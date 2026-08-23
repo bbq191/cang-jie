@@ -44,7 +44,7 @@ UI 界面本地化（简体 + 繁体：语言列表、翻译文件、字体）�
 - **`ghidra-project/`**（顶层）— **反编译工程**：Ghidra 项目 + headless 脚本，定位类/属性/方法/偏移的离线侦查产物。
 - `rmfw/`（顶层）— 固件镜像 `out/`+`extracted/`（通用侦查资源；中文字体已移进 `chinese-ime/fonts/`）。
 - `xovi-extensions/`（顶层）— `reading-qol`+`font-menu`（阅读增强，非中文化本身）。
-- `weread-client/`（顶层）— 独立子项目（微信读书方案），跟中文化无关。
+- `reading/`（顶层，历史名 `weread-client/`）+ `pkm/` — 独立子项目（阅读/PKM），跟中文化无关。
 - 工程纪律（顶层）— 工程纪律。
 
 ## 01｜总体架构图解

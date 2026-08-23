@@ -4,7 +4,7 @@
 
 在 UI 中文化与拼音输入法两条线基本收工（见姊妹文档《[reMarkable 中文化白皮书](../chinese-ime/docs/reMarkable中文化白皮书.md)》《[reMarkable 拼音输入法白皮书](../chinese-ime/docs/reMarkable拼音输入法白皮书.md)》）之后，本文回答一个问题：**这台设备上，下一步做什么最值。**
 
-> 注：中文化核心已归拢进 `chinese-ime/` 子文件夹（2026-08-15 重构）。本文中出现的 `xovi-extensions/cangjie-langhook/`、`pinyin-engine/` 等旧路径一律对应 `chinese-ime/langhook/`、`chinese-ime/pinyin-engine/`；`rm-export/`/`weread-client/` 仍在顶层。
+> 注：中文化核心已归拢进 `chinese-ime/` 子文件夹（2026-08-15 重构）。本文中出现的 `xovi-extensions/cangjie-langhook/`、`pinyin-engine/` 等旧路径一律对应 `chinese-ime/langhook/`、`chinese-ime/pinyin-engine/`；`rm-export/` 仍在顶层。**`weread-client/` 已于 2026-08-23 拆成 `reading/`（阅读）+ `pkm/`（PKM 生产 crate），本文旧引用一律对应新目录。**
 
 **范围声明：** 本文是方向评估文档，不是实现方案——只做候选功能的价值排序、可行性论证和否决理由，具体实现细节待立项后另开方案文档。评估范围同样限定"本机个人定制"，不涉及破解 DRM、绕过付费校验或分发修改版固件。
 
@@ -68,18 +68,18 @@
 
 ### 3.1 项目分块地图（6 块）
 
-项目从"中文输入法 + 汉化"长成一套设备增强套件后，按功能/产品线组织成 6 块。这是全项目的组织骨架，本文的 P0–P4 路线都落在其中某一块内。**心智地图不完全等于目录名**——`weread-client/` 一个目录同时装了块 3 与块 5，见下方 ⚠️。
+项目从"中文输入法 + 汉化"长成一套设备增强套件后，按功能/产品线组织成 6 块。这是全项目的组织骨架，本文的 P0–P4 路线都落在其中某一块内。目录名已与分块对齐（2026-08-23 把历史名 `weread-client/` 拆成 `reading/`+`pkm/`）；块 5 PKM 与块 3 阅读间有一条单向依赖，见下方 ⚠️。
 
 | # | 块 | 落点 | 本文对应 | 状态 |
 |---|---|---|---|---|
 | 1 | **逆向基座** | `ghidra-project/` · `rmfw/` | 全线共享地基（第 11 节架构原则） | 持续维护 |
 | 2 | **中文化**（显示 + 输入法） | `chinese-ime/` | 两本姊妹白皮书；本文 P3 字体 | 收尾维护 |
-| 3 | **阅读**（微信读书 + EPUB 优化） | `weread-client/` 主体 | **P0 墨香**（05 节）+ 5.7 EPUB 优化器 | 端到端真机验证 |
+| 3 | **阅读**（微信读书 + EPUB 优化） | `reading/` 主体 | **P0 墨香**（05 节）+ 5.7 EPUB 优化器 | 端到端真机验证 |
 | 4 | **系统增强**（阅读/显示/笔记 UX） | `xovi-extensions/` + `chinese-ime/langhook`（笔记增强） | **P4**（09 节：点击翻页/快刷/清残影/字体 + 荧光笔汉字吸附） | 真机验证 |
-| 5 | **PKM / 知识管理** | `pkm-semantic/`（原型）+ `weread-client/device-rs/` 内 `star*`/`card*`（生产） | **★全局待办**（5.8 节）；P1/P2 数据流转是其上游 | 首个能力真机端到端 |
+| 5 | **PKM / 知识管理** | `pkm-semantic/`（原型）+ `pkm/`（Rust 生产 crate，单向依赖 `reading/`） | **★全局待办**（5.8 节）；P1/P2 数据流转是其上游 | 首个能力真机端到端 |
 | 6 | **额外应用** | `screenshot-tool/` | 未入本文优先级表（`screenshot-feasibility` 记忆：独立 DRM 直读判死，须 hook xochitl） | 规划中 |
 
-> ⚠️ **两处跨块，勿被目录名误导**：① 块 4 的荧光笔吸附逻辑在 `langhook`（块 2 的 .so）、开关 UI 在 `reading-qol`（块 4），一颗 .so 服务两块，不拆二进制。② 块 5 的 PKM 生产码**嵌在**块 3 的 `weread-client/device-rs` crate 内（`stardetect.rs`/`cardnote.rs`/`cardsync.rs`/`wr_stars*.rs`），不是独立目录；`weread-client` 是历史名、实含阅读+PKM 两线，**计划中的目标是拆分/改名（需 Rust crate 重构，尚未物理执行）**。引用路径以实际目录为准。
+> ⚠️ **一处跨块共享 + 一条单向依赖**：① 块 4 的荧光笔吸附逻辑在 `langhook`（块 2 的 .so）、开关 UI 在 `reading-qol`（块 4），一颗 .so 服务两块，不拆二进制。② 块 5 的 `pkm/` 是独立 Rust crate，但**单向依赖** `reading/device-rs`（复用 `epubindex`/`fswatch`/`inject`/`notebook_rm`）——★待办本就建在阅读栈上；`reading/` 不反向依赖 `pkm/`。这是 2026-08-23 把历史名 `weread-client/`（曾把阅读+PKM 塞一个 crate）拆成 `reading/`+`pkm/` 后的正确形状。
 
 ## 04｜已否决方向及理由
 
@@ -130,7 +130,7 @@ PPI（Move 为固定硬件参数）、Gallery 3 白态偏灰、色彩对比度�
 
 ### 5.2 现架构（三层，全设备自足）
 
-**① 设备端 Rust 二进制**（`weread-client/device-rs/`，交叉编 `aarch64-unknown-linux-musl` **全静态**：ring 的 C 用 aarch64-gcc、musl 链接靠 rustc 自带 rust-lld）：
+**① 设备端 Rust 二进制**（`reading/device-rs/` + `pkm/`，交叉编 `aarch64-unknown-linux-musl` **全静态**：ring 的 C 用 aarch64-gcc、musl 链接靠 rustc 自带 rust-lld）：
 
 - **`wr-serve`**——常驻本地 HTTP 服务（`127.0.0.1:8777`，tiny_http），墨香面板与阅读器菜单都调它。端点：GET `/ping /status`(登录态) `/shelf /chapters /search /notebook/list /profile`；POST `/publish`(下书,可带拉笔记) `/notebook/sync_book`(双向智能同步) `/notebook/sync_current`(阅读器发送画线) `/login/*` `/logout`。
 - **`wr-download`**——整本下载→组 EPUB→`/upload` 免重启注入；**`wr-renew`**（`wr-renew.timer` 定时续期 `wr_skey` 保活）。
@@ -170,7 +170,7 @@ PPI（Move 为固定硬件参数）、Gallery 3 白态偏灰、色彩对比度�
 
 ### 5.2.1 全设备化落地：Rust 移植 + 墨香 app + 阅读器菜单（2026-08，全真机验证）
 
-组件 3/3b/3c 的机制（`.rm` 反解划线、`rmscene` 造笔记页、云端批注双向、EPUB 烤）**已全部逐字节移植成 Rust、搬上设备**（`weread-client/device-rs/`）——host 的 `tools/*.py`/`highlights/*.py` 从"运行时依赖"降为"对拍参照"（下方组件段里的 Python 文件名读作历史实现，现由 Rust 等价件承担）。此外补齐了一批只在设备端才有的能力：
+组件 3/3b/3c 的机制（`.rm` 反解划线、`rmscene` 造笔记页、云端批注双向、EPUB 烤）**已全部逐字节移植成 Rust、搬上设备**（`reading/device-rs/`）——host 的 `tools/*.py`/`highlights/*.py` 从"运行时依赖"降为"对拍参照"（下方组件段里的 Python 文件名读作历史实现，现由 Rust 等价件承担）。此外补齐了一批只在设备端才有的能力：
 
 - **扫码登录（设备自足）**：`login.rs`+`qr.rs` 设备自绘二维码，`/login/start` 取 uid、`/login/poll` 长轮询 `getLoginInfo` 到确认落盘 + 续期激活；退出=`/logout` 改名凭证文件。踩坑：`webLoginVid` 是**数字**非字符串；二维码无过期信号→定时 120s 换一张。
 - **可手写批注的 `.rm` 笔记页 + 想法 CRUD**：`notebook_rm.rs` 自写**字节对拍 rmscene 的 v6 `.rm` 写入器**（`simple_text_document`，ascii+CJK 逐字节一致；`read_root_text` 读回编辑版一致）→ 把云端划线+想法排成可**手写批注**的原生笔记页 → `.rmdoc` `/upload` 免重启进库。设备上在「想法：」后打字 → 读回 `.rm` → 按 `〔wr cu:s-e〕` 锚 `parse_thoughts` → 增/改/删同步回微信读书（`/web/review/add`、`/web/review/delete`）。
@@ -191,7 +191,7 @@ PPI（Move 为固定硬件参数）、Gallery 3 白态偏灰、色彩对比度�
 
 - **登录**：`/api/auth/getLoginUid` 取 uid → 屏显二维码 `/web/confirm?uid=` 手机扫码 → 轮询 `/api/auth/getLoginInfo`（支持手机 4 位 OTP）→ 领**微信读书官方 Skills/Agent API Key**（`/api/skills/apikeyGet`）作主凭证。
 - **下载**：章节走 web 分片端点（正文 `t_0`/`t_1`、EPUB 版式 `e_0..e_3`、`/web/book/chapterInfos` 拿目录），正文是**混淆编码**，需自定义解码还原 HTML 后本地组装 EPUB，付费/受限章节占位。
-  - **真机深挖（2026-08-13，两份自有账号 HAR + 借鉴 MiuRead 逻辑 + host 侧重放实验）**：协议层拆得很透，但**撞上一道"200 空响应"墙，自动下载能否走通仍未定**。已攻克并落地（`weread-client/`）：① 请求形状 `POST /web/book/chapter/{shard}` + JSON body（`b`/`c`/`r`/`st`/`ct`/`ps`/`pc`/`sc`/`s`）+ 头 `x-wrpa-0`；② **签名 `s` 复现**（`0x15051505` 的 XOR+移位滚动散列，HAR 6/6 命中，`sign.py`）；③ **obfuscate 编码复现**（`b`=obfuscate(bookId) 逐字节对拍通过，`obfuscate.py`）；④ **codec 完全攻克并落地**（`codec.py`，经所有者授权移植 codec.lua + 真机对拍）：响应 `32hex(md5校验)+1字符+base64`，base64 **文本层**做了少量字符位置置换（positions/unswap）；正文 `e_0`+`e_1`+`e_3` **拼接**后去置换再 base64 解码 = 完整 XHTML，`e_2` 单分片是全书 CSS。对拍：CSS 4/4、正文拼接后 utf8 完整。**→ P0 下载链全线打通（真机端到端验证）**：`download.py` 用真实自造请求从《喜鹊谋杀案》下到正文、codec 解码成可读中文、组装出合法 EPUB（mimetype 正确、含 container/opf/nav/章节）。链路 = 登录 → 目录（Agent Bearer）→ 自造章节请求（obfuscate 编码 + web_sign 签名 + 新鲜时间戳 + **有效登录 cookie**）→ codec 解码 → EPUB。**鉴权只靠 cookie，不需要 x-wrpa-0，不需要 curl_cffi/浏览器指纹（标准库 urllib 即可）。** **"200 空 {}" 卡了很久，真相是没带对 cookie**——那份 HAR 导出未含 HttpOnly cookie，实验一直用空/过期 cookie，{} 就是"未登录"；换 `tools/login.py` 的新鲜 cookie 一发即得正文。**教训串**：x-wrpa-0 认知反复两次全错（"前端签名"→"服务器票据"→实为客户端埋点但服务器不强校验）、指纹/nonce 假设也全错——**先确认最基本的鉴权（cookie）到位，再怀疑高级反爬**。curl_cffi 仅用于排除指纹假设，不进依赖。
+  - **真机深挖（2026-08-13，两份自有账号 HAR + 借鉴 MiuRead 逻辑 + host 侧重放实验）**：协议层拆得很透，但**撞上一道"200 空响应"墙，自动下载能否走通仍未定**。已攻克并落地（`reading/`）：① 请求形状 `POST /web/book/chapter/{shard}` + JSON body（`b`/`c`/`r`/`st`/`ct`/`ps`/`pc`/`sc`/`s`）+ 头 `x-wrpa-0`；② **签名 `s` 复现**（`0x15051505` 的 XOR+移位滚动散列，HAR 6/6 命中，`sign.py`）；③ **obfuscate 编码复现**（`b`=obfuscate(bookId) 逐字节对拍通过，`obfuscate.py`）；④ **codec 完全攻克并落地**（`codec.py`，经所有者授权移植 codec.lua + 真机对拍）：响应 `32hex(md5校验)+1字符+base64`，base64 **文本层**做了少量字符位置置换（positions/unswap）；正文 `e_0`+`e_1`+`e_3` **拼接**后去置换再 base64 解码 = 完整 XHTML，`e_2` 单分片是全书 CSS。对拍：CSS 4/4、正文拼接后 utf8 完整。**→ P0 下载链全线打通（真机端到端验证）**：`download.py` 用真实自造请求从《喜鹊谋杀案》下到正文、codec 解码成可读中文、组装出合法 EPUB（mimetype 正确、含 container/opf/nav/章节）。链路 = 登录 → 目录（Agent Bearer）→ 自造章节请求（obfuscate 编码 + web_sign 签名 + 新鲜时间戳 + **有效登录 cookie**）→ codec 解码 → EPUB。**鉴权只靠 cookie，不需要 x-wrpa-0，不需要 curl_cffi/浏览器指纹（标准库 urllib 即可）。** **"200 空 {}" 卡了很久，真相是没带对 cookie**——那份 HAR 导出未含 HttpOnly cookie，实验一直用空/过期 cookie，{} 就是"未登录"；换 `tools/login.py` 的新鲜 cookie 一发即得正文。**教训串**：x-wrpa-0 认知反复两次全错（"前端签名"→"服务器票据"→实为客户端埋点但服务器不强校验）、指纹/nonce 假设也全错——**先确认最基本的鉴权（cookie）到位，再怀疑高级反爬**。curl_cffi 仅用于排除指纹假设，不进依赖。
 - **划线/想法**：读走 `/book/underlines`、`/book/readreviews`；写走 `/web/book/addBookmark`、`/web/review/add` 等。微信读书批注是"字符 range"，与设备侧位置要来回映射。
 - **进度/时长**：`/web/book/read` 上传进度（带精确锚点定位）；阅读时长单独上报以计入账号。
 - 统一入口 `https://i.weread.qq.com/api/agent/gateway`，`Authorization: Bearer <api_key>`。
@@ -247,7 +247,7 @@ PPI（Move 为固定硬件参数）、Gallery 3 白态偏灰、色彩对比度�
 
 PKM 回归后 reMarkable 复位为**阅读/笔记工作台**，`pkm-semantic/` 是这条线的"语义引擎"：只读扫 `.rm` 笔迹 → 识别约定符号 → 输出独立文档（绝不回写原件）。首个能力选 **★ 全局待办**（灵感来自 `2.md`「后台解析矢量笔迹」构想）：**阅读时用红笔在某页画一颗五角星，几秒后后台 Rust daemon 自动生成/更新这本书的「《书名》- 总结卡片」笔记本**。选它打头因为①不依赖底层文本 ②颜色/形状能从 `.rm` 直接读出 ③输出独立文件天然绕开 inplace 判死 + 云同步冲突。产物：`pkm-semantic/proto/`（Python 原型 + 差分测试）→ `device-rs/src/{stardetect,cardsync,cardnote,epubindex}.rs`（生产 Rust）+ `bin/wr_stars_daemon.rs` + `device/trash-agent.qmd` + 设置页开关。
 
-![★ 全局待办数据流（画星 → fswatch → 识别 + 页→章名 → 卡片 merge → /upload → 事件驱动去重）](../weread-client/docs/star-todo-flow.svg)
+![★ 全局待办数据流（画星 → fswatch → 识别 + 页→章名 → 卡片 merge → /upload → 事件驱动去重）](../reading/docs/star-todo-flow.svg)
 
 **A. 检测引擎（自相交 + 颜色门控，先 Python 后 Rust 逐字节对拍）**。真机对账《缺失功能》笔记（含红手绘星 + 红干扰 + 黑笔记）后三大发现改写了设计：① **真手绘星 ≠ 理想五角星**——是多笔叠加、外廓圆钝、内部自相交的松散手势，原"5 尖角 + 闭合"阈值全漏 → 改判据为**自相交计数**（pentagram 不变量：clean 恒 5、真机松散星 10~20、圆/方框/对勾/正常字母 = 0）+ 空间合并多笔星（并查集 bbox 聚类）；② **黑对黑纯几何判死**——满页黑手写里草书汉字也有 4~11 自相交，每页约 8 假阳 → 坐实必须**颜色门控**；③ **颜色 + 形状缺一不可**——红笔里也有干扰（红对勾/红方框），双条件下 RED 门控检出星、忽略干扰。用户拍板**用一种记笔记不用的笔色（红）画星**。**踩坑真 bug**：`PenColor` 是 IntEnum，Py3.11+ 的 `str()` 返数字 `"7"` 非 `"RED"` → 颜色归一必须走 `.name`。Rust 移植与 Python `star_scan` 逐字节全等（200 笔逐字段 + 各色门控），vendored `remarkable_lines` 打两处补丁容忍新固件格式（`ParagraphStyle::Unknown`、块少读跳块尾）。
 
@@ -401,7 +401,7 @@ rmkit-cn 的文本 AI 原本在服务器端扫 `.rm` 拼整页文字，后来**�
 3. **许可证：P0 是净室自研，不受 AGPL 传染**（净室纪律见 5.4）。诚实前提是调研已读过 MiuRead 源码，故采可操作的最强净室姿态——协议/解码从微信读书真机流量二次推导、不照搬 `codec.lua`、不复制其代码结构。由此产出为自有版权、自选许可证，非 MiuRead 派生作品；KOReader 不涉及本路线。rmscene（MIT）等 P1/P2 依赖照旧实测 `LICENSE` 确认。所有下载/导出物均为用户自己账号的数据，微信读书书籍内容不进入任何分发渠道。不代替法律意见，只记录事实与架构取舍。
 4. **设备端凭证安全**：墨香在设备上存微信读书登录凭证（`/home/root/weread/credentials.json`：api_key + cookies，`wr-renew.timer` 定时续期保活）。注意 `xochitl.conf` 已有明文 SSH 口令/云 token 的泄露前例（见《中文化白皮书》2.5 节）——凭证落在 /home 用户目录、不进 `.so`、不随书分发；进一步的加密存储可后续加固。
 5. **可复用的现成肩膀**（实现时直接站上去，不重造）：① hook 韧性机制——`xovi-extensions/cangjie-langhook/` 的 LD*PRELOAD + 特征码自定位（含掩码通配跨固件韧性）+ AArch64 trampoline + 手工构造 QString/QStringList，及已摸到的 `EpubProperties` 阅读管线锚点；② rmscene 反解——`rm-export/export.py` 的 `page_highlights()` + 文档库遍历骨架；③ 差分测试 + 离线 blob——`pinyin-engine/c` 的 `make test`/`make diff-check`（Python 参照→C→逐行 diff）+ `gen*\*\_blob.py`离线生成、设备端`mmap` 只读加载。
-6. **本文只保持"当前优先级共识"的单一事实来源**；优先级变动时更新本文并记录调整理由，遵守"发现即写"。P0 已立项，设计不另开方案文档——落在 `weread-client/` 的代码 + README + `ATTRIBUTION.md`（借鉴 MiuRead 之处的标注约定与逐处登记）。
+6. **本文只保持"当前优先级共识"的单一事实来源**；优先级变动时更新本文并记录调整理由，遵守"发现即写"。P0 已立项，设计不另开方案文档——落在 `reading/` 的代码 + README + `ATTRIBUTION.md`（借鉴 MiuRead 之处的标注约定与逐处登记）。
 
 ---
 
