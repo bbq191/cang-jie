@@ -1,0 +1,129 @@
+; Step BB v5：收起状态下候选多到要换行时，下一行内容露出上半部分——
+; 根因是只在外层 Rectangle 上 clip，Flow 自己的高度是内容撑出来的
+; 隐式高度（够放下所有换行后的行），外层裁切只是把超出部分"藏起来"，
+; 裁切边界正好切在第二行中间。改成直接在 Flow 自己身上限制高度
+; （收起时固定 46，正好一行）+ clip:true，收起状态下 Flow 自己就只
+; 占一行的空间，不会有"第二行画出来一半"这种半吊子状态；展开时用
+; implicitHeight 让 Flow 撑到能装下全部候选换行后的高度。
+;
+; Phase A（A-ii 逐字造句/分段提交）：delegate 点选不再传候选文字本身，
+; 改传 "\x02<十进制索引>"（String.fromCharCode(2)+index）——C 端解码出
+; 缓存下标，查该候选消耗几个音节，提交后把剩余音节留在缓冲区继续选。
+; keySelected 因此多带一个 idx 参数。
+;
+; 字体：候选/预览文字统一用 UI 字体 LXGW Neo XiHei Screen Full（fontconfig family
+; 名 "LXGW Neo XiHei Screen Full"，字体文件 /home/root/.local/share/fonts/
+; NeoXiHeiScreen.ttf）。它简繁字符全覆盖，候选文字本身的简/繁内容已由 dict.bin /
+; dict.zh_tw.bin 决定，字体只负责渲染、无需按语言切族。
+; （2026-08-16 结项：UI 字体统一到 LXGW Neo XiHei 后，候选栏原按 zh_TW 切
+;  HarmonyOS Sans SC/TC 的逻辑废弃——设备本就只装了 LXGW，原逻辑早已回退到它。）
+AFFECT /qt/qml/xofm/modules/virtualkeyboard/qml/KeyboardPanel.qml
+    TRAVERSE Item > Item[#keyboardContainer] > Item[#keyboardLayout]
+        LOCATE AFTER KeyPopup[#keyPopup]
+        INSERT {
+            Rectangle {
+                id: cjCandidateBar
+                objectName: "CjCandidateBar"
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.bottom: parent.top
+                height: expanded ? 310 : 94
+                color: "white"
+                border.color: "black"
+                border.width: 1
+                z: 999
+                visible: false
+                clip: true
+
+                property var keys: []
+                property bool expanded: false
+                property string previewText: ""
+                property string cjkFamily: "LXGW Neo XiHei Screen Full"
+                signal keySelected(string symbol, int idx)
+
+                onKeySelected: (symbol, idx) => {
+                    expanded = false;
+                    virtualKeyboard.insertText(String.fromCharCode(2) + idx, 0, 0);
+                }
+                onKeysChanged: expanded = false;
+
+                // A-iv 显示残留修复（2026-08-22）：可见性只由 C 端 update_popup
+                // 驱动，焦点切走时没有按键发生、没人来收栏——键盘一隐藏就
+                // 自清（收栏+清内容），配合 C 端焦点守卫（清状态）补齐闭环。
+                Connections {
+                    target: Qt.inputMethod
+                    function onVisibleChanged() {
+                        if (!Qt.inputMethod.visible) {
+                            cjCandidateBar.visible = false;
+                            cjCandidateBar.expanded = false;
+                            cjCandidateBar.keys = [];
+                            cjCandidateBar.previewText = "";
+                        }
+                    }
+                }
+
+                Flow {
+                    id: candidateFlow
+                    anchors.left: parent.left
+                    anchors.right: expandButton.left
+                    anchors.top: parent.top
+                    anchors.margins: 6
+                    height: cjCandidateBar.expanded ? implicitHeight : 46
+                    clip: true
+                    spacing: 6
+                    Repeater {
+                        model: cjCandidateBar.keys
+                        delegate: Rectangle {
+                            width: label.implicitWidth + 16
+                            height: 46
+                            color: "transparent"
+                            Text {
+                                id: label
+                                anchors.centerIn: parent
+                                text: modelData
+                                font.family: cjCandidateBar.cjkFamily
+                                font.pixelSize: 26
+                            }
+                            MouseArea {
+                                anchors.fill: parent
+                                onReleased: cjCandidateBar.keySelected(modelData, index)
+                            }
+                        }
+                    }
+                }
+
+                Rectangle {
+                    id: expandButton
+                    width: 36
+                    height: 46
+                    anchors.right: parent.right
+                    anchors.top: parent.top
+                    anchors.margins: 6
+                    color: "transparent"
+                    Text {
+                        anchors.centerIn: parent
+                        text: cjCandidateBar.expanded ? "▴" : "▾"
+                        font.pixelSize: 22
+                    }
+                    MouseArea {
+                        anchors.fill: parent
+                        onReleased: cjCandidateBar.expanded = !cjCandidateBar.expanded
+                    }
+                }
+
+                Text {
+                    anchors.left: parent.left
+                    anchors.right: parent.right
+                    anchors.bottom: parent.bottom
+                    anchors.margins: 6
+                    height: 30
+                    text: cjCandidateBar.previewText
+                    font.family: cjCandidateBar.cjkFamily
+                    font.pixelSize: 24
+                    color: "black"
+                    elide: Text.ElideRight
+                }
+            }
+        }
+    END TRAVERSE
+END AFFECT

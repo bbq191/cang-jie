@@ -1,0 +1,50 @@
+; ─────────────────────────────────────────────────────────────────────────
+; keyboard-mono.qmd —— 拼音组词态把键盘区锁单色刷新加速（Move 3.28.0.166）
+;
+; 【状态】.166 真实 QML 核对：KeyboardPanel.qml 与 .164 逐行一致（root→keyboardContainer→
+;   screenMode[objectName:"keyboard",mode:Animation,anchors.fill]→keyboardLayout→keyPopup）。
+;   待 qmldiff 离线 apply-diffs（与 candidatebar.qmd 同 apply）+ 真机部署验证。
+;   净室自写：机制借鉴竞品 pretenderlu/rmtool（GPL-3.0），不复制其 QMD 文本。
+;
+; 【机制】键盘浮层 KeyboardPanel 的 keyboardContainer 自带一个键盘区专属的
+;   Epaper.ScreenModeItem{id:screenMode; objectName:"keyboard"; anchors.fill:parent}，
+;   默认 mode:Animation（多遍 waveform 换流畅）。本补丁把它的 mode 绑成：
+;   拼音组词态 = Mono（单色快刷、压候选栏高频重绘的黑闪），非组词态 = 恢复 Animation。
+;   不需够到 DocumentView 的 globalScreenMode（键盘区有自己的屏幕模式驱动）。
+;
+; 【组词态信号 = candidatebar.qmd 注入的 cjCandidateBar.visible】
+;   候选栏 Rectangle{id:cjCandidateBar; objectName:"CjCandidateBar"; visible:false}，
+;   C 端（cangjie-langhook.so）组词时设 visible:true、提交/收起设 false。screenMode 与
+;   cjCandidateBar 同一 QML component、id 互相可见，故直接引用其 visible 即可，零 C 改动。
+;   ⚠️ 依赖 candidatebar.qmd 也注入到本文件（两 qmd 同改 KeyboardPanel.qml）——
+;     apply-diffs 已验证 cjCandidateBar id 与本引用共存（见 reading-qol/README）。
+;
+; 【可观测性诚实提醒】候选栏本就是纯黑白 UI，Mono 化不改变静态观感——"是否生效"不能
+;   靠看颜色，只能靠刷新速度/闪烁的 A/B 慢动作对比。onModeChanged 日志辅助确认 mode 真在切。
+;
+; 【真机验证】备份→单独放本 qmd→重启→健康检查→journalctl grep "KBD-MONO"：
+;   组词打字看 mode 切 Mono、提交/收起切回 Animation；A/B 慢动作看候选栏黑闪差异。失败即回退。
+; ─────────────────────────────────────────────────────────────────────────
+
+AFFECT /qt/qml/xofm/modules/virtualkeyboard/qml/KeyboardPanel.qml
+
+    ; 组词态(候选栏可见) → Mono 单色快刷；否则恢复 Animation。
+    TRAVERSE Item[#root] > Item[#keyboardContainer] > Epaper.ScreenModeItem[#screenMode]
+        REPLACE mode WITH {
+            mode: cjCandidateBar.visible
+                  ? Epaper.ScreenModeItem.Mono
+                  : Epaper.ScreenModeItem.Animation
+        }
+    END TRAVERSE
+
+    ; 日志：确认 mode 真在 Mono/Animation 间切（INSERT 块内注释用 //，不用 ;）
+    TRAVERSE Item[#root] > Item[#keyboardContainer] > Epaper.ScreenModeItem[#screenMode]
+        LOCATE AFTER ALL
+        INSERT {
+            // reading-qol keyboard-mono：mode 切换日志（组词 Mono / 非组词 Animation）
+            Component.onCompleted: console.warn("KBD-MONO: loaded, initial mode=" + mode)
+            onModeChanged: console.warn("KBD-MONO: mode=" + mode + " candbarVisible=" + cjCandidateBar.visible)
+        }
+    END TRAVERSE
+
+END AFFECT

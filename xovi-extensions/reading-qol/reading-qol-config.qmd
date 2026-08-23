@@ -1,0 +1,80 @@
+; ─────────────────────────────────────────────────────────────────────────
+; reading-qol-config.qmd —— 阅读增强共享配置（挂 DeviceSceneView#root，被 tap/mono/refresh 共用）
+;
+; 【为什么单独一个文件】tap-page-turn / fast-mono / 按章按页刷新 三项都要读同一份用户配置，
+;   且都够得着 DeviceSceneView 的 FocusScope#root（= SceneViewGestures 的 view、DocumentView 的
+;   sceneView）。把「配置属性 + 读盘函数」集中注入这个共享对象，其余补丁只消费 cj* 属性，
+;   避免各自重复读盘、也让默认值统一。
+;
+; 【状态源】设置页「系统增强 → 阅读增强」用 XMLHttpRequest 写
+;   /home/root/.local/share/cangjie-ime/reading-qol.json（/home 持久）；本文件开文档时读它。
+;   运行中 xochitl 环境带 QML_XHR_ALLOW_FILE_READ=1（已核实），file:// 同步 GET 可用。
+;   **全部默认 OFF**：本补丁部署后在用户去设置里打开之前，阅读行为零变化（安全铺垫）。
+;
+; 【锚点核对（设备真二进制 md5 3356dde7，非旧 .166）】DeviceSceneView.qml 根 FocusScope{id:root}
+;   （DeviceSceneView.qml:18-19）——子代理逐锚点核对成立。此对象即 view / sceneView 共享体。
+;
+; 【qmldiff 纪律】INSERT{} 块内是 QML，注释只能用 //；本文件不动任何原生绑定，纯追加成员。
+; ─────────────────────────────────────────────────────────────────────────
+
+AFFECT /qml/device/view/documentview/DeviceSceneView.qml
+
+    TRAVERSE FocusScope[#root]
+        LOCATE AFTER ALL
+        INSERT {
+            // ── reading-qol 共享配置（默认全 OFF；开文档时从 JSON 读一次）──
+            property bool cjTapPageTurn: false      // 点击翻页
+            property bool cjFastMono: false         // 快速黑白阅读
+            property bool cjRefresh: false          // 翻页清残影总开关（彩屏/黑白都生效，独立于 cjFastMono）
+            property bool cjRefreshByChapter: false // true=按章清残影、false=按页
+            property int  cjRefreshEvery: 15        // 按页模式下每 N 页清一次
+            property int  _cjCleanupCount: 0        // 按页计数
+            property int  _cjLastChapter: -1        // 按章：上次章节 index
+
+            function cjLoadConfig() {
+                try {
+                    var xhr = new XMLHttpRequest();
+                    xhr.open("GET", "file:///home/root/.local/share/cangjie-ime/reading-qol.json", false);
+                    xhr.send();
+                    var t = xhr.responseText;
+                    if (t && t.length > 0) {
+                        var c = JSON.parse(t);
+                        if (c.tapPageTurn !== undefined)     root.cjTapPageTurn = !!c.tapPageTurn;
+                        if (c.fastMono !== undefined)        root.cjFastMono = !!c.fastMono;
+                        if (c.refresh !== undefined)         root.cjRefresh = !!c.refresh;
+                        if (c.refreshByChapter !== undefined) root.cjRefreshByChapter = !!c.refreshByChapter;
+                        if (c.refreshEvery !== undefined) {
+                            var n = parseInt(c.refreshEvery);
+                            root.cjRefreshEvery = (n > 0) ? n : 15;
+                        }
+                    }
+                } catch (e) {
+                    console.warn("READING-QOL-CFG: load failed " + e);
+                }
+            }
+
+            Item {
+                objectName: "cjReadingQolConfigMarker"
+                Component.onCompleted: {
+                    root.cjLoadConfig();
+                    console.warn("READING-QOL-CFG: loaded tap=" + root.cjTapPageTurn
+                                 + " mono=" + root.cjFastMono
+                                 + " refresh=" + root.cjRefresh
+                                 + " byChap=" + root.cjRefreshByChapter
+                                 + " every=" + root.cjRefreshEvery);
+                }
+            }
+
+            // 周期重读配置：设置页改完开关后，返回阅读器 ~1.5s 内自动生效（DeviceSceneView 不重建、
+            // onCompleted 不再触发，故靠轮询）。文件仅 ~120B、同步读微秒级；不进触摸/翻页热路径。
+            Timer {
+                objectName: "cjReadingQolConfigPoll"
+                interval: 1500
+                repeat: true
+                running: true
+                onTriggered: root.cjLoadConfig()
+            }
+        }
+    END TRAVERSE
+
+END AFFECT

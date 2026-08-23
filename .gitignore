@@ -1,0 +1,60 @@
+# ─────────────────────────────────────────────────────────────
+# cang-jie .gitignore
+# 原则：只版本化「源码/脚本/文档/配置/小数据」。产物 + GB 级大资源一律排除。
+# 写法心法：类型 glob 优先（一条=一类，自文档）；大二进制宁宽勿窄
+#          （漏进历史代价高）；要留例外用「宽忽略 + ! 白名单」。
+# ─────────────────────────────────────────────────────────────
+
+# ── Python ──（无中间斜杠即匹配任意层级，不必再写 **/）
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+*.egg-info/
+.python-version
+
+# ── Rust ──
+target/
+
+# ── C/C++ 产物 ──
+*.o
+*.a
+**/build/
+*.so            # 编译产物/第三方库全排除（本项目无需 track 任何 .so）
+*.so.*          # 带版本号的第三方库，如 libQt6Core.so.6.10.3
+
+# ── 缓存 ──
+.cache/
+*.qmlc
+
+# ── 部署产物 ──
+**/deploy/dist/
+
+# ─────────────────────────────────────────────────────────────
+# 大资源：git 不管，留工作区。需要时按 README/PROVENANCE 重新获取。
+# 要版本化其中某类，删对应行（并考虑 git-lfs）。
+# ─────────────────────────────────────────────────────────────
+
+# 固件镜像 / 设备二进制 / 反编译工程
+rmfw/extracted
+rmfw/out/
+rmfw/*.bin
+ghidra-project/*.rep/
+
+# 词典（源 .dict.yaml 与派生大 txt；递归匹配子目录）
+chinese-ime/pinyin-engine/data/**/*.dict.yaml
+chinese-ime/pinyin-engine/data/essay-zh-hans.txt
+chinese-ime/pinyin-engine/data/english/frequency_dictionary_*.txt
+
+# 大字体（第三方，可重新下载）
+chinese-ime/fonts/**/*.ttf
+chinese-ime/fonts/**/*.otf
+
+# 媒体：宽忽略 assets 下所有，白名单留 logo（心法③）
+assets/*
+!assets/logo.png
+
+# ── OS / 编辑器 ──
+.DS_Store
+*.swp
+*~

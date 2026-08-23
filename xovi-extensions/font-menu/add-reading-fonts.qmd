@@ -1,0 +1,70 @@
+; ─────────────────────────────────────────────────────────────────────────
+; add-reading-fonts.qmd —— 阅读「文字与布局」字体菜单按开关新增 3 个中文/阅读字体（不替换原有）
+;
+; 【做什么】原生字体菜单(FormatFont.qml)的 fontModel 硬编码 4 项(reMarkable Sans/Serif、
+;   EB Garamond、Ebook default)。当设置页「系统增强 → 阅读增强 → 阅读字体增强」开启时，
+;   往菜单**追加** 3 项可选（原 4 项保留、不替换）：
+;     · 霞鹜文楷（楷体）      key=LXGW WenKai Mono GB Screen
+;     · 霞鹜新致宋（宋体）    key=LXGW Neo ZhiSong Screen Full
+;     · KF Readerly（阅读体） key=KF Readerly
+;   选中即 epub.setFontName(key)，xochitl 免重启重渲。key 为 fc-scan 实测家族名。
+;
+; 【前置】3 个 ttf 需装到设备字体目录（/home/root/.local/share/fonts/）并 fc-cache，
+;   否则 setFontName 命中不到、回退默认。装字体是一次性设备操作，见 deploy 脚本/白皮书。
+;
+; 【开关门控】fontModel 的 Component.onCompleted 读
+;   /home/root/.local/share/cangjie-ime/reading-qol.json 的 fontEnhance；为真才 append 3 项。
+;   字体菜单每次打开都会新建 FormatFont → 每次读一次配置，切换开关后重开菜单即反映
+;   （无需重启；描述里写"重启生效"是保守说法，实际重开字体菜单即可）。
+;
+; 【锚点核对（3356dde7）】FormatFont.qml：根 Control{id:root}(:15-16)；
+;   contentItem: ColumnLayout 内 ListModel{id:fontModel}(:33-39)；onSelect→epub.setFontName(:66-72)。
+;   路径 Control#root > ColumnLayout > ListModel#fontModel 与旧 add-lxgw-font 一致、仍成立。
+;
+; 【qmldiff 纪律】INSERT{} 块内是 QML，注释只能用 //。
+; ─────────────────────────────────────────────────────────────────────────
+
+AFFECT /qml/device/view/documentview/FormatFont.qml
+    TRAVERSE Control[#root] > ColumnLayout > ListModel[#fontModel]
+        LOCATE AFTER ALL
+        INSERT {
+            Component.onCompleted: {
+                console.warn("READING-QOL-FONT: onCompleted fired, count(before)=" + fontModel.count);
+                try {
+                    var xhr = new XMLHttpRequest();
+                    xhr.open("GET", "file:///home/root/.local/share/cangjie-ime/reading-qol.json", false);
+                    xhr.send();
+                    var t = xhr.responseText;
+                    var fe = false;
+                    if (t && t.length > 0) {
+                        var c = JSON.parse(t);
+                        fe = !!c.fontEnhance;
+                    }
+                    console.warn("READING-QOL-FONT: fontEnhance=" + fe + " (json len=" + (t ? t.length : 0) + ")");
+                    if (fe) {
+                        // 本地化显示名：用 qsTranslate("SettingsModel",…) 判 en/简/繁（上下文显式、本文件可用）；
+                        // key(家族名)不变。Help/Cloud/Accessibility 三串交叉：帮助/幫助、云端/雲端、无障碍/無障礙。
+                        var lng = "en";
+                        var s = "" + qsTranslate("SettingsModel", "Help")
+                              + qsTranslate("SettingsModel", "Cloud")
+                              + qsTranslate("SettingsModel", "Accessibility");
+                        if (s.indexOf("幫") >= 0 || s.indexOf("雲") >= 0 || s.indexOf("礙") >= 0) lng = "tw";
+                        else if (s.indexOf("帮") >= 0 || s.indexOf("云") >= 0 || s.indexOf("碍") >= 0) lng = "cn";
+                        var names = {
+                            cn: ["霞鹜文楷（楷体）", "霞鹜新致宋（宋体）", "KF Readerly（阅读体）"],
+                            tw: ["霞鶩文楷（楷體）", "霞鶩新致宋（宋體）", "KF Readerly（閱讀體）"],
+                            en: ["LXGW WenKai (Kai)", "LXGW ZhiSong (Song)", "KF Readerly"]
+                        };
+                        var nm = names[lng] || names.en;
+                        fontModel.append({ key: "LXGW WenKai Mono GB Screen", value: nm[0] });
+                        fontModel.append({ key: "LXGW Neo ZhiSong Screen Full", value: nm[1] });
+                        fontModel.append({ key: "KF Readerly", value: nm[2] });
+                        console.warn("READING-QOL-FONT: appended 3 (" + lng + "), count(after)=" + fontModel.count);
+                    }
+                } catch (e) {
+                    console.warn("READING-QOL-FONT: load failed " + e);
+                }
+            }
+        }
+    END TRAVERSE
+END AFFECT

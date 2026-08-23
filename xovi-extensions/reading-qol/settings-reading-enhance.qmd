@@ -1,0 +1,1345 @@
+; ─────────────────────────────────────────────────────────────────────────
+; settings-reading-enhance.qmd —— 设置 App 底部加「系统增强」菜单项 + 阅读增强内容页
+;   目标：设备真二进制 md5 3356dde7。Settings.qml 结构以子代理逐行核对为准。
+;
+; 【做什么】往「设置」左侧菜单最下方（原生 model 驱动项之后）加一个静态「系统增强」入口，
+;   点击右侧 payloadLoader 加载自定义「阅读增强」内容页，含 4 项控制（读写 reading-qol.json）：
+;     a. 点击翻页  b. 快速黑白阅读模式  c. 翻页清残影(总开关)+按章/按页+每N页步进  d. 阅读字体增强
+;
+; 【本地化 en/简/繁】所有面板文案不写死单语言，运行时读 UI 语言选表：
+;   读 /home/root/.config/remarkable/xochitl.conf 的 `language=`（XHR，各上下文通用）——
+;   缺省/其它=en、`zh_TW`/`zh_HK`=繁、其它 `zh*`=简。读不到就英文（优雅降级、绝不崩）。
+;   不走 .qm/.ts 管线（内嵌三语表，精确控 简/繁/英）。SettingsCheckBoxItem 的 On/Off 由原生
+;   qsTr 本地化，无需处理。languageSettings 是逐级下传的 required property、Settings.qml 没有，
+;   故不用它、改读 conf。
+;
+; 【Settings.qml 结构（qml_00db3818）】菜单=SettingsModel 驱动 Repeater#settingsRepeater(项不在QML里)
+;   → 往 ColumnLayout#settingsColumn 的 Repeater 后插静态 ArkControls.SidebarItem(设置页用 onTriggered)。
+;   内容切换=_selectedPage(int,原生小枚举) → Loader#payloadLoader.sourceComponent switch → 内联 Component。
+;   补丁：REBUILD sourceComponent + LOCATE AFTER STREAM /{/ 注入哨兵(990001)早返回；LOCATE AFTER
+;   Component#help 往 root 加内联内容页；开关用同目录 SettingsCheckBoxItem(selected+clicked 手动翻转)。
+;
+; 【qmldiff 纪律】① LOCATE 选择器类型名开头；② 嵌套节点 TRAVERSE 必须通配 ?#id(非通配只匹配直接子)；
+;   ③ INSERT/REBUILD 块内注释只能 //；④ 视图内元素只 anchor 到自己的 parent/sibling；
+;   ⑤ 明文失配只 log+skip 不崩，但 QML 运行时错误会真崩 → 离线 apply-diffs + 隔离冒烟 + 健康检查。
+; ─────────────────────────────────────────────────────────────────────────
+
+AFFECT /qml/device/view/settings/Settings.qml
+
+    ; ── ① 左侧菜单最下方插「系统增强」入口（Repeater 之后、fillHeight 撑高之前）──
+    TRAVERSE ?#settingsColumn
+        LOCATE AFTER Repeater#settingsRepeater
+        INSERT {
+            ArkControls.SidebarItem {
+                id: cjEnhanceSidebarItem
+                objectName: "cjEnhanceSidebarItem"
+                type: ArkTokens.Sidebar.primary
+                // 本地化菜单标题：用 qsTranslate 判 en/简/繁（响应式，随 UI 语言切换实时更新）
+                function cjMenuLabel() {
+                    var s = "" + qsTranslate("SettingsModel", "Help")
+                          + qsTranslate("SettingsModel", "Cloud")
+                          + qsTranslate("SettingsModel", "Accessibility");
+                    if (s.indexOf("幫") >= 0 || s.indexOf("雲") >= 0 || s.indexOf("礙") >= 0) return "系統增強";
+                    if (s.indexOf("帮") >= 0 || s.indexOf("云") >= 0 || s.indexOf("碍") >= 0) return "系统增强";
+                    return "System Enhancements";
+                }
+                property string cjLabel: cjEnhanceSidebarItem.cjMenuLabel()
+                text: root.showLabels ? cjEnhanceSidebarItem.cjLabel : ""
+                iconSource: "qrc:/ark/icons/notebook_sparkles"
+                highlighted: root._selectedPage >= 990001 && root._selectedPage <= 990005
+                focusPolicy: Qt.StrongFocus
+                Layout.fillWidth: true
+                onTriggered: {
+                    root._selectedPage = 990001;
+                }
+            }
+        }
+    END TRAVERSE
+
+    ; ── ② payloadLoader.sourceComponent 头部注入哨兵早返回 ──
+    TRAVERSE ?#payloadLoader
+        REBUILD sourceComponent
+            LOCATE AFTER STREAM / { /
+            INSERT {
+                // 墨香系统增强页：命中哨兵值直接返回，其余交回下方原生 switch
+                if (root._selectedPage === 990001) {
+                    return cjReadingEnhancePage;
+                }
+                if (root._selectedPage === 990002) {
+                    return cjSnippetsPage;
+                }
+                if (root._selectedPage === 990003) {
+                    return cjFlipPage;
+                }
+                if (root._selectedPage === 990004) {
+                    return cjBookPage;
+                }
+                if (root._selectedPage === 990005) {
+                    return cjNotePage;
+                }
+            }
+        END REBUILD
+    END TRAVERSE
+
+    ; ── ③ 门户页「系统增强」（哨兵 990001）：三个分类入口 → 二级页 ──
+    ;   2026-08-22 重构：原单页 8 项超屏 → 门户+二级页；统一设计语言：
+    ;   同一套页头(返回+52px粗标题+28px灰副题+2px分隔线)、入口行(34px粗标题+
+    ;   24px灰说明+›+发丝线)、开关=原生 SettingsCheckBoxItem、页边距 64。
+    TRAVERSE ?#root
+        LOCATE AFTER Component#help
+        INSERT {
+            Component {
+                id: cjReadingEnhancePage
+                Item {
+                    id: cjHubRoot
+                    objectName: "cjEnhanceHub"
+
+                    function cjLang() {
+                        var s = "" + qsTranslate("SettingsModel", "Help")
+                              + qsTranslate("SettingsModel", "Cloud")
+                              + qsTranslate("SettingsModel", "Accessibility");
+                        if (s.indexOf("幫") >= 0 || s.indexOf("雲") >= 0 || s.indexOf("礙") >= 0) return "tw";
+                        if (s.indexOf("帮") >= 0 || s.indexOf("云") >= 0 || s.indexOf("碍") >= 0) return "cn";
+                        return "en";
+                    }
+                    function cjTable() {
+                        var D = {
+                            cn: {
+                                page: "系统增强", sub: "墨香",
+                                flipT: "翻页与刷新",
+                                flipD: "点击翻页 · 快速黑白阅读模式 · 翻页清残影",
+                                bookT: "书籍与字体",
+                                bookD: "阅读字体增强 · 导入书籍自动优化",
+                                snipT: "快捷输入",
+                                snipD: "缩写自动展开为常用短语（文本替换），支持增删改",
+                                noteT: "笔记增强",
+                                noteD: "★ 全局待办：手绘红星自动汇总成每本书的总结卡片"
+                            },
+                            tw: {
+                                page: "系統增強", sub: "墨香",
+                                flipT: "翻頁與刷新",
+                                flipD: "點擊翻頁 · 快速黑白閱讀模式 · 翻頁清殘影",
+                                bookT: "書籍與字體",
+                                bookD: "閱讀字體增強 · 匯入書籍自動優化",
+                                snipT: "快捷輸入",
+                                snipD: "縮寫自動展開為常用短語（文字替換），支援增刪改",
+                                noteT: "筆記增強",
+                                noteD: "★ 全局待辦：手繪紅星自動彙總成每本書的總結卡片"
+                            },
+                            en: {
+                                page: "System Enhancements", sub: "MoXiang",
+                                flipT: "Page Turning & Refresh",
+                                flipD: "Tap to turn · Fast mono reading · Clear ghosting",
+                                bookT: "Books & Fonts",
+                                bookD: "Reading font upgrade · Auto-optimize imported books",
+                                snipT: "Text Replacement",
+                                snipD: "Expand abbreviations into phrases; add, edit and delete them",
+                                noteT: "Note Enhancements",
+                                noteD: "Global ★ to-do: hand-drawn red stars auto-collect into a per-book summary card"
+                            }
+                        };
+                        return D[cjHubRoot.cjLang()] || D.en;
+                    }
+                    property var i18n: cjHubRoot.cjTable()
+
+                    Rectangle { anchors.fill: parent; color: "#ffffff" }
+
+                    Text {
+                        id: cjPgTitle
+                        text: cjHubRoot.i18n.page
+                        renderType: Text.NativeRendering; font.family: "reMarkable Sans"; antialiasing: false
+                        color: "#000000"
+                        font.pixelSize: 52
+                        font.bold: true
+                        anchors { top: parent.top; left: parent.left; topMargin: 64; leftMargin: 64 }
+                    }
+                    Text {
+                        id: cjPgSub
+                        text: cjHubRoot.i18n.sub
+                        renderType: Text.NativeRendering; font.family: "reMarkable Sans"; antialiasing: false
+                        color: "#3a3a3a"
+                        font.pixelSize: 28
+                        anchors { top: cjPgTitle.bottom; left: parent.left; topMargin: 10; leftMargin: 64 }
+                    }
+                    Rectangle {
+                        id: cjPgRule
+                        color: "#b0b0b0"
+                        height: 2
+                        anchors { top: cjPgSub.bottom; left: parent.left; right: parent.right; topMargin: 28; leftMargin: 64; rightMargin: 64 }
+                    }
+
+                    Column {
+                        id: cjHubCol
+                        anchors { top: cjPgRule.bottom; left: parent.left; right: parent.right; topMargin: 24; leftMargin: 64; rightMargin: 64 }
+
+                        Item {
+                            width: cjHubCol.width
+                            height: 140
+                            Text {
+                                id: cjHubFlipT
+                                anchors { left: parent.left; top: parent.top; topMargin: 26 }
+                                text: cjHubRoot.i18n.flipT
+                                renderType: Text.NativeRendering; font.family: "reMarkable Sans"; antialiasing: false
+                                color: "#000000"; font.pixelSize: 34; font.bold: true
+                            }
+                            Text {
+                                anchors { left: parent.left; right: parent.right; top: cjHubFlipT.bottom; rightMargin: 100; topMargin: 8 }
+                                text: cjHubRoot.i18n.flipD
+                                renderType: Text.NativeRendering; font.family: "reMarkable Sans"; antialiasing: false
+                                color: "#3a3a3a"; font.pixelSize: 24; wrapMode: Text.WordWrap
+                            }
+                            Text {
+                                anchors { right: parent.right; verticalCenter: parent.verticalCenter; rightMargin: 20 }
+                                text: "›"
+                                renderType: Text.NativeRendering; font.family: "reMarkable Sans"; antialiasing: false
+                                color: "#000000"; font.pixelSize: 52
+                            }
+                            Rectangle { anchors { left: parent.left; right: parent.right; bottom: parent.bottom } height: 1; color: "#d0d0d0" }
+                            MouseArea { anchors.fill: parent; onClicked: root._selectedPage = 990003 }
+                        }
+
+                        Item {
+                            width: cjHubCol.width
+                            height: 140
+                            Text {
+                                id: cjHubBookT
+                                anchors { left: parent.left; top: parent.top; topMargin: 26 }
+                                text: cjHubRoot.i18n.bookT
+                                renderType: Text.NativeRendering; font.family: "reMarkable Sans"; antialiasing: false
+                                color: "#000000"; font.pixelSize: 34; font.bold: true
+                            }
+                            Text {
+                                anchors { left: parent.left; right: parent.right; top: cjHubBookT.bottom; rightMargin: 100; topMargin: 8 }
+                                text: cjHubRoot.i18n.bookD
+                                renderType: Text.NativeRendering; font.family: "reMarkable Sans"; antialiasing: false
+                                color: "#3a3a3a"; font.pixelSize: 24; wrapMode: Text.WordWrap
+                            }
+                            Text {
+                                anchors { right: parent.right; verticalCenter: parent.verticalCenter; rightMargin: 20 }
+                                text: "›"
+                                renderType: Text.NativeRendering; font.family: "reMarkable Sans"; antialiasing: false
+                                color: "#000000"; font.pixelSize: 52
+                            }
+                            Rectangle { anchors { left: parent.left; right: parent.right; bottom: parent.bottom } height: 1; color: "#d0d0d0" }
+                            MouseArea { anchors.fill: parent; onClicked: root._selectedPage = 990004 }
+                        }
+
+                        Item {
+                            width: cjHubCol.width
+                            height: 140
+                            Text {
+                                id: cjHubSnipT
+                                anchors { left: parent.left; top: parent.top; topMargin: 26 }
+                                text: cjHubRoot.i18n.snipT
+                                renderType: Text.NativeRendering; font.family: "reMarkable Sans"; antialiasing: false
+                                color: "#000000"; font.pixelSize: 34; font.bold: true
+                            }
+                            Text {
+                                anchors { left: parent.left; right: parent.right; top: cjHubSnipT.bottom; rightMargin: 100; topMargin: 8 }
+                                text: cjHubRoot.i18n.snipD
+                                renderType: Text.NativeRendering; font.family: "reMarkable Sans"; antialiasing: false
+                                color: "#3a3a3a"; font.pixelSize: 24; wrapMode: Text.WordWrap
+                            }
+                            Text {
+                                anchors { right: parent.right; verticalCenter: parent.verticalCenter; rightMargin: 20 }
+                                text: "›"
+                                renderType: Text.NativeRendering; font.family: "reMarkable Sans"; antialiasing: false
+                                color: "#000000"; font.pixelSize: 52
+                            }
+                            Rectangle { anchors { left: parent.left; right: parent.right; bottom: parent.bottom } height: 1; color: "#d0d0d0" }
+                            MouseArea { anchors.fill: parent; onClicked: root._selectedPage = 990002 }
+                        }
+
+                        Item {
+                            width: cjHubCol.width
+                            height: 140
+                            Text {
+                                id: cjHubNoteT
+                                anchors { left: parent.left; top: parent.top; topMargin: 26 }
+                                text: cjHubRoot.i18n.noteT
+                                renderType: Text.NativeRendering; font.family: "reMarkable Sans"; antialiasing: false
+                                color: "#000000"; font.pixelSize: 34; font.bold: true
+                            }
+                            Text {
+                                anchors { left: parent.left; right: parent.right; top: cjHubNoteT.bottom; rightMargin: 100; topMargin: 8 }
+                                text: cjHubRoot.i18n.noteD
+                                renderType: Text.NativeRendering; font.family: "reMarkable Sans"; antialiasing: false
+                                color: "#3a3a3a"; font.pixelSize: 24; wrapMode: Text.WordWrap
+                            }
+                            Text {
+                                anchors { right: parent.right; verticalCenter: parent.verticalCenter; rightMargin: 20 }
+                                text: "›"
+                                renderType: Text.NativeRendering; font.family: "reMarkable Sans"; antialiasing: false
+                                color: "#000000"; font.pixelSize: 52
+                            }
+                            Rectangle { anchors { left: parent.left; right: parent.right; bottom: parent.bottom } height: 1; color: "#d0d0d0" }
+                            MouseArea { anchors.fill: parent; onClicked: root._selectedPage = 990005 }
+                        }
+                    }
+                }
+            }
+        }
+    END TRAVERSE
+
+    ; ── ④ Step GG：快捷输入管理页 Component（独立 INSERT，同锚点 Component#help 之后）──
+    TRAVERSE ?#root
+        LOCATE AFTER Component#help
+        INSERT {
+            Component {
+                id: cjSnippetsPage
+                Item {
+                    id: cjSnipRoot
+                    objectName: "cjSnippetsPage"
+
+                    property var items: []
+                    property int editIndex: -1   // -1=列表模式; -2=新增; >=0=编辑该下标
+                    property string errText: ""
+                    property var _cjXhr: null
+                    readonly property string cjPath: "file:///home/root/.local/share/cangjie-ime/snippets.tsv"
+
+                    function cjLang() {
+                        var s = "" + qsTranslate("SettingsModel", "Help")
+                              + qsTranslate("SettingsModel", "Cloud")
+                              + qsTranslate("SettingsModel", "Accessibility");
+                        if (s.indexOf("幫") >= 0 || s.indexOf("雲") >= 0 || s.indexOf("礙") >= 0) return "tw";
+                        if (s.indexOf("帮") >= 0 || s.indexOf("云") >= 0 || s.indexOf("碍") >= 0) return "cn";
+                        return "en";
+                    }
+                    function cjTable() {
+                        var D = {
+                            cn: {
+                                page: "快捷输入", sub: "墨香 · 系统增强 · 文本替换", back: "‹ 系统增强",
+                                add: "＋ 新增短语", edit: "改", del: "删", save: "保存", cancel: "取消",
+                                scL: "缩写（1–32 个小写英文字母）", phL: "短语",
+                                hint: "缩写在中文键盘下输完字母按回车可原样上屏，或切英文键盘输入。保存后立即生效，无需重启。同一缩写可配多条短语，都会出现在候选栏。",
+                                empty: "还没有快捷短语，点上方「＋ 新增短语」。",
+                                newT: "新增短语", editT: "编辑短语",
+                                errSc: "缩写需为 1–32 个小写英文字母",
+                                errPh: "短语不能为空、不能含制表符/换行、且不超过 256 字节"
+                            },
+                            tw: {
+                                page: "快捷輸入", sub: "墨香 · 系統增強 · 文字替換", back: "‹ 系統增強",
+                                add: "＋ 新增短語", edit: "改", del: "刪", save: "儲存", cancel: "取消",
+                                scL: "縮寫（1–32 個小寫英文字母）", phL: "短語",
+                                hint: "縮寫在中文鍵盤下輸完字母按回車可原樣上屏，或切英文鍵盤輸入。儲存後立即生效，無需重啟。同一縮寫可配多條短語，都會出現在候選欄。",
+                                empty: "還沒有快捷短語，點上方「＋ 新增短語」。",
+                                newT: "新增短語", editT: "編輯短語",
+                                errSc: "縮寫需為 1–32 個小寫英文字母",
+                                errPh: "短語不能為空、不能含製表符/換行、且不超過 256 位元組"
+                            },
+                            en: {
+                                page: "Text Replacement", sub: "MoXiang · System", back: "‹ System",
+                                add: "＋ Add phrase", edit: "Edit", del: "Del", save: "Save", cancel: "Cancel",
+                                scL: "Shortcut (1–32 lowercase letters)", phL: "Phrase",
+                                hint: "Type the shortcut letters then press Enter to keep them as-is under the Chinese keyboard, or switch to the English keyboard. Changes apply immediately. One shortcut may map to several phrases; all appear in the candidate bar.",
+                                empty: "No phrases yet. Tap “＋ Add phrase” above.",
+                                newT: "New phrase", editT: "Edit phrase",
+                                errSc: "Shortcut must be 1–32 lowercase letters",
+                                errPh: "Phrase must be non-empty, single-line, no tabs, at most 256 bytes"
+                            }
+                        };
+                        return D[cjSnipRoot.cjLang()] || D.en;
+                    }
+                    property var i18n: cjSnipRoot.cjTable()
+
+                    function cjByteLen(s) {
+                        return unescape(encodeURIComponent(s)).length;
+                    }
+                    function cjLoad() {
+                        var arr = [];
+                        try {
+                            var xhr = new XMLHttpRequest();
+                            xhr.open("GET", cjSnipRoot.cjPath, false); // 读同步 GET 正常
+                            xhr.send();
+                            var t = xhr.responseText || "";
+                            var lines = t.split("\n");
+                            for (var i = 0; i < lines.length; i++) {
+                                var f = lines[i].split("\t");
+                                if (f.length !== 2 || !f[0] || !f[1]) continue;
+                                arr.push({ sc: f[0], ph: f[1] });
+                            }
+                        } catch (e) {
+                            console.warn("CJ-SNIP: load " + e);
+                        }
+                        cjSnipRoot.items = arr;
+                    }
+                    function cjPersist(arr) {
+                        try {
+                            var body = "";
+                            for (var i = 0; i < arr.length; i++) {
+                                body += arr[i].sc + "\t" + arr[i].ph + "\n";
+                            }
+                            // 异步 PUT：Qt 同步 PUT 到 file:// 只截断不写体；保留 xhr 引用防 GC。
+                            var xhr = new XMLHttpRequest();
+                            cjSnipRoot._cjXhr = xhr;
+                            xhr.open("PUT", cjSnipRoot.cjPath);
+                            xhr.send(body);
+                        } catch (e) {
+                            console.warn("CJ-SNIP: save " + e);
+                        }
+                        // var 数组子项变更不触发重算，整体换新数组
+                        cjSnipRoot.items = arr;
+                    }
+                    function cjOpenEdit(idx) {
+                        cjSnipRoot.errText = "";
+                        cjSnipRoot.editIndex = idx;
+                        cjSnipScInput.text = idx >= 0 ? cjSnipRoot.items[idx].sc : "";
+                        cjSnipPhInput.text = idx >= 0 ? cjSnipRoot.items[idx].ph : "";
+                    }
+                    function cjSaveEdit() {
+                        var sc = cjSnipScInput.text;
+                        var ph = cjSnipPhInput.text;
+                        if (!/^[a-z]{1,32}$/.test(sc)) { cjSnipRoot.errText = cjSnipRoot.i18n.errSc; return; }
+                        if (!ph || ph.indexOf("\t") >= 0 || ph.indexOf("\n") >= 0 || cjSnipRoot.cjByteLen(ph) > 256) {
+                            cjSnipRoot.errText = cjSnipRoot.i18n.errPh; return;
+                        }
+                        var arr = cjSnipRoot.items.slice();
+                        if (cjSnipRoot.editIndex >= 0) {
+                            arr[cjSnipRoot.editIndex] = { sc: sc, ph: ph };
+                        } else {
+                            arr.push({ sc: sc, ph: ph });
+                        }
+                        cjSnipRoot.cjPersist(arr);
+                        cjSnipRoot.errText = "";
+                        cjSnipRoot.editIndex = -1;
+                    }
+                    function cjDelete(idx) {
+                        var arr = cjSnipRoot.items.slice();
+                        arr.splice(idx, 1);
+                        cjSnipRoot.cjPersist(arr);
+                    }
+                    Component.onCompleted: cjSnipRoot.cjLoad()
+
+                    Rectangle {
+                        anchors.fill: parent
+                        color: "#ffffff"
+                    }
+
+                    // 顶部：返回 + 标题
+                    Item {
+                        id: cjSnipBack
+                        anchors { top: parent.top; left: parent.left; topMargin: 40; leftMargin: 64 }
+                        width: cjSnipBackText.implicitWidth + 24
+                        height: 56
+                        Text {
+                            id: cjSnipBackText
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: cjSnipRoot.i18n.back
+                            renderType: Text.NativeRendering; font.family: "reMarkable Sans"; antialiasing: false
+                            color: "#000000"
+                            font.pixelSize: 30
+                        }
+                        MouseArea {
+                            anchors.fill: parent
+                            onClicked: root._selectedPage = 990001
+                        }
+                    }
+                    Text {
+                        id: cjSnipTitle
+                        text: cjSnipRoot.i18n.page
+                        renderType: Text.NativeRendering; font.family: "reMarkable Sans"; antialiasing: false
+                        color: "#000000"
+                        font.pixelSize: 52
+                        font.bold: true
+                        anchors { top: cjSnipBack.bottom; left: parent.left; topMargin: 18; leftMargin: 64 }
+                    }
+                    Text {
+                        id: cjSnipSubtitle
+                        text: cjSnipRoot.i18n.sub
+                        renderType: Text.NativeRendering; font.family: "reMarkable Sans"; antialiasing: false
+                        color: "#3a3a3a"
+                        font.pixelSize: 28
+                        anchors { top: cjSnipTitle.bottom; left: parent.left; topMargin: 10; leftMargin: 64 }
+                    }
+                    Rectangle {
+                        id: cjSnipRule
+                        color: "#b0b0b0"
+                        height: 2
+                        anchors { top: cjSnipSubtitle.bottom; left: parent.left; right: parent.right; topMargin: 24; leftMargin: 64; rightMargin: 64 }
+                    }
+
+                    // ── 列表模式 ──
+                    Item {
+                        id: cjSnipListView
+                        visible: cjSnipRoot.editIndex === -1
+                        anchors { top: cjSnipRule.bottom; left: parent.left; right: parent.right; bottom: parent.bottom; topMargin: 28; leftMargin: 64; rightMargin: 64; bottomMargin: 40 }
+
+                        Rectangle {
+                            id: cjSnipAddBar
+                            anchors { top: parent.top; left: parent.left }
+                            width: cjSnipAddText.implicitWidth + 48
+                            height: 68
+                            radius: 10
+                            color: "transparent"
+                            border.width: 3
+                            border.color: "#000000"
+                            Text {
+                                id: cjSnipAddText
+                                anchors.centerIn: parent
+                                text: cjSnipRoot.i18n.add
+                                renderType: Text.NativeRendering; font.family: "reMarkable Sans"; antialiasing: false
+                                color: "#000000"
+                                font.pixelSize: 30
+                            }
+                            MouseArea {
+                                anchors.fill: parent
+                                onClicked: cjSnipRoot.cjOpenEdit(-2)
+                            }
+                        }
+
+                        Text {
+                            visible: cjSnipRoot.items.length === 0
+                            anchors { top: cjSnipAddBar.bottom; left: parent.left; topMargin: 40 }
+                            text: cjSnipRoot.i18n.empty
+                            renderType: Text.NativeRendering; font.family: "reMarkable Sans"; antialiasing: false
+                            color: "#3a3a3a"
+                            font.pixelSize: 28
+                        }
+
+                        Flickable {
+                            id: cjSnipFlick
+                            anchors { top: cjSnipAddBar.bottom; left: parent.left; right: parent.right; bottom: parent.bottom; topMargin: 24 }
+                            contentHeight: cjSnipListCol.height
+                            clip: true
+                            Column {
+                                id: cjSnipListCol
+                                width: cjSnipFlick.width
+                                Repeater {
+                                    model: cjSnipRoot.items
+                                    delegate: Item {
+                                        width: cjSnipListCol.width
+                                        height: 96
+                                        Rectangle {
+                                            anchors { left: parent.left; right: parent.right; bottom: parent.bottom }
+                                            height: 1
+                                            color: "#d0d0d0"
+                                        }
+                                        Text {
+                                            id: cjSnipRowSc
+                                            anchors { left: parent.left; verticalCenter: parent.verticalCenter }
+                                            width: 220
+                                            text: modelData.sc
+                                            renderType: Text.NativeRendering; font.family: "reMarkable Sans"; antialiasing: false
+                                            color: "#000000"
+                                            font.pixelSize: 32
+                                            font.bold: true
+                                            elide: Text.ElideRight
+                                        }
+                                        Text {
+                                            anchors { left: cjSnipRowSc.right; right: cjSnipRowEdit.left; verticalCenter: parent.verticalCenter; leftMargin: 16; rightMargin: 24 }
+                                            text: modelData.ph
+                                            renderType: Text.NativeRendering; font.family: "LXGW Neo XiHei Screen Full"; antialiasing: false
+                                            color: "#000000"
+                                            font.pixelSize: 30
+                                            elide: Text.ElideRight
+                                        }
+                                        Rectangle {
+                                            id: cjSnipRowEdit
+                                            anchors { right: cjSnipRowDel.left; verticalCenter: parent.verticalCenter; rightMargin: 20 }
+                                            width: 84
+                                            height: 60
+                                            radius: 8
+                                            color: "transparent"
+                                            border.width: 2
+                                            border.color: "#000000"
+                                            Text {
+                                                anchors.centerIn: parent
+                                                text: cjSnipRoot.i18n.edit
+                                                renderType: Text.NativeRendering; font.family: "reMarkable Sans"; antialiasing: false
+                                                color: "#000000"
+                                                font.pixelSize: 26
+                                            }
+                                            MouseArea {
+                                                anchors.fill: parent
+                                                onClicked: cjSnipRoot.cjOpenEdit(index)
+                                            }
+                                        }
+                                        Rectangle {
+                                            id: cjSnipRowDel
+                                            anchors { right: parent.right; verticalCenter: parent.verticalCenter }
+                                            width: 84
+                                            height: 60
+                                            radius: 8
+                                            color: "transparent"
+                                            border.width: 2
+                                            border.color: "#000000"
+                                            Text {
+                                                anchors.centerIn: parent
+                                                text: cjSnipRoot.i18n.del
+                                                renderType: Text.NativeRendering; font.family: "reMarkable Sans"; antialiasing: false
+                                                color: "#000000"
+                                                font.pixelSize: 26
+                                            }
+                                            MouseArea {
+                                                anchors.fill: parent
+                                                onClicked: cjSnipRoot.cjDelete(index)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    // ── 编辑/新增模式（三级视图，占同一页；字段靠上避开键盘）──
+                    Item {
+                        id: cjSnipEditView
+                        visible: cjSnipRoot.editIndex !== -1
+                        anchors { top: cjSnipRule.bottom; left: parent.left; right: parent.right; bottom: parent.bottom; topMargin: 28; leftMargin: 64; rightMargin: 64 }
+
+                        Text {
+                            id: cjSnipEditTitle
+                            anchors { top: parent.top; left: parent.left }
+                            text: cjSnipRoot.editIndex >= 0 ? cjSnipRoot.i18n.editT : cjSnipRoot.i18n.newT
+                            renderType: Text.NativeRendering; font.family: "reMarkable Sans"; antialiasing: false
+                            color: "#000000"
+                            font.pixelSize: 36
+                            font.bold: true
+                        }
+
+                        Text {
+                            id: cjSnipScLabel
+                            anchors { top: cjSnipEditTitle.bottom; left: parent.left; topMargin: 30 }
+                            text: cjSnipRoot.i18n.scL
+                            renderType: Text.NativeRendering; font.family: "reMarkable Sans"; antialiasing: false
+                            color: "#3a3a3a"
+                            font.pixelSize: 26
+                        }
+                        Rectangle {
+                            id: cjSnipScBox
+                            anchors { top: cjSnipScLabel.bottom; left: parent.left; topMargin: 8 }
+                            width: 420
+                            height: 72
+                            color: "transparent"
+                            border.width: 2
+                            border.color: "#000000"
+                            TextInput {
+                                id: cjSnipScInput
+                                anchors { fill: parent; leftMargin: 16; rightMargin: 16 }
+                                verticalAlignment: TextInput.AlignVCenter
+                                renderType: Text.NativeRendering
+                                font.family: "reMarkable Sans"
+                                font.pixelSize: 32
+                                color: "#000000"
+                                inputMethodHints: Qt.ImhNoAutoUppercase | Qt.ImhPreferLowercase | Qt.ImhNoPredictiveText
+                                onTextChanged: {
+                                    var f = text.toLowerCase().replace(/[^a-z]/g, "").slice(0, 32);
+                                    if (f !== text) text = f; // 二次进入 f===text，不递归
+                                }
+                            }
+                        }
+
+                        Text {
+                            id: cjSnipPhLabel
+                            anchors { top: cjSnipScBox.bottom; left: parent.left; topMargin: 26 }
+                            text: cjSnipRoot.i18n.phL
+                            renderType: Text.NativeRendering; font.family: "reMarkable Sans"; antialiasing: false
+                            color: "#3a3a3a"
+                            font.pixelSize: 26
+                        }
+                        Rectangle {
+                            id: cjSnipPhBox
+                            anchors { top: cjSnipPhLabel.bottom; left: parent.left; right: parent.right; topMargin: 8 }
+                            height: 72
+                            color: "transparent"
+                            border.width: 2
+                            border.color: "#000000"
+                            TextInput {
+                                id: cjSnipPhInput
+                                anchors { fill: parent; leftMargin: 16; rightMargin: 16 }
+                                verticalAlignment: TextInput.AlignVCenter
+                                renderType: Text.NativeRendering
+                                font.family: "LXGW Neo XiHei Screen Full"
+                                font.pixelSize: 32
+                                color: "#000000"
+                                clip: true
+                            }
+                        }
+
+                        Text {
+                            id: cjSnipErr
+                            anchors { top: cjSnipPhBox.bottom; left: parent.left; topMargin: 14 }
+                            visible: cjSnipRoot.errText.length > 0
+                            text: cjSnipRoot.errText
+                            renderType: Text.NativeRendering; font.family: "reMarkable Sans"; antialiasing: false
+                            color: "#000000"
+                            font.pixelSize: 26
+                            font.bold: true
+                        }
+
+                        Row {
+                            id: cjSnipEditBtns
+                            anchors { top: cjSnipErr.visible ? cjSnipErr.bottom : cjSnipPhBox.bottom; left: parent.left; topMargin: 28 }
+                            spacing: 28
+                            Rectangle {
+                                width: cjSnipSaveText.implicitWidth + 56
+                                height: 68
+                                radius: 10
+                                color: "#000000"
+                                Text {
+                                    id: cjSnipSaveText
+                                    anchors.centerIn: parent
+                                    text: cjSnipRoot.i18n.save
+                                    renderType: Text.NativeRendering; font.family: "reMarkable Sans"; antialiasing: false
+                                    color: "#ffffff"
+                                    font.pixelSize: 30
+                                }
+                                MouseArea {
+                                    anchors.fill: parent
+                                    onClicked: cjSnipRoot.cjSaveEdit()
+                                }
+                            }
+                            Rectangle {
+                                width: cjSnipCancelText.implicitWidth + 56
+                                height: 68
+                                radius: 10
+                                color: "transparent"
+                                border.width: 3
+                                border.color: "#000000"
+                                Text {
+                                    id: cjSnipCancelText
+                                    anchors.centerIn: parent
+                                    text: cjSnipRoot.i18n.cancel
+                                    renderType: Text.NativeRendering; font.family: "reMarkable Sans"; antialiasing: false
+                                    color: "#000000"
+                                    font.pixelSize: 30
+                                }
+                                MouseArea {
+                                    anchors.fill: parent
+                                    onClicked: {
+                                        cjSnipRoot.errText = "";
+                                        cjSnipRoot.editIndex = -1;
+                                    }
+                                }
+                            }
+                        }
+
+                        Text {
+                            anchors { top: cjSnipEditBtns.bottom; left: parent.left; right: parent.right; topMargin: 30 }
+                            text: cjSnipRoot.i18n.hint
+                            renderType: Text.NativeRendering; font.family: "LXGW Neo XiHei Screen Full"; antialiasing: false
+                            color: "#3a3a3a"
+                            font.pixelSize: 24
+                            wrapMode: Text.WordWrap
+                        }
+                    }
+                }
+            }
+        }
+    END TRAVERSE
+
+    ; ── ⑤ 二级页「翻页与刷新」（哨兵 990003）──
+    TRAVERSE ?#root
+        LOCATE AFTER Component#help
+        INSERT {
+            Component {
+                id: cjFlipPage
+                Item {
+                    id: cjFlipRoot
+                    objectName: "cjFlipPage"
+
+                    // starTodo 三键本页不展示，但读进来 + 写回去（全量防覆盖：别让本页保存抹掉笔记增强配置）
+                    property bool cfgStarTodo: false
+                    property string cfgStarColor: "RED"
+                    property int cfgStarGap: 25
+                    property bool cfgTap: false
+                    property bool cfgMono: false
+                    property bool cfgRefresh: false
+                    property bool cfgByChapter: false
+                    property int  cfgEvery: 15
+                    property bool cfgFont: false
+                    property bool cfgAutoOpt: false
+                    property var _cjXhr: null
+                    readonly property string cjPath: "file:///home/root/.local/share/cangjie-ime/reading-qol.json"
+
+                    function cjLoad() {
+                        try {
+                            var xhr = new XMLHttpRequest();
+                            xhr.open("GET", cjFlipRoot.cjPath, false);
+                            xhr.send();
+                            var s = xhr.responseText;
+                            if (s && s.length > 0) {
+                                var c = JSON.parse(s);
+                                cjFlipRoot.cfgTap = !!c.tapPageTurn;
+                                cjFlipRoot.cfgMono = !!c.fastMono;
+                                cjFlipRoot.cfgRefresh = !!c.refresh;
+                                cjFlipRoot.cfgByChapter = !!c.refreshByChapter;
+                                var n = parseInt(c.refreshEvery);
+                                cjFlipRoot.cfgEvery = (n > 0) ? n : 15;
+                                cjFlipRoot.cfgFont = !!c.fontEnhance;
+                                cjFlipRoot.cfgAutoOpt = !!c.autoOptimize;
+                                cjFlipRoot.cfgStarTodo = !!c.starTodoEnabled;
+                                if (c.starTodoColor) cjFlipRoot.cfgStarColor = c.starTodoColor;
+                                var sg = parseInt(c.starTodoGap); if (sg > 0) cjFlipRoot.cfgStarGap = sg;
+                            }
+                        } catch (e) {
+                            console.warn("CJ-ENH: load " + e);
+                        }
+                    }
+                    function cjSave() {
+                        try {
+                            // 全量字段一起写:本页没展示的字段也保留,避免二级页互相覆盖
+                            var c = {
+                                tapPageTurn: cjFlipRoot.cfgTap,
+                                fastMono: cjFlipRoot.cfgMono,
+                                refresh: cjFlipRoot.cfgRefresh,
+                                refreshByChapter: cjFlipRoot.cfgByChapter,
+                                refreshEvery: cjFlipRoot.cfgEvery,
+                                fontEnhance: cjFlipRoot.cfgFont,
+                                autoOptimize: cjFlipRoot.cfgAutoOpt,
+                                starTodoEnabled: cjFlipRoot.cfgStarTodo,
+                                starTodoColor: cjFlipRoot.cfgStarColor,
+                                starTodoGap: cjFlipRoot.cfgStarGap
+                            };
+                            var body = JSON.stringify(c);
+                            // 异步 PUT:Qt 同步 PUT 到 file:// 只截断不写体;保留 xhr 引用防 GC
+                            var xhr = new XMLHttpRequest();
+                            cjFlipRoot._cjXhr = xhr;
+                            xhr.open("PUT", cjFlipRoot.cjPath);
+                            xhr.send(body);
+                        } catch (e) {
+                            console.warn("CJ-ENH: save " + e);
+                        }
+                    }
+                    function cjLang() {
+                        var s = "" + qsTranslate("SettingsModel", "Help")
+                              + qsTranslate("SettingsModel", "Cloud")
+                              + qsTranslate("SettingsModel", "Accessibility");
+                        if (s.indexOf("幫") >= 0 || s.indexOf("雲") >= 0 || s.indexOf("礙") >= 0) return "tw";
+                        if (s.indexOf("帮") >= 0 || s.indexOf("云") >= 0 || s.indexOf("碍") >= 0) return "cn";
+                        return "en";
+                    }
+                    function cjTable() {
+                        var D = {
+                            cn: {
+                                page: "翻页与刷新", sub: "墨香 · 系统增强", back: "‹ 系统增强",
+                                tapT: "点击翻页",
+                                tapD: "阅读时点屏幕左 1/3 上一页、右 1/3 下一页；保留原生滑动、笔、缩放、长按选择手势。",
+                                monoT: "快速黑白阅读模式",
+                                monoD: "阅读时锁定单色刷新、翻页更快；也可四指点击临时切换。",
+                                refT: "翻页清残影",
+                                refD: "翻页时用整屏全刷清除残影（彩屏、黑白模式都生效）。清除节奏见下方两项。",
+                                chapT: "　按章节清残影",
+                                chapD: "　开=每翻到新章节清一次；关=按固定页数清（见下）。需先开启「翻页清残影」。",
+                                everyA: "每翻 ", everyB: " 页清一次残影"
+                            },
+                            tw: {
+                                page: "翻頁與刷新", sub: "墨香 · 系統增強", back: "‹ 系統增強",
+                                tapT: "點擊翻頁",
+                                tapD: "閱讀時點螢幕左 1/3 上一頁、右 1/3 下一頁；保留原生滑動、筆、縮放、長按選擇手勢。",
+                                monoT: "快速黑白閱讀模式",
+                                monoD: "閱讀時鎖定單色刷新、翻頁更快；也可四指點擊臨時切換。",
+                                refT: "翻頁清殘影",
+                                refD: "翻頁時用整屏全刷清除殘影（彩屏、黑白模式都生效）。清除節奏見下方兩項。",
+                                chapT: "　按章節清殘影",
+                                chapD: "　開=每翻到新章節清一次；關=按固定頁數清（見下）。需先開啟「翻頁清殘影」。",
+                                everyA: "每翻 ", everyB: " 頁清一次殘影"
+                            },
+                            en: {
+                                page: "Page Turning & Refresh", sub: "MoXiang · System", back: "‹ System",
+                                tapT: "Tap to turn pages",
+                                tapD: "Tap the left third for the previous page, the right third for the next; native swipe, pen, zoom and long-press gestures are kept.",
+                                monoT: "Fast mono reading",
+                                monoD: "Lock the screen to monochrome refresh while reading for faster page turns; a four-finger tap also toggles it.",
+                                refT: "Clear ghosting on turn",
+                                refD: "Full-screen refresh to clear ghosting while turning pages (works in both colour and mono). Set the cadence below.",
+                                chapT: "  By chapter",
+                                chapD: "  On: clear at each new chapter. Off: every N pages (below). Requires the option above.",
+                                everyA: "Clear every ", everyB: " pages"
+                            }
+                        };
+                        return D[cjFlipRoot.cjLang()] || D.en;
+                    }
+                    property var i18n: cjFlipRoot.cjTable()
+                    Component.onCompleted: cjFlipRoot.cjLoad()
+
+                    Rectangle { anchors.fill: parent; color: "#ffffff" }
+
+                    Item {
+                        id: cjPgBack
+                        anchors { top: parent.top; left: parent.left; topMargin: 40; leftMargin: 64 }
+                        width: cjPgBackText.implicitWidth + 24
+                        height: 56
+                        Text {
+                            id: cjPgBackText
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: cjFlipRoot.i18n.back
+                            renderType: Text.NativeRendering; font.family: "reMarkable Sans"; antialiasing: false
+                            color: "#000000"
+                            font.pixelSize: 30
+                        }
+                        MouseArea { anchors.fill: parent; onClicked: root._selectedPage = 990001 }
+                    }
+                    Text {
+                        id: cjPgTitle
+                        text: cjFlipRoot.i18n.page
+                        renderType: Text.NativeRendering; font.family: "reMarkable Sans"; antialiasing: false
+                        color: "#000000"
+                        font.pixelSize: 52
+                        font.bold: true
+                        anchors { top: cjPgBack.bottom; left: parent.left; topMargin: 18; leftMargin: 64 }
+                    }
+                    Text {
+                        id: cjPgSub
+                        text: cjFlipRoot.i18n.sub
+                        renderType: Text.NativeRendering; font.family: "reMarkable Sans"; antialiasing: false
+                        color: "#3a3a3a"
+                        font.pixelSize: 28
+                        anchors { top: cjPgTitle.bottom; left: parent.left; topMargin: 10; leftMargin: 64 }
+                    }
+                    Rectangle {
+                        id: cjPgRule
+                        color: "#b0b0b0"
+                        height: 2
+                        anchors { top: cjPgSub.bottom; left: parent.left; right: parent.right; topMargin: 24; leftMargin: 64; rightMargin: 64 }
+                    }
+
+                    Flickable {
+                        id: cjFlipFlick
+                        anchors { top: cjPgRule.bottom; left: parent.left; right: parent.right; bottom: parent.bottom; topMargin: 40; leftMargin: 44; rightMargin: 44; bottomMargin: 24 }
+                        contentHeight: cjFlipCol.height + 40
+                        clip: true
+                        Column {
+                            id: cjFlipCol
+                            spacing: 44
+                            width: cjFlipFlick.width
+
+                            SettingsCheckBoxItem {
+                                width: cjFlipCol.width
+                                textColor: "#000000"
+                                title: cjFlipRoot.i18n.tapT
+                                description: cjFlipRoot.i18n.tapD
+                                selected: cjFlipRoot.cfgTap
+                                onClicked: {
+                                    cjFlipRoot.cfgTap = !cjFlipRoot.cfgTap;
+                                    cjFlipRoot.cjSave();
+                                }
+                            }
+                            SettingsCheckBoxItem {
+                                width: cjFlipCol.width
+                                textColor: "#000000"
+                                title: cjFlipRoot.i18n.monoT
+                                description: cjFlipRoot.i18n.monoD
+                                selected: cjFlipRoot.cfgMono
+                                onClicked: {
+                                    cjFlipRoot.cfgMono = !cjFlipRoot.cfgMono;
+                                    cjFlipRoot.cjSave();
+                                }
+                            }
+                            SettingsCheckBoxItem {
+                                width: cjFlipCol.width
+                                textColor: "#000000"
+                                title: cjFlipRoot.i18n.refT
+                                description: cjFlipRoot.i18n.refD
+                                selected: cjFlipRoot.cfgRefresh
+                                onClicked: {
+                                    cjFlipRoot.cfgRefresh = !cjFlipRoot.cfgRefresh;
+                                    cjFlipRoot.cjSave();
+                                }
+                            }
+                            SettingsCheckBoxItem {
+                                width: cjFlipCol.width
+                                textColor: "#000000"
+                                opacity: cjFlipRoot.cfgRefresh ? 1.0 : 0.35
+                                title: cjFlipRoot.i18n.chapT
+                                description: cjFlipRoot.i18n.chapD
+                                selected: cjFlipRoot.cfgByChapter
+                                onClicked: {
+                                    if (!cjFlipRoot.cfgRefresh)
+                                        return;
+                                    cjFlipRoot.cfgByChapter = !cjFlipRoot.cfgByChapter;
+                                    cjFlipRoot.cjSave();
+                                }
+                            }
+                            Item {
+                                width: cjFlipCol.width
+                                height: 84
+                                opacity: (cjFlipRoot.cfgRefresh && !cjFlipRoot.cfgByChapter) ? 1.0 : 0.35
+                                Text {
+                                    anchors { left: parent.left; verticalCenter: parent.verticalCenter; leftMargin: 24 }
+                                    text: cjFlipRoot.i18n.everyA + cjFlipRoot.cfgEvery + cjFlipRoot.i18n.everyB
+                                    renderType: Text.NativeRendering; font.family: "reMarkable Sans"; antialiasing: false
+                                    color: "#000000"
+                                    font.pixelSize: 34
+                                }
+                                Row {
+                                    anchors { right: parent.right; verticalCenter: parent.verticalCenter; rightMargin: 24 }
+                                    spacing: 28
+                                    Rectangle {
+                                        width: 76; height: 76; radius: 10; color: "transparent"; border.width: 3; border.color: "#000000"
+                                        Text { anchors.centerIn: parent; text: "−"; font.pixelSize: 46; color: "#000000"; renderType: Text.NativeRendering; font.family: "reMarkable Sans"; antialiasing: false }
+                                        MouseArea {
+                                            anchors.fill: parent
+                                            onClicked: {
+                                                if (cjFlipRoot.cfgRefresh && !cjFlipRoot.cfgByChapter && cjFlipRoot.cfgEvery > 5) {
+                                                    cjFlipRoot.cfgEvery -= 5;
+                                                    cjFlipRoot.cjSave();
+                                                }
+                                            }
+                                        }
+                                    }
+                                    Rectangle {
+                                        width: 76; height: 76; radius: 10; color: "transparent"; border.width: 3; border.color: "#000000"
+                                        Text { anchors.centerIn: parent; text: "+"; font.pixelSize: 42; color: "#000000"; renderType: Text.NativeRendering; font.family: "reMarkable Sans"; antialiasing: false }
+                                        MouseArea {
+                                            anchors.fill: parent
+                                            onClicked: {
+                                                if (cjFlipRoot.cfgRefresh && !cjFlipRoot.cfgByChapter && cjFlipRoot.cfgEvery < 100) {
+                                                    cjFlipRoot.cfgEvery += 5;
+                                                    cjFlipRoot.cjSave();
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    END TRAVERSE
+
+    ; ── ⑥ 二级页「书籍与字体」（哨兵 990004）──
+    TRAVERSE ?#root
+        LOCATE AFTER Component#help
+        INSERT {
+            Component {
+                id: cjBookPage
+                Item {
+                    id: cjBookRoot
+                    objectName: "cjBookPage"
+
+                    property bool cfgTap: false
+                    property bool cfgMono: false
+                    property bool cfgRefresh: false
+                    property bool cfgByChapter: false
+                    property int  cfgEvery: 15
+                    property bool cfgFont: false
+                    property bool cfgAutoOpt: false
+                    property bool cfgStarTodo: false
+                    property string cfgStarColor: "RED"
+                    property int cfgStarGap: 25
+                    property var _cjXhr: null
+                    readonly property string cjPath: "file:///home/root/.local/share/cangjie-ime/reading-qol.json"
+
+                    function cjLoad() {
+                        try {
+                            var xhr = new XMLHttpRequest();
+                            xhr.open("GET", cjBookRoot.cjPath, false);
+                            xhr.send();
+                            var s = xhr.responseText;
+                            if (s && s.length > 0) {
+                                var c = JSON.parse(s);
+                                cjBookRoot.cfgTap = !!c.tapPageTurn;
+                                cjBookRoot.cfgMono = !!c.fastMono;
+                                cjBookRoot.cfgRefresh = !!c.refresh;
+                                cjBookRoot.cfgByChapter = !!c.refreshByChapter;
+                                var n = parseInt(c.refreshEvery);
+                                cjBookRoot.cfgEvery = (n > 0) ? n : 15;
+                                cjBookRoot.cfgFont = !!c.fontEnhance;
+                                cjBookRoot.cfgAutoOpt = !!c.autoOptimize;
+                                cjBookRoot.cfgStarTodo = !!c.starTodoEnabled;
+                                if (c.starTodoColor) cjBookRoot.cfgStarColor = c.starTodoColor;
+                                var sg = parseInt(c.starTodoGap); if (sg > 0) cjBookRoot.cfgStarGap = sg;
+                            }
+                        } catch (e) {
+                            console.warn("CJ-ENH: load " + e);
+                        }
+                    }
+                    function cjSave() {
+                        try {
+                            // 全量 7 字段一起写:本页没展示的字段也保留,避免二级页互相覆盖
+                            var c = {
+                                tapPageTurn: cjBookRoot.cfgTap,
+                                fastMono: cjBookRoot.cfgMono,
+                                refresh: cjBookRoot.cfgRefresh,
+                                refreshByChapter: cjBookRoot.cfgByChapter,
+                                refreshEvery: cjBookRoot.cfgEvery,
+                                fontEnhance: cjBookRoot.cfgFont,
+                                autoOptimize: cjBookRoot.cfgAutoOpt,
+                                starTodoEnabled: cjBookRoot.cfgStarTodo,
+                                starTodoColor: cjBookRoot.cfgStarColor,
+                                starTodoGap: cjBookRoot.cfgStarGap
+                            };
+                            var body = JSON.stringify(c);
+                            // 异步 PUT:Qt 同步 PUT 到 file:// 只截断不写体;保留 xhr 引用防 GC
+                            var xhr = new XMLHttpRequest();
+                            cjBookRoot._cjXhr = xhr;
+                            xhr.open("PUT", cjBookRoot.cjPath);
+                            xhr.send(body);
+                        } catch (e) {
+                            console.warn("CJ-ENH: save " + e);
+                        }
+                    }
+                    function cjLang() {
+                        var s = "" + qsTranslate("SettingsModel", "Help")
+                              + qsTranslate("SettingsModel", "Cloud")
+                              + qsTranslate("SettingsModel", "Accessibility");
+                        if (s.indexOf("幫") >= 0 || s.indexOf("雲") >= 0 || s.indexOf("礙") >= 0) return "tw";
+                        if (s.indexOf("帮") >= 0 || s.indexOf("云") >= 0 || s.indexOf("碍") >= 0) return "cn";
+                        return "en";
+                    }
+                    function cjTable() {
+                        var D = {
+                            cn: {
+                                page: "书籍与字体", sub: "墨香 · 系统增强", back: "‹ 系统增强",
+                                fontT: "阅读字体增强",
+                                fontD: "在阅读字体菜单新增 霞鹜文楷 / 霞鹜新致宋 / KF Readerly 三项可选（原字体保留）。开启后重开字体菜单生效。",
+                                optT: "导入书籍自动优化",
+                                optD: "新导入的 EPUB 自动优化：解锁字体字号、修复脚注跳转、修正封面拉伸、去掉冗余目录页。约一分钟内以优化版替换原书（原书移入回收站，可恢复）；仅处理还没打开过的书。"
+                            },
+                            tw: {
+                                page: "書籍與字體", sub: "墨香 · 系統增強", back: "‹ 系統增強",
+                                fontT: "閱讀字體增強",
+                                fontD: "在閱讀字體選單新增 霞鶩文楷 / 霞鶩新致宋 / KF Readerly 三項可選（原字體保留）。開啟後重開字體選單生效。",
+                                optT: "匯入書籍自動優化",
+                                optD: "新匯入的 EPUB 自動優化：解鎖字體字號、修復腳註跳轉、修正封面拉伸、去掉冗餘目錄頁。約一分鐘內以優化版替換原書（原書移入回收站，可恢復）；僅處理還沒打開過的書。"
+                            },
+                            en: {
+                                page: "Books & Fonts", sub: "MoXiang · System", back: "‹ System",
+                                fontT: "Reading font upgrade",
+                                fontD: "Adds LXGW WenKai / LXGW ZhiSong / KF Readerly to the reading font menu (originals kept). Reopen the font menu to apply.",
+                                optT: "Auto-optimize imported books",
+                                optD: "Newly imported EPUBs are optimized automatically: unlock fonts and sizes, fix footnote jumps, fix stretched covers, drop redundant TOC pages. Within about a minute the optimized copy replaces the original (moved to Trash, recoverable); only books never opened are touched."
+                            }
+                        };
+                        return D[cjBookRoot.cjLang()] || D.en;
+                    }
+                    property var i18n: cjBookRoot.cjTable()
+                    Component.onCompleted: cjBookRoot.cjLoad()
+
+                    Rectangle { anchors.fill: parent; color: "#ffffff" }
+
+                    Item {
+                        id: cjPgBack
+                        anchors { top: parent.top; left: parent.left; topMargin: 40; leftMargin: 64 }
+                        width: cjPgBackText.implicitWidth + 24
+                        height: 56
+                        Text {
+                            id: cjPgBackText
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: cjBookRoot.i18n.back
+                            renderType: Text.NativeRendering; font.family: "reMarkable Sans"; antialiasing: false
+                            color: "#000000"
+                            font.pixelSize: 30
+                        }
+                        MouseArea { anchors.fill: parent; onClicked: root._selectedPage = 990001 }
+                    }
+                    Text {
+                        id: cjPgTitle
+                        text: cjBookRoot.i18n.page
+                        renderType: Text.NativeRendering; font.family: "reMarkable Sans"; antialiasing: false
+                        color: "#000000"
+                        font.pixelSize: 52
+                        font.bold: true
+                        anchors { top: cjPgBack.bottom; left: parent.left; topMargin: 18; leftMargin: 64 }
+                    }
+                    Text {
+                        id: cjPgSub
+                        text: cjBookRoot.i18n.sub
+                        renderType: Text.NativeRendering; font.family: "reMarkable Sans"; antialiasing: false
+                        color: "#3a3a3a"
+                        font.pixelSize: 28
+                        anchors { top: cjPgTitle.bottom; left: parent.left; topMargin: 10; leftMargin: 64 }
+                    }
+                    Rectangle {
+                        id: cjPgRule
+                        color: "#b0b0b0"
+                        height: 2
+                        anchors { top: cjPgSub.bottom; left: parent.left; right: parent.right; topMargin: 24; leftMargin: 64; rightMargin: 64 }
+                    }
+
+                    Column {
+                        id: cjBookCol
+                        spacing: 44
+                        anchors { top: cjPgRule.bottom; left: parent.left; right: parent.right; topMargin: 40; leftMargin: 44; rightMargin: 44 }
+
+                        SettingsCheckBoxItem {
+                            width: cjBookCol.width
+                            textColor: "#000000"
+                            title: cjBookRoot.i18n.fontT
+                            description: cjBookRoot.i18n.fontD
+                            selected: cjBookRoot.cfgFont
+                            onClicked: {
+                                cjBookRoot.cfgFont = !cjBookRoot.cfgFont;
+                                cjBookRoot.cjSave();
+                            }
+                        }
+                        SettingsCheckBoxItem {
+                            width: cjBookCol.width
+                            textColor: "#000000"
+                            title: cjBookRoot.i18n.optT
+                            description: cjBookRoot.i18n.optD
+                            selected: cjBookRoot.cfgAutoOpt
+                            onClicked: {
+                                cjBookRoot.cfgAutoOpt = !cjBookRoot.cfgAutoOpt;
+                                cjBookRoot.cjSave();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    END TRAVERSE
+
+    ; ── ⑦ 二级页「笔记增强」（哨兵 990005）：★ 全局待办开关 ──
+    TRAVERSE ?#root
+        LOCATE AFTER Component#help
+        INSERT {
+            Component {
+                id: cjNotePage
+                Item {
+                    id: cjNoteRoot
+                    objectName: "cjNotePage"
+
+                    property bool cfgStarTodo: false
+                    property string cfgStarColor: "RED"
+                    property int cfgStarGap: 25
+                    // 其余键读进来 + 写回去（全量防覆盖）
+                    property bool cfgTap: false
+                    property bool cfgMono: false
+                    property bool cfgRefresh: false
+                    property bool cfgByChapter: false
+                    property int  cfgEvery: 15
+                    property bool cfgFont: false
+                    property bool cfgAutoOpt: false
+                    property var _cjXhr: null
+                    readonly property string cjPath: "file:///home/root/.local/share/cangjie-ime/reading-qol.json"
+
+                    function cjLoad() {
+                        try {
+                            var xhr = new XMLHttpRequest();
+                            xhr.open("GET", cjNoteRoot.cjPath, false);
+                            xhr.send();
+                            var s = xhr.responseText;
+                            if (s && s.length > 0) {
+                                var c = JSON.parse(s);
+                                cjNoteRoot.cfgStarTodo = !!c.starTodoEnabled;
+                                if (c.starTodoColor) cjNoteRoot.cfgStarColor = c.starTodoColor;
+                                var sg = parseInt(c.starTodoGap); if (sg > 0) cjNoteRoot.cfgStarGap = sg;
+                                cjNoteRoot.cfgTap = !!c.tapPageTurn;
+                                cjNoteRoot.cfgMono = !!c.fastMono;
+                                cjNoteRoot.cfgRefresh = !!c.refresh;
+                                cjNoteRoot.cfgByChapter = !!c.refreshByChapter;
+                                var n = parseInt(c.refreshEvery); cjNoteRoot.cfgEvery = (n > 0) ? n : 15;
+                                cjNoteRoot.cfgFont = !!c.fontEnhance;
+                                cjNoteRoot.cfgAutoOpt = !!c.autoOptimize;
+                            }
+                        } catch (e) {
+                            console.warn("CJ-ENH: load " + e);
+                        }
+                    }
+                    function cjSave() {
+                        try {
+                            var c = {
+                                tapPageTurn: cjNoteRoot.cfgTap,
+                                fastMono: cjNoteRoot.cfgMono,
+                                refresh: cjNoteRoot.cfgRefresh,
+                                refreshByChapter: cjNoteRoot.cfgByChapter,
+                                refreshEvery: cjNoteRoot.cfgEvery,
+                                fontEnhance: cjNoteRoot.cfgFont,
+                                autoOptimize: cjNoteRoot.cfgAutoOpt,
+                                starTodoEnabled: cjNoteRoot.cfgStarTodo,
+                                starTodoColor: cjNoteRoot.cfgStarColor,
+                                starTodoGap: cjNoteRoot.cfgStarGap
+                            };
+                            var body = JSON.stringify(c);
+                            var xhr = new XMLHttpRequest();
+                            cjNoteRoot._cjXhr = xhr;
+                            xhr.open("PUT", cjNoteRoot.cjPath);
+                            xhr.send(body);
+                        } catch (e) {
+                            console.warn("CJ-ENH: save " + e);
+                        }
+                    }
+                    function cjLang() {
+                        var s = "" + qsTranslate("SettingsModel", "Help")
+                              + qsTranslate("SettingsModel", "Cloud")
+                              + qsTranslate("SettingsModel", "Accessibility");
+                        if (s.indexOf("幫") >= 0 || s.indexOf("雲") >= 0 || s.indexOf("礙") >= 0) return "tw";
+                        if (s.indexOf("帮") >= 0 || s.indexOf("云") >= 0 || s.indexOf("碍") >= 0) return "cn";
+                        return "en";
+                    }
+                    function cjTable() {
+                        var D = {
+                            cn: {
+                                page: "笔记增强", sub: "墨香 · 系统增强", back: "‹ 系统增强",
+                                starT: "★ 全局待办",
+                                starD: "阅读时用红笔在某页画一颗五角星，几秒后自动生成/更新这本书的「《书名》- 总结卡片」笔记本：每颗星一页，带章名·页号+可打字批注模板。用一种记笔记不用的笔色（红）画星。默认关。"
+                            },
+                            tw: {
+                                page: "筆記增強", sub: "墨香 · 系統增強", back: "‹ 系統增強",
+                                starT: "★ 全局待辦",
+                                starD: "閱讀時用紅筆在某頁畫一顆五角星，幾秒後自動生成/更新這本書的「《書名》- 總結卡片」筆記本：每顆星一頁，帶章名·頁號+可打字批註範本。用一種記筆記不用的筆色（紅）畫星。預設關。"
+                            },
+                            en: {
+                                page: "Note Enhancements", sub: "MoXiang · System", back: "‹ System",
+                                starT: "Global ★ to-do",
+                                starD: "Draw a red five-pointed star on any page while reading; within seconds a per-book “<Title> - Summary Card” notebook is created/updated — one page per star, with chapter · page number and a typeable note template. Use a pen colour you don't use for notes (red). Off by default."
+                            }
+                        };
+                        return D[cjNoteRoot.cjLang()] || D.en;
+                    }
+                    property var i18n: cjNoteRoot.cjTable()
+                    Component.onCompleted: cjNoteRoot.cjLoad()
+
+                    Rectangle { anchors.fill: parent; color: "#ffffff" }
+
+                    Item {
+                        id: cjPgBack
+                        anchors { top: parent.top; left: parent.left; topMargin: 40; leftMargin: 64 }
+                        width: cjPgBackText.implicitWidth + 24
+                        height: 56
+                        Text {
+                            id: cjPgBackText
+                            anchors.verticalCenter: parent.verticalCenter
+                            text: cjNoteRoot.i18n.back
+                            renderType: Text.NativeRendering; font.family: "reMarkable Sans"; antialiasing: false
+                            color: "#000000"; font.pixelSize: 30
+                        }
+                        MouseArea { anchors.fill: parent; onClicked: root._selectedPage = 990001 }
+                    }
+                    Text {
+                        id: cjPgTitle
+                        text: cjNoteRoot.i18n.page
+                        renderType: Text.NativeRendering; font.family: "reMarkable Sans"; antialiasing: false
+                        color: "#000000"; font.pixelSize: 52; font.bold: true
+                        anchors { top: cjPgBack.bottom; left: parent.left; topMargin: 18; leftMargin: 64 }
+                    }
+                    Text {
+                        id: cjPgSub
+                        text: cjNoteRoot.i18n.sub
+                        renderType: Text.NativeRendering; font.family: "reMarkable Sans"; antialiasing: false
+                        color: "#3a3a3a"; font.pixelSize: 28
+                        anchors { top: cjPgTitle.bottom; left: parent.left; topMargin: 10; leftMargin: 64 }
+                    }
+                    Rectangle {
+                        id: cjPgRule
+                        color: "#b0b0b0"; height: 2
+                        anchors { top: cjPgSub.bottom; left: parent.left; right: parent.right; topMargin: 24; leftMargin: 64; rightMargin: 64 }
+                    }
+
+                    Column {
+                        id: cjNoteCol
+                        spacing: 44
+                        anchors { top: cjPgRule.bottom; left: parent.left; right: parent.right; topMargin: 40; leftMargin: 44; rightMargin: 44 }
+
+                        SettingsCheckBoxItem {
+                            width: cjNoteCol.width
+                            textColor: "#000000"
+                            title: cjNoteRoot.i18n.starT
+                            description: cjNoteRoot.i18n.starD
+                            selected: cjNoteRoot.cfgStarTodo
+                            onClicked: {
+                                cjNoteRoot.cfgStarTodo = !cjNoteRoot.cfgStarTodo;
+                                cjNoteRoot.cjSave();
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    END TRAVERSE
+
+END AFFECT

@@ -1,0 +1,22 @@
+; ─────────────────────────────────────────────────────────────────────────
+; add-lxgw-font.qmd —— 给阅读器「文字与布局」字体菜单加一项"霞鹜文楷 LXGW WenKai"
+;
+; 【为什么】原生字体菜单(FormatFont.qml)的 fontModel 是硬编码 4 项(reMarkable Sans/
+;   Serif、EB Garamond、Ebook default)，不含 LXGW。选字体走 epub.setFontName(key) →
+;   xochitl **免重启重渲**。加一项即可让用户对**任意书**(含 /upload 免重启导入的)手动选
+;   霞鹜文楷、免重启生效——解决"/upload 免重启但字体归 xochitl 管、.content patch 被覆盖"。
+;   字体已装设备(fc-list: LXGW WenKai)，setFontName("LXGW WenKai") 能命中。
+;
+; 【.166 核对】AFFECT /qml/device/view/documentview/FormatFont.qml(hashtab 命中)；
+;   根 Control{id:root}；fontModel = ListModel{id:fontModel}(嵌 contentItem ColumnLayout 内)；
+;   ListElement 键 key(family 名)/value(显示名)。setFontName 由 onSelect 调用(:72)。
+; ─────────────────────────────────────────────────────────────────────────
+
+AFFECT /qml/device/view/documentview/FormatFont.qml
+    TRAVERSE Control[#root] > ColumnLayout > ListModel[#fontModel]
+        LOCATE AFTER ALL
+        INSERT {
+            ListElement { key: "LXGW WenKai"; value: "霞鹜文楷" }
+        }
+    END TRAVERSE
+END AFFECT

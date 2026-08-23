@@ -1,0 +1,5 @@
+# ★ 全局待办 Python 原型依赖（host 侧原型/差分测试；生产解析走 device-rs 的 Rust）
+#   rmscene —— MIT（.rm v6 读写；许可证按纪律实测 dist-info 确认，动工再定版）
+#   pytest  —— MIT（差分测试）
+rmscene
+pytest

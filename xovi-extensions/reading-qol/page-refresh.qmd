@@ -1,0 +1,72 @@
+; ─────────────────────────────────────────────────────────────────────────
+; page-refresh.qmd —— 翻页清残影：按章 / 按页全刷（彩屏 & 黑白模式都生效，独立开关）
+;   目标：设备真二进制 md5 3356dde7（当前固件）。
+;
+; 【为什么独立于 fast-mono】ghostBuster.forceClearNow() 是**与屏幕模式无关的硬件全刷**——
+;   彩屏(Content)模式下同样有效，不限于黑白模式。故本功能有自己的总开关 cjRefresh，
+;   与「快速黑白阅读模式」(cjFastMono) 解耦：无论彩屏还是黑白，只要 cjRefresh 开就按节奏清残影。
+;   （黑白模式跳过固件多遍刷新、残影累积更快，清残影更"需要"；彩屏也可用来强制干净刷新。）
+;
+; 【机制】监听 DocumentView 的 onCurrentPageChanged：
+;   · 按章模式(cjRefreshByChapter)：用 tocModel + currentPage 派生当前章节 index，切章即
+;     ghostBuster.forceClearNow（tocModel 空的文档自然退化为按页）；
+;   · 按页模式：每 cjRefreshEvery 页(默认 15)清一次。
+;
+; 【状态源】cjRefresh / cjRefreshByChapter / cjRefreshEvery / _cjCleanupCount / _cjLastChapter
+;   均由 reading-qol-config.qmd 注入 DeviceSceneView#root（= 本文件里的 sceneView），从 JSON 读初值。
+;   ⇒ 部署顺序：先 reading-qol-config.qmd。未部署配置时 cjRefresh undefined→假→不清残影（默认 OFF，安全）。
+;
+; 【锚点核对（3356dde7，子代理逐条成立）】DocumentView.qml：根 FocusScope{id:root}(:48)；
+;   root.ghostBuster(:103)；currentPage 别名 + onCurrentPageChanged(:648)；tocModel(:77，含 .page/.name)；
+;   sceneView 引用 DeviceSceneView 实例（cj* 状态挂那）。章节无直接信号→派生。
+;
+; 【qmldiff 纪律】INSERT{} 块内是 QML，注释只能用 //。
+; ─────────────────────────────────────────────────────────────────────────
+
+AFFECT /qml/device/view/documentview/DocumentView.qml
+    TRAVERSE FocusScope[#root]
+        LOCATE AFTER ALL
+        INSERT {
+            Connections {
+                target: root
+                function onCurrentPageChanged() {
+                    // 总开关：关则不干预（彩屏/黑白都受此开关控制）
+                    if (!sceneView.cjRefresh)
+                        return;
+
+                    if (sceneView.cjRefreshByChapter) {
+                        // 按章：用 tocModel + currentPage 派生当前章节 index，切章即清
+                        var toc = root.tocModel;
+                        var ci = -1;
+                        if (toc && toc.length > 0) {
+                            var p = root.currentPage;
+                            for (var i = toc.length - 1; i >= 0; i--) {
+                                if (p >= toc[i].page) { ci = i; break; }
+                            }
+                            if (ci < 0) ci = 0;
+                        }
+                        if (ci >= 0 && ci !== sceneView._cjLastChapter) {
+                            sceneView._cjLastChapter = ci;
+                            if (root.ghostBuster) {
+                                root.ghostBuster.forceClearNow("reading-qol chapter-change");
+                                console.warn("READING-QOL-REFRESH: chapter cleanup " + ci);
+                            }
+                        }
+                    } else {
+                        // 按页：每 cjRefreshEvery 页清一次
+                        if (sceneView.cjRefreshEvery <= 0)
+                            return;
+                        sceneView._cjCleanupCount += 1;
+                        if (sceneView._cjCleanupCount >= sceneView.cjRefreshEvery) {
+                            sceneView._cjCleanupCount = 0;
+                            if (root.ghostBuster) {
+                                root.ghostBuster.forceClearNow("reading-qol periodic cleanup");
+                                console.warn("READING-QOL-REFRESH: page cleanup");
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    END TRAVERSE
+END AFFECT
