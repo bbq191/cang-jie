@@ -4548,7 +4548,27 @@ static int cj_hl_glyph_is_cjk(long scene, int idx) {
         || (ch >= 0x3000 && ch <= 0x303F);  /* CJK 标点 */
 }
 
+/* 运行时开关：从 reading-qol.json 读 hlSnapCjk 到 g_hl_expand_neuter（设置页「笔记增强」控制）。
+ * 荧光笔扩张不是热路径（划线才调），每次读一次即可，无需 mtime。极简字段扫描、不引 JSON 库。
+ * fail-safe：文件缺失/字段缺失/读失败 → 不改，保持编译期默认（修复开）。 */
+#define CJ_READING_QOL_PATH CJ_DATA_DIR "/reading-qol.json"
+static void cj_hl_refresh_config(void) {
+    FILE *f = fopen(CJ_READING_QOL_PATH, "rb");
+    if (!f) return;
+    char buf[4096];
+    size_t n = fread(buf, 1, sizeof(buf) - 1, f);
+    fclose(f);
+    buf[n] = '\0';
+    const char *p = strstr(buf, "\"hlSnapCjk\"");
+    if (!p) return;
+    p += 11;  /* 跳过 "hlSnapCjk" 本身（含两个引号，共 11 字节） */
+    while (*p == ':' || *p == ' ' || *p == '\t') p++;
+    if (strncmp(p, "true", 4) == 0) g_hl_expand_neuter = 1;
+    else if (strncmp(p, "false", 5) == 0) g_hl_expand_neuter = 0;
+}
+
 static void cj_hl_expand_handler(long scene, void *rng_v) {
+    cj_hl_refresh_config();   /* 每次划线先同步开关状态：设置页改完、下一笔即生效 */
     /* CJK 首字的命中区间：跳过原扩张函数、保命中层精确边界（划哪吸哪）；
      * 英文/其它：call-through 照常扩张，行为与原生一致。 */
     if (g_hl_expand_neuter) {

@@ -742,6 +742,7 @@ AFFECT /qml/device/view/settings/Settings.qml
                     property bool cfgStarTodo: false
                     property string cfgStarColor: "RED"
                     property int cfgStarGap: 25
+                    property bool cfgHlSnap: true
                     property bool cfgTap: false
                     property bool cfgMono: false
                     property bool cfgRefresh: false
@@ -771,6 +772,7 @@ AFFECT /qml/device/view/settings/Settings.qml
                                 cjFlipRoot.cfgStarTodo = !!c.starTodoEnabled;
                                 if (c.starTodoColor) cjFlipRoot.cfgStarColor = c.starTodoColor;
                                 var sg = parseInt(c.starTodoGap); if (sg > 0) cjFlipRoot.cfgStarGap = sg;
+                                cjFlipRoot.cfgHlSnap = (c.hlSnapCjk !== false);
                             }
                         } catch (e) {
                             console.warn("CJ-ENH: load " + e);
@@ -789,7 +791,8 @@ AFFECT /qml/device/view/settings/Settings.qml
                                 autoOptimize: cjFlipRoot.cfgAutoOpt,
                                 starTodoEnabled: cjFlipRoot.cfgStarTodo,
                                 starTodoColor: cjFlipRoot.cfgStarColor,
-                                starTodoGap: cjFlipRoot.cfgStarGap
+                                starTodoGap: cjFlipRoot.cfgStarGap,
+                                hlSnapCjk: cjFlipRoot.cfgHlSnap
                             };
                             var body = JSON.stringify(c);
                             // 异步 PUT:Qt 同步 PUT 到 file:// 只截断不写体;保留 xhr 引用防 GC
@@ -1020,6 +1023,7 @@ AFFECT /qml/device/view/settings/Settings.qml
                     property bool cfgStarTodo: false
                     property string cfgStarColor: "RED"
                     property int cfgStarGap: 25
+                    property bool cfgHlSnap: true
                     property var _cjXhr: null
                     readonly property string cjPath: "file:///home/root/.local/share/cangjie-ime/reading-qol.json"
 
@@ -1042,6 +1046,7 @@ AFFECT /qml/device/view/settings/Settings.qml
                                 cjBookRoot.cfgStarTodo = !!c.starTodoEnabled;
                                 if (c.starTodoColor) cjBookRoot.cfgStarColor = c.starTodoColor;
                                 var sg = parseInt(c.starTodoGap); if (sg > 0) cjBookRoot.cfgStarGap = sg;
+                                cjBookRoot.cfgHlSnap = (c.hlSnapCjk !== false);
                             }
                         } catch (e) {
                             console.warn("CJ-ENH: load " + e);
@@ -1060,7 +1065,8 @@ AFFECT /qml/device/view/settings/Settings.qml
                                 autoOptimize: cjBookRoot.cfgAutoOpt,
                                 starTodoEnabled: cjBookRoot.cfgStarTodo,
                                 starTodoColor: cjBookRoot.cfgStarColor,
-                                starTodoGap: cjBookRoot.cfgStarGap
+                                starTodoGap: cjBookRoot.cfgStarGap,
+                                hlSnapCjk: cjBookRoot.cfgHlSnap
                             };
                             var body = JSON.stringify(c);
                             // 异步 PUT:Qt 同步 PUT 到 file:// 只截断不写体;保留 xhr 引用防 GC
@@ -1196,6 +1202,7 @@ AFFECT /qml/device/view/settings/Settings.qml
                     property bool cfgStarTodo: false
                     property string cfgStarColor: "RED"
                     property int cfgStarGap: 25
+                    property bool cfgHlSnap: true   // 荧光笔汉字精确吸附（C hook 读，修复默认开）
                     // 其余键读进来 + 写回去（全量防覆盖）
                     property bool cfgTap: false
                     property bool cfgMono: false
@@ -1225,6 +1232,7 @@ AFFECT /qml/device/view/settings/Settings.qml
                                 var n = parseInt(c.refreshEvery); cjNoteRoot.cfgEvery = (n > 0) ? n : 15;
                                 cjNoteRoot.cfgFont = !!c.fontEnhance;
                                 cjNoteRoot.cfgAutoOpt = !!c.autoOptimize;
+                                cjNoteRoot.cfgHlSnap = (c.hlSnapCjk !== false);  // 缺省=开
                             }
                         } catch (e) {
                             console.warn("CJ-ENH: load " + e);
@@ -1242,7 +1250,8 @@ AFFECT /qml/device/view/settings/Settings.qml
                                 autoOptimize: cjNoteRoot.cfgAutoOpt,
                                 starTodoEnabled: cjNoteRoot.cfgStarTodo,
                                 starTodoColor: cjNoteRoot.cfgStarColor,
-                                starTodoGap: cjNoteRoot.cfgStarGap
+                                starTodoGap: cjNoteRoot.cfgStarGap,
+                                hlSnapCjk: cjNoteRoot.cfgHlSnap
                             };
                             var body = JSON.stringify(c);
                             var xhr = new XMLHttpRequest();
@@ -1266,17 +1275,23 @@ AFFECT /qml/device/view/settings/Settings.qml
                             cn: {
                                 page: "笔记增强", sub: "墨香 · 系统增强", back: "‹ 系统增强",
                                 starT: "★ 全局待办",
-                                starD: "阅读时用红笔在某页画一颗五角星，几秒后自动生成/更新这本书的「《书名》- 总结卡片」笔记本：每颗星一页，带章名·页号+可打字批注模板。用一种记笔记不用的笔色（红）画星。默认关。"
+                                starD: "阅读时用红笔在某页画一颗五角星，几秒后自动生成/更新这本书的「《书名》- 总结卡片」笔记本：每颗星一页，带章名·页号+可打字批注模板。用一种记笔记不用的笔色（红）画星。默认关。",
+                                hlT: "荧光笔精确吸附汉字",
+                                hlD: "开启后，荧光笔「对齐到文本」时中文只吸附你划过的那几个字，不再一下子吸成整行（英文按词吸附不受影响）。关闭则恢复系统原生的整行吸附。默认开启。"
                             },
                             tw: {
                                 page: "筆記增強", sub: "墨香 · 系統增強", back: "‹ 系統增強",
                                 starT: "★ 全局待辦",
-                                starD: "閱讀時用紅筆在某頁畫一顆五角星，幾秒後自動生成/更新這本書的「《書名》- 總結卡片」筆記本：每顆星一頁，帶章名·頁號+可打字批註範本。用一種記筆記不用的筆色（紅）畫星。預設關。"
+                                starD: "閱讀時用紅筆在某頁畫一顆五角星，幾秒後自動生成/更新這本書的「《書名》- 總結卡片」筆記本：每顆星一頁，帶章名·頁號+可打字批註範本。用一種記筆記不用的筆色（紅）畫星。預設關。",
+                                hlT: "螢光筆精確吸附漢字",
+                                hlD: "開啟後，螢光筆「對齊到文字」時中文只吸附你劃過的那幾個字，不再一下子吸成整行（英文按詞吸附不受影響）。關閉則恢復系統原生的整行吸附。預設開啟。"
                             },
                             en: {
                                 page: "Note Enhancements", sub: "MoXiang · System", back: "‹ System",
                                 starT: "Global ★ to-do",
-                                starD: "Draw a red five-pointed star on any page while reading; within seconds a per-book “<Title> - Summary Card” notebook is created/updated — one page per star, with chapter · page number and a typeable note template. Use a pen colour you don't use for notes (red). Off by default."
+                                starD: "Draw a red five-pointed star on any page while reading; within seconds a per-book “<Title> - Summary Card” notebook is created/updated — one page per star, with chapter · page number and a typeable note template. Use a pen colour you don't use for notes (red). Off by default.",
+                                hlT: "Precise CJK highlighter snap",
+                                hlD: "When on, snap-to-text highlighter grabs only the characters you swiped over instead of the whole line for Chinese text (English word-snapping is unaffected). Off restores the native whole-line snap. On by default."
                             }
                         };
                         return D[cjNoteRoot.cjLang()] || D.en;
@@ -1325,6 +1340,17 @@ AFFECT /qml/device/view/settings/Settings.qml
                         spacing: 44
                         anchors { top: cjPgRule.bottom; left: parent.left; right: parent.right; topMargin: 40; leftMargin: 44; rightMargin: 44 }
 
+                        SettingsCheckBoxItem {
+                            width: cjNoteCol.width
+                            textColor: "#000000"
+                            title: cjNoteRoot.i18n.hlT
+                            description: cjNoteRoot.i18n.hlD
+                            selected: cjNoteRoot.cfgHlSnap
+                            onClicked: {
+                                cjNoteRoot.cfgHlSnap = !cjNoteRoot.cfgHlSnap;
+                                cjNoteRoot.cjSave();
+                            }
+                        }
                         SettingsCheckBoxItem {
                             width: cjNoteCol.width
                             textColor: "#000000"

@@ -95,7 +95,7 @@ rm -f "$QRR/add-lxgw-font.qmd"
 RQOL="$DATADIR/reading-qol.json"
 if [ ! -s "$RQOL" ]; then
     echo "-- 建阅读增强初始配置（全 OFF）-> $RQOL"
-    printf '%s' '{"tapPageTurn":false,"fastMono":false,"refresh":false,"refreshByChapter":false,"refreshEvery":15,"fontEnhance":false}' > "$RQOL"
+    printf '%s' '{"tapPageTurn":false,"fastMono":false,"refresh":false,"refreshByChapter":false,"refreshEvery":15,"fontEnhance":false,"hlSnapCjk":true}' > "$RQOL"
 fi
 
 # ---- 3c. qrr 崩溃自愈 fail-safe（xovi pre-start：崩溃循环时自动隔离阅读增强 qmd，防砖）----
