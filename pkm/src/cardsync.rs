@@ -96,7 +96,7 @@ fn star_header(page: usize, label: &str) -> String {
     }
 }
 
-/// 新出现的 ★ 页的初始模板（对应 2.md《13.67》读书笔记结构）：线索框 / 逻辑推演网 / 标签锚点。
+/// 新出现的 ★ 页的初始模板（总结卡片《13.67》三段式结构，见 PKM 白皮书 §06）：线索框 / 逻辑推演网 / 标签锚点。
 /// 只在**首次出现**该星时注入一次；之后用户在字段后打字，重建时整块作为「批注」逐字保留。
 /// ID 带章名（label，形如「章名」或「章名 - 节名」）便于跨页软链接检索；label 空则只用页号。
 fn page_scaffold(page: usize, label: &str) -> Vec<String> {
@@ -139,7 +139,7 @@ pub fn render_card(book_title: &str, stars: &[(usize, String)], prev: &CardModel
         block.push(star_header(*page, label));
         match prev.notes_by_page.get(page) {
             Some(notes) => block.extend(notes.iter().cloned()), // 老星：保留用户编辑
-            None => block.extend(page_scaffold(*page, label)),  // 新星：注入 2.md 模板
+            None => block.extend(page_scaffold(*page, label)),  // 新星：注入总结卡片模板
         }
         pages.push(block.join("\n"));
     }

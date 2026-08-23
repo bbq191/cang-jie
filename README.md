@@ -23,9 +23,13 @@
 
 ## 白皮书（完整设计 + 真机调试记录）
 
-- **[reMarkable 拼音输入法白皮书](chinese-ime/docs/reMarkable拼音输入法白皮书.md)** —— 块 2 输入法这条线（M3–M7）。含"从新机到当前进度"的完整复现主线。
-- **[reMarkable 中文化白皮书](chinese-ime/docs/reMarkable中文化白皮书.md)** —— 块 2 UI 汉化这条线（M0–M2）。共享的环境搭建 / xovi 基础设施出处。
-- **[功能路线图白皮书](docs/reMarkable功能路线图白皮书.md)** —— 跨块的"下一步做什么"优先级共识 + 6 分块地图。块 3/4/5 的设计与推进历程都落在这里，代码就近落在各自目录（`reading/` 含 README + `ATTRIBUTION.md`），不另开方案文档。
+每个实质功能块有自己的设计白皮书（block-local）；跨块优先级共识单列：
+
+- **[reMarkable 中文化白皮书](chinese-ime/docs/reMarkable中文化白皮书.md)**（块2）—— UI 汉化这条线（M0–M2）。共享的环境搭建 / xovi 基础设施出处。
+- **[reMarkable 拼音输入法白皮书](chinese-ime/docs/reMarkable拼音输入法白皮书.md)**（块2）—— 输入法这条线（M3–M7）。含"从新机到当前进度"的完整复现主线。
+- **[reMarkable 阅读白皮书](reading/docs/reMarkable阅读白皮书.md)**（块3）—— 微信读书集成「墨香」+ 通用 EPUB 优化 + 墨香面板 UI/UX 规范。
+- **[reMarkable PKM 白皮书](pkm/docs/reMarkablePKM白皮书.md)**（块5）—— PKM 知识化方法论 + ★全局待办语义引擎（检测/注入/卡片/去重）。
+- **[功能路线图白皮书](docs/reMarkable功能路线图白皮书.md)**（跨块）—— "下一步做什么"优先级共识 + 6 分块地图 + 已否决方向。深设计已下沉到上面各块白皮书，本文只留优先级与状态。
 
 ## 目录结构
 

@@ -1,5 +1,7 @@
 # pkm-semantic —— reMarkable 设备端语义引擎（PKM 主线）
 
+> 本目录是块5 PKM 的 **Python 算法原型 + 阈值标定**；完整设计 + 知识化方法论见《[PKM 白皮书](../pkm/docs/reMarkablePKM白皮书.md)》，生产 Rust 在 [`../pkm/`](../pkm/README.md)。
+
 把手写笔迹异步解析成结构化知识。PKM 回归后 reMarkable 复位为 **PKM 阅读/笔记工作台**，
 本目录是这条线的"语义引擎"：只读扫描 `.rm` 笔迹 → 识别约定符号 → 输出独立文档（绝不回写原件）。
 
@@ -80,10 +82,10 @@ cd proto
 ## 设备 daemon（✅ 已交付，全真机端到端）
 
 > **注**：下面几条是 daemon 初版（A 模型：直写 EPUB 全局索引）的设计。**最终交付是 B 模型**（一书一份可编辑
-> 打字卡片 + `/upload` 活注入 + 事件驱动去重），与初版差别很大——**完整最终形态见路线图白皮书 §5.8 与记忆
+> 打字卡片 + `/upload` 活注入 + 事件驱动去重），与初版差别很大——**完整最终形态见 [PKM 白皮书](../pkm/docs/reMarkablePKM白皮书.md) §04-05 与记忆
 > `pkm-star-todo-proto`**。关键更正：①注入走 `/upload` 不是直写（xochitl 无视磁盘直写）；②去重走 `trash-agent.qmd`
 > 挂文档模型 `onRowsInserted` 纯事件驱动（不是 Timer）；③输出是每书一份「总结卡片」笔记本（一星一页 + 章名 +
-> `2.md` 模板 + 打字批注保留），不是单本全局 EPUB；④设置页「系统增强 → 笔记增强」已加开关。
+> 总结卡片模板 + 打字批注保留），不是单本全局 EPUB；④设置页「系统增强 → 笔记增强」已加开关。
 
 `pkm/src/bin/wr_stars_daemon.rs`（+ 复用 `reading/device-rs/src/fswatch.rs`）——**独立后台服务**（不并进 wr-serve）。
 

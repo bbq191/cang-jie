@@ -74,9 +74,9 @@
 |---|---|---|---|---|
 | 1 | **逆向基座** | `ghidra-project/` · `rmfw/` | 全线共享地基（第 11 节架构原则） | 持续维护 |
 | 2 | **中文化**（显示 + 输入法） | `chinese-ime/` | 两本姊妹白皮书；本文 P3 字体 | 收尾维护 |
-| 3 | **阅读**（微信读书 + EPUB 优化） | `reading/` 主体 | **P0 墨香**（05 节）+ 5.7 EPUB 优化器 | 端到端真机验证 |
+| 3 | **阅读**（微信读书 + EPUB 优化） | `reading/` 主体 | **P0 墨香** + EPUB 优化器（见[阅读白皮书](../reading/docs/reMarkable阅读白皮书.md)） | 端到端真机验证 |
 | 4 | **系统增强**（阅读/显示/笔记 UX） | `xovi-extensions/` + `chinese-ime/langhook`（笔记增强） | **P4**（09 节：点击翻页/快刷/清残影/字体 + 荧光笔汉字吸附） | 真机验证 |
-| 5 | **PKM / 知识管理** | `pkm-semantic/`（原型）+ `pkm/`（Rust 生产 crate，单向依赖 `reading/`） | **★全局待办**（5.8 节）；P1/P2 数据流转是其上游 | 首个能力真机端到端 |
+| 5 | **PKM / 知识管理** | `pkm-semantic/`（原型）+ `pkm/`（Rust 生产 crate，单向依赖 `reading/`） | **★全局待办**（见 [PKM 白皮书](../pkm/docs/reMarkablePKM白皮书.md)）；P1/P2 数据流转是其上游 | 首个能力真机端到端 |
 | 6 | **额外应用** | `screenshot-tool/` | 未入本文优先级表（`screenshot-feasibility` 记忆：独立 DRM 直读判死，须 hook xochitl） | 规划中 |
 
 > ⚠️ **一处跨块共享 + 一条单向依赖**：① 块 4 的荧光笔吸附逻辑在 `langhook`（块 2 的 .so）、开关 UI 在 `reading-qol`（块 4），一颗 .so 服务两块，不拆二进制。② 块 5 的 `pkm/` 是独立 Rust crate，但**单向依赖** `reading/device-rs`（复用 `epubindex`/`fswatch`/`inject`/`notebook_rm`）——★待办本就建在阅读栈上；`reading/` 不反向依赖 `pkm/`。这是 2026-08-23 把历史名 `weread-client/`（曾把阅读+PKM 塞一个 crate）拆成 `reading/`+`pkm/` 后的正确形状。
@@ -116,152 +116,18 @@ PPI（Move 为固定硬件参数）、Gallery 3 白态偏灰、色彩对比度�
 - 已有社区扩展的（手势、目录）→ P4，装现成的。
 - Supernote 真正的护城河"笔记可检索/可流转"→ 正是 P1 + P2 的内容，以数据流转的形态实现，而非在设备上复刻 UI。
 
-## 05｜P0：微信读书集成——「墨香」（MoXiang），全设备自足
+## 05｜P0：微信读书集成——「墨香」（MoXiang）+ 通用 EPUB 优化（块3 阅读）
 
-**做什么**：让用户在 reMarkable Paper Pro Move 上用微信读书——扫码登录自己的账号、书下载进 xochitl 书库**原生阅读、原生笔划线**、划线/想法**双向同步**到微信读书云端。做成一个叫**「墨香」（MoXiang）** 的设备端功能：入口在 xochitl 首页侧边栏、展开为一个**整页 app**（像文件/设置那样的顶层页），另在 EPUB 阅读器「...」菜单加一项。功能逻辑**借鉴**[觅阅 MiuRead](https://github.com/miumiupy98-art/miuread-koreader)（4.3.2，非官方微信读书客户端，KOReader 插件，AGPL-3.0），**净室自研、不抄源码**（见 5.4）。
+> **完整设计与真机调试记录见《[阅读白皮书](../reading/docs/reMarkable阅读白皮书.md)》。** 本节只保留路线图层面的定位与状态。
 
-> **★架构定案（2026-08 演进，已真机端到端）**：从早期"**host Python 大脑 + 设备薄 hook**（scp/`/upload` + host 桥）"彻底演进到"**全设备自足**"——所有重活（扫码登录 / 分片下载 + 解码 + 组 EPUB / 注入书库 / 划线想法双向同步 / 会话续期 / 个人阅读数据）都由设备上的 **aarch64 Rust 静态二进制**完成，**host 脐带全剪断**。下面 5.2 是这条定案架构；5.3 的协议/解码事实不变，只是实现语言从 Python 逐字节移植成了 Rust（真机对拍一致）。原"KOReader 独立 app 复用路线"早已否决（切走 xochitl、丢原生笔/统一 UI），rmscene 反解成果转化为 P2 并与本节共享（见第 07 节）。
+**做什么**：在 reMarkable Paper Pro Move 上用微信读书——扫码登录自己账号、书下载进 xochitl 书库**原生阅读、原生笔划线**、划线/想法**双向同步**到云端；顺带把任意第三方 EPUB 也优化到能读。做成设备端功能「墨香」：侧边栏入口 + 整页 app + 阅读器「...」菜单。功能逻辑**借鉴觅阅 MiuRead（AGPL-3.0）、净室自研不抄源码**（详见阅读白皮书 §04）。
 
-### 5.1 两堵决定架构的硬墙
+**★架构定案（已真机端到端）**：从早期"host Python 大脑 + 设备薄 hook"彻底演进到**全设备自足**——扫码登录/分片下载+解码/组 EPUB/注入书库/划线想法双向同步/会话续期全由设备上的 aarch64 Rust 静态二进制（`reading/device-rs`：`wr-serve`/`wr-download`/`wr-renew`）完成，host 脐带全剪断。两堵硬墙定了形状：① 渲染器是独立进程 `xochitl_pdf_renderer`（hook 触达不到）→ 集成靠"写文档库 + 读 `.rm` 反解"；② 设备无通用运行时 → 只能跑自编 aarch64 静态二进制 + 注入 QML。
 
-**墙一 · 渲染器是独立进程**：xochitl 把 EPUB 转 PDF 渲染由**独立进程 `xochitl_pdf_renderer`** 干（真机日志实证，见《中文化白皮书》）。LD_PRELOAD hook 只注入主进程、**触达不到渲染进程**。推论：**"集成"不靠 hook 渲染器，而是**① 把书送进阅读器 = 往文档库**写文件**（sideload / `/upload`）② 抓用户划线 = 事后**读 `.rm`**反解——都不碰渲染进程，比"侵入渲染"干净安全一个量级。
+**状态**：**P0 全链路真机端到端验证通过**——下载/注入/双向划线想法同步/内联画回/EPUB 优化/整页墨香 app/阅读器菜单/荧光笔汉字吸附。当前真实剩余风险只有 ② 翻页硬件天花板（Gallery 3 物理刷新，非软件可解）+ ③ 协议脆弱性（上游一改需真机回归）。
 
-**墙二 · 设备无通用运行时**：设备上**没有 python、没有通用包管理**（只有 busybox + glibc），/home 分区 45G 空，显示是 DRM 单 master 被 xochitl 独占。推论：① 设备端只能跑**自编的 aarch64 静态二进制**，不能依赖 host 的 python；② 自绘 reader 是死路（显示独占），唯一"零切换感"的路是**注入 QML** 进 xochitl（面板 / 阅读器菜单）。两墙合起来钉死了本项目的形态：**全设备自足 Rust 二进制 + QML 注入**。
-
-### 5.2 现架构（三层，全设备自足）
-
-**① 设备端 Rust 二进制**（`reading/device-rs/` + `pkm/`，交叉编 `aarch64-unknown-linux-musl` **全静态**：ring 的 C 用 aarch64-gcc、musl 链接靠 rustc 自带 rust-lld）：
-
-- **`wr-serve`**——常驻本地 HTTP 服务（`127.0.0.1:8777`，tiny_http），墨香面板与阅读器菜单都调它。端点：GET `/ping /status`(登录态) `/shelf /chapters /search /notebook/list /profile`；POST `/publish`(下书,可带拉笔记) `/notebook/sync_book`(双向智能同步) `/notebook/sync_current`(阅读器发送画线) `/login/*` `/logout`。
-- **`wr-download`**——整本下载→组 EPUB→`/upload` 免重启注入；**`wr-renew`**（`wr-renew.timer` 定时续期 `wr_skey` 保活）。
-- 三块"皇冠明珠"逐字节移植 Rust、真机对拍 Python 一致：`sign`（web_sign 签名）、`obfuscate`（bookId 编码）、`codec`（正文解码，**AGPL 派生·个人自用不分发**——编进 wr-\* 二进制、只跑在用户自己设备上处理自己账号的数据，不进任何分发渠道）。
-- 网络：设备 wifi **独立可达**微信读书（经全局 fake-ip 代理，28.0.2.x DNS 劫持）。全 musl 静态，`wr-serve.service` + `wr-renew.timer` 持久自启（rootfs `/usr`，OTA 后 `install.sh` 一键恢复）。
-
-**② 墨香面板 = xochitl 里的整页 app**（`device/moxiang-*.qmd`，qmldiff 明文注入，qt-resource-rebuilder 加载；明文失配只 log 不崩）：
-
-- **入口**：xochitl 首页侧边栏「墨香」菜单项（注入 `Sidebar.qml` 的 `filterColumn`，图标=水墨"香"logo 经 rcc 重打）。
-- **形态**：从早期**弹窗(Popup)** 演进为**整页**（注入 `Navigator.qml`：全屏 Loader z:100 盖住文件浏览器，系统同款 ✕ 关闭，点侧栏文件视图自动退出，独占全屏不透出）。演进动因：弹窗会盖住屏幕键盘、且透出后面书库；整页像打开文档一样干净、休眠即挂起。
-- **视图**：**首页**（logo + 个人阅读概览卡[昵称/书龄/阅读时长/藏书/笔记/偏好，读 `/profile`] + 「下载新书」「我的笔记」两入口）；**下载新书**（书架浏览 / 全站搜索 / 选书 / 整本·前 N 章·章节区间 / 勾"同时拉取为划线笔记本"）；**我的笔记**（只列设备**真实存在**的书=云端有笔记 ∪ 本地墨香书，「智能同步」一键双向）；**扫码登录**（设备自绘二维码）。面板经本机 `127.0.0.1:8777` 调 wr-serve，不再走 host 桥。
-
-**③ 阅读器集成**：EPUB 阅读器右上角「...」菜单加**「发送画线到笔记」**（注入 `Toolbar.qml`+`SettingsMenu.qml`+`DocumentView.qml` 三处，沿原生 toolbar 发信号→DocumentView 接的模式）——点了把当前书的本地画线发送成/并入笔记本（调 `/notebook/sync_current`→`sync_book`），底部原生 toast 反馈（进度常驻→结果替换）、点击即关菜单防误触。
-
-**组件 3 · 划线 设备→云端（首版做这个，✅ 2026-08-14 真机端到端闭环，用户 App 确认位置准确）**——原生**荧光笔 + 对齐到文本(snap-to-text)** 划线 → `.rm` 的 `GlyphRange`（自带可见 text）→ `rm-export/export.py` 的 `page_highlights()` 反解 → `highlights/reverse.map_to_weread` 在**章节原始解码全文**（`download.fetch_chapter_document`，即微信读书 range 的 offset 坐标空间，真机 0 误差对拍）里字符串定位算 range（单段整段 find、跨段用 head/tail 锚，标签计入区间）→ `protocol/sync.add_bookmark` 写 `/web/book/addBookmark`（cookie 鉴权、无签名）。全程**只读设备文件 + 网络上行，不往原生阅读器写**。**关键突破：offset 坐标空间就是我们下载的章节内容，绕开了 `.epubindex` 二进制逆向**（见未决⑥修正）。踩坑：marker/普通荧光笔只留视觉笔画、无文本锚，必须 snap-to-text。
-
-**组件 3b · 双向·笔记方案（✅ 2026-08-14 真机端到端闭环，用户 App 确认位置准确）**——不"画回阅读器"，而是把云端划线+想法落成一篇 reMarkable 原生**「笔记(notebook)」**，并做双向。先前把"云端高亮塞进 EPUB 原生目录(TOC)"的展示方案被用户否决（观感 + 与阅读割裂）。新方案链路：`highlights/cloud_index.fetch_book_highlights` 拉云端划线/想法 → `highlights/notebook.build_page_text` 排成纯文本（每条划线=`· 原文` / `〔wr chapterUid:start-end〕`定位锚 / `想法：`空行）→ `write_notebook_files` 用 `rmscene.simple_text_document` 写成一页 `.rm`（+`.content`/`.metadata`）→ scp 落文档库 + `restart xochitl` → 原生笔记正常渲染。用户在「想法：」后**打字**（靠 cangjie IME）→ 拉回 `.rm` → `read_page_text` 读 `RootTextBlock` → `parse_thoughts` 按锚点切块 → `protocol/sync.add_review` 写 `/web/review/add`。工具：`tools/highlights_to_notebook.py`（云→端，`--push --restart`）、`tools/notebook_to_reviews.py`（端→云，`--pull --dry-run`）。
-
-**为何这是关键突破**：它给了"回写"**第三条路**——既不写原生阅读器内存（下方 Step S 最高危），也不靠 evdev 模拟笔（下方 📌，语义不等价的近似）。**建/读一篇独立笔记文件**是文件级操作，安全一个量级、可删回退，且回写的是**真·结构化文字**（不是画上去的笔划）。真机钉死的事实：① rmscene 写的 `.rm`，xochitl .166 正常渲染、rm-sync 不删凭空注入的新文档（读设备写的 `.rm` 有 "newer format" 警告，只影响场景元数据、不碰 `RootTextBlock` 文本）；② `/web/review/add` = cookie 鉴权、无 web_sign，body 的 `abstract`(划线原文)/`content`(想法) **明文不 base64**（区别于 addBookmark 的 markText=base64）、`type=1`；③ 读路径走 Agent 网关 Bearer `api_key`、写路径走 web 主机 cookie(wr_skey)，**独立过期**，`errCode -2012 登录超时`=cookie 失效（api_key 读仍好用）重登。**代价/脆弱点**：笔记与阅读页分离（不像 TOC 在书内）、"关联书籍"非 reMarkable 原生能力（靠命名/映射约定）、想法↔划线锚定靠可见 `〔wr〕` 锚点（用户删改锚点行会失配）。。
-
-**组件 3c · 云端高亮/想法/评论 内联"画回"正文（✅ 2026-08-16 高亮 · 2026-08-17 想法+评论，真机验证通过——原"首版后置·不做"项已实现）**——此项原判为"画回阅读器"=写 `GlyphRange`=Step S 级最高危而后置。**风险重估（关键纠正）**：真正危险的是 hook xochitl **进程内存**（langhook）；"画回"其实是写 **`.rm`/EPUB 数据文件**，不进渲染进程地址空间，安全一个量级，真障碍是"坐标从哪来"而非"写的动作"。落地两条路、均真机验证：
-
-- **路 A · GlyphRange 写渲染页 `.rm`**（`highlights/render_map.py` + `tools/inline_highlights.py`）：把云端高亮在 xochitl 渲染出的 `<uuid>.pdf` 文本层定位，用最小二乘标定的仿射变换 `scene = 3.1545·pdf + off`（各向同性、页局部、≈屏宽/页宽）算出 `Rectangle`，`rmscene` 写成高亮页 `.rm`（多高亮走 CRDT 链、页首/中页 start 均真机正确）→ scp + 安全重启。产出**可编辑的原生高亮对象**（进高亮面板、可点选）。**三缺陷**：① 必须先渲染出 PDF（要坐标）② 必须重启感知 ③ 改字号/布局→绝对坐标错位。
-- **路 B · EPUB 烤高亮（✅ 优路）**：把云端**高亮+想法+评论**直接烤进 EPUB HTML 正文（`highlights/cloud_index.wrap_highlights_inline`：区间 `background-color` span + 高亮末尾内联 `〔想法：…〕`、评论渲成 `作者：内容`）→ `tools/publish_book.py --inline-highlights`/`--inline-comments` 随书 `/upload` **免重启**导入（MainPID 不变）。相对路 A **三缺陷全解**：① 不用渲染（章节 HTML 就有文本、offset 由组件3 已 0 误差掌握）② `/upload` 免重启 ③ **样式跟着文字重排流动，换布局/字体不错位**（2026-08-17 真机确证：改字号/换字体后画线+想法+评论不丢不错位）。跨标签按文本 run 拆 span 不破 HTML；**划线-only 想法**（微信读书"划线并写想法"未必生成 bookmark 条目）由 `fetch_book_highlights(include_review_only=True)` 补齐不漏。代价：是"印"的只读样式（不进高亮面板、不可点选编辑）。真机验证书：《Tell Me Your Dreams》（3 想法）、《13.67》（想法+评论 `知猪瞎:评论1条`）。已接进统一入口 `weread publish <id> --inline-highlights`/`--inline-comments`（内联改正文→不吃"已发布跳过"、每次重发）。
-
-**取舍**：对"**看**云端高亮/想法/评论"这个目标，**路 B（EPUB 烤）更优**（不依赖渲染坐标、免重启、扛重排）；要"**可编辑的原生标注对象**"才用路 A（GlyphRange）。组件 3b 的"独立笔记"仍是"写想法回云端"的双向通道；3c 解决的是"把云端已有批注就地显示在正文里"。。
-
-**组件 3d · 荧光笔「对齐到文本」汉字吸附优化（🔍 2026-08-23 离线根因坐实，未上真机）**——用户反馈"划一小段却吸整行/吸不上"，竞品镇纸(paperweight.cn)官网自述同款问题并已做到按字精确吸附（闭源）。Ghidra 反编译(.164)坐实：根因是 xochitl **自己手写了一套基于空格/标点的分词**、对无空格 CJK 文本失效（**非** `QTextBoundaryFinder`/ICU，故早先搜 ICU 落空；用户"中文无空格→整行"假设**成立**）。四层流水线：① 几何 hit-test（`FUN_00ece4d0`/`FUN_00ec9a70`，坐标→glyph idx，精确、非病根）→ ② 笔画 stroke∩glyph bbox 命中（`FUN_00f07730`：Line 建 `QPainterPath`→`QPainterPathStroker::setWidth(10.0)`→`QRegion::intersects` 遍历 glyph，返回**精确** `[start,end]`+命中率）→ ③ ⭐snap 判据（`FUN_00f086b0`，**病根**：`命中率<DAT_01523960` 或 `命中数/实义字符数 < 1/3(0.333…)` 即拒，再按空格/标点把 range **扩张到词边界**——CJK 无空格边界→扩张吞整行、或一行实义字符过多使分母巨大→比例不达标"吸不上"）→ ④ 造 GlyphRange 挂 scene（`FUN_00de8a70`=`Scene::addSnappedHighlightLine`，只消费上游算好的 `{start,length}`）。魔法常量 `DAT_01523960`(命中率下限)、`0.3333…`(1/3 词比例)。**修复向**：hook `FUN_00f086b0`，候选范围是 CJK 时跳过"词扩张+1/3判据"、直用 `FUN_00f07730` 的几何 `[start,end]`（=镇纸"滑到哪连续吸到哪"）；属 Step S 级写内存，需真机只读日志先验证设备版本布局（`.164` 地址仅参考，设备实跑版本偏移必变，靠锚串 `addSnappedHighlightLine: empty line` 的 xref 重定位；脚本 `ghidra-project/scripts/DecompileHighlight.java`）。**2026-08-23 已在设备实跑固件 `.169`(IMG_VERSION 3.28.0.169)逐行确认机理一致、地址钉死**：入口 `FUN_00de8390`(addSnappedHighlightLine)、⭐病根 `FUN_00f07fd0`(snap 判据，=.164 f086b0 逐行同构：命中率阈 `DAT_01523180`+`1/3`+空格分词)、精确命中 `FUN_00f07050`(=.164 f07730)、几何入口 `FUN_00ecddf0`；修复 hook 目标=`FUN_00f07fd0`。二进制 `rmfw/xochitl_3.28.0.169.bin`+`xochitl_pdf_renderer_3.28.0.169.bin` 入库、旧 .164/.bin 已删；现有中文 IME hook 经设备 journalctl 实证在 .169 全部安装成功（可安全叠加）。**★2026-08-23 修复真机通过**：真机 hook 实测——命中层 `FUN_00f07050` 精确(2-8字)，病根在扩张层，且**中文实测走 `FUN_00f05ad0`**(非早先反编译推测的 `FUN_00f05bb0`，后者一次没被调)：把命中的精确区间扩成整行(19-22字)或反转空(吸不上)。**修复=hook `FUN_00f05ad0`，判首字 QChar∈CJK 时跳过扩张(不调原函数)、保命中精确边界；英文照常**。真机效果：中文荧光笔可精确吸附**单字**、划哪吸哪(=镇纸)，英文不受影响，系统零崩溃、中文 IME 完好(`.so` md5 a56d93f8)。这是自研 clean-room 复现镇纸同款能力。、plan gleaming-wishing-pumpkin。
-
-> #### 📌 竞品借鉴（rmkit-cn）·"回写"还有一条不碰内存的路：evdev 模拟笔
->
-> 来源：`boangs/rmkit`（GPL-3.0）`upload-server-go/internal/handwriting/handwriting.go`、`internal/server/evdev_input.go`。**源码研读结论，未在本项目验证。** `handstrokes.json` 矢量笔画字体血缘 [ghostwriter](https://github.com/rmkit-dev/rmkit)（README 鸣谢）。
->
-> 上面把"画回"判为最高危，前提是"往原生阅读器数据结构写内存"。rmkit-cn 的手写 AI 回写给出**另一种回写范式**——完全不碰 xochitl 内存/数据结构：把要写的内容（它那里是 AI 生成的文字）先经 `handstrokes.json` 查成矢量笔画，再逐笔通过 `/dev/input/event2` 写 evdev 事件（`EV_ABS` 坐标/压力 + `BTN_TOOL_PEN` + `EV_SYN`）**模拟一支真笔在屏上画**，由 xochitl 自己按正常笔输入落墨。它按 `/proc/device-tree/model` 区分 Chiappa(Move 960×1696/输入 6760×11960) 与 Ferrari(Paper Pro) 的坐标映射。
->
-> **对本项目的意义**：如果 P0 组件3 的"云端高亮画回"改成"把高亮位置模拟成笔的划线动作"，风险模型从"Step S 级内存写"降到"模拟输入事件"（最坏是画歪/画错位，不会崩 xochitl）。**代价**：evdev 注入的是"新笔迹"而非"原生高亮对象"，画上去的是普通笔划、不是可被 xochitl 识别为 highlight 的结构化对象，语义不等价；且坐标映射要精确到字符位置（依赖组件3 的 `.epubindex` 映射，见未决⑥）。**置信度：中**——机制在 rmkit-cn 源码坐实，但"高亮↔笔划"语义差决定它只是"画回"的近似替代，不是等价方案。是否采用取决于本项目要的是"真高亮对象"还是"视觉上标出来即可"。
-
-### 5.2.1 全设备化落地：Rust 移植 + 墨香 app + 阅读器菜单（2026-08，全真机验证）
-
-组件 3/3b/3c 的机制（`.rm` 反解划线、`rmscene` 造笔记页、云端批注双向、EPUB 烤）**已全部逐字节移植成 Rust、搬上设备**（`reading/device-rs/`）——host 的 `tools/*.py`/`highlights/*.py` 从"运行时依赖"降为"对拍参照"（下方组件段里的 Python 文件名读作历史实现，现由 Rust 等价件承担）。此外补齐了一批只在设备端才有的能力：
-
-- **扫码登录（设备自足）**：`login.rs`+`qr.rs` 设备自绘二维码，`/login/start` 取 uid、`/login/poll` 长轮询 `getLoginInfo` 到确认落盘 + 续期激活；退出=`/logout` 改名凭证文件。踩坑：`webLoginVid` 是**数字**非字符串；二维码无过期信号→定时 120s 换一张。
-- **可手写批注的 `.rm` 笔记页 + 想法 CRUD**：`notebook_rm.rs` 自写**字节对拍 rmscene 的 v6 `.rm` 写入器**（`simple_text_document`，ascii+CJK 逐字节一致；`read_root_text` 读回编辑版一致）→ 把云端划线+想法排成可**手写批注**的原生笔记页 → `.rmdoc` `/upload` 免重启进库。设备上在「想法：」后打字 → 读回 `.rm` → 按 `〔wr cu:s-e〕` 锚 `parse_thoughts` → 增/改/删同步回微信读书（`/web/review/add`、`/web/review/delete`）。
-- **本地画线推荧光 + 虚线根因**：读书正文 `.rm` 划线 → `reverse.map_to_weread`（章原文字符定位算 range，`canon` 规整 Kangxi Radicals 码位失配）→ 幂等 `addBookmark`（colorStyle 取笔色）。**关键纠偏**：weread 划线只有 `colorStyle` 无"笔形"字段；"有想法无划线"weread 渲染成**虚线**，故同步时**必须同时补推 bookmark** 才是荧光笔（早先只推 review 出虚线的根因）。"笔形语法"判死（无此维度）。
-- **智能同步（一键三合一）**：`sync_book`——① 笔记本想法回传 ② 本地划线推荧光 ③ 拉云端重建笔记本（无改动不重建、省换 UUID）。第一次按=创建。取代早先"拉成笔记本 / 获取画线 / 同步"三个易混按钮。
-- **回传划线（Phase B，2026-08-18/19）**：`.rm` 解析用 vendored `remarkable_lines`（补丁 `PenColor::Unknown`）；`reverse`(canon+locate_range+map_to_weread) 真机对拍 Python 一致；weread colorStyle 0黄1红2紫3蓝4绿（设备荧光笔 3黄4绿9蓝）；`autosync` 按 title 认领本地文档、去重、记 mtime。
-- **我的笔记只列本地真实存在的**：`/notebook/list` = 云端有笔记 ∪ 设备墨香本地书（按 book_id 去重）；`DocMeta.active()` 排除**回收站**（`parent=="trash" ≠ deleted`——xochitl 回收站是改 metadata `parent`，旧筛选只看 `deleted` 会漏，回收的书误判在库）。
-- **脚注跳转根因破案 + 修复（2026-08-20 真机端到端通过，推翻旧结论）**：旧白皮书曾断言"脚注跳转 xochitl 只认小文件同文件 `#` 锚点（跨文件/大文件/弹注全不跳）"——**此结论错误，已纠正**。真机逐层二分锤定：reMarkable 导入 EPUB 时把章内锚点**烘焙成静态索引**，一旦某章存在**"互指对"**（marker→注释、注释又→marker 的**双向脚注**，几乎所有电子书的标准结构），其索引器会把这一对链接**整对丢弃**，导致脚注在设备上连"可点黑块"（rM 给识别为有效链接处打的点击高亮）都没有。普通阅读器实时解析 DOM 无所谓环不环，rM 烘焙期一遇环全灭。与文件大小/跨文件/热区**无关**。诊断关键信号=**有无黑块**（同页跳转看不出移动也能判链接认没认）；上机注入靠 USB Web UI `POST http://10.11.99.1/upload`（multipart，字段 `file`，免重启、秒建 `.epubindex`+`.pdf`）快速迭代。**修法** `htmlproc::break_footnote_cycles`（接在 `epub::assemble` 的 `fix_internal_links` 之后）：找章内 2-环，把"源元素较晚"那条（注释里的回链）**去链化**（`<a>`→`<span>`、删 `href`、**保留 id**——它是正向 marker 的落点；weread 形态 id 与回链同在一个 `<a>` 上，只能变 span 留 id 不能整条 unwrap），正向 `marker→注释` 恢复可点、返回交给 rM 原生"返回第 X 页"条。host 单测覆盖 Kindle(sup/p 分离)+weread(a 自带 id) 两形态；真机重下《喜鹊谋杀案》8 条脚注全跳+返回。**惠及以后新下/重下的书，旧书需重下一次**。（这也顺带解释了当初为何"做独立笔记本 + 阅读器菜单一键发送"而非改阅读器——阅读器内跳转当时被误判判死；现脚注可跳，两条路并存。）
-- **书内目录页删除（同批处理）**：书内"目录"页是**跨文件链接**且我们重命名 spine 后 href 还指着旧文件名（`index_split_NNN.html`，成品 EPUB 里不存在）→ 彻底死链；而 rM 原生目录（`nav.xhtml`）已覆盖章节导航，书内目录纯冗余。故 `pipeline::is_toc_title` 按章标题精确匹配（目录/目錄/目次/Contents 等，`目录导读` 类不误判）在下书时跳过该章——注意判据**必须按标题**而非"链接密度"（书中书的正文页可能含大量死链，按密度会误删正文）。真机重下 122→116 章（"目录"章 6 块一并去除），nav 同步不再列它。
-
-> #### ⚠️ QML 注入纪律（整页导航血泪）
->
-> 往 `Navigator.qml`/`DocumentView.qml` 等核心 QML 注入前**必走离线 qmllint**：把要 INSERT 的片段单独包成一个 QML（`import QtQuick` + `import QtQuick.Controls 2.15 as MXControls` + dummy 依赖）用 `/usr/lib/qt6/bin/qmllint` 编译，`missing-property`/`no matching signal`/`is not a type` 即致命（`inputMethod.hide` 是 qmllint 存根不全的误报，忽略）。**血泪**：Popup→Item 转换漏剥 `background:`/`contentItem:`/`onClosed:`（Item 无这三个属性）→ **整个 Navigator.qml 编译失败 → 启动崩溃循环 → StartLimitAction 整机重启**（uptime 归零）。部署一律带 `NRestarts` 连续监控（攀升立即删 qmd 回退）。另：`LOCATE` 不接 `?` 通配（要具体类型名，`TRAVERSE` 才可 `?#id`）；xofm 模块的真实资源路径不靠推断、查 qrr `hashtab`（`/home/root/xovi/exthome/qt-resource-rebuilder/hashtab`）——xofm 在 `/qt/qml/xofm/…` 不是 `/qml/xofm/…`；`SidebarItem.iconSource` 不吃 dataURI（rcc 重打）；toast 用 `showNotification` 字段是 `message` 不是 `text`。
-
-### 5.3 借鉴逻辑蓝图（须以真机流量二次确认；现由 Rust 等价实现）
-
-以下是读 MiuRead 得到的机制，作为**理解微信读书协议该去哪抓包**的指路牌——不是照抄对象，落地时一律以自己账号的真机流量二次推导为准：
-
-- **登录**：`/api/auth/getLoginUid` 取 uid → 屏显二维码 `/web/confirm?uid=` 手机扫码 → 轮询 `/api/auth/getLoginInfo`（支持手机 4 位 OTP）→ 领**微信读书官方 Skills/Agent API Key**（`/api/skills/apikeyGet`）作主凭证。
-- **下载**：章节走 web 分片端点（正文 `t_0`/`t_1`、EPUB 版式 `e_0..e_3`、`/web/book/chapterInfos` 拿目录），正文是**混淆编码**，需自定义解码还原 HTML 后本地组装 EPUB，付费/受限章节占位。
-  - **真机深挖（2026-08-13，两份自有账号 HAR + 借鉴 MiuRead 逻辑 + host 侧重放实验）**：协议层拆得很透，但**撞上一道"200 空响应"墙，自动下载能否走通仍未定**。已攻克并落地（`reading/`）：① 请求形状 `POST /web/book/chapter/{shard}` + JSON body（`b`/`c`/`r`/`st`/`ct`/`ps`/`pc`/`sc`/`s`）+ 头 `x-wrpa-0`；② **签名 `s` 复现**（`0x15051505` 的 XOR+移位滚动散列，HAR 6/6 命中，`sign.py`）；③ **obfuscate 编码复现**（`b`=obfuscate(bookId) 逐字节对拍通过，`obfuscate.py`）；④ **codec 完全攻克并落地**（`codec.py`，经所有者授权移植 codec.lua + 真机对拍）：响应 `32hex(md5校验)+1字符+base64`，base64 **文本层**做了少量字符位置置换（positions/unswap）；正文 `e_0`+`e_1`+`e_3` **拼接**后去置换再 base64 解码 = 完整 XHTML，`e_2` 单分片是全书 CSS。对拍：CSS 4/4、正文拼接后 utf8 完整。**→ P0 下载链全线打通（真机端到端验证）**：`download.py` 用真实自造请求从《喜鹊谋杀案》下到正文、codec 解码成可读中文、组装出合法 EPUB（mimetype 正确、含 container/opf/nav/章节）。链路 = 登录 → 目录（Agent Bearer）→ 自造章节请求（obfuscate 编码 + web_sign 签名 + 新鲜时间戳 + **有效登录 cookie**）→ codec 解码 → EPUB。**鉴权只靠 cookie，不需要 x-wrpa-0，不需要 curl_cffi/浏览器指纹（标准库 urllib 即可）。** **"200 空 {}" 卡了很久，真相是没带对 cookie**——那份 HAR 导出未含 HttpOnly cookie，实验一直用空/过期 cookie，{} 就是"未登录"；换 `tools/login.py` 的新鲜 cookie 一发即得正文。**教训串**：x-wrpa-0 认知反复两次全错（"前端签名"→"服务器票据"→实为客户端埋点但服务器不强校验）、指纹/nonce 假设也全错——**先确认最基本的鉴权（cookie）到位，再怀疑高级反爬**。curl_cffi 仅用于排除指纹假设，不进依赖。
-- **划线/想法**：读走 `/book/underlines`、`/book/readreviews`；写走 `/web/book/addBookmark`、`/web/review/add` 等。微信读书批注是"字符 range"，与设备侧位置要来回映射。
-- **进度/时长**：`/web/book/read` 上传进度（带精确锚点定位）；阅读时长单独上报以计入账号。
-- 统一入口 `https://i.weread.qq.com/api/agent/gateway`，`Authorization: Bearer <api_key>`。
-
-### 5.4 净室纪律（"不偷源码只借鉴逻辑"落地成规范）
-
-**诚实前提**：本项目调研中已读过 MiuRead 的 AGPL 源码，纯净室（一拨写规格、另一拨没见过原件照做）的法律姿态已不完全具备。因此采用可操作的最强姿态：
-
-1. **协议事实从微信读书自己的真机流量二次推导**——端点、鉴权流、请求/响应形状以抓包为准，MiuRead 只当"该去哪抓包"的指路牌。这些是腾讯服务器的接口事实，非 MiuRead 的版权物。
-2. **解码算法从真实响应重新推导，不照搬 `codec.lua`**——套用 `pinyin-engine/c` 现成的"Python 参照 → C 移植 → 逐行 diff 差分测试"脚手架，实现血缘是"观测到的微信读书行为"。
-3. **不复制 MiuRead 的代码结构/命名/注释**；可把 MiuRead 当**黑盒对拍参照**（跑它、比对输出）验证自研实现——这是合法的行为对拍，不涉及抄代码。
-4. 由此产出的实现是**自有版权、自选许可证，非 MiuRead 派生作品，不受 AGPL 传染**。KOReader 在本路线完全不涉及，其许可证与本路线无关。
-5. 沿用项目许可证纪律：以实测 `LICENSE` 为准；不代替法律意见，只记录事实与架构取舍。
-
-### 5.5 推进历程（"一步一确认"，全部完成、全部上设备）
-
-沿"零设备风险先证协议层 → 只读注入 → 上行同步 → 双向 → 全设备化"逐步推进，每步真机验证再进下一步：
-
-1. **协议层（host 侧）**——✅ 自己账号流量二次推导 + 差分测试跑通登录/下载/解码，MiuRead 作黑盒对拍。
-2. **设备端注入 EPUB 原生渲染**——✅ `/upload` 免重启导入、xochitl 原生阅读。
-3. **设备→云端划线同步**——✅ 反解 `.rm` + 映射 + push（只读设备文件）。
-4. **双向笔记（想法 CRUD）+ 云端批注内联"烤进正文"**——✅（组件 3b/3c；路 B EPUB 烤免重启、扛重排，是"看云端批注"的优路）。
-5. **★整条搬上设备 Rust（host 脐带剪断）**——✅ `sign/obfuscate/codec/下载/组 EPUB/注入/扫码登录/双向同步/续期/本地 UI 服务端`全 Rust 静态二进制，设备自足（见 5.2）。
-6. **★墨香面板从弹窗→整页 app、阅读器「...」菜单发送画线**——✅ 顶层页导航注入 + 三处协同注入 + toast（见 5.2 ②③、5.2.4）。
-
-> 进度/时长**上报**（原第 4 步）暂缓：读端个人数据（时长/天数/排行）已经能取（`/readdata/detail`，用于首页个人卡），但"往云端**写**阅读进度以计入账号"未做——价值不高、且写端受 cookie 保活与协议脆弱性约束，需要时再补。
-
-### 5.6 为什么值得，及未决
-
-- **独家 + 原生**：社区无人在 reMarkable 上碰微信读书，且这是**用原生笔在原生阅读器里读**的完整闭环，不是又一个割裂的第三方 app。
-- **与阅读 QoL 叠加**：P0 注入的 EPUB 走 xochitl 原生阅读器渲染，9.1 节立项的点击翻页 / 快速黑白同样作用于原生阅读器——两者天然叠加，P0 主链打通后可顺带受益（点击翻页尤其能缓解 Move 小屏滑动翻页的别扭，翻页卡顿的硬件天花板则见本节未决②）。
-- **站在现成肩膀上**：hook 韧性机制（特征码自定位 + trampoline）、`.rm` 划线反解、差分测试脚手架都现成可复用（见第 10 节）；真正从零硬啃的是协议/解码层 + 文档库注入这道集成。
-- **进度（2026-08-13 host 首版闭环；2026-08-18 起整条已 Rust 移植上设备）**：**P0 全链路打通**——host 首版由 `tools/publish_book.py` 一键串起：book/info 取书名/作者/出版社/封面 → 下载正文 → codec 解码 → `epub.assemble`（封面+元数据）→ `inject.py` 生成四件套 → 推送 → 设备原生阅读；**此管线现已逐字节移植成设备端 Rust（`wr-download`/`wr-serve`），host 脐带剪断**（下述 `tools/`/`download.py` 等读作历史实现，真书组装踩坑结论仍适用于 EPUB 组装本身）。真机跑通《喜鹊谋杀案》。**真书踩坑（手写测试片段全没暴露，真书才触发，均已修在 `download.py`）**：① codec 解码是完整 XHTML 文档→取 `<body>` 内层（否则嵌套 body 空白）；② calibre 宽松 HTML 的 void 元素 `<br>`/`<hr>`/`<img>` 非自闭→XHTML 化（否则严格 XHTML mismatched tag、整章翻不动）；③ 每章一个大 xhtml→xochitl 翻页极卡→`split_blocks` 按块切 ≤1800 字符小片（原生书拆 55 小 part 不卡）；④ codec 间歇解码失败→同章各分片共用一个时间戳（真实浏览器 ct/pc/ps 同、仅 r 变）+ 重试 + 容错跳过。字体走 `.content` 的 `fontName`（见 08 节）。**第 1 步（协议层）+ 第 2 步（注入原生阅读）+ 字体优化 均真机验证通过。**
-- **未决**（**状态盘点**：① 注入、④ 免重启、⑤ 凭证续期、⑥ offset 映射 **均已解决**，见各项内 ✅；当前真实剩余风险只有 **② 翻页硬件天花板** 与 **③ 协议脆弱性**，两者都非软件可根治、只能监控/回归）：① **第 2 步——设备端注入 EPUB 到 xochitl 原生阅读，✅ 已真机验证通过（2026-08-13 host 首版，现由设备端 Rust `wr-download`+`/upload` 承担）**：host 生成测试 EPUB + **最小 `.content`（`fileType:"epub"`+`formatVersion:2`+`documentMetadata`+渲染参数，`pageCount:0`、无 cPages）** + `.metadata` + `.local`，scp 推送 4 文件（md5 核对）→ 重启 xochitl 重扫 → 书出现在书库、点开 → **xochitl_pdf_renderer 渲染成功**（自动生成 `.pdf`/`.epubindex`/`.thumbnails`，并回写 `.content` 把 `pageCount` 0→4、补全 cPages）。**结论**：**最小 `.content` 即可，cPages/pageCount 靠 xochitl 首开渲染补全**；**感知机制 = 重启 xochitl 重扫**（硬证 xochitl inotify 不监视文档目录，不会自动感知）；`source` 自定义标识被接受。小瑕疵：无封面的 EPUB 日志报 null cover（真实书加封面即可）。**剩余工程化**：把这套注入折进守护进程/`fetch_book.py`（全书下载→组装→推送→触发重扫）、EPUB 加封面（已在 `publish_book` 做）、`e_2` CSS 与图片资源并入；② **翻页卡顿 = 设备硬天花板（已认，非软件可解）**：原生书也卡→Gallery 3 彩色墨水屏物理刷新慢（~1s）+ 官方无 speed mode（评测证实）+ EPD 在独立 T2000 TCON、无 `/dev/fb` 接口、刷新控制在 xochitl 私有 EPD 代码；改波形=本文 4.1 否决（残影/烧屏永久损伤、无回退、rMPP 无先例）。应用层杠杆（切小片）已用尽，改不了物理刷新下限。**附·章内空白与切片的权衡（2026-08-17）**：xochitl 把每个 spine 文件当独立 reflow 单元、**文件边界强制改页**，故我们按 `max_chars` 切出的每个 part 末尾都会留一次"该页剩余=空白"；切片越大→空白位置越少但单文件 reflow 越重、翻页越卡（放大到 3600 时 Chapter One 12→7 片、空白减半但换来卡顿）。真机权衡后**切片保持 1800、翻页顺滑优先，接受结构性空白**（结构性空白只能减、不能归零）。calibre 自带的 `mbppagebreak` 显式改页 + 连续 `<br>` 已在 `download.body_inner` 清掉（纯赚、与卡顿无关，消掉扉页/短章的空页）；③ **协议脆弱性**：整条链依赖微信读书 web 端点/编码/签名不变，上游一改需真机样本回归；`codec` e_0/e_1/e_3 拼接对个别章有间歇失败（已加重试+容错，根因仍需更多样本收敛）；④ **免重启注入（✅ 已解决，2026-08-16）**：走 USB Web UI `POST http://<host>/upload`（xochitl 内嵌 qtwebapp）当场导入 **EPUB 与 `.rmdoc`**，MainPID 不变、NRestarts 不增、**免重启**（B3 + 组件 3c 路 B 真机验证）。`publish --upload` / `notebook --upload` / 内联印书都走它，纯 urllib multipart 不依赖 curl。代价：`.content` 由 xochitl 生成，字体走书内菜单选（不像 scp 文件注入能预置 `fontName`）；且云同步会 churn 掉 `/upload` 的文档 UUID，故按 `visibleName` 认领而非记死 UUID。D-Bus `documentFinished` 信号那条不再需要；rmkit-cn 的管道 broker（进程内调导入）仍是备选、未用。**📌 竞品借鉴（rmkit-cn，源码研读未验证）**：`boangs/rmkit` 用一条不同的免重启路线——一个 `librarian.so` xovi 扩展 + `xovi-message-broker.so`（两者均预编译在其 `vendor/extensions/`，**源码未开放**），host 侧经命名管道 `/run/xovi-mb`(+`-out`) 发 `>eimportDocument:<路径>\n`，broker 在 xochitl 进程内当场入库并回一个 UUID（`upload-server-go/internal/librarian/librarian.go` 是调用端，记了两个真实坑：必须先 open OUT reader 再 write IN 否则应答错位一格；读到 EOF 后不要 reopen 否则打断正在执行的命令）。这证明"进程内扩展直接调 xochitl 导入 API"比 D-Bus 信号更直接可行，是本未决项的第二条候选；但因 broker/librarian 闭源，本项目只能**借协议思路**（xovi 扩展常驻 + 管道 broker + 进程内调导入），实现得自己写；⑤ 凭证（✅ 过期已根治，2026-08-16）：**正文只能走 web 端点 + cookie(`wr_skey`)**（Agent 网关 Bearer `api_key` 17 接口无正文），而 `wr_skey` 实测 **~5400s(90min) 过期**（早先误记"长期有效"）→ 复刻 MiuRead 的 `POST /web/login/renewal`（body `{"rq":"%2Fweb%2Fbook%2Fread","ql":false}`）**保活续期**，已接进 `auth.finish`（登录即激活）+ `_wr_common.load_client`（**一处保活**，`renew=True` 默认，所有 weread 工具每次加载即续期），做到"扫一次码用很久"；`session.py` 的 `cookies_export()` 存完整 expires。设备端凭证已落地（`credentials.json` + `wr-renew.timer` 定时续期，全设备自足）；⑥ **字符 offset → 微信读书 range 映射 ✅ 已绕开 `.epubindex` 逆向**——关键突破是"offset 坐标空间就是我们下载的章节原始解码全文"（`fetch_chapter_document`），在其中字符串定位算 range 即 0 误差对拍，无需逆向 `.epubindex` 二进制（见组件 3、第 07 节）。**下载+注入+字体+双向同步+整页 app 均真机验证；当前真实剩余风险=② 翻页硬件天花板（非缺陷）+ ③ 协议脆弱性（上游一改需真机回归）。**
-
-### 5.7 通用 EPUB 优化器 + 阅读体验做到极致（2026-08-21/22，全真机验证）
-
-定位复位为 PKM 工作台后（砍回传/想法、微读只留下书+进度），把"阅读"做到极致成为主线。四块落地：
-
-- **A. 下书 EPUB 组装升级（微信读书书）**：① **整章一页**——不再按 1800 字硬切成多 xhtml（那切断段落/脚注锚点、只首片带标题、目录塌陷），交 xochitl 自己 reflow 分页；② **多级目录**——`Chapter` 加 `level` 字段，nav 生成部/章嵌套 `<ol>`；③ **脚注内联（两套机制）**——导入版（`CB_` 书）脚注跨文件汇总在某"部"末章（**按注释 id 反查定位注释章**，实测 part 编号 = uid−2），数字正版脚注是 `<img class="qqreader-footnote" alt="注释全文">`（内容就在 alt）。统一内联成**朴素同章锚点**（marker `<a href="#id">`、注释聚章末 `<div class="footnotes">`）；数字版自造 id 用**全局递增**防跨章撞车（reMarkable 把 EPUB 拍平成单文档、锚点是全书空间，每章从 1 重编会撞车跳错章）。
-
-- **B. xochitl 弹窗脚注判死（穷尽实测，重要负结论）**：造对照书真机点验，`epub:type="noteref"`/`aside="footnote"`、ARIA `role="doc-noteref"`/`doc-footnote"`、双语义、`<sup>` 包裹**全部只当普通跳转**——xochitl 闭源渲染器**不实现任何弹窗脚注**；正文点击也**不通知可注入的 QML 层**（外链/scheme/data URI 根本不激活）。**可点性铁律**：只有朴素同章锚点 `<a href="#id">文字</a>` 可点；**图片链接 `<a><img></a>` 不可点、文字链接才可点**；`<sup>` 内文字热区太小点不中、要脱离 sup 独立成块；**注释区必须在 `</body>` 之内**否则 marker 死链。竞品「**镇纸**」的弹窗真相 = 设备跑**浏览器/WebView 加载微信读书网页版**（弹窗/字体/社区全是网页自带），绕开了 xochitl 阅读器；KOReader 能装 Move（MobileRead 有帖，推翻旧"显示路堵"判断）自带弹窗/字体自由——但都属"换阅读器"，本项目定为**继续 xochitl 务实路线**。
-
-- **C. 通用 EPUB 优化器（`device-rs/src/optimize.rs`，对任意结构第三方 EPUB）**：解包 → 只就地改每个 (x)html（**保结构不重组**）→ 重打包 → 新导入替换。① **字体/字号解锁**：剥内联 `style` 里 `font-family`/`font-size`（第三方书硬写死覆盖 xochitl 设置致"改不动字体/字号"；值含 HTML 实体 `&#39;` 要跳实体匹配否则截断）；② **脚注保留原样式**：`preserve_relink_footnotes` **保留脚标原图标**（去 `epub:type`、href 同章）+ 补一个**独立可点 `[N]` 文字角标**（图片脚标点不了，图标留 `<sup>` 内、`[N]` 移到 sup 外正常大小）+ 注释移章末。**四个上机才暴露的坑**：**(a)** zip 依赖必须开 `deflate` feature（第三方 EPUB 多 Deflated 压缩，否则 `Compression method not supported`）；**(b)** 读条目失败必须**报错中止**（静默跳过会产出残缺 epub 破坏原书，踩过 8MB→134 字节）；**(c)** 注释区必须插 `</body>` **之内**（加到完整 xhtml 文件末尾=落在 `</body></html>` 外=无效 HTML，marker 死链点不动，这是"角标点不了"真凶）；**(d)** **就地替换（`update_epub_inplace`）对第三方书判死**（xochitl 缓存旧渲染，覆盖 epub + 删派生件后重开**还是旧内容**，《喜鹊谋杀案》坐实；墨香自家书可就地重渲、第三方书不行）→ 只能**完整导入（`/upload` 当新书）**。⚠ `/upload` 的书名取 **EPUB 内 `dc:title`**、不是上传文件名——优化版与原书必然同名，区分靠内埋标记。后端 `/optimize`+`/library` 端点就绪。
-
-- **D. 无感自动优化 + 原生回收站通道（2026-08-22，《喜鹊谋杀案》三项全对 + 端到端真机闭环）**：
-  - **优化器补三能力**（对任意 calibre/第三方书，喜鹊上逐项真机验证）：① **破脚注互指**——calibre filepos 脚注是**同文件双向互指**（`<sup><small id=X><a href="#Y">[N]</a></small></sup>` ↔ 注释处回链），正中 rM"互指对整对丢弃"雷 → `break_footnote_cycles` 进优化器（喜鹊 `href#filepos` 310→155 正好减半），真机**脚注能跳+能返回**；② **封面拉伸修复**——calibre `titlepage.xhtml` 是 SVG `preserveAspectRatio="none"`，**xochitl 改 aspect 属性不吃**（真机复验仍放大），`svg_cover_to_img` 把 SVG 整体换 `<img max-width:100%>` 才修好；③ **去冗余目录页**——判据 = 指向 ≥10 个**不同 html 文件**的页（正文脚注是同文件 `#frag`，天然区分），`remove_toc_from_spine` 只删 spine `itemref`、manifest 保留不产悬空（喜鹊 93→91，开头+书末两个目录页都去掉）。**幂等标记** = 内埋 `META-INF/com.cangjie.optimized`（版本号，跟书走、云同步/换设备不丢，比记 uuid/书名后缀都鲁棒）。**deflate 坑**：重打包纯 STORED 文本不压缩体积近翻倍（621K→1.2M），mimetype STORED、其余 Deflated。
-  - **判死：外部进程直接写 `.metadata`**——归档原书把 `parent→"trash"` 后被**运行中 xochitl 的内存文档模型覆写回 `""`**（首页两本赎罪坐实）。逆向 UI Delete 按钮（`qml_00dd24e1` trashActionButton）找到正解：`EntitySelection.selectionMoveToTrash()`（C++ 进程内方法），**QML 单例路径可达** `NavigationManager.activeContext.selection`（来自 `import xofm.libs.explorer`，Sidebar.qml 本就 import）；回收站 Restore = `selectionRestoreTrashed()`。**软删真相：reMarkable 软删 = `parent:"trash"`，没有 `deleted` 字段**。
-  - **`trash-agent.qmd`**（注入 Sidebar）：读 wr-serve `GET /trash/pending` → 对每个 uuid `selection.add()` + `selectionMoveToTrash()`——**与用户手点 Delete 同一条原生代码路**（模型/持久化/云同步都由 xochitl 自己做），真机通、不被覆写。队列 `pending-trash.json` 自清洁（见 parent=trash 即出队、QML 端无需 ack）。**触发方式后来从 Timer 15s 轮询演进为纯事件驱动**（挂文档模型 `explorer.entityListModel` 的 `onRowsInserted`/`onModelReset`+4s 防抖，新卡进库即触发、休眠零开销）——详见 §5.8 的踩坑翻案（`elementCount` 属性绑定不触发、`onRowsInserted` 才是 xochitl 自用的可靠信号）。**扫描跳过排队中的书**——堵死"归档未生效就再优化一轮"的重复产书竞态。
-  - **无感终形态**：设置页「系统增强」第 5 开关「**导入书籍自动优化**」（**默认关**；写 `reading-qol.json` 的 `autoOptimize`，wr-serve 每轮扫描前现读现判，改开关即时生效无需重启；`CANGJIE_AUTO_OPTIMIZE=0` 是紧急总闸）。开后：导入 EPUB → 60s 内后台优化（**只动 `lastOpened=="0"` 的未读书**——完整导入产新书丢进度，绝不碰在读的书）→ 完整导入优化版 → 原书入队 → trash-agent 原生归档 → **首页只留优化版，全程零操作**。原书 epub 另备份 `cangjie-backups/<uuid>.epub.pre-optimize`。已知局限：CSS 文件内的字体锁未剥（现只剥内联 style；喜鹊字号是 em 相对不受影响，遇到 CSS px 锁死的书再扩展）。
-
-### 5.8 ★ 全局待办 —— PKM 语义引擎首个能力（2026-08-22，全真机端到端）
-
-PKM 回归后 reMarkable 复位为**阅读/笔记工作台**，`pkm-semantic/` 是这条线的"语义引擎"：只读扫 `.rm` 笔迹 → 识别约定符号 → 输出独立文档（绝不回写原件）。首个能力选 **★ 全局待办**（灵感来自 `2.md`「后台解析矢量笔迹」构想）：**阅读时用红笔在某页画一颗五角星，几秒后后台 Rust daemon 自动生成/更新这本书的「《书名》- 总结卡片」笔记本**。选它打头因为①不依赖底层文本 ②颜色/形状能从 `.rm` 直接读出 ③输出独立文件天然绕开 inplace 判死 + 云同步冲突。产物：`pkm-semantic/proto/`（Python 原型 + 差分测试）→ `device-rs/src/{stardetect,cardsync,cardnote,epubindex}.rs`（生产 Rust）+ `bin/wr_stars_daemon.rs` + `device/trash-agent.qmd` + 设置页开关。
-
-![★ 全局待办数据流（画星 → fswatch → 识别 + 页→章名 → 卡片 merge → /upload → 事件驱动去重）](../reading/docs/star-todo-flow.svg)
-
-**A. 检测引擎（自相交 + 颜色门控，先 Python 后 Rust 逐字节对拍）**。真机对账《缺失功能》笔记（含红手绘星 + 红干扰 + 黑笔记）后三大发现改写了设计：① **真手绘星 ≠ 理想五角星**——是多笔叠加、外廓圆钝、内部自相交的松散手势，原"5 尖角 + 闭合"阈值全漏 → 改判据为**自相交计数**（pentagram 不变量：clean 恒 5、真机松散星 10~20、圆/方框/对勾/正常字母 = 0）+ 空间合并多笔星（并查集 bbox 聚类）；② **黑对黑纯几何判死**——满页黑手写里草书汉字也有 4~11 自相交，每页约 8 假阳 → 坐实必须**颜色门控**；③ **颜色 + 形状缺一不可**——红笔里也有干扰（红对勾/红方框），双条件下 RED 门控检出星、忽略干扰。用户拍板**用一种记笔记不用的笔色（红）画星**。**踩坑真 bug**：`PenColor` 是 IntEnum，Py3.11+ 的 `str()` 返数字 `"7"` 非 `"RED"` → 颜色归一必须走 `.name`。Rust 移植与 Python `star_scan` 逐字节全等（200 笔逐字段 + 各色门控），vendored `remarkable_lines` 打两处补丁容忍新固件格式（`ParagraphStyle::Unknown`、块少读跳块尾）。
-
-- **页 → 章名映射**（`epubindex.rs`，设备任何 EPUB 通用，不限墨香书）：逆向 xochitl 的 `<uuid>.epubindex` 二进制格式 = 头 `"rM epub index"` + 若干长度前缀 UTF-16BE 路径条目，每条后 3 个大端 u32，**起始页 = (中间 int==0 ? 第一 int : 第三 int)**（两内部表一致）→ `page_section` 找起始页 ≤ 页号的最后一条 spine 文件；再读 `.epub`(zip) 的 `nav.xhtml`/`toc.ncx` 解 `spine 文件 → 章名`。真机《赎罪》验：第 8 页 → 洋娃娃、第 74 页 → 狗熊兄妹。**EPUB 页号**：`stardetect` 的 `page_order` 有 fallback 读顶层 `pages`（EPUB 的 `cPages` 为空、页 uuid 在顶层 `pages` 列表），0-based 与 `.epubindex` 对齐。
-
-**B. 注入机制真机命门（挖出三条硬事实，纠正了 §5.7 时期的错误归因）**。做"给已有笔记本追加一页"验证时连挖：① **xochitl 对文档目录零 inotify 监听、维护全内存文档模型**——运行时完全无视磁盘直写，连它自己 native 建的笔记本、直写追加一页重开仍只见旧页；② **`/upload`（`10.11.99.1:80`，本机走本地路由可达、无需真插 USB）是活注入唯一路 → 但永远"新建文档"且强制重新分配 uuid**（指定 uuid 被忽略，连传已存在的 uuid 也另生副本），无任何原地更新路；③ **重启 xochitl 能让直写现身但打断阅读**。→ **纠正**：§5.7 说的"直写文档免重启即显"实为部署时 `systemctl restart xochitl` 顺带重读目录，归因错了；纯运行时直写更新从未真正免重启可见。**旧墨香笔记同步的"追加"真相**（读 `sync_book` 坐实）：从不真追加 = 每次从 weread 云端重建整本 + trash 所有旧同名本 + `/upload` 新本；用户输入不丢是靠想法回传 weread 云再拉下来重建 = **云端往返**。★ 卡片是纯本地笔迹无云可往返 → "重建整本必抹手写"，故 **"后台自动 + 活注入 + 保住本地手写批注"三者不可兼得**。
-
-**C. B 模型卡片设计（打字卡片 + 全自动 merge 重传，用户拍板）**。破局分叉：卡片批注用 **Text 工具打字**（非手写）——真机复验当前固件 Text 打字能被 `notebook_rm::read_root_text` 读回，于是可做"本地版云端往返"：daemon 每次画星后 **读回卡片现有打字 → `parse_card` 拆出每页批注 → `render_card` 按当前星重生成（老星保留用户编辑、新星注入 `2.md` 模板）→ `pack_rmdoc` → `/upload` 新本 + 旧本入 pending-trash 队列**。卡片形态：**一星一页**（一主题一卡），每页 `★ 章名·第 N 页` + `[ID: 章名-pN]`（跨页软链接检索）+ `2.md`《13.67》结构（线索框 🔵🔴🟢 / 逻辑推演网 / 标签锚点 🔖🟡🔗）；打字批注跨重建逐字保留（`cardsync.rs` 纯逻辑 + host 单测）。**爆炸 bug 根治**：去重跳过条件原为 `existing.len()==1`，trash 没删掉时 len 恒 >1 → 每次 fswatch（**开书也触发**）都重生成 → 卡片无限增殖；改成 **"最新卡内容 == 新内容就绝不上传"**（无论几张），多余的只入队列 → 开书不再重复生成、每书恒 1 张。
-
-**D. 纯事件驱动去重（trash 的曲折，最终挂 `onRowsInserted`）**。旧卡删除只能走原生 `selectionMoveToTrash`（外部改磁盘 `parent=trash` xochitl 内存不认、界面残留旧卡，且让 wr-serve 误判提前出队）。触发方式踩了两次坑才对：**× `ViewManager.activeViewChanged` / `entityListModel.elementCount` 属性绑定——真机不触发**（`elementCount` 非 NOTIFY 属性，绑定永不刷新）；**√ `explorer.entityListModel` 的 `onRowsInserted`/`onModelReset`**——这是 QAbstractItemModel 的真信号、**xochitl 自己的文档网格就在用**（离线提取 `qml_00dabb43`/`qml_00dae885` 确证 `Connections{target:model; function onRowsInserted(){}}`）。最终 `trash-agent.qmd`：挂 `onRowsInserted`（新卡 `/upload` 进库）+ `onModelReset`（回书库重载）→ 4s 防抖（覆盖 upload→queue 写入间隙）→ `selection.add(uuid)+selectionMoveToTrash()`，`size>0`（用户手动选中）守卫防误删。**头 less 验证两次通过**（/upload 垃圾 A 入队列 → /upload 垃圾 B 触发 rowsInserted → 4s 后 A 被 xochitl 自写 parent=trash 出队），用户真机确认"2 秒内消失"。**教训翻案**：xochitl 确有可靠信号给注入 QML——**找信号要看 xochitl 自己 QML 怎么连，别猜属性绑定**。
-
-**E. 部署形态 + 设置开关**。daemon 事件驱动省电：`fswatch.rs`（inotify + 防抖，空闲阻塞睡死、零周期唤醒）监视文档目录，`wr-stars.service` 装 `/usr`（硬 `CPUQuota=30%` + `MemoryMax=64M` + `Nice=10` + 开机自启）。**同一改法把 wr-serve 原来 60s 自动优化轮询也改成事件驱动**（同病同治）。配置 `reading-qol.json`：`starTodoEnabled`（默认关）/`starTodoColor`（RED）/`starTodoGap`（25）。**设置页开关**：「系统增强」门户加第 4 分类「**笔记增强**」→ 二级页 `★ 全局待办` 开关（`SettingsCheckBoxItem` + file XHR 读写 `reading-qol.json`）；**全量防覆盖铁律**——每个写 `reading-qol.json` 的二级页都必须读写全量键（翻页页/书籍页原本只写 7 键，加 starTodo 三键，否则切翻页设置会抹掉 `starTodoEnabled` → daemon 读成 false 功能被意外关）。离线 `qmldiff apply-diffs` + host `qmllint` 验过（`1 diff applied`、零语法错误）再上机。**放置决策**：用户否掉"墨香面板"（那面板只有下载选项、无设置区），定「设置页·笔记增强」。。
-
-**最终工作流**：红笔画五角星 → daemon（8s 防抖）重扫 → 内容变才 `/upload` 新卡 → 新卡进库触发 `onRowsInserted` → **2 秒内旧卡经原生 `selectionMoveToTrash` 无形消失**。全设备自足、纯事件驱动、每书恒 1 张、开书不重生成、打字批注永久保留。
+- **§5.7（并入阅读白皮书 §07）· 通用 EPUB 优化器 + 阅读体验做到极致**：下书 EPUB 组装升级（整章一页/多级目录/脚注内联）、xochitl 弹窗脚注判死（穷尽实测负结论）、通用 EPUB 优化器（字体解锁/破脚注互指/封面拉伸/去冗余目录页）、无感自动优化 + 原生回收站通道（`trash-agent.qmd` 走 `selectionMoveToTrash` 原生代码路）。全真机验证。
+- **§5.8（迁至《[PKM 白皮书](../pkm/docs/reMarkablePKM白皮书.md)》）· ★ 全局待办**——PKM 语义引擎首个能力（红笔画星 → 后台 Rust daemon 自动汇总总结卡片）已迁入 PKM 白皮书，见块5。
 
 ## 06｜P1：手写 OCR → Markdown → Obsidian 数据流转
 
@@ -356,7 +222,7 @@ rmkit-cn 的文本 AI 原本在服务器端扫 `.rm` 拼整页文字，后来**�
 - ✅ **快速黑白**：3 文件 AFFECT——状态注入 `DeviceSceneView#root`、4 指手势切换（`SceneViewGestures`）、周期 `ghostBuster.forceClearNow`（`DocumentView`，`root.ghostBuster` 显式）。真机 Mono 生效。**踩坑·改对对象**：最初 REPLACE `DocumentView` 的 ScreenModeItem，但它阅读时 `visible: globalScreenMode != undefined` 为 false、不控屏，改了没反应；真正控屏的是 `DeviceSceneView` 的 `Epaper.ScreenModeItem{id:content;visible:!screenDriver.globalMode}`（:852）——**apply-diffs 能验"选择器命中"、验不了"是不是真正控屏的那个"，靠真机才暴露**（"形状像不等于对"典型）。
 - ✅ 已并入 `deploy/install.sh`（3b 段，与 candidatebar 同目录），规范安装包重建 `cangjie-ime-installer.tar.gz`（含 3 qmd），OTA/重装重跑即恢复。
 
-**★2026-08-17 更新：TODO[集成] 已完成——整套接进设置页控制面板，4 项开关真机端到端验证通过**（当前设备真二进制 md5 **3356dde7**，非旧 .166；裸机恢复后这套本没重铺，此次连面板一起重新落地）。**2026-08-22 面板加第 5 开关「导入书籍自动优化」（默认关）**——消费方是 wr-serve（Rust）非 QML：开关写 `reading-qol.json` 的 `autoOptimize`，wr-serve 后台扫描每轮现读现判、即时生效（详见 §5.7-D）。细节与配方，要点：
+**★2026-08-17 更新：TODO[集成] 已完成——整套接进设置页控制面板，4 项开关真机端到端验证通过**（当前设备真二进制 md5 **3356dde7**，非旧 .166；裸机恢复后这套本没重铺，此次连面板一起重新落地）。**2026-08-22 面板加第 5 开关「导入书籍自动优化」（默认关）**——消费方是 wr-serve（Rust）非 QML：开关写 `reading-qol.json` 的 `autoOptimize`，wr-serve 后台扫描每轮现读现判、即时生效（详见[阅读白皮书](../reading/docs/reMarkable阅读白皮书.md) §07-D）。细节与配方，要点：
 
 - **设置页入口不走阅读器 FormatMenu，而是设置 App**：`settings-reading-enhance.qmd` 往 `Settings.qml` 左侧菜单最下方插「系统增强」`ArkControls.SidebarItem`（设置页用 `onTriggered`）+ 内联「阅读增强」内容页（`SettingsCheckBoxItem` 开关，`selected`+`clicked` 手动翻转）。内容切换=`_selectedPage`(int) 哨兵 990001 → `payloadLoader.sourceComponent` 用 `REBUILD`+`LOCATE AFTER STREAM /{/` 注入早返回。菜单是 `SettingsModel` 驱动的 `Repeater`（项不在 QML 里），故往 `ColumnLayout#settingsColumn` 插静态项。
 - **跨 QML 树共享状态 = `reading-qol.json`（QML XHR 读写，/home 持久）**：`QML_XHR_ALLOW_FILE_{READ,WRITE}=1`。**大坑：同步 PUT 到 `file://` 只截断不写体 → 写必须异步；读同步 GET 正常。** 传播靠 `reading-qol-config.qmd` 在 `DeviceSceneView#root` 的 **1.5s 轮询 Timer**（onCompleted 只触发一次、返回阅读器不重建，"改了不生效"就是这个）；字体菜单例外（构建那刻读一次、退出重开生效）。
@@ -379,7 +245,7 @@ rmkit-cn 的文本 AI 原本在服务器端扫 `.rm` 拼整页文字，后来**�
 
 - 文字入口：QMLDiff 在选择菜单加"AI"按钮（`ai_text_button.qmd`），从剪贴板拿选中文字（避 `.rm` 延迟，见 06 节）→ 设备端 Go 服务 `/ai-page-chat` → OpenAI 兼容流式转发。
 - 手写入口：`glyph_selection_ai.qmd` 取选区坐标 → 截屏裁剪 → 多模态 vision 识别+处理（见 06 节）。
-- 回写：文字直接插入，或走 evdev 模拟笔（见 5.2 组件3 的 📌 块）。
+- 回写：文字直接插入，或走 evdev 模拟笔（见[阅读白皮书](../reading/docs/reMarkable阅读白皮书.md) §03 组件3 的 📌 块）。
 - 配置：OpenAI 兼容 URL/Key/Model，扫码从手机填（见 08 节 📌 高级面板）。
 
 **为什么标"未定级候选"而非直接立项**（客观优劣）：
@@ -398,7 +264,7 @@ rmkit-cn 的文本 AI 原本在服务器端扫 `.rm` 拼整页文字，后来**�
    - **P1/P2**（rmscene 数据流转线）延续"host 侧为主、设备侧零 hook"的护城河：均只读设备 `.rm` 文件、host 侧反解，不叠加汉化/输入法线的 xovi 受灾面。
    - **P0**（微信读书/墨香）：重活是**用户态 Rust 二进制**（wr-serve 等），与 xochitl 解耦、不进其地址空间，**不共享 langhook 那种进程内 hook 的受灾面**；UI 层是 QML 明文注入（墨香整页面板 + 阅读器菜单），落在 qrr/qmldiff 受灾面上、靠"注入锚点少 + 明文失配只 log 不崩"抗 OTA（不像 langhook 要特征码自定位）。P0 的真实依赖是**微信读书协议稳定性**（端点/编码/签名变了下载同步就断，需真机样本回归）+ **`xochitl_pdf_renderer` 进程边界**（决定不能 hook 渲染、只能走文件系统）；"文档库注入感知新书"这道集成点**已真机验证**（`/upload` 免重启导入 / scp+重启重扫）。
 2. **两个不同的单点依赖**。P1/P2 依赖 `.rm` 格式（rmscene 反解）；P0 依赖微信读书 web 端点 + 章节编码方式。两者都遵守同一条纪律的数据线变体：**格式/协议变化后，先用真机样本回归通过，才算兼容**，再谈功能。
-3. **许可证：P0 是净室自研，不受 AGPL 传染**（净室纪律见 5.4）。诚实前提是调研已读过 MiuRead 源码，故采可操作的最强净室姿态——协议/解码从微信读书真机流量二次推导、不照搬 `codec.lua`、不复制其代码结构。由此产出为自有版权、自选许可证，非 MiuRead 派生作品；KOReader 不涉及本路线。rmscene（MIT）等 P1/P2 依赖照旧实测 `LICENSE` 确认。所有下载/导出物均为用户自己账号的数据，微信读书书籍内容不进入任何分发渠道。不代替法律意见，只记录事实与架构取舍。
+3. **许可证：P0 是净室自研，不受 AGPL 传染**（净室纪律见[阅读白皮书](../reading/docs/reMarkable阅读白皮书.md) §04）。诚实前提是调研已读过 MiuRead 源码，故采可操作的最强净室姿态——协议/解码从微信读书真机流量二次推导、不照搬 `codec.lua`、不复制其代码结构。由此产出为自有版权、自选许可证，非 MiuRead 派生作品；KOReader 不涉及本路线。rmscene（MIT）等 P1/P2 依赖照旧实测 `LICENSE` 确认。所有下载/导出物均为用户自己账号的数据，微信读书书籍内容不进入任何分发渠道。不代替法律意见，只记录事实与架构取舍。
 4. **设备端凭证安全**：墨香在设备上存微信读书登录凭证（`/home/root/weread/credentials.json`：api_key + cookies，`wr-renew.timer` 定时续期保活）。注意 `xochitl.conf` 已有明文 SSH 口令/云 token 的泄露前例（见《中文化白皮书》2.5 节）——凭证落在 /home 用户目录、不进 `.so`、不随书分发；进一步的加密存储可后续加固。
 5. **可复用的现成肩膀**（实现时直接站上去，不重造）：① hook 韧性机制——`xovi-extensions/cangjie-langhook/` 的 LD*PRELOAD + 特征码自定位（含掩码通配跨固件韧性）+ AArch64 trampoline + 手工构造 QString/QStringList，及已摸到的 `EpubProperties` 阅读管线锚点；② rmscene 反解——`rm-export/export.py` 的 `page_highlights()` + 文档库遍历骨架；③ 差分测试 + 离线 blob——`pinyin-engine/c` 的 `make test`/`make diff-check`（Python 参照→C→逐行 diff）+ `gen*\*\_blob.py`离线生成、设备端`mmap` 只读加载。
 6. **本文只保持"当前优先级共识"的单一事实来源**；优先级变动时更新本文并记录调整理由，遵守"发现即写"。P0 已立项，设计不另开方案文档——落在 `reading/` 的代码 + README + `ATTRIBUTION.md`（借鉴 MiuRead 之处的标注约定与逐处登记）。
