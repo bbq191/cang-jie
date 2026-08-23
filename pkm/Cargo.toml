@@ -1,0 +1,40 @@
+[package]
+name = "pkm-device"
+version = "0.1.0"
+edition = "2021"
+description = "PKM 知识管理设备端生产实现（块5）。首个能力=★全局待办：阅读时红笔画星→后台守护自动汇总成每本书的总结卡片笔记本。建在块3阅读栈上（epubindex/fswatch/inject/notebook_rm 复用 reading crate），单向依赖。"
+
+[lib]
+name = "pkm_device"
+path = "src/lib.rs"
+
+[[bin]]
+name = "wr-stars"
+path = "src/bin/wr_stars.rs"
+
+[[bin]]
+name = "wr-stars-daemon"
+path = "src/bin/wr_stars_daemon.rs"
+
+[[bin]]
+name = "wr-nbtest"
+path = "src/bin/wr_nbtest.rs"
+
+[dependencies]
+# 单向依赖块3阅读 crate：复用 epubindex（页→章）/fswatch（inotify 封装）/inject
+# （写 xochitl 书库）/notebook_rm（造 .rm 笔记页）。reading 不反向依赖 pkm。
+weread-device = { path = "../reading/device-rs" }
+# stardetect 直接用 remarkable_lines 解 .rm 笔画；与 reading 共用同一份 vendor 源（cargo 去重）
+remarkable_lines = { path = "../reading/device-rs/vendor/remarkable_lines" }
+# 版本/features 与 ../reading/device-rs/Cargo.toml 对齐，避免 Cargo.lock 里同 crate 双版本
+serde_json = "1"
+md5 = "0.7"
+ureq = "2"
+uuid = { version = "1", features = ["v4"] }
+zip = { version = "2", default-features = false, features = ["deflate"] }
+
+[profile.release]
+opt-level = "z"
+lto = true
+strip = true
+panic = "abort"
