@@ -1,38 +1,48 @@
 # cang-jie
 
-给 [reMarkable Paper Pro Move](https://remarkable.com/) 的官方阅读/笔记程序 **xochitl** 注入**中文输入法 + 界面汉化**的个人项目。全程**不改 xochitl 本体**——`cangjie-langhook.so` 是合规 [xovi](https://github.com/asivery/xovi) 扩展，放 `xovi/extensions.d/` 被自动加载，运行时动态改行为，磁盘上的原始二进制原封不动。中文化的核心交付都归拢在 **`chinese-ime/`** 子文件夹。
+把 [reMarkable Paper Pro Move](https://remarkable.com/) 的官方阅读/笔记程序 **xochitl** 从"能用"改造成"顺手"的个人项目：起于**中文输入法 + 界面汉化**，现已长成一套围绕 xochitl 的**设备增强套件**（中文化 · 阅读 · 系统增强 · PKM · 截图）。全程**不改 xochitl 本体**——各项能力以合规 [xovi](https://github.com/asivery/xovi) 扩展 / qmldiff / 设备端自足二进制的形式，放 `xovi/extensions.d/` 等处运行时动态改行为，磁盘上的原始二进制原封不动。
 
-> 本项目是个人设备自用、不对外分发。涉及许可证的数据（rime-ice/iorest 词典等）不编译进 `.so`，只做独立文件运行时 mmap 只读。
+> 本项目是个人设备自用、不对外分发。涉及许可证的数据（rime-ice/iorest 词典、微信读书正文等）不编译进 `.so`，只做独立文件运行时只读 / 仅本机渲染，产物不进入任何再分发渠道。
 
-## 两条线
+## 六大分块
 
-| 线 | 内容 | 里程碑 | 状态 |
-|---|---|---|---|
-| **UI 汉化** | 简体/繁体菜单、翻译文件（Qt `.qm`）、字体、原生 Settings 语言集成 | M0–M2 | 基本收工 |
-| **拼音输入法** | 虚拟键盘 hook、拼音/双拼引擎、候选词典、逐字候选、繁体、中英混输、按语言字体 | M3–M7 | 真机全链路验证通过，收尾中 |
+项目按功能/产品线组织成 6 块（这是心智地图，**不完全等于目录名**——`weread-client/` 一个目录同时装了阅读与 PKM，见下方标注）：
+
+| # | 块 | 内容 | 落点 | 状态 |
+|---|---|---|---|---|
+| 1 | **逆向基座** | 反编译工程 + 固件镜像，离线定位 hook 点/偏移/参数签名，一切能力的共享地基 | `ghidra-project/` · `rmfw/` | 持续维护 |
+| 2 | **中文化**（显示 + 输入法） | UI 汉化（`.qm` 简/繁/港 + 字体 + 原生 Settings 集成，M0–M2）+ 拼音输入法（键盘 hook + 拼音/双拼引擎 + 候选栏 + 中英混输，M3–M7） | `chinese-ime/` | 真机全链路通过，收尾维护 |
+| 3 | **阅读**（微信读书 + EPUB 优化） | 「墨香」设备自足微信读书（扫码/下书/回传/续期）+ 通用 EPUB 优化器 | `weread-client/` 主体 | 真机端到端验证 |
+| 4 | **系统增强**（阅读/显示/笔记 UX） | 点击翻页 · 快速黑白 · 清残影 · 键盘 Mono · 阅读字体 · 荧光笔汉字精确吸附；集中在设置页「系统增强」面板 | `xovi-extensions/` + `chinese-ime/langhook/`（笔记增强） | 真机验证 |
+| 5 | **PKM / 知识管理** | ★全局待办语义引擎（把设备变成 Zettelkasten 工作台的首个能力）：Python 原型标定 + Rust 生产 | `pkm-semantic/`（原型）+ `weread-client/device-rs/` 内 `star*`/`card*` 模块（生产） | 原型标定 + 真机端到端 |
+| 6 | **额外应用** | 截图/录屏工具 | `screenshot-tool/` | 规划中（独立进程 DRM 直读已判死，须 hook xochitl） |
+
+> **两处跨块，别被目录名误导**：① 块 4 的"笔记增强"（荧光笔吸附）逻辑是 `chinese-ime/langhook` 里的 C hook、开关 UI 在 `xovi-extensions/reading-qol`——一颗 .so 同时服务块 2 和块 4，不拆二进制。② 块 5 的 PKM 生产码目前**嵌在**块 3 的 `weread-client/device-rs` crate 内（`stardetect.rs`/`cardnote.rs`/`cardsync.rs`/`wr_stars*.rs`），不是独立目录；`weread-client/` 这个历史名实含"阅读 + PKM"两线，**计划中的目标是拆分/改名**（需 Rust crate 重构，尚未物理执行）。
 
 ## 白皮书（完整设计 + 真机调试记录）
 
-- **[reMarkable 拼音输入法白皮书](chinese-ime/docs/reMarkable拼音输入法白皮书.md)** —— 输入法这条线（M3–M7）。含"从新机到当前进度"的完整复现主线。
-- **[reMarkable 中文化白皮书](chinese-ime/docs/reMarkable中文化白皮书.md)** —— UI 汉化这条线（M0–M2）。共享的环境搭建 / xovi 基础设施出处。
-- **[功能路线图白皮书](docs/reMarkable功能路线图白皮书.md)** —— 下一步做什么的优先级共识。P0（微信读书深度集成进 xochitl）已立项，设计落在 `weread-client/`（代码 + README + `ATTRIBUTION.md`），不另开方案文档。
+- **[reMarkable 拼音输入法白皮书](chinese-ime/docs/reMarkable拼音输入法白皮书.md)** —— 块 2 输入法这条线（M3–M7）。含"从新机到当前进度"的完整复现主线。
+- **[reMarkable 中文化白皮书](chinese-ime/docs/reMarkable中文化白皮书.md)** —— 块 2 UI 汉化这条线（M0–M2）。共享的环境搭建 / xovi 基础设施出处。
+- **[功能路线图白皮书](docs/reMarkable功能路线图白皮书.md)** —— 跨块的"下一步做什么"优先级共识 + 6 分块地图。块 3/4/5 的设计与推进历程都落在这里，代码就近落在各自目录（`weread-client/` 含 README + `ATTRIBUTION.md`），不另开方案文档。
 
 ## 目录结构
 
-| 路径 | 作用 |
-|---|---|
-| **`chinese-ime/`** | **中文化核心交付子文件夹**（归拢），下面几项 |
-| `chinese-ime/langhook/` | 设备端 hook：编译成 `cangjie-langhook.so`（合规 **xovi 扩展**，放 `extensions.d/` 自动加载），承载语言切换器接入 + 按键拦截/拼音缓冲/候选栏全部逻辑；`deploy/` 含**一键安装包**。见 [langhook/README.md](chinese-ime/langhook/README.md) |
-| `chinese-ime/pinyin-engine/` | 拼音引擎离线核心：`src/`（Python 参照）+ `c/`（C 移植 + blob 工具 + 差分测试）+ `data/`（词库 + 许可证留痕）+ `ui/` + `tests/` |
-| `chinese-ime/fonts/` · `translations/` · `docs/` | 中文字体（+OFL）· zh `.qm` 翻译 · 两本白皮书 |
-| `ghidra-project/` | 反编译工程（顶层）：离线定位 hook 点 / 偏移 / 参数签名 |
-| `rmfw/` | 固件镜像 `out/`+`extracted/`（顶层，通用侦查资源；中文字体已移进 `chinese-ime/fonts/`） |
-| `xovi-extensions/` | `reading-qol`（点击翻页/快速黑白/键盘 Mono）+ `font-menu`（阅读增强，非中文化本身） |
-| `weread-client/` | **设备端工具总仓**（名沿用历史，实含三线）：P0 微信读书深度集成 + PKM ★全局待办引擎（`device-rs/` Rust 生产实现）+ EPUB 优化器。见 [weread-client/README.md](weread-client/README.md) |
-| `pkm-semantic/` | PKM ★待办检测算法的 **Python 原型 + 阈值标定**（生产 Rust 移植落在 `weread-client/device-rs/`）。见 [pkm-semantic/README.md](pkm-semantic/README.md) |
-| `docs/` | **跨项目白皮书**：功能路线图 + 网络解决方案（中文化/拼音两本就近在 `chinese-ime/docs/`） |
-| `assets/` | 项目杂项媒体（logo / 截图 / 演示视频），不参与构建 |
-| 工程纪律 | 工程纪律（真机验证再宣称完成、一步一确认、改设备前备份等） |
+| 路径 | 块 | 作用 |
+|---|---|---|
+| `ghidra-project/` | 1 | 反编译工程：离线定位 hook 点 / 偏移 / 参数签名 |
+| `rmfw/` | 1 | 固件镜像 `out/`+`extracted/`（通用侦查资源；中文字体已移进 `chinese-ime/fonts/`） |
+| **`chinese-ime/`** | 2 | **中文化核心交付**（归拢），下面几项 |
+| `chinese-ime/langhook/` | 2(+4) | 设备端 hook：编译成 `cangjie-langhook.so`（合规 **xovi 扩展**，放 `extensions.d/` 自动加载），承载键盘 hook/拼音缓冲/候选栏全部逻辑 + **块 4 的荧光笔汉字吸附**；`deploy/` 含**一键安装包**。见 [langhook/README.md](chinese-ime/langhook/README.md) |
+| `chinese-ime/pinyin-engine/` | 2 | 拼音引擎离线核心：`src/`（Python 参照）+ `c/`（C 移植 + blob 工具 + 差分测试）+ `data/`（词库 + 许可证留痕）+ `ui/` + `tests/` |
+| `chinese-ime/{fonts,translations,docs}/` | 2 | 中文字体（+OFL）· zh `.qm` 翻译 · 两本白皮书 |
+| `weread-client/` | 3(+5) | **设备端工具总仓**（历史名，实含阅读 + PKM 两线）：「墨香」微信读书自足化 + 通用 EPUB 优化器（`device-rs/` Rust）+ 块 5 的 PKM ★待办生产模块。见 [weread-client/README.md](weread-client/README.md)。**目标：拆分/改名，尚未执行** |
+| `xovi-extensions/` | 4 | `reading-qol`（点击翻页/快速黑白/清残影/键盘 Mono + 设置页「系统增强」面板）+ `font-menu`（阅读字体） |
+| `pkm-semantic/` | 5 | PKM ★待办检测算法的 **Python 原型 + 阈值标定**（生产 Rust 移植嵌在 `weread-client/device-rs/`）。见 [pkm-semantic/README.md](pkm-semantic/README.md) |
+| `screenshot-tool/` | 6 | 截图/录屏可行性实验（`drm-probe/`），规划中 |
+| `docs/` | — | **跨块白皮书**：功能路线图（含 6 分块地图）+ 网络解决方案（中文化/拼音两本就近在 `chinese-ime/docs/`） |
+| `assets/` · `rm-export/` | — | 杂项媒体（logo/截图/演示，不参与构建）· `.rm` 导出脚本 |
+| `pyproject.toml` · `uv.lock` | — | uv 统一 Python 环境（依赖按线分组），本地开发用 |
+| 工程纪律 | — | 工程纪律（真机验证再宣称完成、一步一确认、改设备前备份等） |
 
 ## 快速开始
 
@@ -56,7 +66,9 @@ cd chinese-ime/pinyin-engine/c && make test && make diff-check
 cd chinese-ime/langhook && make test && make aarch64 XOVI_DIR=<asivery/xovi clone 路径>
 ```
 
-## 当前进度
+## 当前进度（块 2 中文化线）
+
+> 其余各块的推进历程见[功能路线图白皮书](docs/reMarkable功能路线图白皮书.md)（块 3 墨香/EPUB、块 4 系统增强、块 5 PKM ★待办）。
 
 - **M0–M2（UI 汉化）**：交叉编译工具链、xovi、字体 subset、`.qm` 翻译（简/繁/港）、原生 Settings 语言集成——基本收工。
 - **M3（虚拟键盘 hook）/ M4（拼音候选可用，含逐字造句/分段提交/退格撤销）/ M6（双拼 + 繁体）**：真机全链路验证通过。
