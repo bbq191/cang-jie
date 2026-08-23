@@ -27,6 +27,10 @@ AFFECT /qt/qml/xofm/modules/virtualkeyboard/qml/KeyboardPanel.qml
                 anchors.left: parent.left
                 anchors.right: parent.right
                 anchors.bottom: parent.top
+                // 笔记本格式行(vkb-format-menu)存在时底边上移一个格式行高度让位，
+                // 避免候选栏 z:999 盖住有序/无序列表等格式键；搜索页无格式行→0。
+                // hasFormatRow 由 C 端 update_popup 每次显示时按场景置。
+                anchors.bottomMargin: hasFormatRow ? 82 : 0
                 height: expanded ? 310 : 94
                 color: "white"
                 border.color: "black"
@@ -37,6 +41,7 @@ AFFECT /qt/qml/xofm/modules/virtualkeyboard/qml/KeyboardPanel.qml
 
                 property var keys: []
                 property bool expanded: false
+                property bool hasFormatRow: false
                 property string previewText: ""
                 property string cjkFamily: "LXGW Neo XiHei Screen Full"
                 signal keySelected(string symbol, int idx)

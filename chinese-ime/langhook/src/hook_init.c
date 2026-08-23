@@ -1663,6 +1663,7 @@ typedef double (*qquickitem_getter_fn)(const void *this_ptr);
  * this 参数、返回一个指针，不涉及 ABI 隐藏指针那套规则，比 childItems()
  * 返回值处理更简单）。 */
 typedef void *(*qquickitem_parentitem_fn)(const void *this_ptr);
+typedef char (*qquickitem_boolgetter_fn)(const void *this_ptr);
 
 static qquickitem_childitems_fn g_qquickitem_childitems = NULL;
 static qmetaobject_classname_fn g_qmetaobject_classname = NULL;
@@ -1671,6 +1672,7 @@ static qquickitem_getter_fn g_qquickitem_y = NULL;
 static qquickitem_getter_fn g_qquickitem_width = NULL;
 static qquickitem_getter_fn g_qquickitem_height = NULL;
 static qquickitem_parentitem_fn g_qquickitem_parentitem = NULL;
+static qquickitem_boolgetter_fn g_qquickitem_isvisible = NULL;
 static int g_children_search_symbols_attempted = 0;
 static int g_children_search_symbols_ok = 0;
 
@@ -1688,6 +1690,7 @@ static int cj_resolve_children_search_symbols(void) {
     g_qquickitem_width = (qquickitem_getter_fn) dlsym(RTLD_DEFAULT, "_ZNK10QQuickItem5widthEv");
     g_qquickitem_height = (qquickitem_getter_fn) dlsym(RTLD_DEFAULT, "_ZNK10QQuickItem6heightEv");
     g_qquickitem_parentitem = (qquickitem_parentitem_fn) dlsym(RTLD_DEFAULT, "_ZNK10QQuickItem10parentItemEv");
+    g_qquickitem_isvisible = (qquickitem_boolgetter_fn) dlsym(RTLD_DEFAULT, "_ZNK10QQuickItem9isVisibleEv");
 
     g_children_search_symbols_ok = g_qquickitem_childitems && g_qmetaobject_classname;
     CJ_LOG("[cangjie] Step O：符号解析%s（childItems=%p classname=%p x=%p y=%p width=%p height=%p parentItem=%p）\n",
@@ -2269,6 +2272,55 @@ static CjRectF32 cj_step_t_compute_target_rect(void *this_ptr) {
  * "停用原生 autoHideTimeout"逻辑：CjCandidateBar 是我们自己定义的
  * Rectangle，没有任何原生自动隐藏行为需要对抗，可见性 100% 由我们自己
  * 通过 visible 属性决定。 */
+
+/* Step CB-FMT：笔记本候选栏避让格式行（vkb-format-menu）。
+ * 缺陷：候选栏 anchors.bottom=keyboardLayout.top、向上 94px、z:999；笔记本的格式行
+ * vkb-format-menu（有序/无序/任务列表、撤销/重做，真机实测 absY≈1166 h≈82，紧贴键盘
+ * 顶边上方）正落在候选栏这条带里，被 z:999 盖住；搜索页无此格式行故正常。
+ * 修复：候选栏显示时递归找 vkb-format-menu，存在则置 hasFormatRow=true，qmld 里
+ * anchors.bottomMargin: hasFormatRow?82:0 把候选栏底边上移一个格式行高度让位。
+ * 真机几何定位见白皮书候选栏节。 */
+/* 读 item 的 objectName 到 buf（UTF-16→ASCII，非 ASCII 记 '?'）。 */
+static void cj_geom_objname(void *item, char *buf, int cap) {
+    buf[0] = '\0';
+    if (!item || !g_qobject_property || !g_qvariant_tostring || !g_qvariant_dtor) return;
+    CjVariant32 v = g_qobject_property(item, "objectName");
+    CjPtrList24 s = g_qvariant_tostring(&v);
+    int n = 0;
+    if (s.ptr && s.size > 0 && s.size < 200) {
+        const uint16_t *u = (const uint16_t *)s.ptr;
+        for (long long i = 0; i < s.size && n < cap - 1; i++) {
+            uint16_t c = u[i];
+            buf[n++] = (c >= 32 && c < 127) ? (char)c : '?';
+        }
+    }
+    buf[n] = '\0';
+    g_qvariant_dtor(&v);
+}
+/* 从 root 递归找【当前真正显示】的 vkb-format-menu（笔记本格式行）。判据三合一：
+ * isVisible()（考虑父链，排除搜索页里隐藏的残留元素）+ height>10 + 绝对 y 落在候选栏
+ * 覆盖区[1040,1300]（紧贴键盘上方，排除屏外/别处的同名元素）。累加 abs_y。
+ * 深度/宽度剪枝防跑飞；只在候选栏显示时调（打字才走，非每帧）。 */
+static int cj_has_format_menu(void *item, double abs_y, int depth) {
+    if (!item || depth > 13 || !g_qquickitem_childitems) return 0;
+    double y = abs_y + (g_qquickitem_y ? g_qquickitem_y(item) : 0);
+    char nm[24];
+    cj_geom_objname(item, nm, sizeof(nm));
+    if (strcmp(nm, "vkb-format-menu") == 0) {
+        double h = g_qquickitem_height ? g_qquickitem_height(item) : 0;
+        char vis = g_qquickitem_isvisible ? g_qquickitem_isvisible(item) : 1;
+        if ((vis & 1) && h > 10 && y >= 1040 && y <= 1300) return 1;
+        /* 不满足则继续找（可能有多个同名元素，别的才是活跃那个） */
+    }
+    CjPtrList24 ch = g_qquickitem_childitems(item);
+    if (ch.size > 0 && ch.size < 80 && ch.ptr) {
+        void **arr = (void **)ch.ptr;
+        for (long long i = 0; i < ch.size; i++)
+            if (cj_has_format_menu(arr[i], y, depth + 1)) return 1;
+    }
+    return 0;
+}
+
 static void cj_step_t_update_popup(void *this_ptr, const char *const *candidates, const long long *lens, int count,
                                     int visible, int is_utf8) {
     (void)this_ptr; /* Step AA 的 targetRect/width/height 手动计算已经不需要了，
@@ -2296,6 +2348,19 @@ static void cj_step_t_update_popup(void *this_ptr, const char *const *candidates
         memset(&v, 0, sizeof(v));
         g_qvariant_ctor_bool(&v, visible ? true : false);
         ok_visible = g_qobject_setproperty(g_candidatebar_ptr, "visible", &v);
+        g_qvariant_dtor(&v);
+    }
+
+    /* Step CB-FMT：候选栏显示时检测笔记本格式行（vkb-format-menu），置 hasFormatRow
+     * 让候选栏底边上移让位（避免 z:999 盖住格式行）。搜索页无格式行 → false → 不偏移。 */
+    if (visible && g_qquickitem_parentitem && g_qvariant_ctor_bool) {
+        void *it = g_candidatebar_ptr, *root = g_candidatebar_ptr;
+        for (int i = 0; i < 14 && it; i++) { root = it; it = g_qquickitem_parentitem(it); }
+        int has_fmt = cj_has_format_menu(root, 0.0, 0);
+        CjVariant32 v;
+        memset(&v, 0, sizeof(v));
+        g_qvariant_ctor_bool(&v, has_fmt ? true : false);
+        g_qobject_setproperty(g_candidatebar_ptr, "hasFormatRow", &v);
         g_qvariant_dtor(&v);
     }
 
