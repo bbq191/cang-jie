@@ -40,9 +40,16 @@ weread = [
     "qrcode",
     "rmscene",
 ]
-# PKM ★待办检测 Python 原型 + .rm 导出（生产走 device-rs 的 Rust）
+# PKM ★待办检测 Python 原型 + .rm 导出（生产走 pkm/ 的 Rust）
 pkm = [
     "rmscene",
+]
+# 拼音引擎 host 侧算法原型 + 差分测试（生产走 chinese-ime/pinyin-engine/c 的 C）
+# 许可证：PyYAML MIT · OpenCC Apache-2.0（均 host 工具依赖，不编进 .so）。
+# PySide6（ui/ 候选栏 GUI demo）刻意不进环境——它重且仅演示用，走系统 python3。
+pinyin = [
+    "pyyaml",      # src/shuangpin.py 双拼方案表
+    "opencc",      # src/traditional.py 繁简转换
 ]
 # 离线工具（从 xochitl 二进制解 QML 等）
 tools = [
@@ -55,4 +62,4 @@ test = [
 
 [tool.uv]
 package = false                                   # 虚拟项目：管环境，不构建自身
-default-groups = ["weread", "pkm", "tools", "test"]
+default-groups = ["weread", "pkm", "pinyin", "tools", "test"]

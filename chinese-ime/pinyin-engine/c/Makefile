@@ -10,12 +10,12 @@
 
 CC ?= gcc
 AARCH64_CC ?= aarch64-linux-gnu-gcc
-# 本仓库的 venv 实际在 cang-jie/rmfw/.venv（见 pinyin-engine/README.md
-# "跑起来"一节），不是 pinyin-engine/.venv——下面用到 $(PY) 的地方都是
-# 先 `cd ..`（进 pinyin-engine/）再引用，所以这里写相对 pinyin-engine/
-# 的路径 ../rmfw/.venv/bin/python3；都带了 "|| python3" 兜底，路径不对
-# 时退回系统 python3。
-PY ?= ../rmfw/.venv/bin/python3
+# 本仓库统一 venv 由根 uv 管（cang-jie/.venv，见根 pyproject.toml + PROTOTYPES.md）。
+# 下面用到 $(PY) 的地方都先 `cd ..`（进 pinyin-engine/）再引用，所以这里写相对
+# pinyin-engine/ 的路径 ../../.venv/bin/python3；都带 "|| python3" 兜底，路径不对时
+# 退回系统 python3。（旧值 ../rmfw/.venv 是 pinyin-engine 尚在仓库根时的历史路径，
+# 归拢进 chinese-ime/ + 改用根 uv 后已失效，一直靠兜底跑系统 python——2026-08-23 修正。）
+PY ?= ../../.venv/bin/python3
 
 SRC = src/syllables.c src/segment.c
 DICT_SRC = src/dictionary.c

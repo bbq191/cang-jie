@@ -60,9 +60,14 @@ ssh root@10.11.99.1 'cd /home/root && tar -xzf cangjie-ime-installer.tar.gz && /
 
 ### 本地开发 / 测试（不需要设备）
 
+所有 host 侧 Python（算法原型 / 测试 / 离线工具）由**根 uv 统一管理**（单个 `.venv` + 依赖按线分组）；
+「上机生产模块 ↔ 它的 Python 原型」的完整映射与跑法见 **[PROTOTYPES.md](PROTOTYPES.md)**。
+
 ```bash
-# 拼音引擎：Python 单测 + C 差分测试
-cd chinese-ime/pinyin-engine && python3 -m pytest -q
+uv sync                 # 建统一 .venv（weread/pkm/pinyin/tools/test 各线依赖）
+
+# 拼音引擎：Python 单测 + C 差分测试（diff-check 逐字节对拍 C↔Python，走统一 .venv）
+uv run pytest chinese-ime/pinyin-engine/tests -q
 cd chinese-ime/pinyin-engine/c && make test && make diff-check
 
 # 设备端 hook：宿主机单测 + aarch64 交叉编译（xovi 扩展需 xovigen，XOVI_DIR 指向 xovi clone）
