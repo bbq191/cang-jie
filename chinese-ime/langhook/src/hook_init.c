@@ -259,6 +259,17 @@ static const uint8_t PROLOGUE_KBS_STATICMETACALL[] = { /* KeyboardSettingsAttach
     0xa1, 0x2b, 0x00, 0x54,
 };
 
+/* Step HL2：荧光笔"吸整行"元凶——命中区间向两边扩张的函数（.169 FUN_00f05ad0，
+ * 中文实测走这条：对每个子区间调 FUN_00f052f0 把 start/end 向 ±方向扩张到边界）。
+ * 前 20 字节纯栈/寄存器可安全 patch；offset 32 的 CBZ 在 patch 区外、同版本固定，精确匹配。
+ * x0=scene，x1=range 向量。 */
+static const uint8_t PROLOGUE_HL_EXPAND[] = {
+    0x3f, 0x23, 0x03, 0xd5, 0xfd, 0x7b, 0xbd, 0xa9, 0xfd, 0x03, 0x00, 0x91,
+    0xf5, 0x13, 0x00, 0xf9, 0xf5, 0x03, 0x00, 0xaa, 0x20, 0x00, 0x40, 0xf9,
+    0xf3, 0x53, 0x01, 0xa9, 0xf4, 0x03, 0x01, 0xaa, 0x80, 0x00, 0x00, 0xb4,
+    0x01, 0x00, 0x40, 0xb9,
+};
+
 /* 韧性重构：各 hook 目标运行期自定位结果（0=未唯一命中，对应 hook 跳过 safe
  * mode）。setLanguageCode 主 hook 仍在 cj_hook_init 里就地解析，不进这张表。 */
 static uintptr_t g_addr_fun9174d0 = 0;         /* Step G */
@@ -273,6 +284,7 @@ static uintptr_t g_addr_kbs_staticmetacall = 0; /* Step KBS：设置页屏幕键
 static uintptr_t g_vk_metaobject = 0;          /* Step V-2：扫 static_metacall 唯一 qword-0x18 */
 static uintptr_t g_ef_metaobject = 0;          /* Step EF */
 static uintptr_t g_kbs_metaobject = 0;         /* Step KBS：靠 static_metacall 特征码地址反查 */
+static uintptr_t g_addr_hl_expand = 0;         /* Step HL2：荧光笔命中区间→整行扩张（CJK 修复目标） */
 
 /* 已知版本的入口相对基址偏移，只用来做“命中地址是否落在已知版本范围内”的
  * 诊断日志，不参与实际定位逻辑——真正定位靠上面的特征码扫描，这里只是
@@ -4511,6 +4523,63 @@ static void cj_install_epubproperties_settextformat_hook(void) {
 }
 /* =========== Step EF 第一/三阶段代码段结束 =========== */
 
+/* =========== Step HL2：荧光笔汉字吸附修复（真机 2026-08-23 通过）===========
+ * .169 FUN_00f05ad0 = 把荧光笔命中的精确区间向两边扩张（对每个子区间调 FUN_00f052f0
+ * 扩 start/end）→ 整行；对无空格中文就是"划一小段吸整行"的病根。
+ * 参数：x0=scene（glyph 数组 *(scene+8)，每项 0x38 字节，+0x30=QChar），
+ *       x1=range 向量 v={refcount@0, 子区间ptr@8(int[2]{start,end} 数组), count@16}。
+ * 修复：首字为 CJK 时跳过扩张、保命中层的精确边界（划哪吸哪，=镇纸效果）；英文/其它照常扩张。
+ * g_hl_expand_neuter 置 0 可临时恢复原生扩张。机理。 */
+typedef void (*orig_hl_expand_fn_t)(long, void *);
+static orig_hl_expand_fn_t g_orig_hl_expand_call_through = NULL;
+static int g_hl_expand_neuter = 1;   /* 1=CJK 跳过扩张（修复）；0=恢复原生扩张 */
+
+/* glyph 数组第 idx 个字的 QChar 是否属 CJK。scene+8 是 glyph 数组基址。 */
+static int cj_hl_glyph_is_cjk(long scene, int idx) {
+    if (idx < 0) return 0;
+    long garr = 0;
+    memcpy(&garr, (const void *)(scene + 8), sizeof(garr));
+    if (!garr) return 0;
+    uint16_t ch = 0;
+    memcpy(&ch, (const void *)(garr + (long)idx * 0x38 + 0x30), sizeof(ch));
+    return (ch >= 0x4E00 && ch <= 0x9FFF)   /* CJK 统一表意 */
+        || (ch >= 0x3400 && ch <= 0x4DBF)   /* 扩展 A */
+        || (ch >= 0xF900 && ch <= 0xFAFF)   /* 兼容表意 */
+        || (ch >= 0x3000 && ch <= 0x303F);  /* CJK 标点 */
+}
+
+static void cj_hl_expand_handler(long scene, void *rng_v) {
+    /* CJK 首字的命中区间：跳过原扩张函数、保命中层精确边界（划哪吸哪）；
+     * 英文/其它：call-through 照常扩张，行为与原生一致。 */
+    if (g_hl_expand_neuter) {
+        uint64_t *v = (uint64_t *)rng_v;
+        if (v) {
+            int *subs = (int *)(uintptr_t)v[1];
+            long count = (long)v[2];
+            if (subs && count > 0 && cj_hl_glyph_is_cjk(scene, subs[0])) {
+                return;   /* CJK：不调原扩张函数 */
+            }
+        }
+    }
+    if (g_orig_hl_expand_call_through) {
+        g_orig_hl_expand_call_through(scene, rng_v);
+    }
+}
+
+static void cj_install_hl_expand_hook(void) {
+    uintptr_t target = g_addr_hl_expand;
+    if (!target) return;
+    void *stub = NULL;
+    if (!patch_target((void *)target, (void *)cj_hl_expand_handler, &stub)) {
+        fprintf(stderr, "[cangjie] 荧光笔EXPAND hook 安装失败（safe mode）\n");
+        return;
+    }
+    g_orig_hl_expand_call_through = (orig_hl_expand_fn_t)stub;
+    fprintf(stderr, "[cangjie] 荧光笔EXPAND hook 安装完成 @ %p（neuter=%d）\n",
+            (void *)target, g_hl_expand_neuter);
+}
+/* =========== Step HL2 代码段结束 =========== */
+
 static void cj_install_virtualkeyboard_keyhandler_hook(void) {
     uintptr_t target = g_addr_vk_keyhandler;
     if (!target) return;
@@ -4600,6 +4669,8 @@ static void cj_hook_init(void) {
             sizeof(PROLOGUE_EF_SETTEXTFORMAT), "FUN_00c36530 (Step EF)");
     g_addr_kbs_staticmetacall = cj_resolve_target(base, size, PROLOGUE_KBS_STATICMETACALL, NULL,
             sizeof(PROLOGUE_KBS_STATICMETACALL), "KeyboardSettingsAttached::qt_static_metacall (Step KBS)");
+    g_addr_hl_expand = cj_resolve_target(base, size, PROLOGUE_HL_EXPAND, NULL,
+            sizeof(PROLOGUE_HL_EXPAND), "FUN_00f05ad0 (Step HL2 荧光笔扩张)");
 
     /* 两个 metaobject：靠已定位的 static_metacall 函数地址反查唯一 qword−0x18。 */
     g_vk_metaobject = cj_find_metaobject(base, size, g_addr_vk_dispatch, "VK_STATICMETAOBJECT");
@@ -4618,6 +4689,7 @@ static void cj_hook_init(void) {
     cj_install_epubproperties_staticmetacall_hook();
     cj_install_epubproperties_settextformat_hook();
     cj_install_keyboardsettings_staticmetacall_hook();
+    cj_install_hl_expand_hook();
 }
 
 /* ============================================================================
