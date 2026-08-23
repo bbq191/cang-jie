@@ -1,0 +1,58 @@
+# ─────────────────────────────────────────────────────────────
+# cang-jie —— host 侧 Python 工具统一环境（uv 管理）
+#
+# 定位：本项目生产实现在 Rust(reading/device-rs、pkm/device-rs) 与 C(chinese-ime/langhook、
+#   pinyin-engine/c)。这里的 Python 全是 host 侧「测试 / 原型 / 离线工具」，
+#   不打包分发，故声明为虚拟项目（package = false）：uv 只负责建一个统一 .venv
+#   + 锁依赖，不构建/安装本项目自身。
+#
+# 用法：
+#   uv sync                     # 建 .venv 并装 default-groups
+#   uv sync --all-groups        # 装全部线
+#   uv run pytest               # 在统一环境跑测试
+#   uv run python xovi-extensions/reading-qol/tools/extract_qml.py ...
+#
+# 许可证留痕（沿用旧 requirements.txt，按项目纪律实测 dist-info 确认，非凭印象）：
+#   pytest MIT · qrcode BSD-3-Clause(实测2026-08-13, Copyright Lincoln Loop)
+#   rmscene MIT(.rm v6 读写) · 其余 requests/flask/lxml/numpy/pillow/bs4/
+#   websocket-client/wcwidth/requests-toolbelt 均 host 联调依赖，动版本再逐一实测。
+# ─────────────────────────────────────────────────────────────
+
+[project]
+name = "cang-jie-tools"
+version = "0"
+description = "Host-side helper/test tooling for the cang-jie reMarkable project (not distributed)"
+requires-python = ">=3.11"
+dependencies = []   # 无「always-on」依赖；一切按线放进 dependency-groups
+
+[dependency-groups]
+# 微信读书集成 host 联调（下载/组包/登录/面板 bridge/highlights 反解）
+weread = [
+    "requests",
+    "requests-toolbelt",
+    "flask",
+    "pillow",
+    "numpy",
+    "wcwidth",
+    "lxml",
+    "beautifulsoup4",
+    "websocket-client",
+    "qrcode",
+    "rmscene",
+]
+# PKM ★待办检测 Python 原型 + .rm 导出（生产走 device-rs 的 Rust）
+pkm = [
+    "rmscene",
+]
+# 离线工具（从 xochitl 二进制解 QML 等）
+tools = [
+    "zstandard",
+]
+# 差分测试 / 单测（全线共用）
+test = [
+    "pytest",
+]
+
+[tool.uv]
+package = false                                   # 虚拟项目：管环境，不构建自身
+default-groups = ["weread", "pkm", "tools", "test"]

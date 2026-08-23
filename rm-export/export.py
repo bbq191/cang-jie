@@ -5,8 +5,8 @@
     python3 export.py --src <镜像目录> --out <输出目录>
 
 只读设备镜像，绝不写回。核心反解 `page_highlights` + `merge_adjacent` 被
-`weread-client/highlights/reverse.py` 懒导入复用；生产设备端等价实现是
-`weread-client/device-rs/src/rmread.rs`（remarkable_lines，byte-exact，两者对齐）。
+`reading/highlights/reverse.py` 懒导入复用；生产设备端等价实现是
+`reading/device-rs/src/rmread.rs`（remarkable_lines，byte-exact，两者对齐）。
 
 注意：当前固件写的 .rm 比 rmscene 版本新，read_blocks 会刷 "newer format" 警告并可能
 跳过尾部数据——block 结构可读，笔划/高亮不受影响。生产解析以 Rust 那份为准。
