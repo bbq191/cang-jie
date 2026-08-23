@@ -310,6 +310,8 @@ opencc -c s2twp.json -i zh_CN_strings.txt -o zh_TW_strings.txt
 
 ### 3.3 字体：思源黑体 / Noto Sans CJK
 
+> **2026-08-23 字体方案演进（当前定案）**：早期思源/Noto → 统一 LXGW Neo XiHei → 阿里普惠体（为 e-ink 真粗字重、缓解晰黑单字重发虚）→ **现定案：主字体霞鹜新致宋（LXGW Neo ZhiSong Screen Full，宋体书卷气，BMP+扩展A 全覆盖）+ fontconfig 兜底花园明朝 B（HanaMinB，覆盖 CJK 扩展 B U+20000+）**。根因：词典雾凇 41448 大字表含 1.3 万扩展 B 生僻字，而 LXGW/阿里普惠体只覆盖到扩展 A → 候选框+笔记本某些生僻字（如 `hang` 尾部 𠡊）豆腐块。修复后扩展 B 字字形级回退 HanaMinB 显示、不再方块。候选框字体在 `candidatebar.qmd`(cjkFamily)，笔记本经 `fontconfig-cangjie.conf`（zh fallback 链，install.sh 部署到设备 `~/.config/fontconfig/fonts.conf`）。字体覆盖诊断/速查/踩坑（商业美术字体普遍只 43% BMP 覆盖等）。真机验证通过。
+
 - **协议**：SIL Open Font License 1.1，个人使用可以自由嵌入到设备里，唯一的限制是不能把字体本身单独包装出售、且要保留版权声明文件——放进我的扩展包里附一份 `LICENSE.txt` 就够了。
 - **体积控制**：原始字体几十 MB，大部分字我用不到。用 `pyftsubset` 只保留常用字（简体参考 GB2312 一级字库、繁体参考 Big5 常用字表）+ ASCII + 标点，实测能压到 2MB 左右，细节见下方。
 - **e-ink 观感**：先拿 Regular/Medium 字重上机测试，过细的笔画（Light）在墨水屏上容易发虚，这个只能实机调，模拟器看不出来。

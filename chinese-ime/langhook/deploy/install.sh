@@ -62,6 +62,7 @@ mkdir -p "$FONTS"
 #   LXGWWenKaiMonoGBScreen=霞鹜文楷、LXGWNeoZhiSongScreenFull=霞鹜新致宋、KF_Readerly=拉丁阅读体。
 for f in "$PAYLOAD"/LXGWNeoXiHeiScreenFull.ttf "$PAYLOAD"/LXGWWenKai-Regular.ttf \
          "$PAYLOAD"/LXGWWenKaiMonoGBScreen.ttf "$PAYLOAD"/LXGWNeoZhiSongScreenFull.ttf \
+         "$PAYLOAD"/HanaMinB.ttf \
          "$PAYLOAD"/KF_Readerly-Regular.ttf "$PAYLOAD"/KF_Readerly-Bold.ttf \
          "$PAYLOAD"/KF_Readerly-Italic.ttf "$PAYLOAD"/KF_Readerly-BoldItalic.ttf; do
     [ -f "$f" ] && cp "$f" "$FONTS/"

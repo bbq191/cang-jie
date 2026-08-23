@@ -43,7 +43,7 @@ AFFECT /qt/qml/xofm/modules/virtualkeyboard/qml/KeyboardPanel.qml
                 property bool expanded: false
                 property bool hasFormatRow: false
                 property string previewText: ""
-                property string cjkFamily: "LXGW Neo XiHei Screen Full"
+                property string cjkFamily: "LXGW Neo ZhiSong Screen Full"
                 signal keySelected(string symbol, int idx)
 
                 onKeySelected: (symbol, idx) => {
