@@ -157,7 +157,7 @@ AFFECT /qml/device/view/settings/Settings.qml
                         id: cjPgSub
                         text: cjHubRoot.i18n.sub
                         renderType: Text.NativeRendering; font.family: "reMarkable Sans"; antialiasing: false
-                        color: "#3a3a3a"
+                        color: "#000000"
                         font.pixelSize: 28
                         anchors { top: cjPgTitle.bottom; left: parent.left; topMargin: 10; leftMargin: 64 }
                     }
@@ -186,7 +186,7 @@ AFFECT /qml/device/view/settings/Settings.qml
                                 anchors { left: parent.left; right: parent.right; top: cjHubFlipT.bottom; rightMargin: 100; topMargin: 8 }
                                 text: cjHubRoot.i18n.flipD
                                 renderType: Text.NativeRendering; font.family: "reMarkable Sans"; antialiasing: false
-                                color: "#3a3a3a"; font.pixelSize: 24; wrapMode: Text.WordWrap
+                                color: "#000000"; font.pixelSize: 24; wrapMode: Text.WordWrap
                             }
                             Text {
                                 anchors { right: parent.right; verticalCenter: parent.verticalCenter; rightMargin: 20 }
@@ -212,7 +212,7 @@ AFFECT /qml/device/view/settings/Settings.qml
                                 anchors { left: parent.left; right: parent.right; top: cjHubBookT.bottom; rightMargin: 100; topMargin: 8 }
                                 text: cjHubRoot.i18n.bookD
                                 renderType: Text.NativeRendering; font.family: "reMarkable Sans"; antialiasing: false
-                                color: "#3a3a3a"; font.pixelSize: 24; wrapMode: Text.WordWrap
+                                color: "#000000"; font.pixelSize: 24; wrapMode: Text.WordWrap
                             }
                             Text {
                                 anchors { right: parent.right; verticalCenter: parent.verticalCenter; rightMargin: 20 }
@@ -238,7 +238,7 @@ AFFECT /qml/device/view/settings/Settings.qml
                                 anchors { left: parent.left; right: parent.right; top: cjHubSnipT.bottom; rightMargin: 100; topMargin: 8 }
                                 text: cjHubRoot.i18n.snipD
                                 renderType: Text.NativeRendering; font.family: "reMarkable Sans"; antialiasing: false
-                                color: "#3a3a3a"; font.pixelSize: 24; wrapMode: Text.WordWrap
+                                color: "#000000"; font.pixelSize: 24; wrapMode: Text.WordWrap
                             }
                             Text {
                                 anchors { right: parent.right; verticalCenter: parent.verticalCenter; rightMargin: 20 }
@@ -264,7 +264,7 @@ AFFECT /qml/device/view/settings/Settings.qml
                                 anchors { left: parent.left; right: parent.right; top: cjHubNoteT.bottom; rightMargin: 100; topMargin: 8 }
                                 text: cjHubRoot.i18n.noteD
                                 renderType: Text.NativeRendering; font.family: "reMarkable Sans"; antialiasing: false
-                                color: "#3a3a3a"; font.pixelSize: 24; wrapMode: Text.WordWrap
+                                color: "#000000"; font.pixelSize: 24; wrapMode: Text.WordWrap
                             }
                             Text {
                                 anchors { right: parent.right; verticalCenter: parent.verticalCenter; rightMargin: 20 }
@@ -447,7 +447,7 @@ AFFECT /qml/device/view/settings/Settings.qml
                         id: cjSnipSubtitle
                         text: cjSnipRoot.i18n.sub
                         renderType: Text.NativeRendering; font.family: "reMarkable Sans"; antialiasing: false
-                        color: "#3a3a3a"
+                        color: "#000000"
                         font.pixelSize: 28
                         anchors { top: cjSnipTitle.bottom; left: parent.left; topMargin: 10; leftMargin: 64 }
                     }
@@ -492,7 +492,7 @@ AFFECT /qml/device/view/settings/Settings.qml
                             anchors { top: cjSnipAddBar.bottom; left: parent.left; topMargin: 40 }
                             text: cjSnipRoot.i18n.empty
                             renderType: Text.NativeRendering; font.family: "reMarkable Sans"; antialiasing: false
-                            color: "#3a3a3a"
+                            color: "#000000"
                             font.pixelSize: 28
                         }
 
@@ -602,7 +602,7 @@ AFFECT /qml/device/view/settings/Settings.qml
                             anchors { top: cjSnipEditTitle.bottom; left: parent.left; topMargin: 30 }
                             text: cjSnipRoot.i18n.scL
                             renderType: Text.NativeRendering; font.family: "reMarkable Sans"; antialiasing: false
-                            color: "#3a3a3a"
+                            color: "#000000"
                             font.pixelSize: 26
                         }
                         Rectangle {
@@ -634,7 +634,7 @@ AFFECT /qml/device/view/settings/Settings.qml
                             anchors { top: cjSnipScBox.bottom; left: parent.left; topMargin: 26 }
                             text: cjSnipRoot.i18n.phL
                             renderType: Text.NativeRendering; font.family: "reMarkable Sans"; antialiasing: false
-                            color: "#3a3a3a"
+                            color: "#000000"
                             font.pixelSize: 26
                         }
                         Rectangle {
@@ -718,7 +718,7 @@ AFFECT /qml/device/view/settings/Settings.qml
                             anchors { top: cjSnipEditBtns.bottom; left: parent.left; right: parent.right; topMargin: 30 }
                             text: cjSnipRoot.i18n.hint
                             renderType: Text.NativeRendering; font.family: "LXGW Neo XiHei Screen Full"; antialiasing: false
-                            color: "#3a3a3a"
+                            color: "#000000"
                             font.pixelSize: 24
                             wrapMode: Text.WordWrap
                         }
@@ -886,7 +886,7 @@ AFFECT /qml/device/view/settings/Settings.qml
                         id: cjPgSub
                         text: cjFlipRoot.i18n.sub
                         renderType: Text.NativeRendering; font.family: "reMarkable Sans"; antialiasing: false
-                        color: "#3a3a3a"
+                        color: "#000000"
                         font.pixelSize: 28
                         anchors { top: cjPgTitle.bottom; left: parent.left; topMargin: 10; leftMargin: 64 }
                     }
@@ -1145,7 +1145,7 @@ AFFECT /qml/device/view/settings/Settings.qml
                         id: cjPgSub
                         text: cjBookRoot.i18n.sub
                         renderType: Text.NativeRendering; font.family: "reMarkable Sans"; antialiasing: false
-                        color: "#3a3a3a"
+                        color: "#000000"
                         font.pixelSize: 28
                         anchors { top: cjPgTitle.bottom; left: parent.left; topMargin: 10; leftMargin: 64 }
                     }
@@ -1326,7 +1326,7 @@ AFFECT /qml/device/view/settings/Settings.qml
                         id: cjPgSub
                         text: cjNoteRoot.i18n.sub
                         renderType: Text.NativeRendering; font.family: "reMarkable Sans"; antialiasing: false
-                        color: "#3a3a3a"; font.pixelSize: 28
+                        color: "#000000"; font.pixelSize: 28
                         anchors { top: cjPgTitle.bottom; left: parent.left; topMargin: 10; leftMargin: 64 }
                     }
                     Rectangle {
