@@ -40,6 +40,8 @@ rmfw/extracted
 rmfw/out/
 rmfw/*.bin
 ghidra-project/*.rep/
+# Ghidra headless 运行产物（decompile/disasm/dump/find*/import 的 .log），可重生成，不入库
+ghidra-project/*.log
 
 # 词典（源 .dict.yaml 与派生大 txt；递归匹配子目录）
 chinese-ime/pinyin-engine/data/**/*.dict.yaml
@@ -54,7 +56,12 @@ chinese-ime/fonts/**/*.otf
 assets/*
 !assets/logo.png
 
-# ── OS / 编辑器 ──
+# ── OS / 编辑器 / 解压垃圾 ──
 .DS_Store
+__MACOSX/
+._*
 *.swp
 *~
+
+# 字体压缩包（解压后用目录里的文件，zip 本身不入库）
+chinese-ime/fonts/**/*.zip
