@@ -75,7 +75,7 @@
 | 1 | **逆向基座** | `ghidra-project/` · `rmfw/` | 全线共享地基（第 11 节架构原则） | 持续维护 |
 | 2 | **中文化**（显示 + 输入法） | `chinese-ime/` | 两本姊妹白皮书；本文 P3 字体 | 收尾维护 |
 | 3 | **阅读**（微信读书 + EPUB 优化） | `reading/` 主体 | **P0 墨香** + EPUB 优化器（见[阅读白皮书](../reading/docs/reMarkable阅读白皮书.md)） | 端到端真机验证 |
-| 4 | **系统增强**（阅读/显示/笔记 UX） | `xovi-extensions/` + `chinese-ime/langhook`（笔记增强） | **P4**（09 节：点击翻页/快刷/清残影/字体 + 荧光笔汉字吸附） | 真机验证 |
+| 4 | **系统增强**（阅读/显示/笔记 UX） | `xovi-extensions/` + `chinese-ime/langhook`（笔记增强） | **P4**（见[系统增强白皮书](../xovi-extensions/docs/reMarkable系统增强白皮书.md)：点击翻页/快刷/清残影/字体/键盘Mono + 荧光笔吸附） | 真机验证 |
 | 5 | **PKM / 知识管理** | `pkm-semantic/`（原型）+ `pkm/`（Rust 生产 crate，单向依赖 `reading/`） | **★全局待办**（见 [PKM 白皮书](../pkm/docs/reMarkablePKM白皮书.md)）；P1/P2 数据流转是其上游 | 首个能力真机端到端 |
 | 6 | **额外应用** | `screenshot-tool/` | 未入本文优先级表（`screenshot-feasibility` 记忆：独立 DRM 直读判死，须 hook xochitl） | 规划中 |
 
@@ -203,37 +203,11 @@ rmkit-cn 的文本 AI 原本在服务器端扫 `.rm` 拼整页文字，后来**�
 
 用真实使用一段时间后，只对"确实高频且三方都没有"的缺口考虑自研。注意：第三方扩展与本项目 `cangjie-langhook.so` 共存时，遵守既有纪律——一步一确认、独立部署验证、qt-resource-rebuilder 的 qmd 补丁逐个启用。
 
-### 9.1 阅读体验增强（点击翻页 + 快速黑白 + 清残影 + 字体，设置页「系统增强」面板）—— ✅ 已真机端到端验证（2026-08-14 首版；2026-08-17 接进设置页面板 + 清残影独立/字体增强）
+### 9.1 系统增强（阅读/显示/笔记 UX，设置页「系统增强」面板）—— ✅ 已真机端到端验证
 
-> 缘起：竞品 `pretenderlu/rmtool`（GPL-3.0）的 `tap-page-turn` 与 `fast-mono-reading`。用户明确这两个功能对阅读体验很重要（前提是不损伤硬件——已确认无风险，见 4.1 修正块）。这是从 4.1"显示优化"里拆出、独立立项的一项。
+> **完整设计与真机调试记录见《[系统增强白皮书](../xovi-extensions/docs/reMarkable系统增强白皮书.md)》（块4）。** 本节只保留路线图层面的定位与状态。
 
-**做什么**：给 xochitl 原生阅读器加两个 QML 层增强，**都不碰硬件、不改波形、不进 `xochitl_pdf_renderer`**，纯 QMLDiff 注入：
-
-1. **点击翻页（tap-page-turn）**：阅读视图分区点击——左/中区点击上一页、右/下区点击下一页，保留原生滑动、笔、缩放、菜单、选择手势。机制核到的实现（rmtool `tap-page-turn-3.28.qmd`）：在 `SceneViewGestures.qml` 的 `TouchArea` 里按归一化坐标判方向，`view.moveForward()`/`view.moveBackward()` 翻页，并用一串守卫条件（`zoomedIn`/`notePage`/`textMode`/`textSelectionMode`/文件类型等）避免误触。Move 屏小、滑动翻页别扭，点击翻页是刚需级改善，且与 P0 微信读书注入的 EPUB 阅读体验直接叠加。
-2. **快速黑白（fast-mono-reading）**：阅读时把屏幕模式切 `Epaper.ScreenModeItem.Mono` 加速刷新，每 N 页（5/10/20/30/从不）用 `ghostBuster.forceClearNow` 清残影，"更多"菜单加原生开关。机制与硬件安全见 4.1 修正块。
-
-**本次进度（2026-08-14）**：**按 .166 真实 QML 重写 + qmldiff 离线实跑 + 分两次真机部署验证通过**。
-
-**建立的离线验证管线（方法论资产，务必复用）**：host 无法运行 xochitl，但能用官方 qmldiff 工具离线实跑补丁——① `cargo build` 出 `asivery/qmldiff` CLI；② 从设备 scp `.166` 的 `/usr/bin/xochitl`（md5 `5215ef7ab…`；本地 `rmfw/` 那份是旧 .164 别用）；③ `xovi-extensions/reading-qol/tools/extract_qml.py`（zstd magic 全局扫）解出 556 个真实 QML，靠内容 grep 认领目标；④ 设备 `hashtab` 解析出全部真实资源路径明文（AFFECT 路径权威来源）；⑤ 把目标 QML 放真实路径下 `qmldiff apply-diffs` 实跑，验解析/选择器命中/emit 合法 QML——与设备端 qt-resource-rebuilder 走同一份 qmldiff 代码。**这条抓出了 `;`→`//` 注释 bug**（INSERT 块内是 QML，注释须 `//`）。
-
-**核对修正的草稿臆想**（rmtool ferrari 推断 vs .166 实际）：`view` = `DeviceSceneView` 的 `FocusScope#root`（`view: root` 注入）；`zoomedIn/zoomedOut` 是 SceneView 上的 bool（草稿臆想的 `itemSelectionMode/textSelectionMode` 不存在）；`Epaper.ScreenModeItem` 无 id 选择器要写全点号（裸 `ScreenModeItem` 不匹配）。
-
-- ✅ **点击翻页**：REBUILD `SceneViewGestures.qml` 的 `touchClick.onClick` 注入分区判方向，`view.moveForward/Backward()`。真机验证通过（`READING-QOL-TAP` 命中日志 + 用户确认）。**分区最终用左右三分**（左 1/3 上一页、右 1/3 下一页、中间中性）——初版按"纵向中段 + 底部通栏"分区，真机发现左下角误翻下一页（底部通栏抢判定），改左右三分修正。
-- ✅ **快速黑白**：3 文件 AFFECT——状态注入 `DeviceSceneView#root`、4 指手势切换（`SceneViewGestures`）、周期 `ghostBuster.forceClearNow`（`DocumentView`，`root.ghostBuster` 显式）。真机 Mono 生效。**踩坑·改对对象**：最初 REPLACE `DocumentView` 的 ScreenModeItem，但它阅读时 `visible: globalScreenMode != undefined` 为 false、不控屏，改了没反应；真正控屏的是 `DeviceSceneView` 的 `Epaper.ScreenModeItem{id:content;visible:!screenDriver.globalMode}`（:852）——**apply-diffs 能验"选择器命中"、验不了"是不是真正控屏的那个"，靠真机才暴露**（"形状像不等于对"典型）。
-- ✅ 已并入 `deploy/install.sh`（3b 段，与 candidatebar 同目录），规范安装包重建 `cangjie-ime-installer.tar.gz`（含 3 qmd），OTA/重装重跑即恢复。
-
-**★2026-08-17 更新：TODO[集成] 已完成——整套接进设置页控制面板，4 项开关真机端到端验证通过**（当前设备真二进制 md5 **3356dde7**，非旧 .166；裸机恢复后这套本没重铺，此次连面板一起重新落地）。**2026-08-22 面板加第 5 开关「导入书籍自动优化」（默认关）**——消费方是 wr-serve（Rust）非 QML：开关写 `reading-qol.json` 的 `autoOptimize`，wr-serve 后台扫描每轮现读现判、即时生效（详见[阅读白皮书](../reading/docs/reMarkable阅读白皮书.md) §07-D）。细节与配方，要点：
-
-- **设置页入口不走阅读器 FormatMenu，而是设置 App**：`settings-reading-enhance.qmd` 往 `Settings.qml` 左侧菜单最下方插「系统增强」`ArkControls.SidebarItem`（设置页用 `onTriggered`）+ 内联「阅读增强」内容页（`SettingsCheckBoxItem` 开关，`selected`+`clicked` 手动翻转）。内容切换=`_selectedPage`(int) 哨兵 990001 → `payloadLoader.sourceComponent` 用 `REBUILD`+`LOCATE AFTER STREAM /{/` 注入早返回。菜单是 `SettingsModel` 驱动的 `Repeater`（项不在 QML 里），故往 `ColumnLayout#settingsColumn` 插静态项。
-- **跨 QML 树共享状态 = `reading-qol.json`（QML XHR 读写，/home 持久）**：`QML_XHR_ALLOW_FILE_{READ,WRITE}=1`。**大坑：同步 PUT 到 `file://` 只截断不写体 → 写必须异步；读同步 GET 正常。** 传播靠 `reading-qol-config.qmd` 在 `DeviceSceneView#root` 的 **1.5s 轮询 Timer**（onCompleted 只触发一次、返回阅读器不重建，"改了不生效"就是这个）；字体菜单例外（构建那刻读一次、退出重开生效）。
-- **默认全关**：部署后阅读行为零变化，用户在设置里逐项开。fast-mono/清残影页数不再硬编码。4 指手势保留作快捷切换。
-- **新增能力**：① 清残影从 fast-mono 拆成**独立开关 `cjRefresh`、彩屏&黑白都生效**（`forceClearNow` 是与屏幕模式无关的硬件全刷），支持**按章**（`tocModel`+`currentPage` 派生切章，`DocumentView.onCurrentPageChanged`）或按 N 页（默认 15）。② **阅读字体增强=菜单追加 3 项不替换**（`add-reading-fonts.qmd` 按 `fontEnhance` 往 `FormatFont` 的 `fontModel.append` 霞鹜文楷/霞鹜新致宋/KF Readerly；**仅 EPUB**——`epub.setFontName`，PDF 固定版式无字体菜单；ttf 装 `/home/root/.local/share/fonts/`）。
-- **qmldiff 纪律补充**：嵌套深埋节点 TRAVERSE 必须用通配 `?#id`（非通配只匹配直接子节点，直配 `ColumnLayout#settingsColumn` panic "Cannot locate"）。已并入 `deploy/install.sh`（qmd 列表 + 3 字体 + 初始 `reading-qol.json`）与 uninstall.sh。
-- **本地化 en/简/繁（2026-08-17 真机三语验证过）**：面板/菜单/字体名随 UI 语言切换实时跟随。检测踩坑——本机 `Qt.locale().name` 卡 `en_US`、UI 语言不落 `xochitl.conf`（cangjie 还 hook 了 `setLanguageCode`）、`languageSettings` 是下传 property 拿不到；正解用**响应式 `qsTranslate("SettingsModel",{Help,Cloud,Accessibility})`** 判简繁(帮助/幫助、云端/雲端、无障碍/無障礙、未翻译=en)，判别串靠 `lconvert` 反编译 `reMarkable_zh_{CN,TW}.qm` diff 得到。**QML 硬坑**：`property var T` 大写开头→设置页加载失败 `Property names cannot begin with an upper case letter`（改 `i18n`）。
-- **崩溃自愈 fail-safe**：`cangjie-qrr-failsafe.sh`(xovi pre-start) 用持久 journald `-b -1` 数上个 boot 崩溃签名 ≥3 次即隔离 6 个阅读增强 qmd（只动自己的），一个重启周期内自愈；干净 restart 不误计。。**一次真实隔离与恢复（2026-08-21）**：2026-08-19 墨香 Navigator 整页化 Popup→Item 编译失败致 xochitl 崩溃 4 次，fail-safe 把 6 个阅读增强 qmd 移进隔离区 → 系统增强菜单/功能全掉。真凶（坏的 moxiang-navigator）修好后，隔离区 qmd 移回 `qt-resource-rebuilder/` + 清 `qrr-failsafe.TRIGGERED` + 重启即恢复（hashtab 未过期不必 rebuild）。**教训：fail-safe 隔离的是"阅读增强这批"、不管真凶是谁——排查看崩溃真凶，别错怪被隔离的无辜 qmd。**
-- **返回浮标常驻/延长——判死（2026-08-21）**：脚注跳转后 xochitl 显示"Back to page X"返回浮标、默认 8 秒消失（`DeviceSceneView.qml` 的 `showNotification(...,8000)`，长注释超时就无法返回）。逆向定位到位（`showNotification` 有未用的 `showWithoutTimeout` 参、`messageTimer.interval` 是属性绑定），但两次实测（复杂三元+`2147483647`、简化单行+`45000`）**都连累同 `DeviceSceneView.qml` 的阅读增强全失效**（移除返回浮标 qmd 立即恢复）——是 **REPLACE messageTimer.interval 机制本身**（改大文件深层 Timer 属性→整文件注入回滚）连累，非表达式/大数。**彻底放弃、返回靠原生 8 秒**。规律：改 `DeviceSceneView.qml` 只有 **root 直接子**（fast-mono `FocusScope[#root] > Epaper.ScreenModeItem[#content]` REPLACE mode）安全，**深层节点属性 REPLACE 会拖垮整文件、连累同文件其它 qmd**；且 qmldiff `REPLACE` **只能改属性绑定、不能改函数/信号处理器**（REPLACE 函数报 `Cannot LOCATE Type`）。**"霞鹜文楷 屏幕版"冗余项**：`reader-font-lxgw.qmd`（旧的单字体注入，value 硬编码中文）与 `add-reading-fonts.qmd` 的楷体重复，英文系统显中文碍眼——移除 `reader-font-lxgw.qmd` 即去掉、楷体在 add-reading-fonts 保留。
-
-**许可证**：rmtool QMD 是 GPL-3.0，本项目未复制其文件，按机制自写 QMD，沿用"补丁独立文件、不编译进 `.so`"隔离取舍（不代替法律意见）。
+给 xochitl 原生阅读器/系统加一层 **纯 QMLDiff UX 增强**（不碰硬件/waveform/渲染进程，全部默认关、设置页逐项开）：**点击翻页**（左右三分，Move 小屏刚需）、**快速黑白**（锁 Mono 加速刷新）、**清残影**（`ghostBuster.forceClearNow` 硬件全刷，彩屏黑白都生效）、**阅读字体增强**（EPUB 字体菜单追加霞鹜文楷等）、**键盘 Mono**（组词态键盘区快刷）。设置页门户注入 `Settings.qml`、跨 QML 树状态走 `reading-qol.json`（XHR 写必须异步 + 全量防覆盖铁律）。「笔记增强」二级分类含荧光笔汉字吸附（本体见阅读白皮书 §03-3d）+ ★全局待办开关（本体见 PKM 白皮书）。参照 rmtool（GPL-3.0）机制净室重写、不复制其 QMD。缘起从 4.1「显示优化」拆出独立立项（硬件安全见 4.1 修正块）。全真机验证；建立的离线 qmldiff 验证管线是可复用方法论资产。
 
 ## 10｜候选方向：设备端 AI 助手（借鉴 rmkit-cn，未定级）
 
