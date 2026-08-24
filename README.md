@@ -12,8 +12,8 @@
 |---|---|---|---|---|
 | 1 | **逆向基座** | 反编译工程 + 固件镜像，离线定位 hook 点/偏移/参数签名，一切能力的共享地基 | `ghidra-project/` · `rmfw/` | 持续维护 |
 | 2 | **中文化**（显示 + 输入法） | UI 汉化（`.qm` 简/繁/港 + 字体 + 原生 Settings 集成，M0–M2）+ 拼音输入法（键盘 hook + 拼音/双拼引擎 + 候选栏 + 中英混输，M3–M7） | `chinese-ime/` | 真机全链路通过，收尾维护 |
-| 3 | **阅读**（微信读书 + EPUB 优化） | 「墨香」设备自足微信读书（扫码/下书/回传/续期）+ 通用 EPUB 优化器 | `reading/` | 真机端到端验证 |
-| 4 | **系统增强**（阅读/显示/笔记 UX） | 点击翻页 · 快速黑白 · 清残影 · 键盘 Mono · 阅读字体 · 荧光笔汉字精确吸附；集中在设置页「系统增强」面板 | `xovi-extensions/` + `chinese-ime/langhook/`（笔记增强） | 真机验证 |
+| 3 | **阅读**（微信读书 + EPUB 优化） | 「墨香」设备自足微信读书（扫码/下书/取云端进度/续期；双向回传已随 PKM 回归砍除）+ 通用 EPUB 优化器 | `reading/` | 真机端到端验证 |
+| 4 | **系统增强**（阅读/显示/笔记 UX） | 点击翻页 · 快速黑白 · 清残影 · 键盘 Mono · 阅读字体 · 快捷输入(snippets) · 荧光笔汉字精确吸附；集中在设置页「系统增强」中枢面板（四分类） | `xovi-extensions/` + `chinese-ime/langhook/`（笔记增强） | 真机验证 |
 | 5 | **PKM / 知识管理** | ★全局待办语义引擎（把设备变成 Zettelkasten 工作台的首个能力）：Python 原型标定 + Rust 生产 | `pkm-semantic/`（原型）+ `pkm/`（Rust 生产 crate，单向依赖 `reading/`） | 原型标定 + 真机端到端 |
 | 6 | **额外应用** | 截图/录屏工具 | `screenshot-tool/` | 规划中（独立进程 DRM 直读已判死，须 hook xochitl） |
 
@@ -28,7 +28,7 @@
 - **[reMarkable 中文化白皮书](chinese-ime/docs/reMarkable中文化白皮书.md)**（块2）—— UI 汉化这条线（M0–M2）。共享的环境搭建 / xovi 基础设施出处。
 - **[reMarkable 拼音输入法白皮书](chinese-ime/docs/reMarkable拼音输入法白皮书.md)**（块2）—— 输入法这条线（M3–M7）。含"从新机到当前进度"的完整复现主线。
 - **[reMarkable 阅读白皮书](reading/docs/reMarkable阅读白皮书.md)**（块3）—— 微信读书集成「墨香」+ 通用 EPUB 优化 + 墨香面板 UI/UX 规范。
-- **[reMarkable 系统增强白皮书](xovi-extensions/docs/reMarkable系统增强白皮书.md)**（块4）—— 阅读/显示/笔记 UX（点击翻页/快速黑白/清残影/字体/键盘 Mono）+ 设置页「系统增强」面板 + 离线 qmldiff 验证管线。
+- **[reMarkable 系统增强白皮书](xovi-extensions/docs/reMarkable系统增强白皮书.md)**（块4）—— 阅读/显示/笔记 UX（点击翻页/快速黑白/清残影/字体/键盘 Mono/快捷输入 snippets/荧光笔吸附）+ 设置页「系统增强」中枢面板 + 离线 qmldiff 验证管线。
 - **[reMarkable PKM 白皮书](pkm/docs/reMarkablePKM白皮书.md)**（块5）—— PKM 知识化方法论 + ★全局待办语义引擎（检测/注入/卡片/去重）。
 - **[功能路线图白皮书](docs/reMarkable功能路线图白皮书.md)**（跨块）—— "下一步做什么"优先级共识 + 6 分块地图 + 已否决方向。深设计已下沉到上面各块白皮书，本文只留优先级与状态。
 
@@ -87,5 +87,5 @@ cd chinese-ime/langhook && make test && make aarch64 XOVI_DIR=<asivery/xovi clon
 - **M3（虚拟键盘 hook）/ M4（拼音候选可用，含逐字造句/分段提交/退格撤销）/ M6（双拼 + 繁体）**：真机全链路验证通过。
 - **M5（全局可用 + 原生入口）**：核心已达成（hook 打在系统级 `VirtualKeyboard` 上、原生入口走键盘语言弹层），收尾打磨中。
 - **中英混输（Phase C）**：增量式词典补全（"你好hello"），真机验证。
-- **字体**：候选栏 + 整个 UI 按语言用 HarmonyOS Sans SC/TC。
+- **字体**：候选栏 + 整个 UI 统一用**霞鹜新致宋（LXGW Neo ZhiSong Screen Full，简繁英全覆盖）**，CJK 扩展 B 生僻字字形级回退**花园明朝 B（HanaMinB）**兜底（2026-08-23 定案，不再部署 HarmonyOS）。
 - **M7（长期维护）**：多轮实战——① 固件 OTA 后各 hook 地址位移，做了**韧性重构**（每个目标字节特征码运行期自定位、掩码通配相对跳转、metaobject 靠 static_metacall 指针反查），新固件全命中、不需再推导偏移；② 设备装 vellum 后，`cangjie-langhook.so` 重构成**合规 xovi 扩展**放 `extensions.d/`（/home 持久），弃独立 drop-in；xovi 启动配置放 `/usr/lib`（rootfs，普通重启不丢），界面翻译放 `/usr/share`；固件 OTA 冲掉 rootfs 后重跑 `install.sh` 一键恢复。全部真机验证通过。详见 [langhook/README.md](chinese-ime/langhook/README.md)。
