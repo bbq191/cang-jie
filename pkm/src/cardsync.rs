@@ -227,14 +227,23 @@ pub fn render_card(book_title: &str, stars: &[(usize, String)], prev: &CardModel
     render_card_with(book_title, stars, prev, &[CardTemplate::default()])
 }
 
-/// 同 `render_card`，但显式指定新星注入的模板集（daemon 按书的原生 Tag 选，可多套合并；
-/// 空 `tmpls` 退默认 `General`）。多套按规范序合并去重（见 `page_scaffold`）。
+/// 同 `render_card`，但全书**统一**用一套模板集（每星相同）。空 `tmpls` 退默认 `General`。
 pub fn render_card_with(book_title: &str, stars: &[(usize, String)], prev: &CardModel, tmpls: &[CardTemplate]) -> Vec<String> {
-    // 空集兜底退默认，保证任何调用都有骨架。
-    let default = [CardTemplate::default()];
-    let tmpls: &[CardTemplate] = if tmpls.is_empty() { &default } else { tmpls };
+    let specs: Vec<(usize, String, Vec<CardTemplate>)> =
+        stars.iter().map(|(p, l)| (*p, l.clone(), tmpls.to_vec())).collect();
+    render_card_starspecs(book_title, &specs, prev)
+}
+
+/// 每星**独立**模板集重生成卡片（daemon 按"文档级 tags + 该星页 pageTags"合并出每颗星自己的模板）。
+/// `stars`:(1-based 页号, 章节标签, 该星模板集[空则退默认 General]) 已排序去重；`prev`:上一版可保留状态。
+/// **每个有 ★ 的页各占一张卡片页**，新星注入其模板集骨架、老星保留用户批注。
+pub fn render_card_starspecs(
+    book_title: &str,
+    stars: &[(usize, String, Vec<CardTemplate>)],
+    prev: &CardModel,
+) -> Vec<String> {
     let mut pages: Vec<String> = Vec::new();
-    for (i, (page, label)) in stars.iter().enumerate() {
+    for (i, (page, label, tmpls)) in stars.iter().enumerate() {
         let mut block: Vec<String> = Vec::new();
         if i == 0 {
             // 第一张卡片页带标题 + 待办区头（parse 靠 TODO_HEADER 定位待办区起点）。
@@ -245,7 +254,12 @@ pub fn render_card_with(book_title: &str, stars: &[(usize, String)], prev: &Card
         block.push(star_header(*page, label));
         match prev.notes_by_page.get(page) {
             Some(notes) => block.extend(notes.iter().cloned()), // 老星：保留用户编辑
-            None => block.extend(page_scaffold(tmpls, book_title, *page, label)), // 新星：注入模板（可合并）
+            None => {
+                // 空集兜底退默认，保证任何星都有骨架。
+                let default = [CardTemplate::default()];
+                let t: &[CardTemplate] = if tmpls.is_empty() { &default } else { tmpls };
+                block.extend(page_scaffold(t, book_title, *page, label)); // 新星：注入模板（可合并）
+            }
         }
         pages.push(block.join("\n"));
     }

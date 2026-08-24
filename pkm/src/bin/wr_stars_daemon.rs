@@ -20,7 +20,7 @@ use std::path::Path;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use pkm_device::cardsync::{parse_pages, render_card};
+use pkm_device::cardsync::{parse_pages, render_card_starspecs, CardTemplate};
 use pkm_device::stardetect::{scan_document_dir, scan_library, DocStars, StarConfig};
 use pkm_device::{cardindex, cardnote};
 use weread_device::epubindex::{chapter_map_hier, page_chapter_label, parse_sections};
@@ -259,8 +259,47 @@ fn queue_trash(uuid: &str) {
     }
 }
 
-/// 同步一本书的卡片。stars=(1-based 页号, 章节标签[可空])。返回一句状态或 None（无改动/跳过）。
-fn sync_one_card(dir: &str, book_title: &str, stars: &[(usize, String)], observe: bool) -> Option<String> {
+/// 读一本书的原生标签：文档级 `tags[].name` + 页级 `pageTags`(pageId → [name])。都在 `.content`。
+/// 结构 2026-08-24 真机摸清：`tags`=`[{name,timestamp}]`、`pageTags`=`[{name,pageId,timestamp}]`。
+fn read_book_tags(dir: &str, uuid: &str) -> (Vec<String>, HashMap<String, Vec<String>>) {
+    let content: serde_json::Value = std::fs::read_to_string(format!("{dir}/{uuid}.content"))
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or(serde_json::Value::Null);
+    let doc: Vec<String> = content
+        .get("tags")
+        .and_then(|x| x.as_array())
+        .map(|a| a.iter().filter_map(|t| t.get("name").and_then(|n| n.as_str()).map(String::from)).collect())
+        .unwrap_or_default();
+    let mut page: HashMap<String, Vec<String>> = HashMap::new();
+    if let Some(a) = content.get("pageTags").and_then(|x| x.as_array()) {
+        for t in a {
+            if let (Some(name), Some(pid)) =
+                (t.get("name").and_then(|n| n.as_str()), t.get("pageId").and_then(|p| p.as_str()))
+            {
+                page.entry(pid.to_string()).or_default().push(name.to_string());
+            }
+        }
+    }
+    (doc, page)
+}
+
+/// 该星页的模板集 = 合并(文档级 tags + 该页 pageTags) → `from_tag` → 去重保序。空 = 调用方退默认 General。
+/// 文档级=全书镜片(如整本 #原文)，页级=该页镜片(如某页 #悬疑)，对该页的星合并。
+fn templates_for(doc_tags: &[String], page_tags: &[String]) -> Vec<CardTemplate> {
+    let mut out: Vec<CardTemplate> = Vec::new();
+    for name in doc_tags.iter().chain(page_tags.iter()) {
+        if let Some(t) = CardTemplate::from_tag(name) {
+            if !out.contains(&t) {
+                out.push(t);
+            }
+        }
+    }
+    out
+}
+
+/// 同步一本书的卡片。stars=(1-based 页号, 章节标签[可空], 该星模板集[空=默认])。返回一句状态或 None。
+fn sync_one_card(dir: &str, book_title: &str, stars: &[(usize, String, Vec<CardTemplate>)], observe: bool) -> Option<String> {
     let visible = format!("《{book_title}》{CARD_SUFFIX}");
     let existing = find_docs_by_visible(dir, &visible);
 
@@ -271,7 +310,7 @@ fn sync_one_card(dir: &str, book_title: &str, stars: &[(usize, String)], observe
         }
         None => (Default::default(), String::new()),
     };
-    let new_pages = render_card(book_title, stars, &prev);
+    let new_pages = render_card_starspecs(book_title, stars, &prev);
     let new_text = new_pages.join("\n");
 
     // 无内容改动（最新卡与新内容逐字相同）→ **绝不上传新卡**（否则开书等无关 fswatch 也重生成→爆炸）。
@@ -365,9 +404,11 @@ fn settle(cfg: &Cfg, observe: bool, dirty: Option<&HashSet<String>>) {
         }
         // EPUB 书取章节信息（页 0-based → 章名）；非 EPUB / 笔记本 → None，章名留空。
         let chap = chapter_info(&dir, &d.uuid);
-        // 星页 → (1-based 显示页号, 章名标签)，按 0-based page_index 去重排序。
+        // 原生标签（文档级 + 页级）→ 每星按其所在页 pageId 合并出模板集。
+        let (doc_tags, page_tags_map) = read_book_tags(&dir, &d.uuid);
+        // 星页 → (1-based 显示页号, 章名标签, 该星模板集)，按 0-based page_index 去重排序。
         let mut seen = std::collections::BTreeSet::new();
-        let mut stars: Vec<(usize, String)> = Vec::new();
+        let mut stars: Vec<(usize, String, Vec<CardTemplate>)> = Vec::new();
         for h in &d.hits {
             if h.page_index < 0 {
                 continue;
@@ -377,11 +418,18 @@ fn settle(cfg: &Cfg, observe: bool, dirty: Option<&HashSet<String>>) {
                 continue;
             }
             let label = chap.as_ref().and_then(|(secs, titles)| page_chapter_label(secs, titles, pi)).unwrap_or_default();
-            stars.push((pi + 1, label));
+            let ptags = page_tags_map.get(&h.page_uuid).map(|v| v.as_slice()).unwrap_or(&[]);
+            let tmpls = templates_for(&doc_tags, ptags);
+            stars.push((pi + 1, label, tmpls));
         }
-        stars.sort_by_key(|(p, _)| *p);
+        stars.sort_by_key(|(p, _, _)| *p);
         if stars.is_empty() {
             continue;
+        }
+        // observe 对账：打印本书文档级标签 + 每颗星解析到的模板集（验证 read_book_tags/templates_for）。
+        if observe && (!doc_tags.is_empty() || stars.iter().any(|(_, _, t)| !t.is_empty())) {
+            let per: Vec<String> = stars.iter().map(|(p, _, t)| format!("p{p}={t:?}")).collect();
+            println!("[stars] observe:《{}》docTags={:?} 每星模板 {}", d.title, doc_tags, per.join(" "));
         }
         if let Some(m) = sync_one_card(&dir, &d.title, &stars, observe) {
             msgs.push(m);
