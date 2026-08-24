@@ -105,13 +105,24 @@ fn star_header(page: usize, label: &str) -> String {
 /// 文学各类文本。daemon 全自动、无法判题材，故默认注入通用模板；特殊模板留白皮书作手动骨架。
 /// 只在**首次出现**该星时注入一次；之后用户在字段后打字，重建时整块作为「批注」逐字保留。
 ///
-/// `[ID: …]` 是**机器锚点**（label 形如「章名」或「章名 - 节名」+页号），保持确定性——它是 MOC
-/// 软链接目标 + cardindex 死链体检的索引键；人写的概念名走独立的「🏷 核心概念」字段，二者分开。
-fn page_scaffold(page: usize, label: &str) -> Vec<String> {
-    let id = if label.is_empty() {
-        format!("[ID: p{page}]")
+/// 无章节映射的书（公众号文章类 EPUB / 无 `.epubindex`）用**书名短前缀**给锚点消歧：否则 label 空
+/// → 锚点退化成 `[ID: p页号]`，多本这类书都从 p1 起会跨书撞号（真机 2026-08-24 发现），拿 p1 做 MOC
+/// 软链接目标就指不清哪本书。折叠空白 + 截前 16 字符成单 token（书名可能很长，截断求可读可打）。
+/// 注：只兜底"无章节"这一撞号源；有章名的走 label（章名跨书也可能撞，但概率低、与 §07 既有软链接
+/// 歧义同档，且改 label 格式会动全部旧锚点破坏兼容，故不动）。
+fn book_short(title: &str) -> String {
+    const MAX: usize = 16;
+    title.split_whitespace().collect::<String>().chars().take(MAX).collect()
+}
+
+/// `[ID: …]` 是**机器锚点**，保持确定性——它是 MOC 软链接目标 + cardindex 死链体检的索引键；
+/// 人写的概念名走独立的「🏷 核心概念」字段，二者分开。前缀取章名 label，无章节则退回书名短前缀。
+fn page_scaffold(book_title: &str, page: usize, label: &str) -> Vec<String> {
+    let prefix = if label.is_empty() { book_short(book_title) } else { label.to_string() };
+    let id = if prefix.is_empty() {
+        format!("[ID: p{page}]") // 书名也空（异常兜底）→ 退回裸页号
     } else {
-        format!("[ID: {label}-p{page}]")
+        format!("[ID: {prefix}-p{page}]")
     };
     vec![
         id,
@@ -148,7 +159,7 @@ pub fn render_card(book_title: &str, stars: &[(usize, String)], prev: &CardModel
         block.push(star_header(*page, label));
         match prev.notes_by_page.get(page) {
             Some(notes) => block.extend(notes.iter().cloned()), // 老星：保留用户编辑
-            None => block.extend(page_scaffold(*page, label)),  // 新星：注入总结卡片模板
+            None => block.extend(page_scaffold(book_title, *page, label)), // 新星：注入总结卡片模板
         }
         pages.push(block.join("\n"));
     }
@@ -282,6 +293,24 @@ mod tests {
         assert!(t.contains("🏷 核心概念："), "概念字段");
         assert!(t.contains("WHAT") && t.contains("SO WHAT") && t.contains("NOW WHAT"), "三段通用结构: {t}");
         assert!(!t.contains("案件代号") && !t.contains("逻辑推演网"), "不应再有悬疑特殊字段: {t}");
+    }
+
+    #[test]
+    fn no_chapter_anchor_uses_book_prefix() {
+        // 无章节（label 空）→ 锚点带书名短前缀消歧，不再是裸 [ID: p页号]。
+        let a = render_card("我24岁患帕金森12年", &[(1, "".into())], &CardModel::default()).join("\n");
+        assert!(a.contains("[ID: 我24岁患帕金森12年-p1]"), "无章节应带书名前缀: {a}");
+        assert!(!a.contains("[ID: p1]"), "不应再是裸页号");
+        // 另一本无章节书的 p1 前缀不同 → 跨书不撞号。
+        let b = render_card("另一本文章", &[(1, "".into())], &CardModel::default()).join("\n");
+        assert!(b.contains("[ID: 另一本文章-p1]"));
+        // 超长书名截断到 16 字符（按字符非字节，不切坏多字节）。
+        let long = "一二三四五六七八九十甲乙丙丁戊己庚辛";
+        let c = render_card(long, &[(2, "".into())], &CardModel::default()).join("\n");
+        assert!(c.contains("[ID: 一二三四五六七八九十甲乙丙丁戊己-p2]"), "应截前16字符: {c}");
+        // 有章名时仍走 label，不加书名前缀（向后兼容旧锚点）。
+        let d = render_card("任意书", &[(3, "第一章".into())], &CardModel::default()).join("\n");
+        assert!(d.contains("[ID: 第一章-p3]"), "有章名走 label: {d}");
     }
 
     #[test]
