@@ -9,7 +9,7 @@ xochitl 的 QMLDiff 增强，**纯 QML 层、不碰硬件、不改 waveform、�
 
 - `settings-reading-enhance.qmd` —— 设置 App 左侧菜单**最下方**加「系统增强」入口 + 内联「阅读增强」内容页（4 项 `SettingsCheckBoxItem` 开关 + 每 N 页步进），XHR 读写 `reading-qol.json`。**本地化 en/简/繁**：内嵌三语表 + 用 `qsTranslate("SettingsModel",{Help,Cloud,Accessibility})` 判语言（这三串简繁不同：帮助/幫助、云端/雲端、无障碍/無障礙；未翻译=en），qsTranslate 响应式 → 切语言实时跟随。（`Qt.locale()` 本机卡 en_US 无效、UI 语言不落 conf，都用不了。）字体菜单 3 项显示名同样三语。
 - `reading-qol-config.qmd` —— **共享配置**（挂 DeviceSceneView#root，被 tap/mono/refresh 共用）：从 JSON 读 `cjTapPageTurn/cjFastMono/cjRefresh/cjRefreshByChapter/cjRefreshEvery`，**1.5s Timer 轮询**让设置改动返回阅读器即生效（DeviceSceneView 不重建、`onCompleted` 只触发一次，故靠轮询）。
-- `tap-page-turn.qmd` —— 分区点击翻页（左 1/3 上一页、右 1/3 下一页，保留原生滑动/笔/缩放/菜单/选择/双击进文本），受 `view.cjTapPageTurn` 门控。
+- `tap-page-turn.qmd` —— 窄边缘点击翻页（**左 ~10% 上一页、右 ~10% 下一页**，中间 ~80% 中性；纵向再排除**上 25%/下 15%**，仅 25%~85% 高度生效——避开顶部工具栏/底部进度条/持机拇指的四角误触，保留原生滑动/笔/缩放/菜单/选择/双击进文本），受 `view.cjTapPageTurn` 门控。**2026-08-24 真机验证**：单击单次触发（无多连发）、左右边缘方向正确、中性区不误翻。参数 `0.1/0.9` + `0.25/0.85` 可真机微调。
 - `fast-mono-reading.qmd` —— 阅读时锁 `Epaper.ScreenModeItem.Mono` 加速刷新，绑 `cjFastMono`，4 指点击快捷切换。
 - `page-refresh.qmd` —— **翻页清残影**（独立开关 `cjRefresh`，**彩屏 & 黑白都生效**）：按章（`tocModel`+currentPage 派生切章）或按 N 页（默认 15）`ghostBuster.forceClearNow`。
 - `add-reading-fonts.qmd`（**物理在 `../font-menu/`**，功能上属本组、受 `fontEnhance` 门控）—— 字体菜单按 `fontEnhance` **追加**霞鹜文楷/霞鹜新致宋/KF Readerly 三项（原字体保留，**仅 EPUB**：`epub.setFontName`，PDF 无此菜单）。

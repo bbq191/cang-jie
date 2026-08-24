@@ -26,7 +26,7 @@
 
 ## 02｜阅读增强（点击翻页 / 快速黑白 / 清残影 / 字体）
 
-**1. 点击翻页（`tap-page-turn.qmd`）**：阅读视图分区点击——**左 1/3 上一页、右 1/3 下一页、中间中性**，保留原生滑动/笔/缩放/菜单/选择/双击进文本。机制：REBUILD `SceneViewGestures.qml` 的 `touchClick.onClick`（`TouchAreaClickFilter#click-1`），按归一化坐标判方向 → `view.moveForward()`/`view.moveBackward()`，受 `view.cjTapPageTurn` 门控，一串守卫（`zoomedIn`/`notePage`/`textMode`/`textSelectionMode`/文件类型）避免误触。Move 屏小、滑动翻页别扭，点击翻页是刚需级改善，与 P0 微信读书注入的 EPUB 阅读体验直接叠加。**踩坑·分区**：初版"纵向中段 + 底部通栏"分区，真机发现左下角误翻下一页（底部通栏抢判定），改左右三分修正。
+**1. 点击翻页（`tap-page-turn.qmd`）**：阅读视图窄边缘点击——**左 ~10% 上一页、右 ~10% 下一页、中间 ~80% 中性**；纵向再排除**上 25%/下 15%**（仅 25%~85% 高度生效），保留原生滑动/笔/缩放/菜单/选择/双击进文本。机制：REBUILD `SceneViewGestures.qml` 的 `touchClick.onClick`（`TouchAreaClickFilter#click-1`），按归一化坐标 `pos.x/width`、`pos.y/height` 判方向 → `view.moveForward()`/`view.moveBackward()`，受 `view.cjTapPageTurn` 门控，一串守卫（`zoomedIn`/`notePage`/`textMode`/`linkPressed`/文件类型）避免误触。Move 屏小、滑动翻页别扭，点击翻页是刚需级改善，与 P0 微信读书注入的 EPUB 阅读体验直接叠加。**演进·分区**：初版"纵向中段 + 底部通栏"→ 左下角误翻（底部通栏抢判定）→ 改左右三分（33%）全高 → **2026-08-24 收窄为左右 10% 边缘 + 纵向上 25%/下 15% 排除**（三分太宽、边角持机误触），真机验证单击单次触发、方向正确、中性区不误翻。横向 `0.1/0.9` + 纵向 `0.25/0.85` 均可真机微调。
 
 **2. 快速黑白（`fast-mono-reading.qmd`）**：阅读时锁 `Epaper.ScreenModeItem.Mono` 加速刷新，绑 `cjFastMono`，4 指点击快捷切换。3 文件 AFFECT——状态注入 `DeviceSceneView#root`、4 指手势（`SceneViewGestures`）、周期 `ghostBuster.forceClearNow`（`DocumentView`）。**踩坑·改对对象**：最初 REPLACE `DocumentView` 的 ScreenModeItem，但它阅读时 `visible: globalScreenMode != undefined` 为 false、不控屏，改了没反应；真正控屏的是 `DeviceSceneView` 的 `Epaper.ScreenModeItem{id:content;visible:!screenDriver.globalMode}`——**apply-diffs 能验"选择器命中"、验不了"是不是真正控屏的那个"，靠真机才暴露**（"形状像不等于对"典型）。
 
