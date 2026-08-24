@@ -9,11 +9,13 @@
 
 ## 0. 一句话结论
 
-**`.rm` 里没有独立的「SceneLink」块类型**。SceneLink 是 QML 层的**内存值类型**（QMetaType 注册），
-链接在磁盘上以 **CrdtId 为键的成对 start/end 标记**形式散落在标准 item 块里；链接目标
-（`LibraryId` = documentId+pageId，动作 GotoPage/GotoPageSelection）由 `LinkProvider` 模块运行期解析，
-**是否落 `.rm`、落在哪，本轮未钉死**。要合成一条链接仍需先真机采样确认字节序——但采样目标已从
-"整块未知结构"收窄到"标记项的字段 + 目标存储位置"。
+**`.rm` 里没有独立的「SceneLink」块类型**。一条原生链接由**两半**构成、分存两处：
+① **源锚**在目标页 RootText 的**行内文本格式流**里，是一对 `码5/码6` 标记（与粗体码1/2、斜体码3/4 同族）框住的
+文本 CrdtId 区间 —— 这半在 `.rm`，但**只标"哪段是链接"，不带目标**；
+② **目标**是独立的 link 记录 `{sourceId → targetId}`，targetId 串解成 `LibraryId`(documentId,pageId)+动作
+GotoPage/GotoPageSelection，由**库层打开文档时批量加载**（`loaded N links`）—— 这半**不在 `.rm`**。
+SceneLink 本身是 QML 内存值类型（QMetaType 注册），是拼好后的运行期对象。
+**命门结论：纯写 `.rm` 造不出可用链接**，必须同时往那个"独立 link 存储"写记录，而该存储的确切落点本轮未定位、需真机采样。
 
 ## 1. 【高置信】.rm 分块格式与块类型全表
 
@@ -52,63 +54,81 @@ Unknown block starts at %u: tag=%#2x(%s), version=%d, minVersion=%d, extra len=%
 写路径印证：`SceneItem 子类型 → 块 tag` 映射器 `FUN_00e43330`：子类型 1→3(Glyph)、2→4(Group)、3→5(Line)、
 6→8(Tombstone)、7→0xf(**Image**)，其余抛 `Unhandled SceneItem type ({})`。
 
-## 2. 【高置信】链接的场景内表示 = CrdtId 成对 start/end 标记
+## 2. 【高置信】链接源 = RootText 里的行内文本格式 run（与粗体/斜体同族）
 
-链接装配 pass `FUN_0104d660`（含日志串 `- link start encountered:` / `- link end encountered:` /
-`-- add link:` / `throwing away N links` / `parsing`）遍历场景节点流，把**一条链接识别成一对匹配的标记**：
+**决定性发现**：`FUN_01062c20` 把 `encountered italic end with id` / `bold end with id` / `link end with id`
+放在同一函数处理 —— **链接是一种行内文本格式属性，和粗体/斜体完全同类**，施加在正文某字符区间（由 CrdtId 定界）上。
+这正对应动作枚举里的 `GotoPageSelection`（跳到某文本选区）。
 
-- 每个场景 item 带 CrdtId（item `+0x10`，6 字节 `(author_u8, counter_varuint)`）+ 一个字符串值字段（item `+0x28`）。
-- pass 扫描时遇 start 标记把其 CrdtId 收进 seen 集，遇 end 标记与之配对 → `-- add link:` 把
-  `{CrdtId, QString}` 推进链接向量（`this+0x28/0x30/0x38`，stride 0x20）。
-- JSON 导出器 `FUN_00e490f0` 把链接序列化成 `{first, second}` 的 **CrdtId 对数组**（字段 index 9），
-  与装配 pass 互印证：**链接 = 源文档内一段内容的 (起点 id, 终点 id) 锚**。
+格式解析链（RootText 块的行内格式流）：
+- `FUN_0104f110`：FormatState 解析器，遍历格式标记（marker `+0x10`=CrdtId、`+0x40`=类型码、`+0x48`=存活标志），
+  日志 `- len,marker:` / `FormatState(b:… i:… …)`。
+- `FUN_0104cff0`：格式应用器，**3 个格式通道**（`state[0]/[1]/[2]`），每通道一对 开/关 标记码：
+  **1/2 = 粗体 开/关、3/4 = 斜体 开/关、5/6 = 链接 开/关**（链接通道 `state[2]` 计数增减）。类型码封顶 0–7（3 bit）。
+- `FUN_0104e770`：链接 id 栈 —— link-start(码 5) 压栈、link-end(码 6) 弹栈配对（`encountered link start:` /
+  `link end match:`），**只搬 CrdtId，不读任何目标串**。
+- `FUN_0104d660`：链接装配 pass（`-- add link:` / `throwing away N links`），把配好的一对 CrdtId 推进链接向量。
+- JSON 导出器 `FUN_00e490f0` 把链接导成 `{first, second}` 的 **CrdtId 对数组**（字段 index 9）。
 
-这与原生"手写 anchor 跟随文字"是同一类"用 CrdtId 锚定字符/内容区间"的机制族（见），
-不是独立块，而是寄生在 item 流里的边界标记。
+→ **一条链接的源 = RootText 里一对 码5/码6 标记框住的文本 CrdtId 区间**。**标记本身不带 documentId/pageId 目标**。
+这与原生"手写 anchor 跟随文字"同属"CrdtId 锚定字符区间"机制族（见）。
 
-**⚠ 未过度断言**：`FUN_0104d660` 里判定 start/end 用的是 item `+0x40` 字段值 5/6，但该枚举与 §1 映射器的
-子类型枚举（6=Tombstone）**不是同一套**，故本文**不**声称"链接标记 = SceneItem 子类型 5/6"。可靠的只有
-"CrdtId 成对 start/end"这一形态（日志 + JSON 对佐证），精确枚举值待进一步定位。
+**（修正上一轮的 hedge）**：`+0x40` 的 5/6 就是**格式标记类型码 link-start/link-end**，在 `FUN_0104d660`/`0104f110`/
+`01062c20`/`0104cff0` 四处一致 —— 与 §1 写映射器的"SceneItem 子类型"枚举不是一套，上一轮的谨慎成立，现已定为格式码。
 
-## 3. 【中置信】链接目标由 LinkProvider 运行期解析
+## 3. 【高置信】链接目标 = 独立 link 记录 {sourceId → targetId}，库层批量加载，**不在 .rm**
 
-- SceneLink 是 QML 值类型：`FUN_005e5a30`/`FUN_005eb1d0` 仅做 `QMetaType` / `std::vector<SceneLink>` 注册，
-  无字段布局——它是**已解析的内存对象**，非序列化实体。
-- 目标模型（符号级，.169 仍在）：`xofm::libs::linkprovider::LinkDetails` 目标 = `LibraryId`(documentId, pageId)，
-  动作枚举 `GotoPage` / `GotoPageSelection`；`LinkProvider`/`LinkProviderWrapper`/`LinkProviderDevice` 模块 +
-  QML `onLinkActivated`。`documentId`/`pageId`/`GotoPage(Selection)` 串均在（GotoPage 有 3 份副本 = QML 枚举注册表）。
-- 这些串**无直接代码 xref**（经 QML meta-object 表间接引用），故本轮没能顺藤摸到"目标从哪读"的确切函数。
+- **目标不随 `.rm` 场景存**：§2 的格式标记只标"这段是链接"（3 bit 码），零目标信息。
+- 目标模型：`LibraryId` = (documentId `QByteArray`, pageId `QString`)，构造函数 `FUN_009f2300`（pageId 空则报
+  `LibraryId referring to a page cannot have an empty pageId`），有**字符串序列化形态** `documentId<分隔符>pageId`，
+  由 `FUN_009f3d50` 从串切出 documentId/pageId 再构造。动作 `GotoPage`/`GotoPageSelection`。
+- **链接记录 = {sourceId, targetId}**（`.rodata` 相邻串 `sourceId`/`targetId`、`Links`、`sourceId=`、
+  `multiple links to file: %s`），打开文档时**批量加载**（`-> loaded %d links in %.3fms`）。
+- LibraryId 构造的 4 个调用者全在 **0x94–0x9e 库/文档子系统**，**不在 .rm 解析器（0x104/0xe4）**——坐实目标绑定是库层职责。
+- SceneLink 本身是 QML 值类型（`FUN_005e5a30` 仅 QMetaType 注册），是**已解析的内存对象**，`onLinkActivated` 消费。
 
-## 4. 开放问题（要么更深追踪、要么真机采样）
+**闭环**：`.rm` 存**源锚**（哪段文字是链接，靠 CrdtId=sourceId）；独立 link 存储存**{sourceId → targetId 串}**，
+targetId 串解成 LibraryId(documentId,pageId)+动作。两者由库层在打开时拼起来，交给 QML `onLinkActivated` 跳转。
 
-1. **标记项落在哪个块 tag、字段偏移几何**：start/end 标记是 CrdtLineItem/CrdtGlyphItem/CrdtTextItem 里的
-   一个子字段，还是 SceneTreeNode 上的属性？未钉到字节。
-2. **链接目标 (documentId, pageId, action) 存在 `.rm` 里还是外部**：可能是标记项 `+0x28` 的字符串值，
-   也可能在文档 metadata / 独立 links 存储 / DB 里由 LinkProviderDevice 解析。**这决定"能否只写 `.rm` 造链接"**——
-   若目标在外部，光合成场景标记不够。
-3. 承 工程纪律 铁律（新写场景项先只读采样验证、不猜写，Step S 崩机教训）：合成链接前**必须**先让用户在设备
-   原生创建一条跨文档链接当样本，diff（有链接页 vs 无链接页）+ 与本文的块表/标记形态对拍一致，才动手写。
+## 4. 命门结论：**纯写 `.rm` 造不出可用链接**（可行性下调）
 
-## 5. 对"笔记↔书双向跳转"需求的判断（更新）
+回答上一轮开放问题 #2：**不能只改 `.rm` 就凭空造一条能跳转的原生链接**。要造一条链接得**两处都写**：
+1. 往目标页 RootText 的格式流插一对 码5/码6 标记，框住源文本区间（`.rm` 侧，字段偏移仍需采样钉死）；
+2. 往库层加载的**独立 link 存储**写一条 `{sourceId → targetId=documentId<sep>pageId}` 记录 —— **该存储的确切落点
+   （`.content`？`.metadata`？sidecar？DB？）本轮未定位**，是仅剩的关键未知数。
 
-- 机制**存在且在 .169 存活**，符号完整 —— 方向没被证伪。
-- 但**不是"改 `.rm` 就能造链接"的现货**：链接目标的持久化位置未明，且原生 UI 创建路径（选择工具能否跨文档选目标）
-  未采样。**置信度：机制成立=高；纯注入层可造=中低（受目标存储与 UI 授权两个未知数制约）**。
-- 定位为**中远景**，优先级低于 MOC 软链接（`[ID:]` + 全局搜索，已落地、零依赖）。软链接是现货，原生链接是备选升级。
+且原生 UI 创建路径（选择工具能否跨文档选另一本书为目标）未采样。承 工程纪律 铁律，动手前**必须**先让用户在设备
+原生建一条跨文档链接当样本：diff（有链接页 vs 无链接页的 `.rm`）钉格式标记字节偏移，再找出那次操作**新写/改动了哪个文件**
+（`.content`/sidecar）定位 link 存储，Python 差分对拍一致才写。
+
+## 5. 对"笔记↔书双向跳转"需求的判断（终版）
+
+- 机制**存在且在 .169 存活**，链路已从符号级追到"源锚在 .rm 格式流 + 目标在库层独立记录"的完整形态 —— 方向没被证伪。
+- 但**明确不是"改 `.rm` 就能造链接"的现货**：受 ① 独立 link 存储落点未定 ② 原生 UI 授权/采样未做 两个未知数制约。
+  **置信度：机制成立=高；纯注入层可造=低（需两处写 + 一个未定位的存储）**。
+- 定位为**中远景**，优先级低于 MOC 软链接（`[ID:]` + 全局搜索，已落地、零依赖）。软链接是现货，原生链接是备选升级；
+  真要推进，下一步是**真机采样一条原生链接**（同时看 `.rm` diff 与文件系统 diff），而非继续离线反编译。
 
 ## 附：复现
 
 ```bash
-# 块类型名表（数据段偏移换算 vaddr-0x410000）
-python3 - <<'PY' # 见本轮；输出 16 项类型名表
-PY
-# 三轮反编译（ghidra headless，程序已导入工程 xochitl_analysis）
+# ghidra headless（程序已导入工程 xochitl_analysis，base 0x400000；数据段偏移换算 vaddr-0x410000）
 ~/.local/opt/ghidra_12.1.2_PUBLIC/support/analyzeHeadless \
   ghidra-project xochitl_analysis -process xochitl_3.28.0.169.bin -noanalysis \
-  -scriptPath ghidra-project/scripts -postScript DecompileSceneLink.java   # 锚点 xref + 反编译
-# DecompileSceneLink2.java：读/写分发器 + callers；DecompileSceneLink3.java：LinkProvider 侧
+  -scriptPath ghidra-project/scripts -postScript DecompileSceneLink<N>.java
 ```
+六轮脚本：`1` 锚点 xref+反编译 · `2` 读/写分发器+callers · `3` LinkProvider 侧 ·
+`4` LibraryId 校验/详细链接解析器/setTarget+装配上游 · `5` LibraryId 构造的 callers+格式应用器 ·
+`6` LibraryId 工厂（串→documentId/pageId）。
 
-关键函数（vaddr）：读分发器 `FUN_00e46ba0`、unknown-block fallback `FUN_00e43550`、
-子类型→tag 映射器 `FUN_00e43330`、链接装配 pass `FUN_0104d660`、JSON 导出器 `FUN_00e490f0`、
-类型名表 `PTR_s_Conversion_0191dd40`（vaddr `0x191dd40`）。
+关键函数（vaddr）：
+| 角色 | 函数 |
+|------|------|
+| .rm 块读分发器 / unknown fallback | `FUN_00e46ba0` / `FUN_00e43550` |
+| 子类型→块 tag 映射器 | `FUN_00e43330` |
+| 类型名表（16 项） | `PTR_s_Conversion_0191dd40` (vaddr `0x191dd40`) |
+| RootText FormatState 解析 / 格式应用器（3 通道） | `FUN_0104f110` / `FUN_0104cff0` |
+| 链接 id 栈（码5压/码6弹） / 装配 pass / 上游 | `FUN_0104e770` / `FUN_0104d660` / `FUN_0104f110` |
+| 粗/斜/链接 end-with-id | `FUN_01062c20` |
+| JSON 导出（links={first,second}对） | `FUN_00e490f0` |
+| LibraryId 构造(校验) / 串工厂 | `FUN_009f2300` / `FUN_009f3d50` |
