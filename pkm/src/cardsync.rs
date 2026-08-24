@@ -120,9 +120,9 @@ fn book_short(title: &str) -> String {
 fn page_scaffold(book_title: &str, page: usize, label: &str) -> Vec<String> {
     let prefix = if label.is_empty() { book_short(book_title) } else { label.to_string() };
     let id = if prefix.is_empty() {
-        format!("[ID: p{page}]") // 书名也空（异常兜底）→ 退回裸页号
+        format!("[ID: P {page}]") // 书名也空（异常兜底）→ 退回裸页号
     } else {
-        format!("[ID: {prefix}-p{page}]")
+        format!("[ID: {prefix} - P {page}]")
     };
     vec![
         id,
@@ -289,7 +289,7 @@ mod tests {
         // 新星注入的是通用原子卡（WHAT/SO WHAT/NOW WHAT），不再是悬疑三段式。
         let pages = render_card("任意书", &[(3, "第二章".into())], &CardModel::default());
         let t = pages.join("\n");
-        assert!(t.contains("[ID: 第二章-p3]"), "机器锚点保留: {t}");
+        assert!(t.contains("[ID: 第二章 - P 3]"), "机器锚点保留: {t}");
         assert!(t.contains("🏷 核心概念："), "概念字段");
         assert!(t.contains("WHAT") && t.contains("SO WHAT") && t.contains("NOW WHAT"), "三段通用结构: {t}");
         assert!(!t.contains("案件代号") && !t.contains("逻辑推演网"), "不应再有悬疑特殊字段: {t}");
@@ -299,18 +299,18 @@ mod tests {
     fn no_chapter_anchor_uses_book_prefix() {
         // 无章节（label 空）→ 锚点带书名短前缀消歧，不再是裸 [ID: p页号]。
         let a = render_card("我24岁患帕金森12年", &[(1, "".into())], &CardModel::default()).join("\n");
-        assert!(a.contains("[ID: 我24岁患帕金森12年-p1]"), "无章节应带书名前缀: {a}");
-        assert!(!a.contains("[ID: p1]"), "不应再是裸页号");
+        assert!(a.contains("[ID: 我24岁患帕金森12年 - P 1]"), "无章节应带书名前缀: {a}");
+        assert!(!a.contains("[ID: P 1]"), "不应退回裸页号（应带书名前缀）");
         // 另一本无章节书的 p1 前缀不同 → 跨书不撞号。
         let b = render_card("另一本文章", &[(1, "".into())], &CardModel::default()).join("\n");
-        assert!(b.contains("[ID: 另一本文章-p1]"));
+        assert!(b.contains("[ID: 另一本文章 - P 1]"));
         // 超长书名截断到 16 字符（按字符非字节，不切坏多字节）。
         let long = "一二三四五六七八九十甲乙丙丁戊己庚辛";
         let c = render_card(long, &[(2, "".into())], &CardModel::default()).join("\n");
-        assert!(c.contains("[ID: 一二三四五六七八九十甲乙丙丁戊己-p2]"), "应截前16字符: {c}");
+        assert!(c.contains("[ID: 一二三四五六七八九十甲乙丙丁戊己 - P 2]"), "应截前16字符: {c}");
         // 有章名时仍走 label，不加书名前缀（向后兼容旧锚点）。
         let d = render_card("任意书", &[(3, "第一章".into())], &CardModel::default()).join("\n");
-        assert!(d.contains("[ID: 第一章-p3]"), "有章名走 label: {d}");
+        assert!(d.contains("[ID: 第一章 - P 3]"), "有章名走 label: {d}");
     }
 
     #[test]
