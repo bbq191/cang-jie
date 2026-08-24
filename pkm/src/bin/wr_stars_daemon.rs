@@ -23,10 +23,10 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use pkm_device::cardsync::{parse_pages, render_card};
 use pkm_device::stardetect::{scan_library, StarConfig};
 use pkm_device::cardnote;
-use weread_device::epubindex::{chapter_map, page_chapter, parse_sections};
+use weread_device::epubindex::{chapter_map_hier, page_chapter_label, parse_sections};
 use weread_device::{fswatch, inject};
 
-type ChapterInfo = (Vec<(String, u32)>, HashMap<String, String>);
+type ChapterInfo = (Vec<(String, u32)>, HashMap<String, (String, Option<String>)>);
 #[allow(clippy::type_complexity)]
 static CHAP_CACHE: OnceLock<Mutex<HashMap<String, (u64, ChapterInfo)>>> = OnceLock::new();
 
@@ -48,7 +48,7 @@ fn chapter_info(dir: &str, uuid: &str) -> Option<ChapterInfo> {
     }
     let idx = std::fs::read(&idx_path).ok()?;
     let epub = std::fs::read(&epub_path).ok()?;
-    let info: ChapterInfo = (parse_sections(&idx), chapter_map(&epub));
+    let info: ChapterInfo = (parse_sections(&idx), chapter_map_hier(&epub));
     cache.lock().unwrap().insert(uuid.to_string(), (mtime, info.clone()));
     Some(info)
 }
@@ -244,7 +244,7 @@ fn settle(cfg: &Cfg, observe: bool) {
             if !seen.insert(pi) {
                 continue;
             }
-            let label = chap.as_ref().and_then(|(secs, titles)| page_chapter(secs, titles, pi)).unwrap_or_default();
+            let label = chap.as_ref().and_then(|(secs, titles)| page_chapter_label(secs, titles, pi)).unwrap_or_default();
             stars.push((pi + 1, label));
         }
         stars.sort_by_key(|(p, _)| *p);

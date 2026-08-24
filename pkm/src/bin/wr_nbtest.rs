@@ -121,14 +121,14 @@ fn main() {
             let idx = std::fs::read(format!("{d}/{uuid}.epubindex")).unwrap_or_default();
             let epub = std::fs::read(format!("{d}/{uuid}.epub")).unwrap_or_default();
             let secs = weread_device::epubindex::parse_sections(&idx);
-            let titles = weread_device::epubindex::chapter_map(&epub);
+            let titles = weread_device::epubindex::chapter_map_hier(&epub);
             println!("=== spine 起始页表 ({} 条) ===", secs.len());
-            for (b, s) in &secs { println!("  {b} 起 page{s}  章名={:?}", titles.get(b)); }
+            for (b, s) in &secs { println!("  {b} 起 page{s}  章节={:?}", titles.get(b)); }
             let pages: Vec<usize> = args[3..].iter().filter_map(|s| s.parse().ok()).collect();
             let pages = if pages.is_empty() { vec![0, 2, 40, 73, 113, 200] } else { pages };
-            println!("=== 页 → 章名 ===");
+            println!("=== 页 → 章节标签（章 - 节）===");
             for p in pages {
-                println!("  page{p} (第{}页) -> {:?}", p + 1, weread_device::epubindex::page_chapter(&secs, &titles, p));
+                println!("  page{p} (第{}页) -> {:?}", p + 1, weread_device::epubindex::page_chapter_label(&secs, &titles, p));
             }
         }
         "list" => {
