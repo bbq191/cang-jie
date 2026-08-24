@@ -66,7 +66,7 @@ PKM 回归后 reMarkable 复位为**阅读/笔记工作台**（Zettelkasten + �
 
 **最终工作流**：红笔画五角星 → daemon（8s 防抖）重扫 → 内容变才 `/upload` 新卡 → 新卡进库触发 `onRowsInserted` → **2 秒内旧卡经原生 `selectionMoveToTrash` 无形消失**。全设备自足、纯事件驱动、每书恒 1 张、开书不重生成、打字批注永久保留。
 
-**已知边界 / 后续**：① **松散星漏检**——真机 ~13 星检出最清晰的几个，画太圆钝（自相交 ≤4）的会漏 → 多收样本下调 `self_int_min` / 调 `cluster_gap`（当前 gap=25 稳定，40 起过度合并）；② **节名**——toc 平铺无子节，现只填章名（`★ 章名·第 N 页`），遇带子节的书再扩展成 `章名 - 节名`。。
+**已知边界 / 后续**：① **松散星漏检**——真机 ~13 星检出最清晰的几个，画太圆钝（自相交 ≤4）的会漏 → 多收样本下调 `self_int_min` / 调 `cluster_gap`（当前 gap=25 稳定，40 起过度合并）。② ~~节名~~ **✅ 已实现（2026-08-24）**：`epubindex` 章节映射从扁平升级为**层级解析**（`parse_nav_xhtml_hier` 按 `<ol>` 嵌套维护父栈 → `basename→(标题,父章option)`，`page_chapter_label` 拼 `章 - 节`，扁平书自动退化成仅章名）。**顺带修一个既存 bug**：`parse_sections` 读 `.epubindex` 起始页原用 `b==0?a:c`（对《赎罪》过拟合），坐实**起始页恒是第一个 u32**，旧码遇 b=1 的嵌套章误取乱值→页号错→标签落错章，改 `start=a`。真机 wr-nbtest 跑《Tell Me Your Dreams》（3 部×嵌套章）验证：page200→`Book Two - Chapter Eleven`、page450→`Book Three - Chapter Twenty-two`、顶层→无父，页号单调正确；host 5 epubindex 测试全过。daemon 二进制已更新（服务当前 inactive，开启后新卡即带章-节标签）。**子节若是章文件内的 `#anchor`（非独立 spine 文件）则做不到**——`.epubindex` 无 anchor 级页号。。
 
 ## 06｜总结卡片模板
 
