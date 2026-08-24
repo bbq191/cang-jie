@@ -33,6 +33,9 @@ target/
 
 # ── 部署产物 ──
 **/deploy/dist/
+# highlights_to_notebook.py 的默认输出目录（生成的 .rm/.content/.metadata 三件套，
+# 无代码当夹具读，纯运行产物）。注意：highlights/blank_highlight_page.rm 是输入模板，不在此列。
+reading/notegen/
 
 # ─────────────────────────────────────────────────────────────
 # 大资源：git 不管，留工作区。需要时按 README/PROVENANCE 重新获取。
