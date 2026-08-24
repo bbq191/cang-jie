@@ -18,7 +18,7 @@ Step 记录见两本白皮书 §01，此处放两张总览图：
 
 ## 一键安装（新机 SSH 后照做）
 
-一个打好的安装包放在 `deploy/dist/cangjie-ime-installer.tar.gz`（约 97MB，2026-08-15 真机 install.sh 重跑验证：含 **xovi 扩展版 `.so`**（`_xovi_construct`/`_xovi_shouldLoad` 入口 + xovigen 元数据）+ 5 个词典 blob + 3 个 HarmonyOS 字体 + 霞鹜文楷 `LXGWWenKai-Regular.ttf`(+OFL) + 候选栏 `candidatebar.qmd` + 阅读增强 `tap-page-turn.qmd`/`fast-mono-reading.qmd`(默认关)/`keyboard-mono.qmd` + 字体菜单 `add-lxgw-font.qmd` + **3 个界面翻译 `reMarkable_zh_{CN,TW,HK}.qm`** + 安装/卸载脚本）。fail-safe 内建在 `.so` 的 `_xovi_shouldLoad`（不再需要外部 precheck.sh）。
+一个打好的安装包放在 `deploy/dist/cangjie-ime-installer.tar.gz`（约 97MB，2026-08-15 真机 install.sh 重跑验证）：含 **xovi 扩展版 `.so`**（`_xovi_construct`/`_xovi_shouldLoad` 入口 + xovigen 元数据）+ 5 个词典 blob + CJK/阅读字体（HarmonyOS ×3 + 霞鹜系列 + KF Readerly + 花园明朝B 兜底）+ 候选栏 `candidatebar.qmd` + 阅读增强 / 字体菜单 / 设置门户等一组 qmd（含 `add-reading-fonts.qmd`）+ **3 个界面翻译 `reMarkable_zh_{CN,TW,HK}.qm`** + 安装/卸载脚本。**payload 权威清单以 `deploy/install.sh` 的拷贝段为准**（此处不逐一枚举、免漂移）。fail-safe 内建在 `.so` 的 `_xovi_shouldLoad`（不再需要外部 precheck.sh）。
 
 ### 前置（安装包不负责，需先自己装好）
 
@@ -73,10 +73,10 @@ systemctl daemon-reload && systemctl restart xochitl
 #       （xovi 扩展需 xovigen 生成元数据胶水；.xovi 描述在本目录 cangjie-langhook.xovi）
 # 词典: cd chinese-ime/pinyin-engine && python3 c/tools/gen_dict_blob.py && ...（各 gen_*_blob.py）
 # 组装: tar 内 cangjie-ime/install.sh（+ uninstall.sh）在根，其余资源进 cangjie-ime/payload/：
-#   payload = cangjie-langhook.so(xovi扩展版) + c/build/{dict,dict.zh_tw,dict_jianpin,dict_jianpin.zh_tw,english}.bin
-#           + HarmonyOS_Sans_{,SC_,TC_}Medium.ttf + LXGWWenKai-Regular.ttf(+OFL)
-#           + fontconfig-cangjie.conf + candidatebar.qmd + reading-qol/{tap-page-turn,fast-mono-reading,keyboard-mono}.qmd
-#           + font-menu/add-lxgw-font.qmd + reMarkable_zh_{CN,TW,HK}.qm
+#   payload = cangjie-langhook.so(xovi扩展版) + c/build/*.bin(词典) + 字体 ttf + fontconfig
+#           + candidatebar.qmd + reading-qol/*.qmd + font-menu/add-reading-fonts.qmd
+#           + reMarkable_zh_{CN,TW,HK}.qm
+#   ——具体 ttf/qmd 清单以 deploy/install.sh 的拷贝段为准（勿在此手抄，会漂移）。
 # 注意: deploy/uninstall.sh 必须一并纳入 tar。fail-safe 已内建在 .so 的 _xovi_shouldLoad,
 #       不再有独立 precheck.sh。reading-qol/font-menu 的 qmd 留在 xovi-extensions/,打包时跨目录拷。
 ```

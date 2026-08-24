@@ -12,7 +12,7 @@ xochitl 的 QMLDiff 增强，**纯 QML 层、不碰硬件、不改 waveform、�
 - `tap-page-turn.qmd` —— 分区点击翻页（左 1/3 上一页、右 1/3 下一页，保留原生滑动/笔/缩放/菜单/选择/双击进文本），受 `view.cjTapPageTurn` 门控。
 - `fast-mono-reading.qmd` —— 阅读时锁 `Epaper.ScreenModeItem.Mono` 加速刷新，绑 `cjFastMono`，4 指点击快捷切换。
 - `page-refresh.qmd` —— **翻页清残影**（独立开关 `cjRefresh`，**彩屏 & 黑白都生效**）：按章（`tocModel`+currentPage 派生切章）或按 N 页（默认 15）`ghostBuster.forceClearNow`。
-- `add-reading-fonts.qmd` —— 字体菜单按 `fontEnhance` **追加**霞鹜文楷/霞鹜新致宋/KF Readerly 三项（原字体保留，**仅 EPUB**：`epub.setFontName`，PDF 无此菜单）。
+- `add-reading-fonts.qmd`（**物理在 `../font-menu/`**，功能上属本组、受 `fontEnhance` 门控）—— 字体菜单按 `fontEnhance` **追加**霞鹜文楷/霞鹜新致宋/KF Readerly 三项（原字体保留，**仅 EPUB**：`epub.setFontName`，PDF 无此菜单）。
 - `keyboard-mono.qmd` —— 拼音**组词态**把键盘区（`KeyboardPanel` 自带的 `#screenMode`，objectName:"keyboard"）锁 `Mono` 单色快刷、非组词态恢复 `Animation`；绑定 `candidatebar.qmd` 注入的 `cjCandidateBar.visible`，零 C 改动。
 
 **共享状态机制**：设置页 QML 用 `XMLHttpRequest` 写 `/home/root/.local/share/cangjie-ime/reading-qol.json`（/home 持久），阅读页 QML 读取。运行时 xochitl 带 `QML_XHR_ALLOW_FILE_{READ,WRITE}=1`。**踩坑：同步 PUT 到 `file://` 只截断不写体 → 写必须异步（open 不带 `false`）；读同步 GET 正常。**
