@@ -22,7 +22,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use pkm_device::cardsync::{parse_pages, render_card};
 use pkm_device::stardetect::{scan_document_dir, scan_library, DocStars, StarConfig};
-use pkm_device::cardnote;
+use pkm_device::{cardindex, cardnote};
 use weread_device::epubindex::{chapter_map_hier, page_chapter_label, parse_sections};
 use weread_device::{fswatch, inject};
 
@@ -57,6 +57,8 @@ const CFG_PATH_DEFAULT: &str = "/home/root/.local/share/cangjie-ime/reading-qol.
 const UPLOAD_HOST: &str = "10.11.99.1";
 const CARD_SUFFIX: &str = "- 总结卡片";
 const PENDING_TRASH: &str = "/home/root/weread/pending-trash.json";
+/// MOC 死链体检报告落点（SSH 可读文件；设备端可视化留后续项）。
+const CARD_INDEX_PATH: &str = "/home/root/weread/card-index.md";
 /// 卡片最近被编辑（用户可能正在打字）→ 本轮跳过重建、下次再合，避免读到半刷入的 .rm。
 const GUARD_SECS: u64 = 20;
 
@@ -119,6 +121,74 @@ fn find_docs_by_visible(dir: &str, visible: &str) -> Vec<(String, u64)> {
 /// 读一本笔记本各页 RootText（cPages 顺序）。
 fn read_card_pages(dir: &str, uuid: &str) -> Vec<String> {
     cardnote::list_pages(dir, uuid).map(|rows| rows.into_iter().map(|(_, _, t)| t).collect()).unwrap_or_default()
+}
+
+/// 一个文档是否是"用户笔记本"（含卡片本 + MOC 本）：metadata type=DocumentType 且 content fileType=notebook。
+/// 用于判断本轮 dirty 是否需要重建死链索引（epub/文件夹不算）。
+fn is_user_notebook(dir: &str, uuid: &str) -> bool {
+    let meta: serde_json::Value = std::fs::read_to_string(format!("{dir}/{uuid}.metadata"))
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or(serde_json::Value::Null);
+    if meta.get("type").and_then(|x| x.as_str()) != Some("DocumentType") {
+        return false;
+    }
+    let content: serde_json::Value = std::fs::read_to_string(format!("{dir}/{uuid}.content"))
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or(serde_json::Value::Null);
+    content.get("fileType").and_then(|x| x.as_str()) == Some("notebook")
+}
+
+/// 扫全库笔记本文本 → (笔记本名, 全页文本 join)。**只读文本、不碰笔迹几何**（cardindex 死链体检用）。
+/// 只收 fileType=notebook（卡片本 + 用户 MOC 本），跳过 epub（无 [ID:]、天然轻）与回收站。
+fn collect_notebook_texts(dir: &str) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    if let Ok(rd) = std::fs::read_dir(dir) {
+        for e in rd.flatten() {
+            let p = e.path();
+            if p.extension().and_then(|x| x.to_str()) != Some("metadata") {
+                continue;
+            }
+            let uuid = match p.file_stem().and_then(|s| s.to_str()) {
+                Some(u) => u.to_string(),
+                None => continue,
+            };
+            let meta: serde_json::Value = std::fs::read_to_string(&p)
+                .ok()
+                .and_then(|t| serde_json::from_str(&t).ok())
+                .unwrap_or(serde_json::Value::Null);
+            if meta.get("type").and_then(|x| x.as_str()) != Some("DocumentType") {
+                continue;
+            }
+            if meta.get("parent").and_then(|x| x.as_str()) == Some("trash") {
+                continue;
+            }
+            if !is_user_notebook(dir, &uuid) {
+                continue;
+            }
+            let title = meta.get("visibleName").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            let text = read_card_pages(dir, &uuid).join("\n");
+            out.push((title, text));
+        }
+    }
+    out
+}
+
+/// 重建 MOC 死链索引并写报告文件。observe=true 只打摘要不写。
+fn rebuild_card_index(dir: &str, observe: bool) {
+    let idx = cardindex::build_index(&collect_notebook_texts(dir));
+    let dead = cardindex::dead_links(&idx);
+    if observe {
+        println!("[stars] observe: 卡片索引 {} 锚点 · {} 软链接 · {} 死链", idx.defined.len(), idx.refs.len(), dead.len());
+        return;
+    }
+    let report = cardindex::render_report(&idx);
+    if let Err(e) = std::fs::write(CARD_INDEX_PATH, &report) {
+        println!("[stars] 写死链报告失败: {e}");
+    } else if !dead.is_empty() {
+        println!("[stars] 卡片索引已更新：{} 锚点，⚠ {} 处死链（见 {CARD_INDEX_PATH}）", idx.defined.len(), dead.len());
+    }
 }
 
 /// 文档目录最近改动时间（秒，取页目录 mtime）——判断用户是否刚在编辑。
@@ -282,6 +352,17 @@ fn settle(cfg: &Cfg, observe: bool, dirty: Option<&HashSet<String>>) {
         println!("[stars] {}", msgs.join(" · "));
     } else if observe {
         println!("[stars] observe: 无有星的书需要同步");
+    }
+
+    // MOC 死链体检：冷启动全建；增量时仅当有笔记本变更（卡片 /upload 后其 uuid 落 dirty、
+    // 或用户改 MOC 本）才重建——源书画星本身不触发，但引发的卡片 upload 会在下轮命中，秒级延迟。
+    // 只读笔记本文本、跳过 epub 笔迹，不吐回增量扫的省电成果。
+    let need_index = match dirty {
+        None => true,
+        Some(set) => set.iter().any(|u| is_user_notebook(&dir, u)),
+    };
+    if need_index {
+        rebuild_card_index(&dir, observe);
     }
 }
 
