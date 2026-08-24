@@ -20,7 +20,7 @@ use std::path::Path;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use pkm_device::cardsync::{parse_pages, render_card};
+use pkm_device::cardsync::{parse_pages, render_card_starspecs, CardTemplate};
 use pkm_device::stardetect::{scan_document_dir, scan_library, DocStars, StarConfig};
 use pkm_device::{cardindex, cardnote};
 use weread_device::epubindex::{chapter_map_hier, page_chapter_label, parse_sections};
@@ -57,8 +57,11 @@ const CFG_PATH_DEFAULT: &str = "/home/root/.local/share/cangjie-ime/reading-qol.
 const UPLOAD_HOST: &str = "10.11.99.1";
 const CARD_SUFFIX: &str = "- 总结卡片";
 const PENDING_TRASH: &str = "/home/root/weread/pending-trash.json";
-/// MOC 死链体检报告落点（SSH 可读文件；设备端可视化留后续项）。
+/// MOC 死链体检报告落点（SSH 可读文件）。
 const CARD_INDEX_PATH: &str = "/home/root/weread/card-index.md";
+/// 库内「🔗 卡片索引」笔记本的固定 visibleName（设备端可视化）。必须被 collect_notebook_texts 排除
+/// （否则自我摄取 + 上传→自触发无限重建），且正文不含 [ID:]/触发词双保险（见 cardindex）。
+const INDEX_TITLE: &str = "🔗 卡片索引 · MOC 死链体检";
 /// 卡片最近被编辑（用户可能正在打字）→ 本轮跳过重建、下次再合，避免读到半刷入的 .rm。
 const GUARD_SECS: u64 = 20;
 
@@ -168,6 +171,10 @@ fn collect_notebook_texts(dir: &str) -> Vec<(String, String)> {
                 continue;
             }
             let title = meta.get("visibleName").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            // 索引本自身排除：否则它的锚点/引用回喂进索引（自指）+ 上传后自触发无限重建。
+            if title == INDEX_TITLE {
+                continue;
+            }
             let text = read_card_pages(dir, &uuid).join("\n");
             out.push((title, text));
         }
@@ -175,7 +182,35 @@ fn collect_notebook_texts(dir: &str) -> Vec<(String, String)> {
     out
 }
 
-/// 重建 MOC 死链索引并写报告文件。observe=true 只打摘要不写。
+/// 把「🔗 卡片索引」报告同步成库内笔记本（复用卡片的 pack_rmdoc+upload+trash 链）。
+/// 内容未变（对最新本逐字相同）→ 绝不上传（防 churn + 防自触发循环）；多余旧本入 trash 队列。
+fn sync_index_notebook(dir: &str, pages: &[String]) -> Option<String> {
+    let existing = find_docs_by_visible(dir, INDEX_TITLE);
+    let new_text = pages.join("\n");
+    if let Some((u, _)) = existing.first() {
+        let cur = read_card_pages(dir, u).join("\n");
+        if cur == new_text {
+            // 内容一致：把多余同名旧本入队列，最新那本留着，本轮不上传。
+            for (u2, _) in existing.iter().skip(1) {
+                queue_trash(u2);
+            }
+            return None;
+        }
+    }
+    let new_uuid = uuid::Uuid::new_v4().to_string();
+    let refs: Vec<&str> = pages.iter().map(|s| s.as_str()).collect();
+    let rmdoc = cardnote::pack_rmdoc(&new_uuid, INDEX_TITLE, &refs).ok()?;
+    let net = ureq::AgentBuilder::new().timeout(Duration::from_secs(20)).build();
+    if inject::upload_document(&net, UPLOAD_HOST, &rmdoc, &format!("{INDEX_TITLE}.rmdoc"), "application/zip").is_err() {
+        return None;
+    }
+    for (u, _) in &existing {
+        queue_trash(u);
+    }
+    Some(format!("卡片索引笔记本已{}", if existing.is_empty() { "创建" } else { "更新" }))
+}
+
+/// 重建 MOC 死链索引：写 SSH 报告文件 + 同步库内「🔗 卡片索引」笔记本。observe=true 只打摘要不写。
 fn rebuild_card_index(dir: &str, observe: bool) {
     let idx = cardindex::build_index(&collect_notebook_texts(dir));
     let dead = cardindex::dead_links(&idx);
@@ -186,8 +221,12 @@ fn rebuild_card_index(dir: &str, observe: bool) {
     let report = cardindex::render_report(&idx);
     if let Err(e) = std::fs::write(CARD_INDEX_PATH, &report) {
         println!("[stars] 写死链报告失败: {e}");
+    }
+    // 库内可视化笔记本（内容未变则静默跳过）。
+    if let Some(m) = sync_index_notebook(dir, &cardindex::render_notebook_pages(&idx)) {
+        println!("[stars] {m}（{} 锚点 · {} 死链）", idx.defined.len(), dead.len());
     } else if !dead.is_empty() {
-        println!("[stars] 卡片索引已更新：{} 锚点，⚠ {} 处死链（见 {CARD_INDEX_PATH}）", idx.defined.len(), dead.len());
+        println!("[stars] 卡片索引：{} 锚点，⚠ {} 处死链（见 {CARD_INDEX_PATH}）", idx.defined.len(), dead.len());
     }
 }
 
@@ -220,8 +259,47 @@ fn queue_trash(uuid: &str) {
     }
 }
 
-/// 同步一本书的卡片。stars=(1-based 页号, 章节标签[可空])。返回一句状态或 None（无改动/跳过）。
-fn sync_one_card(dir: &str, book_title: &str, stars: &[(usize, String)], observe: bool) -> Option<String> {
+/// 读一本书的原生标签：文档级 `tags[].name` + 页级 `pageTags`(pageId → [name])。都在 `.content`。
+/// 结构 2026-08-24 真机摸清：`tags`=`[{name,timestamp}]`、`pageTags`=`[{name,pageId,timestamp}]`。
+fn read_book_tags(dir: &str, uuid: &str) -> (Vec<String>, HashMap<String, Vec<String>>) {
+    let content: serde_json::Value = std::fs::read_to_string(format!("{dir}/{uuid}.content"))
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or(serde_json::Value::Null);
+    let doc: Vec<String> = content
+        .get("tags")
+        .and_then(|x| x.as_array())
+        .map(|a| a.iter().filter_map(|t| t.get("name").and_then(|n| n.as_str()).map(String::from)).collect())
+        .unwrap_or_default();
+    let mut page: HashMap<String, Vec<String>> = HashMap::new();
+    if let Some(a) = content.get("pageTags").and_then(|x| x.as_array()) {
+        for t in a {
+            if let (Some(name), Some(pid)) =
+                (t.get("name").and_then(|n| n.as_str()), t.get("pageId").and_then(|p| p.as_str()))
+            {
+                page.entry(pid.to_string()).or_default().push(name.to_string());
+            }
+        }
+    }
+    (doc, page)
+}
+
+/// 该星页的模板集 = 合并(文档级 tags + 该页 pageTags) → `from_tag` → 去重保序。空 = 调用方退默认 General。
+/// 文档级=全书镜片(如整本 #原文)，页级=该页镜片(如某页 #悬疑)，对该页的星合并。
+fn templates_for(doc_tags: &[String], page_tags: &[String]) -> Vec<CardTemplate> {
+    let mut out: Vec<CardTemplate> = Vec::new();
+    for name in doc_tags.iter().chain(page_tags.iter()) {
+        if let Some(t) = CardTemplate::from_tag(name) {
+            if !out.contains(&t) {
+                out.push(t);
+            }
+        }
+    }
+    out
+}
+
+/// 同步一本书的卡片。stars=(1-based 页号, 章节标签[可空], 该星模板集[空=默认])。返回一句状态或 None。
+fn sync_one_card(dir: &str, book_title: &str, stars: &[(usize, String, Vec<CardTemplate>)], observe: bool) -> Option<String> {
     let visible = format!("《{book_title}》{CARD_SUFFIX}");
     let existing = find_docs_by_visible(dir, &visible);
 
@@ -232,7 +310,7 @@ fn sync_one_card(dir: &str, book_title: &str, stars: &[(usize, String)], observe
         }
         None => (Default::default(), String::new()),
     };
-    let new_pages = render_card(book_title, stars, &prev);
+    let new_pages = render_card_starspecs(book_title, stars, &prev);
     let new_text = new_pages.join("\n");
 
     // 无内容改动（最新卡与新内容逐字相同）→ **绝不上传新卡**（否则开书等无关 fswatch 也重生成→爆炸）。
@@ -326,9 +404,11 @@ fn settle(cfg: &Cfg, observe: bool, dirty: Option<&HashSet<String>>) {
         }
         // EPUB 书取章节信息（页 0-based → 章名）；非 EPUB / 笔记本 → None，章名留空。
         let chap = chapter_info(&dir, &d.uuid);
-        // 星页 → (1-based 显示页号, 章名标签)，按 0-based page_index 去重排序。
+        // 原生标签（文档级 + 页级）→ 每星按其所在页 pageId 合并出模板集。
+        let (doc_tags, page_tags_map) = read_book_tags(&dir, &d.uuid);
+        // 星页 → (1-based 显示页号, 章名标签, 该星模板集)，按 0-based page_index 去重排序。
         let mut seen = std::collections::BTreeSet::new();
-        let mut stars: Vec<(usize, String)> = Vec::new();
+        let mut stars: Vec<(usize, String, Vec<CardTemplate>)> = Vec::new();
         for h in &d.hits {
             if h.page_index < 0 {
                 continue;
@@ -338,11 +418,18 @@ fn settle(cfg: &Cfg, observe: bool, dirty: Option<&HashSet<String>>) {
                 continue;
             }
             let label = chap.as_ref().and_then(|(secs, titles)| page_chapter_label(secs, titles, pi)).unwrap_or_default();
-            stars.push((pi + 1, label));
+            let ptags = page_tags_map.get(&h.page_uuid).map(|v| v.as_slice()).unwrap_or(&[]);
+            let tmpls = templates_for(&doc_tags, ptags);
+            stars.push((pi + 1, label, tmpls));
         }
-        stars.sort_by_key(|(p, _)| *p);
+        stars.sort_by_key(|(p, _, _)| *p);
         if stars.is_empty() {
             continue;
+        }
+        // observe 对账：打印本书文档级标签 + 每颗星解析到的模板集（验证 read_book_tags/templates_for）。
+        if observe && (!doc_tags.is_empty() || stars.iter().any(|(_, _, t)| !t.is_empty())) {
+            let per: Vec<String> = stars.iter().map(|(p, _, t)| format!("p{p}={t:?}")).collect();
+            println!("[stars] observe:《{}》docTags={:?} 每星模板 {}", d.title, doc_tags, per.join(" "));
         }
         if let Some(m) = sync_one_card(&dir, &d.title, &stars, observe) {
             msgs.push(m);
