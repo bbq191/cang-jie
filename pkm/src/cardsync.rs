@@ -22,9 +22,12 @@ pub struct CardModel {
     pub free_notes: Vec<String>,
 }
 
-/// 从 ★ 行抽取页号：匹配 "第 N 页"（N 为数字）。抽不到返回 None。
+/// 从 ★ 行抽取页号：匹配行尾 "第 N 页"（N 为数字）。抽不到返回 None。
+/// 用 **rfind**（最后一个「页」）而非 find：页码标记恒在行尾「· 第 N 页」，而前缀 label 是
+/// 章-节名、**可能自身含「页」字**（如章名"第三页的秘密"）——find 会误命中 label 里的「页」、
+/// 收不到数字返 None → 该星批注在重建时被当无页号丢弃。rfind 只认行尾真页码。
 pub fn extract_page(line: &str) -> Option<usize> {
-    let idx = line.find('页')?;
+    let idx = line.rfind('页')?;
     let before = &line[..idx];
     // 从 '页' 往前收集连续数字（跳过紧邻的空格）
     let digits: String = before.chars().rev().skip_while(|c| c.is_whitespace()).take_while(|c| c.is_ascii_digit()).collect();
@@ -164,6 +167,25 @@ mod tests {
         assert_eq!(extract_page("★ 第一章《x》· 第 12 页"), Some(12));
         assert_eq!(extract_page("★ 第 7页"), Some(7)); // 无空格
         assert_eq!(extract_page("没有页号"), None);
+        // label（章-节名）自身含「页」字：必须取行尾真页码，不被 label 里的「页」骗到。
+        assert_eq!(extract_page("★ 第三页的秘密 · 第 5 页"), Some(5));
+        assert_eq!(extract_page("★ 卷一 - 翻页术 · 第 42 页"), Some(42));
+    }
+
+    #[test]
+    fn notes_preserved_when_label_contains_page_char() {
+        // 章节名含「页」字的星，其用户批注必须跨重建保留（回归 extract_page rfind 修复）。
+        let stars = vec![(5, "第三页的秘密".into())];
+        let p1 = render_card("书", &stars, &CardModel::default());
+        let text = p1.join("\n").replace("· 第 5 页", "· 第 5 页\n  这页的关键批注");
+        let prev = parse_card(&text);
+        assert!(
+            prev.notes_by_page.get(&5).map(|v| v.join("\n")).unwrap_or_default().contains("这页的关键批注"),
+            "含「页」字章名的星，批注应按页号保留而非丢弃: {:?}",
+            prev.notes_by_page
+        );
+        let p2 = render_card("书", &stars, &prev);
+        assert!(p2.join("\n").contains("这页的关键批注"), "重建后批注应仍在");
     }
 
     #[test]
