@@ -1,13 +1,14 @@
-# reading-qol —— 阅读增强（设置页「系统增强」控制面板 + 点击翻页/快速黑白/清残影/字体）
+# reading-qol —— 阅读增强（设置页「系统增强」hub + 翻页与刷新/书籍与字体/快捷输入/笔记增强）
 
 > **完整设计 + 真机调试记录见《[系统增强白皮书](../docs/reMarkable系统增强白皮书.md)》（块4）。** 本 README 侧重端点级操作/部署纪律。
 
 xochitl 的 QMLDiff 增强，**纯 QML 层、不碰硬件、不改 waveform、不进 `xochitl_pdf_renderer`**。
-**2026-08-17：整套接进设置页控制面板，4 项开关真机验证通过**（见下「系统增强菜单」）。
+**2026-08-17：整套接进设置页控制面板真机验证通过**——设置 App 左侧最下方「系统增强」入口 → 一个 **hub 中枢页** + **四个并列子分类**：①翻页与刷新 ②书籍与字体 ③快捷输入（snippets 文本替换）④笔记增强（见下「系统增强菜单」）。
 
-**「系统增强 → 阅读增强」整套（设备真二进制 md5 3356dde7 核对 + apply-diffs + 真机端到端）**：
+**「系统增强」整套（设备真二进制 md5 3356dde7 核对 + apply-diffs + 真机端到端）**：
 
-- `settings-reading-enhance.qmd` —— 设置 App 左侧菜单**最下方**加「系统增强」入口 + 内联「阅读增强」内容页（4 项 `SettingsCheckBoxItem` 开关 + 每 N 页步进），XHR 读写 `reading-qol.json`。**本地化 en/简/繁**：内嵌三语表 + 用 `qsTranslate("SettingsModel",{Help,Cloud,Accessibility})` 判语言（这三串简繁不同：帮助/幫助、云端/雲端、无障碍/無障礙；未翻译=en），qsTranslate 响应式 → 切语言实时跟随。（`Qt.locale()` 本机卡 en_US 无效、UI 语言不落 conf，都用不了。）字体菜单 3 项显示名同样三语。
+- `settings-reading-enhance.qmd` —— 设置 App 左侧菜单**最下方**加「系统增强」入口 + **hub 中枢页**（`cjEnhanceHub`，哨兵 990001），中枢列四个子分类行（各 `MouseArea` 切 `_selectedPage`），每个子分类是独立 `Component`：**990003 翻页与刷新**（点击翻页/快速黑白/清残影 3 开关 + 每 N 页步进）、**990004 书籍与字体**（阅读字体增强/导入书籍自动优化）、**990002 快捷输入**（snippets 增删改，见下）、**990005 笔记增强**（★全局待办 + 荧光笔精确吸附汉字 `hlSnapCjk` 默认开）。开关 `SettingsCheckBoxItem`（`selected`+`clicked` 手动翻转），XHR 读写 `reading-qol.json`。**全量防覆盖**：每个子页读写全量键，勿让保存一页抹掉别页的 `starTodoEnabled`/`hlSnapCjk`。**本地化 en/简/繁**：内嵌三语表 + 用 `qsTranslate("SettingsModel",{Help,Cloud,Accessibility})` 判语言（这三串简繁不同：帮助/幫助、云端/雲端、无障碍/無障礙；未翻译=en），qsTranslate 响应式 → 切语言实时跟随。（`Qt.locale()` 本机卡 en_US 无效、UI 语言不落 conf，都用不了。）字体菜单 3 项显示名同样三语。
+- **快捷输入 snippets（`cjSnippetsPage`，哨兵 990002）** —— 缩写→短语的**文本替换**管理页：列表页（每条带编辑/删除 + 顶部「+」新增）+ 编辑页（缩写/短语两栏 + 保存/取消），持久化 `/home/root/.local/share/cangjie-ime/snippets.tsv`（同步 GET 读、异步 PUT 写）。展开逻辑本体在块2 `langhook`（热重载该表），真机端到端已部署。
 - `reading-qol-config.qmd` —— **共享配置**（挂 DeviceSceneView#root，被 tap/mono/refresh 共用）：从 JSON 读 `cjTapPageTurn/cjFastMono/cjRefresh/cjRefreshByChapter/cjRefreshEvery`，**1.5s Timer 轮询**让设置改动返回阅读器即生效（DeviceSceneView 不重建、`onCompleted` 只触发一次，故靠轮询）。
 - `tap-page-turn.qmd` —— 窄边缘点击翻页（**左 ~10% 上一页、右 ~10% 下一页**，中间 ~80% 中性；纵向再排除**上 25%/下 15%**，仅 25%~85% 高度生效——避开顶部工具栏/底部进度条/持机拇指的四角误触，保留原生滑动/笔/缩放/菜单/选择/双击进文本），受 `view.cjTapPageTurn` 门控。**2026-08-24 真机验证**：单击单次触发（无多连发）、左右边缘方向正确、中性区不误翻。参数 `0.1/0.9` + `0.25/0.85` 可真机微调。
 - `fast-mono-reading.qmd` —— 阅读时锁 `Epaper.ScreenModeItem.Mono` 加速刷新，绑 `cjFastMono`，4 指点击快捷切换。
@@ -21,11 +22,14 @@ xochitl 的 QMLDiff 增强，**纯 QML 层、不碰硬件、不改 waveform、�
 
 均参照竞品 [pretenderlu/rmtool](https://github.com/pretenderlu/rmtool)（GPL-3.0）揭示的**机制**净室重写，**不复制其 QMD 文本或代码**。
 
-## 状态（Move 3.28.0.166，2026-08-14）
+## 状态（Move 3.28.0.166 起，2026-08-17 接入设置页后现态）
 
-- **tap-page-turn**：已按 .166 真实 QML 重写 + qmldiff 离线 apply-diffs 实跑 + **真机验证通过**（用户确认点击翻页手感、`READING-QOL-TAP: loaded/next/previous` 日志命中）。
-- **fast-mono-reading**：已按 .166 真实 QML 重写（3 文件）+ 离线 apply-diffs 实跑通过 + 真机部署（2026-08-15 完整 install.sh 重跑，qmldiff 四文件 `Loading file` 无解析错误）；`readingQolMonoEnabled` **默认已改 false**（打开文档不自动进单色，4 指点击手势快捷开/关）；**2026-08-15 用户真机确认点击翻页 / 4 指切单色 / 字体菜单霞鹜文楷均正常**。
-  - **TODO[集成]**：把「开关」+「清残影页数」接进系统阅读设置菜单（"系统功能采集"，用户可自定义刷新页数），替代当前"4 指手势 + 硬编码 50 页"。4 指手势保留作快捷切换。
+- **设置页 hub + 四分类**：`settings-reading-enhance.qmd` 2026-08-17 接进设置页真机验证通过——hub 中枢 + ①翻页与刷新 ②书籍与字体 ③快捷输入 ④笔记增强。所有开关/清残影页数由设置页统一管理（写 `reading-qol.json` / snippets 写 `snippets.tsv`），**已替代早期"4 指手势 + 硬编码页数"**；4 指手势仅保留作快速黑白的快捷临时切换。
+- **tap-page-turn**：已按真实 QML 重写 + qmldiff 离线 apply-diffs 实跑 + **真机验证通过**（用户确认点击翻页手感、`READING-QOL-TAP: loaded/next/previous` 日志命中）；2026-08-24 收窄为左右 10% 边缘 + 纵向上 25%/下 15% 排除。受 `cjTapPageTurn` 门控。
+- **fast-mono-reading**：已按真实 QML 重写（3 文件）+ 离线 apply-diffs 实跑通过 + 真机部署；状态改由 `reading-qol-config.qmd` 提供的**共享 `cjFastMono`**（旧名 `readingQolMonoEnabled` 已废弃），默认 OFF（打开文档不自动进单色），4 指点击手势快捷开/关；**2026-08-15 用户真机确认点击翻页 / 4 指切单色 / 字体菜单霞鹜文楷均正常**。
+- **page-refresh**：翻页清残影从 fast-mono 拆出的**独立开关 `cjRefresh`**（彩屏 & 黑白都生效），按章（`tocModel`+currentPage 派生切章）或按 N 页（**`cjRefreshEvery` 默认 15**，非旧文档的 50）`ghostBuster.forceClearNow`；页数在「翻页与刷新」页步进可调。
+- **书籍与字体 / 笔记增强**：字体增强 `fontEnhance`（字体菜单追加三项）、导入书籍自动优化 `autoOptimize`（消费方 wr-serve）在「书籍与字体」页；★全局待办 `starTodoEnabled`（本体在 PKM）与荧光笔精确吸附汉字 `hlSnapCjk`（**默认开**，C hook 消费）在「笔记增强」页。
+- **快捷输入 snippets**：缩写→短语文本替换，设置页增删改 + `snippets.tsv` 持久化，输入法侧热重载，真机端到端已部署。
 - **keyboard-mono**：`.166` KeyboardPanel.qml 与 .164 逐行一致（`root>keyboardContainer>screenMode[objectName:"keyboard",mode:Animation]`），选择器直接适用 + qmldiff 离线 apply-diffs（与 candidatebar.qmd **一起** apply，2 diff applied，emit 里 `cjCandidateBar` id 与 `#screenMode.mode` 引用共存、无注释污染）+ **2026-08-15 真机验证通过**：qmldiff `Loading`/`Processing KeyboardPanel` 无解析错误、健康检查绿；`KBD-MONO` 日志硬证 **mode 跟随组词态精确切换**（组词 candbarVisible=true→mode=1 Mono、收起 false→mode=2 Animation，两个完整来回）。可观测性提醒：候选栏本就纯黑白，Mono 化不改静态观感，"快多少"需 A/B 慢动作对比，收益可能微妙——日志证明机制在工作。
 
 ## 离线验证管线（本项目建立，务必复用）

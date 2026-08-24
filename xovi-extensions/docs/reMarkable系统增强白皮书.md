@@ -11,16 +11,28 @@
 
 给 xochitl 原生阅读器/系统加一层 UX 增强，**纯 QMLDiff 注入、不碰硬件、不改 waveform、不进 `xochitl_pdf_renderer`**，全部默认关、用户在设置页逐项开。缘起：竞品 [pretenderlu/rmtool](https://github.com/pretenderlu/rmtool)（GPL-3.0）的 `tap-page-turn` 与 `fast-mono-reading`——**参照其揭示的机制净室重写，不复制其 QMD 文本或代码**。许可证隔离沿用项目纪律：QMD 是"往哪个 QML 插什么"的独立文本补丁，运行时由 qt-resource-rebuilder 加载，不编译进 `cangjie-langhook.so`。
 
-## 01｜设置页「系统增强」门户（2026-08-17 接入，4+1 项开关真机验证）
+## 01｜设置页「系统增强」门户（2026-08-17 接入，hub 中枢 + 四分类真机验证）
 
-**入口不走阅读器 FormatMenu，而是设置 App**：`settings-reading-enhance.qmd` 往 `Settings.qml` 左侧菜单**最下方**插「系统增强」`ArkControls.SidebarItem`（设置页用 `onTriggered`）+ 内联「阅读增强」内容页（`SettingsCheckBoxItem` 开关，`selected`+`clicked` 手动翻转）。内容切换 = `_selectedPage`(int) 哨兵 990001 → `payloadLoader.sourceComponent` 用 `REBUILD`+`LOCATE AFTER STREAM /{/` 注入早返回。菜单是 `SettingsModel` 驱动的 `Repeater`（项不在 QML 里），故往 `ColumnLayout#settingsColumn` 插静态项。
+**入口不走阅读器 FormatMenu，而是设置 App**：`settings-reading-enhance.qmd` 往 `Settings.qml` 左侧菜单**最下方**插「系统增强」`ArkControls.SidebarItem`（设置页用 `onTriggered`）+ 一个 **hub 中枢页**（`objectName:"cjEnhanceHub"`，哨兵 990001）。中枢页不直接堆开关，而是列**四个并列子分类**行（大标题 + 说明 + `›` + 发丝线，`MouseArea` 点击切 `_selectedPage`）；每个子分类是一个**独立 `Component`**（各自 `INSERT ... LOCATE AFTER Component#help`），靠 `_selectedPage` 哨兵切换 `payloadLoader.sourceComponent`（`REBUILD`+`LOCATE AFTER STREAM /{/` 注入早返回）。菜单是 `SettingsModel` 驱动的 `Repeater`（项不在 QML 里），故往 `ColumnLayout#settingsColumn` 插静态项。四分类各带独立哨兵：**990001 中枢、990002 快捷输入、990003 翻页与刷新、990004 书籍与字体、990005 笔记增强**；子页顶部「‹ 系统增强」返回即置回 990001。
 
-**开关清单**（写 `reading-qol.json`）：① 点击翻页 `cjTapPageTurn` ② 快速黑白 `cjFastMono` ③ 清残影 `cjRefresh`（+按章 `cjRefreshByChapter`/每 N 页 `cjRefreshEvery`）④ 阅读字体增强 `fontEnhance` ⑤ 导入书籍自动优化 `autoOptimize`（默认关，消费方 wr-serve）。另有「笔记增强」二级分类（荧光笔吸附、★全局待办）。
+**四个子分类 + 开关清单**（除快捷输入用独立文件外，其余写 `reading-qol.json`）：
+
+1. **翻页与刷新**（990003）：① 点击翻页 `cjTapPageTurn`（键 `tapPageTurn`）② 快速黑白 `cjFastMono`（`fastMono`）③ 清残影 `cjRefresh`（`refresh`，+按章 `cjRefreshByChapter`/每 N 页 `cjRefreshEvery` 默认 15）。
+2. **书籍与字体**（990004）：④ 阅读字体增强 `fontEnhance` ⑤ 导入书籍自动优化 `autoOptimize`（默认关，消费方 wr-serve）。
+3. **快捷输入**（990002，snippets）：缩写→短语的**文本替换**管理页，UI 支持增删改，持久化到 `snippets.tsv`（详见 §01a）。
+4. **笔记增强**（990005）：⑥ ★全局待办 `starTodoEnabled`（+颜色 `starTodoColor`/间距 `starTodoGap`，能力本体在 PKM 白皮书）⑦ 荧光笔精确吸附汉字 `hlSnapCjk`（**默认开**，C hook 消费，缺省即视为开——`c.hlSnapCjk !== false`）。
 
 **跨 QML 树共享状态 = `reading-qol.json`**（`/home/root/.local/share/cangjie-ime/reading-qol.json`，/home 持久）：设置页 QML 用 `XMLHttpRequest` 写、阅读页 QML 读。运行时 xochitl 带 `QML_XHR_ALLOW_FILE_{READ,WRITE}=1`。
 - **大坑：同步 PUT 到 `file://` 只截断不写体 → 写必须异步**（open 不带 `false`）；读同步 GET 正常。
 - **传播靠 `reading-qol-config.qmd` 在 `DeviceSceneView#root` 的 1.5s 轮询 Timer**（`onCompleted` 只触发一次、返回阅读器不重建，"改了不生效"就是缺这个轮询）；字体菜单例外（构建那刻读一次、退出重开生效）。
-- **★全量防覆盖铁律**：每个写 `reading-qol.json` 的二级页都必须**读写全量键**（翻页页/书籍页原本只写 7 键，加 starTodo 三键，否则切翻页设置会抹掉 `starTodoEnabled` → daemon 读成 false 功能被意外关）。
+- **★全量防覆盖铁律**：每个写 `reading-qol.json` 的子页都必须**读写全量键**——翻页页/书籍页除自身开关外，也要读进并写回 `starTodoEnabled/starTodoColor/starTodoGap` 与 `hlSnapCjk`（笔记增强页的键），否则在翻页/书籍页保存会抹掉这些值（`starTodoEnabled` → daemon 读成 false 功能被意外关；`hlSnapCjk` 缺失 → C hook 缺省成开尚安全，但仍要全量写回保持一致）。
+
+## 01a｜快捷输入 snippets（文本替换，真机通）
+
+「系统增强 → 快捷输入」（哨兵 990002，`cjSnippetsPage`）是**缩写自动展开为常用短语**的文本替换管理页：用户在任意输入框敲缩写（如 `bqq`），输入法把它替换成预设短语。设置页此处是**增删改 UI**——列表页列出所有「缩写→短语」条目（每行带编辑/删除按钮）+ 顶部「+」新增，编辑页两栏（缩写 / 短语）+ 保存/取消，`cjByteLen` 用 `encodeURIComponent` 算 UTF-8 字节做长度校验。
+
+- **持久化**：条目存 `/home/root/.local/share/cangjie-ime/snippets.tsv`（TSV，一行一条），设置页用 `XMLHttpRequest` 同步 GET 读、异步 PUT 写（同 `reading-qol.json` 的 `file://` 写坑：写必须异步）。输入法侧 `langhook` 热重载该表匹配展开。
+- **能力本体**：展开逻辑 + 逻辑时钟半衰调频等在块2 输入法，真机端到端已部署（：snippets.tsv 热重载 + 跨输入框泄漏修复）；本白皮书只讲设置页这一侧的增删改门户。
 
 **本地化 en/简/繁（三语真机验证）**：面板/菜单/字体名随 UI 语言实时跟随。检测踩坑——本机 `Qt.locale().name` 卡 `en_US`、UI 语言不落 `xochitl.conf`、`languageSettings` 是下传 property 拿不到；正解用**响应式 `qsTranslate("SettingsModel",{Help,Cloud,Accessibility})`** 判简繁（帮助/幫助、云端/雲端、无障碍/無障礙，未翻译=en），判别串靠 `lconvert` 反编译 `reMarkable_zh_{CN,TW}.qm` diff 得到。**QML 硬坑**：`property var T` 大写开头→设置页加载失败 `Property names cannot begin with an upper case letter`（改小写 `i18n`）。
 
@@ -42,7 +54,7 @@
 
 ## 04｜笔记增强（跨块，只在此设开关）
 
-- **荧光笔汉字精确吸附**：中文"对齐到文本"划一小段却吸整行/吸不上的根治（clean-room 复现镇纸）。逻辑是 `langhook` 的 C hook（hook 扩张层 `FUN_00f05ad0`，CJK 首字跳过词扩张、保命中精确边界），设置页此处只给开关。**完整反编译/修复记录见《[阅读白皮书](../../reading/docs/reMarkable阅读白皮书.md)》§03 组件3d。**
+- **荧光笔汉字精确吸附**（开关键 `hlSnapCjk`，**默认开**）：中文"对齐到文本"划一小段却吸整行/吸不上的根治（clean-room 复现镇纸）。逻辑是 `langhook` 的 C hook（hook 扩张层 `FUN_00f05ad0`，CJK 首字跳过词扩张、保命中精确边界），设置页「笔记增强」页此处只给开关，写 `reading-qol.json` 供 C hook 读（缺省即视为开，故其余子页保存时也要全量写回、勿抹）。**完整反编译/修复记录见《[阅读白皮书](../../reading/docs/reMarkable阅读白皮书.md)》§03 组件3d。**
 - **★全局待办**：红笔画星 → 后台 daemon 自动汇总总结卡片。开关在「系统增强 → 笔记增强」，**能力本体见《[PKM 白皮书](../../pkm/docs/reMarkablePKM白皮书.md)》**。
 
 ## 05｜离线 qmldiff 验证管线（方法论资产，务必复用）

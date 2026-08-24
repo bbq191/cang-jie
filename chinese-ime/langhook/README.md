@@ -1,12 +1,12 @@
 # cangjie-langhook
 
-> **状态**：拼音输入法这条线（虚拟键盘 hook、拼音/双拼/繁体引擎、候选词典、逐字候选、中英混输、按语言的 HarmonyOS 字体）**已在真机全链路验证通过**（M3–M7）。本 README 上半部分讲这份 hook 的技术底子（内部用字节特征码扫描 + 自定义 trampoline，不用 xovi 的 override 机制；但外壳是合规 xovi 扩展，靠 xovigen 生成入口元数据、放 `extensions.d/` 被自动加载），下半部分「当前状态」+「一键安装」是最新交付状态；完整过程见《[reMarkable 拼音输入法白皮书](../docs/reMarkable拼音输入法白皮书.md)》。
+> **状态**：拼音输入法这条线（虚拟键盘 hook、拼音/双拼/繁体引擎、候选词典、逐字候选、中英混输、霞鹜新致宋主字体 + 花园明朝 B 扩展 B 兜底）**已在真机全链路验证通过**（M3–M7）。本 README 上半部分讲这份 hook 的技术底子（内部用字节特征码扫描 + 自定义 trampoline，不用 xovi 的 override 机制；但外壳是合规 xovi 扩展，靠 xovigen 生成入口元数据、放 `extensions.d/` 被自动加载），下半部分「当前状态」+「一键安装」是最新交付状态；完整过程见《[reMarkable 拼音输入法白皮书](../docs/reMarkable拼音输入法白皮书.md)》。
 
 ## 架构总览
 
-`cangjie-langhook.so` 是一份 `.so` 打两组独立 trampoline hook：**① UI 汉化**（语言列表 hook →
-中文语言包）与 **② 拼音输入法**（虚拟键盘按键处理 → 拼音缓冲 → 词典 → 候选栏）。完整逆向依据与
-Step 记录见两本白皮书 §01，此处放两张总览图：
+`cangjie-langhook.so` 是一份 `.so` 打三组独立 trampoline hook：**① UI 汉化**（语言列表 hook →
+中文语言包）、**② 拼音输入法**（虚拟键盘按键处理 → 拼音缓冲 → 词典 → 候选栏），外加 **③ 荧光笔汉字精确吸附（Step HL2）**——hook `FUN_00f05ad0`（xochitl 手写命中区间→整行扩张函数），让荧光笔划中文时不再"划一小段吸整行"（真机 2026-08-23 通过；这是"块 4 系统增强"跨到"块 2 中文化"的特性，二进制不拆、随本 `.so` 一起装）。完整逆向依据与
+Step 记录见两本白皮书 §01，此处放两张总览图（HL2 机理）：
 
 **① UI 汉化**（详见《[中文化白皮书](../docs/reMarkable中文化白皮书.md)》§01）：
 
@@ -18,7 +18,7 @@ Step 记录见两本白皮书 §01，此处放两张总览图：
 
 ## 一键安装（新机 SSH 后照做）
 
-一个打好的安装包放在 `deploy/dist/cangjie-ime-installer.tar.gz`（约 97MB，2026-08-15 真机 install.sh 重跑验证）：含 **xovi 扩展版 `.so`**（`_xovi_construct`/`_xovi_shouldLoad` 入口 + xovigen 元数据）+ 5 个词典 blob + CJK/阅读字体（HarmonyOS ×3 + 霞鹜系列 + KF Readerly + 花园明朝B 兜底）+ 候选栏 `candidatebar.qmd` + 阅读增强 / 字体菜单 / 设置门户等一组 qmd（含 `add-reading-fonts.qmd`）+ **3 个界面翻译 `reMarkable_zh_{CN,TW,HK}.qm`** + 安装/卸载脚本。**payload 权威清单以 `deploy/install.sh` 的拷贝段为准**（此处不逐一枚举、免漂移）。fail-safe 内建在 `.so` 的 `_xovi_shouldLoad`（不再需要外部 precheck.sh）。
+一个打好的安装包放在 `deploy/dist/cangjie-ime-installer.tar.gz`（约 124MB，2026-08-18 重打包；花园明朝 B 单文件约 30MB 是体积主因）：含 **xovi 扩展版 `.so`**（`_xovi_construct`/`_xovi_shouldLoad` 入口 + xovigen 元数据）+ 5 个词典 blob + CJK/阅读字体（霞鹜系列：新致宋 Screen Full=UI/候选栏主字体、新晰黑 Screen Full、文楷、文楷 Mono GB Screen + 花园明朝 B 扩展 B 兜底 + KF Readerly ×4，**零 HarmonyOS**）+ 候选栏 `candidatebar.qmd` + 阅读增强 / 字体菜单 / 设置门户等一组 qmd（含 `add-reading-fonts.qmd`）+ **3 个界面翻译 `reMarkable_zh_{CN,TW,HK}.qm`** + 安装/卸载脚本。**payload 权威清单以 `deploy/install.sh` 的拷贝段为准**（此处不逐一枚举、免漂移）。fail-safe 内建在 `.so` 的 `_xovi_shouldLoad`（不再需要外部 precheck.sh）。
 
 ### 前置（安装包不负责，需先自己装好）
 
@@ -38,13 +38,13 @@ ssh root@10.11.99.1 'cd /home/root && tar -xzf cangjie-ime-installer.tar.gz'
 ssh root@10.11.99.1 '/home/root/cangjie-ime/install.sh'
 ```
 
-`install.sh` 会：**拷 `cangjie-langhook.so` 到 `/home/root/xovi/extensions.d/`（xovi 自动加载）**、拷 5 词典到 `/home/root/.local/share/cangjie-ime/`（`.so` 从这读，`CJ_DATA_DIR`）、拷 3 个 HarmonyOS 字体到 `~/.local/share/fonts/` 并装 fontconfig（**整个 xochitl UI** 中文字体按语言用 HarmonyOS Sans SC/TC）、**CJK 字体覆盖预检**（`fc-list :lang=zh-cn` 为空即中止，防豆腐块）、拷 `candidatebar.qmd`/reading-qol/字体菜单 qmd 到 qt-resource-rebuilder、**拷 `reMarkable_zh_{CN,TW,HK}.qm` 到 `/usr/share/remarkable/xochitl/translations/`（界面汉化）**、写 `/usr/lib` 持久 drop-in（`LD_PRELOAD=xovi.so` + `XOVI_ROOT` + **`QML_DISABLE_DISK_CACHE=1` 等 QML env**——qt-resource-rebuilder 硬需求）、`daemon-reload` + 重启 `xochitl` + 健康检查（`is-active`=active / `MainPID` 变化 / `NRestarts` 不增 / **cangjie 扩展是否真加载**）。fail-safe 内建在 `.so` 的 `_xovi_shouldLoad`（扫 xochitl 特征码兼容才加载、否则裸启原生），不再需要外部 precheck。脚本自带 xovi/qt-resource-rebuilder 前置检查。卸载走 `uninstall.sh`（先把系统语言从 `zh_*` 改回 `en` 再删翻译，避免配置悬空）。
+`install.sh` 会：**拷 `cangjie-langhook.so` 到 `/home/root/xovi/extensions.d/`（xovi 自动加载）**、拷 5 词典到 `/home/root/.local/share/cangjie-ime/`（`.so` 从这读，`CJ_DATA_DIR`）、拷字体（霞鹜新致宋 + 花园明朝 B + 新晰黑/文楷/文楷 Mono + KF Readerly，见 install.sh 拷贝段）到 `~/.local/share/fonts/` 并装 fontconfig（**整个 xochitl UI** 与候选栏中文字体统一走**霞鹜新致宋（LXGW Neo ZhiSong Screen Full），扩展 B 生僻字字形级回退花园明朝 B（HanaMinB）**）、**CJK 字体覆盖预检**（`fc-list :lang=zh-cn` 为空即中止，防豆腐块）、拷 `candidatebar.qmd`/reading-qol/字体菜单 qmd 到 qt-resource-rebuilder、**拷 `reMarkable_zh_{CN,TW,HK}.qm` 到 `/usr/share/remarkable/xochitl/translations/`（界面汉化）**、写 `/usr/lib` 持久 drop-in（`LD_PRELOAD=xovi.so` + `XOVI_ROOT` + **`QML_DISABLE_DISK_CACHE=1` 等 QML env**——qt-resource-rebuilder 硬需求）、`daemon-reload` + 重启 `xochitl` + 健康检查（`is-active`=active / `MainPID` 变化 / `NRestarts` 不增 / **cangjie 扩展是否真加载**）。fail-safe 内建在 `.so` 的 `_xovi_shouldLoad`（扫 xochitl 特征码兼容才加载、否则裸启原生），不再需要外部 precheck。脚本自带 xovi/qt-resource-rebuilder 前置检查。卸载走 `uninstall.sh`（先把系统语言从 `zh_*` 改回 `en` 再删翻译，避免配置悬空）。
 
 装完：
 - **输入法**：点开任意文本框弹出键盘，**点地球**在「简体全拼 / 繁體全拼 / 简体双拼 / 繁體双拼」间切换开始输入。
 - **界面汉化**：Settings → General → Language 选「简体中文 / 繁體中文 / 香港繁體」。
 
-**字体**：整个界面 UI 和候选栏的中文都用 **HarmonyOS Sans**——简体（`lang=zh-cn`）用 SC 字形、繁体/港（`lang=zh-tw`/`zh-hk`）用 TC 字形，靠 `/home/root/.config/fontconfig/fonts.conf`（`/home` 持久分区，重启不丢）。已知边界：xochitl 进程 `LANG` 恒为 `en_US`（汉化靠 Qt `.qm`、没改 locale），繁体 TC 字形能否在整个 UI 生效，取决于 Qt 渲染繁体文字时是否带上 `zh-tw` 语言提示；带不上时统一走 SC（跟原先 Noto Sans SC 行为一致，是可接受兜底）。候选栏因为直接读 `virtualKeyboard.language` 显式选 SC/TC，不受这个 locale 限制。
+**字体**（2026-08-23 定案）：整个界面 UI 和候选栏的中文统一走 **霞鹜新致宋（LXGW Neo ZhiSong Screen Full）**——宋体书卷气、BMP+扩展 A 全覆盖、Screen 版 e-ink 不发虚；打到 CJK 扩展 B 生僻字（词典雾凇 41448 大字表含约 1.3 万个，如 `hang` 尾部 𠡊）时字形级回退 **花园明朝 B（HanaMinB）**，不再豆腐块。靠 `/home/root/.config/fontconfig/fonts.conf`（`/home` 持久分区，重启不丢）把 `sans-serif` 及 zh-* 指向"致宋 + HanaMinB"两级链，另对致宋开 `embolden` 合成加粗补偿宋体笔画在低对比 e-ink 下发淡。候选栏字体由 `candidatebar.qmd` 的 `cjkFamily` 显式设为致宋（简/繁字形已由 `dict.bin`/`dict.zh_tw.bin` 决定，字体只管渲染、不按语言切族）。**不再部署 HarmonyOS / 按 SC/TC 切族的旧方案。**字体演进与扩展 B 兜底诊断 及《中文化白皮书》§3.3。
 
 ### 重启持久化（已解决那个坑）
 
@@ -119,8 +119,9 @@ src/
                               ../../pinyin-engine/c/src/{segment,syllables,dictionary,
                               jianpin,shuangpin}.c（不复制，避免两份漂移）
 tests/                       宿主机单元测试（pattern/scan/trampoline）
-deploy/                      一键安装资产：candidatebar.qmd（候选栏 QMLDiff，按语言选
-                             HarmonyOS SC/TC）、fontconfig-cangjie.conf（整个 UI 字体）、
+deploy/                      一键安装资产：candidatebar.qmd（候选栏 QMLDiff，cjkFamily=
+                             霞鹜新致宋）、fontconfig-cangjie.conf（整个 UI 字体：致宋 +
+                             HanaMinB 兜底）、
                              install.sh、dist/cangjie-ime-installer.tar.gz（打好的包）
 ```
 
@@ -131,7 +132,8 @@ deploy/                      一键安装资产：candidatebar.qmd（候选栏 Q
 - **语言切换器接入**：点地球的原生语言弹层里出现 4 个中文模式（简体全拼/繁體全拼/简体双拼/繁體双拼，Phase B），切换立即生效免重启；显示名订正、布局 `en_US` 兜底、崩溃事故均已修复。
 - **按键拦截 + 拼音输入**：hook 按键统一入口拦截字符键，缓冲拼音、查 mmap 的 `dict.bin`/`dict.zh_tw.bin`/`dict_jianpin*.bin`，候选栏（QMLDiff 注入的 `CjCandidateBar`）逐字造句、分段提交、退格撤销（Phase A），双拼解码、繁体、简拼补充候选全部真机验证。
 - **中英混输**（Phase C）：英文候选背后是 `english.bin`（SymSpell），"你好hello" 增量式补全。
-- **字体**：候选栏 + 整个 UI 按语言用 HarmonyOS Sans SC/TC（见上方一键安装的字体说明）。
+- **字体**：候选栏 + 整个 UI 统一用霞鹜新致宋、扩展 B 生僻字回退花园明朝 B（见上方一键安装的字体说明）。
+- **荧光笔汉字吸附（Step HL2）**：hook `FUN_00f05ad0` 让荧光笔划中文时精确吸附、不再"划一小段吸整行"，开关经 `reading-qol.json` 的 `hlSnapCjk`（默认开），真机 2026-08-23 通过。
 
 早期用的**字节特征码扫描（AOB scan）定位 hook 点**这套方法本身仍然成立、贯穿始终——不管固件版本把函数地址挪到哪，只要函数体开头字节没变，运行时扫描就能自动找到（当年对 `xochitl_3.28.0.164.bin`/`xochitl.bin` 两个版本各约 12MB 的 `.text` 段做过唯一命中验证，命中地址跟 objdump 人工反汇编分毫不差）。完整的 hook 定位/踩坑/真机验证记录见《[拼音输入法白皮书](../docs/reMarkable拼音输入法白皮书.md)》02 节。
 

@@ -4,7 +4,8 @@
 
 把 reMarkable 变成 Zettelkasten/PKM 工作台的设备端 Rust 实现。首个能力=**★ 全局待办**：
 阅读时用红笔在书上画五角星 → 后台守护进程自动把每本书的星汇总成一个「总结卡片」
-笔记本（一星一页 + 章名·页号 + 可打字批注模板），想法增改删双向去重。
+笔记本（一星一页 + 章-节名·页号 + **按书的原生 Tag 选模板**：通用/原文英文原版/悬疑/科幻
+共 4 套，多 Tag 合并），打字批注跨重建保留；另出 MOC 死链体检（`cardindex`）。
 
 > **与 `pkm-semantic/` 的关系**：`pkm-semantic/` 是同一算法的 **Python 原型 + 阈值标定**
 > （穷举/边界差分测试的对拍基准）；本目录是**逐结果对拍后的 Rust 生产移植**。两者同属块5。
@@ -23,7 +24,7 @@ reading **不反向依赖** pkm——依赖方向干净单向。这也是"阅读
 
 | bin | 作用 |
 |-----|------|
-| `wr-stars-daemon` | **生产守护进程**：挂 systemd 常驻，`fswatch` 监听文档模型变化 → `stardetect` 扫红星 → `epubindex` 页映射到章名 → `cardsync` 增量 merge → `cardnote` 造/更新总结卡片笔记本 → `inject` 免重启注入。事件驱动去重。 |
+| `wr-stars-daemon` | **生产守护进程**：挂 systemd 常驻，`fswatch` 监听文档目录（**增量：只扫变更书**）→ `stardetect` 扫红星 → `epubindex` 页映射到章-节名 → 按书的原生 Tag（文档级+页级）为**每星选模板**（4 套：通用/原文/悬疑/科幻，`cardsync`）→ 增量 merge → `cardnote` 造/更新总结卡片笔记本 → `/upload` 注入；另 `cardindex` 出全库锚点索引 + MOC 死链体检（SSH 报告 + 库内「🔗 卡片索引」笔记本）。事件驱动去重。 |
 | `wr-stars` | 手动扫描 CLI：一次性扫库出 ★待办 markdown（调试/对拍用）。 |
 | `wr-nbtest` | 笔记本造页测试件（不部署到设备）。 |
 

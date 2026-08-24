@@ -41,10 +41,10 @@
 | **`chinese-ime/`** | 2 | **中文化核心交付**（归拢），下面几项 |
 | `chinese-ime/langhook/` | 2(+4) | 设备端 hook：编译成 `cangjie-langhook.so`（合规 **xovi 扩展**，放 `extensions.d/` 自动加载），承载键盘 hook/拼音缓冲/候选栏全部逻辑 + **块 4 的荧光笔汉字吸附**；`deploy/` 含**一键安装包**。见 [langhook/README.md](chinese-ime/langhook/README.md) |
 | `chinese-ime/pinyin-engine/` | 2 | 拼音引擎离线核心：`src/`（Python 参照）+ `c/`（C 移植 + blob 工具 + 差分测试）+ `data/`（词库 + 许可证留痕）+ `ui/` + `tests/` |
-| `chinese-ime/{fonts,translations,docs}/` | 2 | 中文字体（+OFL）· zh `.qm` 翻译 · 两本白皮书 |
-| `reading/` | 3 | 阅读线设备端总仓：「墨香」微信读书自足化 + 通用 EPUB 优化器（`device-rs/` Rust）。见 [reading/README.md](reading/README.md)、`ATTRIBUTION.md`（历史名 `weread-client/`，2026-08-23 改名） |
-| `xovi-extensions/` | 4 | `reading-qol`（点击翻页/快速黑白/清残影/键盘 Mono + 设置页「系统增强」面板）+ `font-menu`（阅读字体） |
-| `pkm/` | 5 | PKM ★待办**生产 Rust crate**：`stardetect`/`cardsync`/`cardnote` + `wr-stars-daemon`；单向依赖 `reading/device-rs`。见 [pkm/README.md](pkm/README.md) |
+| `chinese-ime/{fonts,translations,docs,qt-im-plugin}/` | 2 | 中文字体（+OFL）· zh `.qm` 翻译 · 两本白皮书 · `qt-im-plugin/`（Qt IM 插件方向判死实验） |
+| `reading/` | 3 | 阅读线设备端总仓：「墨香」微信读书自足化 + 通用 EPUB 优化器（`device-rs/` Rust 主体 + `device/` QML 注入件 `moxiang-sidebar`/`trash-agent`/`reader-*.qmd`）。见 [reading/README.md](reading/README.md)、`ATTRIBUTION.md`（历史名 `weread-client/`，2026-08-23 改名） |
+| `xovi-extensions/` | 4 | `reading-qol`（设置页「系统增强」中枢面板四分类：翻页与刷新/书籍与字体/快捷输入 snippets/笔记增强）+ `font-menu`（阅读字体） |
+| `pkm/` | 5 | PKM ★待办**生产 Rust crate**：`stardetect`/`cardsync`/`cardnote`/`cardindex`（MOC 死链体检）+ `wr-stars-daemon`；卡片按书原生 Tag 选 4 套模板；单向依赖 `reading/device-rs`。见 [pkm/README.md](pkm/README.md) |
 | `pkm-semantic/` | 5 | PKM ★待办检测算法的 **Python 原型 + 阈值标定**（`pkm/` 是其逐结果对拍的 Rust 生产移植）。见 [pkm-semantic/README.md](pkm-semantic/README.md) |
 | `screenshot-tool/` | 6 | 截图/录屏可行性实验（`drm-probe/`），规划中 |
 | `docs/` | — | **跨块白皮书**：功能路线图（含 6 分块地图）+ 网络解决方案（中文化/拼音两本就近在 `chinese-ime/docs/`） |

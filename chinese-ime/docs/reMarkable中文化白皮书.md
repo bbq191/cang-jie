@@ -694,8 +694,9 @@ M0/M2 已验证达标，M1 客观达标但不是靠计划中的机制——UI �
 
 - **拼音输入法**：全拼/双拼 × 简/繁 4 模式 + 简拼 + 中英混输，逐字造句/分段提交/退格撤销；候选栏为 QMLDiff 注入的原生 `CjCandidateBar`；地球弹层切 4 模式。详见姊妹文档《拼音输入法白皮书》。
 - **UI 界面汉化**：bind-mount 覆盖 `/usr/share/.../translations`（verity 安全，运行时 VFS 挂载不改 `/usr` 块），xochitl 原生加载 zh，中英双向切换正确；挂载走 xovi pre-start 脚本，每次 `xovi/start`/reenable 自动重放。
-- **UI 字体**：**统一到 LXGW Neo XiHei Screen Full**（霞鹜新晰黑·屏幕阅读版·补全，单文件覆盖简繁英、e-ink 不发虚），UI 与候选栏共用一份，fontconfig 驱动。**此决定取代本文 6.x/CJK 预检段里"HarmonyOS TC 补繁体 / 观感用 HarmonyOS·汉仪"的旧描述**——结项后不再部署 HarmonyOS，`candidatebar.qmd`/`fontconfig`/`install.sh`/安装包已同步去除 HarmonyOS。
+- **UI 字体**：**统一到 LXGW Neo XiHei Screen Full**（霞鹜新晰黑·屏幕阅读版·补全，单文件覆盖简繁英、e-ink 不发虚），UI 与候选栏共用一份，fontconfig 驱动。**此决定取代本文 6.x/CJK 预检段里"HarmonyOS TC 补繁体 / 观感用 HarmonyOS·汉仪"的旧描述**——结项后不再部署 HarmonyOS，`candidatebar.qmd`/`fontconfig`/`install.sh`/安装包已同步去除 HarmonyOS。**⚠️ 已再度演进（当前定案见 §3.3）**：晰黑单字重 e-ink 发虚 + 只覆盖到扩展 A 会让扩展 B 生僻字豆腐块，故 2026-08-23 主字体又从新晰黑换成**霞鹜新致宋（LXGW Neo ZhiSong Screen Full）+ 花园明朝 B（HanaMinB）扩展 B 兜底**；`candidatebar.qmd`(cjkFamily)/`fontconfig-cangjie.conf`/`install.sh`/安装包均已同步为致宋+HanaMinB，本条"统一到新晰黑"仅存历史。
 - **设置页屏幕键盘中文入口**：纯 QMLDiff 补丁 `settings-keyboard-zh.qmd`（`?#keyboardDialog > SelectionComponent` + 3 REPLACE），设置→语言和键盘→屏幕键盘 出现"中文"项；qrr 设备日志 `Processing file .../LanguageAndKeyboard.qml` 证实 diff 应用。详见姊妹文档「M7 续²」①（含"qmldiff 能穿透 Component{}、方案 D 判死"的翻案）。
+- **荧光笔汉字精确吸附（Step HL2）**：同一份 `cangjie-langhook.so` 里第三组 hook——拦 xochitl 手写命中区间→整行扩张函数 `FUN_00f05ad0`，让荧光笔划中文时不再"划一小段吸整行"（病根：xochitl 手写空格分词对 CJK 失效）。开关走 `reading-qol.json` 的 `hlSnapCjk`（默认开）。这是"块 4 系统增强"跨到"块 2 中文化"的特性、二进制不拆。真机 2026-08-23 通过，机理。
 
 **部署与恢复（维护须知）**：
 
@@ -729,7 +730,7 @@ M0/M2 已验证达标，M1 客观达标但不是靠计划中的机制——UI �
 
 ### 📌 字体线三连（2026-08-22）：核查结论 + Readerly 宋体判死 + embolden 加粗
 
-**核查**（用户问"全 UI 中文=黑体 Screen、阅读菜单=Screen 版+Readerly"是否属实）：全部属实——UI 中文 fallback=`LXGW Neo XiHei Screen Full`（配置在 `~/.config/fontconfig/fonts.conf`，/home 持久所以扛重启，本次首次归档进仓库 `chinese-ime/fonts/fonts.conf`）；阅读菜单三项=文楷 Mono GB Screen/致宋 Screen Full/KF Readerly。UI 英文改 Readerly 不可达（内嵌 reMarkable Sans 拉丁齐全，fallback 不触发、替换规则拦不住应用字体）。
+**核查**（用户问"全 UI 中文=黑体 Screen、阅读菜单=Screen 版+Readerly"是否属实）：全部属实——UI 中文 fallback=`LXGW Neo XiHei Screen Full`（配置在 `~/.config/fontconfig/fonts.conf`，/home 持久所以扛重启，本次首次归档进仓库 `chinese-ime/fonts/fonts.conf`）；阅读菜单三项=文楷 Mono GB Screen/致宋 Screen Full/KF Readerly。**⚠️ 时效更新（当前定案见 §3.3）**：本条记于 2026-08-22，次日（08-23）UI 中文主字体已改为**霞鹜新致宋 + 花园明朝 B 扩展 B 兜底**，此处"UI 中文 fallback=新晰黑"仅存当日快照；仓库 `chinese-ime/fonts/fonts.conf` 与 `deploy/fontconfig-cangjie.conf` 现均为"致宋 + HanaMinB"两级链。UI 英文改 Readerly 不可达（内嵌 reMarkable Sans 拉丁齐全，fallback 不触发、替换规则拦不住应用字体）。
 
 **⛔ "选 Readerly 读中文书汉字回退致宋"判死（双实验+PDF 解剖实证）**：fc-match 层规则全部生效（按 family 定向 prepend_first 后 fc-match 三向验证过），但强制重渲后 `pdffonts` 实测 PDF 仍嵌晰黑——EPUB 渲染是 **xochitl fork 的 worker**（journal 里 rm.worker.unix 前缀+qmldiff/cangjie 日志实证，prgname 仍=xochitl），其 CJK 回退查询不带请求家族 → fontconfig 层既不能按家族也不能按进程定向。prgname 测试本身可用（拿 fc-match 当靶验证过）。**结论：读中文书要衬线直接选致宋（自带衬线拉丁）**；真要精确"英 Readerly+中宋"只剩 EPUB 优化器注入 `font-family: Readerly, 致宋` 双字体 CSS 栈一条路（未验证，需先测渲染器吃不吃 CSS 家族列表，未立项）。**fontconfig 语法坑**：`prepend` 在 test 命中同属性时插到命中值之前而非队头，占队头用 `prepend_first`。
 
