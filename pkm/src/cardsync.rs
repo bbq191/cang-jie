@@ -99,9 +99,14 @@ fn star_header(page: usize, label: &str) -> String {
     }
 }
 
-/// 新出现的 ★ 页的初始模板（总结卡片《13.67》三段式结构，见 PKM 白皮书 §06）：线索框 / 逻辑推演网 / 标签锚点。
+/// 新出现的 ★ 页的初始模板 = **通用原子卡（Zettelkasten）** WHAT / SO WHAT / NOW WHAT 骨架
+/// （见 PKM 白皮书 §06）。放弃对题材结构的预判（悬疑逻辑树 / 科幻阵营制衡等是特殊解、只适 20%
+/// 硬核结构书）——回归原子化底层逻辑，一张卡只讲透一个概念/模型/共鸣点，「生吞」经管/心理/历史/
+/// 文学各类文本。daemon 全自动、无法判题材，故默认注入通用模板；特殊模板留白皮书作手动骨架。
 /// 只在**首次出现**该星时注入一次；之后用户在字段后打字，重建时整块作为「批注」逐字保留。
-/// ID 带章名（label，形如「章名」或「章名 - 节名」）便于跨页软链接检索；label 空则只用页号。
+///
+/// `[ID: …]` 是**机器锚点**（label 形如「章名」或「章名 - 节名」+页号），保持确定性——它是 MOC
+/// 软链接目标 + cardindex 死链体检的索引键；人写的概念名走独立的「🏷 核心概念」字段，二者分开。
 fn page_scaffold(page: usize, label: &str) -> Vec<String> {
     let id = if label.is_empty() {
         format!("[ID: p{page}]")
@@ -110,15 +115,16 @@ fn page_scaffold(page: usize, label: &str) -> Vec<String> {
     };
     vec![
         id,
-        "〔线索框〕".to_string(),
-        "🔵 时间节点：".to_string(),
-        "🔴 核心实体：".to_string(),
-        "🟢 案件代号：".to_string(),
-        "〔逻辑推演网〕".to_string(),
+        "🏷 核心概念：".to_string(),
+        "📚 来源：".to_string(),
+        "🔖 属性：".to_string(),
+        "〔WHAT · 客观重述（大白话，勿抄书）〕".to_string(),
+        "· 定义/事实：".to_string(),
+        "· 关键支撑：".to_string(),
+        "〔SO WHAT · 我的洞见〕".to_string(),
+        "· 为何打动我／解释了什么：".to_string(),
         "　".to_string(),
-        "〔标签与锚点〕".to_string(),
-        "🔖 Tags：".to_string(),
-        "🟡 金句：".to_string(),
+        "〔NOW WHAT · 软链接〕".to_string(),
         "🔗 指向 → ID：".to_string(),
     ]
 }
@@ -265,6 +271,17 @@ mod tests {
         let p2 = render_card("书", &stars, &prev);
         assert_eq!(p2.len(), 3);
         assert!(p2[1].contains("第8页批注"), "第8页批注应在其卡片页: {}", p2[1]);
+    }
+
+    #[test]
+    fn new_star_gets_universal_atomic_scaffold() {
+        // 新星注入的是通用原子卡（WHAT/SO WHAT/NOW WHAT），不再是悬疑三段式。
+        let pages = render_card("任意书", &[(3, "第二章".into())], &CardModel::default());
+        let t = pages.join("\n");
+        assert!(t.contains("[ID: 第二章-p3]"), "机器锚点保留: {t}");
+        assert!(t.contains("🏷 核心概念："), "概念字段");
+        assert!(t.contains("WHAT") && t.contains("SO WHAT") && t.contains("NOW WHAT"), "三段通用结构: {t}");
+        assert!(!t.contains("案件代号") && !t.contains("逻辑推演网"), "不应再有悬疑特殊字段: {t}");
     }
 
     #[test]
