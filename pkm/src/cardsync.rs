@@ -154,16 +154,16 @@ fn anchor_id(book_title: &str, page: usize, label: &str) -> String {
     }
 }
 
-/// 新出现的 ★ 页按模板注入一次初始骨架；之后用户在字段后打字，重建整块作「批注」逐字保留。
-fn page_scaffold(tmpl: CardTemplate, book_title: &str, page: usize, label: &str) -> Vec<String> {
-    let mut v = vec![anchor_id(book_title, page, label)];
-    let body: &[&str] = match tmpl {
+/// 单套模板的字段（不含锚点行）。**共用的「🔗 关联 → ID：」行各模板保持逐字一致**，
+/// 好让多模板合并时精确去重成一条。
+fn template_body(tmpl: CardTemplate) -> &'static [&'static str] {
+    match tmpl {
         // 通用·原子卡（默认）：Evergreen——一卡一概念、概念导向、密集链接。任何书/语言通用。
         CardTemplate::General => &[
             "🏷 概念（一卡一概念，起个能独立成立的名）：",
             "📝 用我的话说清（费曼，勿抄原文）：",
             "💡 SO WHAT · 我的洞见 / 解释了什么：",
-            "🔗 关联 → ID（越多越好，跨书跨域）：",
+            "🔗 关联 → ID：",
             "📚 出处：",
         ],
         // 原文·英文原版：sentence mining——抓含生词的整句（上下文）+ 生词释义 + 地道表达。
@@ -179,7 +179,6 @@ fn page_scaffold(tmpl: CardTemplate, book_title: &str, page: usize, label: &str)
         CardTemplate::Mystery => &[
             "〔线索框〕🔵 时间线 / 🔴 关键人物 / 🟢 案件·诡计代号：",
             "〔逻辑推演网〕（手写树状+箭头：诡计拆解·破局链·伏笔）：",
-            "　",
             "〔主题与金句〕🎯 主题 / 🟡 金句：",
             "🔗 关联 → ID：",
         ],
@@ -192,8 +191,29 @@ fn page_scaffold(tmpl: CardTemplate, book_title: &str, page: usize, label: &str)
             "🎯 主题与我的洞见：",
             "🔗 关联 → ID：",
         ],
-    };
-    v.extend(body.iter().map(|s| s.to_string()));
+    }
+}
+
+/// 枚举规范序——多模板合并按此固定序输出，与用户打 Tag 的书写顺序无关（结果确定 = 幂等）。
+const TEMPLATE_ORDER: [CardTemplate; 4] =
+    [CardTemplate::General, CardTemplate::Original, CardTemplate::Mystery, CardTemplate::SciFi];
+
+/// 新星初始骨架。`tmpls`=该书由原生 Tag 匹配到的模板集（可多个，如英文原版悬疑=#原文+#悬疑）。
+/// **按规范序合并 + 逐字去重**（共用的「🔗 关联」行等合并成一条）；空集由调用方保证退默认 `[General]`。
+/// 之后用户在字段后打字，重建整块作「批注」逐字保留。
+fn page_scaffold(tmpls: &[CardTemplate], book_title: &str, page: usize, label: &str) -> Vec<String> {
+    let mut v = vec![anchor_id(book_title, page, label)];
+    let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    for t in TEMPLATE_ORDER {
+        if !tmpls.contains(&t) {
+            continue;
+        }
+        for &line in template_body(t) {
+            if seen.insert(line) {
+                v.push(line.to_string());
+            }
+        }
+    }
     v
 }
 
@@ -204,11 +224,15 @@ fn page_scaffold(tmpl: CardTemplate, book_title: &str, page: usize, label: &str)
 /// 页文本结构（join("\n") 后是连续流，parse_card 按 ★ 切块，与分页无关）：
 ///   第一张 = 标题 + TODO_HEADER + 第一条 ★ + 其批注；其后每张 = 一条 ★ + 其批注。
 pub fn render_card(book_title: &str, stars: &[(usize, String)], prev: &CardModel) -> Vec<String> {
-    render_card_with(book_title, stars, prev, CardTemplate::default())
+    render_card_with(book_title, stars, prev, &[CardTemplate::default()])
 }
 
-/// 同 `render_card`，但显式指定新星注入的模板（daemon 按书的原生 Tag 选；无 Tag 走默认 Literature）。
-pub fn render_card_with(book_title: &str, stars: &[(usize, String)], prev: &CardModel, tmpl: CardTemplate) -> Vec<String> {
+/// 同 `render_card`，但显式指定新星注入的模板集（daemon 按书的原生 Tag 选，可多套合并；
+/// 空 `tmpls` 退默认 `General`）。多套按规范序合并去重（见 `page_scaffold`）。
+pub fn render_card_with(book_title: &str, stars: &[(usize, String)], prev: &CardModel, tmpls: &[CardTemplate]) -> Vec<String> {
+    // 空集兜底退默认，保证任何调用都有骨架。
+    let default = [CardTemplate::default()];
+    let tmpls: &[CardTemplate] = if tmpls.is_empty() { &default } else { tmpls };
     let mut pages: Vec<String> = Vec::new();
     for (i, (page, label)) in stars.iter().enumerate() {
         let mut block: Vec<String> = Vec::new();
@@ -221,7 +245,7 @@ pub fn render_card_with(book_title: &str, stars: &[(usize, String)], prev: &Card
         block.push(star_header(*page, label));
         match prev.notes_by_page.get(page) {
             Some(notes) => block.extend(notes.iter().cloned()), // 老星：保留用户编辑
-            None => block.extend(page_scaffold(tmpl, book_title, *page, label)), // 新星：注入模板
+            None => block.extend(page_scaffold(tmpls, book_title, *page, label)), // 新星：注入模板（可合并）
         }
         pages.push(block.join("\n"));
     }
@@ -356,13 +380,13 @@ mod tests {
         assert!(gen.contains("一卡一概念") && gen.contains("SO WHAT"), "通用字段: {gen}");
         assert!(!gen.contains("势力阵营") && !gen.contains("线索框") && !gen.contains("生词"), "默认不应带特殊模板字段: {gen}");
         // 原文·英文原版（sentence mining）。
-        let orig = render_card_with("书", stars, &empty, CardTemplate::Original).join("\n");
+        let orig = render_card_with("书", stars, &empty, &[CardTemplate::Original]).join("\n");
         assert!(orig.contains("原句") && orig.contains("生词") && orig.contains("地道表达"), "原文字段: {orig}");
         // 悬疑·推理。
-        let mys = render_card_with("书", stars, &empty, CardTemplate::Mystery).join("\n");
+        let mys = render_card_with("书", stars, &empty, &[CardTemplate::Mystery]).join("\n");
         assert!(mys.contains("线索框") && mys.contains("逻辑推演网") && mys.contains("诡计"), "悬疑字段: {mys}");
         // 科幻·世界观制衡。
-        let sf = render_card_with("书", stars, &empty, CardTemplate::SciFi).join("\n");
+        let sf = render_card_with("书", stars, &empty, &[CardTemplate::SciFi]).join("\n");
         assert!(sf.contains("势力阵营") && sf.contains("权力/资源制衡") && sf.contains("核心冲突"), "科幻字段: {sf}");
         // Tag → 模板映射（含别名、`#` 前缀、大小写）。
         assert_eq!(CardTemplate::from_tag("#悬疑"), Some(CardTemplate::Mystery));
@@ -370,6 +394,24 @@ mod tests {
         assert_eq!(CardTemplate::from_tag("SciFi"), Some(CardTemplate::SciFi));
         assert_eq!(CardTemplate::from_tag("通用"), Some(CardTemplate::General));
         assert_eq!(CardTemplate::from_tag("随便"), None);
+    }
+
+    #[test]
+    fn multi_template_merge_dedups_and_is_order_stable() {
+        let stars = &[(3, "".to_string())];
+        let empty = CardModel::default();
+        // 英文原版悬疑 = #原文 + #悬疑：两套字段都在。
+        let merged = render_card_with("书", stars, &empty, &[CardTemplate::Original, CardTemplate::Mystery]).join("\n");
+        assert!(merged.contains("原句") && merged.contains("生词"), "原文字段应在: {merged}");
+        assert!(merged.contains("线索框") && merged.contains("逻辑推演网"), "悬疑字段应在: {merged}");
+        // 共用的「🔗 关联 → ID：」合并成一条（不重复）。
+        assert_eq!(merged.matches("🔗 关联 → ID：").count(), 1, "关联行应去重成 1 条: {merged}");
+        // 规范序稳定：Tag 书写顺序颠倒，输出逐字相同（幂等）。
+        let reversed = render_card_with("书", stars, &empty, &[CardTemplate::Mystery, CardTemplate::Original]).join("\n");
+        assert_eq!(merged, reversed, "合并输出应与 Tag 顺序无关");
+        // 空集退默认 General。
+        let none = render_card_with("书", stars, &empty, &[]).join("\n");
+        assert!(none.contains("一卡一概念"), "空集应退默认通用: {none}");
     }
 
     #[test]
