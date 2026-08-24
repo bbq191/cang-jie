@@ -125,6 +125,23 @@ targetId 串解成 LibraryId(documentId,pageId)+动作。两者由库层在打�
 **MOC 软链接（`[ID:]` + 全局搜索，已落地、零依赖）是唯一现货路径**，白皮书 §07 已采用。除非未来固件放出原生"创建链接"UI
 （届时可重启采样），此方向不再投入。PDF 内嵌链接（pdfium）是独立的另一套，与笔记本/EPUB 跳转无关，本项目用不上。
 
+## 6. 造链接后门排查（2026-08-24，续）：两条后门双双证伪
+
+采样判死后追问"既然设备无创建 UI，能不能**绕过 UI** 用注入造链接"。查两条后门，都不通：
+
+1. **括号/文本语法糖**（假设：打字输入 `[[ ]]`/`[ ]` 被自动摄取成链接或格式 run）——**证伪**。
+   typed-text 输入走**纯标准 Qt**（`QInputMethodEvent::setCommitString` / `QTextCursor::insertText`，即中文输入法
+   hook 的 commitString 通道），二进制里**无** autolink/wikilink/linkify/detectUrl/markdown/autoformat/autocorrect
+   任何 pattern 检测串；`[[` 的 strings 命中全是随机字节噪声或 std::regex 内部符号（`_BracketMatcher`=正则字符类，无关）。
+2. **QML 方法注入**（假设：qmldiff 注入手势/按钮去调 `SceneLinkHandler` 造链接）——**证伪**。
+   `SceneLinkHandler`（QML 注册类型）的 metaobject stringdata blob（vaddr `0x1158e74`）暴露的方法是
+   **`openUrl` · `goToPage`(page) · `toggleCheckbox`(index) · `activate`(link)** —— 全是**激活/消费端**
+   （点击已有链接→跳页/开 URL，是 `onLinkActivated` 的后端；`toggleCheckbox` 揭示"链接"属于更广的可交互场景元素家族），
+   **没有 `createLink`/`addLink`/`setTarget` 任何创建接口**。注入调它只能激活已存在链接，造不出新链接。
+
+**∴ 补强判死**：原生链接不仅"无创建 UI + 存量零样本"（§5），连"注入造链接"的文本语法 / QML 方法两条后门也不通 → 彻底判死。
+（副产品：`goToPage`/`openUrl` 是 invokable 导航能力，与造链接无关，但注入一个"跳到某页/开 URL"入口是可行的，若未来别的功能用得上。）
+
 ## 附：复现
 
 ```bash
