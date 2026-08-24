@@ -3,7 +3,7 @@
 对应《[reMarkable 拼音输入法白皮书](../docs/reMarkable拼音输入法白皮书.md)》03 节
 （拼音引擎核心设计）/ 06 节（候选词库）。`src/` 是先在 x86 开发机上写通、
 写满测试的 Python 参照实现，`c/` 是逐字节差分对拍后移植的 C 版——C 版已由
-`xovi-extensions/cangjie-langhook` 直接 include 源码、编进 `.so` 装到设备上，
+`chinese-ime/langhook` 直接 include 源码、编进 `.so` 装到设备上，
 拼音/双拼/繁体/简拼/中英混输（Phase C）全部真机验证通过。这个目录本身仍可
 脱离设备独立开发/测试（`pytest` + `make test`/`make diff-check`）。
 
@@ -40,7 +40,7 @@ pinyin-engine/
   c/                 音节表/切分/候选词典/简拼索引/繁体词典的 C 移植版（见
                      c/src/*.h 设计说明），跟 src/ 的 Python 实现逐一有对应的
                      差分测试或专属单测；切分/词典/简拼/繁体双 blob 均已接入
-                     xovi-extensions/cangjie-langhook 并真机验证（含双拼，见
+                     chinese-ime/langhook 并真机验证（含双拼，见
                      《拼音输入法白皮书》Step Y）；候选逻辑做成真正的逐字输入法
                      （Phase A：前缀候选/分段提交/退格撤销，白皮书 02 节）。中英
                      混输已接入设备（Phase C，白皮书 07 节）：词典驱动的 iOS 式
@@ -222,7 +222,7 @@ print(e.query_jianpin('zg')[:3])                              # 简拼 z+g -> ['
   换掉，是刻意的：真正对响应延迟敏感的是接进设备的版本，`c/` 目录下
   已经有对应的 C 查询层（`c/src/dictionary.c`，排序数组 + 二分查找，
   不是 trie，见该文件头部设计说明），差分测试跟这里的 Python 实现
-  逐字节比对过，且已经接入 `xovi-extensions/cangjie-langhook` 并真机
+  逐字节比对过，且已经接入 `chinese-ime/langhook` 并真机
   验证通过（白皮书 02 节 Step V）。
 - 双拼只接了小鹤双拼（flypy）和自然码（natural）两套 schema，`data/`
   里还下了另外三套（abc/mspy/pyjj）但没写对应的解码测试，理论上
@@ -237,7 +237,7 @@ print(e.query_jianpin('zg')[:3])                              # 简拼 z+g -> ['
   拼音输入法白皮书 07 节设计的"全拼/简拼两条路径并行、简拼候选降权
   合并展示"需要先有真机试验数据才能定下具体的降权系数，这一步留到
   真机试验阶段，现在只保证简拼查询本身是对的。
-- `jianpin.c` 已经接入 `xovi-extensions/cangjie-langhook` 并真机验证
+- `jianpin.c` 已经接入 `chinese-ime/langhook` 并真机验证
   通过——`segment.c`/`dictionary.c` 当初"先 Python 原型 + 差分测试，
   再移植 C，最后接真机"的三步全部走完。落地方式比 07 节最初设想的
   "两条路径加权合并"更简单：全拼路径先填充候选缓存，缓存槽位还有

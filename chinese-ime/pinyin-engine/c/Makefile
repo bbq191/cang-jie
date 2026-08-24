@@ -4,9 +4,11 @@
 # 二进制本体，改成运行时 mmap 一份离线生成的 dict.bin，见
 # src/dictionary.h 顶部说明）。
 #
-# syllables/segment 已经接进 xovi-extensions/cangjie-langhook（Step T）；
-# dictionary 这一层是 M5 的产出，这一轮还没接进去（见计划文件"M5"章节
-# 明确不做的事），只做到"离线验证格式设计能不能用"。
+# 全部七层（syllables/segment/dictionary/jianpin/shuangpin/userfreq/snippets）
+# 均已接进 chinese-ime/langhook：langhook/Makefile 的 PINYIN_SRC 直接编译这些
+# .c、hook_init.c include 对应 .h，dict.bin 运行时 mmap，全部真机验证通过。
+# （历史注：dictionary 曾是 M5 产出、一度只做离线验证，后已接入——勿再据旧注释
+# 以为"没接进去"；旧路径 xovi-extensions/cangjie-langhook 已改名 chinese-ime/langhook。）
 
 CC ?= gcc
 AARCH64_CC ?= aarch64-linux-gnu-gcc
@@ -68,7 +70,7 @@ diff-check: dict-blob jianpin-blob
 	cd .. && ($(PY) c/tests/diff_check_snippets.py || python3 c/tests/diff_check_snippets.py)
 
 # 交叉编译验证——确认这批 C 代码在目标架构（reMarkable 的 ARM64）上也能
-# 正常编译，跟 xovi-extensions/cangjie-langhook 用同一个交叉编译器。
+# 正常编译，跟 chinese-ime/langhook 用同一个交叉编译器。
 # dictionary.c/jianpin.c 用了 mmap/fstat 等 POSIX 接口，交叉编译器自带的
 # libc 头文件应该覆盖；shuangpin.c 纯查表，不用任何 POSIX 接口。这里只
 # 验证编译，不验证链接（不产出可执行文件）。
