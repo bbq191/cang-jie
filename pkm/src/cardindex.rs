@@ -128,9 +128,49 @@ pub fn render_report(idx: &CardIndex) -> String {
     s
 }
 
+/// 渲染成设备端「🔗 卡片索引」笔记本的页文本（当前单页）。**刻意不含 `[ID: ]` 括号 + 不含
+/// 「指向/链接…ID:」触发词**——该本会被 collect 按名排除、不回喂索引，但正文再避开触发式样，
+/// 双保险防自我摄取/死链自指。锚点/死链只列内层 id 串（如 `洋娃娃 - P 8`）。
+pub fn render_notebook_pages(idx: &CardIndex) -> Vec<String> {
+    let dead = dead_links(idx);
+    let mut s = String::new();
+    s.push_str("🔗 卡片索引 · MOC 死链体检\n");
+    s.push_str("（daemon 自动生成·只读；勿在此本手写，重建会覆盖）\n\n");
+    s.push_str(&format!("{} 锚点 · {} 软链接 · {} 死链\n\n", idx.defined.len(), idx.refs.len(), dead.len()));
+    s.push_str("━━ ⚠ 死链 ━━\n");
+    if dead.is_empty() {
+        s.push_str("✓ 无死链\n");
+    } else {
+        for (book, target) in &dead {
+            s.push_str(&format!("· 《{book}》 → 「{target}」（锚点不存在）\n"));
+        }
+    }
+    s.push_str("\n━━ 全库锚点 ━━\n");
+    for id in &idx.defined {
+        s.push_str(&format!("· {id}\n"));
+    }
+    vec![s]
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn notebook_pages_no_selfingest_patterns() {
+        // 笔记本正文不得含会被 defined_ids/referenced_ids 摄取的样式，否则自指污染索引。
+        let docs = vec![
+            ("《书A》- 总结卡片".to_string(), "[ID: a]\n指向 → ID：不存在X".to_string()),
+        ];
+        let idx = build_index(&docs);
+        let text = render_notebook_pages(&idx).join("\n");
+        assert!(!text.contains("[ID:"), "笔记本正文不应含 [ID: 括号: {text}");
+        // 即便当作普通 doc 回喂，也不产生新锚点/引用。
+        assert!(defined_ids(&text).is_empty(), "不应从笔记本正文抽出锚点");
+        assert!(referenced_ids(&text).is_empty(), "不应从笔记本正文抽出引用");
+        // 但内容本身在场（死链条目、锚点条目）。
+        assert!(text.contains("不存在X") && text.contains("· a"), "报告内容应在: {text}");
+    }
 
     #[test]
     fn defined_handles_spaces_and_multiple() {

@@ -57,8 +57,11 @@ const CFG_PATH_DEFAULT: &str = "/home/root/.local/share/cangjie-ime/reading-qol.
 const UPLOAD_HOST: &str = "10.11.99.1";
 const CARD_SUFFIX: &str = "- 总结卡片";
 const PENDING_TRASH: &str = "/home/root/weread/pending-trash.json";
-/// MOC 死链体检报告落点（SSH 可读文件；设备端可视化留后续项）。
+/// MOC 死链体检报告落点（SSH 可读文件）。
 const CARD_INDEX_PATH: &str = "/home/root/weread/card-index.md";
+/// 库内「🔗 卡片索引」笔记本的固定 visibleName（设备端可视化）。必须被 collect_notebook_texts 排除
+/// （否则自我摄取 + 上传→自触发无限重建），且正文不含 [ID:]/触发词双保险（见 cardindex）。
+const INDEX_TITLE: &str = "🔗 卡片索引 · MOC 死链体检";
 /// 卡片最近被编辑（用户可能正在打字）→ 本轮跳过重建、下次再合，避免读到半刷入的 .rm。
 const GUARD_SECS: u64 = 20;
 
@@ -168,6 +171,10 @@ fn collect_notebook_texts(dir: &str) -> Vec<(String, String)> {
                 continue;
             }
             let title = meta.get("visibleName").and_then(|x| x.as_str()).unwrap_or("").to_string();
+            // 索引本自身排除：否则它的锚点/引用回喂进索引（自指）+ 上传后自触发无限重建。
+            if title == INDEX_TITLE {
+                continue;
+            }
             let text = read_card_pages(dir, &uuid).join("\n");
             out.push((title, text));
         }
@@ -175,7 +182,35 @@ fn collect_notebook_texts(dir: &str) -> Vec<(String, String)> {
     out
 }
 
-/// 重建 MOC 死链索引并写报告文件。observe=true 只打摘要不写。
+/// 把「🔗 卡片索引」报告同步成库内笔记本（复用卡片的 pack_rmdoc+upload+trash 链）。
+/// 内容未变（对最新本逐字相同）→ 绝不上传（防 churn + 防自触发循环）；多余旧本入 trash 队列。
+fn sync_index_notebook(dir: &str, pages: &[String]) -> Option<String> {
+    let existing = find_docs_by_visible(dir, INDEX_TITLE);
+    let new_text = pages.join("\n");
+    if let Some((u, _)) = existing.first() {
+        let cur = read_card_pages(dir, u).join("\n");
+        if cur == new_text {
+            // 内容一致：把多余同名旧本入队列，最新那本留着，本轮不上传。
+            for (u2, _) in existing.iter().skip(1) {
+                queue_trash(u2);
+            }
+            return None;
+        }
+    }
+    let new_uuid = uuid::Uuid::new_v4().to_string();
+    let refs: Vec<&str> = pages.iter().map(|s| s.as_str()).collect();
+    let rmdoc = cardnote::pack_rmdoc(&new_uuid, INDEX_TITLE, &refs).ok()?;
+    let net = ureq::AgentBuilder::new().timeout(Duration::from_secs(20)).build();
+    if inject::upload_document(&net, UPLOAD_HOST, &rmdoc, &format!("{INDEX_TITLE}.rmdoc"), "application/zip").is_err() {
+        return None;
+    }
+    for (u, _) in &existing {
+        queue_trash(u);
+    }
+    Some(format!("卡片索引笔记本已{}", if existing.is_empty() { "创建" } else { "更新" }))
+}
+
+/// 重建 MOC 死链索引：写 SSH 报告文件 + 同步库内「🔗 卡片索引」笔记本。observe=true 只打摘要不写。
 fn rebuild_card_index(dir: &str, observe: bool) {
     let idx = cardindex::build_index(&collect_notebook_texts(dir));
     let dead = cardindex::dead_links(&idx);
@@ -186,8 +221,12 @@ fn rebuild_card_index(dir: &str, observe: bool) {
     let report = cardindex::render_report(&idx);
     if let Err(e) = std::fs::write(CARD_INDEX_PATH, &report) {
         println!("[stars] 写死链报告失败: {e}");
+    }
+    // 库内可视化笔记本（内容未变则静默跳过）。
+    if let Some(m) = sync_index_notebook(dir, &cardindex::render_notebook_pages(&idx)) {
+        println!("[stars] {m}（{} 锚点 · {} 死链）", idx.defined.len(), dead.len());
     } else if !dead.is_empty() {
-        println!("[stars] 卡片索引已更新：{} 锚点，⚠ {} 处死链（见 {CARD_INDEX_PATH}）", idx.defined.len(), dead.len());
+        println!("[stars] 卡片索引：{} 锚点，⚠ {} 处死链（见 {CARD_INDEX_PATH}）", idx.defined.len(), dead.len());
     }
 }
 
