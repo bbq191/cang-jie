@@ -115,29 +115,86 @@ fn book_short(title: &str) -> String {
     title.split_whitespace().collect::<String>().chars().take(MAX).collect()
 }
 
-/// `[ID: …]` 是**机器锚点**，保持确定性——它是 MOC 软链接目标 + cardindex 死链体检的索引键；
-/// 人写的概念名走独立的「🏷 核心概念」字段，二者分开。前缀取章名 label，无章节则退回书名短前缀。
-fn page_scaffold(book_title: &str, page: usize, label: &str) -> Vec<String> {
+/// 卡片模板类型（社区 PKM 范式改编，见白皮书 §06）。默认 `General`——库中英混杂，默认须语言/题材
+/// 无关；用户给书打原生 Tag 切特殊模板。
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CardTemplate {
+    /// 通用·原子卡（默认）：任何书/语言，提炼一个概念/洞见（Matuschak Evergreen：原子/概念导向/密链）。
+    #[default]
+    General,
+    /// 原文·英文原版：读英文原著的句子挖掘（Refold/Migaku sentence mining：抓整句上下文 + 生词 + 地道表达）。
+    Original,
+    /// 悬疑·推理：线索 / 时间线 / 诡计逻辑（小说阅读笔记 + 推理结构改编）。
+    Mystery,
+    /// 科幻·世界观制衡：势力 / 权力 / 设定规则 / 冲突（worldbuilding 模板改编）。
+    SciFi,
+}
+
+impl CardTemplate {
+    /// 原生 Tag 名 → 模板；无匹配返回 None（→ 调用方退默认 General）。收常见别名，容忍 `#` 前缀。
+    pub fn from_tag(tag: &str) -> Option<CardTemplate> {
+        match tag.trim().trim_start_matches('#').to_lowercase().as_str() {
+            "通用" | "原子" | "永久" | "概念" | "general" => Some(CardTemplate::General),
+            "原文" | "英文" | "英文原版" | "original" => Some(CardTemplate::Original),
+            "悬疑" | "推理" | "侦探" | "mystery" => Some(CardTemplate::Mystery),
+            "科幻" | "scifi" | "sf" => Some(CardTemplate::SciFi),
+            _ => None,
+        }
+    }
+}
+
+/// `[ID: …]` 机器锚点（MOC 软链接目标 + cardindex 死链体检的键，保持确定性）。前缀取章名 label，
+/// 无章节退回书名短前缀消歧；页号段 `- P N`。各模板共用此锚点作首行。
+fn anchor_id(book_title: &str, page: usize, label: &str) -> String {
     let prefix = if label.is_empty() { book_short(book_title) } else { label.to_string() };
-    let id = if prefix.is_empty() {
-        format!("[ID: P {page}]") // 书名也空（异常兜底）→ 退回裸页号
+    if prefix.is_empty() {
+        format!("[ID: P {page}]") // 书名也空（异常兜底）
     } else {
         format!("[ID: {prefix} - P {page}]")
+    }
+}
+
+/// 新出现的 ★ 页按模板注入一次初始骨架；之后用户在字段后打字，重建整块作「批注」逐字保留。
+fn page_scaffold(tmpl: CardTemplate, book_title: &str, page: usize, label: &str) -> Vec<String> {
+    let mut v = vec![anchor_id(book_title, page, label)];
+    let body: &[&str] = match tmpl {
+        // 通用·原子卡（默认）：Evergreen——一卡一概念、概念导向、密集链接。任何书/语言通用。
+        CardTemplate::General => &[
+            "🏷 概念（一卡一概念，起个能独立成立的名）：",
+            "📝 用我的话说清（费曼，勿抄原文）：",
+            "💡 SO WHAT · 我的洞见 / 解释了什么：",
+            "🔗 关联 → ID（越多越好，跨书跨域）：",
+            "📚 出处：",
+        ],
+        // 原文·英文原版：sentence mining——抓含生词的整句（上下文）+ 生词释义 + 地道表达。
+        CardTemplate::Original => &[
+            "❝ 原句（含生词的完整句子 +页码）：",
+            "🔤 生词/短语 → 释义（英英优先，标词性/读音）：",
+            "🌐 我的理解 / 意译：",
+            "🗣 地道表达（可复用的说法，\"偷\"来自己用）：",
+            "❓ 没读懂 / 语法疑问：",
+            "🔗 关联 → ID：",
+        ],
+        // 悬疑·推理：小说阅读笔记（人物/主题/金句）+ 推理结构（线索/时间线/诡计逻辑）。
+        CardTemplate::Mystery => &[
+            "〔线索框〕🔵 时间线 / 🔴 关键人物 / 🟢 案件·诡计代号：",
+            "〔逻辑推演网〕（手写树状+箭头：诡计拆解·破局链·伏笔）：",
+            "　",
+            "〔主题与金句〕🎯 主题 / 🟡 金句：",
+            "🔗 关联 → ID：",
+        ],
+        // 科幻·世界观制衡：worldbuilding 模板改编——势力/权力/设定规则/冲突/主题。
+        CardTemplate::SciFi => &[
+            "🏛 势力阵营（谁 vs 谁）：",
+            "⚖️ 权力/资源制衡（靠什么维系或打破）：",
+            "⚙️ 关键设定 / 技术规则：",
+            "🔥 核心冲突：",
+            "🎯 主题与我的洞见：",
+            "🔗 关联 → ID：",
+        ],
     };
-    vec![
-        id,
-        "🏷 核心概念：".to_string(),
-        "📚 来源：".to_string(),
-        "🔖 属性：".to_string(),
-        "〔WHAT · 客观重述（大白话，勿抄书）〕".to_string(),
-        "· 定义/事实：".to_string(),
-        "· 关键支撑：".to_string(),
-        "〔SO WHAT · 我的洞见〕".to_string(),
-        "· 为何打动我／解释了什么：".to_string(),
-        "　".to_string(),
-        "〔NOW WHAT · 软链接〕".to_string(),
-        "🔗 指向 → ID：".to_string(),
-    ]
+    v.extend(body.iter().map(|s| s.to_string()));
+    v
 }
 
 /// 按当前星集重生成卡片：**每个有 ★ 的页各占一张卡片页**（一主题一卡，留整页给你批注）。
@@ -147,6 +204,11 @@ fn page_scaffold(book_title: &str, page: usize, label: &str) -> Vec<String> {
 /// 页文本结构（join("\n") 后是连续流，parse_card 按 ★ 切块，与分页无关）：
 ///   第一张 = 标题 + TODO_HEADER + 第一条 ★ + 其批注；其后每张 = 一条 ★ + 其批注。
 pub fn render_card(book_title: &str, stars: &[(usize, String)], prev: &CardModel) -> Vec<String> {
+    render_card_with(book_title, stars, prev, CardTemplate::default())
+}
+
+/// 同 `render_card`，但显式指定新星注入的模板（daemon 按书的原生 Tag 选；无 Tag 走默认 Literature）。
+pub fn render_card_with(book_title: &str, stars: &[(usize, String)], prev: &CardModel, tmpl: CardTemplate) -> Vec<String> {
     let mut pages: Vec<String> = Vec::new();
     for (i, (page, label)) in stars.iter().enumerate() {
         let mut block: Vec<String> = Vec::new();
@@ -159,7 +221,7 @@ pub fn render_card(book_title: &str, stars: &[(usize, String)], prev: &CardModel
         block.push(star_header(*page, label));
         match prev.notes_by_page.get(page) {
             Some(notes) => block.extend(notes.iter().cloned()), // 老星：保留用户编辑
-            None => block.extend(page_scaffold(book_title, *page, label)), // 新星：注入总结卡片模板
+            None => block.extend(page_scaffold(tmpl, book_title, *page, label)), // 新星：注入模板
         }
         pages.push(block.join("\n"));
     }
@@ -285,14 +347,29 @@ mod tests {
     }
 
     #[test]
-    fn new_star_gets_universal_atomic_scaffold() {
-        // 新星注入的是通用原子卡（WHAT/SO WHAT/NOW WHAT），不再是悬疑三段式。
-        let pages = render_card("任意书", &[(3, "第二章".into())], &CardModel::default());
-        let t = pages.join("\n");
-        assert!(t.contains("[ID: 第二章 - P 3]"), "机器锚点保留: {t}");
-        assert!(t.contains("🏷 核心概念："), "概念字段");
-        assert!(t.contains("WHAT") && t.contains("SO WHAT") && t.contains("NOW WHAT"), "三段通用结构: {t}");
-        assert!(!t.contains("案件代号") && !t.contains("逻辑推演网"), "不应再有悬疑特殊字段: {t}");
+    fn templates_render_distinct_fields() {
+        let stars = &[(3, "第二章".to_string())];
+        let empty = CardModel::default();
+        // 默认（render_card）= 通用·原子卡。
+        let gen = render_card("书", stars, &empty).join("\n");
+        assert!(gen.contains("[ID: 第二章 - P 3]"), "锚点保留: {gen}");
+        assert!(gen.contains("一卡一概念") && gen.contains("SO WHAT"), "通用字段: {gen}");
+        assert!(!gen.contains("势力阵营") && !gen.contains("线索框") && !gen.contains("生词"), "默认不应带特殊模板字段: {gen}");
+        // 原文·英文原版（sentence mining）。
+        let orig = render_card_with("书", stars, &empty, CardTemplate::Original).join("\n");
+        assert!(orig.contains("原句") && orig.contains("生词") && orig.contains("地道表达"), "原文字段: {orig}");
+        // 悬疑·推理。
+        let mys = render_card_with("书", stars, &empty, CardTemplate::Mystery).join("\n");
+        assert!(mys.contains("线索框") && mys.contains("逻辑推演网") && mys.contains("诡计"), "悬疑字段: {mys}");
+        // 科幻·世界观制衡。
+        let sf = render_card_with("书", stars, &empty, CardTemplate::SciFi).join("\n");
+        assert!(sf.contains("势力阵营") && sf.contains("权力/资源制衡") && sf.contains("核心冲突"), "科幻字段: {sf}");
+        // Tag → 模板映射（含别名、`#` 前缀、大小写）。
+        assert_eq!(CardTemplate::from_tag("#悬疑"), Some(CardTemplate::Mystery));
+        assert_eq!(CardTemplate::from_tag("原文"), Some(CardTemplate::Original));
+        assert_eq!(CardTemplate::from_tag("SciFi"), Some(CardTemplate::SciFi));
+        assert_eq!(CardTemplate::from_tag("通用"), Some(CardTemplate::General));
+        assert_eq!(CardTemplate::from_tag("随便"), None);
     }
 
     #[test]
