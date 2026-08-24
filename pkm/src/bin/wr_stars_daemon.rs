@@ -15,13 +15,13 @@
 //! 配置（reading-qol.json）：starTodoEnabled(默认关)/starTodoColor(默认 RED)/starTodoGap(默认 25)。
 //! 环境：CANGJIE_FSWATCH_OBSERVE=1 = 只打日志不写。
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use pkm_device::cardsync::{parse_pages, render_card};
-use pkm_device::stardetect::{scan_library, StarConfig};
+use pkm_device::stardetect::{scan_document_dir, scan_library, DocStars, StarConfig};
 use pkm_device::cardnote;
 use weread_device::epubindex::{chapter_map_hier, page_chapter_label, parse_sections};
 use weread_device::{fswatch, inject};
@@ -216,14 +216,37 @@ fn sync_one_card(dir: &str, book_title: &str, stars: &[(usize, String)], observe
 }
 
 /// 一次结算：扫库 → 每本有星的书同步卡片。observe=true 只打日志。
-fn settle(cfg: &Cfg, observe: bool) {
+/// `dirty`：None=全库扫（冷启动基线）；Some(uuid 集)=**只扫本轮变更的书**（增量，事件驱动省电的关键）。
+/// 每本卡片彼此独立、无跨书全局态 → 只扫变更书语义等价于全扫，且我们自己 /upload 卡片触发的
+/// 事件只会命中卡片本身（下方 suffix 跳过）→ 不再自触发整库重扫。
+/// 边界：某书清空全部星时，增量扫该书返回无星（不产 DocStars）→ 旧卡不会被 trash —— 此为
+/// **既存行为**（全扫同样如此，`scan_library` 无星即不产 DocStars），非本次增量引入的回归。
+fn settle(cfg: &Cfg, observe: bool, dirty: Option<&HashSet<String>>) {
     if !cfg.enabled {
         return;
     }
     let dir = xochitl_dir();
     let mut scfg = StarConfig::default();
     scfg.todo_colors = Some(vec![cfg.color.clone()]);
-    let docs = scan_library(Path::new(&dir), &scfg, cfg.gap);
+    let docs: Vec<DocStars> = match dirty {
+        None => scan_library(Path::new(&dir), &scfg, cfg.gap),
+        Some(set) => set
+            .iter()
+            .filter_map(|uuid| scan_document_dir(uuid, Path::new(&dir), &scfg, cfg.gap))
+            .collect(),
+    };
+    // observe 对账诊断：直观显示本轮扫描范围（全库 vs 增量几本），生产模式不打。
+    if observe {
+        match dirty {
+            None => println!("[stars] observe: 冷启动全库扫 → {} 本有星", docs.len()),
+            Some(set) => println!(
+                "[stars] observe: 增量扫 {} 本变更书 → 其中 {} 本有星（变更集 {:?}）",
+                set.len(),
+                docs.len(),
+                set.iter().take(8).collect::<Vec<_>>()
+            ),
+        }
+    }
 
     let mut msgs = Vec::new();
     for d in &docs {
@@ -266,9 +289,11 @@ fn main() {
     let observe = std::env::var("CANGJIE_FSWATCH_OBSERVE").ok().as_deref() == Some("1");
     println!("wr-stars-daemon 启动{}（B 模型：一书一份打字卡片）", if observe { "（observe 观察模式）" } else { "" });
 
-    settle(&read_cfg(), observe);
+    // 冷启动：全库扫一遍建基线（此时无变更集可依）。
+    settle(&read_cfg(), observe, None);
 
-    fswatch::watch_debounced(&xochitl_dir(), Duration::from_secs(8), false, |_changed| {
-        settle(&read_cfg(), observe);
+    // 稳态：只扫本轮变更的书（fswatch 已把变更 doc uuid 集交到手上），不再无差别整库重扫。
+    fswatch::watch_debounced(&xochitl_dir(), Duration::from_secs(8), false, |changed| {
+        settle(&read_cfg(), observe, Some(changed));
     });
 }
