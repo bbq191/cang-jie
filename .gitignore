@@ -20,8 +20,12 @@ target/
 *.o
 *.a
 **/build/
-*.so            # 编译产物/第三方库全排除（本项目无需 track 任何 .so）
-*.so.*          # 带版本号的第三方库，如 libQt6Core.so.6.10.3
+# 编译产物/第三方库一律排除。注意：行内 # 不是 gitignore 注释，注释必须独占一行，
+# 否则整条 pattern 连注释文字被吞、规则失效（2026-08-24 修：此前 *.so 一直没生效）。
+*.so
+*.so.*
+# 例外：出货载荷——cangjie-langhook.so 是 install.sh 直接拷的预编译 xovi 扩展，故意 track。
+!chinese-ime/langhook/cangjie-langhook.so
 
 # ── 缓存 ──
 .cache/
