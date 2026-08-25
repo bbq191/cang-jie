@@ -1,7 +1,8 @@
 # reMarkable 知识组织设计建议（EPUB / 剪藏 / Zettelkasten 卡片 / 手写笔记 的存放结构）
 
 > 2026-08-25。针对设备上异构知识产物「书 / 网页剪藏 / 卡片 / daemon 汇总本 / 手写笔记」平铺一堆的现状，
-> 基于真机实况提整理结构 + 落地路径。**这是设计建议、非既成实现**；落地要点里标了关键待验证假设。
+> 基于真机实况提整理结构 + 落地路径。**命门（能否 daemon 自动归档）已真机验证 = 否定**（§四）——
+> reMarkable `/upload` 一律落 root、无 move API，方案据此定为「命名聚类留 root + 素材手动归档一次」的现实版（§五）。
 
 ## 一、现状诊断（真机 22 文档，17 在 root，5 trash）
 
@@ -53,39 +54,45 @@
 - **5 个 daemon 汇总本收进 `zettelkasten/📊仪表盘`**：它们是"看板"，天天生成、不该和内容本挤在 root 顶部。
 - **卡片和 MOC 同在 zettelkasten**：卡片是原子、MOC 是网，同属"加工层"，就近互链。
 
-## 四、落地路径（关键：让 daemon 自动归档）
+## 四、落地路径（命门已真机验证：自动归档 **不可行**）
 
-手动拖必被冲掉（§一.2），所以**唯一可持续的落地 = daemon 生成时直接落对应文件夹**：
+**★ 命门验证结果（2026-08-25 真机，否定）**：造 metadata `parent=<zettelkasten uuid>` 的 rmdoc upload 到
+`/upload` → 设备上该文档 **`parent` 被重置为 `""`（落 root）、uuid 也被换**。即 **reMarkable 的 `/upload`
+导入时忽略 metadata 的 `parent`，一律落 root**（用 `cardnote::pack_rmdoc_in` + `examples/verify_parent.rs` 实测）。
 
-1. **`build_metadata` 支持 `parent`**：现硬编码 `"parent": ""`，改成接受目标文件夹 uuid。
-   daemon 按类型落：卡片 → `zettelkasten` 文件夹、汇总本 → `zettelkasten`（或其下"仪表盘"子夹）。
-2. **★ 关键待验证假设**：reMarkable 的 `/upload` 导入 `.rmdoc` 时，**是否尊重 `.rmdoc` 内 metadata 的
-   `parent`**（把文档放进指定文件夹）？—— 这决定自动归档可行性。**需真机验证**：造一个 metadata
-   `parent=<zettelkasten uuid>` 的 rmdoc upload，看是否进该文件夹（而非 root / 报错 / 忽略）。
-   - 若**尊重** → daemon 自动归档成立，零维护，方案完整落地。
-   - 若**不尊重**（upload 强制落 root 或某收件箱）→ 退路：daemon 上传后再调一次"移动"操作（若 xochitl 有
-     move API / 或直改目标文档 metadata 的 parent 并触发 xochitl 重读——但 xochitl 无视磁盘直写，需 API），
-     或接受"卡片留 root、仅书/剪藏手动归档一次"（书的 parent 用户拖了就稳，因为书不被 daemon 重建）。
-3. **文件夹 uuid 的获取**：daemon 启动时按 visibleName（`library`/`zettelkasten`）查文件夹 uuid（复用
-   `find_docs_by_visible`，但要认 `CollectionType`）；缺则可由 daemon 创建（upload 一个 CollectionType）。
-4. **书 vs 剪藏的自动区分**（进 `library` 后再分子夹）：都带 epubindex，靠启发式——
-   剪藏通常**单章/无 TOC/篇幅短**，正式书**多章 + 有目录**。或最稳：**下书来源打标签**（墨香微信读书下的
-   打 `#书`、抓取工具转的打 `#剪藏`），daemon/工具按标签归。标签方案确定性高、不猜。
+叠加另两条硬约束，**"daemon 自动归档"整条路线判死**：
+- upload 一律落 root（本次实测）；
+- daemon 每次重建卡片**换 uuid**（无法认领已归档的旧卡去改）；
+- xochitl **无视磁盘直写**（直改 `.metadata` 的 parent 不即时生效，要重启 xochitl 才见——不能为归档重启）；
+- xochitl 本地 web API **只有 `/upload`、没有 move/改 parent 的接口**。
 
-## 五、取舍与风险（诚实标注）
+→ **没有任何途径让 daemon 把生成物自动放进文件夹。** 方案据此从"自动归档"退化为下面的现实版。
 
-- **reMarkable 文件夹是纯手动概念**：没有"智能文件夹/标签视图"。本方案靠 daemon 写死 parent 实现"自动归档"，
-  完全依赖 §四.2 那个待验证假设。**先验证再动手**（按项目铁律，不猜写）。
-- **daemon 换 uuid 重建**：卡片每次重建是新 uuid，parent 必须每次都由 daemon 写对，用户一旦手动移动就会被
-  下次重建覆盖回 daemon 设定的文件夹——所以**卡片的归属只能由 daemon 决定，用户别手动挪卡片**（挪了也白挪）。
-  书/剪藏/手写笔记不被 daemon 重建，用户手动归档一次即稳。
-- **过度分层风险**：小屏别超两层。若嫌 `仪表盘` 子夹深，5 个汇总本也可平铺 `zettelkasten` 根（可接受）。
-- **本建议不含"进度/时间"维度**：云端阅读进度在 `wr-serve` 面板、daemon 取不到；本结构是空间组织，不做时间线。
+## 五、现实版方案（命门否定后）
 
-## 六、建议的推进顺序
+**分两类处置：**
 
-1. **先验证命门**（§四.2）：真机造带 `parent` 的 rmdoc upload，确认 xochitl 是否归档。**这一步决定整个方案形态。**
-2. 验证通过 → 给 `build_metadata` 加 `parent`、daemon 启动查/建 `library`+`zettelkasten` 文件夹 uuid、
-   卡片与汇总本落 `zettelkasten`。
-3. 书/剪藏区分先用**来源标签**（最稳），启发式作兜底。
-4. 手写笔记、正式书 = 用户手动归档一次（不被 daemon 冲）。
+1. **daemon 生成物（卡片 + 5 汇总本）——留在 root，靠命名前缀视觉聚类，不强求进文件夹。**
+   - 理由：upload 落 root + 换 uuid，进不了文件夹；用户手动拖也会被下次重建打回 root（白拖）。
+   - 现状命名其实已具聚类性：汇总本用 emoji 前缀（🔗🎨📖📊）、卡片用 `《X》- 总结卡片` 后缀——在 root 列表里
+     天然成簇。**可进一步统一前缀**（如卡片也加个 `🃏` 前缀）让四类各自扎堆、一眼可辨，成本仅改 `title` 字符串。
+   - 若实在想收纳：只能**用户每次画星后手动拖卡片进 zettelkasten**——不推荐（高频、且被重建打回，纯做无用功）。
+
+2. **原始素材（正式书 / 网页剪藏 / 手写笔记）——用户手动归档一次即稳（不被 daemon 重建冲）。**
+   - 书 → `library`；剪藏 → `library`（或其下子夹）；手写笔记 → `笔记` 文件夹。拖一次就固定，因为这些文档
+     daemon 不碰、uuid 不变。
+   - **书 vs 剪藏区分**：最稳靠**下书来源标签**（墨香微信读书下的打 `#书`、chrome/公众号抓取转的打 `#剪藏`），
+     或启发式（剪藏多为单章/无 TOC/短）。这条纯人工或抓取工具侧处理，与 daemon 无关。
+
+**净结论**：reMarkable 的扁平库 + 只进不理的 `/upload`，决定了「自动归档」这条路走不通；能落地的只有
+「**daemon 生成物命名聚类留 root + 素材用户手动归档一次**」。你已建的 `library`/`zettelkasten` 文件夹，
+真正能装的是**素材（书/剪藏）和你手写的 MOC**，而不是 daemon 天天重建的卡片/汇总本。
+
+## 六、可落地的最小改动（若采纳）
+
+1. **给 daemon 生成物统一前缀**，让 root 列表四类各自成簇（唯一真能做的自动化，成本极低）：
+   - 卡片：`🃏 《X》- 总结卡片`（加 🃏）；汇总本已有 emoji，保持。
+   - （`pack_rmdoc` 已加 `pack_rmdoc_in(parent)` 变体备用，但 parent 对 upload 无效，此处不用它，只改 title。）
+2. **素材归档是纯手动**：出一份简短「归档约定」给用户——书/剪藏拖 `library`、手写拖 `笔记`、MOC 放 `zettelkasten`；
+   卡片/汇总本别去拖（拖了白拖）。
+3. 书/剪藏区分标签（`#书`/`#剪藏`）由下书/抓取环节打，非 daemon 职责。
