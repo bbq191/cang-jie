@@ -20,6 +20,7 @@ use std::path::Path;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use pkm_device::cardagg;
 use pkm_device::cardhl;
 use pkm_device::cardsync::{parse_pages, render_card_starspecs, CardTemplate};
 use pkm_device::stardetect::{scan_document_dir, scan_library, DocStars, StarConfig};
@@ -63,6 +64,7 @@ const CARD_INDEX_PATH: &str = "/home/root/weread/card-index.md";
 /// 库内「🔗 卡片索引」笔记本的固定 visibleName（设备端可视化）。必须被 collect_notebook_texts 排除
 /// （否则自我摄取 + 上传→自触发无限重建），且正文不含 [ID:]/触发词双保险（见 cardindex）。
 const INDEX_TITLE: &str = "🔗 卡片索引 · MOC 死链体检";
+const AGG_TITLE: &str = "🎨 高亮汇编";
 /// 卡片最近被编辑（用户可能正在打字）→ 本轮跳过重建、下次再合，避免读到半刷入的 .rm。
 const GUARD_SECS: u64 = 20;
 
@@ -172,8 +174,8 @@ fn collect_notebook_texts(dir: &str) -> Vec<(String, String)> {
                 continue;
             }
             let title = meta.get("visibleName").and_then(|x| x.as_str()).unwrap_or("").to_string();
-            // 索引本自身排除：否则它的锚点/引用回喂进索引（自指）+ 上传后自触发无限重建。
-            if title == INDEX_TITLE {
+            // 索引本 / 汇编本自身排除：否则回喂（自指）+ 上传后自触发无限重建。
+            if title == INDEX_TITLE || title == AGG_TITLE {
                 continue;
             }
             let text = read_card_pages(dir, &uuid).join("\n");
@@ -183,10 +185,10 @@ fn collect_notebook_texts(dir: &str) -> Vec<(String, String)> {
     out
 }
 
-/// 把「🔗 卡片索引」报告同步成库内笔记本（复用卡片的 pack_rmdoc+upload+trash 链）。
+/// 把 daemon 自动生成的只读本（卡片索引 / 高亮汇编）同步成库内笔记本（复用卡片的 pack_rmdoc+upload+trash 链）。
 /// 内容未变（对最新本逐字相同）→ 绝不上传（防 churn + 防自触发循环）；多余旧本入 trash 队列。
-fn sync_index_notebook(dir: &str, pages: &[String]) -> Option<String> {
-    let existing = find_docs_by_visible(dir, INDEX_TITLE);
+fn sync_auto_notebook(dir: &str, title: &str, pages: &[String]) -> Option<String> {
+    let existing = find_docs_by_visible(dir, title);
     let new_text = pages.join("\n");
     if let Some((u, _)) = existing.first() {
         let cur = read_card_pages(dir, u).join("\n");
@@ -200,15 +202,15 @@ fn sync_index_notebook(dir: &str, pages: &[String]) -> Option<String> {
     }
     let new_uuid = uuid::Uuid::new_v4().to_string();
     let refs: Vec<&str> = pages.iter().map(|s| s.as_str()).collect();
-    let rmdoc = cardnote::pack_rmdoc(&new_uuid, INDEX_TITLE, &refs).ok()?;
+    let rmdoc = cardnote::pack_rmdoc(&new_uuid, title, &refs).ok()?;
     let net = ureq::AgentBuilder::new().timeout(Duration::from_secs(20)).build();
-    if inject::upload_document(&net, UPLOAD_HOST, &rmdoc, &format!("{INDEX_TITLE}.rmdoc"), "application/zip").is_err() {
+    if inject::upload_document(&net, UPLOAD_HOST, &rmdoc, &format!("{title}.rmdoc"), "application/zip").is_err() {
         return None;
     }
     for (u, _) in &existing {
         queue_trash(u);
     }
-    Some(format!("卡片索引笔记本已{}", if existing.is_empty() { "创建" } else { "更新" }))
+    Some(if existing.is_empty() { "创建" } else { "更新" }.to_string())
 }
 
 /// 重建 MOC 死链索引：写 SSH 报告文件 + 同步库内「🔗 卡片索引」笔记本。observe=true 只打摘要不写。
@@ -224,10 +226,24 @@ fn rebuild_card_index(dir: &str, observe: bool) {
         println!("[stars] 写死链报告失败: {e}");
     }
     // 库内可视化笔记本（内容未变则静默跳过）。
-    if let Some(m) = sync_index_notebook(dir, &cardindex::render_notebook_pages(&idx)) {
-        println!("[stars] {m}（{} 锚点 · {} 死链）", idx.defined.len(), dead.len());
+    if let Some(m) = sync_auto_notebook(dir, INDEX_TITLE, &cardindex::render_notebook_pages(&idx)) {
+        println!("[stars] 卡片索引笔记本已{m}（{} 锚点 · {} 死链）", idx.defined.len(), dead.len());
     } else if !dead.is_empty() {
         println!("[stars] 卡片索引：{} 锚点，⚠ {} 处死链（见 {CARD_INDEX_PATH}）", idx.defined.len(), dead.len());
+    }
+}
+
+/// 重建「🎨 高亮汇编」：全库卡片本按 6 色横向聚合成 1 本 6 节。observe=true 只打摘要不写。
+fn rebuild_card_agg(dir: &str, observe: bool) {
+    let slots = cardagg::build_agg(&collect_notebook_texts(dir));
+    let total: usize = slots.iter().map(|v| v.len()).sum();
+    if observe {
+        let per: Vec<String> = (0..6).map(|s| format!("{}{}", cardagg::SECTION_NAME[s], slots[s].len())).collect();
+        println!("[stars] observe: 高亮汇编 {total} 条（{}）", per.join(" "));
+        return;
+    }
+    if let Some(m) = sync_auto_notebook(dir, AGG_TITLE, &cardagg::render_notebook_pages(&slots)) {
+        println!("[stars] 高亮汇编笔记本已{m}（{total} 条高亮）");
     }
 }
 
@@ -469,6 +485,7 @@ fn settle(cfg: &Cfg, observe: bool, dirty: Option<&HashSet<String>>) {
     };
     if need_index {
         rebuild_card_index(&dir, observe);
+        rebuild_card_agg(&dir, observe); // 跨书按色聚合，与死链索引同触发条件
     }
 }
 

@@ -8,6 +8,7 @@
 //! 单向依赖不反向。
 pub mod cardindex;
 pub mod cardhl;
+pub mod cardagg;
 pub mod cardnote;
 pub mod cardsync;
 pub mod stardetect;
