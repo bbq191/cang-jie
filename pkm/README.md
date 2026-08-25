@@ -1,6 +1,7 @@
 # pkm —— PKM 知识管理设备端生产实现（块5）
 
-> **完整设计 + 知识化方法论 + 真机调试记录见《[PKM 白皮书](docs/reMarkablePKM白皮书.md)》。** 本 README 只讲 crate 结构与构建。
+> **完整设计 + 真机调试记录见《[PKM 白皮书](docs/reMarkablePKM白皮书.md)》**；**设备上怎么用这套 PKM 读书
+> —— 读→生→炼→网→观→理 六阶段闭环见《[PKM 白皮书](docs/reMarkablePKM白皮书.md)》§01。** 本 README 只讲 crate 结构与构建。
 
 把 reMarkable 变成 Zettelkasten/PKM 工作台的设备端 Rust 实现。首个能力=**★ 全局待办**：
 阅读时用红笔在书上画五角星 → 后台守护进程自动把每本书的星汇总成一个「总结卡片」
