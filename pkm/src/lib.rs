@@ -4,7 +4,9 @@
 //!   - cardnote  ：造/更新"总结卡片"笔记本（.rm 笔记页，复用 reading 的 notebook_rm）
 //!   - cardindex ：全库卡片 ID 索引 + MOC 死链体检（只读文本、纯逻辑）
 //!   - dict      ：本地词典 mmap 二分查词（牛津英汉双解/现汉，用户自备、数据不入库）
-//!   - cardvocab ：荧光笔灰词→查词→《生词本》汇总本（句界扩展 + 渲染，纯逻辑可测）
+//!   - cardvocab ：生词条 + 句界扩原句 + 《生词本》渲染（纯逻辑可测）
+//!   - vocabscan ：生词本扫描编排（全库源书→灰词→查词的 IO 层，从 daemon 抽出，daemon 只触发+注入）
+//!   ↑ dict/cardvocab/locate/vocabscan 是「划词查字典」，概念属**块4 系统增强**（跨块，见系统增强白皮书 §08）
 //!
 //! 阅读栈能力（页→章 epubindex、文件监听 fswatch、书库注入 inject）复用 `weread_device`，
 //! 单向依赖不反向。
@@ -19,3 +21,4 @@ pub mod cardvocab;
 pub mod dict;
 pub mod locate;
 pub mod stardetect;
+pub mod vocabscan;

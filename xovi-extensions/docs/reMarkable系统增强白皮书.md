@@ -94,7 +94,7 @@ host 无法运行 xochitl，但能用官方 qmldiff 工具**离线实跑补丁**
 查字词是**系统增强线的阅读辅助**（读书时划生词自动查词），但**代码本体骑在 pkm daemon（`wr-stars-daemon`）上**
 ——与 §04 荧光笔吸附（代码在块2 langhook .so）同构的第 4 处跨块：能力概念属块4，实现复用了 pkm 的荧光笔读回
 （`cardhl`）+ EPUB 章映射（`epubindex`）+ 笔记本注入（`sync_auto_notebook`）管线，**不为它单拆一个二进制**。
-本节是查字词设计的单一事实来源；实现在 `pkm/src/{dict,cardvocab,locate}.rs` + daemon `collect_vocab`。
+本节是查字词设计的单一事实来源；实现在 `pkm/src/{dict,cardvocab,locate,vocabscan}.rs`，daemon 只触发+注入。
 
 **可行性核查结论**（见《[设备端查词可行性](../../docs/reMarkable设备端查词可行性.md)》）：Move 上 KOReader 判死、
 原生阅读器无逐词选中事件可 hook、注入弹窗够不进 SceneView tile 层——实时划词弹窗走不通；而**荧光笔读回文字**
@@ -118,6 +118,10 @@ host 无法运行 xochitl，但能用官方 qmldiff 工具**离线实跑补丁**
   判中/英选词典、`normalize_key` 与建表侧对齐。数据 = `build_dict.py` 离线把用户自备 MOBI 经 calibre 转 HTML
   再解析（`<span class="bold">词</span>…释义<hr/>`）出的**排序 TSV**。
 - `cardvocab.rs`：`sentence_of`（句界扩展）/ `cap_body`（牛津长释义截断）/ `render_notebook_pages`（纯逻辑可测）。
+- `vocabscan.rs`：**扫描编排**（全库源书 → ⚪灰词 → 查词 → 生词条），从 daemon 抽出成自足模块，**词典路径作
+  参数传入**（路径无关、可测）；只依赖共享基础设施（`cardhl` 读高亮/`epubindex` 页→章+章全文/`stardetect::page_order`
+  页序/`dict`/`cardvocab`），**不碰** daemon 的星/卡片路径。daemon 只剩「触发 `need_vocab` + `sync_auto_notebook`
+  注入」两件事——最大程度解耦，短于另拆一个二进制（查字词与★待办共用同一 daemon 的 fswatch/注入/去重基础设施）。
 - `locate.rs`：`canon`/`locate_range` **搬自 `reading/device-rs/src/reverse.rs`**——那份是微信读书双向同步的逆映射，
   PKM 转向砍掉同步后成了**孤儿死代码**（无 `mod` 声明、缠着同为死码的 `rmread`/`notebook`，暴露它得连锁复活整个
   被砍子系统）。故只把与死码无关的**纯定位原语**逐字搬进 pkm，逻辑不变（真机对拍差=0 的那份），pkm 自足。
