@@ -72,3 +72,12 @@ __MACOSX/
 
 # 字体压缩包（解压后用目录里的文件，zip 本身不入库）
 chinese-ime/fonts/**/*.zip
+
+# ── 词典数据（生词本查词）：版权红线 ──
+# 牛津/现汉是用户正版商业词典 → MOBI 原文件与派生 TSV 只个人自用、绝不入库/分发。
+# 仓库只留不含词典内容的构建脚本 pkm/tools/build_dict.py。（心法②：大二进制+版权数据宁宽勿窄。）
+*.mobi
+pkm/tools/dict-build/
+# 生词本词典部署文件（en/zh.tsv）。注意不用 *.tsv 全局忽略（别的功能如 snippets.tsv 要留）。
+**/dict/en.tsv
+**/dict/zh.tsv
