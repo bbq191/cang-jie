@@ -63,8 +63,9 @@ fn read_cfg() -> Cfg {
 // ─────────── 5 本自动只读汇总本（薄接线：各自 build/render + notebook_sync 注入）───────────
 
 /// 重建 MOC 死链索引：写 SSH 报告文件 + 同步库内「🔗 卡片索引」笔记本。observe=true 只打摘要不写。
-fn rebuild_card_index(dir: &str, observe: bool) {
-    let idx = cardindex::build_index(&collect_notebook_texts(dir, &AUTO_TITLES));
+/// `texts`=本轮已采集一次的全库笔记本文本（4 本汇总本共用一份，避免各自重复整库解析）。
+fn rebuild_card_index(dir: &str, texts: &[(String, String)], observe: bool) {
+    let idx = cardindex::build_index(texts);
     let dead = cardindex::dead_links(&idx);
     if observe {
         println!("[stars] observe: 卡片索引 {} 锚点 · {} 软链接 · {} 死链", idx.defined.len(), idx.refs.len(), dead.len());
@@ -81,8 +82,8 @@ fn rebuild_card_index(dir: &str, observe: bool) {
 }
 
 /// 重建「🎨 高亮汇编」：全库卡片本按 6 色横向聚合成 1 本 6 节。observe=true 只打摘要不写。
-fn rebuild_card_agg(dir: &str, observe: bool) {
-    let slots = cardagg::build_agg(&collect_notebook_texts(dir, &AUTO_TITLES));
+fn rebuild_card_agg(dir: &str, texts: &[(String, String)], observe: bool) {
+    let slots = cardagg::build_agg(texts);
     let total: usize = slots.iter().map(|v| v.len()).sum();
     if observe {
         let per: Vec<String> = (0..6).map(|s| format!("{}{}", cardagg::SECTION_NAME[s], slots[s].len())).collect();
@@ -95,8 +96,8 @@ fn rebuild_card_agg(dir: &str, observe: bool) {
 }
 
 /// 重建「📖 复盘队列」：全库卡片中「有摘录、无提炼」的卡（渐进总结提醒）。observe=true 只打摘要不写。
-fn rebuild_card_review(dir: &str, observe: bool) {
-    let items = cardreview::build_review(&collect_notebook_texts(dir, &AUTO_TITLES));
+fn rebuild_card_review(dir: &str, texts: &[(String, String)], observe: bool) {
+    let items = cardreview::build_review(texts);
     if observe {
         println!("[stars] observe: 复盘队列 {} 张待消化卡", items.len());
         return;
@@ -107,8 +108,8 @@ fn rebuild_card_review(dir: &str, observe: bool) {
 }
 
 /// 重建「📊 阅读仪表」：全库按书统计星/高亮/待消化。observe=true 只打摘要不写。
-fn rebuild_card_stats(dir: &str, observe: bool) {
-    let (books, totals) = cardstats::build_stats(&collect_notebook_texts(dir, &AUTO_TITLES));
+fn rebuild_card_stats(dir: &str, texts: &[(String, String)], observe: bool) {
+    let (books, totals) = cardstats::build_stats(texts);
     if observe {
         println!("[stars] observe: 阅读仪表 {} 本 · {} 星 · {} 高亮", totals.books, totals.stars, totals.highlights);
         return;
@@ -167,10 +168,12 @@ fn settle(cfg: &Cfg, observe: bool, dirty: Option<&HashSet<String>>) {
         Some(set) => set.iter().any(|u| is_user_notebook(&dir, u)),
     };
     if need_index {
-        rebuild_card_index(&dir, observe);
-        rebuild_card_agg(&dir, observe);
-        rebuild_card_review(&dir, observe);
-        rebuild_card_stats(&dir, observe);
+        // 全库笔记本文本只采集一次，4 本汇总本共用（原先各自 collect 一遍=整库解析 4 遍）。
+        let texts = collect_notebook_texts(&dir, &AUTO_TITLES);
+        rebuild_card_index(&dir, &texts, observe);
+        rebuild_card_agg(&dir, &texts, observe);
+        rebuild_card_review(&dir, &texts, observe);
+        rebuild_card_stats(&dir, &texts, observe);
     }
 
     // ③ 生词本：依赖**源书** .rm 的灰高亮（非笔记本文本），故独立触发——冷启动全建，

@@ -163,7 +163,12 @@ fn sentence_for(
     if sections.is_empty() {
         return String::new();
     }
-    let base = page_section(sections, pidx).unwrap_or("").to_string();
+    // 无所属章（页落在首个 spine 起始页之前）→ 无从取原句。page_fulltext 内部同样以 page_section 起头、
+    // 会一致返回 None；这里直接短路，既显式化该不变量、又避免用空串 key 缓存（防不同无章页误命中）。
+    let base = match page_section(sections, pidx) {
+        Some(b) => b.to_string(),
+        None => return String::new(),
+    };
     let ft = cache.entry(base).or_insert_with(|| page_fulltext(bytes, sections, pidx));
     ft.as_ref().and_then(|t| cardvocab::sentence_of(t, word)).unwrap_or_default()
 }

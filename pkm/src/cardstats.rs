@@ -59,7 +59,7 @@ pub fn parse_stats(title: &str, text: &str) -> Option<BookStats> {
     let mut cur_slot: Option<usize> = None;
     let mut block_hl = 0usize;
     let mut block_note = false;
-    let mut close = |block_hl: usize, block_note: bool, pending: &mut usize| {
+    let close = |block_hl: usize, block_note: bool, pending: &mut usize| {
         if block_hl > 0 && !block_note {
             *pending += 1;
         }
