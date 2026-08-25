@@ -89,7 +89,7 @@ host 无法运行 xochitl，但能用官方 qmldiff 工具**离线实跑补丁**
 - `Settings.qml`：左侧菜单 `SettingsModel` 驱动 `Repeater`；静态项插 `ColumnLayout#settingsColumn`；内容页 `payloadLoader.sourceComponent`。
 - `KeyboardPanel.qml`：`root>keyboardContainer>screenMode[objectName:"keyboard",mode:Animation]`。
 
-## 08｜设备端查词 · 生词本「📕 生词本」（跨块：代码在 pkm daemon，host 测试通过、真机端到端待验证）
+## 08｜设备端查词 · 生词本「📕 生词本」（跨块：代码在 pkm daemon，2026-08-25 已部署真机、管线跑通，差用户划灰词终验）
 
 查字词是**系统增强线的阅读辅助**（读书时划生词自动查词），但**代码本体骑在 pkm daemon（`wr-stars-daemon`）上**
 ——与 §04 荧光笔吸附（代码在块2 langhook .so）同构的第 4 处跨块：能力概念属块4，实现复用了 pkm 的荧光笔读回
@@ -132,9 +132,18 @@ host 无法运行 xochitl，但能用官方 qmldiff 工具**离线实跑补丁**
 **版权红线**：牛津/现汉是用户**正版商业词典**，只做**个人自用**：MOBI 与派生 TSV 全部 `.gitignore`、绝不入库/分发，
 仓库只留不含词典内容的 `pkm/tools/build_dict.py`；缺词典文件 daemon 该向自动降级不查。
 
-**验证**：host 测试通过（`dict`/`locate`/`cardvocab`/`epubindex::page_fulltext` 全绿）；现汉 MOBI 实测抽出
-**62,642 词条**、字节序正确、`踌躇` 释义完整。**真机端到端（设备划灰词→生词本出词）待用户配合验证**——按纪律
-未上机不宣称完成。
+**验证**：
+- host 全绿（`dict`/`locate`/`cardvocab`/`vocabscan`/`epubindex::page_fulltext`）。
+- 两部词典实测抽取 + 双典 Rust 探针端到端：**牛津 en.tsv 164,493 条 · 现汉 zh.tsv 62,642 条**，字节序正确；
+  `cachet`/`abandon`→音标+英汉双解、`踌躇满志`→整体命中、`他一直很踌躇`→词级拆「一直」「踌躇」。
+  （牛津 MOBI 经 calibre 完整转换在 CSS-flatten 阶段报错，改用 `--debug-pipeline` 取**输入阶段** HTML 抽词——
+  那在报错阶段之前落盘，正是解析所需，2 秒抽完。）
+- **真机已部署**（2026-08-25）：daemon 二进制 + `en.tsv`/`zh.tsv` scp 到设备 `/home/root/weread/dict/`，
+  备份 `cangjie-backups/wr-stars-daemon.bak.pre-vocab`、md5 本地=设备一致、`systemctl restart wr-stars` 后
+  is-active=active/MainPID 变/NRestarts=0/ExecMainStatus=0；冷启动日志 `[stars] 生词本已创建（0 个生词）`
+  = **查词管线跑通、生词本已建**（暂无灰词故 0 条）。
+- **只差最终一步**：用户在 EPUB 用 ⚪灰色荧光笔划一个生词 → 存盘 → 《📕 生词本》出词。按纪律，实际"灰词→
+  词典→出词"未由用户划出前，不宣称查词功能真机验证完成。
 
 > **后续（未做）**：设置页「系统增强」门户可加一个「生词本」开关（对齐 ★待办 的 `starTodoEnabled` 门户模式，qmd 改
 > `settings-reading-enhance.qmd`，高风险单独上机）；当前无开关，daemon 有词典文件即工作、无则降级。

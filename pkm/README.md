@@ -52,7 +52,9 @@ PKM 要读书页→章、写笔记注入书库，这些**低层设备能力**抽
 
 
 生词本查词用**用户自备的正版 Kindle 词典**（牛津高阶英汉双解 / 现代汉语词典 MOBI）离线预处理成
-排序 TSV，部署到设备 `/home/root/weread/dict/{en,zh}.tsv`，daemon `mmap` 只读二分查。构建：
-`python3 tools/build_dict.py --auto --out-dir <本地目录>`（调 calibre 转 MOBI→HTML 再解析，慢、一次性）。
+排序 TSV（**牛津 en.tsv 164,493 条 · 现汉 zh.tsv 62,642 条**，2026-08-25 已部署真机
+`/home/root/weread/dict/`），daemon `mmap` 只读二分查。构建：`python3 tools/build_dict.py --lang en
+--html <calibre 转出的 index.html> --out en.tsv`（calibre 完整转 htmlz 对大词典会在 CSS-flatten 报错，
+用 `ebook-convert x.mobi out.epub --debug-pipeline=D` 取 `D/input/index.html` 输入阶段产物即可，解析同）。
 **版权红线**：MOBI 与派生 TSV 均只个人自用、`.gitignore`、绝不入库/分发；仓库只留不含词典内容的
 `tools/build_dict.py`。缺词典文件时 daemon 该向不查词（功能自动降级，不报错）。

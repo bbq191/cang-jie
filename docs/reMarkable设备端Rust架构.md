@@ -106,8 +106,11 @@ reading 从"挂着死双向同步"回到"下书+优化+面板"的诚实形状。
 - 三 crate 编译 + 测试全绿：device-core 6 / weread-device 21 / pkm-device 59（lib）+ 5（stars_fixture dev-dep）。
 - 两个部署 bin（wr-stars-daemon / wr-serve）交叉编译 `aarch64-unknown-linux-musl` 全静态。
 - 依赖结构核查：`cargo tree --edges normal` 里 pkm 只见 device-core；`--edges dev` 才见 weread-device。
-- 全程**行为中性**（逻辑逐字搬移 + 等价重构）。⚠ daemon 与 wr-serve 是真机部署过的二进制，下次部署按纪律
-  重跑健康检查（备份 + md5 + is-active/MainPID/NRestarts）。
+- 全程**行为中性**（逻辑逐字搬移 + 等价重构）。
+- **2026-08-25 已把设备全部 5 个二进制同步到本轮最新**（wr-stars-daemon + wr-serve + wr-renew + wr-download +
+  wr-stars；解耦重构改了 reading crate 链接故都变）：备份 `cangjie-backups/*.bak.pre-*`、md5 本地=设备一致、
+  两个服务停/换/启后健康（is-active=active / MainPID 变 / NRestarts=0 / ExecMainStatus=0）。**行为中性真机坐实**：
+  daemon 既有汇总本无重生成、wr-serve 的 autoopt 后台线程正常起。
 
 ## 五、后续可选（未做，记录方向）
 
