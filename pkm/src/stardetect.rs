@@ -264,7 +264,8 @@ fn read_json(p: &std::path::Path) -> serde_json::Value {
 }
 
 /// .content → 页顺序（page-uuid 列表）。兼容 cPages.pages / 顶层 pages（dict 或字符串）。
-fn page_order(content: &serde_json::Value) -> Vec<String> {
+/// pub：生词本枚举"全部已标注页"（脱离画星）复用此页序映射，避免各处重写。
+pub fn page_order(content: &serde_json::Value) -> Vec<String> {
     let pages = content
         .get("cPages")
         .and_then(|c| c.get("pages"))

@@ -105,6 +105,112 @@ impl Dict {
     }
 }
 
+// ───── 短语/句子查词：整体精确优先，miss 才拆（中文词级最长匹配、英文按词）─────
+
+const ZH_MAX_WORD: usize = 8; // 中文最长匹配上限（成语 4，个别更长）
+const PHRASE_MAX_ZH: usize = 12; // 超此长度 = 句子，不拆（划整句更像"金句"非查词）
+const PHRASE_MAX_EN_TOKENS: usize = 5; // 英文超此 token 数 = 句子，不拆
+const PER_HL_CAP: usize = 5; // 一段高亮最多产出的词条数（防刷屏）
+/// 英文虚词/极常见词停用表：短语拆分时跳过（用户要查的是实词生词）。
+const EN_STOP: &[&str] = &[
+    "the", "a", "an", "of", "to", "and", "in", "on", "is", "it", "its", "was", "were", "be", "am",
+    "are", "for", "with", "as", "at", "by", "or", "so", "if", "no", "not", "that", "this", "these",
+    "those", "he", "she", "they", "his", "her", "him", "them", "their", "i", "you", "we", "us",
+    "but", "then", "than", "from", "up", "out", "into", "over", "under", "about", "which", "who",
+    "whom", "had", "has", "have", "do", "did", "does", "will", "would", "can", "could", "s",
+];
+
+/// 一段灰高亮 → 词条列表（(展示词, Entry)）。**整体精确命中就返回整条**（单词/成语/短语在词典里）；
+/// miss 时拆分：英文按词（跳停用词）、中文词级最长匹配（只取 ≥2 字的词，单字连接词天然被跳过）；
+/// **整句不拆**（长度门控）。查不到全丢弃（人物名/专名/纯常用词短语 → 空）。上限 `PER_HL_CAP` 防刷屏。
+pub fn lookup_phrase(en: Option<&Dict>, zh: Option<&Dict>, text: &str) -> Vec<(String, Entry)> {
+    let lang = match detect_lang(text) {
+        Some(l) => l,
+        None => return Vec::new(),
+    };
+    let d = match lang {
+        Lang::En => en,
+        Lang::Zh => zh,
+    };
+    let d = match d {
+        Some(x) => x,
+        None => return Vec::new(),
+    };
+    // 1) 整体精确（单词 / 成语 / 词典里的短语）
+    let key = normalize_key(text, lang);
+    if !key.is_empty() {
+        if let Some(e) = d.lookup(&key) {
+            return vec![(text.trim().to_string(), e)];
+        }
+    }
+    // 2) miss → 拆分
+    match lang {
+        Lang::En => segment_en(d, text),
+        Lang::Zh => segment_zh(d, &key),
+    }
+}
+
+/// 英文短语按词拆：非字母数字/连字符切 token，跳停用词，逐词查，命中收（去重、封顶）。整句不拆。
+fn segment_en(d: &Dict, text: &str) -> Vec<(String, Entry)> {
+    let toks: Vec<&str> = text
+        .split(|c: char| !c.is_ascii_alphanumeric() && c != '-')
+        .filter(|t| !t.is_empty())
+        .collect();
+    if toks.is_empty() || toks.len() > PHRASE_MAX_EN_TOKENS {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for t in toks {
+        let k = normalize_key(t, Lang::En);
+        if k.is_empty() || EN_STOP.contains(&k.as_str()) {
+            continue;
+        }
+        if let Some(e) = d.lookup(&k) {
+            if seen.insert(k.clone()) {
+                out.push((k, e));
+                if out.len() >= PER_HL_CAP {
+                    break;
+                }
+            }
+        }
+    }
+    out
+}
+
+/// 中文词级最长匹配：逐位置试 [8..=2] 字子串查词典，命中取最长、跳过其长度；**只取 ≥2 字的词**
+/// （单字连接词天然被跳过，避免把"他/很/的"刷进生词本）。整句（>PHRASE_MAX_ZH 字）不拆。key 须已 normalize。
+fn segment_zh(d: &Dict, key: &str) -> Vec<(String, Entry)> {
+    let chars: Vec<char> = key.chars().collect();
+    if chars.len() < 2 || chars.len() > PHRASE_MAX_ZH {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    let mut i = 0;
+    while i < chars.len() {
+        let mut matched = 0;
+        let maxl = ZH_MAX_WORD.min(chars.len() - i);
+        let mut l = maxl;
+        while l >= 2 {
+            let w: String = chars[i..i + l].iter().collect();
+            if let Some(e) = d.lookup(&w) {
+                if seen.insert(w.clone()) {
+                    out.push((w, e));
+                }
+                matched = l;
+                break;
+            }
+            l -= 1;
+        }
+        i += if matched > 0 { matched } else { 1 };
+        if out.len() >= PER_HL_CAP {
+            break;
+        }
+    }
+    out
+}
+
 /// 解析 `\t phon \t body \t extra`（payload，含前导 '\t'；缺段容错、多余段并入 extra 的尾部忽略）。
 fn parse_payload(rest: &[u8]) -> Entry {
     // rest 以 '\t' 开头（key 后那个）；split 出 ["", phon, body, extra...]。
@@ -237,5 +343,66 @@ mod tests {
         let d = Dict::open(&p).unwrap();
         assert!(d.lookup("anything").is_none());
         std::fs::remove_file(&p).ok();
+    }
+
+    // 短语/句子查词 fixture：两部小词典（自造，无版权内容）。
+    fn phrase_dicts() -> (Dict, Dict) {
+        // en 按 ASCII 序
+        let pe = fixture(
+            "phrase_en",
+            &[
+                "cachet\tkæˈʃeɪ\tn. prestige\t",
+                "carried\t\tv. carry 过去式\t",
+                "certain\tˈsɜːtn\tadj. 某些\t",
+                "the\tðə\tart. 定冠词\t",
+            ],
+        );
+        // zh 按码位序：他(U+4ED6) < 踌躇(U+8DCC…) < 踌躇满志
+        let pz = fixture(
+            "phrase_zh",
+            &[
+                "他\ttā\t代词\t",
+                "踌躇\tchóuchú\t犹豫\t",
+                "踌躇满志\tchóuchú-mǎnzhì\t形容对现状很得意\t",
+            ],
+        );
+        (Dict::open(&pe).unwrap(), Dict::open(&pz).unwrap())
+    }
+
+    #[test]
+    fn phrase_exact_idiom_hit() {
+        let (en, zh) = phrase_dicts();
+        let r = lookup_phrase(Some(&en), Some(&zh), "踌躇满志");
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].0, "踌躇满志"); // 整体精确命中，不拆
+    }
+
+    #[test]
+    fn phrase_zh_segments_to_word_not_char() {
+        let (en, zh) = phrase_dicts();
+        // "他很踌躇"：很不在词典、他是单字（拆分只取≥2字词）→ 只应拆出「踌躇」
+        let r = lookup_phrase(Some(&en), Some(&zh), "他很踌躇");
+        let words: Vec<&str> = r.iter().map(|(w, _)| w.as_str()).collect();
+        assert_eq!(words, vec!["踌躇"], "词级最长匹配，不拆单字、不含常用单字他");
+    }
+
+    #[test]
+    fn phrase_en_skips_stopwords() {
+        let (en, zh) = phrase_dicts();
+        let r = lookup_phrase(Some(&en), Some(&zh), "the cachet of certain");
+        let mut words: Vec<String> = r.iter().map(|(w, _)| w.clone()).collect();
+        words.sort();
+        assert_eq!(words, vec!["cachet".to_string(), "certain".to_string()], "跳过 the/of 虚词");
+    }
+
+    #[test]
+    fn phrase_sentence_not_split() {
+        let (en, zh) = phrase_dicts();
+        // 英文 >5 token = 句子 → 不拆（即便含 cachet）
+        assert!(lookup_phrase(Some(&en), Some(&zh), "it carried a certain cachet among us").is_empty());
+        // 中文 >12 字 = 句子 → 不拆（即便含踌躇满志）
+        let long = "他一直很踌躇满志地走来走去思考人生真谛啊";
+        assert!(long.chars().count() > 12);
+        assert!(lookup_phrase(Some(&en), Some(&zh), long).is_empty());
     }
 }

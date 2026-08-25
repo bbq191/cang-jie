@@ -24,10 +24,12 @@ use pkm_device::cardagg;
 use pkm_device::cardreview;
 use pkm_device::cardstats;
 use pkm_device::cardhl;
+use pkm_device::cardvocab::{self, VocabEntry};
+use pkm_device::dict::{self, Dict};
 use pkm_device::cardsync::{parse_pages, render_card_starspecs, CardTemplate};
-use pkm_device::stardetect::{scan_document_dir, scan_library, DocStars, StarConfig};
+use pkm_device::stardetect::{page_order, scan_document_dir, scan_library, DocStars, StarConfig};
 use pkm_device::{cardindex, cardnote};
-use weread_device::epubindex::{chapter_map_hier, page_chapter_label, parse_sections};
+use weread_device::epubindex::{chapter_map_hier, page_chapter_label, page_fulltext, page_section, parse_sections};
 use weread_device::{fswatch, inject};
 
 type ChapterInfo = (Vec<(String, u32)>, HashMap<String, (String, Option<String>)>);
@@ -69,6 +71,11 @@ const INDEX_TITLE: &str = "🔗 卡片索引 · MOC 死链体检";
 const AGG_TITLE: &str = "🎨 高亮汇编";
 const REVIEW_TITLE: &str = "📖 复盘队列";
 const STATS_TITLE: &str = "📊 阅读仪表";
+/// 生词本（⚪灰色荧光笔划词→查本地词典）。同样须被 collect_notebook_texts 排除（防自摄取/自触发）。
+const VOCAB_TITLE: &str = cardvocab::VOCAB_TITLE;
+/// 本地词典（用户自备牛津英汉双解/现汉派生的排序 TSV，个人自用不入库）。缺文件 → 该向不查词。
+const EN_DICT_PATH: &str = "/home/root/weread/dict/en.tsv";
+const ZH_DICT_PATH: &str = "/home/root/weread/dict/zh.tsv";
 /// 卡片最近被编辑（用户可能正在打字）→ 本轮跳过重建、下次再合，避免读到半刷入的 .rm。
 const GUARD_SECS: u64 = 20;
 
@@ -178,8 +185,8 @@ fn collect_notebook_texts(dir: &str) -> Vec<(String, String)> {
                 continue;
             }
             let title = meta.get("visibleName").and_then(|x| x.as_str()).unwrap_or("").to_string();
-            // 索引本 / 汇编本自身排除：否则回喂（自指）+ 上传后自触发无限重建。
-            if title == INDEX_TITLE || title == AGG_TITLE || title == REVIEW_TITLE || title == STATS_TITLE {
+            // 索引本 / 汇编本 / 生词本自身排除：否则回喂（自指）+ 上传后自触发无限重建。
+            if title == INDEX_TITLE || title == AGG_TITLE || title == REVIEW_TITLE || title == STATS_TITLE || title == VOCAB_TITLE {
                 continue;
             }
             let text = read_card_pages(dir, &uuid).join("\n");
@@ -360,6 +367,144 @@ fn page_highlights(dir: &str, doc_uuid: &str, page_uuid: &str) -> Vec<Vec<String
     slots
 }
 
+// ─────────── 生词本（⚪灰色荧光笔划词 → 查本地词典，脱离画星、独立附加扫描）───────────
+
+/// 是否"源书"（epub/pdf 等被读的书，非笔记本/卡片/回收站）。生词本触发 + 枚举都用它。
+fn is_source_book(dir: &str, uuid: &str) -> bool {
+    let meta: serde_json::Value = std::fs::read_to_string(format!("{dir}/{uuid}.metadata"))
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or(serde_json::Value::Null);
+    if meta.get("type").and_then(|x| x.as_str()) != Some("DocumentType") {
+        return false;
+    }
+    if meta.get("parent").and_then(|x| x.as_str()) == Some("trash") {
+        return false;
+    }
+    if meta.get("visibleName").and_then(|x| x.as_str()).unwrap_or("").ends_with(CARD_SUFFIX) {
+        return false;
+    }
+    let content: serde_json::Value = std::fs::read_to_string(format!("{dir}/{uuid}.content"))
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or(serde_json::Value::Null);
+    // fileType == notebook 的是笔记本（卡片/汇总本/MOC）；epub/pdf 才是源书。
+    content.get("fileType").and_then(|x| x.as_str()) != Some("notebook")
+}
+
+/// 枚举一本书**全部已标注页**（脱离画星）→ (page_index 0-based[-1=不在页序], page_uuid)。
+/// 复用 stardetect::page_order 的页序映射；只有画过东西的页才有 .rm，天然轻。
+fn enumerate_pages(dir: &str, uuid: &str) -> Vec<(i64, String)> {
+    let content: serde_json::Value = std::fs::read_to_string(format!("{dir}/{uuid}.content"))
+        .ok()
+        .and_then(|t| serde_json::from_str(&t).ok())
+        .unwrap_or(serde_json::Value::Null);
+    let order = page_order(&content);
+    let mut out = Vec::new();
+    if let Ok(rd) = std::fs::read_dir(format!("{dir}/{uuid}")) {
+        for e in rd.flatten() {
+            let p = e.path();
+            if p.extension().and_then(|x| x.to_str()) != Some("rm") {
+                continue;
+            }
+            let page_uuid = p.file_stem().and_then(|s| s.to_str()).unwrap_or("").to_string();
+            let idx = order.iter().position(|x| x == &page_uuid).map(|i| i as i64).unwrap_or(-1);
+            out.push((idx, page_uuid));
+        }
+    }
+    out
+}
+
+/// 全库源书 → ⚪灰色荧光笔高亮的词 → 查本地词典 → 生词条。**全库全量扫**（sync_auto_notebook 每轮
+/// 整本重生，只含改动书会丢其它书的词）。查不到的词丢弃（人物名/专名自动滤）；一书内同词去重。
+/// 无词典文件 → 返回空（该向不查）。原句靠 epubindex 章全文 + `sentence_of`（epub 缺则留空）。
+fn collect_vocab(dir: &str) -> Vec<VocabEntry> {
+    let en = Dict::open(EN_DICT_PATH).ok();
+    let zh = Dict::open(ZH_DICT_PATH).ok();
+    if en.is_none() && zh.is_none() {
+        return Vec::new();
+    }
+    let mut out = Vec::new();
+    let mut seen: HashSet<(String, String)> = HashSet::new(); // (书名, 规整词) 去重
+    let rd = match std::fs::read_dir(dir) {
+        Ok(r) => r,
+        Err(_) => return out,
+    };
+    let gray_slot = cardhl::HlColor::Gray.slot();
+    for e in rd.flatten() {
+        let p = e.path();
+        if p.extension().and_then(|x| x.to_str()) != Some("metadata") {
+            continue;
+        }
+        let uuid = match p.file_stem().and_then(|s| s.to_str()) {
+            Some(u) => u.to_string(),
+            None => continue,
+        };
+        if !is_source_book(dir, &uuid) {
+            continue;
+        }
+        let meta: serde_json::Value = std::fs::read_to_string(&p)
+            .ok()
+            .and_then(|t| serde_json::from_str(&t).ok())
+            .unwrap_or(serde_json::Value::Null);
+        let title = meta.get("visibleName").and_then(|x| x.as_str()).unwrap_or("").to_string();
+        if title.is_empty() {
+            continue;
+        }
+        let chap = chapter_info(dir, &uuid); // Option<(sections, titles)>；取原句用
+        let epub = std::fs::read(format!("{dir}/{uuid}.epub")).ok();
+        let mut chapcache: HashMap<String, Option<String>> = HashMap::new(); // basename → 章全文
+        for (pi, page_uuid) in enumerate_pages(dir, &uuid) {
+            if pi < 0 {
+                continue;
+            }
+            let pidx = pi as usize;
+            let slots = page_highlights(dir, &uuid, &page_uuid);
+            let grays = &slots[gray_slot];
+            if grays.is_empty() {
+                continue;
+            }
+            let label = chap
+                .as_ref()
+                .and_then(|(secs, titles)| page_chapter_label(secs, titles, pidx))
+                .unwrap_or_default();
+            for hl in grays {
+                // 整体精确优先，miss 才拆（英文按词跳停用词、中文词级最长匹配；整句不拆）。
+                for (word, entry) in dict::lookup_phrase(en.as_ref(), zh.as_ref(), hl) {
+                    if !seen.insert((title.clone(), word.to_lowercase())) {
+                        continue; // 同书同词只留一条
+                    }
+                    // 原句：定位**该词**（同句），复用章全文缓存。
+                    let sentence = match (&epub, &chap) {
+                        (Some(bytes), Some((secs, _))) => {
+                            let base = page_section(secs, pidx).unwrap_or("").to_string();
+                            let ft = chapcache
+                                .entry(base)
+                                .or_insert_with(|| page_fulltext(bytes, secs, pidx));
+                            ft.as_ref().and_then(|t| cardvocab::sentence_of(t, &word)).unwrap_or_default()
+                        }
+                        _ => String::new(),
+                    };
+                    out.push(VocabEntry::from_dict(&word, &entry, sentence, &title, &label, &(pidx + 1).to_string()));
+                }
+            }
+        }
+    }
+    out
+}
+
+/// 重建《📕 生词本》汇总本（全库灰词查词）。observe 只打条数。
+fn rebuild_vocab(dir: &str, observe: bool) {
+    let entries = collect_vocab(dir);
+    if observe {
+        println!("[stars] observe: 生词本 {} 个生词", entries.len());
+        return;
+    }
+    if let Some(m) = sync_auto_notebook(dir, VOCAB_TITLE, &cardvocab::render_notebook_pages(&entries)) {
+        println!("[stars] 生词本已{m}（{} 个生词）", entries.len());
+    }
+}
+
 /// 同步一本书的卡片。stars=(1-based 页号, 章节标签[可空], 该星模板集[空=默认], 该页按槽高亮)。返回一句状态或 None。
 fn sync_one_card(dir: &str, book_title: &str, stars: &[(usize, String, Vec<CardTemplate>, Vec<Vec<String>>)], observe: bool) -> Option<String> {
     let visible = format!("《{book_title}》{CARD_SUFFIX}");
@@ -516,6 +661,16 @@ fn settle(cfg: &Cfg, observe: bool, dirty: Option<&HashSet<String>>) {
         rebuild_card_agg(&dir, observe); // 跨书按色聚合，与死链索引同触发条件
         rebuild_card_review(&dir, observe); // 渐进总结复盘队列，同触发条件
         rebuild_card_stats(&dir, observe); // 按书 PKM 仪表，同触发条件
+    }
+
+    // 生词本：依赖**源书** .rm 的灰高亮（非笔记本文本），故独立触发——冷启动全建，
+    // 增量时仅当 dirty 里有源书变更（画了灰词的书存盘）才重扫全库灰词。与死链索引触发条件不同。
+    let need_vocab = match dirty {
+        None => true,
+        Some(set) => set.iter().any(|u| is_source_book(&dir, u)),
+    };
+    if need_vocab {
+        rebuild_vocab(&dir, observe);
     }
 }
 
