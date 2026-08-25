@@ -20,6 +20,7 @@ use std::path::Path;
 use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use pkm_device::cardhl;
 use pkm_device::cardsync::{parse_pages, render_card_starspecs, CardTemplate};
 use pkm_device::stardetect::{scan_document_dir, scan_library, DocStars, StarConfig};
 use pkm_device::{cardindex, cardnote};
@@ -298,8 +299,25 @@ fn templates_for(doc_tags: &[String], page_tags: &[String]) -> Vec<CardTemplate>
     out
 }
 
-/// 同步一本书的卡片。stars=(1-based 页号, 章节标签[可空], 该星模板集[空=默认])。返回一句状态或 None。
-fn sync_one_card(dir: &str, book_title: &str, stars: &[(usize, String, Vec<CardTemplate>)], observe: bool) -> Option<String> {
+/// 读某星页的荧光笔高亮，按 6 色槽分组（长度 SLOT_COUNT）。无 .rm/无高亮 → 全空槽。
+/// A 式：画星那刻该页 .rm 已含之前画的高亮，随新星骨架一次注入、之后随批注保留。
+fn page_highlights(dir: &str, doc_uuid: &str, page_uuid: &str) -> Vec<Vec<String>> {
+    let mut slots: Vec<Vec<String>> = vec![Vec::new(); cardhl::SLOT_COUNT];
+    let rm = format!("{dir}/{doc_uuid}/{page_uuid}.rm");
+    if let Ok(bytes) = std::fs::read(&rm) {
+        if let Ok(hls) = cardhl::extract_highlights(&bytes) {
+            for h in hls {
+                if h.slot < slots.len() {
+                    slots[h.slot].push(h.text);
+                }
+            }
+        }
+    }
+    slots
+}
+
+/// 同步一本书的卡片。stars=(1-based 页号, 章节标签[可空], 该星模板集[空=默认], 该页按槽高亮)。返回一句状态或 None。
+fn sync_one_card(dir: &str, book_title: &str, stars: &[(usize, String, Vec<CardTemplate>, Vec<Vec<String>>)], observe: bool) -> Option<String> {
     let visible = format!("《{book_title}》{CARD_SUFFIX}");
     let existing = find_docs_by_visible(dir, &visible);
 
@@ -408,7 +426,7 @@ fn settle(cfg: &Cfg, observe: bool, dirty: Option<&HashSet<String>>) {
         let (doc_tags, page_tags_map) = read_book_tags(&dir, &d.uuid);
         // 星页 → (1-based 显示页号, 章名标签, 该星模板集)，按 0-based page_index 去重排序。
         let mut seen = std::collections::BTreeSet::new();
-        let mut stars: Vec<(usize, String, Vec<CardTemplate>)> = Vec::new();
+        let mut stars: Vec<(usize, String, Vec<CardTemplate>, Vec<Vec<String>>)> = Vec::new();
         for h in &d.hits {
             if h.page_index < 0 {
                 continue;
@@ -420,15 +438,16 @@ fn settle(cfg: &Cfg, observe: bool, dirty: Option<&HashSet<String>>) {
             let label = chap.as_ref().and_then(|(secs, titles)| page_chapter_label(secs, titles, pi)).unwrap_or_default();
             let ptags = page_tags_map.get(&h.page_uuid).map(|v| v.as_slice()).unwrap_or(&[]);
             let tmpls = templates_for(&doc_tags, ptags);
-            stars.push((pi + 1, label, tmpls));
+            let hl = page_highlights(&dir, &d.uuid, &h.page_uuid); // 该星页荧光笔高亮，按 6 色槽分组
+            stars.push((pi + 1, label, tmpls, hl));
         }
-        stars.sort_by_key(|(p, _, _)| *p);
+        stars.sort_by_key(|(p, _, _, _)| *p);
         if stars.is_empty() {
             continue;
         }
         // observe 对账：打印本书文档级标签 + 每颗星解析到的模板集（验证 read_book_tags/templates_for）。
-        if observe && (!doc_tags.is_empty() || stars.iter().any(|(_, _, t)| !t.is_empty())) {
-            let per: Vec<String> = stars.iter().map(|(p, _, t)| format!("p{p}={t:?}")).collect();
+        if observe && (!doc_tags.is_empty() || stars.iter().any(|(_, _, t, _)| !t.is_empty())) {
+            let per: Vec<String> = stars.iter().map(|(p, _, t, _)| format!("p{p}={t:?}")).collect();
             println!("[stars] observe:《{}》docTags={:?} 每星模板 {}", d.title, doc_tags, per.join(" "));
         }
         if let Some(m) = sync_one_card(&dir, &d.title, &stars, observe) {
