@@ -21,6 +21,7 @@ use std::sync::{Mutex, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use pkm_device::cardagg;
+use pkm_device::cardreview;
 use pkm_device::cardhl;
 use pkm_device::cardsync::{parse_pages, render_card_starspecs, CardTemplate};
 use pkm_device::stardetect::{scan_document_dir, scan_library, DocStars, StarConfig};
@@ -65,6 +66,7 @@ const CARD_INDEX_PATH: &str = "/home/root/weread/card-index.md";
 /// （否则自我摄取 + 上传→自触发无限重建），且正文不含 [ID:]/触发词双保险（见 cardindex）。
 const INDEX_TITLE: &str = "🔗 卡片索引 · MOC 死链体检";
 const AGG_TITLE: &str = "🎨 高亮汇编";
+const REVIEW_TITLE: &str = "📖 复盘队列";
 /// 卡片最近被编辑（用户可能正在打字）→ 本轮跳过重建、下次再合，避免读到半刷入的 .rm。
 const GUARD_SECS: u64 = 20;
 
@@ -175,7 +177,7 @@ fn collect_notebook_texts(dir: &str) -> Vec<(String, String)> {
             }
             let title = meta.get("visibleName").and_then(|x| x.as_str()).unwrap_or("").to_string();
             // 索引本 / 汇编本自身排除：否则回喂（自指）+ 上传后自触发无限重建。
-            if title == INDEX_TITLE || title == AGG_TITLE {
+            if title == INDEX_TITLE || title == AGG_TITLE || title == REVIEW_TITLE {
                 continue;
             }
             let text = read_card_pages(dir, &uuid).join("\n");
@@ -244,6 +246,18 @@ fn rebuild_card_agg(dir: &str, observe: bool) {
     }
     if let Some(m) = sync_auto_notebook(dir, AGG_TITLE, &cardagg::render_notebook_pages(&slots)) {
         println!("[stars] 高亮汇编笔记本已{m}（{total} 条高亮）");
+    }
+}
+
+/// 重建「📖 复盘队列」：全库卡片中「有摘录、无提炼」的卡（渐进总结提醒）。observe=true 只打摘要不写。
+fn rebuild_card_review(dir: &str, observe: bool) {
+    let items = cardreview::build_review(&collect_notebook_texts(dir));
+    if observe {
+        println!("[stars] observe: 复盘队列 {} 张待消化卡", items.len());
+        return;
+    }
+    if let Some(m) = sync_auto_notebook(dir, REVIEW_TITLE, &cardreview::render_notebook_pages(&items)) {
+        println!("[stars] 复盘队列笔记本已{m}（{} 张待消化）", items.len());
     }
 }
 
@@ -486,6 +500,7 @@ fn settle(cfg: &Cfg, observe: bool, dirty: Option<&HashSet<String>>) {
     if need_index {
         rebuild_card_index(&dir, observe);
         rebuild_card_agg(&dir, observe); // 跨书按色聚合，与死链索引同触发条件
+        rebuild_card_review(&dir, observe); // 渐进总结复盘队列，同触发条件
     }
 }
 

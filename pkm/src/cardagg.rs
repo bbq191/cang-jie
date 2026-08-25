@@ -23,8 +23,11 @@ pub struct Entry {
     pub page: String, // 显示用页号串（如 "10"），空则未知
 }
 
+/// 卡片本标题后缀（对外复用：cardreview 也据此判定总结卡片本）。
+pub const TITLE_SUFFIX: &str = CARD_SUFFIX;
+
 /// 从卡片本标题取书名：`《13 67》- 总结卡片` → `13 67`。
-fn book_of_title(title: &str) -> String {
+pub fn book_of_title(title: &str) -> String {
     title
         .trim()
         .strip_suffix(CARD_SUFFIX)
@@ -43,7 +46,7 @@ fn slot_of_line(line: &str) -> Option<usize> {
 }
 
 /// 从 `[ID: 章名 - P 10]` 抽页号串（找 `- P ` 后到 `]` 或行尾的数字）。
-fn page_from_id_line(line: &str) -> Option<String> {
+pub fn page_from_id_line(line: &str) -> Option<String> {
     let p = line.find("- P ")?;
     let after = &line[p + "- P ".len()..];
     let end = after.find(']').unwrap_or(after.len());

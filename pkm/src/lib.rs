@@ -9,6 +9,7 @@
 pub mod cardindex;
 pub mod cardhl;
 pub mod cardagg;
+pub mod cardreview;
 pub mod cardnote;
 pub mod cardsync;
 pub mod stardetect;
