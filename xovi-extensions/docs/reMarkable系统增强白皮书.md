@@ -89,7 +89,7 @@ host 无法运行 xochitl，但能用官方 qmldiff 工具**离线实跑补丁**
 - `Settings.qml`：左侧菜单 `SettingsModel` 驱动 `Repeater`；静态项插 `ColumnLayout#settingsColumn`；内容页 `payloadLoader.sourceComponent`。
 - `KeyboardPanel.qml`：`root>keyboardContainer>screenMode[objectName:"keyboard",mode:Animation]`。
 
-## 08｜设备端查词 · 生词本「📕 生词本」（跨块：代码在 pkm daemon，2026-08-25 已部署真机、管线跑通，差用户划灰词终验）
+## 08｜设备端查词 · 生词本「📕 生词本」（跨块：代码在 pkm daemon，2026-08-25 真机端到端验证通过）
 
 查字词是**系统增强线的阅读辅助**（读书时划生词自动查词），但**代码本体骑在 pkm daemon（`wr-stars-daemon`）上**
 ——与 §04 荧光笔吸附（代码在块2 langhook .so）同构的第 4 处跨块：能力概念属块4，实现复用了 pkm 的荧光笔读回
@@ -142,8 +142,11 @@ host 无法运行 xochitl，但能用官方 qmldiff 工具**离线实跑补丁**
   备份 `cangjie-backups/wr-stars-daemon.bak.pre-vocab`、md5 本地=设备一致、`systemctl restart wr-stars` 后
   is-active=active/MainPID 变/NRestarts=0/ExecMainStatus=0；冷启动日志 `[stars] 生词本已创建（0 个生词）`
   = **查词管线跑通、生词本已建**（暂无灰词故 0 条）。
-- **只差最终一步**：用户在 EPUB 用 ⚪灰色荧光笔划一个生词 → 存盘 → 《📕 生词本》出词。按纪律，实际"灰词→
-  词典→出词"未由用户划出前，不宣称查词功能真机验证完成。
+- **真机端到端验证通过（2026-08-25）**：用户在《13 67》某页用 ⚪灰色荧光笔划「刑事」「情报」两词（**未画星**）→
+  存盘 → daemon 日志 `[stars] 生词本已更新（2 个生词）` → 《📕 生词本》实际生成：
+  「刑事 xíngshì {形}…有关刑法的」「情报 qíngbào {名}…消息和报告」+ **原句**（两词同句"…新上任的刑事情报科B组
+  主管关振铎警司"）+ **章·页**（泰美斯的天秤 · P369）。每一环坐实：灰词检测（脱离画星）/ 现汉拼音+释义 /
+  `locate_range` 原句定位 / `epubindex` 章页 / 词级精确命中。查字词至此**真机端到端验证完成**。
 
 > **后续（未做）**：设置页「系统增强」门户可加一个「生词本」开关（对齐 ★待办 的 `starTodoEnabled` 门户模式，qmd 改
 > `settings-reading-enhance.qmd`，高风险单独上机）；当前无开关，daemon 有词典文件即工作、无则降级。
