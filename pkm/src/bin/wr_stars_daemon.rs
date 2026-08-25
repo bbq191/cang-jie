@@ -22,6 +22,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use pkm_device::cardagg;
 use pkm_device::cardreview;
+use pkm_device::cardstats;
 use pkm_device::cardhl;
 use pkm_device::cardsync::{parse_pages, render_card_starspecs, CardTemplate};
 use pkm_device::stardetect::{scan_document_dir, scan_library, DocStars, StarConfig};
@@ -67,6 +68,7 @@ const CARD_INDEX_PATH: &str = "/home/root/weread/card-index.md";
 const INDEX_TITLE: &str = "🔗 卡片索引 · MOC 死链体检";
 const AGG_TITLE: &str = "🎨 高亮汇编";
 const REVIEW_TITLE: &str = "📖 复盘队列";
+const STATS_TITLE: &str = "📊 阅读仪表";
 /// 卡片最近被编辑（用户可能正在打字）→ 本轮跳过重建、下次再合，避免读到半刷入的 .rm。
 const GUARD_SECS: u64 = 20;
 
@@ -177,7 +179,7 @@ fn collect_notebook_texts(dir: &str) -> Vec<(String, String)> {
             }
             let title = meta.get("visibleName").and_then(|x| x.as_str()).unwrap_or("").to_string();
             // 索引本 / 汇编本自身排除：否则回喂（自指）+ 上传后自触发无限重建。
-            if title == INDEX_TITLE || title == AGG_TITLE || title == REVIEW_TITLE {
+            if title == INDEX_TITLE || title == AGG_TITLE || title == REVIEW_TITLE || title == STATS_TITLE {
                 continue;
             }
             let text = read_card_pages(dir, &uuid).join("\n");
@@ -258,6 +260,18 @@ fn rebuild_card_review(dir: &str, observe: bool) {
     }
     if let Some(m) = sync_auto_notebook(dir, REVIEW_TITLE, &cardreview::render_notebook_pages(&items)) {
         println!("[stars] 复盘队列笔记本已{m}（{} 张待消化）", items.len());
+    }
+}
+
+/// 重建「📊 阅读仪表」：全库按书统计星/高亮/待消化。observe=true 只打摘要不写。
+fn rebuild_card_stats(dir: &str, observe: bool) {
+    let (books, totals) = cardstats::build_stats(&collect_notebook_texts(dir));
+    if observe {
+        println!("[stars] observe: 阅读仪表 {} 本 · {} 星 · {} 高亮", totals.books, totals.stars, totals.highlights);
+        return;
+    }
+    if let Some(m) = sync_auto_notebook(dir, STATS_TITLE, &cardstats::render_notebook_pages(&books, &totals)) {
+        println!("[stars] 阅读仪表笔记本已{m}（{} 本 · {} 星 · {} 高亮）", totals.books, totals.stars, totals.highlights);
     }
 }
 
@@ -501,6 +515,7 @@ fn settle(cfg: &Cfg, observe: bool, dirty: Option<&HashSet<String>>) {
         rebuild_card_index(&dir, observe);
         rebuild_card_agg(&dir, observe); // 跨书按色聚合，与死链索引同触发条件
         rebuild_card_review(&dir, observe); // 渐进总结复盘队列，同触发条件
+        rebuild_card_stats(&dir, observe); // 按书 PKM 仪表，同触发条件
     }
 }
 

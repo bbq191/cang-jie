@@ -10,6 +10,7 @@ pub mod cardindex;
 pub mod cardhl;
 pub mod cardagg;
 pub mod cardreview;
+pub mod cardstats;
 pub mod cardnote;
 pub mod cardsync;
 pub mod stardetect;
