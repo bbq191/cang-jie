@@ -69,7 +69,8 @@ pub struct Highlight {
     pub slot: usize,
     pub text: String,
     pub y: f64,     // 页面纵坐标（同槽多段按此+start 排序，还原阅读顺序）
-    pub start: u32, // 字符起点（同 y 时的次级排序键）
+    pub start: u32, // 字符起点（同 y 时的次级排序键 + 去重的字符范围起点）
+    pub len: u32,   // 字符长度（去重判子集用；xochitl 划线常生成重复/子集段）
 }
 
 /// 清洗高亮文字：去 EPUB 软连字/换行残符（如 `ά`、软连字符）、trim。保守起见只去已知噪声。
@@ -99,13 +100,37 @@ pub fn extract_highlights(rm_bytes: &[u8]) -> Result<Vec<Highlight>, String> {
                         continue;
                     }
                     let y = g.rectangles.first().map(|r| r.y).unwrap_or(0.0);
-                    out.push(Highlight { slot: hc.slot(), text, y, start: g.start });
+                    out.push(Highlight { slot: hc.slot(), text, y, start: g.start, len: g.length });
                 }
             }
         }
     }
     out.sort_by(|a, b| a.y.partial_cmp(&b.y).unwrap().then(a.start.cmp(&b.start)));
-    Ok(out)
+    Ok(dedup_within_slot(out))
+}
+
+/// 同槽内去重：丢掉字符范围 `[start, start+len)` 被同槽另一段**包含**的段（xochitl 划线常生成
+/// 完全重复段 '款'×2 或子集 '行'⊂'行吗？'）。等长重复保留先出现的一条。跨槽不去重（不同色=不同用途，
+/// 即便同一句文字也各自保留）。保持入参已排好的 (y,start) 顺序。
+fn dedup_within_slot(hs: Vec<Highlight>) -> Vec<Highlight> {
+    let n = hs.len();
+    let mut keep = vec![true; n];
+    for i in 0..n {
+        for j in 0..n {
+            if i == j || !keep[j] || hs[i].slot != hs[j].slot {
+                continue;
+            }
+            let (is, ie) = (hs[i].start, hs[i].start + hs[i].len);
+            let (js, je) = (hs[j].start, hs[j].start + hs[j].len);
+            // j 落在 i 内，且 i 更长（真子集）或等长但 i 先出现 → 丢 j。
+            let j_in_i = js >= is && je <= ie;
+            let i_bigger = (ie - is) > (je - js) || ((ie - is) == (je - js) && i < j);
+            if j_in_i && i_bigger {
+                keep[j] = false;
+            }
+        }
+    }
+    hs.into_iter().zip(keep).filter(|(_, k)| *k).map(|(h, _)| h).collect()
 }
 
 #[cfg(test)]
@@ -134,5 +159,21 @@ mod tests {
     fn slot_order() {
         assert_eq!(HlColor::Yellow.slot(), 0);
         assert_eq!(HlColor::Gray.slot(), 5);
+    }
+
+    #[test]
+    fn dedup_subset_and_exact() {
+        let mk = |slot, text: &str, start, len, y| Highlight { slot, text: text.into(), start, len, y };
+        let hs = vec![
+            mk(3, "款", 420, 1, 100.0),
+            mk(3, "款", 420, 1, 100.0),     // 完全重复 → 去
+            mk(3, "行", 232, 1, 200.0),     // 子集 → 去
+            mk(3, "行吗？", 232, 3, 200.0), // 包含 '行' → 留
+            mk(1, "款", 420, 1, 300.0),     // 不同槽同文字 → 留
+        ];
+        let out = dedup_within_slot(hs);
+        let s3: Vec<String> = out.iter().filter(|h| h.slot == 3).map(|h| h.text.clone()).collect();
+        assert_eq!(s3, vec!["款".to_string(), "行吗？".to_string()], "槽3应只剩'款'+'行吗？'");
+        assert_eq!(out.iter().filter(|h| h.slot == 1).count(), 1, "跨槽同文字保留");
     }
 }
