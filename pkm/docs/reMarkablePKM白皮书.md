@@ -61,7 +61,7 @@ PKM 回归后 reMarkable 复位为**阅读/笔记工作台**（Zettelkasten + �
 
 ## 02｜★ 全局待办 —— 首个语义能力（2026-08-22，全真机端到端）
 
-**做什么**：**阅读时用红笔在某页画一颗五角星，几秒后后台 Rust daemon 自动生成/更新这本书的「《书名》- 总结卡片」笔记本**。选它打头因为 ① 不依赖底层文本 ② 颜色/形状能从 `.rm` 直接读出 ③ 输出独立文件天然绕开 inplace 判死 + 云同步冲突。产物链：`pkm-semantic/proto/`（Python 原型 + 差分测试）→ `pkm/src/{stardetect,cardsync,cardnote}.rs` + `reading/device-rs/src/epubindex.rs`（页→章）+ `pkm/src/bin/wr_stars_daemon.rs` + `reading/device/trash-agent.qmd` + 设置页开关。
+**做什么**：**阅读时用红笔在某页画一颗五角星，几秒后后台 Rust daemon 自动生成/更新这本书的「《书名》- 总结卡片」笔记本**。选它打头因为 ① 不依赖底层文本 ② 颜色/形状能从 `.rm` 直接读出 ③ 输出独立文件天然绕开 inplace 判死 + 云同步冲突。产物链：`pkm-semantic/proto/`（Python 原型 + 差分测试）→ `pkm/src/{stardetect,cardsync,cardnote,starscan,notebook_sync}.rs` + `device-core/src/epubindex.rs`（页→章）+ `pkm/src/bin/wr_stars_daemon.rs` + `reading/device/trash-agent.qmd` + 设置页开关。
 
 ![★ 全局待办数据流（画星 → fswatch → 识别 + 页→章名 → 卡片 merge → /upload → 事件驱动去重）](star-todo-flow.svg)
 
@@ -229,5 +229,5 @@ Zettelkasten 的核心不是捕获而是**提炼**——把生摘录逐张用自
 
 - 优先级/立项：《[功能路线图白皮书](../../docs/reMarkable功能路线图白皮书.md)》§5.8。
 - 算法原型 + 阈值标定：[pkm-semantic/README.md](../../pkm-semantic/README.md)（Python 原型 + 差分测试）。
-- 生产 Rust crate：[pkm/README.md](../README.md)（单向依赖 reading）。
+- 生产 Rust crate：[pkm/README.md](../README.md)（依赖共享底座 device-core）。crate/模块结构与解耦见《[设备端 Rust 架构](../../docs/reMarkable设备端Rust架构.md)》。
 - 注入/回收站通道机制亦见《[阅读白皮书](../../reading/docs/reMarkable阅读白皮书.md)》§07-D（`trash-agent`、软删真相）。

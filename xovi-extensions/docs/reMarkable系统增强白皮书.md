@@ -122,9 +122,9 @@ host 无法运行 xochitl，但能用官方 qmldiff 工具**离线实跑补丁**
   参数传入**（路径无关、可测）；只依赖共享基础设施（`cardhl` 读高亮/`epubindex` 页→章+章全文/`stardetect::page_order`
   页序/`dict`/`cardvocab`），**不碰** daemon 的星/卡片路径。daemon 只剩「触发 `need_vocab` + `sync_auto_notebook`
   注入」两件事——最大程度解耦，短于另拆一个二进制（查字词与★待办共用同一 daemon 的 fswatch/注入/去重基础设施）。
-- `locate.rs`：`canon`/`locate_range` **搬自 `reading/device-rs/src/reverse.rs`**——那份是微信读书双向同步的逆映射，
-  PKM 转向砍掉同步后成了**孤儿死代码**（无 `mod` 声明、缠着同为死码的 `rmread`/`notebook`，暴露它得连锁复活整个
-  被砍子系统）。故只把与死码无关的**纯定位原语**逐字搬进 pkm，逻辑不变（真机对拍差=0 的那份），pkm 自足。
+- `locate.rs`：`canon`/`locate_range` **搬自原 `reading/device-rs/src/reverse.rs`**——那份是微信读书双向同步的
+  逆映射孤儿死代码（无 `mod` 声明、缠着 `rmread`/`notebook`）；只把与死码无关的**纯定位原语**逐字搬进 pkm
+  （真机对拍差=0），原 reverse.rs 连同死子系统已 2026-08-25 `git rm` 删除（见 git 历史）。
 - daemon `collect_vocab`/`rebuild_vocab`：全库全量扫（`sync_auto_notebook` 每轮整本重生），**独立触发**
   `need_vocab`（冷启动 or dirty 里有**源书**变更，区别于笔记本触发的 `need_index`）。《生词本》列入
   `collect_notebook_texts` 排除名单（防自摄取）。

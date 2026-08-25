@@ -1,10 +1,10 @@
 //! 章内文本定位（部首规整 + 字符区间查找）。纯函数、host 可测。
 //!
-//! **来源与去重说明**：这几个函数原样搬自 `reading/device-rs/src/reverse.rs`（微信读书双向同步的
-//! 逆映射代码）。那份 reverse.rs 在 PKM 转向砍掉双向同步后成了**孤儿**（无任何 `mod` 声明、未编进
-//! crate，且缠着同为死代码的 `rmread`/`notebook`）。要复用它得连锁复活整个被砍子系统——不划算。
-//! 故把其中**与死代码无关的纯定位原语**（canon/char_find/locate_range/Range + RADICAL_MAP）抽到此处，
-//! 逻辑逐字不变（微信读书真机对拍差=0 的那份），pkm 自足、不碰 reading 的死代码。
+//! **来源与去重说明**：这几个函数原样搬自原 `reading/device-rs/src/reverse.rs`（微信读书双向同步的
+//! 逆映射代码）。那份 reverse.rs 在 PKM 转向砍掉双向同步后成了**孤儿**（无 `mod` 声明、未编进 crate，
+//! 且缠着同为死代码的 `rmread`/`notebook`）——复用它得连锁复活整个被砍子系统，不划算；故把其中**与死代码
+//! 无关的纯定位原语**（canon/char_find/locate_range/Range + RADICAL_MAP）抽到此处，逻辑逐字不变（微信读书
+//! 真机对拍差=0 的那份）。原 reverse.rs 连同那坨死子系统已于 2026-08-25 `git rm` 删除（源码见 git 历史）。
 //!
 //! 用途：生词本查词时，把荧光笔读回的词在 EPUB 章节原始全文里定位（`canon` 先把部首区码位规整回
 //! 常规 CJK，避免 Kangxi/部首区字符导致匹配失败），得字符区间供 `cardvocab::sentence_of` 向两侧扩句。

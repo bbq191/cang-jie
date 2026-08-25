@@ -14,12 +14,12 @@
 | 2 | **中文化**（显示 + 输入法） | UI 汉化（`.qm` 简/繁/港 + 字体 + 原生 Settings 集成，M0–M2）+ 拼音输入法（键盘 hook + 拼音/双拼引擎 + 候选栏 + 中英混输，M3–M7） | `chinese-ime/` | 真机全链路通过，收尾维护 |
 | 3 | **阅读**（微信读书 + EPUB 优化） | 「墨香」设备自足微信读书（扫码/下书/取云端进度/续期；双向回传已随 PKM 回归砍除）+ 通用 EPUB 优化器 | `reading/` | 真机端到端验证 |
 | 4 | **系统增强**（阅读/显示/笔记 UX） | 点击翻页 · 快速黑白 · 清残影 · 键盘 Mono · 阅读字体 · 快捷输入(snippets) · 荧光笔汉字精确吸附 · **划词查字典→生词本**；集中在设置页「系统增强」中枢面板 | `xovi-extensions/` + `chinese-ime/langhook/`（笔记增强）+ `pkm/`（查字词，跨块骑 daemon） | 真机验证（查字词 host 通、真机待验） |
-| 5 | **PKM / 知识管理** | ★全局待办语义引擎（把设备变成 Zettelkasten 工作台的首个能力）：Python 原型标定 + Rust 生产 | `pkm-semantic/`（原型）+ `pkm/`（Rust 生产 crate，单向依赖 `reading/`） | 原型标定 + 真机端到端 |
+| 5 | **PKM / 知识管理** | ★全局待办语义引擎（把设备变成 Zettelkasten 工作台的首个能力）：Python 原型标定 + Rust 生产 | `pkm-semantic/`（原型）+ `pkm/`（Rust 生产 crate，依赖共享底座 `device-core/`） | 原型标定 + 真机端到端 |
 | 6 | **额外应用** | 截图/录屏工具 | `screenshot-tool/` | 规划中（独立进程 DRM 直读已判死，须 hook xochitl） |
 
 > **两处刻意的跨块共享**：① 块 4 的"笔记增强"（荧光笔吸附）逻辑是 `chinese-ime/langhook` 里的 C hook、开关 UI 在 `xovi-extensions/reading-qol`——一颗 .so 同时服务块 2 和块 4，不拆二进制；② 块 4 的"划词查字典→生词本"代码骑在 `pkm/` 的 daemon 上（复用荧光笔读回+笔记本注入管线），概念属块 4 系统增强、实现不单拆二进制。两者都是"能力归块 4、代码在别块"。
 >
-> **块 5 PKM 与块 3 阅读的依赖关系**：`pkm/` 是独立 Rust crate，但**单向依赖** `reading/device-rs`（复用其 `epubindex`/`fswatch`/`inject`/`notebook_rm`）——★待办本就建在阅读栈上（读书、注入书库）。`reading/` 不反向依赖 `pkm/`。这是 2026-08-23 把历史名 `weread-client/`（曾把阅读+PKM 塞一个 crate）拆开后的正确形状。
+> **三个设备端 Rust crate 的依赖关系**（详见《[设备端 Rust 架构](docs/reMarkable设备端Rust架构.md)》）：低层设备能力（`epubindex`/`fswatch`/`inject`/`notebook_rm`）抽成**共享底座 `device-core/`**，块3阅读（`weread-device`）与块5 PKM（`pkm-device`）都依赖它。`pkm/` **生产只依赖 `device-core`**（`weread-device` 降为 dev-dependency，仅 1 个 fixture 测试用）→ **生产 daemon 构建不再全量编译整条 weread 管线**。`reading/` 不反向依赖 `pkm/`，方向单向无环。这是 2026-08-23 拆 `weread-client/`→`reading/`+`pkm/`、再 2026-08-25 抽 `device-core/` 后的形状。
 
 ## 白皮书（完整设计 + 真机调试记录）
 
@@ -31,6 +31,7 @@
 - **[reMarkable 系统增强白皮书](xovi-extensions/docs/reMarkable系统增强白皮书.md)**（块4）—— 阅读/显示/笔记 UX（点击翻页/快速黑白/清残影/字体/键盘 Mono/快捷输入 snippets/荧光笔吸附/**划词查字典→生词本** §08）+ 设置页「系统增强」中枢面板 + 离线 qmldiff 验证管线。
 - **[reMarkable PKM 白皮书](pkm/docs/reMarkablePKM白皮书.md)**（块5）—— PKM 知识化方法论 + ★全局待办语义引擎（检测/注入/卡片/去重）。
 - **[功能路线图白皮书](docs/reMarkable功能路线图白皮书.md)**（跨块）—— "下一步做什么"优先级共识 + 6 分块地图 + 已否决方向。深设计已下沉到上面各块白皮书，本文只留优先级与状态。
+- **[设备端 Rust 架构](docs/reMarkable设备端Rust架构.md)**（跨块）—— 三个设备端 Rust crate（device-core / weread-device / pkm-device）的结构、依赖、模块职责，及**解耦方法论（如何解耦）+ 模块演变**。
 
 ## 目录结构
 
@@ -44,7 +45,8 @@
 | `chinese-ime/{fonts,translations,docs,qt-im-plugin}/` | 2 | 中文字体（+OFL）· zh `.qm` 翻译 · 两本白皮书 · `qt-im-plugin/`（Qt IM 插件方向判死实验） |
 | `reading/` | 3 | 阅读线设备端总仓：「墨香」微信读书自足化 + 通用 EPUB 优化器（`device-rs/` Rust 主体 + `device/` QML 注入件 `moxiang-sidebar`/`trash-agent`/`reader-*.qmd`）。见 [reading/README.md](reading/README.md)、`ATTRIBUTION.md`（历史名 `weread-client/`，2026-08-23 改名） |
 | `xovi-extensions/` | 4 | `reading-qol`（设置页「系统增强」中枢面板四分类：翻页与刷新/书籍与字体/快捷输入 snippets/笔记增强）+ `font-menu`（阅读字体） |
-| `pkm/` | 5 | PKM ★待办**生产 Rust crate**：`stardetect`/`cardsync`/`cardnote`/`cardindex`（MOC 死链体检）+ `wr-stars-daemon`；卡片按书原生 Tag 选 4 套模板；单向依赖 `reading/device-rs`。见 [pkm/README.md](pkm/README.md) |
+| `device-core/` | 3+5 | **共享底座 crate**：`epubindex`/`inject`/`notebook_rm`/`fswatch`——块3阅读与块5 PKM 都用的低层设备能力；抽出后 pkm 生产构建不再全量编译 reading。见《[设备端 Rust 架构](docs/reMarkable设备端Rust架构.md)》 |
+| `pkm/` | 5 | PKM ★待办**生产 Rust crate**：`stardetect`/`cardsync`/`cardnote`/`cardindex`（MOC 死链体检）+ `notebook_sync`/`starscan`/`vocabscan` + `wr-stars-daemon`；卡片按书原生 Tag 选 4 套模板；依赖共享底座 `device-core`。见 [pkm/README.md](pkm/README.md) |
 | `pkm-semantic/` | 5 | PKM ★待办检测算法的 **Python 原型 + 阈值标定**（`pkm/` 是其逐结果对拍的 Rust 生产移植）。见 [pkm-semantic/README.md](pkm-semantic/README.md) |
 | `screenshot-tool/` | 6 | 截图/录屏可行性实验（`drm-probe/`），规划中 |
 | `docs/` | — | **跨块白皮书**：功能路线图（含 6 分块地图）+ 网络解决方案（中文化/拼音两本就近在 `chinese-ime/docs/`） |
