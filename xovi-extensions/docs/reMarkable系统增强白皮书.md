@@ -5,7 +5,7 @@
 > 本白皮书是块4「系统增强」的设计单一事实来源。跨块优先级见《[功能路线图白皮书](../../docs/reMarkable功能路线图白皮书.md)》§09；
 > 代码在 `xovi-extensions/reading-qol/`（+ `font-menu/`）；设置页面板 qmd 是 `settings-reading-enhance.qmd`。
 >
-> ⚠️ **两处跨块**：① 「笔记增强 → 荧光笔汉字吸附」逻辑是 `chinese-ime/langhook` 里的 C hook（块2 的 .so），完整设计见《[阅读白皮书](../../reading/docs/reMarkable阅读白皮书.md)》§03 组件3d；② 「笔记增强 → ★全局待办」开关只是门户，能力本体见《[PKM 白皮书](../../pkm/docs/reMarkablePKM白皮书.md)》；③ 「导入书籍自动优化」开关消费方是 wr-serve（Rust），见《[阅读白皮书](../../reading/docs/reMarkable阅读白皮书.md)》§07-D。本白皮书只讲这些开关的**门户/面板机制**，不重复能力本体。
+> ⚠️ **跨块**：① 「笔记增强 → 荧光笔汉字吸附」逻辑是 `chinese-ime/langhook` 里的 C hook（块2 的 .so），完整设计见《[阅读白皮书](../../reading/docs/reMarkable阅读白皮书.md)》§03 组件3d；② 「笔记增强 → ★全局待办」开关只是门户，能力本体见《[PKM 白皮书](../../pkm/docs/reMarkablePKM白皮书.md)》；③ 「导入书籍自动优化」开关消费方是 wr-serve（Rust），见《[阅读白皮书](../../reading/docs/reMarkable阅读白皮书.md)》§07-D；④ **「设备端查词 · 生词本」代码骑在 pkm daemon 上（复用荧光笔读回+笔记本注入管线，不单拆二进制），但概念属块4系统增强，完整设计在本白皮书 §08**（区别于②③——查字词的**本体文档就在这里**，不是只放开关）。本白皮书对①②③只讲开关的**门户/面板机制**，对④讲**完整能力本体**。
 
 ## 00｜定位
 
@@ -88,6 +88,52 @@ host 无法运行 xochitl，但能用官方 qmldiff 工具**离线实跑补丁**
 - `DocumentView.qml`：根 `FocusScope{id:root}`；`import xofm.libs.epaper as Epaper`；`root.ghostBuster`（`GhostBuster.forceClearNow`）；`currentPage` 有 `onCurrentPageChanged`。
 - `Settings.qml`：左侧菜单 `SettingsModel` 驱动 `Repeater`；静态项插 `ColumnLayout#settingsColumn`；内容页 `payloadLoader.sourceComponent`。
 - `KeyboardPanel.qml`：`root>keyboardContainer>screenMode[objectName:"keyboard",mode:Animation]`。
+
+## 08｜设备端查词 · 生词本「📕 生词本」（跨块：代码在 pkm daemon，host 测试通过、真机端到端待验证）
+
+查字词是**系统增强线的阅读辅助**（读书时划生词自动查词），但**代码本体骑在 pkm daemon（`wr-stars-daemon`）上**
+——与 §04 荧光笔吸附（代码在块2 langhook .so）同构的第 4 处跨块：能力概念属块4，实现复用了 pkm 的荧光笔读回
+（`cardhl`）+ EPUB 章映射（`epubindex`）+ 笔记本注入（`sync_auto_notebook`）管线，**不为它单拆一个二进制**。
+本节是查字词设计的单一事实来源；实现在 `pkm/src/{dict,cardvocab,locate}.rs` + daemon `collect_vocab`。
+
+**可行性核查结论**（见《[设备端查词可行性](../../docs/reMarkable设备端查词可行性.md)》）：Move 上 KOReader 判死、
+原生阅读器无逐词选中事件可 hook、注入弹窗够不进 SceneView tile 层——实时划词弹窗走不通；而**荧光笔读回文字**
+（GlyphRange 自带文字+颜色，PKM 白皮书 §06 已生产）成立，故查词的可行形态是**异步**：荧光笔划词 → daemon 查本地
+词典 → 写回一本《📕 生词本》。
+
+**设计**（三个岔口与用户敲定）：
+- **触发=复用 ⚪Gray 槽**：灰色高亮=生词。灰高亮**照常进卡片灰槽**（PKM §06 不变），查词是**完全解耦的并行附加
+  扫描**，另出《生词本》；查不到的（人物名/专名）自动不列。
+- **脱离画星**：任意已标注页的灰高亮都查（不必画★）。daemon 对源书**全部已标注页**枚举灰高亮
+  （`enumerate_pages` 复用 `stardetect::page_order`，不再只取星页）。
+- **带原句**：`locate::locate_range`（部首 `canon` 规整 + 章内 `char_find`）在 `epubindex::page_fulltext` 取的
+  EPUB 章全文里定位词 → 向两侧扩到句界得整句。
+- **词典双向**：英文词 → **牛津高阶英汉双解**（一部即英释+中译+例句）；中文词 → **现代汉语词典**（中文释义）。
+- **划一句/短语怎么办**（`dict::lookup_phrase`）：**整体精确命中优先**（单词/成语/词典里的短语，如"踌躇满志"直接
+  命中）；miss 才拆——**中文词级最长匹配**（只取 ≥2 字的词，单字连接词天然跳过，不是拆成单字：现汉验证"他一直很
+  踌躇"→「一直」「踌躇」）、**英文按词拆并跳停用词**（the/a/of…）；**整句不拆**（长度门控，划整句更像"金句"非查词）。封顶防刷屏。
+
+**实现**：
+- `dict.rs`：本地词典 **mmap + 行首二分**（`memmap2`，RAM 与词典大小无关，适配设备内存）；`detect_lang`
+  判中/英选词典、`normalize_key` 与建表侧对齐。数据 = `build_dict.py` 离线把用户自备 MOBI 经 calibre 转 HTML
+  再解析（`<span class="bold">词</span>…释义<hr/>`）出的**排序 TSV**。
+- `cardvocab.rs`：`sentence_of`（句界扩展）/ `cap_body`（牛津长释义截断）/ `render_notebook_pages`（纯逻辑可测）。
+- `locate.rs`：`canon`/`locate_range` **搬自 `reading/device-rs/src/reverse.rs`**——那份是微信读书双向同步的逆映射，
+  PKM 转向砍掉同步后成了**孤儿死代码**（无 `mod` 声明、缠着同为死码的 `rmread`/`notebook`，暴露它得连锁复活整个
+  被砍子系统）。故只把与死码无关的**纯定位原语**逐字搬进 pkm，逻辑不变（真机对拍差=0 的那份），pkm 自足。
+- daemon `collect_vocab`/`rebuild_vocab`：全库全量扫（`sync_auto_notebook` 每轮整本重生），**独立触发**
+  `need_vocab`（冷启动 or dirty 里有**源书**变更，区别于笔记本触发的 `need_index`）。《生词本》列入
+  `collect_notebook_texts` 排除名单（防自摄取）。
+
+**版权红线**：牛津/现汉是用户**正版商业词典**，只做**个人自用**：MOBI 与派生 TSV 全部 `.gitignore`、绝不入库/分发，
+仓库只留不含词典内容的 `pkm/tools/build_dict.py`；缺词典文件 daemon 该向自动降级不查。
+
+**验证**：host 测试通过（`dict`/`locate`/`cardvocab`/`epubindex::page_fulltext` 全绿）；现汉 MOBI 实测抽出
+**62,642 词条**、字节序正确、`踌躇` 释义完整。**真机端到端（设备划灰词→生词本出词）待用户配合验证**——按纪律
+未上机不宣称完成。
+
+> **后续（未做）**：设置页「系统增强」门户可加一个「生词本」开关（对齐 ★待办 的 `starTodoEnabled` 门户模式，qmd 改
+> `settings-reading-enhance.qmd`，高风险单独上机）；当前无开关，daemon 有词典文件即工作、无则降级。
 
 ## 交叉引用
 

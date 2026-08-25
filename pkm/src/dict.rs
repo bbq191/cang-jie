@@ -5,7 +5,8 @@
 //! headword \t 音标/拼音 \t 主释义(body) \t 补充(extra) \n
 //! ```
 //!
-//! 词典数据是用户正版商业词典派生物，**只个人自用、不入库、不分发**（见白皮书查词节 / 计划）。
+//! 词典数据是用户正版商业词典派生物，**只个人自用、不入库、不分发**（查字词=块4系统增强跨块能力，
+//! 完整设计见系统增强白皮书 §08）。
 //! 本模块只提供 mmap + **行首二分查找**：RAM 与词典大小无关（不把整表读进 HashMap），
 //! 适配设备内存受限。测试用自造 fixture，不含任何版权词典内容。
 //!
@@ -345,11 +346,12 @@ mod tests {
         std::fs::remove_file(&p).ok();
     }
 
-    // 短语/句子查词 fixture：两部小词典（自造，无版权内容）。
-    fn phrase_dicts() -> (Dict, Dict) {
+    // 短语/句子查词 fixture：两部小词典（自造，无版权内容）。tag 让并发的各测试用**独立文件名**
+    // （否则多测试同名文件并发 truncate/mmap-read 竞态 → 偶发读到半写文件、二分失败）。
+    fn phrase_dicts(tag: &str) -> (Dict, Dict) {
         // en 按 ASCII 序
         let pe = fixture(
-            "phrase_en",
+            &format!("phrase_en_{tag}"),
             &[
                 "cachet\tkæˈʃeɪ\tn. prestige\t",
                 "carried\t\tv. carry 过去式\t",
@@ -359,7 +361,7 @@ mod tests {
         );
         // zh 按码位序：他(U+4ED6) < 踌躇(U+8DCC…) < 踌躇满志
         let pz = fixture(
-            "phrase_zh",
+            &format!("phrase_zh_{tag}"),
             &[
                 "他\ttā\t代词\t",
                 "踌躇\tchóuchú\t犹豫\t",
@@ -371,7 +373,7 @@ mod tests {
 
     #[test]
     fn phrase_exact_idiom_hit() {
-        let (en, zh) = phrase_dicts();
+        let (en, zh) = phrase_dicts("idiom");
         let r = lookup_phrase(Some(&en), Some(&zh), "踌躇满志");
         assert_eq!(r.len(), 1);
         assert_eq!(r[0].0, "踌躇满志"); // 整体精确命中，不拆
@@ -379,7 +381,7 @@ mod tests {
 
     #[test]
     fn phrase_zh_segments_to_word_not_char() {
-        let (en, zh) = phrase_dicts();
+        let (en, zh) = phrase_dicts("zhseg");
         // "他很踌躇"：很不在词典、他是单字（拆分只取≥2字词）→ 只应拆出「踌躇」
         let r = lookup_phrase(Some(&en), Some(&zh), "他很踌躇");
         let words: Vec<&str> = r.iter().map(|(w, _)| w.as_str()).collect();
@@ -388,7 +390,7 @@ mod tests {
 
     #[test]
     fn phrase_en_skips_stopwords() {
-        let (en, zh) = phrase_dicts();
+        let (en, zh) = phrase_dicts("enstop");
         let r = lookup_phrase(Some(&en), Some(&zh), "the cachet of certain");
         let mut words: Vec<String> = r.iter().map(|(w, _)| w.clone()).collect();
         words.sort();
@@ -397,7 +399,7 @@ mod tests {
 
     #[test]
     fn phrase_sentence_not_split() {
-        let (en, zh) = phrase_dicts();
+        let (en, zh) = phrase_dicts("sentence");
         // 英文 >5 token = 句子 → 不拆（即便含 cachet）
         assert!(lookup_phrase(Some(&en), Some(&zh), "it carried a certain cachet among us").is_empty());
         // 中文 >12 字 = 句子 → 不拆（即便含踌躇满志）

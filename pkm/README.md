@@ -43,6 +43,10 @@ reading **不反向依赖** pkm——依赖方向干净单向。这也是"阅读
 
 ## 词典数据（生词本）—— 用户自备、不入库
 
+> **分块归属**：查字词/生词本概念属**块4 系统增强**（阅读辅助），代码在此是跨块（复用荧光笔读回+笔记本注入
+> 管线，不单拆二进制）。完整设计见《[系统增强白皮书](../xovi-extensions/docs/reMarkable系统增强白皮书.md)》§08。
+
+
 生词本查词用**用户自备的正版 Kindle 词典**（牛津高阶英汉双解 / 现代汉语词典 MOBI）离线预处理成
 排序 TSV，部署到设备 `/home/root/weread/dict/{en,zh}.tsv`，daemon `mmap` 只读二分查。构建：
 `python3 tools/build_dict.py --auto --out-dir <本地目录>`（调 calibre 转 MOBI→HTML 再解析，慢、一次性）。

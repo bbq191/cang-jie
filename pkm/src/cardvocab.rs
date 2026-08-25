@@ -1,5 +1,9 @@
 //! 荧光笔生词本 —— ⚪灰色高亮的词 → 查本地词典 → 汇成一本《📕 生词本》（纯逻辑部分 host 可测）。
 //!
+//! **分块归属**：查字词概念属**块4 系统增强**（阅读辅助 UX），代码在 pkm 是**跨块**——复用了 pkm 的
+//! 荧光笔读回（`cardhl`）+ EPUB 章映射（`epubindex`）+ 笔记本注入（`sync_auto_notebook`）管线，不单拆
+//! 二进制（同荧光笔汉字吸附的跨块处理）。完整设计=**系统增强白皮书 §08**，非 PKM 白皮书。
+//!
 //! 数据流（IO 在 daemon 侧 `collect_vocab`，本模块只做纯逻辑）：
 //!   每页 `.rm` 的 ⚪Gray 荧光笔高亮（`cardhl`，脱离画星）→ 词 → `dict` 查释义 →
 //!   `epubindex::page_fulltext` 得章全文 → `sentence_of` 扩出原句 → `VocabEntry` →
