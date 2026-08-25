@@ -114,7 +114,7 @@ pub fn render_notebook_pages(slots: &[Vec<Entry>; 6]) -> Vec<String> {
         slots.iter().flatten().map(|e| e.book.as_str()).collect();
     let mut s = String::new();
     s.push_str("🎨 高亮汇编 · 全库同色聚合\n");
-    s.push_str("（daemon 自动生成·只读；勿在此本手写，重建会覆盖）\n\n");
+    s.push_str("🔔 DORAEMON 魔法生成 · 只读 —— 翻遍你全库卡片变出来的，别跟它抢笔，一动就给你变回去\n\n");
     s.push_str(&format!("{total} 条高亮 · {} 本书\n", books.len()));
     for slot in 0..6 {
         s.push_str(&format!("\n━━ {} {} ━━\n", SECTION_EMOJI[slot], SECTION_NAME[slot]));

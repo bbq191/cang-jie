@@ -123,7 +123,7 @@ pub fn build_stats(docs: &[(String, String)]) -> (Vec<BookStats>, Totals) {
 pub fn render_notebook_pages(books: &[BookStats], totals: &Totals) -> Vec<String> {
     let mut s = String::new();
     s.push_str("📊 阅读仪表 · 全库 PKM 概览\n");
-    s.push_str("（daemon 自动生成·只读）\n\n");
+    s.push_str("🔔 DORAEMON 魔法生成 · 只读 —— 翻遍你全库卡片变出来的，别跟它抢笔，一动就给你变回去\n\n");
     s.push_str(&format!(
         "{} 本书 · {} 颗星 · {} 条高亮 · {} 张待消化\n",
         totals.books, totals.stars, totals.highlights, totals.pending

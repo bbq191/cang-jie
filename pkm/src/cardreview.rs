@@ -112,7 +112,7 @@ pub fn render_notebook_pages(items: &[ReviewItem]) -> Vec<String> {
     let books: std::collections::BTreeSet<&str> = items.iter().map(|i| i.book.as_str()).collect();
     let mut s = String::new();
     s.push_str("📖 复盘队列 · 待消化卡片\n");
-    s.push_str("（daemon 自动生成·只读；把某张卡的摘录用自己的话在槽下写下想法后，它会从队列消失）\n\n");
+    s.push_str("🔔 DORAEMON 魔法生成 · 只读 —— 把某张卡的摘录用自己的话在槽下写下想法，它就把这张变没（其余别抢笔，一动就变回去）\n\n");
     s.push_str(&format!("{} 张待消化 · {} 本书\n", items.len(), books.len()));
     if items.is_empty() {
         s.push_str("\n✓ 全部已消化——没有「有摘录、无提炼」的卡片\n");
