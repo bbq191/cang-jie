@@ -111,6 +111,8 @@ def parse_entries(html: str, lang: str):
             pm = IPA_RE.search(body_raw)
             if pm:
                 phonetic = pm.group(0)
+                # body 开头常重复音标 + ★(Oxford3000)/□(义项分隔) 记号——去掉，避免和 phonetic 字段重复、更干净
+                body = body_raw.replace(phonetic, "", 1).lstrip("★□◊ /;·")
         entries[key] = (phonetic, body)
     # 按 key 的 Unicode 码位序（= UTF-8 字节序 = Rust 二分 cmp）
     return [(k, entries[k][0], entries[k][1]) for k in sorted(entries.keys())]
