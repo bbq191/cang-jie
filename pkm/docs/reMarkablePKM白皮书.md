@@ -108,7 +108,9 @@ PKM 回归后 reMarkable 复位为**阅读/笔记工作台**（Zettelkasten + �
 
 **四套模板提示词的来源**（社区 PKM 范式改编，仅决定槽提示词、不再是独立条目结构）：通用 = [Matuschak Evergreen](https://notes.andymatuschak.org/z5E5QawiXCMbtNtupvxeoEX)（原子/概念导向/密链）；原文 = [句子挖掘 sentence mining](https://refold.la/simplified/stage-2/a/sentence-mining/)（抓整句上下文 + 生词 + 地道表达）；悬疑 = 小说阅读笔记 + 推理结构（线索/诡计，源自《13·67》方法论 §01）；科幻 = [worldbuilding 模板](https://storyflow.so/templates/writers/world-building)（势力/权力/设定）。
 
-**数据源实现**：vendored `remarkable_lines` 的 GlyphRange 原只读 `PenColor`（tag 4）、漏了 `color_rgba`（tag 10 = Paper Pro 彩色高亮真实色）；本项目扩展其解析（LE uint32 BGRA→RGBA），`cardhl.rs` 据此判 6 色。判色/提取/填槽 host 21 测试 + 真机《13 67》端到端全通（6 色各进对应槽、灰槽长句独占一行、画星才生成）。
+**数据源实现**：vendored `remarkable_lines` 的 GlyphRange 原只读 `PenColor`（tag 4）、漏了 `color_rgba`（tag 10 = Paper Pro 彩色高亮真实色）；本项目扩展其解析（LE uint32 BGRA→RGBA），`cardhl.rs` 据此判 6 色。判色/提取/填槽 host 22 测试 + 真机《13 67》端到端全通（6 色各进对应槽、灰槽长句独占一行、画星才生成）。
+
+**同槽去重**：xochitl 划线常生成完全重复段（'款'×2）或子集（'行'⊂'行吗？'），`dedup_within_slot` 按同槽字符范围 `[start,start+len)` 包含关系去重（跨槽不去重——不同色=不同用途，同一句也各留），真机 TMYD 页 'not'⊂'not to' 验证只留 'not to'。**"导入高亮混入"是伪问题**：真机对比高亮 author 全是设备用户本人（同 UUID），墨香下书不往 `.rm` 写云端高亮，当前无导入内联高亮之虞。
 
 **机器锚点 `[ID:]` 与人类字段分离**：`[ID: 章名 - P 页]`（无章节用书名短前缀）是 daemon 生成的确定锚点，供 MOC 引用/搜索/死链体检；填的概念/生词是可读内容，二者不混。页号段 `- P N`（2026-08-24 起，旧卡 `-pN` forward-only 不改）。
 
