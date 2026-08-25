@@ -140,7 +140,13 @@ pub fn append_page_to_notebook(dir: &str, doc_uuid: &str, text: &str) -> Result<
 
 /// 把「标题 + 多页文本」打成 .rmdoc（zip STORED：<uuid>.metadata/.content/<uuid>/<page>.rm）字节。
 /// 用于 /upload 导入路径测试（验证 xochitl 原生导入的 update-vs-duplicate 语义）。
+/// 打包 .rmdoc（落 root）。
 pub fn pack_rmdoc(doc_uuid: &str, title: &str, pages: &[&str]) -> Result<Vec<u8>, String> {
+    pack_rmdoc_in(doc_uuid, title, pages, "")
+}
+
+/// 打包 .rmdoc 并指定 `parent` 文件夹 uuid（空=root）。用于「daemon 自动归档进 zettelkasten」验证/落地。
+pub fn pack_rmdoc_in(doc_uuid: &str, title: &str, pages: &[&str], parent: &str) -> Result<Vec<u8>, String> {
     use std::io::Write;
     let author = uuid::Uuid::new_v4();
     let author_bytes = *author.as_bytes();
@@ -175,7 +181,7 @@ pub fn pack_rmdoc(doc_uuid: &str, title: &str, pages: &[&str]) -> Result<Vec<u8>
     });
     let metadata = json!({
         "createdTime": now, "lastModified": now, "lastOpened": now, "lastOpenedPage": 0,
-        "new": false, "parent": "", "pinned": false, "source": "com.cangjie.weread",
+        "new": false, "parent": parent, "pinned": false, "source": "com.cangjie.weread",
         "type": "DocumentType", "visibleName": title,
     });
     let mut buf = std::io::Cursor::new(Vec::new());

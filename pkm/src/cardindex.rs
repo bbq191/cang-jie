@@ -135,7 +135,7 @@ pub fn render_notebook_pages(idx: &CardIndex) -> Vec<String> {
     let dead = dead_links(idx);
     let mut s = String::new();
     s.push_str("🔗 卡片索引 · MOC 死链体检\n");
-    s.push_str("（daemon 自动生成·只读；勿在此本手写，重建会覆盖）\n\n");
+    s.push_str("🔔 DORAEMON 魔法生成 · 只读 —— 翻遍你全库卡片变出来的，别跟它抢笔，一动就给你变回去\n\n");
     s.push_str(&format!("{} 锚点 · {} 软链接 · {} 死链\n\n", idx.defined.len(), idx.refs.len(), dead.len()));
     s.push_str("━━ ⚠ 死链 ━━\n");
     if dead.is_empty() {
