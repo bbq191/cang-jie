@@ -7,7 +7,7 @@
 //! 目录：默认 xochitl 生产目录，可用 CANGJIE_XOCHITL_DIR 覆盖。
 
 use pkm_device::cardnote;
-use weread_device::inject::XOCHITL_DIR;
+use device_core::inject::XOCHITL_DIR;
 
 fn dir() -> String {
     std::env::var("CANGJIE_XOCHITL_DIR").unwrap_or_else(|_| XOCHITL_DIR.to_string())
@@ -72,7 +72,7 @@ fn main() {
             let agent = ureq::AgentBuilder::new()
                 .timeout(std::time::Duration::from_secs(15))
                 .build();
-            match weread_device::inject::upload_document(&agent, "10.11.99.1", &rmdoc, &format!("{title}.rmdoc"), "application/zip") {
+            match device_core::inject::upload_document(&agent, "10.11.99.1", &rmdoc, &format!("{title}.rmdoc"), "application/zip") {
                 Ok(resp) => println!("upload uuid={u} pages={n} -> 响应: {resp}"),
                 Err(e) => {
                     eprintln!("upload 失败: {e}");
@@ -93,7 +93,7 @@ fn main() {
                 Err(e) => { eprintln!("pack 失败: {e}"); std::process::exit(1); }
             };
             let agent = ureq::AgentBuilder::new().timeout(std::time::Duration::from_secs(15)).build();
-            match weread_device::inject::upload_document(&agent, "10.11.99.1", &rmdoc, &format!("{visible}.rmdoc"), "application/zip") {
+            match device_core::inject::upload_document(&agent, "10.11.99.1", &rmdoc, &format!("{visible}.rmdoc"), "application/zip") {
                 Ok(resp) => println!("carddemo visibleName=《{title}》- 总结卡片 -> {resp}\n请在设备打开它、用Text工具打字、退出，再跑 readback"),
                 Err(e) => { eprintln!("upload 失败: {e}"); std::process::exit(1); }
             }
@@ -120,15 +120,15 @@ fn main() {
             let uuid = match args.get(2) { Some(u) => u, None => { eprintln!("chapter <uuid> [page...]"); std::process::exit(2); } };
             let idx = std::fs::read(format!("{d}/{uuid}.epubindex")).unwrap_or_default();
             let epub = std::fs::read(format!("{d}/{uuid}.epub")).unwrap_or_default();
-            let secs = weread_device::epubindex::parse_sections(&idx);
-            let titles = weread_device::epubindex::chapter_map_hier(&epub);
+            let secs = device_core::epubindex::parse_sections(&idx);
+            let titles = device_core::epubindex::chapter_map_hier(&epub);
             println!("=== spine 起始页表 ({} 条) ===", secs.len());
             for (b, s) in &secs { println!("  {b} 起 page{s}  章节={:?}", titles.get(b)); }
             let pages: Vec<usize> = args[3..].iter().filter_map(|s| s.parse().ok()).collect();
             let pages = if pages.is_empty() { vec![0, 2, 40, 73, 113, 200] } else { pages };
             println!("=== 页 → 章节标签（章 - 节）===");
             for p in pages {
-                println!("  page{p} (第{}页) -> {:?}", p + 1, weread_device::epubindex::page_chapter_label(&secs, &titles, p));
+                println!("  page{p} (第{}页) -> {:?}", p + 1, device_core::epubindex::page_chapter_label(&secs, &titles, p));
             }
         }
         "list" => {

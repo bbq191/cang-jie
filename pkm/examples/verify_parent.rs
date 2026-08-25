@@ -1,7 +1,7 @@
 //! 验证命门：造一个 metadata parent=<文件夹uuid> 的 rmdoc upload，看 xochitl 是否归档进该文件夹。
 use pkm_device::cardnote::pack_rmdoc_in;
 use std::time::Duration;
-use weread_device::inject::upload_document;
+use device_core::inject::upload_document;
 fn main() {
     let parent = std::env::args().nth(1).expect("用法: verify_parent <folder-uuid>");
     let my_uuid = uuid::Uuid::new_v4().to_string();

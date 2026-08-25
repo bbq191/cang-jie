@@ -1,6 +1,6 @@
 //! 离线预览：读真实卡片本 .rm root text → cardagg 汇编。args: "书名::目录" 多个。
 use pkm_device::cardagg::{build_agg, render_notebook_pages};
-use weread_device::notebook_rm::read_root_text;
+use device_core::notebook_rm::read_root_text;
 fn main() {
     let mut docs = Vec::new();
     for arg in std::env::args().skip(1) {

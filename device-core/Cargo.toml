@@ -1,0 +1,19 @@
+[package]
+name = "device-core"
+version = "0.1.0"
+edition = "2021"
+description = "reMarkable 设备端共享底座：EPUB 页→章索引 / xochitl 书库注入 / .rm 笔记页 / inotify 文件监听。块3阅读与块5 PKM 共用；pkm 靠它摆脱对整条微信读书管线（下载/codec/login…）的编译依赖。"
+
+[lib]
+name = "device_core"
+path = "src/lib.rs"
+
+# 版本与 ../reading/device-rs/Cargo.toml 对齐，避免同 crate 双版本（remarkable_lines 走同一 path 去重）。
+[dependencies]
+remarkable_lines = { path = "../reading/device-rs/vendor/remarkable_lines" }
+serde_json = "1"
+ureq = "2"
+uuid = { version = "1", features = ["v4"] }
+zip = { version = "2", default-features = false, features = ["deflate"] }
+regex = "1"
+inotify = { version = "0.11.5", default-features = false }

@@ -18,7 +18,7 @@ use std::time::Duration;
 use pkm_device::notebook_sync::{collect_notebook_texts, is_user_notebook, sync_auto_notebook};
 use pkm_device::stardetect::{scan_document_dir, scan_library, DocStars, StarConfig};
 use pkm_device::{cardagg, cardindex, cardreview, cardstats, cardvocab, starscan, vocabscan};
-use weread_device::fswatch;
+use device_core::fswatch;
 
 const CFG_PATH_DEFAULT: &str = "/home/root/.local/share/cangjie-ime/reading-qol.json";
 /// MOC 死链体检报告落点（SSH 可读文件）。
@@ -36,7 +36,7 @@ const ZH_DICT_PATH: &str = "/home/root/weread/dict/zh.tsv";
 const AUTO_TITLES: [&str; 5] = [INDEX_TITLE, AGG_TITLE, REVIEW_TITLE, STATS_TITLE, VOCAB_TITLE];
 
 fn xochitl_dir() -> String {
-    std::env::var("CANGJIE_XOCHITL_DIR").unwrap_or_else(|_| weread_device::inject::XOCHITL_DIR.to_string())
+    std::env::var("CANGJIE_XOCHITL_DIR").unwrap_or_else(|_| device_core::inject::XOCHITL_DIR.to_string())
 }
 fn cfg_path() -> String {
     std::env::var("CANGJIE_STARS_CFG").unwrap_or_else(|_| CFG_PATH_DEFAULT.to_string())

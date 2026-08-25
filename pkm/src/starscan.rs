@@ -14,8 +14,8 @@ use crate::cardsync::{parse_pages, render_card_starspecs, CardTemplate};
 use crate::notebook_sync::{doc_age_secs, find_docs_by_visible, queue_trash, read_card_pages, UPLOAD_HOST};
 use crate::stardetect::DocStars;
 use crate::cardnote;
-use weread_device::epubindex::{chapter_map_hier, page_chapter_label, parse_sections};
-use weread_device::inject;
+use device_core::epubindex::{chapter_map_hier, page_chapter_label, parse_sections};
+use device_core::inject;
 
 /// 卡片刚被编辑（用户可能正在打字）→ 本轮跳过重建、下次再合，避免读到半刷入的 .rm。
 const GUARD_SECS: u64 = 20;

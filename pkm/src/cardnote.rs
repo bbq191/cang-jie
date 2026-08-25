@@ -7,7 +7,7 @@
 //!   - `create_card_notebook`：新建一本卡片笔记本（首页预填索引/模板）。
 //!   - `append_page_to_notebook`：给已存在的笔记本末尾安全追加一页（分数索引，绝不动已有页）。
 
-use weread_device::notebook_rm;
+use device_core::notebook_rm;
 use serde_json::{json, Value};
 
 fn now_ms_string() -> String {

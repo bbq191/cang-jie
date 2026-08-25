@@ -17,7 +17,7 @@ use crate::cardhl;
 use crate::cardvocab::{self, VocabEntry};
 use crate::dict::{self, Dict};
 use crate::stardetect::page_order;
-use weread_device::epubindex::{
+use device_core::epubindex::{
     chapter_map_hier, page_chapter_label, page_fulltext, page_section, parse_sections,
 };
 

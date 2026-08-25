@@ -10,8 +10,9 @@
 //!   - vocabscan ：生词本扫描编排（全库源书→灰词→查词的 IO 层，从 daemon 抽出，daemon 只触发+注入）
 //!   ↑ dict/cardvocab/locate/vocabscan 是「划词查字典」，概念属**块4 系统增强**（跨块，见系统增强白皮书 §08）
 //!
-//! 阅读栈能力（页→章 epubindex、文件监听 fswatch、书库注入 inject）复用 `weread_device`，
-//! 单向依赖不反向。
+//! 设备端底层能力（页→章 epubindex、文件监听 fswatch、书库注入 inject、造 .rm notebook_rm）复用
+//! **`device-core`** 共享底座（块3阅读也用它）——pkm 只依赖这一小坨，**不再全量编译整条微信读书管线**
+//! （方案B）。仅 tests/examples 的 stars_fixture 走 weread-device(dev-dep) 测 epub::assemble。
 pub mod cardindex;
 pub mod cardhl;
 pub mod cardagg;

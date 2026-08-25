@@ -13,13 +13,17 @@
 > `tests/stars_fixture.rs` 用 `pkm-semantic/proto/testdata/` 的真机 fixture 锁死"与
 > `star_scan.py` 全等"（6 个红星），是两边不漂移的锚点。
 
-## 架构：单向依赖块3阅读栈
+## 架构：依赖共享底座 `device-core`（方案B，2026-08-25）
 
-PKM 建在阅读栈之上（读书要页→章、写笔记要注入书库），因此本 crate **单向依赖**
-`../reading/device-rs`（`weread-device`），复用其 `epubindex`（页→章）/`fswatch`
-（inotify 封装）/`inject`（写 xochitl 书库）/`notebook_rm`（造 .rm 笔记页）。
-reading **不反向依赖** pkm——依赖方向干净单向。这也是"阅读+PKM 曾同居 weread-client
-一个 crate"被拆开后的正确形状（2026-08-23 抽出）。
+PKM 要读书页→章、写笔记注入书库，这些**低层设备能力**抽在 `../device-core` 共享底座 crate
+（`epubindex` 页→章 / `fswatch` inotify 封装 / `inject` 写 xochitl 书库 / `notebook_rm` 造 .rm 笔记页；
+块3阅读也用它）。本 crate **只依赖 `device-core` 这一小坨**——**生产 daemon 构建不再全量编译整条微信读书
+管线**（weread-device 的下载/codec/login/qr…，5657 行）。`device-core` 的四模块本就零 crate 内依赖、自足；
+`weread-device` re-export 它们（`pub use device_core::…`）保 `weread_device::epubindex` 等路径不变。
+
+> **历史**：曾 pkm 直接 path 依赖整个 `weread-device`（拖入全部 reading 编译）。方案B 抽 `device-core` 后依赖精确。
+> 仅 `tests/stars_fixture.rs` 走 `weread-device`（**dev-dependency**，测 `epub::assemble` 组装 A 模型待办 EPUB），
+> 不影响生产构建。reading **不反向依赖** pkm，方向干净。
 
 ## 二进制
 

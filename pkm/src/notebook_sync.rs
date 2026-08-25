@@ -7,7 +7,7 @@
 
 use crate::cardnote;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use weread_device::inject;
+use device_core::inject;
 
 /// xochitl 本地 /upload 端点（USB 网卡，本机走本地路由可达、无需真插 USB）。
 pub const UPLOAD_HOST: &str = "10.11.99.1";

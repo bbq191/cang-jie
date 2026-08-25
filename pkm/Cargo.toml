@@ -21,9 +21,10 @@ name = "wr-nbtest"
 path = "src/bin/wr_nbtest.rs"
 
 [dependencies]
-# 单向依赖块3阅读 crate：复用 epubindex（页→章）/fswatch（inotify 封装）/inject
-# （写 xochitl 书库）/notebook_rm（造 .rm 笔记页）。reading 不反向依赖 pkm。
-weread-device = { path = "../reading/device-rs" }
+# 复用设备端共享底座 epubindex（页→章）/fswatch（inotify 封装）/inject（写 xochitl 书库）/
+# notebook_rm（造 .rm 笔记页）——抽成独立 device-core crate 后，pkm **只依赖这一小坨**、
+# 不再全量编译整条微信读书管线（weread-device 的下载/codec/login…）。方案B，见白皮书。
+device-core = { path = "../device-core" }
 # stardetect 直接用 remarkable_lines 解 .rm 笔画；与 reading 共用同一份 vendor 源（cargo 去重）
 remarkable_lines = { path = "../reading/device-rs/vendor/remarkable_lines" }
 # 版本/features 与 ../reading/device-rs/Cargo.toml 对齐，避免 Cargo.lock 里同 crate 双版本
@@ -35,6 +36,11 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 # 本地词典 mmap 只读（生词本查词）：牛津/现汉派生的排序 TSV 行首二分，RAM 与词典大小无关。
 # 仅 pkm 用（reading 不依赖），无同 crate 双版本风险；musl 静态可编（底层 libc mmap）。
 memmap2 = "0.9"
+
+# weread-device 只给 tests/examples 用（stars_fixture 测 weread_device::epub::assemble 组装 A 模型待办 EPUB）——
+# **dev-only**，故生产 daemon 构建（cargo build --release --bin wr-stars-daemon）不编译整条 reading 管线。
+[dev-dependencies]
+weread-device = { path = "../reading/device-rs" }
 
 [profile.release]
 opt-level = "z"
