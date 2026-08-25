@@ -154,66 +154,61 @@ fn anchor_id(book_title: &str, page: usize, label: &str) -> String {
     }
 }
 
-/// 单套模板的字段（不含锚点行）。**共用的「🔗 关联 → ID：」行各模板保持逐字一致**，
-/// 好让多模板合并时精确去重成一条。
-fn template_body(tmpl: CardTemplate) -> &'static [&'static str] {
+/// 卡片采**类型性 6 色槽**（2026-08-25 定稿）：荧光笔 6 色映射到 6 个**固定语义槽**，颜色语义跨模板
+/// 不变（画什么色进哪个槽与 Tag 无关），Tag 只改各槽的**提示词**。槽序 + emoji 与 `cardhl::HlColor::slot`
+/// 对齐（Yellow/Blue/Pink/Orange/Green/Gray）。多 Tag 时同槽提示词合并去重——不会像"位置性"那样把
+/// 8 条含义挤进 6 笔或复制文字（颜色→槽是多对一收敛）。
+const SLOT_EMOJI: [&str; 6] = ["🟡", "🔵", "🩷", "🟠", "🟢", "⚪"];
+
+/// 每套模板对 6 个槽的提示词（索引 = 槽序）。类型性：语义固定，只是不同书用不同说法。
+fn slot_hints(tmpl: CardTemplate) -> [&'static str; 6] {
     match tmpl {
-        // 通用·原子卡（默认）：Evergreen——一卡一概念、概念导向、密集链接。任何书/语言通用。
-        CardTemplate::General => &[
-            "🏷 概念（一卡一概念，起个能独立成立的名）：",
-            "📝 用我的话说清（费曼，勿抄原文）：",
-            "💡 SO WHAT · 我的洞见 / 解释了什么：",
-            "🔗 关联 → ID：",
-            "📚 出处：",
-        ],
-        // 原文·英文原版：sentence mining——抓含生词的整句（上下文）+ 生词释义 + 地道表达。
-        CardTemplate::Original => &[
-            "❝ 原句（含生词的完整句子 +页码）：",
-            "🔤 生词/短语 → 释义（英英优先，标词性/读音）：",
-            "🌐 我的理解 / 意译：",
-            "🗣 地道表达（可复用的说法，\"偷\"来自己用）：",
-            "❓ 没读懂 / 语法疑问：",
-            "🔗 关联 → ID：",
-        ],
-        // 悬疑·推理：小说阅读笔记（人物/主题/金句）+ 推理结构（线索/时间线/诡计逻辑）。
-        CardTemplate::Mystery => &[
-            "〔线索框〕🔵 时间线 / 🔴 关键人物 / 🟢 案件·诡计代号：",
-            "〔逻辑推演网〕（手写树状+箭头：诡计拆解·破局链·伏笔）：",
-            "〔主题与金句〕🎯 主题 / 🟡 金句：",
-            "🔗 关联 → ID：",
-        ],
-        // 科幻·世界观制衡：worldbuilding 模板改编——势力/权力/设定规则/冲突/主题。
-        CardTemplate::SciFi => &[
-            "🏛 势力阵营（谁 vs 谁）：",
-            "⚖️ 权力/资源制衡（靠什么维系或打破）：",
-            "⚙️ 关键设定 / 技术规则：",
-            "🔥 核心冲突：",
-            "🎯 主题与我的洞见：",
-            "🔗 关联 → ID：",
-        ],
+        CardTemplate::General => ["金句·要记的句", "洞见", "疑问·存疑", "主题·概念", "可复用·关联", "人物·其它"],
+        CardTemplate::Original => ["原句", "可意译/触发理解处", "语法/没读懂", "篇章主旨", "地道表达", "生词/短语"],
+        CardTemplate::Mystery => ["金句", "主题线索", "待解谜团", "案件·诡计代号", "伏笔/破局链", "关键人物"],
+        CardTemplate::SciFi => ["关键句", "主题/洞见触点", "存疑设定", "关键设定/技术", "权力/资源制衡", "势力阵营"],
     }
 }
 
-/// 枚举规范序——多模板合并按此固定序输出，与用户打 Tag 的书写顺序无关（结果确定 = 幂等）。
+/// 枚举规范序——多模板合并按此固定序拼提示词，与用户打 Tag 的书写顺序无关（结果确定 = 幂等）。
 const TEMPLATE_ORDER: [CardTemplate; 4] =
     [CardTemplate::General, CardTemplate::Original, CardTemplate::Mystery, CardTemplate::SciFi];
 
-/// 新星初始骨架。`tmpls`=该书由原生 Tag 匹配到的模板集（可多个，如英文原版悬疑=#原文+#悬疑）。
-/// **按规范序合并 + 逐字去重**（共用的「🔗 关联」行等合并成一条）；空集由调用方保证退默认 `[General]`。
-/// 之后用户在字段后打字，重建整块作「批注」逐字保留。
-fn page_scaffold(tmpls: &[CardTemplate], book_title: &str, page: usize, label: &str) -> Vec<String> {
+/// 新星骨架 = 锚点 + 6 固定色槽（提示词按匹配模板合并去重）+ 各槽**当前高亮**（画星那刻从该页 .rm 摘的，
+/// 类型性归槽）+ 🔗关联行。`tmpls`=该书 Tag 匹配的模板集（空由调用方退默认 General）；
+/// `hl_by_slot`=该页按槽分组的高亮文字（长度 6，空槽为空；整个空切片=无高亮）。
+/// 骨架 + 高亮一次注入，之后用户在槽下打字，重建整块作「批注」逐字保留（A 式）。
+fn page_scaffold(
+    tmpls: &[CardTemplate],
+    book_title: &str,
+    page: usize,
+    label: &str,
+    hl_by_slot: &[Vec<String>],
+) -> Vec<String> {
     let mut v = vec![anchor_id(book_title, page, label)];
-    let mut seen: std::collections::HashSet<&str> = std::collections::HashSet::new();
-    for t in TEMPLATE_ORDER {
-        if !tmpls.contains(&t) {
-            continue;
+    for slot in 0..6 {
+        // 合并各匹配模板该槽提示词（规范序 + 去重）；空集兜底 General。
+        let mut hints: Vec<&str> = Vec::new();
+        for t in TEMPLATE_ORDER {
+            if tmpls.contains(&t) {
+                let h = slot_hints(t)[slot];
+                if !hints.contains(&h) {
+                    hints.push(h);
+                }
+            }
         }
-        for &line in template_body(t) {
-            if seen.insert(line) {
-                v.push(line.to_string());
+        if hints.is_empty() {
+            hints.push(slot_hints(CardTemplate::General)[slot]);
+        }
+        v.push(format!("{} {}：", SLOT_EMOJI[slot], hints.join("/")));
+        // 填该槽高亮（同槽多段 = 多行，需求②）。
+        if let Some(texts) = hl_by_slot.get(slot) {
+            for t in texts {
+                v.push(format!("   · {t}"));
             }
         }
     }
+    v.push("🔗 关联 → ID：".to_string());
     v
 }
 
@@ -229,8 +224,8 @@ pub fn render_card(book_title: &str, stars: &[(usize, String)], prev: &CardModel
 
 /// 同 `render_card`，但全书**统一**用一套模板集（每星相同）。空 `tmpls` 退默认 `General`。
 pub fn render_card_with(book_title: &str, stars: &[(usize, String)], prev: &CardModel, tmpls: &[CardTemplate]) -> Vec<String> {
-    let specs: Vec<(usize, String, Vec<CardTemplate>)> =
-        stars.iter().map(|(p, l)| (*p, l.clone(), tmpls.to_vec())).collect();
+    let specs: Vec<(usize, String, Vec<CardTemplate>, Vec<Vec<String>>)> =
+        stars.iter().map(|(p, l)| (*p, l.clone(), tmpls.to_vec(), Vec::new())).collect();
     render_card_starspecs(book_title, &specs, prev)
 }
 
@@ -239,11 +234,11 @@ pub fn render_card_with(book_title: &str, stars: &[(usize, String)], prev: &Card
 /// **每个有 ★ 的页各占一张卡片页**，新星注入其模板集骨架、老星保留用户批注。
 pub fn render_card_starspecs(
     book_title: &str,
-    stars: &[(usize, String, Vec<CardTemplate>)],
+    stars: &[(usize, String, Vec<CardTemplate>, Vec<Vec<String>>)],
     prev: &CardModel,
 ) -> Vec<String> {
     let mut pages: Vec<String> = Vec::new();
-    for (i, (page, label, tmpls)) in stars.iter().enumerate() {
+    for (i, (page, label, tmpls, hl)) in stars.iter().enumerate() {
         let mut block: Vec<String> = Vec::new();
         if i == 0 {
             // 第一张卡片页带标题 + 待办区头（parse 靠 TODO_HEADER 定位待办区起点）。
@@ -258,7 +253,7 @@ pub fn render_card_starspecs(
                 // 空集兜底退默认，保证任何星都有骨架。
                 let default = [CardTemplate::default()];
                 let t: &[CardTemplate] = if tmpls.is_empty() { &default } else { tmpls };
-                block.extend(page_scaffold(t, book_title, *page, label)); // 新星：注入模板（可合并）
+                block.extend(page_scaffold(t, book_title, *page, label, hl)); // 新星：注入 6 色槽 + 高亮
             }
         }
         pages.push(block.join("\n"));
@@ -391,17 +386,21 @@ mod tests {
         // 默认（render_card）= 通用·原子卡。
         let gen = render_card("书", stars, &empty).join("\n");
         assert!(gen.contains("[ID: 第二章 - P 3]"), "锚点保留: {gen}");
-        assert!(gen.contains("一卡一概念") && gen.contains("SO WHAT"), "通用字段: {gen}");
-        assert!(!gen.contains("势力阵营") && !gen.contains("线索框") && !gen.contains("生词"), "默认不应带特殊模板字段: {gen}");
-        // 原文·英文原版（sentence mining）。
+        // 6 色槽都在（固定 emoji），提示词用 General 说法。
+        for e in ["🟡", "🔵", "🩷", "🟠", "🟢", "⚪"] {
+            assert!(gen.contains(e), "槽 {e} 应在: {gen}");
+        }
+        assert!(gen.contains("金句·要记的句") && gen.contains("洞见"), "通用槽提示词: {gen}");
+        assert!(!gen.contains("势力阵营") && !gen.contains("案件·诡计代号") && !gen.contains("生词"), "默认不应带特殊模板提示词: {gen}");
+        // 原文·英文原版（sentence mining）：槽提示词换成原文说法。
         let orig = render_card_with("书", stars, &empty, &[CardTemplate::Original]).join("\n");
-        assert!(orig.contains("原句") && orig.contains("生词") && orig.contains("地道表达"), "原文字段: {orig}");
+        assert!(orig.contains("原句") && orig.contains("生词/短语") && orig.contains("地道表达"), "原文槽提示词: {orig}");
         // 悬疑·推理。
         let mys = render_card_with("书", stars, &empty, &[CardTemplate::Mystery]).join("\n");
-        assert!(mys.contains("线索框") && mys.contains("逻辑推演网") && mys.contains("诡计"), "悬疑字段: {mys}");
+        assert!(mys.contains("案件·诡计代号") && mys.contains("伏笔/破局链") && mys.contains("关键人物"), "悬疑槽提示词: {mys}");
         // 科幻·世界观制衡。
         let sf = render_card_with("书", stars, &empty, &[CardTemplate::SciFi]).join("\n");
-        assert!(sf.contains("势力阵营") && sf.contains("权力/资源制衡") && sf.contains("核心冲突"), "科幻字段: {sf}");
+        assert!(sf.contains("势力阵营") && sf.contains("权力/资源制衡") && sf.contains("关键设定/技术"), "科幻槽提示词: {sf}");
         // Tag → 模板映射（含别名、`#` 前缀、大小写）。
         assert_eq!(CardTemplate::from_tag("#悬疑"), Some(CardTemplate::Mystery));
         assert_eq!(CardTemplate::from_tag("原文"), Some(CardTemplate::Original));
@@ -414,18 +413,41 @@ mod tests {
     fn multi_template_merge_dedups_and_is_order_stable() {
         let stars = &[(3, "".to_string())];
         let empty = CardModel::default();
-        // 英文原版悬疑 = #原文 + #悬疑：两套字段都在。
+        // 英文原版悬疑 = #原文 + #悬疑：同槽提示词合并（如 Yellow 槽「原句/金句」、Gray 槽「生词/短语/关键人物」）。
         let merged = render_card_with("书", stars, &empty, &[CardTemplate::Original, CardTemplate::Mystery]).join("\n");
-        assert!(merged.contains("原句") && merged.contains("生词"), "原文字段应在: {merged}");
-        assert!(merged.contains("线索框") && merged.contains("逻辑推演网"), "悬疑字段应在: {merged}");
-        // 共用的「🔗 关联 → ID：」合并成一条（不重复）。
-        assert_eq!(merged.matches("🔗 关联 → ID：").count(), 1, "关联行应去重成 1 条: {merged}");
+        assert!(merged.contains("🟡 原句/金句："), "黄槽应合并原文+悬疑说法: {merged}");
+        assert!(merged.contains("生词/短语/关键人物"), "灰槽应合并两模板说法: {merged}");
+        // 仍是 6 个槽 + 1 条关联行（类型性收敛，不因多 Tag 增槽）。
+        assert_eq!(merged.matches("🔗 关联 → ID：").count(), 1, "关联行仅 1 条: {merged}");
+        assert_eq!(merged.matches("🟡").count(), 1, "黄槽仅 1 个（收敛不重复）: {merged}");
         // 规范序稳定：Tag 书写顺序颠倒，输出逐字相同（幂等）。
         let reversed = render_card_with("书", stars, &empty, &[CardTemplate::Mystery, CardTemplate::Original]).join("\n");
         assert_eq!(merged, reversed, "合并输出应与 Tag 顺序无关");
         // 空集退默认 General。
         let none = render_card_with("书", stars, &empty, &[]).join("\n");
-        assert!(none.contains("一卡一概念"), "空集应退默认通用: {none}");
+        assert!(none.contains("金句·要记的句"), "空集应退默认通用: {none}");
+    }
+
+    #[test]
+    fn highlights_fill_color_slots() {
+        // 新星带高亮：黄槽 1 段、灰槽 2 段（非连续画线→同槽多行，需求②）。
+        let empty = CardModel::default();
+        let mut hl: Vec<Vec<String>> = vec![Vec::new(); 6];
+        hl[0] = vec!["骆督察一直很讨厌医院的气味".to_string()];
+        hl[5] = vec!["关键人物甲".to_string(), "关键人物乙".to_string()];
+        let stars = vec![(10usize, "第一章".to_string(), vec![CardTemplate::Original], hl)];
+        let out = render_card_starspecs("13·67", &stars, &empty).join("\n");
+        // 黄槽（原文说法「原句」）下填入该段高亮。
+        assert!(out.contains("🟡 原句：\n   · 骆督察一直很讨厌医院的气味"), "黄槽应填高亮: {out}");
+        // 灰槽两段各占一行。
+        assert!(out.contains("   · 关键人物甲") && out.contains("   · 关键人物乙"), "灰槽应多行: {out}");
+        // 没画色的槽（蓝）不出现 · 行。
+        assert!(out.contains("🔵 可意译/触发理解处："), "空蓝槽仍有标题: {out}");
+        // 老星（prev 有该页整块）走保留分支，不再由高亮重填（A 式）。
+        let prev = parse_pages(&out.lines().map(String::from).collect::<Vec<_>>());
+        let stars2 = vec![(10usize, "第一章".to_string(), vec![CardTemplate::Original], vec![vec!["新画的但不该重填".to_string()]; 6])];
+        let out2 = render_card_starspecs("13·67", &stars2, &prev).join("\n");
+        assert!(!out2.contains("新画的但不该重填"), "老星应整块保留、不被新高亮重填: {out2}");
     }
 
     #[test]
