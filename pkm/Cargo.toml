@@ -32,6 +32,9 @@ md5 = "0.7"
 ureq = "2"
 uuid = { version = "1", features = ["v4"] }
 zip = { version = "2", default-features = false, features = ["deflate"] }
+# 本地词典 mmap 只读（生词本查词）：牛津/现汉派生的排序 TSV 行首二分，RAM 与词典大小无关。
+# 仅 pkm 用（reading 不依赖），无同 crate 双版本风险；musl 静态可编（底层 libc mmap）。
+memmap2 = "0.9"
 
 [profile.release]
 opt-level = "z"
