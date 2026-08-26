@@ -168,7 +168,9 @@ pub fn sync_one_card(dir: &str, book_title: &str, stars: &[StarSpec], observe: b
 }
 
 /// 星→卡片一整趟：对每本有星的书取章节/标签/高亮 → 组 StarSpec → `sync_one_card`。打印汇总。
-pub fn scan_and_sync(dir: &str, docs: &[DocStars], observe: bool) {
+/// `collect_highlights`（划线摘录开关）=false 时卡片只留星骨架（章·页+批注模板）、不收荧光笔原文；
+/// 用户已打字批注仍靠 `cardsync` merge 保留（骨架不变，批注跨重建存活）。
+pub fn scan_and_sync(dir: &str, docs: &[DocStars], collect_highlights: bool, observe: bool) {
     let mut msgs = Vec::new();
     for d in docs {
         // 卡片笔记本自身不当"源书"处理（防 《《X》-总结卡片》 套娃）。
@@ -190,7 +192,11 @@ pub fn scan_and_sync(dir: &str, docs: &[DocStars], observe: bool) {
             let label = chap.as_ref().and_then(|(secs, titles)| page_chapter_label(secs, titles, pi)).unwrap_or_default();
             let ptags = page_tags_map.get(&h.page_uuid).map(|v| v.as_slice()).unwrap_or(&[]);
             let tmpls = templates_for(&doc_tags, ptags);
-            let hl = page_highlights(dir, &d.uuid, &h.page_uuid);
+            let hl = if collect_highlights {
+                page_highlights(dir, &d.uuid, &h.page_uuid)
+            } else {
+                vec![Vec::new(); cardhl::SLOT_COUNT] // 划线摘录关：空槽 → 卡片只剩星骨架
+            };
             stars.push((pi + 1, label, tmpls, hl));
         }
         stars.sort_by_key(|(p, _, _, _)| *p);

@@ -451,6 +451,18 @@ mod tests {
     }
 
     #[test]
+    fn empty_slots_render_skeleton_only() {
+        // 划线摘录=关：全空高亮槽 → 卡片仍出星骨架（6 色槽头 + 提示词），但无任何 · 高亮行。
+        let empty = CardModel::default();
+        let hl: Vec<Vec<String>> = vec![Vec::new(); 6]; // 空槽（daemon 在 collect_highlights=false 时传这个）
+        let stars = vec![(10usize, "第一章".to_string(), vec![CardTemplate::Original], hl)];
+        let out = render_card_starspecs("13·67", &stars, &empty).join("\n");
+        assert!(out.contains("🟡 原句："), "空槽仍应有槽头: {out}");
+        assert!(out.contains("[ID: 第一章 - P 10]"), "星骨架锚点应在: {out}");
+        assert!(!out.contains("\n   · "), "划线摘录关：不应有任何 · 高亮行: {out}");
+    }
+
+    #[test]
     fn no_chapter_anchor_uses_book_prefix() {
         // 无章节（label 空）→ 锚点带书名短前缀消歧，不再是裸 [ID: p页号]。
         let a = render_card("我24岁患帕金森12年", &[(1, "".into())], &CardModel::default()).join("\n");

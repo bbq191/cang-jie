@@ -8,14 +8,21 @@
 //!
 //! **本 bin 只做派发**：读配置 + fswatch 循环 + `settle` 决定"扫谁、建哪些本"。逻辑全在库模块里
 //! （host 可测）。省电：systemd 侧 CPUQuota=30% 硬帽。
-//! 配置（reading-qol.json）：starTodoEnabled(默认关)/starTodoColor(默认 RED)/starTodoGap(默认 25)。
+//! 配置开关（reading-qol.json，设置页「笔记增强」写）：
+//!   - starTodoEnabled(主·默认关) → 星→卡片；starTodoColor(默认 RED)/starTodoGap(默认 25) 为其参数。
+//!     - cardHighlights(子·划线摘录·默认开)：高亮原文是否入卡片。
+//!     - cardAggregates(子·跨书汇总·默认开)：是否建 4 本汇总本。
+//!   - vocabEnabled(独立·单词笔记·默认关) → 生词本；脱离画星，与星代办互不依赖。
+//!   功能关闭时只读自动本(4汇总+生词本)移回收站清残留；星卡片含批注绝不自动 trash。
 //! 环境：CANGJIE_FSWATCH_OBSERVE=1 = 只打日志不写。
 
 use std::collections::HashSet;
 use std::path::Path;
 use std::time::Duration;
 
-use pkm_device::notebook_sync::{collect_notebook_texts, is_user_notebook, sync_auto_notebook};
+use pkm_device::notebook_sync::{
+    collect_notebook_texts, find_docs_by_visible, is_user_notebook, queue_trash, sync_auto_notebook,
+};
 use pkm_device::stardetect::{scan_document_dir, scan_library, DocStars, StarConfig};
 use pkm_device::{cardagg, cardindex, cardreview, cardstats, cardvocab, starscan, vocabscan};
 use device_core::fswatch;
@@ -42,8 +49,16 @@ fn cfg_path() -> String {
     std::env::var("CANGJIE_STARS_CFG").unwrap_or_else(|_| CFG_PATH_DEFAULT.to_string())
 }
 
+/// 三个能力的门控（reading-qol.json，设置页「笔记增强」写）：
+/// - `star_todo`（主，默认关）：红星→《总结卡片》。关则不再生成卡片（已存卡片含批注、绝不自动 trash）。
+///   - `card_highlights`（子·划线摘录，默认开）：高亮原文是否收进卡片页。仅 star_todo 开时有意义。
+///   - `card_aggregates`（子·跨书汇总，默认开）：是否生成 4 本汇总本。仅 star_todo 开时有意义。
+/// - `vocab`（独立·单词笔记，默认关）：灰词查词→《📕生词本》。脱离画星，与 star_todo 互不依赖。
 struct Cfg {
-    enabled: bool,
+    star_todo: bool,
+    card_highlights: bool,
+    card_aggregates: bool,
+    vocab: bool,
     color: String,
     gap: f64,
 }
@@ -53,11 +68,25 @@ fn read_cfg() -> Cfg {
         .ok()
         .and_then(|t| serde_json::from_str(&t).ok())
         .unwrap_or(serde_json::Value::Null);
+    let b = |k: &str, dflt: bool| v.get(k).and_then(|x| x.as_bool()).unwrap_or(dflt);
     Cfg {
-        enabled: v.get("starTodoEnabled").and_then(|x| x.as_bool()).unwrap_or(false),
+        star_todo: b("starTodoEnabled", false),
+        card_highlights: b("cardHighlights", true), // 子开关默认开：开星代办即得完整卡片（含高亮）
+        card_aggregates: b("cardAggregates", true),
+        vocab: b("vocabEnabled", false), // 独立能力显式 opt-in（且需词典文件，缺则本就降级）
         color: v.get("starTodoColor").and_then(|x| x.as_str()).unwrap_or("RED").to_uppercase(),
         gap: v.get("starTodoGap").and_then(|x| x.as_f64()).unwrap_or(25.0),
     }
+}
+
+/// 把某只读自动本（4 汇总/生词本之一）的所有在库副本移回收站——对应开关关闭时清残留。
+/// 幂等：已 trash → find 返回空 → 不重复入队。返回本轮入队数（observe 打印用）。
+fn trash_auto_notebook(dir: &str, title: &str) -> usize {
+    let existing = find_docs_by_visible(dir, title);
+    for (u, _) in &existing {
+        queue_trash(u);
+    }
+    existing.len()
 }
 
 // ─────────── 5 本自动只读汇总本（薄接线：各自 build/render + notebook_sync 注入）───────────
@@ -131,59 +160,89 @@ fn rebuild_vocab(dir: &str, observe: bool) {
     }
 }
 
-/// 一次结算：扫库 → 星→卡片 + 汇总本。observe=true 只打日志。
+/// 一次结算：按三个开关分别门控 星→卡片 / 跨书汇总 / 生词本。observe=true 只打日志。
 /// `dirty`：None=全库扫（冷启动基线）；Some(uuid 集)=**只扫本轮变更的书**（增量，事件驱动省电的关键）。
 /// 每本卡片彼此独立、无跨书全局态 → 只扫变更书语义等价于全扫；自己 /upload 卡片触发的事件只命中卡片本身
 /// （starscan 内 suffix 跳过）→ 不自触发整库重扫。
+///
+/// 门控与清理：功能关闭时——只读自动本（4 汇总 + 生词本）移回收站清残留（无用户数据，安全）；
+/// 星卡片含打字批注 → **绝不自动 trash**，仅停止再生成。主与独立能力全关且非冷启动 → 空转返回。
 fn settle(cfg: &Cfg, observe: bool, dirty: Option<&HashSet<String>>) {
-    if !cfg.enabled {
+    let dir = xochitl_dir();
+
+    // 主(星代办)与独立(单词笔记)全关：稳态直接返回（daemon 睡死零唤醒）；冷启动多走一遍清理落残留。
+    if !cfg.star_todo && !cfg.vocab {
+        if dirty.is_none() {
+            for t in AUTO_TITLES {
+                let n = trash_auto_notebook(&dir, t);
+                if observe && n > 0 {
+                    println!("[stars] observe: 「{t}」功能已关，{n} 本旧本入回收队列");
+                }
+            }
+        }
         return;
     }
-    let dir = xochitl_dir();
-    let mut scfg = StarConfig::default();
-    scfg.todo_colors = Some(vec![cfg.color.clone()]);
-    let docs: Vec<DocStars> = match dirty {
-        None => scan_library(Path::new(&dir), &scfg, cfg.gap),
-        Some(set) => set.iter().filter_map(|u| scan_document_dir(u, Path::new(&dir), &scfg, cfg.gap)).collect(),
-    };
-    if observe {
-        match dirty {
-            None => println!("[stars] observe: 冷启动全库扫 → {} 本有星", docs.len()),
-            Some(set) => println!(
-                "[stars] observe: 增量扫 {} 本变更书 → 其中 {} 本有星（变更集 {:?}）",
-                set.len(),
-                docs.len(),
-                set.iter().take(8).collect::<Vec<_>>()
-            ),
+
+    // ① 星→卡片（划线摘录门控高亮是否入卡）
+    if cfg.star_todo {
+        let mut scfg = StarConfig::default();
+        scfg.todo_colors = Some(vec![cfg.color.clone()]);
+        let docs: Vec<DocStars> = match dirty {
+            None => scan_library(Path::new(&dir), &scfg, cfg.gap),
+            Some(set) => set.iter().filter_map(|u| scan_document_dir(u, Path::new(&dir), &scfg, cfg.gap)).collect(),
+        };
+        if observe {
+            match dirty {
+                None => println!("[stars] observe: 冷启动全库扫 → {} 本有星（划线摘录{}）", docs.len(), if cfg.card_highlights { "开" } else { "关" }),
+                Some(set) => println!(
+                    "[stars] observe: 增量扫 {} 本变更书 → 其中 {} 本有星（变更集 {:?}）",
+                    set.len(), docs.len(), set.iter().take(8).collect::<Vec<_>>()
+                ),
+            }
+        }
+        starscan::scan_and_sync(&dir, &docs, cfg.card_highlights, observe);
+    }
+
+    // ② 跨书汇总（MOC 死链/汇编/复盘/仪表 4 本）：仅 星代办 && 跨书汇总 都开。冷启动全建；增量时仅当有
+    // 笔记本变更（卡片 /upload 后其 uuid 落 dirty、或用户改 MOC 本）才重建——源书画星本身不触发，秒级延迟。
+    if cfg.star_todo && cfg.card_aggregates {
+        let need_index = match dirty {
+            None => true,
+            Some(set) => set.iter().any(|u| is_user_notebook(&dir, u)),
+        };
+        if need_index {
+            // 全库笔记本文本只采集一次，4 本汇总本共用（原先各自 collect 一遍=整库解析 4 遍）。
+            let texts = collect_notebook_texts(&dir, &AUTO_TITLES);
+            rebuild_card_index(&dir, &texts, observe);
+            rebuild_card_agg(&dir, &texts, observe);
+            rebuild_card_review(&dir, &texts, observe);
+            rebuild_card_stats(&dir, &texts, observe);
+        }
+    } else {
+        // 跨书汇总关（或星代办关）→ 清 4 本残留（幂等，已 trash 则 no-op）。
+        for t in [INDEX_TITLE, AGG_TITLE, REVIEW_TITLE, STATS_TITLE] {
+            let n = trash_auto_notebook(&dir, t);
+            if observe && n > 0 {
+                println!("[stars] observe: 跨书汇总关，「{t}」{n} 本入回收队列");
+            }
         }
     }
 
-    // ① 星→卡片
-    starscan::scan_and_sync(&dir, &docs, observe);
-
-    // ② MOC 死链/汇编/复盘/仪表：冷启动全建；增量时仅当有笔记本变更（卡片 /upload 后其 uuid 落 dirty、
-    // 或用户改 MOC 本）才重建——源书画星本身不触发，其引发的卡片 upload 下轮命中，秒级延迟。
-    let need_index = match dirty {
-        None => true,
-        Some(set) => set.iter().any(|u| is_user_notebook(&dir, u)),
-    };
-    if need_index {
-        // 全库笔记本文本只采集一次，4 本汇总本共用（原先各自 collect 一遍=整库解析 4 遍）。
-        let texts = collect_notebook_texts(&dir, &AUTO_TITLES);
-        rebuild_card_index(&dir, &texts, observe);
-        rebuild_card_agg(&dir, &texts, observe);
-        rebuild_card_review(&dir, &texts, observe);
-        rebuild_card_stats(&dir, &texts, observe);
-    }
-
-    // ③ 生词本：依赖**源书** .rm 的灰高亮（非笔记本文本），故独立触发——冷启动全建，
-    // 增量时仅当 dirty 里有源书变更（画了灰词的书存盘）才重扫全库灰词。
-    let need_vocab = match dirty {
-        None => true,
-        Some(set) => set.iter().any(|u| vocabscan::is_source_book(&dir, u)),
-    };
-    if need_vocab {
-        rebuild_vocab(&dir, observe);
+    // ③ 生词本（单词笔记，独立）：依赖**源书** .rm 的灰高亮（非笔记本文本），故独立触发——冷启动全建，
+    // 增量时仅当 dirty 里有源书变更（画了灰词的书存盘）才重扫全库灰词。关则清残留。
+    if cfg.vocab {
+        let need_vocab = match dirty {
+            None => true,
+            Some(set) => set.iter().any(|u| vocabscan::is_source_book(&dir, u)),
+        };
+        if need_vocab {
+            rebuild_vocab(&dir, observe);
+        }
+    } else {
+        let n = trash_auto_notebook(&dir, VOCAB_TITLE);
+        if observe && n > 0 {
+            println!("[stars] observe: 单词笔记关，生词本 {n} 本入回收队列");
+        }
     }
 }
 
