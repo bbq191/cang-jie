@@ -84,7 +84,7 @@ navigation 时看着像能用（我就被 `reverse.rs` 坑过）。
 
 **手法**：设备路径、排除集合等**作参数传入**，模块本身路径无关、可测。
 
-- `vocabscan::collect(dir, en_path, zh_path)`（词典路径参数化）、`notebook_sync::collect_notebook_texts(dir, exclude)`
+- `vocabscan::collect(dir, en_path, zh_path, since_ms)`（词典路径参数化 + 基线时间戳门控）、`notebook_sync::collect_notebook_texts(dir, exclude)`
   （排除列表参数化）→ 都能拿临时目录 host 测。
 
 ## 三、模块演变（2026-08-25 本轮解耦）
@@ -96,6 +96,8 @@ navigation 时看着像能用（我就被 `reverse.rs` 坑过）。
 | 共享底座 | epubindex/inject/notebook_rm/fswatch 埋在 reading | 独立 `device-core` crate（reading re-export） | ② |
 | reading 死代码 | 5 个孤儿文件 1798 行（伪装成实时） | 已 `git rm`（git 历史留档） | ③ |
 | wr-serve | 662 行 bin（HTTP + 后台优化逻辑混） | 528 行路由 + `autoopt` 模块 | ①④ |
+
+**2026-08-26 增量（功能，非解耦）**：`inject` 加 `find_folder_by_name`/`set_upload_folder`（自动归档 GET-then-upload，卡片→zettelkasten、书→library）；`cardsync` 加 `merge_highlights`（老星页高亮增量合并）；`vocabscan::collect` 加 `since_ms` 基线（"开前灰词不补"）；`cardvocab::render_notebook_pages` 改一书一页；daemon 门控细分（star_todo/cardHighlights/cardAggregates/vocab）。均已真机验证部署，见系统增强白皮书 §08 + PKM 白皮书。
 
 **净效果**：三 crate 依赖单向无环、职责清晰；bin 都是薄派发、业务逻辑在可测模块；pkm 生产构建摆脱 reading；
 reading 从"挂着死双向同步"回到"下书+优化+面板"的诚实形状。查字典（`dict`/`cardvocab`/`locate`/`vocabscan`）

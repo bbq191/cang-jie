@@ -20,12 +20,12 @@
 1. **翻页与刷新**（990003）：① 点击翻页 `cjTapPageTurn`（键 `tapPageTurn`）② 快速黑白 `cjFastMono`（`fastMono`）③ 清残影 `cjRefresh`（`refresh`，+按章 `cjRefreshByChapter`/每 N 页 `cjRefreshEvery` 默认 15）。
 2. **书籍与字体**（990004）：④ 阅读字体增强 `fontEnhance` ⑤ 导入书籍自动优化 `autoOptimize`（默认关，消费方 wr-serve）。
 3. **快捷输入**（990002，snippets）：缩写→短语的**文本替换**管理页，UI 支持增删改，持久化到 `snippets.tsv`（详见 §01a）。
-4. **笔记增强**（990005）：⑥ ★全局待办 `starTodoEnabled`（+颜色 `starTodoColor`/间距 `starTodoGap`，能力本体在 PKM 白皮书）⑦ 荧光笔精确吸附汉字 `hlSnapCjk`（**默认开**，C hook 消费，缺省即视为开——`c.hlSnapCjk !== false`）。
+4. **笔记增强**（990005，**5 开关**，详见 §08 开关块）：⑥ ★全局待办 `starTodoEnabled`（主·默认关，+颜色 `starTodoColor`/间距 `starTodoGap`，能力本体在 PKM 白皮书）→ 下挂两子开关 `cardHighlights`（划线摘录·高亮是否入卡·默认开）/`cardAggregates`（跨书汇总·4本汇总本·默认开），随主开关灰化失效；⑦ `vocabEnabled`（单词笔记·生词本·**独立顶层**·默认关，脱离画星）；⑧ 荧光笔精确吸附汉字 `hlSnapCjk`（**默认开**，C hook 消费，缺省即视为开——`c.hlSnapCjk !== false`）。
 
 **跨 QML 树共享状态 = `reading-qol.json`**（`/home/root/.local/share/cangjie-ime/reading-qol.json`，/home 持久）：设置页 QML 用 `XMLHttpRequest` 写、阅读页 QML 读。运行时 xochitl 带 `QML_XHR_ALLOW_FILE_{READ,WRITE}=1`。
 - **大坑：同步 PUT 到 `file://` 只截断不写体 → 写必须异步**（open 不带 `false`）；读同步 GET 正常。
 - **传播靠 `reading-qol-config.qmd` 在 `DeviceSceneView#root` 的 1.5s 轮询 Timer**（`onCompleted` 只触发一次、返回阅读器不重建，"改了不生效"就是缺这个轮询）；字体菜单例外（构建那刻读一次、退出重开生效）。
-- **★全量防覆盖铁律**：每个写 `reading-qol.json` 的子页都必须**读写全量键**——翻页页/书籍页除自身开关外，也要读进并写回 `starTodoEnabled/starTodoColor/starTodoGap` 与 `hlSnapCjk`（笔记增强页的键），否则在翻页/书籍页保存会抹掉这些值（`starTodoEnabled` → daemon 读成 false 功能被意外关；`hlSnapCjk` 缺失 → C hook 缺省成开尚安全，但仍要全量写回保持一致）。
+- **★全量防覆盖铁律**：每个写 `reading-qol.json` 的子页都必须**读写全量键**——翻页页/书籍页除自身开关外，也要读进并写回笔记增强页的全部键 `starTodoEnabled/starTodoColor/starTodoGap` + `cardHighlights/cardAggregates/vocabEnabled`（三新键·默认开/开/关，用 `!== false` / `!!` 取缺省）+ `hlSnapCjk`，否则在翻页/书籍页保存会抹掉这些值（`starTodoEnabled` → daemon 读成 false 功能被意外关；子开关/单词笔记同理）。三个二级页均已带上（笔记页渲染、另两页透传）。
 
 ## 01a｜快捷输入 snippets（文本替换，真机通）
 
@@ -117,7 +117,7 @@ host 无法运行 xochitl，但能用官方 qmldiff 工具**离线实跑补丁**
 - `dict.rs`：本地词典 **mmap + 行首二分**（`memmap2`，RAM 与词典大小无关，适配设备内存）；`detect_lang`
   判中/英选词典、`normalize_key` 与建表侧对齐。数据 = `build_dict.py` 离线把用户自备 MOBI 经 calibre 转 HTML
   再解析（`<span class="bold">词</span>…释义<hr/>`）出的**排序 TSV**。
-- `cardvocab.rs`：`sentence_of`（句界扩展）/ `cap_body`（牛津长释义截断）/ `render_notebook_pages`（纯逻辑可测）。
+- `cardvocab.rs`：`sentence_of`（句界扩展）/ `cap_body`（牛津长释义截断）/ `render_notebook_pages`（纯逻辑可测，**首页=封面〔标题+计数〕，其后每本书各占一页**，避免全堆一页过长）。
 - `vocabscan.rs`：**扫描编排**（全库源书 → ⚪灰词 → 查词 → 生词条），从 daemon 抽出成自足模块，**词典路径作
   参数传入**（路径无关、可测）；只依赖共享基础设施（`cardhl` 读高亮/`epubindex` 页→章+章全文/`stardetect::page_order`
   页序/`dict`/`cardvocab`），**不碰** daemon 的星/卡片路径。daemon 只剩「触发 `need_vocab` + `sync_auto_notebook`
@@ -148,7 +148,7 @@ host 无法运行 xochitl，但能用官方 qmldiff 工具**离线实跑补丁**
   主管关振铎警司"）+ **章·页**（泰美斯的天秤 · P369）。每一环坐实：灰词检测（脱离画星）/ 现汉拼音+释义 /
   `locate_range` 原句定位 / `epubindex` 章页 / 词级精确命中。查字词至此**真机端到端验证完成**。
 
-> **开关（2026-08-26 已加，离线 apply-diffs 实跑通过、待真机）**：设置页「系统增强 → 笔记增强」页现有 5 开关：
+> **开关（2026-08-26 真机验证通过）**：设置页「系统增强 → 笔记增强」页现有 5 开关（用户真机确认 5 开关渲染正常）：
 > `starTodoEnabled`(主·默认关) 下挂 `cardHighlights`(划线摘录·高亮入卡·默认开)/`cardAggregates`(跨书汇总·4本汇总本·默认开)
 > 两个子开关（主关则灰化失效）；`vocabEnabled`(**单词笔记·生词本·独立顶层·默认关**，脱离画星、与★互不依赖)；`hlSnapCjk`(荧光笔吸附)。
 > daemon `wr-stars-daemon` 读这 5 键分别门控三条产出，功能关闭时对应只读自动本(4汇总+生词本)入回收站清残留、星卡片含批注绝不 trash。
