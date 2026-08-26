@@ -72,6 +72,41 @@ pub fn upload_epub(agent: &ureq::Agent, host: &str, epub: &[u8], filename: &str)
     upload_document(agent, host, epub, filename, "application/epub+zip")
 }
 
+/// 按名认领库内文件夹 uuid（CollectionType + visibleName==name + 非 trash）。多个同名取首个；无 → None。
+/// 用于自动归档：daemon 把 zettelkasten、wr-serve 把 library 的 uuid 解析出来传给 `set_upload_folder`。
+pub fn find_folder_by_name(dir: &str, name: &str) -> Option<String> {
+    let rd = std::fs::read_dir(dir).ok()?;
+    for e in rd.flatten() {
+        let p = e.path();
+        if p.extension().and_then(|x| x.to_str()) != Some("metadata") {
+            continue;
+        }
+        let v: serde_json::Value = std::fs::read_to_string(&p)
+            .ok()
+            .and_then(|t| serde_json::from_str(&t).ok())
+            .unwrap_or(serde_json::Value::Null);
+        if v.get("type").and_then(|x| x.as_str()) != Some("CollectionType") {
+            continue;
+        }
+        if v.get("parent").and_then(|x| x.as_str()) == Some("trash") {
+            continue;
+        }
+        if v.get("visibleName").and_then(|x| x.as_str()) == Some(name) {
+            return p.file_stem().and_then(|s| s.to_str()).map(|s| s.to_string());
+        }
+    }
+    None
+}
+
+/// 设「当前文件夹」上下文：`GET /documents/<folder>`（folder 空 → `/documents/` 回根）。
+/// 真机验证：这是**全局服务端状态**，此后的 `/upload` 落进该文件夹（reMarkable web UI 就这么归档的，
+/// 见 §四 命门翻案——metadata parent 被忽略，但 GET-then-upload 有效）。best-effort，失败返回 false
+/// （调用方可继续按 root 传，不致命）。
+pub fn set_upload_folder(agent: &ureq::Agent, host: &str, folder: &str) -> bool {
+    let path = if folder.is_empty() { "documents/".to_string() } else { format!("documents/{folder}") };
+    agent.get(&format!("http://{host}/{path}")).call().is_ok()
+}
+
 /// 通用 /upload：multipart 字段名 file。EPUB=application/epub+zip；.rmdoc=application/zip。
 pub fn upload_document(agent: &ureq::Agent, host: &str, data: &[u8], filename: &str, content_type: &str) -> Result<String, String> {
     let boundary = format!("----cangjie{}", uuid::Uuid::new_v4().simple());

@@ -124,7 +124,8 @@ pub fn queue_trash(uuid: &str) {
 
 /// 把 daemon 自动生成的只读本同步成库内笔记本（复用卡片的 pack_rmdoc+upload+trash 链）。
 /// 内容未变（对最新本逐字相同）→ 绝不上传（防 churn + 防自触发循环）；多余旧本入 trash 队列。
-pub fn sync_auto_notebook(dir: &str, title: &str, pages: &[String]) -> Option<String> {
+/// `folder`=归档目标文件夹 uuid（空=root）；上传前 `GET /documents/<folder>` 设当前文件夹，卡片落进去。
+pub fn sync_auto_notebook(dir: &str, title: &str, pages: &[String], folder: &str) -> Option<String> {
     let existing = find_docs_by_visible(dir, title);
     let new_text = pages.join("\n");
     if let Some((u, _)) = existing.first() {
@@ -139,6 +140,7 @@ pub fn sync_auto_notebook(dir: &str, title: &str, pages: &[String]) -> Option<St
     let refs: Vec<&str> = pages.iter().map(|s| s.as_str()).collect();
     let rmdoc = cardnote::pack_rmdoc(&new_uuid, title, &refs).ok()?;
     let net = ureq::AgentBuilder::new().timeout(Duration::from_secs(20)).build();
+    inject::set_upload_folder(&net, UPLOAD_HOST, folder); // 落进 zettelkasten（空=root 兜底）
     if inject::upload_document(&net, UPLOAD_HOST, &rmdoc, &format!("{title}.rmdoc"), "application/zip").is_err() {
         return None;
     }

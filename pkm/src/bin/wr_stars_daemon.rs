@@ -41,6 +41,9 @@ const EN_DICT_PATH: &str = "/home/root/weread/dict/en.tsv";
 const ZH_DICT_PATH: &str = "/home/root/weread/dict/zh.tsv";
 /// 汇总本自身标题集：从 `collect_notebook_texts` 排除，防自摄取 + 上传自触发。
 const AUTO_TITLES: [&str; 5] = [INDEX_TITLE, AGG_TITLE, REVIEW_TITLE, STATS_TITLE, VOCAB_TITLE];
+/// 卡片盒文件夹名：所有 daemon 生成物（卡片+4汇总+生词本）自动归档进这个文件夹（按名认领 uuid，
+/// 上传前 GET /documents/<uuid> 设当前文件夹）。文件夹不存在 → uuid 空 → 兜底落 root。
+const CARD_BOX_FOLDER: &str = "zettelkasten";
 
 fn xochitl_dir() -> String {
     std::env::var("CANGJIE_XOCHITL_DIR").unwrap_or_else(|_| device_core::inject::XOCHITL_DIR.to_string())
@@ -93,7 +96,7 @@ fn trash_auto_notebook(dir: &str, title: &str) -> usize {
 
 /// 重建 MOC 死链索引：写 SSH 报告文件 + 同步库内「🔗 卡片索引」笔记本。observe=true 只打摘要不写。
 /// `texts`=本轮已采集一次的全库笔记本文本（4 本汇总本共用一份，避免各自重复整库解析）。
-fn rebuild_card_index(dir: &str, texts: &[(String, String)], observe: bool) {
+fn rebuild_card_index(dir: &str, texts: &[(String, String)], folder: &str, observe: bool) {
     let idx = cardindex::build_index(texts);
     let dead = cardindex::dead_links(&idx);
     if observe {
@@ -103,7 +106,7 @@ fn rebuild_card_index(dir: &str, texts: &[(String, String)], observe: bool) {
     if let Err(e) = std::fs::write(CARD_INDEX_PATH, cardindex::render_report(&idx)) {
         println!("[stars] 写死链报告失败: {e}");
     }
-    if let Some(m) = sync_auto_notebook(dir, INDEX_TITLE, &cardindex::render_notebook_pages(&idx)) {
+    if let Some(m) = sync_auto_notebook(dir, INDEX_TITLE, &cardindex::render_notebook_pages(&idx), folder) {
         println!("[stars] 卡片索引笔记本已{m}（{} 锚点 · {} 死链）", idx.defined.len(), dead.len());
     } else if !dead.is_empty() {
         println!("[stars] 卡片索引：{} 锚点，⚠ {} 处死链（见 {CARD_INDEX_PATH}）", idx.defined.len(), dead.len());
@@ -111,7 +114,7 @@ fn rebuild_card_index(dir: &str, texts: &[(String, String)], observe: bool) {
 }
 
 /// 重建「🎨 高亮汇编」：全库卡片本按 6 色横向聚合成 1 本 6 节。observe=true 只打摘要不写。
-fn rebuild_card_agg(dir: &str, texts: &[(String, String)], observe: bool) {
+fn rebuild_card_agg(dir: &str, texts: &[(String, String)], folder: &str, observe: bool) {
     let slots = cardagg::build_agg(texts);
     let total: usize = slots.iter().map(|v| v.len()).sum();
     if observe {
@@ -119,43 +122,43 @@ fn rebuild_card_agg(dir: &str, texts: &[(String, String)], observe: bool) {
         println!("[stars] observe: 高亮汇编 {total} 条（{}）", per.join(" "));
         return;
     }
-    if let Some(m) = sync_auto_notebook(dir, AGG_TITLE, &cardagg::render_notebook_pages(&slots)) {
+    if let Some(m) = sync_auto_notebook(dir, AGG_TITLE, &cardagg::render_notebook_pages(&slots), folder) {
         println!("[stars] 高亮汇编笔记本已{m}（{total} 条高亮）");
     }
 }
 
 /// 重建「📖 复盘队列」：全库卡片中「有摘录、无提炼」的卡（渐进总结提醒）。observe=true 只打摘要不写。
-fn rebuild_card_review(dir: &str, texts: &[(String, String)], observe: bool) {
+fn rebuild_card_review(dir: &str, texts: &[(String, String)], folder: &str, observe: bool) {
     let items = cardreview::build_review(texts);
     if observe {
         println!("[stars] observe: 复盘队列 {} 张待消化卡", items.len());
         return;
     }
-    if let Some(m) = sync_auto_notebook(dir, REVIEW_TITLE, &cardreview::render_notebook_pages(&items)) {
+    if let Some(m) = sync_auto_notebook(dir, REVIEW_TITLE, &cardreview::render_notebook_pages(&items), folder) {
         println!("[stars] 复盘队列笔记本已{m}（{} 张待消化）", items.len());
     }
 }
 
 /// 重建「📊 阅读仪表」：全库按书统计星/高亮/待消化。observe=true 只打摘要不写。
-fn rebuild_card_stats(dir: &str, texts: &[(String, String)], observe: bool) {
+fn rebuild_card_stats(dir: &str, texts: &[(String, String)], folder: &str, observe: bool) {
     let (books, totals) = cardstats::build_stats(texts);
     if observe {
         println!("[stars] observe: 阅读仪表 {} 本 · {} 星 · {} 高亮", totals.books, totals.stars, totals.highlights);
         return;
     }
-    if let Some(m) = sync_auto_notebook(dir, STATS_TITLE, &cardstats::render_notebook_pages(&books, &totals)) {
+    if let Some(m) = sync_auto_notebook(dir, STATS_TITLE, &cardstats::render_notebook_pages(&books, &totals), folder) {
         println!("[stars] 阅读仪表笔记本已{m}（{} 本 · {} 星 · {} 高亮）", totals.books, totals.stars, totals.highlights);
     }
 }
 
 /// 重建《📕 生词本》（查字词=块4系统增强，编排全在 `vocabscan`；此处只触发+注入）。observe 只打条数。
-fn rebuild_vocab(dir: &str, observe: bool) {
+fn rebuild_vocab(dir: &str, folder: &str, observe: bool) {
     let entries = vocabscan::collect(dir, EN_DICT_PATH, ZH_DICT_PATH);
     if observe {
         println!("[stars] observe: 生词本 {} 个生词", entries.len());
         return;
     }
-    if let Some(m) = sync_auto_notebook(dir, VOCAB_TITLE, &cardvocab::render_notebook_pages(&entries)) {
+    if let Some(m) = sync_auto_notebook(dir, VOCAB_TITLE, &cardvocab::render_notebook_pages(&entries), folder) {
         println!("[stars] 生词本已{m}（{} 个生词）", entries.len());
     }
 }
@@ -183,6 +186,13 @@ fn settle(cfg: &Cfg, observe: bool, dirty: Option<&HashSet<String>>) {
         return;
     }
 
+    // 归档目标：所有生成物（卡片+4汇总+生词本）落 zettelkasten 卡片盒。按名认领 uuid，各 sync 上传前
+    // GET /documents/<uuid> 设当前文件夹（全局态，真机验证）。文件夹不存在→空串→兜底落 root。
+    let card_folder = device_core::inject::find_folder_by_name(&dir, CARD_BOX_FOLDER).unwrap_or_default();
+    if observe && card_folder.is_empty() {
+        println!("[stars] observe: 未找到「{CARD_BOX_FOLDER}」文件夹，生成物将落 root（建个同名文件夹即自动归档）");
+    }
+
     // ① 星→卡片（划线摘录门控高亮是否入卡）
     if cfg.star_todo {
         let mut scfg = StarConfig::default();
@@ -200,7 +210,7 @@ fn settle(cfg: &Cfg, observe: bool, dirty: Option<&HashSet<String>>) {
                 ),
             }
         }
-        starscan::scan_and_sync(&dir, &docs, cfg.card_highlights, observe);
+        starscan::scan_and_sync(&dir, &docs, &card_folder, cfg.card_highlights, observe);
     }
 
     // ② 跨书汇总（MOC 死链/汇编/复盘/仪表 4 本）：仅 星代办 && 跨书汇总 都开。冷启动全建；增量时仅当有
@@ -213,10 +223,10 @@ fn settle(cfg: &Cfg, observe: bool, dirty: Option<&HashSet<String>>) {
         if need_index {
             // 全库笔记本文本只采集一次，4 本汇总本共用（原先各自 collect 一遍=整库解析 4 遍）。
             let texts = collect_notebook_texts(&dir, &AUTO_TITLES);
-            rebuild_card_index(&dir, &texts, observe);
-            rebuild_card_agg(&dir, &texts, observe);
-            rebuild_card_review(&dir, &texts, observe);
-            rebuild_card_stats(&dir, &texts, observe);
+            rebuild_card_index(&dir, &texts, &card_folder, observe);
+            rebuild_card_agg(&dir, &texts, &card_folder, observe);
+            rebuild_card_review(&dir, &texts, &card_folder, observe);
+            rebuild_card_stats(&dir, &texts, &card_folder, observe);
         }
     } else {
         // 跨书汇总关（或星代办关）→ 清 4 本残留（幂等，已 trash 则 no-op）。
@@ -236,7 +246,7 @@ fn settle(cfg: &Cfg, observe: bool, dirty: Option<&HashSet<String>>) {
             Some(set) => set.iter().any(|u| vocabscan::is_source_book(&dir, u)),
         };
         if need_vocab {
-            rebuild_vocab(&dir, observe);
+            rebuild_vocab(&dir, &card_folder, observe);
         }
     } else {
         let n = trash_auto_notebook(&dir, VOCAB_TITLE);

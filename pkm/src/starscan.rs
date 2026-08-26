@@ -106,7 +106,8 @@ pub fn page_highlights(dir: &str, doc_uuid: &str, page_uuid: &str) -> Vec<Vec<St
 }
 
 /// 同步一本书的卡片。返回一句状态或 None。observe=true 只报告不写。
-pub fn sync_one_card(dir: &str, book_title: &str, stars: &[StarSpec], observe: bool) -> Option<String> {
+/// `folder`=归档目标文件夹 uuid（空=root）；上传前设当前文件夹让卡片落进 zettelkasten。
+pub fn sync_one_card(dir: &str, book_title: &str, stars: &[StarSpec], folder: &str, observe: bool) -> Option<String> {
     let visible = format!("《{book_title}》{CARD_SUFFIX}");
     let existing = find_docs_by_visible(dir, &visible);
 
@@ -153,6 +154,7 @@ pub fn sync_one_card(dir: &str, book_title: &str, stars: &[StarSpec], observe: b
         Err(e) => return Some(format!("《{book_title}》pack 失败: {e}")),
     };
     let net = ureq::AgentBuilder::new().timeout(Duration::from_secs(20)).build();
+    inject::set_upload_folder(&net, UPLOAD_HOST, folder); // 落进 zettelkasten（空=root 兜底）
     if let Err(e) = inject::upload_document(&net, UPLOAD_HOST, &rmdoc, &format!("{visible}.rmdoc"), "application/zip") {
         return Some(format!("《{book_title}》/upload 失败: {e}"));
     }
@@ -171,7 +173,7 @@ pub fn sync_one_card(dir: &str, book_title: &str, stars: &[StarSpec], observe: b
 /// 星→卡片一整趟：对每本有星的书取章节/标签/高亮 → 组 StarSpec → `sync_one_card`。打印汇总。
 /// `collect_highlights`（划线摘录开关）=false 时卡片只留星骨架（章·页+批注模板）、不收荧光笔原文；
 /// 用户已打字批注仍靠 `cardsync` merge 保留（骨架不变，批注跨重建存活）。
-pub fn scan_and_sync(dir: &str, docs: &[DocStars], collect_highlights: bool, observe: bool) {
+pub fn scan_and_sync(dir: &str, docs: &[DocStars], folder: &str, collect_highlights: bool, observe: bool) {
     let mut msgs = Vec::new();
     for d in docs {
         // 卡片笔记本自身不当"源书"处理（防 《《X》-总结卡片》 套娃）。
@@ -208,7 +210,7 @@ pub fn scan_and_sync(dir: &str, docs: &[DocStars], collect_highlights: bool, obs
             let per: Vec<String> = stars.iter().map(|(p, _, t, _)| format!("p{p}={t:?}")).collect();
             println!("[stars] observe:《{}》docTags={:?} 每星模板 {}", d.title, doc_tags, per.join(" "));
         }
-        if let Some(m) = sync_one_card(dir, &d.title, &stars, observe) {
+        if let Some(m) = sync_one_card(dir, &d.title, &stars, folder, observe) {
             msgs.push(m);
         }
     }

@@ -54,17 +54,25 @@
 - **5 个 daemon 汇总本收进 `zettelkasten/📊仪表盘`**：它们是"看板"，天天生成、不该和内容本挤在 root 顶部。
 - **卡片和 MOC 同在 zettelkasten**：卡片是原子、MOC 是网，同属"加工层"，就近互链。
 
-## 四、落地路径（命门已真机验证：自动归档 **不可行**）
+## 四、落地路径（★ 2026-08-26 翻案：自动归档 **可行**，走 GET-then-upload）
 
-**★ 命门验证结果（2026-08-25 真机，否定）**：造 metadata `parent=<zettelkasten uuid>` 的 rmdoc upload 到
-`/upload` → 设备上该文档 **`parent` 被重置为 `""`（落 root）、uuid 也被换**。即 **reMarkable 的 `/upload`
-导入时忽略 metadata 的 `parent`，一律落 root**（用 `cardnote::pack_rmdoc_in` + `examples/verify_parent.rs` 实测）。
+**★ 翻案（2026-08-26 真机验证，肯定）**：§四原判死是因为只测了 metadata `parent` 这一条路。用户提示「web UI 先进文件夹再 upload 就落进去」→ 逆向 web UI 前端（`/assets/index.js`）发现真机制：
+上传前先 **`GET /documents/<folderId>` 设「当前文件夹」（全局服务端状态）**，随后 **`POST /upload` 就落进该文件夹**（FormData 只带 file，parent 不在 metadata）。真机实测：分开连接 GET zettelkasten/library → POST upload，
+测试 EPUB **准确落入对应文件夹**（全局态、不必绑连接）。
 
-叠加另两条硬约束，**"daemon 自动归档"整条路线判死**：
-- upload 一律落 root（本次实测）；
-- daemon 每次重建卡片**换 uuid**（无法认领已归档的旧卡去改）；
-- xochitl **无视磁盘直写**（直改 `.metadata` 的 parent 不即时生效，要重启 xochitl 才见——不能为归档重启）；
-- xochitl 本地 web API **只有 `/upload`、没有 move/改 parent 的接口**。
+**故 daemon 自动归档现已落地**（`device_core::inject::{find_folder_by_name, set_upload_folder}`）：
+- daemon 生成物（卡片 + 4 汇总 + 生词本）→ 上传前 GET `zettelkasten` → 落卡片盒；
+- wr-serve 的墨香书 + 自动优化版 → GET `library` → 落书库；
+- Chrome 抓取文章由外部工具传、不经我们代码 → 不处理（落哪算哪）；
+- 文件夹按名认领 uuid（`CollectionType`+`visibleName`），**不存在 → 空串 → 兜底落 root**（web UI 无建文件夹端点，用户手动建一次即自动归档）。
+
+**原判死的三条约束现状**（仍成立但不再挡路）：metadata `parent` 确被忽略（本翻案绕开它）；daemon 换 uuid（无妨——每次新卡直接 GET-then-upload 进文件夹，不需认领旧卡）；xochitl 无视磁盘直写（无妨——不走磁盘，走 web 上下文）；无 move 接口（无妨——GET /documents 即"进文件夹"上下文，等价定位）。
+`cardnote::pack_rmdoc_in`（塞 metadata parent）确认无效、弃用，改走 `set_upload_folder`。
+
+<details><summary>历史：2026-08-25 的否定结论（已被上面翻案，保留备查）</summary>
+
+造 metadata `parent=<zettelkasten uuid>` 的 rmdoc upload 到 `/upload` → 设备上 `parent` 被重置为 `""` 落 root、uuid 也被换（`cardnote::pack_rmdoc_in` + `examples/verify_parent.rs` 实测）。当时据此判「自动归档不可行」——**错在只测了 metadata parent 一条路，没测 GET-then-upload**。
+</details>
 
 → **没有任何途径让 daemon 把生成物自动放进文件夹。** 方案据此从"自动归档"退化为下面的现实版。
 
