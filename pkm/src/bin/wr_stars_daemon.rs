@@ -39,6 +39,8 @@ const VOCAB_TITLE: &str = cardvocab::VOCAB_TITLE;
 /// 本地词典（用户自备牛津英汉双解/现汉派生的排序 TSV，个人自用不入库）。缺文件 → 该向不查词。
 const EN_DICT_PATH: &str = "/home/root/weread/dict/en.tsv";
 const ZH_DICT_PATH: &str = "/home/root/weread/dict/zh.tsv";
+/// 单词笔记基线状态：存"开关打开时刻(ms)"，生词本只纳入 .rm mtime >= 该值的页（"开前灰词不补"）。停用时删。
+const VOCAB_SINCE_PATH: &str = "/home/root/weread/vocab-since.txt";
 /// 汇总本自身标题集：从 `collect_notebook_texts` 排除，防自摄取 + 上传自触发。
 const AUTO_TITLES: [&str; 5] = [INDEX_TITLE, AGG_TITLE, REVIEW_TITLE, STATS_TITLE, VOCAB_TITLE];
 /// 卡片盒文件夹名：所有 daemon 生成物（卡片+4汇总+生词本）自动归档进这个文件夹（按名认领 uuid，
@@ -80,6 +82,31 @@ fn read_cfg() -> Cfg {
         color: v.get("starTodoColor").and_then(|x| x.as_str()).unwrap_or("RED").to_uppercase(),
         gap: v.get("starTodoGap").and_then(|x| x.as_f64()).unwrap_or(25.0),
     }
+}
+
+/// 配置文件 reading-qol.json 的最后修改时间（ms）≈ 用户最近一次改开关的时刻。读不到→0。
+fn config_mtime_ms() -> u64 {
+    std::fs::metadata(cfg_path())
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+/// 单词笔记基线时间（ms）：生词本只纳入 .rm mtime >= 该值的页 → "开前画的灰词不补"。
+/// 已有状态文件 → 用它（跨重启稳定）。首次激活：**若已有生词本**（说明之前就在用）→ 基线 0
+/// grandfather 全保留；否则基线=配置 mtime（≈开关打开时刻，避开 fswatch 8s 防抖竞态）。停用时调用方删状态文件。
+fn vocab_since(dir: &str) -> u64 {
+    if let Ok(s) = std::fs::read_to_string(VOCAB_SINCE_PATH) {
+        if let Ok(v) = s.trim().parse::<u64>() {
+            return v;
+        }
+    }
+    let has_existing = !find_docs_by_visible(dir, VOCAB_TITLE).is_empty();
+    let baseline = if has_existing { 0 } else { config_mtime_ms() };
+    let _ = std::fs::write(VOCAB_SINCE_PATH, baseline.to_string());
+    baseline
 }
 
 /// 把某只读自动本（4 汇总/生词本之一）的所有在库副本移回收站——对应开关关闭时清残留。
@@ -152,8 +179,8 @@ fn rebuild_card_stats(dir: &str, texts: &[(String, String)], folder: &str, obser
 }
 
 /// 重建《📕 生词本》（查字词=块4系统增强，编排全在 `vocabscan`；此处只触发+注入）。observe 只打条数。
-fn rebuild_vocab(dir: &str, folder: &str, observe: bool) {
-    let entries = vocabscan::collect(dir, EN_DICT_PATH, ZH_DICT_PATH);
+fn rebuild_vocab(dir: &str, folder: &str, since_ms: u64, observe: bool) {
+    let entries = vocabscan::collect(dir, EN_DICT_PATH, ZH_DICT_PATH, since_ms);
     if observe {
         println!("[stars] observe: 生词本 {} 个生词", entries.len());
         return;
@@ -241,14 +268,16 @@ fn settle(cfg: &Cfg, observe: bool, dirty: Option<&HashSet<String>>) {
     // ③ 生词本（单词笔记，独立）：依赖**源书** .rm 的灰高亮（非笔记本文本），故独立触发——冷启动全建，
     // 增量时仅当 dirty 里有源书变更（画了灰词的书存盘）才重扫全库灰词。关则清残留。
     if cfg.vocab {
+        let since = vocab_since(&dir); // 基线：开前画的灰词不补（首次激活据是否已有生词本决定 grandfather）
         let need_vocab = match dirty {
             None => true,
             Some(set) => set.iter().any(|u| vocabscan::is_source_book(&dir, u)),
         };
         if need_vocab {
-            rebuild_vocab(&dir, &card_folder, observe);
+            rebuild_vocab(&dir, &card_folder, since, observe);
         }
     } else {
+        let _ = std::fs::remove_file(VOCAB_SINCE_PATH); // 停用→删基线，下次重新激活时重设
         let n = trash_auto_notebook(&dir, VOCAB_TITLE);
         if observe && n > 0 {
             println!("[stars] observe: 单词笔记关，生词本 {n} 本入回收队列");

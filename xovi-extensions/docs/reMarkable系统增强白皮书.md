@@ -152,6 +152,10 @@ host 无法运行 xochitl，但能用官方 qmldiff 工具**离线实跑补丁**
 > `starTodoEnabled`(主·默认关) 下挂 `cardHighlights`(划线摘录·高亮入卡·默认开)/`cardAggregates`(跨书汇总·4本汇总本·默认开)
 > 两个子开关（主关则灰化失效）；`vocabEnabled`(**单词笔记·生词本·独立顶层·默认关**，脱离画星、与★互不依赖)；`hlSnapCjk`(荧光笔吸附)。
 > daemon `wr-stars-daemon` 读这 5 键分别门控三条产出，功能关闭时对应只读自动本(4汇总+生词本)入回收站清残留、星卡片含批注绝不 trash。
+> **单词笔记基线（"开前灰词不补"）**：启用时记基线时刻(`vocab-since.txt`)，生词本只纳入 `.rm mtime >= 基线` 的页。
+> 首次激活若已有生词本(之前就在用)→基线 0 grandfather 全保留；否则基线=配置 mtime(≈开关打开时刻，避开 fswatch 防抖竞态)。
+> 停用删基线，下次干净 off→on 重设 → 只纳入此后画的灰词。
+> **归档**：所有生成物上传前 `GET /documents/<zettelkasten uuid>` → 落卡片盒(真机验证 GET-then-upload，见设计建议 §四)。
 > 三个二级页都全量写回同一 `reading-qol.json`，故 3 新键在三页 load+save 都带上（本页渲染、另两页透传）。
 > **离线门槛**：`qmldiff apply-diffs`（真本 Settings.qml=固件 .169 的 `qml_00db3818`）1 diff applied、5 开关接线正确 emit、括号平衡、emit 可再 parse；daemon `cargo test`(60+5) 绿、aarch64-musl 静态链接。
 

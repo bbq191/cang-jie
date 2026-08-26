@@ -63,6 +63,16 @@ fn enumerate_pages(dir: &str, uuid: &str) -> Vec<(i64, String)> {
     out
 }
 
+/// 某页 .rm 的最后修改时间（ms）。用于单词笔记基线门控（只纳入开关打开后画的页）。读不到→0。
+fn page_rm_mtime_ms(dir: &str, uuid: &str, page_uuid: &str) -> u64 {
+    std::fs::metadata(format!("{dir}/{uuid}/{page_uuid}.rm"))
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
+}
+
 /// 某页 .rm 的 ⚪灰色荧光笔高亮文字（只 Gray 槽；不复用 daemon 的 page_highlights 以免依赖卡片路径）。
 fn gray_words(dir: &str, uuid: &str, page_uuid: &str) -> Vec<String> {
     let rm = format!("{dir}/{uuid}/{page_uuid}.rm");
@@ -90,7 +100,8 @@ fn epub_ctx(dir: &str, uuid: &str) -> (Vec<(String, u32)>, Titles, Option<Vec<u8
 
 /// 全库源书 → 生词条。**整体精确优先、miss 词级拆分**（`dict::lookup_phrase`）；查不到丢弃；同书同词去重。
 /// `en_path`/`zh_path` 缺文件 → 该向不查（功能降级）。原句靠 epub 章全文 + `sentence_of`（epub 缺则空）。
-pub fn collect(dir: &str, en_path: &str, zh_path: &str) -> Vec<VocabEntry> {
+/// `since_ms`=单词笔记开关基线：>0 时**只纳入 .rm mtime >= since_ms 的页**（"开前画的灰词不补"）；0=全纳入。
+pub fn collect(dir: &str, en_path: &str, zh_path: &str, since_ms: u64) -> Vec<VocabEntry> {
     let en = Dict::open(en_path).ok();
     let zh = Dict::open(zh_path).ok();
     if en.is_none() && zh.is_none() {
@@ -126,6 +137,10 @@ pub fn collect(dir: &str, en_path: &str, zh_path: &str) -> Vec<VocabEntry> {
         let mut chapcache: HashMap<String, Option<String>> = HashMap::new(); // basename → 章全文
         for (pi, page_uuid) in enumerate_pages(dir, &uuid) {
             if pi < 0 {
+                continue;
+            }
+            // 基线门控：只纳入开关打开后画的页（.rm mtime >= since_ms）。since_ms=0 全纳入。
+            if since_ms > 0 && page_rm_mtime_ms(dir, &uuid, &page_uuid) < since_ms {
                 continue;
             }
             let pidx = pi as usize;
@@ -218,7 +233,7 @@ mod tests {
         let ds = dir.to_str().unwrap();
         write_doc(&dir, "book", r#"{"type":"DocumentType","parent":"","visibleName":"《书》"}"#, r#"{"fileType":"epub"}"#);
         // 两部词典路径都不存在 → 该向不查 → 空（功能降级不 panic）
-        let out = collect(ds, "/nonexistent-en.tsv", "/nonexistent-zh.tsv");
+        let out = collect(ds, "/nonexistent-en.tsv", "/nonexistent-zh.tsv", 0);
         assert!(out.is_empty());
         std::fs::remove_dir_all(&dir).ok();
     }
