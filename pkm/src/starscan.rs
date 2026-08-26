@@ -88,7 +88,8 @@ pub fn templates_for(doc_tags: &[String], page_tags: &[String]) -> Vec<CardTempl
 }
 
 /// 读某星页的荧光笔高亮，按 6 色槽分组（长度 SLOT_COUNT）。无 .rm/无高亮 → 全空槽。
-/// A 式：画星那刻该页 .rm 已含之前画的高亮，随新星骨架一次注入、之后随批注保留。
+/// 新星：随骨架一次注入；老星：`cardsync::merge_highlights` 把后画的新高亮**增量补进**对应槽
+/// （护批注、不重复）——先画星→空模板→再画线也能更新。故这里每轮都读当前全量高亮传下去。
 pub fn page_highlights(dir: &str, doc_uuid: &str, page_uuid: &str) -> Vec<Vec<String>> {
     let mut slots: Vec<Vec<String>> = vec![Vec::new(); cardhl::SLOT_COUNT];
     let rm = format!("{dir}/{doc_uuid}/{page_uuid}.rm");

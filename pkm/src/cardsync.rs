@@ -229,9 +229,52 @@ pub fn render_card_with(book_title: &str, stars: &[(usize, String)], prev: &Card
     render_card_starspecs(book_title, &specs, prev)
 }
 
+/// 老星页高亮**增量合并**：把 `hl`（按 6 色槽分组的当前高亮）里**块中还没有的**文字，补到对应颜色槽
+/// 已有 bullet 之后（下一个槽头 / 🔗 关联行之前）；用户打字批注一行不动、已有高亮不重复。
+/// 让"先画星→空模板→再画线"也能把新高亮流进卡片，同时护住批注。hl 全空（划线摘录关 / 无新高亮）→
+/// 原样返回 → 无改动无上传（保持无 churn）。只并进块中**已存在**的颜色槽（用户删掉的槽不会被重建）。
+fn merge_highlights(prev: &[String], hl: &[Vec<String>]) -> Vec<String> {
+    if hl.iter().all(|v| v.is_empty()) {
+        return prev.to_vec();
+    }
+    // 结算某颜色槽：把该槽里 seen 未覆盖的当前高亮追加到 out。
+    fn flush(out: &mut Vec<String>, cur: Option<usize>, seen: &std::collections::HashSet<String>, hl: &[Vec<String>]) {
+        if let Some(s) = cur {
+            if let Some(texts) = hl.get(s) {
+                for t in texts {
+                    if !seen.contains(t) {
+                        out.push(format!("   · {t}"));
+                    }
+                }
+            }
+        }
+    }
+    let mut out: Vec<String> = Vec::new();
+    let mut cur: Option<usize> = None; // 当前所在颜色槽（跨槽内的批注/空行保持不变）
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for line in prev {
+        let slot = SLOT_EMOJI.iter().position(|e| line.starts_with(e));
+        if slot.is_some() || line.starts_with("🔗") {
+            flush(&mut out, cur, &seen, hl); // 走出上一个槽前先补齐
+            seen.clear();
+            cur = slot; // Some(新槽) 或 None（🔗 关联行终止最后一个槽）
+            out.push(line.clone());
+            continue;
+        }
+        if cur.is_some() {
+            if let Some(text) = line.trim_start().strip_prefix("· ") {
+                seen.insert(text.to_string()); // 记录该槽已有 bullet（含用户手打的）
+            }
+        }
+        out.push(line.clone());
+    }
+    flush(&mut out, cur, &seen, hl); // 收尾（无 🔗 时最后一个槽在此补齐）
+    out
+}
+
 /// 每星**独立**模板集重生成卡片（daemon 按"文档级 tags + 该星页 pageTags"合并出每颗星自己的模板）。
-/// `stars`:(1-based 页号, 章节标签, 该星模板集[空则退默认 General]) 已排序去重；`prev`:上一版可保留状态。
-/// **每个有 ★ 的页各占一张卡片页**，新星注入其模板集骨架、老星保留用户批注。
+/// `stars`:(1-based 页号, 章节标签, 该星模板集[空则退默认 General], 该页6色槽高亮) 已排序去重；`prev`:上一版可保留状态。
+/// **每个有 ★ 的页各占一张卡片页**，新星注入其模板集骨架+高亮、老星保留批注并**增量合并新高亮**。
 pub fn render_card_starspecs(
     book_title: &str,
     stars: &[(usize, String, Vec<CardTemplate>, Vec<Vec<String>>)],
@@ -248,7 +291,7 @@ pub fn render_card_starspecs(
         }
         block.push(star_header(*page, label));
         match prev.notes_by_page.get(page) {
-            Some(notes) => block.extend(notes.iter().cloned()), // 老星：保留用户编辑
+            Some(notes) => block.extend(merge_highlights(notes, hl)), // 老星：保留批注 + 增量合并新高亮
             None => {
                 // 空集兜底退默认，保证任何星都有骨架。
                 let default = [CardTemplate::default()];
@@ -443,11 +486,38 @@ mod tests {
         assert!(out.contains("   · 关键人物甲") && out.contains("   · 关键人物乙"), "灰槽应多行: {out}");
         // 没画色的槽（蓝）不出现 · 行。
         assert!(out.contains("🔵 可意译/触发理解处："), "空蓝槽仍有标题: {out}");
-        // 老星（prev 有该页整块）走保留分支，不再由高亮重填（A 式）。
+        // 老星增量合并：先画星→空/半模板→再画线，新高亮补进对应槽，已有内容不动、不重复。
         let prev = parse_pages(&out.lines().map(String::from).collect::<Vec<_>>());
-        let stars2 = vec![(10usize, "第一章".to_string(), vec![CardTemplate::Original], vec![vec!["新画的但不该重填".to_string()]; 6])];
+        let mut hl2: Vec<Vec<String>> = vec![Vec::new(); 6];
+        hl2[0] = vec!["骆督察一直很讨厌医院的气味".to_string(), "新画的黄槽句".to_string()]; // 老1条+新1条
+        hl2[5] = vec!["关键人物甲".to_string(), "新人物丙".to_string()];
+        let stars2 = vec![(10usize, "第一章".to_string(), vec![CardTemplate::Original], hl2)];
         let out2 = render_card_starspecs("13·67", &stars2, &prev).join("\n");
-        assert!(!out2.contains("新画的但不该重填"), "老星应整块保留、不被新高亮重填: {out2}");
+        assert!(out2.contains("   · 新画的黄槽句"), "老星应把新黄槽高亮补进来: {out2}");
+        assert!(out2.contains("   · 新人物丙"), "老星应把新灰槽高亮补进来: {out2}");
+        assert_eq!(out2.matches("骆督察一直很讨厌医院的气味").count(), 1, "已有高亮不应重复: {out2}");
+        assert_eq!(out2.matches("关键人物甲").count(), 1, "已有高亮不应重复: {out2}");
+    }
+
+    #[test]
+    fn merge_preserves_typed_notes_between_highlights() {
+        // 老星块里用户在槽内打了字（非 bullet 行）——合并新高亮时该行必须原样保留。
+        let empty = CardModel::default();
+        let mut hl: Vec<Vec<String>> = vec![Vec::new(); 6];
+        hl[0] = vec!["原有高亮".to_string()];
+        let stars = vec![(3usize, "".to_string(), vec![CardTemplate::General], hl)];
+        let mut lines: Vec<String> = render_card_starspecs("书", &stars, &empty).join("\n").lines().map(String::from).collect();
+        // 在黄槽已有 bullet 后插一行用户批注
+        let pos = lines.iter().position(|l| l.contains("原有高亮")).unwrap();
+        lines.insert(pos + 1, "这是我打的想法".to_string());
+        let prev = parse_pages(&lines);
+        let mut hl2: Vec<Vec<String>> = vec![Vec::new(); 6];
+        hl2[0] = vec!["原有高亮".to_string(), "新高亮".to_string()];
+        let stars2 = vec![(3usize, "".to_string(), vec![CardTemplate::General], hl2)];
+        let out2 = render_card_starspecs("书", &stars2, &prev).join("\n");
+        assert!(out2.contains("这是我打的想法"), "用户批注必须保留: {out2}");
+        assert!(out2.contains("   · 新高亮"), "新高亮应补进黄槽: {out2}");
+        assert_eq!(out2.matches("原有高亮").count(), 1, "已有高亮不重复: {out2}");
     }
 
     #[test]
