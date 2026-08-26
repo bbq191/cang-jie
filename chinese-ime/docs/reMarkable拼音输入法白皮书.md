@@ -52,7 +52,7 @@
 - **`ghidra-project/`** — **反编译工程**：Ghidra 项目 + headless 脚本，定位 hook 点/偏移/参数签名的离线侦查产物。
 - `rmfw/` — 固件/字体资源（`fonts/`、`out/`）——主要服务 UI 汉化那条线，见姊妹文档。
 - `reading/`（历史名 `weread-client/`）+ `pkm/` — 独立子项目（阅读/PKM），跟 reMarkable 中文化无关，本文不展开。
-- 工程纪律 · 三份白皮书 — 工程纪律；本册 + 《中文化白皮书》+ 《微信读书方案白皮书》。
+- `工程纪律` · 三份白皮书 — 工程纪律；本册 + 《中文化白皮书》+ 《微信读书方案白皮书》。
 
 ## 01｜总体架构图解
 
@@ -762,7 +762,7 @@ M5 的核心（全局可用 + 原生入口）已经达成——hook 打在系统
 
 > 来源：`boangs/rmkit`（GPL-3.0）`installer/install.sh`、`systemd/zz-rmkit-cn.conf`。**源码研读结论，未在本项目验证。**
 
-本工程纪律 记的痛点"`/etc` 是 overlay、真机重启会清掉 systemd drop-in、扩展静默失效"，rmkit-cn 给了一个工程解法：安装时 `mount --bind / /tmp/lc` 拿到 overlay 的 lowerdir（ext4 持久层），把 drop-in 与 wants symlink **同时写进 `/etc/...`（upperdir/tmpfs）和 `/tmp/lc/etc/...`（lowerdir/ext4）双份**，重启后 lowerdir 那份仍在。这与本项目现在把 drop-in 放 `/usr/lib/systemd/system/xochitl.service.d/`（根分区、避开 overlay）是两种不同规避手段——本项目的做法更简单，但 OTA 必冲；rmkit-cn 的双写扛重启但不扛 OTA。二者都不是 OTA-proof，可按维护偏好择一——**本项目已定选 `/usr/lib` 持久 drop-in（避开 `/etc` overlay）+ precheck symlink 外层防线（4.3 节 fail-safe），不采用 bind-mount 双写**（"择一"悬念据此销掉）；详细的固件升级自愈设计见姊妹文档《reMarkable中文化白皮书》4.3 节的 📌 借鉴块。
+本项目 工程纪律 记的痛点"`/etc` 是 overlay、真机重启会清掉 systemd drop-in、扩展静默失效"，rmkit-cn 给了一个工程解法：安装时 `mount --bind / /tmp/lc` 拿到 overlay 的 lowerdir（ext4 持久层），把 drop-in 与 wants symlink **同时写进 `/etc/...`（upperdir/tmpfs）和 `/tmp/lc/etc/...`（lowerdir/ext4）双份**，重启后 lowerdir 那份仍在。这与本项目现在把 drop-in 放 `/usr/lib/systemd/system/xochitl.service.d/`（根分区、避开 overlay）是两种不同规避手段——本项目的做法更简单，但 OTA 必冲；rmkit-cn 的双写扛重启但不扛 OTA。二者都不是 OTA-proof，可按维护偏好择一——**本项目已定选 `/usr/lib` 持久 drop-in（避开 `/etc` overlay）+ precheck symlink 外层防线（4.3 节 fail-safe），不采用 bind-mount 双写**（"择一"悬念据此销掉）；详细的固件升级自愈设计见姊妹文档《reMarkable中文化白皮书》4.3 节的 📌 借鉴块。
 
 ## 参考来源
 

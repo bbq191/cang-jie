@@ -7,7 +7,7 @@
 #   · 本设备 rootfs = /dev/mmcblk0p3 ext4 **ro**（remount rw 可写），
 #     `dmsetup ls` 无 verity target → **dm-verity 未激活**；
 #   · wr-stars.service 自 2026-08-22 就在 /usr、历经重启未变砖；
-# · 工程纪律 确认本项目当前就用 /usr rootfs 做开机持久（xovi 同法）。
+#   · 工程纪律 确认本项目当前就用 /usr rootfs 做开机持久（xovi 同法）。
 #   （2026-08-16 那次"写 /usr + 重启 → A/B 回滚变砖"是 dm-verity 激活的旧配置，
 #    不适用当前固件。若换回 verity 固件，本脚本不可用——先复核 dmsetup。）
 #
