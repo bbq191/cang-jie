@@ -148,8 +148,12 @@ host 无法运行 xochitl，但能用官方 qmldiff 工具**离线实跑补丁**
   主管关振铎警司"）+ **章·页**（泰美斯的天秤 · P369）。每一环坐实：灰词检测（脱离画星）/ 现汉拼音+释义 /
   `locate_range` 原句定位 / `epubindex` 章页 / 词级精确命中。查字词至此**真机端到端验证完成**。
 
-> **后续（未做）**：设置页「系统增强」门户可加一个「生词本」开关（对齐 ★待办 的 `starTodoEnabled` 门户模式，qmd 改
-> `settings-reading-enhance.qmd`，高风险单独上机）；当前无开关，daemon 有词典文件即工作、无则降级。
+> **开关（2026-08-26 已加，离线 apply-diffs 实跑通过、待真机）**：设置页「系统增强 → 笔记增强」页现有 5 开关：
+> `starTodoEnabled`(主·默认关) 下挂 `cardHighlights`(划线摘录·高亮入卡·默认开)/`cardAggregates`(跨书汇总·4本汇总本·默认开)
+> 两个子开关（主关则灰化失效）；`vocabEnabled`(**单词笔记·生词本·独立顶层·默认关**，脱离画星、与★互不依赖)；`hlSnapCjk`(荧光笔吸附)。
+> daemon `wr-stars-daemon` 读这 5 键分别门控三条产出，功能关闭时对应只读自动本(4汇总+生词本)入回收站清残留、星卡片含批注绝不 trash。
+> 三个二级页都全量写回同一 `reading-qol.json`，故 3 新键在三页 load+save 都带上（本页渲染、另两页透传）。
+> **离线门槛**：`qmldiff apply-diffs`（真本 Settings.qml=固件 .169 的 `qml_00db3818`）1 diff applied、5 开关接线正确 emit、括号平衡、emit 可再 parse；daemon `cargo test`(60+5) 绿、aarch64-musl 静态链接。
 
 ## 交叉引用
 

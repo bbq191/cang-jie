@@ -113,7 +113,7 @@ AFFECT /qml/device/view/settings/Settings.qml
                                 snipT: "快捷输入",
                                 snipD: "缩写自动展开为常用短语（文本替换），支持增删改",
                                 noteT: "笔记增强",
-                                noteD: "★ 全局待办：手绘红星自动汇总成每本书的总结卡片"
+                                noteD: "★ 全局待办 · 划线摘录 · 跨书汇总 · 生词本 · 荧光笔汉字吸附"
                             },
                             tw: {
                                 page: "系統增強", sub: "墨香",
@@ -124,7 +124,7 @@ AFFECT /qml/device/view/settings/Settings.qml
                                 snipT: "快捷輸入",
                                 snipD: "縮寫自動展開為常用短語（文字替換），支援增刪改",
                                 noteT: "筆記增強",
-                                noteD: "★ 全局待辦：手繪紅星自動彙總成每本書的總結卡片"
+                                noteD: "★ 全局待辦 · 劃線摘錄 · 跨書彙總 · 生詞本 · 螢光筆漢字吸附"
                             },
                             en: {
                                 page: "System Enhancements", sub: "MoXiang",
@@ -135,7 +135,7 @@ AFFECT /qml/device/view/settings/Settings.qml
                                 snipT: "Text Replacement",
                                 snipD: "Expand abbreviations into phrases; add, edit and delete them",
                                 noteT: "Note Enhancements",
-                                noteD: "Global ★ to-do: hand-drawn red stars auto-collect into a per-book summary card"
+                                noteD: "Global ★ to-do · Highlight excerpts · Cross-book digests · Vocabulary · CJK snap"
                             }
                         };
                         return D[cjHubRoot.cjLang()] || D.en;
@@ -738,11 +738,14 @@ AFFECT /qml/device/view/settings/Settings.qml
                     id: cjFlipRoot
                     objectName: "cjFlipPage"
 
-                    // starTodo 三键本页不展示，但读进来 + 写回去（全量防覆盖：别让本页保存抹掉笔记增强配置）
+                    // 笔记增强五键本页不展示，但读进来 + 写回去（全量防覆盖：别让本页保存抹掉笔记增强配置）
                     property bool cfgStarTodo: false
                     property string cfgStarColor: "RED"
                     property int cfgStarGap: 25
                     property bool cfgHlSnap: true
+                    property bool cfgCardHl: true
+                    property bool cfgCardAgg: true
+                    property bool cfgVocab: false
                     property bool cfgTap: false
                     property bool cfgMono: false
                     property bool cfgRefresh: false
@@ -773,6 +776,9 @@ AFFECT /qml/device/view/settings/Settings.qml
                                 if (c.starTodoColor) cjFlipRoot.cfgStarColor = c.starTodoColor;
                                 var sg = parseInt(c.starTodoGap); if (sg > 0) cjFlipRoot.cfgStarGap = sg;
                                 cjFlipRoot.cfgHlSnap = (c.hlSnapCjk !== false);
+                                cjFlipRoot.cfgCardHl = (c.cardHighlights !== false);
+                                cjFlipRoot.cfgCardAgg = (c.cardAggregates !== false);
+                                cjFlipRoot.cfgVocab = !!c.vocabEnabled;
                             }
                         } catch (e) {
                             console.warn("CJ-ENH: load " + e);
@@ -792,7 +798,10 @@ AFFECT /qml/device/view/settings/Settings.qml
                                 starTodoEnabled: cjFlipRoot.cfgStarTodo,
                                 starTodoColor: cjFlipRoot.cfgStarColor,
                                 starTodoGap: cjFlipRoot.cfgStarGap,
-                                hlSnapCjk: cjFlipRoot.cfgHlSnap
+                                hlSnapCjk: cjFlipRoot.cfgHlSnap,
+                                cardHighlights: cjFlipRoot.cfgCardHl,
+                                cardAggregates: cjFlipRoot.cfgCardAgg,
+                                vocabEnabled: cjFlipRoot.cfgVocab
                             };
                             var body = JSON.stringify(c);
                             // 异步 PUT:Qt 同步 PUT 到 file:// 只截断不写体;保留 xhr 引用防 GC
@@ -1024,6 +1033,9 @@ AFFECT /qml/device/view/settings/Settings.qml
                     property string cfgStarColor: "RED"
                     property int cfgStarGap: 25
                     property bool cfgHlSnap: true
+                    property bool cfgCardHl: true
+                    property bool cfgCardAgg: true
+                    property bool cfgVocab: false
                     property var _cjXhr: null
                     readonly property string cjPath: "file:///home/root/.local/share/cangjie-ime/reading-qol.json"
 
@@ -1047,6 +1059,9 @@ AFFECT /qml/device/view/settings/Settings.qml
                                 if (c.starTodoColor) cjBookRoot.cfgStarColor = c.starTodoColor;
                                 var sg = parseInt(c.starTodoGap); if (sg > 0) cjBookRoot.cfgStarGap = sg;
                                 cjBookRoot.cfgHlSnap = (c.hlSnapCjk !== false);
+                                cjBookRoot.cfgCardHl = (c.cardHighlights !== false);
+                                cjBookRoot.cfgCardAgg = (c.cardAggregates !== false);
+                                cjBookRoot.cfgVocab = !!c.vocabEnabled;
                             }
                         } catch (e) {
                             console.warn("CJ-ENH: load " + e);
@@ -1066,7 +1081,10 @@ AFFECT /qml/device/view/settings/Settings.qml
                                 starTodoEnabled: cjBookRoot.cfgStarTodo,
                                 starTodoColor: cjBookRoot.cfgStarColor,
                                 starTodoGap: cjBookRoot.cfgStarGap,
-                                hlSnapCjk: cjBookRoot.cfgHlSnap
+                                hlSnapCjk: cjBookRoot.cfgHlSnap,
+                                cardHighlights: cjBookRoot.cfgCardHl,
+                                cardAggregates: cjBookRoot.cfgCardAgg,
+                                vocabEnabled: cjBookRoot.cfgVocab
                             };
                             var body = JSON.stringify(c);
                             // 异步 PUT:Qt 同步 PUT 到 file:// 只截断不写体;保留 xhr 引用防 GC
@@ -1189,7 +1207,12 @@ AFFECT /qml/device/view/settings/Settings.qml
         }
     END TRAVERSE
 
-    ; ── ⑦ 二级页「笔记增强」（哨兵 990005）：★ 全局待办开关 ──
+    ; ── ⑦ 二级页「笔记增强」（哨兵 990005）：5 开关 ──
+    ;   ★全局待办(主) → 划线摘录(子·高亮入卡)/跨书汇总(子·4本汇总本)，两子开关随主开关变灰失效；
+    ;   📕单词笔记(独立·灰词查词生词本，与★互不依赖)；荧光笔精确吸附汉字(独立·C hook 读 hlSnapCjk)。
+    ;   写全量 JSON（含 cardHighlights/cardAggregates/vocabEnabled 三新键）→ daemon wr-stars-daemon 消费。
+    ;   ⚠ 三个二级页(翻页/书籍/笔记)都全量写回同一 reading-qol.json，新键必须在**三页**load+save 都带上，
+    ;     否则在别页保存会抹掉——本页只渲染开关，另两页仅透传（同 starTodo 既有做法）。
     TRAVERSE ?#root
         LOCATE AFTER Component#help
         INSERT {
@@ -1203,6 +1226,9 @@ AFFECT /qml/device/view/settings/Settings.qml
                     property string cfgStarColor: "RED"
                     property int cfgStarGap: 25
                     property bool cfgHlSnap: true   // 荧光笔汉字精确吸附（C hook 读，修复默认开）
+                    property bool cfgCardHl: true   // 划线摘录（子·默认开）：高亮原文是否入卡片
+                    property bool cfgCardAgg: true  // 跨书汇总（子·默认开）：是否建 4 本汇总本
+                    property bool cfgVocab: false   // 单词笔记（独立·默认关）：灰词查词→生词本
                     // 其余键读进来 + 写回去（全量防覆盖）
                     property bool cfgTap: false
                     property bool cfgMono: false
@@ -1225,6 +1251,9 @@ AFFECT /qml/device/view/settings/Settings.qml
                                 cjNoteRoot.cfgStarTodo = !!c.starTodoEnabled;
                                 if (c.starTodoColor) cjNoteRoot.cfgStarColor = c.starTodoColor;
                                 var sg = parseInt(c.starTodoGap); if (sg > 0) cjNoteRoot.cfgStarGap = sg;
+                                cjNoteRoot.cfgCardHl = (c.cardHighlights !== false);
+                                cjNoteRoot.cfgCardAgg = (c.cardAggregates !== false);
+                                cjNoteRoot.cfgVocab = !!c.vocabEnabled;
                                 cjNoteRoot.cfgTap = !!c.tapPageTurn;
                                 cjNoteRoot.cfgMono = !!c.fastMono;
                                 cjNoteRoot.cfgRefresh = !!c.refresh;
@@ -1251,7 +1280,10 @@ AFFECT /qml/device/view/settings/Settings.qml
                                 starTodoEnabled: cjNoteRoot.cfgStarTodo,
                                 starTodoColor: cjNoteRoot.cfgStarColor,
                                 starTodoGap: cjNoteRoot.cfgStarGap,
-                                hlSnapCjk: cjNoteRoot.cfgHlSnap
+                                hlSnapCjk: cjNoteRoot.cfgHlSnap,
+                                cardHighlights: cjNoteRoot.cfgCardHl,
+                                cardAggregates: cjNoteRoot.cfgCardAgg,
+                                vocabEnabled: cjNoteRoot.cfgVocab
                             };
                             var body = JSON.stringify(c);
                             var xhr = new XMLHttpRequest();
@@ -1276,6 +1308,12 @@ AFFECT /qml/device/view/settings/Settings.qml
                                 page: "笔记增强", sub: "墨香 · 系统增强", back: "‹ 系统增强",
                                 starT: "★ 全局待办",
                                 starD: "阅读时用红笔在某页画一颗五角星，几秒后自动生成/更新这本书的「《书名》- 总结卡片」笔记本：每颗星一页，带章名·页号+可打字批注模板。用一种记笔记不用的笔色（红）画星。默认关。",
+                                cardHlT: "　划线摘录",
+                                cardHlD: "　开启后，你用荧光笔划过的原文会一并收进《总结卡片》页（按颜色归到金句/疑问等槽）。关闭则卡片只留星骨架+批注模板。需先开启「★ 全局待办」。默认开。",
+                                cardAggT: "　跨书汇总",
+                                cardAggD: "　把全库各书的卡片跨书聚合成 4 本只读汇总：🎨高亮汇编 · 📖复盘队列 · 📊阅读仪表 · 🔗卡片索引。关闭则不再生成、旧本移入回收站。需先开启「★ 全局待办」。默认开。",
+                                vocabT: "📕 单词笔记（生词本）",
+                                vocabD: "阅读时用⚪灰色荧光笔划生词，自动查本地词典（英汉双解/现代汉语），把释义·音标·所在原句·章页汇成一本《生词本》。与★全局待办互不依赖，可单独开；需在设备放好词典文件。默认关。",
                                 hlT: "荧光笔精确吸附汉字",
                                 hlD: "开启后，荧光笔「对齐到文本」时中文只吸附你划过的那几个字，不再一下子吸成整行（英文按词吸附不受影响）。关闭则恢复系统原生的整行吸附。默认开启。"
                             },
@@ -1283,6 +1321,12 @@ AFFECT /qml/device/view/settings/Settings.qml
                                 page: "筆記增強", sub: "墨香 · 系統增強", back: "‹ 系統增強",
                                 starT: "★ 全局待辦",
                                 starD: "閱讀時用紅筆在某頁畫一顆五角星，幾秒後自動生成/更新這本書的「《書名》- 總結卡片」筆記本：每顆星一頁，帶章名·頁號+可打字批註範本。用一種記筆記不用的筆色（紅）畫星。預設關。",
+                                cardHlT: "　劃線摘錄",
+                                cardHlD: "　開啟後，你用螢光筆劃過的原文會一併收進《總結卡片》頁（按顏色歸到金句/疑問等槽）。關閉則卡片只留星骨架+批註範本。需先開啟「★ 全局待辦」。預設開。",
+                                cardAggT: "　跨書彙總",
+                                cardAggD: "　把全庫各書的卡片跨書聚合成 4 本唯讀彙總：🎨高亮彙編 · 📖複盤佇列 · 📊閱讀儀表 · 🔗卡片索引。關閉則不再生成、舊本移入回收站。需先開啟「★ 全局待辦」。預設開。",
+                                vocabT: "📕 單詞筆記（生詞本）",
+                                vocabD: "閱讀時用⚪灰色螢光筆劃生詞，自動查本地詞典（英漢雙解/現代漢語），把釋義·音標·所在原句·章頁彙成一本《生詞本》。與★全局待辦互不依賴，可單獨開；需在裝置放好詞典檔案。預設關。",
                                 hlT: "螢光筆精確吸附漢字",
                                 hlD: "開啟後，螢光筆「對齊到文字」時中文只吸附你劃過的那幾個字，不再一下子吸成整行（英文按詞吸附不受影響）。關閉則恢復系統原生的整行吸附。預設開啟。"
                             },
@@ -1290,6 +1334,12 @@ AFFECT /qml/device/view/settings/Settings.qml
                                 page: "Note Enhancements", sub: "MoXiang · System", back: "‹ System",
                                 starT: "Global ★ to-do",
                                 starD: "Draw a red five-pointed star on any page while reading; within seconds a per-book “<Title> - Summary Card” notebook is created/updated — one page per star, with chapter · page number and a typeable note template. Use a pen colour you don't use for notes (red). Off by default.",
+                                cardHlT: "  Highlight excerpts",
+                                cardHlD: "  When on, text you highlight is pulled into the Summary Card (grouped into slots by colour). Off leaves only the star scaffold + note template. Requires Global ★ to-do. On by default.",
+                                cardAggT: "  Cross-book digests",
+                                cardAggD: "  Aggregate cards across your whole library into 4 read-only digests: 🎨 Highlights · 📖 Review queue · 📊 Reading dashboard · 🔗 Card index. Off stops generating them and moves existing ones to Trash. Requires Global ★ to-do. On by default.",
+                                vocabT: "📕 Word notes (vocabulary)",
+                                vocabD: "Highlight a word with the ⚪ grey highlighter; the daemon looks it up in local dictionaries (EN-CN / Chinese) and collects the definition, phonetics, source sentence and chapter·page into a 📕 Vocabulary notebook. Independent of Global ★ to-do; needs dictionary files on the device. Off by default.",
                                 hlT: "Precise CJK highlighter snap",
                                 hlD: "When on, snap-to-text highlighter grabs only the characters you swiped over instead of the whole line for Chinese text (English word-snapping is unaffected). Off restores the native whole-line snap. On by default."
                             }
@@ -1335,31 +1385,81 @@ AFFECT /qml/device/view/settings/Settings.qml
                         anchors { top: cjPgSub.bottom; left: parent.left; right: parent.right; topMargin: 24; leftMargin: 64; rightMargin: 64 }
                     }
 
-                    Column {
-                        id: cjNoteCol
-                        spacing: 44
-                        anchors { top: cjPgRule.bottom; left: parent.left; right: parent.right; topMargin: 40; leftMargin: 44; rightMargin: 44 }
+                    Flickable {
+                        id: cjNoteFlick
+                        anchors { top: cjPgRule.bottom; left: parent.left; right: parent.right; bottom: parent.bottom; topMargin: 40; leftMargin: 44; rightMargin: 44; bottomMargin: 24 }
+                        contentHeight: cjNoteCol.height + 40
+                        clip: true
+                        Column {
+                            id: cjNoteCol
+                            spacing: 44
+                            width: cjNoteFlick.width
 
-                        SettingsCheckBoxItem {
-                            width: cjNoteCol.width
-                            textColor: "#000000"
-                            title: cjNoteRoot.i18n.hlT
-                            description: cjNoteRoot.i18n.hlD
-                            selected: cjNoteRoot.cfgHlSnap
-                            onClicked: {
-                                cjNoteRoot.cfgHlSnap = !cjNoteRoot.cfgHlSnap;
-                                cjNoteRoot.cjSave();
+                            // ★ 全局待办（主）
+                            SettingsCheckBoxItem {
+                                width: cjNoteCol.width
+                                textColor: "#000000"
+                                title: cjNoteRoot.i18n.starT
+                                description: cjNoteRoot.i18n.starD
+                                selected: cjNoteRoot.cfgStarTodo
+                                onClicked: {
+                                    cjNoteRoot.cfgStarTodo = !cjNoteRoot.cfgStarTodo;
+                                    cjNoteRoot.cjSave();
+                                }
                             }
-                        }
-                        SettingsCheckBoxItem {
-                            width: cjNoteCol.width
-                            textColor: "#000000"
-                            title: cjNoteRoot.i18n.starT
-                            description: cjNoteRoot.i18n.starD
-                            selected: cjNoteRoot.cfgStarTodo
-                            onClicked: {
-                                cjNoteRoot.cfgStarTodo = !cjNoteRoot.cfgStarTodo;
-                                cjNoteRoot.cjSave();
+                            // 划线摘录（子·星代办关则失效并变灰）
+                            SettingsCheckBoxItem {
+                                width: cjNoteCol.width
+                                textColor: "#000000"
+                                opacity: cjNoteRoot.cfgStarTodo ? 1.0 : 0.35
+                                title: cjNoteRoot.i18n.cardHlT
+                                description: cjNoteRoot.i18n.cardHlD
+                                selected: cjNoteRoot.cfgCardHl
+                                onClicked: {
+                                    if (!cjNoteRoot.cfgStarTodo)
+                                        return;
+                                    cjNoteRoot.cfgCardHl = !cjNoteRoot.cfgCardHl;
+                                    cjNoteRoot.cjSave();
+                                }
+                            }
+                            // 跨书汇总（子·星代办关则失效并变灰）
+                            SettingsCheckBoxItem {
+                                width: cjNoteCol.width
+                                textColor: "#000000"
+                                opacity: cjNoteRoot.cfgStarTodo ? 1.0 : 0.35
+                                title: cjNoteRoot.i18n.cardAggT
+                                description: cjNoteRoot.i18n.cardAggD
+                                selected: cjNoteRoot.cfgCardAgg
+                                onClicked: {
+                                    if (!cjNoteRoot.cfgStarTodo)
+                                        return;
+                                    cjNoteRoot.cfgCardAgg = !cjNoteRoot.cfgCardAgg;
+                                    cjNoteRoot.cjSave();
+                                }
+                            }
+                            // 📕 单词笔记（独立顶层，与星代办互不依赖）
+                            SettingsCheckBoxItem {
+                                width: cjNoteCol.width
+                                textColor: "#000000"
+                                title: cjNoteRoot.i18n.vocabT
+                                description: cjNoteRoot.i18n.vocabD
+                                selected: cjNoteRoot.cfgVocab
+                                onClicked: {
+                                    cjNoteRoot.cfgVocab = !cjNoteRoot.cfgVocab;
+                                    cjNoteRoot.cjSave();
+                                }
+                            }
+                            // 荧光笔精确吸附汉字（独立，C hook 读）
+                            SettingsCheckBoxItem {
+                                width: cjNoteCol.width
+                                textColor: "#000000"
+                                title: cjNoteRoot.i18n.hlT
+                                description: cjNoteRoot.i18n.hlD
+                                selected: cjNoteRoot.cfgHlSnap
+                                onClicked: {
+                                    cjNoteRoot.cfgHlSnap = !cjNoteRoot.cfgHlSnap;
+                                    cjNoteRoot.cjSave();
+                                }
                             }
                         }
                     }
