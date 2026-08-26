@@ -114,18 +114,20 @@ pub fn cap_body(body: &str, max: usize) -> String {
 
 const BODY_CAP: usize = 140;
 
-/// 渲染《生词本》页文本（按书分组，首次出现序）。**自摄取防线**：不含 `[ID:`、不含"指向/链接…ID:"
-/// 触发词（且 daemon `collect_notebook_texts` 按标题排除本本，双保险）。空列表打「✓ 暂无生词」。
+/// 渲染《生词本》页文本：**首页=封面**（标题+DORAEMON+计数），其后**每本书各占一页**（按首次出现序）——
+/// 一书一页避免全堆一页过长。**自摄取防线**：不含 `[ID:`、不含"指向/链接…ID:"触发词（且 daemon
+/// `collect_notebook_texts` 按标题排除本本，双保险）。空列表→单页「✓ 暂无生词」。
 pub fn render_notebook_pages(entries: &[VocabEntry]) -> Vec<String> {
     let books: BTreeSet<&str> = entries.iter().map(|e| e.book.as_str()).collect();
-    let mut s = String::new();
-    s.push_str(VOCAB_TITLE);
-    s.push('\n');
-    s.push_str("🔔 DORAEMON 魔法生成 · 只读 —— 你用⚪灰色荧光笔在书里划过的词，它翻遍词典连音带义给你变出来（别在这本手写，一动就变回去）\n\n");
-    s.push_str(&format!("{} 个生词 · {} 本书\n", entries.len(), books.len()));
+    // 封面页
+    let mut cover = String::new();
+    cover.push_str(VOCAB_TITLE);
+    cover.push('\n');
+    cover.push_str("🔔 DORAEMON 魔法生成 · 只读 —— 你用⚪灰色荧光笔在书里划过的词，它翻遍词典连音带义给你变出来（别在这本手写，一动就变回去）\n\n");
+    cover.push_str(&format!("{} 个生词 · {} 本书\n", entries.len(), books.len()));
     if entries.is_empty() {
-        s.push_str("\n✓ 暂无生词——用⚪灰色荧光笔在书里划生词即可\n");
-        return vec![s];
+        cover.push_str("\n✓ 暂无生词——用⚪灰色荧光笔在书里划生词即可\n");
+        return vec![cover];
     }
     let mut order: Vec<&str> = Vec::new();
     for e in entries {
@@ -133,8 +135,10 @@ pub fn render_notebook_pages(entries: &[VocabEntry]) -> Vec<String> {
             order.push(&e.book);
         }
     }
+    let mut pages: Vec<String> = vec![cover];
     for book in order {
-        s.push_str(&format!("\n━━ 《{book}》 ━━\n"));
+        let mut s = String::new();
+        s.push_str(&format!("━━ 《{book}》 ━━\n"));
         for e in entries.iter().filter(|e| e.book == book) {
             let head = if e.phonetic.is_empty() {
                 e.word.clone()
@@ -164,8 +168,9 @@ pub fn render_notebook_pages(entries: &[VocabEntry]) -> Vec<String> {
             loc.push('\n');
             s.push_str(&loc);
         }
+        pages.push(s); // 一书一页
     }
-    vec![s]
+    pages
 }
 
 #[cfg(test)]
@@ -240,10 +245,15 @@ mod tests {
             mk("恻隐", "中文书", "8"),
             mk("prestige", "英文书", "43"),
         ];
-        let p = render_notebook_pages(&entries).join("\n");
-        assert!(p.contains("3 个生词 · 2 本书"));
-        assert!(p.contains("━━ 《英文书》 ━━"));
-        assert!(p.contains("━━ 《中文书》 ━━"));
+        let pages = render_notebook_pages(&entries);
+        // 一书一页：封面 + 2 本 = 3 页；封面带计数，两本各自成页、互不含对方书头。
+        assert_eq!(pages.len(), 3, "应为封面+2本书=3页: {pages:?}");
+        assert!(pages[0].contains("3 个生词 · 2 本书"), "封面页应带计数");
+        let en_page = pages.iter().find(|p| p.contains("━━ 《英文书》 ━━")).expect("应有英文书页");
+        let zh_page = pages.iter().find(|p| p.contains("━━ 《中文书》 ━━")).expect("应有中文书页");
+        assert!(!en_page.contains("中文书"), "英文书页不应混入中文书: {en_page}");
+        assert!(!zh_page.contains("英文书"), "中文书页不应混入英文书: {zh_page}");
+        let p = pages.join("\n");
         assert!(p.contains("▸ cachet"));
         assert!(p.contains("原句：含 cachet 的原句。"));
         assert!(p.contains("—《英文书》第一章 P42"));
