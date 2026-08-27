@@ -20,12 +20,12 @@
 1. **翻页与刷新**（990003）：① 点击翻页 `cjTapPageTurn`（键 `tapPageTurn`）② 快速黑白 `cjFastMono`（`fastMono`）③ 清残影 `cjRefresh`（`refresh`，+按章 `cjRefreshByChapter`/每 N 页 `cjRefreshEvery` 默认 15）。
 2. **书籍与字体**（990004）：④ 阅读字体增强 `fontEnhance` ⑤ 导入书籍自动优化 `autoOptimize`（默认关，消费方 wr-serve）。
 3. **快捷输入**（990002，snippets）：缩写→短语的**文本替换**管理页，UI 支持增删改，持久化到 `snippets.tsv`（详见 §01a）。
-4. **笔记增强**（990005，**5 开关**，详见 §08 开关块）：⑥ ★全局待办 `starTodoEnabled`（主·默认关，+颜色 `starTodoColor`/间距 `starTodoGap`，能力本体在 PKM 白皮书）→ 下挂两子开关 `cardHighlights`（划线摘录·高亮是否入卡·默认开）/`cardAggregates`（跨书汇总·4本汇总本·默认开），随主开关灰化失效；⑦ `vocabEnabled`（单词笔记·生词本·**独立顶层**·默认关，脱离画星）；⑧ 荧光笔精确吸附汉字 `hlSnapCjk`（**默认开**，C hook 消费，缺省即视为开——`c.hlSnapCjk !== false`）。
+4. **笔记增强**（990005，**5 开关**，详见 §08 开关块）：⑥ ★全局待办 `starTodoEnabled`（主·默认关，+颜色 `starTodoColor`/间距 `starTodoGap`，能力本体在 PKM 白皮书）→ 下挂两子开关 `cardHighlights`（划线摘录〔=用户口语「荧光笔」〕·高亮是否入卡·**默认关**〔2026-08-27 规则a：星代办单开=空白模板，需再开此开关才摄取，QML 取缺省用 `=== true`〕）/`cardAggregates`（跨书汇总·4本汇总本·默认开），随主开关灰化失效；⑦ `vocabEnabled`（单词笔记·生词本·**独立顶层**·默认关，脱离画星）；⑧ 荧光笔精确吸附汉字 `hlSnapCjk`（**默认开**，C hook 消费，缺省即视为开——`c.hlSnapCjk !== false`）。
 
 **跨 QML 树共享状态 = `reading-qol.json`**（`/home/root/.local/share/cangjie-ime/reading-qol.json`，/home 持久）：设置页 QML 用 `XMLHttpRequest` 写、阅读页 QML 读。运行时 xochitl 带 `QML_XHR_ALLOW_FILE_{READ,WRITE}=1`。
 - **大坑：同步 PUT 到 `file://` 只截断不写体 → 写必须异步**（open 不带 `false`）；读同步 GET 正常。
 - **传播靠 `reading-qol-config.qmd` 在 `DeviceSceneView#root` 的 1.5s 轮询 Timer**（`onCompleted` 只触发一次、返回阅读器不重建，"改了不生效"就是缺这个轮询）；字体菜单例外（构建那刻读一次、退出重开生效）。
-- **★全量防覆盖铁律**：每个写 `reading-qol.json` 的子页都必须**读写全量键**——翻页页/书籍页除自身开关外，也要读进并写回笔记增强页的全部键 `starTodoEnabled/starTodoColor/starTodoGap` + `cardHighlights/cardAggregates/vocabEnabled`（三新键·默认开/开/关，用 `!== false` / `!!` 取缺省）+ `hlSnapCjk`，否则在翻页/书籍页保存会抹掉这些值（`starTodoEnabled` → daemon 读成 false 功能被意外关；子开关/单词笔记同理）。三个二级页均已带上（笔记页渲染、另两页透传）。
+- **★全量防覆盖铁律**：每个写 `reading-qol.json` 的子页都必须**读写全量键**——翻页页/书籍页除自身开关外，也要读进并写回笔记增强页的全部键 `starTodoEnabled/starTodoColor/starTodoGap` + `cardHighlights/cardAggregates/vocabEnabled`（默认**关/开/关**，取缺省：`cardHighlights` 用 `=== true`〔默认关〕、`cardAggregates` 用 `!== false`〔默认开〕、`vocabEnabled` 用 `=== true`〔默认关〕）+ `hlSnapCjk`，否则在翻页/书籍页保存会抹掉这些值（`starTodoEnabled` → daemon 读成 false 功能被意外关；子开关/单词笔记同理）。三个二级页均已带上（笔记页渲染、另两页透传）。
 
 ## 01a｜快捷输入 snippets（文本替换，真机通）
 
@@ -149,8 +149,10 @@ host 无法运行 xochitl，但能用官方 qmldiff 工具**离线实跑补丁**
   `locate_range` 原句定位 / `epubindex` 章页 / 词级精确命中。查字词至此**真机端到端验证完成**。
 
 > **开关（2026-08-26 真机验证通过）**：设置页「系统增强 → 笔记增强」页现有 5 开关（用户真机确认 5 开关渲染正常）：
-> `starTodoEnabled`(主·默认关) 下挂 `cardHighlights`(划线摘录·高亮入卡·默认开)/`cardAggregates`(跨书汇总·4本汇总本·默认开)
+> `starTodoEnabled`(主·默认关) 下挂 `cardHighlights`(划线摘录〔口语"荧光笔"〕·高亮入卡·**默认关**〔规则a·2026-08-27〕)/`cardAggregates`(跨书汇总·4本汇总本·默认开)
 > 两个子开关（主关则灰化失效）；`vocabEnabled`(**单词笔记·生词本·独立顶层·默认关**，脱离画星、与★互不依赖)；`hlSnapCjk`(荧光笔吸附)。
+>
+> **daemon 开关不生效根治（2026-08-27 真机验证）**：`wr-stars-daemon` 原来 fswatch 只 watch xochitl 文档树、不 watch config → 拨开关只写 `reading-qol.json`、唤不醒休眠 daemon，存量已画星书也不回扫（表现"开关像没用"）。修复：`device_core::fswatch::watch_debounced` 加可选 config 文件监听参数 + `CONFIG_SIGNAL` 哨兵，daemon 见到即 `settle(dirty=None)` **全库重扫**（真实 open-write-close 写 config 后 daemon 被唤醒跑全库重扫，真机坐实）。生效的 tap-page/hlSnapCjk 本就在进程内动作那刻现读，故一直正常。
 > daemon `wr-stars-daemon` 读这 5 键分别门控三条产出，功能关闭时对应只读自动本(4汇总+生词本)入回收站清残留、星卡片含批注绝不 trash。
 > **单词笔记基线（"开前灰词不补"）**：启用时记基线时刻(`vocab-since.txt`)，生词本只纳入 `.rm mtime >= 基线` 的页。
 > 首次激活若已有生词本(之前就在用)→基线 0 grandfather 全保留；否则基线=配置 mtime(≈开关打开时刻，避开 fswatch 防抖竞态)。
