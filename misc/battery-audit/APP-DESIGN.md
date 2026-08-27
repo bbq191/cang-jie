@@ -9,8 +9,18 @@
 - **采集器 `battop`**(Rust,`battop/`):systemd timer 每 ~10 分钟 oneshot 采样,产出 `data/samples-*.tsv` + 预聚合 `data/summary.json`(4 窗口 × 应用/进程双分组 + 放电%)。已部署 `/home/root/battop/`,timer active,自身 ~4.3 CPU 秒/天。
 - **查看器改为设备端注入 QML 面板**(不是 Web):注入系统增强设置页,作为 hub 第 6 项「电池审计」→ 全屏二级页(`xovi-extensions/reading-qol/settings-reading-enhance.qmd` 的 `cjBatteryPage`/990006)。QML 用 XHR 同步读 `summary.json` → JSON.parse → 渲染。参考墨香:衬线品牌标题 + 自绘等宽标签胶囊 + 去框化条形排行(序号/细条/发丝线);归属复选框 = 自绘(不用独立 `ArkControls.Toggle`,那要 Panel 宿主)。
 - **踩坑(致命)**:QML `Item` 的 **`data` 是承载子元素的保留默认属性**;`property var data` 覆盖它 → 所有子元素不被 parent → `parent.X` anchor 全 null → **空白页**(无致命日志,只有下游 anchor-null 警告,apply-diffs 也过)。改名 `sumData` 即好。。
-- **数据契约**:`summary.json` = `{generated, windows:{today,7d,30d,all}}`;每窗口 `{discharge, samples, app:[{name,ms,pct}], proc:[...]}`。应用视图套友好名(§5),进程视图 raw comm。
-- 未做(后续):v2 唤醒次数/唤醒锁;v3 断 USB 真实 `current_now` 校准。
+- **数据契约**:`summary.json` = `{generated, windows:{today,7d,30d,all}}`;每窗口 `{discharge, samples, app:[{name,ms,pct}], proc:[...], wake:[{name,ms=次数,pct}]}`。应用视图套友好名(§5),进程视图 raw comm。
+
+### v2 已落地(2026-08-27):唤醒源维度
+
+设备侧唤醒 sysfs 基本堵死(**debugfs 挂载点不存在**读不到 `wakeup_sources`;`/sys/power/wakeup_count` 读会**阻塞挂起**;`find /sys/devices` 遍历超时)。**唯一可靠源 = journal 内核日志 `PM: active wakeup source: X`**(持久 journald 已存多日,一上线即有历史,不像 CPU 窗口要等积累)。
+
+- 采集器加 `read_wake_events`:`journalctl -o short-unix _TRANSPORT=kernel --since @<31d>`(**不用 `-k`,那只当前 boot**;`-g` 该版本不匹配)→ 解析 `(epoch, 源名)`。summary.json 每窗口加 `wake` 计数(友好名:mwlan→WiFi、spi0.0→触控笔、gpio-hall-sensors→合盖磁吸、N-XXXX→传感器(I2C)…)。
+- **成本控制**:journalctl 读 31 天内核日志 ~1s,144 次/天会让 battop 反成耗电项 → **小时级缓存 `wakes.tsv`**(超 50 分钟才重刷),summary 每轮只读缓存 → 多数运行仍 ~30ms。
+- 视图:面板分组控件由「应用/进程」复选框演进成 **3 段「应用/进程/唤醒源」**(三互斥视图);唤醒源行显示 `× 次数`。
+- **真机发现**:31 天 365 次唤醒中 **触控笔数字化仪 `spi0.0` 占 318 次**——把设备从休眠唤醒的头号来源。与 v1「醒时谁烧 CPU」互补成「谁打断睡眠」。
+
+- 未做(后续):v3 断 USB 真实 `current_now` 校准(需设备旁配合)。
 
 ## 0. 一句话
 

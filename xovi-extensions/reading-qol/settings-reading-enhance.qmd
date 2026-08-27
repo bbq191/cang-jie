@@ -1286,7 +1286,7 @@ AFFECT /qml/device/view/settings/Settings.qml
 
                     property var sumData: null    // 注意:不能叫 data，QML Item 的 data 是承载子元素的保留默认属性，覆盖它会导致所有子元素不被 parent（空白页）
                     property string win: "today"
-                    property bool byApp: true
+                    property string mode: "app"    // app=应用 | proc=进程 | wake=唤醒源
 
                     function cjLang() {
                         var s = "" + qsTranslate("SettingsModel", "Help")
@@ -1299,13 +1299,13 @@ AFFECT /qml/device/view/settings/Settings.qml
                     function cjTable() {
                         var D = {
                             cn: { page: "电池审计", today: "当日", d7: "7天", d30: "30天", all: "全部",
-                                  byApp: "归属应用", disc: "本窗口放电", samp: "采样", refresh: "刷新",
+                                  appT: "应用", procT: "进程", wakeT: "唤醒源", disc: "本窗口放电", samp: "采样", refresh: "刷新",
                                   empty: "暂无数据（采集器刚开始积，稍后再看）", charging: "充电中" },
                             tw: { page: "電池審計", today: "當日", d7: "7天", d30: "30天", all: "全部",
-                                  byApp: "歸屬應用", disc: "本視窗放電", samp: "取樣", refresh: "重新整理",
+                                  appT: "應用", procT: "程序", wakeT: "喚醒源", disc: "本視窗放電", samp: "取樣", refresh: "重新整理",
                                   empty: "暫無資料（採集器剛開始累積，稍後再看）", charging: "充電中" },
                             en: { page: "Battery Audit", today: "Today", d7: "7d", d30: "30d", all: "All",
-                                  byApp: "By app", disc: "Drained", samp: "samples", refresh: "Refresh",
+                                  appT: "Apps", procT: "Procs", wakeT: "Wakeups", disc: "Drained", samp: "samples", refresh: "Refresh",
                                   empty: "No data yet (sampler just started).", charging: "Charging" }
                         };
                         return D[cjBatRoot.cjLang()] || D.en;
@@ -1331,7 +1331,7 @@ AFFECT /qml/device/view/settings/Settings.qml
                         return Math.round(s / 3600) + "h";
                     }
                     property var curWin: (cjBatRoot.sumData && cjBatRoot.sumData.windows) ? cjBatRoot.sumData.windows[cjBatRoot.win] : null
-                    property var listModel: cjBatRoot.curWin ? ((cjBatRoot.byApp ? cjBatRoot.curWin.app : cjBatRoot.curWin.proc) || []) : []
+                    property var listModel: cjBatRoot.curWin ? ((cjBatRoot.mode === "wake" ? cjBatRoot.curWin.wake : (cjBatRoot.mode === "proc" ? cjBatRoot.curWin.proc : cjBatRoot.curWin.app)) || []) : []
                     Component.onCompleted: cjBatRoot.cjLoad()
 
                     Rectangle { anchors.fill: parent; color: "#ffffff" }
@@ -1389,50 +1389,45 @@ AFFECT /qml/device/view/settings/Settings.qml
                     }
 
                     // 概览行：归属应用复选框（左）+ 放电·采样·更新时间（右）
-                    Item {
-                        id: cjBatCtl
-                        height: 56
+                    // 分组：应用 / 进程 / 唤醒源（3 段等分，与时间标签一致；三互斥视图故用分段而非复选框）
+                    Row {
+                        id: cjBatGroup
+                        spacing: 10
+                        property real segW: (width - spacing * 2) / 3
                         anchors { top: cjBatTabs.bottom; left: parent.left; right: parent.right; topMargin: ArkControls.Values.platform.spacing.large; leftMargin: ArkControls.Values.settings.horizontalMargin.secondLevel; rightMargin: ArkControls.Values.settings.horizontalMargin.secondLevel }
-                        // 自绘复选框（参考墨香自绘；不用独立 ArkControls.Toggle，那要 Panel 宿主）
-                        Item {
-                            id: cjBatToggleBox
-                            width: cjBatChkRow.width
-                            height: parent.height
-                            anchors { left: parent.left; verticalCenter: parent.verticalCenter }
-                            Row {
-                                id: cjBatChkRow
-                                spacing: 12
-                                anchors.verticalCenter: parent.verticalCenter
-                                Rectangle {
-                                    width: 38; height: 38; radius: 6
-                                    anchors.verticalCenter: parent.verticalCenter
-                                    border.color: "#000000"; border.width: 2
-                                    color: cjBatRoot.byApp ? "#000000" : "#ffffff"
-                                    Text { anchors.centerIn: parent; visible: cjBatRoot.byApp; renderType: Text.NativeRendering; antialiasing: false; font.family: "reMarkable Sans"; font.pixelSize: 26; color: "#ffffff"; text: "✓" }
-                                }
-                                Text { anchors.verticalCenter: parent.verticalCenter; renderType: Text.NativeRendering; antialiasing: false; font.family: "reMarkable Sans"; font.pixelSize: 30; color: "#000000"; text: cjBatRoot.i18n.byApp }
+                        Repeater {
+                            model: [ { k: "app", t: cjBatRoot.i18n.appT }, { k: "proc", t: cjBatRoot.i18n.procT }, { k: "wake", t: cjBatRoot.i18n.wakeT } ]
+                            delegate: Rectangle {
+                                width: cjBatGroup.segW; height: 60; radius: 8
+                                property bool on: cjBatRoot.mode === modelData.k
+                                color: on ? "#000000" : "#ffffff"
+                                border.color: "#000000"; border.width: 2
+                                Text { anchors.centerIn: parent; renderType: Text.NativeRendering; antialiasing: false; font.family: "reMarkable Sans"; font.pixelSize: 27; color: parent.on ? "#ffffff" : "#000000"; text: modelData.t }
+                                MouseArea { anchors.fill: parent; onClicked: cjBatRoot.mode = modelData.k }
                             }
-                            MouseArea { anchors.fill: parent; onClicked: cjBatRoot.byApp = !cjBatRoot.byApp }
                         }
-                        Text {
-                            anchors { right: parent.right; verticalCenter: parent.verticalCenter }
-                            renderType: Text.NativeRendering; antialiasing: false; font.family: "reMarkable Sans"; font.pixelSize: 27; color: "#000000"
-                            text: {
-                                if (!cjBatRoot.curWin) return "";
-                                var d = cjBatRoot.curWin.discharge;
-                                var ds = (d > 0) ? (cjBatRoot.i18n.disc + " " + d + "%") : cjBatRoot.i18n.charging;
-                                var s = ds + " · " + cjBatRoot.i18n.samp + " " + (cjBatRoot.curWin.samples || 0);
-                                if (cjBatRoot.sumData && cjBatRoot.sumData.generated)
-                                    s += " · " + Qt.formatDateTime(new Date(cjBatRoot.sumData.generated * 1000), "hh:mm");
-                                return s;
-                            }
+                    }
+
+                    // 概览行（独立）：放电% · 采样 · 更新时间
+                    Text {
+                        id: cjBatOverview
+                        anchors { top: cjBatGroup.bottom; left: parent.left; right: parent.right; topMargin: ArkControls.Values.platform.spacing.large; leftMargin: ArkControls.Values.settings.horizontalMargin.secondLevel; rightMargin: ArkControls.Values.settings.horizontalMargin.secondLevel }
+                        renderType: Text.NativeRendering; antialiasing: false; font.family: "reMarkable Sans"; font.pixelSize: 27; color: "#000000"
+                        text: {
+                            if (!cjBatRoot.curWin) return "";
+                            var d = cjBatRoot.curWin.discharge;
+                            var ds = (d > 0) ? (cjBatRoot.i18n.disc + " " + d + "%") : cjBatRoot.i18n.charging;
+                            var s = ds + " · " + cjBatRoot.i18n.samp + " " + (cjBatRoot.curWin.samples || 0);
+                            if (cjBatRoot.sumData && cjBatRoot.sumData.generated)
+                                s += " · " + Qt.formatDateTime(new Date(cjBatRoot.sumData.generated * 1000), "hh:mm");
+                            return s;
                         }
                     }
 
                     Rectangle {
                         id: cjBatRule
                         height: 1; color: "#d4d4d4"
-                        anchors { top: cjBatCtl.bottom; left: parent.left; right: parent.right; topMargin: 20; leftMargin: ArkControls.Values.settings.horizontalMargin.secondLevel; rightMargin: ArkControls.Values.settings.horizontalMargin.secondLevel }
+                        anchors { top: cjBatOverview.bottom; left: parent.left; right: parent.right; topMargin: 20; leftMargin: ArkControls.Values.settings.horizontalMargin.secondLevel; rightMargin: ArkControls.Values.settings.horizontalMargin.secondLevel }
                     }
 
                     // 空态
@@ -1478,7 +1473,8 @@ AFFECT /qml/device/view/settings/Settings.qml
                                         id: cjRowVal
                                         anchors { right: parent.right; top: parent.top; topMargin: 12 }
                                         renderType: Text.NativeRendering; antialiasing: false; font.family: "reMarkable Sans"; font.pixelSize: 27; color: "#000000"
-                                        text: modelData.pct + "% · " + cjBatRoot.fmtMs(modelData.ms)
+                                        // wake 模式:ms 字段承载唤醒次数,显示 ×N;否则 %·CPU时长
+                                        text: cjBatRoot.mode === "wake" ? ("× " + modelData.ms) : (modelData.pct + "% · " + cjBatRoot.fmtMs(modelData.ms))
                                     }
                                     // 细条（与名称左对齐，缩进过序号）
                                     Rectangle {

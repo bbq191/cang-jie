@@ -79,8 +79,22 @@ fn main() {
         eprintln!("battop: 写 baseline 失败: {e}");
     }
 
-    // 生成面板用预聚合(4 窗口 × 应用/进程 双分组 + 放电%)
-    if let Err(e) = write_summary(&dir, now) {
+    // v2:唤醒源事件(设备/子系统级)。journalctl 读 31 天内核日志较贵(~1s),故走小时级缓存:
+    // wakes.tsv 超 50 分钟才重刷,summary 每轮只读这个小缓存 → battop 大多数运行仍 ~30ms。
+    let cache = dir.join("wakes.tsv");
+    let stale = fs::metadata(&cache)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        .map(|d| now.saturating_sub(d.as_secs()) > 3000)
+        .unwrap_or(true);
+    if stale {
+        refresh_wake_cache(&dir, now.saturating_sub(31 * 86400));
+    }
+    let wakes = load_wake_cache(&dir);
+
+    // 生成面板用预聚合(4 窗口 × 应用/进程 CPU + 唤醒源计数 + 放电%)
+    if let Err(e) = write_summary(&dir, now, &wakes) {
         eprintln!("battop: 写 summary 失败: {e}");
     }
 
@@ -260,7 +274,7 @@ fn prune(dir: &Path, now: u64) {
 // ── summary.json:面板用预聚合 ────────────────────────────────
 // 读全部样本 → 4 窗口(当日/7天/30天/全部)× 应用(友好名)/进程(comm)双分组
 // + 每窗口放电% → 写 summary.json。窗口计算靠行内 epoch。
-fn write_summary(dir: &Path, now: u64) -> std::io::Result<()> {
+fn write_summary(dir: &Path, now: u64, wakes: &[(u64, String)]) -> std::io::Result<()> {
     // usage:(epoch, is_app, key, ms)   sys:(epoch, cap, disc)
     let mut usage: Vec<(u64, bool, String, u64)> = Vec::new();
     let mut sys: Vec<(u64, i64)> = Vec::new();
@@ -331,12 +345,22 @@ fn write_summary(dir: &Path, now: u64) -> std::io::Result<()> {
         }
         let samples = s.len();
 
+        // 唤醒源计数(窗口内 journal 事件按友好名聚合)
+        let mut wake: HashMap<String, u64> = HashMap::new();
+        for (ep, name) in wakes {
+            if ep < start {
+                continue;
+            }
+            *wake.entry(friendly_wake(name)).or_insert(0) += 1;
+        }
+
         if wi > 0 {
             json.push(',');
         }
         json.push_str(&format!("\"{wname}\":{{\"discharge\":{disc},\"samples\":{samples},"));
         json.push_str(&format!("\"app\":{},", top_json(&app)));
-        json.push_str(&format!("\"proc\":{}}}", top_json(&proc)));
+        json.push_str(&format!("\"proc\":{},", top_json(&proc)));
+        json.push_str(&format!("\"wake\":{}}}", top_json(&wake)));
     }
     json.push_str("}}\n");
 
@@ -383,6 +407,98 @@ fn friendly(unit: &str) -> String {
         "kernel" => "内核",
         _ if unit.ends_with("-metrics") => "reMarkable 度量",
         _ => unit,
+    };
+    n.to_string()
+}
+
+// v2:读 journal 内核唤醒源事件(自 since 起)。格式:"<epoch>.<us> host kernel: PM: active wakeup source: <NAME>"
+fn read_wake_events(since: u64) -> Vec<(u64, String)> {
+    let mut out = Vec::new();
+    // _TRANSPORT=kernel 跨 boot 取内核消息(不用 -k,那只当前 boot);--since 界定,输出有界(~1MB/31天)
+    let o = match std::process::Command::new("journalctl")
+        .args(["-o", "short-unix", "--no-pager", "--since"])
+        .arg(format!("@{since}"))
+        .arg("_TRANSPORT=kernel")
+        .output()
+    {
+        Ok(o) => o,
+        Err(_) => return out,
+    };
+    let text = String::from_utf8_lossy(&o.stdout);
+    for line in text.lines() {
+        let idx = match line.find("active wakeup source: ") {
+            Some(i) => i,
+            None => continue,
+        };
+        let name = line[idx + "active wakeup source: ".len()..].trim();
+        if name.is_empty() {
+            continue;
+        }
+        // 行首是 epoch(可能带 .微秒)
+        let epoch: u64 = line
+            .split_whitespace()
+            .next()
+            .and_then(|t| t.split('.').next())
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0);
+        if epoch == 0 {
+            continue;
+        }
+        out.push((epoch, name.to_string()));
+    }
+    out
+}
+
+// 刷新唤醒缓存:journalctl 读一次 → 写 wakes.tsv(epoch \t 原始源名)
+fn refresh_wake_cache(dir: &Path, since: u64) {
+    let ev = read_wake_events(since);
+    let mut s = String::new();
+    for (ep, name) in &ev {
+        s.push_str(&format!("{ep}\t{}\n", san(name)));
+    }
+    let tmp = dir.join("wakes.tsv.tmp");
+    if fs::write(&tmp, s).is_ok() {
+        let _ = fs::rename(&tmp, dir.join("wakes.tsv"));
+    }
+}
+
+// 读唤醒缓存
+fn load_wake_cache(dir: &Path) -> Vec<(u64, String)> {
+    let mut out = Vec::new();
+    let content = match fs::read_to_string(dir.join("wakes.tsv")) {
+        Ok(c) => c,
+        Err(_) => return out,
+    };
+    for line in content.lines() {
+        let mut it = line.splitn(2, '\t');
+        if let (Some(e), Some(n)) = (it.next(), it.next()) {
+            if let Ok(ep) = e.parse::<u64>() {
+                out.push((ep, n.to_string()));
+            }
+        }
+    }
+    out
+}
+
+// 唤醒源名 → 友好名
+fn friendly_wake(name: &str) -> String {
+    let n = match name {
+        "mwlan" => "WiFi",
+        "xochitl.batterymanager" => "电池管理",
+        "sleep.resume" => "唤醒锁",
+        "udev.charger" => "充电器",
+        "gpio-hall-sensors" => "合盖磁吸",
+        "rtc0" | "rtc" => "定时器(RTC)",
+        _ if name.starts_with("spi") => "触控笔(SPI)",
+        _ if name.ends_with("pwrkey") => "电源键",
+        // I2C 设备名形如 "0-0048" / "1-0021"
+        _ if name.len() >= 3
+            && name.as_bytes()[0].is_ascii_digit()
+            && name[1..].starts_with('-') =>
+        {
+            "传感器(I2C)"
+        }
+        _ => name,
     };
     n.to_string()
 }
