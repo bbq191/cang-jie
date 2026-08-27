@@ -79,6 +79,11 @@ fn main() {
         eprintln!("battop: 写 baseline 失败: {e}");
     }
 
+    // 生成面板用预聚合(4 窗口 × 应用/进程 双分组 + 放电%)
+    if let Err(e) = write_summary(&dir, now) {
+        eprintln!("battop: 写 summary 失败: {e}");
+    }
+
     // 清理 40 天前旧样本
     prune(&dir, now);
 
@@ -250,6 +255,164 @@ fn prune(dir: &Path, now: u64) {
             }
         }
     }
+}
+
+// ── summary.json:面板用预聚合 ────────────────────────────────
+// 读全部样本 → 4 窗口(当日/7天/30天/全部)× 应用(友好名)/进程(comm)双分组
+// + 每窗口放电% → 写 summary.json。窗口计算靠行内 epoch。
+fn write_summary(dir: &Path, now: u64) -> std::io::Result<()> {
+    // usage:(epoch, is_app, key, ms)   sys:(epoch, cap, disc)
+    let mut usage: Vec<(u64, bool, String, u64)> = Vec::new();
+    let mut sys: Vec<(u64, i64)> = Vec::new();
+    for e in fs::read_dir(dir)?.flatten() {
+        let n = e.file_name();
+        let n = n.to_string_lossy();
+        if !n.starts_with("samples-") || !n.ends_with(".tsv") {
+            continue;
+        }
+        let content = fs::read_to_string(e.path()).unwrap_or_default();
+        for line in content.lines() {
+            let f: Vec<&str> = line.split('\t').collect();
+            if f.len() < 3 {
+                continue;
+            }
+            let epoch: u64 = match f[0].parse() {
+                Ok(v) => v,
+                Err(_) => continue,
+            };
+            match f[1] {
+                "proc" | "app" if f.len() >= 4 => {
+                    let ms: u64 = f[3].parse().unwrap_or(0);
+                    usage.push((epoch, f[1] == "app", f[2].to_string(), ms));
+                }
+                "_sys" if f.len() >= 5 => {
+                    let cap: i64 = f[4].parse().unwrap_or(-1);
+                    sys.push((epoch, cap));
+                }
+                _ => {}
+            }
+        }
+    }
+
+    let off = local_offset();
+    let local = now as i64 + off;
+    let midnight = (local - local.rem_euclid(86400) - off) as u64; // 本地今日 0 点(UTC epoch)
+    let windows: [(&str, u64); 4] = [
+        ("today", midnight),
+        ("7d", now.saturating_sub(7 * 86400)),
+        ("30d", now.saturating_sub(30 * 86400)),
+        ("all", 0),
+    ];
+
+    let mut json = format!("{{\"generated\":{now},\"windows\":{{");
+    for (wi, (wname, start)) in windows.iter().enumerate() {
+        // 应用(按友好名聚合)/ 进程(按 comm)
+        let mut app: HashMap<String, u64> = HashMap::new();
+        let mut proc: HashMap<String, u64> = HashMap::new();
+        for (ep, is_app, key, ms) in &usage {
+            if ep < start {
+                continue;
+            }
+            if *is_app {
+                *app.entry(friendly(key)).or_insert(0) += ms;
+            } else {
+                *proc.entry(key.clone()).or_insert(0) += ms;
+            }
+        }
+        // 放电%:窗口内 _sys 相邻样本的电量正向下降之和
+        let mut s: Vec<(u64, i64)> = sys.iter().filter(|(e, _)| e >= start).cloned().collect();
+        s.sort_by_key(|(e, _)| *e);
+        let mut disc = 0i64;
+        for w in s.windows(2) {
+            let (a, b) = (w[0].1, w[1].1);
+            if a >= 0 && b >= 0 && a > b {
+                disc += a - b;
+            }
+        }
+        let samples = s.len();
+
+        if wi > 0 {
+            json.push(',');
+        }
+        json.push_str(&format!("\"{wname}\":{{\"discharge\":{disc},\"samples\":{samples},"));
+        json.push_str(&format!("\"app\":{},", top_json(&app)));
+        json.push_str(&format!("\"proc\":{}}}", top_json(&proc)));
+    }
+    json.push_str("}}\n");
+
+    let tmp = dir.join("summary.json.tmp");
+    fs::write(&tmp, json)?;
+    fs::rename(&tmp, dir.join("summary.json"))
+}
+
+// 取前 15 名(按 ms 降序)→ JSON 数组;pct=占窗口总量百分比
+fn top_json(m: &HashMap<String, u64>) -> String {
+    let total: u64 = m.values().sum();
+    let mut v: Vec<(&String, &u64)> = m.iter().collect();
+    v.sort_by(|a, b| b.1.cmp(a.1));
+    v.truncate(15);
+    let mut s = String::from("[");
+    for (i, (k, ms)) in v.iter().enumerate() {
+        if i > 0 {
+            s.push(',');
+        }
+        let pct = if total > 0 { **ms * 100 / total } else { 0 };
+        s.push_str(&format!(
+            "{{\"name\":\"{}\",\"ms\":{},\"pct\":{}}}",
+            json_esc(k),
+            ms,
+            pct
+        ));
+    }
+    s.push(']');
+    s
+}
+
+// systemd unit / comm → 友好应用名(应用视图用;设计 §5)
+fn friendly(unit: &str) -> String {
+    let n = match unit {
+        "xochitl" => "reMarkable 核心",
+        "memfaultd" | "crashuploader" => "Memfault 遥测",
+        "remarkable-counter-metrics" | "slumber-metrics" | "nm-metrics"
+        | "battery-status-metrics" => "reMarkable 度量",
+        "mdm-agent" => "reMarkable MDM",
+        "rm-sync" | "update-engine" | "swupdate" => "reMarkable 同步/更新",
+        "NetworkManager" | "wpa_supplicant" | "systemd-networkd" | "systemd-resolved" => "网络栈",
+        "marker-manager" | "tee-supplicant" => "硬件",
+        "wr-serve" | "wr-stars" | "wr-renew" | "battop" | "cangjie-wallpaper" => "cang-jie",
+        "kernel" => "内核",
+        _ if unit.ends_with("-metrics") => "reMarkable 度量",
+        _ => unit,
+    };
+    n.to_string()
+}
+
+fn local_offset() -> i64 {
+    // 用 date +%z 取本地时区偏移(设备 busybox date);失败回落 CST +8h
+    if let Ok(o) = std::process::Command::new("date").arg("+%z").output() {
+        let s = String::from_utf8_lossy(&o.stdout);
+        let s = s.trim();
+        if s.len() == 5 {
+            if let (Ok(h), Ok(m)) = (s[1..3].parse::<i64>(), s[3..5].parse::<i64>()) {
+                let sec = h * 3600 + m * 60;
+                return if s.starts_with('-') { -sec } else { sec };
+            }
+        }
+    }
+    8 * 3600
+}
+
+fn json_esc(s: &str) -> String {
+    let mut o = String::new();
+    for c in s.chars() {
+        match c {
+            '"' => o.push_str("\\\""),
+            '\\' => o.push_str("\\\\"),
+            '\n' | '\t' | '\r' => o.push(' '),
+            _ => o.push(c),
+        }
+    }
+    o
 }
 
 // TSV 安全:去掉 tab/换行
