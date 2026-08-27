@@ -81,3 +81,11 @@ pkm/tools/dict-build/
 # 生词本词典部署文件（en/zh.tsv）。注意不用 *.tsv 全局忽略（别的功能如 snippets.tsv 要留）。
 **/dict/en.tsv
 **/dict/zh.tsv
+
+# 休眠壁纸小工具：个人照片/运行期文件不入库（设备 /home/root/wallpaper 下才有）。
+# 仓库只留工具脚本 + 透明图 blank776.png，用户自备的壁纸不进仓库。
+misc/wallpaper/1.png
+misc/wallpaper/2.png
+misc/wallpaper/current.png
+misc/wallpaper/state
+misc/wallpaper/pool/
