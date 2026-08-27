@@ -1,8 +1,16 @@
 # 电池审计 App 方案文档(battop）
 
 > 一个"类 htop、非实时、带时间窗"的设备电池/后台占用追踪器。
-> **本文件只定方案,不含实现代码。** 现状调研见同目录 `FINDINGS.md`。
-> 决策记录:查看器=**Web 面板(wr-serve 式)**;本轮=**只出文档**。
+> 现状调研见同目录 `FINDINGS.md`。
+> 决策记录:查看器最初定 Web 面板,后**改为设备端注入面板(参考墨香)**——见 §9 实现状态。
+
+## 9. 实现状态（v1 已真机落地，2026-08-27）
+
+- **采集器 `battop`**(Rust,`battop/`):systemd timer 每 ~10 分钟 oneshot 采样,产出 `data/samples-*.tsv` + 预聚合 `data/summary.json`(4 窗口 × 应用/进程双分组 + 放电%)。已部署 `/home/root/battop/`,timer active,自身 ~4.3 CPU 秒/天。
+- **查看器改为设备端注入 QML 面板**(不是 Web):注入系统增强设置页,作为 hub 第 6 项「电池审计」→ 全屏二级页(`xovi-extensions/reading-qol/settings-reading-enhance.qmd` 的 `cjBatteryPage`/990006)。QML 用 XHR 同步读 `summary.json` → JSON.parse → 渲染。参考墨香:衬线品牌标题 + 自绘等宽标签胶囊 + 去框化条形排行(序号/细条/发丝线);归属复选框 = 自绘(不用独立 `ArkControls.Toggle`,那要 Panel 宿主)。
+- **踩坑(致命)**:QML `Item` 的 **`data` 是承载子元素的保留默认属性**;`property var data` 覆盖它 → 所有子元素不被 parent → `parent.X` anchor 全 null → **空白页**(无致命日志,只有下游 anchor-null 警告,apply-diffs 也过)。改名 `sumData` 即好。。
+- **数据契约**:`summary.json` = `{generated, windows:{today,7d,30d,all}}`;每窗口 `{discharge, samples, app:[{name,ms,pct}], proc:[...]}`。应用视图套友好名(§5),进程视图 raw comm。
+- 未做(后续):v2 唤醒次数/唤醒锁;v3 断 USB 真实 `current_now` 校准。
 
 ## 0. 一句话
 

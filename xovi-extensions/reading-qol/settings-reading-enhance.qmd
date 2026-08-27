@@ -46,7 +46,7 @@ AFFECT /qml/device/view/settings/Settings.qml
                 property string cjLabel: cjEnhanceSidebarItem.cjMenuLabel()
                 text: root.showLabels ? cjEnhanceSidebarItem.cjLabel : ""
                 iconSource: "qrc:/ark/icons/notebook_sparkles"
-                highlighted: root._selectedPage >= 990001 && root._selectedPage <= 990005
+                highlighted: root._selectedPage >= 990001 && root._selectedPage <= 990006
                 focusPolicy: Qt.StrongFocus
                 Layout.fillWidth: true
                 onTriggered: {
@@ -76,6 +76,9 @@ AFFECT /qml/device/view/settings/Settings.qml
                 }
                 if (root._selectedPage === 990005) {
                     return cjNotePage;
+                }
+                if (root._selectedPage === 990006) {
+                    return cjBatteryPage;
                 }
             }
         END REBUILD
@@ -113,7 +116,8 @@ AFFECT /qml/device/view/settings/Settings.qml
                                 snipT: "快捷输入",
                                 snipD: "缩写自动展开为常用短语（文本替换），支持增删改",
                                 noteT: "笔记增强",
-                                noteD: "★ 全局待办 · 划线摘录 · 跨书汇总 · 生词本 · 荧光笔汉字吸附"
+                                noteD: "★ 全局待办 · 划线摘录 · 跨书汇总 · 生词本 · 荧光笔汉字吸附",
+                                batT: "电池审计", batD: "谁在耗电 · 当日/7天/30天 · 应用或进程"
                             },
                             tw: {
                                 page: "系統增強", sub: "墨香",
@@ -124,7 +128,8 @@ AFFECT /qml/device/view/settings/Settings.qml
                                 snipT: "快捷輸入",
                                 snipD: "縮寫自動展開為常用短語（文字替換），支援增刪改",
                                 noteT: "筆記增強",
-                                noteD: "★ 全局待辦 · 劃線摘錄 · 跨書彙總 · 生詞本 · 螢光筆漢字吸附"
+                                noteD: "★ 全局待辦 · 劃線摘錄 · 跨書彙總 · 生詞本 · 螢光筆漢字吸附",
+                                batT: "電池審計", batD: "誰在耗電 · 當日/7天/30天 · 應用或程序"
                             },
                             en: {
                                 page: "System Enhancements", sub: "MoXiang",
@@ -135,7 +140,8 @@ AFFECT /qml/device/view/settings/Settings.qml
                                 snipT: "Text Replacement",
                                 snipD: "Expand abbreviations into phrases; add, edit and delete them",
                                 noteT: "Note Enhancements",
-                                noteD: "Global ★ to-do · Highlight excerpts · Cross-book digests · Vocabulary · CJK snap"
+                                noteD: "Global ★ to-do · Highlight excerpts · Cross-book digests · Vocabulary · CJK snap",
+                                batT: "Battery Audit", batD: "Who drains it · today/7d/30d · by app or process"
                             }
                         };
                         return D[cjHubRoot.cjLang()] || D.en;
@@ -174,6 +180,10 @@ AFFECT /qml/device/view/settings/Settings.qml
                         ArkControls.CellItem {
                             text: cjHubRoot.i18n.noteT
                             onClicked: root._selectedPage = 990005
+                        }
+                        ArkControls.CellItem {
+                            text: cjHubRoot.i18n.batT
+                            onClicked: root._selectedPage = 990006
                         }
                     }
                 }
@@ -1253,6 +1263,239 @@ AFFECT /qml/device/view/settings/Settings.qml
                                 action: ArkControls.Toggle {
                                     checked: cjNoteRoot.cfgHlSnap
                                     onClicked: { cjNoteRoot.cfgHlSnap = !cjNoteRoot.cfgHlSnap; cjNoteRoot.cjSave(); }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    END TRAVERSE
+
+    ; ── ⑤ 电池审计页（哨兵 990006）：读 battop summary.json，4 窗口 + 应用/进程切换 ──
+    ;   参考墨香：衬线品牌标题 + 自绘等宽 tab 胶囊 + 去框化条形排行。只读，采集器每 ~10 分钟更新。
+    TRAVERSE ?#root
+        LOCATE AFTER Component#help
+        INSERT {
+            Component {
+                id: cjBatteryPage
+                Item {
+                    id: cjBatRoot
+                    objectName: "cjBatteryPage"
+                    property bool fullscreen: true
+
+                    property var sumData: null    // 注意:不能叫 data，QML Item 的 data 是承载子元素的保留默认属性，覆盖它会导致所有子元素不被 parent（空白页）
+                    property string win: "today"
+                    property bool byApp: true
+
+                    function cjLang() {
+                        var s = "" + qsTranslate("SettingsModel", "Help")
+                              + qsTranslate("SettingsModel", "Cloud")
+                              + qsTranslate("SettingsModel", "Accessibility");
+                        if (s.indexOf("幫") >= 0 || s.indexOf("雲") >= 0 || s.indexOf("礙") >= 0) return "tw";
+                        if (s.indexOf("帮") >= 0 || s.indexOf("云") >= 0 || s.indexOf("碍") >= 0) return "cn";
+                        return "en";
+                    }
+                    function cjTable() {
+                        var D = {
+                            cn: { page: "电池审计", today: "当日", d7: "7天", d30: "30天", all: "全部",
+                                  byApp: "归属应用", disc: "本窗口放电", samp: "采样", refresh: "刷新",
+                                  empty: "暂无数据（采集器刚开始积，稍后再看）", charging: "充电中" },
+                            tw: { page: "電池審計", today: "當日", d7: "7天", d30: "30天", all: "全部",
+                                  byApp: "歸屬應用", disc: "本視窗放電", samp: "取樣", refresh: "重新整理",
+                                  empty: "暫無資料（採集器剛開始累積，稍後再看）", charging: "充電中" },
+                            en: { page: "Battery Audit", today: "Today", d7: "7d", d30: "30d", all: "All",
+                                  byApp: "By app", disc: "Drained", samp: "samples", refresh: "Refresh",
+                                  empty: "No data yet (sampler just started).", charging: "Charging" }
+                        };
+                        return D[cjBatRoot.cjLang()] || D.en;
+                    }
+                    property var i18n: cjBatRoot.cjTable()
+
+                    readonly property string cjPath: "file:///home/root/battop/data/summary.json"
+                    function cjLoad() {
+                        try {
+                            var xhr = new XMLHttpRequest();
+                            xhr.open("GET", cjBatRoot.cjPath, false);
+                            xhr.send();
+                            cjBatRoot.sumData = JSON.parse(xhr.responseText || "null");
+                        } catch (e) {
+                            console.warn("CJ-BAT: load " + e);
+                            cjBatRoot.sumData = null;
+                        }
+                    }
+                    function fmtMs(ms) {
+                        var s = Math.round(ms / 1000);
+                        if (s < 90) return s + "s";
+                        if (s < 5400) return Math.round(s / 60) + "m";
+                        return Math.round(s / 3600) + "h";
+                    }
+                    property var curWin: (cjBatRoot.sumData && cjBatRoot.sumData.windows) ? cjBatRoot.sumData.windows[cjBatRoot.win] : null
+                    property var listModel: cjBatRoot.curWin ? ((cjBatRoot.byApp ? cjBatRoot.curWin.app : cjBatRoot.curWin.proc) || []) : []
+                    Component.onCompleted: cjBatRoot.cjLoad()
+
+                    Rectangle { anchors.fill: parent; color: "#ffffff" }
+
+                    ArkControls.NavigationBar {
+                        id: cjBatNav
+                        type: ArkTokens.NavigationBar.secondary
+                        width: parent.width
+                        ArkControls.NavigationBar.Button {
+                            text: cjBatRoot.cjLang() === "en" ? "Back" : "返回"
+                            textPosition: ArkControls.Button.TextPosition.Right
+                            iconSource: "qrc:/ark/icons/chevron_left"
+                            onClicked: root._selectedPage = 990001
+                        }
+                    }
+
+                    // 头部行：衬线品牌标题（左）+ 低调刷新图标（右，无边框字形）
+                    Item {
+                        id: cjBatHeader
+                        height: 72
+                        anchors { top: cjBatNav.bottom; left: parent.left; right: parent.right; topMargin: ArkControls.Values.platform.spacing.large; leftMargin: ArkControls.Values.settings.horizontalMargin.secondLevel; rightMargin: ArkControls.Values.settings.horizontalMargin.secondLevel }
+                        Text {
+                            id: cjBatTitle
+                            anchors { left: parent.left; verticalCenter: parent.verticalCenter }
+                            renderType: Text.NativeRendering; antialiasing: false
+                            font.family: "reMarkable Serif Small"; font.pixelSize: 52; font.weight: Font.DemiBold
+                            color: "#000000"; text: cjBatRoot.i18n.page
+                        }
+                        Text {
+                            id: cjBatRefresh
+                            anchors { right: parent.right; verticalCenter: parent.verticalCenter }
+                            renderType: Text.NativeRendering; antialiasing: false
+                            font.family: "reMarkable Sans"; font.pixelSize: 46; color: "#000000"; text: "↻"
+                            MouseArea { anchors.fill: parent; anchors.margins: -18; onClicked: cjBatRoot.cjLoad() }
+                        }
+                    }
+
+                    // 标签：4 段等分铺满内容宽（自绘胶囊；参考墨香，原生 primary_inverted 未选态会飘浮）
+                    Row {
+                        id: cjBatTabs
+                        spacing: 10
+                        property real segW: (width - spacing * 3) / 4
+                        anchors { top: cjBatHeader.bottom; left: parent.left; right: parent.right; topMargin: ArkControls.Values.platform.spacing.large; leftMargin: ArkControls.Values.settings.horizontalMargin.secondLevel; rightMargin: ArkControls.Values.settings.horizontalMargin.secondLevel }
+                        Repeater {
+                            model: [ { k: "today", t: cjBatRoot.i18n.today }, { k: "7d", t: cjBatRoot.i18n.d7 }, { k: "30d", t: cjBatRoot.i18n.d30 }, { k: "all", t: cjBatRoot.i18n.all } ]
+                            delegate: Rectangle {
+                                width: cjBatTabs.segW; height: 68; radius: 8
+                                property bool on: cjBatRoot.win === modelData.k
+                                color: on ? "#000000" : "#ffffff"
+                                border.color: "#000000"; border.width: 2
+                                Text { anchors.centerIn: parent; renderType: Text.NativeRendering; antialiasing: false; font.family: "reMarkable Sans"; font.pixelSize: 28; color: parent.on ? "#ffffff" : "#000000"; text: modelData.t }
+                                MouseArea { anchors.fill: parent; onClicked: cjBatRoot.win = modelData.k }
+                            }
+                        }
+                    }
+
+                    // 概览行：归属应用复选框（左）+ 放电·采样·更新时间（右）
+                    Item {
+                        id: cjBatCtl
+                        height: 56
+                        anchors { top: cjBatTabs.bottom; left: parent.left; right: parent.right; topMargin: ArkControls.Values.platform.spacing.large; leftMargin: ArkControls.Values.settings.horizontalMargin.secondLevel; rightMargin: ArkControls.Values.settings.horizontalMargin.secondLevel }
+                        // 自绘复选框（参考墨香自绘；不用独立 ArkControls.Toggle，那要 Panel 宿主）
+                        Item {
+                            id: cjBatToggleBox
+                            width: cjBatChkRow.width
+                            height: parent.height
+                            anchors { left: parent.left; verticalCenter: parent.verticalCenter }
+                            Row {
+                                id: cjBatChkRow
+                                spacing: 12
+                                anchors.verticalCenter: parent.verticalCenter
+                                Rectangle {
+                                    width: 38; height: 38; radius: 6
+                                    anchors.verticalCenter: parent.verticalCenter
+                                    border.color: "#000000"; border.width: 2
+                                    color: cjBatRoot.byApp ? "#000000" : "#ffffff"
+                                    Text { anchors.centerIn: parent; visible: cjBatRoot.byApp; renderType: Text.NativeRendering; antialiasing: false; font.family: "reMarkable Sans"; font.pixelSize: 26; color: "#ffffff"; text: "✓" }
+                                }
+                                Text { anchors.verticalCenter: parent.verticalCenter; renderType: Text.NativeRendering; antialiasing: false; font.family: "reMarkable Sans"; font.pixelSize: 30; color: "#000000"; text: cjBatRoot.i18n.byApp }
+                            }
+                            MouseArea { anchors.fill: parent; onClicked: cjBatRoot.byApp = !cjBatRoot.byApp }
+                        }
+                        Text {
+                            anchors { right: parent.right; verticalCenter: parent.verticalCenter }
+                            renderType: Text.NativeRendering; antialiasing: false; font.family: "reMarkable Sans"; font.pixelSize: 27; color: "#000000"
+                            text: {
+                                if (!cjBatRoot.curWin) return "";
+                                var d = cjBatRoot.curWin.discharge;
+                                var ds = (d > 0) ? (cjBatRoot.i18n.disc + " " + d + "%") : cjBatRoot.i18n.charging;
+                                var s = ds + " · " + cjBatRoot.i18n.samp + " " + (cjBatRoot.curWin.samples || 0);
+                                if (cjBatRoot.sumData && cjBatRoot.sumData.generated)
+                                    s += " · " + Qt.formatDateTime(new Date(cjBatRoot.sumData.generated * 1000), "hh:mm");
+                                return s;
+                            }
+                        }
+                    }
+
+                    Rectangle {
+                        id: cjBatRule
+                        height: 1; color: "#d4d4d4"
+                        anchors { top: cjBatCtl.bottom; left: parent.left; right: parent.right; topMargin: 20; leftMargin: ArkControls.Values.settings.horizontalMargin.secondLevel; rightMargin: ArkControls.Values.settings.horizontalMargin.secondLevel }
+                    }
+
+                    // 空态
+                    Text {
+                        visible: cjBatRoot.listModel.length === 0
+                        anchors { top: cjBatRule.bottom; left: parent.left; right: parent.right; topMargin: 40; leftMargin: ArkControls.Values.settings.horizontalMargin.secondLevel; rightMargin: ArkControls.Values.settings.horizontalMargin.secondLevel }
+                        renderType: Text.NativeRendering; antialiasing: false; font.family: "reMarkable Sans"; font.pixelSize: 28; color: "#000000"; wrapMode: Text.WordWrap
+                        text: cjBatRoot.i18n.empty
+                    }
+
+                    // 条形排行（序号 + 名称 + 细条 + 数值；去框化，轻发丝线）
+                    Flickable {
+                        visible: cjBatRoot.listModel.length > 0
+                        anchors { top: cjBatRule.bottom; left: parent.left; right: parent.right; bottom: parent.bottom; topMargin: ArkControls.Values.platform.spacing.large; leftMargin: ArkControls.Values.settings.horizontalMargin.secondLevel; rightMargin: ArkControls.Values.settings.horizontalMargin.secondLevel; bottomMargin: 24 }
+                        contentHeight: cjBatCol.height
+                        clip: true
+                        Column {
+                            id: cjBatCol
+                            width: parent.width
+                            Repeater {
+                                model: cjBatRoot.listModel
+                                delegate: Item {
+                                    width: cjBatCol.width
+                                    height: 84
+                                    // 序号
+                                    Text {
+                                        id: cjRowRank
+                                        anchors { left: parent.left; top: parent.top; topMargin: 12 }
+                                        width: 46
+                                        renderType: Text.NativeRendering; antialiasing: false; font.family: "reMarkable Sans"; font.pixelSize: 28; color: "#000000"
+                                        text: (index + 1)
+                                    }
+                                    // 名称
+                                    Text {
+                                        id: cjRowName
+                                        anchors { left: cjRowRank.right; leftMargin: 6; top: parent.top; topMargin: 10; right: cjRowVal.left; rightMargin: 16 }
+                                        elide: Text.ElideRight
+                                        renderType: Text.NativeRendering; antialiasing: false; font.family: "reMarkable Sans"; font.pixelSize: 32; color: "#000000"
+                                        text: modelData.name
+                                    }
+                                    // 数值（%·时长）
+                                    Text {
+                                        id: cjRowVal
+                                        anchors { right: parent.right; top: parent.top; topMargin: 12 }
+                                        renderType: Text.NativeRendering; antialiasing: false; font.family: "reMarkable Sans"; font.pixelSize: 27; color: "#000000"
+                                        text: modelData.pct + "% · " + cjBatRoot.fmtMs(modelData.ms)
+                                    }
+                                    // 细条（与名称左对齐，缩进过序号）
+                                    Rectangle {
+                                        id: cjRowTrack
+                                        anchors { left: cjRowName.left; right: parent.right; top: cjRowName.bottom; topMargin: 12 }
+                                        height: 10; radius: 5; color: "#e8e8e8"
+                                    }
+                                    Rectangle {
+                                        anchors { left: cjRowTrack.left; top: cjRowTrack.top }
+                                        height: 10; radius: 5; color: "#000000"
+                                        width: cjRowTrack.width * Math.max(0, Math.min(100, modelData.pct)) / 100
+                                    }
+                                    // 轻发丝分隔线（缩进过序号）
+                                    Rectangle {
+                                        anchors { left: cjRowName.left; right: parent.right; bottom: parent.bottom }
+                                        height: 1; color: "#ececec"
+                                    }
                                 }
                             }
                         }
