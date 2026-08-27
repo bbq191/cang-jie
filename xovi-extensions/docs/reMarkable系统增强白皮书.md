@@ -13,7 +13,7 @@
 
 ## 01｜设置页「系统增强」门户（2026-08-17 接入，hub 中枢 + 四分类真机验证）
 
-**入口不走阅读器 FormatMenu，而是设置 App**：`settings-reading-enhance.qmd` 往 `Settings.qml` 左侧菜单**最下方**插「系统增强」`ArkControls.SidebarItem`（设置页用 `onTriggered`）+ 一个 **hub 中枢页**（`objectName:"cjEnhanceHub"`，哨兵 990001）。中枢页不直接堆开关，而是列**四个并列子分类**行（大标题 + 说明 + `›` + 发丝线，`MouseArea` 点击切 `_selectedPage`）；每个子分类是一个**独立 `Component`**（各自 `INSERT ... LOCATE AFTER Component#help`），靠 `_selectedPage` 哨兵切换 `payloadLoader.sourceComponent`（`REBUILD`+`LOCATE AFTER STREAM /{/` 注入早返回）。菜单是 `SettingsModel` 驱动的 `Repeater`（项不在 QML 里），故往 `ColumnLayout#settingsColumn` 插静态项。四分类各带独立哨兵：**990001 中枢、990002 快捷输入、990003 翻页与刷新、990004 书籍与字体、990005 笔记增强**；子页顶部「‹ 系统增强」返回即置回 990001。
+**入口不走阅读器 FormatMenu，而是设置 App**：`settings-reading-enhance.qmd` 往 `Settings.qml` 左侧菜单**最下方**插「系统增强」`ArkControls.SidebarItem`（设置页用 `onTriggered`）+ 一个 **hub 中枢页**（`objectName:"cjEnhanceHub"`，哨兵 990001）。中枢页不直接堆开关，而是**原生 `ArkControls.Cell` 容器框 + 4 个 `CellItem` 导航行**（CellItem 自带 → 箭头 + 发丝分隔线，点击切 `_selectedPage`）；每个子分类是一个**独立 `Component`**（各自 `INSERT ... LOCATE AFTER Component#help`），靠 `_selectedPage` 哨兵切换 `payloadLoader.sourceComponent`（`REBUILD`+`LOCATE AFTER STREAM /{/` 注入早返回）。菜单是 `SettingsModel` 驱动的 `Repeater`（项不在 QML 里），故往 `ColumnLayout#settingsColumn` 插静态项。四分类各带独立哨兵：**990001 中枢、990002 快捷输入、990003 翻页与刷新、990004 书籍与字体、990005 笔记增强**；**四子页均 `property bool fullscreen:true` 全宽无侧栏**（宿主 payloadLoader 据此左对齐 parent.left），顶部原生 `ArkControls.NavigationBar` 返回栏（chevron_left + "返回"）置回 990001；hub 一级页保留侧栏。UI 全面对齐原生详见 §01b。
 
 **四个子分类 + 开关清单**（除快捷输入用独立文件外，其余写 `reading-qol.json`）：
 
@@ -26,6 +26,23 @@
 - **大坑：同步 PUT 到 `file://` 只截断不写体 → 写必须异步**（open 不带 `false`）；读同步 GET 正常。
 - **传播靠 `reading-qol-config.qmd` 在 `DeviceSceneView#root` 的 1.5s 轮询 Timer**（`onCompleted` 只触发一次、返回阅读器不重建，"改了不生效"就是缺这个轮询）；字体菜单例外（构建那刻读一次、退出重开生效）。
 - **★全量防覆盖铁律**：每个写 `reading-qol.json` 的子页都必须**读写全量键**——翻页页/书籍页除自身开关外，也要读进并写回笔记增强页的全部键 `starTodoEnabled/starTodoColor/starTodoGap` + `cardHighlights/cardAggregates/vocabEnabled`（默认**关/开/关**，取缺省：`cardHighlights` 用 `=== true`〔默认关〕、`cardAggregates` 用 `!== false`〔默认开〕、`vocabEnabled` 用 `=== true`〔默认关〕）+ `hlSnapCjk`，否则在翻页/书籍页保存会抹掉这些值（`starTodoEnabled` → daemon 读成 false 功能被意外关；子开关/单词笔记同理）。三个二级页均已带上（笔记页渲染、另两页透传）。
+
+## 01b｜原生 ArkControls UI 全面对齐（2026-08-27 真机端到端，用户逐屏验收「全对」）
+
+设置页从"手搓 Text + 描边框"重构到**与原生 xochitl 无法区分**。**铁律：对齐靠核查原生 blob 源码，不靠照片**（用户明令）。原生 QML 解包在 `scratchpad/qml_extract/blobs/`。权威模板 blob：通用设置 `qml_00db32a7`（一级）、存储 `qml_00db440c`（二级 fullscreen）、Values 定义 `qml_0113bb9c`（注释钉死 **firstLevel=有侧栏页 / secondLevel=全屏页**）、宿主 `qml_00db3818`（payloadLoader `left: item?.fullscreen ? parent.left : sidebar.right`）。
+
+**组件替换（照抄用法，字体/布局全自动原生，别再手搓）**：
+- 页标题 = `ArkControls.Title { type: ArkControls.Title.Large }`（弃手搓 pixelSize52 bold）
+- 开关行 = `ArkControls.Panel { label; description; iconSource; action: ArkControls.Toggle{checked;onClicked} }`（左图标+标题+**灰**副说明+右**药丸 Toggle**；弃 `SettingsCheckBoxItem` 方块+"开/关"字）
+- hub 导航行 = `ArkControls.Cell { ArkControls.CellItem{text;onClicked} }`（CellItem 有 onClicked 就自带 → 箭头/分隔线）
+- 二级页返回 = `ArkControls.NavigationBar { ArkControls.NavigationBar.Button{ text:"返回"（qsTr("Back")）; iconSource:"qrc:/ark/icons/chevron_left"; textPosition:...Right; onClicked } }`（弃内容区"‹系统增强"文字返回）
+- 一级页标题上方 = `ArkControls.PlaceholderBar {}`（顶部留白，缺它标题贴顶太高）
+
+**布局纪律**：hub 一级页（有侧栏）左右边距 `Values.margin.horizontal.large`(firstLevel)；四子页 `fullscreen:true`（全宽盖侧栏）+ `Values.settings.horizontalMargin.secondLevel`；标题→内容间距 `Values.platform.spacing.x2large`。
+
+**开关左图标（语义配，全表 `grep '"qrc:/ark/icons/'` blobs）**：点击翻页=go_to_page、快速黑白=lens、翻页清残影=erase_all、按章节清残影=restore、每翻N页=page_overview、字体增强=text_t_heading、自动优化=ebook、★待办=star、划线摘录=note、跨书汇总=layers、单词本=tag、荧光笔吸附=text_edit。
+
+**踩坑**：原生 `ArkTokens.Button.primary_inverted` 未选态真机渲染成无边框纯文字（飘浮、和选中实心块不平衡）→ 多选 tab/scope 场景**自绘等宽胶囊**更平衡，别用原生 Button 做分段。**验证**：ark.* 是编译模块，`qmldiff apply-diffs`/qmllint 都担保不了 fullscreen/新组件/Values token 是否真渲染 → **只能真机**（部署盯 NRestarts + 点进面板看）。完整规范（含墨香面板去框化、e-ink 灰字取舍）。
 
 ## 01a｜快捷输入 snippets（文本替换，真机通）
 
