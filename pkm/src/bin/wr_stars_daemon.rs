@@ -76,7 +76,7 @@ fn read_cfg() -> Cfg {
     let b = |k: &str, dflt: bool| v.get(k).and_then(|x| x.as_bool()).unwrap_or(dflt);
     Cfg {
         star_todo: b("starTodoEnabled", false),
-        card_highlights: b("cardHighlights", true), // 子开关默认开：开星代办即得完整卡片（含高亮）
+        card_highlights: b("cardHighlights", false), // 子开关默认关：星代办单开=空白模板，需再开「划线摘录/荧光笔」才摄取（规则a）
         card_aggregates: b("cardAggregates", true),
         vocab: b("vocabEnabled", false), // 独立能力显式 opt-in（且需词典文件，缺则本就降级）
         color: v.get("starTodoColor").and_then(|x| x.as_str()).unwrap_or("RED").to_uppercase(),
@@ -293,7 +293,14 @@ fn main() {
     settle(&read_cfg(), observe, None);
 
     // 稳态：只扫本轮变更的书（fswatch 已把变更 doc uuid 集交到手上），不再无差别整库重扫。
-    fswatch::watch_debounced(&xochitl_dir(), Duration::from_secs(8), false, |changed| {
-        settle(&read_cfg(), observe, Some(changed));
+    // 例外：设置页改开关只写 config、不动文档树 —— 附加监听 config（CONFIG_SIGNAL），见到即全库重扫，
+    // 否则拨开关后（尤其对存量已画星的书）daemon 永远不重扫、看着"开关没用"。
+    fswatch::watch_debounced(&xochitl_dir(), Some(&cfg_path()), Duration::from_secs(8), false, |changed| {
+        if changed.contains(fswatch::CONFIG_SIGNAL) {
+            // 开关变更 → 现读新配置、全库重扫（dirty=None），存量书一并回扫。
+            settle(&read_cfg(), observe, None);
+        } else {
+            settle(&read_cfg(), observe, Some(changed));
+        }
     });
 }

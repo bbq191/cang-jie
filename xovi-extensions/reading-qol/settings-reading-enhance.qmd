@@ -776,7 +776,7 @@ AFFECT /qml/device/view/settings/Settings.qml
                                 if (c.starTodoColor) cjFlipRoot.cfgStarColor = c.starTodoColor;
                                 var sg = parseInt(c.starTodoGap); if (sg > 0) cjFlipRoot.cfgStarGap = sg;
                                 cjFlipRoot.cfgHlSnap = (c.hlSnapCjk !== false);
-                                cjFlipRoot.cfgCardHl = (c.cardHighlights !== false);
+                                cjFlipRoot.cfgCardHl = (c.cardHighlights === true);
                                 cjFlipRoot.cfgCardAgg = (c.cardAggregates !== false);
                                 cjFlipRoot.cfgVocab = !!c.vocabEnabled;
                             }
@@ -1059,7 +1059,7 @@ AFFECT /qml/device/view/settings/Settings.qml
                                 if (c.starTodoColor) cjBookRoot.cfgStarColor = c.starTodoColor;
                                 var sg = parseInt(c.starTodoGap); if (sg > 0) cjBookRoot.cfgStarGap = sg;
                                 cjBookRoot.cfgHlSnap = (c.hlSnapCjk !== false);
-                                cjBookRoot.cfgCardHl = (c.cardHighlights !== false);
+                                cjBookRoot.cfgCardHl = (c.cardHighlights === true);
                                 cjBookRoot.cfgCardAgg = (c.cardAggregates !== false);
                                 cjBookRoot.cfgVocab = !!c.vocabEnabled;
                             }
@@ -1251,7 +1251,7 @@ AFFECT /qml/device/view/settings/Settings.qml
                                 cjNoteRoot.cfgStarTodo = !!c.starTodoEnabled;
                                 if (c.starTodoColor) cjNoteRoot.cfgStarColor = c.starTodoColor;
                                 var sg = parseInt(c.starTodoGap); if (sg > 0) cjNoteRoot.cfgStarGap = sg;
-                                cjNoteRoot.cfgCardHl = (c.cardHighlights !== false);
+                                cjNoteRoot.cfgCardHl = (c.cardHighlights === true);
                                 cjNoteRoot.cfgCardAgg = (c.cardAggregates !== false);
                                 cjNoteRoot.cfgVocab = !!c.vocabEnabled;
                                 cjNoteRoot.cfgTap = !!c.tapPageTurn;

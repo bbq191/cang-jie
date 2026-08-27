@@ -14,6 +14,11 @@ use std::time::Duration;
 
 use inotify::{EventMask, Inotify, WatchDescriptor, WatchMask};
 
+/// 哨兵 uuid：config 文件（如 reading-qol.json）发生写入时经 channel 送出。
+/// 调用方在 dirty 集里见到它即知"开关被改过"，应做**全库重扫**而非增量。
+/// 用 NUL 前缀确保永不与真实 doc uuid（十六进制，无 NUL）冲突。
+pub const CONFIG_SIGNAL: &str = "\0__config__";
+
 /// xochitl 存储里我们关心的事件：新建/写完关闭/移入移出/删除。
 fn watch_mask() -> WatchMask {
     // ISDIR 不是可设的 watch 掩码，只在返回事件的 mask 里体现，故这里不设。
@@ -55,8 +60,17 @@ fn doc_uuid(root: &Path, full: &Path) -> Option<String> {
 ///
 /// 空闲阻塞、settle 窗口定时——低功耗。传 log_only=true 时只打日志不回调（真机首轮观察 xochitl
 /// 落 .rm 的真实事件序列用，遵"先只读打日志确认真实布局再接线"纪律）。
-pub fn watch_debounced<F>(xochitl_dir: &str, debounce: Duration, log_only: bool, mut on_settle: F)
-where
+///
+/// `config_file`：可选。给一个配置文件绝对路径（如 reading-qol.json），额外 inotify 监听其**所在目录**，
+/// 该文件被写入时向回调送 [`CONFIG_SIGNAL`]（与 doc uuid 一样进 dirty 集，同样低功耗、零轮询）。
+/// 用途：设置页改开关只写 config、不动文档树，靠它唤醒 daemon 并触发全库重扫。None=不监听配置。
+pub fn watch_debounced<F>(
+    xochitl_dir: &str,
+    config_file: Option<&str>,
+    debounce: Duration,
+    log_only: bool,
+    mut on_settle: F,
+) where
     F: FnMut(&HashSet<String>),
 {
     let mut inotify = match Inotify::init() {
@@ -69,6 +83,24 @@ where
     let root = PathBuf::from(xochitl_dir);
     let mut wd_map: HashMap<WatchDescriptor, PathBuf> = HashMap::new();
     add_recursive(&mut inotify.watches(), &root, &mut wd_map);
+
+    // 可选：监听 config 文件所在目录（非递归即可，config 直接躺在目录里）。记住其 wd + 文件名，
+    // 读线程据此把该文件的写事件翻译成 CONFIG_SIGNAL（其余同目录文件的写入忽略）。
+    let mut config_wds: HashSet<WatchDescriptor> = HashSet::new();
+    let mut config_basename: Option<String> = None;
+    if let Some(cf) = config_file {
+        let cf_path = Path::new(cf);
+        if let (Some(parent), Some(base)) = (cf_path.parent(), cf_path.file_name().and_then(|b| b.to_str())) {
+            match inotify.watches().add(parent, watch_mask()) {
+                Ok(wd) => {
+                    config_wds.insert(wd);
+                    config_basename = Some(base.to_string());
+                    println!("[fswatch] 附加监听配置 {}（写入即触发全库重扫）", cf);
+                }
+                Err(e) => eprintln!("[fswatch] 配置目录 {} watch 失败: {e}（开关改动需重启 daemon 生效）", parent.display()),
+            }
+        }
+    }
     println!(
         "[fswatch] 监听 {} （{} 个 watch，debounce {:?}{}）",
         xochitl_dir,
@@ -77,7 +109,7 @@ where
         if log_only { "，log-only 观察模式" } else { "" }
     );
 
-    // 读线程：阻塞读事件 → 解析 doc uuid 送 channel；见新目录补 watch。
+    // 读线程：阻塞读事件 → 解析 doc uuid（或 config→CONFIG_SIGNAL）送 channel；见新目录补 watch。
     let (tx, rx) = mpsc::channel::<String>();
     let root_r = root.clone();
     std::thread::spawn(move || {
@@ -100,6 +132,13 @@ where
                 ));
             }
             for (wd, mask, name) in collected {
+                // config 目录事件：只认目标文件名的写入 → CONFIG_SIGNAL（不参与 doc uuid 解析）。
+                if config_wds.contains(&wd) {
+                    if name.as_deref() == config_basename.as_deref() {
+                        let _ = tx.send(CONFIG_SIGNAL.to_string());
+                    }
+                    continue;
+                }
                 let dir = match wd_map.get(&wd) {
                     Some(d) => d.clone(),
                     None => continue,
