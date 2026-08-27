@@ -1,12 +1,12 @@
 # cang-jie
 
-把 [reMarkable Paper Pro Move](https://remarkable.com/) 的官方阅读/笔记程序 **xochitl** 从"能用"改造成"顺手"的个人项目：起于**中文输入法 + 界面汉化**，现已长成一套围绕 xochitl 的**设备增强套件**（中文化 · 阅读 · 系统增强 · PKM · 截图）。全程**不改 xochitl 本体**——各项能力以合规 [xovi](https://github.com/asivery/xovi) 扩展 / qmldiff / 设备端自足二进制的形式，放 `xovi/extensions.d/` 等处运行时动态改行为，磁盘上的原始二进制原封不动。
+把 [reMarkable Paper Pro Move](https://remarkable.com/) 的官方阅读/笔记程序 **xochitl** 从"能用"改造成"顺手"的个人项目：起于**中文输入法 + 界面汉化**，现已长成一套围绕 xochitl 的**设备增强套件**（中文化 · 阅读 · 系统增强 · PKM）。全程**不改 xochitl 本体**——各项能力以合规 [xovi](https://github.com/asivery/xovi) 扩展 / qmldiff / 设备端自足二进制的形式，放 `xovi/extensions.d/` 等处运行时动态改行为，磁盘上的原始二进制原封不动。
 
 > 本项目是个人设备自用、不对外分发。涉及许可证的数据（rime-ice/iorest 词典、微信读书正文等）不编译进 `.so`，只做独立文件运行时只读 / 仅本机渲染，产物不进入任何再分发渠道。
 
-## 六大分块
+## 五大分块
 
-项目按功能/产品线组织成 6 块。目录名基本与分块对齐（2026-08-23 已把历史名 `weread-client/` 拆成 `reading/` + `pkm/`）；仅剩一处刻意的跨块共享，见下方标注：
+项目按功能/产品线组织成 5 块。目录名基本与分块对齐（2026-08-23 已把历史名 `weread-client/` 拆成 `reading/` + `pkm/`）；仅剩一处刻意的跨块共享，见下方标注：
 
 | # | 块 | 内容 | 落点 | 状态 |
 |---|---|---|---|---|
@@ -15,7 +15,6 @@
 | 3 | **阅读**（微信读书 + EPUB 优化） | 「墨香」设备自足微信读书（扫码/下书/取云端进度/续期；双向回传已随 PKM 回归砍除）+ 通用 EPUB 优化器 | `reading/` | 真机端到端验证 |
 | 4 | **系统增强**（阅读/显示/笔记 UX） | 点击翻页 · 快速黑白 · 清残影 · 键盘 Mono · 阅读字体 · 快捷输入(snippets) · 荧光笔汉字精确吸附 · **划词查字典→生词本**；集中在设置页「系统增强」中枢面板 | `xovi-extensions/` + `chinese-ime/langhook/`（笔记增强）+ `pkm/`（查字词，跨块骑 daemon） | 真机端到端验证通过（查字词/5开关/高亮增量合并/自动归档均真机验证） |
 | 5 | **PKM / 知识管理** | ★全局待办语义引擎（把设备变成 Zettelkasten 工作台的首个能力）：Python 原型标定 + Rust 生产 | `pkm-semantic/`（原型）+ `pkm/`（Rust 生产 crate，依赖共享底座 `device-core/`） | 原型标定 + 真机端到端 |
-| 6 | **额外应用** | 截图/录屏工具 | `screenshot-tool/` | 规划中（独立进程 DRM 直读已判死，须 hook xochitl） |
 
 > **两处刻意的跨块共享**：① 块 4 的"笔记增强"（荧光笔吸附）逻辑是 `chinese-ime/langhook` 里的 C hook、开关 UI 在 `xovi-extensions/reading-qol`——一颗 .so 同时服务块 2 和块 4，不拆二进制；② 块 4 的"划词查字典→生词本"代码骑在 `pkm/` 的 daemon 上（复用荧光笔读回+笔记本注入管线），概念属块 4 系统增强、实现不单拆二进制。两者都是"能力归块 4、代码在别块"。
 >
@@ -30,7 +29,7 @@
 - **[reMarkable 阅读白皮书](reading/docs/reMarkable阅读白皮书.md)**（块3）—— 微信读书集成「墨香」+ 通用 EPUB 优化 + 墨香面板 UI/UX 规范。
 - **[reMarkable 系统增强白皮书](xovi-extensions/docs/reMarkable系统增强白皮书.md)**（块4）—— 阅读/显示/笔记 UX（点击翻页/快速黑白/清残影/字体/键盘 Mono/快捷输入 snippets/荧光笔吸附/**划词查字典→生词本** §08）+ 设置页「系统增强」中枢面板 + 离线 qmldiff 验证管线。
 - **[reMarkable PKM 白皮书](pkm/docs/reMarkablePKM白皮书.md)**（块5）—— PKM 知识化方法论 + ★全局待办语义引擎（检测/注入/卡片/去重）。
-- **[功能路线图白皮书](docs/reMarkable功能路线图白皮书.md)**（跨块）—— "下一步做什么"优先级共识 + 6 分块地图 + 已否决方向。深设计已下沉到上面各块白皮书，本文只留优先级与状态。
+- **[功能路线图白皮书](docs/reMarkable功能路线图白皮书.md)**（跨块）—— "下一步做什么"优先级共识 + 5 分块地图 + 已否决方向。深设计已下沉到上面各块白皮书，本文只留优先级与状态。
 - **[设备端 Rust 架构](docs/reMarkable设备端Rust架构.md)**（跨块）—— 三个设备端 Rust crate（device-core / weread-device / pkm-device）的结构、依赖、模块职责，及**解耦方法论（如何解耦）+ 模块演变**。
 
 ## 目录结构
@@ -48,8 +47,7 @@
 | `device-core/` | 3+5 | **共享底座 crate**：`epubindex`/`inject`/`notebook_rm`/`fswatch`——块3阅读与块5 PKM 都用的低层设备能力；抽出后 pkm 生产构建不再全量编译 reading。见《[设备端 Rust 架构](docs/reMarkable设备端Rust架构.md)》 |
 | `pkm/` | 5 | PKM ★待办**生产 Rust crate**：`stardetect`/`cardsync`/`cardnote`/`cardindex`（MOC 死链体检）+ `notebook_sync`/`starscan`/`vocabscan` + `wr-stars-daemon`；卡片按书原生 Tag 选 4 套模板；依赖共享底座 `device-core`。见 [pkm/README.md](pkm/README.md) |
 | `pkm-semantic/` | 5 | PKM ★待办检测算法的 **Python 原型 + 阈值标定**（`pkm/` 是其逐结果对拍的 Rust 生产移植）。见 [pkm-semantic/README.md](pkm-semantic/README.md) |
-| `screenshot-tool/` | 6 | 截图/录屏可行性实验（`drm-probe/`），规划中 |
-| `docs/` | — | **跨块白皮书**：功能路线图（含 6 分块地图）+ 网络解决方案（中文化/拼音两本就近在 `chinese-ime/docs/`） |
+| `docs/` | — | **跨块白皮书**：功能路线图（含 5 分块地图）+ 网络解决方案（中文化/拼音两本就近在 `chinese-ime/docs/`） |
 | `assets/` · `rm-export/` | — | 杂项媒体（logo/截图/演示，不参与构建）· `.rm` 导出脚本 |
 | `pyproject.toml` · `uv.lock` | — | uv 统一 Python 环境（依赖按线分组），本地开发用 |
 | `工程纪律` | — | 工程纪律（真机验证再宣称完成、一步一确认、改设备前备份等） |

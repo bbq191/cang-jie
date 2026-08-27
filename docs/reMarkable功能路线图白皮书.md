@@ -66,9 +66,9 @@
 
 **结论：三家中文化竞品都没有碰"中文场景的数据流转"（阅读批注导出、手写中文 OCR、笔记生态对接、微信读书集成）——各方都空着的地带只有这一块。** 本文 P0–P2 全部落在这块，差异化定位第三次被印证。rmkit-cn / rmtool 的**阅读体验增强**（点击翻页、单色快刷）与本项目不冲突，作为可借鉴的 QoL 增量吸收（见 4.1 与 09 节）。
 
-### 3.1 项目分块地图（6 块）
+### 3.1 项目分块地图（5 块）
 
-项目从"中文输入法 + 汉化"长成一套设备增强套件后，按功能/产品线组织成 6 块。这是全项目的组织骨架，本文的 P0–P4 路线都落在其中某一块内。目录名已与分块对齐（2026-08-23 把历史名 `weread-client/` 拆成 `reading/`+`pkm/`，2026-08-25 再抽共享底座 `device-core/`）；块3阅读与块5 PKM 都依赖 `device-core`，方向单向无环，见下方 ⚠️。
+项目从"中文输入法 + 汉化"长成一套设备增强套件后，按功能/产品线组织成 5 块。这是全项目的组织骨架，本文的 P0–P4 路线都落在其中某一块内。目录名已与分块对齐（2026-08-23 把历史名 `weread-client/` 拆成 `reading/`+`pkm/`，2026-08-25 再抽共享底座 `device-core/`）；块3阅读与块5 PKM 都依赖 `device-core`，方向单向无环，见下方 ⚠️。
 
 | # | 块 | 落点 | 本文对应 | 状态 |
 |---|---|---|---|---|
@@ -77,7 +77,6 @@
 | 3 | **阅读**（微信读书 + EPUB 优化） | `reading/` 主体 | **P0 墨香** + EPUB 优化器（见[阅读白皮书](../reading/docs/reMarkable阅读白皮书.md)） | 端到端真机验证 |
 | 4 | **系统增强**（阅读/显示/笔记 UX） | `xovi-extensions/` + `chinese-ime/langhook`（笔记增强） | **P4**（见[系统增强白皮书](../xovi-extensions/docs/reMarkable系统增强白皮书.md)：点击翻页/快刷/清残影/字体/键盘Mono + 荧光笔吸附） | 真机验证 |
 | 5 | **PKM / 知识管理** | `pkm-semantic/`（原型）+ `pkm/`（Rust 生产 crate，依赖共享底座 `device-core/`） | **★全局待办**（见 [PKM 白皮书](../pkm/docs/reMarkablePKM白皮书.md)）；P1/P2 数据流转是其上游 | 首个能力真机端到端 |
-| 6 | **额外应用** | `screenshot-tool/` | 未入本文优先级表（`screenshot-feasibility` 记忆：独立 DRM 直读判死，须 hook xochitl） | 规划中 |
 
 > ⚠️ **跨块共享 + 依赖结构**（详见《[设备端 Rust 架构](reMarkable设备端Rust架构.md)》）：① 块 4 的荧光笔吸附逻辑在 `langhook`（块 2 的 .so）、开关 UI 在 `reading-qol`（块 4），一颗 .so 服务两块，不拆二进制；块 4 的划词查字典代码骑 `pkm/` daemon（跨块，见系统增强白皮书 §08）。② 低层设备能力（`epubindex`/`fswatch`/`inject`/`notebook_rm`）抽成**共享底座 `device-core/`**，块3阅读（`weread-device`）与块5 PKM（`pkm-device`）都依赖它；`pkm/` **生产只依赖 `device-core`**（weread-device 降 dev-dep）→ 生产 daemon 不再编译整条 weread 管线。`reading/` 不反向依赖 `pkm/`，方向单向无环。
 
