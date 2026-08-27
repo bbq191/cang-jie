@@ -144,136 +144,36 @@ AFFECT /qml/device/view/settings/Settings.qml
 
                     Rectangle { anchors.fill: parent; color: "#ffffff" }
 
-                    Text {
+                    // 原生对齐（第一层=通用设置源码 qml_00db32a7）：PlaceholderBar 顶部留白 + Title + Cell，边距用 firstLevel(margin.horizontal.large)
+                    ArkControls.PlaceholderBar {
+                        id: cjHubPlaceholder
+                        anchors { top: parent.top; left: parent.left; right: parent.right }
+                    }
+                    ArkControls.Title {
                         id: cjPgTitle
                         text: cjHubRoot.i18n.page
-                        renderType: Text.NativeRendering; font.family: "reMarkable Sans"; antialiasing: false
+                        type: ArkControls.Title.Large
                         color: "#000000"
-                        font.pixelSize: 52
-                        font.bold: true
-                        anchors { top: parent.top; left: parent.left; topMargin: 64; leftMargin: 64 }
+                        anchors { top: cjHubPlaceholder.bottom; left: parent.left; leftMargin: ArkControls.Values.margin.horizontal.large }
                     }
-                    Text {
-                        id: cjPgSub
-                        text: cjHubRoot.i18n.sub
-                        renderType: Text.NativeRendering; font.family: "reMarkable Sans"; antialiasing: false
-                        color: "#000000"
-                        font.pixelSize: 28
-                        anchors { top: cjPgTitle.bottom; left: parent.left; topMargin: 10; leftMargin: 64 }
-                    }
-                    Rectangle {
-                        id: cjPgRule
-                        color: "#b0b0b0"
-                        height: 2
-                        anchors { top: cjPgSub.bottom; left: parent.left; right: parent.right; topMargin: 28; leftMargin: 64; rightMargin: 64 }
-                    }
-
-                    Column {
-                        id: cjHubCol
-                        anchors { top: cjPgRule.bottom; left: parent.left; right: parent.right; topMargin: 24; leftMargin: 64; rightMargin: 64 }
-
-                        Item {
-                            width: cjHubCol.width
-                            height: 140
-                            Text {
-                                id: cjHubFlipT
-                                anchors { left: parent.left; top: parent.top; topMargin: 26 }
-                                text: cjHubRoot.i18n.flipT
-                                renderType: Text.NativeRendering; font.family: "reMarkable Sans"; antialiasing: false
-                                color: "#000000"; font.pixelSize: 34; font.bold: true
-                            }
-                            Text {
-                                anchors { left: parent.left; right: parent.right; top: cjHubFlipT.bottom; rightMargin: 100; topMargin: 8 }
-                                text: cjHubRoot.i18n.flipD
-                                renderType: Text.NativeRendering; font.family: "reMarkable Sans"; antialiasing: false
-                                color: "#000000"; font.pixelSize: 24; wrapMode: Text.WordWrap
-                            }
-                            Text {
-                                anchors { right: parent.right; verticalCenter: parent.verticalCenter; rightMargin: 20 }
-                                text: "›"
-                                renderType: Text.NativeRendering; font.family: "reMarkable Sans"; antialiasing: false
-                                color: "#000000"; font.pixelSize: 52
-                            }
-                            Rectangle { anchors { left: parent.left; right: parent.right; bottom: parent.bottom } height: 1; color: "#d0d0d0" }
-                            MouseArea { anchors.fill: parent; onClicked: root._selectedPage = 990003 }
+                    ArkControls.Cell {
+                        id: cjHubCell
+                        anchors { top: cjPgTitle.bottom; left: parent.left; right: parent.right; topMargin: ArkControls.Values.platform.spacing.x2large; leftMargin: ArkControls.Values.margin.horizontal.large; rightMargin: ArkControls.Values.margin.horizontal.large }
+                        ArkControls.CellItem {
+                            text: cjHubRoot.i18n.flipT
+                            onClicked: root._selectedPage = 990003
                         }
-
-                        Item {
-                            width: cjHubCol.width
-                            height: 140
-                            Text {
-                                id: cjHubBookT
-                                anchors { left: parent.left; top: parent.top; topMargin: 26 }
-                                text: cjHubRoot.i18n.bookT
-                                renderType: Text.NativeRendering; font.family: "reMarkable Sans"; antialiasing: false
-                                color: "#000000"; font.pixelSize: 34; font.bold: true
-                            }
-                            Text {
-                                anchors { left: parent.left; right: parent.right; top: cjHubBookT.bottom; rightMargin: 100; topMargin: 8 }
-                                text: cjHubRoot.i18n.bookD
-                                renderType: Text.NativeRendering; font.family: "reMarkable Sans"; antialiasing: false
-                                color: "#000000"; font.pixelSize: 24; wrapMode: Text.WordWrap
-                            }
-                            Text {
-                                anchors { right: parent.right; verticalCenter: parent.verticalCenter; rightMargin: 20 }
-                                text: "›"
-                                renderType: Text.NativeRendering; font.family: "reMarkable Sans"; antialiasing: false
-                                color: "#000000"; font.pixelSize: 52
-                            }
-                            Rectangle { anchors { left: parent.left; right: parent.right; bottom: parent.bottom } height: 1; color: "#d0d0d0" }
-                            MouseArea { anchors.fill: parent; onClicked: root._selectedPage = 990004 }
+                        ArkControls.CellItem {
+                            text: cjHubRoot.i18n.bookT
+                            onClicked: root._selectedPage = 990004
                         }
-
-                        Item {
-                            width: cjHubCol.width
-                            height: 140
-                            Text {
-                                id: cjHubSnipT
-                                anchors { left: parent.left; top: parent.top; topMargin: 26 }
-                                text: cjHubRoot.i18n.snipT
-                                renderType: Text.NativeRendering; font.family: "reMarkable Sans"; antialiasing: false
-                                color: "#000000"; font.pixelSize: 34; font.bold: true
-                            }
-                            Text {
-                                anchors { left: parent.left; right: parent.right; top: cjHubSnipT.bottom; rightMargin: 100; topMargin: 8 }
-                                text: cjHubRoot.i18n.snipD
-                                renderType: Text.NativeRendering; font.family: "reMarkable Sans"; antialiasing: false
-                                color: "#000000"; font.pixelSize: 24; wrapMode: Text.WordWrap
-                            }
-                            Text {
-                                anchors { right: parent.right; verticalCenter: parent.verticalCenter; rightMargin: 20 }
-                                text: "›"
-                                renderType: Text.NativeRendering; font.family: "reMarkable Sans"; antialiasing: false
-                                color: "#000000"; font.pixelSize: 52
-                            }
-                            Rectangle { anchors { left: parent.left; right: parent.right; bottom: parent.bottom } height: 1; color: "#d0d0d0" }
-                            MouseArea { anchors.fill: parent; onClicked: root._selectedPage = 990002 }
+                        ArkControls.CellItem {
+                            text: cjHubRoot.i18n.snipT
+                            onClicked: root._selectedPage = 990002
                         }
-
-                        Item {
-                            width: cjHubCol.width
-                            height: 140
-                            Text {
-                                id: cjHubNoteT
-                                anchors { left: parent.left; top: parent.top; topMargin: 26 }
-                                text: cjHubRoot.i18n.noteT
-                                renderType: Text.NativeRendering; font.family: "reMarkable Sans"; antialiasing: false
-                                color: "#000000"; font.pixelSize: 34; font.bold: true
-                            }
-                            Text {
-                                anchors { left: parent.left; right: parent.right; top: cjHubNoteT.bottom; rightMargin: 100; topMargin: 8 }
-                                text: cjHubRoot.i18n.noteD
-                                renderType: Text.NativeRendering; font.family: "reMarkable Sans"; antialiasing: false
-                                color: "#000000"; font.pixelSize: 24; wrapMode: Text.WordWrap
-                            }
-                            Text {
-                                anchors { right: parent.right; verticalCenter: parent.verticalCenter; rightMargin: 20 }
-                                text: "›"
-                                renderType: Text.NativeRendering; font.family: "reMarkable Sans"; antialiasing: false
-                                color: "#000000"; font.pixelSize: 52
-                            }
-                            Rectangle { anchors { left: parent.left; right: parent.right; bottom: parent.bottom } height: 1; color: "#d0d0d0" }
-                            MouseArea { anchors.fill: parent; onClicked: root._selectedPage = 990005 }
+                        ArkControls.CellItem {
+                            text: cjHubRoot.i18n.noteT
+                            onClicked: root._selectedPage = 990005
                         }
                     }
                 }
@@ -290,6 +190,7 @@ AFFECT /qml/device/view/settings/Settings.qml
                 Item {
                     id: cjSnipRoot
                     objectName: "cjSnippetsPage"
+                    property bool fullscreen: true    // 全宽二级页（盖住侧栏）
 
                     property var items: []
                     property int editIndex: -1   // -1=列表模式; -2=新增; >=0=编辑该下标
@@ -416,53 +317,36 @@ AFFECT /qml/device/view/settings/Settings.qml
                     }
 
                     // 顶部：返回 + 标题
-                    Item {
-                        id: cjSnipBack
-                        anchors { top: parent.top; left: parent.left; topMargin: 40; leftMargin: 64 }
-                        width: cjSnipBackText.implicitWidth + 24
-                        height: 56
-                        Text {
-                            id: cjSnipBackText
-                            anchors.verticalCenter: parent.verticalCenter
-                            text: cjSnipRoot.i18n.back
-                            renderType: Text.NativeRendering; font.family: "reMarkable Sans"; antialiasing: false
-                            color: "#000000"
-                            font.pixelSize: 30
-                        }
-                        MouseArea {
-                            anchors.fill: parent
+                    ArkControls.NavigationBar {
+                        id: cjNavBar
+                        type: ArkTokens.NavigationBar.secondary
+                        width: parent.width
+                        ArkControls.NavigationBar.Button {
+                            text: cjSnipRoot.cjLang() === "en" ? "Back" : "返回"
+                            textPosition: ArkControls.Button.TextPosition.Right
+                            iconSource: "qrc:/ark/icons/chevron_left"
                             onClicked: root._selectedPage = 990001
                         }
                     }
-                    Text {
+                    ArkControls.Title {
                         id: cjSnipTitle
                         text: cjSnipRoot.i18n.page
-                        renderType: Text.NativeRendering; font.family: "reMarkable Sans"; antialiasing: false
+                        type: ArkControls.Title.Large
                         color: "#000000"
-                        font.pixelSize: 52
-                        font.bold: true
-                        anchors { top: cjSnipBack.bottom; left: parent.left; topMargin: 18; leftMargin: 64 }
-                    }
-                    Text {
-                        id: cjSnipSubtitle
-                        text: cjSnipRoot.i18n.sub
-                        renderType: Text.NativeRendering; font.family: "reMarkable Sans"; antialiasing: false
-                        color: "#000000"
-                        font.pixelSize: 28
-                        anchors { top: cjSnipTitle.bottom; left: parent.left; topMargin: 10; leftMargin: 64 }
+                        anchors { top: cjNavBar.bottom; left: parent.left; right: parent.right; topMargin: ArkControls.Values.platform.spacing.large; leftMargin: ArkControls.Values.settings.horizontalMargin.secondLevel; rightMargin: ArkControls.Values.settings.horizontalMargin.secondLevel }
                     }
                     Rectangle {
                         id: cjSnipRule
                         color: "#b0b0b0"
                         height: 2
-                        anchors { top: cjSnipSubtitle.bottom; left: parent.left; right: parent.right; topMargin: 24; leftMargin: 64; rightMargin: 64 }
+                        anchors { top: cjSnipTitle.bottom; left: parent.left; right: parent.right; topMargin: 24; leftMargin: ArkControls.Values.settings.horizontalMargin.secondLevel; rightMargin: ArkControls.Values.settings.horizontalMargin.secondLevel }
                     }
 
                     // ── 列表模式 ──
                     Item {
                         id: cjSnipListView
                         visible: cjSnipRoot.editIndex === -1
-                        anchors { top: cjSnipRule.bottom; left: parent.left; right: parent.right; bottom: parent.bottom; topMargin: 28; leftMargin: 64; rightMargin: 64; bottomMargin: 40 }
+                        anchors { top: cjSnipRule.bottom; left: parent.left; right: parent.right; bottom: parent.bottom; topMargin: 28; leftMargin: ArkControls.Values.settings.horizontalMargin.secondLevel; rightMargin: ArkControls.Values.settings.horizontalMargin.secondLevel; bottomMargin: 40 }
 
                         Rectangle {
                             id: cjSnipAddBar
@@ -585,7 +469,7 @@ AFFECT /qml/device/view/settings/Settings.qml
                     Item {
                         id: cjSnipEditView
                         visible: cjSnipRoot.editIndex !== -1
-                        anchors { top: cjSnipRule.bottom; left: parent.left; right: parent.right; bottom: parent.bottom; topMargin: 28; leftMargin: 64; rightMargin: 64 }
+                        anchors { top: cjSnipRule.bottom; left: parent.left; right: parent.right; bottom: parent.bottom; topMargin: 28; leftMargin: ArkControls.Values.settings.horizontalMargin.secondLevel; rightMargin: ArkControls.Values.settings.horizontalMargin.secondLevel }
 
                         Text {
                             id: cjSnipEditTitle
@@ -737,6 +621,7 @@ AFFECT /qml/device/view/settings/Settings.qml
                 Item {
                     id: cjFlipRoot
                     objectName: "cjFlipPage"
+                    property bool fullscreen: true    // 全宽二级页：宿主 payloadLoader 据此左对齐 parent.left（盖住侧栏）
 
                     // 笔记增强五键本页不展示，但读进来 + 写回去（全量防覆盖：别让本页保存抹掉笔记增强配置）
                     property bool cfgStarTodo: false
@@ -867,48 +752,28 @@ AFFECT /qml/device/view/settings/Settings.qml
 
                     Rectangle { anchors.fill: parent; color: "#ffffff" }
 
-                    Item {
-                        id: cjPgBack
-                        anchors { top: parent.top; left: parent.left; topMargin: 40; leftMargin: 64 }
-                        width: cjPgBackText.implicitWidth + 24
-                        height: 56
-                        Text {
-                            id: cjPgBackText
-                            anchors.verticalCenter: parent.verticalCenter
-                            text: cjFlipRoot.i18n.back
-                            renderType: Text.NativeRendering; font.family: "reMarkable Sans"; antialiasing: false
-                            color: "#000000"
-                            font.pixelSize: 30
+                    ArkControls.NavigationBar {
+                        id: cjNavBar
+                        type: ArkTokens.NavigationBar.secondary
+                        width: parent.width
+                        ArkControls.NavigationBar.Button {
+                            text: cjFlipRoot.cjLang() === "en" ? "Back" : "返回"
+                            textPosition: ArkControls.Button.TextPosition.Right
+                            iconSource: "qrc:/ark/icons/chevron_left"
+                            onClicked: root._selectedPage = 990001
                         }
-                        MouseArea { anchors.fill: parent; onClicked: root._selectedPage = 990001 }
                     }
-                    Text {
+                    ArkControls.Title {
                         id: cjPgTitle
                         text: cjFlipRoot.i18n.page
-                        renderType: Text.NativeRendering; font.family: "reMarkable Sans"; antialiasing: false
+                        type: ArkControls.Title.Large
                         color: "#000000"
-                        font.pixelSize: 52
-                        font.bold: true
-                        anchors { top: cjPgBack.bottom; left: parent.left; topMargin: 18; leftMargin: 64 }
-                    }
-                    Text {
-                        id: cjPgSub
-                        text: cjFlipRoot.i18n.sub
-                        renderType: Text.NativeRendering; font.family: "reMarkable Sans"; antialiasing: false
-                        color: "#000000"
-                        font.pixelSize: 28
-                        anchors { top: cjPgTitle.bottom; left: parent.left; topMargin: 10; leftMargin: 64 }
-                    }
-                    Rectangle {
-                        id: cjPgRule
-                        color: "#b0b0b0"
-                        height: 2
-                        anchors { top: cjPgSub.bottom; left: parent.left; right: parent.right; topMargin: 24; leftMargin: 64; rightMargin: 64 }
+                        anchors { top: cjNavBar.bottom; left: parent.left; right: parent.right; topMargin: ArkControls.Values.platform.spacing.large; leftMargin: ArkControls.Values.settings.horizontalMargin.secondLevel; rightMargin: ArkControls.Values.settings.horizontalMargin.secondLevel }
                     }
 
                     Flickable {
                         id: cjFlipFlick
-                        anchors { top: cjPgRule.bottom; left: parent.left; right: parent.right; bottom: parent.bottom; topMargin: 40; leftMargin: 44; rightMargin: 44; bottomMargin: 24 }
+                        anchors { top: cjPgTitle.bottom; left: parent.left; right: parent.right; bottom: parent.bottom; topMargin: ArkControls.Values.platform.spacing.x2large; leftMargin: ArkControls.Values.settings.horizontalMargin.secondLevel; rightMargin: ArkControls.Values.settings.horizontalMargin.secondLevel; bottomMargin: 24 }
                         contentHeight: cjFlipCol.height + 40
                         clip: true
                         Column {
@@ -916,92 +781,65 @@ AFFECT /qml/device/view/settings/Settings.qml
                             spacing: 44
                             width: cjFlipFlick.width
 
-                            SettingsCheckBoxItem {
+                            // 原生对齐开关行：ArkControls.Panel（label+description+action：字体/灰副说明/布局全原生自动对齐）
+                            ArkControls.Panel {
                                 width: cjFlipCol.width
-                                textColor: "#000000"
-                                title: cjFlipRoot.i18n.tapT
+                                iconSource: "qrc:/ark/icons/go_to_page"
+                                label: cjFlipRoot.i18n.tapT
                                 description: cjFlipRoot.i18n.tapD
-                                selected: cjFlipRoot.cfgTap
-                                onClicked: {
-                                    cjFlipRoot.cfgTap = !cjFlipRoot.cfgTap;
-                                    cjFlipRoot.cjSave();
+                                action: ArkControls.Toggle {
+                                    checked: cjFlipRoot.cfgTap
+                                    onClicked: { cjFlipRoot.cfgTap = !cjFlipRoot.cfgTap; cjFlipRoot.cjSave(); }
                                 }
                             }
-                            SettingsCheckBoxItem {
+                            ArkControls.Panel {
                                 width: cjFlipCol.width
-                                textColor: "#000000"
-                                title: cjFlipRoot.i18n.monoT
+                                iconSource: "qrc:/ark/icons/lens"
+                                label: cjFlipRoot.i18n.monoT
                                 description: cjFlipRoot.i18n.monoD
-                                selected: cjFlipRoot.cfgMono
-                                onClicked: {
-                                    cjFlipRoot.cfgMono = !cjFlipRoot.cfgMono;
-                                    cjFlipRoot.cjSave();
+                                action: ArkControls.Toggle {
+                                    checked: cjFlipRoot.cfgMono
+                                    onClicked: { cjFlipRoot.cfgMono = !cjFlipRoot.cfgMono; cjFlipRoot.cjSave(); }
                                 }
                             }
-                            SettingsCheckBoxItem {
+                            ArkControls.Panel {
                                 width: cjFlipCol.width
-                                textColor: "#000000"
-                                title: cjFlipRoot.i18n.refT
+                                iconSource: "qrc:/ark/icons/erase_all"
+                                label: cjFlipRoot.i18n.refT
                                 description: cjFlipRoot.i18n.refD
-                                selected: cjFlipRoot.cfgRefresh
-                                onClicked: {
-                                    cjFlipRoot.cfgRefresh = !cjFlipRoot.cfgRefresh;
-                                    cjFlipRoot.cjSave();
+                                action: ArkControls.Toggle {
+                                    checked: cjFlipRoot.cfgRefresh
+                                    onClicked: { cjFlipRoot.cfgRefresh = !cjFlipRoot.cfgRefresh; cjFlipRoot.cjSave(); }
                                 }
                             }
-                            SettingsCheckBoxItem {
+                            ArkControls.Panel {
                                 width: cjFlipCol.width
-                                textColor: "#000000"
                                 opacity: cjFlipRoot.cfgRefresh ? 1.0 : 0.35
-                                title: cjFlipRoot.i18n.chapT
+                                iconSource: "qrc:/ark/icons/restore"
+                                label: cjFlipRoot.i18n.chapT
                                 description: cjFlipRoot.i18n.chapD
-                                selected: cjFlipRoot.cfgByChapter
-                                onClicked: {
-                                    if (!cjFlipRoot.cfgRefresh)
-                                        return;
-                                    cjFlipRoot.cfgByChapter = !cjFlipRoot.cfgByChapter;
-                                    cjFlipRoot.cjSave();
+                                action: ArkControls.Toggle {
+                                    checked: cjFlipRoot.cfgByChapter
+                                    onClicked: { if (!cjFlipRoot.cfgRefresh) return; cjFlipRoot.cfgByChapter = !cjFlipRoot.cfgByChapter; cjFlipRoot.cjSave(); }
                                 }
                             }
-                            Item {
+                            // 步进器行：Panel（label 原生字体，[−][+] 作 action）
+                            ArkControls.Panel {
                                 width: cjFlipCol.width
-                                height: 84
                                 opacity: (cjFlipRoot.cfgRefresh && !cjFlipRoot.cfgByChapter) ? 1.0 : 0.35
-                                Text {
-                                    anchors { left: parent.left; verticalCenter: parent.verticalCenter; leftMargin: 24 }
-                                    text: cjFlipRoot.i18n.everyA + cjFlipRoot.cfgEvery + cjFlipRoot.i18n.everyB
-                                    renderType: Text.NativeRendering; font.family: "reMarkable Sans"; antialiasing: false
-                                    color: "#000000"
-                                    font.pixelSize: 34
-                                }
-                                Row {
-                                    anchors { right: parent.right; verticalCenter: parent.verticalCenter; rightMargin: 24 }
-                                    spacing: 28
+                                iconSource: "qrc:/ark/icons/page_overview"
+                                label: cjFlipRoot.i18n.everyA + cjFlipRoot.cfgEvery + cjFlipRoot.i18n.everyB
+                                action: Row {
+                                    spacing: 20
                                     Rectangle {
-                                        width: 76; height: 76; radius: 10; color: "transparent"; border.width: 3; border.color: "#000000"
-                                        Text { anchors.centerIn: parent; text: "−"; font.pixelSize: 46; color: "#000000"; renderType: Text.NativeRendering; font.family: "reMarkable Sans"; antialiasing: false }
-                                        MouseArea {
-                                            anchors.fill: parent
-                                            onClicked: {
-                                                if (cjFlipRoot.cfgRefresh && !cjFlipRoot.cfgByChapter && cjFlipRoot.cfgEvery > 5) {
-                                                    cjFlipRoot.cfgEvery -= 5;
-                                                    cjFlipRoot.cjSave();
-                                                }
-                                            }
-                                        }
+                                        width: 72; height: 72; radius: 10; color: "transparent"; border.width: 3; border.color: "#000000"
+                                        Text { anchors.centerIn: parent; text: "−"; font.pixelSize: 44; color: "#000000"; renderType: Text.NativeRendering; font.family: "reMarkable Sans"; antialiasing: false }
+                                        MouseArea { anchors.fill: parent; onClicked: { if (cjFlipRoot.cfgRefresh && !cjFlipRoot.cfgByChapter && cjFlipRoot.cfgEvery > 5) { cjFlipRoot.cfgEvery -= 5; cjFlipRoot.cjSave(); } } }
                                     }
                                     Rectangle {
-                                        width: 76; height: 76; radius: 10; color: "transparent"; border.width: 3; border.color: "#000000"
-                                        Text { anchors.centerIn: parent; text: "+"; font.pixelSize: 42; color: "#000000"; renderType: Text.NativeRendering; font.family: "reMarkable Sans"; antialiasing: false }
-                                        MouseArea {
-                                            anchors.fill: parent
-                                            onClicked: {
-                                                if (cjFlipRoot.cfgRefresh && !cjFlipRoot.cfgByChapter && cjFlipRoot.cfgEvery < 100) {
-                                                    cjFlipRoot.cfgEvery += 5;
-                                                    cjFlipRoot.cjSave();
-                                                }
-                                            }
-                                        }
+                                        width: 72; height: 72; radius: 10; color: "transparent"; border.width: 3; border.color: "#000000"
+                                        Text { anchors.centerIn: parent; text: "+"; font.pixelSize: 40; color: "#000000"; renderType: Text.NativeRendering; font.family: "reMarkable Sans"; antialiasing: false }
+                                        MouseArea { anchors.fill: parent; onClicked: { if (cjFlipRoot.cfgRefresh && !cjFlipRoot.cfgByChapter && cjFlipRoot.cfgEvery < 100) { cjFlipRoot.cfgEvery += 5; cjFlipRoot.cjSave(); } } }
                                     }
                                 }
                             }
@@ -1021,6 +859,7 @@ AFFECT /qml/device/view/settings/Settings.qml
                 Item {
                     id: cjBookRoot
                     objectName: "cjBookPage"
+                    property bool fullscreen: true    // 全宽二级页（盖住侧栏）
 
                     property bool cfgTap: false
                     property bool cfgMono: false
@@ -1135,70 +974,48 @@ AFFECT /qml/device/view/settings/Settings.qml
 
                     Rectangle { anchors.fill: parent; color: "#ffffff" }
 
-                    Item {
-                        id: cjPgBack
-                        anchors { top: parent.top; left: parent.left; topMargin: 40; leftMargin: 64 }
-                        width: cjPgBackText.implicitWidth + 24
-                        height: 56
-                        Text {
-                            id: cjPgBackText
-                            anchors.verticalCenter: parent.verticalCenter
-                            text: cjBookRoot.i18n.back
-                            renderType: Text.NativeRendering; font.family: "reMarkable Sans"; antialiasing: false
-                            color: "#000000"
-                            font.pixelSize: 30
+                    ArkControls.NavigationBar {
+                        id: cjNavBar
+                        type: ArkTokens.NavigationBar.secondary
+                        width: parent.width
+                        ArkControls.NavigationBar.Button {
+                            text: cjBookRoot.cjLang() === "en" ? "Back" : "返回"
+                            textPosition: ArkControls.Button.TextPosition.Right
+                            iconSource: "qrc:/ark/icons/chevron_left"
+                            onClicked: root._selectedPage = 990001
                         }
-                        MouseArea { anchors.fill: parent; onClicked: root._selectedPage = 990001 }
                     }
-                    Text {
+                    ArkControls.Title {
                         id: cjPgTitle
                         text: cjBookRoot.i18n.page
-                        renderType: Text.NativeRendering; font.family: "reMarkable Sans"; antialiasing: false
+                        type: ArkControls.Title.Large
                         color: "#000000"
-                        font.pixelSize: 52
-                        font.bold: true
-                        anchors { top: cjPgBack.bottom; left: parent.left; topMargin: 18; leftMargin: 64 }
-                    }
-                    Text {
-                        id: cjPgSub
-                        text: cjBookRoot.i18n.sub
-                        renderType: Text.NativeRendering; font.family: "reMarkable Sans"; antialiasing: false
-                        color: "#000000"
-                        font.pixelSize: 28
-                        anchors { top: cjPgTitle.bottom; left: parent.left; topMargin: 10; leftMargin: 64 }
-                    }
-                    Rectangle {
-                        id: cjPgRule
-                        color: "#b0b0b0"
-                        height: 2
-                        anchors { top: cjPgSub.bottom; left: parent.left; right: parent.right; topMargin: 24; leftMargin: 64; rightMargin: 64 }
+                        anchors { top: cjNavBar.bottom; left: parent.left; right: parent.right; topMargin: ArkControls.Values.platform.spacing.large; leftMargin: ArkControls.Values.settings.horizontalMargin.secondLevel; rightMargin: ArkControls.Values.settings.horizontalMargin.secondLevel }
                     }
 
                     Column {
                         id: cjBookCol
                         spacing: 44
-                        anchors { top: cjPgRule.bottom; left: parent.left; right: parent.right; topMargin: 40; leftMargin: 44; rightMargin: 44 }
+                        anchors { top: cjPgTitle.bottom; left: parent.left; right: parent.right; topMargin: ArkControls.Values.platform.spacing.x2large; leftMargin: ArkControls.Values.settings.horizontalMargin.secondLevel; rightMargin: ArkControls.Values.settings.horizontalMargin.secondLevel }
 
-                        SettingsCheckBoxItem {
+                        ArkControls.Panel {
                             width: cjBookCol.width
-                            textColor: "#000000"
-                            title: cjBookRoot.i18n.fontT
+                            iconSource: "qrc:/ark/icons/text_t_heading"
+                            label: cjBookRoot.i18n.fontT
                             description: cjBookRoot.i18n.fontD
-                            selected: cjBookRoot.cfgFont
-                            onClicked: {
-                                cjBookRoot.cfgFont = !cjBookRoot.cfgFont;
-                                cjBookRoot.cjSave();
+                            action: ArkControls.Toggle {
+                                checked: cjBookRoot.cfgFont
+                                onClicked: { cjBookRoot.cfgFont = !cjBookRoot.cfgFont; cjBookRoot.cjSave(); }
                             }
                         }
-                        SettingsCheckBoxItem {
+                        ArkControls.Panel {
                             width: cjBookCol.width
-                            textColor: "#000000"
-                            title: cjBookRoot.i18n.optT
+                            iconSource: "qrc:/ark/icons/ebook"
+                            label: cjBookRoot.i18n.optT
                             description: cjBookRoot.i18n.optD
-                            selected: cjBookRoot.cfgAutoOpt
-                            onClicked: {
-                                cjBookRoot.cfgAutoOpt = !cjBookRoot.cfgAutoOpt;
-                                cjBookRoot.cjSave();
+                            action: ArkControls.Toggle {
+                                checked: cjBookRoot.cfgAutoOpt
+                                onClicked: { cjBookRoot.cfgAutoOpt = !cjBookRoot.cfgAutoOpt; cjBookRoot.cjSave(); }
                             }
                         }
                     }
@@ -1221,6 +1038,7 @@ AFFECT /qml/device/view/settings/Settings.qml
                 Item {
                     id: cjNoteRoot
                     objectName: "cjNotePage"
+                    property bool fullscreen: true    // 全宽二级页（盖住侧栏）
 
                     property bool cfgStarTodo: false
                     property string cfgStarColor: "RED"
@@ -1351,43 +1169,28 @@ AFFECT /qml/device/view/settings/Settings.qml
 
                     Rectangle { anchors.fill: parent; color: "#ffffff" }
 
-                    Item {
-                        id: cjPgBack
-                        anchors { top: parent.top; left: parent.left; topMargin: 40; leftMargin: 64 }
-                        width: cjPgBackText.implicitWidth + 24
-                        height: 56
-                        Text {
-                            id: cjPgBackText
-                            anchors.verticalCenter: parent.verticalCenter
-                            text: cjNoteRoot.i18n.back
-                            renderType: Text.NativeRendering; font.family: "reMarkable Sans"; antialiasing: false
-                            color: "#000000"; font.pixelSize: 30
+                    ArkControls.NavigationBar {
+                        id: cjNavBar
+                        type: ArkTokens.NavigationBar.secondary
+                        width: parent.width
+                        ArkControls.NavigationBar.Button {
+                            text: cjNoteRoot.cjLang() === "en" ? "Back" : "返回"
+                            textPosition: ArkControls.Button.TextPosition.Right
+                            iconSource: "qrc:/ark/icons/chevron_left"
+                            onClicked: root._selectedPage = 990001
                         }
-                        MouseArea { anchors.fill: parent; onClicked: root._selectedPage = 990001 }
                     }
-                    Text {
+                    ArkControls.Title {
                         id: cjPgTitle
                         text: cjNoteRoot.i18n.page
-                        renderType: Text.NativeRendering; font.family: "reMarkable Sans"; antialiasing: false
-                        color: "#000000"; font.pixelSize: 52; font.bold: true
-                        anchors { top: cjPgBack.bottom; left: parent.left; topMargin: 18; leftMargin: 64 }
-                    }
-                    Text {
-                        id: cjPgSub
-                        text: cjNoteRoot.i18n.sub
-                        renderType: Text.NativeRendering; font.family: "reMarkable Sans"; antialiasing: false
-                        color: "#000000"; font.pixelSize: 28
-                        anchors { top: cjPgTitle.bottom; left: parent.left; topMargin: 10; leftMargin: 64 }
-                    }
-                    Rectangle {
-                        id: cjPgRule
-                        color: "#b0b0b0"; height: 2
-                        anchors { top: cjPgSub.bottom; left: parent.left; right: parent.right; topMargin: 24; leftMargin: 64; rightMargin: 64 }
+                        type: ArkControls.Title.Large
+                        color: "#000000"
+                        anchors { top: cjNavBar.bottom; left: parent.left; right: parent.right; topMargin: ArkControls.Values.platform.spacing.large; leftMargin: ArkControls.Values.settings.horizontalMargin.secondLevel; rightMargin: ArkControls.Values.settings.horizontalMargin.secondLevel }
                     }
 
                     Flickable {
                         id: cjNoteFlick
-                        anchors { top: cjPgRule.bottom; left: parent.left; right: parent.right; bottom: parent.bottom; topMargin: 40; leftMargin: 44; rightMargin: 44; bottomMargin: 24 }
+                        anchors { top: cjPgTitle.bottom; left: parent.left; right: parent.right; bottom: parent.bottom; topMargin: ArkControls.Values.platform.spacing.x2large; leftMargin: ArkControls.Values.settings.horizontalMargin.secondLevel; rightMargin: ArkControls.Values.settings.horizontalMargin.secondLevel; bottomMargin: 24 }
                         contentHeight: cjNoteCol.height + 40
                         clip: true
                         Column {
@@ -1396,69 +1199,60 @@ AFFECT /qml/device/view/settings/Settings.qml
                             width: cjNoteFlick.width
 
                             // ★ 全局待办（主）
-                            SettingsCheckBoxItem {
+                            ArkControls.Panel {
                                 width: cjNoteCol.width
-                                textColor: "#000000"
-                                title: cjNoteRoot.i18n.starT
+                                iconSource: "qrc:/ark/icons/star"
+                                label: cjNoteRoot.i18n.starT
                                 description: cjNoteRoot.i18n.starD
-                                selected: cjNoteRoot.cfgStarTodo
-                                onClicked: {
-                                    cjNoteRoot.cfgStarTodo = !cjNoteRoot.cfgStarTodo;
-                                    cjNoteRoot.cjSave();
+                                action: ArkControls.Toggle {
+                                    checked: cjNoteRoot.cfgStarTodo
+                                    onClicked: { cjNoteRoot.cfgStarTodo = !cjNoteRoot.cfgStarTodo; cjNoteRoot.cjSave(); }
                                 }
                             }
                             // 划线摘录（子·星代办关则失效并变灰）
-                            SettingsCheckBoxItem {
+                            ArkControls.Panel {
                                 width: cjNoteCol.width
-                                textColor: "#000000"
                                 opacity: cjNoteRoot.cfgStarTodo ? 1.0 : 0.35
-                                title: cjNoteRoot.i18n.cardHlT
+                                iconSource: "qrc:/ark/icons/note"
+                                label: cjNoteRoot.i18n.cardHlT
                                 description: cjNoteRoot.i18n.cardHlD
-                                selected: cjNoteRoot.cfgCardHl
-                                onClicked: {
-                                    if (!cjNoteRoot.cfgStarTodo)
-                                        return;
-                                    cjNoteRoot.cfgCardHl = !cjNoteRoot.cfgCardHl;
-                                    cjNoteRoot.cjSave();
+                                action: ArkControls.Toggle {
+                                    checked: cjNoteRoot.cfgCardHl
+                                    onClicked: { if (!cjNoteRoot.cfgStarTodo) return; cjNoteRoot.cfgCardHl = !cjNoteRoot.cfgCardHl; cjNoteRoot.cjSave(); }
                                 }
                             }
                             // 跨书汇总（子·星代办关则失效并变灰）
-                            SettingsCheckBoxItem {
+                            ArkControls.Panel {
                                 width: cjNoteCol.width
-                                textColor: "#000000"
                                 opacity: cjNoteRoot.cfgStarTodo ? 1.0 : 0.35
-                                title: cjNoteRoot.i18n.cardAggT
+                                iconSource: "qrc:/ark/icons/layers"
+                                label: cjNoteRoot.i18n.cardAggT
                                 description: cjNoteRoot.i18n.cardAggD
-                                selected: cjNoteRoot.cfgCardAgg
-                                onClicked: {
-                                    if (!cjNoteRoot.cfgStarTodo)
-                                        return;
-                                    cjNoteRoot.cfgCardAgg = !cjNoteRoot.cfgCardAgg;
-                                    cjNoteRoot.cjSave();
+                                action: ArkControls.Toggle {
+                                    checked: cjNoteRoot.cfgCardAgg
+                                    onClicked: { if (!cjNoteRoot.cfgStarTodo) return; cjNoteRoot.cfgCardAgg = !cjNoteRoot.cfgCardAgg; cjNoteRoot.cjSave(); }
                                 }
                             }
                             // 📕 单词笔记（独立顶层，与星代办互不依赖）
-                            SettingsCheckBoxItem {
+                            ArkControls.Panel {
                                 width: cjNoteCol.width
-                                textColor: "#000000"
-                                title: cjNoteRoot.i18n.vocabT
+                                iconSource: "qrc:/ark/icons/tag"
+                                label: cjNoteRoot.i18n.vocabT
                                 description: cjNoteRoot.i18n.vocabD
-                                selected: cjNoteRoot.cfgVocab
-                                onClicked: {
-                                    cjNoteRoot.cfgVocab = !cjNoteRoot.cfgVocab;
-                                    cjNoteRoot.cjSave();
+                                action: ArkControls.Toggle {
+                                    checked: cjNoteRoot.cfgVocab
+                                    onClicked: { cjNoteRoot.cfgVocab = !cjNoteRoot.cfgVocab; cjNoteRoot.cjSave(); }
                                 }
                             }
                             // 荧光笔精确吸附汉字（独立，C hook 读）
-                            SettingsCheckBoxItem {
+                            ArkControls.Panel {
                                 width: cjNoteCol.width
-                                textColor: "#000000"
-                                title: cjNoteRoot.i18n.hlT
+                                iconSource: "qrc:/ark/icons/text_edit"
+                                label: cjNoteRoot.i18n.hlT
                                 description: cjNoteRoot.i18n.hlD
-                                selected: cjNoteRoot.cfgHlSnap
-                                onClicked: {
-                                    cjNoteRoot.cfgHlSnap = !cjNoteRoot.cfgHlSnap;
-                                    cjNoteRoot.cjSave();
+                                action: ArkControls.Toggle {
+                                    checked: cjNoteRoot.cfgHlSnap
+                                    onClicked: { cjNoteRoot.cfgHlSnap = !cjNoteRoot.cfgHlSnap; cjNoteRoot.cjSave(); }
                                 }
                             }
                         }
