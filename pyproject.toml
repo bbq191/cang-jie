@@ -59,6 +59,9 @@ tools = [
 test = [
     "pytest",
 ]
+dev = [
+    "mobi>=0.4.1",
+]
 
 [tool.uv]
 package = false                                   # 虚拟项目：管环境，不构建自身

@@ -28,6 +28,7 @@
 import argparse
 import os
 import re
+import struct
 import subprocess
 import sys
 import tempfile
@@ -35,11 +36,16 @@ import zipfile
 
 # 默认用户词典位置（本地正版；派生物 gitignore，不入库）。
 DEFAULT_DICT_DIR = os.path.expanduser("~/Documents/ereader/books/字典")
-EN_MOBI = "牛津高阶英汉双解第7版(现代版).mobi"
+# EN：用完整版牛津（旧「英汉双解第7版(现代版)」那份下载残缺——只到字母 'pluck'，缺 q–z 约 22MB，
+# 英文生词查不到；换用完整的「英语双解现代第七版」67.5MB）。
+EN_MOBI = "牛津高阶英语双解现代第七版.mobi"
 ZH_MOBI = "现代汉语词典.mobi"
 
 TAG_RE = re.compile(r"<[^>]+>")
+# 词头两种形态：calibre 转换产物 = <span class="bold">词</span>（正文任意处首现）；
+# raw MOBI 直解产物 = 每个 <hr/> 块开头的 <b>词</b>（可能前置空 <a></a> 锚点）。
 BOLD_RE = re.compile(r'<span class="bold"[^>]*>(.*?)</span>', re.S)
+HEAD_B_RE = re.compile(r'^\s*(?:<a[^>]*>\s*</a>\s*)?<b>(.*?)</b>(.*)$', re.S)
 HR_SPLIT_RE = re.compile(r"<hr\s*/?>", re.I)
 WS_RE = re.compile(r"\s+")
 # 英文 IPA 音标：牛津正文里形如 /ˈkæʃeɪ/ 的斜杠对；取第一处作 phonetic。
@@ -79,27 +85,99 @@ def mobi_to_html(mobi_path: str) -> str:
             stderr=subprocess.DEVNULL,
         )
         with zipfile.ZipFile(htmlz) as z:
-            name = next((n for n in z.namelist() if n.endswith("index.html")), None)
-            if name is None:
-                name = next(n for n in z.namelist() if n.endswith(".html"))
-            return z.read(name).decode("utf-8", "replace")
+            # calibre 对大词典会把正文拆成多个 HTML（index.html + index_split_NNN.html…）。
+            # **必须读全部并按名排序拼接**——只读 index.html 会丢掉后半字母表（实测只剩 a–p，
+            # q–z 几乎全缺，英文生词查不到）。用自然序排序保证 split_000 < split_001 < …。
+            names = sorted(
+                n for n in z.namelist() if n.lower().endswith((".html", ".xhtml", ".htm"))
+            )
+            if not names:
+                sys.exit("[build_dict] htmlz 里没有 HTML 文件")
+            print(f"[build_dict] htmlz 含 {len(names)} 个 HTML，全部拼接解析", file=sys.stderr)
+            return "\n".join(z.read(n).decode("utf-8", "replace") for n in names)
+
+
+def mobi_to_html_raw(mobi_path: str) -> str:
+    """**直接解 MOBI**（PalmDOC 记录 → 原始 HTML），不经 calibre——calibre 对大词典的 CSS flatten
+    阶段会近乎卡死（牛津 165k+ 词条，单线程 O(n²)）。需 `mobi` 包（`uv add --dev mobi`）的解压器。
+    直接按 PDB 记录偏移表解压全部文本记录：绕开 mobi 库 loadSection 对超大 MOBI 的 bug（把有效记录
+    误读成空），也不碰它崩溃的词典 INFL 索引解析。词头形态 = 每个 <hr/> 块开头的 <b>词</b>。"""
+    from mobi.mobi_uncompress import PalmdocReader, UncompressedReader
+
+    raw = open(mobi_path, "rb").read()
+    nrec = struct.unpack_from(">H", raw, 0x4C)[0]
+    offs = [struct.unpack_from(">I", raw, 0x4E + i * 8)[0] for i in range(nrec)]
+
+    def rec(i):
+        lo = offs[i]
+        hi = offs[i + 1] if i + 1 < nrec else len(raw)
+        return raw[lo:hi] if 0 <= lo <= hi <= len(raw) else b""
+
+    h = rec(0)
+    comp = struct.unpack_from(">H", h, 0x00)[0]
+    text_recs = struct.unpack_from(">H", h, 0x08)[0]
+    flags = struct.unpack_from(">H", h, 0xF2)[0] if len(h) >= 0xF4 else 0
+    multibyte = flags & 1
+    trailers, f = 0, flags
+    while f > 1:
+        if f & 2:
+            trailers += 1
+        f >>= 1
+
+    def size_of_trailing(data):  # MOBI 尾部数据项长度（反向变长整数）
+        num = 0
+        for v in data[-4:]:
+            if v & 0x80:
+                num = 0
+            num = (num << 7) | (v & 0x7F)
+        return num
+
+    def trim(data):  # 剥尾部数据项 + multibyte 溢出字节，还原纯压缩数据
+        for _ in range(trailers):
+            data = data[: len(data) - size_of_trailing(data)]
+        if multibyte and data:
+            data = data[: len(data) - ((data[-1] & 3) + 1)]
+        return data
+
+    reader = {1: UncompressedReader, 2: PalmdocReader}.get(comp)
+    if reader is None:
+        sys.exit(f"[build_dict] 压缩类型 {comp} 暂不支持（仅 PalmDOC=2/无压缩=1；Huff/CDIC 未实现）")
+    rd = reader()
+    parts = []
+    for i in range(1, min(text_recs, nrec - 1) + 1):
+        d = rec(i)
+        if not d:
+            continue
+        try:
+            parts.append(rd.unpack(trim(d)))
+        except Exception:
+            pass  # 个别损坏记录跳过，不中断（尾部 padding/索引记录常态）
+    full = b"".join(parts).decode("utf-8", "replace")
+    print(f"[build_dict] raw MOBI 解出 {len(full)} 字符（{min(text_recs, nrec-1)} 条文本记录）", file=sys.stderr)
+    return full
 
 
 def parse_entries(html: str, lang: str):
-    """HTML → [(key, phonetic, body)]，按 <hr/> 切块解析。已按 key 去重（保首现）、排序。"""
+    """HTML → [(key, phonetic, body)]，按 <hr/> 切块解析。已按 key 去重（保首现）、排序。
+    词头两种形态都认：raw MOBI = 块首 <b>词</b>（[`HEAD_B_RE`]）；calibre = <span class="bold">词</span>。"""
     # 只取 <body> 之后，避开 head/title/style。
     bi = html.lower().find("<body")
     if bi > 0:
         html = html[bi:]
     entries = {}
     for chunk in HR_SPLIT_RE.split(html):
-        m = BOLD_RE.search(chunk)
-        if not m:
-            continue
-        head = strip_tags(m.group(1))
+        hb = HEAD_B_RE.match(chunk)  # raw MOBI：块首 <b>词</b>
+        if hb:
+            head = strip_tags(hb.group(1))
+            body_raw = strip_tags(hb.group(2))
+        else:  # calibre：<span class="bold">词</span>
+            m = BOLD_RE.search(chunk)
+            if not m:
+                continue
+            head = strip_tags(m.group(1))
+            body_raw = strip_tags(chunk[m.end():])
         if not head:
             continue
-        body_raw = strip_tags(chunk[m.end():])
         if not body_raw:
             continue
         key = normalize_key(head, lang)
@@ -125,32 +203,41 @@ def write_tsv(rows, out_path: str):
     print(f"[build_dict] 写出 {len(rows)} 条 → {out_path}", file=sys.stderr)
 
 
-def build_one(lang: str, mobi: str, html: str, out: str):
-    text = open(html, encoding="utf-8", errors="replace").read() if html else mobi_to_html(mobi)
+def build_one(lang: str, mobi: str, html: str, out: str, via_calibre: bool = False):
+    if html:
+        text = open(html, encoding="utf-8", errors="replace").read()
+    elif via_calibre:
+        text = mobi_to_html(mobi)  # 慢/大词典会卡死，仅回退用
+    else:
+        text = mobi_to_html_raw(mobi)  # 默认：直接解 MOBI，快、不卡
     rows = parse_entries(text, lang)
     if not rows:
-        sys.exit(f"[build_dict] 解析出 0 条，检查 HTML 结构 / lang")
+        sys.exit("[build_dict] 解析出 0 条，检查 HTML 结构 / lang")
     write_tsv(rows, out)
 
 
 def main():
     ap = argparse.ArgumentParser(description="Kindle 词典 MOBI → 排序 TSV（生词本查词用）")
     ap.add_argument("--lang", choices=["en", "zh"], help="词典方向")
-    ap.add_argument("--mobi", help="MOBI 路径（自动调 calibre 转换）")
-    ap.add_argument("--html", help="已转好的 index.html 路径（跳过 calibre）")
+    ap.add_argument("--mobi", help="MOBI 路径（默认直接解 MOBI，不经 calibre）")
+    ap.add_argument("--html", help="已转好的 HTML 路径（跳过抽取，用于迭代解析）")
     ap.add_argument("--out", help="输出 TSV 路径")
+    ap.add_argument("--via-calibre", action="store_true",
+                    help="用 calibre ebook-convert 抽取（慢，大词典会卡死；默认走 raw 直解）")
     ap.add_argument("--auto", action="store_true", help=f"批处理 {DEFAULT_DICT_DIR} 里的两本")
     ap.add_argument("--out-dir", default=".", help="--auto 的输出目录")
     a = ap.parse_args()
 
     if a.auto:
         os.makedirs(a.out_dir, exist_ok=True)
-        build_one("en", os.path.join(DEFAULT_DICT_DIR, EN_MOBI), None, os.path.join(a.out_dir, "en.tsv"))
-        build_one("zh", os.path.join(DEFAULT_DICT_DIR, ZH_MOBI), None, os.path.join(a.out_dir, "zh.tsv"))
+        build_one("en", os.path.join(DEFAULT_DICT_DIR, EN_MOBI), None,
+                  os.path.join(a.out_dir, "en.tsv"), a.via_calibre)
+        build_one("zh", os.path.join(DEFAULT_DICT_DIR, ZH_MOBI), None,
+                  os.path.join(a.out_dir, "zh.tsv"), a.via_calibre)
         return
     if not a.lang or not a.out or (not a.mobi and not a.html):
         ap.error("需 --lang + --out + (--mobi 或 --html)，或用 --auto")
-    build_one(a.lang, a.mobi, a.html, a.out)
+    build_one(a.lang, a.mobi, a.html, a.out, a.via_calibre)
 
 
 if __name__ == "__main__":
