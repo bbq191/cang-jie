@@ -69,6 +69,8 @@ __MACOSX/
 ._*
 *.swp
 *~
+*.bak
+*.orig
 
 # 字体压缩包（解压后用目录里的文件，zip 本身不入库）
 chinese-ime/fonts/**/*.zip
