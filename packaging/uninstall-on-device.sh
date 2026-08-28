@@ -40,6 +40,12 @@ fi
 for b in $BINS; do rm -f "$DEST/$b"; done
 echo "-- 已删 reading/pkm 二进制（$DEST 下用户数据保留）"
 
+# 3b. 摘 OTA 登录触发恢复钩子（去 ~/.bashrc 块 + 尝试标记）
+BRC="$ROOT/.bashrc"
+[ -f "$BRC" ] && sed -i '/# >>> cangjie-ota-recover >>>/,/# <<< cangjie-ota-recover <<</d' "$BRC" 2>/dev/null || true
+rm -f "$ROOT/.local/share/cangjie-ime/ota-recover.attempted."* 2>/dev/null || true
+echo "-- 已摘 OTA 恢复钩子（~/.bashrc）"
+
 # 4. 交给 IME 卸载器收尾（xovi 扩展/qmd/字体/汉化 + 语言回退）
 if [ -f "$HERE/ime/uninstall.sh" ]; then
     echo "-- 调 ime/uninstall.sh 收尾中文化层"
