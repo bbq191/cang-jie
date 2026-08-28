@@ -15,8 +15,9 @@ for b in $BINS; do
     [ -f "target/$TARGET/release/$b" ] || { echo "缺 $b，先跑 ./build.sh"; exit 1; }
 done
 
+# shellcheck disable=SC2029  # $DEST 是固定字面量路径，客户端展开正是所需
 ssh "root@$HOST" "mkdir -p $DEST"
-# shellcheck disable=SC2086
+# shellcheck disable=SC2086,SC2046  # 有意按空格分词：多个二进制路径作独立参数传给 scp
 scp $(for b in $BINS; do echo "target/$TARGET/release/$b"; done) "root@$HOST:$DEST/"
 echo "✓ PKM 二进制已部署到 root@$HOST:$DEST"
 echo "  wr-stars-daemon 挂 systemd 常驻（画星→自动汇总总结卡片）；systemd 单元在设备上，路径未变。"

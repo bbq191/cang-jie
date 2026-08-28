@@ -105,6 +105,7 @@ if [ -d "$HERE/bin" ]; then
         [ -f "$b" ] || continue
         cp "$b" "$DEST/" && chmod +x "$DEST/$(basename "$b")"
     done
+    # shellcheck disable=SC2012  # 仅列出我们自己命名的二进制（无特殊字符），ls 足够
     echo "-- 已部署：$(ls "$HERE/bin" | tr '\n' ' ')"
 else
     echo "-- （包内无 bin/，跳过 reading/pkm 二进制）"
@@ -139,6 +140,7 @@ else
     echo "-- 单元 + .wants 已写入 /usr（普通重启不丢）："
     for u in $WANTS_MU $WANTS_TM; do
         t=multi-user.target.wants; case "$u" in *.timer) t=timers.target.wants;; esac
+        # shellcheck disable=SC2012  # 固定单元名，仅打印链接确认，ls 足够
         ls -l "$SYSD/$t/$u" 2>/dev/null | sed "s|$SYSD/||" || true
     done
 fi

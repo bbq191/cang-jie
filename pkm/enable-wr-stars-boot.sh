@@ -17,6 +17,7 @@
 # 用法：./enable-wr-stars-boot.sh [host]   （host 默认 10.11.99.1）
 #   反做（禁用持久自启）：./enable-wr-stars-boot.sh [host] disable
 # ─────────────────────────────────────────────────────────────
+# shellcheck disable=SC2029  # $UNIT/$WANTS 等是固定字面量路径，有意客户端展开后传给远端（远端再用单引号包住）
 set -e
 cd "$(dirname "$0")"
 

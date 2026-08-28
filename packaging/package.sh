@@ -96,7 +96,8 @@ for b in dict.bin dict.zh_tw.bin dict_jianpin.bin dict_jianpin.zh_tw.bin english
 done
 # 2b 字体：核心 CJK 必需（否则设备端 CJK 预检 abort），其余可选
 for f in LXGWNeoZhiSongScreenFull.ttf HanaMinB.ttf; do
-    p="$(find_font "$f")"; [ -n "$p" ] && cp "$p" "$PAY/" || { echo "  ✗ 缺（必需CJK）：$f"; MISSING_REQ=1; }
+    p="$(find_font "$f")"
+    if [ -n "$p" ]; then cp "$p" "$PAY/"; else echo "  ✗ 缺（必需CJK）：$f"; MISSING_REQ=1; fi
 done
 for f in LXGWNeoXiHeiScreenFull.ttf LXGWWenKai-Regular.ttf LXGWWenKaiMonoGBScreen.ttf \
          KF_Readerly-Regular.ttf KF_Readerly-Bold.ttf KF_Readerly-Italic.ttf KF_Readerly-BoldItalic.ttf; do
