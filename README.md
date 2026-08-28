@@ -1,5 +1,7 @@
 # cang-jie
 
+[![CI](https://github.com/bbq191/cang-jie/actions/workflows/ci.yml/badge.svg)](https://github.com/bbq191/cang-jie/actions/workflows/ci.yml)
+
 把 [reMarkable Paper Pro Move](https://remarkable.com/) 的官方阅读/笔记程序 **xochitl** 从"能用"改造成"顺手"的个人项目：起于**中文输入法 + 界面汉化**，现已长成一套围绕 xochitl 的**设备增强套件**（中文化 · 阅读 · 系统增强 · PKM）。全程**不改 xochitl 本体**——各项能力以合规 [xovi](https://github.com/asivery/xovi) 扩展 / qmldiff / 设备端自足二进制的形式，放 `xovi/extensions.d/` 等处运行时动态改行为，磁盘上的原始二进制原封不动。
 
 > 本项目是个人设备自用、不对外分发。涉及许可证的数据（rime-ice/iorest 词典、微信读书正文等）不编译进 `.so`，只做独立文件运行时只读 / 仅本机渲染，产物不进入任何再分发渠道。
@@ -118,6 +120,10 @@ cd chinese-ime/pinyin-engine/c && make test && make diff-check
 # 设备端 hook：宿主机单测 + aarch64 交叉编译（xovi 扩展需 xovigen，XOVI_DIR 指向 xovi clone）
 cd chinese-ime/langhook && make test && make aarch64 XOVI_DIR=<asivery/xovi clone 路径>
 ```
+
+> **CI**（`.github/workflows/ci.yml`）：push/PR 自动跑四类离线检查——① 全 `.sh` shellcheck 零告警、
+> ② `uv run pytest`（拼音引擎 + 阅读 + PKM 语义原型）、③ 拼音 C↔Python 逐字节差分对拍、
+> ④ 三个 Rust crate `cargo test` + aarch64 交叉编译冒烟。设备行为不进 CI，仍按工程纪律人工真机验证。
 
 ## 当前进度（块 2 中文化线）
 
