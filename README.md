@@ -121,9 +121,11 @@ cd chinese-ime/pinyin-engine/c && make test && make diff-check
 cd chinese-ime/langhook && make test && make aarch64 XOVI_DIR=<asivery/xovi clone 路径>
 ```
 
-> **CI**（`.github/workflows/ci.yml`）：push/PR 自动跑四类离线检查——① 全 `.sh` shellcheck 零告警、
-> ② `uv run pytest`（拼音引擎 + 阅读 + PKM 语义原型）、③ 拼音 C↔Python 逐字节差分对拍、
-> ④ 三个 Rust crate `cargo test` + aarch64 交叉编译冒烟。设备行为不进 CI，仍按工程纪律人工真机验证。
+> **CI**（`.github/workflows/ci.yml`）：push/PR 自动跑离线检查——① 全 `.sh` shellcheck（warning 级门控）、
+> ② `uv run pytest`（阅读 + PKM 语义原型，自足 fixtures）、③ 三个 Rust crate `cargo test`、
+> ④ aarch64 交叉编译冒烟。**拼音引擎（pytest + C 差分对拍）不进 CI**——它需 ~70MB 有意 gitignore 的
+> rime-ice 词典源，只在本地 `uv run pytest chinese-ime/pinyin-engine/tests` + `make -C …/c test diff-check`
+> 跑（上面「本地开发」两条）。设备行为不进 CI，仍按工程纪律人工真机验证。
 
 ## 当前进度（块 2 中文化线）
 
