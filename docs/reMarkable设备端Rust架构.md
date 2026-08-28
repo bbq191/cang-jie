@@ -119,3 +119,30 @@ reading 从"挂着死双向同步"回到"下书+优化+面板"的诚实形状。
 - reading live 部分（下载协议 codec/sign/fetch/login、htmlproc、optimize、面板路由）单一职责、内聚，**不建议再拆**（过度抽象）。
 - `pending-trash` 队列逻辑在 pkm `notebook_sync` 与 reading `autoopt` 各有一份（都写同一 `/home/root/weread/pending-trash.json`）——
   若要彻底去重可上提到 `device-core`，但会扩底座职责，暂不动。
+
+## 六、XDG 路径规范审计（2026-08-28）
+
+**结论：项目已基本是 XDG 形状**，不存在大面积违规——数据在 `~/.local/share`、配置在 `~/.config`、
+字体在 `~/.local/share/fonts`（词典迁 XDG data 是 .166 时做的）。剩余"不合规"要么被工程纪律**冻结**、
+要么**高风险低收益**，`尽量满足` 的实际空间很窄。全项目运行期路径分类：
+
+| 路径 | XDG 判定 | 处置 |
+|---|---|---|
+| `~/.local/share/cangjie-ime/`（词典/翻译）、`~/.local/share/fonts/`、`~/.config/fontconfig/` | ✅ 合规 | 保持 |
+| host `~/.config/weread-client/{credentials,state}.json`（`session.py`/`_wr_common.py`） | ⚠ 硬编码 `.config`、未尊重 `$XDG_CONFIG_HOME` | ✅ **已改**：`$XDG_CONFIG_HOME or ~/.config`；`weread-client` 名冻结不动；afu 机默认→纯 no-op（168 测试全过） |
+| `/home/root/weread/`（二进制+凭证+全部生成数据：covers/sync_state/card-index/dict/pending-trash/…） | ❌ 非 XDG | **冻结**（工程纪律 明令；~15 处 Rust 常量 + systemd 单元硬编码，动即全线真机重验） |
+| **`reading-qol.json`**（用户开关＝config，却在 `~/.local/share/cangjie-ime/` data 目录） | ⚠ 类别错位 | 判断项①，暂不做 |
+| C hook / Rust / shell 里 `/home/root/.local/share/...` 字面量（未走 `${XDG_DATA_HOME:-…}`） | ⚠ 非 env-aware | 判断项②，暂不做 |
+
+**两个判断项（2026-08-28 决定：暂不做）**：
+
+- **① `reading-qol.json` 迁 `~/.config/cangjie-ime/`**（唯一"真正的 XDG 类别修正"）：跨 8 处代码
+  （C `.so` + reading/pkm 3 个 Rust bin + `device-core::fswatch`）+ 3 个 `.qmd` 的 `file://` 硬路径 +
+  `install.sh`，**必须重编 .so + 3 bin + 重部署 + 真机重验整条**（输入法/阅读/★待办/字体都是最高验证等级）。
+  收益纯洁净度。**高风险低收益**，与"真机验证优先、不扰动已验证行为"纪律冲突。
+- **② 设备端改走 `${XDG_DATA_HOME:-/home/root/.local/share}`**：设备上 xochitl 是 systemd root 服务、
+  `XDG_DATA_HOME` 未设 → 解析结果与现硬编码**逐字节相同＝纯 no-op**（`hook_init.c:2473` 注释已说明）；
+  但代价是重编核心 `.so` + 真机重验，还**引入新风险**（安装 shell 与 xochitl 运行时 XDG env 若不一致→
+  装读位置分叉崩溃）。**收益为零、风险为正**，不做。
+
+若日后要做 ①，须单开一轮、按一步一确认逐层真机重验，不混入常规改动。
