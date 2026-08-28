@@ -130,8 +130,9 @@ for u in $UNITS; do copy_req "$SYSD_SRC/$u" "$PKG/systemd"; done
 echo "-- 组包根（编排器 + 固件白名单）"
 copy_req "$HERE/install-on-device.sh"   "$PKG" && mv "$PKG/install-on-device.sh"   "$PKG/install.sh"
 copy_req "$HERE/uninstall-on-device.sh" "$PKG" && mv "$PKG/uninstall-on-device.sh" "$PKG/uninstall.sh"
+copy_req "$HERE/ota-recover.sh"         "$PKG"   # OTA 登录触发恢复（install.sh 挂进 ~/.bashrc）
 copy_req "$HERE/firmware-allowlist.txt" "$PKG"
-chmod +x "$PKG/install.sh" "$PKG/uninstall.sh" "$PKG/ime/install.sh" 2>/dev/null || true
+chmod +x "$PKG/install.sh" "$PKG/uninstall.sh" "$PKG/ota-recover.sh" "$PKG/ime/install.sh" 2>/dev/null || true
 [ -f "$PKG/ime/uninstall.sh" ] && chmod +x "$PKG/ime/uninstall.sh" || true
 
 [ "$MISSING_REQ" = "0" ] || { echo "!! 有必需文件缺失，中止打包（见上 ✗）。"; exit 1; }

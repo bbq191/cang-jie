@@ -145,6 +145,29 @@ else
     done
 fi
 
+# ── 5b. OTA 登录触发恢复钩子（挂 ~/.bashrc）──────────────────────────────────
+# OTA 冲掉 /usr → 启动路径零残留、开机无法自动触发恢复；唯一存活 OTA 又会自动跑的点是
+# root 的 SSH 交互登录（/etc/profile 无条件 source ~/.bashrc）。挂 case $- 守卫→仅交互触发，
+# scp/非交互 ssh cmd 不动。恢复动作复用本 bundle 的 ota-recover.sh，详见其头注。写 /home、非
+# 关键、不碰启动关键路径、不可能变砖。
+echo
+echo "── OTA 登录触发恢复钩子：挂接 ~/.bashrc ──"
+if [ -f "$HERE/ota-recover.sh" ]; then
+    chmod +x "$HERE/ota-recover.sh"
+    BRC="$ROOT/.bashrc"
+    [ -f "$BRC" ] && cp "$BRC" "$BK/.bashrc.pre-ota" 2>/dev/null || true
+    # 幂等：先去旧块（同时更新指向本次 bundle 路径），再追加新块
+    [ -f "$BRC" ] && sed -i '/# >>> cangjie-ota-recover >>>/,/# <<< cangjie-ota-recover <<</d' "$BRC" 2>/dev/null || true
+    {
+        echo "# >>> cangjie-ota-recover >>> (install.sh 维护，勿手改)"
+        echo "case \"\$-\" in *i*) [ -x \"$HERE/ota-recover.sh\" ] && \"$HERE/ota-recover.sh\" || true ;; esac"
+        echo "# <<< cangjie-ota-recover <<<"
+    } >> "$BRC"
+    echo "-- 已挂接（仅交互登录触发；scp/非交互不动）。OTA 后 SSH 进设备即提示自动恢复。"
+else
+    echo "-- （包内无 ota-recover.sh，跳过 OTA 恢复钩子）"
+fi
+
 # ── 6. 启动与 xochitl 无关的常驻服务（本体已由第 1 层 xovi/start 注入，此处不碰它）──
 # cangjie-xovi-reenable 会重启 xochitl，留给下次开机触发，不在装机时打断当前会话。
 echo
