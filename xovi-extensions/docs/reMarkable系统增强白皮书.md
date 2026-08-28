@@ -191,6 +191,15 @@ OTA 到 `IMG_VERSION=3.28.0.169`（此前 .166）后用户报 5 个功能失效�
 
 >（本节浓缩版）。
 
+### 09.1 OTA 韧性基建（2026-08-28）
+
+上面 5 条是 `.166`→`.169` 这类**"改行为"OTA**的回归。对另一类 OTA——**冲掉 `/usr` rootfs**（功能全丢、但"不变砖"）——做了两层恢复基建（`packaging/`，完整教程见 README「装到一部新机」）：
+
+- **全项目一键打包器**：`package.sh` 组自包含 tar → 设备端 `install.sh` 四层编排（固件门 `sha256(/usr/bin/xochitl)` 白名单 + 中文化/reading/pkm + systemd 持久，写 `/usr` 前实检 `dm-verity`）。OTA 后重跑即恢复。**真机端到端验证**（Move/.169）。
+- **OTA 登录触发自动恢复**：`ota-recover.sh` 挂 `~/.bashrc`——OTA 后**开机无法自动触发**（启动路径零残留，正是不变砖来源），唯一存活 OTA 又会自动跑的点是 root 的 SSH 交互登录（`/etc/profile` 无条件 source `~/.bashrc`）。SSH 进设备即检测 xochitl 指纹变化→可中断倒计时后自动重装恢复；`case "$-"` 守卫使 `scp`/非交互不触发；`vellum`/`xovi` 在 `/home` 存活、无需重装。**组件级真机验证**（scp 不坏/非交互静默/检测弹横幅/取消不落标记/幂等挂钩），真实 OTA 端到端待真机 OTA 坐实。。
+
+回归防线另加 **CI**（`.github/workflows/ci.yml`：shellcheck + host pytest + 拼音 C 差分 + cargo test + aarch64 交叉编译冒烟），把可离线复现的回归挡在真机之前。
+
 ## 交叉引用
 
 - 优先级/立项：《[功能路线图白皮书](../../docs/reMarkable功能路线图白皮书.md)》§09。
