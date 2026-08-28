@@ -48,20 +48,60 @@
 | `pkm/` | 5 | PKM ★待办**生产 Rust crate**：`stardetect`/`cardsync`/`cardnote`/`cardindex`（MOC 死链体检）+ `notebook_sync`/`starscan`/`vocabscan` + `wr-stars-daemon`；卡片按书原生 Tag 选 4 套模板；依赖共享底座 `device-core`。见 [pkm/README.md](pkm/README.md) |
 | `pkm-semantic/` | 5 | PKM ★待办检测算法的 **Python 原型 + 阈值标定**（`pkm/` 是其逐结果对拍的 Rust 生产移植）。见 [pkm-semantic/README.md](pkm-semantic/README.md) |
 | `docs/` | — | **跨块白皮书**：功能路线图（含 5 分块地图）+ 网络解决方案（中文化/拼音两本就近在 `chinese-ime/docs/`） |
+| `packaging/` | — | **全项目一键打包/部署工具**：`package.sh`（宿主机组自包含 tar 包）+ `install-on-device.sh`/`uninstall-on-device.sh`（设备端编排四层）+ `firmware-allowlist.txt`（固件门）。见「快速开始 → 装到一部新机」 |
 | `assets/` · `rm-export/` | — | 杂项媒体（logo/截图/演示，不参与构建）· `.rm` 导出脚本 |
 | `pyproject.toml` · `uv.lock` | — | uv 统一 Python 环境（依赖按线分组），本地开发用 |
 | `工程纪律` | — | 工程纪律（真机验证再宣称完成、一步一确认、改设备前备份等） |
 
 ## 快速开始
 
-### 装到一部新机（SSH 后一键安装）
+### 装到一部新机（一键打包 + 一键安装）
 
-见 [chinese-ime/langhook/README.md](chinese-ime/langhook/README.md) 的「一键安装」——前置装好开发者模式/SSH + xovi/qt-resource-rebuilder（vellum 装的或官方），然后：
+全项目一键打包/部署工具在 **[`packaging/`](packaging/)**：`package.sh`（宿主机组装自包含 tar 包）
++ `install-on-device.sh`（设备端编排器，把中文化/阅读/PKM/开机持久四层按序落地）。它只**编排
+既有的、逐条真机验证过的子安装器**，不复刻高危逻辑。
+
+**前置（安装包不负责）**：设备开开发者模式/SSH，且已装 xovi + qt-resource-rebuilder
+（`vellum add xovi qt-resource-rebuilder`，或官方 xovi）。
+
+**① 打包（维护者，宿主机跑一次）**
 
 ```bash
-scp chinese-ime/langhook/deploy/dist/cangjie-ime-installer.tar.gz root@10.11.99.1:/home/root/
-ssh root@10.11.99.1 'cd /home/root && tar -xzf cangjie-ime-installer.tar.gz && /home/root/cangjie-ime/install.sh'
+./packaging/package.sh          # 缺 aarch64 二进制会自动交叉编译，再组包
+# 产物：dist/cangjie-full-<固件标签>-<日期>.tar.gz（约 143MB；花园明朝 B 单文件 ~30MB 是体积主因）
+#   --rebuild 强制重编 Rust 二进制 / --no-build 纯重打包既有产物
 ```
+
+包内结构：`cangjie/{install.sh, uninstall.sh, firmware-allowlist.txt, MANIFEST.txt,
+ime/（中文化层 install.sh + 全部载荷）, bin/（reading+pkm 二进制）, systemd/（开机自恢复单元）}`。
+载荷清单**对齐 `chinese-ime/langhook/deploy/install.sh` 的拷贝段**（权威源，勿手抄）。
+
+**② 部署（新机，SSH 后一条命令）**
+
+```bash
+OUT=dist/cangjie-full-3.28.0.169-20260828.tar.gz   # 换成 package.sh 打出的实际名
+scp $OUT root@10.11.99.1:/home/root/
+ssh root@10.11.99.1 'cd /home/root && tar -xzf '"$(basename "$OUT")"' && cangjie/install.sh'
+# 固件门不命中（装到未验证固件）会拒绝；确要强装：cangjie/install.sh --force
+# 只装功能层、不写 /usr（不装开机持久）：cangjie/install.sh --no-systemd
+```
+
+装完：中文输入（键盘地球键切简繁/全拼双拼）、系统增强面板、墨香微信读书
+（浏览器开 `http://<设备IP>:8777` 扫码登录生成 `credentials.json`）、★全局待办都就位。
+卸载回滚：`cangjie/uninstall.sh`（幂等；保留用户数据；不动 vellum 的 xovi 本体）。
+
+**四条硬保证**（映射到脚本的四层设计）：
+
+| 需求 | 怎么保证 |
+|---|---|
+| **新老设备通用，固件版本对即可** | 固件门逐字节比对 `sha256(/usr/bin/xochitl)` 与 `firmware-allowlist.txt`；同固件哈希相同即命中。装错固件默认拒绝（qmd 定位会错位崩溃），`--force` 强装并自动登记 |
+| **重启不丢任何功能** | systemd 单元 + `.wants` 写进 `/usr`(rootfs，普通重启不丢)；`cangjie-xovi-reenable.service` 在 `/home` 加密盘挂载后重跑 `xovi/start` 重注入 → 每次开机自恢复 |
+| **误升级不变砖，最多丧失全部功能** | ①绝不给 `xochitl.service` 加 `/home` 依赖（红线）；②写 `/usr` 前实检 `dm-verity`，激活即跳过（回滚变砖的病根）；③OTA 冲掉 rootfs → 单元没了 → xochitl 裸启原生 → 功能全丢但机器正常，重跑安装器即恢复；④`.so` 特征码自定位 + qrr 崩溃自愈 + `ExecStartPre=-` 摘链裸启多层兜底 |
+| **一键** | 一个 tar 包 + 一条命令；幂等，可反复跑 |
+
+> ⚠ 打包器已离线跑通（组包结构/清单校验过）；**设备端编排器为离线撰写、逐层复用真机验证过的子脚本，但整条编排本身尚未在真机端到端验证**——首次上机请按工程纪律先备份、逐层核对。固件白名单里的种子哈希取自 `rmfw/` 提取件，首次安装前请 `ssh root@10.11.99.1 'sha256sum /usr/bin/xochitl'` 核对。
+>
+> 仅装中文输入法（不含阅读/PKM）的历史小包见 [chinese-ime/langhook/README.md](chinese-ime/langhook/README.md)。
 
 ### 本地开发 / 测试（不需要设备）
 

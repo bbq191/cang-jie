@@ -91,3 +91,6 @@ misc/wallpaper/2.png
 misc/wallpaper/current.png
 misc/wallpaper/state
 misc/wallpaper/pool/
+
+# 全项目安装包产物（大 tarball，不入库）
+/dist/
