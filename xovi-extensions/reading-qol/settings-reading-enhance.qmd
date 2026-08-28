@@ -1415,9 +1415,12 @@ AFFECT /qml/device/view/settings/Settings.qml
                         renderType: Text.NativeRendering; antialiasing: false; font.family: "reMarkable Sans"; font.pixelSize: 27; color: "#000000"
                         text: {
                             if (!cjBatRoot.curWin) return "";
-                            var d = cjBatRoot.curWin.discharge;
-                            var ds = (d > 0) ? (cjBatRoot.i18n.disc + " " + d + "%") : cjBatRoot.i18n.charging;
-                            var s = ds + " · " + cjBatRoot.i18n.samp + " " + (cjBatRoot.curWin.samples || 0);
+                            var w = cjBatRoot.curWin;
+                            var ds = (w.discharge > 0) ? (cjBatRoot.i18n.disc + " " + w.discharge + "%") : cjBatRoot.i18n.charging;
+                            // v3:库仑计精确 mAh + 均 mA(仅当有放电数据,拔电用一阵才积)
+                            if (w.mah > 0) ds += " · " + w.mah + "mAh";
+                            if (w.ma > 0) ds += " · " + (cjBatRoot.cjLang() === "en" ? "avg " : "均") + w.ma + "mA";
+                            var s = ds + " · " + cjBatRoot.i18n.samp + " " + (w.samples || 0);
                             if (cjBatRoot.sumData && cjBatRoot.sumData.generated)
                                 s += " · " + Qt.formatDateTime(new Date(cjBatRoot.sumData.generated * 1000), "hh:mm");
                             return s;

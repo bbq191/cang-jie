@@ -27,7 +27,7 @@ fn main() {
     }
 
     let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
-    let (cap, status) = read_battery();
+    let (cap, status, charge, current) = read_battery();
     let disc = if status == "Discharging" { 1 } else { 0 };
     let awake = read_uptime();
 
@@ -68,8 +68,11 @@ fn main() {
             out.push_str(&format!("{now}\tapp\t{}\t{}\t{disc}\n", san(k), ms(*t)));
         }
     }
-    // _sys 行(每次都写,供窗口放电量/在线时长计算):epoch _sys status awake_s cap disc
-    out.push_str(&format!("{now}\t_sys\t{}\t{}\t{}\t{disc}\n", san(&status), awake, cap));
+    // _sys 行:epoch _sys status awake_s cap disc charge_uah current_ua(后两列 v3 新增,旧行无)
+    out.push_str(&format!(
+        "{now}\t_sys\t{}\t{}\t{}\t{disc}\t{charge}\t{current}\n",
+        san(&status), awake, cap
+    ));
     if let Err(e) = append(&file, &out) {
         eprintln!("battop: 写样本失败: {e}");
     }
@@ -189,15 +192,21 @@ fn read_unit(pid: u64) -> String {
     path.rsplit('/').find(|s| !s.is_empty()).unwrap_or("other").to_string()
 }
 
-fn read_battery() -> (i64, String) {
-    let cap = fs::read_to_string(format!("{BAT}/capacity"))
-        .ok()
-        .and_then(|s| s.trim().parse::<i64>().ok())
-        .unwrap_or(-1);
+// 返回 (容量%, 状态, charge_now µAh 库仑计当前电量, current_now µA 瞬时电流)
+fn read_battery() -> (i64, String, i64, i64) {
+    let read_i = |k: &str| -> i64 {
+        fs::read_to_string(format!("{BAT}/{k}"))
+            .ok()
+            .and_then(|s| s.trim().parse::<i64>().ok())
+            .unwrap_or(-1)
+    };
+    let cap = read_i("capacity");
+    let charge = read_i("charge_now"); // µAh,下降量=精确放电 mAh(v3)
+    let current = read_i("current_now"); // µA 瞬时
     let status = fs::read_to_string(format!("{BAT}/status"))
         .map(|s| s.trim().to_string())
         .unwrap_or_else(|_| "Unknown".into());
-    (cap, status)
+    (cap, status, charge, current)
 }
 
 fn read_uptime() -> u64 {
@@ -277,7 +286,7 @@ fn prune(dir: &Path, now: u64) {
 fn write_summary(dir: &Path, now: u64, wakes: &[(u64, String)]) -> std::io::Result<()> {
     // usage:(epoch, is_app, key, ms)   sys:(epoch, cap, disc)
     let mut usage: Vec<(u64, bool, String, u64)> = Vec::new();
-    let mut sys: Vec<(u64, i64)> = Vec::new();
+    let mut sys: Vec<(u64, i64, i64)> = Vec::new(); // (epoch, cap%, charge_uah)
     for e in fs::read_dir(dir)?.flatten() {
         let n = e.file_name();
         let n = n.to_string_lossy();
@@ -301,7 +310,8 @@ fn write_summary(dir: &Path, now: u64, wakes: &[(u64, String)]) -> std::io::Resu
                 }
                 "_sys" if f.len() >= 5 => {
                     let cap: i64 = f[4].parse().unwrap_or(-1);
-                    sys.push((epoch, cap));
+                    let charge: i64 = f.get(6).and_then(|x| x.parse().ok()).unwrap_or(-1);
+                    sys.push((epoch, cap, charge));
                 }
                 _ => {}
             }
@@ -333,17 +343,26 @@ fn write_summary(dir: &Path, now: u64, wakes: &[(u64, String)]) -> std::io::Resu
                 *proc.entry(key.clone()).or_insert(0) += ms;
             }
         }
-        // 放电%:窗口内 _sys 相邻样本的电量正向下降之和
-        let mut s: Vec<(u64, i64)> = sys.iter().filter(|(e, _)| e >= start).cloned().collect();
-        s.sort_by_key(|(e, _)| *e);
+        // 放电:窗口内 _sys 相邻样本,容量% 下降之和(disc)+ 库仑计 µAh 下降之和(精确 mAh,v3)
+        let mut s: Vec<(u64, i64, i64)> = sys.iter().filter(|(e, _, _)| e >= start).cloned().collect();
+        s.sort_by_key(|t| t.0);
         let mut disc = 0i64;
+        let mut drained_uah = 0i64;
+        let mut disc_secs = 0u64;
         for w in s.windows(2) {
-            let (a, b) = (w[0].1, w[1].1);
-            if a >= 0 && b >= 0 && a > b {
-                disc += a - b;
+            let (ca, cb) = (w[0].1, w[1].1);
+            if ca >= 0 && cb >= 0 && ca > cb {
+                disc += ca - cb;
+            }
+            let (qa, qb) = (w[0].2, w[1].2);
+            if qa >= 0 && qb >= 0 && qa > qb {
+                drained_uah += qa - qb;
+                disc_secs += w[1].0.saturating_sub(w[0].0);
             }
         }
         let samples = s.len();
+        let mah = drained_uah / 1000; // 精确放电 mAh
+        let ma = if disc_secs > 0 { drained_uah * 3600 / disc_secs as i64 / 1000 } else { 0 }; // 均放电 mA
 
         // 唤醒源计数(窗口内 journal 事件按友好名聚合)
         let mut wake: HashMap<String, u64> = HashMap::new();
@@ -357,7 +376,9 @@ fn write_summary(dir: &Path, now: u64, wakes: &[(u64, String)]) -> std::io::Resu
         if wi > 0 {
             json.push(',');
         }
-        json.push_str(&format!("\"{wname}\":{{\"discharge\":{disc},\"samples\":{samples},"));
+        json.push_str(&format!(
+            "\"{wname}\":{{\"discharge\":{disc},\"mah\":{mah},\"ma\":{ma},\"samples\":{samples},"
+        ));
         json.push_str(&format!("\"app\":{},", top_json(&app)));
         json.push_str(&format!("\"proc\":{},", top_json(&proc)));
         json.push_str(&format!("\"wake\":{}}}", top_json(&wake)));
