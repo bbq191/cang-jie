@@ -16,7 +16,7 @@ echo "=== C. 唤醒源计数(active_count>0,谁在打断/触发唤醒) ==="
 for f in /sys/devices/*/power/wakeup_count /sys/devices/*/*/power/wakeup_count /sys/devices/*/*/*/power/wakeup_count; do
   [ -f "$f" ] || continue
   c=$(cat "$f" 2>/dev/null); [ "$c" -gt 0 ] 2>/dev/null || continue
-  d=$(dirname $(dirname "$f")); nm=$(basename "$d")
+  d=$(dirname "$(dirname "$f")"); nm=$(basename "$d")
   ac=$(cat "$d/power/wakeup_active_count" 2>/dev/null)
   echo "$c  active=$ac  $nm"
 done | sort -rn | head -n 15

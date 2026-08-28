@@ -1,0 +1,70 @@
+name: CI
+
+# cang-jie 最小回归网：离线可跑的四类检查（不含真机——设备行为靠工程纪律人工真机验证）。
+# 命令与本地 README/PROTOTYPES 一致：uv sync + pytest / pinyin C 差分对拍 / cargo test / 交叉编译冒烟。
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ── 安全关键 shell 静态检查（install/deploy/fail-safe/packaging 能把设备搞崩，必须零告警）──
+  shellcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 装 shellcheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+      - name: 全量 .sh 检查（POSIX，揪 busybox 上会炸的 bashism）
+        run: git ls-files '*.sh' | xargs -r shellcheck
+
+  # ── host 侧 Python 测试 + 拼音引擎 C↔Python 逐字节差分对拍 ──
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 装 uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          enable-cache: true
+      - name: uv sync（统一 .venv，各线依赖）
+        run: uv sync
+      - name: pytest（拼音引擎 + 阅读 + PKM 语义原型）
+        run: uv run pytest chinese-ime/pinyin-engine/tests reading/tests pkm-semantic/proto -q
+      - name: 拼音 C 单测 + 差分对拍（C 移植 vs Python 参照逐字节一致）
+        run: make -C chinese-ime/pinyin-engine/c test diff-check PY="$PWD/.venv/bin/python3"
+
+  # ── 三个设备端 Rust crate 的 host 测试（device-core / weread-device / pkm-device）──
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: cargo test（各 crate 独立，无根 workspace）
+        run: |
+          cargo test --manifest-path device-core/Cargo.toml
+          cargo test --manifest-path reading/device-rs/Cargo.toml
+          cargo test --manifest-path pkm/Cargo.toml
+
+  # ── aarch64 全静态交叉编译冒烟（打包器分发的设备二进制，别让 musl/链接悄悄坏掉）──
+  cross-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-unknown-linux-musl
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: cross
+      - name: 装 aarch64 交叉 gcc（编 ring 的 C；musl 链接由 rust-lld 完成）
+        run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu
+      - name: reading + pkm 交叉编译（复用仓库 build.sh，与打包器同路径）
+        run: |
+          sh reading/device-rs/build.sh
+          sh pkm/build.sh

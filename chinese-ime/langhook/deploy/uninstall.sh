@@ -33,7 +33,12 @@ rm -rf "$DATADIR"
 # ---- 2b. UI 汉化 bind-mount：卸载挂载 + 删 pre-start 脚本 + overlay ----
 TRANS=/usr/share/remarkable/xochitl/translations
 echo "-- 卸载 UI 汉化 bind-mount + 删 pre-start 脚本"
-for i in 1 2 3; do grep -q " $TRANS " /proc/mounts 2>/dev/null && umount "$TRANS" 2>/dev/null || break; done
+# 可能叠挂多层（reenable 反复跑过），最多卸 3 次；没挂了即完成，卸不动用 lazy 兜底再停
+i=0
+while [ "$i" -lt 3 ] && grep -q " $TRANS " /proc/mounts 2>/dev/null; do
+    umount "$TRANS" 2>/dev/null || umount -l "$TRANS" 2>/dev/null || break
+    i=$((i + 1))
+done
 rm -f "$XOVI/scripts/pre-start/cangjie-xlate-bindmount.sh"
 rm -f "$XOVI/scripts/pre-start/cangjie-qrr-failsafe.sh"   # qrr 崩溃自愈 fail-safe（隔离区/标记随 rm -rf $DATADIR 清）
 rm -rf "$DATADIR/xlate-overlay" "$DATADIR/translations"
