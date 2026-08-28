@@ -113,6 +113,17 @@ fi
 rm -f "$DATADIR/qrr-failsafe.TRIGGERED"
 rm -rf "$DATADIR/qrr-failsafe.quarantine"
 
+# ---- 3d. loopback 别名（xovi pre-start：让设备端注入回传断 USB 也可达）----
+# 星标卡片/生词本/笔记本注入走 xochitl web POST /upload，该 web 只绑 USB gadget IP
+# 10.11.99.1:80，拔 USB 即从所有接口消失、回传报 Network unreachable。给 lo 加 /32 别名
+# 让 10.11.99.1 常驻本机，绑它的 :80 socket 断 USB 仍可 accept（2026-08-28 真机验证）。
+if [ -f "$PAYLOAD/cangjie-lo-alias.sh" ]; then
+    echo "-- 装 loopback 别名 pre-start -> $PRESTART/"
+    mkdir -p "$PRESTART"
+    cp "$PAYLOAD/cangjie-lo-alias.sh" "$PRESTART/cangjie-lo-alias.sh"
+    chmod +x "$PRESTART/cangjie-lo-alias.sh"
+fi
+
 # ---- 3b. UI 界面汉化（verity 安全，bind-mount 覆盖翻译目录，让 xochitl 原生加载 zh）----
 # 股票固件 /usr 翻译目录只有 de/en/es/fr、无 zh 且 /usr 只读加不进。用 bind-mount 把 /home
 # 的完整目录（原版 + 我们的 zh）覆盖上去——运行时 VFS 挂载、不改 /usr 块、无 verity 回滚。

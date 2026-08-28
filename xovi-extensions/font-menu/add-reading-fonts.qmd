@@ -14,8 +14,10 @@
 ;
 ; 【开关门控】fontModel 的 Component.onCompleted 读
 ;   /home/root/.local/share/cangjie-ime/reading-qol.json 的 fontEnhance；为真才 append 3 项。
-;   字体菜单每次打开都会新建 FormatFont → 每次读一次配置，切换开关后重开菜单即反映
-;   （无需重启；描述里写"重启生效"是保守说法，实际重开字体菜单即可）。
+;   ⚠ 固件 3.28.0.169 实测：FormatFont **每个 xochitl 进程只新建一次、之后缓存复用**，
+;   onCompleted 仅首开触发一次。故切换 fontEnhance 后**必须重启 xochitl** 才反映——
+;   「重开菜单即反映/无需重启」是旧固件的观察，在 .169 已不成立（2026-08-28 真机 READING-QOL-FONT
+;   打点坐实：切 true 后重开菜单零新日志，重启后首开才读到 true→append 3→count 7）。
 ;
 ; 【锚点核对（3356dde7）】FormatFont.qml：根 Control{id:root}(:15-16)；
 ;   contentItem: ColumnLayout 内 ListModel{id:fontModel}(:33-39)；onSelect→epub.setFontName(:66-72)。

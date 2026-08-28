@@ -180,6 +180,17 @@ host 无法运行 xochitl，但能用官方 qmldiff 工具**离线实跑补丁**
 > 三个二级页都全量写回同一 `reading-qol.json`，故 3 新键在三页 load+save 都带上（本页渲染、另两页透传）。
 > **离线门槛**：`qmldiff apply-diffs`（真本 Settings.qml=固件 .169 的 `qml_00db3818`）1 diff applied、5 开关接线正确 emit、括号平衡、emit 可再 parse；daemon `cargo test`(60+5) 绿、aarch64-musl 静态链接。
 
+## 09｜固件 .169 OTA 回归排查（2026-08-28 真机，5 功能"失效"）
+
+OTA 到 `IMG_VERSION=3.28.0.169`（此前 .166）后用户报 5 个功能失效。**关键判断：xovi 扩展链没瘫**——`xovi.so` 靠 `/etc` 的 vellum `00-xovi.conf` 仍 preload、两个 .so 都在 xochitl maps 里（中文输入正常）；日志里 `_xovi_shouldLoad 拒绝加载` 全是 PDF worker 子进程 = fail-safe 设计行为，**非 bug**。排查勿先归因"扩展没加载"，按功能逐条取证。5 条各自独立：
+
+- **① 星标 + ② 划词生词本回传全挂**：注入走 xochitl web `POST http://10.11.99.1/upload`，`/proc/net/tcp` 实测该 :80 **只绑 USB gadget IP 10.11.99.1**（127.0.0.1:80 拒绝）。拔 USB→usb 网卡 down→10.11.99.1 从所有接口消失→`os error 101 Network unreachable`。**修法（真机验证：断 USB 画星→卡片更新成功）**：给 `lo` 加 `10.11.99.1/32` 别名，地址常驻、绑它的 socket 断 USB 仍可本机 accept。持久化 = `chinese-ime/langhook/deploy/cangjie-lo-alias.sh` → xovi pre-start（install.sh §3d 部署，每次开机 `xovi/start` 跑）。
+- **③ 阅读字体菜单空**：fontconfig/字体文件都在、qmldiff 也加载；真因 = **`FormatFont.qml` 在 .169 每进程只新建一次、缓存复用**，`Component.onCompleted` 仅首开触发一次（`READING-QOL-FONT` 打点坐实）。切 `fontEnhance` 后**必须重启 xochitl** 才反映（旧固件"重开菜单即反映"在 .169 不成立）。`add-reading-fonts.qmd` 注释已订正。
+- **④《人骨拼图》节标题全"未知"**：weread 目录 API **本身**对纯编号子章返回 title 字面 "未知"（40/47，仅"部"有名）；设备二进制无"未知"兜底。管线改：空/"未知" 视作无名→合成递增「第N章」（`pipeline.rs` auto_n）。**存量书阅读 TOC 是 xochitl 导入时缓存**（不在 .content/.pagedata，"无视磁盘直写"）：**就地换 .epub + 删 `.epubindex`+`.pagedata` + 重开书**才重建 TOC（真机验证第N章），不必重导入、不生副本。
+- **⑤ 换别的 WiFi 没网**：`/etc/systemd/network/10-usb.network.d/pc-gateway.conf`（用户手动加、`/etc` tmpfs 临时、重启即失）用 `Domains=~.`+`DNSDefaultRoute=yes` 把所有 DNS 劫到 PC `10.11.99.2:1053`+默认路由 metric 500 压过 WiFi。改：去 `~.`、`DNSDefaultRoute=no`、metric→700（WiFi 优先、USB 兜底）；解析实测改走 wlan0。以后配"USB 喂网"别再加 `Domains=~.`。
+
+>（本节浓缩版）。
+
 ## 交叉引用
 
 - 优先级/立项：《[功能路线图白皮书](../../docs/reMarkable功能路线图白皮书.md)》§09。
