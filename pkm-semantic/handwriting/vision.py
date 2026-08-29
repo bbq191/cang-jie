@@ -185,8 +185,15 @@ def transcribe_card(image_path: str, provider: str = "gemini", model: str | None
         arr = json.loads(s[lb:rb + 1])
     except json.JSONDecodeError as e:
         raise VisionError(f"卡片模式 JSON 解析失败：{e}；原文 {raw[:300]}") from e
-    return [{"slot": str(d.get("slot", "")).strip(), "note": str(d.get("note", "")).strip()}
-            for d in arr if isinstance(d, dict) and d.get("note")]
+    out = []
+    for d in arr:
+        if not (isinstance(d, dict) and d.get("note")):
+            continue
+        # 清洗 note 两端的空白/标点artifact（如 vision 带的前导逗号 ",一股茫然"）
+        note = str(d.get("note", "")).strip().strip("，。,.、；;：: \t")
+        if note:
+            out.append({"slot": str(d.get("slot", "")).strip(), "note": note})
+    return out
 
 
 if __name__ == "__main__":  # 单图冒烟：python vision.py <img> [provider] [model]
