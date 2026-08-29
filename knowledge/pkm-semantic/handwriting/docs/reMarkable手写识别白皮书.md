@@ -16,7 +16,7 @@
 
 | 成员 | 形态 | 状态 |
 | --- | --- | --- |
-| **cardhw · 卡片手写批注注入** | 卡片某槽旁手写想法 → vision 空间关联 → 内联注入书摘行 | host 版真机通；**端化 A1/A2/B 真机通** |
+| **cardhw · 卡片手写批注注入** | 卡片某槽旁手写想法 → vision 空间关联 → 内联注入书摘行 | host 版真机通；**端化 A1/A2/B + 端到端真机通（DeepSeek）** |
 | **export · freeform 手写 → Markdown** | 整页手写 → 待校对 Markdown vault | host 版真机通 |
 | 结构识别（未来） | `.rm` 笔迹结构 → 有序/无序列表、待办清单 | 规划中 |
 
@@ -42,7 +42,7 @@
 
 **唯一能再拔高快写的杠杆**：`.rm` 自带笔顺/时序，online-HWR（用笔画动态而非静态图像）理论上吃得到 offline 图像识别吃不到的信息——但无现成中文离线引擎，要上云或自训，成本高，**留作后续可选增强**。
 
-**生产后端实测反超 de-risk 保守值**：MVP 换 Gemini 3.6 Flash 后，同一张 384px 缩略图上工整清单 100%、**快写行 91%**（23 字仅错 2）——de-risk 表里 65%/57% 是 de-risk 阶段的读数。这把「快写~60%」下限抬了一档，但「需校对」定位不变（91% 仍非满分、样本小）。⚠ 各家模型名漂移快（`gemini-2.5-flash` 已对新用户下线 → 须用 `gemini-3.6-flash`），`vision.py` 默认值要跟着更。
+**生产后端实测反超 de-risk 保守值**：MVP 换 Gemini 3.6 Flash 后，同一张 384px 缩略图上工整清单 100%、**快写行 91%**（23 字仅错 2）——de-risk 表里 65%/57% 是 de-risk 阶段的读数。这把「快写~60%」下限抬了一档，但「需校对」定位不变（91% 仍非满分、样本小）。⚠ 各家模型名漂移快（`gemini-2.5-flash` 已对新用户下线 → 须用 `gemini-3.6-flash`），`vision.py` 默认值要跟着更。**★注：Gemini 这组质量数据仍有效，但生产默认后端已定为 DeepSeek**——国内用户设备无法挂代理、Gemini 国内不可达，DeepSeek 国内直连可用（质量代价见 §04「后端定案」）。
 
 **落盘延迟坐实**：手写后停在原页时 host 侧 `.rm`/缩略图**均不更新**，退回书库才落盘。管线取数据必须卡在「切页/退出」之后（与下文 rmkit-cn 警示一致）。
 
@@ -63,16 +63,16 @@ P1 OCR 之上的第一个「消费端」，也是 **P1（OCR）+ P2（手写-文
 
 ---
 
-## 04｜端化 cardhw（设备自主调云，A1/A2 真机通）
+## 04｜端化 cardhw（设备自主调云，A1/A2/B + 端到端真机通）
 
-host 版要「回电脑连云」才能转写；端化版让**设备自己调云 + 走 /upload 注入**，脱离 host。
+host 版要「回电脑连云」才能转写；端化版让**设备自己调云 + 走 /upload 注入**，脱离 host。**2026-08-29 端到端真机跑通**：设备写手写批注 → 关笔记 → daemon 触发 → DeepSeek 识别 → 内联注入 → `/upload` 重建 → 手写消化成文字 → 设备重开卡片肉眼可见（详见本节末「端到端真机验证 + 后端定案」）。
 
 ![端化 cardhw 数据流（关笔记事件 → 设备调云 vision → 内联注入 → /upload 重建）](cardhw-ondevice-flow.svg)
 
 **架构定案（两条铁律驱动）**：
 
 - **可见性必走 /upload**：xochitl 零 inotify、维护全内存文档模型 → **直写 `.rm` 运行时不可见**（连重开都只见旧页）。故端化注入**必走 `/upload` 重建路**（复用 `notebook_sync::sync_auto_notebook`，同 ★卡片），把转写并进卡片重建、手写消化成文字。
-- **设备能自己调云**（两枪 de-risk 通）：① 设备 `ureq+rustls` 发 HTTPS 到 Gemini——**与 reading weread 同机制、生产已验证**；真机实测设备自主拿到标注（rustls 证书校验穿过 host 代理也通=SNI 透传非 MITM；真脱机用设备自己 wifi 直连更无碍）。② 通知：原生 `showNotification({message},ms)` 可从注入 QML 调（`reader-footnote-return.qmd` 已用），但 **daemon（Rust）够不到它** → 需「daemon 写状态文件 + 注入 QML 观察器轮询」桥接（Phase C）。
+- **设备能自己调云**（两枪 de-risk 通）：① 设备 `ureq+rustls` 发 HTTPS 到云端多模态 API（de-risk 用 Gemini 验证，**生产默认 DeepSeek**，见本节末「后端定案」）——**与 reading weread 同机制、生产已验证**；真机实测设备自主拿到标注（rustls 证书校验穿过 host 代理也通=SNI 透传非 MITM；⚠ 但 fake-ip 代理只管本机不管设备转发流量→超时，端云需真直连，DeepSeek 国内直连无需代理）。② 通知：原生 `showNotification({message},ms)` 可从注入 QML 调（`reader-footnote-return.qmd` 已用），但 **daemon（Rust）够不到它** → 需「daemon 写状态文件 + 注入 QML 观察器轮询」桥接（Phase C）。
 
 **A1 · 设备调云核心**（真机端到端）：交叉编 `cj-cardhw`（aarch64-musl 静态 1.7MB 含 rustls）→ 部署设备 → 设备自己调 Gemini → 内联注入 → `/upload` 重建。回拉新卡确认：笔划=0、批注内联到正确书摘行、打印泄漏未入、旧重名卡 `parent=trash`（`sync_auto_notebook` 顺带合并重名）。代码 `pkm/src/cardhw.rs`（vision 适配器 ureq + inject 移植，5 单测）+ `pkm/src/bin/cj_cardhw.rs`。
 
@@ -83,6 +83,14 @@ host 版要「回电脑连云」才能转写；端化版让**设备自己调云 
 **配置**：daemon 读 `reading-qol.json` 的 `cardhwEnabled`/`cardhwProvider`/`cardhwModel`；API key 读 `cardhw.key` 文件（明文，Phase B 由设置面板写）。设备侧 wifi 需有网（正常场景）。
 
 **B · 设置面板**（真机通，2026-08-29）：系统增强设置页新增「手写识别」二级页（qmldiff 哨兵 990007，块⑥），三控件——主开关（写 `cardhwEnabled`）、识别后端 4 段互斥（Gemini/DeepSeek/OpenAI/Claude→`cardhwProvider`）、模型可选框（`cardhwModel`）+ API Key 框（失焦即存、框清空只留尾号回显、echoMode 密文，单独明文写 `cardhw.key` 不进 json）。三语 cn/tw/en，复用本文件既有惯用法（Toggle Panel/分段 Repeater/边框 TextInput），无新选择器。**三页互覆盖防护**：翻页/书籍/笔记三个写 `reading-qol.json` 的二级页 load+save 同步带上 cardhw 三键，全量回写不抹。**离线验证**：用设备同款 `asivery/qmldiff` 对全份 .qmd 实跑 apply-diffs（1 diff·exit 0·emit 干净·注释合法无裸分号污染·990007 三处到位）。**真机 E2E**：改前备份（QRR 外，防 .qmd 双载）→ scp → md5 本地=设备 → restart → 健康检查绿（is-active=active、MainPID 变、NRestarts=0、qrr in maps=5、qmldiff 加载无 parse 错）→ 屏上操作：开关/选 DeepSeek/填 key 三项落地核对通过（`reading-qol.json` 三键正确 + 其余 14 键未被覆盖 + `cardhw.key` 写入）。qmd 落 /home 分区 OTA 不丢、重启能拉起。
+
+**端到端真机验证 + 后端定案 + inject 修复**（2026-08-29，DeepSeek 实测）：
+
+- **端到端跑通**：用户在《人骨拼图》- 总结卡片手写「这是一句总结」→ 关笔记 → daemon `fswatch` 触发 step④ → DeepSeek 识别 → `inject_inline` 注入 → `sync_auto_notebook` /upload 重建（生成新卡、旧卡入 trash、手写笔划消化成文字）→ 用户设备上肉眼确认手写变成印刷体拼在书摘行后。daemon 日志 `[cardhw] 注入 1 条并 /upload（手写消化）` 为证。
+- **★后端定案 = DeepSeek（`deepseek-v4-flash-vision-exp`）**：目标用户群在国内、**设备自身无法挂代理、多数用户路由也无代理**；DeepSeek 是国内多模态 API、**直连国内网即可用、无需任何代理**——这是务实的生产默认。**Gemini 判为不适用**（`generativelanguage.googleapis.com` 国内需代理，设备端走不通）——**这反转了早前 §02/§03 里"推荐 Gemini / Gemini 质量更好所以用它"的取舍**：Gemini 质量确实更好且无 384 上限，但**在国内直连场景不可达**，故 Gemini 保留为四后端之一（有代理/海外用户可选），**默认与推荐都是 DeepSeek**。⚠️ 代码当前 `cardhwProvider` 缺省仍是 `gemini`（`device-core::vision` + daemon cfg），面板可手选 DeepSeek；是否把缺省改 DeepSeek 待定。
+- **DeepSeek 质量实况（384-token 图像上限的代价）**：稀疏测试卡潦草手写 1/4；规整真书卡上清楚单句核心读对（「这是一句总结」✅）但**易把附近印刷划线掺进 note**（384 低分辨率分不清印刷/手写）。定位仍是「辅助转写、需校对」。**用笔建议：手写用红/蓝等非黑色**给模型最强区分线索。
+- **网络出口坑**：设备端调云需**真直连**。实测被 host 的 clash-meta **fake-ip**（`Meta` TUN，把 `api.deepseek.com` 解析到 `28.0.x`）挡过——该代理只拦 host 本机 OUTPUT、不管设备 USB 转发/热点流量 → 设备 TLS 连上但读应答超时。**DeepSeek 国内直连无需代理**正好绕开此坑；用带 fake-ip 的网反而不通。。
+- **inject 修复三处**（真机暴露、`cardhw.rs` + 7 单测）：① `inject_inline` 的 `applied` **无条件 push** 致误报"已注入"→ `sync` 判"有变化"却内容相同 → 空转/None → 改为**仅真拼上才记 applied**，`ends_with` 命中（幂等/泄漏回环）归 `leaked`；② 新增 `strip_printed_prefix`——低分辨率下 vision 常把「印刷条目 + 手写」连成一串，剥掉印刷前缀只留手写；③ `CARD_PROMPT` 从「彩色=手写、黑色=印刷」改为**按字形区分**（机器字规整 vs 手写潦草连笔），兼容黑笔手写、强化"绝不把印刷字算进 note、宁漏不误"。
 
 **未建**：**C 通知桥**（关笔记事件后 daemon 写状态文件 + 注入 QML 观察器轮询调 `showNotification` 通知「处理中→完成/失败」）+ 各模型 token 消耗统计（API 回传 `usage` 落本地计数）。
 
