@@ -20,13 +20,16 @@ pub struct Annotation {
 }
 
 // ── vision 适配器（通用调用在 `device_core::vision`，此处只留卡片专属 prompt + 解析）──────
-const CARD_PROMPT: &str = "这是一张 reMarkable「总结卡片」的整页渲染。黑色打印是卡片已有内容\
-（若干槽 + 每槽下 · 开头的书摘条目）；彩色手写（红/蓝等，非黑）是用户贴着某条书摘条目旁边加的批注。\
-任务：只找彩色手写批注，把每段手写转写出来，并指出它贴着哪一条黑色打印的 · 条目。\
-极其重要：note 只写手写的字，绝对不要把它旁边那条黑色打印文字算进去。\
-anchor 写它所贴的那条黑色打印条目的原文（去掉开头的 · 和空格，照抄黑字，别改别加手写）。\
-只输出一个 JSON 数组，每元素 {\"anchor\":\"黑色打印条目原文\",\"note\":\"手写逐字转写\"}；\
-手写潦草认不准写最可能的字，不留空、不加问号占位。没有手写的条目不要列。\
+const CARD_PROMPT: &str = "这是一张 reMarkable「总结卡片」的整页渲染，页面上有两类文字：\
+（甲）印刷体——规整、等宽、横平竖直的机器字，是卡片已有内容（若干标题槽 + 每槽下以 · 开头的书摘条目）；\
+（乙）手写批注——笔迹潦草、有连笔、粗细不均、大小歪斜的手写字，是用户贴着某条书摘条目旁边加的想法。\
+手写可能是任意颜色（红/蓝等更明显，但也可能和印刷一样是黑色）——**别只靠颜色分，要靠字形：机器字规整、手写字潦草**。\
+任务：只转写（乙）手写批注，逐条给出，并指出它贴着哪一条（甲）印刷的 · 书摘条目。\
+铁律：note 只写手写的字；**绝不能把印刷体的字算进 note**——哪怕手写就写在某条印刷条目旁边或叠在其上，note 也只保留你判断为手写的那部分，印刷部分一个字都不许带。\
+拿不准某段到底是印刷还是手写时，宁可漏掉不写，也绝不把印刷字当手写输出。\
+anchor 写它所贴的那条印刷 · 条目的原文（去掉开头的 · 和空格，照抄印刷字，别加手写）。\
+只输出一个 JSON 数组，每元素 {\"anchor\":\"印刷条目原文\",\"note\":\"手写逐字转写\"}；\
+手写潦草认不准写最可能的字，不留空、不加问号占位；没有手写批注的条目不要列。\
 不要输出 JSON 以外的任何字符（不要 markdown 代码围栏、不要解释）。";
 
 /// 整页卡片缩略图 → 手写批注列表 [{anchor,note}]。通用 HTTP 调用复用 `device_core::vision::call_vision`。
@@ -93,6 +96,26 @@ fn looks_printed(note: &str, bodies: &[&str]) -> bool {
     bodies.iter().any(|b| note == *b || sim(note, b) > 0.85)
 }
 
+/// note 若以某条印刷 bullet 原文开头（vision 把「印刷条目 + 手写」连成一串的泄漏），
+/// 剥掉该印刷前缀只留手写部分。取能剥出非空手写、且剥掉的印刷前缀最长的那条。
+/// 剥不出（note 不以任何印刷条目开头）→ 原样返回。
+fn strip_printed_prefix(note: &str, bodies: &[&str]) -> String {
+    let n = note.trim();
+    let punct: &[char] = &['，', '。', ',', '.', '、', '；', ';', '：', ':', ' ', '\t'];
+    let mut best: Option<(usize, String)> = None; // (剥掉的印刷前缀长度, 剩余手写)
+    for b in bodies {
+        let b = b.trim();
+        if b.is_empty() { continue; }
+        if let Some(rest) = n.strip_prefix(b) {
+            let rest = rest.trim_start_matches(punct).trim();
+            if !rest.is_empty() && best.as_ref().map_or(true, |(l, _)| b.chars().count() > *l) {
+                best = Some((b.chars().count(), rest.to_string()));
+            }
+        }
+    }
+    best.map(|(_, r)| r).unwrap_or_else(|| n.to_string())
+}
+
 /// 在 bullet 行里找与 anchor 最相似的行（阈值 0.5；子串直接给高分）；已用过的行跳过。
 fn best_line(lines: &[String], anchor: &str, used: &HashSet<usize>) -> Option<usize> {
     let (mut best_i, mut best_r) = (None, 0.5_f64);
@@ -125,7 +148,10 @@ pub fn inject_inline(text: &str, anns: &[Annotation]) -> InjectResult {
     let mut used: HashSet<usize> = HashSet::new();
     for a in anns {
         let bref: Vec<&str> = bodies_owned.iter().map(|s| s.as_str()).collect();
-        if looks_printed(&a.note, &bref) {
+        // 先剥掉 note 里混入的印刷条目前缀（低分辨率下 vision 常把「印刷+手写」连成一串）
+        let note = strip_printed_prefix(&a.note, &bref);
+        // 剥完仍整体雷同某条印刷 bullet（或剥空）→ 判定纯泄漏，丢弃。
+        if note.is_empty() || looks_printed(&note, &bref) {
             res.leaked.push(a.clone());
             continue;
         }
@@ -134,9 +160,13 @@ pub fn inject_inline(text: &str, anns: &[Annotation]) -> InjectResult {
             Some(i) => {
                 used.insert(i);
                 let trimmed = lines[i].trim_end().to_string();
-                if !trimmed.ends_with(&a.note) {
-                    lines[i] = format!("{} {}", trimmed, a.note);
+                if trimmed.ends_with(&note) {
+                    // 该行已以此 note 结尾：幂等重跑（之前已注入）或 note 本就是这行印刷内容（泄漏回环）
+                    // → 不产生新变化，**不计入 applied**（否则误报"已注入"→ sync 误判/空转上传）。
+                    res.leaked.push(a.clone());
+                    continue;
                 }
+                lines[i] = format!("{} {}", trimmed, note);
                 res.applied.push(bullet_body(&lines[i]).unwrap_or(lines[i].trim()).to_string());
             }
         }
@@ -255,6 +285,28 @@ mod tests {
         let r1 = inject_inline(CARD, &anns);
         let r2 = inject_inline(&r1.text, &anns);
         assert_eq!(r1.text, r2.text, "再跑一次不重复拼接");
+        // 第二遍该行已以此 note 结尾 → 归泄漏、**不再误报 applied**（旧 bug：applied 无条件 push
+        // 致 sync 误判"有变化"却又内容相同 → 空转/None）。
+        assert!(r2.applied.is_empty(), "幂等重跑不报 applied");
+    }
+
+    #[test]
+    fn concatenated_printed_prefix_stripped() {
+        // 低分辨率 vision 把「印刷条目 + 手写」连成一串：note="只想睡觉 但很累了"（印刷"只想睡觉"+手写"但很累了"）
+        // → 剥掉印刷前缀，只把手写"但很累了"拼回该行。
+        let r = inject_inline(CARD, &[ann("只想睡觉", "只想睡觉 但很累了")]);
+        assert!(r.text.contains("· 只想睡觉 但很累了"), "剥印刷前缀后拼手写");
+        assert!(!r.text.contains("只想睡觉 只想睡觉"), "印刷部分没被重复带进去");
+        assert_eq!(r.applied.len(), 1);
+        assert!(r.leaked.is_empty());
+    }
+
+    #[test]
+    fn full_printed_note_roundtrip_leaked() {
+        // note 整条就是某印刷 bullet（vision 把黑印刷字当手写读回来）→ 剥空/雷同 → 判泄漏、不注入、不报 applied。
+        let r = inject_inline(CARD, &[ann("只想睡觉", "只想睡觉")]);
+        assert!(r.applied.is_empty(), "纯印刷泄漏不产生注入");
+        assert_eq!(r.leaked.len(), 1);
     }
 
     #[test]
