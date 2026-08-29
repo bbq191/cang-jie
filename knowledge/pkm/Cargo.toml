@@ -9,20 +9,20 @@ name = "pkm_device"
 path = "src/lib.rs"
 
 [[bin]]
-name = "wr-stars"
-path = "src/bin/wr_stars.rs"
+name = "cj-stars"
+path = "src/bin/cj_stars.rs"
 
 [[bin]]
-name = "wr-stars-daemon"
-path = "src/bin/wr_stars_daemon.rs"
+name = "cj-stars-daemon"
+path = "src/bin/cj_stars_daemon.rs"
 
 [[bin]]
-name = "wr-nbtest"
-path = "src/bin/wr_nbtest.rs"
+name = "cj-nbtest"
+path = "src/bin/cj_nbtest.rs"
 
 [[bin]]
-name = "wr-cardhw"
-path = "src/bin/wr_cardhw.rs"
+name = "cj-cardhw"
+path = "src/bin/cj_cardhw.rs"
 
 [dependencies]
 # 复用设备端共享底座 epubindex（页→章）/fswatch（inotify 封装）/inject（写 xochitl 书库）/
@@ -42,7 +42,7 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 memmap2 = "0.9"
 
 # weread-device 只给 tests/examples 用（stars_fixture 测 weread_device::epub::assemble 组装 A 模型待办 EPUB）——
-# **dev-only**，故生产 daemon 构建（cargo build --release --bin wr-stars-daemon）不编译整条 reading 管线。
+# **dev-only**，故生产 daemon 构建（cargo build --release --bin cj-stars-daemon）不编译整条 reading 管线。
 [dev-dependencies]
 weread-device = { path = "../../reading/device-rs" }
 

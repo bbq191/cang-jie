@@ -1,4 +1,4 @@
-//! wr-stars-daemon —— ★ 全局待办 + PKM 汇总本 后台服务（**薄派发层**）。
+//! cj-stars-daemon —— ★ 全局待办 + PKM 汇总本 后台服务（**薄派发层**）。
 //!
 //! 事件驱动（inotify+防抖，复用 `fswatch`，空闲阻塞睡死零唤醒）→ 扫库找手绘星（`stardetect`）→
 //!   ① 星→卡片：`starscan::scan_and_sync`（每本有星的书一份可编辑《总结卡片》，打字批注跨重建保留）
@@ -366,7 +366,7 @@ fn append_cardhw_done(hash: &str) {
 
 fn main() {
     let observe = std::env::var("CANGJIE_FSWATCH_OBSERVE").ok().as_deref() == Some("1");
-    println!("wr-stars-daemon 启动{}（B 模型：一书一份打字卡片）", if observe { "（observe 观察模式）" } else { "" });
+    println!("cj-stars-daemon 启动{}（B 模型：一书一份打字卡片）", if observe { "（observe 观察模式）" } else { "" });
 
     // 冷启动：全库扫一遍建基线（此时无变更集可依）。
     settle(&read_cfg(), observe, None);

@@ -29,18 +29,18 @@ PKM 要读书页→章、写笔记注入书库，这些**低层设备能力**抽
 
 | bin | 作用 |
 |-----|------|
-| `wr-stars-daemon` | **生产守护进程**：挂 systemd 常驻，`fswatch` 监听文档目录（**增量：只扫变更书**）→ `stardetect` 扫红星 → `epubindex` 页映射到章-节名 → 按书的原生 Tag（文档级+页级）为**每星选模板**（4 套：通用/原文/悬疑/科幻，`cardsync`）→ 增量 merge → `cardnote` 造/更新总结卡片笔记本 → `/upload` 注入；另 `cardindex` 出全库锚点索引 + MOC 死链体检（SSH 报告 + 库内「🔗 卡片索引」笔记本）。事件驱动去重。**外加一条解耦的附加扫描——生词本**：全库源书**⚪灰色荧光笔划过的词**（脱离画星）→ `dict` mmap 二分查本地词典（用户自备牛津英汉双解/现汉派生的排序 TSV）→ `locate` 在 EPUB 章全文定位取原句 → `cardvocab` 汇成一本「📕 生词本」。查词与 星→卡片 管线互不干扰（灰高亮照常进卡片灰槽）。 |
-| `wr-stars` | 手动扫描 CLI：一次性扫库出 ★待办 markdown（调试/对拍用）。 |
-| `wr-nbtest` | 笔记本造页测试件（不部署到设备）。 |
+| `cj-stars-daemon` | **生产守护进程**：挂 systemd 常驻，`fswatch` 监听文档目录（**增量：只扫变更书**）→ `stardetect` 扫红星 → `epubindex` 页映射到章-节名 → 按书的原生 Tag（文档级+页级）为**每星选模板**（4 套：通用/原文/悬疑/科幻，`cardsync`）→ 增量 merge → `cardnote` 造/更新总结卡片笔记本 → `/upload` 注入；另 `cardindex` 出全库锚点索引 + MOC 死链体检（SSH 报告 + 库内「🔗 卡片索引」笔记本）。事件驱动去重。**外加一条解耦的附加扫描——生词本**：全库源书**⚪灰色荧光笔划过的词**（脱离画星）→ `dict` mmap 二分查本地词典（用户自备牛津英汉双解/现汉派生的排序 TSV）→ `locate` 在 EPUB 章全文定位取原句 → `cardvocab` 汇成一本「📕 生词本」。查词与 星→卡片 管线互不干扰（灰高亮照常进卡片灰槽）。 |
+| `cj-stars` | 手动扫描 CLI：一次性扫库出 ★待办 markdown（调试/对拍用）。 |
+| `cj-nbtest` | 笔记本造页测试件（不部署到设备）。 |
 
 ## 构建 & 部署
 
 ```sh
 ./build.sh              # host 自测 + 交叉编 aarch64-unknown-linux-musl 全静态
-./deploy.sh [host]      # scp wr-stars-daemon + wr-stars 到设备 /home/root/weread
+./deploy.sh [host]      # scp cj-stars-daemon + cj-stars 到设备 /home/root/weread
 ```
 
-设备端落点 `/home/root/weread`（与块3阅读同目录，`wr-stars-daemon` 的 systemd 单元
+设备端落点 `/home/root/weread`（与块3阅读同目录，`cj-stars-daemon` 的 systemd 单元
 路径不变——抽 crate 只改仓库侧、不动设备布局）。前置工具链见
 `../../reading/device-rs/build.sh` 注释（`rustup target add aarch64-unknown-linux-musl`
 + aarch64-gcc）。

@@ -71,15 +71,15 @@ cd proto
 
 ## Rust 移植（已完成，逐字节对拍 Python）
 
-`pkm/src/stardetect.rs` + `pkm/src/bin/wr_stars.rs`（块5 独立 crate，2026-08-23 从 reading 抽出）——纯 aarch64 静态二进制。
+`pkm/src/stardetect.rs` + `pkm/src/bin/cj_stars.rs`（块5 独立 crate，2026-08-23 从 reading 抽出）——纯 aarch64 静态二进制。
 
-- **对拍验证**：同一真机 fixture，Rust `wr-stars` 与 Python `star_scan` 在 5 个 `cluster_gap`（6/6/6/6/4）
+- **对拍验证**：同一真机 fixture，Rust `cj-stars` 与 Python `star_scan` 在 5 个 `cluster_gap`（6/6/6/6/4）
   与各色门控**逐一全等**；**200 笔逐字段全等**（color / self_int / size / aspect）。几何全用 f64
   （Point 是 f32，上采 f64 与 rmscene/Python 一致）。回归测试 `pkm/tests/stars_fixture.rs`。
 - **vendored `remarkable_lines` 新格式补丁**（当前固件比 crate 新）：① `ParagraphStyle::Unknown(u8)`
   容忍新样式码 6（原来遇到就整文件解析失败）；② 块少读时跳到块尾而非报错（rmscene 也只是
   "some data not read"）。补丁后 Rust 读到全部 200 笔，与 rmscene 一致。
-- aarch64 musl 全静态产物 ~509KB。用法同 Python：`wr-stars <镜像> --todo-color RED [--cluster-gap 25]`。
+- aarch64 musl 全静态产物 ~509KB。用法同 Python：`cj-stars <镜像> --todo-color RED [--cluster-gap 25]`。
 
 ## 设备 daemon（✅ 已交付，全真机端到端）
 
@@ -90,7 +90,7 @@ cd proto
 > **按书原生 Tag 选模板**，通用/原文/悬疑/科幻 4 套，见白皮书 §06 + 打字批注保留），不是单本全局 EPUB；④设置页「系统增强 → 笔记增强」已加开关；
 > ⑤后续增量扫（只扫变更书省电）+ `cardindex` MOC 死链体检（库内「🔗 卡片索引」笔记本）。
 
-`pkm/src/bin/wr_stars_daemon.rs`（+ 复用 `reading/device-rs/src/fswatch.rs`）——**独立后台服务**（不并进 wr-serve）。
+`pkm/src/bin/cj_stars_daemon.rs`（+ 复用 `reading/device-rs/src/fswatch.rs`）——**独立后台服务**（不并进 wr-serve）。
 
 - **事件驱动 + 防抖，省电**：复用 `fswatch`（inotify + 防抖），**空闲阻塞睡死、零周期唤醒**
   （周期扫描是电池刺客，弃用）；systemd 侧 `CPUQuota=30%`+`MemoryMax=64M`+`Nice=10`——
@@ -109,7 +109,7 @@ host 验证：全量测试 19 + fswatch 防抖 1 + stars fixture 5 全绿；daem
 
 ## 已交付（全真机端到端，2026-08-22）
 
-部署（`wr-stars.service` 装 `/usr`、`CPUQuota=30%`、开机自启）、检测、章名映射、卡片生成/merge、`/upload` 注入、
+部署（`cj-stars.service` 装 `/usr`、`CPUQuota=30%`、开机自启）、检测、章名映射、卡片生成/merge、`/upload` 注入、
 事件驱动去重、设置页开关——**全部真机验证通过**（用户逐项确认）。三服务 active、NRestarts 0、每书恒 1 张卡。
 
 **已知边界 / 后续**：

@@ -1,9 +1,9 @@
-//! wr-stars —— 扫 xochitl 镜像目录 → ★ 全局待办清单（Markdown）。
+//! cj-stars —— 扫 xochitl 镜像目录 → ★ 全局待办清单（Markdown）。
 //!
 //! 移植自 pkm-semantic/proto/star_scan.py，与 Python 逐结果对拍。扫描逻辑在 stardetect::scan_library
 //! （daemon 共用同一份）。只读，绝不回写设备。
 //!
-//! 用法: wr-stars <镜像目录> [--todo-color RED] [--cluster-gap 25] [--json out.json]
+//! 用法: cj-stars <镜像目录> [--todo-color RED] [--cluster-gap 25] [--json out.json]
 
 use std::path::PathBuf;
 
@@ -12,7 +12,7 @@ use pkm_device::stardetect::{render_todo_markdown, scan_library, DocStars, StarC
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 2 {
-        eprintln!("用法: wr-stars <镜像目录> [--todo-color RED] [--cluster-gap 25] [--json out.json]");
+        eprintln!("用法: cj-stars <镜像目录> [--todo-color RED] [--cluster-gap 25] [--json out.json]");
         std::process::exit(2);
     }
     let src = PathBuf::from(&args[1]);

@@ -11,14 +11,14 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT=/home/root
 DEST="$ROOT/weread"
 SYSD=/usr/lib/systemd/system
-UNITS="cangjie-xovi-reenable.service wr-serve.service wr-renew.service wr-renew.timer wr-stars.service"
-BINS="wr-serve wr-download wr-renew wr-fetch wr-stars-daemon wr-stars"
+UNITS="cangjie-xovi-reenable.service wr-serve.service wr-renew.service wr-renew.timer cj-stars.service"
+BINS="wr-serve wr-download wr-renew wr-fetch cj-stars-daemon cj-stars"
 
 echo "== cang-jie 全项目卸载 =="
 [ "$(id -u)" = "0" ] || { echo "!! 需要 root 运行"; exit 1; }
 
 # 1. 停 + 禁用常驻服务（timer 也停）
-for u in wr-serve.service wr-stars.service wr-renew.timer wr-renew.service cangjie-xovi-reenable.service; do
+for u in wr-serve.service cj-stars.service wr-renew.timer wr-renew.service cangjie-xovi-reenable.service; do
     systemctl stop "$u" 2>/dev/null || true
 done
 

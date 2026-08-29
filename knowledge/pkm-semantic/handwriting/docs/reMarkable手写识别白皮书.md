@@ -74,7 +74,7 @@ host 版要「回电脑连云」才能转写；端化版让**设备自己调云 
 - **可见性必走 /upload**：xochitl 零 inotify、维护全内存文档模型 → **直写 `.rm` 运行时不可见**（连重开都只见旧页）。故端化注入**必走 `/upload` 重建路**（复用 `notebook_sync::sync_auto_notebook`，同 ★卡片），把转写并进卡片重建、手写消化成文字。
 - **设备能自己调云**（两枪 de-risk 通）：① 设备 `ureq+rustls` 发 HTTPS 到 Gemini——**与 reading weread 同机制、生产已验证**；真机实测设备自主拿到标注（rustls 证书校验穿过 host 代理也通=SNI 透传非 MITM；真脱机用设备自己 wifi 直连更无碍）。② 通知：原生 `showNotification({message},ms)` 可从注入 QML 调（`reader-footnote-return.qmd` 已用），但 **daemon（Rust）够不到它** → 需「daemon 写状态文件 + 注入 QML 观察器轮询」桥接（Phase C）。
 
-**A1 · 设备调云核心**（真机端到端）：交叉编 `wr-cardhw`（aarch64-musl 静态 1.7MB 含 rustls）→ 部署设备 → 设备自己调 Gemini → 内联注入 → `/upload` 重建。回拉新卡确认：笔划=0、批注内联到正确书摘行、打印泄漏未入、旧重名卡 `parent=trash`（`sync_auto_notebook` 顺带合并重名）。代码 `pkm/src/cardhw.rs`（vision 适配器 ureq + inject 移植，5 单测）+ `pkm/src/bin/wr_cardhw.rs`。
+**A1 · 设备调云核心**（真机端到端）：交叉编 `cj-cardhw`（aarch64-musl 静态 1.7MB 含 rustls）→ 部署设备 → 设备自己调 Gemini → 内联注入 → `/upload` 重建。回拉新卡确认：笔划=0、批注内联到正确书摘行、打印泄漏未入、旧重名卡 `parent=trash`（`sync_auto_notebook` 顺带合并重名）。代码 `pkm/src/cardhw.rs`（vision 适配器 ureq + inject 移植，5 单测）+ `pkm/src/bin/cj_cardhw.rs`。
 
 **A2 · 事件触发**（真机通）：daemon `settle` 加步骤④——`fswatch CLOSE_WRITE`（退出笔记落盘）事件里，对**在库「总结卡片」**（`is_active_summary_card`，排除 trash）跑 `process_card_doc`。**仅事件驱动**（冷启动不跑，免开机批量调云）；失败只记不崩、不阻塞画星；observe 跳过。
 

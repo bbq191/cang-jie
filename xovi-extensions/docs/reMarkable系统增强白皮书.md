@@ -110,7 +110,7 @@ host 无法运行 xochitl，但能用官方 qmldiff 工具**离线实跑补丁**
 
 ## 08｜设备端查词 · 生词本「📕 生词本」（跨块：代码在 pkm daemon，2026-08-25 真机端到端验证通过）
 
-查字词是**系统增强线的阅读辅助**（读书时划生词自动查词），但**代码本体骑在 pkm daemon（`wr-stars-daemon`）上**
+查字词是**系统增强线的阅读辅助**（读书时划生词自动查词），但**代码本体骑在 pkm daemon（`cj-stars-daemon`）上**
 ——与 §04 荧光笔吸附（代码在块2 langhook .so）同构的第 4 处跨块：能力概念属块4，实现复用了 pkm 的荧光笔读回
 （`cardhl`）+ EPUB 章映射（`epubindex`）+ 笔记本注入（`sync_auto_notebook`）管线，**不为它单拆一个二进制**。
 本节是查字词设计的单一事实来源；实现在 `knowledge/pkm/src/{dict,cardvocab,locate,vocabscan}.rs`，daemon 只触发+注入。
@@ -161,7 +161,7 @@ host 无法运行 xochitl，但能用官方 qmldiff 工具**离线实跑补丁**
   （牛津 MOBI 经 calibre 完整转换在 CSS-flatten 阶段报错，改用 `--debug-pipeline` 取**输入阶段** HTML 抽词——
   那在报错阶段之前落盘，正是解析所需，2 秒抽完。）
 - **真机已部署**（2026-08-25）：daemon 二进制 + `en.tsv`/`zh.tsv` scp 到设备 `/home/root/weread/dict/`，
-  备份 `cangjie-backups/wr-stars-daemon.bak.pre-vocab`、md5 本地=设备一致、`systemctl restart wr-stars` 后
+  备份 `cangjie-backups/cj-stars-daemon.bak.pre-vocab`、md5 本地=设备一致、`systemctl restart cj-stars` 后
   is-active=active/MainPID 变/NRestarts=0/ExecMainStatus=0；冷启动日志 `[stars] 生词本已创建（0 个生词）`
   = **查词管线跑通、生词本已建**（暂无灰词故 0 条）。
 - **真机端到端验证通过（2026-08-25）**：用户在《13 67》某页用 ⚪灰色荧光笔划「刑事」「情报」两词（**未画星**）→
@@ -174,8 +174,8 @@ host 无法运行 xochitl，但能用官方 qmldiff 工具**离线实跑补丁**
 > `starTodoEnabled`(主·默认关) 下挂 `cardHighlights`(划线摘录〔口语"荧光笔"〕·高亮入卡·**默认关**〔规则a·2026-08-27〕)/`cardAggregates`(跨书汇总·4本汇总本·默认开)
 > 两个子开关（主关则灰化失效）；`vocabEnabled`(**单词笔记·生词本·独立顶层·默认关**，脱离画星、与★互不依赖)；`hlSnapCjk`(荧光笔吸附)。
 >
-> **daemon 开关不生效根治（2026-08-27 真机验证）**：`wr-stars-daemon` 原来 fswatch 只 watch xochitl 文档树、不 watch config → 拨开关只写 `reading-qol.json`、唤不醒休眠 daemon，存量已画星书也不回扫（表现"开关像没用"）。修复：`device_core::fswatch::watch_debounced` 加可选 config 文件监听参数 + `CONFIG_SIGNAL` 哨兵，daemon 见到即 `settle(dirty=None)` **全库重扫**（真实 open-write-close 写 config 后 daemon 被唤醒跑全库重扫，真机坐实）。生效的 tap-page/hlSnapCjk 本就在进程内动作那刻现读，故一直正常。
-> daemon `wr-stars-daemon` 读这 5 键分别门控三条产出，功能关闭时对应只读自动本(4汇总+生词本)入回收站清残留、星卡片含批注绝不 trash。
+> **daemon 开关不生效根治（2026-08-27 真机验证）**：`cj-stars-daemon` 原来 fswatch 只 watch xochitl 文档树、不 watch config → 拨开关只写 `reading-qol.json`、唤不醒休眠 daemon，存量已画星书也不回扫（表现"开关像没用"）。修复：`device_core::fswatch::watch_debounced` 加可选 config 文件监听参数 + `CONFIG_SIGNAL` 哨兵，daemon 见到即 `settle(dirty=None)` **全库重扫**（真实 open-write-close 写 config 后 daemon 被唤醒跑全库重扫，真机坐实）。生效的 tap-page/hlSnapCjk 本就在进程内动作那刻现读，故一直正常。
+> daemon `cj-stars-daemon` 读这 5 键分别门控三条产出，功能关闭时对应只读自动本(4汇总+生词本)入回收站清残留、星卡片含批注绝不 trash。
 > **单词笔记基线（"开前灰词不补"）**：启用时记基线时刻(`vocab-since.txt`)，生词本只纳入 `.rm mtime >= 基线` 的页。
 > 首次激活若已有生词本(之前就在用)→基线 0 grandfather 全保留；否则基线=配置 mtime(≈开关打开时刻，避开 fswatch 防抖竞态)。
 > 停用删基线，下次干净 off→on 重设 → 只纳入此后画的灰词。

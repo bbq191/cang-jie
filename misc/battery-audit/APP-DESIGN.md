@@ -99,7 +99,7 @@ battery(hour_epoch, cap_start, cap_end, disc_secs, awake_secs)
 | rm-sync · update-engine · swupdate | reMarkable 云同步/OTA |
 | NetworkManager · wpa_supplicant | 网络栈 |
 | marker-manager · tee-supplicant · irq/* | 硬件驱动 |
-| wr-serve · wr-stars-daemon · wr-renew · battop | **cang-jie(本项目)** |
+| wr-serve · cj-stars-daemon · wr-renew · battop | **cang-jie(本项目)** |
 
 未知 unit 回落显示 unit 名。
 

@@ -2,8 +2,8 @@
 //! （xochitl 直写不可见，必走 /upload；同 ★卡片重建路，`sync_auto_notebook`）。
 //!
 //! A1 阶段 = 手动触发一次性验证（不接 fswatch/通知，那是 A2/C）。API key 走环境变量。
-//! 用法：wr-cardhw --book 人骨拼图 [--provider gemini] [--model X] [--apply]
-//!       wr-cardhw --doc <uuid> --apply
+//! 用法：cj-cardhw --book 人骨拼图 [--provider gemini] [--model X] [--apply]
+//!       cj-cardhw --doc <uuid> --apply
 //! 默认 dry-run 只报「手写→槽」方案；--apply 才走 /upload 重建（手写消化成文字）。
 
 use device_core::inject;

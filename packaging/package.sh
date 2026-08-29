@@ -48,8 +48,8 @@ PKM_REL="$REPO/knowledge/pkm/target/$TARGET/release"
 SYSD_SRC="$REPO/reading/device-rs/systemd"
 
 READING_BINS="wr-serve wr-download wr-renew wr-fetch"
-PKM_BINS="wr-stars-daemon wr-stars"
-UNITS="cangjie-xovi-reenable.service wr-serve.service wr-renew.service wr-renew.timer wr-stars.service"
+PKM_BINS="cj-stars-daemon cj-stars"
+UNITS="cangjie-xovi-reenable.service wr-serve.service wr-renew.service wr-renew.timer cj-stars.service"
 
 # ── 助手 ──────────────────────────────────────────────────────────────────
 MISSING_REQ=0

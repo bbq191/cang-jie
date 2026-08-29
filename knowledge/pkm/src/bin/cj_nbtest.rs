@@ -1,8 +1,8 @@
-//! wr-nbtest —— B 模型笔记本追加机制的真机验证工具（一次性/调试用，非常驻服务）。
+//! cj-nbtest —— B 模型笔记本追加机制的真机验证工具（一次性/调试用，非常驻服务）。
 //!
-//!   wr-nbtest create <title> [首页文本]     直写一本卡片笔记本，打印 uuid
-//!   wr-nbtest append <uuid> <整页文本>       给已存在笔记本末尾安全追加一页
-//!   wr-nbtest list   <uuid>                  只读列出每页 idx.value + 首段文本（校验）
+//!   cj-nbtest create <title> [首页文本]     直写一本卡片笔记本，打印 uuid
+//!   cj-nbtest append <uuid> <整页文本>       给已存在笔记本末尾安全追加一页
+//!   cj-nbtest list   <uuid>                  只读列出每页 idx.value + 首段文本（校验）
 //!
 //! 目录：默认 xochitl 生产目录，可用 CANGJIE_XOCHITL_DIR 覆盖。
 
@@ -15,7 +15,7 @@ fn dir() -> String {
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    let usage = "用法: wr-nbtest create <title> [首页文本] | append <uuid> <文本> | list <uuid>";
+    let usage = "用法: cj-nbtest create <title> [首页文本] | append <uuid> <文本> | list <uuid>";
     let cmd = match args.get(1) {
         Some(c) => c.as_str(),
         None => {
@@ -56,7 +56,7 @@ fn main() {
             }
         }
         "upload" => {
-            // wr-nbtest upload <uuid> <npages> [title]  —— 构造 rmdoc 传 10.11.99.1/upload，测 update-vs-dup
+            // cj-nbtest upload <uuid> <npages> [title]  —— 构造 rmdoc 传 10.11.99.1/upload，测 update-vs-dup
             let u = args.get(2).cloned().unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
             let n: usize = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(1);
             let title = args.get(4).cloned().unwrap_or_else(|| "《UP验证》- 总结卡片".into());

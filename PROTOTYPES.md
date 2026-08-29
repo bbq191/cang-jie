@@ -29,7 +29,7 @@ uv run pytest <path>    # 在统一环境跑测试
 | 2 中文化 | `chinese-ime/pinyin-engine/c`（C → `langhook.so`） | `chinese-ime/pinyin-engine/src`（拼音/双拼/繁体/词典**算法原型**）+ `tests` | `pinyin` | `cd chinese-ime/pinyin-engine/c && make diff-check`（逐字节对拍 C↔Python，用根 `.venv`）；`uv run pytest chinese-ime/pinyin-engine/tests` |
 | 3 阅读 | `reading/device-rs`（Rust：sign/codec/download/epub…） | `reading/protocol`（微信读书协议**原型**，已移植 Rust）+ `reading/highlights`（`.rm` 反解 `reverse.py`） | `weread` | `uv run pytest reading/tests`；对拍参照见各 `.py` |
 | 3 阅读 | —（host 侧编排，非上机） | `reading/tools`（**活跃 host CLI**：`weread.py`/`login.py`/`sync_highlights.py`…，你实际在跑的） | `weread` | `uv run python reading/tools/weread.py …` |
-| 5 PKM | `knowledge/pkm/`（Rust：`stardetect`/`cardsync`/`cardnote` + `wr-stars-daemon`） | `knowledge/pkm-semantic/proto`（★待办星检测**算法原型 + 阈值标定 + 真机 fixture**） | `pkm` | `cd pkm-semantic && uv run pytest proto`（18 条差分）；对拍锚点=`knowledge/pkm/tests/stars_fixture.rs` 读 `knowledge/pkm-semantic/proto/testdata` |
+| 5 PKM | `knowledge/pkm/`（Rust：`stardetect`/`cardsync`/`cardnote` + `cj-stars-daemon`） | `knowledge/pkm-semantic/proto`（★待办星检测**算法原型 + 阈值标定 + 真机 fixture**） | `pkm` | `cd pkm-semantic && uv run pytest proto`（18 条差分）；对拍锚点=`knowledge/pkm/tests/stars_fixture.rs` 读 `knowledge/pkm-semantic/proto/testdata` |
 | 杂项 | —（host 只读工具） | `rm-export/export.py`（扫 xochitl 镜像 → 高亮导 Markdown，复用 `reading/highlights/reverse.py`） | `weread` | `uv run python rm-export/export.py --src <镜像> --out <目录>` |
 | 杂项 | —（离线构建工具） | `xovi-extensions/reading-qol/tools/extract_qml.py`（从 xochitl 二进制解 QML） | `tools` | `uv run python xovi-extensions/reading-qol/tools/extract_qml.py …` |
 

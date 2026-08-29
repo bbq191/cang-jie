@@ -15,7 +15,7 @@ cargo build --release --target "$TARGET"
 
 echo
 echo "aarch64 全静态产物："
-for b in wr-stars wr-stars-daemon wr-nbtest wr-cardhw; do
+for b in cj-stars cj-stars-daemon cj-nbtest cj-cardhw; do
     f="target/$TARGET/release/$b"
     [ -f "$f" ] && echo "  $f  $(wc -c <"$f")B  $(file "$f" | grep -o 'statically linked' || echo dynamic)"
 done

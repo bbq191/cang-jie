@@ -48,7 +48,7 @@
 | `reading/` | 3 | 阅读线设备端总仓：「墨香」微信读书自足化 + 通用 EPUB 优化器（`device-rs/` Rust 主体 + `device/` QML 注入件 `moxiang-sidebar`/`trash-agent`/`reader-*.qmd`）。见 [reading/README.md](reading/README.md)、`ATTRIBUTION.md`（历史名 `weread-client/`，2026-08-23 改名） |
 | `xovi-extensions/` | 4 | `reading-qol`（设置页「系统增强」中枢面板四分类：翻页与刷新/书籍与字体/快捷输入 snippets/笔记增强）+ `font-menu`（阅读字体） |
 | `device-core/` | 3+5 | **共享底座 crate**：`epubindex`/`inject`/`notebook_rm`/`fswatch`——块3阅读与块5 PKM 都用的低层设备能力；抽出后 pkm 生产构建不再全量编译 reading。见《[设备端 Rust 架构](docs/reMarkable设备端Rust架构.md)》 |
-| `knowledge/pkm/` | 5 | PKM ★待办**生产 Rust crate**：`stardetect`/`cardsync`/`cardnote`/`cardindex`（MOC 死链体检）+ `notebook_sync`/`starscan`/`vocabscan` + `wr-stars-daemon`；卡片按书原生 Tag 选 4 套模板；依赖共享底座 `device-core`。见 [knowledge/pkm/README.md](knowledge/pkm/README.md) |
+| `knowledge/pkm/` | 5 | PKM ★待办**生产 Rust crate**：`stardetect`/`cardsync`/`cardnote`/`cardindex`（MOC 死链体检）+ `notebook_sync`/`starscan`/`vocabscan` + `cj-stars-daemon`；卡片按书原生 Tag 选 4 套模板；依赖共享底座 `device-core`。见 [knowledge/pkm/README.md](knowledge/pkm/README.md) |
 | `knowledge/pkm-semantic/` | 5 | PKM ★待办检测算法的 **Python 原型 + 阈值标定**（`knowledge/pkm/` 是其逐结果对拍的 Rust 生产移植）。见 [knowledge/pkm-semantic/README.md](knowledge/pkm-semantic/README.md) |
 | `docs/` | — | **跨块白皮书**：功能路线图（含 5 分块地图）+ 网络解决方案（中文化/拼音两本就近在 `chinese-ime/docs/`） |
 | `packaging/` | — | **全项目一键打包/部署工具**：`package.sh`（宿主机组自包含 tar 包）+ `install-on-device.sh`/`uninstall-on-device.sh`（设备端编排四层）+ `firmware-allowlist.txt`（固件门）。见「快速开始 → 装到一部新机」 |
