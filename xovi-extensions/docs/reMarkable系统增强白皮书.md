@@ -115,10 +115,13 @@ host 无法运行 xochitl，但能用官方 qmldiff 工具**离线实跑补丁**
 （`cardhl`）+ EPUB 章映射（`epubindex`）+ 笔记本注入（`sync_auto_notebook`）管线，**不为它单拆一个二进制**。
 本节是查字词设计的单一事实来源；实现在 `pkm/src/{dict,cardvocab,locate,vocabscan}.rs`，daemon 只触发+注入。
 
-**可行性核查结论**（见《[设备端查词可行性](../../docs/reMarkable设备端查词可行性.md)》）：Move 上 KOReader 判死、
-原生阅读器无逐词选中事件可 hook、注入弹窗够不进 SceneView tile 层——实时划词弹窗走不通；而**荧光笔读回文字**
-（GlyphRange 自带文字+颜色，PKM 白皮书 §06 已生产）成立，故查词的可行形态是**异步**：荧光笔划词 → daemon 查本地
-词典 → 写回一本《📕 生词本》。
+**可行性核查结论**（2026-08-25 `dict-lookup-recon`：对外部三路线分析逐条对表本项目已坐实事实——三条路线的可能性排序对"这台 Move + 本项目"几乎全反了）：
+
+- **① KOReader 判死**（不是"等社区适配彩屏"，是本项目已验走不通）：Move 不是 rM1/rM2，Toltec/rm2fb 那套彩屏 framebuffer 适配对 Move 的 Gallery 3 屏不成立。
+- **② 异步生词本 = 唯一可行形态，且核心已建成**：荧光笔读回文字+颜色（`cardhl` 读 GlyphRange，PKM §06 已生产）、页→章（`epubindex`）、笔记本注入（`sync_auto_notebook`）全套已跑通——真正要新加的只有"查本地词典 + 排版"一步，非从零。触发**天生异步**（`fswatch` 只在 xochitl 真实存盘时触发 + debounce，秒级延迟），正合 reMarkable 无干扰哲学。
+- **③ 劫持原生 UI 实时弹窗 = 不推荐**：注入机制本身不可怕（xovi+qmldiff 日常在用，非 LD_PRELOAD），但**前提「选中文本事件」大概率不存在**——原生 EPUB 阅读器没有逐词选中手势，高亮是荧光笔划过吸附到词/行，没有"选中文本"事件可拦；且注入 Popup 够不进 C++ SceneView tile 增量渲染层（ 判死同源）、只能按 x/y 固定定位，缺可靠锚点。
+
+故查词的可行形态 = **荧光笔划词 → daemon 查本地词典 → 写回《📕 生词本》**（异步）。〔词典选型：可行性阶段初判 CC-CEDICT/ECDICT，落地时改用用户正版牛津高阶/现汉，见下文实现与版权红线。〕
 
 **设计**（三个岔口与用户敲定）：
 - **触发=复用 ⚪Gray 槽**：灰色高亮=生词。灰高亮**照常进卡片灰槽**（PKM §06 不变），查词是**完全解耦的并行附加
