@@ -24,7 +24,7 @@ use pkm_device::notebook_sync::{
     collect_notebook_texts, find_docs_by_visible, is_user_notebook, queue_trash, sync_auto_notebook,
 };
 use pkm_device::stardetect::{scan_document_dir, scan_library, DocStars, StarConfig};
-use pkm_device::{cardagg, cardindex, cardreview, cardstats, cardvocab, starscan, vocabscan};
+use pkm_device::{cardagg, cardhw, cardindex, cardreview, cardstats, cardvocab, starscan, vocabscan};
 use device_core::fswatch;
 
 const CFG_PATH_DEFAULT: &str = "/home/root/.local/share/cangjie-ime/reading-qol.json";
@@ -66,6 +66,31 @@ struct Cfg {
     vocab: bool,
     color: String,
     gap: f64,
+    // 端化手写识别（块⑥，独立能力）：卡片手写批注→设备调云转写→内联注入→/upload。默认关。
+    cardhw_enabled: bool,
+    cardhw_provider: String,
+    cardhw_model: Option<String>,
+}
+
+/// 端化 cardhw 的 API key（明文，Phase B 设置面板写；与 reading-qol.json 同目录）。读不到→None。
+const CARDHW_KEY_PATH: &str = "/home/root/.local/share/cangjie-ime/cardhw.key";
+fn cardhw_key() -> Option<String> {
+    std::fs::read_to_string(CARDHW_KEY_PATH).ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
+}
+
+/// 该文档是否是**在库的**「总结卡片」（cardhw 只处理这类，普通手写笔记本不碰）。
+/// **必须排除 trash**：处理后 queue_trash 旧手写卡 → trash-agent 改其 metadata=trash 又是个写事件，
+/// 若不排除，step④ 会拿"已消化但尚未删的旧卡 .rm（笔划仍在）"重复转写 → 模型输出微变 → sync 总认为
+/// 有改动 → 无限 /upload 自循环（2026-08-29 真机踩过）。故 parent=trash 一律跳过。
+fn is_active_summary_card(dir: &str, uuid: &str) -> bool {
+    std::fs::read_to_string(format!("{dir}/{uuid}.metadata"))
+        .ok()
+        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+        .map(|v| {
+            v["visibleName"].as_str().map(|s| s.contains("总结卡片")).unwrap_or(false)
+                && v["parent"].as_str() != Some("trash")
+        })
+        .unwrap_or(false)
 }
 
 fn read_cfg() -> Cfg {
@@ -81,6 +106,9 @@ fn read_cfg() -> Cfg {
         vocab: b("vocabEnabled", false), // 独立能力显式 opt-in（且需词典文件，缺则本就降级）
         color: v.get("starTodoColor").and_then(|x| x.as_str()).unwrap_or("RED").to_uppercase(),
         gap: v.get("starTodoGap").and_then(|x| x.as_f64()).unwrap_or(25.0),
+        cardhw_enabled: b("cardhwEnabled", false),
+        cardhw_provider: v.get("cardhwProvider").and_then(|x| x.as_str()).unwrap_or("gemini").to_string(),
+        cardhw_model: v.get("cardhwModel").and_then(|x| x.as_str()).filter(|s| !s.is_empty()).map(|s| s.to_string()),
     }
 }
 
@@ -200,8 +228,8 @@ fn rebuild_vocab(dir: &str, folder: &str, since_ms: u64, observe: bool) {
 fn settle(cfg: &Cfg, observe: bool, dirty: Option<&HashSet<String>>) {
     let dir = xochitl_dir();
 
-    // 主(星代办)与独立(单词笔记)全关：稳态直接返回（daemon 睡死零唤醒）；冷启动多走一遍清理落残留。
-    if !cfg.star_todo && !cfg.vocab {
+    // 主(星代办)与独立(单词笔记/手写识别)全关：稳态直接返回（daemon 睡死零唤醒）；冷启动多走一遍清理落残留。
+    if !cfg.star_todo && !cfg.vocab && !cfg.cardhw_enabled {
         if dirty.is_none() {
             for t in AUTO_TITLES {
                 let n = trash_auto_notebook(&dir, t);
@@ -282,6 +310,57 @@ fn settle(cfg: &Cfg, observe: bool, dirty: Option<&HashSet<String>>) {
         if observe && n > 0 {
             println!("[stars] observe: 单词笔记关，生词本 {n} 本入回收队列");
         }
+    }
+
+    // ④ 端化手写识别（块⑥，独立能力）：卡片手写批注 → 设备调云转写 → 内联注入 → /upload 重建。
+    // **仅事件驱动**（dirty=Some）：冷启动不自动跑，避免开机批量调云/计费；只处理「总结卡片」类文档。
+    // 自触发安全：处理后卡片笔划=0，下轮事件 find_handwritten_page=None → no-op。
+    // 网络/识别失败**只记不崩、不阻塞画星主流程**（网络归网络）。observe 模式跳过（不真调云）。
+    if cfg.cardhw_enabled && !observe {
+        if let Some(set) = dirty {
+            match cardhw_key() {
+                None => println!("[cardhw] 已开但缺 key（{CARDHW_KEY_PATH}），跳过——设置面板填 key 后生效"),
+                Some(key) => {
+                    let mut done = load_cardhw_done(); // 已处理过的手写页 .rm md5（幂等+防自循环）
+                    for u in set.iter().filter(|u| is_active_summary_card(&dir, u)) {
+                        // 先拿手写页 .rm 的 md5：这份手写已处理过 → 跳（旧卡消化后 /upload 新卡，旧卡被 trash
+                        // 前仍 active，aggregate 自触发会反复回到这里；靠内容哈希幂等根治自循环，不依赖 trash 时序）。
+                        let page = match cardhw::find_handwritten_page(&dir, u) {
+                            Some(p) => p,
+                            None => continue,
+                        };
+                        let rm = std::fs::read(format!("{dir}/{u}/{}.rm", page.1)).unwrap_or_default();
+                        let hash = format!("{:x}", md5::compute(&rm));
+                        if done.contains(&hash) {
+                            continue;
+                        }
+                        match cardhw::process_card_doc(&dir, u, &cfg.cardhw_provider, cfg.cardhw_model.as_deref(), &key, &card_folder, true) {
+                            Ok(Some(o)) if o.action.is_some() => {
+                                done.insert(hash.clone());
+                                append_cardhw_done(&hash);
+                                println!("[cardhw] 《{}》注入 {} 条并 /upload（手写消化）", o.visible_name, o.applied.len());
+                            }
+                            Ok(_) => {} // 无手写/全泄漏/未匹配：不记 done（下次内容变了仍可处理）
+                            Err(e) => eprintln!("[cardhw] 卡片 {} 处理失败（不阻塞）：{e}", &u[..8.min(u.len())]),
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// 已处理手写页 .rm 的 md5 集（幂等/防自循环）。文件小、每轮读一次即可。
+const CARDHW_DONE_PATH: &str = "/home/root/weread/cardhw-done.txt";
+fn load_cardhw_done() -> HashSet<String> {
+    std::fs::read_to_string(CARDHW_DONE_PATH)
+        .map(|t| t.lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect())
+        .unwrap_or_default()
+}
+fn append_cardhw_done(hash: &str) {
+    use std::io::Write;
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(CARDHW_DONE_PATH) {
+        let _ = writeln!(f, "{hash}");
     }
 }
 
