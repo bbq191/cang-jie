@@ -451,6 +451,21 @@ Settings 里那个语言选择列表，此前一直不确定是硬编码枚举�
 
 配套的字体 apply 机制（`applier.go`）可与本项目字体部署对照：**归档现有 active 字体 → 目标字体硬链接进 active 目录（失败回退拷贝）→ `fc-cache` → 重启 xochitl**；本项目 install.sh 已在做类似的 `scp` + `fc-cache`（3.3/3.6 节），差别是 rmkit-cn 支持运行时在设备上切换激活哪个字体。置信度：中（机制坐实；范式适用性高，但②的具体卡点它并不解决，需诚实区分）。
 
+### 3.7 文档正文字体：两套渲染路径 + `.content` fontName（P3 中文字体渲染，2026-08-13 随 P0 真机验证通过）
+
+> 这是路线图 **P3「中文字体渲染优化」的核心机制**（深内容下沉本节，路线图只留状态指针）。§3.3/§3.6 讲的是 **UI 界面字体**（fontconfig），本节讲**文档正文字体**——两套路径、控制点完全不同。
+
+reMarkable 有**两套字体路径**：
+
+- **UI 界面**由 xochitl 主进程（Qt）渲染，走 `~/.config/fontconfig/fonts.conf`（§3.3/§3.6 已配霞鹜新致宋 / 汉仪铁线黑）。
+- **文档正文**由**独立进程 `xochitl_pdf_renderer`** 渲染，用**具体字体名**（西文默认 `EB Garamond`，CJK 靠 fallback 补），**不吃泛 `serif`/`sans-serif` 的 fontconfig 别名**。
+
+**血泪教训**：改全局 fontconfig `serif → 某字体` 对文档正文**无效**（pdffonts 实测正文没变），只会误伤 UI 中文。**文档正文字体的正确控制点 = 文档 `.content` 的 `fontName` 字段**——注入时设 `"fontName":"LXGW WenKai"`，pdffonts 实测正文简繁英**全部霞鹜文楷**（英文也走楷体拉丁）、UI 不受影响。
+
+**落地**：设备装霞鹜文楷（OFL，单字体含简繁+拉丁）到 `/home/root/.local/share/fonts/`（持久、非 overlay），阅读线注入模块给 `.content` 默认 `fontName="LXGW WenKai"`；装字体纳入 `install.sh`（OTA/重置后重装）。**已随 P0 注入实验一并真机验证通过**（注入代码在阅读线 `wr-serve`，机制归本节）。
+
+> **状态**：可行性高（字体管线已验证）、核心已真机通；观感提升幅度中——需真机 A/B 对比几款字体后定夺，不预设结论。这是 §3.6 ② 阅读器下拉框可选字体（运行时 `setFontName`）之外的**注入期默认字体**通路，两者互补。
+
 ## 04｜xovi Hook 与原生 Settings 集成
 
 ### 4.1 先摸清楚要 hook 什么
