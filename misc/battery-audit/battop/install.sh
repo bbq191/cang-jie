@@ -13,42 +13,36 @@ mkdir -p "$DIR/data"
 echo "[*] remount rootfs rw"
 mount -o remount,rw /
 
+# 常驻采样服务（Type=simple）：进程内部循环每 ~10min 采一次。**不再用 timer 反复拉起 oneshot**——
+# 反复 service-start 的 cgroup 迁移曾撞内核 RCU stall 冻死整机（2026-08-29 事故，见 FINDINGS）。
 cat > "$SVC" <<'UNIT'
 [Unit]
-Description=battop battery/usage sampler (oneshot)
+Description=battop battery/usage sampler (resident, ~10min interval)
 
 [Service]
-Type=oneshot
+Type=simple
 Nice=19
 IOSchedulingClass=idle
 ExecStart=/home/root/battop/battop
-UNIT
-
-cat > "$TMR" <<'UNIT'
-[Unit]
-Description=battop sampler timer (~10min, awake-only)
-
-[Timer]
-OnBootSec=2min
-OnUnitActiveSec=10min
-AccuracySec=2min
-# 不设 WakeSystem:休眠时不唤醒设备,只在醒着时机会性采样。
-Persistent=false
+Restart=on-failure
+RestartSec=60
 
 [Install]
-WantedBy=timers.target
+WantedBy=multi-user.target
 UNIT
 
-echo "[*] 首次采样(建 baseline)"
-"$DIR/battop" || true
+# 清掉旧 oneshot+timer 模型（停用+删 timer 文件；enable 符号链接在 /etc tmpfs，重启本就清）
+systemctl disable --now battop.timer >/dev/null 2>&1 || true
+rm -f "$TMR"
+# 注：不再在此前台跑 "$DIR/battop"——常驻进程不退出，前台跑会永久阻塞 install。服务启动即首采建 baseline。
 
-echo "[*] enable + start timer"
+echo "[*] enable + start 常驻服务（启动即首采，之后每 ~10min）"
 systemctl daemon-reload
-systemctl enable --now battop.timer >/dev/null 2>&1 || true
+systemctl enable --now battop.service >/dev/null 2>&1 || true
 
 echo "[*] remount rootfs ro"
 mount -o remount,ro / || echo "  (remount ro 失败,重启回 ro,无碍)"
 
-echo "[OK] battop 已装。timer 状态:"
-systemctl is-active battop.timer
-systemctl list-timers battop.timer --no-pager 2>/dev/null | head -n 2
+echo "[OK] battop 已装（常驻）。服务状态:"
+systemctl is-active battop.service
+systemctl status battop.service --no-pager 2>/dev/null | grep -E "Active|Main PID" | head -n 2
