@@ -6,7 +6,7 @@
 
 ## 9. 实现状态（v1 已真机落地，2026-08-27）
 
-- **采集器 `battop`**(Rust,`battop/`):systemd timer 每 ~10 分钟 oneshot 采样,产出 `data/samples-*.tsv` + 预聚合 `data/summary.json`(4 窗口 × 应用/进程双分组 + 放电%)。已部署 `/home/root/battop/`,timer active,自身 ~4.3 CPU 秒/天。
+- **采集器 `battop`**(Rust,`battop/`):**Type=simple 常驻服务**,进程内每 ~10 分钟采一次(原为 timer 拉起 oneshot,反复 service-start 的 cgroup 迁移撞内核 RCU stall 冻死整机 → 2026-08-29 改常驻,见 FINDINGS),产出 `data/samples-*.tsv` + 预聚合 `data/summary.json`(4 窗口 × 应用/进程双分组 + 放电%)。已部署 `/home/root/battop/`,service active,自身 ~4.3 CPU 秒/天。
 - **查看器改为设备端注入 QML 面板**(不是 Web):注入系统增强设置页,作为 hub 第 6 项「电池审计」→ 全屏二级页(`xovi-extensions/reading-qol/settings-reading-enhance.qmd` 的 `cjBatteryPage`/990006)。QML 用 XHR 同步读 `summary.json` → JSON.parse → 渲染。参考墨香:衬线品牌标题 + 自绘等宽标签胶囊 + 去框化条形排行(序号/细条/发丝线);归属复选框 = 自绘(不用独立 `ArkControls.Toggle`,那要 Panel 宿主)。
 - **踩坑(致命)**:QML `Item` 的 **`data` 是承载子元素的保留默认属性**;`property var data` 覆盖它 → 所有子元素不被 parent → `parent.X` anchor 全 null → **空白页**(无致命日志,只有下游 anchor-null 警告,apply-diffs 也过)。改名 `sumData` 即好。。
 - **数据契约**:`summary.json` = `{generated, windows:{today,7d,30d,all}}`;每窗口 `{discharge, samples, app:[{name,ms,pct}], proc:[...], wake:[{name,ms=次数,pct}]}`。应用视图套友好名(§5),进程视图 raw comm。
@@ -104,7 +104,7 @@ battery(hour_epoch, cap_start, cap_end, disc_secs, awake_secs)
 未知 unit 回落显示 unit 名。
 
 ## 6. 部署 / 持久化(沿用壁纸那套)
-- 采集器 = systemd service(+timer,`AccuracySec` 宽松、**不 `WakeSystem`**,只在醒时机会性采样);unit 在 rootfs、逻辑/数据在 `/home`,OTA 后 `install.sh` 重建。
+- 采集器 = systemd **常驻 service**(Type=simple,进程内 `loop{sample; sleep(10min)}`;**不再用 timer**——反复 service-start cgroup 迁移曾冻机;sleep 走 CLOCK_MONOTONIC 休眠不推进,保持醒时机会性采样、不 WakeSystem);unit 在 rootfs、逻辑/数据在 `/home`,OTA 后 `install.sh` 重建。
 - **自省**:这工具本身也是常驻——必须比它测的对象更省(10 分钟一 tick、间歇睡、读 ~200 个 /proc 即返回)。上真机后拿它测自己,确认 `battop` 自身占比可忽略,才算合格。
 
 ## 7. v1 范围 vs 以后

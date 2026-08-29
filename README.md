@@ -17,7 +17,7 @@
 | 3 | **阅读**（微信读书 + EPUB 优化） | 「墨香」设备自足微信读书（扫码/下书/取云端进度/续期；双向回传已随 PKM 回归砍除）+ 通用 EPUB 优化器 | `reading/` | 真机端到端验证 |
 | 4 | **系统增强**（阅读/显示/笔记 UX） | 点击翻页 · 快速黑白 · 清残影 · 键盘 Mono · 阅读字体 · 快捷输入(snippets) · 荧光笔汉字精确吸附 · **划词查字典→生词本**；集中在设置页「系统增强」中枢面板 | `xovi-extensions/` + `chinese-ime/langhook/`（笔记增强）+ `knowledge/pkm/`（查字词，跨块骑 daemon） | 真机端到端验证通过（查字词/5开关/高亮增量合并/自动归档均真机验证） |
 | 5 | **PKM / 知识管理** | ★全局待办语义引擎（把设备变成 Zettelkasten 工作台的首个能力）：Python 原型标定 + Rust 生产 | `knowledge/pkm-semantic/`（原型）+ `knowledge/pkm/`（Rust 生产 crate，依赖共享底座 `device-core/`） | 原型标定 + 真机端到端 |
-| 6 | **手写识别** | 笔迹 → 文字/结构：`cardhw` 卡片手写批注 → vision 空间关联 → 内联注入书摘行（host 版真机通，四后端可插拔默认 Gemini）；`export` freeform 手写→待校对 Markdown；**端化版立项中**（设备直接调云识别 + 设置面板选模型/填 key + token 统计 + 关笔记事件触发/通知）；未来 `.rm` 结构识别（数字/实心圆=有序/无序列表、方框=待办） | `knowledge/pkm-semantic/handwriting/`（host 原型）+ 端化设备侧（Phase A 定） | host `cardhw` 真机端到端；端化 Phase A 待建 |
+| 6 | **手写识别** | 笔迹 → 文字/结构：`cardhw` 卡片手写批注 → vision 空间关联 → 内联注入书摘行（host + 端化真机通，四后端可插拔；**设备端生产默认 DeepSeek**——国内直连无需代理，Gemini 质量更好但需代理故非国内默认）；`export` freeform 手写→待校对 Markdown；**端化 A1/A2/B + 端到端真机通**（2026-08-29：设备直接调云识别→内联注入→/upload 重建→设备可见 + 设置面板选模型/填 key/关笔记事件触发；仅 C 通知桥/token 统计待建）；未来 `.rm` 结构识别（数字/实心圆=有序/无序列表、方框=待办） | `knowledge/pkm-semantic/handwriting/`（host 原型）+ 端化设备侧（骑 pkm daemon） | host + 端化 A1/A2/B 端到端真机通；仅 C 通知桥待建 |
 
 > **两处刻意的跨块共享**：① 块 4 的"笔记增强"（荧光笔吸附）逻辑是 `chinese-ime/langhook` 里的 C hook、开关 UI 在 `xovi-extensions/reading-qol`——一颗 .so 同时服务块 2 和块 4，不拆二进制；② 块 4 的"划词查字典→生词本"代码骑在 `knowledge/pkm/` 的 daemon 上（复用荧光笔读回+笔记本注入管线），概念属块 4 系统增强、实现不单拆二进制。两者都是"能力归块 4、代码在别块"。
 >
