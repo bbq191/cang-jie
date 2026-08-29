@@ -2,7 +2,7 @@
 
 > 2026-08-25。三个设备端 Rust crate（`device-core` / `weread-device` / `pkm-device`）的**结构、依赖、模块职责**，
 > 以及本轮解耦的**方法论（如何解耦）与模块演变**。跨块文档（触及块3阅读 + 块5 PKM + 共享底座），归顶层 `docs/`。
-> 各块功能设计见对应白皮书（[阅读](../reading/docs/reMarkable阅读白皮书.md) / [PKM](../pkm/docs/reMarkablePKM白皮书.md) /
+> 各块功能设计见对应白皮书（[阅读](../reading/docs/reMarkable阅读白皮书.md) / [PKM](../knowledge/pkm/docs/reMarkablePKM白皮书.md) /
 > [系统增强](../xovi-extensions/docs/reMarkable系统增强白皮书.md)）；本文只讲 **crate/模块的形状与解耦**。
 
 ## 一、Crate 结构（现状）
@@ -17,7 +17,7 @@ reading/device-rs/      weread-device（块3 阅读）—— 微信读书下书 
   ├ 内容/优化: htmlproc epub optimize    面板后台: autoopt
   └ bins: wr-download wr-serve wr-renew wr-fetch wr-probe wr-spike
 
-pkm/                    pkm-device（块5 PKM）—— ★待办 + 汇总本 + 查字典生词本
+knowledge/pkm/                    pkm-device（块5 PKM）—— ★待办 + 汇总本 + 查字典生词本
   ├ 依赖 device-core（normal）；weread-device 仅 dev-dependency（1 个 fixture 测试用）
   ├ 星→卡片: stardetect cardsync cardnote starscan
   ├ 汇总本: cardindex cardagg cardreview cardstats
@@ -76,7 +76,7 @@ navigation 时看着像能用（我就被 `reverse.rs` 坑过）。
 （源码在 git 历史，要复活找得回）。
 
 - 删 `reverse/notebook/bake/rmread/sync`（1798 行，被砍的微信读书双向同步）。抢救：`canon`/`locate_range`
-  → `pkm/src/locate.rs`；高亮提取由 `pkm/src/cardhl.rs`（6 色版）取代。
+  → `knowledge/pkm/src/locate.rs`；高亮提取由 `knowledge/pkm/src/cardhl.rs`（6 色版）取代。
 
 ### 原则 4 — 路径/配置无关（参数化，别硬编）
 

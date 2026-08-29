@@ -4,7 +4,7 @@
 >
 > ⚠️ **跨块关系**：本块代码骑在 `pkm/` daemon 上（端化 cardhw 复用 `cardsync`/`notebook_sync`/`notebook_rm`/`fswatch`），概念独立成块——同「划词查字典」（块4代码在 pkm）的处理。与 PKM 的 ★待办（手绘星→语义）**同源但不同块**：★待办深绑总结卡片、留块5；块⑥是**通用识别引擎**，★待办算它的近亲不算成员。
 >
-> 优先级/分块地图见顶层《[功能路线图白皮书](../../../docs/reMarkable功能路线图白皮书.md)》（路线图 P1/P2 = 本块）；反解基础设施与 PKM 共用 `device-core`，架构见《[设备端 Rust 架构](../../../docs/reMarkable设备端Rust架构.md)》。
+> 优先级/分块地图见顶层《[功能路线图白皮书](../../../../docs/reMarkable功能路线图白皮书.md)》（路线图 P1/P2 = 本块）；反解基础设施与 PKM 共用 `device-core`，架构见《[设备端 Rust 架构](../../../../docs/reMarkable设备端Rust架构.md)》。
 
 ---
 

@@ -24,7 +24,7 @@ cd "$(dirname "$0")"
 HOST="${1:-10.11.99.1}"
 ACTION="${2:-enable}"
 SVC=wr-stars.service
-SRC="../reading/device-rs/systemd/$SVC"
+SRC="../../reading/device-rs/systemd/$SVC"
 UNIT=/usr/lib/systemd/system/$SVC
 WANTS=/usr/lib/systemd/system/multi-user.target.wants/$SVC
 
