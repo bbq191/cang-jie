@@ -24,7 +24,7 @@ use pkm_device::notebook_sync::{
     collect_notebook_texts, find_docs_by_visible, is_user_notebook, queue_trash, sync_auto_notebook,
 };
 use pkm_device::stardetect::{scan_document_dir, scan_library, DocStars, StarConfig};
-use pkm_device::{cardagg, cardindex, cardreview, cardstats, cardvocab, starscan, vocabscan};
+use pkm_device::{cardagg, cardhw, cardindex, cardreview, cardstats, cardvocab, starscan, vocabscan};
 use device_core::fswatch;
 
 const CFG_PATH_DEFAULT: &str = "/home/root/.local/share/cangjie-ime/reading-qol.json";
@@ -66,6 +66,25 @@ struct Cfg {
     vocab: bool,
     color: String,
     gap: f64,
+    // 端化手写识别（块⑥，独立能力）：卡片手写批注→设备调云转写→内联注入→/upload。默认关。
+    cardhw_enabled: bool,
+    cardhw_provider: String,
+    cardhw_model: Option<String>,
+}
+
+/// 端化 cardhw 的 API key（明文，Phase B 设置面板写；与 reading-qol.json 同目录）。读不到→None。
+const CARDHW_KEY_PATH: &str = "/home/root/.local/share/cangjie-ime/cardhw.key";
+fn cardhw_key() -> Option<String> {
+    std::fs::read_to_string(CARDHW_KEY_PATH).ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
+}
+
+/// 该文档是否是「总结卡片」（cardhw 只处理这类结构化卡片，普通手写笔记本不碰）。
+fn is_summary_card(dir: &str, uuid: &str) -> bool {
+    std::fs::read_to_string(format!("{dir}/{uuid}.metadata"))
+        .ok()
+        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+        .and_then(|v| v["visibleName"].as_str().map(|s| s.contains("总结卡片")))
+        .unwrap_or(false)
 }
 
 fn read_cfg() -> Cfg {
@@ -81,6 +100,9 @@ fn read_cfg() -> Cfg {
         vocab: b("vocabEnabled", false), // 独立能力显式 opt-in（且需词典文件，缺则本就降级）
         color: v.get("starTodoColor").and_then(|x| x.as_str()).unwrap_or("RED").to_uppercase(),
         gap: v.get("starTodoGap").and_then(|x| x.as_f64()).unwrap_or(25.0),
+        cardhw_enabled: b("cardhwEnabled", false),
+        cardhw_provider: v.get("cardhwProvider").and_then(|x| x.as_str()).unwrap_or("gemini").to_string(),
+        cardhw_model: v.get("cardhwModel").and_then(|x| x.as_str()).filter(|s| !s.is_empty()).map(|s| s.to_string()),
     }
 }
 
@@ -200,8 +222,8 @@ fn rebuild_vocab(dir: &str, folder: &str, since_ms: u64, observe: bool) {
 fn settle(cfg: &Cfg, observe: bool, dirty: Option<&HashSet<String>>) {
     let dir = xochitl_dir();
 
-    // 主(星代办)与独立(单词笔记)全关：稳态直接返回（daemon 睡死零唤醒）；冷启动多走一遍清理落残留。
-    if !cfg.star_todo && !cfg.vocab {
+    // 主(星代办)与独立(单词笔记/手写识别)全关：稳态直接返回（daemon 睡死零唤醒）；冷启动多走一遍清理落残留。
+    if !cfg.star_todo && !cfg.vocab && !cfg.cardhw_enabled {
         if dirty.is_none() {
             for t in AUTO_TITLES {
                 let n = trash_auto_notebook(&dir, t);
@@ -281,6 +303,30 @@ fn settle(cfg: &Cfg, observe: bool, dirty: Option<&HashSet<String>>) {
         let n = trash_auto_notebook(&dir, VOCAB_TITLE);
         if observe && n > 0 {
             println!("[stars] observe: 单词笔记关，生词本 {n} 本入回收队列");
+        }
+    }
+
+    // ④ 端化手写识别（块⑥，独立能力）：卡片手写批注 → 设备调云转写 → 内联注入 → /upload 重建。
+    // **仅事件驱动**（dirty=Some）：冷启动不自动跑，避免开机批量调云/计费；只处理「总结卡片」类文档。
+    // 自触发安全：处理后卡片笔划=0，下轮事件 find_handwritten_page=None → no-op。
+    // 网络/识别失败**只记不崩、不阻塞画星主流程**（网络归网络）。observe 模式跳过（不真调云）。
+    if cfg.cardhw_enabled && !observe {
+        if let Some(set) = dirty {
+            match cardhw_key() {
+                None => println!("[cardhw] 已开但缺 key（{CARDHW_KEY_PATH}），跳过——设置面板填 key 后生效"),
+                Some(key) => {
+                    for u in set.iter().filter(|u| is_summary_card(&dir, u)) {
+                        match cardhw::process_card_doc(&dir, u, &cfg.cardhw_provider, cfg.cardhw_model.as_deref(), &key, &card_folder, true) {
+                            Ok(None) => {} // 该卡无手写页
+                            Ok(Some(o)) if o.action.is_some() => {
+                                println!("[cardhw] 《{}》注入 {} 条并 /upload（手写消化）", o.visible_name, o.applied.len())
+                            }
+                            Ok(Some(_)) => {} // 有手写但全泄漏/未匹配，无注入
+                            Err(e) => eprintln!("[cardhw] 卡片 {} 处理失败（不阻塞）：{e}", &u[..8.min(u.len())]),
+                        }
+                    }
+                }
+            }
         }
     }
 }

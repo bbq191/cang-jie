@@ -224,6 +224,75 @@ pub fn inject_inline(text: &str, anns: &[Annotation]) -> InjectResult {
     res
 }
 
+// ── 编排：处理一个卡片文档（daemon 与 bin 共用）─────────────────────────────
+/// 一次卡片处理的结果。
+pub struct ProcessOutcome {
+    pub visible_name: String,
+    pub page_id: String,
+    pub applied: Vec<String>,      // 拼接后条目
+    pub leaked: Vec<Annotation>,   // 打印泄漏丢弃
+    pub unmatched: Vec<Annotation>,
+    pub action: Option<String>,    // Some("创建"/"更新")=已 /upload；None=dry-run 或无变化
+}
+
+fn read_visible_name(dir: &str, uuid: &str) -> String {
+    std::fs::read_to_string(format!("{dir}/{uuid}.metadata"))
+        .ok()
+        .and_then(|t| serde_json::from_str::<Value>(&t).ok())
+        .and_then(|v| v["visibleName"].as_str().map(|s| s.to_string()))
+        .unwrap_or_default()
+}
+
+/// 找该卡片文档里含手写笔划（SceneLine>0）的页；返回 (页序 idx, page_id, 全页文本)。
+pub fn find_handwritten_page(dir: &str, doc_uuid: &str) -> Option<(usize, String, Vec<String>)> {
+    let pages = crate::cardnote::list_pages(dir, doc_uuid).ok()?; // (idx, page_id, text)
+    let texts: Vec<String> = pages.iter().map(|(_, _, t)| t.clone()).collect();
+    for (pi, (_, page_id, _)) in pages.iter().enumerate() {
+        let rm = std::fs::read(format!("{dir}/{doc_uuid}/{page_id}.rm")).unwrap_or_default();
+        let strokes = crate::stardetect::read_strokes(&rm).map(|s| s.len()).unwrap_or(0);
+        if strokes > 0 {
+            return Some((pi, page_id.clone(), texts));
+        }
+    }
+    None
+}
+
+/// 处理一个卡片文档：找含手写页 → 设备调云转写 → 内联注入 →（apply 时）走 /upload 重建。
+/// 无手写页返回 `Ok(None)`（daemon 增量事件里多数卡片走这条=零成本）。apply=false 只出方案不写。
+pub fn process_card_doc(
+    dir: &str,
+    doc_uuid: &str,
+    provider: &str,
+    model: Option<&str>,
+    key: &str,
+    card_folder: &str,
+    apply: bool,
+) -> Result<Option<ProcessOutcome>, String> {
+    let (page_idx, page_id, mut texts) = match find_handwritten_page(dir, doc_uuid) {
+        Some(p) => p,
+        None => return Ok(None),
+    };
+    let vn = read_visible_name(dir, doc_uuid);
+    let thumb = std::fs::read(format!("{dir}/{doc_uuid}.thumbnails/{page_id}.png"))
+        .map_err(|e| format!("读缩略图失败：{e}"))?;
+    let anns = transcribe_card(&thumb, provider, model, key)?;
+    if anns.is_empty() {
+        return Ok(Some(ProcessOutcome {
+            visible_name: vn, page_id, applied: vec![], leaked: vec![], unmatched: vec![], action: None,
+        }));
+    }
+    let r = inject_inline(&texts[page_idx], &anns);
+    let mut action = None;
+    if apply && !r.applied.is_empty() {
+        texts[page_idx] = r.text;
+        action = crate::notebook_sync::sync_auto_notebook(dir, &vn, &texts, card_folder);
+    }
+    Ok(Some(ProcessOutcome {
+        visible_name: vn, page_id,
+        applied: r.applied, leaked: r.leaked, unmatched: r.unmatched, action,
+    }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

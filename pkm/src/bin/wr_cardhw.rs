@@ -7,7 +7,7 @@
 //! 默认 dry-run 只报「手写→槽」方案；--apply 才走 /upload 重建（手写消化成文字）。
 
 use device_core::inject;
-use pkm_device::{cardhw, cardnote, notebook_sync, stardetect};
+use pkm_device::{cardhw, notebook_sync};
 
 const CARD_BOX_FOLDER: &str = "zettelkasten";
 
@@ -24,14 +24,6 @@ fn key_for(provider: &str) -> Option<String> {
         _ => &[],
     };
     envs.iter().find_map(|e| std::env::var(e).ok().filter(|v| !v.is_empty()))
-}
-
-fn visible_name(dir: &str, uuid: &str) -> String {
-    std::fs::read_to_string(format!("{dir}/{uuid}.metadata"))
-        .ok()
-        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
-        .and_then(|v| v["visibleName"].as_str().map(|s| s.to_string()))
-        .unwrap_or_default()
 }
 
 fn main() {
@@ -55,8 +47,9 @@ fn main() {
             std::process::exit(1);
         }
     };
+    let folder = inject::find_folder_by_name(&dir, CARD_BOX_FOLDER).unwrap_or_default();
 
-    // 1. 定位卡片文档（重名按"含手写页"消歧）
+    // 定位卡片文档（重名逐个试，取含手写页的第一本）
     let docs: Vec<String> = match &doc {
         Some(d) => vec![d.clone()],
         None => {
@@ -69,82 +62,34 @@ fn main() {
         std::process::exit(1);
     }
 
-    // 2. 找含手写的页（SceneLine 笔划 > 0）
-    let mut hit: Option<(String, usize, String, Vec<String>, String)> = None;
     for d in &docs {
-        let pages = cardnote::list_pages(&dir, d).unwrap_or_default(); // (idx, page_id, text)
-        let texts: Vec<String> = pages.iter().map(|(_, _, t)| t.clone()).collect();
-        for (pi, (_, page_id, _)) in pages.iter().enumerate() {
-            let rm = std::fs::read(format!("{dir}/{d}/{page_id}.rm")).unwrap_or_default();
-            let strokes = stardetect::read_strokes(&rm).map(|s| s.len()).unwrap_or(0);
-            if strokes > 0 {
-                hit = Some((d.clone(), pi, page_id.clone(), texts, visible_name(&dir, d)));
-                break;
+        eprintln!("-- 处理卡片 {}（设备调 {provider}）…", &d[..8.min(d.len())]);
+        match cardhw::process_card_doc(&dir, d, &provider, model.as_deref(), &key, &folder, apply) {
+            Ok(None) => continue, // 该本无手写页
+            Ok(Some(o)) => {
+                println!("《{}》页 {}：", o.visible_name, &o.page_id[..8.min(o.page_id.len())]);
+                for a in &o.applied {
+                    println!("  ✓ · {a}");
+                }
+                for lk in &o.leaked {
+                    println!("  ⓘ 丢弃疑似打印泄漏：{}（≈已有书摘，vision 误读）", lk.note);
+                }
+                for u in &o.unmatched {
+                    println!("  ✗ 未匹配：anchor={:?} ← {}", u.anchor, u.note);
+                }
+                match o.action {
+                    Some(act) => println!("✅ 卡片已{act}并 /upload（{} 条注入，手写消化）。重开即见。", o.applied.len()),
+                    None if !apply => println!("[dry-run] 未写。加 --apply 走 /upload 重建。"),
+                    None => println!("（内容无变化或上传失败）"),
+                }
+                return;
+            }
+            Err(e) => {
+                eprintln!("✗ {e}");
+                std::process::exit(1);
             }
         }
-        if hit.is_some() {
-            break;
-        }
     }
-    let (doc_u, page_idx, page_id, mut texts, vn) = match hit {
-        Some(h) => h,
-        None => {
-            eprintln!("!! 这些卡片里没有含手写的页——先在某个书摘旁手写再退出书库");
-            std::process::exit(1);
-        }
-    };
-    if docs.len() > 1 {
-        eprintln!("⚠ {} 本重名总结卡，处理含手写的 {}（sync 会合并同名、trash 其余）", docs.len(), &doc_u[..8]);
-    }
-
-    // 3. 读缩略图 → 设备调云转写
-    let thumb_path = format!("{dir}/{doc_u}.thumbnails/{page_id}.png");
-    let thumb = match std::fs::read(&thumb_path) {
-        Ok(b) => b,
-        Err(e) => {
-            eprintln!("!! 读缩略图失败 {thumb_path}: {e}");
-            std::process::exit(1);
-        }
-    };
-    eprintln!("-- {vn} 页 {}：设备调 {provider} 识别…", &page_id[..8]);
-    let anns = match cardhw::transcribe_card(&thumb, &provider, model.as_deref(), &key) {
-        Ok(a) => a,
-        Err(e) => {
-            eprintln!("✗ 识别失败：{e}");
-            std::process::exit(1);
-        }
-    };
-    if anns.is_empty() {
-        eprintln!("· vision 没认出手写批注");
-        std::process::exit(0);
-    }
-
-    // 4. 内联注入
-    let r = cardhw::inject_inline(&texts[page_idx], &anns);
-    println!("关联方案（拼接后条目）：");
-    for a in &r.applied {
-        println!("  ✓ · {a}");
-    }
-    for lk in &r.leaked {
-        println!("  ⓘ 丢弃疑似打印泄漏：{}（≈已有书摘，vision 误读）", lk.note);
-    }
-    for u in &r.unmatched {
-        println!("  ✗ 未匹配：anchor={:?} ← {}", u.anchor, u.note);
-    }
-    if r.applied.is_empty() {
-        std::process::exit(0);
-    }
-
-    if !apply {
-        println!("[dry-run] 未写。确认无误加 --apply 走 /upload 重建（手写消化成文字）。");
-        std::process::exit(0);
-    }
-
-    // 5. 走 /upload 重建（sync_auto_notebook：找同名→pack→/upload→trash 旧）
-    texts[page_idx] = r.text;
-    let folder = inject::find_folder_by_name(&dir, CARD_BOX_FOLDER).unwrap_or_default();
-    match notebook_sync::sync_auto_notebook(&dir, &vn, &texts, &folder) {
-        Some(action) => println!("✅ 卡片已{action}并 /upload（{} 条批注注入，手写消化成文字）。重开笔记本即见。", r.applied.len()),
-        None => println!("（内容无变化或上传失败）"),
-    }
+    eprintln!("!! 这些卡片里没有含手写的页——先在某个书摘旁手写再退出书库");
+    std::process::exit(1);
 }
