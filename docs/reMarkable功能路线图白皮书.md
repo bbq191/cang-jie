@@ -186,6 +186,16 @@ PPI（Move 为固定硬件参数）、Gallery 3 白态偏灰、色彩对比度�
 
 **MVP 活体验证（2026-08-29）**：已按上述架构落 `pkm-semantic/handwriting/`（`export.py` 管线 + `vision.py` 四后端可插拔，默认 Gemini）。真机端到端跑通（设备拉取→缩割缩略图→Gemini 识别→待校对 vault）。**同一张 384px 缩略图上，Gemini 3.6 Flash 显著跑赢上表 de-risk 保守值**：工整清单 100%、快写行 **91%**（23 字仅错 2：漏一叠字"写"、"已"误作"冷"）——上表 65%/57% 是 de-risk 阶段的读数，生产后端换 Gemini 3.6 Flash 后快写实测反而到九成。这把"快写~60%"的下限往上抬了一档，但"需人工校对"的定位不变（91% 仍非满分，且样本小）。教训：各家模型名漂移快（`gemini-2.5-flash` 已对新用户下线，须用 `gemini-3.6-flash`），`vision.py` 默认值要跟着更。
 
+### 📌 卡片手写批注注入（cardhw，2026-08-29 真机写回验证）
+
+P1 OCR 之上落的第一个"消费端"，也是 **P1（OCR）+ P2（手写-文字关联）合体**的具体落地：给 PKM「总结卡片」加手写批注。用户在某个槽（🟡金句/🔵洞见/🩷疑问/🟠主题/🟢可复用/⚪人物）旁手写想法 → 整页喂 vision 做**空间关联**（判断手写贴着哪个槽）→ 转写作"打字批注"注入该槽下 → **模式A** 重建为纯文本页（手写被消化成文字）。
+
+- **机制关键**：手写笔划在 rmscene 层**不暴露 anchor**（§07 探针说的 anchor_id 抠不出来），故走 **vision 空间关联**而非抠坐标——比啃 P2 anchor 逆向更稳、且零逆向。关联准度：盲测 4/4、活体 Gemini 3/3。
+- **保留契约**：转写行搭 `cardsync::parse_card` 的保留通道（★块下所有非★行=该页 `notes_by_page` 逐字保留），落到对应槽下，**下次画星重建不丢**（契约读实，daemon 真实重建后坐实待补）。
+- **真机 E2E**：dry-run 报「手写→槽」方案 → `--apply`（先备份原 `.rm`）→ 回拉设备读 RootText 确认：**笔划=0**（手写消化）、`· ✍ …` 注入到正确槽。
+- **定位仍是辅助转写+人工校对**：空间关联稳，逐字转写有错（messy 快写~60%）；dry-run 先报、apply 后可打字改。
+- **代码**：`pkm-semantic/handwriting/{vision.py（加卡片模式 transcribe_card）, cardhw.py}`。注入用 `rmscene.simple_text_document`（notebook_rm 的对拍参照源）。
+
 ### 📌 竞品借鉴（rmkit-cn）·`.rm` 文件不实时刷新——本项目读 `.rm` 反解同样会踩
 
 > 来源：`boangs/rmkit`（GPL-3.0）`upload-server-go/internal/server/ai_page.go` 头部注释。**源码研读结论。**
