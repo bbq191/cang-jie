@@ -242,7 +242,12 @@ fn merge_highlights(prev: &[String], hl: &[Vec<String>]) -> Vec<String> {
         if let Some(s) = cur {
             if let Some(texts) = hl.get(s) {
                 for t in texts {
-                    if !seen.contains(t) {
+                    // 去重：书摘 t 已在？允许"t 后跟空格再接手写批注"的内联拼接形态
+                    // （cardhw 把手写批注拼在书摘 bullet 行尾，如 "只想睡觉 但很累了"）也算已在，
+                    // 免得重建时把被批注的那条书摘当"缺失"重复插。t 后必须跟空格才算，故
+                    // "她" 不会误配 "她站在…"（无空格）。
+                    let appended = format!("{t} ");
+                    if !seen.iter().any(|s| s == t || s.starts_with(&appended)) {
                         out.push(format!("   · {t}"));
                     }
                 }
@@ -557,5 +562,40 @@ mod tests {
         let prev = parse_card(&p1.join("\n"));
         let p2 = render_card("书", &stars, &prev);
         assert_eq!(p1.join("\n"), p2.join("\n"), "无改动重建应完全一致（幂等）");
+    }
+
+    #[test]
+    fn merge_inline_appended_annotation_not_duplicated() {
+        // cardhw 把手写批注内联拼在书摘 bullet 行尾（"只想睡觉 但很累了"）。
+        // 重建时该书摘仍在 hl 里 → 不能被当"缺失"重复插。t 后跟空格才算已在。
+        let prev = vec![
+            "🟡 金句·要记的句：".to_string(),
+            "   · 只想睡觉 但很累了".to_string(),
+            "🔵 洞见：".to_string(),
+            "   · 她站在候车队伍中 一脸茫然".to_string(),
+            "🔗 关联 → ID：".to_string(),
+        ];
+        let mut hl: Vec<Vec<String>> = vec![Vec::new(); 6];
+        hl[0] = vec!["只想睡觉".into()]; // 🟡 槽书摘
+        hl[1] = vec!["她站在候车队伍中".into()]; // 🔵 槽书摘
+        let out = merge_highlights(&prev, &hl);
+        let joined = out.join("\n");
+        assert_eq!(joined.matches("只想睡觉").count(), 1, "被批注的书摘不该重复插");
+        assert_eq!(joined.matches("她站在候车队伍中").count(), 1, "同上");
+        assert!(joined.contains("· 只想睡觉 但很累了"), "内联批注原样保留");
+    }
+
+    #[test]
+    fn merge_prefix_no_false_dedup() {
+        // "她"（短书摘）不该因为存在 "她站在…"（无空格前缀）而被误判为已在。
+        let prev = vec![
+            "🟡 金句·要记的句：".to_string(),
+            "   · 她站在候车队伍中".to_string(),
+            "🔗 关联 → ID：".to_string(),
+        ];
+        let mut hl: Vec<Vec<String>> = vec![Vec::new(); 6];
+        hl[0] = vec!["她站在候车队伍中".into(), "她".into()];
+        let out = merge_highlights(&prev, &hl);
+        assert!(out.iter().any(|l| l.trim() == "· 她"), "短书摘'她'仍应被补齐（无空格不误配）");
     }
 }

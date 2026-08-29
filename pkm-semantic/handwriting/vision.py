@@ -34,13 +34,13 @@ DEFAULT_PROMPT = (
 # 卡片模式提示词：整页卡片（黑打印槽行 + 红手写批注）→ 结构化 {槽→转写} JSON。
 # de-risk 验证：vision 能准确把红手写空间关联到对应黑行（4/4）。
 CARD_PROMPT = (
-    "这是一张 reMarkable「总结卡片」的整页渲染。**黑色打印**是卡片固定结构（若干带图标的槽，"
-    "如 🟡金句、🔵洞见、🩷疑问、🟠主题、🟢可复用、⚪人物）；**红色（或其它彩色）手写**是用户"
-    "在某些槽旁边加的批注。\n"
-    "任务：找出所有有手写批注的槽，把每段手写转写出来，按它空间上贴着哪个槽归类。\n"
-    "只输出一个 JSON 数组，每元素 {\"slot\":\"槽的关键词\",\"note\":\"手写转写\"}；"
-    "slot 用槽名关键词之一（金句/洞见/疑问/主题/可复用/人物），note 是手写逐字转写"
-    "（潦草认不准写最可能的字，不留空、不加问号占位）。没有手写的槽不要列。"
+    "这是一张 reMarkable「总结卡片」的整页渲染。**黑色打印**是卡片已有内容（若干槽 + 每槽下"
+    " `· 开头的书摘条目`）；**彩色手写**（红/蓝等，非黑）是用户贴着某个书摘条目旁边加的批注。\n"
+    "任务：只找**彩色手写**批注，把每段手写转写出来，并指出它贴着哪一条**黑色打印的 `·` 条目**。\n"
+    "⚠ 极其重要：note 只写**手写**的字，**绝对不要**把它旁边那条黑色打印文字算进去。\n"
+    "anchor 写它所贴的那条黑色打印条目的**原文**（去掉开头的 `·` 和空格，照抄黑字，别改别加手写）。\n"
+    "只输出一个 JSON 数组，每元素 {\"anchor\":\"黑色打印条目原文\",\"note\":\"手写逐字转写\"}；"
+    "手写潦草认不准写最可能的字，不留空、不加问号占位。没有手写的条目不要列。"
     "不要输出 JSON 以外的任何字符（不要 markdown 代码围栏、不要解释）。"
 )
 
@@ -169,7 +169,7 @@ def transcribe(image_path: str, provider: str = "gemini", model: str | None = No
 
 
 def transcribe_card(image_path: str, provider: str = "gemini", model: str | None = None) -> list[dict]:
-    """整页卡片 → [{slot, note}]（红手写批注按空间归到对应槽）。解析失败返回 []。"""
+    """整页卡片 → [{anchor, note}]：note=手写转写（不含黑字），anchor=手写所贴的黑色打印条目原文。"""
     raw = transcribe(image_path, provider, model, prompt=CARD_PROMPT)
     s = raw.strip()
     if s.startswith("```"):  # 容忍模型套了代码围栏
@@ -191,8 +191,9 @@ def transcribe_card(image_path: str, provider: str = "gemini", model: str | None
             continue
         # 清洗 note 两端的空白/标点artifact（如 vision 带的前导逗号 ",一股茫然"）
         note = str(d.get("note", "")).strip().strip("，。,.、；;：: \t")
+        anchor = str(d.get("anchor", "")).strip().lstrip("·· ").strip()
         if note:
-            out.append({"slot": str(d.get("slot", "")).strip(), "note": note})
+            out.append({"anchor": anchor, "note": note})
     return out
 
 

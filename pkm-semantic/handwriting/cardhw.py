@@ -33,11 +33,6 @@ sys.path.insert(0, HERE)
 import vision  # noqa: E402
 
 DEVICE_XOCHITL = "/home/root/.local/share/remarkable/xochitl"
-# 槽头关键词 → 匹配 vision 输出的 slot；也是「块边界」判定用（含终止符 🔗/★）。
-SLOT_KEYWORDS = ["金句", "洞见", "疑问", "主题", "可复用", "人物"]
-SLOT_EMOJI = "🟡🔵🩷🟠🟢⚪"
-TERMINATORS = ("🔗", "★")
-INJECT_PREFIX = "   · ✍ "  # 缩进 bullet + 笔标记，和书摘 bullet 区分、仍被 parse_card 当批注保留
 
 
 # ── .rm 读 ──────────────────────────────────────────────────────────────────
@@ -66,60 +61,49 @@ def rebuild_text_rm(text: str) -> bytes:
 
 
 # ── 槽定位 + 注入 ────────────────────────────────────────────────────────────
-def _header_keyword(line: str) -> str | None:
-    """该行是不是槽头/终止符：是槽头返回其关键词；是 🔗/★ 终止符返回 ''；否则 None。"""
+def _bullet_body(line: str) -> str | None:
+    """`   · 只想睡觉` → `只想睡觉`；非 bullet 行返回 None。"""
     s = line.strip()
-    if any(s.startswith(t) for t in TERMINATORS):
-        return ""
-    for kw in SLOT_KEYWORDS:
-        if kw in s and (s[:1] in SLOT_EMOJI or "：" in s or ":" in s):
-            return kw
+    for pre in ("· ", "·"):
+        if s.startswith(pre):
+            return s[len(pre):].strip()
     return None
 
 
-def _match_slot(vision_slot: str) -> str | None:
-    for kw in SLOT_KEYWORDS:
-        if kw in vision_slot or vision_slot in kw:
-            return kw
-    return None
+def _best_line(lines: list[str], anchor: str, used: set[int]) -> int | None:
+    """在 bullet 行里找与 anchor 最相似的一行（difflib 比值），阈值 0.5；已用过的行跳过。"""
+    from difflib import SequenceMatcher
+    best_i, best_r = None, 0.5
+    for i, line in enumerate(lines):
+        if i in used:
+            continue
+        body = _bullet_body(line)
+        if body is None:
+            continue
+        r = SequenceMatcher(None, anchor, body).ratio()
+        if anchor and anchor in body:      # 子串直接给高分（vision 读黑字通常准）
+            r = max(r, 0.9)
+        if r > best_r:
+            best_i, best_r = i, r
+    return best_i
 
 
 def inject(text: str, annotations: list[dict]) -> tuple[str, list[str], list[dict]]:
-    """把每条 {slot,note} 注入对应槽块尾。返回 (新文本, 应用日志, 未匹配项)。"""
-    by_kw: dict[str, list[str]] = {}
-    unmatched: list[dict] = []
-    for a in annotations:
-        kw = _match_slot(a["slot"])
-        if kw:
-            by_kw.setdefault(kw, []).append(a["note"])
-        else:
-            unmatched.append(a)
-
-    out: list[str] = []
+    """把每条 {anchor,note} **内联拼接**到 anchor 所指 bullet 行尾。返回 (新文本, 日志, 未匹配)。"""
+    lines = text.split("\n")
     applied: list[str] = []
-    cur_kw: str | None = None
-
-    def flush():
-        nonlocal cur_kw
-        if cur_kw and by_kw.get(cur_kw):
-            for note in by_kw[cur_kw]:
-                out.append(INJECT_PREFIX + note)
-                applied.append(f"{cur_kw} ← {note}")
-            by_kw[cur_kw] = []
-
-    for line in text.split("\n"):
-        hk = _header_keyword(line)
-        if hk is not None:      # 遇到新槽头/终止符：先把上一槽的注入落下
-            flush()
-            cur_kw = hk or None
-        out.append(line)
-    flush()  # 收尾（末槽）
-
-    # 有些槽 vision 报了但正文里没找到该槽头 → 归入未匹配
-    for kw, notes in by_kw.items():
-        for n in notes:
-            unmatched.append({"slot": kw, "note": n})
-    return "\n".join(out), applied, unmatched
+    unmatched: list[dict] = []
+    used: set[int] = set()
+    for a in annotations:
+        i = _best_line(lines, a["anchor"], used)
+        if i is None:
+            unmatched.append(a)
+            continue
+        used.add(i)
+        if not lines[i].rstrip().endswith(a["note"]):   # 幂等：已拼过就不重复
+            lines[i] = lines[i].rstrip() + " " + a["note"]
+        applied.append(f"{_bullet_body(lines[i]) or lines[i].strip()}")
+    return "\n".join(lines), applied, unmatched
 
 
 # ── 设备/镜像 ────────────────────────────────────────────────────────────────
@@ -240,11 +224,11 @@ def main() -> int:
             continue
         text = read_root_text(rm)
         new_text, applied, unmatched = inject(text, anns)
-        print("  关联方案（手写 → 槽）：")
+        print("  关联方案（拼接后的条目）：")
         for a in applied:
-            print(f"    ✓ {a}")
+            print(f"    ✓ · {a}")
         for u in unmatched:
-            print(f"    ✗ 未匹配槽：{u['slot']} ← {u['note']}（跳过）")
+            print(f"    ✗ 未匹配条目：anchor={u['anchor']!r} ← {u['note']}（跳过）")
         if not applied:
             continue
 
