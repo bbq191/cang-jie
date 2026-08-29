@@ -1,0 +1,7 @@
+# B1 手写笔记 → 待校对 Markdown MVP（host 侧）
+#   识别走 urllib（标准库），不绑各家 SDK；四家后端只需对应环境变量 key。
+#   以下仅「缩略图缺、需 hw_render 兜底反解渲染」时才用到：
+rmscene   # .rm v6 反解（MIT）
+pillow    # 兜底栅格渲染
+# 跑法：uv run --with rmscene --with pillow python export.py ...
+# 只用缩略图（正常路径）时其实不需要上面两个；兜底渲染才需要。
