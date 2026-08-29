@@ -88,13 +88,28 @@ def _best_line(lines: list[str], anchor: str, used: set[int]) -> int | None:
     return best_i
 
 
-def inject(text: str, annotations: list[dict]) -> tuple[str, list[str], list[dict]]:
-    """把每条 {anchor,note} **内联拼接**到 anchor 所指 bullet 行尾。返回 (新文本, 日志, 未匹配)。"""
+def _looks_printed(note: str, bullet_bodies: list[str]) -> bool:
+    """note 是否与某条已有打印 bullet 高度雷同 → 疑似"打印文字泄漏"（vision 把黑字当手写摄取）。"""
+    from difflib import SequenceMatcher
+    for body in bullet_bodies:
+        if note == body or SequenceMatcher(None, note, body).ratio() > 0.85:
+            return True
+    return False
+
+
+def inject(text: str, annotations: list[dict]) -> tuple[str, list[str], list[dict], list[dict]]:
+    """把每条 {anchor,note} **内联拼接**到 anchor 所指 bullet 行尾。
+    返回 (新文本, 应用日志, 未匹配, 疑似打印泄漏被丢弃)。"""
     lines = text.split("\n")
+    bodies = [b for b in (_bullet_body(l) for l in lines) if b]  # 注入前的所有打印 bullet 原文
     applied: list[str] = []
     unmatched: list[dict] = []
+    leaked: list[dict] = []
     used: set[int] = set()
     for a in annotations:
+        if _looks_printed(a["note"], bodies):   # 结构性防线：note≈已有打印 bullet → 丢弃
+            leaked.append(a)
+            continue
         i = _best_line(lines, a["anchor"], used)
         if i is None:
             unmatched.append(a)
@@ -103,7 +118,7 @@ def inject(text: str, annotations: list[dict]) -> tuple[str, list[str], list[dic
         if not lines[i].rstrip().endswith(a["note"]):   # 幂等：已拼过就不重复
             lines[i] = lines[i].rstrip() + " " + a["note"]
         applied.append(f"{_bullet_body(lines[i]) or lines[i].strip()}")
-    return "\n".join(lines), applied, unmatched
+    return "\n".join(lines), applied, unmatched, leaked
 
 
 # ── 设备/镜像 ────────────────────────────────────────────────────────────────
@@ -223,10 +238,12 @@ def main() -> int:
             print("  · vision 没认出手写批注")
             continue
         text = read_root_text(rm)
-        new_text, applied, unmatched = inject(text, anns)
+        new_text, applied, unmatched, leaked = inject(text, anns)
         print("  关联方案（拼接后的条目）：")
         for a in applied:
             print(f"    ✓ · {a}")
+        for lk in leaked:
+            print(f"    ⓘ 丢弃疑似打印泄漏：{lk['note']!r}（≈已有书摘，非手写；vision 误读）")
         for u in unmatched:
             print(f"    ✗ 未匹配条目：anchor={u['anchor']!r} ← {u['note']}（跳过）")
         if not applied:
