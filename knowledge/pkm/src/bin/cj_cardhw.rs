@@ -18,6 +18,7 @@ fn xochitl_dir() -> String {
 fn key_for(provider: &str) -> Option<String> {
     let envs: &[&str] = match provider {
         "gemini" => &["GEMINI_API_KEY", "GOOGLE_API_KEY"],
+        "qwen" => &["DASHSCOPE_API_KEY", "QWEN_API_KEY"],
         "deepseek" => &["DEEPSEEK_API_KEY"],
         "openai" => &["OPENAI_API_KEY"],
         "anthropic" => &["ANTHROPIC_API_KEY"],
@@ -31,7 +32,7 @@ fn main() {
     let val = |flag: &str| args.iter().position(|a| a == flag).and_then(|i| args.get(i + 1)).cloned();
     let book = val("--book");
     let doc = val("--doc");
-    let provider = val("--provider").unwrap_or_else(|| "deepseek".into());
+    let provider = val("--provider").unwrap_or_else(|| "qwen".into());
     let model = val("--model");
     let apply = args.iter().any(|a| a == "--apply");
     if book.is_none() && doc.is_none() {

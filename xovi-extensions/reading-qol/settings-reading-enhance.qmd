@@ -653,7 +653,7 @@ AFFECT /qml/device/view/settings/Settings.qml
                     property bool cfgVocab: false
                     // 端化 cardhw 三键：本页不展示，读进来+写回去防覆盖
                     property bool cfgCardhw: false
-                    property string cfgProvider: "deepseek"
+                    property string cfgProvider: "qwen"
                     property string cfgModel: ""
                     property bool cfgTap: false
                     property bool cfgMono: false
@@ -907,7 +907,7 @@ AFFECT /qml/device/view/settings/Settings.qml
                     property bool cfgVocab: false
                     // 端化 cardhw 三键：本页不展示，读进来+写回去防覆盖
                     property bool cfgCardhw: false
-                    property string cfgProvider: "deepseek"
+                    property string cfgProvider: "qwen"
                     property string cfgModel: ""
                     property var _cjXhr: null
                     readonly property string cjPath: "file:///home/root/.local/share/cangjie-ime/reading-qol.json"
@@ -1089,7 +1089,7 @@ AFFECT /qml/device/view/settings/Settings.qml
                     property bool cfgVocab: false   // 单词笔记（独立·默认关）：灰词查词→生词本
                     // 端化 cardhw 三键：本页不展示，读进来+写回去防覆盖
                     property bool cfgCardhw: false
-                    property string cfgProvider: "deepseek"
+                    property string cfgProvider: "qwen"
                     property string cfgModel: ""
                     // 其余键读进来 + 写回去（全量防覆盖）
                     property bool cfgTap: false
@@ -1342,7 +1342,7 @@ AFFECT /qml/device/view/settings/Settings.qml
                     property bool cfgVocab: false
                     // cardhw 本页三项
                     property bool cfgCardhw: false
-                    property string cfgProvider: "deepseek"
+                    property string cfgProvider: "qwen"
                     property string cfgModel: ""
                     // API key 尾号回显（空=未填）；key 明文不进 json、单独写 cardhw.key
                     property string cfgKeyTail: ""
@@ -1434,9 +1434,9 @@ AFFECT /qml/device/view/settings/Settings.qml
                                 enT: "端云手写消化",
                                 enD: "开启后，你在《总结卡片》各行后用笔写的手写批注，会在关闭该笔记本时上传到所选模型识别成文字，直接拼回你写的那一行（不识别已有印刷字、不另起行）。需联网、需下方填 API key；识别完成弹通知。默认关。",
                                 provT: "识别后端",
-                                provD: "选一家多模态模型。默认 Gemini（aistudio.google.com/apikey 免费领 key）；DeepSeek / OpenAI / Claude 各自填对应 key。",
+                                provD: "选一家多模态模型。默认 Qwen（阿里云百炼 bailian.console.aliyun.com 领 key，国内直连无需代理、分辨率高更适合手写）；Gemini / DeepSeek / OpenAI / Claude 各自填对应 key。",
                                 modT: "模型（可选）",
-                                modD: "留空用该后端默认模型（Gemini=gemini-3.6-flash）。要指定其它型号填这里，失焦即存。",
+                                modD: "留空用该后端默认模型（Qwen=qwen3-vl-plus）。要指定其它型号填这里，失焦即存。",
                                 keyT: "API Key",
                                 keyD: "明文存于设备 cardhw.key（仅本机、不进仓库）。粘贴后失焦即保存，输入框随即清空、只留尾号回显。",
                                 keySaved: "已保存 · 尾号",
@@ -1447,9 +1447,9 @@ AFFECT /qml/device/view/settings/Settings.qml
                                 enT: "端雲手寫消化",
                                 enD: "開啟後，你在《總結卡片》各行後用筆寫的手寫批註，會在關閉該筆記本時上傳到所選模型識別成文字，直接拼回你寫的那一行（不識別既有印刷字、不另起行）。需聯網、需下方填 API key；識別完成彈通知。預設關。",
                                 provT: "識別後端",
-                                provD: "選一家多模態模型。預設 Gemini（aistudio.google.com/apikey 免費領 key）；DeepSeek / OpenAI / Claude 各自填對應 key。",
+                                provD: "選一家多模態模型。預設 Qwen（阿里雲百煉 bailian.console.aliyun.com 領 key，國內直連無需代理、解析度高更適合手寫）；Gemini / DeepSeek / OpenAI / Claude 各自填對應 key。",
                                 modT: "模型（可選）",
-                                modD: "留空用該後端預設模型（Gemini=gemini-3.6-flash）。要指定其它型號填這裡，失焦即存。",
+                                modD: "留空用該後端預設模型（Qwen=qwen3-vl-plus）。要指定其它型號填這裡，失焦即存。",
                                 keyT: "API Key",
                                 keyD: "明文存於裝置 cardhw.key（僅本機、不進倉庫）。貼上後失焦即儲存，輸入框隨即清空、只留尾號回顯。",
                                 keySaved: "已儲存 · 尾號",
@@ -1460,9 +1460,9 @@ AFFECT /qml/device/view/settings/Settings.qml
                                 enT: "On-device to cloud OCR",
                                 enD: "When on, handwritten notes you pen after each line of a Summary Card are uploaded to the chosen model when you close that notebook, recognised as text and appended in place on the line you wrote (existing print is not re-read, no new line). Needs network and an API key below; a notification fires when done. Off by default.",
                                 provT: "OCR backend",
-                                provD: "Pick a multimodal model. Default Gemini (get a free key at aistudio.google.com/apikey); DeepSeek / OpenAI / Claude each need their own key.",
+                                provD: "Pick a multimodal model. Default Qwen (get a key at bailian.console.aliyun.com; works in mainland China without a proxy, high-resolution — better for handwriting); Gemini / DeepSeek / OpenAI / Claude each need their own key.",
                                 modT: "Model (optional)",
-                                modD: "Leave empty for the backend default (Gemini = gemini-3.6-flash). Enter another model id here; saved on focus loss.",
+                                modD: "Leave empty for the backend default (Qwen = qwen3-vl-plus). Enter another model id here; saved on focus loss.",
                                 keyT: "API Key",
                                 keyD: "Stored in plain text in cardhw.key on the device (local only, never committed). Saved on focus loss; the box then clears, keeping only the last-4 hint.",
                                 keySaved: "Saved · ends in",
@@ -1528,16 +1528,17 @@ AFFECT /qml/device/view/settings/Settings.qml
                                 Row {
                                     id: cjHwProvRow
                                     width: parent.width
-                                    spacing: 10
-                                    property real segW: (width - spacing * 3) / 4
+                                    spacing: 8
+                                    // 5 段（Qwen 生产默认置首）：段窄，字号降到 22 保证 DeepSeek 全字不截，仍纯黑白满对比（小字无淡化）。
+                                    property real segW: (width - spacing * 4) / 5
                                     Repeater {
-                                        model: [ { k: "gemini", t: "Gemini" }, { k: "deepseek", t: "DeepSeek" }, { k: "openai", t: "OpenAI" }, { k: "anthropic", t: "Claude" } ]
+                                        model: [ { k: "qwen", t: "Qwen" }, { k: "gemini", t: "Gemini" }, { k: "deepseek", t: "DeepSeek" }, { k: "openai", t: "OpenAI" }, { k: "anthropic", t: "Claude" } ]
                                         delegate: Rectangle {
                                             width: cjHwProvRow.segW; height: 68; radius: 8
                                             property bool on: cjHwRoot.cfgProvider === modelData.k
                                             color: on ? "#000000" : "#ffffff"
                                             border.color: "#000000"; border.width: 2
-                                            Text { anchors.centerIn: parent; renderType: Text.NativeRendering; antialiasing: false; font.family: "reMarkable Sans"; font.pixelSize: 26; color: parent.on ? "#ffffff" : "#000000"; text: modelData.t }
+                                            Text { anchors.centerIn: parent; renderType: Text.NativeRendering; antialiasing: false; font.family: "reMarkable Sans"; font.pixelSize: 22; color: parent.on ? "#ffffff" : "#000000"; text: modelData.t }
                                             MouseArea { anchors.fill: parent; onClicked: { if (!cjHwRoot.cfgCardhw) return; cjHwRoot.cfgProvider = modelData.k; cjHwRoot.cjSave(); } }
                                         }
                                     }
@@ -1546,7 +1547,7 @@ AFFECT /qml/device/view/settings/Settings.qml
                                     width: parent.width
                                     text: cjHwRoot.i18n.provD
                                     wrapMode: Text.WordWrap
-                                    renderType: Text.NativeRendering; antialiasing: false; font.family: "reMarkable Sans"; font.pixelSize: 22; color: "#808080"
+                                    renderType: Text.NativeRendering; antialiasing: false; font.family: "reMarkable Sans"; font.pixelSize: 22; color: "#000000"
                                 }
                             }
 
@@ -1578,7 +1579,7 @@ AFFECT /qml/device/view/settings/Settings.qml
                                     width: parent.width
                                     text: cjHwRoot.i18n.modD
                                     wrapMode: Text.WordWrap
-                                    renderType: Text.NativeRendering; antialiasing: false; font.family: "reMarkable Sans"; font.pixelSize: 22; color: "#808080"
+                                    renderType: Text.NativeRendering; antialiasing: false; font.family: "reMarkable Sans"; font.pixelSize: 22; color: "#000000"
                                 }
                             }
 
@@ -1614,7 +1615,7 @@ AFFECT /qml/device/view/settings/Settings.qml
                                     width: parent.width
                                     text: cjHwRoot.i18n.keyD
                                     wrapMode: Text.WordWrap
-                                    renderType: Text.NativeRendering; antialiasing: false; font.family: "reMarkable Sans"; font.pixelSize: 22; color: "#808080"
+                                    renderType: Text.NativeRendering; antialiasing: false; font.family: "reMarkable Sans"; font.pixelSize: 22; color: "#000000"
                                 }
                             }
                         }

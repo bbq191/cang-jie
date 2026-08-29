@@ -16,7 +16,7 @@
 
 | 成员 | 形态 | 状态 |
 | --- | --- | --- |
-| **cardhw · 卡片手写批注注入** | 卡片某槽旁手写想法 → vision 空间关联 → 内联注入书摘行 | host 版真机通；**端化 A1/A2/B/C + 端到端真机通（DeepSeek）** |
+| **cardhw · 卡片手写批注注入** | 卡片某槽旁手写想法 → vision 空间关联 → 内联注入书摘行 | host 版真机通；**端化 A1/A2/B/C + 端到端真机通（默认 Qwen；E2E 曾用 DeepSeek 坐实）** |
 | **export · freeform 手写 → Markdown** | 整页手写 → 待校对 Markdown vault | host 版真机通 |
 | 结构识别（未来） | `.rm` 笔迹结构 → 有序/无序列表、待办清单 | 规划中 |
 
@@ -42,7 +42,7 @@
 
 **唯一能再拔高快写的杠杆**：`.rm` 自带笔顺/时序，online-HWR（用笔画动态而非静态图像）理论上吃得到 offline 图像识别吃不到的信息——但无现成中文离线引擎，要上云或自训，成本高，**留作后续可选增强**。
 
-**生产后端实测反超 de-risk 保守值**：MVP 换 Gemini 3.6 Flash 后，同一张 384px 缩略图上工整清单 100%、**快写行 91%**（23 字仅错 2）——de-risk 表里 65%/57% 是 de-risk 阶段的读数。这把「快写~60%」下限抬了一档，但「需校对」定位不变（91% 仍非满分、样本小）。⚠ 各家模型名漂移快（`gemini-2.5-flash` 已对新用户下线 → 须用 `gemini-3.6-flash`），`vision.py` 默认值要跟着更。**★注：Gemini 这组质量数据仍有效，但生产默认后端已定为 DeepSeek**——国内用户设备无法挂代理、Gemini 国内不可达，DeepSeek 国内直连可用（质量代价见 §04「后端定案」）。
+**生产后端实测反超 de-risk 保守值**：MVP 换 Gemini 3.6 Flash 后，同一张 384px 缩略图上工整清单 100%、**快写行 91%**（23 字仅错 2）——de-risk 表里 65%/57% 是 de-risk 阶段的读数。这把「快写~60%」下限抬了一档，但「需校对」定位不变（91% 仍非满分、样本小）。⚠ 各家模型名漂移快（`gemini-2.5-flash` 已对新用户下线 → 须用 `gemini-3.6-flash`），`vision.py` 默认值要跟着更。**★注：Gemini 这组质量数据仍有效，但生产默认后端已定为 Qwen（`qwen3-vl-plus`）**——国内用户设备无法挂代理、Gemini 国内不可达；国内直连合格集里 Qwen 比 DeepSeek 分辨率高（DeepSeek 每图仅 384-token）故取代之为默认，DeepSeek 降备选（见 §04「后端定案」）。
 
 **落盘延迟坐实**：手写后停在原页时 host 侧 `.rm`/缩略图**均不更新**，退回书库才落盘。管线取数据必须卡在「切页/退出」之后（与下文 rmkit-cn 警示一致）。
 
@@ -72,7 +72,7 @@ host 版要「回电脑连云」才能转写；端化版让**设备自己调云 
 **架构定案（两条铁律驱动）**：
 
 - **可见性必走 /upload**：xochitl 零 inotify、维护全内存文档模型 → **直写 `.rm` 运行时不可见**（连重开都只见旧页）。故端化注入**必走 `/upload` 重建路**（复用 `notebook_sync::sync_auto_notebook`，同 ★卡片），把转写并进卡片重建、手写消化成文字。
-- **设备能自己调云**（两枪 de-risk 通）：① 设备 `ureq+rustls` 发 HTTPS 到云端多模态 API（de-risk 用 Gemini 验证，**生产默认 DeepSeek**，见本节末「后端定案」）——**与 reading weread 同机制、生产已验证**；真机实测设备自主拿到标注（rustls 证书校验穿过 host 代理也通=SNI 透传非 MITM；⚠ 但 fake-ip 代理只管本机不管设备转发流量→超时，端云需真直连，DeepSeek 国内直连无需代理）。② 通知：**daemon（Rust）够不到 QML 通知 API** → 「daemon 写状态文件 + 注入 QML 观察器轮询」桥接（Phase C，已建）。⚠ 通知用的是 **MainView 的全局 `notificationQueue.enqueue`**，非 reader 局部 `showNotification`（后者关笔记后回书库够不着）——详见本节末「端化 C」。
+- **设备能自己调云**（两枪 de-risk 通）：① 设备 `ureq+rustls` 发 HTTPS 到云端多模态 API（de-risk 用 Gemini 验证，**生产默认 Qwen**，见本节末「后端定案」）——**与 reading weread 同机制、生产已验证**；真机实测设备自主拿到标注（rustls 证书校验穿过 host 代理也通=SNI 透传非 MITM；⚠ 但 fake-ip 代理只管本机不管设备转发流量→超时，端云需真直连，DeepSeek 国内直连无需代理）。② 通知：**daemon（Rust）够不到 QML 通知 API** → 「daemon 写状态文件 + 注入 QML 观察器轮询」桥接（Phase C，已建）。⚠ 通知用的是 **MainView 的全局 `notificationQueue.enqueue`**，非 reader 局部 `showNotification`（后者关笔记后回书库够不着）——详见本节末「端化 C」。
 
 **A1 · 设备调云核心**（真机端到端）：交叉编 `cj-cardhw`（aarch64-musl 静态 1.7MB 含 rustls）→ 部署设备 → 设备自己调 Gemini → 内联注入 → `/upload` 重建。回拉新卡确认：笔划=0、批注内联到正确书摘行、打印泄漏未入、旧重名卡 `parent=trash`（`sync_auto_notebook` 顺带合并重名）。代码 `pkm/src/cardhw.rs`（vision 适配器 ureq + inject 移植，5 单测）+ `pkm/src/bin/cj_cardhw.rs`。
 
@@ -87,7 +87,10 @@ host 版要「回电脑连云」才能转写；端化版让**设备自己调云 
 **端到端真机验证 + 后端定案 + inject 修复**（2026-08-29，DeepSeek 实测）：
 
 - **端到端跑通**：用户在《人骨拼图》- 总结卡片手写「这是一句总结」→ 关笔记 → daemon `fswatch` 触发 step④ → DeepSeek 识别 → `inject_inline` 注入 → `sync_auto_notebook` /upload 重建（生成新卡、旧卡入 trash、手写笔划消化成文字）→ 用户设备上肉眼确认手写变成印刷体拼在书摘行后。daemon 日志 `[cardhw] 注入 1 条并 /upload（手写消化）` 为证。
-- **★后端定案 = DeepSeek（`deepseek-v4-flash-vision-exp`）**：目标用户群在国内、**设备自身无法挂代理、多数用户路由也无代理**；DeepSeek 是国内多模态 API、**直连国内网即可用、无需任何代理**——这是务实的生产默认。**Gemini 判为不适用**（`generativelanguage.googleapis.com` 国内需代理，设备端走不通）——**这反转了早前 §02/§03 里"推荐 Gemini / Gemini 质量更好所以用它"的取舍**：Gemini 质量确实更好且无 384 上限，但**在国内直连场景不可达**，故 Gemini 保留为四后端之一（有代理/海外用户可选），**默认与推荐都是 DeepSeek**。✅ 代码缺省已改 DeepSeek（`cj_stars_daemon`/`cj_cardhw`/面板 4 页，2026-08-30），面板仍可手选四后端。
+- **★后端定案（2026-08-30 修订）= Qwen（`qwen3-vl-plus`，阿里云百炼 DashScope OpenAI-兼容端点）**。定案逻辑分两步：
+  - **第一约束 = 国内直连无代理**：目标用户群在国内、**设备自身无法挂代理、多数用户路由也无代理**。据此 **Gemini 判出局**（`generativelanguage.googleapis.com` 国内需代理，设备走不通）——反转了早前 §02/§03「推荐 Gemini」的取舍（Gemini 质量更好但国内不可达）。合格集 = 国内直连 API：DeepSeek / Qwen。
+  - **第二约束 = 手写分辨率**：DeepSeek `deepseek-v4-flash-vision-exp` 每图 **384-token 硬上限**，是它最大短板（低分辨率分不清印刷/手写，见下条实况）。**Qwen `qwen3-vl-plus` 原生高分辨率**（qwen-vl-max 系甚至可开 `vl_high_resolution_images` 到 16384-token），OCR/手写更强、且同为**国内直连无需代理**——正好补 DeepSeek 的分辨率短板。故 **Qwen 取代 DeepSeek 成为生产默认**；DeepSeek 降为备选（想更便宜时选）、Gemini/OpenAI/Claude 有代理/海外可选。为何用通用 `qwen3-vl-plus` 而非专用 `qwen-vl-ocr`：cardhw 要「转写+空间关联+JSON 结构化输出」，通用 VL 跟得住复杂指令，纯 OCR 模型偏裸文本转储。
+  - ✅ 代码缺省已改 Qwen（`cj_stars_daemon`/`cj_cardhw`/面板 5 页，2026-08-30）；面板后端选择由 4 段扩为 **5 段**（Qwen/Gemini/DeepSeek/OpenAI/Claude，Qwen 置首）；key 环境变量 `DASHSCOPE_API_KEY`（面板填、写 `cardhw.key`）。端点 `https://dashscope.aliyuncs.com/compatible-mode/v1`（北京域）。⚠ Qwen 端到端真机准度待用户配 DashScope key 后坐实（本次改动含代码+面板设计，Qwen 具体识别质量数尚未在设备上测）。
 - **DeepSeek 质量实况（384-token 图像上限的代价）**：稀疏测试卡潦草手写 1/4；规整真书卡上清楚单句核心读对（「这是一句总结」✅）但**易把附近印刷划线掺进 note**（384 低分辨率分不清印刷/手写）。定位仍是「辅助转写、需校对」。**用笔建议：手写用红/蓝等非黑色**给模型最强区分线索。
 - **网络出口坑**：设备端调云需**真直连**。实测被 host 的 clash-meta **fake-ip**（`Meta` TUN，把 `api.deepseek.com` 解析到 `28.0.x`）挡过——该代理只拦 host 本机 OUTPUT、不管设备 USB 转发/热点流量 → 设备 TLS 连上但读应答超时。**DeepSeek 国内直连无需代理**正好绕开此坑；用带 fake-ip 的网反而不通。。
 - **inject 修复三处**（真机暴露、`cardhw.rs` + 7 单测）：① `inject_inline` 的 `applied` **无条件 push** 致误报"已注入"→ `sync` 判"有变化"却内容相同 → 空转/None → 改为**仅真拼上才记 applied**，`ends_with` 命中（幂等/泄漏回环）归 `leaked`；② 新增 `strip_printed_prefix`——低分辨率下 vision 常把「印刷条目 + 手写」连成一串，剥掉印刷前缀只留手写；③ `CARD_PROMPT` 从「彩色=手写、黑色=印刷」改为**按字形区分**（机器字规整 vs 手写潦草连笔），兼容黑笔手写、强化"绝不把印刷字算进 note、宁漏不误"。

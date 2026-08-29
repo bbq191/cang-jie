@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """B1 手写识别 · 可插拔多模态 vision 适配器（host 侧）。
 
-四家后端，`--provider` 选，key 走各自环境变量，零锁定：
-  - gemini    （默认）Google，手写最强；OpenAI-兼容端点；key=GEMINI_API_KEY / GOOGLE_API_KEY
+五家后端，`--provider` 选，key 走各自环境变量，零锁定：
+  - qwen      **设备端 cardhw 生产默认**；阿里云百炼 qwen3-vl-plus；国内直连无需代理、高分辨率；key=DASHSCOPE_API_KEY
+  - gemini    （host 工具默认）Google，手写最强；OpenAI-兼容端点；key=GEMINI_API_KEY / GOOGLE_API_KEY
   - deepseek  极便宜；deepseek-v4-flash-vision-exp（实验）；每图≤384token；key=DEEPSEEK_API_KEY
   - openai    GPT 视觉；key=OPENAI_API_KEY
   - anthropic Claude 视觉（de-risk 亲测 100%/65%）；原生 messages API；key=ANTHROPIC_API_KEY
@@ -51,6 +52,13 @@ PROVIDERS: dict[str, dict] = {
         "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
         "default_model": "gemini-3.6-flash",
         "key_envs": ["GEMINI_API_KEY", "GOOGLE_API_KEY"],
+    },
+    "qwen": {
+        # 阿里云百炼 DashScope OpenAI-兼容端点（北京域，国内直连无需代理）。设备端 cardhw 生产默认。
+        "style": "openai",
+        "base_url": "https://dashscope.aliyuncs.com/compatible-mode/v1",
+        "default_model": "qwen3-vl-plus",
+        "key_envs": ["DASHSCOPE_API_KEY", "QWEN_API_KEY"],
     },
     "deepseek": {
         "style": "openai",

@@ -120,7 +120,7 @@ fn read_cfg() -> Cfg {
         color: v.get("starTodoColor").and_then(|x| x.as_str()).unwrap_or("RED").to_uppercase(),
         gap: v.get("starTodoGap").and_then(|x| x.as_f64()).unwrap_or(25.0),
         cardhw_enabled: b("cardhwEnabled", false),
-        cardhw_provider: v.get("cardhwProvider").and_then(|x| x.as_str()).unwrap_or("deepseek").to_string(),
+        cardhw_provider: v.get("cardhwProvider").and_then(|x| x.as_str()).unwrap_or("qwen").to_string(),
         cardhw_model: v.get("cardhwModel").and_then(|x| x.as_str()).filter(|s| !s.is_empty()).map(|s| s.to_string()),
     }
 }

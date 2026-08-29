@@ -20,6 +20,14 @@ fn provider_cfg(p: &str) -> Option<ProviderCfg> {
             base_url: "https://generativelanguage.googleapis.com/v1beta/openai",
             default_model: "gemini-3.6-flash",
         },
+        "qwen" => ProviderCfg {
+            // 阿里云 DashScope OpenAI-兼容端点（北京域，**国内直连无需代理**，同 DeepSeek 定位）。
+            // qwen3-vl-plus：通用多模态、原生高分辨率（远超 DeepSeek 384-token 上限）、跟得住 JSON 指令，
+            // 比纯 OCR 模型（qwen-vl-ocr）更适合 cardhw 的「转写+空间关联+JSON」结构化任务。生产默认。
+            style: "openai",
+            base_url: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+            default_model: "qwen3-vl-plus",
+        },
         "deepseek" => ProviderCfg {
             style: "openai",
             base_url: "https://api.deepseek.com",
@@ -69,6 +77,7 @@ pub struct VisionResponse {
 pub fn key_envs(provider: &str) -> &'static [&'static str] {
     match provider {
         "gemini" => &["GEMINI_API_KEY", "GOOGLE_API_KEY"],
+        "qwen" => &["DASHSCOPE_API_KEY", "QWEN_API_KEY"],
         "deepseek" => &["DEEPSEEK_API_KEY"],
         "openai" => &["OPENAI_API_KEY"],
         "anthropic" => &["ANTHROPIC_API_KEY"],

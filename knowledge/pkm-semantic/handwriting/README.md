@@ -34,14 +34,15 @@ uv run python export.py --name 笔记本 --no-vision
 
 缩略图缺、要 `hw_render` 兜底反解渲染时：`uv run --with rmscene --with pillow python export.py ...`。
 
-## vision 后端（`--provider`，host 工具默认 gemini；**设备端 cardhw 生产默认 DeepSeek**——国内直连无需代理，见白皮书 §04）
+## vision 后端（`--provider`，host 工具默认 gemini；**设备端 cardhw 生产默认 Qwen `qwen3-vl-plus`**——国内直连无需代理、高分辨率，见白皮书 §04）
 
-一个 OpenAI-兼容路径覆盖 gemini/deepseek/openai，另加原生 anthropic。key 走各自环境变量，零锁定；模型名会漂移，用 `--model` 覆盖 `vision.py:PROVIDERS` 里的默认值。
+一个 OpenAI-兼容路径覆盖 qwen/gemini/deepseek/openai，另加原生 anthropic。key 走各自环境变量，零锁定；模型名会漂移，用 `--model` 覆盖 `vision.py:PROVIDERS` 里的默认值。
 
 | provider | 默认模型 | key 环境变量 | 备注 |
 | --- | --- | --- | --- |
+| `qwen`（**设备端生产默认**） | qwen3-vl-plus | `DASHSCOPE_API_KEY` | 阿里云百炼 OpenAI-兼容端点，**国内直连无需代理**、**原生高分辨率**（补 DeepSeek 384 短板）；通用 VL 跟得住「转写+空间关联+JSON」复杂指令，比纯 OCR 的 `qwen-vl-ocr` 更合 cardhw |
 | `gemini` | gemini-3.6-flash | `GEMINI_API_KEY` / `GOOGLE_API_KEY` | 手写最强、有免费额度（工整100%/快写91%）；**但国内需代理、设备端不可达**——仅 host 工具或有代理时用 |
-| `deepseek`（**设备端生产默认**） | deepseek-v4-flash-vision-exp | `DEEPSEEK_API_KEY` | **国内直连无需代理**、极便宜；每图≤384token（密页/潦草掉质，需校对；清楚手写核心可读） |
+| `deepseek` | deepseek-v4-flash-vision-exp | `DEEPSEEK_API_KEY` | **国内直连无需代理**、极便宜；每图≤384token（密页/潦草掉质，需校对；清楚手写核心可读）——降为备选 |
 | `openai` | gpt-4o | `OPENAI_API_KEY` | 同级备选 |
 | `anthropic` | claude-sonnet-4-5 | `ANTHROPIC_API_KEY` | de-risk 亲测 100%/65% |
 
