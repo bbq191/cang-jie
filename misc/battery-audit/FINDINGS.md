@@ -53,3 +53,26 @@ autosleep 机型:睡着时几乎不耗电,常驻进程多在睡,整体很省。
 ## 测量限制
 
 审计时设备**插着 USB**(经 USB gadget 连接),`max77818_battery current_now=0`,**测不到实时放电电流**。要真实 mA 级 drain,需**断 USB** 后在设备本地读 `/sys/class/power_supply/max77818_battery/current_now`(负=放电),或按 `capacity` 随时间的下降率估算——两者都会断开 USB 连接,需在设备旁操作。
+
+## ⚠ 2026-08-29 冻机事故 + 架构改常驻（brick 根因）
+
+**现象**：设备 UI 冻在某界面、ping/SSH 全不通但 USB 链路仍 LOWER_UP（＝硬卡死，非 xochitl 崩、非拔线），长按电源 25-30s 强制重启才恢复。
+
+**内核日志（`journalctl -b -1`）铁证**：`task:(battop):57059 state:D`（不可中断睡眠）卡在
+`cgroup_procs_write → vfs_write → percpu_down_write(cgroup_threadgroup_rwsem) → synchronize_rcu`，
+blocked 94→124→157s；连 `systemd:1` 也被这把 cgroup 锁堵死；随后 `rcu_preempt detected stalls` +
+内核向 CPU1 发 NMI（CPU1 卡住）→ 整机雪崩。
+
+**根因判断**：`cgroup_procs_write` 是 **systemd 启动 oneshot 服务时把子进程 PID 写进 service cgroup.procs
+的常规迁移动作**（battop 的 `main()` 那次还没执行到）——**不是 battop 逻辑 bug**，是里面的
+`synchronize_rcu` 撞上一次内核 RCU stall（大概率叠加当时并发的 WiFi association）。但 **battop 靠
+`battop.timer` 每 ~10min 重启 oneshot＝144 次/天 cgroup 迁移**，把这个罕见 stall 的暴露窗口放大了 144 倍
+（3 天 ~432 次中一次，概率吻合）。
+
+**修法（架构改常驻）**：battop 从「timer 反复拉起 oneshot」改为 **Type=simple 常驻服务，进程内 `loop { sample_once; sleep(10min) }`**——内核只在**开机迁一次 cgroup**，暴露窗口 144次/天 → 1次/开机。
+- `thread::sleep`(CLOCK_MONOTONIC) 休眠时不推进 → 天然"醒时每 N 分钟"，与旧 timer 的 awake-only 语义一致；休眠中进程随之冻结、不持 wakelock、不阻止休眠、CPU 零占用。
+- 间隔可 `BATTOP_INTERVAL_SECS` 覆盖（缺省 600）。
+- 附带：`journalctl`（读 31 天内核日志那步）改**有界执行**（`run_bounded`，超 20s 就 SIGKILL）——常驻模型下一个卡住的子进程会拖死整个采样循环，故所有外部子进程必须有界。
+- install.sh：停删 `battop.timer`、改 enable `battop.service`；去掉会永久阻塞 install 的前台"首次采样"（常驻服务启动即首采）。
+
+**注**：`systemctl enable` 的符号链接在 `/etc`（tmpfs），重启即清 → battop 重启后仍是 disabled，需重跑 install.sh 重新启用（与本仓库其它 unit 同一 OTA/重启持久化限制）。重启后 battop 天然处于关闭安全态。

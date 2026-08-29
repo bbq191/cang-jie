@@ -1,6 +1,8 @@
-// battop 采集器(oneshot,由 systemd timer 每 ~10 分钟触发一次)。
+// battop 采集器(常驻服务,进程内每 ~10 分钟采一次;旧模型是 timer 反复拉起 oneshot,
+// 反复 service-start 的 cgroup 迁移撞内核 RCU stall 冻死整机 → 改常驻,cgroup 只迁一次)。
+// 间隔可用 BATTOP_INTERVAL_SECS 覆盖(缺省 600)。
 //
-// 每次运行:载入上次 baseline → 采样 /proc 各进程 CPU 累计 + 电量 →
+// 每轮采样:载入上次 baseline → 采样 /proc 各进程 CPU 累计 + 电量 →
 // 算「距上次的增量」→ 按 comm(进程)与 systemd unit(应用)双聚合 →
 // 追加到当日样本文件 → 写新 baseline → 清理 40 天前旧样本文件。
 //
@@ -12,7 +14,9 @@ use std::collections::HashMap;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::process::{Command, Stdio};
+use std::sync::mpsc;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const CLK_TCK: u64 = 100; // 真机 getconf CLK_TCK = 100(aarch64 Linux 常量)
 const RETAIN_DAYS: u64 = 40;
@@ -26,6 +30,27 @@ fn main() {
         std::process::exit(1);
     }
 
+    // 常驻采样：内核只在开机把本进程迁进 cgroup 一次，不再每 ~10min 由 timer 反复拉起 oneshot——
+    // 反复 service-start 的 cgroup 迁移（systemd 把子进程 PID 写进 service cgroup.procs）曾撞上内核
+    // RCU stall（synchronize_rcu 卡住、向另一 CPU 发 NMI），把握着 cgroup_threadgroup_rwsem 的启动
+    // 进程连同 systemd(PID1) 一起拖死 → 整机冻死（2026-08-29 真机事故，见 FINDINGS）。改常驻后 cgroup
+    // 迁移一次性，暴露窗口从 144次/天降到开机 1 次。
+    // 间隔用 thread::sleep（CLOCK_MONOTONIC）：设备休眠时不推进 → 天然“醒时每 N 分钟”，与旧 timer 的
+    // awake-only 语义一致；休眠中进程随之冻结、不持 wakelock、不阻止休眠。
+    let interval = std::env::var("BATTOP_INTERVAL_SECS")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+        .filter(|n| *n > 0)
+        .unwrap_or(600);
+    loop {
+        sample_once(&dir);
+        std::thread::sleep(Duration::from_secs(interval));
+    }
+}
+
+/// 一轮采样（原 main 主体）：读电量+进程 → 算增量 → 追加样本 → 写 baseline/summary → 清理旧样本。
+fn sample_once(dir: &Path) {
+    let dir = dir.to_path_buf(); // 影子绑定：下方 `&dir` / `dir.join` 沿用原逻辑、无需逐处改
     let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_secs();
     let (cap, status, charge, current) = read_battery();
     let disc = if status == "Discharging" { 1 } else { 0 };
@@ -433,19 +458,44 @@ fn friendly(unit: &str) -> String {
 }
 
 // v2:读 journal 内核唤醒源事件(自 since 起)。格式:"<epoch>.<us> host kernel: PM: active wakeup source: <NAME>"
+/// 有界执行子进程：读满 stdout 或超 `secs` 秒即 SIGKILL，返回 stdout 字节；spawn 失败/超时返回 None。
+/// 纯 std：读线程排空管道（防子进程写满 pipe 阻塞成 D 态），主线程 recv_timeout 计时。常驻模型下
+/// 一个卡住的 journalctl 会拖死整个采样循环，故所有外部子进程必须有界。
+fn run_bounded(mut cmd: Command, secs: u64) -> Option<Vec<u8>> {
+    let mut child = cmd.stdout(Stdio::piped()).stderr(Stdio::null()).spawn().ok()?;
+    let mut stdout = child.stdout.take()?;
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        let _ = std::io::Read::read_to_end(&mut stdout, &mut buf);
+        let _ = tx.send(buf); // rx 可能已 drop（超时路径）→ 忽略
+    });
+    match rx.recv_timeout(Duration::from_secs(secs)) {
+        Ok(buf) => {
+            let _ = child.wait();
+            Some(buf)
+        }
+        Err(_) => {
+            let _ = child.kill(); // 超时 → 杀子进程，绝不让循环无限阻塞
+            let _ = child.wait();
+            None
+        }
+    }
+}
+
 fn read_wake_events(since: u64) -> Vec<(u64, String)> {
     let mut out = Vec::new();
     // _TRANSPORT=kernel 跨 boot 取内核消息(不用 -k,那只当前 boot);--since 界定,输出有界(~1MB/31天)
-    let o = match std::process::Command::new("journalctl")
-        .args(["-o", "short-unix", "--no-pager", "--since"])
+    let mut cmd = Command::new("journalctl");
+    cmd.args(["-o", "short-unix", "--no-pager", "--since"])
         .arg(format!("@{since}"))
-        .arg("_TRANSPORT=kernel")
-        .output()
-    {
-        Ok(o) => o,
-        Err(_) => return out,
+        .arg("_TRANSPORT=kernel");
+    // 有界执行：journald 卡住最多等 20s 就 kill，本轮跳过刷缓存（用旧 wakes.tsv），绝不卡死循环。
+    let stdout = match run_bounded(cmd, 20) {
+        Some(b) => b,
+        None => return out,
     };
-    let text = String::from_utf8_lossy(&o.stdout);
+    let text = String::from_utf8_lossy(&stdout);
     for line in text.lines() {
         let idx = match line.find("active wakeup source: ") {
             Some(i) => i,
