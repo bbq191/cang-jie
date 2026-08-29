@@ -38,7 +38,7 @@ uv run python export.py --name 笔记本 --no-vision
 
 | provider | 默认模型 | key 环境变量 | 备注 |
 | --- | --- | --- | --- |
-| `gemini`（默认） | gemini-2.5-flash | `GEMINI_API_KEY` / `GOOGLE_API_KEY` | 手写最强，有免费额度 |
+| `gemini`（默认） | gemini-3.6-flash | `GEMINI_API_KEY` / `GOOGLE_API_KEY` | 手写最强，有免费额度；活体实测工整100%/快写91% |
 | `deepseek` | deepseek-v4-flash-vision-exp | `DEEPSEEK_API_KEY` | 极便宜；实验；每图≤384token（密页可能掉质） |
 | `openai` | gpt-4o | `OPENAI_API_KEY` | 同级备选 |
 | `anthropic` | claude-sonnet-4-5 | `ANTHROPIC_API_KEY` | de-risk 亲测 100%/65% |

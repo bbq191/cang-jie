@@ -184,6 +184,8 @@ PPI（Move 为固定硬件参数）、Gallery 3 白态偏灰、色彩对比度�
 
 **P1 立项判据：AMBER-GREEN**。方向价值与技术可行性都成立，但体验上限由书写工整度决定、且需 review 环节兜底。是否铺全管线 MVP 待拍板；铺则按"收割缩略图/忠实渲染 → 多模态 vision → Markdown → review → PKM 入库"。
 
+**MVP 活体验证（2026-08-29）**：已按上述架构落 `pkm-semantic/handwriting/`（`export.py` 管线 + `vision.py` 四后端可插拔，默认 Gemini）。真机端到端跑通（设备拉取→缩割缩略图→Gemini 识别→待校对 vault）。**同一张 384px 缩略图上，Gemini 3.6 Flash 显著跑赢上表 de-risk 保守值**：工整清单 100%、快写行 **91%**（23 字仅错 2：漏一叠字"写"、"已"误作"冷"）——上表 65%/57% 是 de-risk 阶段的读数，生产后端换 Gemini 3.6 Flash 后快写实测反而到九成。这把"快写~60%"的下限往上抬了一档，但"需人工校对"的定位不变（91% 仍非满分，且样本小）。教训：各家模型名漂移快（`gemini-2.5-flash` 已对新用户下线，须用 `gemini-3.6-flash`），`vision.py` 默认值要跟着更。
+
 ### 📌 竞品借鉴（rmkit-cn）·`.rm` 文件不实时刷新——本项目读 `.rm` 反解同样会踩
 
 > 来源：`boangs/rmkit`（GPL-3.0）`upload-server-go/internal/server/ai_page.go` 头部注释。**源码研读结论。**

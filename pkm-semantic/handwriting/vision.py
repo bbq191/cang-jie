@@ -36,7 +36,7 @@ PROVIDERS: dict[str, dict] = {
     "gemini": {
         "style": "openai",
         "base_url": "https://generativelanguage.googleapis.com/v1beta/openai",
-        "default_model": "gemini-2.5-flash",
+        "default_model": "gemini-3.6-flash",
         "key_envs": ["GEMINI_API_KEY", "GOOGLE_API_KEY"],
     },
     "deepseek": {
