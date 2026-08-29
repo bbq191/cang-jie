@@ -31,6 +31,7 @@ remarkable_lines = { path = "../reading/device-rs/vendor/remarkable_lines" }
 serde_json = "1"
 md5 = "0.7"
 ureq = "2"
+base64 = "0.22"  # 端化 cardhw：卡片缩略图 base64 进 vision 请求
 uuid = { version = "1", features = ["v4"] }
 zip = { version = "2", default-features = false, features = ["deflate"] }
 # 本地词典 mmap 只读（生词本查词）：牛津/现汉派生的排序 TSV 行首二分，RAM 与词典大小无关。
