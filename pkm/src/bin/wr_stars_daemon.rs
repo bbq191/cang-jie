@@ -78,12 +78,18 @@ fn cardhw_key() -> Option<String> {
     std::fs::read_to_string(CARDHW_KEY_PATH).ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
 }
 
-/// 该文档是否是「总结卡片」（cardhw 只处理这类结构化卡片，普通手写笔记本不碰）。
-fn is_summary_card(dir: &str, uuid: &str) -> bool {
+/// 该文档是否是**在库的**「总结卡片」（cardhw 只处理这类，普通手写笔记本不碰）。
+/// **必须排除 trash**：处理后 queue_trash 旧手写卡 → trash-agent 改其 metadata=trash 又是个写事件，
+/// 若不排除，step④ 会拿"已消化但尚未删的旧卡 .rm（笔划仍在）"重复转写 → 模型输出微变 → sync 总认为
+/// 有改动 → 无限 /upload 自循环（2026-08-29 真机踩过）。故 parent=trash 一律跳过。
+fn is_active_summary_card(dir: &str, uuid: &str) -> bool {
     std::fs::read_to_string(format!("{dir}/{uuid}.metadata"))
         .ok()
         .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
-        .and_then(|v| v["visibleName"].as_str().map(|s| s.contains("总结卡片")))
+        .map(|v| {
+            v["visibleName"].as_str().map(|s| s.contains("总结卡片")).unwrap_or(false)
+                && v["parent"].as_str() != Some("trash")
+        })
         .unwrap_or(false)
 }
 
@@ -315,19 +321,46 @@ fn settle(cfg: &Cfg, observe: bool, dirty: Option<&HashSet<String>>) {
             match cardhw_key() {
                 None => println!("[cardhw] 已开但缺 key（{CARDHW_KEY_PATH}），跳过——设置面板填 key 后生效"),
                 Some(key) => {
-                    for u in set.iter().filter(|u| is_summary_card(&dir, u)) {
+                    let mut done = load_cardhw_done(); // 已处理过的手写页 .rm md5（幂等+防自循环）
+                    for u in set.iter().filter(|u| is_active_summary_card(&dir, u)) {
+                        // 先拿手写页 .rm 的 md5：这份手写已处理过 → 跳（旧卡消化后 /upload 新卡，旧卡被 trash
+                        // 前仍 active，aggregate 自触发会反复回到这里；靠内容哈希幂等根治自循环，不依赖 trash 时序）。
+                        let page = match cardhw::find_handwritten_page(&dir, u) {
+                            Some(p) => p,
+                            None => continue,
+                        };
+                        let rm = std::fs::read(format!("{dir}/{u}/{}.rm", page.1)).unwrap_or_default();
+                        let hash = format!("{:x}", md5::compute(&rm));
+                        if done.contains(&hash) {
+                            continue;
+                        }
                         match cardhw::process_card_doc(&dir, u, &cfg.cardhw_provider, cfg.cardhw_model.as_deref(), &key, &card_folder, true) {
-                            Ok(None) => {} // 该卡无手写页
                             Ok(Some(o)) if o.action.is_some() => {
-                                println!("[cardhw] 《{}》注入 {} 条并 /upload（手写消化）", o.visible_name, o.applied.len())
+                                done.insert(hash.clone());
+                                append_cardhw_done(&hash);
+                                println!("[cardhw] 《{}》注入 {} 条并 /upload（手写消化）", o.visible_name, o.applied.len());
                             }
-                            Ok(Some(_)) => {} // 有手写但全泄漏/未匹配，无注入
+                            Ok(_) => {} // 无手写/全泄漏/未匹配：不记 done（下次内容变了仍可处理）
                             Err(e) => eprintln!("[cardhw] 卡片 {} 处理失败（不阻塞）：{e}", &u[..8.min(u.len())]),
                         }
                     }
                 }
             }
         }
+    }
+}
+
+/// 已处理手写页 .rm 的 md5 集（幂等/防自循环）。文件小、每轮读一次即可。
+const CARDHW_DONE_PATH: &str = "/home/root/weread/cardhw-done.txt";
+fn load_cardhw_done() -> HashSet<String> {
+    std::fs::read_to_string(CARDHW_DONE_PATH)
+        .map(|t| t.lines().map(|l| l.trim().to_string()).filter(|l| !l.is_empty()).collect())
+        .unwrap_or_default()
+}
+fn append_cardhw_done(hash: &str) {
+    use std::io::Write;
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(CARDHW_DONE_PATH) {
+        let _ = writeln!(f, "{hash}");
     }
 }
 
