@@ -90,6 +90,7 @@ dependencies = [
 name = "device-core"
 version = "0.1.0"
 dependencies = [
+ "base64",
  "inotify",
  "regex",
  "remarkable_lines",

@@ -23,6 +23,7 @@ use std::time::Duration;
 use pkm_device::notebook_sync::{
     collect_notebook_texts, find_docs_by_visible, is_user_notebook, queue_trash, sync_auto_notebook,
 };
+use pkm_device::cardhw_status::{accumulate_usage, write_status};
 use pkm_device::stardetect::{scan_document_dir, scan_library, DocStars, StarConfig};
 use pkm_device::{cardagg, cardhw, cardindex, cardreview, cardstats, cardvocab, starscan, vocabscan};
 use device_core::fswatch;
@@ -78,6 +79,18 @@ fn cardhw_key() -> Option<String> {
     std::fs::read_to_string(CARDHW_KEY_PATH).ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
 }
 
+/// Phase C 旁路输出（与 reading-qol.json 同目录）：usage 累计 + 通知桥状态。设置面板/注入 QML 读。
+const CARDHW_USAGE_PATH: &str = "/home/root/.local/share/cangjie-ime/cardhw-usage.json";
+const CARDHW_STATUS_PATH: &str = "/home/root/.local/share/cangjie-ime/cardhw-status.json";
+
+/// 从卡片 visibleName「《书名》- 总结卡片」抠出书名（取《》间）；抠不出原样返回。通知/状态用短标题。
+fn book_title(vn: &str) -> String {
+    match (vn.find('《'), vn.find('》')) {
+        (Some(l), Some(r)) if r > l => vn[l + '《'.len_utf8()..r].to_string(),
+        _ => vn.to_string(),
+    }
+}
+
 /// 该文档是否是**在库的**「总结卡片」（cardhw 只处理这类，普通手写笔记本不碰）。
 /// **必须排除 trash**：处理后 queue_trash 旧手写卡 → trash-agent 改其 metadata=trash 又是个写事件，
 /// 若不排除，step④ 会拿"已消化但尚未删的旧卡 .rm（笔划仍在）"重复转写 → 模型输出微变 → sync 总认为
@@ -107,7 +120,7 @@ fn read_cfg() -> Cfg {
         color: v.get("starTodoColor").and_then(|x| x.as_str()).unwrap_or("RED").to_uppercase(),
         gap: v.get("starTodoGap").and_then(|x| x.as_f64()).unwrap_or(25.0),
         cardhw_enabled: b("cardhwEnabled", false),
-        cardhw_provider: v.get("cardhwProvider").and_then(|x| x.as_str()).unwrap_or("gemini").to_string(),
+        cardhw_provider: v.get("cardhwProvider").and_then(|x| x.as_str()).unwrap_or("deepseek").to_string(),
         cardhw_model: v.get("cardhwModel").and_then(|x| x.as_str()).filter(|s| !s.is_empty()).map(|s| s.to_string()),
     }
 }
@@ -334,14 +347,28 @@ fn settle(cfg: &Cfg, observe: bool, dirty: Option<&HashSet<String>>) {
                         if done.contains(&hash) {
                             continue;
                         }
+                        // 通知桥：开工先写「处理中」；注入 QML 观察器轮询 cardhw-status.json → showNotification。
+                        let title = book_title(&cardhw::read_visible_name(&dir, u));
+                        write_status(Path::new(CARDHW_STATUS_PATH), "processing", &title, 0, "");
                         match cardhw::process_card_doc(&dir, u, &cfg.cardhw_provider, cfg.cardhw_model.as_deref(), &key, &card_folder, true) {
-                            Ok(Some(o)) if o.action.is_some() => {
-                                done.insert(hash.clone());
-                                append_cardhw_done(&hash);
-                                println!("[cardhw] 《{}》注入 {} 条并 /upload（手写消化）", o.visible_name, o.applied.len());
+                            Ok(Some(o)) => {
+                                // usage 统计（全零内部跳过：无手写页/没真调云不虚增）。设置面板展示。
+                                accumulate_usage(Path::new(CARDHW_USAGE_PATH), &cfg.cardhw_provider, o.usage);
+                                if o.action.is_some() {
+                                    done.insert(hash.clone());
+                                    append_cardhw_done(&hash);
+                                    write_status(Path::new(CARDHW_STATUS_PATH), "done", &title, o.applied.len(), "");
+                                    println!("[cardhw] 《{}》注入 {} 条并 /upload（手写消化）", o.visible_name, o.applied.len());
+                                } else {
+                                    // 调云了但无净变化（识别为空/全泄漏/未匹配）：不记 done（下次内容变了仍可处理）。
+                                    write_status(Path::new(CARDHW_STATUS_PATH), "done", &title, 0, "未提取到新手写");
+                                }
                             }
-                            Ok(_) => {} // 无手写/全泄漏/未匹配：不记 done（下次内容变了仍可处理）
-                            Err(e) => eprintln!("[cardhw] 卡片 {} 处理失败（不阻塞）：{e}", &u[..8.min(u.len())]),
+                            Ok(None) => {} // 无手写页（find 竞态，罕见）：不通知不记
+                            Err(e) => {
+                                write_status(Path::new(CARDHW_STATUS_PATH), "failed", &title, 0, "识别或上传失败");
+                                eprintln!("[cardhw] 卡片 {} 处理失败（不阻塞）：{e}", &u[..8.min(u.len())]);
+                            }
                         }
                     }
                 }

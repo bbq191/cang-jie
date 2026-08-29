@@ -653,7 +653,7 @@ AFFECT /qml/device/view/settings/Settings.qml
                     property bool cfgVocab: false
                     // 端化 cardhw 三键：本页不展示，读进来+写回去防覆盖
                     property bool cfgCardhw: false
-                    property string cfgProvider: "gemini"
+                    property string cfgProvider: "deepseek"
                     property string cfgModel: ""
                     property bool cfgTap: false
                     property bool cfgMono: false
@@ -907,7 +907,7 @@ AFFECT /qml/device/view/settings/Settings.qml
                     property bool cfgVocab: false
                     // 端化 cardhw 三键：本页不展示，读进来+写回去防覆盖
                     property bool cfgCardhw: false
-                    property string cfgProvider: "gemini"
+                    property string cfgProvider: "deepseek"
                     property string cfgModel: ""
                     property var _cjXhr: null
                     readonly property string cjPath: "file:///home/root/.local/share/cangjie-ime/reading-qol.json"
@@ -1089,7 +1089,7 @@ AFFECT /qml/device/view/settings/Settings.qml
                     property bool cfgVocab: false   // 单词笔记（独立·默认关）：灰词查词→生词本
                     // 端化 cardhw 三键：本页不展示，读进来+写回去防覆盖
                     property bool cfgCardhw: false
-                    property string cfgProvider: "gemini"
+                    property string cfgProvider: "deepseek"
                     property string cfgModel: ""
                     // 其余键读进来 + 写回去（全量防覆盖）
                     property bool cfgTap: false
@@ -1342,7 +1342,7 @@ AFFECT /qml/device/view/settings/Settings.qml
                     property bool cfgVocab: false
                     // cardhw 本页三项
                     property bool cfgCardhw: false
-                    property string cfgProvider: "gemini"
+                    property string cfgProvider: "deepseek"
                     property string cfgModel: ""
                     // API key 尾号回显（空=未填）；key 明文不进 json、单独写 cardhw.key
                     property string cfgKeyTail: ""

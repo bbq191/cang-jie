@@ -39,6 +39,32 @@ fn provider_cfg(p: &str) -> Option<ProviderCfg> {
     })
 }
 
+/// 一次调用的 token 消耗（各家 API 回传 `usage`，字段名不同，归一到 input/output）。缺字段=0。
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct Usage {
+    pub input_tokens: u64,
+    pub output_tokens: u64,
+}
+
+impl Usage {
+    /// 从应答 JSON 的 `usage` 对象抽 token 数。openai 系 prompt_tokens/completion_tokens，
+    /// anthropic 系 input_tokens/output_tokens；两套字段名都试，取到哪套用哪套。
+    fn from_resp(resp: &Value) -> Usage {
+        let u = &resp["usage"];
+        let pick = |a: &str, b: &str| u[a].as_u64().or_else(|| u[b].as_u64()).unwrap_or(0);
+        Usage {
+            input_tokens: pick("prompt_tokens", "input_tokens"),
+            output_tokens: pick("completion_tokens", "output_tokens"),
+        }
+    }
+}
+
+/// 一次 vision 调用的应答：模型文本 + token 消耗。
+pub struct VisionResponse {
+    pub text: String,
+    pub usage: Usage,
+}
+
 /// 各后端的 API key 环境变量（供 bin/daemon 取 key）。未知后端返回空切片。
 pub fn key_envs(provider: &str) -> &'static [&'static str] {
     match provider {
@@ -50,14 +76,14 @@ pub fn key_envs(provider: &str) -> &'static [&'static str] {
     }
 }
 
-/// 一张图（PNG）+ 一段 prompt → 模型文本应答。四后端可插拔。缺 key/网络/应答异常返回 Err。
+/// 一张图（PNG）+ 一段 prompt → 模型文本应答 + token 消耗。四后端可插拔。缺 key/网络/应答异常返回 Err。
 pub fn call_vision(
     image_png: &[u8],
     prompt: &str,
     provider: &str,
     model: Option<&str>,
     key: &str,
-) -> Result<String, String> {
+) -> Result<VisionResponse, String> {
     let cfg = provider_cfg(provider).ok_or_else(|| format!("未知后端 {provider}"))?;
     let model = model.unwrap_or(cfg.default_model);
     let b64 = base64::engine::general_purpose::STANDARD.encode(image_png);
@@ -81,10 +107,11 @@ pub fn call_vision(
             .map_err(|e| format!("请求失败：{e}"))?
             .into_string().map_err(|e| format!("读应答失败：{e}"))?;
         let resp: Value = serde_json::from_str(&body).map_err(|e| format!("应答非 JSON：{e}；{body:.200}"))?;
-        resp["content"].as_array().map(|a| a.iter()
+        let text = resp["content"].as_array().map(|a| a.iter()
             .filter_map(|b| if b["type"] == "text" { b["text"].as_str() } else { None })
             .collect::<Vec<_>>().join(""))
-            .ok_or_else(|| format!("应答无法解析：{}", resp))
+            .ok_or_else(|| format!("应答无法解析：{}", resp))?;
+        Ok(VisionResponse { text, usage: Usage::from_resp(&resp) })
     } else {
         let data_uri = format!("data:image/png;base64,{b64}");
         let payload = json!({
@@ -101,8 +128,32 @@ pub fn call_vision(
             .map_err(|e| format!("请求失败：{e}"))?
             .into_string().map_err(|e| format!("读应答失败：{e}"))?;
         let resp: Value = serde_json::from_str(&body).map_err(|e| format!("应答非 JSON：{e}；{body:.200}"))?;
-        resp["choices"][0]["message"]["content"].as_str()
-            .ok_or_else(|| format!("应答无法解析：{}", resp))
-            .map(|s| s.to_string())
+        let text = resp["choices"][0]["message"]["content"].as_str()
+            .ok_or_else(|| format!("应答无法解析：{}", resp))?
+            .to_string();
+        Ok(VisionResponse { text, usage: Usage::from_resp(&resp) })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn usage_openai_field_names() {
+        let resp = json!({"usage": {"prompt_tokens": 384, "completion_tokens": 42, "total_tokens": 426}});
+        assert_eq!(Usage::from_resp(&resp), Usage { input_tokens: 384, output_tokens: 42 });
+    }
+
+    #[test]
+    fn usage_anthropic_field_names() {
+        let resp = json!({"usage": {"input_tokens": 500, "output_tokens": 30}});
+        assert_eq!(Usage::from_resp(&resp), Usage { input_tokens: 500, output_tokens: 30 });
+    }
+
+    #[test]
+    fn usage_missing_is_zero() {
+        assert_eq!(Usage::from_resp(&json!({})), Usage::default());
     }
 }

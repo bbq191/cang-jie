@@ -86,7 +86,8 @@ fi
 echo "-- 拷 candidatebar.qmd（候选栏，必需）-> $QRR/"
 cp "$PAYLOAD/candidatebar.qmd" "$QRR/candidatebar.qmd"
 for q in reading-qol-config.qmd tap-page-turn.qmd fast-mono-reading.qmd page-refresh.qmd \
-         keyboard-mono.qmd add-reading-fonts.qmd settings-keyboard-zh.qmd settings-reading-enhance.qmd; do
+         keyboard-mono.qmd add-reading-fonts.qmd settings-keyboard-zh.qmd settings-reading-enhance.qmd \
+         cardhw-notify.qmd; do
     [ -f "$PAYLOAD/$q" ] && cp "$PAYLOAD/$q" "$QRR/$q"
 done
 # 清掉可能残留的旧字体菜单 qmd（已被 add-reading-fonts.qmd 取代）

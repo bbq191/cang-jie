@@ -9,6 +9,7 @@
 //!
 //! 注入落回卡片必须走 `/upload` 重建（xochitl 直写不可见），编排在 bin/daemon，本模块只出新文本。
 
+use device_core::vision::Usage;
 use serde_json::Value;
 use std::collections::HashSet;
 
@@ -32,15 +33,15 @@ anchor 写它所贴的那条印刷 · 条目的原文（去掉开头的 · 和�
 手写潦草认不准写最可能的字，不留空、不加问号占位；没有手写批注的条目不要列。\
 不要输出 JSON 以外的任何字符（不要 markdown 代码围栏、不要解释）。";
 
-/// 整页卡片缩略图 → 手写批注列表 [{anchor,note}]。通用 HTTP 调用复用 `device_core::vision::call_vision`。
+/// 整页卡片缩略图 → 手写批注列表 [{anchor,note}] + token 消耗。通用 HTTP 调用复用 `device_core::vision::call_vision`。
 pub fn transcribe_card(
     image_png: &[u8],
     provider: &str,
     model: Option<&str>,
     key: &str,
-) -> Result<Vec<Annotation>, String> {
-    let raw = device_core::vision::call_vision(image_png, CARD_PROMPT, provider, model, key)?;
-    parse_annotations(&raw)
+) -> Result<(Vec<Annotation>, Usage), String> {
+    let resp = device_core::vision::call_vision(image_png, CARD_PROMPT, provider, model, key)?;
+    Ok((parse_annotations(&resp.text)?, resp.usage))
 }
 
 /// 从模型应答里抠出 JSON 数组 → [{anchor,note}]，清洗 note 两端标点。
@@ -184,9 +185,10 @@ pub struct ProcessOutcome {
     pub leaked: Vec<Annotation>,   // 打印泄漏丢弃
     pub unmatched: Vec<Annotation>,
     pub action: Option<String>,    // Some("创建"/"更新")=已 /upload；None=dry-run 或无变化
+    pub usage: Usage,              // 本次调云 token 消耗（转写发生才非零；无手写页时零）
 }
 
-fn read_visible_name(dir: &str, uuid: &str) -> String {
+pub fn read_visible_name(dir: &str, uuid: &str) -> String {
     std::fs::read_to_string(format!("{dir}/{uuid}.metadata"))
         .ok()
         .and_then(|t| serde_json::from_str::<Value>(&t).ok())
@@ -226,10 +228,10 @@ pub fn process_card_doc(
     let vn = read_visible_name(dir, doc_uuid);
     let thumb = std::fs::read(format!("{dir}/{doc_uuid}.thumbnails/{page_id}.png"))
         .map_err(|e| format!("读缩略图失败：{e}"))?;
-    let anns = transcribe_card(&thumb, provider, model, key)?;
+    let (anns, usage) = transcribe_card(&thumb, provider, model, key)?;
     if anns.is_empty() {
         return Ok(Some(ProcessOutcome {
-            visible_name: vn, page_id, applied: vec![], leaked: vec![], unmatched: vec![], action: None,
+            visible_name: vn, page_id, applied: vec![], leaked: vec![], unmatched: vec![], action: None, usage,
         }));
     }
     let r = inject_inline(&texts[page_idx], &anns);
@@ -240,7 +242,7 @@ pub fn process_card_doc(
     }
     Ok(Some(ProcessOutcome {
         visible_name: vn, page_id,
-        applied: r.applied, leaked: r.leaked, unmatched: r.unmatched, action,
+        applied: r.applied, leaked: r.leaked, unmatched: r.unmatched, action, usage,
     }))
 }
 

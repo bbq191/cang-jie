@@ -16,7 +16,7 @@
 
 | 成员 | 形态 | 状态 |
 | --- | --- | --- |
-| **cardhw · 卡片手写批注注入** | 卡片某槽旁手写想法 → vision 空间关联 → 内联注入书摘行 | host 版真机通；**端化 A1/A2/B + 端到端真机通（DeepSeek）** |
+| **cardhw · 卡片手写批注注入** | 卡片某槽旁手写想法 → vision 空间关联 → 内联注入书摘行 | host 版真机通；**端化 A1/A2/B/C + 端到端真机通（DeepSeek）** |
 | **export · freeform 手写 → Markdown** | 整页手写 → 待校对 Markdown vault | host 版真机通 |
 | 结构识别（未来） | `.rm` 笔迹结构 → 有序/无序列表、待办清单 | 规划中 |
 
@@ -63,7 +63,7 @@ P1 OCR 之上的第一个「消费端」，也是 **P1（OCR）+ P2（手写-文
 
 ---
 
-## 04｜端化 cardhw（设备自主调云，A1/A2/B + 端到端真机通）
+## 04｜端化 cardhw（设备自主调云，A1/A2/B/C + 端到端真机通）
 
 host 版要「回电脑连云」才能转写；端化版让**设备自己调云 + 走 /upload 注入**，脱离 host。**2026-08-29 端到端真机跑通**：设备写手写批注 → 关笔记 → daemon 触发 → DeepSeek 识别 → 内联注入 → `/upload` 重建 → 手写消化成文字 → 设备重开卡片肉眼可见（详见本节末「端到端真机验证 + 后端定案」）。
 
@@ -72,7 +72,7 @@ host 版要「回电脑连云」才能转写；端化版让**设备自己调云 
 **架构定案（两条铁律驱动）**：
 
 - **可见性必走 /upload**：xochitl 零 inotify、维护全内存文档模型 → **直写 `.rm` 运行时不可见**（连重开都只见旧页）。故端化注入**必走 `/upload` 重建路**（复用 `notebook_sync::sync_auto_notebook`，同 ★卡片），把转写并进卡片重建、手写消化成文字。
-- **设备能自己调云**（两枪 de-risk 通）：① 设备 `ureq+rustls` 发 HTTPS 到云端多模态 API（de-risk 用 Gemini 验证，**生产默认 DeepSeek**，见本节末「后端定案」）——**与 reading weread 同机制、生产已验证**；真机实测设备自主拿到标注（rustls 证书校验穿过 host 代理也通=SNI 透传非 MITM；⚠ 但 fake-ip 代理只管本机不管设备转发流量→超时，端云需真直连，DeepSeek 国内直连无需代理）。② 通知：原生 `showNotification({message},ms)` 可从注入 QML 调（`reader-footnote-return.qmd` 已用），但 **daemon（Rust）够不到它** → 需「daemon 写状态文件 + 注入 QML 观察器轮询」桥接（Phase C）。
+- **设备能自己调云**（两枪 de-risk 通）：① 设备 `ureq+rustls` 发 HTTPS 到云端多模态 API（de-risk 用 Gemini 验证，**生产默认 DeepSeek**，见本节末「后端定案」）——**与 reading weread 同机制、生产已验证**；真机实测设备自主拿到标注（rustls 证书校验穿过 host 代理也通=SNI 透传非 MITM；⚠ 但 fake-ip 代理只管本机不管设备转发流量→超时，端云需真直连，DeepSeek 国内直连无需代理）。② 通知：**daemon（Rust）够不到 QML 通知 API** → 「daemon 写状态文件 + 注入 QML 观察器轮询」桥接（Phase C，已建）。⚠ 通知用的是 **MainView 的全局 `notificationQueue.enqueue`**，非 reader 局部 `showNotification`（后者关笔记后回书库够不着）——详见本节末「端化 C」。
 
 **A1 · 设备调云核心**（真机端到端）：交叉编 `cj-cardhw`（aarch64-musl 静态 1.7MB 含 rustls）→ 部署设备 → 设备自己调 Gemini → 内联注入 → `/upload` 重建。回拉新卡确认：笔划=0、批注内联到正确书摘行、打印泄漏未入、旧重名卡 `parent=trash`（`sync_auto_notebook` 顺带合并重名）。代码 `pkm/src/cardhw.rs`（vision 适配器 ureq + inject 移植，5 单测）+ `pkm/src/bin/cj_cardhw.rs`。
 
@@ -87,12 +87,18 @@ host 版要「回电脑连云」才能转写；端化版让**设备自己调云 
 **端到端真机验证 + 后端定案 + inject 修复**（2026-08-29，DeepSeek 实测）：
 
 - **端到端跑通**：用户在《人骨拼图》- 总结卡片手写「这是一句总结」→ 关笔记 → daemon `fswatch` 触发 step④ → DeepSeek 识别 → `inject_inline` 注入 → `sync_auto_notebook` /upload 重建（生成新卡、旧卡入 trash、手写笔划消化成文字）→ 用户设备上肉眼确认手写变成印刷体拼在书摘行后。daemon 日志 `[cardhw] 注入 1 条并 /upload（手写消化）` 为证。
-- **★后端定案 = DeepSeek（`deepseek-v4-flash-vision-exp`）**：目标用户群在国内、**设备自身无法挂代理、多数用户路由也无代理**；DeepSeek 是国内多模态 API、**直连国内网即可用、无需任何代理**——这是务实的生产默认。**Gemini 判为不适用**（`generativelanguage.googleapis.com` 国内需代理，设备端走不通）——**这反转了早前 §02/§03 里"推荐 Gemini / Gemini 质量更好所以用它"的取舍**：Gemini 质量确实更好且无 384 上限，但**在国内直连场景不可达**，故 Gemini 保留为四后端之一（有代理/海外用户可选），**默认与推荐都是 DeepSeek**。⚠️ 代码当前 `cardhwProvider` 缺省仍是 `gemini`（`device-core::vision` + daemon cfg），面板可手选 DeepSeek；是否把缺省改 DeepSeek 待定。
+- **★后端定案 = DeepSeek（`deepseek-v4-flash-vision-exp`）**：目标用户群在国内、**设备自身无法挂代理、多数用户路由也无代理**；DeepSeek 是国内多模态 API、**直连国内网即可用、无需任何代理**——这是务实的生产默认。**Gemini 判为不适用**（`generativelanguage.googleapis.com` 国内需代理，设备端走不通）——**这反转了早前 §02/§03 里"推荐 Gemini / Gemini 质量更好所以用它"的取舍**：Gemini 质量确实更好且无 384 上限，但**在国内直连场景不可达**，故 Gemini 保留为四后端之一（有代理/海外用户可选），**默认与推荐都是 DeepSeek**。✅ 代码缺省已改 DeepSeek（`cj_stars_daemon`/`cj_cardhw`/面板 4 页，2026-08-30），面板仍可手选四后端。
 - **DeepSeek 质量实况（384-token 图像上限的代价）**：稀疏测试卡潦草手写 1/4；规整真书卡上清楚单句核心读对（「这是一句总结」✅）但**易把附近印刷划线掺进 note**（384 低分辨率分不清印刷/手写）。定位仍是「辅助转写、需校对」。**用笔建议：手写用红/蓝等非黑色**给模型最强区分线索。
 - **网络出口坑**：设备端调云需**真直连**。实测被 host 的 clash-meta **fake-ip**（`Meta` TUN，把 `api.deepseek.com` 解析到 `28.0.x`）挡过——该代理只拦 host 本机 OUTPUT、不管设备 USB 转发/热点流量 → 设备 TLS 连上但读应答超时。**DeepSeek 国内直连无需代理**正好绕开此坑；用带 fake-ip 的网反而不通。。
 - **inject 修复三处**（真机暴露、`cardhw.rs` + 7 单测）：① `inject_inline` 的 `applied` **无条件 push** 致误报"已注入"→ `sync` 判"有变化"却内容相同 → 空转/None → 改为**仅真拼上才记 applied**，`ends_with` 命中（幂等/泄漏回环）归 `leaked`；② 新增 `strip_printed_prefix`——低分辨率下 vision 常把「印刷条目 + 手写」连成一串，剥掉印刷前缀只留手写；③ `CARD_PROMPT` 从「彩色=手写、黑色=印刷」改为**按字形区分**（机器字规整 vs 手写潦草连笔），兼容黑笔手写、强化"绝不把印刷字算进 note、宁漏不误"。
 
-**未建**：**C 通知桥**（关笔记事件后 daemon 写状态文件 + 注入 QML 观察器轮询调 `showNotification` 通知「处理中→完成/失败」）+ 各模型 token 消耗统计（API 回传 `usage` 落本地计数）。
+**端化 C（通知桥 + token 统计）——2026-08-30 真机通**：
+- **通知桥**：daemon 处理卡片时写 `cardhw-status.json`（`cardhw_status::write_status`，`{state,book,count,seq,ts}`，**单调 seq** 让观察器凭 seq 变化认出新事件）→ 注入 QML 观察器（`cardhw-notify.qmd`，5s Timer 轮询）→ 弹原生通知「处理中→完成/失败」。
+  - **⚠ 关键设计修正：注入 MainView 而非 DeviceSceneView，用 `notificationQueue.enqueue` 而非 `showNotification`**。离线反编译坐实（`extract_qml`）：reader 的 `showNotification`（`DeviceSceneView.qml`）是**阅读器局部浮标、只在开着文档时可见**；而 cardhw 在**关笔记**后触发，完成时用户已回书库 → reader 浮标够不着。**MainView**（`device.view.main`，书库+文档视图的常驻宿主）持有全局 `required property NotificationQueue notificationQueue`（`xofm.libs.notificationbar`），`notificationQueue.enqueue({text,icon,timeout,...})` 是**全局命令式通知队列**（原生 31 处在用），书库上下文里就渲染这条——这才是关笔记后能被看见的通知面。锚点 `TRAVERSE ?#root → LOCATE AFTER FocusScope#rootItem`；路径 `/qml/device/view/main/MainView.qml`（qmldir `MainView 1.0 MainView.qml` + 同族路径印证，运行期 `Processing file …MainView.qml` 命中）。
+  - **真机验证**（隔离测法，脱开云/网络）：手写 `cardhw-status.json` 造 seq 递增事件 → 观察器日志 `CJ-HW-ENQUEUE … nq=obj` + `CJ-HW-AFTER cur={《人骨拼图》已消化 3 条手写批注} docLoaded=false`（enqueue 执行、`currentNotification` 正确设值、库视图）→ 连发 10 条用户**肉眼确认书库通知条可见**。踩坑：观察器**首见 seq 作静默基线不补发**，故隔离测须先写一次establish基线、再 bump seq 才弹（真运行天然满足：观察器先于 daemon 写就绪）；通知是 5s toast，单发易错过、连发才稳。
+- **token 统计**：`device-core::vision::call_vision` 归一各家 `usage`（openai 系 prompt/completion_tokens、anthropic 系 input/output_tokens）→ 随 `ProcessOutcome.usage` 上抛 → daemon `cardhw_status::accumulate_usage` 按 provider 累计进 `cardhw-usage.json`（`{provider:{calls,input_tokens,output_tokens}}`，全零跳过不虚增）。`cj-cardhw` CLI 也打单次 token 行。（面板展示 usage 为后续小改，文件已就位。）
+
+**后端缺省已定案 = DeepSeek**（原"待定"已结）：`cj_stars_daemon` 的 `cardhwProvider` 缺省 + `cj_cardhw` `--provider` 缺省 + 设置面板 4 页 `cfgProvider` 默认全部 `gemini`→`deepseek`，与生产定案一致；面板仍可手选四后端。
 
 ---
 
@@ -121,5 +127,5 @@ host 版要「回电脑连云」才能转写；端化版让**设备自己调云 
 ## 07｜未来方向
 
 - **结构识别**：`.rm` 笔迹 → 结构化格式。手写数字/实心圆 = 有序/无序列表、方框 = 待办清单。复用本块的反解 + 几何判据（同 ★待办 stardetect 的形状识别思路）。
-- **端化 B/C**：设置面板（选模型/填 key）+ 通知桥 + token 统计（各家 API 回传 `usage` 字段落本地计数）。
+- **端化 B/C 已建**（B 设置面板 2026-08-29、C 通知桥+token 统计 2026-08-30，均真机通，见 §04）。**待办**：设置面板展示 `cardhw-usage.json`（token 累计已落文件、面板 UI 未接）；按笔划 bbox 裁剪缩略图，在 384-token 上限内换更高有效分辨率（提准度大杠杆）。
 - **online-HWR 拔高快写**：吃 `.rm` 笔顺时序，但无现成中文离线引擎，需上云/自训——高成本、低优先。

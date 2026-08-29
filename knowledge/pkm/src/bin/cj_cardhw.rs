@@ -31,7 +31,7 @@ fn main() {
     let val = |flag: &str| args.iter().position(|a| a == flag).and_then(|i| args.get(i + 1)).cloned();
     let book = val("--book");
     let doc = val("--doc");
-    let provider = val("--provider").unwrap_or_else(|| "gemini".into());
+    let provider = val("--provider").unwrap_or_else(|| "deepseek".into());
     let model = val("--model");
     let apply = args.iter().any(|a| a == "--apply");
     if book.is_none() && doc.is_none() {
@@ -81,6 +81,9 @@ fn main() {
                     Some(act) => println!("✅ 卡片已{act}并 /upload（{} 条注入，手写消化）。重开即见。", o.applied.len()),
                     None if !apply => println!("[dry-run] 未写。加 --apply 走 /upload 重建。"),
                     None => println!("（内容无变化或上传失败）"),
+                }
+                if o.usage.input_tokens > 0 || o.usage.output_tokens > 0 {
+                    println!("   token：输入 {} · 输出 {}", o.usage.input_tokens, o.usage.output_tokens);
                 }
                 return;
             }
