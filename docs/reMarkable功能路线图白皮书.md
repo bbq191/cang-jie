@@ -75,7 +75,7 @@
 | 1 | **逆向基座** | `ghidra-project/` · `rmfw/` | 全线共享地基（第 11 节架构原则） | 持续维护 |
 | 2 | **中文化**（显示 + 输入法） | `chinese-ime/` | 两本姊妹白皮书；本文 P3 字体 | 收尾维护 |
 | 3 | **阅读**（微信读书 + EPUB 优化） | `reading/` 主体 | **P0 墨香** + EPUB 优化器（见[阅读白皮书](../reading/docs/reMarkable阅读白皮书.md)） | 端到端真机验证 |
-| 4 | **系统增强**（阅读/显示/笔记 UX） | `xovi-extensions/` + `chinese-ime/langhook`（笔记增强） | **P4**（见[系统增强白皮书](../xovi-extensions/docs/reMarkable系统增强白皮书.md)：点击翻页/快刷/清残影/字体/键盘Mono + 荧光笔吸附） | 真机验证 |
+| 4 | **系统增强**（阅读/显示/笔记 UX + 辅助小工具） | `xovi-extensions/` + `chinese-ime/langhook`（笔记增强） + `misc/`（辅助工具） | **P4**（见[系统增强白皮书](../xovi-extensions/docs/reMarkable系统增强白皮书.md)：点击翻页/快刷/清残影/字体/键盘Mono + 荧光笔吸附；**§10 电池审计 battop · §11 休眠壁纸** 等辅助小工具非 P 项、归此块） | 真机验证 |
 | 5 | **PKM / 知识管理** | `knowledge/pkm-semantic/`（原型）+ `knowledge/pkm/`（Rust 生产 crate，依赖共享底座 `device-core/`） | **★全局待办**（见 [PKM 白皮书](../knowledge/pkm/docs/reMarkablePKM白皮书.md)）；P1/P2 数据流转是其上游 | 首个能力真机端到端 |
 
 > ⚠️ **跨块共享 + 依赖结构**（详见《[设备端 Rust 架构](reMarkable设备端Rust架构.md)》）：① 块 4 的荧光笔吸附逻辑在 `langhook`（块 2 的 .so）、开关 UI 在 `reading-qol`（块 4），一颗 .so 服务两块，不拆二进制；块 4 的划词查字典代码骑 `knowledge/pkm/` daemon（跨块，见系统增强白皮书 §08）。② 低层设备能力（`epubindex`/`fswatch`/`inject`/`notebook_rm`）抽成**共享底座 `device-core/`**，块3阅读（`weread-device`）与块5 PKM（`pkm-device`）都依赖它；`knowledge/pkm/` **生产只依赖 `device-core`**（weread-device 降 dev-dep）→ 生产 daemon 不再编译整条 weread 管线。`reading/` 不反向依赖 `knowledge/pkm/`，方向单向无环。
