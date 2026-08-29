@@ -184,6 +184,19 @@ PPI（Move 为固定硬件参数）、Gallery 3 白态偏灰、色彩对比度�
 
 **P1 立项判据：AMBER-GREEN**。方向价值与技术可行性都成立，但体验上限由书写工整度决定、且需 review 环节兜底。是否铺全管线 MVP 待拍板；铺则按"收割缩略图/忠实渲染 → 多模态 vision → Markdown → review → PKM 入库"。
 
+**MVP 活体验证（2026-08-29）**：已按上述架构落 `pkm-semantic/handwriting/`（`export.py` 管线 + `vision.py` 四后端可插拔，默认 Gemini）。真机端到端跑通（设备拉取→缩割缩略图→Gemini 识别→待校对 vault）。**同一张 384px 缩略图上，Gemini 3.6 Flash 显著跑赢上表 de-risk 保守值**：工整清单 100%、快写行 **91%**（23 字仅错 2：漏一叠字"写"、"已"误作"冷"）——上表 65%/57% 是 de-risk 阶段的读数，生产后端换 Gemini 3.6 Flash 后快写实测反而到九成。这把"快写~60%"的下限往上抬了一档，但"需人工校对"的定位不变（91% 仍非满分，且样本小）。教训：各家模型名漂移快（`gemini-2.5-flash` 已对新用户下线，须用 `gemini-3.6-flash`），`vision.py` 默认值要跟着更。
+
+### 📌 卡片手写批注注入（cardhw，2026-08-29 真机写回验证）
+
+P1 OCR 之上落的第一个"消费端"，也是 **P1（OCR）+ P2（手写-文字关联）合体**的具体落地：给 PKM「总结卡片」加手写批注。用户在某条书摘 `·` 条目旁手写想法 → 整页喂 vision 做**空间关联**（判断手写贴着哪条黑色打印条目，输出 `{anchor:黑字条目原文, note:手写转写}`）→ 把手写转写**内联拼接**到该条目行尾 → **模式A** 重建为纯文本页（手写被消化成文字）。
+
+- **机制关键**：手写笔划在 rmscene 层**不暴露 anchor**（§07 探针说的 anchor_id 抠不出来），故走 **vision 空间关联**而非抠坐标——比啃 P2 anchor 逆向更稳、且零逆向。关联准度：盲测 4/4、活体 Gemini 3/3。
+- **三条实战打磨**（真机反馈驱动）：① 只转写**彩色手写**、不读黑色打印字；② **内联拼接**在书摘行尾（不另起行）——"写在哪就贴哪"；③ **打印文字泄漏结构性过滤**：工具手握整页 RootText 全部打印 bullet 原文，任何 vision `note` 若与某打印 bullet 高度雷同（ratio>0.85）即判泄漏丢弃（真机撞过：Gemini 把打印书摘"只想睡觉"当手写挂到"她"上，被过滤拦下）——比调提示词可靠。
+- **保留契约 + daemon 配套改**：转写行搭 `cardsync::parse_card` 保留通道（★块下非★行逐字保留）。但内联拼接改了书摘行文本，`merge_highlights` 去重须改 **`t+空格` 前缀匹配**（"只想睡觉 但醒了"仍认作书摘"只想睡觉"不重复插；"她"不误配"她站在…"），否则重建重复。**改了 daemon 核心 → 需重新部署（`pkm/deploy.sh`）重建保留才生效**；+2 单测，pkm 全绿。
+- **真机 E2E**：dry-run 报「内联拼接方案 + 泄漏丢弃」→ `--apply`（先备份原 `.rm`）→ 回拉设备读 RootText 确认：**笔划=0**（手写消化）、批注内联到正确条目、泄漏未入、无重复。
+- **定位仍是辅助转写+人工校对**：空间关联稳、泄漏可拦，但逐字转写有错（messy 快写~60%）；dry-run 先报、apply 后可打字改。
+- **代码**：`pkm-semantic/handwriting/{vision.py（卡片模式 transcribe_card）, cardhw.py}` + `pkm/src/cardsync.rs`（merge 去重）。注入用 `rmscene.simple_text_document`（notebook_rm 的对拍参照源）。
+
 ### 📌 竞品借鉴（rmkit-cn）·`.rm` 文件不实时刷新——本项目读 `.rm` 反解同样会踩
 
 > 来源：`boangs/rmkit`（GPL-3.0）`upload-server-go/internal/server/ai_page.go` 头部注释。**源码研读结论。**
