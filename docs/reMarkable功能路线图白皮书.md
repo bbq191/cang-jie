@@ -205,7 +205,8 @@ host 版要"回电脑连云"才能转写；端化版让**设备自己调云 + �
 - **设备调云可行（两枪 de-risk 通）**：① 设备 `ureq+rustls` 发 HTTPS 到 Gemini——**与 reading weread 同机制、生产已验证**；真机实测设备自主拿到标注（rustls 证书校验穿过 host 代理也通=SNI 透传非 MITM；真脱机用设备自己 wifi 直连更无碍）。② 通知：原生 `showNotification({message},ms)` 可从注入 QML 调（`reader-footnote-return.qmd` 已用），但 **daemon（Rust）够不到它** → 需"daemon 写状态文件 + 注入 QML 观察器轮询"桥接。
 - **A1 真机 E2E**：交叉编 `wr-cardhw`（aarch64-musl 静态 1.7MB 含 rustls）→ 部署设备 → 设备自己调 Gemini → 内联注入 → `/upload` 重建。回拉新卡确认：**笔划=0**、批注内联到正确书摘行、打印泄漏未入、旧重名卡 `parent=trash`（`sync_auto_notebook` 顺带合并重名）。
 - **代码**：`pkm/src/cardhw.rs`（vision 适配器 ureq + inject 移植，5 单测）+ `pkm/src/bin/wr_cardhw.rs`（A1 手动编排）。
-- **未建**：A2 接 `fswatch` CLOSE_WRITE 事件触发（关笔记自动跑）；B 设置面板（开关/选模型/填 key）；C 通知桥 + token 统计。设备侧 wifi 需有网（正常场景）。
+- **A2 事件触发真机通（2026-08-29）**：daemon `settle` 加步骤④——`fswatch CLOSE_WRITE`（退出笔记落盘）事件里，对**在库「总结卡片」**（`is_active_summary_card`，排除 trash）跑 `process_card_doc`。**仅事件驱动**（冷启动不跑，免开机批量调云）；失败只记不崩、不阻塞画星；observe 跳过。**踩坑+根治自循环**：处理后 `queue_trash` 旧手写卡是异步，trash-agent 改其 metadata=trash 又是写事件 → step④ 拿"已消化但未删的旧卡 .rm（笔划仍在）"重转写 → 模型输出微变 → `sync_auto_notebook` 总认为有改动 → 无限 /upload。**双重根治**：① 排除 `parent=trash` 的卡；② **内容哈希幂等**（`cardhw-done.txt` 记已处理手写页 .rm 的 md5，不依赖 trash 时序，exactly-once）。真机复测：关笔记 → `[cardhw]` 注入恰好 1 次、90s 无重复、daemon 回零唤醒。
+- **未建**：B 设置面板（开关/选模型/填 key）；C 通知桥（daemon 写状态 + 注入 QML 观察器调 showNotification）+ token 统计。设备侧 wifi 需有网（正常场景）。key 现读 `cardhw.key` 文件（Phase B 由面板写）。
 
 ### 📌 竞品借鉴（rmkit-cn）·`.rm` 文件不实时刷新——本项目读 `.rm` 反解同样会踩
 
