@@ -1438,7 +1438,7 @@ AFFECT /qml/device/view/settings/Settings.qml
                                 modT: "模型（可选）",
                                 modD: "留空用该后端默认模型（Qwen=qwen3-vl-plus）。要指定其它型号填这里，失焦即存。",
                                 keyT: "API Key",
-                                keyD: "明文存于设备 cardhw.key（仅本机、不进仓库）。粘贴后失焦即保存，输入框随即清空、只留尾号回显。",
+                                keyD: "粘贴后点击别处即存进设备 cardhw.key（仅本机、不进仓库），输入框随即清空、只留尾号回显。切后端或改模型都不会清空已存的 key——只需填一次；换到需要不同 key 的后端时重新粘贴覆盖即可。",
                                 keySaved: "已保存 · 尾号",
                                 keyNone: "未填写（daemon 会跳过识别）"
                             },
@@ -1451,7 +1451,7 @@ AFFECT /qml/device/view/settings/Settings.qml
                                 modT: "模型（可選）",
                                 modD: "留空用該後端預設模型（Qwen=qwen3-vl-plus）。要指定其它型號填這裡，失焦即存。",
                                 keyT: "API Key",
-                                keyD: "明文存於裝置 cardhw.key（僅本機、不進倉庫）。貼上後失焦即儲存，輸入框隨即清空、只留尾號回顯。",
+                                keyD: "貼上後點擊別處即存進裝置 cardhw.key（僅本機、不進倉庫），輸入框隨即清空、只留尾號回顯。切後端或改模型都不會清空已存的 key——只需填一次；換到需要不同 key 的後端時重新貼上覆蓋即可。",
                                 keySaved: "已儲存 · 尾號",
                                 keyNone: "未填寫（daemon 會跳過識別）"
                             },
@@ -1464,7 +1464,7 @@ AFFECT /qml/device/view/settings/Settings.qml
                                 modT: "Model (optional)",
                                 modD: "Leave empty for the backend default (Qwen = qwen3-vl-plus). Enter another model id here; saved on focus loss.",
                                 keyT: "API Key",
-                                keyD: "Stored in plain text in cardhw.key on the device (local only, never committed). Saved on focus loss; the box then clears, keeping only the last-4 hint.",
+                                keyD: "Tap elsewhere after pasting to save it to cardhw.key on the device (local only, never committed); the box clears, keeping only the last-4 hint. Switching backend or model never clears the saved key — enter it just once; to use a backend that needs a different key, paste over it.",
                                 keySaved: "Saved · ends in",
                                 keyNone: "Not set (daemon skips OCR)"
                             }
