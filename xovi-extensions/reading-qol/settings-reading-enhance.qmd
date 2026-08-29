@@ -46,7 +46,7 @@ AFFECT /qml/device/view/settings/Settings.qml
                 property string cjLabel: cjEnhanceSidebarItem.cjMenuLabel()
                 text: root.showLabels ? cjEnhanceSidebarItem.cjLabel : ""
                 iconSource: "qrc:/ark/icons/notebook_sparkles"
-                highlighted: root._selectedPage >= 990001 && root._selectedPage <= 990006
+                highlighted: root._selectedPage >= 990001 && root._selectedPage <= 990007
                 focusPolicy: Qt.StrongFocus
                 Layout.fillWidth: true
                 onTriggered: {
@@ -79,6 +79,9 @@ AFFECT /qml/device/view/settings/Settings.qml
                 }
                 if (root._selectedPage === 990006) {
                     return cjBatteryPage;
+                }
+                if (root._selectedPage === 990007) {
+                    return cjCardhwPage;
                 }
             }
         END REBUILD
@@ -117,6 +120,7 @@ AFFECT /qml/device/view/settings/Settings.qml
                                 snipD: "缩写自动展开为常用短语（文本替换），支持增删改",
                                 noteT: "笔记增强",
                                 noteD: "★ 全局待办 · 划线摘录 · 跨书汇总 · 生词本 · 荧光笔汉字吸附",
+                                hwT: "手写识别", hwD: "手写批注消化进总结卡片 · 端云识别 · 关笔记触发",
                                 batT: "电池审计", batD: "谁在耗电 · 当日/7天/30天 · 应用或进程"
                             },
                             tw: {
@@ -129,6 +133,7 @@ AFFECT /qml/device/view/settings/Settings.qml
                                 snipD: "縮寫自動展開為常用短語（文字替換），支援增刪改",
                                 noteT: "筆記增強",
                                 noteD: "★ 全局待辦 · 劃線摘錄 · 跨書彙總 · 生詞本 · 螢光筆漢字吸附",
+                                hwT: "手寫識別", hwD: "手寫批註消化進總結卡片 · 端雲識別 · 關筆記觸發",
                                 batT: "電池審計", batD: "誰在耗電 · 當日/7天/30天 · 應用或程序"
                             },
                             en: {
@@ -141,6 +146,7 @@ AFFECT /qml/device/view/settings/Settings.qml
                                 snipD: "Expand abbreviations into phrases; add, edit and delete them",
                                 noteT: "Note Enhancements",
                                 noteD: "Global ★ to-do · Highlight excerpts · Cross-book digests · Vocabulary · CJK snap",
+                                hwT: "Handwriting", hwD: "Digest handwritten notes into summary cards; on-device to cloud OCR",
                                 batT: "Battery Audit", batD: "Who drains it · today/7d/30d · by app or process"
                             }
                         };
@@ -180,6 +186,10 @@ AFFECT /qml/device/view/settings/Settings.qml
                         ArkControls.CellItem {
                             text: cjHubRoot.i18n.noteT
                             onClicked: root._selectedPage = 990005
+                        }
+                        ArkControls.CellItem {
+                            text: cjHubRoot.i18n.hwT
+                            onClicked: root._selectedPage = 990007
                         }
                         ArkControls.CellItem {
                             text: cjHubRoot.i18n.batT
@@ -641,6 +651,10 @@ AFFECT /qml/device/view/settings/Settings.qml
                     property bool cfgCardHl: true
                     property bool cfgCardAgg: true
                     property bool cfgVocab: false
+                    // 端化 cardhw 三键：本页不展示，读进来+写回去防覆盖
+                    property bool cfgCardhw: false
+                    property string cfgProvider: "gemini"
+                    property string cfgModel: ""
                     property bool cfgTap: false
                     property bool cfgMono: false
                     property bool cfgRefresh: false
@@ -674,6 +688,9 @@ AFFECT /qml/device/view/settings/Settings.qml
                                 cjFlipRoot.cfgCardHl = (c.cardHighlights === true);
                                 cjFlipRoot.cfgCardAgg = (c.cardAggregates !== false);
                                 cjFlipRoot.cfgVocab = !!c.vocabEnabled;
+                                cjFlipRoot.cfgCardhw = !!c.cardhwEnabled;
+                                if (c.cardhwProvider) cjFlipRoot.cfgProvider = c.cardhwProvider;
+                                if (c.cardhwModel) cjFlipRoot.cfgModel = c.cardhwModel;
                             }
                         } catch (e) {
                             console.warn("CJ-ENH: load " + e);
@@ -696,7 +713,10 @@ AFFECT /qml/device/view/settings/Settings.qml
                                 hlSnapCjk: cjFlipRoot.cfgHlSnap,
                                 cardHighlights: cjFlipRoot.cfgCardHl,
                                 cardAggregates: cjFlipRoot.cfgCardAgg,
-                                vocabEnabled: cjFlipRoot.cfgVocab
+                                vocabEnabled: cjFlipRoot.cfgVocab,
+                                cardhwEnabled: cjFlipRoot.cfgCardhw,
+                                cardhwProvider: cjFlipRoot.cfgProvider,
+                                cardhwModel: cjFlipRoot.cfgModel
                             };
                             var body = JSON.stringify(c);
                             // 异步 PUT:Qt 同步 PUT 到 file:// 只截断不写体;保留 xhr 引用防 GC
@@ -885,6 +905,10 @@ AFFECT /qml/device/view/settings/Settings.qml
                     property bool cfgCardHl: true
                     property bool cfgCardAgg: true
                     property bool cfgVocab: false
+                    // 端化 cardhw 三键：本页不展示，读进来+写回去防覆盖
+                    property bool cfgCardhw: false
+                    property string cfgProvider: "gemini"
+                    property string cfgModel: ""
                     property var _cjXhr: null
                     readonly property string cjPath: "file:///home/root/.local/share/cangjie-ime/reading-qol.json"
 
@@ -911,6 +935,9 @@ AFFECT /qml/device/view/settings/Settings.qml
                                 cjBookRoot.cfgCardHl = (c.cardHighlights === true);
                                 cjBookRoot.cfgCardAgg = (c.cardAggregates !== false);
                                 cjBookRoot.cfgVocab = !!c.vocabEnabled;
+                                cjBookRoot.cfgCardhw = !!c.cardhwEnabled;
+                                if (c.cardhwProvider) cjBookRoot.cfgProvider = c.cardhwProvider;
+                                if (c.cardhwModel) cjBookRoot.cfgModel = c.cardhwModel;
                             }
                         } catch (e) {
                             console.warn("CJ-ENH: load " + e);
@@ -933,7 +960,10 @@ AFFECT /qml/device/view/settings/Settings.qml
                                 hlSnapCjk: cjBookRoot.cfgHlSnap,
                                 cardHighlights: cjBookRoot.cfgCardHl,
                                 cardAggregates: cjBookRoot.cfgCardAgg,
-                                vocabEnabled: cjBookRoot.cfgVocab
+                                vocabEnabled: cjBookRoot.cfgVocab,
+                                cardhwEnabled: cjBookRoot.cfgCardhw,
+                                cardhwProvider: cjBookRoot.cfgProvider,
+                                cardhwModel: cjBookRoot.cfgModel
                             };
                             var body = JSON.stringify(c);
                             // 异步 PUT:Qt 同步 PUT 到 file:// 只截断不写体;保留 xhr 引用防 GC
@@ -1057,6 +1087,10 @@ AFFECT /qml/device/view/settings/Settings.qml
                     property bool cfgCardHl: true   // 划线摘录（子·默认开）：高亮原文是否入卡片
                     property bool cfgCardAgg: true  // 跨书汇总（子·默认开）：是否建 4 本汇总本
                     property bool cfgVocab: false   // 单词笔记（独立·默认关）：灰词查词→生词本
+                    // 端化 cardhw 三键：本页不展示，读进来+写回去防覆盖
+                    property bool cfgCardhw: false
+                    property string cfgProvider: "gemini"
+                    property string cfgModel: ""
                     // 其余键读进来 + 写回去（全量防覆盖）
                     property bool cfgTap: false
                     property bool cfgMono: false
@@ -1082,6 +1116,9 @@ AFFECT /qml/device/view/settings/Settings.qml
                                 cjNoteRoot.cfgCardHl = (c.cardHighlights === true);
                                 cjNoteRoot.cfgCardAgg = (c.cardAggregates !== false);
                                 cjNoteRoot.cfgVocab = !!c.vocabEnabled;
+                                cjNoteRoot.cfgCardhw = !!c.cardhwEnabled;
+                                if (c.cardhwProvider) cjNoteRoot.cfgProvider = c.cardhwProvider;
+                                if (c.cardhwModel) cjNoteRoot.cfgModel = c.cardhwModel;
                                 cjNoteRoot.cfgTap = !!c.tapPageTurn;
                                 cjNoteRoot.cfgMono = !!c.fastMono;
                                 cjNoteRoot.cfgRefresh = !!c.refresh;
@@ -1111,7 +1148,10 @@ AFFECT /qml/device/view/settings/Settings.qml
                                 hlSnapCjk: cjNoteRoot.cfgHlSnap,
                                 cardHighlights: cjNoteRoot.cfgCardHl,
                                 cardAggregates: cjNoteRoot.cfgCardAgg,
-                                vocabEnabled: cjNoteRoot.cfgVocab
+                                vocabEnabled: cjNoteRoot.cfgVocab,
+                                cardhwEnabled: cjNoteRoot.cfgCardhw,
+                                cardhwProvider: cjNoteRoot.cfgProvider,
+                                cardhwModel: cjNoteRoot.cfgModel
                             };
                             var body = JSON.stringify(c);
                             var xhr = new XMLHttpRequest();
@@ -1271,6 +1311,319 @@ AFFECT /qml/device/view/settings/Settings.qml
             }
         }
     END TRAVERSE
+
+    ; ── ⑥ 手写识别页（哨兵 990007，块⑥）：端云手写批注消化到《总结卡片》。开关 + 选后端 + 填 key。
+    ;   写 reading-qol.json 的 cardhwEnabled/cardhwProvider/cardhwModel（全量回写、防三页互覆盖）；
+    ;   API key 单独明文写 cardhw.key（不进 json，只本页读写）。daemon 读这三键 + key 决定是否识别。
+    TRAVERSE ?#root
+        LOCATE AFTER Component#help
+        INSERT {
+            Component {
+                id: cjCardhwPage
+                Item {
+                    id: cjHwRoot
+                    objectName: "cjCardhwPage"
+                    property bool fullscreen: true
+
+                    // 全量 reading-qol 字段（本页只展示 cardhw 三项，其余读进来+写回去防覆盖）
+                    property bool cfgTap: false
+                    property bool cfgMono: false
+                    property bool cfgRefresh: false
+                    property bool cfgByChapter: false
+                    property int  cfgEvery: 15
+                    property bool cfgFont: false
+                    property bool cfgAutoOpt: false
+                    property bool cfgStarTodo: false
+                    property string cfgStarColor: "RED"
+                    property int  cfgStarGap: 25
+                    property bool cfgHlSnap: true
+                    property bool cfgCardHl: true
+                    property bool cfgCardAgg: true
+                    property bool cfgVocab: false
+                    // cardhw 本页三项
+                    property bool cfgCardhw: false
+                    property string cfgProvider: "gemini"
+                    property string cfgModel: ""
+                    // API key 尾号回显（空=未填）；key 明文不进 json、单独写 cardhw.key
+                    property string cfgKeyTail: ""
+                    property var _cjXhr: null
+                    property var _cjKeyXhr: null
+                    readonly property string cjPath: "file:///home/root/.local/share/cangjie-ime/reading-qol.json"
+                    readonly property string cjKeyPath: "file:///home/root/.local/share/cangjie-ime/cardhw.key"
+
+                    function cjLoad() {
+                        try {
+                            var xhr = new XMLHttpRequest();
+                            xhr.open("GET", cjHwRoot.cjPath, false);
+                            xhr.send();
+                            var s = xhr.responseText;
+                            if (s && s.length > 0) {
+                                var c = JSON.parse(s);
+                                cjHwRoot.cfgTap = !!c.tapPageTurn;
+                                cjHwRoot.cfgMono = !!c.fastMono;
+                                cjHwRoot.cfgRefresh = !!c.refresh;
+                                cjHwRoot.cfgByChapter = !!c.refreshByChapter;
+                                var n = parseInt(c.refreshEvery); cjHwRoot.cfgEvery = (n > 0) ? n : 15;
+                                cjHwRoot.cfgFont = !!c.fontEnhance;
+                                cjHwRoot.cfgAutoOpt = !!c.autoOptimize;
+                                cjHwRoot.cfgStarTodo = !!c.starTodoEnabled;
+                                if (c.starTodoColor) cjHwRoot.cfgStarColor = c.starTodoColor;
+                                var sg = parseInt(c.starTodoGap); if (sg > 0) cjHwRoot.cfgStarGap = sg;
+                                cjHwRoot.cfgHlSnap = (c.hlSnapCjk !== false);
+                                cjHwRoot.cfgCardHl = (c.cardHighlights === true);
+                                cjHwRoot.cfgCardAgg = (c.cardAggregates !== false);
+                                cjHwRoot.cfgVocab = !!c.vocabEnabled;
+                                cjHwRoot.cfgCardhw = !!c.cardhwEnabled;
+                                if (c.cardhwProvider) cjHwRoot.cfgProvider = c.cardhwProvider;
+                                if (c.cardhwModel) cjHwRoot.cfgModel = c.cardhwModel;
+                            }
+                        } catch (e) { console.warn("CJ-ENH: load " + e); }
+                        cjHwRoot.cjLoadKey();
+                    }
+                    function cjLoadKey() {
+                        try {
+                            var xhr = new XMLHttpRequest();
+                            xhr.open("GET", cjHwRoot.cjKeyPath, false);
+                            xhr.send();
+                            var k = (xhr.responseText || "").replace(/\s+/g, "");
+                            cjHwRoot.cfgKeyTail = (k.length >= 4) ? k.slice(-4) : k;
+                        } catch (e) { cjHwRoot.cfgKeyTail = ""; }
+                    }
+                    function cjSave() {
+                        try {
+                            var c = {
+                                tapPageTurn: cjHwRoot.cfgTap, fastMono: cjHwRoot.cfgMono,
+                                refresh: cjHwRoot.cfgRefresh, refreshByChapter: cjHwRoot.cfgByChapter,
+                                refreshEvery: cjHwRoot.cfgEvery, fontEnhance: cjHwRoot.cfgFont,
+                                autoOptimize: cjHwRoot.cfgAutoOpt, starTodoEnabled: cjHwRoot.cfgStarTodo,
+                                starTodoColor: cjHwRoot.cfgStarColor, starTodoGap: cjHwRoot.cfgStarGap,
+                                hlSnapCjk: cjHwRoot.cfgHlSnap, cardHighlights: cjHwRoot.cfgCardHl,
+                                cardAggregates: cjHwRoot.cfgCardAgg, vocabEnabled: cjHwRoot.cfgVocab,
+                                cardhwEnabled: cjHwRoot.cfgCardhw, cardhwProvider: cjHwRoot.cfgProvider,
+                                cardhwModel: cjHwRoot.cfgModel
+                            };
+                            var xhr = new XMLHttpRequest();
+                            cjHwRoot._cjXhr = xhr;
+                            xhr.open("PUT", cjHwRoot.cjPath);
+                            xhr.send(JSON.stringify(c));
+                        } catch (e) { console.warn("CJ-ENH: save " + e); }
+                    }
+                    function cjSaveKey(k) {
+                        try {
+                            var v = ("" + k).replace(/\s+/g, "");
+                            if (v.length === 0) return;
+                            var xhr = new XMLHttpRequest();
+                            cjHwRoot._cjKeyXhr = xhr;
+                            xhr.open("PUT", cjHwRoot.cjKeyPath);
+                            xhr.send(v);
+                            cjHwRoot.cfgKeyTail = (v.length >= 4) ? v.slice(-4) : v;
+                        } catch (e) { console.warn("CJ-ENH: savekey " + e); }
+                    }
+                    function cjLang() {
+                        var s = "" + qsTranslate("SettingsModel", "Help")
+                              + qsTranslate("SettingsModel", "Cloud")
+                              + qsTranslate("SettingsModel", "Accessibility");
+                        if (s.indexOf("幫") >= 0 || s.indexOf("雲") >= 0 || s.indexOf("礙") >= 0) return "tw";
+                        if (s.indexOf("帮") >= 0 || s.indexOf("云") >= 0 || s.indexOf("碍") >= 0) return "cn";
+                        return "en";
+                    }
+                    function cjTable() {
+                        var D = {
+                            cn: {
+                                page: "手写识别",
+                                enT: "端云手写消化",
+                                enD: "开启后，你在《总结卡片》各行后用笔写的手写批注，会在关闭该笔记本时上传到所选模型识别成文字，直接拼回你写的那一行（不识别已有印刷字、不另起行）。需联网、需下方填 API key；识别完成弹通知。默认关。",
+                                provT: "识别后端",
+                                provD: "选一家多模态模型。默认 Gemini（aistudio.google.com/apikey 免费领 key）；DeepSeek / OpenAI / Claude 各自填对应 key。",
+                                modT: "模型（可选）",
+                                modD: "留空用该后端默认模型（Gemini=gemini-3.6-flash）。要指定其它型号填这里，失焦即存。",
+                                keyT: "API Key",
+                                keyD: "明文存于设备 cardhw.key（仅本机、不进仓库）。粘贴后失焦即保存，输入框随即清空、只留尾号回显。",
+                                keySaved: "已保存 · 尾号",
+                                keyNone: "未填写（daemon 会跳过识别）"
+                            },
+                            tw: {
+                                page: "手寫識別",
+                                enT: "端雲手寫消化",
+                                enD: "開啟後，你在《總結卡片》各行後用筆寫的手寫批註，會在關閉該筆記本時上傳到所選模型識別成文字，直接拼回你寫的那一行（不識別既有印刷字、不另起行）。需聯網、需下方填 API key；識別完成彈通知。預設關。",
+                                provT: "識別後端",
+                                provD: "選一家多模態模型。預設 Gemini（aistudio.google.com/apikey 免費領 key）；DeepSeek / OpenAI / Claude 各自填對應 key。",
+                                modT: "模型（可選）",
+                                modD: "留空用該後端預設模型（Gemini=gemini-3.6-flash）。要指定其它型號填這裡，失焦即存。",
+                                keyT: "API Key",
+                                keyD: "明文存於裝置 cardhw.key（僅本機、不進倉庫）。貼上後失焦即儲存，輸入框隨即清空、只留尾號回顯。",
+                                keySaved: "已儲存 · 尾號",
+                                keyNone: "未填寫（daemon 會跳過識別）"
+                            },
+                            en: {
+                                page: "Handwriting OCR",
+                                enT: "On-device to cloud OCR",
+                                enD: "When on, handwritten notes you pen after each line of a Summary Card are uploaded to the chosen model when you close that notebook, recognised as text and appended in place on the line you wrote (existing print is not re-read, no new line). Needs network and an API key below; a notification fires when done. Off by default.",
+                                provT: "OCR backend",
+                                provD: "Pick a multimodal model. Default Gemini (get a free key at aistudio.google.com/apikey); DeepSeek / OpenAI / Claude each need their own key.",
+                                modT: "Model (optional)",
+                                modD: "Leave empty for the backend default (Gemini = gemini-3.6-flash). Enter another model id here; saved on focus loss.",
+                                keyT: "API Key",
+                                keyD: "Stored in plain text in cardhw.key on the device (local only, never committed). Saved on focus loss; the box then clears, keeping only the last-4 hint.",
+                                keySaved: "Saved · ends in",
+                                keyNone: "Not set (daemon skips OCR)"
+                            }
+                        };
+                        return D[cjHwRoot.cjLang()] || D.en;
+                    }
+                    property var i18n: cjHwRoot.cjTable()
+                    Component.onCompleted: cjHwRoot.cjLoad()
+
+                    Rectangle { anchors.fill: parent; color: "#ffffff" }
+
+                    ArkControls.NavigationBar {
+                        id: cjHwNav
+                        type: ArkTokens.NavigationBar.secondary
+                        width: parent.width
+                        ArkControls.NavigationBar.Button {
+                            text: cjHwRoot.cjLang() === "en" ? "Back" : "返回"
+                            textPosition: ArkControls.Button.TextPosition.Right
+                            iconSource: "qrc:/ark/icons/chevron_left"
+                            onClicked: root._selectedPage = 990001
+                        }
+                    }
+                    ArkControls.Title {
+                        id: cjHwTitle
+                        text: cjHwRoot.i18n.page
+                        type: ArkControls.Title.Large
+                        color: "#000000"
+                        anchors { top: cjHwNav.bottom; left: parent.left; right: parent.right; topMargin: ArkControls.Values.platform.spacing.large; leftMargin: ArkControls.Values.settings.horizontalMargin.secondLevel; rightMargin: ArkControls.Values.settings.horizontalMargin.secondLevel }
+                    }
+                    Flickable {
+                        id: cjHwFlick
+                        anchors { top: cjHwTitle.bottom; left: parent.left; right: parent.right; bottom: parent.bottom; topMargin: ArkControls.Values.platform.spacing.x2large; leftMargin: ArkControls.Values.settings.horizontalMargin.secondLevel; rightMargin: ArkControls.Values.settings.horizontalMargin.secondLevel; bottomMargin: 24 }
+                        contentHeight: cjHwCol.height + 40
+                        clip: true
+                        Column {
+                            id: cjHwCol
+                            spacing: 40
+                            width: cjHwFlick.width
+
+                            // 主开关
+                            ArkControls.Panel {
+                                width: cjHwCol.width
+                                iconSource: "qrc:/ark/icons/text_edit"
+                                label: cjHwRoot.i18n.enT
+                                description: cjHwRoot.i18n.enD
+                                action: ArkControls.Toggle {
+                                    checked: cjHwRoot.cfgCardhw
+                                    onClicked: { cjHwRoot.cfgCardhw = !cjHwRoot.cfgCardhw; cjHwRoot.cjSave(); }
+                                }
+                            }
+
+                            // 识别后端（4 段互斥）
+                            Column {
+                                width: cjHwCol.width
+                                spacing: 12
+                                opacity: cjHwRoot.cfgCardhw ? 1.0 : 0.35
+                                Text {
+                                    text: cjHwRoot.i18n.provT
+                                    renderType: Text.NativeRendering; antialiasing: false; font.family: "reMarkable Sans"; font.pixelSize: 28; color: "#000000"
+                                }
+                                Row {
+                                    id: cjHwProvRow
+                                    width: parent.width
+                                    spacing: 10
+                                    property real segW: (width - spacing * 3) / 4
+                                    Repeater {
+                                        model: [ { k: "gemini", t: "Gemini" }, { k: "deepseek", t: "DeepSeek" }, { k: "openai", t: "OpenAI" }, { k: "anthropic", t: "Claude" } ]
+                                        delegate: Rectangle {
+                                            width: cjHwProvRow.segW; height: 68; radius: 8
+                                            property bool on: cjHwRoot.cfgProvider === modelData.k
+                                            color: on ? "#000000" : "#ffffff"
+                                            border.color: "#000000"; border.width: 2
+                                            Text { anchors.centerIn: parent; renderType: Text.NativeRendering; antialiasing: false; font.family: "reMarkable Sans"; font.pixelSize: 26; color: parent.on ? "#ffffff" : "#000000"; text: modelData.t }
+                                            MouseArea { anchors.fill: parent; onClicked: { if (!cjHwRoot.cfgCardhw) return; cjHwRoot.cfgProvider = modelData.k; cjHwRoot.cjSave(); } }
+                                        }
+                                    }
+                                }
+                                Text {
+                                    width: parent.width
+                                    text: cjHwRoot.i18n.provD
+                                    wrapMode: Text.WordWrap
+                                    renderType: Text.NativeRendering; antialiasing: false; font.family: "reMarkable Sans"; font.pixelSize: 22; color: "#808080"
+                                }
+                            }
+
+                            // 模型（可选）
+                            Column {
+                                width: cjHwCol.width
+                                spacing: 12
+                                opacity: cjHwRoot.cfgCardhw ? 1.0 : 0.35
+                                Text {
+                                    text: cjHwRoot.i18n.modT
+                                    renderType: Text.NativeRendering; antialiasing: false; font.family: "reMarkable Sans"; font.pixelSize: 28; color: "#000000"
+                                }
+                                Rectangle {
+                                    width: parent.width; height: 72; color: "transparent"; border.width: 2; border.color: "#000000"
+                                    TextInput {
+                                        id: cjHwModelInput
+                                        anchors { fill: parent; leftMargin: 16; rightMargin: 16 }
+                                        verticalAlignment: TextInput.AlignVCenter
+                                        renderType: Text.NativeRendering
+                                        font.family: "reMarkable Sans"; font.pixelSize: 30; color: "#000000"
+                                        enabled: cjHwRoot.cfgCardhw
+                                        clip: true
+                                        text: cjHwRoot.cfgModel
+                                        inputMethodHints: Qt.ImhNoAutoUppercase | Qt.ImhNoPredictiveText
+                                        onEditingFinished: { cjHwRoot.cfgModel = text.replace(/\s+/g, ""); cjHwRoot.cjSave(); }
+                                    }
+                                }
+                                Text {
+                                    width: parent.width
+                                    text: cjHwRoot.i18n.modD
+                                    wrapMode: Text.WordWrap
+                                    renderType: Text.NativeRendering; antialiasing: false; font.family: "reMarkable Sans"; font.pixelSize: 22; color: "#808080"
+                                }
+                            }
+
+                            // API Key
+                            Column {
+                                width: cjHwCol.width
+                                spacing: 12
+                                opacity: cjHwRoot.cfgCardhw ? 1.0 : 0.35
+                                Text {
+                                    text: cjHwRoot.i18n.keyT
+                                    renderType: Text.NativeRendering; antialiasing: false; font.family: "reMarkable Sans"; font.pixelSize: 28; color: "#000000"
+                                }
+                                Text {
+                                    text: cjHwRoot.cfgKeyTail.length > 0 ? (cjHwRoot.i18n.keySaved + " " + cjHwRoot.cfgKeyTail) : cjHwRoot.i18n.keyNone
+                                    renderType: Text.NativeRendering; antialiasing: false; font.family: "reMarkable Sans"; font.pixelSize: 24; color: "#000000"
+                                }
+                                Rectangle {
+                                    width: parent.width; height: 72; color: "transparent"; border.width: 2; border.color: "#000000"
+                                    TextInput {
+                                        id: cjHwKeyInput
+                                        anchors { fill: parent; leftMargin: 16; rightMargin: 16 }
+                                        verticalAlignment: TextInput.AlignVCenter
+                                        renderType: Text.NativeRendering
+                                        font.family: "reMarkable Sans"; font.pixelSize: 30; color: "#000000"
+                                        enabled: cjHwRoot.cfgCardhw
+                                        clip: true
+                                        echoMode: TextInput.PasswordEchoOnEdit
+                                        inputMethodHints: Qt.ImhNoAutoUppercase | Qt.ImhNoPredictiveText | Qt.ImhSensitiveData
+                                        onEditingFinished: { if (text.length > 0) { cjHwRoot.cjSaveKey(text); text = ""; } }
+                                    }
+                                }
+                                Text {
+                                    width: parent.width
+                                    text: cjHwRoot.i18n.keyD
+                                    wrapMode: Text.WordWrap
+                                    renderType: Text.NativeRendering; antialiasing: false; font.family: "reMarkable Sans"; font.pixelSize: 22; color: "#808080"
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    END TRAVERSE
+
 
     ; ── ⑤ 电池审计页（哨兵 990006）：读 battop summary.json，4 窗口 + 应用/进程切换 ──
     ;   参考墨香：衬线品牌标题 + 自绘等宽 tab 胶囊 + 去框化条形排行。只读，采集器每 ~10 分钟更新。
