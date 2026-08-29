@@ -197,6 +197,16 @@ P1 OCR 之上落的第一个"消费端"，也是 **P1（OCR）+ P2（手写-文�
 - **定位仍是辅助转写+人工校对**：空间关联稳、泄漏可拦，但逐字转写有错（messy 快写~60%）；dry-run 先报、apply 后可打字改。
 - **代码**：`pkm-semantic/handwriting/{vision.py（卡片模式 transcribe_card）, cardhw.py}` + `pkm/src/cardsync.rs`（merge 去重）。注入用 `rmscene.simple_text_document`（notebook_rm 的对拍参照源）。
 
+### 📌 端化 cardhw（块⑥手写识别，2026-08-29 A1 真机端到端）
+
+host 版要"回电脑连云"才能转写；端化版让**设备自己调云 + 走 /upload 注入**，脱离 host。**A1 核心真机验证通过**（设备自主完成，host 零参与转写）：
+
+- **架构定案**：xochitl 零 inotify、全内存模型 → **直写 .rm 运行时不可见**（白皮书 §88 铁律），故端化**必走 `/upload` 重建路**（复用 `notebook_sync::sync_auto_notebook`，同 ★卡片）。转写并进卡片重建、手写消化成文字。
+- **设备调云可行（两枪 de-risk 通）**：① 设备 `ureq+rustls` 发 HTTPS 到 Gemini——**与 reading weread 同机制、生产已验证**；真机实测设备自主拿到标注（rustls 证书校验穿过 host 代理也通=SNI 透传非 MITM；真脱机用设备自己 wifi 直连更无碍）。② 通知：原生 `showNotification({message},ms)` 可从注入 QML 调（`reader-footnote-return.qmd` 已用），但 **daemon（Rust）够不到它** → 需"daemon 写状态文件 + 注入 QML 观察器轮询"桥接。
+- **A1 真机 E2E**：交叉编 `wr-cardhw`（aarch64-musl 静态 1.7MB 含 rustls）→ 部署设备 → 设备自己调 Gemini → 内联注入 → `/upload` 重建。回拉新卡确认：**笔划=0**、批注内联到正确书摘行、打印泄漏未入、旧重名卡 `parent=trash`（`sync_auto_notebook` 顺带合并重名）。
+- **代码**：`pkm/src/cardhw.rs`（vision 适配器 ureq + inject 移植，5 单测）+ `pkm/src/bin/wr_cardhw.rs`（A1 手动编排）。
+- **未建**：A2 接 `fswatch` CLOSE_WRITE 事件触发（关笔记自动跑）；B 设置面板（开关/选模型/填 key）；C 通知桥 + token 统计。设备侧 wifi 需有网（正常场景）。
+
 ### 📌 竞品借鉴（rmkit-cn）·`.rm` 文件不实时刷新——本项目读 `.rm` 反解同样会踩
 
 > 来源：`boangs/rmkit`（GPL-3.0）`upload-server-go/internal/server/ai_page.go` 头部注释。**源码研读结论。**
