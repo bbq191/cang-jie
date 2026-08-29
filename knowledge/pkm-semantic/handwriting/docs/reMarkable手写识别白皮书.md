@@ -16,7 +16,7 @@
 
 | 成员 | 形态 | 状态 |
 | --- | --- | --- |
-| **cardhw · 卡片手写批注注入** | 卡片某槽旁手写想法 → vision 空间关联 → 内联注入书摘行 | host 版真机通；**端化 A1/A2 真机通** |
+| **cardhw · 卡片手写批注注入** | 卡片某槽旁手写想法 → vision 空间关联 → 内联注入书摘行 | host 版真机通；**端化 A1/A2/B 真机通** |
 | **export · freeform 手写 → Markdown** | 整页手写 → 待校对 Markdown vault | host 版真机通 |
 | 结构识别（未来） | `.rm` 笔迹结构 → 有序/无序列表、待办清单 | 规划中 |
 
@@ -82,7 +82,9 @@ host 版要「回电脑连云」才能转写；端化版让**设备自己调云 
 
 **配置**：daemon 读 `reading-qol.json` 的 `cardhwEnabled`/`cardhwProvider`/`cardhwModel`；API key 读 `cardhw.key` 文件（明文，Phase B 由设置面板写）。设备侧 wifi 需有网（正常场景）。
 
-**未建**：**B 设置面板**（系统增强页开关 + 选模型 + 填 key）；**C 通知桥**（daemon 写状态 + 注入 QML 观察器调 `showNotification`）+ token 统计。
+**B · 设置面板**（真机通，2026-08-29）：系统增强设置页新增「手写识别」二级页（qmldiff 哨兵 990007，块⑥），三控件——主开关（写 `cardhwEnabled`）、识别后端 4 段互斥（Gemini/DeepSeek/OpenAI/Claude→`cardhwProvider`）、模型可选框（`cardhwModel`）+ API Key 框（失焦即存、框清空只留尾号回显、echoMode 密文，单独明文写 `cardhw.key` 不进 json）。三语 cn/tw/en，复用本文件既有惯用法（Toggle Panel/分段 Repeater/边框 TextInput），无新选择器。**三页互覆盖防护**：翻页/书籍/笔记三个写 `reading-qol.json` 的二级页 load+save 同步带上 cardhw 三键，全量回写不抹。**离线验证**：用设备同款 `asivery/qmldiff` 对全份 .qmd 实跑 apply-diffs（1 diff·exit 0·emit 干净·注释合法无裸分号污染·990007 三处到位）。**真机 E2E**：改前备份（QRR 外，防 .qmd 双载）→ scp → md5 本地=设备 → restart → 健康检查绿（is-active=active、MainPID 变、NRestarts=0、qrr in maps=5、qmldiff 加载无 parse 错）→ 屏上操作：开关/选 DeepSeek/填 key 三项落地核对通过（`reading-qol.json` 三键正确 + 其余 14 键未被覆盖 + `cardhw.key` 写入）。qmd 落 /home 分区 OTA 不丢、重启能拉起。
+
+**未建**：**C 通知桥**（关笔记事件后 daemon 写状态文件 + 注入 QML 观察器轮询调 `showNotification` 通知「处理中→完成/失败」）+ 各模型 token 消耗统计（API 回传 `usage` 落本地计数）。
 
 ---
 
