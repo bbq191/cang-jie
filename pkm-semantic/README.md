@@ -25,6 +25,8 @@
 | `star_detect.py`      | ★ 检测器：`StarConfig` + `is_star()`。判据=颜色门控 + 紧致 + 尺寸 + **自相交≥5**                                       |
 | `synth.py`            | 合成笔划：正例（一笔画/圆钝五角星）+ 负例（对勾/括号/圆/方框/下划线/字母/V/涂鸦）                                      |
 | `rm_strokes.py`       | 只读 `.rm` → `Stroke(points,color,tool)`。含 `_enum_name`（PenColor 是 IntEnum，Py3.11+ str() 返数字，必须走 `.name`） |
+| `hw_render.py`        | B1 手写 de-risk：`.rm` 笔划 → 干净栅格 PNG（复用 `rm_strokes`）。均匀细线，识别率低于原生缩略图，仅兜底用（见路线图白皮书 §06） |
+| `hw_cer.py`           | B1 手写 de-risk：逐字 CER 打分器（编辑距离/GT 长度，只比汉字核心）。对拍盲测转写 vs 手写原文 ground truth                  |
 | `star_scan.py`        | 扫描 xochitl 镜像 → `Global_Todo.md`(+JSON)。颜色门控 + **多笔星空间合并**（`--todo-color RED`）                       |
 | `test_star_detect.py` | 差分测试（18 条）：正例≥90%、负例≤5%、自相交不变量、颜色门控、真机 fixture 回归、IntEnum 回归                          |
 | `testdata/`           | **真机 fixture**：《缺失功能》（含红色手绘星 + 红干扰 + 黑色笔记），从设备拉回                                         |
