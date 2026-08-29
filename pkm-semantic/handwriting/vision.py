@@ -31,6 +31,19 @@ DEFAULT_PROMPT = (
     "不要任何解释、不要描述图片、不要评论清晰度。"
 )
 
+# 卡片模式提示词：整页卡片（黑打印槽行 + 红手写批注）→ 结构化 {槽→转写} JSON。
+# de-risk 验证：vision 能准确把红手写空间关联到对应黑行（4/4）。
+CARD_PROMPT = (
+    "这是一张 reMarkable「总结卡片」的整页渲染。**黑色打印**是卡片固定结构（若干带图标的槽，"
+    "如 🟡金句、🔵洞见、🩷疑问、🟠主题、🟢可复用、⚪人物）；**红色（或其它彩色）手写**是用户"
+    "在某些槽旁边加的批注。\n"
+    "任务：找出所有有手写批注的槽，把每段手写转写出来，按它空间上贴着哪个槽归类。\n"
+    "只输出一个 JSON 数组，每元素 {\"slot\":\"槽的关键词\",\"note\":\"手写转写\"}；"
+    "slot 用槽名关键词之一（金句/洞见/疑问/主题/可复用/人物），note 是手写逐字转写"
+    "（潦草认不准写最可能的字，不留空、不加问号占位）。没有手写的槽不要列。"
+    "不要输出 JSON 以外的任何字符（不要 markdown 代码围栏、不要解释）。"
+)
+
 # style=openai 走 chat/completions+image_url；style=anthropic 走原生 messages。
 PROVIDERS: dict[str, dict] = {
     "gemini": {
@@ -153,6 +166,27 @@ def transcribe(image_path: str, provider: str = "gemini", model: str | None = No
     if cfg["style"] == "anthropic":
         return _call_anthropic(cfg, model, key, image_path, prompt)
     return _call_openai_style(cfg, model, key, image_path, prompt)
+
+
+def transcribe_card(image_path: str, provider: str = "gemini", model: str | None = None) -> list[dict]:
+    """整页卡片 → [{slot, note}]（红手写批注按空间归到对应槽）。解析失败返回 []。"""
+    raw = transcribe(image_path, provider, model, prompt=CARD_PROMPT)
+    s = raw.strip()
+    if s.startswith("```"):  # 容忍模型套了代码围栏
+        s = s.strip("`")
+        s = s[s.find("\n") + 1:] if "\n" in s else s
+        s = s.rstrip("`").strip()
+        if s.startswith("json"):
+            s = s[4:].strip()
+    lb, rb = s.find("["), s.rfind("]")
+    if lb < 0 or rb < 0:
+        raise VisionError(f"卡片模式应答非 JSON 数组：{raw[:300]}")
+    try:
+        arr = json.loads(s[lb:rb + 1])
+    except json.JSONDecodeError as e:
+        raise VisionError(f"卡片模式 JSON 解析失败：{e}；原文 {raw[:300]}") from e
+    return [{"slot": str(d.get("slot", "")).strip(), "note": str(d.get("note", "")).strip()}
+            for d in arr if isinstance(d, dict) and d.get("note")]
 
 
 if __name__ == "__main__":  # 单图冒烟：python vision.py <img> [provider] [model]
