@@ -12,3 +12,4 @@ pub mod epubindex;
 pub mod fswatch;
 pub mod inject;
 pub mod notebook_rm;
+pub mod vision;
