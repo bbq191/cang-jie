@@ -424,7 +424,7 @@ fn friendly(unit: &str) -> String {
         "rm-sync" | "update-engine" | "swupdate" => "reMarkable 同步/更新",
         "NetworkManager" | "wpa_supplicant" | "systemd-networkd" | "systemd-resolved" => "网络栈",
         "marker-manager" | "tee-supplicant" => "硬件",
-        "wr-serve" | "wr-stars" | "wr-renew" | "battop" | "cangjie-wallpaper" => "cang-jie",
+        "wr-serve" | "cj-stars" | "wr-renew" | "battop" | "cangjie-wallpaper" => "cang-jie",
         "kernel" => "内核",
         _ if unit.ends_with("-metrics") => "reMarkable 度量",
         _ => unit,

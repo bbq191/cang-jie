@@ -40,7 +40,7 @@ jobs:
       # 等），全新 checkout 没有 → 只能在本地 `uv run pytest chinese-ime/pinyin-engine/tests` +
       # `make -C chinese-ime/pinyin-engine/c test diff-check`（有本地词典）跑，见 README。
       - name: pytest（阅读 + PKM 语义原型，自足 fixtures）
-        run: uv run pytest reading/tests pkm-semantic/proto -q
+        run: uv run pytest reading/tests knowledge/pkm-semantic/proto -q
 
   # ── 三个设备端 Rust crate 的 host 测试（device-core / weread-device / pkm-device）──
   rust:
@@ -53,7 +53,7 @@ jobs:
         run: |
           cargo test --manifest-path device-core/Cargo.toml
           cargo test --manifest-path reading/device-rs/Cargo.toml
-          cargo test --manifest-path pkm/Cargo.toml
+          cargo test --manifest-path knowledge/pkm/Cargo.toml
 
   # ── aarch64 全静态交叉编译冒烟（打包器分发的设备二进制，别让 musl/链接悄悄坏掉）──
   cross-build:
@@ -71,4 +71,4 @@ jobs:
       - name: reading + pkm 交叉编译（复用仓库 build.sh，与打包器同路径）
         run: |
           sh reading/device-rs/build.sh
-          sh pkm/build.sh
+          sh knowledge/pkm/build.sh

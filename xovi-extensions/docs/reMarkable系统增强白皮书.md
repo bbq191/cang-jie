@@ -5,7 +5,7 @@
 > 本白皮书是块4「系统增强」的设计单一事实来源。跨块优先级见《[功能路线图白皮书](../../docs/reMarkable功能路线图白皮书.md)》§09；
 > 代码在 `xovi-extensions/reading-qol/`（+ `font-menu/`）；设置页面板 qmd 是 `settings-reading-enhance.qmd`。
 >
-> ⚠️ **跨块**：① 「笔记增强 → 荧光笔汉字吸附」逻辑是 `chinese-ime/langhook` 里的 C hook（块2 的 .so），完整设计见《[阅读白皮书](../../reading/docs/reMarkable阅读白皮书.md)》§03 组件3d；② 「笔记增强 → ★全局待办」开关只是门户，能力本体见《[PKM 白皮书](../../pkm/docs/reMarkablePKM白皮书.md)》；③ 「导入书籍自动优化」开关消费方是 wr-serve（Rust），见《[阅读白皮书](../../reading/docs/reMarkable阅读白皮书.md)》§07-D；④ **「设备端查词 · 生词本」代码骑在 pkm daemon 上（复用荧光笔读回+笔记本注入管线，不单拆二进制），但概念属块4系统增强，完整设计在本白皮书 §08**（区别于②③——查字词的**本体文档就在这里**，不是只放开关）。本白皮书对①②③只讲开关的**门户/面板机制**，对④讲**完整能力本体**。
+> ⚠️ **跨块**：① 「笔记增强 → 荧光笔汉字吸附」逻辑是 `chinese-ime/langhook` 里的 C hook（块2 的 .so），完整设计见《[阅读白皮书](../../reading/docs/reMarkable阅读白皮书.md)》§03 组件3d；② 「笔记增强 → ★全局待办」开关只是门户，能力本体见《[PKM 白皮书](../../knowledge/pkm/docs/reMarkablePKM白皮书.md)》；③ 「导入书籍自动优化」开关消费方是 wr-serve（Rust），见《[阅读白皮书](../../reading/docs/reMarkable阅读白皮书.md)》§07-D；④ **「设备端查词 · 生词本」代码骑在 pkm daemon 上（复用荧光笔读回+笔记本注入管线，不单拆二进制），但概念属块4系统增强，完整设计在本白皮书 §08**（区别于②③——查字词的**本体文档就在这里**，不是只放开关）。本白皮书对①②③只讲开关的**门户/面板机制**，对④讲**完整能力本体**。
 
 ## 00｜定位
 
@@ -74,7 +74,7 @@
 ## 04｜笔记增强（跨块，只在此设开关）
 
 - **荧光笔汉字精确吸附**（开关键 `hlSnapCjk`，**默认开**）：中文"对齐到文本"划一小段却吸整行/吸不上的根治（clean-room 复现镇纸）。逻辑是 `langhook` 的 C hook（hook 扩张层 `FUN_00f05ad0`，CJK 首字跳过词扩张、保命中精确边界），设置页「笔记增强」页此处只给开关，写 `reading-qol.json` 供 C hook 读（缺省即视为开，故其余子页保存时也要全量写回、勿抹）。**完整反编译/修复记录见《[阅读白皮书](../../reading/docs/reMarkable阅读白皮书.md)》§03 组件3d。**
-- **★全局待办**：红笔画星 → 后台 daemon 自动汇总总结卡片。开关在「系统增强 → 笔记增强」，**能力本体见《[PKM 白皮书](../../pkm/docs/reMarkablePKM白皮书.md)》**。
+- **★全局待办**：红笔画星 → 后台 daemon 自动汇总总结卡片。开关在「系统增强 → 笔记增强」，**能力本体见《[PKM 白皮书](../../knowledge/pkm/docs/reMarkablePKM白皮书.md)》**。
 
 ## 05｜离线 qmldiff 验证管线（方法论资产，务必复用）
 
@@ -110,10 +110,10 @@ host 无法运行 xochitl，但能用官方 qmldiff 工具**离线实跑补丁**
 
 ## 08｜设备端查词 · 生词本「📕 生词本」（跨块：代码在 pkm daemon，2026-08-25 真机端到端验证通过）
 
-查字词是**系统增强线的阅读辅助**（读书时划生词自动查词），但**代码本体骑在 pkm daemon（`wr-stars-daemon`）上**
+查字词是**系统增强线的阅读辅助**（读书时划生词自动查词），但**代码本体骑在 pkm daemon（`cj-stars-daemon`）上**
 ——与 §04 荧光笔吸附（代码在块2 langhook .so）同构的第 4 处跨块：能力概念属块4，实现复用了 pkm 的荧光笔读回
 （`cardhl`）+ EPUB 章映射（`epubindex`）+ 笔记本注入（`sync_auto_notebook`）管线，**不为它单拆一个二进制**。
-本节是查字词设计的单一事实来源；实现在 `pkm/src/{dict,cardvocab,locate,vocabscan}.rs`，daemon 只触发+注入。
+本节是查字词设计的单一事实来源；实现在 `knowledge/pkm/src/{dict,cardvocab,locate,vocabscan}.rs`，daemon 只触发+注入。
 
 **可行性核查结论**（2026-08-25 `dict-lookup-recon`：对外部三路线分析逐条对表本项目已坐实事实——三条路线的可能性排序对"这台 Move + 本项目"几乎全反了）：
 
@@ -152,7 +152,7 @@ host 无法运行 xochitl，但能用官方 qmldiff 工具**离线实跑补丁**
   `collect_notebook_texts` 排除名单（防自摄取）。
 
 **版权红线**：牛津/现汉是用户**正版商业词典**，只做**个人自用**：MOBI 与派生 TSV 全部 `.gitignore`、绝不入库/分发，
-仓库只留不含词典内容的 `pkm/tools/build_dict.py`；缺词典文件 daemon 该向自动降级不查。
+仓库只留不含词典内容的 `knowledge/pkm/tools/build_dict.py`；缺词典文件 daemon 该向自动降级不查。
 
 **验证**：
 - host 全绿（`dict`/`locate`/`cardvocab`/`vocabscan`/`epubindex::page_fulltext`）。
@@ -161,7 +161,7 @@ host 无法运行 xochitl，但能用官方 qmldiff 工具**离线实跑补丁**
   （牛津 MOBI 经 calibre 完整转换在 CSS-flatten 阶段报错，改用 `--debug-pipeline` 取**输入阶段** HTML 抽词——
   那在报错阶段之前落盘，正是解析所需，2 秒抽完。）
 - **真机已部署**（2026-08-25）：daemon 二进制 + `en.tsv`/`zh.tsv` scp 到设备 `/home/root/weread/dict/`，
-  备份 `cangjie-backups/wr-stars-daemon.bak.pre-vocab`、md5 本地=设备一致、`systemctl restart wr-stars` 后
+  备份 `cangjie-backups/cj-stars-daemon.bak.pre-vocab`、md5 本地=设备一致、`systemctl restart cj-stars` 后
   is-active=active/MainPID 变/NRestarts=0/ExecMainStatus=0；冷启动日志 `[stars] 生词本已创建（0 个生词）`
   = **查词管线跑通、生词本已建**（暂无灰词故 0 条）。
 - **真机端到端验证通过（2026-08-25）**：用户在《13 67》某页用 ⚪灰色荧光笔划「刑事」「情报」两词（**未画星**）→
@@ -174,8 +174,8 @@ host 无法运行 xochitl，但能用官方 qmldiff 工具**离线实跑补丁**
 > `starTodoEnabled`(主·默认关) 下挂 `cardHighlights`(划线摘录〔口语"荧光笔"〕·高亮入卡·**默认关**〔规则a·2026-08-27〕)/`cardAggregates`(跨书汇总·4本汇总本·默认开)
 > 两个子开关（主关则灰化失效）；`vocabEnabled`(**单词笔记·生词本·独立顶层·默认关**，脱离画星、与★互不依赖)；`hlSnapCjk`(荧光笔吸附)。
 >
-> **daemon 开关不生效根治（2026-08-27 真机验证）**：`wr-stars-daemon` 原来 fswatch 只 watch xochitl 文档树、不 watch config → 拨开关只写 `reading-qol.json`、唤不醒休眠 daemon，存量已画星书也不回扫（表现"开关像没用"）。修复：`device_core::fswatch::watch_debounced` 加可选 config 文件监听参数 + `CONFIG_SIGNAL` 哨兵，daemon 见到即 `settle(dirty=None)` **全库重扫**（真实 open-write-close 写 config 后 daemon 被唤醒跑全库重扫，真机坐实）。生效的 tap-page/hlSnapCjk 本就在进程内动作那刻现读，故一直正常。
-> daemon `wr-stars-daemon` 读这 5 键分别门控三条产出，功能关闭时对应只读自动本(4汇总+生词本)入回收站清残留、星卡片含批注绝不 trash。
+> **daemon 开关不生效根治（2026-08-27 真机验证）**：`cj-stars-daemon` 原来 fswatch 只 watch xochitl 文档树、不 watch config → 拨开关只写 `reading-qol.json`、唤不醒休眠 daemon，存量已画星书也不回扫（表现"开关像没用"）。修复：`device_core::fswatch::watch_debounced` 加可选 config 文件监听参数 + `CONFIG_SIGNAL` 哨兵，daemon 见到即 `settle(dirty=None)` **全库重扫**（真实 open-write-close 写 config 后 daemon 被唤醒跑全库重扫，真机坐实）。生效的 tap-page/hlSnapCjk 本就在进程内动作那刻现读，故一直正常。
+> daemon `cj-stars-daemon` 读这 5 键分别门控三条产出，功能关闭时对应只读自动本(4汇总+生词本)入回收站清残留、星卡片含批注绝不 trash。
 > **单词笔记基线（"开前灰词不补"）**：启用时记基线时刻(`vocab-since.txt`)，生词本只纳入 `.rm mtime >= 基线` 的页。
 > 首次激活若已有生词本(之前就在用)→基线 0 grandfather 全保留；否则基线=配置 mtime(≈开关打开时刻，避开 fswatch 防抖竞态)。
 > 停用删基线，下次干净 off→on 重设 → 只纳入此后画的灰词。
@@ -207,4 +207,4 @@ OTA 到 `IMG_VERSION=3.28.0.169`（此前 .166）后用户报 5 个功能失效�
 
 - 优先级/立项：《[功能路线图白皮书](../../docs/reMarkable功能路线图白皮书.md)》§09。
 - 代码 + 操作：[reading-qol/README.md](../reading-qol/README.md)（端点级操作/部署纪律）。
-- 荧光笔吸附本体：《[阅读白皮书](../../reading/docs/reMarkable阅读白皮书.md)》§03-3d；★待办本体：《[PKM 白皮书](../../pkm/docs/reMarkablePKM白皮书.md)》；自动优化：阅读白皮书 §07-D。
+- 荧光笔吸附本体：《[阅读白皮书](../../reading/docs/reMarkable阅读白皮书.md)》§03-3d；★待办本体：《[PKM 白皮书](../../knowledge/pkm/docs/reMarkablePKM白皮书.md)》；自动优化：阅读白皮书 §07-D。

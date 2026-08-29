@@ -13,5 +13,5 @@ for u in memfaultd crashuploader remarkable-counter-metrics slumber-metrics nm-m
 done
 echo ""
 echo "=== D. cang-jie 自家 daemon 的休眠礼貌(fswatch 是否轮询自旋) ==="
-echo "wr-stars(2727) 状态: $(cat /proc/2727/stat 2>/dev/null | awk "{print \$3}")  (S=睡眠好, R=运行)"
+echo "cj-stars(2727) 状态: $(cat /proc/2727/stat 2>/dev/null | awk "{print \$3}")  (S=睡眠好, R=运行)"
 echo "wr-serve(6255) 状态: $(cat /proc/6255/stat 2>/dev/null | awk "{print \$3}")"

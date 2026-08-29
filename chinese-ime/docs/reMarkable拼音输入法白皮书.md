@@ -36,7 +36,7 @@
 
 ## ▤ 项目目录结构（cang-jie）
 
-> **目录已重构（2026-08-15）**：中文化核心交付归拢进 **`chinese-ime/`**（本白皮书在 `chinese-ime/docs/`）。文中出现的 `pinyin-engine/`、`xovi-extensions/cangjie-langhook/` 等旧路径，一律对应 `chinese-ime/pinyin-engine/`、`chinese-ime/langhook/`；`ghidra-project/`/`rmfw/`(固件镜像)/`reading/`(历史名 `weread-client/`)/`pkm/` 仍在顶层。
+> **目录已重构（2026-08-15）**：中文化核心交付归拢进 **`chinese-ime/`**（本白皮书在 `chinese-ime/docs/`）。文中出现的 `pinyin-engine/`、`xovi-extensions/cangjie-langhook/` 等旧路径，一律对应 `chinese-ime/pinyin-engine/`、`chinese-ime/langhook/`；`ghidra-project/`/`rmfw/`(固件镜像)/`reading/`(历史名 `weread-client/`)/`knowledge/pkm/` 仍在顶层。
 
 整个仓库的文件夹作用如下，**加粗的是拼音输入法这条线直接相关的**；UI 汉化那条线（字体等）见姊妹文档《中文化白皮书》。
 
@@ -51,7 +51,7 @@
 - **`chinese-ime/langhook/`** — **设备端 hook**：`src/hook_init.c`（全部拦截/候选逻辑 + `_xovi_construct`/`_xovi_shouldLoad` 入口）+ `scan`/`pattern`/`trampoline`/`qstringlist_append` + `cangjie-langhook.xovi`（xovi 扩展描述），交叉编译成 `cangjie-langhook.so`——**合规 xovi 扩展**，放 `xovi/extensions.d/` 被自动加载（不再靠 LD_PRELOAD）。直接引用 `../pinyin-engine/c/src` 的引擎源码（不复制，避免两份漂移）。
 - **`ghidra-project/`** — **反编译工程**：Ghidra 项目 + headless 脚本，定位 hook 点/偏移/参数签名的离线侦查产物。
 - `rmfw/` — 固件/字体资源（`fonts/`、`out/`）——主要服务 UI 汉化那条线，见姊妹文档。
-- `reading/`（历史名 `weread-client/`）+ `pkm/` — 独立子项目（阅读/PKM），跟 reMarkable 中文化无关，本文不展开。
+- `reading/`（历史名 `weread-client/`）+ `knowledge/pkm/` — 独立子项目（阅读/PKM），跟 reMarkable 中文化无关，本文不展开。
 - `工程纪律` · 三份白皮书 — 工程纪律；本册 + 《中文化白皮书》+ 《微信读书方案白皮书》。
 
 ## 01｜总体架构图解

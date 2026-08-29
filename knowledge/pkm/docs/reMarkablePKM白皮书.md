@@ -2,13 +2,13 @@
 
 > PKM / 知识管理线设计与真机调试记录 · 2026-08
 >
-> 本白皮书是块5「PKM/知识管理」的设计单一事实来源。跨块优先级见《[功能路线图白皮书](../../docs/reMarkable功能路线图白皮书.md)》；
-> 算法原型 + 阈值标定在 `pkm-semantic/`（Python），生产 Rust 在 `pkm/`（见 [PROTOTYPES.md](../../PROTOTYPES.md)）；
-> "怎么把书弄上设备/优化"（阅读线）另见《[阅读白皮书](../../reading/docs/reMarkable阅读白皮书.md)》。
+> 本白皮书是块5「PKM/知识管理」的设计单一事实来源。跨块优先级见《[功能路线图白皮书](../../../docs/reMarkable功能路线图白皮书.md)》；
+> 算法原型 + 阈值标定在 `knowledge/pkm-semantic/`（Python），生产 Rust 在 `knowledge/pkm/`（见 [PROTOTYPES.md](../../../PROTOTYPES.md)）；
+> "怎么把书弄上设备/优化"（阅读线）另见《[阅读白皮书](../../../reading/docs/reMarkable阅读白皮书.md)》。
 
 ## 00｜战略定位
 
-PKM 回归后 reMarkable 复位为**阅读/笔记工作台**（Zettelkasten + 渐进总结）——不再追微信读书的完整双向同步，微读降级为"只留下书 + 进度同步"喂给 PKM。`pkm-semantic/` 是这条线的**语义引擎**：只读扫 `.rm` 笔迹 → 识别约定符号 → 输出独立文档（**绝不回写原件**）。首个能力是 **★ 全局待办**（§02–§05）。
+PKM 回归后 reMarkable 复位为**阅读/笔记工作台**（Zettelkasten + 渐进总结）——不再追微信读书的完整双向同步，微读降级为"只留下书 + 进度同步"喂给 PKM。`knowledge/pkm-semantic/` 是这条线的**语义引擎**：只读扫 `.rm` 笔迹 → 识别约定符号 → 输出独立文档（**绝不回写原件**）。首个能力是 **★ 全局待办**（§02–§05）。
 
 **为什么是"异步解析矢量笔迹"而非"改 UI"**：rmppm 绝对闭源的 xochitl + Gallery 3 复杂刷新机制下有一条清晰开发边界——**直接改 UI（加弹窗/套索按钮）极难，但后台解析 `.rm` 矢量笔迹做异步重构大有可为**。据此推演各功能可行性：🟢 中括号摘要 `[ ]`、全局星号待办 `★`、`.rm`→Markdown/笔记生态 数据流转（坐标/压感/颜色齐全）**完全可行**；🟡 套索即标签（降维成"专用色+前缀"符号识别）、系统级超链接（预处理合并成超级 PDF）**需降维妥协**；🔴 实时离线 OCR、双指橡皮擦（evdev 被原生独占）**零可行性**。**代价：接受"非实时"的异步反馈。**
 
@@ -31,7 +31,7 @@ PKM 回归后 reMarkable 复位为**阅读/笔记工作台**（Zettelkasten + �
 - 打开卡片，**在槽下用 Text 工具打字写自己的话**（释义/洞见/联想）。生摘录只是原料，**用自己的话内化才算知识**。
 - 打了字的卡从 **「📖 复盘队列」自动消失**；没提炼的卡一直留在队列里提醒你回来炼（见 §09）。
 - **只认打字**：手写笔迹 daemon 读不回、重建会抹掉；批注必须 Text 工具打字才跨重建存活。
-- **遇生词用⚪灰色荧光笔划**（不必画星）→ daemon 自动查本地词典，把音标+释义+原句汇进「📕 生词本」（查字词归块4系统增强，见《[系统增强白皮书](../../xovi-extensions/docs/reMarkable系统增强白皮书.md)》§08）。
+- **遇生词用⚪灰色荧光笔划**（不必画星）→ daemon 自动查本地词典，把音标+释义+原句汇进「📕 生词本」（查字词归块4系统增强，见《[系统增强白皮书](../../../xovi-extensions/docs/reMarkable系统增强白皮书.md)》§08）。
 
 ### ④ 网 · 组网 ★（跨书整合，策展时）
 - **手动建 MOC 笔记本**（不自动——手动策展"这张卡属于哪个主题、和谁关联"才是结网的深度价值）：卡片顶部有机器
@@ -59,11 +59,11 @@ PKM 回归后 reMarkable 复位为**阅读/笔记工作台**（Zettelkasten + �
 > 父子卡逻辑线。原理是**组块化（Chunking）**：把零散信息打包成更高级概念，突破工作记忆 4~7 区块限制。这些是纯手动的
 > 认知降维,与 daemon 自动摄取并行不悖。
 
-> **设计缘起**：★待办的"后台解析矢量笔迹"构想最早来自这套方法论文档（历史文件 `reading/2.md`，内容已并入本白皮书）。原始设想是一个 `inotify` 监听 xochitl 目录 + 形状识别 `★`/`[ ]` 的 Rust 守护进程；当时就点明两条硬约束——**① 绝不原地改正在阅读的文件**（xochitl 内存缓存与磁盘不一致会死机/重启 + 云同步冲突）→ 结果写独立新文件；**② 电池刺客**（inotify 太宽/算法太重会频繁唤醒 ARM，续航从 2 周骤降）→ 必须 `CPUQuota` + 防抖。这两条在最终实现（§03–§05）里都被真机坐实并遵守。原始教程式代码已被 `pkm/` 的正式实现取代，此处只留缘起。
+> **设计缘起**：★待办的"后台解析矢量笔迹"构想最早来自这套方法论文档（历史文件 `reading/2.md`，内容已并入本白皮书）。原始设想是一个 `inotify` 监听 xochitl 目录 + 形状识别 `★`/`[ ]` 的 Rust 守护进程；当时就点明两条硬约束——**① 绝不原地改正在阅读的文件**（xochitl 内存缓存与磁盘不一致会死机/重启 + 云同步冲突）→ 结果写独立新文件；**② 电池刺客**（inotify 太宽/算法太重会频繁唤醒 ARM，续航从 2 周骤降）→ 必须 `CPUQuota` + 防抖。这两条在最终实现（§03–§05）里都被真机坐实并遵守。原始教程式代码已被 `knowledge/pkm/` 的正式实现取代，此处只留缘起。
 
 ## 02｜★ 全局待办 —— 首个语义能力（2026-08-22，全真机端到端）
 
-**做什么**：**阅读时用红笔在某页画一颗五角星，几秒后后台 Rust daemon 自动生成/更新这本书的「《书名》- 总结卡片」笔记本**。选它打头因为 ① 不依赖底层文本 ② 颜色/形状能从 `.rm` 直接读出 ③ 输出独立文件天然绕开 inplace 判死 + 云同步冲突。产物链：`pkm-semantic/proto/`（Python 原型 + 差分测试）→ `pkm/src/{stardetect,cardsync,cardnote,starscan,notebook_sync}.rs` + `device-core/src/epubindex.rs`（页→章）+ `pkm/src/bin/wr_stars_daemon.rs` + `reading/device/trash-agent.qmd` + 设置页开关。
+**做什么**：**阅读时用红笔在某页画一颗五角星，几秒后后台 Rust daemon 自动生成/更新这本书的「《书名》- 总结卡片」笔记本**。选它打头因为 ① 不依赖底层文本 ② 颜色/形状能从 `.rm` 直接读出 ③ 输出独立文件天然绕开 inplace 判死 + 云同步冲突。产物链：`knowledge/pkm-semantic/proto/`（Python 原型 + 差分测试）→ `knowledge/pkm/src/{stardetect,cardsync,cardnote,starscan,notebook_sync}.rs` + `device-core/src/epubindex.rs`（页→章）+ `knowledge/pkm/src/bin/cj_stars_daemon.rs` + `reading/device/trash-agent.qmd` + 设置页开关。
 
 ![★ 全局待办数据流（画星 → fswatch → 识别 + 页→章名 → 卡片 merge → /upload → 事件驱动去重）](star-todo-flow.svg)
 
@@ -79,7 +79,7 @@ PKM 回归后 reMarkable 复位为**阅读/笔记工作台**（Zettelkasten + �
 
 **踩坑真 bug**：`PenColor` 是 IntEnum，Py3.11+ 的 `str()` 返数字 `"7"` 非 `"RED"` → 颜色归一必须走 `.name`。
 
-**Rust 移植（逐字节对拍 Python）**：`pkm/src/stardetect.rs` 与 Python `star_scan` 在 5 个 `cluster_gap` 与各色门控**逐一全等**、**200 笔逐字段全等**（color/self_int/size/aspect），几何全用 f64（Point 是 f32，上采 f64 与 rmscene/Python 一致），回归测试 `pkm/tests/stars_fixture.rs`。vendored `remarkable_lines` 打两处补丁容忍新固件格式（`ParagraphStyle::Unknown`、块少读跳块尾）。aarch64 musl 全静态 ~509KB。
+**Rust 移植（逐字节对拍 Python）**：`knowledge/pkm/src/stardetect.rs` 与 Python `star_scan` 在 5 个 `cluster_gap` 与各色门控**逐一全等**、**200 笔逐字段全等**（color/self_int/size/aspect），几何全用 f64（Point 是 f32，上采 f64 与 rmscene/Python 一致），回归测试 `knowledge/pkm/tests/stars_fixture.rs`。vendored `remarkable_lines` 打两处补丁容忍新固件格式（`ParagraphStyle::Unknown`、块少读跳块尾）。aarch64 musl 全静态 ~509KB。
 
 **页 → 章名映射**（`epubindex.rs`，设备任何 EPUB 通用，不限墨香书）：逆向 xochitl 的 `<uuid>.epubindex` 二进制格式 = 头 `"rM epub index"` + 若干长度前缀 UTF-16BE 路径条目，每条后 3 个大端 u32，**起始页 = (中间 int==0 ? 第一 int : 第三 int)** → `page_section` 找起始页 ≤ 页号的最后一条 spine 文件；再读 `.epub`(zip) 的 `nav.xhtml`/`toc.ncx` 解 `spine 文件 → 章名`。真机《赎罪》验：第 8 页 → 洋娃娃、第 74 页 → 狗熊兄妹。**EPUB 页号**：`stardetect` 的 `page_order` fallback 读顶层 `pages`（EPUB 的 `cPages` 为空、页 uuid 在顶层 `pages` 列表），0-based 与 `.epubindex` 对齐。
 
@@ -95,13 +95,13 @@ PKM 回归后 reMarkable 复位为**阅读/笔记工作台**（Zettelkasten + �
 
 **纯事件驱动去重（trash 的曲折，最终挂 `onRowsInserted`）**。旧卡删除只能走原生 `selectionMoveToTrash`（外部改磁盘 `parent=trash` xochitl 内存不认、界面残留旧卡）。触发方式踩了两次坑才对：**× `ViewManager.activeViewChanged` / `entityListModel.elementCount` 属性绑定——真机不触发**（`elementCount` 非 NOTIFY 属性，绑定永不刷新）；**√ `explorer.entityListModel` 的 `onRowsInserted`/`onModelReset`**——这是 QAbstractItemModel 的真信号、**xochitl 自己的文档网格就在用**（离线提取 `qml_00dabb43`/`qml_00dae885` 确证 `Connections{target:model; function onRowsInserted(){}}`）。最终 `trash-agent.qmd`：挂 `onRowsInserted`（新卡 `/upload` 进库）+ `onModelReset`（回书库重载）→ 4s 防抖（覆盖 upload→queue 写入间隙）→ `selection.add(uuid)+selectionMoveToTrash()`，`size>0`（用户手动选中）守卫防误删。**教训翻案**：xochitl 确有可靠信号给注入 QML——**找信号要看 xochitl 自己 QML 怎么连，别猜属性绑定**。
 
-**部署形态 + 设置开关**。daemon 事件驱动省电：`fswatch.rs`（inotify + 防抖，空闲阻塞睡死、零周期唤醒；周期扫描是电池刺客，弃用）监视文档目录，`wr-stars.service` 装 `/usr`（硬 `CPUQuota=30%` + `MemoryMax=64M` + `Nice=10` + 开机自启）。**增量扫（2026-08-24）**：`fswatch` 本就把变更 doc uuid 集交给回调，但早期 `settle` 丢弃它、每次事件（含开书/翻页缓存/乃至我们自己 `/upload` 卡片）都无差别 `scan_library` 整库——等于把事件驱动打回近似全量轮询、与省电目标自相矛盾。改为 `settle` 收 `dirty: Option<&HashSet>`：`None`=冷启动全库建基线，`Some(集)`=**只扫本轮变更的书**。每本卡片彼此独立、无跨书全局态 → 语义等价；且我们传卡片触发的事件只命中卡片本身（suffix 跳过）→ 不再自触发整库重扫。真机 observe 对账坐实：冷启动全库扫得 4 本有星、触发单本有星书 → 只扫 1 本、触发无关书 → 只扫 1 本 0 有星。
+**部署形态 + 设置开关**。daemon 事件驱动省电：`fswatch.rs`（inotify + 防抖，空闲阻塞睡死、零周期唤醒；周期扫描是电池刺客，弃用）监视文档目录，`cj-stars.service` 装 `/usr`（硬 `CPUQuota=30%` + `MemoryMax=64M` + `Nice=10` + 开机自启）。**增量扫（2026-08-24）**：`fswatch` 本就把变更 doc uuid 集交给回调，但早期 `settle` 丢弃它、每次事件（含开书/翻页缓存/乃至我们自己 `/upload` 卡片）都无差别 `scan_library` 整库——等于把事件驱动打回近似全量轮询、与省电目标自相矛盾。改为 `settle` 收 `dirty: Option<&HashSet>`：`None`=冷启动全库建基线，`Some(集)`=**只扫本轮变更的书**。每本卡片彼此独立、无跨书全局态 → 语义等价；且我们传卡片触发的事件只命中卡片本身（suffix 跳过）→ 不再自触发整库重扫。真机 observe 对账坐实：冷启动全库扫得 4 本有星、触发单本有星书 → 只扫 1 本、触发无关书 → 只扫 1 本 0 有星。
 
 **通用原子卡模板 + MOC 死链体检（2026-08-24）**：① `page_scaffold` 默认模板从悬疑三段式换成**通用原子卡**（`WHAT/SO WHAT/NOW WHAT`，见 §06）——只对**新星**生效，老卡的 prev.notes 保留旧骨架不覆盖。② 新增 `cardindex.rs`（纯逻辑 + host 测试）：daemon 在 `settle` 尾部（冷启动或 dirty 含笔记本变更时）扫全库笔记本文本 → 抽 `[ID:]` 锚点 + `指向/链接 → ID` 引用 → 写 `/home/root/weread/card-index.md`（锚点清单 + 死链清单）。**只读笔记本文本、跳过 epub 笔迹**，不吐回增量扫的省电成果；触发靠"卡片 /upload 后其 uuid 落 dirty / 用户改 MOC 本"，源书画星本身不触发（其引发的卡片 upload 会在下轮命中）。真机验证：冷启动报告列出 12 个真锚点（含带空格的 "Book One - Chapter One-p4"）✓ 无死链；造含 `指向 → ID：幽灵ID` 的测试笔记本 → 报告即标 1 处死链、真锚点 `洋娃娃-p8` 不误报，清理后回干净态。设备端可视化（面板/笔记本入口）留后续项。**同一改法把 wr-serve 原来 60s 自动优化轮询也改成事件驱动**（同病同治）。配置 `reading-qol.json`：`starTodoEnabled`（默认关）/`starTodoColor`（RED）/`starTodoGap`（25）。**设置页开关**：「系统增强」门户加第 4 分类「**笔记增强**」→ 二级页 `★ 全局待办` 开关（`SettingsCheckBoxItem` + file XHR 读写 `reading-qol.json`）；**全量防覆盖铁律**——每个写 `reading-qol.json` 的二级页都必须读写全量键（否则切翻页设置会抹掉 `starTodoEnabled`）。离线 `qmldiff apply-diffs` + host `qmllint` 验过再上机。**放置决策**：用户否掉"墨香面板"（那面板只有下载选项、无设置区），定「设置页·笔记增强」。
 
 **最终工作流**：红笔画五角星 → daemon（8s 防抖）重扫 → 内容变才 `/upload` 新卡 → 新卡进库触发 `onRowsInserted` → **2 秒内旧卡经原生 `selectionMoveToTrash` 无形消失**。全设备自足、纯事件驱动、每书恒 1 张、开书不重生成、打字批注永久保留。
 
-**已知边界 / 后续**：① **松散星漏检**——真机 ~13 星检出最清晰的几个，画太圆钝（自相交 ≤4）的会漏 → 多收样本下调 `self_int_min` / 调 `cluster_gap`（当前 gap=25 稳定，40 起过度合并）。② ~~节名~~ **✅ 已实现（2026-08-24）**：`epubindex` 章节映射从扁平升级为**层级解析**（`parse_nav_xhtml_hier` 按 `<ol>` 嵌套维护父栈 → `basename→(标题,父章option)`，`page_chapter_label` 拼 `章 - 节`，扁平书自动退化成仅章名）。**顺带修一个既存 bug**：`parse_sections` 读 `.epubindex` 起始页原用 `b==0?a:c`（对《赎罪》过拟合），坐实**起始页恒是第一个 u32**，旧码遇 b=1 的嵌套章误取乱值→页号错→标签落错章，改 `start=a`。真机 wr-nbtest 跑《Tell Me Your Dreams》（3 部×嵌套章）验证：page200→`Book Two - Chapter Eleven`、page450→`Book Three - Chapter Twenty-two`、顶层→无父，页号单调正确；host 5 epubindex 测试全过。daemon 二进制已更新（服务当前 inactive，开启后新卡即带章-节标签）。**子节若是章文件内的 `#anchor`（非独立 spine 文件）则做不到**——`.epubindex` 无 anchor 级页号。。③ **一本书清空全部星 → 旧卡不会自动消失**（增量/全扫皆然：无星即不产 `DocStars`，`sync_one_card` 不被调）。用户实际清空整本星频率低，暂记为已知边界；真要治需 daemon 记住"曾出卡但现无星"→ queue_trash 那张卡。④ **顺带修一个被节名放大的潜在数据丢失 bug（2026-08-24）**：`cardsync::extract_page` 原用 `line.find('页')` 取星页头页码——页码恒在行尾「· 第 N 页」，但节名落地后前缀 label 是「章 - 节」名、**可能自身含「页」字**（如章名"第三页的秘密"），`find` 会误命中 label 里的「页」、收不到数字返 `None` → **该星的用户打字批注在重建时被当无页号丢弃**（破坏 B 模型批注保留核心保证）。改 `rfind`（只认行尾真页码），加两条回归测试（含批注保留）。当前库无含「页」字章名的书，靠 host 测试 + 部署带上修复。
+**已知边界 / 后续**：① **松散星漏检**——真机 ~13 星检出最清晰的几个，画太圆钝（自相交 ≤4）的会漏 → 多收样本下调 `self_int_min` / 调 `cluster_gap`（当前 gap=25 稳定，40 起过度合并）。② ~~节名~~ **✅ 已实现（2026-08-24）**：`epubindex` 章节映射从扁平升级为**层级解析**（`parse_nav_xhtml_hier` 按 `<ol>` 嵌套维护父栈 → `basename→(标题,父章option)`，`page_chapter_label` 拼 `章 - 节`，扁平书自动退化成仅章名）。**顺带修一个既存 bug**：`parse_sections` 读 `.epubindex` 起始页原用 `b==0?a:c`（对《赎罪》过拟合），坐实**起始页恒是第一个 u32**，旧码遇 b=1 的嵌套章误取乱值→页号错→标签落错章，改 `start=a`。真机 cj-nbtest 跑《Tell Me Your Dreams》（3 部×嵌套章）验证：page200→`Book Two - Chapter Eleven`、page450→`Book Three - Chapter Twenty-two`、顶层→无父，页号单调正确；host 5 epubindex 测试全过。daemon 二进制已更新（服务当前 inactive，开启后新卡即带章-节标签）。**子节若是章文件内的 `#anchor`（非独立 spine 文件）则做不到**——`.epubindex` 无 anchor 级页号。。③ **一本书清空全部星 → 旧卡不会自动消失**（增量/全扫皆然：无星即不产 `DocStars`，`sync_one_card` 不被调）。用户实际清空整本星频率低，暂记为已知边界；真要治需 daemon 记住"曾出卡但现无星"→ queue_trash 那张卡。④ **顺带修一个被节名放大的潜在数据丢失 bug（2026-08-24）**：`cardsync::extract_page` 原用 `line.find('页')` 取星页头页码——页码恒在行尾「· 第 N 页」，但节名落地后前缀 label 是「章 - 节」名、**可能自身含「页」字**（如章名"第三页的秘密"），`find` 会误命中 label 里的「页」、收不到数字返 `None` → **该星的用户打字批注在重建时被当无页号丢弃**（破坏 B 模型批注保留核心保证）。改 `rfind`（只认行尾真页码），加两条回归测试（含批注保留）。当前库无含「页」字章名的书，靠 host 测试 + 部署带上修复。
 
 ## 06｜总结卡片模板
 
@@ -149,7 +149,7 @@ PKM 回归后 reMarkable 复位为**阅读/笔记工作台**（Zettelkasten + �
 
 **多 Tag 组合 = 同槽提示词合并（类型性收敛，不增槽）**：Tag 是**书级**的，多维是真实需求（`#原文`+`#悬疑`：既要原文摘录又要悬疑线索）。因卡片是固定 6 槽，多 Tag 只让**同一槽的提示词按规范序合并去重**（如 Yellow 槽「原句/金句」、Gray 槽「生词/短语/关键人物」）——**永远还是 6 槽**，不像旧"位置性"那样把 8 条含义挤进 6 笔或把文字复制到多条。规范序（`TEMPLATE_ORDER`）保证输出与 Tag 书写顺序无关（幂等，`page_scaffold` 单测覆盖）。这正是把"颜色=模板第 i 条"改成"颜色=固定语义槽"换来的：多 Tag 天然兼容、零溢出。
 
-**两级标签 = 星级粒度（2026-08-24 真机摸清 + 接线）**：reMarkable 原生标签有**两级**，都在 `.content`——文档级 `tags`（`[{name,timestamp}]`，整本书）+ **页级 `pageTags`（`[{name,pageId,timestamp}]`，带页 uuid）**。这正好给出**星级粒度**：一本英文原版悬疑小说，整本打文档级 `#原文`、某反转页打页级 `#悬疑`，则**每颗星的模板 = 合并(本书文档级 tags + 该星所在页的 pageTags)**（星的 `page_uuid` 匹配 `pageTag.pageId`）→ `from_tag` → 去重 → 空退默认 General。daemon `read_book_tags`/`templates_for` + `render_card_starspecs`（每星独立模板集）已接线部署，真机 observe 坐实标签解析正确（《赎罪》docTags=["悬疑测试"]、《TMYD》docTags=["原文"] 等按页解析到每颗星）。**Tag 词表保持精简**（`原文/英文/悬疑/推理/侦探/科幻/通用/…`），不为每种自然写法加别名，用户按词表打标签。完整可照抄模板见 [`pkm-semantic/docs/示例-总结卡片模板.md`](../../pkm-semantic/docs/示例-总结卡片模板.md)。
+**两级标签 = 星级粒度（2026-08-24 真机摸清 + 接线）**：reMarkable 原生标签有**两级**，都在 `.content`——文档级 `tags`（`[{name,timestamp}]`，整本书）+ **页级 `pageTags`（`[{name,pageId,timestamp}]`，带页 uuid）**。这正好给出**星级粒度**：一本英文原版悬疑小说，整本打文档级 `#原文`、某反转页打页级 `#悬疑`，则**每颗星的模板 = 合并(本书文档级 tags + 该星所在页的 pageTags)**（星的 `page_uuid` 匹配 `pageTag.pageId`）→ `from_tag` → 去重 → 空退默认 General。daemon `read_book_tags`/`templates_for` + `render_card_starspecs`（每星独立模板集）已接线部署，真机 observe 坐实标签解析正确（《赎罪》docTags=["悬疑测试"]、《TMYD》docTags=["原文"] 等按页解析到每颗星）。**Tag 词表保持精简**（`原文/英文/悬疑/推理/侦探/科幻/通用/…`），不为每种自然写法加别名，用户按词表打标签。完整可照抄模板见 [`knowledge/pkm-semantic/docs/示例-总结卡片模板.md`](../../pkm-semantic/docs/示例-总结卡片模板.md)。
 
 ## 07｜纯设备端 MOC 组网（对抗知识熵增）
 
@@ -157,7 +157,7 @@ PKM 回归后 reMarkable 复位为**阅读/笔记工作台**（Zettelkasten + �
 
 1. **总控节点**：根目录建一本永远置顶的 `000-全局MOC`（数字 000 强制排序在最前 + `pinned`），只写宏观领域（如 `个人认知模型`/`叙事手法`/`权力博弈`），是整个知识库的大门。
 2. **主题集群**：MOC 的灵魂是**跨书整合**——不按书名分类，按主题聚合。《13·67》倒叙 + 金庸多线的卡片统摄进"叙事与诡计设计"；《沙丘》香料垄断 + 银河权力交接进"宏观权力制衡"。
-3. **寻址通路**：reMarkable **无跨文件硬超链接**（Supernote 那种套索超链接本机没有）→ 在 MOC 列表项后用 Text 打目标卡的唯一标识 `[指向 -> ID: 沙丘-资源控制]`，靠**全局搜索该 ID 软跳转**。（原生链接子系统 `SceneLink` 在固件 .169 存活，2026-08-24 已把链路反解闭环：一条链接**分两半**——**源锚**在目标页 RootText 的**行内文本格式流**里，是一对 `码5/码6` 标记（与粗体码1/2、斜体码3/4 同族）框住的文本 CrdtId 区间，这半在 `.rm` 但只标"哪段是链接"、不带目标；**目标**是独立的 link 记录 `{sourceId→targetId}`，targetId 串解成 `LibraryId`(documentId,pageId)+动作，由库层打开文档时批量加载，**不在 `.rm`**。**命门结论：纯写 `.rm` 造不出可用链接**——须同时往那个"独立 link 存储"写记录。且 2026-08-24 真机采样撞墙：设备（.169）**无创建 UI**（套索菜单无入口，官方"Create a link"是 web 分享）、**存量 55 个 `.content` 零 link 样本** → 无从 diff、无从定位存储落点。**故原生链接方向对本项目判死（不可用现货），MOC 软链接是唯一现货**；除非未来固件放出创建 UI 否则不再投入。详见 [`ghidra-project/SceneLink反解发现.md`](../../ghidra-project/SceneLink反解发现.md) 与。）
+3. **寻址通路**：reMarkable **无跨文件硬超链接**（Supernote 那种套索超链接本机没有）→ 在 MOC 列表项后用 Text 打目标卡的唯一标识 `[指向 -> ID: 沙丘-资源控制]`，靠**全局搜索该 ID 软跳转**。（原生链接子系统 `SceneLink` 在固件 .169 存活，2026-08-24 已把链路反解闭环：一条链接**分两半**——**源锚**在目标页 RootText 的**行内文本格式流**里，是一对 `码5/码6` 标记（与粗体码1/2、斜体码3/4 同族）框住的文本 CrdtId 区间，这半在 `.rm` 但只标"哪段是链接"、不带目标；**目标**是独立的 link 记录 `{sourceId→targetId}`，targetId 串解成 `LibraryId`(documentId,pageId)+动作，由库层打开文档时批量加载，**不在 `.rm`**。**命门结论：纯写 `.rm` 造不出可用链接**——须同时往那个"独立 link 存储"写记录。且 2026-08-24 真机采样撞墙：设备（.169）**无创建 UI**（套索菜单无入口，官方"Create a link"是 web 分享）、**存量 55 个 `.content` 零 link 样本** → 无从 diff、无从定位存储落点。**故原生链接方向对本项目判死（不可用现货），MOC 软链接是唯一现货**；除非未来固件放出创建 UI 否则不再投入。详见 [`ghidra-project/SceneLink反解发现.md`](../../../ghidra-project/SceneLink反解发现.md) 与。）
 4. **细胞分裂**：一个 MOC 页最多 15–20 个链接，超了就分裂出子集 MOC（如 `001-MOC-悬疑技法`），在全局 MOC 里指向它。
 
 **daemon 只做「死链体检」，绝不自动生成 MOC**——手动策展（每次挂载卡片都逼自己想"它属于哪个主题、和谁关联"）才是知识结网的深度学习价值，自动化就没了。daemon 补的是用户列出的痛点「删卡→指向它的链接变死链、无法自动更新」：扫全库笔记本文本（只读、跳过 epub 笔迹），抽所有 `[ID:]` 锚点 + 所有 `指向/链接 → ID` 引用，输出两处——① `/home/root/weread/card-index.md`（SSH 可读）；② **库内「🔗 卡片索引 · MOC 死链体检」笔记本**（设备端可视，`render_notebook_pages` + 复用卡片的 pack_rmdoc/upload/pending-trash 链，无 QML、无重启 xochitl）。见 §05、`cardindex.rs`。
@@ -200,7 +200,7 @@ Zettelkasten 的核心不是捕获而是**提炼**——把生摘录逐张用自
   （《13 67》P10 6 段待提炼、帕金森旧通用卡无摘录不进队列，**无需画星**——daemon 冷启动即重建所有只读汇总本）。
 
 > **一条 daemon 触发经验**：这些自动汇总本（索引/汇编/复盘）在 **daemon 冷启动 `settle(None)`** 就重建
-> （`need_index=true`），所以想刷新它们、**重启 daemon 即可**（`systemctl restart wr-stars`），不必画星。
+> （`need_index=true`），所以想刷新它们、**重启 daemon 即可**（`systemctl restart cj-stars`），不必画星。
 > 反之，人为 `touch`/`cp`/`mv` 顶层文件**触发不了**增量 fswatch（它只认 xochitl 真实保存）。
 
 ## 10｜按书 PKM 仪表「📊 阅读仪表」（2026-08-25 真机端到端）
@@ -222,8 +222,8 @@ Zettelkasten 的核心不是捕获而是**提炼**——把生摘录逐张用自
 ## 11｜设备端查词 · 生词本「📕 生词本」→ 归块4系统增强
 
 **查字词已归类为块4「系统增强」**（读书划生词自动查词=阅读辅助 UX），完整设计文档移至
-《[系统增强白皮书](../../xovi-extensions/docs/reMarkable系统增强白皮书.md)》§08。**代码本体仍在 pkm**
-（`pkm/src/{dict,cardvocab,locate}.rs` + daemon `collect_vocab`/`rebuild_vocab`）——与荧光笔汉字吸附
+《[系统增强白皮书](../../../xovi-extensions/docs/reMarkable系统增强白皮书.md)》§08。**代码本体仍在 pkm**
+（`knowledge/pkm/src/{dict,cardvocab,locate}.rs` + daemon `collect_vocab`/`rebuild_vocab`）——与荧光笔汉字吸附
 同构的跨块：能力概念属块4，实现复用 pkm 的荧光笔读回（`cardhl`）+ EPUB 章映射（`epubindex`）+
 笔记本注入（`sync_auto_notebook`）管线，不单拆二进制。故本白皮书不再重复其设计，见系统增强白皮书 §08。
 **2026-08-26 两项补充**（细节见 §08）：①生词本**每本书各占一页**（封面页+一书一页，避免全堆一页过长）；
@@ -253,7 +253,7 @@ Zettelkasten 的核心不是捕获而是**提炼**——把生摘录逐张用自
 
 ## 交叉引用
 
-- 优先级/立项：《[功能路线图白皮书](../../docs/reMarkable功能路线图白皮书.md)》§5.8。
+- 优先级/立项：《[功能路线图白皮书](../../../docs/reMarkable功能路线图白皮书.md)》§5.8。
 - 算法原型 + 阈值标定：[pkm-semantic/README.md](../../pkm-semantic/README.md)（Python 原型 + 差分测试）。
-- 生产 Rust crate：[pkm/README.md](../README.md)（依赖共享底座 device-core）。crate/模块结构与解耦见《[设备端 Rust 架构](../../docs/reMarkable设备端Rust架构.md)》。
-- 注入/回收站通道机制亦见《[阅读白皮书](../../reading/docs/reMarkable阅读白皮书.md)》§07-D（`trash-agent`、软删真相）。
+- 生产 Rust crate：[pkm/README.md](../README.md)（依赖共享底座 device-core）。crate/模块结构与解耦见《[设备端 Rust 架构](../../../docs/reMarkable设备端Rust架构.md)》。
+- 注入/回收站通道机制亦见《[阅读白皮书](../../../reading/docs/reMarkable阅读白皮书.md)》§07-D（`trash-agent`、软删真相）。

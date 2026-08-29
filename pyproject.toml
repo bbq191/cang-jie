@@ -1,7 +1,7 @@
 # ─────────────────────────────────────────────────────────────
 # cang-jie —— host 侧 Python 工具统一环境（uv 管理）
 #
-# 定位：本项目生产实现在 Rust(reading/device-rs、pkm/device-rs) 与 C(chinese-ime/langhook、
+# 定位：本项目生产实现在 Rust(reading/device-rs、knowledge/pkm/device-rs) 与 C(chinese-ime/langhook、
 #   pinyin-engine/c)。这里的 Python 全是 host 侧「测试 / 原型 / 离线工具」，
 #   不打包分发，故声明为虚拟项目（package = false）：uv 只负责建一个统一 .venv
 #   + 锁依赖，不构建/安装本项目自身。
@@ -40,7 +40,7 @@ weread = [
     "qrcode",
     "rmscene",
 ]
-# PKM ★待办检测 Python 原型 + .rm 导出（生产走 pkm/ 的 Rust）
+# PKM ★待办检测 Python 原型 + .rm 导出（生产走 knowledge/pkm/ 的 Rust）
 pkm = [
     "rmscene",
 ]

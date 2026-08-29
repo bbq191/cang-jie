@@ -7,7 +7,7 @@
 ## 结论:无电池刺客
 
 - **休眠健康**:一天 8 次 `PM: suspend entry` = 8 次 `exit`;journal **零** `Deferring suspend` / `Can't suspend`——没有任何进程阻止休眠。
-- **无自旋**:load avg ≈ 0;自家 daemon(`wr-stars`/`wr-serve`)均 `S`(睡眠)态,非轮询。
+- **无自旋**:load avg ≈ 0;自家 daemon(`cj-stars`/`wr-serve`)均 `S`(睡眠)态,非轮询。
 - **WiFi**:`power_save: on`,审计时**未关联**(不连=不耗)。
 - **最高非核心 CPU**:`memfaultd` 39 CPU 秒/天(生命期 0.04%),可忽略。
 - **唯一高频定时器**:`wr-renew`(本项目 cookie 续期,每小时)。其余定时器均日级或已完成。
@@ -23,7 +23,7 @@ autosleep 机型:睡着时几乎不耗电,常驻进程多在睡,整体很省。
 | 20 | 0.02 | irq/39-elants_spi | 触控笔 SPI 中断(硬件) |
 | 13 | — | dbus-daemon | 系统总线 |
 | 9 | 0.03 | wr-serve | **cang-jie** 阅读面板 |
-| 7 | 0.03 | wr-stars-daemon | **cang-jie** PKM daemon |
+| 7 | 0.03 | cj-stars-daemon | **cang-jie** PKM daemon |
 
 ## 机器归属应用
 
@@ -36,7 +36,7 @@ autosleep 机型:睡着时几乎不耗电,常驻进程多在睡,整体很省。
 | rm-sync · update-engine · swupdate | reMarkable 云同步/OTA | 同步/更新检查 | 低 |
 | NetworkManager · wpa_supplicant | 网络栈 | WiFi 管理 | 省电+断连=低 |
 | marker-manager · tee-supplicant · irq/39-elants_spi | 硬件 | 笔/安全/触控驱动 | 正常 |
-| **wr-serve · wr-stars-daemon · wr-renew.timer** | **cang-jie(本项目)** | 阅读面板 / PKM daemon / cookie 续期 | 低;wr-renew 每小时 |
+| **wr-serve · cj-stars-daemon · wr-renew.timer** | **cang-jie(本项目)** | 阅读面板 / PKM daemon / cookie 续期 | 低;wr-renew 每小时 |
 
 ## 唤醒源(打断休眠的来源)
 

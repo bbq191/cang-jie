@@ -12,6 +12,7 @@ path = "src/lib.rs"
 [dependencies]
 remarkable_lines = { path = "../reading/device-rs/vendor/remarkable_lines" }
 serde_json = "1"
+base64 = "0.22"  # 通用 vision 适配器：图片 base64
 ureq = "2"
 uuid = { version = "1", features = ["v4"] }
 zip = { version = "2", default-features = false, features = ["deflate"] }

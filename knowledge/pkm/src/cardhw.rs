@@ -2,15 +2,14 @@
 //! 卡片手写批注 → **设备自己调云** vision 空间关联 → 内联注入书摘行。
 //!
 //! host 版（`pkm-semantic/handwriting/cardhw.py`）的设备端 Rust 移植。两块逻辑：
-//!   - `transcribe_card`：整页缩略图 base64 → 多模态 vision（四后端可插拔）→ [{anchor,note}]。
-//!     设备发 HTTPS（ureq+rustls，与 reading weread 同机制、生产已验证）。
+//!   - `transcribe_card`：整页缩略图 → 多模态 vision（通用调用在 `device_core::vision`）→ [{anchor,note}]。
+//!     卡片专属 prompt + JSON 解析留本模块，四后端 HTTP 调用复用共享底座。
 //!   - `inject_inline`：转写按 anchor 匹配到书摘 bullet 行、**内联拼接**行尾；
 //!     **打印文字泄漏结构性过滤**（note≈已有 bullet 即丢）；幂等。
 //!
 //! 注入落回卡片必须走 `/upload` 重建（xochitl 直写不可见），编排在 bin/daemon，本模块只出新文本。
 
-use base64::Engine as _;
-use serde_json::{json, Value};
+use serde_json::Value;
 use std::collections::HashSet;
 
 /// 一条手写批注：note=手写转写，anchor=它所贴的黑色打印条目原文（仅用于定位）。
@@ -20,39 +19,7 @@ pub struct Annotation {
     pub note: String,
 }
 
-// ── vision 适配器 ───────────────────────────────────────────────────────────
-struct ProviderCfg {
-    style: &'static str, // "openai" | "anthropic"
-    base_url: &'static str,
-    default_model: &'static str,
-}
-
-fn provider_cfg(p: &str) -> Option<ProviderCfg> {
-    Some(match p {
-        "gemini" => ProviderCfg {
-            style: "openai",
-            base_url: "https://generativelanguage.googleapis.com/v1beta/openai",
-            default_model: "gemini-3.6-flash",
-        },
-        "deepseek" => ProviderCfg {
-            style: "openai",
-            base_url: "https://api.deepseek.com",
-            default_model: "deepseek-v4-flash-vision-exp",
-        },
-        "openai" => ProviderCfg {
-            style: "openai",
-            base_url: "https://api.openai.com/v1",
-            default_model: "gpt-4o",
-        },
-        "anthropic" => ProviderCfg {
-            style: "anthropic",
-            base_url: "https://api.anthropic.com/v1",
-            default_model: "claude-sonnet-4-5",
-        },
-        _ => return None,
-    })
-}
-
+// ── vision 适配器（通用调用在 `device_core::vision`，此处只留卡片专属 prompt + 解析）──────
 const CARD_PROMPT: &str = "这是一张 reMarkable「总结卡片」的整页渲染。黑色打印是卡片已有内容\
 （若干槽 + 每槽下 · 开头的书摘条目）；彩色手写（红/蓝等，非黑）是用户贴着某条书摘条目旁边加的批注。\
 任务：只找彩色手写批注，把每段手写转写出来，并指出它贴着哪一条黑色打印的 · 条目。\
@@ -62,60 +29,14 @@ anchor 写它所贴的那条黑色打印条目的原文（去掉开头的 · 和
 手写潦草认不准写最可能的字，不留空、不加问号占位。没有手写的条目不要列。\
 不要输出 JSON 以外的任何字符（不要 markdown 代码围栏、不要解释）。";
 
-/// 整页卡片缩略图 → 手写批注列表。设备发 HTTPS 到对应后端。
+/// 整页卡片缩略图 → 手写批注列表 [{anchor,note}]。通用 HTTP 调用复用 `device_core::vision::call_vision`。
 pub fn transcribe_card(
     image_png: &[u8],
     provider: &str,
     model: Option<&str>,
     key: &str,
 ) -> Result<Vec<Annotation>, String> {
-    let cfg = provider_cfg(provider).ok_or_else(|| format!("未知后端 {provider}"))?;
-    let model = model.unwrap_or(cfg.default_model);
-    let b64 = base64::engine::general_purpose::STANDARD.encode(image_png);
-    let data_uri = format!("data:image/png;base64,{b64}");
-    let agent = ureq::AgentBuilder::new()
-        .timeout(std::time::Duration::from_secs(60))
-        .build();
-
-    let raw = if cfg.style == "anthropic" {
-        let payload = json!({
-            "model": model, "max_tokens": 2048,
-            "messages": [{"role": "user", "content": [
-                {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": b64}},
-                {"type": "text", "text": CARD_PROMPT},
-            ]}],
-        });
-        let body = agent.post(&format!("{}/messages", cfg.base_url))
-            .set("x-api-key", key)
-            .set("anthropic-version", "2023-06-01")
-            .set("Content-Type", "application/json")
-            .send_string(&payload.to_string())
-            .map_err(|e| format!("请求失败：{e}"))?
-            .into_string().map_err(|e| format!("读应答失败：{e}"))?;
-        let resp: Value = serde_json::from_str(&body).map_err(|e| format!("应答非 JSON：{e}；{body:.200}"))?;
-        resp["content"].as_array().map(|a| a.iter()
-            .filter_map(|b| if b["type"] == "text" { b["text"].as_str() } else { None })
-            .collect::<Vec<_>>().join(""))
-            .ok_or_else(|| format!("应答无法解析：{}", resp))?
-    } else {
-        let payload = json!({
-            "model": model, "temperature": 0,
-            "messages": [{"role": "user", "content": [
-                {"type": "text", "text": CARD_PROMPT},
-                {"type": "image_url", "image_url": {"url": data_uri}},
-            ]}],
-        });
-        let body = agent.post(&format!("{}/chat/completions", cfg.base_url))
-            .set("Authorization", &format!("Bearer {key}"))
-            .set("Content-Type", "application/json")
-            .send_string(&payload.to_string())
-            .map_err(|e| format!("请求失败：{e}"))?
-            .into_string().map_err(|e| format!("读应答失败：{e}"))?;
-        let resp: Value = serde_json::from_str(&body).map_err(|e| format!("应答非 JSON：{e}；{body:.200}"))?;
-        resp["choices"][0]["message"]["content"].as_str()
-            .ok_or_else(|| format!("应答无法解析：{}", resp))?
-            .to_string()
-    };
+    let raw = device_core::vision::call_vision(image_png, CARD_PROMPT, provider, model, key)?;
     parse_annotations(&raw)
 }
 

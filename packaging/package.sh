@@ -44,12 +44,12 @@ QOL="$REPO/xovi-extensions/reading-qol"
 FONTMENU="$REPO/xovi-extensions/font-menu"
 TRANS="$REPO/chinese-ime/translations"
 READING_REL="$REPO/reading/device-rs/target/$TARGET/release"
-PKM_REL="$REPO/pkm/target/$TARGET/release"
+PKM_REL="$REPO/knowledge/pkm/target/$TARGET/release"
 SYSD_SRC="$REPO/reading/device-rs/systemd"
 
 READING_BINS="wr-serve wr-download wr-renew wr-fetch"
-PKM_BINS="wr-stars-daemon wr-stars"
-UNITS="cangjie-xovi-reenable.service wr-serve.service wr-renew.service wr-renew.timer wr-stars.service"
+PKM_BINS="cj-stars-daemon cj-stars"
+UNITS="cangjie-xovi-reenable.service wr-serve.service wr-renew.service wr-renew.timer cj-stars.service"
 
 # ── 助手 ──────────────────────────────────────────────────────────────────
 MISSING_REQ=0
@@ -72,7 +72,7 @@ if [ "$BUILD" = "force" ] || { [ "$BUILD" = "auto" ] && [ "$need_build" = "1" ];
     ( cd "$REPO/reading/device-rs" && sh ./build.sh )
     ( cd "$REPO/pkm" && sh ./build.sh )
 elif [ "$BUILD" = "none" ] && [ "$need_build" = "1" ]; then
-    echo "!! 缺 Rust 二进制且 --no-build。先跑 reading/device-rs/build.sh 与 pkm/build.sh"
+    echo "!! 缺 Rust 二进制且 --no-build。先跑 reading/device-rs/build.sh 与 knowledge/pkm/build.sh"
     exit 1
 else
     echo "-- Rust 二进制已就绪，复用（--rebuild 强制重编）"

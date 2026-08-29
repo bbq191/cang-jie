@@ -4,7 +4,7 @@
 
 在 UI 中文化与拼音输入法两条线基本收工（见姊妹文档《[reMarkable 中文化白皮书](../chinese-ime/docs/reMarkable中文化白皮书.md)》《[reMarkable 拼音输入法白皮书](../chinese-ime/docs/reMarkable拼音输入法白皮书.md)》）之后，本文回答一个问题：**这台设备上，下一步做什么最值。**
 
-> 注：中文化核心已归拢进 `chinese-ime/` 子文件夹（2026-08-15 重构）。本文中出现的 `xovi-extensions/cangjie-langhook/`、`pinyin-engine/` 等旧路径一律对应 `chinese-ime/langhook/`、`chinese-ime/pinyin-engine/`；`rm-export/` 仍在顶层。**`weread-client/` 已于 2026-08-23 拆成 `reading/`（阅读）+ `pkm/`（PKM 生产 crate），本文旧引用一律对应新目录。**
+> 注：中文化核心已归拢进 `chinese-ime/` 子文件夹（2026-08-15 重构）。本文中出现的 `xovi-extensions/cangjie-langhook/`、`pinyin-engine/` 等旧路径一律对应 `chinese-ime/langhook/`、`chinese-ime/pinyin-engine/`；`rm-export/` 仍在顶层。**`weread-client/` 已于 2026-08-23 拆成 `reading/`（阅读）+ `knowledge/pkm/`（PKM 生产 crate），本文旧引用一律对应新目录。**
 
 **范围声明：** 本文是方向评估文档，不是实现方案——只做候选功能的价值排序、可行性论证和否决理由，具体实现细节待立项后另开方案文档。评估范围同样限定"本机个人定制"，不涉及破解 DRM、绕过付费校验或分发修改版固件。
 
@@ -68,7 +68,7 @@
 
 ### 3.1 项目分块地图（5 块）
 
-项目从"中文输入法 + 汉化"长成一套设备增强套件后，按功能/产品线组织成 5 块。这是全项目的组织骨架，本文的 P0–P4 路线都落在其中某一块内。目录名已与分块对齐（2026-08-23 把历史名 `weread-client/` 拆成 `reading/`+`pkm/`，2026-08-25 再抽共享底座 `device-core/`）；块3阅读与块5 PKM 都依赖 `device-core`，方向单向无环，见下方 ⚠️。
+项目从"中文输入法 + 汉化"长成一套设备增强套件后，按功能/产品线组织成 5 块。这是全项目的组织骨架，本文的 P0–P4 路线都落在其中某一块内。目录名已与分块对齐（2026-08-23 把历史名 `weread-client/` 拆成 `reading/`+`knowledge/pkm/`，2026-08-25 再抽共享底座 `device-core/`）；块3阅读与块5 PKM 都依赖 `device-core`，方向单向无环，见下方 ⚠️。
 
 | # | 块 | 落点 | 本文对应 | 状态 |
 |---|---|---|---|---|
@@ -76,9 +76,9 @@
 | 2 | **中文化**（显示 + 输入法） | `chinese-ime/` | 两本姊妹白皮书；本文 P3 字体 | 收尾维护 |
 | 3 | **阅读**（微信读书 + EPUB 优化） | `reading/` 主体 | **P0 墨香** + EPUB 优化器（见[阅读白皮书](../reading/docs/reMarkable阅读白皮书.md)） | 端到端真机验证 |
 | 4 | **系统增强**（阅读/显示/笔记 UX） | `xovi-extensions/` + `chinese-ime/langhook`（笔记增强） | **P4**（见[系统增强白皮书](../xovi-extensions/docs/reMarkable系统增强白皮书.md)：点击翻页/快刷/清残影/字体/键盘Mono + 荧光笔吸附） | 真机验证 |
-| 5 | **PKM / 知识管理** | `pkm-semantic/`（原型）+ `pkm/`（Rust 生产 crate，依赖共享底座 `device-core/`） | **★全局待办**（见 [PKM 白皮书](../pkm/docs/reMarkablePKM白皮书.md)）；P1/P2 数据流转是其上游 | 首个能力真机端到端 |
+| 5 | **PKM / 知识管理** | `knowledge/pkm-semantic/`（原型）+ `knowledge/pkm/`（Rust 生产 crate，依赖共享底座 `device-core/`） | **★全局待办**（见 [PKM 白皮书](../knowledge/pkm/docs/reMarkablePKM白皮书.md)）；P1/P2 数据流转是其上游 | 首个能力真机端到端 |
 
-> ⚠️ **跨块共享 + 依赖结构**（详见《[设备端 Rust 架构](reMarkable设备端Rust架构.md)》）：① 块 4 的荧光笔吸附逻辑在 `langhook`（块 2 的 .so）、开关 UI 在 `reading-qol`（块 4），一颗 .so 服务两块，不拆二进制；块 4 的划词查字典代码骑 `pkm/` daemon（跨块，见系统增强白皮书 §08）。② 低层设备能力（`epubindex`/`fswatch`/`inject`/`notebook_rm`）抽成**共享底座 `device-core/`**，块3阅读（`weread-device`）与块5 PKM（`pkm-device`）都依赖它；`pkm/` **生产只依赖 `device-core`**（weread-device 降 dev-dep）→ 生产 daemon 不再编译整条 weread 管线。`reading/` 不反向依赖 `pkm/`，方向单向无环。
+> ⚠️ **跨块共享 + 依赖结构**（详见《[设备端 Rust 架构](reMarkable设备端Rust架构.md)》）：① 块 4 的荧光笔吸附逻辑在 `langhook`（块 2 的 .so）、开关 UI 在 `reading-qol`（块 4），一颗 .so 服务两块，不拆二进制；块 4 的划词查字典代码骑 `knowledge/pkm/` daemon（跨块，见系统增强白皮书 §08）。② 低层设备能力（`epubindex`/`fswatch`/`inject`/`notebook_rm`）抽成**共享底座 `device-core/`**，块3阅读（`weread-device`）与块5 PKM（`pkm-device`）都依赖它；`knowledge/pkm/` **生产只依赖 `device-core`**（weread-device 降 dev-dep）→ 生产 daemon 不再编译整条 weread 管线。`reading/` 不反向依赖 `knowledge/pkm/`，方向单向无环。
 
 ## 04｜已否决方向及理由
 
@@ -126,7 +126,7 @@ PPI（Move 为固定硬件参数）、Gallery 3 白态偏灰、色彩对比度�
 **状态**：**P0 全链路真机端到端验证通过**——下载/注入/双向划线想法同步/内联画回/EPUB 优化/整页墨香 app/阅读器菜单/荧光笔汉字吸附。当前真实剩余风险只有 ② 翻页硬件天花板（Gallery 3 物理刷新，非软件可解）+ ③ 协议脆弱性（上游一改需真机回归）。
 
 - **§5.7（并入阅读白皮书 §07）· 通用 EPUB 优化器 + 阅读体验做到极致**：下书 EPUB 组装升级（整章一页/多级目录/脚注内联）、xochitl 弹窗脚注判死（穷尽实测负结论）、通用 EPUB 优化器（字体解锁/破脚注互指/封面拉伸/去冗余目录页）、无感自动优化 + 原生回收站通道（`trash-agent.qmd` 走 `selectionMoveToTrash` 原生代码路）。全真机验证。
-- **§5.8（迁至《[PKM 白皮书](../pkm/docs/reMarkablePKM白皮书.md)》）· ★ 全局待办**——PKM 语义引擎首个能力（红笔画星 → 后台 Rust daemon 自动汇总总结卡片）已迁入 PKM 白皮书，见块5。
+- **§5.8（迁至《[PKM 白皮书](../knowledge/pkm/docs/reMarkablePKM白皮书.md)》）· ★ 全局待办**——PKM 语义引擎首个能力（红笔画星 → 后台 Rust daemon 自动汇总总结卡片）已迁入 PKM 白皮书，见块5。
 
 ## 06｜P1：手写识别（手写 → 文字/结构 → 笔记生态）（块⑥）
 
@@ -136,13 +136,13 @@ PPI（Move 为固定硬件参数）、Gallery 3 白态偏灰、色彩对比度�
 
 **立项判据 AMBER-GREEN + 已落地**：识别质量 de-risk 通过（工整~100%/快写~60%，需人工校对）；host cardhw（卡片手写批注→内联注入）+ freeform export 真机通；**端化 cardhw A1/A2 真机通**（设备自主调云→/upload 注入，关笔记事件触发）。
 
-> **深内容全部下沉块⑥白皮书**：de-risk 结论、cardhw 空间关联/内联注入/泄漏过滤、端化 A1/A2 架构（含 SVG 流程图）、反解基础设施、rmkit-cn 借鉴——见《[手写识别白皮书](../pkm-semantic/handwriting/docs/reMarkable手写识别白皮书.md)》。路线图只留优先级定位。
+> **深内容全部下沉块⑥白皮书**：de-risk 结论、cardhw 空间关联/内联注入/泄漏过滤、端化 A1/A2 架构（含 SVG 流程图）、反解基础设施、rmkit-cn 借鉴——见《[手写识别白皮书](../knowledge/pkm-semantic/handwriting/docs/reMarkable手写识别白皮书.md)》。路线图只留优先级定位。
 
 ## 07｜P2：手写笔记反解与导出（含手写-文字 anchor）（块⑥）
 
 **做什么**：rmscene 反解 `.rm`，按原生「手写 anchor 到 typed text 字符位」把「打字正文 + 手写批注」混排笔记结构化导出。是 P1 的反解地基（承接原「闭环3」成果，与 PKM 共用 `device-core`）。**导出侧（混排笔记完整离开设备）无人做**，是「设备创作 → 生态沉淀」闭环最后一环，全 host 侧、设备零 hook、OTA 受灾面≈0。
 
-> 详见《[手写识别白皮书](../pkm-semantic/handwriting/docs/reMarkable手写识别白皮书.md)》§05。
+> 详见《[手写识别白皮书](../knowledge/pkm-semantic/handwriting/docs/reMarkable手写识别白皮书.md)》§05。
 
 ## 08｜P3：中文字体渲染优化
 

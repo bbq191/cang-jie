@@ -35,8 +35,8 @@ ALLOW="$HERE/firmware-allowlist.txt"
 XOCHITL=/usr/bin/xochitl
 SYSD=/usr/lib/systemd/system
 # 开机自恢复单元集（权威表 = restore-after-ota.sh；wr-renew.service 是 static、不建 .wants）
-UNITS="cangjie-xovi-reenable.service wr-serve.service wr-renew.service wr-renew.timer wr-stars.service"
-WANTS_MU="cangjie-xovi-reenable.service wr-serve.service wr-stars.service"   # multi-user.target.wants
+UNITS="cangjie-xovi-reenable.service wr-serve.service wr-renew.service wr-renew.timer cj-stars.service"
+WANTS_MU="cangjie-xovi-reenable.service wr-serve.service cj-stars.service"   # multi-user.target.wants
 WANTS_TM="wr-renew.timer"                                                    # timers.target.wants
 
 FORCE=0
@@ -172,7 +172,7 @@ fi
 # cangjie-xovi-reenable 会重启 xochitl，留给下次开机触发，不在装机时打断当前会话。
 echo
 echo "── 启动常驻服务（不含 reenable：xochitl 已注入）──"
-systemctl start wr-stars.service 2>/dev/null && echo "-- wr-stars（★待办）已起" || echo "-- wr-stars 未起（查 journalctl -u wr-stars）"
+systemctl start cj-stars.service 2>/dev/null && echo "-- cj-stars（★待办）已起" || echo "-- cj-stars 未起（查 journalctl -u cj-stars）"
 systemctl start wr-serve.service 2>/dev/null && echo "-- wr-serve（墨香面板 127.0.0.1:8777）已起" || echo "-- wr-serve 未起（缺 credentials.json 属正常，扫码登录后自恢复）"
 systemctl start wr-renew.timer 2>/dev/null || true
 
@@ -185,7 +185,7 @@ CJ="$(grep -c cangjie-langhook /proc/"$NEW_PID"/maps 2>/dev/null || echo 0)"
 QR="$(grep -c qt-resource-rebuilder /proc/"$NEW_PID"/maps 2>/dev/null || echo 0)"
 echo "  xochitl   : is-active=$STATE  PID=$NEW_PID"
 echo "  注入      : cangjie=$CJ 段  qrr=$QR 段  (都期望 >0)"
-echo "  常驻服务  : wr-stars=$(systemctl is-active wr-stars 2>/dev/null || echo ?)  wr-serve=$(systemctl is-active wr-serve 2>/dev/null || echo ?)"
+echo "  常驻服务  : cj-stars=$(systemctl is-active cj-stars 2>/dev/null || echo ?)  wr-serve=$(systemctl is-active wr-serve 2>/dev/null || echo ?)"
 echo "═══════════════════════════════════════════════════"
 if [ "$STATE" = "active" ] && [ "${CJ:-0}" -gt 0 ] && [ "${QR:-0}" -gt 0 ]; then
     echo "✅ 安装完成（幂等，可重复跑）。"
