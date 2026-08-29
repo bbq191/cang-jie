@@ -20,6 +20,10 @@ path = "src/bin/wr_stars_daemon.rs"
 name = "wr-nbtest"
 path = "src/bin/wr_nbtest.rs"
 
+[[bin]]
+name = "wr-cardhw"
+path = "src/bin/wr_cardhw.rs"
+
 [dependencies]
 # 复用设备端共享底座 epubindex（页→章）/fswatch（inotify 封装）/inject（写 xochitl 书库）/
 # notebook_rm（造 .rm 笔记页）——抽成独立 device-core crate 后，pkm **只依赖这一小坨**、
