@@ -1,6 +1,6 @@
 # B1 · 手写笔记 → 待校对 Markdown → PKM 库
 
-reMarkable 上的中文手写笔记，host 侧转成 Markdown 进 Obsidian/PKM。**零设备风险**（只读设备文件、逻辑全在 host），定位是**辅助转写 + 人工校对**——不是无人值守 OCR。
+reMarkable 上的中文手写笔记，host 侧转成 Markdown 进笔记生态/PKM。**零设备风险**（只读设备文件、逻辑全在 host），定位是**辅助转写 + 人工校对**——不是无人值守 OCR。
 
 路线图 P1 的落地。识别质量 de-risk 结论（`docs/reMarkable功能路线图白皮书.md` §06）：**工整中文手写≈100%，快写连笔~60%（局部整段崩）**；传统印刷 OCR（tesseract）判死；喂原生缩略图优于自制渲染。所以本工具默认收割 xochitl 缩略图 + 多模态 vision + 人工校对。
 
@@ -8,7 +8,7 @@ reMarkable 上的中文手写笔记，host 侧转成 Markdown 进 Obsidian/PKM�
 
 ```
 取数据 → 取图 → 识别 → 待校对 bundle → （你）校对 → PKM
-scp .rm/    缩略图    vision      vault/<书名>.md      改错字      Obsidian
+scp .rm/    缩略图    vision      vault/<书名>.md      改错字      笔记生态
 缩略图/元数据 优先，   四家可选     每页图内嵌+草稿       + status     库
 （切页/退出   缺则                 +⚠待校对标记         置已校对
  后才落盘）   hw_render 兜底
@@ -21,7 +21,7 @@ scp .rm/    缩略图    vision      vault/<书名>.md      改错字      Obsid
 uv run python export.py --name 笔记本
 
 # 指定 UUID + 换后端（省钱走 deepseek）
-uv run python export.py --doc <uuid> --provider deepseek --out ~/obsidian/inbox
+uv run python export.py --doc <uuid> --provider deepseek --out ~/notes/inbox
 
 # 不碰设备，跑已拉好的本地镜像
 uv run python export.py --src /path/to/xochitl-mirror --doc <uuid>
