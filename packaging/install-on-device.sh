@@ -24,6 +24,8 @@
 #   ./install.sh                装（固件门把关）
 #   ./install.sh --force        固件门不命中也强装（自动登记当前哈希）
 #   ./install.sh --no-systemd   只装功能层，不碰 /usr（不装开机持久；重启后手动 xovi/start）
+#   ./install.sh --ssh-wlan     额外开 reMarkable 官方 SSH-over-WLAN（脱 USB 用 WiFi 管理设备；
+#                               ⚠ SSH 暴露在 WiFi 网段，默认不开；关：设备上 rm-ssh-over-wlan off）
 # ═══════════════════════════════════════════════════════════════════════════
 set -eu
 
@@ -41,10 +43,12 @@ WANTS_TM="wr-renew.timer"                                                    # t
 
 FORCE=0
 DO_SYSTEMD=1
+SSH_WLAN=0
 for a in "$@"; do
     case "$a" in
         --force) FORCE=1 ;;
         --no-systemd) DO_SYSTEMD=0 ;;
+        --ssh-wlan) SSH_WLAN=1 ;;   # opt-in：开 reMarkable 官方 SSH-over-WLAN（脱 USB 用 WiFi 管理设备）
         *) echo "!! 未知参数：$a"; exit 2 ;;
     esac
 done
@@ -175,6 +179,19 @@ echo "── 启动常驻服务（不含 reenable：xochitl 已注入）──"
 systemctl start cj-stars.service 2>/dev/null && echo "-- cj-stars（★待办）已起" || echo "-- cj-stars 未起（查 journalctl -u cj-stars）"
 systemctl start wr-serve.service 2>/dev/null && echo "-- wr-serve（墨香面板 127.0.0.1:8777）已起" || echo "-- wr-serve 未起（缺 credentials.json 属正常，扫码登录后自恢复）"
 systemctl start wr-renew.timer 2>/dev/null || true
+
+# ── 6.5 opt-in：SSH over WLAN（脱 USB，用 WiFi 管理设备）──────────────────────
+# reMarkable 官方机制（/usr/bin/rm-ssh-over-wlan：建 marker + dropbear-wlan.socket，持久）。
+# ⚠ 安全：开后 SSH 暴露在 WiFi 网段——**默认不开**，仅 --ssh-wlan 显式 opt-in。关：rm-ssh-over-wlan off。
+if [ "$SSH_WLAN" = "1" ]; then
+    echo
+    if command -v rm-ssh-over-wlan >/dev/null 2>&1; then
+        rm-ssh-over-wlan on && echo "-- SSH over WLAN 已开（ssh root@<设备WiFi_IP>；关：rm-ssh-over-wlan off）" \
+            || echo "-- SSH over WLAN 开启失败（查 systemctl status dropbear-wlan.socket）"
+    else
+        echo "-- 未找到 rm-ssh-over-wlan（该固件不支持？），跳过 --ssh-wlan"
+    fi
+fi
 
 # ── 7. 健康检查 ──────────────────────────────────────────────────────────
 echo
