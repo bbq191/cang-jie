@@ -107,7 +107,7 @@ copy_opt "$IME_DEPLOY/fontconfig-cangjie.conf" "$PAY"
 # 2c qmd（候选栏必需；其余系统增强/字体菜单/设置门户可选）
 copy_req "$IME_DEPLOY/candidatebar.qmd" "$PAY"
 copy_opt "$IME_DEPLOY/settings-keyboard-zh.qmd" "$PAY"
-for q in reading-qol-config tap-page-turn fast-mono-reading page-refresh keyboard-mono settings-reading-enhance cardhw-notify; do
+for q in reading-qol-config tap-page-turn fast-mono-reading page-refresh keyboard-mono settings-reading-enhance cardhw-notify reader-link-return; do
     copy_opt "$QOL/$q.qmd" "$PAY"
 done
 copy_opt "$FONTMENU/add-reading-fonts.qmd" "$PAY"

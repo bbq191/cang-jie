@@ -1,0 +1,39 @@
+; reader-link-return.qmd —— 延长「跟随内部链接（脚注等）后返回」浮标的超时（块③阅读）
+;
+; 【问题】点脚注上标跳到注释后，reMarkable 阅读器弹一条带「Back to page N」的返回浮标，
+;   让你跳回原处。但原生超时只 8 秒（DeviceSceneView 的 onDisplayLinkNotification →
+;   root.showNotification(..., 8000)），读完注释一抬头常已消失、找不回原处。
+;
+; 【机制】（离线反编译 DocumentView.qml 坐实）
+;   - 阅读器 SceneView（id: sceneView）跟随链接时发 signal displayLinkNotification(linkedPage, currPage)。
+;   - DocumentView（id: root）里 sceneView 的内联 handler onDisplayLinkNotification 调
+;     root.showNotification({message,action:"Back to page N",onClicked→openPage(currPage,SaveAndRestore)}, 8000)。
+;   - showNotification 把 notificationBar.timerInterval=8000、messageTimer(interval 绑定它).restart()。
+;
+; 【做法】不重建通知内容、只延长超时：外挂一个 Connections 也监听同一 signal，在原生 handler
+;   之后（Qt.callLater 保证跑在同步 emit 之后、否则可能被原生 8000 覆盖）把 timerInterval 改成 20s
+;   再 restart messageTimer → 复用原生刚建好的返回浮标内容、只是多留 12 秒。原生 8000 那次先跑、
+;   我这次后到覆盖，用户只见最终 20s。想调时长改下面 20000 即可。
+;
+; ⚠ 触碰 notificationBar.timerInterval / messageTimer 是 DocumentView 内部 id；固件若改名则本 hook
+;   失效（qrr fail-safe 只 log 不崩，返回浮标退回原生 8s，功能不受损）。锚点 TRAVERSE ?#root →
+;   LOCATE AFTER DeviceSceneView#sceneView（sceneView 是 root 直接子，831 行）。
+
+AFFECT /qml/device/view/documentview/DocumentView.qml
+    TRAVERSE ?#root
+        LOCATE AFTER DeviceSceneView#sceneView
+        INSERT {
+            Connections {
+                objectName: "cjLinkReturnExtend"
+                target: sceneView
+                // 延长「返回」浮标超时（8s→20s）。Qt.callLater 确保跑在原生 handler 之后。
+                function onDisplayLinkNotification(linkedPage, currPage) {
+                    Qt.callLater(function() {
+                        notificationBar.timerInterval = 20000;
+                        messageTimer.restart();
+                    });
+                }
+            }
+        }
+    END TRAVERSE
+END AFFECT
