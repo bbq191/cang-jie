@@ -69,6 +69,13 @@ AFFECT /qml/device/view/main/MainView.qml
                                 "timeout": 4000
                             });
                         }
+                    } else if (st.state === "mismatch") {
+                        // 锚点关联路径：识别条数≠手写块数，宁缺勿造未注入，提示手动核对。
+                        root.notificationQueue.enqueue({
+                            "text": book + "识别 " + n + " 条与手写块数不符，未注入——请重开卡片核对",
+                            "icon": "qrc:/ark/icons/warning_circle",
+                            "timeout": 6000
+                        });
                     } else if (st.state === "failed") {
                         root.notificationQueue.enqueue({
                             "text": book + "手写识别失败（网络或识别错误）",

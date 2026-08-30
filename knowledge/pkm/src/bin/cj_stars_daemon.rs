@@ -379,15 +379,22 @@ fn settle(cfg: &Cfg, observe: bool, dirty: Option<&HashSet<String>>) {
                 }
                 let title = book_title(&cardhw::read_visible_name(&dir, u));
                 write_status(Path::new(CARDHW_STATUS_PATH), "processing", &title, 0, "");
-                // target_name=None → 直接写回真卡（不再经影子卡）。
-                match cardhw::process_card_doc(&dir, u, &cfg.cardhw_provider, cfg.cardhw_model.as_deref(), k, &card_folder, true, None) {
+                // 锚点确定性关联路径（策略 A）：纯转写 + .rm anchor 分桶 zip + 计数护栏，直接写回真卡。
+                match cardhw::process_card_doc(&dir, u, &cfg.cardhw_provider, cfg.cardhw_model.as_deref(), k, &card_folder, true) {
                     Ok(Some(o)) => {
                         accumulate_usage(Path::new(CARDHW_USAGE_PATH), &cfg.cardhw_provider, o.usage);
-                        if o.action.is_some() {
+                        if let Some((m, n)) = o.mismatch {
+                            // 识别条数≠手写块数：无可靠对应、未注入。标 done 免对同一 .rm 反复调云
+                            // （用户重写→hash 变→自然重试）。
+                            done.insert(hash.clone());
+                            append_cardhw_done(&hash);
+                            write_status(Path::new(CARDHW_STATUS_PATH), "mismatch", &title, m, &format!("手写 {n} 处"));
+                            println!("[cardhw] 《{title}》识别 {m} 条 vs 手写 {n} 处，条数不符未注入（宁缺勿造，请重开卡片核对）");
+                        } else if o.action.is_some() {
                             done.insert(hash.clone());
                             append_cardhw_done(&hash);
                             write_status(Path::new(CARDHW_STATUS_PATH), "done", &title, o.applied.len(), "");
-                            println!("[cardhw] 《{title}》直接注入 {} 条并 /upload（手写消化，识别有误请在卡片上手动改）", o.applied.len());
+                            println!("[cardhw] 《{title}》锚点关联注入 {} 条并 /upload（识别有误请在卡片上手动改）", o.applied.len());
                         } else {
                             write_status(Path::new(CARDHW_STATUS_PATH), "done", &title, 0, "未提取到新手写");
                         }

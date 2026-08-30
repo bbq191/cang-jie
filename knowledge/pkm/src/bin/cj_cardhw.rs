@@ -65,7 +65,7 @@ fn main() {
 
     for d in &docs {
         eprintln!("-- 处理卡片 {}（设备调 {provider}）…", &d[..8.min(d.len())]);
-        match cardhw::process_card_doc(&dir, d, &provider, model.as_deref(), &key, &folder, apply, None) {
+        match cardhw::process_card_doc(&dir, d, &provider, model.as_deref(), &key, &folder, apply) {
             Ok(None) => continue, // 该本无手写页
             Ok(Some(o)) => {
                 println!("《{}》页 {}：", o.visible_name, &o.page_id[..8.min(o.page_id.len())]);
@@ -77,6 +77,9 @@ fn main() {
                 }
                 for u in &o.unmatched {
                     println!("  ✗ 未匹配：anchor={:?} ← {}", u.anchor, u.note);
+                }
+                if let Some((m, n)) = o.mismatch {
+                    println!("  ⚠ 识别 {m} 条、手写块 {n} 处，条数不符——未注入（宁缺勿造）。重开卡片手动核对或重写更清楚。");
                 }
                 match o.action {
                     Some(act) => println!("✅ 卡片已{act}并 /upload（{} 条注入，手写消化）。重开即见。", o.applied.len()),
