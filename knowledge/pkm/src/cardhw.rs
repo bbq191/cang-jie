@@ -1,55 +1,20 @@
 //! 端化 cardhw（块⑥「手写识别」，代码骑 pkm daemon、概念归块⑥）：
-//! 卡片手写批注 → **设备自己调云** vision 空间关联 → 内联注入书摘行。
+//! 卡片手写批注 → **设备自己调云纯转写** → 按 .rm anchor 确定性关联 → 内联注入书摘行。
 //!
-//! host 版（`pkm-semantic/handwriting/cardhw.py`）的设备端 Rust 移植。两块逻辑：
-//!   - `transcribe_card`：整页缩略图 → 多模态 vision（通用调用在 `device_core::vision`）→ [{anchor,note}]。
-//!     卡片专属 prompt + JSON 解析留本模块，四后端 HTTP 调用复用共享底座。
-//!   - `inject_inline`：转写按 anchor 匹配到书摘 bullet 行、**内联拼接**行尾；
-//!     **打印文字泄漏结构性过滤**（note≈已有 bullet 即丢）；幂等。
+//! **治本设计（策略 A，真机坐实）**：关联不由 vision 猜（那是「杜纂」根因），而由 `cardanchor`
+//! 从 .rm 的 v6 anchor 机制确定性导出。本模块只负责：
+//!   - `transcribe_notes`：整页缩略图 → 多模态 vision（`device_core::vision`）→ **有序纯手写转写**
+//!     （只认字、不猜位；`expect_n` 计数提示稳住条数抖动）。
+//!   - `inject_by_anchor`：把有序转写 zip 进 `CardPage` 的 anchor 分桶、内联拼接行尾；计数护栏
+//!     （条数不符不注入）+ 打印泄漏过滤 + 幂等。
 //!
 //! 注入落回卡片必须走 `/upload` 重建（xochitl 直写不可见），编排在 bin/daemon，本模块只出新文本。
 
 use crate::cardanchor::CardPage;
 use device_core::vision::Usage;
 use serde_json::Value;
-use std::collections::HashSet;
 
-/// 一条手写批注：note=手写转写，anchor=它所贴的黑色打印条目原文（仅用于定位）。
-#[derive(Debug, Clone, PartialEq)]
-pub struct Annotation {
-    pub anchor: String,
-    pub note: String,
-}
-
-// ── vision 适配器（通用调用在 `device_core::vision`，此处只留卡片专属 prompt + 解析）──────
-// ⚠ 遗留路径（vision 猜关联）：`CARD_PROMPT`/`transcribe_card`/`parse_annotations`/`inject_inline`
-//   是杜纂根因所在的旧法，已被 `NOTES_PROMPT`+`transcribe_notes`+`inject_by_anchor`（锚点确定性
-//   关联）取代、`process_card_doc` 不再调用。暂留作 anchor 路径真机验证期间的对照/回退，
-//   待真机坐实 anchor 路径后可整段删除。
-const CARD_PROMPT: &str = "这是一张 reMarkable「总结卡片」整页渲染。页面有（甲）印刷体书摘条目（规整、等宽的机器字，每条以 · 开头）\
-和（乙）少量手写批注（笔迹潦草、有连笔、粗细不均、大小歪斜，是用户贴着某条书摘旁边加的想法；可能任意颜色，也可能和印刷一样黑——\
-别只靠颜色、要靠字形分）。任务：把每一条手写批注逐字转写出来，并指出它物理上就近贴着的那一条印刷书摘。\
-【最重要三条铁律，违反即错】\
-1) **一条手写只输出一次**——只对应它垂直位置上最贴近的那一条印刷书摘，绝不把同一条手写重复分配到两条或多条书摘上。\
-2) **没有手写贴着的印刷书摘，绝对不要出现在结果里**；宁可少输出，也绝不为某条书摘凭空补一条手写。\
-3) **结果条数必须严格等于你在图上实际看到的手写笔迹块数**——先在心里数清有几处手写笔迹，就只输出几条，不多不少。\
-判位靠手写笔迹与印刷行的垂直对齐（写在哪一行的右侧/旁边就归哪一行）。\
-note 只写手写的字、**绝不含任何印刷字**（哪怕手写叠在印刷条目上，也只留手写那部分）；拿不准是印刷还是手写就宁可不写。\
-anchor 抄它所贴那条印刷书摘的原文（去掉开头 · 和空格，照抄印刷字、别加手写）。手写潦草认不准写最可能的字，不留空、不加问号。\
-只输出一个 JSON 数组，每元素 {\"anchor\":\"印刷条目原文\",\"note\":\"手写逐字转写\"}，不要 markdown 围栏、不要解释、不要任何其它字符。";
-
-/// 整页卡片缩略图 → 手写批注列表 [{anchor,note}] + token 消耗。通用 HTTP 调用复用 `device_core::vision::call_vision`。
-pub fn transcribe_card(
-    image_png: &[u8],
-    provider: &str,
-    model: Option<&str>,
-    key: &str,
-) -> Result<(Vec<Annotation>, Usage), String> {
-    let resp = device_core::vision::call_vision(image_png, CARD_PROMPT, provider, model, key)?;
-    Ok((parse_annotations(&resp.text)?, resp.usage))
-}
-
-// ── 策略 A：纯转写（关联交给 .rm anchor，vision 只认字）──────────────────────
+// ── vision 纯转写（关联交给 .rm anchor，vision 只认字）──────────────────────
 /// 纯转写 prompt——**只**要手写逐字、top-to-bottom、一行一条，**不做**任何空间关联。
 /// 关联由 `cardanchor` 从 .rm 的 anchor 机制确定性导出，故此处剥离 vision 的猜位职责
 /// （杜纂根因）。要求排除印刷体（书摘条目），只出手写。
@@ -99,25 +64,7 @@ fn parse_notes(raw: &str) -> Vec<String> {
         .collect()
 }
 
-/// 从模型应答里抠出 JSON 数组 → [{anchor,note}]，清洗 note 两端标点。
-fn parse_annotations(raw: &str) -> Result<Vec<Annotation>, String> {
-    let s = raw.trim().trim_start_matches("```json").trim_start_matches("```").trim_end_matches("```").trim();
-    let (lb, rb) = (s.find('['), s.rfind(']'));
-    let (lb, rb) = match (lb, rb) {
-        (Some(l), Some(r)) if r > l => (l, r),
-        _ => return Err(format!("应答非 JSON 数组：{}", &raw.chars().take(200).collect::<String>())),
-    };
-    let arr: Value = serde_json::from_str(&s[lb..=rb]).map_err(|e| format!("JSON 解析失败：{e}"))?;
-    let trim_pat: &[char] = &['，', '。', ',', '.', '、', '；', ';', '：', ':', ' ', '\t'];
-    Ok(arr.as_array().map(|a| a.iter().filter_map(|d| {
-        let note = d["note"].as_str()?.trim().trim_matches(trim_pat).to_string();
-        if note.is_empty() { return None; }
-        let anchor = d["anchor"].as_str().unwrap_or("").trim().trim_start_matches('·').trim().to_string();
-        Some(Annotation { anchor, note })
-    }).collect()).unwrap_or_default())
-}
-
-// ── 注入（移植 host cardhw.py）─────────────────────────────────────────────
+// ── 注入辅助（bullet 解析 + 打印泄漏过滤，anchor 注入复用）──────────────────
 /// `   · 只想睡觉` → `只想睡觉`；非 bullet 行返回 None。
 fn bullet_body(line: &str) -> Option<&str> {
     let s = line.trim();
@@ -164,7 +111,7 @@ fn strip_printed_prefix(note: &str, bodies: &[&str]) -> String {
         if b.is_empty() { continue; }
         if let Some(rest) = n.strip_prefix(b) {
             let rest = rest.trim_start_matches(punct).trim();
-            if !rest.is_empty() && best.as_ref().map_or(true, |(l, _)| b.chars().count() > *l) {
+            if !rest.is_empty() && best.as_ref().is_none_or(|(l, _)| b.chars().count() > *l) {
                 best = Some((b.chars().count(), rest.to_string()));
             }
         }
@@ -172,71 +119,13 @@ fn strip_printed_prefix(note: &str, bodies: &[&str]) -> String {
     best.map(|(_, r)| r).unwrap_or_else(|| n.to_string())
 }
 
-/// 在 bullet 行里找与 anchor 最相似的行（阈值 0.5；子串直接给高分）；已用过的行跳过。
-fn best_line(lines: &[String], anchor: &str, used: &HashSet<usize>) -> Option<usize> {
-    let (mut best_i, mut best_r) = (None, 0.5_f64);
-    for (i, line) in lines.iter().enumerate() {
-        if used.contains(&i) { continue; }
-        if let Some(body) = bullet_body(line) {
-            let mut r = sim(anchor, body);
-            if !anchor.is_empty() && body.contains(anchor) { r = r.max(0.9); }
-            if r > best_r { best_i = Some(i); best_r = r; }
-        }
-    }
-    best_i
-}
-
 /// 注入结果。
 pub struct InjectResult {
     pub text: String,
-    pub applied: Vec<String>,     // 拼接后的条目
-    pub leaked: Vec<Annotation>,  // 疑似打印泄漏被丢弃
-    pub unmatched: Vec<Annotation>,
-    /// anchor 路径专用：Some((识别条数, 手写块数))=计数护栏触发、未注入（宁缺勿造）。
+    pub applied: Vec<String>,   // 拼接后的条目
+    pub leaked: Vec<String>,    // 疑似打印泄漏 / 幂等重复被丢弃的 note 文本（诊断用）
+    /// 计数护栏：Some((识别条数, 手写块数))=条数不符、未注入（宁缺勿造）。
     pub mismatch: Option<(usize, usize)>,
-}
-
-/// 把每条 {anchor,note} 内联拼接到 anchor 所指 bullet 行尾。幂等；打印泄漏过滤。
-pub fn inject_inline(text: &str, anns: &[Annotation]) -> InjectResult {
-    let mut lines: Vec<String> = text.split('\n').map(|s| s.to_string()).collect();
-    let bodies: Vec<&str> = lines.iter().filter_map(|l| bullet_body(l)).collect();
-    // 注：bodies 借用 lines，下面改 lines 前先算完 leak 判定所需，故先克隆一份 owned。
-    let bodies_owned: Vec<String> = bodies.iter().map(|s| s.to_string()).collect();
-    let mut res = InjectResult { text: String::new(), applied: vec![], leaked: vec![], unmatched: vec![], mismatch: None };
-    let mut used: HashSet<usize> = HashSet::new();
-    let mut seen_notes: HashSet<String> = HashSet::new(); // 已注入的手写文本，防 vision 把一条手写重复安到多行（杜纂护栏）
-    for a in anns {
-        let bref: Vec<&str> = bodies_owned.iter().map(|s| s.as_str()).collect();
-        // 先剥掉 note 里混入的印刷条目前缀（低分辨率下 vision 常把「印刷+手写」连成一串）
-        let note = strip_printed_prefix(&a.note, &bref);
-        // 剥完仍整体雷同某条印刷 bullet（或剥空）→ 判定纯泄漏，丢弃。
-        if note.is_empty() || looks_printed(&note, &bref) {
-            res.leaked.push(a.clone());
-            continue;
-        }
-        // 同一条手写文本只注入一次：vision 常把一条手写重复分配到相邻多行（384px 归位不准的表现）→ 丢重复。
-        if !seen_notes.insert(note.clone()) {
-            res.leaked.push(a.clone());
-            continue;
-        }
-        match best_line(&lines, &a.anchor, &used) {
-            None => res.unmatched.push(a.clone()),
-            Some(i) => {
-                used.insert(i);
-                let trimmed = lines[i].trim_end().to_string();
-                if trimmed.ends_with(&note) {
-                    // 该行已以此 note 结尾：幂等重跑（之前已注入）或 note 本就是这行印刷内容（泄漏回环）
-                    // → 不产生新变化，**不计入 applied**（否则误报"已注入"→ sync 误判/空转上传）。
-                    res.leaked.push(a.clone());
-                    continue;
-                }
-                lines[i] = format!("{} {}", trimmed, note);
-                res.applied.push(bullet_body(&lines[i]).unwrap_or(lines[i].trim()).to_string());
-            }
-        }
-    }
-    res.text = lines.join("\n");
-    res
 }
 
 /// 锚点确定性关联注入（策略 A 治本）：消费已解析的 `CardPage`（分桶 top-to-bottom）
@@ -249,7 +138,6 @@ pub fn inject_by_anchor(page: &CardPage, notes: &[String]) -> InjectResult {
         text: page.full.clone(),
         applied: vec![],
         leaked: vec![],
-        unmatched: vec![],
         mismatch: None,
     };
 
@@ -261,7 +149,7 @@ pub fn inject_by_anchor(page: &CardPage, notes: &[String]) -> InjectResult {
     for n in notes {
         let c = strip_printed_prefix(n, &bref);
         if c.is_empty() || looks_printed(&c, &bref) {
-            res.leaked.push(Annotation { anchor: String::new(), note: n.clone() });
+            res.leaked.push(n.clone());
             continue;
         }
         clean.push(c);
@@ -277,11 +165,10 @@ pub fn inject_by_anchor(page: &CardPage, notes: &[String]) -> InjectResult {
     let mut lines_mut = page.lines.clone();
     for (note, plan) in clean.iter().zip(page.plans.iter()) {
         let i = plan.line;
-        let body = bullet_body(&lines_mut[i]).unwrap_or("").to_string();
         let trimmed = lines_mut[i].trim_end().to_string();
         if trimmed.ends_with(note.as_str()) {
             // 幂等重跑 / note 恰为该行印刷内容 → 不产生新变化，不计 applied。
-            res.leaked.push(Annotation { anchor: body, note: note.clone() });
+            res.leaked.push(note.clone());
             continue;
         }
         lines_mut[i] = format!("{} {}", trimmed, note);
@@ -297,8 +184,7 @@ pub struct ProcessOutcome {
     pub visible_name: String,
     pub page_id: String,
     pub applied: Vec<String>,      // 拼接后条目
-    pub leaked: Vec<Annotation>,   // 打印泄漏丢弃
-    pub unmatched: Vec<Annotation>,
+    pub leaked: Vec<String>,       // 打印泄漏 / 幂等重复丢弃的 note 文本
     pub action: Option<String>,    // Some("创建"/"更新")=已 /upload；None=dry-run 或无变化
     pub usage: Usage,              // 本次调云 token 消耗（转写发生才非零；无手写页时零）
     /// 计数护栏：Some((识别条数, 手写块数))=条数不符未注入（识别不稳，请重开卡片手动核对）。
@@ -363,7 +249,7 @@ pub fn process_card_doc(
     }
     Ok(Some(ProcessOutcome {
         visible_name: vn, page_id,
-        applied: r.applied, leaked: r.leaked, unmatched: r.unmatched, action, usage,
+        applied: r.applied, leaked: r.leaked, action, usage,
         mismatch: r.mismatch,
     }))
 }
@@ -373,10 +259,6 @@ mod tests {
     use super::*;
 
     const HW0: &[u8] = include_bytes!("../testdata/cardhw/hw0.rm");
-
-    fn ann(anchor: &str, note: &str) -> Annotation {
-        Annotation { anchor: anchor.into(), note: note.into() }
-    }
 
     #[test]
     fn parse_notes_basic() {
@@ -424,79 +306,15 @@ mod tests {
         assert_eq!(r.mismatch, Some((4, 5)), "过滤后 4≠5 触发护栏");
     }
 
-
-    const CARD: &str = "🟡 金句·要记的句：\n   · 她\n   · 只想睡觉\n🔵 洞见：\n   · 她站在候车队伍中\n🔗 关联 → ID：";
-
     #[test]
-    fn inject_inline_to_correct_bullet() {
-        let anns = [ann("只想睡觉", "但很累了"), ann("她站在候车队伍中", "一脸茫然")];
-        let r = inject_inline(CARD, &anns);
-        assert!(r.text.contains("· 只想睡觉 但很累了"), "拼到对的行尾");
-        assert!(r.text.contains("· 她站在候车队伍中 一脸茫然"));
-        assert!(r.leaked.is_empty() && r.unmatched.is_empty());
-    }
-
-    #[test]
-    fn anchor_short_not_mismatched() {
-        // anchor "她" 应匹配 "· 她"（sim=1）而非 "· 她站在…"
-        let r = inject_inline(CARD, &[ann("她", "买想睡觉")]);
-        assert!(r.text.contains("· 她 买想睡觉"), "短 anchor 精确匹配");
-        assert!(!r.text.contains("候车队伍中 买想睡觉"));
-    }
-
-    #[test]
-    fn printed_leak_dropped() {
-        // vision 误把打印 bullet "只想睡觉" 当手写挂给 anchor "她" → 应被过滤
-        let r = inject_inline(CARD, &[ann("她", "只想睡觉")]);
-        assert_eq!(r.leaked.len(), 1, "打印泄漏被丢");
-        assert!(r.applied.is_empty());
-    }
-
-    #[test]
-    fn idempotent() {
-        let anns = [ann("只想睡觉", "但很累了")];
-        let r1 = inject_inline(CARD, &anns);
-        let r2 = inject_inline(&r1.text, &anns);
-        assert_eq!(r1.text, r2.text, "再跑一次不重复拼接");
-        // 第二遍该行已以此 note 结尾 → 归泄漏、**不再误报 applied**（旧 bug：applied 无条件 push
-        // 致 sync 误判"有变化"却又内容相同 → 空转/None）。
-        assert!(r2.applied.is_empty(), "幂等重跑不报 applied");
-    }
-
-    #[test]
-    fn concatenated_printed_prefix_stripped() {
-        // 低分辨率 vision 把「印刷条目 + 手写」连成一串：note="只想睡觉 但很累了"（印刷"只想睡觉"+手写"但很累了"）
-        // → 剥掉印刷前缀，只把手写"但很累了"拼回该行。
-        let r = inject_inline(CARD, &[ann("只想睡觉", "只想睡觉 但很累了")]);
-        assert!(r.text.contains("· 只想睡觉 但很累了"), "剥印刷前缀后拼手写");
-        assert!(!r.text.contains("只想睡觉 只想睡觉"), "印刷部分没被重复带进去");
-        assert_eq!(r.applied.len(), 1);
-        assert!(r.leaked.is_empty());
-    }
-
-    #[test]
-    fn full_printed_note_roundtrip_leaked() {
-        // note 整条就是某印刷 bullet（vision 把黑印刷字当手写读回来）→ 剥空/雷同 → 判泄漏、不注入、不报 applied。
-        let r = inject_inline(CARD, &[ann("只想睡觉", "只想睡觉")]);
-        assert!(r.applied.is_empty(), "纯印刷泄漏不产生注入");
-        assert_eq!(r.leaked.len(), 1);
-    }
-
-    #[test]
-    fn duplicate_note_injected_once() {
-        // 杜纂护栏：vision 把同一条手写「累了」重复安到两行 → 只注入第一条、第二条丢弃
-        let anns = [ann("只想睡觉", "累了"), ann("她站在候车队伍中", "累了")];
-        let r = inject_inline(CARD, &anns);
-        assert_eq!(r.applied.len(), 1, "同一手写文本只注入一次");
-        assert_eq!(r.leaked.len(), 1, "重复的那条被丢弃");
-        assert!(r.text.contains("· 只想睡觉 累了"));
-        assert!(!r.text.contains("候车队伍中 累了"), "第二行不被重复注入");
-    }
-
-    #[test]
-    fn parse_annotations_strips_fences_and_punct() {
-        let raw = "```json\n[{\"anchor\":\"她\",\"note\":\"，一脸茫然\"}]\n```";
-        let v = parse_annotations(raw).unwrap();
-        assert_eq!(v, vec![ann("她", "一脸茫然")], "剥围栏+清前导逗号");
+    fn leak_filter_helpers() {
+        // inject_by_anchor 复用的泄漏过滤 helper 直接对账。
+        let bodies = ["只想睡觉 但醒了", "她"];
+        // looks_printed：整体雷同某 bullet（相同或高相似）→ true。
+        assert!(looks_printed("她", &bodies), "== bullet 原文");
+        assert!(!looks_printed("好句", &bodies), "真手写不算泄漏");
+        // strip_printed_prefix：note 以印刷 bullet 原文开头 → 剥掉只留手写；剥不出则原样。
+        assert_eq!(strip_printed_prefix("只想睡觉 但醒了 新想法", &bodies), "新想法", "剥印刷前缀留手写");
+        assert_eq!(strip_printed_prefix("独立想法", &bodies), "独立想法", "不以印刷开头则原样");
     }
 }

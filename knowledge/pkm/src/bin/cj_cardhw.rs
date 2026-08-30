@@ -73,10 +73,7 @@ fn main() {
                     println!("  ✓ · {a}");
                 }
                 for lk in &o.leaked {
-                    println!("  ⓘ 丢弃疑似打印泄漏：{}（≈已有书摘，vision 误读）", lk.note);
-                }
-                for u in &o.unmatched {
-                    println!("  ✗ 未匹配：anchor={:?} ← {}", u.anchor, u.note);
+                    println!("  ⓘ 丢弃疑似打印泄漏/幂等重复：{lk}");
                 }
                 if let Some((m, n)) = o.mismatch {
                     println!("  ⚠ 识别 {m} 条、手写块 {n} 处，条数不符——未注入（宁缺勿造）。重开卡片手动核对或重写更清楚。");
