@@ -90,9 +90,6 @@ pub fn collect_notebook_texts(dir: &str, exclude: &[&str]) -> Vec<(String, Strin
             if exclude.contains(&title.as_str()) {
                 continue;
             }
-            if title.contains("手写待确认") {
-                continue; // cardhw 影子卡（待确认，Phase C）是临时件，不进汇总/死链索引
-            }
             out.push((title, read_card_pages(dir, &uuid).join("\n")));
         }
     }

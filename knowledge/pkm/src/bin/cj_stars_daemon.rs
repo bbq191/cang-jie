@@ -73,10 +73,31 @@ struct Cfg {
     cardhw_model: Option<String>,
 }
 
-/// 端化 cardhw 的 API key（明文，Phase B 设置面板写；与 reading-qol.json 同目录）。读不到→None。
-const CARDHW_KEY_PATH: &str = "/home/root/.local/share/cangjie-ime/cardhw.key";
-fn cardhw_key() -> Option<String> {
-    std::fs::read_to_string(CARDHW_KEY_PATH).ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty())
+/// 端化 cardhw 的 API key（明文，设置面板写；与 reading-qol.json 同目录）。
+/// **按后端各存一份**：`cardhw-<provider>.key`——各家 key 不通用，切后端各用各的、绝不拿错 key。
+const CARDHW_KEY_DIR: &str = "/home/root/.local/share/cangjie-ime";
+const CARDHW_KEY_LEGACY: &str = "/home/root/.local/share/cangjie-ime/cardhw.key";
+fn cardhw_key(provider: &str) -> Option<String> {
+    std::fs::read_to_string(format!("{CARDHW_KEY_DIR}/cardhw-{provider}.key"))
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+}
+/// 一次性迁移旧共享 `cardhw.key` → 当前后端的 `cardhw-<provider>.key`（旧 key 属于当时选的后端）。
+/// 目标已存在则不动；迁移后删旧文件，避免它再被误当"通用 key"。
+fn migrate_legacy_key(provider: &str) {
+    let per = format!("{CARDHW_KEY_DIR}/cardhw-{provider}.key");
+    if std::path::Path::new(&per).exists() {
+        return;
+    }
+    if let Ok(s) = std::fs::read_to_string(CARDHW_KEY_LEGACY) {
+        if !s.trim().is_empty() {
+            if std::fs::write(&per, s.trim()).is_ok() {
+                let _ = std::fs::remove_file(CARDHW_KEY_LEGACY);
+                println!("[cardhw] 旧 cardhw.key 已迁移为 cardhw-{provider}.key（按后端绑定）");
+            }
+        }
+    }
 }
 
 /// Phase C 旁路输出（与 reading-qol.json 同目录）：usage 累计 + 通知桥状态。设置面板/注入 QML 读。
@@ -269,8 +290,6 @@ fn settle(cfg: &Cfg, observe: bool, dirty: Option<&HashSet<String>>) {
             None => scan_library(Path::new(&dir), &scfg, cfg.gap),
             Some(set) => set.iter().filter_map(|u| scan_document_dir(u, Path::new(&dir), &scfg, cfg.gap)).collect(),
         };
-        // cardhw 影子卡（待确认）上的确认★不是书星——排除，免星代办误当书去建总结卡片（与 cardhw ④(b) 冲突）。
-        let docs: Vec<DocStars> = docs.into_iter().filter(|d| !d.title.contains(cardhw::SHADOW_SUFFIX)).collect();
         if observe {
             match dirty {
                 None => println!("[stars] observe: 冷启动全库扫 → {} 本有星（划线摘录{}）", docs.len(), if cfg.card_highlights { "开" } else { "关" }),
@@ -327,84 +346,61 @@ fn settle(cfg: &Cfg, observe: bool, dirty: Option<&HashSet<String>>) {
         }
     }
 
-    // ④ 端化手写识别（块⑥，独立能力）——**确认制（Phase C，影子卡 + 画★应用）**：
-    //    (a) 提议：有新手写的「总结卡片」→ 设备调云转写 → 内联注入结果写进**独立影子卡**
-    //        《书名》- 手写待确认（**真卡不动、不污染**）；弹「N 条待确认」通知。
-    //    (b) 应用：用户核对无误 → 在影子卡上画 ★ → 本步检测到 → 把影子文本重建进真卡（手写消化）+ 删影子卡；
-    //        不满意直接删影子卡即弃。杜纂不再自动落真卡——这是"辅助转写+人工校对"定位的回归。
+    // ④ 端化手写识别（块⑥，独立能力）——**直接注入制**：有新手写的「总结卡片」→ 设备调云转写 →
+    //    内联注入**直接写回真卡**（走 /upload 重建，手写消化成文字）→ 识别有误用户在卡片上**手动修正**即可。
+    //    （曾做过"影子卡+画★确认"防杜纂，2026-08-30 用户定案砍掉：后端换 DeepSeek 后质量够用，
+    //     直接写 + 手动改比影子卡那套仪式省事。护栏 A〔去重+反杜纂 prompt〕仍在，减少要手改的量。）
     // **仅事件驱动**（dirty=Some）：冷启动不跑，避免开机批量调云/计费。observe 跳过（不真调云）。
-    // 幂等：手写页 .rm 的 md5 记入 done → 同一份手写只提议一次（防 aggregate 自触发反复回来）。
+    // 幂等：手写页 .rm 的 md5 记入 done → 同一份手写只注入一次（防 aggregate 自触发反复回来）。
     if cfg.cardhw_enabled && !observe {
         if let Some(set) = dirty {
-            let key = cardhw_key();
+            let key = cardhw_key(&cfg.cardhw_provider); // 按当前后端取对应 key（各家不通用）
             let mut done = load_cardhw_done();
             let mut warned_no_key = false;
-            for u in set {
-                if is_active_summary_card(&dir, u) {
-                    // (a) 提议 → 影子卡（需 key）
-                    let k = match &key {
-                        Some(k) => k,
-                        None => {
-                            if !warned_no_key {
-                                println!("[cardhw] 有手写卡片但缺 key（{CARDHW_KEY_PATH}），跳过——设置面板填 key 后生效");
-                                warned_no_key = true;
-                            }
-                            continue;
+            for u in set.iter().filter(|u| is_active_summary_card(&dir, u)) {
+                let k = match &key {
+                    Some(k) => k,
+                    None => {
+                        if !warned_no_key {
+                            println!("[cardhw] 有手写卡片但缺 {} 的 key（{CARDHW_KEY_DIR}/cardhw-{}.key），跳过——设置面板选该后端填 key 后生效", cfg.cardhw_provider, cfg.cardhw_provider);
+                            warned_no_key = true;
                         }
-                    };
-                    let page = match cardhw::find_handwritten_page(&dir, u) {
-                        Some(p) => p,
-                        None => continue,
-                    };
-                    let rm = std::fs::read(format!("{dir}/{u}/{}.rm", page.1)).unwrap_or_default();
-                    let hash = format!("{:x}", md5::compute(&rm));
-                    if done.contains(&hash) {
                         continue;
                     }
-                    let real_vn = cardhw::read_visible_name(&dir, u);
-                    let title = book_title(&real_vn);
-                    let shadow = cardhw::shadow_name(&real_vn); // 写到《书名》- 手写待确认，真卡不碰
-                    write_status(Path::new(CARDHW_STATUS_PATH), "processing", &title, 0, "");
-                    match cardhw::process_card_doc(&dir, u, &cfg.cardhw_provider, cfg.cardhw_model.as_deref(), k, &card_folder, true, Some(&shadow)) {
-                        Ok(Some(o)) => {
-                            accumulate_usage(Path::new(CARDHW_USAGE_PATH), &cfg.cardhw_provider, o.usage);
-                            if o.action.is_some() {
-                                done.insert(hash.clone());
-                                append_cardhw_done(&hash);
-                                write_status(Path::new(CARDHW_STATUS_PATH), "proposed", &title, o.applied.len(), "画★应用");
-                                println!("[cardhw] 《{title}》{} 条待确认（影子卡·画★应用/删除丢弃）", o.applied.len());
-                            } else {
-                                write_status(Path::new(CARDHW_STATUS_PATH), "done", &title, 0, "未提取到新手写");
-                            }
-                        }
-                        Ok(None) => {}
-                        Err(e) => {
-                            write_status(Path::new(CARDHW_STATUS_PATH), "failed", &title, 0, "识别或上传失败");
-                            eprintln!("[cardhw] 卡片 {} 处理失败（不阻塞）：{e}", &u[..8.min(u.len())]);
+                };
+                let page = match cardhw::find_handwritten_page(&dir, u) {
+                    Some(p) => p,
+                    None => continue,
+                };
+                let rm = std::fs::read(format!("{dir}/{u}/{}.rm", page.1)).unwrap_or_default();
+                let hash = format!("{:x}", md5::compute(&rm));
+                if done.contains(&hash) {
+                    continue;
+                }
+                let title = book_title(&cardhw::read_visible_name(&dir, u));
+                write_status(Path::new(CARDHW_STATUS_PATH), "processing", &title, 0, "");
+                // target_name=None → 直接写回真卡（不再经影子卡）。
+                match cardhw::process_card_doc(&dir, u, &cfg.cardhw_provider, cfg.cardhw_model.as_deref(), k, &card_folder, true, None) {
+                    Ok(Some(o)) => {
+                        accumulate_usage(Path::new(CARDHW_USAGE_PATH), &cfg.cardhw_provider, o.usage);
+                        if o.action.is_some() {
+                            done.insert(hash.clone());
+                            append_cardhw_done(&hash);
+                            write_status(Path::new(CARDHW_STATUS_PATH), "done", &title, o.applied.len(), "");
+                            println!("[cardhw] 《{title}》直接注入 {} 条并 /upload（手写消化，识别有误请在卡片上手动改）", o.applied.len());
+                        } else {
+                            write_status(Path::new(CARDHW_STATUS_PATH), "done", &title, 0, "未提取到新手写");
                         }
                     }
-                } else if cardhw::is_shadow_card(&dir, u) && shadow_has_star(&dir, u, &cfg.color) {
-                    // (b) 影子卡被画 ★ → 应用到真卡 + 删影子卡
-                    if let Some((real_vn, _act)) = cardhw::apply_shadow(&dir, u, &card_folder) {
-                        let title = book_title(&real_vn);
-                        write_status(Path::new(CARDHW_STATUS_PATH), "applied", &title, 0, "");
-                        println!("[cardhw] 《{title}》手写已应用到卡片（影子卡确认）");
+                    Ok(None) => {}
+                    Err(e) => {
+                        write_status(Path::new(CARDHW_STATUS_PATH), "failed", &title, 0, "识别或上传失败");
+                        eprintln!("[cardhw] 卡片 {} 处理失败（不阻塞）：{e}", &u[..8.min(u.len())]);
                     }
                 }
             }
         }
     }
-}
-
-/// 影子卡上是否有确认 ★（复用 stardetect 的星几何 + 颜色门控；确认星用与星代办同色，默认 RED）。
-fn shadow_has_star(dir: &str, uuid: &str, color: &str) -> bool {
-    let scfg = StarConfig {
-        todo_colors: Some(vec![color.to_uppercase()]),
-        ..StarConfig::default()
-    };
-    scan_document_dir(uuid, Path::new(dir), &scfg, 25.0)
-        .map(|ds| !ds.hits.is_empty())
-        .unwrap_or(false)
 }
 
 /// 已处理手写页 .rm 的 md5 集（幂等/防自循环）。文件小、每轮读一次即可。
@@ -424,6 +420,11 @@ fn append_cardhw_done(hash: &str) {
 fn main() {
     let observe = std::env::var("CANGJIE_FSWATCH_OBSERVE").ok().as_deref() == Some("1");
     println!("cj-stars-daemon 启动{}（B 模型：一书一份打字卡片）", if observe { "（observe 观察模式）" } else { "" });
+
+    // cardhw：把旧共享 cardhw.key 迁移为当前后端的 cardhw-<provider>.key（key 按后端绑定）。
+    if !observe {
+        migrate_legacy_key(&read_cfg().cardhw_provider);
+    }
 
     // 冷启动：全库扫一遍建基线（此时无变更集可依）。
     settle(&read_cfg(), observe, None);

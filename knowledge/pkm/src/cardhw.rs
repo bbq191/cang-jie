@@ -182,48 +182,6 @@ pub fn inject_inline(text: &str, anns: &[Annotation]) -> InjectResult {
     res
 }
 
-// ── 影子卡·确认制（Phase C）─────────────────────────────────────────────
-/// 真卡后缀 / 影子（待确认）卡后缀。真卡 `《书名》- 总结卡片`，影子 `《书名》- 手写待确认`。
-pub const CARD_SUFFIX: &str = "总结卡片";
-pub const SHADOW_SUFFIX: &str = "手写待确认";
-
-/// 真卡 visibleName → 影子卡 visibleName（`总结卡片`→`手写待确认`）。无该后缀则原样加后缀兜底。
-pub fn shadow_name(real_vn: &str) -> String {
-    if real_vn.contains(CARD_SUFFIX) {
-        real_vn.replace(CARD_SUFFIX, SHADOW_SUFFIX)
-    } else {
-        format!("{real_vn} · {SHADOW_SUFFIX}")
-    }
-}
-
-/// 该文档是否是**在库的**影子（待确认）卡。
-pub fn is_shadow_card(dir: &str, uuid: &str) -> bool {
-    std::fs::read_to_string(format!("{dir}/{uuid}.metadata"))
-        .ok()
-        .and_then(|t| serde_json::from_str::<Value>(&t).ok())
-        .map(|v| {
-            v["visibleName"].as_str().map(|s| s.contains(SHADOW_SUFFIX)).unwrap_or(false)
-                && v["parent"].as_str() != Some("trash")
-        })
-        .unwrap_or(false)
-}
-
-/// 应用一张已被画 ★ 的影子卡：把它的文本重建进对应真卡（`手写待确认`→`总结卡片`），并把影子卡入回收站。
-/// 返回 (真卡 visibleName, 应用动作) 供通知；失败/无真卡名返回 None。
-pub fn apply_shadow(dir: &str, shadow_uuid: &str, card_folder: &str) -> Option<(String, String)> {
-    let shadow_vn = read_visible_name(dir, shadow_uuid);
-    if !shadow_vn.contains(SHADOW_SUFFIX) {
-        return None;
-    }
-    let real_vn = shadow_vn.replace(SHADOW_SUFFIX, CARD_SUFFIX);
-    let pages = crate::cardnote::list_pages(dir, shadow_uuid).ok()?; // (idx, page_id, text)
-    let texts: Vec<String> = pages.iter().map(|(_, _, t)| t.clone()).collect();
-    // 用影子卡的文本全量重建真卡（真卡旧手写笔划随文本重建一并消化成文字）。
-    let action = crate::notebook_sync::sync_auto_notebook(dir, &real_vn, &texts, card_folder)?;
-    crate::notebook_sync::queue_trash(shadow_uuid); // 应用后删影子卡
-    Some((real_vn, action))
-}
-
 // ── 编排：处理一个卡片文档（daemon 与 bin 共用）─────────────────────────────
 /// 一次卡片处理的结果。
 pub struct ProcessOutcome {
@@ -373,20 +331,6 @@ mod tests {
         assert_eq!(r.leaked.len(), 1, "重复的那条被丢弃");
         assert!(r.text.contains("· 只想睡觉 累了"));
         assert!(!r.text.contains("候车队伍中 累了"), "第二行不被重复注入");
-    }
-
-    #[test]
-    fn shadow_name_round_trips() {
-        let real = "《人骨拼图》- 总结卡片";
-        let shadow = shadow_name(real);
-        assert_eq!(shadow, "《人骨拼图》- 手写待确认");
-        // 应用时反推真卡名
-        assert_eq!(shadow.replace(SHADOW_SUFFIX, CARD_SUFFIX), real);
-    }
-
-    #[test]
-    fn shadow_name_fallback_when_no_suffix() {
-        assert_eq!(shadow_name("随手笔记"), "随手笔记 · 手写待确认");
     }
 
     #[test]

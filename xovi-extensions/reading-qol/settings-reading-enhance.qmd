@@ -1314,7 +1314,7 @@ AFFECT /qml/device/view/settings/Settings.qml
 
     ; ── ⑥ 手写识别页（哨兵 990007，块⑥）：端云手写批注消化到《总结卡片》。开关 + 选后端 + 填 key。
     ;   写 reading-qol.json 的 cardhwEnabled/cardhwProvider/cardhwModel（全量回写、防三页互覆盖）；
-    ;   API key 单独明文写 cardhw.key（不进 json，只本页读写）。daemon 读这三键 + key 决定是否识别。
+    ;   API key 单独明文写 cardhw-<后端>.key（按后端各存一份、不进 json，只本页读写）。daemon 读这三键 + 对应后端 key 决定是否识别。
     TRAVERSE ?#root
         LOCATE AFTER Component#help
         INSERT {
@@ -1344,12 +1344,13 @@ AFFECT /qml/device/view/settings/Settings.qml
                     property bool cfgCardhw: false
                     property string cfgProvider: "qwen"
                     property string cfgModel: ""
-                    // API key 尾号回显（空=未填）；key 明文不进 json、单独写 cardhw.key
+                    // API key 尾号回显（空=未填）；key 明文不进 json、**按后端各存一份** cardhw-<后端>.key
                     property string cfgKeyTail: ""
                     property var _cjXhr: null
                     property var _cjKeyXhr: null
                     readonly property string cjPath: "file:///home/root/.local/share/cangjie-ime/reading-qol.json"
-                    readonly property string cjKeyPath: "file:///home/root/.local/share/cangjie-ime/cardhw.key"
+                    // key 路径随所选后端变（各家 key 不通用、绑定到当前 cfgProvider）
+                    readonly property string cjKeyPath: "file:///home/root/.local/share/cangjie-ime/cardhw-" + cjHwRoot.cfgProvider + ".key"
 
                     function cjLoad() {
                         try {
@@ -1438,7 +1439,7 @@ AFFECT /qml/device/view/settings/Settings.qml
                                 modT: "模型（可选）",
                                 modD: "留空用该后端默认模型（Qwen=qwen3-vl-plus）。要指定其它型号填这里，失焦即存。",
                                 keyT: "API Key",
-                                keyD: "粘贴后点击别处即存进设备 cardhw.key（仅本机、不进仓库），输入框随即清空、只留尾号回显。切后端或改模型都不会清空已存的 key——只需填一次；换到需要不同 key 的后端时重新粘贴覆盖即可。",
+                                keyD: "粘贴后点击别处即存进设备（明文、仅本机、不进仓库），输入框随即清空、只留尾号回显。**key 按后端各存一份**：每个后端记住自己的 key，上方切后端时这里会显示该后端已存的 key；改模型不影响 key。所以每个你要用的后端各填一次即可。",
                                 keySaved: "已保存 · 尾号",
                                 keyNone: "未填写（daemon 会跳过识别）"
                             },
@@ -1451,7 +1452,7 @@ AFFECT /qml/device/view/settings/Settings.qml
                                 modT: "模型（可選）",
                                 modD: "留空用該後端預設模型（Qwen=qwen3-vl-plus）。要指定其它型號填這裡，失焦即存。",
                                 keyT: "API Key",
-                                keyD: "貼上後點擊別處即存進裝置 cardhw.key（僅本機、不進倉庫），輸入框隨即清空、只留尾號回顯。切後端或改模型都不會清空已存的 key——只需填一次；換到需要不同 key 的後端時重新貼上覆蓋即可。",
+                                keyD: "貼上後點擊別處即存進裝置（明文、僅本機、不進倉庫），輸入框隨即清空、只留尾號回顯。**key 按後端各存一份**：每個後端記住自己的 key，上方切後端時這裡會顯示該後端已存的 key；改模型不影響 key。所以每個你要用的後端各填一次即可。",
                                 keySaved: "已儲存 · 尾號",
                                 keyNone: "未填寫（daemon 會跳過識別）"
                             },
@@ -1464,7 +1465,7 @@ AFFECT /qml/device/view/settings/Settings.qml
                                 modT: "Model (optional)",
                                 modD: "Leave empty for the backend default (Qwen = qwen3-vl-plus). Enter another model id here; saved on focus loss.",
                                 keyT: "API Key",
-                                keyD: "Tap elsewhere after pasting to save it to cardhw.key on the device (local only, never committed); the box clears, keeping only the last-4 hint. Switching backend or model never clears the saved key — enter it just once; to use a backend that needs a different key, paste over it.",
+                                keyD: "Tap elsewhere after pasting to save it on the device (plain text, local only, never committed); the box clears, keeping only the last-4 hint. **Each backend keeps its own key**: switching backend above shows that backend's saved key; changing the model doesn't affect the key. So enter a key once per backend you use.",
                                 keySaved: "Saved · ends in",
                                 keyNone: "Not set (daemon skips OCR)"
                             }
@@ -1539,7 +1540,7 @@ AFFECT /qml/device/view/settings/Settings.qml
                                             color: on ? "#000000" : "#ffffff"
                                             border.color: "#000000"; border.width: 2
                                             Text { anchors.centerIn: parent; renderType: Text.NativeRendering; antialiasing: false; font.family: "reMarkable Sans"; font.pixelSize: 22; color: parent.on ? "#ffffff" : "#000000"; text: modelData.t }
-                                            MouseArea { anchors.fill: parent; onClicked: { if (!cjHwRoot.cfgCardhw) return; cjHwRoot.cfgProvider = modelData.k; cjHwRoot.cjSave(); } }
+                                            MouseArea { anchors.fill: parent; onClicked: { if (!cjHwRoot.cfgCardhw) return; cjHwRoot.cfgProvider = modelData.k; cjHwRoot.cjSave(); cjHwRoot.cjLoadKey(); } }
                                         }
                                     }
                                 }
