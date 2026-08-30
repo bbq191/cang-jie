@@ -96,11 +96,11 @@ pub fn call_vision(
     let cfg = provider_cfg(provider).ok_or_else(|| format!("未知后端 {provider}"))?;
     let model = model.unwrap_or(cfg.default_model);
     let b64 = base64::engine::general_purpose::STANDARD.encode(image_png);
-    // 180s：DeepSeek 系（deepseek-v4-flash-vision-exp）是推理模型、输出上千 reasoning token 很慢，
-    // 叠加设备端网络延迟常 >60s（真机实测 60s ureq 上限被精确打满 → timed out）。Qwen 类简洁模型远快，
-    // 用不满这个上限。宁可等，也别让慢后端假性失败。
+    // 300s：DeepSeek 系（deepseek-v4-flash-vision-exp）是重推理模型，单次输出常 1w~1.6w+ reasoning
+    // token，真机实测耗时在 42s~152s 剧烈波动、偶尔 >180s（打满旧 180s 上限 → 假性失败）。故放宽到
+    // 300s 兜住它的慢运行。Qwen 类简洁模型（~百 token）秒回、远用不满。宁可等，也别让慢后端假性超时。
     let agent = ureq::AgentBuilder::new()
-        .timeout(std::time::Duration::from_secs(180))
+        .timeout(std::time::Duration::from_secs(300))
         .build();
 
     if cfg.style == "anthropic" {
