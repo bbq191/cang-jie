@@ -255,10 +255,25 @@ pub fn plan_injections(rm: &[u8], full: &str, runs: &[TextRun], lines: &[&str]) 
     (groups, plans)
 }
 
+/// 一页 .rm 关联得上 bullet 的手写批注桶数（= 期望的转写条数）。供转写前给 vision 计数提示，
+/// 稳住整页转写的条数抖动（DeepSeek 真机实测 2↔3 不稳）。读 .rm 全套、内部自足。
+pub fn bucket_count(rm: &[u8]) -> usize {
+    let full = device_core::notebook_rm::read_root_text(rm);
+    let runs = device_core::notebook_rm::read_root_text_runs(rm);
+    let lines: Vec<&str> = full.split('\n').collect();
+    let (_g, plans) = plan_injections(rm, &full, &runs, &lines);
+    plans.len()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use device_core::notebook_rm::read_root_text_runs;
+
+    #[test]
+    fn hw0_bucket_count() {
+        assert_eq!(bucket_count(HW0), 5, "hw0 有 5 个关联桶");
+    }
 
     const HW0: &[u8] = include_bytes!("../testdata/cardhw/hw0.rm");
 

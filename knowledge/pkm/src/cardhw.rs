@@ -63,13 +63,22 @@ const NOTES_PROMPT: &str = "这是一张 reMarkable「总结卡片」整页渲�
 
 /// 整页卡片缩略图 → **有序手写转写**（每行一条，top-to-bottom）+ token。纯转写、不做关联。
 /// 关联由调用方用 `inject_by_anchor`（读 .rm）确定性完成。
+/// `expect_n`：.rm 已知手写块数（Some 时拼进 prompt 硬约束条数，稳住整页转写的条数抖动——
+/// DeepSeek 真机实测同页 2↔3 不稳，护栏会误挡；给准数后 vision 输出条数才对得齐）。
 pub fn transcribe_notes(
     image_png: &[u8],
     provider: &str,
     model: Option<&str>,
     key: &str,
+    expect_n: Option<usize>,
 ) -> Result<(Vec<String>, Usage), String> {
-    let resp = device_core::vision::call_vision(image_png, NOTES_PROMPT, provider, model, key)?;
+    let prompt = match expect_n {
+        Some(n) if n > 0 => format!(
+            "{NOTES_PROMPT}\n这一页上一共有 {n} 处手写批注，请**不多不少**正好输出 {n} 行、每行一条，按从上到下顺序。"
+        ),
+        _ => NOTES_PROMPT.to_string(),
+    };
+    let resp = device_core::vision::call_vision(image_png, &prompt, provider, model, key)?;
     Ok((parse_notes(&resp.text), resp.usage))
 }
 
@@ -347,7 +356,9 @@ pub fn process_card_doc(
         .map_err(|e| format!("读手写页 .rm 失败：{e}"))?;
     let thumb = std::fs::read(format!("{dir}/{doc_uuid}.thumbnails/{page_id}.png"))
         .map_err(|e| format!("读缩略图失败：{e}"))?;
-    let (notes, usage) = transcribe_notes(&thumb, provider, model, key)?;
+    // 先从 .rm 数出手写块数，作为转写的计数提示（稳住整页转写条数抖动）。
+    let expect_n = crate::cardanchor::bucket_count(&rm);
+    let (notes, usage) = transcribe_notes(&thumb, provider, model, key, Some(expect_n))?;
     let r = inject_by_anchor(&rm, &notes);
     let mut action = None;
     if apply && !r.applied.is_empty() {
