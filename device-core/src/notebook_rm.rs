@@ -186,6 +186,13 @@ impl<'a> R<'a> {
         self.varuint()?; // crdt part2
         Some(())
     }
+    /// 读一个 id 字段 → (part1, part2)。与 skip_id 同布局，只是返回值。
+    fn read_id(&mut self) -> Option<(u8, u32)> {
+        self.tag()?; // index/ID
+        let p1 = self.u8()?;
+        let p2 = self.varuint()?;
+        Some((p1, p2))
+    }
     /// 跳过一个 u32 字段：tag+u32。
     fn skip_u32(&mut self) -> Option<()> {
         self.tag()?;
@@ -278,6 +285,121 @@ fn extract_text(r: &mut R, end: usize) -> String {
         r.p = item_end;
     }
     out
+}
+
+/// RootText 的一个文本 run（`TextItem::Text`），按文件顺序。
+/// `id`=run 首字符 CrdtId（(part1,part2)）；run 内第 i 字符的 CrdtId=(part1, part2+i)。
+/// `char_off`=该 run 首字符在 `read_root_text` 全文里的字符偏移（跳过 FormatCode，与全文串联对齐）。
+#[derive(Debug, Clone, PartialEq)]
+pub struct TextRun {
+    pub id: (u8, u32),
+    pub char_off: usize,
+    pub text: String,
+}
+
+/// 抽 RootText 的文本 run 序列（file order），每 run 带首字符 CrdtId + 累计字符偏移。
+/// 供「手写 group 的 anchor_id（字符 CrdtId）→ 全文字符偏移 → 行」映射：run 内 id 连续，
+/// 找 anchor.part2 落在哪个 run 的 [id.part2, id.part2+len) 区间即得偏移。FormatCode 项不产出 run
+/// （不含文本、不是 anchor 目标），但其字符偏移贡献为 0——与 `read_root_text` 的串联口径一致。
+pub fn read_root_text_runs(rm: &[u8]) -> Vec<TextRun> {
+    if rm.len() < HEADER.len() || &rm[..HEADER.len()] != HEADER {
+        return Vec::new();
+    }
+    let mut r = R { b: rm, p: HEADER.len() };
+    loop {
+        let start = r.p;
+        let len = match r.u32() {
+            Some(l) => l as usize,
+            None => break,
+        };
+        if r.bytes(3).is_none() {
+            break;
+        }
+        let btype = match r.u8() {
+            Some(t) => t,
+            None => break,
+        };
+        let payload_start = r.p;
+        let payload_end = payload_start + len;
+        if btype == 0x07 {
+            return extract_text_runs(&mut R { b: rm, p: payload_start }, payload_end);
+        }
+        r.p = payload_end;
+        if r.p <= start || r.p > rm.len() {
+            break;
+        }
+    }
+    Vec::new()
+}
+
+fn extract_text_runs(r: &mut R, end: usize) -> Vec<TextRun> {
+    let mut runs = Vec::new();
+    let mut char_off = 0usize;
+    if r.skip_id().is_none() {
+        return runs;
+    }
+    if r.subblock(2).is_none() || r.subblock(1).is_none() {
+        return runs;
+    }
+    let sb3_end = match r.subblock(1) {
+        Some(e) => e,
+        None => return runs,
+    };
+    let count = r.varuint().unwrap_or(0);
+    for _ in 0..count {
+        if r.p >= sb3_end || r.p >= end {
+            break;
+        }
+        let item_end = match r.subblock(0) {
+            Some(e) => e,
+            None => break,
+        };
+        // id(2) item_id, id(3) left, id(4) right, u32(5) del_len
+        let item_id = match r.read_id() {
+            Some(id) => id,
+            None => break,
+        };
+        r.skip_id(); // left
+        r.skip_id(); // right
+        r.skip_u32(); // del_len
+        if r.p < item_end && r.peek_is(6, 0xC) {
+            let sb6_end = r.u32().map(|s| r.p + s as usize).unwrap_or(item_end);
+            if let Some(slen) = r.varuint() {
+                let _ascii = r.u8();
+                if let Some(sb) = r.bytes(slen as usize) {
+                    let is_format = r.p < sb6_end && r.peek_is(2, 0x4);
+                    if !is_format {
+                        let text = String::from_utf8_lossy(sb).to_string();
+                        let n = text.chars().count();
+                        runs.push(TextRun { id: item_id, char_off, text });
+                        char_off += n;
+                    }
+                }
+            }
+            r.p = sb6_end;
+        }
+        r.p = item_end;
+    }
+    runs
+}
+
+/// anchor 字符 CrdtId → 全文字符偏移。找 anchor 落在哪个 run 的 id 区间。
+/// 哨兵 part2==0xFFFF_FFFE（顶）/0xFFFF_FFFF（底）返回 None（不指向具体字符）。
+pub fn anchor_char_offset(anchor: (u8, u32), runs: &[TextRun]) -> Option<usize> {
+    let (p1, p2) = anchor;
+    if p2 == 0xFFFF_FFFE || p2 == 0xFFFF_FFFF {
+        return None;
+    }
+    for run in runs {
+        if run.id.0 != p1 {
+            continue;
+        }
+        let n = run.text.chars().count() as u32;
+        if p2 >= run.id.1 && p2 < run.id.1 + n {
+            return Some(run.char_off + (p2 - run.id.1) as usize);
+        }
+    }
+    None
 }
 
 fn frame(out: &mut Vec<u8>, btype: u8, min: u8, cur: u8, content: &[u8]) {
@@ -419,5 +541,45 @@ pub fn simple_text_document(text: &str, author: &[u8; 16]) -> Vec<u8> {
     }
 
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn runs_roundtrip_single_item() {
+        // simple_text_document 写单 run id=(1,16)；读回应得一个 run、text 一致、char_off=0。
+        let text = "第一行\n第二行 abc\n第三行";
+        let author = [7u8; 16];
+        let rm = simple_text_document(text, &author);
+        let runs = read_root_text_runs(&rm);
+        assert_eq!(runs.len(), 1, "单 run");
+        assert_eq!(runs[0].id, (1, 16), "首字符 CrdtId=(1,16)");
+        assert_eq!(runs[0].char_off, 0);
+        assert_eq!(runs[0].text, text, "run 文本==原文");
+        // 与 read_root_text 全文一致
+        assert_eq!(read_root_text(&rm), text);
+    }
+
+    #[test]
+    fn anchor_offset_within_run() {
+        let text = "abcdefghij"; // 10 chars, ids (1,16)..(1,25)
+        let rm = simple_text_document(text, &[1u8; 16]);
+        let runs = read_root_text_runs(&rm);
+        // 首字符
+        assert_eq!(anchor_char_offset((1, 16), &runs), Some(0));
+        // 第 5 字符 'e'
+        assert_eq!(anchor_char_offset((1, 20), &runs), Some(4));
+        // 末字符 'j'
+        assert_eq!(anchor_char_offset((1, 25), &runs), Some(9));
+        // 越界（run 只到 25）
+        assert_eq!(anchor_char_offset((1, 26), &runs), None);
+        // part1 不匹配
+        assert_eq!(anchor_char_offset((2, 20), &runs), None);
+        // 哨兵
+        assert_eq!(anchor_char_offset((0, 0xFFFF_FFFE), &runs), None);
+        assert_eq!(anchor_char_offset((0, 0xFFFF_FFFF), &runs), None);
+    }
 }
 

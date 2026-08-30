@@ -20,6 +20,7 @@ pub mod cardreview;
 pub mod cardstats;
 pub mod cardnote;
 pub mod cardsync;
+pub mod cardanchor;
 pub mod cardhw;
 pub mod cardhw_status;
 pub mod cardvocab;
