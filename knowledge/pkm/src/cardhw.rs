@@ -21,17 +21,17 @@ pub struct Annotation {
 }
 
 // ── vision 适配器（通用调用在 `device_core::vision`，此处只留卡片专属 prompt + 解析）──────
-const CARD_PROMPT: &str = "这是一张 reMarkable「总结卡片」的整页渲染，页面上有两类文字：\
-（甲）印刷体——规整、等宽、横平竖直的机器字，是卡片已有内容（若干标题槽 + 每槽下以 · 开头的书摘条目）；\
-（乙）手写批注——笔迹潦草、有连笔、粗细不均、大小歪斜的手写字，是用户贴着某条书摘条目旁边加的想法。\
-手写可能是任意颜色（红/蓝等更明显，但也可能和印刷一样是黑色）——**别只靠颜色分，要靠字形：机器字规整、手写字潦草**。\
-任务：只转写（乙）手写批注，逐条给出，并指出它贴着哪一条（甲）印刷的 · 书摘条目。\
-铁律：note 只写手写的字；**绝不能把印刷体的字算进 note**——哪怕手写就写在某条印刷条目旁边或叠在其上，note 也只保留你判断为手写的那部分，印刷部分一个字都不许带。\
-拿不准某段到底是印刷还是手写时，宁可漏掉不写，也绝不把印刷字当手写输出。\
-anchor 写它所贴的那条印刷 · 条目的原文（去掉开头的 · 和空格，照抄印刷字，别加手写）。\
-只输出一个 JSON 数组，每元素 {\"anchor\":\"印刷条目原文\",\"note\":\"手写逐字转写\"}；\
-手写潦草认不准写最可能的字，不留空、不加问号占位；没有手写批注的条目不要列。\
-不要输出 JSON 以外的任何字符（不要 markdown 代码围栏、不要解释）。";
+const CARD_PROMPT: &str = "这是一张 reMarkable「总结卡片」整页渲染。页面有（甲）印刷体书摘条目（规整、等宽的机器字，每条以 · 开头）\
+和（乙）少量手写批注（笔迹潦草、有连笔、粗细不均、大小歪斜，是用户贴着某条书摘旁边加的想法；可能任意颜色，也可能和印刷一样黑——\
+别只靠颜色、要靠字形分）。任务：把每一条手写批注逐字转写出来，并指出它物理上就近贴着的那一条印刷书摘。\
+【最重要三条铁律，违反即错】\
+1) **一条手写只输出一次**——只对应它垂直位置上最贴近的那一条印刷书摘，绝不把同一条手写重复分配到两条或多条书摘上。\
+2) **没有手写贴着的印刷书摘，绝对不要出现在结果里**；宁可少输出，也绝不为某条书摘凭空补一条手写。\
+3) **结果条数必须严格等于你在图上实际看到的手写笔迹块数**——先在心里数清有几处手写笔迹，就只输出几条，不多不少。\
+判位靠手写笔迹与印刷行的垂直对齐（写在哪一行的右侧/旁边就归哪一行）。\
+note 只写手写的字、**绝不含任何印刷字**（哪怕手写叠在印刷条目上，也只留手写那部分）；拿不准是印刷还是手写就宁可不写。\
+anchor 抄它所贴那条印刷书摘的原文（去掉开头 · 和空格，照抄印刷字、别加手写）。手写潦草认不准写最可能的字，不留空、不加问号。\
+只输出一个 JSON 数组，每元素 {\"anchor\":\"印刷条目原文\",\"note\":\"手写逐字转写\"}，不要 markdown 围栏、不要解释、不要任何其它字符。";
 
 /// 整页卡片缩略图 → 手写批注列表 [{anchor,note}] + token 消耗。通用 HTTP 调用复用 `device_core::vision::call_vision`。
 pub fn transcribe_card(
@@ -147,12 +147,18 @@ pub fn inject_inline(text: &str, anns: &[Annotation]) -> InjectResult {
     let bodies_owned: Vec<String> = bodies.iter().map(|s| s.to_string()).collect();
     let mut res = InjectResult { text: String::new(), applied: vec![], leaked: vec![], unmatched: vec![] };
     let mut used: HashSet<usize> = HashSet::new();
+    let mut seen_notes: HashSet<String> = HashSet::new(); // 已注入的手写文本，防 vision 把一条手写重复安到多行（杜纂护栏）
     for a in anns {
         let bref: Vec<&str> = bodies_owned.iter().map(|s| s.as_str()).collect();
         // 先剥掉 note 里混入的印刷条目前缀（低分辨率下 vision 常把「印刷+手写」连成一串）
         let note = strip_printed_prefix(&a.note, &bref);
         // 剥完仍整体雷同某条印刷 bullet（或剥空）→ 判定纯泄漏，丢弃。
         if note.is_empty() || looks_printed(&note, &bref) {
+            res.leaked.push(a.clone());
+            continue;
+        }
+        // 同一条手写文本只注入一次：vision 常把一条手写重复分配到相邻多行（384px 归位不准的表现）→ 丢重复。
+        if !seen_notes.insert(note.clone()) {
             res.leaked.push(a.clone());
             continue;
         }
@@ -309,6 +315,17 @@ mod tests {
         let r = inject_inline(CARD, &[ann("只想睡觉", "只想睡觉")]);
         assert!(r.applied.is_empty(), "纯印刷泄漏不产生注入");
         assert_eq!(r.leaked.len(), 1);
+    }
+
+    #[test]
+    fn duplicate_note_injected_once() {
+        // 杜纂护栏：vision 把同一条手写「累了」重复安到两行 → 只注入第一条、第二条丢弃
+        let anns = [ann("只想睡觉", "累了"), ann("她站在候车队伍中", "累了")];
+        let r = inject_inline(CARD, &anns);
+        assert_eq!(r.applied.len(), 1, "同一手写文本只注入一次");
+        assert_eq!(r.leaked.len(), 1, "重复的那条被丢弃");
+        assert!(r.text.contains("· 只想睡觉 累了"));
+        assert!(!r.text.contains("候车队伍中 累了"), "第二行不被重复注入");
     }
 
     #[test]
