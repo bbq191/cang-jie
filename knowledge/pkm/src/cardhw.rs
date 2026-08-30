@@ -9,7 +9,7 @@
 //!
 //! 注入落回卡片必须走 `/upload` 重建（xochitl 直写不可见），编排在 bin/daemon，本模块只出新文本。
 
-use device_core::notebook_rm::{read_root_text, read_root_text_runs};
+use crate::cardanchor::CardPage;
 use device_core::vision::Usage;
 use serde_json::Value;
 use std::collections::HashSet;
@@ -239,25 +239,21 @@ pub fn inject_inline(text: &str, anns: &[Annotation]) -> InjectResult {
     res
 }
 
-/// 锚点确定性关联注入（策略 A 治本）：读 .rm → `cardanchor::plan_injections` 分桶（top-to-bottom）
-/// → zip 有序纯转写。关联全由 .rm anchor 定，vision 不参与猜位（杜纂根因根除）。
+/// 锚点确定性关联注入（策略 A 治本）：消费已解析的 `CardPage`（分桶 top-to-bottom）
+/// → zip 有序纯转写。关联全由 .rm anchor 定、vision 不参与猜位（杜纂根因根除）；本函数只做
+/// 文本注入、**不碰 .rm 解析**（解析归 `cardanchor::CardPage::parse`）。
 /// 计数护栏：过滤打印泄漏后的 note 数 ≠ 手写块数 → **不注入**（宁缺勿造）、置 `mismatch`。
 /// 幂等：目标行已以该 note 结尾则跳过。
-pub fn inject_by_anchor(rm: &[u8], notes: &[String]) -> InjectResult {
-    let full = read_root_text(rm);
-    let runs = read_root_text_runs(rm);
-    let lines_owned: Vec<String> = full.split('\n').map(|s| s.to_string()).collect();
+pub fn inject_by_anchor(page: &CardPage, notes: &[String]) -> InjectResult {
     let mut res = InjectResult {
-        text: full.clone(),
+        text: page.full.clone(),
         applied: vec![],
         leaked: vec![],
         unmatched: vec![],
         mismatch: None,
     };
 
-    let lines_ref: Vec<&str> = lines_owned.iter().map(|s| s.as_str()).collect();
-    let (_groups, plans) = crate::cardanchor::plan_injections(rm, &full, &runs, &lines_ref);
-    let bodies_owned: Vec<String> = lines_ref.iter().filter_map(|l| bullet_body(l)).map(|s| s.to_string()).collect();
+    let bodies_owned: Vec<String> = page.lines.iter().filter_map(|l| bullet_body(l)).map(|s| s.to_string()).collect();
     let bref: Vec<&str> = bodies_owned.iter().map(|s| s.as_str()).collect();
 
     // 先清洗 note + 过滤打印泄漏（保相对顺序，仍与分桶 top-to-bottom 对齐）。
@@ -272,14 +268,14 @@ pub fn inject_by_anchor(rm: &[u8], notes: &[String]) -> InjectResult {
     }
 
     // 计数护栏：识别条数须严格等于手写块数，否则无可靠 note↔桶 对应 → 不注入。
-    if clean.len() != plans.len() {
-        res.mismatch = Some((clean.len(), plans.len()));
+    if clean.len() != page.plans.len() {
+        res.mismatch = Some((clean.len(), page.plans.len()));
         return res;
     }
 
     // 1:1 zip（两侧都 top-to-bottom）。
-    let mut lines_mut = lines_owned.clone();
-    for (note, plan) in clean.iter().zip(plans.iter()) {
+    let mut lines_mut = page.lines.clone();
+    for (note, plan) in clean.iter().zip(page.plans.iter()) {
         let i = plan.line;
         let body = bullet_body(&lines_mut[i]).unwrap_or("").to_string();
         let trimmed = lines_mut[i].trim_end().to_string();
@@ -356,10 +352,10 @@ pub fn process_card_doc(
         .map_err(|e| format!("读手写页 .rm 失败：{e}"))?;
     let thumb = std::fs::read(format!("{dir}/{doc_uuid}.thumbnails/{page_id}.png"))
         .map_err(|e| format!("读缩略图失败：{e}"))?;
-    // 先从 .rm 数出手写块数，作为转写的计数提示（稳住整页转写条数抖动）。
-    let expect_n = crate::cardanchor::bucket_count(&rm);
-    let (notes, usage) = transcribe_notes(&thumb, provider, model, key, Some(expect_n))?;
-    let r = inject_by_anchor(&rm, &notes);
+    // .rm 只解析一次：手写块数（计数提示，稳住整页转写条数抖动）+ 注入分桶共用同一份。
+    let page = CardPage::parse(&rm);
+    let (notes, usage) = transcribe_notes(&thumb, provider, model, key, Some(page.bucket_count()))?;
+    let r = inject_by_anchor(&page, &notes);
     let mut action = None;
     if apply && !r.applied.is_empty() {
         texts[page_idx] = r.text;
@@ -395,8 +391,9 @@ mod tests {
     fn inject_by_anchor_zips_to_buckets() {
         // hw0.rm 有 5 桶（top-to-bottom）：她/只想睡觉/她站候车/踢翻蚂蚁/很不高兴。
         // 传 5 条纯转写 → 依序 zip 进对应 bullet 行尾。
+        let page = CardPage::parse(HW0);
         let notes: Vec<String> = ["甲", "乙", "丙", "丁", "戊"].iter().map(|s| s.to_string()).collect();
-        let r = inject_by_anchor(HW0, &notes);
+        let r = inject_by_anchor(&page, &notes);
         assert!(r.mismatch.is_none(), "5 条 vs 5 桶 应对齐");
         assert_eq!(r.applied.len(), 5, "5 条全注入");
         assert!(r.text.contains("· 她 甲"), "她 ← 甲");
@@ -409,18 +406,20 @@ mod tests {
     #[test]
     fn inject_by_anchor_count_guard() {
         // 3 条 vs 5 桶 → 计数护栏触发、不注入、text 原样。
+        let page = CardPage::parse(HW0);
         let notes: Vec<String> = ["甲", "乙", "丙"].iter().map(|s| s.to_string()).collect();
-        let r = inject_by_anchor(HW0, &notes);
+        let r = inject_by_anchor(&page, &notes);
         assert_eq!(r.mismatch, Some((3, 5)), "识别 3 手写 5");
         assert!(r.applied.is_empty());
-        assert_eq!(r.text, read_root_text(HW0), "护栏触发 text 不变");
+        assert_eq!(r.text, page.full, "护栏触发 text 不变");
     }
 
     #[test]
     fn inject_by_anchor_printed_leak_filtered() {
         // 其中一条恰是印刷书摘原文（vision 误读）→ 泄漏过滤 → clean=4≠5 桶 → mismatch。
+        let page = CardPage::parse(HW0);
         let notes: Vec<String> = ["她", "乙", "丙", "丁", "戊"].iter().map(|s| s.to_string()).collect();
-        let r = inject_by_anchor(HW0, &notes);
+        let r = inject_by_anchor(&page, &notes);
         assert_eq!(r.leaked.len(), 1, "「她」==已有 bullet 原文，判泄漏");
         assert_eq!(r.mismatch, Some((4, 5)), "过滤后 4≠5 触发护栏");
     }

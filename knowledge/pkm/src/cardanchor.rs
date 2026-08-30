@@ -14,7 +14,7 @@
 //! ⚠ 此吸附规则仅在 hw0.rm（多轮测试污染卡）上验证过，跨场景（单条批注 / 顶底哨兵 /
 //!    多 section）须用干净设备 fixture 复核后方可接入生产 daemon。
 
-use device_core::notebook_rm::{anchor_char_offset, TextRun};
+use device_core::notebook_rm::{anchor_char_offset, read_root_text_runs, TextRun};
 use remarkable_lines::v6::block::Block;
 use remarkable_lines::v6::crdt::CrdtId;
 use remarkable_lines::v6::scene_item::point::Point;
@@ -49,11 +49,6 @@ impl HwGroup {
         } else {
             sum / n as f32
         }
-    }
-
-    /// 笔画总点数（判是否空组 / 排序稳定用）。
-    pub fn point_count(&self) -> usize {
-        self.strokes.iter().map(|s| s.len()).sum()
     }
 }
 
@@ -228,54 +223,79 @@ pub fn associate(group: &HwGroup, full: &str, runs: &[TextRun], lines: &[&str]) 
     None
 }
 
-/// 一条书摘行上待注入的批注计划：命中的 bullet 行 + 归属该行的手写组（按 first-seen 序）。
-/// daemon 消费：对每个 bucket 转写（整页缩略图或按几何裁剪/渲染，策略见模块头），注入到 `line`。
+/// 一条书摘行上待注入的批注计划：命中的 bullet 行 + 归属该行的手写组（`CardPage.groups` 下标，first-seen 序）。
 #[derive(Debug, Clone)]
 pub struct LinePlan {
     pub line: usize,
-    pub group_idx: Vec<usize>, // 指向 read_hw_groups 返回的下标
+    pub group_idx: Vec<usize>,
 }
 
-/// 把一页 .rm 的全部手写组按「关联到的 bullet 行」分桶，返回按行号升序（top-to-bottom）的注入计划。
-/// 同一 bullet 被 xochitl 拆成的多组（如连写被切成几笔片）自然并进同一桶。
-/// 关联不上的组（无锚/哨兵/窗口内无 bullet）被丢弃（不产生杜纂——宁缺勿造）。
-pub fn plan_injections(rm: &[u8], full: &str, runs: &[TextRun], lines: &[&str]) -> (Vec<HwGroup>, Vec<LinePlan>) {
-    let groups = read_hw_groups(rm);
+/// 一页卡片 .rm 的解析上下文——**只解析一次**：文本 run + 手写组 + 关联分桶。
+/// 计数提示（`bucket_count`）与注入（`cardhw::inject_by_anchor`）共用同一份，避免重复解析 .rm。
+/// cardanchor 独占".rm→关联计划"的职责；下游只消费本结构、不再碰 .rm 解析。
+pub struct CardPage {
+    /// 全文（由 `runs` 串联得出，与 `notebook_rm::read_root_text` 同口径：file order、跳 FormatCode）。
+    pub full: String,
+    /// 文本 run（各 run 首字符 CrdtId + 偏移；供 anchor 字符 id → 行）。
+    pub runs: Vec<TextRun>,
+    /// `full.split('\n')`（owned）。
+    pub lines: Vec<String>,
+    /// 手写组（first-seen 序）。
+    pub groups: Vec<HwGroup>,
+    /// 关联分桶（bullet 行号升序 = top-to-bottom）。关联不上的组已丢弃（不产生杜纂——宁缺勿造）。
+    pub plans: Vec<LinePlan>,
+}
+
+impl CardPage {
+    /// 解析一页 .rm，全程只解析一次（`full` 由 runs 串联、不再单独跑 read_root_text）。
+    pub fn parse(rm: &[u8]) -> CardPage {
+        let runs = read_root_text_runs(rm);
+        let full: String = runs.iter().map(|r| r.text.as_str()).collect();
+        let lines: Vec<String> = full.split('\n').map(str::to_string).collect();
+        let groups = read_hw_groups(rm);
+        let plans = build_plans(&groups, &full, &runs, &lines);
+        CardPage { full, runs, lines, groups, plans }
+    }
+
+    /// 关联得上 bullet 的批注桶数（= 期望转写条数，供 vision 计数提示稳住条数抖动）。
+    pub fn bucket_count(&self) -> usize {
+        self.plans.len()
+    }
+}
+
+/// 手写组按「关联到的 bullet 行」分桶，行号升序（top-to-bottom）。同一 bullet 被 xochitl 拆成的
+/// 多组（连写切成几片）自然并进同一桶；关联不上的组（无锚/哨兵/窗口内无 bullet）被丢弃。
+fn build_plans(groups: &[HwGroup], full: &str, runs: &[TextRun], lines: &[String]) -> Vec<LinePlan> {
     use std::collections::BTreeMap;
+    let lref: Vec<&str> = lines.iter().map(String::as_str).collect();
     let mut buckets: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
     for (i, g) in groups.iter().enumerate() {
-        if let Some(a) = associate(g, full, runs, lines) {
+        if let Some(a) = associate(g, full, runs, &lref) {
             buckets.entry(a.line).or_default().push(i);
         }
     }
-    let plans = buckets
-        .into_iter()
-        .map(|(line, group_idx)| LinePlan { line, group_idx })
-        .collect();
-    (groups, plans)
-}
-
-/// 一页 .rm 关联得上 bullet 的手写批注桶数（= 期望的转写条数）。供转写前给 vision 计数提示，
-/// 稳住整页转写的条数抖动（DeepSeek 真机实测 2↔3 不稳）。读 .rm 全套、内部自足。
-pub fn bucket_count(rm: &[u8]) -> usize {
-    let full = device_core::notebook_rm::read_root_text(rm);
-    let runs = device_core::notebook_rm::read_root_text_runs(rm);
-    let lines: Vec<&str> = full.split('\n').collect();
-    let (_g, plans) = plan_injections(rm, &full, &runs, &lines);
-    plans.len()
+    buckets.into_iter().map(|(line, group_idx)| LinePlan { line, group_idx }).collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use device_core::notebook_rm::read_root_text_runs;
+
+    const HW0: &[u8] = include_bytes!("../testdata/cardhw/hw0.rm");
+
+    #[test]
+    fn cardpage_full_matches_read_root_text() {
+        // CardPage.full 由 runs 串联；须与 device-core 验证过的 read_root_text 逐字一致
+        // （否则 anchor 偏移→行 会错位）。
+        let page = CardPage::parse(HW0);
+        assert_eq!(page.full, device_core::notebook_rm::read_root_text(HW0));
+        assert_eq!(page.lines.len(), page.full.split('\n').count());
+    }
 
     #[test]
     fn hw0_bucket_count() {
-        assert_eq!(bucket_count(HW0), 5, "hw0 有 5 个关联桶");
+        assert_eq!(CardPage::parse(HW0).bucket_count(), 5, "hw0 有 5 个关联桶");
     }
-
-    const HW0: &[u8] = include_bytes!("../testdata/cardhw/hw0.rm");
 
     #[test]
     fn hw0_groups_extracted() {
@@ -297,11 +317,8 @@ mod tests {
 
     #[test]
     fn hw0_association_snaps_to_bullets() {
-        let full = device_core::notebook_rm::read_root_text(HW0);
-        let runs = read_root_text_runs(HW0);
-        let lines: Vec<&str> = full.split('\n').collect();
-        let groups = read_hw_groups(HW0);
-
+        let page = CardPage::parse(HW0);
+        let lref: Vec<&str> = page.lines.iter().map(String::as_str).collect();
         // 逐组期望的命中 bullet 行文本（吸附规则的黄金对账）。
         let want: &[(usize, &str)] = &[
             (0, "只想睡觉"), // (2,288) 行7 bullet，锚点即本行
@@ -311,40 +328,36 @@ mod tests {
             (6, "很不高兴"), // (2,447) 行18 footer→上吸附行17
         ];
         for (gi, needle) in want {
-            let a = associate(&groups[*gi], &full, &runs, &lines)
+            let a = associate(&page.groups[*gi], &page.full, &page.runs, &lref)
                 .unwrap_or_else(|| panic!("组 {gi} 应关联到某 bullet"));
             assert!(
-                lines[a.line].contains(needle),
+                lref[a.line].contains(needle),
                 "组 {gi} 期望命中含{:?}的行，实得 行{}={:?}",
                 needle,
                 a.line,
-                lines[a.line]
+                lref[a.line]
             );
         }
     }
 
     #[test]
     fn hw0_plan_buckets_top_to_bottom() {
-        let full = device_core::notebook_rm::read_root_text(HW0);
-        let runs = read_root_text_runs(HW0);
-        let lines: Vec<&str> = full.split('\n').collect();
-        let (_groups, plans) = plan_injections(HW0, &full, &runs, &lines);
-
+        let page = CardPage::parse(HW0);
         // 行号严格升序（top-to-bottom）。
-        for w in plans.windows(2) {
+        for w in page.plans.windows(2) {
             assert!(w[0].line < w[1].line, "计划按行升序");
         }
         // 红色 group（写在"她"旁）中 mean_y 明显偏移的三片吸附到行6"她"、归并同桶
         // （用户实测：红黑蓝写在"她"旁）。mean_y≈0 的边界组归相邻行7，属 ±1 固有歧义。
-        let she = plans.iter().find(|p| lines[p.line].trim_end() == "   · 她").unwrap();
+        let she = page.plans.iter().find(|p| page.lines[p.line].trim_end() == "   · 她").unwrap();
         assert!(
             she.group_idx.len() >= 3,
             "「她」行应聚拢≥3 组红片，实得 {:?}",
             she.group_idx
         );
         // 覆盖的 bullet 行都是真 bullet。
-        for p in &plans {
-            assert!(is_bullet(lines[p.line]), "计划命中行须是 bullet：{:?}", lines[p.line]);
+        for p in &page.plans {
+            assert!(is_bullet(&page.lines[p.line]), "计划命中行须是 bullet：{:?}", page.lines[p.line]);
         }
     }
 }
