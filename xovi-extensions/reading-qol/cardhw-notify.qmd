@@ -42,50 +42,68 @@ AFFECT /qml/device/view/main/MainView.qml
                 // 已弹过的最高 seq；-1=未初始化（首 tick 取当前 seq 作基线、不给历史状态补发通知）。
                 property int cjLastSeq: -1
                 readonly property string cjStatusPath: "file:///home/root/.local/share/cangjie-ime/cardhw-status.json"
+                // 连发重发：单条 5s toast 极易错过（关笔记后 ~150s 才弹、用户多已离屏），
+                // 靠本 5s Timer 每 tick 补发一次同条通知拉长可见窗口（连发才稳，真机实证）。
+                property int cjRepeatLeft: 0
+                property var cjRepeatPayload: null
 
                 function cjBook(b) { return (b && b.length > 0) ? ("《" + b + "》") : "总结卡片"; }
+
+                // 弹一条通知并安排连发：立即入队一次 + 之后每个 5s tick 补发，共 repeats 次。
+                function cjFire(payload, repeats) {
+                    root.notificationQueue.enqueue(payload);
+                    cjCardhwNotifyWatcher.cjRepeatPayload = payload;
+                    cjCardhwNotifyWatcher.cjRepeatLeft = Math.max(0, repeats - 1);
+                }
 
                 function cjNotify(st) {
                     var book = cjCardhwNotifyWatcher.cjBook(st.book);
                     var n = parseInt(st.count) || 0;
                     if (st.state === "processing") {
-                        root.notificationQueue.enqueue({
+                        // 过程态、转瞬即过，单发即可（不连发免打扰）。
+                        cjCardhwNotifyWatcher.cjFire({
                             "text": book + "手写识别中…",
                             "icon": "qrc:/ark/icons/notebook_sparkles",
-                            "timeout": 4000
-                        });
+                            "timeout": 5000
+                        }, 1);
                     } else if (st.state === "done") {
-                        // 直接注入制：已把 N 条手写消化进卡片（识别有误重开卡片手动改）
                         if (n > 0) {
-                            root.notificationQueue.enqueue({
+                            // 成功注入：重要、且用户多已离屏 → 连发 3 次（跨 ~15s）。
+                            cjCardhwNotifyWatcher.cjFire({
                                 "text": book + "已消化 " + n + " 条手写批注（有误可手动改）",
                                 "icon": "qrc:/ark/icons/checkmark_circle",
-                                "timeout": 5000
-                            });
+                                "timeout": 6000
+                            }, 3);
                         } else {
-                            root.notificationQueue.enqueue({
+                            cjCardhwNotifyWatcher.cjFire({
                                 "text": book + "未识别到新手写",
                                 "icon": "qrc:/ark/icons/information_circle",
-                                "timeout": 4000
-                            });
+                                "timeout": 5000
+                            }, 1);
                         }
                     } else if (st.state === "mismatch") {
-                        // 锚点关联路径：识别条数≠手写块数，宁缺勿造未注入，提示手动核对。
-                        root.notificationQueue.enqueue({
+                        // 锚点关联路径：识别条数≠手写块数，宁缺勿造未注入，需用户核对 → 连发 3 次。
+                        cjCardhwNotifyWatcher.cjFire({
                             "text": book + "识别 " + n + " 条与手写块数不符，未注入——请重开卡片核对",
                             "icon": "qrc:/ark/icons/warning_circle",
-                            "timeout": 6000
-                        });
+                            "timeout": 7000
+                        }, 3);
                     } else if (st.state === "failed") {
-                        root.notificationQueue.enqueue({
+                        cjCardhwNotifyWatcher.cjFire({
                             "text": book + "手写识别失败（网络或识别错误）",
                             "icon": "qrc:/ark/icons/warning_circle",
-                            "timeout": 6000
-                        });
+                            "timeout": 7000
+                        }, 3);
                     }
                 }
 
                 onTriggered: {
+                    // ① 先补发待连发的通知（拉长可见窗口）。
+                    if (cjCardhwNotifyWatcher.cjRepeatLeft > 0 && cjCardhwNotifyWatcher.cjRepeatPayload) {
+                        root.notificationQueue.enqueue(cjCardhwNotifyWatcher.cjRepeatPayload);
+                        cjCardhwNotifyWatcher.cjRepeatLeft -= 1;
+                    }
+                    // ② 再轮询 status（有新 seq 则通知，cjNotify 会重置连发计数）。
                     try {
                         var xhr = new XMLHttpRequest();
                         xhr.open("GET", cjCardhwNotifyWatcher.cjStatusPath, false); // 同步读小文件
