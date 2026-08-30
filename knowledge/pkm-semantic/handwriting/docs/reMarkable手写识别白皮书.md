@@ -16,11 +16,16 @@
 
 | 成员 | 形态 | 状态 |
 | --- | --- | --- |
-| **cardhw · 卡片手写批注注入** | 卡片某槽旁手写想法 → vision 空间关联 → 内联注入书摘行 | host 版真机通；**端化 A1/A2/B/C + 端到端真机通（默认 Qwen；E2E 曾用 DeepSeek 坐实）** |
+| **cardhw · 卡片手写批注注入** | 卡片某条书摘旁手写想法 → vision **纯转写** + **.rm anchor 确定性关联** → 内联注入书摘行 | 端化端到端真机通；**关联治本（anchor）2026-08-30 真机坐实**，详见 §05b |
 | **export · freeform 手写 → Markdown** | 整页手写 → 待校对 Markdown vault | host 版真机通 |
 | 结构识别（未来） | `.rm` 笔迹结构 → 有序/无序列表、待办清单 | 规划中 |
 
 **核心定位（de-risk 定案）**：**辅助转写 + 人工校对**，不是无人值守 OCR——工整字近满分、快写连笔约六成，须留校对兜底。
+
+> **★ cardhw 现状总纲（2026-08-30 anchor 治本后，读 §03/§04 历史前先看这条）**：
+> - **关联机制**：从「vision 猜手写贴哪条书摘」**改为「.rm v6 anchor 确定性导出」**——vision 退化为**纯转写**（只认字、不猜位），关联由 `cardanchor::CardPage` 从 .rm 的 anchor 机制算出。这根除了「杜纂」（vision 往空/错 bullet 造批注）。**§03/§04 描述的 vision-空间-关联是历史阶段，已被 §05b 取代**。
+> - **代码单路径**：`transcribe_notes`（纯转写，`expect_n` 计数提示）→ `inject_by_anchor`（消费 `CardPage` 分桶 + 计数护栏）。遗留 vision-猜关联函数（`transcribe_card`/`inject_inline`/`parse_annotations`/`CARD_PROMPT`/`Annotation`）已删。
+> - **生产后端 = Qwen**（`qwen3-vl-plus`，国内直连、快、原生高分辨率）：anchor 时代后端**只负责转写**，qwen 的速度/分辨率优势正合适（它旧短板"猜关联"已由 anchor 接管而无关）。anchor 端到端 E2E 在 **DeepSeek** 上坐实（含计数提示压其条数抖动）；qwen 为默认转写器、qwen+anchor E2E 待下次自然使用坐实。
 
 ---
 
@@ -89,7 +94,7 @@ host 版要「回电脑连云」才能转写；端化版让**设备自己调云 
 - **端到端跑通**：用户在《人骨拼图》- 总结卡片手写「这是一句总结」→ 关笔记 → daemon `fswatch` 触发 step④ → DeepSeek 识别 → `inject_inline` 注入 → `sync_auto_notebook` /upload 重建（生成新卡、旧卡入 trash、手写笔划消化成文字）→ 用户设备上肉眼确认手写变成印刷体拼在书摘行后。daemon 日志 `[cardhw] 注入 1 条并 /upload（手写消化）` 为证。
 - **★后端定案（2026-08-30 修订）= Qwen（`qwen3-vl-plus`，阿里云百炼 DashScope OpenAI-兼容端点）**。定案逻辑分两步：
   - **第一约束 = 国内直连无代理**：目标用户群在国内、**设备自身无法挂代理、多数用户路由也无代理**。据此 **Gemini 判出局**（`generativelanguage.googleapis.com` 国内需代理，设备走不通）——反转了早前 §02/§03「推荐 Gemini」的取舍（Gemini 质量更好但国内不可达）。合格集 = 国内直连 API：DeepSeek / Qwen。
-  - **第二约束 = 手写分辨率**：DeepSeek `deepseek-v4-flash-vision-exp` 每图 **384-token 硬上限**，是它最大短板（低分辨率分不清印刷/手写，见下条实况）。**Qwen `qwen3-vl-plus` 原生高分辨率**（qwen-vl-max 系甚至可开 `vl_high_resolution_images` 到 16384-token），OCR/手写更强、且同为**国内直连无需代理**——正好补 DeepSeek 的分辨率短板。故 **Qwen 取代 DeepSeek 成为生产默认**；DeepSeek 降为备选（想更便宜时选）、Gemini/OpenAI/Claude 有代理/海外可选。为何用通用 `qwen3-vl-plus` 而非专用 `qwen-vl-ocr`：cardhw 要「转写+空间关联+JSON 结构化输出」，通用 VL 跟得住复杂指令，纯 OCR 模型偏裸文本转储。
+  - **第二约束 = 手写分辨率**：DeepSeek `deepseek-v4-flash-vision-exp` 每图 **384-token 硬上限**，是它最大短板（低分辨率分不清印刷/手写，见下条实况）。**Qwen `qwen3-vl-plus` 原生高分辨率**（qwen-vl-max 系甚至可开 `vl_high_resolution_images` 到 16384-token），OCR/手写更强、且同为**国内直连无需代理**——正好补 DeepSeek 的分辨率短板。故 **Qwen 取代 DeepSeek 成为生产默认**；DeepSeek 降为备选（想更便宜时选）、Gemini/OpenAI/Claude 有代理/海外可选。为何用通用 `qwen3-vl-plus` 而非专用 `qwen-vl-ocr`：anchor 治本后 cardhw 只要**纯转写但带指令**（只转手写、按序、计数提示——关联已交给 .rm anchor），通用 VL 跟得住这些指令，纯 OCR 模型偏裸文本转储、不听指令。
   - ✅ 代码缺省已改 Qwen（`cj_stars_daemon`/`cj_cardhw`/面板 5 页，2026-08-30）；面板后端选择由 4 段扩为 **5 段**（Qwen/Gemini/DeepSeek/OpenAI/Claude，Qwen 置首）；key 环境变量 `DASHSCOPE_API_KEY`（面板填、写 `cardhw.key`）。端点 `https://dashscope.aliyuncs.com/compatible-mode/v1`（北京域）。⚠ Qwen 端到端真机准度待用户配 DashScope key 后坐实（本次改动含代码+面板设计，Qwen 具体识别质量数尚未在设备上测）。
 - **DeepSeek 质量实况（384-token 图像上限的代价）**：稀疏测试卡潦草手写 1/4；规整真书卡上清楚单句核心读对（「这是一句总结」✅）但**易把附近印刷划线掺进 note**（384 低分辨率分不清印刷/手写）。定位仍是「辅助转写、需校对」。**用笔建议：手写用红/蓝等非黑色**给模型最强区分线索。
 - **网络出口坑**：设备端调云需**真直连**。实测被 host 的 clash-meta **fake-ip**（`Meta` TUN，把 `api.deepseek.com` 解析到 `28.0.x`）挡过——该代理只拦 host 本机 OUTPUT、不管设备 USB 转发/热点流量 → 设备 TLS 连上但读应答超时。更细：插 USB 时设备默认路由经 host，deepseek 走境外 AI 代理 + USB-NAT MTU 黑洞把大响应拖到超时（dashscope 国内直连+小响应则通）。。
@@ -102,7 +107,9 @@ host 版要「回电脑连云」才能转写；端化版让**设备自己调云 
   - **真机验证**（隔离测法，脱开云/网络）：手写 `cardhw-status.json` 造 seq 递增事件 → 观察器日志 `CJ-HW-ENQUEUE … nq=obj` + `CJ-HW-AFTER cur={《人骨拼图》已消化 3 条手写批注} docLoaded=false`（enqueue 执行、`currentNotification` 正确设值、库视图）→ 连发 10 条用户**肉眼确认书库通知条可见**。踩坑：观察器**首见 seq 作静默基线不补发**，故隔离测须先写一次establish基线、再 bump seq 才弹（真运行天然满足：观察器先于 daemon 写就绪）；通知是 5s toast，单发易错过、连发才稳。
 - **token 统计**：`device-core::vision::call_vision` 归一各家 `usage`（openai 系 prompt/completion_tokens、anthropic 系 input/output_tokens）→ 随 `ProcessOutcome.usage` 上抛 → daemon `cardhw_status::accumulate_usage` 按 provider 累计进 `cardhw-usage.json`（`{provider:{calls,input_tokens,output_tokens}}`，全零跳过不虚增）。`cj-cardhw` CLI 也打单次 token 行。（面板展示 usage 为后续小改，文件已就位。）
 
-**后端缺省已定案 = DeepSeek**（原"待定"已结）：`cj_stars_daemon` 的 `cardhwProvider` 缺省 + `cj_cardhw` `--provider` 缺省 + 设置面板 4 页 `cfgProvider` 默认全部 `gemini`→`deepseek`，与生产定案一致；面板仍可手选四后端。
+> ⚠ **本节（§04）是端化历程记录**（A1/A2/B/C、后端定案、inject 修复）——其中 vision-空间-关联 + `inject_inline` 属**已被 §05b anchor 治本取代的历史阶段**（当前生产路径 = `transcribe_notes` 纯转写 + `inject_by_anchor`，见 §01 现状总纲 + §05b）。后端定案以上方 line「★后端定案 = **Qwen**」为准。
+
+**后端定案回顾**：早期 `待定 → DeepSeek → Qwen`（现行）。**当前缺省 = Qwen**（`cj_stars_daemon`/`cj_cardhw`/设置面板 5 页 `cfgProvider` 默认全部 `qwen`，面板 5 段 Qwen 置首，可手选五后端）。anchor 时代后端只做纯转写、qwen 的速度+原生高分辨率正合适。
 
 ---
 
@@ -134,7 +141,7 @@ host 版要「回电脑连云」才能转写；端化版让**设备自己调云 
 - `device-core::notebook_rm`：`read_root_text_runs`（file-order 文本 run + 首字符 CrdtId + 字符偏移）、`anchor_char_offset`（含顶/底哨兵 `0xFFFF_FFFE/FF`）。
 - `pkm::cardanchor`：`read_hw_groups`（按 parent_id 聚笔画+锚点）、`associate`（anchor 行+笔画 y 符号吸附）、`plan_injections`（按 bullet 行分桶 top-to-bottom）。
 - `pkm::cardhw`：`NOTES_PROMPT`/`transcribe_notes`（整页缩略图纯转写、无 anchor 猜位）+ `inject_by_anchor`（分桶 zip 有序转写 + 泄漏过滤 + **计数护栏**：识别数≠手写块数→不注入、置 `mismatch`、宁缺勿造）。`process_card_doc` 已切此路；daemon/cj-cardhw/`cardhw-notify.qmd` 加 mismatch 分支（mismatch 标 done 免对同一 .rm 反复调云）。
-- 遗留 vision-猜关联路径（`CARD_PROMPT`/`transcribe_card`/`inject_inline`）暂留作对照/回退，真机坐实 anchor 路径后删。
+- 遗留 vision-猜关联路径（`CARD_PROMPT`/`transcribe_card`/`parse_annotations`/`inject_inline`/`best_line`/`Annotation`/`unmatched`）**已于 anchor 路径真机坐实后整段删除**（2026-08-30），cardhw 现为单路径；共享 helper（`bullet_body`/`sim`/`lev`/`strip_printed_prefix`/`looks_printed`）保留供 `inject_by_anchor` 复用。
 - worktree 分支 `feat/cardhw-anchor`；fixture `pkm/testdata/cardhw/hw0.rm`；83 单测过 + aarch64 交叉编译冒烟过、未加新依赖。
 
 **真机验证（2026-08-30，WiFi 192.168.1.22，DeepSeek）**：

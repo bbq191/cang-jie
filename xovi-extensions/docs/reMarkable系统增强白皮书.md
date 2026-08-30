@@ -90,14 +90,14 @@ host 无法运行 xochitl，但能用官方 qmldiff 工具**离线实跑补丁**
 - `INSERT { … }` 块内是 QML，注释必须用 `//`（emit 成 `/* */`）；误用 diff 注释 `;` 会被当 QML token 输出成非法 JS（离线 apply-diffs 抓出过）。
 - 无 id 的点号类型选择器要写全（`Epaper.ScreenModeItem`，裸 `ScreenModeItem` 不匹配）。
 - 嵌套深埋节点 `TRAVERSE` 必须用通配 `?#id`（非通配只匹配直接子节点，直配 `ColumnLayout#settingsColumn` panic "Cannot locate"）。
-- **改 `DeviceSceneView.qml` 只有 root 直接子安全**（fast-mono 的 `FocusScope[#root] > Epaper.ScreenModeItem[#content]` REPLACE mode）；**深层节点属性 REPLACE 会拖垮整文件、连累同文件其它 qmd**（返回浮标延长实验坐实，见 §06 判死）；且 `REPLACE` **只能改属性绑定、不能改函数/信号处理器**（REPLACE 函数报 `Cannot LOCATE Type`）。
+- **改 `DeviceSceneView.qml` 只有 root 直接子安全**（fast-mono 的 `FocusScope[#root] > Epaper.ScreenModeItem[#content]` REPLACE mode）；**深层节点属性 REPLACE 会拖垮整文件、连累同文件其它 qmd**（返回浮标延长早前走这条判死）；且 `REPLACE` **只能改属性绑定、不能改函数/信号处理器**（REPLACE 函数报 `Cannot LOCATE Type`）。**正解 = 改用 INSERT 外挂 `Connections` 监听同信号 + `Qt.callLater` 覆写属性，绕开深层 REPLACE**（返回浮标延长即此法做成，见 §06「返回浮标延长已实现」）。
 
 ## 06｜崩溃自愈 fail-safe + 判死清单
 
 **崩溃自愈 fail-safe**（qmd 无 `.so` 的签名守卫）：`chinese-ime/langhook/deploy/cangjie-qrr-failsafe.sh` 装到 xovi `scripts/pre-start/`，每次 `xovi/start` 用 `journalctl -b -1`（设备 journald 持久）数上一个 boot 的 xochitl 崩溃签名，**≥3 次就把这批阅读增强 qmd 移出 qrr 隔离**（只动自己的、不碰 candidatebar/moxiang/IME），下一个 boot 恢复到"输入法可用"。干净 `systemctl restart` 不产生崩溃签名、不误触发。**一次真实隔离与恢复（2026-08-21）**：墨香 Navigator 整页化 Popup→Item 编译失败致 xochitl 崩溃 4 次，fail-safe 把 6 个阅读增强 qmd 移进隔离区 → 系统增强菜单全掉。**真凶（坏的 moxiang-navigator）修好后**，隔离区 qmd 移回 + 清 `qrr-failsafe.TRIGGERED` + 重启即恢复。**教训：fail-safe 隔离的是"阅读增强这批"、不管真凶是谁——排查看崩溃真凶，别错怪被隔离的无辜 qmd。**
 
 **判死清单**：
-- **返回浮标常驻/延长——判死**：脚注跳转后的"Back to page X"浮标默认 8 秒消失（`showNotification(...,8000)`）。逆向定位到位（有未用的 `showWithoutTimeout` 参），但两次实测（改 `messageTimer.interval`）都连累同 `DeviceSceneView.qml` 的阅读增强全失效——是 **REPLACE 深层 Timer 属性机制本身**拖垮整文件，非表达式/大数。**彻底放弃、返回靠原生 8 秒**。
+- **返回浮标延长 8s→20s——已实现（2026-08-30 真机通，翻案早前判死）**：脚注跳转后的"Back to page X"浮标默认 8 秒消失（`DocumentView.qml` 里 sceneView 内联 `onDisplayLinkNotification` 调 `showNotification(...,8000)`）。**早前判死**是走 REPLACE 深层 Timer 属性那条（改 `messageTimer.interval` 连累整 `DeviceSceneView.qml`、且 REPLACE 改不了信号处理器）。**换招做成**：不 REPLACE、改用 **INSERT 一个外挂 `Connections{ target: sceneView; onDisplayLinkNotification }`**，在原生 handler 之后（`Qt.callLater` 保证顺序、否则被原生 8000 覆盖）把 `notificationBar.timerInterval` 改 20000 + `messageTimer.restart()`——复用原生浮标内容、只延长停留。qmd = `reading-qol/reader-link-return.qmd`，离线 apply-diffs（1 diff、落 root 层、括号平衡）+ 真机验证（重启无 SyntaxError、停留明显变长）。**通用法：延长/改造原生阅读器通知，用外挂 Connections 监听同信号 + Qt.callLater，绕开 REPLACE 深层属性的坑。**
 - **改 waveform / 屏幕高刷**——判死（残影/烧屏永久损伤、无回退），见路线图 §4.1。
 
 ## 07｜关键 QML 结构参考（.166/.169 真实核对）
