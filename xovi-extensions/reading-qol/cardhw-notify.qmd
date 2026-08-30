@@ -47,14 +47,28 @@ AFFECT /qml/device/view/main/MainView.qml
 
                 function cjNotify(st) {
                     var book = cjCardhwNotifyWatcher.cjBook(st.book);
+                    var n = parseInt(st.count) || 0;
                     if (st.state === "processing") {
                         root.notificationQueue.enqueue({
                             "text": book + "手写识别中…",
                             "icon": "qrc:/ark/icons/notebook_sparkles",
                             "timeout": 4000
                         });
+                    } else if (st.state === "proposed") {
+                        // 确认制：转写进影子卡《…手写待确认》，待用户画★应用
+                        root.notificationQueue.enqueue({
+                            "text": book + n + " 条手写待确认 · 去《手写待确认》核对后画 ★ 应用",
+                            "icon": "qrc:/ark/icons/notebook_sparkles",
+                            "timeout": 8000
+                        });
+                    } else if (st.state === "applied") {
+                        root.notificationQueue.enqueue({
+                            "text": book + "手写已应用到卡片",
+                            "icon": "qrc:/ark/icons/checkmark_circle",
+                            "timeout": 5000
+                        });
                     } else if (st.state === "done") {
-                        var n = parseInt(st.count) || 0;
+                        // 兼容旧「自动消化」状态（确认制下不再发；count=0=未识别到手写）
                         if (n > 0) {
                             root.notificationQueue.enqueue({
                                 "text": book + "已消化 " + n + " 条手写批注",

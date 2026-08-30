@@ -65,7 +65,7 @@ fn main() {
 
     for d in &docs {
         eprintln!("-- 处理卡片 {}（设备调 {provider}）…", &d[..8.min(d.len())]);
-        match cardhw::process_card_doc(&dir, d, &provider, model.as_deref(), &key, &folder, apply) {
+        match cardhw::process_card_doc(&dir, d, &provider, model.as_deref(), &key, &folder, apply, None) {
             Ok(None) => continue, // 该本无手写页
             Ok(Some(o)) => {
                 println!("《{}》页 {}：", o.visible_name, &o.page_id[..8.min(o.page_id.len())]);
