@@ -114,7 +114,30 @@ host 版要「回电脑连云」才能转写；端化版让**设备自己调云 
 
 - **已落地**：`rm-export/export.py` 的 `page_highlights()` 能读一页 `.rm` 的 `GlyphRange`，取高亮文本 + 字符 offset + 颜色、拼回整句。文档库遍历骨架（`glob *.metadata` → uuid → `<uuid>/*.rm`）现成。
 - **已知边界**：原生 EPUB 阅读页只能手写批注、不能打字 → anchor 混排导出只适用 notebook 场景；批注（note）尚未在反解数据中定位（目前只通了高亮）；`.rm` 格式无文档，固件升级可能引入新 block 类型需跟进。
-- **cardhw 为何绕开 anchor**：手写笔划的 anchor_id 在 rmscene 层抠不出来，故 cardhw 走 vision 空间关联（§03）而非坐标锚点——精确 anchor 逆向留作后续精度升级。
+- **~~cardhw 为何绕开 anchor~~（2026-08-30 已翻案，见 §05b）**：曾以为手写笔划 anchor_id 在 rmscene 层抠不出来、故 cardhw 走 vision 空间关联；实测**能**抠出（走 `remarkable_lines` Rust 解析器，非 rmscene Python），且正是 cardhw 杜纂的治本抓手。
+
+---
+
+## 05b｜cardhw 杜纂治本 · anchor 确定性关联（2026-08-30，离线坐实，待真机 E2E）
+
+**问题**：cardhw 靠 vision 在 384px 缩略图上同时「转写手写 + 猜它贴哪条书摘」，**猜关联**这一步反复杜纂——往空/错 bullet 造批注，换模型、调 prompt 都治不了（根因是低分辨率下的空间归位，非识别）。
+
+**治本**：关联改由 `.rm` 的 reMarkable v6 **anchor 机制**确定性导出，vision 退化为**纯转写**（只认字、不猜位）。
+
+**anchor 机制（离线 dump 真机卡片 `hw0.rm` 坐实，工具 `pkm/examples/dump_anchor.rs`）**：
+- 卡片是原生打字笔记；用户手写批注时 xochitl 把每片笔迹归成 **TreeNode 组**（block `0x02`），组带 `anchor_id`（→RootText 一个**字符的 CrdtId**，提供锚定 y 基线）+ `anchor_origin_x`；笔画 `SceneLineItem`（`0x05`）靠 `parent_id`→组 `node_id` 归属。`CrdtId={part1:u8,part2:u32}`、**无 Ord**、须自己比 `(part1,part2)` 元组。
+- 卡片文本是 `simple_text_document` 写的**单个未拆分 RootText run** `id=(1,16)`（手写不触发 xochitl 重写文本），故 char i 的 CrdtId=`(1,16+i)`、offset=`anchor.part2−16`（多 run 情形由 `notebook_rm::anchor_char_offset` 按 run 区间通用处理）。
+
+**关键实测（推翻「anchor=精确 bullet 指针」的乐观预期）**：`anchor_id` 落在 y 最近的字符上，常是 section header 或行边界、**非目标 bullet**——它是 **±1 行的 y-带**。治法：anchor 行 + **笔画均值 y 的符号**定方向（负=写在锚点上方、正=下方），就近吸附到该方向最近的 bullet。`hw0.rm` 五组 **5/5 命中**（含用户"红黑蓝写在她旁"→3 片红聚到「她」行）。
+
+**实现（策略 A，纯离线带单测，未接真机）**：
+- `device-core::notebook_rm`：`read_root_text_runs`（file-order 文本 run + 首字符 CrdtId + 字符偏移）、`anchor_char_offset`（含顶/底哨兵 `0xFFFF_FFFE/FF`）。
+- `pkm::cardanchor`：`read_hw_groups`（按 parent_id 聚笔画+锚点）、`associate`（anchor 行+笔画 y 符号吸附）、`plan_injections`（按 bullet 行分桶 top-to-bottom）。
+- `pkm::cardhw`：`NOTES_PROMPT`/`transcribe_notes`（整页缩略图纯转写、无 anchor 猜位）+ `inject_by_anchor`（分桶 zip 有序转写 + 泄漏过滤 + **计数护栏**：识别数≠手写块数→不注入、置 `mismatch`、宁缺勿造）。`process_card_doc` 已切此路；daemon/cj-cardhw/`cardhw-notify.qmd` 加 mismatch 分支（mismatch 标 done 免对同一 .rm 反复调云）。
+- 遗留 vision-猜关联路径（`CARD_PROMPT`/`transcribe_card`/`inject_inline`）暂留作对照/回退，真机坐实 anchor 路径后删。
+- worktree 分支 `feat/cardhw-anchor`；fixture `pkm/testdata/cardhw/hw0.rm`；83 单测过 + aarch64 交叉编译冒烟过、未加新依赖。
+
+**⚠待真机（设备回来一次性验）**：① 干净 fixture 复核吸附规则（`hw0` 是多轮污染卡；写"每 bullet 一条已知批注 + 顶/底边界"卡→拉 .rm→`dump_plan` 对账）；② 端到端（纯转写识别质量 + 计数对齐真实率 + `/upload` 重建）。策略 A 若计数常不符（一批注被拆成多 group/多 bullet），再评估按 group 几何裁剪/渲染单独转写（需上 aarch64 光栅库）。
 
 ---
 
