@@ -137,7 +137,12 @@ host 版要「回电脑连云」才能转写；端化版让**设备自己调云 
 - 遗留 vision-猜关联路径（`CARD_PROMPT`/`transcribe_card`/`inject_inline`）暂留作对照/回退，真机坐实 anchor 路径后删。
 - worktree 分支 `feat/cardhw-anchor`；fixture `pkm/testdata/cardhw/hw0.rm`；83 单测过 + aarch64 交叉编译冒烟过、未加新依赖。
 
-**⚠待真机（设备回来一次性验）**：① 干净 fixture 复核吸附规则（`hw0` 是多轮污染卡；写"每 bullet 一条已知批注 + 顶/底边界"卡→拉 .rm→`dump_plan` 对账）；② 端到端（纯转写识别质量 + 计数对齐真实率 + `/upload` 重建）。策略 A 若计数常不符（一批注被拆成多 group/多 bullet），再评估按 group 几何裁剪/渲染单独转写（需上 aarch64 光栅库）。
+**真机验证（2026-08-30，WiFi 192.168.1.22，DeepSeek）**：
+- **① 干净 fixture 关联对账 2/2**：用户在一张卡两处受控手写（「锚点」贴 踢翻蚂蚁 bullet、「好句」贴 很不高兴 bullet）→ 拉 .rm → `dump_plan`：两组 anchor 均落**下方 header 行**、靠笔画均值 y 负号**正确上吸**到目标 bullet（(2,466)→行13、(2,538)→行17）。**±1 y-带 + 笔画 y 符号吸附规则在干净数据上成立**；且卡片已被历轮注入污染、新手写仍准确归位（鲁棒）。
+- **② 端到端 cj-cardhw --apply 通**：纯转写→计数护栏→锚点关联→注入→/upload 重建→拉重建件确认两条注入落到**正确 bullet**、设备可见。关联 2/2 全对、零杜纂/零错位/零重复。识别层有单字误认（我写「锚」被读成「错」，384px 小字固有限；「好句」复测读对）——**属识别精度、非关联 bug**。
+- **⚠ 暴露并修掉的坑：DeepSeek 整页纯转写条数不稳**（同页同图 dry-run 2 条 / --apply 3 条，输出 token 146↔2596——reasoning 模式偶发过分割/多产）。计数护栏因此误挡（3≠2 拒注入，宁缺勿造正确但功能不触发）。**修法=计数提示**：转写前从 .rm 数出块数 N（`cardanchor::bucket_count`）拼进 prompt「不多不少输出 N 行」→ 复测 DeepSeek 稳定 2 条（token 回落 157）、注入成功。计数提示是策略 A 可靠性的关键补丁。
+
+**剩余（收尾）**：daemon 自动触发路径（fswatch 关笔记→自动 process→通知）已部署计数提示版（cj-stars.service，PID 换、无崩溃），核心 `process_card_doc` 与手动路同码已验；auto-trigger 端到端 + mismatch 通知为最后一次现场确认项。若日后计数提示仍压不住抖动（一批注被拆成多 group/多 bullet 致 N≠视觉块数），再评估按 group 几何裁剪/渲染单独转写（需上 aarch64 光栅库）。
 
 ---
 
