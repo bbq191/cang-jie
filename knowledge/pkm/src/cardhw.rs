@@ -1,14 +1,19 @@
 //! 端化 cardhw（块⑥「手写识别」，代码骑 pkm daemon、概念归块⑥）：
-//! 卡片手写批注 → **设备自己调云纯转写** → 按 .rm anchor 确定性关联 → 内联注入书摘行。
+//! 卡片手写批注 → **设备自己调云按行转写** → 落到 anchor 定的槽下、每行各占一行（所见即所得）。
 //!
-//! **治本设计（策略 A，真机坐实）**：关联不由 vision 猜（那是「杜纂」根因），而由 `cardanchor`
-//! 从 .rm 的 v6 anchor 机制确定性导出。本模块只负责：
-//!   - `transcribe_notes`：整页缩略图 → 多模态 vision（`device_core::vision`）→ **有序纯手写转写**
-//!     （只认字、不猜位；`expect_n` 计数提示稳住条数抖动）。
-//!   - `inject_by_anchor`：把有序转写 zip 进 `CardPage` 的 anchor 分桶、内联拼接行尾；计数护栏
-//!     （条数不符不注入）+ 打印泄漏过滤 + 幂等。
+//! **分工铁律（用户 2026-08-31 定，真机验证）**——两个信号各用其长：
+//!   - **槽只信 `.rm` anchor**（vision 猜槽会错：实测把洞见的字归到金句，是「杜纂」根因）。
+//!     `cardanchor::CardPage.plans` 给出「有手写的槽」。
+//!   - **行结构只信 vision**（`.rm` 无 `anchor_origin_y`、空行无锚，几何恢复不了「第几行」；
+//!     多模态 OCR 天然保留手写的行布局）。
+//! 本模块只负责：
+//!   - `transcribe_notes`：整页缩略图 → vision（`device_core::vision`）→ **只认手写、逐行、按序**。
+//!   - `inject_lines`：把 vision 的每行手写**各占一行插到 anchor 定的槽头正下方**；打印泄漏过滤
+//!     + 幂等。v1 仅支持单槽有手写（多槽 → 宁缺勿造不注入）。
 //!
 //! 注入落回卡片必须走 `/upload` 重建（xochitl 直写不可见），编排在 bin/daemon，本模块只出新文本。
+//! 史：曾试「.rm 几何反推每片手写落哪一行」判死（无 anchor_origin_y+空行无锚→行位 collapse），
+//! 又试「vision 直接猜槽」判死（把洞见归金句）；终定「anchor 管槽 + vision 管行」。
 
 use crate::cardanchor::CardPage;
 use device_core::vision::Usage;
@@ -128,12 +133,13 @@ pub struct InjectResult {
     pub mismatch: Option<(usize, usize)>,
 }
 
-/// 锚点确定性关联注入（策略 A 治本）：消费已解析的 `CardPage`（分桶 top-to-bottom）
-/// → zip 有序纯转写。关联全由 .rm anchor 定、vision 不参与猜位（杜纂根因根除）；本函数只做
-/// 文本注入、**不碰 .rm 解析**（解析归 `cardanchor::CardPage::parse`）。
-/// 计数护栏：过滤打印泄漏后的 note 数 ≠ 手写块数 → **不注入**（宁缺勿造）、置 `mismatch`。
-/// 幂等：目标行已以该 note 结尾则跳过。
-pub fn inject_by_anchor(page: &CardPage, notes: &[String]) -> InjectResult {
+/// 「所见即所得」注入（用户 2026-08-31 定，取代 zip-to-bucket）：vision 按行转写的每条手写
+/// **各占一行**、插到 **anchor 定的那个槽头正下方**。分工铁律——
+/// **槽只信 anchor**（vision 猜槽会错：实测把洞见的字归到金句），**行结构只信 vision**
+/// （.rm 无 anchor_origin_y、空行无锚，几何恢复不了「第几行」；vision OCR 天然保留行布局）。
+/// v1 仅支持「手写集中在单个槽」；`page.plans` 恰好 1 个槽才注入，多槽/无槽 → 不注入
+/// （宁缺勿造，`mismatch` 表意「未注入」，提示一次只在一个槽下写）。幂等：已在该槽块中的行不重插。
+pub fn inject_lines(page: &CardPage, notes: &[String]) -> InjectResult {
     let mut res = InjectResult {
         text: page.full.clone(),
         applied: vec![],
@@ -144,7 +150,7 @@ pub fn inject_by_anchor(page: &CardPage, notes: &[String]) -> InjectResult {
     let bodies_owned: Vec<String> = page.lines.iter().filter_map(|l| bullet_body(l)).map(|s| s.to_string()).collect();
     let bref: Vec<&str> = bodies_owned.iter().map(|s| s.as_str()).collect();
 
-    // 先清洗 note + 过滤打印泄漏（保相对顺序，仍与分桶 top-to-bottom 对齐）。
+    // 清洗 note + 过滤打印泄漏（保序）。
     let mut clean: Vec<String> = Vec::new();
     for n in notes {
         let c = strip_printed_prefix(n, &bref);
@@ -154,27 +160,44 @@ pub fn inject_by_anchor(page: &CardPage, notes: &[String]) -> InjectResult {
         }
         clean.push(c);
     }
-
-    // 计数护栏：识别条数须严格等于手写块数，否则无可靠 note↔桶 对应 → 不注入。
-    if clean.len() != page.plans.len() {
-        res.mismatch = Some((clean.len(), page.plans.len()));
+    if clean.is_empty() {
         return res;
     }
 
-    // 1:1 zip（两侧都 top-to-bottom）。
-    let mut lines_mut = page.lines.clone();
-    for (note, plan) in clean.iter().zip(page.plans.iter()) {
-        let i = plan.line;
-        let trimmed = lines_mut[i].trim_end().to_string();
-        if trimmed.ends_with(note.as_str()) {
-            // 幂等重跑 / note 恰为该行印刷内容 → 不产生新变化，不计 applied。
-            res.leaked.push(note.clone());
-            continue;
-        }
-        lines_mut[i] = format!("{} {}", trimmed, note);
-        res.applied.push(bullet_body(&lines_mut[i]).unwrap_or(lines_mut[i].trim()).to_string());
+    // 槽只认 anchor：plans 给出「有手写的槽」。v1 仅单槽；≠1 → 不注入（宁缺勿造）。
+    if page.plans.len() != 1 {
+        res.mismatch = Some((clean.len(), page.plans.len()));
+        return res;
     }
-    res.text = lines_mut.join("\n");
+    let slot_line = page.plans[0].line;
+
+    // 槽块 = 槽头下一行 .. 下一个槽头之前。幂等：块中已存在的行不重插。
+    let mut block_end = slot_line + 1;
+    while block_end < page.lines.len() && !crate::cardanchor::is_slot_header(&page.lines[block_end]) {
+        block_end += 1;
+    }
+    let existing: std::collections::HashSet<String> =
+        page.lines[slot_line + 1..block_end].iter().map(|l| l.trim().to_string()).collect();
+    let to_insert: Vec<String> = clean
+        .into_iter()
+        .filter(|c| !existing.contains(c.trim()))
+        .collect();
+    if to_insert.is_empty() {
+        for n in notes {
+            res.leaked.push(n.clone());
+        }
+        return res;
+    }
+
+    // 每条各占一行，插到槽头正下方（top-to-bottom = vision 行序）。
+    let mut lines: Vec<String> = page.lines.clone();
+    let mut at = slot_line + 1;
+    for c in &to_insert {
+        lines.insert(at, c.clone());
+        at += 1;
+        res.applied.push(c.clone());
+    }
+    res.text = lines.join("\n");
     res
 }
 
@@ -213,9 +236,9 @@ pub fn find_handwritten_page(dir: &str, doc_uuid: &str) -> Option<(usize, String
     None
 }
 
-/// 处理一个卡片文档（**锚点确定性关联**治本路径，策略 A）：
-///   找含手写页 → 设备调云**纯转写**（`transcribe_notes`，vision 只认字）
-///   → 读该页 .rm，`inject_by_anchor` 按 anchor 分桶确定性关联 + zip 有序转写 + 计数护栏
+/// 处理一个卡片文档（**anchor 管槽 + vision 管行**，所见即所得）：
+///   找含手写页 → 设备调云**按行转写**（`transcribe_notes`，vision 只认手写、逐行）
+///   → 读该页 .rm，`inject_lines` 把每行手写各占一行插到 anchor 定的槽头下（v1 单槽）
 ///   →（apply 且有注入）写回真卡、走 `/upload` 重建（xochitl 直写不可见）。
 /// 无手写页返回 `Ok(None)`（daemon 增量事件多数卡片走这条=零成本）。apply=false 只出方案不写。
 /// 关联不再由 vision 猜（杜纂根因根除）；计数不符时 `mismatch=Some`、不注入。
@@ -238,10 +261,11 @@ pub fn process_card_doc(
         .map_err(|e| format!("读手写页 .rm 失败：{e}"))?;
     let thumb = std::fs::read(format!("{dir}/{doc_uuid}.thumbnails/{page_id}.png"))
         .map_err(|e| format!("读缩略图失败：{e}"))?;
-    // .rm 只解析一次：手写块数（计数提示，稳住整页转写条数抖动）+ 注入分桶共用同一份。
+    // .rm 只解析一次：anchor 定「哪个槽」（plans）；vision 按行转写定「写了什么、分几行」。
+    // 不再传 expect_n——行数由 vision 的行布局决定、不由 .rm 槽数约束（旧 zip 时代才用计数提示）。
     let page = CardPage::parse(&rm);
-    let (notes, usage) = transcribe_notes(&thumb, provider, model, key, Some(page.bucket_count()))?;
-    let r = inject_by_anchor(&page, &notes);
+    let (notes, usage) = transcribe_notes(&thumb, provider, model, key, None)?;
+    let r = inject_lines(&page, &notes);
     let mut action = None;
     if apply && !r.applied.is_empty() {
         texts[page_idx] = r.text;
@@ -258,7 +282,8 @@ pub fn process_card_doc(
 mod tests {
     use super::*;
 
-    const HW0: &[u8] = include_bytes!("../testdata/cardhw/hw0.rm");
+    // 真机单槽卡（洞见下写了 第一行/第二行/第三行/第四行，帕金森笔迹）。
+    const CALIB: &[u8] = include_bytes!("../testdata/cardhw/calib_wysiwyg.rm");
 
     #[test]
     fn parse_notes_basic() {
@@ -270,40 +295,47 @@ mod tests {
     }
 
     #[test]
-    fn inject_by_anchor_zips_to_buckets() {
-        // hw0.rm 有 5 桶（top-to-bottom）：她/只想睡觉/她站候车/踢翻蚂蚁/很不高兴。
-        // 传 5 条纯转写 → 依序 zip 进对应 bullet 行尾。
-        let page = CardPage::parse(HW0);
-        let notes: Vec<String> = ["甲", "乙", "丙", "丁", "戊"].iter().map(|s| s.to_string()).collect();
-        let r = inject_by_anchor(&page, &notes);
-        assert!(r.mismatch.is_none(), "5 条 vs 5 桶 应对齐");
-        assert_eq!(r.applied.len(), 5, "5 条全注入");
-        assert!(r.text.contains("· 她 甲"), "她 ← 甲");
-        assert!(r.text.contains("但醒了 乙"), "只想睡觉行 ← 乙");
-        assert!(r.text.contains("一脸茫然 丙"), "她站候车行 ← 丙");
-        assert!(r.text.contains("脚闲得很 丁"), "踢翻蚂蚁行 ← 丁");
-        assert!(r.text.contains("这是一句总结 戊"), "很不高兴行 ← 戊");
+    fn inject_lines_single_slot_wysiwyg() {
+        // 真机单槽卡：洞见下手写四行。anchor 定槽=洞见（单槽），vision 按行给 4 条 →
+        // 各占一行插到洞见头行正下方（所见即所得）。
+        let page = CardPage::parse(CALIB);
+        assert_eq!(page.plans.len(), 1, "手写集中在单槽（洞见）");
+        let slot = page.lines[page.plans[0].line].trim().to_string();
+        assert!(slot.starts_with("🔵 洞见"), "槽=洞见，实得 {slot:?}");
+        let notes: Vec<String> = ["第一行", "第二行", "第三行", "第四行"].iter().map(|s| s.to_string()).collect();
+        let r = inject_lines(&page, &notes);
+        assert!(r.mismatch.is_none(), "单槽应注入");
+        assert_eq!(r.applied, notes, "四条各占一行、按序注入");
+        // 洞见头行紧接着就是第一行→第四行。
+        let out: Vec<&str> = r.text.lines().collect();
+        let h = out.iter().position(|l| l.trim().starts_with("🔵 洞见")).unwrap();
+        assert_eq!(&out[h + 1..h + 5], &["第一行", "第二行", "第三行", "第四行"], "洞见下依序四行");
     }
 
     #[test]
-    fn inject_by_anchor_count_guard() {
-        // 3 条 vs 5 桶 → 计数护栏触发、不注入、text 原样。
-        let page = CardPage::parse(HW0);
-        let notes: Vec<String> = ["甲", "乙", "丙"].iter().map(|s| s.to_string()).collect();
-        let r = inject_by_anchor(&page, &notes);
-        assert_eq!(r.mismatch, Some((3, 5)), "识别 3 手写 5");
+    fn inject_lines_idempotent() {
+        // 重跑：四行已在洞见块中 → 不重插（幂等）。
+        let page = CardPage::parse(CALIB);
+        let notes: Vec<String> = ["第一行", "第二行", "第三行", "第四行"].iter().map(|s| s.to_string()).collect();
+        let r1 = inject_lines(&page, &notes);
+        let page2 = CardPage {
+            lines: r1.text.split('\n').map(str::to_string).collect(),
+            full: r1.text.clone(),
+            ..CardPage::parse(CALIB)
+        };
+        let r2 = inject_lines(&page2, &notes);
+        assert!(r2.applied.is_empty(), "已存在的行不重插");
+    }
+
+    #[test]
+    fn inject_lines_multi_slot_skips() {
+        // renbone：手写分布在金句+洞见两槽 → plans=2 → v1 不注入（宁缺勿造），mismatch 表意未注入。
+        let page = CardPage::parse(include_bytes!("../testdata/cardhw/renbone_slots.rm"));
+        assert!(page.plans.len() > 1, "renbone 是多槽");
+        let r = inject_lines(&page, &["甲".to_string()]);
+        assert!(r.mismatch.is_some(), "多槽不注入");
         assert!(r.applied.is_empty());
-        assert_eq!(r.text, page.full, "护栏触发 text 不变");
-    }
-
-    #[test]
-    fn inject_by_anchor_printed_leak_filtered() {
-        // 其中一条恰是印刷书摘原文（vision 误读）→ 泄漏过滤 → clean=4≠5 桶 → mismatch。
-        let page = CardPage::parse(HW0);
-        let notes: Vec<String> = ["她", "乙", "丙", "丁", "戊"].iter().map(|s| s.to_string()).collect();
-        let r = inject_by_anchor(&page, &notes);
-        assert_eq!(r.leaked.len(), 1, "「她」==已有 bullet 原文，判泄漏");
-        assert_eq!(r.mismatch, Some((4, 5)), "过滤后 4≠5 触发护栏");
+        assert_eq!(r.text, page.full, "text 不变");
     }
 
     #[test]

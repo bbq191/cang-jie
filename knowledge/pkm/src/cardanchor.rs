@@ -170,7 +170,7 @@ fn is_bullet(line: &str) -> bool {
 /// 分类槽头（🟡 金句…／🔵 洞见…／🩷 疑问…／🟠 主题…／🟢 可复用…／⚪ 人物…／🔗 关联→ID）。
 /// 模板 4 套（通用/原文/悬疑/科幻）标签各异但槽 emoji 前缀固定（见 cardsync::SLOT_EMOJI）。
 /// cardHighlights 默认关时卡片只有空槽头、无 `· ` bullet——手写批注需能落到槽头（用户 2026-08-31 定）。
-fn is_slot_header(line: &str) -> bool {
+pub fn is_slot_header(line: &str) -> bool {
     const SLOT_EMOJI: [&str; 7] = ["🟡", "🔵", "🩷", "🟠", "🟢", "⚪", "🔗"];
     let s = line.trim_start();
     SLOT_EMOJI.iter().any(|e| s.starts_with(e))
