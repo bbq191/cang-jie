@@ -160,6 +160,15 @@ fn is_bullet(line: &str) -> bool {
     s.starts_with("· ") || s.starts_with('·')
 }
 
+/// 分类槽头（🟡 金句…／🔵 洞见…／🩷 疑问…／🟠 主题…／🟢 可复用…／⚪ 人物…／🔗 关联→ID）。
+/// 模板 4 套（通用/原文/悬疑/科幻）标签各异但槽 emoji 前缀固定（见 cardsync::SLOT_EMOJI）。
+/// cardHighlights 默认关时卡片只有空槽头、无 `· ` bullet——手写批注需能落到槽头（用户 2026-08-31 定）。
+fn is_slot_header(line: &str) -> bool {
+    const SLOT_EMOJI: [&str; 7] = ["🟡", "🔵", "🩷", "🟠", "🟢", "⚪", "🔗"];
+    let s = line.trim_start();
+    SLOT_EMOJI.iter().any(|e| s.starts_with(e))
+}
+
 /// 一片手写关联到的书摘行结果。
 #[derive(Debug, Clone, PartialEq)]
 pub struct Assoc {
@@ -173,20 +182,26 @@ pub struct Assoc {
 const DIR_EPS: f32 = 15.0;
 /// 吸附搜索窗口（行）。
 const SNAP_WINDOW: usize = 2;
+/// 空槽卡「书写位→上方槽头」的向上搜索窗口（槽间可夹空行，见 renbone_slots：洞见/疑问隔一空行）。
+const SLOT_WINDOW: usize = 3;
 
-/// 把一片手写关联到书摘 bullet 行：anchor→行，笔画 y 符号定方向，就近吸附到 bullet。
-/// 无锚点/哨兵/anchor 越界/窗口内无 bullet → `None`。
+/// 把一片手写关联到落点行。**两类卡分别处理**（互不干扰：`· ` 卡无槽头、空槽卡无 bullet）：
+/// ① 书摘 bullet 卡（cardHighlights 开）：anchor 常落小节头、bullet 在其下/上 → 方向吸附到 bullet；
+/// ② 空槽卡（cardHighlights 关，多数情形）：只有分类槽头、内容永远写在**槽头之下** →
+///    落到「书写位所在/上方最近的分类槽头」（据 mean_y 符号估书写行，再向上找最近 `is_slot_header`）。
+/// 无锚点/哨兵/anchor 越界/两类都找不到 → `None`（宁缺勿造）。
+/// 定案：用户 2026-08-31 真机（《人骨拼图》空槽卡，帕金森抖动笔迹裂成多片）——组6 越空行 overshoot
+/// 到隔壁槽的病根 = 拿 bullet 的向下方向套空槽；空槽改「向上就近槽头」后 9 片→2 桶（金句/洞见）正确。
 pub fn associate(group: &HwGroup, full: &str, runs: &[TextRun], lines: &[&str]) -> Option<Assoc> {
     let anchor = group.anchor?;
     let off = anchor_char_offset(anchor, runs)?;
     let aline = line_of_offset(full, off)?;
     let my = group.mean_y();
-
-    // 候选行的搜索顺序：按方向优先。
-    let mut cands: Vec<isize> = Vec::new();
     let a = aline as isize;
+
+    // ① 书摘 bullet：按 mean_y 符号定方向、就近吸附（仅认 `· ` bullet）。
+    let mut cands: Vec<isize> = Vec::new();
     if my < -DIR_EPS {
-        // 写在锚点上方：优先往上
         for d in 1..=SNAP_WINDOW as isize {
             cands.push(a - d);
         }
@@ -195,7 +210,6 @@ pub fn associate(group: &HwGroup, full: &str, runs: &[TextRun], lines: &[&str]) 
             cands.push(a + d);
         }
     } else if my > DIR_EPS {
-        // 写在锚点下方：优先往下
         for d in 1..=SNAP_WINDOW as isize {
             cands.push(a + d);
         }
@@ -204,19 +218,35 @@ pub fn associate(group: &HwGroup, full: &str, runs: &[TextRun], lines: &[&str]) 
             cands.push(a - d);
         }
     } else {
-        // 就在锚点行：先本行，再上下交替
         cands.push(a);
         for d in 1..=SNAP_WINDOW as isize {
             cands.push(a - d);
             cands.push(a + d);
         }
     }
-
     for c in cands {
         if c < 0 || c as usize >= lines.len() {
             continue;
         }
         if is_bullet(lines[c as usize]) {
+            return Some(Assoc { line: c as usize, anchor_line: aline });
+        }
+    }
+
+    // ② 空槽卡：估书写行（锚行 + 方向），向上找最近分类槽头（内容在槽头之下）。
+    let est = a + if my > DIR_EPS {
+        1
+    } else if my < -DIR_EPS {
+        -1
+    } else {
+        0
+    };
+    for k in 0..=SLOT_WINDOW as isize {
+        let c = est - k;
+        if c < 0 || c as usize >= lines.len() {
+            continue;
+        }
+        if is_slot_header(lines[c as usize]) {
             return Some(Assoc { line: c as usize, anchor_line: aline });
         }
     }
@@ -295,6 +325,29 @@ mod tests {
     #[test]
     fn hw0_bucket_count() {
         assert_eq!(CardPage::parse(HW0).bucket_count(), 5, "hw0 有 5 个关联桶");
+    }
+
+    // 空槽卡（cardHighlights 关）：真机《人骨拼图》总结卡，用户手写 2 处——
+    // 金句同行「我是你爸爸」、洞见下一行「我换行了」（帕金森抖动笔迹裂成 9 片 stroke-group）。
+    // 病根修前：向下方向吸附把洞见的碎片 overshoot 到隔壁「疑问」槽→3 桶、计数护栏拦。
+    // 修后：空槽卡走「向上就近槽头」，9 片正确归 2 桶（金句 / 洞见）。
+    const RENBONE: &[u8] = include_bytes!("../testdata/cardhw/renbone_slots.rm");
+
+    #[test]
+    fn renbone_empty_slots_two_buckets() {
+        let page = CardPage::parse(RENBONE);
+        assert_eq!(page.groups.len(), 9, "帕金森抖动裂成 9 片");
+        assert_eq!(page.bucket_count(), 2, "9 片应归 2 桶（金句 / 洞见），不 overshoot 到疑问");
+        let slots: Vec<&str> = page
+            .plans
+            .iter()
+            .map(|p| page.lines[p.line].trim())
+            .collect();
+        assert_eq!(slots, vec!["🟡 金句·要记的句：", "🔵 洞见："], "两桶=金句+洞见（top-to-bottom）");
+        // 每桶落点都是槽头。
+        for p in &page.plans {
+            assert!(is_slot_header(&page.lines[p.line]), "落点须是槽头：{:?}", page.lines[p.line]);
+        }
     }
 
     #[test]
