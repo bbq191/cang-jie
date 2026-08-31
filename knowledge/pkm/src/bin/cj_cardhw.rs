@@ -75,13 +75,8 @@ fn main() {
                 for lk in &o.leaked {
                     println!("  ⓘ 丢弃疑似打印泄漏/幂等重复：{lk}");
                 }
-                if let Some((m, n)) = o.mismatch {
-                    let why = if n > 1 {
-                        format!("检测到 {n} 个槽都有手写——v1 一次只处理单槽，请一次只在一个槽下写、分次退出")
-                    } else {
-                        "手写没关联到任何槽（请写在某个槽标签的正下方）".to_string()
-                    };
-                    println!("  ⚠ 识别 {m} 条手写但未注入：{why}。");
+                if o.mismatch.is_some() {
+                    println!("  ⚠ 手写未关联到任何槽、未注入——请写在某个槽标签的正下方。");
                 }
                 match o.action {
                     Some(act) => println!("✅ 卡片已{act}并 /upload（{} 条注入，手写消化）。重开即见。", o.applied.len()),

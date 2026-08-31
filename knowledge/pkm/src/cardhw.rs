@@ -69,6 +69,80 @@ fn parse_notes(raw: &str) -> Vec<String> {
         .collect()
 }
 
+// ── 多槽：按槽裁横条、逐条喂 vision（区域隔离→不串槽）────────────────────────
+/// 缩略图「文本行 → 像素 Y」映射（reMarkable 总结卡片固定字号 + 缩略图渲染，2026-08-31 真机
+/// 384×512 实测：顶 70 + 行×20 → top_frac≈0.137、行高 frac≈0.039；按实际高缩放以耐尺寸变化）。
+const THUMB_TOP_FRAC: f32 = 70.0 / 512.0;
+const THUMB_LH_FRAC: f32 = 20.0 / 512.0;
+
+/// 裁出来的横条区域用的转写 prompt（区域已隔离，只需按行认手写）。
+/// 铁律「只彩色（非黑）手写」——印刷体一律黑色、手写是红/蓝等彩色，颜色是最干净的判据；
+/// 放宽成「所有潦草笔迹」会把黑色印刷体也吞进来（真机实测泄漏一堆印刷字）。
+const BAND_PROMPT: &str = "这是 reMarkable 卡片的一个横条区域。图里有**黑色印刷体**和少量**彩色手写**\
+（红色或蓝色等，笔迹潦草、连笔、大小歪斜）。任务：**只转写彩色（非黑色）的手写笔迹**，\
+**绝对不要**输出任何黑色印刷体文字。每一行彩色手写各输出一行、保持从上到下顺序；潦草认最可能的字、\
+不留空。这一条里没有彩色手写就输出空。只输出彩色手写文字，不要黑色印刷体、不要序号、不要解释。";
+
+/// 按槽把整页缩略图裁成横条：每个「有手写的槽」→ [该槽头行, 下一个槽头行] 的像素带（顶留半行余量），
+/// 返回 (槽头行号, 裁出的 PNG)。区域隔离后单条喂 vision 才认得准（整页会串区/幻觉，真机实测）。
+fn crop_slot_bands(thumb_png: &[u8], hw_slots: &[usize], all_slots: &[usize]) -> Vec<(usize, Vec<u8>)> {
+    let img = match image::load_from_memory(thumb_png) {
+        Ok(i) => i,
+        Err(_) => return Vec::new(),
+    };
+    let (w, h) = (img.width(), img.height());
+    let py = |line: usize| -> u32 {
+        ((THUMB_TOP_FRAC + line as f32 * THUMB_LH_FRAC) * h as f32).round().clamp(0.0, h as f32) as u32
+    };
+    let margin = (THUMB_LH_FRAC * h as f32 * 0.4) as u32;
+    let mut out = Vec::new();
+    for &sl in hw_slots {
+        let next = all_slots.iter().copied().find(|&s| s > sl); // 下一个槽头（不论有无手写）= 带底
+        let y0 = py(sl).saturating_sub(margin);
+        let y1 = next.map(py).unwrap_or(h).min(h);
+        if y1 <= y0 {
+            continue;
+        }
+        let band = img.crop_imm(0, y0, w, y1 - y0);
+        let mut buf = std::io::Cursor::new(Vec::new());
+        if band.write_to(&mut buf, image::ImageFormat::Png).is_ok() {
+            out.push((sl, buf.into_inner()));
+        }
+    }
+    out
+}
+
+/// 逐槽转写：`page.plans` 给出有手写的槽 → 每槽裁横条 → 单独 vision 按行转写。
+/// 返回 (槽头行号, 该槽手写行列表) + 累计 token。区域隔离让 vision 只面对单槽、不串区。
+pub fn transcribe_by_slots(
+    thumb_png: &[u8],
+    page: &CardPage,
+    provider: &str,
+    model: Option<&str>,
+    key: &str,
+) -> Result<(Vec<(usize, Vec<String>)>, Usage), String> {
+    let all_slots: Vec<usize> = page
+        .lines
+        .iter()
+        .enumerate()
+        .filter(|(_, l)| crate::cardanchor::is_slot_header(l))
+        .map(|(i, _)| i)
+        .collect();
+    let hw_slots: Vec<usize> = page.plans.iter().map(|p| p.line).collect();
+    let bands = crop_slot_bands(thumb_png, &hw_slots, &all_slots);
+    let mut per_slot = Vec::new();
+    let mut usage = Usage::default();
+    for (sl, crop) in bands {
+        let resp = device_core::vision::call_vision(&crop, BAND_PROMPT, provider, model, key)?;
+        usage = Usage {
+            input_tokens: usage.input_tokens + resp.usage.input_tokens,
+            output_tokens: usage.output_tokens + resp.usage.output_tokens,
+        };
+        per_slot.push((sl, parse_notes(&resp.text)));
+    }
+    Ok((per_slot, usage))
+}
+
 // ── 注入辅助（bullet 解析 + 打印泄漏过滤，anchor 注入复用）──────────────────
 /// `   · 只想睡觉` → `只想睡觉`；非 bullet 行返回 None。
 fn bullet_body(line: &str) -> Option<&str> {
@@ -133,69 +207,61 @@ pub struct InjectResult {
     pub mismatch: Option<(usize, usize)>,
 }
 
-/// 「所见即所得」注入（用户 2026-08-31 定，取代 zip-to-bucket）：vision 按行转写的每条手写
-/// **各占一行**、插到 **anchor 定的那个槽头正下方**。分工铁律——
-/// **槽只信 anchor**（vision 猜槽会错：实测把洞见的字归到金句），**行结构只信 vision**
-/// （.rm 无 anchor_origin_y、空行无锚，几何恢复不了「第几行」；vision OCR 天然保留行布局）。
-/// v1 仅支持「手写集中在单个槽」；`page.plans` 恰好 1 个槽才注入，多槽/无槽 → 不注入
-/// （宁缺勿造，`mismatch` 表意「未注入」，提示一次只在一个槽下写）。幂等：已在该槽块中的行不重插。
-pub fn inject_lines(page: &CardPage, notes: &[String]) -> InjectResult {
+/// 「所见即所得」多槽注入（用户 2026-08-31 定）：每个有手写的槽，把该槽 vision 按行转写的每条
+/// **各占一行**插到**该槽头正下方**。分工铁律——**槽只信 anchor**（vision 猜槽/整页分块会错、串区，
+/// 真机实测），**槽内行结构只信 vision**（对裁出的单槽横条按行转写；.rm 无 anchor_origin_y、
+/// 几何恢复不了行）。多槽逐槽独立插；**按槽头行降序插**（先靠下的，避免行号位移影响靠上的）。
+/// 幂等：已在该槽块中的行不重插。`per_slot`=(槽头行, 该槽手写行列表)，来自 `transcribe_by_slots`。
+pub fn inject_slots(page: &CardPage, per_slot: &[(usize, Vec<String>)]) -> InjectResult {
     let mut res = InjectResult {
         text: page.full.clone(),
         applied: vec![],
         leaked: vec![],
         mismatch: None,
     };
-
     let bodies_owned: Vec<String> = page.lines.iter().filter_map(|l| bullet_body(l)).map(|s| s.to_string()).collect();
     let bref: Vec<&str> = bodies_owned.iter().map(|s| s.as_str()).collect();
 
-    // 清洗 note + 过滤打印泄漏（保序）。
-    let mut clean: Vec<String> = Vec::new();
-    for n in notes {
-        let c = strip_printed_prefix(n, &bref);
-        if c.is_empty() || looks_printed(&c, &bref) {
-            res.leaked.push(n.clone());
+    let mut lines: Vec<String> = page.lines.clone();
+    // 按槽头行降序：先插靠下的槽，其插入不位移靠上槽的行号。
+    let mut slots: Vec<(usize, Vec<String>)> = per_slot.iter().map(|(l, v)| (*l, v.clone())).collect();
+    slots.sort_by(|a, b| b.0.cmp(&a.0));
+
+    for (slot_line, notes) in &slots {
+        // 清洗 + 泄漏过滤。
+        let mut clean: Vec<String> = Vec::new();
+        for n in notes {
+            let c = strip_printed_prefix(n, &bref);
+            if c.is_empty() || looks_printed(&c, &bref) {
+                res.leaked.push(n.clone());
+                continue;
+            }
+            clean.push(c);
+        }
+        if clean.is_empty() {
             continue;
         }
-        clean.push(c);
-    }
-    if clean.is_empty() {
-        return res;
-    }
-
-    // 槽只认 anchor：plans 给出「有手写的槽」。v1 仅单槽；≠1 → 不注入（宁缺勿造）。
-    if page.plans.len() != 1 {
-        res.mismatch = Some((clean.len(), page.plans.len()));
-        return res;
-    }
-    let slot_line = page.plans[0].line;
-
-    // 槽块 = 槽头下一行 .. 下一个槽头之前。幂等：块中已存在的行不重插。
-    let mut block_end = slot_line + 1;
-    while block_end < page.lines.len() && !crate::cardanchor::is_slot_header(&page.lines[block_end]) {
-        block_end += 1;
-    }
-    let existing: std::collections::HashSet<String> =
-        page.lines[slot_line + 1..block_end].iter().map(|l| l.trim().to_string()).collect();
-    let to_insert: Vec<String> = clean
-        .into_iter()
-        .filter(|c| !existing.contains(c.trim()))
-        .collect();
-    if to_insert.is_empty() {
-        for n in notes {
-            res.leaked.push(n.clone());
+        // 槽块 = 槽头下一行 .. 下一个槽头之前（在当前 lines 上算，含之前靠下槽的插入）。幂等去重。
+        let mut block_end = slot_line + 1;
+        while block_end < lines.len() && !crate::cardanchor::is_slot_header(&lines[block_end]) {
+            block_end += 1;
         }
-        return res;
+        let existing: std::collections::HashSet<String> =
+            lines[slot_line + 1..block_end].iter().map(|l| l.trim().to_string()).collect();
+        let mut at = slot_line + 1;
+        for c in &clean {
+            if existing.contains(c.trim()) {
+                res.leaked.push(c.clone());
+                continue;
+            }
+            lines.insert(at, c.clone());
+            at += 1;
+            res.applied.push(c.clone());
+        }
     }
-
-    // 每条各占一行，插到槽头正下方（top-to-bottom = vision 行序）。
-    let mut lines: Vec<String> = page.lines.clone();
-    let mut at = slot_line + 1;
-    for c in &to_insert {
-        lines.insert(at, c.clone());
-        at += 1;
-        res.applied.push(c.clone());
+    if res.applied.is_empty() && res.leaked.is_empty() {
+        // 没关联到任何槽（plans 空）→ 表意未注入。
+        res.mismatch = Some((0, 0));
     }
     res.text = lines.join("\n");
     res
@@ -261,11 +327,11 @@ pub fn process_card_doc(
         .map_err(|e| format!("读手写页 .rm 失败：{e}"))?;
     let thumb = std::fs::read(format!("{dir}/{doc_uuid}.thumbnails/{page_id}.png"))
         .map_err(|e| format!("读缩略图失败：{e}"))?;
-    // .rm 只解析一次：anchor 定「哪个槽」（plans）；vision 按行转写定「写了什么、分几行」。
-    // 不再传 expect_n——行数由 vision 的行布局决定、不由 .rm 槽数约束（旧 zip 时代才用计数提示）。
+    // anchor 定「哪些槽有手写」（plans）；每槽裁横条单独 vision 按行转写（区域隔离不串区）；
+    // 逐槽把行插到各自槽头下。多槽同页一次处理。
     let page = CardPage::parse(&rm);
-    let (notes, usage) = transcribe_notes(&thumb, provider, model, key, None)?;
-    let r = inject_lines(&page, &notes);
+    let (per_slot, usage) = transcribe_by_slots(&thumb, &page, provider, model, key)?;
+    let r = inject_slots(&page, &per_slot);
     let mut action = None;
     if apply && !r.applied.is_empty() {
         texts[page_idx] = r.text;
@@ -295,16 +361,15 @@ mod tests {
     }
 
     #[test]
-    fn inject_lines_single_slot_wysiwyg() {
-        // 真机单槽卡：洞见下手写四行。anchor 定槽=洞见（单槽），vision 按行给 4 条 →
+    fn inject_slots_single_slot_wysiwyg() {
+        // 真机单槽卡：洞见下手写四行。anchor 定槽=洞见，vision 按行给 4 条 →
         // 各占一行插到洞见头行正下方（所见即所得）。
         let page = CardPage::parse(CALIB);
         assert_eq!(page.plans.len(), 1, "手写集中在单槽（洞见）");
-        let slot = page.lines[page.plans[0].line].trim().to_string();
-        assert!(slot.starts_with("🔵 洞见"), "槽=洞见，实得 {slot:?}");
+        let sl = page.plans[0].line;
+        assert!(page.lines[sl].trim().starts_with("🔵 洞见"));
         let notes: Vec<String> = ["第一行", "第二行", "第三行", "第四行"].iter().map(|s| s.to_string()).collect();
-        let r = inject_lines(&page, &notes);
-        assert!(r.mismatch.is_none(), "单槽应注入");
+        let r = inject_slots(&page, &[(sl, notes.clone())]);
         assert_eq!(r.applied, notes, "四条各占一行、按序注入");
         // 洞见头行紧接着就是第一行→第四行。
         let out: Vec<&str> = r.text.lines().collect();
@@ -313,29 +378,34 @@ mod tests {
     }
 
     #[test]
-    fn inject_lines_idempotent() {
-        // 重跑：四行已在洞见块中 → 不重插（幂等）。
+    fn inject_slots_idempotent() {
+        // 重跑：行已在洞见块中 → 不重插（幂等）。
         let page = CardPage::parse(CALIB);
-        let notes: Vec<String> = ["第一行", "第二行", "第三行", "第四行"].iter().map(|s| s.to_string()).collect();
-        let r1 = inject_lines(&page, &notes);
+        let sl = page.plans[0].line;
+        let notes: Vec<String> = ["第一行", "第二行"].iter().map(|s| s.to_string()).collect();
+        let r1 = inject_slots(&page, &[(sl, notes.clone())]);
         let page2 = CardPage {
             lines: r1.text.split('\n').map(str::to_string).collect(),
             full: r1.text.clone(),
             ..CardPage::parse(CALIB)
         };
-        let r2 = inject_lines(&page2, &notes);
+        let r2 = inject_slots(&page2, &[(sl, notes)]);
         assert!(r2.applied.is_empty(), "已存在的行不重插");
     }
 
     #[test]
-    fn inject_lines_multi_slot_skips() {
-        // renbone：手写分布在金句+洞见两槽 → plans=2 → v1 不注入（宁缺勿造），mismatch 表意未注入。
+    fn inject_slots_multi_each_under_own() {
+        // renbone 多槽（金句+洞见）：逐槽各插各的、互不串；降序插不位移。
         let page = CardPage::parse(include_bytes!("../testdata/cardhw/renbone_slots.rm"));
-        assert!(page.plans.len() > 1, "renbone 是多槽");
-        let r = inject_lines(&page, &["甲".to_string()]);
-        assert!(r.mismatch.is_some(), "多槽不注入");
-        assert!(r.applied.is_empty());
-        assert_eq!(r.text, page.full, "text 不变");
+        let jin = page.plans.iter().find(|p| page.lines[p.line].trim().starts_with("🟡 金句")).unwrap().line;
+        let dong = page.plans.iter().find(|p| page.lines[p.line].trim().starts_with("🔵 洞见")).unwrap().line;
+        let r = inject_slots(&page, &[(jin, vec!["甲".into()]), (dong, vec!["乙".into()])]);
+        assert_eq!(r.applied.len(), 2, "两槽各注入一条");
+        let out: Vec<&str> = r.text.lines().collect();
+        let hj = out.iter().position(|l| l.trim().starts_with("🟡 金句")).unwrap();
+        let hd = out.iter().position(|l| l.trim().starts_with("🔵 洞见")).unwrap();
+        assert_eq!(out[hj + 1], "甲", "金句下=甲");
+        assert_eq!(out[hd + 1], "乙", "洞见下=乙");
     }
 
     #[test]
