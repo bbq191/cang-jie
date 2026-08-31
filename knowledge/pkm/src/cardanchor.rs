@@ -11,8 +11,15 @@
 //! anchor 落在 y 最近的字符上，常是 section header 或行边界、而非目标 bullet。
 //! 治法：anchor 行 + **笔画均值 y 的符号**定方向（负=写在锚点上方、正=下方），
 //! 就近吸附到该方向最近的 bullet 行。hw0.rm 五组 5/5 命中（含用户"红黑蓝写在她旁"）。
-//! ⚠ 此吸附规则仅在 hw0.rm（多轮测试污染卡）上验证过，跨场景（单条批注 / 顶底哨兵 /
-//!    多 section）须用干净设备 fixture 复核后方可接入生产 daemon。
+//! ## 验证覆盖（A1 跨场景加固）
+//! - `· ` bullet 卡：`hw0.rm`（污染卡）5 组 5/5 + DeepSeek 真机 --apply E2E。
+//! - 空槽卡（`is_slot_header`，cardHighlights 关的默认形态）：`renbone_slots.rm` 真机
+//!   （帕金森抖动 9 片手写、金句同行 + 洞见下行）→ 2 桶正确 + qwen 真机 dry-run 坐实；
+//!   合成锚点补测所有 7 槽同行书写、卡顶无槽不乱塞、顶/底哨兵 None。
+//! ⚠ 仍缺真机 geometry 覆盖（低 ROI、需新写才有）：① **bullet+空槽混排卡**（cardHighlights
+//!    开）——两分支交叉行为无 fixture；② 下方相邻槽（无空行间隔）「下一行书写」可能吸到隔壁槽
+//!    （renbone 洞见靠其下有空行才准）。二者遇到时靠计数护栏兜底（桶数≠识别数则不注入），
+//!    要彻底坐实须补对应真机 fixture。
 
 use device_core::notebook_rm::{anchor_char_offset, read_root_text_runs, TextRun};
 use remarkable_lines::v6::block::Block;
@@ -411,6 +418,69 @@ mod tests {
         // 覆盖的 bullet 行都是真 bullet。
         for p in &page.plans {
             assert!(is_bullet(&page.lines[p.line]), "计划命中行须是 bullet：{:?}", page.lines[p.line]);
+        }
+    }
+
+    // ── A1 跨场景加固：用 renbone 真实文本几何 + 合成锚点，覆盖真数据没碰到的槽位/边界 ──
+    // （renbone 真手写只落在 金句/洞见 两个顶部槽；下方槽 疑问/主题/可复用/人物 及边界靠合成验证）。
+    use remarkable_lines::v6::scene_item::point::Point;
+
+    /// char 偏移 → CrdtId（`anchor_char_offset` 的逆：run 内字符 id 从 run.id 连续 +1）。
+    fn crdt_at(off: usize, runs: &[TextRun]) -> (u8, u32) {
+        for r in runs {
+            let n = r.text.chars().count();
+            if off >= r.char_off && off < r.char_off + n {
+                return (r.id.0, r.id.1 + (off - r.char_off) as u32);
+            }
+        }
+        panic!("offset {off} 不在任何 run 内");
+    }
+    /// 行 li 首字符的绝对 char 偏移（每行 +1 计 `\n`）。
+    fn line_start(lines: &[String], li: usize) -> usize {
+        lines[..li].iter().map(|l| l.chars().count() + 1).sum()
+    }
+    /// 合成一片手写：锚 + 给定 mean_y（单点即可，mean_y 只读 y）。
+    fn mk_group(anchor: (u8, u32), mean_y: f32) -> HwGroup {
+        HwGroup {
+            node_id: (99, 99),
+            anchor: Some(anchor),
+            anchor_origin_x: 0.0,
+            color: "BLACK".into(),
+            strokes: vec![vec![Point { x: 0.0, y: mean_y, speed: 0.0, direction: 0.0, width: 0.0, pressure: 0.0 }]],
+        }
+    }
+    fn assoc_at(page: &CardPage, off: usize, mean_y: f32) -> Option<usize> {
+        let g = mk_group(crdt_at(off, &page.runs), mean_y);
+        let lref: Vec<&str> = page.lines.iter().map(String::as_str).collect();
+        associate(&g, &page.full, &page.runs, &lref).map(|a| a.line)
+    }
+
+    #[test]
+    fn slot_same_line_all_positions() {
+        // 每个分类槽头「同行书写」（mean_y≈0）都吸到自己那行——含下方槽（renbone 真数据只覆盖顶部两槽）。
+        let page = CardPage::parse(RENBONE);
+        for label in ["🟡", "🔵", "🩷", "🟠", "🟢", "⚪", "🔗"] {
+            let li = page.lines.iter().position(|l| l.starts_with(label)).unwrap();
+            let off = line_start(&page.lines, li) + 2; // 槽头行内（越过 emoji+空格）
+            assert_eq!(assoc_at(&page, off, 0.0), Some(li), "同行写 {label} 槽应吸到本行");
+        }
+    }
+
+    #[test]
+    fn top_of_card_no_slot_above_returns_none() {
+        // 卡顶标题行（其上无任何槽头）书写 → None（宁缺勿造，不往上乱塞）。
+        let page = CardPage::parse(RENBONE);
+        assert_eq!(assoc_at(&page, 0, 0.0), None);
+    }
+
+    #[test]
+    fn sentinel_anchor_none() {
+        // 顶/底哨兵锚（0xFFFF_FFFE/FF）→ None。
+        let page = CardPage::parse(RENBONE);
+        let lref: Vec<&str> = page.lines.iter().map(String::as_str).collect();
+        for sent in [0xFFFF_FFFEu32, 0xFFFF_FFFF] {
+            let g = mk_group((1, sent), 0.0);
+            assert_eq!(associate(&g, &page.full, &page.runs, &lref), None, "哨兵 {sent:#x} 应 None");
         }
     }
 }
