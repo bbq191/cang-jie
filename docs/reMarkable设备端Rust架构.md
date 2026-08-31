@@ -7,32 +7,15 @@
 
 ## 一、Crate 结构（现状）
 
-```
-device-core/            共享底座 crate（块3阅读 + 块5 PKM 都用的低层设备能力）
-  └ epubindex inject notebook_rm fswatch          ← 零 crate 内依赖、自足；精简外部依赖
+![三 crate 结构](diagrams/crate-structure.svg)
 
-reading/device-rs/      weread-device（块3 阅读）—— 微信读书下书 + EPUB 优化 + 面板服务
-  ├ 依赖 device-core，并 `pub use device_core::{那4个}` re-export（保 weread_device::epubindex 路径不变）
-  ├ 下载协议: codec sign obfuscate fetch login qr renew agent
-  ├ 内容/优化: htmlproc epub optimize    面板后台: autoopt
-  └ bins: wr-download wr-serve wr-renew wr-fetch wr-probe wr-spike
-
-knowledge/pkm/                    pkm-device（块5 PKM）—— ★待办 + 汇总本 + 查字典生词本
-  ├ 依赖 device-core（normal）；weread-device 仅 dev-dependency（1 个 fixture 测试用）
-  ├ 星→卡片: stardetect cardsync cardnote starscan
-  ├ 汇总本: cardindex cardagg cardreview cardstats
-  ├ 注入底层: notebook_sync         查字典(块4跨块): dict cardvocab locate vocabscan
-  └ bins: cj-stars-daemon cj-stars cj-nbtest
-```
+- `device-core` = epubindex/inject/notebook_rm/fswatch（零 crate 内依赖、自足）。
+- `weread-device`（块3 阅读）：下载协议 + 内容/优化 + **多格式转换 `convert`（cbz/fb2/mobi/kf8/pdfwrite/ingest/common）** + **`upload_server`（浏览器上传页 0.0.0.0:8778）** + 面板后台 `autoopt`；bins 里 wr-serve 内含面板 API（127.0.0.1:8777）+ inbox fswatch 线程 + 上传页线程。
+- `pkm-device`（块5 PKM）：星→卡片 + 汇总本 + 注入底层 + 查字典生词本（块4跨块）。
 
 **依赖图（单向、无环）**：
 
-```
-        device-core  ←──────────────┐
-           ▲   ▲                     │ (dev-dependency 仅测试)
-           │   └──────── pkm-device ─┘
-        weread-device                  ✗ reading 不反向依赖 pkm
-```
+![crate 依赖（单向无环）](diagrams/crate-deps.svg)
 
 - `device-core` 谁都不依赖（除 remarkable_lines 等外部 crate），是最底座。
 - `weread-device` 依赖 `device-core`（并 re-export 那 4 个模块）。
@@ -98,6 +81,8 @@ navigation 时看着像能用（我就被 `reverse.rs` 坑过）。
 | wr-serve | 662 行 bin（HTTP + 后台优化逻辑混） | 528 行路由 + `autoopt` 模块 | ①④ |
 
 **2026-08-26 增量（功能，非解耦）**：`inject` 加 `find_folder_by_name`/`set_upload_folder`（自动归档 GET-then-upload，卡片→zettelkasten、书→library）；`cardsync` 加 `merge_highlights`（老星页高亮增量合并）；`vocabscan::collect` 加 `since_ms` 基线（"开前灰词不补"）；`cardvocab::render_notebook_pages` 改一书一页；daemon 门控细分（star_todo/cardHighlights/cardAggregates/vocab）。均已真机验证部署，见系统增强白皮书 §08 + PKM 白皮书。
+
+**2026-08-31 增量（功能）· 多格式转换 + 浏览器上传页**：`weread-device` 新增 `convert`（多格式转换：CBZ→PDF、FB2/MOBI6/AZW3(KF8)→EPUB，全设备端纯 Rust；AZW3/KF8 为 clean-room 自研，`common` 收敛 cbz/fb2/mobi/kf8 的重复——图片魔数/sanitize/assemble+optimize）+ `upload_server`（浏览器上传页 `0.0.0.0:8778`，与面板 API `127.0.0.1:8777` 分离、只暴露「传文件进 inbox」）；`inject` 加 `upload_to_folder`（find→set→upload 一步，autoopt 与 ingest 共用）；`wr-serve` 加 `GET /inbox`+`POST /convert` 端点 + inbox fswatch 摄入线程 + 上传页线程。**解耦手法**：转换器各管一种格式、EPUB 组装/优化统一走 `common::assemble_optimized`（复用现成 `epub::assemble`+`optimize`）。均真机验证，见[阅读白皮书](../reading/docs/reMarkable阅读白皮书.md)「多格式转换线」。
 
 **净效果**：三 crate 依赖单向无环、职责清晰；bin 都是薄派发、业务逻辑在可测模块；pkm 生产构建摆脱 reading；
 reading 从"挂着死双向同步"回到"下书+优化+面板"的诚实形状。查字典（`dict`/`cardvocab`/`locate`/`vocabscan`）

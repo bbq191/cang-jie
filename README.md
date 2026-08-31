@@ -14,7 +14,7 @@
 |---|---|---|---|---|
 | 1 | **逆向基座** | 反编译工程 + 固件镜像，离线定位 hook 点/偏移/参数签名，一切能力的共享地基 | `ghidra-project/` · `rmfw/` | 持续维护 |
 | 2 | **中文化**（显示 + 输入法） | UI 汉化（`.qm` 简/繁/港 + 字体 + 原生 Settings 集成，M0–M2）+ 拼音输入法（键盘 hook + 拼音/双拼引擎 + 候选栏 + 中英混输，M3–M7） | `chinese-ime/` | 真机全链路通过，收尾维护 |
-| 3 | **阅读**（微信读书 + EPUB 优化） | 「墨香」设备自足微信读书（扫码/下书/取云端进度/续期；双向回传已随 PKM 回归砍除）+ 通用 EPUB 优化器 | `reading/` | 真机端到端验证 |
+| 3 | **阅读**（微信读书 + EPUB 优化 + 多格式转换） | 「墨香」设备自足微信读书（扫码/下书/取云端进度/续期；双向回传已随 PKM 回归砍除）+ 通用 EPUB 优化器 + **多格式转换**（CBZ/FB2/MOBI6/AZW3→EPUB/PDF，浏览器上传页 `:8778`） | `reading/` | 真机端到端验证 |
 | 4 | **系统增强**（阅读/显示/笔记 UX） | 点击翻页 · 快速黑白 · 清残影 · 键盘 Mono · 阅读字体 · 快捷输入(snippets) · 荧光笔汉字精确吸附 · **划词查字典→生词本**；集中在设置页「系统增强」中枢面板 | `xovi-extensions/` + `chinese-ime/langhook/`（笔记增强）+ `knowledge/pkm/`（查字词，跨块骑 daemon） | 真机端到端验证通过（查字词/5开关/高亮增量合并/自动归档均真机验证） |
 | 5 | **PKM / 知识管理** | ★全局待办语义引擎（把设备变成 Zettelkasten 工作台的首个能力）：Python 原型标定 + Rust 生产 | `knowledge/pkm-semantic/`（原型）+ `knowledge/pkm/`（Rust 生产 crate，依赖共享底座 `device-core/`） | 原型标定 + 真机端到端 |
 | 6 | **手写识别** | 笔迹 → 文字/结构：`cardhw` 卡片手写批注 → **所见即所得注入**（`anchor` 管『哪些槽有手写』+ 逐槽把缩略图裁成横条单喂 `vision` 管『写了什么、分几行』→ 每行落各自槽头下、不串槽，2026-08-31 终定）；五后端可插拔、**设备端生产默认 Qwen `qwen3-vl-plus`**（国内直连、原生高分辨率）；`export` freeform 手写→待校对 Markdown；**端化 A1/A2/B/C + 端到端真机通**（设备直接调云识别→注入→/upload 重建→设备可见 + 设置面板选模型/填 key/关笔记事件触发 + C 通知桥〔MainView `notificationQueue`〕+ token 统计）；真机多槽复杂场景结构性通过（各槽零串槽），转写准确率随手写清晰度=OCR 边界需人工校对；未来 `.rm` 结构识别（数字/实心圆=有序/无序列表、方框=待办） | `knowledge/pkm-semantic/handwriting/`（host 原型）+ 端化设备侧（骑 pkm daemon） | host + 端化 A1/A2/B/C 端到端真机通 |
@@ -29,7 +29,7 @@
 
 - **[reMarkable 中文化白皮书](chinese-ime/docs/reMarkable中文化白皮书.md)**（块2）—— UI 汉化这条线（M0–M2）。共享的环境搭建 / xovi 基础设施出处。
 - **[reMarkable 拼音输入法白皮书](chinese-ime/docs/reMarkable拼音输入法白皮书.md)**（块2）—— 输入法这条线（M3–M7）。含"从新机到当前进度"的完整复现主线。
-- **[reMarkable 阅读白皮书](reading/docs/reMarkable阅读白皮书.md)**（块3）—— 微信读书集成「墨香」+ 通用 EPUB 优化 + 墨香面板 UI/UX 规范。
+- **[reMarkable 阅读白皮书](reading/docs/reMarkable阅读白皮书.md)**（块3）—— 微信读书集成「墨香」+ 通用 EPUB 优化 + 多格式转换线（§08）+ 墨香面板 UI/UX 规范。
 - **[reMarkable 系统增强白皮书](xovi-extensions/docs/reMarkable系统增强白皮书.md)**（块4）—— 阅读/显示/笔记 UX（点击翻页/快速黑白/清残影/字体/键盘 Mono/快捷输入 snippets/荧光笔吸附/**划词查字典→生词本** §08）+ 设置页「系统增强」中枢面板 + 离线 qmldiff 验证管线。
 - **[reMarkable PKM 白皮书](knowledge/pkm/docs/reMarkablePKM白皮书.md)**（块5）—— PKM 知识化方法论 + ★全局待办语义引擎（检测/注入/卡片/去重）。
 - **[功能路线图白皮书](docs/reMarkable功能路线图白皮书.md)**（跨块）—— "下一步做什么"优先级共识 + 5 分块地图 + 已否决方向。深设计已下沉到上面各块白皮书，本文只留优先级与状态。
@@ -45,7 +45,7 @@
 | `chinese-ime/langhook/` | 2(+4) | 设备端 hook：编译成 `cangjie-langhook.so`（合规 **xovi 扩展**，放 `extensions.d/` 自动加载），承载键盘 hook/拼音缓冲/候选栏全部逻辑 + **块 4 的荧光笔汉字吸附**；`deploy/` 含**一键安装包**。见 [langhook/README.md](chinese-ime/langhook/README.md) |
 | `chinese-ime/pinyin-engine/` | 2 | 拼音引擎离线核心：`src/`（Python 参照）+ `c/`（C 移植 + blob 工具 + 差分测试）+ `data/`（词库 + 许可证留痕）+ `ui/` + `tests/` |
 | `chinese-ime/{fonts,translations,docs,qt-im-plugin}/` | 2 | 中文字体（+OFL）· zh `.qm` 翻译 · 两本白皮书 · `qt-im-plugin/`（Qt IM 插件方向判死实验） |
-| `reading/` | 3 | 阅读线设备端总仓：「墨香」微信读书自足化 + 通用 EPUB 优化器（`device-rs/` Rust 主体 + `device/` QML 注入件 `moxiang-sidebar`/`trash-agent`/`reader-*.qmd`）。见 [reading/README.md](reading/README.md)、`ATTRIBUTION.md`（历史名 `weread-client/`，2026-08-23 改名） |
+| `reading/` | 3 | 阅读线设备端总仓：「墨香」微信读书自足化 + 通用 EPUB 优化器 + **多格式转换**（`device-rs/src/convert/` CBZ/FB2/MOBI/AZW3→EPUB/PDF + `upload_server` 浏览器上传页；`device/` QML 注入件 `moxiang-sidebar`/`trash-agent`/`reader-*.qmd`）。见 [reading/README.md](reading/README.md)、`ATTRIBUTION.md`（历史名 `weread-client/`，2026-08-23 改名） |
 | `xovi-extensions/` | 4 | `reading-qol`（设置页「系统增强」中枢面板四分类：翻页与刷新/书籍与字体/快捷输入 snippets/笔记增强）+ `font-menu`（阅读字体） |
 | `device-core/` | 3+5 | **共享底座 crate**：`epubindex`/`inject`/`notebook_rm`/`fswatch`——块3阅读与块5 PKM 都用的低层设备能力；抽出后 pkm 生产构建不再全量编译 reading。见《[设备端 Rust 架构](docs/reMarkable设备端Rust架构.md)》 |
 | `knowledge/pkm/` | 5 | PKM ★待办**生产 Rust crate**：`stardetect`/`cardsync`/`cardnote`/`cardindex`（MOC 死链体检）+ `notebook_sync`/`starscan`/`vocabscan` + `cj-stars-daemon`；卡片按书原生 Tag 选 4 套模板；依赖共享底座 `device-core`。见 [knowledge/pkm/README.md](knowledge/pkm/README.md) |
@@ -90,7 +90,8 @@ ssh root@10.11.99.1 'cd /home/root && tar -xzf '"$(basename "$OUT")"' && cangjie
 ```
 
 装完：中文输入（键盘地球键切简繁/全拼双拼）、系统增强面板、墨香微信读书
-（浏览器开 `http://<设备IP>:8777` 扫码登录生成 `credentials.json`）、★全局待办都就位。
+（浏览器开 `http://<设备IP>:8777` 扫码登录生成 `credentials.json`）、**多格式转换**
+（浏览器开 `http://<设备IP>:8778` 拖 azw3/mobi/fb2/cbz 进书库）、★全局待办都就位。
 卸载回滚：`cangjie/uninstall.sh`（幂等；保留用户数据；不动 vellum 的 xovi 本体）。
 
 **四条硬保证**（映射到脚本的四层设计）：

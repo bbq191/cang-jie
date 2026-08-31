@@ -10,6 +10,7 @@
 
 - [背景与结论](#背景与结论)
 - [网络拓扑](#网络拓扑)
+- [设备 :80 Web UI 绑定与 usb1 alias](#设备-80-web-ui-绑定与-usb1-alias)
 - [PC 端配置](#pc-端配置)
 - [设备端事实（为什么不能在设备上持久化）](#设备端事实为什么不能在设备上持久化)
 - [自愈推送机制](#自愈推送机制)
@@ -33,19 +34,35 @@
 
 ## 网络拓扑
 
-```
-reMarkable (usb1: 10.11.99.1/27, 设备是该链路的 DHCP 服务器)
-    │ USB CDC
-PC (enp128s20f0u1c2: 10.11.99.2/24 + 30.1.11.46/24[UAT 工作网段])
-    │ 策略路由 (mihomo auto-route, table 2022)
-Meta TUN (28.0.0.1/30, fake-ip 段 28.0.0.1/8)
-    │
-mihomo v1.19.29 ──► wlan0 (家庭 Wi-Fi) / 代理节点
-```
+![网络拓扑](diagrams/network-topology.svg)
 
 - 设备侧发出的流量 → PC 转发 → 策略规则 `not iif lo lookup 2022` → 进 Meta TUN → mihomo 按规则分流。
 - 目的地址命中 `inet4-route-exclude-address`（10/8、30/8、40/8、172.16/12 等工作网段）的流量不进
   TUN，从 PC 直连出去——设备访问 UAT 内网正好走直连。
+
+---
+
+## 设备 :80 Web UI 绑定与 usb1 alias
+
+与上面「设备上网」正交的另一件设备网络事实：**xochitl 的 Web UI（`:80`，`/upload` 免重启导书用）只绑到 USB gadget 接口的 IP**——WiFi IP、`127.0.0.1` 都不听。反编译 `xochitl_3.28.0.169.bin` 的接口选择函数 `0x71e070`：先看 `usb0`，**无 carrier 就落 `usb1` fallback 且不再查 carrier**，绑到该接口 `addressEntries()` 的 IP。本项目一大票功能（墨香下书 / ★待办 / cardhw / 多格式转换）都靠 `POST http://10.11.99.1:80/upload` 导书，故 `:80` 必须绑得上。
+
+![:80 绑定链](diagrams/port80-binding.svg)
+
+**无 USB 冷启动也要能绑**：拔 USB 时 usb0/usb1 掉 IPv4、`10.11.99.1` 从接口消失。喂饱 fallback 的办法 = pre-start 给 `usb1` 挂 `10.11.99.1/32`（`lo` 上也挂一份，但 lo 只保「已绑之后」本机可达、**不触发**绑定；真正让冷启动绑起来的是 usb1 这份）。
+
+**时序缺口（2026-08-31 多格式真机踩到）**：给 usb1 挂 alias 的脚本 `cangjie-lo-alias.sh` **只在 xovi pre-start（开机）跑**——中途 `systemctl restart xochitl`（部署常做：cardhw/packaging/多格式）不重跑它；期间插拔 USB 又会重置 usb1、丢掉手挂的 alias。→ xochitl 中途重启时 usb1 无 IPv4 → `:80` 绑不上 → **所有 `/upload` 静默失败直到下次真重启**。
+
+**治本 = ExecStartPre**（`chinese-ime/langhook/deploy/zz-cangjie-usb1-alias.conf`）：把 usb1 alias 挂载做成 `xochitl.service` 的 `ExecStartPre`，**每次 xochitl 启动都跑**（不只开机 pre-start）：
+
+```ini
+[Service]
+ExecStartPre=-/usr/sbin/ip link set usb1 up
+ExecStartPre=-/usr/sbin/ip addr add 10.11.99.1/32 dev usb1
+```
+
+`-` 前缀让命令失败（usb1 不存在、地址已存在）被忽略、绝不阻塞 xochitl 启动；命令内联走 rootfs 的 `/usr/sbin/ip`，**不引入任何 `/home` 依赖**（守「绝不给 xochitl 加 /home 依赖」铁律）。drop-in 放 `/usr/lib/systemd/system/xochitl.service.d/`（rootfs 持久、普通重启不丢；OTA 冲后重跑 `install.sh` 恢复）。**真机验证**：删掉 usb1 的 alias → 裸 `systemctl restart xochitl` → ExecStartPre 自动挂回 → `:80` ~45s 自动绑上、`GET /documents/` 返回 200。
+
+> **诊断口诀**：`/upload` 报 `Connection refused (os error 111)` + `grep :0050 /proc/net/tcp` 里无 `0A`（LISTEN 态）= `:80` 没绑；查 `ip addr show usb1` 有没有 `10.11.99.1`。
 
 ---
 

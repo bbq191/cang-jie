@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 620" font-family="-apple-system, 'PingFang SC', 'Noto Sans CJK SC', sans-serif" font-size="14">
+  <defs>
+    <style>
+      .panel{fill:#fff;stroke:#333;stroke-width:1.5;}
+      .core{fill:#eafaef;stroke:#2b8f4e;}
+      .weread{fill:#eef4ff;stroke:#2b5fb3;}
+      .pkm{fill:#f3f0fb;stroke:#6b4fa3;}
+      .name{font-size:16px;font-weight:600;fill:#1a1a1a;}
+      .role{font-size:12px;fill:#666;}
+      .grp{font-size:12px;fill:#555;font-weight:600;}
+      .mods{font-size:13px;fill:#1a1a1a;font-family:'SF Mono','Menlo',monospace;}
+      .new{fill:#c5221f;font-weight:600;}
+      .title{font-size:18px;font-weight:600;fill:#1a1a1a;}
+    </style>
+  </defs>
+
+  <text x="20" y="30" class="title">三个设备端 Rust crate 的结构（块3阅读 + 块5 PKM + 共享底座）</text>
+
+  <!-- device-core -->
+  <rect class="panel core" x="30" y="52" width="840" height="86" rx="10"/>
+  <text x="48" y="78" class="name">device-core</text>
+  <text x="145" y="78" class="role">共享底座 —— 零 crate 内依赖、自足；块3/块5 都用的低层设备能力</text>
+  <text x="48" y="104" class="grp">模块</text>
+  <text x="120" y="104" class="mods">epubindex · inject · notebook_rm · fswatch</text>
+  <text x="48" y="126" class="role">reading 通过 pub use device_core::{那4个} re-export，调用路径 weread_device::epubindex::… 不变。</text>
+
+  <!-- weread-device -->
+  <rect class="panel weread" x="30" y="158" width="840" height="248" rx="10"/>
+  <text x="48" y="184" class="name">weread-device</text>
+  <text x="205" y="184" class="role">块3 阅读 —— 微信读书下书 + EPUB 优化 + 多格式转换 + 面板/上传服务</text>
+  <text x="48" y="210" class="grp">依赖</text>
+  <text x="120" y="210" class="mods">device-core（re-export 那 4 个模块）</text>
+  <text x="48" y="236" class="grp">下载协议</text>
+  <text x="120" y="236" class="mods">codec · sign · obfuscate · fetch · login · qr · renew · agent</text>
+  <text x="48" y="262" class="grp">内容/优化</text>
+  <text x="120" y="262" class="mods">htmlproc · epub · optimize</text>
+  <text x="48" y="288" class="grp">多格式转换</text>
+  <text x="120" y="288" class="mods">convert</text>
+  <text x="185" y="288" class="role">（cbz · fb2 · mobi · kf8 · pdfwrite · ingest · common）</text>
+  <text x="640" y="288" class="new">← 本轮新增</text>
+  <text x="48" y="314" class="grp">上传页</text>
+  <text x="120" y="314" class="mods">upload_server</text>
+  <text x="260" y="314" class="role">（浏览器传书进 inbox，独立监听 0.0.0.0:8778）</text>
+  <text x="640" y="314" class="new">← 本轮新增</text>
+  <text x="48" y="340" class="grp">面板后台</text>
+  <text x="120" y="340" class="mods">autoopt</text>
+  <text x="48" y="366" class="grp">bins</text>
+  <text x="120" y="366" class="mods">wr-download · wr-serve · wr-renew · wr-fetch · wr-probe · wr-spike</text>
+  <text x="48" y="392" class="role">wr-serve 内含：面板 API（127.0.0.1:8777）+ inbox fswatch 线程 + 上传页线程（0.0.0.0:8778）。</text>
+
+  <!-- pkm-device -->
+  <rect class="panel pkm" x="30" y="426" width="840" height="172" rx="10"/>
+  <text x="48" y="452" class="name">pkm-device</text>
+  <text x="175" y="452" class="role">块5 PKM —— ★待办 + 汇总本 +（块4跨块）查字典生词本</text>
+  <text x="48" y="478" class="grp">依赖</text>
+  <text x="120" y="478" class="mods">device-core（normal）</text>
+  <text x="330" y="478" class="role">weread-device 仅 dev-dependency（1 个 fixture 测试用）</text>
+  <text x="48" y="504" class="grp">星→卡片</text>
+  <text x="120" y="504" class="mods">stardetect · cardsync · cardnote · starscan</text>
+  <text x="48" y="530" class="grp">汇总本</text>
+  <text x="120" y="530" class="mods">cardindex · cardagg · cardreview · cardstats</text>
+  <text x="48" y="556" class="grp">注入/查字典</text>
+  <text x="120" y="556" class="mods">notebook_sync · dict · cardvocab · locate · vocabscan</text>
+  <text x="48" y="582" class="grp">bins</text>
+  <text x="120" y="582" class="mods">cj-stars-daemon · cj-stars · cj-nbtest</text>
+</svg>
