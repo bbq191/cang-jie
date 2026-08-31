@@ -107,6 +107,23 @@ pub fn set_upload_folder(agent: &ureq::Agent, host: &str, folder: &str) -> bool 
     agent.get(&format!("http://{host}/{path}")).call().is_ok()
 }
 
+/// 组合助手：把文档上传进指定名字的文件夹（`find_folder_by_name`→`set_upload_folder`→`upload_document`
+/// 一步到位）。folder_name 找不到 → 落书库根（best-effort，不致命）。复用方：wr-serve 自动优化 / 多格式
+/// 转换摄入都往同名 library 落，避免各写一遍这套 find/set/upload 三步。
+pub fn upload_to_folder(
+    agent: &ureq::Agent,
+    host: &str,
+    xochitl_dir: &str,
+    data: &[u8],
+    filename: &str,
+    content_type: &str,
+    folder_name: &str,
+) -> Result<String, String> {
+    let folder = find_folder_by_name(xochitl_dir, folder_name).unwrap_or_default();
+    set_upload_folder(agent, host, &folder);
+    upload_document(agent, host, data, filename, content_type)
+}
+
 /// 通用 /upload：multipart 字段名 file。EPUB=application/epub+zip；.rmdoc=application/zip。
 pub fn upload_document(agent: &ureq::Agent, host: &str, data: &[u8], filename: &str, content_type: &str) -> Result<String, String> {
     let boundary = format!("----cangjie{}", uuid::Uuid::new_v4().simple());

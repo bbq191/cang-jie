@@ -957,6 +957,7 @@ dependencies = [
  "device-core",
  "inotify",
  "md5",
+ "miniz_oxide",
  "png 0.17.16",
  "qrcode",
  "regex",

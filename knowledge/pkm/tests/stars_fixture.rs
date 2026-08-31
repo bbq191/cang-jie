@@ -120,6 +120,7 @@ fn todo_epub_assembles_to_valid_zip() {
             html_body: render_todo_html(&docs),
             level: 1,
         }],
+        resources: vec![],
     };
     let bytes = assemble(&mut book).expect("EPUB 应组装成功");
     assert!(bytes.len() > 100, "EPUB 非空");
