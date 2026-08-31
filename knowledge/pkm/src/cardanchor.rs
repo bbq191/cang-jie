@@ -189,8 +189,6 @@ pub struct Assoc {
 const DIR_EPS: f32 = 15.0;
 /// 吸附搜索窗口（行）。
 const SNAP_WINDOW: usize = 2;
-/// 空槽卡「书写位→上方槽头」的向上搜索窗口（槽间可夹空行，见 renbone_slots：洞见/疑问隔一空行）。
-const SLOT_WINDOW: usize = 3;
 
 /// 把一片手写关联到落点行。**两类卡分别处理**（互不干扰：`· ` 卡无槽头、空槽卡无 bullet）：
 /// ① 书摘 bullet 卡（cardHighlights 开）：anchor 常落小节头、bullet 在其下/上 → 方向吸附到 bullet；
@@ -240,7 +238,9 @@ pub fn associate(group: &HwGroup, full: &str, runs: &[TextRun], lines: &[&str]) 
         }
     }
 
-    // ② 空槽卡：估书写行（锚行 + 方向），向上找最近分类槽头（内容在槽头之下）。
+    // ② 空槽卡：估书写行（锚行 + 方向），**无界向上**找最近分类槽头。
+    // 内容永远属其上方最近的槽（槽下堆多少行都算这个槽），故不设窗口——否则槽内容一多、
+    // 手写离槽头远（如洞见下已注入多行），有界搜索够不着就丢（2026-08-31 真机 multislot 踩到）。
     let est = a + if my > DIR_EPS {
         1
     } else if my < -DIR_EPS {
@@ -248,14 +248,12 @@ pub fn associate(group: &HwGroup, full: &str, runs: &[TextRun], lines: &[&str]) 
     } else {
         0
     };
-    for k in 0..=SLOT_WINDOW as isize {
-        let c = est - k;
-        if c < 0 || c as usize >= lines.len() {
-            continue;
-        }
+    let mut c = est.min(lines.len() as isize - 1);
+    while c >= 0 {
         if is_slot_header(lines[c as usize]) {
             return Some(Assoc { line: c as usize, anchor_line: aline });
         }
+        c -= 1;
     }
     None
 }
@@ -482,5 +480,19 @@ mod tests {
             let g = mk_group((1, sent), 0.0);
             assert_eq!(associate(&g, &page.full, &page.runs, &lref), None, "哨兵 {sent:#x} 应 None");
         }
+    }
+
+    #[test]
+    fn multislot_unbounded_upward_reaches_deep_slot() {
+        // 真机多槽卡：洞见下已注入多行（第一行…行长）把新手写推到离洞见头 6 行；
+        // 人物/关联下各写一处。无界上吸后 → 3 个槽都识别到（洞见含在内），不因窗口小丢洞见。
+        // （有界 SLOT_WINDOW=3 时洞见手写会被丢——本测试锁死该回归。）
+        let page = CardPage::parse(include_bytes!("../testdata/cardhw/multislot.rm"));
+        let slots: std::collections::HashSet<&str> =
+            page.plans.iter().map(|p| page.lines[p.line].trim()).collect();
+        assert!(slots.iter().any(|s| s.starts_with("🔵 洞见")), "洞见（深处）应够到，实得 {slots:?}");
+        assert!(slots.iter().any(|s| s.starts_with("⚪ 人物")), "人物应识别");
+        assert!(slots.iter().any(|s| s.starts_with("🔗 关联")), "关联应识别");
+        assert!(page.plans.len() >= 3, "≥3 槽有手写");
     }
 }

@@ -384,12 +384,17 @@ fn settle(cfg: &Cfg, observe: bool, dirty: Option<&HashSet<String>>) {
                     Ok(Some(o)) => {
                         accumulate_usage(Path::new(CARDHW_USAGE_PATH), &cfg.cardhw_provider, o.usage);
                         if let Some((m, n)) = o.mismatch {
-                            // 识别条数≠手写块数：无可靠对应、未注入。标 done 免对同一 .rm 反复调云
-                            // （用户重写→hash 变→自然重试）。
+                            // 未注入（v1 只处理单槽）：n>1=多个槽都有手写；n==0=没关联到槽。
+                            // 标 done 免对同一 .rm 反复调云（用户重写→hash 变→自然重试）。
                             done.insert(hash.clone());
                             append_cardhw_done(&hash);
-                            write_status(Path::new(CARDHW_STATUS_PATH), "mismatch", &title, m, &format!("手写 {n} 处"));
-                            println!("[cardhw] 《{title}》识别 {m} 条 vs 手写 {n} 处，条数不符未注入（宁缺勿造，请重开卡片核对）");
+                            let why = if n > 1 {
+                                format!("{n} 个槽都有手写、一次只在一个槽下写")
+                            } else {
+                                "没关联到槽".to_string()
+                            };
+                            write_status(Path::new(CARDHW_STATUS_PATH), "mismatch", &title, m, &why);
+                            println!("[cardhw] 《{title}》识别 {m} 条手写但未注入：{why}");
                         } else if o.action.is_some() {
                             done.insert(hash.clone());
                             append_cardhw_done(&hash);
