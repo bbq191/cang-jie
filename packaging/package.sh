@@ -115,6 +115,8 @@ copy_opt "$FONTMENU/add-reading-fonts.qmd" "$PAY"
 for s in cangjie-qrr-failsafe.sh cangjie-lo-alias.sh cangjie-xlate-bindmount.sh; do
     copy_opt "$IME_DEPLOY/$s" "$PAY"
 done
+# 2d' usb1 alias ExecStartPre drop-in（rootfs，补 :80 pre-start-only 时序缺口）
+copy_opt "$IME_DEPLOY/zz-cangjie-usb1-alias.conf" "$PAY"
 # 2e UI 汉化 .qm
 for q in reMarkable_zh_CN.qm reMarkable_zh_TW.qm reMarkable_zh_HK.qm; do
     copy_opt "$TRANS/$q" "$PAY"

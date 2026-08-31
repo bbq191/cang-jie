@@ -125,6 +125,22 @@ if [ -f "$PAYLOAD/cangjie-lo-alias.sh" ]; then
     chmod +x "$PRESTART/cangjie-lo-alias.sh"
 fi
 
+# ---- 3e. usb1 alias ExecStartPre drop-in（rootfs：补 pre-start-only 时序缺口）----
+# cangjie-lo-alias.sh 只在 xovi pre-start（开机）跑，中途 systemctl restart xochitl（部署常做）
+# 不重跑它、期间 USB 插拔又会重置 usb1 → xochitl 重启时 :80 绑不上、所有 /upload 静默失败。
+# 这个 drop-in 把 usb1 alias 做成 xochitl.service 的 ExecStartPre，每次启动都挂、封住缺口
+# （2026-08-31 真机验证：删 usb1 alias→restart xochitl→ExecStartPre 自动挂回、:80 绑上）。
+# /usr 是 ro rootfs，remount rw 写入；普通重启不丢、OTA 冲后重跑本脚本恢复。
+if [ -f "$PAYLOAD/zz-cangjie-usb1-alias.conf" ]; then
+    DROPIN_DIR=/usr/lib/systemd/system/xochitl.service.d
+    echo "-- 装 usb1 alias drop-in -> $DROPIN_DIR/"
+    mount -o remount,rw / 2>/dev/null || true
+    mkdir -p "$DROPIN_DIR"
+    cp "$PAYLOAD/zz-cangjie-usb1-alias.conf" "$DROPIN_DIR/zz-cangjie-usb1-alias.conf"
+    mount -o remount,ro / 2>/dev/null || true
+    systemctl daemon-reload 2>/dev/null || true
+fi
+
 # ---- 3b. UI 界面汉化（verity 安全，bind-mount 覆盖翻译目录，让 xochitl 原生加载 zh）----
 # 股票固件 /usr 翻译目录只有 de/en/es/fr、无 zh 且 /usr 只读加不进。用 bind-mount 把 /home
 # 的完整目录（原版 + 我们的 zh）覆盖上去——运行时 VFS 挂载、不改 /usr 块、无 verity 回滚。

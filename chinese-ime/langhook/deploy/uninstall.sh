@@ -14,6 +14,7 @@ DATADIR="$ROOT/.local/share/cangjie-ime"
 XCONF="$ROOT/.config/remarkable/xochitl.conf"
 # 旧架构残留（本项目曾写 /usr，dm-verity 回滚雷）——best-effort 清掉
 LEGACY_DROPIN=/usr/lib/systemd/system/xochitl.service.d/zz-cangjie-xovi.conf
+USB1_DROPIN=/usr/lib/systemd/system/xochitl.service.d/zz-cangjie-usb1-alias.conf
 
 echo "== cangjie-ime 卸载（vellum-xovi 结构）=="
 [ "$(id -u)" = "0" ] || { echo "!! 需要 root 运行"; exit 1; }
@@ -53,12 +54,13 @@ done
 
 # ---- 4. best-effort 清旧架构 /usr 残留（若存在。注意：写 /usr 本身有 verity 风险，
 #         但删掉一个不该在的文件是为了避免它继续存在；只在真存在时才 remount）----
-if [ -f "$LEGACY_DROPIN" ]; then
-    echo "-- 检测到旧架构 /usr drop-in，尝试清除（remount rw）"
+if [ -f "$LEGACY_DROPIN" ] || [ -f "$USB1_DROPIN" ]; then
+    echo "-- 清 /usr drop-in（旧 xovi conf + usb1 alias，remount rw）"
     mount -o remount,rw / 2>/dev/null || true
-    rm -f "$LEGACY_DROPIN"
+    rm -f "$LEGACY_DROPIN" "$USB1_DROPIN"
     rmdir /usr/lib/systemd/system/xochitl.service.d 2>/dev/null || true
     sync; mount -o remount,ro / 2>/dev/null || true
+    systemctl daemon-reload 2>/dev/null || true
 fi
 
 # ---- 5. 重放 xovi/start，让 xochitl 不带 cangjie 重启（qrr 等其它扩展保留）----
