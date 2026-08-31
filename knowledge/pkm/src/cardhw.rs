@@ -6,53 +6,25 @@
 //!     `cardanchor::CardPage.plans` 给出「有手写的槽」。
 //!   - **行结构只信 vision**（`.rm` 无 `anchor_origin_y`、空行无锚，几何恢复不了「第几行」；
 //!     多模态 OCR 天然保留手写的行布局）。
-//! 本模块只负责：
-//!   - `transcribe_notes`：整页缩略图 → vision（`device_core::vision`）→ **只认手写、逐行、按序**。
-//!   - `inject_lines`：把 vision 的每行手写**各占一行插到 anchor 定的槽头正下方**；打印泄漏过滤
-//!     + 幂等。v1 仅支持单槽有手写（多槽 → 宁缺勿造不注入）。
+//! 本模块只负责（**多槽：按槽裁图隔离**）：
+//!   - `transcribe_by_slots`：`plans` 给出有手写的槽 → 每槽把缩略图裁成 [槽头行, 下一槽头行] 横条
+//!     （`crop_slot_bands`，文本行→像素映射 `y=顶+行×行高`）→ 单独喂 vision 按行转写。
+//!     区域隔离是关键——**整页喂 vision 做空间分割全不可靠**（猜槽串区、按块幻觉、按标签串区，
+//!     真机实测），裁成单槽横条 vision 才认得准。
+//!   - `inject_slots`：逐槽把该槽转写的每行**各占一行插到该槽头正下方**（降序插不位移、幂等）。
 //!
 //! 注入落回卡片必须走 `/upload` 重建（xochitl 直写不可见），编排在 bin/daemon，本模块只出新文本。
-//! 史：曾试「.rm 几何反推每片手写落哪一行」判死（无 anchor_origin_y+空行无锚→行位 collapse），
-//! 又试「vision 直接猜槽」判死（把洞见归金句）；终定「anchor 管槽 + vision 管行」。
+//! 史（判死链）：① 「.rm 几何反推每片手写落哪一行」判死（Group 无 anchor_origin_y+空行无字符可锚
+//! →行位 collapse）；② 「vision 猜槽/整页分块/按标签区域」全判死（串区/幻觉/泄漏）；
+//! 终定「anchor 管『哪些槽』+ 逐槽裁图 vision 管『写了什么、分几行』」。转写准确率随手写清晰度
+//! （帕金森抖动/淡笔迹认花属 OCR 边界，需人工校对，非机制问题）。
 
 use crate::cardanchor::CardPage;
 use device_core::vision::Usage;
 use serde_json::Value;
 
-// ── vision 纯转写（关联交给 .rm anchor，vision 只认字）──────────────────────
-/// 纯转写 prompt——**只**要手写逐字、top-to-bottom、一行一条，**不做**任何空间关联。
-/// 关联由 `cardanchor` 从 .rm 的 anchor 机制确定性导出，故此处剥离 vision 的猜位职责
-/// （杜纂根因）。要求排除印刷体（书摘条目），只出手写。
-const NOTES_PROMPT: &str = "这是一张 reMarkable「总结卡片」整页渲染。页面有（甲）印刷体书摘条目\
-（规整、等宽的机器字，多以 · 开头）和（乙）少量手写批注（笔迹潦草、有连笔、粗细不均、大小歪斜）。\
-任务：**只**把（乙）手写批注逐字转写出来，按它们在页面上从上到下的顺序、一行输出一条。\
-【铁律】① 只转写手写笔迹，**绝不**输出任何印刷体书摘文字（哪怕手写就叠在某条书摘旁，也只留手写那几个字）；\
-② 一处手写笔迹只输出一行，不要把一条手写拆成多行、也不要合并两处手写；\
-③ 潦草认不准写最可能的字，不留空、不加问号方括号占位。\
-只输出转写正文本身，一行一条，不要序号、不要 markdown、不要解释、不要描述图片、不要任何其它字符。";
-
-/// 整页卡片缩略图 → **有序手写转写**（每行一条，top-to-bottom）+ token。纯转写、不做关联。
-/// 关联由调用方用 `inject_by_anchor`（读 .rm）确定性完成。
-/// `expect_n`：.rm 已知手写块数（Some 时拼进 prompt 硬约束条数，稳住整页转写的条数抖动——
-/// DeepSeek 真机实测同页 2↔3 不稳，护栏会误挡；给准数后 vision 输出条数才对得齐）。
-pub fn transcribe_notes(
-    image_png: &[u8],
-    provider: &str,
-    model: Option<&str>,
-    key: &str,
-    expect_n: Option<usize>,
-) -> Result<(Vec<String>, Usage), String> {
-    let prompt = match expect_n {
-        Some(n) if n > 0 => format!(
-            "{NOTES_PROMPT}\n这一页上一共有 {n} 处手写批注，请**不多不少**正好输出 {n} 行、每行一条，按从上到下顺序。"
-        ),
-        _ => NOTES_PROMPT.to_string(),
-    };
-    let resp = device_core::vision::call_vision(image_png, &prompt, provider, model, key)?;
-    Ok((parse_notes(&resp.text), resp.usage))
-}
-
-/// 把纯转写应答拆成有序 note 列表：去代码围栏、按行切、去序号/项目符号前缀、去空行。
+// ── vision 转写应答解析（转写本身在 transcribe_by_slots：逐槽裁图喂 vision）──────
+/// 把转写应答拆成有序 note 列表：去代码围栏、按行切、去序号/项目符号前缀、去空行。
 fn parse_notes(raw: &str) -> Vec<String> {
     let s = raw
         .trim()

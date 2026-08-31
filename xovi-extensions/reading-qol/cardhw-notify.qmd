@@ -82,9 +82,9 @@ AFFECT /qml/device/view/main/MainView.qml
                             }, 1);
                         }
                     } else if (st.state === "mismatch") {
-                        // 锚点关联路径：识别条数≠手写块数，宁缺勿造未注入，需用户核对 → 连发 3 次。
+                        // 手写没落在任何槽下（anchor 关联不上）→ 未注入，提示写在槽标签正下方。连发 3 次。
                         cjCardhwNotifyWatcher.cjFire({
-                            "text": book + "识别 " + n + " 条与手写块数不符，未注入——请重开卡片核对",
+                            "text": book + "手写未落在任何槽下、未注入——请写在某个槽标签的正下方",
                             "icon": "qrc:/ark/icons/warning_circle",
                             "timeout": 7000
                         }, 3);
