@@ -4,7 +4,7 @@ reMarkable 上的中文手写笔记，host 侧转成 Markdown 进笔记生态/PK
 
 路线图 P1 的落地。识别质量 de-risk 结论（块⑥《[手写识别白皮书](docs/reMarkable手写识别白皮书.md)》§02）：**工整中文手写≈100%，快写连笔~60%（局部整段崩）**；传统印刷 OCR（tesseract）判死；喂原生缩略图优于自制渲染。所以本工具默认收割 xochitl 缩略图 + 多模态 vision + 人工校对。
 
-> **本 README 只讲 `export.py`（freeform 手写→Markdown vault）。** 块⑥另一成员 **`cardhw`（卡片手写批注→内联注入书摘行）已端化、端到端真机通**——设备自己调云识别→注入→/upload 重建，代码在 `knowledge/pkm/src/cardhw.rs`（关联治本=`.rm anchor` 确定性导出、vision 纯转写，见 **§05b**），完整设计见白皮书 **§03（host 版）/ §04（端化历程 + 后端默认 Qwen）/ §05b（anchor 治本，当前生产路径）**。`vision.py` 的多后端适配是 host 参照实现。
+> **本 README 只讲 `export.py`（freeform 手写→Markdown vault）。** 块⑥另一成员 **`cardhw`（卡片手写批注→所见即所得注入）已端化、真机通**——设备自己调云识别→注入→/upload 重建，代码在 `knowledge/pkm/src/cardhw.rs`。**注入终定=「anchor 管『哪些槽有手写』+ 逐槽裁缩略图横条单喂 vision 管『写了什么、分几行』→ 各行落各自槽头下、不串槽」**（2026-08-31，见白皮书 **§05c**）。完整设计见 **§03（host 版历史）/ §04（端化历程 + 后端默认 Qwen）/ §05b（anchor 分工地基，内联注入旧路径已被取代）/ §05c（所见即所得多槽裁图，当前生产路径）**。`vision.py` 的多后端适配是 host 参照实现。
 
 ## 管线
 
