@@ -9,8 +9,8 @@
 
 ![三 crate 结构](diagrams/crate-structure.svg)
 
-- `device-core` = epubindex/inject/notebook_rm/fswatch（零 crate 内依赖、自足）。
-- `weread-device`（块3 阅读）：下载协议 + 内容/优化 + **多格式转换 `convert`（cbz/fb2/mobi/kf8/pdfwrite/ingest/common + 容器共享底座 `palm`）** + **`upload_server`（浏览器上传页 0.0.0.0:8778）** + 面板后台 `autoopt`；bins 里 wr-serve 内含面板 API（127.0.0.1:8777）+ inbox fswatch 线程 + 上传页线程。
+- `device-core` = epubindex/inject/notebook_rm/fswatch/vision（零 crate 内依赖、自足）+ **`http_agent(secs)`**（统一构造 ureq Agent，全线共用）。`inject` 含 **`upload_or_delivered`**（把大书"408/读超时=很可能已送达"当成功、连接层失败才 Err，消除各调用处的三分支 match、防复制风暴）。
+- `weread-device`（块3 阅读）：下载协议 + 内容/优化（`optimize`+`htmlproc`+**`imgopt`**〔按 Move 屏 1696px 图片降采样〕）+ **多格式转换 `convert`（cbz/fb2/mobi/kf8/pdfwrite/ingest/common + 容器共享底座 `palm`）** + **稍后读 `readlater`（网页文章→干净 EPUB→read-later 文件夹）** + **`upload_server`（浏览器上传页 0.0.0.0:8778）** + 面板后台 `autoopt` + 小工具 `util`（xml_escape/sanitize_filename 共用）；bins 里 wr-serve 内含面板 API（127.0.0.1:8777）+ inbox fswatch 线程 + 上传页线程。
 - `pkm-device`（块5 PKM）：星→卡片 + 汇总本 + 注入底层 + 查字典生词本（块4跨块）。
 
 **依赖图（单向、无环）**：
@@ -88,13 +88,28 @@ navigation 时看着像能用（我就被 `reverse.rs` 坑过）。
 
 - **`convert/palm`（新，MOBI6/KF8 容器共享底座）**：PalmDB 记录表、PalmDOC 解压、extra_data_flags 尾字节剥离（正确偏移 = MOBI 头 `+0xE2`）、EXTH 元数据（语言 524 / 封面 201·202 / 书名 503 / 作者 100 / 出版 101）、图片收集、**NCX 目录 `parse_ncx`**（记录号 MOBI 头 `+0xE4`）、**fragment 索引 `parse_fragment_starts`**（`+0xE8`）。**弃用外部 `mobi` crate**（其 extra_data_flags 位置判断错、真机词典《现代汉语词典》乱码；自研 palm 修正）。**解耦**：MOBI6 与 KF8 早先各自解容器，现共用 `palm`；INDX 索引族解析进一步抽 `indx_locate`/`indx_entries`/`indx_split_entry` 三 helper（`parse_ncx` 与 `parse_fragment_starts` 复用去重，各自只剩「解释条目语义」的差异）。
 - **`convert/kf8`（AZW3/KF8）**：用 `palm`；**NCX 按位置切章**（真章名 + 层级 → nav 嵌套，把塞进同一 skeleton 的多章拆开）；`Cleaner`（`aid="X"`→`id="aidX"` 建锚 + 去结构壳 + kindle:embed 图 + kindle:flow）；`LinkCtx` + `remap_links`（两遍把 `kindle:pos:fid:off` 内链重映射成 `chap_N.xhtml#aidX` → 脚注/目录跳转可用，替代早先一律去链）；EXTH 封面。
-- **`convert/mobi`（MOBI6）**：用 `palm`；pagebreak 切章 + recindex 图 + EXTH 封面；filepos 内链暂去链（真样本病态待正常带脚注 MOBI6 再治）。
+- **`convert/mobi`（MOBI6）**：用 `palm`；recindex 图 + EXTH 封面。**filepos 内链已重映射**（2026-09-01 后续，真样本《喜鹊谋杀案》坐实——早先判死的词典是病态特例）：按书内目录（TOC 链最密段）切章拿真章名 + 为引用目标注入 `id="fpN"` 锚点 + 就地把 `filepos=N` 改写成 `href="chap#fpN"`；目录页链接变跨文件 href 后被现有优化器自动剥离，与 EPUB 对齐。
 - **`convert/mod` 扩展**：`is_ingestible` / `direct_content_type`（**EPUB/PDF 直传**——不转换原样 `/upload`）/ `precheck`（**先验后转**——mobi/azw3 只解容器头即判 DRM/HUFF-CDIC，秒级、不写盘、不阻塞批量）。
 - **`convert/ingest` 防重强化**：`INGEST_LOCK` 互斥把同步(上传页)/异步(fswatch)/手动(/convert) 三条触发**串行化** + 原子认领（rename 进 `.work`）+ `RECENT_CLAIMED` 账本（同名文件 180s 冷却，终极防重，根治启动窗口竞态"一书出两本"）+ `upload_likely_delivered`（区分"已送达 408/读超时"vs"连接被拒"，前者当成功不重试——**根治大书上传假失败→重试→复制风暴**）+ 上传超时 45/120→**300s** + `recover_orphans`（.work 崩溃残留移回）。
 - **`upload_server` 强化**：多选**排队 + 逐项进度条**（XHR upload.onprogress）、EPUB/PDF 直传 + 其它转换、收文即 `precheck` 先验。
 - **对齐原生 EPUB · 语言**：转换书 `<dc:language>` 从硬编 `en` 改为读 EXTH 524（`palm::lang_or_default`，空退 en）→ churchill=ru、中文书=zh。（其余优化——字体锁/脚注/封面/去冗余目录页/id 去重/幂等标记——转换产物本就走完整 `common::assemble_optimized`→`optimize_epub`，与原生一致。）
 
 均真机验证，详见[阅读白皮书](../reading/docs/reMarkable阅读白皮书.md)「多格式转换线」§08。
+
+**2026-09-01 增量（功能）· 设备级优化 + 稍后读 + 本地 tab 书库管理**（详见阅读白皮书 §07/§10）：
+
+- **`imgopt`（新）· 按 Move 屏规格图片降采样**：长边 >1696px 的图 Lanczos3 缩到 ≤1696（保比保格式、达标即跳过、任何失败原样）。接进优化器（`optimize_epub` 对 EPUB 内图）+ CBZ→PDF 组页前（`cbz` 每页）。`image` crate（纯 Rust zune-jpeg+png，无 C 依赖、musl 友好）。配套 **`htmlproc::boost_text_contrast`**（e-ink 灰字→纯黑、细字重→400，作用于 style/`<style>`/`.css`）。产物幂等（`OPTIMIZE_VERSION` 2→3）。
+- **`readlater`（新）· 稍后读**：URL→设备 WiFi 抓取→`readability-rust`（Mozilla 移植纯 Rust）抽取→**`scraper` 白名单重序列化成合法 XHTML**（根治脏 HTML5 塞 EPUB 崩解析）→图片 data-src 兜底+Referer 抓取+降采样内嵌→组优化 EPUB→`ensure_folder` 建 `read-later` 独立文件夹。入口：上传页 `POST /save-url` + 面板 `POST /read-later`。`strip_bad_params` 去微信 `poc_token` 拦截。
+- **本地 tab 书库管理**：`/library` 纳入 pdf（`fmt` 字段）；面板**直接调 xochitl 原生 `selectionMoveToTrash`** 手动删除（绕开 trash-agent 模型触发依赖）+ `POST /trash/add` 队列兜底；`/inbox` 返回 `failed` + `list_failed`/`retry_failed`/`delete_failed`（失败项重试/删除）。
+
+**2026-09-01 增量（去重解耦 + 打包）**：
+
+- **HTTP Agent 单源**：`device_core::http_agent(secs)` 替换 reading(autoopt/ingest/readlater/wr_serve+4 bins)/pkm(starscan/notebook_sync/cj_nbtest)/device_core(vision) 约 10 处重复的 `AgentBuilder`。
+- **上传防风暴单源**：`inject::upload_or_delivered` 收敛 ingest/autoopt/readlater 各自的三分支 match。
+- **reading `util` 模块**：`xml_escape`（`&<>"`，替代 epub/fb2 `xesc` + readlater `xml_escape`）、`sanitize_filename(title, default)`（合并 ingest `sanitize_title` + readlater `sanitize_filename` + autoopt 内联）。
+- **wr-serve `read_json(&mut req)`**：收敛 7 处 `read_to_string + from_str` 样板。
+- **打包生产优化**：reading/pkm `[profile.release]` 加 `codegen-units = 1`（配已有 `opt-level=z + lto + strip + panic=abort`），wr-serve −86KB + 改善跨函数优化。device-core 作依赖跟随主 crate profile。
+- **验证**：reading 86 单测绿、三 crate + aarch64-musl 交叉编译零告警（仅 vendored remarkable_lines 既有 dead_code）；真机 wr-serve NRestarts=0、稍后读/删除/多格式全路径通——纯重构行为不变。
 
 **净效果**：三 crate 依赖单向无环、职责清晰；bin 都是薄派发、业务逻辑在可测模块；pkm 生产构建摆脱 reading；
 reading 从"挂着死双向同步"回到"下书+优化+面板"的诚实形状。查字典（`dict`/`cardvocab`/`locate`/`vocabscan`）
