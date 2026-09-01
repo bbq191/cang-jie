@@ -99,9 +99,7 @@ pub fn call_vision(
     // 300s：DeepSeek 系（deepseek-v4-flash-vision-exp）是重推理模型，单次输出常 1w~1.6w+ reasoning
     // token，真机实测耗时在 42s~152s 剧烈波动、偶尔 >180s（打满旧 180s 上限 → 假性失败）。故放宽到
     // 300s 兜住它的慢运行。Qwen 类简洁模型（~百 token）秒回、远用不满。宁可等，也别让慢后端假性超时。
-    let agent = ureq::AgentBuilder::new()
-        .timeout(std::time::Duration::from_secs(300))
-        .build();
+    let agent = crate::http_agent(300);
 
     if cfg.style == "anthropic" {
         let payload = json!({

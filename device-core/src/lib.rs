@@ -13,3 +13,13 @@ pub mod fswatch;
 pub mod inject;
 pub mod notebook_rm;
 pub mod vision;
+
+/// 统一构造 ureq HTTP Agent（超时=连接+读，秒；0=不限）。设备端所有 HTTP 客户端（reading/pkm 的
+/// 下书/抓取/上传/调云）共用，消除各处重复的 `AgentBuilder::new().timeout(..).build()`。
+pub fn http_agent(timeout_secs: u64) -> ureq::Agent {
+    let mut b = ureq::AgentBuilder::new();
+    if timeout_secs > 0 {
+        b = b.timeout(std::time::Duration::from_secs(timeout_secs));
+    }
+    b.build()
+}

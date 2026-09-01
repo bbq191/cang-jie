@@ -124,6 +124,26 @@ pub fn upload_to_folder(
     upload_document(agent, host, data, filename, content_type)
 }
 
+/// `upload_to_folder` 的"防复制风暴"包装：把**很可能已送达**（大书 /upload 处理慢→408/读超时，
+/// 但 xochitl 实际已创建文档）当成功——`Ok(true)`=确认成功；`Ok(false)`=超时但很可能已送达（**绝不重试**）；
+/// `Err`=连接层失败（未创建，可安全重试/归档 failed）。消除 ingest/autoopt/readlater 各自重复的三分支
+/// match（真机《飘》复制风暴根治逻辑，见 reading 白皮书 §08）。
+pub fn upload_or_delivered(
+    agent: &ureq::Agent,
+    host: &str,
+    xochitl_dir: &str,
+    data: &[u8],
+    filename: &str,
+    content_type: &str,
+    folder_name: &str,
+) -> Result<bool, String> {
+    match upload_to_folder(agent, host, xochitl_dir, data, filename, content_type, folder_name) {
+        Ok(_) => Ok(true),
+        Err(e) if upload_likely_delivered(&e) => Ok(false),
+        Err(e) => Err(e),
+    }
+}
+
 /// 通用 /upload：multipart 字段名 file。EPUB=application/epub+zip；.rmdoc=application/zip。
 pub fn upload_document(agent: &ureq::Agent, host: &str, data: &[u8], filename: &str, content_type: &str) -> Result<String, String> {
     let boundary = format!("----cangjie{}", uuid::Uuid::new_v4().simple());

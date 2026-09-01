@@ -6,7 +6,7 @@
 
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
-use std::time::{Duration, UNIX_EPOCH};
+use std::time::UNIX_EPOCH;
 
 use crate::cardagg::TITLE_SUFFIX as CARD_SUFFIX; // "- 总结卡片"：源书排除卡片本 + 卡片本命名，单一来源
 use crate::cardhl;
@@ -153,7 +153,7 @@ pub fn sync_one_card(dir: &str, book_title: &str, stars: &[StarSpec], folder: &s
         Ok(b) => b,
         Err(e) => return Some(format!("《{book_title}》pack 失败: {e}")),
     };
-    let net = ureq::AgentBuilder::new().timeout(Duration::from_secs(20)).build();
+    let net = device_core::http_agent(20);
     inject::set_upload_folder(&net, UPLOAD_HOST, folder); // 落进 zettelkasten（空=root 兜底）
     if let Err(e) = inject::upload_document(&net, UPLOAD_HOST, &rmdoc, &format!("{visible}.rmdoc"), "application/zip") {
         return Some(format!("《{book_title}》/upload 失败: {e}"));

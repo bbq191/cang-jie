@@ -6,7 +6,7 @@
 //! 原生 `selectionMoveToTrash` 内存即时移回收站）。**绝不直接改磁盘 metadata parent=trash**（xochitl 内存不认）。
 
 use crate::cardnote;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 use device_core::inject;
 
 /// xochitl 本地 /upload 端点（USB 网卡，本机走本地路由可达、无需真插 USB）。
@@ -139,7 +139,7 @@ pub fn sync_auto_notebook(dir: &str, title: &str, pages: &[String], folder: &str
     let new_uuid = uuid::Uuid::new_v4().to_string();
     let refs: Vec<&str> = pages.iter().map(|s| s.as_str()).collect();
     let rmdoc = cardnote::pack_rmdoc(&new_uuid, title, &refs).ok()?;
-    let net = ureq::AgentBuilder::new().timeout(Duration::from_secs(20)).build();
+    let net = device_core::http_agent(20);
     inject::set_upload_folder(&net, UPLOAD_HOST, folder); // 落进 zettelkasten（空=root 兜底）
     if inject::upload_document(&net, UPLOAD_HOST, &rmdoc, &format!("{title}.rmdoc"), "application/zip").is_err() {
         return None;

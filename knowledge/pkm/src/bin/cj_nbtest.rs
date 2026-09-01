@@ -69,9 +69,7 @@ fn main() {
                     std::process::exit(1);
                 }
             };
-            let agent = ureq::AgentBuilder::new()
-                .timeout(std::time::Duration::from_secs(15))
-                .build();
+            let agent = device_core::http_agent(15);
             match device_core::inject::upload_document(&agent, "10.11.99.1", &rmdoc, &format!("{title}.rmdoc"), "application/zip") {
                 Ok(resp) => println!("upload uuid={u} pages={n} -> 响应: {resp}"),
                 Err(e) => {
@@ -92,7 +90,7 @@ fn main() {
                 Ok(b) => b,
                 Err(e) => { eprintln!("pack 失败: {e}"); std::process::exit(1); }
             };
-            let agent = ureq::AgentBuilder::new().timeout(std::time::Duration::from_secs(15)).build();
+            let agent = device_core::http_agent(15);
             match device_core::inject::upload_document(&agent, "10.11.99.1", &rmdoc, &format!("{visible}.rmdoc"), "application/zip") {
                 Ok(resp) => println!("carddemo visibleName=《{title}》- 总结卡片 -> {resp}\n请在设备打开它、用Text工具打字、退出，再跑 readback"),
                 Err(e) => { eprintln!("upload 失败: {e}"); std::process::exit(1); }
