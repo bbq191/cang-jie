@@ -10,7 +10,7 @@
 ![三 crate 结构](diagrams/crate-structure.svg)
 
 - `device-core` = epubindex/inject/notebook_rm/fswatch（零 crate 内依赖、自足）。
-- `weread-device`（块3 阅读）：下载协议 + 内容/优化 + **多格式转换 `convert`（cbz/fb2/mobi/kf8/pdfwrite/ingest/common）** + **`upload_server`（浏览器上传页 0.0.0.0:8778）** + 面板后台 `autoopt`；bins 里 wr-serve 内含面板 API（127.0.0.1:8777）+ inbox fswatch 线程 + 上传页线程。
+- `weread-device`（块3 阅读）：下载协议 + 内容/优化 + **多格式转换 `convert`（cbz/fb2/mobi/kf8/pdfwrite/ingest/common + 容器共享底座 `palm`）** + **`upload_server`（浏览器上传页 0.0.0.0:8778）** + 面板后台 `autoopt`；bins 里 wr-serve 内含面板 API（127.0.0.1:8777）+ inbox fswatch 线程 + 上传页线程。
 - `pkm-device`（块5 PKM）：星→卡片 + 汇总本 + 注入底层 + 查字典生词本（块4跨块）。
 
 **依赖图（单向、无环）**：
@@ -83,6 +83,18 @@ navigation 时看着像能用（我就被 `reverse.rs` 坑过）。
 **2026-08-26 增量（功能，非解耦）**：`inject` 加 `find_folder_by_name`/`set_upload_folder`（自动归档 GET-then-upload，卡片→zettelkasten、书→library）；`cardsync` 加 `merge_highlights`（老星页高亮增量合并）；`vocabscan::collect` 加 `since_ms` 基线（"开前灰词不补"）；`cardvocab::render_notebook_pages` 改一书一页；daemon 门控细分（star_todo/cardHighlights/cardAggregates/vocab）。均已真机验证部署，见系统增强白皮书 §08 + PKM 白皮书。
 
 **2026-08-31 增量（功能）· 多格式转换 + 浏览器上传页**：`weread-device` 新增 `convert`（多格式转换：CBZ→PDF、FB2/MOBI6/AZW3(KF8)→EPUB，全设备端纯 Rust；AZW3/KF8 为 clean-room 自研，`common` 收敛 cbz/fb2/mobi/kf8 的重复——图片魔数/sanitize/assemble+optimize）+ `upload_server`（浏览器上传页 `0.0.0.0:8778`，与面板 API `127.0.0.1:8777` 分离、只暴露「传文件进 inbox」）；`inject` 加 `upload_to_folder`（find→set→upload 一步，autoopt 与 ingest 共用）；`wr-serve` 加 `GET /inbox`+`POST /convert` 端点 + inbox fswatch 摄入线程 + 上传页线程。**解耦手法**：转换器各管一种格式、EPUB 组装/优化统一走 `common::assemble_optimized`（复用现成 `epub::assemble`+`optimize`）。均真机验证，见[阅读白皮书](../reading/docs/reMarkable阅读白皮书.md)「多格式转换线」。
+
+**2026-09-01 增量（功能 + 解耦）· 容器底座 `palm` + KF8 目录/内链 + 摄入防重 + 上传页强化 + 语言对齐**：
+
+- **`convert/palm`（新，MOBI6/KF8 容器共享底座）**：PalmDB 记录表、PalmDOC 解压、extra_data_flags 尾字节剥离（正确偏移 = MOBI 头 `+0xE2`）、EXTH 元数据（语言 524 / 封面 201·202 / 书名 503 / 作者 100 / 出版 101）、图片收集、**NCX 目录 `parse_ncx`**（记录号 MOBI 头 `+0xE4`）、**fragment 索引 `parse_fragment_starts`**（`+0xE8`）。**弃用外部 `mobi` crate**（其 extra_data_flags 位置判断错、真机词典《现代汉语词典》乱码；自研 palm 修正）。**解耦**：MOBI6 与 KF8 早先各自解容器，现共用 `palm`；INDX 索引族解析进一步抽 `indx_locate`/`indx_entries`/`indx_split_entry` 三 helper（`parse_ncx` 与 `parse_fragment_starts` 复用去重，各自只剩「解释条目语义」的差异）。
+- **`convert/kf8`（AZW3/KF8）**：用 `palm`；**NCX 按位置切章**（真章名 + 层级 → nav 嵌套，把塞进同一 skeleton 的多章拆开）；`Cleaner`（`aid="X"`→`id="aidX"` 建锚 + 去结构壳 + kindle:embed 图 + kindle:flow）；`LinkCtx` + `remap_links`（两遍把 `kindle:pos:fid:off` 内链重映射成 `chap_N.xhtml#aidX` → 脚注/目录跳转可用，替代早先一律去链）；EXTH 封面。
+- **`convert/mobi`（MOBI6）**：用 `palm`；pagebreak 切章 + recindex 图 + EXTH 封面；filepos 内链暂去链（真样本病态待正常带脚注 MOBI6 再治）。
+- **`convert/mod` 扩展**：`is_ingestible` / `direct_content_type`（**EPUB/PDF 直传**——不转换原样 `/upload`）/ `precheck`（**先验后转**——mobi/azw3 只解容器头即判 DRM/HUFF-CDIC，秒级、不写盘、不阻塞批量）。
+- **`convert/ingest` 防重强化**：`INGEST_LOCK` 互斥把同步(上传页)/异步(fswatch)/手动(/convert) 三条触发**串行化** + 原子认领（rename 进 `.work`）+ `RECENT_CLAIMED` 账本（同名文件 180s 冷却，终极防重，根治启动窗口竞态"一书出两本"）+ `upload_likely_delivered`（区分"已送达 408/读超时"vs"连接被拒"，前者当成功不重试——**根治大书上传假失败→重试→复制风暴**）+ 上传超时 45/120→**300s** + `recover_orphans`（.work 崩溃残留移回）。
+- **`upload_server` 强化**：多选**排队 + 逐项进度条**（XHR upload.onprogress）、EPUB/PDF 直传 + 其它转换、收文即 `precheck` 先验。
+- **对齐原生 EPUB · 语言**：转换书 `<dc:language>` 从硬编 `en` 改为读 EXTH 524（`palm::lang_or_default`，空退 en）→ churchill=ru、中文书=zh。（其余优化——字体锁/脚注/封面/去冗余目录页/id 去重/幂等标记——转换产物本就走完整 `common::assemble_optimized`→`optimize_epub`，与原生一致。）
+
+均真机验证，详见[阅读白皮书](../reading/docs/reMarkable阅读白皮书.md)「多格式转换线」§08。
 
 **净效果**：三 crate 依赖单向无环、职责清晰；bin 都是薄派发、业务逻辑在可测模块；pkm 生产构建摆脱 reading；
 reading 从"挂着死双向同步"回到"下书+优化+面板"的诚实形状。查字典（`dict`/`cardvocab`/`locate`/`vocabscan`）

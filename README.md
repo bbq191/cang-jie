@@ -14,7 +14,7 @@
 |---|---|---|---|---|
 | 1 | **逆向基座** | 反编译工程 + 固件镜像，离线定位 hook 点/偏移/参数签名，一切能力的共享地基 | `ghidra-project/` · `rmfw/` | 持续维护 |
 | 2 | **中文化**（显示 + 输入法） | UI 汉化（`.qm` 简/繁/港 + 字体 + 原生 Settings 集成，M0–M2）+ 拼音输入法（键盘 hook + 拼音/双拼引擎 + 候选栏 + 中英混输，M3–M7） | `chinese-ime/` | 真机全链路通过，收尾维护 |
-| 3 | **阅读**（微信读书 + EPUB 优化 + 多格式转换） | 「墨香」设备自足微信读书（扫码/下书/取云端进度/续期；双向回传已随 PKM 回归砍除）+ 通用 EPUB 优化器 + **多格式转换**（CBZ/FB2/MOBI6/AZW3→EPUB/PDF，浏览器上传页 `:8778`） | `reading/` | 真机端到端验证 |
+| 3 | **阅读**（微信读书 + EPUB 优化 + 多格式转换） | 「墨香」设备自足微信读书（扫码/下书/取云端进度/续期；双向回传已随 PKM 回归砍除）+ 通用 EPUB 优化器 + **多格式转换**（CBZ→PDF，FB2/MOBI6/**AZW3(KF8)**→EPUB，纯 Rust clean-room 自研 `palm` 容器底座）：KF8 解 NCX 真目录（章名+层级）、内链 `kindle:pos` 重映射成真锚点（脚注/目录跳转可用）、EXTH 封面+语言、产物走完整 optimize_epub 与原生对齐；**浏览器上传页 `:8778`**（多选排队+进度条、EPUB/PDF 直传、HUFF/CDIC/DRM 先验后拒、去重根治） | `reading/` | 真机端到端验证 |
 | 4 | **系统增强**（阅读/显示/笔记 UX） | 点击翻页 · 快速黑白 · 清残影 · 键盘 Mono · 阅读字体 · 快捷输入(snippets) · 荧光笔汉字精确吸附 · **划词查字典→生词本**；集中在设置页「系统增强」中枢面板 | `xovi-extensions/` + `chinese-ime/langhook/`（笔记增强）+ `knowledge/pkm/`（查字词，跨块骑 daemon） | 真机端到端验证通过（查字词/5开关/高亮增量合并/自动归档均真机验证） |
 | 5 | **PKM / 知识管理** | ★全局待办语义引擎（把设备变成 Zettelkasten 工作台的首个能力）：Python 原型标定 + Rust 生产 | `knowledge/pkm-semantic/`（原型）+ `knowledge/pkm/`（Rust 生产 crate，依赖共享底座 `device-core/`） | 原型标定 + 真机端到端 |
 | 6 | **手写识别** | 笔迹 → 文字/结构：`cardhw` 卡片手写批注 → **所见即所得注入**（`anchor` 管『哪些槽有手写』+ 逐槽把缩略图裁成横条单喂 `vision` 管『写了什么、分几行』→ 每行落各自槽头下、不串槽，2026-08-31 终定）；五后端可插拔、**设备端生产默认 Qwen `qwen3-vl-plus`**（国内直连、原生高分辨率）；`export` freeform 手写→待校对 Markdown；**端化 A1/A2/B/C + 端到端真机通**（设备直接调云识别→注入→/upload 重建→设备可见 + 设置面板选模型/填 key/关笔记事件触发 + C 通知桥〔MainView `notificationQueue`〕+ token 统计）；真机多槽复杂场景结构性通过（各槽零串槽），转写准确率随手写清晰度=OCR 边界需人工校对；未来 `.rm` 结构识别（数字/实心圆=有序/无序列表、方框=待办） | `knowledge/pkm-semantic/handwriting/`（host 原型）+ 端化设备侧（骑 pkm daemon） | host + 端化 A1/A2/B/C 端到端真机通 |
@@ -91,7 +91,7 @@ ssh root@10.11.99.1 'cd /home/root && tar -xzf '"$(basename "$OUT")"' && cangjie
 
 装完：中文输入（键盘地球键切简繁/全拼双拼）、系统增强面板、墨香微信读书
 （浏览器开 `http://<设备IP>:8777` 扫码登录生成 `credentials.json`）、**多格式转换**
-（浏览器开 `http://<设备IP>:8778` 拖 azw3/mobi/fb2/cbz 进书库）、★全局待办都就位。
+（浏览器开 `http://<设备IP>:8778` 拖 azw3/mobi/fb2/cbz 转换、epub/pdf 直传，可多选排队进书库）、★全局待办都就位。
 卸载回滚：`cangjie/uninstall.sh`（幂等；保留用户数据；不动 vellum 的 xovi 本体）。
 
 **四条硬保证**（映射到脚本的四层设计）：

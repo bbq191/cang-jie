@@ -126,10 +126,10 @@ PPI（Move 为固定硬件参数）、Gallery 3 白态偏灰、色彩对比度�
 
 **★架构定案（已真机端到端）**：从早期"host Python 大脑 + 设备薄 hook"彻底演进到**全设备自足**——扫码登录/分片下载+解码/组 EPUB/注入书库/划线想法双向同步/会话续期全由设备上的 aarch64 Rust 静态二进制（`reading/device-rs`：`wr-serve`/`wr-download`/`wr-renew`）完成，host 脐带全剪断。两堵硬墙定了形状：① 渲染器是独立进程 `xochitl_pdf_renderer`（hook 触达不到）→ 集成靠"写文档库 + 读 `.rm` 反解"；② 设备无通用运行时 → 只能跑自编 aarch64 静态二进制 + 注入 QML。
 
-**状态**：**P0 全链路真机端到端验证通过**——下载/注入/双向划线想法同步/内联画回/EPUB 优化/整页墨香 app/阅读器菜单/荧光笔汉字吸附/**多格式转换（CBZ/FB2/MOBI6/AZW3→EPUB/PDF）+ 浏览器上传页**。当前真实剩余风险只有 ② 翻页硬件天花板（Gallery 3 物理刷新，非软件可解）+ ③ 协议脆弱性（上游一改需真机回归）。
+**状态**：**P0 全链路真机端到端验证通过**——下载/注入/双向划线想法同步/内联画回/EPUB 优化/整页墨香 app/阅读器菜单/荧光笔汉字吸附/**多格式转换（CBZ/FB2/MOBI6/AZW3(KF8)→EPUB/PDF，KF8 含真目录 NCX + 内链跳转重映射 + 封面/语言）+ 浏览器上传页（多选排队/直传/预检/去重根治）**。当前真实剩余风险只有 ② 翻页硬件天花板（Gallery 3 物理刷新，非软件可解）+ ③ 协议脆弱性（上游一改需真机回归）。
 
 - **§5.7（并入阅读白皮书 §07）· 通用 EPUB 优化器 + 阅读体验做到极致**：下书 EPUB 组装升级（整章一页/多级目录/脚注内联）、xochitl 弹窗脚注判死（穷尽实测负结论）、通用 EPUB 优化器（字体解锁/破脚注互指/封面拉伸/去冗余目录页）、无感自动优化 + 原生回收站通道（`trash-agent.qmd` 走 `selectionMoveToTrash` 原生代码路）。全真机验证。
-- **§5.8（详见阅读白皮书 §08）· 多格式转换线 + 浏览器上传页**：xochitl 只认 EPUB/PDF，把 **CBZ→PDF、FB2/MOBI6/AZW3(KF8)→EPUB** 全设备端纯 Rust 转好再注入（`reading/device-rs/src/convert/`）。**AZW3/KF8 无纯 Rust crate → clean-room 自研**（用户要求不走 host 降级）；HUFF/CDIC 的 AZW3 与 CBR 因 C 依赖/受限许可走 host 降级。摄入经 **inbox**（fswatch 自动转）+ **浏览器上传页**（`0.0.0.0:8778`，与敏感 API 隔离）。全真机验证。**顺带根治 :80 时序缺口**：usb1 alias 做成 `xochitl.service` ExecStartPre，护住所有 `/upload` 功能（详见网络方案白皮书）。
+- **§5.8（详见阅读白皮书 §08）· 多格式转换线 + 浏览器上传页**：xochitl 只认 EPUB/PDF，把 **CBZ→PDF、FB2/MOBI6/AZW3(KF8)→EPUB** 全设备端纯 Rust 转好再注入（`reading/device-rs/src/convert/`）。**AZW3/KF8 无纯 Rust crate → clean-room 自研**（用户要求不走 host 降级），弃外部 `mobi` crate、自研 **`palm` 容器底座**（PalmDB/PalmDOC/EXTH/INDX，MOBI6 与 KF8 共用）。KF8 深加工全真机验证：**NCX 真目录**（解索引得真章名+层级、nav 嵌套，根治"每章都叫书名"）、**内链 `kindle:pos` 重映射成真 epub 锚点**（脚注/源书目录页链接可跳）、**EXTH 封面**（201/202）+ `cover.xhtml` 垂直居中（缩略图不再偏上）+ **EXTH 524 语言**（原硬编 en）。产物统一走完整 `optimize_epub`，**与原生 EPUB 优化对齐**（字体锁剥离/脚注/封面修复/去冗余目录页/id 去重/幂等标记）。HUFF/CDIC 的 AZW3 与 CBR 因 C 依赖/受限许可走 host 降级；MOBI6 的 filepos 内链暂去链（真样本病态，待正常样本再治）。摄入经 **inbox**（fswatch 自动转）+ **浏览器上传页**（`0.0.0.0:8778`，与敏感 API 隔离）：**多选排队+进度条、EPUB/PDF 直传（不转换）、HUFF/CDIC/DRM 先验后拒（不阻塞批量）**。**去重根治**（真机《飘》《丘吉尔》复现后逐层坐实）：互斥锁串行化 + 原子认领 + 最近已认领账本 + **大书上传超时假失败→重试复制风暴根治**（区分"已送达 408/超时"vs"连接失败"，前者当成功绝不重试）。**顺带根治 :80 时序缺口**：usb1 alias 做成 `xochitl.service` ExecStartPre，护住所有 `/upload` 功能（详见网络方案白皮书）。
 - **§5.8（迁至《[PKM 白皮书](../knowledge/pkm/docs/reMarkablePKM白皮书.md)》）· ★ 全局待办**——PKM 语义引擎首个能力（红笔画星 → 后台 Rust daemon 自动汇总总结卡片）已迁入 PKM 白皮书，见块5。
 
 ## 06｜P1：手写识别（手写 → 文字/结构 → 笔记生态）（块⑥）
