@@ -115,6 +115,20 @@ else
     echo "-- （包内无 bin/，跳过 reading/pkm 二进制）"
 fi
 
+# ── 4b. 稍后读文件夹：预建 read-later collection（缺失才建）──────────────────────
+# 稍后读文章落独立 read-later 文件夹（与 library 分开）。直写的 collection xochitl **下次重启后**
+# 才进活模型（本次安装不重启 xochitl，故装完到首次重启前若存文章会落库根、重启后自愈）。
+XDATA="$ROOT/.local/share/remarkable/xochitl"
+if [ -d "$XDATA" ] && ! grep -ql '"read-later"' "$XDATA"/*.metadata 2>/dev/null; then
+    RLU="$(cat /proc/sys/kernel/random/uuid 2>/dev/null || true)"
+    if [ -n "$RLU" ]; then
+        NOW="$(date +%s)000"
+        printf '{\n    "createdTime": "%s",\n    "lastModified": "%s",\n    "new": false,\n    "parent": "",\n    "pinned": false,\n    "source": "",\n    "type": "CollectionType",\n    "visibleName": "read-later"\n}\n' "$NOW" "$NOW" > "$XDATA/$RLU.metadata"
+        echo '{}' > "$XDATA/$RLU.content"
+        echo "-- 已预建 read-later 文件夹（下次 xochitl 重启后可见）"
+    fi
+fi
+
 # ── 5. 第 3 层：systemd 开机持久化（写 /usr rootfs；dm-verity 门 + 红线）────────
 echo
 echo "── 第 3 层：开机自恢复（systemd → /usr rootfs）──"
