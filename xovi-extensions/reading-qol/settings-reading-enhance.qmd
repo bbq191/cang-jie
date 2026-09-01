@@ -662,6 +662,7 @@ AFFECT /qml/device/view/settings/Settings.qml
                     property int  cfgEvery: 15
                     property bool cfgFont: false
                     property bool cfgAutoOpt: false
+                    property bool cfgComicEink: false
                     property var _cjXhr: null
                     readonly property string cjPath: "file:///home/root/.local/share/cangjie-ime/reading-qol.json"
 
@@ -681,6 +682,7 @@ AFFECT /qml/device/view/settings/Settings.qml
                                 cjFlipRoot.cfgEvery = (n > 0) ? n : 15;
                                 cjFlipRoot.cfgFont = !!c.fontEnhance;
                                 cjFlipRoot.cfgAutoOpt = !!c.autoOptimize;
+                                cjFlipRoot.cfgComicEink = !!c.comicEinkTone;
                                 cjFlipRoot.cfgStarTodo = !!c.starTodoEnabled;
                                 if (c.starTodoColor) cjFlipRoot.cfgStarColor = c.starTodoColor;
                                 var sg = parseInt(c.starTodoGap); if (sg > 0) cjFlipRoot.cfgStarGap = sg;
@@ -707,6 +709,7 @@ AFFECT /qml/device/view/settings/Settings.qml
                                 refreshEvery: cjFlipRoot.cfgEvery,
                                 fontEnhance: cjFlipRoot.cfgFont,
                                 autoOptimize: cjFlipRoot.cfgAutoOpt,
+                                comicEinkTone: cjFlipRoot.cfgComicEink,
                                 starTodoEnabled: cjFlipRoot.cfgStarTodo,
                                 starTodoColor: cjFlipRoot.cfgStarColor,
                                 starTodoGap: cjFlipRoot.cfgStarGap,
@@ -898,6 +901,7 @@ AFFECT /qml/device/view/settings/Settings.qml
                     property int  cfgEvery: 15
                     property bool cfgFont: false
                     property bool cfgAutoOpt: false
+                    property bool cfgComicEink: false
                     property bool cfgStarTodo: false
                     property string cfgStarColor: "RED"
                     property int cfgStarGap: 25
@@ -928,6 +932,7 @@ AFFECT /qml/device/view/settings/Settings.qml
                                 cjBookRoot.cfgEvery = (n > 0) ? n : 15;
                                 cjBookRoot.cfgFont = !!c.fontEnhance;
                                 cjBookRoot.cfgAutoOpt = !!c.autoOptimize;
+                                cjBookRoot.cfgComicEink = !!c.comicEinkTone;
                                 cjBookRoot.cfgStarTodo = !!c.starTodoEnabled;
                                 if (c.starTodoColor) cjBookRoot.cfgStarColor = c.starTodoColor;
                                 var sg = parseInt(c.starTodoGap); if (sg > 0) cjBookRoot.cfgStarGap = sg;
@@ -954,6 +959,7 @@ AFFECT /qml/device/view/settings/Settings.qml
                                 refreshEvery: cjBookRoot.cfgEvery,
                                 fontEnhance: cjBookRoot.cfgFont,
                                 autoOptimize: cjBookRoot.cfgAutoOpt,
+                                comicEinkTone: cjBookRoot.cfgComicEink,
                                 starTodoEnabled: cjBookRoot.cfgStarTodo,
                                 starTodoColor: cjBookRoot.cfgStarColor,
                                 starTodoGap: cjBookRoot.cfgStarGap,
@@ -990,21 +996,27 @@ AFFECT /qml/device/view/settings/Settings.qml
                                 fontT: "阅读字体增强",
                                 fontD: "在阅读字体菜单新增 霞鹜文楷 / 霞鹜新致宋 / KF Readerly 三项可选（原字体保留）。开启后重开字体菜单生效。",
                                 optT: "导入书籍自动优化",
-                                optD: "新导入的 EPUB 自动优化：解锁字体字号、修复脚注跳转、修正封面拉伸、去掉冗余目录页。约一分钟内以优化版替换原书（原书移入回收站，可恢复）；仅处理还没打开过的书。"
+                                optD: "新导入的 EPUB 自动优化：解锁字体字号、修复脚注跳转、修正封面拉伸、去掉冗余目录页。约一分钟内以优化版替换原书（原书移入回收站，可恢复）；仅处理还没打开过的书。",
+                                comicT: "漫画省刷新",
+                                comicD: "导入漫画（CBZ）时把黑白页转成 1-bit 抖动黑白——触发墨水屏更轻快的刷新波形、翻页更省闪，文件也更小；彩色封面/插页自动保留彩色。对经「传书页 / inbox」导入的漫画生效，开启后新导入的适用。"
                             },
                             tw: {
                                 page: "書籍與字體", sub: "墨香 · 系統增強", back: "‹ 系統增強",
                                 fontT: "閱讀字體增強",
                                 fontD: "在閱讀字體選單新增 霞鶩文楷 / 霞鶩新致宋 / KF Readerly 三項可選（原字體保留）。開啟後重開字體選單生效。",
                                 optT: "匯入書籍自動優化",
-                                optD: "新匯入的 EPUB 自動優化：解鎖字體字號、修復腳註跳轉、修正封面拉伸、去掉冗餘目錄頁。約一分鐘內以優化版替換原書（原書移入回收站，可恢復）；僅處理還沒打開過的書。"
+                                optD: "新匯入的 EPUB 自動優化：解鎖字體字號、修復腳註跳轉、修正封面拉伸、去掉冗餘目錄頁。約一分鐘內以優化版替換原書（原書移入回收站，可恢復）；僅處理還沒打開過的書。",
+                                comicT: "漫畫省刷新",
+                                comicD: "匯入漫畫（CBZ）時把黑白頁轉成 1-bit 抖動黑白——觸發墨水屏更輕快的刷新波形、翻頁更省閃，檔案也更小；彩色封面/插頁自動保留彩色。對經「傳書頁 / inbox」匯入的漫畫生效，開啟後新匯入的適用。"
                             },
                             en: {
                                 page: "Books & Fonts", sub: "MoXiang · System", back: "‹ System",
                                 fontT: "Reading font upgrade",
                                 fontD: "Adds LXGW WenKai / LXGW ZhiSong / KF Readerly to the reading font menu (originals kept). Reopen the font menu to apply.",
                                 optT: "Auto-optimize imported books",
-                                optD: "Newly imported EPUBs are optimized automatically: unlock fonts and sizes, fix footnote jumps, fix stretched covers, drop redundant TOC pages. Within about a minute the optimized copy replaces the original (moved to Trash, recoverable); only books never opened are touched."
+                                optD: "Newly imported EPUBs are optimized automatically: unlock fonts and sizes, fix footnote jumps, fix stretched covers, drop redundant TOC pages. Within about a minute the optimized copy replaces the original (moved to Trash, recoverable); only books never opened are touched.",
+                                comicT: "Comic low-flash mode",
+                                comicD: "When importing comics (CBZ), black-and-white pages are converted to 1-bit dithered mono — triggering the e-ink panel's lighter, faster refresh waveform (less flashing on page turns) and smaller files; colour covers/inserts stay in colour automatically. Applies to comics imported via the upload page / inbox, for newly imported ones."
                             }
                         };
                         return D[cjBookRoot.cjLang()] || D.en;
@@ -1058,6 +1070,16 @@ AFFECT /qml/device/view/settings/Settings.qml
                                 onClicked: { cjBookRoot.cfgAutoOpt = !cjBookRoot.cfgAutoOpt; cjBookRoot.cjSave(); }
                             }
                         }
+                        ArkControls.Panel {
+                            width: cjBookCol.width
+                            iconSource: "qrc:/ark/icons/lens"
+                            label: cjBookRoot.i18n.comicT
+                            description: cjBookRoot.i18n.comicD
+                            action: ArkControls.Toggle {
+                                checked: cjBookRoot.cfgComicEink
+                                onClicked: { cjBookRoot.cfgComicEink = !cjBookRoot.cfgComicEink; cjBookRoot.cjSave(); }
+                            }
+                        }
                     }
                 }
             }
@@ -1099,6 +1121,7 @@ AFFECT /qml/device/view/settings/Settings.qml
                     property int  cfgEvery: 15
                     property bool cfgFont: false
                     property bool cfgAutoOpt: false
+                    property bool cfgComicEink: false
                     property var _cjXhr: null
                     readonly property string cjPath: "file:///home/root/.local/share/cangjie-ime/reading-qol.json"
 
@@ -1126,6 +1149,7 @@ AFFECT /qml/device/view/settings/Settings.qml
                                 var n = parseInt(c.refreshEvery); cjNoteRoot.cfgEvery = (n > 0) ? n : 15;
                                 cjNoteRoot.cfgFont = !!c.fontEnhance;
                                 cjNoteRoot.cfgAutoOpt = !!c.autoOptimize;
+                                cjNoteRoot.cfgComicEink = !!c.comicEinkTone;
                                 cjNoteRoot.cfgHlSnap = (c.hlSnapCjk !== false);  // 缺省=开
                             }
                         } catch (e) {
@@ -1142,6 +1166,7 @@ AFFECT /qml/device/view/settings/Settings.qml
                                 refreshEvery: cjNoteRoot.cfgEvery,
                                 fontEnhance: cjNoteRoot.cfgFont,
                                 autoOptimize: cjNoteRoot.cfgAutoOpt,
+                                comicEinkTone: cjNoteRoot.cfgComicEink,
                                 starTodoEnabled: cjNoteRoot.cfgStarTodo,
                                 starTodoColor: cjNoteRoot.cfgStarColor,
                                 starTodoGap: cjNoteRoot.cfgStarGap,
@@ -1333,6 +1358,7 @@ AFFECT /qml/device/view/settings/Settings.qml
                     property int  cfgEvery: 15
                     property bool cfgFont: false
                     property bool cfgAutoOpt: false
+                    property bool cfgComicEink: false
                     property bool cfgStarTodo: false
                     property string cfgStarColor: "RED"
                     property int  cfgStarGap: 25
@@ -1367,6 +1393,7 @@ AFFECT /qml/device/view/settings/Settings.qml
                                 var n = parseInt(c.refreshEvery); cjHwRoot.cfgEvery = (n > 0) ? n : 15;
                                 cjHwRoot.cfgFont = !!c.fontEnhance;
                                 cjHwRoot.cfgAutoOpt = !!c.autoOptimize;
+                                cjHwRoot.cfgComicEink = !!c.comicEinkTone;
                                 cjHwRoot.cfgStarTodo = !!c.starTodoEnabled;
                                 if (c.starTodoColor) cjHwRoot.cfgStarColor = c.starTodoColor;
                                 var sg = parseInt(c.starTodoGap); if (sg > 0) cjHwRoot.cfgStarGap = sg;
@@ -1396,7 +1423,7 @@ AFFECT /qml/device/view/settings/Settings.qml
                                 tapPageTurn: cjHwRoot.cfgTap, fastMono: cjHwRoot.cfgMono,
                                 refresh: cjHwRoot.cfgRefresh, refreshByChapter: cjHwRoot.cfgByChapter,
                                 refreshEvery: cjHwRoot.cfgEvery, fontEnhance: cjHwRoot.cfgFont,
-                                autoOptimize: cjHwRoot.cfgAutoOpt, starTodoEnabled: cjHwRoot.cfgStarTodo,
+                                autoOptimize: cjHwRoot.cfgAutoOpt, comicEinkTone: cjHwRoot.cfgComicEink, starTodoEnabled: cjHwRoot.cfgStarTodo,
                                 starTodoColor: cjHwRoot.cfgStarColor, starTodoGap: cjHwRoot.cfgStarGap,
                                 hlSnapCjk: cjHwRoot.cfgHlSnap, cardHighlights: cjHwRoot.cfgCardHl,
                                 cardAggregates: cjHwRoot.cfgCardAgg, vocabEnabled: cjHwRoot.cfgVocab,
