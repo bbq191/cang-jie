@@ -2,7 +2,7 @@
 
 [![CI](https://github.com/bbq191/cang-jie/actions/workflows/ci.yml/badge.svg)](https://github.com/bbq191/cang-jie/actions/workflows/ci.yml)
 
-把 [reMarkable Paper Pro Move](https://remarkable.com/) 的官方阅读/笔记程序 **xochitl** 从"能用"改造成"顺手"的个人项目：起于**中文输入法 + 界面汉化**，现已长成一套围绕 xochitl 的**设备增强套件**（中文化 · 阅读 · 系统增强 · PKM）。全程**不改 xochitl 本体**——各项能力以合规 [xovi](https://github.com/asivery/xovi) 扩展 / qmldiff / 设备端自足二进制的形式，放 `xovi/extensions.d/` 等处运行时动态改行为，磁盘上的原始二进制原封不动。
+把 [reMarkable Paper Pro Move](https://remarkable.com/) 的官方阅读/笔记程序 **xochitl** 从"能用"改造成"顺手"的个人项目：起于**中文输入法 + 界面汉化**，现已长成一套围绕 xochitl 的**设备增强套件**（中文化 · 阅读 · 系统增强 · PKM · 手写识别，共 6 分块见下）。**当前主线是「阅读」（块3）**——功能最密、迭代最活跃；中文化（块2）已收尾维护。全程**不改 xochitl 本体**——各项能力以合规 [xovi](https://github.com/asivery/xovi) 扩展 / qmldiff / 设备端自足二进制的形式，放 `xovi/extensions.d/` 等处运行时动态改行为，磁盘上的原始二进制原封不动。
 
 > 本项目是个人设备自用、不对外分发。涉及许可证的数据（rime-ice/iorest 词典、微信读书正文等）不编译进 `.so`，只做独立文件运行时只读 / 仅本机渲染，产物不进入任何再分发渠道。
 
@@ -140,9 +140,20 @@ cd chinese-ime/langhook && make test && make aarch64 XOVI_DIR=<asivery/xovi clon
 > rime-ice 词典源，只在本地 `uv run pytest chinese-ime/pinyin-engine/tests` + `make -C …/c test diff-check`
 > 跑（上面「本地开发」两条）。设备行为不进 CI，仍按工程纪律人工真机验证。
 
-## 当前进度（块 2 中文化线）
+## 当前进度
 
-> 其余各块的推进历程见[功能路线图白皮书](docs/reMarkable功能路线图白皮书.md)（块 3 墨香/EPUB、块 4 系统增强、块 5 PKM ★待办）。
+一句话：**中文化（块2）收尾维护，「阅读」（块3）是当前最活跃、功能最密的线**；系统增强/PKM/手写识别均已真机端到端跑通。各块推进历程详见[功能路线图白皮书](docs/reMarkable功能路线图白皮书.md)。
+
+| 块 | 现状 | 近况要点 |
+|---|---|---|
+| ① 逆向基座 | 持续维护 | 新固件 OTA 后靠特征码运行期自定位，不需重推偏移 |
+| ② 中文化 | **收尾维护** | 全拼/双拼/繁体/中英混输全链路真机通；霞鹜新致宋 + 花园明朝 B 兜底；韧性重构抗 OTA（详见下方里程碑）|
+| ③ **阅读（当前主线）** | **持续迭代** | 墨香微信读书自足化（扫码/下书/进度/续期）+ 通用 EPUB 优化器（脚注/封面/字体锁/去冗余目录 + **按 Move 屏设备优化**：图片降采样 1696px + e-ink 灰字提黑）+ **多格式转换**（CBZ/FB2/MOBI6/**AZW3(KF8)**→EPUB/PDF，纯 Rust 自研 `palm` 底座，KF8/MOBI6 真目录 + 内链跳转）+ **稍后读**（网页文章/微信公众号→干净 EPUB→read-later）+ 浏览器上传页 + 墨香面板本地书库管理（列全书/手动删除/失败项重试）。全真机验证 |
+| ④ 系统增强 | 真机通 | 点击翻页/快速黑白/清残影/键盘 Mono/阅读字体/快捷输入 snippets/荧光笔汉字吸附/划词查字典→生词本，集中在设置页「系统增强」面板 |
+| ⑤ PKM | 真机通 | ★全局待办语义引擎（红笔画星→一书一份总结卡片笔记本），Python 原型标定 + Rust 生产 daemon |
+| ⑥ 手写识别 | 端化真机通 | cardhw 卡片手写批注→所见即所得注入 + freeform export→Markdown；端化 A1/A2/B/C 端到端通，默认 Qwen 后端；转写准确率=OCR 边界需人校 |
+
+### 块 2 中文化里程碑（详）
 
 - **M0–M2（UI 汉化）**：交叉编译工具链、xovi、字体 subset、`.qm` 翻译（简/繁/港）、原生 Settings 语言集成——基本收工。
 - **M3（虚拟键盘 hook）/ M4（拼音候选可用，含逐字造句/分段提交/退格撤销）/ M6（双拼 + 繁体）**：真机全链路验证通过。
