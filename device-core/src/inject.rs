@@ -147,3 +147,32 @@ pub fn upload_document(agent: &ureq::Agent, host: &str, data: &[u8], filename: &
         Err(e) => Err(format!("上传失败: {e}")),
     }
 }
+
+/// 上传返回错误时，判断请求**是否很可能已送达并被 xochitl 创建**。
+/// 大书 /upload：xochitl 收完整请求后处理很慢 → 回 `408 request timeout` 或客户端读响应超时，
+/// **但文档实际已创建**。此时**绝不能重试**（每重试一次多一本 → 真机「飘」复制风暴）。
+/// 反之「连接被拒/连接错误」= :80 没绑、请求没送达，文档未创建（这类才可安全重试）。
+/// true=已送达(当成功、别重试)；false=连接层失败(未创建)。
+pub fn upload_likely_delivered(err: &str) -> bool {
+    let e = err.to_ascii_lowercase();
+    (e.contains("408") || e.contains("timed out") || e.contains("timeout"))
+        && !e.contains("connect")
+}
+
+#[cfg(test)]
+mod delivered_tests {
+    use super::upload_likely_delivered;
+    #[test]
+    fn classifies_upload_errors() {
+        // 已送达（别重试）：408 / 读响应超时
+        assert!(upload_likely_delivered("HTTP 408: 408 request timeout"));
+        assert!(upload_likely_delivered(
+            "上传失败: Network Error: Error encountered in the status line: timed out reading response"
+        ));
+        // 未送达（可能重试/终态失败）：连接被拒 / 连接错误
+        assert!(!upload_likely_delivered(
+            "上传失败: http://10.11.99.1/upload: Connection Failed: Connect error: Connection refused (os error 111)"
+        ));
+        assert!(!upload_likely_delivered("上传失败: connect timed out")); // 连接阶段超时=未送达
+    }
+}
