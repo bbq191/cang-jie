@@ -221,11 +221,12 @@ OTA 到 `IMG_VERSION=3.28.0.169`（此前 .166）后用户报 5 个功能失效�
 
 ## 12｜Sidebar 一级直达「KOReader」入口（2026-09-02 真机通，固件 3.27.3.0）
 
-**背景**：双阅读器分工后 KOReader 是消遣阅读主力，原入口藏在 Sidebar→AppLoad 二级菜单。「彻底取代 xochitl」架构判死（Move 无 /dev/fb，显示合成器在 xochitl 进程内，KOReader 靠 appload qtfb 桥显示；oxide/blight 在 imx93 崩、判死有效）。本功能=最外层入口：书库侧边栏 My files 下直插「KOReader」项（Ko 字标），点击即启。
+**背景**：双阅读器分工后 KOReader 是消遣阅读主力，原入口藏在 Sidebar→AppLoad 二级菜单。「彻底取代 xochitl」架构判死（Move 无 /dev/fb，显示合成器在 xochitl 进程内，KOReader 靠 appload qtfb 桥显示；oxide/blight 在 imx93 崩、判死有效）。本功能=最外层入口，**最终布局（用户逐轮定稿，2026-09-02 真机通）**：`My files / Favorites / Tags / Import files / ──隔离线── / KOReader(Ko字标) / (空隙) / Trash / ── / Guides / Settings`，AppLoad 菜单项隐藏。
 
 **机制**（`reading-qol/koreader-sidebar-entry.qmd` + `assets/`）：
 - appload 暴露 QML 单例 `AppLoadLauncher.launchApplication(id,args,env,window)`（import net.asivery.AppLoad 1.0），接收方 Connections 在 appload 常驻 Loader 里，任意上下文可调。**⚠ 外部应用 id = `external::<目录名>`**（library.cpp:245 前缀拼接，裸名报 No application installed——真机踩过）。
-- 注入点：Sidebar.qml `?#filterColumn` > `SidebarFilterItem#filterMyFiles` 后插同型项（属性形态照抄原生；又踩一次"非通配选择器不递归"，`?#id` 治之）。
+- 注入点：Sidebar.qml `?#filterColumn` >「Import files」宿主 `DeviceKeyboardNavigationHandler#integrationsHandler` 之后（"Import files" 真身=integrations 折叠项的 title，走查时它 title 不外露、日志只见类名——差点误判不存在）；隔离线=原生 Trash/Guides 间同款（Item h=2+黑 Rectangle）复刻。又踩一次"非通配选择器不递归"，`?#id` 治之。
+- **AppLoad 项隐藏 + 活体布局诊断法**：AppLoad 项由 appload.so 内建 diff 注入（与我们 qmd 的应用顺序不可控，REMOVE 不可靠）→ 改在我们项的 `Component.onCompleted` 里**兄弟遍历**按 title 匹配置 `visible=false`（ColumnLayout 下即出布局），顺带 `CJ-SIDEBAR[i]` 打印全兄弟清单——**journal 直读活体侧边栏布局**，qmd 布局调试从"改→上机→肉眼看"变成"改→看日志"，可复用手法。
 
 **⚠ 图标三连踩 + 新武器 .rcc**：
 1. `ArkControls.Icon` 是单色模板染色管线（alpha 当形状、color 上色）——KOReader 彩色 icon.png 渲空；
