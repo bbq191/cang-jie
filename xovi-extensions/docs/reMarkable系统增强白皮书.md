@@ -219,6 +219,19 @@ OTA 到 `IMG_VERSION=3.28.0.169`（此前 .166）后用户报 5 个功能失效�
 
 设备休眠屏用自备彩色图替换、两张每次唤醒自动交替、并消掉中央原生「休眠插画卡」。**bind-mount 盖 `suspended.png`**（ro rootfs 可挂）+ 透明盖 carousel 插画卡；xochitl 每次休眠重读、sleep 钩子唤醒滚图。独立于主线、不改设备核心行为。实现见 `misc/wallpaper/`。
 
+## 12｜Sidebar 一级直达「KOReader」入口（2026-09-02 真机通，固件 3.27.3.0）
+
+**背景**：双阅读器分工后 KOReader 是消遣阅读主力，原入口藏在 Sidebar→AppLoad 二级菜单。「彻底取代 xochitl」架构判死（Move 无 /dev/fb，显示合成器在 xochitl 进程内，KOReader 靠 appload qtfb 桥显示；oxide/blight 在 imx93 崩、判死有效）。本功能=最外层入口：书库侧边栏 My files 下直插「KOReader」项（Ko 字标），点击即启。
+
+**机制**（`reading-qol/koreader-sidebar-entry.qmd` + `assets/`）：
+- appload 暴露 QML 单例 `AppLoadLauncher.launchApplication(id,args,env,window)`（import net.asivery.AppLoad 1.0），接收方 Connections 在 appload 常驻 Loader 里，任意上下文可调。**⚠ 外部应用 id = `external::<目录名>`**（library.cpp:245 前缀拼接，裸名报 No application installed——真机踩过）。
+- 注入点：Sidebar.qml `?#filterColumn` > `SidebarFilterItem#filterMyFiles` 后插同型项（属性形态照抄原生；又踩一次"非通配选择器不递归"，`?#id` 治之）。
+
+**⚠ 图标三连踩 + 新武器 .rcc**：
+1. `ArkControls.Icon` 是单色模板染色管线（alpha 当形状、color 上色）——KOReader 彩色 icon.png 渲空；
+2. 且**只认 qrc 资源**——file:// 一律渲空（AppLoad 界面里彩图正常是因为那边用普通 Image 组件）；
+3. **正解=qt-resource-rebuilder 的 `.rcc` 通道**（README 明载三通道：.qrr 替换/.qmd 改 QML/**.rcc 加新资源**）：自制 "Ko" alpha 蒙版 → `rcc --binary` 编 `cangjie-icons.rcc` 放 exthome/qt-resource-rebuilder/ → 注册为 `qrc:/cangjie/icons/koreader`，原生染色/选中反色全自动。**这是通用新武器：自定义图标/图片/QML 组件都可注册进 qrc**。
+
 ## 交叉引用
 
 - 优先级/立项：《[功能路线图白皮书](../../docs/reMarkable功能路线图白皮书.md)》§09。

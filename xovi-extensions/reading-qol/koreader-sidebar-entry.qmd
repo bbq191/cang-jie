@@ -1,0 +1,51 @@
+; ─────────────────────────────────────────────────────────────────────────
+; koreader-sidebar-entry.qmd —— Sidebar 一级直达「KOReader」入口（2026-09-02，固件 3.27.3.0）
+;
+; 【背景】双阅读器分工后 KOReader 是消遣阅读主力，但入口藏在 Sidebar→AppLoad 二级菜单。
+;   「彻底取代 xochitl」在 Move 上架构判死（无 /dev/fb，显示合成器活在 xochitl 进程内，
+;   KOReader 靠 appload 的 qtfb 桥显示；独立显示层 oxide/blight 在 imx93 真机崩、判死有效）。
+;   本 qmd 做「最外层入口」：书库侧边栏 My files 下直插一项，点击即启 KOReader。
+;
+; 【机制】appload 暴露 QML 单例 AppLoadLauncher（import net.asivery.AppLoad 1.0，
+;   Launcher.h: Q_INVOKABLE launchApplication(id, args, env, window)→emit requestLaunch），
+;   接收方 Connections 活在 appload 注入的常驻 Loader 里（开机即实例化、只切可见性），
+;   故任意 QML 上下文随时可调（真机日志坐实：信号必达 onRequestLaunch）。
+;   ⚠ app id = **external::<目录名>**（library.cpp:245 前缀拼接），裸 "koreader" 报
+;   No application installed（2026-09-02 真机踩过）。图标 = 应用目录 icon.png 的
+;   file:// 路径（libraryexternals getIconPath 同源）。
+;
+; 【锚点核对（3.27.3.0 build 20260612，extract_qml blob qml_00d52de3）】
+;   /qml/device/view/navigator/Sidebar.qml：ColumnLayout#filterColumn >
+;   SidebarFilterItem#filterMyFiles（title/iconSource/onClicked/Layout.*/navigationHandler
+;   属性形态照抄原生项）。图标暂复用 my_files（ark 图标清单未盘点，先保渲染不空）。
+; ─────────────────────────────────────────────────────────────────────────
+
+AFFECT /qml/device/view/navigator/Sidebar.qml
+    IMPORT net.asivery.AppLoad 1.0 CJAppLoad
+    TRAVERSE ?#filterColumn
+        LOCATE AFTER SidebarFilterItem[#filterMyFiles]
+        INSERT {
+            SidebarFilterItem {
+                id: cjKoreaderEntry
+                objectName: "cjKoreaderEntry"
+                title: "KOReader"
+                // ⚠ iconSource 进 ArkControls.Icon 染色管线（单色模板：alpha 当形状、color 上色），
+                // 且 **只认 qrc 资源**——file:// 一律渲空、彩色不透明图也渲空（2026-09-02 两连踩）。
+                // 正解=qt-resource-rebuilder 的 .rcc 通道加新资源：自制 "Ko" alpha 蒙版
+                // （Noto Sans Bold 192px）→ rcc --binary 编成 cangjie-icons.rcc 放
+                // exthome/qt-resource-rebuilder/ → 注册为 qrc:/cangjie/icons/koreader，
+                // 原生染色/选中反色全自动。
+                iconSource: "qrc:/cangjie/icons/koreader"
+                active: false
+                enabled: true
+                onClicked: {
+                    console.warn("CJ-KOREADER-ENTRY: launch requested");
+                    CJAppLoad.AppLoadLauncher.launchApplication("external::koreader", [], {}, false);
+                }
+                Layout.preferredHeight: Values.navigatorSidebarItemHeight
+                Layout.preferredWidth: parent.width
+                navigationHandler: root
+            }
+        }
+    END TRAVERSE
+END AFFECT
