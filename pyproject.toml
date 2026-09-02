@@ -55,6 +55,11 @@ pinyin = [
 tools = [
     "zstandard",
 ]
+# Calibre 前置渲染流水线（reading/tools/calibre/：产物体检 check_output.py、PDF 裁边）
+# 刻意不进 default-groups：仅 host 侧按需 `uv run --group calibre`，CI 不背这份重量。
+calibre = [
+    "pymupdf",
+]
 # 差分测试 / 单测（全线共用）
 test = [
     "pytest",
