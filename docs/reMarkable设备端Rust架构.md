@@ -98,7 +98,7 @@ navigation 时看着像能用（我就被 `reverse.rs` 坑过）。
 
 **2026-09-01 增量（功能）· 设备级优化 + 稍后读 + 本地 tab 书库管理**（详见阅读白皮书 §07/§10）：
 
-- **`imgopt`（新）· 按 Move 屏规格图片降采样**：长边 >1696px 的图 Lanczos3 缩到 ≤1696（保比保格式、达标即跳过、任何失败原样）。接进优化器（`optimize_epub` 对 EPUB 内图）+ CBZ→PDF 组页前（`cbz` 每页）。`image` crate（纯 Rust zune-jpeg+png，无 C 依赖、musl 友好）。配套 **`htmlproc::boost_text_contrast`**（e-ink 灰字→纯黑、细字重→400，作用于 style/`<style>`/`.css`）。产物幂等（`OPTIMIZE_VERSION` 2→3）。
+- **`imgopt`（新）· 按 Move 屏规格图片降采样**：长边 >1696 或短边 >954 的图 Lanczos3 缩到「长边≤1696 且短边≤954」（v5 补短边，真机探针块级图缩到列宽；保比保格式、达标即跳过、任何失败原样）。接进优化器（`optimize_epub` 对 EPUB 内图）+ CBZ→PDF 组页前（`cbz` 每页）。`image` crate（纯 Rust zune-jpeg+png，无 C 依赖、musl 友好）。配套 **`htmlproc::boost_text_contrast`**（e-ink 灰字→纯黑、细字重→400，作用于 style/`<style>`/`.css`）。产物幂等（`OPTIMIZE_VERSION` 2→3；现 5：v4 远程图内联、v5 Calibre 洗书脚注形态+短边约束）。另有 host/设备通用 bin `epub-optimize`（洗书末步调同一 `optimize_epub`）。
 - **`readlater`（新）· 稍后读**：URL→设备 WiFi 抓取→`readability-rust`（Mozilla 移植纯 Rust）抽取→**`scraper` 白名单重序列化成合法 XHTML**（根治脏 HTML5 塞 EPUB 崩解析）→图片 data-src 兜底+Referer 抓取+降采样内嵌→组优化 EPUB→`ensure_folder` 建 `read-later` 独立文件夹。入口：上传页 `POST /save-url` + 面板 `POST /read-later`。`strip_bad_params` 去微信 `poc_token` 拦截。
 - **本地 tab 书库管理**：`/library` 纳入 pdf（`fmt` 字段）；面板**直接调 xochitl 原生 `selectionMoveToTrash`** 手动删除（绕开 trash-agent 模型触发依赖）+ `POST /trash/add` 队列兜底；`/inbox` 返回 `failed` + `list_failed`/`retry_failed`/`delete_failed`（失败项重试/删除）。
 

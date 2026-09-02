@@ -117,7 +117,7 @@ host 无法运行 xochitl，但能用官方 qmldiff 工具**离线实跑补丁**
 
 **可行性核查结论**（2026-08-25 `dict-lookup-recon`：对外部三路线分析逐条对表本项目已坐实事实——三条路线的可能性排序对"这台 Move + 本项目"几乎全反了）：
 
-- **① KOReader 判死**（不是"等社区适配彩屏"，是本项目已验走不通）：Move 不是 rM1/rM2，Toltec/rm2fb 那套彩屏 framebuffer 适配对 Move 的 Gallery 3 屏不成立。
+- **① ~~KOReader 判死~~ → 已翻案（2026-09-02：KOReader 2026.03 起官方支持 Move，设备经 vellum/appload 日用，见 §12 与阅读白皮书 §11.1b；但作为「划词查字典」载体仍不成立——KOReader 高亮/词典数据自成孤岛，不进 .rm/PKM 管线）**。原判断存档：Move 不是 rM1/rM2，Toltec/rm2fb 那套彩屏 framebuffer 适配对 Move 的 Gallery 3 屏不成立。
 - **② 异步生词本 = 唯一可行形态，且核心已建成**：荧光笔读回文字+颜色（`cardhl` 读 GlyphRange，PKM §06 已生产）、页→章（`epubindex`）、笔记本注入（`sync_auto_notebook`）全套已跑通——真正要新加的只有"查本地词典 + 排版"一步，非从零。触发**天生异步**（`fswatch` 只在 xochitl 真实存盘时触发 + debounce，秒级延迟），正合 reMarkable 无干扰哲学。
 - **③ 劫持原生 UI 实时弹窗 = 不推荐**：注入机制本身不可怕（xovi+qmldiff 日常在用，非 LD_PRELOAD），但**前提「选中文本事件」大概率不存在**——原生 EPUB 阅读器没有逐词选中手势，高亮是荧光笔划过吸附到词/行，没有"选中文本"事件可拦；且注入 Popup 够不进 C++ SceneView tile 增量渲染层（ 判死同源）、只能按 x/y 固定定位，缺可靠锚点。
 
@@ -236,4 +236,5 @@ OTA 到 `IMG_VERSION=3.28.0.169`（此前 .166）后用户报 5 个功能失效�
 
 - 优先级/立项：《[功能路线图白皮书](../../docs/reMarkable功能路线图白皮书.md)》§09。
 - 代码 + 操作：[reading-qol/README.md](../reading-qol/README.md)（端点级操作/部署纪律）。
+- KOReader 第二阅读器调优（词典移植/防误触/屏闪/悬挂标点/退出手势/脚注弹窗+滑动返回/刷新档位=锯齿根因/状态栏收紧）：《[阅读白皮书](../../reading/docs/reMarkable阅读白皮书.md)》§11.1b（概念归本块④，操作记录在阅读白皮书）。
 - 荧光笔吸附本体：《[阅读白皮书](../../reading/docs/reMarkable阅读白皮书.md)》§03-3d；★待办本体：《[PKM 白皮书](../../knowledge/pkm/docs/reMarkablePKM白皮书.md)》；自动优化：阅读白皮书 §07-D。
