@@ -45,7 +45,9 @@ TAG_RE = re.compile(r"<[^>]+>")
 # 词头两种形态：calibre 转换产物 = <span class="bold">词</span>（正文任意处首现）；
 # raw MOBI 直解产物 = 每个 <hr/> 块开头的 <b>词</b>（可能前置空 <a></a> 锚点）。
 BOLD_RE = re.compile(r'<span class="bold"[^>]*>(.*?)</span>', re.S)
-HEAD_B_RE = re.compile(r'^\s*(?:<a[^>]*>\s*</a>\s*)?<b>(.*?)</b>(.*)$', re.S)
+HEAD_B_RE = re.compile(
+    r'^\s*(?:<a[^>]*>\s*</a>\s*)?(?:<p[^>]*>\s*)?(?:<a[^>]*>\s*</a>\s*)?<b>(.*?)</b>(.*)$', re.S
+)  # 块首可被 <p width="0%"> 包裹（现汉 raw 形态，2026-09-02）
 HR_SPLIT_RE = re.compile(r"<hr\s*/?>", re.I)
 WS_RE = re.compile(r"\s+")
 # 英文 IPA 音标：牛津正文里形如 /ˈkæʃeɪ/ 的斜杠对；取第一处作 phonetic。
@@ -53,8 +55,9 @@ IPA_RE = re.compile(r"/[^/\n]{1,40}/")
 
 
 def strip_tags(s: str) -> str:
-    """去 HTML 标签 + 折叠空白为单空格。"""
-    return WS_RE.sub(" ", TAG_RE.sub(" ", s)).strip()
+    """去 HTML 标签 + 折叠空白为单空格 + 解 HTML 实体（现汉 raw 全文是 &#xxxxx; 实体）。"""
+    import html as _html
+    return _html.unescape(WS_RE.sub(" ", TAG_RE.sub(" ", s)).strip())
 
 
 def escape_field(s: str) -> str:
@@ -185,6 +188,13 @@ def parse_entries(html: str, lang: str):
             continue
         phonetic = ""
         body = body_raw
+        if lang == "zh":
+            # 现汉 body 以拼音打头（"mǎlāsōng sàipǎo 一种…"）：首个 CJK 字符前的
+            # 拉丁段作 phonetic（含声调字母/间隔号/连字符），太长则不认（防误吞英文释义）。
+            pm = re.match(r"^([^㐀-鿿【（(]{1,40}?)\s*(?=[㐀-鿿【（(])", body_raw)
+            if pm and re.search(r"[a-zA-Zāáǎàēéěèīíǐìōóǒòūúǔùǖǘǚǜ]", pm.group(1)):
+                phonetic = pm.group(1).strip()
+                body = body_raw[pm.end():].strip()
         if lang == "en":
             pm = IPA_RE.search(body_raw)
             if pm:

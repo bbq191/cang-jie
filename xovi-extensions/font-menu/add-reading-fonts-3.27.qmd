@@ -1,0 +1,48 @@
+; ─────────────────────────────────────────────────────────────────────────
+; add-reading-fonts-3.27.qmd —— 3.27 固件线的阅读字体菜单增强（与 3.28 版并存，按固件二选一部署）
+;
+; 【为什么另立一版】3.27.3.0（build 20260612）的 FormatFont.qml 与 3.28.0.169 结构完全不同：
+;   3.28 = Control#root > ColumnLayout > ListModel#fontModel（append 即加项）
+;   3.27 = Item#fontContainer > Grid#fontGrid > Repeater{ model: ["EB Garamond",...] 内联数组 }
+;   Repeater 无 id、rows:2/columns:2 写死（QML Grid 两者都设时超出 rows*columns 的项不布局），
+;   所以做法=往 Repeater INSERT onCompleted：先扩 fontGrid.rows=4，再整体重赋 7 项 model。
+; 【显示名】此实现 delegate 的 text 与 font.family 都直接用 modelData（家族名即标签），
+;   无法像 3.28 版那样给本地化显示名——标签显示英文家族名并以该字体自渲染预览，可接受。
+; 【开关门控】与 3.28 版一致读 reading-qol.json 的 fontEnhance；改 model 属重赋值，
+;   同样受"FormatFont 每进程建一次"缓存约束：切开关后需重启 xochitl。
+; 【前置】3 个 ttf 已在 /home/root/.local/share/fonts/（家族名 fc-scan 实测）。
+; 【qmldiff 纪律】INSERT{} 块内是 QML，注释只能用 //。
+; ─────────────────────────────────────────────────────────────────────────
+
+AFFECT /qml/device/view/documentview/FormatFont.qml
+    TRAVERSE Item[#fontContainer] > Grid[#fontGrid] > Repeater
+        LOCATE AFTER ALL
+        INSERT {
+            Component.onCompleted: {
+                console.warn("READING-QOL-FONT327: onCompleted fired");
+                try {
+                    var xhr = new XMLHttpRequest();
+                    xhr.open("GET", "file:///home/root/.local/share/cangjie-ime/reading-qol.json", false);
+                    xhr.send();
+                    var t = xhr.responseText;
+                    var fe = false;
+                    if (t && t.length > 0) {
+                        var c = JSON.parse(t);
+                        fe = !!c.fontEnhance;
+                    }
+                    console.warn("READING-QOL-FONT327: fontEnhance=" + fe);
+                    if (fe) {
+                        fontGrid.rows = 4;
+                        model = ["EB Garamond", "Noto Sans", "Noto Mono", "Noto Serif",
+                                 "LXGW WenKai Mono GB Screen",
+                                 "LXGW Neo ZhiSong Screen Full",
+                                 "KF Readerly"];
+                        console.warn("READING-QOL-FONT327: model expanded to 7, rows=4");
+                    }
+                } catch (e) {
+                    console.warn("READING-QOL-FONT327: load failed " + e);
+                }
+            }
+        }
+    END TRAVERSE
+END AFFECT
