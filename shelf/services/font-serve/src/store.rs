@@ -12,6 +12,12 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 pub const FONT_EXT: &[&str] = &["ttf", "otf", "ttc"];
+/// 覆盖率 ≥ 此值才算"中文字体"、才进回退链（滤掉纯拉丁字体，避免拉丁字体当中文兜底）。
+pub const CJK_MIN_PCT: u8 = 8;
+/// 覆盖率 < 此值 = 低覆盖美术/子集字体，上传时警告（正文会缺字）。
+pub const CJK_LOW_PCT: u8 = 80;
+/// shelf 生成的 fontconfig 首行标记（据此判断是否可安全重写）。
+const FC_MARK: &str = "shelf font-serve 自动生成";
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -30,6 +36,9 @@ pub struct FontEntry {
     /// 该家族的全部文件（多字重）。
     pub files: Vec<String>,
     pub names: Names,
+    /// 中文基本区覆盖率（0..=100）。0=非中文字体。用于回退排序 + 低覆盖警告。
+    #[serde(default)]
+    pub cjk_pct: u8,
     /// 被 fontconfig 用户配置引用（界面中文回退用），删前提醒。
     #[serde(default)]
     pub fontconfig_ref: bool,
@@ -137,7 +146,9 @@ impl FontStore {
         let mut files: Vec<String> = rd.flatten().filter_map(|e| e.file_name().to_str().map(|s| s.to_string())).filter(|n| !n.starts_with('.') && Self::is_font_file(n)).collect();
         files.sort();
         for f in files {
-            let fams = self.families_of(&self.fonts_dir.join(&f));
+            let path = self.fonts_dir.join(&f);
+            let fams = self.families_of(&path);
+            let pct = std::fs::read(&path).ok().and_then(|b| crate::ttf::han_coverage_pct(&b)).unwrap_or(0);
             let key = match fams.first() {
                 Some(k) => k.clone(),
                 None => f.rsplit_once('.').map(|(s, _)| s.to_string()).unwrap_or_else(|| f.clone()),
@@ -148,8 +159,10 @@ impl FontStore {
                 key: key.clone(),
                 files: vec![],
                 names: Names { cn: local.clone(), tw: local.clone(), en: key.clone() },
+                cjk_pct: 0,
                 fontconfig_ref: refs.iter().any(|r| r == &key || fams.contains(r)),
             });
+            e.cjk_pct = e.cjk_pct.max(pct);
             e.files.push(f);
         }
         groups.into_values().collect()
@@ -164,6 +177,9 @@ impl FontStore {
         let tmp = self.json_path.with_extension("json.tmp");
         std::fs::write(&tmp, serde_json::to_string_pretty(&FontsJson { version: 1, fonts: fonts.clone() }).unwrap_or_default()).map_err(|e| e.to_string())?;
         std::fs::rename(&tmp, &self.json_path).map_err(|e| e.to_string())?;
+        if let Err(e) = self.write_fontconfig(&fonts) {
+            eprintln!("[font-serve] 写 fontconfig 回退失败: {e}");
+        }
         Ok(fonts)
     }
 
@@ -178,6 +194,77 @@ impl FontStore {
         }
     }
 
+
+    /// 中文字体（覆盖率 ≥ CJK_MIN_PCT），按覆盖率降序——回退链首选覆盖最全的。
+    fn cjk_fallback_order(fonts: &[FontEntry]) -> Vec<&FontEntry> {
+        let mut v: Vec<&FontEntry> = fonts.iter().filter(|e| e.cjk_pct >= CJK_MIN_PCT).collect();
+        v.sort_by(|a, b| b.cjk_pct.cmp(&a.cjk_pct).then(a.key.cmp(&b.key)));
+        v
+    }
+
+    /// 生成 shelf 自管的 `~/.config/fontconfig/fonts.conf`：把界面/书籍的中文回退动态指向**当前已装**的
+    /// 中文字体（覆盖率降序）。关键：全部用 **append + binding=weak**——所以阅读器 `setFontName(你选的字体)`
+    /// 永远排在最前、真正生效（修 bug1「上传不生效」），只有你选的字体缺的那个字才字形级回退到兜底中文字体
+    /// （修 bug2「书里方框」，只要装了任意中文字体就不豆腐）。generic sans/serif/mono 也指向它们（界面/笔记）。
+    /// 首次接管前，把已存在的非 shelf 配置备份到 `~/.config/shelf/fontconfig-fonts.conf.pre-shelf.bak`。
+    pub fn write_fontconfig(&self, fonts: &[FontEntry]) -> Result<(), String> {
+        let cjk = Self::cjk_fallback_order(fonts);
+        let dir = self.fontconfig_conf.parent().ok_or("fontconfig 路径无父目录")?;
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+        // 备份既有的非 shelf 配置（只备份一次）
+        if let Ok(existing) = std::fs::read_to_string(&self.fontconfig_conf) {
+            if !existing.contains(FC_MARK) {
+                let bak = self.config_root_backup();
+                if !bak.exists() {
+                    if let Some(p) = bak.parent() {
+                        let _ = std::fs::create_dir_all(p);
+                    }
+                    let _ = std::fs::write(&bak, &existing);
+                }
+            }
+        }
+        let esc = |s: &str| s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
+        let mut x = String::new();
+        x.push_str("<?xml version=\"1.0\"?>\n<!DOCTYPE fontconfig SYSTEM \"fonts.dtd\">\n");
+        x.push_str(&format!("<!-- {FC_MARK}：随已装中文字体自动更新，请勿手改（改动会被覆盖）。\n     原有配置已备份到 {}。全部 weak 绑定：阅读器里选的字体优先，缺字才回退。 -->\n", self.config_root_backup().display()));
+        x.push_str("<fontconfig>\n");
+        if cjk.is_empty() {
+            x.push_str("  <!-- 当前没有已装的中文字体（覆盖率≥8%）；无回退可设。装一个中文字体即自动生效。 -->\n");
+        } else {
+            let names: Vec<String> = cjk.iter().map(|e| esc(&e.key)).collect();
+            let prefer_block: String = names.iter().map(|n| format!("      <family>{n}</family>\n")).collect();
+            for generic in ["sans-serif", "serif", "monospace"] {
+                x.push_str(&format!("  <alias binding=\"weak\">\n    <family>{generic}</family>\n    <prefer>\n{prefer_block}    </prefer>\n  </alias>\n"));
+            }
+            // 中文文本 + 兜底：append weak（排在用户所选字体之后）
+            // prepend 是逐条插到最前，故按覆盖率**升序**写、最高覆盖率最后 prepend → 落在最前。
+            let rev: Vec<&String> = names.iter().rev().collect();
+            x.push_str("  <match target=\"pattern\">\n    <test name=\"lang\" compare=\"contains\"><string>zh</string></test>\n");
+            for n in &rev {
+                x.push_str(&format!("    <edit name=\"family\" mode=\"prepend\" binding=\"weak\"><string>{n}</string></edit>\n"));
+            }
+            x.push_str("  </match>\n  <match target=\"pattern\">\n");
+            for n in &rev {
+                x.push_str(&format!("    <edit name=\"family\" mode=\"prepend\" binding=\"weak\"><string>{n}</string></edit>\n"));
+            }
+            x.push_str("  </match>\n");
+        }
+        x.push_str("</fontconfig>\n");
+        let tmp = self.fontconfig_conf.with_extension("conf.shelf.tmp");
+        std::fs::write(&tmp, x).map_err(|e| e.to_string())?;
+        std::fs::rename(&tmp, &self.fontconfig_conf).map_err(|e| e.to_string())?;
+        Ok(())
+    }
+
+    /// ~/.config/shelf/fontconfig-fonts.conf.pre-shelf.bak（首次接管前的原配置备份）。
+    fn config_root_backup(&self) -> PathBuf {
+        self.fontconfig_conf.parent().and_then(|p| p.parent()).map(|c| c.join("shelf/fontconfig-fonts.conf.pre-shelf.bak")).unwrap_or_else(|| PathBuf::from("fontconfig-fonts.conf.pre-shelf.bak"))
+    }
+
+    /// 当前中文回退链（覆盖率降序的字体 key）——回执/状态展示用。
+    pub fn cjk_fallback_keys(&self) -> Vec<String> {
+        Self::cjk_fallback_order(&self.entries()).into_iter().map(|e| e.key.clone()).collect()
+    }
 
     /// 删整个家族（全部文件）。
     pub fn remove_family(&self, key: &str) -> Result<Vec<String>, String> {
@@ -214,7 +301,20 @@ impl AssetStore for FontStore {
         self.fc_cache();
         let fonts = self.write_index()?;
         let entry = fonts.iter().find(|e| e.files.iter().any(|f| f == name)).cloned();
-        let extra = serde_json::json!({"family": entry.as_ref().map(|e| e.key.clone()).unwrap_or_default(), "names": entry.as_ref().map(|e| e.names.clone())});
+        let pct = entry.as_ref().map(|e| e.cjk_pct).unwrap_or(0);
+        let is_cjk = pct >= CJK_MIN_PCT;
+        let mut warn = String::new();
+        if is_cjk && pct < CJK_LOW_PCT {
+            warn = format!("中文覆盖率仅 {pct}%（正文会有生僻字缺字/方框，适合做标题或点缀，不建议当正文主字体）");
+        } else if !is_cjk && pct > 0 {
+            warn = format!("中文覆盖率仅 {pct}%，不作中文回退");
+        }
+        let extra = serde_json::json!({
+            "family": entry.as_ref().map(|e| e.key.clone()).unwrap_or_default(),
+            "names": entry.as_ref().map(|e| e.names.clone()),
+            "cjkPct": pct, "isCjk": is_cjk,
+            "fallback": is_cjk, "warn": warn,
+        });
         Ok(AssetItem { name: name.into(), bytes, extra })
     }
     fn list(&self) -> Vec<AssetItem> {
@@ -222,7 +322,7 @@ impl AssetStore for FontStore {
             .into_iter()
             .map(|e| {
                 let bytes: u64 = e.files.iter().map(|f| std::fs::metadata(self.fonts_dir.join(f)).map(|m| m.len()).unwrap_or(0)).sum();
-                AssetItem { name: e.key.clone(), bytes, extra: serde_json::json!({"family": e.key, "files": e.files, "names": e.names, "fontconfigRef": e.fontconfig_ref}) }
+                AssetItem { name: e.key.clone(), bytes, extra: serde_json::json!({"family": e.key, "files": e.files, "names": e.names, "cjkPct": e.cjk_pct, "fontconfigRef": e.fontconfig_ref}) }
             })
             .collect()
     }
@@ -284,6 +384,39 @@ mod tests {
         assert!(store.remove("nope").is_err());
     }
 
+
+    fn entry(key: &str, pct: u8) -> FontEntry {
+        FontEntry { key: key.into(), files: vec![format!("{key}.ttf")], names: Names { cn: key.into(), tw: key.into(), en: key.into() }, cjk_pct: pct, fontconfig_ref: false }
+    }
+
+    #[test]
+    fn fontconfig_weak_fallback_ordered_by_coverage_and_backs_up() {
+        let (_t, _paths, store) = setup();
+        std::fs::create_dir_all(store.fontconfig_conf.parent().unwrap()).unwrap();
+        // 首次接管前已有非 shelf 配置 → 应备份
+        std::fs::write(&store.fontconfig_conf, "<fontconfig><!-- chinese-ime 旧配置 --></fontconfig>").unwrap();
+        let fonts = vec![entry("Art Font", 35), entry("Big CJK", 99), entry("Latin Only", 0), entry("Mid CJK", 90)];
+        store.write_fontconfig(&fonts).unwrap();
+        let out = std::fs::read_to_string(&store.fontconfig_conf).unwrap();
+        assert!(out.contains(FC_MARK), "带 shelf 标记");
+        assert!(std::fs::read_to_string(store.config_root_backup()).unwrap().contains("chinese-ime"), "原配置已备份");
+        // 全 weak，无 strong
+        assert!(!out.contains("strong"), "不得有 strong 绑定（否则盖过用户选择）: {out}");
+        assert!(out.contains(r#"binding="weak""#));
+        // 覆盖率降序：Big CJK(99) 在 Mid CJK(90) 之前，二者在 Art Font(35) 之前；Latin(0) 与 <8% 不入链
+        let ib = out.find("Big CJK").unwrap();
+        let im = out.find("Mid CJK").unwrap();
+        let ia = out.find("Art Font").unwrap();
+        assert!(ib < im && im < ia, "按覆盖率降序: {out}");
+        assert!(!out.contains("Latin Only"), "非中文字体不入回退链");
+        // 幂等 + 二次不再覆盖备份
+        std::fs::write(store.config_root_backup(), "SENTINEL").unwrap();
+        store.write_fontconfig(&fonts).unwrap();
+        assert_eq!(std::fs::read_to_string(store.config_root_backup()).unwrap(), "SENTINEL", "已备份则不再覆盖");
+        // 无中文字体 → 空回退但不报错
+        store.write_fontconfig(&[entry("Latin", 0)]).unwrap();
+        assert!(std::fs::read_to_string(&store.fontconfig_conf).unwrap().contains("没有已装的中文字体"));
+    }
     #[test]
     fn family_splitting_and_localized_name() {
         assert_eq!(split_families("LXGW WenKai,霞鹜文楷"), vec!["LXGW WenKai", "霞鹜文楷"]);

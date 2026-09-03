@@ -9,6 +9,7 @@ AFFECT /qml/device/view/documentview/FormatFont.qml
     TRAVERSE Item[#fontContainer] > Grid[#fontGrid] > Repeater
         LOCATE AFTER ALL
         INSERT {
+            property string cjLastSig: ""
             property var cjBase: ["EB Garamond", "Noto Sans", "Noto Mono", "Noto Serif"]
             function cjRead(path) {
                 try { var xhr = new XMLHttpRequest(); xhr.open("GET", path, false); xhr.send(); return xhr.responseText; } catch (e) { return ""; }
@@ -27,7 +28,7 @@ AFFECT /qml/device/view/documentview/FormatFont.qml
                 try { if (t && t.length > 0) fe = !!JSON.parse(t).fontEnhance; } catch (e) {}
                 if (!fe) { console.warn("SHELF-FONT327: " + reason + " fontEnhance=false, skip"); return; }
                 var all = cjBase.concat(cjKeys());
-                if (model && model.length === all.length) return;
+                var sig = all.join("\u0001"); if (cjLastSig === sig) return; cjLastSig = sig;
                 fontGrid.rows = Math.ceil(all.length / 2);
                 model = all;
                 console.warn("SHELF-FONT327: " + reason + " model=" + all.length + " rows=" + fontGrid.rows);
