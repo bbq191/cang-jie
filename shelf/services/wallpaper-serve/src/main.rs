@@ -1,10 +1,12 @@
 //! wallpaper-serve —— 书架·壁纸（loopback 8793）+ 子命令。
 //! `serve`：路由（经网关前缀 `/api/wallpapers`）`GET /`（池）· `POST /`（multipart 多图，缩放入池，`?activate=1` 顺手激活）·
 //!   `PUT /current {name}` · `PUT /mode {mode}` · `DELETE /{name}` · `GET /{name}`（PNG 预览）· `GET /status`。
-//! `bind` / `unbind` / `roll`：给 boot 单元与 systemd-sleep 钩子用（唤醒时 roll 下一张；xochitl 每次休眠重读磁盘）。
+//! `bind` / `unbind` / `roll`：给 boot 单元 / 钩子 / 手动用。**轮换由 serve 内的 journal 唤醒监听触发**（见 wake.rs：
+//! 充电时按电源键不真 suspend，systemd-sleep 钩子不跑；xochitl 显示状态日志才是可靠信号）。
 //! `activate <name>`：命令行激活。
 mod mount;
 mod store;
+mod wake;
 
 use shelf_core::asset::{AssetStore, AssetUploadFlow};
 use shelf_core::http::{ApiError, Reply, Router};
@@ -104,7 +106,8 @@ fn main() {
             let data = std::fs::read(s7.pool().join(&name)).map_err(|_| ApiError::not_found("池里没有这张图"))?;
             Ok(Reply::bytes("image/png", data))
         });
-    println!("[wallpaper-serve] 池 {}，已挂 {}/4", store.pool().display(), mount::mounted_count());
+    wake::spawn(store.clone());
+    println!("[wallpaper-serve] 池 {}，已挂 {}/4；监听 xochitl 唤醒日志轮换", store.pool().display(), mount::mounted_count());
     if let Err(e) = service::run(&SPEC, &bind, &paths, router) {
         eprintln!("[wallpaper-serve] {e}");
         std::process::exit(1);
