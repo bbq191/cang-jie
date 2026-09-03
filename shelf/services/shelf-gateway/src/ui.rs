@@ -61,7 +61,7 @@ function uploader(box,urlOf,queryOf){
 const TABS={
  'book-serve':{title:'传书',render(sec){sec.innerHTML=`
   <div class="row"><label>投到 <select id="tgt"><option value="native">原生阅读（xochitl；AZW3/MOBI/FB2/CBZ 自动转换，EPUB 自动优化）</option><option value="annot">原生批注（PDF 定稿；只收 PDF/CBZ）</option><option value="koreader">KOReader（原样投递，任意格式）</option></select></label></div>
-  <div class="row"><label>文件夹 <input type="text" id="folder" placeholder="留空=默认"></label><label><input type="checkbox" id="opt" checked> 设备端优化 EPUB</label></div>
+  <div class="row"><label>文件夹 <input type="text" id="folder" placeholder="留空=默认"></label><label><input type="checkbox" id="opt" checked> 设备端优化 EPUB</label> <span class="small">（不勾=原样进库；本页不调用 Calibre——电脑上高质量洗书请用 <code>shelf push</code>）</span></div>
   <div class="drop">点击或拖入文件（可多选）</div><input type="file" multiple hidden>
   <ul class="q"></ul><div class="row"><button class="btn pri go">开始上传</button><button class="btn clr">清空</button></div>
   <div id="bstat" class="kv small" style="margin-top:1em"></div><h3 style="font-size:1em">未完成 / 失败</h3><ul class="list" id="inbox"></ul>`;

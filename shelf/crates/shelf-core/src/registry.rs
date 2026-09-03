@@ -44,10 +44,19 @@ fn file_of(paths: &Paths, name: &str) -> PathBuf {
     paths.services_dir().join(format!("{name}.json"))
 }
 
-/// 写注册文件（原子：先写 .tmp 再 rename）。
+/// 写注册文件（原子：先写 .tmp 再 rename）。同名且 pid 仍活着的条目**拒绝覆盖**（防误起第二实例顶掉
+/// 正在服务的那份——真机踩过：调试起了个 `--bind 127.0.0.1:1` 把 wallpaper-serve 注册顶没了）。
 pub fn register(paths: &Paths, info: &ServiceInfo) -> std::io::Result<Registration> {
     std::fs::create_dir_all(paths.services_dir())?;
     let file = file_of(paths, &info.name);
+    if let Some(existing) = std::fs::read_to_string(&file).ok().and_then(|t| serde_json::from_str::<ServiceInfo>(&t).ok()) {
+        if existing.pid != info.pid && pid_alive(existing.pid) {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::AlreadyExists,
+                format!("{} 已由 pid {} 注册（端口 {}）；先停掉它再起第二份", info.name, existing.pid, existing.port),
+            ));
+        }
+    }
     let tmp = file.with_extension("json.tmp");
     std::fs::write(&tmp, serde_json::to_vec_pretty(info)?)?;
     std::fs::rename(&tmp, &file)?;
@@ -119,6 +128,21 @@ mod tests {
         assert_eq!(list(&p).len(), 1);
         assert!(find(&p, "b-svc").is_some());
         assert!(find(&p, "a-svc").is_none());
+    }
+
+    #[test]
+    fn second_live_instance_cannot_clobber() {
+        let t = tempfile::tempdir().unwrap();
+        let p = paths(&t);
+        let me = std::process::id();
+        let _g = register(&p, &info("svc", 1, me)).unwrap();
+        // 用 pid 1（init，必活）模拟"另一个活着的实例"
+        let err = match register(&p, &info("svc", 1, 1)) {
+            Err(e) => e,
+            Ok(_) => panic!("同名活实例不该注册成功"),
+        };
+        assert_eq!(err.kind(), std::io::ErrorKind::AlreadyExists);
+        assert_eq!(find(&p, "svc").unwrap().pid, me);
     }
 
     #[test]
