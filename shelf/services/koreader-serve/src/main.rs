@@ -1,6 +1,6 @@
 //! koreader-serve —— 书架·KOReader（loopback 8791）。
 //! 路由（经网关前缀 `/api/koreader`）：`GET /status` · `POST /books?folder=`（multipart 多文件）·
-//! `GET /books[?folder=]` · `GET /fonts` · `POST /fonts`（字体镜像，font-serve 调用）· `GET /dicts` · `POST /dicts?name=`
+//! `GET /books[?folder=]` · `GET /fonts` · `POST /fonts`（直传 KOReader 字体；font-serve 镜像也走它）· `DELETE /fonts/{file}` · `GET /dicts` · `POST /dicts?name=`
 //! `GET /config/{settings|defaults|gestures}`（原文）· `POST /config/{file}?dry_run=1`（body=补丁 Lua；运行中拒写）。
 mod config;
 mod koreader;
@@ -131,6 +131,21 @@ fn main() {
         })
         .get("/fonts", move |_| Ok(Reply::ok(&serde_json::json!({"items": k4.list_dir(&k4.fonts_dir(), &["ttf","otf","ttc"])}))))
         .post("/fonts", move |r| receive_into(&k5, r, &k5.fonts_dir(), &["ttf", "otf", "ttc"]))
+        .delete("/fonts/{file}", {
+            let k = k.clone();
+            move |r| {
+                let name = shelf_core::multipart::safe_basename(r.param("file"), "");
+                if name.is_empty() || name.starts_with('.') {
+                    return Err(ApiError::bad("非法文件名"));
+                }
+                let p = k.fonts_dir().join(&name);
+                if !p.is_file() {
+                    return Err(ApiError::not_found("KOReader fonts/ 里没有这个文件"));
+                }
+                std::fs::remove_file(&p).map_err(|e| ApiError::internal(format!("删除失败: {e}")))?;
+                Ok(Reply::ok(&serde_json::json!({"ok": true, "note": if k.running() {"KOReader 运行中：重启它后字体列表才更新"} else {""}})))
+            }
+        })
         .get("/dicts", move |_| Ok(Reply::ok(&serde_json::json!({"items": list_dicts(&k6)}))))
         .post("/dicts", move |r| {
             let name = r.q("name").unwrap_or("").trim().to_string();

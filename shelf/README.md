@@ -79,6 +79,7 @@ shelf/host/bin/shelf push 书.azw3 论文.pdf -t native|annot|koreader [-f 文�
 shelf font add 字体.ttf | ls | rm <file>                  # 装进 ~/.local/share/fonts + fc-cache + fonts.json + KOReader fonts/
 shelf wallpaper add 图.jpg [--activate] | ls | set <name> | mode sequential|random|fixed | rm <name>
 shelf koreader pull | diff | sync [-n] [--fonts] [--dicts]   # 配置即代码（Lua 合并在设备端跑）
+shelf koreader font add 字体.ttf | ls | rm <file>         # 只装进 KOReader（原生+KOReader 同装用 shelf font）
 ```
 配置 `$XDG_CONFIG_HOME/shelf/config.toml`（host/port/ssh/default_target/quality/split_pdf_mb）。
 

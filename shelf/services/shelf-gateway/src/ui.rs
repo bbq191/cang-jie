@@ -73,8 +73,14 @@ const TABS={
       if(it.state==='failed'){$('.r',li).onclick=async()=>{await j('/api/books/inbox/retry',{method:'POST',body:JSON.stringify({name:it.name})});refresh()};$('.d',li).onclick=async()=>{await j('/api/books/inbox/delete',{method:'POST',body:JSON.stringify({name:it.name})});refresh()}}
       ul.appendChild(li)});if(!(ib.items||[]).length)ul.innerHTML='<li class="small">（空）</li>'};
   refresh();sec.dataset.refresh='1';sec.refresh=refresh;}},
- 'koreader-serve':{title:'KOReader',render(sec){sec.innerHTML=`<div class="kv" id="ks">加载…</div><h3 style="font-size:1em">books/</h3><ul class="list" id="kb"></ul>`;
-  const refresh=async()=>{const s=await j('/api/koreader/status');$('#ks',sec).innerHTML=s.ok?`<b>安装</b><span>${s.installed?'是':'否'} ${s.version?'('+s.version+')':''}</span><b>运行中</b><span>${s.running?'是（改配置须先退出）':'否'}</span><b>目录</b><span>${s.root}</span><b>书</b><span>${s.books} 本 · 字体 ${s.fonts} 个</span>`:`<span>${s.message}</span>`;
+ 'koreader-serve':{title:'KOReader',render(sec){sec.innerHTML=`<div class="kv" id="ks">加载…</div>
+  <h3 style="font-size:1em">传字体给 KOReader <span class="small">（只装进 KOReader，不进原生阅读器；原生+KOReader 同时装请用「字体」页）</span></h3>
+  <div class="drop">点击或拖入 ttf/otf（可多选）</div><input type="file" multiple hidden accept=".ttf,.otf,.ttc"><ul class="q"></ul><div class="row"><button class="btn pri go">上传</button></div>
+  <h3 style="font-size:1em">KOReader fonts/</h3><ul class="list" id="kf"></ul>
+  <h3 style="font-size:1em">books/</h3><ul class="list" id="kb"></ul>`;
+  uploader(sec,()=>'/api/koreader/fonts',()=>({}));
+  const refresh=async()=>{const s=await j('/api/koreader/status');$('#ks',sec).innerHTML=s.ok?`<b>安装</b><span>${s.installed?'是':'否'} ${s.version?'('+s.version+')':''}</span><b>运行中</b><span>${s.running?'是（改配置/删字体后需重启它）':'否'}</span><b>目录</b><span>${s.root}</span><b>书</b><span>${s.books} 本 · 字体 ${s.fonts} 个</span>`:`<span>${s.message}</span>`;
+    const f=await j('/api/koreader/fonts');const uf=$('#kf',sec);uf.innerHTML='';(f.items||[]).forEach(it=>{const li=document.createElement('li');li.innerHTML=`<span>${it.name}</span><span class="small">${fmtB(it.bytes)} </span>`;const d=document.createElement('button');d.className='btn';d.textContent='删除';d.onclick=async()=>{if(confirm('从 KOReader 删除 '+it.name+'？')){const r=await j('/api/koreader/fonts/'+encodeURIComponent(it.name),{method:'DELETE'});if(r.ok===false)alert(r.message);refresh()}};li.lastChild.appendChild(d);uf.appendChild(li)});if(!(f.items||[]).length)uf.innerHTML='<li class="small">（空）</li>';
     const b=await j('/api/koreader/books');const ul=$('#kb',sec);ul.innerHTML='';(b.items||[]).forEach(it=>{const li=document.createElement('li');li.innerHTML=`<span>${it.name}</span><span class="small">${fmtB(it.bytes)}</span>`;ul.appendChild(li)});if(!(b.items||[]).length)ul.innerHTML='<li class="small">（空）</li>'};
   refresh();sec.refresh=refresh}},
  'font-serve':{title:'字体',render(sec){assetTab(sec,'/api/fonts','ttf/otf 字体（同时装进原生阅读器与 KOReader）')}},

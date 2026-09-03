@@ -228,6 +228,13 @@ impl AssetStore for FontStore {
             return Err("不是书架安装的字体".into());
         }
         let _ = std::fs::remove_file(self.fonts_dir.join(name));
+        // 同步撤 KOReader 镜像（失败只打日志：KOReader 侧可在其 tab 里单独删）
+        if self.cfg.mirror_to_koreader && self.side_effects {
+            let url = format!("{}/fonts/{}", self.cfg.koreader_url, percent_encode(name));
+            if let Err(e) = ureq::AgentBuilder::new().timeout(std::time::Duration::from_secs(10)).build().delete(&url).call() {
+                eprintln!("[font-serve] 撤 KOReader 镜像 {name} 失败: {e}");
+            }
+        }
         self.save_user(&users.into_iter().filter(|u| u.file != name).collect::<Vec<_>>())?;
         self.fc_cache();
         self.write_index()
@@ -282,4 +289,15 @@ mod tests {
         assert_eq!(store.list().len(), 1);
         assert!(!store.fonts_dir().join("My Font.otf").exists());
     }
+}
+
+fn percent_encode(s: &str) -> String {
+    let mut o = String::new();
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => o.push(b as char),
+            _ => o.push_str(&format!("%{:02X}", b)),
+        }
+    }
+    o
 }
