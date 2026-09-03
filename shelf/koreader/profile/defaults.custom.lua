@@ -1,6 +1,8 @@
--- defaults.custom.lua 补丁：点击翻页区四周留死区（左右 6%、上下 10%），Move 握持贴边不误翻。
--- 缺省整屏都是翻页区（BACKWARD 左 1/4 全高 + FORWARD 右 3/4 全高）。值待 `shelf koreader pull` 核对。
+-- defaults.custom.lua（整文件覆盖语义：本文件与设备快照 2026-09-03 一致）
+-- Move 7.3寸握持防误触：翻页点击区四周留死区（右/左边缘6%、上下10%不响应），
+-- 原默认整屏都是翻页区（FORWARD右3/4全高+BACKWARD左1/4全高），贴边必误翻。
+-- 顶部1/8菜单区保持默认。改动只影响点击翻页，滑动翻页不受限。
 return {
-    DTAP_ZONE_BACKWARD = { x = 0.06, y = 0.10, w = 0.19, h = 0.80 },
-    DTAP_ZONE_FORWARD  = { x = 0.25, y = 0.10, w = 0.69, h = 0.80 },
+    DTAP_ZONE_FORWARD  = { x = 0.30, y = 0.10, w = 0.64, h = 0.80 },
+    DTAP_ZONE_BACKWARD = { x = 0.06, y = 0.10, w = 0.24, h = 0.80 },
 }

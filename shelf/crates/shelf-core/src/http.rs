@@ -170,6 +170,12 @@ impl Router {
         self.route(Method::Delete, p, f)
     }
 
+    /// 追加另一组路由（保持各自顺序，self 的在前）。
+    pub fn merge(mut self, other: Router) -> Router {
+        self.routes.extend(other.routes);
+        self
+    }
+
     fn matches(route: &Route, method: Method, path: &str) -> Option<HashMap<String, String>> {
         if route.method != method {
             return None;
@@ -289,6 +295,15 @@ mod tests {
         let mut r = Request { method: m, path: path.into(), query: parse_query(q), params: HashMap::new(), content_type: String::new(), content_length: None, body: &mut empty };
         let rep = router.dispatch(&mut r);
         (rep.status, String::from_utf8_lossy(&rep.body).to_string())
+    }
+
+    #[test]
+    fn merge_keeps_front_routes_first() {
+        let a = Router::new().get("/health", |_| Ok(Reply::ok(&serde_json::json!({"h": 1}))));
+        let b = Router::new().get("/{name}", |r| Ok(Reply::ok(&serde_json::json!({"name": r.param("name")}))));
+        let r = a.merge(b);
+        assert_eq!(call(&r, Method::Get, "/health", "").1, r#"{"h":1}"#);
+        assert_eq!(call(&r, Method::Get, "/x.png", "").1, r#"{"name":"x.png"}"#);
     }
 
     #[test]

@@ -43,7 +43,10 @@ pub fn run(spec: &ServiceSpec, bind: &str, paths: &Paths, router: Router) -> Res
     let _reg = registry::register(paths, &info).map_err(|e| format!("注册失败: {e}"))?;
     let name = spec.name;
     let ver = spec.version;
-    let router = router.get("/health", move |_| Ok(Reply::ok(&serde_json::json!({"ok": true, "service": name, "version": ver}))));
+    // /health 必须**先于**业务路由注册：否则会被形如 `GET /{name}` 的通配路由抢先匹配（真机 wallpaper-serve 踩过）。
+    let router = Router::new()
+        .get("/health", move |_| Ok(Reply::ok(&serde_json::json!({"ok": true, "service": name, "version": ver}))))
+        .merge(router);
     println!("[{}] v{} 监听 http://{}/", spec.name, spec.version, bind);
     http::serve(bind, router)
 }
