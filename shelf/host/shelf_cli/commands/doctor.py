@@ -28,11 +28,11 @@ def run(args, ctx) -> int:
         print(f"{tool:<14}: {p or '缺（' + why + '）'}")
         if tool == "ebook-convert" and not p:
             print("                → 无 Calibre 时 `shelf push` 自动走 --quality device（设备端 Rust 兜底）")
-    try:
-        import fitz  # type: ignore  # noqa: F401
-        print("pymupdf       : 有")
-    except ImportError:
-        print("pymupdf       : 缺（大 PDF 分卷/体检不可用）")
+    from .. import calibre_bridge as _cb
+    import subprocess
+    py = _cb._py_with_pymupdf()
+    ok = subprocess.run([*py, "-c", "import pymupdf"], env=_cb.clean_env(), capture_output=True).returncode == 0
+    print(f"pymupdf       : {'有' if ok else '缺'}（经 {' '.join(py[:2])}；体检/裁边/大 PDF 分卷{'可用' if ok else '不可用'}）")
     print(f"认证          : 用户 {ctx.config.user}，密码{'已提供' if ctx.config.password else '未提供（config.toml password / $SHELF_PASSWORD / 交互输入）'}；TLS 校验 {'开' if ctx.config.verify_tls else '关（自签）'}")
     try:
         n = len(ctx.transport.get("/api/services").get("services", []))

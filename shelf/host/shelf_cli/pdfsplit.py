@@ -16,9 +16,12 @@ def volumes_for(size_bytes: int, split_mb: int) -> int:
 
 def split(path: Path, split_mb: int, out_dir: Path) -> list[Path]:
     try:
-        import fitz  # type: ignore
+        import pymupdf as fitz  # type: ignore
     except ImportError:
-        return [path]
+        try:
+            import fitz  # type: ignore
+        except ImportError:
+            return [path]
     n = volumes_for(path.stat().st_size, split_mb)
     if n <= 1:
         return [path]
