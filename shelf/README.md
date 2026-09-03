@@ -88,7 +88,7 @@ shelf koreader pull | diff | sync [-n] [--fonts] [--dicts]   # 配置即代码�
 |---|---|---|
 | P0 | 骨架 · bookconv 抽离（md5 对拍一致）· CI · 打包/编排接入 · 五服务注册/代理本机冒烟 | ✅ 离线完成 |
 | P1 | 统一投递：三目标手选（native/annot/koreader）、格式自动处理、host Calibre 优先/设备兜底、完整单页 UI、`shelf push` | ✅ **真机通**（3.27.3.0，2026-09-03）：三目标投递、拔插、WiFi 访问 |
-| P2 | 字体/壁纸上传即可用：font-serve（fontconfig+fonts.json+KOReader 镜像）、wallpaper-serve（954×1696 池化/轮换/bind 子命令）、动态字体菜单 qmd（3.27/3.28）、sleep 钩子+开机 bind 单元、旧壁纸工具迁移、CLI font/wallpaper | ✅ **真机通**（3.27.3.0，2026-09-03）：字体上传→菜单差量→选中即渲染全程免重启（S-A/S-B）；壁纸缩放/激活/bind/roll 通，休眠肉眼待看 |
+| P2 | 字体/壁纸上传即可用：font-serve（fontconfig+fonts.json+KOReader 镜像）、wallpaper-serve（954×1696 池化/轮换/bind 子命令）、动态字体菜单 qmd（3.27/3.28）、sleep 钩子+开机 bind 单元、旧壁纸工具迁移、CLI font/wallpaper | ✅ **真机通**（3.27.3.0，2026-09-03）：字体上传→菜单差量→选中即渲染全程免重启（S-A/S-B）；壁纸缩放/激活/bind + 唤醒日志触发轮换真机通 |
 | P3 | KOReader 配置即代码：`koreader/profile/` 三份补丁 + `merge.lua`（设备端 luajit 深合并，dry-run/备份/回读/幂等）+ `/config/{file}` 端点（运行中拒写）+ 词典上传 + CLI pull/diff/sync | ✅ **真机通**（2026-09-03）：pull→profile 校正→diff 零差异 |
 | P4 | 原生高质量门：`shelf push` host 路强制 `check_output.py`（`--skip-check` 逃生）；设备路回执带转换/优化摘要；网关只读展示阅读增强开关 | ✅ 离线完成 |
 | P5 | 微读网页版门控 spike：`weread-web/spike.sh recon\|fetch\|run\|restore`（看门狗 600s 自动拉起 xochitl） | 脚本就绪，**需用户设备旁执行** |
