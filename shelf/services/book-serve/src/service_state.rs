@@ -8,6 +8,8 @@ use std::sync::Arc;
 
 pub struct State {
     pub cfg: BookConfig,
+    /// 只读：系统增强面板的开关文件（`$XDG_DATA_HOME/cangjie-ime/reading-qol.json`，书架不写它）。
+    pub reading_qol: std::path::PathBuf,
     pub spool: Spool,
     pub targets: TargetRegistry,
     pub xochitl: Arc<Xochitl>,
@@ -19,7 +21,8 @@ impl State {
         let xochitl = Arc::new(Xochitl::new(&cfg.xochitl_host, &paths.xochitl_dir(), cfg.upload_timeout_secs));
         let spool = Spool::new(paths.state_dir().join("books"));
         let targets = TargetRegistry::new(&cfg, xochitl.clone());
-        State { cfg, spool, targets, xochitl }
+        let reading_qol = paths.data_root().join("cangjie-ime/reading-qol.json");
+        State { cfg, spool, targets, xochitl, reading_qol }
     }
 
     pub fn status(&self) -> serde_json::Value {
@@ -34,6 +37,7 @@ impl State {
                 "failed": items.iter().filter(|i| i.state == "failed").count(),
             },
             "targets": self.targets.ids().iter().map(|(i, l)| serde_json::json!({"id": i, "label": l})).collect::<Vec<_>>(),
+            "readingQol": std::fs::read_to_string(&self.reading_qol).ok().and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok()),
         })
     }
 

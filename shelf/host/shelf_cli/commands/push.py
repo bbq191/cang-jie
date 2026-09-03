@@ -23,6 +23,7 @@ def add_args(p):
     p.add_argument("--no-optimize", action="store_true", help="native 直传 EPUB 不在设备端优化")
     p.add_argument("--no-split", action="store_true", help="大 PDF 不分卷")
     p.add_argument("--require-toc", action="store_true", help="host 路体检要求有目录")
+    p.add_argument("--skip-check", action="store_true", help="host 路跳过 check_output.py 体检（缺省不过不推）")
     p.add_argument("--comic2cbz", action="store_true", help="koreader 目标：AZW3 漫画先转 CBZ")
     p.add_argument("--dry-run", "-n", action="store_true", help="只打印路由决定，不动文件、不上传")
 
@@ -40,6 +41,17 @@ def decide_route(quality: str, target: str, path: Path, calibre: bool) -> str:
     return "device"
 
 
+def _gate(out: Path, args) -> None:
+    """原生高质量门：host 路产物必过 check_output.py（TOC/内链/字体子集/双 id/屏上字号列宽），不过不推。"""
+    if getattr(args, "skip_check", False):
+        print("  （--skip-check：跳过体检）")
+        return
+    ok, rep = cb.check(out, require_toc=args.require_toc)
+    print(rep)
+    if not ok:
+        raise cb.CalibreError("体检未通过，未推送（--skip-check 强推 / --quality device 走设备兜底）")
+
+
 def host_prepare(target: str, path: Path, args, work: Path) -> list[Path]:
     """host 路：产出待推送文件列表（可能多个：分卷）。"""
     suf = path.suffix.lower()
@@ -54,10 +66,7 @@ def host_prepare(target: str, path: Path, args, work: Path) -> list[Path]:
             out = cb.wash(path, work)  # wash_epub.sh 泛化收 AZW3/MOBI（内部 ebook-convert）
         else:
             return [path]
-        ok, rep = cb.check(out, require_toc=args.require_toc)
-        print(rep)
-        if not ok:
-            raise cb.CalibreError("体检未通过，未推送（--quality device 可绕过 host 路）")
+        _gate(out, args)
         return [out]
     # annot
     if suf == ".epub" or suf in (".azw3", ".mobi", ".azw", ".prc", ".fb2"):
@@ -70,10 +79,7 @@ def host_prepare(target: str, path: Path, args, work: Path) -> list[Path]:
             raise cb.CalibreError(f"扫描型 PDF 不做定稿（{e}）；建议 --target koreader 用 KOPT 重排") from None
     else:
         return [path]
-    ok, rep = cb.check(out, require_toc=args.require_toc)
-    print(rep)
-    if not ok:
-        raise cb.CalibreError("体检未通过，未推送")
+    _gate(out, args)
     return [out]
 
 

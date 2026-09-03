@@ -66,6 +66,10 @@ impl Paths {
     pub fn data_dir(&self) -> PathBuf {
         self.data.join(APP)
     }
+    /// `$XDG_DATA_HOME` 本身（只读对接别的应用的数据位，如 cangjie-ime/reading-qol.json）。
+    pub fn data_root(&self) -> &Path {
+        &self.data
+    }
     pub fn state_dir(&self) -> PathBuf {
         self.state.join(APP)
     }

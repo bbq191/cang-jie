@@ -90,5 +90,5 @@ shelf koreader pull | diff | sync [-n] [--fonts] [--dicts]   # 配置即代码�
 | P1 | 统一投递：三目标手选（native/annot/koreader）、格式自动处理、host Calibre 优先/设备兜底、完整单页 UI、`shelf push` | ✅ 离线完成（本机三服务冒烟通），**真机待验**（设备离线） |
 | P2 | 字体/壁纸上传即可用：font-serve（fontconfig+fonts.json+KOReader 镜像）、wallpaper-serve（954×1696 池化/轮换/bind 子命令）、动态字体菜单 qmd（3.27/3.28）、sleep 钩子+开机 bind 单元、旧壁纸工具迁移、CLI font/wallpaper | ✅ 离线完成（本机冒烟通），**真机 spike 待做**（字体免重启 S-A/S-B、休眠显示） |
 | P3 | KOReader 配置即代码：`koreader/profile/` 三份补丁 + `merge.lua`（设备端 luajit 深合并，dry-run/备份/回读/幂等）+ `/config/{file}` 端点（运行中拒写）+ 词典上传 + CLI pull/diff/sync | ✅ 离线完成（merge 本机 luajit 验证），**真机待验**（profile 值需 pull 核对） |
-| P4 | 原生高质量门 | 待做 |
-| P5 | 微读网页版门控 spike（rmweb × Move） | 待做 |
+| P4 | 原生高质量门：`shelf push` host 路强制 `check_output.py`（`--skip-check` 逃生）；设备路回执带转换/优化摘要；网关只读展示阅读增强开关 | ✅ 离线完成 |
+| P5 | 微读网页版门控 spike：`weread-web/spike.sh recon\|fetch\|run\|restore`（看门狗 600s 自动拉起 xochitl） | 脚本就绪，**需用户设备旁执行** |
