@@ -26,14 +26,15 @@ progress{width:100%;height:.5em}
 .list li{display:flex;justify-content:space-between;gap:1em;padding:.35em 0;border-bottom:1px solid var(--line)}
 .small{font-size:.85em;color:var(--mute)}
 </style></head><body>
-<header><h1>书架</h1><small id="hdr">连接中…</small></header>
+<header><h1>书架</h1><small id="hdr">连接中…</small><span style="margin-left:auto" class="small"><a href="/password">改密码</a> · <a href="/ca.crt">CA 证书</a> · <a href="#" id="logout">退出</a></span></header>
 <nav id="tabs"></nav>
 <main id="main"><p class="small">加载服务列表…</p></main>
 <script>
 const $=(s,r=document)=>r.querySelector(s);
 const SEG={"book-serve":"books","koreader-serve":"koreader","font-serve":"fonts","wallpaper-serve":"wallpapers","weread-serve":"weread"};
 const fmtB=n=>n>1048576?(n/1048576).toFixed(1)+' MB':n>1024?(n/1024).toFixed(0)+' KB':n+' B';
-async function j(url,opt){const r=await fetch(url,opt);let d;try{d=await r.json()}catch{d={ok:false,message:'HTTP '+r.status}}if(!r.ok&&d.ok!==false)d={ok:false,message:d.message||('HTTP '+r.status)};return d}
+document.getElementById('logout').onclick=e=>{e.preventDefault();fetch('/logout',{method:'POST'}).then(()=>location.href='/login')};
+async function j(url,opt){const r=await fetch(url,opt);if(r.status===401){location.href='/login?next='+encodeURIComponent(location.pathname);return {ok:false,message:'未登录'}}if(r.status===403){location.href='/password';return {ok:false,message:'需先改密码'}}let d;try{d=await r.json()}catch{d={ok:false,message:'HTTP '+r.status}}if(!r.ok&&d.ok!==false)d={ok:false,message:d.message||('HTTP '+r.status)};return d}
 
 /* 通用上传器：逐文件一请求，进度条，回执逐项 */
 function uploader(box,urlOf,queryOf){
@@ -50,7 +51,7 @@ function uploader(box,urlOf,queryOf){
       msg.textContent='上传中…';
       await new Promise(res=>{const x=new XMLHttpRequest();const q=queryOf();x.open('POST',urlOf()+(q?'?'+new URLSearchParams(q):''));
         x.upload.onprogress=e=>{if(e.lengthComputable)pg.value=e.loaded/e.total*100};
-        x.onload=()=>{let d;try{d=JSON.parse(x.responseText)}catch{d={ok:false,message:'HTTP '+x.status}}
+        x.onload=()=>{if(x.status===401){location.href='/login';return}let d;try{d=JSON.parse(x.responseText)}catch{d={ok:false,message:'HTTP '+x.status}}
           const it=(d.items&&d.items[0])||d;f.st=it.ok?'ok':'bad';f.msg=it.message||(it.ok?'完成':'失败');li.className=f.st;msg.textContent=f.msg;pg.value=100;res()};
         x.onerror=()=>{f.st='bad';f.msg='网络错误';li.className='bad';msg.textContent=f.msg;res()};
         const fd=new FormData();fd.append('file',f.file);x.send(fd)})}
@@ -61,12 +62,13 @@ function uploader(box,urlOf,queryOf){
 const TABS={
  'book-serve':{title:'传书',render(sec){sec.innerHTML=`
   <div class="row"><label>投到 <select id="tgt"><option value="native">原生阅读（xochitl；AZW3/MOBI/FB2/CBZ 自动转换，EPUB 自动优化）</option><option value="annot">原生批注（PDF 定稿；只收 PDF/CBZ）</option><option value="koreader">KOReader（原样投递，任意格式）</option></select></label></div>
-  <div class="row"><label>文件夹 <input type="text" id="folder" placeholder="留空=默认；KOReader 可多级 如 漫画/阿拉蕾"></label><label><input type="checkbox" id="opt" checked> 设备端优化 EPUB</label> <span class="small">（不勾=原样进库；本页不调用 Calibre——电脑上高质量洗书请用 <code>shelf push</code>）</span></div>
+  <div class="row"><label>文件夹 <input type="text" id="folder" placeholder="留空=默认；KOReader 可多级 如 漫画/阿拉蕾"></label></div>
+  <div class="row" id="optrow"><label>EPUB 处理 <select id="opt"><option value="auto">清洗 + 优化（对标电脑洗书：剥字体/颜色锁、边距段距归零、缺目录自动建）</option><option value="keep-spacing">清洗但保留段距（诗集 / 剧本）</option><option value="plain">只优化不清洗（脚注/图片/对比度）</option><option value="off">原样进库</option></select></label><label><input type="checkbox" id="chk" checked> 质量门</label> <span class="small">（真 DRM / 目录坏 / 双 id 硬拦；不勾=强行投递。Calibre 转换只在电脑 <code>shelf push</code>）</span></div>
   <div class="drop">点击或拖入文件（可多选）</div><input type="file" multiple hidden>
   <ul class="q"></ul><div class="row"><button class="btn pri go">开始上传</button><button class="btn clr">清空</button></div>
   <div id="bstat" class="kv small" style="margin-top:1em"></div><h3 style="font-size:1em">未完成 / 失败</h3><ul class="list" id="inbox"></ul>`;
   const tgt=$('#tgt',sec);
-  const up=uploader(sec,()=>tgt.value==='koreader'?'/api/koreader/books':'/api/books',()=>{const q={folder:$('#folder',sec).value.trim()};if(tgt.value!=='koreader'){q.target=tgt.value;q.optimize=$('#opt',sec).checked?'auto':'off'}return q});
+  const up=uploader(sec,()=>tgt.value==='koreader'?'/api/koreader/books':'/api/books',()=>{const q={folder:$('#folder',sec).value.trim()};if(tgt.value!=='koreader'){q.target=tgt.value;q.optimize=$('#opt',sec).value;q.check=$('#chk',sec).checked?'on':'off'}return q});
   $('.clr',sec).onclick=()=>up.clear();
   const refresh=async()=>{const s=await j('/api/books/status');$('#bstat',sec).innerHTML=s.ok?`<b>xochitl /upload</b><span>${s.uploadReachable?'可达':'<span style="color:var(--bad)">不可达（lo 别名/USB 未就绪）</span>'}</span><b>书库文件夹</b><span>${s.libraryFolder} / 批注 ${s.annotFolder}</span><b>队列</b><span>待处理 ${s.spool.pending} · 失败 ${s.spool.failed}</span>${s.readingQol?`<b>阅读增强</b><span class="small">点击翻页 ${s.readingQol.tapPageTurn?'开':'关'} · 快速黑白 ${s.readingQol.fastMono?'开':'关'} · 清残影 ${s.readingQol.refresh?'开':'关'} · 字体增强 ${s.readingQol.fontEnhance?'开':'关'}（设置→系统增强 里改）</span>`:''}`:`<b>book-serve</b><span>${s.message}</span>`;
     const ib=await j('/api/books/inbox');const ul=$('#inbox',sec);ul.innerHTML='';(ib.items||[]).forEach(it=>{const li=document.createElement('li');li.innerHTML=`<span>${it.name} <span class="small">${it.state} · ${fmtB(it.bytes)}</span></span><span>${it.state==='failed'?'<button class="btn r">重试</button> <button class="btn d">删除</button>':''}</span>`;
@@ -123,3 +125,36 @@ function assetTab(sec,api,hint,ext={}){sec.innerHTML=`<p class="small">${hint}</
   if(!svcs.length)main.innerHTML='<p>没有领域服务在线。用 <code>shelf/install.sh</code> 安装，或检查 <code>systemctl status shelf.target</code>。</p>';
 })();
 </script></body></html>"##;
+
+
+const AUTH_CSS: &str = r#"body{font-family:system-ui,-apple-system,"PingFang SC","Noto Sans CJK SC",sans-serif;margin:0;background:#fff;color:#111;display:flex;min-height:100vh;align-items:center;justify-content:center}
+form{width:min(22em,90vw);border:1px solid #ddd;border-radius:.8em;padding:1.4em 1.6em}
+h1{font-size:1.2em;margin:0 0 .6em}label{display:block;margin:.7em 0 .2em;color:#666;font-size:.92em}
+input{width:100%;box-sizing:border-box;font-size:1.05em;padding:.5em}
+button{margin-top:1em;width:100%;font-size:1em;padding:.55em;border:1px solid #111;background:#111;color:#fff;border-radius:.4em;cursor:pointer}
+.err{color:#b3261e;margin:.6em 0 0;min-height:1.2em}.small{font-size:.85em;color:#666;margin-top:1em;line-height:1.5}a{color:inherit}"#;
+
+fn esc(s: &str) -> String {
+    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
+}
+
+/// 登录页：只要密码，无用户名。`error` 空=无提示。
+pub fn login_page(error: &str, next: &str) -> String {
+    format!(r#"<!doctype html><html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>书架 · 登录</title><style>{AUTH_CSS}</style></head><body>
+<form method="post" action="/login" autocomplete="on"><h1>书架</h1>
+<label for="pw">密码</label><input id="pw" name="password" type="password" autofocus required autocomplete="current-password">
+<input type="hidden" name="next" value="{next}"><div class="err">{err}</div><button type="submit">登录</button>
+<p class="small">首次使用密码为 <code>shelf</code>，登录后必须改。<br>浏览器提示"不安全"是自签证书所致：<a href="/ca.crt">下载 CA 证书</a> 装进手机/电脑信任库一次即不再提示。</p></form></body></html>"#, next = esc(next), err = esc(error))
+}
+
+/// 改密码页：`forced`=首登必改（不给"返回"）。
+pub fn password_page(error: &str, forced: bool) -> String {
+    let hint = if forced { "首次登录：请先设置新密码（至少 6 位，不能是默认密码）。" } else { "至少 6 位。改完其它已登录设备需重新登录。" };
+    let back = if forced { "" } else { r#"<p class="small"><a href="/">返回书架</a></p>"# };
+    format!(r#"<!doctype html><html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>书架 · 改密码</title><style>{AUTH_CSS}</style></head><body>
+<form method="post" action="/password"><h1>设置密码</h1><p class="small" style="margin-top:0">{hint}</p>
+<label for="cur">当前密码</label><input id="cur" name="current" type="password" required autocomplete="current-password">
+<label for="new">新密码</label><input id="new" name="new" type="password" required minlength="6" autocomplete="new-password">
+<label for="cf">再输一次</label><input id="cf" name="confirm" type="password" required minlength="6" autocomplete="new-password">
+<div class="err">{err}</div><button type="submit">保存</button>{back}</form></body></html>"#, err = esc(error))
+}

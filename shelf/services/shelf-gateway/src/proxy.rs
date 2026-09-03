@@ -44,7 +44,7 @@ pub fn forward(paths: &Paths, service: Option<&'static str>, req: &mut Request<'
     Ok(Reply { status, content_type: ctype, body, headers: vec![] })
 }
 
-fn enc(s: &str) -> String {
+pub fn enc(s: &str) -> String {
     let mut o = String::new();
     for b in s.bytes() {
         match b {

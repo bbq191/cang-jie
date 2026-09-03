@@ -68,7 +68,7 @@ impl State {
                     continue;
                 }
             };
-            let o = target.deliver(&name, data, &DeliverOpts { folder: None, optimize: true });
+            let o = target.deliver(&name, data, &DeliverOpts { folder: None, optimize: Default::default(), check: true });
             if o.ok {
                 self.spool.archive_done(&work);
             } else {

@@ -11,7 +11,7 @@
 #
 # 用法：./install.sh [--only gateway,book,koreader,font,wallpaper] [--no-systemd] [--src DIR] [--password PW]
 #   --only        只装/更新列出的服务（网关总会装）；缺省全装
-#   --password    设置网关密码（缺省首启随机生成并打印；之后可 shelf-gateway passwd <新密码>）
+#   --password    直接设网关密码（缺省首次默认 shelf、网页登录后强制改；之后可 shelf-gateway passwd <新密码>）
 #   --no-systemd  只落二进制与目录，不碰 /usr（重启后需手动 systemctl start）
 #   --src DIR     载荷目录（含 bin/ systemd/ lo-alias/），缺省=本脚本所在目录
 # 幂等，可反复跑；每次先把现有二进制备份到 /home/root/cangjie-backups/shelf-<时间>/。
@@ -169,7 +169,7 @@ esac
 
 # ── 4. 健康检查 ──
 sleep 1
-PW="$("$BIN_DIR/shelf-gateway" show-password 2>/dev/null | head -n1)"
+MUST_CHANGE="$(grep -c '"mustChangePassword": true' "${XDG_CONFIG_HOME:-$HOME/.config}/shelf/gateway.json" 2>/dev/null || true)"
 # 设备端 busybox wget 不认 --user/自签证书，HTTPS 探测交给 host 侧 deploy.sh（curl -k）；这里只看 systemd + 注册表。
 echo "═══════════════════════════════════════════════════"
 ALL_OK=1
@@ -181,12 +181,13 @@ done
 REG="$(ls /tmp/shelf-0/shelf/services/ 2>/dev/null | sed 's/\.json$//' | tr '\n' ' ')"
 echo "  注册表        : ${REG:-（空）}"
 if [ "$ALL_OK" = "1" ] && [ -n "$REG" ]; then
-    echo "✅ 书架在线：https://<设备IP>:8778/"
-    case "$PW" in
-        ""|*（*) echo "   登录：用户 shelf  密码：已自定义（改：shelf-gateway passwd <新密码>）" ;;
-        *) echo "   登录：用户 shelf  密码 $PW   （改：shelf-gateway passwd <新密码>）" ;;
-    esac
-    echo "   ⚠ 自签证书，浏览器首次要点「高级 → 继续访问」"
+    echo "✅ 书架在线：https://<设备IP>:8778/  或 https://shelf.local:8778/（mDNS；安卓不支持 .local）"
+    if [ "${MUST_CHANGE:-0}" != "0" ]; then
+        echo "   登录：密码 shelf（首次默认），登录后必须改；忘记密码：shelf-gateway reset-password"
+    else
+        echo "   登录：已设置的密码（改：网页右上「改密码」/ shelf passwd / 设备上 shelf-gateway passwd <新密码>）"
+    fi
+    echo "   ⚠ 自签证书：登录页「下载 CA 证书」装进手机/电脑信任库一次即不再提示，否则点「高级 → 继续访问」"
 else
     echo "⚠️  有服务未起（journalctl -u shelf-gateway 等）。备份在 $BK。"
     [ "$DO_SYSTEMD" = "0" ] || exit 1

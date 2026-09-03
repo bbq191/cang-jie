@@ -1,5 +1,6 @@
-//! 密码哈希 + HTTP Basic 认证。哈希格式 `sha256$<salt-hex>$<digest-hex>`（salt 16 字节，随机）。
+//! 密码哈希 + HTTP Basic 解析 + 内存会话表。哈希格式 `sha256$<salt-hex>$<digest-hex>`（salt 16 字节，随机）。
 //! 只保护对外的网关；loopback 领域服务不认证（只有设备本机能连）。
+//! 会话：登录页校验密码后发 Cookie 令牌（随机 32 字节 hex），令牌只在内存（重启网关=全部重新登录）。
 use base64::Engine;
 use sha2::{Digest, Sha256};
 
@@ -61,9 +62,76 @@ pub fn parse_basic(header: &str) -> Option<(String, String)> {
     Some((u.to_string(), p.to_string()))
 }
 
+/// 解析 `Cookie:` 头里指定名字的值。
+pub fn parse_cookie(header: &str, name: &str) -> Option<String> {
+    header.split(';').map(|kv| kv.trim()).find_map(|kv| {
+        let (k, v) = kv.split_once('=')?;
+        (k.trim() == name).then(|| v.trim().to_string())
+    })
+}
+
+/// 内存会话表（Mutex 保护）：签发/校验/吊销，带绝对过期与容量上限（防无限增长）。
+pub struct SessionStore {
+    inner: std::sync::Mutex<std::collections::HashMap<String, std::time::Instant>>,
+    ttl: std::time::Duration,
+    max: usize,
+}
+
+impl SessionStore {
+    pub fn new(ttl: std::time::Duration, max: usize) -> SessionStore {
+        SessionStore { inner: std::sync::Mutex::new(std::collections::HashMap::new()), ttl, max }
+    }
+    /// 签发新令牌；满了先清过期，仍满则淘汰最早到期的。
+    pub fn issue(&self) -> String {
+        let token = hex(&random_bytes(32));
+        let mut m = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let now = std::time::Instant::now();
+        m.retain(|_, exp| *exp > now);
+        if m.len() >= self.max {
+            if let Some(oldest) = m.iter().min_by_key(|(_, e)| **e).map(|(k, _)| k.clone()) {
+                m.remove(&oldest);
+            }
+        }
+        m.insert(token.clone(), now + self.ttl);
+        token
+    }
+    pub fn check(&self, token: &str) -> bool {
+        let m = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        m.get(token).map(|exp| *exp > std::time::Instant::now()).unwrap_or(false)
+    }
+    pub fn revoke(&self, token: &str) {
+        self.inner.lock().unwrap_or_else(|e| e.into_inner()).remove(token);
+    }
+    /// 吊销除 `keep` 外的全部（改密码后踢掉其它设备）。
+    pub fn revoke_others(&self, keep: &str) {
+        self.inner.lock().unwrap_or_else(|e| e.into_inner()).retain(|k, _| k == keep);
+    }
+    pub fn ttl(&self) -> std::time::Duration {
+        self.ttl
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn cookie_and_sessions() {
+        assert_eq!(parse_cookie("a=1; shelf_session=abc ; b=2", "shelf_session").as_deref(), Some("abc"));
+        assert_eq!(parse_cookie("a=1", "shelf_session"), None);
+        let s = SessionStore::new(std::time::Duration::from_secs(60), 2);
+        let t1 = s.issue();
+        assert!(s.check(&t1) && !s.check("nope"));
+        let t2 = s.issue();
+        let t3 = s.issue(); // 超容量：最早的 t1 被淘汰
+        assert!(!s.check(&t1) && s.check(&t2) && s.check(&t3));
+        s.revoke_others(&t3);
+        assert!(!s.check(&t2) && s.check(&t3));
+        s.revoke(&t3);
+        assert!(!s.check(&t3));
+        let e = SessionStore::new(std::time::Duration::from_secs(0), 8);
+        let t = e.issue();
+        assert!(!e.check(&t), "ttl=0 立即过期");
+    }
     #[test]
     fn hash_roundtrip_and_reject() {
         let h = hash_password("s3cret");

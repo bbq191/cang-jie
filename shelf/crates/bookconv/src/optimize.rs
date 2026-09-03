@@ -25,7 +25,15 @@ pub const OPTIMIZE_MARKER: &str = "META-INF/com.cangjie.optimized";
 /// v5：Calibre 洗书形态——同文件带文件名 href 归一裸锚（normalize_self_hrefs）+ 真 img 版 duokan 标记
 /// 换上标且保留 id（`wash_epub.sh` 产物经 host CLI `epub-optimize` 走同一函数）；图片降采样加短边 ≤954
 /// 约束（真机探针：块级图缩到正文列宽，方图只卡长边白留 1.8× 像素）。
-pub const OPTIMIZE_VERSION: &str = "5";
+/// v6：清洗层（`wash`）可选前置——伪 DRM 剥离、CSS 文件级锁剥离、边距/段距归零+2em 缩进、空页清理、
+/// 自动目录、单标签双 id 折叠（对标 host `wash_epub.sh`，`OptimizeOpts::wash`；weread 线缺省不开）。
+pub const OPTIMIZE_VERSION: &str = "6";
+
+/// 优化选项：`wash=Some` 时先过清洗层（书架 native 投递与 host `epub-optimize` 缺省开；weread 线不开）。
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct OptimizeOpts {
+    pub wash: Option<crate::wash::WashOpts>,
+}
 
 /// HTML 里的远程图（http(s)/协议相对 `//`）→ 抓取降采样内联进 EPUB：抓到→存进 zip（与本章同目录，
 /// src 改本地文件名，免相对路径计算）；抓不到→**删掉该 `<img>`**（避免 reMarkable 破图占位=大放大镜）。
@@ -86,7 +94,9 @@ fn remote_img_fetcher(ag: &ureq::Agent) -> impl Fn(&str) -> Option<(Vec<u8>, &'s
 }
 
 /// 优化统计，供回执。
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Report {
+    pub wash: Option<crate::wash::WashReport>,
     pub total_files: usize,
     pub html_files: usize,
     pub bytes_before: usize,
@@ -199,43 +209,37 @@ fn remove_toc_from_spine(opf: &str, toc_basenames: &HashSet<String>) -> String {
 
 /// 解包 → 每个 (x)html 走 strip_font_locks → 原样保留其余 → 重打包。返回 (新epub, 统计)。
 pub fn optimize_epub(epub: &[u8]) -> Result<(Vec<u8>, Report), String> {
-    let mut archive =
-        ZipArchive::new(Cursor::new(epub)).map_err(|e| format!("解 EPUB(非 zip?): {e}"))?;
+    optimize_epub_with(epub, &OptimizeOpts::default())
+}
 
-    // 条目名快照。mimetype 必须首个且 STORED（EPUB 规范），其余原序。
+/// 带选项：`opts.wash` 有值则先过清洗层（真 DRM 在此报错、原样不动）。
+pub fn optimize_epub_with(epub: &[u8], opts: &OptimizeOpts) -> Result<(Vec<u8>, Report), String> {
     // 读失败必须整体报错——绝不能静默跳过条目产出残缺 EPUB（会破坏原书）。
-    let mut names: Vec<String> = Vec::new();
-    for i in 0..archive.len() {
-        let f = archive.by_index(i).map_err(|e| format!("读 EPUB 条目 {i}: {e}"))?;
-        names.push(f.name().to_string());
+    let mut raw = crate::check::read_entries(epub)?;
+    let wash_rep = match &opts.wash {
+        Some(w) => Some(crate::wash::wash_entries(&mut raw, w)?),
+        None => None,
+    };
+    // mimetype 必须首个且 STORED（EPUB 规范），其余原序；旧标记剔除(结尾统一重写当前版本，避免重优化时残留两条)。
+    let mut ordered: Vec<crate::wash::Entry> = Vec::with_capacity(raw.len());
+    if let Some(i) = raw.iter().position(|e| e.name == "mimetype") {
+        ordered.push(raw[i].clone());
     }
-    let mut ordered: Vec<String> = Vec::new();
-    if names.iter().any(|n| n == "mimetype") {
-        ordered.push("mimetype".to_string());
-    }
-    for n in &names {
-        // 跳过 mimetype(已置顶)和旧标记(结尾统一重写当前版本，避免重优化时残留两条)
-        if n != "mimetype" && n != OPTIMIZE_MARKER {
-            ordered.push(n.clone());
+    for e in raw.into_iter() {
+        if e.name != "mimetype" && e.name != OPTIMIZE_MARKER {
+            ordered.push(e);
         }
     }
 
-    let mut rep = Report { total_files: 0, html_files: 0, bytes_before: epub.len(), bytes_after: 0 };
+    let mut rep = Report { wash: wash_rep, total_files: 0, html_files: 0, bytes_before: epub.len(), bytes_after: 0 };
 
     // 第一遍：读所有条目。xhtml → strip_font_locks；同时扫全书 marker 得**被引用**的尾注 frag 集
     // （referenced），供下一步"只搬被引用的注释块"用。dir 条目跳过。
     let mut entries: Vec<(String, Vec<u8>, bool)> = Vec::new(); // (name, data, is_html)
     let mut referenced: HashSet<String> = HashSet::new(); // 被 marker 引用的注释 id（noteref + 跨文件普通<a>）
     let mut toc_basenames: HashSet<String> = HashSet::new(); // 指向大量 html 的目录页(basename)
-    for name in &ordered {
-        let mut data = Vec::new();
-        {
-            let mut file = archive.by_name(name).map_err(|e| format!("读条目 {name}: {e}"))?;
-            if file.is_dir() {
-                continue;
-            }
-            file.read_to_end(&mut data).map_err(|e| e.to_string())?;
-        }
+    for crate::wash::Entry { name, mut data } in ordered {
+        let name = &name;
         rep.total_files += 1;
         let ish = is_html(name);
         if ish {

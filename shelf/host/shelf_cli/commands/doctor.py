@@ -33,7 +33,7 @@ def run(args, ctx) -> int:
     py = _cb._py_with_pymupdf()
     ok = subprocess.run([*py, "-c", "import pymupdf"], env=_cb.clean_env(), capture_output=True).returncode == 0
     print(f"pymupdf       : {'有' if ok else '缺'}（经 {' '.join(py[:2])}；体检/裁边/大 PDF 分卷{'可用' if ok else '不可用'}）")
-    print(f"认证          : 用户 {ctx.config.user}，密码{'已提供' if ctx.config.password else '未提供（config.toml password / $SHELF_PASSWORD / 交互输入）'}；TLS 校验 {'开' if ctx.config.verify_tls else '关（自签）'}")
+    print(f"认证          : 密码{'已提供' if ctx.config.password else '未提供（config.toml password / $SHELF_PASSWORD / 交互输入）'}；TLS 校验 {'开' if ctx.config.verify_tls else '关（自签）'}")
     try:
         n = len(ctx.transport.get("/api/services").get("services", []))
         print(f"设备网关      : {ctx.config.base_url} 在线，{n} 个服务")

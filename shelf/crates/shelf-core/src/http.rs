@@ -36,10 +36,21 @@ pub struct Request<'a> {
     pub params: HashMap<String, String>,
     pub content_type: String,
     pub content_length: Option<usize>,
+    /// 少量请求头（Cookie/Authorization/Accept/Host/X-Forwarded-Proto），登录/守卫用。
+    pub headers: Vec<(String, String)>,
     pub body: &'a mut dyn Read,
 }
 
 impl Request<'_> {
+    /// 按名取头（不区分大小写）。
+    pub fn header(&self, name: &str) -> Option<&str> {
+        self.headers.iter().find(|(k, _)| k.eq_ignore_ascii_case(name)).map(|(_, v)| v.as_str())
+    }
+    /// `application/x-www-form-urlencoded` 表单 → map（小 body）。
+    pub fn form_body(&mut self) -> Result<HashMap<String, String>, String> {
+        let b = self.read_small_body()?;
+        Ok(parse_query(&String::from_utf8_lossy(&b).replace('+', " ")))
+    }
     pub fn q(&self, k: &str) -> Option<&str> {
         self.query.get(k).map(|s| s.as_str())
     }
@@ -83,6 +94,18 @@ impl Reply {
     }
     pub fn not_found() -> Reply {
         Reply::error(404, "not found")
+    }
+    /// 303 跳转（表单提交后用 303 避免重复提交）。
+    pub fn redirect(location: &str) -> Reply {
+        Reply { status: 303, content_type: "text/plain; charset=utf-8".into(), body: Vec::new(), headers: vec![("Location".into(), location.into())] }
+    }
+    pub fn with_header(mut self, k: &str, v: &str) -> Reply {
+        self.headers.push((k.into(), v.into()));
+        self
+    }
+    pub fn with_status(mut self, status: u16) -> Reply {
+        self.status = status;
+        self
     }
 }
 
@@ -242,16 +265,42 @@ pub fn parse_query(q: &str) -> HashMap<String, String> {
         .collect()
 }
 
-/// 服务选项：TLS（PEM）与 Basic 认证（用户名 + 校验闭包）。
+/// 服务选项：TLS（PEM）与请求守卫（登录/密码策略由服务自己定义，HTTP 层只负责"先问守卫再分发"）。
 #[derive(Default)]
 pub struct ServeOpts {
     pub tls: Option<crate::tls::TlsPem>,
-    pub basic_auth: Option<BasicAuth>,
+    pub guard: Option<Guard>,
 }
 
-pub struct BasicAuth {
-    pub realm: String,
-    pub verify: Arc<dyn Fn(&str, &str) -> bool + Send + Sync>,
+/// 守卫：看到请求（方法/路径/头）后返回 `None`=放行，`Some(reply)`=拦下并直接回这个应答。
+pub struct Guard {
+    pub check: Arc<dyn Fn(&GuardRequest) -> Option<Reply> + Send + Sync>,
+}
+
+pub struct GuardRequest {
+    pub method: Method,
+    pub path: String,
+    pub headers: Vec<(String, String)>,
+}
+impl GuardRequest {
+    pub fn header(&self, name: &str) -> Option<&str> {
+        self.headers.iter().find(|(k, _)| k.eq_ignore_ascii_case(name)).map(|(_, v)| v.as_str())
+    }
+}
+
+const KEPT_HEADERS: &[&str] = &["Cookie", "Authorization", "Accept", "Host", "X-Forwarded-Proto", "User-Agent"];
+
+fn reply_to_tiny(reply: Reply) -> tiny_http::Response<std::io::Cursor<Vec<u8>>> {
+    let mut resp = tiny_http::Response::from_data(reply.body).with_status_code(reply.status);
+    if let Ok(h) = tiny_http::Header::from_bytes(&b"Content-Type"[..], reply.content_type.as_bytes()) {
+        resp = resp.with_header(h);
+    }
+    for (k, v) in reply.headers {
+        if let Ok(h) = tiny_http::Header::from_bytes(k.as_bytes(), v.as_bytes()) {
+            resp = resp.with_header(h);
+        }
+    }
+    resp
 }
 
 /// 起阻塞服务器：每请求一线程（上传大文件不阻塞其它请求）。永不返回（bind 失败返回 Err）。
@@ -265,58 +314,40 @@ pub fn serve_with(bind: &str, router: Router, opts: ServeOpts) -> Result<(), Str
         None => tiny_http::Server::http(bind).map_err(|e| format!("绑定 {bind} 失败: {e}"))?,
     };
     let router = Arc::new(router);
-    let auth = opts.basic_auth.map(Arc::new);
+    let guard = opts.guard.map(Arc::new);
     for mut req in server.incoming_requests() {
         let router = router.clone();
-        let auth = auth.clone();
+        let guard = guard.clone();
         std::thread::spawn(move || {
-            if let Some(a) = &auth {
-                let ok = req.headers().iter().find(|h| h.field.equiv("Authorization")).and_then(|h| crate::auth::parse_basic(h.value.as_str())).map(|(u, p)| (a.verify)(&u, &p)).unwrap_or(false);
-                if !ok {
-                    std::thread::sleep(std::time::Duration::from_millis(400)); // 减缓暴力尝试
-                    let mut resp = tiny_http::Response::from_string("{\"ok\":false,\"message\":\"需要密码\"}").with_status_code(401);
-                    if let Ok(h) = tiny_http::Header::from_bytes(&b"WWW-Authenticate"[..], format!("Basic realm=\"{}\", charset=\"UTF-8\"", a.realm).as_bytes()) {
-                        resp = resp.with_header(h);
-                    }
-                    if let Ok(h) = tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"application/json; charset=utf-8"[..]) {
-                        resp = resp.with_header(h);
-                    }
-                    let _ = req.respond(resp);
-                    return;
-                }
-            }
             let url = req.url().to_string();
             let (path, query) = url.split_once('?').unwrap_or((&url, ""));
             let method = Method::from_tiny(req.method());
             let mut content_type = String::new();
             let mut content_length = None;
+            let mut headers: Vec<(String, String)> = Vec::new();
             for h in req.headers() {
                 if h.field.equiv("Content-Type") {
                     content_type = h.value.as_str().to_string();
                 } else if h.field.equiv("Content-Length") {
                     content_length = h.value.as_str().parse().ok();
+                } else if let Some(k) = KEPT_HEADERS.iter().find(|k| h.field.equiv(k)) {
+                    headers.push((k.to_string(), h.value.as_str().to_string()));
                 }
             }
             let path = path.to_string();
+            if let Some(g) = &guard {
+                if let Some(reply) = (g.check)(&GuardRequest { method, path: path.clone(), headers: headers.clone() }) {
+                    let _ = req.respond(reply_to_tiny(reply));
+                    return;
+                }
+            }
             let query = parse_query(query);
             let reply = {
                 let mut body = req.as_reader();
-                let mut r = Request { method, path, query, params: HashMap::new(), content_type, content_length, body: &mut body };
+                let mut r = Request { method, path, query, params: HashMap::new(), content_type, content_length, headers, body: &mut body };
                 router.dispatch(&mut r)
             };
-            let mut resp = tiny_http::Response::from_data(reply.body).with_status_code(reply.status);
-            if let Ok(h) = tiny_http::Header::from_bytes(&b"Content-Type"[..], reply.content_type.as_bytes()) {
-                resp = resp.with_header(h);
-            }
-            if let Ok(h) = tiny_http::Header::from_bytes(&b"Access-Control-Allow-Origin"[..], &b"*"[..]) {
-                resp = resp.with_header(h);
-            }
-            for (k, v) in reply.headers {
-                if let Ok(h) = tiny_http::Header::from_bytes(k.as_bytes(), v.as_bytes()) {
-                    resp = resp.with_header(h);
-                }
-            }
-            let _ = req.respond(resp);
+            let _ = req.respond(reply_to_tiny(reply));
         });
     }
     Ok(())
@@ -328,7 +359,7 @@ mod tests {
 
     fn call(router: &Router, m: Method, path: &str, q: &str) -> (u16, String) {
         let mut empty: &[u8] = b"";
-        let mut r = Request { method: m, path: path.into(), query: parse_query(q), params: HashMap::new(), content_type: String::new(), content_length: None, body: &mut empty };
+        let mut r = Request { method: m, path: path.into(), query: parse_query(q), params: HashMap::new(), content_type: String::new(), content_length: None, headers: vec![], body: &mut empty };
         let rep = router.dispatch(&mut r);
         (rep.status, String::from_utf8_lossy(&rep.body).to_string())
     }

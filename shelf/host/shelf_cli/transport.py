@@ -17,9 +17,9 @@ class TransportError(RuntimeError):
 
 
 class HttpTransport:
-    """HTTPS（自签，缺省不校验证书——局域网 + 密码保护）+ HTTP Basic。"""
+    """HTTPS（私有 CA 自签，缺省不校验证书——局域网 + 密码保护）+ HTTP Basic（网关只看密码，用户名任意）。"""
 
-    def __init__(self, base_url: str, timeout: float = 900.0, user: str = "", password: str = "", verify_tls: bool = False):
+    def __init__(self, base_url: str, timeout: float = 900.0, user: str = "shelf", password: str = "", verify_tls: bool = False):
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         self.auth = base64.b64encode(f"{user}:{password}".encode()).decode() if password else ""
@@ -44,12 +44,14 @@ class HttpTransport:
                 body = r.read()
         except urllib.error.HTTPError as e:
             if e.code == 401:
-                raise TransportError("密码错误或未设置（config.toml 的 password / 环境变量 SHELF_PASSWORD / 交互输入）") from None
+                raise TransportError("密码错误或未设置（config.toml 的 password / 环境变量 SHELF_PASSWORD / 交互输入；首次默认 shelf）") from None
             body = e.read()
             try:
                 j = json.loads(body)
             except ValueError:
                 j = {"ok": False, "message": body.decode("utf-8", "replace")}
+            if e.code == 403 and "改密码" in str(j.get("message", "")):
+                raise TransportError("首次登录必须先改密码：`shelf passwd`（或网页 /password）") from None
             raise TransportError(f"HTTP {e.code}: {j.get('message', j)}") from None
         except urllib.error.URLError as e:
             raise TransportError(f"连不上 {self.base_url}: {e.reason}") from None

@@ -10,7 +10,6 @@ DEFAULTS = {
     "host": "10.11.99.1",
     "port": 8778,
     "scheme": "https",
-    "user": "shelf",
     "password": "",
     "verify_tls": False,
     "ssh": "root@10.11.99.1",
@@ -25,7 +24,6 @@ class Config:
     host: str
     port: int
     scheme: str
-    user: str
     password: str
     verify_tls: bool
     ssh: str

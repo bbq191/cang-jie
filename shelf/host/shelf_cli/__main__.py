@@ -43,8 +43,8 @@ def main(argv: list[str] | None = None, transport_factory=None) -> int:
     cfg = cfgmod.load(paths, {"host": args.host, "port": args.port, "scheme": "http" if args.http else None, "password": pw})
     if not cfg.password and transport_factory is None and sys.stdin.isatty():
         import getpass
-        cfg.password = getpass.getpass(f"书架密码（{cfg.user}@{cfg.host}）: ")
-    transport = (transport_factory or (lambda c: tr.HttpTransport(c.base_url, user=c.user, password=c.password, verify_tls=c.verify_tls)))(cfg)
+        cfg.password = getpass.getpass(f"书架密码（{cfg.host}；首次默认 shelf）: ")
+    transport = (transport_factory or (lambda c: tr.HttpTransport(c.base_url, password=c.password, verify_tls=c.verify_tls)))(cfg)
     ctx = Context(paths=paths, config=cfg, transport=transport)
     try:
         return int(args._run(args, ctx) or 0)

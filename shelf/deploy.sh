@@ -22,13 +22,11 @@ echo "-- 推送到 root@$HOST:/home/root/shelf-pkg/ 并安装"
 tar -C "$STAGE" -cf - shelf | ssh "root@$HOST" 'rm -rf /home/root/shelf-pkg && mkdir -p /home/root/shelf-pkg && tar -C /home/root/shelf-pkg -xf -'
 # shellcheck disable=SC2029  # 参数就是要在远端展开
 ssh "root@$HOST" "sh /home/root/shelf-pkg/shelf/install.sh $*"
-# host 侧 HTTPS 探测（设备 busybox wget 做不了自签+Basic）：无密码应 401，有初始密码应 200
+# host 侧 HTTPS 探测（设备 busybox wget 做不了自签）：无密码应 401；默认密码 shelf 若仍必改应 403（首登必改），否则 200
 code="$(curl -sk -o /dev/null -w '%{http_code}' --max-time 5 "https://$HOST:8778/api/services" || echo 000)"
-pw="$(ssh "root@$HOST" '/home/root/.local/bin/shelf-gateway show-password' 2>/dev/null | head -n1)"
-case "$pw" in ""|*（*) pw="" ;; esac
-if [ -n "$pw" ]; then
-    ok="$(curl -sk -o /dev/null -w '%{http_code}' --max-time 5 -u "shelf:$pw" "https://$HOST:8778/api/services" || echo 000)"
-    echo "-- HTTPS 探测：无密码 $code（期望 401），初始密码 $ok（期望 200）；浏览器开 https://$HOST:8778/ 用户 shelf 密码 $pw"
-else
-    echo "-- HTTPS 探测：无密码 $code（期望 401）；密码已自定义，用你设的密码登录 https://$HOST:8778/"
-fi
+ok="$(curl -sk -o /dev/null -w '%{http_code}' --max-time 5 -u "shelf:shelf" "https://$HOST:8778/api/services" || echo 000)"
+case "$ok" in
+    403) echo "-- HTTPS 探测：无密码 $code（期望 401），默认密码 shelf → 403（首登必改）；浏览器开 https://$HOST:8778/ 用 shelf 登录后设新密码" ;;
+    200) echo "-- HTTPS 探测：无密码 $code（期望 401），默认密码仍可用但未强制改（异常，检查 gateway.json）" ;;
+    *) echo "-- HTTPS 探测：无密码 $code（期望 401），默认密码 $ok（已自定义密码则为 401 正常）；浏览器开 https://$HOST:8778/" ;;
+esac

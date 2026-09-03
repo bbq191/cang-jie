@@ -1,17 +1,19 @@
 //! shelf-gateway —— 书架对外唯一入口（`0.0.0.0:8778`）。
 //! 职责：① 托管单页 UI；② `/api/services` 列注册表；③ `/api/<service>/*` 反向代理到
 //! 该服务的 loopback 端口（流式转发 body）。服务缺席 → 404 "未安装"，UI 据 `/api/services` 隐藏 tab。
-//! 对外 **HTTPS（自签，首启生成）+ HTTP Basic 密码**（用户 2026-09-03 要求：防止知道地址就乱传文件）。
-//! 子命令：`serve [--bind]` · `passwd <新密码>` · `show-password`（初始密码，改过后无）。
+//! 对外 **HTTPS（私有 CA 签发，首启生成，`/ca.crt` 可下载装信任）+ 登录页密码**（无用户名；首次默认 `shelf`、
+//! 登录后必改；CLI 用 Basic）+ **mDNS `shelf.local`** 伪域名（用户 2026-09-03 要求）。策略见 `auth.rs`。
+//! 子命令：`serve [--bind]` · `passwd <新密码>` · `reset-password`（回默认并强制改）· `regen-tls`（重签叶证书）。
+mod auth;
 mod config;
 mod proxy;
 mod ui;
 
-use shelf_core::http::{ApiError, Method, Reply, Router};
+use shelf_core::http::{ApiError, Method, Reply, Router, ServeOpts};
 use shelf_core::paths::Paths;
 use shelf_core::registry;
-use shelf_core::http::{BasicAuth, ServeOpts};
 use shelf_core::service::{self, ServiceSpec};
+use std::sync::{Arc, Mutex};
 
 const SPEC: ServiceSpec = ServiceSpec {
     name: "shelf-gateway",
@@ -42,55 +44,96 @@ fn main() {
         Some("passwd") => {
             let pw = args.get(1).cloned().unwrap_or_default();
             match cfg.set_password(&paths, &pw) {
-                Ok(()) => {
-                    println!("[shelf-gateway] 密码已更新（重启网关生效：systemctl restart shelf-gateway）");
-                    std::process::exit(0)
-                }
+                Ok(()) => println!("[shelf-gateway] 密码已更新（重启网关生效：systemctl restart shelf-gateway）"),
                 Err(e) => {
                     eprintln!("[shelf-gateway] {e}");
                     std::process::exit(1)
                 }
             }
+            std::process::exit(0)
         }
-        Some("show-password") => {
-            match std::fs::read_to_string(config::initial_password_file(&paths)) {
-                Ok(p) => println!("{}", p.trim()),
-                Err(_) => println!("（初始密码已改过或尚未生成；改密码：shelf-gateway passwd <新密码>）"),
+        Some("reset-password") => {
+            if let Err(e) = cfg.reset_password(&paths) {
+                eprintln!("[shelf-gateway] {e}");
+                std::process::exit(1)
             }
+            println!("[shelf-gateway] 已重置为默认密码 {}，下次登录强制改（重启网关生效）", config::DEFAULT_PASSWORD);
+            std::process::exit(0)
+        }
+        Some("regen-tls") => {
+            let dir = paths.config_dir().join("tls");
+            for f in ["cert.pem", "key.pem", "cert.meta"] {
+                let _ = std::fs::remove_file(dir.join(f));
+            }
+            println!("[shelf-gateway] 叶证书已删除，网关下次启动用同一 CA 重签（已装 CA 的设备不受影响）");
             std::process::exit(0)
         }
         Some("serve") | None => {}
         Some(x) => {
-            eprintln!("未知子命令 {x}（serve|passwd|show-password）");
+            eprintln!("未知子命令 {x}（serve|passwd|reset-password|regen-tls）");
             std::process::exit(2)
         }
     }
     let bind = service::parse_bind(&args, SPEC.default_bind);
-    // 认证与 TLS
     let mut opts = ServeOpts::default();
-    if cfg.auth {
-        match cfg.ensure_password(&paths) {
-            Ok(Some(pw)) => println!("[shelf-gateway] 初始密码已生成：用户 {}  密码 {}  （也在 {}；改密码：shelf-gateway passwd <新密码>）", cfg.user, pw, config::initial_password_file(&paths).display()),
-            Ok(None) => {}
-            Err(e) => eprintln!("[shelf-gateway] 生成初始密码失败: {e}（继续，但无密码保护！）"),
-        }
-        let (user, hash) = (cfg.user.clone(), cfg.password_hash.clone());
-        if !hash.is_empty() {
-            opts.basic_auth = Some(BasicAuth { realm: "shelf".into(), verify: std::sync::Arc::new(move |u, p| u == user && shelf_core::auth::verify_password(p, &hash)) });
-        }
-    }
+    let tls_dir = paths.config_dir().join("tls");
     if cfg.https {
-        let sans = device_ips();
-        match shelf_core::tls::ensure_self_signed(&paths.config_dir().join("tls"), &sans) {
+        let mut sans = shelf_core::netinfo::ipv4_strings();
+        if !cfg.mdns_name.trim().is_empty() {
+            sans.push(format!("{}.local", cfg.mdns_name.trim()));
+        }
+        sans.extend(cfg.extra_sans.iter().cloned());
+        match shelf_core::tls::ensure_ca_signed(&tls_dir, &sans) {
             Ok(pem) => opts.tls = Some(pem),
             Err(e) => eprintln!("[shelf-gateway] TLS 证书失败: {e}（回落 HTTP）"),
         }
     }
+    let secure_cookie = opts.tls.is_some();
+    // 认证：首启写默认密码 + 必改标志
+    let state: Option<auth::Shared> = if cfg.auth {
+        match cfg.ensure_password(&paths) {
+            Ok(true) => println!("[shelf-gateway] 首次启动：默认密码 {}，网页登录后必须改", config::DEFAULT_PASSWORD),
+            Ok(false) => {}
+            Err(e) => eprintln!("[shelf-gateway] 写默认密码失败: {e}（继续，但无密码保护！）"),
+        }
+        if cfg.password_hash.is_empty() {
+            None
+        } else {
+            let ttl = std::time::Duration::from_secs(u64::from(cfg.session_days.max(1)) * 86400);
+            Some(Arc::new(auth::AuthState { cfg: Mutex::new(cfg.clone()), sessions: shelf_core::auth::SessionStore::new(ttl, 64), paths: paths.clone(), secure_cookie }))
+        }
+    } else {
+        None
+    };
+    if let Some(st) = &state {
+        opts.guard = Some(st.guard());
+    }
+    if !cfg.mdns_name.trim().is_empty() {
+        shelf_core::mdns::spawn(vec![cfg.mdns_name.trim().to_string()]);
+        println!("[shelf-gateway] mDNS 名 {}.local（iOS/macOS/Windows/Linux 可直接访问；安卓走热点 dnsmasq 别名）", cfg.mdns_name.trim());
+    }
     let p1 = paths.clone();
     let p2 = paths.clone();
-    let router = Router::new()
+    let mut router = Router::new()
         .get("/", |_| Ok(Reply::html(ui::PAGE)))
-        .get("/api/services", move |_| Ok(Reply::ok(&serde_json::json!({"services": registry::list(&p1)}))))
+        .get("/ca.crt", { let d = tls_dir.clone(); move |_| Ok(match shelf_core::tls::ca_pem(&d) {
+            Some(pem) => Reply::bytes("application/x-x509-ca-cert", pem).with_header("Content-Disposition", "attachment; filename=\"shelf-ca.crt\""),
+            None => Reply::error(404, "HTTPS 未启用，无 CA"),
+        }) })
+        .get("/api/services", move |_| Ok(Reply::ok(&serde_json::json!({"services": registry::list(&p1)}))));
+    if let Some(st) = &state {
+        let (a, b, c, d, e) = (st.clone(), st.clone(), st.clone(), st.clone(), st.clone());
+        router = router
+            .get("/login", |r| Ok(Reply::html(&ui::login_page("", r.q("next").unwrap_or("/")))))
+            .post("/login", move |r| a.login(r))
+            .post("/logout", move |r| b.logout(r))
+            .get("/password", move |_| Ok(Reply::html(&ui::password_page("", c.must_change()))))
+            .post("/password", move |r| d.change_password(r))
+            .get("/api/session", move |_| Ok(e.session_info()));
+    } else {
+        router = router.get("/api/session", |_| Ok(Reply::ok(&serde_json::json!({"ok": true, "mustChange": false, "auth": false}))));
+    }
+    let router = router
         .route(Method::Other, "/api/*", |_| Err(ApiError::bad("unsupported method")))
         .route(Method::Get, "/api/{svc}/*", { let p = p2.clone(); move |r| proxy::forward(&p, service_of(r.param("svc")), r) })
         .route(Method::Post, "/api/{svc}/*", { let p = p2.clone(); move |r| proxy::forward(&p, service_of(r.param("svc")), r) })
@@ -102,21 +145,4 @@ fn main() {
         eprintln!("[shelf-gateway] {e}");
         std::process::exit(1);
     }
-}
-
-/// 设备当前 IPv4 列表（进证书 SAN，减少浏览器地址不匹配告警；解析失败无碍）。
-fn device_ips() -> Vec<String> {
-    let mut v = Vec::new();
-    if let Ok(out) = std::process::Command::new("ip").args(["-4", "-o", "addr"]).output() {
-        for line in String::from_utf8_lossy(&out.stdout).lines() {
-            if let Some(i) = line.find("inet ") {
-                let rest = &line[i + 5..];
-                let ip = rest.split('/').next().unwrap_or("").trim();
-                if !ip.is_empty() && ip != "127.0.0.1" && !v.iter().any(|x| x == ip) {
-                    v.push(ip.to_string());
-                }
-            }
-        }
-    }
-    v
 }

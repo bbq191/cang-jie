@@ -1,19 +1,49 @@
 //! 投递目标（Strategy）：`native`（原生阅读）/ `annot`（原生批注=PDF 定稿）。
 //! KOReader 目标由 koreader-serve 承担（网关/UI/CLI 按 target 直接打它），本服务对它一无所知。
 use crate::config::BookConfig;
-use crate::pipeline::{Convert, Doc, Inject, Optimize, Pipeline, Precheck};
+use crate::pipeline::{Check, Convert, Doc, Inject, Optimize, Pipeline, Precheck};
 use bookconv::convert::{self, EinkTone};
+use bookconv::wash::WashOpts;
 use serde::Serialize;
 use shelf_core::xochitl::Xochitl;
 use std::collections::HashMap;
 use std::sync::Arc;
 
+/// `optimize=` 档位：`auto`（清洗+优化，缺省）/ `keep-spacing`（清洗但保留段距）/ `plain`（只优化不清洗）/ `off`。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum OptimizeMode {
+    #[default]
+    Auto,
+    KeepSpacing,
+    Plain,
+    Off,
+}
+
+impl OptimizeMode {
+    pub fn parse(s: &str) -> OptimizeMode {
+        match s {
+            "off" => OptimizeMode::Off,
+            "plain" => OptimizeMode::Plain,
+            "keep-spacing" | "keep_spacing" => OptimizeMode::KeepSpacing,
+            _ => OptimizeMode::Auto,
+        }
+    }
+    fn wash(self) -> Option<WashOpts> {
+        match self {
+            OptimizeMode::Auto => Some(WashOpts::default()),
+            OptimizeMode::KeepSpacing => Some(WashOpts { keep_para_spacing: true, ..Default::default() }),
+            _ => None,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct DeliverOpts {
     /// 覆盖配置里的文件夹（空=用配置）。
     pub folder: Option<String>,
-    /// `optimize=off` 时 false。
-    pub optimize: bool,
+    pub optimize: OptimizeMode,
+    /// `check=off` 时 false（强行投递）。
+    pub check: bool,
 }
 
 #[derive(Serialize, Clone, Debug, PartialEq)]
@@ -71,7 +101,8 @@ impl DeliveryTarget for Native {
         Pipeline::new()
             .then(Precheck)
             .then(Convert { tone })
-            .then(Optimize { enabled: opts.optimize && self.cfg.optimize_direct_epub })
+            .then(Optimize { enabled: opts.optimize != OptimizeMode::Off && self.cfg.optimize_direct_epub, wash: opts.optimize.wash() })
+            .then(Check { enabled: opts.check, require_toc: false })
             .then(Inject { xochitl: self.xochitl.clone(), folder: opts.folder.clone().unwrap_or_else(|| self.cfg.library_folder.clone()) })
     }
 }
@@ -158,8 +189,10 @@ mod tests {
     #[test]
     fn pipelines_are_composed_per_target() {
         let r = reg();
-        let o = DeliverOpts { folder: None, optimize: true };
-        assert_eq!(r.get("native").unwrap().pipeline(&o).names(), vec!["precheck", "convert", "optimize", "inject"]);
+        let o = DeliverOpts { folder: None, optimize: OptimizeMode::Auto, check: true };
+        assert_eq!(r.get("native").unwrap().pipeline(&o).names(), vec!["precheck", "convert", "optimize", "check", "inject"]);
+        assert_eq!(OptimizeMode::parse("keep-spacing").wash().unwrap().keep_para_spacing, true);
+        assert!(OptimizeMode::parse("plain").wash().is_none() && OptimizeMode::parse("").wash().is_some());
         assert_eq!(r.get("annot").unwrap().pipeline(&o).names(), vec!["precheck", "convert", "inject"]);
     }
 

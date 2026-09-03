@@ -10,6 +10,9 @@ tiny_http = { version = "0.12", features = ["ssl-rustls"] }
 # 自签证书（首启生成，纯 Rust ring 后端）与密码哈希/Basic 认证
 rcgen = { version = "0.14", default-features = false, features = ["crypto", "pem", "ring"] }
 sha2 = "0.10"
+time = "0.3"
+# mDNS 应答器需要 SO_REUSEADDR + 多播接口选择，std UdpSocket 不暴露
+socket2 = { version = "0.5", features = ["all"] }
 base64 = "0.22"
 ureq = "2"
 serde = { version = "1", features = ["derive"] }

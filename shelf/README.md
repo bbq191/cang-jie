@@ -10,7 +10,7 @@ reMarkable Paper Pro Move 的**统一投递与阅读质量层**：一个网页/�
 ## 架构：网关 + 领域服务
 
 ```
-浏览器 / shelf CLI ──► shelf-gateway  https://0.0.0.0:8778（自签 TLS + Basic 密码）  UI + /api/services + /api/<seg>/* 反向代理
+浏览器 / shelf CLI ──► shelf-gateway  https://0.0.0.0:8778 · shelf.local（私有 CA TLS + 登录页密码/CLI Basic）  UI + /api/services + /api/<seg>/* 反向代理
                             │  按注册表转发（剥掉 <seg>，body 流式透传）
         ┌───────────────────┼─────────────────┬──────────────────┬──────────────────┐
    book-serve          koreader-serve       font-serve       wallpaper-serve     weread-serve(预留)
@@ -61,9 +61,13 @@ shelf/
 
 ## 访问与密码
 
-- 浏览器开 `https://<设备IP>:8778/`（自签证书，首次点「高级 → 继续访问」），用户 `shelf`，密码=安装输出打印的初始密码
-  （设备上 `shelf-gateway show-password` 可再看；改密：`shelf-gateway passwd <新密码>` 后 `systemctl restart shelf-gateway`）。
-- CLI：`shelf -p <密码> …` / 环境变量 `SHELF_PASSWORD` / `config.toml` 的 `password` / 不给则交互输入。
+- 地址：`https://<设备IP>:8778/`，或伪域名 **`https://shelf.local:8778/`**（网关自带 mDNS 应答；iOS/macOS/Windows/Linux 直接可用，
+  **安卓系统不解析 .local**——安卓手机走 host 热点时在 host 加 dnsmasq 别名，见白皮书 §03j）。
+- 登录页只要密码、无用户名：**首次默认 `shelf`，登录后强制改**（≥6 位、不能是默认）。改密：网页右上「改密码」/ `shelf passwd` /
+  设备上 `shelf-gateway passwd <新密码>`；忘记：`shelf-gateway reset-password`（回默认并再次强制改）。改密后其它设备会话失效。
+- 证书：私有 CA 签发（`~/.config/shelf/tls/ca.pem`）。登录页「下载 CA 证书」装进手机/电脑信任库**一次**，此后不再有"不安全"提示
+  （叶证书 800 天自动续签、CA 不变）；不装就点「高级 → 继续访问」。
+- CLI：`shelf -p <密码> …` / 环境变量 `SHELF_PASSWORD` / `config.toml` 的 `password` / 不给则交互输入（Basic，网关只看密码）。
 - 只有网关对外；领域服务只绑 127.0.0.1，无需认证。
 
 ## 构建 · 部署 · 卸载
@@ -99,6 +103,8 @@ shelf koreader font add 字体.ttf | ls | rm <file>         # 只装进 KOReader
 | P1 | 统一投递：三目标手选（native/annot/koreader）、格式自动处理、host Calibre 优先/设备兜底、完整单页 UI、`shelf push` | ✅ **真机通**（3.27.3.0，2026-09-03）：三目标投递、拔插、WiFi 访问 |
 | P2 | 字体/壁纸上传即可用：font-serve（fontconfig+fonts.json+KOReader 镜像）、wallpaper-serve（954×1696 池化/轮换/bind 子命令）、动态字体菜单 qmd（3.27/3.28）、sleep 钩子+开机 bind 单元、旧壁纸工具迁移、CLI font/wallpaper | ✅ **真机通**（3.27.3.0，2026-09-03）：字体上传→菜单差量→选中即渲染全程免重启（S-A/S-B）；壁纸缩放/激活/bind + 唤醒日志触发轮换真机通 |
 | P3 | KOReader 配置即代码：`koreader/profile/` 三份补丁 + `merge.lua`（设备端 luajit 深合并，dry-run/备份/回读/幂等）+ `/config/{file}` 端点（运行中拒写）+ 词典上传 + CLI pull/diff/sync | ✅ **真机通**（2026-09-03）：pull→profile 校正→diff 零差异 |
-| P4 | 原生高质量门：`shelf push` host 路强制 `check_output.py`（`--skip-check` 逃生）；设备路回执带转换/优化摘要；网关只读展示阅读增强开关 | ✅ 离线完成；**清洗层+质量门移植进 bookconv 待做**（白皮书 §03i） |
+| P4 | 原生高质量门：`shelf push` host 路强制 `check_output.py`（`--skip-check` 逃生）；设备路回执带转换/优化摘要；网关只读展示阅读增强开关 | ✅ 离线完成 |
+| P4b | **清洗层 + 质量门移植进 bookconv**（`wash.rs`/`check.rs`，对标 host Calibre 规则；Pipeline 加 `Check` 步；优化器 v6；`optimize=auto\|keep-spacing\|plain\|off`、`check=off`） | ✅ 真机通（坏书被门拦 / 《飘·上册》伪 DRM 剥离 90s 进库；白皮书 §03i） |
 | P5 | 微读网页版门控 spike：`weread-web/spike.sh recon\|fetch\|run\|restore`（看门狗 600s 自动拉起 xochitl） | 脚本就绪，**需用户设备旁执行** |
 | 追加 | HTTPS+密码、字体/KOReader 分开装、KOReader 多级目录、字体去"内建"、壁纸唤醒日志轮换、KOReader 直传字体 | ✅ 真机通（2026-09-03） |
+| 追加2 | 登录页（无用户名、首次默认 `shelf` 登录后必改）、私有 CA + `/ca.crt` 免提示、mDNS `shelf.local` 伪域名 | ✅ 真机通（白皮书 §03j） |

@@ -1,5 +1,5 @@
 //! HTTP 适配层（唯一碰 http 类型的地方）。路由（经网关时前缀 `/api/books`）：
-//! `POST /?target=native|annot&folder=&optimize=auto|off`（multipart，多文件逐项回执）
+//! `POST /?target=native|annot&folder=&optimize=auto|keep-spacing|plain|off&check=on|off`（multipart，多文件逐项回执）
 //! `GET /status` · `GET /targets` · `GET /inbox` · `POST /inbox/retry {name}` · `POST /inbox/delete {name}`
 use crate::service_state::State;
 use crate::target::{DeliverOpts, Outcome};
@@ -48,7 +48,8 @@ fn upload(st: &State, r: &mut Request<'_>) -> ApiResult {
     };
     let opts = DeliverOpts {
         folder: r.q("folder").map(|s| s.trim().to_string()).filter(|s| !s.is_empty()),
-        optimize: r.q("optimize").map(|v| v != "off").unwrap_or(true),
+        optimize: crate::target::OptimizeMode::parse(r.q("optimize").unwrap_or("auto")),
+        check: r.q("check").map(|v| v != "off").unwrap_or(true),
     };
     let Some(boundary) = boundary_of(&r.content_type) else { return Err(ApiError::bad("需要 multipart/form-data")) };
     let mut mp = MultipartReader::new(&mut *r.body, &boundary);

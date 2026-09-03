@@ -23,6 +23,7 @@ class FakeGateway(BaseHTTPRequestHandler):
         {"name": "font-serve", "port": 8792, "label": "字体", "version": "0.1.0", "pid": 2, "ui": {"title": "字体", "order": 30}},
     ]
     received: list = []
+    must_change = False
 
     def _json(self, code, obj):
         b = json.dumps(obj).encode()
@@ -51,6 +52,13 @@ class FakeGateway(BaseHTTPRequestHandler):
         n = int(self.headers.get("Content-Length", 0))
         body = self.rfile.read(n)
         FakeGateway.received.append((self.path, self.headers.get("Content-Type", ""), body))
+        if self.path == "/password":
+            new = json.loads(body).get("new", "")
+            if len(new) < 6:
+                return self._json(400, {"ok": False, "message": "密码至少 6 位"})
+            return self._json(200, {"ok": True, "message": "密码已更新"})
+        if self.path.startswith("/api/books") and FakeGateway.must_change:
+            return self._json(403, {"ok": False, "message": "首次登录必须先改密码"})
         return self._json(200, {"ok": True, "items": [{"name": "x", "ok": True}]})
 
     def log_message(self, *a):  # 静音
@@ -132,3 +140,24 @@ def test_doctor_detects_venv_hijack():
     assert doctor.venv_hijack({"VIRTUAL_ENV": "/x"})
     assert doctor.venv_hijack({"PATH": "/repo/.venv/bin:/usr/bin"})
     assert not doctor.venv_hijack({"PATH": "/usr/bin"})
+
+
+def test_passwd_command_posts_new_password(gateway, capsys):
+    rc, out = run(["passwd", "--new", "longer1"], gateway, capsys)
+    assert rc == 0 and "已更新" in out
+    assert FakeGateway.received[-1][0] == "/password"
+    assert json.loads(FakeGateway.received[-1][2]) == {"new": "longer1"}
+    rc, _ = run(["passwd", "--new", "abc"], gateway, capsys)
+    assert rc != 0
+
+
+def test_must_change_403_is_explained(gateway, capsys, tmp_path):
+    f = tmp_path / "a.pdf"
+    f.write_bytes(b"%PDF-1.4")
+    FakeGateway.must_change = True
+    try:
+        rc, out = run(["push", "-q", "device", "--skip-check", str(f)], gateway, capsys)
+    finally:
+        FakeGateway.must_change = False
+    assert rc != 0
+    assert "shelf passwd" in capsys.readouterr().err + out

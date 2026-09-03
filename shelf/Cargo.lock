@@ -143,6 +143,7 @@ dependencies = [
  "serde_json",
  "shelf-core",
  "tempfile",
+ "zip",
 ]
 
 [[package]]
@@ -156,6 +157,8 @@ dependencies = [
  "png 0.17.16",
  "quick-xml",
  "regex",
+ "serde",
+ "serde_json",
  "ureq",
  "zip",
 ]
@@ -1142,7 +1145,9 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
+ "socket2",
  "tempfile",
+ "time",
  "tiny_http",
  "ureq",
  "uuid",
@@ -1152,6 +1157,7 @@ dependencies = [
 name = "shelf-gateway"
 version = "0.1.0"
 dependencies = [
+ "base64 0.22.1",
  "serde",
  "serde_json",
  "shelf-core",
@@ -1182,6 +1188,16 @@ name = "smallvec"
 version = "1.16.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b9be42f50aa861c555654aa3a37f52f4b1074bacf4e48fe0ef7fa584e80f1f0f"
+
+[[package]]
+name = "socket2"
+version = "0.5.10"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "e22376abed350d73dd1cd119b57ffccad95b4e585a7cda43e286245ce23c0678"
+dependencies = [
+ "libc",
+ "windows-sys",
+]
 
 [[package]]
 name = "spin"

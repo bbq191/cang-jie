@@ -20,7 +20,8 @@ def add_args(p):
     p.add_argument("--target", "-t", choices=["native", "annot", "koreader"], help="缺省 config.default_target")
     p.add_argument("--folder", "-f", default="", help="目标文件夹（xochitl visibleName / KOReader books 子目录）")
     p.add_argument("--quality", "-q", choices=["auto", "host", "device"], help="缺省 config.quality")
-    p.add_argument("--no-optimize", action="store_true", help="native 直传 EPUB 不在设备端优化")
+    p.add_argument("--optimize", choices=["auto", "keep-spacing", "plain", "off"], default="auto", help="设备路 EPUB：auto=清洗+优化（缺省）/ keep-spacing=清洗但保留段距（诗集剧本）/ plain=只优化不清洗 / off=原样")
+    p.add_argument("--no-optimize", action="store_true", help="= --optimize off")
     p.add_argument("--no-split", action="store_true", help="大 PDF 不分卷")
     p.add_argument("--require-toc", action="store_true", help="host 路体检要求有目录")
     p.add_argument("--skip-check", action="store_true", help="host 路跳过 check_output.py 体检（缺省不过不推）")
@@ -117,7 +118,7 @@ def run(args, ctx) -> int:
             if target == "koreader":
                 url, q = "/api/koreader/books", {"folder": args.folder}
             else:
-                url, q = "/api/books", {"target": target, "folder": args.folder, "optimize": "off" if args.no_optimize else "auto"}
+                url, q = "/api/books", {"target": target, "folder": args.folder, "optimize": "off" if args.no_optimize else args.optimize, "check": "off" if args.skip_check else None}
             try:
                 res = ctx.transport.post_files(url, [o], q)
             except Exception as e:  # noqa: BLE001

@@ -51,7 +51,7 @@ pub fn run_with(spec: &ServiceSpec, bind: &str, paths: &Paths, router: Router, o
     let router = Router::new()
         .get("/health", move |_| Ok(Reply::ok(&serde_json::json!({"ok": true, "service": name, "version": ver}))))
         .merge(router);
-    println!("[{}] v{} 监听 {}://{}/{}", spec.name, spec.version, if opts.tls.is_some() { "https" } else { "http" }, bind, if opts.basic_auth.is_some() { "（Basic 认证）" } else { "" });
+    println!("[{}] v{} 监听 {}://{}/{}", spec.name, spec.version, if opts.tls.is_some() { "https" } else { "http" }, bind, if opts.guard.is_some() { "（密码保护）" } else { "" });
     http::serve_with(bind, router, opts)
 }
 
