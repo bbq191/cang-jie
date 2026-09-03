@@ -1,0 +1,14 @@
+[package]
+name = "font-serve"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "书架·字体：上传即装（fontconfig + fonts.json + KOReader 镜像）"
+
+[[bin]]
+name = "font-serve"
+path = "src/main.rs"
+
+[dependencies]
+shelf-core = { path = "../../crates/shelf-core" }
+serde_json = "1"

@@ -1,0 +1,15 @@
+[package]
+name = "book-serve"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "书架·原生投递：EPUB/PDF/AZW3/MOBI/FB2/CBZ → xochitl 书库（转换/优化/注入）"
+
+[[bin]]
+name = "book-serve"
+path = "src/main.rs"
+
+[dependencies]
+shelf-core = { path = "../../crates/shelf-core" }
+serde_json = "1"
+bookconv = { path = "../../crates/bookconv" }

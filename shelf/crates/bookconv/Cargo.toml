@@ -1,0 +1,20 @@
+[package]
+name = "bookconv"
+version = "0.1.0"
+edition = "2021"
+description = "通用电子书内容层：多格式→EPUB/PDF 转换、EPUB 优化器、e-ink 图片处理、EPUB 组装（从 weread-device 抽出，weread 线与书架共用）"
+license = "MIT"
+
+[dependencies]
+regex = "1"
+base64 = "0.22"
+ureq = "2"
+png = "0.17"
+zip = { version = "2", default-features = false, features = ["deflate"] }
+# PNG 像素 /FlateDecode 压缩（pdfwrite），纯 Rust、musl 友好
+miniz_oxide = "0.8"
+# 图片降采样/抖动：只启 jpeg+png 控体积
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+# FB2→EPUB；quick-xml 版本须与 fb2 一致(0.30)
+fb2 = "0.4"
+quick-xml = { version = "0.30", features = ["serialize", "encoding"] }

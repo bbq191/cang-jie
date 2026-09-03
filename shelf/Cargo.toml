@@ -1,0 +1,28 @@
+# shelf 书架：网关 + 领域服务 + 共享 crate 的内部 workspace（仓库根仍不建 workspace，
+# 旧三 crate device-core / weread-device / pkm-device 各自独立、路径依赖不变）。
+# 依赖方向单向无环：services/* → shelf-core；book-serve → bookconv + device-core；
+# weread-device → bookconv（re-export 保路径）。shelf 不依赖 weread-device。
+[workspace]
+resolver = "2"
+members = [
+    "crates/bookconv",
+    "crates/shelf-core",
+    "services/shelf-gateway",
+    "services/book-serve",
+    "services/koreader-serve",
+    "services/font-serve",
+    "services/wallpaper-serve",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+
+# 与 reading/device-rs、knowledge/pkm 同款：设备端体积优先、全静态 musl。
+[profile.release]
+opt-level = "z"
+lto = true
+strip = true
+panic = "abort"
+codegen-units = 1

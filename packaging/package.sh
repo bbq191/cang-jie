@@ -46,9 +46,12 @@ TRANS="$REPO/chinese-ime/translations"
 READING_REL="$REPO/reading/device-rs/target/$TARGET/release"
 PKM_REL="$REPO/knowledge/pkm/target/$TARGET/release"
 SYSD_SRC="$REPO/reading/device-rs/systemd"
+SHELF="$REPO/shelf"                                   # 书架（独立可插拔层，自带安装器）
+SHELF_REL="$SHELF/target/$TARGET/release"
 
 READING_BINS="wr-serve wr-download wr-renew wr-fetch"
 PKM_BINS="cj-stars-daemon cj-stars"
+SHELF_BINS="shelf-gateway book-serve koreader-serve font-serve wallpaper-serve"
 UNITS="cangjie-xovi-reenable.service wr-serve.service wr-renew.service wr-renew.timer cj-stars.service"
 
 # ── 助手 ──────────────────────────────────────────────────────────────────
@@ -67,12 +70,14 @@ echo "═══ cang-jie 全项目打包 ═══"
 need_build=0
 for b in $READING_BINS; do [ -f "$READING_REL/$b" ] || need_build=1; done
 for b in $PKM_BINS;     do [ -f "$PKM_REL/$b" ]     || need_build=1; done
+for b in $SHELF_BINS;   do [ -f "$SHELF_REL/$b" ]   || need_build=1; done
 if [ "$BUILD" = "force" ] || { [ "$BUILD" = "auto" ] && [ "$need_build" = "1" ]; }; then
     echo "-- 交叉编译 reading + pkm（$TARGET 全静态）…"
     ( cd "$REPO/reading/device-rs" && sh ./build.sh )
-    ( cd "$REPO/pkm" && sh ./build.sh )
+    ( cd "$REPO/knowledge/pkm" && sh ./build.sh )
+    ( cd "$SHELF" && sh ./build.sh )
 elif [ "$BUILD" = "none" ] && [ "$need_build" = "1" ]; then
-    echo "!! 缺 Rust 二进制且 --no-build。先跑 reading/device-rs/build.sh 与 knowledge/pkm/build.sh"
+    echo "!! 缺 Rust 二进制且 --no-build。先跑 reading/device-rs/build.sh、knowledge/pkm/build.sh 与 shelf/build.sh"
     exit 1
 else
     echo "-- Rust 二进制已就绪，复用（--rebuild 强制重编）"
@@ -125,6 +130,15 @@ done
 echo "-- 组 bin/（reading + pkm 二进制）"
 for b in $READING_BINS; do copy_opt "$READING_REL/$b" "$PKG/bin"; done
 for b in $PKM_BINS;     do copy_opt "$PKM_REL/$b"     "$PKG/bin"; done
+
+echo "-- 组 shelf/（书架：网关+领域服务，自带安装器，可 --only 按服务装）"
+mkdir -p "$PKG/shelf/bin" "$PKG/shelf/systemd" "$PKG/shelf/lo-alias"
+copy_req "$SHELF/install.sh"   "$PKG/shelf"
+copy_req "$SHELF/uninstall.sh" "$PKG/shelf"
+for b in $SHELF_BINS; do copy_opt "$SHELF_REL/$b" "$PKG/shelf/bin"; done
+for u in "$SHELF"/systemd/*; do copy_req "$u" "$PKG/shelf/systemd"; done
+copy_req "$IME_DEPLOY/cangjie-lo-alias.sh" "$PKG/shelf/lo-alias"   # 同一份脚本，网关 ExecStartPre 用
+chmod +x "$PKG/shelf/install.sh" "$PKG/shelf/uninstall.sh"
 
 echo "-- 组 systemd/（开机自恢复单元）"
 for u in $UNITS; do copy_req "$SYSD_SRC/$u" "$PKG/systemd"; done

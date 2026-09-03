@@ -194,6 +194,19 @@ systemctl start cj-stars.service 2>/dev/null && echo "-- cj-stars（★待办）
 systemctl start wr-serve.service 2>/dev/null && echo "-- wr-serve（墨香面板 127.0.0.1:8777）已起" || echo "-- wr-serve 未起（缺 credentials.json 属正常，扫码登录后自恢复）"
 systemctl start wr-renew.timer 2>/dev/null || true
 
+# ── 6.2 第 5 层：书架（shelf）——独立可插拔层，委托其自带安装器（不复制其逻辑）────
+# 网关 0.0.0.0:8778 + 各领域服务 loopback；单元由它自己写 /usr（同样过 dm-verity 门）。
+# 与旧上传页（wr-serve 内建 :8778）冲突时以书架为准：wr-serve 用 CANGJIE_UPLOAD_PAGE=0 让出端口。
+if [ -f "$HERE/shelf/install.sh" ]; then
+    echo
+    echo "── 第 5 层：书架 shelf（shelf/install.sh）──"
+    SHELF_ARGS=""; [ "$DO_SYSTEMD" = "0" ] && SHELF_ARGS="--no-systemd"
+    # shellcheck disable=SC2086  # SHELF_ARGS 有意按空白拆分
+    sh "$HERE/shelf/install.sh" $SHELF_ARGS || echo "!! 书架安装未完成（journalctl -u shelf-gateway），其余层不受影响。"
+else
+    echo "-- （包内无 shelf/，跳过书架）"
+fi
+
 # ── 6.5 opt-in：SSH over WLAN（脱 USB，用 WiFi 管理设备）──────────────────────
 # reMarkable 官方机制（/usr/bin/rm-ssh-over-wlan：建 marker + dropbear-wlan.socket，持久）。
 # ⚠ 安全：开后 SSH 暴露在 WiFi 网段——**默认不开**，仅 --ssh-wlan 显式 opt-in。关：rm-ssh-over-wlan off。
@@ -216,7 +229,7 @@ CJ="$(grep -c cangjie-langhook /proc/"$NEW_PID"/maps 2>/dev/null || echo 0)"
 QR="$(grep -c qt-resource-rebuilder /proc/"$NEW_PID"/maps 2>/dev/null || echo 0)"
 echo "  xochitl   : is-active=$STATE  PID=$NEW_PID"
 echo "  注入      : cangjie=$CJ 段  qrr=$QR 段  (都期望 >0)"
-echo "  常驻服务  : cj-stars=$(systemctl is-active cj-stars 2>/dev/null || echo ?)  wr-serve=$(systemctl is-active wr-serve 2>/dev/null || echo ?)"
+echo "  常驻服务  : cj-stars=$(systemctl is-active cj-stars 2>/dev/null || echo ?)  wr-serve=$(systemctl is-active wr-serve 2>/dev/null || echo ?)  shelf=$(systemctl is-active shelf-gateway 2>/dev/null || echo ?)"
 echo "═══════════════════════════════════════════════════"
 if [ "$STATE" = "active" ] && [ "${CJ:-0}" -gt 0 ] && [ "${QR:-0}" -gt 0 ]; then
     echo "✅ 安装完成（幂等，可重复跑）。"

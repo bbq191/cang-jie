@@ -158,3 +158,12 @@ reading 从"挂着死双向同步"回到"下书+优化+面板"的诚实形状。
   装读位置分叉崩溃）。**收益为零、风险为正**，不做。
 
 若日后要做 ①，须单开一轮、按一步一确认逐层真机重验，不混入常规改动。
+
+
+## 七、内容层抽离 `bookconv` 与书架 workspace（2026-09-03）
+
+- **抽出**：`reading/device-rs/src/{convert/(除 ingest),optimize,imgopt,htmlproc,epub,util}.rs` → `shelf/crates/bookconv/`（独立 crate，无任何本仓 crate 依赖）。`optimize → readlater::fetch_image` 反常边切开（`fetch_image`/`UA`/`http_agent` 进 `bookconv::netimg`）。
+- **保路径**：`weread-device` `lib.rs` `pub use bookconv::{epub,htmlproc,imgopt,netimg,optimize,util}` + `mod convert { pub use bookconv::convert::*; pub mod ingest; }`；bins 零改动；移除其不再用的 zip/image/miniz_oxide/fb2 依赖。
+- **验收**：三旧 crate 测试全绿；新旧 `epub-optimize` 同一 EPUB 输出 md5 一致。
+- **依赖图更新**：`weread-device → {device-core, bookconv}`；`pkm-device → device-core`（+dev weread-device）；`shelf/services/* → shelf-core`，`book-serve → bookconv`。书架不依赖 device-core / weread-device（用户原则：新重构不引用旧项目，能力只许剥离移植——`shelf-core::{xochitl,fswatch}` 即 `device-core::{inject,fswatch}` 的独立移植）。
+- **workspace**：`shelf/Cargo.toml` 是内部 workspace（成员 bookconv/shelf-core/五服务），仓库根仍不建；跨 workspace 的 path 依赖（weread-device→bookconv）编译无碍。

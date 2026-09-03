@@ -1,0 +1,46 @@
+# reMarkable 书架（shelf）白皮书
+
+> 记"怎么决定、真机怎么验、踩了什么坑"。计划全文见 未入库的计划文件。
+
+## 00｜定位与原则
+
+2026-09-03 用户提出"全面重构，补齐短板增强优势"：① 阅读系统增加 KOReader 与微信读书；② 全面支持 AZW3/PDF/EPUB；
+③ 字体与屏保图片上传即可用。澄清：先「有书读」（原生 / KOReader / 微读三条投递线）再「高质量读」；上传时手选目标；
+设备网页 + host CLI 共用同一 API；微读 = 设备上直接开网页版在线读（门控）。
+
+四条硬原则（用户两轮驳回后定）：
+1. **XDG 基目录规范**（Rust `shelf_core::paths` / shell / Python 三处同一张表，env 可注入测试）。
+2. **设计模式去重解耦**：Strategy（投递目标）· Pipeline（处理链）· Repository + Template Method（资产上传）· 端口/适配器（HTTP 只在 `http.rs`）· Registry（服务发现）· Facade（网关代理）· Command（CLI）。移动优先于复制。
+3. **专项专用可插拔**：不做单体，按领域拆服务。
+4. **不引用旧项目 crate、不对接旧路径**：能力只许剥离移植；不读写 `/home/root/weread/**`；旧 wr-serve 微读线原样兜底。
+
+## 01｜架构决策
+
+**三种拆法**：A 每服务独立对外端口（暴露面多、UI/CLI 要记端口）；**B 网关 + loopback 服务 + 注册表（采纳）**；C 单二进制 feature 编译期插拔（不能运行时拔）。
+- 注册表放 `$XDG_RUNTIME_DIR`（重启即清）+ 读时按 `/proc/<pid>` 清陈旧条目：SIGTERM 杀进程 Drop 不跑也不会误报。
+- 代理**剥掉服务段**（`/api/fonts/x` → 后端 `/x`）：后端直连与经网关同一套路由，`/health` 也能穿过网关。
+- 每请求一线程：大文件上传不阻塞其它请求；body 流式透传（`ureq::send(reader)` + 透传 Content-Length）。
+- 内存：musl 静态服务各约 0.56MB 二进制（网关 1.6MB 含 ureq/TLS）；空闲 RSS 数 MB，五个可接受。
+
+**内容层抽离 `bookconv`**（移动，不复制）：从 weread-device `git mv` `convert/{mod,common,cbz,fb2,mobi,kf8,palm,pdfwrite}`、`optimize`、`imgopt`、`htmlproc`、`epub`、`util`；`ingest.rs`（weread/inbox 语义）留下。唯一反常边 `optimize → readlater::fetch_image` 切开：`fetch_image` + `UA` 移成 `bookconv::netimg`，readlater 改为引用；`http_agent` 在 netimg 独立实现（bookconv 不依赖 device-core）。weread-device `lib.rs` 以 `pub use bookconv::{…}` + 内联 `mod convert { pub use bookconv::convert::*; pub mod ingest; }` 保全部旧路径；顺手移除其不再用的 `zip/image/miniz_oxide/fb2` 依赖。**验收**：三个旧 crate `cargo test` 全绿（内容层 81 个测试随模块迁移）；新旧 `epub-optimize` 对同一合成 EPUB（脚注/跨章链接/双 id/2400px 图/字体锁）输出 **md5 完全一致**。
+
+**跨 workspace 路径依赖可行**：weread-device（无 workspace）path 依赖 `shelf/crates/bookconv`（在 shelf workspace 内）编译无碍，各自 target。
+
+## 02｜XDG 路径表
+
+见 `shelf/README.md`「路径」。qmd 的 XHR 只能写绝对路径，写的是缺省值展开 `/home/root/.local/share/shelf/fonts.json`。
+
+## 03｜systemd
+
+`shelf.target`（WantedBy=multi-user）；服务 `PartOf=shelf.target` + `WantedBy=shelf.target`；网关 `ExecStartPre=-…/cangjie-lo-alias.sh`（同一份脚本，让 10.11.99.1 常驻可达以便 `/upload` 注入）与 `ExecStartPre=-/usr/bin/fc-cache`（tmpfs 索引真重启后丢）。`install.sh` 写 /usr 前实检 dm-verity。**不给 xochitl 加任何依赖**。
+
+## 04｜踩坑
+
+- multipart 流式解析：`fill()` 用 `Vec::resize(+64KB)` 在逐字节到达的流上变成 memset 风暴（测试 50s）；改栈上临时块 `extend_from_slice` → 0.8s。
+- `shelf/build.sh` 必须在 `shelf/` 目录跑（仓库根没有 build.sh）。
+
+## 05｜真机待办（按阶段）
+
+P1：`/api/services` 列三服务；native 三格式；annot 拒 epub；koreader 中文名字节验；5 本混投；200MB+ 不 OOM；`--only` 拔插；真重启自起。
+P2：字体免重启 spike（S-A/S-B/S-C）；壁纸休眠即显示；`--only wallpaper` 单装。
+P3：KOReader pull/sync 幂等。P5：rmweb × Move 看门狗 spike。

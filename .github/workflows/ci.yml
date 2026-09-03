@@ -40,9 +40,9 @@ jobs:
       # 等），全新 checkout 没有 → 只能在本地 `uv run pytest chinese-ime/pinyin-engine/tests` +
       # `make -C chinese-ime/pinyin-engine/c test diff-check`（有本地词典）跑，见 README。
       - name: pytest（阅读 + PKM 语义原型，自足 fixtures）
-        run: uv run pytest reading/tests knowledge/pkm-semantic/proto -q
+        run: uv run pytest reading/tests knowledge/pkm-semantic/proto shelf/host/tests -q
 
-  # ── 三个设备端 Rust crate 的 host 测试（device-core / weread-device / pkm-device）──
+  # ── 设备端 Rust crate 的 host 测试（device-core / weread-device / pkm-device + 书架 workspace）──
   rust:
     runs-on: ubuntu-latest
     steps:
@@ -54,6 +54,8 @@ jobs:
           cargo test --manifest-path device-core/Cargo.toml
           cargo test --manifest-path reading/device-rs/Cargo.toml
           cargo test --manifest-path knowledge/pkm/Cargo.toml
+      - name: cargo test（书架 shelf 内部 workspace：bookconv/shelf-core/各服务）
+        run: cargo test --manifest-path shelf/Cargo.toml --workspace
 
   # ── aarch64 全静态交叉编译冒烟（打包器分发的设备二进制，别让 musl/链接悄悄坏掉）──
   cross-build:
@@ -72,3 +74,4 @@ jobs:
         run: |
           sh reading/device-rs/build.sh
           sh knowledge/pkm/build.sh
+          sh shelf/build.sh

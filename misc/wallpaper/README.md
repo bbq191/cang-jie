@@ -1,3 +1,5 @@
+> ⚠ 2026-09-03：本工具计划并入书架 `shelf/`（`wallpaper-serve` 上传即用 + Rust 子命令承接 bind/roll/unbind，XDG 路径），Phase 2 落地后本目录只留指针。当前仍可独立使用。
+
 # 休眠壁纸(reMarkable Paper Pro Move)
 
 设备休眠屏用**自备彩色图**替换,两张**每次唤醒自动交替**,并**消掉中央的原生"休眠插画卡"**。
