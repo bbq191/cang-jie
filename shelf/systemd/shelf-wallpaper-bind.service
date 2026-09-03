@@ -1,0 +1,14 @@
+[Unit]
+Description=书架·壁纸 开机 bind-mount 休眠屏（current.png → suspended.png + 透明盖三张插画卡）
+DefaultDependencies=no
+After=local-fs.target home.mount
+ConditionPathExists=/home/root/.local/share/shelf/wallpapers/current.png
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/home/root/.local/bin/wallpaper-serve bind
+ExecStop=/home/root/.local/bin/wallpaper-serve unbind
+
+[Install]
+WantedBy=multi-user.target

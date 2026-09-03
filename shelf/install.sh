@@ -101,6 +101,55 @@ else
     echo "-- 单元已写入 /usr 并启动（shelf.target；单个服务可 systemctl disable --now <svc>）"
 fi
 
+# ── 3b. 壁纸：旧 misc/wallpaper 迁移 + 开机 bind 单元 + sleep 钩子（选了 wallpaper 才做）──
+case " $SEL " in *" wallpaper "*)
+    OLD=/home/root/wallpaper
+    POOL="$XDG_DATA_HOME/shelf/wallpapers/pool"
+    mkdir -p "$POOL"
+    if [ -d "$OLD" ] && [ ! -f "$XDG_DATA_HOME/shelf/wallpapers/.migrated" ]; then
+        echo "-- 发现旧壁纸工具 $OLD：停旧单元/钩子、迁移图片进池"
+        systemctl disable --now cangjie-wallpaper.service 2>/dev/null || true
+        [ -x "$OLD/unbind.sh" ] && sh "$OLD/unbind.sh" >/dev/null 2>&1 || true
+        for f in "$OLD"/*.png "$OLD"/pool/*.png; do
+            [ -f "$f" ] || continue
+            case "$(basename "$f")" in blank776.png|current.png) continue ;; esac
+            cp -n "$f" "$POOL/" 2>/dev/null || true
+        done
+        touch "$XDG_DATA_HOME/shelf/wallpapers/.migrated"
+        echo "   旧目录保留未删（确认无误后可 rm -rf $OLD）"
+    fi
+    if [ "$DO_SYSTEMD" = "1" ] && ! dmsetup ls --target verity 2>/dev/null | grep -q .; then
+        mount -o remount,rw / || true
+        rm -f /usr/lib/systemd/system-sleep/cangjie-wallpaper.sh /usr/lib/systemd/system/cangjie-wallpaper.service
+        cp "$SRC/systemd/shelf-wallpaper-bind.service" "$SYSD/shelf-wallpaper-bind.service" && chmod 644 "$SYSD/shelf-wallpaper-bind.service"
+        ln -sf ../shelf-wallpaper-bind.service "$SYSD/multi-user.target.wants/shelf-wallpaper-bind.service"
+        mkdir -p /usr/lib/systemd/system-sleep
+        cp "$SRC/wallpaper/shelf-wallpaper-sleep.sh" /usr/lib/systemd/system-sleep/shelf-wallpaper.sh && chmod 755 /usr/lib/systemd/system-sleep/shelf-wallpaper.sh
+        sync; mount -o remount,ro / || true
+        systemctl daemon-reload
+        systemctl start shelf-wallpaper-bind.service 2>/dev/null || true
+        echo "-- 壁纸开机 bind 单元 + sleep 钩子已写入 /usr"
+    fi
+    ;;
+esac
+
+# ── 3c. 字体菜单 qmd（选了 font 才做；qrr 目录在才装）──
+case " $SEL " in *" font "*)
+    QRR="$HOME_DIR/xovi/exthome/qt-resource-rebuilder"
+    if [ -d "$QRR" ] && [ -d "$SRC/xovi" ]; then
+        # 固件按 /etc/version 主次号挑 qmd（3.27 与 3.28 的 FormatFont.qml 结构不同）
+        FWV="$(cut -d. -f1-2 /etc/version 2>/dev/null || echo 3.28)"
+        Q="font-menu-dynamic.qmd"; [ "$FWV" = "3.27" ] && Q="font-menu-dynamic-3.27.qmd"
+        [ -f "$QRR/add-reading-fonts.qmd" ] && mv "$QRR/add-reading-fonts.qmd" "$BK/" && echo "-- 旧 add-reading-fonts.qmd 已移到备份（避免与动态菜单重复追加）"
+        rm -f "$QRR/font-menu-dynamic.qmd" "$QRR/font-menu-dynamic-3.27.qmd"
+        cp "$SRC/xovi/$Q" "$QRR/font-menu-dynamic.qmd"
+        echo "-- 字体菜单 qmd（$Q）已放 $QRR/ —— ⚠ 需 systemctl restart xochitl 生效（本脚本不自动重启）"
+    else
+        echo "-- （无 qt-resource-rebuilder 目录或载荷无 xovi/，跳过字体菜单 qmd；字体仍可用 fontconfig 装入）"
+    fi
+    ;;
+esac
+
 # ── 4. 健康检查 ──
 sleep 1
 GET() { if command -v curl >/dev/null 2>&1; then curl -s --max-time 3 "$1"; else wget -qO- -T 3 "$1"; fi; }

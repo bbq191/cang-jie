@@ -29,7 +29,7 @@ QRR=/home/root/xovi/exthome/qt-resource-rebuilder
 QUAR=$STATE/qrr-failsafe.quarantine
 TRIG=$STATE/qrr-failsafe.TRIGGERED
 THRESH=${CJ_QRR_FAILSAFE_THRESH:-3}   # 可用环境变量覆盖（测试用）
-LIST="reading-qol-config.qmd tap-page-turn.qmd fast-mono-reading.qmd page-refresh.qmd add-reading-fonts.qmd settings-reading-enhance.qmd"
+LIST="reading-qol-config.qmd tap-page-turn.qmd fast-mono-reading.qmd page-refresh.qmd add-reading-fonts.qmd font-menu-dynamic.qmd settings-reading-enhance.qmd"
 
 command -v journalctl >/dev/null 2>&1 || exit 0
 mkdir -p "$STATE"

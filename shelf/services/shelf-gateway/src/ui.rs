@@ -78,13 +78,22 @@ const TABS={
     const b=await j('/api/koreader/books');const ul=$('#kb',sec);ul.innerHTML='';(b.items||[]).forEach(it=>{const li=document.createElement('li');li.innerHTML=`<span>${it.name}</span><span class="small">${fmtB(it.bytes)}</span>`;ul.appendChild(li)});if(!(b.items||[]).length)ul.innerHTML='<li class="small">（空）</li>'};
   refresh();sec.refresh=refresh}},
  'font-serve':{title:'字体',render(sec){assetTab(sec,'/api/fonts','ttf/otf 字体（同时装进原生阅读器与 KOReader）')}},
- 'wallpaper-serve':{title:'壁纸',render(sec){assetTab(sec,'/api/wallpapers','jpg/png 图片（自动裁到 954×1696，下次休眠即生效）')}},
+ 'wallpaper-serve':{title:'壁纸',render(sec){assetTab(sec,'/api/wallpapers','jpg/png 图片（自动裁到 954×1696，首张自动启用，下次休眠即生效）',{
+   header:`<div class="row"><label>轮换 <select id="wpmode"><option value="sequential">按顺序</option><option value="random">随机</option><option value="fixed">固定</option></select></label><span id="wpst" class="small"></span></div>`,
+   onRender:async(sec,refresh)=>{const st=await j('/api/wallpapers/status');const sel=$('#wpmode',sec);if(st.ok){sel.value=st.mode;$('#wpst',sec).textContent=`当前 ${st.current||'（无）'} · bind ${st.mounted}/${st.expectedMounts}`}
+     sel.onchange=async()=>{await j('/api/wallpapers/mode',{method:'PUT',body:JSON.stringify({mode:sel.value})});refresh()}},
+   itemAction:(it,refresh)=>{if((it.extra||{}).current)return '<span class="small">当前</span>';const b=document.createElement('button');b.className='btn';b.textContent='使用';b.onclick=async()=>{await j('/api/wallpapers/current',{method:'PUT',body:JSON.stringify({name:it.name})});refresh()};return b},
+   preview:it=>`<img src="/api/wallpapers/${encodeURIComponent(it.name)}" alt="" style="height:3.6em;border:1px solid var(--line);margin-right:.5em;vertical-align:middle">`})}},
  'weread-serve':{title:'微读',render(sec){sec.innerHTML='<p class="small">微信读书网页版入口（预留）。</p>'}}
 };
-function assetTab(sec,api,hint){sec.innerHTML=`<p class="small">${hint}</p><div class="drop">点击或拖入文件（可多选）</div><input type="file" multiple hidden><ul class="q"></ul><div class="row"><button class="btn pri go">上传</button></div><h3 style="font-size:1em">已安装</h3><ul class="list" id="al"></ul>`;
+function assetTab(sec,api,hint,ext={}){sec.innerHTML=`<p class="small">${hint}</p>${ext.header||''}<div class="drop">点击或拖入文件（可多选）</div><input type="file" multiple hidden><ul class="q"></ul><div class="row"><button class="btn pri go">上传</button></div><h3 style="font-size:1em">已安装</h3><ul class="list" id="al"></ul>`;
   uploader(sec,()=>api,()=>({}));
-  const refresh=async()=>{const d=await j(api);const ul=$('#al',sec);ul.innerHTML='';(d.items||d.fonts||d.pool||[]).forEach(it=>{const li=document.createElement('li');li.innerHTML=`<span>${it.name||it.file}${it.family?' <span class="small">'+it.family+'</span>':''}</span><span class="small">${it.bytes?fmtB(it.bytes):''} ${it.source==='builtin'?'内建':'<button class="btn d">删除</button>'}</span>`;
-    const del=$('.d',li);if(del)del.onclick=async()=>{if(confirm('删除 '+(it.name||it.file)+'？')){await j(api+'/'+encodeURIComponent(it.name||it.file),{method:'DELETE'});refresh()}};ul.appendChild(li)});if(!ul.children.length)ul.innerHTML='<li class="small">（空）</li>'};
+  const refresh=async()=>{const d=await j(api);const ul=$('#al',sec);ul.innerHTML='';(d.items||[]).forEach(it=>{const ex=it.extra||{};const li=document.createElement('li');
+    const left=document.createElement('span');left.innerHTML=(ext.preview?ext.preview(it):'')+`${it.name}${ex.family?' <span class="small">'+ex.family+'</span>':''}`;
+    const right=document.createElement('span');right.className='small';right.textContent=(it.bytes?fmtB(it.bytes)+' ':'');
+    if(ext.itemAction){const a=ext.itemAction(it,refresh);if(typeof a==='string')right.insertAdjacentHTML('beforeend',a);else right.appendChild(a);right.append(' ')}
+    if(ex.source==='builtin')right.append('内建');else if(!ex.current){const del=document.createElement('button');del.className='btn';del.textContent='删除';del.onclick=async()=>{if(confirm('删除 '+it.name+'？')){const r=await j(api+'/'+encodeURIComponent(it.name),{method:'DELETE'});if(r.ok===false)alert(r.message);refresh()}};right.appendChild(del)}
+    li.append(left,right);ul.appendChild(li)});if(!ul.children.length)ul.innerHTML='<li class="small">（空）</li>';if(ext.onRender)ext.onRender(sec,refresh)};
   refresh();sec.refresh=refresh}
 
 (async()=>{const d=await j('/api/services');const svcs=(d.services||[]).filter(s=>s.ui&&TABS[s.name]).sort((a,b)=>a.ui.order-b.ui.order);

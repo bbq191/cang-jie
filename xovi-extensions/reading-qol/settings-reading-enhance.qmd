@@ -994,7 +994,7 @@ AFFECT /qml/device/view/settings/Settings.qml
                             cn: {
                                 page: "书籍与字体", sub: "墨香 · 系统增强", back: "‹ 系统增强",
                                 fontT: "阅读字体增强",
-                                fontD: "在阅读字体菜单新增 霞鹜文楷 / 霞鹜新致宋 / KF Readerly 三项可选（原字体保留）。开启后重开字体菜单生效。",
+                                fontD: "在阅读字体菜单新增 霞鹜文楷 / 霞鹜新致宋 / KF Readerly 及书架上传的字体（原字体保留）。切换本开关后需重启 xochitl 生效（字体菜单每次启动只建一次）。",
                                 optT: "导入书籍自动优化",
                                 optD: "新导入的 EPUB 自动优化：解锁字体字号、修复脚注跳转、修正封面拉伸、去掉冗余目录页。约一分钟内以优化版替换原书（原书移入回收站，可恢复）；仅处理还没打开过的书。",
                                 comicT: "漫画省刷新",
@@ -1003,7 +1003,7 @@ AFFECT /qml/device/view/settings/Settings.qml
                             tw: {
                                 page: "書籍與字體", sub: "墨香 · 系統增強", back: "‹ 系統增強",
                                 fontT: "閱讀字體增強",
-                                fontD: "在閱讀字體選單新增 霞鶩文楷 / 霞鶩新致宋 / KF Readerly 三項可選（原字體保留）。開啟後重開字體選單生效。",
+                                fontD: "在閱讀字體選單新增 霞鶩文楷 / 霞鶩新致宋 / KF Readerly 及書架上傳的字體（原字體保留）。切換本開關後需重啟 xochitl 生效（字體選單每次啟動只建一次）。",
                                 optT: "匯入書籍自動優化",
                                 optD: "新匯入的 EPUB 自動優化：解鎖字體字號、修復腳註跳轉、修正封面拉伸、去掉冗餘目錄頁。約一分鐘內以優化版替換原書（原書移入回收站，可恢復）；僅處理還沒打開過的書。",
                                 comicT: "漫畫省刷新",
@@ -1012,7 +1012,7 @@ AFFECT /qml/device/view/settings/Settings.qml
                             en: {
                                 page: "Books & Fonts", sub: "MoXiang · System", back: "‹ System",
                                 fontT: "Reading font upgrade",
-                                fontD: "Adds LXGW WenKai / LXGW ZhiSong / KF Readerly to the reading font menu (originals kept). Reopen the font menu to apply.",
+                                fontD: "Adds LXGW WenKai / LXGW ZhiSong / KF Readerly and fonts uploaded via Shelf to the reading font menu (originals kept). Restart xochitl after toggling (the font menu is built once per launch).",
                                 optT: "Auto-optimize imported books",
                                 optD: "Newly imported EPUBs are optimized automatically: unlock fonts and sizes, fix footnote jumps, fix stretched covers, drop redundant TOC pages. Within about a minute the optimized copy replaces the original (moved to Trash, recoverable); only books never opened are touched.",
                                 comicT: "Comic low-flash mode",

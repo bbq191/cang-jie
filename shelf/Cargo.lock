@@ -261,8 +261,11 @@ dependencies = [
 name = "font-serve"
 version = "0.1.0"
 dependencies = [
+ "serde",
  "serde_json",
  "shelf-core",
+ "tempfile",
+ "ureq",
 ]
 
 [[package]]
@@ -1051,8 +1054,12 @@ dependencies = [
 name = "wallpaper-serve"
 version = "0.1.0"
 dependencies = [
+ "bookconv",
+ "image",
+ "serde",
  "serde_json",
  "shelf-core",
+ "tempfile",
 ]
 
 [[package]]

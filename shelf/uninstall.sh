@@ -36,6 +36,16 @@ if ! dmsetup ls --target verity 2>/dev/null | grep -q .; then
     sync; mount -o remount,ro / || true
     systemctl daemon-reload
 fi
+case " $SEL " in *" wallpaper "*)
+    systemctl disable --now shelf-wallpaper-bind.service 2>/dev/null || true
+    [ -x "$BIN_DIR/wallpaper-serve" ] && "$BIN_DIR/wallpaper-serve" unbind >/dev/null 2>&1 || true
+    if ! dmsetup ls --target verity 2>/dev/null | grep -q .; then
+        mount -o remount,rw / || true
+        rm -f "$SYSD/shelf-wallpaper-bind.service" "$SYSD/multi-user.target.wants/shelf-wallpaper-bind.service" /usr/lib/systemd/system-sleep/shelf-wallpaper.sh
+        sync; mount -o remount,ro / || true; systemctl daemon-reload
+    fi ;;
+esac
+case " $SEL " in *" font "*) rm -f "$HOME_DIR/xovi/exthome/qt-resource-rebuilder/font-menu-dynamic.qmd" ;; esac
 for s in $SEL; do rm -f "$BIN_DIR/$(svc_of "$s")"; done
 if [ "$PURGE" = "1" ]; then
     rm -rf "${XDG_CONFIG_HOME:-$HOME_DIR/.config}/shelf" "${XDG_DATA_HOME:-$HOME_DIR/.local/share}/shelf" "${XDG_STATE_HOME:-$HOME_DIR/.local/state}/shelf"

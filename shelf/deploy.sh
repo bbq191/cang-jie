@@ -11,11 +11,13 @@ BINS="shelf-gateway book-serve koreader-serve font-serve wallpaper-serve"
 
 [ "${SHELF_NO_BUILD:-0}" = "1" ] || sh ./build.sh
 STAGE="$(mktemp -d)"; trap 'rm -rf "$STAGE"' EXIT
-mkdir -p "$STAGE/shelf/bin" "$STAGE/shelf/systemd" "$STAGE/shelf/lo-alias"
+mkdir -p "$STAGE/shelf/bin" "$STAGE/shelf/systemd" "$STAGE/shelf/lo-alias" "$STAGE/shelf/wallpaper" "$STAGE/shelf/xovi"
 for b in $BINS; do cp "target/$TARGET/release/$b" "$STAGE/shelf/bin/"; done
 cp systemd/* "$STAGE/shelf/systemd/"
 cp ../chinese-ime/langhook/deploy/cangjie-lo-alias.sh "$STAGE/shelf/lo-alias/"
 cp install.sh uninstall.sh "$STAGE/shelf/"
+cp wallpaper/shelf-wallpaper-sleep.sh "$STAGE/shelf/wallpaper/"
+cp xovi/*.qmd "$STAGE/shelf/xovi/"
 echo "-- 推送到 root@$HOST:/home/root/shelf-pkg/ 并安装"
 tar -C "$STAGE" -cf - shelf | ssh "root@$HOST" 'rm -rf /home/root/shelf-pkg && mkdir -p /home/root/shelf-pkg && tar -C /home/root/shelf-pkg -xf -'
 # shellcheck disable=SC2029  # 参数就是要在远端展开

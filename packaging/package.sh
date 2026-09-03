@@ -41,7 +41,6 @@ IME_DEPLOY="$REPO/chinese-ime/langhook/deploy"
 FONTS_DIR="$REPO/chinese-ime/fonts"
 DICT_BUILD="$REPO/chinese-ime/pinyin-engine/c/build"
 QOL="$REPO/xovi-extensions/reading-qol"
-FONTMENU="$REPO/xovi-extensions/font-menu"
 TRANS="$REPO/chinese-ime/translations"
 READING_REL="$REPO/reading/device-rs/target/$TARGET/release"
 PKM_REL="$REPO/knowledge/pkm/target/$TARGET/release"
@@ -115,7 +114,7 @@ copy_opt "$IME_DEPLOY/settings-keyboard-zh.qmd" "$PAY"
 for q in reading-qol-config tap-page-turn fast-mono-reading page-refresh keyboard-mono settings-reading-enhance cardhw-notify reader-link-return; do
     copy_opt "$QOL/$q.qmd" "$PAY"
 done
-copy_opt "$FONTMENU/add-reading-fonts.qmd" "$PAY"
+# add-reading-fonts.qmd 已由书架层的 font-menu-dynamic.qmd 取代（shelf/install.sh 装并清旧文件）
 # 2d pre-start 脚本（fail-safe / lo 别名 / 汉化 bind-mount）
 for s in cangjie-qrr-failsafe.sh cangjie-lo-alias.sh cangjie-xlate-bindmount.sh; do
     copy_opt "$IME_DEPLOY/$s" "$PAY"
@@ -132,12 +131,14 @@ for b in $READING_BINS; do copy_opt "$READING_REL/$b" "$PKG/bin"; done
 for b in $PKM_BINS;     do copy_opt "$PKM_REL/$b"     "$PKG/bin"; done
 
 echo "-- 组 shelf/（书架：网关+领域服务，自带安装器，可 --only 按服务装）"
-mkdir -p "$PKG/shelf/bin" "$PKG/shelf/systemd" "$PKG/shelf/lo-alias"
+mkdir -p "$PKG/shelf/bin" "$PKG/shelf/systemd" "$PKG/shelf/lo-alias" "$PKG/shelf/wallpaper" "$PKG/shelf/xovi"
 copy_req "$SHELF/install.sh"   "$PKG/shelf"
 copy_req "$SHELF/uninstall.sh" "$PKG/shelf"
 for b in $SHELF_BINS; do copy_opt "$SHELF_REL/$b" "$PKG/shelf/bin"; done
 for u in "$SHELF"/systemd/*; do copy_req "$u" "$PKG/shelf/systemd"; done
 copy_req "$IME_DEPLOY/cangjie-lo-alias.sh" "$PKG/shelf/lo-alias"   # 同一份脚本，网关 ExecStartPre 用
+copy_req "$SHELF/wallpaper/shelf-wallpaper-sleep.sh" "$PKG/shelf/wallpaper"
+for q in "$SHELF"/xovi/*.qmd; do copy_req "$q" "$PKG/shelf/xovi"; done
 chmod +x "$PKG/shelf/install.sh" "$PKG/shelf/uninstall.sh"
 
 echo "-- 组 systemd/（开机自恢复单元）"
