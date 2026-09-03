@@ -26,7 +26,12 @@ pub struct Xochitl {
 impl Xochitl {
     /// `library_dir`=书库目录（用于按名找文件夹）；`timeout_secs` 建议 300（大书）。
     pub fn new(host: &str, library_dir: &Path, timeout_secs: u64) -> Xochitl {
-        let agent = ureq::AgentBuilder::new().timeout(std::time::Duration::from_secs(timeout_secs)).build();
+        // 连接 10s 即判"未送达"（:80 没绑/USB 未就绪，可安全重试）；整体 timeout 给大书处理留足（超时但已送达
+        // 由 upload_likely_delivered 识别、绝不重试）。
+        let agent = ureq::AgentBuilder::new()
+            .timeout_connect(std::time::Duration::from_secs(10))
+            .timeout(std::time::Duration::from_secs(timeout_secs))
+            .build();
         Xochitl { agent, host: host.to_string(), library_dir: library_dir.to_path_buf() }
     }
 

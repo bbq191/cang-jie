@@ -55,7 +55,7 @@ pinyin = [
 tools = [
     "zstandard",
 ]
-# Calibre 前置渲染流水线（reading/tools/calibre/：产物体检 check_output.py、PDF 裁边）
+# Calibre 前置渲染流水线（shelf/host/calibre/：产物体检 check_output.py、PDF 裁边；2026-09-03 自 reading/tools/calibre 迁入）
 # 刻意不进 default-groups：仅 host 侧按需 `uv run --group calibre`，CI 不背这份重量。
 calibre = [
     "pymupdf",

@@ -37,7 +37,7 @@ shelf/
 ├── systemd/                           shelf.target + 5 个 .service
 ├── install.sh · uninstall.sh          设备端安装/卸载（--only 按服务；写 /usr 前实检 dm-verity）
 ├── deploy.sh                          host 一键：build → tar-over-ssh → 设备 install.sh
-├── host/                              CLI `shelf`（纯 stdlib、系统 python3）+ pytest
+├── host/                              CLI `shelf`（纯 stdlib、系统 python3）+ pytest；host/calibre/ = Calibre 前置流水线（自 reading/tools/calibre 迁入）
 ├── koreader/ · xovi/ · wallpaper/ · weread-web/   后续阶段落位
 └── docs/reMarkable书架白皮书.md        设计决策 + 真机记录
 ```
@@ -69,8 +69,11 @@ ssh root@10.11.99.1 sh /home/root/shelf-pkg/shelf/uninstall.sh [--only font] [--
 ## host CLI
 
 ```sh
-shelf/host/bin/shelf services | status | doctor      # Phase 0
-shelf push … / font … / wallpaper … / koreader …      # Phase 1–3 逐步接入
+shelf/host/bin/shelf services | status | doctor
+shelf/host/bin/shelf push 书.azw3 论文.pdf -t native|annot|koreader [-f 文件夹] [-q auto|host|device] [--no-optimize] [--no-split] [-n]
+   quality=auto：host 有 ebook-convert → native 走 wash_epub.sh→体检→推；annot 走 epub2pdf_move.sh / pdf_crop_move.py→体检→推；
+                 否则直推网关（设备端 Rust 转换/优化兜底）。>60MB PDF 自动 pymupdf 分卷（可选依赖）。
+shelf font … / wallpaper … / koreader …               # Phase 2–3
 ```
 配置 `$XDG_CONFIG_HOME/shelf/config.toml`（host/port/ssh/default_target/quality/split_pdf_mb）。
 
@@ -79,7 +82,7 @@ shelf push … / font … / wallpaper … / koreader …      # Phase 1–3 逐�
 | 阶段 | 内容 | 状态 |
 |---|---|---|
 | P0 | 骨架 · bookconv 抽离（md5 对拍一致）· CI · 打包/编排接入 · 五服务注册/代理本机冒烟 | ✅ 离线完成 |
-| P1 | 统一投递：三目标手选、格式自动处理、host Calibre 优先/设备兜底 | 待做 |
+| P1 | 统一投递：三目标手选（native/annot/koreader）、格式自动处理、host Calibre 优先/设备兜底、完整单页 UI、`shelf push` | ✅ 离线完成（本机三服务冒烟通），**真机待验**（设备离线） |
 | P2 | 字体/壁纸上传即可用（先真机 spike 字体免重启） | 待做 |
 | P3 | KOReader 配置即代码 | 待做 |
 | P4 | 原生高质量门 | 待做 |

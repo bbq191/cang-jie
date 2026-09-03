@@ -70,8 +70,10 @@ name = "book-serve"
 version = "0.1.0"
 dependencies = [
  "bookconv",
+ "serde",
  "serde_json",
  "shelf-core",
+ "tempfile",
 ]
 
 [[package]]
@@ -524,8 +526,10 @@ dependencies = [
 name = "koreader-serve"
 version = "0.1.0"
 dependencies = [
+ "serde",
  "serde_json",
  "shelf-core",
+ "tempfile",
 ]
 
 [[package]]

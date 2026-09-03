@@ -18,3 +18,8 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png"]
 # FB2→EPUB；quick-xml 版本须与 fb2 一致(0.30)
 fb2 = "0.4"
 quick-xml = { version = "0.30", features = ["serialize", "encoding"] }
+
+# host/设备通用 CLI：对一本 EPUB 跑同一 optimize_epub（wash_epub.sh 末步用）。随内容层从 weread-device 迁入。
+[[bin]]
+name = "epub-optimize"
+path = "src/bin/epub_optimize.rs"
