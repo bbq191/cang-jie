@@ -13,7 +13,7 @@ from test_cli import FakeGateway, run, serve  # noqa: E402
 class AssetsGateway(FakeGateway):
     def do_GET(self):
         if self.path == "/api/fonts":
-            return self._json(200, {"items": [{"name": "a.ttf", "bytes": 10, "extra": {"family": "A Fam", "source": "user"}}]})
+            return self._json(200, {"items": [{"name": "A Fam", "bytes": 10, "extra": {"family": "A Fam", "files": ["a.ttf", "a-b.ttf"], "names": {"cn": "甲字体", "tw": "甲字體", "en": "A Fam"}, "fontconfigRef": True}}]})
         if self.path == "/api/wallpapers":
             return self._json(200, {"mode": "sequential", "current": "x.png", "items": [{"name": "x.png", "bytes": 2048, "extra": {"current": True}}]})
         return super().do_GET()
@@ -50,9 +50,9 @@ def test_font_add_ls_rm(gateway, tmp_path, capsys):
     rc, out = run(["font", "add", str(f)], gateway, capsys)
     assert rc == 0 and "家族=F" in out and FakeGateway.received[-1][0] == "/api/fonts"
     rc, out = run(["font", "ls"], gateway, capsys)
-    assert rc == 0 and "A Fam" in out
-    rc, out = run(["font", "rm", "a.ttf"], gateway, capsys)
-    assert rc == 0 and FakeGateway.received[-1] == ("/api/fonts/a.ttf", "DELETE", b"")
+    assert rc == 0 and "A Fam" in out and "甲字体" in out and " 2 文件" in out and "⚠界面回退" in out
+    rc, out = run(["font", "rm", "A Fam"], gateway, capsys)
+    assert rc == 0 and FakeGateway.received[-1] == ("/api/fonts/A%20Fam", "DELETE", b"")
 
 
 def test_wallpaper_flow(gateway, tmp_path, capsys):

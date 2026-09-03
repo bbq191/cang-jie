@@ -19,7 +19,6 @@ AFFECT /qml/device/view/documentview/FormatFont.qml
                 if (t && t.length > 0) {
                     try { var j = JSON.parse(t); if (j && j.fonts) for (var i = 0; i < j.fonts.length; i++) if (j.fonts[i].key) keys.push(j.fonts[i].key); } catch (e) {}
                 }
-                if (keys.length === 0) keys = ["LXGW WenKai Mono GB Screen", "LXGW Neo ZhiSong Screen Full", "KF Readerly"];
                 return keys;
             }
             function cjSync(reason) {

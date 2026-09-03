@@ -70,6 +70,10 @@ impl Paths {
     pub fn data_root(&self) -> &Path {
         &self.data
     }
+    /// `$XDG_CONFIG_HOME` 本身（只读对接如 fontconfig/fonts.conf）。
+    pub fn config_root(&self) -> &Path {
+        &self.config
+    }
     pub fn state_dir(&self) -> PathBuf {
         self.state.join(APP)
     }

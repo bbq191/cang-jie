@@ -1,5 +1,6 @@
 """`shelf wallpaper add|ls|set|mode|rm`：休眠壁纸上传即用。"""
 from pathlib import Path
+from urllib.parse import quote
 
 NAME = "wallpaper"
 HELP = "壁纸：add <img...> [--activate] | ls | set <name> | mode sequential|random|fixed | rm <name>"
@@ -37,7 +38,7 @@ def run(args, ctx) -> int:
         print(f"轮换模式：{args.mode}")
         return 0
     if args.op == "rm":
-        t.delete(f"/api/wallpapers/{args.name}")
+        t.delete(f"/api/wallpapers/{quote(args.name)}")
         print(f"已删除 {args.name}")
         return 0
     rc = 0

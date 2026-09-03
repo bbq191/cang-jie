@@ -83,7 +83,7 @@ const TABS={
     const f=await j('/api/koreader/fonts');const uf=$('#kf',sec);uf.innerHTML='';(f.items||[]).forEach(it=>{const li=document.createElement('li');li.innerHTML=`<span>${it.name}</span><span class="small">${fmtB(it.bytes)} </span>`;const d=document.createElement('button');d.className='btn';d.textContent='删除';d.onclick=async()=>{if(confirm('从 KOReader 删除 '+it.name+'？')){const r=await j('/api/koreader/fonts/'+encodeURIComponent(it.name),{method:'DELETE'});if(r.ok===false)alert(r.message);refresh()}};li.lastChild.appendChild(d);uf.appendChild(li)});if(!(f.items||[]).length)uf.innerHTML='<li class="small">（空）</li>';
     const b=await j('/api/koreader/books');const ul=$('#kb',sec);ul.innerHTML='';(b.items||[]).forEach(it=>{const li=document.createElement('li');li.innerHTML=`<span>${it.name}</span><span class="small">${fmtB(it.bytes)}</span>`;ul.appendChild(li)});if(!(b.items||[]).length)ul.innerHTML='<li class="small">（空）</li>'};
   refresh();sec.refresh=refresh}},
- 'font-serve':{title:'字体',render(sec){assetTab(sec,'/api/fonts','ttf/otf 字体（同时装进原生阅读器与 KOReader）')}},
+ 'font-serve':{title:'字体',render(sec){assetTab(sec,'/api/fonts','ttf/otf 字体：装进原生阅读器（fontconfig 用户字体目录）并镜像到 KOReader；列表=目录里全部字体，按家族归组，都可删')}},
  'wallpaper-serve':{title:'壁纸',render(sec){assetTab(sec,'/api/wallpapers','jpg/png 图片（自动裁到 954×1696，首张自动启用，下次休眠即生效）',{
    header:`<div class="row"><label>轮换 <select id="wpmode"><option value="sequential">按顺序</option><option value="random">随机</option><option value="fixed">固定</option></select></label><span id="wpst" class="small"></span></div>`,
    onRender:async(sec,refresh)=>{const st=await j('/api/wallpapers/status');const sel=$('#wpmode',sec);if(st.ok){sel.value=st.mode;$('#wpst',sec).textContent=`当前 ${st.current||'（无）'} · bind ${st.mounted}/${st.expectedMounts}`}
@@ -95,10 +95,11 @@ const TABS={
 function assetTab(sec,api,hint,ext={}){sec.innerHTML=`<p class="small">${hint}</p>${ext.header||''}<div class="drop">点击或拖入文件（可多选）</div><input type="file" multiple hidden><ul class="q"></ul><div class="row"><button class="btn pri go">上传</button></div><h3 style="font-size:1em">已安装</h3><ul class="list" id="al"></ul>`;
   uploader(sec,()=>api,()=>({}));
   const refresh=async()=>{const d=await j(api);const ul=$('#al',sec);ul.innerHTML='';(d.items||[]).forEach(it=>{const ex=it.extra||{};const li=document.createElement('li');
-    const left=document.createElement('span');left.innerHTML=(ext.preview?ext.preview(it):'')+`${it.name}${ex.family?' <span class="small">'+ex.family+'</span>':''}`;
+    const left=document.createElement('span');left.innerHTML=(ext.preview?ext.preview(it):'')+`${it.name}${ex.names&&ex.names.cn&&ex.names.cn!==it.name?' <span class="small">'+ex.names.cn+'</span>':''}${ex.files&&ex.files.length>1?' <span class="small">×'+ex.files.length+'</span>':''}`;
     const right=document.createElement('span');right.className='small';right.textContent=(it.bytes?fmtB(it.bytes)+' ':'');
     if(ext.itemAction){const a=ext.itemAction(it,refresh);if(typeof a==='string')right.insertAdjacentHTML('beforeend',a);else right.appendChild(a);right.append(' ')}
-    if(ex.source==='builtin')right.append('内建');else if(!ex.current){const del=document.createElement('button');del.className='btn';del.textContent='删除';del.onclick=async()=>{if(confirm('删除 '+it.name+'？')){const r=await j(api+'/'+encodeURIComponent(it.name),{method:'DELETE'});if(r.ok===false)alert(r.message);refresh()}};right.appendChild(del)}
+    if(ex.fontconfigRef)right.insertAdjacentHTML('afterbegin','<span title="被 fontconfig 配置引用（界面中文回退用），删了界面可能变方块">⚠ </span>');
+    if(!ex.current){const del=document.createElement('button');del.className='btn';del.textContent='删除';del.onclick=async()=>{const files=(ex.files||[]).length>1?'（含 '+ex.files.length+' 个文件）':'';if(confirm('删除 '+it.name+files+(ex.fontconfigRef?'？\n⚠ 该字体是界面中文回退字体':'？'))){const r=await j(api+'/'+encodeURIComponent(it.name),{method:'DELETE'});if(r.ok===false)alert(r.message);refresh()}};right.appendChild(del)}
     li.append(left,right);ul.appendChild(li)});if(!ul.children.length)ul.innerHTML='<li class="small">（空）</li>';if(ext.onRender)ext.onRender(sec,refresh)};
   refresh();sec.refresh=refresh}
 

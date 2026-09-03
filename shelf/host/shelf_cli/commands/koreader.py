@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import datetime as _dt
 from pathlib import Path
+from urllib.parse import quote
 
 NAME = "koreader"
 HELP = "KOReader：pull | diff | sync [--dry-run] [--fonts] [--dicts] | font add|ls|rm（只装 KOReader）"
@@ -97,7 +98,7 @@ def run(args, ctx) -> int:
                 print(f"{it['name']:<40} {it.get('bytes', 0) // 1024} KB")
             return 0
         if args.fop == "rm":
-            t.delete(f"/api/koreader/fonts/{args.file}")
+            t.delete(f"/api/koreader/fonts/{quote(args.file)}")
             print(f"已从 KOReader 删除 {args.file}（KOReader 运行中需重启它）")
             return 0
         rc = 0

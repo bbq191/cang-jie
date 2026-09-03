@@ -1,6 +1,7 @@
 //! font-serve —— 书架·字体（loopback 8792）。路由（经网关前缀 `/api/fonts`）：
-//! `GET /`（清单=fonts.json 内容）· `POST /`（multipart 多文件，装进 fontconfig 用户字体目录 + 镜像 KOReader）·
-//! `DELETE /{file}` · `GET /status`。字体菜单 qmd 读 `~/.local/share/shelf/fonts.json`（`shelf/xovi/font-menu-dynamic.qmd`）。
+//! `GET /`（按家族归组的清单）· `POST /`（multipart 多文件，装进 fontconfig 用户字体目录 + 镜像 KOReader）·
+//! `DELETE /{family}`（删整个家族的全部文件）· `GET /status`。所有字体一视同仁、无"内建"。
+//! 字体菜单 qmd 读 `~/.local/share/shelf/fonts.json`（`shelf/xovi/font-menu-dynamic.qmd`）。
 mod store;
 mod ttf;
 
@@ -26,8 +27,9 @@ fn main() {
     let paths = Paths::from_env();
     let _ = paths.ensure();
     let store = Arc::new(FontStore::new(&paths, FontConfig::load(&paths)));
-    if let Err(e) = store.write_index() {
-        eprintln!("[font-serve] 写 fonts.json 失败: {e}");
+    match store.write_index() {
+        Ok(f) => println!("[font-serve] 索引 {} 个家族", f.len()),
+        Err(e) => eprintln!("[font-serve] 写 fonts.json 失败: {e}"),
     }
     let (s1, s2, s3, s4) = (store.clone(), store.clone(), store.clone(), store.clone());
     let p1 = paths.clone();
@@ -41,9 +43,9 @@ fn main() {
             // → restartNeeded=false 成立。菜单每进程只建一次，qmd 的 onVisibleChanged 负责差量追加（S-B）。
             Ok(Reply::ok(&serde_json::json!({"ok": ok, "items": items, "restartNeeded": false, "note": "字体已装入 fontconfig；阅读器「文字与布局」菜单重开即可选，选中即渲染，无需重启"})))
         })
-        .delete("/{file}", move |r| {
-            s3.remove(r.param("file")).map_err(ApiError::bad)?;
-            Ok(Reply::ok(&serde_json::json!({"ok": true})))
+        .delete("/{family}", move |r| {
+            let removed = s3.remove_family(r.param("family")).map_err(ApiError::bad)?;
+            Ok(Reply::ok(&serde_json::json!({"ok": true, "removed": removed})))
         })
         .get("/status", move |_| Ok(Reply::ok(&serde_json::json!({"ok": true, "count": s4.list().len(), "mirrorToKoreader": s4.cfg.mirror_to_koreader}))));
     println!("[font-serve] 字体目录 {}，清单 {}", store.fonts_dir().display(), store.json_path().display());
