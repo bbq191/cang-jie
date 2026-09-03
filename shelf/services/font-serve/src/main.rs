@@ -37,8 +37,9 @@ fn main() {
             let Some(b) = boundary_of(&r.content_type) else { return Err(ApiError::bad("需要 multipart/form-data")) };
             let items = AssetUploadFlow::new(&p1).run(&*s2, &mut *r.body, &b).map_err(ApiError::bad)?;
             let ok = !items.is_empty() && items.iter().all(|i| i.ok);
-            // 渲染 worker 是否需重启 xochitl 由真机 spike 决定；先如实告知"菜单重开可见、渲染可能需重启"
-            Ok(Reply::ok(&serde_json::json!({"ok": ok, "items": items, "restartNeeded": false, "note": "字体已装入 fontconfig；阅读器字体菜单重开后可选"})))
+            // 真机 2026-09-03（3.27.3.0）：上传后不重启，菜单出现新项、选中即渲染（渲染 PDF 嵌入 LXGWNeoXiHeiScreenFull）
+            // → restartNeeded=false 成立。菜单每进程只建一次，qmd 的 onVisibleChanged 负责差量追加（S-B）。
+            Ok(Reply::ok(&serde_json::json!({"ok": ok, "items": items, "restartNeeded": false, "note": "字体已装入 fontconfig；阅读器「文字与布局」菜单重开即可选，选中即渲染，无需重启"})))
         })
         .delete("/{file}", move |r| {
             s3.remove(r.param("file")).map_err(ApiError::bad)?;

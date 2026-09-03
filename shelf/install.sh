@@ -147,7 +147,15 @@ case " $SEL " in *" font "*)
         [ -f "$QRR/add-reading-fonts.qmd" ] && mv "$QRR/add-reading-fonts.qmd" "$BK/" && echo "-- 旧 add-reading-fonts.qmd 已移到备份（避免与动态菜单重复追加）"
         rm -f "$QRR/font-menu-dynamic.qmd" "$QRR/font-menu-dynamic-3.27.qmd"
         cp "$SRC/xovi/$Q" "$QRR/font-menu-dynamic.qmd"
-        echo "-- 字体菜单 qmd（$Q）已放 $QRR/ —— ⚠ 需 systemctl restart xochitl 生效（本脚本不自动重启）"
+        # ⚠ 重启 xochitl 的正确姿势取决于 xovi 怎么持久化：有 cangjie-xovi-reenable.service（rootfs oneshot helper）
+        #   时 `systemctl restart xochitl` 后它不会自动补 xovi——只有开机才跑；没装它（vellum 裸机，xovi 配置在 /etc
+        #   tmpfs）时 restart 直接丢 xovi（KOReader 入口/中文化一起没）。两种情况都用 xovi/start：它写 env + bind-mount +
+        #   自己 restart xochitl。2026-09-03 真机踩过。
+        if [ -x "$HOME_DIR/xovi/start" ]; then
+            echo "-- 字体菜单 qmd（$Q）已放 $QRR/ —— ⚠ 生效需重启 xochitl：请跑 $HOME_DIR/xovi/start（不要裸 systemctl restart xochitl，会丢 xovi）"
+        else
+            echo "-- 字体菜单 qmd（$Q）已放 $QRR/ —— ⚠ 需 systemctl restart xochitl 生效（本脚本不自动重启）"
+        fi
     else
         echo "-- （无 qt-resource-rebuilder 目录或载荷无 xovi/，跳过字体菜单 qmd；字体仍可用 fontconfig 装入）"
     fi
