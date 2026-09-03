@@ -6,5 +6,6 @@
 每次休眠重读磁盘，换图零重启；换图原地覆盖 `current.png` 保 inode。
 
 路径（XDG）：池 `~/.local/share/shelf/wallpapers/pool/*.png`、`current.png` 同级、状态 `~/.local/state/shelf/wallpaper-state.json`。
-单元：`shelf-wallpaper-bind.service`（开机 bind）+ `/usr/lib/systemd/system-sleep/shelf-wallpaper.sh`（唤醒轮换）。
+单元：`shelf-wallpaper-bind.service`（开机 bind）+ `/usr/lib/systemd/system-sleep/shelf-wallpaper.sh`（入睡前补 bind）。
+**轮换**由 `wallpaper-serve serve` 监听 xochitl 日志 `DeepSleep to Normal` 触发（充电时按电源键内核不 suspend、sleep 钩子不跑，2026-09-03 真机）。
 `shelf/install.sh` 检测旧 `/home/root/wallpaper/` 会迁移池图并停用旧 `cangjie-wallpaper.service`。
