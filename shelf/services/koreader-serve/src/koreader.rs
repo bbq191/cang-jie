@@ -15,6 +15,16 @@ pub struct FileItem {
     pub bytes: u64,
 }
 
+/// books/ 一层里的条目（目录或文件）。
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct Entry {
+    pub name: String,
+    pub kind: &'static str,
+    pub bytes: u64,
+    /// kind=dir 时：直接子文件数。
+    pub count: usize,
+}
+
 impl KoReader {
     pub fn new(root: &Path) -> KoReader {
         KoReader { root: root.to_path_buf() }
@@ -43,16 +53,42 @@ impl KoReader {
         running_by_proc(Path::new("/proc"))
     }
 
-    /// 校验并规范 folder（单段、无路径穿越；空=根）。
+    /// 校验并规范 folder（相对 books/ 的多级路径，无 `..`/绝对路径/反斜杠；空=根）。
     pub fn subdir(&self, folder: &str) -> Result<PathBuf, String> {
         let f = folder.trim().trim_matches('/');
         if f.is_empty() {
             return Ok(self.books_dir());
         }
-        if f.contains("..") || f.contains('/') || f.contains('\\') {
-            return Err("folder 只允许单层目录名".into());
+        if f.contains('\\') || f.split('/').any(|seg| seg.is_empty() || seg == "." || seg == ".." || seg.starts_with('.')) {
+            return Err("folder 非法（不允许 .. / 隐藏目录 / 空段）".into());
         }
         Ok(self.books_dir().join(f))
+    }
+
+    /// 列一层：子目录（kind=dir，含书数）+ 文件；隐藏项与 .sdr 元数据目录不列。
+    pub fn list_books(&self, folder: &str) -> Result<Vec<Entry>, String> {
+        let dir = self.subdir(folder)?;
+        let mut v = Vec::new();
+        if let Ok(rd) = std::fs::read_dir(&dir) {
+            for e in rd.flatten() {
+                let name = e.file_name().to_string_lossy().to_string();
+                if name.starts_with('.') {
+                    continue;
+                }
+                let Ok(md) = e.metadata() else { continue };
+                if md.is_dir() {
+                    if name.ends_with(".sdr") {
+                        continue; // KOReader 每本书的元数据目录
+                    }
+                    let count = std::fs::read_dir(e.path()).map(|r| r.flatten().filter(|x| x.path().is_file() && !x.file_name().to_string_lossy().starts_with('.')).count()).unwrap_or(0);
+                    v.push(Entry { name, kind: "dir", bytes: 0, count });
+                } else if md.is_file() {
+                    v.push(Entry { name, kind: "file", bytes: md.len(), count: 0 });
+                }
+            }
+        }
+        v.sort_by(|a, b| (a.kind != "dir", a.name.to_lowercase()).cmp(&(b.kind != "dir", b.name.to_lowercase())));
+        Ok(v)
     }
 
     /// 把 reader 里的字节原样写进 books/[folder]/<name>（先写 .part 再 rename，KOReader 扫目录不会见半成品）。
@@ -113,7 +149,9 @@ fn running_by_proc(proc_dir: &Path) -> bool {
         }
         if let Ok(cmd) = std::fs::read(e.path().join("cmdline")) {
             let s = String::from_utf8_lossy(&cmd);
-            if s.contains("koreader") && !s.contains("koreader-serve") {
+            // 只认 KOReader 真身：luajit 跑 reader.lua / koreader.sh 启动脚本。不能只匹配 "koreader"——
+            // koreader-serve 自己、cargo 测试二进制 koreader_serve-xxx 都含这个词（真机+CI 都误判过）。
+            if s.contains("reader.lua") || s.contains("koreader.sh") || (s.contains("luajit") && s.contains("/koreader/")) {
                 return true;
             }
         }
@@ -136,7 +174,13 @@ mod tests {
         assert_eq!(std::fs::read(k.books_dir().join("中文 名.azw3")).unwrap(), data);
         assert!(k.installed());
         let mut r2: &[u8] = b"x";
-        assert!(k.put_book("a/b", "x.epub", &mut r2).is_err());
+        k.put_book("a/b", "x.epub", &mut r2).unwrap(); // 多级目录允许
+        assert!(k.put_book("../x", "x.epub", &mut (&b"x"[..])).is_err());
+        std::fs::create_dir_all(k.books_dir().join("book.sdr")).unwrap();
+        let root = k.list_books("").unwrap();
+        assert_eq!(root.iter().map(|e| (e.name.as_str(), e.kind)).collect::<Vec<_>>(), vec![("a", "dir"), ("中文 名.azw3", "file")]);
+        assert_eq!(k.list_books("a").unwrap()[0].name, "b");
+        assert_eq!(k.list_books("a/b").unwrap()[0].kind, "file");
         let mut r3: &[u8] = b"";
         assert_eq!(k.put_book("sub", "e.epub", &mut r3).unwrap_err(), "空文件");
         assert!(!k.books_dir().join("sub/.e.epub.part").exists());
@@ -153,6 +197,8 @@ mod tests {
         std::fs::create_dir_all(t.path().join("self")).unwrap();
         assert!(running_by_proc(t.path()));
         std::fs::write(t.path().join("123/cmdline"), b"/home/root/.local/bin/koreader-serve\0serve\0").unwrap();
+        assert!(!running_by_proc(t.path()));
+        std::fs::write(t.path().join("123/cmdline"), b"/x/target/debug/deps/koreader_serve-abc\0").unwrap();
         assert!(!running_by_proc(t.path()));
     }
 }

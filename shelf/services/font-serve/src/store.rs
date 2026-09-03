@@ -2,7 +2,8 @@
 //! 目录里**所有**字体一视同仁、按 fontconfig 家族名归组（一个家族多字重文件=一项），都可删——没有"内建/系统"之分
 //! （2026-09-03 用户纠正：那是对旧中文化套件 scp 字体的路径耦合）。唯一的提示：家族被
 //! `~/.config/fontconfig/fonts.conf` 引用（界面 CJK 回退）的标 `fontconfigRef`，删前 UI 提醒但不拦。
-//! 上传→落目录→`fc-cache -f`→重建 `$XDG_DATA_HOME/shelf/fonts.json`（字体菜单 qmd 读）→可选镜像 KOReader。
+//! 上传→落目录→`fc-cache -f`→重建 `$XDG_DATA_HOME/shelf/fonts.json`（字体菜单 qmd 读）。**只管原生阅读器**：
+//! KOReader 的字体由 koreader-serve 单独管（用户 2026-09-03 定：两边各自装、不同时装填）。
 use crate::ttf;
 use serde::{Deserialize, Serialize};
 use shelf_core::asset::{AssetItem, AssetStore};
@@ -34,18 +35,9 @@ pub struct FontEntry {
     pub fontconfig_ref: bool,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Default)]
 #[serde(default, rename_all = "camelCase")]
-pub struct FontConfig {
-    pub mirror_to_koreader: bool,
-    pub koreader_url: String,
-}
-
-impl Default for FontConfig {
-    fn default() -> Self {
-        FontConfig { mirror_to_koreader: true, koreader_url: "http://127.0.0.1:8791".into() }
-    }
-}
+pub struct FontConfig {}
 
 impl FontConfig {
     pub fn load(paths: &Paths) -> FontConfig {
@@ -72,11 +64,12 @@ struct FontsJson {
 }
 
 pub struct FontStore {
+    #[allow(dead_code)] // 预留：将来字体级配置（如显示名覆盖）
     pub cfg: FontConfig,
     fonts_dir: PathBuf,
     json_path: PathBuf,
     fontconfig_conf: PathBuf,
-    /// 测试可关：不真跑 fc-cache/fc-scan、不镜像。
+    /// 测试可关：不真跑 fc-cache/fc-scan。
     pub side_effects: bool,
 }
 
@@ -185,47 +178,12 @@ impl FontStore {
         }
     }
 
-    fn koreader_call(&self, method: &str, path: &str, body: Option<(&[u8], &str)>) -> Result<(), String> {
-        if !self.side_effects {
-            return Ok(());
-        }
-        let ag = ureq::AgentBuilder::new().timeout(std::time::Duration::from_secs(30)).build();
-        let req = ag.request(method, &format!("{}{}", self.cfg.koreader_url, path));
-        let resp = match body {
-            Some((b, ct)) => req.set("Content-Type", ct).send_bytes(b),
-            None => req.call(),
-        };
-        match resp {
-            Ok(_) => Ok(()),
-            Err(ureq::Error::Status(c, r)) => Err(format!("koreader-serve HTTP {c}: {}", r.into_string().unwrap_or_default())),
-            Err(e) => Err(format!("koreader-serve 不可达: {e}")),
-        }
-    }
-
-    pub fn mirror_to_koreader(&self, name: &str, path: &Path) -> Result<(), String> {
-        let data = std::fs::read(path).map_err(|e| e.to_string())?;
-        let boundary = "----shelffont";
-        let mut body = Vec::new();
-        body.extend_from_slice(format!("--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{name}\"\r\nContent-Type: font/ttf\r\n\r\n").as_bytes());
-        body.extend_from_slice(&data);
-        body.extend_from_slice(format!("\r\n--{boundary}--\r\n").as_bytes());
-        self.koreader_call("POST", "/fonts", Some((&body, &format!("multipart/form-data; boundary={boundary}"))))
-    }
-
-    fn unmirror_from_koreader(&self, name: &str) {
-        if let Err(e) = self.koreader_call("DELETE", &format!("/fonts/{}", percent_encode(name)), None) {
-            eprintln!("[font-serve] 撤 KOReader 镜像 {name} 失败: {e}");
-        }
-    }
 
     /// 删整个家族（全部文件）。
     pub fn remove_family(&self, key: &str) -> Result<Vec<String>, String> {
         let Some(e) = self.entries().into_iter().find(|e| e.key == key) else { return Err("没有这个字体家族".into()) };
         for f in &e.files {
             std::fs::remove_file(self.fonts_dir.join(f)).map_err(|err| format!("删 {f} 失败: {err}"))?;
-            if self.cfg.mirror_to_koreader {
-                self.unmirror_from_koreader(f);
-            }
         }
         self.fc_cache();
         self.write_index()?;
@@ -256,13 +214,7 @@ impl AssetStore for FontStore {
         self.fc_cache();
         let fonts = self.write_index()?;
         let entry = fonts.iter().find(|e| e.files.iter().any(|f| f == name)).cloned();
-        let mut extra = serde_json::json!({"family": entry.as_ref().map(|e| e.key.clone()).unwrap_or_default(), "names": entry.as_ref().map(|e| e.names.clone())});
-        if self.cfg.mirror_to_koreader {
-            extra["koreader"] = match self.mirror_to_koreader(name, &dest) {
-                Ok(()) => serde_json::json!("mirrored"),
-                Err(e) => serde_json::json!(format!("未镜像：{e}")),
-            };
-        }
+        let extra = serde_json::json!({"family": entry.as_ref().map(|e| e.key.clone()).unwrap_or_default(), "names": entry.as_ref().map(|e| e.names.clone())});
         Ok(AssetItem { name: name.into(), bytes, extra })
     }
     fn list(&self) -> Vec<AssetItem> {
@@ -279,16 +231,6 @@ impl AssetStore for FontStore {
     }
 }
 
-pub fn percent_encode(s: &str) -> String {
-    let mut o = String::new();
-    for b in s.bytes() {
-        match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => o.push(b as char),
-            _ => o.push_str(&format!("%{:02X}", b)),
-        }
-    }
-    o
-}
 
 #[cfg(test)]
 mod tests {

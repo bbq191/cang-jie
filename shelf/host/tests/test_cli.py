@@ -32,7 +32,13 @@ class FakeGateway(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(b)
 
+    def _authed(self):
+        h = self.headers.get("Authorization", "")
+        return h == "Basic " + __import__("base64").b64encode(b"shelf:pw").decode()
+
     def do_GET(self):
+        if not self._authed():
+            return self._json(401, {"ok": False, "message": "需要密码"})
         if self.path == "/api/services":
             return self._json(200, {"services": self.services})
         if self.path == "/api/fonts/health":
@@ -40,6 +46,8 @@ class FakeGateway(BaseHTTPRequestHandler):
         return self._json(404, {"ok": False, "message": "not found"})
 
     def do_POST(self):
+        if not self._authed():
+            return self._json(401, {"ok": False, "message": "需要密码"})
         n = int(self.headers.get("Content-Length", 0))
         body = self.rfile.read(n)
         FakeGateway.received.append((self.path, self.headers.get("Content-Type", ""), body))
@@ -63,8 +71,8 @@ def gateway():
     srv.shutdown()
 
 
-def run(argv, base_url, capsys):
-    rc = cli.main(argv, transport_factory=lambda c: tr.HttpTransport(base_url))
+def run(argv, base_url, capsys, password="pw"):
+    rc = cli.main(argv, transport_factory=lambda c: tr.HttpTransport(base_url, user="shelf", password=password))
     return rc, capsys.readouterr().out
 
 
@@ -85,10 +93,15 @@ def test_unreachable_gateway_is_reported(capsys):
     assert rc == 2
 
 
+def test_wrong_password_is_401(gateway, capsys):
+    rc, out = run(["services"], gateway, capsys, password="nope")
+    assert rc == 2
+
+
 def test_multipart_upload_encoding(gateway, tmp_path):
     f = tmp_path / "中 文.epub"
     f.write_bytes(b"PK\x03\x04data")
-    t = tr.HttpTransport(gateway)
+    t = tr.HttpTransport(gateway, user="shelf", password="pw")
     FakeGateway.received.clear()
     j = t.post_files("/api/books", [f], {"target": "native"})
     assert j["ok"]
@@ -106,7 +119,8 @@ def test_config_defaults_and_overrides(tmp_path):
     p.config_file.write_text('host = "192.168.1.5"\nquality = "device"\nbogus = 1\n')
     c = cfgmod.load(p, {"port": 9999, "host": None})
     assert (c.host, c.port, c.quality, c.default_target) == ("192.168.1.5", 9999, "device", "native")
-    assert c.base_url == "http://192.168.1.5:9999"
+    assert c.base_url == "https://192.168.1.5:9999"
+    assert cfgmod.load(p, {"scheme": "http"}).base_url.startswith("http://")
 
 
 def test_xdg_relative_paths_are_ignored(tmp_path):

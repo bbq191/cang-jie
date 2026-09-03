@@ -52,10 +52,15 @@ impl ConfigSync<'_> {
         Ok(Some(b.display().to_string()))
     }
 
-    /// 应用补丁（Lua 文本）。dry_run 只算差异。
+    /// 应用补丁（Lua 文本）。dry_run 只算差异。运行态由 `KoReader::running()`（扫 /proc）判定。
     pub fn apply(&self, file: &str, patch_lua: &str, dry_run: bool) -> Result<ApplyResult, String> {
+        self.apply_with(file, patch_lua, dry_run, || self.ko.running())
+    }
+
+    /// 同 apply，运行态判定可注入（单测不碰真 /proc）。
+    pub fn apply_with(&self, file: &str, patch_lua: &str, dry_run: bool, running: impl Fn() -> bool) -> Result<ApplyResult, String> {
         let rel = file_of(file).ok_or("file ∈ settings|defaults|gestures")?;
-        if !dry_run && self.ko.running() {
+        if !dry_run && running() {
             return Err("KOReader 正在运行：退出后再同步（它退出时会回写覆盖）".into());
         }
         let target = self.ko.root().join(rel);
@@ -118,16 +123,17 @@ mod tests {
         std::fs::write(t.path().join("settings.reader.lua"), "return { wf_level = 3, footer = { battery = true } }\n").unwrap();
         let cs = ConfigSync { ko: &ko, backup_dir: t.path().join("bk"), tmp_dir: t.path().join("tmp") };
         let patch = "return { wf_level = 1, footer = { battery = false, reclaim_height = true } }";
-        let d = cs.apply("settings", patch, true).unwrap();
+        let d = cs.apply_with("settings", patch, true, || false).unwrap();
         assert!(d.dry_run && !d.written && d.changes.as_array().unwrap().len() == 3 && d.backup.is_none());
-        let w = cs.apply("settings", patch, false).unwrap();
+        assert!(cs.apply_with("settings", patch, false, || true).unwrap_err().contains("正在运行"));
+        let w = cs.apply_with("settings", patch, false, || false).unwrap();
         assert!(w.written && w.backup.is_some());
-        let again = cs.apply("settings", patch, false).unwrap();
+        let again = cs.apply_with("settings", patch, false, || false).unwrap();
         assert!(!again.written && again.changes.as_array().unwrap().is_empty(), "幂等");
         assert!(cs.read("settings").unwrap().contains("reclaim_height = true"));
-        assert!(cs.apply("bogus", patch, true).is_err());
+        assert!(cs.apply_with("bogus", patch, true, || false).is_err());
         // 不存在的文件也能建（gestures 在子目录）
-        let g = cs.apply("gestures", "return { gesture_reader = { hold_top_left_corner = { exit = true } } }", false).unwrap();
+        let g = cs.apply_with("gestures", "return { gesture_reader = { hold_top_left_corner = { exit = true } } }", false, || false).unwrap();
         assert!(g.written && t.path().join("settings/gestures.lua").is_file());
     }
 }

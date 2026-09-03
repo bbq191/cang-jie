@@ -10,7 +10,7 @@ reMarkable Paper Pro Move 的**统一投递与阅读质量层**：一个网页/�
 ## 架构：网关 + 领域服务
 
 ```
-浏览器 / shelf CLI ──► shelf-gateway  0.0.0.0:8778   UI + /api/services + /api/<seg>/* 反向代理
+浏览器 / shelf CLI ──► shelf-gateway  https://0.0.0.0:8778（自签 TLS + Basic 密码）  UI + /api/services + /api/<seg>/* 反向代理
                             │  按注册表转发（剥掉 <seg>，body 流式透传）
         ┌───────────────────┼─────────────────┬──────────────────┬──────────────────┐
    book-serve          koreader-serve       font-serve       wallpaper-serve     weread-serve(预留)
@@ -58,6 +58,13 @@ shelf/
 | 状态 | `~/.local/state/shelf/`（spool、轮换状态） |
 | 运行时 | `/tmp/shelf-0/shelf/{services,upload}`（`XDG_RUNTIME_DIR` 缺省回落；重启即清） |
 | 外部约定 | KOReader 根 `SHELF_KOREADER_ROOT`（缺省 `~/xovi/exthome/appload/koreader`）；xochitl 书库 `~/.local/share/remarkable/xochitl` |
+
+## 访问与密码
+
+- 浏览器开 `https://<设备IP>:8778/`（自签证书，首次点「高级 → 继续访问」），用户 `shelf`，密码=安装输出打印的初始密码
+  （设备上 `shelf-gateway show-password` 可再看；改密：`shelf-gateway passwd <新密码>` 后 `systemctl restart shelf-gateway`）。
+- CLI：`shelf -p <密码> …` / 环境变量 `SHELF_PASSWORD` / `config.toml` 的 `password` / 不给则交互输入。
+- 只有网关对外；领域服务只绑 127.0.0.1，无需认证。
 
 ## 构建 · 部署 · 卸载
 

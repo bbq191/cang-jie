@@ -1,8 +1,10 @@
 """设备访问抽象（Strategy）：HTTP 走网关；测试注入 FakeTransport。纯 urllib，自写 multipart。"""
 from __future__ import annotations
 
+import base64
 import json
 import mimetypes
+import ssl
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -15,9 +17,18 @@ class TransportError(RuntimeError):
 
 
 class HttpTransport:
-    def __init__(self, base_url: str, timeout: float = 900.0):
+    """HTTPS（自签，缺省不校验证书——局域网 + 密码保护）+ HTTP Basic。"""
+
+    def __init__(self, base_url: str, timeout: float = 900.0, user: str = "", password: str = "", verify_tls: bool = False):
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
+        self.auth = base64.b64encode(f"{user}:{password}".encode()).decode() if password else ""
+        if verify_tls:
+            self.ctx = ssl.create_default_context()
+        else:
+            self.ctx = ssl.create_default_context()
+            self.ctx.check_hostname = False
+            self.ctx.verify_mode = ssl.CERT_NONE
 
     def _do(self, method: str, path: str, query: dict | None = None, data: bytes | None = None, content_type: str | None = None) -> dict:
         url = self.base_url + path
@@ -26,10 +37,14 @@ class HttpTransport:
         req = urllib.request.Request(url, data=data, method=method)
         if content_type:
             req.add_header("Content-Type", content_type)
+        if self.auth:
+            req.add_header("Authorization", f"Basic {self.auth}")
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as r:
+            with urllib.request.urlopen(req, timeout=self.timeout, context=self.ctx) as r:
                 body = r.read()
         except urllib.error.HTTPError as e:
+            if e.code == 401:
+                raise TransportError("密码错误或未设置（config.toml 的 password / 环境变量 SHELF_PASSWORD / 交互输入）") from None
             body = e.read()
             try:
                 j = json.loads(body)

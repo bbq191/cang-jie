@@ -9,8 +9,9 @@
 #   · systemd：shelf.target + 各服务单元 → /usr/lib/systemd/system（rootfs，普通重启不丢；OTA 冲掉后重跑本脚本）
 # 写 /usr 前实检 dm-verity，激活即跳过（ 红线）；绝不给 xochitl 加依赖。
 #
-# 用法：./install.sh [--only gateway,book,koreader,font,wallpaper] [--no-systemd] [--src DIR]
+# 用法：./install.sh [--only gateway,book,koreader,font,wallpaper] [--no-systemd] [--src DIR] [--password PW]
 #   --only        只装/更新列出的服务（网关总会装）；缺省全装
+#   --password    设置网关密码（缺省首启随机生成并打印；之后可 shelf-gateway passwd <新密码>）
 #   --no-systemd  只落二进制与目录，不碰 /usr（重启后需手动 systemctl start）
 #   --src DIR     载荷目录（含 bin/ systemd/ lo-alias/），缺省=本脚本所在目录
 # 幂等，可反复跑；每次先把现有二进制备份到 /home/root/cangjie-backups/shelf-<时间>/。
@@ -20,6 +21,7 @@ set -eu
 HERE="$(cd "$(dirname "$0")" && pwd)"
 SRC="$HERE"
 ONLY=""
+PASSWORD=""
 DO_SYSTEMD=1
 for a in "$@"; do
     case "$a" in
@@ -28,13 +30,15 @@ for a in "$@"; do
         --no-systemd) DO_SYSTEMD=0 ;;
         --src=*) SRC="${a#--src=}" ;;
         --src) ;;
+        --password=*) PASSWORD="${a#--password=}" ;;
+        --password) ;;
         *) if [ -n "${_prev:-}" ]; then
-               case "$_prev" in --only) ONLY="$a" ;; --src) SRC="$a" ;; esac
+               case "$_prev" in --only) ONLY="$a" ;; --src) SRC="$a" ;; --password) PASSWORD="$a" ;; esac
            else
                echo "!! 未知参数：$a"; exit 2
            fi ;;
     esac
-    case "$a" in --only|--src) _prev="$a" ;; *) _prev="" ;; esac
+    case "$a" in --only|--src|--password) _prev="$a" ;; *) _prev="" ;; esac
 done
 
 HOME_DIR="${HOME:-/home/root}"
@@ -46,7 +50,7 @@ SYSD=/usr/lib/systemd/system
 BK="$HOME_DIR/cangjie-backups/shelf-$(date +%Y%m%d-%H%M%S)"
 
 ALL="gateway book koreader font wallpaper"
-[ -n "$ONLY" ] && SEL="gateway $(echo "$ONLY" | tr ',' ' ')" || SEL="$ALL"
+[ -n "$ONLY" ] && SEL="gateway $(echo "$ONLY" | tr ',' ' ' | sed 's/\bgateway\b//g')" || SEL="$ALL"
 svc_of() { case "$1" in gateway) echo shelf-gateway ;; *) echo "$1-serve" ;; esac; }
 
 echo "═══ 书架 shelf 安装（$(echo "$SEL" | tr ' ' ',')）═══"
@@ -71,6 +75,7 @@ if [ -f "$SRC/lo-alias/cangjie-lo-alias.sh" ]; then
     cp "$SRC/lo-alias/cangjie-lo-alias.sh" "$BIN_DIR/cangjie-lo-alias.sh" && chmod 755 "$BIN_DIR/cangjie-lo-alias.sh"
 fi
 echo "-- 二进制已落 $BIN_DIR"
+[ -n "$PASSWORD" ] && "$BIN_DIR/shelf-gateway" passwd "$PASSWORD"
 
 # ── 3. systemd（写 /usr rootfs；dm-verity 门）──
 if [ "$DO_SYSTEMD" = "0" ]; then
@@ -164,15 +169,26 @@ esac
 
 # ── 4. 健康检查 ──
 sleep 1
-GET() { if command -v curl >/dev/null 2>&1; then curl -s --max-time 3 "$1"; else wget -qO- -T 3 "$1"; fi; }
+PW="$("$BIN_DIR/shelf-gateway" show-password 2>/dev/null | head -n1)"
+# 设备端 busybox wget 不认 --user/自签证书，HTTPS 探测交给 host 侧 deploy.sh（curl -k）；这里只看 systemd + 注册表。
 echo "═══════════════════════════════════════════════════"
+ALL_OK=1
 for s in $SEL; do
-    printf '  %-16s %s\n' "$(svc_of "$s")" "$(systemctl is-active "$(svc_of "$s")" 2>/dev/null || echo '?')"
+    st="$(systemctl is-active "$(svc_of "$s")" 2>/dev/null || echo '?')"
+    printf '  %-16s %s\n' "$(svc_of "$s")" "$st"
+    [ "$st" = "active" ] || ALL_OK=0
 done
-if GET http://127.0.0.1:8778/api/services | grep -q '"services"'; then
-    echo "✅ 书架在线：http://<设备IP>:8778/  （$(GET http://127.0.0.1:8778/api/services | grep -o '"name":"[^"]*"' | tr '\n' ' ')）"
+REG="$(ls /tmp/shelf-0/shelf/services/ 2>/dev/null | sed 's/\.json$//' | tr '\n' ' ')"
+echo "  注册表        : ${REG:-（空）}"
+if [ "$ALL_OK" = "1" ] && [ -n "$REG" ]; then
+    echo "✅ 书架在线：https://<设备IP>:8778/"
+    case "$PW" in
+        ""|*（*) echo "   登录：用户 shelf  密码：已自定义（改：shelf-gateway passwd <新密码>）" ;;
+        *) echo "   登录：用户 shelf  密码 $PW   （改：shelf-gateway passwd <新密码>）" ;;
+    esac
+    echo "   ⚠ 自签证书，浏览器首次要点「高级 → 继续访问」"
 else
-    echo "⚠️  网关未响应（journalctl -u shelf-gateway）。备份在 $BK。"
+    echo "⚠️  有服务未起（journalctl -u shelf-gateway 等）。备份在 $BK。"
     [ "$DO_SYSTEMD" = "0" ] || exit 1
 fi
 echo "═══════════════════════════════════════════════════"

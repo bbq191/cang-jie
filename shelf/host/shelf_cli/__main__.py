@@ -25,6 +25,8 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--version", action="version", version=f"shelf {__version__}")
     p.add_argument("--host", help="设备 IP（缺省 config.toml 或 10.11.99.1）")
     p.add_argument("--port", type=int, help="网关端口（缺省 8778）")
+    p.add_argument("--http", action="store_true", help="用明文 HTTP（网关关了 https 时）")
+    p.add_argument("--password", "-p", help="网关密码（缺省 config.toml / $SHELF_PASSWORD / 交互输入）")
     sub = p.add_subparsers(dest="cmd", required=True)
     for m in commands.ALL:
         sp = sub.add_parser(m.NAME, help=m.HELP)
@@ -36,8 +38,13 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None, transport_factory=None) -> int:
     args = build_parser().parse_args(argv)
     paths = pathsmod.Paths()
-    cfg = cfgmod.load(paths, {"host": args.host, "port": args.port})
-    transport = (transport_factory or (lambda c: tr.HttpTransport(c.base_url)))(cfg)
+    import os
+    pw = args.password or os.environ.get("SHELF_PASSWORD") or None
+    cfg = cfgmod.load(paths, {"host": args.host, "port": args.port, "scheme": "http" if args.http else None, "password": pw})
+    if not cfg.password and transport_factory is None and sys.stdin.isatty():
+        import getpass
+        cfg.password = getpass.getpass(f"书架密码（{cfg.user}@{cfg.host}）: ")
+    transport = (transport_factory or (lambda c: tr.HttpTransport(c.base_url, user=c.user, password=c.password, verify_tls=c.verify_tls)))(cfg)
     ctx = Context(paths=paths, config=cfg, transport=transport)
     try:
         return int(args._run(args, ctx) or 0)

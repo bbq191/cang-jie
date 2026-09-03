@@ -242,13 +242,49 @@ pub fn parse_query(q: &str) -> HashMap<String, String> {
         .collect()
 }
 
+/// 服务选项：TLS（PEM）与 Basic 认证（用户名 + 校验闭包）。
+#[derive(Default)]
+pub struct ServeOpts {
+    pub tls: Option<crate::tls::TlsPem>,
+    pub basic_auth: Option<BasicAuth>,
+}
+
+pub struct BasicAuth {
+    pub realm: String,
+    pub verify: Arc<dyn Fn(&str, &str) -> bool + Send + Sync>,
+}
+
 /// 起阻塞服务器：每请求一线程（上传大文件不阻塞其它请求）。永不返回（bind 失败返回 Err）。
 pub fn serve(bind: &str, router: Router) -> Result<(), String> {
-    let server = tiny_http::Server::http(bind).map_err(|e| format!("绑定 {bind} 失败: {e}"))?;
+    serve_with(bind, router, ServeOpts::default())
+}
+
+pub fn serve_with(bind: &str, router: Router, opts: ServeOpts) -> Result<(), String> {
+    let server = match opts.tls {
+        Some(pem) => tiny_http::Server::https(bind, tiny_http::SslConfig { certificate: pem.cert, private_key: pem.key }).map_err(|e| format!("绑定 {bind}（TLS）失败: {e}"))?,
+        None => tiny_http::Server::http(bind).map_err(|e| format!("绑定 {bind} 失败: {e}"))?,
+    };
     let router = Arc::new(router);
+    let auth = opts.basic_auth.map(Arc::new);
     for mut req in server.incoming_requests() {
         let router = router.clone();
+        let auth = auth.clone();
         std::thread::spawn(move || {
+            if let Some(a) = &auth {
+                let ok = req.headers().iter().find(|h| h.field.equiv("Authorization")).and_then(|h| crate::auth::parse_basic(h.value.as_str())).map(|(u, p)| (a.verify)(&u, &p)).unwrap_or(false);
+                if !ok {
+                    std::thread::sleep(std::time::Duration::from_millis(400)); // 减缓暴力尝试
+                    let mut resp = tiny_http::Response::from_string("{\"ok\":false,\"message\":\"需要密码\"}").with_status_code(401);
+                    if let Ok(h) = tiny_http::Header::from_bytes(&b"WWW-Authenticate"[..], format!("Basic realm=\"{}\", charset=\"UTF-8\"", a.realm).as_bytes()) {
+                        resp = resp.with_header(h);
+                    }
+                    if let Ok(h) = tiny_http::Header::from_bytes(&b"Content-Type"[..], &b"application/json; charset=utf-8"[..]) {
+                        resp = resp.with_header(h);
+                    }
+                    let _ = req.respond(resp);
+                    return;
+                }
+            }
             let url = req.url().to_string();
             let (path, query) = url.split_once('?').unwrap_or((&url, ""));
             let method = Method::from_tiny(req.method());

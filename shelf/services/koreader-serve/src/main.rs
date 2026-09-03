@@ -28,7 +28,7 @@ fn status(k: &KoReader) -> serde_json::Value {
         "version": k.version(),
         "root": k.root(),
         "booksDir": k.books_dir(),
-        "books": k.list_dir(&k.books_dir(), &[]).len(),
+        "books": k.list_books("").map(|v| v.iter().filter(|e| e.kind == "file").count()).unwrap_or(0),
         "fonts": k.list_dir(&k.fonts_dir(), &["ttf","otf","ttc"]).len(),
     })
 }
@@ -126,8 +126,9 @@ fn main() {
         .get("/status", move |_| Ok(Reply::ok(&status(&k1))))
         .post("/books", move |r| receive(&k2, r, "books", &[]))
         .get("/books", move |r| {
-            let dir = k3.subdir(r.q("folder").unwrap_or("")).map_err(ApiError::bad)?;
-            Ok(Reply::ok(&serde_json::json!({"items": k3.list_dir(&dir, &[])})))
+            let folder = r.q("folder").unwrap_or("").trim_matches('/').to_string();
+            let items = k3.list_books(&folder).map_err(ApiError::bad)?;
+            Ok(Reply::ok(&serde_json::json!({"folder": folder, "items": items})))
         })
         .get("/fonts", move |_| Ok(Reply::ok(&serde_json::json!({"items": k4.list_dir(&k4.fonts_dir(), &["ttf","otf","ttc"])}))))
         .post("/fonts", move |r| receive_into(&k5, r, &k5.fonts_dir(), &["ttf", "otf", "ttc"]))

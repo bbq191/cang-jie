@@ -61,7 +61,7 @@ function uploader(box,urlOf,queryOf){
 const TABS={
  'book-serve':{title:'传书',render(sec){sec.innerHTML=`
   <div class="row"><label>投到 <select id="tgt"><option value="native">原生阅读（xochitl；AZW3/MOBI/FB2/CBZ 自动转换，EPUB 自动优化）</option><option value="annot">原生批注（PDF 定稿；只收 PDF/CBZ）</option><option value="koreader">KOReader（原样投递，任意格式）</option></select></label></div>
-  <div class="row"><label>文件夹 <input type="text" id="folder" placeholder="留空=默认"></label><label><input type="checkbox" id="opt" checked> 设备端优化 EPUB</label> <span class="small">（不勾=原样进库；本页不调用 Calibre——电脑上高质量洗书请用 <code>shelf push</code>）</span></div>
+  <div class="row"><label>文件夹 <input type="text" id="folder" placeholder="留空=默认；KOReader 可多级 如 漫画/阿拉蕾"></label><label><input type="checkbox" id="opt" checked> 设备端优化 EPUB</label> <span class="small">（不勾=原样进库；本页不调用 Calibre——电脑上高质量洗书请用 <code>shelf push</code>）</span></div>
   <div class="drop">点击或拖入文件（可多选）</div><input type="file" multiple hidden>
   <ul class="q"></ul><div class="row"><button class="btn pri go">开始上传</button><button class="btn clr">清空</button></div>
   <div id="bstat" class="kv small" style="margin-top:1em"></div><h3 style="font-size:1em">未完成 / 失败</h3><ul class="list" id="inbox"></ul>`;
@@ -74,16 +74,27 @@ const TABS={
       ul.appendChild(li)});if(!(ib.items||[]).length)ul.innerHTML='<li class="small">（空）</li>'};
   refresh();sec.dataset.refresh='1';sec.refresh=refresh;}},
  'koreader-serve':{title:'KOReader',render(sec){sec.innerHTML=`<div class="kv" id="ks">加载…</div>
-  <h3 style="font-size:1em">传字体给 KOReader <span class="small">（只装进 KOReader，不进原生阅读器；原生+KOReader 同时装请用「字体」页）</span></h3>
+  <h3 style="font-size:1em">传字体给 KOReader <span class="small">（只装进 KOReader；原生阅读器的字体去「字体」页装）</span></h3>
   <div class="drop">点击或拖入 ttf/otf（可多选）</div><input type="file" multiple hidden accept=".ttf,.otf,.ttc"><ul class="q"></ul><div class="row"><button class="btn pri go">上传</button></div>
   <h3 style="font-size:1em">KOReader fonts/</h3><ul class="list" id="kf"></ul>
-  <h3 style="font-size:1em">books/</h3><ul class="list" id="kb"></ul>`;
-  uploader(sec,()=>'/api/koreader/fonts',()=>({}));
+  <h3 style="font-size:1em">books/ <span id="kcrumb" class="small"></span></h3>
+  <div class="row"><div class="drop" style="flex:1;margin:0;padding:.6em">拖入书到当前目录（可多选）</div><input type="file" multiple hidden></div><ul class="q"></ul><div class="row"><button class="btn pri go">上传到当前目录</button></div>
+  <ul class="list" id="kb"></ul>`;
+  let kdir='';
+  // 两个上传器：字体（第一组 drop/input/q/go）与书（第二组）——按 DOM 顺序取
+  const fontBox=document.createElement('div'),bookBox=document.createElement('div');
+  const drops=sec.querySelectorAll('.drop'),inputs=sec.querySelectorAll('input[type=file]'),qs=sec.querySelectorAll('ul.q'),gos=sec.querySelectorAll('.go');
+  const wrap=(i)=>({querySelector:(sel)=>({'ul.q':qs[i],'input[type=file]':inputs[i],'.drop':drops[i],'.go':gos[i]}[sel])});
+  const $$=$;
+  uploader(wrap(0),()=>'/api/koreader/fonts',()=>({}));
+  uploader(wrap(1),()=>'/api/koreader/books',()=>({folder:kdir}));
   const refresh=async()=>{const s=await j('/api/koreader/status');$('#ks',sec).innerHTML=s.ok?`<b>安装</b><span>${s.installed?'是':'否'} ${s.version?'('+s.version+')':''}</span><b>运行中</b><span>${s.running?'是（改配置/删字体后需重启它）':'否'}</span><b>目录</b><span>${s.root}</span><b>书</b><span>${s.books} 本 · 字体 ${s.fonts} 个</span>`:`<span>${s.message}</span>`;
     const f=await j('/api/koreader/fonts');const uf=$('#kf',sec);uf.innerHTML='';(f.items||[]).forEach(it=>{const li=document.createElement('li');li.innerHTML=`<span>${it.name}</span><span class="small">${fmtB(it.bytes)} </span>`;const d=document.createElement('button');d.className='btn';d.textContent='删除';d.onclick=async()=>{if(confirm('从 KOReader 删除 '+it.name+'？')){const r=await j('/api/koreader/fonts/'+encodeURIComponent(it.name),{method:'DELETE'});if(r.ok===false)alert(r.message);refresh()}};li.lastChild.appendChild(d);uf.appendChild(li)});if(!(f.items||[]).length)uf.innerHTML='<li class="small">（空）</li>';
-    const b=await j('/api/koreader/books');const ul=$('#kb',sec);ul.innerHTML='';(b.items||[]).forEach(it=>{const li=document.createElement('li');li.innerHTML=`<span>${it.name}</span><span class="small">${fmtB(it.bytes)}</span>`;ul.appendChild(li)});if(!(b.items||[]).length)ul.innerHTML='<li class="small">（空）</li>'};
+    const b=await j('/api/koreader/books?'+new URLSearchParams({folder:kdir}));const ul=$('#kb',sec);ul.innerHTML='';
+    const crumb=$('#kcrumb',sec);crumb.innerHTML='';const parts=kdir?kdir.split('/'):[];const mk=(t,p)=>{const a=document.createElement('a');a.href='#';a.textContent=t;a.onclick=e=>{e.preventDefault();kdir=p;refresh()};return a};crumb.appendChild(mk('根',''));parts.forEach((p,i)=>{crumb.append(' / ');crumb.appendChild(mk(p,parts.slice(0,i+1).join('/')))});
+    (b.items||[]).forEach(it=>{const li=document.createElement('li');if(it.kind==='dir'){li.innerHTML=`<span>📁 <a href="#">${it.name}</a></span><span class="small">${it.count} 本</span>`;$('a',li).onclick=e=>{e.preventDefault();kdir=(kdir?kdir+'/':'')+it.name;refresh()}}else li.innerHTML=`<span>${it.name}</span><span class="small">${fmtB(it.bytes)}</span>`;ul.appendChild(li)});if(!(b.items||[]).length)ul.innerHTML='<li class="small">（空目录）</li>'};
   refresh();sec.refresh=refresh}},
- 'font-serve':{title:'字体',render(sec){assetTab(sec,'/api/fonts','ttf/otf 字体：装进原生阅读器（fontconfig 用户字体目录）并镜像到 KOReader；列表=目录里全部字体，按家族归组，都可删')}},
+ 'font-serve':{title:'字体',render(sec){assetTab(sec,'/api/fonts','ttf/otf 字体 → 只装进原生阅读器（fontconfig 用户字体目录）；KOReader 的字体去 KOReader 页装。列表=目录里全部字体，按家族归组，都可删')}},
  'wallpaper-serve':{title:'壁纸',render(sec){assetTab(sec,'/api/wallpapers','jpg/png 图片（自动裁到 954×1696，首张自动启用，下次休眠即生效）',{
    header:`<div class="row"><label>轮换 <select id="wpmode"><option value="sequential">按顺序</option><option value="random">随机</option><option value="fixed">固定</option></select></label><span id="wpst" class="small"></span></div>`,
    onRender:async(sec,refresh)=>{const st=await j('/api/wallpapers/status');const sel=$('#wpmode',sec);if(st.ok){sel.value=st.mode;$('#wpst',sec).textContent=`当前 ${st.current||'（无）'} · bind ${st.mounted}/${st.expectedMounts}`}

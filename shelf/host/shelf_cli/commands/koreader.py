@@ -26,7 +26,7 @@ def add_args(p):
     sy.add_argument("--dicts", action="store_true", help="按 profile/dicts.txt 同步词典")
     for x in (df, sy):
         x.add_argument("--profile", type=Path, default=PROFILE_DIR)
-    fo = sub.add_parser("font", help="只给 KOReader 装字体：add <ttf...> | ls | rm <file>（原生+KOReader 同装用 `shelf font`）")
+    fo = sub.add_parser("font", help="给 KOReader 装字体：add <ttf...> | ls | rm <file>（原生阅读器用 `shelf font`）")
     fsub = fo.add_subparsers(dest="fop", required=True)
     fa = fsub.add_parser("add")
     fa.add_argument("files", nargs="+", type=Path)

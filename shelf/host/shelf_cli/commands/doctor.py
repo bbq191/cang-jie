@@ -33,6 +33,7 @@ def run(args, ctx) -> int:
         print("pymupdf       : 有")
     except ImportError:
         print("pymupdf       : 缺（大 PDF 分卷/体检不可用）")
+    print(f"认证          : 用户 {ctx.config.user}，密码{'已提供' if ctx.config.password else '未提供（config.toml password / $SHELF_PASSWORD / 交互输入）'}；TLS 校验 {'开' if ctx.config.verify_tls else '关（自签）'}")
     try:
         n = len(ctx.transport.get("/api/services").get("services", []))
         print(f"设备网关      : {ctx.config.base_url} 在线，{n} 个服务")

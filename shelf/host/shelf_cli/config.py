@@ -9,6 +9,10 @@ from .paths import Paths
 DEFAULTS = {
     "host": "10.11.99.1",
     "port": 8778,
+    "scheme": "https",
+    "user": "shelf",
+    "password": "",
+    "verify_tls": False,
     "ssh": "root@10.11.99.1",
     "default_target": "native",
     "quality": "auto",
@@ -20,6 +24,10 @@ DEFAULTS = {
 class Config:
     host: str
     port: int
+    scheme: str
+    user: str
+    password: str
+    verify_tls: bool
     ssh: str
     default_target: str
     quality: str
@@ -27,7 +35,7 @@ class Config:
 
     @property
     def base_url(self) -> str:
-        return f"http://{self.host}:{self.port}"
+        return f"{self.scheme}://{self.host}:{self.port}"
 
 
 def load(paths: Paths, overrides: dict | None = None) -> Config:

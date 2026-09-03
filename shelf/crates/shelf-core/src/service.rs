@@ -1,6 +1,6 @@
 //! 服务启动模板（Template Method）：解析参数 → 建目录 → 自注册 → 起服务器。
 //! 各领域服务只提供 [`ServiceSpec`] 与路由构造函数，其余流程一致。
-use crate::http::{self, Reply, Router};
+use crate::http::{self, Reply, Router, ServeOpts};
 use crate::paths::Paths;
 use crate::registry::{self, ServiceInfo, UiTab};
 
@@ -31,6 +31,10 @@ fn port_of(bind: &str) -> u16 {
 
 /// 跑服务：自动挂 `GET /health`。永不返回（失败 Err）。
 pub fn run(spec: &ServiceSpec, bind: &str, paths: &Paths, router: Router) -> Result<(), String> {
+    run_with(spec, bind, paths, router, ServeOpts::default())
+}
+
+pub fn run_with(spec: &ServiceSpec, bind: &str, paths: &Paths, router: Router, opts: ServeOpts) -> Result<(), String> {
     paths.ensure().map_err(|e| format!("建目录失败: {e}"))?;
     let info = ServiceInfo {
         name: spec.name.into(),
@@ -47,8 +51,8 @@ pub fn run(spec: &ServiceSpec, bind: &str, paths: &Paths, router: Router) -> Res
     let router = Router::new()
         .get("/health", move |_| Ok(Reply::ok(&serde_json::json!({"ok": true, "service": name, "version": ver}))))
         .merge(router);
-    println!("[{}] v{} 监听 http://{}/", spec.name, spec.version, bind);
-    http::serve(bind, router)
+    println!("[{}] v{} 监听 {}://{}/{}", spec.name, spec.version, if opts.tls.is_some() { "https" } else { "http" }, bind, if opts.basic_auth.is_some() { "（Basic 认证）" } else { "" });
+    http::serve_with(bind, router, opts)
 }
 
 #[cfg(test)]
