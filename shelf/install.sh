@@ -137,10 +137,12 @@ esac
 case " $SEL " in *" font "*)
     QRR="$HOME_DIR/xovi/exthome/qt-resource-rebuilder"
     if [ -d "$QRR" ] && [ -d "$SRC/xovi" ]; then
-        # 固件按 update.conf 的 REMARKABLE_RELEASE_VERSION 主次号挑 qmd（3.27 与 3.28 的 FormatFont.qml 结构不同）。
-        # ⚠ /etc/version 是 build 号（如 20260612085811），不含语义版本——真机踩过选错版本。
-        FWV="$(sed -n 's/^REMARKABLE_RELEASE_VERSION=\([0-9]*\.[0-9]*\).*/\1/p' /usr/share/remarkable/update.conf 2>/dev/null | head -n1)"
+        # 固件按 os-release 的 IMG_VERSION 主次号挑 qmd（3.27 与 3.28 的 FormatFont.qml 结构不同）。
+        # ⚠ /etc/version 是 build 号（如 20260612085811）、不含语义版本——真机踩过选错版本；
+        #   语义版本在 /usr/lib/os-release（rootfs）与 /etc/os-release 的 IMG_VERSION="3.27.3.0"。
+        FWV="$(sed -n 's/^IMG_VERSION="\{0,1\}\([0-9]*\.[0-9]*\).*/\1/p' /usr/lib/os-release /etc/os-release 2>/dev/null | head -n1)"
         [ -n "$FWV" ] || FWV=3.28
+        echo "-- 固件 $FWV（IMG_VERSION）"
         Q="font-menu-dynamic.qmd"; [ "$FWV" = "3.27" ] && Q="font-menu-dynamic-3.27.qmd"
         [ -f "$QRR/add-reading-fonts.qmd" ] && mv "$QRR/add-reading-fonts.qmd" "$BK/" && echo "-- 旧 add-reading-fonts.qmd 已移到备份（避免与动态菜单重复追加）"
         rm -f "$QRR/font-menu-dynamic.qmd" "$QRR/font-menu-dynamic-3.27.qmd"
