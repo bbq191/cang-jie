@@ -40,7 +40,8 @@ shelf/
 ├── host/                              CLI `shelf`（纯 stdlib、系统 python3）+ pytest；host/calibre/ = Calibre 前置流水线（自 reading/tools/calibre 迁入）
 ├── xovi/font-menu-dynamic{,-3.27}.qmd  字体菜单读 fonts.json 动态追加（缺文件回退内建三项）
 ├── wallpaper/                         5 行 sleep 钩子 + README（逻辑在 wallpaper-serve 子命令）
-├── koreader/ · weread-web/            后续阶段落位
+├── koreader/                          配置即代码：profile/{settings.reader.patch,defaults.custom,gestures.patch}.lua + fonts.txt/dicts.txt + merge.lua
+├── weread-web/                        P5 门控 spike（rmweb × Move）
 └── docs/reMarkable书架白皮书.md        设计决策 + 真机记录
 ```
 
@@ -77,7 +78,7 @@ shelf/host/bin/shelf push 书.azw3 论文.pdf -t native|annot|koreader [-f 文�
                  否则直推网关（设备端 Rust 转换/优化兜底）。>60MB PDF 自动 pymupdf 分卷（可选依赖）。
 shelf font add 字体.ttf | ls | rm <file>                  # 装进 ~/.local/share/fonts + fc-cache + fonts.json + KOReader fonts/
 shelf wallpaper add 图.jpg [--activate] | ls | set <name> | mode sequential|random|fixed | rm <name>
-shelf koreader …                                      # Phase 3
+shelf koreader pull | diff | sync [-n] [--fonts] [--dicts]   # 配置即代码（Lua 合并在设备端跑）
 ```
 配置 `$XDG_CONFIG_HOME/shelf/config.toml`（host/port/ssh/default_target/quality/split_pdf_mb）。
 
@@ -88,6 +89,6 @@ shelf koreader …                                      # Phase 3
 | P0 | 骨架 · bookconv 抽离（md5 对拍一致）· CI · 打包/编排接入 · 五服务注册/代理本机冒烟 | ✅ 离线完成 |
 | P1 | 统一投递：三目标手选（native/annot/koreader）、格式自动处理、host Calibre 优先/设备兜底、完整单页 UI、`shelf push` | ✅ 离线完成（本机三服务冒烟通），**真机待验**（设备离线） |
 | P2 | 字体/壁纸上传即可用：font-serve（fontconfig+fonts.json+KOReader 镜像）、wallpaper-serve（954×1696 池化/轮换/bind 子命令）、动态字体菜单 qmd（3.27/3.28）、sleep 钩子+开机 bind 单元、旧壁纸工具迁移、CLI font/wallpaper | ✅ 离线完成（本机冒烟通），**真机 spike 待做**（字体免重启 S-A/S-B、休眠显示） |
-| P3 | KOReader 配置即代码 | 待做 |
+| P3 | KOReader 配置即代码：`koreader/profile/` 三份补丁 + `merge.lua`（设备端 luajit 深合并，dry-run/备份/回读/幂等）+ `/config/{file}` 端点（运行中拒写）+ 词典上传 + CLI pull/diff/sync | ✅ 离线完成（merge 本机 luajit 验证），**真机待验**（profile 值需 pull 核对） |
 | P4 | 原生高质量门 | 待做 |
 | P5 | 微读网页版门控 spike（rmweb × Move） | 待做 |

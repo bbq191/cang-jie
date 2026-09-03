@@ -1,0 +1,4 @@
+# 同步到 koreader/fonts/ 的字体文件（每行一个路径，相对仓库根或绝对；# 注释）。
+# 字体文件本身不入库（见 .gitignore），按本机实际位置填。
+chinese-ime/fonts/LXGWNeoZhiSongScreenFull.ttf
+chinese-ime/fonts/HanaMinB.ttf

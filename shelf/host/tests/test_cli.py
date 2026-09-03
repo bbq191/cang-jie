@@ -49,12 +49,17 @@ class FakeGateway(BaseHTTPRequestHandler):
         pass
 
 
+def serve(handler):
+    """起一个假网关（独立线程），返回 (base_url, server)。各测试文件用自己的 Handler 子类，互不污染。"""
+    srv = HTTPServer(("127.0.0.1", 0), handler)
+    threading.Thread(target=srv.serve_forever, daemon=True).start()
+    return f"http://127.0.0.1:{srv.server_port}", srv
+
+
 @pytest.fixture(scope="module")
 def gateway():
-    srv = HTTPServer(("127.0.0.1", 0), FakeGateway)
-    t = threading.Thread(target=srv.serve_forever, daemon=True)
-    t.start()
-    yield f"http://127.0.0.1:{srv.server_port}"
+    url, srv = serve(FakeGateway)
+    yield url
     srv.shutdown()
 
 

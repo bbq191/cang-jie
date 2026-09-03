@@ -46,6 +46,13 @@ class HttpTransport:
     def get(self, path: str, query: dict | None = None) -> dict:
         return self._do("GET", path, query)
 
+    def get_text(self, path: str) -> str:
+        r = self._do("GET", path)
+        return r["raw"] if "raw" in r else json.dumps(r)
+
+    def post_text(self, path: str, data: bytes, query: dict | None = None) -> dict:
+        return self._do("POST", path, query, data, "text/plain; charset=utf-8")
+
     def delete(self, path: str) -> dict:
         return self._do("DELETE", path)
 

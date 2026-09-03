@@ -1,4 +1,4 @@
-"""font / wallpaper 子命令对假网关。"""
+"""font / wallpaper 子命令对假网关（本文件自己的 Handler 子类，不污染 FakeGateway）。"""
 from __future__ import annotations
 
 import json
@@ -6,18 +6,17 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-from test_cli import FakeGateway, gateway, run  # noqa: E402,F401
+import pytest  # noqa: E402
+from test_cli import FakeGateway, run, serve  # noqa: E402
 
 
-def _patch_gateway():
-    orig_get, orig_post = FakeGateway.do_GET, FakeGateway.do_POST
-
+class AssetsGateway(FakeGateway):
     def do_GET(self):
         if self.path == "/api/fonts":
             return self._json(200, {"items": [{"name": "a.ttf", "bytes": 10, "extra": {"family": "A Fam", "source": "user"}}]})
         if self.path == "/api/wallpapers":
             return self._json(200, {"mode": "sequential", "current": "x.png", "items": [{"name": "x.png", "bytes": 2048, "extra": {"current": True}}]})
-        return orig_get(self)
+        return super().do_GET()
 
     def do_POST(self):
         n = int(self.headers.get("Content-Length", 0))
@@ -36,10 +35,12 @@ def _patch_gateway():
         FakeGateway.received.append((self.path, "DELETE", b""))
         return self._json(200, {"ok": True})
 
-    FakeGateway.do_GET, FakeGateway.do_POST, FakeGateway.do_PUT, FakeGateway.do_DELETE = do_GET, do_POST, do_PUT, do_DELETE
 
-
-_patch_gateway()
+@pytest.fixture(scope="module")
+def gateway():
+    url, srv = serve(AssetsGateway)
+    yield url
+    srv.shutdown()
 
 
 def test_font_add_ls_rm(gateway, tmp_path, capsys):
