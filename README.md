@@ -23,7 +23,7 @@
 >
 > **三个设备端 Rust crate 的依赖关系**（详见《[设备端 Rust 架构](docs/reMarkable设备端Rust架构.md)》）：低层设备能力（`epubindex`/`fswatch`/`inject`/`notebook_rm`）抽成**共享底座 `device-core/`**，块3阅读（`weread-device`）与块5 PKM（`pkm-device`）都依赖它。`knowledge/pkm/` **生产只依赖 `device-core`**（`weread-device` 降为 dev-dependency，仅 1 个 fixture 测试用）→ **生产 daemon 构建不再全量编译整条 weread 管线**。`reading/` 不反向依赖 `knowledge/pkm/`，方向单向无环。这是 2026-08-23 拆 `weread-client/`→`reading/`+`knowledge/pkm/`、再 2026-08-25 抽 `device-core/` 后的形状。
 >
-> **2026-09-03 新增顶层 `shelf/`（书架）**：跨块 3+4 的统一投递/阅读质量层（网关 `:8778` + `book/koreader/font/wallpaper` 可插拔服务），**不引用 device-core / weread-device**；通用内容层（多格式转换/EPUB 优化器/图片处理）从 `weread-device` **抽成 `shelf/crates/bookconv`**，weread 线改为依赖它并 re-export 保路径。详见 `shelf/README.md` 与《书架白皮书》。
+> **2026-09-03 新增顶层 `shelf/`（书架）**：跨块 3+4 的统一投递/阅读质量层（网关 `:8778` + `book/koreader/font/wallpaper` 可插拔服务），**不引用 device-core / weread-device**；通用内容层（多格式转换/EPUB 优化器/图片处理）从 `weread-device` **抽成 `shelf/crates/bookconv`**，weread 线改为依赖它并 re-export 保路径。详见 `shelf/README.md` 与《书架白皮书》。**2026-09-03 真机通**（3.27.3.0）：三目标投递、字体/壁纸上传即用（免重启）、KOReader 配置即代码、HTTPS+密码；分支 `feature/shelf-p1` 未合并。
 
 ## 白皮书（完整设计 + 真机调试记录）
 
