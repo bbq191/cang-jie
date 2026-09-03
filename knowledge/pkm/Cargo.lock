@@ -133,7 +133,6 @@ name = "bookconv"
 version = "0.1.0"
 dependencies = [
  "base64",
- "device-core",
  "fb2",
  "image",
  "miniz_oxide",
@@ -1695,11 +1694,8 @@ dependencies = [
  "bookconv",
  "device-core",
  "ego-tree",
- "fb2",
- "image",
  "inotify",
  "md5",
- "miniz_oxide",
  "png 0.17.16",
  "qrcode",
  "quick-xml",
@@ -1711,7 +1707,6 @@ dependencies = [
  "tiny_http",
  "ureq",
  "uuid",
- "zip",
 ]
 
 [[package]]
