@@ -87,7 +87,7 @@ fn upload(st: &State, r: &mut Request<'_>) -> ApiResult {
                 if o.ok {
                     st.spool.archive_done(&staged);
                 } else {
-                    st.spool.archive_failed(&staged);
+                    st.spool.archive_failed(&staged, &o.message);
                 }
                 items.push(o);
             }

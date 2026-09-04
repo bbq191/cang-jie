@@ -30,6 +30,7 @@ fn status(k: &KoReader) -> serde_json::Value {
         "booksDir": k.books_dir(),
         "books": k.list_books("").map(|v| v.iter().filter(|e| e.kind == "file").count()).unwrap_or(0),
         "fonts": k.list_dir(&k.fonts_dir(), &["ttf","otf","ttc"]).len(),
+        "dicts": list_dicts(k).len(),
     })
 }
 

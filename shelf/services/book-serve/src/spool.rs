@@ -20,7 +20,13 @@ pub struct SpoolEntry {
     pub name: String,
     pub bytes: u64,
     pub state: &'static str,
+    /// 失败原因（仅 failed 条目，读 `<name>.reason` sidecar）。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason: Option<String>,
 }
+
+/// 失败原因 sidecar 后缀。
+const REASON_EXT: &str = ".reason";
 
 impl Spool {
     pub fn new(root: PathBuf) -> Spool {
@@ -66,8 +72,14 @@ impl Spool {
         archive(p, &self.done());
         prune(&self.done(), DONE_CAP);
     }
-    pub fn archive_failed(&self, p: &Path) {
-        archive(p, &self.failed());
+    /// 归档失败源到 `failed/`，并把 `reason` 写进 `<归档名>.reason` sidecar（供列表展示，重试不再靠猜）。
+    pub fn archive_failed(&self, p: &Path, reason: &str) {
+        let target = archive(p, &self.failed());
+        if let Some(t) = &target {
+            if !reason.trim().is_empty() {
+                let _ = std::fs::write(reason_path(t), reason.trim());
+            }
+        }
         prune(&self.failed(), FAILED_CAP);
     }
 
@@ -88,11 +100,16 @@ impl Spool {
     pub fn list(&self) -> Vec<SpoolEntry> {
         let mut out = Vec::new();
         for (dir, state) in [(self.inbox(), "pending"), (self.work(), "working"), (self.failed(), "failed")] {
-            if let Ok(rd) = std::fs::read_dir(dir) {
+            if let Ok(rd) = std::fs::read_dir(&dir) {
                 for e in rd.flatten() {
+                    let fname = e.file_name().to_string_lossy().to_string();
+                    if fname.ends_with(REASON_EXT) {
+                        continue; // sidecar 不作为条目
+                    }
                     if let Ok(md) = e.metadata() {
                         if md.is_file() {
-                            out.push(SpoolEntry { name: e.file_name().to_string_lossy().to_string(), bytes: md.len(), state });
+                            let reason = if state == "failed" { std::fs::read_to_string(reason_path(&e.path())).ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()) } else { None };
+                            out.push(SpoolEntry { name: fname, bytes: md.len(), state, reason });
                         }
                     }
                 }
@@ -102,19 +119,28 @@ impl Spool {
         out
     }
 
-    /// failed/ → inbox/（重试）。
+    /// failed/ → inbox/（重试）；连带清掉 `.reason` sidecar。
     pub fn retry(&self, name: &str) -> Result<(), String> {
         let src = self.failed().join(safe(name)?);
         if !src.is_file() {
             return Err("failed/ 里没有这个文件".into());
         }
+        let _ = std::fs::remove_file(reason_path(&src));
         archive(&src, &self.inbox());
         Ok(())
     }
     pub fn delete_failed(&self, name: &str) -> Result<(), String> {
         let src = self.failed().join(safe(name)?);
+        let _ = std::fs::remove_file(reason_path(&src));
         std::fs::remove_file(&src).map_err(|e| format!("删除失败: {e}"))
     }
+}
+
+/// `<文件>.reason` sidecar 路径。
+fn reason_path(p: &Path) -> PathBuf {
+    let mut s = p.as_os_str().to_os_string();
+    s.push(REASON_EXT);
+    PathBuf::from(s)
 }
 
 fn safe(name: &str) -> Result<&str, String> {
@@ -134,11 +160,17 @@ fn unique(dir: &Path, name: &str) -> PathBuf {
     t
 }
 
-fn archive(src: &Path, dest_dir: &Path) {
+/// 归档到 `dest_dir`（rename，跨设备回退 copy+rm）。返回落地后的唯一路径（失败 None）。
+fn archive(src: &Path, dest_dir: &Path) -> Option<PathBuf> {
     let name = src.file_name().and_then(|s| s.to_str()).unwrap_or("file");
     let target = unique(dest_dir, name);
-    if std::fs::rename(src, &target).is_err() && std::fs::copy(src, &target).is_ok() {
+    if std::fs::rename(src, &target).is_ok() {
+        Some(target)
+    } else if std::fs::copy(src, &target).is_ok() {
         let _ = std::fs::remove_file(src);
+        Some(target)
+    } else {
+        None
     }
 }
 
@@ -181,16 +213,21 @@ mod tests {
         let w = s.claim("a.epub").unwrap();
         assert!(w.starts_with(s.work()));
         assert!(s.claim("a.epub").is_none(), "二次认领必须失败");
-        s.archive_failed(&w);
-        assert_eq!(s.list(), vec![SpoolEntry { name: "a.epub".into(), bytes: 1, state: "failed" }]);
+        s.archive_failed(&w, "质量门未过：双 id");
+        let listed = s.list();
+        assert_eq!(listed, vec![SpoolEntry { name: "a.epub".into(), bytes: 1, state: "failed", reason: Some("质量门未过：双 id".into()) }]);
         s.retry("a.epub").unwrap();
         assert_eq!(s.list()[0].state, "pending");
+        assert!(s.list()[0].reason.is_none(), "重试后原因清掉");
+        assert!(!reason_path(&s.failed().join("a.epub")).exists(), "reason sidecar 已删");
         assert!(s.retry("../x").is_err());
-        // 同名再入 failed 不覆盖
+        // 同名再入 failed 不覆盖，reason 跟着归档名走
         let w2 = s.claim("a.epub").unwrap();
         std::fs::write(s.failed().join("a.epub"), b"old").unwrap();
-        s.archive_failed(&w2);
-        assert_eq!(s.list().len(), 2);
+        s.archive_failed(&w2, "转换失败");
+        let l = s.list();
+        assert_eq!(l.len(), 2);
+        assert!(l.iter().any(|e| e.name == "1_a.epub" && e.reason.as_deref() == Some("转换失败")), "{l:?}");
     }
 
     #[test]

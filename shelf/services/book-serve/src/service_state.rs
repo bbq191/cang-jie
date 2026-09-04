@@ -63,7 +63,7 @@ impl State {
             let data = match std::fs::read(&work) {
                 Ok(d) => d,
                 Err(e) => {
-                    self.spool.archive_failed(&work);
+                    self.spool.archive_failed(&work, &format!("读取失败: {e}"));
                     out.push(Outcome { file: name, target: "native".into(), ok: false, message: format!("读取失败: {e}") });
                     continue;
                 }
@@ -72,7 +72,7 @@ impl State {
             if o.ok {
                 self.spool.archive_done(&work);
             } else {
-                self.spool.archive_failed(&work);
+                self.spool.archive_failed(&work, &o.message);
             }
             println!("[book-serve] inbox {} → {}: {}", name, if o.ok { "ok" } else { "fail" }, o.message);
             out.push(o);
