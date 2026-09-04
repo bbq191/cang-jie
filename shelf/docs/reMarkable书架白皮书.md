@@ -189,6 +189,29 @@
 - **方法**：`extract_qml.py` 从 xochitl 二进制解出真实 `FormatFont.qml`（blob `qml_00d42f92`），建 [`asivery/qmldiff`](https://github.com/asivery/qmldiff) CLI，`apply-diffs <root> <dest> qmd -f -c` **离线实跑**：确认 `Item[#fontContainer] > Grid[#fontGrid] > Repeater > Item > Text[#fontSample]` 选择器命中（delegate 以 `Repeater > Item` 可达）、产物是合法 QML、cjSync 与 elide 共存。**这条离线验证管线务必复用，别盲改 qmd 上机**（打不中的 TRAVERSE 会让整个 qmd 不生效，退回字体菜单只剩 4 项）。
 - qmd 改动需 xochitl 重启（qmldiff 在启动时应用）才生效，一律走 `/home/root/xovi/start`（重启核 `grep -c xovi.so /proc/<pid>/maps`）。
 
+## 03n｜细节调整（2026-09-04，重构主体后的打磨，用户四项全做，分批部署验证）
+
+Explore 走查出的粗糙点 + 一个真 bug，分 5 批。批 1-4 已真机部署验证，批 5 待用户目测/清理。
+
+**批 1 网页 UI + 投递回执（`ui.rs` + book-serve）**：
+- ★真 bug：上传器 `for(f of files){if(f.st)continue}` 让失败项永远跳过，某本失败后再点上传不重试——改成 `if(f.st==='ok')continue`（失败可重传）。
+- 队列逐项「×」删除、各上传器自动补「清空」按钮、顶部「N/M 完成·K 失败」总进度；顶层回执 `note` 不再丢（KOReader"运行中需刷新"等能看到）。
+- localStorage 记住 target/optimize/质量门/文件夹/壁纸模式（`try/catch` 包，禁用回默认）；非 USB 网段时传书区提示"大书走 USB"；微读 tab 明确"未上线"。
+- **B1 中文回退链展示**：xochitl 字体区顶部列"中文缺字回退：A → B …"（覆盖率≥8% 降序，客户端从 `/api/fonts` 的 `cjkPct` 算，与服务端 `cjk_fallback_keys` 同判据）。
+- **C3 failed 留原因**：`spool.rs` `archive_failed(p, reason)` 写 `<名>.reason` sidecar，`SpoolEntry.reason`，`list()` 读回、`retry`/`delete` 连带清；inbox 行显示失败原因（重试不再靠猜）。真机验证：坏书失败带 reason、重试通、清理不留 sidecar。
+- **D2 网页 KOReader 词典**：KOReader tab 加词典卡（`/api/koreader/dicts` GET/POST 已存在）；status 加 `dicts` 数。
+
+**批 2 字体渲染（font-serve/koreader-serve/shelf-core）**：
+- `ttf`（家族名/魔数/CJK 覆盖率 cmap）从 font-serve 下沉 **`shelf_core::ttf`** 共享。
+- **B3**：KOReader 字体 `GET /fonts` 也算 `cjkPct`、网页列表显示徽标（真机：FZFW 35% / 京華 100%）。
+- **B2 embolden**：`font-serve` `FontConfig.embolden_cjk_fallback`（默认 false，`AtomicBool` 运行时可切），`write_fontconfig` 为真时对每个回退字体加 `<match target="font"><edit name="embolden">true`；`PUT /api/fonts/config` 实时切（fontconfig 无需重启 xochitl，翻书即见）+ 网页开关。真机：PUT true→fonts.conf 6 条 embolden、false→0。**观感（墨水屏是否变实）待用户目测**。
+
+**批 3 host CLI（`host/shelf_cli/`）**：`shelf status` 显示 book-serve spool 待/失败数；新增 `shelf inbox [--retry|--delete 名字]`（对齐网页 /inbox）。pytest 覆盖。
+
+**批 4 install.sh**：`--with-xovi-reenable` 可选装 `cangjie-xovi-reenable.service`（单一事实源 `reading/device-rs/systemd/`，deploy/package stage 进 shelf 载荷）；不装时缺失则**醒目提示**（裸 restart xochitl 丢 xovi）；dm-verity 设备壁纸 bind 不持久单独警告。shellcheck 零告警。
+
+**批 5（待用户）**：C5 磁盘残留 8 个「云同步探针」测试文档——它们 `parent=trash` 但 UI 回收站不显示（与云同步状态错位）；**正确清法是 UI 里清空回收站（云端一并删），不直接 rm 本地文件**（ + §04 metadata≠UI 教训）；不趁用户在读时停 xochitl 硬删。C6 字体菜单 elide 宽度（现 `rightMargin:8`）待用户目测。
+
 ## 04｜踩坑
 
 - **磁盘 metadata ≠ xochitl/UI 实际状态（2026-09-04 用户纠正）**：直接 `sed` 改 `.metadata` 的 `parent=trash` 并不等于"已进回收站"——xochitl 运行时在内存缓存、写回时覆盖，云同步也可能还原；出现过磁盘 8 个探针 `parent=trash` 但 UI 回收站只见真实书的错位。**涉及书库状态以设备 UI/xochitl 实际为准，不拿磁盘 metadata 当真相**；清测试文档走正常删除流程或停 xochitl 后操作，别边跑边改。
