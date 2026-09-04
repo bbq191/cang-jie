@@ -8,6 +8,7 @@ from pathlib import Path
 
 from .. import calibre_bridge as cb
 from .. import pdfsplit
+from ..receipts import guard_file, print_receipts
 
 NAME = "push"
 HELP = "投书：--target native|annot|koreader（host 有 Calibre 走高质量路，否则设备兜底）"
@@ -91,8 +92,7 @@ def run(args, ctx) -> int:
     rc = 0
     work = cb.workdir()
     for path in args.files:
-        if not path.is_file():
-            print(f"✗ {path}: 不是文件")
+        if not guard_file(path):
             rc = 1
             continue
         route = decide_route(quality, target, path, calibre)
@@ -125,9 +125,5 @@ def run(args, ctx) -> int:
                 print(f"✗ {o.name}: {e}")
                 rc = 1
                 continue
-            for it in res.get("items", [res]):
-                mark = "✓" if it.get("ok") else "✗"
-                print(f"{mark} {it.get('file', o.name)}: {it.get('message', '')}")
-                if not it.get("ok"):
-                    rc = 1
+            rc |= print_receipts(res, name_key="file", default_name=o.name, fallback_self=True)
     return rc

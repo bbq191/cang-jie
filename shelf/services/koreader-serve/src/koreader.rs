@@ -2,11 +2,79 @@
 //! 投书=原字节落 `books/`（不转换不改名——KOReader 原生读 EPUB/PDF/AZW3/MOBI/FB2/CBZ）；
 //! 运行态=扫 `/proc/*/cmdline` 含 koreader（改其配置必须在它退出后，退出回写会覆盖）。
 use serde::Serialize;
+use shelf_core::asset::{AssetItem, AssetStore};
 use shelf_core::multipart::safe_basename;
 use std::path::{Path, PathBuf};
 
 pub struct KoReader {
     root: PathBuf,
+}
+
+/// KOReader 上传落盘目标（books/fonts/dicts 共用一个 [`AssetStore`] 实现，收编原先两份手搓 multipart 循环）。
+/// `exts` 空＝接受任意格式（books「原样」）。install 走 `dest/.<name>.part` → rename：`.` 前缀半成品
+/// KOReader 扫目录不见（原 books 才有的保证，现字体/词典也一并获得）。
+pub struct KoStore {
+    dest: PathBuf,
+    kind: &'static str,
+    exts: &'static [&'static str],
+}
+
+pub const KO_ANY: &[&str] = &[];
+pub const KO_FONT_EXT: &[&str] = &["ttf", "otf", "ttc"];
+pub const KO_DICT_EXT: &[&str] = &["ifo", "idx", "dict", "dz", "syn", "oft"];
+
+impl KoStore {
+    pub fn new(dest: PathBuf, kind: &'static str, exts: &'static [&'static str]) -> KoStore {
+        KoStore { dest, kind, exts }
+    }
+}
+
+impl AssetStore for KoStore {
+    fn kind(&self) -> &'static str {
+        self.kind
+    }
+    fn allowed_ext(&self) -> &'static [&'static str] {
+        self.exts
+    }
+    fn validate(&self, _name: &str, _staged: &Path) -> Result<(), String> {
+        Ok(()) // KOReader 侧不做格式/尺寸校验（原样落盘）
+    }
+    fn install(&self, name: &str, staged: &Path) -> Result<AssetItem, String> {
+        std::fs::create_dir_all(&self.dest).map_err(|e| format!("建目录失败: {e}"))?;
+        let dest = self.dest.join(name);
+        let part = self.dest.join(format!(".{name}.part"));
+        std::fs::copy(staged, &part).map_err(|e| format!("落盘失败: {e}"))?;
+        let bytes = std::fs::metadata(&part).map(|m| m.len()).unwrap_or(0);
+        std::fs::rename(&part, &dest).map_err(|e| {
+            let _ = std::fs::remove_file(&part);
+            format!("落盘失败: {e}")
+        })?;
+        Ok(AssetItem { name: name.to_string(), bytes, extra: serde_json::Value::Null })
+    }
+    fn list(&self) -> Vec<AssetItem> {
+        let mut v = Vec::new();
+        if let Ok(rd) = std::fs::read_dir(&self.dest) {
+            for e in rd.flatten() {
+                let name = e.file_name().to_string_lossy().to_string();
+                if name.starts_with('.') {
+                    continue;
+                }
+                if let Ok(md) = e.metadata() {
+                    if md.is_file() {
+                        v.push(AssetItem { name, bytes: md.len(), extra: serde_json::Value::Null });
+                    }
+                }
+            }
+        }
+        v
+    }
+    fn remove(&self, name: &str) -> Result<(), String> {
+        let n = safe_basename(name, "");
+        if n.is_empty() {
+            return Err("非法文件名".into());
+        }
+        std::fs::remove_file(self.dest.join(n)).map_err(|e| e.to_string())
+    }
 }
 
 #[derive(Serialize, Clone, Debug, PartialEq)]
@@ -91,33 +159,6 @@ impl KoReader {
         Ok(v)
     }
 
-    /// 把 reader 里的字节原样写进 books/[folder]/<name>（先写 .part 再 rename，KOReader 扫目录不会见半成品）。
-    pub fn put_book(&self, folder: &str, filename: &str, reader: &mut dyn std::io::Read) -> Result<FileItem, String> {
-        let dir = self.subdir(folder)?;
-        std::fs::create_dir_all(&dir).map_err(|e| format!("建目录失败: {e}"))?;
-        let name = safe_basename(filename, "book.bin");
-        let dest = dir.join(&name);
-        let tmp = dir.join(format!(".{name}.part"));
-        let n = (|| -> Result<u64, String> {
-            let mut f = std::fs::File::create(&tmp).map_err(|e| e.to_string())?;
-            std::io::copy(reader, &mut f).map_err(|e| e.to_string())
-        })();
-        match n {
-            Ok(0) => {
-                let _ = std::fs::remove_file(&tmp);
-                Err("空文件".into())
-            }
-            Ok(bytes) => {
-                std::fs::rename(&tmp, &dest).map_err(|e| format!("落盘失败: {e}"))?;
-                Ok(FileItem { name, bytes })
-            }
-            Err(e) => {
-                let _ = std::fs::remove_file(&tmp);
-                Err(format!("接收失败: {e}"))
-            }
-        }
-    }
-
     pub fn list_dir(&self, dir: &Path, exts: &[&str]) -> Vec<FileItem> {
         let mut v = Vec::new();
         if let Ok(rd) = std::fs::read_dir(dir) {
@@ -164,29 +205,48 @@ mod tests {
     use super::*;
 
     #[test]
-    fn put_book_keeps_bytes_and_name() {
+    fn subdir_validates_folder_and_lists() {
         let t = tempfile::tempdir().unwrap();
         let k = KoReader::new(t.path());
-        let data = "中文 名.azw3".as_bytes().to_vec();
-        let mut r = &data[..];
-        let item = k.put_book("", "../../中文 名.azw3", &mut r).unwrap();
-        assert_eq!(item.name, "中文 名.azw3");
-        assert_eq!(std::fs::read(k.books_dir().join("中文 名.azw3")).unwrap(), data);
-        assert!(k.installed());
-        let mut r2: &[u8] = b"x";
-        k.put_book("a/b", "x.epub", &mut r2).unwrap(); // 多级目录允许
-        assert!(k.put_book("../x", "x.epub", &mut (&b"x"[..])).is_err());
+        assert_eq!(k.subdir("").unwrap(), k.books_dir());
+        assert_eq!(k.subdir("a/b").unwrap(), k.books_dir().join("a/b")); // 多级目录允许
+        assert!(k.subdir("../x").is_err());
+        assert!(k.subdir("a/../b").is_err());
+        assert!(k.subdir(".hide").is_err());
+        // 直接铺文件测 list_books 的 .sdr / 隐藏项过滤（不经上传）
+        std::fs::create_dir_all(k.books_dir().join("a/b")).unwrap();
+        std::fs::write(k.books_dir().join("中文 名.azw3"), b"x").unwrap();
+        std::fs::write(k.books_dir().join("a/b/x.epub"), b"x").unwrap();
         std::fs::create_dir_all(k.books_dir().join("book.sdr")).unwrap();
         let root = k.list_books("").unwrap();
         assert_eq!(root.iter().map(|e| (e.name.as_str(), e.kind)).collect::<Vec<_>>(), vec![("a", "dir"), ("中文 名.azw3", "file")]);
-        assert_eq!(k.list_books("a").unwrap()[0].name, "b");
         assert_eq!(k.list_books("a/b").unwrap()[0].kind, "file");
-        let mut r3: &[u8] = b"";
-        assert_eq!(k.put_book("sub", "e.epub", &mut r3).unwrap_err(), "空文件");
-        assert!(!k.books_dir().join("sub/.e.epub.part").exists());
-        let mut r4: &[u8] = b"pk";
-        k.put_book("sub", "e.epub", &mut r4).unwrap();
-        assert_eq!(k.list_dir(&k.subdir("sub").unwrap(), &["epub"]).len(), 1);
+    }
+
+    #[test]
+    fn kostore_install_via_flow_keeps_name_bytes_and_leaves_no_part() {
+        use shelf_core::asset::AssetUploadFlow;
+        use shelf_core::paths::Paths;
+        let t = tempfile::tempdir().unwrap();
+        let k = KoReader::new(&t.path().join("ko"));
+        let h = t.path().to_str().unwrap().to_string();
+        let paths = Paths::resolve(move |key| if key == "HOME" || key == "XDG_RUNTIME_DIR" { Some(h.clone()) } else { None });
+        // multipart：一个正常书（文件名带 ../ 前缀，应被 safe_basename 规整）+ 一个空文件（应判空、不 install）
+        let mut body = Vec::new();
+        for (f, d) in [("../../中文 名.azw3", "中文 名内容"), ("e.epub", "")] {
+            body.extend_from_slice(format!("--B\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{f}\"\r\n\r\n{d}\r\n").as_bytes());
+        }
+        body.extend_from_slice(b"--B--\r\n");
+        let dir = k.books_dir();
+        let store = KoStore::new(dir.clone(), "koreader-book", KO_ANY);
+        let out = AssetUploadFlow::new(&paths).run(&store, &body[..], "B").unwrap();
+        assert_eq!(out[0].name, "中文 名.azw3");
+        assert!(out[0].ok);
+        assert_eq!(out[0].item.as_ref().unwrap().bytes, "中文 名内容".len() as u64);
+        assert!(!out[1].ok && out[1].message == "空文件");
+        assert_eq!(std::fs::read(dir.join("中文 名.azw3")).unwrap(), "中文 名内容".as_bytes());
+        assert!(!dir.join(".中文 名.azw3.part").exists(), "成功后 .part 应已 rename");
+        assert!(!dir.join(".e.epub.part").exists(), "空文件不该留 .part");
     }
 
     #[test]

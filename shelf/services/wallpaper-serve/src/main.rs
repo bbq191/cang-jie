@@ -78,8 +78,7 @@ fn main() {
                     activated = Some(first.name.clone());
                 }
             }
-            let ok = !items.is_empty() && items.iter().all(|i| i.ok);
-            Ok(Reply::ok(&serde_json::json!({"ok": ok, "items": items, "activated": activated, "note": "下次休眠即显示"})))
+            Ok(Reply::ok(&serde_json::json!({"ok": shelf_core::asset::all_ok(&items), "items": items, "activated": activated, "note": "下次休眠即显示"})))
         })
         .put("/current", move |r| {
             let j = r.json_body().map_err(ApiError::bad)?;

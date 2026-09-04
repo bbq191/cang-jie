@@ -7,8 +7,8 @@
 //! | `XDG_DATA_HOME` | `~/.local/share` | `shelf/{fonts.json,wallpapers/}`；`fonts/`（fontconfig 标准位）；`remarkable/xochitl`（原生书库，同为 XDG 数据位） |
 //! | `XDG_STATE_HOME` | `~/.local/state` | `shelf/{books/,wallpaper-state}` 易变状态 |
 //! | `XDG_RUNTIME_DIR` | `/tmp/shelf-<uid>` | `shelf/{services/,upload/}` 注册表与上传分片（重启即清） |
-//! | `XDG_CACHE_HOME` | `~/.cache` | host 侧缓存 |
 //! | 可执行 | `~/.local/bin` | 各服务二进制 |
+//! （host 侧缓存 `XDG_CACHE_HOME` 由 Python `shelf_cli/paths.py` 各自处理，不在此 Rust 表内。）
 //! 外部约定单点可覆盖：`SHELF_KOREADER_ROOT`（appload 外部应用目录）。
 //! qmd 里的 XHR 只能写绝对路径，写的是这些缺省值的展开（文档注明，非新约定）。
 use std::path::{Path, PathBuf};
@@ -22,7 +22,6 @@ pub struct Paths {
     data: PathBuf,
     state: PathBuf,
     runtime: PathBuf,
-    cache: PathBuf,
     koreader_root: PathBuf,
 }
 
@@ -47,7 +46,6 @@ impl Paths {
             data: pick("XDG_DATA_HOME", home.join(".local/share")),
             state: pick("XDG_STATE_HOME", home.join(".local/state")),
             runtime: pick("XDG_RUNTIME_DIR", PathBuf::from(format!("/tmp/{APP}-{uid}"))),
-            cache: pick("XDG_CACHE_HOME", home.join(".cache")),
             koreader_root: pick("SHELF_KOREADER_ROOT", home.join("xovi/exthome/appload/koreader")),
             home,
         }
@@ -79,9 +77,6 @@ impl Paths {
     }
     pub fn runtime_dir(&self) -> PathBuf {
         self.runtime.join(APP)
-    }
-    pub fn cache_dir(&self) -> PathBuf {
-        self.cache.join(APP)
     }
     /// 用户字体目录（fontconfig 默认扫描 `$XDG_DATA_HOME/fonts`）。
     pub fn user_fonts_dir(&self) -> PathBuf {

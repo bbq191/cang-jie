@@ -106,11 +106,6 @@ pub fn ensure_ca_signed(dir: &Path, extra_sans: &[String]) -> Result<TlsPem, Str
     Ok(TlsPem { cert: chain, key })
 }
 
-/// 兼容旧调用名。
-pub fn ensure_self_signed(dir: &Path, extra_sans: &[String]) -> Result<TlsPem, String> {
-    ensure_ca_signed(dir, extra_sans)
-}
-
 /// CA 证书 PEM（给 `/ca.crt` 下载）。
 pub fn ca_pem(dir: &Path) -> Option<Vec<u8>> {
     std::fs::read(dir.join("ca.pem")).ok()

@@ -60,18 +60,7 @@ impl Default for FontConfig {
 
 impl FontConfig {
     pub fn load(paths: &Paths) -> FontConfig {
-        let f = paths.service_config("font");
-        match std::fs::read_to_string(&f).ok().and_then(|t| serde_json::from_str(&t).ok()) {
-            Some(c) => c,
-            None => {
-                let c = FontConfig::default();
-                if !f.exists() {
-                    let _ = std::fs::create_dir_all(paths.config_dir());
-                    let _ = std::fs::write(&f, serde_json::to_string_pretty(&c).unwrap_or_default());
-                }
-                c
-            }
-        }
+        shelf_core::config::load_or_seed(&paths.service_config("font"))
     }
 }
 
@@ -117,11 +106,7 @@ impl FontStore {
     /// 切换中文回退加粗：存配置 + 重写 fontconfig（fontconfig 实时生效，翻书即见，无需重启 xochitl）。
     pub fn set_embolden(&self, on: bool) -> Result<(), String> {
         self.embolden.store(on, std::sync::atomic::Ordering::Relaxed);
-        let cfg = FontConfig { embolden_cjk_fallback: on };
-        if let Some(p) = self.config_path.parent() {
-            let _ = std::fs::create_dir_all(p);
-        }
-        std::fs::write(&self.config_path, serde_json::to_string_pretty(&cfg).unwrap_or_default()).map_err(|e| e.to_string())?;
+        shelf_core::config::save(&self.config_path, &FontConfig { embolden_cjk_fallback: on }, None)?;
         self.write_fontconfig(&self.entries())?;
         Ok(())
     }
@@ -198,13 +183,8 @@ impl FontStore {
 
     /// 重建 fonts.json（qmd 消费）。
     pub fn write_index(&self) -> Result<Vec<FontEntry>, String> {
-        if let Some(p) = self.json_path.parent() {
-            std::fs::create_dir_all(p).map_err(|e| e.to_string())?;
-        }
         let fonts = self.scan();
-        let tmp = self.json_path.with_extension("json.tmp");
-        std::fs::write(&tmp, serde_json::to_string_pretty(&FontsJson { version: 1, fonts: fonts.clone() }).unwrap_or_default()).map_err(|e| e.to_string())?;
-        std::fs::rename(&tmp, &self.json_path).map_err(|e| e.to_string())?;
+        shelf_core::config::save(&self.json_path, &FontsJson { version: 1, fonts: fonts.clone() }, None)?;
         if let Err(e) = self.write_fontconfig(&fonts) {
             eprintln!("[font-serve] 写 fontconfig 回退失败: {e}");
         }

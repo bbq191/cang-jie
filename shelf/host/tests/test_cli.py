@@ -134,7 +134,11 @@ def test_config_defaults_and_overrides(tmp_path):
     c = cfgmod.load(p, {"port": 9999, "host": None})
     assert (c.host, c.port, c.quality, c.default_target) == ("192.168.1.5", 9999, "device", "native")
     assert c.base_url == "https://192.168.1.5:9999"
+    assert c.ssh == "root@192.168.1.5", "ssh 未显式配则跟随 host"
     assert cfgmod.load(p, {"scheme": "http"}).base_url.startswith("http://")
+    # 显式配 ssh 时不被 host 覆盖
+    p.config_file.write_text('host = "10.0.0.9"\nssh = "pi@nas"\n')
+    assert cfgmod.load(p).ssh == "pi@nas"
 
 
 def test_xdg_relative_paths_are_ignored(tmp_path):

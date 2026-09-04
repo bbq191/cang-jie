@@ -73,6 +73,10 @@ class HttpTransport:
     def delete(self, path: str) -> dict:
         return self._do("DELETE", path)
 
+    def delete_named(self, base_path: str, name: str) -> dict:
+        """DELETE `<base_path>/<url 编码的 name>`——URL 编码规则单点收在 transport 层（各命令不再各自 import quote）。"""
+        return self._do("DELETE", f"{base_path.rstrip('/')}/{urllib.parse.quote(name)}")
+
     def post_json(self, path: str, obj: dict) -> dict:
         return self._do("POST", path, data=json.dumps(obj).encode(), content_type="application/json")
 

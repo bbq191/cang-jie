@@ -1,6 +1,7 @@
 """`shelf wallpaper add|ls|set|mode|rm`：休眠壁纸上传即用。"""
 from pathlib import Path
-from urllib.parse import quote
+
+from ..receipts import guard_file, print_receipts
 
 NAME = "wallpaper"
 HELP = "壁纸：add <img...> [--activate] | ls | set <name> | mode sequential|random|fixed | rm <name>"
@@ -38,20 +39,17 @@ def run(args, ctx) -> int:
         print(f"轮换模式：{args.mode}")
         return 0
     if args.op == "rm":
-        t.delete(f"/api/wallpapers/{quote(args.name)}")
+        t.delete_named("/api/wallpapers", args.name)
         print(f"已删除 {args.name}")
         return 0
     rc = 0
     for i, f in enumerate(args.files):
-        if not f.is_file():
-            print(f"✗ {f}: 不是文件")
+        if not guard_file(f):
             rc = 1
             continue
         q = {"activate": "1"} if (args.activate and i == 0) else None
         d = t.post_files("/api/wallpapers", [f], q)
-        for it in d.get("items", []):
-            print(f"{'✓' if it['ok'] else '✗'} {it['name']}: {it['message']}")
-            rc |= 0 if it["ok"] else 1
+        rc |= print_receipts(d)
         if d.get("activated"):
             print(f"  已激活 {d['activated']}")
     return rc

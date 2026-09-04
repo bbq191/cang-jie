@@ -57,9 +57,7 @@ pub fn register(paths: &Paths, info: &ServiceInfo) -> std::io::Result<Registrati
             ));
         }
     }
-    let tmp = file.with_extension("json.tmp");
-    std::fs::write(&tmp, serde_json::to_vec_pretty(info)?)?;
-    std::fs::rename(&tmp, &file)?;
+    crate::fs::write_atomic(&file, &serde_json::to_vec_pretty(info)?)?;
     Ok(Registration { file })
 }
 

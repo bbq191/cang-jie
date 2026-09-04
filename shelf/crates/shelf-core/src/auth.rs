@@ -24,12 +24,6 @@ fn hex(b: &[u8]) -> String {
     b.iter().map(|x| format!("{x:02x}")).collect()
 }
 
-/// 生成人能抄的随机密码（去掉易混字符）。
-pub fn random_password(len: usize) -> String {
-    const ALPHABET: &[u8] = b"abcdefghjkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-    random_bytes(len).iter().map(|b| ALPHABET[(*b as usize) % ALPHABET.len()] as char).collect()
-}
-
 pub fn hash_password(password: &str) -> String {
     let salt = random_bytes(16);
     hash_with_salt(password, &salt)
@@ -145,6 +139,5 @@ mod tests {
     fn basic_header() {
         assert_eq!(parse_basic("Basic c2hlbGY6cGFzczp3b3Jk"), Some(("shelf".into(), "pass:word".into())));
         assert_eq!(parse_basic("Bearer x"), None);
-        assert_eq!(random_password(12).len(), 12);
     }
 }

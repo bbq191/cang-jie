@@ -35,18 +35,11 @@ impl GatewayConfig {
         paths.service_config("gateway")
     }
     pub fn load(paths: &Paths) -> GatewayConfig {
-        std::fs::read_to_string(Self::path(paths)).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default()
+        shelf_core::config::load_or_default(&Self::path(paths))
     }
     pub fn save(&self, paths: &Paths) -> Result<(), String> {
-        std::fs::create_dir_all(paths.config_dir()).map_err(|e| e.to_string())?;
-        let p = Self::path(paths);
-        std::fs::write(&p, serde_json::to_string_pretty(self).unwrap_or_default()).map_err(|e| e.to_string())?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            let _ = std::fs::set_permissions(&p, std::fs::Permissions::from_mode(0o600));
-        }
-        Ok(())
+        // 含密码哈希 → 0o600。
+        shelf_core::config::save(&Self::path(paths), self, Some(0o600))
     }
 
     /// 无密码哈希 → 写入默认密码并标记必改。返回 true 表示本次初始化。

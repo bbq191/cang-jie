@@ -34,18 +34,7 @@ impl Default for BookConfig {
 
 impl BookConfig {
     pub fn load(paths: &Paths) -> BookConfig {
-        let f = paths.service_config("book");
-        match std::fs::read_to_string(&f).ok().and_then(|t| serde_json::from_str::<BookConfig>(&t).ok()) {
-            Some(c) => c,
-            None => {
-                let c = BookConfig::default();
-                if !f.exists() {
-                    let _ = std::fs::create_dir_all(paths.config_dir());
-                    let _ = std::fs::write(&f, serde_json::to_string_pretty(&c).unwrap_or_default());
-                }
-                c
-            }
-        }
+        shelf_core::config::load_or_seed(&paths.service_config("book"))
     }
 }
 

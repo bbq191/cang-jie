@@ -3,7 +3,8 @@ from __future__ import annotations
 
 import datetime as _dt
 from pathlib import Path
-from urllib.parse import quote
+
+from ..receipts import guard_file, print_receipts
 
 NAME = "koreader"
 HELP = "KOReader：pull | diff | sync [--dry-run] [--fonts] [--dicts] | font add|ls|rm（只装 KOReader）"
@@ -98,18 +99,15 @@ def run(args, ctx) -> int:
                 print(f"{it['name']:<40} {it.get('bytes', 0) // 1024} KB")
             return 0
         if args.fop == "rm":
-            t.delete(f"/api/koreader/fonts/{quote(args.file)}")
+            t.delete_named("/api/koreader/fonts", args.file)
             print(f"已从 KOReader 删除 {args.file}（KOReader 运行中需重启它）")
             return 0
         rc = 0
         for f in args.files:
-            if not f.is_file():
-                print(f"✗ {f}: 不是文件")
+            if not guard_file(f):
                 rc = 1
                 continue
-            for it in t.post_files("/api/koreader/fonts", [f]).get("items", []):
-                print(f"{'✓' if it['ok'] else '✗'} {it['file']}: {it['message']}")
-                rc |= 0 if it["ok"] else 1
+            rc |= print_receipts(t.post_files("/api/koreader/fonts", [f]), name_key="file")
         return rc
     if args.op == "diff":
         return _apply(ctx, args.profile, dry=True)
@@ -123,8 +121,7 @@ def run(args, ctx) -> int:
                 print(f"✗ 字体缺：{p}")
                 rc = 1
                 continue
-            for it in t.post_files("/api/koreader/fonts", [p]).get("items", []):
-                print(f"{'✓' if it['ok'] else '✗'} 字体 {it['file']}: {it['message']}")
+            print_receipts(t.post_files("/api/koreader/fonts", [p]), name_key="file", prefix="字体 ")
     if args.dicts:
         for row in _read_list(args.profile / "dicts.txt"):
             if len(row) < 2:

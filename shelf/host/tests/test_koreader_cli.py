@@ -20,6 +20,8 @@ class KoGateway(FakeGateway):
             self.end_headers()
             self.wfile.write(b)
             return
+        if self.path == "/api/koreader/fonts":
+            return self._json(200, {"items": [{"name": "g.ttf", "bytes": 4096, "cjkPct": 90}]})
         return super().do_GET()
 
     def do_POST(self):
@@ -32,6 +34,10 @@ class KoGateway(FakeGateway):
         if self.path.startswith("/api/koreader/fonts"):
             return self._json(200, {"ok": True, "items": [{"file": "f.ttf", "ok": True, "message": "ok"}]})
         return super().do_POST()
+
+    def do_DELETE(self):
+        FakeGateway.received.append((self.path, "DELETE", b""))
+        return self._json(200, {"ok": True})
 
 
 
@@ -71,3 +77,15 @@ def test_diff_uses_dry_run_and_sync_writes(gateway, tmp_path, capsys):
     assert rc == 0 and "已写入" in o and "字体 f.ttf" in o
     assert any(r[0] == "/api/koreader/config/settings" and r[1].startswith("text/plain") for r in FakeGateway.received)
     assert any(r[0] == "/api/koreader/fonts" for r in FakeGateway.received)
+
+
+def test_font_add_ls_rm(gateway, tmp_path, capsys):
+    f = tmp_path / "h.ttf"
+    f.write_bytes(b"\x00\x01\x00\x00")
+    FakeGateway.received.clear()
+    rc, out = run(["koreader", "font", "add", str(f)], gateway, capsys)
+    assert rc == 0 and "f.ttf: ok" in out and FakeGateway.received[-1][0] == "/api/koreader/fonts"
+    rc, out = run(["koreader", "font", "ls"], gateway, capsys)
+    assert rc == 0 and "g.ttf" in out
+    rc, out = run(["koreader", "font", "rm", "g.ttf"], gateway, capsys)
+    assert rc == 0 and FakeGateway.received[-1] == ("/api/koreader/fonts/g.ttf", "DELETE", b"")

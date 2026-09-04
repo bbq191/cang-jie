@@ -6,13 +6,14 @@ from dataclasses import dataclass
 
 from .paths import Paths
 
+# ssh 缺省留空 → load() 里从最终的 host 派生（`root@<host>`），避免改了 host 而 ssh 仍停在旧 IP。
 DEFAULTS = {
     "host": "10.11.99.1",
     "port": 8778,
     "scheme": "https",
     "password": "",
     "verify_tls": False,
-    "ssh": "root@10.11.99.1",
+    "ssh": "",
     "default_target": "native",
     "quality": "auto",
     "split_pdf_mb": 60,
@@ -43,4 +44,6 @@ def load(paths: Paths, overrides: dict | None = None) -> Config:
         with f.open("rb") as fh:
             d.update({k: v for k, v in tomllib.load(fh).items() if k in DEFAULTS})
     d.update({k: v for k, v in (overrides or {}).items() if v is not None})
+    if not d.get("ssh"):  # 未显式配 ssh → 跟随 host（改 host 时 ssh 不掉队）
+        d["ssh"] = f"root@{d['host']}"
     return Config(**d)

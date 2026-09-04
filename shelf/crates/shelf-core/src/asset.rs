@@ -39,6 +39,12 @@ pub trait AssetStore {
     fn remove(&self, name: &str) -> Result<(), String>;
 }
 
+/// 整批是否全成功（非空且逐项 ok）——各上传处理器统一用它算回执 `ok`，不再各写一遍
+/// `!items.is_empty() && items.iter().all(|i| i.ok)`（font / wallpaper / koreader 曾各写一份）。
+pub fn all_ok(items: &[UploadOutcome]) -> bool {
+    !items.is_empty() && items.iter().all(|i| i.ok)
+}
+
 /// 上传流程模板：multipart 逐文件流式落暂存 → 扩展名门 → validate → install；逐项独立成败。
 pub struct AssetUploadFlow<'a> {
     paths: &'a Paths,
@@ -50,6 +56,10 @@ impl<'a> AssetUploadFlow<'a> {
     }
 
     fn ext_ok(store: &dyn AssetStore, name: &str) -> bool {
+        // 空白名单＝接受任意扩展名（含无扩展名文件），对齐 KOReader books「任意格式原样」语义。
+        if store.allowed_ext().is_empty() {
+            return true;
+        }
         let ext = name.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
         name.contains('.') && store.allowed_ext().contains(&ext.as_str())
     }
@@ -73,10 +83,7 @@ impl<'a> AssetUploadFlow<'a> {
                 continue;
             }
             let staged: PathBuf = tmp_dir.join(format!("{}.{}.part", uuid::Uuid::new_v4().simple(), store.kind()));
-            let written = (|| -> Result<u64, String> {
-                let mut f = std::fs::File::create(&staged).map_err(|e| e.to_string())?;
-                std::io::copy(&mut part, &mut f).map_err(|e| e.to_string())
-            })();
+            let written = crate::multipart::receive_part_to(&staged, &mut part);
             let outcome = match written {
                 Err(e) => UploadOutcome { name: name.clone(), ok: false, message: format!("接收失败: {e}"), item: None },
                 Ok(0) => UploadOutcome { name: name.clone(), ok: false, message: "空文件".into(), item: None },

@@ -37,7 +37,7 @@ fn main() {
         .post("/", move |r| {
             let Some(b) = boundary_of(&r.content_type) else { return Err(ApiError::bad("需要 multipart/form-data")) };
             let items = AssetUploadFlow::new(&p1).run(&*s2, &mut *r.body, &b).map_err(ApiError::bad)?;
-            let ok = !items.is_empty() && items.iter().all(|i| i.ok);
+            let ok = shelf_core::asset::all_ok(&items);
             // 真机 2026-09-03（3.27.3.0）：上传后不重启，菜单出现新项、选中即渲染。菜单 onVisibleChanged 差量刷新（S-B）。
             // fontconfig 回退由 write_index 随每次上传重写（weak 绑定：选的字体优先、缺字才回退）。
             let fallback = s2b.cjk_fallback_keys();

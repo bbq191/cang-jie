@@ -68,10 +68,7 @@ fn upload(st: &State, r: &mut Request<'_>) -> ApiResult {
         }
         let _g = st.spool.guard();
         let staged = st.spool.stage(&name);
-        let recv = (|| -> Result<u64, String> {
-            let mut f = std::fs::File::create(&staged).map_err(|e| e.to_string())?;
-            std::io::copy(&mut part, &mut f).map_err(|e| e.to_string())
-        })();
+        let recv = shelf_core::multipart::receive_part_to(&staged, &mut part);
         match recv {
             Err(e) => {
                 let _ = std::fs::remove_file(&staged);

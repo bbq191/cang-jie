@@ -110,20 +110,6 @@ pub fn upload_likely_delivered(err: &str) -> bool {
     (e.contains("408") || e.contains("timed out") || e.contains("timeout")) && !e.contains("connect")
 }
 
-/// 按扩展名给 xochitl 可直读格式的 MIME。
-pub fn content_type_of(filename: &str) -> Option<&'static str> {
-    let l = filename.to_ascii_lowercase();
-    if l.ends_with(".epub") {
-        Some("application/epub+zip")
-    } else if l.ends_with(".pdf") {
-        Some("application/pdf")
-    } else if l.ends_with(".rmdoc") {
-        Some("application/zip")
-    } else {
-        None
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -146,12 +132,5 @@ mod tests {
         w("d.content", r#"{}"#);
         assert_eq!(find_folder_by_name(t.path(), "library"), Some("c".into()));
         assert_eq!(find_folder_by_name(t.path(), "none"), None);
-    }
-
-    #[test]
-    fn content_types() {
-        assert_eq!(content_type_of("A.EPUB"), Some("application/epub+zip"));
-        assert_eq!(content_type_of("x.pdf"), Some("application/pdf"));
-        assert_eq!(content_type_of("x.azw3"), None);
     }
 }

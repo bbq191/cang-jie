@@ -5,9 +5,10 @@
 mod config;
 mod koreader;
 
-use koreader::KoReader;
+use koreader::{KoReader, KoStore, KO_ANY, KO_DICT_EXT, KO_FONT_EXT};
+use shelf_core::asset::{all_ok, AssetUploadFlow};
 use shelf_core::http::{ApiError, ApiResult, Reply, Request, Router};
-use shelf_core::multipart::{boundary_of, MultipartReader};
+use shelf_core::multipart::boundary_of;
 use shelf_core::paths::Paths;
 use shelf_core::service::{self, ServiceSpec};
 use std::sync::Arc;
@@ -34,68 +35,26 @@ fn status(k: &KoReader) -> serde_json::Value {
     })
 }
 
-/// multipart 多文件 → books/[folder]（.part→rename，KOReader 扫目录不见半成品）。
-fn receive(k: &KoReader, r: &mut Request<'_>, into: &str, allow: &[&str]) -> ApiResult {
+/// multipart 多文件 → `store` 目标（books/fonts/dicts 共用同一 [`AssetUploadFlow`]）。`into` 是回执里的落点显示名。
+/// KOReader 未装→409；每项回执沿用历史形状 `{file, ok, target, message}`（客户端契约不变）。
+fn ko_upload(k: &KoReader, r: &mut Request<'_>, paths: &Paths, store: &KoStore, into: &str) -> ApiResult {
     if !k.installed() {
         return Err(ApiError { status: 409, message: "KOReader 未安装（appload 目录不存在）".into() });
     }
     let Some(boundary) = boundary_of(&r.content_type) else { return Err(ApiError::bad("需要 multipart/form-data")) };
-    let folder = r.q("folder").unwrap_or("").to_string();
-    let mut mp = MultipartReader::new(&mut *r.body, &boundary);
-    let mut items = Vec::new();
-    loop {
-        let mut part = match mp.next_part() {
-            Ok(Some(p)) => p,
-            Ok(None) => break,
-            Err(e) => return Err(ApiError::bad(format!("multipart 解析失败: {e}"))),
-        };
-        let Some(fname) = part.filename.clone() else { continue };
-        let ext = fname.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
-        if !allow.is_empty() && !allow.contains(&ext.as_str()) {
-            items.push(serde_json::json!({"file": fname, "ok": false, "message": format!("不支持的扩展名（允许：{}）", allow.join("/"))}));
-            continue;
-        }
-        let res = k.put_book(&folder, &fname, &mut part);
-        items.push(match res {
-            Ok(it) => serde_json::json!({"file": it.name, "ok": true, "target": "koreader", "message": format!("已放入 KOReader {}/（{} 字节）", into, it.bytes)}),
-            Err(e) => serde_json::json!({"file": fname, "ok": false, "target": "koreader", "message": e}),
-        });
-    }
-    let ok = !items.is_empty() && items.iter().all(|i| i["ok"].as_bool().unwrap_or(false));
-    Ok(Reply::ok(&serde_json::json!({"ok": ok, "items": items, "note": if k.running() {"KOReader 正在运行：新书需在其文件浏览器里刷新"} else {""}})))
-}
-
-/// multipart 多文件原字节落到 `dir`（词典/字体共用；books 走 put_book 的 .part→rename）。
-fn receive_into(k: &KoReader, r: &mut Request<'_>, dir: &std::path::Path, allow: &[&str]) -> ApiResult {
-    if !k.installed() {
-        return Err(ApiError { status: 409, message: "KOReader 未安装（appload 目录不存在）".into() });
-    }
-    let Some(boundary) = boundary_of(&r.content_type) else { return Err(ApiError::bad("需要 multipart/form-data")) };
-    std::fs::create_dir_all(dir).map_err(|e| ApiError::internal(e.to_string()))?;
-    let mut mp = MultipartReader::new(&mut *r.body, &boundary);
-    let mut items = Vec::new();
-    loop {
-        let mut part = match mp.next_part() {
-            Ok(Some(p)) => p,
-            Ok(None) => break,
-            Err(e) => return Err(ApiError::bad(format!("multipart 解析失败: {e}"))),
-        };
-        let Some(fname) = part.filename.clone() else { continue };
-        let name = shelf_core::multipart::safe_basename(&fname, "file.bin");
-        let ext = name.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
-        if !allow.is_empty() && !allow.contains(&ext.as_str()) {
-            items.push(serde_json::json!({"file": name, "ok": false, "message": format!("不支持的扩展名（允许：{}）", allow.join("/"))}));
-            continue;
-        }
-        let dest = dir.join(&name);
-        let res = std::fs::File::create(&dest).map_err(|e| e.to_string()).and_then(|mut f| std::io::copy(&mut part, &mut f).map_err(|e| e.to_string()));
-        items.push(match res {
-            Ok(bytes) => serde_json::json!({"file": name, "ok": true, "message": format!("已放入 {}（{} 字节）", dir.display(), bytes)}),
-            Err(e) => serde_json::json!({"file": name, "ok": false, "message": e}),
-        });
-    }
-    let ok = !items.is_empty() && items.iter().all(|i| i["ok"].as_bool().unwrap_or(false));
-    Ok(Reply::ok(&serde_json::json!({"ok": ok, "items": items})))
+    let outcomes = AssetUploadFlow::new(paths).run(store, &mut *r.body, &boundary).map_err(ApiError::bad)?;
+    let items: Vec<serde_json::Value> = outcomes
+        .iter()
+        .map(|o| {
+            if o.ok {
+                let bytes = o.item.as_ref().map(|i| i.bytes).unwrap_or(0);
+                serde_json::json!({"file": o.name, "ok": true, "target": "koreader", "message": format!("已放入 KOReader {into}（{bytes} 字节）")})
+            } else {
+                serde_json::json!({"file": o.name, "ok": false, "target": "koreader", "message": o.message})
+            }
+        })
+        .collect();
+    Ok(Reply::ok(&serde_json::json!({"ok": all_ok(&outcomes), "items": items, "note": if k.running() {"KOReader 正在运行：新书需在其文件浏览器里刷新"} else {""}})))
 }
 
 /// data/dict/ 下每个子目录=一本词典（有 .ifo 才算）。
@@ -121,11 +80,16 @@ fn main() {
     let k = Arc::new(KoReader::new(paths.koreader_root()));
     let (k1, k2, k3, k4, k5, k6) = (k.clone(), k.clone(), k.clone(), k.clone(), k.clone(), k.clone());
     let (k7, k8, k9) = (k.clone(), k.clone(), k.clone());
+    let (pb, pf, pd) = (paths.clone(), paths.clone(), paths.clone());
     let backup_dir = paths.state_dir().join("koreader-backups");
     let tmp_dir = paths.runtime_dir().join("koreader");
     let router = Router::new()
         .get("/status", move |_| Ok(Reply::ok(&status(&k1))))
-        .post("/books", move |r| receive(&k2, r, "books", &[]))
+        .post("/books", move |r| {
+            let folder = r.q("folder").unwrap_or("").to_string();
+            let dest = k2.subdir(&folder).map_err(ApiError::bad)?;
+            ko_upload(&k2, r, &pb, &KoStore::new(dest, "koreader-book", KO_ANY), "books/")
+        })
         .get("/books", move |r| {
             let folder = r.q("folder").unwrap_or("").trim_matches('/').to_string();
             let items = k3.list_books(&folder).map_err(ApiError::bad)?;
@@ -140,7 +104,7 @@ fn main() {
             }).collect();
             Ok(Reply::ok(&serde_json::json!({"items": items})))
         })
-        .post("/fonts", move |r| receive_into(&k5, r, &k5.fonts_dir(), &["ttf", "otf", "ttc"]))
+        .post("/fonts", move |r| ko_upload(&k5, r, &pf, &KoStore::new(k5.fonts_dir(), "koreader-font", KO_FONT_EXT), "fonts/"))
         .delete("/fonts/{file}", {
             let k = k.clone();
             move |r| {
@@ -162,7 +126,8 @@ fn main() {
             if name.is_empty() || name.contains('/') || name.contains("..") {
                 return Err(ApiError::bad("需要 ?name=<词典目录名>（单层）"));
             }
-            receive_into(&k7, r, &k7.dict_dir().join(&name), &["ifo", "idx", "dict", "dz", "syn", "oft"])
+            let dest = k7.dict_dir().join(&name);
+            ko_upload(&k7, r, &pd, &KoStore::new(dest, "koreader-dict", KO_DICT_EXT), &format!("词典 {name}/"))
         })
         .get("/config/{file}", move |r| {
             let cs = config::ConfigSync { ko: &k8, backup_dir: backup_dir.clone(), tmp_dir: tmp_dir.clone() };

@@ -84,10 +84,10 @@ impl WallpaperStore {
     }
 
     pub fn state(&self) -> WpState {
-        std::fs::read_to_string(&self.state_file).ok().and_then(|t| serde_json::from_str(&t).ok()).unwrap_or_default()
+        shelf_core::config::load_or_default(&self.state_file)
     }
     pub fn save_state(&self, st: &WpState) -> Result<(), String> {
-        std::fs::write(&self.state_file, serde_json::to_string_pretty(st).unwrap_or_default()).map_err(|e| e.to_string())
+        shelf_core::config::save(&self.state_file, st, None)
     }
     pub fn set_mode(&self, mode: Mode) -> Result<(), String> {
         let mut st = self.state();
