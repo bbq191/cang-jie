@@ -108,3 +108,6 @@ shelf koreader font add 字体.ttf | ls | rm <file>         # 只装进 KOReader
 | P5 | 微读网页版门控 spike：`weread-web/spike.sh recon\|fetch\|run\|restore`（看门狗 600s 自动拉起 xochitl） | 脚本就绪，**需用户设备旁执行** |
 | 追加 | HTTPS+密码、字体/KOReader 分开装、KOReader 多级目录、字体去"内建"、壁纸唤醒日志轮换、KOReader 直传字体 | ✅ 真机通（2026-09-03） |
 | 追加2 | 登录页（无用户名、首次默认 `shelf` 登录后必改）、私有 CA + `/ca.crt` 免提示、mDNS `shelf.local` 伪域名 | ✅ 真机通（白皮书 §03j） |
+| 追加3 | 字体两 bug 根治：font-serve 接管 fontconfig 中文回退（weak 绑定、覆盖率降序）、cmap 覆盖率检测/警告、字体菜单按内容刷新 | ✅ 真机通（白皮书 §03k） |
+| 追加4 | 网页改版（深浅色/卡片/两张对比表）、传书页并入原生字体上传并改名 **xochitl**（书上字体下）、去掉冗余 KOReader 选项、字体菜单长家族名 elide 截断（离线 qmldiff 验证） | ✅ 真机通（白皮书 §03m） |
+| 诊断 | "传书卡传字体不卡"根因＝reMarkable 云同步每本书出站 2-3MB 挤满弱热点上行；**大书上传优先 USB** `https://10.11.99.1:8778` | ✅ 复现坐实 + USB 验证（白皮书 §03l） |

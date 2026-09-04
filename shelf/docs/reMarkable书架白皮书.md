@@ -177,7 +177,22 @@
 
 **诊断法可复用**：分清哪端掉——设备 ping host 不丢＝设备无辜，看 host AP 网卡 + 设备出站 tx 突发是否＝云同步。。
 
+**验证（2026-09-04）**：用户改走 **USB（`https://10.11.99.1:8778`）传书顺畅、不卡**——坐实"卡在 WiFi 无线路径 + 云同步出站"，非 shelf/设备 bug。**结论：大书上传优先 USB**；WiFi 传书本身能完成，只是每本书云同步那几秒会占满弱热点上行。
+
+## 03m｜网页改版 + 传书页重构 + 字体菜单长名截断（2026-09-04，用户三条要求）
+
+**① 网页美化（`shelf-gateway/src/ui.rs` 的 `PAGE`）**：深/浅色跟随系统（`prefers-color-scheme` + 完整 token）、卡片式布局、圆角胶囊 tab、吸顶头部、拖放区/进度条/徽章统一样式。纯内嵌 CSS/JS，无 CDN（设备离线也渲染）。传书页新增可展开**两张对比表**：投递目标对比（用在哪/收什么/动不动文件/字体可调/落在哪）＋ EPUB 处理档位对比（清洗+优化 / 保留段距 / 只优化 / 原样，各自做什么、何时用）＋ 质量门说明。
+
+**② 传书页重构成 xochitl 标签（用户："像 KOReader 标签页统一风格，字体上传并进来，改名 xochitl，去掉多余的 KOReader 选项"）**：`book-serve` tab 标题 `传书`→`xochitl`，风格对齐 KOReader tab＝**书在上、字体在下**（原生阅读器字体上传并入本 tab，带中文覆盖率徽章＋删除）；独立「字体」tab 去掉（`TABS['font-serve']` 移除，font-serve 仍注册但被 `s.ui && TABS[s.name]` 过滤不显示）；投递目标去掉冗余的 KOReader 选项（已有 KOReader 标签页），只留 native/annot，对比表 KOReader 列加"→ 见 KOReader 标签页"；KOReader tab 也对齐成书在上字体在下。
+
+**③ 字体菜单长家族名溢出（用户："字体名称太长超出可视范围"）**：3.27 `FormatFont.qml` 的 delegate `Text#fontSample` 只锚左边、无右界也无 elide → 长名（如 `LXGW Neo ZhiSong Screen Full`）画出格子。修法＝该 Text 加 `anchors.right: parent.right` + `anchors.rightMargin: 8`（初值 `Values.documentViewFormatTitleMargin`=30 太狠，用户要"多两字符"→改 8）+ `elide: Text.ElideRight`；`text`/`font.family` 仍是完整 `modelData`，`setFontName` 不受影响。
+- **方法**：`extract_qml.py` 从 xochitl 二进制解出真实 `FormatFont.qml`（blob `qml_00d42f92`），建 [`asivery/qmldiff`](https://github.com/asivery/qmldiff) CLI，`apply-diffs <root> <dest> qmd -f -c` **离线实跑**：确认 `Item[#fontContainer] > Grid[#fontGrid] > Repeater > Item > Text[#fontSample]` 选择器命中（delegate 以 `Repeater > Item` 可达）、产物是合法 QML、cjSync 与 elide 共存。**这条离线验证管线务必复用，别盲改 qmd 上机**（打不中的 TRAVERSE 会让整个 qmd 不生效，退回字体菜单只剩 4 项）。
+- qmd 改动需 xochitl 重启（qmldiff 在启动时应用）才生效，一律走 `/home/root/xovi/start`（重启核 `grep -c xovi.so /proc/<pid>/maps`）。
+
 ## 04｜踩坑
+
+- **磁盘 metadata ≠ xochitl/UI 实际状态（2026-09-04 用户纠正）**：直接 `sed` 改 `.metadata` 的 `parent=trash` 并不等于"已进回收站"——xochitl 运行时在内存缓存、写回时覆盖，云同步也可能还原；出现过磁盘 8 个探针 `parent=trash` 但 UI 回收站只见真实书的错位。**涉及书库状态以设备 UI/xochitl 实际为准，不拿磁盘 metadata 当真相**；清测试文档走正常删除流程或停 xochitl 后操作，别边跑边改。
+- multipart 流式解析：`fill()` 用 `Vec::resize(+64KB)` 在逐字节到达的流上变成 memset 风暴（测试 50s）；改栈上临时块 `extend_from_slice` → 0.8s。
 
 - multipart 流式解析：`fill()` 用 `Vec::resize(+64KB)` 在逐字节到达的流上变成 memset 风暴（测试 50s）；改栈上临时块 `extend_from_slice` → 0.8s。
 - `shelf/build.sh` 必须在 `shelf/` 目录跑（仓库根没有 build.sh）。
@@ -187,7 +202,9 @@
 
 ## 05｜真机待办（按阶段）
 
-**当前（2026-09-03 深夜）剩余**：① ~~清洗层+质量门移植~~ 已落地（§03i），真机只验了投递通路，`!important` 段距假设待量；② 文字书三路对照（host 洗书 / 设备清洗+优化 / 原样）；③ 真重启后 shelf.target/壁纸 bind 自起（重启会丢 xovi，需手动 `xovi/start`，用户暂不装 reenable）；④ P5 `weread-web/spike.sh`（用户设备旁）；⑤ 拔线真 suspend 场景下钩子 bind + 唤醒轮换只触发一次；⑥ 3.28 固件机验证 `font-menu-dynamic.qmd`（3.28 锚点版未上机）。
+**当前（2026-09-04）剩余**：① ~~清洗层+质量门移植~~ 已落地（§03i），真机只验了投递通路，`!important` 段距假设待量；② 文字书三路对照（host 洗书 / 设备清洗+优化 / 原样，可用回收站里的《飘·上册》《人骨拼图》做对比）；③ 真重启后 shelf.target/壁纸 bind 自起（重启会丢 xovi，需手动 `xovi/start`，用户暂不装 reenable）；④ P5 `weread-web/spike.sh`（用户设备旁）；⑤ 拔线真 suspend 场景下钩子 bind + 唤醒轮换只触发一次；⑥ 3.28 固件机验证 `font-menu-dynamic.qmd`（3.28 锚点版未上机，含 elide 补丁）；⑦ 字体菜单 elide 截断宽度用户目测确认；⑧ 清理磁盘残留的 8 个「云同步探针」测试文档（走正常删除流程）。
+
+**已闭环（真机）**：§03j 登录/CA/mDNS、§03k 字体两 bug（fontconfig 回退接管 + 覆盖率检测）、§03l 传书卡根因（云同步，USB 传书验证顺畅）、§03m 网页改版 + xochitl 标签重构 + 字体菜单长名 elide（离线 qmldiff 验证 + 上机）。
 
 P1：`/api/services` 列三服务；native 三格式；annot 拒 epub；koreader 中文名字节验；5 本混投；200MB+ 不 OOM；`--only` 拔插；真重启自起。
 P2：字体免重启 spike（S-A/S-B/S-C）；壁纸休眠即显示；`--only wallpaper` 单装。
