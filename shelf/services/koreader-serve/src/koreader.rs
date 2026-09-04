@@ -42,8 +42,8 @@ impl KoStore {
             return None;
         }
         let bytes = std::fs::read(staged).ok()?;
-        if bookconv::optimize::is_optimized(&bytes) {
-            return None; // 已优化（如从 native 管线来的）不重复
+        if bookconv::optimize::is_current_version(&bytes) {
+            return None; // 已是当前版本（如从 native 管线来的）不重复；旧版本会重优化升级
         }
         let opts = bookconv::optimize::OptimizeOpts {
             wash: Some(bookconv::wash::WashOpts::default()),

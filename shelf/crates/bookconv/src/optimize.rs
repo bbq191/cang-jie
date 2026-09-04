@@ -136,6 +136,12 @@ pub fn is_optimized(epub: &[u8]) -> bool {
     optimized_version(epub).is_some()
 }
 
+/// 是否已是**当前版本**优化产物。版本 bump 后旧产物返回 false → 重传应重优化升级
+/// （否则旧标记会把 v7 的中英文缩进 / v8 的脚注·背景修复等新改进永久挡在门外）。
+pub fn is_current_version(epub: &[u8]) -> bool {
+    optimized_version(epub).as_deref() == Some(OPTIMIZE_VERSION)
+}
+
 /// 同 optimized_version，但直接开文件——ZipArchive over File 只读中央目录，
 /// 不把整本 epub 读进内存，供 /library 逐本轻量标注是否优化过。
 pub fn optimized_version_file(path: &str) -> Option<String> {
@@ -553,6 +559,42 @@ mod tests {
         // 注释已从 notes.xhtml 移走（不重复渲染）
         let notes = read(&mut ar, "notes.xhtml");
         assert!(!notes.contains("第一章的注释") && !notes.contains("第二章的注释"), "注释未从源文件移除: {notes}");
+    }
+
+    #[test]
+    fn double_optimize_inline_footnote_no_dup() {
+        // 版本升级会重优化已优化过的旧书——重优化不得把已内联的注释再翻倍。
+        let opts = OptimizeOpts { wash: Some(crate::wash::WashOpts::default()), footnote: FootnoteMode::Inline };
+        let (out, _) = optimize_epub_with(&make_crossfile_endnote_epub(), &opts).unwrap();
+        let (out2, _) = optimize_epub_with(&out, &opts).unwrap();
+        let mut ar = ZipArchive::new(Cursor::new(&out2)).unwrap();
+        let mut ch1 = String::new();
+        ar.by_name("ch1.xhtml").unwrap().read_to_string(&mut ch1).unwrap();
+        let n = ch1.matches("第一章的注释").count();
+        assert_eq!(n, 1, "重优化后注释重复 {n} 次: {ch1}");
+    }
+
+    #[test]
+    fn reoptimize_relinked_footnote_no_dup() {
+        // 模拟旧版本(v6/v7)产物：注释已移同章末尾 <div class="footnotes"> + marker 已是同章锚点。
+        // 版本升级重优化这类书时，不得把注释再翻倍。
+        let mut buf = Vec::new();
+        {
+            let mut zw = ZipWriter::new(Cursor::new(&mut buf));
+            let stored = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
+            zw.start_file("mimetype", stored).unwrap();
+            zw.write_all(b"application/epub+zip").unwrap();
+            zw.start_file("ch1.xhtml", stored).unwrap();
+            zw.write_all(r##"<html><body><p>正文<a href="#n1">1</a>结束</p><div class="footnotes"><p id="n1">第一章的注释</p></div></body></html>"##.as_bytes()).unwrap();
+            zw.finish().unwrap();
+        }
+        let opts = OptimizeOpts { wash: Some(crate::wash::WashOpts::default()), footnote: FootnoteMode::Inline };
+        let (out, _) = optimize_epub_with(&buf, &opts).unwrap();
+        let mut ar = ZipArchive::new(Cursor::new(&out)).unwrap();
+        let mut ch1 = String::new();
+        ar.by_name("ch1.xhtml").unwrap().read_to_string(&mut ch1).unwrap();
+        let n = ch1.matches("第一章的注释").count();
+        assert_eq!(n, 1, "重优化旧版脚注结构翻倍 {n} 次: {ch1}");
     }
 
     #[test]

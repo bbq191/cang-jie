@@ -108,7 +108,8 @@ impl Step for Optimize {
         "optimize"
     }
     fn run(&self, mut doc: Doc) -> Result<Doc, String> {
-        if !self.enabled || doc.content_type != Some(ContentType::Epub) || optimize::is_optimized(&doc.data) {
+        // 只跳过**当前版本**产物；旧版本重传会重优化升级（重优化幂等，见 double_optimize_* 测试）。
+        if !self.enabled || doc.content_type != Some(ContentType::Epub) || optimize::is_current_version(&doc.data) {
             return Ok(doc);
         }
         let (out, rep) = optimize::optimize_epub_with(&doc.data, &OptimizeOpts { wash: self.wash.clone(), footnote: self.footnote })?;
