@@ -1,6 +1,7 @@
 # reMarkable 书架（shelf）白皮书
 
 > 记"怎么决定、真机怎么验、踩了什么坑"。计划全文见 未入库的计划文件。
+> **书籍优化引擎（`bookconv`）的深度细节**（清洗层 / 优化遍 / 脚注 / 图片 / 格式转换 / **★xochitl 渲染硬规则** / 版本演进）**已独立成 `bookconv优化白皮书.md`**；本文只记书架侧的决策/UI/真机轮次。
 
 ## 00｜定位与原则
 
@@ -247,6 +248,43 @@ Explore 走查出的粗糙点 + 一个真 bug，分 5 批。批 1-4 已真机部
 **跳过（避免过度抽象）**：各服务 `status()` 字段本就领域各异不强统一；tri-language 路径表有意各写一份（host 不链接 Rust）；systemd 4 个 loopback 单元近全同但声明式模板化收益低；大范围 `pub`→`pub(crate)` churn 大收益小。
 
 **验收**：`cargo test` 全绿（新增 `fs`/`config` 单测、`KoStore` 经 flow 端到端单测、koreader font add/ls/rm 补覆盖缺口、ssh 派生测试）+ host `pytest` 22 过 + shellcheck 0 + aarch64 交叉编译干净。**真机（WiFi 10.42.0.224，固件 3.27.3.0）**：5 服务部署重启 0 NRestarts、全注册、网关 health 200、日志无 panic；`gateway.json` 落盘 **0600**（0o600 保留）、无 `.tmp` 残留、`fonts.json` 合法（6 家族）——R1/R5 坐实；SSH 隧道直连 koreader-serve loopback 打真上传 → 正确落盘 + 回执契约不变 + **无 `.part` 残留**——R2 坐实。
+
+## 03q｜书籍优化深层优化：做精做细做强（2026-09-04，用户"只做精做细做强"）
+
+> 📖 优化引擎的机制细节（清洗层/优化遍/脚注四形态/图片降采样/**xochitl 渲染硬规则**/v1–v10 版本演进）见 **`bookconv优化白皮书.md`**。本节只记这几轮的诉求、决策与真机反馈。
+
+四诉求：① 格式仅留 EPUB+PDF；② 做精=按 Move 设备参数/xochitl 裁切规则全面优化；③ 做强=图片美观、中英文各按习惯、不锁字体、不缺目录、**脚注自动呈现**、PDF 学术重排；④ 做细=host/端、EPUB/PDF 统一优化、xochitl≈KOReader 一致。分 6 阶段（每阶段独立构建+真机验证）。
+
+**两条真机判死（决定可行边界，穷尽实测）**：① **xochitl 弹窗脚注判死**——闭源渲染器不实现弹窗、正文点击不通知可注入 QML 层（`reading/docs…:126`）；竞品「镇纸」弹窗=另开 WebView 载微读网页版。∴ xochitl 脚注只能内联常显或跳转+浮标。② **端上 PDF 重排不现实**——PDF 栅格化无 musl-friendly 纯 Rust 方案。→ 三决策（AskUserQuestion）：脚注 **xochitl 内联常显 + KOReader 弹窗**；PDF **born-digital 结构化重排→EPUB + 扫描件 k2pdfopt 兜底**（不移植 k2pdfopt 位图引擎：28+43 C 文件、高投入低回报，born-digital 结构化更简单更好且复用 EPUB 管线）；其它格式**拒收引导走 host Calibre**。
+
+- **A 格式收敛**：`target.rs` native/annot 只收 EPUB/PDF，其它拒收+引导语；UI 标签/对比表同步。`convert/*` 保留不删（兜底）。
+- **B EPUB 做精做强**（`bookconv`，host/端/koreader 自动共享）：① **中英文各按习惯**（`wash::LangMode` 按全书 CJK/拉丁字符占比自动探测：中文 `text-indent:2em`、拉丁 `1.2em`+`h*+p` 首段不缩进）；② **不缺目录**——auto-TOC 从 h1/h2 **扩到 h1–h6** 并 dense-rank 多级嵌套（只用 h3 当章标题的书不再漏）；③ 不锁字体沿用 wash（去 font/color/text-align + CSS 文件级）。`OPTIMIZE_VERSION`→**7**。
+- **C 脚注目标感知**：`OptimizeOpts.footnote: FootnoteMode{Inline,Anchor}`；native/host-CLI 默认 **Inline**——注释文字就地内联 `<span class="cj-fnote">〔…〕</span>` 始终可见=「自动呈现」（**去标签成纯文本**防块级标签塞进 `<p>` 致 xochitl 严格 XML 整章白屏）；`Anchor`=章末+锚点跳转（weread/pkm 兜底）。`collect_footnote_notes` 加**扁平 `<div>` 注释**支持（嵌套 div 跳过，零丢失）。⚠ 引擎收敛 + 「两标签间/包裹回退」抽取（②③）暂缓——不动多次真机迭代过的脆弱脚注逻辑。
+- **D KOReader 一致性**：`koreader-serve` 收 EPUB 走**同一 `bookconv` 优化**（去锁/排版/图片/目录统一），脚注用 **Anchor** 让 `link_prefer_footnote` 触发底部弹窗；`koreader.json` `optimizeEpub` 开关（默认开，可关回原样）；非 epub/非法 zip 回退原样不阻断。profile（`settings.reader.patch.lua`）已真机调优（弹窗/悬挂标点/波形），**不猜字体键**（设备快照无 cre_font 顶层键）。
+- **E PDF 重排（host）**：`pdf_reflow_move.py`——PyMuPDF 逐页文字覆盖率分流；**born-digital 结构化**：`get_text("dict")` 抽 blocks/图 bbox→x 聚列→列内 y 阅读序→文字重排、图/公式 `get_pixmap(clip=bbox)` 裁原区当整块不切→组 EPUB→再走 `wash`+`epub-optimize` 统一管线（xochitl 内联脚注/KOReader 弹窗全复用）；标题按**字符加权字号**判（比中位鲁棒）。**扫描件**回退 k2pdfopt(`-mode fw`)缺则 `pdf_crop_move.py` 裁边→PDF。`calibre_bridge.reflow_pdf/has_k2pdfopt`；`push` native+pdf 默认重排（`--no-reflow` 逃生）；pdf-split 仅对 PDF 产物。**设备端 PDF 仍直传不重排**（端上无栅格化器）。born-digital→EPUB(h2/p/nav) 离线跑通。
+- **F 真机验证**（Phase F，未坐实项据实放开）：`!important`/line-height 支持、内联脚注长注观感、KOReader 优化后弹窗触发、结构化重排学术观感、公式图（intrinsic 放大 EPUB 侧暂未做，属 PDF 结构化重排范畴）。诊断法沿用 scp `<uuid>.pdf` + pymupdf 量列宽/图/outline。
+
+离线门槛：`cargo test` bookconv 94 + 全 workspace 绿（新增 LangMode/TOC-h6/FootnoteMode-Inline/div 注释/KoStore-optimize/reflow 路由用例）+ host `pytest` 24 过 + shellcheck 0 + 交叉编译干净。
+
+**Phase F 真机（2026-09-04，用户拍照《飘·上册》逐页核）——三条 xochitl 渲染硬规则 + 一条误诊教训（OPTIMIZE_VERSION→8）**：
+- **① 内联脚注 marker 若是图标 `<img>` 必须丢弃**：《飘》脚注 marker=`<a noteref><span class="koboSpan"><img alt="note" 70×95/></span></a>`。xochitl 行内图按**固有尺寸**渲染→图标巨大；一页 7 个脚注→同图标重复 7 次（「多幅图片」）。修：`FootnoteMode::Inline` **一律丢弃原 marker**，就地只留 `〔注释纯文本〕`（去标签防块级标签塞进 `<p>` 致严格 XML 白屏）。
+- **② EPUB 内嵌图卡竖向框（宽≤954）**：`class="logo"` 1696×630 内联横幅按固有 1696px 宽渲染→溢出竖屏。修：EPUB 图走 `imgopt::downscale_for_epub`（竖向框 954×1696，宽绝不超 954）；CBZ 漫画整页仍用 `downscale_for_device`（朝向框，横读满宽）。块级图适配列宽显示不变、行内图不再溢出。
+- **③ xochitl 无视 CSS `no-repeat`/`background-size`→平铺背景图**：分卷页 `body.fen{background:url() no-repeat bottom center;background-size:100% auto}` 被**平铺满页盖正文**（用户「第一卷页应空白却铺满风景图」）。修：清洗层 `filter_props` 加 **`background`/`background-image`**（`@font-face` 的 `src:url` 豁免；章头 `<img>` 装饰不受影响）。
+- **⚠ 误诊教训**：先把「分卷页多幅图」当成"章头 banner 跨章重复"，加了"同图被≥5章引用即删其 `<img>`"的规则——**错**：章头 banner（`<img class="logo">` 村舍插画，每章一张）是用户**要保留**的正常装饰（照片 IMG_0447 判「对」）；真凶是 CSS 背景图（非 `<img>`）。已 `git revert` 该 img-strip、换成剥 CSS 背景。**看不到屏幕别猜渲染，让用户拍照**。真机核：分卷页背景 url 30→0、章头 banner 保留 30、内联脚注 32 全好；投递走 book-serve loopback 避 WiFi 云同步卡顿。
+
+**第 2 轮用户反馈（2026-09-04，测「基本书」6 条 bug + 2 问）——UI 合并 / 幂等版本门 / 客户端预拦 / 指引补全**：
+- **★幂等门只看标记存在、不看版本 → 版本升级永远挡在门外（根因，波及全部 v7+ 改进）**：`is_optimized` = `optimized_version().is_some()`，pipeline/koreader 据此**任意版本都跳过**。v6/v7 优化过的书带旧标记，bump 到 v8 后**重传被整步跳过**，永远拿不到 v7 中英文缩进 / v8 脚注·背景修复——完美解释"反复测基本书都看不到中英文优化"。修：加 `is_current_version()`（版本==当前才跳过），旧版本重传**重优化升级**。重优化安全性用两个新测试坐实：`double_optimize_inline_footnote_no_dup`（Inline 跑两遍）+ `reoptimize_relinked_footnote_no_dup`（模拟 v6 产物=注释已移同章末尾+同章锚点 marker，跑 v8 不翻倍）。⚠ 只对**下次重传**生效；设备上存量老书需重传才升级。（另一候选因：xochitl「文字与布局」全局排版是否覆盖书内 `text-indent`——待真机核，证据倾向 xochitl 认书 CSS〔已知它认 background/inline-img〕，置信中。）
+- **传书目标合并为文件夹选择（bug 4，用户拍板）**：原 `原生阅读/原生批注` 二选一对 PDF 只差落地文件夹（优化/体检对 PDF 都是空操作，Check 有 `content_type!=Epub` 守卫，安全）。UI 改为单一「传书到 xochitl」+ 文件夹预设（书库/批注/自定义），统一走 `target=native`。服务端零改（annot target 保留供 CLI）。
+- **客户端格式预拦（bug 6）**：`uploader()` 加第 4 参 `okExt`，选中即按扩展名判、不合格标红不上传（书 `.epub/.pdf`、字体 `.ttf/.otf/.ttc`、词典 StarDict 全套、壁纸 `.jpg/.png`；KOReader 书库任意格式不拦）。drop `<input>` 也加 `accept`。
+- **文案去生硬（bug 3）+ PDF 端上不重排讲清（bug 2，非 bug=设计如此）**：删「固定版式 PDF 上手写定稿」等黑话；档位标「PDF 不受影响永远原样投」；加提示"PDF 想重排请电脑 `shelf push`"。
+- **host `shelf push` 进阶指引 + KOReader 安装/配置指引进网页（bug 5 / 非 bug 2）**：「管理」页加 `shelf push` 卡（强在哪/怎么装/常用命令）；KOReader 页加安装+profile 已调优说明。
+- **端/host 一致性（非 bug 1，答用户）**：一致——两条路末步都调同一 `epub-optimize`(=`bookconv::optimize`)，host 只多一层 Calibre 级 CSS 拍平 + 非 EPUB/PDF 转码。
+
+**★首行缩进根因终结（2026-09-04 真机 7 版诊断书 + 《飘》活样本，OPTIMIZE_VERSION→10）**：bug 1「中英文没缩进」真机死磕出 xochitl 的 CSS 行为，纠正了此前一路的错判：
+- **xochitl 只认外链 `.css` 文件里的规则，完全无视内联 `<style>` 块和元素 `style=` 属性**。⟹ **v6–v9 我们注入的内联 `<style class="cj-wash">` 排版规则（边距归零/首行缩进）在 xochitl 上从来没生效过**！之前以为有效的只是「删改源文件」类改动（剥字体锁/去背景图）。活样本：《飘》自带外链 `p{text-indent:2em}` 真机显示缩进，而我们所有内联注入都不显示。
+- xochitl 的 **css 解析器很脆**：**① 不认 `!important`**（带 `!important` 的外链规则整条失效，v10 首版真机「都没缩进」，去掉即生效）；**② 不认类/相邻/at-rule 选择器**（外链 css 里混一条 `.big{}` 就让整表失效，diag5 坐实）——**只吃裸元素选择器 `p{}`**。
+- 中途错误探索（记录以免重走）：先误判「xochitl 无视 text-indent」→ 试段首 `&nbsp;`（v9）——但 nbsp 宽度随字体变、且**连续 nbsp 被折叠**成一段，做不到精确 2 字；全角空格 U+3000 / em 空格 U+2003 被 xochitl **吞掉**（前置空白折叠）；inline-block 占位被无视。**全是死路**，已撤回。
+- **根治（v10）**：优化器把排版规则写成**外链 `cangjie-wash.css`**（`p{text-indent:2em;margin-top:0;…}` 裸选择器、无 `!important`）+ 每章 `<head>` 注 `<link>`（相对路径 `relative_to` 算）+ OPF manifest 补 `<item>`。中文 2em / 拉丁 1.2em。**em 单位 = 字体无关、精确 2 字**。`wash_entries::add_wash_css_entry` 幂等（重洗不重复加）。真机《缩进v10无important验证》3 段精确 2 字缩进坐实。**方法论**：一个真机活样本（《飘》）＞ 七版凭空诊断——早点解剖有效样本能少走很多弯路。
 
 ## 04｜踩坑
 

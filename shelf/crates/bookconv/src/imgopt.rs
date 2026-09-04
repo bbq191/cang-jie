@@ -12,32 +12,25 @@ use image::imageops::FilterType;
 use image::{GenericImageView, ImageFormat};
 use std::io::Cursor;
 
-/// Move 屏最长像素边 / 最短像素边。**两条一起卡：长边 ≤1696 且短边 ≤954**。
-/// 真机探针（2026-09-02，5 张 400–2400px 宽图上机看 xochitl 渲染的 `<uuid>.pdf`）：块级 `<img>` 一律
-/// 缩放到**正文列宽**（小图放大、大图缩小，保比），列宽在竖屏 ≤954；横置时列宽上限 1696 但页高只有
-/// 954。故任何朝向下一张图有意义的最大尺寸都满足"长边 ≤1696 且短边 ≤954"：竖图 954×1696、横图
-/// 1696×954、方图 954×954。只卡长边会让方图/近方图多留 1.8× 无用像素。
+/// Move 屏最长像素边 / 最短像素边。
 pub const MAX_EDGE: u32 = 1696;
 pub const MAX_SHORT_EDGE: u32 = 954;
 /// 重编码 JPEG 质量（0–100）。85 = 视觉无损级，体积/画质平衡；e-ink 上更看不出差异。
 const JPEG_QUALITY: u8 = 85;
 
-/// 若图片任一边 > `MAX_EDGE`，Lanczos3 缩到长边 ≤`MAX_EDGE`（保宽高比、保原格式）返回新字节；
-/// 否则（已达标 / 非 JPEG·PNG / 解码失败 / 重编码没变小）返回 `None`——调用方原样保留该条目。
-pub fn downscale_for_device(bytes: &[u8]) -> Option<Vec<u8>> {
+/// 保比缩进 `max_w × max_h` 框（宽高比保持、保原格式），只在超框时动；返回新字节或 `None`
+/// （已达标 / 非 JPEG·PNG / 解码失败 / 重编码没变小 → 调用方原样保留）。
+fn downscale_into(bytes: &[u8], max_w: u32, max_h: u32) -> Option<Vec<u8>> {
     let fmt = image::guess_format(bytes).ok()?;
     if !matches!(fmt, ImageFormat::Jpeg | ImageFormat::Png) {
         return None;
     }
     let img = image::load_from_memory_with_format(bytes, fmt).ok()?;
     let (w, h) = img.dimensions();
-    let (long, short) = (w.max(h), w.min(h));
-    if long <= MAX_EDGE && short <= MAX_SHORT_EDGE {
+    if w <= max_w && h <= max_h {
         return None; // 已达标：不重编码（避免无谓的二次有损压缩）
     }
-    // 保比缩入"长边 ≤MAX_EDGE 且短边 ≤MAX_SHORT_EDGE"：按朝向选盒（竖 954×1696 / 横 1696×954）
-    let (bw, bh) = if w >= h { (MAX_EDGE, MAX_SHORT_EDGE) } else { (MAX_SHORT_EDGE, MAX_EDGE) };
-    let resized = img.resize(bw, bh, FilterType::Lanczos3);
+    let resized = img.resize(max_w, max_h, FilterType::Lanczos3);
     let mut out = Vec::new();
     match fmt {
         ImageFormat::Jpeg => {
@@ -51,6 +44,21 @@ pub fn downscale_for_device(bytes: &[u8]) -> Option<Vec<u8>> {
     }
     // 只有确实变小才采用（极端下重编码可能变大 → 保留原图，不倒退体积）。
     (out.len() < bytes.len()).then_some(out)
+}
+
+/// **CBZ/漫画整页**降采样：按朝向选盒（竖 954×1696 / 横 1696×954），页整张填屏、横页横读可用 1696 宽。
+/// 真机探针（2026-09-02，5 张 400–2400px 宽图上机看渲染的 `<uuid>.pdf`）：只卡长边会让方图多留 1.8× 无用像素。
+pub fn downscale_for_device(bytes: &[u8]) -> Option<Vec<u8>> {
+    let dim = image::guess_format(bytes).ok().and_then(|f| image::load_from_memory_with_format(bytes, f).ok()).map(|i| i.dimensions())?;
+    let (max_w, max_h) = if dim.0 >= dim.1 { (MAX_EDGE, MAX_SHORT_EDGE) } else { (MAX_SHORT_EDGE, MAX_EDGE) };
+    downscale_into(bytes, max_w, max_h)
+}
+
+/// **EPUB 内嵌图**降采样：一律竖向框 954×1696（**宽绝不超 954**）。EPUB 图可能**行内**（xochitl 按固有
+/// 尺寸渲染、不认 CSS），横图容许 1696 宽会让行内横幅溢出竖屏——2026-09-04 真机《飘》1696×630 的
+/// `class="logo"` 内联横幅溢出坐实。竖向框下：块级图仍适配列宽（显示无变化）、行内图不再超宽。
+pub fn downscale_for_epub(bytes: &[u8]) -> Option<Vec<u8>> {
+    downscale_into(bytes, MAX_SHORT_EDGE, MAX_EDGE)
 }
 
 /// 「漫画省刷新」色彩保留阈值：页面平均色度（RGB 通道极差 /255 的均值）低于此值视作**黑白/偏色扫描**、
@@ -120,34 +128,31 @@ mod tests {
     }
 
     #[test]
-    fn downscales_oversized_jpeg_preserving_aspect() {
-        let big = jpeg_of(3392, 1908); // 2× 屏尺寸，宽高比 16:9
-        let out = downscale_for_device(&big).expect("超大图应被缩");
-        let img = image::load_from_memory(&out).unwrap();
-        let (w, h) = img.dimensions();
-        assert!(w <= MAX_EDGE && h <= MAX_EDGE, "缩后 {w}x{h} 应 ≤{MAX_EDGE}");
-        assert_eq!(w, MAX_EDGE, "长边应正好到 MAX_EDGE");
-        assert_eq!(h, 954, "宽高比保持 16:9");
-        assert!(out.len() < big.len(), "体积应变小");
+    fn device_orientation_box_for_comics() {
+        // CBZ/漫画整页：按朝向选盒。横图 3392×1908 → 1696×954（横读可用满宽）
+        let big = jpeg_of(3392, 1908);
+        let (w, h) = image::load_from_memory(&downscale_for_device(&big).unwrap()).unwrap().dimensions();
+        assert_eq!((w, h), (MAX_EDGE, 954), "横页应到 1696×954");
+        // 方图 → 954×954
+        let sq = jpeg_of(2000, 2000);
+        let (w, h) = image::load_from_memory(&downscale_for_device(&sq).unwrap()).unwrap().dimensions();
+        assert_eq!((w, h), (954, 954));
     }
 
     #[test]
-    fn square_image_bounded_by_short_edge() {
-        // 方图只卡长边会留 1696×1696（列宽最多 954，任何朝向都显示不出）→ 应缩到 954×954
+    fn epub_portrait_box_caps_width_954() {
+        // EPUB 内嵌图一律卡宽 ≤954（防行内横幅溢出竖屏）
+        // 横图 1696×630 的内联横幅（《飘》真机溢出源）→ 954×~355
+        let banner = jpeg_of(1696, 630);
+        let (w, h) = image::load_from_memory(&downscale_for_epub(&banner).unwrap()).unwrap().dimensions();
+        assert_eq!(w, 954, "横幅宽必须卡到 954");
+        assert!(h < 400, "保比 h={h}");
+        // 方图 → 954×954；竖图 1000×3000 → 565×1696
         let sq = jpeg_of(2000, 2000);
-        let out = downscale_for_device(&sq).expect("超短边上限应被缩");
-        let (w, h) = image::load_from_memory(&out).unwrap().dimensions();
-        assert_eq!((w, h), (954, 954), "方图应缩到短边上限");
-        // 竖图：高卡 1696、宽随比例（1000×3000 → 565×1696）
+        assert_eq!(image::load_from_memory(&downscale_for_epub(&sq).unwrap()).unwrap().dimensions(), (954, 954));
         let tall = jpeg_of(1000, 3000);
-        let (w, h) = image::load_from_memory(&downscale_for_device(&tall).unwrap()).unwrap().dimensions();
-        assert_eq!(h, 1696);
-        assert!(w <= 954, "竖图宽 {w} 应 ≤954");
-        // 长边达标但短边超：1600×1200 → 1272×954
-        let wide = jpeg_of(1600, 1200);
-        let (w, h) = image::load_from_memory(&downscale_for_device(&wide).unwrap()).unwrap().dimensions();
-        assert_eq!(h, 954);
-        assert!(w <= 1696 && w > 1200, "横图 {w}x{h} 应按短边 954 缩");
+        let (w, h) = image::load_from_memory(&downscale_for_epub(&tall).unwrap()).unwrap().dimensions();
+        assert!(w <= 954 && h == 1696, "竖图 {w}x{h}");
     }
 
     #[test]

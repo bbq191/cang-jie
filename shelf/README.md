@@ -42,7 +42,9 @@ shelf/
 ├── wallpaper/                         5 行 sleep 钩子 + README（逻辑在 wallpaper-serve 子命令）
 ├── koreader/                          配置即代码：profile/{settings.reader.patch,defaults.custom,gestures.patch}.lua + fonts.txt/dicts.txt + merge.lua
 ├── weread-web/                        P5 门控 spike（rmweb × Move）
-└── docs/reMarkable书架白皮书.md        设计决策 + 真机记录
+└── docs/
+    ├── reMarkable书架白皮书.md          书架侧设计决策 + 真机记录（服务/UI/投递/字体）
+    └── bookconv优化白皮书.md            书籍优化引擎：清洗层/优化遍/脚注/图片/格式转换/★xochitl 渲染硬规则/版本演进
 ```
 
 依赖方向（单向无环）：`services/* → shelf-core`；`book-serve → bookconv`；`weread-device → bookconv`。
@@ -84,10 +86,11 @@ ssh root@10.11.99.1 sh /home/root/shelf-pkg/shelf/uninstall.sh [--only font] [--
 
 ```sh
 shelf/host/bin/shelf services | status | doctor
-shelf/host/bin/shelf push 书.azw3 论文.pdf -t native|annot|koreader [-f 文件夹] [-q auto|host|device] [--no-optimize] [--no-split] [-n]
-   quality=auto：host 有 ebook-convert → native 走 wash_epub.sh→体检→推；annot 走 epub2pdf_move.sh / pdf_crop_move.py→体检→推；
-                 否则直推网关（设备端 Rust 转换/优化兜底）。>60MB PDF 自动 pymupdf 分卷（可选依赖）。
-   ⚠ 两条路只有优化器同源；Calibre 清洗层与质量门设备路尚无（移植计划见白皮书 §03i）。
+shelf/host/bin/shelf push 论文.pdf 书.epub -t native|annot|koreader [-f 文件夹] [-q auto|host|device] [--no-optimize] [--no-reflow] [--no-split] [-n]
+   quality=auto：host 有 Calibre → native EPUB 走 wash_epub.sh→体检→推；**native PDF 默认重排**（born-digital 结构化→EPUB→洗书；
+                 扫描件 k2pdfopt/裁边→PDF，`--no-reflow` 原样投）；annot 走 epub2pdf_move.sh / pdf_crop_move.py→体检→推；
+                 否则直推网关（设备端 Rust 优化兜底；设备端 PDF 不重排）。>60MB PDF 自动 pymupdf 分卷。
+   格式仅收 EPUB/PDF；AZW3/MOBI/FB2/CBZ 经 host Calibre 转换。清洗层+质量门已同源（白皮书 §03i/§03q）。
 shelf font add 字体.ttf | ls | rm <file>                  # 只装原生阅读器：~/.local/share/fonts + fc-cache + fonts.json（KOReader 字体用 shelf koreader font）
 shelf wallpaper add 图.jpg [--activate] | ls | set <name> | mode sequential|random|fixed | rm <name>
 shelf koreader pull | diff | sync [-n] [--fonts] [--dicts]   # 配置即代码（Lua 合并在设备端跑）
@@ -114,3 +117,4 @@ shelf koreader font add 字体.ttf | ls | rm <file>         # 只装进 KOReader
 | 追加5 | 服务管理台（固定「管理」tab）：基石(xovi/appload/qrr/KOReader)红绿引导 + 模块三态(未装/已装未开/已开)、开关(仅停后台)、网页卸载(调 `shelf-uninstall`)、安装走引导；embolden 默认开；`cangjie-xovi-reenable`→`xovi-reenable`(归基石层，撤回 shelf 对外层耦合) | ✅ 部署+守卫真机通（白皮书 §03o） |
 | 追加6 | UI 易用性：二级 tab（xochitl 传书/字体、KOReader 书库/字体/词典，治手机长拉）、管理台三态/开关/卸载完整说明 + 常开性能实测数据、基石引导补 reManager 链接 | ✅ 部署真机通（白皮书 §03o 末） |
 | 质量 | 代码质量核查一轮：`config`/`fs` 共享模块 + `receive_part_to`/`all_ok` 原语收编各服务复制；koreader-serve `KoStore` 收编被绕过的 `AssetUploadFlow`；死代码清除；host `receipts`/`delete_named` 收编 CLI 重复 | ✅ 行为不变，离线全过 + 真机冒烟(R1/R5/R2 坐实，白皮书 §03p) |
+| 书籍优化 | 深层优化(做精做细做强)：格式仅 EPUB/PDF；中英文各按习惯排版(LangMode)；目录 h1–h6 多级；**脚注 xochitl 内联常显〔…〕/ KOReader 弹窗**(FootnoteMode·xochitl 弹窗真机判死)；OPTIMIZE_VERSION→7；KOReader 收 EPUB 走同一优化；**host PDF 重排**(born-digital 结构化→EPUB / 扫描件 k2pdfopt) | ✅ 离线全过(cargo/pytest/交叉编译)；真机验证=白皮书 §03q Phase F 待做 |

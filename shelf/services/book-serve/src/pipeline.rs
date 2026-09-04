@@ -1,7 +1,7 @@
 //! 处理链（Pipeline）：`Precheck → Convert → Optimize → Check → Inject` 每步一个 [`Step`]，目标（Strategy）
 //! 按需组装。步骤只调 bookconv / shelf-core 函数，不重写规则。
 use bookconv::convert::{self, ContentType, EinkTone};
-use bookconv::optimize::{self, OptimizeOpts};
+use bookconv::optimize::{self, FootnoteMode, OptimizeOpts};
 use bookconv::wash::WashOpts;
 use shelf_core::xochitl::{Delivery, Xochitl};
 
@@ -100,16 +100,19 @@ impl Step for Convert {
 pub struct Optimize {
     pub enabled: bool,
     pub wash: Option<WashOpts>,
+    /// 脚注呈现（native=Inline 内联常显；缺省 Anchor）。
+    pub footnote: FootnoteMode,
 }
 impl Step for Optimize {
     fn name(&self) -> &'static str {
         "optimize"
     }
     fn run(&self, mut doc: Doc) -> Result<Doc, String> {
-        if !self.enabled || doc.content_type != Some(ContentType::Epub) || optimize::is_optimized(&doc.data) {
+        // 只跳过**当前版本**产物；旧版本重传会重优化升级（重优化幂等，见 double_optimize_* 测试）。
+        if !self.enabled || doc.content_type != Some(ContentType::Epub) || optimize::is_current_version(&doc.data) {
             return Ok(doc);
         }
-        let (out, rep) = optimize::optimize_epub_with(&doc.data, &OptimizeOpts { wash: self.wash.clone() })?;
+        let (out, rep) = optimize::optimize_epub_with(&doc.data, &OptimizeOpts { wash: self.wash.clone(), footnote: self.footnote })?;
         let mut note = format!("已{}（{} 章，{}→{} 字节", if rep.wash.is_some() { "清洗+优化" } else { "优化" }, rep.html_files, rep.bytes_before, rep.bytes_after);
         if let Some(w) = &rep.wash {
             if !w.pseudo_drm_stripped.is_empty() {
@@ -209,9 +212,9 @@ mod tests {
 
     #[test]
     fn optimize_step_skips_when_disabled_or_non_epub() {
-        let s = Optimize { enabled: false, wash: None };
+        let s = Optimize { enabled: false, wash: None, footnote: FootnoteMode::Anchor };
         assert!(s.run(Doc::new("a.epub", b"notazip".to_vec())).is_ok());
-        let s = Optimize { enabled: true, wash: Some(WashOpts::default()) };
+        let s = Optimize { enabled: true, wash: Some(WashOpts::default()), footnote: FootnoteMode::Anchor };
         assert!(s.run(Doc::new("a.pdf", b"%PDF".to_vec())).is_ok());
         assert!(s.run(Doc::new("a.epub", b"notazip".to_vec())).is_err());
     }
@@ -241,7 +244,7 @@ mod tests {
         let raw = Check { enabled: true, require_toc: false }.run(Doc::new("a.epub", epub.clone()));
         assert!(raw.err().unwrap().contains("双 id"));
         // 清洗+优化 → 双 id 折叠、自动目录 → 过门
-        let d = Optimize { enabled: true, wash: Some(WashOpts::default()) }.run(Doc::new("a.epub", epub)).unwrap();
+        let d = Optimize { enabled: true, wash: Some(WashOpts::default()), footnote: FootnoteMode::Anchor }.run(Doc::new("a.epub", epub)).unwrap();
         assert!(d.notes[0].contains("清洗+优化") && d.notes[0].contains("自动目录 1 条"), "{:?}", d.notes);
         let d = Check { enabled: true, require_toc: true }.run(d).unwrap();
         assert!(d.notes[1].starts_with("质量门通过（目录 2 条"), "{:?}", d.notes);

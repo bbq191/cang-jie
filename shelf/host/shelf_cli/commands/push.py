@@ -24,6 +24,7 @@ def add_args(p):
     p.add_argument("--optimize", choices=["auto", "keep-spacing", "plain", "off"], default="auto", help="设备路 EPUB：auto=清洗+优化（缺省）/ keep-spacing=清洗但保留段距（诗集剧本）/ plain=只优化不清洗 / off=原样")
     p.add_argument("--no-optimize", action="store_true", help="= --optimize off")
     p.add_argument("--no-split", action="store_true", help="大 PDF 不分卷")
+    p.add_argument("--no-reflow", action="store_true", help="native 目标的 PDF 不做重排（原样固定版式投递）")
     p.add_argument("--require-toc", action="store_true", help="host 路体检要求有目录")
     p.add_argument("--skip-check", action="store_true", help="host 路跳过 check_output.py 体检（缺省不过不推）")
     p.add_argument("--comic2cbz", action="store_true", help="koreader 目标：AZW3 漫画先转 CBZ")
@@ -62,6 +63,18 @@ def host_prepare(target: str, path: Path, args, work: Path) -> list[Path]:
             return [cb.comic2cbz(path, work / (path.stem + ".cbz"))]
         return [path]
     if target == "native":
+        if suf == ".pdf":
+            # PDF 重排：born-digital→结构化 EPUB（再走统一洗书+优化）；扫描件→k2pdfopt/裁边 PDF。--no-reflow 原样投。
+            if args.no_reflow:
+                return [path]
+            reflowed, kind = cb.reflow_pdf(path, work)
+            if kind == "epub":
+                print(f"  结构化重排 → EPUB（{reflowed.name}）")
+                out = cb.wash(reflowed, work)
+                _gate(out, args)
+                return [out]
+            print(f"  扫描件位图重排 → PDF（{reflowed.name}）")
+            return [reflowed]
         if suf == ".epub":
             out = cb.wash(path, work)
         elif suf in (".azw3", ".mobi", ".azw", ".prc", ".fb2"):
@@ -92,6 +105,11 @@ def run(args, ctx) -> int:
     rc = 0
     work = cb.workdir()
     for path in args.files:
+        # 防呆：把目标名当位置参数了（`push 书.epub koreader`）——目标要用 -t，不是位置参数。
+        if not path.is_file() and str(path) in ("native", "annot", "koreader"):
+            print(f"✗ '{path}' 不是文件——投递目标要用 -t {path}（别当位置参数）")
+            rc = 1
+            continue
         if not guard_file(path):
             rc = 1
             continue
@@ -107,7 +125,7 @@ def run(args, ctx) -> int:
             continue
         final: list[Path] = []
         for o in outs:
-            if not args.no_split and target != "koreader" and pdfsplit.needs_split(o, ctx.config.split_pdf_mb):
+            if not args.no_split and target != "koreader" and o.suffix.lower() == ".pdf" and pdfsplit.needs_split(o, ctx.config.split_pdf_mb):
                 parts = pdfsplit.split(o, ctx.config.split_pdf_mb, work)
                 if len(parts) > 1:
                     print(f"  分卷 {len(parts)} 份（>{ctx.config.split_pdf_mb}MB）")

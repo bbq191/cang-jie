@@ -27,12 +27,35 @@ pub const OPTIMIZE_MARKER: &str = "META-INF/com.cangjie.optimized";
 /// 约束（真机探针：块级图缩到正文列宽，方图只卡长边白留 1.8× 像素）。
 /// v6：清洗层（`wash`）可选前置——伪 DRM 剥离、CSS 文件级锁剥离、边距/段距归零+2em 缩进、空页清理、
 /// 自动目录、单标签双 id 折叠（对标 host `wash_epub.sh`，`OptimizeOpts::wash`；weread 线缺省不开）。
-pub const OPTIMIZE_VERSION: &str = "6";
+/// v7：做精做强——① 中英文各按阅读习惯注排版（`wash::LangMode` 自动探测：中文首行 2em / 拉丁 1.2em+标题后首段不缩进）；
+/// ② 自动目录从 h1/h2 扩到 **h1–h6** 并多级嵌套（只用 h3 当章标题的书不再漏目录）。
+/// v8：真机《飘》两修——① 内联脚注丢弃图标 marker（xochitl 按固有尺寸渲染图标=巨大且每条重复）；
+/// ② EPUB 内嵌图改竖向框（宽≤954）防行内横幅溢出竖屏；③ 清洗层剥 CSS `background`/`background-image`
+/// （xochitl 无视 no-repeat 把背景图平铺满页盖正文，真机《飘》分卷页坐实）——章头 `<img>` 装饰不受影响。
+/// v10：真机《缩进诊断6》/《飘》坐实——xochitl **只认外链 `.css` 文件里的规则，完全无视内联 `<style>` 块和元素
+/// `style=` 属性**（此前 v6–v9 注入的内联 cj-wash 排版规则在 xochitl 从未生效！）。改：排版规则（首行缩进/边距）
+/// 写成**外链 `cangjie-wash.css`** + 每章 `<link>` + OPF manifest 补 item（xochitl/KOReader 都认）。⚠ xochitl css
+/// 解析器脆，外链 css **只用裸 `p{}` 元素选择器**（一条类/复杂选择器就让整表失效，《缩进诊断5》坐实）。撤回 v9 的
+/// nbsp 段首缩进（nbsp 宽随字体变、且被折叠，做不到精确 2 字；外链 text-indent 精确且字体无关）。
+pub const OPTIMIZE_VERSION: &str = "10";
+
+/// 脚注呈现方式。xochitl 无弹窗脚注（穷尽真机实测判死），故给它 `Inline` 内联常显=「自动呈现」；
+/// weread/pkm 线与第三方书历史行为用 `Anchor`（章末可见 + 同章锚点跳转 + 原生「返回」浮标）。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum FootnoteMode {
+    /// 注释移章末 `<div class="footnotes">` + marker 改同章锚点，点跳、原生浮标返回。
+    #[default]
+    Anchor,
+    /// 注释文字就地内联显示在引用处 `<span class="cj-fnote">〔…〕</span>`，始终可见、不跳转。
+    Inline,
+}
 
 /// 优化选项：`wash=Some` 时先过清洗层（书架 native 投递与 host `epub-optimize` 缺省开；weread 线不开）。
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct OptimizeOpts {
     pub wash: Option<crate::wash::WashOpts>,
+    /// 脚注呈现方式（缺省 `Anchor` 保持历史行为；native 投递传 `Inline`）。
+    pub footnote: FootnoteMode,
 }
 
 /// HTML 里的远程图（http(s)/协议相对 `//`）→ 抓取降采样内联进 EPUB：抓到→存进 zip（与本章同目录，
@@ -116,6 +139,12 @@ pub fn optimized_version(epub: &[u8]) -> Option<String> {
 /// 是否已优化过(任意版本)。
 pub fn is_optimized(epub: &[u8]) -> bool {
     optimized_version(epub).is_some()
+}
+
+/// 是否已是**当前版本**优化产物。版本 bump 后旧产物返回 false → 重传应重优化升级
+/// （否则旧标记会把 v7 的中英文缩进 / v8 的脚注·背景修复等新改进永久挡在门外）。
+pub fn is_current_version(epub: &[u8]) -> bool {
+    optimized_version(epub).as_deref() == Some(OPTIMIZE_VERSION)
 }
 
 /// 同 optimized_version，但直接开文件——ZipArchive over File 只读中央目录，
@@ -308,7 +337,7 @@ pub fn optimize_epub_with(epub: &[u8], opts: &OptimizeOpts) -> Result<(Vec<u8>, 
                         let t = crate::htmlproc::fix_duokan_markers(&t);
                         let t = fix_cover_aspect(&t);
                         let t = svg_cover_to_img(&t);
-                        let t = crate::htmlproc::preserve_relink_footnotes(&t, &aside_index);
+                        let t = crate::htmlproc::preserve_relink_footnotes(&t, &aside_index, opts.footnote);
                         // ② e-ink 提对比：灰字→纯黑、细字重→400（style 属性 + <style> 块）。
                         let t = crate::htmlproc::boost_text_contrast(&t);
                         // 远程图内联（抓下降采样进 zip / 抓不到删 img，免大放大镜）。
@@ -326,8 +355,8 @@ pub fn optimize_epub_with(epub: &[u8], opts: &OptimizeOpts) -> Result<(Vec<u8>, 
                     Err(_) => data.clone(),
                 }
             } else if crate::imgopt::is_downscalable(name) {
-                // ① 按 Move 屏 1696px 长边降采样超大图（缩不动/失败则原样）。
-                crate::imgopt::downscale_for_device(data).unwrap_or_else(|| data.clone())
+                // ① 按 Move 屏竖向框（宽≤954）降采样超大图——EPUB 图可能行内，宽超 954 会溢出竖屏（缩不动/失败则原样）。
+                crate::imgopt::downscale_for_epub(data).unwrap_or_else(|| data.clone())
             } else if name.to_lowercase().ends_with(".opf") {
                 // opf：从 spine 删目录页 itemref（去掉冗余 HTML 目录，reMarkable 有自己的 TOC）。
                 match String::from_utf8(data.clone()) {
@@ -535,6 +564,42 @@ mod tests {
         // 注释已从 notes.xhtml 移走（不重复渲染）
         let notes = read(&mut ar, "notes.xhtml");
         assert!(!notes.contains("第一章的注释") && !notes.contains("第二章的注释"), "注释未从源文件移除: {notes}");
+    }
+
+    #[test]
+    fn double_optimize_inline_footnote_no_dup() {
+        // 版本升级会重优化已优化过的旧书——重优化不得把已内联的注释再翻倍。
+        let opts = OptimizeOpts { wash: Some(crate::wash::WashOpts::default()), footnote: FootnoteMode::Inline };
+        let (out, _) = optimize_epub_with(&make_crossfile_endnote_epub(), &opts).unwrap();
+        let (out2, _) = optimize_epub_with(&out, &opts).unwrap();
+        let mut ar = ZipArchive::new(Cursor::new(&out2)).unwrap();
+        let mut ch1 = String::new();
+        ar.by_name("ch1.xhtml").unwrap().read_to_string(&mut ch1).unwrap();
+        let n = ch1.matches("第一章的注释").count();
+        assert_eq!(n, 1, "重优化后注释重复 {n} 次: {ch1}");
+    }
+
+    #[test]
+    fn reoptimize_relinked_footnote_no_dup() {
+        // 模拟旧版本(v6/v7)产物：注释已移同章末尾 <div class="footnotes"> + marker 已是同章锚点。
+        // 版本升级重优化这类书时，不得把注释再翻倍。
+        let mut buf = Vec::new();
+        {
+            let mut zw = ZipWriter::new(Cursor::new(&mut buf));
+            let stored = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
+            zw.start_file("mimetype", stored).unwrap();
+            zw.write_all(b"application/epub+zip").unwrap();
+            zw.start_file("ch1.xhtml", stored).unwrap();
+            zw.write_all(r##"<html><body><p>正文<a href="#n1">1</a>结束</p><div class="footnotes"><p id="n1">第一章的注释</p></div></body></html>"##.as_bytes()).unwrap();
+            zw.finish().unwrap();
+        }
+        let opts = OptimizeOpts { wash: Some(crate::wash::WashOpts::default()), footnote: FootnoteMode::Inline };
+        let (out, _) = optimize_epub_with(&buf, &opts).unwrap();
+        let mut ar = ZipArchive::new(Cursor::new(&out)).unwrap();
+        let mut ch1 = String::new();
+        ar.by_name("ch1.xhtml").unwrap().read_to_string(&mut ch1).unwrap();
+        let n = ch1.matches("第一章的注释").count();
+        assert_eq!(n, 1, "重优化旧版脚注结构翻倍 {n} 次: {ch1}");
     }
 
     #[test]

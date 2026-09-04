@@ -6,20 +6,21 @@
 //! 用法: epub-optimize [选项] 输入.epub 输出.epub    （输入输出可同路径=就地覆盖，先整本写内存再落盘）
 //!   --no-wash        只跑优化器不清洗（= v5 行为）
 //!   --keep-spacing   清洗但保留原书段间距（诗集/剧本）
-//!   --auto-toc       强制从 h1/h2 重建目录（缺省仅在无目录时生成）
+//!   --auto-toc       强制从 h1–h6 重建目录（缺省仅在无目录时生成）
+//!   --footnote-anchor 脚注用章末锚点跳转（缺省 Inline 内联常显，对齐设备 native→xochitl）
 //!   --check          产物过质量门，打印 JSON 报告；不过则退出码 3（产物仍写出）
 //!   --require-toc    质量门把"无目录"升为失败
 //! 退出码: 0 成功；1 用法错；2 优化失败（输入原样不动）；3 质量门未过。
 
-use bookconv::optimize::{self, OptimizeOpts};
+use bookconv::optimize::{self, FootnoteMode, OptimizeOpts};
 use bookconv::wash::{AutoToc, WashOpts};
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let flags: Vec<&str> = args.iter().filter(|a| a.starts_with("--")).map(|s| s.as_str()).collect();
     let files: Vec<&String> = args.iter().filter(|a| !a.starts_with("--")).collect();
-    if files.len() != 2 || flags.iter().any(|f| !["--no-wash", "--keep-spacing", "--auto-toc", "--check", "--require-toc"].contains(f)) {
-        eprintln!("用法: epub-optimize [--no-wash] [--keep-spacing] [--auto-toc] [--check] [--require-toc] 输入.epub 输出.epub");
+    if files.len() != 2 || flags.iter().any(|f| !["--no-wash", "--keep-spacing", "--auto-toc", "--footnote-anchor", "--check", "--require-toc"].contains(f)) {
+        eprintln!("用法: epub-optimize [--no-wash] [--keep-spacing] [--auto-toc] [--footnote-anchor] [--check] [--require-toc] 输入.epub 输出.epub");
         std::process::exit(1);
     }
     let epub = match std::fs::read(files[0]) {
@@ -32,9 +33,14 @@ fn main() {
     let wash = if flags.contains(&"--no-wash") {
         None
     } else {
-        Some(WashOpts { keep_para_spacing: flags.contains(&"--keep-spacing"), auto_toc: if flags.contains(&"--auto-toc") { AutoToc::Always } else { AutoToc::IfMissing }, ..Default::default() })
+        Some(WashOpts {
+            keep_para_spacing: flags.contains(&"--keep-spacing"),
+            auto_toc: if flags.contains(&"--auto-toc") { AutoToc::Always } else { AutoToc::IfMissing },
+            ..Default::default()
+        })
     };
-    let (out, rep) = match optimize::optimize_epub_with(&epub, &OptimizeOpts { wash }) {
+    let footnote = if flags.contains(&"--footnote-anchor") { FootnoteMode::Anchor } else { FootnoteMode::Inline };
+    let (out, rep) = match optimize::optimize_epub_with(&epub, &OptimizeOpts { wash, footnote }) {
         Ok(x) => x,
         Err(e) => {
             eprintln!("优化失败: {e}");

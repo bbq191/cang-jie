@@ -74,6 +74,24 @@ def crop_pdf(src: Path, out: Path) -> Path:
     return out
 
 
+def has_k2pdfopt() -> bool:
+    return shutil.which("k2pdfopt", path=clean_env().get("PATH")) is not None
+
+
+def reflow_pdf(src: Path, outdir: Path) -> tuple[Path, str]:
+    """PDF 重排（born-digital 结构化→EPUB / 扫描件 k2pdfopt|裁边→PDF）。返回 (产物路径, kind∈{'epub','pdf'})。"""
+    import json
+
+    r = _run([*_py_with_pymupdf(), str(CALIBRE_DIR / "pdf_reflow_move.py"), str(src), str(outdir)])
+    if r.returncode != 0:
+        raise CalibreError(f"pdf_reflow_move.py 失败（rc={r.returncode}）：{r.stderr.strip()[-800:]}")
+    try:
+        d = json.loads(r.stdout.strip().splitlines()[-1])
+        return Path(d["out"]), d["kind"]
+    except Exception as e:  # noqa: BLE001
+        raise CalibreError(f"pdf_reflow_move.py 输出不可解析（{e}）：{r.stdout.strip()[-400:]}") from None
+
+
 def check(path: Path, require_toc: bool = False) -> tuple[bool, str]:
     """C5 体检（check_output.py）：返回 (通过?, 输出)。硬拦项非零退出。"""
     cmd = [*_py_with_pymupdf(), str(CALIBRE_DIR / "check_output.py"), str(path)]
