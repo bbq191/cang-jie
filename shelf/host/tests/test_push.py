@@ -53,6 +53,33 @@ def test_push_device_route_hits_gateway(gateway, tmp_path, capsys):
     assert FakeGateway.received[-1][0] == "/api/koreader/books?folder=manga"
 
 
+def test_push_native_pdf_reflow_to_epub(gateway, tmp_path, capsys, monkeypatch):
+    pdf = tmp_path / "paper.pdf"
+    pdf.write_bytes(b"%PDF-1.4 fake")
+    epub = tmp_path / "paper.epub"
+    epub.write_bytes(b"PK\x03\x04reflowed")
+    monkeypatch.setattr(cb, "has_calibre", lambda: True)
+    monkeypatch.setattr(cb, "reflow_pdf", lambda src, work: (epub, "epub"))
+    monkeypatch.setattr(cb, "wash", lambda src, work: src)  # 洗书直返（不跑 Calibre）
+    monkeypatch.setattr(push, "_gate", lambda out, args: None)
+    FakeGateway.received.clear()
+    rc, out = run(["push", "-q", "host", "-t", "native", str(pdf)], gateway, capsys)
+    assert rc == 0 and "结构化重排 → EPUB" in out
+    assert FakeGateway.received[-1][0].startswith("/api/books?target=native"), FakeGateway.received
+
+
+def test_push_native_pdf_no_reflow_pushes_raw(gateway, tmp_path, capsys, monkeypatch):
+    pdf = tmp_path / "p.pdf"
+    pdf.write_bytes(b"%PDF raw")
+    called = {"n": 0}
+    monkeypatch.setattr(cb, "has_calibre", lambda: True)
+    monkeypatch.setattr(cb, "reflow_pdf", lambda *a: called.__setitem__("n", 1) or (pdf, "pdf"))
+    FakeGateway.received.clear()
+    rc, out = run(["push", "-q", "host", "-t", "native", "--no-reflow", str(pdf)], gateway, capsys)
+    assert rc == 0 and called["n"] == 0, "--no-reflow 不应调用 reflow"
+    assert FakeGateway.received[-1][0].startswith("/api/books?target=native")
+
+
 def test_push_dry_run_and_missing_file(gateway, tmp_path, capsys):
     rc, out = run(["push", "-n", str(tmp_path / "nope.epub")], gateway, capsys)
     assert rc == 1 and "不是文件" in out
