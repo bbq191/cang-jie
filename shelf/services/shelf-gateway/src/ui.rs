@@ -113,9 +113,9 @@ function uploader(box,urlOf,queryOf){
   return {clear(){files=[];render()}};
 }
 
-const CMP=`<details class="cmp"><summary>各投递方式怎么选？（对比）</summary>
+const CMP=`<details class="cmp"><summary>原生阅读 vs 原生批注 怎么选？（含 KOReader 对照）</summary>
 <div class="tblwrap"><table class="cmp"><thead><tr><th></th><th>📖 原生阅读</th><th>✍️ 原生批注</th><th>📚 KOReader</th></tr></thead><tbody>
-<tr><th>用在哪</th><td>reMarkable 自带阅读器：目录跳转 / 脚注 / 自定义字体 / 手写批注</td><td>在固定版式 PDF 上手写、定稿</td><td>消遣阅读，用 KOReader 的重排 / 词典 / 手势</td></tr>
+<tr><th>用在哪</th><td>reMarkable 自带阅读器：目录跳转 / 脚注 / 自定义字体 / 手写批注</td><td>在固定版式 PDF 上手写、定稿</td><td>消遣阅读，用 KOReader 的重排 / 词典 / 手势 <span class="small">→ 见上方 KOReader 标签页</span></td></tr>
 <tr><th>收什么</th><td>EPUB·PDF 直接；AZW3·MOBI·PRC·AZW·FB2 转 EPUB；CBZ 转 PDF</td><td>只收 PDF、CBZ→PDF（EPUB 要电脑端 Calibre 定稿）</td><td>任意格式，原样</td></tr>
 <tr><th>动不动文件</th><td>EPUB 走清洗/优化（可关）；其它按需转换</td><td>PDF 原样，CBZ 转 PDF</td><td class="pick">完全不改，字节不动</td></tr>
 <tr><th>字体/字号可调</th><td class="pick">是（EPUB 流式，reMarkable 字体设置生效）</td><td>否（PDF 固定版式）</td><td class="pick">是（KOReader 自己排版）</td></tr>
@@ -132,59 +132,71 @@ const CMP=`<details class="cmp"><summary>各投递方式怎么选？（对比）
 </details>`;
 
 const TABS={
- 'book-serve':{title:'传书',render(sec){sec.innerHTML=`
+ 'book-serve':{title:'xochitl',render(sec){sec.innerHTML=`
   <div class="card">
-    <h2>传书</h2><p class="lead">选一个投递方式，拖入文件即可。格式自动处理。</p>
+    <h2>xochitl · 原生阅读器</h2><p class="lead">选投递方式，拖入文件即可。格式自动处理。KOReader 的书和字体在 KOReader 标签页。</p>
     <div class="seg" id="tgt">
-      <label><input type="radio" name="tgt" value="native" checked><div class="t">📖 原生阅读</div><div class="d">自带阅读器 · 目录 · 脚注 · 字体 · 批注</div><div class="fmt">EPUB PDF AZW3 MOBI FB2 CBZ</div></label>
+      <label><input type="radio" name="tgt" value="native" checked><div class="t">📖 原生阅读</div><div class="d">目录 · 脚注 · 可调字体 · 手写批注</div><div class="fmt">EPUB PDF AZW3 MOBI FB2 CBZ</div></label>
       <label><input type="radio" name="tgt" value="annot"><div class="t">✍️ 原生批注</div><div class="d">固定版式 PDF 上手写定稿</div><div class="fmt">PDF CBZ</div></label>
-      <label><input type="radio" name="tgt" value="koreader"><div class="t">📚 KOReader</div><div class="d">消遣阅读 · 重排 · 词典</div><div class="fmt">任意格式 · 原样</div></label>
     </div>
     ${CMP}
     <label class="field" for="folder">文件夹</label>
-    <input type="text" id="folder" placeholder="留空=默认；KOReader 可多级 如 漫画/阿拉蕾">
+    <input type="text" id="folder" placeholder="留空=默认书库文件夹">
     <div id="optrow"><label class="field">EPUB 处理</label>
       <select id="opt"><option value="auto">清洗 + 优化（推荐 · 剥字体锁、归零边距、缺目录自动建）</option><option value="keep-spacing">清洗但保留段距（诗集 / 剧本）</option><option value="plain">只优化不清洗（脚注 / 图片 / 对比度）</option><option value="off">原样进库</option></select>
       <div class="row" style="margin:.5em 0 0"><label class="toggle"><input type="checkbox" id="chk" checked> 质量门（真 DRM / 目录坏 / 双 id 硬拦）</label></div>
     </div>
-    <div class="drop"><span class="big">⬆</span>点击或拖入文件（可多选）</div><input type="file" multiple hidden>
+    <div class="drop"><span class="big">⬆</span>点击或拖入书（可多选）</div><input type="file" multiple hidden>
     <ul class="q"></ul>
     <div class="row"><button class="btn pri go">开始上传</button><button class="btn clr">清空</button></div>
   </div>
   <div class="card"><div id="bstat" class="kv small"></div>
-    <h3>未完成 / 失败</h3><ul class="list" id="inbox"></ul></div>`;
+    <h3>未完成 / 失败</h3><ul class="list" id="inbox"></ul></div>
+  <div class="card"><h3 style="margin-top:0">字体（原生阅读器）</h3>
+    <p class="small">ttf / otf → 装进 fontconfig 用户字体目录。上传后阅读器「文字与布局」菜单重开即可选，无需重启。中文缺字自动回退到覆盖率最高的已装中文字体。KOReader 的字体在 KOReader 标签页装。</p>
+    <div class="drop"><span class="big">🔤</span>点击或拖入 ttf/otf（可多选）</div><input type="file" multiple hidden accept=".ttf,.otf,.ttc">
+    <ul class="q"></ul><div class="row"><button class="btn pri go">上传字体</button></div>
+    <h3>已装字体</h3><ul class="list" id="fontlist"></ul></div>`;
   const tgtVal=()=>$('input[name=tgt]:checked',sec).value;
-  const syncTarget=()=>{const t=tgtVal();$('#optrow',sec).style.display=t==='koreader'?'none':'';
-    $('#folder',sec).placeholder=t==='koreader'?'留空=根目录；可多级 如 漫画/阿拉蕾':'留空=默认书库文件夹';};
+  const syncTarget=()=>{$('#optrow',sec).style.display=tgtVal()==='annot'?'none':'';};
   sec.querySelectorAll('input[name=tgt]').forEach(r=>r.onchange=syncTarget);syncTarget();
-  const up=uploader(sec,()=>tgtVal()==='koreader'?'/api/koreader/books':'/api/books',()=>{const q={folder:$('#folder',sec).value.trim()};if(tgtVal()!=='koreader'){q.target=tgtVal();q.optimize=$('#opt',sec).value;q.check=$('#chk',sec).checked?'on':'off'}return q});
-  $('.clr',sec).onclick=()=>up.clear();
+  // 两个上传器：书(drop 0)、字体(drop 1)——按 DOM 顺序取
+  const drops=sec.querySelectorAll('.drop'),inputs=sec.querySelectorAll('input[type=file]'),qs=sec.querySelectorAll('ul.q'),gos=sec.querySelectorAll('.go');
+  const wrap=(k)=>({querySelector:(x)=>({'ul.q':qs[k],'input[type=file]':inputs[k],'.drop':drops[k],'.go':gos[k]}[x])});
+  const upBook=uploader(wrap(0),()=>'/api/books',()=>({folder:$('#folder',sec).value.trim(),target:tgtVal(),optimize:$('#opt',sec).value,check:$('#chk',sec).checked?'on':'off'}));
+  uploader(wrap(1),()=>'/api/fonts',()=>({}));
+  $('.clr',sec).onclick=()=>upBook.clear();
   const refresh=async()=>{const s=await j('/api/books/status');$('#bstat',sec).innerHTML=s.ok?`<b>xochitl 投递</b><span>${s.uploadReachable?'✅ 可达':'<span style="color:var(--bad)">⚠ 不可达（lo 别名 / USB 未就绪）</span>'}</span><b>书库 / 批注</b><span>${s.libraryFolder} / ${s.annotFolder}</span><b>队列</b><span>待处理 ${s.spool.pending} · 失败 ${s.spool.failed}</span>${s.readingQol?`<b>阅读增强</b><span>点击翻页 ${s.readingQol.tapPageTurn?'开':'关'} · 快速黑白 ${s.readingQol.fastMono?'开':'关'} · 清残影 ${s.readingQol.refresh?'开':'关'} · 字体增强 ${s.readingQol.fontEnhance?'开':'关'}<br><span class="small">在设备「设置 → 系统增强」里改</span></span>`:''}`:`<b>book-serve</b><span>${s.message}</span>`;
     const ib=await j('/api/books/inbox');const ul=$('#inbox',sec);ul.innerHTML='';(ib.items||[]).forEach(it=>{const li=document.createElement('li');li.innerHTML=`<span>${it.name} <span class="small">${it.state} · ${fmtB(it.bytes)}</span></span><span>${it.state==='failed'?'<button class="btn r">重试</button> <button class="btn d">删除</button>':''}</span>`;
       if(it.state==='failed'){$('.r',li).onclick=async()=>{await j('/api/books/inbox/retry',{method:'POST',body:JSON.stringify({name:it.name})});refresh()};$('.d',li).onclick=async()=>{await j('/api/books/inbox/delete',{method:'POST',body:JSON.stringify({name:it.name})});refresh()}}
-      ul.appendChild(li)});if(!(ib.items||[]).length)ul.innerHTML='<li class="small">（空）</li>'};
+      ul.appendChild(li)});if(!(ib.items||[]).length)ul.innerHTML='<li class="small">（空）</li>';
+    const fl=await j('/api/fonts');const fu=$('#fontlist',sec);fu.innerHTML='';(fl.items||[]).forEach(it=>{const ex=it.extra||{};const li=document.createElement('li');
+      const left=document.createElement('span');left.innerHTML=`${it.name}${ex.names&&ex.names.cn&&ex.names.cn!==it.name?' <span class="small">'+ex.names.cn+'</span>':''}${ex.files&&ex.files.length>1?' <span class="small">×'+ex.files.length+'</span>':''}`;
+      const right=document.createElement('span');right.style.cssText='display:flex;align-items:center;gap:.4em';right.className='small';
+      const p=ex.cjkPct;if(p!=null){const cls=p>=80?'on':(p>=8?'':'off');right.insertAdjacentHTML('beforeend',`<span class="badge ${cls}" title="中文基本区覆盖率">中文 ${p}%</span>`)}
+      if(ex.fontconfigRef)right.insertAdjacentHTML('beforeend','<span title="界面中文回退引用">⚠</span>');
+      const d=document.createElement('button');d.className='btn';d.textContent='删除';d.onclick=async()=>{if(confirm('删除字体 '+it.name+'？')){const r=await j('/api/fonts/'+encodeURIComponent(it.name),{method:'DELETE'});if(r.ok===false)alert(r.message);refresh()}};right.appendChild(d);
+      li.append(left,right);fu.appendChild(li)});if(!(fl.items||[]).length)fu.innerHTML='<li class="small">（空）</li>'};
   refresh();sec.refresh=refresh;}},
  'koreader-serve':{title:'KOReader',render(sec){sec.innerHTML=`
   <div class="card"><h2>KOReader</h2><div class="kv small" id="ks" style="margin-top:.5em">加载…</div></div>
-  <div class="card"><h3 style="margin-top:0">传字体给 KOReader</h3><p class="small">只装进 KOReader；原生阅读器的字体去「字体」页装。</p>
-  <div class="drop"><span class="big">🔤</span>点击或拖入 ttf/otf（可多选）</div><input type="file" multiple hidden accept=".ttf,.otf,.ttc"><ul class="q"></ul><div class="row"><button class="btn pri go">上传</button></div>
-  <h3>已装字体</h3><ul class="list" id="kf"></ul></div>
   <div class="card"><h3 style="margin-top:0">书库 <span id="kcrumb" class="small crumb"></span></h3>
-  <div class="drop"><span class="big">⬆</span>拖入书到当前目录（可多选）</div><input type="file" multiple hidden><ul class="q"></ul><div class="row"><button class="btn pri go">上传到当前目录</button></div>
-  <ul class="list" id="kb"></ul></div>`;
+  <div class="drop"><span class="big">⬆</span>拖入书到当前目录（可多选 · 任意格式原样）</div><input type="file" multiple hidden><ul class="q"></ul><div class="row"><button class="btn pri go">上传到当前目录</button></div>
+  <ul class="list" id="kb"></ul></div>
+  <div class="card"><h3 style="margin-top:0">字体（KOReader）</h3><p class="small">只装进 KOReader；原生阅读器的字体在 xochitl 标签页装。</p>
+  <div class="drop"><span class="big">🔤</span>点击或拖入 ttf/otf（可多选）</div><input type="file" multiple hidden accept=".ttf,.otf,.ttc"><ul class="q"></ul><div class="row"><button class="btn pri go">上传字体</button></div>
+  <h3>已装字体</h3><ul class="list" id="kf"></ul></div>`;
   let kdir='';
   const drops=sec.querySelectorAll('.drop'),inputs=sec.querySelectorAll('input[type=file]'),qs=sec.querySelectorAll('ul.q'),gos=sec.querySelectorAll('.go');
   const wrap=(i)=>({querySelector:(sel)=>({'ul.q':qs[i],'input[type=file]':inputs[i],'.drop':drops[i],'.go':gos[i]}[sel])});
-  uploader(wrap(0),()=>'/api/koreader/fonts',()=>({}));
-  uploader(wrap(1),()=>'/api/koreader/books',()=>({folder:kdir}));
+  uploader(wrap(0),()=>'/api/koreader/books',()=>({folder:kdir}));
+  uploader(wrap(1),()=>'/api/koreader/fonts',()=>({}));
   const refresh=async()=>{const s=await j('/api/koreader/status');$('#ks',sec).innerHTML=s.ok?`<b>安装</b><span>${s.installed?'是':'否'} ${s.version?'('+s.version+')':''}</span><b>运行中</b><span>${s.running?'是（改配置 / 删字体后需重启它）':'否'}</span><b>目录</b><span>${s.root}</span><b>藏书</b><span>${s.books} 本 · 字体 ${s.fonts} 个</span>`:`<span>${s.message}</span>`;
     const f=await j('/api/koreader/fonts');const uf=$('#kf',sec);uf.innerHTML='';(f.items||[]).forEach(it=>{const li=document.createElement('li');li.innerHTML=`<span>${it.name}</span><span class="small">${fmtB(it.bytes)} </span>`;const d=document.createElement('button');d.className='btn';d.textContent='删除';d.onclick=async()=>{if(confirm('从 KOReader 删除 '+it.name+'？')){const r=await j('/api/koreader/fonts/'+encodeURIComponent(it.name),{method:'DELETE'});if(r.ok===false)alert(r.message);refresh()}};li.lastChild.appendChild(d);uf.appendChild(li)});if(!(f.items||[]).length)uf.innerHTML='<li class="small">（空）</li>';
     const b=await j('/api/koreader/books?'+new URLSearchParams({folder:kdir}));const ul=$('#kb',sec);ul.innerHTML='';
     const crumb=$('#kcrumb',sec);crumb.innerHTML='';const parts=kdir?kdir.split('/'):[];const mk=(t,p)=>{const a=document.createElement('a');a.href='#';a.textContent=t;a.onclick=e=>{e.preventDefault();kdir=p;refresh()};return a};crumb.appendChild(mk('根',''));parts.forEach((p,i)=>{crumb.append(' / ');crumb.appendChild(mk(p,parts.slice(0,i+1).join('/')))});
     (b.items||[]).forEach(it=>{const li=document.createElement('li');if(it.kind==='dir'){li.innerHTML=`<span>📁 <a href="#">${it.name}</a></span><span class="small">${it.count} 本</span>`;$('a',li).onclick=e=>{e.preventDefault();kdir=(kdir?kdir+'/':'')+it.name;refresh()}}else li.innerHTML=`<span>${it.name}</span><span class="small">${fmtB(it.bytes)}</span>`;ul.appendChild(li)});if(!(b.items||[]).length)ul.innerHTML='<li class="small">（空目录）</li>'};
   refresh();sec.refresh=refresh}},
- 'font-serve':{title:'字体',render(sec){assetTab(sec,'/api/fonts','ttf / otf 字体 → 只装进原生阅读器（fontconfig 用户字体目录）。KOReader 的字体去 KOReader 页装。上传后「文字与布局」菜单重开即可选，无需重启。中文缺字会自动回退到覆盖率最高的已装中文字体。',{icon:'🔤',
-   itemAction:(it)=>{const ex=it.extra||{};const p=ex.cjkPct;if(p==null)return '';const cls=p>=80?'on':(p>=8?'':'off');return `<span class="badge ${cls}" title="中文基本区覆盖率">中文 ${p}%</span> `}})}},
  'wallpaper-serve':{title:'壁纸',render(sec){assetTab(sec,'/api/wallpapers','jpg / png 图片，自动裁到 954×1696。首张自动启用，下次休眠即生效。',{icon:'🖼',
    header:`<label class="field">休眠轮换</label><div class="row"><select id="wpmode" style="max-width:12em"><option value="sequential">按顺序</option><option value="random">随机</option><option value="fixed">固定</option></select><span id="wpst" class="small"></span></div>`,
    onRender:async(sec,refresh)=>{const st=await j('/api/wallpapers/status');const sel=$('#wpmode',sec);if(st.ok){sel.value=st.mode;$('#wpst',sec).textContent=`当前 ${st.current||'（无）'} · 已挂载 ${st.mounted}/${st.expectedMounts}`}
