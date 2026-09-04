@@ -79,6 +79,15 @@ table.cmp .pick{color:var(--accent);font-weight:600}
 .badge.on{background:color-mix(in srgb,var(--ok) 18%,transparent);color:var(--ok);border-color:transparent}
 .badge.off{background:color-mix(in srgb,var(--bad) 15%,transparent);color:var(--bad);border-color:transparent}
 .crumb a{color:var(--accent);text-decoration:none}.crumb a:hover{text-decoration:underline}
+/* 二级标签（把一个大页面拆成几屏，手机不长拉） */
+.subnav{display:flex;gap:.4em;overflow-x:auto;margin:.2em 0 1em;padding-bottom:.15em;-webkit-overflow-scrolling:touch}
+.subnav button{border:1px solid var(--line);background:var(--surface);color:var(--mute);padding:.32em .95em;border-radius:2em;cursor:pointer;font-size:.9em;white-space:nowrap;transition:.15s}
+.subnav button:hover{color:var(--fg)}
+.subnav button.on{background:var(--surface2);color:var(--fg);border-color:var(--accent);font-weight:600}
+.subpanel{display:none}.subpanel.on{display:block}
+/* 说明列表 */
+dl.help{margin:.3em 0 .2em}dl.help dt{font-weight:600;margin-top:.7em;color:var(--fg)}
+dl.help dd{margin:.2em 0 .2em;color:var(--mute);font-size:.9em;line-height:1.65}
 </style></head><body>
 <header><span class="logo">书架</span><small id="hdr">连接中…</small>
 <span class="links"><a href="/password">改密码</a><a href="/ca.crt">CA 证书</a><a href="#" id="logout">退出</a></span></header>
@@ -124,6 +133,10 @@ function uploader(box,urlOf,queryOf){
   return {clear(){files=[];render()}};
 }
 
+/* 二级标签：面板都由外层 render/refresh 预先填好，切换只显隐（复用主 addTab 的思路，不重复请求） */
+function subtabs(sec){const nav=$('.subnav',sec);if(!nav)return;const btns=[...nav.children],panels=[...sec.querySelectorAll('.subpanel')];
+  btns.forEach((b,i)=>b.onclick=()=>{btns.forEach(x=>x.classList.remove('on'));panels.forEach(p=>p.classList.remove('on'));b.classList.add('on');if(panels[i])panels[i].classList.add('on')});}
+
 const CMP=`<details class="cmp"><summary>原生阅读 vs 原生批注 怎么选？（含 KOReader 对照）</summary>
 <div class="tblwrap"><table class="cmp"><thead><tr><th></th><th>📖 原生阅读</th><th>✍️ 原生批注</th><th>📚 KOReader</th></tr></thead><tbody>
 <tr><th>用在哪</th><td>reMarkable 自带阅读器：目录跳转 / 脚注 / 自定义字体 / 手写批注</td><td>在固定版式 PDF 上手写、定稿</td><td>消遣阅读，用 KOReader 的重排 / 词典 / 手势 <span class="small">→ 见上方 KOReader 标签页</span></td></tr>
@@ -144,33 +157,38 @@ const CMP=`<details class="cmp"><summary>原生阅读 vs 原生批注 怎么选�
 
 const TABS={
  'book-serve':{title:'xochitl',render(sec){sec.innerHTML=`
-  <div class="card">
-    <h2>xochitl · 原生阅读器</h2><p class="lead">选投递方式，拖入文件即可。格式自动处理。KOReader 的书和字体在 KOReader 标签页。</p>
-    ${onUsb?'':'<p class="opt-note">传大书建议走 USB：设备插线后开 <code>https://10.11.99.1:8778</code>，不占 Wi-Fi（每本书 xochitl 会往云端同步，走弱热点会卡）。</p>'}
-    <div class="seg" id="tgt">
-      <label><input type="radio" name="tgt" value="native" checked><div class="t">📖 原生阅读</div><div class="d">目录 · 脚注 · 可调字体 · 手写批注</div><div class="fmt">EPUB PDF AZW3 MOBI FB2 CBZ</div></label>
-      <label><input type="radio" name="tgt" value="annot"><div class="t">✍️ 原生批注</div><div class="d">固定版式 PDF 上手写定稿</div><div class="fmt">PDF CBZ</div></label>
+  <div class="subnav"><button class="on">📚 传书</button><button>🔤 原生字体</button></div>
+  <div class="subpanel on">
+    <div class="card">
+      <h2>xochitl · 原生阅读器</h2><p class="lead">选投递方式，拖入文件即可，格式自动处理。</p>
+      ${onUsb?'':'<p class="opt-note">传大书建议走 USB：设备插线后开 <code>https://10.11.99.1:8778</code>，不占 Wi-Fi（每本书 xochitl 会往云端同步，走弱热点会卡）。</p>'}
+      <div class="seg" id="tgt">
+        <label><input type="radio" name="tgt" value="native" checked><div class="t">📖 原生阅读</div><div class="d">目录 · 脚注 · 可调字体 · 手写批注</div><div class="fmt">EPUB PDF AZW3 MOBI FB2 CBZ</div></label>
+        <label><input type="radio" name="tgt" value="annot"><div class="t">✍️ 原生批注</div><div class="d">固定版式 PDF 上手写定稿</div><div class="fmt">PDF CBZ</div></label>
+      </div>
+      ${CMP}
+      <label class="field" for="folder">文件夹</label>
+      <input type="text" id="folder" placeholder="留空=默认书库文件夹">
+      <div id="optrow"><label class="field">EPUB 处理</label>
+        <select id="opt"><option value="auto">清洗 + 优化（推荐 · 剥字体锁、归零边距、缺目录自动建）</option><option value="keep-spacing">清洗但保留段距（诗集 / 剧本）</option><option value="plain">只优化不清洗（脚注 / 图片 / 对比度）</option><option value="off">原样进库</option></select>
+        <div class="row" style="margin:.5em 0 0"><label class="toggle"><input type="checkbox" id="chk" checked> 质量门（真 DRM / 目录坏 / 双 id 硬拦）</label></div>
+      </div>
+      <div class="drop"><span class="big">⬆</span>点击或拖入书（可多选）</div><input type="file" multiple hidden>
+      <ul class="q"></ul>
+      <div class="row"><button class="btn pri go">开始上传</button></div>
     </div>
-    ${CMP}
-    <label class="field" for="folder">文件夹</label>
-    <input type="text" id="folder" placeholder="留空=默认书库文件夹">
-    <div id="optrow"><label class="field">EPUB 处理</label>
-      <select id="opt"><option value="auto">清洗 + 优化（推荐 · 剥字体锁、归零边距、缺目录自动建）</option><option value="keep-spacing">清洗但保留段距（诗集 / 剧本）</option><option value="plain">只优化不清洗（脚注 / 图片 / 对比度）</option><option value="off">原样进库</option></select>
-      <div class="row" style="margin:.5em 0 0"><label class="toggle"><input type="checkbox" id="chk" checked> 质量门（真 DRM / 目录坏 / 双 id 硬拦）</label></div>
-    </div>
-    <div class="drop"><span class="big">⬆</span>点击或拖入书（可多选）</div><input type="file" multiple hidden>
-    <ul class="q"></ul>
-    <div class="row"><button class="btn pri go">开始上传</button></div>
+    <div class="card"><div id="bstat" class="kv small"></div>
+      <h3>未完成 / 失败</h3><ul class="list" id="inbox"></ul></div>
   </div>
-  <div class="card"><div id="bstat" class="kv small"></div>
-    <h3>未完成 / 失败</h3><ul class="list" id="inbox"></ul></div>
-  <div class="card"><h3 style="margin-top:0">字体（原生阅读器）</h3>
-    <p class="small">ttf / otf → 装进 fontconfig 用户字体目录。上传后阅读器「文字与布局」菜单重开即可选，无需重启。KOReader 的字体在 KOReader 标签页装。</p>
-    <div id="fbchain" class="opt-note" style="display:none"></div>
-    <div class="row"><label class="toggle"><input type="checkbox" id="embold" checked> 中文加粗（墨水屏细笔画补偿）</label> <span class="small">默认开：对回退中文字体加粗，宋体在低对比墨水屏发淡时更清楚；翻书即见。</span></div>
-    <div class="drop"><span class="big">🔤</span>点击或拖入 ttf/otf（可多选）</div><input type="file" multiple hidden accept=".ttf,.otf,.ttc">
-    <ul class="q"></ul><div class="row"><button class="btn pri go">上传字体</button></div>
-    <h3>已装字体</h3><ul class="list" id="fontlist"></ul></div>`;
+  <div class="subpanel">
+    <div class="card"><h3 style="margin-top:0">字体（原生阅读器）</h3>
+      <p class="small">ttf / otf → 装进 fontconfig 用户字体目录。上传后阅读器「文字与布局」菜单重开即可选，无需重启。KOReader 的字体在 KOReader 标签页装。</p>
+      <div id="fbchain" class="opt-note" style="display:none"></div>
+      <div class="row"><label class="toggle"><input type="checkbox" id="embold" checked> 中文加粗（墨水屏细笔画补偿）</label> <span class="small">默认开：对回退中文字体加粗，宋体在低对比墨水屏发淡时更清楚；翻书即见。</span></div>
+      <div class="drop"><span class="big">🔤</span>点击或拖入 ttf/otf（可多选）</div><input type="file" multiple hidden accept=".ttf,.otf,.ttc">
+      <ul class="q"></ul><div class="row"><button class="btn pri go">上传字体</button></div>
+      <h3>已装字体</h3><ul class="list" id="fontlist"></ul></div>
+  </div>`;
   const tgtVal=()=>$('input[name=tgt]:checked',sec).value;
   const syncTarget=()=>{$('#optrow',sec).style.display=tgtVal()==='annot'?'none':'';};
   // localStorage 记住上次选择（A1）
@@ -202,19 +220,26 @@ const TABS={
       if(ex.fontconfigRef)right.insertAdjacentHTML('beforeend','<span title="界面中文回退引用">⚠</span>');
       const d=document.createElement('button');d.className='btn';d.textContent='删除';d.onclick=async()=>{if(confirm('删除字体 '+it.name+'？')){const r=await j('/api/fonts/'+encodeURIComponent(it.name),{method:'DELETE'});if(r.ok===false)alert(r.message);refresh()}};right.appendChild(d);
       li.append(left,right);fu.appendChild(li)});if(!(fl.items||[]).length)fu.innerHTML='<li class="small">（空）</li>'};
-  refresh();sec.refresh=refresh;}},
+  refresh();sec.refresh=refresh;subtabs(sec);}},
  'koreader-serve':{title:'KOReader',render(sec){sec.innerHTML=`
-  <div class="card"><h2>KOReader</h2><div class="kv small" id="ks" style="margin-top:.5em">加载…</div></div>
-  <div class="card"><h3 style="margin-top:0">书库 <span id="kcrumb" class="small crumb"></span></h3>
-  <div class="drop"><span class="big">⬆</span>拖入书到当前目录（可多选 · 任意格式原样）</div><input type="file" multiple hidden><ul class="q"></ul><div class="row"><button class="btn pri go">上传到当前目录</button></div>
-  <ul class="list" id="kb"></ul></div>
-  <div class="card"><h3 style="margin-top:0">字体（KOReader）</h3><p class="small">只装进 KOReader；原生阅读器的字体在 xochitl 标签页装。</p>
-  <div class="drop"><span class="big">🔤</span>点击或拖入 ttf/otf（可多选）</div><input type="file" multiple hidden accept=".ttf,.otf,.ttc"><ul class="q"></ul><div class="row"><button class="btn pri go">上传字体</button></div>
-  <h3>已装字体</h3><ul class="list" id="kf"></ul></div>
-  <div class="card"><h3 style="margin-top:0">词典（KOReader）</h3><p class="small">StarDict 词典：填词典名，拖入这本词典的全部文件（.ifo/.idx/.dict/.dz/.syn/.oft）一起传。</p>
-  <label class="field" for="dictname">词典名</label><input type="text" id="dictname" placeholder="如 牛津高阶 / cc-cedict">
-  <div class="drop"><span class="big">📖</span>点击或拖入词典文件（可多选）</div><input type="file" multiple hidden accept=".ifo,.idx,.dict,.dz,.syn,.oft"><ul class="q"></ul><div class="row"><button class="btn pri go">上传词典</button></div>
-  <h3>已装词典</h3><ul class="list" id="kd"></ul></div>`;
+  <div class="subnav"><button class="on">📚 书库</button><button>🔤 字体</button><button>📖 词典</button></div>
+  <div class="subpanel on">
+    <div class="card"><h2>KOReader</h2><div class="kv small" id="ks" style="margin-top:.5em">加载…</div></div>
+    <div class="card"><h3 style="margin-top:0">书库 <span id="kcrumb" class="small crumb"></span></h3>
+    <div class="drop"><span class="big">⬆</span>拖入书到当前目录（可多选 · 任意格式原样）</div><input type="file" multiple hidden><ul class="q"></ul><div class="row"><button class="btn pri go">上传到当前目录</button></div>
+    <ul class="list" id="kb"></ul></div>
+  </div>
+  <div class="subpanel">
+    <div class="card"><h3 style="margin-top:0">字体（KOReader）</h3><p class="small">只装进 KOReader；原生阅读器的字体在 xochitl 标签页装。</p>
+    <div class="drop"><span class="big">🔤</span>点击或拖入 ttf/otf（可多选）</div><input type="file" multiple hidden accept=".ttf,.otf,.ttc"><ul class="q"></ul><div class="row"><button class="btn pri go">上传字体</button></div>
+    <h3>已装字体</h3><ul class="list" id="kf"></ul></div>
+  </div>
+  <div class="subpanel">
+    <div class="card"><h3 style="margin-top:0">词典（KOReader）</h3><p class="small">StarDict 词典：填词典名，拖入这本词典的全部文件（.ifo/.idx/.dict/.dz/.syn/.oft）一起传。</p>
+    <label class="field" for="dictname">词典名</label><input type="text" id="dictname" placeholder="如 牛津高阶 / cc-cedict">
+    <div class="drop"><span class="big">📖</span>点击或拖入词典文件（可多选）</div><input type="file" multiple hidden accept=".ifo,.idx,.dict,.dz,.syn,.oft"><ul class="q"></ul><div class="row"><button class="btn pri go">上传词典</button></div>
+    <h3>已装词典</h3><ul class="list" id="kd"></ul></div>
+  </div>`;
   let kdir='';
   const drops=sec.querySelectorAll('.drop'),inputs=sec.querySelectorAll('input[type=file]'),qs=sec.querySelectorAll('ul.q'),gos=sec.querySelectorAll('.go');
   const wrap=(i)=>({querySelector:(sel)=>({'ul.q':qs[i],'input[type=file]':inputs[i],'.drop':drops[i],'.go':gos[i]}[sel])});
@@ -229,7 +254,7 @@ const TABS={
     const b=await j('/api/koreader/books?'+new URLSearchParams({folder:kdir}));const ul=$('#kb',sec);ul.innerHTML='';
     const crumb=$('#kcrumb',sec);crumb.innerHTML='';const parts=kdir?kdir.split('/'):[];const mk=(t,p)=>{const a=document.createElement('a');a.href='#';a.textContent=t;a.onclick=e=>{e.preventDefault();kdir=p;refresh()};return a};crumb.appendChild(mk('根',''));parts.forEach((p,i)=>{crumb.append(' / ');crumb.appendChild(mk(p,parts.slice(0,i+1).join('/')))});
     (b.items||[]).forEach(it=>{const li=document.createElement('li');if(it.kind==='dir'){li.innerHTML=`<span>📁 <a href="#">${it.name}</a></span><span class="small">${it.count} 本</span>`;$('a',li).onclick=e=>{e.preventDefault();kdir=(kdir?kdir+'/':'')+it.name;refresh()}}else li.innerHTML=`<span>${it.name}</span><span class="small">${fmtB(it.bytes)}</span>`;ul.appendChild(li)});if(!(b.items||[]).length)ul.innerHTML='<li class="small">（空目录）</li>'};
-  refresh();sec.refresh=refresh}},
+  refresh();sec.refresh=refresh;subtabs(sec)}},
  'wallpaper-serve':{title:'壁纸',render(sec){assetTab(sec,'/api/wallpapers','jpg / png 图片，自动裁到 954×1696。首张自动启用，下次休眠即生效。',{icon:'🖼',
    header:`<label class="field">休眠轮换</label><div class="row"><select id="wpmode" style="max-width:12em"><option value="sequential">按顺序</option><option value="random">随机</option><option value="fixed">固定</option></select><span id="wpst" class="small"></span></div>`,
    onRender:async(sec,refresh)=>{const st=await j('/api/wallpapers/status');const sel=$('#wpmode',sec);if(st.ok){sel.value=st.mode;LS.set('wpmode',st.mode);$('#wpst',sec).textContent=`当前 ${st.current||'（无）'} · 已挂载 ${st.mounted}/${st.expectedMounts}`}
@@ -255,10 +280,26 @@ function assetTab(sec,api,hint,ext={}){sec.innerHTML=`<div class="card"><p class
 
 /* 管理台/引导（固定 tab，始终在——它是网关自身页面，不由服务注册表驱动） */
 function renderManage(sec){sec.innerHTML=`
-  <div class="card"><h2>引导 · 基石</h2><p class="lead">先用 remanager / vellum 装好 xovi + appload（KOReader 走官方仓库自装），再来这里管理书架各功能。</p>
+  <div class="card"><h2>引导 · 基石</h2><p class="lead">书架的功能建在 xovi + appload 之上。先用桌面端 <b>reManager</b>（或设备上的 vellum）把基石装好，KOReader 走官方仓库自装，再回这里管理书架各功能。</p>
     <div class="kv small" id="found">检测中…</div>
-    <p class="small">官方：<a href="https://github.com/asivery/rmpp-xovi" target="_blank" rel="noopener">xovi</a> · <a href="https://github.com/koreader/koreader/wiki" target="_blank" rel="noopener">KOReader Wiki</a></p></div>
-  <div class="card"><h2>书架功能</h2><p class="lead">未装＝按下面命令装；已装可开关（关＝停后台、隐藏该网页功能，已生效的照用，几乎不省电）与卸载。网关始终在。</p>
+    <p class="small">下载 / 文档：<a href="https://github.com/rmitchellscott/reManager" target="_blank" rel="noopener">reManager</a>（桌面端 · vellum 生态）· <a href="https://github.com/asivery/rmpp-xovi" target="_blank" rel="noopener">xovi</a> · <a href="https://github.com/koreader/koreader/wiki" target="_blank" rel="noopener">KOReader Wiki</a></p></div>
+  <div class="card"><h2>书架功能</h2>
+    <p class="lead">每个功能可单独<b>开关</b>、<b>卸载</b>；未装的按命令安装。网关（本页）始终在。</p>
+    <details class="cmp"><summary>三态 / 开关 / 卸载 / 安装 是什么？（点开看说明）</summary>
+      <dl class="help">
+        <dt>三种状态</dt>
+        <dd><span class="badge off">未装</span> 设备上没这个程序 → 按给出的命令安装。<br>
+            <span class="badge">已装·未开</span> 程序在、后台没跑 → 网页看不到它的功能，点「开启」启用。<br>
+            <span class="badge on">已开</span> 后台在跑 → 顶部有它的标签页，功能可用。</dd>
+        <dt>开启 / 关闭</dt>
+        <dd><b>关闭＝只停后台服务</b>：网页隐藏该标签，但<b>已经生效的东西照常用</b>——已装字体仍能在阅读器里选、壁纸仍显示、KOReader 仍能打开；只是不能再用网页传 / 改它。用途是隐藏用不到的功能、减少对外暴露面。</dd>
+        <dt>常开会不会卡 / 费电？</dt>
+        <dd>不会。实测 5 个服务全部常开共约 <b>9 MB 内存</b>、开机一整天累计不到 <b>2 秒 CPU</b>（平均约 0.002%），平时都阻塞在等请求、不抢 CPU。<b>对看书 / 记笔记零可感影响，不卡、不额外费电。</b>建议全部常开，除非某功能你确定永远不用。</dd>
+        <dt>卸载</dt>
+        <dd>删掉该功能的程序、systemd 单元和相关注入文件（qmd）。<b>你传过的书 / 字体 / 壁纸等用户数据保留。</b>卸载后它从网页消失；想再用按安装命令重装。网关不能从网页关或卸——它是本管理页的宿主。</dd>
+        <dt>安装为什么不在网页做？</dt>
+        <dd>安装要重挂载只读系统分区、写系统单元，风险偏高。<b>未装功能只给命令</b>：在电脑上 SSH 跑，或走 reManager 引导，更安全。</dd>
+      </dl></details>
     <div class="row"><button class="btn" id="allon">全部开启</button><button class="btn" id="alloff">全部关闭（留网关）</button></div>
     <ul class="list" id="mods"></ul></div>`;
   const badge=(t,ok)=>`<span class="badge ${ok?'on':'off'}">${t}</span>`;
