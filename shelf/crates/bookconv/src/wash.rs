@@ -64,7 +64,10 @@ impl Default for WashOpts {
     }
 }
 
-pub const DEFAULT_FILTER_PROPS: &[&str] = &["font-family", "font-size", "font", "color", "background-color", "text-align"];
+// background / background-image：书常在 body/分卷页用 CSS 背景图（装饰纹样、分卷插画）。xochitl **无视
+// no-repeat / background-size** → 把背景图**平铺**满页盖住正文（真机《飘》body.fen 的 `background:url() no-repeat`
+// 被铺成多幅）。剥掉背景图声明即净页（章头 <img> 装饰不受影响，仍保留）。@font-face 的 src:url() 由 filter_css 豁免。
+pub const DEFAULT_FILTER_PROPS: &[&str] = &["font-family", "font-size", "font", "color", "background-color", "background-image", "background", "text-align"];
 /// 伪 DRM 允许加密的扩展名（= strip_pseudo_drm.py SAFE_EXTS）。
 pub const PSEUDO_DRM_SAFE_EXTS: &[&str] = &[".css", ".ttf", ".otf", ".woff", ".woff2", ".js"];
 pub const WASH_MARK: &str = "cj-wash";
@@ -767,6 +770,17 @@ mod tests {
         assert!(out.contains(".c{margin:1em}"), "类选择器不动: {out}");
         let k = WashOpts { keep_para_spacing: true, ..Default::default() };
         assert!(filter_css("p{margin:1em 0}", &k).contains("p{margin:1em 0}"));
+    }
+
+    #[test]
+    fn strips_background_image_keeps_font_src() {
+        let o = WashOpts::default();
+        // 分卷页背景图（xochitl 平铺盖正文）应剥；@font-face 的 src:url 保留。
+        let css = "@font-face{font-family:F;src:url(f.ttf)} body.fen{background:url(bg.png) no-repeat bottom center;background-size:100% auto;margin:0} .x{background-image:url(y.png);color:#333;text-indent:2em}";
+        let out = filter_css(css, &o);
+        assert!(!out.contains("bg.png") && !out.contains("y.png"), "背景图应剥: {out}");
+        assert!(out.contains("f.ttf"), "@font-face src 保留: {out}");
+        assert!(out.contains("text-indent:2em"), "非背景声明保留: {out}");
     }
 
     #[test]
