@@ -968,6 +968,39 @@ pub fn boost_contrast_css(css: &str) -> String {
     darken_css_decls(css)
 }
 
+/// 一章里出现的**去重** `<img>` src 基名（文件名部分）。供全书统计"某图被多少章引用"——
+/// 被很多章重复引用的图＝装饰性章头/logo/分隔纹样（非正文内容）。
+pub fn img_src_basenames(html: &str) -> std::collections::HashSet<String> {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    let re = RE.get_or_init(|| Regex::new(r#"(?i)<img\b[^>]*\bsrc\s*=\s*["']([^"']+)["']"#).unwrap());
+    re.captures_iter(html).filter_map(|c| c.get(1)).map(|m| m.as_str().rsplit('/').next().unwrap_or("").to_string()).filter(|s| !s.is_empty()).collect()
+}
+
+fn img_tag_src_basename(tag: &str) -> Option<String> {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    let re = RE.get_or_init(|| Regex::new(r#"(?i)\bsrc\s*=\s*["']([^"']+)["']"#).unwrap());
+    re.captures(tag).and_then(|c| c.get(1)).map(|m| m.as_str().rsplit('/').next().unwrap_or("").to_string())
+}
+
+/// 删掉 src 基名在 `strip` 集合里的所有 `<img>` 标签（重复装饰性章头图/logo/分隔纹样）。
+/// 只删标签、不动图片文件本身（留着无害；主要是视觉去杂 + 免每章渲染大图）。
+pub fn strip_imgs_by_src(html: &str, strip: &std::collections::HashSet<String>) -> String {
+    if strip.is_empty() {
+        return html.to_string();
+    }
+    static RE: OnceLock<Regex> = OnceLock::new();
+    let re = RE.get_or_init(|| Regex::new(r#"(?i)<img\b[^>]*?>"#).unwrap());
+    re.replace_all(html, |c: &regex::Captures| {
+        let tag = c.get(0).unwrap().as_str();
+        if img_tag_src_basename(tag).map(|b| strip.contains(&b)).unwrap_or(false) {
+            String::new()
+        } else {
+            tag.to_string()
+        }
+    })
+    .into_owned()
+}
+
 /// 注释正文去标签成纯内联文本（供 `FootnoteMode::Inline` 塞进 `<span>`，杜绝块级标签造成非法嵌套
 /// →xochitl 严格 XML 整章白屏）。折叠空白、还原常见空格实体。
 fn inline_note_text(html: &str) -> String {
@@ -1308,6 +1341,19 @@ mod optimizer_footnote_tests {
         // Inline 模式：注释就地内联〔…〕、不跳转、无章末 div
         let inl = preserve_relink_footnotes(chapter, &index, crate::optimize::FootnoteMode::Inline);
         assert!(inl.contains("〔第十二条注释文本〕") && !inl.contains(r##"<div class="footnotes">"##) && !inl.contains(r##"href="#n12""##), "Inline 应内联常显不跳转: {inl}");
+    }
+
+    #[test]
+    fn strips_repeated_decorative_imgs() {
+        let mut strip = std::collections::HashSet::new();
+        strip.insert("logo.png".to_string());
+        let html = r#"<p>正文</p><img alt="t1" class="logo" src="../Images/logo.png" width="100%"/><p><img src="fig1.jpg"/></p>"#;
+        let out = strip_imgs_by_src(html, &strip);
+        assert!(!out.contains("logo.png"), "装饰 logo 应删: {out}");
+        assert!(out.contains("fig1.jpg"), "正文图应保留: {out}");
+        // basename 提取
+        let bases = img_src_basenames(html);
+        assert!(bases.contains("logo.png") && bases.contains("fig1.jpg"));
     }
 
     #[test]
