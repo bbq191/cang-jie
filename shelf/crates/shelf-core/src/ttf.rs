@@ -1,4 +1,4 @@
-//! TTF/OTF `name` 表家族名解析（fc-scan 不在时的兜底；也用于校验上传的是真字体）。
+//! TTF/OTF 解析（shelf-core 共享）：`name` 表家族名（fc-scan 兜底）、魔数校验、CJK 覆盖率（cmap）。font-serve 与 koreader-serve 共用。
 //! 取 nameID 16（Typographic Family）优先、否则 nameID 1；平台 3(Windows, UTF-16BE) 优先、否则 1(Mac Roman)。
 use std::convert::TryInto;
 

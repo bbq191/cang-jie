@@ -131,7 +131,15 @@ fn main() {
             let items = k3.list_books(&folder).map_err(ApiError::bad)?;
             Ok(Reply::ok(&serde_json::json!({"folder": folder, "items": items})))
         })
-        .get("/fonts", move |_| Ok(Reply::ok(&serde_json::json!({"items": k4.list_dir(&k4.fonts_dir(), &["ttf","otf","ttc"])}))))
+        .get("/fonts", move |_| {
+            let dir = k4.fonts_dir();
+            let items: Vec<serde_json::Value> = k4.list_dir(&dir, &["ttf", "otf", "ttc"]).into_iter().map(|it| {
+                // 中文基本区覆盖率（同原生字体一致的判据），低覆盖当正文会缺字
+                let pct = std::fs::read(dir.join(&it.name)).ok().and_then(|b| shelf_core::ttf::han_coverage_pct(&b)).unwrap_or(0);
+                serde_json::json!({"name": it.name, "bytes": it.bytes, "cjkPct": pct})
+            }).collect();
+            Ok(Reply::ok(&serde_json::json!({"items": items})))
+        })
         .post("/fonts", move |r| receive_into(&k5, r, &k5.fonts_dir(), &["ttf", "otf", "ttc"]))
         .delete("/fonts/{file}", {
             let k = k.clone();

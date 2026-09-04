@@ -4,7 +4,7 @@
 //! `~/.config/fontconfig/fonts.conf` 引用（界面 CJK 回退）的标 `fontconfigRef`，删前 UI 提醒但不拦。
 //! 上传→落目录→`fc-cache -f`→重建 `$XDG_DATA_HOME/shelf/fonts.json`（字体菜单 qmd 读）。**只管原生阅读器**：
 //! KOReader 的字体由 koreader-serve 单独管（用户 2026-09-03 定：两边各自装、不同时装填）。
-use crate::ttf;
+use shelf_core::ttf;
 use serde::{Deserialize, Serialize};
 use shelf_core::asset::{AssetItem, AssetStore};
 use shelf_core::paths::Paths;
@@ -46,7 +46,10 @@ pub struct FontEntry {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Default)]
 #[serde(default, rename_all = "camelCase")]
-pub struct FontConfig {}
+pub struct FontConfig {
+    /// 对中文回退字体加 `embolden`（墨水屏细笔画/低对比补偿，对标旧中文化套件）。默认关（中性）。
+    pub embolden_cjk_fallback: bool,
+}
 
 impl FontConfig {
     pub fn load(paths: &Paths) -> FontConfig {
@@ -73,8 +76,9 @@ struct FontsJson {
 }
 
 pub struct FontStore {
-    #[allow(dead_code)] // 预留：将来字体级配置（如显示名覆盖）
-    pub cfg: FontConfig,
+    /// 中文回退加粗（墨水屏补偿）。运行时可切（PUT /config），用 AtomicBool 免锁。
+    embolden: std::sync::atomic::AtomicBool,
+    config_path: PathBuf,
     fonts_dir: PathBuf,
     json_path: PathBuf,
     fontconfig_conf: PathBuf,
@@ -90,12 +94,29 @@ fn split_families(s: &str) -> Vec<String> {
 impl FontStore {
     pub fn new(paths: &Paths, cfg: FontConfig) -> FontStore {
         FontStore {
-            cfg,
+            embolden: std::sync::atomic::AtomicBool::new(cfg.embolden_cjk_fallback),
+            config_path: paths.service_config("font"),
             fonts_dir: paths.user_fonts_dir(),
             json_path: paths.data_dir().join("fonts.json"),
             fontconfig_conf: paths.config_root().join("fontconfig/fonts.conf"),
             side_effects: true,
         }
+    }
+
+    pub fn embolden(&self) -> bool {
+        self.embolden.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// 切换中文回退加粗：存配置 + 重写 fontconfig（fontconfig 实时生效，翻书即见，无需重启 xochitl）。
+    pub fn set_embolden(&self, on: bool) -> Result<(), String> {
+        self.embolden.store(on, std::sync::atomic::Ordering::Relaxed);
+        let cfg = FontConfig { embolden_cjk_fallback: on };
+        if let Some(p) = self.config_path.parent() {
+            let _ = std::fs::create_dir_all(p);
+        }
+        std::fs::write(&self.config_path, serde_json::to_string_pretty(&cfg).unwrap_or_default()).map_err(|e| e.to_string())?;
+        self.write_fontconfig(&self.entries())?;
+        Ok(())
     }
     pub fn fonts_dir(&self) -> &Path {
         &self.fonts_dir
@@ -148,7 +169,7 @@ impl FontStore {
         for f in files {
             let path = self.fonts_dir.join(&f);
             let fams = self.families_of(&path);
-            let pct = std::fs::read(&path).ok().and_then(|b| crate::ttf::han_coverage_pct(&b)).unwrap_or(0);
+            let pct = std::fs::read(&path).ok().and_then(|b| ttf::han_coverage_pct(&b)).unwrap_or(0);
             let key = match fams.first() {
                 Some(k) => k.clone(),
                 None => f.rsplit_once('.').map(|(s, _)| s.to_string()).unwrap_or_else(|| f.clone()),
@@ -248,6 +269,12 @@ impl FontStore {
                 x.push_str(&format!("    <edit name=\"family\" mode=\"prepend\" binding=\"weak\"><string>{n}</string></edit>\n"));
             }
             x.push_str("  </match>\n");
+            // 可选：对每个中文回退字体加 embolden（墨水屏细笔画补偿，对标旧中文化套件）。
+            if self.embolden() {
+                for n in &names {
+                    x.push_str(&format!("  <match target=\"font\">\n    <test name=\"family\" compare=\"eq\"><string>{n}</string></test>\n    <edit name=\"embolden\" mode=\"assign\"><bool>true</bool></edit>\n  </match>\n"));
+                }
+            }
         }
         x.push_str("</fontconfig>\n");
         let tmp = self.fontconfig_conf.with_extension("conf.shelf.tmp");
@@ -416,6 +443,12 @@ mod tests {
         // 无中文字体 → 空回退但不报错
         store.write_fontconfig(&[entry("Latin", 0)]).unwrap();
         assert!(std::fs::read_to_string(&store.fontconfig_conf).unwrap().contains("没有已装的中文字体"));
+        // embolden：开则对每个回退字体加 <match target=font> embolden；关则无
+        assert!(!out.contains("embolden"), "默认不加粗");
+        store.embolden.store(true, std::sync::atomic::Ordering::Relaxed);
+        store.write_fontconfig(&fonts).unwrap();
+        let e = std::fs::read_to_string(&store.fontconfig_conf).unwrap();
+        assert!(e.contains("<match target=\"font\">") && e.contains("<edit name=\"embolden\""), "开 embolden 应加 match: {e}");
     }
     #[test]
     fn family_splitting_and_localized_name() {

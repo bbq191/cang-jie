@@ -3,7 +3,6 @@
 //! `DELETE /{family}`（删整个家族的全部文件）· `GET /status`。所有字体一视同仁、无"内建"。
 //! 字体菜单 qmd 读 `~/.local/share/shelf/fonts.json`（`shelf/xovi/font-menu-dynamic.qmd`）。
 mod store;
-mod ttf;
 
 use shelf_core::asset::{AssetStore, AssetUploadFlow};
 use shelf_core::http::{ApiError, Reply, Router};
@@ -56,7 +55,16 @@ fn main() {
             let removed = s3.remove_family(r.param("family")).map_err(ApiError::bad)?;
             Ok(Reply::ok(&serde_json::json!({"ok": true, "removed": removed})))
         })
-        .get("/status", move |_| Ok(Reply::ok(&serde_json::json!({"ok": true, "count": s4.list().len(), "target": "native", "cjkFallback": s4.cjk_fallback_keys()}))));
+        .put("/config", {
+            let s = store.clone();
+            move |r| {
+                let v = r.json_body().map_err(ApiError::bad)?;
+                let on = v.get("emboldenCjkFallback").and_then(|x| x.as_bool()).ok_or_else(|| ApiError::bad("需要 {emboldenCjkFallback: bool}"))?;
+                s.set_embolden(on).map_err(ApiError::internal)?;
+                Ok(Reply::ok(&serde_json::json!({"ok": true, "emboldenCjkFallback": on, "note": "已更新，翻书即见（fontconfig 实时生效，无需重启）"})))
+            }
+        })
+        .get("/status", move |_| Ok(Reply::ok(&serde_json::json!({"ok": true, "count": s4.list().len(), "target": "native", "cjkFallback": s4.cjk_fallback_keys(), "emboldenCjkFallback": s4.embolden()}))));
     println!("[font-serve] 字体目录 {}，清单 {}", store.fonts_dir().display(), store.json_path().display());
     if let Err(e) = service::run(&SPEC, &bind, &paths, router) {
         eprintln!("[font-serve] {e}");
