@@ -341,8 +341,8 @@ pub fn optimize_epub_with(epub: &[u8], opts: &OptimizeOpts) -> Result<(Vec<u8>, 
                     Err(_) => data.clone(),
                 }
             } else if crate::imgopt::is_downscalable(name) {
-                // ① 按 Move 屏 1696px 长边降采样超大图（缩不动/失败则原样）。
-                crate::imgopt::downscale_for_device(data).unwrap_or_else(|| data.clone())
+                // ① 按 Move 屏竖向框（宽≤954）降采样超大图——EPUB 图可能行内，宽超 954 会溢出竖屏（缩不动/失败则原样）。
+                crate::imgopt::downscale_for_epub(data).unwrap_or_else(|| data.clone())
             } else if name.to_lowercase().ends_with(".opf") {
                 // opf：从 spine 删目录页 itemref（去掉冗余 HTML 目录，reMarkable 有自己的 TOC）。
                 match String::from_utf8(data.clone()) {

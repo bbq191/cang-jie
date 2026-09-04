@@ -993,11 +993,10 @@ pub fn preserve_relink_footnotes(html: &str, index: &std::collections::HashMap<S
         let frag = href_fragment(attrs)?;
         let text = index.get(&frag)?;
         if mode == FootnoteMode::Inline {
-            // 内联：marker（图标/上标原样保留视觉线索）后紧跟内联注释；注释**去标签成纯文本**，
-            // 杜绝把块级标签塞进 <p> 造成非法嵌套（xochitl 严格 XML 会整章白屏）。
-            let plain = inline_note_text(text);
-            let marker = if sup_wrapped { format!("<sup>{content}</sup>") } else { content.to_string() };
-            return Some(format!("{marker}<span class=\"cj-fnote\">〔{plain}〕</span>"));
+            // 内联：**丢弃原 marker**（很多书 marker 是图标 <img>，xochitl 按固有尺寸渲染=巨大且每条重复），
+            // 就地只留内联注释 `〔…〕`（注释**去标签成纯文本**，杜绝块级标签塞进 <p> 致 xochitl 严格 XML 白屏）。
+            let _ = (content, sup_wrapped);
+            return Some(format!("<span class=\"cj-fnote\">〔{}〕</span>", inline_note_text(text)));
         }
         if seen.insert(frag.clone()) {
             // 注释放章末。不加可点回链——真机实测 reMarkable 会丢弃"marker↔注释"互指里较晚那条
@@ -1038,7 +1037,8 @@ pub fn preserve_relink_footnotes(html: &str, index: &std::collections::HashMap<S
             match href_crossfile_fragment(attrs).filter(|f| index.contains_key(f)) {
                 Some(frag) => {
                     if mode == FootnoteMode::Inline {
-                        return format!("{content}<span class=\"cj-fnote\">〔{}〕</span>", inline_note_text(&index[&frag]));
+                        // 跨文件普通 <a> marker（多为"12"数字文本）——内联模式丢弃 marker，只留内联注释。
+                        return format!("<span class=\"cj-fnote\">〔{}〕</span>", inline_note_text(&index[&frag]));
                     }
                     if seen.insert(frag.clone()) {
                         appended.push(format!("<p id=\"{frag}\">{}</p>", deprefix_footnote_hrefs(&index[&frag])));
@@ -1308,6 +1308,17 @@ mod optimizer_footnote_tests {
         // Inline 模式：注释就地内联〔…〕、不跳转、无章末 div
         let inl = preserve_relink_footnotes(chapter, &index, crate::optimize::FootnoteMode::Inline);
         assert!(inl.contains("〔第十二条注释文本〕") && !inl.contains(r##"<div class="footnotes">"##) && !inl.contains(r##"href="#n12""##), "Inline 应内联常显不跳转: {inl}");
+    }
+
+    #[test]
+    fn inline_drops_image_marker() {
+        // 《飘》形态：noteref <a> 包着图标 <img>。内联模式必须丢弃图标（否则 xochitl 按固有尺寸渲染=巨大且每条重复）。
+        let mut index: HashMap<String, String> = HashMap::new();
+        index.insert("fn1".to_string(), "注释文字".to_string());
+        let chapter = r##"<p>正文<a epub:type="noteref" href="#fn1"><span class="koboSpan"><img alt="note" src="../Images/i.png"/></span></a>后续</p>"##;
+        let out = preserve_relink_footnotes(chapter, &index, crate::optimize::FootnoteMode::Inline);
+        assert!(!out.contains("<img"), "内联模式应丢弃图标 marker: {out}");
+        assert!(out.contains("〔注释文字〕"), "应内联注释: {out}");
     }
 
     #[test]
