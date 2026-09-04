@@ -49,7 +49,7 @@ AFFECT /qml/device/view/documentview/FormatFont.qml
             // 长家族名(如 "LXGW Neo ZhiSong Screen Full")原本只锚左边、无右界→画出格子。
             // 加右锚+elide：超出格子截断成"…"，text/font.family 仍是完整 modelData，setFontName 不受影响。
             anchors.right: parent.right
-            anchors.rightMargin: Values.documentViewFormatTitleMargin
+            anchors.rightMargin: 8
             elide: Text.ElideRight
         }
     END TRAVERSE
