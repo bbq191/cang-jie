@@ -289,22 +289,27 @@ function renderManage(sec){sec.innerHTML=`
     <div class="kv small" id="found">检测中…</div>
     <p class="small">下载 / 文档：<a href="https://github.com/rmitchellscott/reManager" target="_blank" rel="noopener">reManager</a>（桌面端 · vellum 生态）· <a href="https://github.com/asivery/rmpp-xovi" target="_blank" rel="noopener">xovi</a> · <a href="https://github.com/koreader/koreader/wiki" target="_blank" rel="noopener">KOReader Wiki</a></p></div>
   <div class="card"><h2>电脑端 · <code>shelf push</code>（进阶洗书 / PDF 重排）</h2>
-    <p class="lead">网页直传已够日常。电脑端多一条 Calibre 高质量路，专治难搞的书——最强但容易被忽略。</p>
-    <details class="cmp"><summary>它比网页直传强在哪 / 怎么装 / 怎么用</summary>
+    <p class="lead">难搞的书用它：非标准格式转 EPUB、Calibre 级深洗、PDF 论文重排——网页直传做不到的都在这。</p>
+    <div class="opt-note">
+      <b>命令长这样</b>（在本仓库目录下跑；<code>shelf/host/bin/shelf</code> 就是那个命令，嫌长可 <code>alias shelf="$PWD/shelf/host/bin/shelf"</code>）：<br>
+      <code>shelf/host/bin/shelf push &lt;书1&gt; [书2 …] [-t 目标] [-f 文件夹]</code>
+      <div class="small" style="margin-top:.4em">
+        · 后面只跟<b>要投的书</b>（可一次多本）；<b>不要写输出文件名</b>——它直接投到设备，没有「输出路径」这个参数。<br>
+        · 投哪个阅读器用 <code>-t</code>：<code>-t native</code> = xochitl 书库（缺省）/ <code>-t annot</code> = 批注 / <code>-t koreader</code> = KOReader。<b>别把 <code>koreader</code> 直接当参数写</b>（会被当成第二本书）。<br>
+        · <code>-f 论文/2026</code> 放指定文件夹（可选）。
+      </div>
+    </div>
+    <details class="cmp"><summary>例子 / 强在哪 / 怎么装</summary>
     <dl class="help">
+      <dt>例子</dt>
+      <dd><code>shelf/host/bin/shelf push 论文.pdf</code> — PDF 重排后投书库<br>
+          <code>shelf/host/bin/shelf push 小说.azw3 -t koreader</code> — 转 EPUB 投 KOReader<br>
+          <code>shelf/host/bin/shelf push a.epub b.mobi -f 收藏</code> — 一次多本投「收藏」文件夹<br>
+          <code>shelf/host/bin/shelf status</code> · <code>doctor</code> — 看设备连通 / 环境</dd>
       <dt>强在哪</dt>
-      <dd>① <b>杂格式转干净 EPUB</b>：AZW3 / MOBI / FB2 / TXT… 网页端一律拒收，这里能转；<br>
-          ② <b>Calibre 级深洗</b>：CSS 拍平比端上更彻底，排版锁得死的书也能救；<br>
-          ③ <b>PDF 学术重排</b>：多列论文 / 公式 / 图按阅读顺序重排到设备屏宽——<b>端上做不到</b>（端上 PDF 只能原样直传）；<br>
-          ④ 扫描件走 k2pdfopt 位图重排。产物再叠加设备同款优化器，最终与网页直传的书观感一致。</dd>
+      <dd>① <b>杂格式转干净 EPUB</b>：AZW3 / MOBI / FB2 / TXT… 网页端不收，这里能转；② <b>Calibre 级深洗</b>：CSS 拍平比端上更彻底，排版锁死的书也能救；③ <b>PDF 论文重排</b>：多列 / 公式 / 图按阅读顺序重排到屏宽——<b>端上做不到</b>（端上 PDF 只原样直传）；④ 扫描件走 k2pdfopt。产物再叠加设备同款优化器，观感与网页直传一致。</dd>
       <dt>怎么装</dt>
-      <dd>电脑装 <a href="https://calibre-ebook.com/" target="_blank" rel="noopener">Calibre</a>（含 ebook-convert）+ Python 3；克隆本仓库，<code>cd shelf &amp;&amp; sh build.sh</code> 编出 <code>epub-optimize</code>；投书用 <code>shelf/host/bin/shelf</code>。</dd>
-      <dt>常用命令</dt>
-      <dd><code>shelf push 书.epub</code> 洗书投书库<br>
-          <code>shelf push 论文.pdf</code> PDF 重排后投<br>
-          <code>shelf push 书.azw3 -t koreader</code> 投 KOReader<br>
-          <code>shelf push 书.epub -f 论文/2026</code> 投指定文件夹<br>
-          <code>shelf status</code> / <code>shelf doctor</code> 看连通与环境</dd>
+      <dd>电脑装 <a href="https://calibre-ebook.com/" target="_blank" rel="noopener">Calibre</a>（含 ebook-convert）+ Python 3 → 克隆本仓库 → <code>cd shelf &amp;&amp; sh build.sh</code>（编出 <code>epub-optimize</code>）→ 就能用 <code>shelf/host/bin/shelf</code> 了。</dd>
     </dl></details></div>
   <div class="card"><h2>书架功能</h2>
     <p class="lead">每个功能可单独<b>开关</b>、<b>卸载</b>；未装的按命令安装。网关（本页）始终在。</p>
