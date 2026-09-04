@@ -37,6 +37,16 @@ pub enum AutoToc {
     Always,
 }
 
+/// 正文排版语言（决定首行缩进/段落习惯）。`Auto` 由 `wash_entries` 按全书 CJK/拉丁字符占比判定。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LangMode {
+    Auto,
+    /// 中文习惯：首行缩进 2em（两个全角字）、段间无空。
+    Cjk,
+    /// 拉丁习惯：首行缩进 1.2em、标题后首段不缩进。
+    Latin,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub struct WashOpts {
     /// 保留原书段间距（诗集/剧本靠空行分节）。
@@ -44,11 +54,13 @@ pub struct WashOpts {
     pub auto_toc: AutoToc,
     /// 剥掉的 CSS 属性（小写）。缺省与 host `--filter-css` 一致。
     pub filter_props: Vec<String>,
+    /// 正文排版语言（`Auto`=自动探测）。
+    pub lang: LangMode,
 }
 
 impl Default for WashOpts {
     fn default() -> Self {
-        WashOpts { keep_para_spacing: false, auto_toc: AutoToc::IfMissing, filter_props: DEFAULT_FILTER_PROPS.iter().map(|s| s.to_string()).collect() }
+        WashOpts { keep_para_spacing: false, auto_toc: AutoToc::IfMissing, filter_props: DEFAULT_FILTER_PROPS.iter().map(|s| s.to_string()).collect(), lang: LangMode::Auto }
     }
 }
 
@@ -309,13 +321,22 @@ pub fn wash_html(html: &str, opts: &WashOpts) -> (String, usize) {
     (inject_style(&s, opts), before_dup)
 }
 
-/// 清洗样式块（注入 `</head>` 前；无 head 则 `<body` 前）。
+/// 清洗样式块（注入 `</head>` 前；无 head 则 `<body` 前）。按 `opts.lang` 注中/英排版习惯。
+/// 注意：`opts.lang` 应已被 `wash_entries` 从 `Auto` 解析为 `Cjk`/`Latin`（此处把 `Auto` 兜底当 `Cjk`）。
 pub fn wash_css(opts: &WashOpts) -> String {
     let mut css = String::from("html,body{margin:0!important;padding:0!important}@page{margin:0}");
     if !opts.keep_para_spacing {
         css.push_str("p,div{margin-top:0!important;margin-bottom:0!important;padding-top:0!important;padding-bottom:0!important}");
     }
-    css.push_str("p{text-indent:2em!important}");
+    match opts.lang {
+        LangMode::Latin => {
+            // 拉丁：首行缩进小一些（2em 对拉丁偏大）、标题/分隔后的首段不缩进（若 xochitl 认相邻选择器则生效，不认亦无害）
+            css.push_str("p{text-indent:1.2em!important}");
+            css.push_str("h1+p,h2+p,h3+p,h4+p,h5+p,h6+p,hr+p,blockquote+p{text-indent:0!important}");
+        }
+        // Cjk 与 Auto 兜底：中文习惯 2em
+        _ => css.push_str("p{text-indent:2em!important}"),
+    }
     css
 }
 
@@ -477,7 +498,16 @@ pub fn toc_entry_count(entries: &[Entry]) -> usize {
 
 fn heading_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| Regex::new(r#"(?is)<h([12])\b([^>]*)>(.*?)</h[12]>"#).unwrap())
+    // h1–h6 都收（书只用 h3 当章标题也不漏目录）；多级由 build_ncx/build_nav 按 dense-rank 嵌套。
+    RE.get_or_init(|| Regex::new(r#"(?is)<h([1-6])\b([^>]*)>(.*?)</h[1-6]>"#).unwrap())
+}
+
+/// 把出现过的 h 级别稠密化为连续深度 1..N（如书用 {h1,h3} → 各条 rank 1/2），供嵌套用。
+fn dense_ranks(items: &[(u8, String, String, String)]) -> Vec<u8> {
+    let mut levels: Vec<u8> = items.iter().map(|i| i.0).collect();
+    levels.sort_unstable();
+    levels.dedup();
+    items.iter().map(|i| (levels.iter().position(|&l| l == i.0).unwrap_or(0) as u8) + 1).collect()
 }
 
 fn plain_text(html: &str) -> String {
@@ -531,24 +561,23 @@ fn collect_headings(entries: &mut [Entry], spine: &[String], nav_doc: Option<&St
 }
 
 fn build_ncx(items: &[(u8, String, String, String)], ncx_dir: &str, title: &str) -> String {
+    let ranks = dense_ranks(items);
+    let depth_max = ranks.iter().copied().max().unwrap_or(1);
     let mut s = format!(r#"<?xml version="1.0" encoding="UTF-8"?>
-<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1"><head><meta name="dtb:uid" content="cj-wash"/><meta name="dtb:depth" content="2"/></head><docTitle><text>{}</text></docTitle><navMap>"#, xml_escape(title));
-    let mut open_l1 = false;
-    let mut order = 0;
-    for (level, t, path, frag) in items {
-        order += 1;
-        let href = format!("{}#{}", relative_to(ncx_dir, path), frag);
-        if *level == 1 || !open_l1 {
-            if open_l1 {
+<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1"><head><meta name="dtb:uid" content="cj-wash"/><meta name="dtb:depth" content="{depth_max}"/></head><docTitle><text>{}</text></docTitle><navMap>"#, xml_escape(title));
+    let mut depth = 0u8; // 当前打开的 navPoint 层数
+    for (i, (_, t, path, frag)) in items.iter().enumerate() {
+        let d = ranks[i].min(depth + 1); // 钳制：不跳跃深入 >1 层，保证良构
+        if d <= depth {
+            for _ in 0..(depth - d + 1) {
                 s.push_str("</navPoint>");
             }
-            s.push_str(&format!(r#"<navPoint id="np{order}" playOrder="{order}"><navLabel><text>{}</text></navLabel><content src="{}"/>"#, xml_escape(t), xml_escape(&href)));
-            open_l1 = true;
-        } else {
-            s.push_str(&format!(r#"<navPoint id="np{order}" playOrder="{order}"><navLabel><text>{}</text></navLabel><content src="{}"/></navPoint>"#, xml_escape(t), xml_escape(&href)));
         }
+        let href = format!("{}#{}", relative_to(ncx_dir, path), frag);
+        s.push_str(&format!(r#"<navPoint id="np{}" playOrder="{}"><navLabel><text>{}</text></navLabel><content src="{}"/>"#, i + 1, i + 1, xml_escape(t), xml_escape(&href)));
+        depth = d;
     }
-    if open_l1 {
+    for _ in 0..depth {
         s.push_str("</navPoint>");
     }
     s.push_str("</navMap></ncx>");
@@ -556,37 +585,30 @@ fn build_ncx(items: &[(u8, String, String, String)], ncx_dir: &str, title: &str)
 }
 
 fn build_nav(items: &[(u8, String, String, String)], nav_dir: &str) -> String {
+    let ranks = dense_ranks(items);
     let mut s = String::from(r#"<?xml version="1.0" encoding="UTF-8"?>
-<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><head><title>目录</title></head><body><nav epub:type="toc" id="toc"><h1>目录</h1><ol>"#);
-    let mut open_l1 = false;
-    let mut open_sub = false;
-    for (level, t, path, frag) in items {
-        let href = format!("{}#{}", relative_to(nav_dir, path), frag);
-        if *level == 1 || !open_l1 {
-            if open_sub {
-                s.push_str("</ol>");
-                open_sub = false;
-            }
-            if open_l1 {
-                s.push_str("</li>");
-            }
-            s.push_str(&format!(r#"<li><a href="{}">{}</a>"#, xml_escape(&href), xml_escape(t)));
-            open_l1 = true;
-        } else {
-            if !open_sub {
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><head><title>目录</title></head><body><nav epub:type="toc" id="toc"><h1>目录</h1>"#);
+    let mut depth = 0u8; // 当前打开的 <ol> 层数
+    for (i, (_, t, path, frag)) in items.iter().enumerate() {
+        let d = ranks[i].min(depth + 1);
+        if d > depth {
+            for _ in depth..d {
                 s.push_str("<ol>");
-                open_sub = true;
             }
-            s.push_str(&format!(r#"<li><a href="{}">{}</a></li>"#, xml_escape(&href), xml_escape(t)));
+        } else {
+            for _ in d..depth {
+                s.push_str("</li></ol>");
+            }
+            s.push_str("</li>");
         }
+        depth = d;
+        let href = format!("{}#{}", relative_to(nav_dir, path), frag);
+        s.push_str(&format!(r#"<li><a href="{}">{}</a>"#, xml_escape(&href), xml_escape(t)));
     }
-    if open_sub {
-        s.push_str("</ol>");
+    for _ in 0..depth {
+        s.push_str("</li></ol>");
     }
-    if open_l1 {
-        s.push_str("</li>");
-    }
-    s.push_str("</ol></nav></body></html>");
+    s.push_str("</nav></body></html>");
     s
 }
 
@@ -637,11 +659,43 @@ fn auto_toc(entries: &mut Vec<Entry>, mode: AutoToc, rep: &mut WashReport) {
 
 // ───────────────────────── 入口 ─────────────────────────
 
+/// 全书 CJK vs 拉丁字符占比 → 主语言（Han 字数 ≥ 拉丁字母数 = Cjk）。扫全部 html 正文，早停够量即定。
+fn detect_dominant_script(entries: &[Entry]) -> LangMode {
+    let (mut han, mut latin) = (0u64, 0u64);
+    for e in entries.iter().filter(|e| is_html(&e.name) && !is_toc_file(&e.name)) {
+        let Ok(t) = std::str::from_utf8(&e.data) else { continue };
+        for ch in plain_text(t).chars() {
+            if matches!(ch, '\u{4E00}'..='\u{9FFF}' | '\u{3400}'..='\u{4DBF}' | '\u{F900}'..='\u{FAFF}') {
+                han += 1;
+            } else if ch.is_ascii_alphabetic() {
+                latin += 1;
+            }
+        }
+        if han + latin > 20_000 {
+            break; // 够量即判，不必扫全书
+        }
+    }
+    if han >= latin {
+        LangMode::Cjk
+    } else {
+        LangMode::Latin
+    }
+}
+
 /// 对条目表就地清洗。真 DRM 返回 Err（调用方应整体失败、原样不动）。
 pub fn wash_entries(entries: &mut Vec<Entry>, opts: &WashOpts) -> Result<WashReport, String> {
     let mut rep = WashReport::default();
     strip_pseudo_drm(entries, &mut rep)?;
     remove_empty_pages(entries, &mut rep);
+    // Auto → 探测主语言，解析成具体 Cjk/Latin 再逐文件注排版（探测在剥空页之后、注样式之前）。
+    let opts = if opts.lang == LangMode::Auto {
+        let mut o = opts.clone();
+        o.lang = detect_dominant_script(entries);
+        o
+    } else {
+        opts.clone()
+    };
+    let opts = &opts;
     for e in entries.iter_mut() {
         let l = e.name.to_ascii_lowercase();
         if l.ends_with(".css") {
@@ -800,5 +854,45 @@ mod tests {
         let rep = wash_entries(&mut w, &WashOpts::default()).unwrap();
         assert_eq!(rep.toc_generated, 0);
         assert!(!w.iter().any(|x| x.name == "OEBPS/nav.xhtml"));
+    }
+
+    #[test]
+    fn lang_aware_indent() {
+        let cjk = wash_css(&WashOpts { lang: LangMode::Cjk, ..Default::default() });
+        assert!(cjk.contains("text-indent:2em!important") && !cjk.contains("1.2em"));
+        let lat = wash_css(&WashOpts { lang: LangMode::Latin, ..Default::default() });
+        assert!(lat.contains("text-indent:1.2em!important") && lat.contains("h1+p") && lat.contains("text-indent:0!important"));
+    }
+
+    #[test]
+    fn detect_script_and_apply_to_wash() {
+        let cjk = vec![e("c.xhtml", "<html><body><p>这是一本中文书籍需要两字缩进的测试内容足够多的汉字</p></body></html>")];
+        assert_eq!(detect_dominant_script(&cjk), LangMode::Cjk);
+        let en = vec![e("c.xhtml", "<html><body><p>This is an English book with plenty of latin letters here indeed</p></body></html>")];
+        assert_eq!(detect_dominant_script(&en), LangMode::Latin);
+        // 端到端：英文书 wash 后注入拉丁缩进
+        let mut v = vec![
+            e("content.opf", r#"<package version="3.0"><metadata><dc:title>B</dc:title></metadata><manifest><item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="c1"/></spine></package>"#),
+            e("c1.xhtml", "<html><head></head><body><h2>Chapter One</h2><p>English prose flowing across the page with many words indeed here</p></body></html>"),
+        ];
+        wash_entries(&mut v, &WashOpts::default()).unwrap();
+        assert!(s(&v, "c1.xhtml").contains("text-indent:1.2em!important"), "英文书应注拉丁缩进");
+    }
+
+    #[test]
+    fn auto_toc_from_h3_and_deep_nesting() {
+        // 只用 h3 当章标题：旧 h1/h2 正则会漏，现在应生成目录
+        let mut v = vec![
+            e("content.opf", r#"<package version="3.0"><metadata><dc:title>书</dc:title></metadata><manifest><item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="c1"/></spine></package>"#),
+            e("c1.xhtml", "<html><body><h3>章一</h3><p>a</p><h3>章二</h3></body></html>"),
+        ];
+        assert_eq!(wash_entries(&mut v, &WashOpts::default()).unwrap().toc_generated, 2, "h3 也进目录");
+        // 多级嵌套 h1>h2>h3>h1
+        let items = vec![(1u8, "A".into(), "c.xhtml".into(), "a".into()), (2, "B".into(), "c.xhtml".into(), "b".into()), (3, "C".into(), "c.xhtml".into(), "c".into()), (1, "D".into(), "c.xhtml".into(), "d".into())];
+        let nav = build_nav(&items, "");
+        assert!(nav.contains(r#"<li><a href="c.xhtml#a">A</a><ol><li><a href="c.xhtml#b">B</a><ol><li><a href="c.xhtml#c">C</a></li></ol></li></ol></li><li><a href="c.xhtml#d">D</a></li></ol>"#), "{nav}");
+        let ncx = build_ncx(&items, "", "T");
+        assert!(ncx.contains(r#"<navPoint id="np1" playOrder="1"><navLabel><text>A</text></navLabel><content src="c.xhtml#a"/><navPoint id="np2""#), "{ncx}");
+        assert!(ncx.contains(r#"</navPoint></navPoint></navPoint><navPoint id="np4""#), "C 收 3 层再开 D: {ncx}");
     }
 }

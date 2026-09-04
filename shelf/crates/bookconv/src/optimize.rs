@@ -27,7 +27,9 @@ pub const OPTIMIZE_MARKER: &str = "META-INF/com.cangjie.optimized";
 /// 约束（真机探针：块级图缩到正文列宽，方图只卡长边白留 1.8× 像素）。
 /// v6：清洗层（`wash`）可选前置——伪 DRM 剥离、CSS 文件级锁剥离、边距/段距归零+2em 缩进、空页清理、
 /// 自动目录、单标签双 id 折叠（对标 host `wash_epub.sh`，`OptimizeOpts::wash`；weread 线缺省不开）。
-pub const OPTIMIZE_VERSION: &str = "6";
+/// v7：做精做强——① 中英文各按阅读习惯注排版（`wash::LangMode` 自动探测：中文首行 2em / 拉丁 1.2em+标题后首段不缩进）；
+/// ② 自动目录从 h1/h2 扩到 **h1–h6** 并多级嵌套（只用 h3 当章标题的书不再漏目录）。
+pub const OPTIMIZE_VERSION: &str = "7";
 
 /// 优化选项：`wash=Some` 时先过清洗层（书架 native 投递与 host `epub-optimize` 缺省开；weread 线不开）。
 #[derive(Clone, Debug, Default, PartialEq)]
