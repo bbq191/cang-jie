@@ -29,10 +29,7 @@ pub const OPTIMIZE_MARKER: &str = "META-INF/com.cangjie.optimized";
 /// 自动目录、单标签双 id 折叠（对标 host `wash_epub.sh`，`OptimizeOpts::wash`；weread 线缺省不开）。
 /// v7：做精做强——① 中英文各按阅读习惯注排版（`wash::LangMode` 自动探测：中文首行 2em / 拉丁 1.2em+标题后首段不缩进）；
 /// ② 自动目录从 h1/h2 扩到 **h1–h6** 并多级嵌套（只用 h3 当章标题的书不再漏目录）。
-/// v8：真机《飘》三修——① 内联脚注丢弃图标 marker（xochitl 按固有尺寸渲染图标=巨大且每条重复）；
-/// ② EPUB 内嵌图改竖向框（宽≤954）防行内横幅溢出竖屏；③ 删**重复装饰图**（同一图被 ≥5 章且 ≥30% 章引用＝
-/// 章头 logo/分隔纹样，非正文内容 → 删其 <img> 标签，去墨水屏杂+提渲染）。
-pub const OPTIMIZE_VERSION: &str = "8";
+pub const OPTIMIZE_VERSION: &str = "7";
 
 /// 脚注呈现方式。xochitl 无弹窗脚注（穷尽真机实测判死），故给它 `Inline` 内联常显=「自动呈现」；
 /// weread/pkm 线与第三方书历史行为用 `Anchor`（章末可见 + 同章锚点跳转 + 原生「返回」浮标）。
@@ -256,7 +253,6 @@ pub fn optimize_epub_with(epub: &[u8], opts: &OptimizeOpts) -> Result<(Vec<u8>, 
     let mut entries: Vec<(String, Vec<u8>, bool)> = Vec::new(); // (name, data, is_html)
     let mut referenced: HashSet<String> = HashSet::new(); // 被 marker 引用的注释 id（noteref + 跨文件普通<a>）
     let mut toc_basenames: HashSet<String> = HashSet::new(); // 指向大量 html 的目录页(basename)
-    let mut img_chapter_counts: std::collections::HashMap<String, usize> = std::collections::HashMap::new(); // img 基名 → 引用它的章数
     for crate::wash::Entry { name, mut data } in ordered {
         let name = &name;
         rep.total_files += 1;
@@ -277,19 +273,12 @@ pub fn optimize_epub_with(epub: &[u8], opts: &OptimizeOpts) -> Result<(Vec<u8>, 
                 for f in crate::htmlproc::referenced_note_frags(&stripped) {
                     referenced.insert(f);
                 }
-                // 统计图片跨章引用（同一图被很多章引用＝装饰性章头/logo/纹样）。
-                for b in crate::htmlproc::img_src_basenames(&stripped) {
-                    *img_chapter_counts.entry(b).or_insert(0) += 1;
-                }
                 data = stripped.into_bytes();
                 rep.html_files += 1;
             }
         }
         entries.push((name.clone(), data, ish));
     }
-    // 装饰性重复图：同一图被 ≥5 章且 ≥30% 章引用 → 判为章头 logo/分隔纹样（非正文内容），第二遍删其 <img> 标签。
-    // 双条件兼顾书大小：短书里每章都带的头图会命中，大书里只在少数几章出现的图（如分部地图）保留。
-    let decorative_imgs: HashSet<String> = img_chapter_counts.iter().filter(|(_, &n)| n >= 5 && n * 100 >= rep.html_files.max(1) * 30).map(|(k, _)| k.clone()).collect();
 
     // 第一遍后半：把**被引用**的注释块（aside/p/li 且带注释语义）从各章移除、建全书索引 aside_index，
     // 交给第二遍 preserve_relink_footnotes 搬进引用它的那一章。未被引用的块原样留在原处（零丢失）。
@@ -329,8 +318,6 @@ pub fn optimize_epub_with(epub: &[u8], opts: &OptimizeOpts) -> Result<(Vec<u8>, 
                         // break_footnote_cycles：拆双向脚注互指对（reMarkable 索引器遇互指整对丢弃→点不动），
                         //   calibre filepos 脚注/微信读书脚注都是这个形态。封面：先试 aspect，再 SVG→img。
                         let t = crate::htmlproc::break_footnote_cycles(&text);
-                        // 删重复装饰图（章头 logo/纹样）——先删，免后续对它做对比/远程处理。
-                        let t = crate::htmlproc::strip_imgs_by_src(&t, &decorative_imgs);
                         // duokan 图片脚注标记（注释块同文件、img 是转义死图/远程 CDN 不可点）换成可点上标。
                         // 与下载路径 inline_footnotes 共用同一处理，导入的 duokan 书也固化（不再分情况漏）。
                         let t = crate::htmlproc::fix_duokan_markers(&t);
