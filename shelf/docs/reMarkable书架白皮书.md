@@ -224,7 +224,7 @@ Explore 走查出的粗糙点 + 一个真 bug，分 5 批。批 1-4 已真机部
 3. **embolden 默认开**：`FontConfig` 手写 `Default{embolden_cjk_fallback:true}`（显式 false 则关）；网页开关默认勾；真机 PUT true。
 4. **实测：常开不卡不费电**（开机 23.4h）：5 服务共 ~9MB RSS（2GB/1.5GB 空闲=0.5%）、累计 ~1.8 CPU 秒（~0.002%），阻塞 I/O 不抢 CPU、负载 0.31。→ 后续"关服务"定位为"隐藏功能/减暴露面"，**不卖省电**。
 
-**管理台愿景（用户提，Track 2 待另立细化计划）**：安装引导页（经 remanager 装基石 xovi+可选 KOReader，KOReader 走官方 GitHub 指引 shelf 不代装）+ 服务管理台（每模块三态：未装灰+引导 / 已装未开灰+开启 / 已开功能可用；开关=systemctl start/stop 领域服务、留网关；网页可卸载=`uninstall.sh --only`；**安装保持 shell/引导**不让网页 remount /usr 装系统单元）。font 模块 UI 名「xochitl 字体」，KOReader 字体归 koreader 模块（服务层已拆）。weread 标"未上线"不可装。
+**管理台（Track 2，已落地）**：`manage.rs` 单一模块目录表 `MODULES`（seg↔service↔`--only`令牌↔label↔installable）——`service_of`/代理/管理三态都从它派生（去重）。`GET /api/manage` 三态（未装：二进制不在→引导命令 / 已装未开：二进制在服务没跑→开启 / 已开：跑着→网页有功能，`running` 复用注册表不 shell）；`GET /api/foundation` 探测 xovi/appload/qrr/KOReader；`POST /api/manage/{seg}/{start|stop|uninstall}`（开关=`systemctl` 仅领域服务留网关；卸载=已装的 `shelf-uninstall --only`＝uninstall.sh 单一事实源，install.sh 装它进 `~/.local/bin`；**安装不走网页**，未装只给命令，不让网页 remount /usr）。网页固定「管理」tab（基石红绿+官方链接、模块三态+开关/卸载/引导、全开/全关留网关）。所有管理端点受登录守卫（特权）。真机：`/health`200、`/api/manage`/`/api/foundation` 401（注册+守卫），管理逻辑单测锁 3 态。顺修：mdns recv EINTR（spawn 子进程 SIGCHLD 打断阻塞 recv）当重试、不再刷屏。weread `installable:false` 不可装/开；font 模块 label「xochitl 字体」，KOReader 字体归 koreader（服务层已拆）。
 
 ## 04｜踩坑
 
