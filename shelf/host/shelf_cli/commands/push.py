@@ -105,6 +105,11 @@ def run(args, ctx) -> int:
     rc = 0
     work = cb.workdir()
     for path in args.files:
+        # 防呆：把目标名当位置参数了（`push 书.epub koreader`）——目标要用 -t，不是位置参数。
+        if not path.is_file() and str(path) in ("native", "annot", "koreader"):
+            print(f"✗ '{path}' 不是文件——投递目标要用 -t {path}（别当位置参数）")
+            rc = 1
+            continue
         if not guard_file(path):
             rc = 1
             continue
