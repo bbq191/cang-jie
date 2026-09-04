@@ -42,7 +42,9 @@ shelf/
 ├── wallpaper/                         5 行 sleep 钩子 + README（逻辑在 wallpaper-serve 子命令）
 ├── koreader/                          配置即代码：profile/{settings.reader.patch,defaults.custom,gestures.patch}.lua + fonts.txt/dicts.txt + merge.lua
 ├── weread-web/                        P5 门控 spike（rmweb × Move）
-└── docs/reMarkable书架白皮书.md        设计决策 + 真机记录
+└── docs/
+    ├── reMarkable书架白皮书.md          书架侧设计决策 + 真机记录（服务/UI/投递/字体）
+    └── bookconv优化白皮书.md            书籍优化引擎：清洗层/优化遍/脚注/图片/格式转换/★xochitl 渲染硬规则/版本演进
 ```
 
 依赖方向（单向无环）：`services/* → shelf-core`；`book-serve → bookconv`；`weread-device → bookconv`。
