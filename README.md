@@ -101,7 +101,7 @@ ssh root@10.11.99.1 'cd /home/root && tar -xzf '"$(basename "$OUT")"' && cangjie
 | 需求 | 怎么保证 |
 |---|---|
 | **新老设备通用，固件版本对即可** | 固件门逐字节比对 `sha256(/usr/bin/xochitl)` 与 `firmware-allowlist.txt`；同固件哈希相同即命中。装错固件默认拒绝（qmd 定位会错位崩溃），`--force` 强装并自动登记 |
-| **重启不丢任何功能** | systemd 单元 + `.wants` 写进 `/usr`(rootfs，普通重启不丢)；`cangjie-xovi-reenable.service` 在 `/home` 加密盘挂载后重跑 `xovi/start` 重注入 → 每次开机自恢复 |
+| **重启不丢任何功能** | systemd 单元 + `.wants` 写进 `/usr`(rootfs，普通重启不丢)；`xovi-reenable.service` 在 `/home` 加密盘挂载后重跑 `xovi/start` 重注入 → 每次开机自恢复 |
 | **误升级不变砖，最多丧失全部功能** | ①绝不给 `xochitl.service` 加 `/home` 依赖（红线）；②写 `/usr` 前实检 `dm-verity`，激活即跳过（回滚变砖的病根）；③OTA 冲掉 rootfs → 单元没了 → xochitl 裸启原生 → 功能全丢但机器正常；④`.so` 特征码自定位 + qrr 崩溃自愈 + `ExecStartPre=-` 摘链裸启多层兜底 |
 | **OTA 后自动恢复** | OTA 后启动路径零残留、开机无法自动触发；唯一存活 OTA 又会自动跑的点是 root 的 SSH 交互登录。安装器把守卫化钩子挂进 `~/.bashrc`（`ota-recover.sh`）：**OTA 后 SSH 进设备即检测指纹变化→提示→可中断倒计时后自动重跑安装器恢复**（每固件只自动尝一次；`scp`/非交互不触发；`vellum`/`xovi` 在 `/home` 存活、无需重装） |
 | **一键** | 一个 tar 包 + 一条命令；幂等，可反复跑 |

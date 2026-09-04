@@ -51,7 +51,7 @@ SHELF_REL="$SHELF/target/$TARGET/release"
 READING_BINS="wr-serve wr-download wr-renew wr-fetch"
 PKM_BINS="cj-stars-daemon cj-stars"
 SHELF_BINS="shelf-gateway book-serve koreader-serve font-serve wallpaper-serve"
-UNITS="cangjie-xovi-reenable.service wr-serve.service wr-renew.service wr-renew.timer cj-stars.service"
+UNITS="xovi-reenable.service wr-serve.service wr-renew.service wr-renew.timer cj-stars.service"
 
 # ── 助手 ──────────────────────────────────────────────────────────────────
 MISSING_REQ=0
@@ -136,7 +136,6 @@ copy_req "$SHELF/install.sh"   "$PKG/shelf"
 copy_req "$SHELF/uninstall.sh" "$PKG/shelf"
 for b in $SHELF_BINS; do copy_opt "$SHELF_REL/$b" "$PKG/shelf/bin"; done
 for u in "$SHELF"/systemd/*; do copy_req "$u" "$PKG/shelf/systemd"; done
-copy_req "$SYSD_SRC/cangjie-xovi-reenable.service" "$PKG/shelf/systemd"   # 供 shelf/install.sh --with-xovi-reenable 可选装（单一事实源）
 copy_req "$IME_DEPLOY/cangjie-lo-alias.sh" "$PKG/shelf/lo-alias"   # 同一份脚本，网关 ExecStartPre 用
 copy_req "$SHELF/wallpaper/shelf-wallpaper-sleep.sh" "$PKG/shelf/wallpaper"
 for q in "$SHELF"/xovi/*.qmd; do copy_req "$q" "$PKG/shelf/xovi"; done

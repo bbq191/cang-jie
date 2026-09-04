@@ -44,11 +44,18 @@ pub struct FontEntry {
     pub fontconfig_ref: bool,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Default)]
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(default, rename_all = "camelCase")]
 pub struct FontConfig {
-    /// 对中文回退字体加 `embolden`（墨水屏细笔画/低对比补偿，对标旧中文化套件）。默认关（中性）。
+    /// 对中文回退字体加 `embolden`（墨水屏细笔画/低对比补偿，对标旧中文化套件）。
+    /// **默认开**（2026-09-04 用户目测更清楚）；显式写 false 则关。
     pub embolden_cjk_fallback: bool,
+}
+
+impl Default for FontConfig {
+    fn default() -> Self {
+        FontConfig { embolden_cjk_fallback: true }
+    }
 }
 
 impl FontConfig {
@@ -443,12 +450,18 @@ mod tests {
         // 无中文字体 → 空回退但不报错
         store.write_fontconfig(&[entry("Latin", 0)]).unwrap();
         assert!(std::fs::read_to_string(&store.fontconfig_conf).unwrap().contains("没有已装的中文字体"));
-        // embolden：开则对每个回退字体加 <match target=font> embolden；关则无
-        assert!(!out.contains("embolden"), "默认不加粗");
+        // embolden 机制：关则无 <match target=font>，开则每个回退字体一条（不依赖默认值）
+        store.embolden.store(false, std::sync::atomic::Ordering::Relaxed);
+        store.write_fontconfig(&fonts).unwrap();
+        assert!(!std::fs::read_to_string(&store.fontconfig_conf).unwrap().contains("embolden"), "关则无");
         store.embolden.store(true, std::sync::atomic::Ordering::Relaxed);
         store.write_fontconfig(&fonts).unwrap();
         let e = std::fs::read_to_string(&store.fontconfig_conf).unwrap();
         assert!(e.contains("<match target=\"font\">") && e.contains("<edit name=\"embolden\""), "开 embolden 应加 match: {e}");
+    }
+    #[test]
+    fn embolden_defaults_on() {
+        assert!(FontConfig::default().embolden_cjk_fallback, "默认开");
     }
     #[test]
     fn family_splitting_and_localized_name() {

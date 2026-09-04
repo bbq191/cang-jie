@@ -14,8 +14,6 @@ STAGE="$(mktemp -d)"; trap 'rm -rf "$STAGE"' EXIT
 mkdir -p "$STAGE/shelf/bin" "$STAGE/shelf/systemd" "$STAGE/shelf/lo-alias" "$STAGE/shelf/wallpaper" "$STAGE/shelf/xovi"
 for b in $BINS; do cp "target/$TARGET/release/$b" "$STAGE/shelf/bin/"; done
 cp systemd/* "$STAGE/shelf/systemd/"
-# xovi-reenable 单元（单一事实源在 reading/device-rs/systemd）——供 install.sh --with-xovi-reenable 可选装
-cp ../reading/device-rs/systemd/cangjie-xovi-reenable.service "$STAGE/shelf/systemd/" 2>/dev/null || true
 cp ../chinese-ime/langhook/deploy/cangjie-lo-alias.sh "$STAGE/shelf/lo-alias/"
 cp install.sh uninstall.sh "$STAGE/shelf/"
 cp wallpaper/shelf-wallpaper-sleep.sh "$STAGE/shelf/wallpaper/"

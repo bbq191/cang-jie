@@ -167,7 +167,7 @@ const TABS={
   <div class="card"><h3 style="margin-top:0">字体（原生阅读器）</h3>
     <p class="small">ttf / otf → 装进 fontconfig 用户字体目录。上传后阅读器「文字与布局」菜单重开即可选，无需重启。KOReader 的字体在 KOReader 标签页装。</p>
     <div id="fbchain" class="opt-note" style="display:none"></div>
-    <div class="row"><label class="toggle"><input type="checkbox" id="embold"> 中文加粗（墨水屏细笔画补偿）</label> <span class="small">对回退中文字体加粗，宋体在低对比墨水屏发淡时更清楚；翻书即见。</span></div>
+    <div class="row"><label class="toggle"><input type="checkbox" id="embold" checked> 中文加粗（墨水屏细笔画补偿）</label> <span class="small">默认开：对回退中文字体加粗，宋体在低对比墨水屏发淡时更清楚；翻书即见。</span></div>
     <div class="drop"><span class="big">🔤</span>点击或拖入 ttf/otf（可多选）</div><input type="file" multiple hidden accept=".ttf,.otf,.ttc">
     <ul class="q"></ul><div class="row"><button class="btn pri go">上传字体</button></div>
     <h3>已装字体</h3><ul class="list" id="fontlist"></ul></div>`;

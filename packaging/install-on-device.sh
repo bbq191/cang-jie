@@ -10,7 +10,7 @@
 #      firmware-allowlist.txt。同一固件的任意设备哈希相同即命中→装；装错固件默认
 #      拒绝（qmd 定位会错位崩溃），--force 可强装并自动登记当前哈希。
 #   ② 重启不丢：systemd 单元 + .wants 链接写进 /usr(rootfs，普通重启不丢)；
-#      cangjie-xovi-reenable.service 在 /home 加密盘挂载后重跑 xovi/start 重注入
+#      xovi-reenable.service 在 /home 加密盘挂载后重跑 xovi/start 重注入
 #      xovi。→ 每次开机自恢复全部功能，无需手动。
 #   ③ 误升级不变砖，最多丧失全部功能：
 # · 绝不给 xochitl.service 加 /home 依赖（红线）；
@@ -37,8 +37,8 @@ ALLOW="$HERE/firmware-allowlist.txt"
 XOCHITL=/usr/bin/xochitl
 SYSD=/usr/lib/systemd/system
 # 开机自恢复单元集（权威表 = restore-after-ota.sh；wr-renew.service 是 static、不建 .wants）
-UNITS="cangjie-xovi-reenable.service wr-serve.service wr-renew.service wr-renew.timer cj-stars.service"
-WANTS_MU="cangjie-xovi-reenable.service wr-serve.service cj-stars.service"   # multi-user.target.wants
+UNITS="xovi-reenable.service wr-serve.service wr-renew.service wr-renew.timer cj-stars.service"
+WANTS_MU="xovi-reenable.service wr-serve.service cj-stars.service"   # multi-user.target.wants
 WANTS_TM="wr-renew.timer"                                                    # timers.target.wants
 
 FORCE=0
@@ -141,10 +141,13 @@ elif dmsetup ls --target verity 2>/dev/null | grep -q .; then
 elif [ ! -d "$HERE/systemd" ]; then
     echo "-- （包内无 systemd/，跳过开机持久）"
 else
+    # 旧名清理（2026-09-04：cangjie-xovi-reenable → xovi-reenable，避免升级后两份并存重复重启 xochitl）
+    systemctl disable --now cangjie-xovi-reenable.service 2>/dev/null || true
     mount -o remount,rw / || { echo "!! remount rw / 失败"; exit 1; }
     (
         set -e
         cd "$SYSD"
+        rm -f cangjie-xovi-reenable.service multi-user.target.wants/cangjie-xovi-reenable.service
         for u in $UNITS; do
             [ -f "$HERE/systemd/$u" ] && { cp "$HERE/systemd/$u" "$u"; chmod 644 "$u"; }
         done
@@ -187,7 +190,7 @@ else
 fi
 
 # ── 6. 启动与 xochitl 无关的常驻服务（本体已由第 1 层 xovi/start 注入，此处不碰它）──
-# cangjie-xovi-reenable 会重启 xochitl，留给下次开机触发，不在装机时打断当前会话。
+# xovi-reenable 会重启 xochitl，留给下次开机触发，不在装机时打断当前会话。
 echo
 echo "── 启动常驻服务（不含 reenable：xochitl 已注入）──"
 systemctl start cj-stars.service 2>/dev/null && echo "-- cj-stars（★待办）已起" || echo "-- cj-stars 未起（查 journalctl -u cj-stars）"

@@ -11,14 +11,14 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT=/home/root
 DEST="$ROOT/weread"
 SYSD=/usr/lib/systemd/system
-UNITS="cangjie-xovi-reenable.service wr-serve.service wr-renew.service wr-renew.timer cj-stars.service"
+UNITS="xovi-reenable.service wr-serve.service wr-renew.service wr-renew.timer cj-stars.service"
 BINS="wr-serve wr-download wr-renew wr-fetch cj-stars-daemon cj-stars"
 
 echo "== cang-jie 全项目卸载 =="
 [ "$(id -u)" = "0" ] || { echo "!! 需要 root 运行"; exit 1; }
 
-# 1. 停 + 禁用常驻服务（timer 也停）
-for u in wr-serve.service cj-stars.service wr-renew.timer wr-renew.service cangjie-xovi-reenable.service; do
+# 1. 停 + 禁用常驻服务（timer 也停）；连旧名 cangjie-xovi-reenable 一并清（升级前装过的设备）
+for u in wr-serve.service cj-stars.service wr-renew.timer wr-renew.service xovi-reenable.service cangjie-xovi-reenable.service; do
     systemctl stop "$u" 2>/dev/null || true
 done
 
@@ -27,7 +27,7 @@ if dmsetup ls --target verity 2>/dev/null | grep -q .; then
     echo "-- dm-verity 激活，跳过写 /usr（单元若在 rootfs 需换非 verity 时再清）"
 else
     mount -o remount,rw / 2>/dev/null || true
-    for u in $UNITS; do
+    for u in $UNITS cangjie-xovi-reenable.service; do   # 带旧名，清升级前的残留
         rm -f "$SYSD/$u" "$SYSD/multi-user.target.wants/$u" "$SYSD/timers.target.wants/$u"
     done
     sync

@@ -1,7 +1,7 @@
 #!/bin/sh
 # cangjie-qrr-failsafe.sh —— qrr 阅读增强 qmd 崩溃自愈（xovi pre-start 钩子）
 #
-# 装在 $XOVI/scripts/pre-start/：每次 xovi/start（开机由 cangjie-xovi-reenable.service 触发、
+# 装在 $XOVI/scripts/pre-start/：每次 xovi/start（开机由 xovi-reenable.service 触发、
 # 或手动 xovi/start）在**重启 xochitl 之前**跑一次。
 #
 # 【机制】设备 journald 持久（/var/log/journal）→ 检查【上一个 boot】xochitl 有没有崩溃循环：
