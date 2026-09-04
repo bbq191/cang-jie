@@ -106,7 +106,8 @@ pub fn serve(names: Vec<String>) -> Result<(), String> {
         }
         let (n, from) = match sock.recv_from(&mut buf) {
             Ok(x) => x,
-            Err(e) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) => continue,
+            // EINTR（Interrupted，如进程 spawn 子进程时 SIGCHLD 打断阻塞 recv）与超时/WouldBlock 一样只是重试，别刷屏
+            Err(e) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut | std::io::ErrorKind::Interrupted) => continue,
             Err(e) => {
                 std::thread::sleep(Duration::from_secs(1));
                 eprintln!("[mdns] recv: {e}");

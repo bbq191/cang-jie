@@ -253,13 +253,41 @@ function assetTab(sec,api,hint,ext={}){sec.innerHTML=`<div class="card"><p class
     li.append(left,right);ul.appendChild(li)});if(!ul.children.length)ul.innerHTML='<li class="small">（空）</li>';if(ext.onRender)ext.onRender(sec,refresh)};
   refresh();sec.refresh=refresh}
 
+/* 管理台/引导（固定 tab，始终在——它是网关自身页面，不由服务注册表驱动） */
+function renderManage(sec){sec.innerHTML=`
+  <div class="card"><h2>引导 · 基石</h2><p class="lead">先用 remanager / vellum 装好 xovi + appload（KOReader 走官方仓库自装），再来这里管理书架各功能。</p>
+    <div class="kv small" id="found">检测中…</div>
+    <p class="small">官方：<a href="https://github.com/asivery/rmpp-xovi" target="_blank" rel="noopener">xovi</a> · <a href="https://github.com/koreader/koreader/wiki" target="_blank" rel="noopener">KOReader Wiki</a></p></div>
+  <div class="card"><h2>书架功能</h2><p class="lead">未装＝按下面命令装；已装可开关（关＝停后台、隐藏该网页功能，已生效的照用，几乎不省电）与卸载。网关始终在。</p>
+    <div class="row"><button class="btn" id="allon">全部开启</button><button class="btn" id="alloff">全部关闭（留网关）</button></div>
+    <ul class="list" id="mods"></ul></div>`;
+  const badge=(t,ok)=>`<span class="badge ${ok?'on':'off'}">${t}</span>`;
+  const refresh=async()=>{
+    const f=await j('/api/foundation');$('#found',sec).innerHTML=f.ok===false?`<span>${f.message}</span>`:
+      `<b>xovi</b><span>${badge(f.xovi?'已装':'未装',f.xovi)}</span><b>appload</b><span>${badge(f.appload?'已装':'未装',f.appload)}</span><b>qt-resource-rebuilder</b><span>${badge(f.qrr?'已装':'未装',f.qrr)}</span><b>KOReader</b><span>${badge(f.koreader?'已装':'未装',f.koreader)}</span>`;
+    const d=await j('/api/manage');const ul=$('#mods',sec);ul.innerHTML='';(d.modules||[]).forEach(m=>{const li=document.createElement('li');li.style.flexWrap='wrap';
+      let state,cls;if(!m.installable){state='未上线';cls=''}else if(!m.installed){state='未装';cls='off'}else if(m.running){state='已开';cls='on'}else{state='已装·未开';cls=''}
+      const left=document.createElement('span');left.innerHTML=`${m.label} <span class="small">${m.service}</span> <span class="badge ${cls}">${state}</span>`;
+      const right=document.createElement('span');right.style.cssText='display:flex;gap:.4em;align-items:center';
+      if(m.installable&&m.installed){
+        const t=document.createElement('button');t.className='btn';t.textContent=m.running?'关闭':'开启';
+        t.onclick=async()=>{const r=await j('/api/manage/'+m.seg+'/'+(m.running?'stop':'start'),{method:'POST'});if(r.ok===false)alert(r.message);setTimeout(refresh,600)};right.appendChild(t);
+        const u=document.createElement('button');u.className='btn';u.textContent='卸载';
+        u.onclick=async()=>{if(confirm('卸载 '+m.label+'？删除它的服务/单元/相关 qmd（用户数据保留）。')){const r=await j('/api/manage/'+m.seg+'/uninstall',{method:'POST'});if(r.ok===false)alert(r.message);else alert('已卸载 '+m.label);setTimeout(()=>location.reload(),800)}};right.appendChild(u);
+      }else if(m.installable){const g=document.createElement('span');g.className='small';g.innerHTML='装：<code>shelf/install.sh --only '+m.only+'</code>';right.appendChild(g)}
+      li.append(left,right);ul.appendChild(li)});};
+  $('#allon',sec).onclick=async()=>{const d=await j('/api/manage');for(const m of (d.modules||[]))if(m.installable&&m.installed&&!m.running)await j('/api/manage/'+m.seg+'/start',{method:'POST'});refresh()};
+  $('#alloff',sec).onclick=async()=>{if(!confirm('关闭全部领域服务（网关保留）？'))return;const d=await j('/api/manage');for(const m of (d.modules||[]))if(m.installable&&m.installed&&m.running)await j('/api/manage/'+m.seg+'/stop',{method:'POST'});refresh()};
+  refresh();sec.refresh=refresh;}
+
 (async()=>{const d=await j('/api/services');const svcs=(d.services||[]).filter(s=>s.ui&&TABS[s.name]).sort((a,b)=>a.ui.order-b.ui.order);
-  $('#hdr').textContent=svcs.length?location.host:'无领域服务在线';
+  $('#hdr').textContent=location.host;
   const nav=$('#tabs'),main=$('#main');main.innerHTML='';
-  svcs.forEach((s,i)=>{const b=document.createElement('button');b.textContent=TABS[s.name].title;const sec=document.createElement('section');sec.id='t-'+s.name;
+  const addTab=(title,render,first)=>{const b=document.createElement('button');b.textContent=title;const sec=document.createElement('section');
     b.onclick=()=>{[...nav.children].forEach(x=>x.classList.remove('on'));[...main.children].forEach(x=>x.classList.remove('on'));b.classList.add('on');sec.classList.add('on');if(sec.refresh)sec.refresh()};
-    nav.appendChild(b);main.appendChild(sec);TABS[s.name].render(sec);if(i===0)b.onclick()});
-  if(!svcs.length)main.innerHTML='<div class="card"><p>没有领域服务在线。用 <code>shelf/install.sh</code> 安装，或检查 <code>systemctl status shelf.target</code>。</p></div>';
+    nav.appendChild(b);main.appendChild(sec);render(sec);if(first)b.onclick()};
+  svcs.forEach((s,i)=>addTab(TABS[s.name].title,TABS[s.name].render,i===0));
+  addTab('管理',renderManage,!svcs.length);   // 固定管理台，始终可进（即使没领域服务在线）
 })();
 </script></body></html>
 "##;

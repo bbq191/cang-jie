@@ -6,6 +6,7 @@
 //! 子命令：`serve [--bind]` · `passwd <新密码>` · `reset-password`（回默认并强制改）· `regen-tls`（重签叶证书）。
 mod auth;
 mod config;
+mod manage;
 mod proxy;
 mod ui;
 
@@ -23,15 +24,11 @@ const SPEC: ServiceSpec = ServiceSpec {
     tab: None,
 };
 
-/// `/api/<service>/<rest>` 的服务名映射：URL 段 → 注册名。
+/// `/api/<service>/<rest>` 的服务名映射：单一事实源在 `manage::MODULES`。
 fn service_of(segment: &str) -> Option<&'static str> {
-    Some(match segment {
-        "books" => "book-serve",
-        "koreader" => "koreader-serve",
-        "fonts" => "font-serve",
-        "wallpapers" => "wallpaper-serve",
-        "weread" => "weread-serve",
-        _ => return None,
+    Some(match manage::service_of(segment) {
+        Some(s) => s,
+        None => return None,
     })
 }
 
@@ -133,7 +130,15 @@ fn main() {
     } else {
         router = router.get("/api/session", |_| Ok(Reply::ok(&serde_json::json!({"ok": true, "mustChange": false, "auth": false}))));
     }
+    // 管理台/引导路由——**必须在 /api/{svc} 代理通配之前**注册（否则 manage/foundation 被当服务段代理成 404）。
+    let (pm1, pm2, pm3) = (paths.clone(), paths.clone(), paths.clone());
     let router = router
+        .route(Method::Get, "/api/manage", move |_| Ok(manage::status(&pm1)))
+        .route(Method::Get, "/api/foundation", move |_| Ok(manage::foundation(&pm2)))
+        .route(Method::Post, "/api/manage/{seg}/{action}", move |r| {
+            let (seg, action) = (r.param("seg").to_string(), r.param("action").to_string());
+            if action == "uninstall" { manage::uninstall(&pm3, &seg, r) } else { manage::toggle(&pm3, &seg, &action) }
+        })
         .route(Method::Other, "/api/*", |_| Err(ApiError::bad("unsupported method")))
         .route(Method::Get, "/api/{svc}/*", { let p = p2.clone(); move |r| proxy::forward(&p, service_of(r.param("svc")), r) })
         .route(Method::Post, "/api/{svc}/*", { let p = p2.clone(); move |r| proxy::forward(&p, service_of(r.param("svc")), r) })

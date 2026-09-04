@@ -76,6 +76,10 @@ done
 if [ -f "$SRC/lo-alias/cangjie-lo-alias.sh" ]; then
     cp "$SRC/lo-alias/cangjie-lo-alias.sh" "$BIN_DIR/cangjie-lo-alias.sh" && chmod 755 "$BIN_DIR/cangjie-lo-alias.sh"
 fi
+# 装 uninstall.sh 为 shelf-uninstall（网关「管理台」网页卸载调它，单一事实源）
+if [ -f "$SRC/uninstall.sh" ]; then
+    cp "$SRC/uninstall.sh" "$BIN_DIR/shelf-uninstall" && chmod 755 "$BIN_DIR/shelf-uninstall"
+fi
 echo "-- 二进制已落 $BIN_DIR"
 [ -n "$PASSWORD" ] && "$BIN_DIR/shelf-gateway" passwd "$PASSWORD"
 
