@@ -31,10 +31,23 @@ pub const OPTIMIZE_MARKER: &str = "META-INF/com.cangjie.optimized";
 /// ② 自动目录从 h1/h2 扩到 **h1–h6** 并多级嵌套（只用 h3 当章标题的书不再漏目录）。
 pub const OPTIMIZE_VERSION: &str = "7";
 
+/// 脚注呈现方式。xochitl 无弹窗脚注（穷尽真机实测判死），故给它 `Inline` 内联常显=「自动呈现」；
+/// weread/pkm 线与第三方书历史行为用 `Anchor`（章末可见 + 同章锚点跳转 + 原生「返回」浮标）。
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum FootnoteMode {
+    /// 注释移章末 `<div class="footnotes">` + marker 改同章锚点，点跳、原生浮标返回。
+    #[default]
+    Anchor,
+    /// 注释文字就地内联显示在引用处 `<span class="cj-fnote">〔…〕</span>`，始终可见、不跳转。
+    Inline,
+}
+
 /// 优化选项：`wash=Some` 时先过清洗层（书架 native 投递与 host `epub-optimize` 缺省开；weread 线不开）。
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct OptimizeOpts {
     pub wash: Option<crate::wash::WashOpts>,
+    /// 脚注呈现方式（缺省 `Anchor` 保持历史行为；native 投递传 `Inline`）。
+    pub footnote: FootnoteMode,
 }
 
 /// HTML 里的远程图（http(s)/协议相对 `//`）→ 抓取降采样内联进 EPUB：抓到→存进 zip（与本章同目录，
@@ -310,7 +323,7 @@ pub fn optimize_epub_with(epub: &[u8], opts: &OptimizeOpts) -> Result<(Vec<u8>, 
                         let t = crate::htmlproc::fix_duokan_markers(&t);
                         let t = fix_cover_aspect(&t);
                         let t = svg_cover_to_img(&t);
-                        let t = crate::htmlproc::preserve_relink_footnotes(&t, &aside_index);
+                        let t = crate::htmlproc::preserve_relink_footnotes(&t, &aside_index, opts.footnote);
                         // ② e-ink 提对比：灰字→纯黑、细字重→400（style 属性 + <style> 块）。
                         let t = crate::htmlproc::boost_text_contrast(&t);
                         // 远程图内联（抓下降采样进 zip / 抓不到删 img，免大放大镜）。

@@ -553,6 +553,11 @@ fn li_any_re() -> &'static Regex {
     static R: OnceLock<Regex> = OnceLock::new();
     R.get_or_init(|| Regex::new(r#"(?si)<li\b[^>]*>(.*?)</li>"#).unwrap())
 }
+fn div_any_re() -> &'static Regex {
+    static R: OnceLock<Regex> = OnceLock::new();
+    // 非贪婪到最近 </div>；嵌套 div 会欠匹配 → 收集处对含嵌套的跳过（见 collect_footnote_notes 守卫）。
+    R.get_or_init(|| Regex::new(r#"(?si)<div\b[^>]*>(.*?)</div>"#).unwrap())
+}
 fn a_generic_re() -> &'static Regex {
     static R: OnceLock<Regex> = OnceLock::new();
     R.get_or_init(|| Regex::new(r#"(?si)<a\b([^>]*)>(.*?)</a>"#).unwrap())
@@ -591,12 +596,17 @@ pub fn collect_footnote_notes(
     let mut index: Vec<(String, String)> = Vec::new();
     let mut cleaned = html.to_string();
     // p 不嵌 p、li 不嵌 li（扁平尾注表）、aside 不嵌 aside → 非贪婪匹配到最近闭合安全。
-    for re in [aside_any_re(), p_any_re(), li_any_re()] {
+    // div 也收（v7：不少书注释块是 <div id=fn>），但**嵌套 div 正则不可靠** → 内含 <div 的跳过不搬（零丢失）。
+    for re in [aside_any_re(), p_any_re(), li_any_re(), div_any_re()] {
         cleaned = re
             .replace_all(&cleaned, |c: &regex::Captures| {
                 let whole = c.get(0).unwrap().as_str();
                 let open = &whole[..whole.find('>').map(|i| i + 1).unwrap_or(whole.len())];
                 let inner = c.get(1).unwrap().as_str();
+                let is_div = whole.as_bytes().get(..4).map(|b| b.eq_ignore_ascii_case(b"<div")).unwrap_or(false);
+                if is_div && inner.contains("<div") {
+                    return whole.to_string(); // 嵌套 div：欠匹配风险，原样保留不搬
+                }
                 let id = match id_re().captures(open).map(|m| m.get(1).unwrap().as_str().to_string()) {
                     Some(i) => i,
                     None => return whole.to_string(),
@@ -958,20 +968,37 @@ pub fn boost_contrast_css(css: &str) -> String {
     darken_css_decls(css)
 }
 
+/// 注释正文去标签成纯内联文本（供 `FootnoteMode::Inline` 塞进 `<span>`，杜绝块级标签造成非法嵌套
+/// →xochitl 严格 XML 整章白屏）。折叠空白、还原常见空格实体。
+fn inline_note_text(html: &str) -> String {
+    static TAG: OnceLock<Regex> = OnceLock::new();
+    let tag = TAG.get_or_init(|| Regex::new(r"(?s)<[^>]*>").unwrap());
+    let t = tag.replace_all(html, "");
+    t.replace("&nbsp;", " ").replace("&#160;", " ").split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
 /// 优化器专用脚注处理：**完整保留 marker 原始内容/样式**(sup/上标/图标一律不动)，只把 `<a>`
 /// 上 xochitl 不认的 `epub:type` 去掉、href 规整成同章 `#frag`(xochitl 唯一会跳的形态)；
 /// 注释块(index 提供，跨文件也行)收集、移到本章末尾可见 `<div class="footnotes">`。
 /// 与 inline_footnotes 的区别：那个为微信读书**重造** marker，这个为第三方书**保留脚标原样**。
-pub fn preserve_relink_footnotes(html: &str, index: &std::collections::HashMap<String, String>) -> String {
+pub fn preserve_relink_footnotes(html: &str, index: &std::collections::HashMap<String, String>, mode: crate::optimize::FootnoteMode) -> String {
+    use crate::optimize::FootnoteMode;
     let mut appended: Vec<String> = Vec::new();
     let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
     let mut counter = 0usize;
 
-    // 收注释到章末 + 生成"图标(留原位) + 独立可点 [N] 角标"。sup 版把 [N] 放到 <sup> 外，
-    // 让它正常大小、脱离图片——图片链接和 sup 内的文字 xochitl 都点不了，[N] 必须独立成块。
+    // 两种呈现：Inline=注释文字就地内联〔…〕始终可见、不跳转（xochitl 无弹窗）；
+    //          Anchor=注释移章末 + marker 改同章锚点（图标留原位、独立可点 [N]）。
     let mut make = |attrs: &str, content: &str, sup_wrapped: bool| -> Option<String> {
         let frag = href_fragment(attrs)?;
         let text = index.get(&frag)?;
+        if mode == FootnoteMode::Inline {
+            // 内联：marker（图标/上标原样保留视觉线索）后紧跟内联注释；注释**去标签成纯文本**，
+            // 杜绝把块级标签塞进 <p> 造成非法嵌套（xochitl 严格 XML 会整章白屏）。
+            let plain = inline_note_text(text);
+            let marker = if sup_wrapped { format!("<sup>{content}</sup>") } else { content.to_string() };
+            return Some(format!("{marker}<span class=\"cj-fnote\">〔{plain}〕</span>"));
+        }
         if seen.insert(frag.clone()) {
             // 注释放章末。不加可点回链——真机实测 reMarkable 会丢弃"marker↔注释"互指里较晚那条
             // (注释回链)，加了也点不了、反成死链迷惑人。返回靠 xochitl 原生。
@@ -1003,14 +1030,16 @@ pub fn preserve_relink_footnotes(html: &str, index: &std::collections::HashMap<S
     drop(make); // 释放对 appended/seen 的可变借用，pass 3 要用
 
     // 3) 跨文件普通 <a href="其他文件#frag">：非 noteref，但 frag 已被 collect_footnote_notes 收进
-    //    index（确证是注释）→ 改成同章可点锚点 #frag、注释搬到章末。目录/交叉引用因目标不在 index，不动。
-    //    此处不追加独立 [N]：marker 文本本就是角标（如"12"），原样保留即可点。
+    //    index（确证是注释）→ Inline 内联〔…〕/ Anchor 改同章锚点 + 注释搬章末。目标不在 index 的（目录/交叉引用）不动。
     let out = a_generic_re()
         .replace_all(&out, |c: &regex::Captures| {
             let attrs = c.get(1).unwrap().as_str();
             let content = c.get(2).unwrap().as_str();
             match href_crossfile_fragment(attrs).filter(|f| index.contains_key(f)) {
                 Some(frag) => {
+                    if mode == FootnoteMode::Inline {
+                        return format!("{content}<span class=\"cj-fnote\">〔{}〕</span>", inline_note_text(&index[&frag]));
+                    }
                     if seen.insert(frag.clone()) {
                         appended.push(format!("<p id=\"{frag}\">{}</p>", deprefix_footnote_hrefs(&index[&frag])));
                     }
@@ -1239,6 +1268,19 @@ mod optimizer_footnote_tests {
         assert_eq!(cleaned, notes, "无引用的注释应原样不动: {cleaned}");
     }
 
+    #[test]
+    fn collects_flat_div_notes_but_skips_nested() {
+        let mut referenced = HashSet::new();
+        referenced.insert("d1".to_string());
+        referenced.insert("d2".to_string());
+        // d1 扁平 div 注释应收；d2 含嵌套 div → 跳过不搬（零丢失）
+        let notes = r#"<div class="footnote" id="d1">扁平注释文本</div><div class="footnote" id="d2">外<div>内嵌</div>层</div>"#;
+        let (cleaned, idx) = collect_footnote_notes(notes, &referenced, true);
+        let ids: Vec<&str> = idx.iter().map(|(i, _)| i.as_str()).collect();
+        assert!(ids.contains(&"d1") && !ids.contains(&"d2"), "扁平 div 收、嵌套 div 跳过: {ids:?}");
+        assert!(!cleaned.contains(r##"id="d1""##) && cleaned.contains(r##"id="d2""##), "{cleaned}");
+    }
+
     // ---- referenced_note_frags：noteref + 跨文件普通 <a> ----
     #[test]
     fn scans_noteref_and_crossfile_markers() {
@@ -1256,13 +1298,16 @@ mod optimizer_footnote_tests {
         let mut index: HashMap<String, String> = HashMap::new();
         index.insert("n12".to_string(), "第十二条注释文本".to_string());
         let chapter = r#"<html><body><p>正文波波<a href="../notes/notes.xhtml#n12">12</a>后续</p></body></html>"#;
-        let out = preserve_relink_footnotes(chapter, &index);
+        let out = preserve_relink_footnotes(chapter, &index, crate::optimize::FootnoteMode::Anchor);
         assert!(out.contains(r##"<a href="#n12">12</a>"##), "跨文件 marker 未改成同章锚点: {out}");
         assert!(!out.contains("notes.xhtml"), "跨文件 href 前缀未去掉: {out}");
         assert!(out.contains(r##"<p id="n12">第十二条注释文本</p>"##), "注释未搬进本章章末: {out}");
         // 注释区必须落在 </body> 之内
         let body_end = out.find("</body>").unwrap();
         assert!(out[..body_end].contains(r##"<div class="footnotes">"##), "注释区落到 </body> 外: {out}");
+        // Inline 模式：注释就地内联〔…〕、不跳转、无章末 div
+        let inl = preserve_relink_footnotes(chapter, &index, crate::optimize::FootnoteMode::Inline);
+        assert!(inl.contains("〔第十二条注释文本〕") && !inl.contains(r##"<div class="footnotes">"##) && !inl.contains(r##"href="#n12""##), "Inline 应内联常显不跳转: {inl}");
     }
 
     #[test]
@@ -1270,7 +1315,7 @@ mod optimizer_footnote_tests {
         // 目标不在 index（不是注释）→ 跨文件链接原样不动，绝不误搬目录/交叉引用。
         let index: HashMap<String, String> = HashMap::new();
         let chapter = r#"<p>见<a href="chap03.xhtml#sec2">第三章</a></p>"#;
-        assert_eq!(preserve_relink_footnotes(chapter, &index), chapter);
+        assert_eq!(preserve_relink_footnotes(chapter, &index, crate::optimize::FootnoteMode::Anchor), chapter);
     }
 
     // ---- dedup_ids_in_chapter：跨章 id 撞车（"跳到错章"的次因）----
