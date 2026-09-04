@@ -80,6 +80,12 @@ fi
 # 文件名净化：/ 和控制字符不可入名
 name=$(printf '%s' "$name" | tr '/\n\t' '---')
 out="$outdir/$name.epub"
+# 防输出撞输入：PDF 重排产物落在 <work>/X.epub，wash 又按同标题算出 <work>/X.epub → ebook-convert
+# 报 "Input file is the same as the output file"。规范化两边路径比对，撞了就换个名（调用方按 mtime 取最新）。
+canon() { d=$(dirname "$1"); printf '%s/%s' "$(cd "$d" 2>/dev/null && pwd || printf '%s' "$d")" "$(basename "$1")"; }
+if [ "$(canon "$out")" = "$(canon "$in")" ]; then
+    out="$outdir/$name.washed.epub"
+fi
 
 autotoc_args=""
 if [ "${WASH_AUTOTOC:-0}" = "1" ]; then
