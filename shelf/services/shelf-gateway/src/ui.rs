@@ -140,8 +140,8 @@ function subtabs(sec){const nav=$('.subnav',sec);if(!nav)return;const btns=[...n
 const CMP=`<details class="cmp"><summary>原生阅读 vs 原生批注 怎么选？（含 KOReader 对照）</summary>
 <div class="tblwrap"><table class="cmp"><thead><tr><th></th><th>📖 原生阅读</th><th>✍️ 原生批注</th><th>📚 KOReader</th></tr></thead><tbody>
 <tr><th>用在哪</th><td>reMarkable 自带阅读器：目录跳转 / 脚注 / 自定义字体 / 手写批注</td><td>在固定版式 PDF 上手写、定稿</td><td>消遣阅读，用 KOReader 的重排 / 词典 / 手势 <span class="small">→ 见上方 KOReader 标签页</span></td></tr>
-<tr><th>收什么</th><td>EPUB·PDF 直接；AZW3·MOBI·PRC·AZW·FB2 转 EPUB；CBZ 转 PDF</td><td>只收 PDF、CBZ→PDF（EPUB 要电脑端 Calibre 定稿）</td><td>任意格式，原样</td></tr>
-<tr><th>动不动文件</th><td>EPUB 走清洗/优化（可关）；其它按需转换</td><td>PDF 原样，CBZ 转 PDF</td><td class="pick">完全不改，字节不动</td></tr>
+<tr><th>收什么</th><td>EPUB · PDF（AZW3/MOBI/FB2/CBZ 等请在电脑用 <code>shelf push</code> 经 Calibre 转换后再投）</td><td>只收 PDF（EPUB / 其它格式电脑端 Calibre 定稿）</td><td>任意格式，原样</td></tr>
+<tr><th>动不动文件</th><td>EPUB 走清洗/优化（可关）；PDF 学术重排请用电脑 <code>shelf push</code></td><td>PDF 原样</td><td class="pick">完全不改，字节不动</td></tr>
 <tr><th>字体/字号可调</th><td class="pick">是（EPUB 流式，reMarkable 字体设置生效）</td><td>否（PDF 固定版式）</td><td class="pick">是（KOReader 自己排版）</td></tr>
 <tr><th>落在哪</th><td>xochitl 书库「library」</td><td>xochitl「批注」文件夹</td><td>KOReader books/（可多级目录）</td></tr>
 </tbody></table></div>
@@ -163,8 +163,8 @@ const TABS={
       <h2>xochitl · 原生阅读器</h2><p class="lead">选投递方式，拖入文件即可，格式自动处理。</p>
       ${onUsb?'':'<p class="opt-note">传大书建议走 USB：设备插线后开 <code>https://10.11.99.1:8778</code>，不占 Wi-Fi（每本书 xochitl 会往云端同步，走弱热点会卡）。</p>'}
       <div class="seg" id="tgt">
-        <label><input type="radio" name="tgt" value="native" checked><div class="t">📖 原生阅读</div><div class="d">目录 · 脚注 · 可调字体 · 手写批注</div><div class="fmt">EPUB PDF AZW3 MOBI FB2 CBZ</div></label>
-        <label><input type="radio" name="tgt" value="annot"><div class="t">✍️ 原生批注</div><div class="d">固定版式 PDF 上手写定稿</div><div class="fmt">PDF CBZ</div></label>
+        <label><input type="radio" name="tgt" value="native" checked><div class="t">📖 原生阅读</div><div class="d">目录 · 脚注 · 可调字体 · 手写批注</div><div class="fmt">EPUB PDF</div></label>
+        <label><input type="radio" name="tgt" value="annot"><div class="t">✍️ 原生批注</div><div class="d">固定版式 PDF 上手写定稿</div><div class="fmt">PDF</div></label>
       </div>
       ${CMP}
       <label class="field" for="folder">文件夹</label>

@@ -90,10 +90,11 @@ impl DeliveryTarget for Native {
         "原生阅读"
     }
     fn accepts(&self, filename: &str) -> Result<(), String> {
-        if convert::is_ingestible(filename) {
+        // 只收 EPUB / PDF（2026-09-04 定案：格式仅保留两种；其它格式转换质量交给电脑端 Calibre）。
+        if convert::direct_content_type(filename).is_some() {
             Ok(())
         } else {
-            Err("不支持的格式（EPUB/PDF 直传；AZW3/MOBI/PRC/AZW/FB2/CBZ 转换）".into())
+            Err("原生阅读只收 EPUB / PDF。AZW3 / MOBI / FB2 / CBZ 等请在电脑用 `shelf push`（Calibre 转换质量更高）后再投".into())
         }
     }
     fn pipeline(&self, opts: &DeliverOpts) -> Pipeline {
@@ -116,12 +117,12 @@ impl DeliveryTarget for Annot {
     }
     fn accepts(&self, filename: &str) -> Result<(), String> {
         let l = filename.to_ascii_lowercase();
-        if l.ends_with(".pdf") || l.ends_with(".cbz") {
+        if l.ends_with(".pdf") {
             Ok(())
         } else if l.ends_with(".epub") {
             Err("批注目标只收 PDF：EPUB 请在 host 用 `shelf push --target annot` 定稿（Calibre 954×1696 固定版式）后再投".into())
         } else {
-            Err("批注目标只收 PDF（或 CBZ→PDF）".into())
+            Err("批注目标只收 PDF（CBZ / 其它格式请在电脑用 `shelf push` 转换后再投）".into())
         }
     }
     fn pipeline(&self, opts: &DeliverOpts) -> Pipeline {
@@ -179,9 +180,12 @@ mod tests {
     fn accept_rules() {
         let r = reg();
         let n = r.get("native").unwrap();
-        assert!(n.accepts("a.azw3").is_ok() && n.accepts("b.EPUB").is_ok() && n.accepts("c.txt").is_err());
+        // 只收 EPUB/PDF；AZW3/CBZ 等一律拒（引导走 host Calibre）
+        assert!(n.accepts("b.EPUB").is_ok() && n.accepts("d.pdf").is_ok());
+        assert!(n.accepts("a.azw3").is_err() && n.accepts("z.cbz").is_err() && n.accepts("c.txt").is_err());
         let a = r.get("annot").unwrap();
-        assert!(a.accepts("x.pdf").is_ok() && a.accepts("x.cbz").is_ok());
+        assert!(a.accepts("x.pdf").is_ok());
+        assert!(a.accepts("x.cbz").is_err());
         assert!(a.accepts("x.epub").unwrap_err().contains("shelf push --target annot"));
         assert!(a.accepts("x.azw3").is_err());
     }
