@@ -102,7 +102,12 @@ impl DeliveryTarget for Native {
         Pipeline::new()
             .then(Precheck)
             .then(Convert { tone })
-            .then(Optimize { enabled: opts.optimize != OptimizeMode::Off && self.cfg.optimize_direct_epub, wash: opts.optimize.wash(), footnote: bookconv::optimize::FootnoteMode::Inline })
+            // 排版规则（首行缩进/边距）由优化器写成外链 css（xochitl 只认外链，不认内联 <style>）；脚注内联常显。
+            .then(Optimize {
+                enabled: opts.optimize != OptimizeMode::Off && self.cfg.optimize_direct_epub,
+                wash: opts.optimize.wash(),
+                footnote: bookconv::optimize::FootnoteMode::Inline,
+            })
             .then(Check { enabled: opts.check, require_toc: false })
             .then(Inject { xochitl: self.xochitl.clone(), folder: opts.folder.clone().unwrap_or_else(|| self.cfg.library_folder.clone()) })
     }

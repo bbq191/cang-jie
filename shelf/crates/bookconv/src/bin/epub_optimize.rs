@@ -33,7 +33,11 @@ fn main() {
     let wash = if flags.contains(&"--no-wash") {
         None
     } else {
-        Some(WashOpts { keep_para_spacing: flags.contains(&"--keep-spacing"), auto_toc: if flags.contains(&"--auto-toc") { AutoToc::Always } else { AutoToc::IfMissing }, ..Default::default() })
+        Some(WashOpts {
+            keep_para_spacing: flags.contains(&"--keep-spacing"),
+            auto_toc: if flags.contains(&"--auto-toc") { AutoToc::Always } else { AutoToc::IfMissing },
+            ..Default::default()
+        })
     };
     let footnote = if flags.contains(&"--footnote-anchor") { FootnoteMode::Anchor } else { FootnoteMode::Inline };
     let (out, rep) = match optimize::optimize_epub_with(&epub, &OptimizeOpts { wash, footnote }) {

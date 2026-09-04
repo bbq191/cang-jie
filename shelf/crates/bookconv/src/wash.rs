@@ -64,6 +64,13 @@ impl Default for WashOpts {
     }
 }
 
+/// 注入排版规则的外链 css 文件名（放 OPF 同目录）。真机坐实（2026-09-04《缩进诊断6》/《飘》）：
+/// **xochitl 只认外链 `.css` 文件里的规则，完全无视内联 `<style>` 块和元素 `style=` 属性**——所以
+/// 排版规则（首行缩进/边距）必须写成外链 css 才在 xochitl 生效（KOReader/crengine 两者都认）。
+/// ⚠ xochitl 的 css 解析器很脆：**只用裸元素选择器**（`p`/`body`），一条类/复杂选择器就可能让整表失效
+/// （《缩进诊断5》带 `.big` 类规则时整表不生效，diag6 纯 `p{}` 生效）。
+const WASH_CSS_NAME: &str = "cangjie-wash.css";
+
 // background / background-image：书常在 body/分卷页用 CSS 背景图（装饰纹样、分卷插画）。xochitl **无视
 // no-repeat / background-size** → 把背景图**平铺**满页盖住正文（真机《飘》body.fen 的 `background:url() no-repeat`
 // 被铺成多幅）。剥掉背景图声明即净页（章头 <img> 装饰不受影响，仍保留）。@font-face 的 src:url() 由 filter_css 豁免。
@@ -316,45 +323,47 @@ pub fn wash_html(html: &str, opts: &WashOpts) -> (String, usize) {
     let block = BLOCK.get_or_init(|| Regex::new(r#"(?is)(<style\b[^>]*>)(.*?)(</style>)"#).unwrap());
     let s = block.replace_all(&s, |c: &regex::Captures| {
         if c[1].contains(WASH_MARK) {
-            c[0].to_string()
+            // 旧版（v9 及以前）注入的内联 <style class="cj-wash"> 块：xochitl 本就无视它，重洗时清掉（已改外链 css）。
+            String::new()
         } else {
             format!("{}{}{}", &c[1], filter_css(&c[2], opts), &c[3])
         }
     }).into_owned();
-    (inject_style(&s, opts), before_dup)
+    // 不再注入内联 <style>（xochitl 无视内联）；排版规则由 wash_entries 写成外链 css + 逐 html 加 <link>。
+    (s, before_dup)
 }
 
-/// 清洗样式块（注入 `</head>` 前；无 head 则 `<body` 前）。按 `opts.lang` 注中/英排版习惯。
-/// 注意：`opts.lang` 应已被 `wash_entries` 从 `Auto` 解析为 `Cjk`/`Latin`（此处把 `Auto` 兜底当 `Cjk`）。
-pub fn wash_css(opts: &WashOpts) -> String {
-    let mut css = String::from("html,body{margin:0!important;padding:0!important}@page{margin:0}");
-    if !opts.keep_para_spacing {
-        css.push_str("p,div{margin-top:0!important;margin-bottom:0!important;padding-top:0!important;padding-bottom:0!important}");
-    }
-    match opts.lang {
-        LangMode::Latin => {
-            // 拉丁：首行缩进小一些（2em 对拉丁偏大）、标题/分隔后的首段不缩进（若 xochitl 认相邻选择器则生效，不认亦无害）
-            css.push_str("p{text-indent:1.2em!important}");
-            css.push_str("h1+p,h2+p,h3+p,h4+p,h5+p,h6+p,hr+p,blockquote+p{text-indent:0!important}");
-        }
-        // Cjk 与 Auto 兜底：中文习惯 2em
-        _ => css.push_str("p{text-indent:2em!important}"),
-    }
-    css
-}
-
-fn inject_style(html: &str, opts: &WashOpts) -> String {
-    if html.contains(&format!("class=\"{WASH_MARK}\"")) {
+/// 给 `<head>` 注入指向外链 wash css 的 `<link>`（`href`=该 html 相对 css 的路径）。幂等（已有则跳过）。
+/// 无 `</head>` 时补一对 head；无 `<body` 也不动（异常文件）。
+fn inject_css_link(html: &str, href: &str) -> String {
+    let marker = format!("href=\"{href}\"");
+    if html.contains(&marker) {
         return html.to_string();
     }
-    let block = format!("<style class=\"{WASH_MARK}\" type=\"text/css\">{}</style>", wash_css(opts));
+    let link = format!("<link rel=\"stylesheet\" type=\"text/css\" href=\"{href}\"/>");
     if let Some(i) = html.find("</head>") {
-        format!("{}{}{}", &html[..i], block, &html[i..])
+        format!("{}{}{}", &html[..i], link, &html[i..])
     } else if let Some(i) = html.find("<body") {
-        format!("{}<head>{}</head>{}", &html[..i], block, &html[i..])
+        format!("{}<head>{}</head>{}", &html[..i], link, &html[i..])
     } else {
         html.to_string()
     }
+}
+
+/// 外链 wash css 的内容。按 `opts.lang` 注中/英首行缩进习惯 + 段落上下边距归零（除非 keep_para_spacing）。
+/// ⚠ 两条 xochitl css 解析器的脆弱性（真机坐实）：
+/// ① **只用裸元素选择器 `p{}`**——一条类/相邻/at-rule 选择器就让整表失效（《缩进诊断5》带 `.big` 时连 `p{}` 都不生效）。
+/// ② **不用 `!important`**——带 `!important` 的外链规则不生效（v10 真机「都没缩进」），去掉即生效（diag6/《飘》验证）。
+/// 我们的 `<link>` 注在 `</head>` 前、晚于书自带 css，同特异性靠源序后者胜，无需 `!important` 也能盖过书里的 `p{text-indent:0}`。
+/// `opts.lang` 应已被 `wash_entries` 从 `Auto` 解析为具体值（此处把 `Auto` 兜底当 `Cjk`）。
+pub fn wash_css(opts: &WashOpts) -> String {
+    // 拉丁 1.2em / 中文 2em（Auto 兜底中文）。
+    let indent = if opts.lang == LangMode::Latin { "1.2em" } else { "2em" };
+    let mut decl = format!("text-indent:{indent}");
+    if !opts.keep_para_spacing {
+        decl.push_str(";margin-top:0;margin-bottom:0;padding-top:0;padding-bottom:0");
+    }
+    format!("p{{{decl}}}\n")
 }
 
 pub fn count_dup_id_tags(html: &str) -> usize {
@@ -699,6 +708,15 @@ pub fn wash_entries(entries: &mut Vec<Entry>, opts: &WashOpts) -> Result<WashRep
         opts.clone()
     };
     let opts = &opts;
+    // 外链 wash css 的 zip 路径（放 OPF 同目录；无 OPF 兜底放根）。排版规则写这里、逐 html 加 <link>——
+    // xochitl 只认外链 css（内联 <style> 无视），见 WASH_CSS_NAME 注。
+    let css_path = match find_opf(entries) {
+        Some(i) => {
+            let d = dir_of(&entries[i].name);
+            if d.is_empty() { WASH_CSS_NAME.to_string() } else { format!("{d}/{WASH_CSS_NAME}") }
+        }
+        None => WASH_CSS_NAME.to_string(),
+    };
     for e in entries.iter_mut() {
         let l = e.name.to_ascii_lowercase();
         if l.ends_with(".css") {
@@ -709,14 +727,37 @@ pub fn wash_entries(entries: &mut Vec<Entry>, opts: &WashOpts) -> Result<WashRep
         } else if is_html(&e.name) && !is_toc_file(&e.name) {
             if let Ok(t) = std::str::from_utf8(&e.data) {
                 let (out, dups) = wash_html(t, opts);
+                let href = relative_to(dir_of(&e.name), &css_path);
+                let out = inject_css_link(&out, &href);
                 rep.dup_id_tags_collapsed += dups;
                 e.data = out.into_bytes();
                 rep.html_files += 1;
             }
         }
     }
+    add_wash_css_entry(entries, &css_path, &wash_css(opts));
     auto_toc(entries, opts.auto_toc, &mut rep);
     Ok(rep)
+}
+
+/// 新增（或重优化时更新）外链 wash css 文件，并往 OPF manifest 补一条 `<item>`（幂等）。
+fn add_wash_css_entry(entries: &mut Vec<Entry>, css_path: &str, content: &str) {
+    if let Some(e) = entries.iter_mut().find(|e| e.name == css_path) {
+        e.data = content.as_bytes().to_vec();
+    } else {
+        entries.push(Entry { name: css_path.to_string(), data: content.as_bytes().to_vec() });
+    }
+    if let Some(oi) = find_opf(entries) {
+        let opf_dir = dir_of(&entries[oi].name).to_string();
+        let href = relative_to(&opf_dir, css_path);
+        let mut text = String::from_utf8_lossy(&entries[oi].data).into_owned();
+        if !text.contains(&format!("href=\"{href}\"")) {
+            if let Some(p) = text.find("</manifest>") {
+                text.insert_str(p, &format!("<item id=\"cangjie-wash-css\" href=\"{href}\" media-type=\"text/css\"/>"));
+                entries[oi].data = text.into_bytes();
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -784,7 +825,7 @@ mod tests {
     }
 
     #[test]
-    fn html_wash_injects_once_and_collapses_dup_ids() {
+    fn html_wash_filters_styles_and_collapses_dup_ids() {
         let o = WashOpts::default();
         let html = r#"<html><head><link rel="stylesheet" href="s.css"/></head><body style="margin:5pt"><p id="a" id="b" style="font-size:12px;margin-top:1em;margin-left:2em">x</p><div style="color:gray">y</div><style>p{color:#333;margin:1em}</style></body></html>"#;
         let (out, dups) = wash_html(html, &o);
@@ -793,13 +834,11 @@ mod tests {
         assert!(out.contains("<div>y</div>"), "空 style 整个删: {out}");
         assert!(out.contains("<body>"), "{out}");
         assert!(out.contains("<style>p{margin:0 1em}</style>"), "1em 四边→上下归零左右保留: {out}");
-        assert!(out.contains(&format!(r#"<style class="{WASH_MARK}""#)), "{out}");
-        assert!(out.contains("text-indent:2em!important"), "{out}");
-        let (again, _) = wash_html(&out, &o);
-        assert_eq!(again.matches(WASH_MARK).count(), 1, "幂等");
-        // 无 head
-        let (nh, _) = wash_html("<html><body><p>z</p></body></html>", &o);
-        assert!(nh.starts_with("<html><head><style"), "{nh}");
+        // wash_html 不再注入内联 <style>（排版规则改外链 css，由 wash_entries 注）——见 external_css_injected_and_linked。
+        assert!(!out.contains(&format!(r#"class="{WASH_MARK}""#)), "不该再注入内联 cj-wash: {out}");
+        // 旧版内联 cj-wash 块重洗时清掉
+        let (cleaned, _) = wash_html(r#"<html><head><style class="cj-wash">p{text-indent:2em!important}</style></head><body><p>z</p></body></html>"#, &o);
+        assert!(!cleaned.contains("cj-wash") && !cleaned.contains("text-indent"), "旧内联块未清: {cleaned}");
     }
 
     #[test]
@@ -872,25 +911,47 @@ mod tests {
 
     #[test]
     fn lang_aware_indent() {
+        // 只用裸 p{} 元素选择器（xochitl 解析器脆）、不带 !important（xochitl 吃不下）；中文 2em / 拉丁 1.2em。
         let cjk = wash_css(&WashOpts { lang: LangMode::Cjk, ..Default::default() });
-        assert!(cjk.contains("text-indent:2em!important") && !cjk.contains("1.2em"));
+        assert!(cjk.contains("text-indent:2em") && !cjk.contains("1.2em") && !cjk.contains("!important"));
+        assert!(cjk.starts_with("p{") && !cjk.contains(',') && !cjk.contains('+') && !cjk.contains('@'), "禁用复杂/逗号选择器: {cjk}");
         let lat = wash_css(&WashOpts { lang: LangMode::Latin, ..Default::default() });
-        assert!(lat.contains("text-indent:1.2em!important") && lat.contains("h1+p") && lat.contains("text-indent:0!important"));
+        assert!(lat.contains("text-indent:1.2em") && !lat.contains("!important"));
+        // keep_para_spacing 时不归零段距
+        let keep = wash_css(&WashOpts { keep_para_spacing: true, ..Default::default() });
+        assert!(!keep.contains("margin-top:0"));
     }
 
     #[test]
-    fn detect_script_and_apply_to_wash() {
+    fn external_css_injected_and_linked() {
+        // 端到端：英文书 wash 后——排版规则进外链 cangjie-wash.css、每章 <link> 指向它、OPF manifest 补 item。
+        let mut v = vec![
+            e("OEBPS/content.opf", r#"<package version="3.0"><metadata><dc:title>B</dc:title></metadata><manifest><item id="c1" href="Text/c1.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="c1"/></spine></package>"#),
+            e("OEBPS/Text/c1.xhtml", "<html><head></head><body><h2>Chapter One</h2><p>English prose flowing across the page with many words indeed here</p></body></html>"),
+        ];
+        wash_entries(&mut v, &WashOpts::default()).unwrap();
+        // 外链 css 存在且带拉丁缩进（英文书探测为 Latin）
+        let css = s(&v, "OEBPS/cangjie-wash.css");
+        assert!(css.contains("text-indent:1.2em") && !css.contains("!important"), "外链 css 应含拉丁缩进、无 !important: {css}");
+        // 章节 <link> 相对路径正确（Text/ 下 → ../cangjie-wash.css），且不再有内联 text-indent
+        let c1 = s(&v, "OEBPS/Text/c1.xhtml");
+        assert!(c1.contains(r#"href="../cangjie-wash.css""#), "章节 link 路径错: {c1}");
+        assert!(!c1.contains("text-indent"), "排版规则不该内联进 html: {c1}");
+        // OPF manifest 补了 item（相对 opf 目录 = cangjie-wash.css）
+        let opf = s(&v, "OEBPS/content.opf");
+        assert!(opf.contains(r#"href="cangjie-wash.css""#) && opf.contains("text/css"), "manifest 未补 item: {opf}");
+        // 幂等：重洗不重复加 link / item
+        wash_entries(&mut v, &WashOpts::default()).unwrap();
+        assert_eq!(s(&v, "OEBPS/Text/c1.xhtml").matches("cangjie-wash.css").count(), 1, "link 重复");
+        assert_eq!(s(&v, "OEBPS/content.opf").matches("cangjie-wash.css").count(), 1, "manifest item 重复");
+    }
+
+    #[test]
+    fn detect_script() {
         let cjk = vec![e("c.xhtml", "<html><body><p>这是一本中文书籍需要两字缩进的测试内容足够多的汉字</p></body></html>")];
         assert_eq!(detect_dominant_script(&cjk), LangMode::Cjk);
         let en = vec![e("c.xhtml", "<html><body><p>This is an English book with plenty of latin letters here indeed</p></body></html>")];
         assert_eq!(detect_dominant_script(&en), LangMode::Latin);
-        // 端到端：英文书 wash 后注入拉丁缩进
-        let mut v = vec![
-            e("content.opf", r#"<package version="3.0"><metadata><dc:title>B</dc:title></metadata><manifest><item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="c1"/></spine></package>"#),
-            e("c1.xhtml", "<html><head></head><body><h2>Chapter One</h2><p>English prose flowing across the page with many words indeed here</p></body></html>"),
-        ];
-        wash_entries(&mut v, &WashOpts::default()).unwrap();
-        assert!(s(&v, "c1.xhtml").contains("text-indent:1.2em!important"), "英文书应注拉丁缩进");
     }
 
     #[test]
