@@ -21,7 +21,20 @@ const SPEC: ServiceSpec = ServiceSpec {
     tab: Some(("KOReader", 20)),
 };
 
-fn status(k: &KoReader) -> serde_json::Value {
+/// 服务配置 `~/.config/shelf/koreader.json`。
+#[derive(serde::Serialize, serde::Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+struct KoConfig {
+    /// 收 EPUB 时先过统一优化器（与 xochitl native 一致的去锁/排版/图片/目录，脚注 Anchor 供 KOReader 弹窗）。默认开。
+    optimize_epub: bool,
+}
+impl Default for KoConfig {
+    fn default() -> Self {
+        KoConfig { optimize_epub: true }
+    }
+}
+
+fn status(k: &KoReader, optimize_epub: bool) -> serde_json::Value {
     serde_json::json!({
         "ok": true,
         "installed": k.installed(),
@@ -32,6 +45,7 @@ fn status(k: &KoReader) -> serde_json::Value {
         "books": k.list_books("").map(|v| v.iter().filter(|e| e.kind == "file").count()).unwrap_or(0),
         "fonts": k.list_dir(&k.fonts_dir(), &["ttf","otf","ttc"]).len(),
         "dicts": list_dicts(k).len(),
+        "optimizeEpub": optimize_epub,
     })
 }
 
@@ -78,17 +92,19 @@ fn main() {
     let bind = service::parse_bind(&args, SPEC.default_bind);
     let paths = Paths::from_env();
     let k = Arc::new(KoReader::new(paths.koreader_root()));
+    let kcfg: KoConfig = shelf_core::config::load_or_seed(&paths.service_config("koreader"));
+    let opt_epub = kcfg.optimize_epub;
     let (k1, k2, k3, k4, k5, k6) = (k.clone(), k.clone(), k.clone(), k.clone(), k.clone(), k.clone());
     let (k7, k8, k9) = (k.clone(), k.clone(), k.clone());
     let (pb, pf, pd) = (paths.clone(), paths.clone(), paths.clone());
     let backup_dir = paths.state_dir().join("koreader-backups");
     let tmp_dir = paths.runtime_dir().join("koreader");
     let router = Router::new()
-        .get("/status", move |_| Ok(Reply::ok(&status(&k1))))
+        .get("/status", move |_| Ok(Reply::ok(&status(&k1, opt_epub))))
         .post("/books", move |r| {
             let folder = r.q("folder").unwrap_or("").to_string();
             let dest = k2.subdir(&folder).map_err(ApiError::bad)?;
-            ko_upload(&k2, r, &pb, &KoStore::new(dest, "koreader-book", KO_ANY), "books/")
+            ko_upload(&k2, r, &pb, &KoStore::new(dest, "koreader-book", KO_ANY).optimizing(opt_epub), "books/")
         })
         .get("/books", move |r| {
             let folder = r.q("folder").unwrap_or("").trim_matches('/').to_string();

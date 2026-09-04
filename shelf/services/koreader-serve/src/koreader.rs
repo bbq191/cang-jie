@@ -17,6 +17,9 @@ pub struct KoStore {
     dest: PathBuf,
     kind: &'static str,
     exts: &'static [&'static str],
+    /// 收 `.epub` 时先过通用优化器（与 xochitl native 同一 `bookconv::optimize`，脚注用 Anchor 让
+    /// KOReader `link_prefer_footnote` 弹窗；去锁/排版/图片/目录统一）。只对 books 路开、可 config 关。
+    optimize_epub: bool,
 }
 
 pub const KO_ANY: &[&str] = &[];
@@ -25,7 +28,28 @@ pub const KO_DICT_EXT: &[&str] = &["ifo", "idx", "dict", "dz", "syn", "oft"];
 
 impl KoStore {
     pub fn new(dest: PathBuf, kind: &'static str, exts: &'static [&'static str]) -> KoStore {
-        KoStore { dest, kind, exts }
+        KoStore { dest, kind, exts, optimize_epub: false }
+    }
+    /// 开启「收 EPUB 时统一优化」（books 路用）。
+    pub fn optimizing(mut self, on: bool) -> KoStore {
+        self.optimize_epub = on;
+        self
+    }
+
+    /// 若开了优化且是未优化过的 EPUB → 返回优化后字节；否则 None（调用方原样落盘）。失败也返回 None（不阻断上传）。
+    fn optimized_bytes(&self, name: &str, staged: &Path) -> Option<Vec<u8>> {
+        if !self.optimize_epub || !name.to_ascii_lowercase().ends_with(".epub") {
+            return None;
+        }
+        let bytes = std::fs::read(staged).ok()?;
+        if bookconv::optimize::is_optimized(&bytes) {
+            return None; // 已优化（如从 native 管线来的）不重复
+        }
+        let opts = bookconv::optimize::OptimizeOpts {
+            wash: Some(bookconv::wash::WashOpts::default()),
+            footnote: bookconv::optimize::FootnoteMode::Anchor,
+        };
+        bookconv::optimize::optimize_epub_with(&bytes, &opts).ok().map(|(out, _)| out)
     }
 }
 
@@ -43,7 +67,13 @@ impl AssetStore for KoStore {
         std::fs::create_dir_all(&self.dest).map_err(|e| format!("建目录失败: {e}"))?;
         let dest = self.dest.join(name);
         let part = self.dest.join(format!(".{name}.part"));
-        std::fs::copy(staged, &part).map_err(|e| format!("落盘失败: {e}"))?;
+        // EPUB 且开了优化 → 写优化后字节；否则原样拷贝。（`.part` 隐藏半成品，rename 原子换上。）
+        match self.optimized_bytes(name, staged) {
+            Some(out) => std::fs::write(&part, &out).map_err(|e| format!("落盘失败: {e}"))?,
+            None => {
+                std::fs::copy(staged, &part).map_err(|e| format!("落盘失败: {e}"))?;
+            }
+        }
         let bytes = std::fs::metadata(&part).map(|m| m.len()).unwrap_or(0);
         std::fs::rename(&part, &dest).map_err(|e| {
             let _ = std::fs::remove_file(&part);
@@ -247,6 +277,24 @@ mod tests {
         assert_eq!(std::fs::read(dir.join("中文 名.azw3")).unwrap(), "中文 名内容".as_bytes());
         assert!(!dir.join(".中文 名.azw3.part").exists(), "成功后 .part 应已 rename");
         assert!(!dir.join(".e.epub.part").exists(), "空文件不该留 .part");
+    }
+
+    #[test]
+    fn kostore_optimize_guard_and_fallback() {
+        let t = tempfile::tempdir().unwrap();
+        let dir = t.path().join("books");
+        let store = KoStore::new(dir.clone(), "koreader-book", KO_ANY).optimizing(true);
+        // 非 epub：不尝试优化，原样落盘
+        let txt = t.path().join("s.txt");
+        std::fs::write(&txt, b"hello").unwrap();
+        store.install("a.txt", &txt).unwrap();
+        assert_eq!(std::fs::read(dir.join("a.txt")).unwrap(), b"hello");
+        // .epub 但非合法 zip：优化失败 → 回退原样拷贝，不报错、不留 .part
+        let bad = t.path().join("b.epub");
+        std::fs::write(&bad, b"not a zip").unwrap();
+        store.install("b.epub", &bad).unwrap();
+        assert_eq!(std::fs::read(dir.join("b.epub")).unwrap(), b"not a zip");
+        assert!(!dir.join(".b.epub.part").exists());
     }
 
     #[test]
