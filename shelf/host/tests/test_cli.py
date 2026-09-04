@@ -44,6 +44,8 @@ class FakeGateway(BaseHTTPRequestHandler):
             return self._json(200, {"services": self.services})
         if self.path == "/api/fonts/health":
             return self._json(200, {"ok": True, "service": "font-serve", "version": "0.1.0"})
+        if self.path == "/api/books/inbox":
+            return self._json(200, {"items": [{"name": "bad.epub", "state": "failed", "bytes": 12, "reason": "质量门未过：双 id"}]})
         return self._json(404, {"ok": False, "message": "not found"})
 
     def do_POST(self):
@@ -59,6 +61,10 @@ class FakeGateway(BaseHTTPRequestHandler):
             return self._json(200, {"ok": True, "message": "密码已更新"})
         if self.path.startswith("/api/books") and FakeGateway.must_change:
             return self._json(403, {"ok": False, "message": "首次登录必须先改密码"})
+        if self.path == "/api/books/inbox/retry":
+            return self._json(200, {"ok": True, "items": [{"name": json.loads(body)["name"], "ok": True, "message": "已重投"}]})
+        if self.path == "/api/books/inbox/delete":
+            return self._json(200, {"ok": True})
         return self._json(200, {"ok": True, "items": [{"name": "x", "ok": True}]})
 
     def log_message(self, *a):  # 静音
@@ -161,3 +167,18 @@ def test_must_change_403_is_explained(gateway, capsys, tmp_path):
         FakeGateway.must_change = False
     assert rc != 0
     assert "shelf passwd" in capsys.readouterr().err + out
+
+
+def test_inbox_list_shows_failed_reason(gateway, capsys):
+    rc, out = run(["inbox"], gateway, capsys)
+    assert rc == 0
+    assert "bad.epub" in out and "质量门未过" in out
+
+
+def test_inbox_retry_and_delete(gateway, capsys):
+    rc, out = run(["inbox", "--retry", "bad.epub"], gateway, capsys)
+    assert rc == 0 and "已重投" in out
+    assert FakeGateway.received[-1][0] == "/api/books/inbox/retry"
+    rc, out = run(["inbox", "--delete", "bad.epub"], gateway, capsys)
+    assert rc == 0 and "已删除" in out
+    assert FakeGateway.received[-1][0] == "/api/books/inbox/delete"

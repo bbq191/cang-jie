@@ -20,8 +20,18 @@ def run(args, ctx) -> int:
             continue
         try:
             h = ctx.transport.get(f"/api/{seg[s['name']]}/health")
-            print(f"  {s['name']:<16} {'ok' if h.get('ok') else 'bad'}  v{h.get('version', '?')}")
+            extra = ""
+            if s["name"] == "book-serve":
+                try:
+                    st = ctx.transport.get("/api/books/status")
+                    sp = st.get("spool", {})
+                    extra = f"  队列 待{sp.get('pending', 0)}/失败{sp.get('failed', 0)}"
+                except Exception:  # noqa: BLE001
+                    pass
+            print(f"  {s['name']:<16} {'ok' if h.get('ok') else 'bad'}  v{h.get('version', '?')}{extra}")
         except Exception as e:  # noqa: BLE001
             ok = False
             print(f"  {s['name']:<16} 异常：{e}")
+    if any(s["name"] == "book-serve" for s in svcs):
+        print("  （失败的书：shelf inbox 查看/重投/删除）")
     return 0 if ok else 1

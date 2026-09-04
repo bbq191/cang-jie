@@ -9,11 +9,13 @@
 #   · systemd：shelf.target + 各服务单元 → /usr/lib/systemd/system（rootfs，普通重启不丢；OTA 冲掉后重跑本脚本）
 # 写 /usr 前实检 dm-verity，激活即跳过（ 红线）；绝不给 xochitl 加依赖。
 #
-# 用法：./install.sh [--only gateway,book,koreader,font,wallpaper] [--no-systemd] [--src DIR] [--password PW]
+# 用法：./install.sh [--only gateway,book,koreader,font,wallpaper] [--no-systemd] [--src DIR] [--password PW] [--with-xovi-reenable]
 #   --only        只装/更新列出的服务（网关总会装）；缺省全装
 #   --password    直接设网关密码（缺省首次默认 shelf、网页登录后强制改；之后可 shelf-gateway passwd <新密码>）
 #   --no-systemd  只落二进制与目录，不碰 /usr（重启后需手动 systemctl start）
 #   --src DIR     载荷目录（含 bin/ systemd/ lo-alias/），缺省=本脚本所在目录
+#   --with-xovi-reenable  额外装 cangjie-xovi-reenable.service（开机 /home 挂好后自动补 xovi）——
+#                 只装 shelf 又想让 `systemctl restart xochitl`/重启后 xovi 不丢时用；缺省不装（尊重"先不装"）
 # 幂等，可反复跑；每次先把现有二进制备份到 /home/root/cangjie-backups/shelf-<时间>/。
 # ═══════════════════════════════════════════════════════════════════════════
 set -eu
@@ -23,11 +25,13 @@ SRC="$HERE"
 ONLY=""
 PASSWORD=""
 DO_SYSTEMD=1
+WITH_REENABLE=0
 for a in "$@"; do
     case "$a" in
         --only=*) ONLY="${a#--only=}" ;;
         --only) ;;                                   # 下一个参数是列表
         --no-systemd) DO_SYSTEMD=0 ;;
+        --with-xovi-reenable) WITH_REENABLE=1 ;;
         --src=*) SRC="${a#--src=}" ;;
         --src) ;;
         --password=*) PASSWORD="${a#--password=}" ;;
@@ -134,6 +138,8 @@ case " $SEL " in *" wallpaper "*)
         systemctl daemon-reload
         systemctl start shelf-wallpaper-bind.service 2>/dev/null || true
         echo "-- 壁纸开机 bind 单元 + sleep 钩子已写入 /usr"
+    elif [ "$DO_SYSTEMD" = "1" ] && dmsetup ls --target verity 2>/dev/null | grep -q .; then
+        echo "⚠ dm-verity 设备：壁纸 bind 单元未装（/usr 只读）——壁纸**重启即丢**，每次开机需手动 $BIN_DIR/wallpaper-serve bind（或走 xovi oneshot）。"
     fi
     ;;
 esac
@@ -166,6 +172,34 @@ case " $SEL " in *" font "*)
     fi
     ;;
 esac
+
+# ── 3d. xovi-reenable（可选）：装了它，重启/OTA 后开机自动补 xovi，不必手动 xovi/start ──
+if [ -x "$HOME_DIR/xovi/start" ]; then
+    REEN_UNIT="$SYSD/cangjie-xovi-reenable.service"
+    if [ "$WITH_REENABLE" = "1" ]; then
+        if [ "$DO_SYSTEMD" = "0" ]; then
+            echo "-- --no-systemd 下不装 xovi-reenable"
+        elif dmsetup ls --target verity 2>/dev/null | grep -q .; then
+            echo "✋ dm-verity：无法持久装 xovi-reenable（/usr 只读）"
+        elif [ ! -f "$SRC/systemd/cangjie-xovi-reenable.service" ]; then
+            echo "-- 载荷缺 cangjie-xovi-reenable.service，跳过（package.sh 应从 reading/device-rs/systemd 带上）"
+        else
+            mount -o remount,rw / || { echo "!! remount rw / 失败"; exit 1; }
+            cp "$SRC/systemd/cangjie-xovi-reenable.service" "$REEN_UNIT" && chmod 644 "$REEN_UNIT"
+            mkdir -p "$SYSD/multi-user.target.wants"
+            ln -sf ../cangjie-xovi-reenable.service "$SYSD/multi-user.target.wants/cangjie-xovi-reenable.service"
+            sync; mount -o remount,ro / || true
+            systemctl daemon-reload
+            echo "-- cangjie-xovi-reenable.service 已装：开机 /home 挂好后自动跑 xovi/start（重启后 xovi 不再丢）"
+        fi
+    elif [ ! -f "$REEN_UNIT" ]; then
+        echo "═══════════════════════════════════════════════════"
+        echo "⚠ 未装 cangjie-xovi-reenable.service：裸 systemctl restart xochitl 或重启后 xovi 会丢"
+        echo "  （字体菜单 / KOReader 入口 / 中文化一起没），得手动 $HOME_DIR/xovi/start。"
+        echo "  想让它开机自动恢复：重跑  ./install.sh --with-xovi-reenable"
+        echo "═══════════════════════════════════════════════════"
+    fi
+fi
 
 # ── 4. 健康检查 ──
 sleep 1
