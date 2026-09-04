@@ -10,7 +10,7 @@
 
 四条硬原则（用户两轮驳回后定）：
 1. **XDG 基目录规范**（Rust `shelf_core::paths` / shell / Python 三处同一张表，env 可注入测试）。
-2. **设计模式去重解耦**：Strategy（投递目标）· Pipeline（处理链）· Repository + Template Method（资产上传）· 端口/适配器（HTTP 只在 `http.rs`）· Registry（服务发现）· Facade（网关代理）· Command（CLI）。移动优先于复制。
+2. **设计模式去重解耦**：Strategy（投递目标）· Pipeline（处理链）· Repository + Template Method（资产上传 `AssetStore`/`AssetUploadFlow`，font/wallpaper/**koreader 三家共用**）· 服务启动模板（`service::ServiceSpec`+`run`）· 配置读写模板（`config::load_or_default/seed/save`）· 端口/适配器（HTTP 只在 `http.rs`）· Registry（服务发现）· Facade（网关代理）· Command（CLI）。共享原语：`fs::write_atomic`、`multipart::receive_part_to`、`asset::all_ok`（Rust）与 `receipts.print_receipts`/`transport.delete_named`（host）。移动优先于复制；**旧 crate 只许剥离+re-export，不直接引用**（§03p 一轮质量核查按此收编重复）。
 3. **专项专用可插拔**：不做单体，按领域拆服务。
 4. **不引用旧项目 crate、不对接旧路径**：能力只许剥离移植；不读写 `/home/root/weread/**`；旧 wr-serve 微读线原样兜底。
 
@@ -227,6 +227,26 @@ Explore 走查出的粗糙点 + 一个真 bug，分 5 批。批 1-4 已真机部
 **管理台（Track 2，已落地）**：`manage.rs` 单一模块目录表 `MODULES`（seg↔service↔`--only`令牌↔label↔installable）——`service_of`/代理/管理三态都从它派生（去重）。`GET /api/manage` 三态（未装：二进制不在→引导命令 / 已装未开：二进制在服务没跑→开启 / 已开：跑着→网页有功能，`running` 复用注册表不 shell）；`GET /api/foundation` 探测 xovi/appload/qrr/KOReader；`POST /api/manage/{seg}/{start|stop|uninstall}`（开关=`systemctl` 仅领域服务留网关；卸载=已装的 `shelf-uninstall --only`＝uninstall.sh 单一事实源，install.sh 装它进 `~/.local/bin`；**安装不走网页**，未装只给命令，不让网页 remount /usr）。网页固定「管理」tab（基石红绿+官方链接、模块三态+开关/卸载/引导、全开/全关留网关）。所有管理端点受登录守卫（特权）。真机：`/health`200、`/api/manage`/`/api/foundation` 401（注册+守卫），管理逻辑单测锁 3 态。顺修：mdns recv EINTR（spawn 子进程 SIGCHLD 打断阻塞 recv）当重试、不再刷屏。weread `installable:false` 不可装/开；font 模块 label「xochitl 字体」，KOReader 字体归 koreader（服务层已拆）。
 
 **UI 易用性打磨（2026-09-04 二次）**：① **二级 tab**（`subtabs(sec)` 复用主 `addTab` 显隐思路，面板由 render/refresh 预填、切换只显隐不重复请求）——xochitl 拆「传书 / 原生字体」，KOReader 拆「书库 / 字体 / 词典」；根治"一屏堆多个长列表、书/字体多了手机滑很久"（每屏只剩一个列表）。选二级 tab 而非折叠：折叠仍要展开再滑，二级 tab 一步到位。drop 的 DOM 顺序保持不变（`querySelectorAll('.drop')` 按序映射 `wrap(i)`，故 uploader 接线零改）。② 管理台「三态/开关/卸载/安装」写成可折叠 `<details>` 说明（默认收起保持干净、点开完整），含**性能实测数据**（5 服务常开共 ~9MB 内存、开机一天累计 <2s CPU≈0.002%、不卡不额外费电，建议全常开）——回答用户"常开会不会卡"。③ 基石引导链接补 **reManager**（`github.com/rmitchellscott/reManager`，桌面端 vellum 生态管理器，本设备正是 vellum 引导链，是引导装 xovi/KOReader 的正主；此前只有 xovi/KOReader Wiki 两个链接）。移动端：viewport + `max-width:48em` + seg 34em 断点单列 + 表格 `overflow-x` 已在，二级 tab 横向可滑复用主 nav 样式。
+
+## 03p｜代码质量核查一轮：去重 / 复用 / 解耦（2026-09-04，用户"合理用设计式避免重复、复用、解耦"）
+
+三个只读审查 agent 分片扫（6 服务 / shelf-core / host CLI），主线自核 shell/systemd/Cargo。**结论**：shelf-core 是干净的 port/adapter，抽象真在复用（同一 HTTP 栈、单一密码哈希、单一路径表/语言），债务集中在几处明确复制 + 一处被绕过的抽象。行为保持不变，离线门槛全过后真机部署冒烟坐实。
+
+**shelf-core 新增两模块收编各服务复制**：
+- `config.rs`：`load_or_default` / `load_or_seed`（首启写缺省、损坏文件不覆盖）/ `save`（原子 + 可选 0600）。收编 book/font/gateway/wallpaper **四处**各写一份的 config 读写；顺带把 wallpaper state、book config 从"原地 write（非原子）"统一到原子写。
+- `fs.rs`：`write_atomic`（`<path>.tmp`→rename）+ `set_mode`；registry / fonts.json / 所有 config-save 共用。
+- `multipart::receive_part_to`：单点化"建文件 + io::copy"，`AssetUploadFlow` 与 book-serve spool 落盘共用（各自再定空文件/归档语义）。
+- `asset::all_ok`：统一 `!empty && all(ok)` 回执判据（font/wallpaper/koreader 曾各写）；`ext_ok` 空白名单⇒接受任意扩展名（对齐 KOReader books「原样」）。
+
+**koreader-serve 收编被绕过的抽象**（agent 标最高收益的解耦）：新增 `KoStore` 实现 `AssetStore`，books/fonts/dicts **三条上传路统一走 `AssetUploadFlow`**，删掉 `receive`/`receive_into` 两个近乎相同的手搓 multipart 循环 + 第二份 `UploadOutcome` 手拼 JSON。`install` 走 `dest/.<name>.part`→rename——原 books 才有的"KOReader 扫目录不见半成品"保证现扩展到字体/词典（严格改进）。取舍：`AssetUploadFlow` 先落中央暂存再 install，跨文件系统时对大书是两次拷贝；书经 KOReader 多为中小文件、极少 200MB，为统一走同一 flow 接受此微增 I/O。**客户端回执契约不变**（仍 `{file,ok,message}`）。
+
+**死代码清除**（生产零调用者、仅自身测试引用）：`auth::random_password`（网关用固定默认密码+必改，从未接线）、`tls::ensure_self_signed`（兼容 shim 零引用）、`xochitl::content_type_of`（book-serve 走 `bookconv` 派生 MIME）、`paths::cache_dir`+`cache` 字段（host 是 Python 不链接本 crate）。
+
+**host CLI**：`receipts.py`（`guard_file`/`print_receipts`）收编 font/wallpaper/koreader/push 各自的「✗不是文件」守卫 + 「✓/✗ <名>:<消息>」回执行（回执名字键 font/wallpaper=`name`、koreader/book=`file`，故 `name_key` 参数化）；`transport.delete_named` 集中 `quote` URL 编码（命令层不再各自 import）；`config` 的 `ssh` 缺省从 `host` 派生（改 host 时 ssh 不掉队）；`paths` docstring 收窄"三语言同一张表"→同一套**规则**，标注 `self.data` 含 `/shelf` 段（＝Rust `data_dir()`）。
+
+**跳过（避免过度抽象）**：各服务 `status()` 字段本就领域各异不强统一；tri-language 路径表有意各写一份（host 不链接 Rust）；systemd 4 个 loopback 单元近全同但声明式模板化收益低；大范围 `pub`→`pub(crate)` churn 大收益小。
+
+**验收**：`cargo test` 全绿（新增 `fs`/`config` 单测、`KoStore` 经 flow 端到端单测、koreader font add/ls/rm 补覆盖缺口、ssh 派生测试）+ host `pytest` 22 过 + shellcheck 0 + aarch64 交叉编译干净。**真机（WiFi 10.42.0.224，固件 3.27.3.0）**：5 服务部署重启 0 NRestarts、全注册、网关 health 200、日志无 panic；`gateway.json` 落盘 **0600**（0o600 保留）、无 `.tmp` 残留、`fonts.json` 合法（6 家族）——R1/R5 坐实；SSH 隧道直连 koreader-serve loopback 打真上传 → 正确落盘 + 回执契约不变 + **无 `.part` 残留**——R2 坐实。
 
 ## 04｜踩坑
 

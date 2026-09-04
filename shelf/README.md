@@ -32,7 +32,7 @@ shelf/
 ├── Cargo.toml · build.sh · .cargo/    内部 workspace（仓库根仍无 workspace）；musl 全静态交叉编译
 ├── crates/bookconv/                   ★ 通用内容层：多格式→EPUB/PDF、EPUB 优化器、e-ink 图片处理、EPUB 组装
 │                                      （2026-09-03 从 weread-device 抽出；weread 线改为依赖它并 re-export 保路径）
-├── crates/shelf-core/                 共享底座：XDG paths · registry · 流式 multipart · AssetStore · http 适配 · xochitl 注入 · fswatch
+├── crates/shelf-core/                 共享底座：XDG paths · registry · 流式 multipart(+receive_part_to) · AssetStore/上传模板 · config(读写模板) · fs(原子写) · http 适配 · xochitl 注入 · fswatch · tls/auth/mdns/netinfo/ttf
 ├── services/{shelf-gateway,book-serve,koreader-serve,font-serve,wallpaper-serve}/   各服务 crate（weread-serve 仅 README 占位）
 ├── systemd/                           shelf.target + 5 个 .service
 ├── install.sh · uninstall.sh          设备端安装/卸载（--only 按服务；写 /usr 前实检 dm-verity）
@@ -88,7 +88,7 @@ shelf/host/bin/shelf push 书.azw3 论文.pdf -t native|annot|koreader [-f 文�
    quality=auto：host 有 ebook-convert → native 走 wash_epub.sh→体检→推；annot 走 epub2pdf_move.sh / pdf_crop_move.py→体检→推；
                  否则直推网关（设备端 Rust 转换/优化兜底）。>60MB PDF 自动 pymupdf 分卷（可选依赖）。
    ⚠ 两条路只有优化器同源；Calibre 清洗层与质量门设备路尚无（移植计划见白皮书 §03i）。
-shelf font add 字体.ttf | ls | rm <file>                  # 装进 ~/.local/share/fonts + fc-cache + fonts.json + KOReader fonts/
+shelf font add 字体.ttf | ls | rm <file>                  # 只装原生阅读器：~/.local/share/fonts + fc-cache + fonts.json（KOReader 字体用 shelf koreader font）
 shelf wallpaper add 图.jpg [--activate] | ls | set <name> | mode sequential|random|fixed | rm <name>
 shelf koreader pull | diff | sync [-n] [--fonts] [--dicts]   # 配置即代码（Lua 合并在设备端跑）
 shelf koreader font add 字体.ttf | ls | rm <file>         # 只装进 KOReader（原生+KOReader 同装用 shelf font）
@@ -101,7 +101,7 @@ shelf koreader font add 字体.ttf | ls | rm <file>         # 只装进 KOReader
 |---|---|---|
 | P0 | 骨架 · bookconv 抽离（md5 对拍一致）· CI · 打包/编排接入 · 五服务注册/代理本机冒烟 | ✅ 离线完成 |
 | P1 | 统一投递：三目标手选（native/annot/koreader）、格式自动处理、host Calibre 优先/设备兜底、完整单页 UI、`shelf push` | ✅ **真机通**（3.27.3.0，2026-09-03）：三目标投递、拔插、WiFi 访问 |
-| P2 | 字体/壁纸上传即可用：font-serve（fontconfig+fonts.json+KOReader 镜像）、wallpaper-serve（954×1696 池化/轮换/bind 子命令）、动态字体菜单 qmd（3.27/3.28）、sleep 钩子+开机 bind 单元、旧壁纸工具迁移、CLI font/wallpaper | ✅ **真机通**（3.27.3.0，2026-09-03）：字体上传→菜单差量→选中即渲染全程免重启（S-A/S-B）；壁纸缩放/激活/bind + 唤醒日志触发轮换真机通 |
+| P2 | 字体/壁纸上传即可用：font-serve（fontconfig+fonts.json，只管原生；KOReader 字体由 koreader-serve 单独装）、wallpaper-serve（954×1696 池化/轮换/bind 子命令）、动态字体菜单 qmd（3.27/3.28）、sleep 钩子+开机 bind 单元、旧壁纸工具迁移、CLI font/wallpaper | ✅ **真机通**（3.27.3.0，2026-09-03）：字体上传→菜单差量→选中即渲染全程免重启（S-A/S-B）；壁纸缩放/激活/bind + 唤醒日志触发轮换真机通 |
 | P3 | KOReader 配置即代码：`koreader/profile/` 三份补丁 + `merge.lua`（设备端 luajit 深合并，dry-run/备份/回读/幂等）+ `/config/{file}` 端点（运行中拒写）+ 词典上传 + CLI pull/diff/sync | ✅ **真机通**（2026-09-03）：pull→profile 校正→diff 零差异 |
 | P4 | 原生高质量门：`shelf push` host 路强制 `check_output.py`（`--skip-check` 逃生）；设备路回执带转换/优化摘要；网关只读展示阅读增强开关 | ✅ 离线完成 |
 | P4b | **清洗层 + 质量门移植进 bookconv**（`wash.rs`/`check.rs`，对标 host Calibre 规则；Pipeline 加 `Check` 步；优化器 v6；`optimize=auto\|keep-spacing\|plain\|off`、`check=off`） | ✅ 真机通（坏书被门拦 / 《飘·上册》伪 DRM 剥离 90s 进库；白皮书 §03i） |
@@ -111,3 +111,6 @@ shelf koreader font add 字体.ttf | ls | rm <file>         # 只装进 KOReader
 | 追加3 | 字体两 bug 根治：font-serve 接管 fontconfig 中文回退（weak 绑定、覆盖率降序）、cmap 覆盖率检测/警告、字体菜单按内容刷新 | ✅ 真机通（白皮书 §03k） |
 | 追加4 | 网页改版（深浅色/卡片/两张对比表）、传书页并入原生字体上传并改名 **xochitl**（书上字体下）、去掉冗余 KOReader 选项、字体菜单长家族名 elide 截断（离线 qmldiff 验证） | ✅ 真机通（白皮书 §03m） |
 | 诊断 | "传书卡传字体不卡"根因＝reMarkable 云同步每本书出站 2-3MB 挤满弱热点上行；**大书上传优先 USB** `https://10.11.99.1:8778` | ✅ 复现坐实 + USB 验证（白皮书 §03l） |
+| 追加5 | 服务管理台（固定「管理」tab）：基石(xovi/appload/qrr/KOReader)红绿引导 + 模块三态(未装/已装未开/已开)、开关(仅停后台)、网页卸载(调 `shelf-uninstall`)、安装走引导；embolden 默认开；`cangjie-xovi-reenable`→`xovi-reenable`(归基石层，撤回 shelf 对外层耦合) | ✅ 部署+守卫真机通（白皮书 §03o） |
+| 追加6 | UI 易用性：二级 tab（xochitl 传书/字体、KOReader 书库/字体/词典，治手机长拉）、管理台三态/开关/卸载完整说明 + 常开性能实测数据、基石引导补 reManager 链接 | ✅ 部署真机通（白皮书 §03o 末） |
+| 质量 | 代码质量核查一轮：`config`/`fs` 共享模块 + `receive_part_to`/`all_ok` 原语收编各服务复制；koreader-serve `KoStore` 收编被绕过的 `AssetUploadFlow`；死代码清除；host `receipts`/`delete_named` 收编 CLI 重复 | ✅ 行为不变，离线全过 + 真机冒烟(R1/R5/R2 坐实，白皮书 §03p) |
