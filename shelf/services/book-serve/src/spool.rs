@@ -213,12 +213,13 @@ impl Spool {
         shelf_core::fs::write_atomic(&delivered_path(&p), &s).map_err(|e| format!("写落库记录失败: {e}"))
     }
 
-    /// 母版库所在分区剩余空间（字节）。`df -k` 解析（busybox/GNU 都是第 4 列 Available KB）；解析不了返回 None。
+    /// 母版库所在分区剩余空间（字节）。`df -k` 解析：表头后的所有行拍平成 token（设备名太长时 busybox 会把数字
+    /// 换到下一行，真机 `/dev/mapper/home-encrypted-disk` 就这样），第 4 个 token = Available KB；解析不了返回 None。
     pub fn free_bytes(&self) -> Option<u64> {
         let out = std::process::Command::new("df").arg("-k").arg(self.staging()).output().ok()?;
         let s = String::from_utf8_lossy(&out.stdout);
-        let cols: Vec<&str> = s.lines().nth(1)?.split_whitespace().collect();
-        cols.get(3)?.parse::<u64>().ok().map(|kb| kb * 1024)
+        let toks: Vec<&str> = s.lines().skip(1).flat_map(|l| l.split_whitespace()).collect();
+        toks.get(3)?.parse::<u64>().ok().map(|kb| kb * 1024)
     }
 
     /// 列母版库：格式（epub/pdf/other）+ 是否带优化标记（`optimized_version_file` 轻量只读中央目录）。
