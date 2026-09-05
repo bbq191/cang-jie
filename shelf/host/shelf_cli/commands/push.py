@@ -1,7 +1,12 @@
-"""`shelf push`：把书投到 native / annot / koreader。质量路由（Strategy）：
-- host   有 Calibre → native: wash → 体检 → 推；annot: epub→定稿 PDF / pdf→裁边 → 体检 → 推；koreader: 原样（--comic2cbz 可选）
-- device 直推网关，设备端 Rust 转换/优化兜底
-- auto   有 ebook-convert 且目标为 native/annot 且文件需要处理 → host，否则 device"""
+"""`shelf push`：host 洗书 → 落**母版库**（中间层），去向由用户在网页选（xochitl / KOReader）。
+
+统一后 push 不再有投递目标——一律落母版库（`/api/books/staging`）。host 是唯一能"入库时顺带优化"的源：
+- 默认：有 Calibre → 洗书（EPUB 深洗 / 杂格式转 EPUB / PDF 结构化重排）→ 落母版库（产物带优化标记）。
+- `--no-optimize`：不洗，原样传母版库（用户可在网页按需点优化）。
+- `--to-pdf`：定稿成固定版式 PDF（手写批注用），落母版库。
+- `--direct`：绕过母版库，洗完直投 xochitl 书库（逃生，保留旧直投行为）。
+无 Calibre → 原样传母版库（设备端优化在网页母版库里点）。
+"""
 from __future__ import annotations
 
 from pathlib import Path
@@ -11,121 +16,94 @@ from .. import pdfsplit
 from ..receipts import guard_file, print_receipts
 
 NAME = "push"
-HELP = "投书：--target native|annot|koreader（host 有 Calibre 走高质量路，否则设备兜底）"
+HELP = "投书到母版库（host 有 Calibre 先洗书）；去向在网页选。难搞的书/PDF 重排用这条"
 
-HOST_ROUTE_EXT = {".epub", ".azw3", ".mobi", ".azw", ".prc", ".fb2", ".pdf"}
+# host 能洗的源格式（其余原样传母版库）。
+WASH_EXT = {".epub", ".azw3", ".mobi", ".azw", ".prc", ".fb2"}
 
 
 def add_args(p):
     p.add_argument("files", nargs="+", type=Path)
-    p.add_argument("--target", "-t", choices=["native", "annot", "koreader"], help="缺省 config.default_target")
-    p.add_argument("--folder", "-f", default="", help="目标文件夹（xochitl visibleName / KOReader books 子目录）")
-    p.add_argument("--quality", "-q", choices=["auto", "host", "device"], help="缺省 config.quality")
-    p.add_argument("--optimize", choices=["auto", "keep-spacing", "plain", "off"], default="auto", help="设备路 EPUB：auto=清洗+优化（缺省）/ keep-spacing=清洗但保留段距（诗集剧本）/ plain=只优化不清洗 / off=原样")
-    p.add_argument("--no-optimize", action="store_true", help="= --optimize off")
+    p.add_argument("--to-pdf", action="store_true", help="定稿成固定版式 PDF（手写批注用）；默认洗成流式 EPUB")
+    p.add_argument("--no-optimize", action="store_true", help="不洗，原样传母版库（网页里可再点优化）")
+    p.add_argument("--no-reflow", action="store_true", help="PDF 不重排（原样传）")
     p.add_argument("--no-split", action="store_true", help="大 PDF 不分卷")
-    p.add_argument("--no-reflow", action="store_true", help="native 目标的 PDF 不做重排（原样固定版式投递）")
-    p.add_argument("--require-toc", action="store_true", help="host 路体检要求有目录")
-    p.add_argument("--skip-check", action="store_true", help="host 路跳过 check_output.py 体检（缺省不过不推）")
-    p.add_argument("--comic2cbz", action="store_true", help="koreader 目标：AZW3 漫画先转 CBZ")
-    p.add_argument("--dry-run", "-n", action="store_true", help="只打印路由决定，不动文件、不上传")
-
-
-def decide_route(quality: str, target: str, path: Path, calibre: bool) -> str:
-    if quality == "device":
-        return "device"
-    if quality == "host":
-        return "host" if calibre else "device"
-    # auto
-    if target in ("native", "annot") and calibre and path.suffix.lower() in HOST_ROUTE_EXT:
-        return "host"
-    if target == "koreader" and calibre and path.suffix.lower() == ".azw3":
-        return "host"  # 只在 --comic2cbz 时真做事
-    return "device"
+    p.add_argument("--require-toc", action="store_true", help="洗书体检要求有目录")
+    p.add_argument("--skip-check", action="store_true", help="跳过 check_output.py 体检（缺省不过不推）")
+    p.add_argument("--direct", action="store_true", help="绕过母版库，洗完直投 xochitl 书库（逃生）")
+    p.add_argument("--folder", "-f", default="", help="仅 --direct：落 xochitl 的文件夹")
+    p.add_argument("--dry-run", "-n", action="store_true", help="只打印会怎么做，不动文件、不上传")
 
 
 def _gate(out: Path, args) -> None:
-    """原生高质量门：host 路产物必过 check_output.py（TOC/内链/字体子集/双 id/屏上字号列宽），不过不推。"""
+    """原生高质量门：host 洗书产物必过 check_output.py（TOC/内链/字体子集/双 id/屏上字号列宽），不过不推。"""
     if getattr(args, "skip_check", False):
         print("  （--skip-check：跳过体检）")
         return
     ok, rep = cb.check(out, require_toc=args.require_toc)
     print(rep)
     if not ok:
-        raise cb.CalibreError("体检未通过，未推送（--skip-check 强推 / --quality device 走设备兜底）")
+        raise cb.CalibreError("体检未通过，未推送（--skip-check 强推）")
 
 
-def host_prepare(target: str, path: Path, args, work: Path) -> list[Path]:
-    """host 路：产出待推送文件列表（可能多个：分卷）。"""
+def host_prepare(path: Path, args, work: Path) -> list[Path]:
+    """host 洗书：默认 EPUB 深洗 / 杂格式转 EPUB / PDF 结构化重排；--to-pdf 定稿 PDF。产物待落母版库。"""
     suf = path.suffix.lower()
-    if target == "koreader":
-        if args.comic2cbz and suf == ".azw3":
-            return [cb.comic2cbz(path, work / (path.stem + ".cbz"))]
-        return [path]
-    if target == "native":
-        if suf == ".pdf":
-            # PDF 重排：born-digital→结构化 EPUB（再走统一洗书+优化）；扫描件→k2pdfopt/裁边 PDF。--no-reflow 原样投。
-            if args.no_reflow:
-                return [path]
-            reflowed, kind = cb.reflow_pdf(path, work)
-            if kind == "epub":
-                print(f"  结构化重排 → EPUB（{reflowed.name}）")
-                out = cb.wash(reflowed, work)
-                _gate(out, args)
-                return [out]
-            print(f"  扫描件位图重排 → PDF（{reflowed.name}）")
-            return [reflowed]
-        if suf == ".epub":
-            out = cb.wash(path, work)
-        elif suf in (".azw3", ".mobi", ".azw", ".prc", ".fb2"):
-            out = cb.wash(path, work)  # wash_epub.sh 泛化收 AZW3/MOBI（内部 ebook-convert）
+    if args.to_pdf:
+        # 定稿固定版式 PDF（EPUB/杂格式先转 EPUB 再定稿；PDF 裁边）。
+        if suf == ".epub" or suf in WASH_EXT:
+            src = path if suf == ".epub" else cb.wash(path, work)
+            out = cb.to_pdf(src, work / (path.stem + ".pdf"))
+        elif suf == ".pdf":
+            try:
+                out = cb.crop_pdf(path, work / (path.stem + ".crop.pdf"))
+            except cb.ScannedPdf as e:
+                raise cb.CalibreError(f"扫描型 PDF 不做定稿（{e}）；去掉 --to-pdf 走重排，或用网页投 KOReader") from None
         else:
             return [path]
         _gate(out, args)
         return [out]
-    # annot
-    if suf == ".epub" or suf in (".azw3", ".mobi", ".azw", ".prc", ".fb2"):
-        src = path if suf == ".epub" else cb.wash(path, work)
-        out = cb.to_pdf(src, work / (path.stem + ".pdf"))
-    elif suf == ".pdf":
-        try:
-            out = cb.crop_pdf(path, work / (path.stem + ".crop.pdf"))
-        except cb.ScannedPdf as e:
-            raise cb.CalibreError(f"扫描型 PDF 不做定稿（{e}）；建议 --target koreader 用 KOPT 重排") from None
-    else:
-        return [path]
-    _gate(out, args)
-    return [out]
+    # 默认：PDF 结构化重排 / EPUB·杂格式深洗成流式 EPUB。
+    if suf == ".pdf":
+        if args.no_reflow:
+            return [path]
+        reflowed, kind = cb.reflow_pdf(path, work)
+        if kind == "epub":
+            print(f"  结构化重排 → EPUB（{reflowed.name}）")
+            out = cb.wash(reflowed, work)
+            _gate(out, args)
+            return [out]
+        print(f"  扫描件位图重排 → PDF（{reflowed.name}）")
+        return [reflowed]
+    if suf == ".epub" or suf in WASH_EXT:
+        out = cb.wash(path, work)  # wash_epub.sh 泛化收 AZW3/MOBI（内部 ebook-convert），末步叠加 epub-optimize
+        _gate(out, args)
+        return [out]
+    return [path]
 
 
 def run(args, ctx) -> int:
-    target = args.target or ctx.config.default_target
-    quality = args.quality or ctx.config.quality
     calibre = cb.has_calibre()
+    do_wash = calibre and not args.no_optimize
+    dest = "xochitl 书库(--direct)" if args.direct else "母版库"
     rc = 0
     work = cb.workdir()
     for path in args.files:
-        # 防呆：把目标名当位置参数了（`push 书.epub koreader`）——目标要用 -t，不是位置参数。
-        if not path.is_file() and str(path) in ("native", "annot", "koreader"):
-            print(f"✗ '{path}' 不是文件——投递目标要用 -t {path}（别当位置参数）")
-            rc = 1
-            continue
         if not guard_file(path):
             rc = 1
             continue
-        route = decide_route(quality, target, path, calibre)
-        print(f"→ {path.name}  target={target}  route={route}")
+        print(f"→ {path.name}  {'洗书→' if do_wash else '原样→'}{dest}")
         if args.dry_run:
             continue
         try:
-            outs = host_prepare(target, path, args, work) if route == "host" else [path]
+            outs = host_prepare(path, args, work) if do_wash else [path]
         except cb.CalibreError as e:
             print(f"✗ {path.name}: {e}")
             rc = 1
             continue
         final: list[Path] = []
         for o in outs:
-            if not args.no_split and target != "koreader" and o.suffix.lower() == ".pdf" and pdfsplit.needs_split(o, ctx.config.split_pdf_mb):
+            if not args.no_split and o.suffix.lower() == ".pdf" and pdfsplit.needs_split(o, ctx.config.split_pdf_mb):
                 parts = pdfsplit.split(o, ctx.config.split_pdf_mb, work)
                 if len(parts) > 1:
                     print(f"  分卷 {len(parts)} 份（>{ctx.config.split_pdf_mb}MB）")
@@ -133,10 +111,12 @@ def run(args, ctx) -> int:
             else:
                 final.append(o)
         for o in final:
-            if target == "koreader":
-                url, q = "/api/koreader/books", {"folder": args.folder}
+            if args.direct:
+                # 逃生：绕过母版库直投书库。已 host 洗过 → optimize=off；--to-pdf 产物投批注目标。
+                target = "annot" if args.to_pdf else "native"
+                url, q = "/api/books", {"target": target, "folder": args.folder, "optimize": "off", "check": "off" if args.skip_check else None}
             else:
-                url, q = "/api/books", {"target": target, "folder": args.folder, "optimize": "off" if args.no_optimize else args.optimize, "check": "off" if args.skip_check else None}
+                url, q = "/api/books/staging", {}  # 落母版库（原样落，host 已洗则带优化标记）
             try:
                 res = ctx.transport.post_files(url, [o], q)
             except Exception as e:  # noqa: BLE001
