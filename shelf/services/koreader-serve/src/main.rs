@@ -6,7 +6,7 @@ mod config;
 mod koreader;
 
 use koreader::{KoReader, KoStore, KO_ANY, KO_DICT_EXT, KO_FONT_EXT};
-use shelf_core::asset::{all_ok, AssetUploadFlow};
+use shelf_core::asset::{all_ok, AssetStore, AssetUploadFlow};
 use shelf_core::http::{ApiError, ApiResult, Reply, Request, Router};
 use shelf_core::multipart::boundary_of;
 use shelf_core::paths::Paths;
@@ -96,7 +96,7 @@ fn main() {
     let opt_epub = kcfg.optimize_epub;
     let (k1, k2, k3, k4, k5, k6) = (k.clone(), k.clone(), k.clone(), k.clone(), k.clone(), k.clone());
     let (k7, k8, k9) = (k.clone(), k.clone(), k.clone());
-    let (pb, pf, pd) = (paths.clone(), paths.clone(), paths.clone());
+    let (k10, pb, pf, pd, pa) = (k.clone(), paths.clone(), paths.clone(), paths.clone(), paths.clone());
     let backup_dir = paths.state_dir().join("koreader-backups");
     let tmp_dir = paths.runtime_dir().join("koreader");
     let router = Router::new()
@@ -110,6 +110,27 @@ fn main() {
             let folder = r.q("folder").unwrap_or("").trim_matches('/').to_string();
             let items = k3.list_books(&folder).map_err(ApiError::bad)?;
             Ok(Reply::ok(&serde_json::json!({"folder": folder, "items": items})))
+        })
+        // 从母版库（book-serve 的 staging/，共享目录）adopt 一本书到 KOReader——落库=纯复制母版字节，不优化
+        // （优化是母版库的独立动作；两读器落同一字节才能对照）。前端从 /api/books/staging 列表选书后调这里。
+        .post("/books/adopt", move |r| {
+            if !k10.installed() {
+                return Err(ApiError { status: 409, message: "KOReader 未安装（appload 目录不存在）".into() });
+            }
+            let j = r.json_body().map_err(ApiError::bad)?;
+            let raw = j.get("name").and_then(|v| v.as_str()).ok_or_else(|| ApiError::bad("缺 name"))?;
+            let name = shelf_core::multipart::safe_basename(raw, "");
+            if name.is_empty() || name.starts_with('.') {
+                return Err(ApiError::bad("非法文件名"));
+            }
+            let src = pa.staging_dir().join(&name);
+            if !src.is_file() {
+                return Err(ApiError::not_found("母版库里没有这本书"));
+            }
+            let folder = j.get("folder").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let dest = k10.subdir(&folder).map_err(ApiError::bad)?;
+            let item = KoStore::new(dest, "koreader-book", KO_ANY).install(&name, &src).map_err(ApiError::bad)?;
+            Ok(Reply::ok(&serde_json::json!({"ok": true, "message": format!("已加入 KOReader《{}》（{} 字节）", name, item.bytes), "note": if k10.running() {"KOReader 运行中：在其文件浏览器刷新可见"} else {""}})))
         })
         .get("/fonts", move |_| {
             let dir = k4.fonts_dir();

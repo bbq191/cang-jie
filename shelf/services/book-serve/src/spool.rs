@@ -25,6 +25,15 @@ pub struct SpoolEntry {
     pub reason: Option<String>,
 }
 
+/// 母版库（staging）一本书的展示条目。`format` 从扩展名判、`optimized` 从内埋标记判（轻量只读中央目录）。
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct StagingEntry {
+    pub name: String,
+    pub bytes: u64,
+    pub format: &'static str,
+    pub optimized: bool,
+}
+
 /// 失败原因 sidecar 后缀。
 const REASON_EXT: &str = ".reason";
 
@@ -44,8 +53,13 @@ impl Spool {
     pub fn failed(&self) -> PathBuf {
         self.root.join("failed")
     }
+    /// 母版库（中间层暂存池）：所有源原样落这里，用户再选优化/落库去向。**不套 done/ 的 LRU 淘汰**。
+    /// 与 `shelf_core::Paths::staging_dir()` 同一路径（root=`state_dir()/books`）——koreader-serve adopt 时读同处。
+    pub fn staging(&self) -> PathBuf {
+        self.root.join("staging")
+    }
     pub fn ensure(&self) -> std::io::Result<()> {
-        for d in [self.inbox(), self.work(), self.done(), self.failed()] {
+        for d in [self.inbox(), self.work(), self.done(), self.failed(), self.staging()] {
             std::fs::create_dir_all(d)?;
         }
         Ok(())
@@ -133,6 +147,65 @@ impl Spool {
         let src = self.failed().join(safe(name)?);
         let _ = std::fs::remove_file(reason_path(&src));
         std::fs::remove_file(&src).map_err(|e| format!("删除失败: {e}"))
+    }
+
+    // ───────────────────────── 母版库（staging）操作 ─────────────────────────
+
+    /// 新入库：原样原子写进母版库，同名加数字前缀不覆盖。返回落地文件名（供前端引用）。
+    pub fn stage_new(&self, name: &str, bytes: &[u8]) -> Result<String, String> {
+        let base = safe(name)?;
+        let target = unique(&self.staging(), base);
+        shelf_core::fs::write_atomic(&target, bytes).map_err(|e| format!("写母版库失败: {e}"))?;
+        Ok(target.file_name().and_then(|s| s.to_str()).unwrap_or(base).to_string())
+    }
+
+    /// 覆盖写母版库同名文件（优化后回写产物）。原子。
+    pub fn overwrite_staging(&self, name: &str, bytes: &[u8]) -> Result<(), String> {
+        let target = self.staging().join(safe(name)?);
+        shelf_core::fs::write_atomic(&target, bytes).map_err(|e| format!("回写母版库失败: {e}"))
+    }
+
+    /// 母版库某文件的安全路径（校验文件名）。
+    pub fn staging_path(&self, name: &str) -> Result<PathBuf, String> {
+        Ok(self.staging().join(safe(name)?))
+    }
+
+    pub fn read_staging(&self, name: &str) -> Result<Vec<u8>, String> {
+        std::fs::read(self.staging_path(name)?).map_err(|e| format!("读母版库文件失败: {e}"))
+    }
+
+    pub fn remove_staging(&self, name: &str) -> Result<(), String> {
+        std::fs::remove_file(self.staging_path(name)?).map_err(|e| format!("删除失败: {e}"))
+    }
+
+    /// 列母版库：格式（epub/pdf/other）+ 是否带优化标记（`optimized_version_file` 轻量只读中央目录）。
+    pub fn list_staging(&self) -> Vec<StagingEntry> {
+        let mut out = Vec::new();
+        if let Ok(rd) = std::fs::read_dir(self.staging()) {
+            for e in rd.flatten() {
+                let name = e.file_name().to_string_lossy().to_string();
+                if name.starts_with('.') {
+                    continue; // .part 半成品 / 隐藏文件不列
+                }
+                let Ok(md) = e.metadata() else { continue };
+                if !md.is_file() {
+                    continue;
+                }
+                let lower = name.to_ascii_lowercase();
+                let format = if lower.ends_with(".epub") {
+                    "epub"
+                } else if lower.ends_with(".pdf") {
+                    "pdf"
+                } else {
+                    "other"
+                };
+                // 优化状态只对 EPUB 有意义（PDF 端上不优化）。
+                let optimized = format == "epub" && e.path().to_str().map(|p| bookconv::optimize::optimized_version_file(p).is_some()).unwrap_or(false);
+                out.push(StagingEntry { name, bytes: md.len(), format, optimized });
+            }
+        }
+        out.sort_by(|a, b| a.name.cmp(&b.name));
+        out
     }
 }
 
@@ -228,6 +301,28 @@ mod tests {
         let l = s.list();
         assert_eq!(l.len(), 2);
         assert!(l.iter().any(|e| e.name == "1_a.epub" && e.reason.as_deref() == Some("转换失败")), "{l:?}");
+    }
+
+    #[test]
+    fn staging_put_list_read_remove() {
+        let t = tempfile::tempdir().unwrap();
+        let s = Spool::new(t.path().join("books"));
+        s.ensure().unwrap();
+        assert_eq!(s.stage_new("a.epub", b"not-a-zip").unwrap(), "a.epub");
+        assert_eq!(s.stage_new("a.epub", b"xx").unwrap(), "1_a.epub", "同名不覆盖");
+        s.stage_new("doc.pdf", b"%PDF").unwrap();
+        let list = s.list_staging();
+        assert_eq!(list.len(), 3);
+        let epub = list.iter().find(|e| e.name == "a.epub").unwrap();
+        assert_eq!(epub.format, "epub");
+        assert!(!epub.optimized, "非 zip 不该判已优化");
+        assert_eq!(list.iter().find(|e| e.name == "doc.pdf").unwrap().format, "pdf");
+        assert_eq!(s.read_staging("a.epub").unwrap(), b"not-a-zip");
+        s.overwrite_staging("a.epub", b"new").unwrap();
+        assert_eq!(s.read_staging("a.epub").unwrap(), b"new");
+        s.remove_staging("a.epub").unwrap();
+        assert_eq!(s.list_staging().len(), 2);
+        assert!(s.stage_new("../x", b"y").is_err(), "非法名拒绝");
     }
 
     #[test]

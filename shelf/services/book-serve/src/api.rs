@@ -14,6 +14,8 @@ pub fn router(st: Arc<State>) -> Router {
     let s3 = st.clone();
     let s4 = st.clone();
     let s5 = st.clone();
+    let sg = st.clone(); // 母版库列表
+    let su = st.clone(); // 母版库上传
     Router::new()
         .post("/", move |r| upload(&s1, r))
         .get("/status", move |_| Ok(Reply::ok(&s2.status())))
@@ -33,6 +35,89 @@ pub fn router(st: Arc<State>) -> Router {
             s5.spool.delete_failed(&name).map_err(ApiError::bad)?;
             Ok(Reply::ok(&serde_json::json!({"ok": true})))
         })
+        // ── 母版库（中间层）：入库/优化/落库/删除各自正交 ──
+        .get("/staging", move |_| Ok(Reply::ok(&serde_json::json!({"items": sg.spool.list_staging()}))))
+        .post("/staging", move |r| staging_upload(&su, r)) // multipart 原样落，不优化不投递
+        .post("/staging/optimize", {
+            let s = st.clone();
+            move |r| {
+                let name = name_of(r)?;
+                if !name.to_ascii_lowercase().ends_with(".epub") {
+                    return Err(ApiError::bad("只有 EPUB 能优化（PDF 重排请在电脑用 shelf push）"));
+                }
+                let data = s.spool.read_staging(&name).map_err(ApiError::bad)?;
+                // 通用优化（Inline 脚注 + 外链 css 缩进）：两读器都能显示；落库时纯复制此产物，保证两器同字节可对照。
+                let opts = bookconv::optimize::OptimizeOpts { wash: Some(bookconv::wash::WashOpts::default()), footnote: bookconv::optimize::FootnoteMode::Inline };
+                let (out, _) = bookconv::optimize::optimize_epub_with(&data, &opts).map_err(ApiError::bad)?;
+                s.spool.overwrite_staging(&name, &out).map_err(ApiError::bad)?;
+                Ok(Reply::ok(&serde_json::json!({"ok": true, "message": format!("已优化《{name}》")})))
+            }
+        })
+        .post("/staging/deliver", {
+            let s = st.clone();
+            move |r| {
+                let j = r.json_body().map_err(ApiError::bad)?;
+                let name = j.get("name").and_then(|v| v.as_str()).ok_or_else(|| ApiError::bad("缺 name"))?.to_string();
+                let keep = j.get("keep").and_then(|v| v.as_bool()).unwrap_or(true); // 母版库默认保留（可再投另一读器对照）
+                let folder = j.get("folder").and_then(|v| v.as_str()).map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).unwrap_or_else(|| s.cfg.library_folder.clone());
+                let data = s.spool.read_staging(&name).map_err(ApiError::bad)?;
+                // 落库=纯复制原字节投 xochitl，不再优化（优化是母版库独立动作）。
+                let ct = bookconv::convert::direct_content_type(&name).map(|c| c.mime()).unwrap_or("application/octet-stream");
+                s.xochitl.upload(&data, &name, ct, &folder).map_err(ApiError::bad)?;
+                if !keep {
+                    let _ = s.spool.remove_staging(&name);
+                }
+                Ok(Reply::ok(&serde_json::json!({"ok": true, "message": format!("已投入原生书库《{name}》")})))
+            }
+        })
+        .post("/staging/delete", move |r| {
+            let name = name_of(r)?;
+            st.spool.remove_staging(&name).map_err(ApiError::bad)?;
+            Ok(Reply::ok(&serde_json::json!({"ok": true})))
+        })
+}
+
+/// multipart 逐文件原样落母版库（不优化、不投递）——中间层入库路。逐项回执带落地文件名。
+fn staging_upload(st: &State, r: &mut Request<'_>) -> ApiResult {
+    let Some(boundary) = boundary_of(&r.content_type) else { return Err(ApiError::bad("需要 multipart/form-data")) };
+    let mut mp = MultipartReader::new(&mut *r.body, &boundary);
+    let mut items: Vec<serde_json::Value> = Vec::new();
+    loop {
+        let mut part = match mp.next_part() {
+            Ok(Some(p)) => p,
+            Ok(None) => break,
+            Err(e) => return Err(ApiError::bad(format!("multipart 解析失败: {e}"))),
+        };
+        let Some(fname) = part.filename.clone() else { continue };
+        let name = safe_basename(&fname, "upload.bin");
+        // 只收 EPUB/PDF（母版库不做格式转换——非标准格式走电脑 shelf push）。
+        if bookconv::convert::direct_content_type(&name).is_none() {
+            items.push(serde_json::json!({"file": name, "ok": false, "message": "母版库只收 EPUB / PDF；其它格式请在电脑用 shelf push 转换"}));
+            continue;
+        }
+        let _g = st.spool.guard();
+        let staged = st.spool.stage(&name);
+        match shelf_core::multipart::receive_part_to(&staged, &mut part) {
+            Err(e) => {
+                let _ = std::fs::remove_file(&staged);
+                items.push(serde_json::json!({"file": name, "ok": false, "message": format!("接收失败: {e}")}));
+            }
+            Ok(0) => {
+                let _ = std::fs::remove_file(&staged);
+                items.push(serde_json::json!({"file": name, "ok": false, "message": "空文件"}));
+            }
+            Ok(_) => {
+                let data = std::fs::read(&staged).map_err(|e| ApiError::internal(e.to_string()))?;
+                let _ = std::fs::remove_file(&staged);
+                match st.spool.stage_new(&name, &data) {
+                    Ok(landed) => items.push(serde_json::json!({"file": landed, "ok": true, "message": "已入母版库"})),
+                    Err(e) => items.push(serde_json::json!({"file": name, "ok": false, "message": e})),
+                }
+            }
+        }
+    }
+    let ok = items.iter().all(|i| i["ok"].as_bool().unwrap_or(false)) && !items.is_empty();
+    Ok(Reply::ok(&serde_json::json!({"ok": ok, "items": items})))
 }
 
 fn name_of(r: &mut Request<'_>) -> Result<String, ApiError> {
