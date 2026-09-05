@@ -1,5 +1,8 @@
 //! 多格式 → xochitl 可读格式转换（块3 阅读 · 补内容源）。
 //!
+//! **使用方（2026-09-05 起）只有 `reading/device-rs`**（ingest / 旧上传页）：书架 shelf 的杂格式进原生统一走电脑 Calibre，
+//! 漫画只出 CBZ 给 KOReader（不投原生），设备端不再调本模块转换；`direct_content_type` 仍被母版库落库门控复用。
+//!
 //! xochitl 原生只开 EPUB/PDF：**文本类 → EPUB、漫画类 → PDF**，再走已验证的 `/upload`
 //! 免重启注入书库（见 device-core inject）。设计要点 = 各转换器互不耦合、统一收敛到
 //! `Converted` 结果类型，摄入层（ingest）对 CBZ/FB2/… 一视同仁，不认具体格式。
@@ -46,7 +49,7 @@ pub struct Converted {
     pub title: String,
 }
 
-/// 墨水屏色调处理档（仅作用于漫画 CBZ→PDF；其余格式忽略）。「系统增强→漫画省刷新」开关控制。
+/// 墨水屏色调处理档（仅作用于漫画 CBZ→PDF；其余格式忽略）。reading 线由「系统增强→漫画省刷新」开关控制；shelf 不再用。
 /// `Off`=原样（默认）；`Mono`=黑白页转 1-bit Floyd–Steinberg 抖动（触发面板更轻的 mono 波形、缩体积；
 /// 真彩页按饱和度阈值保留彩色）。真机坐实内容层能换更轻波形=减闪，见白皮书。
 #[derive(Clone, Copy, PartialEq, Debug, Default)]

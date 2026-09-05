@@ -1,7 +1,7 @@
 """漫画 AZW3/MOBI/EPUB → CBZ：calibre 解包成 EPUB 中转，按 OPF spine 顺序抽
 每页图片，零填充序号打包 CBZ。KOReader 漫画体验以 CBZ 最佳（AZW3 漫画类
-KF8 在 KOReader/crengine 下支持不佳，2026-09-02 用户真机反馈）；CBZ 也是
-未来 xochitl 省刷新线（CBZ→1-bit PDF）的输入格式。
+KF8 在 KOReader/crengine 下支持不佳，2026-09-02 用户真机反馈）。**漫画不投原生**
+（2026-09-05 用户定）：`shelf push` 判为漫画的书只出 CBZ 进母版库、加入 KOReader。
 
 用法: python3 shelf/host/calibre/comic2cbz.py 输入.azw3 [输出.cbz]
 只用 stdlib + ebook-convert，不需要 pymupdf。
