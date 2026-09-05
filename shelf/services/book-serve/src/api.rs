@@ -70,6 +70,18 @@ pub fn router(st: Arc<State>) -> Router {
                 Ok(Reply::ok(&serde_json::json!({"ok": true, "message": format!("已投入原生书库《{name}》")})))
             }
         })
+        .post("/staging/fetch-article", {
+            let s = st.clone();
+            move |r| {
+                let j = r.json_body().map_err(ApiError::bad)?;
+                let url = j.get("url").and_then(|v| v.as_str()).ok_or_else(|| ApiError::bad("缺 url"))?;
+                // 网文抓取（Readability + 白名单）→ 组 EPUB 原样落母版库（未优化，用户按需再点优化）。
+                let (epub, title) = bookconv::article::build_article_epub(url).map_err(ApiError::bad)?;
+                let fname = format!("{}.epub", bookconv::util::sanitize_filename(&title, "article"));
+                let landed = s.spool.stage_new(&fname, &epub).map_err(ApiError::bad)?;
+                Ok(Reply::ok(&serde_json::json!({"ok": true, "file": landed, "title": title, "message": format!("已抓取《{title}》入母版库")})))
+            }
+        })
         .post("/staging/delete", move |r| {
             let name = name_of(r)?;
             st.spool.remove_staging(&name).map_err(ApiError::bad)?;
