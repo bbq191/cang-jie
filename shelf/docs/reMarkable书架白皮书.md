@@ -249,6 +249,12 @@ Explore 走查出的粗糙点 + 一个真 bug，分 5 批。批 1-4 已真机部
 
 **验收**：`cargo test` 全绿（新增 `fs`/`config` 单测、`KoStore` 经 flow 端到端单测、koreader font add/ls/rm 补覆盖缺口、ssh 派生测试）+ host `pytest` 22 过 + shellcheck 0 + aarch64 交叉编译干净。**真机（WiFi 10.42.0.224，固件 3.27.3.0）**：5 服务部署重启 0 NRestarts、全注册、网关 health 200、日志无 panic；`gateway.json` 落盘 **0600**（0o600 保留）、无 `.tmp` 残留、`fonts.json` 合法（6 家族）——R1/R5 坐实；SSH 隧道直连 koreader-serve loopback 打真上传 → 正确落盘 + 回执契约不变 + **无 `.part` 残留**——R2 坐实。
 
+## 03r｜读书线重构：中间层（母版库）三层架构（2026-09-05，用户"逻辑很乱"提出改造）
+
+**问题**：读书线让用户一次背 3 维决策（读器×投递口×文件夹），"优化"与"落库"耦合；根因是把机器判不了的"用途分类"（侦探小说/漫画是闲书还是研读）塞进流程。**方案**（计划全文见 plan 文件）：**三动作正交解耦**——入库 / 优化 / 落库；中间夹**母版库**（中间层暂存池）作交汇点。统一规则：**所有源一律原样直传母版库，"优化"是母版库独立动作，"落库"也独立**。四决策：母版库=可反复落库（一本落两读器对照）/ 指引=决策辅助（不替用户分类，讲清读器差异）/ 微读=内容源（非独立 app）/ 设备端优化=保留（够用默认，host 是高质量路）。
+
+**Phase A 母版库基础设施（✅ 真机通 2026-09-05，USB 部署 192.168.1.21）**：`shelf-core::paths::staging_dir()`（`state_dir()/books/staging`，/home 分区不丢、不套 spool 的 LRU 淘汰）；book-serve spool 加 `stage_new/list_staging(StagingEntry 带 format+optimized，复用 optimized_version_file)/optimize/deliver/remove`；5 路由（GET/POST /staging、/staging/{optimize,deliver,delete}）；koreader-serve `POST /books/adopt` 从共享 staging 读→`KoStore::install` 纯复制。**关键设计：落库=纯复制原字节不优化**（优化只在母版库动作里），保证一本母版落两读器是**同字节可对照**（兑现"两器一致"）。真机端到端：上传→母版库(optimized:false)→优化(1400→1778,标记 false→true)→投 xochitl(visibleName 坐实)→adopt KOReader(1778 同字节)→**母版保留、两库并存**。Phase B–E（网文下沉/host push 落 staging/UI 三层重构/微读内容源/P0 真机清单）待做。
+
 ## 03q｜书籍优化深层优化：做精做细做强（2026-09-04，用户"只做精做细做强"）
 
 > 📖 优化引擎的机制细节（清洗层/优化遍/脚注四形态/图片降采样/**xochitl 渲染硬规则**/v1–v10 版本演进）见 **`bookconv优化白皮书.md`**。本节只记这几轮的诉求、决策与真机反馈。
