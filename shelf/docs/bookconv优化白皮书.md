@@ -10,7 +10,7 @@
 3. **清洗层 `wash`**：对标 host Calibre `wash_epub.sh` 的规则（伪 DRM / CSS 锁 / 边距段距 / 自动目录 / 空页 / 外链排版 css），由优化器可选前置调用。
 4. **质量门 `check`**：只读体检（真 DRM / 目录命中率 / 双 id 非法），硬失败应拦下投递。
 
-**一份代码两处共用**：设备 `book-serve` 母版库「优化」（`Staging::optimize`）与 host CLI `epub-optimize` 都调 `optimize::optimize_epub_with`；host `wash_epub.sh` 末步也叠加同一个 `epub-optimize` 二进制——**端 / host 优化同源**（书架白皮书 §03i / §03q）。漫画同理：设备母版库「转 PDF」与 host CLI `cbz2pdf` 都调 `convert::cbz::cbz_to_pdf`。〔koreader-serve 自 §03s 起不再优化——落库＝纯复制母版字节。〕
+**一份代码两处共用**：设备 `book-serve` 母版库「优化」（`Staging::optimize`）与 host CLI `epub-optimize` 都调 `optimize::optimize_epub_with`；host `wash_epub.sh` 末步也叠加同一个 `epub-optimize` 二进制——**端 / host 优化同源**（书架白皮书 §03i / §03q）。〔koreader-serve 自 §03s 起不再优化——落库＝纯复制母版字节；漫画不经优化器，`comic2cbz.py` 出 CBZ 直接给 KOReader。〕
 
 **零 C 依赖原则**：EPUB 组装（`epub.rs`）全条目走 STORED（不压缩，免 zlib C 依赖，设备空间充足）；漫画 PDF 手搓（`pdfwrite`：JPEG 直嵌 `/DCTDecode`、PNG 走 `png` crate + miniz_oxide `/FlateDecode`）；MOBI/KF8 解析不依赖 `mobi` crate（它在真机词典样本上把 `extra_data_flags` 尾字节判错、解压乱码，见 `palm.rs`）。
 
@@ -68,7 +68,7 @@ Move 屏 = **954×1696 px、7.3″、264 PPI、Gallery 3 彩色墨水屏**。书
 
 **取尺寸只读头**（2026-09-05）：`header_dims` 用 `ImageReader::into_dimensions` 只解 JPEG/PNG 头，达标页零解码零重编码（原先为判尺寸整张解码甚至两次，2473 页漫画 2m36s → 1m49s，产物字节不变）。
 
-**1-bit 抖动的体积真相**：Floyd–Steinberg 位图对 Flate 是高熵噪点——927×1327 一页压后仍 ~90KB，只比 120KB JPEG 小 1/4；"~1/8"是相对 8-bit 灰 Flate 说的。要真省体积得换 CCITT G4 / JBIG2（待办）。用户定漫画默认**原图**（`EinkTone::Off`），`--mono` 可选。
+**1-bit 抖动的体积真相**：Floyd–Steinberg 位图对 Flate 是高熵噪点——927×1327 一页压后仍 ~90KB，只比 120KB JPEG 小 1/4；"~1/8"是相对 8-bit 灰 Flate 说的。要真省体积得换 CCITT G4 / JBIG2（待办）。〔shelf 已不再把漫画转 PDF（漫画不投原生），此段留给 reading 线的 CBZ→PDF 参考。〕
 
 ## 06｜自动目录（`auto_toc`，缺目录才建）
 
@@ -81,9 +81,9 @@ xochitl 原生只开 EPUB/PDF：**文本类 → EPUB、漫画类 → PDF**，产
 - **`mobi`**：PalmDOC 解压得整本 HTML（`<mbp:pagebreak>` 分页、`<img recindex>` 引图、`<a filepos>` 内链）→ `epub::Book`。
 - **`kf8`**：AZW3 clean-room（依 KF8/MobileRead wiki，**不抄 GPL 的 KindleUnpack**）→ 预组装 XHTML 序列。
 - **`fb2`**：quick-xml serde 反序列化 → `epub::{Book,Chapter,Resource}`（EPUB 组装 + 优化全交给 epub.rs/optimize.rs，同一 assemble→optimize 路）。
-- **`cbz`**：解包 + 图片自然序排（`natural_cmp`）→ 每页 `downscale_for_device` → `pdfwrite` 手搓 PDF。CLI `cbz2pdf [--mono] in.cbz out.pdf`。
+- **`cbz`**：解包 + 图片自然序排（`natural_cmp`）→ 每页 `downscale_for_device` → `pdfwrite` 手搓 PDF。
 - 各格式的 EPUB 字节组装统一交 `epub.rs`（最小合规 EPUB3，移植自 protocol/epub.py）。
-- **谁在用（2026-09-05）**：`cbz` 被 shelf 母版库「转 PDF」与 host 漫画通道（`shelf push` 漫画 → `comic2cbz.py` → `cbz2pdf`）调用；`mobi`/`kf8`/`fb2` 只剩 `reading/device-rs`（ingest / 旧上传页）在用——shelf 里杂格式进原生统一走电脑 Calibre（书架白皮书 §03s），设备端不再转。`is_ingestible`/`precheck` 同理属 reading 线。
+- **谁在用（2026-09-05）**：整个 `convert`（`cbz`/`mobi`/`kf8`/`fb2`、`is_ingestible`/`precheck`）现在只剩 `reading/device-rs`（ingest / 旧上传页）在用——shelf 里杂格式进原生统一走电脑 Calibre（书架白皮书 §03s），**漫画不投原生**（§03t 末：曾做 CBZ→PDF 投原生，用户否决后删，CBZ 只给 KOReader）。
 
 许可：clean-room 依格式规范实现，不抄 GPL 代码；GPL 数据（词典等）不编译进产物。
 
@@ -131,8 +131,6 @@ reMarkable 的 EPUB 渲染器闭源，行为多次跟 host / 常识不一致。�
 
 **CLI `epub-optimize`**（`cargo build --release -p bookconv --bin epub-optimize`）：`[--no-wash] [--keep-spacing] [--auto-toc] [--footnote-anchor] [--check] [--require-toc] 输入.epub 输出.epub`。缺省 = 清洗 + 优化 + 脚注 Inline（对齐 native→xochitl）。退出码 0 成功 / 1 用法 / 2 优化失败（输入不动）/ 3 质量门未过。
 
-**CLI `cbz2pdf`**（`--bin cbz2pdf`）：`[--mono] 输入.cbz 输出.pdf`，退出码 0/1/2。host 漫画通道与设备母版库「转 PDF」同一函数。
-
 **目标脚注**：母版库「优化」传 `Inline`（xochitl 无弹窗，内联常显）；KOReader 从母版库纯复制拿到的也是 Inline 产物（crengine 弹窗需 `Anchor`+`epub:type`，是否为 KOReader 另跑 Anchor 待用户看观感，书架白皮书 §05①）；weread/pkm 线 `Anchor` 兜底。
 
 ## 12｜踩坑
@@ -145,4 +143,4 @@ reMarkable 的 EPUB 渲染器闭源，行为多次跟 host / 常识不一致。�
 
 ## 13｜真机待办
 
-英文书拉丁排版（1.2em）真机观感；KOReader 里 Inline 内联脚注能否接受（否则落库时另跑 Anchor + `epub:type` 触发弹窗）；PDF 结构化重排（host `pdf_reflow_move.py`）杂志观感已通（财新 v3），学术论文多列/公式待验；公式图 intrinsic 放大阈值；mono 档 CCITT G4 编码。诊断法：xochitl 导入渲染 `<uuid>.pdf` scp 回 host、pymupdf 量列宽/图尺寸/outline/内链 kind。
+英文书拉丁排版（1.2em）真机观感；KOReader 里 Inline 内联脚注能否接受（否则落库时另跑 Anchor + `epub:type` 触发弹窗）；PDF 结构化重排（host `pdf_reflow_move.py`）杂志观感已通（财新 v3），学术论文多列/公式待验；公式图 intrinsic 放大阈值。诊断法：xochitl 导入渲染 `<uuid>.pdf` scp 回 host、pymupdf 量列宽/图尺寸/outline/内链 kind。

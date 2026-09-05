@@ -29,8 +29,3 @@ ego-tree = "0.6"
 [[bin]]
 name = "epub-optimize"
 path = "src/bin/epub_optimize.rs"
-
-# host/设备通用 CLI：CBZ → 固定版式 PDF（漫画通道；与母版库「转 PDF」同一函数）。
-[[bin]]
-name = "cbz2pdf"
-path = "src/bin/cbz2pdf.rs"

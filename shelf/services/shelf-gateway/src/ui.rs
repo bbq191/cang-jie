@@ -118,7 +118,7 @@ const EXT=__EXTS__, dot=l=>l.map(e=>'.'+e);
 const BOOK_EXT=dot(EXT.book), FONT_EXT=dot(EXT.font), DICT_EXT=dot(EXT.dict), IMG_EXT=dot(EXT.image);
 const up=l=>l.map(e=>e.toUpperCase()).join(' / ');
 /* 书籍格式三档说明（同一份白名单分档展示，不再一口气列 18 个） */
-const FMT_TIERS=`<b>${up(EXT.native)}</b>：两个读器都能去 · <b>${up(EXT.convertible)}</b>：电脑 <code>shelf push</code> 可转成 EPUB 进原生，直接上传则只能加入 KOReader · <b>${up(EXT.koOnly)}</b>：只能加入 KOReader（CBZ 可在母版库「转 PDF」再投原生）· <b>漫画</b>（AZW3/EPUB 里全是整页图）走电脑 <code>shelf push</code>：自动出 CBZ（KOReader）+ PDF（原生）`;
+const FMT_TIERS=`<b>${up(EXT.native)}</b>：两个读器都能去 · <b>${up(EXT.convertible)}</b>：电脑 <code>shelf push</code> 可转成 EPUB 进原生，直接上传则只能加入 KOReader · <b>${up(EXT.koOnly)}</b>：只能加入 KOReader · <b>漫画不投原生</b>：AZW3/EPUB 漫画走电脑 <code>shelf push</code> 自动转 CBZ，加入 KOReader 读`;
 $('#logout').onclick=e=>{e.preventDefault();fetch('/logout',{method:'POST'}).then(()=>location.href='/login')};
 async function j(url,opt){const r=await fetch(url,opt);if(r.status===401){location.href='/login?next='+encodeURIComponent(location.pathname);return {ok:false,message:'未登录'}}if(r.status===403){location.href='/password';return {ok:false,message:'需先改密码'}}let d;try{d=await r.json()}catch{d={ok:false,message:'HTTP '+r.status}}if(!r.ok&&d.ok!==false)d={ok:false,message:d.message||('HTTP '+r.status)};return d}
 const postJ=async(url,body)=>{const r=await j(url,{method:'POST',body:JSON.stringify(body)});if(r.ok===false)alert(r.message||'失败');return r};
@@ -189,7 +189,7 @@ const OPTTABLE=`<div class="tblwrap"><table class="cmp"><thead><tr><th>档位</t
 </tbody></table></div>`;
 
 /* 母版库列表。按格式门控按钮：EPUB→优化(未优化时)/投原生/加入 KO；PDF→投原生/加入 KO；其它→只能加入 KO。
-   CBZ→「转 PDF」（新条目）。「加入 KOReader」按 koInstalled 门控。opts: {items,q,fmt,st,xFolder(),kFolder(),mode(),clear(),mono(),koInstalled,refresh()} */
+   CBZ 漫画只能加入 KOReader（不投原生）。「加入 KOReader」按 koInstalled 门控。opts: {items,q,fmt,st,xFolder(),kFolder(),mode(),clear(),koInstalled,refresh()} */
 function stagingList(ul,opts){
   ul.innerHTML='';
   const q=(opts.q||'').toLowerCase();
@@ -199,7 +199,7 @@ function stagingList(ul,opts){
   items.forEach(it=>{const li=document.createElement('li');li.style.flexWrap='wrap';
     const fmt=it.format==='epub'?'EPUB':it.format==='pdf'?'PDF':(it.name.includes('.')?it.name.split('.').pop().toUpperCase():'其它');
     const st=it.format!=='epub'?'<span class="badge">原样</span>':it.level==='full'?'<span class="badge on">已优化</span>':it.level==='core'?'<span class="badge" title="只跑了核心遍（脚注/图片/对比度），没洗排版缩进——点「优化」补全">已优化·未清洗</span>':it.level==='old'?'<span class="badge" title="旧版本优化，点「优化」升级">旧版优化</span>':'<span class="badge">未优化</span>';
-    const hint=it.format==='pdf'?' · 手写定稿放原生':it.format==='cbz'?' · KOReader 直接读；想投原生先「转 PDF」（大套系走电脑 shelf push 更快）':it.format==='other'?' · 原生读不了，只能加入 KOReader（想进原生用电脑 shelf push 转 EPUB）':'';
+    const hint=it.format==='pdf'?' · 手写定稿放原生':it.format==='cbz'?' · 漫画：加入 KOReader 读（不投原生）':it.format==='other'?' · 原生读不了，只能加入 KOReader（想进原生用电脑 shelf push 转 EPUB）':'';
     // 落库记录徽章；落库时间早于母版 mtime（之后又优化过）→ 标「旧」，提示可重投
     const dv=it.delivered||{},stale=t=>t&&it.mtime&&t<it.mtime;
     const dl=(dv.native?` <span class="badge on" title="${stale(dv.native)?'投过，之后母版又优化过，可重投':'已投入原生书库'}">已投原生${stale(dv.native)?'·旧':''}</span>`:'')+(dv.koreader?` <span class="badge on" title="${stale(dv.koreader)?'加入过，之后母版又优化过，可重投':'已加入 KOReader'}">已加入KO${stale(dv.koreader)?'·旧':''}</span>`:'');
@@ -207,7 +207,6 @@ function stagingList(ul,opts){
     const right=document.createElement('span');right.style.cssText='display:flex;gap:.4em;flex-wrap:wrap;align-items:center';
     const btn=(t,pri,fn,dis,title)=>{const b=document.createElement('button');b.className='btn'+(pri?' pri':'');b.textContent=t;if(dis){b.disabled=true;b.title=title||''}else b.onclick=async()=>{b.disabled=true;b.textContent=t+'…';await fn();if(opts.refresh)opts.refresh()};right.appendChild(b)};
     if(it.format==='epub'&&!it.optimized)btn('优化',false,()=>postJ('/api/books/staging/optimize',{name:it.name,mode:opts.mode()}));
-    if(it.format==='cbz')btn('转 PDF',false,()=>postJ('/api/books/staging/to-pdf',{name:it.name,mono:opts.mono()}));
     if(it.format==='epub'||it.format==='pdf')btn('投入原生书库',true,()=>postJ('/api/books/staging/deliver',{name:it.name,keep:!opts.clear(),folder:opts.xFolder()}));
     btn('加入 KOReader',true,async()=>{const r=await postJ('/api/koreader/books/adopt',{name:it.name,folder:opts.kFolder()});if(r.ok!==false){await postJ('/api/books/staging/mark',{name:it.name,target:'koreader'});if(opts.clear())await postJ('/api/books/staging/delete',{name:it.name})}},!opts.koInstalled,'KOReader 未安装（「管理」页看基石）');
     btn('删除',false,async()=>{if(confirm('从母版库删除 '+it.name+'？（已投到读器的不受影响）'))await postJ('/api/books/staging/delete',{name:it.name})});
@@ -239,8 +238,7 @@ function renderTransfer(sec){sec.innerHTML=`
       <div class="row"><span class="small">投原生 → 文件夹</span><select id="folderPreset" style="max-width:13em"><option value="lib">书库（默认）</option><option value="annot">批注文件夹</option><option value="custom">自定义…</option></select><input type="text" id="folder" placeholder="文件夹名" style="display:none;max-width:10em">
         <span class="small">加入 KOReader → 目录</span><input type="text" id="kfolder" list="kodirs" placeholder="留空＝根目录" style="max-width:9em"><datalist id="kodirs"></datalist></div>
       <div class="row"><span class="small">优化档位</span><select id="optmode" style="max-width:15em"><option value="auto">清洗＋优化（推荐）</option><option value="keep-spacing">清洗但保留段距（诗集 / 剧本）</option><option value="plain">只优化不清洗</option></select>
-        <label class="toggle"><input type="checkbox" id="stgclear"> 投完从母版库清除</label>
-        <label class="toggle" title="CBZ 转 PDF 时黑白页转 1-bit 抖动：翻页更轻、体积约 1/8，但灰阶网点变抖动点；默认原图"><input type="checkbox" id="stgmono"> 漫画转 PDF 用 1-bit 抖动</label></div>
+        <label class="toggle"><input type="checkbox" id="stgclear"> 投完从母版库清除</label></div>
       <details class="cmp"><summary>档位说明 · 母版为什么默认保留</summary>${OPTTABLE}<p class="small">母版保留＝同一本可再投另一个读器对照、换设备重投；不需要了手动删。</p></details>
       <div class="row"><input type="text" id="stgq" placeholder="搜书名…" style="flex:1;min-width:8em"><select id="stgfmt" style="max-width:8em"><option value="">全部格式</option><option value="epub">EPUB</option><option value="pdf">PDF</option><option value="other">其它</option></select><select id="stgst" style="max-width:8em"><option value="">全部状态</option><option value="0">未优化</option><option value="1">已优化</option></select><button class="btn" id="stgpurge" title="删除已投过读器的母版（读器里的书不受影响）">清理已落库</button></div>
       <div class="small" id="stgfree" style="margin:-.3em 0 .4em"></div>
@@ -253,9 +251,9 @@ function renderTransfer(sec){sec.innerHTML=`
   const syncFolder=()=>{g('folder').style.display=g('folderPreset').value==='custom'?'':'none'};
   // 落库设置记在本机（per-viewer 便利态）
   [['folderPreset','fpreset','lib'],['folder','folder',''],['kfolder','kfolder',''],['optmode','optmode','auto']].forEach(([id,k,d])=>{g(id).value=LS.get(k,d);['input','change'].forEach(ev=>g(id).addEventListener(ev,()=>{LS.set(k,g(id).value);if(id==='folderPreset')syncFolder()}))});
-  [['stgclear','stgclear'],['stgmono','stgmono']].forEach(([id,k])=>{g(id).checked=LS.get(k,'0')==='1';g(id).onchange=()=>LS.set(k,g(id).checked?'1':'0')});
+  g('stgclear').checked=LS.get('stgclear','0')==='1';g('stgclear').onchange=()=>LS.set('stgclear',g('stgclear').checked?'1':'0');
   syncFolder();
-  const render=()=>stagingList(g('stglist'),{items,q:g('stgq').value,fmt:g('stgfmt').value,st:g('stgst').value,xFolder,kFolder:()=>g('kfolder').value.trim(),mode:()=>g('optmode').value,clear:()=>g('stgclear').checked,mono:()=>g('stgmono').checked,koInstalled,refresh:()=>refresh()});
+  const render=()=>stagingList(g('stglist'),{items,q:g('stgq').value,fmt:g('stgfmt').value,st:g('stgst').value,xFolder,kFolder:()=>g('kfolder').value.trim(),mode:()=>g('optmode').value,clear:()=>g('stgclear').checked,koInstalled,refresh:()=>refresh()});
   ['stgq','stgfmt','stgst'].forEach(id=>['input','change'].forEach(ev=>g(id).addEventListener(ev,render)));
   const refresh=async()=>{const [d,s,k,kb]=await Promise.all([j('/api/books/staging'),j('/api/books/status'),j('/api/koreader/status'),j('/api/koreader/books')]);
     if(s.ok&&s.annotFolder)annotFolder=s.annotFolder;koInstalled=!!(k.ok&&k.installed);

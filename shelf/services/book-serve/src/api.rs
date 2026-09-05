@@ -1,7 +1,7 @@
 //! HTTP 适配层（唯一碰 http 类型的地方，只做取参 + 调领域方法 + 回执）。路由（经网关时前缀 `/api/books`）：
 //! `GET /status` · `GET /inbox` · `POST /inbox/retry {name}` · `POST /inbox/delete {name}`
 //! 母版库：`GET /staging` → `{items, freeBytes}` · `POST /staging`（multipart，原样入库）· `POST /staging/optimize {name, mode}`
-//! · `POST /staging/to-pdf {name, mono?}`（CBZ → PDF 新条目）· `POST /staging/deliver {name, folder?, keep?}` · `POST /staging/mark {name, target}` · `POST /staging/fetch-article {url}`
+//! · `POST /staging/deliver {name, folder?, keep?}` · `POST /staging/mark {name, target}` · `POST /staging/fetch-article {url}`
 //! · `POST /staging/delete {name}`。
 //! 2026-09-05 起规则统一"所有书只落母版库"：旧 `POST /?target=` 直投路已删（`/staging*` 是唯一入口）。
 use crate::service_state::State;
@@ -29,11 +29,6 @@ pub fn router(st: Arc<State>) -> Router {
         .post("/staging/optimize", bind(&st, |s, r| {
             let j = r.json()?;
             let msg = s.staging.optimize(j.str("name")?, OptimizeMode::parse(j.str_or("mode", "auto"))).map_err(ApiError::bad)?;
-            Ok(Reply::ok(&serde_json::json!({"ok": true, "message": msg})))
-        }))
-        .post("/staging/to-pdf", bind(&st, |s, r| {
-            let j = r.json()?;
-            let msg = s.staging.to_pdf(j.str("name")?, j.bool_or("mono", false)).map_err(ApiError::bad)?;
             Ok(Reply::ok(&serde_json::json!({"ok": true, "message": msg})))
         }))
         .post("/staging/deliver", bind(&st, |s, r| {

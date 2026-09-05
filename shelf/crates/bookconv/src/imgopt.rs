@@ -9,7 +9,7 @@
 
 use image::codecs::jpeg::JpegEncoder;
 use image::imageops::FilterType;
-use image::{GenericImageView, ImageFormat};
+use image::ImageFormat;
 use std::io::Cursor;
 
 /// Move 屏最长像素边 / 最短像素边。
@@ -122,7 +122,7 @@ pub fn is_downscalable(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use image::{DynamicImage, RgbImage};
+    use image::{DynamicImage, GenericImageView, RgbImage};
 
     fn jpeg_of(w: u32, h: u32) -> Vec<u8> {
         let img = DynamicImage::ImageRgb8(RgbImage::from_fn(w, h, |x, y| {

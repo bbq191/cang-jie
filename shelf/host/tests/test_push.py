@@ -1,4 +1,4 @@
-"""push 端到端（假网关）：落母版库 / 无直投逃生 / PDF 重排 / 漫画通道 / 分卷 / calibre 桥环境清洗。"""
+"""push 端到端（假网关）：落母版库 / 无直投逃生 / PDF 重排 / 漫画→CBZ / 分卷 / calibre 桥环境清洗。"""
 from __future__ import annotations
 
 import sys
@@ -133,19 +133,19 @@ def test_comic_probe_palmdb_and_epub(tmp_path):
     assert comic.is_comic(tmp_path / "c.epub") and not comic.is_comic(tmp_path / "t.epub")
 
 
-def test_push_comic_route_lands_cbz_and_pdf(gateway, tmp_path, capsys, monkeypatch):
+def test_push_comic_route_lands_cbz_only(gateway, tmp_path, capsys, monkeypatch):
+    """漫画不投原生：只出 CBZ 进母版库，不产 PDF。"""
     src = tmp_path / "manga.azw3"
     src.write_bytes(b"x")
     monkeypatch.setattr(cb, "has_calibre", lambda: True)
     monkeypatch.setattr(comic, "is_comic", lambda p: True)
-    seen = {}
     monkeypatch.setattr(cb, "comic2cbz", lambda s, o: (o.write_bytes(b"PK"), o)[1])
-    monkeypatch.setattr(cb, "cbz2pdf", lambda s, o, mono=False: (seen.__setitem__("mono", mono), o.write_bytes(b"%PDF"), o)[2])
     FakeGateway.received.clear()
-    rc, out = run(["push", "--mono", str(src)], gateway, capsys)
-    assert rc == 0 and "漫画 CBZ+PDF→母版库" in out and seen["mono"] is True
+    rc, out = run(["push", str(src)], gateway, capsys)
+    assert rc == 0 and "漫画 CBZ→母版库" in out
     names = [r[0] for r in FakeGateway.received]
-    assert names.count("/api/books/staging") == 2, "CBZ 与 PDF 各一次入库"
+    assert names.count("/api/books/staging") == 1, "只有 CBZ 一次入库"
+    assert b"manga.cbz" in FakeGateway.received[-1][2]
     # --no-comic 强制走洗书路；--no-optimize 原样
     monkeypatch.setattr(cb, "wash", lambda s, w, env=None: s)
     monkeypatch.setattr(push, "_gate", lambda o, a: None)
@@ -153,12 +153,12 @@ def test_push_comic_route_lands_cbz_and_pdf(gateway, tmp_path, capsys, monkeypat
     assert rc == 0 and "洗书→母版库" in out
     rc, out = run(["push", "--no-optimize", str(src)], gateway, capsys)
     assert rc == 0 and "原样→母版库" in out
-    # CBZ 不需要 Calibre 也走漫画路
+    # CBZ 本身就是终态：原样入库，不需要 Calibre
     monkeypatch.setattr(cb, "has_calibre", lambda: False)
     cbz = tmp_path / "v1.cbz"
     cbz.write_bytes(b"PK")
     rc, out = run(["push", str(cbz)], gateway, capsys)
-    assert rc == 0 and "漫画 CBZ+PDF→母版库" in out
+    assert rc == 0 and "原样→母版库" in out
 
 
 def test_split_fails_loudly_without_pymupdf(tmp_path, monkeypatch):

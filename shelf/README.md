@@ -13,7 +13,7 @@ reMarkable Paper Pro Move 的**读书与阅读质量层**：一个网页 / 一�
  网页上传                ~/.local/state/shelf/books/staging/            📖 投入原生书库（xochitl：EPUB / PDF）
  抓网文（Readability）    · 母版永久保留，可反复落库、两读器对照           📚 加入 KOReader（母版库收的任何格式）
  电脑 shelf push          · 「优化」只对 EPUB（清洗+优化，档位三选）      · 落库＝纯复制母版字节，不再优化
- scp 进 inbox/            · CBZ 可「转 PDF」再投原生                     · 落库记录徽章 / 清理已落库 / 剩余空间
+ scp 进 inbox/            · 漫画（CBZ）只加入 KOReader，不投原生          · 落库记录徽章 / 清理已落库 / 剩余空间
  微信读书（Phase D 待接）
 ```
 
@@ -26,7 +26,7 @@ host `shelf push` 是唯一能"入库时顺带优化"的源（Calibre 深洗 / �
 |---|---|---|
 | 原生直读 | EPUB / PDF | 两个读器都能去 |
 | 电脑可转 | AZW3 / MOBI / AZW / PRC / FB2 | `shelf push` 转 EPUB 进原生；直接上传只能加入 KOReader |
-| 仅 KOReader | TXT / CBZ / CBR / DjVu / HTML / RTF / DOC / DOCX / CHM / XPS | 只能加入 KOReader（CBZ 可在母版库转 PDF 投原生） |
+| 仅 KOReader | TXT / CBZ / CBR / DjVu / HTML / RTF / DOC / DOCX / CHM / XPS | 只能加入 KOReader（漫画 CBZ 也在此档：**漫画不投原生**） |
 
 **网页 tab**：「传书」（固定第一位：入库｜母版库）· xochitl（原生字体，font-serve）· KOReader（字体｜词典，koreader-serve）· 壁纸 · 「管理」（固定）。读器页不传书。
 
@@ -68,7 +68,7 @@ host `shelf push` 是唯一能"入库时顺带优化"的源（Calibre 深洗 / �
 shelf/
 ├── Cargo.toml · build.sh · .cargo/    内部 workspace（仓库根仍无 workspace）；musl 全静态交叉编译
 ├── crates/bookconv/                   ★ 通用内容层：多格式→EPUB/PDF、EPUB 优化器+清洗层+质量门、e-ink 图片处理、EPUB 组装、网文抽取
-│   └── src/bin/{epub_optimize,cbz2pdf}.rs   host/设备共用 CLI（wash_epub.sh 末步 / 漫画通道）
+│   └── src/bin/epub_optimize.rs         host/设备共用 CLI（wash_epub.sh 末步）
 ├── crates/shelf-core/                 共享底座：paths(XDG) · formats(格式白名单) · registry · multipart(流式) · asset(AssetStore+上传模板+receipt)
 │                                      · http(Router/bind/JsonBody/Guard) · config · fs(原子写/plain_name/unique) · xochitl 注入 · fswatch · tls/auth/mdns/netinfo/ttf
 ├── services/book-serve/               staging.rs(母版库领域：入库/优化/转PDF/落库) · spool.rs(inbox 队列) · api.rs(纯 HTTP 适配) · service_state.rs
@@ -119,7 +119,7 @@ cd shelf && sh build.sh                       # host 测试 + aarch64 musl 全�
 sh deploy.sh 10.11.99.1                       # 组载荷 → 设备 /home/root/shelf-pkg → install.sh（先备份旧二进制/单元）
 sh deploy.sh 10.11.99.1 --only font,wallpaper # 只装/更新部分服务；SHELF_NO_BUILD=1 跳过编译
 ssh root@10.11.99.1 sh /home/root/shelf-pkg/shelf/uninstall.sh [--only font] [--purge]
-cargo build --release -p bookconv --bin epub-optimize --bin cbz2pdf   # host 侧 push 要用的两个 CLI（shelf/target/release/）
+cargo build --release -p bookconv --bin epub-optimize   # host 侧 push 洗书要用的 CLI（shelf/target/release/）
 ```
 整包路径：`packaging/package.sh` 把 `shelf/` 作为第 5 层打进 `cangjie-full-*.tar.gz`，`install.sh` 直接调用 `shelf/install.sh`。
 ⚠ 设备上 `systemctl restart xochitl` 会丢 xovi（字体菜单/KOReader 入口一起没），重启 xochitl 一律 `/home/root/xovi/start`。
@@ -132,8 +132,8 @@ shelf/host/bin/shelf push 论文.pdf 书.epub [--to-pdf] [--no-optimize] [--keep
    **只落母版库**，去向在网页「传书 → 母版库」选。路线自动定（`push.plan`）：
    · 有 Calibre → 洗书：EPUB 深洗 / AZW3·MOBI·AZW·PRC·FB2 转 EPUB / **PDF 默认结构化重排**（born-digital→EPUB→洗书；扫描件 k2pdfopt/裁边→PDF，`--no-reflow` 原样）；
      产物必过 `check_output.py` 质量门（`--skip-check` 强推）。`--to-pdf` 定稿固定版式 PDF（手写批注用）。>60MB PDF 自动分卷（需 uv `calibre` 组的 pymupdf；切不了会报错不推，xochitl 收不下 188MB 整本）。
-   · **漫画**（AZW3/MOBI/EPUB 里几乎全是整页图，`comic.py` 自动判；CBZ 天然）→ 出 **CBZ**（KOReader）+ **固定版式 PDF**（原生，每页按屏降采样、默认原图、`--mono` 1-bit 抖动）；
-     `--comic / --no-comic` 覆盖判断。
+   · **漫画**（AZW3/MOBI/EPUB 里几乎全是整页图，`comic.py` 自动判）→ 转成 **CBZ** 进母版库，网页点「加入 KOReader」；**漫画不投原生**（用户定）。
+     `--comic / --no-comic` 覆盖判断；CBZ 输入原样入库。
    · `--no-optimize` 或无 Calibre → 原样传母版库（网页里可再点优化）。
 shelf font add 字体.ttf | ls | rm <家族名>                # 只装原生阅读器：~/.local/share/fonts + fc-cache + fonts.json + 中文回退链
 shelf wallpaper add 图.jpg [--activate] | ls | set <name> | mode sequential|random|fixed | rm <name>
@@ -159,4 +159,4 @@ shelf passwd [--new …]
 | 书籍优化 | 做精做细做强：LangMode 中英文排版、目录 h1–h6、脚注 Inline/Anchor、host PDF 重排、**首行缩进根因＝xochitl 只认外链 css（v10）** | ✅ 真机通（§03q） |
 | **中间层** | **母版库三层架构**：入库/优化/落库正交、传书总入口、读器页不传书、落库记录、网文抓取、财新 PDF 重排修空白 | ✅ 真机通（§03r） |
 | 质量二轮 | 母版库领域化、直投路删除、上传模板/格式白名单/取参单一事实源、格式三档展示 | ✅ 真机通（§03s） |
-| 漫画通道 | AZW3/EPUB/CBZ 漫画自动识别 → CBZ + 固定版式 PDF；母版库 CBZ「转 PDF」；镖人 282MB EPUB 撞 xochitl 上传上限根因 | ✅ 真机通（§03t） |
+| 漫画通道 | AZW3/EPUB 漫画自动识别 → CBZ 给 KOReader；**漫画不投原生**（曾做过 CBZ→PDF 分卷投原生，用户否决后删）；镖人 282MB EPUB 撞 xochitl 上传上限根因；分卷静默失效修 | ✅ 真机通（§03t） |

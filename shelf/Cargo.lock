@@ -202,7 +202,6 @@ name = "book-serve"
 version = "0.1.0"
 dependencies = [
  "bookconv",
- "image",
  "serde",
  "serde_json",
  "shelf-core",
