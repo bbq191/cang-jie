@@ -105,6 +105,15 @@ pub fn router(st: Arc<State>) -> Router {
         })
 }
 
+/// 母版库收的书籍格式（= xochitl 的 EPUB/PDF ∪ KOReader 能读的）。**与网页 `BOOK_EXT` 同一份列表**（改一处另一处同步）；
+/// 网页 accept+选中即拦是体验，这里是规则（CLI/scp inbox 也走它）。其它文件（图片/压缩包/未知）拒收并指引。
+pub const BOOK_EXTS: &[&str] = &[".epub", ".pdf", ".mobi", ".azw", ".azw3", ".prc", ".fb2", ".txt", ".cbz", ".cbr", ".djvu", ".html", ".htm", ".rtf", ".doc", ".docx", ".chm", ".xps"];
+
+pub fn is_book_name(name: &str) -> bool {
+    let l = name.to_ascii_lowercase();
+    BOOK_EXTS.iter().any(|e| l.ends_with(e))
+}
+
 /// multipart 逐文件原样落母版库（不优化、不投递）——中间层入库路。逐项回执带落地文件名。
 fn staging_upload(st: &State, r: &mut Request<'_>) -> ApiResult {
     let Some(boundary) = boundary_of(&r.content_type) else { return Err(ApiError::bad("需要 multipart/form-data")) };
@@ -118,8 +127,12 @@ fn staging_upload(st: &State, r: &mut Request<'_>) -> ApiResult {
         };
         let Some(fname) = part.filename.clone() else { continue };
         let name = safe_basename(&fname, "upload.bin");
-        // 母版库是总入口：任意格式原样入库（2026-09-05 用户定）。能投哪个读器按格式在落库时门控：
+        // 母版库是总入口：书籍格式原样入库（BOOK_EXTS）。能投哪个读器按格式在落库时门控：
         // EPUB/PDF 可投原生；其它格式只能加入 KOReader（想进原生用电脑 shelf push 转 EPUB）。
+        if !is_book_name(&name) {
+            items.push(serde_json::json!({"file": name, "ok": false, "message": format!("不是书籍格式，母版库只收 {}", BOOK_EXTS.join(" "))}));
+            continue;
+        }
         let _g = st.spool.guard();
         let staged = st.spool.stage(&name);
         match shelf_core::multipart::receive_part_to(&staged, &mut part) {

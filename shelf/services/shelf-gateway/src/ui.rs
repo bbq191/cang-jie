@@ -139,10 +139,13 @@ function uploader(box,urlOf,queryOf,okExt,onFinish){
 function subtabs(sec){const nav=$('.subnav',sec);if(!nav)return;const btns=[...nav.children],panels=[...sec.querySelectorAll('.subpanel')];
   btns.forEach((b,i)=>b.onclick=()=>{btns.forEach(x=>x.classList.remove('on'));panels.forEach(p=>p.classList.remove('on'));b.classList.add('on');if(panels[i])panels[i].classList.add('on')});}
 
+/* 母版库收的书籍格式：= book-serve api.rs 的 BOOK_EXTS（同一份，改一处另一处同步）。所有上传口都有格式限制（用户定）。 */
+const BOOK_EXT=['.epub','.pdf','.mobi','.azw','.azw3','.prc','.fb2','.txt','.cbz','.cbr','.djvu','.html','.htm','.rtf','.doc','.docx','.chm','.xps'];
+
 /* 决策辅助：不替用户分类（闲书/研读机器判不准），讲清母版库三步走 + 两读器各擅长；拿不准先投一个，母版还在 */
 const GUIDE=`<details class="cmp"><summary>母版库怎么用？两个读器怎么选？（点开）</summary>
 <dl class="help">
-<dt>三步走</dt><dd>① <b>入库</b>：上传（任意格式）/ 抓网文 / 微信读书 / 电脑 <code>shelf push</code>——书<b>原样</b>进母版库，不动字节。② <b>优化</b>（可选）：EPUB 点「优化」洗排版、脚注、中英文缩进（PDF 端上不动，重排走电脑）。③ <b>落库</b>：点「投入原生书库」或「加入 KOReader」。<b>母版留着</b>，随时再投另一个。读器页（xochitl / KOReader）只管各自的字体、词典，不传书。</dd>
+<dt>三步走</dt><dd>① <b>入库</b>：上传（书籍格式）/ 抓网文 / 微信读书 / 电脑 <code>shelf push</code>——书<b>原样</b>进母版库，不动字节。② <b>优化</b>（可选）：EPUB 点「优化」洗排版、脚注、中英文缩进（PDF 端上不动，重排走电脑）。③ <b>落库</b>：点「投入原生书库」或「加入 KOReader」。<b>母版留着</b>，随时再投另一个。读器页（xochitl / KOReader）只管各自的字体、词典，不传书。</dd>
 <dt>格式</dt><dd>EPUB / PDF 两个读器都能去；CBZ / TXT / AZW3 等<b>只能加入 KOReader</b>，想进原生用电脑 <code>shelf push</code> 转成 EPUB。</dd>
 <dt>📖 投入原生书库（xochitl）：要做笔记、批注的书</dt><dd>目录跳转、脚注、换字体、<b>直接手写批注</b>、AI 解读。学术 / 论文 / 要划线的书放这；PDF 手写定稿也放这。</dd>
 <dt>📚 加入 KOReader：消遣、查词的书</dt><dd>自由重排、<b>内置词典</b>、翻页手势。小说、漫画、外语书顺手。</dd>
@@ -191,10 +194,10 @@ function renderTransfer(sec){sec.innerHTML=`
       <p class="lead">所有书从这里进：上传、抓网文、微信读书、电脑 shelf push。原样入库、不动字节；洗不洗、放哪读，到「母版库」再定。</p>
       ${GUIDE}
       ${onUsb?'':'<p class="opt-note">传大书建议走 USB <code>https://10.11.99.1:8778</code>，不占 Wi-Fi。</p>'}
-      <h3>上传（任意格式）</h3>
-      <div class="drop"><span class="big">⬆</span>点击或拖入书（可多选）</div><input type="file" multiple hidden>
+      <h3>上传</h3>
+      <div class="drop"><span class="big">⬆</span>点击或拖入书（可多选 · ${BOOK_EXT.map(e=>e.slice(1).toUpperCase()).join(' / ')}）</div><input type="file" multiple hidden accept="${BOOK_EXT.join(',')}">
       <ul class="q"></ul><div class="row"><button class="btn pri go">进母版库</button></div>
-      <p class="small">EPUB / PDF 两个读器都能去；其它格式（CBZ / TXT / AZW3…）只能加入 KOReader，想进原生用电脑 <code>shelf push</code> 转成 EPUB。</p>
+      <p class="small">EPUB / PDF 两个读器都能去；其它格式只能加入 KOReader，想进原生用电脑 <code>shelf push</code> 转成 EPUB。不是书的文件（图片 / 压缩包）不收。</p>
       <h3>抓网文</h3>
       <div class="row"><input type="text" id="arturl" placeholder="https://… 文章链接（公众号 / 博客 / 新闻）" style="flex:1;min-width:12em"><button class="btn" id="artgo">抓取进母版库</button></div>
       <div class="small" id="artmsg" style="margin-top:.3em"></div>
@@ -236,7 +239,7 @@ function renderTransfer(sec){sec.innerHTML=`
   g('stgpurge').onclick=async()=>{const done=items.filter(it=>it.delivered&&(it.delivered.native||it.delivered.koreader));if(!done.length){alert('没有已落库的母版');return}
     if(!confirm(`删除 ${done.length} 本已投过读器的母版？（读器里的书不受影响，只是不能再重投）`))return;
     for(const it of done)await j('/api/books/staging/delete',{method:'POST',body:JSON.stringify({name:it.name})});refresh()};
-  uploader(sec,()=>'/api/books/staging',()=>({}),null,()=>refresh());   // 任意格式原样入库，不预拦
+  uploader(sec,()=>'/api/books/staging',()=>({}),BOOK_EXT,()=>refresh());   // 书籍格式原样入库；选中即按 BOOK_EXT 拦
   const am=g('artmsg'),au=g('arturl'),ag=g('artgo');
   ag.onclick=async()=>{const url=au.value.trim();if(!url){am.textContent='请填链接';return}ag.disabled=true;am.style.color='';am.textContent='抓取中…（联网抽取正文，十几秒）';
     const r=await j('/api/books/staging/fetch-article',{method:'POST',body:JSON.stringify({url})});ag.disabled=false;
@@ -275,7 +278,7 @@ const TABS={
       <dl class="help">
         <dt>安装</dt><dd>走官方仓库自装：先备齐基石 xovi + appload（见「管理」页），再从 <a href="https://github.com/koreader/koreader/releases" target="_blank" rel="noopener">官方 releases</a> 装 reMarkable Paper Pro（rmpp）版。</dd>
         <dt>已按 Move 屏调好（开箱即用，不用手动配）</dt><dd>本套件的 profile 贴近 xochitl 观感：中文主字体霞鹜新致宋、页边距、行距、脚注<b>底部弹窗</b>、悬挂标点、防误触、退出手势。</dd>
-        <dt>书从哪来</dt><dd>在「传书」页把书入母版库，点「加入 KOReader」即可（任意格式）。有什么书，去 KOReader 里看。</dd>
+        <dt>书从哪来</dt><dd>在「传书」页把书入母版库，点「加入 KOReader」即可（EPUB / PDF / MOBI / AZW3 / FB2 / TXT / CBZ / DjVu 等书籍格式）。有什么书，去 KOReader 里看。</dd>
         <dt>改配置 / 删字体后</dt><dd>KOReader 若正在跑，需<b>重启它</b>才生效（上方状态「运行中」会提示）。</dd>
       </dl></details></div>
     <div class="card"><h3 style="margin-top:0">字体（KOReader）</h3><p class="small">只装进 KOReader；原生阅读器的字体在 xochitl 页装。</p>

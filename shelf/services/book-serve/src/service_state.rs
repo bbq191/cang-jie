@@ -54,9 +54,16 @@ impl State {
             }
             let Some(name) = p.file_name().and_then(|s| s.to_str()).map(|s| s.to_string()) else { continue };
             if only.map(|o| o != name).unwrap_or(false) || name.starts_with('.') {
-                continue; // 半成品不动；任意格式都收（能投哪个读器在落库时按格式门控）
+                continue; // 半成品不动
             }
             let Some(work) = self.spool.claim(&name) else { continue };
+            if !crate::api::is_book_name(&name) {
+                // 与网页同一份书籍格式限制（BOOK_EXTS）：非书文件进 failed/ 带原因，不进母版库也不反复重试
+                let msg = format!("不是书籍格式，母版库只收 {}", crate::api::BOOK_EXTS.join(" "));
+                self.spool.archive_failed(&work, &msg);
+                out.push(Outcome { file: name.clone(), target: "staging".into(), ok: false, message: msg });
+                continue;
+            }
             let o = match std::fs::read(&work).map_err(|e| format!("读取失败: {e}")).and_then(|d| self.spool.stage_new(&name, &d)) {
                 Ok(landed) => {
                     let _ = std::fs::remove_file(&work);
