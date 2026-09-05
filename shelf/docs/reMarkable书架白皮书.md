@@ -17,7 +17,7 @@
 
 ## 00b｜现状总览（2026-09-05，读本文其余历史节前先看这里）
 
-**架构**：网关（`0.0.0.0:8778`，HTTPS 私有 CA + 登录页密码 / CLI Basic + mDNS `shelf.local`）+ 四个 loopback 领域服务（book 8790 / koreader 8791 / font 8792 / wallpaper 8793）+ 运行时注册表驱动 tab。设备固件 3.27.3.0，KOReader v2026.07.1。
+**架构**：网关（`0.0.0.0:8778`，HTTPS 私有 CA + 登录页密码 / CLI Basic + mDNS `shelf.local`）+ 四个 loopback 领域服务（book 8790 / koreader 8791 / font 8792 / wallpaper 8793）+ 运行时注册表驱动 tab。设备固件 **3.28.0.172**（2026-09-05 从 3.27.3.0 升级，实录 §03v；appload 0.5.3 在 3.28 不兼容已停用，KOReader 暂无侧栏入口），KOReader v2026.07.1。
 
 **读书线 = 三层 · 三动作正交**（§03r 定，§03s 收口）：内容源（网页上传 / 抓网文 / host `shelf push` / scp inbox；微读线已砍，§03u）→ **母版库** `~/.local/state/shelf/books/staging/`（原样入库，永久保留，不淘汰）→ 落库（人选：投 xochitl 只收 EPUB/PDF；加入 KOReader 收任意入库格式）。「优化」是母版库里对 EPUB 的独立动作（档位 auto / keep-spacing / plain，产物标记 full / core / old）；落库＝纯复制母版字节（投原生有体积门 `nativeUploadLimitMb`，缺省 150）。**漫画不投原生**：AZW3/EPUB 漫画由 host `shelf push` 转 CBZ 入库，只加入 KOReader。**所有书只落母版库，没有任何直投读器的路径**。落库记录 sidecar `.<书>.delivered`。
 
@@ -27,7 +27,7 @@
 
 **网页 tab**：传书（入库｜母版库，固定第一）· xochitl（原生字体，由 font-serve 注册）· KOReader（字体｜词典）· 壁纸 · 管理（固定）。
 
-**未闭环**：Phase E ②③④（英文书拉丁缩进观感 / 两器同字节对照 / KOReader 里内联脚注可否接受——KOReader 拿到的是母版库 Inline 产物，不再另跑 Anchor）；真重启后 `shelf.target` 自起 + `xovi/start`；3.28 固件 qmd。§05 有清单。
+**未闭环**：Phase E ②③④（英文书拉丁缩进观感 / 两器同字节对照 / KOReader 里内联脚注可否接受——KOReader 拿到的是母版库 Inline 产物，不再另跑 Anchor）；3.28 机上 `font-menu-dynamic.qmd`（3.28 锚点）已放进 qrr 目录但未 `xovi/start` 激活验证；appload 3.28 适配（KOReader 入口）。§05 有清单。
 
 ## 01｜架构决策
 
@@ -379,6 +379,20 @@ book→「母版库 / 原生投递」、weread→「微信读书（内容源，�
 
 **砍掉的**：管理页目录表 weread 行（`installable` 机制保留）、入库页「微信读书 · 即将接入」占位与三处「待接」文案、`services/weread-serve/` 槽位 README、`weread-web/`（内嵌浏览器 spike 脚本，从未执行）。**不动的**：`reading/` 的 wr-* 下书栈、`/home/root/weread` 与 `~/.config/weread-client` 冻结路径（块③阅读旧线，与书架无关）；`bookconv` 里为微读书形态做的脚注/远程图规则保留（第三方书同样受益）。书架内容源定为四条：网页上传 / 抓网文 / 电脑 `shelf push` / scp inbox。
 
+## 03v｜固件升级 3.27.3.0 → 3.28.0.172 实录（2026-09-05，真机）
+
+**为什么记**：这是书架落地后第一次跨固件 OTA，把"哪些会被冲、哪些活着、怎么不循环死机"钉成事实，下次升级照抄。
+
+**升级机制（真机核）**：OTA 走 Memfault（`memfaultd` swupdate 特性，`/tmp/remarkable-production-image-3.28.0.172-chiappa-public.swu`），写进**备用槽** root_a（`mmcblk0p2`），30 秒 SUCCESS，等重启切槽；当前槽 root_b 的 3.27 完整保留（`/proc/cmdline root=` 看在哪个槽）。3.28.0.172 的内部版本串是 `3.28.1.1666`（`strings /usr/bin/xochitl`），os-release `VERSION=5.8.203`。
+
+**冲掉 / 活着**：新槽 `/usr` 是全新 rootfs——书架 6 个 systemd 单元、壁纸 bind 单元 + sleep 钩子全没；`/home` 原样（母版库、KOReader、xovi、`~/.local/bin` 二进制、配置、证书都在）；`/etc` overlay 照旧 tmpfs。dm-verity **未激活**（`dmsetup ls --target verity` 空），`mount -o remount,rw /` 可写，install.sh 的 verity 门照常放行。
+
+**appload 要不要停**：appload.so **没有 `_xovi_shouldLoad` 自检**，不会"自己停"；但 xovi 的 LD_PRELOAD 只在 `/etc` tmpfs 里（`xovi/start` 现场写），重启即清，所以**首次进 3.28 是纯原厂 xochitl，任何扩展都不载入**——循环死机只可能发生在之后手动 `xovi/start` 时。且即便循环，StartLimitAction 整机重启后 `/etc` 又清空、自愈，**最坏是一次被迫重启，不会砖**。实际操作：重启前把 `appload.so` + 两份 qmd（KOReader 侧栏入口、字体菜单 3.27 锚点）挪到 `/home/root/xovi-disabled/pre-3.28-<时间>/`（extensions.d 外；md5 清单 + README 同放），`exthome/appload/koreader/` 数据不动。
+
+**进 3.28 后顺序（实测约 8 分钟）**：① `xovi/rebuild_hashtable`（设备旁输密码，hashtab 20231 条重建）→ ② `xovi/start` 只带 qt-resource-rebuilder（`[qmldiff]: Set system version to 3.28.0.172`，xochitl NRestarts=0）→ ③ host `SHELF_NO_BUILD=1 ./deploy.sh 10.11.99.1`：五服务 active、`uploadReachable=true`、壁纸 bind 1 处、HTTPS 401 正常；install.sh 按 IMG_VERSION 选了 3.28 锚点 `font-menu-dynamic.qmd` 放进 qrr 目录（**未激活**，下次 `xovi/start` 才生效，独立一步验证）。**appload 不挪回**：0.5.3 的 qmd 钩 3.28 已删的 `SidebarFilterItem`（上游 PR #59 只改 qmd、编进 .so，重编需 rM Qt6 SDK），KOReader 暂无侧栏入口。
+
+**顺带核实**：`/home/root/.bashrc` 没有登录触发的 xovi 恢复钩子（记忆里的 A2 登录恢复在这台重置机上**没装**）；`root` 的 shell 是 `/usr/sbin/rmdevlogin`（`exec -a -sh /bin/sh --login`）。vellum 的 `post-os-upgrade` 钩子只打印"先跑 rebuild_hashtable"，不自动做。装 KOReader 的字体/书目录 `exthome/appload/koreader/` 与 appload 是否加载无关，koreader-serve 照常工作。
+
 ## 04｜踩坑
 
 - **磁盘 metadata ≠ xochitl/UI 实际状态（2026-09-04 用户纠正）**：直接 `sed` 改 `.metadata` 的 `parent=trash` 并不等于"已进回收站"——xochitl 运行时在内存缓存、写回时覆盖，云同步也可能还原；出现过磁盘 8 个探针 `parent=trash` 但 UI 回收站只见真实书的错位。**涉及书库状态以设备 UI/xochitl 实际为准，不拿磁盘 metadata 当真相**；清测试文档走正常删除流程或停 xochitl 后操作，别边跑边改。
@@ -395,9 +409,10 @@ book→「母版库 / 原生投递」、weread→「微信读书（内容源，�
 
 **未闭环**：
 1. **Phase E ②③④**：英文书拉丁缩进（1.2em、标题后首段不缩进）观感；同一母版落 xochitl + KOReader 并排对照；KOReader 里内联脚注〔…〕能否接受（若不能，落库时对 KOReader 另跑 Anchor 是唯一备选，但会打破"两器同字节"）。
-3. 母版库里遗留的漫画 PDF（用户推的《镖人》297MB / 《火影》188MB 整本，漫画不投原生后无用）由用户在网页删；KOReader 里旧的 282MB《镖人.epub》同。
-4. 真重启后 `shelf.target` / 壁纸 bind 自起（重启会丢 xovi，需手动 `xovi/start`，用户暂不装 reenable）；拔线真 suspend 下钩子 bind + 唤醒轮换只触发一次。
-5. 3.28 固件机验证 `font-menu-dynamic.qmd`（3.28 锚点版含 elide 补丁未上机）。
+3. KOReader 里旧的 282MB《镖人.epub》由用户删（母版库里的漫画 PDF 用户已删，2026-09-05 15:04 后母版库为空）。
+4. 拔线真 suspend 下钩子 bind + 唤醒轮换只触发一次。（普通重启后 `shelf.target` / 壁纸 bind 自起已由 9-03 21:13 重启 + 2 天 uptime 坐实；OTA 后需重跑 deploy，§03v。）
+5. 3.28 机上激活验证 `font-menu-dynamic.qmd`：已放进 qrr 目录（§03v），下次 `xovi/start` 后看菜单 `SHELF-FONT` 日志与 elide。
+7. appload 3.28 适配：等上游发版或自 fork 重编（需 rM Qt6 SDK）；期间 KOReader 无侧栏入口。
 6. PDF 结构化重排小瑕疵：署名"文｜某某"混进目录；"句中断开 12%"含图注/列表未细分。
 
 **已闭环（真机）**：§03f 首轮五服务 · §03g/§03h 字体分开装/子目录/HTTPS · §03j 登录/CA/mDNS · §03k 字体两 bug · §03l 传书卡＝云同步 · §03m/§03n/§03o 网页改版/细节/管理台 · §03p 质量一轮 · §03q 优化做精 + 首行缩进 v10 · §03r 母版库 Phase A/B/C + 财新重排 · §03s 质量二轮 + 格式三档 · §03t 漫画通道（host 真书探针 → CBZ；漫画不投原生）+ 分卷静默失效修 + 投原生体积门。
