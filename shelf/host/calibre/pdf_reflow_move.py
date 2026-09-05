@@ -156,12 +156,17 @@ def _page_units(page: fitz.Page, imgdir: Path, page_no: int) -> list[dict]:
                     continue
             if b.get("type", 0) == 1:  # 图块：裁原区当整块保留（不切，含图/公式/表），尺寸封顶
                 bbox = fitz.Rect(b["bbox"])
-                if bbox.width < 8 or bbox.height < 8:
-                    continue
+                if bbox.width < 30 or bbox.height < 30:
+                    continue  # 图标/装饰级小图不进正文
                 scale = min(2.0, FIG_MAX_W / bbox.width, FIG_MAX_H / bbox.height)
                 pix = page.get_pixmap(clip=bbox, matrix=fitz.Matrix(scale, scale))
-                name = f"p{page_no}_{len(units)}.png"
-                pix.save(str(imgdir / name))
+                # 照片存 JPEG（PNG 一张 954 宽照片 ≈1.3MB，39 张就 21MB；JPEG q80 约 1/8）；编码不可用回退 PNG
+                name = f"p{page_no}_{len(units)}.jpg"
+                try:
+                    (imgdir / name).write_bytes(pix.tobytes("jpeg", jpg_quality=80))
+                except Exception:  # noqa: BLE001
+                    name = name[:-4] + ".png"
+                    pix.save(str(imgdir / name))
                 units.append({"k": "fig", "t": "", "size": 0.0, "x0": x0, "x1": x1, "y0": y0, "y1": y1, "col0": col0, "col1": col1, "lh": 0.0, "page": page_no, "html": f'<p class="fig"><img src="../images/{name}" alt=""/></p>'})
                 continue
             text, max_size, lh = _block_text(b)
@@ -276,9 +281,10 @@ def _build_epub(chapters: list[tuple[str, str]], imgdir: Path, title: str, out: 
         manifest.append(f'<item id="{cid}" href="{fname}" media-type="application/xhtml+xml"/>')
         spine.append(f'<itemref idref="{cid}"/>')
         navlis.append(f'<li><a href="{fname}">{html.escape(ctitle)}</a></li>')
-    for img in sorted(imgdir.glob("*.png")):
-        iid = img.stem
-        manifest.append(f'<item id="{iid}" href="images/{img.name}" media-type="image/png"/>')
+    imgs = sorted(p for p in imgdir.iterdir() if p.suffix in (".png", ".jpg"))
+    for img in imgs:
+        mt = "image/jpeg" if img.suffix == ".jpg" else "image/png"
+        manifest.append(f'<item id="{img.stem}" href="images/{img.name}" media-type="{mt}"/>')
     opf = (
         f'<?xml version="1.0" encoding="UTF-8"?>\n<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="bid">'
         f'<metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="bid">shelf-reflow-{html.escape(title)}</dc:identifier>'
@@ -299,8 +305,8 @@ def _build_epub(chapters: list[tuple[str, str]], imgdir: Path, title: str, out: 
         z.writestr("OEBPS/style.css", css, compress_type=zipfile.ZIP_DEFLATED)
         for fname, data in chaps.items():
             z.writestr(f"OEBPS/{fname}", data, compress_type=zipfile.ZIP_DEFLATED)
-        for img in sorted(imgdir.glob("*.png")):
-            z.writestr(f"OEBPS/images/{img.name}", img.read_bytes(), compress_type=zipfile.ZIP_DEFLATED)
+        for img in imgs:
+            z.writestr(f"OEBPS/images/{img.name}", img.read_bytes(), compress_type=zipfile.ZIP_STORED)  # 已压缩图不再 deflate
 
 
 def _reflow_scanned(src: Path, out_pdf: Path) -> bool:
