@@ -263,6 +263,12 @@ Explore 走查出的粗糙点 + 一个真 bug，分 5 批。批 1-4 已真机部
 
 **验收**：`cargo test` 全绿（新增 `fs`/`config` 单测、`KoStore` 经 flow 端到端单测、koreader font add/ls/rm 补覆盖缺口、ssh 派生测试）+ host `pytest` 22 过 + shellcheck 0 + aarch64 交叉编译干净。**真机（WiFi 10.42.0.224，固件 3.27.3.0）**：5 服务部署重启 0 NRestarts、全注册、网关 health 200、日志无 panic；`gateway.json` 落盘 **0600**（0o600 保留）、无 `.tmp` 残留、`fonts.json` 合法（6 家族）——R1/R5 坐实；SSH 隧道直连 koreader-serve loopback 打真上传 → 正确落盘 + 回执契约不变 + **无 `.part` 残留**——R2 坐实。
 
+**分卷静默失效（2026-09-05 用户报「上传失败 … Connection reset by peer」）**：用户按上面流程推了《镖人》与《火影忍者 卷1~7》，母版库里 PDF 是
+**297MB / 188MB 整本**——`pdfsplit.split` 缺 pymupdf 时 `except ImportError: return [path]` 静默不分卷（CLI 刻意用系统 python3，pymupdf 只在 uv `calibre`
+组），投原生时 xochitl 日志 `multipart body is too large`（14:32:44 / 14:33:15）并直接断连=用户看到的 reset。**修**：分卷逻辑挪到 `host/calibre/pdf_split.py`
+由 `py_with_pymupdf()` 解释器跑（与 check/裁边/重排同一机制），切不了**抛 `CalibreError` 不推**（回执写明原因）；测试钉死。真机数据修正：xochitl 上传上限
+**<188MB**（60MB 分卷稳）。补救：host 用修好的 splitter 切 5+4 卷经 API 入母版库，整本 PDF 留着（KOReader 已 adopt 过），由用户删。
+
 ## 03q｜书籍优化深层优化：做精做细做强（2026-09-04，用户"只做精做细做强"）
 
 > 📖 优化引擎的机制细节（清洗层/优化遍/脚注四形态/图片降采样/**xochitl 渲染硬规则**/v1–v10 版本演进）见 **`bookconv优化白皮书.md`**。本节只记这几轮的诉求、决策与真机反馈。

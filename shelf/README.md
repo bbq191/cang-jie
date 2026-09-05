@@ -131,7 +131,7 @@ shelf/host/bin/shelf services | status | doctor
 shelf/host/bin/shelf push 论文.pdf 书.epub [--to-pdf] [--no-optimize] [--keep-spacing] [--no-reflow] [--no-split] [--skip-check] [-n]
    **只落母版库**，去向在网页「传书 → 母版库」选。路线自动定（`push.plan`）：
    · 有 Calibre → 洗书：EPUB 深洗 / AZW3·MOBI·AZW·PRC·FB2 转 EPUB / **PDF 默认结构化重排**（born-digital→EPUB→洗书；扫描件 k2pdfopt/裁边→PDF，`--no-reflow` 原样）；
-     产物必过 `check_output.py` 质量门（`--skip-check` 强推）。`--to-pdf` 定稿固定版式 PDF（手写批注用）。>60MB PDF 自动分卷。
+     产物必过 `check_output.py` 质量门（`--skip-check` 强推）。`--to-pdf` 定稿固定版式 PDF（手写批注用）。>60MB PDF 自动分卷（需 uv `calibre` 组的 pymupdf；切不了会报错不推，xochitl 收不下 188MB 整本）。
    · **漫画**（AZW3/MOBI/EPUB 里几乎全是整页图，`comic.py` 自动判；CBZ 天然）→ 出 **CBZ**（KOReader）+ **固定版式 PDF**（原生，每页按屏降采样、默认原图、`--mono` 1-bit 抖动）；
      `--comic / --no-comic` 覆盖判断。
    · `--no-optimize` 或无 Calibre → 原样传母版库（网页里可再点优化）。

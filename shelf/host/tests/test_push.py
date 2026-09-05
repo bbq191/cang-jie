@@ -159,3 +159,23 @@ def test_push_comic_route_lands_cbz_and_pdf(gateway, tmp_path, capsys, monkeypat
     cbz.write_bytes(b"PK")
     rc, out = run(["push", str(cbz)], gateway, capsys)
     assert rc == 0 and "漫画 CBZ+PDF→母版库" in out
+
+
+def test_split_fails_loudly_without_pymupdf(tmp_path, monkeypatch):
+    """>上限的 PDF 切不了必须抛错（老实现静默返回原文件 → 297MB 整本推上去被 xochitl 拒）。"""
+    import subprocess
+
+    big = tmp_path / "big.pdf"
+    big.write_bytes(b"%PDF" + b"\0" * (2 * 2**20))
+    monkeypatch.setattr(cb, "_run", lambda cmd, **kw: subprocess.CompletedProcess(cmd, 1, "", "ModuleNotFoundError: pymupdf"))
+    import pytest
+
+    with pytest.raises(cb.CalibreError, match="分卷失败"):
+        pdfsplit.split(big, 1, tmp_path)
+    # 成功路径：按脚本 stdout 最后一行 JSON 取分卷
+    p1, p2 = tmp_path / "big (1of2).pdf", tmp_path / "big (2of2).pdf"
+    monkeypatch.setattr(cb, "_run", lambda cmd, **kw: subprocess.CompletedProcess(cmd, 0, f'log\n{{"parts": ["{p1}", "{p2}"]}}\n', ""))
+    assert pdfsplit.split(big, 1, tmp_path) == [p1, p2]
+    small = tmp_path / "s.pdf"
+    small.write_bytes(b"%PDF")
+    assert pdfsplit.split(small, 60, tmp_path) == [small], "不超上限原样返回、不调脚本"
