@@ -126,14 +126,19 @@ pub struct Report {
     pub bytes_after: usize,
 }
 
-/// 读 EPUB 判是否已被本优化器处理过。返回内埋的版本串(Some=已优化)。
-/// 非 zip / 损坏 / 无标记都当"未优化"(None)。只读 zip 中央目录 + 标记那一条，不解压正文，轻。
-pub fn optimized_version(epub: &[u8]) -> Option<String> {
-    let mut ar = ZipArchive::new(Cursor::new(epub)).ok()?;
+/// 从任意可 seek 的 zip 读端取标记（内存字节与磁盘文件共用；ZipArchive 只读中央目录 + 标记那一条，不解压正文）。
+fn marker_in<R: Read + std::io::Seek>(reader: R) -> Option<String> {
+    let mut ar = ZipArchive::new(reader).ok()?;
     let mut f = ar.by_name(OPTIMIZE_MARKER).ok()?;
     let mut s = String::new();
     f.read_to_string(&mut s).ok()?;
     Some(s.trim().to_string())
+}
+
+/// 读 EPUB 判是否已被本优化器处理过。返回内埋的版本串(Some=已优化)。
+/// 非 zip / 损坏 / 无标记都当"未优化"(None)。
+pub fn optimized_version(epub: &[u8]) -> Option<String> {
+    marker_in(Cursor::new(epub))
 }
 
 /// 是否已优化过(任意版本)。
@@ -154,21 +159,12 @@ pub fn is_current_version(epub: &[u8]) -> bool {
     optimized_version(epub).as_deref() == Some(OPTIMIZE_VERSION)
 }
 
-/// 同 optimized_version，但直接开文件——ZipArchive over File 只读中央目录，
-/// 不把整本 epub 读进内存，供 /library 逐本轻量标注是否优化过。
+/// 同 optimized_version，但直接开文件——不把整本 epub 读进内存，供书库列表逐本轻量标注。
 pub fn optimized_version_file(path: &str) -> Option<String> {
-    let f = std::fs::File::open(path).ok()?;
-    let mut ar = ZipArchive::new(f).ok()?;
-    let mut mf = ar.by_name(OPTIMIZE_MARKER).ok()?;
-    let mut s = String::new();
-    mf.read_to_string(&mut s).ok()?;
-    Some(s.trim().to_string())
+    marker_in(std::fs::File::open(path).ok()?)
 }
 
-fn is_html(name: &str) -> bool {
-    let l = name.to_lowercase();
-    l.ends_with(".xhtml") || l.ends_with(".html") || l.ends_with(".htm")
-}
+use crate::wash::is_html;
 
 /// 修封面拉伸变形：calibre 封面页 SVG 常用 preserveAspectRatio="none"（强制铺满、不保宽高比，
 /// 封面被拉伸放大变形），改成 "xMidYMid meet"（保持比例缩放到适配）。覆盖小写/标准两种写法。

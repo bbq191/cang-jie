@@ -14,8 +14,6 @@ DEFAULTS = {
     "password": "",
     "verify_tls": False,
     "ssh": "",
-    "default_target": "native",
-    "quality": "auto",
     "split_pdf_mb": 60,
 }
 
@@ -28,8 +26,6 @@ class Config:
     password: str
     verify_tls: bool
     ssh: str
-    default_target: str
-    quality: str
     split_pdf_mb: int
 
     @property

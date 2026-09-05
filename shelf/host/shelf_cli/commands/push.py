@@ -4,6 +4,10 @@
 - 默认：有 Calibre → 洗书（EPUB 深洗 / 杂格式转 EPUB / PDF 结构化重排）→ 落母版库（产物带优化标记）。
 - `--no-optimize`：不洗，原样传母版库（用户可在网页按需点优化）。
 - `--to-pdf`：定稿成固定版式 PDF（手写批注用），落母版库。
+- **漫画**（AZW3/MOBI/EPUB 里全是整页图，`comic.is_comic` 自动判，`--comic/--no-comic` 覆盖；CBZ 天然）：不走洗书路，
+  产**两份**——CBZ（原图，给 KOReader 漫画模式）+ 固定版式 PDF（每页按屏降采样，缺省原图、`--mono` 1-bit 抖动；
+  >60MB 自动分卷，给 xochitl）。漫画走 EPUB 重排引擎又慢又撞 `/upload` 体积上限（《镖人》282MB EPUB 被 xochitl
+  "multipart body is too large" 拒收，2026-09-05）。
 无 Calibre → 原样传母版库（设备端优化在网页母版库里点）。
 规则与网页一致：**所有书只落母版库**，没有绕过母版库直投读器的选项（2026-09-05 用户定）。
 """
@@ -12,13 +16,14 @@ from __future__ import annotations
 from pathlib import Path
 
 from .. import calibre_bridge as cb
-from .. import pdfsplit
-from ..receipts import guard_file, print_receipts
+from .. import comic, pdfsplit
+from ..receipts import guard_file, upload_each
 
 NAME = "push"
-HELP = "投书到母版库（host 有 Calibre 先洗书）；去向在网页选。难搞的书/PDF 重排用这条"
+HELP = "投书到母版库（host 有 Calibre 先洗书；漫画自动出 CBZ+PDF）；去向在网页选。难搞的书/PDF 重排用这条"
 
-# host 能洗的源格式（其余原样传母版库）。
+# host 能洗/转成 EPUB 的源格式（其余原样传母版库）。= Rust `shelf_core::formats::HOST_CONVERTIBLE_EXTS` ∪ {epub}，
+# 网页「格式」提示里"电脑可转"那一档就是它——改一处另一处同步（Python 不链接 Rust crate，只能镜像）。
 WASH_EXT = {".epub", ".azw3", ".mobi", ".azw", ".prc", ".fb2"}
 
 
@@ -28,6 +33,10 @@ def add_args(p):
     p.add_argument("--no-optimize", action="store_true", help="不洗，原样传母版库（网页里可再点优化）")
     p.add_argument("--keep-spacing", action="store_true", help="洗书时保留原书段间距（诗集 / 剧本；对应网页「清洗但保留段距」档位）")
     p.add_argument("--no-reflow", action="store_true", help="PDF 不重排（原样传）")
+    g = p.add_mutually_exclusive_group()
+    g.add_argument("--comic", action="store_true", help="强制按漫画处理（出 CBZ + PDF）")
+    g.add_argument("--no-comic", action="store_true", help="不判漫画，按文字书洗")
+    p.add_argument("--mono", action="store_true", help="漫画 PDF 黑白页转 1-bit 抖动（省刷新、体积 ~1/8；缺省原图）")
     p.add_argument("--no-split", action="store_true", help="大 PDF 不分卷")
     p.add_argument("--require-toc", action="store_true", help="洗书体检要求有目录")
     p.add_argument("--skip-check", action="store_true", help="跳过 check_output.py 体检（缺省不过不推）")
@@ -45,9 +54,25 @@ def _gate(out: Path, args) -> None:
         raise cb.CalibreError("体检未通过，未推送（--skip-check 强推）")
 
 
+def comic_prepare(path: Path, args, work: Path) -> list[Path]:
+    """漫画通道：→ CBZ（KOReader）+ PDF（xochitl，按屏降采样，缺省原图 / --mono 抖动）。两份都落母版库。"""
+    cbz = path if path.suffix.lower() == ".cbz" else cb.comic2cbz(path, work / (path.stem + ".cbz"))
+    pdf = cb.cbz2pdf(cbz, work / (path.stem + ".pdf"), mono=getattr(args, "mono", False))
+    print(f"  漫画 → CBZ（KOReader）+ PDF（原生，{'1-bit 抖动' if getattr(args, 'mono', False) else '原图'}）")
+    return [cbz, pdf]
+
+
+def is_comic(path: Path, args) -> bool:
+    if getattr(args, "no_comic", False):
+        return False
+    return getattr(args, "comic", False) or comic.is_comic(path)
+
+
 def host_prepare(path: Path, args, work: Path) -> list[Path]:
-    """host 洗书：默认 EPUB 深洗 / 杂格式转 EPUB / PDF 结构化重排；--to-pdf 定稿 PDF。产物待落母版库。"""
+    """host 洗书：默认 EPUB 深洗 / 杂格式转 EPUB / PDF 结构化重排；--to-pdf 定稿 PDF；漫画走 comic_prepare。产物待落母版库。"""
     suf = path.suffix.lower()
+    if is_comic(path, args):
+        return comic_prepare(path, args, work)
     wenv = {"WASH_KEEP_PARA_SPACING": "1"} if getattr(args, "keep_spacing", False) else None  # 与网页档位对齐
     if args.to_pdf:
         # 定稿固定版式 PDF（EPUB/杂格式先转 EPUB 再定稿；PDF 裁边）。
@@ -82,10 +107,20 @@ def host_prepare(path: Path, args, work: Path) -> list[Path]:
     return [path]
 
 
+ROUTE_LABEL = {"raw": "原样→", "comic": "漫画 CBZ+PDF→", "wash": "洗书→"}
+
+
+def plan(path: Path, args, calibre: bool) -> str:
+    """一本书走哪条路：raw（原样）/ comic（CBZ+PDF）/ wash（Calibre 洗书）。纯函数，便于测试。"""
+    if args.no_optimize:
+        return "raw"
+    if is_comic(path, args) and (path.suffix.lower() == ".cbz" or calibre):
+        return "comic"  # CBZ 不需要 Calibre（cbz2pdf 是本仓库 Rust CLI）；AZW3/EPUB 漫画解包要 Calibre
+    return "wash" if calibre else "raw"
+
+
 def run(args, ctx) -> int:
     calibre = cb.has_calibre()
-    do_wash = calibre and not args.no_optimize
-    dest = "母版库"
     rc = 0
     landed = 0
     work = cb.workdir()
@@ -93,11 +128,12 @@ def run(args, ctx) -> int:
         if not guard_file(path):
             rc = 1
             continue
-        print(f"→ {path.name}  {'洗书→' if do_wash else '原样→'}{dest}")
+        route = plan(path, args, calibre)
+        print(f"→ {path.name}  {ROUTE_LABEL[route]}母版库")
         if args.dry_run:
             continue
         try:
-            outs = host_prepare(path, args, work) if do_wash else [path]
+            outs = [path] if route == "raw" else comic_prepare(path, args, work) if route == "comic" else host_prepare(path, args, work)
         except cb.CalibreError as e:
             print(f"✗ {path.name}: {e}")
             rc = 1
@@ -111,16 +147,9 @@ def run(args, ctx) -> int:
                 final.extend(parts)
             else:
                 final.append(o)
-        for o in final:
-            # 只落母版库（原样落，host 已洗则带优化标记）；去向在网页「传书 → 母版库」选。
-            try:
-                res = ctx.transport.post_files("/api/books/staging", [o], {})
-            except Exception as e:  # noqa: BLE001
-                print(f"✗ {o.name}: {e}")
-                rc = 1
-                continue
-            rc |= print_receipts(res, name_key="file", default_name=o.name, fallback_self=True)
-            landed += 1
+        # 只落母版库（原样落，host 已洗则带优化标记）；去向在网页「传书 → 母版库」选。
+        rc |= upload_each(ctx.transport, "/api/books/staging", final)
+        landed += len(final)
     if landed and not args.dry_run:
         scheme = getattr(ctx.config, "scheme", "https")
         print(f"→ 已入母版库。去 {scheme}://{ctx.config.host}:{ctx.config.port}/ 「传书 → 母版库」点优化 / 选去向（xochitl / KOReader）")

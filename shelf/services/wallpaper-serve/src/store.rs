@@ -9,6 +9,8 @@ use image::imageops::FilterType;
 use image::{GenericImageView, ImageFormat, RgbaImage};
 use serde::{Deserialize, Serialize};
 use shelf_core::asset::{AssetItem, AssetStore};
+use shelf_core::formats::IMAGE_EXTS;
+use shelf_core::fs::plain_name;
 use shelf_core::paths::Paths;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -103,9 +105,14 @@ impl WallpaperStore {
         v
     }
 
+    /// 池里的图按名读字节（预览用）。
+    pub fn read(&self, name: &str) -> Result<Vec<u8>, String> {
+        std::fs::read(self.pool.join(plain_name(name)?)).map_err(|_| "池里没有这张图".to_string())
+    }
+
     /// 原地覆盖 current.png（truncate 写、保 inode，bind-mount 自动跟随）。
     pub fn activate(&self, name: &str) -> Result<(), String> {
-        let src = self.pool.join(safe(name)?);
+        let src = self.pool.join(plain_name(name)?);
         let data = std::fs::read(&src).map_err(|_| "池里没有这张图".to_string())?;
         let mut f = std::fs::OpenOptions::new().write(true).create(true).truncate(true).open(&self.current).map_err(|e| e.to_string())?;
         f.write_all(&data).map_err(|e| e.to_string())?;
@@ -142,13 +149,6 @@ impl WallpaperStore {
     }
 }
 
-fn safe(name: &str) -> Result<&str, String> {
-    if name.is_empty() || name.contains('/') || name.contains('\\') || name.starts_with('.') {
-        return Err("非法文件名".into());
-    }
-    Ok(name)
-}
-
 /// 任意尺寸 → 竖屏 954×1696 RGBA PNG 字节。cover=等比放大后居中裁；contain=等比缩进画布、黑边补齐。
 pub fn fit_to_screen(src: &[u8], fit: Fit) -> Result<Vec<u8>, String> {
     let img = image::load_from_memory(src).map_err(|e| format!("解码失败: {e}"))?;
@@ -183,7 +183,7 @@ impl AssetStore for WallpaperStore {
         "wallpaper"
     }
     fn allowed_ext(&self) -> &'static [&'static str] {
-        &["jpg", "jpeg", "png"]
+        IMAGE_EXTS
     }
     fn validate(&self, _name: &str, staged: &Path) -> Result<(), String> {
         let md = std::fs::metadata(staged).map_err(|e| e.to_string())?;
@@ -206,11 +206,14 @@ impl AssetStore for WallpaperStore {
         std::fs::write(&dest, &png).map_err(|e| e.to_string())?;
         Ok(AssetItem { name: out_name, bytes: png.len() as u64, extra: serde_json::json!({"width": W, "height": H}) })
     }
+    fn success_message(&self, _requested: &str, _item: &AssetItem) -> String {
+        format!("已入池（缩放到 {W}×{H}）")
+    }
     fn list(&self) -> Vec<AssetItem> {
         self.names().into_iter().map(|n| AssetItem { name: n.clone(), bytes: std::fs::metadata(self.pool.join(&n)).map(|m| m.len()).unwrap_or(0), extra: serde_json::json!({"current": self.state().current.as_deref() == Some(n.as_str())}) }).collect()
     }
     fn remove(&self, name: &str) -> Result<(), String> {
-        let n = safe(name)?;
+        let n = plain_name(name)?;
         if self.state().current.as_deref() == Some(n) {
             return Err("正在使用的壁纸不能删，先换一张".into());
         }

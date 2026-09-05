@@ -1,7 +1,10 @@
 """host 环境体检：系统 python3、uv/venv 劫持、Calibre、pymupdf、ssh；设备侧：网关可达。"""
 import os
 import shutil
+import subprocess
 import sys
+
+from .. import calibre_bridge as cb
 
 NAME = "doctor"
 HELP = "检查 host 依赖（Calibre/pymupdf/venv 劫持）与设备可达性"
@@ -27,11 +30,9 @@ def run(args, ctx) -> int:
         p = shutil.which(tool)
         print(f"{tool:<14}: {p or '缺（' + why + '）'}")
         if tool == "ebook-convert" and not p:
-            print("                → 无 Calibre 时 `shelf push` 自动走 --quality device（设备端 Rust 兜底）")
-    from .. import calibre_bridge as _cb
-    import subprocess
-    py = _cb._py_with_pymupdf()
-    ok = subprocess.run([*py, "-c", "import pymupdf"], env=_cb.clean_env(), capture_output=True).returncode == 0
+            print("                → 无 Calibre 时 `shelf push` 原样落母版库，优化在网页母版库里点")
+    py = cb.py_with_pymupdf()
+    ok = subprocess.run([*py, "-c", "import pymupdf"], env=cb.clean_env(), capture_output=True).returncode == 0
     print(f"pymupdf       : {'有' if ok else '缺'}（经 {' '.join(py[:2])}；体检/裁边/大 PDF 分卷{'可用' if ok else '不可用'}）")
     print(f"认证          : 密码{'已提供' if ctx.config.password else '未提供（config.toml password / $SHELF_PASSWORD / 交互输入）'}；TLS 校验 {'开' if ctx.config.verify_tls else '关（自签）'}")
     try:

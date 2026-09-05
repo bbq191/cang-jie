@@ -4,7 +4,7 @@ from __future__ import annotations
 import datetime as _dt
 from pathlib import Path
 
-from ..receipts import guard_file, print_receipts
+from ..receipts import print_receipts, upload_each
 
 NAME = "koreader"
 HELP = "KOReader：pull | diff | sync [--dry-run] [--fonts] [--dicts] | font add|ls|rm（只装 KOReader）"
@@ -102,13 +102,7 @@ def run(args, ctx) -> int:
             t.delete_named("/api/koreader/fonts", args.file)
             print(f"已从 KOReader 删除 {args.file}（KOReader 运行中需重启它）")
             return 0
-        rc = 0
-        for f in args.files:
-            if not guard_file(f):
-                rc = 1
-                continue
-            rc |= print_receipts(t.post_files("/api/koreader/fonts", [f]), name_key="file")
-        return rc
+        return upload_each(t, "/api/koreader/fonts", args.files)
     if args.op == "diff":
         return _apply(ctx, args.profile, dry=True)
     rc = _apply(ctx, args.profile, dry=args.dry_run)
@@ -121,7 +115,7 @@ def run(args, ctx) -> int:
                 print(f"✗ 字体缺：{p}")
                 rc = 1
                 continue
-            print_receipts(t.post_files("/api/koreader/fonts", [p]), name_key="file", prefix="字体 ")
+            print_receipts(t.post_files("/api/koreader/fonts", [p]), prefix="字体 ")
     if args.dicts:
         for row in _read_list(args.profile / "dicts.txt"):
             if len(row) < 2:

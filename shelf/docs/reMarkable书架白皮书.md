@@ -11,9 +11,23 @@
 
 四条硬原则（用户两轮驳回后定）：
 1. **XDG 基目录规范**（Rust `shelf_core::paths` / shell / Python 三处同一张表，env 可注入测试）。
-2. **设计模式去重解耦**：Strategy（投递目标）· Pipeline（处理链）· Repository + Template Method（资产上传 `AssetStore`/`AssetUploadFlow`，font/wallpaper/**koreader 三家共用**）· 服务启动模板（`service::ServiceSpec`+`run`）· 配置读写模板（`config::load_or_default/seed/save`）· 端口/适配器（HTTP 只在 `http.rs`）· Registry（服务发现）· Facade（网关代理）· Command（CLI）。共享原语：`fs::write_atomic`、`multipart::receive_part_to`、`asset::all_ok`（Rust）与 `receipts.print_receipts`/`transport.delete_named`（host）。移动优先于复制；**旧 crate 只许剥离+re-export，不直接引用**（§03p 一轮质量核查按此收编重复）。
+2. **设计模式去重解耦**：Repository + Template Method（资产上传 `AssetStore`/`AssetUploadFlow`，font/wallpaper/koreader/**母版库四家共用**，拒收/成功文案由仓库定）· 领域模块 + 纯适配层（book-serve `staging.rs` 领域 / `api.rs` 只取参回执）· 服务启动模板（`service::ServiceSpec`+`run`）· 配置读写模板（`config::load_or_default/seed/save`）· 端口/适配器（HTTP 只在 `http.rs`；`bind`/`Router::any`/`JsonBody` 取参门面）· Registry（服务发现）· Facade（网关代理，`manage::MODULES` 单一目录表）· Command（CLI）· 单一事实源（`formats` 格式白名单、`fs::plain_name`/`unique_path`）。共享原语：`fs::write_atomic`、`multipart::receive_part_to`、`asset::receipt/all_ok`（Rust）与 `receipts.upload_each/print_receipts`、`transport.delete_named`（host）。移动优先于复制；**旧 crate 只许剥离+re-export，不直接引用**。〔早期的 Strategy（投递目标）/ Pipeline（处理链）随直投路于 §03s 删除——规则统一后没有调用方，模式要适配需求而非反之。〕
 3. **专项专用可插拔**：不做单体，按领域拆服务。
 4. **不引用旧项目 crate、不对接旧路径**：能力只许剥离移植；不读写 `/home/root/weread/**`；旧 wr-serve 微读线原样兜底。
+
+## 00b｜现状总览（2026-09-05，读本文其余历史节前先看这里）
+
+**架构**：网关（`0.0.0.0:8778`，HTTPS 私有 CA + 登录页密码 / CLI Basic + mDNS `shelf.local`）+ 四个 loopback 领域服务（book 8790 / koreader 8791 / font 8792 / wallpaper 8793）+ 运行时注册表驱动 tab；`weread-serve` 8794 预留。设备固件 3.27.3.0，KOReader v2026.07.1。
+
+**读书线 = 三层 · 三动作正交**（§03r 定，§03s 收口）：内容源（网页上传 / 抓网文 / host `shelf push` / scp inbox / 微读〔Phase D 待接〕）→ **母版库** `~/.local/state/shelf/books/staging/`（原样入库，永久保留，不淘汰）→ 落库（人选：投 xochitl 只收 EPUB/PDF；加入 KOReader 收任意入库格式）。「优化」是母版库里对 EPUB 的独立动作（档位 auto / keep-spacing / plain，产物标记 full / core / old）；CBZ 有「转 PDF」；落库＝纯复制母版字节。**所有书只落母版库，没有任何直投读器的路径**。落库记录 sidecar `.<书>.delivered`。
+
+**代码落点**：book-serve `staging.rs`（领域）/ `spool.rs`（inbox 队列）/ `api.rs`（纯适配）；koreader-serve 只做"从母版库 adopt"+字体/词典/配置同步（不依赖 bookconv）；`shelf_core::formats` 是格式白名单单一事实源（三档：原生 epub/pdf · 电脑可转 azw3/mobi/azw/prc/fb2 · 仅 KOReader 其余 11 个），网页 `ui::page()` 注入；`shelf_core::asset` 是所有上传口的模板（母版库暂存在 spool `.work/` 同分区 rename）。host CLI：`push.plan()` 三路 raw / comic / wash；`comic.py` 漫画探针；bookconv 两个 CLI `epub-optimize`、`cbz2pdf`（与设备同一函数）。
+
+**已删（别再找）**：book-serve `POST /?target=native|annot` 直投路与 `target.rs`/`pipeline.rs`（Strategy/Pipeline）、`/targets`、`done/` LRU；koreader-serve 直传 `POST /books` 与 `optimizeEpub`；网页读器页的传书区与 KOReader 书库浏览；host `push -t/--direct/--quality`、config `default_target/quality`；`BookConfig.optimizeDirectEpub/comicMono`。
+
+**网页 tab**：传书（入库｜母版库，固定第一）· xochitl（原生字体，由 font-serve 注册）· KOReader（字体｜词典）· 壁纸 · 管理（固定）。
+
+**未闭环**：Phase E ②③④（英文书拉丁缩进观感 / 两器同字节对照 / KOReader 里内联脚注可否接受——KOReader 拿到的是母版库 Inline 产物，不再另跑 Anchor）；Phase D 微读内容源；真重启后 `shelf.target` 自起 + `xovi/start`；3.28 固件 qmd；mono 档改 CCITT G4 才真省体积；《镖人》真推（用户决定）。§05 有清单。
 
 ## 01｜架构决策
 
@@ -37,8 +51,8 @@
 
 ## 03b｜Phase 1 统一投递（2026-09-03，离线完成）
 
-**book-serve**（loopback 8790）：`POST /?target=native|annot&folder=&optimize=auto|off` multipart 多文件流式落 `.work` → 目标 Strategy（`Native`=Precheck→Convert→Optimize→Inject；`Annot`=Precheck→Convert(cbz)→Inject，只收 PDF/CBZ、EPUB 回执"去 host 定稿"）→ done/failed 归档；`GET /status|/targets|/inbox`、`POST /inbox/retry|/inbox/delete`。自有 spool `$XDG_STATE_HOME/shelf/books/`（inbox 供 scp 追平：启动扫一遍 + inotify 8s 防抖；`.work` 崩溃残留启动时移回）。配置 `~/.config/shelf/book.json` 首启写出缺省。
-**koreader-serve**（8791）：`POST /books?folder=` 原字节落 `books/[folder]/`（先 `.part` 再 rename，KOReader 扫目录不见半成品）；`GET /status`（installed/running(扫 /proc cmdline)/version(git-rev)/计数）、`GET /books`、`GET|POST /fonts`（字体镜像口，供 font-serve）、`GET /dicts`。
+**book-serve**（loopback 8790）：（⚠ 本段直投路 `POST /?target=` 与 `Native`/`Annot` Strategy 已于 2026-09-05 删除，见 §03s；现行唯一入口是母版库 `/staging*`，§03r）`POST /?target=native|annot&folder=&optimize=auto|off` multipart 多文件流式落 `.work` → 目标 Strategy（`Native`=Precheck→Convert→Optimize→Inject；`Annot`=Precheck→Convert(cbz)→Inject，只收 PDF/CBZ、EPUB 回执"去 host 定稿"）→ done/failed 归档；`GET /status|/targets|/inbox`、`POST /inbox/retry|/inbox/delete`。自有 spool `$XDG_STATE_HOME/shelf/books/`（inbox 供 scp 追平：启动扫一遍 + inotify 8s 防抖；`.work` 崩溃残留启动时移回）。配置 `~/.config/shelf/book.json` 首启写出缺省。
+**koreader-serve**（8791）：（⚠ 直传 `POST /books` 已于 §03s 删除，现只从母版库 `POST /books/adopt`）`POST /books?folder=` 原字节落 `books/[folder]/`（先 `.part` 再 rename，KOReader 扫目录不见半成品）；`GET /status`（installed/running(扫 /proc cmdline)/version(git-rev)/计数）、`GET /books`、`GET|POST /fonts`（字体镜像口，供 font-serve）、`GET /dicts`。
 **网关 UI**：tab 按注册表；传书 tab 目标下拉三档→按档打 `/api/books` 或 `/api/koreader/books`；逐文件一请求 + 进度条 + 逐项回执；失败项重试/删除；字体/壁纸 tab 复用同一上传器（AssetUploadFlow 回执同形）。
 **host CLI `shelf push`**：`decide_route(quality,target,ext,has_calibre)` 纯函数（单测矩阵）；Calibre 桥统一清 `VIRTUAL_ENV`/`.venv/bin`；`pdfsplit` >60MB 分卷（pymupdf 可选）。Calibre 八件套自 `reading/tools/calibre/` **整体 git mv** 到 `shelf/host/calibre/`；`epub-optimize` CLI 随之迁 `bookconv` bin（书架不引用旧项目）。
 **本机冒烟（三服务，干净 env）**：注册/代理 ✓；KOReader 中文名+子目录落盘字节正确 ✓；native 在 xochitl 不可达时 `inject:` 失败入 failed、可重试/删除 ✓；annot 拒 EPUB ✓；未知目标 400 ✓；inbox 追平认领进 .work ✓。修正：xochitl 客户端加 10s 连接超时（整体 300s 只防大书误判）。
@@ -117,7 +131,7 @@
 | `wash.rs` 双 id | 每章先 `collapse_dup_id_attrs`（先修再拦） | — |
 | `check.rs` 门 | 真 DRM（非字体项）/ 目录 href 命中率 <80% / 单标签双 id → **硬失败**；无目录（`require_toc` 升失败）、锚点丢失 → 告警。PDF 门不移植（pymupdf，定稿只在 host） | `check_output.py` EPUB 项逐条 |
 
-接线：book-serve Pipeline = `Precheck → Convert → Optimize(wash) → Check → Inject`；API `optimize=auto|keep-spacing|plain|off`（auto=清洗+优化）、`check=on|off`（硬拦回执"质量门未过：…（可加 check=off 强行投递）"）；网页「EPUB 处理」下拉四档 + 「质量门」勾；CLI `shelf push --optimize … --skip-check`（设备路也生效）；`epub-optimize [--no-wash] [--keep-spacing] [--auto-toc] [--check] [--require-toc]`（`--check` 不过退出码 3）。`wash_epub.sh` 末步不改（Calibre 洗完再过一遍 Rust 清洗，规则幂等、注入块带 `class="cj-wash"` 标记）。单测：wash 7 项 + check 2 项 + pipeline 端到端（双 id 书不清洗被门拦、清洗后过门且自动目录 1 条）。
+接线（⚠ 本段的 Pipeline / `optimize=off` / `check=` 直投接线已随 §03s 删除；现行是母版库 `POST /staging/optimize {mode}`，设备端不跑质量门、门只在 host `push`）：book-serve Pipeline = `Precheck → Convert → Optimize(wash) → Check → Inject`；API `optimize=auto|keep-spacing|plain|off`（auto=清洗+优化）、`check=on|off`（硬拦回执"质量门未过：…（可加 check=off 强行投递）"）；网页「EPUB 处理」下拉四档 + 「质量门」勾；CLI `shelf push --optimize … --skip-check`（设备路也生效）；`epub-optimize [--no-wash] [--keep-spacing] [--auto-toc] [--check] [--require-toc]`（`--check` 不过退出码 3）。`wash_epub.sh` 末步不改（Calibre 洗完再过一遍 Rust 清洗，规则幂等、注入块带 `class="cj-wash"` 标记）。单测：wash 7 项 + check 2 项 + pipeline 端到端（双 id 书不清洗被门拦、清洗后过门且自动目录 1 条）。
 
 **真机（2026-09-03 深夜，WiFi）**：造一本双 id + 无目录的坏书——`optimize=off` 被门拦（"质量门未过：1 个标签带双 id 属性…可加 check=off 强行投递"）、`check=off` 强投成功、`optimize=plain` 优化器自身已折叠双 id 故过门、`optimize=auto` 回执"已清洗+优化（自动目录 2 条）；质量门通过（目录 4 条）"。真书《飘·上册》（多看伪 DRM `dkagent.css`，10.6MB）：设备端 `optimize=auto` **90s** 回执"已清洗+优化（35 章，10631321→3183269 字节，剥伪 DRM 1 项）；质量门通过（目录 34 条）；已导入"，书库出现《飘·上册》（host debug 版 `epub-optimize --check` 同书 33s、同结果）。测试书全部标 `parent=trash`（xochitl 重启后消失；《飘·上册》可从回收站恢复用于三路对照）。
 
@@ -249,18 +263,6 @@ Explore 走查出的粗糙点 + 一个真 bug，分 5 批。批 1-4 已真机部
 
 **验收**：`cargo test` 全绿（新增 `fs`/`config` 单测、`KoStore` 经 flow 端到端单测、koreader font add/ls/rm 补覆盖缺口、ssh 派生测试）+ host `pytest` 22 过 + shellcheck 0 + aarch64 交叉编译干净。**真机（WiFi 10.42.0.224，固件 3.27.3.0）**：5 服务部署重启 0 NRestarts、全注册、网关 health 200、日志无 panic；`gateway.json` 落盘 **0600**（0o600 保留）、无 `.tmp` 残留、`fonts.json` 合法（6 家族）——R1/R5 坐实；SSH 隧道直连 koreader-serve loopback 打真上传 → 正确落盘 + 回执契约不变 + **无 `.part` 残留**——R2 坐实。
 
-## 03r｜读书线重构：中间层（母版库）三层架构（2026-09-05，用户"逻辑很乱"提出改造）
-
-**问题**：读书线让用户一次背 3 维决策（读器×投递口×文件夹），"优化"与"落库"耦合；根因是把机器判不了的"用途分类"（侦探小说/漫画是闲书还是研读）塞进流程。**方案**（计划全文见 plan 文件）：**三动作正交解耦**——入库 / 优化 / 落库；中间夹**母版库**（中间层暂存池）作交汇点。统一规则：**所有源一律原样直传母版库，"优化"是母版库独立动作，"落库"也独立**。四决策：母版库=可反复落库（一本落两读器对照）/ 指引=决策辅助（不替用户分类，讲清读器差异）/ 微读=内容源（非独立 app）/ 设备端优化=保留（够用默认，host 是高质量路）。
-
-**Phase A 母版库基础设施（✅ 真机通 2026-09-05，USB 部署 192.168.1.21）**：`shelf-core::paths::staging_dir()`（`state_dir()/books/staging`，/home 分区不丢、不套 spool 的 LRU 淘汰）；book-serve spool 加 `stage_new/list_staging(StagingEntry 带 format+optimized，复用 optimized_version_file)/optimize/deliver/remove`；5 路由（GET/POST /staging、/staging/{optimize,deliver,delete}）；koreader-serve `POST /books/adopt` 从共享 staging 读→`KoStore::install` 纯复制。**关键设计：落库=纯复制原字节不优化**（优化只在母版库动作里），保证一本母版落两读器是**同字节可对照**（兑现"两器一致"）。真机端到端：上传→母版库(optimized:false)→优化(1400→1778,标记 false→true)→投 xochitl(visibleName 坐实)→adopt KOReader(1778 同字节)→**母版保留、两库并存**。
-
-**Phase B 内容源汇入母版库（✅ 真机通 2026-09-05）**：① **网文获取下沉**——`readlater` 的抓取+Readability 抽取+scraper 白名单核心从 `reading/device-rs` 下沉进 `bookconv::article`（纯函数，device-rs re-export 保 `save_article` 上传半，移除 readability-rust/scraper/ego-tree 依赖）；book-serve `POST /api/books/staging/fetch-article {url}` → 组 EPUB 落母版库。真机：scraper/html5ever **aarch64-musl 交叉编译通过**；设备联网抓 runoob/阮一峰两篇成功落母版库（404 时正确返回错误=通路工作）。② **host push 改造**——`push.py` 统一"洗书→落母版库(`/api/books/staging`)"，**去掉 -t 目标/输出路径**（根治用户连踩的用法坑），`--to-pdf` 定稿 / `--no-optimize` 原样（`--direct` 直投逃生随后按用户"规则一致"去掉，见 Phase C）；去 decide_route/quality/koreader直投。host pytest 全绿(24)。⚠**技术债**：网文/转换类产物走 `assemble_optimized` 会打优化标记→母版库显示 `optimized:true`，但其实没跑 wash 层（外链 css 缩进/脚注），母版库语义下会让用户以为已优化而跳过；待澄清（网文也过 wash，或标记语义分层）。**Phase C UI 三层重构（✅ 功能真机通 2026-09-05：上传→洗书→落原生→落 KOReader 全链用户走通；结构按用户反馈二次定稿）**：首版把母版库列表复用进 xochitl/KOReader 三个 tab、读器页仍留传书区，用户指出"页面逻辑混乱、书从哪进有三个答案"。**定稿（用户拍板）**：① **「传书」固定 tab 放第一位＝唯一总入口**，二级 tab **入库**（上传任意格式 / 抓网文 / 微信读书〔占位，Phase D〕/ 电脑 shelf push）｜**母版库**（落库设置行：投原生文件夹 / KOReader 目录 / 优化档位 / 投完清除；搜索＋格式/状态筛选；最新入库在前；**按格式门控按钮**：EPUB→优化/投原生/加入 KO，PDF→投原生/加入 KO，其它→只能加入 KO；「加入 KOReader」按是否已装门控）。② **读器页彻底不传书**：xochitl 只剩原生字体（去阅读增强状态、失败队列），KOReader 只剩字体＋词典（去书库浏览——"有什么去 KOReader 里看"）。**网页直传取消，电脑 `shelf push --direct` 也去掉**（用户："规则一致，所有书只允许落母版库"）——没有任何绕过母版库直投读器的路径，去向只在网页选。③ **母版库改收任意格式**（推翻 Phase A"只收 EPUB/PDF"——那是 xochitl 的约束，不该限制 KOReader）；投原生时对非 EPUB/PDF 明确拒绝并指引。④ 指引＝决策辅助（三步走 + 两读器各擅长 + "拿不准先投一个母版还在"，不问闲书/研读）；微读独立 tab 删除，归入库内容源。设计：`stagingList` 单一渲染函数按格式/安装状态门控，不再三处复用。**观感（措辞/手机排版）待用户浏览器核**。
-
-**规则漏洞两处（2026-09-05，用户问"逻辑是否清晰"时自查出，先于新功能修）**：① **inbox 追平绕过母版库**——`process_inbox` 老逻辑 scp 进 `inbox/` 就自动优化直投 native，违反"所有书只落母版库"；改为原样 `stage_new` 落母版库（任意格式），老 `POST /?target=` 直投接口标废。② **"已优化"徽章说谎**——网文 / 格式转换产物走 `assemble_optimized`（默认 `optimize_epub`，无 wash）却写同一标记，母版库显示已优化并隐藏「优化」按钮，其实没洗缩进/脚注。改 `marker_value(full)`：含 wash 写版本号本身，无 wash 写 `<版本>-core`；`is_current_version` 只认 full；`StagingEntry.level` = full / core / old / none，UI 徽章「已优化 / 已优化·未清洗 / 旧版优化 / 未优化」，非 full 仍给「优化」按钮。weread 线只看 `is_optimized`（有无标记），不受影响。**真机通（2026-09-05）**：scp 进 inbox/ → 8s 防抖后日志「已入母版库」、xochitl 无该书；抓网文 → 母版库 `level:core`、点优化 → `full`。⚠ 验证时踩了自己的坑：watcher 是 8 秒防抖，5 秒就去查以为没触发。
-
-**第二步"能用→好用"小迭代（✅ 真机通 2026-09-05）**：① **落库记录** sidecar `.<书>.delivered {native,koreader}`——deliver 自动记 native，KOReader adopt 由前端调 `POST /staging/mark` 记（各服务只写自己目录）；UI 徽章「已投原生 / 已加入KO」，落库时间早于母版 mtime（之后又优化过）标「·旧」提示可重投；删书连带删 sidecar。② **「清理已落库」**批量删已投过的母版。③ KOReader 目录改 **datalist 下拉**（候选=现有目录）。④ `GET /staging` 带 **freeBytes**（`df -k` 解析——busybox 设备名过长会把数字换行，需拍平表头后所有行再取第 4 token，真机 `/dev/mapper/home-encrypted-disk` 坐实），<300MB 红字告警。⑤ 同名重复入库回执「已有同名，存为 1_x」。⑥ CLI `push` 成功后打印网页去向提示；加 `--keep-spacing`（透传 `WASH_KEEP_PARA_SPACING=1`，与网页档位对齐）。**Phase E ① PDF 结构化重排——真机《财新周刊》"整页大片空白"根因与修（2026-09-05）**：解剖产物（不猜）定位三根因：**每页一章**（91 页→91 xhtml，读器每章末强制翻页，一页 PDF 重排后占 1.3 屏就留 70% 空白）；**段落碎成行**（PyMuPDF 对杂志每行一个块，"块=段"不成立，每行独立缩进）；**图近整屏高**推到下页留白。修：整本平铺成单元→文档级段落合并（同列小间距续接；新段信号＝相对上一行起点缩进≥1 字 / 短行＋句末标点；换列换页按"上段未完"续接）→按标题分章（字号≥1.35×正文且在列首/页顶，排除正文中大字引语；无标题每 12 页一章；<200 字迷你章并入下章）→图封顶宽≤954/高≤60% 屏。**两个二次坑**（dump 单页逐行数据才看出）：分栏按"块中点在中线左/右"会把单栏页的宽块甩到"右栏"排最后、阅读序全乱→改为只在存在贯穿页面竖向空白带时分栏；行尾零宽空格 `​` 挡住句末标点判断→全局剥零宽字符。量化：章 91→10、段落 1209→770、句中断开 48%→12%、中位段长 47→109 字。**第三坑**：修分栏后发现旧中点分栏在双栏页只收文字块、**图块被静默丢掉**（8 张→39 张才是全量），而 954 宽照片存 PNG 一张 1.3MB → 21MB；改图块存 JPEG q80（回退 PNG）→ 3.6MB。**✅ 真机通（用户核 v3："空白没了，段落正常"）**。已知小瑕疵待后续：目录混入 3 个"文｜某某"署名当标题；"句中断开 12%"里含图注/列表项，真实断段更低未细分。Phase D–E 其余（微读内容源 / 英文排版·两器对照·KOReader 脚注观感）待用户核。
-
 ## 03q｜书籍优化深层优化：做精做细做强（2026-09-04，用户"只做精做细做强"）
 
 > 📖 优化引擎的机制细节（清洗层/优化遍/脚注四形态/图片降采样/**xochitl 渲染硬规则**/v1–v10 版本演进）见 **`bookconv优化白皮书.md`**。本节只记这几轮的诉求、决策与真机反馈。
@@ -269,10 +271,10 @@ Explore 走查出的粗糙点 + 一个真 bug，分 5 批。批 1-4 已真机部
 
 **两条真机判死（决定可行边界，穷尽实测）**：① **xochitl 弹窗脚注判死**——闭源渲染器不实现弹窗、正文点击不通知可注入 QML 层（`reading/docs…:126`）；竞品「镇纸」弹窗=另开 WebView 载微读网页版。∴ xochitl 脚注只能内联常显或跳转+浮标。② **端上 PDF 重排不现实**——PDF 栅格化无 musl-friendly 纯 Rust 方案。→ 三决策（AskUserQuestion）：脚注 **xochitl 内联常显 + KOReader 弹窗**；PDF **born-digital 结构化重排→EPUB + 扫描件 k2pdfopt 兜底**（不移植 k2pdfopt 位图引擎：28+43 C 文件、高投入低回报，born-digital 结构化更简单更好且复用 EPUB 管线）；其它格式**拒收引导走 host Calibre**。
 
-- **A 格式收敛**：`target.rs` native/annot 只收 EPUB/PDF，其它拒收+引导语；UI 标签/对比表同步。`convert/*` 保留不删（兜底）。
+- **A 格式收敛**：`target.rs` native/annot 只收 EPUB/PDF，其它拒收+引导语；UI 标签/对比表同步。`convert/*` 保留不删（兜底）。〔§03s 后：`target.rs` 已删，"投原生只收 EPUB/PDF"改由 `Staging::deliver` 门控；母版库本身收任意书籍格式（§03r ③）。〕
 - **B EPUB 做精做强**（`bookconv`，host/端/koreader 自动共享）：① **中英文各按习惯**（`wash::LangMode` 按全书 CJK/拉丁字符占比自动探测：中文 `text-indent:2em`、拉丁 `1.2em`+`h*+p` 首段不缩进）；② **不缺目录**——auto-TOC 从 h1/h2 **扩到 h1–h6** 并 dense-rank 多级嵌套（只用 h3 当章标题的书不再漏）；③ 不锁字体沿用 wash（去 font/color/text-align + CSS 文件级）。`OPTIMIZE_VERSION`→**7**。
 - **C 脚注目标感知**：`OptimizeOpts.footnote: FootnoteMode{Inline,Anchor}`；native/host-CLI 默认 **Inline**——注释文字就地内联 `<span class="cj-fnote">〔…〕</span>` 始终可见=「自动呈现」（**去标签成纯文本**防块级标签塞进 `<p>` 致 xochitl 严格 XML 整章白屏）；`Anchor`=章末+锚点跳转（weread/pkm 兜底）。`collect_footnote_notes` 加**扁平 `<div>` 注释**支持（嵌套 div 跳过，零丢失）。⚠ 引擎收敛 + 「两标签间/包裹回退」抽取（②③）暂缓——不动多次真机迭代过的脆弱脚注逻辑。
-- **D KOReader 一致性**：`koreader-serve` 收 EPUB 走**同一 `bookconv` 优化**（去锁/排版/图片/目录统一），脚注用 **Anchor** 让 `link_prefer_footnote` 触发底部弹窗；`koreader.json` `optimizeEpub` 开关（默认开，可关回原样）；非 epub/非法 zip 回退原样不阻断。profile（`settings.reader.patch.lua`）已真机调优（弹窗/悬挂标点/波形），**不猜字体键**（设备快照无 cre_font 顶层键）。
+- **D KOReader 一致性**：`koreader-serve` 收 EPUB 走**同一 `bookconv` 优化**（去锁/排版/图片/目录统一），脚注用 **Anchor** 让 `link_prefer_footnote` 触发底部弹窗；`koreader.json` `optimizeEpub` 开关（默认开，可关回原样）；非 epub/非法 zip 回退原样不阻断。〔§03r/§03s 后**已撤**：落库＝纯复制母版字节，KOReader 拿到的是母版库里的 Inline 产物（两器同字节可对照）；"KOReader 是否该单独 Anchor"列 Phase E④ 待用户看观感再定。〕profile（`settings.reader.patch.lua`）已真机调优（弹窗/悬挂标点/波形），**不猜字体键**（设备快照无 cre_font 顶层键）。
 - **E PDF 重排（host）**：`pdf_reflow_move.py`——PyMuPDF 逐页文字覆盖率分流；**born-digital 结构化**：`get_text("dict")` 抽 blocks/图 bbox→x 聚列→列内 y 阅读序→文字重排、图/公式 `get_pixmap(clip=bbox)` 裁原区当整块不切→组 EPUB→再走 `wash`+`epub-optimize` 统一管线（xochitl 内联脚注/KOReader 弹窗全复用）；标题按**字符加权字号**判（比中位鲁棒）。**扫描件**回退 k2pdfopt(`-mode fw`)缺则 `pdf_crop_move.py` 裁边→PDF。`calibre_bridge.reflow_pdf/has_k2pdfopt`；`push` native+pdf 默认重排（`--no-reflow` 逃生）；pdf-split 仅对 PDF 产物。**设备端 PDF 仍直传不重排**（端上无栅格化器）。born-digital→EPUB(h2/p/nav) 离线跑通。
 - **F 真机验证**（Phase F，未坐实项据实放开）：`!important`/line-height 支持、内联脚注长注观感、KOReader 优化后弹窗触发、结构化重排学术观感、公式图（intrinsic 放大 EPUB 侧暂未做，属 PDF 结构化重排范畴）。诊断法沿用 scp `<uuid>.pdf` + pymupdf 量列宽/图/outline。
 
@@ -298,23 +300,83 @@ Explore 走查出的粗糙点 + 一个真 bug，分 5 批。批 1-4 已真机部
 - 中途错误探索（记录以免重走）：先误判「xochitl 无视 text-indent」→ 试段首 `&nbsp;`（v9）——但 nbsp 宽度随字体变、且**连续 nbsp 被折叠**成一段，做不到精确 2 字；全角空格 U+3000 / em 空格 U+2003 被 xochitl **吞掉**（前置空白折叠）；inline-block 占位被无视。**全是死路**，已撤回。
 - **根治（v10）**：优化器把排版规则写成**外链 `cangjie-wash.css`**（`p{text-indent:2em;margin-top:0;…}` 裸选择器、无 `!important`）+ 每章 `<head>` 注 `<link>`（相对路径 `relative_to` 算）+ OPF manifest 补 `<item>`。中文 2em / 拉丁 1.2em。**em 单位 = 字体无关、精确 2 字**。`wash_entries::add_wash_css_entry` 幂等（重洗不重复加）。真机《缩进v10无important验证》3 段精确 2 字缩进坐实。**方法论**：一个真机活样本（《飘》）＞ 七版凭空诊断——早点解剖有效样本能少走很多弯路。
 
+## 03r｜读书线重构：中间层（母版库）三层架构（2026-09-05，用户"逻辑很乱"提出改造）
+
+**问题**：读书线让用户一次背 3 维决策（读器×投递口×文件夹），"优化"与"落库"耦合；根因是把机器判不了的"用途分类"（侦探小说/漫画是闲书还是研读）塞进流程。**方案**（计划全文见 plan 文件）：**三动作正交解耦**——入库 / 优化 / 落库；中间夹**母版库**（中间层暂存池）作交汇点。统一规则：**所有源一律原样直传母版库，"优化"是母版库独立动作，"落库"也独立**。四决策：母版库=可反复落库（一本落两读器对照）/ 指引=决策辅助（不替用户分类，讲清读器差异）/ 微读=内容源（非独立 app）/ 设备端优化=保留（够用默认，host 是高质量路）。
+
+**Phase A 母版库基础设施（✅ 真机通 2026-09-05，USB 部署 192.168.1.21）**：`shelf-core::paths::staging_dir()`（`state_dir()/books/staging`，/home 分区不丢、不套 spool 的 LRU 淘汰）；book-serve spool 加 `stage_new/list_staging(StagingEntry 带 format+optimized，复用 optimized_version_file)/optimize/deliver/remove`；5 路由（GET/POST /staging、/staging/{optimize,deliver,delete}）；koreader-serve `POST /books/adopt` 从共享 staging 读→`KoStore::install` 纯复制。**关键设计：落库=纯复制原字节不优化**（优化只在母版库动作里），保证一本母版落两读器是**同字节可对照**（兑现"两器一致"）。真机端到端：上传→母版库(optimized:false)→优化(1400→1778,标记 false→true)→投 xochitl(visibleName 坐实)→adopt KOReader(1778 同字节)→**母版保留、两库并存**。
+
+**Phase B 内容源汇入母版库（✅ 真机通 2026-09-05）**：① **网文获取下沉**——`readlater` 的抓取+Readability 抽取+scraper 白名单核心从 `reading/device-rs` 下沉进 `bookconv::article`（纯函数，device-rs re-export 保 `save_article` 上传半，移除 readability-rust/scraper/ego-tree 依赖）；book-serve `POST /api/books/staging/fetch-article {url}` → 组 EPUB 落母版库。真机：scraper/html5ever **aarch64-musl 交叉编译通过**；设备联网抓 runoob/阮一峰两篇成功落母版库（404 时正确返回错误=通路工作）。② **host push 改造**——`push.py` 统一"洗书→落母版库(`/api/books/staging`)"，**去掉 -t 目标/输出路径**（根治用户连踩的用法坑），`--to-pdf` 定稿 / `--no-optimize` 原样（`--direct` 直投逃生随后按用户"规则一致"去掉，见 Phase C）；去 decide_route/quality/koreader直投。host pytest 全绿(24)。⚠**技术债**：网文/转换类产物走 `assemble_optimized` 会打优化标记→母版库显示 `optimized:true`，但其实没跑 wash 层（外链 css 缩进/脚注），母版库语义下会让用户以为已优化而跳过；待澄清（网文也过 wash，或标记语义分层）。**Phase C UI 三层重构（✅ 功能真机通 2026-09-05：上传→洗书→落原生→落 KOReader 全链用户走通；结构按用户反馈二次定稿）**：首版把母版库列表复用进 xochitl/KOReader 三个 tab、读器页仍留传书区，用户指出"页面逻辑混乱、书从哪进有三个答案"。**定稿（用户拍板）**：① **「传书」固定 tab 放第一位＝唯一总入口**，二级 tab **入库**（上传任意格式 / 抓网文 / 微信读书〔占位，Phase D〕/ 电脑 shelf push）｜**母版库**（落库设置行：投原生文件夹 / KOReader 目录 / 优化档位 / 投完清除；搜索＋格式/状态筛选；最新入库在前；**按格式门控按钮**：EPUB→优化/投原生/加入 KO，PDF→投原生/加入 KO，其它→只能加入 KO；「加入 KOReader」按是否已装门控）。② **读器页彻底不传书**：xochitl 只剩原生字体（去阅读增强状态、失败队列），KOReader 只剩字体＋词典（去书库浏览——"有什么去 KOReader 里看"）。**网页直传取消，电脑 `shelf push --direct` 也去掉**（用户："规则一致，所有书只允许落母版库"）——没有任何绕过母版库直投读器的路径，去向只在网页选。③ **母版库改收任意格式**（推翻 Phase A"只收 EPUB/PDF"——那是 xochitl 的约束，不该限制 KOReader）；投原生时对非 EPUB/PDF 明确拒绝并指引。④ 指引＝决策辅助（三步走 + 两读器各擅长 + "拿不准先投一个母版还在"，不问闲书/研读）；微读独立 tab 删除，归入库内容源。设计：`stagingList` 单一渲染函数按格式/安装状态门控，不再三处复用。**观感（措辞/手机排版）待用户浏览器核**。
+
+**规则漏洞两处（2026-09-05，用户问"逻辑是否清晰"时自查出，先于新功能修）**：① **inbox 追平绕过母版库**——`process_inbox` 老逻辑 scp 进 `inbox/` 就自动优化直投 native，违反"所有书只落母版库"；改为原样 `stage_new` 落母版库（任意格式），老 `POST /?target=` 直投接口标废。② **"已优化"徽章说谎**——网文 / 格式转换产物走 `assemble_optimized`（默认 `optimize_epub`，无 wash）却写同一标记，母版库显示已优化并隐藏「优化」按钮，其实没洗缩进/脚注。改 `marker_value(full)`：含 wash 写版本号本身，无 wash 写 `<版本>-core`；`is_current_version` 只认 full；`StagingEntry.level` = full / core / old / none，UI 徽章「已优化 / 已优化·未清洗 / 旧版优化 / 未优化」，非 full 仍给「优化」按钮。weread 线只看 `is_optimized`（有无标记），不受影响。**真机通（2026-09-05）**：scp 进 inbox/ → 8s 防抖后日志「已入母版库」、xochitl 无该书；抓网文 → 母版库 `level:core`、点优化 → `full`。⚠ 验证时踩了自己的坑：watcher 是 8 秒防抖，5 秒就去查以为没触发。
+
+**第二步"能用→好用"小迭代（✅ 真机通 2026-09-05）**：① **落库记录** sidecar `.<书>.delivered {native,koreader}`——deliver 自动记 native，KOReader adopt 由前端调 `POST /staging/mark` 记（各服务只写自己目录）；UI 徽章「已投原生 / 已加入KO」，落库时间早于母版 mtime（之后又优化过）标「·旧」提示可重投；删书连带删 sidecar。② **「清理已落库」**批量删已投过的母版。③ KOReader 目录改 **datalist 下拉**（候选=现有目录）。④ `GET /staging` 带 **freeBytes**（`df -k` 解析——busybox 设备名过长会把数字换行，需拍平表头后所有行再取第 4 token，真机 `/dev/mapper/home-encrypted-disk` 坐实），<300MB 红字告警。⑤ 同名重复入库回执「已有同名，存为 1_x」。⑥ CLI `push` 成功后打印网页去向提示；加 `--keep-spacing`（透传 `WASH_KEEP_PARA_SPACING=1`，与网页档位对齐）。**Phase E ① PDF 结构化重排——真机《财新周刊》"整页大片空白"根因与修（2026-09-05）**：解剖产物（不猜）定位三根因：**每页一章**（91 页→91 xhtml，读器每章末强制翻页，一页 PDF 重排后占 1.3 屏就留 70% 空白）；**段落碎成行**（PyMuPDF 对杂志每行一个块，"块=段"不成立，每行独立缩进）；**图近整屏高**推到下页留白。修：整本平铺成单元→文档级段落合并（同列小间距续接；新段信号＝相对上一行起点缩进≥1 字 / 短行＋句末标点；换列换页按"上段未完"续接）→按标题分章（字号≥1.35×正文且在列首/页顶，排除正文中大字引语；无标题每 12 页一章；<200 字迷你章并入下章）→图封顶宽≤954/高≤60% 屏。**两个二次坑**（dump 单页逐行数据才看出）：分栏按"块中点在中线左/右"会把单栏页的宽块甩到"右栏"排最后、阅读序全乱→改为只在存在贯穿页面竖向空白带时分栏；行尾零宽空格 `​` 挡住句末标点判断→全局剥零宽字符。量化：章 91→10、段落 1209→770、句中断开 48%→12%、中位段长 47→109 字。**第三坑**：修分栏后发现旧中点分栏在双栏页只收文字块、**图块被静默丢掉**（8 张→39 张才是全量），而 954 宽照片存 PNG 一张 1.3MB → 21MB；改图块存 JPEG q80（回退 PNG）→ 3.6MB。**✅ 真机通（用户核 v3："空白没了，段落正常"）**。已知小瑕疵待后续：目录混入 3 个"文｜某某"署名当标题；"句中断开 12%"里含图注/列表项，真实断段更低未细分。Phase D–E 其余（微读内容源 / 英文排版·两器对照·KOReader 脚注观感）待用户核。
+
+## 03s｜代码质量核查二轮：母版库领域化 · 直投路删除 · 上传模板统一（2026-09-05，用户"审视 shelf/ 合理用设计模式、去重、解耦"）
+
+**动机**：§03r 中间层落地后代码里留着两套并行的"收书"路（旧 `POST /?target=` Strategy+Pipeline 直投 vs 新 `/staging*`），三份手搓 multipart 循环（book-serve 两份 + shelf-core `AssetUploadFlow`），格式白名单在网页 JS / book-serve / font-serve / koreader-serve 四处各写一份，服务 main 里 `let (k1..k10) = (k.clone()…)` 的克隆串，"缺 name" 取参样板 ×7，单段文件名校验 ×4。全部按"单一事实源 + 模板方法 + 门面"收。
+
+**做了什么（按层）**：
+- **shelf-core**：① 新 `formats`（`BOOK_EXTS`/`FONT_EXTS`/`DICT_EXTS`/`IMAGE_EXTS` + `has_ext`/`ext_of`/`dotted`）——网页 accept、各服务上传门、inbox 追平、KOReader 列表全从这一份派生；② `fs::plain_name`（单段文件名校验，拒 `/`、`..`、`.` 开头）+ `unique_path`/`move_unique`（同名不覆盖 / 跨设备回退拷贝）收编 spool·壁纸·koreader 各自的 `safe`/`unique`/`archive`；③ `http`：`bind(&state, |st, r| …)` 替代克隆串、`Router::any(&[GET,POST,…], pat, f)` 一个处理函数挂多方法（网关代理 6 条路由→2 条）、`Request::json() → JsonBody{str/str_or/bool_or}` 取参门面、`multipart_boundary()`/`q_flag()`；路由匹配拆成 `Pattern`，405 判定不再每请求克隆 Route；④ `asset`：`AssetUploadFlow::in_dir(dir)`（母版库暂存在 spool `.work/` 与目标同分区、入库 rename 零拷贝）、trait 缺省方法 `reject_message`/`success_message`（拒收/成功文案归仓库定，流程不再写死"已安装"）、`receipt(items, extra)` 统一 `{ok, items, …}` 回执；成功项 `name` 用落地名。`percent_encode` 从网关 proxy 挪进 `multipart` 与 `percent_decode` 成对。
+- **book-serve**：删 `target.rs`/`pipeline.rs`（Strategy/Pipeline 是为"上传→转换→优化→检查→注入"直投设计的，规则统一后没有调用方；设备端 AZW3/MOBI/FB2/CBZ 转换随之不再从 book-serve 可达——网页早已写明"其它格式只能加入 KOReader，想进原生用电脑 `shelf push` 转 EPUB"，bookconv 的转换器本体保留给 reading 线）。母版库从 `spool.rs` 拆成独立领域模块 **`staging.rs`**（`Staging`：入库 `stage_new`/`stage_from_path`/`fetch_article`、优化 `optimize(name, mode)`、落库 `deliver(name, folder, keep)`、`mark_delivered`、`list`/`remove`/`free_bytes`；`StagingStore` 是它的 `AssetStore` 适配；`OptimizeMode` 三档随之搬来）。`api.rs` 回到"只取参 + 调领域方法 + 回执"的适配层（每条路由 1–3 行）。`spool.rs` 只剩 inbox 队列（`done/` 与 100MB LRU 一并删：成功的书进母版库，不再另存）。`BookConfig` 退役 `optimizeDirectEpub`/`comicMono`（旧 json 里多余键被忽略，有测试）。`/targets` 路由与 status 里的 `targets` 删。
+- **koreader-serve**：删直传 `POST /books` 与 `KoConfig.optimizeEpub`/`KoStore::optimizing`（书只从母版库 adopt，落库＝纯复制）；不再依赖 bookconv；`ConfigSync` 改持 `Arc<KoReader>`（原先 get/post 各构造一份）；`require_installed`/`running_note`/`plain_name` 收三处重复；`list_dicts`/`list_files` 归 `koreader.rs`。
+- **font-serve / wallpaper-serve**：`State{store, paths}` + `bind`；壁纸上传"显式激活 / 首张自动激活"两段重复合并为 `want = activate || 无当前`；`GET /{name}` 走 `store.read`（`plain_name` 校验）；`FONT_EXT`/`&["jpg","jpeg","png"]` 改引 `formats`。font-serve 的注册 tab 改名「xochitl」（order 10），book-serve 不再挂 tab——网页 xochitl 字体页由 font-serve 存活与否驱动（原先键在 book-serve 上：book-serve 关了字体页就没了，font-serve 关了页面还在但全 404）。
+- **网关**：`ui::page()` 用 `OnceLock` 把 `formats` 四张白名单注入模板 `__EXTS__`（网页 `BOOK_EXT` 等不再手抄）；`upHtml()` 生成上传区 + `uploader()` 认 `.up` 容器（KOReader 页原先用 `wrap(i)` 假 querySelector 拆两个上传器的 hack 删）；`fillList`/`delBtn`/`cjkBadge` 三个小件收编 xochitl 字体 / KOReader 字体 / 词典 / 壁纸四处列表渲染；`assetTab` 改成带 `row`/`header`/`onRender` 钩子的模板，xochitl 字体页与壁纸页都走它。`main.rs` 去掉 `service_of` 二传手，`proxy::forward` 自己查目录表。`auth::identify` 直接用 `GuardRequest::header`。
+- **host CLI**：`receipts.item_name` 兼认 `name`/`file`，`upload_each(transport, api, files, query, extra, on_response)` 收编 font/wallpaper/koreader font/push 四处"守卫→逐文件 POST→回执"循环；`status` 的 URL 段映射改从网关 `/api/manage` 取（单一事实源 `manage::MODULES`）；`config.toml` 退役 `default_target`/`quality`；`passwd`/`doctor`/`__main__` 去掉 `__import__("sys")`、函数内 import 与过期文案。
+
+**没动的**：bookconv 内容层（只把 `optimized_version`/`_file` 合成一个 `marker_in<R: Read+Seek>`、`is_html` 改引 `wash`），`htmlproc`/`wash` 的规则本体不碰；`koreader/merge.lua`、systemd 单元、install/uninstall 不碰。
+
+**验证**：离线 `cargo test --workspace`（bookconv 104 / shelf-core 37 / book-serve 10 / koreader 4 / font 4 / wallpaper 4 / gateway 6）+ host `pytest` 25 全绿，`node --check` 内嵌 JS 通过，workspace 零警告。
+**真机通（2026-09-05 13:41，USB 10.11.99.1，备份 `shelf-20260905-134052`，SSH 隧道打 loopback）**：注册表 font-serve 挂 tab「xochitl」、book-serve 无 tab ✓；`POST /staging` 一次传 jpg+epub → jpg 拒收（文案含整份白名单）、epub 落地回执 `name`=落地名 ✓；`/staging/optimize keep-spacing` 回执带统计「清洗+优化，2 章，653→1630 字节，自动目录 1 条」、列表等级 none→full ✓；`/staging/deliver` 非 EPUB/PDF 门 ✓；`/staging/mark weread` 拒 ✓；`/books/adopt` 进 KOReader 子目录（1630 字节同字节）+ `mark koreader` 后列表 `delivered.koreader` ✓；font-serve 拒 jpg（fallback 链照常）✓；旧 `POST /?target=` 404、`POST /koreader/books` 405 ✓；`.work/` 空（上传暂存已清）。测试书已从母版库与 KOReader 删除。
+**格式提示分档（2026-09-05，用户"入库页格式列太多了，只列实际支持的"）**：核实结论——18 个扩展名全部是设备装的 KOReader v2026.07.1 `documentregistry` 真注册的（crengine：txt/html/rtf/doc/docx/chm/mobi/azw/prc/fb2；mupdf：pdf/cbz/cbr/xps，`libarchive.so.13` 带 `rar`/`rar5` 所以 CBR 真能开；djvu 引擎：djvu），白名单没有多收。问题在**展示**：一口气列 18 个看不出谁能去哪。改 `formats` 分三档（`NATIVE_EXTS` epub/pdf · `HOST_CONVERTIBLE_EXTS` azw3/mobi/azw/prc/fb2 = host `WASH_EXT` · `KOREADER_ONLY_EXTS` 其余 11 个），`BOOK_EXTS` 仍是三档之并（测试钉死），网页拖放框只写「EPUB / PDF 及下列格式」，下方与 GUIDE「格式」条改为三档一句话说明（`FMT_TIERS`），KOReader 页改"母版库收的所有格式 KOReader 都能读"。
+
+## 03t｜漫画通道：AZW3 漫画 → CBZ + 固定版式 PDF（2026-09-05，用户"AZW3 漫画该怎么转 / 镖人为何投不了原生"）
+
+**根因**：《镖人》AZW3 被当文字书走 Calibre 洗书路 → 282MB EPUB（2637 文件 / 2473 图）→ 点「投入原生书库」两次，xochitl 日志
+`HttpRequest: expected multipart body is too large`（13:45:50 / 13:45:59）——撞的是 xochitl `/upload` 体积上限（此前测得 60～285MB 间 413），
+不是我们的格式门。就算传上，漫画进 xochitl EPUB 重排引擎也不对（图按列宽缩、无固定页）；正确载体是**固定版式 PDF**（每页一张 954×1696）。
+架构缺口：母版库三层下**没有"漫画 → 原生"的路**（`push` 见 `.azw3` 一律洗成 EPUB；`.cbz` 原样只能进 KOReader；设备端 CBZ→PDF 转换器已无调用方）。
+
+**做法（用户定：默认原图，不抖动）**：
+- **host 探针 `shelf_cli/comic.py`**（不调 Calibre，毫秒级）：PalmDB 容器数 JPEG/PNG 魔数记录，图片字节 ≥60% 且 ≥20 张判漫画；EPUB 按 spine 统计
+  `<img>` 数与可见文字数，图 ≥20 且每图配字 <40 判漫画；CBZ 天然。真书：《镖人》AZW3 2498 图占 99.96% ✓，Calibre 洗过的 EPUB 2473 图 / 5527 字 ✓
+  （首版"整页只有一张图的页占比"判据在洗过的 EPUB 上失败——Calibre 把十几张图塞进一个 xhtml，146 页 spine 只 24 页单图——改成图/字比后两种都命中）。
+  `--comic / --no-comic` 覆盖。
+- **`shelf push` 路线规划 `plan()`**：`--no-optimize`→raw；漫画且（CBZ 或有 Calibre）→comic；有 Calibre→wash；否则 raw。comic 路产**两份**入母版库：
+  CBZ（`comic2cbz.py` 按 spine 抽整页图；给 KOReader 漫画模式）+ PDF（新 bookconv bin **`cbz2pdf`**，与设备端同一 `convert::cbz::cbz_to_pdf`：
+  每页按屏降采样，缺省原图 JPEG 直嵌，`--mono` 黑白页 1-bit 抖动），PDF >60MB 走既有 `pdfsplit` 分卷。
+- **设备端母版库加「转 PDF」**：`POST /staging/to-pdf {name, mono}`，CBZ → `<stem>.pdf` 新条目、CBZ 保留；网页 CBZ 行出「转 PDF」按钮 + 「漫画转 PDF 用 1-bit 抖动」开关；
+  列表 `format` 加 `cbz`（筛选归「其它」）。真机：3 页测试 CBZ → `mini.pdf` 3473 字节 ✓。大套系走电脑（设备 CPU 慢约 10×）。
+- **`imgopt` 提速**：`downscale_for_device`/`downscale_into` 原先为取尺寸把每页 JPEG 完整解码（甚至两次），改只读头取尺寸、达标页零解码。
+  《镖人》2473 页原图路 host 2m36s → 1m49s（产物字节完全相同）；剩下的 44ms/页在 JPEG 头解析 + 写 297MB 产物，未再深挖。
+
+**《镖人》实测（host）**：`comic2cbz` 0.8s → CBZ 296MB（页 927×1327 RGB JPEG，均 120KB，已 ≤ 屏、直嵌）；`cbz2pdf` 原图 297MB；`--mono` 223MB（4m31s）。
+mono 只缩到 3/4 而非"1/8"：色度采样 99 页只 1 页 ≥0.06（彩封），几乎全书都转了 1-bit——**体积没降是 Floyd–Steinberg 抖动后的位图是高熵噪点，
+Flate 压不动**（927×1327 1-bit 裸 154KB，压后仍 ~90KB，只比 120KB 的 JPEG 小 1/4）；代码里"~1/8"是相对 8-bit 灰 Flate 说的，对 JPEG 源不成立。
+原图档不受影响（用户定默认原图）；mono 要真省体积得换 CCITT G4/JBIG2 编码，留后续。
 ## 04｜踩坑
 
 - **磁盘 metadata ≠ xochitl/UI 实际状态（2026-09-04 用户纠正）**：直接 `sed` 改 `.metadata` 的 `parent=trash` 并不等于"已进回收站"——xochitl 运行时在内存缓存、写回时覆盖，云同步也可能还原；出现过磁盘 8 个探针 `parent=trash` 但 UI 回收站只见真实书的错位。**涉及书库状态以设备 UI/xochitl 实际为准，不拿磁盘 metadata 当真相**；清测试文档走正常删除流程或停 xochitl 后操作，别边跑边改。
 - multipart 流式解析：`fill()` 用 `Vec::resize(+64KB)` 在逐字节到达的流上变成 memset 风暴（测试 50s）；改栈上临时块 `extend_from_slice` → 0.8s。
-
-- multipart 流式解析：`fill()` 用 `Vec::resize(+64KB)` 在逐字节到达的流上变成 memset 风暴（测试 50s）；改栈上临时块 `extend_from_slice` → 0.8s。
+- **xochitl `/upload` 有体积上限**（实测 282MB EPUB 被 `multipart body is too large` 拒；此前 60～285MB 间见过 413）：大 PDF 靠 `pdfsplit` 60MB 分卷；EPUB 不能分卷——漫画别走 EPUB（§03t）。
+- 会话里 shell cwd 会在 `cang-jie/` 与 `shelf/` 间漂移：`curl -F` 之类落地文件一律写绝对路径到 scratchpad，否则测试文件会混进仓库（2026-09-05 误提交两个临时文件后已删）。
+- busybox：`head` 要 `-n`、无 `timeout`/`base64`/`od -A`、`ls` 中文名显示 `?`（验名 `find | hexdump -C`）。
 - `shelf/build.sh` 必须在 `shelf/` 目录跑（仓库根没有 build.sh）。
 - 本机冒烟别忘 `env -i`：host 桌面环境自带 `XDG_STATE_HOME/XDG_CONFIG_HOME` 会盖过 `HOME` 覆盖，把测试数据写进真实用户目录。
 - pytest 要从仓库根跑（`uv run pytest shelf/host/tests`）。
 - 多个测试文件对同一个 `http.server` Handler 类 monkeypatch，module fixture 共用服务器线程时 patch 链互相覆盖会递归死循环（pytest 挂死）。各文件用自己的 Handler **子类** + 自己的 fixture。
 
-## 05｜真机待办（按阶段）
+## 05｜真机待办（2026-09-05 刷新）
 
-**当前（2026-09-04）剩余**：① ~~清洗层+质量门移植~~ 已落地（§03i），真机只验了投递通路，`!important` 段距假设待量；② 文字书三路对照（host 洗书 / 设备清洗+优化 / 原样，可用回收站里的《飘·上册》《人骨拼图》做对比）；③ 真重启后 shelf.target/壁纸 bind 自起（重启会丢 xovi，需手动 `xovi/start`，用户暂不装 reenable）；④ P5 `weread-web/spike.sh`（用户设备旁）；⑤ 拔线真 suspend 场景下钩子 bind + 唤醒轮换只触发一次；⑥ 3.28 固件机验证 `font-menu-dynamic.qmd`（3.28 锚点版未上机，含 elide 补丁）；⑦ 字体菜单 elide 截断宽度用户目测确认；⑧ 清理磁盘残留的 8 个「云同步探针」测试文档（走正常删除流程）。
+**未闭环**：
+1. **Phase E ②③④**：英文书拉丁缩进（1.2em、标题后首段不缩进）观感；同一母版落 xochitl + KOReader 并排对照；KOReader 里内联脚注〔…〕能否接受（若不能，落库时对 KOReader 另跑 Anchor 是唯一备选，但会打破"两器同字节"）。
+2. **Phase D 微读内容源**：复用 `reading/device-rs` 下书栈（扫码登录 / 抓章 / 组 EPUB），落母版库；形态待定（立 `weread-serve` 8794 或 book-serve 代理）。
+3. 《镖人》真推：`shelf push …镖人.azw3` → CBZ 296MB + PDF 5 卷进母版库 → 分别落库；再删 KOReader 里旧的 282MB EPUB。用户决定。
+4. mono 档体积：Floyd–Steinberg 1-bit 对 Flate 是噪点（§03t），要真省体积换 CCITT G4 / JBIG2。
+5. 真重启后 `shelf.target` / 壁纸 bind 自起（重启会丢 xovi，需手动 `xovi/start`，用户暂不装 reenable）；拔线真 suspend 下钩子 bind + 唤醒轮换只触发一次。
+6. 3.28 固件机验证 `font-menu-dynamic.qmd`（3.28 锚点版含 elide 补丁未上机）。
+7. PDF 结构化重排小瑕疵：署名"文｜某某"混进目录；"句中断开 12%"含图注/列表未细分。
 
-**已闭环（真机）**：§03j 登录/CA/mDNS、§03k 字体两 bug（fontconfig 回退接管 + 覆盖率检测）、§03l 传书卡根因（云同步，USB 传书验证顺畅）、§03m 网页改版 + xochitl 标签重构 + 字体菜单长名 elide（离线 qmldiff 验证 + 上机）。
+**已闭环（真机）**：§03f 首轮五服务 · §03g/§03h 字体分开装/子目录/HTTPS · §03j 登录/CA/mDNS · §03k 字体两 bug · §03l 传书卡＝云同步 · §03m/§03n/§03o 网页改版/细节/管理台 · §03p 质量一轮 · §03q 优化做精 + 首行缩进 v10 · §03r 母版库 Phase A/B/C + 财新重排 · §03s 质量二轮 + 格式三档 · §03t 漫画通道（设备 CBZ→PDF；host 真书探针/转换）。
 
-P1：`/api/services` 列三服务；native 三格式；annot 拒 epub；koreader 中文名字节验；5 本混投；200MB+ 不 OOM；`--only` 拔插；真重启自起。
-P2：字体免重启 spike（S-A/S-B/S-C）；壁纸休眠即显示；`--only wallpaper` 单装。
-P3：KOReader pull/sync 幂等。P5：rmweb × Move 看门狗 spike。
+**已放弃**：P5 微读网页版内嵌浏览器 spike（§03r 决策 3：微读定位为内容源）；设备端 AZW3/MOBI/FB2 → EPUB 转换（§03s，杂格式走电脑 Calibre，`bookconv::convert` 本体留给 reading 线）。

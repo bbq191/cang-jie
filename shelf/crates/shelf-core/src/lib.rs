@@ -11,7 +11,8 @@
 //! - `fswatch`  inotify 防抖目录监听（spool 追平）。
 //! - `service`  服务启动模板：解析参数→建目录→注册→起服务器。
 //! - `config`   服务配置/状态 JSON 读写模板（load/seed/save），收编各服务的 config 复制。
-//! - `fs`       原子写（tmp→rename）+ unix 权限，config/registry/fonts.json 共用。
+//! - `fs`       原子写（tmp→rename）+ unix 权限 + 单段文件名校验 / 同名不覆盖，config/registry/母版库/壁纸池共用。
+//! - `formats`  文件格式白名单单一事实源（书籍/字体/词典/图片），UI accept 与服务端上传门同源。
 //! - `tls`      私有 CA + 叶证书生成/加载（网关 HTTPS；装一次 CA 免提示）。
 //! - `auth`     密码哈希（salted SHA-256）、Basic/Cookie 解析、内存会话表。
 //! - `netinfo`  本机 IPv4 表（证书 SAN、mDNS 选址）。
@@ -19,6 +20,7 @@
 pub mod asset;
 pub mod auth;
 pub mod config;
+pub mod formats;
 pub mod fs;
 pub mod fswatch;
 pub mod http;

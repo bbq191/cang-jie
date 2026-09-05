@@ -1,12 +1,12 @@
-//! book-serve —— 书架·原生投递（loopback 8790）。
-//! 上传（经网关 `POST /api/books?target=native|annot`）→ 目标 Strategy → 处理链 → xochitl 书库；
-//! 自有 spool（XDG state）+ inotify 追平（scp 丢进 inbox 也能进库）。不读写旧项目任何路径。
+//! book-serve —— 书架·母版库 + 原生投递（loopback 8790）。
+//! 所有内容源（网页上传 / 抓网文 / host `shelf push` / scp 进 inbox）原样落**母版库**；优化与落库（投 xochitl）是母版库里
+//! 各自独立的动作（`staging.rs`）。自有 inbox 队列（XDG state）+ inotify 追平。不读写旧项目任何路径。
+//! 网页 tab 「传书」是网关固定页（不由本服务注册），本服务不挂 tab。
 mod api;
 mod config;
-mod pipeline;
 mod service_state;
 mod spool;
-mod target;
+mod staging;
 
 use shelf_core::paths::Paths;
 use shelf_core::service::{self, ServiceSpec};
@@ -14,23 +14,19 @@ use std::sync::Arc;
 
 const SPEC: ServiceSpec = ServiceSpec {
     name: "book-serve",
-    label: "原生投递",
+    label: "母版库 / 原生投递",
     version: env!("CARGO_PKG_VERSION"),
     default_bind: "127.0.0.1:8790",
-    tab: Some(("传书", 10)),
+    tab: None,
 };
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let bind = service::parse_bind(&args, SPEC.default_bind);
     let paths = Paths::from_env();
-    if let Err(e) = paths.ensure() {
-        eprintln!("[book-serve] 建目录失败: {e}");
-        std::process::exit(1);
-    }
     let st = Arc::new(service_state::State::new(&paths));
-    if let Err(e) = st.spool.ensure() {
-        eprintln!("[book-serve] spool 建目录失败: {e}");
+    if let Err(e) = paths.ensure().and_then(|_| st.ensure_dirs()) {
+        eprintln!("[book-serve] 建目录失败: {e}");
         std::process::exit(1);
     }
     let n = st.spool.recover_orphans();
@@ -48,7 +44,7 @@ fn main() {
             });
         });
     }
-    println!("[book-serve] 目标：{:?}；书库文件夹 {:?}；xochitl {}", st.targets.ids(), st.cfg.library_folder, st.cfg.xochitl_host);
+    println!("[book-serve] 母版库 {}；书库文件夹 {:?}；xochitl {}", st.staging.dir().display(), st.cfg.library_folder, st.cfg.xochitl_host);
     if let Err(e) = service::run(&SPEC, &bind, &paths, api::router(st)) {
         eprintln!("[book-serve] {e}");
         std::process::exit(1);

@@ -21,15 +21,11 @@ const JPEG_QUALITY: u8 = 85;
 /// 保比缩进 `max_w × max_h` 框（宽高比保持、保原格式），只在超框时动；返回新字节或 `None`
 /// （已达标 / 非 JPEG·PNG / 解码失败 / 重编码没变小 → 调用方原样保留）。
 fn downscale_into(bytes: &[u8], max_w: u32, max_h: u32) -> Option<Vec<u8>> {
-    let fmt = image::guess_format(bytes).ok()?;
-    if !matches!(fmt, ImageFormat::Jpeg | ImageFormat::Png) {
-        return None;
+    let (fmt, (w, h)) = header_dims(bytes)?;
+    if w <= max_w && h <= max_h {
+        return None; // 已达标：不解码不重编码（避免无谓的二次有损压缩；2473 页漫画只读头是秒级、全解是分钟级）
     }
     let img = image::load_from_memory_with_format(bytes, fmt).ok()?;
-    let (w, h) = img.dimensions();
-    if w <= max_w && h <= max_h {
-        return None; // 已达标：不重编码（避免无谓的二次有损压缩）
-    }
     let resized = img.resize(max_w, max_h, FilterType::Lanczos3);
     let mut out = Vec::new();
     match fmt {
@@ -49,9 +45,19 @@ fn downscale_into(bytes: &[u8], max_w: u32, max_h: u32) -> Option<Vec<u8>> {
 /// **CBZ/漫画整页**降采样：按朝向选盒（竖 954×1696 / 横 1696×954），页整张填屏、横页横读可用 1696 宽。
 /// 真机探针（2026-09-02，5 张 400–2400px 宽图上机看渲染的 `<uuid>.pdf`）：只卡长边会让方图多留 1.8× 无用像素。
 pub fn downscale_for_device(bytes: &[u8]) -> Option<Vec<u8>> {
-    let dim = image::guess_format(bytes).ok().and_then(|f| image::load_from_memory_with_format(bytes, f).ok()).map(|i| i.dimensions())?;
-    let (max_w, max_h) = if dim.0 >= dim.1 { (MAX_EDGE, MAX_SHORT_EDGE) } else { (MAX_SHORT_EDGE, MAX_EDGE) };
+    let (_, (w, h)) = header_dims(bytes)?;
+    let (max_w, max_h) = if w >= h { (MAX_EDGE, MAX_SHORT_EDGE) } else { (MAX_SHORT_EDGE, MAX_EDGE) };
     downscale_into(bytes, max_w, max_h)
+}
+
+/// 只读文件头取 (格式, 宽, 高)，不解码像素。非 JPEG/PNG → None。
+fn header_dims(bytes: &[u8]) -> Option<(ImageFormat, (u32, u32))> {
+    let fmt = image::guess_format(bytes).ok()?;
+    if !matches!(fmt, ImageFormat::Jpeg | ImageFormat::Png) {
+        return None;
+    }
+    let dims = image::ImageReader::with_format(Cursor::new(bytes), fmt).into_dimensions().ok()?;
+    Some((fmt, dims))
 }
 
 /// **EPUB 内嵌图**降采样：一律竖向框 954×1696（**宽绝不超 954**）。EPUB 图可能**行内**（xochitl 按固有

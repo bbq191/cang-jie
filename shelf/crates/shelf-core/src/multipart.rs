@@ -275,6 +275,18 @@ pub fn percent_decode(s: &str) -> String {
     String::from_utf8_lossy(&out).to_string()
 }
 
+/// 百分号编码（RFC 3986 unreserved 之外全编）：查询串 / `?next=` 跳转共用，与 [`percent_decode`] 成对。
+pub fn percent_encode(s: &str) -> String {
+    let mut o = String::with_capacity(s.len());
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => o.push(b as char),
+            _ => o.push_str(&format!("%{:02X}", b)),
+        }
+    }
+    o
+}
+
 /// 只取文件名的 basename（防路径穿越），空则用 default。
 pub fn safe_basename(filename: &str, default: &str) -> String {
     let base = filename.replace('\\', "/");
@@ -394,5 +406,11 @@ mod tests {
         assert_eq!(safe_basename("C:\\x\\y.epub", "d"), "y.epub");
         assert_eq!(safe_basename("..", "d"), "d");
         assert_eq!(safe_basename("", "d"), "d");
+    }
+
+    #[test]
+    fn percent_roundtrip() {
+        assert_eq!(percent_encode("a b/中"), "a%20b%2F%E4%B8%AD");
+        assert_eq!(percent_decode(&percent_encode("x=1&y=中 文")), "x=1&y=中 文");
     }
 }

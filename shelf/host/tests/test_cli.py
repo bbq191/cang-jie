@@ -42,6 +42,8 @@ class FakeGateway(BaseHTTPRequestHandler):
             return self._json(401, {"ok": False, "message": "需要密码"})
         if self.path == "/api/services":
             return self._json(200, {"services": self.services})
+        if self.path == "/api/manage":
+            return self._json(200, {"modules": [{"seg": "fonts", "service": "font-serve"}, {"seg": "books", "service": "book-serve"}]})
         if self.path == "/api/fonts/health":
             return self._json(200, {"ok": True, "service": "font-serve", "version": "0.1.0"})
         if self.path == "/api/books/inbox":
@@ -117,10 +119,10 @@ def test_multipart_upload_encoding(gateway, tmp_path):
     f.write_bytes(b"PK\x03\x04data")
     t = tr.HttpTransport(gateway, user="shelf", password="pw")
     FakeGateway.received.clear()
-    j = t.post_files("/api/books", [f], {"target": "native"})
+    j = t.post_files("/api/books/staging", [f], {"x": "1"})
     assert j["ok"]
     path, ctype, body = FakeGateway.received[0]
-    assert path == "/api/books?target=native"
+    assert path == "/api/books/staging?x=1"
     assert ctype.startswith("multipart/form-data; boundary=")
     assert b"filename*=UTF-8''%E4%B8%AD%20%E6%96%87.epub" in body
     assert b"PK\x03\x04data\r\n--" in body
@@ -132,7 +134,7 @@ def test_config_defaults_and_overrides(tmp_path):
     p.config.mkdir(parents=True)
     p.config_file.write_text('host = "192.168.1.5"\nquality = "device"\nbogus = 1\n')
     c = cfgmod.load(p, {"port": 9999, "host": None})
-    assert (c.host, c.port, c.quality, c.default_target) == ("192.168.1.5", 9999, "device", "native")
+    assert (c.host, c.port, c.split_pdf_mb) == ("192.168.1.5", 9999, 60), "未知键（含退役的 quality）忽略"
     assert c.base_url == "https://192.168.1.5:9999"
     assert c.ssh == "root@192.168.1.5", "ssh 未显式配则跟随 host"
     assert cfgmod.load(p, {"scheme": "http"}).base_url.startswith("http://")

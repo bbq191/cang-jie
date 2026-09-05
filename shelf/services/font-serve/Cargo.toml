@@ -3,7 +3,7 @@ name = "font-serve"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "书架·字体：上传即装（fontconfig + fonts.json + KOReader 镜像）"
+description = "书架·字体：上传即装（fontconfig 用户字体目录 + fonts.json + 中文回退链）"
 
 [[bin]]
 name = "font-serve"

@@ -202,6 +202,7 @@ name = "book-serve"
 version = "0.1.0"
 dependencies = [
  "bookconv",
+ "image",
  "serde",
  "serde_json",
  "shelf-core",
@@ -904,7 +905,6 @@ dependencies = [
 name = "koreader-serve"
 version = "0.1.0"
 dependencies = [
- "bookconv",
  "serde",
  "serde_json",
  "shelf-core",

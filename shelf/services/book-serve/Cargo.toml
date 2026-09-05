@@ -3,7 +3,7 @@ name = "book-serve"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "书架·原生投递：EPUB/PDF/AZW3/MOBI/FB2/CBZ → xochitl 书库（转换/优化/注入）"
+description = "书架·母版库（入库/优化/落库正交）+ 原生 xochitl 投递"
 
 [[bin]]
 name = "book-serve"
@@ -17,4 +17,5 @@ serde_json = "1"
 
 [dev-dependencies]
 zip = { version = "2", default-features = false, features = ["deflate"] }
+image = { version = "0.25", default-features = false, features = ["png"] }
 tempfile = "3"

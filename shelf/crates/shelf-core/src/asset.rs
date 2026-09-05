@@ -1,6 +1,8 @@
 //! 资产仓库（Repository）与上传流程模板（Template Method）。
-//! 字体、壁纸都是"一个目录里的一堆文件 + 一份清单"：上传→暂存→校验→安装→回执 这一套只在
-//! [`AssetUploadFlow`] 写一次，各仓库只实现差异（`validate`/`install`/`list`/`remove`）。
+//! 字体、壁纸、KOReader 字体/词典、母版库都是"一个目录里的一堆文件"：上传→暂存→扩展名门→校验→安装→回执
+//! 这一套只在 [`AssetUploadFlow`] 写一次，各仓库只实现差异（`validate`/`install`/`list`/`remove`），
+//! 拒收 / 成功文案也由仓库按需覆盖（`reject_message`/`success_message`），不再各服务手搓 multipart 循环。
+use crate::formats;
 use crate::multipart::{safe_basename, MultipartReader};
 use crate::paths::Paths;
 use serde::Serialize;
@@ -16,7 +18,13 @@ pub struct AssetItem {
     pub extra: serde_json::Value,
 }
 
-/// 单项上传结果。
+impl AssetItem {
+    pub fn plain(name: impl Into<String>, bytes: u64) -> AssetItem {
+        AssetItem { name: name.into(), bytes, extra: serde_json::Value::Null }
+    }
+}
+
+/// 单项上传结果（网页 uploader / CLI `print_receipts` 共同的契约：`name` + `ok` + `message`）。
 #[derive(Clone, Debug, Serialize, PartialEq)]
 pub struct UploadOutcome {
     pub name: String,
@@ -26,48 +34,69 @@ pub struct UploadOutcome {
     pub item: Option<AssetItem>,
 }
 
+impl UploadOutcome {
+    pub fn fail(name: impl Into<String>, message: impl Into<String>) -> UploadOutcome {
+        UploadOutcome { name: name.into(), ok: false, message: message.into(), item: None }
+    }
+}
+
 pub trait AssetStore {
-    /// 资产类型（日志/回执用），如 "font" / "wallpaper"。
+    /// 资产类型（日志/暂存文件名用），如 "font" / "wallpaper" / "book"。
     fn kind(&self) -> &'static str;
-    /// 允许的扩展名（小写、不带点）。
+    /// 允许的扩展名（小写、不带点）；**空＝任意**。
     fn allowed_ext(&self) -> &'static [&'static str];
-    /// 校验暂存文件（格式/尺寸/与内建冲突…）。
-    fn validate(&self, name: &str, staged: &Path) -> Result<(), String>;
-    /// 安装暂存文件（移动/转换到最终位置），返回条目。
+    /// 校验暂存文件（格式/尺寸/与内建冲突…）。缺省不校验。
+    fn validate(&self, _name: &str, _staged: &Path) -> Result<(), String> {
+        Ok(())
+    }
+    /// 安装暂存文件（移动/转换到最终位置），返回条目。暂存文件之后由流程删除（已被 rename 走也无妨）。
     fn install(&self, name: &str, staged: &Path) -> Result<AssetItem, String>;
     fn list(&self) -> Vec<AssetItem>;
     fn remove(&self, name: &str) -> Result<(), String>;
+    /// 扩展名不在白名单时的回执文案。
+    fn reject_message(&self) -> String {
+        format!("不支持的扩展名（允许：{}）", self.allowed_ext().join(" / "))
+    }
+    /// 安装成功的回执文案（`requested`=上传时的文件名，`item.name` 可能被仓库改名）。
+    fn success_message(&self, _requested: &str, _item: &AssetItem) -> String {
+        "已安装".into()
+    }
 }
 
-/// 整批是否全成功（非空且逐项 ok）——各上传处理器统一用它算回执 `ok`，不再各写一遍
-/// `!items.is_empty() && items.iter().all(|i| i.ok)`（font / wallpaper / koreader 曾各写一份）。
+/// 整批是否全成功（非空且逐项 ok）。
 pub fn all_ok(items: &[UploadOutcome]) -> bool {
     !items.is_empty() && items.iter().all(|i| i.ok)
 }
 
-/// 上传流程模板：multipart 逐文件流式落暂存 → 扩展名门 → validate → install；逐项独立成败。
-pub struct AssetUploadFlow<'a> {
-    paths: &'a Paths,
+/// 标准回执 `{ok, items, …extra}`——各上传处理器在此之上只加自己的字段（note / activated …）。
+pub fn receipt(items: &[UploadOutcome], extra: serde_json::Value) -> serde_json::Value {
+    let mut v = serde_json::json!({"ok": all_ok(items), "items": items});
+    if let (Some(dst), Some(src)) = (v.as_object_mut(), extra.as_object()) {
+        for (k, val) in src {
+            dst.insert(k.clone(), val.clone());
+        }
+    }
+    v
 }
 
-impl<'a> AssetUploadFlow<'a> {
-    pub fn new(paths: &'a Paths) -> Self {
-        AssetUploadFlow { paths }
-    }
+/// 上传流程模板：multipart 逐文件流式落暂存 → 扩展名门 → validate → install；逐项独立成败。
+pub struct AssetUploadFlow {
+    tmp_dir: PathBuf,
+}
 
-    fn ext_ok(store: &dyn AssetStore, name: &str) -> bool {
-        // 空白名单＝接受任意扩展名（含无扩展名文件），对齐 KOReader books「任意格式原样」语义。
-        if store.allowed_ext().is_empty() {
-            return true;
-        }
-        let ext = name.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
-        name.contains('.') && store.allowed_ext().contains(&ext.as_str())
+impl AssetUploadFlow {
+    /// 暂存在运行时目录 `$XDG_RUNTIME_DIR/shelf/upload`（字体 / 壁纸 / 词典这类小文件）。
+    pub fn new(paths: &Paths) -> Self {
+        AssetUploadFlow { tmp_dir: paths.upload_tmp_dir() }
+    }
+    /// 暂存在指定目录——大文件（书）应与最终目录同分区，install 才能 rename 而不是拷贝。
+    pub fn in_dir(dir: PathBuf) -> Self {
+        AssetUploadFlow { tmp_dir: dir }
     }
 
     /// 处理一整个 multipart 请求体。
     pub fn run<R: Read>(&self, store: &dyn AssetStore, body: R, boundary: &str) -> Result<Vec<UploadOutcome>, String> {
-        let tmp_dir = self.paths.upload_tmp_dir();
-        std::fs::create_dir_all(&tmp_dir).map_err(|e| e.to_string())?;
+        std::fs::create_dir_all(&self.tmp_dir).map_err(|e| e.to_string())?;
         let mut mp = MultipartReader::new(body, boundary);
         let mut out = Vec::new();
         loop {
@@ -78,18 +107,18 @@ impl<'a> AssetUploadFlow<'a> {
             };
             let Some(fname) = part.filename.clone() else { continue };
             let name = safe_basename(&fname, "upload.bin");
-            if !Self::ext_ok(store, &name) {
-                out.push(UploadOutcome { name, ok: false, message: format!("不支持的扩展名（允许：{}）", store.allowed_ext().join("/")), item: None });
+            if !formats::has_ext(&name, store.allowed_ext()) {
+                out.push(UploadOutcome::fail(name, store.reject_message()));
                 continue;
             }
-            let staged: PathBuf = tmp_dir.join(format!("{}.{}.part", uuid::Uuid::new_v4().simple(), store.kind()));
-            let written = crate::multipart::receive_part_to(&staged, &mut part);
-            let outcome = match written {
-                Err(e) => UploadOutcome { name: name.clone(), ok: false, message: format!("接收失败: {e}"), item: None },
-                Ok(0) => UploadOutcome { name: name.clone(), ok: false, message: "空文件".into(), item: None },
+            let staged = self.tmp_dir.join(format!(".{}.{}.part", uuid::Uuid::new_v4().simple(), store.kind()));
+            let outcome = match crate::multipart::receive_part_to(&staged, &mut part) {
+                Err(e) => UploadOutcome::fail(name, format!("接收失败: {e}")),
+                Ok(0) => UploadOutcome::fail(name, "空文件"),
                 Ok(_) => match store.validate(&name, &staged).and_then(|_| store.install(&name, &staged)) {
-                    Ok(item) => UploadOutcome { name: name.clone(), ok: true, message: "已安装".into(), item: Some(item) },
-                    Err(e) => UploadOutcome { name: name.clone(), ok: false, message: e, item: None },
+                    // 成功项的 name 用落地名（仓库可能改名 / 加前缀），回执与列表一致。
+                    Ok(item) => UploadOutcome { message: store.success_message(&name, &item), name: item.name.clone(), ok: true, item: Some(item) },
+                    Err(e) => UploadOutcome::fail(name, e),
                 },
             };
             let _ = std::fs::remove_file(&staged);
@@ -128,13 +157,16 @@ mod tests {
             let dest = self.dir.join(name);
             std::fs::copy(staged, &dest).map_err(|e| e.to_string())?;
             self.installed.lock().unwrap().push(name.to_string());
-            Ok(AssetItem { name: name.into(), bytes: std::fs::metadata(&dest).unwrap().len(), extra: serde_json::Value::Null })
+            Ok(AssetItem::plain(name, std::fs::metadata(&dest).unwrap().len()))
         }
         fn list(&self) -> Vec<AssetItem> {
             vec![]
         }
         fn remove(&self, _: &str) -> Result<(), String> {
             Ok(())
+        }
+        fn success_message(&self, requested: &str, item: &AssetItem) -> String {
+            format!("装好 {requested}→{}", item.name)
         }
     }
 
@@ -156,7 +188,13 @@ mod tests {
             summary,
             vec![("ok.txt".into(), true), ("bad.txt".into(), false), ("big.txt".into(), false), ("nope.bin".into(), false), ("evil.txt".into(), true)]
         );
+        assert_eq!(out[0].message, "装好 ok.txt→ok.txt", "成功文案由仓库定");
+        assert_eq!(out[3].message, "不支持的扩展名（允许：txt）");
         assert_eq!(*store.installed.lock().unwrap(), vec!["ok.txt", "evil.txt"]);
         assert!(std::fs::read_dir(paths.upload_tmp_dir()).unwrap().next().is_none(), "暂存应清空");
+        let r = receipt(&out, serde_json::json!({"note": "n"}));
+        assert_eq!(r["ok"], false);
+        assert_eq!(r["items"].as_array().unwrap().len(), 5);
+        assert_eq!(r["note"], "n");
     }
 }

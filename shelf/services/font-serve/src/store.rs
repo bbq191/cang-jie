@@ -4,14 +4,14 @@
 //! `~/.config/fontconfig/fonts.conf` 引用（界面 CJK 回退）的标 `fontconfigRef`，删前 UI 提醒但不拦。
 //! 上传→落目录→`fc-cache -f`→重建 `$XDG_DATA_HOME/shelf/fonts.json`（字体菜单 qmd 读）。**只管原生阅读器**：
 //! KOReader 的字体由 koreader-serve 单独管（用户 2026-09-03 定：两边各自装、不同时装填）。
-use shelf_core::ttf;
 use serde::{Deserialize, Serialize};
 use shelf_core::asset::{AssetItem, AssetStore};
+use shelf_core::formats::{self, FONT_EXTS};
 use shelf_core::paths::Paths;
+use shelf_core::ttf;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-pub const FONT_EXT: &[&str] = &["ttf", "otf", "ttc"];
 /// 覆盖率 ≥ 此值才算"中文字体"、才进回退链（滤掉纯拉丁字体，避免拉丁字体当中文兜底）。
 pub const CJK_MIN_PCT: u8 = 8;
 /// 覆盖率 < 此值 = 低覆盖美术/子集字体，上传时警告（正文会缺字）。
@@ -117,11 +117,6 @@ impl FontStore {
         &self.json_path
     }
 
-    fn is_font_file(name: &str) -> bool {
-        let ext = name.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
-        name.contains('.') && FONT_EXT.contains(&ext.as_str())
-    }
-
     /// 文件的家族名列表：fc-scan 优先（带本地化名，如 "LXGW WenKai,霞鹜文楷"），否则自解析 name 表。
     fn families_of(&self, path: &Path) -> Vec<String> {
         if self.side_effects {
@@ -156,7 +151,7 @@ impl FontStore {
         let refs = self.fontconfig_families();
         let mut groups: BTreeMap<String, FontEntry> = BTreeMap::new();
         let Ok(rd) = std::fs::read_dir(&self.fonts_dir) else { return vec![] };
-        let mut files: Vec<String> = rd.flatten().filter_map(|e| e.file_name().to_str().map(|s| s.to_string())).filter(|n| !n.starts_with('.') && Self::is_font_file(n)).collect();
+        let mut files: Vec<String> = rd.flatten().filter_map(|e| e.file_name().to_str().map(|s| s.to_string())).filter(|n| !n.starts_with('.') && formats::has_ext(n, FONT_EXTS)).collect();
         files.sort();
         for f in files {
             let path = self.fonts_dir.join(&f);
@@ -201,7 +196,6 @@ impl FontStore {
             let _ = std::process::Command::new("fc-cache").arg("-f").status();
         }
     }
-
 
     /// 中文字体（覆盖率 ≥ CJK_MIN_PCT），按覆盖率降序——回退链首选覆盖最全的。
     fn cjk_fallback_order(fonts: &[FontEntry]) -> Vec<&FontEntry> {
@@ -297,7 +291,7 @@ impl AssetStore for FontStore {
         "font"
     }
     fn allowed_ext(&self) -> &'static [&'static str] {
-        FONT_EXT
+        FONT_EXTS
     }
     fn validate(&self, _name: &str, staged: &Path) -> Result<(), String> {
         let mut head = [0u8; 4];
@@ -331,6 +325,12 @@ impl AssetStore for FontStore {
         });
         Ok(AssetItem { name: name.into(), bytes, extra })
     }
+    fn success_message(&self, _requested: &str, item: &AssetItem) -> String {
+        match item.extra.get("family").and_then(|f| f.as_str()).filter(|f| !f.is_empty()) {
+            Some(f) => format!("已安装（家族 {f}）"),
+            None => "已安装".into(),
+        }
+    }
     fn list(&self) -> Vec<AssetItem> {
         self.entries()
             .into_iter()
@@ -344,7 +344,6 @@ impl AssetStore for FontStore {
         self.remove_family(name).map(|_| ())
     }
 }
-
 
 #[cfg(test)]
 mod tests {

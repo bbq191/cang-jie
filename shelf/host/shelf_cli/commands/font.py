@@ -1,7 +1,7 @@
 """`shelf font add|ls|rm`：只装原生阅读器（fontconfig 用户字体目录）；KOReader 用 `shelf koreader font`。"""
 from pathlib import Path
 
-from ..receipts import guard_file, print_receipts
+from ..receipts import upload_each
 
 NAME = "font"
 HELP = "字体：add <ttf/otf...> | ls | rm <家族名>（删该家族全部文件）"
@@ -29,13 +29,7 @@ def run(args, ctx) -> int:
         t.delete_named("/api/fonts", args.file)
         print(f"已删除 {args.file}")
         return 0
-    rc = 0
-    family = lambda it: f"  家族={((it.get('item') or {}).get('extra') or {}).get('family')}"  # noqa: E731
-    for f in args.files:
-        if not guard_file(f):
-            rc = 1
-            continue
-        rc |= print_receipts(t.post_files("/api/fonts", [f]), extra=family)
+    rc = upload_each(t, "/api/fonts", args.files, extra=lambda it: f"  家族={((it.get('item') or {}).get('extra') or {}).get('family')}")
     if rc == 0:
         print("原生阅读器「文字与布局」菜单重开即可选，无需重启；KOReader 请用 shelf koreader font add")
     return rc
