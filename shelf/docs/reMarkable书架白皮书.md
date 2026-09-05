@@ -277,6 +277,7 @@ Explore 走查出的粗糙点 + 一个真 bug，分 5 批。批 1-4 已真机部
 
 **验证**：离线 `cargo test --workspace`（bookconv 104 / shelf-core 37 / book-serve 10 / koreader 4 / font 4 / wallpaper 4 / gateway 6）+ host `pytest` 25 全绿，`node --check` 内嵌 JS 通过，workspace 零警告。
 **真机通（2026-09-05 13:41，USB 10.11.99.1，备份 `shelf-20260905-134052`，SSH 隧道打 loopback）**：注册表 font-serve 挂 tab「xochitl」、book-serve 无 tab ✓；`POST /staging` 一次传 jpg+epub → jpg 拒收（文案含整份白名单）、epub 落地回执 `name`=落地名 ✓；`/staging/optimize keep-spacing` 回执带统计「清洗+优化，2 章，653→1630 字节，自动目录 1 条」、列表等级 none→full ✓；`/staging/deliver` 非 EPUB/PDF 门 ✓；`/staging/mark weread` 拒 ✓；`/books/adopt` 进 KOReader 子目录（1630 字节同字节）+ `mark koreader` 后列表 `delivered.koreader` ✓；font-serve 拒 jpg（fallback 链照常）✓；旧 `POST /?target=` 404、`POST /koreader/books` 405 ✓；`.work/` 空（上传暂存已清）。测试书已从母版库与 KOReader 删除。
+**格式提示分档（2026-09-05，用户"入库页格式列太多了，只列实际支持的"）**：核实结论——18 个扩展名全部是设备装的 KOReader v2026.07.1 `documentregistry` 真注册的（crengine：txt/html/rtf/doc/docx/chm/mobi/azw/prc/fb2；mupdf：pdf/cbz/cbr/xps，`libarchive.so.13` 带 `rar`/`rar5` 所以 CBR 真能开；djvu 引擎：djvu），白名单没有多收。问题在**展示**：一口气列 18 个看不出谁能去哪。改 `formats` 分三档（`NATIVE_EXTS` epub/pdf · `HOST_CONVERTIBLE_EXTS` azw3/mobi/azw/prc/fb2 = host `WASH_EXT` · `KOREADER_ONLY_EXTS` 其余 11 个），`BOOK_EXTS` 仍是三档之并（测试钉死），网页拖放框只写「EPUB / PDF 及下列格式」，下方与 GUIDE「格式」条改为三档一句话说明（`FMT_TIERS`），KOReader 页改"母版库收的所有格式 KOReader 都能读"。
 
 ## 03q｜书籍优化深层优化：做精做细做强（2026-09-04，用户"只做精做细做强"）
 

@@ -8,8 +8,8 @@ use std::sync::OnceLock;
 pub fn page() -> &'static str {
     static PAGE: OnceLock<String> = OnceLock::new();
     PAGE.get_or_init(|| {
-        use shelf_core::formats::{BOOK_EXTS, DICT_EXTS, FONT_EXTS, IMAGE_EXTS};
-        let exts = serde_json::json!({"book": BOOK_EXTS, "font": FONT_EXTS, "dict": DICT_EXTS, "image": IMAGE_EXTS});
+        use shelf_core::formats::{BOOK_EXTS, DICT_EXTS, FONT_EXTS, HOST_CONVERTIBLE_EXTS, IMAGE_EXTS, KOREADER_ONLY_EXTS, NATIVE_EXTS};
+        let exts = serde_json::json!({"book": BOOK_EXTS, "native": NATIVE_EXTS, "convertible": HOST_CONVERTIBLE_EXTS, "koOnly": KOREADER_ONLY_EXTS, "font": FONT_EXTS, "dict": DICT_EXTS, "image": IMAGE_EXTS});
         PAGE_TEMPLATE.replace("__EXTS__", &exts.to_string())
     })
 }
@@ -116,13 +116,15 @@ const onUsb=/^10\.11\.99\./.test(location.hostname);
 /* 格式白名单：服务端 shelf_core::formats 注入（同一份，网页 accept + 选中即拦 = 服务端上传门） */
 const EXT=__EXTS__, dot=l=>l.map(e=>'.'+e);
 const BOOK_EXT=dot(EXT.book), FONT_EXT=dot(EXT.font), DICT_EXT=dot(EXT.dict), IMG_EXT=dot(EXT.image);
+const up=l=>l.map(e=>e.toUpperCase()).join(' / ');
+/* 书籍格式三档说明（同一份白名单分档展示，不再一口气列 18 个） */
+const FMT_TIERS=`<b>${up(EXT.native)}</b>：两个读器都能去 · <b>${up(EXT.convertible)}</b>：电脑 <code>shelf push</code> 可转成 EPUB 进原生，直接上传则只能加入 KOReader · <b>${up(EXT.koOnly)}</b>：只能加入 KOReader`;
 $('#logout').onclick=e=>{e.preventDefault();fetch('/logout',{method:'POST'}).then(()=>location.href='/login')};
 async function j(url,opt){const r=await fetch(url,opt);if(r.status===401){location.href='/login?next='+encodeURIComponent(location.pathname);return {ok:false,message:'未登录'}}if(r.status===403){location.href='/password';return {ok:false,message:'需先改密码'}}let d;try{d=await r.json()}catch{d={ok:false,message:'HTTP '+r.status}}if(!r.ok&&d.ok!==false)d={ok:false,message:d.message||('HTTP '+r.status)};return d}
 const postJ=async(url,body)=>{const r=await j(url,{method:'POST',body:JSON.stringify(body)});if(r.ok===false)alert(r.message||'失败');return r};
 
 /* 上传区 HTML（拖放框 + 隐藏 input + 队列 + 按钮），一处生成、各页复用；uploader() 认这个 .up 容器 */
 const upHtml=(icon,label,ext,btn)=>`<div class="up"><div class="drop"><span class="big">${icon}</span>${label}</div><input type="file" multiple hidden accept="${ext.join(',')}"><ul class="q"></ul><div class="row"><button class="btn pri go">${btn}</button></div></div>`;
-const extLabel=ext=>ext.map(e=>e.slice(1).toUpperCase()).join(' / ');
 
 /* 通用上传器：逐文件一请求，进度条，逐项回执；失败项可重传，队列可逐项删/清空，顶部总进度。box=.up 容器 */
 function uploader(box,urlOf,queryOf,okExt,onFinish){
@@ -172,7 +174,7 @@ const cjkBadge=p=>p==null?'':`<span class="badge ${p>=80?'on':(p>=8?'':'off')}" 
 const GUIDE=`<details class="cmp"><summary>母版库怎么用？两个读器怎么选？（点开）</summary>
 <dl class="help">
 <dt>三步走</dt><dd>① <b>入库</b>：上传（书籍格式）/ 抓网文 / 微信读书 / 电脑 <code>shelf push</code>——书<b>原样</b>进母版库，不动字节。② <b>优化</b>（可选）：EPUB 点「优化」洗排版、脚注、中英文缩进（PDF 端上不动，重排走电脑）。③ <b>落库</b>：点「投入原生书库」或「加入 KOReader」。<b>母版留着</b>，随时再投另一个。读器页（xochitl / KOReader）只管各自的字体、词典，不传书。</dd>
-<dt>格式</dt><dd>EPUB / PDF 两个读器都能去；CBZ / TXT / AZW3 等<b>只能加入 KOReader</b>，想进原生用电脑 <code>shelf push</code> 转成 EPUB。</dd>
+<dt>格式</dt><dd>${FMT_TIERS}。</dd>
 <dt>📖 投入原生书库（xochitl）：要做笔记、批注的书</dt><dd>目录跳转、脚注、换字体、<b>直接手写批注</b>、AI 解读。学术 / 论文 / 要划线的书放这；PDF 手写定稿也放这。</dd>
 <dt>📚 加入 KOReader：消遣、查词的书</dt><dd>自由重排、<b>内置词典</b>、翻页手势。小说、漫画、外语书顺手。</dd>
 <dt>拿不准放哪？</dt><dd>先投一个。母版还在，觉得不对随时再投另一个对照——<b>不用纠结"闲书还是研读"，去向你说了算</b>（侦探小说有人当消遣、有人拿来推理画线索图；漫画有人看有人学画）。</dd>
@@ -220,8 +222,8 @@ function renderTransfer(sec){sec.innerHTML=`
       ${GUIDE}
       ${onUsb?'':'<p class="opt-note">传大书建议走 USB <code>https://10.11.99.1:8778</code>，不占 Wi-Fi。</p>'}
       <h3>上传</h3>
-      ${upHtml('⬆','点击或拖入书（可多选 · '+extLabel(BOOK_EXT)+'）',BOOK_EXT,'进母版库')}
-      <p class="small">EPUB / PDF 两个读器都能去；其它格式只能加入 KOReader，想进原生用电脑 <code>shelf push</code> 转成 EPUB。不是书的文件（图片 / 压缩包）不收。</p>
+      ${upHtml('⬆','点击或拖入书（可多选 · '+up(EXT.native)+' 及下列格式）',BOOK_EXT,'进母版库')}
+      <p class="small">${FMT_TIERS}。不是书的文件（图片 / 压缩包）不收。</p>
       <h3>抓网文</h3>
       <div class="row"><input type="text" id="arturl" placeholder="https://… 文章链接（公众号 / 博客 / 新闻）" style="flex:1;min-width:12em"><button class="btn" id="artgo">抓取进母版库</button></div>
       <div class="small" id="artmsg" style="margin-top:.3em"></div>
@@ -295,7 +297,7 @@ const TABS={
       <dl class="help">
         <dt>安装</dt><dd>走官方仓库自装：先备齐基石 xovi + appload（见「管理」页），再从 <a href="https://github.com/koreader/koreader/releases" target="_blank" rel="noopener">官方 releases</a> 装 reMarkable Paper Pro（rmpp）版。</dd>
         <dt>已按 Move 屏调好（开箱即用，不用手动配）</dt><dd>本套件的 profile 贴近 xochitl 观感：中文主字体霞鹜新致宋、页边距、行距、脚注<b>底部弹窗</b>、悬挂标点、防误触、退出手势。</dd>
-        <dt>书从哪来</dt><dd>在「传书」页把书入母版库，点「加入 KOReader」即可（${extLabel(BOOK_EXT)}）。有什么书，去 KOReader 里看。</dd>
+        <dt>书从哪来</dt><dd>在「传书」页把书入母版库，点「加入 KOReader」即可（母版库收的所有格式 KOReader 都能读）。有什么书，去 KOReader 里看。</dd>
         <dt>改配置 / 删字体后</dt><dd>KOReader 若正在跑，需<b>重启它</b>才生效（上方状态「运行中」会提示）。</dd>
       </dl></details></div>
     <div class="card"><h3 style="margin-top:0">字体（KOReader）</h3><p class="small">只装进 KOReader；原生阅读器的字体在 xochitl 页装。</p>
@@ -459,6 +461,7 @@ mod tests {
         let p = super::page();
         assert!(!p.contains("__EXTS__"), "占位应被替换");
         assert!(p.contains(r#""book":["epub","pdf""#) && p.contains(r#""font":["ttf""#) && p.contains(r#""dict":["ifo""#) && p.contains(r#""image":["jpg""#));
+        assert!(p.contains(r#""native":["epub","pdf"]"#) && p.contains(r#""convertible":["azw3""#) && p.contains(r#""koOnly":["txt""#), "三档格式说明注入");
         assert!(std::ptr::eq(p, super::page()), "OnceLock 只渲染一次");
     }
 }

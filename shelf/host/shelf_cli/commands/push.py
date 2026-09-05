@@ -18,7 +18,8 @@ from ..receipts import guard_file, upload_each
 NAME = "push"
 HELP = "投书到母版库（host 有 Calibre 先洗书）；去向在网页选。难搞的书/PDF 重排用这条"
 
-# host 能洗的源格式（其余原样传母版库）。
+# host 能洗/转成 EPUB 的源格式（其余原样传母版库）。= Rust `shelf_core::formats::HOST_CONVERTIBLE_EXTS` ∪ {epub}，
+# 网页「格式」提示里"电脑可转"那一档就是它——改一处另一处同步（Python 不链接 Rust crate，只能镜像）。
 WASH_EXT = {".epub", ".azw3", ".mobi", ".azw", ".prc", ".fb2"}
 
 
