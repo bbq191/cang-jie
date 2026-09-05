@@ -1,11 +1,13 @@
 //! 反向代理（Facade）：把 `/api/<seg>[/<rest>]` 转给注册表里的服务（剥掉 `<seg>`），body 流式透传、状态码/JSON 原样回。
 use shelf_core::http::{ApiError, ApiResult, Method, Reply, Request};
+use shelf_core::multipart::percent_encode as enc;
 use shelf_core::paths::Paths;
 use shelf_core::registry;
 use std::io::Read;
 
-pub fn forward(paths: &Paths, service: Option<&'static str>, req: &mut Request<'_>) -> ApiResult {
-    let Some(name) = service else { return Err(ApiError::not_found("未知服务")) };
+/// `/api/{svc}/*` → 按 URL 段查目录表找服务名再转发（段不在表里 404）。
+pub fn forward(paths: &Paths, req: &mut Request<'_>) -> ApiResult {
+    let Some(name) = crate::manage::service_of(req.param("svc")) else { return Err(ApiError::not_found("未知服务")) };
     let Some(info) = registry::find(paths, name) else {
         return Err(ApiError { status: 404, message: format!("{name} 未安装或未运行") });
     };
@@ -42,23 +44,4 @@ pub fn forward(paths: &Paths, service: Option<&'static str>, req: &mut Request<'
     let mut body = Vec::new();
     resp.into_reader().read_to_end(&mut body).map_err(|e| ApiError::internal(e.to_string()))?;
     Ok(Reply { status, content_type: ctype, body, headers: vec![] })
-}
-
-pub fn enc(s: &str) -> String {
-    let mut o = String::new();
-    for b in s.bytes() {
-        match b {
-            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => o.push(b as char),
-            _ => o.push_str(&format!("%{:02X}", b)),
-        }
-    }
-    o
-}
-
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn encodes_query() {
-        assert_eq!(super::enc("a b/中"), "a%20b%2F%E4%B8%AD");
-    }
 }

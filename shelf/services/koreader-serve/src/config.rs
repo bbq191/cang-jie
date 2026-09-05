@@ -25,13 +25,13 @@ pub struct ApplyResult {
     pub backup: Option<String>,
 }
 
-pub struct ConfigSync<'a> {
-    pub ko: &'a KoReader,
+pub struct ConfigSync {
+    pub ko: std::sync::Arc<KoReader>,
     pub backup_dir: PathBuf,
     pub tmp_dir: PathBuf,
 }
 
-impl ConfigSync<'_> {
+impl ConfigSync {
     fn luajit(&self) -> PathBuf {
         let p = self.ko.root().join("luajit");
         if p.is_file() {
@@ -119,9 +119,9 @@ mod tests {
             return;
         }
         let t = tempfile::tempdir().unwrap();
-        let ko = KoReader::new(t.path());
+        let ko = std::sync::Arc::new(KoReader::new(t.path()));
         std::fs::write(t.path().join("settings.reader.lua"), "return { wf_level = 3, footer = { battery = true } }\n").unwrap();
-        let cs = ConfigSync { ko: &ko, backup_dir: t.path().join("bk"), tmp_dir: t.path().join("tmp") };
+        let cs = ConfigSync { ko, backup_dir: t.path().join("bk"), tmp_dir: t.path().join("tmp") };
         let patch = "return { wf_level = 1, footer = { battery = false, reclaim_height = true } }";
         let d = cs.apply_with("settings", patch, true, || false).unwrap();
         assert!(d.dry_run && !d.written && d.changes.as_array().unwrap().len() == 3 && d.backup.is_none());

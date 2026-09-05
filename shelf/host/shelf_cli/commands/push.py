@@ -13,7 +13,7 @@ from pathlib import Path
 
 from .. import calibre_bridge as cb
 from .. import pdfsplit
-from ..receipts import guard_file, print_receipts
+from ..receipts import guard_file, upload_each
 
 NAME = "push"
 HELP = "投书到母版库（host 有 Calibre 先洗书）；去向在网页选。难搞的书/PDF 重排用这条"
@@ -85,7 +85,6 @@ def host_prepare(path: Path, args, work: Path) -> list[Path]:
 def run(args, ctx) -> int:
     calibre = cb.has_calibre()
     do_wash = calibre and not args.no_optimize
-    dest = "母版库"
     rc = 0
     landed = 0
     work = cb.workdir()
@@ -93,7 +92,7 @@ def run(args, ctx) -> int:
         if not guard_file(path):
             rc = 1
             continue
-        print(f"→ {path.name}  {'洗书→' if do_wash else '原样→'}{dest}")
+        print(f"→ {path.name}  {'洗书→' if do_wash else '原样→'}母版库")
         if args.dry_run:
             continue
         try:
@@ -111,16 +110,9 @@ def run(args, ctx) -> int:
                 final.extend(parts)
             else:
                 final.append(o)
-        for o in final:
-            # 只落母版库（原样落，host 已洗则带优化标记）；去向在网页「传书 → 母版库」选。
-            try:
-                res = ctx.transport.post_files("/api/books/staging", [o], {})
-            except Exception as e:  # noqa: BLE001
-                print(f"✗ {o.name}: {e}")
-                rc = 1
-                continue
-            rc |= print_receipts(res, name_key="file", default_name=o.name, fallback_self=True)
-            landed += 1
+        # 只落母版库（原样落，host 已洗则带优化标记）；去向在网页「传书 → 母版库」选。
+        rc |= upload_each(ctx.transport, "/api/books/staging", final)
+        landed += len(final)
     if landed and not args.dry_run:
         scheme = getattr(ctx.config, "scheme", "https")
         print(f"→ 已入母版库。去 {scheme}://{ctx.config.host}:{ctx.config.port}/ 「传书 → 母版库」点优化 / 选去向（xochitl / KOReader）")

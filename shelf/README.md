@@ -97,7 +97,7 @@ shelf wallpaper add 图.jpg [--activate] | ls | set <name> | mode sequential|ran
 shelf koreader pull | diff | sync [-n] [--fonts] [--dicts]   # 配置即代码（Lua 合并在设备端跑）
 shelf koreader font add 字体.ttf | ls | rm <file>         # 只装进 KOReader（原生+KOReader 同装用 shelf font）
 ```
-配置 `$XDG_CONFIG_HOME/shelf/config.toml`（host/port/ssh/default_target/quality/split_pdf_mb）。
+配置 `$XDG_CONFIG_HOME/shelf/config.toml`（host/port/scheme/password/verify_tls/ssh/split_pdf_mb）。
 
 ## 阶段状态
 

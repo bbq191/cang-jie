@@ -1,14 +1,17 @@
 //! koreader-serve —— 书架·KOReader（loopback 8791）。
-//! 路由（经网关前缀 `/api/koreader`）：`GET /status` · `POST /books?folder=`（multipart 多文件）·
-//! `GET /books[?folder=]` · `GET /fonts` · `POST /fonts`（直传 KOReader 字体；font-serve 镜像也走它）· `DELETE /fonts/{file}` · `GET /dicts` · `POST /dicts?name=`
+//! 路由（经网关前缀 `/api/koreader`）：`GET /status` · `GET /books[?folder=]` · `POST /books/adopt {name, folder}`（从母版库落库）·
+//! `GET /fonts` · `POST /fonts` · `DELETE /fonts/{file}` · `GET /dicts` · `POST /dicts?name=` ·
 //! `GET /config/{settings|defaults|gestures}`（原文）· `POST /config/{file}?dry_run=1`（body=补丁 Lua；运行中拒写）。
+//! 书只从母版库来（2026-09-05 规则：所有书先落母版库，落库＝纯复制原字节，不优化），本服务不再收直传书。
 mod config;
 mod koreader;
 
-use koreader::{KoReader, KoStore, KO_ANY, KO_DICT_EXT, KO_FONT_EXT};
-use shelf_core::asset::{all_ok, AssetStore, AssetUploadFlow};
-use shelf_core::http::{ApiError, ApiResult, Reply, Request, Router};
-use shelf_core::multipart::boundary_of;
+use config::ConfigSync;
+use koreader::{KoReader, KoStore, KO_ANY};
+use shelf_core::asset::{self, AssetStore, AssetUploadFlow};
+use shelf_core::formats::{DICT_EXTS, FONT_EXTS};
+use shelf_core::fs::plain_name;
+use shelf_core::http::{bind, ApiError, ApiResult, Reply, Request, Router};
 use shelf_core::paths::Paths;
 use shelf_core::service::{self, ServiceSpec};
 use std::sync::Arc;
@@ -21,170 +24,113 @@ const SPEC: ServiceSpec = ServiceSpec {
     tab: Some(("KOReader", 20)),
 };
 
-/// 服务配置 `~/.config/shelf/koreader.json`。
-#[derive(serde::Serialize, serde::Deserialize)]
-#[serde(default, rename_all = "camelCase")]
-struct KoConfig {
-    /// 收 EPUB 时先过统一优化器（与 xochitl native 一致的去锁/排版/图片/目录，脚注 Anchor 供 KOReader 弹窗）。默认开。
-    optimize_epub: bool,
-}
-impl Default for KoConfig {
-    fn default() -> Self {
-        KoConfig { optimize_epub: true }
-    }
+struct State {
+    ko: Arc<KoReader>,
+    paths: Paths,
+    sync: ConfigSync,
 }
 
-fn status(k: &KoReader, optimize_epub: bool) -> serde_json::Value {
-    serde_json::json!({
-        "ok": true,
-        "installed": k.installed(),
-        "running": k.running(),
-        "version": k.version(),
-        "root": k.root(),
-        "booksDir": k.books_dir(),
-        "books": k.list_books("").map(|v| v.iter().filter(|e| e.kind == "file").count()).unwrap_or(0),
-        "fonts": k.list_dir(&k.fonts_dir(), &["ttf","otf","ttc"]).len(),
-        "dicts": list_dicts(k).len(),
-        "optimizeEpub": optimize_epub,
-    })
-}
-
-/// multipart 多文件 → `store` 目标（books/fonts/dicts 共用同一 [`AssetUploadFlow`]）。`into` 是回执里的落点显示名。
-/// KOReader 未装→409；每项回执沿用历史形状 `{file, ok, target, message}`（客户端契约不变）。
-fn ko_upload(k: &KoReader, r: &mut Request<'_>, paths: &Paths, store: &KoStore, into: &str) -> ApiResult {
-    if !k.installed() {
-        return Err(ApiError { status: 409, message: "KOReader 未安装（appload 目录不存在）".into() });
-    }
-    let Some(boundary) = boundary_of(&r.content_type) else { return Err(ApiError::bad("需要 multipart/form-data")) };
-    let outcomes = AssetUploadFlow::new(paths).run(store, &mut *r.body, &boundary).map_err(ApiError::bad)?;
-    let items: Vec<serde_json::Value> = outcomes
-        .iter()
-        .map(|o| {
-            if o.ok {
-                let bytes = o.item.as_ref().map(|i| i.bytes).unwrap_or(0);
-                serde_json::json!({"file": o.name, "ok": true, "target": "koreader", "message": format!("已放入 KOReader {into}（{bytes} 字节）")})
-            } else {
-                serde_json::json!({"file": o.name, "ok": false, "target": "koreader", "message": o.message})
-            }
-        })
-        .collect();
-    Ok(Reply::ok(&serde_json::json!({"ok": all_ok(&outcomes), "items": items, "note": if k.running() {"KOReader 正在运行：新书需在其文件浏览器里刷新"} else {""}})))
-}
-
-/// data/dict/ 下每个子目录=一本词典（有 .ifo 才算）。
-fn list_dicts(k: &KoReader) -> Vec<serde_json::Value> {
-    let mut v = Vec::new();
-    if let Ok(rd) = std::fs::read_dir(k.dict_dir()) {
-        for e in rd.flatten() {
-            if e.path().is_dir() {
-                let n = k.list_dir(&e.path(), &["ifo"]).len();
-                if n > 0 {
-                    v.push(serde_json::json!({"name": e.file_name().to_string_lossy(), "ifo": n}));
-                }
-            }
+impl State {
+    fn require_installed(&self) -> Result<(), ApiError> {
+        if self.ko.installed() {
+            Ok(())
+        } else {
+            Err(ApiError { status: 409, message: "KOReader 未安装（appload 目录不存在）".into() })
         }
     }
-    v
+
+    fn status(&self) -> serde_json::Value {
+        let k = &self.ko;
+        serde_json::json!({
+            "ok": true,
+            "installed": k.installed(),
+            "running": k.running(),
+            "version": k.version(),
+            "root": k.root(),
+            "booksDir": k.books_dir(),
+            "books": k.list_books("").map(|v| v.iter().filter(|e| e.kind == "file").count()).unwrap_or(0),
+            "fonts": koreader::list_files(&k.fonts_dir(), FONT_EXTS).len(),
+            "dicts": k.list_dicts().len(),
+        })
+    }
+
+    /// multipart 多文件 → `store`（fonts/dicts 共用同一 [`AssetUploadFlow`]）。KOReader 未装→409。
+    fn upload(&self, r: &mut Request<'_>, store: &KoStore) -> ApiResult {
+        self.require_installed()?;
+        let boundary = r.multipart_boundary()?;
+        let items = AssetUploadFlow::new(&self.paths).run(store, &mut *r.body, &boundary).map_err(ApiError::bad)?;
+        Ok(Reply::ok(&asset::receipt(&items, serde_json::json!({"note": self.ko.running_note("KOReader 正在运行：重启它后才生效")}))))
+    }
+
+    fn font_store(&self) -> KoStore {
+        KoStore::new(self.ko.fonts_dir(), "koreader-font", FONT_EXTS, "fonts/")
+    }
 }
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    let bind = service::parse_bind(&args, SPEC.default_bind);
+    let bind_addr = service::parse_bind(&args, SPEC.default_bind);
     let paths = Paths::from_env();
-    let k = Arc::new(KoReader::new(paths.koreader_root()));
-    let kcfg: KoConfig = shelf_core::config::load_or_seed(&paths.service_config("koreader"));
-    let opt_epub = kcfg.optimize_epub;
-    let (k1, k2, k3, k4, k5, k6) = (k.clone(), k.clone(), k.clone(), k.clone(), k.clone(), k.clone());
-    let (k7, k8, k9) = (k.clone(), k.clone(), k.clone());
-    let (k10, pb, pf, pd, pa) = (k.clone(), paths.clone(), paths.clone(), paths.clone(), paths.clone());
-    let backup_dir = paths.state_dir().join("koreader-backups");
-    let tmp_dir = paths.runtime_dir().join("koreader");
+    let ko = Arc::new(KoReader::new(paths.koreader_root()));
+    let st = Arc::new(State {
+        sync: ConfigSync { ko: ko.clone(), backup_dir: paths.state_dir().join("koreader-backups"), tmp_dir: paths.runtime_dir().join("koreader") },
+        ko,
+        paths: paths.clone(),
+    });
     let router = Router::new()
-        .get("/status", move |_| Ok(Reply::ok(&status(&k1, opt_epub))))
-        .post("/books", move |r| {
-            let folder = r.q("folder").unwrap_or("").to_string();
-            let dest = k2.subdir(&folder).map_err(ApiError::bad)?;
-            ko_upload(&k2, r, &pb, &KoStore::new(dest, "koreader-book", KO_ANY).optimizing(opt_epub), "books/")
-        })
-        .get("/books", move |r| {
+        .get("/status", bind(&st, |s, _| Ok(Reply::ok(&s.status()))))
+        .get("/books", bind(&st, |s, r| {
             let folder = r.q("folder").unwrap_or("").trim_matches('/').to_string();
-            let items = k3.list_books(&folder).map_err(ApiError::bad)?;
+            let items = s.ko.list_books(&folder).map_err(ApiError::bad)?;
             Ok(Reply::ok(&serde_json::json!({"folder": folder, "items": items})))
-        })
+        }))
         // 从母版库（book-serve 的 staging/，共享目录）adopt 一本书到 KOReader——落库=纯复制母版字节，不优化
         // （优化是母版库的独立动作；两读器落同一字节才能对照）。前端从 /api/books/staging 列表选书后调这里。
-        .post("/books/adopt", move |r| {
-            if !k10.installed() {
-                return Err(ApiError { status: 409, message: "KOReader 未安装（appload 目录不存在）".into() });
-            }
-            let j = r.json_body().map_err(ApiError::bad)?;
-            let raw = j.get("name").and_then(|v| v.as_str()).ok_or_else(|| ApiError::bad("缺 name"))?;
-            let name = shelf_core::multipart::safe_basename(raw, "");
-            if name.is_empty() || name.starts_with('.') {
-                return Err(ApiError::bad("非法文件名"));
-            }
-            let src = pa.staging_dir().join(&name);
+        .post("/books/adopt", bind(&st, |s, r| {
+            s.require_installed()?;
+            let j = r.json()?;
+            let name = plain_name(j.str("name")?).map_err(ApiError::bad)?.to_string();
+            let src = s.paths.staging_dir().join(&name);
             if !src.is_file() {
                 return Err(ApiError::not_found("母版库里没有这本书"));
             }
-            let folder = j.get("folder").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            let dest = k10.subdir(&folder).map_err(ApiError::bad)?;
-            let item = KoStore::new(dest, "koreader-book", KO_ANY).install(&name, &src).map_err(ApiError::bad)?;
-            Ok(Reply::ok(&serde_json::json!({"ok": true, "message": format!("已加入 KOReader《{}》（{} 字节）", name, item.bytes), "note": if k10.running() {"KOReader 运行中：在其文件浏览器刷新可见"} else {""}})))
-        })
-        .get("/fonts", move |_| {
-            let dir = k4.fonts_dir();
-            let items: Vec<serde_json::Value> = k4.list_dir(&dir, &["ttf", "otf", "ttc"]).into_iter().map(|it| {
+            let dest = s.ko.subdir(j.str_or("folder", "")).map_err(ApiError::bad)?;
+            let item = KoStore::new(dest, "koreader-book", KO_ANY, "books/").install(&name, &src).map_err(ApiError::bad)?;
+            Ok(Reply::ok(&serde_json::json!({"ok": true, "message": format!("已加入 KOReader《{}》（{} 字节）", name, item.bytes), "note": s.ko.running_note("KOReader 运行中：在其文件浏览器刷新可见")})))
+        }))
+        .get("/fonts", bind(&st, |s, _| {
+            let dir = s.ko.fonts_dir();
+            let items: Vec<serde_json::Value> = koreader::list_files(&dir, FONT_EXTS).into_iter().map(|it| {
                 // 中文基本区覆盖率（同原生字体一致的判据），低覆盖当正文会缺字
                 let pct = std::fs::read(dir.join(&it.name)).ok().and_then(|b| shelf_core::ttf::han_coverage_pct(&b)).unwrap_or(0);
                 serde_json::json!({"name": it.name, "bytes": it.bytes, "cjkPct": pct})
             }).collect();
             Ok(Reply::ok(&serde_json::json!({"items": items})))
-        })
-        .post("/fonts", move |r| ko_upload(&k5, r, &pf, &KoStore::new(k5.fonts_dir(), "koreader-font", KO_FONT_EXT), "fonts/"))
-        .delete("/fonts/{file}", {
-            let k = k.clone();
-            move |r| {
-                let name = shelf_core::multipart::safe_basename(r.param("file"), "");
-                if name.is_empty() || name.starts_with('.') {
-                    return Err(ApiError::bad("非法文件名"));
-                }
-                let p = k.fonts_dir().join(&name);
-                if !p.is_file() {
-                    return Err(ApiError::not_found("KOReader fonts/ 里没有这个文件"));
-                }
-                std::fs::remove_file(&p).map_err(|e| ApiError::internal(format!("删除失败: {e}")))?;
-                Ok(Reply::ok(&serde_json::json!({"ok": true, "note": if k.running() {"KOReader 运行中：重启它后字体列表才更新"} else {""}})))
-            }
-        })
-        .get("/dicts", move |_| Ok(Reply::ok(&serde_json::json!({"items": list_dicts(&k6)}))))
-        .post("/dicts", move |r| {
+        }))
+        .post("/fonts", bind(&st, |s, r| s.upload(r, &s.font_store())))
+        .delete("/fonts/{file}", bind(&st, |s, r| {
+            s.font_store().remove(r.param("file")).map_err(|e| ApiError::not_found(format!("删除失败: {e}")))?;
+            Ok(Reply::ok(&serde_json::json!({"ok": true, "note": s.ko.running_note("KOReader 运行中：重启它后字体列表才更新")})))
+        }))
+        .get("/dicts", bind(&st, |s, _| Ok(Reply::ok(&serde_json::json!({"items": s.ko.list_dicts()})))))
+        .post("/dicts", bind(&st, |s, r| {
             let name = r.q("name").unwrap_or("").trim().to_string();
-            if name.is_empty() || name.contains('/') || name.contains("..") {
-                return Err(ApiError::bad("需要 ?name=<词典目录名>（单层）"));
-            }
-            let dest = k7.dict_dir().join(&name);
-            ko_upload(&k7, r, &pd, &KoStore::new(dest, "koreader-dict", KO_DICT_EXT), &format!("词典 {name}/"))
-        })
-        .get("/config/{file}", move |r| {
-            let cs = config::ConfigSync { ko: &k8, backup_dir: backup_dir.clone(), tmp_dir: tmp_dir.clone() };
-            let text = cs.read(r.param("file")).map_err(ApiError::bad)?;
+            plain_name(&name).map_err(|_| ApiError::bad("需要 ?name=<词典目录名>（单层）"))?;
+            s.upload(r, &KoStore::new(s.ko.dict_dir().join(&name), "koreader-dict", DICT_EXTS, format!("词典 {name}/")))
+        }))
+        .get("/config/{file}", bind(&st, |s, r| {
+            let text = s.sync.read(r.param("file")).map_err(ApiError::bad)?;
             Ok(Reply::bytes("text/plain; charset=utf-8", text.into_bytes()))
-        })
-        .post("/config/{file}", {
-            let backup_dir = paths.state_dir().join("koreader-backups");
-            let tmp_dir = paths.runtime_dir().join("koreader");
-            move |r| {
-                let file = r.param("file").to_string();
-                let dry = r.q("dry_run").map(|v| v == "1" || v == "true").unwrap_or(false);
-                let patch = String::from_utf8(r.read_small_body().map_err(ApiError::bad)?).map_err(|_| ApiError::bad("补丁不是 UTF-8"))?;
-                let cs = config::ConfigSync { ko: &k9, backup_dir: backup_dir.clone(), tmp_dir: tmp_dir.clone() };
-                let res = cs.apply(&file, &patch, dry).map_err(|e| ApiError { status: if e.contains("正在运行") { 409 } else { 400 }, message: e })?;
-                Ok(Reply::ok(&res))
-            }
-        });
-    println!("[koreader-serve] root={} installed={}", k.root().display(), k.installed());
-    if let Err(e) = service::run(&SPEC, &bind, &paths, router) {
+        }))
+        .post("/config/{file}", bind(&st, |s, r| {
+            let file = r.param("file").to_string();
+            let dry = r.q_flag("dry_run");
+            let patch = String::from_utf8(r.read_small_body().map_err(ApiError::bad)?).map_err(|_| ApiError::bad("补丁不是 UTF-8"))?;
+            let res = s.sync.apply(&file, &patch, dry).map_err(|e| ApiError { status: if e.contains("正在运行") { 409 } else { 400 }, message: e })?;
+            Ok(Reply::ok(&res))
+        }));
+    println!("[koreader-serve] root={} installed={}", st.ko.root().display(), st.ko.installed());
+    if let Err(e) = service::run(&SPEC, &bind_addr, &paths, router) {
         eprintln!("[koreader-serve] {e}");
         std::process::exit(1);
     }

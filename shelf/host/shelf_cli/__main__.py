@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import argparse
+import getpass
+import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -38,11 +40,9 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None, transport_factory=None) -> int:
     args = build_parser().parse_args(argv)
     paths = pathsmod.Paths()
-    import os
     pw = args.password or os.environ.get("SHELF_PASSWORD") or None
     cfg = cfgmod.load(paths, {"host": args.host, "port": args.port, "scheme": "http" if args.http else None, "password": pw})
     if not cfg.password and transport_factory is None and sys.stdin.isatty():
-        import getpass
         cfg.password = getpass.getpass(f"书架密码（{cfg.host}；首次默认 shelf）: ")
     transport = (transport_factory or (lambda c: tr.HttpTransport(c.base_url, password=c.password, verify_tls=c.verify_tls)))(cfg)
     ctx = Context(paths=paths, config=cfg, transport=transport)

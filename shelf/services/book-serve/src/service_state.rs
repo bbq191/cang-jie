@@ -1,7 +1,9 @@
-//! 服务共享状态：配置、spool、目标注册表、xochitl 客户端；inbox 追平处理。
+//! 服务组合根：配置、inbox 队列、母版库、xochitl 客户端；inbox 追平处理。
 use crate::config::BookConfig;
 use crate::spool::Spool;
-use crate::target::{Outcome, TargetRegistry};
+use crate::staging::{self, Staging};
+use serde::Serialize;
+use shelf_core::formats::{self, BOOK_EXTS};
 use shelf_core::paths::Paths;
 use shelf_core::xochitl::Xochitl;
 use std::sync::Arc;
@@ -11,8 +13,16 @@ pub struct State {
     /// 只读：系统增强面板的开关文件（`$XDG_DATA_HOME/cangjie-ime/reading-qol.json`，书架不写它）。
     pub reading_qol: std::path::PathBuf,
     pub spool: Spool,
-    pub targets: TargetRegistry,
+    pub staging: Staging,
     pub xochitl: Arc<Xochitl>,
+}
+
+/// inbox 追平一项的结果（日志 / `POST /inbox/retry` 回执）。
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct InboxOutcome {
+    pub name: String,
+    pub ok: bool,
+    pub message: String,
 }
 
 impl State {
@@ -20,9 +30,14 @@ impl State {
         let cfg = BookConfig::load(paths);
         let xochitl = Arc::new(Xochitl::new(&cfg.xochitl_host, &paths.xochitl_dir(), cfg.upload_timeout_secs));
         let spool = Spool::new(paths.state_dir().join("books"));
-        let targets = TargetRegistry::new(&cfg, xochitl.clone());
+        let staging = Staging::new(paths.staging_dir(), xochitl.clone(), cfg.library_folder.clone());
         let reading_qol = paths.data_root().join("cangjie-ime/reading-qol.json");
-        State { cfg, spool, targets, xochitl, reading_qol }
+        State { cfg, spool, staging, xochitl, reading_qol }
+    }
+
+    pub fn ensure_dirs(&self) -> std::io::Result<()> {
+        self.spool.ensure()?;
+        self.staging.ensure()
     }
 
     pub fn status(&self) -> serde_json::Value {
@@ -36,47 +51,56 @@ impl State {
                 "pending": items.iter().filter(|i| i.state == "pending").count(),
                 "failed": items.iter().filter(|i| i.state == "failed").count(),
             },
-            "targets": self.targets.ids().iter().map(|(i, l)| serde_json::json!({"id": i, "label": l})).collect::<Vec<_>>(),
             "readingQol": std::fs::read_to_string(&self.reading_qol).ok().and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok()),
         })
     }
 
-    /// 处理 inbox（scp 丢进来的 / 重试的）：**原样落母版库**，不再直投 native。
-    /// 规则与网页/CLI 一致——所有书只允许落母版库，去向在网页选（2026-09-05 用户定）。`only`=只处理该文件。
-    pub fn process_inbox(&self, only: Option<&str>) -> Vec<Outcome> {
+    /// 处理 inbox（scp 丢进来的 / 重试的）：**原样落母版库**（与网页/CLI 同一规则：所有书只落母版库，去向在网页选）。
+    /// 非书籍格式进 failed/ 带原因、不反复重试。`only`=只处理该文件。
+    pub fn process_inbox(&self, only: Option<&str>) -> Vec<InboxOutcome> {
         let _g = self.spool.guard();
         let mut out = Vec::new();
         let Ok(rd) = std::fs::read_dir(self.spool.inbox()) else { return out };
         for e in rd.flatten() {
             let p = e.path();
-            if !p.is_file() {
-                continue;
-            }
             let Some(name) = p.file_name().and_then(|s| s.to_str()).map(|s| s.to_string()) else { continue };
-            if only.map(|o| o != name).unwrap_or(false) || name.starts_with('.') {
+            if !p.is_file() || only.map(|o| o != name).unwrap_or(false) || name.starts_with('.') {
                 continue; // 半成品不动
             }
             let Some(work) = self.spool.claim(&name) else { continue };
-            if !crate::api::is_book_name(&name) {
-                // 与网页同一份书籍格式限制（BOOK_EXTS）：非书文件进 failed/ 带原因，不进母版库也不反复重试
-                let msg = format!("不是书籍格式，母版库只收 {}", crate::api::BOOK_EXTS.join(" "));
-                self.spool.archive_failed(&work, &msg);
-                out.push(Outcome { file: name.clone(), target: "staging".into(), ok: false, message: msg });
-                continue;
-            }
-            let o = match std::fs::read(&work).map_err(|e| format!("读取失败: {e}")).and_then(|d| self.spool.stage_new(&name, &d)) {
-                Ok(landed) => {
-                    let _ = std::fs::remove_file(&work);
-                    Outcome { file: landed, target: "staging".into(), ok: true, message: "已入母版库".into() }
-                }
+            let res = if formats::has_ext(&name, BOOK_EXTS) { self.staging.stage_from_path(&name, &work) } else { Err(staging::reject_message()) };
+            let o = match res {
+                Ok(landed) => InboxOutcome { name: landed, ok: true, message: "已入母版库".into() },
                 Err(e) => {
                     self.spool.archive_failed(&work, &e);
-                    Outcome { file: name.clone(), target: "staging".into(), ok: false, message: e }
+                    InboxOutcome { name: name.clone(), ok: false, message: e }
                 }
             };
             println!("[book-serve] inbox {} → {}: {}", name, if o.ok { "ok" } else { "fail" }, o.message);
             out.push(o);
         }
         out
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn inbox_lands_books_and_fails_non_books() {
+        let t = tempfile::tempdir().unwrap();
+        let h = t.path().to_str().unwrap().to_string();
+        let paths = Paths::resolve(move |k| if k == "HOME" || k == "XDG_RUNTIME_DIR" { Some(h.clone()) } else { None });
+        let st = State::new(&paths);
+        st.ensure_dirs().unwrap();
+        std::fs::write(st.spool.inbox().join("b.mobi"), b"x").unwrap();
+        std::fs::write(st.spool.inbox().join("p.jpg"), b"x").unwrap();
+        let out = st.process_inbox(None);
+        assert_eq!(out.len(), 2);
+        assert!(out.iter().any(|o| o.ok && o.name == "b.mobi"));
+        assert!(out.iter().any(|o| !o.ok && o.name == "p.jpg" && o.message.contains("不是书籍格式")));
+        assert!(st.staging.dir().join("b.mobi").is_file() && !st.spool.inbox().join("b.mobi").exists());
+        assert_eq!(st.spool.list().iter().filter(|e| e.state == "failed").count(), 1);
     }
 }

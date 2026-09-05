@@ -41,10 +41,37 @@ pub struct Request<'a> {
     pub body: &'a mut dyn Read,
 }
 
+/// 按名取头（不区分大小写）——[`Request`] 与 [`GuardRequest`] 共用。
+fn header_of<'a>(headers: &'a [(String, String)], name: &str) -> Option<&'a str> {
+    headers.iter().find(|(k, _)| k.eq_ignore_ascii_case(name)).map(|(_, v)| v.as_str())
+}
+
+/// JSON 请求体的取值门面：缺字段 / 类型不对统一变 400 `ApiError`，各服务不再各写一遍
+/// `j.get("name").and_then(|v| v.as_str()).ok_or_else(|| ApiError::bad("缺 name"))`。
+pub struct JsonBody(pub serde_json::Value);
+
+impl JsonBody {
+    /// 必填字符串字段。
+    pub fn str(&self, key: &str) -> Result<&str, ApiError> {
+        self.0.get(key).and_then(|v| v.as_str()).ok_or_else(|| ApiError::bad(format!("缺 {key}")))
+    }
+    /// 可选字符串字段（去首尾空白；缺 / 空白 → `default`）。
+    pub fn str_or<'a>(&'a self, key: &str, default: &'a str) -> &'a str {
+        self.0.get(key).and_then(|v| v.as_str()).map(str::trim).filter(|s| !s.is_empty()).unwrap_or(default)
+    }
+    pub fn bool_or(&self, key: &str, default: bool) -> bool {
+        self.0.get(key).and_then(|v| v.as_bool()).unwrap_or(default)
+    }
+}
+
 impl Request<'_> {
     /// 按名取头（不区分大小写）。
     pub fn header(&self, name: &str) -> Option<&str> {
-        self.headers.iter().find(|(k, _)| k.eq_ignore_ascii_case(name)).map(|(_, v)| v.as_str())
+        header_of(&self.headers, name)
+    }
+    /// 查询参数是否为真（`1` / `true`）。
+    pub fn q_flag(&self, k: &str) -> bool {
+        matches!(self.q(k), Some("1") | Some("true"))
     }
     /// `application/x-www-form-urlencoded` 表单 → map（小 body）。
     pub fn form_body(&mut self) -> Result<HashMap<String, String>, String> {
@@ -66,6 +93,14 @@ impl Request<'_> {
     pub fn json_body(&mut self) -> Result<serde_json::Value, String> {
         let b = self.read_small_body()?;
         serde_json::from_slice(&b).map_err(|e| format!("JSON 解析失败: {e}"))
+    }
+    /// JSON body → [`JsonBody`]（解析失败 400）。
+    pub fn json(&mut self) -> Result<JsonBody, ApiError> {
+        self.json_body().map(JsonBody).map_err(ApiError::bad)
+    }
+    /// multipart 请求的 boundary；非 multipart → 400。
+    pub fn multipart_boundary(&self) -> Result<String, ApiError> {
+        crate::multipart::boundary_of(&self.content_type).ok_or_else(|| ApiError::bad("需要 multipart/form-data"))
     }
 }
 
@@ -140,10 +175,61 @@ pub type ApiResult = Result<Reply, ApiError>;
 
 pub type Handler = Arc<dyn Fn(&mut Request<'_>) -> ApiResult + Send + Sync>;
 
+/// 把共享状态绑进处理函数：`router.get("/x", bind(&st, |st, r| …))`。
+/// 替代各服务 main 里 `let (s1, s2, s3, …) = (st.clone(), …)` 的手工克隆串。
+pub fn bind<S, F>(state: &Arc<S>, f: F) -> impl Fn(&mut Request<'_>) -> ApiResult + Send + Sync + 'static
+where
+    S: Send + Sync + 'static,
+    F: Fn(&S, &mut Request<'_>) -> ApiResult + Send + Sync + 'static,
+{
+    let st = state.clone();
+    move |r| f(&st, r)
+}
+
+/// 路径模式（分段；尾 `*` 前缀匹配；`{x}` 参数）。
+struct Pattern {
+    segs: Vec<String>,
+    prefix: bool,
+}
+
+impl Pattern {
+    fn parse(pattern: &str) -> Pattern {
+        let mut segs: Vec<String> = pattern.trim_matches('/').split('/').filter(|s| !s.is_empty()).map(|s| s.to_string()).collect();
+        let prefix = segs.last().map(|s| s == "*").unwrap_or(false);
+        if prefix {
+            segs.pop();
+        }
+        Pattern { segs, prefix }
+    }
+
+    /// 匹配则返回参数表（`{x}` 解码后；前缀模式额外给 `*`=余下路径）。
+    fn matches(&self, path: &str) -> Option<HashMap<String, String>> {
+        let segs: Vec<&str> = path.trim_matches('/').split('/').filter(|s| !s.is_empty()).collect();
+        if self.prefix {
+            if segs.len() < self.segs.len() {
+                return None;
+            }
+        } else if segs.len() != self.segs.len() {
+            return None;
+        }
+        let mut params = HashMap::new();
+        for (pat, seg) in self.segs.iter().zip(segs.iter()) {
+            if pat.starts_with('{') && pat.ends_with('}') {
+                params.insert(pat[1..pat.len() - 1].to_string(), crate::multipart::percent_decode(seg));
+            } else if pat != seg {
+                return None;
+            }
+        }
+        if self.prefix {
+            params.insert("*".into(), segs[self.segs.len()..].join("/"));
+        }
+        Some(params)
+    }
+}
+
 struct Route {
     method: Method,
-    pattern: Vec<String>, // 分段；"*" 尾通配；"{x}" 参数
-    prefix: bool,
+    pattern: Pattern,
     handler: Handler,
 }
 
@@ -156,16 +242,21 @@ impl Router {
     pub fn new() -> Router {
         Router::default()
     }
-    pub fn route<F>(mut self, method: Method, pattern: &str, f: F) -> Router
+    pub fn route<F>(self, method: Method, pattern: &str, f: F) -> Router
     where
         F: Fn(&mut Request<'_>) -> ApiResult + Send + Sync + 'static,
     {
-        let mut segs: Vec<String> = pattern.trim_matches('/').split('/').filter(|s| !s.is_empty()).map(|s| s.to_string()).collect();
-        let prefix = segs.last().map(|s| s == "*").unwrap_or(false);
-        if prefix {
-            segs.pop();
+        self.any(&[method], pattern, f)
+    }
+    /// 同一处理函数挂到多个方法（反向代理这类"方法无关"的路由不必写四遍）。
+    pub fn any<F>(mut self, methods: &[Method], pattern: &str, f: F) -> Router
+    where
+        F: Fn(&mut Request<'_>) -> ApiResult + Send + Sync + 'static,
+    {
+        let handler: Handler = Arc::new(f);
+        for &method in methods {
+            self.routes.push(Arc::new(Route { method, pattern: Pattern::parse(pattern), handler: handler.clone() }));
         }
-        self.routes.push(Arc::new(Route { method, pattern: segs, prefix, handler: Arc::new(f) }));
         self
     }
     pub fn get<F>(self, p: &str, f: F) -> Router
@@ -199,49 +290,20 @@ impl Router {
         self
     }
 
-    fn matches(route: &Route, method: Method, path: &str) -> Option<HashMap<String, String>> {
-        if route.method != method {
-            return None;
-        }
-        let segs: Vec<&str> = path.trim_matches('/').split('/').filter(|s| !s.is_empty()).collect();
-        if route.prefix {
-            if segs.len() < route.pattern.len() {
-                return None;
-            }
-        } else if segs.len() != route.pattern.len() {
-            return None;
-        }
-        let mut params = HashMap::new();
-        for (pat, seg) in route.pattern.iter().zip(segs.iter()) {
-            if pat.starts_with('{') && pat.ends_with('}') {
-                params.insert(pat[1..pat.len() - 1].to_string(), crate::multipart::percent_decode(seg));
-            } else if pat != seg {
-                return None;
-            }
-        }
-        if route.prefix {
-            params.insert("*".into(), segs[route.pattern.len()..].join("/"));
-        }
-        Some(params)
-    }
-
-    /// 分发（纯函数，可单测）。
+    /// 分发（纯函数，可单测）。路径匹配但方法不对 → 405。
     pub fn dispatch(&self, req: &mut Request<'_>) -> Reply {
         let mut path_exists = false;
         for r in &self.routes {
-            if let Some(params) = Self::matches(r, req.method, &req.path) {
-                req.params = params;
-                return match (r.handler)(req) {
-                    Ok(rep) => rep,
-                    Err(e) => e.into(),
-                };
-            }
-            // 405 判断：同路径其它方法
-            let mut probe = Route { method: req.method, pattern: r.pattern.clone(), prefix: r.prefix, handler: r.handler.clone() };
-            probe.method = req.method;
-            if Self::matches(&probe, req.method, &req.path).is_some() {
+            let Some(params) = r.pattern.matches(&req.path) else { continue };
+            if r.method != req.method {
                 path_exists = true;
+                continue;
             }
+            req.params = params;
+            return match (r.handler)(req) {
+                Ok(rep) => rep,
+                Err(e) => e.into(),
+            };
         }
         if req.method == Method::Options {
             return Reply { status: 204, content_type: "text/plain".into(), body: vec![], headers: vec![] };
@@ -284,7 +346,7 @@ pub struct GuardRequest {
 }
 impl GuardRequest {
     pub fn header(&self, name: &str) -> Option<&str> {
-        self.headers.iter().find(|(k, _)| k.eq_ignore_ascii_case(name)).map(|(_, v)| v.as_str())
+        header_of(&self.headers, name)
     }
 }
 
@@ -387,5 +449,26 @@ mod tests {
         assert_eq!(call(&router, Method::Post, "/api/fonts", "").0, 405);
         assert_eq!(call(&router, Method::Get, "/nope", "").0, 404);
         assert_eq!(call(&router, Method::Options, "/whatever", "").0, 204);
+    }
+
+    #[test]
+    fn any_binds_one_handler_to_many_methods_and_bind_shares_state() {
+        let st = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let router = Router::new().any(&[Method::Get, Method::Post], "/n", bind(&st, |st, _| {
+            let n = st.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+            Ok(Reply::ok(&serde_json::json!({"n": n})))
+        }));
+        assert_eq!(call(&router, Method::Get, "/n", "").1, r#"{"n":1}"#);
+        assert_eq!(call(&router, Method::Post, "/n", "").1, r#"{"n":2}"#);
+        assert_eq!(call(&router, Method::Put, "/n", "").0, 405);
+    }
+
+    #[test]
+    fn json_body_accessors() {
+        let b = JsonBody(serde_json::json!({"name": "x", "folder": "  ", "keep": false}));
+        assert_eq!(b.str("name").unwrap(), "x");
+        assert_eq!(b.str("nope").unwrap_err().message, "缺 nope");
+        assert_eq!(b.str_or("folder", "lib"), "lib", "空白当缺省");
+        assert!(!b.bool_or("keep", true) && b.bool_or("other", true));
     }
 }

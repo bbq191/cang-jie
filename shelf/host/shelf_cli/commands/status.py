@@ -1,3 +1,5 @@
+"""`shelf status`：网关在线 + 每个活着的服务打一次 `/health`。URL 段↔服务名映射来自网关 `/api/manage`
+（单一事实源 `manage::MODULES`），本地不再硬编码一份。"""
 NAME = "status"
 HELP = "网关与各服务健康状态"
 
@@ -7,24 +9,27 @@ def add_args(p):
 
 
 def run(args, ctx) -> int:
-    ok = True
+    t = ctx.transport
     try:
-        svcs = ctx.transport.get("/api/services").get("services", [])
+        svcs = t.get("/api/services").get("services", [])
     except Exception as e:  # noqa: BLE001
         print(f"网关 {ctx.config.base_url}: 不可达（{e}）")
         return 1
     print(f"网关 {ctx.config.base_url}: 在线")
-    seg = {"book-serve": "books", "koreader-serve": "koreader", "font-serve": "fonts", "wallpaper-serve": "wallpapers", "weread-serve": "weread"}
+    try:
+        seg = {m["service"]: m["seg"] for m in t.get("/api/manage").get("modules", [])}
+    except Exception:  # noqa: BLE001
+        seg = {}
+    ok = True
     for s in svcs:
         if s["name"] not in seg:
             continue
         try:
-            h = ctx.transport.get(f"/api/{seg[s['name']]}/health")
+            h = t.get(f"/api/{seg[s['name']]}/health")
             extra = ""
             if s["name"] == "book-serve":
                 try:
-                    st = ctx.transport.get("/api/books/status")
-                    sp = st.get("spool", {})
+                    sp = t.get("/api/books/status").get("spool", {})
                     extra = f"  队列 待{sp.get('pending', 0)}/失败{sp.get('failed', 0)}"
                 except Exception:  # noqa: BLE001
                     pass

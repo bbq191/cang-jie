@@ -37,7 +37,7 @@ def _run(cmd: list[str], env_extra: dict | None = None, **kw) -> subprocess.Comp
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
-def _py_with_pymupdf() -> list[str]:
+def py_with_pymupdf() -> list[str]:
     """跑纯 pymupdf 脚本（check_output / pdf_crop_move）的解释器：它们不调 ebook-convert，可以走仓库 uv 环境
     （pymupdf 在 `calibre` 依赖组）；无 uv/pyproject 时退回系统 python3（需自行 pip 装 pymupdf）。"""
     if shutil.which("uv") and (REPO_ROOT / "pyproject.toml").is_file():
@@ -70,7 +70,7 @@ class ScannedPdf(Exception):
 
 
 def crop_pdf(src: Path, out: Path) -> Path:
-    r = _run([*_py_with_pymupdf(), str(CALIBRE_DIR / "pdf_crop_move.py"), str(src), str(out)])
+    r = _run([*py_with_pymupdf(), str(CALIBRE_DIR / "pdf_crop_move.py"), str(src), str(out)])
     if r.returncode == 3:
         raise ScannedPdf(r.stdout.strip() or r.stderr.strip())
     if r.returncode != 0 or not out.is_file():
@@ -86,7 +86,7 @@ def reflow_pdf(src: Path, outdir: Path) -> tuple[Path, str]:
     """PDF 重排（born-digital 结构化→EPUB / 扫描件 k2pdfopt|裁边→PDF）。返回 (产物路径, kind∈{'epub','pdf'})。"""
     import json
 
-    r = _run([*_py_with_pymupdf(), str(CALIBRE_DIR / "pdf_reflow_move.py"), str(src), str(outdir)])
+    r = _run([*py_with_pymupdf(), str(CALIBRE_DIR / "pdf_reflow_move.py"), str(src), str(outdir)])
     if r.returncode != 0:
         raise CalibreError(f"pdf_reflow_move.py 失败（rc={r.returncode}）：{r.stderr.strip()[-800:]}")
     try:
@@ -98,7 +98,7 @@ def reflow_pdf(src: Path, outdir: Path) -> tuple[Path, str]:
 
 def check(path: Path, require_toc: bool = False) -> tuple[bool, str]:
     """C5 体检（check_output.py）：返回 (通过?, 输出)。硬拦项非零退出。"""
-    cmd = [*_py_with_pymupdf(), str(CALIBRE_DIR / "check_output.py"), str(path)]
+    cmd = [*py_with_pymupdf(), str(CALIBRE_DIR / "check_output.py"), str(path)]
     if require_toc:
         cmd.append("--require-toc")
     r = _run(cmd)

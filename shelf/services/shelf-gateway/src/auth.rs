@@ -38,14 +38,13 @@ enum Who {
 }
 
 impl AuthState {
-    fn identify(&self, headers: &[(String, String)]) -> Who {
-        let h = |n: &str| headers.iter().find(|(k, _)| k.eq_ignore_ascii_case(n)).map(|(_, v)| v.as_str());
-        if let Some(tok) = h("Cookie").and_then(|c| parse_cookie(c, COOKIE)) {
+    fn identify(&self, r: &GuardRequest) -> Who {
+        if let Some(tok) = r.header("Cookie").and_then(|c| parse_cookie(c, COOKIE)) {
             if self.sessions.check(&tok) {
                 return Who::Session;
             }
         }
-        if let Some((_, pw)) = h("Authorization").and_then(parse_basic) {
+        if let Some((_, pw)) = r.header("Authorization").and_then(parse_basic) {
             if self.cfg.lock().map(|c| c.verify(&pw)).unwrap_or(false) {
                 return Who::Basic;
             }
@@ -66,9 +65,9 @@ impl AuthState {
                     return None;
                 }
                 let html = wants_html(r.header("Accept"));
-                match st.identify(&r.headers) {
+                match st.identify(r) {
                     Who::Nobody => Some(if html {
-                        Reply::redirect(&format!("/login?next={}", crate::proxy::enc(&r.path)))
+                        Reply::redirect(&format!("/login?next={}", shelf_core::multipart::percent_encode(&r.path)))
                     } else {
                         Reply::error(401, "需要登录（网页 /login；CLI 用 Basic 密码）").with_header("WWW-Authenticate", "Basic realm=\"shelf\", charset=\"UTF-8\"")
                     }),

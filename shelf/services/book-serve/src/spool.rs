@@ -1,14 +1,16 @@
-//! 自有 spool（`$XDG_STATE_HOME/shelf/books/{inbox,.work,done,failed}`）。
-//! 与旧项目 `/home/root/weread/inbox` 无关。语义：
-//! - `inbox/`  待处理（scp 丢进来的、或上传接收完成后暂放）——fswatch 追平；
-//! - `.work/`  已认领、处理中（rename 原子独占，防并发重复处理）；
-//! - `done/`   成功源归档（封顶 100MB，便于重投）；`failed/` 失败源（封顶 50MB，可重试/删除）。
-use serde::{Deserialize, Serialize};
+//! inbox 追平队列（`$XDG_STATE_HOME/shelf/books/{inbox,.work,failed}`）——给 scp 直接丢文件的人一条"不经网页也进母版库"的路。
+//! - `inbox/`  待处理（scp 丢进来的）——fswatch 追平；
+//! - `.work/`  已认领、处理中（rename 原子独占，防并发重复处理）；上传流程的暂存也在这（与母版库同分区，入库 rename 零拷贝）；
+//! - `failed/` 失败源（封顶 50MB，可重试/删除，`<name>.reason` sidecar 记原因）。
+//! 处理成功的书进母版库（`staging/`，见 `staging.rs`），本队列不再另存一份。
+use serde::Serialize;
+use shelf_core::fs::{move_unique, plain_name, unique_path};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-const DONE_CAP: u64 = 100 * 1024 * 1024;
 const FAILED_CAP: u64 = 50 * 1024 * 1024;
+/// 失败原因 sidecar 后缀。
+const REASON_EXT: &str = ".reason";
 
 pub struct Spool {
     root: PathBuf,
@@ -20,38 +22,10 @@ pub struct SpoolEntry {
     pub name: String,
     pub bytes: u64,
     pub state: &'static str,
-    /// 失败原因（仅 failed 条目，读 `<name>.reason` sidecar）。
+    /// 失败原因（仅 failed 条目）。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
 }
-
-/// 母版库（staging）一本书的展示条目。`format` 从扩展名判、`optimized` 从内埋标记判（轻量只读中央目录）。
-#[derive(Serialize, Clone, Debug, PartialEq)]
-pub struct StagingEntry {
-    pub name: String,
-    pub bytes: u64,
-    pub format: &'static str,
-    /// 是否**当前版本的完整优化**（含清洗层）。`level` 更细：full / core（只跑核心遍，如网文·格式转换产物）/ old（旧版本）/ none。
-    pub optimized: bool,
-    pub level: &'static str,
-    /// 入库时间（unix 秒），列表最新在前。
-    pub mtime: u64,
-    /// 落库记录（sidecar `.<name>.delivered`）：投过哪个读器、何时。时间早于 `mtime`（之后又优化过）= 母版已变，UI 标"旧"。
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub delivered: Option<Delivered>,
-}
-
-/// 落库记录：各读器最近一次落库的 unix 秒。
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
-pub struct Delivered {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub native: Option<u64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub koreader: Option<u64>,
-}
-
-/// 失败原因 sidecar 后缀。
-const REASON_EXT: &str = ".reason";
 
 impl Spool {
     pub fn new(root: PathBuf) -> Spool {
@@ -63,19 +37,11 @@ impl Spool {
     pub fn work(&self) -> PathBuf {
         self.root.join(".work")
     }
-    pub fn done(&self) -> PathBuf {
-        self.root.join("done")
-    }
     pub fn failed(&self) -> PathBuf {
         self.root.join("failed")
     }
-    /// 母版库（中间层暂存池）：所有源原样落这里，用户再选优化/落库去向。**不套 done/ 的 LRU 淘汰**。
-    /// 与 `shelf_core::Paths::staging_dir()` 同一路径（root=`state_dir()/books`）——koreader-serve adopt 时读同处。
-    pub fn staging(&self) -> PathBuf {
-        self.root.join("staging")
-    }
     pub fn ensure(&self) -> std::io::Result<()> {
-        for d in [self.inbox(), self.work(), self.done(), self.failed(), self.staging()] {
+        for d in [self.inbox(), self.work(), self.failed()] {
             std::fs::create_dir_all(d)?;
         }
         Ok(())
@@ -88,26 +54,15 @@ impl Spool {
 
     /// 认领 inbox 里的文件：rename 进 .work（原子独占）。另一线程已搬走 → None。
     pub fn claim(&self, name: &str) -> Option<PathBuf> {
-        let src = self.inbox().join(name);
-        let dst = unique(&self.work(), name);
-        std::fs::rename(&src, &dst).ok().map(|_| dst)
+        let dst = unique_path(&self.work(), name);
+        std::fs::rename(self.inbox().join(name), &dst).ok().map(|_| dst)
     }
 
-    /// 上传路：直接在 .work 里开一个独占文件（不经 inbox）。
-    pub fn stage(&self, name: &str) -> PathBuf {
-        unique(&self.work(), name)
-    }
-
-    pub fn archive_done(&self, p: &Path) {
-        archive(p, &self.done());
-        prune(&self.done(), DONE_CAP);
-    }
     /// 归档失败源到 `failed/`，并把 `reason` 写进 `<归档名>.reason` sidecar（供列表展示，重试不再靠猜）。
     pub fn archive_failed(&self, p: &Path, reason: &str) {
-        let target = archive(p, &self.failed());
-        if let Some(t) = &target {
+        if let Some(t) = move_unique(p, &self.failed()) {
             if !reason.trim().is_empty() {
-                let _ = std::fs::write(reason_path(t), reason.trim());
+                let _ = std::fs::write(reason_path(&t), reason.trim());
             }
         }
         prune(&self.failed(), FAILED_CAP);
@@ -119,7 +74,7 @@ impl Spool {
         if let Ok(rd) = std::fs::read_dir(self.work()) {
             for e in rd.flatten() {
                 if e.path().is_file() {
-                    archive(&e.path(), &self.inbox());
+                    move_unique(&e.path(), &self.inbox());
                     n += 1;
                 }
             }
@@ -130,19 +85,15 @@ impl Spool {
     pub fn list(&self) -> Vec<SpoolEntry> {
         let mut out = Vec::new();
         for (dir, state) in [(self.inbox(), "pending"), (self.work(), "working"), (self.failed(), "failed")] {
-            if let Ok(rd) = std::fs::read_dir(&dir) {
-                for e in rd.flatten() {
-                    let fname = e.file_name().to_string_lossy().to_string();
-                    if fname.ends_with(REASON_EXT) {
-                        continue; // sidecar 不作为条目
-                    }
-                    if let Ok(md) = e.metadata() {
-                        if md.is_file() {
-                            let reason = if state == "failed" { std::fs::read_to_string(reason_path(&e.path())).ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()) } else { None };
-                            out.push(SpoolEntry { name: fname, bytes: md.len(), state, reason });
-                        }
-                    }
+            let Ok(rd) = std::fs::read_dir(&dir) else { continue };
+            for e in rd.flatten() {
+                let fname = e.file_name().to_string_lossy().to_string();
+                let Ok(md) = e.metadata() else { continue };
+                if fname.ends_with(REASON_EXT) || fname.starts_with('.') || !md.is_file() {
+                    continue; // sidecar / 上传半成品不作为条目
                 }
+                let reason = if state == "failed" { std::fs::read_to_string(reason_path(&e.path())).ok().map(|s| s.trim().to_string()).filter(|s| !s.is_empty()) } else { None };
+                out.push(SpoolEntry { name: fname, bytes: md.len(), state, reason });
             }
         }
         out.sort_by(|a, b| (a.state, &a.name).cmp(&(b.state, &b.name)));
@@ -151,130 +102,19 @@ impl Spool {
 
     /// failed/ → inbox/（重试）；连带清掉 `.reason` sidecar。
     pub fn retry(&self, name: &str) -> Result<(), String> {
-        let src = self.failed().join(safe(name)?);
+        let src = self.failed().join(plain_name(name)?);
         if !src.is_file() {
             return Err("failed/ 里没有这个文件".into());
         }
         let _ = std::fs::remove_file(reason_path(&src));
-        archive(&src, &self.inbox());
+        move_unique(&src, &self.inbox());
         Ok(())
     }
     pub fn delete_failed(&self, name: &str) -> Result<(), String> {
-        let src = self.failed().join(safe(name)?);
+        let src = self.failed().join(plain_name(name)?);
         let _ = std::fs::remove_file(reason_path(&src));
         std::fs::remove_file(&src).map_err(|e| format!("删除失败: {e}"))
     }
-
-    // ───────────────────────── 母版库（staging）操作 ─────────────────────────
-
-    /// 新入库：原样原子写进母版库，同名加数字前缀不覆盖。返回落地文件名（供前端引用）。
-    pub fn stage_new(&self, name: &str, bytes: &[u8]) -> Result<String, String> {
-        let base = safe(name)?;
-        let target = unique(&self.staging(), base);
-        shelf_core::fs::write_atomic(&target, bytes).map_err(|e| format!("写母版库失败: {e}"))?;
-        Ok(target.file_name().and_then(|s| s.to_str()).unwrap_or(base).to_string())
-    }
-
-    /// 覆盖写母版库同名文件（优化后回写产物）。原子。
-    pub fn overwrite_staging(&self, name: &str, bytes: &[u8]) -> Result<(), String> {
-        let target = self.staging().join(safe(name)?);
-        shelf_core::fs::write_atomic(&target, bytes).map_err(|e| format!("回写母版库失败: {e}"))
-    }
-
-    /// 母版库某文件的安全路径（校验文件名）。
-    pub fn staging_path(&self, name: &str) -> Result<PathBuf, String> {
-        Ok(self.staging().join(safe(name)?))
-    }
-
-    pub fn read_staging(&self, name: &str) -> Result<Vec<u8>, String> {
-        std::fs::read(self.staging_path(name)?).map_err(|e| format!("读母版库文件失败: {e}"))
-    }
-
-    pub fn remove_staging(&self, name: &str) -> Result<(), String> {
-        let p = self.staging_path(name)?;
-        let _ = std::fs::remove_file(delivered_path(&p));
-        std::fs::remove_file(&p).map_err(|e| format!("删除失败: {e}"))
-    }
-
-    /// 记一次落库（`target`=native|koreader）。写 sidecar `.<name>.delivered`（隐藏名，列表不当条目）。
-    pub fn mark_delivered(&self, name: &str, target: &str) -> Result<(), String> {
-        let p = self.staging_path(name)?;
-        if !p.is_file() {
-            return Err("母版库里没有这本书".into());
-        }
-        let mut d = read_delivered(&p).unwrap_or_default();
-        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
-        match target {
-            "native" => d.native = Some(now),
-            "koreader" => d.koreader = Some(now),
-            _ => return Err("target 只能是 native / koreader".into()),
-        }
-        let s = serde_json::to_vec(&d).map_err(|e| e.to_string())?;
-        shelf_core::fs::write_atomic(&delivered_path(&p), &s).map_err(|e| format!("写落库记录失败: {e}"))
-    }
-
-    /// 母版库所在分区剩余空间（字节）。`df -k` 解析：表头后的所有行拍平成 token（设备名太长时 busybox 会把数字
-    /// 换到下一行，真机 `/dev/mapper/home-encrypted-disk` 就这样），第 4 个 token = Available KB；解析不了返回 None。
-    pub fn free_bytes(&self) -> Option<u64> {
-        let out = std::process::Command::new("df").arg("-k").arg(self.staging()).output().ok()?;
-        let s = String::from_utf8_lossy(&out.stdout);
-        let toks: Vec<&str> = s.lines().skip(1).flat_map(|l| l.split_whitespace()).collect();
-        toks.get(3)?.parse::<u64>().ok().map(|kb| kb * 1024)
-    }
-
-    /// 列母版库：格式（epub/pdf/other）+ 是否带优化标记（`optimized_version_file` 轻量只读中央目录）。
-    pub fn list_staging(&self) -> Vec<StagingEntry> {
-        let mut out = Vec::new();
-        if let Ok(rd) = std::fs::read_dir(self.staging()) {
-            for e in rd.flatten() {
-                let name = e.file_name().to_string_lossy().to_string();
-                if name.starts_with('.') {
-                    continue; // .part 半成品 / 隐藏文件不列
-                }
-                let Ok(md) = e.metadata() else { continue };
-                if !md.is_file() {
-                    continue;
-                }
-                let lower = name.to_ascii_lowercase();
-                let format = if lower.ends_with(".epub") {
-                    "epub"
-                } else if lower.ends_with(".pdf") {
-                    "pdf"
-                } else {
-                    "other"
-                };
-                // 优化状态只对 EPUB 有意义（PDF/其它格式端上不优化）。标记分等级：完整（含 wash）= 版本号本身；
-                // 只跑核心遍（网文/格式转换产物）= `<版本>-core`；旧版本号 = old。只有 full 才不再给「优化」按钮。
-                let level = if format != "epub" {
-                    "none"
-                } else {
-                    match e.path().to_str().and_then(bookconv::optimize::optimized_version_file) {
-                        Some(v) if v == bookconv::optimize::OPTIMIZE_VERSION => "full",
-                        Some(v) if v.ends_with("-core") => "core",
-                        Some(_) => "old",
-                        None => "none",
-                    }
-                };
-                let mtime = md.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs()).unwrap_or(0);
-                let delivered = read_delivered(&e.path());
-                out.push(StagingEntry { name, bytes: md.len(), format, optimized: level == "full", level, mtime, delivered });
-            }
-        }
-        // 最新入库在前（同秒按名）。
-        out.sort_by(|a, b| b.mtime.cmp(&a.mtime).then_with(|| a.name.cmp(&b.name)));
-        out
-    }
-}
-
-/// 母版库落库记录 sidecar：`.<文件名>.delivered`（同目录、隐藏名）。
-fn delivered_path(book: &Path) -> PathBuf {
-    let name = book.file_name().and_then(|s| s.to_str()).unwrap_or("book");
-    book.with_file_name(format!(".{name}.delivered"))
-}
-
-fn read_delivered(book: &Path) -> Option<Delivered> {
-    let s = std::fs::read(delivered_path(book)).ok()?;
-    serde_json::from_slice(&s).ok()
 }
 
 /// `<文件>.reason` sidecar 路径。
@@ -284,37 +124,7 @@ fn reason_path(p: &Path) -> PathBuf {
     PathBuf::from(s)
 }
 
-fn safe(name: &str) -> Result<&str, String> {
-    if name.is_empty() || name.contains('/') || name.contains('\\') || name == "." || name == ".." {
-        return Err("非法文件名".into());
-    }
-    Ok(name)
-}
-
-fn unique(dir: &Path, name: &str) -> PathBuf {
-    let mut t = dir.join(name);
-    let mut n = 1;
-    while t.exists() {
-        t = dir.join(format!("{n}_{name}"));
-        n += 1;
-    }
-    t
-}
-
-/// 归档到 `dest_dir`（rename，跨设备回退 copy+rm）。返回落地后的唯一路径（失败 None）。
-fn archive(src: &Path, dest_dir: &Path) -> Option<PathBuf> {
-    let name = src.file_name().and_then(|s| s.to_str()).unwrap_or("file");
-    let target = unique(dest_dir, name);
-    if std::fs::rename(src, &target).is_ok() {
-        Some(target)
-    } else if std::fs::copy(src, &target).is_ok() {
-        let _ = std::fs::remove_file(src);
-        Some(target)
-    } else {
-        None
-    }
-}
-
+/// 超过 `cap` 时按 mtime 从旧到新删，直到不超。
 fn prune(dir: &Path, cap: u64) {
     let Ok(rd) = std::fs::read_dir(dir) else { return };
     let mut files: Vec<(PathBuf, u64, std::time::SystemTime)> = Vec::new();
@@ -372,52 +182,14 @@ mod tests {
     }
 
     #[test]
-    fn staging_put_list_read_remove() {
-        let t = tempfile::tempdir().unwrap();
-        let s = Spool::new(t.path().join("books"));
-        s.ensure().unwrap();
-        assert_eq!(s.stage_new("a.epub", b"not-a-zip").unwrap(), "a.epub");
-        assert_eq!(s.stage_new("a.epub", b"xx").unwrap(), "1_a.epub", "同名不覆盖");
-        s.stage_new("doc.pdf", b"%PDF").unwrap();
-        let list = s.list_staging();
-        assert_eq!(list.len(), 3);
-        let epub = list.iter().find(|e| e.name == "a.epub").unwrap();
-        assert_eq!(epub.format, "epub");
-        assert!(!epub.optimized, "非 zip 不该判已优化");
-        assert_eq!(list.iter().find(|e| e.name == "doc.pdf").unwrap().format, "pdf");
-        assert_eq!(s.read_staging("a.epub").unwrap(), b"not-a-zip");
-        s.overwrite_staging("a.epub", b"new").unwrap();
-        assert_eq!(s.read_staging("a.epub").unwrap(), b"new");
-        s.remove_staging("a.epub").unwrap();
-        assert_eq!(s.list_staging().len(), 2);
-        assert!(s.stage_new("../x", b"y").is_err(), "非法名拒绝");
-    }
-
-    #[test]
-    fn staging_delivered_record_roundtrip() {
-        let t = tempfile::tempdir().unwrap();
-        let s = Spool::new(t.path().join("books"));
-        s.ensure().unwrap();
-        s.stage_new("b.epub", b"x").unwrap();
-        assert!(s.list_staging()[0].delivered.is_none(), "未落库无记录");
-        s.mark_delivered("b.epub", "native").unwrap();
-        s.mark_delivered("b.epub", "koreader").unwrap();
-        let d = s.list_staging()[0].delivered.clone().unwrap();
-        assert!(d.native.is_some() && d.koreader.is_some());
-        assert_eq!(s.list_staging().len(), 1, "sidecar 不当条目列出");
-        assert!(s.mark_delivered("b.epub", "weread").is_err(), "未知 target 拒绝");
-        assert!(s.mark_delivered("nope.epub", "native").is_err(), "不存在的书拒绝");
-        s.remove_staging("b.epub").unwrap();
-        assert!(!delivered_path(&s.staging().join("b.epub")).exists(), "删书连带删 sidecar");
-    }
-
-    #[test]
-    fn recover_orphans_moves_work_back() {
+    fn recover_orphans_moves_work_back_and_hides_upload_parts() {
         let t = tempfile::tempdir().unwrap();
         let s = Spool::new(t.path().to_path_buf());
         s.ensure().unwrap();
         std::fs::write(s.work().join("half.azw3"), b"x").unwrap();
-        assert_eq!(s.recover_orphans(), 1);
+        std::fs::write(s.work().join(".abc.book.part"), b"x").unwrap();
+        assert_eq!(s.list().iter().map(|e| e.name.as_str()).collect::<Vec<_>>(), vec!["half.azw3"], "上传半成品不列");
+        assert_eq!(s.recover_orphans(), 2);
         assert!(s.inbox().join("half.azw3").is_file());
     }
 

@@ -10,7 +10,7 @@ mod manage;
 mod proxy;
 mod ui;
 
-use shelf_core::http::{ApiError, Method, Reply, Router, ServeOpts};
+use shelf_core::http::{bind, ApiError, Method, Reply, Router, ServeOpts};
 use shelf_core::paths::Paths;
 use shelf_core::registry;
 use shelf_core::service::{self, ServiceSpec};
@@ -23,14 +23,6 @@ const SPEC: ServiceSpec = ServiceSpec {
     default_bind: "0.0.0.0:8778",
     tab: None,
 };
-
-/// `/api/<service>/<rest>` 的服务名映射：单一事实源在 `manage::MODULES`。
-fn service_of(segment: &str) -> Option<&'static str> {
-    Some(match manage::service_of(segment) {
-        Some(s) => s,
-        None => return None,
-    })
-}
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
@@ -71,7 +63,7 @@ fn main() {
             std::process::exit(2)
         }
     }
-    let bind = service::parse_bind(&args, SPEC.default_bind);
+    let bind_addr = service::parse_bind(&args, SPEC.default_bind);
     let mut opts = ServeOpts::default();
     let tls_dir = paths.config_dir().join("tls");
     if cfg.https {
@@ -109,15 +101,14 @@ fn main() {
         shelf_core::mdns::spawn(vec![cfg.mdns_name.trim().to_string()]);
         println!("[shelf-gateway] mDNS 名 {}.local（iOS/macOS/Windows/Linux 可直接访问；安卓走热点 dnsmasq 别名）", cfg.mdns_name.trim());
     }
-    let p1 = paths.clone();
-    let p2 = paths.clone();
+    let paths = Arc::new(paths);
     let mut router = Router::new()
-        .get("/", |_| Ok(Reply::html(ui::PAGE)))
+        .get("/", |_| Ok(Reply::html(ui::page())))
         .get("/ca.crt", { let d = tls_dir.clone(); move |_| Ok(match shelf_core::tls::ca_pem(&d) {
             Some(pem) => Reply::bytes("application/x-x509-ca-cert", pem).with_header("Content-Disposition", "attachment; filename=\"shelf-ca.crt\""),
             None => Reply::error(404, "HTTPS 未启用，无 CA"),
         }) })
-        .get("/api/services", move |_| Ok(Reply::ok(&serde_json::json!({"services": registry::list(&p1)}))));
+        .get("/api/services", bind(&paths, |p, _| Ok(Reply::ok(&serde_json::json!({"services": registry::list(p)})))));
     if let Some(st) = &state {
         let (a, b, c, d, e) = (st.clone(), st.clone(), st.clone(), st.clone(), st.clone());
         router = router
@@ -131,22 +122,18 @@ fn main() {
         router = router.get("/api/session", |_| Ok(Reply::ok(&serde_json::json!({"ok": true, "mustChange": false, "auth": false}))));
     }
     // 管理台/引导路由——**必须在 /api/{svc} 代理通配之前**注册（否则 manage/foundation 被当服务段代理成 404）。
-    let (pm1, pm2, pm3) = (paths.clone(), paths.clone(), paths.clone());
+    const PROXIED: &[Method] = &[Method::Get, Method::Post, Method::Put, Method::Delete];
     let router = router
-        .route(Method::Get, "/api/manage", move |_| Ok(manage::status(&pm1)))
-        .route(Method::Get, "/api/foundation", move |_| Ok(manage::foundation(&pm2)))
-        .route(Method::Post, "/api/manage/{seg}/{action}", move |r| {
+        .get("/api/manage", bind(&paths, |p, _| Ok(manage::status(p))))
+        .get("/api/foundation", bind(&paths, |p, _| Ok(manage::foundation(p))))
+        .post("/api/manage/{seg}/{action}", bind(&paths, |p, r| {
             let (seg, action) = (r.param("seg").to_string(), r.param("action").to_string());
-            if action == "uninstall" { manage::uninstall(&pm3, &seg, r) } else { manage::toggle(&pm3, &seg, &action) }
-        })
+            if action == "uninstall" { manage::uninstall(p, &seg, r) } else { manage::toggle(p, &seg, &action) }
+        }))
         .route(Method::Other, "/api/*", |_| Err(ApiError::bad("unsupported method")))
-        .route(Method::Get, "/api/{svc}/*", { let p = p2.clone(); move |r| proxy::forward(&p, service_of(r.param("svc")), r) })
-        .route(Method::Post, "/api/{svc}/*", { let p = p2.clone(); move |r| proxy::forward(&p, service_of(r.param("svc")), r) })
-        .route(Method::Put, "/api/{svc}/*", { let p = p2.clone(); move |r| proxy::forward(&p, service_of(r.param("svc")), r) })
-        .route(Method::Delete, "/api/{svc}/*", { let p = p2.clone(); move |r| proxy::forward(&p, service_of(r.param("svc")), r) })
-        .route(Method::Get, "/api/{svc}", { let p = p2.clone(); move |r| proxy::forward(&p, service_of(r.param("svc")), r) })
-        .route(Method::Post, "/api/{svc}", { let p = p2.clone(); move |r| proxy::forward(&p, service_of(r.param("svc")), r) });
-    if let Err(e) = service::run_with(&SPEC, &bind, &paths, router, opts) {
+        .any(PROXIED, "/api/{svc}/*", bind(&paths, proxy::forward))
+        .any(PROXIED, "/api/{svc}", bind(&paths, proxy::forward));
+    if let Err(e) = service::run_with(&SPEC, &bind_addr, &paths, router, opts) {
         eprintln!("[shelf-gateway] {e}");
         std::process::exit(1);
     }
