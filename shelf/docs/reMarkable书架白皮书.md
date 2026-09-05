@@ -389,7 +389,7 @@ book→「母版库 / 原生投递」、weread→「微信读书（内容源，�
 
 **appload 要不要停**：appload.so **没有 `_xovi_shouldLoad` 自检**，不会"自己停"；但 xovi 的 LD_PRELOAD 只在 `/etc` tmpfs 里（`xovi/start` 现场写），重启即清，所以**首次进 3.28 是纯原厂 xochitl，任何扩展都不载入**——循环死机只可能发生在之后手动 `xovi/start` 时。且即便循环，StartLimitAction 整机重启后 `/etc` 又清空、自愈，**最坏是一次被迫重启，不会砖**。实际操作：重启前把 `appload.so` + 两份 qmd（KOReader 侧栏入口、字体菜单 3.27 锚点）挪到 `/home/root/xovi-disabled/pre-3.28-<时间>/`（extensions.d 外；md5 清单 + README 同放），`exthome/appload/koreader/` 数据不动。
 
-**进 3.28 后顺序（实测约 8 分钟）**：① `xovi/rebuild_hashtable`（设备旁输密码，hashtab 20231 条重建）→ ② `xovi/start` 只带 qt-resource-rebuilder（`[qmldiff]: Set system version to 3.28.0.172`，xochitl NRestarts=0）→ ③ host `SHELF_NO_BUILD=1 ./deploy.sh 10.11.99.1`：五服务 active、`uploadReachable=true`、壁纸 bind 1 处、HTTPS 401 正常；install.sh 按 IMG_VERSION 选了 3.28 锚点 `font-menu-dynamic.qmd` 放进 qrr 目录（**未激活**，下次 `xovi/start` 才生效，独立一步验证）。**appload 不挪回**：0.5.3 的 qmd 钩 3.28 已删的 `SidebarFilterItem`（上游 PR #59 只改 qmd、编进 .so，重编需 rM Qt6 SDK），KOReader 暂无侧栏入口。
+**进 3.28 后顺序（实测约 8 分钟）**：① `xovi/rebuild_hashtable`（设备旁输密码，hashtab 20231 条重建）→ ② `xovi/start` 只带 qt-resource-rebuilder（`[qmldiff]: Set system version to 3.28.0.172`，xochitl NRestarts=0）→ ③ host `SHELF_NO_BUILD=1 ./deploy.sh 10.11.99.1`：五服务 active、`uploadReachable=true`、壁纸 bind 1 处、HTTPS 401 正常；install.sh 按 IMG_VERSION 选了 3.28 锚点 `font-menu-dynamic.qmd` 放进 qrr 目录（**未激活**，下次 `xovi/start` 才生效，独立一步验证）→ ④ `ssh root@10.11.99.1 sh -s < packaging/chrony-cn.sh` 恢复国内 NTP（§03w，OTA 冲 rootfs 后 chrony 会回到 Google 服务器）。**appload 不挪回**：0.5.3 的 qmd 钩 3.28 已删的 `SidebarFilterItem`（上游 PR #59 只改 qmd、编进 .so，重编需 rM Qt6 SDK），KOReader 暂无侧栏入口。
 
 **顺带核实**：`/home/root/.bashrc` 没有登录触发的 xovi 恢复钩子（记忆里的 A2 登录恢复在这台重置机上**没装**）；`root` 的 shell 是 `/usr/sbin/rmdevlogin`（`exec -a -sh /bin/sh --login`）。vellum 的 `post-os-upgrade` 钩子只打印"先跑 rebuild_hashtable"，不自动做。装 KOReader 的字体/书目录 `exthome/appload/koreader/` 与 appload 是否加载无关，koreader-serve 照常工作。
 
@@ -424,7 +424,7 @@ book→「母版库 / 原生投递」、weread→「微信读书（内容源，�
 7. appload 3.28 适配：等上游发版或自 fork 重编（需 rM Qt6 SDK）；期间 KOReader 无侧栏入口。
 8. **退役 bind-mount 壁纸整套**（§03w 已证原生 `SleepScreenPath=current.png` 随唤醒轮换）：wallpaper-serve 去掉 `bind/unbind`/`mount.rs`/三张透明插画卡，删 `shelf-wallpaper-bind.service` + sleep 钩子，安装器改为写 xochitl.conf `SleepScreenPath`（要停 xochitl 写、备份 conf、不打印 token），卸载器还原键；轮换沿用 wake.rs。
 9. ~~WiFi 60 秒掉链根治~~ 已写入 `powersave 2`（§03w）；换 SSID 时记得再 modify。
-10. OTA 后除 shelf 外还要恢复：rootfs `/etc/chrony.conf` 国内 NTP（§03w）；`xovi/scripts/post-start/wifi-reconnect.sh` 在 /home 不受影响。
+10. OTA 后除 shelf 外还要恢复：rootfs `/etc/chrony.conf` 国内 NTP——**已脚本化** `ssh root@10.11.99.1 sh -s < packaging/chrony-cn.sh`（幂等：底层已是国内就跳过、overlay 不一致才拷、未同步才重启 chronyd；真机跑过"google 状态→改→同步"与"已改→跳过"两条路）；`xovi/scripts/post-start/wifi-reconnect.sh` 在 /home 不受影响。
 6. PDF 结构化重排小瑕疵：署名"文｜某某"混进目录；"句中断开 12%"含图注/列表未细分。
 
 **已闭环（真机）**：§03f 首轮五服务 · §03g/§03h 字体分开装/子目录/HTTPS · §03j 登录/CA/mDNS · §03k 字体两 bug · §03l 传书卡＝云同步 · §03m/§03n/§03o 网页改版/细节/管理台 · §03p 质量一轮 · §03q 优化做精 + 首行缩进 v10 · §03r 母版库 Phase A/B/C + 财新重排 · §03s 质量二轮 + 格式三档 · §03t 漫画通道（host 真书探针 → CBZ；漫画不投原生）+ 分卷静默失效修 + 投原生体积门。
