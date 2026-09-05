@@ -324,7 +324,7 @@ function renderManage(sec){sec.innerHTML=`
       <div class="small" style="margin-top:.4em">
         · 后面只跟<b>要投的书</b>（可一次多本）；<b>没有输出路径、也没有目标参数</b>——洗完一律落到<b>母版库</b>，放哪个读器你在网页「传书 → 母版库」里点。<br>
         · 有 Calibre 就先洗（EPUB 深洗 / 杂格式转 EPUB / PDF 结构化重排）；<code>--no-optimize</code> 不洗原样传；<code>--to-pdf</code> 定稿成手写批注用的 PDF。<br>
-        · <code>--direct</code> 跳过母版库直投 xochitl 书库（逃生用，可配 <code>-f 文件夹</code>）。
+        · 和网页规则一致：<b>所有书只落母版库</b>，没有直投读器的选项。
       </div>
     </div>
     <details class="cmp"><summary>例子 / 强在哪 / 怎么装</summary>

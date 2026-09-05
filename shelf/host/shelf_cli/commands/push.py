@@ -4,8 +4,8 @@
 - 默认：有 Calibre → 洗书（EPUB 深洗 / 杂格式转 EPUB / PDF 结构化重排）→ 落母版库（产物带优化标记）。
 - `--no-optimize`：不洗，原样传母版库（用户可在网页按需点优化）。
 - `--to-pdf`：定稿成固定版式 PDF（手写批注用），落母版库。
-- `--direct`：绕过母版库，洗完直投 xochitl 书库（逃生，保留旧直投行为）。
 无 Calibre → 原样传母版库（设备端优化在网页母版库里点）。
+规则与网页一致：**所有书只落母版库**，没有绕过母版库直投读器的选项（2026-09-05 用户定）。
 """
 from __future__ import annotations
 
@@ -30,8 +30,6 @@ def add_args(p):
     p.add_argument("--no-split", action="store_true", help="大 PDF 不分卷")
     p.add_argument("--require-toc", action="store_true", help="洗书体检要求有目录")
     p.add_argument("--skip-check", action="store_true", help="跳过 check_output.py 体检（缺省不过不推）")
-    p.add_argument("--direct", action="store_true", help="绕过母版库，洗完直投 xochitl 书库（逃生）")
-    p.add_argument("--folder", "-f", default="", help="仅 --direct：落 xochitl 的文件夹")
     p.add_argument("--dry-run", "-n", action="store_true", help="只打印会怎么做，不动文件、不上传")
 
 
@@ -85,7 +83,7 @@ def host_prepare(path: Path, args, work: Path) -> list[Path]:
 def run(args, ctx) -> int:
     calibre = cb.has_calibre()
     do_wash = calibre and not args.no_optimize
-    dest = "xochitl 书库(--direct)" if args.direct else "母版库"
+    dest = "母版库"
     rc = 0
     work = cb.workdir()
     for path in args.files:
@@ -111,14 +109,9 @@ def run(args, ctx) -> int:
             else:
                 final.append(o)
         for o in final:
-            if args.direct:
-                # 逃生：绕过母版库直投书库。已 host 洗过 → optimize=off；--to-pdf 产物投批注目标。
-                target = "annot" if args.to_pdf else "native"
-                url, q = "/api/books", {"target": target, "folder": args.folder, "optimize": "off", "check": "off" if args.skip_check else None}
-            else:
-                url, q = "/api/books/staging", {}  # 落母版库（原样落，host 已洗则带优化标记）
+            # 只落母版库（原样落，host 已洗则带优化标记）；去向在网页「传书 → 母版库」选。
             try:
-                res = ctx.transport.post_files(url, [o], q)
+                res = ctx.transport.post_files("/api/books/staging", [o], {})
             except Exception as e:  # noqa: BLE001
                 print(f"✗ {o.name}: {e}")
                 rc = 1

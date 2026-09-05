@@ -36,13 +36,13 @@ def test_push_lands_in_staging(gateway, tmp_path, capsys, monkeypatch):
     assert FakeGateway.received[-1][0] == "/api/books/staging"
 
 
-def test_push_direct_bypasses_staging(gateway, tmp_path, capsys, monkeypatch):
+def test_push_has_no_direct_escape(gateway, tmp_path, capsys):
+    # 规则与网页一致：所有书只落母版库，--direct 不存在
     (tmp_path / "b.epub").write_bytes(b"PK")
-    monkeypatch.setattr(cb, "has_calibre", lambda: False)
-    FakeGateway.received.clear()
-    rc, out = run(["push", "--direct", str(tmp_path / "b.epub")], gateway, capsys)
-    assert rc == 0 and "xochitl 书库" in out
-    assert FakeGateway.received[-1][0].startswith("/api/books?target=native")
+    import pytest
+
+    with pytest.raises(SystemExit):
+        run(["push", "--direct", str(tmp_path / "b.epub")], gateway, capsys)
 
 
 def test_push_native_pdf_reflow_to_staging(gateway, tmp_path, capsys, monkeypatch):
