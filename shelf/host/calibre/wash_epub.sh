@@ -17,9 +17,9 @@
 #   WASH_NO_OPTIMIZE=1  跳过设备优化步
 #
 # 末步叠加**设备端同一优化器**（host CLI `epub-optimize`，`cd shelf && cargo build --release -p bookconv --bin epub-optimize`）：脚注互指拆环 + duokan 标记换可点上标 + 远程图内联 + 全书 id 去重 +
-# 图片降采样 + e-ink 提对比。⚠ :8778 直传 EPUB 不过设备优化器（只有 AZW3/MOBI/FB2 转换路过），
-# 设置页「导入书籍自动优化」默认关——所以这一步必须在 host 做完再推，否则注释在设备上点不动
-# （Calibre 会把同文件锚写成 part0004.html#x 并保留真 img 标记+回链 2-环，v5 优化器专治此形态）。
+# 图片降采样 + e-ink 提对比。产物落母版库时带优化标记（full），网页不再显示「优化」按钮——所以这一步必须在 host
+# 做完再推，否则用户以为已优化而注释在设备上点不动（Calibre 会把同文件锚写成 part0004.html#x 并保留真 img
+# 标记+回链 2-环，v5 优化器专治此形态；设备端母版库「优化」是同一函数，漏了也能在网页补点）。
 # 产物自带 META-INF/com.cangjie.optimized 标记，设备 autoopt 不会再优化一遍。找不到二进制则跳过并提示。
 #
 # 取舍（详见阅读白皮书 §11）:
