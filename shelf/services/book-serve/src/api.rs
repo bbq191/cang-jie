@@ -37,7 +37,18 @@ pub fn router(st: Arc<State>) -> Router {
             Ok(Reply::ok(&serde_json::json!({"ok": true})))
         })
         // ── 母版库（中间层）：入库/优化/落库/删除各自正交 ──
-        .get("/staging", move |_| Ok(Reply::ok(&serde_json::json!({"items": sg.spool.list_staging()}))))
+        .get("/staging", move |_| Ok(Reply::ok(&serde_json::json!({"items": sg.spool.list_staging(), "freeBytes": sg.spool.free_bytes()}))))
+        .post("/staging/mark", {
+            // 落库记录：KOReader adopt 在 koreader-serve 完成后由前端调这里记一笔（各服务只写自己的目录）。
+            let s = st.clone();
+            move |r| {
+                let jb = r.json_body().map_err(ApiError::bad)?;
+                let name = jb.get("name").and_then(|v| v.as_str()).ok_or_else(|| ApiError::bad("缺 name"))?;
+                let target = jb.get("target").and_then(|v| v.as_str()).ok_or_else(|| ApiError::bad("缺 target"))?;
+                s.spool.mark_delivered(name, target).map_err(ApiError::bad)?;
+                Ok(Reply::ok(&serde_json::json!({"ok": true})))
+            }
+        })
         .post("/staging", move |r| staging_upload(&su, r)) // multipart 原样落，不优化不投递
         .post("/staging/optimize", {
             let s = st.clone();
@@ -68,6 +79,7 @@ pub fn router(st: Arc<State>) -> Router {
                 // 落库=纯复制原字节投 xochitl，不再优化（优化是母版库独立动作）。原生阅读器只读 EPUB/PDF。
                 let ct = bookconv::convert::direct_content_type(&name).map(|c| c.mime()).ok_or_else(|| ApiError::bad("原生阅读器只读 EPUB / PDF；此格式请「加入 KOReader」，或在电脑用 shelf push 转成 EPUB"))?;
                 s.xochitl.upload(&data, &name, ct, &folder).map_err(ApiError::bad)?;
+                let _ = s.spool.mark_delivered(&name, "native");
                 if !keep {
                     let _ = s.spool.remove_staging(&name);
                 }
@@ -123,6 +135,7 @@ fn staging_upload(st: &State, r: &mut Request<'_>) -> ApiResult {
                 let data = std::fs::read(&staged).map_err(|e| ApiError::internal(e.to_string()))?;
                 let _ = std::fs::remove_file(&staged);
                 match st.spool.stage_new(&name, &data) {
+                    Ok(landed) if landed != name => items.push(serde_json::json!({"file": landed, "ok": true, "message": format!("已入母版库（已有同名，存为 {landed}）")})),
                     Ok(landed) => items.push(serde_json::json!({"file": landed, "ok": true, "message": "已入母版库"})),
                     Err(e) => items.push(serde_json::json!({"file": name, "ok": false, "message": e})),
                 }

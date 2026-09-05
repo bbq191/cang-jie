@@ -52,12 +52,26 @@ def test_push_native_pdf_reflow_to_staging(gateway, tmp_path, capsys, monkeypatc
     epub.write_bytes(b"PK\x03\x04reflowed")
     monkeypatch.setattr(cb, "has_calibre", lambda: True)
     monkeypatch.setattr(cb, "reflow_pdf", lambda src, work: (epub, "epub"))
-    monkeypatch.setattr(cb, "wash", lambda src, work: src)  # 洗书直返（不跑 Calibre）
+    monkeypatch.setattr(cb, "wash", lambda src, work, **kw: src)  # 洗书直返（不跑 Calibre）
     monkeypatch.setattr(push, "_gate", lambda out, args: None)
     FakeGateway.received.clear()
     rc, out = run(["push", str(pdf)], gateway, capsys)
     assert rc == 0 and "结构化重排 → EPUB" in out
     assert FakeGateway.received[-1][0] == "/api/books/staging", FakeGateway.received
+    assert "已入母版库。去 " in out and "传书 → 母版库" in out, "推完要给网页去向提示"
+
+
+def test_push_keep_spacing_passes_env(gateway, tmp_path, capsys, monkeypatch):
+    (tmp_path / "poem.epub").write_bytes(b"PK")
+    seen = {}
+    monkeypatch.setattr(cb, "has_calibre", lambda: True)
+    monkeypatch.setattr(cb, "wash", lambda src, work, env=None: seen.__setitem__("env", env) or src)
+    monkeypatch.setattr(push, "_gate", lambda out, args: None)
+    FakeGateway.received.clear()
+    rc, _ = run(["push", "--keep-spacing", str(tmp_path / "poem.epub")], gateway, capsys)
+    assert rc == 0 and seen["env"] == {"WASH_KEEP_PARA_SPACING": "1"}
+    rc, _ = run(["push", str(tmp_path / "poem.epub")], gateway, capsys)
+    assert seen["env"] is None, "不带 --keep-spacing 不设环境"
 
 
 def test_push_no_reflow_raw_to_staging(gateway, tmp_path, capsys, monkeypatch):

@@ -3,7 +3,7 @@
 //! - `inbox/`  待处理（scp 丢进来的、或上传接收完成后暂放）——fswatch 追平；
 //! - `.work/`  已认领、处理中（rename 原子独占，防并发重复处理）；
 //! - `done/`   成功源归档（封顶 100MB，便于重投）；`failed/` 失败源（封顶 50MB，可重试/删除）。
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -36,6 +36,18 @@ pub struct StagingEntry {
     pub level: &'static str,
     /// 入库时间（unix 秒），列表最新在前。
     pub mtime: u64,
+    /// 落库记录（sidecar `.<name>.delivered`）：投过哪个读器、何时。时间早于 `mtime`（之后又优化过）= 母版已变，UI 标"旧"。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub delivered: Option<Delivered>,
+}
+
+/// 落库记录：各读器最近一次落库的 unix 秒。
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
+pub struct Delivered {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub native: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub koreader: Option<u64>,
 }
 
 /// 失败原因 sidecar 后缀。
@@ -179,7 +191,34 @@ impl Spool {
     }
 
     pub fn remove_staging(&self, name: &str) -> Result<(), String> {
-        std::fs::remove_file(self.staging_path(name)?).map_err(|e| format!("删除失败: {e}"))
+        let p = self.staging_path(name)?;
+        let _ = std::fs::remove_file(delivered_path(&p));
+        std::fs::remove_file(&p).map_err(|e| format!("删除失败: {e}"))
+    }
+
+    /// 记一次落库（`target`=native|koreader）。写 sidecar `.<name>.delivered`（隐藏名，列表不当条目）。
+    pub fn mark_delivered(&self, name: &str, target: &str) -> Result<(), String> {
+        let p = self.staging_path(name)?;
+        if !p.is_file() {
+            return Err("母版库里没有这本书".into());
+        }
+        let mut d = read_delivered(&p).unwrap_or_default();
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+        match target {
+            "native" => d.native = Some(now),
+            "koreader" => d.koreader = Some(now),
+            _ => return Err("target 只能是 native / koreader".into()),
+        }
+        let s = serde_json::to_vec(&d).map_err(|e| e.to_string())?;
+        shelf_core::fs::write_atomic(&delivered_path(&p), &s).map_err(|e| format!("写落库记录失败: {e}"))
+    }
+
+    /// 母版库所在分区剩余空间（字节）。`df -k` 解析（busybox/GNU 都是第 4 列 Available KB）；解析不了返回 None。
+    pub fn free_bytes(&self) -> Option<u64> {
+        let out = std::process::Command::new("df").arg("-k").arg(self.staging()).output().ok()?;
+        let s = String::from_utf8_lossy(&out.stdout);
+        let cols: Vec<&str> = s.lines().nth(1)?.split_whitespace().collect();
+        cols.get(3)?.parse::<u64>().ok().map(|kb| kb * 1024)
     }
 
     /// 列母版库：格式（epub/pdf/other）+ 是否带优化标记（`optimized_version_file` 轻量只读中央目录）。
@@ -216,13 +255,25 @@ impl Spool {
                     }
                 };
                 let mtime = md.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs()).unwrap_or(0);
-                out.push(StagingEntry { name, bytes: md.len(), format, optimized: level == "full", level, mtime });
+                let delivered = read_delivered(&e.path());
+                out.push(StagingEntry { name, bytes: md.len(), format, optimized: level == "full", level, mtime, delivered });
             }
         }
         // 最新入库在前（同秒按名）。
         out.sort_by(|a, b| b.mtime.cmp(&a.mtime).then_with(|| a.name.cmp(&b.name)));
         out
     }
+}
+
+/// 母版库落库记录 sidecar：`.<文件名>.delivered`（同目录、隐藏名）。
+fn delivered_path(book: &Path) -> PathBuf {
+    let name = book.file_name().and_then(|s| s.to_str()).unwrap_or("book");
+    book.with_file_name(format!(".{name}.delivered"))
+}
+
+fn read_delivered(book: &Path) -> Option<Delivered> {
+    let s = std::fs::read(delivered_path(book)).ok()?;
+    serde_json::from_slice(&s).ok()
 }
 
 /// `<文件>.reason` sidecar 路径。
@@ -339,6 +390,24 @@ mod tests {
         s.remove_staging("a.epub").unwrap();
         assert_eq!(s.list_staging().len(), 2);
         assert!(s.stage_new("../x", b"y").is_err(), "非法名拒绝");
+    }
+
+    #[test]
+    fn staging_delivered_record_roundtrip() {
+        let t = tempfile::tempdir().unwrap();
+        let s = Spool::new(t.path().join("books"));
+        s.ensure().unwrap();
+        s.stage_new("b.epub", b"x").unwrap();
+        assert!(s.list_staging()[0].delivered.is_none(), "未落库无记录");
+        s.mark_delivered("b.epub", "native").unwrap();
+        s.mark_delivered("b.epub", "koreader").unwrap();
+        let d = s.list_staging()[0].delivered.clone().unwrap();
+        assert!(d.native.is_some() && d.koreader.is_some());
+        assert_eq!(s.list_staging().len(), 1, "sidecar 不当条目列出");
+        assert!(s.mark_delivered("b.epub", "weread").is_err(), "未知 target 拒绝");
+        assert!(s.mark_delivered("nope.epub", "native").is_err(), "不存在的书拒绝");
+        s.remove_staging("b.epub").unwrap();
+        assert!(!delivered_path(&s.staging().join("b.epub")).exists(), "删书连带删 sidecar");
     }
 
     #[test]

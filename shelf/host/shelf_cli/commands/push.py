@@ -26,6 +26,7 @@ def add_args(p):
     p.add_argument("files", nargs="+", type=Path)
     p.add_argument("--to-pdf", action="store_true", help="定稿成固定版式 PDF（手写批注用）；默认洗成流式 EPUB")
     p.add_argument("--no-optimize", action="store_true", help="不洗，原样传母版库（网页里可再点优化）")
+    p.add_argument("--keep-spacing", action="store_true", help="洗书时保留原书段间距（诗集 / 剧本；对应网页「清洗但保留段距」档位）")
     p.add_argument("--no-reflow", action="store_true", help="PDF 不重排（原样传）")
     p.add_argument("--no-split", action="store_true", help="大 PDF 不分卷")
     p.add_argument("--require-toc", action="store_true", help="洗书体检要求有目录")
@@ -47,10 +48,11 @@ def _gate(out: Path, args) -> None:
 def host_prepare(path: Path, args, work: Path) -> list[Path]:
     """host 洗书：默认 EPUB 深洗 / 杂格式转 EPUB / PDF 结构化重排；--to-pdf 定稿 PDF。产物待落母版库。"""
     suf = path.suffix.lower()
+    wenv = {"WASH_KEEP_PARA_SPACING": "1"} if getattr(args, "keep_spacing", False) else None  # 与网页档位对齐
     if args.to_pdf:
         # 定稿固定版式 PDF（EPUB/杂格式先转 EPUB 再定稿；PDF 裁边）。
         if suf == ".epub" or suf in WASH_EXT:
-            src = path if suf == ".epub" else cb.wash(path, work)
+            src = path if suf == ".epub" else cb.wash(path, work, env=wenv)
             out = cb.to_pdf(src, work / (path.stem + ".pdf"))
         elif suf == ".pdf":
             try:
@@ -68,13 +70,13 @@ def host_prepare(path: Path, args, work: Path) -> list[Path]:
         reflowed, kind = cb.reflow_pdf(path, work)
         if kind == "epub":
             print(f"  结构化重排 → EPUB（{reflowed.name}）")
-            out = cb.wash(reflowed, work)
+            out = cb.wash(reflowed, work, env=wenv)
             _gate(out, args)
             return [out]
         print(f"  扫描件位图重排 → PDF（{reflowed.name}）")
         return [reflowed]
     if suf == ".epub" or suf in WASH_EXT:
-        out = cb.wash(path, work)  # wash_epub.sh 泛化收 AZW3/MOBI（内部 ebook-convert），末步叠加 epub-optimize
+        out = cb.wash(path, work, env=wenv)  # wash_epub.sh 泛化收 AZW3/MOBI（内部 ebook-convert），末步叠加 epub-optimize
         _gate(out, args)
         return [out]
     return [path]
@@ -85,6 +87,7 @@ def run(args, ctx) -> int:
     do_wash = calibre and not args.no_optimize
     dest = "母版库"
     rc = 0
+    landed = 0
     work = cb.workdir()
     for path in args.files:
         if not guard_file(path):
@@ -117,4 +120,8 @@ def run(args, ctx) -> int:
                 rc = 1
                 continue
             rc |= print_receipts(res, name_key="file", default_name=o.name, fallback_self=True)
+            landed += 1
+    if landed and not args.dry_run:
+        scheme = getattr(ctx.config, "scheme", "https")
+        print(f"→ 已入母版库。去 {scheme}://{ctx.config.host}:{ctx.config.port}/ 「传书 → 母版库」点优化 / 选去向（xochitl / KOReader）")
     return rc

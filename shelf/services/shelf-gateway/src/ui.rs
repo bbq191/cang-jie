@@ -169,12 +169,15 @@ function stagingList(ul,opts){
     const fmt=it.format==='epub'?'EPUB':it.format==='pdf'?'PDF':(it.name.includes('.')?it.name.split('.').pop().toUpperCase():'其它');
     const st=it.format!=='epub'?'<span class="badge">原样</span>':it.level==='full'?'<span class="badge on">已优化</span>':it.level==='core'?'<span class="badge" title="只跑了核心遍（脚注/图片/对比度），没洗排版缩进——点「优化」补全">已优化·未清洗</span>':it.level==='old'?'<span class="badge" title="旧版本优化，点「优化」升级">旧版优化</span>':'<span class="badge">未优化</span>';
     const hint=it.format==='pdf'?' · 手写定稿放原生':it.format==='other'?' · 原生读不了，只能加入 KOReader（想进原生用电脑 shelf push 转 EPUB）':'';
-    li.innerHTML=`<span><b>${it.name}</b> <span class="badge">${fmt}</span> ${st} <span class="small">${fmtB(it.bytes)}${hint}</span></span>`;
+    // 落库记录徽章；落库时间早于母版 mtime（之后又优化过）→ 标「旧」，提示可重投
+    const dv=it.delivered||{},stale=t=>t&&it.mtime&&t<it.mtime;
+    const dl=(dv.native?` <span class="badge on" title="${stale(dv.native)?'投过，之后母版又优化过，可重投':'已投入原生书库'}">已投原生${stale(dv.native)?'·旧':''}</span>`:'')+(dv.koreader?` <span class="badge on" title="${stale(dv.koreader)?'加入过，之后母版又优化过，可重投':'已加入 KOReader'}">已加入KO${stale(dv.koreader)?'·旧':''}</span>`:'');
+    li.innerHTML=`<span><b>${it.name}</b> <span class="badge">${fmt}</span> ${st}${dl} <span class="small">${fmtB(it.bytes)}${hint}</span></span>`;
     const right=document.createElement('span');right.style.cssText='display:flex;gap:.4em;flex-wrap:wrap;align-items:center';
     const btn=(t,pri,fn,dis,title)=>{const b=document.createElement('button');b.className='btn'+(pri?' pri':'');b.textContent=t;if(dis){b.disabled=true;b.title=title||''}else b.onclick=async()=>{b.disabled=true;b.textContent=t+'…';await fn();if(opts.refresh)opts.refresh()};right.appendChild(b)};
     if(it.format==='epub'&&!it.optimized)btn('优化',false,()=>post('/api/books/staging/optimize',{name:it.name,mode:opts.mode()}));
     if(it.format!=='other')btn('投入原生书库',true,()=>post('/api/books/staging/deliver',{name:it.name,keep:!opts.clear(),folder:opts.xFolder()}));
-    btn('加入 KOReader',true,async()=>{const r=await post('/api/koreader/books/adopt',{name:it.name,folder:opts.kFolder()});if(r.ok!==false&&opts.clear())await post('/api/books/staging/delete',{name:it.name})},!opts.koInstalled,'KOReader 未安装（「管理」页看基石）');
+    btn('加入 KOReader',true,async()=>{const r=await post('/api/koreader/books/adopt',{name:it.name,folder:opts.kFolder()});if(r.ok!==false){await post('/api/books/staging/mark',{name:it.name,target:'koreader'});if(opts.clear())await post('/api/books/staging/delete',{name:it.name})}},!opts.koInstalled,'KOReader 未安装（「管理」页看基石）');
     btn('删除',false,async()=>{if(confirm('从母版库删除 '+it.name+'？（已投到读器的不受影响）'))await post('/api/books/staging/delete',{name:it.name})});
     li.appendChild(right);ul.appendChild(li)});
 }
@@ -203,11 +206,12 @@ function renderTransfer(sec){sec.innerHTML=`
   <div class="subpanel">
     <div class="card"><h3 style="margin-top:0">母版库 <span class="small" id="stgcap"></span></h3>
       <div class="row"><span class="small">投原生 → 文件夹</span><select id="folderPreset" style="max-width:13em"><option value="lib">书库（默认）</option><option value="annot">批注文件夹</option><option value="custom">自定义…</option></select><input type="text" id="folder" placeholder="文件夹名" style="display:none;max-width:10em">
-        <span class="small">加入 KOReader → 目录</span><input type="text" id="kfolder" placeholder="留空＝根目录" style="max-width:9em"></div>
+        <span class="small">加入 KOReader → 目录</span><input type="text" id="kfolder" list="kodirs" placeholder="留空＝根目录" style="max-width:9em"><datalist id="kodirs"></datalist></div>
       <div class="row"><span class="small">优化档位</span><select id="optmode" style="max-width:15em"><option value="auto">清洗＋优化（推荐）</option><option value="keep-spacing">清洗但保留段距（诗集 / 剧本）</option><option value="plain">只优化不清洗</option></select>
         <label class="toggle"><input type="checkbox" id="stgclear"> 投完从母版库清除</label></div>
       <details class="cmp"><summary>档位说明 · 母版为什么默认保留</summary>${OPTTABLE}<p class="small">母版保留＝同一本可再投另一个读器对照、换设备重投；不需要了手动删。</p></details>
-      <div class="row"><input type="text" id="stgq" placeholder="搜书名…" style="flex:1;min-width:8em"><select id="stgfmt" style="max-width:8em"><option value="">全部格式</option><option value="epub">EPUB</option><option value="pdf">PDF</option><option value="other">其它</option></select><select id="stgst" style="max-width:8em"><option value="">全部状态</option><option value="0">未优化</option><option value="1">已优化</option></select></div>
+      <div class="row"><input type="text" id="stgq" placeholder="搜书名…" style="flex:1;min-width:8em"><select id="stgfmt" style="max-width:8em"><option value="">全部格式</option><option value="epub">EPUB</option><option value="pdf">PDF</option><option value="other">其它</option></select><select id="stgst" style="max-width:8em"><option value="">全部状态</option><option value="0">未优化</option><option value="1">已优化</option></select><button class="btn" id="stgpurge" title="删除已投过读器的母版（读器里的书不受影响）">清理已落库</button></div>
+      <div class="small" id="stgfree" style="margin:-.3em 0 .4em"></div>
       <ul class="list" id="stglist"></ul>
     </div>
   </div>`;
@@ -221,10 +225,17 @@ function renderTransfer(sec){sec.innerHTML=`
   syncFolder();
   const render=()=>stagingList(g('stglist'),{items,q:g('stgq').value,fmt:g('stgfmt').value,st:g('stgst').value,xFolder,kFolder:()=>g('kfolder').value.trim(),mode:()=>g('optmode').value,clear:()=>g('stgclear').checked,koInstalled,refresh:()=>refresh()});
   ['stgq','stgfmt','stgst'].forEach(id=>['input','change'].forEach(ev=>g(id).addEventListener(ev,render)));
-  const refresh=async()=>{const [d,s,k]=await Promise.all([j('/api/books/staging'),j('/api/books/status'),j('/api/koreader/status')]);
+  const refresh=async()=>{const [d,s,k,kb]=await Promise.all([j('/api/books/staging'),j('/api/books/status'),j('/api/koreader/status'),j('/api/koreader/books')]);
     if(s.ok&&s.annotFolder)annotFolder=s.annotFolder;koInstalled=!!(k.ok&&k.installed);
+    // KOReader 现有目录 → 下拉候选（免手打错）
+    g('kodirs').innerHTML=(kb.items||[]).filter(x=>x.kind==='dir').map(x=>`<option value="${x.name}">`).join('');
     if(d.ok===false){g('stglist').innerHTML=`<li class="small" style="color:var(--bad)">母版库不可用：${d.message||'book-serve 未开'}（去「管理」页开启）</li>`;g('stgcap').textContent='';return}
-    items=d.items||[];const tot=items.reduce((a,b)=>a+b.bytes,0);g('stgcap').textContent=items.length?`${items.length} 本 · ${fmtB(tot)}`:'';render()};
+    items=d.items||[];const tot=items.reduce((a,b)=>a+b.bytes,0);g('stgcap').textContent=items.length?`${items.length} 本 · ${fmtB(tot)}`:'';
+    const fr=d.freeBytes;const low=fr!=null&&fr<300*1048576;g('stgfree').style.color=low?'var(--bad)':'';g('stgfree').textContent=fr!=null?`设备剩余空间 ${fmtB(fr)}${low?' ⚠ 快满了：清理已落库或删不要的母版':''}`:'';
+    render()};
+  g('stgpurge').onclick=async()=>{const done=items.filter(it=>it.delivered&&(it.delivered.native||it.delivered.koreader));if(!done.length){alert('没有已落库的母版');return}
+    if(!confirm(`删除 ${done.length} 本已投过读器的母版？（读器里的书不受影响，只是不能再重投）`))return;
+    for(const it of done)await j('/api/books/staging/delete',{method:'POST',body:JSON.stringify({name:it.name})});refresh()};
   uploader(sec,()=>'/api/books/staging',()=>({}),null,()=>refresh());   // 任意格式原样入库，不预拦
   const am=g('artmsg'),au=g('arturl'),ag=g('artgo');
   ag.onclick=async()=>{const url=au.value.trim();if(!url){am.textContent='请填链接';return}ag.disabled=true;am.style.color='';am.textContent='抓取中…（联网抽取正文，十几秒）';
