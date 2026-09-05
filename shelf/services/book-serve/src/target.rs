@@ -28,7 +28,8 @@ impl OptimizeMode {
             _ => OptimizeMode::Auto,
         }
     }
-    fn wash(self) -> Option<WashOpts> {
+    /// 档位 → 清洗层选项（`Plain`/`Off` 不清洗）。母版库「优化」按钮也按此档位。
+    pub fn wash(self) -> Option<WashOpts> {
         match self {
             OptimizeMode::Auto => Some(WashOpts::default()),
             OptimizeMode::KeepSpacing => Some(WashOpts { keep_para_spacing: true, ..Default::default() }),

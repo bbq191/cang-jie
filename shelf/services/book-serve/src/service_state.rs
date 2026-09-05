@@ -1,7 +1,7 @@
 //! 服务共享状态：配置、spool、目标注册表、xochitl 客户端；inbox 追平处理。
 use crate::config::BookConfig;
 use crate::spool::Spool;
-use crate::target::{DeliverOpts, Outcome, TargetRegistry};
+use crate::target::{Outcome, TargetRegistry};
 use shelf_core::paths::Paths;
 use shelf_core::xochitl::Xochitl;
 use std::sync::Arc;
@@ -41,39 +41,39 @@ impl State {
         })
     }
 
-    /// 处理 inbox（scp 丢进来的 / 重试的），缺省目标 native。`only`=只处理该文件。
+    /// 处理 inbox（scp 丢进来的 / 重试的）：**原样落母版库**，不再直投 native。
+    /// 规则与网页/CLI 一致——所有书只允许落母版库，去向在网页选（2026-09-05 用户定）。`only`=只处理该文件。
     pub fn process_inbox(&self, only: Option<&str>) -> Vec<Outcome> {
         let _g = self.spool.guard();
         let mut out = Vec::new();
         let Ok(rd) = std::fs::read_dir(self.spool.inbox()) else { return out };
-        let target = self.targets.get("native").expect("native target");
         for e in rd.flatten() {
             let p = e.path();
             if !p.is_file() {
                 continue;
             }
             let Some(name) = p.file_name().and_then(|s| s.to_str()).map(|s| s.to_string()) else { continue };
-            if only.map(|o| o != name).unwrap_or(false) {
-                continue;
-            }
-            if name.starts_with('.') || target.accepts(&name).is_err() {
-                continue; // 半成品/非书籍文件不动
+            if only.map(|o| o != name).unwrap_or(false) || name.starts_with('.') {
+                continue; // 半成品不动
             }
             let Some(work) = self.spool.claim(&name) else { continue };
-            let data = match std::fs::read(&work) {
-                Ok(d) => d,
+            if !crate::api::is_book_name(&name) {
+                // 与网页同一份书籍格式限制（BOOK_EXTS）：非书文件进 failed/ 带原因，不进母版库也不反复重试
+                let msg = format!("不是书籍格式，母版库只收 {}", crate::api::BOOK_EXTS.join(" "));
+                self.spool.archive_failed(&work, &msg);
+                out.push(Outcome { file: name.clone(), target: "staging".into(), ok: false, message: msg });
+                continue;
+            }
+            let o = match std::fs::read(&work).map_err(|e| format!("读取失败: {e}")).and_then(|d| self.spool.stage_new(&name, &d)) {
+                Ok(landed) => {
+                    let _ = std::fs::remove_file(&work);
+                    Outcome { file: landed, target: "staging".into(), ok: true, message: "已入母版库".into() }
+                }
                 Err(e) => {
-                    self.spool.archive_failed(&work, &format!("读取失败: {e}"));
-                    out.push(Outcome { file: name, target: "native".into(), ok: false, message: format!("读取失败: {e}") });
-                    continue;
+                    self.spool.archive_failed(&work, &e);
+                    Outcome { file: name.clone(), target: "staging".into(), ok: false, message: e }
                 }
             };
-            let o = target.deliver(&name, data, &DeliverOpts { folder: None, optimize: Default::default(), check: true });
-            if o.ok {
-                self.spool.archive_done(&work);
-            } else {
-                self.spool.archive_failed(&work, &o.message);
-            }
             println!("[book-serve] inbox {} → {}: {}", name, if o.ok { "ok" } else { "fail" }, o.message);
             out.push(o);
         }

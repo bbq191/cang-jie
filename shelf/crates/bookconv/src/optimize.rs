@@ -141,8 +141,15 @@ pub fn is_optimized(epub: &[u8]) -> bool {
     optimized_version(epub).is_some()
 }
 
-/// 是否已是**当前版本**优化产物。版本 bump 后旧产物返回 false → 重传应重优化升级
-/// （否则旧标记会把 v7 的中英文缩进 / v8 的脚注·背景修复等新改进永久挡在门外）。
+/// 标记值分等级（2026-09-05，修"已优化徽章说谎"）：**含清洗层的完整优化 = 版本号本身**；只跑核心遍
+/// （`wash=None`，如网文 / 格式转换产物的 `assemble_optimized`）= `<版本>-core`。母版库据此显示
+/// 「已优化 / 已优化·未清洗」并只对 full 隐藏「优化」按钮；weread 线只看"有无标记"（`is_optimized`），不受影响。
+pub fn marker_value(full: bool) -> String {
+    if full { OPTIMIZE_VERSION.to_string() } else { format!("{OPTIMIZE_VERSION}-core") }
+}
+
+/// 是否已是**当前版本的完整优化**产物（`-core` 与旧版本都返回 false）。版本 bump 后旧产物返回 false →
+/// 重传应重优化升级（否则旧标记会把 v7 的中英文缩进 / v8 的脚注·背景修复等新改进永久挡在门外）。
 pub fn is_current_version(epub: &[u8]) -> bool {
     optimized_version(epub).as_deref() == Some(OPTIMIZE_VERSION)
 }
@@ -377,7 +384,7 @@ pub fn optimize_epub_with(epub: &[u8], opts: &OptimizeOpts) -> Result<(Vec<u8>, 
         }
         // 埋幂等标记(结尾)：内容=优化器版本号，供 optimized_version/is_optimized 判据。
         zw.start_file(OPTIMIZE_MARKER, deflated).map_err(|e| e.to_string())?;
-        zw.write_all(OPTIMIZE_VERSION.as_bytes()).map_err(|e| e.to_string())?;
+        zw.write_all(marker_value(opts.wash.is_some()).as_bytes()).map_err(|e| e.to_string())?;
         zw.finish().map_err(|e| e.to_string())?;
     }
     rep.bytes_after = out_buf.len();
@@ -606,11 +613,17 @@ mod tests {
     fn marks_and_detects_optimized() {
         let raw = make_epub();
         assert!(!is_optimized(&raw), "原始 EPUB 不该带标记");
+        // 默认 optimize_epub 无清洗层 → 只算"核心遍"标记，不能冒充完整优化
         let (out, _) = optimize_epub(&raw).unwrap();
-        assert_eq!(optimized_version(&out).as_deref(), Some(OPTIMIZE_VERSION), "产物应带版本标记");
+        assert_eq!(optimized_version(&out).as_deref(), Some(format!("{OPTIMIZE_VERSION}-core").as_str()), "无 wash 应标 -core");
+        assert!(is_optimized(&out) && !is_current_version(&out), "有标记但不算当前完整优化");
+        // 带清洗层 → 完整标记
+        let (full, _) = optimize_epub_with(&raw, &OptimizeOpts { wash: Some(crate::wash::WashOpts::default()), footnote: FootnoteMode::Anchor }).unwrap();
+        assert_eq!(optimized_version(&full).as_deref(), Some(OPTIMIZE_VERSION), "含 wash 应标完整版本");
+        assert!(is_current_version(&full));
         // 重优化幂等：标记只有一条(不残留旧标记)、版本仍正确
         let (out2, _) = optimize_epub(&out).unwrap();
-        assert_eq!(optimized_version(&out2).as_deref(), Some(OPTIMIZE_VERSION));
+        assert_eq!(optimized_version(&out2).as_deref(), Some(format!("{OPTIMIZE_VERSION}-core").as_str()));
         let mut ar = ZipArchive::new(Cursor::new(&out2)).unwrap();
         let marker_count = (0..ar.len())
             .filter(|&i| ar.by_index(i).unwrap().name() == OPTIMIZE_MARKER)

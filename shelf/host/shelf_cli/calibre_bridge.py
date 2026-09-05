@@ -27,8 +27,11 @@ class CalibreError(RuntimeError):
     pass
 
 
-def _run(cmd: list[str], **kw) -> subprocess.CompletedProcess:
-    return subprocess.run(cmd, env=clean_env(), check=False, text=True, capture_output=True, **kw)
+def _run(cmd: list[str], env_extra: dict | None = None, **kw) -> subprocess.CompletedProcess:
+    env = clean_env()
+    if env_extra:
+        env.update(env_extra)
+    return subprocess.run(cmd, env=env, check=False, text=True, capture_output=True, **kw)
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -42,9 +45,10 @@ def _py_with_pymupdf() -> list[str]:
     return ["python3"]
 
 
-def wash(src: Path, out_dir: Path) -> Path:
-    """C2 洗书：wash_epub.sh（拍平 CSS/重建 TOC/伪 DRM 剥离/末步 epub-optimize）。返回产物路径。"""
-    r = _run(["sh", str(CALIBRE_DIR / "wash_epub.sh"), str(src), str(out_dir)])
+def wash(src: Path, out_dir: Path, env: dict | None = None) -> Path:
+    """C2 洗书：wash_epub.sh（拍平 CSS/重建 TOC/伪 DRM 剥离/末步 epub-optimize）。返回产物路径。
+    `env` 透传给脚本（如 `WASH_KEEP_PARA_SPACING=1` 保留段距）。"""
+    r = _run(["sh", str(CALIBRE_DIR / "wash_epub.sh"), str(src), str(out_dir)], env_extra=env)
     if r.returncode != 0:
         raise CalibreError(f"wash_epub.sh 失败（rc={r.returncode}）：{r.stderr.strip()[-800:]}")
     outs = sorted(out_dir.glob("*.epub"), key=lambda p: p.stat().st_mtime)

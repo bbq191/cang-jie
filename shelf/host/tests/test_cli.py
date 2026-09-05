@@ -161,12 +161,15 @@ def test_passwd_command_posts_new_password(gateway, capsys):
     assert rc != 0
 
 
-def test_must_change_403_is_explained(gateway, capsys, tmp_path):
-    f = tmp_path / "a.pdf"
-    f.write_bytes(b"%PDF-1.4")
+def test_must_change_403_is_explained(gateway, capsys, tmp_path, monkeypatch):
+    from shelf_cli.commands import push
+
+    f = tmp_path / "a.epub"
+    f.write_bytes(b"PK")
+    monkeypatch.setattr(push.cb, "has_calibre", lambda: False)  # 原样落母版库，403 命中
     FakeGateway.must_change = True
     try:
-        rc, out = run(["push", "-q", "device", "--skip-check", str(f)], gateway, capsys)
+        rc, out = run(["push", str(f)], gateway, capsys)
     finally:
         FakeGateway.must_change = False
     assert rc != 0
