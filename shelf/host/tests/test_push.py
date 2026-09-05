@@ -1,4 +1,4 @@
-"""push 端到端（假网关）：落母版库 / --direct 直投 / PDF 重排 / 分卷 / calibre 桥环境清洗。"""
+"""push 端到端（假网关）：落母版库 / 无直投逃生 / PDF 重排 / 漫画通道 / 分卷 / calibre 桥环境清洗。"""
 from __future__ import annotations
 
 import sys

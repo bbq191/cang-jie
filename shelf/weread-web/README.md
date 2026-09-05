@@ -1,10 +1,11 @@
-# weread-web · 微读网页版在线读（P5 门控 spike）
+# weread-web · 微读网页版在线读 spike（存档，不再推进）
 
-**问题只有一个**：现货浏览器 `exp78/rmweb`（MIT，WPE WebKit + Skia CPU raster，Qt6 epaper QPA 直出屏，
-**运行时停掉 xochitl**，预编译 106MB，v0.9.1 2026-08-28）**只标 Paper Pro "Ferrari" 1620×2160**，
-Move（"Chiappa" 954×1696）未提及——能不能显示并交互？通了才立 `weread-serve`（appload `qtfb:true`
-共存入口 + 移植评估另计划），不通就记录关闭。微读墨水屏网页版入口 `ink.qq.com`。**现有微读 EPUB 下书线
-（wr-serve）始终兜底，书架不碰它。**
+**状态（2026-09-05）**：方向已改——微信读书在书架里定位为**内容源**（扫码登录 → 下书成 EPUB → 原样落母版库 → 用户选读器），
+不再做"设备上直接开网页版在线读"的内嵌浏览器 app（书架白皮书 §03r 决策 3：spike 未通过验证、e-ink WebKit 天花板低、基础≈0）。
+本目录的 `spike.sh` 与判据**原样存档**，供将来重评时用；未执行过，**不要**把 rmweb 写进 systemd 或开机路径。
+
+原始问题：现货浏览器 `exp78/rmweb`（MIT，WPE WebKit + Skia CPU raster，Qt6 epaper QPA 直出屏，运行时停掉 xochitl，
+预编译 106MB，v0.9.1）只标 Paper Pro "Ferrari" 1620×2160，Move（"Chiappa" 954×1696）未提及。
 
 ## 步骤（`spike.sh`，逐步人工确认；设备 root SSH）
 1. `spike.sh recon`：只读侦查——`/etc/version`、`uname -r`、`/sys/devices/soc0/machine`、`ls /usr/lib/plugins/platforms/`
@@ -14,6 +15,4 @@ Move（"Chiappa" 954×1696）未提及——能不能显示并交互？通了才
 4. 出画面则测：触摸、屏幕键盘、打开 ink.qq.com、扫码登录、翻页时延、退出后 xochitl 恢复。
 5. `spike.sh restore`：kill 看门狗、`systemctl start xochitl`、`is-active`/`NRestarts` 检查。
 
-## 门控判据
-步骤 3 出画面 **且** 步骤 5 恢复干净 → "通"；否则关闭。**绝不**把 rmweb 写进 systemd 或开机路径。
 回退：`systemctl start xochitl`；`rm -rf ~/.local/share/shelf/rmweb`。
