@@ -31,7 +31,9 @@ pub struct StagingEntry {
     pub name: String,
     pub bytes: u64,
     pub format: &'static str,
+    /// 是否**当前版本的完整优化**（含清洗层）。`level` 更细：full / core（只跑核心遍，如网文·格式转换产物）/ old（旧版本）/ none。
     pub optimized: bool,
+    pub level: &'static str,
     /// 入库时间（unix 秒），列表最新在前。
     pub mtime: u64,
 }
@@ -201,10 +203,20 @@ impl Spool {
                 } else {
                     "other"
                 };
-                // 优化状态只对 EPUB 有意义（PDF/其它格式端上不优化）。
-                let optimized = format == "epub" && e.path().to_str().map(|p| bookconv::optimize::optimized_version_file(p).is_some()).unwrap_or(false);
+                // 优化状态只对 EPUB 有意义（PDF/其它格式端上不优化）。标记分等级：完整（含 wash）= 版本号本身；
+                // 只跑核心遍（网文/格式转换产物）= `<版本>-core`；旧版本号 = old。只有 full 才不再给「优化」按钮。
+                let level = if format != "epub" {
+                    "none"
+                } else {
+                    match e.path().to_str().and_then(bookconv::optimize::optimized_version_file) {
+                        Some(v) if v == bookconv::optimize::OPTIMIZE_VERSION => "full",
+                        Some(v) if v.ends_with("-core") => "core",
+                        Some(_) => "old",
+                        None => "none",
+                    }
+                };
                 let mtime = md.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs()).unwrap_or(0);
-                out.push(StagingEntry { name, bytes: md.len(), format, optimized, mtime });
+                out.push(StagingEntry { name, bytes: md.len(), format, optimized: level == "full", level, mtime });
             }
         }
         // 最新入库在前（同秒按名）。

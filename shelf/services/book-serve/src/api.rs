@@ -1,5 +1,6 @@
 //! HTTP 适配层（唯一碰 http 类型的地方）。路由（经网关时前缀 `/api/books`）：
-//! `POST /?target=native|annot&folder=&optimize=auto|keep-spacing|plain|off&check=on|off`（multipart，多文件逐项回执）
+//! `POST /?target=native|annot&...`（直投，**已标废**：2026-09-05 起规则统一"所有书只落母版库"，网页/CLI/inbox 都不再调它；
+//! 保留仅为兼容与测试，新代码走 `/staging*`）
 //! `GET /status` · `GET /targets` · `GET /inbox` · `POST /inbox/retry {name}` · `POST /inbox/delete {name}`
 use crate::service_state::State;
 use crate::target::{DeliverOpts, Outcome};

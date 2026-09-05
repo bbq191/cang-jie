@@ -167,7 +167,7 @@ function stagingList(ul,opts){
   const post=async(url,body)=>{const r=await j(url,{method:'POST',body:JSON.stringify(body)});if(r.ok===false)alert(r.message||'失败');return r};
   items.forEach(it=>{const li=document.createElement('li');li.style.flexWrap='wrap';
     const fmt=it.format==='epub'?'EPUB':it.format==='pdf'?'PDF':(it.name.includes('.')?it.name.split('.').pop().toUpperCase():'其它');
-    const st=it.format==='epub'?(it.optimized?'<span class="badge on">已优化</span>':'<span class="badge">未优化</span>'):'<span class="badge">原样</span>';
+    const st=it.format!=='epub'?'<span class="badge">原样</span>':it.level==='full'?'<span class="badge on">已优化</span>':it.level==='core'?'<span class="badge" title="只跑了核心遍（脚注/图片/对比度），没洗排版缩进——点「优化」补全">已优化·未清洗</span>':it.level==='old'?'<span class="badge" title="旧版本优化，点「优化」升级">旧版优化</span>':'<span class="badge">未优化</span>';
     const hint=it.format==='pdf'?' · 手写定稿放原生':it.format==='other'?' · 原生读不了，只能加入 KOReader（想进原生用电脑 shelf push 转 EPUB）':'';
     li.innerHTML=`<span><b>${it.name}</b> <span class="badge">${fmt}</span> ${st} <span class="small">${fmtB(it.bytes)}${hint}</span></span>`;
     const right=document.createElement('span');right.style.cssText='display:flex;gap:.4em;flex-wrap:wrap;align-items:center';
