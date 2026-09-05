@@ -27,7 +27,7 @@
 
 **网页 tab**：传书（入库｜母版库，固定第一）· xochitl（原生字体，由 font-serve 注册）· KOReader（字体｜词典）· 壁纸 · 管理（固定）。
 
-**未闭环**：Phase E ②③④（英文书拉丁缩进观感 / 两器同字节对照 / KOReader 里内联脚注可否接受——KOReader 拿到的是母版库 Inline 产物，不再另跑 Anchor）；3.28 机上 `font-menu-dynamic.qmd`（3.28 锚点）已放进 qrr 目录但未 `xovi/start` 激活验证；appload 3.28 适配（KOReader 入口）。§05 有清单。
+**未闭环**：Phase E ②③④（英文书拉丁缩进观感 / 两器同字节对照 / KOReader 里内联脚注可否接受——KOReader 拿到的是母版库 Inline 产物，不再另跑 Anchor）；3.28 机上 `font-menu-dynamic.qmd`（3.28 锚点）已放进 qrr 目录但未 `xovi/start` 激活验证；appload 3.28 适配（KOReader 入口）；原生休眠屏 `SleepScreenPath` 已通、轮换待验（§03w）；WiFi 60 秒掉链=IW612 省电（§03w），根治待拍板。§05 有清单。
 
 ## 01｜架构决策
 
@@ -393,6 +393,12 @@ book→「母版库 / 原生投递」、weread→「微信读书（内容源，�
 
 **顺带核实**：`/home/root/.bashrc` 没有登录触发的 xovi 恢复钩子（记忆里的 A2 登录恢复在这台重置机上**没装**）；`root` 的 shell 是 `/usr/sbin/rmdevlogin`（`exec -a -sh /bin/sh --login`）。vellum 的 `post-os-upgrade` 钩子只打印"先跑 rebuild_hashtable"，不自动做。装 KOReader 的字体/书目录 `exthome/appload/koreader/` 与 appload 是否加载无关，koreader-serve 照常工作。
 
+## 03w｜原生自定义休眠屏 `SleepScreenPath` + WiFi 60 秒掉链根因（2026-09-05，3.28 真机）
+
+**原生休眠屏（隐藏键，真机通）**：xochitl.conf `[General]` 加 `SleepScreenPath=<png 绝对路径>`（无需 `file://`，QML 自己补）。3.28 `SleepScreenView.qml` 解出来的机制：`logo.source = isettings.sleepScreenPath`（默认 `/usr/share/remarkable/suspended.png`）；`isCustomSleepScreenPath` 为真时 **logo 铺满整屏 PreserveAspectFit、插画卡自动隐藏**（`illustration.visible = showCarousel && !isCustom`）；图加载失败显示占位文字 "reMarkable is sleeping"。`ShowSleepScreenCarousel` 不是隐藏功能——3.28 设置里就是「休眠屏幕插图」开关（`SettingsSleepScreenToggle.qml`）。真机：停 xochitl → sed 写键 → `xovi/start`，键不被 xochitl 抹掉；用户确认休眠屏显示指定的池图（954×1696 满屏）。现指向 `~/.local/share/shelf/wallpapers/current.png`（wallpaper-serve 唤醒轮换原地覆盖的那个文件）；**轮换是否被 Qt Image 缓存吃掉待用户两次休眠对照**——若能换，bind-mount suspended.png + 三张透明插画卡 + `/usr` 写入 + sleep 钩子整套可退役（只留唤醒轮换）；若不能，原生路径只配"固定一张"。改键流程：`cp xochitl.conf` 备份（含 token，绝不打印）→ `systemctl stop xochitl` → `sed -i '/^\[General\]/a SleepScreenPath=…'` → `xovi/start`。
+
+**WiFi "升级后连不上" 的真相：不是 3.28 回归，是 NXP IW612（`iw61x` MWLAN, SDIO）省电模式**。现象：连上 AP 后 **约 60 秒** `systemd-networkd: wlan0: Lost carrier` + `wpa_supplicant: REGDOM-CHANGE init=CORE type=WORLD`，**没有** wpa DISCONNECTED 事件、dmesg 无字，NetworkManager 仍标 `connected`、路由标 `dead`、永不自愈；`nmcli con up <SSID>` 立刻回来再掉。persistent journal 翻旧账：**3.27 那次 2 天 uptime 里 `Lost carrier` 95 次**，当天 15:29/16:21 也是连上 62 秒即掉——一直如此，只是以前主要走 USB 没察觉。`iw dev wlan0 set power_save off` 后 7 分钟以上零掉（对照：开着时 60/61/61/101/139 秒必掉）。置信度高。**根治候选**：`nmcli con modify <SSID> 802-11-wireless.powersave 2`（按连接持久，NM 库在 `/var/lib/NetworkManager` bind 自 /home）；代价 WiFi 开着时功耗略升（休眠时 WiFi 本就关）；xochitl 在设置里重建该 WiFi 会丢此设置。**已落地的兜底**：`packaging/xovi-post-start/wifi-reconnect.sh` → `/home/root/xovi/scripts/post-start/`（`xovi/start` 后台看护 60 秒，见 NO-CARRIER 就 `nmcli con up`，`journalctl -t xovi-wifi`），真机 `t+5s NO-CARRIER → 已激活` 通。
+
 ## 04｜踩坑
 
 - **磁盘 metadata ≠ xochitl/UI 实际状态（2026-09-04 用户纠正）**：直接 `sed` 改 `.metadata` 的 `parent=trash` 并不等于"已进回收站"——xochitl 运行时在内存缓存、写回时覆盖，云同步也可能还原；出现过磁盘 8 个探针 `parent=trash` 但 UI 回收站只见真实书的错位。**涉及书库状态以设备 UI/xochitl 实际为准，不拿磁盘 metadata 当真相**；清测试文档走正常删除流程或停 xochitl 后操作，别边跑边改。
@@ -413,6 +419,8 @@ book→「母版库 / 原生投递」、weread→「微信读书（内容源，�
 4. 拔线真 suspend 下钩子 bind + 唤醒轮换只触发一次。（普通重启后 `shelf.target` / 壁纸 bind 自起已由 9-03 21:13 重启 + 2 天 uptime 坐实；OTA 后需重跑 deploy，§03v。）
 5. 3.28 机上激活验证 `font-menu-dynamic.qmd`：已放进 qrr 目录（§03v），下次 `xovi/start` 后看菜单 `SHELF-FONT` 日志与 elide。
 7. appload 3.28 适配：等上游发版或自 fork 重编（需 rM Qt6 SDK）；期间 KOReader 无侧栏入口。
+8. 原生休眠屏 `SleepScreenPath=current.png` 能否随唤醒轮换（§03w）；能则退役 bind-mount 整套（wallpaper-serve `bind/unbind`、`shelf-wallpaper-bind.service`、sleep 钩子、三张透明插画卡）。
+9. WiFi 60 秒掉链根治：`802-11-wireless.powersave 2` 用户拍板后写入（§03w）。
 6. PDF 结构化重排小瑕疵：署名"文｜某某"混进目录；"句中断开 12%"含图注/列表未细分。
 
 **已闭环（真机）**：§03f 首轮五服务 · §03g/§03h 字体分开装/子目录/HTTPS · §03j 登录/CA/mDNS · §03k 字体两 bug · §03l 传书卡＝云同步 · §03m/§03n/§03o 网页改版/细节/管理台 · §03p 质量一轮 · §03q 优化做精 + 首行缩进 v10 · §03r 母版库 Phase A/B/C + 财新重排 · §03s 质量二轮 + 格式三档 · §03t 漫画通道（host 真书探针 → CBZ；漫画不投原生）+ 分卷静默失效修 + 投原生体积门。
