@@ -58,7 +58,7 @@ fn ok() -> ApiResult {
     Ok(Reply::ok(&serde_json::json!({"ok": true})))
 }
 
-/// multipart 逐文件原样落母版库（不优化、不投递）：走共享上传模板，暂存在 spool `.work/`（与母版库同分区，入库 rename）。
+/// multipart 逐文件原样落母版库（不优化、不落库）：走共享上传模板，暂存在 spool `.work/`（与母版库同分区，入库 rename）。
 fn staging_upload(st: &State, r: &mut Request<'_>) -> ApiResult {
     let boundary = r.multipart_boundary()?;
     let _g = st.spool.guard();

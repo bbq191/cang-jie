@@ -50,11 +50,11 @@ pub enum FootnoteMode {
     Inline,
 }
 
-/// 优化选项：`wash=Some` 时先过清洗层（书架 native 投递与 host `epub-optimize` 缺省开；weread 线不开）。
+/// 优化选项：`wash=Some` 时先过清洗层（书架母版库「优化」与 host `epub-optimize` 缺省开；weread 线不开）。
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct OptimizeOpts {
     pub wash: Option<crate::wash::WashOpts>,
-    /// 脚注呈现方式（缺省 `Anchor` 保持历史行为；native 投递传 `Inline`）。
+    /// 脚注呈现方式（缺省 `Anchor` 保持历史行为；母版库「优化」传 `Inline`）。
     pub footnote: FootnoteMode,
 }
 
