@@ -89,11 +89,13 @@ pub struct Staging {
     xochitl: Arc<Xochitl>,
     /// 投原生时未指定文件夹的缺省（配置 `libraryFolder`）。
     library_folder: String,
+    /// 投原生体积门（字节，0=不拦）：xochitl `/upload` 超限会直接断连，先拦下来给指引。
+    native_limit: u64,
 }
 
 impl Staging {
-    pub fn new(dir: PathBuf, xochitl: Arc<Xochitl>, library_folder: String) -> Staging {
-        Staging { dir, xochitl, library_folder }
+    pub fn new(dir: PathBuf, xochitl: Arc<Xochitl>, library_folder: String, native_limit: u64) -> Staging {
+        Staging { dir, xochitl, library_folder, native_limit }
     }
     pub fn dir(&self) -> &Path {
         &self.dir
@@ -162,6 +164,14 @@ impl Staging {
         let ct = bookconv::convert::direct_content_type(name)
             .ok_or("原生阅读器只读 EPUB / PDF；此格式请「加入 KOReader」，或在电脑用 shelf push 转成 EPUB")?;
         let p = self.existing(name)?;
+        let size = std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0);
+        if self.native_limit > 0 && size > self.native_limit {
+            return Err(format!(
+                "《{name}》{} MB 超过原生阅读器上传上限（{} MB），xochitl 会直接断连。PDF 请在电脑用 shelf push 重推（自动按 60MB 分卷）；EPUB 无法分卷，用 KOReader 读",
+                size >> 20,
+                self.native_limit >> 20
+            ));
+        }
         let data = std::fs::read(&p).map_err(|e| format!("读母版库文件失败: {e}"))?;
         let folder = if folder.trim().is_empty() { self.library_folder.as_str() } else { folder.trim() };
         let msg = match self.xochitl.upload(&data, name, ct.mime(), folder)? {
@@ -317,7 +327,7 @@ mod tests {
 
     fn staging(t: &tempfile::TempDir) -> Staging {
         let x = Arc::new(Xochitl::new("127.0.0.1:1", Path::new("/nonexistent"), 1));
-        let s = Staging::new(t.path().join("staging"), x, "library".into());
+        let s = Staging::new(t.path().join("staging"), x, "library".into(), 1024 * 1024);
         s.ensure().unwrap();
         s
     }
@@ -404,6 +414,10 @@ mod tests {
         s.stage_new("d.pdf", b"%PDF").unwrap();
         assert_eq!(s.list().iter().find(|e| e.name == "c.cbz").unwrap().format, "cbz");
         assert!(s.deliver("c.cbz", "", true).unwrap_err().contains("只读 EPUB / PDF"));
+        // 体积门：超过 native_limit（测试设 1MB）不碰 xochitl，回执指引分卷
+        s.stage_new("huge.pdf", &vec![b'%'; 2 * 1024 * 1024]).unwrap();
+        let e = s.deliver("huge.pdf", "", true).unwrap_err();
+        assert!(e.contains("超过原生阅读器上传上限") && e.contains("分卷"), "{e}");
         // PDF 走到 xochitl 才失败（不可达），母版仍在、无落库记录
         assert!(s.deliver("d.pdf", "", true).is_err());
         assert!(s.list().iter().any(|e| e.name == "d.pdf" && e.delivered.is_none()));

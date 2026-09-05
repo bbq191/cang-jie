@@ -13,17 +13,24 @@ pub struct BookConfig {
     pub xochitl_host: String,
     /// `/upload` 超时（大书处理慢；超时但已送达会被判 LikelyDelivered、绝不重试）。
     pub upload_timeout_secs: u64,
+    /// 投原生的体积门（MB）：xochitl `/upload` 有上限（真机 188MB 被 "multipart body is too large" 拒并断连，60MB 稳），
+    /// 超过就不发、直接回执指引分卷。0=不拦。
+    pub native_upload_limit_mb: u64,
 }
 
 impl Default for BookConfig {
     fn default() -> Self {
-        BookConfig { library_folder: "library".into(), annot_folder: "library".into(), xochitl_host: shelf_core::xochitl::DEFAULT_HOST.into(), upload_timeout_secs: 300 }
+        BookConfig { library_folder: "library".into(), annot_folder: "library".into(), xochitl_host: shelf_core::xochitl::DEFAULT_HOST.into(), upload_timeout_secs: 300, native_upload_limit_mb: 150 }
     }
 }
 
 impl BookConfig {
     pub fn load(paths: &Paths) -> BookConfig {
         shelf_core::config::load_or_seed(&paths.service_config("book"))
+    }
+    /// 体积门（字节）；0=不拦。
+    pub fn native_upload_limit_bytes(&self) -> u64 {
+        self.native_upload_limit_mb * 1024 * 1024
     }
 }
 
@@ -35,5 +42,6 @@ mod tests {
         let c: BookConfig = serde_json::from_str(r#"{"libraryFolder":"books","comicMono":true,"optimizeDirectEpub":false}"#).unwrap();
         assert_eq!(c.library_folder, "books");
         assert_eq!(c.upload_timeout_secs, 300);
+        assert_eq!(c.native_upload_limit_bytes(), 150 * 1024 * 1024);
     }
 }

@@ -1,4 +1,4 @@
-"""host 环境体检：系统 python3、uv/venv 劫持、Calibre、pymupdf、ssh；设备侧：网关可达。"""
+"""host 环境体检：系统 python3、uv/venv 劫持、Calibre、pymupdf；设备侧：网关可达。"""
 import os
 import shutil
 import subprocess
@@ -26,7 +26,7 @@ def run(args, ctx) -> int:
         print("venv 劫持     : ⚠ 处于 VIRTUAL_ENV/.venv PATH 中——调 Calibre 前会自动清洗（calibre_bridge）")
     else:
         print("venv 劫持     : 无")
-    for tool, why in [("ebook-convert", "host 高质量路（洗书/定稿）"), ("ssh", "KOReader 配置同步"), ("pdfinfo", "可选")]:
+    for tool, why in [("ebook-convert", "host 高质量路（洗书/定稿/漫画转 CBZ）"), ("k2pdfopt", "可选：扫描件 PDF 重排兜底")]:
         p = shutil.which(tool)
         print(f"{tool:<14}: {p or '缺（' + why + '）'}")
         if tool == "ebook-convert" and not p:

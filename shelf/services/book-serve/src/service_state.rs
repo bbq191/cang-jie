@@ -10,8 +10,6 @@ use std::sync::Arc;
 
 pub struct State {
     pub cfg: BookConfig,
-    /// 只读：系统增强面板的开关文件（`$XDG_DATA_HOME/cangjie-ime/reading-qol.json`，书架不写它）。
-    pub reading_qol: std::path::PathBuf,
     pub spool: Spool,
     pub staging: Staging,
     pub xochitl: Arc<Xochitl>,
@@ -30,9 +28,8 @@ impl State {
         let cfg = BookConfig::load(paths);
         let xochitl = Arc::new(Xochitl::new(&cfg.xochitl_host, &paths.xochitl_dir(), cfg.upload_timeout_secs));
         let spool = Spool::new(paths.state_dir().join("books"));
-        let staging = Staging::new(paths.staging_dir(), xochitl.clone(), cfg.library_folder.clone());
-        let reading_qol = paths.data_root().join("cangjie-ime/reading-qol.json");
-        State { cfg, spool, staging, xochitl, reading_qol }
+        let staging = Staging::new(paths.staging_dir(), xochitl.clone(), cfg.library_folder.clone(), cfg.native_upload_limit_bytes());
+        State { cfg, spool, staging, xochitl }
     }
 
     pub fn ensure_dirs(&self) -> std::io::Result<()> {
@@ -47,11 +44,12 @@ impl State {
             "uploadReachable": self.xochitl.reachable(),
             "libraryFolder": self.cfg.library_folder,
             "annotFolder": self.cfg.annot_folder,
+            // 投原生的体积门（字节），网页据此灰掉超限书的「投入原生书库」
+            "nativeUploadLimitBytes": self.cfg.native_upload_limit_bytes(),
             "spool": {
                 "pending": items.iter().filter(|i| i.state == "pending").count(),
                 "failed": items.iter().filter(|i| i.state == "failed").count(),
             },
-            "readingQol": std::fs::read_to_string(&self.reading_qol).ok().and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok()),
         })
     }
 
