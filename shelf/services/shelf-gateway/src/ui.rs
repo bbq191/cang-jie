@@ -173,7 +173,7 @@ const cjkBadge=p=>p==null?'':`<span class="badge ${p>=80?'on':(p>=8?'':'off')}" 
 /* 决策辅助：不替用户分类（闲书/研读机器判不准），讲清母版库三步走 + 两读器各擅长；拿不准先投一个，母版还在 */
 const GUIDE=`<details class="cmp"><summary>母版库怎么用？两个读器怎么选？（点开）</summary>
 <dl class="help">
-<dt>三步走</dt><dd>① <b>入库</b>：上传（书籍格式）/ 抓网文 / 电脑 <code>shelf push</code>（微信读书待接）——书<b>原样</b>进母版库，不动字节。② <b>优化</b>（可选）：EPUB 点「优化」洗排版、脚注、中英文缩进（PDF 端上不动，重排走电脑）。③ <b>落库</b>：点「投入原生书库」或「加入 KOReader」。<b>母版留着</b>，随时再投另一个。读器页（xochitl / KOReader）只管各自的字体、词典，不传书。</dd>
+<dt>三步走</dt><dd>① <b>入库</b>：上传（书籍格式）/ 抓网文 / 电脑 <code>shelf push</code> / scp 进 inbox——书<b>原样</b>进母版库，不动字节。② <b>优化</b>（可选）：EPUB 点「优化」洗排版、脚注、中英文缩进（PDF 端上不动，重排走电脑）。③ <b>落库</b>：点「投入原生书库」或「加入 KOReader」。<b>母版留着</b>，随时再投另一个。读器页（xochitl / KOReader）只管各自的字体、词典，不传书。</dd>
 <dt>格式</dt><dd>${FMT_TIERS}。</dd>
 <dt>📖 投入原生书库（xochitl）：要做笔记、批注的书</dt><dd>目录跳转、脚注、换字体、<b>直接手写批注</b>、AI 解读。学术 / 论文 / 要划线的书放这；PDF 手写定稿也放这。</dd>
 <dt>📚 加入 KOReader：消遣、查词的书</dt><dd>自由重排、<b>内置词典</b>、翻页手势。小说、漫画、外语书顺手。</dd>
@@ -222,7 +222,7 @@ function renderTransfer(sec){sec.innerHTML=`
   <div class="subnav"><button class="on">📥 入库</button><button>📚 母版库</button></div>
   <div class="subpanel on">
     <div class="card"><h2>传书 · 入库</h2>
-      <p class="lead">所有书从这里进：上传、抓网文、电脑 shelf push（微信读书待接）。原样入库、不动字节；洗不洗、放哪读，到「母版库」再定。</p>
+      <p class="lead">所有书从这里进：上传、抓网文、电脑 shelf push、scp 进 inbox。原样入库、不动字节；洗不洗、放哪读，到「母版库」再定。</p>
       ${GUIDE}
       ${onUsb?'':'<p class="opt-note">传大书建议走 USB <code>https://10.11.99.1:8778</code>，不占 Wi-Fi。</p>'}
       <h3>上传</h3>
@@ -232,8 +232,6 @@ function renderTransfer(sec){sec.innerHTML=`
       <div class="row"><input type="text" id="arturl" placeholder="https://… 文章链接（公众号 / 博客 / 新闻）" style="flex:1;min-width:12em"><button class="btn" id="artgo">抓取进母版库</button></div>
       <div class="small" id="artmsg" style="margin-top:.3em"></div>
       <p class="small">静态网页效果好；纯 JS 页面、付费墙抓不出。单篇文章（连载分章后续）。</p>
-      <h3>微信读书 <span class="badge">即将接入</span></h3>
-      <p class="small">扫码登录 → 选书 → 下成 EPUB 进母版库，再选读器读（原生阅读器体验远好于网页版）。</p>
     </div>
   </div>
   <div class="subpanel">
@@ -334,7 +332,6 @@ const TABS={
      right.insertAdjacentHTML('beforeend',`<span>${fmtB(it.bytes)}</span>`+(cur?'<span class="badge on">当前</span>':''));
      if(!cur){const b=document.createElement('button');b.className='btn';b.textContent='使用';b.onclick=async()=>{await j('/api/wallpapers/current',{method:'PUT',body:JSON.stringify({name:it.name})});refresh()};right.appendChild(b);
        right.appendChild(delBtn('删除 '+it.name+'？','/api/wallpapers/'+encodeURIComponent(it.name),refresh))}}})}}
- // 微读不再是独立 tab：定位为「传书·入库」的一种内容源（下书→EPUB→母版库），Phase D 接入。
 };
 
 /* 资产页模板（字体 / 壁纸）：说明 + 可选头部 + 上传区 + 列表。o: {title?,hint,header?,icon,label,accept,btn,listTitle?,onRender?(sec,refresh,data),row(it,left,right,refresh)} */

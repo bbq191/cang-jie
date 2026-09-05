@@ -18,7 +18,7 @@ pub struct Module {
     /// `install.sh`/`uninstall.sh` 的 `--only` 令牌。
     pub only: &'static str,
     pub label: &'static str,
-    /// 门控未上线（如 weread P5 未通）→ 不可装、不可开。
+    /// 门控未上线 → 不可装、不可开（当前全为 true；机制保留给将来的新模块）。
     pub installable: bool,
 }
 
@@ -27,7 +27,6 @@ pub const MODULES: &[Module] = &[
     Module { seg: "fonts", service: "font-serve", only: "font", label: "xochitl 字体", installable: true },
     Module { seg: "koreader", service: "koreader-serve", only: "koreader", label: "KOReader", installable: true },
     Module { seg: "wallpapers", service: "wallpaper-serve", only: "wallpaper", label: "壁纸", installable: true },
-    Module { seg: "weread", service: "weread-serve", only: "weread", label: "微信读书（内容源，待接）", installable: false },
 ];
 
 pub fn by_seg(seg: &str) -> Option<&'static Module> {
@@ -126,7 +125,8 @@ mod tests {
         assert_eq!(service_of("fonts"), Some("font-serve"));
         assert_eq!(service_of("wallpapers"), Some("wallpaper-serve"));
         assert_eq!(service_of("nope"), None);
-        assert!(!by_seg("weread").unwrap().installable);
+        assert_eq!(service_of("weread"), None, "微读线已砍（2026-09-05），目录表不再有它");
+        assert!(MODULES.iter().all(|m| m.installable));
     }
     #[test]
     fn status_reports_three_states() {
@@ -142,7 +142,7 @@ mod tests {
         assert_eq!(find("book-serve")["running"], false);
         assert_eq!(find("book-serve")["hasWeb"], true);
         assert_eq!(find("font-serve")["installed"], false);
-        assert_eq!(find("weread-serve")["installable"], false);
-        assert_eq!(find("weread-serve")["hasWeb"], false);
+        assert_eq!(find("font-serve")["hasWeb"], false, "未装则网页无该功能");
+        assert!(mods.iter().all(|m| m["service"] != "weread-serve"));
     }
 }
