@@ -95,7 +95,7 @@ shelf/
 | 用途 | 路径 |
 |---|---|
 | 二进制 | `~/.local/bin/{shelf-gateway,*-serve,shelf-uninstall,cangjie-lo-alias.sh}` |
-| 配置 | `~/.config/shelf/<service>.json`（book/koreader/font/gateway）· `~/.config/shelf/tls/`（CA+叶证书） |
+| 配置 | `~/.config/shelf/<service>.json`（book：书库文件夹/xochitl 主机/超时/**`nativeUploadLimitMb` 投原生体积门 150**；font；gateway）· `~/.config/shelf/tls/`（CA+叶证书） |
 | 数据 | `~/.local/share/shelf/`（fonts.json、壁纸池）· `~/.local/share/fonts/`（用户字体，fontconfig 标准位） |
 | 状态 | `~/.local/state/shelf/books/staging/`（**母版库**，不淘汰）· `books/{inbox,.work,failed}`（追平队列）· `wallpaper-state.json` · `koreader-backups/` |
 | 运行时 | `/tmp/shelf-0/shelf/{services,upload,koreader}`（`XDG_RUNTIME_DIR` 缺省回落；重启即清） |
@@ -142,7 +142,7 @@ shelf koreader font add 字体.ttf | ls | rm <file>         # 只装进 KOReader
 shelf inbox [--retry 名 | --delete 名]                    # scp 追平队列里失败的书
 shelf passwd [--new …]
 ```
-配置 `$XDG_CONFIG_HOME/shelf/config.toml`（host/port/scheme/password/verify_tls/ssh/split_pdf_mb）。
+配置 `$XDG_CONFIG_HOME/shelf/config.toml`（host/port/scheme/password/verify_tls/split_pdf_mb）。
 
 ## 演进记录（详见白皮书各节）
 

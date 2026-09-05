@@ -132,15 +132,11 @@ def test_config_defaults_and_overrides(tmp_path):
     p = pathsmod.Paths({"HOME": str(tmp_path), "XDG_CONFIG_HOME": str(tmp_path / "cfg")})
     assert p.config_file == tmp_path / "cfg" / "shelf" / "config.toml"
     p.config.mkdir(parents=True)
-    p.config_file.write_text('host = "192.168.1.5"\nquality = "device"\nbogus = 1\n')
+    p.config_file.write_text('host = "192.168.1.5"\nretired_key = "x"\nbogus = 1\n')
     c = cfgmod.load(p, {"port": 9999, "host": None})
-    assert (c.host, c.port, c.split_pdf_mb) == ("192.168.1.5", 9999, 60), "未知键（含退役的 quality）忽略"
+    assert (c.host, c.port, c.split_pdf_mb) == ("192.168.1.5", 9999, 60), "未知键忽略"
     assert c.base_url == "https://192.168.1.5:9999"
-    assert c.ssh == "root@192.168.1.5", "ssh 未显式配则跟随 host"
     assert cfgmod.load(p, {"scheme": "http"}).base_url.startswith("http://")
-    # 显式配 ssh 时不被 host 覆盖
-    p.config_file.write_text('host = "10.0.0.9"\nssh = "pi@nas"\n')
-    assert cfgmod.load(p).ssh == "pi@nas"
 
 
 def test_xdg_relative_paths_are_ignored(tmp_path):

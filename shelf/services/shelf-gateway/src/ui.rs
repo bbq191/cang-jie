@@ -189,7 +189,8 @@ const OPTTABLE=`<div class="tblwrap"><table class="cmp"><thead><tr><th>档位</t
 </tbody></table></div>`;
 
 /* 母版库列表。按格式门控按钮：EPUB→优化(未优化时)/投原生/加入 KO；PDF→投原生/加入 KO；其它→只能加入 KO。
-   CBZ 漫画只能加入 KOReader（不投原生）。「加入 KOReader」按 koInstalled 门控。opts: {items,q,fmt,st,xFolder(),kFolder(),mode(),clear(),koInstalled,refresh()} */
+   CBZ 漫画只能加入 KOReader（不投原生）；超体积门（nativeLimit 字节）的书灰掉投原生。「加入 KOReader」按 koInstalled 门控。
+   opts: {items,q,fmt,st,xFolder(),kFolder(),mode(),clear(),koInstalled,nativeLimit,refresh()} */
 function stagingList(ul,opts){
   ul.innerHTML='';
   const q=(opts.q||'').toLowerCase();
@@ -207,7 +208,9 @@ function stagingList(ul,opts){
     const right=document.createElement('span');right.style.cssText='display:flex;gap:.4em;flex-wrap:wrap;align-items:center';
     const btn=(t,pri,fn,dis,title)=>{const b=document.createElement('button');b.className='btn'+(pri?' pri':'');b.textContent=t;if(dis){b.disabled=true;b.title=title||''}else b.onclick=async()=>{b.disabled=true;b.textContent=t+'…';await fn();if(opts.refresh)opts.refresh()};right.appendChild(b)};
     if(it.format==='epub'&&!it.optimized)btn('优化',false,()=>postJ('/api/books/staging/optimize',{name:it.name,mode:opts.mode()}));
-    if(it.format==='epub'||it.format==='pdf')btn('投入原生书库',true,()=>postJ('/api/books/staging/deliver',{name:it.name,keep:!opts.clear(),folder:opts.xFolder()}));
+    // 体积门：超过 xochitl /upload 上限的书灰掉按钮（服务端同样拦），提示走电脑分卷
+    const tooBig=opts.nativeLimit&&it.bytes>opts.nativeLimit;
+    if(it.format==='epub'||it.format==='pdf')btn('投入原生书库',true,()=>postJ('/api/books/staging/deliver',{name:it.name,keep:!opts.clear(),folder:opts.xFolder()}),tooBig,`超过原生阅读器上传上限 ${fmtB(opts.nativeLimit)}：PDF 在电脑 shelf push 重推会自动分卷；EPUB 用 KOReader 读`);
     btn('加入 KOReader',true,async()=>{const r=await postJ('/api/koreader/books/adopt',{name:it.name,folder:opts.kFolder()});if(r.ok!==false){await postJ('/api/books/staging/mark',{name:it.name,target:'koreader'});if(opts.clear())await postJ('/api/books/staging/delete',{name:it.name})}},!opts.koInstalled,'KOReader 未安装（「管理」页看基石）');
     btn('删除',false,async()=>{if(confirm('从母版库删除 '+it.name+'？（已投到读器的不受影响）'))await postJ('/api/books/staging/delete',{name:it.name})});
     li.appendChild(right);ul.appendChild(li)});
@@ -245,7 +248,7 @@ function renderTransfer(sec){sec.innerHTML=`
       <ul class="list" id="stglist"></ul>
     </div>
   </div>`;
-  let annotFolder='',koInstalled=false,items=[];
+  let annotFolder='',koInstalled=false,items=[],nativeLimit=0;
   const g=id=>$('#'+id,sec);
   const xFolder=()=>{const p=g('folderPreset').value;return p==='lib'?'':p==='annot'?annotFolder:g('folder').value.trim()};
   const syncFolder=()=>{g('folder').style.display=g('folderPreset').value==='custom'?'':'none'};
@@ -253,10 +256,10 @@ function renderTransfer(sec){sec.innerHTML=`
   [['folderPreset','fpreset','lib'],['folder','folder',''],['kfolder','kfolder',''],['optmode','optmode','auto']].forEach(([id,k,d])=>{g(id).value=LS.get(k,d);['input','change'].forEach(ev=>g(id).addEventListener(ev,()=>{LS.set(k,g(id).value);if(id==='folderPreset')syncFolder()}))});
   g('stgclear').checked=LS.get('stgclear','0')==='1';g('stgclear').onchange=()=>LS.set('stgclear',g('stgclear').checked?'1':'0');
   syncFolder();
-  const render=()=>stagingList(g('stglist'),{items,q:g('stgq').value,fmt:g('stgfmt').value,st:g('stgst').value,xFolder,kFolder:()=>g('kfolder').value.trim(),mode:()=>g('optmode').value,clear:()=>g('stgclear').checked,koInstalled,refresh:()=>refresh()});
+  const render=()=>stagingList(g('stglist'),{items,q:g('stgq').value,fmt:g('stgfmt').value,st:g('stgst').value,xFolder,kFolder:()=>g('kfolder').value.trim(),mode:()=>g('optmode').value,clear:()=>g('stgclear').checked,koInstalled,nativeLimit,refresh:()=>refresh()});
   ['stgq','stgfmt','stgst'].forEach(id=>['input','change'].forEach(ev=>g(id).addEventListener(ev,render)));
   const refresh=async()=>{const [d,s,k,kb]=await Promise.all([j('/api/books/staging'),j('/api/books/status'),j('/api/koreader/status'),j('/api/koreader/books')]);
-    if(s.ok&&s.annotFolder)annotFolder=s.annotFolder;koInstalled=!!(k.ok&&k.installed);
+    if(s.ok&&s.annotFolder)annotFolder=s.annotFolder;nativeLimit=(s.ok&&s.nativeUploadLimitBytes)||0;koInstalled=!!(k.ok&&k.installed);
     // KOReader 现有目录 → 下拉候选（免手打错）
     g('kodirs').innerHTML=(kb.items||[]).filter(x=>x.kind==='dir').map(x=>`<option value="${x.name}">`).join('');
     if(d.ok===false){g('stglist').innerHTML=`<li class="small" style="color:var(--bad)">母版库不可用：${d.message||'book-serve 未开'}（去「管理」页开启）</li>`;g('stgcap').textContent='';return}
@@ -348,13 +351,13 @@ function renderManage(sec){sec.innerHTML=`
     <div class="kv small" id="found">检测中…</div>
     <p class="small">下载 / 文档：<a href="https://github.com/rmitchellscott/reManager" target="_blank" rel="noopener">reManager</a>（桌面端 · vellum 生态）· <a href="https://github.com/asivery/rmpp-xovi" target="_blank" rel="noopener">xovi</a> · <a href="https://github.com/koreader/koreader/wiki" target="_blank" rel="noopener">KOReader Wiki</a></p></div>
   <div class="card"><h2>电脑端 · <code>shelf push</code>（进阶洗书 / PDF 重排）</h2>
-    <p class="lead">难搞的书用它：非标准格式转 EPUB、Calibre 级深洗、PDF 论文重排——网页直传做不到的都在这。</p>
+    <p class="lead">难搞的书用它：非标准格式转 EPUB、Calibre 级深洗、PDF 论文重排、漫画转 CBZ——设备端做不到的都在这。</p>
     <div class="opt-note">
       <b>命令长这样</b>（在本仓库目录下跑；<code>shelf/host/bin/shelf</code> 就是那个命令，嫌长可 <code>alias shelf="$PWD/shelf/host/bin/shelf"</code>）：<br>
       <code>shelf/host/bin/shelf push &lt;书1&gt; [书2 …]</code>
       <div class="small" style="margin-top:.4em">
         · 后面只跟<b>要投的书</b>（可一次多本）；<b>没有输出路径、也没有目标参数</b>——洗完一律落到<b>母版库</b>，放哪个读器你在网页「传书 → 母版库」里点。<br>
-        · 有 Calibre 就先洗（EPUB 深洗 / 杂格式转 EPUB / PDF 结构化重排）；<code>--no-optimize</code> 不洗原样传；<code>--to-pdf</code> 定稿成手写批注用的 PDF。<br>
+        · 有 Calibre 就先洗（EPUB 深洗 / 杂格式转 EPUB / PDF 结构化重排，&gt;60MB 的 PDF 自动分卷）；漫画自动识别转 CBZ（<code>--comic/--no-comic</code> 覆盖）；<code>--no-optimize</code> 不洗原样传；<code>--to-pdf</code> 定稿成手写批注用的 PDF。<br>
         · 和网页规则一致：<b>所有书只落母版库</b>，没有直投读器的选项。
       </div>
     </div>
@@ -362,12 +365,13 @@ function renderManage(sec){sec.innerHTML=`
     <dl class="help">
       <dt>例子</dt>
       <dd><code>shelf/host/bin/shelf push 论文.pdf</code> — PDF 结构化重排 → 母版库，再到「传书 → 母版库」选去向<br>
-          <code>shelf/host/bin/shelf push 小说.azw3</code> — 转干净 EPUB → 母版库（网页里点「加入 KOReader」）<br>
+          <code>shelf/host/bin/shelf push 小说.azw3</code> — 转干净 EPUB → 母版库（两个读器都能去）<br>
+          <code>shelf/host/bin/shelf push 漫画.azw3</code> — 自动识别漫画 → CBZ → 母版库（点「加入 KOReader」；漫画不投原生）<br>
           <code>shelf/host/bin/shelf push 书.epub --to-pdf</code> — 定稿固定版式 PDF → 母版库（投 xochitl 手写批注）<br>
           <code>shelf/host/bin/shelf push a.epub b.mobi</code> — 一次多本<br>
           <code>shelf/host/bin/shelf status</code> · <code>doctor</code> — 看设备连通 / 环境</dd>
       <dt>强在哪</dt>
-      <dd>① <b>杂格式转干净 EPUB</b>：AZW3 / MOBI / FB2 / TXT… 网页端不收，这里能转；② <b>Calibre 级深洗</b>：CSS 拍平比端上更彻底，排版锁死的书也能救；③ <b>PDF 论文重排</b>：多列 / 公式 / 图按阅读顺序重排到屏宽——<b>端上做不到</b>（端上 PDF 只原样直传）；④ 扫描件走 k2pdfopt。产物再叠加设备同款优化器，观感与网页直传一致。</dd>
+      <dd>① <b>杂格式转干净 EPUB 进原生</b>：AZW3 / MOBI / AZW / PRC / FB2 直接上传只能进 KOReader，这里能转成 EPUB 投原生；② <b>Calibre 级深洗</b>：CSS 拍平比端上更彻底，排版锁死的书也能救；③ <b>PDF 论文重排</b>：多列 / 公式 / 图按阅读顺序重排到屏宽——<b>端上做不到</b>（端上 PDF 只原样直传）；④ 扫描件走 k2pdfopt。产物再叠加设备同款优化器，观感与网页直传一致。</dd>
       <dt>怎么装</dt>
       <dd>电脑装 <a href="https://calibre-ebook.com/" target="_blank" rel="noopener">Calibre</a>（含 ebook-convert）+ Python 3 → 克隆本仓库 → <code>cd shelf &amp;&amp; sh build.sh</code>（编出 <code>epub-optimize</code>）→ 就能用 <code>shelf/host/bin/shelf</code> 了。</dd>
     </dl></details></div>
