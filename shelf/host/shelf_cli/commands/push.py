@@ -1,6 +1,6 @@
 """`shelf push`：host 洗书 → 落**母版库**（中间层），去向由用户在网页选（xochitl / KOReader）。
 
-统一后 push 不再有投递目标——一律落母版库（`/api/books/staging`）。host 是唯一能"入库时顺带优化"的源：
+统一后 push 不再有去向参数——一律落母版库（`/api/books/staging`）。host 是唯一能"入库时顺带优化"的源：
 - 默认：有 Calibre → 洗书（EPUB 深洗 / 杂格式转 EPUB / PDF 结构化重排）→ 落母版库（产物带优化标记）。
 - `--no-optimize`：不洗，原样传母版库（用户可在网页按需点优化）。
 - `--to-pdf`：定稿成固定版式 PDF（手写批注用），落母版库。

@@ -1,5 +1,5 @@
 //! EPUB 质量门（对标 host `check_output.py` 的 EPUB 检查项，2026-09-03 移植；白皮书 §03i）。
-//! 只读、不改书。硬失败（`ok=false`）应拦下投递：
+//! 只读、不改书。硬失败（`ok=false`）应拦下落库/推送：
 //! 1. 真 DRM：`META-INF/encryption.xml` 加密了非字体项（仅字体混淆是合法的，告警不拦）。
 //! 2. 目录 href 文件命中率 < 80%（目录指向不存在的文件 = xochitl TOC 面板点不动）。
 //! 3. 单标签双 `id=` 属性（非法 XHTML，xochitl 严格 XML 解析整章白屏，《消失的爱人》7 页事故）。

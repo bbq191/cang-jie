@@ -4,7 +4,7 @@ from __future__ import annotations
 import sys
 
 NAME = "inbox"
-HELP = "book-serve 队列：列出 / 重试 / 删除失败的投递（--retry / --delete 名字）"
+HELP = "scp 追平队列（inbox/）：列出 / 重试 / 删除入库失败的书（--retry / --delete 名字）"
 
 
 def add_args(p):

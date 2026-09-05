@@ -23,7 +23,7 @@ pub struct Module {
 }
 
 pub const MODULES: &[Module] = &[
-    Module { seg: "books", service: "book-serve", only: "book", label: "母版库 / 原生投递", installable: true },
+    Module { seg: "books", service: "book-serve", only: "book", label: "母版库 / 落原生", installable: true },
     Module { seg: "fonts", service: "font-serve", only: "font", label: "xochitl 字体", installable: true },
     Module { seg: "koreader", service: "koreader-serve", only: "koreader", label: "KOReader", installable: true },
     Module { seg: "wallpapers", service: "wallpaper-serve", only: "wallpaper", label: "壁纸", installable: true },

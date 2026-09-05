@@ -108,7 +108,7 @@
 
 ## 03i｜host 优化 vs 设备端优化：对标现状与移植计划（2026-09-03 傍晚，用户问"对标一致吗"）
 
-**结论：优化器同源一致，清洗层与质量门不对标。**
+**结论：优化器同源一致，清洗层与质量门不对标。**（⚠ 下表的 `-q host` / `-q device` 两条入口是 2026-09-03 的历史形态，现行唯一入口见 §00b：host `shelf push` 落母版库 + 设备端母版库「优化」。）
 
 | 层 | host 路（`shelf push -q host`） | 设备路（网页 / `-q device`） | 状态 |
 |---|---|---|---|
@@ -371,6 +371,7 @@ KOReader 漫画模式读 CBZ 本就是最优解。`imgopt` 只读头取尺寸的
 ③ **投原生体积门**：`BookConfig.nativeUploadLimitMb`（缺省 150，0=不拦；真机 188MB 被拒、60MB 稳）→ `Staging::deliver` 超限不发、回执指引"PDF 在电脑 shelf push 重推自动分卷 / EPUB 用 KOReader"，
 `status` 带 `nativeUploadLimitBytes` 供网页灰掉超限书的「投入原生书库」（⑫）；④ 管理页 `shelf push` 卡改正"TXT 网页不收/网页直传"过时说法、补漫画例子；⑤ `manage::MODULES` 标签
 book→「母版库 / 原生投递」、weread→「微信读书（内容源，待接）」；⑥ `book-serve.service` Description 同步。真机：`status.nativeUploadLimitBytes`=150MB；对母版库里 283MB《镖人.pdf》点投原生 → 门拦回执、xochitl 日志零新增。
+**核查二档（2026-09-05，11/13/14/16）**：删无调用方的 `host/calibre/einkify_epub.py`（同等能力在 `bookconv::imgopt`，`reading/tools/calibre/README` 同步）；网页入库页与 GUIDE 把"微信读书"标为待接；"投递"用词统一为入库/落库（模块标签「母版库 / 落原生」、`book-serve.service`、bookconv/check 注释、`inbox` HELP）；§03i 对标表加"历史形态、现行见 §00b"提示。第 15 条（config 测试的 `quality` 键）已随一档 ② 改成中性键名。
 **⚠ 文档事故**：上一轮文档脚本用 `**未闭环**：`/`**已闭环（真机）**` 做切片锚点，前者在 §00b 与 §05 各出现一次，切掉了 §00b 尾～§05 整段并随 `b5fde60` 提交；从 `898f2fd` 恢复全文后重放改动。教训：切片锚点必须先 `count()==1`。
 ## 04｜踩坑
 
