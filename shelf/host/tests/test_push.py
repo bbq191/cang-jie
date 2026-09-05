@@ -6,7 +6,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from shelf_cli import calibre_bridge as cb  # noqa: E402
-from shelf_cli import pdfsplit  # noqa: E402
+from shelf_cli import comic, pdfsplit  # noqa: E402
 from shelf_cli.commands import push  # noqa: E402
 from test_cli import FakeGateway, gateway, run  # noqa: E402,F401
 
@@ -94,3 +94,68 @@ def test_push_dry_run_and_missing_file(gateway, tmp_path, capsys):
     FakeGateway.received.clear()
     rc, out = run(["push", "-n", str(tmp_path / "a.epub")], gateway, capsys)
     assert rc == 0 and "母版库" in out and not FakeGateway.received
+
+
+def _palmdb(records: list[bytes]) -> bytes:
+    """最小 PalmDB：78 字节头 + 记录表 + 记录体。"""
+    n = len(records)
+    head = bytearray(78)
+    head[76:78] = n.to_bytes(2, "big")
+    off = 78 + n * 8
+    table = bytearray()
+    for i, r in enumerate(records):
+        table += off.to_bytes(4, "big") + bytes([0, 0, 0, i & 0xFF])
+        off += len(r)
+    return bytes(head) + bytes(table) + b"".join(records)
+
+
+def test_comic_probe_palmdb_and_epub(tmp_path):
+    jpg = b"\xff\xd8\xff" + b"\0" * 2000
+    comic_book = tmp_path / "manga.azw3"
+    comic_book.write_bytes(_palmdb([b"MOBIhdr" + b"\0" * 100] + [jpg] * 30))
+    text_book = tmp_path / "novel.azw3"
+    text_book.write_bytes(_palmdb([b"text record " * 200] * 40 + [jpg] * 2))
+    assert comic.is_comic(comic_book) and not comic.is_comic(text_book)
+    assert comic.is_comic(tmp_path / "x.cbz") and not comic.is_comic(tmp_path / "x.pdf")
+    import zipfile
+
+    def epub(path, pages, imgs_per_page, text_per_page):
+        with zipfile.ZipFile(path, "w") as z:
+            z.writestr("META-INF/container.xml", '<container><rootfile full-path="OEBPS/content.opf"/></container>')
+            items = "".join(f'<item id="p{i}" href="p{i}.xhtml"/>' for i in range(pages))
+            spine = "".join(f'<itemref idref="p{i}"/>' for i in range(pages))
+            z.writestr("OEBPS/content.opf", f"<package><manifest>{items}</manifest><spine>{spine}</spine></package>")
+            for i in range(pages):
+                body = '<img src="i.jpg"/>' * imgs_per_page + "<p>" + "字" * text_per_page + "</p>"
+                z.writestr(f"OEBPS/p{i}.xhtml", f"<html><head><style>p{{x}}</style></head><body>{body}</body></html>")
+    epub(tmp_path / "c.epub", 10, 17, 30)      # Calibre 洗过的漫画：一页十几张图、几乎无字
+    epub(tmp_path / "t.epub", 30, 1, 600)      # 文字书：每章一张插图、几百字
+    assert comic.is_comic(tmp_path / "c.epub") and not comic.is_comic(tmp_path / "t.epub")
+
+
+def test_push_comic_route_lands_cbz_and_pdf(gateway, tmp_path, capsys, monkeypatch):
+    src = tmp_path / "manga.azw3"
+    src.write_bytes(b"x")
+    monkeypatch.setattr(cb, "has_calibre", lambda: True)
+    monkeypatch.setattr(comic, "is_comic", lambda p: True)
+    seen = {}
+    monkeypatch.setattr(cb, "comic2cbz", lambda s, o: (o.write_bytes(b"PK"), o)[1])
+    monkeypatch.setattr(cb, "cbz2pdf", lambda s, o, mono=False: (seen.__setitem__("mono", mono), o.write_bytes(b"%PDF"), o)[2])
+    FakeGateway.received.clear()
+    rc, out = run(["push", "--mono", str(src)], gateway, capsys)
+    assert rc == 0 and "漫画 CBZ+PDF→母版库" in out and seen["mono"] is True
+    names = [r[0] for r in FakeGateway.received]
+    assert names.count("/api/books/staging") == 2, "CBZ 与 PDF 各一次入库"
+    # --no-comic 强制走洗书路；--no-optimize 原样
+    monkeypatch.setattr(cb, "wash", lambda s, w, env=None: s)
+    monkeypatch.setattr(push, "_gate", lambda o, a: None)
+    rc, out = run(["push", "--no-comic", str(src)], gateway, capsys)
+    assert rc == 0 and "洗书→母版库" in out
+    rc, out = run(["push", "--no-optimize", str(src)], gateway, capsys)
+    assert rc == 0 and "原样→母版库" in out
+    # CBZ 不需要 Calibre 也走漫画路
+    monkeypatch.setattr(cb, "has_calibre", lambda: False)
+    cbz = tmp_path / "v1.cbz"
+    cbz.write_bytes(b"PK")
+    rc, out = run(["push", str(cbz)], gateway, capsys)
+    assert rc == 0 and "漫画 CBZ+PDF→母版库" in out

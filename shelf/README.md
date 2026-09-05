@@ -92,6 +92,7 @@ shelf/host/bin/shelf push 论文.pdf 书.epub [--to-pdf] [--no-optimize] [--keep
                  扫描件 k2pdfopt/裁边→PDF，`--no-reflow` 原样）；`--to-pdf` 定稿固定版式 PDF（手写批注用）。>60MB PDF 自动分卷。
    `--no-optimize` 不洗原样传母版库。无 Calibre → 原样传母版库（网页里可再点优化）。
    清洗层+质量门已同源（白皮书 §03i/§03q/§03r）。
+shelf push 漫画.azw3 [--mono]                              # 漫画自动识别：出 CBZ（KOReader）+ 固定版式 PDF（原生，>60MB 分卷）；--comic/--no-comic 覆盖
 shelf font add 字体.ttf | ls | rm <file>                  # 只装原生阅读器：~/.local/share/fonts + fc-cache + fonts.json（KOReader 字体用 shelf koreader font）
 shelf wallpaper add 图.jpg [--activate] | ls | set <name> | mode sequential|random|fixed | rm <name>
 shelf koreader pull | diff | sync [-n] [--fonts] [--dicts]   # 配置即代码（Lua 合并在设备端跑）

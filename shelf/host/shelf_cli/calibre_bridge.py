@@ -106,9 +106,33 @@ def check(path: Path, require_toc: bool = False) -> tuple[bool, str]:
 
 
 def comic2cbz(src: Path, out: Path) -> Path:
+    """漫画 AZW3/MOBI/EPUB → CBZ（Calibre 解包成 EPUB 中转，按 spine 顺序抽整页图）。"""
     r = _run(["python3", str(CALIBRE_DIR / "comic2cbz.py"), str(src), str(out)])
     if r.returncode != 0 or not out.is_file():
         raise CalibreError(f"comic2cbz.py 失败（rc={r.returncode}）：{r.stderr.strip()[-800:]}")
+    return out
+
+
+SHELF_DIR = Path(__file__).resolve().parents[2]
+
+
+def bookconv_bin(name: str) -> Path | None:
+    """bookconv 的 host CLI（epub-optimize / cbz2pdf）：先 PATH，再 `shelf/target/release/`（`cd shelf && cargo build --release -p bookconv`）。"""
+    p = shutil.which(name, path=clean_env().get("PATH"))
+    if p:
+        return Path(p)
+    local = SHELF_DIR / "target" / "release" / name
+    return local if local.is_file() else None
+
+
+def cbz2pdf(src: Path, out: Path, mono: bool = False) -> Path:
+    """CBZ → 固定版式 PDF（每页按 Move 屏降采样；缺省原图，`mono` 黑白页 1-bit 抖动）。与设备端母版库「转 PDF」同一函数。"""
+    b = bookconv_bin("cbz2pdf")
+    if b is None:
+        raise CalibreError("未找到 cbz2pdf（cd shelf && cargo build --release -p bookconv --bin cbz2pdf）")
+    r = _run([str(b), *(["--mono"] if mono else []), str(src), str(out)])
+    if r.returncode != 0 or not out.is_file():
+        raise CalibreError(f"cbz2pdf 失败（rc={r.returncode}）：{r.stderr.strip()[-800:]}")
     return out
 
 

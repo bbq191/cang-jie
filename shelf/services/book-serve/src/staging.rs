@@ -4,6 +4,7 @@
 //! 之后前端调 `mark_delivered` 记一笔）。落库＝纯复制母版字节（两读器同字节可对照），母版默认保留可反复落库。
 //! 目录 `$XDG_STATE_HOME/shelf/books/staging/`（/home 分区，重启/OTA 不丢；**不套 LRU 淘汰**，留住用户还没落库的书）。
 //! 落库记录是同目录隐藏 sidecar `.<name>.delivered`（JSON，各读器最近一次落库 unix 秒）。
+use bookconv::convert::EinkTone;
 use bookconv::optimize::{self, FootnoteMode, OptimizeOpts};
 use bookconv::wash::WashOpts;
 use serde::{Deserialize, Serialize};
@@ -42,7 +43,7 @@ impl OptimizeMode {
     }
 }
 
-/// 母版库一本书的展示条目。`format` 从扩展名判、优化等级从内埋标记判（轻量只读中央目录）。
+/// 母版库一本书的展示条目。`format`（epub / pdf / cbz / other）从扩展名判、优化等级从内埋标记判（轻量只读中央目录）。
 #[derive(Serialize, Clone, Debug, PartialEq)]
 pub struct StagingEntry {
     pub name: String,
@@ -154,6 +155,20 @@ impl Staging {
         Ok(format!("已优化《{name}》{}", optimize_note(&rep)))
     }
 
+    /// 漫画 CBZ → 固定版式 PDF（每页按 Move 屏降采样；`mono` 黑白页 1-bit 抖动），作为**新条目** `<stem>.pdf` 入库，
+    /// CBZ 保留（KOReader 读 CBZ 更好）。与 host `cbz2pdf` 同一函数。大套系（上千页）建议走电脑，设备 CPU 慢。
+    pub fn to_pdf(&self, name: &str, mono: bool) -> Result<String, String> {
+        if formats::ext_of(name) != "cbz" {
+            return Err("只有 CBZ 能转 PDF".into());
+        }
+        let p = self.existing(name)?;
+        let data = std::fs::read(&p).map_err(|e| format!("读母版库文件失败: {e}"))?;
+        let pdf = bookconv::convert::cbz::cbz_to_pdf(&data, if mono { EinkTone::Mono } else { EinkTone::Off })?;
+        let stem = name.rsplit_once('.').map(|(s, _)| s).unwrap_or(name);
+        let landed = self.stage_new(&format!("{stem}.pdf"), &pdf)?;
+        Ok(format!("已转成 PDF《{landed}》（{} 字节，{}）", pdf.len(), if mono { "1-bit 抖动" } else { "原图" }))
+    }
+
     // ───────────── 落库 ─────────────
 
     /// 投入 xochitl 书库：纯复制原字节（不再优化）。原生阅读器只读 EPUB/PDF。`folder` 空＝配置缺省；
@@ -218,6 +233,7 @@ impl Staging {
             let format = match formats::ext_of(&name).as_str() {
                 "epub" => "epub",
                 "pdf" => "pdf",
+                "cbz" => "cbz",
                 _ => "other",
             };
             // 优化状态只对 EPUB 有意义。标记分等级：完整（含 wash）= 版本号本身；只跑核心遍 = `<版本>-core`；旧版本号 = old。
@@ -393,6 +409,33 @@ mod tests {
         assert!(e.optimized && e.level == "full");
         assert_eq!(OptimizeMode::parse("keep-spacing").wash().unwrap().keep_para_spacing, true);
         assert!(OptimizeMode::parse("plain").wash().is_none() && OptimizeMode::parse("").wash().is_some());
+    }
+
+    #[test]
+    fn cbz_to_pdf_lands_new_entry_and_keeps_cbz() {
+        let t = tempfile::tempdir().unwrap();
+        let s = staging(&t);
+        let img = image::RgbImage::from_fn(300, 500, |x, y| image::Rgb([((x + y) % 2 * 255) as u8; 3]));
+        let mut png = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgb8(img).write_to(&mut png, image::ImageFormat::Png).unwrap();
+        let mut cbz = Vec::new();
+        {
+            use std::io::Write;
+            let mut zw = zip::ZipWriter::new(std::io::Cursor::new(&mut cbz));
+            let o = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+            for n in ["p2.png", "p10.png", "p1.png"] {
+                zw.start_file(n, o).unwrap();
+                zw.write_all(png.get_ref()).unwrap();
+            }
+            zw.finish().unwrap();
+        }
+        s.stage_new("c.cbz", &cbz).unwrap();
+        assert!(s.to_pdf("nope.epub", false).unwrap_err().contains("只有 CBZ"));
+        let msg = s.to_pdf("c.cbz", true).unwrap();
+        assert!(msg.contains("c.pdf") && msg.contains("1-bit"), "{msg}");
+        let l = s.list();
+        assert!(l.iter().any(|e| e.name == "c.cbz" && e.format == "cbz") && l.iter().any(|e| e.name == "c.pdf" && e.format == "pdf"));
+        assert!(std::fs::read(s.dir().join("c.pdf")).unwrap().starts_with(b"%PDF"));
     }
 
     #[test]

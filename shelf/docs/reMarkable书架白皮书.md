@@ -279,6 +279,30 @@ Explore 走查出的粗糙点 + 一个真 bug，分 5 批。批 1-4 已真机部
 **真机通（2026-09-05 13:41，USB 10.11.99.1，备份 `shelf-20260905-134052`，SSH 隧道打 loopback）**：注册表 font-serve 挂 tab「xochitl」、book-serve 无 tab ✓；`POST /staging` 一次传 jpg+epub → jpg 拒收（文案含整份白名单）、epub 落地回执 `name`=落地名 ✓；`/staging/optimize keep-spacing` 回执带统计「清洗+优化，2 章，653→1630 字节，自动目录 1 条」、列表等级 none→full ✓；`/staging/deliver` 非 EPUB/PDF 门 ✓；`/staging/mark weread` 拒 ✓；`/books/adopt` 进 KOReader 子目录（1630 字节同字节）+ `mark koreader` 后列表 `delivered.koreader` ✓；font-serve 拒 jpg（fallback 链照常）✓；旧 `POST /?target=` 404、`POST /koreader/books` 405 ✓；`.work/` 空（上传暂存已清）。测试书已从母版库与 KOReader 删除。
 **格式提示分档（2026-09-05，用户"入库页格式列太多了，只列实际支持的"）**：核实结论——18 个扩展名全部是设备装的 KOReader v2026.07.1 `documentregistry` 真注册的（crengine：txt/html/rtf/doc/docx/chm/mobi/azw/prc/fb2；mupdf：pdf/cbz/cbr/xps，`libarchive.so.13` 带 `rar`/`rar5` 所以 CBR 真能开；djvu 引擎：djvu），白名单没有多收。问题在**展示**：一口气列 18 个看不出谁能去哪。改 `formats` 分三档（`NATIVE_EXTS` epub/pdf · `HOST_CONVERTIBLE_EXTS` azw3/mobi/azw/prc/fb2 = host `WASH_EXT` · `KOREADER_ONLY_EXTS` 其余 11 个），`BOOK_EXTS` 仍是三档之并（测试钉死），网页拖放框只写「EPUB / PDF 及下列格式」，下方与 GUIDE「格式」条改为三档一句话说明（`FMT_TIERS`），KOReader 页改"母版库收的所有格式 KOReader 都能读"。
 
+## 03t｜漫画通道：AZW3 漫画 → CBZ + 固定版式 PDF（2026-09-05，用户"AZW3 漫画该怎么转 / 镖人为何投不了原生"）
+
+**根因**：《镖人》AZW3 被当文字书走 Calibre 洗书路 → 282MB EPUB（2637 文件 / 2473 图）→ 点「投入原生书库」两次，xochitl 日志
+`HttpRequest: expected multipart body is too large`（13:45:50 / 13:45:59）——撞的是 xochitl `/upload` 体积上限（此前测得 60～285MB 间 413），
+不是我们的格式门。就算传上，漫画进 xochitl EPUB 重排引擎也不对（图按列宽缩、无固定页）；正确载体是**固定版式 PDF**（每页一张 954×1696）。
+架构缺口：母版库三层下**没有"漫画 → 原生"的路**（`push` 见 `.azw3` 一律洗成 EPUB；`.cbz` 原样只能进 KOReader；设备端 CBZ→PDF 转换器已无调用方）。
+
+**做法（用户定：默认原图，不抖动）**：
+- **host 探针 `shelf_cli/comic.py`**（不调 Calibre，毫秒级）：PalmDB 容器数 JPEG/PNG 魔数记录，图片字节 ≥60% 且 ≥20 张判漫画；EPUB 按 spine 统计
+  `<img>` 数与可见文字数，图 ≥20 且每图配字 <40 判漫画；CBZ 天然。真书：《镖人》AZW3 2498 图占 99.96% ✓，Calibre 洗过的 EPUB 2473 图 / 5527 字 ✓
+  （首版"整页只有一张图的页占比"判据在洗过的 EPUB 上失败——Calibre 把十几张图塞进一个 xhtml，146 页 spine 只 24 页单图——改成图/字比后两种都命中）。
+  `--comic / --no-comic` 覆盖。
+- **`shelf push` 路线规划 `plan()`**：`--no-optimize`→raw；漫画且（CBZ 或有 Calibre）→comic；有 Calibre→wash；否则 raw。comic 路产**两份**入母版库：
+  CBZ（`comic2cbz.py` 按 spine 抽整页图；给 KOReader 漫画模式）+ PDF（新 bookconv bin **`cbz2pdf`**，与设备端同一 `convert::cbz::cbz_to_pdf`：
+  每页按屏降采样，缺省原图 JPEG 直嵌，`--mono` 黑白页 1-bit 抖动），PDF >60MB 走既有 `pdfsplit` 分卷。
+- **设备端母版库加「转 PDF」**：`POST /staging/to-pdf {name, mono}`，CBZ → `<stem>.pdf` 新条目、CBZ 保留；网页 CBZ 行出「转 PDF」按钮 + 「漫画转 PDF 用 1-bit 抖动」开关；
+  列表 `format` 加 `cbz`（筛选归「其它」）。真机：3 页测试 CBZ → `mini.pdf` 3473 字节 ✓。大套系走电脑（设备 CPU 慢约 10×）。
+- **`imgopt` 提速**：`downscale_for_device`/`downscale_into` 原先为取尺寸把每页 JPEG 完整解码（甚至两次），改只读头取尺寸、达标页零解码。
+  《镖人》2473 页原图路 host 2m36s → 1m49s（产物字节完全相同）；剩下的 44ms/页在 JPEG 头解析 + 写 297MB 产物，未再深挖。
+
+**《镖人》实测（host）**：`comic2cbz` 0.8s → CBZ 296MB（页 927×1327 RGB JPEG，均 120KB，已 ≤ 屏、直嵌）；`cbz2pdf` 原图 297MB；`--mono` 223MB（4m31s）。
+mono 只缩到 3/4 而非"1/8"：色度采样 99 页只 1 页 ≥0.06（彩封），几乎全书都转了 1-bit——**体积没降是 Floyd–Steinberg 抖动后的位图是高熵噪点，
+Flate 压不动**（927×1327 1-bit 裸 154KB，压后仍 ~90KB，只比 120KB 的 JPEG 小 1/4）；代码里"~1/8"是相对 8-bit 灰 Flate 说的，对 JPEG 源不成立。
+原图档不受影响（用户定默认原图）；mono 要真省体积得换 CCITT G4/JBIG2 编码，留后续。
 ## 03q｜书籍优化深层优化：做精做细做强（2026-09-04，用户"只做精做细做强"）
 
 > 📖 优化引擎的机制细节（清洗层/优化遍/脚注四形态/图片降采样/**xochitl 渲染硬规则**/v1–v10 版本演进）见 **`bookconv优化白皮书.md`**。本节只记这几轮的诉求、决策与真机反馈。
