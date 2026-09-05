@@ -13,15 +13,20 @@
 ;   .169 上 FormatFont 每进程只建一次、onCompleted 只触发一次（2026-08-28 坐实），visible 变化信号是否触发未验。
 ;   渲染 worker 能否认新字体（S-A）与本 qmd 无关，由 fontconfig 决定。
 ;
-; 【锚点核对（3.28.0.169，md5 3356dde7）】Control#root > ColumnLayout > ListModel#fontModel（同 add-reading-fonts.qmd）。
-; 【qmldiff 纪律】INSERT{} 块内是 QML，注释只能用 //。
+; 【锚点核对（3.28.0.169，md5 3356dde7；3.28.0.172 的 FormatFont.qml 与 .169 逐字节相同）】Control#root > ColumnLayout > ListModel#fontModel（同 add-reading-fonts.qmd）。
+; 【真机】3.28.0.172 2026-09-05：qmldiff 应用干净，`SHELF-FONT: onCompleted lang=en appended=4 count=8`。
+; 【qmldiff 纪律】INSERT{} 块内是 QML，注释只能用 //；**不写 `({})` 对象字面量、handler 一律 `{ … }` 块**（否则整份 qmd
+;   "expected item assignment value token, got Some(Symbol('('))" 不应用）。改前先用 asivery/qmldiff CLI `apply-diffs` 离线实跑
+;   （reading-qol/README「离线验证管线」），它能一比一复现设备端的解析错误。
 ; ─────────────────────────────────────────────────────────────────────────
 
 AFFECT /qml/device/view/documentview/FormatFont.qml
     TRAVERSE Control[#root] > ColumnLayout > ListModel[#fontModel]
         LOCATE AFTER ALL
         INSERT {
-            property var cjAdded: ({})
+            // 去重表用数组当字典：qmldiff 解析不了 `({})`（3.28.0.172 真机 2026-09-05：
+            // "expected item assignment value token, got Some(Symbol('('))"，整份 qmd 不应用），数组字面量它认。
+            property var cjAdded: []
             function cjLang() {
                 var s = "" + qsTranslate("SettingsModel", "Help")
                       + qsTranslate("SettingsModel", "Cloud")
@@ -63,14 +68,15 @@ AFFECT /qml/device/view/documentview/FormatFont.qml
                 }
                 console.warn("SHELF-FONT: " + reason + " lang=" + lng + " appended=" + n + " count=" + fontModel.count);
             }
-            Component.onCompleted: cjSync("onCompleted")
+            // handler 一律写成 `{ … }` 块：不带花括号的 `if (` 会让 qmldiff 报同一句解析错误（离线 CLI 二分坐实）。
+            Component.onCompleted: { cjSync("onCompleted") }
         }
     END TRAVERSE
     TRAVERSE Control[#root]
         LOCATE AFTER ALL
         INSERT {
             // 菜单再次可见 → 差量同步（S-B 假设，真机验证：journal 看 SHELF-FONT: visible 是否出现）
-            onVisibleChanged: if (visible) fontModel.cjSync("visible")
+            onVisibleChanged: { if (visible) fontModel.cjSync("visible") }
         }
     END TRAVERSE
 END AFFECT

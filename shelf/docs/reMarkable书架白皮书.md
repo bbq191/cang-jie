@@ -404,6 +404,7 @@ book→「母版库 / 原生投递」、weread→「微信读书（内容源，�
 ## 04｜踩坑
 
 - **磁盘 metadata ≠ xochitl/UI 实际状态（2026-09-04 用户纠正）**：直接 `sed` 改 `.metadata` 的 `parent=trash` 并不等于"已进回收站"——xochitl 运行时在内存缓存、写回时覆盖，云同步也可能还原；出现过磁盘 8 个探针 `parent=trash` 但 UI 回收站只见真实书的错位。**涉及书库状态以设备 UI/xochitl 实际为准，不拿磁盘 metadata 当真相**；清测试文档走正常删除流程或停 xochitl 后操作，别边跑边改。
+- **qmd 语法比 QML 窄，且解析错误=整份不应用、xochitl 不崩不报**（2026-09-05）：`({})`、裸 `if (` handler 都让 qmldiff 报 `expected item assignment value token`；只在 journal 有一行 `[qmldiff]: Error while processing file tree`，菜单静默缺项（用户"选不到已安装的字体"）。规矩：写/改 qmd 先 `git clone asivery/qmldiff && cargo build --release`，`qmldiff apply-diffs <root> <dest> x.qmd -f -c` 对 `extract_qml.py` 解出的真 QML 实跑（root 按资源路径摆），过了再上机；上机后 `journalctl -u xochitl | grep qmldiff` 必看。
 - multipart 流式解析：`fill()` 用 `Vec::resize(+64KB)` 在逐字节到达的流上变成 memset 风暴（测试 50s）；改栈上临时块 `extend_from_slice` → 0.8s。
 - **xochitl `/upload` 有体积上限**（实测 282MB EPUB 被 `multipart body is too large` 拒；此前 60～285MB 间见过 413）：大 PDF 靠 `pdfsplit` 60MB 分卷；EPUB 不能分卷——漫画别走 EPUB（§03t）。
 - 会话里 shell cwd 会在 `cang-jie/` 与 `shelf/` 间漂移：`curl -F` 之类落地文件一律写绝对路径到 scratchpad，否则测试文件会混进仓库（2026-09-05 误提交两个临时文件后已删）。
@@ -419,7 +420,7 @@ book→「母版库 / 原生投递」、weread→「微信读书（内容源，�
 1. **Phase E ②③④**：英文书拉丁缩进（1.2em、标题后首段不缩进）观感；同一母版落 xochitl + KOReader 并排对照；KOReader 里内联脚注〔…〕能否接受（若不能，落库时对 KOReader 另跑 Anchor 是唯一备选，但会打破"两器同字节"）。
 3. KOReader 里旧的 282MB《镖人.epub》由用户删（母版库里的漫画 PDF 用户已删，2026-09-05 15:04 后母版库为空）。
 4. 拔线真 suspend 下钩子 bind + 唤醒轮换只触发一次。（普通重启后 `shelf.target` / 壁纸 bind 自起已由 9-03 21:13 重启 + 2 天 uptime 坐实；OTA 后需重跑 deploy，§03v。）
-5. 3.28 机上激活验证 `font-menu-dynamic.qmd`：已放进 qrr 目录（§03v），下次 `xovi/start` 后看菜单 `SHELF-FONT` 日志与 elide。
+5. ~~3.28 机上激活验证 `font-menu-dynamic.qmd`~~ **已通（2026-09-05 17:23）**：首版在 .172 上整份不应用——qmldiff 解析不了 `property var x: ({})` 与不带花括号的 `onVisibleChanged: if (…)`（报 `expected item assignment value token, got Some(Symbol('('))`），改成 `[]` + `{ … }` 块后 `SHELF-FONT: onCompleted lang=en appended=4 count=8`。判官=本机编的 asivery/qmldiff CLI，能一比一复现设备错误（§04）。用户选字体渲染效果待其确认。
 7. appload 3.28 适配：等上游发版或自 fork 重编（需 rM Qt6 SDK）；期间 KOReader 无侧栏入口。
 8. **退役 bind-mount 壁纸整套**（§03w 已证原生 `SleepScreenPath=current.png` 随唤醒轮换）：wallpaper-serve 去掉 `bind/unbind`/`mount.rs`/三张透明插画卡，删 `shelf-wallpaper-bind.service` + sleep 钩子，安装器改为写 xochitl.conf `SleepScreenPath`（要停 xochitl 写、备份 conf、不打印 token），卸载器还原键；轮换沿用 wake.rs。
 9. ~~WiFi 60 秒掉链根治~~ 已写入 `powersave 2`（§03w）；换 SSID 时记得再 modify。
