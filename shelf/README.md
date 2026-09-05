@@ -14,7 +14,6 @@ reMarkable Paper Pro Move 的**读书与阅读质量层**：一个网页 / 一�
  抓网文（Readability）    · 母版永久保留，可反复落库、两读器对照           📚 加入 KOReader（母版库收的任何格式）
  电脑 shelf push          · 「优化」只对 EPUB（清洗+优化，档位三选）      · 落库＝纯复制母版字节，不再优化
  scp 进 inbox/            · 漫画（CBZ）只加入 KOReader，不投原生          · 落库记录徽章 / 清理已落库 / 剩余空间
- 微信读书（Phase D 待接）
 ```
 
 **统一规则**：所有书**只落母版库**——网页、CLI、inbox 都没有直投读器的路径；"入库是入库，优化是优化，落库是落库"。
@@ -35,9 +34,9 @@ host `shelf push` 是唯一能"入库时顺带优化"的源（Calibre 深洗 / �
 ```
 浏览器 / shelf CLI ──► shelf-gateway  https://0.0.0.0:8778 · shelf.local（私有 CA TLS + 登录页密码/CLI Basic）  UI + /api/services + /api/manage + /api/<seg>/* 反向代理
                             │  按注册表转发（剥掉 <seg>，body 流式透传）
-        ┌───────────────────┼─────────────────┬──────────────────┬──────────────────┐
-   book-serve          koreader-serve       font-serve       wallpaper-serve     weread-serve(预留 8794)
-  127.0.0.1:8790        :8791               :8792            :8793               微读作为内容源（下书→母版库，Phase D）
+        ┌───────────────────┼─────────────────┬──────────────────┐
+   book-serve          koreader-serve       font-serve       wallpaper-serve
+  127.0.0.1:8790        :8791               :8792            :8793
   母版库(入库/优化/落库) 从母版库落书·字体·   原生字体上传即装   壁纸上传即用
   + 投 xochitl + inbox   词典·配置同步       (fontconfig 回退链)  (bind-mount 休眠屏)
 ```
@@ -45,7 +44,7 @@ host `shelf push` 是唯一能"入库时顺带优化"的源（Calibre 深洗 / �
 - **注册表**：服务启动写 `$XDG_RUNTIME_DIR/shelf/services/<name>.json`（含 pid、端口、UI tab），退出即删；
   网关按它出 tab、缺席回 404「未安装」。装/卸一个服务 = 一个二进制 + 一个 systemd 单元，其余零改动。
 - **URL 段 ↔ 服务**（`shelf-gateway/src/manage.rs` 的 `MODULES` 单一事实源，管理台三态/代理/CLI `status` 都从它派生）：
-  `books→book-serve`、`koreader→koreader-serve`、`fonts→font-serve`、`wallpapers→wallpaper-serve`、`weread→weread-serve`。
+  `books→book-serve`、`koreader→koreader-serve`、`fonts→font-serve`、`wallpapers→wallpaper-serve`。
   经网关 `GET /api/fonts/health` = 后端直连 `GET 127.0.0.1:8792/health`（SSH 隧道调试同一套路由）。
 - **systemd**：`shelf.target`（挂 multi-user）+ 各服务 `PartOf=shelf.target`；`systemctl disable --now font-serve` 即拔掉字体服务。
   所有单元只 `After=home.mount`，**绝不给 xochitl 加依赖**。网页「管理」页可开关/卸载单个服务（安装不走网页）。
@@ -81,7 +80,6 @@ shelf/
 ├── xovi/font-menu-dynamic{,-3.27}.qmd  字体菜单读 fonts.json 动态追加
 ├── wallpaper/                         5 行 sleep 钩子 + README（逻辑在 wallpaper-serve 子命令）
 ├── koreader/                          配置即代码：profile/{settings.reader.patch,defaults.custom,gestures.patch}.lua + fonts.txt/dicts.txt + merge.lua
-├── weread-web/                        〔存档〕微读网页版内嵌浏览器 spike——方向已改为"微读=内容源"，见其 README
 └── docs/
     ├── reMarkable书架白皮书.md          书架侧设计决策 + 真机记录（服务/UI/母版库/字体/管理台）；开头有「现状总览」
     └── bookconv优化白皮书.md            书籍优化引擎：清洗层/优化遍/脚注/图片/格式转换/★xochitl 渲染硬规则/版本演进
@@ -153,7 +151,7 @@ shelf passwd [--new …]
 | P2 | 字体/壁纸上传即可用（fontconfig+fonts.json、954×1696 池化/轮换/bind、动态字体菜单 qmd、sleep 钩子） | ✅ 真机通 |
 | P3 | KOReader 配置即代码（profile 三份补丁 + 设备端 merge.lua + pull/diff/sync） | ✅ 真机通 |
 | P4/P4b | 质量门 + 清洗层进 bookconv（host/端同一优化器，`optimize` 档位） | ✅ 真机通（§03i） |
-| P5 | 微读网页版内嵌浏览器 spike | ⏸ **方向已改**：微读定位为内容源（下书→母版库，§03r 决策 3），spike 不再推进 |
+| P5 | 微信读书（先内嵌浏览器 spike，后改内容源） | ⛔ **已砍（2026-09-05，§03u）**：微读不再是书架内容源；reading/ 旧下书线不受影响 |
 | 追加 1–6 | HTTPS+密码、登录页/私有 CA/mDNS、字体两 bug 根治、网页改版、管理台三态、二级 tab | ✅ 真机通（§03h–§03o） |
 | 质量一轮 | config/fs/receive_part_to/all_ok 共享原语；KoStore 收编；死代码清除 | ✅（§03p） |
 | 书籍优化 | 做精做细做强：LangMode 中英文排版、目录 h1–h6、脚注 Inline/Anchor、host PDF 重排、**首行缩进根因＝xochitl 只认外链 css（v10）** | ✅ 真机通（§03q） |

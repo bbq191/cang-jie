@@ -379,7 +379,7 @@ mod tests {
         let d = s.list()[0].delivered.clone().unwrap();
         assert!(d.native.is_some() && d.koreader.is_some());
         assert_eq!(s.list().len(), 1, "sidecar 不当条目列出");
-        assert!(Reader::parse("weread").is_err() && Reader::parse("native").is_ok());
+        assert!(Reader::parse("nowhere").is_err() && Reader::parse("native").is_ok());
         assert!(s.mark_delivered("nope.epub", Reader::Native).is_err(), "不存在的书拒绝");
         s.remove("b.epub").unwrap();
         assert!(!delivered_path(&s.dir().join("b.epub")).exists(), "删书连带删 sidecar");

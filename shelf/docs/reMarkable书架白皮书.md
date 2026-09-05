@@ -17,9 +17,9 @@
 
 ## 00b｜现状总览（2026-09-05，读本文其余历史节前先看这里）
 
-**架构**：网关（`0.0.0.0:8778`，HTTPS 私有 CA + 登录页密码 / CLI Basic + mDNS `shelf.local`）+ 四个 loopback 领域服务（book 8790 / koreader 8791 / font 8792 / wallpaper 8793）+ 运行时注册表驱动 tab；`weread-serve` 8794 预留。设备固件 3.27.3.0，KOReader v2026.07.1。
+**架构**：网关（`0.0.0.0:8778`，HTTPS 私有 CA + 登录页密码 / CLI Basic + mDNS `shelf.local`）+ 四个 loopback 领域服务（book 8790 / koreader 8791 / font 8792 / wallpaper 8793）+ 运行时注册表驱动 tab。设备固件 3.27.3.0，KOReader v2026.07.1。
 
-**读书线 = 三层 · 三动作正交**（§03r 定，§03s 收口）：内容源（网页上传 / 抓网文 / host `shelf push` / scp inbox / 微读〔Phase D 待接〕）→ **母版库** `~/.local/state/shelf/books/staging/`（原样入库，永久保留，不淘汰）→ 落库（人选：投 xochitl 只收 EPUB/PDF；加入 KOReader 收任意入库格式）。「优化」是母版库里对 EPUB 的独立动作（档位 auto / keep-spacing / plain，产物标记 full / core / old）；落库＝纯复制母版字节（投原生有体积门 `nativeUploadLimitMb`，缺省 150）。**漫画不投原生**：AZW3/EPUB 漫画由 host `shelf push` 转 CBZ 入库，只加入 KOReader。**所有书只落母版库，没有任何直投读器的路径**。落库记录 sidecar `.<书>.delivered`。
+**读书线 = 三层 · 三动作正交**（§03r 定，§03s 收口）：内容源（网页上传 / 抓网文 / host `shelf push` / scp inbox；微读线已砍，§03u）→ **母版库** `~/.local/state/shelf/books/staging/`（原样入库，永久保留，不淘汰）→ 落库（人选：投 xochitl 只收 EPUB/PDF；加入 KOReader 收任意入库格式）。「优化」是母版库里对 EPUB 的独立动作（档位 auto / keep-spacing / plain，产物标记 full / core / old）；落库＝纯复制母版字节（投原生有体积门 `nativeUploadLimitMb`，缺省 150）。**漫画不投原生**：AZW3/EPUB 漫画由 host `shelf push` 转 CBZ 入库，只加入 KOReader。**所有书只落母版库，没有任何直投读器的路径**。落库记录 sidecar `.<书>.delivered`。
 
 **代码落点**：book-serve `staging.rs`（领域）/ `spool.rs`（inbox 队列）/ `api.rs`（纯适配）；koreader-serve 只做"从母版库 adopt"+字体/词典/配置同步（不依赖 bookconv）；`shelf_core::formats` 是格式白名单单一事实源（三档：原生 epub/pdf · 电脑可转 azw3/mobi/azw/prc/fb2 · 仅 KOReader 其余 11 个），网页 `ui::page()` 注入；`shelf_core::asset` 是所有上传口的模板（母版库暂存在 spool `.work/` 同分区 rename）。host CLI：`push.plan()` 三路 raw / comic（→CBZ）/ wash；`comic.py` 漫画探针；bookconv CLI `epub-optimize`（与设备同一函数）。
 
@@ -27,7 +27,7 @@
 
 **网页 tab**：传书（入库｜母版库，固定第一）· xochitl（原生字体，由 font-serve 注册）· KOReader（字体｜词典）· 壁纸 · 管理（固定）。
 
-**未闭环**：Phase E ②③④（英文书拉丁缩进观感 / 两器同字节对照 / KOReader 里内联脚注可否接受——KOReader 拿到的是母版库 Inline 产物，不再另跑 Anchor）；Phase D 微读内容源；真重启后 `shelf.target` 自起 + `xovi/start`；3.28 固件 qmd。§05 有清单。
+**未闭环**：Phase E ②③④（英文书拉丁缩进观感 / 两器同字节对照 / KOReader 里内联脚注可否接受——KOReader 拿到的是母版库 Inline 产物，不再另跑 Anchor）；真重启后 `shelf.target` 自起 + `xovi/start`；3.28 固件 qmd。§05 有清单。
 
 ## 01｜架构决策
 
@@ -373,6 +373,12 @@ KOReader 漫画模式读 CBZ 本就是最优解。`imgopt` 只读头取尺寸的
 book→「母版库 / 原生投递」、weread→「微信读书（内容源，待接）」；⑥ `book-serve.service` Description 同步。真机：`status.nativeUploadLimitBytes`=150MB；对母版库里 283MB《镖人.pdf》点投原生 → 门拦回执、xochitl 日志零新增。
 **核查二档（2026-09-05，11/13/14/16）**：删无调用方的 `host/calibre/einkify_epub.py`（同等能力在 `bookconv::imgopt`，`reading/tools/calibre/README` 同步）；网页入库页与 GUIDE 把"微信读书"标为待接；"投递"用词统一为入库/落库（模块标签「母版库 / 落原生」、`book-serve.service`、bookconv/check 注释、`inbox` HELP）；§03i 对标表加"历史形态、现行见 §00b"提示。第 15 条（config 测试的 `quality` 键）已随一档 ② 改成中性键名。注释级 7–10（`wash_epub.sh` 末步说明、`comic2cbz.py`、`convert/mod.rs` 头注与 `EinkTone`）随后一并改为现状口径。
 **⚠ 文档事故**：上一轮文档脚本用 `**未闭环**：`/`**已闭环（真机）**` 做切片锚点，前者在 §00b 与 §05 各出现一次，切掉了 §00b 尾～§05 整段并随 `b5fde60` 提交；从 `898f2fd` 恢复全文后重放改动。教训：切片锚点必须先 `count()==1`。
+## 03u｜砍微读线（2026-09-05，用户"不做了，直接砍微读线"；范围只限书架）
+
+**评估后砍**。Phase D 探索（两个只读 agent + 真机核）得到的事实：① 「微读 Skill」= 微信读书官方 Skills/Agent 网关（Bearer api_key，`/_list` 自描述 17 接口）**只读没正文**——书架/目录/搜书能拿，章节正文只能走 web 端点 + cookie `wr_skey`（~90 分钟过期靠 renewal 续）+ 分片 `codec`（经授权照 MiuRead 移植的 AGPL 派生，个人自用不分发）；② 现有下书栈在 `reading/device-rs`（login/qr/renew/agent/fetch/sign/obfuscate/codec/pipeline ≈1000 行，纯网络模块零 device-core 依赖，只有 pipeline 尾巴与 wr_serve 是设备耦合），按书架原则要 `git mv` 成 `shelf/crates/weread-core`（crate 级 AGPL-3.0）+ 旧 crate re-export，再立 `weread-serve` 8794（后台任务 + 进度轮询 + 55 分钟续期 + 封面代理）+ 网页扫码状态机；③ 设备与 host 当前都没有任何微读凭证（重置机），要重新扫码；④ 协议脆弱是已知常量（上游一改即断，"200 空 {}"曾卡数日）。投入约两天、收益一条依赖第三方私有协议的内容源，用户决定不做。
+
+**砍掉的**：管理页目录表 weread 行（`installable` 机制保留）、入库页「微信读书 · 即将接入」占位与三处「待接」文案、`services/weread-serve/` 槽位 README、`weread-web/`（内嵌浏览器 spike 脚本，从未执行）。**不动的**：`reading/` 的 wr-* 下书栈、`/home/root/weread` 与 `~/.config/weread-client` 冻结路径（块③阅读旧线，与书架无关）；`bookconv` 里为微读书形态做的脚注/远程图规则保留（第三方书同样受益）。书架内容源定为四条：网页上传 / 抓网文 / 电脑 `shelf push` / scp inbox。
+
 ## 04｜踩坑
 
 - **磁盘 metadata ≠ xochitl/UI 实际状态（2026-09-04 用户纠正）**：直接 `sed` 改 `.metadata` 的 `parent=trash` 并不等于"已进回收站"——xochitl 运行时在内存缓存、写回时覆盖，云同步也可能还原；出现过磁盘 8 个探针 `parent=trash` 但 UI 回收站只见真实书的错位。**涉及书库状态以设备 UI/xochitl 实际为准，不拿磁盘 metadata 当真相**；清测试文档走正常删除流程或停 xochitl 后操作，别边跑边改。
@@ -389,7 +395,6 @@ book→「母版库 / 原生投递」、weread→「微信读书（内容源，�
 
 **未闭环**：
 1. **Phase E ②③④**：英文书拉丁缩进（1.2em、标题后首段不缩进）观感；同一母版落 xochitl + KOReader 并排对照；KOReader 里内联脚注〔…〕能否接受（若不能，落库时对 KOReader 另跑 Anchor 是唯一备选，但会打破"两器同字节"）。
-2. **Phase D 微读内容源**：复用 `reading/device-rs` 下书栈（扫码登录 / 抓章 / 组 EPUB），落母版库；形态待定（立 `weread-serve` 8794 或 book-serve 代理）。
 3. 母版库里遗留的漫画 PDF（用户推的《镖人》297MB / 《火影》188MB 整本，漫画不投原生后无用）由用户在网页删；KOReader 里旧的 282MB《镖人.epub》同。
 4. 真重启后 `shelf.target` / 壁纸 bind 自起（重启会丢 xovi，需手动 `xovi/start`，用户暂不装 reenable）；拔线真 suspend 下钩子 bind + 唤醒轮换只触发一次。
 5. 3.28 固件机验证 `font-menu-dynamic.qmd`（3.28 锚点版含 elide 补丁未上机）。
@@ -397,4 +402,4 @@ book→「母版库 / 原生投递」、weread→「微信读书（内容源，�
 
 **已闭环（真机）**：§03f 首轮五服务 · §03g/§03h 字体分开装/子目录/HTTPS · §03j 登录/CA/mDNS · §03k 字体两 bug · §03l 传书卡＝云同步 · §03m/§03n/§03o 网页改版/细节/管理台 · §03p 质量一轮 · §03q 优化做精 + 首行缩进 v10 · §03r 母版库 Phase A/B/C + 财新重排 · §03s 质量二轮 + 格式三档 · §03t 漫画通道（host 真书探针 → CBZ；漫画不投原生）+ 分卷静默失效修 + 投原生体积门。
 
-**已放弃**：P5 微读网页版内嵌浏览器 spike（§03r 决策 3：微读定位为内容源）；设备端 AZW3/MOBI/FB2 → EPUB 转换（§03s，杂格式走电脑 Calibre，`bookconv::convert` 本体留给 reading 线）。
+**已放弃**：**微读线整条**（§03u，2026-09-05：先是内嵌浏览器 spike 未推进，后内容源方案评估后用户砍掉）；设备端 AZW3/MOBI/FB2 → EPUB 转换（§03s，杂格式走电脑 Calibre，`bookconv::convert` 本体留给 reading 线）。
