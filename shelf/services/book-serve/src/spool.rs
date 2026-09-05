@@ -32,6 +32,8 @@ pub struct StagingEntry {
     pub bytes: u64,
     pub format: &'static str,
     pub optimized: bool,
+    /// 入库时间（unix 秒），列表最新在前。
+    pub mtime: u64,
 }
 
 /// 失败原因 sidecar 后缀。
@@ -199,12 +201,14 @@ impl Spool {
                 } else {
                     "other"
                 };
-                // 优化状态只对 EPUB 有意义（PDF 端上不优化）。
+                // 优化状态只对 EPUB 有意义（PDF/其它格式端上不优化）。
                 let optimized = format == "epub" && e.path().to_str().map(|p| bookconv::optimize::optimized_version_file(p).is_some()).unwrap_or(false);
-                out.push(StagingEntry { name, bytes: md.len(), format, optimized });
+                let mtime = md.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs()).unwrap_or(0);
+                out.push(StagingEntry { name, bytes: md.len(), format, optimized, mtime });
             }
         }
-        out.sort_by(|a, b| a.name.cmp(&b.name));
+        // 最新入库在前（同秒按名）。
+        out.sort_by(|a, b| b.mtime.cmp(&a.mtime).then_with(|| a.name.cmp(&b.name)));
         out
     }
 }

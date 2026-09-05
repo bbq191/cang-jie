@@ -142,129 +142,107 @@ function subtabs(sec){const nav=$('.subnav',sec);if(!nav)return;const btns=[...n
 /* 决策辅助：不替用户分类（闲书/研读机器判不准），讲清母版库三步走 + 两读器各擅长；拿不准先投一个，母版还在 */
 const GUIDE=`<details class="cmp"><summary>母版库怎么用？两个读器怎么选？（点开）</summary>
 <dl class="help">
-<dt>三步走</dt><dd>① <b>入库</b>：上传 / 抓网文 / 电脑 <code>shelf push</code>——书<b>原样</b>进母版库，不动字节。② <b>优化</b>（可选）：EPUB 点「优化」洗排版、脚注、中英文缩进（PDF 端上不动，重排走电脑）。③ <b>落库</b>：点「投入原生书库」或「加入 KOReader」。<b>母版留着</b>，随时再投另一个。</dd>
+<dt>三步走</dt><dd>① <b>入库</b>：上传（任意格式）/ 抓网文 / 微信读书 / 电脑 <code>shelf push</code>——书<b>原样</b>进母版库，不动字节。② <b>优化</b>（可选）：EPUB 点「优化」洗排版、脚注、中英文缩进（PDF 端上不动，重排走电脑）。③ <b>落库</b>：点「投入原生书库」或「加入 KOReader」。<b>母版留着</b>，随时再投另一个。读器页（xochitl / KOReader）只管各自的字体、词典，不传书。</dd>
+<dt>格式</dt><dd>EPUB / PDF 两个读器都能去；CBZ / TXT / AZW3 等<b>只能加入 KOReader</b>，想进原生用电脑 <code>shelf push</code> 转成 EPUB。</dd>
 <dt>📖 投入原生书库（xochitl）：要做笔记、批注的书</dt><dd>目录跳转、脚注、换字体、<b>直接手写批注</b>、AI 解读。学术 / 论文 / 要划线的书放这；PDF 手写定稿也放这。</dd>
 <dt>📚 加入 KOReader：消遣、查词的书</dt><dd>自由重排、<b>内置词典</b>、翻页手势。小说、漫画、外语书顺手。</dd>
 <dt>拿不准放哪？</dt><dd>先投一个。母版还在，觉得不对随时再投另一个对照——<b>不用纠结"闲书还是研读"，去向你说了算</b>（侦探小说有人当消遣、有人拿来推理画线索图；漫画有人看有人学画）。</dd>
 <dt>电脑 shelf push（进阶）</dt><dd>难搞的书走电脑：非标准格式转 EPUB、Calibre 深洗、PDF 论文重排。洗完<b>也落这个母版库</b>，去向一样在这里选。命令见「管理」页。</dd>
 </dl></details>`;
 
-/* 直传档位表（仅 xochitl 页「直传」折叠里用） */
+/* 母版库「优化」档位说明（对应 /staging/optimize 的 mode） */
 const OPTTABLE=`<div class="tblwrap"><table class="cmp"><thead><tr><th>档位</th><th>做什么</th><th>什么时候用</th></tr></thead><tbody>
-<tr><th class="pick">清洗+优化<br><span class="small">默认</span></th><td>全套：剥字体/字号/颜色/对齐锁 · 边距段距归零+按中英文习惯首行缩进 · 缺目录按标题自动建 · 伪 DRM 剥离 · 脚注就地内联常显 · 远程图内联 · 图片降采样 · e-ink 提对比 · 双 id 去重</td><td>绝大多数第三方书</td></tr>
-<tr><th>清洗但保留段距</th><td>同上，但不动原书段间距</td><td>诗集 / 剧本</td></tr>
-<tr><th>只优化不清洗</th><td>只修脚注 / 图片 / 对比度 / 双 id</td><td>已排好版的书</td></tr>
-<tr><th>原样进库</th><td>什么都不做</td><td>你确定这本已完美</td></tr>
-</tbody></table></div>
-<p class="opt-note"><b>质量门</b>（仅 EPUB）：真 DRM / 目录损坏 / 双 id 非法（会让 reMarkable 整章白屏）会被<b>硬拦</b>；取消勾选＝强行投递。</p>`;
+<tr><th class="pick">清洗＋优化<br><span class="small">默认</span></th><td>全套：剥字体/字号/颜色/对齐锁 · 边距段距归零+按中英文习惯首行缩进 · 缺目录按标题自动建 · 伪 DRM 剥离 · 脚注就地内联常显 · 远程图内联 · 图片降采样 · e-ink 提对比 · 双 id 去重</td><td>绝大多数第三方书</td></tr>
+<tr><th>清洗但保留段距</th><td>同上，但不动原书段间距</td><td>诗集 / 剧本 / 靠空行分节的书</td></tr>
+<tr><th>只优化不清洗</th><td>只修脚注 / 图片 / 对比度 / 双 id，不碰排版和字体锁</td><td>已排好版、只想修脚注和图的书</td></tr>
+</tbody></table></div>`;
 
-/* 母版库列表（三处复用：书籍优化页全操作 / xochitl 页投原生 / KOReader 页加入）。
-   opts.actions ⊆ ['optimize','native','koreader','delete']；opts.clear()=投完是否清母版；opts.folder()=落地文件夹；opts.refresh()=操作后刷新 */
-async function stagingList(ul,opts){
-  const d=await j('/api/books/staging');ul.innerHTML='';
-  if(d.ok===false){ul.innerHTML=`<li class="small" style="color:var(--bad)">母版库不可用：${d.message||'book-serve 未开'}（去「管理」页开启）</li>`;return []}
-  const items=d.items||[];const A=opts.actions||[];
-  if(!items.length){ul.innerHTML='<li class="small">（母版库是空的——先在「书籍优化」页把书弄进来）</li>';return items}
+/* 母版库列表（只在「传书·母版库」用）。按格式门控按钮：EPUB→优化(未优化时)/投原生/加入 KO；PDF→投原生/加入 KO；其它→只能加入 KO。
+   「加入 KOReader」按 koInstalled 门控。opts: {items,q,fmt,st,xFolder(),kFolder(),mode(),clear(),koInstalled,refresh()} */
+function stagingList(ul,opts){
+  ul.innerHTML='';
+  const q=(opts.q||'').toLowerCase();
+  const items=(opts.items||[]).filter(it=>(!q||it.name.toLowerCase().includes(q))&&(!opts.fmt||it.format===opts.fmt)&&(!opts.st||(opts.st==='1')===!!it.optimized));
+  if(!items.length){ul.innerHTML='<li class="small">'+(opts.items&&opts.items.length?'（没有匹配的书）':'（母版库是空的——去「入库」把书弄进来）')+'</li>';return}
   const post=async(url,body)=>{const r=await j(url,{method:'POST',body:JSON.stringify(body)});if(r.ok===false)alert(r.message||'失败');return r};
   items.forEach(it=>{const li=document.createElement('li');li.style.flexWrap='wrap';
-    const fmt=it.format==='epub'?'EPUB':it.format==='pdf'?'PDF':'其它';
+    const fmt=it.format==='epub'?'EPUB':it.format==='pdf'?'PDF':(it.name.includes('.')?it.name.split('.').pop().toUpperCase():'其它');
     const st=it.format==='epub'?(it.optimized?'<span class="badge on">已优化</span>':'<span class="badge">未优化</span>'):'<span class="badge">原样</span>';
-    const hint=it.format==='pdf'?'<span class="small"> · 手写定稿放 xochitl</span>':'';
-    li.innerHTML=`<span><b>${it.name}</b> <span class="badge">${fmt}</span> ${st} <span class="small">${fmtB(it.bytes)}</span>${hint}</span>`;
+    const hint=it.format==='pdf'?' · 手写定稿放原生':it.format==='other'?' · 原生读不了，只能加入 KOReader（想进原生用电脑 shelf push 转 EPUB）':'';
+    li.innerHTML=`<span><b>${it.name}</b> <span class="badge">${fmt}</span> ${st} <span class="small">${fmtB(it.bytes)}${hint}</span></span>`;
     const right=document.createElement('span');right.style.cssText='display:flex;gap:.4em;flex-wrap:wrap;align-items:center';
-    const btn=(t,pri,fn)=>{const b=document.createElement('button');b.className='btn'+(pri?' pri':'');b.textContent=t;b.onclick=async()=>{b.disabled=true;b.textContent=t+'…';await fn();if(opts.refresh)opts.refresh()};right.appendChild(b)};
-    if(A.includes('optimize')&&it.format==='epub'&&!it.optimized)btn('优化',false,()=>post('/api/books/staging/optimize',{name:it.name}));
-    if(A.includes('native'))btn('投入原生书库',true,()=>post('/api/books/staging/deliver',{name:it.name,keep:!(opts.clear&&opts.clear()),folder:opts.folder?opts.folder():''}));
-    if(A.includes('koreader'))btn('加入 KOReader',true,async()=>{const r=await post('/api/koreader/books/adopt',{name:it.name,folder:opts.folder?opts.folder():''});if(r.ok!==false&&opts.clear&&opts.clear())await post('/api/books/staging/delete',{name:it.name})});
-    if(A.includes('delete'))btn('删除',false,async()=>{if(confirm('从母版库删除 '+it.name+'？（已投到读器的不受影响）'))await post('/api/books/staging/delete',{name:it.name})});
+    const btn=(t,pri,fn,dis,title)=>{const b=document.createElement('button');b.className='btn'+(pri?' pri':'');b.textContent=t;if(dis){b.disabled=true;b.title=title||''}else b.onclick=async()=>{b.disabled=true;b.textContent=t+'…';await fn();if(opts.refresh)opts.refresh()};right.appendChild(b)};
+    if(it.format==='epub'&&!it.optimized)btn('优化',false,()=>post('/api/books/staging/optimize',{name:it.name,mode:opts.mode()}));
+    if(it.format!=='other')btn('投入原生书库',true,()=>post('/api/books/staging/deliver',{name:it.name,keep:!opts.clear(),folder:opts.xFolder()}));
+    btn('加入 KOReader',true,async()=>{const r=await post('/api/koreader/books/adopt',{name:it.name,folder:opts.kFolder()});if(r.ok!==false&&opts.clear())await post('/api/books/staging/delete',{name:it.name})},!opts.koInstalled,'KOReader 未安装（「管理」页看基石）');
+    btn('删除',false,async()=>{if(confirm('从母版库删除 '+it.name+'？（已投到读器的不受影响）'))await post('/api/books/staging/delete',{name:it.name})});
     li.appendChild(right);ul.appendChild(li)});
-  return items;
 }
 
-/* 「书籍优化」固定 tab = 母版库（中间层）：入库 → 可选优化 → 选去向落库。三层架构的入口，放第一位。 */
-function renderStaging(sec){sec.innerHTML=`
-  <div class="card"><h2>书籍优化 · 母版库</h2>
-    <p class="lead">书先进这里，再决定"洗不洗"和"放哪读"。母版留着，可反复投到不同读器对照。</p>
-    ${GUIDE}
-    <h3>① 入库（原样进，不动字节）</h3>
-    ${onUsb?'':'<p class="opt-note">传大书建议走 USB <code>https://10.11.99.1:8778</code>，不占 Wi-Fi。</p>'}
-    <div class="drop"><span class="big">⬆</span>点击或拖入 EPUB / PDF（可多选）</div><input type="file" multiple hidden accept=".epub,.pdf">
-    <ul class="q"></ul><div class="row"><button class="btn pri go">进母版库</button></div>
-    <h3>抓网文</h3>
-    <div class="row"><input type="text" id="arturl" placeholder="https://… 文章链接（公众号 / 博客 / 新闻）" style="flex:1;min-width:12em"><button class="btn" id="artgo">抓取进母版库</button></div>
-    <div class="small" id="artmsg" style="margin-top:.3em"></div>
-    <p class="small">静态网页效果好；纯 JS 页面、付费墙抓不出。单篇文章（连载分章后续）。</p>
+/* 「传书」固定 tab = 三层架构入口：入库（所有内容源汇入）｜母版库（可选优化 → 选去向落库）。放第一位。
+   读器页（xochitl / KOReader）不再有任何传书入口，只管各自的字体 / 词典。 */
+function renderTransfer(sec){sec.innerHTML=`
+  <div class="subnav"><button class="on">📥 入库</button><button>📚 母版库</button></div>
+  <div class="subpanel on">
+    <div class="card"><h2>传书 · 入库</h2>
+      <p class="lead">所有书从这里进：上传、抓网文、微信读书、电脑 shelf push。原样入库、不动字节；洗不洗、放哪读，到「母版库」再定。</p>
+      ${GUIDE}
+      ${onUsb?'':'<p class="opt-note">传大书建议走 USB <code>https://10.11.99.1:8778</code>，不占 Wi-Fi。</p>'}
+      <h3>上传（任意格式）</h3>
+      <div class="drop"><span class="big">⬆</span>点击或拖入书（可多选）</div><input type="file" multiple hidden>
+      <ul class="q"></ul><div class="row"><button class="btn pri go">进母版库</button></div>
+      <p class="small">EPUB / PDF 两个读器都能去；其它格式（CBZ / TXT / AZW3…）只能加入 KOReader，想进原生用电脑 <code>shelf push</code> 转成 EPUB。</p>
+      <h3>抓网文</h3>
+      <div class="row"><input type="text" id="arturl" placeholder="https://… 文章链接（公众号 / 博客 / 新闻）" style="flex:1;min-width:12em"><button class="btn" id="artgo">抓取进母版库</button></div>
+      <div class="small" id="artmsg" style="margin-top:.3em"></div>
+      <p class="small">静态网页效果好；纯 JS 页面、付费墙抓不出。单篇文章（连载分章后续）。</p>
+      <h3>微信读书 <span class="badge">即将接入</span></h3>
+      <p class="small">扫码登录 → 选书 → 下成 EPUB 进母版库，再选读器读（原生阅读器体验远好于网页版）。</p>
+    </div>
   </div>
-  <div class="card"><h3 style="margin-top:0">② 母版库 <span class="small" id="stgcap"></span></h3>
-    <div class="row"><label class="toggle"><input type="checkbox" id="stgclear"> 投完从母版库清除</label><span class="small">默认不清：母版保留，可再投另一读器对照；不需要了手动删</span></div>
-    <ul class="list" id="stglist"></ul>
+  <div class="subpanel">
+    <div class="card"><h3 style="margin-top:0">母版库 <span class="small" id="stgcap"></span></h3>
+      <div class="row"><span class="small">投原生 → 文件夹</span><select id="folderPreset" style="max-width:13em"><option value="lib">书库（默认）</option><option value="annot">批注文件夹</option><option value="custom">自定义…</option></select><input type="text" id="folder" placeholder="文件夹名" style="display:none;max-width:10em">
+        <span class="small">加入 KOReader → 目录</span><input type="text" id="kfolder" placeholder="留空＝根目录" style="max-width:9em"></div>
+      <div class="row"><span class="small">优化档位</span><select id="optmode" style="max-width:15em"><option value="auto">清洗＋优化（推荐）</option><option value="keep-spacing">清洗但保留段距（诗集 / 剧本）</option><option value="plain">只优化不清洗</option></select>
+        <label class="toggle"><input type="checkbox" id="stgclear"> 投完从母版库清除</label></div>
+      <details class="cmp"><summary>档位说明 · 母版为什么默认保留</summary>${OPTTABLE}<p class="small">母版保留＝同一本可再投另一个读器对照、换设备重投；不需要了手动删。</p></details>
+      <div class="row"><input type="text" id="stgq" placeholder="搜书名…" style="flex:1;min-width:8em"><select id="stgfmt" style="max-width:8em"><option value="">全部格式</option><option value="epub">EPUB</option><option value="pdf">PDF</option><option value="other">其它</option></select><select id="stgst" style="max-width:8em"><option value="">全部状态</option><option value="0">未优化</option><option value="1">已优化</option></select></div>
+      <ul class="list" id="stglist"></ul>
+    </div>
   </div>`;
-  const clr=$('#stgclear',sec);clr.checked=LS.get('stgclear','0')==='1';clr.onchange=()=>LS.set('stgclear',clr.checked?'1':'0');
-  const refresh=async()=>{const items=await stagingList($('#stglist',sec),{actions:['optimize','native','koreader','delete'],clear:()=>clr.checked,refresh:()=>refresh()});
-    const tot=items.reduce((a,b)=>a+b.bytes,0);$('#stgcap',sec).textContent=items.length?`${items.length} 本 · ${fmtB(tot)}`:''};
-  uploader(sec,()=>'/api/books/staging',()=>({}),['.epub','.pdf'],()=>refresh());
-  const am=$('#artmsg',sec),au=$('#arturl',sec),ag=$('#artgo',sec);
+  let annotFolder='',koInstalled=false,items=[];
+  const g=id=>$('#'+id,sec);
+  const xFolder=()=>{const p=g('folderPreset').value;return p==='lib'?'':p==='annot'?annotFolder:g('folder').value.trim()};
+  const syncFolder=()=>{g('folder').style.display=g('folderPreset').value==='custom'?'':'none'};
+  // 落库设置记在本机（per-viewer 便利态）
+  [['folderPreset','fpreset','lib'],['folder','folder',''],['kfolder','kfolder',''],['optmode','optmode','auto']].forEach(([id,k,d])=>{g(id).value=LS.get(k,d);['input','change'].forEach(ev=>g(id).addEventListener(ev,()=>{LS.set(k,g(id).value);if(id==='folderPreset')syncFolder()}))});
+  g('stgclear').checked=LS.get('stgclear','0')==='1';g('stgclear').onchange=()=>LS.set('stgclear',g('stgclear').checked?'1':'0');
+  syncFolder();
+  const render=()=>stagingList(g('stglist'),{items,q:g('stgq').value,fmt:g('stgfmt').value,st:g('stgst').value,xFolder,kFolder:()=>g('kfolder').value.trim(),mode:()=>g('optmode').value,clear:()=>g('stgclear').checked,koInstalled,refresh:()=>refresh()});
+  ['stgq','stgfmt','stgst'].forEach(id=>['input','change'].forEach(ev=>g(id).addEventListener(ev,render)));
+  const refresh=async()=>{const [d,s,k]=await Promise.all([j('/api/books/staging'),j('/api/books/status'),j('/api/koreader/status')]);
+    if(s.ok&&s.annotFolder)annotFolder=s.annotFolder;koInstalled=!!(k.ok&&k.installed);
+    if(d.ok===false){g('stglist').innerHTML=`<li class="small" style="color:var(--bad)">母版库不可用：${d.message||'book-serve 未开'}（去「管理」页开启）</li>`;g('stgcap').textContent='';return}
+    items=d.items||[];const tot=items.reduce((a,b)=>a+b.bytes,0);g('stgcap').textContent=items.length?`${items.length} 本 · ${fmtB(tot)}`:'';render()};
+  uploader(sec,()=>'/api/books/staging',()=>({}),null,()=>refresh());   // 任意格式原样入库，不预拦
+  const am=g('artmsg'),au=g('arturl'),ag=g('artgo');
   ag.onclick=async()=>{const url=au.value.trim();if(!url){am.textContent='请填链接';return}ag.disabled=true;am.style.color='';am.textContent='抓取中…（联网抽取正文，十几秒）';
     const r=await j('/api/books/staging/fetch-article',{method:'POST',body:JSON.stringify({url})});ag.disabled=false;
     am.style.color=r.ok===false?'var(--bad)':'var(--ok)';am.textContent=r.ok===false?('✗ '+(r.message||'失败')):('✓ '+r.message);if(r.ok!==false){au.value='';refresh()}};
-  refresh();sec.refresh=refresh;}
+  refresh();sec.refresh=refresh;subtabs(sec);}
 
 const TABS={
  'book-serve':{title:'xochitl',render(sec){sec.innerHTML=`
-  <div class="subnav"><button class="on">📚 传书</button><button>🔤 原生字体</button></div>
-  <div class="subpanel on">
-    <div class="card">
-      <h2>投入原生书库（xochitl）</h2><p class="lead">从母版库选书投进来。要做笔记、手写批注、用目录脚注的书放这。</p>
-      <label class="field" for="folderPreset">放进哪个文件夹</label>
-      <select id="folderPreset"><option value="lib">书库（默认）</option><option value="annot">批注文件夹（PDF 手写定稿常放这）</option><option value="custom">自定义…</option></select>
-      <input type="text" id="folder" placeholder="文件夹名，如 论文/2026" style="display:none;margin-top:.4em">
-      <div class="row"><label class="toggle"><input type="checkbox" id="xclear"> 投完从母版库清除</label><span class="small">默认不清：母版保留，可再投 KOReader 对照</span></div>
-      <ul class="list" id="xstg"></ul>
-      <p class="small">母版库空？去「书籍优化」页上传 / 抓网文 / 电脑 <code>shelf push</code>。</p>
-    </div>
-    <div class="card"><details class="cmp"><summary>直传（不经母版库，一步到位）</summary>
-      <p class="small">拖文件直接进书库：EPUB 按下面档位优化，PDF 原样。不留母版、以后想再投 KOReader 对照得重传。${onUsb?'':'传大书建议走 USB <code>https://10.11.99.1:8778</code>。'}</p>
-      <label class="field">EPUB 处理</label>
-      <select id="opt"><option value="auto">清洗 + 优化（推荐 · 剥字体锁、归零边距、按中英文习惯缩进、缺目录自动建）</option><option value="keep-spacing">清洗但保留段距（诗集 / 剧本）</option><option value="plain">只优化不清洗（脚注 / 图片 / 对比度）</option><option value="off">原样进库</option></select>
-      <div class="row" style="margin:.5em 0 0"><label class="toggle"><input type="checkbox" id="chk" checked> 质量门（真 DRM / 目录坏 / 双 id 硬拦，仅 EPUB）</label></div>
-      ${OPTTABLE}
-      <div class="drop"><span class="big">⬆</span>点击或拖入书（可多选 · 仅 EPUB / PDF）</div><input type="file" multiple hidden accept=".epub,.pdf">
-      <ul class="q"></ul>
-      <div class="row"><button class="btn pri go">直传进书库</button></div>
-    </details></div>
-    <div class="card"><div id="bstat" class="kv small"></div>
-      <h3>未完成 / 失败</h3><ul class="list" id="inbox"></ul></div>
-  </div>
-  <div class="subpanel">
-    <div class="card"><h3 style="margin-top:0">字体（原生阅读器）</h3>
-      <p class="small">ttf / otf → 装进 fontconfig 用户字体目录。上传后阅读器「文字与布局」菜单重开即可选，无需重启。KOReader 的字体在 KOReader 标签页装。</p>
+    <div class="card"><h2>xochitl · 原生字体</h2>
+      <p class="small">ttf / otf → 装进 fontconfig 用户字体目录。上传后阅读器「文字与布局」菜单重开即可选，无需重启。传书在「传书」页；KOReader 的字体在 KOReader 页装。</p>
       <div id="fbchain" class="opt-note" style="display:none"></div>
       <div class="row"><label class="toggle"><input type="checkbox" id="embold" checked> 中文加粗（墨水屏细笔画补偿）</label> <span class="small">默认开：对回退中文字体加粗，宋体在低对比墨水屏发淡时更清楚；翻书即见。</span></div>
       <div class="drop"><span class="big">🔤</span>点击或拖入 ttf/otf（可多选）</div><input type="file" multiple hidden accept=".ttf,.otf,.ttc">
       <ul class="q"></ul><div class="row"><button class="btn pri go">上传字体</button></div>
-      <h3>已装字体</h3><ul class="list" id="fontlist"></ul></div>
-  </div>`;
-  let annotFolder='';   // 由 status 填充；「批注」预设投这里（合并后统一走 native，只是落地文件夹不同）
-  const folderVal=()=>{const p=$('#folderPreset',sec).value;return p==='lib'?'':p==='annot'?annotFolder:$('#folder',sec).value.trim()};
-  const syncFolder=()=>{$('#folder',sec).style.display=$('#folderPreset',sec).value==='custom'?'':'none'};
-  // localStorage 记住上次选择
-  $('#folderPreset',sec).value=LS.get('fpreset','lib');$('#opt',sec).value=LS.get('opt','auto');$('#chk',sec).checked=LS.get('chk','1')!=='0';$('#folder',sec).value=LS.get('folder','');
-  $('#folderPreset',sec).onchange=()=>{syncFolder();LS.set('fpreset',$('#folderPreset',sec).value)};
-  $('#opt',sec).onchange=()=>LS.set('opt',$('#opt',sec).value);
-  $('#chk',sec).onchange=()=>LS.set('chk',$('#chk',sec).checked?'1':'0');
-  $('#folder',sec).oninput=()=>LS.set('folder',$('#folder',sec).value);
-  syncFolder();
-  const xclr=$('#xclear',sec);xclr.checked=LS.get('xclear','0')==='1';xclr.onchange=()=>LS.set('xclear',xclr.checked?'1':'0');
-  // 两个上传器：直传书(drop 0，折叠里)、字体(drop 1)——按 DOM 顺序取；第 4 参 = 客户端预拦的允许扩展名
-  const drops=sec.querySelectorAll('.drop'),inputs=sec.querySelectorAll('input[type=file]'),qs=sec.querySelectorAll('ul.q'),gos=sec.querySelectorAll('.go');
-  const wrap=(k)=>({querySelector:(x)=>({'ul.q':qs[k],'input[type=file]':inputs[k],'.drop':drops[k],'.go':gos[k]}[x])});
-  uploader(wrap(0),()=>'/api/books',()=>({folder:folderVal(),target:'native',optimize:$('#opt',sec).value,check:$('#chk',sec).checked?'on':'off'}),['.epub','.pdf'],()=>refresh());
-  uploader(wrap(1),()=>'/api/fonts',()=>({}),['.ttf','.otf','.ttc']);
-  const refresh=async()=>{stagingList($('#xstg',sec),{actions:['native'],clear:()=>xclr.checked,folder:folderVal,refresh:()=>refresh()});
-    const s=await j('/api/books/status');if(s.ok&&s.annotFolder)annotFolder=s.annotFolder;$('#bstat',sec).innerHTML=s.ok?`<b>xochitl 投递</b><span>${s.uploadReachable?'✅ 可达':'<span style="color:var(--bad)">⚠ 不可达（lo 别名 / USB 未就绪）</span>'}</span><b>书库 / 批注</b><span>${s.libraryFolder} / ${s.annotFolder}</span><b>队列</b><span>待处理 ${s.spool.pending} · 失败 ${s.spool.failed}</span>${s.readingQol?`<b>阅读增强</b><span>点击翻页 ${s.readingQol.tapPageTurn?'开':'关'} · 快速黑白 ${s.readingQol.fastMono?'开':'关'} · 清残影 ${s.readingQol.refresh?'开':'关'} · 字体增强 ${s.readingQol.fontEnhance?'开':'关'}<br><span class="small">在设备「设置 → 系统增强」里改</span></span>`:''}`:`<b>book-serve</b><span>${s.message}</span>`;
-    const ib=await j('/api/books/inbox');const ul=$('#inbox',sec);ul.innerHTML='';(ib.items||[]).forEach(it=>{const li=document.createElement('li');li.style.flexWrap='wrap';li.innerHTML=`<span>${it.name} <span class="small">${it.state} · ${fmtB(it.bytes)}</span></span><span>${it.state==='failed'?'<button class="btn r">重试</button> <button class="btn d">删除</button>':''}</span>${it.reason?`<div class="small" style="flex-basis:100%;color:var(--bad)">${it.reason}</div>`:''}`;
-      if(it.state==='failed'){$('.r',li).onclick=async()=>{await j('/api/books/inbox/retry',{method:'POST',body:JSON.stringify({name:it.name})});refresh()};$('.d',li).onclick=async()=>{await j('/api/books/inbox/delete',{method:'POST',body:JSON.stringify({name:it.name})});refresh()}}
-      ul.appendChild(li)});if(!(ib.items||[]).length)ul.innerHTML='<li class="small">（空）</li>';
+      <h3>已装字体</h3><ul class="list" id="fontlist"></ul></div>`;
+  uploader(sec,()=>'/api/fonts',()=>({}),['.ttf','.otf','.ttc'],()=>refresh());
+  const refresh=async()=>{
     const fl=await j('/api/fonts');const fu=$('#fontlist',sec);fu.innerHTML='';
     // 中文缺字回退链（B1）：覆盖率≥8% 的中文字体，按覆盖率降序
     const cjk=(fl.items||[]).filter(it=>((it.extra||{}).cjkPct||0)>=8).sort((a,b)=>(b.extra.cjkPct||0)-(a.extra.cjkPct||0));
@@ -277,27 +255,19 @@ const TABS={
       if(ex.fontconfigRef)right.insertAdjacentHTML('beforeend','<span title="界面中文回退引用">⚠</span>');
       const d=document.createElement('button');d.className='btn';d.textContent='删除';d.onclick=async()=>{if(confirm('删除字体 '+it.name+'？')){const r=await j('/api/fonts/'+encodeURIComponent(it.name),{method:'DELETE'});if(r.ok===false)alert(r.message);refresh()}};right.appendChild(d);
       li.append(left,right);fu.appendChild(li)});if(!(fl.items||[]).length)fu.innerHTML='<li class="small">（空）</li>'};
-  refresh();sec.refresh=refresh;subtabs(sec);}},
+  refresh();sec.refresh=refresh;}},
  'koreader-serve':{title:'KOReader',render(sec){sec.innerHTML=`
-  <div class="subnav"><button class="on">📚 书库</button><button>🔤 字体</button><button>📖 词典</button></div>
+  <div class="subnav"><button class="on">🔤 字体</button><button>📖 词典</button></div>
   <div class="subpanel on">
     <div class="card"><h2>KOReader</h2><div class="kv small" id="ks" style="margin-top:.5em">加载…</div>
       <details class="cmp"><summary>KOReader 怎么装 / 已经帮你调好了什么</summary>
       <dl class="help">
-        <dt>安装</dt><dd>走官方仓库自装：先备齐基石 xovi + appload（见「管理」页），再从 <a href="https://github.com/koreader/koreader/releases" target="_blank" rel="noopener">官方 releases</a> 装 reMarkable Paper Pro（rmpp）版。装好后这里就能看到藏书、传字体 / 词典。</dd>
+        <dt>安装</dt><dd>走官方仓库自装：先备齐基石 xovi + appload（见「管理」页），再从 <a href="https://github.com/koreader/koreader/releases" target="_blank" rel="noopener">官方 releases</a> 装 reMarkable Paper Pro（rmpp）版。</dd>
         <dt>已按 Move 屏调好（开箱即用，不用手动配）</dt><dd>本套件的 profile 贴近 xochitl 观感：中文主字体霞鹜新致宋、页边距、行距、脚注<b>底部弹窗</b>、悬挂标点、防误触、退出手势。</dd>
-        <dt>传什么</dt><dd>书任意格式、字节不改；字体 ttf/otf 只进 KOReader（原生阅读器的字体在 xochitl 页装）；词典填名后把一套 StarDict 文件（.ifo/.idx/.dict…）一起拖进来。</dd>
-        <dt>改配置 / 删字体后</dt><dd>KOReader 若正在跑，需<b>重启它</b>才生效（下方状态「运行中」会提示）。</dd>
+        <dt>书从哪来</dt><dd>在「传书」页把书入母版库，点「加入 KOReader」即可（任意格式）。有什么书，去 KOReader 里看。</dd>
+        <dt>改配置 / 删字体后</dt><dd>KOReader 若正在跑，需<b>重启它</b>才生效（上方状态「运行中」会提示）。</dd>
       </dl></details></div>
-    <div class="card"><h3 style="margin-top:0">从母版库加入 <span class="small" style="font-weight:400">消遣、查词的书放这（落到下方当前目录）</span></h3>
-      <div class="row"><label class="toggle"><input type="checkbox" id="kclear"> 加入后从母版库清除</label><span class="small">默认不清：母版保留，可再投 xochitl 对照</span></div>
-      <ul class="list" id="kstg"></ul></div>
-    <div class="card"><h3 style="margin-top:0">书库 <span id="kcrumb" class="small crumb"></span></h3>
-    <div class="drop"><span class="big">⬆</span>直传到当前目录（不经母版库 · 任意格式原样）</div><input type="file" multiple hidden><ul class="q"></ul><div class="row"><button class="btn pri go">直传到当前目录</button></div>
-    <ul class="list" id="kb"></ul></div>
-  </div>
-  <div class="subpanel">
-    <div class="card"><h3 style="margin-top:0">字体（KOReader）</h3><p class="small">只装进 KOReader；原生阅读器的字体在 xochitl 标签页装。</p>
+    <div class="card"><h3 style="margin-top:0">字体（KOReader）</h3><p class="small">只装进 KOReader；原生阅读器的字体在 xochitl 页装。</p>
     <div class="drop"><span class="big">🔤</span>点击或拖入 ttf/otf（可多选）</div><input type="file" multiple hidden accept=".ttf,.otf,.ttc"><ul class="q"></ul><div class="row"><button class="btn pri go">上传字体</button></div>
     <h3>已装字体</h3><ul class="list" id="kf"></ul></div>
   </div>
@@ -307,30 +277,24 @@ const TABS={
     <div class="drop"><span class="big">📖</span>点击或拖入词典文件（可多选）</div><input type="file" multiple hidden accept=".ifo,.idx,.dict,.dz,.syn,.oft"><ul class="q"></ul><div class="row"><button class="btn pri go">上传词典</button></div>
     <h3>已装词典</h3><ul class="list" id="kd"></ul></div>
   </div>`;
-  let kdir='';
-  const kclr=$('#kclear',sec);kclr.checked=LS.get('kclear','0')==='1';kclr.onchange=()=>LS.set('kclear',kclr.checked?'1':'0');
   const drops=sec.querySelectorAll('.drop'),inputs=sec.querySelectorAll('input[type=file]'),qs=sec.querySelectorAll('ul.q'),gos=sec.querySelectorAll('.go');
   const wrap=(i)=>({querySelector:(sel)=>({'ul.q':qs[i],'input[type=file]':inputs[i],'.drop':drops[i],'.go':gos[i]}[sel])});
-  uploader(wrap(0),()=>'/api/koreader/books',()=>({folder:kdir}),null,()=>refresh());   // 任意格式原样，不预拦
-  uploader(wrap(1),()=>'/api/koreader/fonts',()=>({}),['.ttf','.otf','.ttc']);
-  uploader(wrap(2),()=>'/api/koreader/dicts',()=>({name:$('#dictname',sec).value.trim()}),['.ifo','.idx','.dict','.dz','.syn','.oft']);
-  const refresh=async()=>{stagingList($('#kstg',sec),{actions:['koreader'],clear:()=>kclr.checked,folder:()=>kdir,refresh:()=>refresh()});
-    const s=await j('/api/koreader/status');$('#ks',sec).innerHTML=s.ok?`<b>安装</b><span>${s.installed?'是':'否'} ${s.version?'('+s.version+')':''}</span><b>运行中</b><span>${s.running?'是（改配置 / 删字体后需重启它）':'否'}</span><b>目录</b><span>${s.root}</span><b>藏书</b><span>${s.books} 本 · 字体 ${s.fonts} 个 · 词典 ${s.dicts||0} 本</span>`:`<span>${s.message}</span>`;
+  uploader(wrap(0),()=>'/api/koreader/fonts',()=>({}),['.ttf','.otf','.ttc'],()=>refresh());
+  uploader(wrap(1),()=>'/api/koreader/dicts',()=>({name:$('#dictname',sec).value.trim()}),['.ifo','.idx','.dict','.dz','.syn','.oft'],()=>refresh());
+  const refresh=async()=>{
+    const s=await j('/api/koreader/status');$('#ks',sec).innerHTML=s.ok?`<b>安装</b><span>${s.installed?'是':'否'} ${s.version?'('+s.version+')':''}</span><b>运行中</b><span>${s.running?'是（改配置 / 删字体后需重启它）':'否'}</span><b>已装</b><span>字体 ${s.fonts} 个 · 词典 ${s.dicts||0} 本</span>`:`<span>${s.message}</span>`;
     const f=await j('/api/koreader/fonts');const uf=$('#kf',sec);uf.innerHTML='';(f.items||[]).forEach(it=>{const li=document.createElement('li');
       const badge=it.cjkPct!=null?`<span class="badge ${it.cjkPct>=80?'on':(it.cjkPct>=8?'':'off')}" title="中文基本区覆盖率">中文 ${it.cjkPct}%</span> `:'';
       li.innerHTML=`<span>${it.name}</span><span class="small">${badge}${fmtB(it.bytes)} </span>`;const d=document.createElement('button');d.className='btn';d.textContent='删除';d.onclick=async()=>{if(confirm('从 KOReader 删除 '+it.name+'？')){const r=await j('/api/koreader/fonts/'+encodeURIComponent(it.name),{method:'DELETE'});if(r.ok===false)alert(r.message);refresh()}};li.lastChild.appendChild(d);uf.appendChild(li)});if(!(f.items||[]).length)uf.innerHTML='<li class="small">（空）</li>';
-    const dc=await j('/api/koreader/dicts');const ud=$('#kd',sec);ud.innerHTML='';(dc.items||[]).forEach(it=>{const li=document.createElement('li');li.innerHTML=`<span>📖 ${it.name}</span><span class="small">${it.ifo} 本</span>`;ud.appendChild(li)});if(!(dc.items||[]).length)ud.innerHTML='<li class="small">（空）</li>';
-    const b=await j('/api/koreader/books?'+new URLSearchParams({folder:kdir}));const ul=$('#kb',sec);ul.innerHTML='';
-    const crumb=$('#kcrumb',sec);crumb.innerHTML='';const parts=kdir?kdir.split('/'):[];const mk=(t,p)=>{const a=document.createElement('a');a.href='#';a.textContent=t;a.onclick=e=>{e.preventDefault();kdir=p;refresh()};return a};crumb.appendChild(mk('根',''));parts.forEach((p,i)=>{crumb.append(' / ');crumb.appendChild(mk(p,parts.slice(0,i+1).join('/')))});
-    (b.items||[]).forEach(it=>{const li=document.createElement('li');if(it.kind==='dir'){li.innerHTML=`<span>📁 <a href="#">${it.name}</a></span><span class="small">${it.count} 本</span>`;$('a',li).onclick=e=>{e.preventDefault();kdir=(kdir?kdir+'/':'')+it.name;refresh()}}else li.innerHTML=`<span>${it.name}</span><span class="small">${fmtB(it.bytes)}</span>`;ul.appendChild(li)});if(!(b.items||[]).length)ul.innerHTML='<li class="small">（空目录）</li>'};
+    const dc=await j('/api/koreader/dicts');const ud=$('#kd',sec);ud.innerHTML='';(dc.items||[]).forEach(it=>{const li=document.createElement('li');li.innerHTML=`<span>📖 ${it.name}</span><span class="small">${it.ifo} 本</span>`;ud.appendChild(li)});if(!(dc.items||[]).length)ud.innerHTML='<li class="small">（空）</li>'};
   refresh();sec.refresh=refresh;subtabs(sec)}},
  'wallpaper-serve':{title:'壁纸',render(sec){assetTab(sec,'/api/wallpapers','jpg / png 图片，自动裁到 954×1696。首张自动启用，下次休眠即生效。',{icon:'🖼',accept:['.jpg','.jpeg','.png'],
    header:`<label class="field">休眠轮换</label><div class="row"><select id="wpmode" style="max-width:12em"><option value="sequential">按顺序</option><option value="random">随机</option><option value="fixed">固定</option></select><span id="wpst" class="small"></span></div>`,
    onRender:async(sec,refresh)=>{const st=await j('/api/wallpapers/status');const sel=$('#wpmode',sec);if(st.ok){sel.value=st.mode;LS.set('wpmode',st.mode);$('#wpst',sec).textContent=`当前 ${st.current||'（无）'} · 已挂载 ${st.mounted}/${st.expectedMounts}`}
      sel.onchange=async()=>{LS.set('wpmode',sel.value);await j('/api/wallpapers/mode',{method:'PUT',body:JSON.stringify({mode:sel.value})});refresh()}},
    itemAction:(it,refresh)=>{if((it.extra||{}).current)return '<span class="badge on">当前</span>';const b=document.createElement('button');b.className='btn';b.textContent='使用';b.onclick=async()=>{await j('/api/wallpapers/current',{method:'PUT',body:JSON.stringify({name:it.name})});refresh()};return b},
-   preview:it=>`<img src="/api/wallpapers/${encodeURIComponent(it.name)}" alt="" style="height:3.4em;border-radius:.3em;border:1px solid var(--line);margin-right:.6em;vertical-align:middle">`})}},
- 'weread-serve':{title:'微读',render(sec){sec.innerHTML='<div class="card"><h2>微信读书</h2><p class="lead">网页版入口尚未上线（rmweb × Move 门控 spike 中）。通过前这里不提供功能。</p></div>'}}
+   preview:it=>`<img src="/api/wallpapers/${encodeURIComponent(it.name)}" alt="" style="height:3.4em;border-radius:.3em;border:1px solid var(--line);margin-right:.6em;vertical-align:middle">`})}}
+ // 微读不再是独立 tab：定位为「传书·入库」的一种内容源（下书→EPUB→母版库），Phase D 接入。
 };
 
 function assetTab(sec,api,hint,ext={}){sec.innerHTML=`<div class="card"><p class="lead">${hint}</p>${ext.header||''}
@@ -358,7 +322,7 @@ function renderManage(sec){sec.innerHTML=`
       <b>命令长这样</b>（在本仓库目录下跑；<code>shelf/host/bin/shelf</code> 就是那个命令，嫌长可 <code>alias shelf="$PWD/shelf/host/bin/shelf"</code>）：<br>
       <code>shelf/host/bin/shelf push &lt;书1&gt; [书2 …]</code>
       <div class="small" style="margin-top:.4em">
-        · 后面只跟<b>要投的书</b>（可一次多本）；<b>没有输出路径、也没有目标参数</b>——洗完一律落到本页的<b>母版库</b>，放哪个读器你在网页「书籍优化」页点。<br>
+        · 后面只跟<b>要投的书</b>（可一次多本）；<b>没有输出路径、也没有目标参数</b>——洗完一律落到<b>母版库</b>，放哪个读器你在网页「传书 → 母版库」里点。<br>
         · 有 Calibre 就先洗（EPUB 深洗 / 杂格式转 EPUB / PDF 结构化重排）；<code>--no-optimize</code> 不洗原样传；<code>--to-pdf</code> 定稿成手写批注用的 PDF。<br>
         · <code>--direct</code> 跳过母版库直投 xochitl 书库（逃生用，可配 <code>-f 文件夹</code>）。
       </div>
@@ -366,7 +330,7 @@ function renderManage(sec){sec.innerHTML=`
     <details class="cmp"><summary>例子 / 强在哪 / 怎么装</summary>
     <dl class="help">
       <dt>例子</dt>
-      <dd><code>shelf/host/bin/shelf push 论文.pdf</code> — PDF 结构化重排 → 母版库，再到「书籍优化」页选去向<br>
+      <dd><code>shelf/host/bin/shelf push 论文.pdf</code> — PDF 结构化重排 → 母版库，再到「传书 → 母版库」选去向<br>
           <code>shelf/host/bin/shelf push 小说.azw3</code> — 转干净 EPUB → 母版库（网页里点「加入 KOReader」）<br>
           <code>shelf/host/bin/shelf push 书.epub --to-pdf</code> — 定稿固定版式 PDF → 母版库（投 xochitl 手写批注）<br>
           <code>shelf/host/bin/shelf push a.epub b.mobi</code> — 一次多本<br>
@@ -420,7 +384,7 @@ function renderManage(sec){sec.innerHTML=`
   const addTab=(title,render,first)=>{const b=document.createElement('button');b.textContent=title;const sec=document.createElement('section');
     b.onclick=()=>{[...nav.children].forEach(x=>x.classList.remove('on'));[...main.children].forEach(x=>x.classList.remove('on'));b.classList.add('on');sec.classList.add('on');if(sec.refresh)sec.refresh()};
     nav.appendChild(b);main.appendChild(sec);render(sec);if(first)b.onclick()};
-  addTab('书籍优化',renderStaging,true);       // 母版库=三层架构入口，固定第一位（book-serve 不在时列表里提示去管理页开）
+  addTab('传书',renderTransfer,true);          // 总入口（入库｜母版库），固定第一位（book-serve 不在时列表里提示去管理页开）
   svcs.forEach((s)=>addTab(TABS[s.name].title,TABS[s.name].render,false));
   addTab('管理',renderManage,false);            // 固定管理台，始终可进
 })();

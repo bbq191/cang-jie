@@ -41,13 +41,16 @@ pub fn router(st: Arc<State>) -> Router {
         .post("/staging/optimize", {
             let s = st.clone();
             move |r| {
-                let name = name_of(r)?;
+                let jb = r.json_body().map_err(ApiError::bad)?;
+                let name = jb.get("name").and_then(|v| v.as_str()).ok_or_else(|| ApiError::bad("缺 name"))?.to_string();
                 if !name.to_ascii_lowercase().ends_with(".epub") {
                     return Err(ApiError::bad("只有 EPUB 能优化（PDF 重排请在电脑用 shelf push）"));
                 }
+                // 档位 auto（缺省）/ keep-spacing / plain —— 与直传同一套 OptimizeMode。
+                let mode = crate::target::OptimizeMode::parse(jb.get("mode").and_then(|v| v.as_str()).unwrap_or("auto"));
                 let data = s.spool.read_staging(&name).map_err(ApiError::bad)?;
                 // 通用优化（Inline 脚注 + 外链 css 缩进）：两读器都能显示；落库时纯复制此产物，保证两器同字节可对照。
-                let opts = bookconv::optimize::OptimizeOpts { wash: Some(bookconv::wash::WashOpts::default()), footnote: bookconv::optimize::FootnoteMode::Inline };
+                let opts = bookconv::optimize::OptimizeOpts { wash: mode.wash(), footnote: bookconv::optimize::FootnoteMode::Inline };
                 let (out, _) = bookconv::optimize::optimize_epub_with(&data, &opts).map_err(ApiError::bad)?;
                 s.spool.overwrite_staging(&name, &out).map_err(ApiError::bad)?;
                 Ok(Reply::ok(&serde_json::json!({"ok": true, "message": format!("已优化《{name}》")})))
@@ -61,8 +64,8 @@ pub fn router(st: Arc<State>) -> Router {
                 let keep = j.get("keep").and_then(|v| v.as_bool()).unwrap_or(true); // 母版库默认保留（可再投另一读器对照）
                 let folder = j.get("folder").and_then(|v| v.as_str()).map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).unwrap_or_else(|| s.cfg.library_folder.clone());
                 let data = s.spool.read_staging(&name).map_err(ApiError::bad)?;
-                // 落库=纯复制原字节投 xochitl，不再优化（优化是母版库独立动作）。
-                let ct = bookconv::convert::direct_content_type(&name).map(|c| c.mime()).unwrap_or("application/octet-stream");
+                // 落库=纯复制原字节投 xochitl，不再优化（优化是母版库独立动作）。原生阅读器只读 EPUB/PDF。
+                let ct = bookconv::convert::direct_content_type(&name).map(|c| c.mime()).ok_or_else(|| ApiError::bad("原生阅读器只读 EPUB / PDF；此格式请「加入 KOReader」，或在电脑用 shelf push 转成 EPUB"))?;
                 s.xochitl.upload(&data, &name, ct, &folder).map_err(ApiError::bad)?;
                 if !keep {
                     let _ = s.spool.remove_staging(&name);
@@ -102,11 +105,8 @@ fn staging_upload(st: &State, r: &mut Request<'_>) -> ApiResult {
         };
         let Some(fname) = part.filename.clone() else { continue };
         let name = safe_basename(&fname, "upload.bin");
-        // 只收 EPUB/PDF（母版库不做格式转换——非标准格式走电脑 shelf push）。
-        if bookconv::convert::direct_content_type(&name).is_none() {
-            items.push(serde_json::json!({"file": name, "ok": false, "message": "母版库只收 EPUB / PDF；其它格式请在电脑用 shelf push 转换"}));
-            continue;
-        }
+        // 母版库是总入口：任意格式原样入库（2026-09-05 用户定）。能投哪个读器按格式在落库时门控：
+        // EPUB/PDF 可投原生；其它格式只能加入 KOReader（想进原生用电脑 shelf push 转 EPUB）。
         let _g = st.spool.guard();
         let staged = st.spool.stage(&name);
         match shelf_core::multipart::receive_part_to(&staged, &mut part) {
