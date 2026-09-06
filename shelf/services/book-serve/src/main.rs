@@ -9,6 +9,7 @@ mod service_state;
 mod sidecar;
 mod spool;
 mod staging;
+mod trash;
 
 use shelf_core::paths::Paths;
 use shelf_core::service::{self, ServiceSpec};

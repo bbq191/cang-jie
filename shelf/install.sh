@@ -154,6 +154,16 @@ case " $SEL " in *" font "*)
     ;;
 esac
 
+# ── 3c2. 原生回收站代理 qmd（选了 book 才做；qrr 目录在才装）：shelf doctor --render 的探针量完自动进回收站 ──
+case " $SEL " in *" book "*)
+    QRR="$HOME_DIR/xovi/exthome/qt-resource-rebuilder"
+    if [ -d "$QRR" ] && [ -f "$SRC/xovi/shelf-trash-agent.qmd" ]; then
+        cp "$SRC/xovi/shelf-trash-agent.qmd" "$QRR/shelf-trash-agent.qmd"
+        echo "-- 回收站代理 qmd 已放 $QRR/（3.28 锚点）—— 生效同样需 $HOME_DIR/xovi/start 一次"
+    fi
+    ;;
+esac
+
 # ── 3d. xovi 持久化诊断（借鉴踩过的坑，不引用/不安装外层单元——那是 xovi 层的事）──
 if [ -x "$HOME_DIR/xovi/start" ] && [ ! -f "$SYSD/xovi-reenable.service" ] && [ ! -f "$SYSD/cangjie-xovi-reenable.service" ]; then
     echo "═══════════════════════════════════════════════════"

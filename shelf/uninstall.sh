@@ -41,6 +41,7 @@ case " $SEL " in *" wallpaper "*)
     [ -x "$BIN_DIR/wallpaper-serve" ] && "$BIN_DIR/wallpaper-serve" disable 2>/dev/null || true ;;
 esac
 case " $SEL " in *" font "*) rm -f "$HOME_DIR/xovi/exthome/qt-resource-rebuilder/font-menu-dynamic.qmd" ;; esac
+case " $SEL " in *" book "*) rm -f "$HOME_DIR/xovi/exthome/qt-resource-rebuilder/shelf-trash-agent.qmd" ;; esac
 for s in $SEL; do rm -f "$BIN_DIR/$(svc_of "$s")"; done
 if [ "$PURGE" = "1" ]; then
     rm -rf "${XDG_CONFIG_HOME:-$HOME_DIR/.config}/shelf" "${XDG_DATA_HOME:-$HOME_DIR/.local/share}/shelf" "${XDG_STATE_HOME:-$HOME_DIR/.local/state}/shelf"

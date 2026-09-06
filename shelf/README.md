@@ -53,7 +53,7 @@ host `shelf push` 是唯一能"入库时顺带优化"的源（Calibre 深洗 / �
 
 | 服务 | 路由 |
 |---|---|
-| books | `GET /events`（SSE） · `GET /status` · `GET /inbox` · `POST /inbox/{retry,delete}` · `GET /staging` → `{items, freeBytes}`（条目 `delivered.render`＝投原生后的渲染自检 `{uuid,pages,expected,status}`）· `POST /staging`（multipart 原样入库）· `POST /staging/optimize {name, mode}` · `POST /staging/deliver {name, folder?, keep?}`（EPUB 投完起线程等 xochitl 渲染、核对页数，结果推 `books/render` 事件）· `POST /staging/mark {name, target}` · `POST /staging/fetch-article {url}` · `POST /staging/delete {name}` · `GET /staging/render/{uuid}`（xochitl 渲染缓存 PDF，`doctor --render` 取回量测） |
+| books | `GET /events`（SSE） · `GET /status` · `GET /inbox` · `POST /inbox/{retry,delete}` · `GET /staging` → `{items, freeBytes}`（条目 `delivered.render`＝投原生后的渲染自检 `{uuid,pages,expected,status}`）· `POST /staging`（multipart 原样入库）· `POST /staging/optimize {name, mode}` · `POST /staging/deliver {name, folder?, keep?}`（EPUB 投完起线程等 xochitl 渲染、核对页数，结果推 `books/render` 事件）· `POST /staging/mark {name, target}` · `POST /staging/fetch-article {url}` · `POST /staging/delete {name}` · `GET /staging/render/{uuid}`（xochitl 渲染缓存 PDF，`doctor --render` 取回量测）· **原生回收站队列** `POST /trash/add {uuid, name}`（name 须与书库 visibleName 相符）· `GET /trash/pending`（Sidebar 代理 qmd 拉取，由 xochitl 自己的 `selectionMoveToTrash` 执行）· `GET /trash` |
 | koreader | `GET /status` · `GET /books[?folder=]` · `POST /books/adopt {name, folder}`（从母版库落书）· `GET|POST /fonts` · `DELETE /fonts/{file}` · `GET|POST /dicts[?name=]` · `GET|POST /config/{settings\|defaults\|gestures}[?dry_run=1]` |
 | fonts | `GET /` · `POST /` · `DELETE /{family}` · `PUT /config {emboldenCjkFallback}` · `GET /status` |
 | wallpapers | `GET /` · `POST /[?activate=1]` · `PUT /current {name}` · `PUT /mode {mode}` · `DELETE /{name}` · `GET /{name}` · `GET /status` → `{native:{enabled,path,restartPending}}` |
@@ -78,7 +78,7 @@ shelf/
 ├── install.sh · uninstall.sh          设备端安装/卸载（--only 按服务；写 /usr 前实检 dm-verity）
 ├── deploy.sh                          host 一键：build → tar-over-ssh → 设备 install.sh（自动备份到 /home/root/cangjie-backups）
 ├── host/                              CLI `shelf`（纯 stdlib、系统 python3）+ pytest；shelf_cli/comic.py 漫画探针；host/calibre/ = Calibre 前置流水线 + 独立脚本（epub_skel 共享 EPUB 骨架 / txt_to_epub / comic_gray / render_probe+measure）
-├── xovi/font-menu-dynamic{,-3.27}.qmd  字体菜单读 fonts.json 动态追加（3.28.0.172 / 3.27.3 真机通；改 qmd 先用 qmldiff CLI 离线实跑，白皮书 §04）
+├── xovi/                              font-menu-dynamic{,-3.27}.qmd 字体菜单读 fonts.json 动态追加（3.28 / 3.27 真机通）· shelf-trash-agent.qmd 原生回收站代理（Sidebar 注入，拉 book-serve /trash/pending）；改 qmd 先用 qmldiff CLI 离线实跑（白皮书 §04）
 ├── wallpaper/                         README（休眠屏机制＝xochitl.conf SleepScreenPath；逻辑在 wallpaper-serve）
 ├── koreader/                          配置即代码：profile/{settings.reader.patch,defaults.custom,gestures.patch}.lua + fonts.txt/dicts.txt + merge.lua
 └── docs/
@@ -132,7 +132,7 @@ cargo build --release -p bookconv --bin epub-optimize   # host 侧 push 洗书�
 |---|---|---|---|
 | 母版库 / KOReader / 字体 / 壁纸池 / 配置 / 证书 / 休眠屏 conf 键 `SleepScreenPath` | `/home` | 保留 | 无 |
 | WiFi 看护钩子 `xovi/scripts/post-start/` · NM `powersave 2` | `/home` | 保留 | 无 |
-| 字体菜单 qmd | `/home`（hashtab 过期） | 文件在、未注入 | ① `xovi/rebuild_hashtable`（设备旁输密码）② `xovi/start` |
+| 字体菜单 qmd · 回收站代理 qmd | `/home`（hashtab 过期） | 文件在、未注入 | ① `xovi/rebuild_hashtable`（设备旁输密码）② `xovi/start` |
 | 书架五服务 | `/usr` | **冲掉** | ③ `SHELF_NO_BUILD=1 sh deploy.sh 10.11.99.1` |
 | chrony 国内 NTP | rootfs `/etc` | **冲掉** | ④ `ssh root@10.11.99.1 sh -s < packaging/chrony-cn.sh` |
 | wifi-watch 常驻看护（wlan0 假死自动 `nmcli con up`；固化所有 WiFi 连接 2.4G + 省电关——路由 5G 信道 36 不在设备精简 regdb 的 CN 允许段，白皮书 §03w） | `/usr` 单元 + `~/.local/bin` 脚本 | 单元**冲掉** | ⑤ `scp -r packaging/wifi-watch root@…:/home/root/wifi-watch-pkg && ssh root@… sh /home/root/wifi-watch-pkg/install.sh` |
@@ -161,7 +161,7 @@ shelf koreader pull | diff | sync [-n] [--fonts] [--dicts]   # 配置即代码�
 shelf koreader font add 字体.ttf | ls | rm <file>         # 只装进 KOReader
 shelf inbox [--retry 名 | --delete 名]                    # scp 追平队列里失败的书
 shelf events [--once] [--area books|koreader|fonts|wallpapers|manage] [--raw]   # 订阅设备事件流（SSE），有变更就打印
-shelf doctor --render [--keep]     # 真机排版回归探针：投探针书→等渲染自检→取回 xochitl 渲染缓存→pymupdf 量顶格/首行缩进→PASS/FAIL（固件 OTA 后跑一次）
+shelf doctor --render [--keep]     # 真机排版回归探针：投探针书→等渲染自检→取回 xochitl 渲染缓存→pymupdf 量顶格/首行缩进→PASS/FAIL（固件 OTA 后跑一次）；量完探针自动排进原生回收站（设备回到书库视图即执行）
 shelf passwd [--new …]
 ```
 配置 `$XDG_CONFIG_HOME/shelf/config.toml`（host/port/scheme/password/verify_tls/split_pdf_mb）。

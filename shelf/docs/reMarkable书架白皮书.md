@@ -23,9 +23,9 @@
 
 **格式三档**（`shelf_core::formats` 单一事实源）：原生 epub/pdf · 电脑可转 azw3/mobi/azw/prc/fb2/**txt**（TXT 由 host `txt_to_epub.py` 按「第X卷/章」切章建两级目录再洗，§03aa）· 仅 KOReader 其余 10 个。
 
-**host CLI**（`shelf`）：`push`（Calibre 洗书 / PDF 结构化重排 / TXT 切章 / 漫画→CBZ→16 灰；`--wait` 设备睡了探 `/health` 等醒；`--no-eink-gray` 要原图）· `doctor --render`（排版回归探针：投探针书→取回 xochitl 渲染缓存→pymupdf 量顶格/缩进→PASS/FAIL，固件 OTA 后跑一次）· `events` · font/wallpaper/koreader/inbox/status/passwd。
+**host CLI**（`shelf`）：`push`（Calibre 洗书 / PDF 结构化重排 / TXT 切章 / 漫画→CBZ→16 灰；`--wait` 设备睡了探 `/health` 等醒；`--no-eink-gray` 要原图）· `doctor --render`（排版回归探针：投探针书→取回 xochitl 渲染缓存→pymupdf 量顶格/缩进→PASS/FAIL→探针自动进原生回收站，固件 OTA 后跑一次）· `events` · font/wallpaper/koreader/inbox/status/passwd。
 
-**代码落点**：book-serve `staging.rs`（领域）/ `sidecar.rs`（落库记录边车）/ `render_check.rs`（渲染自检）/ `spool.rs`（inbox 队列）/ `api.rs`（纯适配）；koreader-serve 只做"从母版库 adopt"+字体/词典/配置同步（不依赖 bookconv）；shelf-core `clock`（时间戳唯一出处）、`xochitl`（注入 + 找书/页数）、`fswatch`（常驻 + 限时）、`events`；host `calibre/epub_skel.py`（三处手搓 EPUB 骨架收编）、`calibre_bridge._run_json`、`transport._open`（§03ab）；`comic.py` 漫画探针；bookconv CLI `epub-optimize`（与设备同一函数）。
+**代码落点**：book-serve `staging.rs`（领域）/ `sidecar.rs`（落库记录边车）/ `render_check.rs`（渲染自检）/ `trash.rs`（原生回收站队列，执行方是 `xovi/shelf-trash-agent.qmd`）/ `spool.rs`（inbox 队列）/ `api.rs`（纯适配）；koreader-serve 只做"从母版库 adopt"+字体/词典/配置同步（不依赖 bookconv）；shelf-core `clock`（时间戳唯一出处）、`xochitl`（注入 + 找书/页数）、`fswatch`（常驻 + 限时）、`events`；host `calibre/epub_skel.py`（三处手搓 EPUB 骨架收编）、`calibre_bridge._run_json`、`transport._open`（§03ab）；`comic.py` 漫画探针；bookconv CLI `epub-optimize`（与设备同一函数）。
 
 **已删（别再找）**：漫画 CBZ→PDF 投原生整条（`cbz2pdf` bin、`POST /staging/to-pdf`、`push --mono`，§03t 末）；book-serve `POST /?target=native|annot` 直投路与 `target.rs`/`pipeline.rs`（Strategy/Pipeline）、`/targets`、`done/` LRU；koreader-serve 直传 `POST /books` 与 `optimizeEpub`；网页读器页的传书区与 KOReader 书库浏览；host `push -t/--direct/--quality`、config `default_target/quality`；`BookConfig.optimizeDirectEpub/comicMono`；壁纸 bind-mount 整套（§03x）与安装器里的旧壁纸/bind 迁移块（§03ab）；`paths::data_root`、`htmlproc::has_internal_anchor`、`optimize::is_current_version`（§03ab）。
 
@@ -474,6 +474,10 @@ book→「母版库 / 原生投递」、weread→「微信读书（内容源，�
 
 **`shelf push --wait`（同日）**：设备离 USB 后几秒就自动休眠关 WiFi（§03w），push 最常见的失败是逐本报"连不上"，而且失败发生在洗书之后。改法：洗完第一本、上传前先 `transport.reachable()` 探网关公开路由 `GET /health`（不用密码、3 s 超时；任何 HTTP 应答都算在线）；不可达时——无 `--wait` 直接 rc 2 并提示"点亮屏幕或接 USB / 加 --wait"，产物留在工作目录；有 `--wait[=秒]`（缺省 600）每 5 s 探一次、每 30 s 复述剩余时间，醒了继续上传，Ctrl-C 放弃。探活只做一次，不通就不再洗后面的书。真机：`reachable()` 对在线设备 True、对不存在地址 False；"睡着→点亮→续传"的时序由用户日常使用验证。
 
+**原生回收站代理（同日晚，`xovi/shelf-trash-agent.qmd` + book-serve `trash.rs`）**：探针书每跑一次 `doctor --render` 就在原生书库多一本。外部进程直改 `.metadata` 的 `parent="trash"` 是判死路（阅读白皮书：运行中 xochitl 的内存文档模型会覆写回来），唯一可靠的软删是 xochitl 自己的 `EntitySelection.selectionMoveToTrash()`——从 reading 线 `trash-agent.qmd` 剥离移植：注入 Sidebar 一个隐形 Item，挂当前文件夹文档模型 `entityListModel` 的 `rowsInserted`/`modelReset`（xochitl 自己在用的信号，纯事件驱动不轮询），4 s 防抖后 `GET 127.0.0.1:8790/trash/pending`，逐个 `selection.add` + `selectionMoveToTrash`；不在文件视图或用户正手动选中则跳过。book-serve 队列 `$XDG_STATE_HOME/shelf/books/trash-pending.json`：`POST /trash/add {uuid,name}` **入队时按 visibleName 核对 uuid**（错 uuid 就是错删别的书，拒绝），`GET /trash/pending` 顺手把已进回收站/已不存在的出队（QML 端无需 ack）。doctor 在取回渲染缓存后立刻入队——落在本次 `/upload` 触发的 4 s 防抖窗内，量完探针已在回收站（可恢复）。
+- 3.28 锚点核实：从设备 `/usr/bin/xochitl` 解出 556 个 QML（`extract_qml.py`），Sidebar.qml（blob qml_00dcd9d7）仍是 `#root > ColumnLayout#filterColumn`，`NavigationManager.activeContext.{explorer.entityListModel,selection}` 与 `selectionMoveToTrash` 都在（qml_00dcfe48）；本机重建 asivery/qmldiff CLI 用设备 hashtab 离线 `apply-diffs` 一次通过，再 `xovi/start` 上机。
+- 真机：xochitl 启动时不触发（进的是上次视图），投一本书 → `rowsInserted` → 5 s 内 `SHELF-TRASH: moved 2 to trash`（新探针 + 一本排队的旧测试书），队列清空、`parent:"trash"` 由 xochitl 自己写入。名字守卫真机验证：同 uuid 配错名 400。
+
 **中文 TXT 切章（同日，`host/calibre/txt_to_epub.py`）**：网文以 TXT 为主，此前 `.txt` 原样进母版库→只能 KOReader 且无章节（bookconv/book-serve 零 TXT 处理，Calibre 也不认中文"第X章"）。host 路：stdlib 脚本解码（utf-8-sig → utf-16 BOM → gb18030 严格 → utf-8 替换）→ 一行一段、行首全角空格/nbsp 剥掉（缩进交 css）→ `第X卷/部/集`（一级）/`第X章/回/节/话`、`序章|楔子|尾声|番外…`（二级或一级）切章，标题行 ≤40 字防"第三章说过……"误判，一个没认出就每 8000 字硬切「第 N 部分」→ 极简 EPUB3（两级 nav、dc:title/creator 取自文件名 `书名 - 作者`）→ `wash_epub.sh`（`WASH_AUTOTOC=0`，目录已有）→ `check_output.py`。`formats.rs` 把 txt 从「只能 KOReader」挪到「电脑可转」（网页格式说明随之变）。
 - 真机（样本：把《人骨拼圖》EPUB 正文抽成 GB18030 TXT，38 章 24.8 万字）：`shelf push` 链 txt_to_epub → wash_epub.sh → check_output（NCX 48 条全命中）→ 投原生 **531 页（自检期望 526，ok）**，正文页 x0 只有 17.8/41.9 两档 = 首行缩进 24.1 pt = 2em，章名 24.1 pt。样本暴露一坑：TXT 开头常自带一份目录（每行"第一部　一天的國王　1"），会被切成一串空章——`drop_contents_listing`：没正文且标题（去尾页码）在后面再次出现的章视为目录行丢掉。另一事实：**xochitl 渲染缓存 PDF 从不带书签**（Tell Me Your Dreams 的也是 0 条），目录只能从 EPUB 的 ncx/nav 验，不能从缓存验。
 
@@ -507,7 +511,7 @@ book→「母版库 / 原生投递」、weread→「微信读书（内容源，�
 
 ## 05｜真机待办（2026-09-06 刷新）
 
-**未闭环**：无。用户侧小事：设备原生书库里删今天的测试书（Probe Good / Probe Bad ×2 / 探针本地 / 探针重构 / 第二本人骨拼圖）；`push --wait` "睡着→点亮→续传"的时序在日常使用里顺手验一次。
+**未闭环**：无。今天的测试书已全部清掉（五本用户手删、最后两本由回收站代理软删）。用户侧小事：`push --wait` "睡着→点亮→续传"的时序在日常使用里顺手验一次。
 
 **OTA 后固定五步**（§03v）：`xovi/rebuild_hashtable` → `xovi/start` → `SHELF_NO_BUILD=1 sh deploy.sh 10.11.99.1` → `ssh root@10.11.99.1 sh -s < packaging/chrony-cn.sh` → `packaging/wifi-watch/install.sh`。升完顺手 `shelf doctor --render` 看 CSS 引擎有没有变。/home 里的（母版库、KOReader、WiFi 钩子与 `powersave 2`、休眠屏 conf 键、qmd 文件）不用动。
 

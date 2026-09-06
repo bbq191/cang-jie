@@ -3,6 +3,7 @@
 //! 母版库：`GET /staging` → `{items, freeBytes}` · `POST /staging`（multipart，原样入库）· `POST /staging/optimize {name, mode}`
 //! · `POST /staging/deliver {name, folder?, keep?}` · `POST /staging/mark {name, target}` · `POST /staging/fetch-article {url}`
 //! · `POST /staging/delete {name}` · `GET /staging/render/{uuid}`（xochitl 渲染缓存 PDF，doctor --render 用）· `GET /events`（SSE：母版库/inbox 变更即推，网页零轮询）。
+//! 原生回收站队列：`POST /trash/add {uuid, name}`（name 必须与书库 visibleName 相符）· `GET /trash/pending` → `{uuids}`（Sidebar 代理 qmd 拉取执行）· `GET /trash`。
 //! 2026-09-05 起规则统一"所有书只落母版库"：旧 `POST /?target=` 直投路已删（`/staging*` 是唯一入口）。
 use crate::service_state::State;
 use crate::staging::{OptimizeMode, Reader, StagingStore};
@@ -61,6 +62,21 @@ pub fn router(st: Arc<State>) -> Router {
             let pdf = s.staging.render_pdf(r.param("uuid")).map_err(ApiError::not_found)?;
             Ok(Reply::bytes("application/pdf", pdf))
         }))
+        // ── 原生书库回收站队列（真正的软删由 xochitl 自己的 selectionMoveToTrash 执行，见 trash.rs / shelf-trash-agent.qmd）──
+        .post("/trash/add", bind(&st, |s, r| {
+            let j = r.json()?;
+            let n = s.trash.add(j.str("uuid")?, j.str("name")?).map_err(ApiError::bad)?;
+            s.bus.publish("books", "trash");
+            Ok(Reply::ok(&serde_json::json!({"ok": true, "pending": n, "message": "已排队：书库视图下次有动静时移进回收站"})))
+        }))
+        .get("/trash/pending", bind(&st, |s, _| {
+            let (uuids, pruned) = s.trash.pending().map_err(ApiError::internal)?;
+            if pruned > 0 {
+                s.bus.publish("books", "trash");
+            }
+            Ok(Reply::ok(&serde_json::json!({"uuids": uuids})))
+        }))
+        .get("/trash", bind(&st, |s, _| Ok(Reply::ok(&serde_json::json!({"items": s.trash.list()})))))
         .post("/staging/delete", bind(&st, |s, r| {
             s.staging.remove(r.json()?.str("name")?).map_err(ApiError::bad)?;
             s.bus.publish("books", "staging");
