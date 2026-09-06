@@ -391,7 +391,7 @@ book→「母版库 / 原生投递」、weread→「微信读书（内容源，�
 
 **appload 要不要停**：appload.so **没有 `_xovi_shouldLoad` 自检**，不会"自己停"；但 xovi 的 LD_PRELOAD 只在 `/etc` tmpfs 里（`xovi/start` 现场写），重启即清，所以**首次进 3.28 是纯原厂 xochitl，任何扩展都不载入**——循环死机只可能发生在之后手动 `xovi/start` 时。且即便循环，StartLimitAction 整机重启后 `/etc` 又清空、自愈，**最坏是一次被迫重启，不会砖**。实际操作：重启前把 `appload.so` + 两份 qmd（KOReader 侧栏入口、字体菜单 3.27 锚点）挪到 `/home/root/xovi-disabled/pre-3.28-<时间>/`（extensions.d 外；md5 清单 + README 同放），`exthome/appload/koreader/` 数据不动。
 
-**进 3.28 后顺序（实测约 8 分钟）**：① `xovi/rebuild_hashtable`（设备旁输密码，hashtab 20231 条重建）→ ② `xovi/start` 只带 qt-resource-rebuilder（`[qmldiff]: Set system version to 3.28.0.172`，xochitl NRestarts=0）→ ③ host `SHELF_NO_BUILD=1 ./deploy.sh 10.11.99.1`：五服务 active、`uploadReachable=true`、壁纸 bind 1 处、HTTPS 401 正常；install.sh 按 IMG_VERSION 选了 3.28 锚点 `font-menu-dynamic.qmd` 放进 qrr 目录（**未激活**，下次 `xovi/start` 才生效，独立一步验证）→ ④ `ssh root@10.11.99.1 sh -s < packaging/chrony-cn.sh` 恢复国内 NTP（§03w，OTA 冲 rootfs 后 chrony 会回到 Google 服务器）。**appload 不挪回**：0.5.3 的 qmd 钩 3.28 已删的 `SidebarFilterItem`（上游 PR #59 只改 qmd、编进 .so，重编需 rM Qt6 SDK），KOReader 暂无侧栏入口。
+**进 3.28 后顺序（实测约 8 分钟）**：① `xovi/rebuild_hashtable`（设备旁输密码，hashtab 20231 条重建）→ ② `xovi/start` 只带 qt-resource-rebuilder（`[qmldiff]: Set system version to 3.28.0.172`，xochitl NRestarts=0）→ ③ host `SHELF_NO_BUILD=1 ./deploy.sh 10.11.99.1`：五服务 active、`uploadReachable=true`、壁纸 bind 1 处、HTTPS 401 正常；install.sh 按 IMG_VERSION 选了 3.28 锚点 `font-menu-dynamic.qmd` 放进 qrr 目录（**未激活**，下次 `xovi/start` 才生效，独立一步验证）→ ④ `ssh root@10.11.99.1 sh -s < packaging/chrony-cn.sh` 恢复国内 NTP（§03w，OTA 冲 rootfs 后 chrony 会回到 Google 服务器）。 → ⑤ `packaging/wifi-watch/install.sh` 装回 wifi-watch 常驻看护（§03w）。**appload 不挪回**：0.5.3 的 qmd 钩 3.28 已删的 `SidebarFilterItem`（上游 PR #59 只改 qmd、编进 .so，重编需 rM Qt6 SDK），KOReader 暂无侧栏入口。
 
 **可升级性的准确说法（2026-09-05 用户问"是否 99% 可用"）**：*升级零风险、数据零丢失、随时可升；升完要手工四步装回，不是"升了就能用"*。风险按层分、不合成百分比：书架五服务/壁纸/WiFi/chrony/休眠屏键只用 `/upload` 接口和系统标准件，重装即回（本次 100%）；qmldiff 注入（字体菜单）依赖 xochitl QML，大版本常要重适配（3.27→3.28 已两版 qmd）；中文输入法 langhook（本机未装）靠二进制特征码，每版真机验、有 fail-safe；KOReader 本体独立无碍，侧栏入口靠第三方 appload、3.28 目前挂着。
 
@@ -405,6 +405,8 @@ book→「母版库 / 原生投递」、weread→「微信读书（内容源，�
 
 **时钟从未同步的根因与修法**：`chronyd` 4.5 配置的 4 个 `time{1-4}.google.com` 在国内不通（ping 100% 丢），启动以来没有一条 `Selected source`，`timedatectl` 一直 `synchronized: no`（RTC 本身准，差 1 秒，靠的是出厂/上次同步）。设备没有 `chronyc`、busybox 没有 `ntpd`。修法：改 **rootfs 底层** `/etc/chrony.conf`（服务器换成 `ntp.aliyun.com / ntp.tencent.com / cn.pool.ntp.org / time.cloudflare.com`），重启不丢（OTA 会冲）。**改底层 /etc 的姿势**：`/etc` 是 overlay（lower=/etc 本体，upper=/var/volatile tmpfs），必须 `mount -o remount,rw /` **先于** `mount --bind / /tmp/rootbind`（bind 继承挂载时的 ro 标志，后 remount 不传播），改 `/tmp/rootbind/etc/…`，umount，再 remount ro；**overlay 缓存 lower**：改完当场 `/etc/` 看到的仍是旧内容，重启才变——本次要立即生效就再 `cp` 一份进 overlay（落 upper tmpfs，重启自然消失、底层接管）。`mount -o remount,ro /` 偶发 `mount point is busy`，隔几秒再试就过（journal 在 /home 不占 rootfs）。改后重启 chronyd 8 秒 `Selected source ntp.tencent.com`，`synchronized: yes`。**"时不时连不上"的另一半真相（2026-09-06）**：不插 USB 时设备空闲几秒就进内核深度休眠（journal `PM: suspend entry (deep)` / `rm_sleep_monitor: Enter autosleep`，屏幕内容不变、`Woke up with reason=Ignored`），WiFi 随之断，摸一下屏就回来并重新 DHCP（还会漫游到另一 BSSID）。这不是 WiFi 故障：**要长时间可达就插 USB 供电（充电时不 autosuspend）**，排查前先 `journalctl -b | grep "suspend entry"`。
 
+**常驻看护（2026-09-06）**：`packaging/wifi-watch/`（`wifi-watch.service` /usr 单元 + `~/.local/bin/wifi-watch.sh`，每 15s 查一次，NM 说连着而 wlan0 连续两次 NO-CARRIER 就 `nmcli con up`）——因为省电关掉后**slumber 醒来仍会**出现 `Lost carrier`+`REGDOM init=CORE` 的假死（09:51 实例：醒来 37s 后掉、插 USB 也不自愈）。日志 `journalctl -u wifi-watch`。OTA 后重装（§03v 第 ⑤ 步）。
+
 **已落地的兜底**：`packaging/xovi-post-start/wifi-reconnect.sh` → `/home/root/xovi/scripts/post-start/`（`xovi/start` 后台看护 60 秒，见 NO-CARRIER 就 `nmcli con up`，`journalctl -t xovi-wifi`），真机 `t+5s NO-CARRIER → 已激活` 通。
 
 ## 03x｜退役 bind-mount 壁纸整套，改写 `SleepScreenPath`（2026-09-06，3.28.0.172 真机）
@@ -417,9 +419,26 @@ book→「母版库 / 原生投递」、weread→「微信读书（内容源，�
 
 **QSettings 运行中改键的边界**：xochitl 在 sync 时按 mtime 重读再合并，外部加的键不被抹（本次装机时 xochitl 在跑、键保住）；但 `isettings.sleepScreenPath` 只在启动时读，所以首次写键必须 `xovi/start` 一次；之后换图不再碰 conf。
 
+## 03y｜xochitl CSS 引擎实测规则（2026-09-06，八轮"诊断 EPUB"量渲染缓存，3.28.0.172）
+
+**方法**：造只有一个变量的诊断 EPUB（每章一种写法 + 同章一个对照 `<p>`），scp 进 inbox → 设备上 `wget --post-data` 打 `127.0.0.1:8790/staging/deliver` 投原生（免密）→ xochitl 导入即渲染 `<uuid>.pdf` → pymupdf 量每段首行相对下一行的 x 偏移（只量会换行的段）。**全程不需要肉眼，不需要用户点**；一轮 2 分钟。诊断 7–14 共 60 个变体。
+
+**钉死的规则**（推翻/修正了记忆里"只认外链裸 p{}"的旧结论）：
+1. **规则里最后一个没有分号收尾的声明被丢掉**。`p{text-indent:2em}` 整条不生效，`p{text-indent:2em;}` 生效；书 css `.calibre_ {…;text-indent:1.2em;margin:0}` 的 `margin:0` 一直被吞。→ 清洗层所有输出声明一律尾分号（`filter_decls`、`wash_css`）。keep-spacing 档位此前因此在 xochitl 上零缩进。
+2. **`text-indent:0` 被当"没设"**，落回继承/其它规则；`0.01em`、`-0.01em` 生效。→ 顶格规则写 `text-indent:0.01em`。
+3. **类选择器认**（`.x{text-indent:2em;}` 对 `div.x` 得 2em），且**类规则压过元素规则**（`p.cj-flush` + `.cj-flush{0.01em;}` 顶格）。此前"不认类选择器"是规则 1 的误读。
+4. **同为类规则时先出现者胜**（书的表链接在前 → `.calibre_` 压住我们的 `.cj-flush`，无论我们的表链在前后、无论 class 属性里顺序）。同选择器后写的 `p{}` 也压不过先写的。
+5. **不认内联 `style=""` 属性**；`div{}` 元素规则不生效（div 只吃类规则/继承）。
+6. **text-indent 继承**：`<div class="calibre1">`（书的 1.2em）里的子 div 若自己"没设"（含 0）就继承缩进——Sheldon v5 顶格失败的根因。
+7. 外链 css 里混类选择器不会"废整表"（诊断 11 V4/V5 对照 p 正常）；旧结论来自当年带 `!important` 的实验。`!important` 仍不认。
+
+**最终配方（v6 真机量：章首 / 场景切换 0pt，续段 14.2pt）**：顶格段 → `<div class="cj-flush">`（**剥掉书的类与 style**，只留 cj-flush；id 等保留）+ `cangjie-wash.css` 加 `.cj-flush{text-indent:0.01em;margin-top:0;margin-bottom:0;}`；判定顶格的信号见 wash.rs `flush_first_para_after_heading`（h 标签后 / 加粗或 Chapter… 开头的标题样段后 / 双 `<br>`·空段·`* * *` 后 / 章首）。KOReader 走标准 CSS 同样顶格。
+
+**中文书**：用户看到"传原生没缩进"的《人骨拼圖》是 2017 年旧 EPUB 直传、没经清洗；经 `shelf push` 或母版库「优化」的中文书走 `p{text-indent:2em;…;}` 有缩进（诊断 12 V7 量 24.1pt=2em）。
+
 ## 04｜踩坑
 
-- **xochitl EPUB 渲染第四条硬规则：不认内联 `style=""` 属性**（2026-09-06 真机：`<p style="text-indent:0">` KOReader 顶格、xochitl 照缩）。要让某一段与众不同，只能**换元素**（p→div），靠"外链裸元素选择器管不到它"实现。
+- **xochitl CSS 引擎七条实测规则见 §03y**（尾分号 / 0 当没设 / 类规则认且压元素 / 同类先出现者胜 / 不认内联 style / text-indent 继承 / 混类选择器不废表）。改排版规则前先用诊断 EPUB 量渲染缓存，别靠肉眼。
 - **磁盘 metadata ≠ xochitl/UI 实际状态（2026-09-04 用户纠正）**：直接 `sed` 改 `.metadata` 的 `parent=trash` 并不等于"已进回收站"——xochitl 运行时在内存缓存、写回时覆盖，云同步也可能还原；出现过磁盘 8 个探针 `parent=trash` 但 UI 回收站只见真实书的错位。**涉及书库状态以设备 UI/xochitl 实际为准，不拿磁盘 metadata 当真相**；清测试文档走正常删除流程或停 xochitl 后操作，别边跑边改。
 - **qmd 语法比 QML 窄，且解析错误=整份不应用、xochitl 不崩不报**（2026-09-05）：`({})`、裸 `if (` handler 都让 qmldiff 报 `expected item assignment value token`；只在 journal 有一行 `[qmldiff]: Error while processing file tree`，菜单静默缺项（用户"选不到已安装的字体"）。规矩：写/改 qmd 先 `git clone asivery/qmldiff && cargo build --release`，`qmldiff apply-diffs <root> <dest> x.qmd -f -c` 对 `extract_qml.py` 解出的真 QML 实跑（root 按资源路径摆），过了再上机；上机后 `journalctl -u xochitl | grep qmldiff` 必看。
 - multipart 流式解析：`fill()` 用 `Vec::resize(+64KB)` 在逐字节到达的流上变成 memset 风暴（测试 50s）；改栈上临时块 `extend_from_slice` → 0.8s。
@@ -437,6 +456,7 @@ book→「母版库 / 原生投递」、weread→「微信读书（内容源，�
 1. **Phase E ②③④**（2026-09-06 用《Tell Me Your Dreams》AZW3 推进）：
    - 洗书发现两处实现缺口并修（bookconv `wash.rs`）：① 书自带类规则 `.calibre_ {text-indent:2em}` 未统一——xochitl 不认类规则走我们的 `p{1.2em}`，KOReader 认且类规则特异性更高走 2em，**两器同字节不同缩进**；现在书 css / 内联 style 里非零 `text-indent` 一律改写成本书缩进（0 与负值保留）。② "标题后首段不缩进"只写在注释里从未实现；现在拉丁模式给 h1–h6 后第一个 `<p>` 加内联 `style="text-indent:0"`（唯一能落到单段的通道；**xochitl 认不认内联 style 属性待真机核**，不认也无害）。
    - **③ 用户对照通过**：两器翻到同一页首行缩进一致。**量化**（xochitl 渲染缓存 `<uuid>.pdf` 用 pymupdf 量首行 x 偏移）：英文书 KingHwa 12.1pt 下缩进 14.2pt = **1.17em**（=我们的 `p{1.2em}`，em 制、随字号缩放、不随字体家族变）。同法量《人骨拼圖》：那本是 2017 年旧 EPUB 直传、**没洗过**（无 cangjie-wash.css、书 css 无 text-indent、正文无全角空格），xochitl 渲染下**首行零缩进**。
+   - **② 已闭环（v6，2026-09-06）**：xochitl 章首/场景切换 0pt、续段 14.2pt（§03y 配方）；KOReader 同。
    - 用户追问"英文习惯不是首段不缩进吗"→ 是，且首版只认 `<h>`，这本书章名是加粗段落一段都没顶格。**泛化**（同日第二版）：前一块是 `</hN>` / 标题样段落（≤80 字、加粗或 Chapter/Book/Part… 开头、不以句末标点结尾）/ 段末 ≥2 个 `<br>` 或空段·`* * *` 分隔（空段 >20% 的书不算）/ 章首第一段 → 内联 `text-indent:0`；Sheldon 4455 段中 370 段顶格。产物以「Tell Me Your Dreams (v3 首段顶格)」入母版库，用户投原生后：**KOReader 顶格、xochitl 未顶格 → xochitl 不认内联 `style=""` 属性（真机判据落定，与"不认内联 <style> 块/类选择器/!important"并列第四条硬规则）**。第三版改**换元素**：顶格段由 `<p>` 改成 `<div class="… cj-flush" style="text-indent:0">`——外链 `p{text-indent:1.2em}` 管不到 div，xochitl 只能顶格；class 原样保留（KOReader 里书的类规则照常）；重洗时 cj-flush div 当段落参与"下一段是否顶格"判定（幂等）。产物「Tell Me Your Dreams (v4 div顶格)」待设备醒来后入库，用户再验 xochitl。
    - 用户观察"中文换字体缩进跟着变、英文不变"：em 制缩进只随字号不随家族；会随家族变的是**烘进正文的全角空格 `　　`**（宽度=该字体的全角空格字形）。清洗层目前**不剥段首全角空格**（待办：剥掉并统一走 css 2em，否则洗过的中文书是 2em+2 空格=4 字缩进）。待用户指明是哪本书/哪个读器看到的。
    - ④ 这本书没有脚注，要换一本带脚注的英文书。
@@ -445,7 +465,7 @@ book→「母版库 / 原生投递」、weread→「微信读书（内容源，�
 4. ~~PDF 结构化重排小瑕疵~~ **已修（2026-09-06，《财新》33 期实测）**：署名/贡献行/冒号结尾不再当标题，"{{" 垃圾剥掉；署名「文｜」/图注/原文链接各自成段带 class、不与上下段续接，导语内嵌署名切开；短、字号略大、无句末标点的行标 h3；标题按字号分三档，第二大档及以上才分章（目录 10→45→**18 条全是文章题**，节题 40 个 h3 不翻页）。"不以句末标点结尾"的正文段 15.1% → **2.7%**（剩下是真断行/表格行）。`test_reflow.py` 锁纯函数。
 5. ~~KOReader 里旧的 282MB《镖人.epub》~~ 用户已删（2026-09-06）。
 
-**OTA 后固定四步**（§03v）：`xovi/rebuild_hashtable` → `xovi/start` → `SHELF_NO_BUILD=1 sh deploy.sh 10.11.99.1` → `ssh root@10.11.99.1 sh -s < packaging/chrony-cn.sh`。/home 里的（母版库、KOReader、WiFi 钩子与 `powersave 2`、休眠屏 conf 键、qmd 文件）不用动。
+**OTA 后固定五步**（§03v）：`xovi/rebuild_hashtable` → `xovi/start` → `SHELF_NO_BUILD=1 sh deploy.sh 10.11.99.1` → `ssh root@10.11.99.1 sh -s < packaging/chrony-cn.sh` → `packaging/wifi-watch/install.sh`。/home 里的（母版库、KOReader、WiFi 钩子与 `powersave 2`、休眠屏 conf 键、qmd 文件）不用动。
 
 **已闭环（真机）**：§03f 首轮五服务 · §03g/§03h 字体分开装/子目录/HTTPS · §03j 登录/CA/mDNS · §03k 字体两 bug · §03l 传书卡＝云同步 · §03m/§03n/§03o 网页改版/细节/管理台 · §03p 质量一轮 · §03q 优化做精 + 首行缩进 v10 · §03r 母版库 Phase A/B/C + 财新重排 · §03s 质量二轮 + 格式三档 · §03t 漫画通道（host 真书探针 → CBZ；漫画不投原生）+ 分卷静默失效修 + 投原生体积门 · §03v 固件 3.28 升级 + 3.28 字体菜单 qmd（首版整份不应用：qmldiff 解析不了 `({})` 与裸 `if (` handler，改 `[]`+`{ }` 后 `appended=4 count=8`，判官＝本机 asivery/qmldiff CLI）· §03w 原生休眠屏 `SleepScreenPath` + WiFi `powersave 2` 根治 + 看护钩子 + chrony 国内 NTP 脚本 · §03x 退役 bind-mount 壁纸整套（`xochitl_conf` + `native.rs`，安装器清旧残留）。
 
