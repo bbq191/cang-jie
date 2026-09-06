@@ -112,41 +112,11 @@ else
     echo "-- 单元已写入 /usr 并启动（shelf.target；单个服务可 systemctl disable --now <svc>）"
 fi
 
-# ── 3b. 壁纸：旧 misc/wallpaper 迁移 + 清旧 bind 整套 + 写原生 SleepScreenPath（选了 wallpaper 才做）──
+# ── 3b. 壁纸：建池 + 写原生 SleepScreenPath（选了 wallpaper 才做）──
+# 历史迁移块（旧 misc/wallpaper 工具搬池、bind-mount 整套退役清理、blank776.png）已于 2026-09-06 删除：
+# 真机确认零残留（白皮书 §03x/§03ab）；万一从更老的备份恢复，按 §03x 手工清。
 case " $SEL " in *" wallpaper "*)
-    OLD=/home/root/wallpaper
-    POOL="$XDG_DATA_HOME/shelf/wallpapers/pool"
-    mkdir -p "$POOL"
-    if [ -d "$OLD" ] && [ ! -f "$XDG_DATA_HOME/shelf/wallpapers/.migrated" ]; then
-        echo "-- 发现旧壁纸工具 $OLD：停旧单元/钩子、迁移图片进池"
-        systemctl disable --now cangjie-wallpaper.service 2>/dev/null || true
-        [ -x "$OLD/unbind.sh" ] && sh "$OLD/unbind.sh" >/dev/null 2>&1 || true
-        for f in "$OLD"/*.png "$OLD"/pool/*.png; do
-            [ -f "$f" ] || continue
-            case "$(basename "$f")" in blank776.png|current.png) continue ;; esac
-            cp -n "$f" "$POOL/" 2>/dev/null || true
-        done
-        touch "$XDG_DATA_HOME/shelf/wallpapers/.migrated"
-        echo "   旧目录保留未删（确认无误后可 rm -rf $OLD）"
-    fi
-    # 退役旧 bind-mount 整套（2026-09-06，白皮书 §03x）：停旧单元、卸掉残留 bind、清 /usr 里的单元与 sleep 钩子
-    systemctl disable --now shelf-wallpaper-bind.service 2>/dev/null || true
-    for t in /usr/share/remarkable/suspended.png /usr/share/remarkable/carousel/sleep_Illustration_01.png \
-             /usr/share/remarkable/carousel/sleep_Illustration_02.png /usr/share/remarkable/carousel/sleep_Illustration_03.png; do
-        grep -q " $t " /proc/mounts 2>/dev/null && umount "$t" 2>/dev/null || true
-    done
-    OLD_UNITS="$SYSD/shelf-wallpaper-bind.service $SYSD/multi-user.target.wants/shelf-wallpaper-bind.service /usr/lib/systemd/system-sleep/shelf-wallpaper.sh /usr/lib/systemd/system-sleep/cangjie-wallpaper.sh /usr/lib/systemd/system/cangjie-wallpaper.service"
-    for f in $OLD_UNITS; do
-        if [ -e "$f" ] && ! dmsetup ls --target verity 2>/dev/null | grep -q .; then
-            mount -o remount,rw / || true
-            # shellcheck disable=SC2086  # 空格分隔的固定路径列表，就是要展开
-            rm -f $OLD_UNITS
-            sync; mount -o remount,ro / || true; systemctl daemon-reload
-            echo "-- 已清除旧 bind-mount 壁纸单元/钩子"
-            break
-        fi
-    done
-    rm -f "$XDG_DATA_HOME/shelf/wallpapers/blank776.png"   # bind 时代生成的透明卡，无用
+    mkdir -p "$XDG_DATA_HOME/shelf/wallpapers/pool"
     # 原生休眠屏：xochitl.conf SleepScreenPath → current.png（有当前图才写；首次写入需 xovi/start 一次生效）
     if [ -f "$XDG_DATA_HOME/shelf/wallpapers/current.png" ]; then
         "$BIN_DIR/wallpaper-serve" enable || true
@@ -167,7 +137,6 @@ case " $SEL " in *" font "*)
         [ -n "$FWV" ] || FWV=3.28
         echo "-- 固件 $FWV（IMG_VERSION）"
         Q="font-menu-dynamic.qmd"; [ "$FWV" = "3.27" ] && Q="font-menu-dynamic-3.27.qmd"
-        [ -f "$QRR/add-reading-fonts.qmd" ] && mv "$QRR/add-reading-fonts.qmd" "$BK/" && echo "-- 旧 add-reading-fonts.qmd 已移到备份（避免与动态菜单重复追加）"
         rm -f "$QRR/font-menu-dynamic.qmd" "$QRR/font-menu-dynamic-3.27.qmd"
         cp "$SRC/xovi/$Q" "$QRR/font-menu-dynamic.qmd"
         # ⚠ 重启 xochitl 的正确姿势取决于 xovi 怎么持久化：有 xovi-reenable.service（rootfs oneshot helper）
