@@ -411,7 +411,7 @@ book→「母版库 / 原生投递」、weread→「微信读书（内容源，�
 
 **改法**：① `shelf_core::xochitl_conf`——`xochitl.conf [General]` 单键 get/set/remove：只动目标行、tmp+rename 原子写、首次改前留 `xochitl.conf.shelf-bak`；**文件含 DeveloperPassword/UserToken，模块任何路径都不返回/打印行内容**（错误只带键名）；无 `[General]` 段时补一段；单测锁"插在段头后、其它行逐字节不变、删键后与原件相同"。② wallpaper-serve `mount.rs` → `native.rs`：`enable`（写键指向 `current.png`，幂等）/ `disable`（删键）/ `restart_pending`（记住写键时 xochitl MainPID，PID 没变即"还没生效"）；激活首张时自动 `enable`；`GET /status` 出 `native:{enabled,path,restartPending}`，上传回执 note 首次提示"跑一次 xovi/start"。③ 删 `blank776.png` 生成、`CAROUSEL/SUSPENDED_PNG` 常量、wake.rs 入睡补 bind 分支、`systemd/shelf-wallpaper-bind.service`、`wallpaper/shelf-wallpaper-sleep.sh`；deploy.sh / package.sh 不再组 `wallpaper/`。④ install.sh 3b：迁旧池 → **清旧 bind 整套**（`disable --now` 旧单元、按 `/proc/mounts` 卸 4 个 bind、remount rw 删 /usr 里的单元+钩子）→ 有 current.png 就 `wallpaper-serve enable`；uninstall.sh：`disable` 删键 + 同样的旧残留清理。网页壁纸页状态改为「原生休眠屏 已启用/未启用 · 需跑一次 xovi/start 生效」。
 
-**真机**：WiFi `192.168.1.22` 部署（USB 当时不通；known_hosts 里 192.168.1.22 是别的机器的旧键，按 USB 已知指纹核对一致后替换）。装前：4 个 bind 在挂、旧单元 active、键已在；装后：bind 0、旧单元/钩子文件全没（`reset-failed` 清掉 systemd 残留态）、键仍在、`native.enabled=true restartPending=false`、rootfs 回 ro、xochitl 未动（NRestarts=0）。**待用户休眠一次确认**：bind 全卸后休眠屏仍是池图（证明只靠原生键）。
+**真机**：WiFi `192.168.1.22` 部署（USB 当时不通；known_hosts 里 192.168.1.22 是别的机器的旧键，按 USB 已知指纹核对一致后替换）。装前：4 个 bind 在挂、旧单元 active、键已在；装后：bind 0、旧单元/钩子文件全没（`reset-failed` 清掉 systemd 残留态）、键仍在、`native.enabled=true restartPending=false`、rootfs 回 ro、xochitl 未动（NRestarts=0）。**用户确认（2026-09-06）**：bind 全卸后休眠 3 次换了 3 张池图——只靠原生键 + 唤醒轮换成立，闭环。
 
 **QSettings 运行中改键的边界**：xochitl 在 sync 时按 mtime 重读再合并，外部加的键不被抹（本次装机时 xochitl 在跑、键保住）；但 `isettings.sleepScreenPath` 只在启动时读，所以首次写键必须 `xovi/start` 一次；之后换图不再碰 conf。
 
@@ -432,9 +432,7 @@ book→「母版库 / 原生投递」、weread→「微信读书（内容源，�
 
 **未闭环**：
 1. **Phase E ②③④**：英文书拉丁缩进（1.2em、标题后首段不缩进）观感；同一母版落 xochitl + KOReader 并排对照；KOReader 里内联脚注〔…〕能否接受（若不能，落库时对 KOReader 另跑 Anchor 是唯一备选，但会打破"两器同字节"）。
-2. ~~退役 bind-mount 壁纸整套~~ **已做（§03x，2026-09-06）**；待用户休眠一次确认 bind 卸光后休眠屏仍是池图。
 3. appload 3.28 适配：等上游发版或自 fork 重编（需 rM Qt6 SDK）；期间 KOReader 无侧栏入口。
-4. 拔线真 suspend 下唤醒轮换只触发一次（钩子已删，只剩 wake.rs 这一条路）。
 5. 3.28 字体菜单：用户在阅读器里选中书架字体后正文渲染效果确认；菜单再开时 `SHELF-FONT: visible` 差量追加是否触发（S-B）。
 6. PDF 结构化重排小瑕疵：署名"文｜某某"混进目录；"句中断开 12%"含图注/列表未细分。
 7. KOReader 里旧的 282MB《镖人.epub》由用户删（母版库里的漫画 PDF 用户已删，2026-09-05 15:04 后母版库为空）。
