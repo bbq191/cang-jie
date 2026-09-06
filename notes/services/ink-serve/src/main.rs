@@ -38,7 +38,7 @@ impl State {
         match ingest::ingest_doc(&self.paths.xochitl_dir(), &self.crops_dir(), &self.db, &self.cfg, uuid, shelf_core::clock::now_secs()) {
             Ok(Some(s)) if s.pages > 0 => {
                 println!("[ink-serve] {uuid}: 页 {} 新增 {} 变更 {} 不变 {} 撤销 {}", s.pages, s.merge.added, s.merge.changed, s.merge.unchanged, s.merge.revoked);
-                self.bus.publish("ink", "entries");
+                self.bus.publish("notes", "entries");
             }
             Ok(_) => {}
             Err(e) => eprintln!("[ink-serve] {uuid}: {e}"),
@@ -128,7 +128,7 @@ fn main() {
             if !found {
                 return Err(ApiError::not_found("没有这条目"));
             }
-            s.bus.publish("ink", "entries");
+            s.bus.publish("notes", "entries");
             Ok(Reply::ok(&serde_json::json!({"ok": true})))
         }))
         .put("/books/{uuid}/sections", bind(&st, |s, r| {
@@ -138,7 +138,7 @@ fn main() {
                 return Err(ApiError::not_found("没有这本书的条目"));
             }
             s.db.update(&uuid, || Default::default(), |b| b.sections = secs).map_err(ApiError::internal)?;
-            s.bus.publish("ink", "sections");
+            s.bus.publish("notes", "sections");
             Ok(Reply::ok(&serde_json::json!({"ok": true})))
         }))
         .post("/books/{uuid}/rescan", bind(&st, |s, r| {

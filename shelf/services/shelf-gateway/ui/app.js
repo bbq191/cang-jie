@@ -167,8 +167,9 @@ function renderTransfer(sec){sec.innerHTML=`
   refresh();sec.refresh=refresh;subtabs(sec);}
 
 /* 服务 tab（按注册表出现）。key = 注册的服务名 */
-const AREA={'font-serve':'fonts','koreader-serve':'koreader','wallpaper-serve':'wallpapers'};
+const AREA={'font-serve':'fonts','koreader-serve':'koreader','wallpaper-serve':'wallpapers','note-serve':'notes'};
 const TABS={
+ 'note-serve':{title:'笔记',render:renderNotes},
  'font-serve':{title:'xochitl',render(sec){assetTab(sec,'/api/fonts',{
    title:'xochitl · 原生字体',
    hint:'ttf / otf → 装进 fontconfig 用户字体目录。上传后阅读器「文字与布局」菜单重开即可选，无需重启。传书在「传书」页；KOReader 的字体在 KOReader 页装。',
@@ -233,6 +234,52 @@ function assetTab(sec,api,o){sec.innerHTML=`<div class="card">${o.title?`<h2>${o
   <h3>${o.listTitle||'已安装'}</h3><ul class="list" id="al"></ul></div>`;
   const refresh=async()=>{const d=await j(api);fillList($('#al',sec),d.items||[],(it,left,right)=>o.row(it,left,right,refresh));if(o.onRender)o.onRender(sec,refresh,d)};
   uploader($('.up',sec),()=>api,()=>({}),o.accept,refresh);
+  refresh();sec.refresh=refresh}
+
+/* 「笔记」tab（note-serve 注册；数据来自 ink-serve 条目库）：按书→按章列条目，左裁图右文本，改即存。
+   设备只负责写、不负责改：这里就是"改"的地方（e-ink 上打字太痛苦）。分区 = 名字 + 简述（简述就是给 AI 的要求）。 */
+const STYLE_NAMES={body:'正文',bullet:'无序 -',numbered:'有序 1.',checkbox:'待办 口'};
+const STATUS_NAMES={pending:'待转写',draft:'待校对',reviewed:'已校对',revoked:'已撤销'};
+function renderNotes(sec){sec.innerHTML=`
+  <div class="card"><h2>笔记</h2>
+    <p class="lead">荧光笔勾书、在旁边手写，合上书就到这里：核对转写、选分区、选样式。改动只进条目库，设备笔记本由它重新生成。</p>
+    <div class="row"><span class="small">书</span><select id="nbook" style="flex:1;min-width:10em"></select><button class="btn" id="nrescan" title="清掉页记录，整本重新摄取">重扫</button></div>
+    <div class="row small" id="nsum"></div>
+    <details class="cmp" id="nsecs"><summary>分区（名字 + 给 AI 的要求）</summary><div id="nseclist"></div><button class="btn" id="nsecadd">＋ 分区</button> <button class="btn pri" id="nsecsave">保存分区</button></details>
+  </div>
+  <div id="nchapters"></div>`;
+  const sel=$('#nbook',sec),chaps=$('#nchapters',sec),sum=$('#nsum',sec);let book=null;
+  const cropUrl=(uuid,f)=>`/api/ink/books/${encodeURIComponent(uuid)}/crops/${encodeURIComponent(f)}`;
+  const patch=async(id,body)=>{const r=await postJ(`/api/ink/books/${encodeURIComponent(book.uuid)}/entries/${encodeURIComponent(id)}`,body);if(r.ok===false)alert(r.message||'保存失败')};
+  const renderSections=()=>{const el=$('#nseclist',sec);el.innerHTML='';(book.sections||[]).forEach((s,i)=>{const d=document.createElement('div');d.className='row';d.innerHTML=`<input type="text" value="${s.name}" placeholder="名字" style="max-width:6em" data-k="name"><input type="text" value="${s.brief||''}" placeholder="给 AI 的要求（空＝不调模型）" style="flex:1;min-width:10em" data-k="brief"><label class="toggle"><input type="checkbox" data-k="ai" ${s.ai?'checked':''}> 调模型</label><button class="btn" title="删">✕</button>`;
+    d.querySelectorAll('[data-k]').forEach(inp=>inp.onchange=()=>{book.sections[i][inp.dataset.k]=inp.type==='checkbox'?inp.checked:inp.value});d.querySelector('button').onclick=()=>{book.sections.splice(i,1);renderSections()};el.appendChild(d)})};
+  $('#nsecadd',sec).onclick=()=>{book.sections.push({id:'s'+Date.now(),name:'',brief:'',ai:true,order:book.sections.length,triggers:[]});renderSections()};
+  $('#nsecsave',sec).onclick=async()=>{const r=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}/sections`,{method:'PUT',body:JSON.stringify({sections:book.sections})});if(r.ok===false)alert(r.message);else renderBook()};
+  $('#nrescan',sec).onclick=async()=>{if(!book)return;await postJ(`/api/ink/books/${encodeURIComponent(book.uuid)}/rescan`,{});refresh()};
+  const renderBook=()=>{chaps.innerHTML='';if(!book)return;renderSections();
+    const live=(book.entries||[]).filter(e=>e.status!=='revoked');
+    sum.textContent=`${live.length} 条 · 待转写 ${live.filter(e=>e.status==='pending').length} · 待校对 ${live.filter(e=>e.status==='draft').length} · 已校对 ${live.filter(e=>e.status==='reviewed').length}`;
+    const groups=new Map();live.forEach(e=>{const k=e.chapter==null?-1:e.chapter;if(!groups.has(k))groups.set(k,[]);groups.get(k).push(e)});
+    [...groups.keys()].sort((a,b)=>a-b).forEach(k=>{const es=groups.get(k).sort((a,b)=>a.page_index-b.page_index||a.ink.bbox[1]-b.ink.bbox[1]);
+      const card=document.createElement('div');card.className='card';card.innerHTML=`<h3 style="margin-top:0">${k<0?'（未归章）':`第 ${k+1} 章 · ${es[0].chapter_title||''}`} <span class="small">${es.length} 条</span></h3>`;
+      es.forEach(e=>{const row=document.createElement('div');row.className='opt-note';row.style.cssText='display:flex;gap:.6em;flex-wrap:wrap;align-items:flex-start;margin:.4em 0';
+        const img=e.ink&&e.ink.crop?`<img src="${cropUrl(book.uuid,e.ink.crop)}" alt="手写" style="max-width:40%;max-height:9em;border:1px solid var(--line);background:#fff">`:'<span class="small">（无裁图）</span>';
+        const opts=(book.sections||[]).map(s=>`<option value="${s.id}" ${e.section===s.id?'selected':''}>${s.name}</option>`).join('');
+        const sty=Object.entries(STYLE_NAMES).map(([v,n])=>`<option value="${v}" ${e.style===v?'selected':''}>${n}</option>`).join('');
+        const draft=(e.drafts&&e.drafts[0])?e.drafts[0].text:'';
+        row.innerHTML=`${img}<div style="flex:1;min-width:12em">
+          <div class="small">p.${e.page_index+1}${e.subhead?' · '+e.subhead:''} <span class="badge ${e.status==='reviewed'?'on':''}">${STATUS_NAMES[e.status]||e.status}</span></div>
+          ${e.quote?`<div class="small" style="border-left:3px solid var(--line);padding-left:.5em;margin:.2em 0">「${e.quote.text}」</div>`:''}
+          <textarea rows="2" style="width:100%;box-sizing:border-box" placeholder="${draft?'转写：'+draft:'等待转写…'}">${e.text||draft}</textarea>
+          <div class="row"><select data-k="section"><option value="">（未分区）</option>${opts}</select><select data-k="style">${sty}</select>${e.answer?`<details class="cmp" style="flex-basis:100%"><summary>智能回答</summary><div class="small">${e.answer.text}</div></details>`:''}</div></div>`;
+        row.querySelector('textarea').onchange=ev=>patch(e.id,{text:ev.target.value});
+        row.querySelectorAll('select').forEach(s=>s.onchange=()=>patch(e.id,{[s.dataset.k]:s.value}));
+        card.appendChild(row)});
+      chaps.appendChild(card)})};
+  const loadBook=async()=>{if(!sel.value){book=null;renderBook();return}book=await j(`/api/ink/books/${encodeURIComponent(sel.value)}`);renderBook()};
+  sel.onchange=loadBook;
+  const refresh=async()=>{const d=await j('/api/ink/books');const cur=sel.value;sel.innerHTML=(d.items||[]).map(b=>`<option value="${b.uuid}">${b.title}（${b.entries}）</option>`).join('')||'<option value="">（还没有勾画过的书）</option>';
+    if(cur&&[...sel.options].some(o=>o.value===cur))sel.value=cur;await loadBook()};
   refresh();sec.refresh=refresh}
 
 /* 管理台/引导（固定 tab，始终在——它是网关自身页面，不由服务注册表驱动） */

@@ -645,6 +645,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "note-serve"
+version = "0.1.0"
+dependencies = [
+ "notecore",
+ "serde",
+ "serde_json",
+ "shelf-core",
+]
+
+[[package]]
 name = "notecore"
 version = "0.1.0"
 dependencies = [

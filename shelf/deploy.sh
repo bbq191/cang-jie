@@ -8,7 +8,7 @@ cd "$(dirname "$0")"
 HOST="${1:-10.11.99.1}"; [ $# -gt 0 ] && shift
 TARGET=aarch64-unknown-linux-musl
 BINS="shelf-gateway book-serve koreader-serve font-serve wallpaper-serve"
-NOTES_BINS="ink-serve"   # 笔记线（../notes）二进制与单元一并打进载荷
+NOTES_BINS="ink-serve note-serve"   # 笔记线（../notes）二进制与单元一并打进载荷
 
 [ "${SHELF_NO_BUILD:-0}" = "1" ] || sh ./build.sh
 STAGE="$(mktemp -d)"; trap 'rm -rf "$STAGE"' EXIT
