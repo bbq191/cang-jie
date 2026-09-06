@@ -16,7 +16,7 @@ for a in "$@"; do
     esac
     _prev=""
 done
-ALL="gateway book koreader font wallpaper"
+ALL="gateway book koreader font wallpaper ink transcribe note"   # 笔记线三服务同载荷同卸载；其条目库（~/.local/state/notes）不在 --purge 范围，绝不删用户笔记
 [ -n "$ONLY" ] && SEL="$(echo "$ONLY" | tr ',' ' ')" || SEL="$ALL"
 svc_of() { case "$1" in gateway) echo shelf-gateway ;; *) echo "$1-serve" ;; esac; }
 

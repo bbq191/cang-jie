@@ -246,6 +246,13 @@ function renderNotes(sec){sec.innerHTML=`
     <div class="row"><span class="small">书</span><select id="nbook" style="flex:1;min-width:10em"></select><button class="btn" id="nrescan" title="清掉页记录，整本重新摄取">重扫</button></div>
     <div class="row small" id="nsum"></div>
     <details class="cmp" id="nsecs"><summary>分区（名字 + 给 AI 的要求）</summary><div id="nseclist"></div><button class="btn" id="nsecadd">＋ 分区</button> <button class="btn pri" id="nsecsave">保存分区</button></details>
+    <details class="cmp" id="ntr"><summary>转写 <span class="small" id="ntrsum"></span></summary>
+      <div class="row small" id="ntrstat"></div>
+      <div class="row"><input type="password" id="ntrkey" placeholder="API key（只写不回显；DashScope 百炼）" style="flex:1;min-width:12em" autocomplete="off"><button class="btn pri" id="ntrsave">保存</button><button class="btn" id="ntrclear" title="清掉已存的 key">清 key</button></div>
+      <div class="row"><input type="text" id="ntrmodel" placeholder="模型" style="max-width:10em"><input type="text" id="ntrurl" placeholder="OpenAI 兼容口 baseUrl" style="flex:1;min-width:12em"><label class="toggle"><input type="checkbox" id="ntrauto"> 合书自动转写</label></div>
+      <div class="row"><button class="btn" id="ntrrun">转写待转写条目</button><button class="btn" id="ntrretry" title="清掉失败记录再跑">重试失败</button><span class="small" id="ntrmsg"></span></div>
+      <div class="small" id="ntrfail"></div>
+    </details>
   </div>
   <div id="nchapters"></div>`;
   const sel=$('#nbook',sec),chaps=$('#nchapters',sec),sum=$('#nsum',sec);let book=null;
@@ -274,12 +281,29 @@ function renderNotes(sec){sec.innerHTML=`
           <div class="row"><select data-k="section"><option value="">（未分区）</option>${opts}</select><select data-k="style">${sty}</select>${e.answer?`<details class="cmp" style="flex-basis:100%"><summary>智能回答</summary><div class="small">${e.answer.text}</div></details>`:''}</div></div>`;
         row.querySelector('textarea').onchange=ev=>patch(e.id,{text:ev.target.value});
         row.querySelectorAll('select').forEach(s=>s.onchange=()=>patch(e.id,{[s.dataset.k]:s.value}));
+        if(e.ink&&e.ink.crop){const rb=document.createElement('button');rb.className='btn';rb.textContent=draft?'重转':'转写';rb.title='用当前后端转写这一条（不动已校对文本）';rb.style.marginLeft='.4em';
+          rb.onclick=async()=>{rb.disabled=true;const r=await j(`/api/transcribe/books/${encodeURIComponent(book.uuid)}/entries/${encodeURIComponent(e.id)}`,{method:'POST'});rb.disabled=false;if(r.ok===false)alert(r.message||'转写失败')};row.querySelector('.row').appendChild(rb)}
         card.appendChild(row)});
       chaps.appendChild(card)})};
   const loadBook=async()=>{if(!sel.value){book=null;renderBook();return}book=await j(`/api/ink/books/${encodeURIComponent(sel.value)}`);renderBook()};
   sel.onchange=loadBook;
+  /* 转写区（transcribe-serve）：key 只写不回显；状态 = 待转写数 / 用量 / 最近一轮 / 失败清单 */
+  const trKey=$('#ntrkey',sec),trMsg=$('#ntrmsg',sec);
+  const trRefresh=async()=>{const st=await j('/api/transcribe/status');const box=$('#ntr',sec);if(st.ok===false){box.style.display='none';return}box.style.display='';
+    const c=st.config||{},u=st.usage||{},lr=u.lastRun;
+    $('#ntrsum',sec).textContent=`${c.hasKey?'key ✓':'未配 key'} · 待转写 ${st.pending||0}`;
+    $('#ntrstat',sec).textContent=`${c.backend||''} ${c.model||''} · 累计 ${u.ok||0} 成 ${u.failed||0} 败 · token 入 ${u.promptTokens||0} 出 ${u.completionTokens||0}${lr?` · 上轮 扫 ${lr.scanned} 成 ${lr.done} 败 ${lr.failed}${lr.note?' · '+lr.note:''}`:''}${u.lastError?' · 最近错误：'+u.lastError:''}`;
+    $('#ntrmodel',sec).value=c.model||'';$('#ntrurl',sec).value=c.baseUrl||'';$('#ntrauto',sec).checked=!!c.auto;
+    $('#ntrfail',sec).innerHTML=(st.failures||[]).length?'失败：'+st.failures.map(f=>`${f.id.slice(0,8)}… ×${f.attempts} ${f.error}`).join('；'):''};
+  const trPut=async(body)=>{const r=await j('/api/transcribe/config',{method:'PUT',body:JSON.stringify(body)});if(r.ok===false)alert(r.message||'保存失败');else{trKey.value='';trMsg.textContent='已保存'}trRefresh()};
+  $('#ntrsave',sec).onclick=()=>trPut({apiKey:trKey.value,model:$('#ntrmodel',sec).value,baseUrl:$('#ntrurl',sec).value,auto:$('#ntrauto',sec).checked});
+  $('#ntrclear',sec).onclick=()=>{if(confirm('清掉已存的 API key？'))trPut({clearKey:true})};
+  $('#ntrauto',sec).onchange=()=>trPut({auto:$('#ntrauto',sec).checked});
+  const trRun=async(url)=>{trMsg.textContent='转写中…';const r=await j(url,{method:'POST'});trMsg.textContent=r.ok===false?('✗ '+(r.message||'失败')):(r.done!=null?`✓ 成 ${r.done} 败 ${r.failed} 余 ${r.left}${r.note?' · '+r.note:''}`:'✓');trRefresh()};
+  $('#ntrrun',sec).onclick=()=>trRun('/api/transcribe/run');
+  $('#ntrretry',sec).onclick=()=>trRun('/api/transcribe/retry');
   const refresh=async()=>{const d=await j('/api/ink/books');const cur=sel.value;sel.innerHTML=(d.items||[]).map(b=>`<option value="${b.uuid}">${b.title}（${b.entries}）</option>`).join('')||'<option value="">（还没有勾画过的书）</option>';
-    if(cur&&[...sel.options].some(o=>o.value===cur))sel.value=cur;await loadBook()};
+    if(cur&&[...sel.options].some(o=>o.value===cur))sel.value=cur;await Promise.all([loadBook(),trRefresh()])};
   refresh();sec.refresh=refresh}
 
 /* 管理台/引导（固定 tab，始终在——它是网关自身页面，不由服务注册表驱动） */
