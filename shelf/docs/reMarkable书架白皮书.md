@@ -473,7 +473,7 @@ book→「母版库 / 原生投递」、weread→「微信读书（内容源，�
 **中文 TXT 切章（同日，`host/calibre/txt_to_epub.py`）**：网文以 TXT 为主，此前 `.txt` 原样进母版库→只能 KOReader 且无章节（bookconv/book-serve 零 TXT 处理，Calibre 也不认中文"第X章"）。host 路：stdlib 脚本解码（utf-8-sig → utf-16 BOM → gb18030 严格 → utf-8 替换）→ 一行一段、行首全角空格/nbsp 剥掉（缩进交 css）→ `第X卷/部/集`（一级）/`第X章/回/节/话`、`序章|楔子|尾声|番外…`（二级或一级）切章，标题行 ≤40 字防"第三章说过……"误判，一个没认出就每 8000 字硬切「第 N 部分」→ 极简 EPUB3（两级 nav、dc:title/creator 取自文件名 `书名 - 作者`）→ `wash_epub.sh`（`WASH_AUTOTOC=0`，目录已有）→ `check_output.py`。`formats.rs` 把 txt 从「只能 KOReader」挪到「电脑可转」（网页格式说明随之变）。
 - 真机（样本：把《人骨拼圖》EPUB 正文抽成 GB18030 TXT，38 章 24.8 万字）：`shelf push` 链 txt_to_epub → wash_epub.sh → check_output（NCX 48 条全命中）→ 投原生 **531 页（自检期望 526，ok）**，正文页 x0 只有 17.8/41.9 两档 = 首行缩进 24.1 pt = 2em，章名 24.1 pt。样本暴露一坑：TXT 开头常自带一份目录（每行"第一部　一天的國王　1"），会被切成一串空章——`drop_contents_listing`：没正文且标题（去尾页码）在后面再次出现的章视为目录行丢掉。另一事实：**xochitl 渲染缓存 PDF 从不带书签**（Tell Me Your Dreams 的也是 0 条），目录只能从 EPUB 的 ncx/nav 验，不能从缓存验。
 
-**漫画省刷新档 `shelf push --eink-gray`（同日，`host/calibre/comic_gray.py`）**：依据墨水屏波形按内容分档（彩重 / 256 灰中 / ≤16 灰轻 / 1-bit 最轻， 真机坐实），CBZ→CBZ 逐页：缩进屏盒（长边 ≤1696 且短边 ≤954）→ 平均色度 ≥ 0.06 保色 JPEG q85，否则 L → 16 级等距灰 + Floyd-Steinberg → **4-bit PNG**。阈值与采样法镜像设备端 `imgopt.rs`（`COLOR_KEEP_CHROMA`），前身是已删的 `einkify_epub.py`。用户定默认关、体积实测再议——实测《阿拉蕾（第 1 部）》AZW3：comic2cbz 1092 页 171.2 MB → 16 灰 1085 页 / 保色 7 页 **108.2 MB**（48 s）。此前担心"抖动噪点 Flate 压不动、比 JPEG 大 2–3 倍"没发生：原图远超屏幕分辨率，降采样省下的远多于抖动多出的；4-bit PNG 原始数据只有 8-bit 灰的一半。KOReader 翻页闪烁对照由用户目视。Pillow 显式进 `calibre` 依赖组（`getdata` 在 Pillow 12 弃用，改 `tobytes`）。
+**漫画省刷新档 `shelf push --eink-gray`（同日，`host/calibre/comic_gray.py`）**：依据墨水屏波形按内容分档（彩重 / 256 灰中 / ≤16 灰轻 / 1-bit 最轻， 真机坐实），CBZ→CBZ 逐页：缩进屏盒（长边 ≤1696 且短边 ≤954）→ 平均色度 ≥ 0.06 保色 JPEG q85，否则 L → 16 级等距灰 + Floyd-Steinberg → **4-bit PNG**。阈值与采样法镜像设备端 `imgopt.rs`（`COLOR_KEEP_CHROMA`），前身是已删的 `einkify_epub.py`。用户定默认关、体积实测再议——实测《阿拉蕾（第 1 部）》AZW3：comic2cbz 1092 页 171.2 MB → 16 灰 1085 页 / 保色 7 页 **108.2 MB**（48 s）。此前担心"抖动噪点 Flate 压不动、比 JPEG 大 2–3 倍"没发生：原图远超屏幕分辨率，降采样省下的远多于抖动多出的；4-bit PNG 原始数据只有 8-bit 灰的一半。**用户目视《阿拉蕾①》16 灰翻页明显少闪 → 定默认开（`--no-eink-gray` 关；16 灰失败退回原图 CBZ 不挡推送）。** Pillow 显式进 `calibre` 依赖组（`getdata` 在 Pillow 12 弃用，改 `tobytes`）。
 
 ## 04｜踩坑
 
@@ -493,7 +493,7 @@ book→「母版库 / 原生投递」、weread→「微信读书（内容源，�
 ## 05｜真机待办（2026-09-05 刷新）
 
 **未闭环**：
-0. **阅读线六项（2026-09-06 下午，§03aa）**：① 渲染自检 ✓（网页徽章「渲染 404 页」用户确认）② `doctor --render` 探针 ✓（用户用网关密码跑 `shelf --host <ip> doctor --render` **PASS**，CLI 端到端闭环）③ `push --wait` ✓（睡着→点亮→续传时序由日常使用验）④ TXT 切章 ✓ ⑥ `push --eink-gray` ✓（KOReader 翻页闪烁对照待用户目视；默认开不开由用户定）⑤ 脚注见下条 ④。
+0. **阅读线六项（2026-09-06 下午，§03aa）**：① 渲染自检 ✓（网页徽章「渲染 404 页」用户确认）② `doctor --render` 探针 ✓（用户用网关密码跑 `shelf --host <ip> doctor --render` **PASS**，CLI 端到端闭环）③ `push --wait` ✓（睡着→点亮→续传时序由日常使用验）④ TXT 切章 ✓ ⑥ `push --eink-gray` ✓（用户目视明显少闪，已改默认开）⑤ 脚注见下条 ④。
 1. ~~**Phase E ②③④**~~ **全部闭环（2026-09-06，④ 用 Gulliver 收口）**（用《Tell Me Your Dreams》AZW3 推进）：
    - 洗书发现两处实现缺口并修（bookconv `wash.rs`）：① 书自带类规则 `.calibre_ {text-indent:2em}` 未统一——xochitl 不认类规则走我们的 `p{1.2em}`，KOReader 认且类规则特异性更高走 2em，**两器同字节不同缩进**；现在书 css / 内联 style 里非零 `text-indent` 一律改写成本书缩进（0 与负值保留）。② "标题后首段不缩进"只写在注释里从未实现；现在拉丁模式给 h1–h6 后第一个 `<p>` 加内联 `style="text-indent:0"`（唯一能落到单段的通道；**xochitl 认不认内联 style 属性待真机核**，不认也无害）。
    - **③ 用户对照通过**：两器翻到同一页首行缩进一致。**量化**（xochitl 渲染缓存 `<uuid>.pdf` 用 pymupdf 量首行 x 偏移）：英文书 KingHwa 12.1pt 下缩进 14.2pt = **1.17em**（=我们的 `p{1.2em}`，em 制、随字号缩放、不随字体家族变）。同法量《人骨拼圖》：那本是 2017 年旧 EPUB 直传、**没洗过**（无 cangjie-wash.css、书 css 无 text-indent、正文无全角空格），xochitl 渲染下**首行零缩进**。
