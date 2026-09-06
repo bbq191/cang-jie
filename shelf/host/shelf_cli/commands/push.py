@@ -69,7 +69,9 @@ def add_args(p):
     g = p.add_mutually_exclusive_group()
     g.add_argument("--comic", action="store_true", help="强制按漫画处理（出 CBZ，只加入 KOReader；漫画不投原生）")
     g.add_argument("--no-comic", action="store_true", help="不判漫画，按文字书洗")
-    p.add_argument("--eink-gray", action="store_true", help="漫画省刷新档：CBZ 逐页降采样，黑白页转 16 灰抖动 PNG（墨水屏走轻波形少闪）、彩页保色；体积可能比原 JPEG 大，默认关")
+    g2 = p.add_mutually_exclusive_group()
+    g2.add_argument("--eink-gray", dest="eink_gray", action="store_true", default=True, help="漫画省刷新档（缺省开）：CBZ 逐页缩屏盒，黑白页转 16 灰抖动 4-bit PNG（轻波形、翻页明显少闪），彩页保色")
+    g2.add_argument("--no-eink-gray", dest="eink_gray", action="store_false", help="漫画不转 16 灰，原图 CBZ")
     p.add_argument("--no-split", action="store_true", help="大 PDF 不分卷")
     p.add_argument("--require-toc", action="store_true", help="洗书体检要求有目录")
     p.add_argument("--skip-check", action="store_true", help="跳过 check_output.py 体检（缺省不过不推）")
@@ -89,16 +91,20 @@ def _gate(out: Path, args) -> None:
 
 
 def comic_prepare(path: Path, work: Path, args=None) -> list[Path]:
-    """漫画通道：→ CBZ 落母版库，去向 KOReader（漫画不投原生）。CBZ 输入原样；`--eink-gray` 再过 16 灰省刷新档。"""
+    """漫画通道：→ CBZ 落母版库，去向 KOReader（漫画不投原生）。缺省再过 16 灰省刷新档（用户 2026-09-06 目视少闪后定默认开；
+    `--no-eink-gray` 关）；16 灰失败（如没 Pillow）退回原图 CBZ 并提示，不挡推送。"""
     if path.suffix.lower() == ".cbz":
         cbz = path
     else:
         cbz = cb.comic2cbz(path, work / (path.stem + ".cbz"))
         print("  漫画 → CBZ（加入 KOReader；漫画不投原生）")
-    if getattr(args, "eink_gray", False):
-        cbz, st = cb.comic_gray(cbz, work / (path.stem + ".gray.cbz"))
-        mb = lambda n: f"{n / 2**20:.1f}MB"  # noqa: E731
-        print(f"  省刷新档：16 灰 {st['gray']} 页 / 保色 {st['color']} 页；体积 {mb(st['bytes_in'])} → {mb(st['bytes_out'])}")
+    if getattr(args, "eink_gray", True):
+        try:
+            cbz, st = cb.comic_gray(cbz, work / (path.stem + ".gray.cbz"))
+            mb = lambda n: f"{n / 2**20:.1f}MB"  # noqa: E731
+            print(f"  省刷新档：16 灰 {st['gray']} 页 / 保色 {st['color']} 页；体积 {mb(st['bytes_in'])} → {mb(st['bytes_out'])}")
+        except cb.CalibreError as e:
+            print(f"  ⚠ 16 灰失败，按原图 CBZ 推（{str(e)[:160]}）")
     return [cbz]
 
 
@@ -168,7 +174,7 @@ ROUTE_LABEL = {"raw": "原样→", "comic": "漫画 CBZ→", "wash": "洗书→"
 def plan(path: Path, args, calibre: bool) -> str:
     """一本书走哪条路：raw（原样）/ comic（→CBZ）/ wash（Calibre 洗书）。纯函数，便于测试。"""
     if path.suffix.lower() == ".cbz":
-        return "comic" if getattr(args, "eink_gray", False) else "raw"  # CBZ 本身就是终态，原样进母版库；--eink-gray 才再过一遍
+        return "comic" if getattr(args, "eink_gray", True) else "raw"  # CBZ 缺省再过 16 灰；--no-eink-gray 原样进母版库
     if args.no_optimize:
         return "raw"
     if is_comic(path, args) and calibre:

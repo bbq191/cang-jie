@@ -141,8 +141,8 @@ def test_push_comic_route_lands_cbz_only(gateway, tmp_path, capsys, monkeypatch)
     monkeypatch.setattr(comic, "is_comic", lambda p: True)
     monkeypatch.setattr(cb, "comic2cbz", lambda s, o: (o.write_bytes(b"PK"), o)[1])
     FakeGateway.received.clear()
-    rc, out = run(["push", str(src)], gateway, capsys)
-    assert rc == 0 and "漫画 CBZ→母版库" in out
+    rc, out = run(["push", str(src)], gateway, capsys)  # 缺省过 16 灰；假字节让 comic_gray 失败 → 退回原图 CBZ 不挡推送
+    assert rc == 0 and "漫画 CBZ→母版库" in out and "16 灰失败，按原图 CBZ 推" in out
     names = [r[0] for r in FakeGateway.received]
     assert names.count("/api/books/staging") == 1, "只有 CBZ 一次入库"
     assert b"manga.cbz" in FakeGateway.received[-1][2]
@@ -153,11 +153,11 @@ def test_push_comic_route_lands_cbz_only(gateway, tmp_path, capsys, monkeypatch)
     assert rc == 0 and "洗书→母版库" in out
     rc, out = run(["push", "--no-optimize", str(src)], gateway, capsys)
     assert rc == 0 and "原样→母版库" in out
-    # CBZ 本身就是终态：原样入库，不需要 Calibre
+    # CBZ 本身就是终态：--no-eink-gray 原样入库，不需要 Calibre
     monkeypatch.setattr(cb, "has_calibre", lambda: False)
     cbz = tmp_path / "v1.cbz"
     cbz.write_bytes(b"PK")
-    rc, out = run(["push", str(cbz)], gateway, capsys)
+    rc, out = run(["push", "--no-eink-gray", str(cbz)], gateway, capsys)
     assert rc == 0 and "原样→母版库" in out
 
 

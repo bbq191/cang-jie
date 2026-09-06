@@ -145,8 +145,8 @@ cargo build --release -p bookconv --bin epub-optimize   # host 侧 push 洗书�
 
 ```sh
 shelf/host/bin/shelf services | status | doctor
-shelf/host/bin/shelf push 论文.pdf 书.epub [--to-pdf] [--no-optimize] [--keep-spacing] [--no-reflow] [--no-split] [--skip-check] [-n] [--wait[=秒]] [--eink-gray]
-#   --eink-gray：漫画省刷新档——CBZ 逐页缩到屏盒、黑白页转 16 灰抖动 4-bit PNG（墨水屏走轻波形少闪）、彩页保色；默认关（《阿拉蕾①》1092 页 171MB→108MB，16 灰 1085/保色 7）
+shelf/host/bin/shelf push 论文.pdf 书.epub [--to-pdf] [--no-optimize] [--keep-spacing] [--no-reflow] [--no-split] [--skip-check] [-n] [--wait[=秒]] [--no-eink-gray]
+#   漫画缺省过省刷新档：CBZ 逐页缩到屏盒、黑白页转 16 灰抖动 4-bit PNG（轻波形，用户目视翻页明显少闪）、彩页保色（《阿拉蕾①》1092 页 171MB→108MB，16 灰 1085/保色 7）；--no-eink-gray 要原图
 #   --wait：设备离 USB 几秒就自动休眠关 WiFi，push 上传前先探 /health；不可达时每 5 秒探一次等它醒（点亮屏幕/接 USB），缺省最多 600 秒；不加 --wait 则直接报错、不传
    **只落母版库**，去向在网页「传书 → 母版库」选。路线自动定（`push.plan`）：
    · 有 Calibre → 洗书：EPUB 深洗 / AZW3·MOBI·AZW·PRC·FB2 转 EPUB / **PDF 默认结构化重排**（born-digital→EPUB→洗书；扫描件 k2pdfopt/裁边→PDF，`--no-reflow` 原样）；

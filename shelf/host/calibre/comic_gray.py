@@ -1,7 +1,7 @@
 """漫画省刷新档：CBZ → CBZ，每页按 Move 屏盒降采样，黑白/偏色页转 **16 级灰 + Floyd-Steinberg 抖动 → 4-bit PNG**，
 真彩页（按饱和度阈值）保色存 JPEG。依据：墨水屏波形按内容分档（彩色重 / 256 灰中 / ≤16 灰轻 / 1-bit 最轻，真机坐实），
-16 灰是画质与减闪的甜点（网点/灰阶插画不像 1-bit 那样糊成噪点）。**默认关**（`shelf push --eink-gray`）：抖动噪点
-Flate 压不动，体积可能比原 JPEG 大 2–3 倍，实测数字报用户再定默认（2026-09-06）。
+16 灰是画质与减闪的甜点（网点/灰阶插画不像 1-bit 那样糊成噪点）。**默认开**（`shelf push --no-eink-gray` 关）：
+实测《阿拉蕾①》171MB→108MB（降采样省的多于抖动多出的），用户目视翻页明显少闪后定默认开（2026-09-06）。
 阈值/采样镜像设备端 bookconv `imgopt.rs`（`COLOR_KEEP_CHROMA=0.06`：RGB 通道极差均值 /255，火影正文=0、彩封≈0.5；
 每 total/40000 像素取一样本）——两处同一份，改一处另一处同步。前身：已删的 `einkify_epub.py`（EPUB 内图；`git show 560a8b5^`）。
 依赖 Pillow（`uv run --group calibre`）。用法: python comic_gray.py <in.cbz> <out.cbz>  → 末行 JSON {out,pages,gray,color,bytes_in,bytes_out}

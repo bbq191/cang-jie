@@ -83,9 +83,9 @@ def test_push_cbz_with_eink_gray_routes_comic_and_calls_gray(gateway, tmp_path, 
     monkeypatch.setattr(cb, "has_calibre", lambda: False)
     monkeypatch.setattr(cb, "comic_gray", lambda s, o: (calls.append((s.name, o.name)) or (gray, {"pages": 3, "gray": 2, "color": 1, "bytes_in": 300, "bytes_out": 450})))
     FakeGateway.received.clear()
-    rc, out = run(["push", "--eink-gray", str(src)], gateway, capsys)
+    rc, out = run(["push", str(src)], gateway, capsys)  # 缺省开
     assert rc == 0 and calls == [("manga.cbz", "manga.gray.cbz")] and "16 灰 2 页" in out and "保色 1 页" in out
     assert FakeGateway.received[-1][0] == "/api/books/staging"
     calls.clear()
-    rc, out = run(["push", str(src)], gateway, capsys)
-    assert rc == 0 and calls == [] and "原样→" in out, "不加开关 CBZ 原样"
+    rc, out = run(["push", "--no-eink-gray", str(src)], gateway, capsys)
+    assert rc == 0 and calls == [] and "原样→" in out, "--no-eink-gray CBZ 原样"
