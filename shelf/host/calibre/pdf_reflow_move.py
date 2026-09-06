@@ -21,7 +21,6 @@ import re
 import shutil
 import subprocess
 import sys
-import zipfile
 from pathlib import Path
 
 try:
@@ -29,6 +28,7 @@ try:
 except ImportError:  # 老环境回退旧名
     import fitz
 
+from epub_skel import Chapter, write_epub  # noqa: E402  共享 EPUB 骨架
 from move_screen import H_PX, W_PX  # noqa: E402  单一事实源屏常量
 
 # born-digital 判据：平均每页可抽取文字 ≥ 该字符数 → 有文字层。扫描件通常近 0。
@@ -349,51 +349,12 @@ def _chapters(paras: list[dict], n_pages: int) -> list[tuple[str, str]]:
 
 
 def _build_epub(chapters: list[tuple[str, str]], imgdir: Path, title: str, out: Path) -> None:
-    """极简 EPUB3：mimetype(STORED) + container + opf + nav + 每章一个 xhtml。图片在 images/。
-    产物随后由上层 wash/epub-optimize 统一优化（此处不注排版细节，交给统一管线）。"""
+    """极简 EPUB3（共享骨架 epub_skel）：每章一个 xhtml，图片在 images/。产物随后由上层 wash/epub-optimize 统一优化。"""
     css = "@page{margin:0}body{margin:0}img{max-width:100%}.fig{text-align:center;margin:0}"
     css += "h3{font-size:1.1em;margin:1em 0 .3em}.byline{font-size:.9em;margin:0 0 .8em}.caption{font-size:.85em;text-align:center;margin:0 0 .8em}.link{font-size:.8em;word-break:break-all}"
     css += f"/* Move {W_PX}x{H_PX} */"  # 竖向 CSS 提示（认 CSS 的阅读器用；xochitl 忽略、走自身列宽）
-    manifest, spine, navlis = [], [], []
-    chaps = {}
-    for i, (ctitle, body) in enumerate(chapters, 1):
-        cid = f"c{i}"
-        fname = f"text/{cid}.xhtml"
-        chaps[fname] = (
-            f'<?xml version="1.0" encoding="UTF-8"?>\n'
-            f'<html xmlns="http://www.w3.org/1999/xhtml"><head><meta charset="utf-8"/>'
-            f'<title>{html.escape(ctitle)}</title><link rel="stylesheet" href="../style.css"/></head>'
-            f"<body>{body}</body></html>"
-        )
-        manifest.append(f'<item id="{cid}" href="{fname}" media-type="application/xhtml+xml"/>')
-        spine.append(f'<itemref idref="{cid}"/>')
-        navlis.append(f'<li><a href="{fname}">{html.escape(ctitle)}</a></li>')
     imgs = sorted(p for p in imgdir.iterdir() if p.suffix in (".png", ".jpg"))
-    for img in imgs:
-        mt = "image/jpeg" if img.suffix == ".jpg" else "image/png"
-        manifest.append(f'<item id="{img.stem}" href="images/{img.name}" media-type="{mt}"/>')
-    opf = (
-        f'<?xml version="1.0" encoding="UTF-8"?>\n<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="bid">'
-        f'<metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="bid">shelf-reflow-{html.escape(title)}</dc:identifier>'
-        f'<dc:title>{html.escape(title)}</dc:title><dc:language>zh</dc:language></metadata>'
-        f'<manifest><item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>'
-        f'<item id="css" href="style.css" media-type="text/css"/>{"".join(manifest)}</manifest>'
-        f'<spine>{"".join(spine)}</spine></package>'
-    )
-    nav = (
-        f'<?xml version="1.0" encoding="UTF-8"?>\n<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">'
-        f'<head><meta charset="utf-8"/><title>目录</title></head><body><nav epub:type="toc"><ol>{"".join(navlis)}</ol></nav></body></html>'
-    )
-    with zipfile.ZipFile(out, "w") as z:
-        z.writestr("mimetype", "application/epub+zip", compress_type=zipfile.ZIP_STORED)
-        z.writestr("META-INF/container.xml", '<?xml version="1.0"?>\n<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>', compress_type=zipfile.ZIP_DEFLATED)
-        z.writestr("OEBPS/content.opf", opf, compress_type=zipfile.ZIP_DEFLATED)
-        z.writestr("OEBPS/nav.xhtml", nav, compress_type=zipfile.ZIP_DEFLATED)
-        z.writestr("OEBPS/style.css", css, compress_type=zipfile.ZIP_DEFLATED)
-        for fname, data in chaps.items():
-            z.writestr(f"OEBPS/{fname}", data, compress_type=zipfile.ZIP_DEFLATED)
-        for img in imgs:
-            z.writestr(f"OEBPS/images/{img.name}", img.read_bytes(), compress_type=zipfile.ZIP_STORED)  # 已压缩图不再 deflate
+    write_epub(out, title, [Chapter(t, body) for t, body in chapters], css=css, uid=f"shelf-reflow-{title}", images=imgs)
 
 
 def _reflow_scanned(src: Path, out_pdf: Path) -> bool:

@@ -5,14 +5,17 @@
 拉丁配方一致（`p{text-indent:1.2em;…}` + `.cj-flush{text-indent:0.01em;…}`，每条声明带尾分号）——配方改了这里要跟。
 第一章拉丁（h1 后首段 / 场景切换后 / 续段），第二章中文（同一规则走 CJK 字体回退）。不过优化器（投原生是纯字节拷贝）。
 
-用法: python3 render_probe.py <输出目录> [书名]   → 末行打印产物路径
+用法: python3 render_probe.py <输出目录> [书名]   → 末行 JSON {"out": 产物路径}
 """
 from __future__ import annotations
 
+import json
 import random
 import sys
-import zipfile
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from epub_skel import Chapter, write_epub  # noqa: E402  共享 EPUB 骨架
 
 CSS = "p{text-indent:1.2em;margin-top:0;margin-bottom:0;padding-top:0;padding-bottom:0;}\n.cj-flush{text-indent:0.01em;margin-top:0;margin-bottom:0;}\n"
 EXPECT_EM = 1.2
@@ -29,16 +32,6 @@ def _latin(sentinel: str, rnd: random.Random, n: int = 70) -> str:
 
 def _cjk(sentinel: str, rnd: random.Random, n: int = 140) -> str:
     return sentinel + " " + "".join(rnd.choice(_HAN) for _ in range(n)) + "。"
-
-
-def _xhtml(title: str, body: str) -> str:
-    return (
-        '<?xml version="1.0" encoding="utf-8"?>\n<html xmlns="http://www.w3.org/1999/xhtml"><head><title>'
-        + title
-        + '</title><link rel="stylesheet" type="text/css" href="cangjie-wash.css"/></head><body>\n'
-        + body
-        + "\n</body></html>"
-    )
 
 
 def build(out: Path, title: str) -> Path:
@@ -61,28 +54,7 @@ def build(out: Path, title: str) -> Path:
             f"<p>{_cjk('PINDENT4', rnd)}</p>",
         ]
     )
-    out.parent.mkdir(parents=True, exist_ok=True)
-    with zipfile.ZipFile(out, "w") as z:
-        z.writestr("mimetype", "application/epub+zip", compress_type=zipfile.ZIP_STORED)
-        z.writestr(
-            "META-INF/container.xml",
-            '<?xml version="1.0"?><container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>',
-        )
-        z.writestr(
-            "OEBPS/content.opf",
-            '<?xml version="1.0"?><package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="u">'
-            f'<metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="u">urn:shelf:probe:{title}</dc:identifier><dc:title>{title}</dc:title><dc:language>en</dc:language></metadata>'
-            '<manifest><item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/><item id="css" href="cangjie-wash.css" media-type="text/css"/>'
-            '<item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/><item id="c2" href="c2.xhtml" media-type="application/xhtml+xml"/></manifest>'
-            '<spine><itemref idref="c1"/><itemref idref="c2"/></spine></package>',
-        )
-        z.writestr(
-            "OEBPS/nav.xhtml",
-            '<?xml version="1.0" encoding="utf-8"?><html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><head><title>nav</title></head><body><nav epub:type="toc"><ol><li><a href="c1.xhtml">Chapter One</a></li><li><a href="c2.xhtml">第二章</a></li></ol></nav></body></html>',
-        )
-        z.writestr("OEBPS/cangjie-wash.css", CSS)
-        z.writestr("OEBPS/c1.xhtml", _xhtml("Chapter One", ch1))
-        z.writestr("OEBPS/c2.xhtml", _xhtml("第二章", ch2))
+    write_epub(out, title, [Chapter("Chapter One", ch1), Chapter("第二章", ch2)], css=CSS, css_name="cangjie-wash.css", lang="en", uid=f"urn:shelf:probe:{title}")
     return out
 
 
@@ -92,7 +64,7 @@ def main() -> int:
         return 2
     title = sys.argv[2] if len(sys.argv) == 3 else "书架自检探针"
     p = build(Path(sys.argv[1]) / f"{title}.epub", title)
-    print(p)
+    print(json.dumps({"out": str(p)}, ensure_ascii=False))
     return 0
 
 

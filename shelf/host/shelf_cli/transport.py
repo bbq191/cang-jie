@@ -16,6 +16,9 @@ class TransportError(RuntimeError):
     pass
 
 
+_DEFAULT = object()  # `_open(timeout=…)` 的哨兵：区分"用缺省超时"与"None=不超时"
+
+
 class HttpTransport:
     """HTTPS（私有 CA 自签，缺省不校验证书——局域网 + 密码保护）+ HTTP Basic（网关只看密码，用户名任意）。"""
 
@@ -42,18 +45,20 @@ class HttpTransport:
         except (urllib.error.URLError, OSError):
             return False
 
-    def _do(self, method: str, path: str, query: dict | None = None, data: bytes | None = None, content_type: str | None = None) -> dict:
+    def _open(self, method: str, path: str, query: dict | None = None, data: bytes | None = None, content_type: str | None = None, accept: str | None = None, timeout: float | None | object = _DEFAULT):
+        """所有请求的唯一出口：拼 URL/鉴权头/超时，把 401/403/其它 HTTP 错、连不上统一翻成 TransportError。返回可读的响应对象。"""
         url = self.base_url + path
         if query:
             url += "?" + urllib.parse.urlencode({k: v for k, v in query.items() if v is not None})
         req = urllib.request.Request(url, data=data, method=method)
         if content_type:
             req.add_header("Content-Type", content_type)
+        if accept:
+            req.add_header("Accept", accept)
         if self.auth:
             req.add_header("Authorization", f"Basic {self.auth}")
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout, context=self.ctx) as r:
-                body = r.read()
+            return urllib.request.urlopen(req, timeout=self.timeout if timeout is _DEFAULT else timeout, context=self.ctx)
         except urllib.error.HTTPError as e:
             if e.code == 401:
                 raise TransportError("密码错误或未设置（config.toml 的 password / 环境变量 SHELF_PASSWORD / 交互输入；首次默认 shelf）") from None
@@ -61,12 +66,16 @@ class HttpTransport:
             try:
                 j = json.loads(body)
             except ValueError:
-                j = {"ok": False, "message": body.decode("utf-8", "replace")}
+                j = {"ok": False, "message": body.decode("utf-8", "replace")[:200]}
             if e.code == 403 and "改密码" in str(j.get("message", "")):
                 raise TransportError("首次登录必须先改密码：`shelf passwd`（或网页 /password）") from None
             raise TransportError(f"HTTP {e.code}: {j.get('message', j)}") from None
         except urllib.error.URLError as e:
             raise TransportError(f"连不上 {self.base_url}: {e.reason}") from None
+
+    def _do(self, method: str, path: str, query: dict | None = None, data: bytes | None = None, content_type: str | None = None) -> dict:
+        with self._open(method, path, query, data, content_type) as r:
+            body = r.read()
         try:
             return json.loads(body)
         except ValueError:
@@ -76,35 +85,13 @@ class HttpTransport:
         return self._do("GET", path, query)
 
     def get_bytes(self, path: str) -> bytes:
-        """取二进制体（如渲染缓存 PDF）；非 2xx 按 `_do` 同样的错误文案抛。"""
-        req = urllib.request.Request(self.base_url + path, method="GET")
-        if self.auth:
-            req.add_header("Authorization", f"Basic {self.auth}")
-        try:
-            with urllib.request.urlopen(req, timeout=self.timeout, context=self.ctx) as r:
-                return r.read()
-        except urllib.error.HTTPError as e:
-            if e.code == 401:
-                raise TransportError("密码错误或未设置（config.toml 的 password / 环境变量 SHELF_PASSWORD / 交互输入）") from None
-            raise TransportError(f"HTTP {e.code}: {e.read().decode('utf-8', 'replace')[:200]}") from None
-        except urllib.error.URLError as e:
-            raise TransportError(f"连不上 {self.base_url}: {e.reason}") from None
+        """取二进制体（如渲染缓存 PDF）。"""
+        with self._open("GET", path) as r:
+            return r.read()
 
     def stream_lines(self, path: str):
         """长连接逐行读（SSE）：无读超时，靠服务端 20s 心跳保活；连接断开时生成器结束，调用方决定是否重连。"""
-        req = urllib.request.Request(self.base_url + path, method="GET")
-        req.add_header("Accept", "text/event-stream")
-        if self.auth:
-            req.add_header("Authorization", f"Basic {self.auth}")
-        try:
-            r = urllib.request.urlopen(req, timeout=None, context=self.ctx)
-        except urllib.error.HTTPError as e:
-            if e.code == 401:
-                raise TransportError("密码错误或未设置（config.toml 的 password / 环境变量 SHELF_PASSWORD / 交互输入）") from None
-            raise TransportError(f"HTTP {e.code}") from None
-        except urllib.error.URLError as e:
-            raise TransportError(f"连不上 {self.base_url}: {e.reason}") from None
-        with r:
+        with self._open("GET", path, accept="text/event-stream", timeout=None) as r:
             for raw in r:
                 yield raw.decode("utf-8", "replace").rstrip("\r\n")
 
