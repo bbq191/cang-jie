@@ -1,13 +1,15 @@
 //! wallpaper-serve —— 书架·壁纸（loopback 8793）+ 子命令。
 //! `serve`：路由（经网关前缀 `/api/wallpapers`）`GET /`（池）· `POST /`（multipart 多图，缩放入池，`?activate=1` 顺手激活）·
 //!   `PUT /current {name}` · `PUT /mode {mode}` · `DELETE /{name}` · `GET /{name}`（PNG 预览）· `GET /status`。
-//! `bind` / `unbind` / `roll`：给 boot 单元 / 钩子 / 手动用。**轮换由 serve 内的 journal 唤醒监听触发**（见 wake.rs：
-//! 充电时按电源键不真 suspend，systemd-sleep 钩子不跑；xochitl 显示状态日志才是可靠信号）。
-//! `activate <name>`：命令行激活。
-mod mount;
+//! `enable` / `disable`：写 / 删 xochitl.conf 的 `SleepScreenPath`（安装器 / 卸载器 / 手动用）；`roll`：手动轮换；
+//! `activate <name>`：命令行激活。**轮换由 serve 内的 journal 唤醒监听触发**（wake.rs）。
+//! 休眠屏机制（2026-09-06 起）：原生隐藏键 `SleepScreenPath=current.png`（native.rs），xochitl 每次休眠重读该文件——
+//! 不再 bind-mount `/usr/share/remarkable/suspended.png`、不再盖插画卡、不写 `/usr`、没有开机单元和 sleep 钩子。
+mod native;
 mod store;
 mod wake;
 
+use native::Native;
 use shelf_core::asset::{self, AssetStore, AssetUploadFlow};
 use shelf_core::http::{bind, ApiError, Reply, Router};
 use shelf_core::paths::Paths;
@@ -25,6 +27,7 @@ const SPEC: ServiceSpec = ServiceSpec {
 
 struct State {
     store: WallpaperStore,
+    native: Native,
     paths: Paths,
 }
 
@@ -33,14 +36,22 @@ impl State {
         let st = self.store.state();
         serde_json::json!({
             "ok": true, "mode": st.mode, "current": st.current, "pool": self.store.names().len(),
-            "mounted": mount::mounted_count(), "expectedMounts": 4,
+            "native": self.native.status(),
             "screen": {"width": store::W, "height": store::H},
         })
     }
-    /// 激活一张并确保 bind-mount 就位；返回挂载数（bind 失败不阻断，状态里能看到）。
-    fn activate(&self, name: &str) -> Result<Option<usize>, String> {
+    /// 激活一张并确保原生键就位（首次写键 → 需 `xovi/start` 一次才生效，状态里 `restartPending` 能看到）。
+    fn activate(&self, name: &str) -> Result<bool, String> {
         self.store.activate(name)?;
-        Ok(mount::bind(self.store.current_path(), self.store.blank_path()).ok())
+        self.native.enable()
+    }
+}
+
+fn enable_message(changed: bool) -> String {
+    if changed {
+        "已写入 xochitl.conf SleepScreenPath（首次生效需重启 xochitl 一次：/home/root/xovi/start）".into()
+    } else {
+        "SleepScreenPath 已就位".into()
     }
 }
 
@@ -53,19 +64,25 @@ fn main() {
         eprintln!("[wallpaper-serve] 建目录失败: {e}");
         std::process::exit(1);
     }
+    let native = Native::new(&paths, store.current_path());
     match args.first().map(|s| s.as_str()) {
-        Some("bind") => exit_with(mount::bind(store.current_path(), store.blank_path()).map(|n| format!("bind 就绪 {n}/4"))),
-        Some("unbind") => exit_with(mount::unbind().map(|_| "已还原原生休眠屏".to_string())),
+        Some("enable") => {
+            if !store.current_path().is_file() {
+                exit_with(Err("还没有激活的壁纸（先上传并激活一张）".into()));
+            }
+            exit_with(native.enable().map(enable_message))
+        }
+        Some("disable") => exit_with(native.disable().map(|c| if c { "已删 SleepScreenPath，xochitl 重启后回原生休眠屏".to_string() } else { "本就没有 SleepScreenPath".to_string() })),
         Some("roll") => exit_with(store.roll().map(|n| n.map(|n| format!("轮换到 {n}")).unwrap_or_else(|| "不轮换（fixed 或空池）".into()))),
-        Some("activate") => exit_with(args.get(1).ok_or("用法: activate <name>".to_string()).and_then(|n| store.activate(n).map(|_| format!("已激活 {n}")))),
+        Some("activate") => exit_with(args.get(1).ok_or("用法: activate <name>".to_string()).and_then(|n| store.activate(n).and_then(|_| native.enable()).map(|c| format!("已激活 {n}；{}", enable_message(c))))),
         Some("serve") | None => {}
         Some(x) => {
-            eprintln!("未知子命令 {x}（serve|bind|unbind|roll|activate）");
+            eprintln!("未知子命令 {x}（serve|enable|disable|roll|activate）");
             std::process::exit(2);
         }
     }
     let bind_addr = service::parse_bind(&args, SPEC.default_bind);
-    let st = Arc::new(State { store, paths: paths.clone() });
+    let st = Arc::new(State { store, native, paths: paths.clone() });
     let router = Router::new()
         .get("/", bind(&st, |s, _| {
             let w = s.store.state();
@@ -78,19 +95,21 @@ fn main() {
             let want = r.q_flag("activate") || s.store.state().current.is_none();
             let items = AssetUploadFlow::new(&s.paths).run(&s.store, &mut *r.body, &b).map_err(ApiError::bad)?;
             let mut activated = None;
+            let mut changed = false;
             if want {
                 if let Some(first) = items.iter().find(|i| i.ok).and_then(|i| i.item.as_ref()) {
-                    s.activate(&first.name).map_err(ApiError::internal)?;
+                    changed = s.activate(&first.name).map_err(ApiError::internal)?;
                     activated = Some(first.name.clone());
                 }
             }
-            Ok(Reply::ok(&asset::receipt(&items, serde_json::json!({"activated": activated, "note": "下次休眠即显示"}))))
+            let note = if changed || s.native.restart_pending() { "首次启用：跑一次 /home/root/xovi/start 后，下次休眠即显示" } else { "下次休眠即显示" };
+            Ok(Reply::ok(&asset::receipt(&items, serde_json::json!({"activated": activated, "note": note, "restartPending": s.native.restart_pending()}))))
         }))
         .put("/current", bind(&st, |s, r| {
             let j = r.json()?;
             let name = j.str("name")?;
-            let mounted = s.activate(name).map_err(ApiError::bad)?;
-            Ok(Reply::ok(&serde_json::json!({"ok": true, "current": name, "mounted": mounted})))
+            s.activate(name).map_err(ApiError::bad)?;
+            Ok(Reply::ok(&serde_json::json!({"ok": true, "current": name, "native": s.native.status()})))
         }))
         .put("/mode", bind(&st, |s, r| {
             let j = r.json()?;
@@ -104,7 +123,7 @@ fn main() {
         }))
         .get("/{name}", bind(&st, |s, r| Ok(Reply::bytes("image/png", s.store.read(r.param("name")).map_err(ApiError::not_found)?))));
     wake::spawn(Arc::new(WallpaperStore::new(&paths)));
-    println!("[wallpaper-serve] 池 {}，已挂 {}/4；监听 xochitl 唤醒日志轮换", st.store.pool().display(), mount::mounted_count());
+    println!("[wallpaper-serve] 池 {}，原生休眠屏键 {}；监听 xochitl 唤醒日志轮换", st.store.pool().display(), if st.native.enabled() { "已就位" } else { "未写（激活首张时自动写）" });
     if let Err(e) = service::run(&SPEC, &bind_addr, &paths, router) {
         eprintln!("[wallpaper-serve] {e}");
         std::process::exit(1);

@@ -112,7 +112,7 @@ else
     echo "-- 单元已写入 /usr 并启动（shelf.target；单个服务可 systemctl disable --now <svc>）"
 fi
 
-# ── 3b. 壁纸：旧 misc/wallpaper 迁移 + 开机 bind 单元 + sleep 钩子（选了 wallpaper 才做）──
+# ── 3b. 壁纸：旧 misc/wallpaper 迁移 + 清旧 bind 整套 + 写原生 SleepScreenPath（选了 wallpaper 才做）──
 case " $SEL " in *" wallpaper "*)
     OLD=/home/root/wallpaper
     POOL="$XDG_DATA_HOME/shelf/wallpapers/pool"
@@ -129,19 +129,29 @@ case " $SEL " in *" wallpaper "*)
         touch "$XDG_DATA_HOME/shelf/wallpapers/.migrated"
         echo "   旧目录保留未删（确认无误后可 rm -rf $OLD）"
     fi
-    if [ "$DO_SYSTEMD" = "1" ] && ! dmsetup ls --target verity 2>/dev/null | grep -q .; then
-        mount -o remount,rw / || true
-        rm -f /usr/lib/systemd/system-sleep/cangjie-wallpaper.sh /usr/lib/systemd/system/cangjie-wallpaper.service
-        cp "$SRC/systemd/shelf-wallpaper-bind.service" "$SYSD/shelf-wallpaper-bind.service" && chmod 644 "$SYSD/shelf-wallpaper-bind.service"
-        ln -sf ../shelf-wallpaper-bind.service "$SYSD/multi-user.target.wants/shelf-wallpaper-bind.service"
-        mkdir -p /usr/lib/systemd/system-sleep
-        cp "$SRC/wallpaper/shelf-wallpaper-sleep.sh" /usr/lib/systemd/system-sleep/shelf-wallpaper.sh && chmod 755 /usr/lib/systemd/system-sleep/shelf-wallpaper.sh
-        sync; mount -o remount,ro / || true
-        systemctl daemon-reload
-        systemctl start shelf-wallpaper-bind.service 2>/dev/null || true
-        echo "-- 壁纸开机 bind 单元 + sleep 钩子已写入 /usr"
-    elif [ "$DO_SYSTEMD" = "1" ] && dmsetup ls --target verity 2>/dev/null | grep -q .; then
-        echo "⚠ dm-verity 设备：壁纸 bind 单元未装（/usr 只读）——壁纸**重启即丢**，每次开机需手动 $BIN_DIR/wallpaper-serve bind（或走 xovi oneshot）。"
+    # 退役旧 bind-mount 整套（2026-09-06，白皮书 §03x）：停旧单元、卸掉残留 bind、清 /usr 里的单元与 sleep 钩子
+    systemctl disable --now shelf-wallpaper-bind.service 2>/dev/null || true
+    for t in /usr/share/remarkable/suspended.png /usr/share/remarkable/carousel/sleep_Illustration_01.png \
+             /usr/share/remarkable/carousel/sleep_Illustration_02.png /usr/share/remarkable/carousel/sleep_Illustration_03.png; do
+        grep -q " $t " /proc/mounts 2>/dev/null && umount "$t" 2>/dev/null || true
+    done
+    OLD_UNITS="$SYSD/shelf-wallpaper-bind.service $SYSD/multi-user.target.wants/shelf-wallpaper-bind.service /usr/lib/systemd/system-sleep/shelf-wallpaper.sh /usr/lib/systemd/system-sleep/cangjie-wallpaper.sh /usr/lib/systemd/system/cangjie-wallpaper.service"
+    for f in $OLD_UNITS; do
+        if [ -e "$f" ] && ! dmsetup ls --target verity 2>/dev/null | grep -q .; then
+            mount -o remount,rw / || true
+            # shellcheck disable=SC2086  # 空格分隔的固定路径列表，就是要展开
+            rm -f $OLD_UNITS
+            sync; mount -o remount,ro / || true; systemctl daemon-reload
+            echo "-- 已清除旧 bind-mount 壁纸单元/钩子"
+            break
+        fi
+    done
+    rm -f "$XDG_DATA_HOME/shelf/wallpapers/blank776.png"   # bind 时代生成的透明卡，无用
+    # 原生休眠屏：xochitl.conf SleepScreenPath → current.png（有当前图才写；首次写入需 xovi/start 一次生效）
+    if [ -f "$XDG_DATA_HOME/shelf/wallpapers/current.png" ]; then
+        "$BIN_DIR/wallpaper-serve" enable || true
+    else
+        echo "-- 壁纸池还没有当前图：上传并激活首张时自动写 SleepScreenPath"
     fi
     ;;
 esac

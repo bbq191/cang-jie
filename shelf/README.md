@@ -38,7 +38,7 @@ host `shelf push` 是唯一能"入库时顺带优化"的源（Calibre 深洗 / �
    book-serve          koreader-serve       font-serve       wallpaper-serve
   127.0.0.1:8790        :8791               :8792            :8793
   母版库(入库/优化/落库) 从母版库落书·字体·   原生字体上传即装   壁纸上传即用
-  + 投 xochitl + inbox   词典·配置同步       (fontconfig 回退链)  (休眠屏：原生 SleepScreenPath 已通，bind-mount 待退役)
+  + 投 xochitl + inbox   词典·配置同步       (fontconfig 回退链)  (原生 SleepScreenPath 键)
 ```
 
 - **注册表**：服务启动写 `$XDG_RUNTIME_DIR/shelf/services/<name>.json`（含 pid、端口、UI tab），退出即删；
@@ -56,7 +56,7 @@ host `shelf push` 是唯一能"入库时顺带优化"的源（Calibre 深洗 / �
 | books | `GET /status` · `GET /inbox` · `POST /inbox/{retry,delete}` · `GET /staging` → `{items, freeBytes}` · `POST /staging`（multipart 原样入库）· `POST /staging/optimize {name, mode}` · `POST /staging/deliver {name, folder?, keep?}` · `POST /staging/mark {name, target}` · `POST /staging/fetch-article {url}` · `POST /staging/delete {name}` |
 | koreader | `GET /status` · `GET /books[?folder=]` · `POST /books/adopt {name, folder}`（从母版库落书）· `GET|POST /fonts` · `DELETE /fonts/{file}` · `GET|POST /dicts[?name=]` · `GET|POST /config/{settings\|defaults\|gestures}[?dry_run=1]` |
 | fonts | `GET /` · `POST /` · `DELETE /{family}` · `PUT /config {emboldenCjkFallback}` · `GET /status` |
-| wallpapers | `GET /` · `POST /[?activate=1]` · `PUT /current {name}` · `PUT /mode {mode}` · `DELETE /{name}` · `GET /{name}` · `GET /status` |
+| wallpapers | `GET /` · `POST /[?activate=1]` · `PUT /current {name}` · `PUT /mode {mode}` · `DELETE /{name}` · `GET /{name}` · `GET /status` → `{native:{enabled,path,restartPending}}` |
 | 网关自身 | `GET /api/services` · `GET /api/manage` · `GET /api/foundation` · `POST /api/manage/{seg}/{start\|stop\|uninstall}` · `/login` `/logout` `/password` `/ca.crt` |
 
 上传回执统一 `{ok, items:[{name, ok, message, item?}], …}`（`shelf_core::asset::receipt`）；成功项 `name` 是落地名。
@@ -68,17 +68,17 @@ shelf/
 ├── Cargo.toml · build.sh · .cargo/    内部 workspace（仓库根仍无 workspace）；musl 全静态交叉编译
 ├── crates/bookconv/                   ★ 通用内容层：多格式→EPUB/PDF、EPUB 优化器+清洗层+质量门、e-ink 图片处理、EPUB 组装、网文抽取
 │   └── src/bin/epub_optimize.rs         host/设备共用 CLI（wash_epub.sh 末步）
-├── crates/shelf-core/                 共享底座：paths(XDG) · formats(格式白名单) · registry · multipart(流式) · asset(AssetStore+上传模板+receipt)
+├── crates/shelf-core/                 共享底座：paths(XDG) · formats(格式白名单) · registry · multipart(流式) · asset(AssetStore+上传模板+receipt) · xochitl_conf(休眠屏键)
 │                                      · http(Router/bind/JsonBody/Guard) · config · fs(原子写/plain_name/unique) · xochitl 注入 · fswatch · tls/auth/mdns/netinfo/ttf
 ├── services/book-serve/               staging.rs(母版库领域：入库/优化/转PDF/落库) · spool.rs(inbox 队列) · api.rs(纯 HTTP 适配) · service_state.rs
 ├── services/koreader-serve/           koreader.rs(目录模型+KoStore) · config.rs(ConfigSync+merge.lua) · main.rs
 ├── services/{font-serve,wallpaper-serve,shelf-gateway}/
-├── systemd/                           shelf.target + 5 个 .service + 壁纸开机 bind 单元（bind 整套待退役，见 wallpaper/README）
+├── systemd/                           shelf.target + 5 个 .service（壁纸不再有开机单元/sleep 钩子，2026-09-06）
 ├── install.sh · uninstall.sh          设备端安装/卸载（--only 按服务；写 /usr 前实检 dm-verity）
 ├── deploy.sh                          host 一键：build → tar-over-ssh → 设备 install.sh（自动备份到 /home/root/cangjie-backups）
 ├── host/                              CLI `shelf`（纯 stdlib、系统 python3）+ pytest；shelf_cli/comic.py 漫画探针；host/calibre/ = Calibre 前置流水线
 ├── xovi/font-menu-dynamic{,-3.27}.qmd  字体菜单读 fonts.json 动态追加（3.28.0.172 / 3.27.3 真机通；改 qmd 先用 qmldiff CLI 离线实跑，白皮书 §04）
-├── wallpaper/                         5 行 sleep 钩子 + README（逻辑在 wallpaper-serve 子命令）
+├── wallpaper/                         README（休眠屏机制＝xochitl.conf SleepScreenPath；逻辑在 wallpaper-serve）
 ├── koreader/                          配置即代码：profile/{settings.reader.patch,defaults.custom,gestures.patch}.lua + fonts.txt/dicts.txt + merge.lua
 └── docs/
     ├── reMarkable书架白皮书.md          书架侧设计决策 + 真机记录（服务/UI/母版库/字体/管理台）；开头有「现状总览」
@@ -129,10 +129,10 @@ cargo build --release -p bookconv --bin epub-optimize   # host 侧 push 洗书�
 
 | 项目 | 位置 | OTA 后 | 恢复 |
 |---|---|---|---|
-| 母版库 / KOReader / 字体 / 壁纸池 / 配置 / 证书 / 休眠屏 conf 键 | `/home` | 保留 | 无 |
+| 母版库 / KOReader / 字体 / 壁纸池 / 配置 / 证书 / 休眠屏 conf 键 `SleepScreenPath` | `/home` | 保留 | 无 |
 | WiFi 看护钩子 `xovi/scripts/post-start/` · NM `powersave 2` | `/home` | 保留 | 无 |
 | 字体菜单 qmd | `/home`（hashtab 过期） | 文件在、未注入 | ① `xovi/rebuild_hashtable`（设备旁输密码）② `xovi/start` |
-| 书架五服务 + 壁纸单元 | `/usr` | **冲掉** | ③ `SHELF_NO_BUILD=1 sh deploy.sh 10.11.99.1` |
+| 书架五服务 | `/usr` | **冲掉** | ③ `SHELF_NO_BUILD=1 sh deploy.sh 10.11.99.1` |
 | chrony 国内 NTP | rootfs `/etc` | **冲掉** | ④ `ssh root@10.11.99.1 sh -s < packaging/chrony-cn.sh` |
 
 升级前把与新固件不兼容的 xovi 扩展（如 appload）挪出 `extensions.d/`（放 `/home/root/xovi-disabled/`，绝不留在目录里）。
@@ -166,7 +166,7 @@ shelf passwd [--new …]
 |---|---|---|
 | P0 | 骨架 · bookconv 抽离（md5 对拍一致）· CI · 打包/编排接入 · 五服务注册/代理 | ✅ |
 | P1 | 统一投递（当时是三目标手选 native/annot/koreader + 设备端转换管线）| ✅ 真机通（2026-09-03）；**2026-09-05 被母版库三层架构取代**（§03r/§03s），直投路已删 |
-| P2 | 字体/壁纸上传即可用（fontconfig+fonts.json、954×1696 池化/轮换/bind、动态字体菜单 qmd、sleep 钩子） | ✅ 真机通 |
+| P2 | 字体/壁纸上传即可用（fontconfig+fonts.json、954×1696 池化/轮换、动态字体菜单 qmd；壁纸最初 bind-mount+sleep 钩子，2026-09-06 换原生键） | ✅ 真机通 |
 | P3 | KOReader 配置即代码（profile 三份补丁 + 设备端 merge.lua + pull/diff/sync） | ✅ 真机通 |
 | P4/P4b | 质量门 + 清洗层进 bookconv（host/端同一优化器，`optimize` 档位） | ✅ 真机通（§03i） |
 | P5 | 微信读书（先内嵌浏览器 spike，后改内容源） | ⛔ **已砍（2026-09-05，§03u）**：微读不再是书架内容源；reading/ 旧下书线不受影响 |
@@ -177,4 +177,5 @@ shelf passwd [--new …]
 | 质量二轮 | 母版库领域化、直投路删除、上传模板/格式白名单/取参单一事实源、格式三档展示 | ✅ 真机通（§03s） |
 | 漫画通道 | AZW3/EPUB 漫画自动识别 → CBZ 给 KOReader；**漫画不投原生**（曾做过 CBZ→PDF 分卷投原生，用户否决后删）；镖人 282MB EPUB 撞 xochitl 上传上限根因；分卷静默失效修 | ✅ 真机通（§03t） |
 | 固件 3.28 | OTA 3.27.3.0→3.28.0.172 实录：appload 停用、hashtab 重建、deploy 重装；3.28 字体菜单 qmd 修 qmldiff 语法（`({})`/裸 `if(` 整份不应用）后通 | ✅ 真机通（§03v，§05 第 5 条） |
-| 设备杂项 | 原生休眠屏隐藏键 `SleepScreenPath`（满屏+随轮换，bind-mount 待退役）；WiFi 60 秒掉链＝IW612 省电（`powersave 2` 根治 + xovi post-start 看护钩子）；chrony 国内 NTP 幂等脚本 `packaging/chrony-cn.sh` | ✅ 真机通（§03w） |
+| 设备杂项 | 原生休眠屏隐藏键 `SleepScreenPath`（满屏+随轮换）；WiFi 60 秒掉链＝IW612 省电（`powersave 2` 根治 + xovi post-start 看护钩子）；chrony 国内 NTP 幂等脚本 `packaging/chrony-cn.sh` | ✅ 真机通（§03w） |
+| 壁纸退役 bind | wallpaper-serve 改写 `SleepScreenPath`（`shelf_core::xochitl_conf`），删 bind 单元/sleep 钩子/透明卡/`mount.rs`，安装器自动清旧残留 | ✅ 真机通（§03x） |

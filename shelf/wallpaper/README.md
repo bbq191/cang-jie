@@ -1,16 +1,21 @@
 # 壁纸（wallpaper-serve）
 
-休眠屏"上传即用"。逻辑全在 Rust `services/wallpaper-serve`（缩放 954×1696、池化、`bind|unbind|roll` 子命令）；
-本目录只有 5 行 sleep 钩子。机制（真机结论，自 `misc/wallpaper/` 剥离移植）：`/usr/share/remarkable/suspended.png`
-+ 三张 776×776 carousel 插画卡用 bind-mount 覆盖（rootfs 只读也可挂、真身不改、umount 即还原）；xochitl
-每次休眠重读磁盘，换图零重启；换图原地覆盖 `current.png` 保 inode。
+休眠屏"上传即用"。逻辑全在 Rust `services/wallpaper-serve`（缩放 954×1696、池化、`enable|disable|roll|activate` 子命令）；
+本目录只剩这份说明（2026-09-06 起没有任何脚本）。
+
+**机制（2026-09-06 定稿，3.28.0.172 真机）**：xochitl 有隐藏键 `xochitl.conf [General] SleepScreenPath=<png>`——指向
+`~/.local/share/shelf/wallpapers/current.png` 后，休眠屏原生满屏显示该图、插画卡自动隐藏、**每次休眠重读文件**。
+所以键只写一次（激活首张时 `native.rs` 自动写，或安装器 `wallpaper-serve enable`），换图永远是**原地覆盖 current.png**
+（保 inode），轮换由 `wallpaper-serve serve` 监听 xochitl 日志 `DeepSleep to Normal` 触发（`wake.rs`；充电时按电源键内核
+不 suspend、systemd-sleep 钩子不可靠，2026-09-03 真机）。**零 `/usr` 写入、零 bind-mount、没有开机单元和 sleep 钩子。**
+首次写键后要重启一次 xochitl（`/home/root/xovi/start`）才被读进 `isettings`；网页壁纸页和 `GET /status` 的
+`native.restartPending` 会提示。卸载 `wallpaper-serve disable` 删键还原原生休眠屏。
+
+改 `xochitl.conf` 的纪律：`shelf_core::xochitl_conf` 只动 `[General]` 单键、tmp+rename 原子写、首次改前留 `xochitl.conf.shelf-bak`；
+文件含 DeveloperPassword / UserToken，**任何地方都不打印行内容**。
 
 路径（XDG）：池 `~/.local/share/shelf/wallpapers/pool/*.png`、`current.png` 同级、状态 `~/.local/state/shelf/wallpaper-state.json`。
-单元：`shelf-wallpaper-bind.service`（开机 bind）+ `/usr/lib/systemd/system-sleep/shelf-wallpaper.sh`（入睡前补 bind）。
-**轮换**由 `wallpaper-serve serve` 监听 xochitl 日志 `DeepSleep to Normal` 触发（充电时按电源键内核不 suspend、sleep 钩子不跑，2026-09-03 真机）。
-`shelf/install.sh` 检测旧 `/home/root/wallpaper/` 会迁移池图并停用旧 `cangjie-wallpaper.service`。
 
-**2026-09-05 翻案（3.28.0.172 真机）**：xochitl 有隐藏键 `xochitl.conf [General] SleepScreenPath=<png>`——设为 `current.png` 后
-休眠屏原生满屏显示该图、插画卡自动隐藏、且每次休眠重读文件（随 wake.rs 轮换变图，用户两次休眠对照确认）。**bind-mount +
-三张透明插画卡 + `/usr` 写入 + sleep 钩子整套可退役**，只留唤醒轮换 + 安装器写 conf 键（书架白皮书 §03w / §05 第 8 条，待做）。
-当前设备两套并存：conf 键已写（优先生效），bind 仍挂着无害。改 conf 键必须停 xochitl 后改、先备份、绝不打印其中的 token。
+**历史（已退役）**：2026-09-03～09-05 用 bind-mount 覆盖 `/usr/share/remarkable/suspended.png` + 三张 776×776 透明卡盖插画
+（`shelf-wallpaper-bind.service` + `system-sleep/shelf-wallpaper.sh` + `blank776.png`）。发现 `SleepScreenPath` 后整套删除；
+`install.sh`/`uninstall.sh` 遇到旧安装会自动停单元、卸 bind、删 /usr 里的残留。书架白皮书 §03w/§03x。

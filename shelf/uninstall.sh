@@ -37,9 +37,14 @@ if ! dmsetup ls --target verity 2>/dev/null | grep -q .; then
     systemctl daemon-reload
 fi
 case " $SEL " in *" wallpaper "*)
+    # 还原原生休眠屏（删 xochitl.conf SleepScreenPath；xochitl 重启后生效）+ 清旧 bind-mount 整套残留（2026-09-06 前的安装）
+    [ -x "$BIN_DIR/wallpaper-serve" ] && "$BIN_DIR/wallpaper-serve" disable 2>/dev/null || true
     systemctl disable --now shelf-wallpaper-bind.service 2>/dev/null || true
-    [ -x "$BIN_DIR/wallpaper-serve" ] && "$BIN_DIR/wallpaper-serve" unbind >/dev/null 2>&1 || true
-    if ! dmsetup ls --target verity 2>/dev/null | grep -q .; then
+    for t in /usr/share/remarkable/suspended.png /usr/share/remarkable/carousel/sleep_Illustration_01.png \
+             /usr/share/remarkable/carousel/sleep_Illustration_02.png /usr/share/remarkable/carousel/sleep_Illustration_03.png; do
+        grep -q " $t " /proc/mounts 2>/dev/null && umount "$t" 2>/dev/null || true
+    done
+    if { [ -e "$SYSD/shelf-wallpaper-bind.service" ] || [ -e /usr/lib/systemd/system-sleep/shelf-wallpaper.sh ]; } && ! dmsetup ls --target verity 2>/dev/null | grep -q .; then
         mount -o remount,rw / || true
         rm -f "$SYSD/shelf-wallpaper-bind.service" "$SYSD/multi-user.target.wants/shelf-wallpaper-bind.service" /usr/lib/systemd/system-sleep/shelf-wallpaper.sh
         sync; mount -o remount,ro / || true; systemctl daemon-reload

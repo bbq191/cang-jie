@@ -8,6 +8,7 @@
 //! - `asset`    资产仓库抽象（Repository）+ 上传流程模板（Template Method），字体/壁纸共用。
 //! - `http`     tiny_http 适配：路由、JSON 回执、查询串。
 //! - `xochitl`  原生书库免重启注入（`/upload` GET-then-upload 归档、防复制风暴判据）。
+//! - `xochitl_conf` xochitl.conf `[General]` 单键读写（休眠屏 `SleepScreenPath`；含凭证，绝不打印行内容）。
 //! - `fswatch`  inotify 防抖目录监听（spool 追平）。
 //! - `service`  服务启动模板：解析参数→建目录→注册→起服务器。
 //! - `config`   服务配置/状态 JSON 读写模板（load/seed/save），收编各服务的 config 复制。
@@ -33,3 +34,4 @@ pub mod service;
 pub mod tls;
 pub mod ttf;
 pub mod xochitl;
+pub mod xochitl_conf;
