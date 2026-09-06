@@ -45,6 +45,11 @@ impl Xochitl {
         find_folder_by_name(&self.library_dir, name)
     }
 
+    /// 书库目录（`<uuid>.{metadata,content,epub,pdf}` 所在）。
+    pub fn library_dir(&self) -> &Path {
+        &self.library_dir
+    }
+
     fn set_folder(&self, folder_uuid: &str) -> bool {
         let path = if folder_uuid.is_empty() { "documents/".to_string() } else { format!("documents/{folder_uuid}") };
         self.agent.get(&format!("http://{}/{}", self.host, path)).call().is_ok()
@@ -84,6 +89,48 @@ pub fn find_folder_by_name(dir: &Path, name: &str) -> Option<String> {
         }
     }
     None
+}
+
+/// 书库里一份文档（非文件夹、非回收站）。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DocInfo {
+    pub uuid: String,
+    pub visible_name: String,
+    /// xochitl `createdTime`（毫秒字符串）。
+    pub created_ms: u64,
+}
+
+/// `createdTime >= since_ms` 的文档，新→旧。投原生后找"刚进库的那本"用（`/upload` 不回 uuid；visibleName
+/// 取自 EPUB 元数据不等于文件名，所以按时间圈候选、再按书名挑）。只读 `.metadata`，不写。
+pub fn find_documents_since(dir: &Path, since_ms: u64) -> Vec<DocInfo> {
+    let mut out = Vec::new();
+    let Ok(rd) = std::fs::read_dir(dir) else { return out };
+    for e in rd.flatten() {
+        let p = e.path();
+        if p.extension().and_then(|x| x.to_str()) != Some("metadata") {
+            continue;
+        }
+        let Some(v) = std::fs::read_to_string(&p).ok().and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok()) else { continue };
+        let s = |k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or("");
+        if s("type") != "DocumentType" || s("parent") == "trash" || v.get("deleted").and_then(|x| x.as_bool()) == Some(true) {
+            continue;
+        }
+        let created_ms = v.get("createdTime").and_then(|x| x.as_str().and_then(|s| s.parse::<u64>().ok()).or_else(|| x.as_u64())).unwrap_or(0);
+        if created_ms < since_ms {
+            continue;
+        }
+        let Some(uuid) = p.file_stem().and_then(|x| x.to_str()) else { continue };
+        out.push(DocInfo { uuid: uuid.to_string(), visible_name: s("visibleName").to_string(), created_ms });
+    }
+    out.sort_by(|a, b| b.created_ms.cmp(&a.created_ms));
+    out
+}
+
+/// `<uuid>.content` 的 `pageCount`：xochitl 渲染完（导入 / 打开）才写；缺或 0 → None。
+pub fn page_count(dir: &Path, uuid: &str) -> Option<u64> {
+    let t = std::fs::read_to_string(dir.join(format!("{uuid}.content"))).ok()?;
+    let v: serde_json::Value = serde_json::from_str(&t).ok()?;
+    v.get("pageCount").and_then(|x| x.as_u64()).filter(|&n| n > 0)
 }
 
 fn upload_document(agent: &ureq::Agent, host: &str, data: &[u8], filename: &str, content_type: &str) -> Result<String, String> {
@@ -132,5 +179,25 @@ mod tests {
         w("d.content", r#"{}"#);
         assert_eq!(find_folder_by_name(t.path(), "library"), Some("c".into()));
         assert_eq!(find_folder_by_name(t.path(), "none"), None);
+    }
+
+    #[test]
+    fn finds_documents_since_newest_first_and_reads_page_count() {
+        let t = tempfile::tempdir().unwrap();
+        let w = |n: &str, j: &str| std::fs::write(t.path().join(n), j).unwrap();
+        w("old.metadata", r#"{"type":"DocumentType","visibleName":"旧书","parent":"","createdTime":"1000"}"#);
+        w("new.metadata", r#"{"type":"DocumentType","visibleName":"New Book","parent":"","createdTime":"3000"}"#);
+        w("mid.metadata", r#"{"type":"DocumentType","visibleName":"Mid","parent":"","createdTime":"2000"}"#);
+        w("tr.metadata", r#"{"type":"DocumentType","visibleName":"Trash","parent":"trash","createdTime":"5000"}"#);
+        w("del.metadata", r#"{"type":"DocumentType","visibleName":"Del","parent":"","deleted":true,"createdTime":"5000"}"#);
+        w("dir.metadata", r#"{"type":"CollectionType","visibleName":"Folder","parent":"","createdTime":"5000"}"#);
+        w("new.content", r#"{"pageCount": 352, "fileType": "epub"}"#);
+        w("mid.content", r#"{"pageCount": 0}"#);
+        let docs = find_documents_since(t.path(), 2000);
+        assert_eq!(docs.iter().map(|d| d.uuid.as_str()).collect::<Vec<_>>(), ["new", "mid"]);
+        assert_eq!(docs[0].visible_name, "New Book");
+        assert_eq!(page_count(t.path(), "new"), Some(352));
+        assert_eq!(page_count(t.path(), "mid"), None, "0 页＝还没渲染");
+        assert_eq!(page_count(t.path(), "old"), None, "没有 .content");
     }
 }

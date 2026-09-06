@@ -37,9 +37,12 @@ pub fn router(st: Arc<State>) -> Router {
         .post("/staging/deliver", bind(&st, |s, r| {
             let j = r.json()?;
             // 母版库默认保留（可再投另一读器对照）；folder 空＝配置缺省。
-            let msg = s.staging.deliver(j.str("name")?, j.str_or("folder", ""), j.bool_or("keep", true)).map_err(ApiError::bad)?;
+            let out = s.staging.deliver(j.str("name")?, j.str_or("folder", ""), j.bool_or("keep", true)).map_err(ApiError::bad)?;
+            if let Some(plan) = out.render {
+                s.spawn_render_check(plan); // EPUB：等 xochitl 渲染完核对页数（结果写边车 + 推 books/render）
+            }
             s.bus.publish("books", "staging");
-            Ok(Reply::ok(&serde_json::json!({"ok": true, "message": msg})))
+            Ok(Reply::ok(&serde_json::json!({"ok": true, "message": out.message})))
         }))
         // 落库记录：KOReader adopt 在 koreader-serve 完成后由前端调这里记一笔（各服务只写自己的目录）。
         .post("/staging/mark", bind(&st, |s, r| {

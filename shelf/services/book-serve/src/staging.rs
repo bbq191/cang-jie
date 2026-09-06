@@ -58,13 +58,41 @@ pub struct StagingEntry {
     pub delivered: Option<Delivered>,
 }
 
-/// 落库记录：各读器最近一次落库的 unix 秒。
+/// 落库记录：各读器最近一次落库的 unix 秒；`render`=最近一次投原生的渲染自检结果（`render_check`）。
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
 pub struct Delivered {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub koreader: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub render: Option<RenderCheck>,
+}
+
+/// 渲染自检结果：`status` = pending（等 xochitl 渲染）/ ok / warn（页数远低于期望＝整章渲染失败）/ timeout。
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
+pub struct RenderCheck {
+    pub uuid: String,
+    pub pages: u64,
+    pub expected: u64,
+    pub status: String,
+    pub at: u64,
+}
+
+/// 投原生成功后交给自检线程的计划：投书时刻（毫秒，圈"之后进库"的候选）+ 书名 + 期望页数。
+#[derive(Clone, Debug, PartialEq)]
+pub struct RenderPlan {
+    pub name: String,
+    pub title: Option<String>,
+    pub expected: u64,
+    pub since_ms: u64,
+}
+
+/// `deliver` 的结果：回执文案 + （EPUB 才有）渲染自检计划。
+#[derive(Debug, PartialEq)]
+pub struct DeliverOutcome {
+    pub message: String,
+    pub render: Option<RenderPlan>,
 }
 
 /// 落库去向（记录用）。
@@ -84,6 +112,7 @@ impl Reader {
     }
 }
 
+#[derive(Clone)]
 pub struct Staging {
     dir: PathBuf,
     xochitl: Arc<Xochitl>,
@@ -159,8 +188,8 @@ impl Staging {
     // ───────────── 落库 ─────────────
 
     /// 投入 xochitl 书库：纯复制原字节（不再优化）。原生阅读器只读 EPUB/PDF（CBZ 漫画不投原生，用户定）。`folder` 空＝配置缺省；
-    /// `keep=false` 投完从母版库删除。返回回执文案。
-    pub fn deliver(&self, name: &str, folder: &str, keep: bool) -> Result<String, String> {
+    /// `keep=false` 投完从母版库删除。返回回执文案 + EPUB 的渲染自检计划（调用方起线程跑 `render_check::run`）。
+    pub fn deliver(&self, name: &str, folder: &str, keep: bool) -> Result<DeliverOutcome, String> {
         let ct = bookconv::convert::direct_content_type(name)
             .ok_or("原生阅读器只读 EPUB / PDF；此格式请「加入 KOReader」，或在电脑用 shelf push 转成 EPUB")?;
         let p = self.existing(name)?;
@@ -174,7 +203,13 @@ impl Staging {
         }
         let data = std::fs::read(&p).map_err(|e| format!("读母版库文件失败: {e}"))?;
         let folder = if folder.trim().is_empty() { self.library_folder.as_str() } else { folder.trim() };
-        let msg = match self.xochitl.upload(&data, name, ct.mime(), folder)? {
+        // 自检计划在上传前算好（投书时刻要早于 xochitl 给文档的 createdTime）；统计失败就不自检，不影响投书。
+        let render = if formats::ext_of(name) == "epub" {
+            bookconv::stats::text_profile(&data).ok().map(|prof| RenderPlan { name: name.to_string(), title: prof.title.clone(), expected: prof.expected_pages(), since_ms: now_ms() })
+        } else {
+            None
+        };
+        let message = match self.xochitl.upload(&data, name, ct.mime(), folder)? {
             Delivery::Delivered(_) => format!("已投入原生书库《{name}》"),
             Delivery::LikelyDelivered(_) => format!("已投入原生书库《{name}》（设备处理较慢，稍候刷新书库）"),
         };
@@ -182,7 +217,16 @@ impl Staging {
         if !keep {
             let _ = self.remove(name);
         }
-        Ok(msg)
+        Ok(DeliverOutcome { message, render })
+    }
+
+    /// 写渲染自检结果到边车（书已从母版库删除 → Err，调用方只记日志）。
+    pub fn set_render(&self, name: &str, rc: RenderCheck) -> Result<(), String> {
+        let p = self.existing(name)?;
+        let mut d = read_delivered(&p).unwrap_or_default();
+        d.render = Some(rc);
+        let s = serde_json::to_vec(&d).map_err(|e| e.to_string())?;
+        write_atomic(&delivered_path(&p), &s).map_err(|e| format!("写落库记录失败: {e}"))
     }
 
     /// 记一次落库：写 sidecar `.<name>.delivered`。
@@ -305,6 +349,10 @@ fn optimize_note(rep: &optimize::Report) -> String {
     }
     note.push('）');
     note
+}
+
+fn now_ms() -> u64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
 }
 
 fn landed_name(p: &Path) -> String {

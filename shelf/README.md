@@ -53,11 +53,11 @@ host `shelf push` 是唯一能"入库时顺带优化"的源（Calibre 深洗 / �
 
 | 服务 | 路由 |
 |---|---|
-| books | `GET /events`（SSE） · `GET /status` · `GET /inbox` · `POST /inbox/{retry,delete}` · `GET /staging` → `{items, freeBytes}` · `POST /staging`（multipart 原样入库）· `POST /staging/optimize {name, mode}` · `POST /staging/deliver {name, folder?, keep?}` · `POST /staging/mark {name, target}` · `POST /staging/fetch-article {url}` · `POST /staging/delete {name}` |
+| books | `GET /events`（SSE） · `GET /status` · `GET /inbox` · `POST /inbox/{retry,delete}` · `GET /staging` → `{items, freeBytes}`（条目 `delivered.render`＝投原生后的渲染自检 `{uuid,pages,expected,status}`）· `POST /staging`（multipart 原样入库）· `POST /staging/optimize {name, mode}` · `POST /staging/deliver {name, folder?, keep?}`（EPUB 投完起线程等 xochitl 渲染、核对页数，结果推 `books/render` 事件）· `POST /staging/mark {name, target}` · `POST /staging/fetch-article {url}` · `POST /staging/delete {name}` |
 | koreader | `GET /status` · `GET /books[?folder=]` · `POST /books/adopt {name, folder}`（从母版库落书）· `GET|POST /fonts` · `DELETE /fonts/{file}` · `GET|POST /dicts[?name=]` · `GET|POST /config/{settings\|defaults\|gestures}[?dry_run=1]` |
 | fonts | `GET /` · `POST /` · `DELETE /{family}` · `PUT /config {emboldenCjkFallback}` · `GET /status` |
 | wallpapers | `GET /` · `POST /[?activate=1]` · `PUT /current {name}` · `PUT /mode {mode}` · `DELETE /{name}` · `GET /{name}` · `GET /status` → `{native:{enabled,path,restartPending}}` |
-| 网关自身 | `GET /api/services` · `GET /api/manage` · `GET /api/foundation` · `POST /api/manage/{seg}/{start\|stop\|uninstall}` · **`GET /api/events`（SSE 事件流：各服务 `GET /events` 汇聚，`{svc,area,kind,at}`；网页零轮询、host `shelf events`）** · `/login` `/logout` `/password` `/ca.crt` |
+| 网关自身 | `GET /api/services` · `GET /api/manage` · `GET /api/foundation` · `POST /api/manage/{seg}/{start\|stop\|uninstall}` · **`GET /api/events`（SSE 事件流：各服务 `GET /events` 汇聚，`{svc,area,kind,at}`，`books/render` 另带 `name/status/pages/expected`；网页零轮询、host `shelf events`）** · `/login` `/logout` `/password` `/ca.crt` |
 
 上传回执统一 `{ok, items:[{name, ok, message, item?}], …}`（`shelf_core::asset::receipt`）；成功项 `name` 是落地名。
 
