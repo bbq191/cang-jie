@@ -12,3 +12,8 @@ shelf koreader sync [--dry-run]     # 应用 profile/（settings/defaults/gestur
 shelf koreader sync --fonts --dicts # 另按 fonts.txt / dicts.txt 同步字体与词典
 ```
 profile 三文件的键来自《阅读白皮书》§11.1b；标注"待核对"的值需先 `pull` 看设备实况再定。
+
+**KOReader 入口现状（2026-09-05，固件 3.28.0.172）**：KOReader 本体（v2026.07.1，官方支持 Move）与本目录/koreader-serve 都正常；
+但**启动入口 appload 0.5.3 在 3.28 上不兼容**（其 qmd 钩 3.28 已删的 `SidebarFilterItem`，上游 PR #59 只改 qmd、编进 .so，重编需 rM Qt6 SDK），
+已挪到 `/home/root/xovi-disabled/pre-3.28-*/`（extensions.d 外），**暂无侧栏入口**；等上游发版或自 fork 重编。KOReader 根目录仍是
+`~/xovi/exthome/appload/koreader/`（书/字体/词典照常同步进去）。书架白皮书 §03v。

@@ -27,7 +27,9 @@
 
 **网页 tab**：传书（入库｜母版库，固定第一）· xochitl（原生字体，由 font-serve 注册）· KOReader（字体｜词典）· 壁纸 · 管理（固定）。
 
-**未闭环**：Phase E ②③④（英文书拉丁缩进观感 / 两器同字节对照 / KOReader 里内联脚注可否接受——KOReader 拿到的是母版库 Inline 产物，不再另跑 Anchor）；3.28 机上 `font-menu-dynamic.qmd`（3.28 锚点）已放进 qrr 目录但未 `xovi/start` 激活验证；appload 3.28 适配（KOReader 入口）；原生休眠屏 `SleepScreenPath` 已通、轮换待验（§03w）；WiFi 60 秒掉链=IW612 省电（§03w），根治待拍板。§05 有清单。
+**设备杂项（§03v/§03w，全真机通）**：3.28 字体菜单 qmd 已通（qmldiff 语法坑，§04）；原生休眠屏 `SleepScreenPath=current.png` 满屏且随轮换（bind-mount 整套待退役）；WiFi 60 秒掉链＝IW612 省电，`powersave 2` 已根治 + `xovi/scripts/post-start/wifi-reconnect.sh` 看护；chrony 国内 NTP `packaging/chrony-cn.sh`；OTA 后四步恢复见 §03v（README 有"OTA 与恢复"表）。
+
+**未闭环**：Phase E ②③④（英文书拉丁缩进观感 / 两器同字节对照 / KOReader 里内联脚注可否接受——KOReader 拿到的是母版库 Inline 产物，不再另跑 Anchor）；退役 bind-mount 壁纸整套改写 `SleepScreenPath`；appload 3.28 适配（KOReader 入口）。§05 有清单。
 
 ## 01｜架构决策
 
@@ -391,6 +393,8 @@ book→「母版库 / 原生投递」、weread→「微信读书（内容源，�
 
 **进 3.28 后顺序（实测约 8 分钟）**：① `xovi/rebuild_hashtable`（设备旁输密码，hashtab 20231 条重建）→ ② `xovi/start` 只带 qt-resource-rebuilder（`[qmldiff]: Set system version to 3.28.0.172`，xochitl NRestarts=0）→ ③ host `SHELF_NO_BUILD=1 ./deploy.sh 10.11.99.1`：五服务 active、`uploadReachable=true`、壁纸 bind 1 处、HTTPS 401 正常；install.sh 按 IMG_VERSION 选了 3.28 锚点 `font-menu-dynamic.qmd` 放进 qrr 目录（**未激活**，下次 `xovi/start` 才生效，独立一步验证）→ ④ `ssh root@10.11.99.1 sh -s < packaging/chrony-cn.sh` 恢复国内 NTP（§03w，OTA 冲 rootfs 后 chrony 会回到 Google 服务器）。**appload 不挪回**：0.5.3 的 qmd 钩 3.28 已删的 `SidebarFilterItem`（上游 PR #59 只改 qmd、编进 .so，重编需 rM Qt6 SDK），KOReader 暂无侧栏入口。
 
+**可升级性的准确说法（2026-09-05 用户问"是否 99% 可用"）**：*升级零风险、数据零丢失、随时可升；升完要手工四步装回，不是"升了就能用"*。风险按层分、不合成百分比：书架五服务/壁纸/WiFi/chrony/休眠屏键只用 `/upload` 接口和系统标准件，重装即回（本次 100%）；qmldiff 注入（字体菜单）依赖 xochitl QML，大版本常要重适配（3.27→3.28 已两版 qmd）；中文输入法 langhook（本机未装）靠二进制特征码，每版真机验、有 fail-safe；KOReader 本体独立无碍，侧栏入口靠第三方 appload、3.28 目前挂着。
+
 **顺带核实**：`/home/root/.bashrc` 没有登录触发的 xovi 恢复钩子（记忆里的 A2 登录恢复在这台重置机上**没装**）；`root` 的 shell 是 `/usr/sbin/rmdevlogin`（`exec -a -sh /bin/sh --login`）。vellum 的 `post-os-upgrade` 钩子只打印"先跑 rebuild_hashtable"，不自动做。装 KOReader 的字体/书目录 `exthome/appload/koreader/` 与 appload 是否加载无关，koreader-serve 照常工作。
 
 ## 03w｜原生自定义休眠屏 `SleepScreenPath` + WiFi 60 秒掉链根因（2026-09-05，3.28 真机）
@@ -418,15 +422,15 @@ book→「母版库 / 原生投递」、weread→「微信读书（内容源，�
 
 **未闭环**：
 1. **Phase E ②③④**：英文书拉丁缩进（1.2em、标题后首段不缩进）观感；同一母版落 xochitl + KOReader 并排对照；KOReader 里内联脚注〔…〕能否接受（若不能，落库时对 KOReader 另跑 Anchor 是唯一备选，但会打破"两器同字节"）。
-3. KOReader 里旧的 282MB《镖人.epub》由用户删（母版库里的漫画 PDF 用户已删，2026-09-05 15:04 后母版库为空）。
-4. 拔线真 suspend 下钩子 bind + 唤醒轮换只触发一次。（普通重启后 `shelf.target` / 壁纸 bind 自起已由 9-03 21:13 重启 + 2 天 uptime 坐实；OTA 后需重跑 deploy，§03v。）
-5. ~~3.28 机上激活验证 `font-menu-dynamic.qmd`~~ **已通（2026-09-05 17:23）**：首版在 .172 上整份不应用——qmldiff 解析不了 `property var x: ({})` 与不带花括号的 `onVisibleChanged: if (…)`（报 `expected item assignment value token, got Some(Symbol('('))`），改成 `[]` + `{ … }` 块后 `SHELF-FONT: onCompleted lang=en appended=4 count=8`。判官=本机编的 asivery/qmldiff CLI，能一比一复现设备错误（§04）。用户选字体渲染效果待其确认。
-7. appload 3.28 适配：等上游发版或自 fork 重编（需 rM Qt6 SDK）；期间 KOReader 无侧栏入口。
-8. **退役 bind-mount 壁纸整套**（§03w 已证原生 `SleepScreenPath=current.png` 随唤醒轮换）：wallpaper-serve 去掉 `bind/unbind`/`mount.rs`/三张透明插画卡，删 `shelf-wallpaper-bind.service` + sleep 钩子，安装器改为写 xochitl.conf `SleepScreenPath`（要停 xochitl 写、备份 conf、不打印 token），卸载器还原键；轮换沿用 wake.rs。
-9. ~~WiFi 60 秒掉链根治~~ 已写入 `powersave 2`（§03w）；换 SSID 时记得再 modify。
-10. OTA 后除 shelf 外还要恢复：rootfs `/etc/chrony.conf` 国内 NTP——**已脚本化** `ssh root@10.11.99.1 sh -s < packaging/chrony-cn.sh`（幂等：底层已是国内就跳过、overlay 不一致才拷、未同步才重启 chronyd；真机跑过"google 状态→改→同步"与"已改→跳过"两条路）；`xovi/scripts/post-start/wifi-reconnect.sh` 在 /home 不受影响。
+2. **退役 bind-mount 壁纸整套**（§03w 已证原生 `SleepScreenPath=current.png` 满屏且随唤醒轮换）：wallpaper-serve 去掉 `bind/unbind`/`mount.rs`/三张透明插画卡，删 `shelf-wallpaper-bind.service` + sleep 钩子，安装器改为写 xochitl.conf `SleepScreenPath`（要停 xochitl 写、备份 conf、不打印 token），卸载器还原键；轮换沿用 wake.rs。退役后第 4 条自然消失。
+3. appload 3.28 适配：等上游发版或自 fork 重编（需 rM Qt6 SDK）；期间 KOReader 无侧栏入口。
+4. 拔线真 suspend 下钩子 bind + 唤醒轮换只触发一次（bind 退役后不再相关）。
+5. 3.28 字体菜单：用户在阅读器里选中书架字体后正文渲染效果确认；菜单再开时 `SHELF-FONT: visible` 差量追加是否触发（S-B）。
 6. PDF 结构化重排小瑕疵：署名"文｜某某"混进目录；"句中断开 12%"含图注/列表未细分。
+7. KOReader 里旧的 282MB《镖人.epub》由用户删（母版库里的漫画 PDF 用户已删，2026-09-05 15:04 后母版库为空）。
 
-**已闭环（真机）**：§03f 首轮五服务 · §03g/§03h 字体分开装/子目录/HTTPS · §03j 登录/CA/mDNS · §03k 字体两 bug · §03l 传书卡＝云同步 · §03m/§03n/§03o 网页改版/细节/管理台 · §03p 质量一轮 · §03q 优化做精 + 首行缩进 v10 · §03r 母版库 Phase A/B/C + 财新重排 · §03s 质量二轮 + 格式三档 · §03t 漫画通道（host 真书探针 → CBZ；漫画不投原生）+ 分卷静默失效修 + 投原生体积门。
+**OTA 后固定四步**（§03v）：`xovi/rebuild_hashtable` → `xovi/start` → `SHELF_NO_BUILD=1 sh deploy.sh 10.11.99.1` → `ssh root@10.11.99.1 sh -s < packaging/chrony-cn.sh`。/home 里的（母版库、KOReader、WiFi 钩子与 `powersave 2`、休眠屏 conf 键、qmd 文件）不用动。
+
+**已闭环（真机）**：§03f 首轮五服务 · §03g/§03h 字体分开装/子目录/HTTPS · §03j 登录/CA/mDNS · §03k 字体两 bug · §03l 传书卡＝云同步 · §03m/§03n/§03o 网页改版/细节/管理台 · §03p 质量一轮 · §03q 优化做精 + 首行缩进 v10 · §03r 母版库 Phase A/B/C + 财新重排 · §03s 质量二轮 + 格式三档 · §03t 漫画通道（host 真书探针 → CBZ；漫画不投原生）+ 分卷静默失效修 + 投原生体积门 · §03v 固件 3.28 升级 + 3.28 字体菜单 qmd（首版整份不应用：qmldiff 解析不了 `({})` 与裸 `if (` handler，改 `[]`+`{ }` 后 `appended=4 count=8`，判官＝本机 asivery/qmldiff CLI）· §03w 原生休眠屏 `SleepScreenPath` + WiFi `powersave 2` 根治 + 看护钩子 + chrony 国内 NTP 脚本。
 
 **已放弃**：**微读线整条**（§03u，2026-09-05：先是内嵌浏览器 spike 未推进，后内容源方案评估后用户砍掉）；设备端 AZW3/MOBI/FB2 → EPUB 转换（§03s，杂格式走电脑 Calibre，`bookconv::convert` 本体留给 reading 线）。
