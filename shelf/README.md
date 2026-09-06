@@ -97,7 +97,7 @@ shelf/
 | 数据 | `~/.local/share/shelf/`（fonts.json、壁纸池）· `~/.local/share/fonts/`（用户字体，fontconfig 标准位） |
 | 状态 | `~/.local/state/shelf/books/staging/`（**母版库**，不淘汰）· `books/{inbox,.work,failed}`（追平队列）· `wallpaper-state.json` · `koreader-backups/` |
 | 运行时 | `/tmp/shelf-0/shelf/{services,upload,koreader}`（`XDG_RUNTIME_DIR` 缺省回落；重启即清） |
-| 外部约定 | KOReader 根 `SHELF_KOREADER_ROOT`（缺省 `~/xovi/exthome/appload/koreader`；appload 0.5.3 在 3.28 已停用、KOReader 暂无侧栏入口，见 koreader/README）；xochitl 书库 `~/.local/share/remarkable/xochitl` |
+| 外部约定 | KOReader 根 `SHELF_KOREADER_ROOT`（缺省 `~/xovi/exthome/appload/koreader`；appload 0.5.3 经 PR #59 qmd 回填补丁在 3.28 复活，见 koreader/README）；xochitl 书库 `~/.local/share/remarkable/xochitl` |
 
 ## 访问与密码
 
@@ -135,10 +135,10 @@ cargo build --release -p bookconv --bin epub-optimize   # host 侧 push 洗书�
 | 书架五服务 | `/usr` | **冲掉** | ③ `SHELF_NO_BUILD=1 sh deploy.sh 10.11.99.1` |
 | chrony 国内 NTP | rootfs `/etc` | **冲掉** | ④ `ssh root@10.11.99.1 sh -s < packaging/chrony-cn.sh` |
 
-升级前把与新固件不兼容的 xovi 扩展（如 appload）挪出 `extensions.d/`（放 `/home/root/xovi-disabled/`，绝不留在目录里）。
+升级前把与新固件不兼容的 xovi 扩展（如 appload）挪出 `extensions.d/`（放 `/home/root/xovi-disabled/`，绝不留在目录里）；appload 的 3.28 补丁见系统增强白皮书 §12.1。
 **风险分层**（不要合成一个百分比）：书架这一层只用 xochitl 的 `/upload` 网页接口和系统标准组件，换固件重装即回（本次 100%）；
 字体菜单这类 qmldiff 注入依赖 xochitl 内部 QML，大版本常要重适配（3.27→3.28 已是两版 qmd）；KOReader 本体独立无碍，
-但侧栏入口靠第三方 appload，3.28 目前挂着。
+但侧栏入口靠第三方 appload，每个大版本可能要重打补丁（3.28 靠 PR #59 qmd 回填，系统增强白皮书 §12.1）。
 
 ## host CLI
 

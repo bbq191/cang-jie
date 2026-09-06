@@ -217,7 +217,7 @@ OTA 到 `IMG_VERSION=3.28.0.169`（此前 .166）后用户报 5 个功能失效�
 
 ## 11｜小工具 · 休眠壁纸（`misc/wallpaper/`，个人向）
 
-设备休眠屏用自备彩色图替换、两张每次唤醒自动交替、并消掉中央原生「休眠插画卡」。**bind-mount 盖 `suspended.png`**（ro rootfs 可挂）+ 透明盖 carousel 插画卡；xochitl 每次休眠重读、sleep 钩子唤醒滚图。独立于主线、不改设备核心行为。实现见 `misc/wallpaper/`。
+设备休眠屏用自备彩色图替换、两张每次唤醒自动交替、并消掉中央原生「休眠插画卡」。**bind-mount 盖 `suspended.png`**（ro rootfs 可挂）+ 透明盖 carousel 插画卡；xochitl 每次休眠重读、sleep 钩子唤醒滚图。独立于主线、不改设备核心行为。实现见 `misc/wallpaper/`。 **2026-09-06 翻案**：xochitl 3.28 隐藏键 `xochitl.conf [General] SleepScreenPath=<png>` 原生满屏+隐插画卡+每次休眠重读，bind-mount 整套退役（书架 wallpaper-serve 已改，书架白皮书 §03w/§03x）。
 
 ## 12｜Sidebar 一级直达「KOReader」入口（2026-09-02 真机通，固件 3.27.3.0）
 
@@ -232,6 +232,18 @@ OTA 到 `IMG_VERSION=3.28.0.169`（此前 .166）后用户报 5 个功能失效�
 1. `ArkControls.Icon` 是单色模板染色管线（alpha 当形状、color 上色）——KOReader 彩色 icon.png 渲空；
 2. 且**只认 qrc 资源**——file:// 一律渲空（AppLoad 界面里彩图正常是因为那边用普通 Image 组件）；
 3. **正解=qt-resource-rebuilder 的 `.rcc` 通道**（README 明载三通道：.qrr 替换/.qmd 改 QML/**.rcc 加新资源**）：自制 "Ko" alpha 蒙版 → `rcc --binary` 编 `cangjie-icons.rcc` 放 exthome/qt-resource-rebuilder/ → 注册为 `qrc:/cangjie/icons/koreader`，原生染色/选中反色全自动。**这是通用新武器：自定义图标/图片/QML 组件都可注册进 qrc**。
+
+### 12.1 固件 3.28 适配：appload 不用 SDK 也能修 + 入口 qmd 换锚点（2026-09-06 真机，3.28.0.172）
+
+**现象**：3.28 删了 `DeviceKeyboardNavigationHandler#integrationsHandler` 与 `SidebarFilterItem`，appload 0.5.3 内嵌的 qmd 和本节的 qmd 都钩它们 → qmldiff `Couldn't resolve the hashed identifier`，AppLoad/KOReader 入口全消失。上游只有 PR #59（rmitchellscott 分支 `3.28`，未合并、无发版）改了 `xovi/template/appload.qmd`；重编 .so 需 rM Qt6 SDK。
+
+**发现**：appload.so 把那份（已 hash 的）qmd 当 **C 字符串**嵌在 .rodata（`AFFECT [[` 起、NUL 止，7895 字节，逐字节等于上游 master 文件）。PR #59 的新 qmd 只有 7427 字节 → **等长回填 + NUL 补齐**即可，不碰任何代码段。工具 `reading-qol/tools/appload_patch_328.py`（校验内嵌段结构/长度，产物 md5 fafedbd0）。新锚点：Sidebar `FocusScope > ColumnLayout#filterColumn`，`LOCATE AFTER ArkControls.SidebarFoldout#integrationsFoldout` 插 `ArkControls.SidebarItem`（属性 `text`/`highlighted`，`Common.Values.navigatorSidebarItemHeight`）；MainView 改 `LOCATE AFTER ALL`（3.28 MainView 已无 `Epaper.ScreenModeItem`）。设备 hashtab `dump-hashtab` 反查确认每个 hash 在 .172 都能解析。
+
+**本节 qmd 同步换锚点**：`koreader-sidebar-entry.qmd`（3.28）/ `-3.27.qmd`（旧）：`SidebarFilterItem`→`ArkControls.SidebarItem`、`title`→`text`、`active`→`highlighted`、去 `navigationHandler`、`Values`→`Common.Values`、隐藏 AppLoad 按 `c.text` 匹配、handler 全部 `{ }` 块（qmldiff 解析坑，书架白皮书 §04）。
+
+**验证**：离线 qmldiff CLI（§05 管线，`--hashtab` 用设备真表）——旧 qmd 在 3.28 树上复现同一条 unresolved 错误，新 qmd + 本节 qmd 一起 apply 全 4 文件成功；真机 `xovi/start` 后 xochitl NRestarts=0、appload/xovi/qrr 全在 maps、qmldiff 零错误、`CJ-SIDEBAR[6]: AppLoad` → hidden、`[8]: KOReader` 在位。**用户点 KOReader 起 KOReader 待确认**。
+
+**⚠ 运维**：这份 .so 是本地补丁版（原件在 `/home/root/xovi-disabled/pre-3.28-*/`）；`vellum upgrade appload` 会用上游 .so 盖回去，上游发 3.28 版前别升 appload。
 
 ## 交叉引用
 

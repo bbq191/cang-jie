@@ -1,30 +1,33 @@
 ; ─────────────────────────────────────────────────────────────────────────
-; koreader-sidebar-entry.qmd —— Sidebar 一级直达「KOReader」入口（固件 3.28 线；3.27 版见 -3.27.qmd）
+; koreader-sidebar-entry.qmd —— Sidebar 一级直达「KOReader」入口（2026-09-02，固件 3.27.3.0）
 ;
 ; 【背景】双阅读器分工后 KOReader 是消遣阅读主力，但入口藏在 Sidebar→AppLoad 二级菜单。
 ;   「彻底取代 xochitl」在 Move 上架构判死（无 /dev/fb，显示合成器活在 xochitl 进程内，
 ;   KOReader 靠 appload 的 qtfb 桥显示；独立显示层 oxide/blight 在 imx93 真机崩、判死有效）。
-;   本 qmd 做「最外层入口」：Import files 折叠区正下方一条原生同款隔离线 + 「KOReader」项
-;   （Ko 字标），并运行时隐藏 AppLoad 菜单项。
+;   本 qmd 做「最外层入口」（最终布局，用户逐轮定稿）：Import files 正下方
+;   一条原生同款隔离线 + 「KOReader」项（Ko 字标），并运行时隐藏 AppLoad 菜单项。
 ;
 ; 【机制】appload 暴露 QML 单例 AppLoadLauncher（import net.asivery.AppLoad 1.0，
 ;   Launcher.h: Q_INVOKABLE launchApplication(id, args, env, window)→emit requestLaunch），
 ;   接收方 Connections 活在 appload 注入的常驻 Loader 里（开机即实例化、只切可见性），
-;   故任意 QML 上下文随时可调。⚠ app id = **external::<目录名>**（library.cpp:245 前缀拼接），
-;   裸 "koreader" 报 No application installed（2026-09-02 真机踩过）。
+;   故任意 QML 上下文随时可调（真机日志坐实：信号必达 onRequestLaunch）。
+;   ⚠ app id = **external::<目录名>**（library.cpp:245 前缀拼接），裸 "koreader" 报
+;   No application installed（2026-09-02 真机踩过）。
 ;
-; 【3.28 变化（2026-09-06，extract_qml blob qml_00dcd9d7，3.28.0.172）】Sidebar 项类型
-;   SidebarFilterItem → **ArkControls.SidebarItem**（属性 title→text、active→highlighted、无 navigationHandler）；
-;   DeviceKeyboardNavigationHandler#integrationsHandler 已删，Import files 折叠区改为
-;   **ArkControls.SidebarFoldout#integrationsFoldout**（appload PR #59 同一锚点）；Values → Common.Values。
-;   appload 0.5.3 自身的 qmd 也钩这两个旧锚点，3.28 上要用 PR #59 的 qmd 回填进 .so（系统增强白皮书）。
-;   【qmldiff 纪律】INSERT{} 内注释只能 //；handler 一律 `{ … }` 块、不写 `({})`（书架白皮书 §04）。
+; 【锚点核对（3.27.3.0 build 20260612，extract_qml blob qml_00d52de3）】
+;   /qml/device/view/navigator/Sidebar.qml：?#filterColumn >
+;   DeviceKeyboardNavigationHandler#integrationsHandler（= "Import files" 折叠项的
+;   宿主，SidebarFoldoutItem#integrations title=qsTr("Import files")）之后插入；
+;   隔离线 = 原生 Trash/Guides 间同款（Item h=2 + 黑 Rectangle）。AppLoad 项由
+;   appload.so 内建 diff 注入（顺序不可控），故用 onCompleted 兄弟遍历按 title
+;   隐藏（visible=false 即出布局），顺带打印 CJ-SIDEBAR[i] 全清单当活体布局诊断。
+;   图标经 .rcc 通道注册（见 assets/README.md 与下方行内注释）。
 ; ─────────────────────────────────────────────────────────────────────────
 
 AFFECT /qml/device/view/navigator/Sidebar.qml
     IMPORT net.asivery.AppLoad 1.0 CJAppLoad
     TRAVERSE ?#filterColumn
-        LOCATE AFTER ArkControls.SidebarFoldout#integrationsFoldout
+        LOCATE AFTER DeviceKeyboardNavigationHandler[#integrationsHandler]
         INSERT {
             Item {
                 // 与原生 Trash/Guides 之间那条完全同款的隔离线
@@ -32,21 +35,22 @@ AFFECT /qml/device/view/navigator/Sidebar.qml
                 height: 2
                 Rectangle {
                     anchors.fill: parent
-                    color: Common.Values.colorBlack
+                    color: Values.colorBlack
                 }
             }
-            ArkControls.SidebarItem {
+            SidebarFilterItem {
                 id: cjKoreaderEntry
                 objectName: "cjKoreaderEntry"
-                text: "KOReader"
-                // 落位：Import files 折叠区正下方 + 自带隔离线。onCompleted 遍历兄弟：隐藏 appload
-                // 注入的 AppLoad 项（3.28 属性名是 text）+ 打印各项进日志（CJ-SIDEBAR[i]）。
+                title: "KOReader"
+                // 落位：Import files（=原生 integrations 折叠项 #integrationsHandler 的
+                // 显示名）正下方 + 自带隔离线。onCompleted 遍历兄弟：隐藏 appload 注入的
+                // AppLoad 项 + 打印各项 title 进日志（CJ-SIDEBAR[i]），布局偏差看 journal。
                 Component.onCompleted: {
                     try {
                         var col = cjKoreaderEntry.parent;
                         for (var i = 0; i < col.children.length; i++) {
                             var c = col.children[i];
-                            var t = (c && c.text !== undefined && c.text) ? c.text : "";
+                            var t = (c && c.title !== undefined && c.title) ? c.title : "";
                             console.warn("CJ-SIDEBAR[" + i + "]: " + (t || c.toString().split("(")[0]));
                             if (t === "AppLoad") {
                                 c.visible = false;
@@ -57,18 +61,22 @@ AFFECT /qml/device/view/navigator/Sidebar.qml
                         console.warn("CJ-SIDEBAR walk fail: " + e);
                     }
                 }
-                // iconSource 走 ArkControls.Icon 染色管线且只认 qrc：图标由 cangjie-icons.rcc
-                // （qt-resource-rebuilder .rcc 通道）注册为 qrc:/cangjie/icons/koreader（见 assets/README.md）。
+                // ⚠ iconSource 进 ArkControls.Icon 染色管线（单色模板：alpha 当形状、color 上色），
+                // 且 **只认 qrc 资源**——file:// 一律渲空、彩色不透明图也渲空（2026-09-02 两连踩）。
+                // 正解=qt-resource-rebuilder 的 .rcc 通道加新资源：自制 "Ko" alpha 蒙版
+                // （Noto Sans Bold 192px）→ rcc --binary 编成 cangjie-icons.rcc 放
+                // exthome/qt-resource-rebuilder/ → 注册为 qrc:/cangjie/icons/koreader，
+                // 原生染色/选中反色全自动。
                 iconSource: "qrc:/cangjie/icons/koreader"
-                highlighted: false
+                active: false
                 enabled: true
                 onClicked: {
                     console.warn("CJ-KOREADER-ENTRY: launch requested");
-                    root.toggle();
                     CJAppLoad.AppLoadLauncher.launchApplication("external::koreader", [], {}, false);
                 }
-                Layout.preferredHeight: Common.Values.navigatorSidebarItemHeight
+                Layout.preferredHeight: Values.navigatorSidebarItemHeight
                 Layout.preferredWidth: parent.width
+                navigationHandler: root
             }
         }
     END TRAVERSE

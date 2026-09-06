@@ -32,6 +32,7 @@ xochitl 的 QMLDiff 增强，**纯 QML 层、不碰硬件、不改 waveform、�
 - **书籍与字体 / 笔记增强**：字体增强 `fontEnhance`（字体菜单追加三项）、导入书籍自动优化 `autoOptimize`（消费方 wr-serve）在「书籍与字体」页；「笔记增强」页 5 开关消费方=`cj-stars-daemon`（除 `hlSnapCjk` 走 C hook）：★全局待办 `starTodoEnabled`（主）下挂 划线摘录 `cardHighlights`（高亮是否入卡）/跨书汇总 `cardAggregates`（4 本汇总本）两子开关；单词笔记 `vocabEnabled`（**独立顶层**·生词本·脱离画星）；荧光笔精确吸附汉字 `hlSnapCjk`（**默认开**，C hook 消费）。daemon 侧：功能关时对应只读自动本入回收站清残留、星卡片含批注绝不 trash（详见 `knowledge/pkm/src/bin/cj_stars_daemon.rs` 头注 + 系统增强白皮书 §08）。
 - **快捷输入 snippets**：缩写→短语文本替换，设置页增删改 + `snippets.tsv` 持久化，输入法侧热重载，真机端到端已部署。
 - **keyboard-mono**：`.166` KeyboardPanel.qml 与 .164 逐行一致（`root>keyboardContainer>screenMode[objectName:"keyboard",mode:Animation]`），选择器直接适用 + qmldiff 离线 apply-diffs（与 candidatebar.qmd **一起** apply，2 diff applied，emit 里 `cjCandidateBar` id 与 `#screenMode.mode` 引用共存、无注释污染）+ **2026-08-15 真机验证通过**：qmldiff `Loading`/`Processing KeyboardPanel` 无解析错误、健康检查绿；`KBD-MONO` 日志硬证 **mode 跟随组词态精确切换**（组词 candbarVisible=true→mode=1 Mono、收起 false→mode=2 Animation，两个完整来回）。可观测性提醒：候选栏本就纯黑白，Mono 化不改静态观感，"快多少"需 A/B 慢动作对比，收益可能微妙——日志证明机制在工作。
+- **koreader-sidebar-entry**（`koreader-sidebar-entry.qmd` 3.28 / `-3.27.qmd`）：Sidebar 一级「KOReader」入口 + 隐藏 AppLoad 项（系统增强白皮书 §12）。**3.28 适配（2026-09-06）**：锚点换 `ArkControls.SidebarFoldout#integrationsFoldout` / `ArkControls.SidebarItem`；appload 0.5.3 本身也钩旧锚点，用 `tools/appload_patch_328.py` 把上游 PR #59 的 qmd 等长回填进 .so（免 SDK），离线 apply-diffs + 真机 qmldiff 零错误。
 
 ## 离线验证管线（本项目建立，务必复用）
 
