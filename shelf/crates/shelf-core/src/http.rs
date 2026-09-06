@@ -109,11 +109,13 @@ pub struct Reply {
     pub content_type: String,
     pub body: Vec<u8>,
     pub headers: Vec<(String, String)>,
+    /// 流式响应体（SSE 等）：Some 时忽略 `body`，chunked 边读边发，直到 reader 返回 0 或客户端断开。
+    pub stream: Option<Box<dyn Read + Send>>,
 }
 
 impl Reply {
     pub fn json<T: Serialize>(status: u16, v: &T) -> Reply {
-        Reply { status, content_type: "application/json; charset=utf-8".into(), body: serde_json::to_vec(v).unwrap_or_default(), headers: vec![] }
+        Reply { status, content_type: "application/json; charset=utf-8".into(), body: serde_json::to_vec(v).unwrap_or_default(), headers: vec![], stream: None }
     }
     pub fn ok<T: Serialize>(v: &T) -> Reply {
         Reply::json(200, v)
@@ -122,17 +124,21 @@ impl Reply {
         Reply::json(status, &serde_json::json!({"ok": false, "message": message.into()}))
     }
     pub fn html(body: &str) -> Reply {
-        Reply { status: 200, content_type: "text/html; charset=utf-8".into(), body: body.as_bytes().to_vec(), headers: vec![] }
+        Reply { status: 200, content_type: "text/html; charset=utf-8".into(), body: body.as_bytes().to_vec(), headers: vec![], stream: None }
     }
     pub fn bytes(content_type: &str, body: Vec<u8>) -> Reply {
-        Reply { status: 200, content_type: content_type.into(), body, headers: vec![] }
+        Reply { status: 200, content_type: content_type.into(), body, headers: vec![], stream: None }
+    }
+    /// 流式响应（SSE / 大文件边读边发）：不知长度，chunked。
+    pub fn stream(content_type: &str, reader: Box<dyn Read + Send>) -> Reply {
+        Reply { status: 200, content_type: content_type.into(), body: Vec::new(), headers: vec![], stream: Some(reader) }
     }
     pub fn not_found() -> Reply {
         Reply::error(404, "not found")
     }
     /// 303 跳转（表单提交后用 303 避免重复提交）。
     pub fn redirect(location: &str) -> Reply {
-        Reply { status: 303, content_type: "text/plain; charset=utf-8".into(), body: Vec::new(), headers: vec![("Location".into(), location.into())] }
+        Reply { status: 303, content_type: "text/plain; charset=utf-8".into(), body: Vec::new(), headers: vec![("Location".into(), location.into())], stream: None }
     }
     pub fn with_header(mut self, k: &str, v: &str) -> Reply {
         self.headers.push((k.into(), v.into()));
@@ -306,7 +312,7 @@ impl Router {
             };
         }
         if req.method == Method::Options {
-            return Reply { status: 204, content_type: "text/plain".into(), body: vec![], headers: vec![] };
+            return Reply { status: 204, content_type: "text/plain".into(), body: vec![], headers: vec![], stream: None };
         }
         if path_exists {
             Reply::error(405, "method not allowed")
@@ -352,17 +358,24 @@ impl GuardRequest {
 
 const KEPT_HEADERS: &[&str] = &["Cookie", "Authorization", "Accept", "Host", "X-Forwarded-Proto", "User-Agent"];
 
-fn reply_to_tiny(reply: Reply) -> tiny_http::Response<std::io::Cursor<Vec<u8>>> {
-    let mut resp = tiny_http::Response::from_data(reply.body).with_status_code(reply.status);
+fn reply_to_tiny(reply: Reply) -> tiny_http::Response<Box<dyn Read + Send>> {
+    let mut headers = Vec::new();
     if let Ok(h) = tiny_http::Header::from_bytes(&b"Content-Type"[..], reply.content_type.as_bytes()) {
-        resp = resp.with_header(h);
+        headers.push(h);
     }
     for (k, v) in reply.headers {
         if let Ok(h) = tiny_http::Header::from_bytes(k.as_bytes(), v.as_bytes()) {
-            resp = resp.with_header(h);
+            headers.push(h);
         }
     }
-    resp
+    match reply.stream {
+        // 流式：长度未知 → tiny_http 走 chunked；respond 在本请求线程里边读边写直到 EOF / 客户端断开
+        Some(reader) => tiny_http::Response::new(tiny_http::StatusCode(reply.status), headers, reader, None, None),
+        None => {
+            let len = reply.body.len();
+            tiny_http::Response::new(tiny_http::StatusCode(reply.status), headers, Box::new(std::io::Cursor::new(reply.body)) as Box<dyn Read + Send>, Some(len), None)
+        }
+    }
 }
 
 /// 起阻塞服务器：每请求一线程（上传大文件不阻塞其它请求）。永不返回（bind 失败返回 Err）。

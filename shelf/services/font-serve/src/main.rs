@@ -23,6 +23,7 @@ const SPEC: ServiceSpec = ServiceSpec {
 struct State {
     store: FontStore,
     paths: Paths,
+    bus: Arc<shelf_core::events::EventBus>,
 }
 
 fn main() {
@@ -35,7 +36,7 @@ fn main() {
         Ok(f) => println!("[font-serve] 索引 {} 个家族", f.len()),
         Err(e) => eprintln!("[font-serve] 写 fonts.json 失败: {e}"),
     }
-    let st = Arc::new(State { store, paths: paths.clone() });
+    let st = Arc::new(State { store, paths: paths.clone(), bus: Arc::new(shelf_core::events::EventBus::new()) });
     let router = Router::new()
         .get("/", bind(&st, |s, _| Ok(Reply::ok(&serde_json::json!({"items": s.store.list(), "fontsDir": s.store.fonts_dir(), "index": s.store.json_path()})))))
         .post("/", bind(&st, |s, r| {
@@ -52,15 +53,21 @@ fn main() {
             if !warns.is_empty() {
                 note.push_str(&format!("。⚠ {}", warns.join("；")));
             }
+            if items.iter().any(|i| i.ok) {
+                s.bus.publish("fonts", "fonts");
+            }
             Ok(Reply::ok(&asset::receipt(&items, serde_json::json!({"restartNeeded": false, "fallback": fallback, "note": note}))))
         }))
+        .get("/events", bind(&st, |s, _| Ok(s.bus.sse_reply())))
         .delete("/{family}", bind(&st, |s, r| {
             let removed = s.store.remove_family(r.param("family")).map_err(ApiError::bad)?;
+            s.bus.publish("fonts", "fonts");
             Ok(Reply::ok(&serde_json::json!({"ok": true, "removed": removed})))
         }))
         .put("/config", bind(&st, |s, r| {
             let on = r.json()?.0.get("emboldenCjkFallback").and_then(|x| x.as_bool()).ok_or_else(|| ApiError::bad("需要 {emboldenCjkFallback: bool}"))?;
             s.store.set_embolden(on).map_err(ApiError::internal)?;
+            s.bus.publish("fonts", "config");
             Ok(Reply::ok(&serde_json::json!({"ok": true, "emboldenCjkFallback": on, "note": "已更新，翻书即见（fontconfig 实时生效，无需重启）"})))
         }))
         .get("/status", bind(&st, |s, _| Ok(Reply::ok(&serde_json::json!({"ok": true, "count": s.store.list().len(), "target": "native", "cjkFallback": s.store.cjk_fallback_keys(), "emboldenCjkFallback": s.store.embolden()})))));

@@ -275,6 +275,7 @@ function renderTransfer(sec){sec.innerHTML=`
   refresh();sec.refresh=refresh;subtabs(sec);}
 
 /* 服务 tab（按注册表出现）。key = 注册的服务名 */
+const AREA={'font-serve':'fonts','koreader-serve':'koreader','wallpaper-serve':'wallpapers'};
 const TABS={
  'font-serve':{title:'xochitl',render(sec){assetTab(sec,'/api/fonts',{
    title:'xochitl · 原生字体',
@@ -413,12 +414,24 @@ function renderManage(sec){sec.innerHTML=`
 (async()=>{const d=await j('/api/services');const svcs=(d.services||[]).filter(s=>s.ui&&TABS[s.name]).sort((a,b)=>a.ui.order-b.ui.order);
   $('#hdr').textContent=location.host;
   const nav=$('#tabs'),main=$('#main');main.innerHTML='';
-  const addTab=(title,render,first)=>{const b=document.createElement('button');b.textContent=title;const sec=document.createElement('section');
-    b.onclick=()=>{[...nav.children].forEach(x=>x.classList.remove('on'));[...main.children].forEach(x=>x.classList.remove('on'));b.classList.add('on');sec.classList.add('on');if(sec.refresh)sec.refresh()};
+  const secByArea={};const dirty=new Set();
+  const addTab=(title,render,first,area)=>{const b=document.createElement('button');b.textContent=title;const sec=document.createElement('section');sec.area=area;secByArea[area]=sec;
+    b.onclick=()=>{[...nav.children].forEach(x=>x.classList.remove('on'));[...main.children].forEach(x=>x.classList.remove('on'));b.classList.add('on');sec.classList.add('on');dirty.delete(area);if(sec.refresh)sec.refresh()};
     nav.appendChild(b);main.appendChild(sec);render(sec);if(first)b.onclick()};
-  addTab('传书',renderTransfer,true);          // 总入口（入库｜母版库），固定第一位（book-serve 不在时列表里提示去管理页开）
-  svcs.forEach((s)=>addTab(TABS[s.name].title,TABS[s.name].render,false));
-  addTab('管理',renderManage,false);            // 固定管理台，始终可进
+  addTab('传书',renderTransfer,true,'books');          // 总入口（入库｜母版库），固定第一位（book-serve 不在时列表里提示去管理页开）
+  svcs.forEach((s)=>addTab(TABS[s.name].title,TABS[s.name].render,false,AREA[s.name]||s.name));
+  addTab('管理',renderManage,false,'manage');            // 固定管理台，始终可进
+  /* 事件推送（SSE，零轮询）：服务在变更处发事件 → 网关 /api/events 汇聚 → 这里只刷对应 tab；不在前台的 tab 记脏，切过去时刷。
+     manage 事件（服务启停）：tab 集合变了就整页重载，否则只刷管理台。断线（WiFi 掉/设备休眠醒来）EventSource 自动重连。 */
+  const svcKey=svcs.map(s=>s.name).join(',');
+  const dot=document.createElement('span');dot.id='live';dot.title='事件推送';dot.textContent='●';dot.style.cssText='margin-left:.5em;font-size:.8em;color:var(--bad)';$('#hdr').appendChild(dot);
+  const es=new EventSource('/api/events');
+  es.onopen=()=>{dot.style.color='var(--ok)';dot.title='事件推送已连接'};
+  es.onerror=()=>{dot.style.color='var(--bad)';dot.title='事件推送断开，自动重连中'};
+  es.onmessage=async(e)=>{let ev;try{ev=JSON.parse(e.data)}catch{return}
+    if(ev.area==='manage'){const d=await j('/api/services');const k=(d.services||[]).filter(s=>s.ui&&TABS[s.name]).map(s=>s.name).join(',');if(k!==svcKey){location.reload();return}}
+    const sec=secByArea[ev.area];if(!sec)return;
+    if(sec.classList.contains('on')){if(sec.refresh)sec.refresh()}else dirty.add(ev.area)};
 })();
 </script></body></html>
 "##;

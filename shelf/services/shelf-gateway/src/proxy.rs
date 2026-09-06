@@ -43,5 +43,5 @@ pub fn forward(paths: &Paths, req: &mut Request<'_>) -> ApiResult {
     let ctype = resp.header("Content-Type").unwrap_or("application/octet-stream").to_string();
     let mut body = Vec::new();
     resp.into_reader().read_to_end(&mut body).map_err(|e| ApiError::internal(e.to_string()))?;
-    Ok(Reply { status, content_type: ctype, body, headers: vec![] })
+    Ok(Reply { status, content_type: ctype, body, headers: vec![], stream: None })
 }

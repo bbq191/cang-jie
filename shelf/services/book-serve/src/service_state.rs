@@ -3,6 +3,7 @@ use crate::config::BookConfig;
 use crate::spool::Spool;
 use crate::staging::{self, Staging};
 use serde::Serialize;
+use shelf_core::events::EventBus;
 use shelf_core::formats::{self, BOOK_EXTS};
 use shelf_core::paths::Paths;
 use shelf_core::xochitl::Xochitl;
@@ -13,6 +14,8 @@ pub struct State {
     pub spool: Spool,
     pub staging: Staging,
     pub xochitl: Arc<Xochitl>,
+    /// 事件总线：母版库/inbox 每次变更发一条，网关汇聚推给网页（零轮询）。
+    pub bus: Arc<EventBus>,
 }
 
 /// inbox 追平一项的结果（日志 / `POST /inbox/retry` 回执）。
@@ -29,7 +32,7 @@ impl State {
         let xochitl = Arc::new(Xochitl::new(&cfg.xochitl_host, &paths.xochitl_dir(), cfg.upload_timeout_secs));
         let spool = Spool::new(paths.state_dir().join("books"));
         let staging = Staging::new(paths.staging_dir(), xochitl.clone(), cfg.library_folder.clone(), cfg.native_upload_limit_bytes());
-        State { cfg, spool, staging, xochitl }
+        State { cfg, spool, staging, xochitl, bus: Arc::new(EventBus::new()) }
     }
 
     pub fn ensure_dirs(&self) -> std::io::Result<()> {
@@ -76,6 +79,12 @@ impl State {
             };
             println!("[book-serve] inbox {} → {}: {}", name, if o.ok { "ok" } else { "fail" }, o.message);
             out.push(o);
+        }
+        if !out.is_empty() {
+            self.bus.publish("books", "inbox");
+            if out.iter().any(|o| o.ok) {
+                self.bus.publish("books", "staging");
+            }
         }
         out
     }

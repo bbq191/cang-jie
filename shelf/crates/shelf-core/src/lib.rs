@@ -12,6 +12,7 @@
 //! - `fswatch`  inotify 防抖目录监听（spool 追平）。
 //! - `service`  服务启动模板：解析参数→建目录→注册→起服务器。
 //! - `config`   服务配置/状态 JSON 读写模板（load/seed/save），收编各服务的 config 复制。
+//! - `events`   进程内事件总线 + SSE 流（服务在变更处发事件，网关汇聚推给网页/CLI，网页零轮询）。
 //! - `fs`       原子写（tmp→rename）+ unix 权限 + 单段文件名校验 / 同名不覆盖，config/registry/母版库/壁纸池共用。
 //! - `formats`  文件格式白名单单一事实源（书籍/字体/词典/图片），UI accept 与服务端上传门同源。
 //! - `tls`      私有 CA + 叶证书生成/加载（网关 HTTPS；装一次 CA 免提示）。
@@ -21,6 +22,7 @@
 pub mod asset;
 pub mod auth;
 pub mod config;
+pub mod events;
 pub mod formats;
 pub mod fs;
 pub mod fswatch;

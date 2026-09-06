@@ -28,6 +28,7 @@ struct State {
     ko: Arc<KoReader>,
     paths: Paths,
     sync: ConfigSync,
+    bus: Arc<shelf_core::events::EventBus>,
 }
 
 impl State {
@@ -76,9 +77,11 @@ fn main() {
         sync: ConfigSync { ko: ko.clone(), backup_dir: paths.state_dir().join("koreader-backups"), tmp_dir: paths.runtime_dir().join("koreader") },
         ko,
         paths: paths.clone(),
+        bus: Arc::new(shelf_core::events::EventBus::new()),
     });
     let router = Router::new()
         .get("/status", bind(&st, |s, _| Ok(Reply::ok(&s.status()))))
+        .get("/events", bind(&st, |s, _| Ok(s.bus.sse_reply())))
         .get("/books", bind(&st, |s, r| {
             let folder = r.q("folder").unwrap_or("").trim_matches('/').to_string();
             let items = s.ko.list_books(&folder).map_err(ApiError::bad)?;
@@ -96,6 +99,7 @@ fn main() {
             }
             let dest = s.ko.subdir(j.str_or("folder", "")).map_err(ApiError::bad)?;
             let item = KoStore::new(dest, "koreader-book", KO_ANY, "books/").install(&name, &src).map_err(ApiError::bad)?;
+            s.bus.publish("koreader", "books");
             Ok(Reply::ok(&serde_json::json!({"ok": true, "message": format!("已加入 KOReader《{}》（{} 字节）", name, item.bytes), "note": s.ko.running_note("KOReader 运行中：在其文件浏览器刷新可见")})))
         }))
         .get("/fonts", bind(&st, |s, _| {
@@ -107,16 +111,19 @@ fn main() {
             }).collect();
             Ok(Reply::ok(&serde_json::json!({"items": items})))
         }))
-        .post("/fonts", bind(&st, |s, r| s.upload(r, &s.font_store())))
+        .post("/fonts", bind(&st, |s, r| { let rep = s.upload(r, &s.font_store())?; s.bus.publish("koreader", "fonts"); Ok(rep) }))
         .delete("/fonts/{file}", bind(&st, |s, r| {
             s.font_store().remove(r.param("file")).map_err(|e| ApiError::not_found(format!("删除失败: {e}")))?;
+            s.bus.publish("koreader", "fonts");
             Ok(Reply::ok(&serde_json::json!({"ok": true, "note": s.ko.running_note("KOReader 运行中：重启它后字体列表才更新")})))
         }))
         .get("/dicts", bind(&st, |s, _| Ok(Reply::ok(&serde_json::json!({"items": s.ko.list_dicts()})))))
         .post("/dicts", bind(&st, |s, r| {
             let name = r.q("name").unwrap_or("").trim().to_string();
             plain_name(&name).map_err(|_| ApiError::bad("需要 ?name=<词典目录名>（单层）"))?;
-            s.upload(r, &KoStore::new(s.ko.dict_dir().join(&name), "koreader-dict", DICT_EXTS, format!("词典 {name}/")))
+            let rep = s.upload(r, &KoStore::new(s.ko.dict_dir().join(&name), "koreader-dict", DICT_EXTS, format!("词典 {name}/")))?;
+            s.bus.publish("koreader", "dicts");
+            Ok(rep)
         }))
         .get("/config/{file}", bind(&st, |s, r| {
             let text = s.sync.read(r.param("file")).map_err(ApiError::bad)?;
@@ -127,6 +134,9 @@ fn main() {
             let dry = r.q_flag("dry_run");
             let patch = String::from_utf8(r.read_small_body().map_err(ApiError::bad)?).map_err(|_| ApiError::bad("补丁不是 UTF-8"))?;
             let res = s.sync.apply(&file, &patch, dry).map_err(|e| ApiError { status: if e.contains("正在运行") { 409 } else { 400 }, message: e })?;
+            if !dry {
+                s.bus.publish("koreader", "config");
+            }
             Ok(Reply::ok(&res))
         }));
     println!("[koreader-serve] root={} installed={}", st.ko.root().display(), st.ko.installed());
