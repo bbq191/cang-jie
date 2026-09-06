@@ -224,14 +224,38 @@ enum Spacing {
     All,
 }
 
-/// 对一段声明文本：剥 `filter` 里的属性；按 `spacing` 处理 margin/padding。
+/// 对一段声明文本：剥 `filter` 里的属性；按 `spacing` 处理 margin/padding。（测试用薄封装）
+#[cfg(test)]
 fn filter_decls(decls: &str, filter: &[String], spacing: Spacing) -> String {
+    filter_decls_with(decls, filter, spacing, None)
+}
+
+/// 值是否"非零缩进"（`0` / `0em` / `0.0pt` 之类算零；负值=悬挂缩进，保留不动）。
+fn is_positive_indent(val: &str) -> bool {
+    let v = val.trim().trim_end_matches("!important").trim();
+    let num: String = v.chars().take_while(|c| c.is_ascii_digit() || *c == '.' || *c == '-' || *c == '+').collect();
+    num.parse::<f64>().map(|n| n > 0.0).unwrap_or(false)
+}
+
+/// 同 `filter_decls`，另把书里**非零** `text-indent` 统一改成 `indent`（Some 时）。
+/// 为什么：书自带的类规则（calibre 转 AZW3 常见 `.calibre_ {text-indent:2em}`）xochitl 不认（只认裸 `p{}`），
+/// KOReader 认且类规则特异性高于我们的 `p{}`——不统一就"xochitl 1.2em、KOReader 2em"，两器同字节不同观感
+/// （2026-09-06 Phase E 英文书对照发现）。`text-indent:0`（诗歌/引文/列表明示不缩进）与负值保留。
+fn filter_decls_with(decls: &str, filter: &[String], spacing: Spacing, indent: Option<&str>) -> String {
     let mut out: Vec<String> = Vec::new();
     for c in decl_re().captures_iter(decls) {
         let prop = c[1].to_ascii_lowercase();
         let val = c[2].trim();
         if filter.iter().any(|f| *f == prop) {
             continue;
+        }
+        if prop == "text-indent" {
+            if let Some(ind) = indent {
+                if is_positive_indent(val) {
+                    out.push(format!("text-indent:{ind}"));
+                    continue;
+                }
+            }
         }
         let is_box = prop == "margin" || prop == "padding";
         let is_box_side = prop.starts_with("margin-") || prop.starts_with("padding-");
@@ -292,8 +316,13 @@ pub fn filter_css(css: &str, opts: &WashOpts) -> String {
             Spacing::Vertical if opts.keep_para_spacing => Spacing::Keep,
             s => s,
         };
-        format!("{}{{{}}}", sel, filter_decls(&c[2], &opts.filter_props, spacing))
+        format!("{}{{{}}}", sel, filter_decls_with(&c[2], &opts.filter_props, spacing, Some(indent_for(opts))))
     }).into_owned()
+}
+
+/// 本书的首行缩进值（拉丁 1.2em / 中文 2em；Auto 兜底中文）。`wash_css` 与书 css 统一改写共用。
+fn indent_for(opts: &WashOpts) -> &'static str {
+    if opts.lang == LangMode::Latin { "1.2em" } else { "2em" }
 }
 
 fn style_attr_re() -> &'static Regex {
@@ -312,7 +341,7 @@ pub fn wash_html(html: &str, opts: &WashOpts) -> (String, usize) {
             "p" | "div" if !opts.keep_para_spacing => Spacing::Vertical,
             _ => Spacing::Keep,
         };
-        let cleaned = filter_decls(&c[3], &opts.filter_props, spacing);
+        let cleaned = filter_decls_with(&c[3], &opts.filter_props, spacing, Some(indent_for(opts)));
         if cleaned.is_empty() {
             format!("<{}{}{}>", &c[1], &c[2], &c[4])
         } else {
@@ -330,7 +359,29 @@ pub fn wash_html(html: &str, opts: &WashOpts) -> (String, usize) {
         }
     }).into_owned();
     // 不再注入内联 <style>（xochitl 无视内联）；排版规则由 wash_entries 写成外链 css + 逐 html 加 <link>。
+    let s = if opts.lang == LangMode::Latin { flush_first_para_after_heading(&s) } else { s };
     (s, before_dup)
+}
+
+/// 拉丁习惯：标题（h1–h6）后的第一段不缩进。xochitl 不认 `h1+p{}` 这类选择器（且一条就废整表），
+/// 唯一能落到单段的通道是该 `<p>` 的内联 `style="text-indent:0"`（KOReader 也认）。幂等。
+/// ⚠ xochitl 认不认内联 style 属性待真机核（书架白皮书 §05 Phase E ②）；不认也只是首段照常缩进 1.2em，无害。
+fn flush_first_para_after_heading(html: &str) -> String {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    let re = RE.get_or_init(|| Regex::new(r#"(?is)(</h[1-6]>)((?:\s|<(?:/?div|/?section|a|/a|span|/span|br)\b[^>]*>)*)<p\b([^>]*)>"#).unwrap());
+    re.replace_all(html, |c: &regex::Captures| {
+        let attrs = &c[3];
+        if attrs.contains("text-indent:0") {
+            return c[0].to_string();
+        }
+        let new_attrs = if let Some(i) = attrs.find("style=\"") {
+            let j = i + "style=\"".len();
+            format!("{}text-indent:0;{}", &attrs[..j], &attrs[j..])
+        } else {
+            format!("{attrs} style=\"text-indent:0\"")
+        };
+        format!("{}{}<p{}>", &c[1], &c[2], new_attrs)
+    }).into_owned()
 }
 
 /// 给 `<head>` 注入指向外链 wash css 的 `<link>`（`href`=该 html 相对 css 的路径）。幂等（已有则跳过）。
@@ -358,7 +409,7 @@ fn inject_css_link(html: &str, href: &str) -> String {
 /// `opts.lang` 应已被 `wash_entries` 从 `Auto` 解析为具体值（此处把 `Auto` 兜底当 `Cjk`）。
 pub fn wash_css(opts: &WashOpts) -> String {
     // 拉丁 1.2em / 中文 2em（Auto 兜底中文）。
-    let indent = if opts.lang == LangMode::Latin { "1.2em" } else { "2em" };
+    let indent = indent_for(opts);
     let mut decl = format!("text-indent:{indent}");
     if !opts.keep_para_spacing {
         decl.push_str(";margin-top:0;margin-bottom:0;padding-top:0;padding-bottom:0");
@@ -936,7 +987,8 @@ mod tests {
         // 章节 <link> 相对路径正确（Text/ 下 → ../cangjie-wash.css），且不再有内联 text-indent
         let c1 = s(&v, "OEBPS/Text/c1.xhtml");
         assert!(c1.contains(r#"href="../cangjie-wash.css""#), "章节 link 路径错: {c1}");
-        assert!(!c1.contains("text-indent"), "排版规则不该内联进 html: {c1}");
+        assert!(!c1.contains("text-indent:1.2em"), "通用缩进规则不该内联进 html: {c1}");
+        assert!(c1.contains(r#"Chapter One</h2><p style="text-indent:0">"#), "拉丁：标题后首段内联 text-indent:0: {c1}");
         // OPF manifest 补了 item（相对 opf 目录 = cangjie-wash.css）
         let opf = s(&v, "OEBPS/content.opf");
         assert!(opf.contains(r#"href="cangjie-wash.css""#) && opf.contains("text/css"), "manifest 未补 item: {opf}");
@@ -944,6 +996,26 @@ mod tests {
         wash_entries(&mut v, &WashOpts::default()).unwrap();
         assert_eq!(s(&v, "OEBPS/Text/c1.xhtml").matches("cangjie-wash.css").count(), 1, "link 重复");
         assert_eq!(s(&v, "OEBPS/content.opf").matches("cangjie-wash.css").count(), 1, "manifest item 重复");
+    }
+
+    #[test]
+    fn book_css_indent_harmonized_and_first_para_flush() {
+        // 书自带类规则的非零 text-indent 改成本书缩进；0 与负值保留；拉丁标题后首段内联不缩进且幂等
+        let lat = WashOpts { lang: LangMode::Latin, ..Default::default() };
+        let css = filter_css(".calibre_ {display:block;text-indent:2em;margin:0} .quote{text-indent:0;margin-left:2em} .hang{text-indent:-1.5em} p{text-indent:3%}", &lat);
+        assert!(css.contains(".calibre_ {display:block;text-indent:1.2em;margin:0}"), "{css}");
+        assert!(css.contains(".quote{text-indent:0;margin-left:2em}") && css.contains(".hang{text-indent:-1.5em}"), "{css}");
+        assert!(css.contains("p{text-indent:1.2em}"), "百分比也算非零: {css}");
+        let cjk = WashOpts { lang: LangMode::Cjk, ..Default::default() };
+        assert!(filter_css(".calibre_ {text-indent:1.2em}", &cjk).contains("text-indent:2em"));
+        let (h, _) = wash_html(r#"<html><body><h1 id="a">T</h1>
+<div class="x"><p class="c" style="color:red;text-indent:2em">first</p><p>second</p></div><h2>U</h2><p style="text-indent:0">already</p></body></html>"#, &lat);
+        assert!(h.contains(r#"<p class="c" style="text-indent:0;text-indent:1.2em">first</p>"#) || h.contains(r#"<p class="c" style="text-indent:0;color:red;text-indent:1.2em">first</p>"#), "{h}");
+        assert_eq!(h.matches("text-indent:0").count(), 2, "第二段不动、已有的不重复: {h}");
+        let (h2, _) = wash_html(&h, &lat);
+        assert_eq!(h2.matches("text-indent:0").count(), 2, "幂等: {h2}");
+        let (c, _) = wash_html("<html><body><h1>T</h1><p>x</p></body></html>", &cjk);
+        assert!(!c.contains("text-indent:0"), "中文不做首段不缩进: {c}");
     }
 
     #[test]
