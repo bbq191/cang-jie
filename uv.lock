@@ -35,6 +35,7 @@ source = { virtual = "." }
 
 [package.dev-dependencies]
 calibre = [
+    { name = "pillow" },
     { name = "pymupdf" },
 ]
 dev = [
@@ -71,7 +72,10 @@ weread = [
 [package.metadata]
 
 [package.metadata.requires-dev]
-calibre = [{ name = "pymupdf" }]
+calibre = [
+    { name = "pillow" },
+    { name = "pymupdf" },
+]
 dev = [{ name = "mobi", specifier = ">=0.4.1" }]
 pinyin = [
     { name = "opencc" },

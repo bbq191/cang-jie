@@ -105,6 +105,19 @@ def check(path: Path, require_toc: bool = False) -> tuple[bool, str]:
     return r.returncode == 0, (r.stdout + r.stderr).strip()
 
 
+def comic_gray(src: Path, out: Path) -> tuple[Path, dict]:
+    """漫画省刷新档：CBZ → 16 灰 CBZ（comic_gray.py，Pillow 走 uv calibre 组）。返回 (产物, {pages,gray,color,bytes_in,bytes_out})。"""
+    import json
+
+    r = _run([*py_with_pymupdf(), str(CALIBRE_DIR / "comic_gray.py"), str(src), str(out)])
+    if r.returncode != 0 or not out.is_file():
+        raise CalibreError(f"comic_gray.py 失败（rc={r.returncode}）：{(r.stderr or r.stdout).strip()[-800:]}")
+    try:
+        return out, json.loads(r.stdout.strip().splitlines()[-1])
+    except Exception as e:  # noqa: BLE001
+        raise CalibreError(f"comic_gray.py 输出不可解析（{e}）：{r.stdout.strip()[-400:]}") from None
+
+
 def txt_to_epub(src: Path, outdir: Path) -> tuple[Path, dict]:
     """中文 TXT → 带目录 EPUB（txt_to_epub.py，stdlib）。返回 (产物, 元数据 {chapters, volumes, encoding, detected,…})。"""
     import json
