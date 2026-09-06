@@ -441,7 +441,7 @@ book→「母版库 / 原生投递」、weread→「微信读书（内容源，�
 ## 03z｜事件推送：网页零轮询即时刷新（2026-09-06，用户"不喜欢轮询，要事件通知，包括 host"）
 
 **设计**（三条硬约束：不轮询、不监听全盘、日志写入不触发）：
-- `shelf_core::events`：进程内 `EventBus`（订阅者各持有界通道，满了丢——事件只是"该刷新了"的信号）+ `SseStream`（`Read` 包装，20 s 无事件吐一行注释心跳）；`http::Reply` 新增 `stream` 字段，`reply_to_tiny` 对流式回执走 `Response::new(..., None, None)` chunked，每请求本就一线程所以长连接不堵别人。
+- `shelf_core::events`：进程内 `EventBus`（订阅者各持有界通道，满了丢——事件只是"该刷新了"的信号）+ `SseStream`（`Read` 包装，20 s 无事件吐一行注释心跳）；`http::Reply` 新增 `stream` 字段。**流式回执不能走 tiny_http 的 `respond`**：它的 chunked 编码器（chunked_transfer::Encoder）攒满 8 KB 才发、外面再套 1 KB BufWriter，小帧永远滞留（真机 curl 30 s 零字节，垫到 1.2 KB 也没用）；改用 `Request::upgrade` 接管裸 socket（先发只有头的 200 + `Connection: upgrade`，浏览器/curl 对 200 忽略它、按读到关闭处理），一帧一 flush。真机隧道 curl：inbox 落库与母版库删除的三帧当秒到达。每请求一线程，长连接不堵别人。
 - 四个领域服务在**变更发生处**发事件（上传/优化/落库/mark/抓网文/删除、inbox 追平、KOReader adopt/字体/词典/配置、原生字体装删/配置、壁纸入池/激活/模式/删除/唤醒轮换），各挂 `GET /events`。唯二 inotify：inbox（本就有）与网关的注册表目录（tmpfs，服务启停）。
 - 网关 `events::Hub`：每个模块一条 loopback 订阅线程（阻塞读、断了 3 s 重连、服务没起就等），事件补 `svc` 转发到自己的总线；`GET /api/events` 受登录守卫，在 `/api/{svc}` 代理通配之前注册。
 - 网页：`EventSource('/api/events')`，事件只刷对应 tab（在前台立刻刷；不在前台记脏、切过去时刷）；`manage` 事件若 tab 集合变了整页重载；页眉一个小圆点显示连接状态；断线（WiFi 掉 / 休眠醒来）浏览器自动重连。
@@ -458,6 +458,7 @@ book→「母版库 / 原生投递」、weread→「微信读书（内容源，�
 - **xochitl `/upload` 有体积上限**（实测 282MB EPUB 被 `multipart body is too large` 拒；此前 60～285MB 间见过 413）：大 PDF 靠 `pdfsplit` 60MB 分卷；EPUB 不能分卷——漫画别走 EPUB（§03t）。
 - 会话里 shell cwd 会在 `cang-jie/` 与 `shelf/` 间漂移：`curl -F` 之类落地文件一律写绝对路径到 scratchpad，否则测试文件会混进仓库（2026-09-05 误提交两个临时文件后已删）。
 - busybox：`head` 要 `-n`、无 `timeout`/`base64`/`od -A`、`ls` 中文名显示 `?`（验名 `find | hexdump -C`）。
+- busybox `nc`/`wget` 读不了 SSE 流（wget 缓冲到结束、nc 拿不到响应）：验证长连接用 host 侧 `ssh -L` 隧道 + `curl -sN`；后台进程要 `setsid … < /dev/null`，否则 ssh 会话挂住；`pkill -f` 的模式别写进自己的命令行（会把自己杀了，exit 144）。
 - `shelf/build.sh` 必须在 `shelf/` 目录跑（仓库根没有 build.sh）。
 - 本机冒烟别忘 `env -i`：host 桌面环境自带 `XDG_STATE_HOME/XDG_CONFIG_HOME` 会盖过 `HOME` 覆盖，把测试数据写进真实用户目录。
 - pytest 要从仓库根跑（`uv run pytest shelf/host/tests`）。
