@@ -364,8 +364,10 @@ pub fn wash_html(html: &str, opts: &WashOpts) -> (String, usize) {
 }
 
 /// 拉丁习惯：**标题后 / 章首 / 场景切换后的第一段不缩进**（英文排版惯例：只有紧接上一段的段落才缩进）。
-/// xochitl 不认 `h1+p{}` 这类选择器（且一条就废整表），唯一能落到单段的通道是该 `<p>` 的内联 `style="text-indent:0"`
-/// （KOReader 也认）。判定"前面是标题/切换"的信号（2026-09-06 用《Tell Me Your Dreams》AZW3 定，它的章名不是 `<h>`
+/// xochitl 不认 `h1+p{}` 这类选择器（一条就废整表）、**也不认内联 `style=""` 属性**（2026-09-06 真机：内联
+/// `text-indent:0` KOReader 顶格、xochitl 照缩）→ 唯一通道是**换元素**：顶格段改成 `<div class="… cj-flush">`，
+/// 我们外链的 `p{text-indent:…}` 管不到 div；class 原样保留（书自带 `.calibre_{}` 类规则在 KOReader 照常生效）；
+/// 顺带留内联 `text-indent:0` 给认它的阅读器。判定"前面是标题/切换"的信号（2026-09-06 用《Tell Me Your Dreams》AZW3 定，它的章名不是 `<h>`
 /// 而是加粗段落、场景切换是段末双 `<br/>`）：
 ///   ① 前一个块是 `</h1>`–`</h6>`；② 前一段是"标题样段落"：≤80 字且（全文加粗/strong/class 含 bold、或以
 ///   Chapter/Book/Part/Prologue/Epilogue 开头）且不以句末标点结尾；③ 前一段以 ≥2 个 `<br>` 结尾或本身是空段/`* * *`
@@ -373,12 +375,14 @@ pub fn wash_html(html: &str, opts: &WashOpts) -> (String, usize) {
 /// ⚠ xochitl 认不认内联 style 属性待真机核（书架白皮书 §05 Phase E ②）；不认也只是照常缩进 1.2em，无害。
 fn flush_first_para_after_heading(html: &str) -> String {
     static P: OnceLock<Regex> = OnceLock::new();
+    static CLASS: OnceLock<Regex> = OnceLock::new();
     static TAG: OnceLock<Regex> = OnceLock::new();
     static BR2: OnceLock<Regex> = OnceLock::new();
     static HEAD_WORD: OnceLock<Regex> = OnceLock::new();
     static SEP: OnceLock<Regex> = OnceLock::new();
-    // 块序列：h 结束标签 / p 元素（p 内不再嵌 p，非贪婪到最近 </p> 够用）
-    let p = P.get_or_init(|| Regex::new(r#"(?is)</h[1-6]>|<p\b([^>]*)>(.*?)</p>"#).unwrap());
+    // 块序列：h 结束标签 / p 元素（p 内不再嵌 p，非贪婪到最近 </p> 够用）/ 上次洗出的 cj-flush div（重洗幂等）
+    let p = P.get_or_init(|| Regex::new(r#"(?is)</h[1-6]>|<p\b([^>]*)>(.*?)</p>|<div\b([^>]*\bcj-flush\b[^>]*)>(.*?)</div>"#).unwrap());
+    let class_re = CLASS.get_or_init(|| Regex::new(r#"(?i)\bclass="([^"]*)""#).unwrap());
     let tag = TAG.get_or_init(|| Regex::new(r#"(?s)<[^>]+>"#).unwrap());
     let br2 = BR2.get_or_init(|| Regex::new(r#"(?is)(<br\b[^>]*>\s*){2,}(</span>|</a>|\s)*$"#).unwrap());
     let head_word = HEAD_WORD.get_or_init(|| Regex::new(r#"(?i)^\s*(chapter|book|part|prologue|epilogue|section|interlude)\b"#).unwrap());
@@ -388,17 +392,19 @@ fn flush_first_para_after_heading(html: &str) -> String {
         t.replace("&#160;", " ").replace("&nbsp;", " ").trim().to_string()
     };
     // 空段太多（>20%）的书是拿空段当段距，不当场景分隔
-    let total_p = p.captures_iter(html).filter(|c| c.get(1).is_some()).count();
-    let empty_p = p.captures_iter(html).filter(|c| c.get(2).map(|m| sep.is_match(&text_of(m.as_str()))).unwrap_or(false)).count();
+    let total_p = p.captures_iter(html).filter(|c| c.get(1).is_some() || c.get(3).is_some()).count();
+    let empty_p = p.captures_iter(html).filter(|c| c.get(2).or(c.get(4)).map(|m| sep.is_match(&text_of(m.as_str()))).unwrap_or(false)).count();
     let empty_is_sep = total_p == 0 || empty_p * 5 <= total_p;
     let mut flush_next = true; // ④ 章首
     p.replace_all(html, |c: &regex::Captures| {
-        let Some(attrs) = c.get(1) else {
-            flush_next = true; // ① </hN>
-            return c[0].to_string();
+        let (attrs, inner, already_div) = match (c.get(1), c.get(3)) {
+            (Some(a), _) => (a.as_str(), &c[2], false),
+            (None, Some(a)) => (a.as_str(), &c[4], true),
+            (None, None) => {
+                flush_next = true; // ① </hN>
+                return c[0].to_string();
+            }
         };
-        let attrs = attrs.as_str();
-        let inner = &c[2];
         let text = text_of(inner);
         if text.is_empty() || sep.is_match(&text) {
             if empty_is_sep {
@@ -408,14 +414,18 @@ fn flush_first_para_after_heading(html: &str) -> String {
         }
         let bold_wrapped = (inner.contains("<b>") || inner.contains("<strong") || inner.contains("bold")) && text.chars().count() <= 80;
         let heading_like = !_terminal_latin(&text) && text.chars().count() <= 80 && (bold_wrapped || head_word.is_match(&text));
-        let out = if flush_next && !heading_like && !attrs.contains("text-indent:0") {
-            let new_attrs = if let Some(i) = attrs.find("style=\"") {
+        let out = if flush_next && !heading_like && !already_div {
+            let mut new_attrs = if let Some(i) = attrs.find("style=\"") {
                 let j = i + "style=\"".len();
                 format!("{}text-indent:0;{}", &attrs[..j], &attrs[j..])
             } else {
                 format!("{attrs} style=\"text-indent:0\"")
             };
-            format!("<p{new_attrs}>{inner}</p>")
+            new_attrs = match class_re.captures(&new_attrs) {
+                Some(cc) => new_attrs.replacen(&cc[0], &format!("class=\"{} cj-flush\"", &cc[1]), 1),
+                None => format!("{new_attrs} class=\"cj-flush\""),
+            };
+            format!("<div{new_attrs}>{inner}</div>")
         } else {
             c[0].to_string()
         };
@@ -1034,7 +1044,7 @@ mod tests {
         let c1 = s(&v, "OEBPS/Text/c1.xhtml");
         assert!(c1.contains(r#"href="../cangjie-wash.css""#), "章节 link 路径错: {c1}");
         assert!(!c1.contains("text-indent:1.2em"), "通用缩进规则不该内联进 html: {c1}");
-        assert!(c1.contains(r#"Chapter One</h2><p style="text-indent:0">"#), "拉丁：标题后首段内联 text-indent:0: {c1}");
+        assert!(c1.contains(r#"Chapter One</h2><div style="text-indent:0" class="cj-flush">"#), "拉丁：标题后首段换 div 顶格: {c1}");
         // OPF manifest 补了 item（相对 opf 目录 = cangjie-wash.css）
         let opf = s(&v, "OEBPS/content.opf");
         assert!(opf.contains(r#"href="cangjie-wash.css""#) && opf.contains("text/css"), "manifest 未补 item: {opf}");
@@ -1056,10 +1066,11 @@ mod tests {
         assert!(filter_css(".calibre_ {text-indent:1.2em}", &cjk).contains("text-indent:2em"));
         let (h, _) = wash_html(r#"<html><body><h1 id="a">T</h1>
 <div class="x"><p class="c" style="color:red;text-indent:2em">first</p><p>second</p></div><h2>U</h2><p style="text-indent:0">already</p></body></html>"#, &lat);
-        assert!(h.contains(r#"<p class="c" style="text-indent:0;text-indent:1.2em">first</p>"#), "{h}");
-        assert_eq!(h.matches("text-indent:0").count(), 2, "第二段不动、已有的不重复: {h}");
+        assert!(h.contains(r#"<div class="c cj-flush" style="text-indent:0;text-indent:1.2em">first</div>"#), "{h}");
+        assert!(h.contains(r#"<p>second</p>"#), "第二段不动: {h}");
+        assert_eq!(h.matches("cj-flush").count(), 2, "h1 后与 h2 后各一段: {h}");
         let (h2, _) = wash_html(&h, &lat);
-        assert_eq!(h2.matches("text-indent:0").count(), 2, "幂等: {h2}");
+        assert_eq!(h2.matches("cj-flush").count(), 2, "幂等: {h2}");
         let (c, _) = wash_html("<html><body><h1>T</h1><p>x</p></body></html>", &cjk);
         assert!(!c.contains("text-indent:0"), "中文不做首段不缩进: {c}");
     }
@@ -1070,19 +1081,19 @@ mod tests {
         let lat = WashOpts { lang: LangMode::Latin, ..Default::default() };
         let src = r#"<html><body><div><p class="calibre_"><a href="x.html#1"><span class="bold"><span class="underline">Chapter Three</span></span></a></p><p class="calibre_"><span class="bold">I</span>N another place, at another time, Alette Peters could have been a successful artist.</p><p class="calibre_">Her father’s voice was blue.</p><p class="calibre_">The sound of running water was gray.<br class="calibre3"/><br class="calibre3"/></p><p class="calibre_">Alette Peters was twenty years old.</p><p class="calibre_">She could be plain-looking.</p><p class="calibre_">* * *</p><p class="calibre_">After the break.</p><p class="calibre_">Still after.</p></div></body></html>"#;
         let (h, _) = wash_html(src, &lat);
-        let flush: Vec<&str> = h.match_indices("text-indent:0").map(|(i, _)| &h[i..(i + 60).min(h.len())]).collect();
-        assert_eq!(flush.len(), 3, "章首正文 + 双br 后 + * * * 后各一段: {h}");
-        assert!(h.contains(r#"<p class="calibre_" style="text-indent:0"><span class="bold">I</span>N another"#), "章首正文顶格（章名段本身不算）: {h}");
-        assert!(h.contains(r#"<p class="calibre_" style="text-indent:0">Alette Peters was twenty"#), "双 br 后顶格: {h}");
-        assert!(h.contains(r#"<p class="calibre_" style="text-indent:0">After the break"#), "* * * 后顶格: {h}");
-        assert!(!h.contains(r#"style="text-indent:0">Her father"#) && !h.contains(r#"style="text-indent:0">Still after"#), "普通续段不动: {h}");
-        assert!(!h.contains(r#"style="text-indent:0"><a href="x.html#1">"#), "章名段自己不顶格标记: {h}");
+        assert_eq!(h.matches("cj-flush").count(), 3, "章首正文 + 双br 后 + * * * 后各一段: {h}");
+        assert!(h.contains(r#"<div class="calibre_ cj-flush" style="text-indent:0"><span class="bold">I</span>N another"#), "章首正文顶格＝换成 div（章名段本身不算）: {h}");
+        assert!(h.contains(r#"<div class="calibre_ cj-flush" style="text-indent:0">Alette Peters was twenty"#), "双 br 后顶格: {h}");
+        assert!(h.contains(r#"<div class="calibre_ cj-flush" style="text-indent:0">After the break.</div>"#), "* * * 后顶格: {h}");
+        assert!(h.contains(r#"<p class="calibre_">Her father"#) && h.contains(r#"<p class="calibre_">Still after"#), "普通续段仍是 p: {h}");
+        assert!(h.contains(r#"<p class="calibre_"><a href="x.html#1">"#), "章名段自己不动: {h}");
         // 拿空段当段距的书（空段 > 20%）：空段不算场景分隔
         let spaced = r#"<html><body><p>One.</p><p></p><p>Two.</p><p></p><p>Three.</p><p></p><p>Four.</p></body></html>"#;
         let (h3, _) = wash_html(spaced, &lat);
-        assert_eq!(h3.matches("text-indent:0").count(), 1, "只有章首一段顶格: {h3}");
+        assert_eq!(h3.matches("cj-flush").count(), 1, "只有章首一段顶格: {h3}");
         let (h4, _) = wash_html(&h, &lat);
-        assert_eq!(h4.matches("text-indent:0").count(), 3, "幂等: {h4}");
+        assert_eq!(h4.matches("cj-flush").count(), 3, "幂等（cj-flush div 当段落参与计数，后一段不被误顶格）: {h4}");
+        assert!(h4.contains(r#"<p class="calibre_">Her father"#), "重洗后续段仍不顶格: {h4}");
     }
 
     #[test]

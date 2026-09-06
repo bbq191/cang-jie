@@ -417,6 +417,7 @@ book→「母版库 / 原生投递」、weread→「微信读书（内容源，�
 
 ## 04｜踩坑
 
+- **xochitl EPUB 渲染第四条硬规则：不认内联 `style=""` 属性**（2026-09-06 真机：`<p style="text-indent:0">` KOReader 顶格、xochitl 照缩）。要让某一段与众不同，只能**换元素**（p→div），靠"外链裸元素选择器管不到它"实现。
 - **磁盘 metadata ≠ xochitl/UI 实际状态（2026-09-04 用户纠正）**：直接 `sed` 改 `.metadata` 的 `parent=trash` 并不等于"已进回收站"——xochitl 运行时在内存缓存、写回时覆盖，云同步也可能还原；出现过磁盘 8 个探针 `parent=trash` 但 UI 回收站只见真实书的错位。**涉及书库状态以设备 UI/xochitl 实际为准，不拿磁盘 metadata 当真相**；清测试文档走正常删除流程或停 xochitl 后操作，别边跑边改。
 - **qmd 语法比 QML 窄，且解析错误=整份不应用、xochitl 不崩不报**（2026-09-05）：`({})`、裸 `if (` handler 都让 qmldiff 报 `expected item assignment value token`；只在 journal 有一行 `[qmldiff]: Error while processing file tree`，菜单静默缺项（用户"选不到已安装的字体"）。规矩：写/改 qmd 先 `git clone asivery/qmldiff && cargo build --release`，`qmldiff apply-diffs <root> <dest> x.qmd -f -c` 对 `extract_qml.py` 解出的真 QML 实跑（root 按资源路径摆），过了再上机；上机后 `journalctl -u xochitl | grep qmldiff` 必看。
 - multipart 流式解析：`fill()` 用 `Vec::resize(+64KB)` 在逐字节到达的流上变成 memset 风暴（测试 50s）；改栈上临时块 `extend_from_slice` → 0.8s。
@@ -434,7 +435,7 @@ book→「母版库 / 原生投递」、weread→「微信读书（内容源，�
 1. **Phase E ②③④**（2026-09-06 用《Tell Me Your Dreams》AZW3 推进）：
    - 洗书发现两处实现缺口并修（bookconv `wash.rs`）：① 书自带类规则 `.calibre_ {text-indent:2em}` 未统一——xochitl 不认类规则走我们的 `p{1.2em}`，KOReader 认且类规则特异性更高走 2em，**两器同字节不同缩进**；现在书 css / 内联 style 里非零 `text-indent` 一律改写成本书缩进（0 与负值保留）。② "标题后首段不缩进"只写在注释里从未实现；现在拉丁模式给 h1–h6 后第一个 `<p>` 加内联 `style="text-indent:0"`（唯一能落到单段的通道；**xochitl 认不认内联 style 属性待真机核**，不认也无害）。
    - **③ 用户对照通过**：两器翻到同一页首行缩进一致。**量化**（xochitl 渲染缓存 `<uuid>.pdf` 用 pymupdf 量首行 x 偏移）：英文书 KingHwa 12.1pt 下缩进 14.2pt = **1.17em**（=我们的 `p{1.2em}`，em 制、随字号缩放、不随字体家族变）。同法量《人骨拼圖》：那本是 2017 年旧 EPUB 直传、**没洗过**（无 cangjie-wash.css、书 css 无 text-indent、正文无全角空格），xochitl 渲染下**首行零缩进**。
-   - 用户追问"英文习惯不是首段不缩进吗"→ 是，且首版只认 `<h>`，这本书章名是加粗段落一段都没顶格。**泛化**（同日第二版）：前一块是 `</hN>` / 标题样段落（≤80 字、加粗或 Chapter/Book/Part… 开头、不以句末标点结尾）/ 段末 ≥2 个 `<br>` 或空段·`* * *` 分隔（空段 >20% 的书不算）/ 章首第一段 → 内联 `text-indent:0`；Sheldon 4455 段中 370 段顶格。产物以「Tell Me Your Dreams (v3 首段顶格)」入母版库，**用户投原生后看章首/场景切换后是否顶格＝xochitl 认不认内联 style 的真机判据**。
+   - 用户追问"英文习惯不是首段不缩进吗"→ 是，且首版只认 `<h>`，这本书章名是加粗段落一段都没顶格。**泛化**（同日第二版）：前一块是 `</hN>` / 标题样段落（≤80 字、加粗或 Chapter/Book/Part… 开头、不以句末标点结尾）/ 段末 ≥2 个 `<br>` 或空段·`* * *` 分隔（空段 >20% 的书不算）/ 章首第一段 → 内联 `text-indent:0`；Sheldon 4455 段中 370 段顶格。产物以「Tell Me Your Dreams (v3 首段顶格)」入母版库，用户投原生后：**KOReader 顶格、xochitl 未顶格 → xochitl 不认内联 `style=""` 属性（真机判据落定，与"不认内联 <style> 块/类选择器/!important"并列第四条硬规则）**。第三版改**换元素**：顶格段由 `<p>` 改成 `<div class="… cj-flush" style="text-indent:0">`——外链 `p{text-indent:1.2em}` 管不到 div，xochitl 只能顶格；class 原样保留（KOReader 里书的类规则照常）；重洗时 cj-flush div 当段落参与"下一段是否顶格"判定（幂等）。产物「Tell Me Your Dreams (v4 div顶格)」待设备醒来后入库，用户再验 xochitl。
    - 用户观察"中文换字体缩进跟着变、英文不变"：em 制缩进只随字号不随家族；会随家族变的是**烘进正文的全角空格 `　　`**（宽度=该字体的全角空格字形）。清洗层目前**不剥段首全角空格**（待办：剥掉并统一走 css 2em，否则洗过的中文书是 2em+2 空格=4 字缩进）。待用户指明是哪本书/哪个读器看到的。
    - ④ 这本书没有脚注，要换一本带脚注的英文书。
 2. ~~appload 3.28 适配~~ **已通（2026-09-06，用户点侧栏 KOReader 正常起）**：PR #59 的 qmd 等长回填进 appload.so（免 SDK）+ KOReader 入口 qmd 换 3.28 锚点（系统增强白皮书 §12.1）。
