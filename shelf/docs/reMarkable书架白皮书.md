@@ -432,10 +432,10 @@ book→「母版库 / 原生投递」、weread→「微信读书（内容源，�
 
 **未闭环**：
 1. **Phase E ②③④**：英文书拉丁缩进（1.2em、标题后首段不缩进）观感；同一母版落 xochitl + KOReader 并排对照；KOReader 里内联脚注〔…〕能否接受（若不能，落库时对 KOReader 另跑 Anchor 是唯一备选，但会打破"两器同字节"）。
-3. appload 3.28 适配：等上游发版或自 fork 重编（需 rM Qt6 SDK）；期间 KOReader 无侧栏入口。
-5. 3.28 字体菜单：用户在阅读器里选中书架字体后正文渲染效果确认；菜单再开时 `SHELF-FONT: visible` 差量追加是否触发（S-B）。
-6. PDF 结构化重排小瑕疵：署名"文｜某某"混进目录；"句中断开 12%"含图注/列表未细分。
-7. KOReader 里旧的 282MB《镖人.epub》由用户删（母版库里的漫画 PDF 用户已删，2026-09-05 15:04 后母版库为空）。
+2. appload 3.28 适配：等上游发版或自 fork 重编（需 rM Qt6 SDK）；期间 KOReader 无侧栏入口。
+3. 3.28 字体菜单：用户在阅读器里选中书架字体后正文渲染效果确认；菜单再开时 `SHELF-FONT: visible` 差量追加是否触发（S-B）。
+4. PDF 结构化重排小瑕疵：署名"文｜某某"混进目录；"句中断开 12%"含图注/列表未细分。
+5. KOReader 里旧的 282MB《镖人.epub》由用户删（母版库里的漫画 PDF 用户已删，2026-09-05 15:04 后母版库为空）。
 
 **OTA 后固定四步**（§03v）：`xovi/rebuild_hashtable` → `xovi/start` → `SHELF_NO_BUILD=1 sh deploy.sh 10.11.99.1` → `ssh root@10.11.99.1 sh -s < packaging/chrony-cn.sh`。/home 里的（母版库、KOReader、WiFi 钩子与 `powersave 2`、休眠屏 conf 键、qmd 文件）不用动。
 
