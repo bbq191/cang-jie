@@ -1,6 +1,6 @@
 # bookconv 电子书优化白皮书
 
-> `shelf/crates/bookconv` —— 通用电子书内容层：多格式转换 + EPUB 优化器 + 清洗层 + 质量门。记"为什么这么做、真机怎么验、踩了什么坑"，尤其 **xochitl（reMarkable EPUB 渲染器）的硬规则**（§09，本项目最贵的一批真机知识）。上层用法/服务见 `reMarkable书架白皮书.md`（book-serve 母版库「优化」/「转 PDF」、host `shelf push`；KOReader 只从母版库纯复制落书，不再单独优化）。
+> `shelf/crates/bookconv` —— 通用电子书内容层：多格式转换 + EPUB 优化器 + 清洗层 + 质量门。记"为什么这么做、真机怎么验、踩了什么坑"，尤其 **xochitl（reMarkable EPUB 渲染器）的硬规则**（§09，本项目最贵的一批真机知识）。上层用法/服务见 `reMarkable书架白皮书.md`（book-serve 母版库「优化」、host `shelf push`；KOReader 只从母版库纯复制落书，不再单独优化）。
 
 ## 00｜定位与职责
 
@@ -22,7 +22,7 @@
 - **重排**：`mimetype` 首个 STORED（EPUB 规范），其余原序；旧优化标记剔除。
 - **第一遍**：每个 (x)html → `strip_font_locks`；扫全书 marker 得**被引用**的尾注 frag 集（`referenced`）；判目录页（指向 ≥ 阈值个不同 html）。后半：把被引用的注释块从各章移除、建全书 `aside_index`，交第二遍搬进引用章。
 - **第二遍**：`preserve_relink_footnotes`（按 `FootnoteMode`）→ `break_footnote_cycles` → `fix_duokan_markers` → `inline_remote_images` → 图片降采样 → `boost_text_contrast` → `dedup_ids_in_chapter`（跨章 id 去重防撞车）→ 打包。
-- **幂等标记**：产物写 `META-INF/com.cangjie.optimized` = `OPTIMIZE_VERSION`。`is_current_version()` 判是否当前版本；旧版本重传**重优化升级**（`double_optimize_*` 测试坐实重优化不翻倍脚注）。
+- **幂等标记**：产物写 `META-INF/com.cangjie.optimized` = `OPTIMIZE_VERSION`。`optimized_version()` 读标记判是否当前版本（母版库列表据此标 full / core / old）；旧版本重传**重优化升级**（`double_optimize_*` 测试坐实重优化不翻倍脚注）。
 
 `FootnoteMode`：`Anchor`（缺省，注释移章末 + 同章锚点跳转 + 原生「返回」浮标；weread/pkm/第三方书历史行为）· `Inline`（就地内联 `〔…〕` 常显，native→xochitl 用，见 §04/§09）。
 
@@ -131,7 +131,7 @@ reMarkable 的 EPUB 渲染器闭源，行为多次跟 host / 常识不一致。�
 
 **CLI `epub-optimize`**（`cargo build --release -p bookconv --bin epub-optimize`）：`[--no-wash] [--keep-spacing] [--auto-toc] [--footnote-anchor] [--check] [--require-toc] 输入.epub 输出.epub`。缺省 = 清洗 + 优化 + 脚注 Inline（对齐 native→xochitl）。退出码 0 成功 / 1 用法 / 2 优化失败（输入不动）/ 3 质量门未过。
 
-**目标脚注**：母版库「优化」传 `Inline`（xochitl 无弹窗，内联常显）；KOReader 从母版库纯复制拿到的也是 Inline 产物（crengine 弹窗需 `Anchor`+`epub:type`，是否为 KOReader 另跑 Anchor 待用户看观感，书架白皮书 §05①）；weread/pkm 线 `Anchor` 兜底。
+**目标脚注**：母版库「优化」传 `Inline`（xochitl 无弹窗，内联常显）；KOReader 从母版库纯复制拿到的也是 Inline 产物——**2026-09-06 用 Standard Ebooks《Gulliver's Travels》（7 处 noteref）两器对照，用户目视观感正常，不再为 KOReader 另跑 Anchor**（书架白皮书 §05 Phase E ④）；weread/pkm 线 `Anchor` 兜底。
 
 ## 12｜踩坑
 
@@ -143,4 +143,4 @@ reMarkable 的 EPUB 渲染器闭源，行为多次跟 host / 常识不一致。�
 
 ## 13｜真机待办
 
-英文书拉丁排版（1.2em）真机观感；KOReader 里 Inline 内联脚注能否接受（否则落库时另跑 Anchor + `epub:type` 触发弹窗）；PDF 结构化重排（host `pdf_reflow_move.py`）杂志观感已通（财新 v3；v4 2026-09-06：署名/图注/链接分类、节题 h3、标题分档，非句末段 15%→2.7%，书架白皮书 §05）；清洗层同日：书 css 非零 text-indent 统一改本书缩进（KOReader 与 xochitl 同缩进）+ 拉丁首段顶格（终版：`<div class="cj-flush">` 剥书类 + `.cj-flush{text-indent:0.01em;…;}`，xochitl 七条 CSS 规则见书架白皮书 §03y）+ 中文 br 分行书段落化/剥段首全角空格 + 所有 css 声明尾分号，学术论文多列/公式待验；公式图 intrinsic 放大阈值。诊断法：xochitl 导入渲染 `<uuid>.pdf` scp 回 host、pymupdf 量列宽/图尺寸/outline/内链 kind。
+~~英文书拉丁排版（1.2em）真机观感；KOReader 里 Inline 内联脚注能否接受~~（两项 2026-09-06 均闭环：§03y 配方 + Gulliver 对照）；PDF 结构化重排（host `pdf_reflow_move.py`）杂志观感已通（财新 v3；v4 2026-09-06：署名/图注/链接分类、节题 h3、标题分档，非句末段 15%→2.7%，书架白皮书 §05）；清洗层同日：书 css 非零 text-indent 统一改本书缩进（KOReader 与 xochitl 同缩进）+ 拉丁首段顶格（终版：`<div class="cj-flush">` 剥书类 + `.cj-flush{text-indent:0.01em;…;}`，xochitl 七条 CSS 规则见书架白皮书 §03y）+ 中文 br 分行书段落化/剥段首全角空格 + 所有 css 声明尾分号，学术论文多列/公式待验；公式图 intrinsic 放大阈值。诊断法：xochitl 导入渲染 `<uuid>.pdf` scp 回 host、pymupdf 量列宽/图尺寸/outline/内链 kind。

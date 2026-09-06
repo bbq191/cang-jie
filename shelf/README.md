@@ -6,14 +6,14 @@ reMarkable Paper Pro Move 的**读书与阅读质量层**：一个网页 / 一�
 > 工程原则（2026-09-03 用户定，见白皮书 §00）：XDG 基目录规范 · 设计模式去重解耦 · 专项专用可插拔多服务 ·
 > **不引用旧项目任何 crate**（能力只许剥离移植）· 不与旧运行期路径对接（不读写 `/home/root/weread/**`）。
 
-## 读书线现状（2026-09-05 定稿）：三层 · 三动作正交
+## 读书线现状（2026-09-06）：三层 · 三动作正交
 
 ```
 内容源 ──原样入库──►  母版库（中间层暂存池）  ──可选「优化」──►  落库（去向由人选）
  网页上传                ~/.local/state/shelf/books/staging/            📖 投入原生书库（xochitl：EPUB / PDF）
  抓网文（Readability）    · 母版永久保留，可反复落库、两读器对照           📚 加入 KOReader（母版库收的任何格式）
  电脑 shelf push          · 「优化」只对 EPUB（清洗+优化，档位三选）      · 落库＝纯复制母版字节，不再优化
- scp 进 inbox/            · 漫画（CBZ）只加入 KOReader，不投原生          · 落库记录徽章 / 清理已落库 / 剩余空间
+ scp 进 inbox/            · 漫画（CBZ）只加入 KOReader，不投原生          · 落库记录徽章（含投原生后的渲染自检）/ 清理已落库 / 剩余空间
 ```
 
 **统一规则**：所有书**只落母版库**——网页、CLI、inbox 都没有直投读器的路径；"入库是入库，优化是优化，落库是落库"。
@@ -25,7 +25,7 @@ host `shelf push` 是唯一能"入库时顺带优化"的源（Calibre 深洗 / �
 |---|---|---|
 | 原生直读 | EPUB / PDF | 两个读器都能去 |
 | 电脑可转 | AZW3 / MOBI / AZW / PRC / FB2 / **TXT** | `shelf push` 转 EPUB 进原生（TXT 按「第X章/卷」切章建两级目录，GB18030/UTF-8 自动识别）；直接上传只能加入 KOReader |
-| 仅 KOReader | TXT / CBZ / CBR / DjVu / HTML / RTF / DOC / DOCX / CHM / XPS | 只能加入 KOReader（漫画 CBZ 也在此档：**漫画不投原生**） |
+| 仅 KOReader | CBZ / CBR / DjVu / HTML / RTF / DOC / DOCX / CHM / XPS | 只能加入 KOReader（漫画 CBZ 也在此档：**漫画不投原生**；TXT 直传也落这档，走 `shelf push` 才切章进原生） |
 
 **网页 tab**：「传书」（固定第一位：入库｜母版库）· xochitl（原生字体，font-serve）· KOReader（字体｜词典，koreader-serve）· 壁纸 · 「管理」（固定）。读器页不传书。
 
@@ -183,5 +183,8 @@ shelf passwd [--new …]
 | 质量二轮 | 母版库领域化、直投路删除、上传模板/格式白名单/取参单一事实源、格式三档展示 | ✅ 真机通（§03s） |
 | 漫画通道 | AZW3/EPUB 漫画自动识别 → CBZ 给 KOReader；**漫画不投原生**（曾做过 CBZ→PDF 分卷投原生，用户否决后删）；镖人 282MB EPUB 撞 xochitl 上传上限根因；分卷静默失效修 | ✅ 真机通（§03t） |
 | 固件 3.28 | OTA 3.27.3.0→3.28.0.172 实录：appload 停用、hashtab 重建、deploy 重装；3.28 字体菜单 qmd 修 qmldiff 语法（`({})`/裸 `if(` 整份不应用）后通 | ✅ 真机通（§03v，§05 第 5 条） |
-| 设备杂项 | 原生休眠屏隐藏键 `SleepScreenPath`（满屏+随轮换）；WiFi 60 秒掉链＝IW612 省电（`powersave 2` 根治 + xovi post-start 看护钩子）；chrony 国内 NTP 幂等脚本 `packaging/chrony-cn.sh` | ✅ 真机通（§03w） |
-| 壁纸退役 bind | wallpaper-serve 改写 `SleepScreenPath`（`shelf_core::xochitl_conf`），删 bind 单元/sleep 钩子/透明卡/`mount.rs`，安装器自动清旧残留 | ✅ 真机通（§03x） |
+| 设备杂项 | 原生休眠屏隐藏键 `SleepScreenPath`（满屏+随轮换）；WiFi 连上恰 60 秒必掉＝cfg80211 regdomain 宽限（精简 regdb 的 CN 无 5150–5350，路由 5G 信道 36 被判非法）→ 连接锁 2.4G + `powersave 2`，`packaging/wifi-watch` 常驻固化；chrony 国内 NTP 幂等脚本 `packaging/chrony-cn.sh` | ✅ 真机通（§03w） |
+| 壁纸退役 bind | wallpaper-serve 改写 `SleepScreenPath`（`shelf_core::xochitl_conf`），删 bind 单元/sleep 钩子/透明卡/`mount.rs`（安装器的旧残留清理块已于 2026-09-06 随体检删除，真机零残留） | ✅ 真机通（§03x） |
+| 事件推送 | shelf-core `events`（EventBus+SSE）· 四服务在变更处发事件 · 网关 `Hub` 汇聚 `/api/events` · 网页 EventSource 零轮询 · CLI `shelf events`；tiny_http 流式回执必须 `Request::upgrade` 一帧一 flush | ✅ 真机通（§03z） |
+| 阅读线六项 | 投原生后渲染自检（`pageCount` vs 正文字符数，<50% warn，边车+事件+徽章）· `shelf doctor --render` 排版回归探针（§03y 八轮手工诊断固化，真机 7/7）· `push --wait`（探 `/health` 等设备醒）· 中文 TXT 切章两级目录 · Phase E ④ 脚注（Gulliver 两器观感通过）· 漫画 16 灰省刷新档（默认开，171→108MB） | ✅ 真机通（§03aa） |
+| 代码体检 | shelf-core `clock` · 死项清除 · `xochitl` 扫 metadata 合一 · book-serve `sidecar.rs` · 网关 UI 拆 `ui/` 真文件（CI node --check）· host `epub_skel`/`_run_json`/`transport._open` · install.sh 删迁移块 | ✅（§03ab） |

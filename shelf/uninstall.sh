@@ -37,18 +37,8 @@ if ! dmsetup ls --target verity 2>/dev/null | grep -q .; then
     systemctl daemon-reload
 fi
 case " $SEL " in *" wallpaper "*)
-    # 还原原生休眠屏（删 xochitl.conf SleepScreenPath；xochitl 重启后生效）+ 清旧 bind-mount 整套残留（2026-09-06 前的安装）
-    [ -x "$BIN_DIR/wallpaper-serve" ] && "$BIN_DIR/wallpaper-serve" disable 2>/dev/null || true
-    systemctl disable --now shelf-wallpaper-bind.service 2>/dev/null || true
-    for t in /usr/share/remarkable/suspended.png /usr/share/remarkable/carousel/sleep_Illustration_01.png \
-             /usr/share/remarkable/carousel/sleep_Illustration_02.png /usr/share/remarkable/carousel/sleep_Illustration_03.png; do
-        grep -q " $t " /proc/mounts 2>/dev/null && umount "$t" 2>/dev/null || true
-    done
-    if { [ -e "$SYSD/shelf-wallpaper-bind.service" ] || [ -e /usr/lib/systemd/system-sleep/shelf-wallpaper.sh ]; } && ! dmsetup ls --target verity 2>/dev/null | grep -q .; then
-        mount -o remount,rw / || true
-        rm -f "$SYSD/shelf-wallpaper-bind.service" "$SYSD/multi-user.target.wants/shelf-wallpaper-bind.service" /usr/lib/systemd/system-sleep/shelf-wallpaper.sh
-        sync; mount -o remount,ro / || true; systemctl daemon-reload
-    fi ;;
+    # 还原原生休眠屏（删 xochitl.conf SleepScreenPath；xochitl 重启后生效）。旧 bind-mount 残留清理块已于 2026-09-06 删（真机零残留，白皮书 §03ab）
+    [ -x "$BIN_DIR/wallpaper-serve" ] && "$BIN_DIR/wallpaper-serve" disable 2>/dev/null || true ;;
 esac
 case " $SEL " in *" font "*) rm -f "$HOME_DIR/xovi/exthome/qt-resource-rebuilder/font-menu-dynamic.qmd" ;; esac
 for s in $SEL; do rm -f "$BIN_DIR/$(svc_of "$s")"; done

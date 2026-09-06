@@ -1,13 +1,13 @@
 # reMarkable 书架（shelf）白皮书
 
-> 记"怎么决定、真机怎么验、踩了什么坑"。计划全文见 未入库的计划文件。
+> 记"怎么决定、真机怎么验、踩了什么坑"。读现状先看 §00b；待办/已闭环/已放弃看 §05；踩坑看 §04。
 > **书籍优化引擎（`bookconv`）的深度细节**（清洗层 / 优化遍 / 脚注 / 图片 / 格式转换 / **★xochitl 渲染硬规则** / 版本演进）**已独立成 `bookconv优化白皮书.md`**；本文只记书架侧的决策/UI/真机轮次。
 
 ## 00｜定位与原则
 
 2026-09-03 用户提出"全面重构，补齐短板增强优势"：① 阅读系统增加 KOReader 与微信读书；② 全面支持 AZW3/PDF/EPUB；
 ③ 字体与屏保图片上传即可用。澄清：先「有书读」（原生 / KOReader / 微读三条投递线）再「高质量读」；上传时手选目标；
-设备网页 + host CLI 共用同一 API；微读 = 设备上直接开网页版在线读（门控）。
+设备网页 + host CLI 共用同一 API；微读 = 设备上直接开网页版在线读（门控）。〔后续变化：微读线 2026-09-05 砍掉（§03u）；"上传时手选目标"被母版库三层架构取代（§03r），去向在母版库里选；现状看 §00b。〕
 
 四条硬原则（用户两轮驳回后定）：
 1. **XDG 基目录规范**（Rust `shelf_core::paths` / shell / Python 三处同一张表，env 可注入测试）。
@@ -15,21 +15,25 @@
 3. **专项专用可插拔**：不做单体，按领域拆服务。
 4. **不引用旧项目 crate、不对接旧路径**：能力只许剥离移植；不读写 `/home/root/weread/**`；旧 wr-serve 微读线原样兜底。
 
-## 00b｜现状总览（2026-09-05，读本文其余历史节前先看这里）
+## 00b｜现状总览（2026-09-06，读本文其余历史节前先看这里）
 
-**架构**：网关（`0.0.0.0:8778`，HTTPS 私有 CA + 登录页密码 / CLI Basic + mDNS `shelf.local`）+ 四个 loopback 领域服务（book 8790 / koreader 8791 / font 8792 / wallpaper 8793）+ 运行时注册表驱动 tab。设备固件 **3.28.0.172**（2026-09-05 从 3.27.3.0 升级，实录 §03v；appload 0.5.3 经 qmd 回填补丁在 3.28 复活），KOReader v2026.07.1。
+**架构**：网关（`0.0.0.0:8778`，HTTPS 私有 CA + 登录页密码 / CLI Basic + mDNS `shelf.local`；单页 UI 源码在 `services/shelf-gateway/ui/` 真文件，编译期 `include_str!`）+ 四个 loopback 领域服务（book 8790 / koreader 8791 / font 8792 / wallpaper 8793）+ 运行时注册表驱动 tab + 事件总线（各服务 `GET /events` → 网关 `Hub` 汇聚 `GET /api/events`，网页零轮询、host `shelf events`，§03z）。设备固件 **3.28.0.172**（2026-09-05 从 3.27.3.0 升级，实录 §03v；appload 0.5.3 经 qmd 回填补丁在 3.28 复活），KOReader v2026.07.1。
 
-**读书线 = 三层 · 三动作正交**（§03r 定，§03s 收口）：内容源（网页上传 / 抓网文 / host `shelf push` / scp inbox；微读线已砍，§03u）→ **母版库** `~/.local/state/shelf/books/staging/`（原样入库，永久保留，不淘汰）→ 落库（人选：投 xochitl 只收 EPUB/PDF；加入 KOReader 收任意入库格式）。「优化」是母版库里对 EPUB 的独立动作（档位 auto / keep-spacing / plain，产物标记 full / core / old）；落库＝纯复制母版字节（投原生有体积门 `nativeUploadLimitMb`，缺省 150）。**漫画不投原生**：AZW3/EPUB 漫画由 host `shelf push` 转 CBZ 入库，只加入 KOReader。**所有书只落母版库，没有任何直投读器的路径**。落库记录 sidecar `.<书>.delivered`。
+**读书线 = 三层 · 三动作正交**（§03r 定，§03s 收口）：内容源（网页上传 / 抓网文 / host `shelf push` / scp inbox；微读线已砍，§03u）→ **母版库** `~/.local/state/shelf/books/staging/`（原样入库，永久保留，不淘汰）→ 落库（人选：投 xochitl 只收 EPUB/PDF；加入 KOReader 收任意入库格式）。「优化」是母版库里对 EPUB 的独立动作（档位 auto / keep-spacing / plain，产物标记 full / core / old）；落库＝纯复制母版字节（投原生有体积门 `nativeUploadLimitMb`，缺省 150）。**投原生后自动渲染自检**（§03aa：xochitl 导入即渲染写 `pageCount`，与正文字符数期望比，<50% 判 warn，结果进边车 `.<书>.delivered.render` + `books/render` 事件 + 网页徽章）。**漫画不投原生**：AZW3/EPUB 漫画由 host `shelf push` 转 CBZ（缺省再过 16 灰省刷新档）入库，只加入 KOReader。**所有书只落母版库，没有任何直投读器的路径**。
 
-**代码落点**：book-serve `staging.rs`（领域）/ `spool.rs`（inbox 队列）/ `api.rs`（纯适配）；koreader-serve 只做"从母版库 adopt"+字体/词典/配置同步（不依赖 bookconv）；`shelf_core::formats` 是格式白名单单一事实源（三档：原生 epub/pdf · 电脑可转 azw3/mobi/azw/prc/fb2 · 仅 KOReader 其余 11 个），网页 `ui::page()` 注入；`shelf_core::asset` 是所有上传口的模板（母版库暂存在 spool `.work/` 同分区 rename）。host CLI：`push.plan()` 三路 raw / comic（→CBZ）/ wash；`comic.py` 漫画探针；bookconv CLI `epub-optimize`（与设备同一函数）。
+**格式三档**（`shelf_core::formats` 单一事实源）：原生 epub/pdf · 电脑可转 azw3/mobi/azw/prc/fb2/**txt**（TXT 由 host `txt_to_epub.py` 按「第X卷/章」切章建两级目录再洗，§03aa）· 仅 KOReader 其余 10 个。
 
-**已删（别再找）**：漫画 CBZ→PDF 投原生整条（`cbz2pdf` bin、`POST /staging/to-pdf`、`push --mono`，§03t 末）；book-serve `POST /?target=native|annot` 直投路与 `target.rs`/`pipeline.rs`（Strategy/Pipeline）、`/targets`、`done/` LRU；koreader-serve 直传 `POST /books` 与 `optimizeEpub`；网页读器页的传书区与 KOReader 书库浏览；host `push -t/--direct/--quality`、config `default_target/quality`；`BookConfig.optimizeDirectEpub/comicMono`。
+**host CLI**（`shelf`）：`push`（Calibre 洗书 / PDF 结构化重排 / TXT 切章 / 漫画→CBZ→16 灰；`--wait` 设备睡了探 `/health` 等醒；`--no-eink-gray` 要原图）· `doctor --render`（排版回归探针：投探针书→取回 xochitl 渲染缓存→pymupdf 量顶格/缩进→PASS/FAIL，固件 OTA 后跑一次）· `events` · font/wallpaper/koreader/inbox/status/passwd。
+
+**代码落点**：book-serve `staging.rs`（领域）/ `sidecar.rs`（落库记录边车）/ `render_check.rs`（渲染自检）/ `spool.rs`（inbox 队列）/ `api.rs`（纯适配）；koreader-serve 只做"从母版库 adopt"+字体/词典/配置同步（不依赖 bookconv）；shelf-core `clock`（时间戳唯一出处）、`xochitl`（注入 + 找书/页数）、`fswatch`（常驻 + 限时）、`events`；host `calibre/epub_skel.py`（三处手搓 EPUB 骨架收编）、`calibre_bridge._run_json`、`transport._open`（§03ab）；`comic.py` 漫画探针；bookconv CLI `epub-optimize`（与设备同一函数）。
+
+**已删（别再找）**：漫画 CBZ→PDF 投原生整条（`cbz2pdf` bin、`POST /staging/to-pdf`、`push --mono`，§03t 末）；book-serve `POST /?target=native|annot` 直投路与 `target.rs`/`pipeline.rs`（Strategy/Pipeline）、`/targets`、`done/` LRU；koreader-serve 直传 `POST /books` 与 `optimizeEpub`；网页读器页的传书区与 KOReader 书库浏览；host `push -t/--direct/--quality`、config `default_target/quality`；`BookConfig.optimizeDirectEpub/comicMono`；壁纸 bind-mount 整套（§03x）与安装器里的旧壁纸/bind 迁移块（§03ab）；`paths::data_root`、`htmlproc::has_internal_anchor`、`optimize::is_current_version`（§03ab）。
 
 **网页 tab**：传书（入库｜母版库，固定第一）· xochitl（原生字体，由 font-serve 注册）· KOReader（字体｜词典）· 壁纸 · 管理（固定）。
 
-**设备杂项（§03v/§03w，全真机通）**：3.28 字体菜单 qmd 已通（qmldiff 语法坑，§04）；原生休眠屏 `SleepScreenPath=current.png` 满屏且随轮换，bind-mount 整套已退役（§03x，`shelf_core::xochitl_conf` + wallpaper-serve `native.rs`）；WiFi 60 秒掉链＝IW612 省电，`powersave 2` 已根治 + `xovi/scripts/post-start/wifi-reconnect.sh` 看护；chrony 国内 NTP `packaging/chrony-cn.sh`；OTA 后四步恢复见 §03v（README 有"OTA 与恢复"表）。
+**设备杂项（§03v/§03w，全真机通）**：3.28 字体菜单 qmd 已通（qmldiff 语法坑，§04）；原生休眠屏 `SleepScreenPath=current.png` 满屏且随轮换，bind-mount 整套已退役（§03x，`shelf_core::xochitl_conf` + wallpaper-serve `native.rs`）；WiFi 连上恰 60 秒必掉的真凶＝cfg80211 regdomain 宽限（精简 regdb 的 CN 无 5150–5350，路由 5G 信道 36 被判非法）→ 连接锁 2.4G + `powersave 2`，`packaging/wifi-watch` 常驻固化（§03w）；离 USB 数秒自动休眠关 WiFi 是设备正常行为（`push --wait` 应对）；chrony 国内 NTP `packaging/chrony-cn.sh`；OTA 后五步恢复见 §05（README 有"OTA 与恢复"表）。
 
-**未闭环**：Phase E ②③④（英文书拉丁缩进观感 / 两器同字节对照 / KOReader 里内联脚注可否接受——KOReader 拿到的是母版库 Inline 产物，不再另跑 Anchor）。appload 3.28 已靠 PR #59 qmd 回填复活（系统增强白皮书 §12.1）。§05 有清单。
+**未闭环**：无（§05）。Phase E ②③④、阅读线六项、代码体检均于 2026-09-06 闭环。
 
 ## 01｜架构决策
 
@@ -401,7 +405,7 @@ book→「母版库 / 原生投递」、weread→「微信读书（内容源，�
 
 **原生休眠屏（隐藏键，真机通）**：xochitl.conf `[General]` 加 `SleepScreenPath=<png 绝对路径>`（无需 `file://`，QML 自己补）。3.28 `SleepScreenView.qml` 解出来的机制：`logo.source = isettings.sleepScreenPath`（默认 `/usr/share/remarkable/suspended.png`）；`isCustomSleepScreenPath` 为真时 **logo 铺满整屏 PreserveAspectFit、插画卡自动隐藏**（`illustration.visible = showCarousel && !isCustom`）；图加载失败显示占位文字 "reMarkable is sleeping"。`ShowSleepScreenCarousel` 不是隐藏功能——3.28 设置里就是「休眠屏幕插图」开关（`SettingsSleepScreenToggle.qml`）。真机：停 xochitl → sed 写键 → `xovi/start`，键不被 xochitl 抹掉；用户确认休眠屏显示指定的池图（954×1696 满屏）。现指向 `~/.local/share/shelf/wallpapers/current.png`（wallpaper-serve 唤醒轮换原地覆盖的那个文件）；**用户两次休眠对照确认轮换生效**（"休眠图生效"，2026-09-05 17:10）——xochitl 每次休眠按路径重读，不吃 Qt Image 缓存。结论：bind-mount suspended.png + 三张透明插画卡 + `/usr` 写入 + sleep 钩子整套**可退役**，只留 wallpaper-serve 的唤醒轮换（原地覆盖 current.png）+ 安装器写 `SleepScreenPath`（§05 第 8 条，待做）。改键流程：`cp xochitl.conf` 备份（含 token，绝不打印）→ `systemctl stop xochitl` → `sed -i '/^\[General\]/a SleepScreenPath=…'` → `xovi/start`。
 
-**WiFi "升级后连不上" 的真相：不是 3.28 回归，是 NXP IW612（`iw61x` MWLAN, SDIO）省电模式**。现象：连上 AP 后 **约 60 秒** `systemd-networkd: wlan0: Lost carrier` + `wpa_supplicant: REGDOM-CHANGE init=CORE type=WORLD`，**没有** wpa DISCONNECTED 事件、dmesg 无字，NetworkManager 仍标 `connected`、路由标 `dead`、永不自愈；`nmcli con up <SSID>` 立刻回来再掉。persistent journal 翻旧账：**3.27 那次 2 天 uptime 里 `Lost carrier` 95 次**，当天 15:29/16:21 也是连上 62 秒即掉——一直如此，只是以前主要走 USB 没察觉。`iw dev wlan0 set power_save off` 后 7 分钟以上零掉（对照：开着时 60/61/61/101/139 秒必掉）。置信度高。**根治（用户拍板，已写入）**：`nmcli con modify 我是猫 802-11-wireless.powersave 2`（按连接持久，NM 库在 `/var/lib/NetworkManager` bind 自 /home）；重新激活后 `iw dev wlan0 get power_save` = off，NM 每次激活都会关省电。代价 WiFi 开着时功耗略升（休眠时 WiFi 本就关）；xochitl 在设置里删掉重建该 WiFi 会丢此设置，换新 SSID 要再 modify 一次。
+**WiFi "升级后连不上"：〔首判，2026-09-05——后被推翻，真凶见本节末"真凶（2026-09-06 定案）"段：是 cfg80211 regdomain 宽限，省电只是次要因素〕不是 3.28 回归，先怀疑 NXP IW612（`iw61x` MWLAN, SDIO）省电模式**。现象：连上 AP 后 **约 60 秒** `systemd-networkd: wlan0: Lost carrier` + `wpa_supplicant: REGDOM-CHANGE init=CORE type=WORLD`，**没有** wpa DISCONNECTED 事件、dmesg 无字，NetworkManager 仍标 `connected`、路由标 `dead`、永不自愈；`nmcli con up <SSID>` 立刻回来再掉。persistent journal 翻旧账：**3.27 那次 2 天 uptime 里 `Lost carrier` 95 次**，当天 15:29/16:21 也是连上 62 秒即掉——一直如此，只是以前主要走 USB 没察觉。`iw dev wlan0 set power_save off` 后 7 分钟以上零掉（对照：开着时 60/61/61/101/139 秒必掉）。置信度高。**根治（用户拍板，已写入）**：`nmcli con modify 我是猫 802-11-wireless.powersave 2`（按连接持久，NM 库在 `/var/lib/NetworkManager` bind 自 /home）；重新激活后 `iw dev wlan0 get power_save` = off，NM 每次激活都会关省电。代价 WiFi 开着时功耗略升（休眠时 WiFi 本就关）；xochitl 在设置里删掉重建该 WiFi 会丢此设置，换新 SSID 要再 modify 一次。
 
 **时钟从未同步的根因与修法**：`chronyd` 4.5 配置的 4 个 `time{1-4}.google.com` 在国内不通（ping 100% 丢），启动以来没有一条 `Selected source`，`timedatectl` 一直 `synchronized: no`（RTC 本身准，差 1 秒，靠的是出厂/上次同步）。设备没有 `chronyc`、busybox 没有 `ntpd`。修法：改 **rootfs 底层** `/etc/chrony.conf`（服务器换成 `ntp.aliyun.com / ntp.tencent.com / cn.pool.ntp.org / time.cloudflare.com`），重启不丢（OTA 会冲）。**改底层 /etc 的姿势**：`/etc` 是 overlay（lower=/etc 本体，upper=/var/volatile tmpfs），必须 `mount -o remount,rw /` **先于** `mount --bind / /tmp/rootbind`（bind 继承挂载时的 ro 标志，后 remount 不传播），改 `/tmp/rootbind/etc/…`，umount，再 remount ro；**overlay 缓存 lower**：改完当场 `/etc/` 看到的仍是旧内容，重启才变——本次要立即生效就再 `cp` 一份进 overlay（落 upper tmpfs，重启自然消失、底层接管）。`mount -o remount,ro /` 偶发 `mount point is busy`，隔几秒再试就过（journal 在 /home 不占 rootfs）。改后重启 chronyd 8 秒 `Selected source ntp.tencent.com`，`synchronized: yes`。**"时不时连不上"的另一半真相（2026-09-06）**：不插 USB 时设备空闲几秒就进内核深度休眠（journal `PM: suspend entry (deep)` / `rm_sleep_monitor: Enter autosleep`，屏幕内容不变、`Woke up with reason=Ignored`），WiFi 随之断，摸一下屏就回来并重新 DHCP（还会漫游到另一 BSSID）。这不是 WiFi 故障：**要长时间可达就插 USB 供电（充电时不 autosuspend）**，排查前先 `journalctl -b | grep "suspend entry"`。
 
@@ -482,7 +486,7 @@ book→「母版库 / 原生投递」、weread→「微信读书（内容源，�
 1. **shelf-core / 服务**：新 `clock` 模块收编 8 处 `SystemTime::now().duration_since(UNIX_EPOCH)…`（事件/证书/会话盐/备份戳/边车/自检/壁纸随机种子）；删死项 `paths::data_root`、`htmlproc::has_internal_anchor`、`optimize::is_current_version`（reading/device-rs 也零引用，编译核过），`WASH_MARK` 收私、`events::subscribers` 限测试；`xochitl.rs` 找文件夹/找文档两处各扫一遍 `.metadata` 合成 `metadata_entries` + `is_live`；book-serve 落库记录边车（`Delivered`/`RenderCheck`/读改删）从 500 行的 `staging.rs` 拆成 `sidecar.rs`（Repository），`staging` 与 `render_check` 只通过它落盘；`Cargo.toml` 头里"book-serve → device-core"的过期依赖注释改正。
 2. **网关 UI**：`ui.rs` 484 行 Rust 原始字符串里嵌 CSS+JS → `ui/{index.html,style.css,app.js,auth.css}` 真文件，编译期 `include_str!` 拼成单页（网页仍零外链），`ui.rs` 剩 61 行；CI 加 `node --check app.js`（此前只能手工抽 `<script>` 段查语法）。
 3. **host**：`calibre/epub_skel.py` 收编 pdf_reflow / txt_to_epub / render_probe 三处手搓 mimetype+container+opf+nav（两级目录、可选 css/图片/作者，布局统一 `text/cN.xhtml`）；`calibre_bridge` 五处"跑脚本解析末行 JSON"合成 `_run_json`（render_probe 也改成末行 JSON 契约）；`transport` 的 `_do`/`get_bytes`/`stream_lines` 三条请求路径合成 `_open`（鉴权头、401/403/HTTP 错、连不上的翻译只有一处）。探针改布局后真机重投 7/7 PASS（`../cangjie-wash.css` 相对链接 xochitl 认）。
-4. **install.sh**：删旧 misc/wallpaper 搬池、bind-mount 退役清理、blank776、旧 `add-reading-fonts.qmd` 搬迁四个迁移块（真机逐项确认零残留），224→193 行，shellcheck 零告警；重部署五服务 active、四 `/health` 通。
+4. **install.sh / uninstall.sh**：删旧 misc/wallpaper 搬池、bind-mount 退役清理（安装/卸载两侧）、blank776、旧 `add-reading-fonts.qmd` 搬迁四个迁移块（真机逐项确认零残留），install.sh 224→193 行，shellcheck 零告警；重部署五服务 active、四 `/health` 通。
 
 **没动的**（评估后认为不值得或有风险）：`bookconv::convert` 整族（reading 线在用）；四个服务各自一行 `GET /events` 路由（不算重复，塞进 `service::run` 反而把总线所有权搞乱）；`multipart.rs`/`http.rs` 体量大但职责单一。**踩坑**：中途 `cargo fmt --all` 把 64 个文件重排进了提交，回滚重放——本仓库 Rust 从不走 rustfmt，别跑 fmt。
 
@@ -501,24 +505,18 @@ book→「母版库 / 原生投递」、weread→「微信读书（内容源，�
 - pytest 要从仓库根跑（`uv run pytest shelf/host/tests`）。
 - 多个测试文件对同一个 `http.server` Handler 类 monkeypatch，module fixture 共用服务器线程时 patch 链互相覆盖会递归死循环（pytest 挂死）。各文件用自己的 Handler **子类** + 自己的 fixture。
 
-## 05｜真机待办（2026-09-05 刷新）
+## 05｜真机待办（2026-09-06 刷新）
 
-**未闭环**：
-0. **阅读线六项（2026-09-06 下午，§03aa）**：① 渲染自检 ✓（网页徽章「渲染 404 页」用户确认）② `doctor --render` 探针 ✓（用户用网关密码跑 `shelf --host <ip> doctor --render` **PASS**，CLI 端到端闭环）③ `push --wait` ✓（睡着→点亮→续传时序由日常使用验）④ TXT 切章 ✓ ⑥ `push --eink-gray` ✓（用户目视明显少闪，已改默认开）⑤ 脚注见下条 ④。
-1. ~~**Phase E ②③④**~~ **全部闭环（2026-09-06，④ 用 Gulliver 收口）**（用《Tell Me Your Dreams》AZW3 推进）：
-   - 洗书发现两处实现缺口并修（bookconv `wash.rs`）：① 书自带类规则 `.calibre_ {text-indent:2em}` 未统一——xochitl 不认类规则走我们的 `p{1.2em}`，KOReader 认且类规则特异性更高走 2em，**两器同字节不同缩进**；现在书 css / 内联 style 里非零 `text-indent` 一律改写成本书缩进（0 与负值保留）。② "标题后首段不缩进"只写在注释里从未实现；现在拉丁模式给 h1–h6 后第一个 `<p>` 加内联 `style="text-indent:0"`（唯一能落到单段的通道；**xochitl 认不认内联 style 属性待真机核**，不认也无害）。
-   - **③ 用户对照通过**：两器翻到同一页首行缩进一致。**量化**（xochitl 渲染缓存 `<uuid>.pdf` 用 pymupdf 量首行 x 偏移）：英文书 KingHwa 12.1pt 下缩进 14.2pt = **1.17em**（=我们的 `p{1.2em}`，em 制、随字号缩放、不随字体家族变）。同法量《人骨拼圖》：那本是 2017 年旧 EPUB 直传、**没洗过**（无 cangjie-wash.css、书 css 无 text-indent、正文无全角空格），xochitl 渲染下**首行零缩进**。
-   - **② 已闭环（v6，2026-09-06）**：xochitl 章首/场景切换 0pt、续段 14.2pt（§03y 配方）；KOReader 同。
-   - 用户追问"英文习惯不是首段不缩进吗"→ 是，且首版只认 `<h>`，这本书章名是加粗段落一段都没顶格。**泛化**（同日第二版）：前一块是 `</hN>` / 标题样段落（≤80 字、加粗或 Chapter/Book/Part… 开头、不以句末标点结尾）/ 段末 ≥2 个 `<br>` 或空段·`* * *` 分隔（空段 >20% 的书不算）/ 章首第一段 → 内联 `text-indent:0`；Sheldon 4455 段中 370 段顶格。产物以「Tell Me Your Dreams (v3 首段顶格)」入母版库，用户投原生后：**KOReader 顶格、xochitl 未顶格 → xochitl 不认内联 `style=""` 属性（真机判据落定，与"不认内联 <style> 块/类选择器/!important"并列第四条硬规则）**。第三版改**换元素**：顶格段由 `<p>` 改成 `<div class="… cj-flush" style="text-indent:0">`——外链 `p{text-indent:1.2em}` 管不到 div，xochitl 只能顶格；class 原样保留（KOReader 里书的类规则照常）；重洗时 cj-flush div 当段落参与"下一段是否顶格"判定（幂等）。产物「Tell Me Your Dreams (v4 div顶格)」待设备醒来后入库，用户再验 xochitl。
-   - 用户观察"中文换字体缩进跟着变、英文不变"：em 制缩进只随字号不随家族；会随家族变的是**烘进正文的全角空格 `　　`**（宽度=该字体的全角空格字形）。→ 已定位并修（§03y 末段 `cjk_paragraphize`）。
-   - ④ 这本书没有脚注，要换一本带脚注的英文书。**2026-09-06 下午**：用户定拉公版书——Standard Ebooks《Gulliver's Travels》（7 处 `epub:type="noteref"` 尾注 + endnotes.xhtml），`shelf push` 链洗后（Inline 脚注：7 处内联成 cj-note，noteref 标记不再保留；NCX 52 条）投原生 404 页（自检 ok）+ 加入 KOReader，**已闭环（用户目视 2026-09-06）：两器脚注观感正常**——xochitl 内联注文不碍眼、KOReader 没有弹窗被替代的落差；Inline 一条产物两器通用的判断成立。网页徽章「渲染 404 页」用户同时确认。
-2. ~~appload 3.28 适配~~ **已通（2026-09-06，用户点侧栏 KOReader 正常起）**：PR #59 的 qmd 等长回填进 appload.so（免 SDK）+ KOReader 入口 qmd 换 3.28 锚点（系统增强白皮书 §12.1）。
-3. ~~3.28 字体菜单~~ **已通**：用户在《人骨拼圖》选 KingHwaOldSong-LT 渲染正常；`SHELF-FONT: visible … count=8` 出现，S-B 差量追加成立。
-4. ~~PDF 结构化重排小瑕疵~~ **已修（2026-09-06，《财新》33 期实测）**：署名/贡献行/冒号结尾不再当标题，"{{" 垃圾剥掉；署名「文｜」/图注/原文链接各自成段带 class、不与上下段续接，导语内嵌署名切开；短、字号略大、无句末标点的行标 h3；标题按字号分三档，第二大档及以上才分章（目录 10→45→**18 条全是文章题**，节题 40 个 h3 不翻页）。"不以句末标点结尾"的正文段 15.1% → **2.7%**（剩下是真断行/表格行）。`test_reflow.py` 锁纯函数。
-5. ~~KOReader 里旧的 282MB《镖人.epub》~~ 用户已删（2026-09-06）。
+**未闭环**：无。用户侧小事：设备原生书库里删今天的测试书（Probe Good / Probe Bad ×2 / 探针本地 / 探针重构 / 第二本人骨拼圖）；`push --wait` "睡着→点亮→续传"的时序在日常使用里顺手验一次。
 
-**OTA 后固定五步**（§03v）：`xovi/rebuild_hashtable` → `xovi/start` → `SHELF_NO_BUILD=1 sh deploy.sh 10.11.99.1` → `ssh root@10.11.99.1 sh -s < packaging/chrony-cn.sh` → `packaging/wifi-watch/install.sh`。/home 里的（母版库、KOReader、WiFi 钩子与 `powersave 2`、休眠屏 conf 键、qmd 文件）不用动。
+**OTA 后固定五步**（§03v）：`xovi/rebuild_hashtable` → `xovi/start` → `SHELF_NO_BUILD=1 sh deploy.sh 10.11.99.1` → `ssh root@10.11.99.1 sh -s < packaging/chrony-cn.sh` → `packaging/wifi-watch/install.sh`。升完顺手 `shelf doctor --render` 看 CSS 引擎有没有变。/home 里的（母版库、KOReader、WiFi 钩子与 `powersave 2`、休眠屏 conf 键、qmd 文件）不用动。
 
-**已闭环（真机）**：§03f 首轮五服务 · §03g/§03h 字体分开装/子目录/HTTPS · §03j 登录/CA/mDNS · §03k 字体两 bug · §03l 传书卡＝云同步 · §03m/§03n/§03o 网页改版/细节/管理台 · §03p 质量一轮 · §03q 优化做精 + 首行缩进 v10 · §03r 母版库 Phase A/B/C + 财新重排 · §03s 质量二轮 + 格式三档 · §03t 漫画通道（host 真书探针 → CBZ；漫画不投原生）+ 分卷静默失效修 + 投原生体积门 · §03v 固件 3.28 升级 + 3.28 字体菜单 qmd（首版整份不应用：qmldiff 解析不了 `({})` 与裸 `if (` handler，改 `[]`+`{ }` 后 `appended=4 count=8`，判官＝本机 asivery/qmldiff CLI）· §03w 原生休眠屏 `SleepScreenPath` + WiFi `powersave 2` 根治 + 看护钩子 + chrony 国内 NTP 脚本 · §03x 退役 bind-mount 壁纸整套（`xochitl_conf` + `native.rs`，安装器清旧残留）· §03aa 投原生后渲染自检（探针好书 ok / 坏书 warn，事件+边车+徽章）。
+**已闭环（真机）**：§03f 首轮五服务 · §03g/§03h 字体分开装/子目录/HTTPS · §03j 登录/CA/mDNS · §03k 字体两 bug · §03l 传书卡＝云同步 · §03m/§03n/§03o 网页改版/细节/管理台 · §03p 质量一轮 · §03q 优化做精 + 首行缩进 v10 · §03r 母版库 Phase A/B/C + 财新重排 · §03s 质量二轮 + 格式三档 · §03t 漫画通道（host 真书探针 → CBZ；漫画不投原生）+ 分卷静默失效修 + 投原生体积门 · §03v 固件 3.28 升级 + 3.28 字体菜单 qmd（首版整份不应用：qmldiff 解析不了 `({})` 与裸 `if (` handler，改 `[]`+`{ }` 后 `appended=4 count=8`，判官＝本机 asivery/qmldiff CLI）+ appload 3.28 复活（PR #59 qmd 等长回填进 .so，系统增强白皮书 §12.1；用户点侧栏 KOReader 正常起）· §03w 原生休眠屏 `SleepScreenPath` + WiFi regdomain 真凶 + wifi-watch + chrony 国内 NTP 脚本 · §03x 退役 bind-mount 壁纸整套（`xochitl_conf` + `native.rs`）· §03y xochitl CSS 引擎七条实测规则 + 英文首段顶格 v6 + 中文 br 书段落化 · §03z 事件推送（网页 + CLI 用户确认）· §03aa 阅读线六项（渲染自检 / `doctor --render` 用户 CLI PASS / `push --wait` / TXT 切章 / Phase E ④ Gulliver 两器脚注观感 / 漫画 16 灰默认开）· §03ab 代码体检四支 · PDF 结构化重排 v4（《财新》33 期：署名/图注/链接分类、节题 h3、标题分档，非句末段 15.1%→2.7%，`test_reflow.py` 锁纯函数）。
 
-**已放弃**：**微读线整条**（§03u，2026-09-05：先是内嵌浏览器 spike 未推进，后内容源方案评估后用户砍掉）；设备端 AZW3/MOBI/FB2 → EPUB 转换（§03s，杂格式走电脑 Calibre，`bookconv::convert` 本体留给 reading 线）。
+**Phase E 实录（②③④，2026-09-06 全部闭环，用《Tell Me Your Dreams》AZW3 与《Gulliver's Travels》推进）**：
+- 洗书发现两处实现缺口并修（bookconv `wash.rs`）：① 书自带类规则 `.calibre_ {text-indent:2em}` 未统一——xochitl 不认类规则走我们的 `p{1.2em}`，KOReader 认且类规则特异性更高走 2em，**两器同字节不同缩进**；现在书 css / 内联 style 里非零 `text-indent` 一律改写成本书缩进（0 与负值保留）。② "标题后首段不缩进"只写在注释里从未实现。
+- **③ 用户对照通过**：两器翻到同一页首行缩进一致。**量化**（xochitl 渲染缓存 `<uuid>.pdf` 用 pymupdf 量首行 x 偏移）：英文书 KingHwa 12.1pt 下缩进 14.2pt = **1.17em**（=我们的 `p{1.2em}`，em 制、随字号缩放、不随字体家族变）。同法量《人骨拼圖》：2017 年旧 EPUB 直传、没洗过，xochitl 渲染下首行零缩进（→ `cjk_paragraphize`，§03y 末段）。
+- **②**：用户追问"英文习惯不是首段不缩进吗"→ 泛化判定（前一块是 `</hN>` / 标题样段落 / 段末 ≥2 个 `<br>` 或空段·`* * *` 分隔 / 章首第一段）；内联 `style="text-indent:0"` 在 KOReader 顶格、xochitl 不顶格 → **xochitl 不认内联 `style=""` 属性**（§03y 硬规则）；改为换元素 `<div class="cj-flush">` + 外链 `.cj-flush{text-indent:0.01em}`（`0` 被当没设）→ v6 真机：章首/场景切换 0pt、续段 14.2pt，KOReader 同。用户观察"中文换字体缩进跟着变、英文不变"：em 制只随字号；随家族变的是烘进正文的全角空格——已剥。
+- **④**：Sheldon 无脚注 → 用户定拉公版书 Standard Ebooks《Gulliver's Travels》（7 处 `epub:type="noteref"` 尾注），`shelf push` 链洗后（Inline：7 处内联成 cj-note；NCX 52 条）投原生 404 页（自检 ok）+ 加入 KOReader，**用户目视两器脚注观感正常**：xochitl 内联注文不碍眼、KOReader 没有弹窗被替代的落差；Inline 一条产物两器通用成立，不为 KOReader 另跑 Anchor。
+
+**已放弃**：**微读线整条**（§03u，2026-09-05：先是内嵌浏览器 spike 未推进，后内容源方案评估后用户砍掉）；设备端 AZW3/MOBI/FB2 → EPUB 转换（§03s，杂格式走电脑 Calibre，`bookconv::convert` 本体留给 reading 线）；KOReader 高亮/生词回流 PKM（2026-09-06 用户定留给笔记线）与"稍后读"URL 队列（网文少，不做）。

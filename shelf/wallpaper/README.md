@@ -18,4 +18,4 @@
 
 **历史（已退役）**：2026-09-03～09-05 用 bind-mount 覆盖 `/usr/share/remarkable/suspended.png` + 三张 776×776 透明卡盖插画
 （`shelf-wallpaper-bind.service` + `system-sleep/shelf-wallpaper.sh` + `blank776.png`）。发现 `SleepScreenPath` 后整套删除；
-`install.sh`/`uninstall.sh` 遇到旧安装会自动停单元、卸 bind、删 /usr 里的残留。书架白皮书 §03w/§03x。
+安装器/卸载器里的旧残留清理块已于 2026-09-06 删除（真机零残留，白皮书 §03ab）；万一从更老的备份恢复，按 §03x 手工清。书架白皮书 §03w/§03x。
