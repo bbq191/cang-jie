@@ -105,6 +105,20 @@ def check(path: Path, require_toc: bool = False) -> tuple[bool, str]:
     return r.returncode == 0, (r.stdout + r.stderr).strip()
 
 
+def txt_to_epub(src: Path, outdir: Path) -> tuple[Path, dict]:
+    """中文 TXT → 带目录 EPUB（txt_to_epub.py，stdlib）。返回 (产物, 元数据 {chapters, volumes, encoding, detected,…})。"""
+    import json
+
+    r = _run(["python3", str(CALIBRE_DIR / "txt_to_epub.py"), str(src), str(outdir)])
+    if r.returncode != 0:
+        raise CalibreError(f"txt_to_epub.py 失败（rc={r.returncode}）：{(r.stderr or r.stdout).strip()[-800:]}")
+    try:
+        d = json.loads(r.stdout.strip().splitlines()[-1])
+        return Path(d["out"]), d
+    except Exception as e:  # noqa: BLE001
+        raise CalibreError(f"txt_to_epub.py 输出不可解析（{e}）：{r.stdout.strip()[-400:]}") from None
+
+
 def comic2cbz(src: Path, out: Path) -> Path:
     """漫画 AZW3/MOBI/EPUB → CBZ（Calibre 解包成 EPUB 中转，按 spine 顺序抽整页图）。"""
     r = _run(["python3", str(CALIBRE_DIR / "comic2cbz.py"), str(src), str(out)])

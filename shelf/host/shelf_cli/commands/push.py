@@ -22,8 +22,9 @@ from ..receipts import guard_file, upload_each
 NAME = "push"
 HELP = "投书到母版库（host 有 Calibre 先洗书；漫画自动转 CBZ 给 KOReader）；去向在网页选。难搞的书/PDF 重排用这条"
 
-# host 能洗/转成 EPUB 的源格式（其余原样传母版库）。= Rust `shelf_core::formats::HOST_CONVERTIBLE_EXTS` ∪ {epub}，
+# host 能洗/转成 EPUB 的源格式（其余原样传母版库）。= Rust `shelf_core::formats::HOST_CONVERTIBLE_EXTS` ∪ {epub} − {txt}，
 # 网页「格式」提示里"电脑可转"那一档就是它——改一处另一处同步（Python 不链接 Rust crate，只能镜像）。
+# `.txt` 也是电脑可转，但先走 txt_to_epub.py 切章（Calibre 不认中文"第X章"），再进 wash——见 host_prepare。
 WASH_EXT = {".epub", ".azw3", ".mobi", ".azw", ".prc", ".fb2"}
 
 WAIT_DEFAULT_SECS = 600
@@ -101,12 +102,27 @@ def is_comic(path: Path, args) -> bool:
     return getattr(args, "comic", False) or comic.is_comic(path)
 
 
+def txt_prepare(path: Path, work: Path, wenv: dict | None) -> Path:
+    """中文 TXT：切章建 EPUB（带两级目录）→ wash（TOC 已有，关 Calibre 自动目录）。返回洗好的 EPUB。"""
+    epub, meta = cb.txt_to_epub(path, work)
+    note = "" if meta.get("detected", True) else "；没认出「第X章」标题，按 8000 字硬切"
+    vols = f"{meta['volumes']} 卷 " if meta.get("volumes") else ""
+    print(f"  TXT 切章 → EPUB（{vols}{meta['chapters']} 章，{meta['encoding']}{note}）")
+    return cb.wash(epub, work, env={**(wenv or {}), "WASH_AUTOTOC": "0"})
+
+
 def host_prepare(path: Path, args, work: Path) -> list[Path]:
-    """host 洗书：默认 EPUB 深洗 / 杂格式转 EPUB / PDF 结构化重排；--to-pdf 定稿 PDF；漫画走 comic_prepare。产物待落母版库。"""
+    """host 洗书：默认 EPUB 深洗 / 杂格式转 EPUB / TXT 切章 / PDF 结构化重排；--to-pdf 定稿 PDF；漫画走 comic_prepare。产物待落母版库。"""
     suf = path.suffix.lower()
     if is_comic(path, args):
         return comic_prepare(path, work)
     wenv = {"WASH_KEEP_PARA_SPACING": "1"} if getattr(args, "keep_spacing", False) else None  # 与网页档位对齐
+    if suf == ".txt":
+        out = txt_prepare(path, work, wenv)
+        if args.to_pdf:
+            out = cb.to_pdf(out, work / (path.stem + ".pdf"))
+        _gate(out, args)
+        return [out]
     if args.to_pdf:
         # 定稿固定版式 PDF（EPUB/杂格式先转 EPUB 再定稿；PDF 裁边）。
         if suf == ".epub" or suf in WASH_EXT:
