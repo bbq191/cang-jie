@@ -35,6 +35,12 @@ impl State {
         State { cfg, spool, staging, xochitl, bus: Arc::new(EventBus::new()) }
     }
 
+    /// 投原生后起一条自检线程（见 `render_check`）；线程只拿母版库/总线/书库目录的句柄，不持 State。
+    pub fn spawn_render_check(&self, plan: staging::RenderPlan) {
+        let (staging, bus, lib) = (self.staging.clone(), self.bus.clone(), self.xochitl.library_dir().to_path_buf());
+        std::thread::spawn(move || crate::render_check::run(&staging, &bus, &lib, &plan));
+    }
+
     pub fn ensure_dirs(&self) -> std::io::Result<()> {
         self.spool.ensure()?;
         self.staging.ensure()

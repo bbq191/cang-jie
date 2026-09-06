@@ -18,7 +18,10 @@ def add_args(p):
 
 def fmt(ev: dict) -> str:
     at = time.strftime("%H:%M:%S", time.localtime(int(ev.get("at", time.time()))))
-    return f"{at}  {ev.get('svc', ev.get('area', '?')):<10} {ev.get('area', '?')}/{ev.get('kind', '?')}"
+    line = f"{at}  {ev.get('svc', ev.get('area', '?')):<10} {ev.get('area', '?')}/{ev.get('kind', '?')}"
+    # 带载荷的事件（如 books/render：name/status/pages/expected）把字段追加在后面
+    extra = " ".join(f"{k}={ev[k]}" for k in ("name", "status", "pages", "expected") if k in ev)
+    return f"{line}  {extra}" if extra else line
 
 
 def run(args, ctx) -> int:

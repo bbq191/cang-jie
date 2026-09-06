@@ -14,5 +14,6 @@ pub mod htmlproc;
 pub mod imgopt;
 pub mod netimg;
 pub mod optimize;
+pub mod stats;
 pub mod util;
 pub mod wash;

@@ -204,7 +204,9 @@ function stagingList(ul,opts){
     // 落库记录徽章；落库时间早于母版 mtime（之后又优化过）→ 标「旧」，提示可重投
     const dv=it.delivered||{},stale=t=>t&&it.mtime&&t<it.mtime;
     const dl=(dv.native?` <span class="badge on" title="${stale(dv.native)?'投过，之后母版又优化过，可重投':'已投入原生书库'}">已投原生${stale(dv.native)?'·旧':''}</span>`:'')+(dv.koreader?` <span class="badge on" title="${stale(dv.koreader)?'加入过，之后母版又优化过，可重投':'已加入 KOReader'}">已加入KO${stale(dv.koreader)?'·旧':''}</span>`:'');
-    li.innerHTML=`<span><b>${it.name}</b> <span class="badge">${fmt}</span> ${st}${dl} <span class="small">${fmtB(it.bytes)}${hint}</span></span>`;
+    // 渲染自检徽章（投原生后 book-serve 等 xochitl 渲染完核对页数；warn＝整章渲染失败的典型症状）
+    const rc=dv.render,rb=!rc?'':rc.status==='ok'?` <span class="badge on" title="xochitl 渲染 ${rc.pages} 页，与正文量相符（缺省字号预期≈${rc.expected}）">渲染 ${rc.pages} 页</span>`:rc.status==='warn'?` <span class="badge off" title="xochitl 只渲染出 ${rc.pages} 页，按正文量预期≈${rc.expected} 页——整章渲染失败的症状（如同一标签双 id）；点「优化」修复后重投">⚠ 只渲染 ${rc.pages} 页</span>`:rc.status==='pending'?` <span class="badge" title="投原生后等 xochitl 渲染完成自动核对页数（最长 10 分钟）">渲染中…</span>`:` <span class="badge" title="10 分钟内没等到 xochitl 的渲染结果；在设备上打开这本书一次再重投可复核">未见渲染</span>`;
+    li.innerHTML=`<span><b>${it.name}</b> <span class="badge">${fmt}</span> ${st}${dl}${rb} <span class="small">${fmtB(it.bytes)}${hint}</span></span>`;
     const right=document.createElement('span');right.style.cssText='display:flex;gap:.4em;flex-wrap:wrap;align-items:center';
     const btn=(t,pri,fn,dis,title)=>{const b=document.createElement('button');b.className='btn'+(pri?' pri':'');b.textContent=t;if(dis){b.disabled=true;b.title=title||''}else b.onclick=async()=>{b.disabled=true;b.textContent=t+'…';await fn();if(opts.refresh)opts.refresh()};right.appendChild(b)};
     if(it.format==='epub'&&!it.optimized)btn('优化',false,()=>postJ('/api/books/staging/optimize',{name:it.name,mode:opts.mode()}));

@@ -449,6 +449,21 @@ book→「母版库 / 原生投递」、weread→「微信读书（内容源，�
 
 **耗电**：空闲时 inotify/通道 recv 都是内核阻塞，零唤醒；每条 SSE 连接 20 s 一次十几字节心跳；设备深度休眠时进程不跑、连接断、醒来重连。对比轮询（每 5 s 一个完整 HTTPS 请求）少两个数量级。
 
+## 03aa｜投原生后的渲染自检（2026-09-06，3.28.0.172 真机）
+
+**问题**：整章渲染失败（同一标签双 id → 严格 XML 吞整章，《消失的爱人》只出 7 页；背景图盖正文）以前都是用户翻到才发现。
+
+**依据（真机事实）**：xochitl 导入 EPUB 时**同步渲染**，`/upload` 返回时 `<uuid>.content` 已有 `pageCount`（人骨拼圖 523、Tell Me Your Dreams 352），旁边有 `<uuid>.pdf` 渲染缓存。所以自检只读一个 JSON 字段，设备端不用解析 PDF（设备也没有 pdfinfo/mutool/python3）。
+
+**做法**（book-serve `render_check.rs` + shelf-core `xochitl::{find_documents_since,page_count}` + bookconv `stats::text_profile`）：
+1. 投书前算正文非空白字符数与 dc:title，期望页数 = 字符数 ÷ 每页字符数（真机标定：中文 460 字/页、英文 960 字符/页，两本真书 0.99 吻合）。
+2. `/upload` 不回 uuid、visibleName 取自 EPUB 元数据不等于文件名 → 按 `createdTime ≥ 投书时刻` 圈候选，书名（dc:title / 文件名 stem，忽略大小写）相符者优先，否则最新一本。
+3. 立即探一次；没渲染完就 `fswatch::watch_until` **限时**监听书库目录（3 s 防抖、最长 10 min，结束即撤——不给书库留常驻 inotify，守 §03z 约束；读线程靠私有"踢醒"目录退出）。超时记 `timeout`（不是错误：设备上打开一次就渲染）。
+4. 判定 `pages < expected × 50%` → `warn`。阈值标定：自检发生在导入当下、xochitl 用缺省字号/边距，页数只随文字密度浮动；坏章在 xochitl 里各占 **1 页空白**，4 章坏 3 章的探针 10/29=0.34，30% 抓不住，定 50%。
+5. 结果写母版库边车 `.<name>.delivered` 的 `render`（事件有损、状态必须落盘）+ 推 `books/render {name,status,pages,expected}`；网页母版库条目徽章「渲染 N 页」/「⚠ 只渲染 N 页」（红）/「渲染中…」/「未见渲染」，`shelf events` 打印字段。
+
+**真机**：Probe Good（4 章随机词）ok 25/29；Probe Bad（h1 双 id ×3 章）warn 10/29；事件四条当秒到达，边车落盘。三本探针留在原生书库根目录（用户在设备上删）。
+
 ## 04｜踩坑
 
 - **xochitl CSS 引擎七条实测规则见 §03y**（尾分号 / 0 当没设 / 类规则认且压元素 / 同类先出现者胜 / 不认内联 style / text-indent 继承 / 混类选择器不废表）。改排版规则前先用诊断 EPUB 量渲染缓存，别靠肉眼。
@@ -481,6 +496,6 @@ book→「母版库 / 原生投递」、weread→「微信读书（内容源，�
 
 **OTA 后固定五步**（§03v）：`xovi/rebuild_hashtable` → `xovi/start` → `SHELF_NO_BUILD=1 sh deploy.sh 10.11.99.1` → `ssh root@10.11.99.1 sh -s < packaging/chrony-cn.sh` → `packaging/wifi-watch/install.sh`。/home 里的（母版库、KOReader、WiFi 钩子与 `powersave 2`、休眠屏 conf 键、qmd 文件）不用动。
 
-**已闭环（真机）**：§03f 首轮五服务 · §03g/§03h 字体分开装/子目录/HTTPS · §03j 登录/CA/mDNS · §03k 字体两 bug · §03l 传书卡＝云同步 · §03m/§03n/§03o 网页改版/细节/管理台 · §03p 质量一轮 · §03q 优化做精 + 首行缩进 v10 · §03r 母版库 Phase A/B/C + 财新重排 · §03s 质量二轮 + 格式三档 · §03t 漫画通道（host 真书探针 → CBZ；漫画不投原生）+ 分卷静默失效修 + 投原生体积门 · §03v 固件 3.28 升级 + 3.28 字体菜单 qmd（首版整份不应用：qmldiff 解析不了 `({})` 与裸 `if (` handler，改 `[]`+`{ }` 后 `appended=4 count=8`，判官＝本机 asivery/qmldiff CLI）· §03w 原生休眠屏 `SleepScreenPath` + WiFi `powersave 2` 根治 + 看护钩子 + chrony 国内 NTP 脚本 · §03x 退役 bind-mount 壁纸整套（`xochitl_conf` + `native.rs`，安装器清旧残留）。
+**已闭环（真机）**：§03f 首轮五服务 · §03g/§03h 字体分开装/子目录/HTTPS · §03j 登录/CA/mDNS · §03k 字体两 bug · §03l 传书卡＝云同步 · §03m/§03n/§03o 网页改版/细节/管理台 · §03p 质量一轮 · §03q 优化做精 + 首行缩进 v10 · §03r 母版库 Phase A/B/C + 财新重排 · §03s 质量二轮 + 格式三档 · §03t 漫画通道（host 真书探针 → CBZ；漫画不投原生）+ 分卷静默失效修 + 投原生体积门 · §03v 固件 3.28 升级 + 3.28 字体菜单 qmd（首版整份不应用：qmldiff 解析不了 `({})` 与裸 `if (` handler，改 `[]`+`{ }` 后 `appended=4 count=8`，判官＝本机 asivery/qmldiff CLI）· §03w 原生休眠屏 `SleepScreenPath` + WiFi `powersave 2` 根治 + 看护钩子 + chrony 国内 NTP 脚本 · §03x 退役 bind-mount 壁纸整套（`xochitl_conf` + `native.rs`，安装器清旧残留）· §03aa 投原生后渲染自检（探针好书 ok / 坏书 warn，事件+边车+徽章）。
 
 **已放弃**：**微读线整条**（§03u，2026-09-05：先是内嵌浏览器 spike 未推进，后内容源方案评估后用户砍掉）；设备端 AZW3/MOBI/FB2 → EPUB 转换（§03s，杂格式走电脑 Calibre，`bookconv::convert` 本体留给 reading 线）。
