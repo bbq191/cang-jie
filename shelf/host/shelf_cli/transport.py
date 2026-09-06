@@ -30,6 +30,18 @@ class HttpTransport:
             self.ctx.check_hostname = False
             self.ctx.verify_mode = ssl.CERT_NONE
 
+    def reachable(self, timeout: float = 3.0) -> bool:
+        """设备网关是否在线：探 `GET /health`（网关公开路由，不用密码、不触发交互输入）。任何 HTTP 应答都算在线，
+        连不上 / 超时算离线（设备离 USB 后几秒就自动休眠关 WiFi，这是 push 最常见的失败）。"""
+        req = urllib.request.Request(self.base_url + "/health", method="GET")
+        try:
+            with urllib.request.urlopen(req, timeout=timeout, context=self.ctx):
+                return True
+        except urllib.error.HTTPError:
+            return True
+        except (urllib.error.URLError, OSError):
+            return False
+
     def _do(self, method: str, path: str, query: dict | None = None, data: bytes | None = None, content_type: str | None = None) -> dict:
         url = self.base_url + path
         if query:

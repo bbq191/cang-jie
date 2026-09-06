@@ -145,7 +145,8 @@ cargo build --release -p bookconv --bin epub-optimize   # host 侧 push 洗书�
 
 ```sh
 shelf/host/bin/shelf services | status | doctor
-shelf/host/bin/shelf push 论文.pdf 书.epub [--to-pdf] [--no-optimize] [--keep-spacing] [--no-reflow] [--no-split] [--skip-check] [-n]
+shelf/host/bin/shelf push 论文.pdf 书.epub [--to-pdf] [--no-optimize] [--keep-spacing] [--no-reflow] [--no-split] [--skip-check] [-n] [--wait[=秒]]
+#   --wait：设备离 USB 几秒就自动休眠关 WiFi，push 上传前先探 /health；不可达时每 5 秒探一次等它醒（点亮屏幕/接 USB），缺省最多 600 秒；不加 --wait 则直接报错、不传
    **只落母版库**，去向在网页「传书 → 母版库」选。路线自动定（`push.plan`）：
    · 有 Calibre → 洗书：EPUB 深洗 / AZW3·MOBI·AZW·PRC·FB2 转 EPUB / **PDF 默认结构化重排**（born-digital→EPUB→洗书；扫描件 k2pdfopt/裁边→PDF，`--no-reflow` 原样）；
      产物必过 `check_output.py` 质量门（`--skip-check` 强推）。`--to-pdf` 定稿固定版式 PDF（手写批注用）。>60MB PDF 自动分卷（需 uv `calibre` 组的 pymupdf；切不了会报错不推，xochitl 收不下 188MB 整本）。

@@ -12,6 +12,7 @@
 """
 from __future__ import annotations
 
+import time
 from pathlib import Path
 
 from .. import calibre_bridge as cb
@@ -24,6 +25,38 @@ HELP = "投书到母版库（host 有 Calibre 先洗书；漫画自动转 CBZ �
 # host 能洗/转成 EPUB 的源格式（其余原样传母版库）。= Rust `shelf_core::formats::HOST_CONVERTIBLE_EXTS` ∪ {epub}，
 # 网页「格式」提示里"电脑可转"那一档就是它——改一处另一处同步（Python 不链接 Rust crate，只能镜像）。
 WASH_EXT = {".epub", ".azw3", ".mobi", ".azw", ".prc", ".fb2"}
+
+WAIT_DEFAULT_SECS = 600
+WAIT_PROBE_SECS = 5
+UNREACHABLE_HINT = "设备不可达（离 USB 后几秒就自动休眠、关 WiFi）：点亮屏幕或接上 USB 再推，或加 --wait 让 push 等它醒"
+
+
+def ensure_reachable(transport, wait: int | None, sleep=time.sleep, clock=time.monotonic) -> bool:
+    """上传前探活（`GET /health`，不用密码）。不可达：无 `--wait` → 提示后 False；有 → 每 WAIT_PROBE_SECS 秒探一次直到可达/超时/Ctrl-C。
+    洗书在这之前已做完，等待期间不白占；探活放在上传循环之前，避免逐本各报一次"连不上"。"""
+    probe = getattr(transport, "reachable", None)
+    if probe is None or probe():
+        return True
+    if wait is None:
+        print(f"✗ {UNREACHABLE_HINT}")
+        return False
+    print(f"… 设备不可达（可能已休眠）：点亮屏幕或接上 USB，每 {WAIT_PROBE_SECS} 秒探一次，最多等 {wait} 秒（Ctrl-C 放弃）", flush=True)
+    t0 = clock()
+    last_note = t0
+    try:
+        while clock() - t0 < wait:
+            sleep(WAIT_PROBE_SECS)
+            if probe():
+                print(f"… 设备醒了（等了 {int(clock() - t0)} 秒），继续上传", flush=True)
+                return True
+            if clock() - last_note >= 30:
+                last_note = clock()
+                print(f"… 仍在等（还剩 {int(wait - (clock() - t0))} 秒）", flush=True)
+    except KeyboardInterrupt:
+        print("… 放弃等待")
+        return False
+    print(f"✗ 等了 {wait} 秒设备还没醒，未上传")
+    return False
 
 
 def add_args(p):
@@ -39,6 +72,7 @@ def add_args(p):
     p.add_argument("--require-toc", action="store_true", help="洗书体检要求有目录")
     p.add_argument("--skip-check", action="store_true", help="跳过 check_output.py 体检（缺省不过不推）")
     p.add_argument("--dry-run", "-n", action="store_true", help="只打印会怎么做，不动文件、不上传")
+    p.add_argument("--wait", nargs="?", const=WAIT_DEFAULT_SECS, type=int, metavar="秒", help=f"设备不可达（离 USB 自动休眠关 WiFi）时每 {WAIT_PROBE_SECS} 秒探一次、等它醒再传（缺省最多 {WAIT_DEFAULT_SECS} 秒）；不加则直接报错不传")
 
 
 def _gate(out: Path, args) -> None:
@@ -123,7 +157,8 @@ def run(args, ctx) -> int:
     rc = 0
     landed = 0
     work = cb.workdir()
-    for path in args.files:
+    ready: bool | None = None  # 首本洗完、上传前探活一次；不可达就停，不再洗后面的书
+    for idx, path in enumerate(args.files):
         if not guard_file(path):
             rc = 1
             continue
@@ -146,6 +181,12 @@ def run(args, ctx) -> int:
                 final.extend(parts)
             else:
                 final.append(o)
+        if ready is None:
+            ready = ensure_reachable(ctx.transport, args.wait)
+        if not ready:
+            rest = [p.name for p in args.files[idx:]]
+            print(f"✗ 未上传：{', '.join(rest)}（洗好的产物在 {work}）")
+            return 2
         # 只落母版库（原样落，host 已洗则带优化标记）；去向在网页「传书 → 母版库」选。
         rc |= upload_each(ctx.transport, "/api/books/staging", final)
         landed += len(final)
