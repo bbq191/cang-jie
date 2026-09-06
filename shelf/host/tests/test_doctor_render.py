@@ -25,14 +25,14 @@ def test_probe_epub_has_sentinels_css_and_two_chapters(tmp_path):
         assert names[0] == "mimetype" and z.getinfo("mimetype").compress_type == zipfile.ZIP_STORED
         css = z.read("OEBPS/cangjie-wash.css").decode()
         assert css == rp.CSS and "text-indent:1.2em;" in css and ".cj-flush{text-indent:0.01em;" in css, "配方字面（含尾分号）"
-        c1 = z.read("OEBPS/c1.xhtml").decode()
-        c2 = z.read("OEBPS/c2.xhtml").decode()
+        c1 = z.read("OEBPS/text/c1.xhtml").decode()
+        c2 = z.read("OEBPS/text/c2.xhtml").decode()
         for s, kind in rp.SENTINELS.items():
             body = c1 if s in c1 else c2
             assert s in body, s
             tag = '<div class="cj-flush">' if kind == "flush" else "<p>"
             assert f"{tag}{s} " in body, f"{s} 应在 {tag} 里"
-        assert 'href="cangjie-wash.css"' in c1 and 'href="cangjie-wash.css"' in c2
+        assert 'href="../cangjie-wash.css"' in c1 and 'href="../cangjie-wash.css"' in c2
         assert "<h1>Chapter One</h1>" in c1 and "<h1>第二章</h1>" in c2
 
 

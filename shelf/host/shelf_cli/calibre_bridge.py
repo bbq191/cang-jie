@@ -3,6 +3,7 @@
 在 venv 里会被劫持即炸（阅读白皮书 §11.2）。"""
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -82,18 +83,21 @@ def has_k2pdfopt() -> bool:
     return shutil.which("k2pdfopt", path=clean_env().get("PATH")) is not None
 
 
+def _run_json(cmd: list[str], label: str, env_extra: dict | None = None) -> dict:
+    """跑一个"末行打印 JSON"的脚本（reflow / txt 切章 / 漫画 16 灰 / 探针 / 量测共用契约）：非零退出或末行不是 JSON 都报 CalibreError。"""
+    r = _run(cmd, env_extra=env_extra)
+    if r.returncode != 0:
+        raise CalibreError(f"{label} 失败（rc={r.returncode}）：{(r.stderr or r.stdout).strip()[-800:]}")
+    try:
+        return json.loads(r.stdout.strip().splitlines()[-1])
+    except Exception as e:  # noqa: BLE001
+        raise CalibreError(f"{label} 输出不可解析（{e}）：{r.stdout.strip()[-400:]}") from None
+
+
 def reflow_pdf(src: Path, outdir: Path) -> tuple[Path, str]:
     """PDF 重排（born-digital 结构化→EPUB / 扫描件 k2pdfopt|裁边→PDF）。返回 (产物路径, kind∈{'epub','pdf'})。"""
-    import json
-
-    r = _run([*py_with_pymupdf(), str(CALIBRE_DIR / "pdf_reflow_move.py"), str(src), str(outdir)])
-    if r.returncode != 0:
-        raise CalibreError(f"pdf_reflow_move.py 失败（rc={r.returncode}）：{r.stderr.strip()[-800:]}")
-    try:
-        d = json.loads(r.stdout.strip().splitlines()[-1])
-        return Path(d["out"]), d["kind"]
-    except Exception as e:  # noqa: BLE001
-        raise CalibreError(f"pdf_reflow_move.py 输出不可解析（{e}）：{r.stdout.strip()[-400:]}") from None
+    d = _run_json([*py_with_pymupdf(), str(CALIBRE_DIR / "pdf_reflow_move.py"), str(src), str(outdir)], "pdf_reflow_move.py")
+    return Path(d["out"]), d["kind"]
 
 
 def check(path: Path, require_toc: bool = False) -> tuple[bool, str]:
@@ -107,29 +111,16 @@ def check(path: Path, require_toc: bool = False) -> tuple[bool, str]:
 
 def comic_gray(src: Path, out: Path) -> tuple[Path, dict]:
     """漫画省刷新档：CBZ → 16 灰 CBZ（comic_gray.py，Pillow 走 uv calibre 组）。返回 (产物, {pages,gray,color,bytes_in,bytes_out})。"""
-    import json
-
-    r = _run([*py_with_pymupdf(), str(CALIBRE_DIR / "comic_gray.py"), str(src), str(out)])
-    if r.returncode != 0 or not out.is_file():
-        raise CalibreError(f"comic_gray.py 失败（rc={r.returncode}）：{(r.stderr or r.stdout).strip()[-800:]}")
-    try:
-        return out, json.loads(r.stdout.strip().splitlines()[-1])
-    except Exception as e:  # noqa: BLE001
-        raise CalibreError(f"comic_gray.py 输出不可解析（{e}）：{r.stdout.strip()[-400:]}") from None
+    d = _run_json([*py_with_pymupdf(), str(CALIBRE_DIR / "comic_gray.py"), str(src), str(out)], "comic_gray.py")
+    if not out.is_file():
+        raise CalibreError("comic_gray.py 未产出 CBZ")
+    return out, d
 
 
 def txt_to_epub(src: Path, outdir: Path) -> tuple[Path, dict]:
     """中文 TXT → 带目录 EPUB（txt_to_epub.py，stdlib）。返回 (产物, 元数据 {chapters, volumes, encoding, detected,…})。"""
-    import json
-
-    r = _run(["python3", str(CALIBRE_DIR / "txt_to_epub.py"), str(src), str(outdir)])
-    if r.returncode != 0:
-        raise CalibreError(f"txt_to_epub.py 失败（rc={r.returncode}）：{(r.stderr or r.stdout).strip()[-800:]}")
-    try:
-        d = json.loads(r.stdout.strip().splitlines()[-1])
-        return Path(d["out"]), d
-    except Exception as e:  # noqa: BLE001
-        raise CalibreError(f"txt_to_epub.py 输出不可解析（{e}）：{r.stdout.strip()[-400:]}") from None
+    d = _run_json(["python3", str(CALIBRE_DIR / "txt_to_epub.py"), str(src), str(outdir)], "txt_to_epub.py")
+    return Path(d["out"]), d
 
 
 def comic2cbz(src: Path, out: Path) -> Path:
@@ -142,23 +133,12 @@ def comic2cbz(src: Path, out: Path) -> Path:
 
 def render_probe(out_dir: Path, title: str) -> Path:
     """`shelf doctor --render` 的探针 EPUB（纯 stdlib 脚本 render_probe.py）。"""
-    r = _run(["python3", str(CALIBRE_DIR / "render_probe.py"), str(out_dir), title])
-    if r.returncode != 0:
-        raise CalibreError(f"render_probe.py 失败（rc={r.returncode}）：{r.stderr.strip()[-800:]}")
-    return Path(r.stdout.strip().splitlines()[-1])
+    return Path(_run_json(["python3", str(CALIBRE_DIR / "render_probe.py"), str(out_dir), title], "render_probe.py")["out"])
 
 
 def render_measure(pdf: Path) -> dict:
     """量 xochitl 渲染缓存里探针段的首行缩进（pymupdf）。返回 {rows, ok, problems}。"""
-    import json
-
-    r = _run([*py_with_pymupdf(), str(CALIBRE_DIR / "render_measure.py"), str(pdf)])
-    if r.returncode != 0:
-        raise CalibreError(f"render_measure.py 失败（rc={r.returncode}）：{r.stderr.strip()[-800:]}")
-    try:
-        return json.loads(r.stdout.strip().splitlines()[-1])
-    except Exception as e:  # noqa: BLE001
-        raise CalibreError(f"render_measure.py 输出不可解析（{e}）：{r.stdout.strip()[-400:]}") from None
+    return _run_json([*py_with_pymupdf(), str(CALIBRE_DIR / "render_measure.py"), str(pdf)], "render_measure.py")
 
 
 def workdir(prefix: str = "shelf-push-") -> Path:

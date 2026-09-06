@@ -14,8 +14,10 @@ import html
 import json
 import re
 import sys
-import zipfile
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from epub_skel import Chapter, write_epub  # noqa: E402  共享 EPUB 骨架
 
 _NUM = r"[零〇一二三四五六七八九十百千两0-9０-９]{1,8}"
 _SEP = r"\s*[:：、.．\-—－]?\s*"
@@ -125,54 +127,15 @@ def title_author(stem: str) -> tuple[str, str]:
 
 
 def build_epub(chapters: list[dict], title: str, author: str, out: Path) -> None:
+    """卷 → h1 / 1 级目录；章 → 有卷时 h2 / 2 级，否则 h1 / 1 级（共享骨架 epub_skel）。"""
     has_vol = any(c["kind"] == "vol" for c in chapters)
-    manifest, spine, nav = [], [], []
-    files = {}
-    open_vol = False
-    for i, c in enumerate(chapters, 1):
-        cid = f"c{i}"
-        fname = f"text/{cid}.xhtml"
-        tag = "h1" if (c["kind"] == "vol" or not has_vol) else "h2"
+    chs = []
+    for c in chapters:
+        is_vol = c["kind"] == "vol"
+        tag = "h1" if (is_vol or not has_vol) else "h2"
         body = f"<{tag}>{html.escape(c['title'])}</{tag}>\n" + "\n".join(f"<p>{html.escape(p)}</p>" for p in c["paras"])
-        files[fname] = (
-            '<?xml version="1.0" encoding="UTF-8"?>\n<html xmlns="http://www.w3.org/1999/xhtml"><head><meta charset="utf-8"/>'
-            f"<title>{html.escape(c['title'])}</title></head><body>\n{body}\n</body></html>"
-        )
-        manifest.append(f'<item id="{cid}" href="{fname}" media-type="application/xhtml+xml"/>')
-        spine.append(f'<itemref idref="{cid}"/>')
-        li = f'<li><a href="{fname}">{html.escape(c["title"])}</a>'
-        if c["kind"] == "vol":
-            if open_vol:
-                nav.append("</ol></li>")
-            nav.append(li + "<ol>")
-            open_vol = True
-        elif open_vol:
-            nav.append(li + "</li>")
-        else:
-            nav.append(li + "</li>")
-    if open_vol:
-        nav.append("</ol></li>")
-    # 卷节点下没有章时 <ol></ol> 为空不合规：去掉空 ol
-    navs = "".join(nav).replace("<ol></ol>", "")
-    meta_author = f"<dc:creator>{html.escape(author)}</dc:creator>" if author else ""
-    opf = (
-        '<?xml version="1.0" encoding="UTF-8"?>\n<package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="bid">'
-        f'<metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:identifier id="bid">shelf-txt-{html.escape(title)}</dc:identifier>'
-        f"<dc:title>{html.escape(title)}</dc:title>{meta_author}<dc:language>zh</dc:language></metadata>"
-        f'<manifest><item id="nav" href="nav.xhtml" media-type="application/xhtml+xml" properties="nav"/>{"".join(manifest)}</manifest>'
-        f'<spine>{"".join(spine)}</spine></package>'
-    )
-    navx = (
-        '<?xml version="1.0" encoding="UTF-8"?>\n<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops">'
-        f'<head><meta charset="utf-8"/><title>目录</title></head><body><nav epub:type="toc"><ol>{navs}</ol></nav></body></html>'
-    )
-    with zipfile.ZipFile(out, "w") as z:
-        z.writestr("mimetype", "application/epub+zip", compress_type=zipfile.ZIP_STORED)
-        z.writestr("META-INF/container.xml", '<?xml version="1.0"?>\n<container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>', compress_type=zipfile.ZIP_DEFLATED)
-        z.writestr("OEBPS/content.opf", opf, compress_type=zipfile.ZIP_DEFLATED)
-        z.writestr("OEBPS/nav.xhtml", navx, compress_type=zipfile.ZIP_DEFLATED)
-        for fname, data in files.items():
-            z.writestr(f"OEBPS/{fname}", data, compress_type=zipfile.ZIP_DEFLATED)
+        chs.append(Chapter(c["title"], body, level=2 if (has_vol and not is_vol) else 1))
+    write_epub(out, title, chs, author=author, uid=f"shelf-txt-{title}")
 
 
 def convert(src: Path, outdir: Path) -> dict:
