@@ -431,11 +431,13 @@ book→「母版库 / 原生投递」、weread→「微信读书（内容源，�
 ## 05｜真机待办（2026-09-05 刷新）
 
 **未闭环**：
-1. **Phase E ②③④**：英文书拉丁缩进（1.2em、标题后首段不缩进）观感；同一母版落 xochitl + KOReader 并排对照；KOReader 里内联脚注〔…〕能否接受（若不能，落库时对 KOReader 另跑 Anchor 是唯一备选，但会打破"两器同字节"）。
-2. ~~appload 3.28 适配~~ **已通（2026-09-06）**：PR #59 的 qmd 等长回填进 appload.so（免 SDK）+ KOReader 入口 qmd 换 3.28 锚点，真机 qmldiff 零错误、侧栏 KOReader 项在位（系统增强白皮书 §12.1）；用户点入口起 KOReader 待确认。
-3. 3.28 字体菜单：用户在阅读器里选中书架字体后正文渲染效果确认；菜单再开时 `SHELF-FONT: visible` 差量追加是否触发（S-B）。
+1. **Phase E ②③④**（2026-09-06 用《Tell Me Your Dreams》AZW3 推进）：
+   - 洗书发现两处实现缺口并修（bookconv `wash.rs`）：① 书自带类规则 `.calibre_ {text-indent:2em}` 未统一——xochitl 不认类规则走我们的 `p{1.2em}`，KOReader 认且类规则特异性更高走 2em，**两器同字节不同缩进**；现在书 css / 内联 style 里非零 `text-indent` 一律改写成本书缩进（0 与负值保留）。② "标题后首段不缩进"只写在注释里从未实现；现在拉丁模式给 h1–h6 后第一个 `<p>` 加内联 `style="text-indent:0"`（唯一能落到单段的通道；**xochitl 认不认内联 style 属性待真机核**，不认也无害）。
+   - 这本书的限制：章名是加粗段落不是 `<h>` 标签（② 首段规则测不到）、没有脚注（④ 测不到）。产物已经 inbox 落母版库，**用户在网页投原生 + 加入 KOReader 后对照 ③**：两器首行缩进应一致 1.2em。④ 要换一本带脚注的英文书。
+2. ~~appload 3.28 适配~~ **已通（2026-09-06，用户点侧栏 KOReader 正常起）**：PR #59 的 qmd 等长回填进 appload.so（免 SDK）+ KOReader 入口 qmd 换 3.28 锚点（系统增强白皮书 §12.1）。
+3. ~~3.28 字体菜单~~ **已通**：用户在《人骨拼圖》选 KingHwaOldSong-LT 渲染正常；`SHELF-FONT: visible … count=8` 出现，S-B 差量追加成立。
 4. ~~PDF 结构化重排小瑕疵~~ **已修（2026-09-06，《财新》33 期实测）**：署名/贡献行/冒号结尾不再当标题，"{{" 垃圾剥掉；署名「文｜」/图注/原文链接各自成段带 class、不与上下段续接，导语内嵌署名切开；短、字号略大、无句末标点的行标 h3；标题按字号分三档，第二大档及以上才分章（目录 10→45→**18 条全是文章题**，节题 40 个 h3 不翻页）。"不以句末标点结尾"的正文段 15.1% → **2.7%**（剩下是真断行/表格行）。`test_reflow.py` 锁纯函数。
-5. KOReader 里旧的 282MB《镖人.epub》由用户删（母版库里的漫画 PDF 用户已删，2026-09-05 15:04 后母版库为空）。
+5. ~~KOReader 里旧的 282MB《镖人.epub》~~ 用户已删（2026-09-06）。
 
 **OTA 后固定四步**（§03v）：`xovi/rebuild_hashtable` → `xovi/start` → `SHELF_NO_BUILD=1 sh deploy.sh 10.11.99.1` → `ssh root@10.11.99.1 sh -s < packaging/chrony-cn.sh`。/home 里的（母版库、KOReader、WiFi 钩子与 `powersave 2`、休眠屏 conf 键、qmd 文件）不用动。
 

@@ -241,7 +241,7 @@ OTA 到 `IMG_VERSION=3.28.0.169`（此前 .166）后用户报 5 个功能失效�
 
 **本节 qmd 同步换锚点**：`koreader-sidebar-entry.qmd`（3.28）/ `-3.27.qmd`（旧）：`SidebarFilterItem`→`ArkControls.SidebarItem`、`title`→`text`、`active`→`highlighted`、去 `navigationHandler`、`Values`→`Common.Values`、隐藏 AppLoad 按 `c.text` 匹配、handler 全部 `{ }` 块（qmldiff 解析坑，书架白皮书 §04）。
 
-**验证**：离线 qmldiff CLI（§05 管线，`--hashtab` 用设备真表）——旧 qmd 在 3.28 树上复现同一条 unresolved 错误，新 qmd + 本节 qmd 一起 apply 全 4 文件成功；真机 `xovi/start` 后 xochitl NRestarts=0、appload/xovi/qrr 全在 maps、qmldiff 零错误、`CJ-SIDEBAR[6]: AppLoad` → hidden、`[8]: KOReader` 在位。**用户点 KOReader 起 KOReader 待确认**。
+**验证**：离线 qmldiff CLI（§05 管线，`--hashtab` 用设备真表）——旧 qmd 在 3.28 树上复现同一条 unresolved 错误，新 qmd + 本节 qmd 一起 apply 全 4 文件成功；真机 `xovi/start` 后 xochitl NRestarts=0、appload/xovi/qrr 全在 maps、qmldiff 零错误、`CJ-SIDEBAR[6]: AppLoad` → hidden、`[8]: KOReader` 在位。**用户点侧栏 KOReader 正常起 KOReader（2026-09-06 确认）**。
 
 **⚠ 运维**：这份 .so 是本地补丁版（原件在 `/home/root/xovi-disabled/pre-3.28-*/`）；`vellum upgrade appload` 会用上游 .so 盖回去，上游发 3.28 版前别升 appload。
 
