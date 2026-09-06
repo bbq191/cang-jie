@@ -64,6 +64,17 @@ impl Paths {
     pub fn data_dir(&self) -> PathBuf {
         self.data.join(APP)
     }
+    /// 别的应用（如笔记线 `notes`）在同一张 XDG 表上的三个私有目录：`$XDG_{CONFIG,DATA,STATE}_HOME/<app>`。
+    /// 注册表 / 上传分片仍在书架的运行时目录下（网关只认那一处），所以只开放这三个。
+    pub fn app_config_dir(&self, app: &str) -> PathBuf {
+        self.config.join(app)
+    }
+    pub fn app_data_dir(&self, app: &str) -> PathBuf {
+        self.data.join(app)
+    }
+    pub fn app_state_dir(&self, app: &str) -> PathBuf {
+        self.state.join(app)
+    }
     /// `$XDG_CONFIG_HOME` 本身（只读对接如 fontconfig/fonts.conf）。
     pub fn config_root(&self) -> &Path {
         &self.config
@@ -150,6 +161,8 @@ mod tests {
         assert_eq!(p.data_dir(), PathBuf::from("/h/.local/share/shelf"));
         assert_eq!(p.services_dir(), PathBuf::from("/run/user/1000/shelf/services"));
         assert_eq!(p.koreader_root(), Path::new("/opt/ko"));
+        assert_eq!(p.app_state_dir("notes"), PathBuf::from("/h/.local/state/notes"), "笔记线私有目录与书架并列");
+        assert_eq!(p.app_config_dir("notes"), PathBuf::from("/etc/x/notes"));
     }
 
     #[test]
