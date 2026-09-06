@@ -1,7 +1,7 @@
 //! 事件总线 + SSE（Server-Sent Events）流：服务在**变更发生处**发事件（上传/优化/落库/删除/轮换/inbox 追平），
 //! 网关汇聚后推给浏览器与 host CLI，网页不轮询也能即时刷新（2026-09-06 用户："不喜欢轮询，要事件通知"）。
 //! - `EventBus`：进程内广播，订阅者各持一个有界通道（满了丢事件——事件只是"该刷新了"的信号，不携带状态）；
-//! - `SseStream`：把通道包成 `Read`，交给 HTTP 层做 chunked 流式响应；20 s 无事件发一行注释心跳，
+//! - `SseStream`：把通道包成 `Read`，交给 HTTP 层（`http::respond_stream`：接管 socket、一帧一 flush，绕开 tiny_http 的 8 KB chunked 缓冲）；20 s 无事件发一行注释心跳，
 //!   浏览器 `EventSource` 断线（WiFi 掉 / 设备休眠醒来）会自动重连；
 //! - 事件格式一行 JSON：`{"area":"books","kind":"staging","at":<unix秒>}`，网关转发时补 `"svc"`。
 use crate::http::Reply;
@@ -96,7 +96,7 @@ mod tests {
         let b = bus.subscribe();
         assert_eq!(bus.subscribers(), 2);
         bus.publish("books", "staging");
-        let mut buf = [0u8; 256];
+        let mut buf = [0u8; 2048];
         let n = a.read(&mut buf).unwrap();
         let s = std::str::from_utf8(&buf[..n]).unwrap();
         assert!(s.starts_with("data: {") && s.ends_with("}\n\n") && s.contains(r#""area":"books""#) && s.contains(r#""kind":"staging""#), "{s}");

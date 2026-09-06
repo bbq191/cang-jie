@@ -2,7 +2,7 @@
 //! 路由 = (方法, 路径模式) → 处理函数；路径模式支持尾部 `/*` 前缀匹配与单段 `{param}`。
 use serde::Serialize;
 use std::collections::HashMap;
-use std::io::Read;
+use std::io::{Read, Write};
 use std::sync::Arc;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Hash)]
@@ -368,12 +368,33 @@ fn reply_to_tiny(reply: Reply) -> tiny_http::Response<Box<dyn Read + Send>> {
             headers.push(h);
         }
     }
-    match reply.stream {
-        // 流式：长度未知 → tiny_http 走 chunked；respond 在本请求线程里边读边写直到 EOF / 客户端断开
-        Some(reader) => tiny_http::Response::new(tiny_http::StatusCode(reply.status), headers, reader, None, None),
-        None => {
-            let len = reply.body.len();
-            tiny_http::Response::new(tiny_http::StatusCode(reply.status), headers, Box::new(std::io::Cursor::new(reply.body)) as Box<dyn Read + Send>, Some(len), None)
+    let len = reply.body.len();
+    tiny_http::Response::new(tiny_http::StatusCode(reply.status), headers, Box::new(std::io::Cursor::new(reply.body)) as Box<dyn Read + Send>, Some(len), None)
+}
+
+/// 流式回执（SSE）：**不能**走 `respond`——tiny_http 的 chunked 编码器（chunked_transfer::Encoder）攒满 8 KB 才发、
+/// 外面还套一层 1 KB BufWriter，小帧永远滞留（真机 curl 30 s 零字节）。改用 `Request::upgrade` 拿到裸 socket：
+/// 先发一个只有头的 200（Content-Type: text/event-stream，无长度、`Connection: upgrade`——浏览器/curl 对 200 忽略它，
+/// 按"读到连接关闭"处理），然后从 reader 读一帧写一帧、每帧 flush；客户端断开 → 写失败 → 退出，socket 随之关闭。
+fn respond_stream(req: tiny_http::Request, status: u16, content_type: &str, extra: Vec<(String, String)>, mut reader: Box<dyn Read + Send>) {
+    let mut resp = tiny_http::Response::empty(tiny_http::StatusCode(status));
+    if let Ok(h) = tiny_http::Header::from_bytes(&b"Content-Type"[..], content_type.as_bytes()) {
+        resp = resp.with_header(h);
+    }
+    for (k, v) in extra {
+        if let Ok(h) = tiny_http::Header::from_bytes(k.as_bytes(), v.as_bytes()) {
+            resp = resp.with_header(h);
+        }
+    }
+    let mut sock = req.upgrade("sse", resp);
+    let mut buf = [0u8; 4096];
+    loop {
+        let n = match reader.read(&mut buf) {
+            Ok(0) | Err(_) => break,
+            Ok(n) => n,
+        };
+        if sock.write_all(&buf[..n]).is_err() || sock.flush().is_err() {
+            break;
         }
     }
 }
@@ -417,11 +438,15 @@ pub fn serve_with(bind: &str, router: Router, opts: ServeOpts) -> Result<(), Str
                 }
             }
             let query = parse_query(query);
-            let reply = {
+            let mut reply = {
                 let mut body = req.as_reader();
                 let mut r = Request { method, path, query, params: HashMap::new(), content_type, content_length, headers, body: &mut body };
                 router.dispatch(&mut r)
             };
+            if let Some(reader) = reply.stream.take() {
+                respond_stream(req, reply.status, &reply.content_type, reply.headers, reader);
+                return;
+            }
             let _ = req.respond(reply_to_tiny(reply));
         });
     }
