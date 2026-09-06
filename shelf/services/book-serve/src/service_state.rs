@@ -2,6 +2,7 @@
 use crate::config::BookConfig;
 use crate::spool::Spool;
 use crate::staging::{self, Staging};
+use crate::trash::TrashQueue;
 use serde::Serialize;
 use shelf_core::events::EventBus;
 use shelf_core::formats::{self, BOOK_EXTS};
@@ -16,6 +17,8 @@ pub struct State {
     pub xochitl: Arc<Xochitl>,
     /// 事件总线：母版库/inbox 每次变更发一条，网关汇聚推给网页（零轮询）。
     pub bus: Arc<EventBus>,
+    /// 原生书库「移进回收站」队列（QML 代理 shelf-trash-agent.qmd 拉取执行）。
+    pub trash: TrashQueue,
 }
 
 /// inbox 追平一项的结果（日志 / `POST /inbox/retry` 回执）。
@@ -32,7 +35,8 @@ impl State {
         let xochitl = Arc::new(Xochitl::new(&cfg.xochitl_host, &paths.xochitl_dir(), cfg.upload_timeout_secs));
         let spool = Spool::new(paths.state_dir().join("books"));
         let staging = Staging::new(paths.staging_dir(), xochitl.clone(), cfg.library_folder.clone(), cfg.native_upload_limit_bytes());
-        State { cfg, spool, staging, xochitl, bus: Arc::new(EventBus::new()) }
+        let trash = TrashQueue::new(&paths.state_dir().join("books"), &paths.xochitl_dir());
+        State { cfg, spool, staging, xochitl, bus: Arc::new(EventBus::new()), trash }
     }
 
     /// 投原生后起一条自检线程（见 `render_check`）；线程只拿母版库/总线/书库目录的句柄，不持 State。

@@ -122,6 +122,9 @@ def test_doctor_render_end_to_end_with_stubbed_measure(render_gateway, capsys, m
     assert measured["bytes"].startswith(b"%PDF")
     paths = [p for p, _, _ in RenderGateway.received]
     assert paths[0] == "/api/books/staging" and paths[1] == "/api/books/staging/deliver" and paths[-1] == "/api/books/staging/delete"
+    assert "/api/books/trash/add" in paths and "排队进原生回收站" in out
+    trash = json.loads(RenderGateway.received[paths.index("/api/books/trash/add")][2])
+    assert trash["uuid"].startswith("1234abcd") and trash["name"].startswith("书架自检探针")
     deliver = json.loads(RenderGateway.received[1][2])
     assert deliver["folder"] == doctor.RENDER_FOLDER and deliver["keep"] is True and deliver["name"] == RenderGateway.landed
     assert urllib.parse.quote("书架自检探针").encode() in RenderGateway.received[0][2], "探针文件名 UTF-8 编码进 multipart"

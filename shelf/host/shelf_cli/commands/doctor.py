@@ -105,11 +105,20 @@ def run_render(args, ctx) -> int:
     print(f"投原生        : {r.get('message', r)}")
     st = wait_render(t, name)
     status = st.get("status")
+    trashed = False
     print(f"渲染自检      : {status} pages={st.get('pages')} expected={st.get('expected')} uuid={st.get('uuid') or '-'}")
     rc = 1
     if status in ("ok", "warn") and st.get("uuid"):
         pdf = work / "render.pdf"
         pdf.write_bytes(t.get_bytes(f"/api/books/staging/render/{st['uuid']}"))
+        if not args.keep:
+            # 探针不在原生书库里累积：排进回收站队列，Sidebar 代理在书库视图下次有动静（本次 /upload 的 4s 防抖内即可）移进回收站
+            try:
+                t.post_json("/api/books/trash/add", {"uuid": st["uuid"], "name": title})
+                trashed = True
+            except Exception as e:  # noqa: BLE001
+                trashed = False
+                print(f"回收站        : 排队失败（{e}），探针留在原生书库「{RENDER_FOLDER}」")
         res = cb.render_measure(pdf)
         for row in res.get("rows", []):
             print(f"  {row['sentinel']:<9} p{row['page']:<3} 首行 {row['indent_pt']:>7} pt  字号 {row['size_pt']:>5} pt  = {row['em']:>6} em")
@@ -127,5 +136,8 @@ def run_render(args, ctx) -> int:
     if not args.keep:
         t.post_json("/api/books/staging/delete", {"name": name})
         shutil.rmtree(work, ignore_errors=True)
-    print(f"提示          : 探针书留在原生书库「{RENDER_FOLDER}」文件夹（不存在则在根目录），读完可在设备上删")
+        if trashed:
+            print("提示          : 探针已从母版库删除并排队进原生回收站（设备回到书库视图即执行；回收站里可恢复）")
+    else:
+        print(f"提示          : --keep：探针留在母版库与原生书库「{RENDER_FOLDER}」文件夹")
     return rc
