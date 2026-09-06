@@ -1,0 +1,263 @@
+//! 一轮转写的编排（纯逻辑，依赖全是 trait，可用内存桩单测）：
+//! 列书 → 每本取条目 → 挑 `needs_transcribe`（或指定的一条强制）→ 取裁图 → 视觉模型 → 草稿写回（行首标记兜底判样式）。
+//! 失败记在 `Failures`（同指纹超过 `max_attempts` 不再自动重试，网页可清）；每轮最多 `max_per_run` 条。
+use crate::backend::Vision;
+use crate::config::TranscribeConfig;
+use crate::ink::EntryStore;
+use crate::ledger::{Ledger, RunReport};
+use notecore::marker::split_leading_marker;
+use notecore::model::{Draft, Style};
+use serde::Serialize;
+use std::collections::HashMap;
+use std::sync::Mutex;
+
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct Failure {
+    pub book: String,
+    pub id: String,
+    pub hash: String,
+    pub attempts: u32,
+    pub error: String,
+    pub at: u64,
+}
+
+#[derive(Default)]
+pub struct Failures(Mutex<HashMap<String, Failure>>);
+
+impl Failures {
+    fn key(uuid: &str, id: &str) -> String {
+        format!("{uuid}/{id}")
+    }
+    /// 同指纹已达上限 → 不再自动试。
+    pub fn exhausted(&self, uuid: &str, id: &str, hash: &str, max: u32) -> bool {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).get(&Self::key(uuid, id)).map(|f| f.hash == hash && f.attempts >= max).unwrap_or(false)
+    }
+    pub fn note(&self, uuid: &str, id: &str, hash: &str, err: &str, at: u64) {
+        let mut m = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        let f = m.entry(Self::key(uuid, id)).or_insert_with(|| Failure { book: uuid.into(), id: id.into(), hash: hash.into(), attempts: 0, error: String::new(), at });
+        if f.hash != hash {
+            f.hash = hash.into();
+            f.attempts = 0;
+        }
+        f.attempts += 1;
+        f.error = err.chars().take(200).collect();
+        f.at = at;
+    }
+    pub fn clear_one(&self, uuid: &str, id: &str) {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).remove(&Self::key(uuid, id));
+    }
+    pub fn clear(&self) {
+        self.0.lock().unwrap_or_else(|e| e.into_inner()).clear();
+    }
+    pub fn list(&self) -> Vec<Failure> {
+        let mut v: Vec<Failure> = self.0.lock().unwrap_or_else(|e| e.into_inner()).values().cloned().collect();
+        v.sort_by(|a, b| b.at.cmp(&a.at));
+        v
+    }
+}
+
+/// 强制转写指定一条（忽略 needs_transcribe 与失败上限）。
+pub struct Target<'a> {
+    pub uuid: &'a str,
+    pub id: &'a str,
+}
+
+pub struct Ctx<'a> {
+    pub store: &'a dyn EntryStore,
+    pub vision: &'a dyn Vision,
+    pub cfg: &'a TranscribeConfig,
+    pub ledger: &'a Ledger,
+    pub failures: &'a Failures,
+    pub now: u64,
+}
+
+/// 转写一条并写回；返回草稿文本。
+fn transcribe_entry(c: &Ctx<'_>, uuid: &str, e: &notecore::model::Entry) -> Result<String, String> {
+    let ink = e.ink.as_ref().ok_or("没有手写")?;
+    if ink.crop.is_empty() {
+        return Err("没有裁图".into());
+    }
+    let png = c.store.crop(uuid, &ink.crop)?;
+    let prompt = crate::prompt::build(&c.cfg.prompt, e.quote.as_ref().map(|q| q.text.as_str()));
+    let t = c.vision.transcribe(&png, &prompt)?;
+    // 行首标记兜底：几何没认出来（仍是正文）时按转写结果认，并剥掉标记
+    let (style, text) = if e.style == Style::Body { split_leading_marker(&t.text) } else { (None, t.text.clone()) };
+    let draft = Draft { text: text.clone(), backend: c.vision.name().to_string(), at: c.now, hash: ink.hash.clone() };
+    c.store.post_draft(uuid, &e.id, &draft, style)?;
+    c.ledger.record_ok(t.prompt_tokens, t.completion_tokens, c.now);
+    Ok(text)
+}
+
+/// 跑一轮。`only` 给定 → 只做那一条（强制）。
+pub fn run_once(c: &Ctx<'_>, only: Option<Target<'_>>) -> RunReport {
+    let mut r = RunReport { at: c.now, ..Default::default() };
+    let books = match c.store.list_books() {
+        Ok(b) => b,
+        Err(e) => {
+            r.note = e;
+            return r;
+        }
+    };
+    'books: for b in books {
+        if let Some(t) = &only {
+            if t.uuid != b.uuid {
+                continue;
+            }
+        } else if b.pending == 0 {
+            continue;
+        }
+        let book = match c.store.book(&b.uuid) {
+            Ok(x) => x,
+            Err(e) => {
+                r.note = e;
+                continue;
+            }
+        };
+        for e in &book.entries {
+            let forced = only.as_ref().map(|t| t.id == e.id).unwrap_or(false);
+            if only.is_some() && !forced {
+                continue;
+            }
+            if !forced && !e.needs_transcribe() {
+                continue;
+            }
+            r.scanned += 1;
+            let hash = e.ink.as_ref().map(|i| i.hash.as_str()).unwrap_or("");
+            if !forced && c.failures.exhausted(&b.uuid, &e.id, hash, c.cfg.max_attempts) {
+                r.skipped += 1;
+                continue;
+            }
+            if r.done + r.failed >= c.cfg.max_per_run {
+                r.left += 1;
+                continue;
+            }
+            match transcribe_entry(c, &b.uuid, e) {
+                Ok(_) => {
+                    r.done += 1;
+                    c.failures.clear_one(&b.uuid, &e.id);
+                }
+                Err(err) => {
+                    r.failed += 1;
+                    c.ledger.record_fail(&err, c.now);
+                    c.failures.note(&b.uuid, &e.id, hash, &err, c.now);
+                    if forced {
+                        r.note = err;
+                    }
+                    // key 错 / 连不上 → 这一轮别再一条条撞
+                    if r.failed >= 3 && r.done == 0 {
+                        r.note = "连续失败，本轮停止（看 lastError）".into();
+                        break 'books;
+                    }
+                }
+            }
+            if c.cfg.pause_ms > 0 && r.done + r.failed < c.cfg.max_per_run {
+                std::thread::sleep(std::time::Duration::from_millis(c.cfg.pause_ms));
+            }
+        }
+    }
+    c.ledger.record_run(r.clone());
+    r
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::backend::Fixed;
+    use crate::ink::BookBrief;
+    use notecore::model::{Book, Entry, Ink, Quote, Status};
+
+    struct Mem {
+        book: Mutex<Book>,
+        posted: Mutex<Vec<(String, Draft, Option<Style>)>>,
+    }
+    impl EntryStore for Mem {
+        fn list_books(&self) -> Result<Vec<BookBrief>, String> {
+            let b = self.book.lock().unwrap();
+            Ok(vec![BookBrief { uuid: b.uuid.clone(), pending: b.entries.iter().filter(|e| e.needs_transcribe()).count() }])
+        }
+        fn book(&self, _uuid: &str) -> Result<Book, String> {
+            Ok(self.book.lock().unwrap().clone())
+        }
+        fn crop(&self, _uuid: &str, file: &str) -> Result<Vec<u8>, String> {
+            if file == "missing.png" { Err("没有这张裁图".into()) } else { Ok(b"\x89PNG".to_vec()) }
+        }
+        fn post_draft(&self, _uuid: &str, id: &str, draft: &Draft, style: Option<Style>) -> Result<(), String> {
+            self.posted.lock().unwrap().push((id.into(), draft.clone(), style));
+            let mut b = self.book.lock().unwrap();
+            if let Some(e) = b.entries.iter_mut().find(|e| e.id == id) {
+                e.drafts.insert(0, draft.clone());
+                e.status = Status::Draft;
+                if let Some(s) = style { e.style = s; }
+            }
+            Ok(())
+        }
+    }
+    fn entry(id: &str, hash: &str, crop: &str, quote: Option<&str>) -> Entry {
+        Entry { id: id.into(), page: "p".into(), page_index: 0, chapter: None, chapter_title: String::new(), subhead: None, quote: quote.map(|q| Quote { text: q.into(), color: "y".into(), rects: vec![] }), ink: Some(Ink { strokes: vec![], bbox: (0.0, 0.0, 1.0, 1.0), hash: hash.into(), crop: crop.into() }), drafts: vec![], text: None, style: Style::Body, section: None, answer: None, status: Status::Pending, created: 0, updated: 0 }
+    }
+    fn mem(entries: Vec<Entry>) -> Mem {
+        Mem { book: Mutex::new(Book { uuid: "u".into(), title: "t".into(), entries, ..Default::default() }), posted: Mutex::new(vec![]) }
+    }
+    fn cfg() -> TranscribeConfig {
+        TranscribeConfig { pause_ms: 0, max_per_run: 2, max_attempts: 2, ..Default::default() }
+    }
+
+    #[test]
+    fn transcribes_pending_writes_draft_and_style() {
+        let t = tempfile::tempdir().unwrap();
+        let ledger = Ledger::open(&t.path().join("l.json"));
+        let store = mem(vec![entry("a", "h1", "a.png", Some("梭罗")), entry("b", "h2", "b.png", None), entry("c", "h3", "c.png", None)]);
+        let vision = Fixed("1. 背诵".into());
+        let f = Failures::default();
+        let c = Ctx { store: &store, vision: &vision, cfg: &cfg(), ledger: &ledger, failures: &f, now: 9 };
+        let r = run_once(&c, None);
+        assert_eq!((r.scanned, r.done, r.failed, r.left), (3, 2, 0, 1), "max_per_run=2 剩 1: {r:?}");
+        let posted = store.posted.lock().unwrap().clone();
+        assert_eq!(posted[0].1, Draft { text: "背诵".into(), backend: "fixed".into(), at: 9, hash: "h1".into() });
+        assert_eq!(posted[0].2, Some(Style::Numbered), "行首 1. → 有序，且标记剥掉");
+        assert_eq!(ledger.snapshot().ok, 2);
+        // 第二轮：只剩 c；a/b 已有同指纹草稿不重做
+        let r = run_once(&c, None);
+        assert_eq!((r.scanned, r.done, r.left), (1, 1, 0));
+        let r = run_once(&c, None);
+        assert_eq!(r.scanned, 0, "全部有草稿后零调用");
+    }
+
+    #[test]
+    fn failures_are_bounded_and_forced_retry_bypasses() {
+        let t = tempfile::tempdir().unwrap();
+        let ledger = Ledger::open(&t.path().join("l.json"));
+        let store = mem(vec![entry("a", "h1", "missing.png", None)]);
+        let vision = Fixed("x".into());
+        let f = Failures::default();
+        let c = Ctx { store: &store, vision: &vision, cfg: &cfg(), ledger: &ledger, failures: &f, now: 1 };
+        assert_eq!(run_once(&c, None).failed, 1);
+        assert_eq!(run_once(&c, None).failed, 1);
+        let r = run_once(&c, None);
+        assert_eq!((r.failed, r.skipped), (0, 1), "两次后不再自动重试");
+        assert_eq!(f.list()[0].attempts, 2);
+        let r = run_once(&c, Some(Target { uuid: "u", id: "a" }));
+        assert_eq!(r.failed, 1, "强制仍会试（并报错）");
+        assert!(r.note.contains("裁图"));
+        // 指纹变了 → 计数归零重试
+        store.book.lock().unwrap().entries[0].ink.as_mut().unwrap().hash = "h9".into();
+        assert_eq!(run_once(&c, None).failed, 1);
+        f.clear();
+        assert!(f.list().is_empty());
+    }
+
+    #[test]
+    fn stops_after_consecutive_failures() {
+        let t = tempfile::tempdir().unwrap();
+        let ledger = Ledger::open(&t.path().join("l.json"));
+        let store = mem((0..6).map(|i| entry(&format!("e{i}"), "h", "x.png", None)).collect());
+        let vision = Fixed("!fail".into());
+        let f = Failures::default();
+        let big = TranscribeConfig { max_per_run: 50, ..cfg() };
+        let c = Ctx { store: &store, vision: &vision, cfg: &big, ledger: &ledger, failures: &f, now: 1 };
+        let r = run_once(&c, None);
+        assert_eq!(r.failed, 3, "连续 3 次失败即停: {r:?}");
+        assert!(r.note.contains("停止"));
+        assert_eq!(ledger.snapshot().last_error, "模拟失败");
+    }
+}

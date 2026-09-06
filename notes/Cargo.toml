@@ -8,6 +8,7 @@ members = [
     "crates/epubmap",
     "crates/notecore",
     "services/ink-serve",
+    "services/transcribe-serve",
     "services/note-serve",
 ]
 

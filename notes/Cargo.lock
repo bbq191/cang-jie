@@ -1207,6 +1207,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "transcribe-serve"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "notecore",
+ "serde",
+ "serde_json",
+ "shelf-core",
+ "tempfile",
+ "ureq",
+]
+
+[[package]]
 name = "typenum"
 version = "1.20.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
