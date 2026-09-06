@@ -242,6 +242,14 @@ impl Staging {
         write_atomic(&delivered_path(&p), &s).map_err(|e| format!("写落库记录失败: {e}"))
     }
 
+    /// xochitl 的渲染缓存 `<uuid>.pdf`（`shelf doctor --render` 取回量首行缩进）。只认 uuid 形状，只读。
+    pub fn render_pdf(&self, uuid: &str) -> Result<Vec<u8>, String> {
+        if uuid.len() != 36 || !uuid.chars().all(|c| c.is_ascii_hexdigit() || c == '-') {
+            return Err("uuid 形状不对".into());
+        }
+        std::fs::read(self.xochitl.library_dir().join(format!("{uuid}.pdf"))).map_err(|_| "书库里没有这份渲染缓存（xochitl 还没渲染，或书已删）".to_string())
+    }
+
     // ───────────── 查 / 删 ─────────────
 
     pub fn remove(&self, name: &str) -> Result<(), String> {

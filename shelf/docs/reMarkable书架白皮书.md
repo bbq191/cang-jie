@@ -464,6 +464,10 @@ book→「母版库 / 原生投递」、weread→「微信读书（内容源，�
 
 **真机**：Probe Good（4 章随机词）ok 25/29；Probe Bad（h1 双 id ×3 章）warn 10/29；事件四条当秒到达，边车落盘。三本探针留在原生书库根目录（用户在设备上删）。
 
+**排版回归探针 `shelf doctor --render`（同日）**：把 §03y 八轮手工诊断固化成一条命令。host `calibre/render_probe.py`（stdlib）造探针 EPUB——第一章拉丁：h1 后首段 `div.cj-flush`（PFLUSH1）、两个续段 `<p>`（PINDENT1/2）、`* * *` 场景切换后首段（PFLUSH2）、续段（PINDENT3）；第二章中文同规则（PFLUSH3/PINDENT4）；自带 `cangjie-wash.css`，字面与 `wash_css` 拉丁配方一致（配方改了探针要跟，测试钉住字面）。流程：`POST /api/books/staging` 入库 → `deliver {folder:"书架自检"}` → 读 `delivered.render`（pending 才挂事件流等 `books/render`）→ 新路由 `GET /api/books/staging/render/{uuid}` 取回渲染缓存 → `calibre/render_measure.py`（pymupdf）按哨兵量"首行 x − 下一视觉行 x"→ flush |em|<0.15、indent 1.2±0.2 em → PASS/FAIL；量完从母版库删探针（探针书留在原生书库「书架自检」文件夹）。
+- 真机坑：pymupdf 把**同一视觉行拆成多段**——拉丁哨兵（EBGaramond）与 CJK 回退字体（KingHwaOldSongGJ）各成一 "line"，y0 差 2 pt；不合并就量出 −62 pt。`visual_lines` 先按 y（<0.6 字号）合并碎片、x 取最小，再量。
+- 真机数字（3.28.0.172，缺省字号 12.05 pt）：PFLUSH1/2/3 = 0.0 pt；PINDENT1–4 = **14.27 pt = 1.184 em**（与 §03y 的 14.2 pt / 1.17 em 一致）；7/7 PASS。CJK 段走 KingHwa 回退、缩进同样由 css 给出（不靠全角空格）。
+
 ## 04｜踩坑
 
 - **xochitl CSS 引擎七条实测规则见 §03y**（尾分号 / 0 当没设 / 类规则认且压元素 / 同类先出现者胜 / 不认内联 style / text-indent 继承 / 混类选择器不废表）。改排版规则前先用诊断 EPUB 量渲染缓存，别靠肉眼。

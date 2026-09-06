@@ -2,7 +2,7 @@
 //! `GET /status` · `GET /inbox` · `POST /inbox/retry {name}` · `POST /inbox/delete {name}`
 //! 母版库：`GET /staging` → `{items, freeBytes}` · `POST /staging`（multipart，原样入库）· `POST /staging/optimize {name, mode}`
 //! · `POST /staging/deliver {name, folder?, keep?}` · `POST /staging/mark {name, target}` · `POST /staging/fetch-article {url}`
-//! · `POST /staging/delete {name}` · `GET /events`（SSE：母版库/inbox 变更即推，网页零轮询）。
+//! · `POST /staging/delete {name}` · `GET /staging/render/{uuid}`（xochitl 渲染缓存 PDF，doctor --render 用）· `GET /events`（SSE：母版库/inbox 变更即推，网页零轮询）。
 //! 2026-09-05 起规则统一"所有书只落母版库"：旧 `POST /?target=` 直投路已删（`/staging*` 是唯一入口）。
 use crate::service_state::State;
 use crate::staging::{OptimizeMode, Reader, StagingStore};
@@ -56,6 +56,10 @@ pub fn router(st: Arc<State>) -> Router {
             let (landed, title) = s.staging.fetch_article(r.json()?.str("url")?).map_err(ApiError::bad)?;
             s.bus.publish("books", "staging");
             Ok(Reply::ok(&serde_json::json!({"ok": true, "name": landed, "title": title, "message": format!("已抓取《{title}》入母版库")})))
+        }))
+        .get("/staging/render/{uuid}", bind(&st, |s, r| {
+            let pdf = s.staging.render_pdf(r.param("uuid")).map_err(ApiError::not_found)?;
+            Ok(Reply::bytes("application/pdf", pdf))
         }))
         .post("/staging/delete", bind(&st, |s, r| {
             s.staging.remove(r.json()?.str("name")?).map_err(ApiError::bad)?;

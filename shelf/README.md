@@ -53,7 +53,7 @@ host `shelf push` 是唯一能"入库时顺带优化"的源（Calibre 深洗 / �
 
 | 服务 | 路由 |
 |---|---|
-| books | `GET /events`（SSE） · `GET /status` · `GET /inbox` · `POST /inbox/{retry,delete}` · `GET /staging` → `{items, freeBytes}`（条目 `delivered.render`＝投原生后的渲染自检 `{uuid,pages,expected,status}`）· `POST /staging`（multipart 原样入库）· `POST /staging/optimize {name, mode}` · `POST /staging/deliver {name, folder?, keep?}`（EPUB 投完起线程等 xochitl 渲染、核对页数，结果推 `books/render` 事件）· `POST /staging/mark {name, target}` · `POST /staging/fetch-article {url}` · `POST /staging/delete {name}` |
+| books | `GET /events`（SSE） · `GET /status` · `GET /inbox` · `POST /inbox/{retry,delete}` · `GET /staging` → `{items, freeBytes}`（条目 `delivered.render`＝投原生后的渲染自检 `{uuid,pages,expected,status}`）· `POST /staging`（multipart 原样入库）· `POST /staging/optimize {name, mode}` · `POST /staging/deliver {name, folder?, keep?}`（EPUB 投完起线程等 xochitl 渲染、核对页数，结果推 `books/render` 事件）· `POST /staging/mark {name, target}` · `POST /staging/fetch-article {url}` · `POST /staging/delete {name}` · `GET /staging/render/{uuid}`（xochitl 渲染缓存 PDF，`doctor --render` 取回量测） |
 | koreader | `GET /status` · `GET /books[?folder=]` · `POST /books/adopt {name, folder}`（从母版库落书）· `GET|POST /fonts` · `DELETE /fonts/{file}` · `GET|POST /dicts[?name=]` · `GET|POST /config/{settings\|defaults\|gestures}[?dry_run=1]` |
 | fonts | `GET /` · `POST /` · `DELETE /{family}` · `PUT /config {emboldenCjkFallback}` · `GET /status` |
 | wallpapers | `GET /` · `POST /[?activate=1]` · `PUT /current {name}` · `PUT /mode {mode}` · `DELETE /{name}` · `GET /{name}` · `GET /status` → `{native:{enabled,path,restartPending}}` |
@@ -158,6 +158,7 @@ shelf koreader pull | diff | sync [-n] [--fonts] [--dicts]   # 配置即代码�
 shelf koreader font add 字体.ttf | ls | rm <file>         # 只装进 KOReader
 shelf inbox [--retry 名 | --delete 名]                    # scp 追平队列里失败的书
 shelf events [--once] [--area books|koreader|fonts|wallpapers|manage] [--raw]   # 订阅设备事件流（SSE），有变更就打印
+shelf doctor --render [--keep]     # 真机排版回归探针：投探针书→等渲染自检→取回 xochitl 渲染缓存→pymupdf 量顶格/首行缩进→PASS/FAIL（固件 OTA 后跑一次）
 shelf passwd [--new …]
 ```
 配置 `$XDG_CONFIG_HOME/shelf/config.toml`（host/port/scheme/password/verify_tls/split_pdf_mb）。
