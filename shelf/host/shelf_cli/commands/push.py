@@ -33,7 +33,7 @@ def add_args(p):
     p.add_argument("--keep-spacing", action="store_true", help="洗书时保留原书段间距（诗集 / 剧本；对应网页「清洗但保留段距」档位）")
     p.add_argument("--no-reflow", action="store_true", help="PDF 不重排（原样传）")
     g = p.add_mutually_exclusive_group()
-    g.add_argument("--comic", action="store_true", help="强制按漫画处理（出 CBZ + PDF）")
+    g.add_argument("--comic", action="store_true", help="强制按漫画处理（出 CBZ，只加入 KOReader；漫画不投原生）")
     g.add_argument("--no-comic", action="store_true", help="不判漫画，按文字书洗")
     p.add_argument("--no-split", action="store_true", help="大 PDF 不分卷")
     p.add_argument("--require-toc", action="store_true", help="洗书体检要求有目录")
