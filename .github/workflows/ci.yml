@@ -41,6 +41,8 @@ jobs:
       # `make -C chinese-ime/pinyin-engine/c test diff-check`（有本地词典）跑，见 README。
       - name: pytest（阅读 + PKM 语义原型，自足 fixtures）
         run: uv run pytest reading/tests knowledge/pkm-semantic/proto shelf/host/tests -q
+      - name: 书架网关内嵌 JS 语法检查（ui/app.js 是真文件，编译期 include_str! 进二进制）
+        run: node --check shelf/services/shelf-gateway/ui/app.js
 
   # ── 设备端 Rust crate 的 host 测试（device-core / weread-device / pkm-device + 书架 workspace）──
   rust:
