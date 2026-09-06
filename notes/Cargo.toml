@@ -6,6 +6,7 @@ resolver = "2"
 members = [
     "crates/rmv6",
     "crates/epubmap",
+    "crates/notecore",
 ]
 
 [workspace.package]
