@@ -7,6 +7,8 @@ cd "$(dirname "$0")"
 
 TARGET=aarch64-unknown-linux-musl
 BINS="shelf-gateway book-serve koreader-serve font-serve wallpaper-serve"
+# 笔记线（../notes，独立 workspace）挂在同一网关下，随书架一起编/装（目录不存在则跳过）。
+NOTES_BINS="ink-serve"
 
 echo "== host 构建 + 测试 =="
 cargo build --release --workspace
@@ -14,10 +16,18 @@ cargo test --workspace --quiet
 
 echo "== 交叉编译 $TARGET（全静态）=="
 cargo build --release --workspace --target "$TARGET"
+if [ -f ../notes/Cargo.toml ]; then
+    echo "== 笔记线 notes/：host 测试 + 交叉编译 =="
+    (cd ../notes && cargo test --workspace --quiet && cargo build --release --workspace --target "$TARGET")
+fi
 
 echo
 echo "aarch64 全静态产物："
 for b in $BINS; do
     f="target/$TARGET/release/$b"
+    [ -f "$f" ] && echo "  $f  $(wc -c <"$f")B  $(file "$f" | grep -o 'statically linked' || echo dynamic)"
+done
+for b in $NOTES_BINS; do
+    f="../notes/target/$TARGET/release/$b"
     [ -f "$f" ] && echo "  $f  $(wc -c <"$f")B  $(file "$f" | grep -o 'statically linked' || echo dynamic)"
 done

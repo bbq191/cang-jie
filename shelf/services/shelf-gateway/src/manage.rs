@@ -27,6 +27,8 @@ pub const MODULES: &[Module] = &[
     Module { seg: "fonts", service: "font-serve", only: "font", label: "xochitl 字体", installable: true },
     Module { seg: "koreader", service: "koreader-serve", only: "koreader", label: "KOReader", installable: true },
     Module { seg: "wallpapers", service: "wallpaper-serve", only: "wallpaper", label: "壁纸", installable: true },
+    // 笔记线（notes/）：矿 / 转写 / 脑 / 本，挂同一网关；网页只有 note-serve 注册「笔记」tab，前端组合四个 seg。
+    Module { seg: "ink", service: "ink-serve", only: "ink", label: "笔记·矿（条目库）", installable: true },
 ];
 
 pub fn by_seg(seg: &str) -> Option<&'static Module> {

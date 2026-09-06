@@ -8,12 +8,17 @@ cd "$(dirname "$0")"
 HOST="${1:-10.11.99.1}"; [ $# -gt 0 ] && shift
 TARGET=aarch64-unknown-linux-musl
 BINS="shelf-gateway book-serve koreader-serve font-serve wallpaper-serve"
+NOTES_BINS="ink-serve"   # 笔记线（../notes）二进制与单元一并打进载荷
 
 [ "${SHELF_NO_BUILD:-0}" = "1" ] || sh ./build.sh
 STAGE="$(mktemp -d)"; trap 'rm -rf "$STAGE"' EXIT
 mkdir -p "$STAGE/shelf/bin" "$STAGE/shelf/systemd" "$STAGE/shelf/lo-alias" "$STAGE/shelf/xovi"
 for b in $BINS; do cp "target/$TARGET/release/$b" "$STAGE/shelf/bin/"; done
 cp systemd/* "$STAGE/shelf/systemd/"
+for b in $NOTES_BINS; do
+    [ -f "../notes/target/$TARGET/release/$b" ] && cp "../notes/target/$TARGET/release/$b" "$STAGE/shelf/bin/"
+done
+[ -d ../notes/systemd ] && cp ../notes/systemd/*.service "$STAGE/shelf/systemd/"
 cp ../chinese-ime/langhook/deploy/cangjie-lo-alias.sh "$STAGE/shelf/lo-alias/"
 cp install.sh uninstall.sh "$STAGE/shelf/"
 cp xovi/*.qmd "$STAGE/shelf/xovi/"

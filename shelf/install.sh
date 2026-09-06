@@ -9,7 +9,8 @@
 #   · systemd：shelf.target + 各服务单元 → /usr/lib/systemd/system（rootfs，普通重启不丢；OTA 冲掉后重跑本脚本）
 # 写 /usr 前实检 dm-verity，激活即跳过（ 红线）；绝不给 xochitl 加依赖。
 #
-# 用法：./install.sh [--only gateway,book,koreader,font,wallpaper] [--no-systemd] [--src DIR] [--password PW]
+# 用法：./install.sh [--only gateway,book,koreader,font,wallpaper,ink] [--no-systemd] [--src DIR] [--password PW]
+#   笔记线服务（ink…）与书架同一载荷、同一 shelf.target，令牌同规则 <令牌>-serve。
 #   --only        只装/更新列出的服务（网关总会装）；缺省全装
 #   --password    直接设网关密码（缺省首次默认 shelf、网页登录后强制改；之后可 shelf-gateway passwd <新密码>）
 #   --no-systemd  只落二进制与目录，不碰 /usr（重启后需手动 systemctl start）
@@ -51,7 +52,7 @@ XDG_STATE_HOME="${XDG_STATE_HOME:-$HOME_DIR/.local/state}"
 SYSD=/usr/lib/systemd/system
 BK="$HOME_DIR/cangjie-backups/shelf-$(date +%Y%m%d-%H%M%S)"
 
-ALL="gateway book koreader font wallpaper"
+ALL="gateway book koreader font wallpaper ink"
 [ -n "$ONLY" ] && SEL="gateway $(echo "$ONLY" | tr ',' ' ' | sed 's/\bgateway\b//g')" || SEL="$ALL"
 svc_of() { case "$1" in gateway) echo shelf-gateway ;; *) echo "$1-serve" ;; esac; }
 
