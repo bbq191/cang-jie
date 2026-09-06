@@ -493,7 +493,7 @@ book→「母版库 / 原生投递」、weread→「微信读书（内容源，�
 ## 05｜真机待办（2026-09-05 刷新）
 
 **未闭环**：
-0. **阅读线六项（2026-09-06 下午，§03aa）**：① 渲染自检 ✓（网页徽章「渲染 404 页」用户确认）② `doctor --render` 探针 ✓（host CLI 端到端还需用户用网关密码跑一次 `shelf --host <ip> doctor --render`）③ `push --wait` ✓（睡着→点亮→续传时序由日常使用验）④ TXT 切章 ✓ ⑥ `push --eink-gray` ✓（KOReader 翻页闪烁对照待用户目视；默认开不开由用户定）⑤ 脚注见下条 ④。
+0. **阅读线六项（2026-09-06 下午，§03aa）**：① 渲染自检 ✓（网页徽章「渲染 404 页」用户确认）② `doctor --render` 探针 ✓（用户用网关密码跑 `shelf --host <ip> doctor --render` **PASS**，CLI 端到端闭环）③ `push --wait` ✓（睡着→点亮→续传时序由日常使用验）④ TXT 切章 ✓ ⑥ `push --eink-gray` ✓（KOReader 翻页闪烁对照待用户目视；默认开不开由用户定）⑤ 脚注见下条 ④。
 1. ~~**Phase E ②③④**~~ **全部闭环（2026-09-06，④ 用 Gulliver 收口）**（用《Tell Me Your Dreams》AZW3 推进）：
    - 洗书发现两处实现缺口并修（bookconv `wash.rs`）：① 书自带类规则 `.calibre_ {text-indent:2em}` 未统一——xochitl 不认类规则走我们的 `p{1.2em}`，KOReader 认且类规则特异性更高走 2em，**两器同字节不同缩进**；现在书 css / 内联 style 里非零 `text-indent` 一律改写成本书缩进（0 与负值保留）。② "标题后首段不缩进"只写在注释里从未实现；现在拉丁模式给 h1–h6 后第一个 `<p>` 加内联 `style="text-indent:0"`（唯一能落到单段的通道；**xochitl 认不认内联 style 属性待真机核**，不认也无害）。
    - **③ 用户对照通过**：两器翻到同一页首行缩进一致。**量化**（xochitl 渲染缓存 `<uuid>.pdf` 用 pymupdf 量首行 x 偏移）：英文书 KingHwa 12.1pt 下缩进 14.2pt = **1.17em**（=我们的 `p{1.2em}`，em 制、随字号缩放、不随字体家族变）。同法量《人骨拼圖》：那本是 2017 年旧 EPUB 直传、**没洗过**（无 cangjie-wash.css、书 css 无 text-indent、正文无全角空格），xochitl 渲染下**首行零缩进**。
