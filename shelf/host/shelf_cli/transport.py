@@ -63,6 +63,21 @@ class HttpTransport:
     def get(self, path: str, query: dict | None = None) -> dict:
         return self._do("GET", path, query)
 
+    def get_bytes(self, path: str) -> bytes:
+        """取二进制体（如渲染缓存 PDF）；非 2xx 按 `_do` 同样的错误文案抛。"""
+        req = urllib.request.Request(self.base_url + path, method="GET")
+        if self.auth:
+            req.add_header("Authorization", f"Basic {self.auth}")
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout, context=self.ctx) as r:
+                return r.read()
+        except urllib.error.HTTPError as e:
+            if e.code == 401:
+                raise TransportError("密码错误或未设置（config.toml 的 password / 环境变量 SHELF_PASSWORD / 交互输入）") from None
+            raise TransportError(f"HTTP {e.code}: {e.read().decode('utf-8', 'replace')[:200]}") from None
+        except urllib.error.URLError as e:
+            raise TransportError(f"连不上 {self.base_url}: {e.reason}") from None
+
     def stream_lines(self, path: str):
         """长连接逐行读（SSE）：无读超时，靠服务端 20s 心跳保活；连接断开时生成器结束，调用方决定是否重连。"""
         req = urllib.request.Request(self.base_url + path, method="GET")

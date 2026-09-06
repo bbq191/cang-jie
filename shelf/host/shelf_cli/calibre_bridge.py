@@ -113,5 +113,26 @@ def comic2cbz(src: Path, out: Path) -> Path:
     return out
 
 
+def render_probe(out_dir: Path, title: str) -> Path:
+    """`shelf doctor --render` 的探针 EPUB（纯 stdlib 脚本 render_probe.py）。"""
+    r = _run(["python3", str(CALIBRE_DIR / "render_probe.py"), str(out_dir), title])
+    if r.returncode != 0:
+        raise CalibreError(f"render_probe.py 失败（rc={r.returncode}）：{r.stderr.strip()[-800:]}")
+    return Path(r.stdout.strip().splitlines()[-1])
+
+
+def render_measure(pdf: Path) -> dict:
+    """量 xochitl 渲染缓存里探针段的首行缩进（pymupdf）。返回 {rows, ok, problems}。"""
+    import json
+
+    r = _run([*py_with_pymupdf(), str(CALIBRE_DIR / "render_measure.py"), str(pdf)])
+    if r.returncode != 0:
+        raise CalibreError(f"render_measure.py 失败（rc={r.returncode}）：{r.stderr.strip()[-800:]}")
+    try:
+        return json.loads(r.stdout.strip().splitlines()[-1])
+    except Exception as e:  # noqa: BLE001
+        raise CalibreError(f"render_measure.py 输出不可解析（{e}）：{r.stdout.strip()[-400:]}") from None
+
+
 def workdir(prefix: str = "shelf-push-") -> Path:
     return Path(tempfile.mkdtemp(prefix=prefix))
