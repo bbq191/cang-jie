@@ -134,7 +134,7 @@ cargo build --release -p bookconv --bin epub-optimize   # host 侧 push 洗书�
 | 字体菜单 qmd | `/home`（hashtab 过期） | 文件在、未注入 | ① `xovi/rebuild_hashtable`（设备旁输密码）② `xovi/start` |
 | 书架五服务 | `/usr` | **冲掉** | ③ `SHELF_NO_BUILD=1 sh deploy.sh 10.11.99.1` |
 | chrony 国内 NTP | rootfs `/etc` | **冲掉** | ④ `ssh root@10.11.99.1 sh -s < packaging/chrony-cn.sh` |
-| wifi-watch 常驻看护（slumber 醒来后 wlan0 假死自动 `nmcli con up`） | `/usr` 单元 + `~/.local/bin` 脚本 | 单元**冲掉** | ⑤ `scp -r packaging/wifi-watch root@…:/home/root/wifi-watch-pkg && ssh root@… sh /home/root/wifi-watch-pkg/install.sh` |
+| wifi-watch 常驻看护（wlan0 假死自动 `nmcli con up`；固化所有 WiFi 连接 2.4G + 省电关——路由 5G 信道 36 不在设备精简 regdb 的 CN 允许段，白皮书 §03w） | `/usr` 单元 + `~/.local/bin` 脚本 | 单元**冲掉** | ⑤ `scp -r packaging/wifi-watch root@…:/home/root/wifi-watch-pkg && ssh root@… sh /home/root/wifi-watch-pkg/install.sh` |
 
 升级前把与新固件不兼容的 xovi 扩展（如 appload）挪出 `extensions.d/`（放 `/home/root/xovi-disabled/`，绝不留在目录里）；appload 的 3.28 补丁见系统增强白皮书 §12.1。
 **风险分层**（不要合成一个百分比）：书架这一层只用 xochitl 的 `/upload` 网页接口和系统标准组件，换固件重装即回（本次 100%）；

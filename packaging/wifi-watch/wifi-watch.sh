@@ -5,16 +5,35 @@
 # （NetworkManager 仍标 connected、永不自愈）时 `nmcli con up`。⚠ `nmcli con up` 对已激活连接会先断再连，所以判据必须是真 NO-CARRIER。
 # 做法：每 INTERVAL 秒看一次；wlan0 存在、rfkill 未软锁、NM 有 wifi 连接、却连续 STRIKES 次 NO-CARRIER → `nmcli con up`。
 # 只在"NM 以为连着但链路死了"时动手；用户关 WiFi（rfkill/NM 断开）不干预。日志 journalctl -u wifi-watch。
+# 固化（用户 2026-09-06 拍板）：当前活动的 WiFi 连接缺 `802-11-wireless.band=$BAND`（缺省 bg=2.4G）或
+# `powersave=2` 就补上并重新激活一次——新 SSID / 在设置里重连后自动生效。BAND= 置空即不管频段。
 IFACE=${IFACE:-wlan0}
 INTERVAL=${INTERVAL:-15}
 STRIKES=${STRIKES:-2}
+BAND=${BAND-bg}
 strikes=0
+enforced=""
 while :; do
     sleep "$INTERVAL"
     [ -e "/sys/class/net/$IFACE" ] || continue
     if rfkill list wifi 2>/dev/null | grep -q "Soft blocked: yes"; then strikes=0; continue; fi
     con="$(nmcli -t -f DEVICE,NAME con show --active 2>/dev/null | grep "^$IFACE:" | head -n 1 | cut -d: -f2-)"
     [ -n "$con" ] || { strikes=0; continue; }
+    # 固化频段/省电（每个连接只查一次，避免每 15s 打 nmcli）
+    if [ "$enforced" != "$con" ]; then
+        changed=""
+        if [ -n "$BAND" ] && [ "$(nmcli -g 802-11-wireless.band con show "$con" 2>/dev/null)" != "$BAND" ]; then
+            nmcli con modify "$con" 802-11-wireless.band "$BAND" 2>/dev/null && changed="band=$BAND"
+        fi
+        if [ "$(nmcli -g 802-11-wireless.powersave con show "$con" 2>/dev/null)" != "2" ]; then
+            nmcli con modify "$con" 802-11-wireless.powersave 2 2>/dev/null && changed="$changed powersave=2"
+        fi
+        if [ -n "$changed" ]; then
+            out="$(nmcli con up "$con" 2>&1 | tail -n 1)"
+            echo "固化 '$con' $changed → 重新激活: $out"
+        fi
+        enforced="$con"
+    fi
     if ip link show "$IFACE" 2>/dev/null | grep -q NO-CARRIER; then
         strikes=$((strikes + 1))
         if [ "$strikes" -ge "$STRIKES" ]; then
