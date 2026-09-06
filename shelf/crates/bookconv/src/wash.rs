@@ -284,7 +284,12 @@ fn filter_decls_with(decls: &str, filter: &[String], spacing: Spacing, indent: O
         }
         out.push(format!("{prop}:{val}"));
     }
-    out.join(";")
+    // 尾分号：xochitl 丢规则里最后一个无分号的声明（书 css `.calibre_ {…;margin:0}` 的 margin 曾被吞；若 text-indent 排最后就没缩进）
+    let mut joined = out.join(";");
+    if !joined.is_empty() {
+        joined.push(';');
+    }
+    joined
 }
 
 fn selector_spacing(selector: &str) -> Spacing {
@@ -364,10 +369,10 @@ pub fn wash_html(html: &str, opts: &WashOpts) -> (String, usize) {
 }
 
 /// 拉丁习惯：**标题后 / 章首 / 场景切换后的第一段不缩进**（英文排版惯例：只有紧接上一段的段落才缩进）。
-/// xochitl 不认 `h1+p{}` 这类选择器（一条就废整表）、**也不认内联 `style=""` 属性**（2026-09-06 真机：内联
-/// `text-indent:0` KOReader 顶格、xochitl 照缩）→ 唯一通道是**换元素**：顶格段改成 `<div class="… cj-flush">`，
-/// 我们外链的 `p{text-indent:…}` 管不到 div；class 原样保留（书自带 `.calibre_{}` 类规则在 KOReader 照常生效）；
-/// 顺带留内联 `text-indent:0` 给认它的阅读器。判定"前面是标题/切换"的信号（2026-09-06 用《Tell Me Your Dreams》AZW3 定，它的章名不是 `<h>`
+/// xochitl 的 CSS 引擎（2026-09-06 八轮渲染缓存量化，书架白皮书 §03y）：不认内联 `style=""`；`text-indent:0` 当"没设"；
+/// 类规则压过元素规则，但同为类规则时**先出现者胜**（书的表链接在前）；规则最后一个无分号的声明被丢。
+/// 因此顶格段＝`<div class="cj-flush">`（**剥掉书的类与 style**，只留 cj-flush，id 等保留）+ 外链 `.cj-flush{text-indent:0;…;}`；
+/// KOReader 走标准 CSS 同样顶格。判定"前面是标题/切换"的信号（2026-09-06 用《Tell Me Your Dreams》AZW3 定，它的章名不是 `<h>`
 /// 而是加粗段落、场景切换是段末双 `<br/>`）：
 ///   ① 前一个块是 `</h1>`–`</h6>`；② 前一段是"标题样段落"：≤80 字且（全文加粗/strong/class 含 bold、或以
 ///   Chapter/Book/Part/Prologue/Epilogue 开头）且不以句末标点结尾；③ 前一段以 ≥2 个 `<br>` 结尾或本身是空段/`* * *`
@@ -376,6 +381,7 @@ pub fn wash_html(html: &str, opts: &WashOpts) -> (String, usize) {
 fn flush_first_para_after_heading(html: &str) -> String {
     static P: OnceLock<Regex> = OnceLock::new();
     static CLASS: OnceLock<Regex> = OnceLock::new();
+    static STYLE: OnceLock<Regex> = OnceLock::new();
     static TAG: OnceLock<Regex> = OnceLock::new();
     static BR2: OnceLock<Regex> = OnceLock::new();
     static HEAD_WORD: OnceLock<Regex> = OnceLock::new();
@@ -383,6 +389,7 @@ fn flush_first_para_after_heading(html: &str) -> String {
     // 块序列：h 结束标签 / p 元素（p 内不再嵌 p，非贪婪到最近 </p> 够用）/ 上次洗出的 cj-flush div（重洗幂等）
     let p = P.get_or_init(|| Regex::new(r#"(?is)</h[1-6]>|<p\b([^>]*)>(.*?)</p>|<div\b([^>]*\bcj-flush\b[^>]*)>(.*?)</div>"#).unwrap());
     let class_re = CLASS.get_or_init(|| Regex::new(r#"(?i)\bclass="([^"]*)""#).unwrap());
+    let style_re = STYLE.get_or_init(|| Regex::new(r#"(?i)\bstyle="[^"]*""#).unwrap());
     let tag = TAG.get_or_init(|| Regex::new(r#"(?s)<[^>]+>"#).unwrap());
     let br2 = BR2.get_or_init(|| Regex::new(r#"(?is)(<br\b[^>]*>\s*){2,}(</span>|</a>|\s)*$"#).unwrap());
     let head_word = HEAD_WORD.get_or_init(|| Regex::new(r#"(?i)^\s*(chapter|book|part|prologue|epilogue|section|interlude)\b"#).unwrap());
@@ -415,17 +422,13 @@ fn flush_first_para_after_heading(html: &str) -> String {
         let bold_wrapped = (inner.contains("<b>") || inner.contains("<strong") || inner.contains("bold")) && text.chars().count() <= 80;
         let heading_like = !_terminal_latin(&text) && text.chars().count() <= 80 && (bold_wrapped || head_word.is_match(&text));
         let out = if flush_next && !heading_like && !already_div {
-            let mut new_attrs = if let Some(i) = attrs.find("style=\"") {
-                let j = i + "style=\"".len();
-                format!("{}text-indent:0;{}", &attrs[..j], &attrs[j..])
-            } else {
-                format!("{attrs} style=\"text-indent:0\"")
-            };
-            new_attrs = match class_re.captures(&new_attrs) {
-                Some(cc) => new_attrs.replacen(&cc[0], &format!("class=\"{} cj-flush\"", &cc[1]), 1),
-                None => format!("{new_attrs} class=\"cj-flush\""),
-            };
-            format!("<div{new_attrs}>{inner}</div>")
+            // 只留 cj-flush 一个类、去掉 style：书的类规则（如 `.calibre_ {text-indent:1.2em}`）在 xochitl 里同为类规则时
+            // **先出现者胜**（诊断 13/14），带着书的类就压不住；元素/内联通道又都不通（诊断 7–10）。id 等其它属性保留。
+            let mut kept = class_re.replace_all(attrs, "").to_string();
+            kept = style_re.replace_all(&kept, "").to_string();
+            let kept = kept.split_whitespace().collect::<Vec<_>>().join(" ");
+            let sep = if kept.is_empty() { "" } else { " " };
+            format!("<div class=\"cj-flush\"{sep}{kept}>{inner}</div>")
         } else {
             c[0].to_string()
         };
@@ -466,11 +469,18 @@ fn inject_css_link(html: &str, href: &str) -> String {
 pub fn wash_css(opts: &WashOpts) -> String {
     // 拉丁 1.2em / 中文 2em（Auto 兜底中文）。
     let indent = indent_for(opts);
-    let mut decl = format!("text-indent:{indent}");
+    let mut decl = format!("text-indent:{indent};");
     if !opts.keep_para_spacing {
-        decl.push_str(";margin-top:0;margin-bottom:0;padding-top:0;padding-bottom:0");
+        decl.push_str("margin-top:0;margin-bottom:0;padding-top:0;padding-bottom:0;");
     }
-    format!("p{{{decl}}}\n")
+    // ⚠ 每条声明都以 `;` 收尾：xochitl 会丢掉规则里最后一个没分号的声明（2026-09-06 诊断 11/12：`p{text-indent:2em}`
+    // 整条不生效、`p{text-indent:2em;}` 生效）——keep_para_spacing 档位此前因此在 xochitl 上没缩进。
+    // `.cj-flush`：拉丁首段顶格段（wash_html 换成的 `<div class="cj-flush">`），KOReader 靠它归零缩进/段距；
+    // xochitl 上 div 本就无 p 规则、且书的类规则够不到（类已剥），此条只是保险。
+    // ⚠ 值用 0.01em 不用 0：xochitl 把 `text-indent:0` 当"没设"→ 落回从外层 `<div class="calibre1">` 之类**继承**来的缩进
+    //   （诊断 14 V1/V7 vs Sheldon v5，2026-09-06）；0.01em ≈ 0.1pt 肉眼不可见，KOReader 同样视为顶格。
+    let flush = if opts.keep_para_spacing { ".cj-flush{text-indent:0.01em;}" } else { ".cj-flush{text-indent:0.01em;margin-top:0;margin-bottom:0;}" };
+    format!("p{{{decl}}}\n{flush}\n")
 }
 
 pub fn count_dup_id_tags(html: &str) -> usize {
@@ -892,12 +902,12 @@ mod tests {
     #[test]
     fn decl_filter_and_spacing() {
         let f: Vec<String> = DEFAULT_FILTER_PROPS.iter().map(|s| s.to_string()).collect();
-        assert_eq!(filter_decls("font-family:'A';color:#333;text-indent:1em;font:12px x", &f, Spacing::Keep), "text-indent:1em");
-        assert_eq!(filter_decls("margin:1em 2em;padding-top:3px;padding-left:4px", &f, Spacing::Vertical), "margin:0 2em;padding-left:4px");
-        assert_eq!(filter_decls("margin:1em 2em 3em 4em", &f, Spacing::Vertical), "margin:0 2em 0 4em");
-        assert_eq!(filter_decls("margin:5pt", &f, Spacing::Vertical), "margin:0 5pt");
-        assert_eq!(filter_decls("margin:5pt;padding:2px;line-height:1.5", &f, Spacing::All), "line-height:1.5");
-        assert_eq!(filter_decls("font-family: &#39;A&#39;; text-indent:2em", &f, Spacing::Keep), "text-indent:2em", "实体分号不截断");
+        assert_eq!(filter_decls("font-family:'A';color:#333;text-indent:1em;font:12px x", &f, Spacing::Keep), "text-indent:1em;");
+        assert_eq!(filter_decls("margin:1em 2em;padding-top:3px;padding-left:4px", &f, Spacing::Vertical), "margin:0 2em;padding-left:4px;");
+        assert_eq!(filter_decls("margin:1em 2em 3em 4em", &f, Spacing::Vertical), "margin:0 2em 0 4em;");
+        assert_eq!(filter_decls("margin:5pt", &f, Spacing::Vertical), "margin:0 5pt;");
+        assert_eq!(filter_decls("margin:5pt;padding:2px;line-height:1.5", &f, Spacing::All), "line-height:1.5;");
+        assert_eq!(filter_decls("font-family: &#39;A&#39;; text-indent:2em", &f, Spacing::Keep), "text-indent:2em;", "实体分号不截断");
         assert_eq!(selector_spacing("p.calibre1"), Spacing::Vertical);
         assert_eq!(selector_spacing("div > p"), Spacing::Vertical);
         assert_eq!(selector_spacing("body"), Spacing::All);
@@ -913,11 +923,11 @@ mod tests {
         let out = filter_css(css, &o);
         assert!(out.contains("@font-face{font-family:X;src:url(x.ttf)}"), "{out}");
         assert!(out.contains("body{}"), "{out}");
-        assert!(out.contains(" p{margin:0 0;text-indent:0}"), "{out}");
+        assert!(out.contains(" p{margin:0 0;text-indent:0;}"), "{out}");
         assert!(out.contains("p{}"), "media 内规则也处理: {out}");
-        assert!(out.contains(".c{margin:1em}"), "类选择器不动: {out}");
+        assert!(out.contains(".c{margin:1em;}"), "类选择器不动: {out}");
         let k = WashOpts { keep_para_spacing: true, ..Default::default() };
-        assert!(filter_css("p{margin:1em 0}", &k).contains("p{margin:1em 0}"));
+        assert!(filter_css("p{margin:1em 0}", &k).contains("p{margin:1em 0;}"));
     }
 
     #[test]
@@ -937,10 +947,10 @@ mod tests {
         let html = r#"<html><head><link rel="stylesheet" href="s.css"/></head><body style="margin:5pt"><p id="a" id="b" style="font-size:12px;margin-top:1em;margin-left:2em">x</p><div style="color:gray">y</div><style>p{color:#333;margin:1em}</style></body></html>"#;
         let (out, dups) = wash_html(html, &o);
         assert_eq!(dups, 1);
-        assert!(out.contains(r#"<p id="a" style="margin-left:2em">x</p>"#), "{out}");
+        assert!(out.contains(r#"<p id="a" style="margin-left:2em;">x</p>"#), "{out}");
         assert!(out.contains("<div>y</div>"), "空 style 整个删: {out}");
         assert!(out.contains("<body>"), "{out}");
-        assert!(out.contains("<style>p{margin:0 1em}</style>"), "1em 四边→上下归零左右保留: {out}");
+        assert!(out.contains("<style>p{margin:0 1em;}</style>"), "1em 四边→上下归零左右保留: {out}");
         // wash_html 不再注入内联 <style>（排版规则改外链 css，由 wash_entries 注）——见 external_css_injected_and_linked。
         assert!(!out.contains(&format!(r#"class="{WASH_MARK}""#)), "不该再注入内联 cj-wash: {out}");
         // 旧版内联 cj-wash 块重洗时清掉
@@ -1020,13 +1030,14 @@ mod tests {
     fn lang_aware_indent() {
         // 只用裸 p{} 元素选择器（xochitl 解析器脆）、不带 !important（xochitl 吃不下）；中文 2em / 拉丁 1.2em。
         let cjk = wash_css(&WashOpts { lang: LangMode::Cjk, ..Default::default() });
-        assert!(cjk.contains("text-indent:2em") && !cjk.contains("1.2em") && !cjk.contains("!important"));
+        assert!(cjk.contains("text-indent:2em;") && !cjk.contains("1.2em") && !cjk.contains("!important"));
         assert!(cjk.starts_with("p{") && !cjk.contains(',') && !cjk.contains('+') && !cjk.contains('@'), "禁用复杂/逗号选择器: {cjk}");
+        assert!(cjk.contains("padding-bottom:0;}"), "每条规则以分号收尾（xochitl 丢最后一个无分号声明）: {cjk}");
         let lat = wash_css(&WashOpts { lang: LangMode::Latin, ..Default::default() });
         assert!(lat.contains("text-indent:1.2em") && !lat.contains("!important"));
         // keep_para_spacing 时不归零段距
         let keep = wash_css(&WashOpts { keep_para_spacing: true, ..Default::default() });
-        assert!(!keep.contains("margin-top:0"));
+        assert!(!keep.contains("margin-top:0") && keep.contains("p{text-indent:2em;}"), "keep-spacing 也要尾分号: {keep}");
     }
 
     #[test]
@@ -1044,7 +1055,8 @@ mod tests {
         let c1 = s(&v, "OEBPS/Text/c1.xhtml");
         assert!(c1.contains(r#"href="../cangjie-wash.css""#), "章节 link 路径错: {c1}");
         assert!(!c1.contains("text-indent:1.2em"), "通用缩进规则不该内联进 html: {c1}");
-        assert!(c1.contains(r#"Chapter One</h2><div style="text-indent:0" class="cj-flush">"#), "拉丁：标题后首段换 div 顶格: {c1}");
+        assert!(c1.contains(r#"Chapter One</h2><div class="cj-flush">"#), "拉丁：标题后首段换 div 顶格: {c1}");
+        assert!(css.contains(".cj-flush{text-indent:0.01em;margin-top:0;margin-bottom:0;}"), "外链 css 带 cj-flush 规则（0.01em 压继承）且尾分号: {css}");
         // OPF manifest 补了 item（相对 opf 目录 = cangjie-wash.css）
         let opf = s(&v, "OEBPS/content.opf");
         assert!(opf.contains(r#"href="cangjie-wash.css""#) && opf.contains("text/css"), "manifest 未补 item: {opf}");
@@ -1059,14 +1071,14 @@ mod tests {
         // 书自带类规则的非零 text-indent 改成本书缩进；0 与负值保留；拉丁标题后首段内联不缩进且幂等
         let lat = WashOpts { lang: LangMode::Latin, ..Default::default() };
         let css = filter_css(".calibre_ {display:block;text-indent:2em;margin:0} .quote{text-indent:0;margin-left:2em} .hang{text-indent:-1.5em} p{text-indent:3%}", &lat);
-        assert!(css.contains(".calibre_ {display:block;text-indent:1.2em;margin:0}"), "{css}");
-        assert!(css.contains(".quote{text-indent:0;margin-left:2em}") && css.contains(".hang{text-indent:-1.5em}"), "{css}");
-        assert!(css.contains("p{text-indent:1.2em}"), "百分比也算非零: {css}");
+        assert!(css.contains(".calibre_ {display:block;text-indent:1.2em;margin:0;}"), "{css}");
+        assert!(css.contains(".quote{text-indent:0;margin-left:2em;}") && css.contains(".hang{text-indent:-1.5em;}"), "{css}");
+        assert!(css.contains("p{text-indent:1.2em;}"), "百分比也算非零: {css}");
         let cjk = WashOpts { lang: LangMode::Cjk, ..Default::default() };
         assert!(filter_css(".calibre_ {text-indent:1.2em}", &cjk).contains("text-indent:2em"));
         let (h, _) = wash_html(r#"<html><body><h1 id="a">T</h1>
 <div class="x"><p class="c" style="color:red;text-indent:2em">first</p><p>second</p></div><h2>U</h2><p style="text-indent:0">already</p></body></html>"#, &lat);
-        assert!(h.contains(r#"<div class="c cj-flush" style="text-indent:0;text-indent:1.2em">first</div>"#), "{h}");
+        assert!(h.contains(r#"<div class="cj-flush">first</div>"#), "只留 cj-flush、剥 class/style: {h}");
         assert!(h.contains(r#"<p>second</p>"#), "第二段不动: {h}");
         assert_eq!(h.matches("cj-flush").count(), 2, "h1 后与 h2 后各一段: {h}");
         let (h2, _) = wash_html(&h, &lat);
@@ -1082,9 +1094,9 @@ mod tests {
         let src = r#"<html><body><div><p class="calibre_"><a href="x.html#1"><span class="bold"><span class="underline">Chapter Three</span></span></a></p><p class="calibre_"><span class="bold">I</span>N another place, at another time, Alette Peters could have been a successful artist.</p><p class="calibre_">Her father’s voice was blue.</p><p class="calibre_">The sound of running water was gray.<br class="calibre3"/><br class="calibre3"/></p><p class="calibre_">Alette Peters was twenty years old.</p><p class="calibre_">She could be plain-looking.</p><p class="calibre_">* * *</p><p class="calibre_">After the break.</p><p class="calibre_">Still after.</p></div></body></html>"#;
         let (h, _) = wash_html(src, &lat);
         assert_eq!(h.matches("cj-flush").count(), 3, "章首正文 + 双br 后 + * * * 后各一段: {h}");
-        assert!(h.contains(r#"<div class="calibre_ cj-flush" style="text-indent:0"><span class="bold">I</span>N another"#), "章首正文顶格＝换成 div（章名段本身不算）: {h}");
-        assert!(h.contains(r#"<div class="calibre_ cj-flush" style="text-indent:0">Alette Peters was twenty"#), "双 br 后顶格: {h}");
-        assert!(h.contains(r#"<div class="calibre_ cj-flush" style="text-indent:0">After the break.</div>"#), "* * * 后顶格: {h}");
+        assert!(h.contains(r#"<div class="cj-flush"><span class="bold">I</span>N another"#), "章首正文顶格＝换成只带 cj-flush 的 div（章名段本身不算）: {h}");
+        assert!(h.contains(r#"<div class="cj-flush">Alette Peters was twenty"#), "双 br 后顶格: {h}");
+        assert!(h.contains(r#"<div class="cj-flush">After the break.</div>"#), "* * * 后顶格: {h}");
         assert!(h.contains(r#"<p class="calibre_">Her father"#) && h.contains(r#"<p class="calibre_">Still after"#), "普通续段仍是 p: {h}");
         assert!(h.contains(r#"<p class="calibre_"><a href="x.html#1">"#), "章名段自己不动: {h}");
         // 拿空段当段距的书（空段 > 20%）：空段不算场景分隔
