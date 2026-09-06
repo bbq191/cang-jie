@@ -46,7 +46,7 @@ impl ConfigSync {
             return Ok(None);
         }
         std::fs::create_dir_all(&self.backup_dir).map_err(|e| e.to_string())?;
-        let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+        let stamp = shelf_core::clock::now_secs();
         let b = self.backup_dir.join(format!("{name}.bak.pre-shelf-{stamp}"));
         std::fs::copy(target, &b).map_err(|e| format!("备份失败: {e}"))?;
         Ok(Some(b.display().to_string()))

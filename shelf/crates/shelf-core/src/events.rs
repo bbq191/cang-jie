@@ -33,7 +33,7 @@ impl EventBus {
 
     /// 发一条事件（`area`=UI 区域：books/koreader/fonts/wallpapers/manage；`kind`=细分）。
     pub fn publish(&self, area: &str, kind: &str) {
-        let at = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
+        let at = crate::clock::now_secs();
         self.publish_raw(&serde_json::json!({"area": area, "kind": kind, "at": at}).to_string());
     }
 
@@ -47,6 +47,7 @@ impl EventBus {
         });
     }
 
+    #[cfg(test)]
     pub fn subscribers(&self) -> usize {
         self.subs.lock().unwrap_or_else(|e| e.into_inner()).len()
     }

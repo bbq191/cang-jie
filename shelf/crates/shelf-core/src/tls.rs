@@ -3,6 +3,7 @@
 //! - `cert.pem`（叶 + CA 链）/`key.pem`：叶证书由 CA 签发，SAN 含 `shelf.local`/设备 IP 等；
 //!   有效期 800 天（Apple 平台拒绝 >825 天的 TLS 服务器证书），过期前 30 天或 SAN 变化时自动换叶、CA 不变。
 //! 不装 CA 时浏览器仍提示"不受信任"（自签），确认一次即可；CLI 侧默认不校验证书（局域网 + 密码保护）。
+use crate::clock::now_secs;
 use rcgen::{BasicConstraints, CertificateParams, DnType, ExtendedKeyUsagePurpose, IsCa, Issuer, KeyPair, KeyUsagePurpose};
 use std::path::Path;
 
@@ -109,10 +110,6 @@ pub fn ensure_ca_signed(dir: &Path, extra_sans: &[String]) -> Result<TlsPem, Str
 /// CA 证书 PEM（给 `/ca.crt` 下载）。
 pub fn ca_pem(dir: &Path) -> Option<Vec<u8>> {
     std::fs::read(dir.join("ca.pem")).ok()
-}
-
-fn now_secs() -> u64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
 }
 
 #[cfg(test)]

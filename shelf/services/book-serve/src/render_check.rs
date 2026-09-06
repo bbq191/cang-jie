@@ -5,7 +5,9 @@
 //! `render` 字段（事件是有损信号，状态必须落盘），并推 `books/render` 事件（带 name/status/pages）。
 //! 认书：`/upload` 不回 uuid，visibleName 取自 EPUB 元数据不等于文件名 → 按 `createdTime >= 投书时刻` 圈候选，
 //! 书名（dc:title / 文件名 stem）相符者优先，否则取最新一本。只读 `.metadata/.content`，绝不写 xochitl 目录。
-use crate::staging::{RenderCheck, RenderPlan, Staging};
+use crate::sidecar::RenderCheck;
+use crate::staging::{RenderPlan, Staging};
+use shelf_core::clock::now_secs as now;
 use shelf_core::events::EventBus;
 use shelf_core::fswatch::watch_until;
 use shelf_core::xochitl::{find_documents_since, page_count, DocInfo};
@@ -61,10 +63,6 @@ pub fn verdict(pages: u64, expected: u64) -> &'static str {
     } else {
         "ok"
     }
-}
-
-fn now() -> u64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0)
 }
 
 #[cfg(test)]

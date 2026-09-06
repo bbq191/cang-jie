@@ -118,7 +118,7 @@ impl WallpaperStore {
                 names[i].clone()
             }
             Mode::Random => {
-                let seed = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0) as usize;
+                let seed = shelf_core::clock::now_nanos() as usize;
                 let mut i = seed % names.len();
                 if names.len() > 1 && st.current.as_deref() == Some(names[i].as_str()) {
                     i = (i + 1) % names.len();

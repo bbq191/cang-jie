@@ -77,7 +77,7 @@ const WASH_CSS_NAME: &str = "cangjie-wash.css";
 pub const DEFAULT_FILTER_PROPS: &[&str] = &["font-family", "font-size", "font", "color", "background-color", "background-image", "background", "text-align"];
 /// 伪 DRM 允许加密的扩展名（= strip_pseudo_drm.py SAFE_EXTS）。
 pub const PSEUDO_DRM_SAFE_EXTS: &[&str] = &[".css", ".ttf", ".otf", ".woff", ".woff2", ".js"];
-pub const WASH_MARK: &str = "cj-wash";
+const WASH_MARK: &str = "cj-wash";
 
 #[derive(Clone, Debug, Default, PartialEq, serde::Serialize)]
 pub struct WashReport {

@@ -6,6 +6,7 @@ mod api;
 mod config;
 mod render_check;
 mod service_state;
+mod sidecar;
 mod spool;
 mod staging;
 
