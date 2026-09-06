@@ -69,14 +69,15 @@ shelf/
 ├── crates/bookconv/                   ★ 通用内容层：多格式→EPUB/PDF、EPUB 优化器+清洗层+质量门、e-ink 图片处理、EPUB 组装、网文抽取
 │   └── src/bin/epub_optimize.rs         host/设备共用 CLI（wash_epub.sh 末步）
 ├── crates/shelf-core/                 共享底座：paths(XDG) · formats(格式白名单) · registry · multipart(流式) · asset(AssetStore+上传模板+receipt) · xochitl_conf(休眠屏键) · events(事件总线+SSE)
-│                                      · http(Router/bind/JsonBody/Guard) · config · fs(原子写/plain_name/unique) · xochitl 注入 · fswatch · tls/auth/mdns/netinfo/ttf
-├── services/book-serve/               staging.rs(母版库领域：入库/优化/转PDF/落库) · spool.rs(inbox 队列) · api.rs(纯 HTTP 适配) · service_state.rs
+│                                      · http(Router/bind/JsonBody/Guard) · config · fs(原子写/plain_name/unique) · clock(时间戳唯一出处) · xochitl 注入/找书/页数 · fswatch(常驻+限时) · tls/auth/mdns/netinfo/ttf
+├── services/book-serve/               staging.rs(母版库领域：入库/优化/落库) · sidecar.rs(落库记录边车) · render_check.rs(投原生后渲染自检) · spool.rs(inbox 队列) · api.rs(纯 HTTP 适配) · service_state.rs
 ├── services/koreader-serve/           koreader.rs(目录模型+KoStore) · config.rs(ConfigSync+merge.lua) · main.rs
-├── services/{font-serve,wallpaper-serve,shelf-gateway}/
+├── services/{font-serve,wallpaper-serve}/
+├── services/shelf-gateway/            auth/proxy/manage/events(Hub 汇聚)；ui/{index.html,style.css,app.js,auth.css} 真文件，编译期 include_str! 拼成单页（CI node --check）
 ├── systemd/                           shelf.target + 5 个 .service（壁纸不再有开机单元/sleep 钩子，2026-09-06）
 ├── install.sh · uninstall.sh          设备端安装/卸载（--only 按服务；写 /usr 前实检 dm-verity）
 ├── deploy.sh                          host 一键：build → tar-over-ssh → 设备 install.sh（自动备份到 /home/root/cangjie-backups）
-├── host/                              CLI `shelf`（纯 stdlib、系统 python3）+ pytest；shelf_cli/comic.py 漫画探针；host/calibre/ = Calibre 前置流水线
+├── host/                              CLI `shelf`（纯 stdlib、系统 python3）+ pytest；shelf_cli/comic.py 漫画探针；host/calibre/ = Calibre 前置流水线 + 独立脚本（epub_skel 共享 EPUB 骨架 / txt_to_epub / comic_gray / render_probe+measure）
 ├── xovi/font-menu-dynamic{,-3.27}.qmd  字体菜单读 fonts.json 动态追加（3.28.0.172 / 3.27.3 真机通；改 qmd 先用 qmldiff CLI 离线实跑，白皮书 §04）
 ├── wallpaper/                         README（休眠屏机制＝xochitl.conf SleepScreenPath；逻辑在 wallpaper-serve）
 ├── koreader/                          配置即代码：profile/{settings.reader.patch,defaults.custom,gestures.patch}.lua + fonts.txt/dicts.txt + merge.lua

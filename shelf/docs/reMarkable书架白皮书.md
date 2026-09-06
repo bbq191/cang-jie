@@ -475,6 +475,17 @@ book→「母版库 / 原生投递」、weread→「微信读书（内容源，�
 
 **漫画省刷新档 `shelf push --eink-gray`（同日，`host/calibre/comic_gray.py`）**：依据墨水屏波形按内容分档（彩重 / 256 灰中 / ≤16 灰轻 / 1-bit 最轻， 真机坐实），CBZ→CBZ 逐页：缩进屏盒（长边 ≤1696 且短边 ≤954）→ 平均色度 ≥ 0.06 保色 JPEG q85，否则 L → 16 级等距灰 + Floyd-Steinberg → **4-bit PNG**。阈值与采样法镜像设备端 `imgopt.rs`（`COLOR_KEEP_CHROMA`），前身是已删的 `einkify_epub.py`。用户定默认关、体积实测再议——实测《阿拉蕾（第 1 部）》AZW3：comic2cbz 1092 页 171.2 MB → 16 灰 1085 页 / 保色 7 页 **108.2 MB**（48 s）。此前担心"抖动噪点 Flate 压不动、比 JPEG 大 2–3 倍"没发生：原图远超屏幕分辨率，降采样省下的远多于抖动多出的；4-bit PNG 原始数据只有 8-bit 灰的一半。**用户目视《阿拉蕾①》16 灰翻页明显少闪 → 定默认开（`--no-eink-gray` 关；16 灰失败退回原图 CBZ 不挡推送）。** Pillow 显式进 `calibre` 依赖组（`getdata` 在 Pillow 12 弃用，改 `tobytes`）。
 
+## 03ab｜代码体检与重构（2026-09-06，六项闭环后）
+
+用户："如果没有值得新增的，就优化代码：设计模式、解耦、删失效代码"。先全量扫（死 pub 项 = 在 shelf 与 reading/knowledge 非测试代码零引用；重复小助手；过期注释；host 死函数），结论是**结构本身已经对**（端口/适配器、AssetStore 模板、ServiceSpec 模板、Hub 汇聚都在），能改的是四类零碎，各开一支 `--no-ff` 并入：
+
+1. **shelf-core / 服务**：新 `clock` 模块收编 8 处 `SystemTime::now().duration_since(UNIX_EPOCH)…`（事件/证书/会话盐/备份戳/边车/自检/壁纸随机种子）；删死项 `paths::data_root`、`htmlproc::has_internal_anchor`、`optimize::is_current_version`（reading/device-rs 也零引用，编译核过），`WASH_MARK` 收私、`events::subscribers` 限测试；`xochitl.rs` 找文件夹/找文档两处各扫一遍 `.metadata` 合成 `metadata_entries` + `is_live`；book-serve 落库记录边车（`Delivered`/`RenderCheck`/读改删）从 500 行的 `staging.rs` 拆成 `sidecar.rs`（Repository），`staging` 与 `render_check` 只通过它落盘；`Cargo.toml` 头里"book-serve → device-core"的过期依赖注释改正。
+2. **网关 UI**：`ui.rs` 484 行 Rust 原始字符串里嵌 CSS+JS → `ui/{index.html,style.css,app.js,auth.css}` 真文件，编译期 `include_str!` 拼成单页（网页仍零外链），`ui.rs` 剩 61 行；CI 加 `node --check app.js`（此前只能手工抽 `<script>` 段查语法）。
+3. **host**：`calibre/epub_skel.py` 收编 pdf_reflow / txt_to_epub / render_probe 三处手搓 mimetype+container+opf+nav（两级目录、可选 css/图片/作者，布局统一 `text/cN.xhtml`）；`calibre_bridge` 五处"跑脚本解析末行 JSON"合成 `_run_json`（render_probe 也改成末行 JSON 契约）；`transport` 的 `_do`/`get_bytes`/`stream_lines` 三条请求路径合成 `_open`（鉴权头、401/403/HTTP 错、连不上的翻译只有一处）。探针改布局后真机重投 7/7 PASS（`../cangjie-wash.css` 相对链接 xochitl 认）。
+4. **install.sh**：删旧 misc/wallpaper 搬池、bind-mount 退役清理、blank776、旧 `add-reading-fonts.qmd` 搬迁四个迁移块（真机逐项确认零残留），224→193 行，shellcheck 零告警；重部署五服务 active、四 `/health` 通。
+
+**没动的**（评估后认为不值得或有风险）：`bookconv::convert` 整族（reading 线在用）；四个服务各自一行 `GET /events` 路由（不算重复，塞进 `service::run` 反而把总线所有权搞乱）；`multipart.rs`/`http.rs` 体量大但职责单一。**踩坑**：中途 `cargo fmt --all` 把 64 个文件重排进了提交，回滚重放——本仓库 Rust 从不走 rustfmt，别跑 fmt。
+
 ## 04｜踩坑
 
 - **xochitl CSS 引擎七条实测规则见 §03y**（尾分号 / 0 当没设 / 类规则认且压元素 / 同类先出现者胜 / 不认内联 style / text-indent 继承 / 混类选择器不废表）。改排版规则前先用诊断 EPUB 量渲染缓存，别靠肉眼。
