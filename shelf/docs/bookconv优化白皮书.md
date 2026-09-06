@@ -143,4 +143,4 @@ reMarkable 的 EPUB 渲染器闭源，行为多次跟 host / 常识不一致。�
 
 ## 13｜真机待办
 
-英文书拉丁排版（1.2em）真机观感；KOReader 里 Inline 内联脚注能否接受（否则落库时另跑 Anchor + `epub:type` 触发弹窗）；PDF 结构化重排（host `pdf_reflow_move.py`）杂志观感已通（财新 v3），学术论文多列/公式待验；公式图 intrinsic 放大阈值。诊断法：xochitl 导入渲染 `<uuid>.pdf` scp 回 host、pymupdf 量列宽/图尺寸/outline/内链 kind。
+英文书拉丁排版（1.2em）真机观感；KOReader 里 Inline 内联脚注能否接受（否则落库时另跑 Anchor + `epub:type` 触发弹窗）；PDF 结构化重排（host `pdf_reflow_move.py`）杂志观感已通（财新 v3；v4 2026-09-06：署名/图注/链接分类、节题 h3、标题分档，非句末段 15%→2.7%，书架白皮书 §05），学术论文多列/公式待验；公式图 intrinsic 放大阈值。诊断法：xochitl 导入渲染 `<uuid>.pdf` scp 回 host、pymupdf 量列宽/图尺寸/outline/内链 kind。

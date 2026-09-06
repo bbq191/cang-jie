@@ -44,6 +44,46 @@ FIG_MAX_H = int(H_PX * 0.6)
 
 _TERMINAL = "。！？；…”」』）】》.!?:\"'"
 _ZW = {0x200B: None, 0x200C: None, 0x200D: None, 0xFEFF: None, 0x00AD: None, 0x2060: None}
+# 杂志版式的"非正文行"（2026-09-06 《财新》第 33 期 770 段实测：15% 段不以句末标点结尾，其中六成是这些，不是断句）：
+#   署名行「文｜某某」/「图｜」/「摄影｜」、贡献行「某某对此文亦有贡献」、图注「图：…」「…/IC photo」「…视觉中国」、
+#   原文链接行、小标题（短、字号略大、不带句末标点）。它们各自成段、绝不进目录、绝不与上下段续接。
+_BYLINE_RE = re.compile(r"^(文|图|摄影|摄|编辑|记者|撰文|整理|译|插画|制图)\s*[｜|/／]")
+_CREDIT_RE = re.compile(r"(对此文亦有贡献|对本文亦有贡献|亦有贡献)")
+_CAPTION_RE = re.compile(r"^(图|表|图片来源|资料来源|来源|摄影?|制图|数据来源)\s*[：:]|(/IC photo|视觉中国|/东方IC|/CFP|图/[^/]{1,12})$")
+_LINK_RE = re.compile(r"^原文链接\s*[：:]")
+# 小标题：不超过这个字数、不以句末标点结尾、字号 ≥ 正文 + SUBHEAD_SIZE_DELTA
+SUBHEAD_MAX_CHARS = 25
+SUBHEAD_SIZE_DELTA = 0.5
+# 文章级标题（分章）：字号 ≥ 正文 × HEADING_FONT_RATIO 且不超过这个字数、不以句末标点结尾——不再要求列首/页顶
+# （杂志正文中段的栏目标题「显影｜…」「专栏｜…」此前因不在列首漏判成正文）。
+HEADING_MAX_CHARS = 40
+
+
+def _classify(t: str) -> str | None:
+    """署名 / 贡献 / 图注 / 链接 → 'byline'|'caption'|'link'；其它 None。"""
+    t = t.strip()
+    if not t:
+        return None
+    if _BYLINE_RE.search(t) or _CREDIT_RE.search(t):
+        return "byline"
+    if _LINK_RE.search(t):
+        return "link"
+    if _CAPTION_RE.search(t):
+        return "caption"
+    return None
+
+
+def _split_inline_byline(t: str) -> tuple[str, str | None]:
+    """导语与署名被 PDF 排在同一块时（"…一帆风顺文｜财新周刊 …"）从「文｜」处切开。"""
+    m = re.search(r"(?<=[^\s｜|/／])(文|图|摄影)\s*[｜|/／]", t)
+    if m and m.start() >= 6:
+        return t[: m.start()].rstrip(), t[m.start() :].strip()
+    return t, None
+
+
+def _clean(t: str) -> str:
+    """剥 PDF 私用字形映射出来的 "{{" / "}}" 垃圾（《财新》导播栏每行前缀）。"""
+    return t.replace("{{", "").replace("}}", "").strip()
 
 
 def has_k2pdfopt() -> bool:
@@ -106,7 +146,7 @@ def _block_text(block: dict) -> tuple[str, float, float]:
         if not s:
             continue
         text = _join(text, s)
-    return text, max_size, line_h
+    return _clean(text), max_size, line_h
 
 
 def _join(a: str, b: str) -> str:
@@ -173,9 +213,16 @@ def _page_units(page: fitz.Page, imgdir: Path, page_no: int) -> list[dict]:
             if not text:
                 continue
             big = body_size > 0 and max_size >= body_size * HEADING_FONT_RATIO
-            # 标题：字号显著大 且 (列首 或 页顶区)，排除正文中间的大字引语（那会把文章切成两章留白）
-            is_h = big and (first_text or y0 < page_h * HEADING_TOP_FRAC) and len(text) <= 60
-            units.append({"k": "h" if is_h else "text", "t": text, "size": max_size, "x0": x0, "x1": x1, "y0": y0, "y1": y1, "col0": col0, "col1": col1, "lh": lh or max_size * 1.2, "page": page_no, "html": ""})
+            cls = _classify(text)
+            # 紧跟图块的短行（≤60 字、无句末标点）= 图注
+            if cls is None and units and units[-1]["k"] == "fig" and len(text) <= 60 and not _terminal(text):
+                cls = "caption"
+            # 标题：字号显著大 且 ((列首 或 页顶区 且 ≤60 字) 或 (≤HEADING_MAX_CHARS 字且无句末标点))；
+            # 署名/贡献/图注/链接、冒号结尾（「本刊产业新闻部：」）一律不算标题——它们曾混进目录（2026-09-05 用户指出）
+            is_h = big and cls is None and not text.rstrip().endswith(("：", ":")) and (
+                ((first_text or y0 < page_h * HEADING_TOP_FRAC) and len(text) <= 60) or (len(text) <= HEADING_MAX_CHARS and not _terminal(text))
+            )
+            units.append({"k": "h" if is_h else "text", "cls": None if is_h else cls, "t": text, "size": max_size, "x0": x0, "x1": x1, "y0": y0, "y1": y1, "col0": col0, "col1": col1, "lh": lh or max_size * 1.2, "page": page_no, "html": ""})
             first_text = False
     return units
 
@@ -198,7 +245,7 @@ def _assemble_paragraphs(units: list[dict]) -> list[dict]:
             continue
         prev = out[-1] if out else None
         joined = False
-        if prev is not None and prev["k"] == "text" and abs(prev["size"] - u["size"]) <= 1.5:
+        if prev is not None and prev["k"] == "text" and abs(prev["size"] - u["size"]) <= 1.5 and not u.get("cls") and not prev.get("cls"):
             sz = max(u["size"], 1.0)
             same_col = prev["page"] == u["page"] and abs(prev["col0"] - u["col0"]) < 5
             if same_col:
@@ -221,11 +268,41 @@ def _assemble_paragraphs(units: list[dict]) -> list[dict]:
             nu = dict(u)
             nu["lx0"] = u["x0"]  # 最后一行的起点（缩进判断用）
             out.append(nu)
-    return out
+    return _mark_subheads(out)
+
+
+def _mark_subheads(paras: list[dict]) -> list[dict]:
+    """文档级：短、无句末标点、字号略大于全书正文字号的独立文本 → 小标题（k='h3'，不分章、不进目录）。
+    正文字号 = 全书按字数加权最多的那档。"""
+    size_chars: dict[int, int] = {}
+    for p in paras:
+        if p["k"] == "text" and not p.get("cls"):
+            size_chars[round(p["size"])] = size_chars.get(round(p["size"]), 0) + len(p["t"])
+    if not size_chars:
+        return paras
+    body = float(max(size_chars, key=lambda k: size_chars[k]))
+    for p in paras:
+        if p["k"] == "text" and not p.get("cls") and len(p["t"]) <= SUBHEAD_MAX_CHARS and not _terminal(p["t"]) and p["size"] >= body + SUBHEAD_SIZE_DELTA:
+            p["k"] = "h3"
+    return paras
+
+
+def _demote_section_heads(paras: list[dict]) -> list[dict]:
+    """标题分档（2026-09-06 《财新》实测：刊头 25.5 / 文章题 19.5 / 节题 16.5）：有 ≥3 个字号档时，
+    第二大档及以上才分章进目录，其余降为 h3（节题不翻页、不进目录——否则 10 章变 45 章、每节末留白）。"""
+    sizes = sorted({round(p["size"] * 2) / 2 for p in paras if p["k"] == "h"}, reverse=True)
+    if len(sizes) < 3:
+        return paras
+    threshold = sizes[1] - 0.3
+    for p in paras:
+        if p["k"] == "h" and p["size"] < threshold:
+            p["k"] = "h3"
+    return paras
 
 
 def _chapters(paras: list[dict], n_pages: int) -> list[tuple[str, str]]:
     """按标题分章（标题开新章）；全书无标题则每 PAGES_PER_CHAPTER_FALLBACK 页一章。返回 [(章名, body_html)]。"""
+    paras = _demote_section_heads(paras)
     has_h = any(p["k"] == "h" for p in paras)
     chapters: list[tuple[str, list[str]]] = []
     cur_title = "开头"
@@ -250,12 +327,21 @@ def _chapters(paras: list[dict], n_pages: int) -> list[tuple[str, str]]:
             cur.append(f"<h2>{html.escape(p['t'])}</h2>")
         elif p["k"] == "fig":
             cur.append(p["html"])
+        elif p["k"] == "h3":
+            cur.append(f"<h3>{html.escape(p['t'])}</h3>")
         else:
             if not has_h and cur and p["page"] - cur_start_page >= PAGES_PER_CHAPTER_FALLBACK:
                 flush()
                 cur_title = f"第 {p['page'] + 1} 页起"
                 cur_start_page = p["page"]
-            cur.append(f"<p>{html.escape(p['t'])}</p>")
+            cls = p.get("cls")
+            if cls:
+                cur.append(f'<p class="{cls}">{html.escape(p["t"])}</p>')
+                continue
+            body_t, byline = _split_inline_byline(p["t"])
+            cur.append(f"<p>{html.escape(body_t)}</p>")
+            if byline:
+                cur.append(f'<p class="byline">{html.escape(byline)}</p>')
     flush()
     if not chapters:
         chapters.append(("正文", ["<p>&#160;</p>"]))
@@ -266,6 +352,7 @@ def _build_epub(chapters: list[tuple[str, str]], imgdir: Path, title: str, out: 
     """极简 EPUB3：mimetype(STORED) + container + opf + nav + 每章一个 xhtml。图片在 images/。
     产物随后由上层 wash/epub-optimize 统一优化（此处不注排版细节，交给统一管线）。"""
     css = "@page{margin:0}body{margin:0}img{max-width:100%}.fig{text-align:center;margin:0}"
+    css += "h3{font-size:1.1em;margin:1em 0 .3em}.byline{font-size:.9em;margin:0 0 .8em}.caption{font-size:.85em;text-align:center;margin:0 0 .8em}.link{font-size:.8em;word-break:break-all}"
     css += f"/* Move {W_PX}x{H_PX} */"  # 竖向 CSS 提示（认 CSS 的阅读器用；xochitl 忽略、走自身列宽）
     manifest, spine, navlis = [], [], []
     chaps = {}
@@ -347,7 +434,12 @@ def main() -> int:
         out = outdir / f"{title}.epub"
         _build_epub(chapters, imgdir, title, out)
         shutil.rmtree(imgdir, ignore_errors=True)
-        print(json.dumps({"out": str(out), "kind": "epub", "chapters": len(chapters), "paragraphs": sum(1 for p in paras if p["k"] == "text")}))
+        body_paras = [p for p in paras if p["k"] == "text" and not p.get("cls")]
+        unterminated = sum(1 for p in body_paras if not _terminal(_split_inline_byline(p["t"])[0]))
+        stats = {"out": str(out), "kind": "epub", "chapters": len(chapters), "paragraphs": len(body_paras),
+                 "subheads": sum(1 for p in paras if p["k"] == "h3"), "classified": sum(1 for p in paras if p.get("cls")),
+                 "unterminated": unterminated, "unterminated_pct": round(100.0 * unterminated / max(1, len(body_paras)), 1)}
+        print(json.dumps(stats, ensure_ascii=False))
         return 0
     out_pdf = outdir / f"{title}.reflow.pdf"
     if _reflow_scanned(src, out_pdf):
