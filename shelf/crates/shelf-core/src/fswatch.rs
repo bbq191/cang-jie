@@ -7,7 +7,7 @@ use std::path::Path;
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
-/// 监听 `dir` 下文件的 CLOSE_WRITE/MOVED_TO/CREATE，防抖后回调。**永不返回**（init 失败返回）。
+/// 监听 `dir` 下文件的 CLOSE_WRITE/MOVED_TO/CREATE/DELETE/MOVED_FROM，防抖后回调（删除也算：网关看注册表目录用）。**永不返回**（init 失败返回）。
 pub fn watch_debounced<F>(dir: &Path, debounce: Duration, mut on_settle: F)
 where
     F: FnMut(&HashSet<String>),
@@ -19,7 +19,7 @@ where
             return;
         }
     };
-    if let Err(e) = inotify.watches().add(dir, WatchMask::CLOSE_WRITE | WatchMask::MOVED_TO | WatchMask::CREATE) {
+    if let Err(e) = inotify.watches().add(dir, WatchMask::CLOSE_WRITE | WatchMask::MOVED_TO | WatchMask::CREATE | WatchMask::DELETE | WatchMask::MOVED_FROM) {
         eprintln!("[fswatch] watch {} 失败: {e}", dir.display());
         return;
     }

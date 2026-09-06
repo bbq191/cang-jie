@@ -29,6 +29,7 @@ struct State {
     store: WallpaperStore,
     native: Native,
     paths: Paths,
+    bus: Arc<shelf_core::events::EventBus>,
 }
 
 impl State {
@@ -82,13 +83,15 @@ fn main() {
         }
     }
     let bind_addr = service::parse_bind(&args, SPEC.default_bind);
-    let st = Arc::new(State { store, native, paths: paths.clone() });
+    let bus = Arc::new(shelf_core::events::EventBus::new());
+    let st = Arc::new(State { store, native, paths: paths.clone(), bus: bus.clone() });
     let router = Router::new()
         .get("/", bind(&st, |s, _| {
             let w = s.store.state();
             Ok(Reply::ok(&serde_json::json!({"items": s.store.list(), "mode": w.mode, "current": w.current})))
         }))
         .get("/status", bind(&st, |s, _| Ok(Reply::ok(&s.status()))))
+        .get("/events", bind(&st, |s, _| Ok(s.bus.sse_reply())))
         .post("/", bind(&st, |s, r| {
             let b = r.multipart_boundary()?;
             // `?activate=1` 显式激活首张成功项；池里还没有当前图时也自动激活（上传即可用）。
@@ -103,26 +106,32 @@ fn main() {
                 }
             }
             let note = if changed || s.native.restart_pending() { "首次启用：跑一次 /home/root/xovi/start 后，下次休眠即显示" } else { "下次休眠即显示" };
+            if items.iter().any(|i| i.ok) {
+                s.bus.publish("wallpapers", "pool");
+            }
             Ok(Reply::ok(&asset::receipt(&items, serde_json::json!({"activated": activated, "note": note, "restartPending": s.native.restart_pending()}))))
         }))
         .put("/current", bind(&st, |s, r| {
             let j = r.json()?;
             let name = j.str("name")?;
             s.activate(name).map_err(ApiError::bad)?;
+            s.bus.publish("wallpapers", "pool");
             Ok(Reply::ok(&serde_json::json!({"ok": true, "current": name, "native": s.native.status()})))
         }))
         .put("/mode", bind(&st, |s, r| {
             let j = r.json()?;
             let mode: Mode = serde_json::from_value(j.0.get("mode").cloned().unwrap_or_default()).map_err(|_| ApiError::bad("mode ∈ sequential|random|fixed"))?;
             s.store.set_mode(mode).map_err(ApiError::internal)?;
+            s.bus.publish("wallpapers", "pool");
             Ok(Reply::ok(&serde_json::json!({"ok": true, "mode": mode})))
         }))
         .delete("/{name}", bind(&st, |s, r| {
             s.store.remove(r.param("name")).map_err(ApiError::bad)?;
+            s.bus.publish("wallpapers", "pool");
             Ok(Reply::ok(&serde_json::json!({"ok": true})))
         }))
         .get("/{name}", bind(&st, |s, r| Ok(Reply::bytes("image/png", s.store.read(r.param("name")).map_err(ApiError::not_found)?))));
-    wake::spawn(Arc::new(WallpaperStore::new(&paths)));
+    wake::spawn(Arc::new(WallpaperStore::new(&paths)), bus);
     println!("[wallpaper-serve] 池 {}，原生休眠屏键 {}；监听 xochitl 唤醒日志轮换", st.store.pool().display(), if st.native.enabled() { "已就位" } else { "未写（激活首张时自动写）" });
     if let Err(e) = service::run(&SPEC, &bind_addr, &paths, router) {
         eprintln!("[wallpaper-serve] {e}");

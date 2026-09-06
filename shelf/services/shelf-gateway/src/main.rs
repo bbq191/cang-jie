@@ -6,6 +6,7 @@
 //! 子命令：`serve [--bind]` · `passwd <新密码>` · `reset-password`（回默认并强制改）· `regen-tls`（重签叶证书）。
 mod auth;
 mod config;
+mod events;
 mod manage;
 mod proxy;
 mod ui;
@@ -102,6 +103,7 @@ fn main() {
         println!("[shelf-gateway] mDNS 名 {}.local（iOS/macOS/Windows/Linux 可直接访问；安卓走热点 dnsmasq 别名）", cfg.mdns_name.trim());
     }
     let paths = Arc::new(paths);
+    let hub = Arc::new(events::Hub::spawn(paths.clone()));
     let mut router = Router::new()
         .get("/", |_| Ok(Reply::html(ui::page())))
         .get("/ca.crt", { let d = tls_dir.clone(); move |_| Ok(match shelf_core::tls::ca_pem(&d) {
@@ -124,6 +126,8 @@ fn main() {
     // 管理台/引导路由——**必须在 /api/{svc} 代理通配之前**注册（否则 manage/foundation 被当服务段代理成 404）。
     const PROXIED: &[Method] = &[Method::Get, Method::Post, Method::Put, Method::Delete];
     let router = router
+        // 事件流（SSE）：必须在 /api/{svc} 代理通配之前；受登录守卫（cookie/Basic）保护
+        .get("/api/events", bind(&hub, |h, _| Ok(h.bus.sse_reply())))
         .get("/api/manage", bind(&paths, |p, _| Ok(manage::status(p))))
         .get("/api/foundation", bind(&paths, |p, _| Ok(manage::foundation(p))))
         .post("/api/manage/{seg}/{action}", bind(&paths, |p, r| {

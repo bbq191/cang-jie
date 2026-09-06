@@ -14,7 +14,7 @@ pub fn is_wake_line(line: &str) -> bool {
     line.contains("Changing display state from DeepSleep to Normal")
 }
 
-pub fn spawn(store: Arc<WallpaperStore>) {
+pub fn spawn(store: Arc<WallpaperStore>, bus: Arc<shelf_core::events::EventBus>) {
     std::thread::spawn(move || loop {
         let child = Command::new("journalctl").args(["-f", "-n", "0", "-u", "xochitl", "-o", "cat"]).stdout(Stdio::piped()).stderr(Stdio::null()).spawn();
         let mut child = match child {
@@ -29,7 +29,10 @@ pub fn spawn(store: Arc<WallpaperStore>) {
             for line in BufReader::new(out).lines().map_while(Result::ok) {
                 if is_wake_line(&line) {
                     match store.roll() {
-                        Ok(Some(n)) => println!("[wallpaper-serve] 唤醒 → 轮换到 {n}"),
+                        Ok(Some(n)) => {
+                            println!("[wallpaper-serve] 唤醒 → 轮换到 {n}");
+                            bus.publish("wallpapers", "pool");
+                        }
                         Ok(None) => {}
                         Err(e) => eprintln!("[wallpaper-serve] 唤醒轮换失败: {e}"),
                     }
