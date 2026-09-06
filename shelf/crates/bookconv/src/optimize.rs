@@ -153,12 +153,6 @@ pub fn marker_value(full: bool) -> String {
     if full { OPTIMIZE_VERSION.to_string() } else { format!("{OPTIMIZE_VERSION}-core") }
 }
 
-/// 是否已是**当前版本的完整优化**产物（`-core` 与旧版本都返回 false）。版本 bump 后旧产物返回 false →
-/// 重传应重优化升级（否则旧标记会把 v7 的中英文缩进 / v8 的脚注·背景修复等新改进永久挡在门外）。
-pub fn is_current_version(epub: &[u8]) -> bool {
-    optimized_version(epub).as_deref() == Some(OPTIMIZE_VERSION)
-}
-
 /// 同 optimized_version，但直接开文件——不把整本 epub 读进内存，供书库列表逐本轻量标注。
 pub fn optimized_version_file(path: &str) -> Option<String> {
     marker_in(std::fs::File::open(path).ok()?)
@@ -612,11 +606,10 @@ mod tests {
         // 默认 optimize_epub 无清洗层 → 只算"核心遍"标记，不能冒充完整优化
         let (out, _) = optimize_epub(&raw).unwrap();
         assert_eq!(optimized_version(&out).as_deref(), Some(format!("{OPTIMIZE_VERSION}-core").as_str()), "无 wash 应标 -core");
-        assert!(is_optimized(&out) && !is_current_version(&out), "有标记但不算当前完整优化");
+        assert!(is_optimized(&out) && optimized_version(&out).as_deref() != Some(OPTIMIZE_VERSION), "有标记但不算当前完整优化");
         // 带清洗层 → 完整标记
         let (full, _) = optimize_epub_with(&raw, &OptimizeOpts { wash: Some(crate::wash::WashOpts::default()), footnote: FootnoteMode::Anchor }).unwrap();
         assert_eq!(optimized_version(&full).as_deref(), Some(OPTIMIZE_VERSION), "含 wash 应标完整版本");
-        assert!(is_current_version(&full));
         // 重优化幂等：标记只有一条(不残留旧标记)、版本仍正确
         let (out2, _) = optimize_epub(&out).unwrap();
         assert_eq!(optimized_version(&out2).as_deref(), Some(format!("{OPTIMIZE_VERSION}-core").as_str()));

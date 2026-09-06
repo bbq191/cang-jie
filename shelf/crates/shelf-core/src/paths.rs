@@ -64,10 +64,6 @@ impl Paths {
     pub fn data_dir(&self) -> PathBuf {
         self.data.join(APP)
     }
-    /// `$XDG_DATA_HOME` 本身（只读对接别的应用的数据位，如 cangjie-ime/reading-qol.json）。
-    pub fn data_root(&self) -> &Path {
-        &self.data
-    }
     /// `$XDG_CONFIG_HOME` 本身（只读对接如 fontconfig/fonts.conf）。
     pub fn config_root(&self) -> &Path {
         &self.config

@@ -1,7 +1,7 @@
 # shelf 书架：网关 + 领域服务 + 共享 crate 的内部 workspace（仓库根仍不建 workspace，
 # 旧三 crate device-core / weread-device / pkm-device 各自独立、路径依赖不变）。
-# 依赖方向单向无环：services/* → shelf-core；book-serve → bookconv + device-core；
-# weread-device → bookconv（re-export 保路径）。shelf 不依赖 weread-device。
+# 依赖方向单向无环：services/* → shelf-core；book-serve / wallpaper-serve → bookconv；
+# reading/device-rs（旧 weread-device）→ bookconv（re-export 保路径）。shelf 不依赖旧 crate。
 [workspace]
 resolver = "2"
 members = [

@@ -126,24 +126,6 @@ pub fn split_blocks(html: &str, max_chars: usize, break_before: Option<&str>) ->
     }
 }
 
-/// 章内是否有"指向本章某 id"的 `#锚点`（脚注即如此）。用于"含此类锚点的章不切分"。
-pub fn has_internal_anchor(html: &str) -> bool {
-    let ids: std::collections::HashSet<&str> =
-        id_re().captures_iter(html).filter_map(|c| c.get(1).map(|m| m.as_str())).collect();
-    if ids.is_empty() {
-        return false;
-    }
-    for c in a_href_re().captures_iter(html) {
-        if let Some(anchor) = c.get(3) {
-            let aid = &anchor.as_str()[1..];
-            if ids.contains(aid) {
-                return true;
-            }
-        }
-    }
-    false
-}
-
 fn block_close_re() -> &'static Regex {
     static R: OnceLock<Regex> = OnceLock::new();
     R.get_or_init(|| Regex::new(r"(?i)</(p|div|h[1-6]|li|blockquote|section|article|ul|ol|table|pre)>").unwrap())
@@ -303,7 +285,6 @@ mod footnote_tests {
         eprintln!("OUT: {out}");
         assert!(out.contains(r##"href="#zhu1""##), "marker 未规整成裸锚点");
         assert!(out.contains(r##"href="#zw1""##), "注释回链未规整成裸锚点");
-        assert!(has_internal_anchor(html), "应判定含章内锚点(不切分)");
     }
 
     #[test]

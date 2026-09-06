@@ -13,7 +13,7 @@ fn random_bytes(n: usize) -> Vec<u8> {
         }
     }
     // 兜底：时间+pid 混合（只在 /dev/urandom 不可用的怪环境）
-    let t = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_nanos()).unwrap_or(0);
+    let t = crate::clock::now_nanos();
     let mut h = Sha256::new();
     h.update(t.to_le_bytes());
     h.update(std::process::id().to_le_bytes());

@@ -3,10 +3,11 @@
 //! **优化**（`optimize`，只对 EPUB）、**落库**（`deliver` 投 xochitl；KOReader 由 koreader-serve 从同一目录 adopt，
 //! 之后前端调 `mark_delivered` 记一笔）。落库＝纯复制母版字节（两读器同字节可对照），母版默认保留可反复落库。
 //! 目录 `$XDG_STATE_HOME/shelf/books/staging/`（/home 分区，重启/OTA 不丢；**不套 LRU 淘汰**，留住用户还没落库的书）。
-//! 落库记录是同目录隐藏 sidecar `.<name>.delivered`（JSON，各读器最近一次落库 unix 秒）。
+//! 落库记录是同目录隐藏 sidecar `.<name>.delivered`（`sidecar` 模块管读写；本模块只在落库/删书时调它）。
 use bookconv::optimize::{self, FootnoteMode, OptimizeOpts};
+use crate::sidecar::{self, Delivered, RenderCheck};
 use bookconv::wash::WashOpts;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use shelf_core::asset::{AssetItem, AssetStore};
 use shelf_core::formats::{self, BOOK_EXTS};
 use shelf_core::fs::{plain_name, unique_path, write_atomic};
@@ -56,27 +57,6 @@ pub struct StagingEntry {
     /// 落库记录。时间早于 `mtime`（之后又优化过）= 母版已变，UI 标"旧"。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub delivered: Option<Delivered>,
-}
-
-/// 落库记录：各读器最近一次落库的 unix 秒；`render`=最近一次投原生的渲染自检结果（`render_check`）。
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
-pub struct Delivered {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub native: Option<u64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub koreader: Option<u64>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub render: Option<RenderCheck>,
-}
-
-/// 渲染自检结果：`status` = pending（等 xochitl 渲染）/ ok / warn（页数远低于期望＝整章渲染失败）/ timeout。
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
-pub struct RenderCheck {
-    pub uuid: String,
-    pub pages: u64,
-    pub expected: u64,
-    pub status: String,
-    pub at: u64,
 }
 
 /// 投原生成功后交给自检线程的计划：投书时刻（毫秒，圈"之后进库"的候选）+ 书名 + 期望页数。
@@ -205,7 +185,7 @@ impl Staging {
         let folder = if folder.trim().is_empty() { self.library_folder.as_str() } else { folder.trim() };
         // 自检计划在上传前算好（投书时刻要早于 xochitl 给文档的 createdTime）；统计失败就不自检，不影响投书。
         let render = if formats::ext_of(name) == "epub" {
-            bookconv::stats::text_profile(&data).ok().map(|prof| RenderPlan { name: name.to_string(), title: prof.title.clone(), expected: prof.expected_pages(), since_ms: now_ms() })
+            bookconv::stats::text_profile(&data).ok().map(|prof| RenderPlan { name: name.to_string(), title: prof.title.clone(), expected: prof.expected_pages(), since_ms: shelf_core::clock::now_ms() })
         } else {
             None
         };
@@ -223,23 +203,17 @@ impl Staging {
     /// 写渲染自检结果到边车（书已从母版库删除 → Err，调用方只记日志）。
     pub fn set_render(&self, name: &str, rc: RenderCheck) -> Result<(), String> {
         let p = self.existing(name)?;
-        let mut d = read_delivered(&p).unwrap_or_default();
-        d.render = Some(rc);
-        let s = serde_json::to_vec(&d).map_err(|e| e.to_string())?;
-        write_atomic(&delivered_path(&p), &s).map_err(|e| format!("写落库记录失败: {e}"))
+        sidecar::update(&p, |d| d.render = Some(rc))
     }
 
     /// 记一次落库：写 sidecar `.<name>.delivered`。
     pub fn mark_delivered(&self, name: &str, reader: Reader) -> Result<(), String> {
         let p = self.existing(name)?;
-        let mut d = read_delivered(&p).unwrap_or_default();
-        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
-        match reader {
+        let now = shelf_core::clock::now_secs();
+        sidecar::update(&p, |d| match reader {
             Reader::Native => d.native = Some(now),
             Reader::Koreader => d.koreader = Some(now),
-        }
-        let s = serde_json::to_vec(&d).map_err(|e| e.to_string())?;
-        write_atomic(&delivered_path(&p), &s).map_err(|e| format!("写落库记录失败: {e}"))
+        })
     }
 
     /// xochitl 的渲染缓存 `<uuid>.pdf`（`shelf doctor --render` 取回量首行缩进）。只认 uuid 形状，只读。
@@ -254,7 +228,7 @@ impl Staging {
 
     pub fn remove(&self, name: &str) -> Result<(), String> {
         let p = self.path_of(name)?;
-        let _ = std::fs::remove_file(delivered_path(&p));
+        sidecar::remove(&p);
         std::fs::remove_file(&p).map_err(|e| format!("删除失败: {e}"))
     }
 
@@ -294,8 +268,8 @@ impl Staging {
                     None => "none",
                 }
             };
-            let mtime = md.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_secs()).unwrap_or(0);
-            out.push(StagingEntry { name, bytes: md.len(), format, optimized: level == "full", level, mtime, delivered: read_delivered(&e.path()) });
+            let mtime = md.modified().ok().map(shelf_core::clock::secs_of).unwrap_or(0);
+            out.push(StagingEntry { name, bytes: md.len(), format, optimized: level == "full", level, mtime, delivered: sidecar::read(&e.path()) });
         }
         out.sort_by(|a, b| b.mtime.cmp(&a.mtime).then_with(|| a.name.cmp(&b.name)));
         out
@@ -359,22 +333,10 @@ fn optimize_note(rep: &optimize::Report) -> String {
     note
 }
 
-fn now_ms() -> u64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
-}
-
 fn landed_name(p: &Path) -> String {
     p.file_name().and_then(|s| s.to_str()).unwrap_or("book").to_string()
 }
 
-/// 落库记录 sidecar：`.<文件名>.delivered`（同目录、隐藏名）。
-fn delivered_path(book: &Path) -> PathBuf {
-    book.with_file_name(format!(".{}.delivered", landed_name(book)))
-}
-
-fn read_delivered(book: &Path) -> Option<Delivered> {
-    serde_json::from_slice(&std::fs::read(delivered_path(book)).ok()?).ok()
-}
 
 #[cfg(test)]
 mod tests {
@@ -438,7 +400,7 @@ mod tests {
         assert!(Reader::parse("nowhere").is_err() && Reader::parse("native").is_ok());
         assert!(s.mark_delivered("nope.epub", Reader::Native).is_err(), "不存在的书拒绝");
         s.remove("b.epub").unwrap();
-        assert!(!delivered_path(&s.dir().join("b.epub")).exists(), "删书连带删 sidecar");
+        assert!(!sidecar::path_for(&s.dir().join("b.epub")).exists(), "删书连带删 sidecar");
     }
 
     #[test]

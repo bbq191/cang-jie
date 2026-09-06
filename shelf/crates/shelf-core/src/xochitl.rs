@@ -67,28 +67,33 @@ impl Xochitl {
     }
 }
 
+/// 书库目录里所有可解析的 `<uuid>.metadata` → (uuid, JSON)。只读；解析失败的跳过。
+fn metadata_entries(dir: &Path) -> Vec<(String, serde_json::Value)> {
+    let Ok(rd) = std::fs::read_dir(dir) else { return vec![] };
+    rd.flatten()
+        .filter_map(|e| {
+            let p = e.path();
+            if p.extension().and_then(|x| x.to_str()) != Some("metadata") {
+                return None;
+            }
+            let uuid = p.file_stem()?.to_str()?.to_string();
+            let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&p).ok()?).ok()?;
+            Some((uuid, v))
+        })
+        .collect()
+}
+
+fn str_of<'a>(v: &'a serde_json::Value, k: &str) -> &'a str {
+    v.get(k).and_then(|x| x.as_str()).unwrap_or("")
+}
+
+/// 非回收站、未删除的条目（文件夹与文档共用的过滤）。
+fn is_live(v: &serde_json::Value) -> bool {
+    str_of(v, "parent") != "trash" && v.get("deleted").and_then(|x| x.as_bool()) != Some(true)
+}
+
 pub fn find_folder_by_name(dir: &Path, name: &str) -> Option<String> {
-    let rd = std::fs::read_dir(dir).ok()?;
-    for e in rd.flatten() {
-        let p = e.path();
-        if p.extension().and_then(|x| x.to_str()) != Some("metadata") {
-            continue;
-        }
-        let v: serde_json::Value = match std::fs::read_to_string(&p).ok().and_then(|t| serde_json::from_str(&t).ok()) {
-            Some(v) => v,
-            None => continue,
-        };
-        if v.get("type").and_then(|x| x.as_str()) != Some("CollectionType") {
-            continue;
-        }
-        if v.get("parent").and_then(|x| x.as_str()) == Some("trash") {
-            continue;
-        }
-        if v.get("visibleName").and_then(|x| x.as_str()) == Some(name) {
-            return p.file_stem().and_then(|s| s.to_str()).map(|s| s.to_string());
-        }
-    }
-    None
+    metadata_entries(dir).into_iter().find(|(_, v)| str_of(v, "type") == "CollectionType" && is_live(v) && str_of(v, "visibleName") == name).map(|(uuid, _)| uuid)
 }
 
 /// 书库里一份文档（非文件夹、非回收站）。
@@ -103,25 +108,14 @@ pub struct DocInfo {
 /// `createdTime >= since_ms` 的文档，新→旧。投原生后找"刚进库的那本"用（`/upload` 不回 uuid；visibleName
 /// 取自 EPUB 元数据不等于文件名，所以按时间圈候选、再按书名挑）。只读 `.metadata`，不写。
 pub fn find_documents_since(dir: &Path, since_ms: u64) -> Vec<DocInfo> {
-    let mut out = Vec::new();
-    let Ok(rd) = std::fs::read_dir(dir) else { return out };
-    for e in rd.flatten() {
-        let p = e.path();
-        if p.extension().and_then(|x| x.to_str()) != Some("metadata") {
-            continue;
-        }
-        let Some(v) = std::fs::read_to_string(&p).ok().and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok()) else { continue };
-        let s = |k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or("");
-        if s("type") != "DocumentType" || s("parent") == "trash" || v.get("deleted").and_then(|x| x.as_bool()) == Some(true) {
-            continue;
-        }
-        let created_ms = v.get("createdTime").and_then(|x| x.as_str().and_then(|s| s.parse::<u64>().ok()).or_else(|| x.as_u64())).unwrap_or(0);
-        if created_ms < since_ms {
-            continue;
-        }
-        let Some(uuid) = p.file_stem().and_then(|x| x.to_str()) else { continue };
-        out.push(DocInfo { uuid: uuid.to_string(), visible_name: s("visibleName").to_string(), created_ms });
-    }
+    let mut out: Vec<DocInfo> = metadata_entries(dir)
+        .into_iter()
+        .filter(|(_, v)| str_of(v, "type") == "DocumentType" && is_live(v))
+        .filter_map(|(uuid, v)| {
+            let created_ms = v.get("createdTime").and_then(|x| x.as_str().and_then(|s| s.parse::<u64>().ok()).or_else(|| x.as_u64())).unwrap_or(0);
+            (created_ms >= since_ms).then(|| DocInfo { uuid, visible_name: str_of(&v, "visibleName").to_string(), created_ms })
+        })
+        .collect();
     out.sort_by(|a, b| b.created_ms.cmp(&a.created_ms));
     out
 }
