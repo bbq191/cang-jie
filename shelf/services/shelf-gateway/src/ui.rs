@@ -478,7 +478,7 @@ mod tests {
         let p = super::page();
         assert!(!p.contains("__EXTS__"), "占位应被替换");
         assert!(p.contains(r#""book":["epub","pdf""#) && p.contains(r#""font":["ttf""#) && p.contains(r#""dict":["ifo""#) && p.contains(r#""image":["jpg""#));
-        assert!(p.contains(r#""native":["epub","pdf"]"#) && p.contains(r#""convertible":["azw3""#) && p.contains(r#""koOnly":["txt""#), "三档格式说明注入");
+        assert!(p.contains(r#""native":["epub","pdf"]"#) && p.contains(r#""convertible":["azw3""#) && p.contains(r#""koOnly":["cbz""#), "三档格式说明注入");
         assert!(std::ptr::eq(p, super::page()), "OnceLock 只渲染一次");
     }
 }

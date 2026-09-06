@@ -5,11 +5,12 @@
 
 /// 原生 xochitl 直读（两个读器都能去）。
 pub const NATIVE_EXTS: &[&str] = &["epub", "pdf"];
-/// 电脑 `shelf push` 能转成 EPUB 进原生的源格式（= host `push.py` 的 `WASH_EXT`，Calibre 路；两处同一份，改一处另一处同步）。
-pub const HOST_CONVERTIBLE_EXTS: &[&str] = &["azw3", "mobi", "azw", "prc", "fb2"];
+/// 电脑 `shelf push` 能转成 EPUB 进原生的源格式（= host `push.py` 的 `WASH_EXT` ∪ txt；两处同一份，改一处另一处同步）。
+/// txt：中文网文，host `txt_to_epub.py` 按「第X章」切章建目录再洗（2026-09-06）；直接上传仍只能加入 KOReader（无章节）。
+pub const HOST_CONVERTIBLE_EXTS: &[&str] = &["azw3", "mobi", "azw", "prc", "fb2", "txt"];
 /// 只能加入 KOReader 的格式（设备装的 KOReader v2026.07.1 `documentregistry` 真机核对：crengine 收 txt/html/rtf/doc/docx/chm，
 /// mupdf 收 cbz/cbr(libarchive 带 rar)/xps，djvu 引擎收 djvu）。
-pub const KOREADER_ONLY_EXTS: &[&str] = &["txt", "cbz", "cbr", "djvu", "html", "htm", "rtf", "doc", "docx", "chm", "xps"];
+pub const KOREADER_ONLY_EXTS: &[&str] = &["cbz", "cbr", "djvu", "html", "htm", "rtf", "doc", "docx", "chm", "xps"];
 /// 母版库收的书籍格式 = 上面三档之并（有测试钉死一致）。能投哪个读器按格式在落库时门控。
 pub const BOOK_EXTS: &[&str] = &["epub", "pdf", "azw3", "mobi", "azw", "prc", "fb2", "txt", "cbz", "cbr", "djvu", "html", "htm", "rtf", "doc", "docx", "chm", "xps"];
 /// TrueType / OpenType 字体（原生 fontconfig 与 KOReader 同一份）。

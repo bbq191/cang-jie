@@ -470,6 +470,9 @@ book→「母版库 / 原生投递」、weread→「微信读书（内容源，�
 
 **`shelf push --wait`（同日）**：设备离 USB 后几秒就自动休眠关 WiFi（§03w），push 最常见的失败是逐本报"连不上"，而且失败发生在洗书之后。改法：洗完第一本、上传前先 `transport.reachable()` 探网关公开路由 `GET /health`（不用密码、3 s 超时；任何 HTTP 应答都算在线）；不可达时——无 `--wait` 直接 rc 2 并提示"点亮屏幕或接 USB / 加 --wait"，产物留在工作目录；有 `--wait[=秒]`（缺省 600）每 5 s 探一次、每 30 s 复述剩余时间，醒了继续上传，Ctrl-C 放弃。探活只做一次，不通就不再洗后面的书。真机：`reachable()` 对在线设备 True、对不存在地址 False；"睡着→点亮→续传"的时序由用户日常使用验证。
 
+**中文 TXT 切章（同日，`host/calibre/txt_to_epub.py`）**：网文以 TXT 为主，此前 `.txt` 原样进母版库→只能 KOReader 且无章节（bookconv/book-serve 零 TXT 处理，Calibre 也不认中文"第X章"）。host 路：stdlib 脚本解码（utf-8-sig → utf-16 BOM → gb18030 严格 → utf-8 替换）→ 一行一段、行首全角空格/nbsp 剥掉（缩进交 css）→ `第X卷/部/集`（一级）/`第X章/回/节/话`、`序章|楔子|尾声|番外…`（二级或一级）切章，标题行 ≤40 字防"第三章说过……"误判，一个没认出就每 8000 字硬切「第 N 部分」→ 极简 EPUB3（两级 nav、dc:title/creator 取自文件名 `书名 - 作者`）→ `wash_epub.sh`（`WASH_AUTOTOC=0`，目录已有）→ `check_output.py`。`formats.rs` 把 txt 从「只能 KOReader」挪到「电脑可转」（网页格式说明随之变）。
+- 真机（样本：把《人骨拼圖》EPUB 正文抽成 GB18030 TXT，38 章 24.8 万字）：`shelf push` 链 txt_to_epub → wash_epub.sh → check_output（NCX 48 条全命中）→ 投原生 **531 页（自检期望 526，ok）**，正文页 x0 只有 17.8/41.9 两档 = 首行缩进 24.1 pt = 2em，章名 24.1 pt。样本暴露一坑：TXT 开头常自带一份目录（每行"第一部　一天的國王　1"），会被切成一串空章——`drop_contents_listing`：没正文且标题（去尾页码）在后面再次出现的章视为目录行丢掉。另一事实：**xochitl 渲染缓存 PDF 从不带书签**（Tell Me Your Dreams 的也是 0 条），目录只能从 EPUB 的 ncx/nav 验，不能从缓存验。
+
 ## 04｜踩坑
 
 - **xochitl CSS 引擎七条实测规则见 §03y**（尾分号 / 0 当没设 / 类规则认且压元素 / 同类先出现者胜 / 不认内联 style / text-indent 继承 / 混类选择器不废表）。改排版规则前先用诊断 EPUB 量渲染缓存，别靠肉眼。

@@ -24,7 +24,7 @@ host `shelf push` 是唯一能"入库时顺带优化"的源（Calibre 深洗 / �
 | 档 | 格式 | 去向 |
 |---|---|---|
 | 原生直读 | EPUB / PDF | 两个读器都能去 |
-| 电脑可转 | AZW3 / MOBI / AZW / PRC / FB2 | `shelf push` 转 EPUB 进原生；直接上传只能加入 KOReader |
+| 电脑可转 | AZW3 / MOBI / AZW / PRC / FB2 / **TXT** | `shelf push` 转 EPUB 进原生（TXT 按「第X章/卷」切章建两级目录，GB18030/UTF-8 自动识别）；直接上传只能加入 KOReader |
 | 仅 KOReader | TXT / CBZ / CBR / DjVu / HTML / RTF / DOC / DOCX / CHM / XPS | 只能加入 KOReader（漫画 CBZ 也在此档：**漫画不投原生**） |
 
 **网页 tab**：「传书」（固定第一位：入库｜母版库）· xochitl（原生字体，font-serve）· KOReader（字体｜词典，koreader-serve）· 壁纸 · 「管理」（固定）。读器页不传书。
