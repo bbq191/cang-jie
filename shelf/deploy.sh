@@ -1,6 +1,6 @@
 #!/bin/sh
 # host 侧一键部署书架到设备（独立于整包 packaging/，Phase 验证期用）：
-#   组载荷（bin/ systemd/ lo-alias/ install.sh uninstall.sh）→ tar-over-ssh → 设备端 install.sh。
+#   组载荷（bin/ systemd/ lo-alias/ xovi/ install.sh uninstall.sh）→ tar-over-ssh → 设备端 install.sh。
 # 用法：./deploy.sh [host] [install.sh 的参数…]      host 默认 10.11.99.1
 #   环境 SHELF_NO_BUILD=1 跳过交叉编译（直接用 target/ 里现成产物）
 set -eu
@@ -11,12 +11,11 @@ BINS="shelf-gateway book-serve koreader-serve font-serve wallpaper-serve"
 
 [ "${SHELF_NO_BUILD:-0}" = "1" ] || sh ./build.sh
 STAGE="$(mktemp -d)"; trap 'rm -rf "$STAGE"' EXIT
-mkdir -p "$STAGE/shelf/bin" "$STAGE/shelf/systemd" "$STAGE/shelf/lo-alias" "$STAGE/shelf/wallpaper" "$STAGE/shelf/xovi"
+mkdir -p "$STAGE/shelf/bin" "$STAGE/shelf/systemd" "$STAGE/shelf/lo-alias" "$STAGE/shelf/xovi"
 for b in $BINS; do cp "target/$TARGET/release/$b" "$STAGE/shelf/bin/"; done
 cp systemd/* "$STAGE/shelf/systemd/"
 cp ../chinese-ime/langhook/deploy/cangjie-lo-alias.sh "$STAGE/shelf/lo-alias/"
 cp install.sh uninstall.sh "$STAGE/shelf/"
-cp wallpaper/shelf-wallpaper-sleep.sh "$STAGE/shelf/wallpaper/"
 cp xovi/*.qmd "$STAGE/shelf/xovi/"
 echo "-- 推送到 root@$HOST:/home/root/shelf-pkg/ 并安装"
 tar -C "$STAGE" -cf - shelf | ssh "root@$HOST" 'rm -rf /home/root/shelf-pkg && mkdir -p /home/root/shelf-pkg && tar -C /home/root/shelf-pkg -xf -'

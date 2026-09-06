@@ -1,9 +1,8 @@
-//! 壁纸仓库（`AssetStore` 实现）+ 轮换状态。**剥离移植**自 misc/wallpaper 的真机结论：
-//! - 休眠屏背景 = `/usr/share/remarkable/suspended.png`（954×1696 RGBA），中央叠三张 776×776 插画卡
-//!   `/usr/share/remarkable/carousel/sleep_Illustration_0{1,2,3}.png`（白底烘焙在 png 内）；
-//! - **xochitl 每次休眠重读磁盘** → 换图零重启即时生效；
-//! - rootfs 只读，用 bind-mount 覆盖（真身不改、OTA 无冲突、umount 秒还原）；
-//! - 换图必须**原地覆盖 current.png 保 inode**（bind 跟随），绝不能 rename 新文件盖上去。
+//! 壁纸仓库（`AssetStore` 实现）+ 轮换状态。真机结论（2026-09-03 bind 时代 → 2026-09-06 原生键时代）：
+//! - 休眠屏由 xochitl.conf `SleepScreenPath` 指向本仓库的 `current.png`（native.rs）；xochitl **每次休眠重读该文件**，
+//!   满屏 PreserveAspectFit、插画卡自动隐藏 → 换图零重启即时生效，不写 `/usr`、不 bind-mount；
+//! - 换图**原地覆盖 current.png**（truncate 写、保 inode，路径与 inode 都不变）；
+//! - 竖屏物理尺寸 954×1696，上传即缩放入池。
 //! 路径全走 XDG：池 `$XDG_DATA_HOME/shelf/wallpapers/pool/`、`current.png` 同级；状态 `$XDG_STATE_HOME/shelf/wallpaper-state.json`。
 use image::imageops::FilterType;
 use image::{GenericImageView, ImageFormat, RgbaImage};
@@ -18,13 +17,6 @@ use std::path::{Path, PathBuf};
 /// 竖屏物理尺寸（长边/短边常量与 bookconv 同源：954×1696 @264PPI）。
 pub const W: u32 = bookconv::imgopt::MAX_SHORT_EDGE;
 pub const H: u32 = bookconv::imgopt::MAX_EDGE;
-pub const CARD: u32 = 776;
-pub const SUSPENDED_PNG: &str = "/usr/share/remarkable/suspended.png";
-pub const CAROUSEL: [&str; 3] = [
-    "/usr/share/remarkable/carousel/sleep_Illustration_01.png",
-    "/usr/share/remarkable/carousel/sleep_Illustration_02.png",
-    "/usr/share/remarkable/carousel/sleep_Illustration_03.png",
-];
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Default)]
 #[serde(rename_all = "lowercase")]
@@ -53,7 +45,6 @@ pub struct WpState {
 pub struct WallpaperStore {
     pool: PathBuf,
     current: PathBuf,
-    blank: PathBuf,
     state_file: PathBuf,
     pub fit: Fit,
 }
@@ -61,7 +52,7 @@ pub struct WallpaperStore {
 impl WallpaperStore {
     pub fn new(paths: &Paths) -> WallpaperStore {
         let base = paths.data_dir().join("wallpapers");
-        WallpaperStore { pool: base.join("pool"), current: base.join("current.png"), blank: base.join("blank776.png"), state_file: paths.state_dir().join("wallpaper-state.json"), fit: Fit::Cover }
+        WallpaperStore { pool: base.join("pool"), current: base.join("current.png"), state_file: paths.state_dir().join("wallpaper-state.json"), fit: Fit::Cover }
     }
     pub fn pool(&self) -> &Path {
         &self.pool
@@ -69,18 +60,10 @@ impl WallpaperStore {
     pub fn current_path(&self) -> &Path {
         &self.current
     }
-    pub fn blank_path(&self) -> &Path {
-        &self.blank
-    }
     pub fn ensure(&self) -> Result<(), String> {
         std::fs::create_dir_all(&self.pool).map_err(|e| e.to_string())?;
         if let Some(p) = self.state_file.parent() {
             std::fs::create_dir_all(p).map_err(|e| e.to_string())?;
-        }
-        if !self.blank.is_file() {
-            // 全透明 776×776：盖住三张原生插画卡（它们白底烘焙在 png 里，不盖就挡在中央）
-            let img = RgbaImage::from_pixel(CARD, CARD, image::Rgba([0, 0, 0, 0]));
-            img.save_with_format(&self.blank, ImageFormat::Png).map_err(|e| e.to_string())?;
         }
         Ok(())
     }
@@ -110,7 +93,7 @@ impl WallpaperStore {
         std::fs::read(self.pool.join(plain_name(name)?)).map_err(|_| "池里没有这张图".to_string())
     }
 
-    /// 原地覆盖 current.png（truncate 写、保 inode，bind-mount 自动跟随）。
+    /// 原地覆盖 current.png（truncate 写、保 inode；xochitl 每次休眠按 SleepScreenPath 重读）。
     pub fn activate(&self, name: &str) -> Result<(), String> {
         let src = self.pool.join(plain_name(name)?);
         let data = std::fs::read(&src).map_err(|_| "池里没有这张图".to_string())?;
@@ -270,7 +253,6 @@ mod tests {
         s.set_mode(Mode::Random).unwrap();
         assert!(s.roll().unwrap().is_some());
         assert!(s.remove(&s.state().current.clone().unwrap()).is_err());
-        assert!(s.blank_path().is_file());
     }
 
     #[test]

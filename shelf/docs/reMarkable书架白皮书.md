@@ -27,9 +27,9 @@
 
 **网页 tab**：传书（入库｜母版库，固定第一）· xochitl（原生字体，由 font-serve 注册）· KOReader（字体｜词典）· 壁纸 · 管理（固定）。
 
-**设备杂项（§03v/§03w，全真机通）**：3.28 字体菜单 qmd 已通（qmldiff 语法坑，§04）；原生休眠屏 `SleepScreenPath=current.png` 满屏且随轮换（bind-mount 整套待退役）；WiFi 60 秒掉链＝IW612 省电，`powersave 2` 已根治 + `xovi/scripts/post-start/wifi-reconnect.sh` 看护；chrony 国内 NTP `packaging/chrony-cn.sh`；OTA 后四步恢复见 §03v（README 有"OTA 与恢复"表）。
+**设备杂项（§03v/§03w，全真机通）**：3.28 字体菜单 qmd 已通（qmldiff 语法坑，§04）；原生休眠屏 `SleepScreenPath=current.png` 满屏且随轮换，bind-mount 整套已退役（§03x，`shelf_core::xochitl_conf` + wallpaper-serve `native.rs`）；WiFi 60 秒掉链＝IW612 省电，`powersave 2` 已根治 + `xovi/scripts/post-start/wifi-reconnect.sh` 看护；chrony 国内 NTP `packaging/chrony-cn.sh`；OTA 后四步恢复见 §03v（README 有"OTA 与恢复"表）。
 
-**未闭环**：Phase E ②③④（英文书拉丁缩进观感 / 两器同字节对照 / KOReader 里内联脚注可否接受——KOReader 拿到的是母版库 Inline 产物，不再另跑 Anchor）；退役 bind-mount 壁纸整套改写 `SleepScreenPath`；appload 3.28 适配（KOReader 入口）。§05 有清单。
+**未闭环**：Phase E ②③④（英文书拉丁缩进观感 / 两器同字节对照 / KOReader 里内联脚注可否接受——KOReader 拿到的是母版库 Inline 产物，不再另跑 Anchor）；appload 3.28 适配（KOReader 入口）。§05 有清单。
 
 ## 01｜架构决策
 
@@ -405,6 +405,16 @@ book→「母版库 / 原生投递」、weread→「微信读书（内容源，�
 
 **时钟从未同步的根因与修法**：`chronyd` 4.5 配置的 4 个 `time{1-4}.google.com` 在国内不通（ping 100% 丢），启动以来没有一条 `Selected source`，`timedatectl` 一直 `synchronized: no`（RTC 本身准，差 1 秒，靠的是出厂/上次同步）。设备没有 `chronyc`、busybox 没有 `ntpd`。修法：改 **rootfs 底层** `/etc/chrony.conf`（服务器换成 `ntp.aliyun.com / ntp.tencent.com / cn.pool.ntp.org / time.cloudflare.com`），重启不丢（OTA 会冲）。**改底层 /etc 的姿势**：`/etc` 是 overlay（lower=/etc 本体，upper=/var/volatile tmpfs），必须 `mount -o remount,rw /` **先于** `mount --bind / /tmp/rootbind`（bind 继承挂载时的 ro 标志，后 remount 不传播），改 `/tmp/rootbind/etc/…`，umount，再 remount ro；**overlay 缓存 lower**：改完当场 `/etc/` 看到的仍是旧内容，重启才变——本次要立即生效就再 `cp` 一份进 overlay（落 upper tmpfs，重启自然消失、底层接管）。`mount -o remount,ro /` 偶发 `mount point is busy`，隔几秒再试就过（journal 在 /home 不占 rootfs）。改后重启 chronyd 8 秒 `Selected source ntp.tencent.com`，`synchronized: yes`。**已落地的兜底**：`packaging/xovi-post-start/wifi-reconnect.sh` → `/home/root/xovi/scripts/post-start/`（`xovi/start` 后台看护 60 秒，见 NO-CARRIER 就 `nmcli con up`，`journalctl -t xovi-wifi`），真机 `t+5s NO-CARRIER → 已激活` 通。
 
+## 03x｜退役 bind-mount 壁纸整套，改写 `SleepScreenPath`（2026-09-06，3.28.0.172 真机）
+
+**动机**：§03w 证明原生隐藏键 `SleepScreenPath=current.png` 满屏、隐藏插画卡、每次休眠重读——bind-mount 覆盖 `/usr/share/remarkable/suspended.png` + 三张透明插画卡 + 开机单元 + sleep 钩子那整套（§03g P2 时代）从此多余，且是书架唯一还在写 `/usr` 且要 root 挂载的地方。
+
+**改法**：① `shelf_core::xochitl_conf`——`xochitl.conf [General]` 单键 get/set/remove：只动目标行、tmp+rename 原子写、首次改前留 `xochitl.conf.shelf-bak`；**文件含 DeveloperPassword/UserToken，模块任何路径都不返回/打印行内容**（错误只带键名）；无 `[General]` 段时补一段；单测锁"插在段头后、其它行逐字节不变、删键后与原件相同"。② wallpaper-serve `mount.rs` → `native.rs`：`enable`（写键指向 `current.png`，幂等）/ `disable`（删键）/ `restart_pending`（记住写键时 xochitl MainPID，PID 没变即"还没生效"）；激活首张时自动 `enable`；`GET /status` 出 `native:{enabled,path,restartPending}`，上传回执 note 首次提示"跑一次 xovi/start"。③ 删 `blank776.png` 生成、`CAROUSEL/SUSPENDED_PNG` 常量、wake.rs 入睡补 bind 分支、`systemd/shelf-wallpaper-bind.service`、`wallpaper/shelf-wallpaper-sleep.sh`；deploy.sh / package.sh 不再组 `wallpaper/`。④ install.sh 3b：迁旧池 → **清旧 bind 整套**（`disable --now` 旧单元、按 `/proc/mounts` 卸 4 个 bind、remount rw 删 /usr 里的单元+钩子）→ 有 current.png 就 `wallpaper-serve enable`；uninstall.sh：`disable` 删键 + 同样的旧残留清理。网页壁纸页状态改为「原生休眠屏 已启用/未启用 · 需跑一次 xovi/start 生效」。
+
+**真机**：WiFi `192.168.1.22` 部署（USB 当时不通；known_hosts 里 192.168.1.22 是别的机器的旧键，按 USB 已知指纹核对一致后替换）。装前：4 个 bind 在挂、旧单元 active、键已在；装后：bind 0、旧单元/钩子文件全没（`reset-failed` 清掉 systemd 残留态）、键仍在、`native.enabled=true restartPending=false`、rootfs 回 ro、xochitl 未动（NRestarts=0）。**待用户休眠一次确认**：bind 全卸后休眠屏仍是池图（证明只靠原生键）。
+
+**QSettings 运行中改键的边界**：xochitl 在 sync 时按 mtime 重读再合并，外部加的键不被抹（本次装机时 xochitl 在跑、键保住）；但 `isettings.sleepScreenPath` 只在启动时读，所以首次写键必须 `xovi/start` 一次；之后换图不再碰 conf。
+
 ## 04｜踩坑
 
 - **磁盘 metadata ≠ xochitl/UI 实际状态（2026-09-04 用户纠正）**：直接 `sed` 改 `.metadata` 的 `parent=trash` 并不等于"已进回收站"——xochitl 运行时在内存缓存、写回时覆盖，云同步也可能还原；出现过磁盘 8 个探针 `parent=trash` 但 UI 回收站只见真实书的错位。**涉及书库状态以设备 UI/xochitl 实际为准，不拿磁盘 metadata 当真相**；清测试文档走正常删除流程或停 xochitl 后操作，别边跑边改。
@@ -422,15 +432,15 @@ book→「母版库 / 原生投递」、weread→「微信读书（内容源，�
 
 **未闭环**：
 1. **Phase E ②③④**：英文书拉丁缩进（1.2em、标题后首段不缩进）观感；同一母版落 xochitl + KOReader 并排对照；KOReader 里内联脚注〔…〕能否接受（若不能，落库时对 KOReader 另跑 Anchor 是唯一备选，但会打破"两器同字节"）。
-2. **退役 bind-mount 壁纸整套**（§03w 已证原生 `SleepScreenPath=current.png` 满屏且随唤醒轮换）：wallpaper-serve 去掉 `bind/unbind`/`mount.rs`/三张透明插画卡，删 `shelf-wallpaper-bind.service` + sleep 钩子，安装器改为写 xochitl.conf `SleepScreenPath`（要停 xochitl 写、备份 conf、不打印 token），卸载器还原键；轮换沿用 wake.rs。退役后第 4 条自然消失。
+2. ~~退役 bind-mount 壁纸整套~~ **已做（§03x，2026-09-06）**；待用户休眠一次确认 bind 卸光后休眠屏仍是池图。
 3. appload 3.28 适配：等上游发版或自 fork 重编（需 rM Qt6 SDK）；期间 KOReader 无侧栏入口。
-4. 拔线真 suspend 下钩子 bind + 唤醒轮换只触发一次（bind 退役后不再相关）。
+4. 拔线真 suspend 下唤醒轮换只触发一次（钩子已删，只剩 wake.rs 这一条路）。
 5. 3.28 字体菜单：用户在阅读器里选中书架字体后正文渲染效果确认；菜单再开时 `SHELF-FONT: visible` 差量追加是否触发（S-B）。
 6. PDF 结构化重排小瑕疵：署名"文｜某某"混进目录；"句中断开 12%"含图注/列表未细分。
 7. KOReader 里旧的 282MB《镖人.epub》由用户删（母版库里的漫画 PDF 用户已删，2026-09-05 15:04 后母版库为空）。
 
 **OTA 后固定四步**（§03v）：`xovi/rebuild_hashtable` → `xovi/start` → `SHELF_NO_BUILD=1 sh deploy.sh 10.11.99.1` → `ssh root@10.11.99.1 sh -s < packaging/chrony-cn.sh`。/home 里的（母版库、KOReader、WiFi 钩子与 `powersave 2`、休眠屏 conf 键、qmd 文件）不用动。
 
-**已闭环（真机）**：§03f 首轮五服务 · §03g/§03h 字体分开装/子目录/HTTPS · §03j 登录/CA/mDNS · §03k 字体两 bug · §03l 传书卡＝云同步 · §03m/§03n/§03o 网页改版/细节/管理台 · §03p 质量一轮 · §03q 优化做精 + 首行缩进 v10 · §03r 母版库 Phase A/B/C + 财新重排 · §03s 质量二轮 + 格式三档 · §03t 漫画通道（host 真书探针 → CBZ；漫画不投原生）+ 分卷静默失效修 + 投原生体积门 · §03v 固件 3.28 升级 + 3.28 字体菜单 qmd（首版整份不应用：qmldiff 解析不了 `({})` 与裸 `if (` handler，改 `[]`+`{ }` 后 `appended=4 count=8`，判官＝本机 asivery/qmldiff CLI）· §03w 原生休眠屏 `SleepScreenPath` + WiFi `powersave 2` 根治 + 看护钩子 + chrony 国内 NTP 脚本。
+**已闭环（真机）**：§03f 首轮五服务 · §03g/§03h 字体分开装/子目录/HTTPS · §03j 登录/CA/mDNS · §03k 字体两 bug · §03l 传书卡＝云同步 · §03m/§03n/§03o 网页改版/细节/管理台 · §03p 质量一轮 · §03q 优化做精 + 首行缩进 v10 · §03r 母版库 Phase A/B/C + 财新重排 · §03s 质量二轮 + 格式三档 · §03t 漫画通道（host 真书探针 → CBZ；漫画不投原生）+ 分卷静默失效修 + 投原生体积门 · §03v 固件 3.28 升级 + 3.28 字体菜单 qmd（首版整份不应用：qmldiff 解析不了 `({})` 与裸 `if (` handler，改 `[]`+`{ }` 后 `appended=4 count=8`，判官＝本机 asivery/qmldiff CLI）· §03w 原生休眠屏 `SleepScreenPath` + WiFi `powersave 2` 根治 + 看护钩子 + chrony 国内 NTP 脚本 · §03x 退役 bind-mount 壁纸整套（`xochitl_conf` + `native.rs`，安装器清旧残留）。
 
 **已放弃**：**微读线整条**（§03u，2026-09-05：先是内嵌浏览器 spike 未推进，后内容源方案评估后用户砍掉）；设备端 AZW3/MOBI/FB2 → EPUB 转换（§03s，杂格式走电脑 Calibre，`bookconv::convert` 本体留给 reading 线）。
