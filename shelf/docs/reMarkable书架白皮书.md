@@ -17,7 +17,7 @@
 
 ## 00b｜现状总览（2026-09-05，读本文其余历史节前先看这里）
 
-**架构**：网关（`0.0.0.0:8778`，HTTPS 私有 CA + 登录页密码 / CLI Basic + mDNS `shelf.local`）+ 四个 loopback 领域服务（book 8790 / koreader 8791 / font 8792 / wallpaper 8793）+ 运行时注册表驱动 tab。设备固件 **3.28.0.172**（2026-09-05 从 3.27.3.0 升级，实录 §03v；appload 0.5.3 在 3.28 不兼容已停用，KOReader 暂无侧栏入口），KOReader v2026.07.1。
+**架构**：网关（`0.0.0.0:8778`，HTTPS 私有 CA + 登录页密码 / CLI Basic + mDNS `shelf.local`）+ 四个 loopback 领域服务（book 8790 / koreader 8791 / font 8792 / wallpaper 8793）+ 运行时注册表驱动 tab。设备固件 **3.28.0.172**（2026-09-05 从 3.27.3.0 升级，实录 §03v；appload 0.5.3 经 qmd 回填补丁在 3.28 复活），KOReader v2026.07.1。
 
 **读书线 = 三层 · 三动作正交**（§03r 定，§03s 收口）：内容源（网页上传 / 抓网文 / host `shelf push` / scp inbox；微读线已砍，§03u）→ **母版库** `~/.local/state/shelf/books/staging/`（原样入库，永久保留，不淘汰）→ 落库（人选：投 xochitl 只收 EPUB/PDF；加入 KOReader 收任意入库格式）。「优化」是母版库里对 EPUB 的独立动作（档位 auto / keep-spacing / plain，产物标记 full / core / old）；落库＝纯复制母版字节（投原生有体积门 `nativeUploadLimitMb`，缺省 150）。**漫画不投原生**：AZW3/EPUB 漫画由 host `shelf push` 转 CBZ 入库，只加入 KOReader。**所有书只落母版库，没有任何直投读器的路径**。落库记录 sidecar `.<书>.delivered`。
 
@@ -29,7 +29,7 @@
 
 **设备杂项（§03v/§03w，全真机通）**：3.28 字体菜单 qmd 已通（qmldiff 语法坑，§04）；原生休眠屏 `SleepScreenPath=current.png` 满屏且随轮换，bind-mount 整套已退役（§03x，`shelf_core::xochitl_conf` + wallpaper-serve `native.rs`）；WiFi 60 秒掉链＝IW612 省电，`powersave 2` 已根治 + `xovi/scripts/post-start/wifi-reconnect.sh` 看护；chrony 国内 NTP `packaging/chrony-cn.sh`；OTA 后四步恢复见 §03v（README 有"OTA 与恢复"表）。
 
-**未闭环**：Phase E ②③④（英文书拉丁缩进观感 / 两器同字节对照 / KOReader 里内联脚注可否接受——KOReader 拿到的是母版库 Inline 产物，不再另跑 Anchor）；appload 3.28 适配（KOReader 入口）。§05 有清单。
+**未闭环**：Phase E ②③④（英文书拉丁缩进观感 / 两器同字节对照 / KOReader 里内联脚注可否接受——KOReader 拿到的是母版库 Inline 产物，不再另跑 Anchor）。appload 3.28 已靠 PR #59 qmd 回填复活（系统增强白皮书 §12.1）。§05 有清单。
 
 ## 01｜架构决策
 
@@ -432,7 +432,7 @@ book→「母版库 / 原生投递」、weread→「微信读书（内容源，�
 
 **未闭环**：
 1. **Phase E ②③④**：英文书拉丁缩进（1.2em、标题后首段不缩进）观感；同一母版落 xochitl + KOReader 并排对照；KOReader 里内联脚注〔…〕能否接受（若不能，落库时对 KOReader 另跑 Anchor 是唯一备选，但会打破"两器同字节"）。
-2. appload 3.28 适配：等上游发版或自 fork 重编（需 rM Qt6 SDK）；期间 KOReader 无侧栏入口。
+2. ~~appload 3.28 适配~~ **已通（2026-09-06）**：PR #59 的 qmd 等长回填进 appload.so（免 SDK）+ KOReader 入口 qmd 换 3.28 锚点，真机 qmldiff 零错误、侧栏 KOReader 项在位（系统增强白皮书 §12.1）；用户点入口起 KOReader 待确认。
 3. 3.28 字体菜单：用户在阅读器里选中书架字体后正文渲染效果确认；菜单再开时 `SHELF-FONT: visible` 差量追加是否触发（S-B）。
 4. PDF 结构化重排小瑕疵：署名"文｜某某"混进目录；"句中断开 12%"含图注/列表未细分。
 5. KOReader 里旧的 282MB《镖人.epub》由用户删（母版库里的漫画 PDF 用户已删，2026-09-05 15:04 后母版库为空）。
