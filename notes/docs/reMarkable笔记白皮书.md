@@ -1,37 +1,45 @@
 # reMarkable 笔记线（notes）白皮书
 
-> 记"怎么决定、真机怎么验、踩了什么坑"。现状看 §00b；待办看 §05；踩坑看 §04。总计划 未入库的计划文件。
+> 记"怎么决定、真机怎么验、踩了什么坑"。读现状先看 §00b；待办/已闭环/明确不做看 §05；踩坑看 §04。总计划 未入库的计划文件。
+> 笔记线**挂在书架网关下**：网关 / 注册表 / 事件汇聚 / 部署链 / 原生回收站代理都是书架的（`shelf/docs/reMarkable书架白皮书.md`），本文只记笔记线自己的决策、服务、真机轮次。
 
 ## 00｜定位与原则（2026-09-06 用户定）
 
-书架（`shelf/`）补 reMarkable 读书短板；笔记线做强它的强项：**荧光笔勾书 + 在勾出来的内容旁边直接手写**。文学书勾作者名写"查作者"，学术书勾公式写"?/没听懂"或"!/背诵"——凡是勾了、写了的都该汇入笔记。旧 `knowledge/pkm`（画星待办、六色槽卡片、跨书汇编、复盘队列、仪表）判"太花哨"（颜色即路由的产物），**全部退役；新建 `notes/`，不引入任何旧代码，只借鉴功能与踩坑**。
+书架（`shelf/`）补 reMarkable 读书短板；笔记线做强它的强项：**荧光笔勾书 + 在勾出来的内容旁边直接手写**。文学书勾作者名写"查作者"，学术书勾公式写"?/没听懂"或"!/背诵"——凡是勾了、写了的都该汇入笔记。旧 `knowledge/pkm`（画星待办、六色槽卡片、跨书汇编、复盘队列、仪表）判"太花哨"（颜色即路由的产物），**全部退役；新建 `notes/`，不引入任何旧代码，只借鉴功能与踩坑**（`.rm` 解析、`.epubindex` 页→章按书架惯例"剥离移植"成新 crate）。
 
 四步闭环：① 合上书自动摄取（事件驱动）→ ② **手机上修正**（e-ink 打字太痛苦；不再引入中文化/输入法）→ ③ 按分区调智能（**分区 = 名字 + 简述 + 是否调模型，简述就是给 AI 的要求**；"背诵"不调）→ ④ 可选导出 md，一章一文件，与设备笔记本同构，反链。
 
-工程原则同书架：XDG · 设计模式去重解耦 · 专项专用可插拔 · **设备只负责写，不负责改；改在手机，回写靠重建；条目库是唯一事实源，笔记本与 md 都是投影**。用户另定：四个服务（转写与智能分开）；设备笔记本一章一本、放《书名》文件夹、只读；分区自定义；首期只 EPUB。
+工程原则同书架四条（XDG · 设计模式去重解耦 · 专项专用可插拔 · 不引旧 crate 不对接旧路径），外加笔记线自己的一句话：**设备只负责写，不负责改；改在手机，回写靠重建；条目库是唯一事实源，笔记本与 md 都是投影**。用户另定：四个服务（转写与智能分开）；设备笔记本一章一本、放《书名》文件夹、只读；分区自定义；首期只 EPUB；**后续全部提交 `dev` 分支**。
 
-## 00b｜现状总览（2026-09-06 晚）
+## 00b｜现状总览（2026-09-06 晚，读其余历史节前先看这里）
 
-- `crates/rmv6`：`.rm` v6 只读解析，剥离移植 vendored `remarkable_lines` 0.1.3（MIT，PROVENANCE 留痕）只留 v6；补 CHECKBOX(6/7) 样式码、未知工具兜底；高层 `page::Page`（笔画 / 勾画 GlyphRange / 打字文本，墓碑剔除）。
-- `crates/epubmap`：`.epubindex`（两张表取首现的第一个 u32 = 起始页）+ nav/ncx 两策略统一成带层级目录 → `chapter_of(page)` 给章（1 级祖先）与小节。
-- `crates/notecore`：条目/分区模型、FNV 簇指纹、并查集聚簇 + 就近配对勾画、增量合并规则。
-- `services/ink-serve`（8795）：监听书库（fswatch 非递归：合上书 xochitl 重写 `.content/.metadata` 触发）→ 只扫变更页 → 摄取 → 缩略图裁片 → 条目库 `~/.local/state/notes/books/<uuid>.json`（**唯一写者**：其它服务经 `POST /books/{uuid}/entries/{id}` 改字段）。真机：active、注册、扫到《人骨拼圖》38 章。
-- `services/transcribe-serve`（8796，2026-09-06 夜建、**真机待验**）：订阅 ink 事件 → 待转写条目取裁图 → `OpenAiCompat`（Strategy：`POST {baseUrl}/chat/completions` + `image_url` data URI，DashScope Qwen `qwen3-vl-plus` 缺省，任何 OpenAI 兼容口只改配置）→ 草稿经 ink-serve HTTP 写回（不直碰条目库）。编排 `worker::run_once` 全 trait 注入（`EntryStore`/`Vision`），内存桩单测覆盖：限量、失败上限、强制重转、指纹变计数归零、连续失败即停。行首标记 OCR 兜底 `notecore::marker`（几何优先，仍是正文时才按转写文本认 `-`/`1.`/`口` 并剥标记）。key 只写不读、文件 0600、环境变量兜底；用量账本只记数。网页笔记页加「转写」区（key/模型/baseUrl/自动开关/跑一轮/重试失败/失败清单）与每条「转写/重转」。
-- `services/note-serve`（8798）：注册「笔记」tab；投影/导出待建。
-- 网关「笔记」tab：按书→按章列条目，左裁图右文本框，改即存；分区编辑（名/简述/调模型）。
-- 部署：随书架 `deploy.sh` 一起（build.sh 顺带编 `../notes`，载荷带其二进制与单元，install/uninstall 令牌 `ink`/`transcribe`/`note`，网关 `MODULES` 三行）。分支：2026-09-06 起笔记线全部提交到 `dev`（用户定）。
+**架构**：书架网关 `manage::MODULES` 加三行（`ink`/`transcribe`/`notes`）；三个 loopback 服务已上机——**ink-serve 矿 8795**（书库监听 → 条目库唯一写者，零网络）· **transcribe-serve 转写 8796**（订阅矿的事件 → 裁图喂视觉模型 → 草稿写回，唯一出网）· **note-serve 本 8798**（注册「笔记」tab；投影/导出待建）；**mind-serve 脑 8797 待建**。网页只多一个「笔记」tab（前端组合 `/api/ink` `/api/transcribe` `/api/notes`），事件区域 `notes`（矿发 `entries`/`sections`，转写发 `transcribe`）经网关 `Hub` 汇聚到 `/api/events`，页面零轮询。**笔记线零 xovi 依赖**（无 qmd、无 .so；将来建《书名》文件夹走书架的 Sidebar 代理 qmd，依赖仍留在书架那一份）。
 
-待建：mind-serve、note-serve 投影（7 样式写入器）与 md 导出、书库动作代理扩展（`createCollection` 建《书名》夹）。transcribe-serve 待真机验（设备当时离线）：服务 active/注册、网页粘 key、有样本后看转写与校对流。
+**数据流**：合上书 → xochitl 重写 `<uuid>.content/.metadata` → ink `fswatch`（书库目录非递归、4 s 防抖）→ 只扫页 `.rm` mtime 变了的页 → `rmv6` 解析（勾画 GlyphRange + 手写笔画，同一坐标系，墓碑剔除）→ `notecore` 并查集聚簇 + 就近配对 + 增量合并 → 从缩略图裁片 → `~/.local/state/notes/books/<uuid>.json` + `~/.local/share/notes/crops/` → 事件 → transcribe 防抖 3 s 取待转写条目 → DashScope `qwen3-vl-plus`（OpenAI 兼容口，改配置即换厂）→ `POST ink /books/{uuid}/entries/{id}` 写 `draft` → 手机网页改字/分区/样式（改即存）→〔待建〕note 投影为《书名》文件夹一章一本 + md 导出。
 
-## 01｜真机事实
+**真机（3.28.0.172，2026-09-06 晚，设备在 WiFi `192.168.1.22`，USB 网卡当时没起来）**：三服务 `active`，注册表 8 项（书架 5 + 笔记 3）；ink 扫到《人骨拼圖》38 章、0 条（唯一有 `.rm` 的页 23 笔全是墓碑）；transcribe 配置 `transcribe.json` 权限 `0600`、启动追平一轮记 `note="未配置 API key"`、`inkReachable=true`、`pending=0`；`GET /status` 不含 key 字段。**未目视**：手机网页笔记页/转写区（用户看）。
 
-- EPUB 页 `.rm`：勾画 = `SceneGlyphItem`（GlyphRange：原文 + 字符偏移 + 每行矩形），手写 = `SceneLineItem` 笔画，**同一坐标系**；擦掉的项是墓碑（`item.value` 为空）。《人骨拼圖》c65fa2ae 页 23 笔全是墓碑（用户画了又擦）——fixture 只能测"解析成功零条目"，真样本待步骤 0。
-- 3.28 打字段落样式 7 种（格式菜单 qml_00db4610）：Title / Subheading 1 / Subheading 2 / Body / Bulletpoint / NumberedList / CheckboxUnchecked；rmscene 已知码 0–7（CHECKBOX=6/7），有序列表码待样本读回。
-- `.content`（formatVersion 1）：`pages` 是页 id 顺序表（523 项），下标 = 页号，与 `.epubindex` 起始页对齐；`.epubindex` 有两张表（第一张 `路径+起始页+flag+?`，第二张 `路径+字符偏移+长度+起始页`）。
-- 缩略图 `<uuid>.thumbnails/<page>.png` **384×512**（3:4；封面 954 宽）——页坐标系按经典 1404×1872、x 原点页中线假设，待样本核。
-- 3.28 QML：`Library.createCollection`（`import xofm.libs.library`）、`explorer.removeAllTrashed()`（emptyTrash 的内核）、`selectionRestoreTrashed`——建夹/清空回收站都能由 Sidebar 代理代劳。
+**代码落点**：`crates/rmv6`（`lib.rs` 低层 `RmFile::read` / `page.rs` 高层 `Page{strokes,highlights,text}` + `BBox`）· `crates/epubmap`（`index.rs` 两张表取首现 / `toc.rs` nav→ncx 两策略 / `lib.rs` `BookMap::chapter_of`）· `crates/notecore`（`model` 条目/分区/样式/状态 · `hash` FNV 簇指纹与条目 id · `geom` 聚簇/配对 · `ingest` 增量合并 · `marker` 行首标记 OCR 兜底）· `services/ink-serve`（`doc.rs` 书库只读视图 / `ingest.rs` 变更页编排 / `crop.rs` 页坐标→缩略图像素 / `bookdb.rs` Repository / `config.rs` 阈值与几何 / `main.rs` 路由+监听）· `services/transcribe-serve`（`config` key 与节制参数 / `backend` `Vision` Strategy + `OpenAiCompat` / `prompt` / `ledger` 用量账本 / `ink` `EntryStore` 客户端 / `worker` 一轮编排 / `main.rs` SSE 订阅 + 防抖工作线程）· `services/note-serve`（骨架）· 网关 `ui/app.js` `renderNotes` · `shelf/{build,deploy,install,uninstall}.sh` 的 `NOTES_BINS`/令牌。
 
-## 02｜手写约定 ↔ 7 种样式
+**离线门槛**：`cargo test --workspace` 31 个（rmv6 2 · epubmap 5 · notecore 9 · ink-serve 7 · transcribe-serve 8）零警告；网关 `node --check app.js`；shell 过 shellcheck。
+
+**未闭环**：步骤 0 真机样本（阈值/页几何/样式码标定）· transcribe 真调一次模型（等 key + 样本）· note-serve 投影 · mind-serve · md 导出 + `notes pull`（§05）。
+
+## 01｜架构决策
+
+- **四个服务而不是一个 `note-serve`**（用户驳回单服务方案）：失败面分离——矿零网络（解析错只影响新条目）、转写/脑出网（断网只是积压）、本只碰输出物（xochitl `/upload`）；**转写与智能分开**是用户明确要求（转写是 OCR 边界问题，智能是提示词问题，节奏与费用都不同）。
+- **条目库唯一写者 = ink-serve**：转写/脑/本一律经它的 HTTP 改字段（`POST /books/{uuid}/entries/{id}`，缺省底座无 PATCH）。多进程各自读改写同一份 JSON 迟早互相覆盖（书架落库边车早期踩过同类）。
+- **设备只写不改，改在手机**：xochitl 不认外部对已有文档的原地修改（书架/PKM 两线都判死），且 e-ink 上改字太痛苦。所以设备笔记本**只读**，由条目库投影生成；一章一本使重建局部化（只重建变过的章），旧本走书架回收站代理软删（`selectionMoveToTrash` 是唯一可靠路，直改 metadata 会被运行中 xochitl 覆写）。
+- **事件驱动、零轮询**：ink 只在书库目录上挂非递归 inotify（合上书时 xochitl 重写 `.content/.metadata`，页 `.rm` 的写入不监听——文件多且是 xochitl 内部节奏），触发后按页 `.rm` mtime 只扫变更页；转写订阅矿的 `/events`；网页订阅网关 `/api/events`。
+- **增量在数据层**（回答用户"二次识别会不会把改好的您好覆盖回你好"）：簇指纹 = 笔画 id 集合 + 点数 + 量化包围盒的 FNV-1a；指纹不变 → 不重转写不动 `text`；共享笔画但指纹变（补了几笔）→ 同一条目、新 `draft` 只作建议；笔画全没 → `Revoked` 留痕；条目 id 按 (书, 页, 最小笔画 id) 创建时一次算定永不重算。投影永远取 `text ?? draft`。
+- **分区 = {名字, 简述, 是否调模型, 触发词}**：简述就是提示词，"背诵"分区空简述不调模型；缺省四区（查询 / 解释 / 背诵 / 其他），按书可改；行首触发词（`?` `查` `!` `背`）给缺省归属。
+- **样式判定：几何优先，OCR 兜底**：`-`/实心点/`口`/下划线分区头由几何认（ink-serve，阈值待样本）；`1.` 数字形状不定走 OCR（transcribe 侧 `notecore::marker`，只在条目仍为正文时认，并把标记从正文剥掉——笔记本样式自带编号/符号）。
+- **裁图来源 = xochitl 现成缩略图**（384×512，3:4）：零渲染成本、与 de-risk 结论一致（工整 ≈100% / 快写 ~60–91%）；精度不够再换高分辨率自渲染，`crop.rs` 只暴露"给我这片的 PNG"可替换。页坐标 → 像素按 `page_width/height` 等比、`x_origin_center` 可配，**待样本核**。
+- **视觉后端 Strategy**：`Vision` trait 一个方法；`OpenAiCompat` 走 `POST {baseUrl}/chat/completions` + `image_url` data URI，DashScope Qwen 缺省（国内直连、设备自己 WiFi 不经 host 代理——host clash fake-ip 会挡），任何 OpenAI 兼容口只改配置。编排 `worker::run_once` 全 trait 注入，内存桩单测。
+- **rmv6 剥离移植而非依赖 device-core**：vendored `remarkable_lines` 0.1.3（MIT）只留 v6，保留两处兼容补丁（未知 PenColor/ParagraphStyle/Tool 码兜底、块尾多余字节跳过），补 CHECKBOX(6/7) 码；`PROVENANCE.md` 留痕。notes 不依赖 `bookconv`/`device-core`/`knowledge/pkm`/`reading`。
+- **体积/内存**：musl 全静态 ink 2.5 MB · transcribe 2.1 MB · note 1.2 MB；单元 `MemoryMax=128M` `CPUWeight=20` `Nice=5`。
+
+**手写约定 ↔ xochitl 3.28 七种打字样式**（格式菜单 qml_00db4610：Title / Subheading 1 / Subheading 2 / Body / Bulletpoint / NumberedList / CheckboxUnchecked；rmscene 已知码 0–7，CHECKBOX=6/7，**有序列表码待样本读回**）：
 
 | 样式 | 笔记本用途 | 手写约定 | 判法 |
 |---|---|---|---|
@@ -39,22 +47,77 @@
 | Subheading 1 | 分区头（名 + 简述 = AI 要求） | 一行字 + 下面长横 | 几何 |
 | Subheading 2 | 勾画所在小节 | 无 | epubmap |
 | Body | 转写正文 / AI 回答 | 普通书写 | OCR |
-| Bulletpoint | 无序 | 行首短横 / 实心点 | 几何 |
-| NumberedList | 有序 | 行首 `1.` | OCR |
-| Checkbox | 待办 | 行首空心小方框 | 几何 |
+| Bulletpoint | 无序 | 行首短横 / 实心点 | 几何（OCR 兜底 `- `/`• `） |
+| NumberedList | 有序 | 行首 `1.` | OCR（`marker`） |
+| Checkbox | 待办 | 行首空心小方框 | 几何（OCR 兜底 `□`/`口 `） |
 
-## 03｜设计取舍（转写）
+## 02｜XDG 路径表（设备 HOME=/home/root，`Paths::app_{config,data,state}_dir("notes")`）
 
-- **为什么转写不直接写条目库文件**：条目库唯一写者是 ink-serve，其它服务一律走它的 HTTP；否则两进程同写一个 JSON 迟早互相覆盖（书架 sidecar 早期踩过同类问题）。
-- **为什么一轮限量 + 连续失败即停**：一次合书可能几十条；key 错或断网时不该一条条撞到超时（每条 60 s）。停下来只影响本轮，事件再来会再试，失败上限保证不会无限烧。
-- **为什么行首标记在转写这边兜底**：`1.` 几何认不出（数字形状不定），表里本就写"OCR 判"；几何（ink-serve）判出的不覆盖，只在样式仍为正文时认。标记剥掉是因为笔记本样式自带编号/符号。
-- **ureq 2 默认特性没有 `json`**：`Response::into_json` 不可用，用 `serde_json::from_reader(resp.into_reader())`；TLS 根用 webpki-roots（已在锁文件里），设备直连 DashScope 不经 host 代理（fake-ip 会挡）。
+| 用途 | 路径 |
+|---|---|
+| 二进制 | `~/.local/bin/{ink-serve,transcribe-serve,note-serve}`（随书架 `install.sh`，令牌 `ink`/`transcribe`/`note`） |
+| 配置 | `~/.config/notes/ink.json`（聚簇/配对阈值、页几何、防抖；首启写出缺省）· `~/.config/notes/transcribe.json`（**0600**，含 apiKey；backend/baseUrl/model/timeoutSecs/maxPerRun/pauseMs/auto/maxAttempts/prompt） |
+| 数据 | `~/.local/share/notes/crops/`（手写裁片 PNG）· `~/.local/share/notes/vault/`（md 导出，待建） |
+| 状态 | `~/.local/state/notes/books/<uuid>.json`（**条目库**，一书一文件，原子写）· `~/.local/state/notes/transcribe.json`（用量账本：次数/token/最近错误/上轮报告，不存内容） |
+| 运行时 | 与书架共用注册表 `$XDG_RUNTIME_DIR/shelf/services/`（缺省回落 `/tmp/shelf-0/shelf/services`） |
+| 只读外部 | xochitl 书库 `~/.local/share/remarkable/xochitl/`（`<uuid>.{metadata,content,epub,epubindex}`、`<uuid>/<page>.rm`、`<uuid>.thumbnails/<page>.png`）——**绝不写** |
+
+## 03｜systemd
+
+三个单元 `notes/systemd/*.service`，随书架载荷一起装：`PartOf=shelf.target` + `WantedBy=shelf.target`，`After=home.mount`（transcribe 另 `Wants/After=network-online.target`）；`Restart=on-failure`。**不给 xochitl 加任何依赖**（红线）。装/卸：`shelf/install.sh --only ink,transcribe,note`、`shelf/uninstall.sh`（条目库不在 `--purge` 范围，绝不删用户笔记）。
+
+## 03b｜地基三 crate（2026-09-06，离线）
+
+- **rmv6**：`RmFile::read` 只认 `reMarkable .lines file, version=6`；高层 `Page::parse` 给 `strokes`（`SceneLineItem`，未删）/ `highlights`（`SceneGlyphItem` = GlyphRange：原文 + 页文本偏移 + 每行矩形）/ `text`（打字文本）。真机事实：**勾画与手写笔画同一坐标系**，几何配对不需换算；擦掉的项是墓碑（`item.value` 为空）。fixture `testdata/renggu/page.rm`（《人骨拼圖》c65fa2ae 页，1049 B）23 笔全墓碑——只能测"解析成功零条目"。
+- **epubmap**：`.epubindex` 两张表（每条 `u32 长度 + UTF-16BE 路径 + 3×u32`），第一张第一个 u32 = 起始页（0-based），第二张第三个 u32 也是（前两个是字符偏移/长度）；取每个 basename **首现**的第一个 u32；路径非 ASCII 不认（防误配）。目录 `nav.xhtml`（嵌套 `<ol>`）优先、`toc.ncx`（嵌套 `navPoint`）退回，标签事件流 + 深度栈解析（不带完整 XML 解析器，省体积）。`chapter_of(page)` = 1 级祖先为章、本条 ≥2 级为小节。`.content` `pages` 是页 id 顺序表，下标 = 页号，与起始页对齐（真机 523 项核过）。
+- **notecore**：纯函数零 I/O。`geom::cluster` 并查集（任意两笔包围盒间距 ≤ `cluster_gap` 连通，不看笔序/时间——用户会回头补笔）、`pair` 每簇最近勾画（≤ `pair_gap`，否则本页批注）；`is_handwriting` 排除荧光笔/橡皮/选区；缺省 40 / 120 页坐标单位（**常识值，待标定**）。`ingest::merge_page` 实现 §01 增量四规则。`marker::split_leading_marker` OCR 兜底（`口渴了`/`-3 度`/`2024 年` 不误判）。
+
+## 03c｜ink-serve 矿（2026-09-06，真机首轮）
+
+- 路由（经网关 `/api/ink`）：`GET /books`（每本 `{uuid,title,chapters,entries,pending}`）· `GET /books/{uuid}`（整份条目库）· `GET /books/{uuid}/crops/{file}` · `POST /books/{uuid}/entries/{id}`（`text`/`section`/`style`/`draft`/`answer` 逐字段；给 `text` 即 `Reviewed`，清空回 `Draft`/`Pending`）· `PUT /books/{uuid}/sections` · `POST /books/{uuid}/rescan`（清页 mtime 记录整本重扫）· `GET /events`。
+- 摄取：只处理活的 EPUB（`DocumentType` 且非回收站/非 deleted，`fileType=epub`）且有手写页的文档；启动追平一遍，之后 `watch_debounced`（`debounceSecs` 4）按事件文件名认 uuid 只扫涉及的文档；页 mtime 记在条目库 `page_mtimes`。裁图：页包围盒 + `cropMargin` 24 → 缩略图像素（`PageGeom::to_pixels`，夹在图内），文件名带簇指纹，指纹不变不重裁。
+- 真机：`active`、注册；追平扫到《人骨拼圖》38 章、0 条（墓碑页）；`ink.json` 首启写出缺省。**真样本待步骤 0**。
+
+## 03d｜网关「笔记」tab + note-serve 骨架（2026-09-06）
+
+- 书架侧：`MODULES` 加行、`AREA['note-serve']='notes'`、`TABS['note-serve']`；`build.sh/deploy.sh` `NOTES_BINS`、`install.sh` `ALL` 令牌。note-serve `ServiceSpec.tab=("笔记",25)` 注册 tab；`GET /status`（vault 路径）· `GET /events`。
+- 网页（`renderNotes`）：选书 → 按章分卡片 → 每条：左裁图（`/api/ink/.../crops/`）、右文本框（缺省填 `text ?? draft`，改即 `POST entries` 存）、分区下拉、样式下拉、状态徽章、勾画原文引用、智能回答折叠；分区编辑（名 / 简述 / 调模型 / 增删 / 保存）；「重扫」。真机：tab 出现、两服务 active（用户手机端目视待补）。
+
+## 03e｜transcribe-serve 转写（2026-09-06 夜，真机 WiFi 部署）
+
+**触发**：订阅 ink-serve `/events`（与网关 Hub 同套路：注册表找 → 长连接 → 断线 3 s 重连），`area=notes,kind=entries` 且 `auto=true` → 踢工作线程 → 防抖 3 s 合并 → 跑一轮；启动追平一次；`POST /run` 同步跑一轮（网页「转写」）；`POST /books/{uuid}/entries/{id}` 强制转写一条（网页每条「转写/重转」，忽略指纹与失败上限）；`POST /retry` 清失败记录再踢。自动与手动共用 `run_lock` 互斥。
+
+**一轮**（`worker::run_once`）：`GET /books` 只看 `pending>0` 的书 → 条目 `needs_transcribe()`（`ink.hash` 没有对应草稿且非 Revoked）→ 取裁图 → 提示词（内置：只转写不发挥、保留换行与行首符号、认不出用「？」、无字输出空；**勾画原文截 300 字作语境**帮人名/术语，但明说别抄进来；`temperature=0`）→ 模型 → 样式仍为正文时 `marker` 兜底 → `POST ink entries` 写 `draft{text,backend,at,hash}`（+ `style`）→ 账本记 token。
+
+**节制**（用户费用/限流关切）：每轮 `maxPerRun` 20、请求间歇 `pauseMs` 300；同一条同指纹失败 `maxAttempts` 3 次后不再自动试（指纹变了计数归零）；**一轮连续 3 次失败零成功即停**（key 错/断网别一条条撞 60 s 超时）；账本只记数不记内容。
+
+**key**：`GET /config`/`/status` 只报 `hasKey`/`keySource`（config/env/none）**不回显**；`PUT /config` 的 `apiKey` 非空才改、`clearKey` 清；文件 `0600`；环境 `DASHSCOPE_API_KEY` 兜底。网页转写区：key 输入框（`type=password`，保存后清空）、模型/baseUrl、合书自动开关、跑一轮/重试失败、失败清单、用量与上轮报告。
+
+**真机（WiFi `192.168.1.22`，`SHELF_NO_BUILD=1 ./deploy.sh 192.168.1.22`）**：`active`、注册表见 `transcribe-serve`；日志 `后端 qwen qwen3-vl-plus；key None`；`/status`：`hasKey=false keySource=none inkReachable=true pending=0`，`lastRun.note="未配置 API key（…）"`；`transcribe.json` `-rw-------`。**待验**：粘 key 后真调一次模型（等步骤 0 样本产生 pending 条目）、事件链 ink→transcribe→网页刷新。
+
+**取舍**：为什么不直写条目库（§01 唯一写者）；为什么限量 + 即停（一次合书几十条，key 错时不该烧完超时）；为什么行首标记在转写侧兜底（`1.` 几何认不出，表里本就写 OCR 判；几何判出的不覆盖）；为什么勾画原文进提示词（旧 cardhw 经验：上下文救人名/术语，代价是 token 略增）。
 
 ## 04｜踩坑
 
-- 外部进程直改 `.metadata` `parent="trash"` 会被运行中 xochitl 覆写（阅读线判死）；软删/建夹只能走 QML 代理（书架 `shelf-trash-agent.qmd`）。
-- 书架规则沿用：别跑 `cargo fmt --all`；qmd 先离线 `qmldiff apply-diffs`；重启 xochitl 只用 `xovi/start`。
+- **外部进程直改 `.metadata` `parent="trash"` 会被运行中 xochitl 覆写**（阅读线判死）；软删/建夹只能走 QML 代理（书架 `shelf-trash-agent.qmd`）。
+- **真机样本页可能全是墓碑**：《人骨拼圖》c65fa2ae 页 23 笔全被擦过，`Page` 剔除后零条目——采样前先 `rmv6` 解析看非墓碑数，别拿它标阈值。
+- **ureq 2 默认特性没有 `json`**：`Response::into_json` 不存在，用 `serde_json::from_reader(resp.into_reader())`；TLS 根用 webpki-roots（锁文件已有），出网设备直连不经 host 代理。
+- **设备可能只在 WiFi 上**：USB 网卡没起来时 `10.11.99.1` 不通、mDNS 也没有；局域网扫 `8778` 找到 IP 后 `deploy.sh <ip>`（host 参数）。
+- busybox：`head -1` 不认（要 `-n 1`）、无 `timeout`、`ls` 中文名显示 `?`（验名 `find | hexdump -C`）；`grep -c` 零匹配退出码 1 会断 `&&` 链。
+- 书架规则沿用：**别跑 `cargo fmt --all`**（仓库非 rustfmt 风格，2026-09-06 混进 64 文件重排回滚重放）；qmd 先离线 `qmldiff apply-diffs`；重启 xochitl 只用 `xovi/start`；shell 里 cwd 会在 `cang-jie/`、`shelf/`、`notes/` 间漂移，路径写绝对。
+- 会话里 python 改文件时留了个尾逗号把表达式变 tuple、测试文件括号未闭合各踩一次——改完立刻 `cargo test`/`node --check`。
 
-## 05｜待办
+## 05｜真机待办（2026-09-06 晚刷新）
 
-步骤 0 真机 de-risk（用户在设备上：勾三段写三行 + `-`/`1.`/`口`/下划线；七样式笔记本；定稿 PDF 勾画）→ 样本进 `testdata/`，标定聚簇/配对阈值与页坐标几何 → transcribe-serve 真机验（部署 + 粘 key + 看草稿）→ note-serve 投影 → 代理扩展（mkdir）→ mind-serve → 导出 + `notes pull` → 文档/合并 `dev`。
+**未闭环（按依赖顺序）**：
+1. **步骤 0 样本（用户在设备上）**：① 一本 EPUB 勾三段、每段旁写一行，行首各用 `-` / `1.` / `口`，另一行下面画长横；② 新建笔记本用格式菜单各打一行七种样式（读回 NumberedList 码）；③ DashScope key（网页转写区粘）；④ 可选：`--to-pdf` 定稿 PDF 上勾一段看有无 GlyphRange。样本进 `testdata/`，Python（rmscene）对拍几何判定，标定 `clusterGap/pairGap`、`pageWidth/Height/xOriginCenter`、裁片位置。
+2. transcribe 真调模型：pending 出现 → 自动一轮 → 网页见草稿；手机改字 → `Reviewed`；再合书补一笔 → 新草稿只作建议、`text` 不动。
+3. note-serve 投影：7 样式写入器（含 NumberedList/Checkbox）、`《书名》/第N章 章名` 一章一本、GET-then-upload、旧本 `POST /api/books/trash/add`、只重建变过的章。
+4. 书库动作代理扩展：`shelf-trash-agent.qmd` → 通用 `{action: trash|mkdir}` 队列，`Library.createCollection` 建《书名》夹；先离线 `apply-diffs` 再上机。
+5. mind-serve：按分区跑文本模型（简述 = 提示词，`ai=false` 跳过），`answer` 写回再投影。
+6. md 导出 `vault/<书名>/第N章.md`（front-matter、`^id` 块锚、`[[书名]]` 反链、索引页）+ host `notes/host/bin/notes pull`。
+7. 文档收尾、旧 PKM 白皮书加"已退役、由 notes/ 取代"头注、`dev` 以 `--no-ff` 合入 `feature/shelf-p1`。
+
+**已闭环（真机）**：§03c ink-serve 首轮（active/注册/追平 38 章）· §03d 「笔记」tab 注册 · §03e transcribe-serve 部署（active/注册/0600/追平记 note）。离线：§03b 三 crate 31 测。
+
+**明确不做（本期）**：扫描件 PDF、定稿 PDF（等步骤 0 ④）、笔记本手写批注回读（设备只读）、颜色语义（只进 tags）、自动清空回收站（网页按钮走 `emptyTrash()` 用户显式点）、Anki/Todoist/Readwise 外发（有 md 与稳定 id 之后再谈）、KOReader 高亮回流（书架砍下来留给笔记线，排在导出之后）。
