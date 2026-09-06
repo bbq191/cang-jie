@@ -364,8 +364,72 @@ pub fn wash_html(html: &str, opts: &WashOpts) -> (String, usize) {
         }
     }).into_owned();
     // 不再注入内联 <style>（xochitl 无视内联）；排版规则由 wash_entries 写成外链 css + 逐 html 加 <link>。
-    let s = if opts.lang == LangMode::Latin { flush_first_para_after_heading(&s) } else { s };
+    let s = match opts.lang {
+        LangMode::Latin => flush_first_para_after_heading(&s),
+        _ => cjk_paragraphize(&s),
+    };
     (s, before_dup)
+}
+
+/// 中文书两种"假段落"归一（2026-09-06 《人骨拼圖》2017 旧 EPUB 真机）：
+/// ① 全书没有 `<p>`，每章一个 `<div>` 里 `<br/>` 分行、段首两个全角空格——`p{text-indent:2em}` 没有对象，xochitl 又把
+///    U+3000 折叠掉 → 零缩进；KOReader 把 U+3000 按字体宽度画出来 → "换字体缩进跟着变"。→ 按 `<br>` 切成 `<p>`。
+/// ② 段首烘死的全角空格 / nbsp（有 `<p>` 的书也常见）→ 剥掉，缩进统一走外链 css（字体无关的精确 2em）。
+/// 只在文件里 `<br` 数 ≥ 4 且 `<p` 为 0 时做 ①；② 对所有 `<p>` 做。块级标签（h1–h6/div/section 的开闭、img、table）原样保留。
+fn cjk_paragraphize(html: &str) -> String {
+    static LEAD: OnceLock<Regex> = OnceLock::new();
+    static BR: OnceLock<Regex> = OnceLock::new();
+    static BLOCK: OnceLock<Regex> = OnceLock::new();
+    let lead = LEAD.get_or_init(|| Regex::new(r#"(?i)(<p\b[^>]*>)(?:\s|\u{3000}|&#12288;|&#x3000;|&nbsp;|&#160;|&#xa0;)+"#).unwrap());
+    let out = lead.replace_all(html, "$1").into_owned();
+    let n_br = out.matches("<br").count();
+    let n_p = Regex::new(r#"(?i)<p\b"#).unwrap().find_iter(&out).count();
+    if n_br < 4 || n_p > 0 {
+        return out;
+    }
+    let Some(bstart) = out.find("<body") else { return out };
+    let Some(bopen_end) = out[bstart..].find('>').map(|i| bstart + i + 1) else { return out };
+    let Some(bend) = out.rfind("</body>") else { return out };
+    let (head, body, tail) = (&out[..bopen_end], &out[bopen_end..bend], &out[bend..]);
+    let br = BR.get_or_init(|| Regex::new(r#"(?is)(?:\s*<br\b[^>]*>\s*)+"#).unwrap());
+    // 块级开闭标签 / 整块元素：不裹进 p
+    let block = BLOCK.get_or_init(|| Regex::new(r#"(?is)^\s*(?:</?(?:div|section|article|body|blockquote|ul|ol|li|table|tr|td|th|figure|figcaption)\b[^>]*>|<h[1-6]\b[^>]*>.*?</h[1-6]>|<img\b[^>]*>|<hr\b[^>]*>|<a\b[^>]*id="[^"]*"[^>]*>\s*</a>)\s*"#).unwrap());
+    let mut res = String::with_capacity(body.len() + 64);
+    for piece in br.split(body) {
+        let mut rest = piece;
+        // 剥前导块级标签
+        loop {
+            match block.find(rest) {
+                Some(m) if m.start() == 0 => {
+                    res.push_str(&rest[..m.end()]);
+                    rest = &rest[m.end()..];
+                }
+                _ => break,
+            }
+        }
+        // 剥尾随块级闭合标签
+        let mut trailing = String::new();
+        loop {
+            let t = rest.trim_end();
+            if let Some(i) = t.rfind('<') {
+                let tag = &t[i..];
+                if Regex::new(r#"(?i)^</(?:div|section|article|blockquote|ul|ol|li|table|tr|td|th|figure)>$"#).unwrap().is_match(tag) {
+                    trailing.insert_str(0, tag);
+                    rest = &t[..i];
+                    continue;
+                }
+            }
+            break;
+        }
+        let text = rest.trim().trim_start_matches(|c: char| c == '\u{3000}' || c == '\u{a0}' || c.is_whitespace());
+        if !text.is_empty() {
+            res.push_str("<p>");
+            res.push_str(text);
+            res.push_str("</p>");
+        }
+        res.push_str(&trailing);
+    }
+    format!("{head}{res}{tail}")
 }
 
 /// 拉丁习惯：**标题后 / 章首 / 场景切换后的第一段不缩进**（英文排版惯例：只有紧接上一段的段落才缩进）。
@@ -1085,6 +1149,24 @@ mod tests {
         assert_eq!(h2.matches("cj-flush").count(), 2, "幂等: {h2}");
         let (c, _) = wash_html("<html><body><h1>T</h1><p>x</p></body></html>", &cjk);
         assert!(!c.contains("text-indent:0"), "中文不做首段不缩进: {c}");
+    }
+
+    #[test]
+    fn cjk_br_book_paragraphized_and_fullwidth_indent_stripped() {
+        let cjk = WashOpts { lang: LangMode::Cjk, ..Default::default() };
+        // 《人骨拼圖》形态：一章一个 div，h3 + 双 br + 每段全角空格开头、单 br 分段，无 <p>
+        let src = "<html><head></head><body class=\"calibre\">\n<div class=\"calibre1\">\n<h3 class=\"calibre3\">14</h3><br class=\"calibre2\"/><br class=\"calibre2\"/>　　這間辦公室高居在曼哈頓下城高處。<br class=\"calibre2\"/>　　「對不起？長官？」<br class=\"calibre2\"/>　　嚴格說來，她不能算是。<br class=\"calibre2\"/></div></body></html>";
+        let (h, _) = wash_html(src, &cjk);
+        assert!(h.contains("<div class=\"calibre1\">\n<h3 class=\"calibre3\">14</h3>"), "块级标签原样: {h}");
+        assert!(h.contains("<p>這間辦公室高居在曼哈頓下城高處。</p><p>「對不起？長官？」</p><p>嚴格說來，她不能算是。</p></div>"), "按 br 段落化且剥全角空格: {h}");
+        assert!(!h.contains("<br") && !h.contains('　'), "br 与全角空格都不剩: {h}");
+        // 有 <p> 的书：不动 br，但剥段首全角空格/nbsp
+        let (h2, _) = wash_html("<html><body><p>　　第一段。</p><p>&#160;&#160;第二段。<br/>换行</p></body></html>", &cjk);
+        assert!(h2.contains("<p>第一段。</p><p>第二段。<br/>换行</p>"), "{h2}");
+        // 拉丁书不做段落化
+        let lat = WashOpts { lang: LangMode::Latin, ..Default::default() };
+        let (h3, _) = wash_html("<html><body><div>line one<br/>line two<br/>line three<br/>line four<br/>five</div></body></html>", &lat);
+        assert!(h3.contains("line one<br/>line two"), "{h3}");
     }
 
     #[test]
