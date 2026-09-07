@@ -138,11 +138,13 @@ mod tests {
     fn dump_device_test_doc() {
         let Ok(dir) = std::env::var("CANGJIE_DUMP_RMDOC") else { return };
         let paragraphs = vec![
-            Paragraph::new(ParagraphStyle::HEADING, "笔记线真机测试"),
-            Paragraph::new(ParagraphStyle::BOLD, "查询（分区头样式）"),
-            Paragraph::new(ParagraphStyle::PLAIN, "这是正文样式，混排中文和 English 123，验证 rmv6::write 生成的 RootTextBlock。"),
-            Paragraph::new(ParagraphStyle::BULLET, "无序要点一"),
-            Paragraph::new(ParagraphStyle::BULLET, "无序要点二"),
+            Paragraph::new(ParagraphStyle::HEADING, "笔记线真机测试二轮"),
+            Paragraph::subheading1("真 Subheading 1（带 7 字节标记，应大字号）"),
+            Paragraph::new(ParagraphStyle::BOLD, "裸 BOLD＝Subheading 2（不带标记，应小字号）"),
+            Paragraph::new(ParagraphStyle::PLAIN, "正文样式，验证 rmv6::write 二轮生成的 RootTextBlock。"),
+            Paragraph::new(ParagraphStyle::BULLET, "无序要点"),
+            Paragraph::new(ParagraphStyle::NUMBERED, "有序要点一"),
+            Paragraph::new(ParagraphStyle::NUMBERED, "有序要点二"),
             Paragraph::new(ParagraphStyle::CHECKBOX, "待办事项：确认样式渲染正常"),
         ];
         let rm = build_page_rm(TEMPLATE, &paragraphs).unwrap();
@@ -150,7 +152,7 @@ mod tests {
         let page_uuid = uuid::Uuid::new_v4().to_string();
         let page = Page { uuid: page_uuid, rm_bytes: rm };
         let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64;
-        let bytes = pack(&doc_uuid, "cangjie 笔记线真机测试", "", &page, TEMPLATE_AUTHOR, now).unwrap();
+        let bytes = pack(&doc_uuid, "cangjie 笔记线真机测试二轮", "", &page, TEMPLATE_AUTHOR, now).unwrap();
         std::fs::write(std::path::Path::new(&dir).join("device_test.rmdoc"), &bytes).unwrap();
         eprintln!("wrote device_test.rmdoc, {} bytes, doc_uuid={doc_uuid}", bytes.len());
     }

@@ -18,15 +18,32 @@
 //! - 全新文档没有编辑历史，`deleted_length` 恒 0、id 不留空隙——这是本模块能确定性生成的原因（真机
 //!   活文档里那些"隔一个 id"的空隙是打字/删改历史的产物，我们不需要模拟）。
 //!
-//! ⚠ **本模块目前只覆盖 5 种确认安全的样式**（PLAIN/HEADING/BOLD/BULLET/CHECKBOX）；`NUMBERED` 的格式
-//! 子块比其余样式多 7 字节未解码载荷（疑似编号计数），故意不在这里支持——调用方传 `NUMBERED` 会报错，
-//! 等多行样本把那 7 字节解出来再补（白皮书 §03f/§03g）。
 //! ✅ **2026-09-07 真机验证通过**：6 段/5 样式测试文档经 `note-serve::rmdoc` 打包、`shelf_core::
 //! xochitl::Xochitl::upload` 传到真机，xochitl 自己渲染的缩略图肉眼核对——大标题/加粗小标题/正文
-//! 换行/无序两点/空心待办全部渲染正确，无白屏无错位（笔记线白皮书 §03h）。note-serve 接自动投影
-//! 管线前还差的是"条目库怎么变成一章一本"这层业务逻辑，不是这个模块本身。
+//! 换行/无序两点/空心待办全部渲染正确，无白屏无错位（笔记线白皮书 §03h）。
+//!
+//! ⚠️ **更正一处早前的误判（§03h 当时写的"NUMBERED 多 7 字节未解码载荷"是错的）**：那 7 字节其实
+//! 属于 **Subheading 1**，不是 NumberedList——早前分析漏看了是哪个 char_id 拥有那段多余字节，
+//! 错怪到了旁边的 NUMBERED 条目头上。2026-09-07 用户在真机上把这份测试文档手动加了真正的原生
+//! "Subheading 1"/"已编号列表"/"复选框(勾选)"，拉回来逐条目核对字节才理清：
+//! - **NUMBERED（10）格式子块跟其余样式一样只有 2 字节**（`17` + 样式码），没有隐藏内容——本模块
+//!   现在正常支持它，写出来的编号由 xochitl 在渲染时按"连续几个 NUMBERED 段落"自动算，不用自己存序号。
+//! - **Subheading 1 与 Subheading 2 真机确实共用同一个码（BOLD=3），区分开关是格式子块末尾多出来的
+//!   固定 7 字节 `21 02 34 03 00 00 00`**——真机原生按钮打出的 "Subheading 1" 带这 7 字节、渲染成
+//!   大字号；"Subheading 2"（以及裸 `BOLD`）不带，渲染成小字号。跟段落在文档里的位置**无关**（用户
+//!   明确验证过）。`Paragraph::subheading1()` 补这 7 字节；`Paragraph::new(BOLD, ..)` 保持不带，
+//!   语义上当"小节标题"（Subheading 2）用。
+//!
+//! ✅ **两条更正当场用本模块自己生成的文档二次真机验证过**：8 段测试文档（含 `subheading1()` 一段、
+//! 裸 `BOLD` 一段、`NUMBERED` 两段）传真机，xochitl 渲染缩略图——"真 Subheading 1" 明显大字号、
+//! "裸 BOLD" 明显小字号，两段有序列表自动编号 "1." "2." 正确显示，其余样式同前一轮全部正确。
+//! 至此 xochitl 3.28 打字格式菜单的 7 种样式（含 Subheading 1/2 两级）本模块全部支持。
 use crate::v6::scene_item::text::ParagraphStyle;
 use crate::v6::crdt::CrdtId;
+
+/// 真机原生 "Subheading 1" 按钮打出来的段落，格式子块比裸 `BOLD` 多这 7 字节（2026-09-07 真机
+/// 双样本逐字节对照坐实，见模块文档）；`Paragraph::subheading1` 用它跟 `new(BOLD, ..)`（=Subheading 2）区分。
+pub const SUBHEADING1_MARKER: [u8; 7] = [0x21, 0x02, 0x34, 0x03, 0x00, 0x00, 0x00];
 
 /// 待写入的一段文字。
 #[derive(Debug, Clone)]
@@ -34,11 +51,19 @@ pub struct Paragraph {
     pub style: ParagraphStyle,
     /// 不含尾随换行——写入时自动补一个 `\n`。
     pub text: String,
+    /// 格式子块（`[17, 样式码]`）末尾的额外字节，目前只有 `subheading1()` 会填，其余样式留空。
+    extra: Vec<u8>,
 }
 
 impl Paragraph {
     pub fn new(style: ParagraphStyle, text: impl Into<String>) -> Self {
-        Paragraph { style, text: text.into() }
+        Paragraph { style, text: text.into(), extra: Vec::new() }
+    }
+
+    /// 真正的"大字号" Subheading 1（分区头）。裸 `new(ParagraphStyle::BOLD, ..)` 渲染成小字号的
+    /// Subheading 2——两者 wire 码相同，全靠这 7 字节区分，见模块文档。
+    pub fn subheading1(text: impl Into<String>) -> Self {
+        Paragraph { style: ParagraphStyle::BOLD, text: text.into(), extra: SUBHEADING1_MARKER.to_vec() }
     }
 }
 
@@ -126,7 +151,7 @@ fn style_code(s: ParagraphStyle) -> Result<u8, String> {
         ParagraphStyle::BOLD => 0x03,
         ParagraphStyle::BULLET => 0x04,
         ParagraphStyle::CHECKBOX => 0x06,
-        ParagraphStyle::NUMBERED => return Err("NUMBERED 格式子块还有 7 字节未解码载荷，写入器暂不支持，见模块文档".into()),
+        ParagraphStyle::NUMBERED => 0x0a,
         other => return Err(format!("不支持写入这个样式：{other:?}")),
     })
 }
@@ -169,10 +194,12 @@ pub fn encode_root_text_block(paragraphs: &[Paragraph]) -> Result<Vec<u8>, Strin
         item_body.subblock(6, &text_body.into_vec());
         items_content.subblock(0, &item_body.into_vec());
 
-        // 样式：raw id(段头换行的 id，即本段 left_id) + tagged id(1,timestamp) + subblock(2,[17, code])
+        // 样式：raw id(段头换行的 id，即本段 left_id) + tagged id(1,timestamp) + subblock(2,[17, code, ...extra])
         styles_content.id_raw(left_id);
         styles_content.id_tagged(1, item_id); // timestamp 只要单调、不冲突即可，用 item_id 本身
-        styles_content.subblock(2, &[17u8, code]);
+        let mut fmt = vec![17u8, code];
+        fmt.extend_from_slice(&p.extra);
+        styles_content.subblock(2, &fmt);
 
         next_id += char_count;
         prev_last = CrdtId { part1: AUTHOR, part2: next_id - 1 };
@@ -271,18 +298,18 @@ mod tests {
     const TEMPLATE: &[u8] = include_bytes!("../../../testdata/seven_styles/page.rm");
 
     #[test]
-    fn rejects_numbered_and_empty() {
+    fn rejects_empty() {
         assert!(encode_root_text_block(&[]).is_err());
-        assert!(encode_root_text_block(&[Paragraph::new(ParagraphStyle::NUMBERED, "1")]).is_err());
     }
 
     #[test]
     fn roundtrips_through_our_own_parser() {
         let paragraphs = vec![
             Paragraph::new(ParagraphStyle::HEADING, "第一章 起点"),
-            Paragraph::new(ParagraphStyle::BOLD, "查询"),
+            Paragraph::subheading1("查询"),
             Paragraph::new(ParagraphStyle::PLAIN, "这是转写出来的正文，混着中文和 English。"),
             Paragraph::new(ParagraphStyle::BULLET, "无序要点"),
+            Paragraph::new(ParagraphStyle::NUMBERED, "有序要点"),
             Paragraph::new(ParagraphStyle::CHECKBOX, "待办事项"),
         ];
         let rm = build_page_rm(TEMPLATE, &paragraphs).expect("build");

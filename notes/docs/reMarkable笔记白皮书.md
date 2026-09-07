@@ -27,7 +27,7 @@
 
 **离线门槛**：`cargo test --workspace` 41 个（rmv6 7 · epubmap 5 · notecore 11 · ink-serve 9 · transcribe-serve 8 · note-serve 1）零警告；网关 `node --check app.js`；shell 过 shellcheck。
 
-**未闭环**：transcribe 转写质量再打磨（重转复验：坐标已对、结构读对，但汉字数字"一/二/三"被认成阿拉伯数字"1/2/3"，1 条仍混印刷体，见 §03g；提示词已补一条规则，待真机复验）· note-serve 条目→文档编排（写入器/打包器/上传三件套已真机验证通过，见 §03h；还差"条目库怎么变成一章一本"这层业务逻辑、《书名》文件夹、旧本回收）· NumberedList 写入前还差一份多行样本（§03f）· mind-serve · md 导出 + `notes pull`（§05）。步骤 0 真机样本已于 2026-09-07 采回、验证、且真机复验通过（§03f/§03g）。
+**未闭环**：transcribe 转写质量再打磨（重转复验：坐标已对、结构读对，但汉字数字"一/二/三"被认成阿拉伯数字"1/2/3"，1 条仍混印刷体，见 §03g；提示词已补一条规则，待真机复验）· note-serve 条目→文档编排（写入器/打包器/上传三件套 + 全部 7 种打字样式都已真机验证通过，见 §03h/§03i；还差"条目库怎么变成一章一本"这层业务逻辑、《书名》文件夹、旧本回收）· mind-serve · md 导出 + `notes pull`（§05）。步骤 0 真机样本已于 2026-09-07 采回、验证、且真机复验通过（§03f/§03g/§03i）。
 
 ## 01｜架构决策
 
@@ -44,18 +44,18 @@
 - **rmv6 剥离移植而非依赖 device-core**：vendored `remarkable_lines` 0.1.3（MIT）只留 v6，保留两处兼容补丁（未知 PenColor/ParagraphStyle/Tool 码兜底、块尾多余字节跳过），补 CHECKBOX(6/7) 码；`PROVENANCE.md` 留痕。notes 不依赖 `bookconv`/`device-core`/`knowledge/pkm`/`reading`。
 - **体积/内存**：musl 全静态 ink 2.5 MB · transcribe 2.1 MB · note 1.2 MB；单元 `MemoryMax=128M` `CPUWeight=20` `Nice=5`。
 
-**手写约定 ↔ xochitl 3.28 七种打字样式**（格式菜单 qml_00db4610：Title / Subheading 1 / Subheading 2 / Body / Bulletpoint / NumberedList / CheckboxUnchecked；.rm 段落样式码 2026-09-07 真机样本全部坐实，见 §03f）：
+**手写约定 ↔ xochitl 3.28 七种打字样式**（格式菜单 qml_00db4610：Title / Subheading 1 / Subheading 2 / Body / Bulletpoint / NumberedList / CheckboxUnchecked；.rm 段落样式码 + 全部 7 种真机验证通过的写入能力，见 §03f/§03h/§03i）：
 
 | 样式 | 码 | 笔记本用途 | 手写约定 | 判法 |
 |---|---|---|---|---|
 | Title | 2 (HEADING) | 页标题 = 章名 | 无 | epubmap |
-| Subheading 1 | 3 (BOLD) | 分区头（名 + 简述 = AI 要求） | 一行字 + 下面长横 | 几何（`has_underline`） |
-| Subheading 2 | 3 (BOLD)⚠️同 Subheading 1 | 勾画所在小节 | 无 | epubmap |
+| Subheading 1 | 3 (BOLD) + 7 字节标记 `21023403000000` | 分区头（名 + 简述 = AI 要求） | 一行字 + 下面长横 | 几何（`has_underline`） |
+| Subheading 2 | 3 (BOLD)，不带标记 | 勾画所在小节 | 无 | epubmap |
 | Body | 1 (PLAIN) | 转写正文 / AI 回答 | 普通书写 | OCR |
 | Bulletpoint | 4 (BULLET) | 无序 | 行首短横 / 实心点 | 几何（OCR 兜底 `- `/`• `） |
-| NumberedList | 10 ⚠️格式子块多 7 字节未解码 | 有序 | 行首 `1.` | OCR（`marker`） |
+| NumberedList | 10，格式子块跟其余样式一样只有 2 字节 | 有序 | 行首 `1.` | OCR（`marker`） |
 | Checkbox（未勾选） | 6 (CHECKBOX) | 待办 | 行首空心小方框 | 几何（OCR 兜底 `□`/`口 `） |
-| Checkbox（勾上号） | 7，**未验证**：打字打不出，要点方框 | — | — | — |
+| Checkbox（勾上号） | 7，只能原生点方框切换，写入器造不出 | — | — | — |
 
 ## 02｜XDG 路径表（设备 HOME=/home/root，`Paths::app_{config,data,state}_dir("notes")`）
 
@@ -117,9 +117,9 @@
 - **`has_underline` 判据成立**：下划线是单独一笔，宽度≈簇全宽（本样本 487.7 实测）、高约簇高 1/6（18 vs 113）、贴簇底部；三条批注簇上该判据均为假，第四簇为真——几何足够稳，不必等 OCR。
 
 **新发现（改了代码/文档）**：
-- **NumberedList 真实码 = 10**（写进 `rmv6::v6::scene_item::text::ParagraphStyle::NUMBERED`，`notecore::model::Style::wire_code`）。⚠️ 它的格式子块比其余样式**多 7 字节未解码载荷**（`c: u8=17` + `format_code: u8` 之后还有 7 字节，rmv6 靠 `validate_size` 的"少读则跳过"容错过去，没崩但也没读懂）——猜是编号计数/起始值，因为有序列表天然需要一个可能不从位置隐式推算的显式序号状态；本样本只打了一行，没法差分出编码规则。**note-serve 写入器落这码之前必须再采一份多行有序列表样本**（至少 3 行，最好中途删一行看编号是否重排）把这段字节差出来，否则写出去的编号可能不对，甚至被 xochitl 判非法丢弃。
-- **Subheading 1 与 Subheading 2 共用同一个 .rm 码（3=BOLD）**——原计划设想的"7 个不同样式码各管一种"不成立，原生靠某种不在 `RootTextBlock.styles` 里的机制区分两级大小（大概率是渲染时按段落在文档大纲里的层级动态决定，而不是逐段落存一个"是几级标题"的位——这块本项目不打算深挖，因为投影只需要**产出**正确样式，不需要**读回**原生渲染算法）。**影响设计**：note-serve 写"分区头"（Subheading 1 语义）和"小节标题"（Subheading 2 语义）时，两者在 .rm 层会是同一个样式码，渲染出来大小完全一样——不奢求还原原生两级视觉差异，靠缩进/前缀文字区分即可。
-- **Checkbox 勾上号（7）未验证**：格式菜单把两行都打成"Checkbox"样式（其中一行文字打的是"Checkbox finished"），.rm 里两行的码都是 6——说明**打字模式给不出 7**，勾上号是对已渲染方框的一次点击手势，不是段落样式菜单的选项。设备只读设计下用不上（不用回读用户是否勾选了原生笔记本的复选框），但写入器也别指望能直接"生成一个已勾选的待办"。
+- **NumberedList 真实码 = 10**（写进 `rmv6::v6::scene_item::text::ParagraphStyle::NUMBERED`，`notecore::model::Style::wire_code`）。~~⚠️ 它的格式子块比其余样式多 7 字节未解码载荷，note-serve 写入器落这码前必须再采多行样本~~ **✏️ 2026-09-07 更正（§03i）：这条是分析失误，那 7 字节其实属于 Subheading 1，NumberedList 格式子块跟其余样式一样只有 2 字节，`rmv6::write` 已支持且真机验证编号自动生成正确，不存在这个前提**。
+- **Subheading 1 与 Subheading 2 共用同一个 .rm 码（3=BOLD）**——原计划设想的"7 个不同样式码各管一种"不成立。~~原生靠某种不在 styles 里的机制区分两级大小，大概率按段落在文档大纲里的层级动态决定，这块不打算深挖~~ **✏️ 2026-09-07 更正（§03i）：机制找到了，就在 styles 里——格式子块末尾多 7 字节 `21023403000000` = Subheading 1（大字号），不带 = Subheading 2（小字号），`rmv6::write` 的 `Paragraph::subheading1()` 已支持、真机验证过，不需要"靠缩进/前缀文字区分"这种退而求其次的办法**。
+- **Checkbox 勾上号（7）：打字给不出，但确认真实存在**：格式菜单把两行都打成"Checkbox"样式（其中一行文字打的是"Checkbox finished"），.rm 里两行的码都是 6，说明**打字模式给不出 7**，勾上号是对已渲染方框的一次点击手势，不是段落样式菜单的选项。2026-09-07 用户在真机上点了一次方框，拉回来的文件里那一行码确实是 7（§03i）——码本身没问题，只是设备只读设计下用不上、写入器也造不出"直接生成一个已勾选的待办"。
 - **`SceneLineItem` 的软删有两种写法**：既有独立的 `SceneTombstoneItemBlock`（旧样本 23 笔全是这个），也有 `SceneLineItem`/`SceneGlyphItem` 自身 `item.value` 为空（真机新样本 105 个 `SceneLineItem` 块里 17 个是这样）。两条路径 `Page::from_file` 已经都在处理（`if let Some(...) = &it.item.value`），只是这次才第一次在同一个真实文件里看到两种形态并存，记一笔防止以后只测了一种就以为够了。
 
 **产物**：`testdata/renggu_marks/`（`page.rm`/`page.png`/`book.content`/`book.epubindex`/`toc.ncx`/`content.opf`）、`testdata/seven_styles/`（`page.rm`/`page.png`/`book.content`）；新增 4 个测试（rmv6 2 个真机样本解析 + notecore 2 个：聚簇配对回归 + `has_underline`），`cargo test --workspace` 从 31 涨到 35。
@@ -165,7 +165,7 @@ note-serve 投影要往设备写打字文本，rmv6 之前是纯只读解析。�
 - 每段一个 wire 条目，`item_id` 指向本段第一个字符，后续字符隐式 +1；`left_id` = 上一段最后一个字符的 id（首段用 `(0,0)`）；`right_id` 恒 `(0,0)`。
 - 样式表的 key = "结束上一段的换行符"的 id（等于本段的 `left_id`），value 是 `{固定字节 17, 样式码}`。
 - **⚠ 真机大坑，独立验证抓出来的**：文本条目里那个叫 `is_ascii` 的字段，真机样本对**含中文的段落也写 1**——按字面意思、老实按内容判断（ASCII 写 1 非 ASCII 写 0）会通过我们自己宽松的 rmv6 解析器，但喂给 `rmscene`（它对这个字段有 `assert is_ascii == 1`）直接炸；这说明真实设备/规范要求恒为 1，字段名具有误导性。这正是"先拿独立实现交叉验证、别只信自己写的解析器"救回来的一个真实 bug——如果没交叉验证，这份文件大概率传到真机也会被拒或崩，而我们自己的往返测试完全测不出来。
-- 目前只支持 5 种确认安全的样式（PLAIN/HEADING/BOLD/BULLET/CHECKBOX）；`NUMBERED` 因为格式子块还有 7 字节没解码（§03f/§03g）故意不支持，调用会报错而不是蒙一个错的编码上去。
+- 首版只支持 5 种样式（PLAIN/HEADING/BOLD/BULLET/CHECKBOX），`NUMBERED` 当时因为怀疑格式子块有未解码载荷故意不支持——**这条限制后来证明是分析失误，§03i 已更正并补全支持**。
 
 **验证方式与边界**：`cargo test -p rmv6` 全绿（往返：写入→用 rmv6 自己的 `Page::parse` 读回，断言条目数/文本/样式对得上）+ 额外用独立的 `rmscene`（Python，MIT，已在本仓库 venv）交叉解析生成的文件、正确读出全部 5 段文字与样式。**⚠ 尚未真机验证**——这只证明"两个独立的读取实现都认为这份文件合法、内容对"，不等于 xochitl 真的会正常打开渲染。
 
@@ -174,6 +174,22 @@ note-serve 投影要往设备写打字文本，rmv6 之前是纯只读解析。�
 **打包器已经写了**（`note-serve::rmdoc`，1 测）：给一页 `.rm` 字节 + 书名 + 父文件夹，拼出 `<uuid>.metadata`+`<uuid>.content`（`fileType:"notebook"`，`formatVersion 2`/`cPages` 结构，参照真机样本 `testdata/seven_styles/book.content` 与上述旧代码印证过的最小字段集——`extraMetadata` 空对象就够，不用填一堆画笔工具状态）+`<uuid>/<page>.rm`，STORED 不压缩（zip crate，workspace 里 `epubmap` 已经在用，不是新依赖）。上传本身**直接复用 `shelf_core::xochitl::Xochitl::upload`**（共享底座、非"旧代码"，笔记线本来就已经间接依赖 shelf-core）。落地文件用 Python `zipfile` + `rmscene` 交叉核过一遍：zip 结构对、`.metadata`/`.content` JSON 合法、内嵌 `.rm` 独立解析出正确文字与样式。
 
 **真机验证通过（2026-09-07 当场做的）**：拿 6 段测试内容（Title/Subheading/Body/Bullet×2/Checkbox 全部 5 种支持样式都占一个）打包、经临时诊断工具直接调 `shelf_core::xochitl::Xochitl::upload`（`reachable=true`）传到设备，返回 `{"status":"Upload successful"}`。真机行为跟 §03h 前半引用的旧结论完全对上：**新文档立刻出现在书库、免重启**；**导入端确实重新分配了文档 UUID 和页 UUID**（都不是包里写的那两个）；**`.content` 被 xochitl 重写过一遍**（`uuids[0].first` 换成它自己的作者 UUID、丢了我们写的 `modifed` 字段，但 `pageCount`/`fileType` 原样保留）；xochitl **自己重新渲染生成了缩略图**（`<uuid>.thumbnails/<page>.png`，38501 字节）。拉这张缩略图下来肉眼核对：**六行内容、五种样式（大标题/加粗小标题/正文换行/两个圆点无序/空心方框待办）全部渲染正确**，没有白屏、没有样式错位、没有乱码。这是笔记线第一次真正让 xochitl 打开并渲染我们自己生成的文档——`rmv6::write` 的 `RootTextBlock` 编码器与 `note-serve::rmdoc` 打包器到这里才算真正闭环验证，不再只是"两个独立读取实现互相认可"。测试文档留在设备书库根目录，标题「cangjie 笔记线真机测试」，人工核对完可以在设备上直接删除。
+
+## 03i｜更正一处误判：NUMBERED 是无辜的，7 字节其实是 Subheading 1 的开关（2026-09-07）
+
+用户在设备上打开 §03h 那份测试文档，反馈"没有有序列表、没有勾选框、没有分区头1"，并**用真机原生格式菜单按钮**（不是手敲字符）把这三样都补打了一遍到同一份文档里。拉回来的文件里那三样其实都在——"待办事项"那行确实是 Checkbox 未勾选（缩略图上有空心方框），用户没细看是他没注意，不是 bug；但另外两条一细查，发现**§03f 当时的结论有一处真判断错了**。
+
+**排查过程**：把补打过的文件重新按 char_id 逐条目核对格式子块的原始字节（不是走 `TextDocument` 的样式名字，是直接读每条 `styles` 记录的 `[17, code, ...剩下的字节]`）——用户原生"Subheading 1"按钮打出来的那段，格式子块比"裸 BOLD"多整整 **7 字节**：`21 02 34 03 00 00 00`；而用户原生"已编号列表"按钮打出来的两段，格式子块跟其余样式一样只有 **2 字节**，干干净净。
+
+**结论**：§03f 那时候看到"某处有 7 字节没读完"的警告，**把账记错了对象**——那 7 字节从来不是 NumberedList 的，是 Subheading 1 的。两件事一次性理清：
+- **NumberedList（10）没有任何隐藏内容**，跟 PLAIN/BULLET/CHECKBOX 一样只是 `[17, 10]` 两字节；序号是 xochitl 渲染时按"连续几个 NUMBERED 段落"自动数出来的，不用自己存序号，**不存在"补样本才能安全写"的前提**——`rmv6::write` 已解除限制，正常支持。
+- **Subheading 1 与 Subheading 2 真机确实共用 wire 码（BOLD=3）**，但区分开关就是这 7 字节 `21023403000000`：带 = Subheading 1（大字号），不带 = Subheading 2（小字号）。**跟段落在文档里的位置无关**——用户明确验证过，§03h 当时"大概率是位置决定"的猜测是错的，两级大小完全由这段固定字节决定，可控。`rmv6::write` 新增 `Paragraph::subheading1()` 补这 7 字节，`Paragraph::new(BOLD, ..)` 保持不带（语义上当 Subheading 2/小节标题用）。
+
+**二次真机验证**：改完当场生成第二份 8 段测试文档（含一段 `subheading1()`、一段裸 `BOLD`、两段 `NUMBERED`）传真机，缩略图核对：「真 Subheading 1」明显大字号、「裸 BOLD」明显小字号，两段有序列表正确自动编号"1."/"2."。**xochitl 3.28 打字格式菜单全部 7 种样式（Title/Subheading 1/Subheading 2/Body/Bulletpoint/NumberedList/Checkbox）本模块现在都支持写入且真机验证过**——只有 Checkbox 的"已勾选"（码 7）还是只能靠原生点方框切换，写入器造不出勾上号的待办（这条限制是真的，不是分析失误）。
+
+**教训**：读 wire 格式的"哪个字段属于哪个条目"，光凭"警告出现在文件读到一半的位置附近"去猜容易猜错——这次改成显式记录每条 `styles` 记录自己的 `char_id`，逐条目核对多余字节，才把账算清楚。以后遇到"某处有没读完的字节"，先把它跟具体的 char_id/条目绑定，别凭空间顺序臆测归属。
+
+**产物**：`rmv6::write` 解除 NUMBERED 限制、新增 `Paragraph::subheading1()`/`SUBHEADING1_MARKER`；`notecore::model::Style::wire_code` 文档注释更正；两个真机测试文档（8 段版含全部 7 种样式）二次验证通过。
 
 ## 04｜踩坑
 
@@ -189,14 +205,14 @@ note-serve 投影要往设备写打字文本，rmv6 之前是纯只读解析。�
 
 **未闭环（按依赖顺序）**：
 1. **转写质量两项**：① entry3（高亮 3 旁 `口 第三段`）重转后仍没读对，裁图上下混进了相邻印刷行——把 `cropMargin` 从固定 24 改成按簇高度动态收紧，或者干脆换自渲染高分辨率裁图（§01 早留的口子）；② ~~entry1/2 把手写的汉字数字"一/二"认成阿拉伯数字"1/2"~~ 提示词已加规则（2026-09-07），待真机重转复验是否真的不再转数字。entry4 那条旧的错误草稿是裁图坐标错时期的遗留数据，手机网页上人工清一下（一改字段就覆盖）。
-2. **NumberedList 补样本**：再打一份多行有序列表（≥3 行，中途删一行看编号是否重排），差出格式子块那 7 字节未解码载荷的编码规则——不补这步，note-serve 写入器落 NumberedList 就是蒙的（§03f）。
-3. ~~rmdoc 打包器 + 真机小范围验证~~ ✅ 2026-09-07 当场做完：6 段/5 种样式测试文档真机上传成功，xochitl 自己渲染的缩略图肉眼核对全对（§03h）。
-4. note-serve 条目→文档编排：`rmv6::write`/`rmdoc`/上传三件套都已真机验证，还差业务逻辑——条目库按章分组转成段落列表（分区做 Subheading，条目做 Body，样式按 `notecore::model::Style` 映射）、`《书名》/第N章 章名` 一章一本、旧本 `POST /api/books/trash/add` 软删、只重建变过的章；NumberedList 等 2 补完样本再接。
+2. ~~NumberedList 补样本~~ ✅ 用户真机核对时一并补了：那 7 字节根本不属于 NumberedList，是分析失误，已更正、已解除限制（§03i）。
+3. ~~rmdoc 打包器 + 真机小范围验证~~ ✅ 2026-09-07 当场做完两轮：全部 7 种打字样式真机上传+渲染验证通过（§03h/§03i）。
+4. note-serve 条目→文档编排：`rmv6::write`/`rmdoc`/上传三件套 + 全部 7 种样式都已真机验证，只差业务逻辑——条目库按章分组转成段落列表（分区做 Subheading 1、条目做 Body、勾画所在小节做 Subheading 2，样式按 `notecore::model::Style` 映射）、`《书名》/第N章 章名` 一章一本、旧本 `POST /api/books/trash/add` 软删、只重建变过的章。
 5. 书库动作代理扩展：`shelf-trash-agent.qmd` → 通用 `{action: trash|mkdir}` 队列，`Library.createCollection` 建《书名》夹；先离线 `apply-diffs` 再上机。
 6. mind-serve：按分区跑文本模型（简述 = 提示词，`ai=false` 跳过），`answer` 写回再投影。
 7. md 导出 `vault/<书名>/第N章.md`（front-matter、`^id` 块锚、`[[书名]]` 反链、索引页）+ host `notes/host/bin/notes pull`。
 8. 文档收尾、旧 PKM 白皮书加"已退役、由 notes/ 取代"头注、`dev` 以 `--no-ff` 合入 `feature/shelf-p1`。
 
-**已闭环（真机）**：§03c ink-serve 首轮（active/注册/追平 38 章）· §03d 「笔记」tab 注册 · §03e transcribe-serve 部署（active/注册/0600/追平记 note）· §03f 步骤 0 样本标定（聚簇/配对阈值验证通过，NumberedList/Subheading 碰撞/Checkbox 勾选三项新发现）· §03g 揪出裁图画布尺寸错（960×1280）并修复部署复验（3 条有勾画的条目裁图都对准了手写位置，但转写准确率另计——2 条数字被认错、1 条完全读错；1 条裁不到已优雅降级）· §03h `rmv6::write`/`note-serve::rmdoc`/上传三件套真机验证通过（6 段 5 样式测试文档，xochitl 自己渲染的缩略图肉眼核对全对——笔记线第一次真正往设备写东西成功）。离线：五 crate+服务 **41** 测（§03h 新增 rmv6::write 5 测 + note-serve::rmdoc 1 测）。
+**已闭环（真机）**：§03c ink-serve 首轮（active/注册/追平 38 章）· §03d 「笔记」tab 注册 · §03e transcribe-serve 部署（active/注册/0600/追平记 note）· §03f 步骤 0 样本标定（聚簇/配对阈值验证通过）· §03g 揪出裁图画布尺寸错（960×1280）并修复部署复验（3 条有勾画的条目裁图都对准了手写位置，但转写准确率另计——2 条数字被认错、1 条完全读错；1 条裁不到已优雅降级）· §03h `rmv6::write`/`note-serve::rmdoc`/上传三件套首次真机验证通过 · §03i 更正 NUMBERED 误判、解出 Subheading 1/2 区分开关、二次真机验证全部 7 种打字样式渲染正确。离线：五 crate+服务 **41** 测。
 
 **明确不做（本期）**：扫描件 PDF、定稿 PDF（等步骤 0 ④）、笔记本手写批注回读（设备只读）、颜色语义（只进 tags）、自动清空回收站（网页按钮走 `emptyTrash()` 用户显式点）、Anki/Todoist/Readwise 外发（有 md 与稳定 id 之后再谈）、KOReader 高亮回流（书架砍下来留给笔记线，排在导出之后）。
