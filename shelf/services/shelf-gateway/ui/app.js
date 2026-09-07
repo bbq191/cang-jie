@@ -239,33 +239,63 @@ function assetTab(sec,api,o){sec.innerHTML=`<div class="card">${o.title?`<h2>${o
 /* 「笔记」tab（note-serve 注册；数据来自 ink-serve 条目库）：按书→按章列条目，左裁图右文本，改即存。
    设备只负责写、不负责改：这里就是"改"的地方（e-ink 上打字太痛苦）。分区 = 名字 + 简述（简述就是给 AI 的要求）。 */
 const STYLE_NAMES={body:'正文',bullet:'无序 -',numbered:'有序 1.',checkbox:'待办 口'};
-const STATUS_NAMES={pending:'待转写',draft:'待校对',reviewed:'已校对',revoked:'已撤销'};
+const STATUS_NAMES={mined:'待浏览',pending:'待转写',draft:'待校对',reviewed:'已校对',skipped:'已跳过',revoked:'已撤销'};
+/* 「浏览」（新批注先落这，点了才转笔记）与「整理」（真被要求转笔记的才在这核对）拆两个子视图，见二期设计（白皮书 §03n）。 */
 function renderNotes(sec){sec.innerHTML=`
   <div class="card"><h2>笔记</h2>
-    <p class="lead">荧光笔勾书、在旁边手写，合上书就到这里：核对转写、选分区、选样式。改动只进条目库，设备笔记本由它重新生成。</p>
+    <p class="lead">荧光笔勾书、在旁边手写，合上书先到「浏览」：看一眼，点「转入笔记」才会转写、进「整理」核对；点「不需要」就跳过，不再出现。</p>
     <div class="row"><span class="small">书</span><select id="nbook" style="flex:1;min-width:10em"></select><button class="btn" id="nrescan" title="清掉页记录，整本重新摄取">重扫</button></div>
     <div class="row small" id="nsum"></div>
-    <details class="cmp" id="nsecs"><summary>分区（名字 + 给 AI 的要求）</summary><div id="nseclist"></div><button class="btn" id="nsecadd">＋ 分区</button> <button class="btn pri" id="nsecsave">保存分区</button></details>
-    <details class="cmp" id="ntr"><summary>转写 <span class="small" id="ntrsum"></span></summary>
-      <div class="row small" id="ntrstat"></div>
-      <div class="row"><input type="password" id="ntrkey" placeholder="API key（只写不回显；DashScope 百炼）" style="flex:1;min-width:12em" autocomplete="off"><button class="btn pri" id="ntrsave">保存</button><button class="btn" id="ntrclear" title="清掉已存的 key">清 key</button></div>
-      <div class="row"><input type="text" id="ntrmodel" placeholder="模型" style="max-width:10em"><input type="text" id="ntrurl" placeholder="OpenAI 兼容口 baseUrl" style="flex:1;min-width:12em"><label class="toggle"><input type="checkbox" id="ntrauto"> 合书自动转写</label></div>
-      <div class="row"><button class="btn" id="ntrrun">转写待转写条目</button><button class="btn" id="ntrretry" title="清掉失败记录再跑">重试失败</button><span class="small" id="ntrmsg"></span></div>
-      <div class="small" id="ntrfail"></div>
-    </details>
   </div>
-  <div id="nchapters"></div>`;
-  const sel=$('#nbook',sec),chaps=$('#nchapters',sec),sum=$('#nsum',sec);let book=null;
+  <div class="subnav"><button class="on">👀 浏览</button><button>✎ 整理</button></div>
+  <div class="subpanel on" id="nbrowse"></div>
+  <div class="subpanel" id="norganize">
+    <div class="card">
+      <details class="cmp" id="nsecs"><summary>分区（名字 + 给 AI 的要求）</summary><div id="nseclist"></div><button class="btn" id="nsecadd">＋ 分区</button> <button class="btn pri" id="nsecsave">保存分区</button></details>
+      <details class="cmp" id="ntr"><summary>转写 <span class="small" id="ntrsum"></span></summary>
+        <div class="row small" id="ntrstat"></div>
+        <div class="row"><input type="password" id="ntrkey" placeholder="API key（只写不回显；DashScope 百炼）" style="flex:1;min-width:12em" autocomplete="off"><button class="btn pri" id="ntrsave">保存</button><button class="btn" id="ntrclear" title="清掉已存的 key">清 key</button></div>
+        <div class="row"><input type="text" id="ntrmodel" placeholder="模型" style="max-width:10em"><input type="text" id="ntrurl" placeholder="OpenAI 兼容口 baseUrl" style="flex:1;min-width:12em"><label class="toggle"><input type="checkbox" id="ntrauto"> 合书自动转写</label></div>
+        <div class="row"><button class="btn" id="ntrrun">转写待转写条目</button><button class="btn" id="ntrretry" title="清掉失败记录再跑">重试失败</button><span class="small" id="ntrmsg"></span></div>
+        <div class="small" id="ntrfail"></div>
+      </details>
+    </div>
+    <div id="nchapters"></div>
+  </div>`;
+  const sel=$('#nbook',sec),chaps=$('#nchapters',sec),browse=$('#nbrowse',sec),sum=$('#nsum',sec);let book=null;
   const cropUrl=(uuid,f)=>`/api/ink/books/${encodeURIComponent(uuid)}/crops/${encodeURIComponent(f)}`;
   const patch=async(id,body)=>{const r=await postJ(`/api/ink/books/${encodeURIComponent(book.uuid)}/entries/${encodeURIComponent(id)}`,body);if(r.ok===false)alert(r.message||'保存失败')};
+  /* 浏览态动作：Mined→Pending（转入笔记）/ Mined→Skipped（不需要），见 ink-serve::triage。成功后两个子视图都要重画（条目跨视图搬家）。 */
+  const triage=async(id,action)=>{const r=await postJ(`/api/ink/books/${encodeURIComponent(book.uuid)}/entries/${encodeURIComponent(id)}/${action}`,{});if(r.ok===false)return;
+    book=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}`);renderBrowse();renderBook()};
+  const updateSummary=()=>{if(!book){sum.textContent='';return}const es=book.entries||[];
+    const c=st=>es.filter(e=>e.status===st).length,skipped=c('skipped');
+    sum.textContent=`待浏览 ${c('mined')} · 待转写 ${c('pending')} · 待校对 ${c('draft')} · 已校对 ${c('reviewed')}${skipped?` · 已跳过 ${skipped}（不再显示）`:''}`};
   const renderSections=()=>{const el=$('#nseclist',sec);el.innerHTML='';(book.sections||[]).forEach((s,i)=>{const d=document.createElement('div');d.className='row';d.innerHTML=`<input type="text" value="${s.name}" placeholder="名字" style="max-width:6em" data-k="name"><input type="text" value="${s.brief||''}" placeholder="给 AI 的要求（空＝不调模型）" style="flex:1;min-width:10em" data-k="brief"><label class="toggle"><input type="checkbox" data-k="ai" ${s.ai?'checked':''}> 调模型</label><button class="btn" title="删">✕</button>`;
     d.querySelectorAll('[data-k]').forEach(inp=>inp.onchange=()=>{book.sections[i][inp.dataset.k]=inp.type==='checkbox'?inp.checked:inp.value});d.querySelector('button').onclick=()=>{book.sections.splice(i,1);renderSections()};el.appendChild(d)})};
   $('#nsecadd',sec).onclick=()=>{book.sections.push({id:'s'+Date.now(),name:'',brief:'',ai:true,order:book.sections.length,triggers:[]});renderSections()};
   $('#nsecsave',sec).onclick=async()=>{const r=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}/sections`,{method:'PUT',body:JSON.stringify({sections:book.sections})});if(r.ok===false)alert(r.message);else renderBook()};
   $('#nrescan',sec).onclick=async()=>{if(!book)return;await postJ(`/api/ink/books/${encodeURIComponent(book.uuid)}/rescan`,{});refresh()};
-  const renderBook=()=>{chaps.innerHTML='';if(!book)return;renderSections();
-    const live=(book.entries||[]).filter(e=>e.status!=='revoked');
-    sum.textContent=`${live.length} 条 · 待转写 ${live.filter(e=>e.status==='pending').length} · 待校对 ${live.filter(e=>e.status==='draft').length} · 已校对 ${live.filter(e=>e.status==='reviewed').length}`;
+  /* 浏览：按页分组、只列 Mined（待决定的），最近变更的页在前；转入笔记/不需要两个按钮直接调 triage。 */
+  const renderBrowse=()=>{browse.innerHTML='';if(!book)return;updateSummary();
+    const mined=(book.entries||[]).filter(e=>e.status==='mined');
+    if(!mined.length){browse.innerHTML='<div class="card"><p class="small">没有待浏览的批注——勾画/手写后合上书，稍等抓取即可出现在这里。</p></div>';return}
+    const groups=new Map();mined.forEach(e=>{const k=e.page_index;if(!groups.has(k))groups.set(k,[]);groups.get(k).push(e)});
+    const recency=k=>Math.max(...groups.get(k).map(e=>e.updated));
+    [...groups.keys()].sort((a,b)=>recency(b)-recency(a)).forEach(k=>{const es=groups.get(k).sort((a,b)=>a.ink.bbox[1]-b.ink.bbox[1]);
+      const card=document.createElement('div');card.className='card';card.innerHTML=`<h3 style="margin-top:0">第 ${k+1} 页${es[0].chapter_title?' · '+es[0].chapter_title:''} <span class="small">${es.length} 条</span></h3>`;
+      es.forEach(e=>{const row=document.createElement('div');row.className='opt-note';row.style.cssText='display:flex;gap:.6em;flex-wrap:wrap;align-items:flex-start;margin:.4em 0';
+        const img=e.ink&&e.ink.crop?`<img src="${cropUrl(book.uuid,e.ink.crop)}" alt="手写" style="max-width:40%;max-height:9em;border:1px solid var(--line);background:#fff">`:'<span class="small">（无裁图）</span>';
+        row.innerHTML=`${img}<div style="flex:1;min-width:12em">
+          ${e.quote?`<div class="small" style="border-left:3px solid var(--line);padding-left:.5em;margin:.2em 0">「${e.quote.text}」</div>`:''}
+          <div class="row"><button class="btn pri" data-a="request">转入笔记</button><button class="btn" data-a="skip">不需要</button></div></div>`;
+        row.querySelector('[data-a="request"]').onclick=()=>triage(e.id,'request');
+        row.querySelector('[data-a="skip"]').onclick=()=>triage(e.id,'skip');
+        card.appendChild(row)});
+      browse.appendChild(card)})};
+  /* 整理：只列真被要求转笔记的（Pending/Draft/Reviewed）——Mined 在「浏览」决定，Skipped/Revoked 不再出现。 */
+  const renderBook=()=>{chaps.innerHTML='';if(!book)return;renderSections();updateSummary();
+    const live=(book.entries||[]).filter(e=>['pending','draft','reviewed'].includes(e.status));
     const groups=new Map();live.forEach(e=>{const k=e.chapter==null?-1:e.chapter;if(!groups.has(k))groups.set(k,[]);groups.get(k).push(e)});
     [...groups.keys()].sort((a,b)=>a-b).forEach(k=>{const es=groups.get(k).sort((a,b)=>a.page_index-b.page_index||a.ink.bbox[1]-b.ink.bbox[1]);
       const card=document.createElement('div');card.className='card';card.innerHTML=`<h3 style="margin-top:0">${k<0?'（未归章）':`第 ${k+1} 章 · ${es[0].chapter_title||''}`} <span class="small">${es.length} 条</span></h3>`;
@@ -285,7 +315,7 @@ function renderNotes(sec){sec.innerHTML=`
           rb.onclick=async()=>{rb.disabled=true;const r=await j(`/api/transcribe/books/${encodeURIComponent(book.uuid)}/entries/${encodeURIComponent(e.id)}`,{method:'POST'});rb.disabled=false;if(r.ok===false)alert(r.message||'转写失败')};row.querySelector('.row').appendChild(rb)}
         card.appendChild(row)});
       chaps.appendChild(card)})};
-  const loadBook=async()=>{if(!sel.value){book=null;renderBook();return}book=await j(`/api/ink/books/${encodeURIComponent(sel.value)}`);renderBook()};
+  const loadBook=async()=>{if(!sel.value){book=null;renderBrowse();renderBook();return}book=await j(`/api/ink/books/${encodeURIComponent(sel.value)}`);renderBrowse();renderBook()};
   sel.onchange=loadBook;
   /* 转写区（transcribe-serve）：key 只写不回显；状态 = 待转写数 / 用量 / 最近一轮 / 失败清单 */
   const trKey=$('#ntrkey',sec),trMsg=$('#ntrmsg',sec);
@@ -304,7 +334,7 @@ function renderNotes(sec){sec.innerHTML=`
   $('#ntrretry',sec).onclick=()=>trRun('/api/transcribe/retry');
   const refresh=async()=>{const d=await j('/api/ink/books');const cur=sel.value;sel.innerHTML=(d.items||[]).map(b=>`<option value="${b.uuid}">${b.title}（${b.entries}）</option>`).join('')||'<option value="">（还没有勾画过的书）</option>';
     if(cur&&[...sel.options].some(o=>o.value===cur))sel.value=cur;await Promise.all([loadBook(),trRefresh()])};
-  refresh();sec.refresh=refresh}
+  refresh();sec.refresh=refresh;subtabs(sec)}
 
 /* 管理台/引导（固定 tab，始终在——它是网关自身页面，不由服务注册表驱动） */
 function renderManage(sec){sec.innerHTML=`
