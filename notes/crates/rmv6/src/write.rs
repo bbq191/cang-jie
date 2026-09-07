@@ -21,8 +21,10 @@
 //! ⚠ **本模块目前只覆盖 5 种确认安全的样式**（PLAIN/HEADING/BOLD/BULLET/CHECKBOX）；`NUMBERED` 的格式
 //! 子块比其余样式多 7 字节未解码载荷（疑似编号计数），故意不在这里支持——调用方传 `NUMBERED` 会报错，
 //! 等多行样本把那 7 字节解出来再补（白皮书 §03f/§03g）。
-//! ⚠ **只在 host 侧跑过与本 crate 自身解析器的往返验证，还没真机上传验证**——note-serve 接这个模块前，
-//! 先拿它生成一份新文档传到真机确认 xochitl 真能打开、渲染正常，再接自动投影管线。
+//! ✅ **2026-09-07 真机验证通过**：6 段/5 样式测试文档经 `note-serve::rmdoc` 打包、`shelf_core::
+//! xochitl::Xochitl::upload` 传到真机，xochitl 自己渲染的缩略图肉眼核对——大标题/加粗小标题/正文
+//! 换行/无序两点/空心待办全部渲染正确，无白屏无错位（笔记线白皮书 §03h）。note-serve 接自动投影
+//! 管线前还差的是"条目库怎么变成一章一本"这层业务逻辑，不是这个模块本身。
 use crate::v6::scene_item::text::ParagraphStyle;
 use crate::v6::crdt::CrdtId;
 

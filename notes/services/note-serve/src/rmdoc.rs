@@ -10,9 +10,10 @@
 //! 结构，字段集合参照真机样本 `testdata/seven_styles/book.content` 与上面三处旧代码的最小可用集
 //! （`extraMetadata` 可以是空对象——不用把所有画笔工具状态字段都填一遍）。
 //!
-//! ⚠ 打包器本身已经 host 双实现（zipfile+rmscene）交叉验证过、还没让真的 xochitl 摸过（笔记线白皮书
-//! §03h），条目→文档编排也没写，所以这个模块暂时只有测试用它——`#[allow(dead_code)]` 是有意为之，
-//! 不是漏掉了接线；真机验证过、编排写完就会摘掉。
+//! ✅ 打包器本身已经 host 双实现（zipfile+rmscene）交叉验证过，且 **2026-09-07 真机验证通过**（笔记线
+//! 白皮书 §03h：6 段 5 样式测试文档传到真机、xochitl 自己渲染的缩略图肉眼核对全对）。条目→文档编排
+//! 还没写，所以这个模块暂时只有测试用它——`#[allow(dead_code)]` 是有意为之，不是漏掉了接线；
+//! 编排写完接进路由就会摘掉。
 #![allow(dead_code)]
 use std::io::Write;
 use zip::write::SimpleFileOptions;
@@ -128,5 +129,29 @@ mod tests {
         assert_eq!(content["fileType"], "notebook");
         assert_eq!(content["pageCount"], 1);
         assert_eq!(content["cPages"]["pages"][0]["id"], "1111");
+    }
+
+    /// 不是真正的单测——一次性生成真机验证用的测试文档，落到 scratchpad 供手动 scp+上传。
+    /// `CANGJIE_DUMP_RMDOC=<目录> cargo test -p note-serve -- --ignored dump_device_test_doc`
+    #[test]
+    #[ignore]
+    fn dump_device_test_doc() {
+        let Ok(dir) = std::env::var("CANGJIE_DUMP_RMDOC") else { return };
+        let paragraphs = vec![
+            Paragraph::new(ParagraphStyle::HEADING, "笔记线真机测试"),
+            Paragraph::new(ParagraphStyle::BOLD, "查询（分区头样式）"),
+            Paragraph::new(ParagraphStyle::PLAIN, "这是正文样式，混排中文和 English 123，验证 rmv6::write 生成的 RootTextBlock。"),
+            Paragraph::new(ParagraphStyle::BULLET, "无序要点一"),
+            Paragraph::new(ParagraphStyle::BULLET, "无序要点二"),
+            Paragraph::new(ParagraphStyle::CHECKBOX, "待办事项：确认样式渲染正常"),
+        ];
+        let rm = build_page_rm(TEMPLATE, &paragraphs).unwrap();
+        let doc_uuid = uuid::Uuid::new_v4().to_string();
+        let page_uuid = uuid::Uuid::new_v4().to_string();
+        let page = Page { uuid: page_uuid, rm_bytes: rm };
+        let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64;
+        let bytes = pack(&doc_uuid, "cangjie 笔记线真机测试", "", &page, TEMPLATE_AUTHOR, now).unwrap();
+        std::fs::write(std::path::Path::new(&dir).join("device_test.rmdoc"), &bytes).unwrap();
+        eprintln!("wrote device_test.rmdoc, {} bytes, doc_uuid={doc_uuid}", bytes.len());
     }
 }

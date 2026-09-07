@@ -8,7 +8,7 @@
 |---|---|---|---|
 | `ink-serve` 矿 | `ink` / 8795 | 监听书库 → 只扫变更页 → 勾画 ↔ 旁边手写配对 → 裁图 → **条目库（唯一写者）**；零网络 | ✅ 真机 active，扫到《人骨拼圖》38 章 |
 | `transcribe-serve` 转写 | `transcribe` / 8796 | 订阅矿的事件 → 裁图喂视觉模型（Qwen 缺省，OpenAI 兼容口可换）→ 草稿写回；唯一出网 | ✅ 真机 active；真调模型待 key + 样本 |
-| `note-serve` 本 | `notes` / 8798 | 注册「笔记」tab；打包 `.rmdoc`（`rmdoc.rs`）+ 写 `RootTextBlock`（`rmv6::write`）已就绪；条目→文档编排、上传、`《书名》` 一章一本、旧本回收站还没接线 | tab 已注册；打包/写入器已测（host），未接线、未真机验证 |
+| `note-serve` 本 | `notes` / 8798 | 注册「笔记」tab；打包 `.rmdoc`（`rmdoc.rs`）+ 写 `RootTextBlock`（`rmv6::write`）+ 上传（复用 shelf-core）三件套已就绪且**真机验证通过**；条目→文档业务编排、`《书名》` 一章一本、旧本回收站还没接线 | ✅ tab 已注册；三件套真机传文档成功、5 样式渲染全对（2026-09-07）；业务编排待建 |
 | `mind-serve` 脑 | `mind` / 8797 | 按分区跑文本模型（分区简述 = 提示词），回答写回 | 待建 |
 
 **卡点**：真机样本（勾三段写三行 + `-`/`1.`/`口`/下划线；七样式笔记本）用来标定聚簇/配对阈值与页坐标几何；现有样本页全是墓碑笔画。
@@ -114,4 +114,4 @@ ssh root@<设备IP> sh /home/root/shelf-pkg/shelf/install.sh --only ink,transcri
 | 网关接入 | MODULES 三行、「笔记」tab（裁图/文本/分区/样式改即存）、部署链 NOTES_BINS/令牌 | ✅ 真机 tab 注册（§03d） |
 | 转写 | transcribe-serve：Vision Strategy（Qwen 缺省）、限量/失败上限/即停、key 只写不读 0600、用量账本、网页转写区 | ✅ 修完裁图坐标（§03g）真机重转复验：裁图都对准了手写位置，但转写准确率另计——2 条"第一/二段"被认成"第1/2段"（汉字数字读成阿拉伯数字）、1 条完全读错（裁图边距混印刷体）；1 条无勾画批注裁不到，新守卫优雅跳过 |
 | 步骤 0 | 真机样本标定阈值/页几何/样式码 | ✅ 2026-09-07：聚簇/配对阈值验证通过、NumberedList 码=10（§03f）；★页坐标画布尺寸原假设是错的，真机反测坐实 960×1280、已修复部署复验（§03g） |
-| 本 / 脑 / 导出 | note-serve 投影：rmv6::write + rmdoc 打包已就绪（host 双实现交叉验证）· 代理 mkdir · mind-serve · md + `notes pull` | ⏳ 真机验证 + 投影编排待建（§05）；NumberedList 写入前还差一份多行样本 |
+| 本 / 脑 / 导出 | note-serve 投影：rmv6::write + rmdoc 打包 + 上传三件套 · 代理 mkdir · mind-serve · md + `notes pull` | ✅ 三件套真机验证通过（2026-09-07，5 样式渲染全对）；⏳ 条目→文档业务编排/mind/导出待建（§05）；NumberedList 写入前还差一份多行样本 |
