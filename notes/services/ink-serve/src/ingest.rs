@@ -2,7 +2,7 @@
 //! 只处理活的 EPUB 文档（首期）；页→章由 epubmap 给。
 use crate::bookdb::BookDb;
 use crate::config::IngestConfig;
-use crate::crop::{crop_png, PageGeom};
+use crate::crop::render_ink;
 use crate::doc::Doc;
 use epubmap::BookMap;
 use notecore::ingest::{drafts_of_page, merge_page, MergeStats, PageCtx};
@@ -40,7 +40,6 @@ pub fn ingest_doc(lib: &Path, crops_dir: &Path, db: &BookDb, cfg: &IngestConfig,
         (Some(e), Some(i)) => BookMap::from_epub(&e, &i),
         _ => BookMap::default(),
     };
-    let geom = PageGeom { page_w: cfg.page_width, page_h: cfg.page_height, x_origin_center: cfg.x_origin_center, margin: cfg.crop_margin };
     let th = cfg.thresholds();
     let title = meta.visible_name.clone();
     let chapters: Vec<String> = map.chapters().into_iter().map(|(_, t)| t.to_string()).collect();
@@ -77,21 +76,21 @@ pub fn ingest_doc(lib: &Path, crops_dir: &Path, db: &BookDb, cfg: &IngestConfig,
                 stats.merge.unchanged += m.unchanged;
                 stats.merge.revoked += m.revoked;
                 stats.pages += 1;
-                // 裁图：本页所有有手写、且裁图缺失或指纹变了的条目
-                if let Ok(thumb) = std::fs::read(doc.page_thumb(page_id)) {
-                    for e in book.entries.iter_mut().filter(|e| e.page == *page_id) {
-                        let Some(ink) = e.ink.as_mut() else { continue };
-                        let want = format!("{}-{}.png", e.id, ink.hash);
-                        if ink.crop == want && crops_dir.join(&want).is_file() {
-                            continue;
-                        }
-                        match crop_png(&thumb, &geom, ink.bbox) {
-                            Ok(png) => match shelf_core::fs::write_atomic(&crops_dir.join(&want), &png) {
-                                Ok(()) => ink.crop = want,
-                                Err(err) => errors.push(format!("{page_id}: 写裁图失败 {err}")),
-                            },
-                            Err(err) => errors.push(format!("{page_id}: {err}")),
-                        }
+                // 裁图：本页所有有手写、且裁图缺失或指纹变了的条目。自渲染（`render_ink`）直接吃这一页
+                // 已经解析好的 `page.strokes`，不依赖 xochitl 缩略图——写多靠下都画得出来，也不会混进印刷体
+                // （2026-09-07 二期真机验证发现的两个问题，见白皮书 §03o）。
+                for e in book.entries.iter_mut().filter(|e| e.page == *page_id) {
+                    let Some(ink) = e.ink.as_mut() else { continue };
+                    let want = format!("{}-{}.png", e.id, ink.hash);
+                    if ink.crop == want && crops_dir.join(&want).is_file() {
+                        continue;
+                    }
+                    match render_ink(&page.strokes, &ink.strokes, ink.bbox, cfg.crop_margin) {
+                        Ok(png) => match shelf_core::fs::write_atomic(&crops_dir.join(&want), &png) {
+                            Ok(()) => ink.crop = want,
+                            Err(err) => errors.push(format!("{page_id}: 写裁图失败 {err}")),
+                        },
+                        Err(err) => errors.push(format!("{page_id}: {err}")),
                     }
                 }
                 book.page_mtimes.insert(page_id.clone(), *mtime);

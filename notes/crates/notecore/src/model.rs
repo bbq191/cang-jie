@@ -81,6 +81,11 @@ pub enum Status {
 /// 配对到的勾画（GlyphRange）。
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Quote {
+    /// 勾画自己的稳定 id（`.rm` 里 `GlyphRange` 的 CRDT id，不是笔画 id）：给"纯勾画条目"（没有旁边
+    /// 手写，`Entry.ink` 是 `None`）做重扫认领用，笔画哈希那套配不上它。`#[serde(default)]` 兼容
+    /// 二期这个字段加之前落盘的旧条目库（旧数据反序列化成空串，不影响已有的手写配对逻辑）。
+    #[serde(default)]
+    pub id: String,
     pub text: String,
     pub color: String,
     /// 每行一个矩形 (x, y, w, h)，页坐标。
@@ -161,10 +166,22 @@ impl Entry {
         matches!((&self.ink, self.status), (Some(ink), s) if !matches!(s, Status::Revoked | Status::Mined | Status::Skipped) && !self.drafts.iter().any(|d| d.hash == ink.hash))
     }
     /// 浏览态动作：转成 `Pending`（转入笔记）或 `Skipped`（不需要）。已撤销的条目笔画都没了，
-    /// 操作没有意义，拒绝。
+    /// 操作没有意义，拒绝。**纯勾画条目**（`ink` 是 `None`，内容全是 `quote`）没有手写可转写——
+    /// 勾画文字是 `GlyphRange` 原生给的精确文字，不需要过一遍视觉模型；这种条目"转入笔记"
+    /// 就直接落定（`text = quote.text`、状态跳到 `Reviewed`），不经过 `Pending`/`Draft` 那两步，
+    /// 不然会卡在 `Pending` 里——`needs_transcribe()` 要求 `ink` 是 `Some`，永远不会被自动转写捡走
+    /// （2026-09-07 二期真机验证时发现的缺口，见笔记线白皮书 §03o）。
     pub fn set_triage(&mut self, target: Status, now: u64) -> Result<(), String> {
         if self.status == Status::Revoked {
             return Err("这条已撤销，笔画不在了，不能操作".into());
+        }
+        if target == Status::Pending && self.ink.is_none() {
+            if let Some(q) = &self.quote {
+                self.text = Some(q.text.clone());
+                self.status = Status::Reviewed;
+                self.updated = now;
+                return Ok(());
+            }
         }
         self.status = target;
         self.updated = now;
@@ -285,5 +302,23 @@ mod tests {
         let err = e.set_triage(Status::Pending, 30).unwrap_err();
         assert!(err.contains("已撤销"));
         assert_eq!(e.status, Status::Revoked, "拒绝后状态不变");
+    }
+
+    /// 纯勾画条目（`ink: None`）没有手写可转写：转入笔记直接落定成 `Reviewed`，不经过
+    /// `Pending`/`Draft`（不然会卡住——`needs_transcribe()` 要求 `ink` 是 `Some`，永远不会被
+    /// 自动转写捡走），文本直接取勾画原文。「不需要」还是走普通的 `Skipped`，不特殊。
+    #[test]
+    fn set_triage_finalizes_quote_only_entries_straight_to_reviewed() {
+        let mut e: Entry = serde_json::from_str(r#"{"id":"e","page":"p","page_index":0,"created":0,"updated":0,"quote":{"id":"q1","text":"勾画原文","color":"yellow","rects":[]}}"#).unwrap();
+        assert!(e.ink.is_none() && e.quote.is_some());
+
+        e.set_triage(Status::Pending, 10).unwrap();
+        assert_eq!((e.status, e.text.as_deref(), e.updated), (Status::Reviewed, Some("勾画原文"), 10), "转入笔记直接定稿，跳过 Pending/Draft");
+
+        // 「不需要」不受影响，还是 Skipped。
+        e.status = Status::Mined;
+        e.text = None;
+        e.set_triage(Status::Skipped, 20).unwrap();
+        assert_eq!(e.status, Status::Skipped);
     }
 }

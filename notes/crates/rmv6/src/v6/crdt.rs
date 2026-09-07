@@ -28,6 +28,14 @@ impl Default for CrdtId {
     }
 }
 
+/// `"part1:part2"`——这就是笔画/勾画在条目库 JSON 里落盘的稳定 id 字符串格式（`notecore::model::Ink::strokes`
+/// 等字段用的就是这个），定义在这一层是因为格式本身是 `CrdtId` 自己的事，别处只管调用不重复拼。
+impl std::fmt::Display for CrdtId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}:{}", self.part1, self.part2)
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct CrdtSequenceItem<N> {
     pub item_id: CrdtId,
