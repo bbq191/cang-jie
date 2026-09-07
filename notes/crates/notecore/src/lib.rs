@@ -4,9 +4,11 @@
 //! - `hash`   簇指纹（笔画点集量化哈希）——增量的根：指纹不变不重识别；
 //! - `ingest` 一页解析结果 → 条目草稿，并按增量规则并入已有条目（校对文本永不被覆盖、删笔画只标撤销）。
 //! - `marker` 行首标记的 OCR 路兜底（转写文本开头的 `-`/`1.`/`口` → 样式，并剥掉标记）。
+//! - `project` 条目库 → 设备笔记本投影（一章 → `rmv6::write::Paragraph` 列表 + 变更指纹），note-serve 专用。
 //! 行首手写约定（`-` / `1.` / `口` / 下划线分区头）的几何判定放 `glyph`，阈值待真机样本标定后补。
 pub mod geom;
 pub mod hash;
 pub mod ingest;
 pub mod marker;
 pub mod model;
+pub mod project;

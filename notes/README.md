@@ -8,7 +8,7 @@
 |---|---|---|---|
 | `ink-serve` 矿 | `ink` / 8795 | 监听书库 → 只扫变更页 → 勾画 ↔ 旁边手写配对 → 裁图 → **条目库（唯一写者）**；零网络 | ✅ 真机 active，真实勾画+手写样本摄取正确（聚簇/配对/裁图坐标全部真机验证，见白皮书 §03f/§03g） |
 | `transcribe-serve` 转写 | `transcribe` / 8796 | 订阅矿的事件 → 裁图喂视觉模型（Qwen 缺省，OpenAI 兼容口可换）→ 草稿写回；唯一出网 | ✅ 真机 active、key 已配置、真调模型跑过；转写准确率还在打磨（§03g/§05） |
-| `note-serve` 本 | `notes` / 8798 | 注册「笔记」tab；打包 `.rmdoc`（`rmdoc.rs`）+ 写 `RootTextBlock`（`rmv6::write`，全部 7 种打字样式）+ 上传（复用 shelf-core）三件套已就绪且**真机验证通过**；条目→文档业务编排、`《书名》` 一章一本、旧本回收站还没接线 | ✅ tab 已注册；三件套 + 7 种样式真机传文档、渲染全对（2026-09-07 两轮，见白皮书 §03h/§03i）；业务编排待建 |
+| `note-serve` 本 | `notes` / 8798 | 注册「笔记」tab；打包 `.rmdoc`（`rmdoc.rs`）+ 写 `RootTextBlock`（`rmv6::write`，全部 7 种打字样式）+ 上传（复用 shelf-core）三件套**真机验证通过**；条目→文档生成编排（`notecore::project` 投影 + `publish.rs` 上传/认领/旧本回收）代码已写完、离线测试全绿，⚠ 还没真机跑过、前端也没接按钮 | ✅ tab 已注册；三件套 + 7 种样式真机传文档、渲染全对（2026-09-07 两轮，见白皮书 §03h/§03i）；🔶 生成编排离线完成待真机验证（§03j） |
 | `mind-serve` 脑 | `mind` / 8797 | 按分区跑文本模型（分区简述 = 提示词），回答写回 | 待建 |
 
 ## 四步闭环
@@ -29,7 +29,7 @@
 ```
 浏览器 ──► shelf-gateway :8778 ──/api/<seg>/*──┬── ink-serve 127.0.0.1:8795 ──fswatch──► ~/.local/share/remarkable/xochitl（只读）
                  「笔记」tab（note-serve 注册）  ├── transcribe-serve :8796 ──订阅 ink /events──► DashScope（设备 WiFi 直连）
-                 /api/events（area=notes）      ├── note-serve :8798 ──► xochitl /upload（打包/写入/上传已就绪+真机验证；业务编排待建）
+                 /api/events（area=notes）      ├── note-serve :8798 ──► xochitl /upload（打包/写入/上传+生成编排都写完；上传三件套真机验证，编排待真机验证）
                                                └── mind-serve :8797（待建）
 ```
 
@@ -46,7 +46,7 @@
 |---|---|
 | ink | `GET /books` → `{items:[{uuid,title,chapters,entries,pending}]}` · `GET /books/{uuid}`（整份条目库：chapters/sections/entries）· `GET /books/{uuid}/crops/{file}` · `POST /books/{uuid}/entries/{id} {text?|section?|style?|draft?|answer?}`（给 `text` 即已校对；`draft` 追加最新在前）· `PUT /books/{uuid}/sections {sections}` · `POST /books/{uuid}/rescan` · `GET /events` |
 | transcribe | `GET /status` → `{config(无 key), usage, failures, inkReachable, pending}` · `GET /config` · `PUT /config {apiKey?（只写）, clearKey?, model?, baseUrl?, auto?, maxPerRun?, pauseMs?, timeoutSecs?, maxAttempts?, prompt?}` · `POST /run`（同步跑一轮，回 `{scanned,done,failed,skipped,left,note}`）· `POST /books/{uuid}/entries/{id}`（强制转写一条）· `POST /retry`（清失败记录再跑）· `GET /events` |
-| notes | `GET /status` · `GET /events`（投影/导出待建） |
+| notes | `GET /status` · `GET /books`（各书章节生成状态）· `GET /books/{uuid}/notebooks` · `POST /books/{uuid}/generate`（全书按需重投影+上传，⚠ 未真机验证）· `POST /books/{uuid}/chapters/{idx}/generate`（单章）· `GET /events`（md 导出待建） |
 
 事件：`{"svc":"ink","area":"notes","kind":"entries|sections"}`、`{"svc":"transcribe","area":"notes","kind":"transcribe"}` → 网页「笔记」tab 自动刷新。
 
@@ -60,7 +60,7 @@ notes/
 ├── crates/notecore/                   领域核心（纯函数）：model 条目/分区 · hash FNV 簇指纹 · geom 聚簇+配对 · ingest 增量合并 · marker 行首标记 OCR 兜底
 ├── services/ink-serve/                矿：doc(书库只读视图) · ingest(变更页编排) · crop(页坐标→缩略图像素) · bookdb(Repository) · config · main(路由+监听)
 ├── services/transcribe-serve/         转写：config(key/节制) · backend(Vision Strategy + OpenAiCompat) · prompt · ledger(用量) · ink(EntryStore 客户端) · worker(一轮编排) · main(SSE 订阅+防抖)
-├── services/note-serve/               本：注册「笔记」tab；rmdoc.rs 打包 .rmdoc（上传复用 shelf-core::xochitl）；投影编排待建
+├── services/note-serve/               本：注册「笔记」tab；rmdoc.rs 打包 .rmdoc（上传复用 shelf-core::xochitl）；config/ink/trash/notebooks/publish 生成编排（离线完成，⚠ 待真机验证）
 ├── systemd/                           三个 .service（PartOf=shelf.target；随书架 install.sh 装）
 ├── host/                              待建：CLI `notes pull`（md 同步到 Obsidian vault）
 ├── testdata/renggu/                   真机 fixture（《人骨拼圖》墓碑页 .rm，测"解析成功零条目"）· renggu_marks/（同书真实勾画+手写）· seven_styles/（笔记本一页七样式，rmv6::write 模板）
@@ -96,7 +96,7 @@ notes/
 ## 构建 · 部署
 
 ```sh
-cd notes && cargo build --workspace && cargo test --workspace     # host：41 个测试（rmv6 7 · epubmap 5 · notecore 11 · ink 9 · transcribe 8 · note 1）
+cd notes && cargo build --workspace && cargo test --workspace     # host：51 个测试（rmv6 7 · epubmap 5 · notecore 15 · ink 9 · transcribe 8 · note 7）
 cd ../shelf && ./build.sh && ./deploy.sh <设备IP>                  # 随书架一起交叉编译/打包/装机（NOTES_BINS；设备在 WiFi 上时给 WiFi IP）
 ssh root@<设备IP> sh /home/root/shelf-pkg/shelf/install.sh --only ink,transcribe,note   # 只装/更新笔记线
 ```
@@ -113,4 +113,5 @@ ssh root@<设备IP> sh /home/root/shelf-pkg/shelf/install.sh --only ink,transcri
 | 转写 | transcribe-serve：Vision Strategy（Qwen 缺省）、限量/失败上限/即停、key 只写不读 0600、用量账本、网页转写区 | ✅ 修完裁图坐标（§03g）真机重转复验：裁图都对准了手写位置，但转写准确率另计——2 条"第一/二段"被认成"第1/2段"（汉字数字读成阿拉伯数字）、1 条完全读错（裁图边距混印刷体）；1 条无勾画批注裁不到，新守卫优雅跳过 |
 | 步骤 0 | 真机样本标定阈值/页几何/样式码 | ✅ 2026-09-07：聚簇/配对阈值验证通过、NumberedList 码=10（§03f）；★页坐标画布尺寸原假设是错的，真机反测坐实 960×1280、已修复部署复验（§03g） |
 | 写入底座 | rmv6::write 编 RootTextBlock（全部 7 种打字样式）+ note-serve::rmdoc 打包 `.rmdoc` + 上传（复用 shelf-core::xochitl） | ✅ 真机验证通过（2026-09-07 两轮：Subheading 1/2 区分开关、NumberedList 自动编号，§03h/§03i） |
-| 本 / 脑 / 导出 | note-serve 条目→文档业务编排（一章一本、《书名》夹）· 代理 mkdir · mind-serve · md + `notes pull` | ⏳ 待建（§05），底座已就绪 |
+| 生成编排 | `notecore::project` 投影一章 + 变更指纹 · `note-serve::publish` 上传/认领/旧本回收编排（Strategy trait 全桩单测） | ✅ 离线完成（2026-09-07，§03j，4+4 测试全绿）；🔶 真机验证待做（下一步） |
+| 脑 / 导出 | 代理 mkdir 扩展（《书名》夹自动建）· mind-serve · md + `notes pull` | ⏳ 待建（§05） |

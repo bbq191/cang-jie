@@ -653,6 +653,8 @@ dependencies = [
  "serde",
  "serde_json",
  "shelf-core",
+ "tempfile",
+ "ureq",
  "uuid",
  "zip",
 ]

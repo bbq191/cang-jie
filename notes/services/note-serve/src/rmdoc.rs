@@ -11,13 +11,21 @@
 //! （`extraMetadata` 可以是空对象——不用把所有画笔工具状态字段都填一遍）。
 //!
 //! ✅ 打包器本身已经 host 双实现（zipfile+rmscene）交叉验证过，且 **2026-09-07 真机验证通过**（笔记线
-//! 白皮书 §03h：6 段 5 样式测试文档传到真机、xochitl 自己渲染的缩略图肉眼核对全对）。条目→文档编排
-//! 还没写，所以这个模块暂时只有测试用它——`#[allow(dead_code)]` 是有意为之，不是漏掉了接线；
-//! 编排写完接进路由就会摘掉。
-#![allow(dead_code)]
+//! 白皮书 §03h：6 段 5 样式测试文档传到真机、xochitl 自己渲染的缩略图肉眼核对全对）。
+//!
+//! `TEMPLATE`/`TEMPLATE_AUTHOR` 不只是测试用的——生产投影（`publish.rs`）复用同一份真机模板：模板里
+//! `RootTextBlock` 之外的块（纸张大小/场景树等）跟"页面上打的是什么字"无关，从这份已知能被 xochitl
+//! 正常打开的真机文件里原样复用最稳（见 `rmv6::write` 模块文档"为什么是模板替换"）。
 use std::io::Write;
 use zip::write::SimpleFileOptions;
 use zip::CompressionMethod;
+
+/// 每份生成的原生笔记本文档共用的真机模板：一份最小的、xochitl 打开正常的单页 `.rm`；
+/// 生成时只替换其中的 `RootTextBlock`（`rmv6::write::build_page_rm`）。
+pub const TEMPLATE: &[u8] = include_bytes!("../../../testdata/seven_styles/page.rm");
+/// 模板 `AuthorIdsBlock` 里声明的作者 uuid——`build_page_rm` 复用模板的其它块，写入的 `RootTextBlock`
+/// 引用的作者索引必须跟它一致，这里固定用模板自己的值。
+pub const TEMPLATE_AUTHOR: &str = "94980865-163a-5b59-a2d1-cd702a59e989";
 
 pub struct Page {
     pub uuid: String,
@@ -103,9 +111,6 @@ mod tests {
     use super::*;
     use rmv6::write::{build_page_rm, Paragraph};
     use rmv6::v6::scene_item::text::ParagraphStyle;
-
-    const TEMPLATE: &[u8] = include_bytes!("../../../testdata/seven_styles/page.rm");
-    const TEMPLATE_AUTHOR: &str = "94980865-163a-5b59-a2d1-cd702a59e989"; // 模板 AuthorIdsBlock 声明的作者
 
     #[test]
     fn packs_a_valid_zip_with_three_entries() {

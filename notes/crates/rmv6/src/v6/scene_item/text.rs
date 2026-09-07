@@ -29,9 +29,10 @@ pub enum ParagraphStyle {
     CHECKBOX,
     CHECKBOX_CHECKED,
     /// 有序列表（3.28 格式菜单「已编号列表」）。真机坐实码 10（2026-09-07，真机样本 `testdata/seven_styles`）；
-    /// 旧 rmscene 0.8.0 不认，读到会警告丢弃当 PLAIN。⚠️ 格式子块比其余样式多 7 字节未解码载荷
-    /// （疑似编号计数/起始值，本样本只有一行、没法差分出编码规则）——note-serve 写入器补这码前，
-    /// 再采一份多行有序列表样本把这段载荷差出来，否则编号可能不对或被 xochitl 拒收。
+    /// 旧 rmscene 0.8.0 不认，读到会警告丢弃当 PLAIN。格式子块跟其余样式一样只有 2 字节（`17`+样式码），
+    /// **没有隐藏载荷**——早前"多 7 字节未解码"的说法是分析失误，那 7 字节其实属于 BOLD 上的
+    /// Subheading 1 开关（见 `write::SUBHEADING1_MARKER`），已用二轮真机样本更正、`rmv6::write`
+    /// 正常写入 NUMBERED 且编号显示正确。
     NUMBERED,
     /// 仍未知的样式码。不让未知值把整个 .rm 解析打挂（rmscene 同样容忍并继续）。
     Unknown(u8),
