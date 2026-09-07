@@ -22,6 +22,8 @@
 ④ 投影    ──note-serve──►  设备《书名》文件夹一章一本（xochitl 7 种打字样式）· vault/书名/第N章.md（反链）
 ```
 
+![notes 数据流：四步闭环](docs/diagrams/data-flow.svg)
+
 一句话原则：**设备只负责写，不负责改；改在手机，回写靠重建；条目库是唯一事实源，笔记本与 md 都是投影。**
 
 ## 架构：挂书架网关的 loopback 服务
@@ -32,6 +34,8 @@
                  /api/events（area=notes）      ├── note-serve :8798 ──► xochitl /upload（待建）
                                                └── mind-serve :8797（待建）
 ```
+
+![notes 架构：条目库唯一写者 = ink-serve](docs/diagrams/architecture.svg)
 
 - 注册表 / 反向代理 / 事件汇聚 / 管理台三态全是书架的机制（`shelf/README.md`）；网关 `manage::MODULES` 加三行即接入。
 - 依赖方向单向无环：`services/* → shelf-core + crates/*`；**不依赖** `bookconv` / `device-core` / `knowledge/pkm` / `reading`。

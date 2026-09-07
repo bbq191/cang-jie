@@ -15,7 +15,11 @@
 
 **架构**：书架网关 `manage::MODULES` 加三行（`ink`/`transcribe`/`notes`）；三个 loopback 服务已上机——**ink-serve 矿 8795**（书库监听 → 条目库唯一写者，零网络）· **transcribe-serve 转写 8796**（订阅矿的事件 → 裁图喂视觉模型 → 草稿写回，唯一出网）· **note-serve 本 8798**（注册「笔记」tab；投影/导出待建）；**mind-serve 脑 8797 待建**。网页只多一个「笔记」tab（前端组合 `/api/ink` `/api/transcribe` `/api/notes`），事件区域 `notes`（矿发 `entries`/`sections`，转写发 `transcribe`）经网关 `Hub` 汇聚到 `/api/events`，页面零轮询。**笔记线零 xovi 依赖**（无 qmd、无 .so；将来建《书名》文件夹走书架的 Sidebar 代理 qmd，依赖仍留在书架那一份）。
 
+![notes 架构：条目库唯一写者 = ink-serve](diagrams/architecture.svg)
+
 **数据流**：合上书 → xochitl 重写 `<uuid>.content/.metadata` → ink `fswatch`（书库目录非递归、4 s 防抖）→ 只扫页 `.rm` mtime 变了的页 → `rmv6` 解析（勾画 GlyphRange + 手写笔画，同一坐标系，墓碑剔除）→ `notecore` 并查集聚簇 + 就近配对 + 增量合并 → 从缩略图裁片 → `~/.local/state/notes/books/<uuid>.json` + `~/.local/share/notes/crops/` → 事件 → transcribe 防抖 3 s 取待转写条目 → DashScope `qwen3-vl-plus`（OpenAI 兼容口，改配置即换厂）→ `POST ink /books/{uuid}/entries/{id}` 写 `draft` → 手机网页改字/分区/样式（改即存）→〔待建〕note 投影为《书名》文件夹一章一本 + md 导出。
+
+![notes 数据流：四步闭环](diagrams/data-flow.svg)
 
 **真机（3.28.0.172，2026-09-06 晚，设备在 WiFi `192.168.1.22`，USB 网卡当时没起来）**：三服务 `active`，注册表 8 项（书架 5 + 笔记 3）；ink 扫到《人骨拼圖》38 章、0 条（唯一有 `.rm` 的页 23 笔全是墓碑）；transcribe 配置 `transcribe.json` 权限 `0600`、启动追平一轮记 `note="未配置 API key"`、`inkReachable=true`、`pending=0`；`GET /status` 不含 key 字段。**未目视**：手机网页笔记页/转写区（用户看）。
 
