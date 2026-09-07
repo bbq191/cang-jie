@@ -114,4 +114,4 @@ ssh root@<设备IP> sh /home/root/shelf-pkg/shelf/install.sh --only ink,transcri
 | 网关接入 | MODULES 三行、「笔记」tab（裁图/文本/分区/样式改即存）、部署链 NOTES_BINS/令牌 | ✅ 真机 tab 注册（§03d） |
 | 转写 | transcribe-serve：Vision Strategy（Qwen 缺省）、限量/失败上限/即停、key 只写不读 0600、用量账本、网页转写区 | ✅ 修完裁图坐标（§03g）真机重转复验：裁图都对准了手写位置，但转写准确率另计——2 条"第一/二段"被认成"第1/2段"（汉字数字读成阿拉伯数字）、1 条完全读错（裁图边距混印刷体）；1 条无勾画批注裁不到，新守卫优雅跳过 |
 | 步骤 0 | 真机样本标定阈值/页几何/样式码 | ✅ 2026-09-07：聚簇/配对阈值验证通过、NumberedList 码=10（§03f）；★页坐标画布尺寸原假设是错的，真机反测坐实 960×1280、已修复部署复验（§03g） |
-| 本 / 脑 / 导出 | note-serve 投影：rmv6::write + rmdoc 打包 + 上传三件套 · 代理 mkdir · mind-serve · md + `notes pull` | ✅ 三件套真机验证通过（2026-09-07，5 样式渲染全对）；⏳ 条目→文档业务编排/mind/导出待建（§05）；NumberedList 写入前还差一份多行样本 |
+| 本 / 脑 / 导出 | note-serve 投影：rmv6::write + rmdoc 打包 + 上传三件套 · 代理 mkdir · mind-serve · md + `notes pull` | ✅ 三件套 + 全部 7 种打字样式真机验证通过（2026-09-07 两轮，含 Subheading 1/2 区分开关、NumberedList 自动编号）；⏳ 条目→文档业务编排/mind/导出待建（§05） |

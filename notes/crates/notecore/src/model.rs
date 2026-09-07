@@ -44,13 +44,14 @@ pub enum Style {
 
 impl Style {
     /// 对应 `.rm` 段落样式码（2026-09-07 真机样本 `testdata/seven_styles` 坐实，见 `rmv6::v6::scene_item::text::ParagraphStyle`）。
-    /// ⚠️ NumberedList(10) 的格式子块比其余样式多 7 字节未解码载荷（疑似编号计数）——note-serve 写入器落这码前
-    /// 得再采一份多行样本把它差出来，否则编号可能不对；这里先给码，不代表已能安全写入。
+    /// NumberedList(10) 格式子块跟其余样式一样只有 2 字节，没有隐藏内容（早前"多 7 字节未解码载荷"的
+    /// 说法是分析失误，那 7 字节其实属于 Subheading 1，见 `rmv6::write` 模块文档与白皮书 §03i）——
+    /// `rmv6::write` 已支持写 NUMBERED 且真机验证过编号正确自动生成。
     pub fn wire_code(self) -> u8 {
         match self {
             Style::Body => 0x01,     // PLAIN
             Style::Bullet => 0x04,   // BULLET
-            Style::Numbered => 0x0a, // NUMBERED（见上方警告）
+            Style::Numbered => 0x0a, // NUMBERED，真机验证过，见 rmv6::write
             Style::Checkbox => 0x06, // CHECKBOX（未勾选；勾上号 7 要点方框，打字给不出，写入器别用）
         }
     }
