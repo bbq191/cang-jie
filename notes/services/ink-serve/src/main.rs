@@ -41,7 +41,9 @@ impl State {
     }
     fn ingest(&self, uuid: &str) {
         match ingest::ingest_doc(&self.paths.xochitl_dir(), &self.crops_dir(), &self.db, &self.cfg, uuid, shelf_core::clock::now_secs()) {
-            Ok(Some(s)) if s.pages > 0 => {
+            // `s.merge.revoked > 0` 单独成立的情况＝书被移进回收站/删除、`revoke_stale` 撤了条目但没扫任何页（pages==0）；
+            // 这时也要发事件，不然网页「笔记」列表要等到下一次不相干的事件才会把这本书摘掉。
+            Ok(Some(s)) if s.pages > 0 || s.merge.revoked > 0 => {
                 println!("[ink-serve] {uuid}: 页 {} 新增 {} 变更 {} 不变 {} 撤销 {}", s.pages, s.merge.added, s.merge.changed, s.merge.unchanged, s.merge.revoked);
                 self.bus.publish("notes", "entries");
             }
@@ -79,11 +81,15 @@ fn main() {
         eprintln!("[ink-serve] 建目录失败: {e}");
         std::process::exit(1);
     }
-    // 追平 + 监听：启动扫一遍有手写页的 EPUB；之后书库目录有写入（合上书 xochitl 重写 .content/.metadata）防抖后只扫涉及的文档。
+    // 追平 + 监听：启动扫一遍有手写页的 EPUB，**外加**条目库里已知但这次没扫到的书（回收站/删除清场，见
+    // `ingest::revoke_stale`——上次运行之后被移到回收站/删掉的书，不追平一次不会被摘出网页列表）；
+    // 之后书库目录有写入（合上书 xochitl 重写 .content/.metadata）防抖后只扫涉及的文档。
     {
         let st = st.clone();
         std::thread::spawn(move || {
-            for u in ingest::candidate_docs(&st.paths.xochitl_dir()) {
+            let mut catchup: std::collections::BTreeSet<String> = ingest::candidate_docs(&st.paths.xochitl_dir()).into_iter().collect();
+            catchup.extend(st.db.list().into_iter().map(|b| b.uuid));
+            for u in catchup {
                 st.ingest(&u);
             }
             let lib = st.paths.xochitl_dir();
