@@ -6,7 +6,7 @@ use crate::crop::{crop_png, PageGeom};
 use crate::doc::Doc;
 use epubmap::BookMap;
 use notecore::ingest::{drafts_of_page, merge_page, MergeStats, PageCtx};
-use notecore::model::{default_sections, Book};
+use notecore::model::{default_sections, Book, Status};
 use std::path::Path;
 
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -18,7 +18,13 @@ pub struct DocStats {
 /// 摄取一份文档。返回 None = 不该管（非 EPUB / 回收站 / 没有手写页）。
 pub fn ingest_doc(lib: &Path, crops_dir: &Path, db: &BookDb, cfg: &IngestConfig, uuid: &str, now: u64) -> Result<Option<DocStats>, String> {
     let doc = Doc::new(lib, uuid);
-    let Some(meta) = doc.metadata().filter(|m| m.is_live_document()) else { return Ok(None) };
+    let Some(meta) = doc.metadata().filter(|m| m.is_live_document()) else {
+        // 书被移进回收站，或彻底删除（连 .metadata 都没了）：撤销条目库里这本书还没撤销的条目。
+        // 不这么做的话 `BookDb::list_active` 找不到理由把它从列表摘掉——它只看条目状态，
+        // 从没在这条路径上被通知过"书本身没了"（真机验证时发现，2026-09-07；清空勾画走
+        // `merge_page` 那条撤销路径管的是"页还在、笔画没了"，这里是另一条"书不见了"的路径）。
+        return revoke_stale(db, uuid, now);
+    };
     let Some(content) = doc.content().filter(|c| c.file_type == "epub") else { return Ok(None) };
     let pages = doc.annotated_pages();
     if pages.is_empty() {
@@ -98,6 +104,24 @@ pub fn ingest_doc(lib: &Path, crops_dir: &Path, db: &BookDb, cfg: &IngestConfig,
     Ok(Some(stats))
 }
 
+/// 书不再活了（回收站/已删）：条目库里如果还有没撤销的条目，全标 `Revoked`（不物理删，历史留痕）。
+/// 没追平摄取过的书（条目库压根没有）是 no-op；已经全撤销过也是 no-op（幂等，事件重复触发不白做功）。
+fn revoke_stale(db: &BookDb, uuid: &str, now: u64) -> Result<Option<DocStats>, String> {
+    if db.load(uuid).is_none() {
+        return Ok(None);
+    }
+    let revoked = db.update(uuid, || Default::default(), |b| {
+        let mut n = 0usize;
+        for e in b.entries.iter_mut().filter(|e| e.status != Status::Revoked) {
+            e.status = Status::Revoked;
+            e.updated = now;
+            n += 1;
+        }
+        n
+    })?;
+    Ok((revoked > 0).then(|| DocStats { pages: 0, merge: MergeStats { revoked, ..Default::default() } }))
+}
+
 /// 书库里所有活的 EPUB 且有手写页的文档 uuid（启动追平用）。
 pub fn candidate_docs(lib: &Path) -> Vec<String> {
     let Ok(rd) = std::fs::read_dir(lib) else { return vec![] };
@@ -147,8 +171,48 @@ mod tests {
         // 再来一次：页没变 → 零页
         let s2 = ingest_doc(&lib, &crops, &db, &cfg, u, 2).unwrap().unwrap();
         assert_eq!(s2, DocStats::default());
-        // 非 EPUB / 回收站 → None
+        // 非 EPUB / 回收站 → None（这本书条目库里本来就是 0 条，revoke_stale 无事可做）
         std::fs::write(lib.join(format!("{u}.metadata")), r#"{"visibleName":"人骨拼圖","type":"DocumentType","parent":"trash"}"#).unwrap();
         assert!(ingest_doc(&lib, &crops, &db, &cfg, u, 3).unwrap().is_none());
+    }
+
+    fn seeded_entry(id: &str, status: Status) -> notecore::model::Entry {
+        notecore::model::Entry { id: id.into(), page: "p".into(), page_index: 0, chapter: None, chapter_title: String::new(), subhead: None, quote: None, ink: None, drafts: vec![], text: None, style: Default::default(), section: None, answer: None, status, created: 0, updated: 0 }
+    }
+
+    /// 真机验证时发现的 bug（2026-09-07）：书被移进回收站、甚至彻底删除，条目库里的旧条目
+    /// 一直没人管，`BookDb::list_active` 就一直找得到理由把这本书留在网页选择器里。
+    #[test]
+    fn trashed_or_deleted_book_revokes_its_stale_entries_but_untracked_book_is_a_no_op() {
+        let t = tempfile::tempdir().unwrap();
+        let lib = t.path().join("xochitl");
+        let crops = t.path().join("crops");
+        std::fs::create_dir_all(&lib).unwrap();
+        std::fs::create_dir_all(&crops).unwrap();
+        let db = BookDb::new(t.path().join("books"));
+        db.ensure().unwrap();
+        let cfg = IngestConfig::default();
+
+        // 场景一：条目库里已经追平过、有活条目的书，被移进回收站（.metadata 还在，parent=trash）。
+        let u1 = "11111111-5e28-4969-8926-c8973d49020d";
+        db.update(u1, || Book { uuid: u1.into(), title: "测试书一".into(), ..Default::default() }, |b| b.entries.push(seeded_entry("e1", Status::Reviewed))).unwrap();
+        std::fs::write(lib.join(format!("{u1}.metadata")), r#"{"visibleName":"测试书一","type":"DocumentType","parent":"trash"}"#).unwrap();
+        let s1 = ingest_doc(&lib, &crops, &db, &cfg, u1, 10).unwrap().unwrap();
+        assert_eq!((s1.pages, s1.merge.revoked), (0, 1));
+        assert_eq!(db.load(u1).unwrap().entries[0].status, Status::Revoked);
+        // 再摄取一遍（比如又收到一次事件）：已经全撤销 → 幂等 no-op，不重复计数
+        assert!(ingest_doc(&lib, &crops, &db, &cfg, u1, 11).unwrap().is_none());
+
+        // 场景二：另一本书直接被彻底删除——.metadata 都没写过（真机上是文件被删掉）。
+        let u2 = "22222222-5e28-4969-8926-c8973d49020d";
+        db.update(u2, || Book { uuid: u2.into(), title: "测试书二".into(), ..Default::default() }, |b| b.entries.push(seeded_entry("e2", Status::Pending))).unwrap();
+        let s2 = ingest_doc(&lib, &crops, &db, &cfg, u2, 12).unwrap().unwrap();
+        assert_eq!((s2.pages, s2.merge.revoked), (0, 1));
+        assert_eq!(db.load(u2).unwrap().entries[0].status, Status::Revoked);
+
+        // 场景三：条目库里压根没追平过的书被删——no-op，不建幽灵记录、不 panic。
+        let u3 = "33333333-5e28-4969-8926-c8973d49020d";
+        assert!(ingest_doc(&lib, &crops, &db, &cfg, u3, 13).unwrap().is_none());
+        assert!(db.load(u3).is_none());
     }
 }
