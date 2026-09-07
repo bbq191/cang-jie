@@ -27,7 +27,7 @@
 
 **离线门槛**：`cargo test --workspace` 41 个（rmv6 7 · epubmap 5 · notecore 11 · ink-serve 9 · transcribe-serve 8 · note-serve 1）零警告；网关 `node --check app.js`；shell 过 shellcheck。
 
-**未闭环**：transcribe 转写质量再打磨（重转复验：坐标已对、结构读对，但汉字数字"一/二/三"被认成阿拉伯数字"1/2/3"，1 条仍混印刷体，见 §03g；提示词已补一条规则，待真机复验）· note-serve 投影（`rmv6::write` 编 `RootTextBlock`、`note-serve::rmdoc` 打包 `.rmdoc`，都已双实现交叉验证过，见 §03h；**还没让真的 xochitl 摸过**，真机小范围验证是下一步、通过前不接自动管线；NumberedList 写入前还差一份多行样本，见 §03f）· mind-serve · md 导出 + `notes pull`（§05）。步骤 0 真机样本已于 2026-09-07 采回、验证、且真机复验通过（§03f/§03g）。
+**未闭环**：transcribe 转写质量再打磨（重转复验：坐标已对、结构读对，但汉字数字"一/二/三"被认成阿拉伯数字"1/2/3"，1 条仍混印刷体，见 §03g；提示词已补一条规则，待真机复验）· note-serve 条目→文档编排（写入器/打包器/上传三件套已真机验证通过，见 §03h；还差"条目库怎么变成一章一本"这层业务逻辑、《书名》文件夹、旧本回收）· NumberedList 写入前还差一份多行样本（§03f）· mind-serve · md 导出 + `notes pull`（§05）。步骤 0 真机样本已于 2026-09-07 采回、验证、且真机复验通过（§03f/§03g）。
 
 ## 01｜架构决策
 
@@ -171,7 +171,9 @@ note-serve 投影要往设备写打字文本，rmv6 之前是纯只读解析。�
 
 **上传这条路不是新领域，是本项目已经踩过、真机验证过的坑**：查了一遍才发现 `reading/protocol/inject.py`（2026-08-16 真机验证批注）+ Rust 版 `device-core/src/inject.rs` + `knowledge/pkm/src/cardnote.rs` 早就摸清楚了——xochitl 的 `POST /upload` 除 EPUB/PDF 外**也吃 `.rmdoc`**（reMarkable 官方文档包 zip：`<uuid>.metadata` + `<uuid>.content`[+`.pagedata`] + `<uuid>/<page>.rm`，**不含** `.local`，导入端自建）；multipart 字段名 `file`，`.rmdoc` 用 `application/zip`。真机行为：201 "Upload successful"、免重启出现在书库、**导入端会重新分配设备 UUID**（不是包里写的那个）——调用方按 `visibleName` 事后认领（跟书架 `render_check.rs` 的"按 createdTime 圈候选"是同一类模式）。`cardnote.rs` 甚至已经是"纯 `.rm` 组装成笔记本再传"的先例，不是 EPUB 派生的笔记。**按"不引入任何旧代码到 notes/"的红线，这些实现不能直接搬——但摸清楚的格式/字段名/UUID 重分配这几条事实可以借鉴**，note-serve 要写的 rmdoc 打包器是参照这些事实全新写的。唯一没坐实的一点：xochitl 到底是按文件名后缀（`.rmdoc`）还是按 zip 内容本身分流——现有结论全是黑盒试出来的，不是反编译坐实的，notes 线接入前该用最小样本（比如同一份 zip 换几种文件名）自己再核一遍，不能直接照搬旧结论当真理。
 
-**打包器已经写了**（`note-serve::rmdoc`，1 测）：给一页 `.rm` 字节 + 书名 + 父文件夹，拼出 `<uuid>.metadata`+`<uuid>.content`（`fileType:"notebook"`，`formatVersion 2`/`cPages` 结构，参照真机样本 `testdata/seven_styles/book.content` 与上述旧代码印证过的最小字段集——`extraMetadata` 空对象就够，不用填一堆画笔工具状态）+`<uuid>/<page>.rm`，STORED 不压缩（zip crate，workspace 里 `epubmap` 已经在用，不是新依赖）。上传本身**直接复用 `shelf_core::xochitl::Xochitl::upload`**（共享底座、非"旧代码"，笔记线本来就已经间接依赖 shelf-core）。落地文件用 Python `zipfile` + `rmscene` 交叉核过一遍：zip 结构对、`.metadata`/`.content` JSON 合法、内嵌 `.rm` 独立解析出正确文字与样式——**跟 §03h 前半的 `RootTextBlock` 编码器一样，仍然只是"两个独立读取实现都认可"，还没让真的 xochitl 摸过**。
+**打包器已经写了**（`note-serve::rmdoc`，1 测）：给一页 `.rm` 字节 + 书名 + 父文件夹，拼出 `<uuid>.metadata`+`<uuid>.content`（`fileType:"notebook"`，`formatVersion 2`/`cPages` 结构，参照真机样本 `testdata/seven_styles/book.content` 与上述旧代码印证过的最小字段集——`extraMetadata` 空对象就够，不用填一堆画笔工具状态）+`<uuid>/<page>.rm`，STORED 不压缩（zip crate，workspace 里 `epubmap` 已经在用，不是新依赖）。上传本身**直接复用 `shelf_core::xochitl::Xochitl::upload`**（共享底座、非"旧代码"，笔记线本来就已经间接依赖 shelf-core）。落地文件用 Python `zipfile` + `rmscene` 交叉核过一遍：zip 结构对、`.metadata`/`.content` JSON 合法、内嵌 `.rm` 独立解析出正确文字与样式。
+
+**真机验证通过（2026-09-07 当场做的）**：拿 6 段测试内容（Title/Subheading/Body/Bullet×2/Checkbox 全部 5 种支持样式都占一个）打包、经临时诊断工具直接调 `shelf_core::xochitl::Xochitl::upload`（`reachable=true`）传到设备，返回 `{"status":"Upload successful"}`。真机行为跟 §03h 前半引用的旧结论完全对上：**新文档立刻出现在书库、免重启**；**导入端确实重新分配了文档 UUID 和页 UUID**（都不是包里写的那两个）；**`.content` 被 xochitl 重写过一遍**（`uuids[0].first` 换成它自己的作者 UUID、丢了我们写的 `modifed` 字段，但 `pageCount`/`fileType` 原样保留）；xochitl **自己重新渲染生成了缩略图**（`<uuid>.thumbnails/<page>.png`，38501 字节）。拉这张缩略图下来肉眼核对：**六行内容、五种样式（大标题/加粗小标题/正文换行/两个圆点无序/空心方框待办）全部渲染正确**，没有白屏、没有样式错位、没有乱码。这是笔记线第一次真正让 xochitl 打开并渲染我们自己生成的文档——`rmv6::write` 的 `RootTextBlock` 编码器与 `note-serve::rmdoc` 打包器到这里才算真正闭环验证，不再只是"两个独立读取实现互相认可"。测试文档留在设备书库根目录，标题「cangjie 笔记线真机测试」，人工核对完可以在设备上直接删除。
 
 ## 04｜踩坑
 
@@ -188,13 +190,13 @@ note-serve 投影要往设备写打字文本，rmv6 之前是纯只读解析。�
 **未闭环（按依赖顺序）**：
 1. **转写质量两项**：① entry3（高亮 3 旁 `口 第三段`）重转后仍没读对，裁图上下混进了相邻印刷行——把 `cropMargin` 从固定 24 改成按簇高度动态收紧，或者干脆换自渲染高分辨率裁图（§01 早留的口子）；② ~~entry1/2 把手写的汉字数字"一/二"认成阿拉伯数字"1/2"~~ 提示词已加规则（2026-09-07），待真机重转复验是否真的不再转数字。entry4 那条旧的错误草稿是裁图坐标错时期的遗留数据，手机网页上人工清一下（一改字段就覆盖）。
 2. **NumberedList 补样本**：再打一份多行有序列表（≥3 行，中途删一行看编号是否重排），差出格式子块那 7 字节未解码载荷的编码规则——不补这步，note-serve 写入器落 NumberedList 就是蒙的（§03f）。
-3. **rmdoc 打包器 + 真机小范围验证**：`.rmdoc` 上传格式已经不是未知数（§03h：`reading/protocol/inject.py`/`device-core/inject.rs`/`knowledge/pkm/cardnote.rs` 都验证过，zip 装 `.metadata`+`.content`+`<uuid>/<page>.rm`，字段名 `file`，导入后设备重分配 UUID 按 `visibleName` 认领）——但代码不能抄，note-serve 得照着这些事实全新写一个打包器；写完先拿一份最小测试文档（1 页、几种样式）传一次真机，肉眼确认 xochitl 打开正常、样式渲染对，再往下接自动管线。
-4. note-serve 投影：`rmv6::write` 已能编 5 种样式的 `RootTextBlock` 且双实现交叉验证过（§03h），上一步真机验证过后接上；`《书名》/第N章 章名` 一章一本、旧本 `POST /api/books/trash/add`、只重建变过的章；NumberedList 等 2 补完样本再接。
-4. 书库动作代理扩展：`shelf-trash-agent.qmd` → 通用 `{action: trash|mkdir}` 队列，`Library.createCollection` 建《书名》夹；先离线 `apply-diffs` 再上机。
-5. mind-serve：按分区跑文本模型（简述 = 提示词，`ai=false` 跳过），`answer` 写回再投影。
-6. md 导出 `vault/<书名>/第N章.md`（front-matter、`^id` 块锚、`[[书名]]` 反链、索引页）+ host `notes/host/bin/notes pull`。
-7. 文档收尾、旧 PKM 白皮书加"已退役、由 notes/ 取代"头注、`dev` 以 `--no-ff` 合入 `feature/shelf-p1`。
+3. ~~rmdoc 打包器 + 真机小范围验证~~ ✅ 2026-09-07 当场做完：6 段/5 种样式测试文档真机上传成功，xochitl 自己渲染的缩略图肉眼核对全对（§03h）。
+4. note-serve 条目→文档编排：`rmv6::write`/`rmdoc`/上传三件套都已真机验证，还差业务逻辑——条目库按章分组转成段落列表（分区做 Subheading，条目做 Body，样式按 `notecore::model::Style` 映射）、`《书名》/第N章 章名` 一章一本、旧本 `POST /api/books/trash/add` 软删、只重建变过的章；NumberedList 等 2 补完样本再接。
+5. 书库动作代理扩展：`shelf-trash-agent.qmd` → 通用 `{action: trash|mkdir}` 队列，`Library.createCollection` 建《书名》夹；先离线 `apply-diffs` 再上机。
+6. mind-serve：按分区跑文本模型（简述 = 提示词，`ai=false` 跳过），`answer` 写回再投影。
+7. md 导出 `vault/<书名>/第N章.md`（front-matter、`^id` 块锚、`[[书名]]` 反链、索引页）+ host `notes/host/bin/notes pull`。
+8. 文档收尾、旧 PKM 白皮书加"已退役、由 notes/ 取代"头注、`dev` 以 `--no-ff` 合入 `feature/shelf-p1`。
 
-**已闭环（真机）**：§03c ink-serve 首轮（active/注册/追平 38 章）· §03d 「笔记」tab 注册 · §03e transcribe-serve 部署（active/注册/0600/追平记 note）· §03f 步骤 0 样本标定（聚簇/配对阈值验证通过，NumberedList/Subheading 碰撞/Checkbox 勾选三项新发现）· §03g 揪出裁图画布尺寸错（960×1280）并修复部署复验（3 条有勾画的条目裁图都对准了手写位置，但转写准确率另计——2 条数字被认错、1 条完全读错；1 条裁不到已优雅降级）。离线：五 crate+服务 **41** 测（§03h 新增 rmv6::write 5 测 + note-serve::rmdoc 1 测）。
+**已闭环（真机）**：§03c ink-serve 首轮（active/注册/追平 38 章）· §03d 「笔记」tab 注册 · §03e transcribe-serve 部署（active/注册/0600/追平记 note）· §03f 步骤 0 样本标定（聚簇/配对阈值验证通过，NumberedList/Subheading 碰撞/Checkbox 勾选三项新发现）· §03g 揪出裁图画布尺寸错（960×1280）并修复部署复验（3 条有勾画的条目裁图都对准了手写位置，但转写准确率另计——2 条数字被认错、1 条完全读错；1 条裁不到已优雅降级）· §03h `rmv6::write`/`note-serve::rmdoc`/上传三件套真机验证通过（6 段 5 样式测试文档，xochitl 自己渲染的缩略图肉眼核对全对——笔记线第一次真正往设备写东西成功）。离线：五 crate+服务 **41** 测（§03h 新增 rmv6::write 5 测 + note-serve::rmdoc 1 测）。
 
 **明确不做（本期）**：扫描件 PDF、定稿 PDF（等步骤 0 ④）、笔记本手写批注回读（设备只读）、颜色语义（只进 tags）、自动清空回收站（网页按钮走 `emptyTrash()` 用户显式点）、Anki/Todoist/Readwise 外发（有 md 与稳定 id 之后再谈）、KOReader 高亮回流（书架砍下来留给笔记线，排在导出之后）。
