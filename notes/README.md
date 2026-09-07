@@ -1,6 +1,6 @@
 # notes —— reMarkable 笔记线
 
-书架（`shelf/`）补读书短板，笔记线做强 reMarkable 的强项：**荧光笔勾书 + 在勾出来的内容旁边直接手写**。合上书自动摄取成条目，手机上修正，按分区调智能，设备笔记本与 md 都由条目库投影生成。**不引入任何旧 `knowledge/pkm` 代码**，只借鉴功能与踩坑。决策/真机/踩坑见 `docs/reMarkable笔记白皮书.md`（开头「现状总览」）。
+书架（`shelf/`）补读书短板，笔记线做强 reMarkable 的强项：**荧光笔勾书 + 在勾出来的内容旁边直接手写**。合上书自动摄取成条目，手机浏览页里挑要转笔记的、修正转写，勾选按条目问 AI，设备笔记本与 md 都由条目库投影生成。**不引入任何旧 `knowledge/pkm` 代码**，只借鉴功能与踩坑。决策/真机/踩坑见 `docs/reMarkable笔记白皮书.md`（开头「现状总览」）；二期（浏览态触发/问AI/模型配置统一）计划见 未入库的计划文件。
 
 ## 现状（2026-09-07）
 
@@ -9,14 +9,15 @@
 | `ink-serve` 矿 | `ink` / 8795 | 监听书库 → 只扫变更页 → 勾画 ↔ 旁边手写配对 → 裁图 → **条目库（唯一写者）**；零网络 | ✅ 真机 active，真实勾画+手写样本摄取正确（聚簇/配对/裁图坐标全部真机验证，见白皮书 §03f/§03g） |
 | `transcribe-serve` 转写 | `transcribe` / 8796 | 订阅矿的事件 → 裁图喂视觉模型（Qwen 缺省，OpenAI 兼容口可换）→ 草稿写回；唯一出网 | ✅ 真机 active、key 已配置、真调模型跑过；转写准确率还在打磨（§03g/§05） |
 | `note-serve` 本 | `notes` / 8798 | 注册「笔记」tab；打包 `.rmdoc`（`rmdoc.rs`）+ 写 `RootTextBlock`（`rmv6::write`，全部 7 种打字样式）+ 上传（复用 shelf-core）+ 条目→文档生成编排（`notecore::project` 投影 + `publish.rs` 上传/认领/旧本回收）全部**真机验证通过**；网页「生成」按钮还没接 | ✅ 三件套+编排全部真机验证（2026-09-07，两轮样式渲染 §03h/§03i + 当晚三轮生成/增量重传/旧本自动回收 §03k） |
-| `mind-serve` 脑 | `mind` / 8797 | 按分区跑文本模型（分区简述 = 提示词），回答写回 | 待建 |
+| `mind-serve` 脑 | `mind` / 8797 | 按条目单发：勾选「问AI」+ 输入问题 → 书名+章节+原文+问题发文字模型 → `answer` 写回（二期重新设计，不再是按分区批量，见 §03n） | 待建 |
 
 ## 四步闭环
 
 ```
-① 合上书  ──事件驱动──►  ink-serve 矿     解析书页 .rm：勾画(GlyphRange 原文+矩形) ↔ 旁边手写(笔画簇) 几何配对 → 条目库 + 裁图
+① 合上书  ──事件驱动──►  ink-serve 矿     解析书页 .rm：勾画(GlyphRange 原文+矩形) ↔ 旁边手写(笔画簇) 几何配对 → 条目库(Mined) + 裁图
+① .5 浏览 ──手机网页──►  「浏览」视图（二期，待建）  按书→按页看缩略图，点「转入笔记」（Mined→Pending）或「不需要」（→Skipped）
 ② 修正    ──手机网页──►  书架网关「笔记」tab   核对转写、选分区、选样式（e-ink 上改字太痛苦，设备只负责写）
-③ 智能    ──按分区────►  transcribe-serve 转写手写；mind-serve 按「分区名 + 简述」跑模型（"背诵"类不调）
+③ 智能    ──按条目────►  transcribe-serve 转写手写（只处理 Pending）；mind-serve 按条目「问AI」+ 输入问题跑模型（二期重新设计，不再按分区）
 ④ 投影    ──note-serve──►  设备《书名》文件夹一章一本（xochitl 7 种打字样式）· vault/书名/第N章.md（反链）
 ```
 
@@ -96,7 +97,7 @@ notes/
 ## 构建 · 部署
 
 ```sh
-cd notes && cargo build --workspace && cargo test --workspace     # host：54 个测试（rmv6 7 · epubmap 5 · notecore 17 · ink 10 · transcribe 8 · note 7）
+cd notes && cargo build --workspace && cargo test --workspace     # host：56 个测试（rmv6 7 · epubmap 5 · notecore 18 · ink 10 · transcribe 9 · note 7）
 cd ../shelf && ./build.sh && ./deploy.sh <设备IP>                  # 随书架一起交叉编译/打包/装机（NOTES_BINS；设备在 WiFi 上时给 WiFi IP）
 ssh root@<设备IP> sh /home/root/shelf-pkg/shelf/install.sh --only ink,transcribe,note   # 只装/更新笔记线
 ```
@@ -115,4 +116,6 @@ ssh root@<设备IP> sh /home/root/shelf-pkg/shelf/install.sh --only ink,transcri
 | 写入底座 | rmv6::write 编 RootTextBlock（全部 7 种打字样式）+ note-serve::rmdoc 打包 `.rmdoc` + 上传（复用 shelf-core::xochitl） | ✅ 真机验证通过（2026-09-07 两轮：Subheading 1/2 区分开关、NumberedList 自动编号，§03h/§03i） |
 | 生成编排 | `notecore::project` 投影一章 + 变更指纹 · `note-serve::publish` 上传/认领/旧本回收编排（Strategy trait 全桩单测） | ✅ 真机验证通过（2026-09-07 当晚三轮：生成/增量重传+旧本自动进回收站/无变化跳过，§03j/§03k） |
 | 建夹代理 | `shelf-mkdir-agent.qmd`（MainView 锚点）+ book-serve `mkdir.rs`，《书名》文件夹缺失时自动建 | ✅ 真机验证通过（§03l） |
-| 脑 / 导出 | 网页「生成」按钮 · mind-serve · md + `notes pull` | ⏳ 待建（§05） |
+| 二期·浏览态状态机 | `notecore::model::Status` 拆 `Mined`/`Skipped`，`ink-serve` `request`/`skip` 两端点，"探测"与"转笔记"拆开 | ✅ 离线完成、合入 `dev`；🔶 故意未部署（等浏览页 UI 一起上，§03n） |
+| 二期·浏览页 UI / 问AI / mind-serve / 统一模型配置 | 网关"浏览"视图 · 按条目问 AI（取代按分区批量）· `mind-serve` 新建 · key 脱敏+用量面板 | ⏳ 待建（§05，未入库的计划文件 二期计划） |
+| 网页「生成笔记本」按钮 / md 导出 | note-serve 生成 API 已就绪（真机验证过），前端按钮未接；导出到 Obsidian vault | ⏳ 待建（§05） |
