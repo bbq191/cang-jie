@@ -11,9 +11,9 @@
 
 工程原则同书架四条（XDG · 设计模式去重解耦 · 专项专用可插拔 · 不引旧 crate 不对接旧路径），外加笔记线自己的一句话：**设备只负责写，不负责改；改在手机，回写靠重建；条目库是唯一事实源，笔记本与 md 都是投影**。用户另定：四个服务（转写与智能分开）；设备笔记本一章一本、放《书名》文件夹、只读；分区自定义；首期只 EPUB；**后续全部提交 `dev` 分支**。
 
-## 00b｜现状总览（2026-09-06 晚，读其余历史节前先看这里）
+## 00b｜现状总览（2026-09-07 刷新，读其余历史节前先看这里）
 
-**架构**：书架网关 `manage::MODULES` 加三行（`ink`/`transcribe`/`notes`）；三个 loopback 服务已上机——**ink-serve 矿 8795**（书库监听 → 条目库唯一写者，零网络）· **transcribe-serve 转写 8796**（订阅矿的事件 → 裁图喂视觉模型 → 草稿写回，唯一出网）· **note-serve 本 8798**（注册「笔记」tab；投影/导出待建）；**mind-serve 脑 8797 待建**。网页只多一个「笔记」tab（前端组合 `/api/ink` `/api/transcribe` `/api/notes`），事件区域 `notes`（矿发 `entries`/`sections`，转写发 `transcribe`）经网关 `Hub` 汇聚到 `/api/events`，页面零轮询。**笔记线零 xovi 依赖**（无 qmd、无 .so；将来建《书名》文件夹走书架的 Sidebar 代理 qmd，依赖仍留在书架那一份）。
+**架构**：书架网关 `manage::MODULES` 加三行（`ink`/`transcribe`/`notes`）；三个 loopback 服务已上机——**ink-serve 矿 8795**（书库监听 → 条目库唯一写者，零网络）· **transcribe-serve 转写 8796**（订阅矿的事件 → 裁图喂视觉模型 → 草稿写回，唯一出网）· **note-serve 本 8798**（注册「笔记」tab；写入/打包/上传三件套已就绪且真机验证通过，条目→文档业务编排待建）；**mind-serve 脑 8797 待建**。网页只多一个「笔记」tab（前端组合 `/api/ink` `/api/transcribe` `/api/notes`），事件区域 `notes`（矿发 `entries`/`sections`，转写发 `transcribe`）经网关 `Hub` 汇聚到 `/api/events`，页面零轮询。**笔记线零 xovi 依赖**（无 qmd、无 .so；将来建《书名》文件夹走书架的 Sidebar 代理 qmd，依赖仍留在书架那一份）。
 
 ![notes 架构：条目库唯一写者 = ink-serve](diagrams/architecture.svg)
 
@@ -21,7 +21,7 @@
 
 ![notes 数据流：四步闭环](diagrams/data-flow.svg)
 
-**真机（3.28.0.172，2026-09-06 晚，设备在 WiFi `192.168.1.22`，USB 网卡当时没起来）**：三服务 `active`，注册表 8 项（书架 5 + 笔记 3）；ink 扫到《人骨拼圖》38 章、0 条（唯一有 `.rm` 的页 23 笔全是墓碑）；transcribe 配置 `transcribe.json` 权限 `0600`、启动追平一轮记 `note="未配置 API key"`、`inkReachable=true`、`pending=0`；`GET /status` 不含 key 字段。**未目视**：手机网页笔记页/转写区（用户看）。
+**真机现状（2026-09-07 汇总，历史逐轮记录见 §03c–§03i）**：设备 3.28.0.172，WiFi 直连（IP 是 DHCP 分配的，每次连不一定一样，别死记）。三服务 `active`，注册表 8 项（书架 5 + 笔记 3）。ink-serve 已摄取真实勾画+手写样本，聚簇/配对/裁图坐标全部真机验证有效（§03f/§03g）。transcribe-serve key 已配置、真调过模型，转写准确率还在打磨（§03g）。note-serve：`rmv6::write`/`rmdoc`/上传三件套 + 全部 7 种打字样式两轮真机验证通过（§03h/§03i），业务编排（条目库→一章一本）还没写，尚无法从网页一键生成设备笔记本。**未目视**：手机网页笔记页/转写区完整交互流程（用户看）。
 
 **代码落点**：`crates/rmv6`（`lib.rs` 低层 `RmFile::read` / `page.rs` 高层 `Page{strokes,highlights,text}` + `BBox` / `write.rs` 写 `RootTextBlock` + 模板替换拼 `.rm`，§03h）· `crates/epubmap`（`index.rs` 两张表取首现 / `toc.rs` nav→ncx 两策略 / `lib.rs` `BookMap::chapter_of`）· `crates/notecore`（`model` 条目/分区/样式/状态 · `hash` FNV 簇指纹与条目 id · `geom` 聚簇/配对 · `ingest` 增量合并 · `marker` 行首标记 OCR 兜底）· `services/ink-serve`（`doc.rs` 书库只读视图 / `ingest.rs` 变更页编排 / `crop.rs` 页坐标→缩略图像素 / `bookdb.rs` Repository / `config.rs` 阈值与几何 / `main.rs` 路由+监听）· `services/transcribe-serve`（`config` key 与节制参数 / `backend` `Vision` Strategy + `OpenAiCompat` / `prompt` / `ledger` 用量账本 / `ink` `EntryStore` 客户端 / `worker` 一轮编排 / `main.rs` SSE 订阅 + 防抖工作线程）· `services/note-serve`（`rmdoc.rs` 打包 `.rmdoc`（`.metadata`+`.content`+`.rm`），投影编排待建；上传直接复用 `shelf_core::xochitl::Xochitl::upload`）· 网关 `ui/app.js` `renderNotes` · `shelf/{build,deploy,install,uninstall}.sh` 的 `NOTES_BINS`/令牌。
 
@@ -82,7 +82,7 @@
 
 - 路由（经网关 `/api/ink`）：`GET /books`（每本 `{uuid,title,chapters,entries,pending}`）· `GET /books/{uuid}`（整份条目库）· `GET /books/{uuid}/crops/{file}` · `POST /books/{uuid}/entries/{id}`（`text`/`section`/`style`/`draft`/`answer` 逐字段；给 `text` 即 `Reviewed`，清空回 `Draft`/`Pending`）· `PUT /books/{uuid}/sections` · `POST /books/{uuid}/rescan`（清页 mtime 记录整本重扫）· `GET /events`。
 - 摄取：只处理活的 EPUB（`DocumentType` 且非回收站/非 deleted，`fileType=epub`）且有手写页的文档；启动追平一遍，之后 `watch_debounced`（`debounceSecs` 4）按事件文件名认 uuid 只扫涉及的文档；页 mtime 记在条目库 `page_mtimes`。裁图：页包围盒 + `cropMargin` 24 → 缩略图像素（`PageGeom::to_pixels`，夹在图内），文件名带簇指纹，指纹不变不重裁。
-- 真机：`active`、注册；追平扫到《人骨拼圖》38 章、0 条（墓碑页）；`ink.json` 首启写出缺省。**真样本待步骤 0**。
+- 真机：`active`、注册；追平扫到《人骨拼圖》38 章；`ink.json` 首启写出缺省。当时唯一有 `.rm` 的页 23 笔全是墓碑、扫出 0 条——**真样本已于步骤 0 补上（§03f），现在能摄取出真实条目**。
 
 ## 03d｜网关「笔记」tab + note-serve 骨架（2026-09-06）
 
@@ -99,7 +99,7 @@
 
 **key**：`GET /config`/`/status` 只报 `hasKey`/`keySource`（config/env/none）**不回显**；`PUT /config` 的 `apiKey` 非空才改、`clearKey` 清；文件 `0600`；环境 `DASHSCOPE_API_KEY` 兜底。网页转写区：key 输入框（`type=password`，保存后清空）、模型/baseUrl、合书自动开关、跑一轮/重试失败、失败清单、用量与上轮报告。
 
-**真机（WiFi `192.168.1.22`，`SHELF_NO_BUILD=1 ./deploy.sh 192.168.1.22`）**：`active`、注册表见 `transcribe-serve`；日志 `后端 qwen qwen3-vl-plus；key None`；`/status`：`hasKey=false keySource=none inkReachable=true pending=0`，`lastRun.note="未配置 API key（…）"`；`transcribe.json` `-rw-------`。**待验**：粘 key 后真调一次模型（等步骤 0 样本产生 pending 条目）、事件链 ink→transcribe→网页刷新。
+**真机部署当轮**：`active`、注册表见 `transcribe-serve`；日志 `后端 qwen qwen3-vl-plus；key None`；`/status`：`hasKey=false keySource=none inkReachable=true pending=0`，`lastRun.note="未配置 API key（…）"`；`transcribe.json` `-rw-------`。~~**待验**：粘 key 后真调一次模型、事件链 ink→transcribe→网页刷新~~ **✅ 后续都验过了**：步骤 0 样本到手后 key 配置好、真调过模型（§03g 那轮翻车＋修复就是这次真调暴露出来的）。
 
 **取舍**：为什么不直写条目库（§01 唯一写者）；为什么限量 + 即停（一次合书几十条，key 错时不该烧完超时）；为什么行首标记在转写侧兜底（`1.` 几何认不出，表里本就写 OCR 判；几何判出的不覆盖）；为什么勾画原文进提示词（旧 cardhw 经验：上下文救人名/术语，代价是 token 略增）。
 
