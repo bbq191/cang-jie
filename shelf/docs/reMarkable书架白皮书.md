@@ -31,7 +31,7 @@
 
 **网页 tab**：传书（入库｜母版库，固定第一）· xochitl（原生字体，由 font-serve 注册）· KOReader（字体｜词典）· 壁纸 · **笔记**（由 `../notes` 的 note-serve 注册，order 25）· 管理（固定）。
 
-**笔记线挂在同一网关下（§03ac，2026-09-06 晚）**：`manage::MODULES` 加 `ink`/`transcribe`/`notes` 三行，`build.sh/deploy.sh` 的 `NOTES_BINS` 顺带编/打包 `../notes`，`install.sh/uninstall.sh` 令牌同规则；书架自身代码只加目录表行与网页 `renderNotes`。笔记线的设计/真机/踩坑在 `notes/docs/reMarkable笔记白皮书.md`，本文不重复。
+**笔记线（`notes/`）是独立仓库线，只是挂在书架同一网关上**（§03ac 记的是"书架这套可插拔机制接得住独立线"这件事本身，不是笔记线的设计）：书架侧改动仅 `manage::MODULES` 加几行、`build.sh/deploy.sh/install.sh` 顺带打包、目录表行与网页 `renderNotes`。笔记线自己的架构决策/真机记录/踩坑全部在 `notes/docs/reMarkable笔记白皮书.md`，本文不重复也不代管。
 
 **设备杂项（§03v/§03w，全真机通）**：3.28 字体菜单 qmd 已通（qmldiff 语法坑，§04）；原生休眠屏 `SleepScreenPath=current.png` 满屏且随轮换，bind-mount 整套已退役（§03x，`shelf_core::xochitl_conf` + wallpaper-serve `native.rs`）；WiFi 连上恰 60 秒必掉的真凶＝cfg80211 regdomain 宽限（精简 regdb 的 CN 无 5150–5350，路由 5G 信道 36 被判非法）→ 连接锁 2.4G + `powersave 2`，`packaging/wifi-watch` 常驻固化（§03w）；离 USB 数秒自动休眠关 WiFi 是设备正常行为（`push --wait` 应对）；chrony 国内 NTP `packaging/chrony-cn.sh`；OTA 后五步恢复见 §05（README 有"OTA 与恢复"表）。
 
@@ -496,11 +496,11 @@ book→「母版库 / 原生投递」、weread→「微信读书（内容源，�
 
 **没动的**（评估后认为不值得或有风险）：`bookconv::convert` 整族（reading 线在用）；四个服务各自一行 `GET /events` 路由（不算重复，塞进 `service::run` 反而把总线所有权搞乱）；`multipart.rs`/`http.rs` 体量大但职责单一。**踩坑**：中途 `cargo fmt --all` 把 64 个文件重排进了提交，回滚重放——本仓库 Rust 从不走 rustfmt，别跑 fmt。
 
-## 03ac｜笔记线接入书架（2026-09-06 晚）
+## 03ac｜可插拔机制验证：接住一条独立仓库线（2026-09-06 晚）
 
-用户定笔记线（`notes/`，四个 loopback 服务）**复用书架的网关/注册表/事件汇聚/部署链**而不另起一套：① `manage::MODULES` 三行（`ink`→ink-serve 8795、`transcribe`→transcribe-serve 8796、`notes`→note-serve 8798；mind 8797 待建时再加）；② `build.sh` 在 `../notes/Cargo.toml` 存在时顺带 `cargo test + 交叉编译`，`deploy.sh` `NOTES_BINS` 把二进制与 `../notes/systemd/*.service` 打进同一载荷，`install.sh` `ALL` 加令牌（`svc_of` 规则 `<令牌>-serve` 不变），`uninstall.sh` 同步加令牌但 `--purge` **不碰** `~/.local/state/notes`（用户笔记）；③ 网页 `renderNotes`（`AREA['note-serve']='notes'`）——笔记 tab 前端组合三个 seg，事件 `area=notes` 刷新；④ 回收站队列 `POST /trash/add` 将来供 note-serve 软删旧笔记本，代理 qmd 计划扩成 `{trash|mkdir}` 通用动作。
+笔记线（独立仓库 `notes/`）选择复用书架的网关/注册表/事件汇聚/部署链，而不是另起一套——这是**笔记线自己的架构决策**（理由与取舍见 `notes/docs/reMarkable笔记白皮书.md` §01），本节只记**书架这边为了接住它、实际改了什么**，证明可插拔机制这套设计经得住"外部独立线接入"的考验：`manage::MODULES` 加几行映射、`build.sh/deploy.sh` 在对方 `Cargo.toml` 存在时顺带编译打包、`install.sh/uninstall.sh` 令牌同规则加、网页按同一事件总线接一个新 tab——书架自身代码只在这几处各加一点，没有为笔记线开任何专门口子。book-serve 原有的原生回收站队列（`POST /trash/add`）也顺带被笔记线未来的软删需求复用，无需书架新增能力。
 
-**真机**：设备当时只在 WiFi（USB 网卡没起，`10.11.99.1`/mDNS 都不通，局域网扫 8778 找到 `192.168.1.22`），`SHELF_NO_BUILD=1 ./deploy.sh 192.168.1.22`：八服务 `active`、注册表 8 项、HTTPS 探测 401 正常；书架侧行为零变化。**取舍**：笔记线不做独立网关（暴露面/密码/证书/mDNS 全是重复劳动），也不塞进 book-serve（失败面与依赖方向都不同）；代价是 `MODULES` 成了跨目录的单一事实源——加服务必须来这里登记，README 已写明。
+**真机**：设备当时只在 WiFi（USB 网卡没起，`10.11.99.1`/mDNS 都不通，局域网扫 8778 找到 `192.168.1.22`），`SHELF_NO_BUILD=1 ./deploy.sh 192.168.1.22`：书架 5 服务 + 笔记线 3 服务共八项 `active`、注册表 8 项、HTTPS 探测 401 正常；书架侧行为零变化。**书架自身的遗留 gotcha**：`MODULES` 现在是跨两个仓库的单一事实源——以后任何独立线要接进来，都得先来这个文件登记一行，别只改对方仓库就以为完事，README 已写明。
 
 ## 04｜踩坑
 
@@ -523,7 +523,7 @@ book→「母版库 / 原生投递」、weread→「微信读书（内容源，�
 
 **OTA 后固定五步**（§03v）：`xovi/rebuild_hashtable` → `xovi/start` → `SHELF_NO_BUILD=1 sh deploy.sh 10.11.99.1` → `ssh root@10.11.99.1 sh -s < packaging/chrony-cn.sh` → `packaging/wifi-watch/install.sh`。升完顺手 `shelf doctor --render` 看 CSS 引擎有没有变。/home 里的（母版库、KOReader、WiFi 钩子与 `powersave 2`、休眠屏 conf 键、qmd 文件）不用动。
 
-**已闭环（真机）**：§03ac 笔记线三服务挂网关（2026-09-06 晚，WiFi 部署八服务 active）· §03f 首轮五服务 · §03g/§03h 字体分开装/子目录/HTTPS · §03j 登录/CA/mDNS · §03k 字体两 bug · §03l 传书卡＝云同步 · §03m/§03n/§03o 网页改版/细节/管理台 · §03p 质量一轮 · §03q 优化做精 + 首行缩进 v10 · §03r 母版库 Phase A/B/C + 财新重排 · §03s 质量二轮 + 格式三档 · §03t 漫画通道（host 真书探针 → CBZ；漫画不投原生）+ 分卷静默失效修 + 投原生体积门 · §03v 固件 3.28 升级 + 3.28 字体菜单 qmd（首版整份不应用：qmldiff 解析不了 `({})` 与裸 `if (` handler，改 `[]`+`{ }` 后 `appended=4 count=8`，判官＝本机 asivery/qmldiff CLI）+ appload 3.28 复活（PR #59 qmd 等长回填进 .so，系统增强白皮书 §12.1；用户点侧栏 KOReader 正常起）· §03w 原生休眠屏 `SleepScreenPath` + WiFi regdomain 真凶 + wifi-watch + chrony 国内 NTP 脚本 · §03x 退役 bind-mount 壁纸整套（`xochitl_conf` + `native.rs`）· §03y xochitl CSS 引擎七条实测规则 + 英文首段顶格 v6 + 中文 br 书段落化 · §03z 事件推送（网页 + CLI 用户确认）· §03aa 阅读线六项（渲染自检 / `doctor --render` 用户 CLI PASS / `push --wait` / TXT 切章 / Phase E ④ Gulliver 两器脚注观感 / 漫画 16 灰默认开）· §03ab 代码体检四支 · PDF 结构化重排 v4（《财新》33 期：署名/图注/链接分类、节题 h3、标题分档，非句末段 15.1%→2.7%，`test_reflow.py` 锁纯函数）。
+**已闭环（真机）**：§03ac 可插拔机制接住独立仓库线（2026-09-06 晚，WiFi 部署书架+笔记线共八服务 active）· §03f 首轮五服务 · §03g/§03h 字体分开装/子目录/HTTPS · §03j 登录/CA/mDNS · §03k 字体两 bug · §03l 传书卡＝云同步 · §03m/§03n/§03o 网页改版/细节/管理台 · §03p 质量一轮 · §03q 优化做精 + 首行缩进 v10 · §03r 母版库 Phase A/B/C + 财新重排 · §03s 质量二轮 + 格式三档 · §03t 漫画通道（host 真书探针 → CBZ；漫画不投原生）+ 分卷静默失效修 + 投原生体积门 · §03v 固件 3.28 升级 + 3.28 字体菜单 qmd（首版整份不应用：qmldiff 解析不了 `({})` 与裸 `if (` handler，改 `[]`+`{ }` 后 `appended=4 count=8`，判官＝本机 asivery/qmldiff CLI）+ appload 3.28 复活（PR #59 qmd 等长回填进 .so，系统增强白皮书 §12.1；用户点侧栏 KOReader 正常起）· §03w 原生休眠屏 `SleepScreenPath` + WiFi regdomain 真凶 + wifi-watch + chrony 国内 NTP 脚本 · §03x 退役 bind-mount 壁纸整套（`xochitl_conf` + `native.rs`）· §03y xochitl CSS 引擎七条实测规则 + 英文首段顶格 v6 + 中文 br 书段落化 · §03z 事件推送（网页 + CLI 用户确认）· §03aa 阅读线六项（渲染自检 / `doctor --render` 用户 CLI PASS / `push --wait` / TXT 切章 / Phase E ④ Gulliver 两器脚注观感 / 漫画 16 灰默认开）· §03ab 代码体检四支 · PDF 结构化重排 v4（《财新》33 期：署名/图注/链接分类、节题 h3、标题分档，非句末段 15.1%→2.7%，`test_reflow.py` 锁纯函数）。
 
 **Phase E 实录（②③④，2026-09-06 全部闭环，用《Tell Me Your Dreams》AZW3 与《Gulliver's Travels》推进）**：
 - 洗书发现两处实现缺口并修（bookconv `wash.rs`）：① 书自带类规则 `.calibre_ {text-indent:2em}` 未统一——xochitl 不认类规则走我们的 `p{1.2em}`，KOReader 认且类规则特异性更高走 2em，**两器同字节不同缩进**；现在书 css / 内联 style 里非零 `text-indent` 一律改写成本书缩进（0 与负值保留）。② "标题后首段不缩进"只写在注释里从未实现。
