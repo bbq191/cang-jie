@@ -1,0 +1,70 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 450" font-family="sans-serif">
+  <defs>
+    <marker id="n1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#555"/>
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="1080" height="450" fill="#fbfbfa"/>
+  <text x="540" y="26" text-anchor="middle" font-size="17" font-weight="bold" fill="#1a1a1a">脚注：四种真机形态 → 一套抽取 → 两种 FootnoteMode</text>
+  <text x="540" y="44" text-anchor="middle" font-size="11" fill="#8a8a8a">零丢失原则：没被引用的注释块原样留在原处，不搬不删</text>
+
+  <!-- 4 input forms -->
+  <rect x="20" y="110" width="220" height="160" rx="9" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.5"/>
+  <text x="130" y="132" text-anchor="middle" font-size="12" font-weight="bold" fill="#1a1a1a">真机四种形态</text>
+  <text x="130" y="152" text-anchor="middle" font-size="10" fill="#3a3a3a">① 同章 noteref ↔ aside</text>
+  <text x="130" y="172" text-anchor="middle" font-size="10" fill="#3a3a3a">② 跨文件 &lt;a href="notes.xhtml#n"&gt;</text>
+  <text x="130" y="188" text-anchor="middle" font-size="9.3" fill="#3a3a3a">+ &lt;p id="n"&gt; 尾注</text>
+  <text x="130" y="208" text-anchor="middle" font-size="10" fill="#3a3a3a">③ duokan 图片脚注标记</text>
+  <text x="130" y="228" text-anchor="middle" font-size="10" fill="#3a3a3a">④ 双向互指对（marker↔note</text>
+  <text x="130" y="244" text-anchor="middle" font-size="9.3" fill="#8a3a3a">互链，索引器整对丢弃）</text>
+
+  <line x1="240" y1="190" x2="270" y2="190" stroke="#555" stroke-width="1.6" marker-end="url(#n1)"/>
+
+  <!-- extraction -->
+  <rect x="274" y="110" width="290" height="160" rx="9" fill="#fdf3f0" stroke="#b5541f" stroke-width="1.5"/>
+  <text x="419" y="132" text-anchor="middle" font-size="12" font-weight="bold" fill="#1a1a1a">抽取（第一遍 → 第二遍）</text>
+  <text x="419" y="154" text-anchor="middle" font-size="10" fill="#3a3a3a">referenced_note_frags：扫全书</text>
+  <text x="419" y="170" text-anchor="middle" font-size="10" fill="#3a3a3a">marker，得被引用的注释 id 集</text>
+  <text x="419" y="190" text-anchor="middle" font-size="10" fill="#3a3a3a">collect_footnote_notes：把这些</text>
+  <text x="419" y="206" text-anchor="middle" font-size="10" fill="#3a3a3a">注释块（aside/p/li/div，嵌套 div</text>
+  <text x="419" y="222" text-anchor="middle" font-size="10" fill="#3a3a3a">跳过零丢失）移出，建 aside_index</text>
+  <text x="419" y="242" text-anchor="middle" font-size="9.5" fill="#8a5a2a">break_footnote_cycles 先拆 ④ 互指环</text>
+  <text x="419" y="258" text-anchor="middle" font-size="9.5" fill="#8a5a2a">→ preserve_relink_footnotes(mode)</text>
+
+  <!-- fork arrows -->
+  <line x1="564" y1="170" x2="605" y2="125" stroke="#555" stroke-width="1.5" marker-end="url(#n1)"/>
+  <line x1="564" y1="220" x2="605" y2="295" stroke="#555" stroke-width="1.5" marker-end="url(#n1)"/>
+
+  <!-- Anchor box -->
+  <rect x="608" y="60" width="250" height="150" rx="9" fill="#eaf7ec" stroke="#3e8e51" stroke-width="1.5"/>
+  <text x="733" y="82" text-anchor="middle" font-size="12" font-weight="bold" fill="#1a1a1a">FootnoteMode::Anchor</text>
+  <text x="733" y="100" text-anchor="middle" font-size="9.5" fill="#3a3a3a">缺省；weread/pkm/第三方书</text>
+  <text x="733" y="120" text-anchor="middle" font-size="10" fill="#3a3a3a">marker → 同章朴素文字锚点</text>
+  <text x="733" y="135" text-anchor="middle" font-size="10" fill="#3a3a3a">&lt;a href="#nX"&gt;1&lt;/a&gt;</text>
+  <text x="733" y="155" text-anchor="middle" font-size="10" fill="#3a3a3a">注释移章末 &lt;div class=</text>
+  <text x="733" y="170" text-anchor="middle" font-size="10" fill="#3a3a3a">"footnotes"&gt;，点击跳转</text>
+  <text x="733" y="190" text-anchor="middle" font-size="9.5" fill="#8a3a3a">原生「返回」浮标（延长版）</text>
+
+  <!-- Inline box -->
+  <rect x="608" y="225" width="250" height="150" rx="9" fill="#fdf6e3" stroke="#8a6d00" stroke-width="1.5"/>
+  <text x="733" y="247" text-anchor="middle" font-size="12" font-weight="bold" fill="#1a1a1a">FootnoteMode::Inline</text>
+  <text x="733" y="265" text-anchor="middle" font-size="9.5" fill="#6a5a2a">native → xochitl 用（xochitl 无</text>
+  <text x="733" y="280" text-anchor="middle" font-size="9.5" fill="#6a5a2a">弹窗脚注，Inline 是「自动呈现」）</text>
+  <text x="733" y="300" text-anchor="middle" font-size="10" fill="#6a5a2a">注释就地内联 &lt;span class=</text>
+  <text x="733" y="315" text-anchor="middle" font-size="10" fill="#6a5a2a">"cj-fnote"&gt;纯文本&lt;/span&gt;，始终可见</text>
+  <text x="733" y="335" text-anchor="middle" font-size="9.3" fill="#a03030">⚠ 丢弃原 marker（图标会巨大）</text>
+  <text x="733" y="350" text-anchor="middle" font-size="9.3" fill="#a03030">⚠ 去标签取纯文本（防整章白屏）</text>
+
+  <!-- 右侧汇总小卡：谁用哪种 -->
+  <rect x="888" y="110" width="172" height="160" rx="9" fill="#f2f2f2" stroke="#9a9a9a" stroke-width="1.3"/>
+  <text x="974" y="132" text-anchor="middle" font-size="11" font-weight="bold" fill="#3a3a3a">谁用哪种</text>
+  <text x="974" y="154" text-anchor="middle" font-size="9.5" fill="#5a5a5a">母版库「优化」</text>
+  <text x="974" y="169" text-anchor="middle" font-size="9.5" fill="#5a5a5a">→ Inline（native/</text>
+  <text x="974" y="183" text-anchor="middle" font-size="9.5" fill="#5a5a5a">KOReader 都用）</text>
+  <text x="974" y="205" text-anchor="middle" font-size="9.5" fill="#5a5a5a">weread/pkm 线</text>
+  <text x="974" y="220" text-anchor="middle" font-size="9.5" fill="#5a5a5a">→ Anchor 兜底</text>
+
+  <text x="540" y="405" text-anchor="middle" font-size="11.5" fill="#6a6a6a">未被引用的注释块原样留原处；normalize_self_hrefs 先把 Calibre 的裸文件内锚点归一，防误当跨文件脚注</text>
+  <text x="540" y="425" text-anchor="middle" font-size="11" fill="#8a8a8a">详见白皮书 04 节；xochitl 硬规则见 09 节①⑤⑥</text>
+</svg>
