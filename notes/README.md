@@ -2,16 +2,14 @@
 
 书架（`shelf/`）补读书短板，笔记线做强 reMarkable 的强项：**荧光笔勾书 + 在勾出来的内容旁边直接手写**。合上书自动摄取成条目，手机上修正，按分区调智能，设备笔记本与 md 都由条目库投影生成。**不引入任何旧 `knowledge/pkm` 代码**，只借鉴功能与踩坑。决策/真机/踩坑见 `docs/reMarkable笔记白皮书.md`（开头「现状总览」）。
 
-## 现状（2026-09-06 晚）
+## 现状（2026-09-07）
 
 | 服务 | seg / 端口 | 职责 | 状态 |
 |---|---|---|---|
-| `ink-serve` 矿 | `ink` / 8795 | 监听书库 → 只扫变更页 → 勾画 ↔ 旁边手写配对 → 裁图 → **条目库（唯一写者）**；零网络 | ✅ 真机 active，扫到《人骨拼圖》38 章 |
-| `transcribe-serve` 转写 | `transcribe` / 8796 | 订阅矿的事件 → 裁图喂视觉模型（Qwen 缺省，OpenAI 兼容口可换）→ 草稿写回；唯一出网 | ✅ 真机 active；真调模型待 key + 样本 |
-| `note-serve` 本 | `notes` / 8798 | 注册「笔记」tab；打包 `.rmdoc`（`rmdoc.rs`）+ 写 `RootTextBlock`（`rmv6::write`）+ 上传（复用 shelf-core）三件套已就绪且**真机验证通过**；条目→文档业务编排、`《书名》` 一章一本、旧本回收站还没接线 | ✅ tab 已注册；三件套真机传文档成功、5 样式渲染全对（2026-09-07）；业务编排待建 |
+| `ink-serve` 矿 | `ink` / 8795 | 监听书库 → 只扫变更页 → 勾画 ↔ 旁边手写配对 → 裁图 → **条目库（唯一写者）**；零网络 | ✅ 真机 active，真实勾画+手写样本摄取正确（聚簇/配对/裁图坐标全部真机验证，见白皮书 §03f/§03g） |
+| `transcribe-serve` 转写 | `transcribe` / 8796 | 订阅矿的事件 → 裁图喂视觉模型（Qwen 缺省，OpenAI 兼容口可换）→ 草稿写回；唯一出网 | ✅ 真机 active、key 已配置、真调模型跑过；转写准确率还在打磨（§03g/§05） |
+| `note-serve` 本 | `notes` / 8798 | 注册「笔记」tab；打包 `.rmdoc`（`rmdoc.rs`）+ 写 `RootTextBlock`（`rmv6::write`，全部 7 种打字样式）+ 上传（复用 shelf-core）三件套已就绪且**真机验证通过**；条目→文档业务编排、`《书名》` 一章一本、旧本回收站还没接线 | ✅ tab 已注册；三件套 + 7 种样式真机传文档、渲染全对（2026-09-07 两轮，见白皮书 §03h/§03i）；业务编排待建 |
 | `mind-serve` 脑 | `mind` / 8797 | 按分区跑文本模型（分区简述 = 提示词），回答写回 | 待建 |
-
-**卡点**：真机样本（勾三段写三行 + `-`/`1.`/`口`/下划线；七样式笔记本）用来标定聚簇/配对阈值与页坐标几何；现有样本页全是墓碑笔画。
 
 ## 四步闭环
 
@@ -31,7 +29,7 @@
 ```
 浏览器 ──► shelf-gateway :8778 ──/api/<seg>/*──┬── ink-serve 127.0.0.1:8795 ──fswatch──► ~/.local/share/remarkable/xochitl（只读）
                  「笔记」tab（note-serve 注册）  ├── transcribe-serve :8796 ──订阅 ink /events──► DashScope（设备 WiFi 直连）
-                 /api/events（area=notes）      ├── note-serve :8798 ──► xochitl /upload（待建）
+                 /api/events（area=notes）      ├── note-serve :8798 ──► xochitl /upload（打包/写入/上传已就绪+真机验证；业务编排待建）
                                                └── mind-serve :8797（待建）
 ```
 
@@ -57,7 +55,7 @@
 ```
 notes/
 ├── Cargo.toml · .cargo/               内部 workspace（与 shelf 同款 musl 全静态；`opt-level=z` + lto + strip）
-├── crates/rmv6/                       .rm v6 只读解析（剥离移植 remarkable_lines 0.1.3，MIT，PROVENANCE.md 留痕；page::Page = 笔画 + 勾画 + 打字文本，墓碑剔除）
+├── crates/rmv6/                       .rm v6 解析+写入（剥离移植 remarkable_lines 0.1.3，MIT，PROVENANCE.md 留痕；page::Page = 笔画 + 勾画 + 打字文本，墓碑剔除；write.rs 编 RootTextBlock，模板替换拼 .rm，全部 7 种打字样式真机验证过）
 ├── crates/epubmap/                    .epubindex 起始页（两张表取首现）+ nav/ncx 目录 → 页号→章/小节
 ├── crates/notecore/                   领域核心（纯函数）：model 条目/分区 · hash FNV 簇指纹 · geom 聚簇+配对 · ingest 增量合并 · marker 行首标记 OCR 兜底
 ├── services/ink-serve/                矿：doc(书库只读视图) · ingest(变更页编排) · crop(页坐标→缩略图像素) · bookdb(Repository) · config · main(路由+监听)
@@ -65,7 +63,7 @@ notes/
 ├── services/note-serve/               本：注册「笔记」tab；rmdoc.rs 打包 .rmdoc（上传复用 shelf-core::xochitl）；投影编排待建
 ├── systemd/                           三个 .service（PartOf=shelf.target；随书架 install.sh 装）
 ├── host/                              待建：CLI `notes pull`（md 同步到 Obsidian vault）
-├── testdata/renggu/                   真机 fixture（《人骨拼圖》.content/.epubindex/toc.ncx/content.opf/墓碑页 .rm + 缩略图）
+├── testdata/renggu/                   真机 fixture（《人骨拼圖》墓碑页 .rm，测"解析成功零条目"）· renggu_marks/（同书真实勾画+手写）· seven_styles/（笔记本一页七样式，rmv6::write 模板）
 └── docs/reMarkable笔记白皮书.md          决策 / 真机 / 踩坑（开头「现状总览」）
 ```
 
@@ -84,7 +82,7 @@ notes/
 ## 转写（transcribe-serve）
 
 - 触发：订阅 ink-serve `/events`，`entries` 事件防抖 3 s 后跑一轮；启动追平一次；网页「转写」按钮同步跑一轮；单条「重转」强制跑。
-- 一轮：列书 → 只看 `pending>0` 的书 → 条目 `needs_transcribe()`（簇指纹没有对应草稿）→ 取裁图 → 提示词（内置 + 勾画原文作语境）→ 模型 → `POST ink /books/{uuid}/entries/{id}` 写 `draft{text,backend,at,hash}`。
+- 一轮：列书 → 只看 `pending>0` 的书 → 条目 `needs_transcribe()`（簇指纹没有对应草稿）→ 取裁图 → 提示词（内置：只转写不发挥、汉字数字按原字符抄不转阿拉伯数字、+ 勾画原文作语境）→ 模型 → `POST ink /books/{uuid}/entries/{id}` 写 `draft{text,backend,at,hash}`。
   已校对 `text` 由 ink-serve 保证不被覆盖。行首标记兜底：条目样式仍是正文时，转写文本开头 `-`/`1.`/`口` → 无序/有序/待办并剥掉标记（`notecore::marker`）。
 - 节制：每轮最多 `maxPerRun`（20）条、请求间歇 `pauseMs`（300）；同一条同指纹失败 `maxAttempts`（3）次后不再自动试（网页「重试失败」清）；一轮连续失败 3 次零成功即停（key 错/断网不一条条撞）。
 - key：文件 → 环境 `DASHSCOPE_API_KEY`；`GET /config` 只报 `hasKey/keySource` **不回显**。用量账本只记次数/token/最近错误，不存内容。
@@ -114,4 +112,5 @@ ssh root@<设备IP> sh /home/root/shelf-pkg/shelf/install.sh --only ink,transcri
 | 网关接入 | MODULES 三行、「笔记」tab（裁图/文本/分区/样式改即存）、部署链 NOTES_BINS/令牌 | ✅ 真机 tab 注册（§03d） |
 | 转写 | transcribe-serve：Vision Strategy（Qwen 缺省）、限量/失败上限/即停、key 只写不读 0600、用量账本、网页转写区 | ✅ 修完裁图坐标（§03g）真机重转复验：裁图都对准了手写位置，但转写准确率另计——2 条"第一/二段"被认成"第1/2段"（汉字数字读成阿拉伯数字）、1 条完全读错（裁图边距混印刷体）；1 条无勾画批注裁不到，新守卫优雅跳过 |
 | 步骤 0 | 真机样本标定阈值/页几何/样式码 | ✅ 2026-09-07：聚簇/配对阈值验证通过、NumberedList 码=10（§03f）；★页坐标画布尺寸原假设是错的，真机反测坐实 960×1280、已修复部署复验（§03g） |
-| 本 / 脑 / 导出 | note-serve 投影：rmv6::write + rmdoc 打包 + 上传三件套 · 代理 mkdir · mind-serve · md + `notes pull` | ✅ 三件套 + 全部 7 种打字样式真机验证通过（2026-09-07 两轮，含 Subheading 1/2 区分开关、NumberedList 自动编号）；⏳ 条目→文档业务编排/mind/导出待建（§05） |
+| 写入底座 | rmv6::write 编 RootTextBlock（全部 7 种打字样式）+ note-serve::rmdoc 打包 `.rmdoc` + 上传（复用 shelf-core::xochitl） | ✅ 真机验证通过（2026-09-07 两轮：Subheading 1/2 区分开关、NumberedList 自动编号，§03h/§03i） |
+| 本 / 脑 / 导出 | note-serve 条目→文档业务编排（一章一本、《书名》夹）· 代理 mkdir · mind-serve · md + `notes pull` | ⏳ 待建（§05），底座已就绪 |
