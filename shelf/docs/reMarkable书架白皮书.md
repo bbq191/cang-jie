@@ -19,7 +19,11 @@
 
 **架构**：网关（`0.0.0.0:8778`，HTTPS 私有 CA + 登录页密码 / CLI Basic + mDNS `shelf.local`；单页 UI 源码在 `services/shelf-gateway/ui/` 真文件，编译期 `include_str!`）+ 四个 loopback 领域服务（book 8790 / koreader 8791 / font 8792 / wallpaper 8793）+ 运行时注册表驱动 tab + 事件总线（各服务 `GET /events` → 网关 `Hub` 汇聚 `GET /api/events`，网页零轮询、host `shelf events`，§03z）。设备固件 **3.28.0.172**（2026-09-05 从 3.27.3.0 升级，实录 §03v；appload 0.5.3 经 qmd 回填补丁在 3.28 复活），KOReader v2026.07.1。
 
+![shelf 架构：网关 + 领域服务](diagrams/architecture.svg)
+
 **读书线 = 三层 · 三动作正交**（§03r 定，§03s 收口）：内容源（网页上传 / 抓网文 / host `shelf push` / scp inbox；微读线已砍，§03u）→ **母版库** `~/.local/state/shelf/books/staging/`（原样入库，永久保留，不淘汰）→ 落库（人选：投 xochitl 只收 EPUB/PDF；加入 KOReader 收任意入库格式）。「优化」是母版库里对 EPUB 的独立动作（档位 auto / keep-spacing / plain，产物标记 full / core / old）；落库＝纯复制母版字节（投原生有体积门 `nativeUploadLimitMb`，缺省 150）。**投原生后自动渲染自检**（§03aa：xochitl 导入即渲染写 `pageCount`，与正文字符数期望比，<50% 判 warn，结果进边车 `.<书>.delivered.render` + `books/render` 事件 + 网页徽章）。**漫画不投原生**：AZW3/EPUB 漫画由 host `shelf push` 转 CBZ（缺省再过 16 灰省刷新档）入库，只加入 KOReader。**所有书只落母版库，没有任何直投读器的路径**。
+
+![shelf 数据流：三层·三动作正交](diagrams/data-flow.svg)
 
 **格式三档**（`shelf_core::formats` 单一事实源）：原生 epub/pdf · 电脑可转 azw3/mobi/azw/prc/fb2/**txt**（TXT 由 host `txt_to_epub.py` 按「第X卷/章」切章建两级目录再洗，§03aa）· 仅 KOReader 其余 10 个。
 

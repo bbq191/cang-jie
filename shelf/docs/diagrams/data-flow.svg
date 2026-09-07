@@ -1,0 +1,69 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1040 480" font-family="sans-serif">
+  <defs>
+    <marker id="arrow2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#555"/>
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="1040" height="480" fill="#fbfbfa"/>
+  <text x="520" y="30" text-anchor="middle" font-size="18" font-weight="bold" fill="#1a1a1a">shelf 读书线数据流：三层 · 三动作正交</text>
+  <text x="520" y="50" text-anchor="middle" font-size="12.5" fill="#6a6a6a">统一规则：所有书只落母版库——网页/CLI/inbox 都没有直投读器的路径</text>
+
+  <!-- 内容源 -->
+  <rect x="30" y="90" width="230" height="230" rx="10" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.6"/>
+  <text x="145" y="114" text-anchor="middle" font-size="14" font-weight="bold" fill="#1a1a1a">内容源</text>
+  <rect x="50" y="128" width="190" height="38" rx="6" fill="#ffffff" stroke="#4a6fa5" stroke-width="1"/>
+  <text x="145" y="151" text-anchor="middle" font-size="11.5" fill="#2a2a2a">网页上传</text>
+  <rect x="50" y="174" width="190" height="38" rx="6" fill="#ffffff" stroke="#4a6fa5" stroke-width="1"/>
+  <text x="145" y="197" text-anchor="middle" font-size="11.5" fill="#2a2a2a">抓网文（Readability）</text>
+  <rect x="50" y="220" width="190" height="38" rx="6" fill="#ffffff" stroke="#4a6fa5" stroke-width="1"/>
+  <text x="145" y="243" text-anchor="middle" font-size="11.5" fill="#2a2a2a">电脑 shelf push（唯一能顺带优化）</text>
+  <rect x="50" y="266" width="190" height="38" rx="6" fill="#ffffff" stroke="#4a6fa5" stroke-width="1"/>
+  <text x="145" y="289" text-anchor="middle" font-size="11.5" fill="#2a2a2a">scp 进 inbox/（追平队列）</text>
+
+  <line x1="260" y1="205" x2="330" y2="205" stroke="#555" stroke-width="1.6" marker-end="url(#arrow2)"/>
+  <text x="295" y="195" text-anchor="middle" font-size="11" fill="#5a5a5a">原样入库</text>
+
+  <!-- 母版库 -->
+  <rect x="335" y="90" width="290" height="230" rx="10" fill="#fff3d6" stroke="#c9971f" stroke-width="1.8"/>
+  <text x="480" y="114" text-anchor="middle" font-size="14" font-weight="bold" fill="#1a1a1a">母版库（中间层暂存池）</text>
+  <text x="480" y="134" text-anchor="middle" font-size="11" fill="#4a4a4a">~/.local/state/shelf/books/staging/</text>
+  <text x="480" y="152" text-anchor="middle" font-size="11" fill="#4a4a4a">母版永久保留，可反复落库、两读器对照</text>
+
+  <rect x="355" y="168" width="250" height="60" rx="7" fill="#ffffff" stroke="#c9971f" stroke-width="1.2" stroke-dasharray="4 3"/>
+  <text x="480" y="188" text-anchor="middle" font-size="12" fill="#2a2a2a">可选「优化」（只对 EPUB）</text>
+  <text x="480" y="205" text-anchor="middle" font-size="10.8" fill="#5a5a5a">清洗 + 排版优化，档位三选</text>
+  <text x="480" y="219" text-anchor="middle" font-size="10.8" fill="#5a5a5a">漫画走独立通道出 CBZ</text>
+  <path d="M 605 198 A 26 26 0 1 1 605 199" fill="none" stroke="#c9971f" stroke-width="1.2" marker-end="url(#arrow2)"/>
+
+  <text x="480" y="255" text-anchor="middle" font-size="10.8" fill="#5a5a5a">格式三档（`shelf_core::formats`）：</text>
+  <text x="480" y="271" text-anchor="middle" font-size="10.3" fill="#5a5a5a">原生直读 EPUB/PDF</text>
+  <text x="480" y="286" text-anchor="middle" font-size="10.3" fill="#5a5a5a">电脑可转 AZW3/MOBI/TXT…（push 转 EPUB）</text>
+  <text x="480" y="301" text-anchor="middle" font-size="10.3" fill="#5a5a5a">仅 KOReader CBZ/CBR/DOCX…</text>
+
+  <line x1="625" y1="205" x2="695" y2="205" stroke="#555" stroke-width="1.6" marker-end="url(#arrow2)"/>
+  <text x="660" y="195" text-anchor="middle" font-size="11" fill="#5a5a5a">落库</text>
+  <text x="660" y="223" text-anchor="middle" font-size="9.8" fill="#8a8a8a">（纯复制母版字节）</text>
+
+  <!-- 落库 -->
+  <rect x="700" y="90" width="310" height="230" rx="10" fill="#eaf7ec" stroke="#3e8e51" stroke-width="1.8"/>
+  <text x="855" y="114" text-anchor="middle" font-size="14" font-weight="bold" fill="#1a1a1a">落库（去向由人选）</text>
+
+  <rect x="720" y="128" width="270" height="82" rx="7" fill="#ffffff" stroke="#3e8e51" stroke-width="1.2"/>
+  <circle cx="737" cy="145" r="5" fill="#3e8e51"/>
+  <text x="855" y="150" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">投入原生书库</text>
+  <text x="855" y="167" text-anchor="middle" font-size="10.8" fill="#5a5a5a">（xochitl：EPUB / PDF）</text>
+  <text x="855" y="183" text-anchor="middle" font-size="10.3" fill="#8a6d00">→ 渲染自检：量实际页数 vs 预期</text>
+  <text x="855" y="198" text-anchor="middle" font-size="10.3" fill="#8a6d00">事件 books/render 推网页徽章</text>
+
+  <rect x="720" y="222" width="270" height="60" rx="7" fill="#ffffff" stroke="#3e8e51" stroke-width="1.2"/>
+  <circle cx="737" cy="238" r="5" fill="#4a6fa5"/>
+  <text x="855" y="244" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">加入 KOReader</text>
+  <text x="855" y="261" text-anchor="middle" font-size="10.8" fill="#5a5a5a">母版库收的任何格式都能去</text>
+  <text x="855" y="275" text-anchor="middle" font-size="10.3" fill="#5a5a5a">漫画 CBZ 只能去这（不投原生）</text>
+
+  <text x="855" y="304" text-anchor="middle" font-size="10.3" fill="#6a6a6a">落库记录徽章 · 清理已落库 · 剩余空间</text>
+
+  <text x="520" y="358" text-anchor="middle" font-size="12" fill="#6a6a6a">host `shelf push` 是唯一能"入库时顺带优化"的源（Calibre 深洗 / 杂格式转 EPUB / PDF 结构化重排 / 漫画出 CBZ）</text>
+  <text x="520" y="380" text-anchor="middle" font-size="11" fill="#8a8a8a">详见 shelf/README.md「读书线现状」；渲染自检细节见白皮书 03aa 节</text>
+</svg>

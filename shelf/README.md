@@ -16,6 +16,8 @@ reMarkable Paper Pro Move 的**读书与阅读质量层**：一个网页 / 一�
  scp 进 inbox/            · 漫画（CBZ）只加入 KOReader，不投原生          · 落库记录徽章（含投原生后的渲染自检）/ 清理已落库 / 剩余空间
 ```
 
+![shelf 数据流：三层·三动作正交](docs/diagrams/data-flow.svg)
+
 **统一规则**：所有书**只落母版库**——网页、CLI、inbox 都没有直投读器的路径；"入库是入库，优化是优化，落库是落库"。
 host `shelf push` 是唯一能"入库时顺带优化"的源（Calibre 深洗 / 杂格式转 EPUB / PDF 结构化重排 / **漫画出 CBZ**）。
 
@@ -41,6 +43,8 @@ host `shelf push` 是唯一能"入库时顺带优化"的源（Calibre 深洗 / �
   + 投 xochitl + inbox   词典·配置同步       (fontconfig 回退链)  (原生 SleepScreenPath 键)
         └── 笔记线（`../notes`，独立仓库线，只是挂在同一网关/同一载荷/同一 shelf.target 上）：服务列表/职责/端口见 `notes/README.md`
 ```
+
+![shelf 架构：网关 + 领域服务](docs/diagrams/architecture.svg)
 
 - **注册表**：服务启动写 `$XDG_RUNTIME_DIR/shelf/services/<name>.json`（含 pid、端口、UI tab），退出即删；
   网关按它出 tab、缺席回 404「未安装」。装/卸一个服务 = 一个二进制 + 一个 systemd 单元，其余零改动。
