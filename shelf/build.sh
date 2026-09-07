@@ -8,7 +8,7 @@ cd "$(dirname "$0")"
 TARGET=aarch64-unknown-linux-musl
 BINS="shelf-gateway book-serve koreader-serve font-serve wallpaper-serve"
 # 笔记线（../notes，独立 workspace）挂在同一网关下，随书架一起编/装（目录不存在则跳过）。
-NOTES_BINS="ink-serve transcribe-serve note-serve"
+NOTES_BINS="ink-serve transcribe-serve mind-serve note-serve"
 
 echo "== host 构建 + 测试 =="
 cargo build --release --workspace

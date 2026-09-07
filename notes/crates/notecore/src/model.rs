@@ -145,6 +145,12 @@ pub struct Entry {
     pub style: Style,
     #[serde(default)]
     pub section: Option<String>,
+    /// 用户勾了「问AI」——二期改按条目单发，不再靠分区批量跑（`mind-serve`，2026-09-07 二期）。
+    #[serde(default)]
+    pub ask_ai: bool,
+    /// 用户输的问题（`ask_ai` 为真时才有意义）；答案写回 `answer`，`Answer.brief` 存的就是这句问题的存档。
+    #[serde(default)]
+    pub question: Option<String>,
     #[serde(default)]
     pub answer: Option<Answer>,
     #[serde(default)]
@@ -250,7 +256,7 @@ mod tests {
 
     #[test]
     fn roundtrip_and_defaults() {
-        let e = Entry { id: "e1".into(), page: "p".into(), page_index: 3, chapter: Some(1), chapter_title: "一".into(), subhead: None, quote: None, ink: Some(Ink { strokes: vec!["1:2".into()], bbox: (0.0, 0.0, 1.0, 1.0), hash: "h".into(), crop: String::new() }), drafts: vec![], text: None, style: Style::Checkbox, section: None, answer: None, status: Status::Pending, created: 1, updated: 1 };
+        let e = Entry { id: "e1".into(), page: "p".into(), page_index: 3, chapter: Some(1), chapter_title: "一".into(), subhead: None, quote: None, ink: Some(Ink { strokes: vec!["1:2".into()], bbox: (0.0, 0.0, 1.0, 1.0), hash: "h".into(), crop: String::new() }), drafts: vec![], text: None, style: Style::Checkbox, section: None, ask_ai: false, question: None, answer: None, status: Status::Pending, created: 1, updated: 1 };
         let j = serde_json::to_string(&e).unwrap();
         assert!(j.contains(r#""style":"checkbox""#) && j.contains(r#""status":"pending""#));
         let back: Entry = serde_json::from_str(&j).unwrap();

@@ -237,7 +237,8 @@ function assetTab(sec,api,o){sec.innerHTML=`<div class="card">${o.title?`<h2>${o
   refresh();sec.refresh=refresh}
 
 /* 「笔记」tab（note-serve 注册；数据来自 ink-serve 条目库）：按书→按章列条目，左裁图右文本，改即存。
-   设备只负责写、不负责改：这里就是"改"的地方（e-ink 上打字太痛苦）。分区 = 名字 + 简述（简述就是给 AI 的要求）。 */
+   设备只负责写、不负责改：这里就是"改"的地方（e-ink 上打字太痛苦）。分区只管笔记本排版分组，不再驱动 AI；
+   问 AI 改按条目单发——勾「问AI」+ 填问题+点提问，调 mind-serve 拼"书名+章节+勾画原文+转写文本+问题"发模型（二期，白皮书 §03n）。 */
 const STYLE_NAMES={body:'正文',bullet:'无序 -',numbered:'有序 1.',checkbox:'待办 口'};
 const STATUS_NAMES={mined:'待浏览',pending:'待转写',draft:'待校对',reviewed:'已校对',skipped:'已跳过',revoked:'已撤销'};
 /* 「浏览」（新批注先落这，点了才转笔记）与「整理」（真被要求转笔记的才在这核对）拆两个子视图，见二期设计（白皮书 §03n）。 */
@@ -251,7 +252,7 @@ function renderNotes(sec){sec.innerHTML=`
   <div class="subpanel on" id="nbrowse"></div>
   <div class="subpanel" id="norganize">
     <div class="card">
-      <details class="cmp" id="nsecs"><summary>分区（名字 + 给 AI 的要求）</summary><div id="nseclist"></div><button class="btn" id="nsecadd">＋ 分区</button> <button class="btn pri" id="nsecsave">保存分区</button></details>
+      <details class="cmp" id="nsecs"><summary>分区（笔记本排版分组；不再驱动 AI，问 AI 见每条下面）</summary><div id="nseclist"></div><button class="btn" id="nsecadd">＋ 分区</button> <button class="btn pri" id="nsecsave">保存分区</button></details>
       <details class="cmp" id="ntr"><summary>转写 <span class="small" id="ntrsum"></span></summary>
         <div class="row small" id="ntrstat"></div>
         <div class="row"><input type="password" id="ntrkey" placeholder="API key（只写不回显；DashScope 百炼）" style="flex:1;min-width:12em" autocomplete="off"><button class="btn pri" id="ntrsave">保存</button><button class="btn" id="ntrclear" title="清掉已存的 key">清 key</button></div>
@@ -271,7 +272,7 @@ function renderNotes(sec){sec.innerHTML=`
   const updateSummary=()=>{if(!book){sum.textContent='';return}const es=book.entries||[];
     const c=st=>es.filter(e=>e.status===st).length,skipped=c('skipped');
     sum.textContent=`待浏览 ${c('mined')} · 待转写 ${c('pending')} · 待校对 ${c('draft')} · 已校对 ${c('reviewed')}${skipped?` · 已跳过 ${skipped}（不再显示）`:''}`};
-  const renderSections=()=>{const el=$('#nseclist',sec);el.innerHTML='';(book.sections||[]).forEach((s,i)=>{const d=document.createElement('div');d.className='row';d.innerHTML=`<input type="text" value="${s.name}" placeholder="名字" style="max-width:6em" data-k="name"><input type="text" value="${s.brief||''}" placeholder="给 AI 的要求（空＝不调模型）" style="flex:1;min-width:10em" data-k="brief"><label class="toggle"><input type="checkbox" data-k="ai" ${s.ai?'checked':''}> 调模型</label><button class="btn" title="删">✕</button>`;
+  const renderSections=()=>{const el=$('#nseclist',sec);el.innerHTML='';(book.sections||[]).forEach((s,i)=>{const d=document.createElement('div');d.className='row';d.innerHTML=`<input type="text" value="${s.name}" placeholder="名字" style="max-width:6em" data-k="name"><input type="text" value="${s.brief||''}" placeholder="说明（可选，会印进笔记本这个分区的标题里）" style="flex:1;min-width:10em" data-k="brief"><button class="btn" title="删">✕</button>`;
     d.querySelectorAll('[data-k]').forEach(inp=>inp.onchange=()=>{book.sections[i][inp.dataset.k]=inp.type==='checkbox'?inp.checked:inp.value});d.querySelector('button').onclick=()=>{book.sections.splice(i,1);renderSections()};el.appendChild(d)})};
   $('#nsecadd',sec).onclick=()=>{book.sections.push({id:'s'+Date.now(),name:'',brief:'',ai:true,order:book.sections.length,triggers:[]});renderSections()};
   $('#nsecsave',sec).onclick=async()=>{const r=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}/sections`,{method:'PUT',body:JSON.stringify({sections:book.sections})});if(r.ok===false)alert(r.message);else renderBook()};
@@ -308,11 +309,24 @@ function renderNotes(sec){sec.innerHTML=`
           <div class="small">p.${e.page_index+1}${e.subhead?' · '+e.subhead:''} <span class="badge ${e.status==='reviewed'?'on':''}">${STATUS_NAMES[e.status]||e.status}</span></div>
           ${e.quote?`<div class="small" style="border-left:3px solid var(--line);padding-left:.5em;margin:.2em 0">「${e.quote.text}」</div>`:''}
           <textarea rows="2" style="width:100%;box-sizing:border-box" placeholder="${draft?'转写：'+draft:'等待转写…'}">${e.text||draft}</textarea>
-          <div class="row"><select data-k="section"><option value="">（未分区）</option>${opts}</select><select data-k="style">${sty}</select>${e.answer?`<details class="cmp" style="flex-basis:100%"><summary>智能回答</summary><div class="small">${e.answer.text}</div></details>`:''}</div></div>`;
+          <div class="row"><select data-k="section"><option value="">（未分区）</option>${opts}</select><select data-k="style">${sty}</select></div>
+          <div class="row" style="margin-top:.3em"><label class="toggle"><input type="checkbox" data-ask ${e.ask_ai?'checked':''}> 问AI</label>
+            <input type="text" data-question placeholder="问题…（如「他是谁」）" value="${e.question?e.question.replace(/"/g,'&quot;'):''}" style="flex:1;min-width:9em" ${e.ask_ai?'':'disabled'}>
+            <button class="btn" data-askbtn ${e.ask_ai&&e.question?'':'disabled'}>提问</button></div>
+          ${e.answer?`<details class="cmp" open><summary>回答 <span class="small">「${e.answer.brief}」</span></summary><div class="small">${e.answer.text}</div></details>`:''}</div>`;
         row.querySelector('textarea').onchange=ev=>patch(e.id,{text:ev.target.value});
         row.querySelectorAll('select').forEach(s=>s.onchange=()=>patch(e.id,{[s.dataset.k]:s.value}));
         if(e.ink&&e.ink.crop){const rb=document.createElement('button');rb.className='btn';rb.textContent=draft?'重转':'转写';rb.title='用当前后端转写这一条（不动已校对文本）';rb.style.marginLeft='.4em';
           rb.onclick=async()=>{rb.disabled=true;const r=await j(`/api/transcribe/books/${encodeURIComponent(book.uuid)}/entries/${encodeURIComponent(e.id)}`,{method:'POST'});rb.disabled=false;if(r.ok===false)alert(r.message||'转写失败')};row.querySelector('.row').appendChild(rb)}
+        /* 「问AI」勾选框 + 问题 + 提问按钮：改即存（ink-serve），点提问才真的调 mind-serve。 */
+        const askBox=row.querySelector('[data-ask]'),qInput=row.querySelector('[data-question]'),askBtn=row.querySelector('[data-askbtn]');
+        const syncAskUi=()=>{qInput.disabled=!askBox.checked;askBtn.disabled=!(askBox.checked&&qInput.value.trim())};
+        askBox.onchange=()=>{patch(e.id,{askAi:askBox.checked});syncAskUi()};
+        qInput.onchange=()=>{patch(e.id,{question:qInput.value});syncAskUi()};
+        askBtn.onclick=async()=>{askBtn.disabled=true;askBtn.textContent='提问中…';
+          const r=await j(`/api/mind/books/${encodeURIComponent(book.uuid)}/entries/${encodeURIComponent(e.id)}/ask`,{method:'POST'});
+          askBtn.disabled=false;askBtn.textContent='提问';
+          if(r.ok===false)alert(r.message||'提问失败');else{book=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}`);renderBook()}};
         card.appendChild(row)});
       chaps.appendChild(card)})};
   const loadBook=async()=>{if(!sel.value){book=null;renderBrowse();renderBook();return}book=await j(`/api/ink/books/${encodeURIComponent(sel.value)}`);renderBrowse();renderBook()};

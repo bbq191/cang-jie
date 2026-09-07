@@ -65,7 +65,7 @@ mod tests {
     use notecore::model::Entry;
 
     fn entry(id: &str, status: Status) -> Entry {
-        Entry { id: id.into(), page: "p".into(), page_index: 0, chapter: None, chapter_title: String::new(), subhead: None, quote: None, ink: None, drafts: vec![], text: None, style: Default::default(), section: None, answer: None, status, created: 0, updated: 0 }
+        Entry { id: id.into(), page: "p".into(), page_index: 0, chapter: None, chapter_title: String::new(), subhead: None, quote: None, ink: None, drafts: vec![], text: None, style: Default::default(), section: None, ask_ai: false, question: None, answer: None, status, created: 0, updated: 0 }
     }
 
     #[test]

@@ -195,7 +195,7 @@ mod tests {
         }
     }
     fn entry(id: &str, hash: &str, crop: &str, quote: Option<&str>) -> Entry {
-        Entry { id: id.into(), page: "p".into(), page_index: 0, chapter: None, chapter_title: String::new(), subhead: None, quote: quote.map(|q| Quote { id: "q".into(), text: q.into(), color: "y".into(), rects: vec![] }), ink: Some(Ink { strokes: vec![], bbox: (0.0, 0.0, 1.0, 1.0), hash: hash.into(), crop: crop.into() }), drafts: vec![], text: None, style: Style::Body, section: None, answer: None, status: Status::Pending, created: 0, updated: 0 }
+        Entry { id: id.into(), page: "p".into(), page_index: 0, chapter: None, chapter_title: String::new(), subhead: None, quote: quote.map(|q| Quote { id: "q".into(), text: q.into(), color: "y".into(), rects: vec![] }), ink: Some(Ink { strokes: vec![], bbox: (0.0, 0.0, 1.0, 1.0), hash: hash.into(), crop: crop.into() }), drafts: vec![], text: None, style: Style::Body, section: None, ask_ai: false, question: None, answer: None, status: Status::Pending, created: 0, updated: 0 }
     }
     fn mem(entries: Vec<Entry>) -> Mem {
         Mem { book: Mutex::new(Book { uuid: "u".into(), title: "t".into(), entries, ..Default::default() }), posted: Mutex::new(vec![]) }
