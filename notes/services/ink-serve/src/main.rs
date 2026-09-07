@@ -1,7 +1,9 @@
 //! ink-serve —— 笔记·矿（loopback 8795）。监听原生书库（事件驱动、防抖），书页 `.rm` 变了就只扫变更页：
 //! 勾画（GlyphRange）+ 旁边手写（笔画簇）→ 条目 → 裁图 → 条目库（**唯一写者**，其它服务经这里改字段）。零网络。
 //! 路由（经网关前缀 `/api/ink`）：`GET /books` · `GET /books/{uuid}` · `GET /books/{uuid}/crops/{file}` ·
-//! `POST /books/{uuid}/entries/{id}`（text/section/style/draft/answer 字段更新，缺省底座无 PATCH）· `PUT /books/{uuid}/sections` ·
+//! `POST /books/{uuid}/entries/{id}`（text/section/style/draft/answer 字段更新，缺省底座无 PATCH；
+//! `sectionHint`/`subheadHint` 是 `## 文字`/`### 文字` 手写标记转写侧兜底认出来的，见 `notecore::marker::Marker`——
+//! 分区找不到同名的会自动新建，`GET /books` 只列条目库里还有活条目的书）· `PUT /books/{uuid}/sections` ·
 //! `POST /books/{uuid}/rescan` · `GET /events`。条目库 `$XDG_STATE_HOME/notes/books/<uuid>.json`，裁图 `$XDG_DATA_HOME/notes/crops/`。
 mod bookdb;
 mod config;
@@ -82,7 +84,7 @@ fn main() {
     let router = Router::new()
         .get("/events", bind(&st, |s, _| Ok(s.bus.sse_reply())))
         .get("/books", bind(&st, |s, _| {
-            let items: Vec<serde_json::Value> = s.db.list().iter().map(|b| serde_json::json!({"uuid": b.uuid, "title": b.title, "chapters": b.chapters.len(), "entries": b.entries.iter().filter(|e| e.status != Status::Revoked).count(), "pending": b.entries.iter().filter(|e| e.needs_transcribe()).count()})).collect();
+            let items: Vec<serde_json::Value> = s.db.list_active().iter().map(|b| serde_json::json!({"uuid": b.uuid, "title": b.title, "chapters": b.chapters.len(), "entries": b.entries.iter().filter(|e| e.status != Status::Revoked).count(), "pending": b.entries.iter().filter(|e| e.needs_transcribe()).count()})).collect();
             Ok(Reply::ok(&serde_json::json!({"items": items})))
         }))
         .get("/books/{uuid}", bind(&st, |s, r| {
@@ -102,6 +104,10 @@ fn main() {
             }
             let now = shelf_core::clock::now_secs();
             let found = s.db.update(&uuid, || Default::default(), |b| {
+                // 找/建分区在借 e（可变借 b.entries）之前算好——`Book::section_id_for_name` 要整个 &mut b，
+                // 跟同时持有 e 冲突不过借用检查，所以先落地成一个 id 字符串再往下走。
+                let section_hint_id = j.0.get("sectionHint").and_then(|v| v.as_str()).map(str::trim).filter(|s| !s.is_empty()).map(|name| b.section_id_for_name(name));
+                let subhead_hint = j.0.get("subheadHint").and_then(|v| v.as_str()).map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
                 let Some(e) = b.entries.iter_mut().find(|e| e.id == id) else { return false };
                 if let Some(t) = j.0.get("text").and_then(|v| v.as_str()) {
                     e.text = (!t.trim().is_empty()).then(|| t.to_string());
@@ -109,6 +115,14 @@ fn main() {
                 }
                 if let Some(v) = j.0.get("section") {
                     e.section = v.as_str().filter(|s| !s.is_empty()).map(str::to_string);
+                }
+                // `## 文字`/`### 文字` 手写标记（转写侧兜底认出来的，见 notecore::marker::Marker）：
+                // 分区标记落 section（自动建/复用同名分区）；小节标记覆盖 subhead（平时由 epubmap 自动填）。
+                if let Some(id) = section_hint_id {
+                    e.section = Some(id);
+                }
+                if let Some(name) = subhead_hint {
+                    e.subhead = Some(name);
                 }
                 if let Some(v) = j.0.get("style").and_then(|v| serde_json::from_value::<Style>(v.clone()).ok()) {
                     e.style = v;

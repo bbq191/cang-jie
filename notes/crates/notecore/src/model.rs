@@ -1,4 +1,5 @@
 //! 数据模型。所有字段可序列化（条目库落 JSON，网页/CLI 直接吃同一形状）。
+use crate::hash::{fnv1a, hex};
 use serde::{Deserialize, Serialize};
 
 /// 分区 = 名字 + 简述（简述就是给 AI 的要求）+ 是否调模型 + 顺序。全局缺省，按书可覆盖。
@@ -170,9 +171,46 @@ pub struct Book {
     pub page_mtimes: std::collections::BTreeMap<String, u64>,
 }
 
+impl Book {
+    /// 按名字找分区，没有就新建（`## 文字` 手写标记用，见 `marker::Marker::Section`）：
+    /// id 用名字的 FNV 哈希（稳定、不跟已有 id 生成规则冲突），排在已有分区最后，
+    /// `ai`/`brief`/`triggers` 留空——这些是"手写随手建的分区"，细节留给网页后补。
+    /// 返回分区 id；不改动已存在的同名分区（哪怕大小写/前后空白不同也按 trim 后精确匹配，不模糊)。
+    pub fn section_id_for_name(&mut self, name: &str) -> String {
+        let name = name.trim();
+        if let Some(s) = self.sections.iter().find(|s| s.name == name) {
+            return s.id.clone();
+        }
+        let id = hex(fnv1a(name.as_bytes()));
+        let order = self.sections.iter().map(|s| s.order).max().map(|m| m + 1).unwrap_or(0);
+        self.sections.push(Section { id: id.clone(), name: name.to_string(), brief: String::new(), ai: false, order, triggers: vec![] });
+        id
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn section_id_for_name_reuses_existing_and_creates_new_appended_last() {
+        let mut b = Book { uuid: "u".into(), title: "t".into(), sections: default_sections(), ..Default::default() };
+        let existing = b.section_id_for_name("查询");
+        assert_eq!(existing, "lookup", "已有的同名分区直接复用 id，不新建");
+        assert_eq!(b.sections.len(), 4, "没多建");
+
+        let new_id = b.section_id_for_name(" 会议纪要 ");
+        assert_eq!(b.sections.len(), 5);
+        let created = b.sections.last().unwrap();
+        assert_eq!(created.id, new_id);
+        assert_eq!(created.name, "会议纪要", "trim 过");
+        assert_eq!(created.order, 4, "排在已有 4 个分区之后");
+        assert!(!created.ai && created.brief.is_empty() && created.triggers.is_empty());
+
+        let again = b.section_id_for_name("会议纪要");
+        assert_eq!(again, new_id, "再叫一次同名不重复新建");
+        assert_eq!(b.sections.len(), 5);
+    }
 
     #[test]
     fn roundtrip_and_defaults() {
