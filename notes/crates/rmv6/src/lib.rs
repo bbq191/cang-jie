@@ -20,6 +20,7 @@ pub mod page;
 pub mod parse_error;
 pub mod shared;
 pub mod v6;
+pub mod write;
 
 pub use crate::parse_error::ParseErrorKind;
 pub use parse_error::ParseError;

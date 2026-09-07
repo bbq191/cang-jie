@@ -13,7 +13,7 @@ use crate::{
 
 
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[allow(non_camel_case_types)] // 沿用上游全大写命名，与 rmscene 对照读码方便
 /// Text paragraph style.
 pub enum ParagraphStyle {

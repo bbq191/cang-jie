@@ -1,6 +1,8 @@
 //! note-serve —— 笔记·本（loopback 8798）。它是网页「笔记」tab 的注册方（tab 只挂一个服务，前端组合 ink/transcribe/mind/notes 四段）；
 //! 本体职责是把条目库投影成设备笔记本（《书名》文件夹一章一本，xochitl 7 种打字样式）与 md 导出——投影/导出在后续步骤建。
 //! 路由（经网关前缀 `/api/notes`）：`GET /status` · `GET /events`。
+mod rmdoc;
+
 use shelf_core::events::EventBus;
 use shelf_core::http::{bind, Reply, Router};
 use shelf_core::paths::Paths;
