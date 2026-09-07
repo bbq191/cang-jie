@@ -80,10 +80,11 @@ fn transcribe_entry(c: &Ctx<'_>, uuid: &str, e: &notecore::model::Entry) -> Resu
     let png = c.store.crop(uuid, &ink.crop)?;
     let prompt = crate::prompt::build(&c.cfg.prompt, e.quote.as_ref().map(|q| q.text.as_str()));
     let t = c.vision.transcribe(&png, &prompt)?;
-    // 行首标记兜底：几何没认出来（仍是正文）时按转写结果认，并剥掉标记
-    let (style, text) = if e.style == Style::Body { split_leading_marker(&t.text) } else { (None, t.text.clone()) };
+    // 行首标记兜底：几何没认出来（仍是正文）时按转写结果认，并剥掉标记——可能认出内容样式（Style）
+    // 也可能认出结构性标记（## 分区 / ### 小节），见 `notecore::marker::Marker`。
+    let (marker, text) = if e.style == Style::Body { split_leading_marker(&t.text) } else { (None, t.text.clone()) };
     let draft = Draft { text: text.clone(), backend: c.vision.name().to_string(), at: c.now, hash: ink.hash.clone() };
-    c.store.post_draft(uuid, &e.id, &draft, style)?;
+    c.store.post_draft(uuid, &e.id, &draft, marker)?;
     c.ledger.record_ok(t.prompt_tokens, t.completion_tokens, c.now);
     Ok(text)
 }
@@ -164,11 +165,12 @@ mod tests {
     use super::*;
     use crate::backend::Fixed;
     use crate::ink::BookBrief;
+    use notecore::marker::Marker;
     use notecore::model::{Book, Entry, Ink, Quote, Status};
 
     struct Mem {
         book: Mutex<Book>,
-        posted: Mutex<Vec<(String, Draft, Option<Style>)>>,
+        posted: Mutex<Vec<(String, Draft, Option<Marker>)>>,
     }
     impl EntryStore for Mem {
         fn list_books(&self) -> Result<Vec<BookBrief>, String> {
@@ -181,13 +183,13 @@ mod tests {
         fn crop(&self, _uuid: &str, file: &str) -> Result<Vec<u8>, String> {
             if file == "missing.png" { Err("没有这张裁图".into()) } else { Ok(b"\x89PNG".to_vec()) }
         }
-        fn post_draft(&self, _uuid: &str, id: &str, draft: &Draft, style: Option<Style>) -> Result<(), String> {
-            self.posted.lock().unwrap().push((id.into(), draft.clone(), style));
+        fn post_draft(&self, _uuid: &str, id: &str, draft: &Draft, marker: Option<Marker>) -> Result<(), String> {
+            self.posted.lock().unwrap().push((id.into(), draft.clone(), marker.clone()));
             let mut b = self.book.lock().unwrap();
             if let Some(e) = b.entries.iter_mut().find(|e| e.id == id) {
                 e.drafts.insert(0, draft.clone());
                 e.status = Status::Draft;
-                if let Some(s) = style { e.style = s; }
+                if let Some(Marker::Style(s)) = marker { e.style = s; }
             }
             Ok(())
         }
@@ -214,7 +216,7 @@ mod tests {
         assert_eq!((r.scanned, r.done, r.failed, r.left), (3, 2, 0, 1), "max_per_run=2 剩 1: {r:?}");
         let posted = store.posted.lock().unwrap().clone();
         assert_eq!(posted[0].1, Draft { text: "背诵".into(), backend: "fixed".into(), at: 9, hash: "h1".into() });
-        assert_eq!(posted[0].2, Some(Style::Numbered), "行首 1. → 有序，且标记剥掉");
+        assert_eq!(posted[0].2, Some(Marker::Style(Style::Numbered)), "行首 1. → 有序，且标记剥掉");
         assert_eq!(ledger.snapshot().ok, 2);
         // 第二轮：只剩 c；a/b 已有同指纹草稿不重做
         let r = run_once(&c, None);

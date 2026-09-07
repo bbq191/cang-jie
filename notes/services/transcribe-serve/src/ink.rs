@@ -1,6 +1,7 @@
 //! 条目库的访问口（只经 ink-serve 的 HTTP，**不直接碰文件**：条目库唯一写者是 ink-serve）。
 //! `EntryStore` 抽象出四个动作，生产走注册表找 ink-serve，测试用内存桩。
-use notecore::model::{Book, Draft, Style};
+use notecore::marker::Marker;
+use notecore::model::{Book, Draft};
 use serde::Deserialize;
 use shelf_core::paths::Paths;
 use shelf_core::registry;
@@ -17,8 +18,8 @@ pub trait EntryStore: Send + Sync {
     fn list_books(&self) -> Result<Vec<BookBrief>, String>;
     fn book(&self, uuid: &str) -> Result<Book, String>;
     fn crop(&self, uuid: &str, file: &str) -> Result<Vec<u8>, String>;
-    /// 写回草稿（与可选的样式修正）。ink-serve 保证不覆盖已校对 `text`。
-    fn post_draft(&self, uuid: &str, id: &str, draft: &Draft, style: Option<Style>) -> Result<(), String>;
+    /// 写回草稿（与可选的行首标记：样式修正，或 `##`/`###` 挂分区/覆盖小节）。ink-serve 保证不覆盖已校对 `text`。
+    fn post_draft(&self, uuid: &str, id: &str, draft: &Draft, marker: Option<Marker>) -> Result<(), String>;
 }
 
 pub struct InkHttp {
@@ -55,10 +56,13 @@ impl EntryStore for InkHttp {
         self.agent.get(&format!("{}/books/{}/crops/{}", self.base()?, enc(uuid), enc(file))).call().map_err(|e| format!("取裁图 {file}: {e}"))?.into_reader().read_to_end(&mut out).map_err(|e| e.to_string())?;
         Ok(out)
     }
-    fn post_draft(&self, uuid: &str, id: &str, draft: &Draft, style: Option<Style>) -> Result<(), String> {
+    fn post_draft(&self, uuid: &str, id: &str, draft: &Draft, marker: Option<Marker>) -> Result<(), String> {
         let mut body = serde_json::json!({"draft": draft});
-        if let Some(s) = style {
-            body["style"] = serde_json::to_value(s).unwrap_or_default();
+        match marker {
+            Some(Marker::Style(s)) => body["style"] = serde_json::to_value(s).unwrap_or_default(),
+            Some(Marker::Section(name)) => body["sectionHint"] = serde_json::Value::String(name),
+            Some(Marker::Subhead(name)) => body["subheadHint"] = serde_json::Value::String(name),
+            None => {}
         }
         self.agent.post(&format!("{}/books/{}/entries/{}", self.base()?, enc(uuid), enc(id))).set("Content-Type", "application/json").send_string(&body.to_string()).map_err(|e| format!("写回草稿 {id}: {e}"))?;
         Ok(())
