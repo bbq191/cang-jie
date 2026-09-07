@@ -21,17 +21,23 @@ fn color_name(c: &rmv6::shared::pen_color::PenColor, rgba: Option<(u8, u8, u8, u
     }
 }
 
-/// 一页里认出的"一片手写（+ 它旁边的勾画）"。
+/// 一页里认出的"一片手写（+ 它旁边的勾画）"，或"一条没配到手写的纯勾画"（`ink: None`，2026-09-07
+/// 二期真机验证时发现的缺口：只勾线不写字的页原来整页被跳过，见下方 `drafts_of_page` 尾部补的一段）。
 #[derive(Debug, Clone, PartialEq)]
 pub struct PageDraft {
-    pub ink: Ink,
+    pub ink: Option<Ink>,
     pub quote: Option<Quote>,
+}
+
+fn quote_of(h: &rmv6::page::Highlight) -> Quote {
+    Quote { id: sid(&h.id), text: h.text.clone(), color: color_name(&h.color, h.rgba), rects: h.rects.clone() }
 }
 
 pub fn drafts_of_page(page: &Page, th: &Thresholds) -> Vec<PageDraft> {
     let clusters = cluster(&page.strokes, th);
     let pairs = pair(&clusters, &page.highlights, th);
-    clusters
+    let mut paired: std::collections::BTreeSet<usize> = Default::default();
+    let mut out: Vec<PageDraft> = clusters
         .iter()
         .zip(pairs)
         .map(|(c, hl)| {
@@ -39,12 +45,22 @@ pub fn drafts_of_page(page: &Page, th: &Thresholds) -> Vec<PageDraft> {
             let refs: Vec<(&str, usize, (f32, f32, f32, f32))> = items.iter().map(|(id, n, b)| (id.as_str(), *n, *b)).collect();
             let mut strokes: Vec<String> = items.iter().map(|(id, _, _)| id.clone()).collect();
             strokes.sort();
+            if let Some(i) = hl {
+                paired.insert(i);
+            }
             PageDraft {
-                ink: Ink { strokes, bbox: (c.bbox.x0, c.bbox.y0, c.bbox.x1, c.bbox.y1), hash: cluster_hash(&refs), crop: String::new() },
-                quote: hl.map(|i| { let h = &page.highlights[i]; Quote { text: h.text.clone(), color: color_name(&h.color, h.rgba), rects: h.rects.clone() } }),
+                ink: Some(Ink { strokes, bbox: (c.bbox.x0, c.bbox.y0, c.bbox.x1, c.bbox.y1), hash: cluster_hash(&refs), crop: String::new() }),
+                quote: hl.map(|i| quote_of(&page.highlights[i])),
             }
         })
-        .collect()
+        .collect();
+    // 没被任何簇认领的勾画：单独落一条"纯勾画"草稿（没有旁边手写，内容就是勾画本身，不需要转写）。
+    for (i, h) in page.highlights.iter().enumerate() {
+        if !paired.contains(&i) {
+            out.push(PageDraft { ink: None, quote: Some(quote_of(h)) });
+        }
+    }
+    out
 }
 
 /// 页级上下文（摄取时由 ink-serve 从 epubmap 算好）。
@@ -67,42 +83,57 @@ pub struct MergeStats {
     pub revoked: usize,
 }
 
-/// 把本页新草稿并入 `entries`（只动本页的条目）。
+/// 把本页新草稿并入 `entries`（只动本页的条目）。**两条认领路径**：有手写的草稿按笔画指纹/共享笔画
+/// 认领（原逻辑不变）；纯勾画草稿（`ink: None`）没有笔画可比，按勾画自己的 `Quote.id`（`GlyphRange`
+/// 的 CRDT id）认领——2026-09-07 二期真机验证时发现"只勾线不写字"整页被跳过，补的这条路径。
 pub fn merge_page(entries: &mut Vec<Entry>, ctx: &PageCtx, drafts: Vec<PageDraft>) -> MergeStats {
     let mut st = MergeStats::default();
     let mut claimed = vec![false; entries.len()];
     for d in drafts {
-        // 认领：先找指纹相同的，再找共享笔画的（本页、未撤销、未被本轮认领）
         let same_page = |e: &Entry| e.page == ctx.page && e.status != Status::Revoked;
-        let hit = entries.iter().enumerate().find(|(i, e)| !claimed[*i] && same_page(e) && e.ink.as_ref().map(|k| k.hash == d.ink.hash).unwrap_or(false)).map(|(i, _)| i)
-            .or_else(|| entries.iter().enumerate().find(|(i, e)| !claimed[*i] && same_page(e) && e.ink.as_ref().map(|k| k.strokes.iter().any(|s| d.ink.strokes.contains(s))).unwrap_or(false)).map(|(i, _)| i));
+        let hit = match &d.ink {
+            Some(dink) => entries.iter().enumerate().find(|(i, e)| !claimed[*i] && same_page(e) && e.ink.as_ref().map(|k| k.hash == dink.hash).unwrap_or(false)).map(|(i, _)| i)
+                .or_else(|| entries.iter().enumerate().find(|(i, e)| !claimed[*i] && same_page(e) && e.ink.as_ref().map(|k| k.strokes.iter().any(|s| dink.strokes.contains(s))).unwrap_or(false)).map(|(i, _)| i)),
+            None => {
+                let dq_id = d.quote.as_ref().map(|q| q.id.as_str());
+                entries.iter().enumerate().find(|(i, e)| !claimed[*i] && same_page(e) && e.ink.is_none() && e.quote.as_ref().map(|q| q.id.as_str()) == dq_id).map(|(i, _)| i)
+            }
+        };
         match hit {
             Some(i) => {
                 claimed[i] = true;
                 let e = &mut entries[i];
-                if e.ink.as_ref().map(|k| k.hash == d.ink.hash).unwrap_or(false) {
-                    st.unchanged += 1;
-                } else {
-                    let crop = e.ink.as_ref().map(|k| k.crop.clone()).unwrap_or_default();
-                    e.ink = Some(Ink { crop, ..d.ink });
-                    e.updated = ctx.now;
-                    st.changed += 1;
-                }
-                if e.quote.is_none() {
-                    e.quote = d.quote; // 后补的勾画认上
+                match &d.ink {
+                    Some(dink) => {
+                        if e.ink.as_ref().map(|k| k.hash == dink.hash).unwrap_or(false) {
+                            st.unchanged += 1;
+                        } else {
+                            let crop = e.ink.as_ref().map(|k| k.crop.clone()).unwrap_or_default();
+                            e.ink = Some(Ink { crop, ..dink.clone() });
+                            e.updated = ctx.now;
+                            st.changed += 1;
+                        }
+                        if e.quote.is_none() {
+                            e.quote = d.quote; // 后补的勾画认上
+                        }
+                    }
+                    None => {
+                        st.unchanged += 1; // 纯勾画：内容随 quote id 走，认领到了就是没变（勾画画下不会再改）
+                        e.quote = d.quote; // 保险起见仍然刷新一遍（颜色等字段理论上可能变）
+                    }
                 }
             }
             None => {
-                let first = d.ink.strokes.first().cloned().unwrap_or_default();
+                let id_seed = d.ink.as_ref().map(|k| k.strokes.first().cloned().unwrap_or_default()).or_else(|| d.quote.as_ref().map(|q| q.id.clone())).unwrap_or_default();
                 entries.push(Entry {
-                    id: entry_id(ctx.book, ctx.page, &first),
+                    id: entry_id(ctx.book, ctx.page, &id_seed),
                     page: ctx.page.to_string(),
                     page_index: ctx.page_index,
                     chapter: ctx.chapter,
                     chapter_title: ctx.chapter_title.to_string(),
                     subhead: ctx.subhead.map(str::to_string),
                     quote: d.quote,
-                    ink: Some(d.ink),
+                    ink: d.ink,
                     drafts: vec![],
                     text: None,
                     style: Style::Body,
@@ -118,7 +149,7 @@ pub fn merge_page(entries: &mut Vec<Entry>, ctx: &PageCtx, drafts: Vec<PageDraft
         }
     }
     for (i, e) in entries.iter_mut().enumerate() {
-        if !claimed[i] && e.page == ctx.page && e.status != Status::Revoked && e.ink.is_some() {
+        if !claimed[i] && e.page == ctx.page && e.status != Status::Revoked && (e.ink.is_some() || e.quote.is_some()) {
             e.status = Status::Revoked;
             e.updated = ctx.now;
             st.revoked += 1;
@@ -184,7 +215,39 @@ mod tests {
         assert_eq!(ds.len(), 2);
         assert_eq!(ds[0].quote.as_ref().map(|q| q.text.as_str()), Some("第二段"));
         assert_eq!(ds[1].quote, None);
-        assert_eq!(ds[0].ink.strokes, vec!["1:1"]);
+        assert_eq!(ds[0].ink.as_ref().unwrap().strokes, vec!["1:1"]);
         assert_eq!(ds[0].quote.as_ref().unwrap().color, "yellow");
+    }
+
+    /// 2026-09-07 二期真机验证时发现的缺口：只勾线不写字的页，原来整页被跳过；补上"纯勾画"路径。
+    #[test]
+    fn quote_only_page_creates_a_no_ink_entry_and_survives_rescans() {
+        let th = Thresholds::default();
+        // 一条勾画，旁边完全没有手写。
+        let p = page(vec![], vec![hl(9, "纯勾画的原文", 100.0, 320.0, 780.0, 30.0)]);
+        let ds = drafts_of_page(&p, &th);
+        assert_eq!(ds.len(), 1);
+        assert!(ds[0].ink.is_none());
+        assert_eq!(ds[0].quote.as_ref().unwrap().text, "纯勾画的原文");
+        assert!(!ds[0].quote.as_ref().unwrap().id.is_empty(), "勾画自己的 CRDT id 要落进去，重扫认领靠它");
+
+        let mut entries = vec![];
+        let st = merge_page(&mut entries, &ctx(10), ds);
+        assert_eq!(st, MergeStats { added: 1, ..Default::default() });
+        assert_eq!(entries.len(), 1);
+        assert!(entries[0].ink.is_none());
+        assert_eq!(entries[0].status, Status::Mined);
+        let id = entries[0].id.clone();
+
+        // 同一页再摄取一次（页没变）：认领到同一条，不变、不重复新建。
+        let st2 = merge_page(&mut entries, &ctx(20), drafts_of_page(&p, &th));
+        assert_eq!(st2, MergeStats { unchanged: 1, ..Default::default() });
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].id, id);
+
+        // 勾画被擦掉（页上啥都没了）：撤销，不物理删——跟手写条目同一套终态。
+        let st3 = merge_page(&mut entries, &ctx(30), drafts_of_page(&page(vec![], vec![]), &th));
+        assert_eq!(st3, MergeStats { revoked: 1, ..Default::default() });
+        assert_eq!(entries[0].status, Status::Revoked);
     }
 }

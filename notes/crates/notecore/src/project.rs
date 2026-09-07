@@ -226,7 +226,7 @@ mod tests {
 
         // quote 是 Option<Quote>，构造函数里没给，补一个验证也参与指纹
         let mut with_quote = b.clone();
-        with_quote.entries[0].quote = Some(Quote { text: "原文摘录".into(), color: "yellow".into(), rects: vec![] });
+        with_quote.entries[0].quote = Some(Quote { id: "q".into(), text: "原文摘录".into(), color: "yellow".into(), rects: vec![] });
         assert_ne!(fingerprint_chapter(&with_quote, 0).unwrap(), fp1, "勾画原文变了指纹也要变");
     }
 }

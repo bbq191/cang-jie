@@ -58,9 +58,6 @@ impl Doc {
     pub fn page_rm(&self, page_id: &str) -> PathBuf {
         self.lib.join(&self.uuid).join(format!("{page_id}.rm"))
     }
-    pub fn page_thumb(&self, page_id: &str) -> PathBuf {
-        self.lib.join(format!("{}.thumbnails", self.uuid)).join(format!("{page_id}.png"))
-    }
     /// 有 `.rm` 的页：(页 id, mtime 秒)。
     pub fn annotated_pages(&self) -> Vec<(String, u64)> {
         let Ok(rd) = std::fs::read_dir(self.lib.join(&self.uuid)) else { return vec![] };
@@ -111,7 +108,6 @@ mod tests {
         let lib = t.path();
         let d = Doc::new(lib, "u1");
         assert_eq!(d.page_rm("p"), lib.join("u1/p.rm"));
-        assert_eq!(d.page_thumb("p"), lib.join("u1.thumbnails/p.png"));
         assert!(d.annotated_pages().is_empty());
         std::fs::create_dir_all(lib.join("u1")).unwrap();
         std::fs::write(lib.join("u1/b.rm"), b"x").unwrap();
