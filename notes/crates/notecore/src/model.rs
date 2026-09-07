@@ -42,6 +42,20 @@ pub enum Style {
     Checkbox,
 }
 
+impl Style {
+    /// 对应 `.rm` 段落样式码（2026-09-07 真机样本 `testdata/seven_styles` 坐实，见 `rmv6::v6::scene_item::text::ParagraphStyle`）。
+    /// ⚠️ NumberedList(10) 的格式子块比其余样式多 7 字节未解码载荷（疑似编号计数）——note-serve 写入器落这码前
+    /// 得再采一份多行样本把它差出来，否则编号可能不对；这里先给码，不代表已能安全写入。
+    pub fn wire_code(self) -> u8 {
+        match self {
+            Style::Body => 0x01,     // PLAIN
+            Style::Bullet => 0x04,   // BULLET
+            Style::Numbered => 0x0a, // NUMBERED（见上方警告）
+            Style::Checkbox => 0x06, // CHECKBOX（未勾选；勾上号 7 要点方框，打字给不出，写入器别用）
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum Status {
@@ -170,6 +184,14 @@ mod tests {
         let b: Book = serde_json::from_str(r#"{"uuid":"u","title":"t"}"#).unwrap();
         assert!(b.entries.is_empty() && b.sections.is_empty());
         assert_eq!(default_sections().iter().map(|s| s.name.as_str()).collect::<Vec<_>>(), ["查询", "解释", "背诵", "其他"]);
+    }
+
+    #[test]
+    fn style_wire_codes_match_device_sample() {
+        assert_eq!(Style::Body.wire_code(), 0x01);
+        assert_eq!(Style::Bullet.wire_code(), 0x04);
+        assert_eq!(Style::Numbered.wire_code(), 0x0a);
+        assert_eq!(Style::Checkbox.wire_code(), 0x06);
     }
 
     #[test]

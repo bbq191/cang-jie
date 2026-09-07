@@ -72,7 +72,7 @@ notes/
 | 用途 | 路径 |
 |---|---|
 | 二进制 | `~/.local/bin/{ink-serve,transcribe-serve,note-serve}` |
-| 配置 | `~/.config/notes/ink.json`（clusterGap 40 / pairGap 120 / pageWidth 1404 / pageHeight 1872 / xOriginCenter / cropMargin 24 / debounceSecs 4；**阈值与几何待样本标定**）· `~/.config/notes/transcribe.json`（**0600**，含 apiKey） |
+| 配置 | `~/.config/notes/ink.json`（clusterGap 40 / pairGap 120 真机验证有效未改；**pageWidth 960 / pageHeight 1280**——2026-09-07 真机测出旧 1404×1872 是错的，见白皮书 §03g；xOriginCenter / cropMargin 24 / debounceSecs 4）· `~/.config/notes/transcribe.json`（**0600**，含 apiKey） |
 | 数据 | `~/.local/share/notes/crops/`（裁片 PNG）· `~/.local/share/notes/vault/`（md，待建） |
 | 状态 | `~/.local/state/notes/books/<uuid>.json`（**条目库**）· `~/.local/state/notes/transcribe.json`（用量账本） |
 | 只读外部 | xochitl 书库 `~/.local/share/remarkable/xochitl/`——**绝不写** |
@@ -94,7 +94,7 @@ notes/
 ## 构建 · 部署
 
 ```sh
-cd notes && cargo build --workspace && cargo test --workspace     # host：31 个测试（rmv6 2 · epubmap 5 · notecore 9 · ink 7 · transcribe 8）
+cd notes && cargo build --workspace && cargo test --workspace     # host：37 个测试（rmv6 4 · epubmap 5 · notecore 11 · ink 9 · transcribe 8）
 cd ../shelf && ./build.sh && ./deploy.sh <设备IP>                  # 随书架一起交叉编译/打包/装机（NOTES_BINS；设备在 WiFi 上时给 WiFi IP）
 ssh root@<设备IP> sh /home/root/shelf-pkg/shelf/install.sh --only ink,transcribe,note   # 只装/更新笔记线
 ```
@@ -108,6 +108,6 @@ ssh root@<设备IP> sh /home/root/shelf-pkg/shelf/install.sh --only ink,transcri
 | 地基 | `rmv6`（剥离移植 + CHECKBOX 码）· `epubmap`（两张表取首现 + nav/ncx）· `notecore`（模型/指纹/聚簇配对/增量合并/行首标记） | ✅ 离线 31 测（§03b） |
 | 矿 | ink-serve：fswatch 只扫变更页、缩略图裁片、条目库唯一写者、HTTP + 事件 | ✅ 真机 active、扫到 38 章（§03c） |
 | 网关接入 | MODULES 三行、「笔记」tab（裁图/文本/分区/样式改即存）、部署链 NOTES_BINS/令牌 | ✅ 真机 tab 注册（§03d） |
-| 转写 | transcribe-serve：Vision Strategy（Qwen 缺省）、限量/失败上限/即停、key 只写不读 0600、用量账本、网页转写区 | ✅ 真机 active（§03e）；真调模型待 key + 样本 |
-| 步骤 0 | 真机样本标定阈值/页几何/样式码 | ⏳ 等用户 |
-| 本 / 脑 / 导出 | note-serve 投影（7 样式）+ 代理 mkdir · mind-serve · md + `notes pull` | ⏳ 待建（§05） |
+| 转写 | transcribe-serve：Vision Strategy（Qwen 缺省）、限量/失败上限/即停、key 只写不读 0600、用量账本、网页转写区 | ✅ 修完裁图坐标（§03g）真机重转复验：3 条有勾画的条目 2 条读对手写、1 条仍读错（裁图边距混印刷体，留质量项）；1 条无勾画批注裁不到，新守卫优雅跳过 |
+| 步骤 0 | 真机样本标定阈值/页几何/样式码 | ✅ 2026-09-07：聚簇/配对阈值验证通过、NumberedList 码=10（§03f）；★页坐标画布尺寸原假设是错的，真机反测坐实 960×1280、已修复部署复验（§03g） |
+| 本 / 脑 / 导出 | note-serve 投影（7 样式）+ 代理 mkdir · mind-serve · md + `notes pull` | ⏳ 待建（§05）；NumberedList 写入前还差一份多行样本 |

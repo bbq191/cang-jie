@@ -136,4 +136,40 @@ mod tests {
         assert!(p.strokes.is_empty() && p.highlights.is_empty() && p.text.is_none());
         assert!(Page::parse(b"reMarkable .lines file, version=5           ").is_err(), "只认 v6");
     }
+
+    #[test]
+    fn parses_real_highlight_and_handwriting_page() {
+        // 真机 2026-09-07 步骤 0 样本：同一本《人骨拼圖》同一页，重画三段勾画 + 旁边手写。
+        // 坐实 x 原点居中（页宽 1404，高亮矩形 x 全为负、落在左半页）、EPUB 页 text=None。
+        let bytes = include_bytes!("../../../testdata/renggu_marks/page.rm");
+        let p = Page::parse(bytes).unwrap();
+        assert!(p.text.is_none(), "EPUB 书页没有打字文本");
+        let texts: Vec<&str> = p.highlights.iter().map(|h| h.text.as_str()).collect();
+        assert_eq!(texts, vec!["她只想睡覺。", "她站在候車隊伍中，苗條的身材因手提", "看著一輛輛川流不息的黃色計程車，這些顏色"]);
+        for h in &p.highlights {
+            assert!(h.bbox.x0 < 0.0, "高亮都在左半页，x 原点居中假设成立: {h:?}");
+        }
+        // 荧光笔本身也留一条 SceneLineItem（HIGHLIGHTER 工具），加上手写共 88 条非墓碑笔画
+        // （原始 105 个 SceneLineItem 块里另 17 个 value=None——同类块内软删，不是独立墓碑块）。
+        assert_eq!(p.strokes.len(), 88);
+        assert_eq!(p.strokes.iter().filter(|s| s.tool == Tool::Highlighter).count(), 1);
+    }
+
+    #[test]
+    fn parses_seven_style_notebook_page() {
+        // 真机 2026-09-07 步骤 0 样本：格式菜单逐行打 Title/Subheading 1/Subheading 2/Body/
+        // Bulletpoint/NumberedList/Checkbox(×2)。坐实 NumberedList 码=10；且 Subheading 1/2
+        // 在 .rm 层用的是**同一个码**（BOLD=3）——原生靠别的机制区分两级大小，不能只凭这个码分层级。
+        use crate::v6::scene_item::text::ParagraphStyle as PS;
+        let bytes = include_bytes!("../../../testdata/seven_styles/page.rm");
+        let p = Page::parse(bytes).unwrap();
+        let styles: Vec<&PS> = p.text.as_ref().unwrap().styles.values().map(|lww| &lww.value).collect();
+        let count = |want: &PS| styles.iter().filter(|s| std::mem::discriminant(**s) == std::mem::discriminant(want)).count();
+        assert_eq!(count(&PS::HEADING), 1, "Title");
+        assert_eq!(count(&PS::BOLD), 2, "Subheading 1 + Subheading 2 共用一个码");
+        assert_eq!(count(&PS::BULLET), 1, "Bulletpoint");
+        assert_eq!(count(&PS::NUMBERED), 1, "NumberedList");
+        assert_eq!(count(&PS::CHECKBOX), 2, "Checkbox 未勾选 ×2（打字打不出勾上号 7）");
+        assert_eq!(count(&PS::CHECKBOX_CHECKED), 0);
+    }
 }

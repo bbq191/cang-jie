@@ -1,6 +1,8 @@
 //! 几何：同一页坐标系里，把手写笔画聚成"一片"（簇），再给每簇找它旁边的勾画。
-//! 只用包围盒间距，不看笔序、不看时间（用户会回头补笔）。阈值以页坐标单位（约等于像素，Move 页宽 ≈ 1404）计，
-//! 缺省值先按常识给，真机样本（步骤 0）到手后标定。
+//! 只用包围盒间距，不看笔序、不看时间（用户会回头补笔）。阈值以 `.rm` 原始页坐标单位计（**不是像素**——
+//! EPUB 页的坐标系是排版引擎自己的虚拟画布，真机实测 960×1280，见 `ink-serve::crop` 与白皮书 §03g；
+//! 聚簇/配对只比坐标间的相对距离，不需要知道画布真实尺寸，不受这个换算影响）。
+//! 缺省 `cluster_gap=40`/`pair_gap=120`，2026-09-07 真机样本验证有效（§03f）。
 use rmv6::page::{BBox, Highlight, Stroke};
 
 /// 聚簇/配对阈值。
@@ -90,6 +92,21 @@ pub fn pair(clusters: &[Cluster], highlights: &[Highlight], th: &Thresholds) -> 
         .collect()
 }
 
+/// 簇里有没有"一行字 + 下面一条长横"（§02 分区头手写约定）：某条笔画几乎撑满簇宽、扁而矮、贴在簇下半部分。
+/// 真机样本（未配对到勾画的第四簇）核过：下划线是单独一笔，宽度≈簇全宽、高约为簇高的 1/6、贴底。
+/// 只给谓词，不建分区——落地到"新建分区"要过手机确认，先不在摄取阶段自动生效。
+pub fn has_underline(strokes: &[Stroke], cluster: &Cluster) -> bool {
+    let cb = cluster.bbox;
+    let (w, h) = (cb.width(), cb.height());
+    if w <= 0.0 || h <= 0.0 {
+        return false;
+    }
+    cluster.strokes.iter().any(|&i| {
+        let b = strokes[i].bbox;
+        b.width() >= w * 0.85 && b.height() <= h * 0.3 && b.y0 >= cb.y0 + h * 0.5
+    })
+}
+
 #[cfg(test)]
 pub(crate) mod fixtures {
     use rmv6::page::{BBox, Highlight, Stroke};
@@ -134,5 +151,29 @@ mod tests {
         let cs = cluster(&strokes, &Thresholds::default());
         let p = pair(&cs, &hls, &Thresholds::default());
         assert_eq!(p, vec![Some(1), None], "簇 1 挨着第二段（间距 20）；簇 2 离得远 → 本页批注");
+    }
+
+    #[test]
+    fn real_device_sample_clusters_and_pairs_correctly() {
+        // 真机 2026-09-07 步骤 0 样本：三段勾画 + 旁边手写（分别首字 -/1./口）+ 另一行字带下划线（本页批注，无勾画）。
+        // 用缺省阈值（cluster_gap=40, pair_gap=120）跑真实几何，坐实默认值不用改。
+        use rmv6::page::Page;
+        let bytes = include_bytes!("../../../testdata/renggu_marks/page.rm");
+        let page = Page::parse(bytes).unwrap();
+        let cs = cluster(&page.strokes, &Thresholds::default());
+        assert_eq!(cs.len(), 4, "3 条批注簇 + 1 条无关批注（字+下划线合并一簇）");
+        assert_eq!(cs.iter().map(|c| c.strokes.len()).collect::<Vec<_>>(), vec![14, 14, 17, 42]);
+
+        let hls: Vec<Highlight> = page.highlights.clone();
+        let p = pair(&cs, &hls, &Thresholds::default());
+        assert_eq!(p.iter().filter(|x| x.is_some()).count(), 3, "前三簇各配到一条勾画");
+        assert_eq!(p[3], None, "第四簇（字+下划线）离最近勾画 ~305pt，超过 pair_gap → 本页批注");
+        // 配对精确到"哪一条"：簇按 y 升序（同 cluster 排序），勾画顺序与页面从上到下一致。
+        assert_eq!(p[..3], [Some(0), Some(1), Some(2)]);
+
+        assert!(!has_underline(&page.strokes, &cs[0]), "批注簇没有下划线");
+        assert!(!has_underline(&page.strokes, &cs[1]));
+        assert!(!has_underline(&page.strokes, &cs[2]));
+        assert!(has_underline(&page.strokes, &cs[3]), "第四簇=一行字+下划线，判定应为分区头候选");
     }
 }
