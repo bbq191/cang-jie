@@ -3,7 +3,10 @@
 //! 路由（经网关前缀 `/api/ink`）：`GET /books` · `GET /books/{uuid}` · `GET /books/{uuid}/crops/{file}` ·
 //! `POST /books/{uuid}/entries/{id}`（text/section/style/draft/answer 字段更新，缺省底座无 PATCH；
 //! `sectionHint`/`subheadHint` 是 `## 文字`/`### 文字` 手写标记转写侧兜底认出来的，见 `notecore::marker::Marker`——
-//! 分区找不到同名的会自动新建，`GET /books` 只列条目库里还有活条目的书）· `PUT /books/{uuid}/sections` ·
+//! 分区找不到同名的会自动新建，`GET /books` 只列条目库里还有活条目的书）·
+//! `POST /books/{uuid}/entries/{id}/request`（浏览态"转入笔记"：`Mined→Pending`）·
+//! `POST /books/{uuid}/entries/{id}/skip`（浏览态"不需要"：`Mined→Skipped`，两者都拒绝已撤销的条目，
+//! 见 `notecore::model::Entry::set_triage`，2026-09-07 二期）· `PUT /books/{uuid}/sections` ·
 //! `POST /books/{uuid}/rescan` · `GET /events`。条目库 `$XDG_STATE_HOME/notes/books/<uuid>.json`，裁图 `$XDG_DATA_HOME/notes/crops/`。
 mod bookdb;
 mod config;
@@ -16,7 +19,7 @@ use config::IngestConfig;
 use notecore::model::{Answer, Draft, Section, Status, Style};
 use shelf_core::events::EventBus;
 use shelf_core::fs::plain_name;
-use shelf_core::http::{bind, ApiError, Reply, Router};
+use shelf_core::http::{bind, ApiError, ApiResult, Reply, Request, Router};
 use shelf_core::paths::Paths;
 use shelf_core::service::{self, ServiceSpec};
 use std::sync::Arc;
@@ -46,6 +49,23 @@ impl State {
             Err(e) => eprintln!("[ink-serve] {uuid}: {e}"),
         }
     }
+}
+
+/// 浏览态动作：`Mined→Pending`（转入笔记）/ `Mined→Skipped`（不需要），见 `notecore::model::Entry::set_triage`。
+fn triage(s: &State, r: &mut Request<'_>, target: Status) -> ApiResult {
+    let (uuid, id) = (r.param("uuid").to_string(), r.param("id").to_string());
+    if s.db.load(&uuid).is_none() {
+        return Err(ApiError::not_found("没有这本书的条目"));
+    }
+    let now = shelf_core::clock::now_secs();
+    let outcome = s.db.update(&uuid, || Default::default(), |b| b.entries.iter_mut().find(|e| e.id == id).map(|e| e.set_triage(target, now))).map_err(ApiError::internal)?;
+    match outcome {
+        None => return Err(ApiError::not_found("没有这条目")),
+        Some(Err(e)) => return Err(ApiError::bad(e)),
+        Some(Ok(())) => {}
+    }
+    s.bus.publish("notes", "entries");
+    Ok(Reply::ok(&serde_json::json!({"ok": true})))
 }
 
 fn main() {
@@ -145,6 +165,8 @@ fn main() {
             s.bus.publish("notes", "entries");
             Ok(Reply::ok(&serde_json::json!({"ok": true})))
         }))
+        .post("/books/{uuid}/entries/{id}/request", bind(&st, |s, r| triage(s, r, Status::Pending)))
+        .post("/books/{uuid}/entries/{id}/skip", bind(&st, |s, r| triage(s, r, Status::Skipped)))
         .put("/books/{uuid}/sections", bind(&st, |s, r| {
             let uuid = r.param("uuid").to_string();
             let secs: Vec<Section> = serde_json::from_value(r.json()?.0.get("sections").cloned().unwrap_or_default()).map_err(|e| ApiError::bad(format!("sections 形状不对: {e}")))?;

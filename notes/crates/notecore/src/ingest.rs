@@ -108,7 +108,7 @@ pub fn merge_page(entries: &mut Vec<Entry>, ctx: &PageCtx, drafts: Vec<PageDraft
                     style: Style::Body,
                     section: None,
                     answer: None,
-                    status: Status::Pending,
+                    status: Status::Mined, // 只是探测到，还没被用户要求转笔记——见浏览态设计（2026-09-07 二期）
                     created: ctx.now,
                     updated: ctx.now,
                 });

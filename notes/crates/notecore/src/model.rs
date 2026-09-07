@@ -61,13 +61,19 @@ impl Style {
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum Status {
-    /// 有手写、还没转写。
+    /// ink-serve 刚探测到（有画线/手写），还没被用户要求转笔记——**不会**被自动转写。
+    /// 2026-09-07 二期定案：探测（挖到了）与转笔记（真想要）拆成两个独立动作，见浏览态设计；
+    /// 之前版本摄取时给的初始态是 `Pending`，现在收窄到"用户在浏览列表点了『转入笔记』才算数"。
     #[default]
+    Mined,
+    /// 用户点了「转入笔记」，等转写。
     Pending,
     /// 有转写草稿、等人校对。
     Draft,
     /// 人已定稿（`text` 有值）。
     Reviewed,
+    /// 用户在浏览列表点了「不需要」——跟 `Mined` 一样不会被自动转写，区别只是不再出现在待办列表里。
+    Skipped,
     /// 笔画已从书页删除（不物理删，留痕）。
     Revoked,
 }
@@ -147,9 +153,22 @@ impl Entry {
     pub fn display_text(&self) -> Option<&str> {
         self.text.as_deref().or_else(|| self.drafts.first().map(|d| d.text.as_str()))
     }
-    /// 指纹已变、还没有对应新指纹的草稿 → 需要（再）转写。
+    /// 指纹已变、还没有对应新指纹的草稿 → 需要（再）转写。**只认用户已经表态要转的条目**
+    /// （`Mined`/`Skipped` 都不算——探测到不等于想转笔记，见浏览态设计，2026-09-07 二期）；
+    /// 已经在 `Pending`/`Draft`/`Reviewed` 的条目如果笔画又变了（补了几笔），仍然继续认，
+    /// 不会因为已经校对过就不再建议新草稿（校对文本本身不会被覆盖，见增量规则）。
     pub fn needs_transcribe(&self) -> bool {
-        matches!((&self.ink, self.status), (Some(ink), s) if s != Status::Revoked && !self.drafts.iter().any(|d| d.hash == ink.hash))
+        matches!((&self.ink, self.status), (Some(ink), s) if !matches!(s, Status::Revoked | Status::Mined | Status::Skipped) && !self.drafts.iter().any(|d| d.hash == ink.hash))
+    }
+    /// 浏览态动作：转成 `Pending`（转入笔记）或 `Skipped`（不需要）。已撤销的条目笔画都没了，
+    /// 操作没有意义，拒绝。
+    pub fn set_triage(&mut self, target: Status, now: u64) -> Result<(), String> {
+        if self.status == Status::Revoked {
+            return Err("这条已撤销，笔画不在了，不能操作".into());
+        }
+        self.status = target;
+        self.updated = now;
+        Ok(())
     }
 }
 
@@ -240,10 +259,31 @@ mod tests {
         e.drafts.push(Draft { text: "你好".into(), backend: "qwen".into(), at: 1, hash: "h".into() });
         assert_eq!(e.display_text(), Some("你好"));
         e.text = Some("您好".into());
+        e.status = Status::Reviewed; // 已经有草稿+校对文本，说明这条早就被请求过、不再是 Mined 了
         assert_eq!(e.display_text(), Some("您好"), "校对文本压过草稿");
         e.ink = Some(Ink { strokes: vec![], bbox: (0.0, 0.0, 0.0, 0.0), hash: "h".into(), crop: String::new() });
         assert!(!e.needs_transcribe(), "草稿指纹与簇指纹一致");
         e.ink.as_mut().unwrap().hash = "h2".into();
-        assert!(e.needs_transcribe(), "簇变了要再转写（作为建议，不动 text）");
+        assert!(e.needs_transcribe(), "簇变了要再转写（作为建议，不动 text）：已经在 Reviewed 态，笔画再变仍然要再认");
+        e.status = Status::Mined;
+        assert!(!e.needs_transcribe(), "但如果这条从没被请求过（Mined），笔画再怎么变也不自动转写");
+    }
+
+    #[test]
+    fn set_triage_moves_mined_to_pending_or_skipped_but_refuses_revoked() {
+        let mut e: Entry = serde_json::from_str(r#"{"id":"e","page":"p","page_index":0,"created":0,"updated":0}"#).unwrap();
+        assert_eq!(e.status, Status::Mined, "缺省态就是 Mined");
+
+        e.set_triage(Status::Pending, 10).unwrap();
+        assert_eq!((e.status, e.updated), (Status::Pending, 10), "转入笔记");
+
+        e.status = Status::Mined;
+        e.set_triage(Status::Skipped, 20).unwrap();
+        assert_eq!((e.status, e.updated), (Status::Skipped, 20), "不需要");
+
+        e.status = Status::Revoked;
+        let err = e.set_triage(Status::Pending, 30).unwrap_err();
+        assert!(err.contains("已撤销"));
+        assert_eq!(e.status, Status::Revoked, "拒绝后状态不变");
     }
 }
