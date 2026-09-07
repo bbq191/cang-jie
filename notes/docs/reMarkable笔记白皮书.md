@@ -21,7 +21,7 @@
 
 ![notes 数据流：四步闭环](diagrams/data-flow.svg)
 
-**真机现状（2026-09-07 汇总，历史逐轮记录见 §03c–§03k）**：设备 3.28.0.172，WiFi 直连（IP 是 DHCP 分配的，每次连不一定一样，别死记）。三服务 `active`，注册表 8 项（书架 5 + 笔记 3）。ink-serve 已摄取真实勾画+手写样本，聚簇/配对/裁图坐标全部真机验证有效（§03f/§03g）。transcribe-serve key 已配置、真调过模型，转写准确率还在打磨（§03g）。note-serve：写入/打包/上传三件套 + 全部 7 种打字样式两轮真机验证通过（§03h/§03i）；条目库→一章一本的生成编排**三轮真机验证通过**（首次生成、增量重传+旧本自动进回收站、无变化跳过，§03k）——但网页「笔记」tab 还点不了「生成」（路由已开、前端未接，目前只能 curl/wget 手动触发），且《书名》文件夹自动创建还没做（新书首次生成落库根）。**未目视**：手机网页笔记页/转写区完整交互流程（用户看）。
+**真机现状（2026-09-07 汇总，历史逐轮记录见 §03c–§03l）**：设备 3.28.0.172，WiFi 直连（IP 是 DHCP 分配的，每次连不一定一样，别死记）。三服务 `active`，注册表 8 项（书架 5 + 笔记 3）。ink-serve 已摄取真实勾画+手写样本，聚簇/配对/裁图坐标全部真机验证有效（§03f/§03g）。transcribe-serve key 已配置、真调过模型，转写准确率还在打磨（§03g）。note-serve：写入/打包/上传三件套 + 全部 7 种打字样式两轮真机验证通过（§03h/§03i）；条目库→一章一本的生成编排**三轮真机验证通过**（首次生成、增量重传+旧本自动进回收站、无变化跳过，§03k）；《书名》文件夹自动创建**也真机验证通过**（`shelf-mkdir-agent.qmd` + `book-serve::mkdir`，§03l）——目前只剩网页「笔记」tab 还点不了「生成」（路由已开、前端未接，目前只能 curl/wget 手动触发）。**未目视**：手机网页笔记页/转写区完整交互流程（用户看）。
 
 **代码落点**：`crates/rmv6`（`lib.rs` 低层 `RmFile::read` / `page.rs` 高层 `Page{strokes,highlights,text}` + `BBox` / `write.rs` 写 `RootTextBlock` + 模板替换拼 `.rm`，§03h）· `crates/epubmap`（`index.rs` 两张表取首现 / `toc.rs` nav→ncx 两策略 / `lib.rs` `BookMap::chapter_of`）· `crates/notecore`（`model` 条目/分区/样式/状态 · `hash` FNV 簇指纹与条目 id · `geom` 聚簇/配对 · `ingest` 增量合并 · `marker` 行首标记 OCR 兜底 · `project` 条目库→段落列表投影+变更指纹，§03j）· `services/ink-serve`（`doc.rs` 书库只读视图 / `ingest.rs` 变更页编排 / `crop.rs` 页坐标→缩略图像素 / `bookdb.rs` Repository / `config.rs` 阈值与几何 / `main.rs` 路由+监听）· `services/transcribe-serve`（`config` key 与节制参数 / `backend` `Vision` Strategy + `OpenAiCompat` / `prompt` / `ledger` 用量账本 / `ink` `EntryStore` 客户端 / `worker` 一轮编排 / `main.rs` SSE 订阅 + 防抖工作线程）· `services/note-serve`（`rmdoc.rs` 打包 `.rmdoc` + 生产模板常量 / `config.rs` xochitl host/超时/文件夹命名 / `ink.rs` 只读 `EntryStore` 客户端 / `trash.rs` 跨服务调 book-serve 回收站队列 / `notebooks.rs` 每章生成记录簿记 / `publish.rs` `Uploader` Strategy + `generate_chapter/generate_book` 编排，§03j / `main.rs` 路由）· 网关 `ui/app.js` `renderNotes`（尚未接"生成笔记本"按钮）· `shelf/{build,deploy,install,uninstall}.sh` 的 `NOTES_BINS`/令牌。
 
@@ -227,6 +227,17 @@ note-serve 投影要往设备写打字文本，rmv6 之前是纯只读解析。�
 
 **仍是已知缺口，没打算这次解决**：《书名》文件夹自动创建（`shelf-trash-agent.qmd` 扩成 `{action: trash|mkdir}` 通用代理，§05 第 5 项）；生成按钮还没接进网页「笔记」tab（现在只能用 curl/wget 手动触发 `POST /generate`）。
 
+## 03l｜建夹代理：《书名》文件夹自动创建（2026-09-07，真机验证通过）
+
+§03j 记的已知缺口——目标文件夹不存在时新文档落库根——这次补上了。**QML 反编译 + `book-serve::mkdir` 队列 + `shelf/xovi/shelf-mkdir-agent.qmd` 的完整设计、反编译过程与真机验证记在 `shelf/docs/reMarkable书架白皮书.md`**（书架那条"原生建文件夹代理"段落）——按 §01 的分工原则，qmd/book-serve 是书架的机制，笔记线这边只记 note-serve 这半：
+
+- `note-serve::publish::Uploader` trait 新增 `ensure_folder(folder_name)`：`generate_chapter` 打包完、上传前调用，fire-and-forget（不等待、不阻塞、失败只记日志）。生产实现 `XochitlUploader::ensure_folder` 先查文件夹是否已存在（`Xochitl::find_folder`），存在就什么都不做；不存在才请求 `note-serve::mkdir::BookServeMkdir`（跨服务 HTTP 调 `book-serve POST /mkdir/add`，跟 `trash.rs` 同一套路）。
+- 4 个新离线测试（`ensure_folder_calls` 断言：上传前必调、空章不调）+ book-serve `mkdir.rs` 5 个测试（去重/已存在不入队/`pending()` 剔除），`cargo test --workspace` 两个仓库都零警告全绿。
+- **真机验证（同日，跟《人骨拼圖》真实条目一起做的）**：改一条已校对文本触发重生成 → `ensure_folder` 正确请求建夹 → `book-serve /mkdir` 队列即时出现《人骨拼圖》→ MainView 的 8 s 轮询代理把文件夹建出来 → **再生成一次，新文档正确落进这个文件夹**（旧的、建夹前生成的那份原样留在根目录，不会被追加挪动，这是设计内行为）；重复触发不产生重名文件夹。全程五个 notes/shelf 服务 + xochitl 健康检查干净（`NRestarts=0`）。
+- **一个真机操作教训**（记在这里，不是这次代码的问题）：`/home/root/xovi/start` 第一次跑完显示 `Job for xochitl.service canceled`，事后核对 `/etc/systemd/system/xochitl.service.d/` 是空的（LD_PRELOAD 等一个都没进新进程的环境），本机没装 `xovi-reenable.service`、纯 vellum tmpfs 机制这次没吃上；**原地重跑一次干净成功**。以后跑完 `xovi/start` 别只看 `systemctl is-active`（进程会正常起、只是没挂 xovi，qmd 全部形同虚设且不报错），要核对新 PID 的 `LD_PRELOAD`/`XOVI_ROOT` 环境变量（`tr '\0' '\n' < /proc/<pid>/environ | grep -E 'LD_PRELOAD|XOVI'`）。
+
+**仍是已知缺口**：网页「笔记」tab 还没有「生成笔记本」按钮（§05 第 4 项剩的那半）；`Library.createCollection` 重复调用传同名文件夹会不会建出两个重名文件夹这条风险，本轮验证走的是"add()/pending() 两层不重复请求"的正常路径，没有刻意去撞"两次并发请求建同名夹"这种边界，留意但不阻塞。
+
 ## 04｜踩坑
 
 - **外部进程直改 `.metadata` `parent="trash"` 会被运行中 xochitl 覆写**（阅读线判死）；软删/建夹只能走 QML 代理（书架 `shelf-trash-agent.qmd`）。
@@ -244,11 +255,11 @@ note-serve 投影要往设备写打字文本，rmv6 之前是纯只读解析。�
 2. ~~NumberedList 补样本~~ ✅ 用户真机核对时一并补了：那 7 字节根本不属于 NumberedList，是分析失误，已更正、已解除限制（§03i）。
 3. ~~rmdoc 打包器 + 真机小范围验证~~ ✅ 2026-09-07 当场做完两轮：全部 7 种打字样式真机上传+渲染验证通过（§03h/§03i）。
 4. ~~note-serve 条目→文档编排~~ ✅ 2026-09-07 当晚三轮真机验证通过：首次生成（渲染全对）、改文本增量重传+旧本自动进回收站（`shelf-trash-agent.qmd` 全自动消费队列，没人手动点）、无变化跳过（见 §03k）。**剩的是前端接线**：网页「笔记」tab 还没有「生成笔记本」按钮，目前只能 curl/wget 手动触发 `POST /books/{uuid}/chapters/{idx}/generate`。
-5. 书库动作代理扩展：`shelf-trash-agent.qmd` → 通用 `{action: trash|mkdir}` 队列，`Library.createCollection` 建《书名》夹（现在新书首次生成落库根，人工挪一次之后就找得到）；先离线 `apply-diffs` 再上机。
+5. ~~书库动作代理扩展~~ ✅ 2026-09-07 真机验证通过：新增独立 `shelf-mkdir-agent.qmd`（锚点 MainView 而非 Sidebar，见 §03l 为什么不是"扩展"而是新文件）+ book-serve `mkdir.rs`，`Library.createCollection` 建《书名》夹真机确认能建、能落对、不重复。
 6. mind-serve：按分区跑文本模型（简述 = 提示词，`ai=false` 跳过），`answer` 写回再投影。
 7. md 导出 `vault/<书名>/第N章.md`（front-matter、`^id` 块锚、`[[书名]]` 反链、索引页）+ host `notes/host/bin/notes pull`。
 8. 文档收尾、旧 PKM 白皮书加"已退役、由 notes/ 取代"头注、`dev` 以 `--no-ff` 合入 `feature/shelf-p1`。
 
-**已闭环（真机）**：§03c ink-serve 首轮（active/注册/追平 38 章）· §03d 「笔记」tab 注册 · §03e transcribe-serve 部署（active/注册/0600/追平记 note）· §03f 步骤 0 样本标定（聚簇/配对阈值验证通过）· §03g 揪出裁图画布尺寸错（960×1280）并修复部署复验（3 条有勾画的条目裁图都对准了手写位置，但转写准确率另计——2 条数字被认错、1 条完全读错；1 条裁不到已优雅降级）· §03h `rmv6::write`/`note-serve::rmdoc`/上传三件套首次真机验证通过 · §03i 更正 NUMBERED 误判、解出 Subheading 1/2 区分开关、二次真机验证全部 7 种打字样式渲染正确 · §03j/§03k note-serve 生成编排离线写完当晚三轮真机验证通过（生成/增量重传+旧本自动回收/无变化跳过全绿）。离线：五 crate+服务 **51** 测。
+**已闭环（真机）**：§03c ink-serve 首轮（active/注册/追平 38 章）· §03d 「笔记」tab 注册 · §03e transcribe-serve 部署（active/注册/0600/追平记 note）· §03f 步骤 0 样本标定（聚簇/配对阈值验证通过）· §03g 揪出裁图画布尺寸错（960×1280）并修复部署复验（3 条有勾画的条目裁图都对准了手写位置，但转写准确率另计——2 条数字被认错、1 条完全读错；1 条裁不到已优雅降级）· §03h `rmv6::write`/`note-serve::rmdoc`/上传三件套首次真机验证通过 · §03i 更正 NUMBERED 误判、解出 Subheading 1/2 区分开关、二次真机验证全部 7 种打字样式渲染正确 · §03j/§03k note-serve 生成编排离线写完当晚三轮真机验证通过（生成/增量重传+旧本自动回收/无变化跳过全绿）· §03l 建夹代理真机验证通过（《书名》文件夹自动创建、新文档正确落进去、不重复建夹）。离线：五 crate+服务 **51** 测。
 
 **明确不做（本期）**：扫描件 PDF、定稿 PDF（等步骤 0 ④）、笔记本手写批注回读（设备只读）、颜色语义（只进 tags）、自动清空回收站（网页按钮走 `emptyTrash()` 用户显式点）、Anki/Todoist/Readwise 外发（有 md 与稳定 id 之后再谈）、KOReader 高亮回流（书架砍下来留给笔记线，排在导出之后）。

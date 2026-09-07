@@ -5,9 +5,10 @@
 //! 且这次真的换了新文档，旧版本入 `book-serve` 回收站队列 → 记新记录（`notebooks.rs`）。
 //! 一章失败不影响其它章；旧版本入队失败也不算这一章失败（新文档已经生成好了，旧的多留一份不是数据丢失）。
 //!
-//! ⚠️ 已知缺口（不是这次的阻塞项，留给"代理扩展 mkdir"那一步）：`Xochitl::upload` 在目标文件夹不存在时
-//! best-effort 落书库根——本模块目前不会自动建《书名》文件夹，一本新书第一次生成前，文件夹要么已经手动建过，
-//! 要么第一份文档会落进根目录（人工挪一次即可，往后同名文件夹就找得到了）。
+//! 目标文件夹不存在时 `Xochitl::upload` 本身会 best-effort 落书库根——`generate_chapter` 上传前先调
+//! `Uploader::ensure_folder` 请求建夹代理创建（2026-09-07 补，见 `mkdir.rs`/`shelf-mkdir-agent.qmd`）：
+//! fire-and-forget，不等待、不影响本次结果，这次大概率还是落根目录，下次这本书再生成别的章节时
+//! 文件夹多半已经建好了。
 use crate::config::NoteConfig;
 use crate::ink::EntryStore;
 use crate::notebooks::{ChapterRecord, NotebookState};
@@ -18,12 +19,15 @@ use notecore::project::{fingerprint_chapter, project_chapter};
 use rmv6::write::build_page_rm;
 use serde::Serialize;
 
-/// 传书 + 认领两件事的抽象；生产实现包一层 `shelf_core::xochitl::Xochitl`，测试用内存桩——不真的碰网络。
+/// 传书 + 认领 + 建夹三件事的抽象；生产实现包一层 `shelf_core::xochitl::Xochitl`，测试用内存桩——不真的碰网络。
 pub trait Uploader: Send + Sync {
     /// 上传一份 `.rmdoc`，进 `folder_name`（找不到该文件夹 → best-effort 落书库根）。
     fn upload(&self, bytes: &[u8], filename: &str, folder_name: &str) -> Result<(), String>;
     /// 找 `createdTime >= since_ms` 且 `visibleName == visible_name` 的文档，返回设备分配的新 uuid。
     fn claim(&self, visible_name: &str, since_ms: u64) -> Result<String, String>;
+    /// 确保 `folder_name` 存在；不存在就请求建夹代理创建。fire-and-forget——生产实现判断"已存在就不
+    /// 重复请求"，失败只记日志不影响本次上传；缺省空实现方便不关心这件事的测试桩少写一个方法。
+    fn ensure_folder(&self, _folder_name: &str) {}
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize)]
@@ -76,6 +80,7 @@ pub fn generate_chapter(c: &Ctx, book: &Book, idx: usize) -> ChapterResult {
         let visible_name = format!("第{}章 {}", idx + 1, title);
         let folder = c.cfg.folder_name(&book.title);
         let bytes = rmdoc::pack(&doc_uuid, &visible_name, "", &page, rmdoc::TEMPLATE_AUTHOR, c.now_ms)?;
+        c.uploader.ensure_folder(&folder);
         c.uploader.upload(&bytes, &format!("{doc_uuid}.rmdoc"), &folder)?;
         let new_uuid = c.uploader.claim(&visible_name, c.now_ms)?;
         if let Some(old) = &existing {
@@ -102,25 +107,36 @@ pub fn generate_book(c: &Ctx, book_uuid: &str) -> Result<Vec<ChapterResult>, Str
     Ok((0..book.chapters.len()).map(|i| generate_chapter(c, &book, i)).collect())
 }
 
-/// 生产实现：包一层 `shelf_core::xochitl::Xochitl`。
-pub struct XochitlUploader(shelf_core::xochitl::Xochitl);
+/// 生产实现：包一层 `shelf_core::xochitl::Xochitl` + 建夹代理客户端。
+pub struct XochitlUploader {
+    xochitl: shelf_core::xochitl::Xochitl,
+    mkdir: Box<dyn crate::mkdir::MkdirSink>,
+}
 
 impl XochitlUploader {
-    pub fn new(host: &str, library_dir: &std::path::Path, timeout_secs: u64) -> XochitlUploader {
-        XochitlUploader(shelf_core::xochitl::Xochitl::new(host, library_dir, timeout_secs))
+    pub fn new(host: &str, library_dir: &std::path::Path, timeout_secs: u64, mkdir: Box<dyn crate::mkdir::MkdirSink>) -> XochitlUploader {
+        XochitlUploader { xochitl: shelf_core::xochitl::Xochitl::new(host, library_dir, timeout_secs), mkdir }
     }
 }
 
 impl Uploader for XochitlUploader {
     fn upload(&self, bytes: &[u8], filename: &str, folder_name: &str) -> Result<(), String> {
-        self.0.upload(bytes, filename, "application/zip", folder_name).map(|_| ())
+        self.xochitl.upload(bytes, filename, "application/zip", folder_name).map(|_| ())
     }
     fn claim(&self, visible_name: &str, since_ms: u64) -> Result<String, String> {
-        shelf_core::xochitl::find_documents_since(self.0.library_dir(), since_ms)
+        shelf_core::xochitl::find_documents_since(self.xochitl.library_dir(), since_ms)
             .into_iter()
             .find(|d| d.visible_name == visible_name)
             .map(|d| d.uuid)
             .ok_or_else(|| format!("上传后没能在书库里认领到《{visible_name}》（createdTime>={since_ms}），也许还没渲染完，稍后在网页重试"))
+    }
+    fn ensure_folder(&self, folder_name: &str) {
+        if folder_name.is_empty() || self.xochitl.find_folder(folder_name).is_some() {
+            return; // 空名（落根目录）或已存在，都不用建
+        }
+        if let Err(e) = self.mkdir.request(folder_name) {
+            eprintln!("[note-serve] 请求建夹《{folder_name}》失败（不阻塞本次上传，这次大概率落根目录）: {e}");
+        }
     }
 }
 
@@ -144,6 +160,7 @@ mod tests {
     #[derive(Default)]
     struct FakeUploader {
         uploads: Mutex<Vec<(String, String)>>, // (filename, folder)
+        ensure_folder_calls: Mutex<Vec<String>>,
         fail_upload: Mutex<bool>,
         fail_claim: Mutex<bool>,
     }
@@ -160,6 +177,9 @@ mod tests {
                 return Err("模拟认领失败".into());
             }
             Ok(format!("claimed-{visible_name}-{since_ms}"))
+        }
+        fn ensure_folder(&self, folder_name: &str) {
+            self.ensure_folder_calls.lock().unwrap().push(folder_name.to_string());
         }
     }
 
@@ -211,6 +231,7 @@ mod tests {
         assert_eq!(results[1].outcome, ChapterOutcome::Empty, "空章没条目");
         assert_eq!(uploader.uploads.lock().unwrap().len(), 1);
         assert_eq!(uploader.uploads.lock().unwrap()[0].1, "《人骨拼图》");
+        assert_eq!(uploader.ensure_folder_calls.lock().unwrap().as_slice(), ["《人骨拼图》"], "上传前应该先请求确保文件夹存在，空章不应该调（没走到上传那步）");
         assert!(trash.0.lock().unwrap().is_empty(), "第一次生成没有旧版本要清");
 
         // 再跑一遍、书没变 → 不重传

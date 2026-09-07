@@ -155,12 +155,24 @@ case " $SEL " in *" font "*)
     ;;
 esac
 
-# ── 3c2. 原生回收站代理 qmd（选了 book 才做；qrr 目录在才装）：shelf doctor --render 的探针量完自动进回收站 ──
+# ── 3c2. 原生回收站代理 qmd（选了 book 才做；qrr 目录在才装）：shelf doctor --render 探针 + note-serve
+#         生成笔记本的旧版本回收都走这条队列（book-serve /trash/*，Sidebar 注入）──
 case " $SEL " in *" book "*)
     QRR="$HOME_DIR/xovi/exthome/qt-resource-rebuilder"
     if [ -d "$QRR" ] && [ -f "$SRC/xovi/shelf-trash-agent.qmd" ]; then
         cp "$SRC/xovi/shelf-trash-agent.qmd" "$QRR/shelf-trash-agent.qmd"
         echo "-- 回收站代理 qmd 已放 $QRR/（3.28 锚点）—— 生效同样需 $HOME_DIR/xovi/start 一次"
+    fi
+    ;;
+esac
+
+# ── 3c3. 原生建文件夹代理 qmd（选了 book 才做；qrr 目录在才装）：note-serve 生成《书名》一章一本时
+#         目标文件夹不存在，靠这条队列（book-serve /mkdir/*，MainView 注入）建出来 ──
+case " $SEL " in *" book "*)
+    QRR="$HOME_DIR/xovi/exthome/qt-resource-rebuilder"
+    if [ -d "$QRR" ] && [ -f "$SRC/xovi/shelf-mkdir-agent.qmd" ]; then
+        cp "$SRC/xovi/shelf-mkdir-agent.qmd" "$QRR/shelf-mkdir-agent.qmd"
+        echo "-- 建夹代理 qmd 已放 $QRR/（3.28 锚点）—— 生效同样需 $HOME_DIR/xovi/start 一次"
     fi
     ;;
 esac

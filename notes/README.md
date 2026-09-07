@@ -60,7 +60,7 @@ notes/
 ├── crates/notecore/                   领域核心（纯函数）：model 条目/分区 · hash FNV 簇指纹 · geom 聚簇+配对 · ingest 增量合并 · marker 行首标记 OCR 兜底
 ├── services/ink-serve/                矿：doc(书库只读视图) · ingest(变更页编排) · crop(页坐标→缩略图像素) · bookdb(Repository) · config · main(路由+监听)
 ├── services/transcribe-serve/         转写：config(key/节制) · backend(Vision Strategy + OpenAiCompat) · prompt · ledger(用量) · ink(EntryStore 客户端) · worker(一轮编排) · main(SSE 订阅+防抖)
-├── services/note-serve/               本：注册「笔记」tab；rmdoc.rs 打包 .rmdoc（上传复用 shelf-core::xochitl）；config/ink/trash/notebooks/publish 生成编排（真机验证通过，网页按钮待接）
+├── services/note-serve/               本：注册「笔记」tab；rmdoc.rs 打包 .rmdoc（上传复用 shelf-core::xochitl）；config/ink/trash/mkdir/notebooks/publish 生成编排+建夹（真机验证通过，网页按钮待接）
 ├── systemd/                           三个 .service（PartOf=shelf.target；随书架 install.sh 装）
 ├── host/                              待建：CLI `notes pull`（md 同步到 Obsidian vault）
 ├── testdata/renggu/                   真机 fixture（《人骨拼圖》墓碑页 .rm，测"解析成功零条目"）· renggu_marks/（同书真实勾画+手写）· seven_styles/（笔记本一页七样式，rmv6::write 模板）
@@ -114,4 +114,5 @@ ssh root@<设备IP> sh /home/root/shelf-pkg/shelf/install.sh --only ink,transcri
 | 步骤 0 | 真机样本标定阈值/页几何/样式码 | ✅ 2026-09-07：聚簇/配对阈值验证通过、NumberedList 码=10（§03f）；★页坐标画布尺寸原假设是错的，真机反测坐实 960×1280、已修复部署复验（§03g） |
 | 写入底座 | rmv6::write 编 RootTextBlock（全部 7 种打字样式）+ note-serve::rmdoc 打包 `.rmdoc` + 上传（复用 shelf-core::xochitl） | ✅ 真机验证通过（2026-09-07 两轮：Subheading 1/2 区分开关、NumberedList 自动编号，§03h/§03i） |
 | 生成编排 | `notecore::project` 投影一章 + 变更指纹 · `note-serve::publish` 上传/认领/旧本回收编排（Strategy trait 全桩单测） | ✅ 真机验证通过（2026-09-07 当晚三轮：生成/增量重传+旧本自动进回收站/无变化跳过，§03j/§03k） |
-| 脑 / 导出 | 代理 mkdir 扩展（《书名》夹自动建）· 网页「生成」按钮 · mind-serve · md + `notes pull` | ⏳ 待建（§05） |
+| 建夹代理 | `shelf-mkdir-agent.qmd`（MainView 锚点）+ book-serve `mkdir.rs`，《书名》文件夹缺失时自动建 | ✅ 真机验证通过（§03l） |
+| 脑 / 导出 | 网页「生成」按钮 · mind-serve · md + `notes pull` | ⏳ 待建（§05） |

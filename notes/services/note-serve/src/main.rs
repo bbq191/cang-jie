@@ -7,6 +7,7 @@
 //! `POST /books/{uuid}/generate`（全书重新投影+按需上传）· `POST /books/{uuid}/chapters/{idx}/generate`（单章）。
 mod config;
 mod ink;
+mod mkdir;
 mod notebooks;
 mod publish;
 mod rmdoc;
@@ -14,6 +15,7 @@ mod trash;
 
 use config::NoteConfig;
 use ink::{EntryStore, InkHttp};
+use mkdir::BookServeMkdir;
 use notebooks::NotebookState;
 use publish::{generate_book, generate_chapter, ChapterResult, Ctx, Uploader, XochitlUploader};
 use shelf_core::events::EventBus;
@@ -61,7 +63,7 @@ fn main() {
         eprintln!("[note-serve] 建目录失败: {e}");
         std::process::exit(1);
     }
-    let uploader = XochitlUploader::new(&cfg.xochitl_host, &paths.xochitl_dir(), cfg.upload_timeout_secs);
+    let uploader = XochitlUploader::new(&cfg.xochitl_host, &paths.xochitl_dir(), cfg.upload_timeout_secs, Box::new(BookServeMkdir::new(paths.clone())));
     let st = Arc::new(State {
         store: Box::new(InkHttp::new(paths.clone())),
         uploader: Box::new(uploader),
