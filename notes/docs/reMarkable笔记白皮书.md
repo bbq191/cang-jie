@@ -13,7 +13,7 @@
 
 ## 00b｜现状总览（2026-09-07 刷新，读其余历史节前先看这里）
 
-**架构**：书架网关 `manage::MODULES` 加三行（`ink`/`transcribe`/`notes`）；三个 loopback 服务已上机——**ink-serve 矿 8795**（书库监听 → 条目库唯一写者，零网络）· **transcribe-serve 转写 8796**（订阅矿的事件 → 裁图喂视觉模型 → 草稿写回，唯一出网）· **note-serve 本 8798**（注册「笔记」tab；写入/打包/上传三件套 + 条目→文档生成编排都已写完且离线单测全绿，见 §03j；⚠ 生成编排本身尚未真机跑过，跟已经两轮真机验证过的写入器/打包器不是一回事）；**mind-serve 脑 8797 待建**。网页只多一个「笔记」tab（前端组合 `/api/ink` `/api/transcribe` `/api/notes`），事件区域 `notes`（矿发 `entries`/`sections`，转写发 `transcribe`）经网关 `Hub` 汇聚到 `/api/events`，页面零轮询。**笔记线零 xovi 依赖**（无 qmd、无 .so；将来建《书名》文件夹走书架的 Sidebar 代理 qmd，依赖仍留在书架那一份）。
+**架构**：书架网关 `manage::MODULES` 加三行（`ink`/`transcribe`/`notes`）；三个 loopback 服务已上机——**ink-serve 矿 8795**（书库监听 → 条目库唯一写者，零网络）· **transcribe-serve 转写 8796**（订阅矿的事件 → 裁图喂视觉模型 → 草稿写回，唯一出网）· **note-serve 本 8798**（注册「笔记」tab；写入/打包/上传三件套 + 条目→文档生成编排**全部真机验证通过**，含旧版本自动软删闭环，见 §03h/§03i/§03j/§03k）；**mind-serve 脑 8797 待建**。网页只多一个「笔记」tab（前端组合 `/api/ink` `/api/transcribe` `/api/notes`），事件区域 `notes`（矿发 `entries`/`sections`，转写发 `transcribe`）经网关 `Hub` 汇聚到 `/api/events`，页面零轮询。**笔记线零 xovi 依赖**（无 qmd、无 .so；将来建《书名》文件夹走书架的 Sidebar 代理 qmd，依赖仍留在书架那一份）。
 
 ![notes 架构：条目库唯一写者 = ink-serve](diagrams/architecture.svg)
 
@@ -21,13 +21,13 @@
 
 ![notes 数据流：四步闭环](diagrams/data-flow.svg)
 
-**真机现状（2026-09-07 汇总，历史逐轮记录见 §03c–§03j）**：设备 3.28.0.172，WiFi 直连（IP 是 DHCP 分配的，每次连不一定一样，别死记）。三服务 `active`，注册表 8 项（书架 5 + 笔记 3）。ink-serve 已摄取真实勾画+手写样本，聚簇/配对/裁图坐标全部真机验证有效（§03f/§03g）。transcribe-serve key 已配置、真调过模型，转写准确率还在打磨（§03g）。note-serve：`rmv6::write`/`rmdoc`/上传三件套 + 全部 7 种打字样式两轮真机验证通过（§03h/§03i）；条目库→一章一本的生成编排代码已写完、离线单测全绿（§03j），**但还没有一次真机调用**——网页还点不了「生成」（路由已开但前端未接），尚无法从网页一键生成设备笔记本。**未目视**：手机网页笔记页/转写区完整交互流程（用户看）。
+**真机现状（2026-09-07 汇总，历史逐轮记录见 §03c–§03k）**：设备 3.28.0.172，WiFi 直连（IP 是 DHCP 分配的，每次连不一定一样，别死记）。三服务 `active`，注册表 8 项（书架 5 + 笔记 3）。ink-serve 已摄取真实勾画+手写样本，聚簇/配对/裁图坐标全部真机验证有效（§03f/§03g）。transcribe-serve key 已配置、真调过模型，转写准确率还在打磨（§03g）。note-serve：写入/打包/上传三件套 + 全部 7 种打字样式两轮真机验证通过（§03h/§03i）；条目库→一章一本的生成编排**三轮真机验证通过**（首次生成、增量重传+旧本自动进回收站、无变化跳过，§03k）——但网页「笔记」tab 还点不了「生成」（路由已开、前端未接，目前只能 curl/wget 手动触发），且《书名》文件夹自动创建还没做（新书首次生成落库根）。**未目视**：手机网页笔记页/转写区完整交互流程（用户看）。
 
 **代码落点**：`crates/rmv6`（`lib.rs` 低层 `RmFile::read` / `page.rs` 高层 `Page{strokes,highlights,text}` + `BBox` / `write.rs` 写 `RootTextBlock` + 模板替换拼 `.rm`，§03h）· `crates/epubmap`（`index.rs` 两张表取首现 / `toc.rs` nav→ncx 两策略 / `lib.rs` `BookMap::chapter_of`）· `crates/notecore`（`model` 条目/分区/样式/状态 · `hash` FNV 簇指纹与条目 id · `geom` 聚簇/配对 · `ingest` 增量合并 · `marker` 行首标记 OCR 兜底 · `project` 条目库→段落列表投影+变更指纹，§03j）· `services/ink-serve`（`doc.rs` 书库只读视图 / `ingest.rs` 变更页编排 / `crop.rs` 页坐标→缩略图像素 / `bookdb.rs` Repository / `config.rs` 阈值与几何 / `main.rs` 路由+监听）· `services/transcribe-serve`（`config` key 与节制参数 / `backend` `Vision` Strategy + `OpenAiCompat` / `prompt` / `ledger` 用量账本 / `ink` `EntryStore` 客户端 / `worker` 一轮编排 / `main.rs` SSE 订阅 + 防抖工作线程）· `services/note-serve`（`rmdoc.rs` 打包 `.rmdoc` + 生产模板常量 / `config.rs` xochitl host/超时/文件夹命名 / `ink.rs` 只读 `EntryStore` 客户端 / `trash.rs` 跨服务调 book-serve 回收站队列 / `notebooks.rs` 每章生成记录簿记 / `publish.rs` `Uploader` Strategy + `generate_chapter/generate_book` 编排，§03j / `main.rs` 路由）· 网关 `ui/app.js` `renderNotes`（尚未接"生成笔记本"按钮）· `shelf/{build,deploy,install,uninstall}.sh` 的 `NOTES_BINS`/令牌。
 
 **离线门槛**：`cargo test --workspace` 51 个（rmv6 7 · epubmap 5 · notecore 15 · ink-serve 9 · transcribe-serve 8 · note-serve 7）零警告；网关 `node --check app.js`；shell 过 shellcheck。
 
-**未闭环**：transcribe 转写质量再打磨（重转复验：坐标已对、结构读对，但汉字数字"一/二/三"被认成阿拉伯数字"1/2/3"，1 条仍混印刷体，见 §03g；提示词已补一条规则，待真机复验）· note-serve 生成编排真机验证（投影+打包+上传+认领+旧本回收的代码与离线测试都已写完，见 §03j；还没有一次真机调用，也没接前端按钮）· 书库动作代理 mkdir 扩展（§05 第 5 项，新书首次生成前《书名》文件夹要么手动建、要么落根目录）· mind-serve · md 导出 + `notes pull`（§05）。步骤 0 真机样本已于 2026-09-07 采回、验证、且真机复验通过（§03f/§03g/§03i）。
+**未闭环**：transcribe 转写质量再打磨（重转复验：坐标已对、结构读对，但汉字数字"一/二/三"被认成阿拉伯数字"1/2/3"，1 条仍混印刷体，见 §03g；提示词已补一条规则，待真机复验）· note-serve 生成编排前端接线（后端三轮真机验证通过，见 §03k；网页「笔记」tab 还没有「生成笔记本」按钮）· 书库动作代理 mkdir 扩展（§05 第 5 项，新书首次生成前《书名》文件夹要么手动建、要么落根目录）· mind-serve · md 导出 + `notes pull`（§05）。步骤 0 真机样本已于 2026-09-07 采回、验证、且真机复验通过（§03f/§03g/§03i）。
 
 ## 01｜架构决策
 
@@ -191,9 +191,9 @@ note-serve 投影要往设备写打字文本，rmv6 之前是纯只读解析。�
 
 **产物**：`rmv6::write` 解除 NUMBERED 限制、新增 `Paragraph::subheading1()`/`SUBHEADING1_MARKER`；`notecore::model::Style::wire_code` 文档注释更正；两个真机测试文档（8 段版含全部 7 种样式）二次验证通过。
 
-## 03j｜note-serve 生成编排：条目库 → 一章一本（2026-09-07，离线写完，⚠ 尚未真机验证）
+## 03j｜note-serve 生成编排：条目库 → 一章一本（2026-09-07，离线写完，✏️ 当晚已真机验证见 §03k）
 
-§03h/§03i 把"写一份合法 `.rmdoc` 并传上真机"这条路走通了，但那时候段落列表都是测试里手写死的。这一节把"从条目库自动排出这份段落列表、判断要不要重传、旧版本怎么处理"这层业务逻辑写完——**只做到离线单测全绿，还没有一次真机调用**，§05 待办第 4 项还留在"未闭环"，不能因为代码写完了就当已完成。
+§03h/§03i 把"写一份合法 `.rmdoc` 并传上真机"这条路走通了，但那时候段落列表都是测试里手写死的。这一节把"从条目库自动排出这份段落列表、判断要不要重传、旧版本怎么处理"这层业务逻辑写完——**这一节写完时只做到离线单测全绿，还没有一次真机调用**（真机验证结果见 §03k，别把这一节当"已完成"的证据，本节记的是"代码写完那一刻"的状态）。
 
 **投影是纯函数**（`notecore::project`，零 I/O，4 个测试）：`project_chapter(book, idx)` 把一章的条目铺成 `rmv6::write::Paragraph` 列表——Title=章名，按 `Section.order` 排的每个分区起一段 `subheading1()`（名+简述），分区内条目按 `page_index` 排、样式取 `Entry.style`（映射同 §01 样式表）、文本取 `display_text()`（没转写占位"（待转写）"），条目下再各跟一段 Body 摘录勾画原文（`〔原文〕`前缀，有的话）与 AI 回答（`〔AI〕`前缀，有的话）；指向未知/已删分区的条目落一个"未分区"兜底段；已撤销条目不投影；空章返回 `None`（调用方不该为空章生成文档，见下方"未生成"档位）。`fingerprint_chapter` 用同一批输入（章名/分区名简述顺序/条目样式分区文本原文回答）算 FNV-1a 指纹，只要它不变就不重新打包上传——这是"重生成"判断的唯一依据，`Paragraph` 本身没有 `PartialEq`（跨 crate 内部字段拿不到）无法直接比较，所以指纹是单独在纯输入上算的，不是拿投影结果反推。
 
@@ -207,7 +207,25 @@ note-serve 投影要往设备写打字文本，rmv6 之前是纯只读解析。�
 
 **⚠️ 已知缺口，留给下一步"代理扩展 mkdir"**（§05 第 5 项）：`Xochitl::upload` 目标文件夹不存在时 best-effort 落书库根——本模块目前**不会自动建《书名》文件夹**，一本新书第一次生成前，文件夹要么已经手动建过，要么第一份文档会落进根目录（人工挪一次即可，之后 `find_folder_by_name` 就找得到、后续章节会正确落进去）。
 
-**离线门槛**：`cargo test --workspace` 从 41 涨到 **51**（notecore 11→15、note-serve 1→7：`config`1/`notebooks`2/`publish`4，加原有 `rmdoc`1，`dump_device_test_doc` 仍是 `#[ignore]` 不计入）；零警告。**真机验证清单（下一步该做的）**：拿一本已有真实条目的书跑 `POST /generate`，核对①《书名》文件夹里出现正确数量的章节文档、②缩略图渲染的分区/样式/编号都对、③改一条已校对文本后再跑一次只重传那一章、④旧版本确实进了回收站（`GET /trash` 能看到）、⑤新书第一次生成时落根目录这个已知缺口是否符合预期。这几条一天没做完，§05 第 4 项就一天不能划掉。
+**离线门槛**：`cargo test --workspace` 从 41 涨到 **51**（notecore 11→15、note-serve 1→7：`config`1/`notebooks`2/`publish`4，加原有 `rmdoc`1，`dump_device_test_doc` 仍是 `#[ignore]` 不计入）；零警告。**真机验证清单（当晚就做完了，结果见 §03k）**：拿一本已有真实条目的书跑 `POST /generate`，核对①《书名》文件夹里出现正确数量的章节文档、②缩略图渲染的分区/样式/编号都对、③改一条已校对文本后再跑一次只重传那一章、④旧版本确实进了回收站（`GET /trash` 能看到）、⑤新书第一次生成时落根目录这个已知缺口是否符合预期——五条全部核对通过，见 §03k。
+
+## 03k｜note-serve 生成编排真机验证通过（2026-09-07 当晚）
+
+§03j 写完的生成编排第一次真机跑通，而且比预想的更完整——**旧版本真的自动进了回收站，不是只挂在队列里等着**。
+
+**准备**：交叉编译+部署 `note-serve`（`shelf/build.sh` + `SHELF_NO_BUILD=1 ./deploy.sh 10.42.0.224 --only note`，只更新这一个服务，book-serve/ink-serve/transcribe-serve 不动）。设备上《人骨拼圖》那本书之前 4 条真实条目（§03f/§03g 步骤 0 样本）当时全被判"笔画消失"标成了 `Revoked`（页面被重写过，ink-serve 正确识别成撤销，不是 bug），拉回来核对确认后，按"②手机修正"设计好的同一条路径——`POST ink /books/{uuid}/entries/{id}`——把 4 条的 `text`/`style`/`section` 补齐（校对文本用当初真实手写的原文：`第一段`/`第二段`/`第三段`/`这是一段话并画线`，样式分别对应 Bullet/Numbered/Checkbox/Body），4 条全部转回 `Reviewed`，凑出一份真实的四样式测试章节，不是编的假数据。
+
+**第一轮（`POST /books/{uuid}/chapters/1/generate`）**：返回 `{"status":"generated","doc_uuid":"b20ec5fd-…"}`。设备书库当场核对：新文档确实出现（`parent:""`，文件夹《人骨拼圖》不存在，如预期落了根目录，见 §03j 已知缺口）、`.content` 是合法 `notebook`/`formatVersion 2`/一页、xochitl 自己渲染了缩略图。拉缩略图肉眼核对——**标题、分区头「其他」、四条条目样式（圆点/编号/方框/正文）、每条下方的〔原文〕勾画摘录，全部位置正确、无乱码无错位**，跟 `notecore::project` 设计的版式一字不差。
+
+**第二轮（改一条已校对文本再生成同一章）**：返回新 `doc_uuid=6be690f8-…`（跟第一轮不同）；本地簿记 `notebooks/<uuid>.json` 指纹与 uuid 都更新到新值；`book-serve GET /trash/pending` 当场就能看到旧 uuid 排在队列里（`TrashSink::add` 用的是**生成时记录的旧 visibleName**，`book-serve` 按名字核对通过）。**没有额外做任何操作**，几秒后再查旧文档的 `.metadata`：`parent` 已经变成 `"trash"`——设备当时屏幕停在书库视图，新文档 `/upload` 进来触发了 `entityListModel.rowsInserted`，`shelf-trash-agent.qmd` 的 4s 防抖计时器如期打了 `selection.add`+`selectionMoveToTrash`，`trash/pending` 随即清空。**这是"条目库→一章一本"整条闭环第一次端到端全自动跑通**：生成、传书、认领、旧版本软删，中间没有人手动点一下。拉第二轮缩略图核对，编辑过的文本正确出现在渲染结果里。
+
+**第三轮（不改任何东西再生成一次）**：返回 `{"status":"unchanged"}`，设备文档总数不变——指纹跳过重传的判断在真机上也成立，不是只在内存桩测试里成立。
+
+**结论**：`notecore::project`/`note-serve::publish` 整条链路（投影→打包→上传→认领→旧本回收→簿记→指纹跳过）**真机全绿**，§03j 记的"⚠ 尚未真机验证"到此撤销。§05 待办第 4 项可以划掉。留在设备上的两份历史文档（旧的那份已在回收站，新的那份在书库根目录，标题都是「第2章 第一部 一天的國王 1」）人工核对完可以直接删/清空回收站。
+
+**当场验证顺带证实的两件事**（不是这次改的代码，但值得记一笔）：① `shelf-trash-agent.qmd` 这套"纯事件驱动、无需人工确认"的软删机制在有真实数据的场景下确实可靠，不需要人守在设备旁点确认；② note-serve 这次全程走**跨服务 HTTP**（`ink.rs`/`trash.rs` 直连 ink-serve:8795、book-serve:8790 的 loopback 端口，不经网关），这个"服务互相直连而不绕网关"的套路（transcribe-serve 早就在用）在多服务真机同时跑的场景下也验证有效，没有端口冲突或注册表查找失败。
+
+**仍是已知缺口，没打算这次解决**：《书名》文件夹自动创建（`shelf-trash-agent.qmd` 扩成 `{action: trash|mkdir}` 通用代理，§05 第 5 项）；生成按钮还没接进网页「笔记」tab（现在只能用 curl/wget 手动触发 `POST /generate`）。
 
 ## 04｜踩坑
 
@@ -225,12 +243,12 @@ note-serve 投影要往设备写打字文本，rmv6 之前是纯只读解析。�
 1. **转写质量两项**：① entry3（高亮 3 旁 `口 第三段`）重转后仍没读对，裁图上下混进了相邻印刷行——把 `cropMargin` 从固定 24 改成按簇高度动态收紧，或者干脆换自渲染高分辨率裁图（§01 早留的口子）；② ~~entry1/2 把手写的汉字数字"一/二"认成阿拉伯数字"1/2"~~ 提示词已加规则（2026-09-07），待真机重转复验是否真的不再转数字。entry4 那条旧的错误草稿是裁图坐标错时期的遗留数据，手机网页上人工清一下（一改字段就覆盖）。
 2. ~~NumberedList 补样本~~ ✅ 用户真机核对时一并补了：那 7 字节根本不属于 NumberedList，是分析失误，已更正、已解除限制（§03i）。
 3. ~~rmdoc 打包器 + 真机小范围验证~~ ✅ 2026-09-07 当场做完两轮：全部 7 种打字样式真机上传+渲染验证通过（§03h/§03i）。
-4. note-serve 条目→文档编排：✅ 2026-09-07 代码写完（`notecore::project` 投影+指纹、`note-serve::publish` 生成/认领/旧本回收编排，离线单测 4+4 个全绿，见 §03j）——**⚠ 还没真机验证过、前端也没接按钮**，不能划掉。下一步：拿真实条目跑一次 `POST /generate`，核对文件夹/渲染/增量重传/旧本回收站四件事，再把「生成笔记本」按钮接进 `renderNotes`。
-5. 书库动作代理扩展：`shelf-trash-agent.qmd` → 通用 `{action: trash|mkdir}` 队列，`Library.createCollection` 建《书名》夹；先离线 `apply-diffs` 再上机。
+4. ~~note-serve 条目→文档编排~~ ✅ 2026-09-07 当晚三轮真机验证通过：首次生成（渲染全对）、改文本增量重传+旧本自动进回收站（`shelf-trash-agent.qmd` 全自动消费队列，没人手动点）、无变化跳过（见 §03k）。**剩的是前端接线**：网页「笔记」tab 还没有「生成笔记本」按钮，目前只能 curl/wget 手动触发 `POST /books/{uuid}/chapters/{idx}/generate`。
+5. 书库动作代理扩展：`shelf-trash-agent.qmd` → 通用 `{action: trash|mkdir}` 队列，`Library.createCollection` 建《书名》夹（现在新书首次生成落库根，人工挪一次之后就找得到）；先离线 `apply-diffs` 再上机。
 6. mind-serve：按分区跑文本模型（简述 = 提示词，`ai=false` 跳过），`answer` 写回再投影。
 7. md 导出 `vault/<书名>/第N章.md`（front-matter、`^id` 块锚、`[[书名]]` 反链、索引页）+ host `notes/host/bin/notes pull`。
 8. 文档收尾、旧 PKM 白皮书加"已退役、由 notes/ 取代"头注、`dev` 以 `--no-ff` 合入 `feature/shelf-p1`。
 
-**已闭环（真机）**：§03c ink-serve 首轮（active/注册/追平 38 章）· §03d 「笔记」tab 注册 · §03e transcribe-serve 部署（active/注册/0600/追平记 note）· §03f 步骤 0 样本标定（聚簇/配对阈值验证通过）· §03g 揪出裁图画布尺寸错（960×1280）并修复部署复验（3 条有勾画的条目裁图都对准了手写位置，但转写准确率另计——2 条数字被认错、1 条完全读错；1 条裁不到已优雅降级）· §03h `rmv6::write`/`note-serve::rmdoc`/上传三件套首次真机验证通过 · §03i 更正 NUMBERED 误判、解出 Subheading 1/2 区分开关、二次真机验证全部 7 种打字样式渲染正确。离线：五 crate+服务 **41** 测。
+**已闭环（真机）**：§03c ink-serve 首轮（active/注册/追平 38 章）· §03d 「笔记」tab 注册 · §03e transcribe-serve 部署（active/注册/0600/追平记 note）· §03f 步骤 0 样本标定（聚簇/配对阈值验证通过）· §03g 揪出裁图画布尺寸错（960×1280）并修复部署复验（3 条有勾画的条目裁图都对准了手写位置，但转写准确率另计——2 条数字被认错、1 条完全读错；1 条裁不到已优雅降级）· §03h `rmv6::write`/`note-serve::rmdoc`/上传三件套首次真机验证通过 · §03i 更正 NUMBERED 误判、解出 Subheading 1/2 区分开关、二次真机验证全部 7 种打字样式渲染正确 · §03j/§03k note-serve 生成编排离线写完当晚三轮真机验证通过（生成/增量重传+旧本自动回收/无变化跳过全绿）。离线：五 crate+服务 **51** 测。
 
 **明确不做（本期）**：扫描件 PDF、定稿 PDF（等步骤 0 ④）、笔记本手写批注回读（设备只读）、颜色语义（只进 tags）、自动清空回收站（网页按钮走 `emptyTrash()` 用户显式点）、Anki/Todoist/Readwise 外发（有 md 与稳定 id 之后再谈）、KOReader 高亮回流（书架砍下来留给笔记线，排在导出之后）。
