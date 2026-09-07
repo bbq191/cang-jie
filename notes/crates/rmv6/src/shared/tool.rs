@@ -1,6 +1,6 @@
 use crate::ParseError;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Tool {
     Brush,
     Pencil,

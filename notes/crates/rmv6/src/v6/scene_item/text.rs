@@ -24,9 +24,16 @@ pub enum ParagraphStyle {
     BULLET,
     BULLET2,
     /// 复选框（rmscene CHECKBOX=6 / CHECKBOX_CHECKED=7；3.28 格式菜单「复选框」）。
+    /// 真机坐实：格式菜单打的"未勾选"复选框，无论后面文字是否叫"finished"，都是 6——
+    /// 勾上号（7）要点一下渲染出来的方框，不是打字样式，本样本没验到，写入器慎用。
     CHECKBOX,
     CHECKBOX_CHECKED,
-    /// 仍未知的样式码（如 3.28 有序列表，待设备样本读回）。不让未知值把整个 .rm 解析打挂（rmscene 同样容忍并继续）。
+    /// 有序列表（3.28 格式菜单「已编号列表」）。真机坐实码 10（2026-09-07，真机样本 `testdata/seven_styles`）；
+    /// 旧 rmscene 0.8.0 不认，读到会警告丢弃当 PLAIN。⚠️ 格式子块比其余样式多 7 字节未解码载荷
+    /// （疑似编号计数/起始值，本样本只有一行、没法差分出编码规则）——note-serve 写入器补这码前，
+    /// 再采一份多行有序列表样本把这段载荷差出来，否则编号可能不对或被 xochitl 拒收。
+    NUMBERED,
+    /// 仍未知的样式码。不让未知值把整个 .rm 解析打挂（rmscene 同样容忍并继续）。
     Unknown(u8),
 }
 
@@ -43,6 +50,7 @@ impl TryFrom<u8> for ParagraphStyle {
             0x05 => ParagraphStyle::BULLET2,
             0x06 => ParagraphStyle::CHECKBOX,
             0x07 => ParagraphStyle::CHECKBOX_CHECKED,
+            0x0a => ParagraphStyle::NUMBERED,
             v => ParagraphStyle::Unknown(v),
         })
     }

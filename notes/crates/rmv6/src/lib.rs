@@ -1,7 +1,8 @@
 //! rmv6 —— reMarkable `.rm` v6 笔迹文件**只读解析**，笔记线（notes/）的地基。
 //!
 //! 剥离移植自 vendored `remarkable_lines` 0.1.3（MIT，来源与改动见 `PROVENANCE.md`）：只留 v6（去掉 v3–v5），
-//! 保留两处兼容补丁（`PenColor`/`ParagraphStyle`/`Tool` 未知码兜底、块尾多余字节跳过），补 CHECKBOX 样式码。
+//! 保留两处兼容补丁（`PenColor`/`ParagraphStyle`/`Tool` 未知码兜底、块尾多余字节跳过），补 CHECKBOX/NUMBERED 样式码
+//! （2026-09-07 真机样本坐实：NUMBERED=10，其格式子块比其余样式多 7 字节未解码——见 `v6::scene_item::text::ParagraphStyle`）。
 //!
 //! 两层 API：
 //! - 低层 [`RmFile::read`]：全部 block + 场景树（逆向格式原样暴露，调试/新字段探索用）；
