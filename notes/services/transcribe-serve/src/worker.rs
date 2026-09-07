@@ -226,6 +226,31 @@ mod tests {
     }
 
     #[test]
+    fn mined_and_skipped_entries_are_never_auto_transcribed() {
+        // 2026-09-07 二期：ink-serve 摄取的初始态是 Mined（只是探测到），不是 Pending——
+        // needs_transcribe() 只认真正被请求过的条目，自动转写不该碰它们，除非用户点了"转入笔记"。
+        let t = tempfile::tempdir().unwrap();
+        let ledger = Ledger::open(&t.path().join("l.json"));
+        let mut mined = entry("m", "h1", "m.png", None);
+        mined.status = Status::Mined;
+        let mut skipped = entry("s", "h2", "s.png", None);
+        skipped.status = Status::Skipped;
+        let store = mem(vec![mined, skipped]);
+        let vision = Fixed("不该被调用".into());
+        let f = Failures::default();
+        let c = Ctx { store: &store, vision: &vision, cfg: &cfg(), ledger: &ledger, failures: &f, now: 9 };
+        let r = run_once(&c, None);
+        assert_eq!(r.scanned, 0, "Mined/Skipped 都不算 needs_transcribe，一个都不该扫到");
+        assert!(store.posted.lock().unwrap().is_empty());
+
+        // 转成 Pending（模拟用户点了"转入笔记"）之后才应该被扫到。
+        store.book.lock().unwrap().entries[0].status = Status::Pending;
+        let r = run_once(&c, None);
+        assert_eq!(r.scanned, 1, "转成 Pending 后这条才进入扫描范围");
+        assert_eq!(r.done, 1);
+    }
+
+    #[test]
     fn failures_are_bounded_and_forced_retry_bypasses() {
         let t = tempfile::tempdir().unwrap();
         let ledger = Ledger::open(&t.path().join("l.json"));
