@@ -3,7 +3,7 @@ name = "note-serve"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "笔记·本：注册「笔记」tab；条目库 → 设备笔记本（一章一本）投影与 md 导出（投影部分待建）"
+description = "笔记·本：注册「笔记」tab；条目库 → 设备笔记本（一章一本）投影 + 生成/上传编排（md 导出待建）"
 
 [[bin]]
 name = "note-serve"
@@ -17,3 +17,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 uuid = { version = "1", features = ["v4"] }
 zip = { version = "2", default-features = false, features = ["deflate"] }
+ureq = "2"
+
+[dev-dependencies]
+tempfile = "3"
