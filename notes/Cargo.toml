@@ -9,6 +9,7 @@ members = [
     "crates/notecore",
     "services/ink-serve",
     "services/transcribe-serve",
+    "services/mind-serve",
     "services/note-serve",
 ]
 

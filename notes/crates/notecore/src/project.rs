@@ -137,6 +137,8 @@ mod tests {
             text: (!text.is_empty()).then(|| text.to_string()),
             style,
             section: (!section.is_empty()).then(|| section.to_string()),
+            ask_ai: false,
+            question: None,
             answer: None,
             status: Status::Reviewed,
             created: 0,

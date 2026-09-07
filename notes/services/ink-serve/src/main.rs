@@ -1,9 +1,10 @@
 //! ink-serve —— 笔记·矿（loopback 8795）。监听原生书库（事件驱动、防抖），书页 `.rm` 变了就只扫变更页：
 //! 勾画（GlyphRange）+ 旁边手写（笔画簇）→ 条目 → 裁图 → 条目库（**唯一写者**，其它服务经这里改字段）。零网络。
 //! 路由（经网关前缀 `/api/ink`）：`GET /books` · `GET /books/{uuid}` · `GET /books/{uuid}/crops/{file}` ·
-//! `POST /books/{uuid}/entries/{id}`（text/section/style/draft/answer 字段更新，缺省底座无 PATCH；
+//! `POST /books/{uuid}/entries/{id}`（text/section/style/draft/answer/askAi/question 字段更新，缺省底座无 PATCH；
 //! `sectionHint`/`subheadHint` 是 `## 文字`/`### 文字` 手写标记转写侧兜底认出来的，见 `notecore::marker::Marker`——
-//! 分区找不到同名的会自动新建，`GET /books` 只列条目库里还有活条目的书）·
+//! 分区找不到同名的会自动新建；`askAi`+`question` 是"问AI"勾选框+问题输入框，`mind-serve` 读这两个字段触发按条目单发问答；
+//! `GET /books` 只列条目库里还有活条目的书）·
 //! `POST /books/{uuid}/entries/{id}/request`（浏览态"转入笔记"：`Mined→Pending`）·
 //! `POST /books/{uuid}/entries/{id}/skip`（浏览态"不需要"：`Mined→Skipped`，两者都拒绝已撤销的条目，
 //! 见 `notecore::model::Entry::set_triage`，2026-09-07 二期）· `PUT /books/{uuid}/sections` ·
@@ -161,6 +162,13 @@ fn main() {
                 }
                 if let Some(a) = j.0.get("answer") {
                     e.answer = serde_json::from_value::<Answer>(a.clone()).ok();
+                }
+                // 「问AI」勾选框 + 问题输入框（二期按条目单发，mind-serve 触发的动作端点另开，见白皮书 §03n）。
+                if let Some(v) = j.0.get("askAi").and_then(|v| v.as_bool()) {
+                    e.ask_ai = v;
+                }
+                if let Some(v) = j.0.get("question") {
+                    e.question = v.as_str().filter(|s| !s.trim().is_empty()).map(str::to_string);
                 }
                 e.updated = now;
                 true
