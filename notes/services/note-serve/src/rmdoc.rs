@@ -1,0 +1,132 @@
+//! 打包一份 xochitl 认的原生文档 zip（reMarkable 官方叫 `.rmdoc`）：`<uuid>.metadata` +
+//! `<uuid>.content` + `<uuid>/<page-uuid>.rm`。**格式不是自己猜的**：`reading/protocol/inject.py`
+//! （2026-08-16 真机验证）+ `device-core/src/inject.rs` + `knowledge/pkm/src/cardnote.rs` 都验证过
+//! `POST /upload`（`shelf_core::xochitl::Xochitl::upload`，本模块直接复用这个共享底座，不是"旧代码"）
+//! 除 EPUB/PDF 外也吃 `.rmdoc`：multipart 字段名 `file`、`.rmdoc` 用 `application/zip`；导入端**会
+//! 重新分配设备 UUID**（不是包里写的那个），落库后免重启出现，调用方按 `visibleName` 事后认领。
+//! 按"不引入任何旧代码到 notes/"的红线，本模块是照这些事实全新写的，不是搬运（笔记线白皮书 §03h）。
+//!
+//! 首期只做"一章一页"：一份文档正好一页，`.content` 走当前固件（3.28）的 `cPages`/`formatVersion 2`
+//! 结构，字段集合参照真机样本 `testdata/seven_styles/book.content` 与上面三处旧代码的最小可用集
+//! （`extraMetadata` 可以是空对象——不用把所有画笔工具状态字段都填一遍）。
+//!
+//! ⚠ 打包器本身已经 host 双实现（zipfile+rmscene）交叉验证过、还没让真的 xochitl 摸过（笔记线白皮书
+//! §03h），条目→文档编排也没写，所以这个模块暂时只有测试用它——`#[allow(dead_code)]` 是有意为之，
+//! 不是漏掉了接线；真机验证过、编排写完就会摘掉。
+#![allow(dead_code)]
+use std::io::Write;
+use zip::write::SimpleFileOptions;
+use zip::CompressionMethod;
+
+pub struct Page {
+    pub uuid: String,
+    pub rm_bytes: Vec<u8>,
+}
+
+/// 一份最小合规的 `.content`（`fileType:"notebook"`，一页）。
+fn content_json(page_uuid: &str, author_uuid: &str, now_ms: u64, size_bytes: usize) -> serde_json::Value {
+    serde_json::json!({
+        "cPages": {
+            "lastOpened": {"timestamp": "1:1", "value": page_uuid},
+            "original": {"timestamp": "0:0", "value": -1},
+            "pages": [{
+                "id": page_uuid,
+                "idx": {"timestamp": "1:2", "value": "ba"},
+                "modifed": now_ms.to_string(),
+                "template": {"timestamp": "1:2", "value": "Blank"},
+            }],
+            "uuids": [{"first": author_uuid, "second": 1}],
+        },
+        "coverPageNumber": -1,
+        "customZoomCenterX": 0,
+        "customZoomCenterY": 936,
+        "customZoomOrientation": "portrait",
+        "customZoomPageHeight": 1872,
+        "customZoomPageWidth": 1404,
+        "customZoomScale": 1,
+        "documentMetadata": {},
+        "extraMetadata": {},
+        "fileType": "notebook",
+        "fontName": "",
+        "formatVersion": 2,
+        "lineHeight": 100,
+        "orientation": "portrait",
+        "pageCount": 1,
+        "pageTags": [],
+        "sizeInBytes": size_bytes.to_string(),
+        "tags": [],
+        "textAlignment": "left",
+        "textScale": 1,
+        "zoomMode": "bestFit",
+    })
+}
+
+fn metadata_json(visible_name: &str, now_ms: u64, parent: &str) -> serde_json::Value {
+    serde_json::json!({
+        "createdTime": now_ms.to_string(),
+        "lastModified": now_ms.to_string(),
+        "lastOpened": "0",
+        "lastOpenedPage": 0,
+        "new": false,
+        "parent": parent,
+        "pinned": false,
+        "source": "",
+        "type": "DocumentType",
+        "visibleName": visible_name,
+    })
+}
+
+/// 打包一份单页原生文档。`doc_uuid` 只是包内占位（导入端会换新的，见模块文档），`author_uuid`
+/// 必须跟 `page.rm_bytes` 里 `AuthorIdsBlock` 声明的作者一致（用模板拼页时，用模板自己的作者）。
+pub fn pack(doc_uuid: &str, visible_name: &str, parent: &str, page: &Page, author_uuid: &str, now_ms: u64) -> Result<Vec<u8>, String> {
+    let content = content_json(&page.uuid, author_uuid, now_ms, page.rm_bytes.len());
+    let metadata = metadata_json(visible_name, now_ms, parent);
+
+    let mut out = Vec::new();
+    {
+        let mut z = zip::ZipWriter::new(std::io::Cursor::new(&mut out));
+        let opts = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
+        z.start_file(format!("{doc_uuid}.metadata"), opts).map_err(|e| e.to_string())?;
+        z.write_all(serde_json::to_string(&metadata).map_err(|e| e.to_string())?.as_bytes()).map_err(|e| e.to_string())?;
+        z.start_file(format!("{doc_uuid}.content"), opts).map_err(|e| e.to_string())?;
+        z.write_all(serde_json::to_string(&content).map_err(|e| e.to_string())?.as_bytes()).map_err(|e| e.to_string())?;
+        z.start_file(format!("{doc_uuid}/{}.rm", page.uuid), opts).map_err(|e| e.to_string())?;
+        z.write_all(&page.rm_bytes).map_err(|e| e.to_string())?;
+        z.finish().map_err(|e| e.to_string())?;
+    }
+    Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rmv6::write::{build_page_rm, Paragraph};
+    use rmv6::v6::scene_item::text::ParagraphStyle;
+
+    const TEMPLATE: &[u8] = include_bytes!("../../../testdata/seven_styles/page.rm");
+    const TEMPLATE_AUTHOR: &str = "94980865-163a-5b59-a2d1-cd702a59e989"; // 模板 AuthorIdsBlock 声明的作者
+
+    #[test]
+    fn packs_a_valid_zip_with_three_entries() {
+        let rm = build_page_rm(TEMPLATE, &[Paragraph::new(ParagraphStyle::HEADING, "第一章")]).unwrap();
+        let page = Page { uuid: "1111".into(), rm_bytes: rm };
+        let bytes = pack("doc-uuid", "《测试书》第一章", "", &page, TEMPLATE_AUTHOR, 1_700_000_000_000).unwrap();
+
+        let mut z = zip::ZipArchive::new(std::io::Cursor::new(&bytes)).unwrap();
+        let names: Vec<String> = (0..z.len()).map(|i| z.by_index(i).unwrap().name().to_string()).collect();
+        assert_eq!(names, vec!["doc-uuid.metadata", "doc-uuid.content", "doc-uuid/1111.rm"]);
+
+        let mut meta = String::new();
+        std::io::Read::read_to_string(&mut z.by_name("doc-uuid.metadata").unwrap(), &mut meta).unwrap();
+        let meta: serde_json::Value = serde_json::from_str(&meta).unwrap();
+        assert_eq!(meta["visibleName"], "《测试书》第一章");
+        assert_eq!(meta["type"], "DocumentType");
+
+        let mut content = String::new();
+        std::io::Read::read_to_string(&mut z.by_name("doc-uuid.content").unwrap(), &mut content).unwrap();
+        let content: serde_json::Value = serde_json::from_str(&content).unwrap();
+        assert_eq!(content["fileType"], "notebook");
+        assert_eq!(content["pageCount"], 1);
+        assert_eq!(content["cPages"]["pages"][0]["id"], "1111");
+    }
+}

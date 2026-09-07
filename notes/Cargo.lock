@@ -649,9 +649,12 @@ name = "note-serve"
 version = "0.1.0"
 dependencies = [
  "notecore",
+ "rmv6",
  "serde",
  "serde_json",
  "shelf-core",
+ "uuid",
+ "zip",
 ]
 
 [[package]]
