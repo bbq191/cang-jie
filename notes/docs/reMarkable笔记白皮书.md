@@ -436,6 +436,20 @@ note-serve 投影要往设备写打字文本，rmv6 之前是纯只读解析。�
 
 **离线**：`cargo test --workspace` **112 个**（`notecore` 40→42、`ink-serve` 不变 10、`transcribe-serve` 12→18、`mind-serve` 13→17、`note-serve` 不变 13）零警告；`cargo build --workspace`/`--target aarch64-unknown-linux-musl` 零警告（notes + shelf 两个 workspace）；`node --check app.js` 通过。
 
+## 03v｜§03u 真机上手立刻反馈两个 bug + 模型两级下拉（2026-09-08，纯前端修复）
+
+用户部署 §03u 之后立刻真机试，报了两个问题：
+
+**① 编辑区改字不落盘**：根因是竞态，不是没发 PATCH——`textarea` 的 `onchange`（失焦才存）发出保存请求是异步的；用户改完字通常紧接着点旁边的按钮（去处循环/重转/问AI 提问），点按钮本身会让文本框先失焦（触发保存请求出发），但按钮自己的收尾动作（`book=await j(...);renderBook()`）几乎同时也在跑——如果保存请求的响应还没回来，按钮收尾这次的整页重画读到的是服务端的旧文本，把编辑"盖"回去了，看起来就是"改了不存"。修法：加一个 `pendingText`（entry id → 最新未确认值，`textarea.oninput` 记，`onchange` 确认后清）+ `flushPendingText()`，所有会重新拉数据整页重画的动作（去处循环、单条/批量重转、问AI、批量归档/恢复/生成/导出、浏览态转入/跳过、清空回收站、重扫、切书）之前统一先冲一遍，保证重画时读到的一定是最新值。
+
+**② 点重转列表区闪一下**：根因是 `renderBook()` 的清空时机——原来是"先 `chaps.innerHTML=''` 清空 → 再 `await` 查一次转写失败清单 → 才重新拼卡片"，网络这段时间列表是空的，肉眼看就是"列表出来一下又消失"。改成清空挪到 `await` 之后、紧挨着同步重建那一步，中间不再留空档。
+
+**顺手做的一件事（不是这两个 bug，是同一批一起改的）**：模型面板的下拉从"一个框塞七八个跨厂商模型"改成两级——先选厂家（DashScope/OpenAI/Gemini/DeepSeek/自定义），第二级只列该厂家自己的模型；选厂家立即原子切换到该厂家第一个模型（不用二次确认），选"自定义"才露出手填框。「管理」tab 的模型管理卡片从并排两栏改成上下堆叠占满宽度——这轮给每张卡片加了用量表/单价输入之后内容明显变多，`min-width:18em` 两卡硬挤一排在正常屏宽下就是局促；堆叠后两张卡片结构、宽度完全对齐。
+
+**真机验证**：部署后 5 个服务 active、`NRestarts` 全 0；从设备吐出的首页 HTML 里确认新标识符（`pendingText`/`flushPendingText`/`data-vendor`/`PROVIDER_NAMES`/`modelbox`）已经在served 页面里；`text` PATCH 服务端行为本身没变（这轮是纯前端时序修复），重跑一次真机 PATCH 确认没有回归。**这三处改动的实际视觉/交互效果依旧没有人眼确认过**——异步竞态和列表闪烁这类问题本质上是"浏览器里发生的事"，没有浏览器渲染工具没法从我这边确认修复是否真的解决了用户看到的现象，只能确认代码逻辑上时序对了；下一轮真机试用是唯一能确认这两个 bug 真的消失了的办法。
+
+**离线**：纯前端改动，Rust 契约不变，`cargo test --workspace`（shelf 109+15）零回归；`node --check app.js` 通过。
+
 ## 04｜踩坑
 
 - **外部进程直改 `.metadata` `parent="trash"` 会被运行中 xochitl 覆写**（阅读线判死）；软删/建夹只能走 QML 代理（书架 `shelf-trash-agent.qmd`）。
