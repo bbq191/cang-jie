@@ -21,13 +21,13 @@
 
 ![notes 数据流：四步闭环](diagrams/data-flow.svg)
 
-**真机现状（2026-09-07 汇总，历史逐轮记录见 §03c–§03p）**：设备 imx93-chiappa，WiFi 直连（mDNS `shelf.local`，或直查 `getent hosts`；IP 是 DHCP 分配的别死记）。四个笔记线服务（`ink`/`transcribe`/`mind`/`notes`）全部 `active`，注册表 9 项（书架 5 + 笔记 4）。ink-serve 已摄取真实勾画+手写样本，聚簇/配对全部真机验证有效（§03f/§03g）；裁图**已换成自渲染**（`render_ink`，不再依赖缩略图，§03p）。transcribe-serve key 已配置、真调过模型，转写准确率还在打磨（§03g）。note-serve：写入/打包/上传三件套 + 全部 7 种打字样式两轮真机验证通过（§03h/§03i）；条目库→一章一本的生成编排**三轮真机验证通过**（首次生成、增量重传+旧本自动进回收站、无变化跳过，§03k）；《书名》文件夹自动创建**也真机验证通过**（`shelf-mkdir-agent.qmd` + `book-serve::mkdir`，§03l）——目前只剩网页「笔记」tab 还点不了「生成」（路由已开、前端未接，目前只能 curl/wget 手动触发）。**二期浏览态状态机 + 浏览页 UI + 纯勾画条目 + mind-serve 问 AI 全部真机验证通过**（步骤 1–4 收尾，§03n/§03o/§03p）；过程中修了两个真机 bug（书进回收站/删除仍赖在列表里；「浏览」对纯勾画条目排序时崩溃变空白）。**mind-serve 的模型手动改成了 `qwen3-vl-plus`**（这台设备的测试 key 对代码缺省的 `qwen-plus` 没权限，403；代码缺省没跟着改，见 §03p）。二期只剩步骤 5（模型配置统一页）没做。
+**真机现状（2026-09-08 汇总，历史逐轮记录见 §03c–§03q）**：设备 imx93-chiappa，WiFi 直连（mDNS `shelf.local`，或直查 `getent hosts`；IP 是 DHCP 分配的别死记）。四个笔记线服务（`ink`/`transcribe`/`mind`/`notes`）全部 `active`，注册表 9 项（书架 5 + 笔记 4）。ink-serve 已摄取真实勾画+手写样本，聚簇/配对全部真机验证有效（§03f/§03g）；裁图**已换成自渲染**（`render_ink`，不再依赖缩略图，§03p）。transcribe-serve key 已配置、真调过模型，转写准确率还在打磨（§03g）。note-serve：写入/打包/上传三件套 + 全部 7 种打字样式两轮真机验证通过（§03h/§03i）；条目库→一章一本的生成编排**三轮真机验证通过**（首次生成、增量重传+旧本自动进回收站、无变化跳过，§03k）；《书名》文件夹自动创建**也真机验证通过**（`shelf-mkdir-agent.qmd` + `book-serve::mkdir`，§03l）——目前只剩网页「笔记」tab 还点不了「生成」（路由已开、前端未接，目前只能 curl/wget 手动触发）。**二期浏览态状态机 + 浏览页 UI + 纯勾画条目 + mind-serve 问 AI 全部真机验证通过**（步骤 1–4 收尾，§03n/§03o/§03p）；过程中修了两个真机 bug（书进回收站/删除仍赖在列表里；「浏览」对纯勾画条目排序时崩溃变空白）。**mind-serve 的模型手动改成了 `qwen3-vl-plus`**（这台设备的测试 key 对代码缺省的 `qwen-plus` 没权限，403；代码缺省没跟着改，见 §03p）。**二期步骤 5（模型配置统一页）已完成**（§03q）：`keyMasked` 脱敏预览 + 网关「模型」统一面板（视觉/文字并排），后端到设备配置文件的数据链路真机验证通过；前端面板可视渲染本身还没人眼确认过（缺网关登录密码）。二期五步全部完成。
 
 **代码落点**：`crates/rmv6`（`lib.rs` 低层 `RmFile::read` / `page.rs` 高层 `Page{strokes,highlights,text}` + `BBox` / `write.rs` 写 `RootTextBlock` + 模板替换拼 `.rm` / `v6/crdt.rs` `CrdtId` 的 `Display`（`"part1:part2"`，条目库落盘 id 字符串的唯一定义处），§03h/§03p）· `crates/epubmap`（`index.rs` 两张表取首现 / `toc.rs` nav→ncx 两策略 / `lib.rs` `BookMap::chapter_of`）· `crates/notecore`（`model` 条目/分区/样式/状态（`Entry.ask_ai`/`question`、`Quote.id`，§03p）· `hash` FNV 簇指纹与条目 id · `geom` 聚簇/配对 · `ingest` 增量合并（含纯勾画路径，§03p）· `marker` 行首标记 OCR 兜底 · `project` 条目库→段落列表投影+变更指纹，§03j）· `services/ink-serve`（`doc.rs` 书库只读视图 / `ingest.rs` 变更页编排 / `crop.rs` **自渲染裁图**（`render_ink`，从笔画矢量数据画折线，不再吃缩略图，§03p）/ `bookdb.rs` Repository / `config.rs` 阈值与几何 / `main.rs` 路由+监听，接 `askAi`/`question` 字段）· `services/transcribe-serve`（`config` key 与节制参数 / `backend` `Vision` Strategy + `OpenAiCompat` / `prompt` / `ledger` 用量账本 / `ink` `EntryStore` 客户端 / `worker` 一轮编排 / `main.rs` SSE 订阅 + 防抖工作线程）· `services/mind-serve`（**新增**，§03p：`config` key/模型（无节流字段）/ `backend` `TextModel` Strategy + `OpenAiCompat`（纯文本消息） / `prompt` 拼书名+章节+原文+文本+问题 / `ledger` 用量账本（无 `lastRun`） / `ink` `EntryStore` 客户端（只有 `book`/`post_answer` 两个动作） / `worker::ask_entry` 单条问答 / `main.rs` **无后台线程**，纯被动路由）· `services/note-serve`（`rmdoc.rs` 打包 `.rmdoc` + 生产模板常量 / `config.rs` xochitl host/超时/文件夹命名 / `ink.rs` 只读 `EntryStore` 客户端 / `trash.rs` 跨服务调 book-serve 回收站队列 / `notebooks.rs` 每章生成记录簿记 / `publish.rs` `Uploader` Strategy + `generate_chapter/generate_book` 编排，§03j / `main.rs` 路由）· 网关 `ui/app.js` `renderNotes`（「浏览」/「整理」两个子视图 + 每条「问AI」勾选框/问题框/提问按钮，§03o/§03p；尚未接"生成笔记本"按钮）· `shelf/{build,deploy,install,uninstall}.sh` 的 `NOTES_BINS`/令牌（含 `mind`）· `shelf-gateway::manage::MODULES` 注册表。
 
 **离线门槛**：`cargo test --workspace` 68 个（rmv6 7 · epubmap 5 · notecore 20 · ink-serve 10 · transcribe-serve 9 · note-serve 7 · **mind-serve 10（新）**）零警告；网关 `node --check app.js`；shell 过 shellcheck。
 
-**未闭环**：transcribe 转写质量再打磨（重转复验：坐标已对、结构读对，但汉字数字"一/二/三"被认成阿拉伯数字"1/2/3"，1 条仍混印刷体，见 §03g；提示词已补一条规则，待真机复验）· note-serve 生成编排前端接线（后端三轮真机验证通过，见 §03k；网页「笔记」tab 还没有「生成笔记本」按钮）· `## `/`### ` 分区/小节标记真机验证（后端已接线、离线单测全绿，真机复验两轮都没成功——第一轮撞印刷体泄漏、第二轮排除了管线问题但手写行草连笔视觉模型读错，属于识别准确率而非代码问题，见 §03o/§03p）· 浏览页 UI 人眼确认（状态机/纯勾画条目/问AI 全部真机走过一遍，UI 截图仍没让用户确认过是否符合预期）· 模型配置统一页（二期步骤 5，唯一没做的一步）· md 导出 + `notes pull`（§05）。步骤 0 真机样本已于 2026-09-07 采回、验证、且真机复验通过（§03f/§03g/§03i）。
+**未闭环**：transcribe 转写质量再打磨（重转复验：坐标已对、结构读对，但汉字数字"一/二/三"被认成阿拉伯数字"1/2/3"，1 条仍混印刷体，见 §03g；提示词已补一条规则，待真机复验）· note-serve 生成编排前端接线（后端三轮真机验证通过，见 §03k；网页「笔记」tab 还没有「生成笔记本」按钮）· `## `/`### ` 分区/小节标记真机验证（后端已接线、离线单测全绿，真机复验两轮都没成功——第一轮撞印刷体泄漏、第二轮排除了管线问题但手写行草连笔视觉模型读错，属于识别准确率而非代码问题，见 §03o/§03p）· 浏览页/模型配置面板 UI 人眼确认（两处后端数据链路都真机走通，但纯前端可视渲染都没人眼确认过，见 §03o/§03q）· md 导出 + `notes pull`（§05）。步骤 0 真机样本已于 2026-09-07 采回、验证、且真机复验通过（§03f/§03g/§03i）。
 
 ## 01｜架构决策
 
@@ -301,6 +301,24 @@ note-serve 投影要往设备写打字文本，rmv6 之前是纯只读解析。�
 
 **离线门槛**：`cargo test --workspace` **68 个**（`notecore` 18→20、`ink-serve` 11→10〔换自渲染裁图，删 4 个旧缩略图测试加 3 个新的〕、**`mind-serve` 全新 10 个**，其余不变）零警告。
 
+## 03q｜步骤 5：模型配置统一面板，二期收尾（2026-09-08，真机验证通过）
+
+二期唯一剩的一步：`transcribe-serve`/`mind-serve` `GET /config` 加脱敏 key 预览、网关"模型"统一设置面板（视觉+文字并排、用量卡片）。落地：
+
+- **`keyMasked`**：`TranscribeConfig`/`MindConfig::public()` 各加一个 `key_masked()`——有 key 就回最后 4 位（如 `...ab12`），没 key 回 `null`；只在服务端算，`public()` 从不整串回显（跟 `hasKey`/`keySource` 同一条纪律）。两边各补一条单测断言（有 key 的脱敏格式、清 key 后变 `null`）。
+- **网关「模型」统一面板**：`renderNotes` 的「整理」子视图里新增一个折叠块，视觉（transcribe）/文字（mind）并排两栏，各自：key 输入框（脱敏预览行 + 保存 + 清 key）+ 模型/baseUrl 输入框 + 用量行（调用/成/败、token 入/出、最近错误）。**原「转写」折叠块的 key/模型/baseUrl 编辑挪到这个新面板**——同一份配置两处都能编会互相打架（改了一处另一处显示的还是旧值），「转写」折叠块只留自动转写开关、跑一轮/重试失败按钮、失败清单这几项转写工作流本身的操作，不再管"是什么模型"。`mind-serve` 之前**完全没有配置 UI**（§03p 记的"手动改成 qwen3-vl-plus"是没有网页入口、只能 SSH 改配置文件），这是它第一次有网页可配。
+
+**真机验证过程**：`SHELF_NO_BUILD=1 ./deploy.sh --only gateway,transcribe,mind` 部署后三服务 `active`。逐项走了后端到设备文件系统这条链路（网关本身的登录密码这次没有，无法从浏览器点一遍，见下方"没验证的"）：
+- `GET /config`（loopback 8796/8797）：`keyMasked` 真实计算正确——设备上已配置的真实 key 算出 `"...yP5A"`，两个服务一致（同一把 key，`mind-serve` 配置注释里写的"图省事共用"符合实测）。
+- `PUT /config` 空 `apiKey`（前端"没编辑 key 框就保存"时发的就是空串）不清已存 key、`keyMasked` 原样不变；改 `model` 为同一个值（no-op）后重新 `GET` 确认写穿——`apply()`/`public()` 这条路径在真实配置文件（不是测试 fixture）上端到端走通。
+- 二进制里 `strings` 确认新面板的元素 id（`mvsave`/`mtsave`/`keyMasked` 等）被正确编译进部署的 `shelf-gateway`。
+
+**没验证的（如实记录，不是回避）**：**前端面板本身的可视渲染与点击流程没有人眼确认过**——需要网关自己的登录密码，这次没有，只验证到"数据链路通不通"这一层。跟 §03o 记的"浏览页 UI 本身还没人眼看过"是同一类缺口，留给用户下次打开网页顺手看一眼。
+
+**离线**：`cargo test --workspace` 仍 **68 个**（这次是往既有测试加断言，没加新测试函数）零警告；`cargo build --workspace`/`--target aarch64-unknown-linux-musl` 零警告；`node --check app.js` 通过。
+
+**二期状态：步骤 1–5 全部完成、真机验证通过**（浏览页/模型面板两处纯前端可视渲染未经人眼确认，都已记录在案，不影响后端数据链路已验证的结论）。
+
 ## 04｜踩坑
 
 - **外部进程直改 `.metadata` `parent="trash"` 会被运行中 xochitl 覆写**（阅读线判死）；软删/建夹只能走 QML 代理（书架 `shelf-trash-agent.qmd`）。
@@ -325,10 +343,10 @@ note-serve 投影要往设备写打字文本，rmv6 之前是纯只读解析。�
 8. ~~纯勾画（无手写）条目~~ ✅ 2026-09-07 晚真机验证通过（§03p）：`drafts_of_page` 认出未配对的勾画单独生成 `ink:None` 草稿，`Entry::set_triage` 对这类条目"转入笔记"直接落 `text=quote.text`+`Reviewed`；真机确认条目正确落 `Mined`（`ink:null`）、浏览页正确显示引用文字无裁图、转入笔记后直接定稿。
 9. ~~裁图自渲染（治本）~~ ✅ 2026-09-07 晚真机验证通过（§03p）：`ink-serve::crop::render_ink` 从 `.rm` 笔画矢量数据自己画折线，不依赖缩略图；真机新写的批注正常转写成功。**没有专门复验"写在页面很靠下的位置"这个原始症状**（架构上已经不可能复现，但没有刻意造一个边界样本去踩一遍确切步骤）。
 10. `Section.triggers`（行首关键字/符号缺省归属，`?`/`查`/`!`/`背`）：字段声明了但从没被摄取/转写逻辑读过，跟当初 `has_underline` 是同一类"设计文档写了、代码没接"的缺口（§03m 发现），要不要接、怎么接（跟 `## ` 分区标记如何共存）还没定。
-11. ~~`mind-serve`（二期重新设计，取代原计划的"按分区批量跑"）~~ ✅ 2026-09-07 晚真机验证通过（§03p）：按条目单发——`ask_ai`+`question` 输入框触发，拼"书名+章节+勾画原文+转写文本+用户问题"发文字模型，写回 `answer`；`Section` 只保留笔记本排版分组用途，不再驱动 AI（网页"调模型"勾选框已删）。真机点验一次踩到 key 权限限制（403，不是代码 bug），换模型后拿到正确回答。**剩配套没做**：`transcribe-serve`/`mind-serve` `GET /config` 加 `keyMasked`（脱敏预览）、网关统一"模型"设置面板（视觉+文字并排、用量卡片）——**二期唯一没做的一步，见步骤 5**。
+11. ~~`mind-serve`（二期重新设计，取代原计划的"按分区批量跑"）~~ ✅ 2026-09-07 晚真机验证通过（§03p）：按条目单发——`ask_ai`+`question` 输入框触发，拼"书名+章节+勾画原文+转写文本+用户问题"发文字模型，写回 `answer`；`Section` 只保留笔记本排版分组用途，不再驱动 AI（网页"调模型"勾选框已删）。真机点验一次踩到 key 权限限制（403，不是代码 bug），换模型后拿到正确回答。~~剩配套~~ ✅ 2026-09-08 完成（§03q）：`transcribe-serve`/`mind-serve` `GET /config` 加了 `keyMasked`（脱敏预览）、网关统一"模型"设置面板（视觉+文字并排、用量卡片）；后端到设备配置文件真机验证通过，前端面板可视渲染未经人眼确认（缺登录密码）。**二期五步全部完成**。
 12. md 导出 `vault/<书名>/第N章.md`（front-matter、`^id` 块锚、`[[书名]]` 反链、索引页）+ host `notes/host/bin/notes pull`。
 13. 文档收尾、旧 PKM 白皮书加"已退役、由 notes/ 取代"头注、`dev` 以 `--no-ff` 合入 `feature/shelf-p1`。
 
-**已闭环（真机）**：§03c ink-serve 首轮（active/注册/追平 38 章）· §03d 「笔记」tab 注册 · §03e transcribe-serve 部署（active/注册/0600/追平记 note）· §03f 步骤 0 样本标定（聚簇/配对阈值验证通过）· §03g 揪出裁图画布尺寸错（960×1280）并修复部署复验（3 条有勾画的条目裁图都对准了手写位置，但转写准确率另计——2 条数字被认错、1 条完全读错；1 条裁不到已优雅降级）· §03h `rmv6::write`/`note-serve::rmdoc`/上传三件套首次真机验证通过 · §03i 更正 NUMBERED 误判、解出 Subheading 1/2 区分开关、二次真机验证全部 7 种打字样式渲染正确 · §03j/§03k note-serve 生成编排离线写完当晚三轮真机验证通过（生成/增量重传+旧本自动回收/无变化跳过全绿）· §03l 建夹代理真机验证通过（《书名》文件夹自动创建、新文档正确落进去、不重复建夹）· §03m 修正 `list_active` 真机验证通过（书清空后正确从列表消失）· §03o 二期浏览态状态机 + 浏览页 UI 全套真机验证通过、顺带修复"回收站/删除仍赖在列表里"bug · §03p 纯勾画条目 + 裁图自渲染 + `mind-serve` 全部真机验证通过、顺带修复"浏览页对纯勾画条目排序崩溃"bug，二期只剩步骤 5（模型配置统一页）。离线：七 crate+服务 **68** 测。
+**已闭环（真机）**：§03c ink-serve 首轮（active/注册/追平 38 章）· §03d 「笔记」tab 注册 · §03e transcribe-serve 部署（active/注册/0600/追平记 note）· §03f 步骤 0 样本标定（聚簇/配对阈值验证通过）· §03g 揪出裁图画布尺寸错（960×1280）并修复部署复验（3 条有勾画的条目裁图都对准了手写位置，但转写准确率另计——2 条数字被认错、1 条完全读错；1 条裁不到已优雅降级）· §03h `rmv6::write`/`note-serve::rmdoc`/上传三件套首次真机验证通过 · §03i 更正 NUMBERED 误判、解出 Subheading 1/2 区分开关、二次真机验证全部 7 种打字样式渲染正确 · §03j/§03k note-serve 生成编排离线写完当晚三轮真机验证通过（生成/增量重传+旧本自动回收/无变化跳过全绿）· §03l 建夹代理真机验证通过（《书名》文件夹自动创建、新文档正确落进去、不重复建夹）· §03m 修正 `list_active` 真机验证通过（书清空后正确从列表消失）· §03o 二期浏览态状态机 + 浏览页 UI 全套真机验证通过、顺带修复"回收站/删除仍赖在列表里"bug · §03p 纯勾画条目 + 裁图自渲染 + `mind-serve` 全部真机验证通过、顺带修复"浏览页对纯勾画条目排序崩溃"bug · §03q 模型配置统一面板（步骤 5）真机验证通过（后端到设备配置文件数据链路，前端面板可视渲染未经人眼确认），**二期五步全部完成**。离线：七 crate+服务 **68** 测。
 
 **明确不做（本期）**：扫描件 PDF、定稿 PDF（等步骤 0 ④）、笔记本手写批注回读（设备只读）、颜色语义（只进 tags）、自动清空回收站（网页按钮走 `emptyTrash()` 用户显式点）、Anki/Todoist/Readwise 外发（有 md 与稳定 id 之后再谈）、KOReader 高亮回流（书架砍下来留给笔记线，排在导出之后）。
