@@ -21,7 +21,7 @@
 
 ![notes 数据流：四步闭环](diagrams/data-flow.svg)
 
-**真机现状（2026-09-08 汇总，历史逐轮记录见 §03c–§03q）**：设备 imx93-chiappa，WiFi 直连（mDNS `shelf.local`，或直查 `getent hosts`；IP 是 DHCP 分配的别死记）。四个笔记线服务（`ink`/`transcribe`/`mind`/`notes`）全部 `active`，注册表 9 项（书架 5 + 笔记 4）。ink-serve 已摄取真实勾画+手写样本，聚簇/配对全部真机验证有效（§03f/§03g）；裁图**已换成自渲染**（`render_ink`，不再依赖缩略图，§03p）。transcribe-serve key 已配置、真调过模型，转写准确率还在打磨（§03g）。note-serve：写入/打包/上传三件套 + 全部 7 种打字样式两轮真机验证通过（§03h/§03i）；条目库→一章一本的生成编排**三轮真机验证通过**（首次生成、增量重传+旧本自动进回收站、无变化跳过，§03k）；《书名》文件夹自动创建**也真机验证通过**（`shelf-mkdir-agent.qmd` + `book-serve::mkdir`，§03l）——目前只剩网页「笔记」tab 还点不了「生成」（路由已开、前端未接，目前只能 curl/wget 手动触发）。**二期浏览态状态机 + 浏览页 UI + 纯勾画条目 + mind-serve 问 AI 全部真机验证通过**（步骤 1–4 收尾，§03n/§03o/§03p）；过程中修了两个真机 bug（书进回收站/删除仍赖在列表里；「浏览」对纯勾画条目排序时崩溃变空白）。**mind-serve 的模型手动改成了 `qwen3-vl-plus`**（这台设备的测试 key 对代码缺省的 `qwen-plus` 没权限，403；代码缺省没跟着改，见 §03p）。**二期步骤 5（模型配置统一页）已完成**（§03q）：`keyMasked` 脱敏预览 + 网关「模型」统一面板（视觉/文字并排），拿到网关登录密码后**经真实 HTTPS 网关认证代理层**（不是绕过网关直查 loopback）验证过 `GET`/`PUT /config` 的字段形状与前端读取逻辑完全对得上；剩纯视觉排版没有人眼确认过（没有浏览器渲染工具）。二期五步全部完成。
+**真机现状（2026-09-08 汇总，历史逐轮记录见 §03c–§03q）**：设备 imx93-chiappa，WiFi 直连（mDNS `shelf.local`，或直查 `getent hosts`；IP 是 DHCP 分配的别死记）。四个笔记线服务（`ink`/`transcribe`/`mind`/`notes`）全部 `active`，注册表 9 项（书架 5 + 笔记 4）。ink-serve 已摄取真实勾画+手写样本，聚簇/配对全部真机验证有效（§03f/§03g）；裁图**已换成自渲染**（`render_ink`，不再依赖缩略图，§03p）。transcribe-serve key 已配置、真调过模型，转写准确率还在打磨（§03g）。note-serve：写入/打包/上传三件套 + 全部 7 种打字样式两轮真机验证通过（§03h/§03i）；条目库→一章一本的生成编排**三轮真机验证通过**（首次生成、增量重传+旧本自动进回收站、无变化跳过，§03k）；《书名》文件夹自动创建**也真机验证通过**（`shelf-mkdir-agent.qmd` + `book-serve::mkdir`，§03l）——目前只剩网页「笔记」tab 还点不了「生成」（路由已开、前端未接，目前只能 curl/wget 手动触发）。**二期浏览态状态机 + 浏览页 UI + 纯勾画条目 + mind-serve 问 AI 全部真机验证通过**（步骤 1–4 收尾，§03n/§03o/§03p）；过程中修了两个真机 bug（书进回收站/删除仍赖在列表里；「浏览」对纯勾画条目排序时崩溃变空白）。**mind-serve 的模型手动改成了 `qwen3-vl-plus`**（这台设备的测试 key 对代码缺省的 `qwen-plus` 没权限，403；代码缺省没跟着改，见 §03p）。**二期步骤 5（模型配置统一页）已完成**（§03q）：`keyMasked` 脱敏预览 + 网关「模型」统一面板，拿到网关登录密码后**经真实 HTTPS 网关认证代理层**验证过 `GET`/`PUT /config` 的字段形状与前端读取逻辑完全对得上。二期五步全部完成。**这个面板后来在三期（§03t）整个搬进了「管理」tab、换成预置下拉 + 脱敏后只剩删除的 key 语义**——§03q 这段"视觉/文字并排两栏塞在笔记「整理」区"的布局描述已经过期，当前设计以 §03t 为准。
 
 **代码落点**：`crates/rmv6`（`lib.rs` 低层 `RmFile::read` / `page.rs` 高层 `Page{strokes,highlights,text}` + `BBox` / `write.rs` 写 `RootTextBlock` + 模板替换拼 `.rm` / `v6/crdt.rs` `CrdtId` 的 `Display`（`"part1:part2"`，条目库落盘 id 字符串的唯一定义处），§03h/§03p）· `crates/epubmap`（`index.rs` 两张表取首现 / `toc.rs` nav→ncx 两策略 / `lib.rs` `BookMap::chapter_of`）· `crates/notecore`（`model` 条目/样式/状态/去处（`Entry.ask_ai`/`question`/`destination`、`Quote.id`，分区三期已删见 §03s）· `hash` FNV 簇指纹与条目 id · `geom` 聚簇/配对 · `ingest` 增量合并（含纯勾画路径，§03p）· `marker` 行首标记 OCR 兜底 · `project` 条目库→段落列表投影+变更指纹（三期改按页平铺，§03s）· `export` 条目库→Markdown 导出，§03r）· `services/ink-serve`（`doc.rs` 书库只读视图 / `ingest.rs` 变更页编排 / `crop.rs` **自渲染裁图**（`render_ink`，从笔画矢量数据画折线，不再吃缩略图，§03p）/ `bookdb.rs` Repository / `config.rs` 阈值与几何 / `main.rs` 路由+监听，接 `askAi`/`question`/`destination` 字段 + `archive`/`purge` 动作，§03r）· `services/transcribe-serve`（`config` key 与节制参数 / `backend` `Vision` Strategy + `OpenAiCompat` / `prompt` / `ledger` 用量账本 / `ink` `EntryStore` 客户端 / `worker` 一轮编排 / `main.rs` SSE 订阅 + 防抖工作线程）· `services/mind-serve`（**新增**，§03p：`config` key/模型（无节流字段）/ `backend` `TextModel` Strategy + `OpenAiCompat`（纯文本消息） / `prompt` 拼书名+章节+原文+文本+问题 / `ledger` 用量账本（无 `lastRun`） / `ink` `EntryStore` 客户端（只有 `book`/`post_answer` 两个动作） / `worker::ask_entry` 单条问答 / `main.rs` **无后台线程**，纯被动路由）· `services/note-serve`（`rmdoc.rs` 打包 `.rmdoc` + 生产模板常量 / `config.rs` xochitl host/超时/文件夹命名 / `ink.rs` 只读 `EntryStore` 客户端 / `trash.rs` 跨服务调 book-serve 回收站队列 / `notebooks.rs` 每章生成记录簿记 / `publish.rs` `Uploader` Strategy + `generate_chapter/generate_book` 编排，§03j / `export.rs` 落盘 vault + 浏览器下载的 `content_disposition()`，§03r / `main.rs` 路由）· 网关 `ui/app.js` `renderNotes`（「浏览」/「整理」两个子视图 + 每条「问AI」勾选框/问题框/提问按钮/去处下拉/「不要了」按钮 + 章头「生成笔记本」「导出 md」+ 书头「清空回收站」，§03o/§03p/§03r/§03s）· `shelf/{build,deploy,install,uninstall}.sh` 的 `NOTES_BINS`/令牌（含 `mind`）· `shelf-gateway::manage::MODULES` 注册表。
 
@@ -372,6 +372,33 @@ note-serve 投影要往设备写打字文本，rmv6 之前是纯只读解析。�
 
 **离线**：`cargo test --workspace` **94 个**（`notecore` 41→40，删了 `section_id_for_name` 一个测试，其余相关测试改名字/改断言但数量不变）零警告；`cargo build --workspace`/`--target aarch64-unknown-linux-musl` 零警告；`node --check app.js` 通过。
 
+## 03t｜「整理」区四点反馈：模型预置下拉 + 移到管理台、回收站显内容、条目卡片重设计（2026-09-08，真机验证通过）
+
+用户拿真机用了「整理」区之后提了四点，逐条落地：
+
+**① 「转写」折叠层看不懂是干嘛的**：不是功能问题，是文案问题——三期步骤 5 把 key/模型配置搬出这个折叠块之后，剩下的自动转写开关/立即跑一次/重试失败/失败清单这几项，脱离了原本"配置+状态"的上下文，单看确实不知道在干嘛。补一句说明："合上书后台会自动转写手写批注，正常情况不用管这里——这里是给你看进度、失败了手动重试、或临时关掉自动转写用的。"没删任何功能。
+
+**② 模型管理搬进「管理」tab，重新设计**：用户点出两个问题——不该待在笔记专属的「整理」区（以后可能不止笔记线用到模型）；不该让用户自己填 baseUrl，模型该是下拉选。落地：
+- `transcribe-serve`/`mind-serve` 的 `config.rs` 各加一张 `Preset` 表（视觉/文字分开维护，`id`/`label`/`model`/`baseUrl` 四元组的静态常量数组）：视觉表 `qwen3-vl-plus`/`qwen-vl-max`/`qwen-vl-plus`，文字表 `qwen-plus`/`qwen-max`/`qwen-turbo`/`qwen3-vl-plus`（VL 模型本来就能答纯文字问题，之前真机踩过这个事实，见 §03p）。
+- `PUT /config` 新增 `preset` 字段：查表原子设置 `model`+`base_url`（一步到位，不会出现"model 换了 baseUrl 忘换"这种半吊子状态），未知预置名直接拒绝报错。`"custom"` 是转义阀，留给真要接非 DashScope 的 OpenAI 兼容口——这种时候才退回手填 `model`/`baseUrl` 那条老路径（没删，只是不再是默认路）。`GET /config`/`/status` 相应加 `presets`（表本身）+ `activePreset`（当前配置匹配哪个预置，不匹配算 `"custom"`，服务端算好直接给，前端不用自己猜）。
+- key 语义也改了：脱敏显示已保存的 key 之后，**网页上不再能直接在原处改写**——只剩「删除」按钮；真要换 key 得先删再填。没保存 key 时才给输入框+保存按钮。原来的设计是"看着像能编辑一个看不见的旧值，其实一保存就是整个覆盖"，容易造成"我明明没改怎么变了"的困惑；现在两种状态各自只有一套明确的操作，没有歧义状态。
+- 网页新建 `mountModelPanel()` 通用函数（视觉/文字两张卡片共用同一套渲染+交互逻辑，各自挂一个实例），挪进「管理」tab 新增的"模型管理"卡片。
+
+**③ 回收站不再是纯按钮**：原来「清空回收站」是「整理」页顶部一个按钮，点了就是 `confirm()` + 全清，看不到要丢的是什么。改成「整理」拆出第三个子视图「🗑 回收站」，真列出 `Skipped`/`Revoked`/`Archived` 状态的条目（页码、章节、原文或转写文本），「清空回收站」按钮挪进这个视图，点之前先取真实条数放进确认文案（"永久清掉这 N 条……"），回收站本来就空时点了直接提示"没什么可清"，不再空转一次网络请求。**这个功能零后端改动**——`GET /books/{uuid}` 本来就带全部条目（含三种终态的，`bookdb` 从不过滤），前端按 `status` 过滤即可，之前只是没人把这份数据显示出来。
+
+**④ 条目卡片重新设计**：新增一套 `.entry`/`.entry-head`/`.entry-body`/`.entry-crop`/`.entry-main`/`.entry-quote`/`.entry-text`/`.entry-ops`/`.entry-ask`/`.entry-answer` CSS 类（`style.css`），把原来一个裸 `flex` 行（图+一大坨内容糊在一起）拆成五块视觉分区：手写裁图、勾画原文引用、转写/校对文本框、样式与去处控制、问 AI 区——卡片化（圆角+边框+内边距，不再是无边界的行）。AI 回答不再藏在 `<details>` 折叠里（"问了就该看得见"，折叠反而多一次点击）。响应式只用一条 `@media(max-width:30em)`：窄屏裁图撑满宽度、宽屏裁图侧栏对齐，手机和桌面共用同一份 DOM，不用 JS 判断视口宽度分别渲染两套。
+
+**真机纠错（用户当场指出一处误删）**：`Marker::Section` 变体删除时，我把 `## 文字`这个**手写标记本身**也一并当死代码删掉了（只识别 `### `）——用户明确指出这不对：`##` 这个手写约定要继续识别，只是不再驱动已经删掉的"分区"数据结构。问清楚具体该映射到哪之后（同 `### ` 一样覆盖 `Entry.subhead`，两者不分层级），改了 `notecore::marker::split_leading_marker` 的判据从"三个及以上 `#`"放宽成"两个及以上 `#`"，`Marker::Subhead` 一个变体同时接住 `##`/`###`。这次教训：删除一个数据结构（分区）时，要把"这个数据结构本身"和"触发它的手写标记语法"分开看——后者可能有独立于前者的、用户已经养成的书写习惯，不能因为底层字段没了就连带默认干掉。
+
+**真机验证**（经真实 HTTPS 网关认证层）：
+- `GET /status` 正确带 `presets`（3/4 条，视觉/文字表分别核对过）+ `activePreset`（这台设备 mind-serve 之前手动改过的 `qwen3-vl-plus` 正确识别为已知预置，不是误判成 `"custom"`）。
+- `PUT {preset:"qwen-plus"}` 原子切换 model+baseUrl 验证过，切完再切回 `qwen3-vl-plus`（这台设备的测试 key 只对这个模型开了权限，来回切换验证完整后确认切回工作配置，不留手尾）。
+- `PUT {preset:"gpt-4o"}`（不存在的预置名）正确 400 拒绝，配置不变。
+- 拿人骨拼圖真实条目库核对回收站该显示的内容：10 条 `revoked` + 1 条 `skipped`，状态分布跟预期一致。
+- **前端可视渲染仍未经人眼确认**——没有浏览器渲染工具，只验证到 `strings` 确认新元素 id（`ntrashlist`/`mountModelPanel`/`entry-crop`/`trash-item` 等）已编译进部署的 `shelf-gateway` 二进制、以及上面这些后端数据契约全部走通。跟浏览页/模型面板（§03o/§03q）是同一类已知缺口，等用户自己打开网页看一眼。
+
+**离线**：`cargo test --workspace` **100 个**（`transcribe-serve` 9→12、`mind-serve` 10→13，`marker` 测试改名不增减，其余不变）零警告；`cargo build --workspace`/`--target aarch64-unknown-linux-musl` 零警告（notes + shelf 两个 workspace）；`node --check app.js` 通过。
+
 ## 04｜踩坑
 
 - **外部进程直改 `.metadata` `parent="trash"` 会被运行中 xochitl 覆写**（阅读线判死）；软删/建夹只能走 QML 代理（书架 `shelf-trash-agent.qmd`）。
@@ -401,6 +428,6 @@ note-serve 投影要往设备写打字文本，rmv6 之前是纯只读解析。�
 12. ~~md 导出~~ ✅ 2026-09-08 真机验证通过（§03r）：`vault/<书名>/第N章.md`（front-matter、`^id` 块锚、`[[书名]]` 反链、索引页）设备端落盘已完成。**剩 host `notes/host/bin/notes pull`**（拉到本机 Obsidian vault 路径）没做——三期只做了"导出到设备"这一半，"host 拉走"是新的独立待办。
 13. 文档收尾、旧 PKM 白皮书加"已退役、由 notes/ 取代"头注、`dev` 以 `--no-ff` 合入 `feature/shelf-p1`。
 
-**已闭环（真机）**：§03c ink-serve 首轮（active/注册/追平 38 章）· §03d 「笔记」tab 注册 · §03e transcribe-serve 部署（active/注册/0600/追平记 note）· §03f 步骤 0 样本标定（聚簇/配对阈值验证通过）· §03g 揪出裁图画布尺寸错（960×1280）并修复部署复验（3 条有勾画的条目裁图都对准了手写位置，但转写准确率另计——2 条数字被认错、1 条完全读错；1 条裁不到已优雅降级）· §03h `rmv6::write`/`note-serve::rmdoc`/上传三件套首次真机验证通过 · §03i 更正 NUMBERED 误判、解出 Subheading 1/2 区分开关、二次真机验证全部 7 种打字样式渲染正确 · §03j/§03k note-serve 生成编排离线写完当晚三轮真机验证通过（生成/增量重传+旧本自动回收/无变化跳过全绿）· §03l 建夹代理真机验证通过（《书名》文件夹自动创建、新文档正确落进去、不重复建夹）· §03m 修正 `list_active` 真机验证通过（书清空后正确从列表消失）· §03o 二期浏览态状态机 + 浏览页 UI 全套真机验证通过、顺带修复"回收站/删除仍赖在列表里"bug · §03p 纯勾画条目 + 裁图自渲染 + `mind-serve` 全部真机验证通过、顺带修复"浏览页对纯勾画条目排序崩溃"bug · §03q 模型配置统一面板（步骤 5）真机验证通过（经真实网关认证代理层验证数据契约，纯视觉排版未经人眼确认），**二期五步全部完成** · §03r 三期：md 导出 + 落设备笔记本/Obsidian/删除三选一真机验证通过，顺带修复"`Mined`/`Skipped` 混进两条投影"的真机 bug（`live_entries` 判据从排除法改允许列表）+ 导出改直接触发浏览器下载（顺带修了 `shelf-gateway::proxy::forward` 丢弃 `Content-Disposition` 头的缺口） · §03s 三期：砍掉分区，条目按页序平铺真机验证通过（含旧数据向后兼容验证）。离线：七 crate+服务 **94** 测。
+**已闭环（真机）**：§03c ink-serve 首轮（active/注册/追平 38 章）· §03d 「笔记」tab 注册 · §03e transcribe-serve 部署（active/注册/0600/追平记 note）· §03f 步骤 0 样本标定（聚簇/配对阈值验证通过）· §03g 揪出裁图画布尺寸错（960×1280）并修复部署复验（3 条有勾画的条目裁图都对准了手写位置，但转写准确率另计——2 条数字被认错、1 条完全读错；1 条裁不到已优雅降级）· §03h `rmv6::write`/`note-serve::rmdoc`/上传三件套首次真机验证通过 · §03i 更正 NUMBERED 误判、解出 Subheading 1/2 区分开关、二次真机验证全部 7 种打字样式渲染正确 · §03j/§03k note-serve 生成编排离线写完当晚三轮真机验证通过（生成/增量重传+旧本自动回收/无变化跳过全绿）· §03l 建夹代理真机验证通过（《书名》文件夹自动创建、新文档正确落进去、不重复建夹）· §03m 修正 `list_active` 真机验证通过（书清空后正确从列表消失）· §03o 二期浏览态状态机 + 浏览页 UI 全套真机验证通过、顺带修复"回收站/删除仍赖在列表里"bug · §03p 纯勾画条目 + 裁图自渲染 + `mind-serve` 全部真机验证通过、顺带修复"浏览页对纯勾画条目排序崩溃"bug · §03q 模型配置统一面板（步骤 5）真机验证通过（经真实网关认证代理层验证数据契约，纯视觉排版未经人眼确认），**二期五步全部完成** · §03r 三期：md 导出 + 落设备笔记本/Obsidian/删除三选一真机验证通过，顺带修复"`Mined`/`Skipped` 混进两条投影"的真机 bug（`live_entries` 判据从排除法改允许列表）+ 导出改直接触发浏览器下载（顺带修了 `shelf-gateway::proxy::forward` 丢弃 `Content-Disposition` 头的缺口） · §03s 三期：砍掉分区，条目按页序平铺真机验证通过（含旧数据向后兼容验证）· §03t「整理」区四点反馈：模型预置下拉+搬进管理台、回收站显内容、条目卡片重设计，真机验证数据契约通过（前端可视渲染仍未经人眼确认）。离线：七 crate+服务 **100** 测。
 
 **明确不做（本期）**：扫描件 PDF、定稿 PDF（等步骤 0 ④）、笔记本手写批注回读（设备只读）、颜色语义（只进 tags）、自动清空回收站（网页按钮走 `emptyTrash()` 用户显式点）、Anki/Todoist/Readwise 外发（有 md 与稳定 id 之后再谈）、KOReader 高亮回流（书架砍下来留给笔记线，排在导出之后）。
