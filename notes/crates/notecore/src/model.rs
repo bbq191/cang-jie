@@ -1,36 +1,5 @@
 //! 数据模型。所有字段可序列化（条目库落 JSON，网页/CLI 直接吃同一形状）。
-use crate::hash::{fnv1a, hex};
 use serde::{Deserialize, Serialize};
-
-/// 分区 = 名字 + 简述（简述就是给 AI 的要求）+ 是否调模型 + 顺序。全局缺省，按书可覆盖。
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq)]
-pub struct Section {
-    pub id: String,
-    pub name: String,
-    #[serde(default)]
-    pub brief: String,
-    #[serde(default = "yes")]
-    pub ai: bool,
-    #[serde(default)]
-    pub order: u32,
-    /// 行首关键字/符号 → 默认归到本分区（如 `?` `查` `!` `背诵`）。
-    #[serde(default)]
-    pub triggers: Vec<String>,
-}
-
-fn yes() -> bool {
-    true
-}
-
-/// 缺省分区表（用户可改）：查询 / 解释 / 背诵 / 其他。
-pub fn default_sections() -> Vec<Section> {
-    vec![
-        Section { id: "lookup".into(), name: "查询".into(), brief: "查这段勾画里的人名、作者、术语，给出简介与出处".into(), ai: true, order: 0, triggers: vec!["查".into()] },
-        Section { id: "explain".into(), name: "解释".into(), brief: "用通俗的话讲解这段勾画，先说结论再说为什么".into(), ai: true, order: 1, triggers: vec!["?".into(), "？".into(), "没懂".into()] },
-        Section { id: "memorize".into(), name: "背诵".into(), brief: String::new(), ai: false, order: 2, triggers: vec!["!".into(), "！".into(), "背".into()] },
-        Section { id: "other".into(), name: "其他".into(), brief: String::new(), ai: false, order: 3, triggers: vec![] },
-    ]
-}
 
 /// 笔记本里一行的段落样式（对应 xochitl 3.28 打字格式；Title/Subheading 由投影自动给，条目只在这四种里）。
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -171,9 +140,9 @@ pub struct Entry {
     pub text: Option<String>,
     #[serde(default)]
     pub style: Style,
-    #[serde(default)]
-    pub section: Option<String>,
-    /// 用户勾了「问AI」——二期改按条目单发，不再靠分区批量跑（`mind-serve`，2026-09-07 二期）。
+    /// 用户勾了「问AI」——二期改按条目单发（`mind-serve`，2026-09-07 二期）。三期（2026-09-08）
+    /// 砍掉了"分区"这个概念——AI 触发早就是这个字段的事了，分区兼职的"笔记本排版分组"角色也
+    /// 一并砍掉，改成整章条目按页序平铺（各自的 `Style` 就是唯一的格式区分，见 `project.rs`/`export.rs`）。
     #[serde(default)]
     pub ask_ai: bool,
     /// 用户输的问题（`ask_ai` 为真时才有意义）；答案写回 `answer`，`Answer.brief` 存的就是这句问题的存档。
@@ -236,8 +205,6 @@ pub struct Book {
     #[serde(default)]
     pub chapters: Vec<String>,
     #[serde(default)]
-    pub sections: Vec<Section>,
-    #[serde(default)]
     pub entries: Vec<Entry>,
     /// 页 id → 上次摄取时页 `.rm` 的 mtime（秒），只扫变更页。
     #[serde(default)]
@@ -245,21 +212,6 @@ pub struct Book {
 }
 
 impl Book {
-    /// 按名字找分区，没有就新建（`## 文字` 手写标记用，见 `marker::Marker::Section`）：
-    /// id 用名字的 FNV 哈希（稳定、不跟已有 id 生成规则冲突），排在已有分区最后，
-    /// `ai`/`brief`/`triggers` 留空——这些是"手写随手建的分区"，细节留给网页后补。
-    /// 返回分区 id；不改动已存在的同名分区（哪怕大小写/前后空白不同也按 trim 后精确匹配，不模糊)。
-    pub fn section_id_for_name(&mut self, name: &str) -> String {
-        let name = name.trim();
-        if let Some(s) = self.sections.iter().find(|s| s.name == name) {
-            return s.id.clone();
-        }
-        let id = hex(fnv1a(name.as_bytes()));
-        let order = self.sections.iter().map(|s| s.order).max().map(|m| m + 1).unwrap_or(0);
-        self.sections.push(Section { id: id.clone(), name: name.to_string(), brief: String::new(), ai: false, order, triggers: vec![] });
-        id
-    }
-
     /// 清空回收站：物理移除 `Archived`/`Revoked`/`Skipped` 这三种"终态、不再活跃"的条目——软删会
     /// 无限攒（每条撤销/跳过/归档的条目永远留痕），这是唯一真正腾空间的操作。**手动触发，不自动跑**，
     /// 跟书级回收站"不自动清空回收站"是同一条纪律（见笔记线白皮书 §05 明确不做清单）；一旦清掉就是
@@ -277,36 +229,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn section_id_for_name_reuses_existing_and_creates_new_appended_last() {
-        let mut b = Book { uuid: "u".into(), title: "t".into(), sections: default_sections(), ..Default::default() };
-        let existing = b.section_id_for_name("查询");
-        assert_eq!(existing, "lookup", "已有的同名分区直接复用 id，不新建");
-        assert_eq!(b.sections.len(), 4, "没多建");
-
-        let new_id = b.section_id_for_name(" 会议纪要 ");
-        assert_eq!(b.sections.len(), 5);
-        let created = b.sections.last().unwrap();
-        assert_eq!(created.id, new_id);
-        assert_eq!(created.name, "会议纪要", "trim 过");
-        assert_eq!(created.order, 4, "排在已有 4 个分区之后");
-        assert!(!created.ai && created.brief.is_empty() && created.triggers.is_empty());
-
-        let again = b.section_id_for_name("会议纪要");
-        assert_eq!(again, new_id, "再叫一次同名不重复新建");
-        assert_eq!(b.sections.len(), 5);
-    }
-
-    #[test]
     fn roundtrip_and_defaults() {
-        let e = Entry { id: "e1".into(), page: "p".into(), page_index: 3, chapter: Some(1), chapter_title: "一".into(), subhead: None, quote: None, ink: Some(Ink { strokes: vec!["1:2".into()], bbox: (0.0, 0.0, 1.0, 1.0), hash: "h".into(), crop: String::new() }), drafts: vec![], text: None, style: Style::Checkbox, section: None, ask_ai: false, question: None, answer: None, status: Status::Pending, destination: Default::default(), created: 1, updated: 1 };
+        let e = Entry { id: "e1".into(), page: "p".into(), page_index: 3, chapter: Some(1), chapter_title: "一".into(), subhead: None, quote: None, ink: Some(Ink { strokes: vec!["1:2".into()], bbox: (0.0, 0.0, 1.0, 1.0), hash: "h".into(), crop: String::new() }), drafts: vec![], text: None, style: Style::Checkbox, ask_ai: false, question: None, answer: None, status: Status::Pending, destination: Default::default(), created: 1, updated: 1 };
         let j = serde_json::to_string(&e).unwrap();
         assert!(j.contains(r#""style":"checkbox""#) && j.contains(r#""status":"pending""#));
         let back: Entry = serde_json::from_str(&j).unwrap();
         assert_eq!(back, e);
         assert!(back.needs_transcribe());
         let b: Book = serde_json::from_str(r#"{"uuid":"u","title":"t"}"#).unwrap();
-        assert!(b.entries.is_empty() && b.sections.is_empty());
-        assert_eq!(default_sections().iter().map(|s| s.name.as_str()).collect::<Vec<_>>(), ["查询", "解释", "背诵", "其他"]);
+        assert!(b.entries.is_empty());
     }
 
     #[test]

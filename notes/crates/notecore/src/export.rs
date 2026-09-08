@@ -1,15 +1,14 @@
 //! 条目库 → Markdown 导出（纯函数，零 I/O）：`vault/<书名>/第N章 章名.md`（一章一文件，跟设备笔记本
 //! 同构，文件名格式照抄 `note-serve::publish` 的 `visibleName` 命名）+ `vault/<书名>/书名.md`（索引页，
-//! 列各有内容的章、反链回去）。跟 `project.rs`（条目库 → 设备笔记本投影）用同一批"live 条目"（本章、
-//! 未撤销）、同一套排布逻辑（按分区、分区内按页序），只是产物是纯文本 Markdown 不是 `.rm` 段落——
-//! 给 Obsidian 用：稳定 `Entry.id`（16 位小写 hex，天然合法 Obsidian 块 id）当块锚 `^id`，改字段
-//! 按 id 幂等覆盖同一行，不会因为重新导出而产生重复块或丢失反链。
+//! 列各有内容的章、反链回去）。跟 `project.rs`（条目库 → 设备笔记本投影）用同一批"live 条目"、同一套
+//! 排布逻辑（按页序平铺，见 `project.rs` 模块文档"2026-09-08 三期：砍掉分区"），只是产物是纯文本
+//! Markdown 不是 `.rm` 段落——给 Obsidian 用：稳定 `Entry.id`（16 位小写 hex，天然合法 Obsidian 块 id）
+//! 当块锚 `^id`，改字段按 id 幂等覆盖同一行，不会因为重新导出而产生重复块或丢失反链。
 //!
 //! ⚠️ 已知限制（跟 `project.rs` 记的是同一类问题，这次同样不解决）：CommonMark 严格实现下，有序列表
 //! （`Style::Numbered`）条目之间如果夹着摘录/回答的引用块，可能不被认作连续列表、编号从 1 重来——
 //! 真要连续编号，条目间不能有摘录/回答。多数 Markdown 渲染器（含 Obsidian）对这个更宽容，先不处理。
 use crate::model::{Book, Entry, Status, Style};
-use std::collections::BTreeSet;
 
 /// YAML 双引号字符串字面量（转义反斜杠与双引号；标题/书名可能含冒号、井号等 YAML 特殊字符，
 /// 不加引号会被解析错）。
@@ -96,29 +95,8 @@ pub fn export_chapter_md(book: &Book, chapter_idx: usize) -> Option<String> {
     out.push_str("---\n\n");
     out.push_str(&format!("[[{}]]\n\n", book.title));
 
-    let mut sections = book.sections.clone();
-    if sections.is_empty() {
-        sections = crate::model::default_sections();
-    }
-    sections.sort_by_key(|s| s.order);
-
-    for sec in &sections {
-        let in_sec: Vec<&&Entry> = entries.iter().filter(|e| e.section.as_deref() == Some(sec.id.as_str())).collect();
-        if in_sec.is_empty() {
-            continue;
-        }
-        out.push_str(&format!("## {}\n\n", sec.name));
-        for e in in_sec {
-            push_entry_md(&mut out, e);
-        }
-    }
-    let known: BTreeSet<&str> = sections.iter().map(|s| s.id.as_str()).collect();
-    let stray: Vec<&&Entry> = entries.iter().filter(|e| !e.section.as_deref().map(|s| known.contains(s)).unwrap_or(false)).collect();
-    if !stray.is_empty() {
-        out.push_str("## 未分区\n\n");
-        for e in stray {
-            push_entry_md(&mut out, e);
-        }
+    for e in entries {
+        push_entry_md(&mut out, e);
     }
     Some(out)
 }
@@ -147,9 +125,9 @@ pub fn export_index_md(book: &Book) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{Answer, Book, Quote, Section};
+    use crate::model::{Answer, Book, Quote};
 
-    fn entry(id: &str, chapter: usize, page_index: usize, section: &str, style: Style, text: &str) -> Entry {
+    fn entry(id: &str, chapter: usize, page_index: usize, style: Style, text: &str) -> Entry {
         Entry {
             id: id.into(),
             page: "p".into(),
@@ -162,7 +140,6 @@ mod tests {
             drafts: vec![],
             text: (!text.is_empty()).then(|| text.to_string()),
             style,
-            section: (!section.is_empty()).then(|| section.to_string()),
             ask_ai: false,
             question: None,
             answer: None,
@@ -179,14 +156,10 @@ mod tests {
             title: "人骨拼图".into(),
             author: "杰佛瑞·迪佛".into(),
             chapters: vec!["第一章".into(), "空章".into()],
-            sections: vec![
-                Section { id: "lookup".into(), name: "查询".into(), brief: String::new(), ai: true, order: 0, triggers: vec![] },
-                Section { id: "explain".into(), name: "解释".into(), brief: String::new(), ai: true, order: 1, triggers: vec![] },
-            ],
             entries: vec![
-                entry("e1", 0, 2, "lookup", Style::Body, "林肯·莱姆"),
-                entry("e2", 0, 1, "explain", Style::Bullet, "为什么是纽约"),
-                entry("e3", 0, 5, "", Style::Body, "没归类的一条"),
+                entry("e1", 0, 2, Style::Body, "林肯·莱姆"),
+                entry("e2", 0, 1, Style::Bullet, "为什么是纽约"),
+                entry("e3", 0, 5, Style::Body, "没归类的一条"),
             ],
             page_mtimes: Default::default(),
         }
@@ -222,14 +195,15 @@ mod tests {
     }
 
     #[test]
-    fn sections_ordered_entries_by_page_stray_falls_back_and_block_anchors_present() {
+    fn entries_are_flat_and_ordered_by_page_no_section_headers() {
         let b = book();
         let md = export_chapter_md(&b, 0).unwrap();
-        // 查询在前（order 0），解释次之（order 1），未分区最后；分区内按页序：e2(page 1) 先于 e1(page 2)（不同分区，各自独立）。
-        let lookup_at = md.find("## 查询").unwrap();
-        let explain_at = md.find("## 解释").unwrap();
-        let stray_at = md.find("## 未分区").unwrap();
-        assert!(lookup_at < explain_at && explain_at < stray_at);
+        // 按页序：e2(page 1) 先于 e1(page 2) 先于 e3(page 5)；没有任何 "## " 分区头。
+        let e2_at = md.find("为什么是纽约").unwrap();
+        let e1_at = md.find("林肯·莱姆").unwrap();
+        let e3_at = md.find("没归类的一条").unwrap();
+        assert!(e2_at < e1_at && e1_at < e3_at);
+        assert!(!md.contains("##"), "三期砍掉分区之后不该再有任何分区头: {md}");
         assert!(md.contains("林肯·莱姆 ^e1\n"), "Body 样式无列表标记，块锚跟在文本后: {md}");
         assert!(md.contains("- 为什么是纽约 ^e2\n"), "Bullet 样式加 - 前缀");
         assert!(md.contains("没归类的一条 ^e3\n"));

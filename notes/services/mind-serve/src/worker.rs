@@ -59,7 +59,6 @@ mod tests {
             drafts: vec![],
             text: Some("这是谁".into()),
             style: Style::Body,
-            section: None,
             ask_ai,
             question: question.map(str::to_string),
             answer: None,

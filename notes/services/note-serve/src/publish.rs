@@ -144,7 +144,7 @@ impl Uploader for XochitlUploader {
 mod tests {
     use super::*;
     use crate::ink::BookBrief;
-    use notecore::model::{Entry, Section, Status, Style};
+    use notecore::model::{Entry, Status, Style};
     use std::sync::Mutex;
 
     struct FakeStore(Book);
@@ -193,7 +193,7 @@ mod tests {
     }
 
     fn entry(id: &str, chapter: usize, text: &str) -> Entry {
-        Entry { id: id.into(), page: "p".into(), page_index: 0, chapter: Some(chapter), chapter_title: String::new(), subhead: None, quote: None, ink: None, drafts: vec![], text: Some(text.into()), style: Style::Body, section: Some("other".into()), ask_ai: false, question: None, answer: None, status: Status::Reviewed, destination: Default::default(), created: 0, updated: 0 }
+        Entry { id: id.into(), page: "p".into(), page_index: 0, chapter: Some(chapter), chapter_title: String::new(), subhead: None, quote: None, ink: None, drafts: vec![], text: Some(text.into()), style: Style::Body, ask_ai: false, question: None, answer: None, status: Status::Reviewed, destination: Default::default(), created: 0, updated: 0 }
     }
 
     fn book() -> Book {
@@ -202,7 +202,6 @@ mod tests {
             title: "人骨拼图".into(),
             author: String::new(),
             chapters: vec!["第一章".into(), "空章".into()],
-            sections: vec![Section { id: "other".into(), name: "其他".into(), brief: String::new(), ai: false, order: 9, triggers: vec![] }],
             entries: vec![entry("e1", 0, "第一条")],
             page_mtimes: Default::default(),
         }

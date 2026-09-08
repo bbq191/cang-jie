@@ -60,7 +60,6 @@ impl EntryStore for InkHttp {
         let mut body = serde_json::json!({"draft": draft});
         match marker {
             Some(Marker::Style(s)) => body["style"] = serde_json::to_value(s).unwrap_or_default(),
-            Some(Marker::Section(name)) => body["sectionHint"] = serde_json::Value::String(name),
             Some(Marker::Subhead(name)) => body["subheadHint"] = serde_json::Value::String(name),
             None => {}
         }

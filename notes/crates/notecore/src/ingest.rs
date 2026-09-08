@@ -137,7 +137,6 @@ pub fn merge_page(entries: &mut Vec<Entry>, ctx: &PageCtx, drafts: Vec<PageDraft
                     drafts: vec![],
                     text: None,
                     style: Style::Body,
-                    section: None,
                     ask_ai: false,
                     question: None,
                     answer: None,

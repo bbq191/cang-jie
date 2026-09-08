@@ -237,8 +237,9 @@ function assetTab(sec,api,o){sec.innerHTML=`<div class="card">${o.title?`<h2>${o
   refresh();sec.refresh=refresh}
 
 /* 「笔记」tab（note-serve 注册；数据来自 ink-serve 条目库）：按书→按章列条目，左裁图右文本，改即存。
-   设备只负责写、不负责改：这里就是"改"的地方（e-ink 上打字太痛苦）。分区只管笔记本排版分组，不再驱动 AI；
-   问 AI 改按条目单发——勾「问AI」+ 填问题+点提问，调 mind-serve 拼"书名+章节+勾画原文+转写文本+问题"发模型（二期，白皮书 §03n）。 */
+   设备只负责写、不负责改：这里就是"改"的地方（e-ink 上打字太痛苦）。三期（2026-09-08）砍掉了"分区"——
+   AI 触发早就是按条目单发（勾「问AI」+ 填问题+点提问，调 mind-serve 拼"书名+章节+勾画原文+转写文本+问题"
+   发模型，二期，白皮书 §03n），分区兼职的笔记本排版分组也不要了，条目一律按页序平铺，格式=Entry.style。 */
 const STYLE_NAMES={body:'正文',bullet:'无序 -',numbered:'有序 1.',checkbox:'待办 口'};
 const STATUS_NAMES={mined:'待浏览',pending:'待转写',draft:'待校对',reviewed:'已校对',skipped:'已跳过',revoked:'已撤销',archived:'已删除'};
 /* 落设备笔记本/落 Obsidian/两处都要（三期，白皮书 §03n 之后）：缺省 both，不碰这个下拉就是老行为。 */
@@ -254,7 +255,6 @@ function renderNotes(sec){sec.innerHTML=`
   <div class="subpanel on" id="nbrowse"></div>
   <div class="subpanel" id="norganize">
     <div class="card">
-      <details class="cmp" id="nsecs"><summary>分区（笔记本排版分组；不再驱动 AI，问 AI 见每条下面）</summary><div id="nseclist"></div><button class="btn" id="nsecadd">＋ 分区</button> <button class="btn pri" id="nsecsave">保存分区</button></details>
       <details class="cmp" id="nmodels"><summary>模型（视觉转写 + 文字问答，各自 key/模型/用量）</summary>
         <div class="row" style="align-items:flex-start;gap:1.2em;flex-wrap:wrap">
           <div style="flex:1;min-width:14em">
@@ -289,10 +289,6 @@ function renderNotes(sec){sec.innerHTML=`
   const updateSummary=()=>{if(!book){sum.textContent='';return}const es=book.entries||[];
     const c=st=>es.filter(e=>e.status===st).length,skipped=c('skipped');
     sum.textContent=`待浏览 ${c('mined')} · 待转写 ${c('pending')} · 待校对 ${c('draft')} · 已校对 ${c('reviewed')}${skipped?` · 已跳过 ${skipped}（不再显示）`:''}`};
-  const renderSections=()=>{const el=$('#nseclist',sec);el.innerHTML='';(book.sections||[]).forEach((s,i)=>{const d=document.createElement('div');d.className='row';d.innerHTML=`<input type="text" value="${s.name}" placeholder="名字" style="max-width:6em" data-k="name"><input type="text" value="${s.brief||''}" placeholder="说明（可选，会印进笔记本这个分区的标题里）" style="flex:1;min-width:10em" data-k="brief"><button class="btn" title="删">✕</button>`;
-    d.querySelectorAll('[data-k]').forEach(inp=>inp.onchange=()=>{book.sections[i][inp.dataset.k]=inp.type==='checkbox'?inp.checked:inp.value});d.querySelector('button').onclick=()=>{book.sections.splice(i,1);renderSections()};el.appendChild(d)})};
-  $('#nsecadd',sec).onclick=()=>{book.sections.push({id:'s'+Date.now(),name:'',brief:'',ai:true,order:book.sections.length,triggers:[]});renderSections()};
-  $('#nsecsave',sec).onclick=async()=>{const r=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}/sections`,{method:'PUT',body:JSON.stringify({sections:book.sections})});if(r.ok===false)alert(r.message);else renderBook()};
   $('#nrescan',sec).onclick=async()=>{if(!book)return;await postJ(`/api/ink/books/${encodeURIComponent(book.uuid)}/rescan`,{});refresh()};
   $('#npurge',sec).onclick=async()=>{if(!book)return;if(!confirm('永久清掉已删除/已撤销/已跳过的条目，条目库里再也找不回——确定？'))return;
     const r=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}/purge`,{method:'POST'});
@@ -320,7 +316,7 @@ function renderNotes(sec){sec.innerHTML=`
         card.appendChild(row)});
       browse.appendChild(card)})};
   /* 整理：只列真被要求转笔记的（Pending/Draft/Reviewed）——Mined 在「浏览」决定，Skipped/Revoked 不再出现。 */
-  const renderBook=()=>{chaps.innerHTML='';if(!book)return;renderSections();updateSummary();
+  const renderBook=()=>{chaps.innerHTML='';if(!book)return;updateSummary();
     const live=(book.entries||[]).filter(e=>['pending','draft','reviewed'].includes(e.status));
     const groups=new Map();live.forEach(e=>{const k=e.chapter==null?-1:e.chapter;if(!groups.has(k))groups.set(k,[]);groups.get(k).push(e)});
     [...groups.keys()].sort((a,b)=>a-b).forEach(k=>{const es=groups.get(k).sort((a,b)=>a.page_index-b.page_index||(a.ink?a.ink.bbox[1]:0)-(b.ink?b.ink.bbox[1]:0));
@@ -345,7 +341,6 @@ function renderNotes(sec){sec.innerHTML=`
       }
       es.forEach(e=>{const row=document.createElement('div');row.className='opt-note';row.style.cssText='display:flex;gap:.6em;flex-wrap:wrap;align-items:flex-start;margin:.4em 0';
         const img=e.ink&&e.ink.crop?`<img src="${cropUrl(book.uuid,e.ink.crop)}" alt="手写" style="max-width:40%;max-height:9em;border:1px solid var(--line);background:#fff">`:'<span class="small">（无裁图）</span>';
-        const opts=(book.sections||[]).map(s=>`<option value="${s.id}" ${e.section===s.id?'selected':''}>${s.name}</option>`).join('');
         const sty=Object.entries(STYLE_NAMES).map(([v,n])=>`<option value="${v}" ${e.style===v?'selected':''}>${n}</option>`).join('');
         const dest=Object.entries(DEST_NAMES).map(([v,n])=>`<option value="${v}" ${(e.destination||'both')===v?'selected':''}>${n}</option>`).join('');
         const draft=(e.drafts&&e.drafts[0])?e.drafts[0].text:'';
@@ -353,7 +348,7 @@ function renderNotes(sec){sec.innerHTML=`
           <div class="small">p.${e.page_index+1}${e.subhead?' · '+e.subhead:''} <span class="badge ${e.status==='reviewed'?'on':''}">${STATUS_NAMES[e.status]||e.status}</span></div>
           ${e.quote?`<div class="small" style="border-left:3px solid var(--line);padding-left:.5em;margin:.2em 0">「${e.quote.text}」</div>`:''}
           <textarea rows="2" style="width:100%;box-sizing:border-box" placeholder="${draft?'转写：'+draft:'等待转写…'}">${e.text||draft}</textarea>
-          <div class="row"><select data-k="section"><option value="">（未分区）</option>${opts}</select><select data-k="style">${sty}</select><select data-k="destination">${dest}</select><button class="btn" data-archive title="两处投影都摘掉（软删）">不要了</button></div>
+          <div class="row"><select data-k="style">${sty}</select><select data-k="destination">${dest}</select><button class="btn" data-archive title="两处投影都摘掉（软删）">不要了</button></div>
           <div class="row" style="margin-top:.3em"><label class="toggle"><input type="checkbox" data-ask ${e.ask_ai?'checked':''}> 问AI</label>
             <input type="text" data-question placeholder="问题…（如「他是谁」）" value="${e.question?e.question.replace(/"/g,'&quot;'):''}" style="flex:1;min-width:9em" ${e.ask_ai?'':'disabled'}>
             <button class="btn" data-askbtn ${e.ask_ai&&e.question?'':'disabled'}>提问</button></div>

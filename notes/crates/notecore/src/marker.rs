@@ -2,20 +2,23 @@
 //! 几何判定（ink-serve）优先；这里兜底：几何没认出来（仍是 Body）时，用转写结果再认一次，并把标记从正文剥掉
 //! （笔记本样式自带项目符号/编号，正文里再留一份会重复）。多行文本只看第一行的行首。
 //!
-//! **2026-09-07 用户定案**：标记表参照 Markdown 标题级别，零学习成本——`## 文字`＝分区头、
-//! `### 文字`＝小节标题；`#`（对应 Title）**这次不接**：Title 在当前设计里是整章级别的（一份生成的笔记本
-//! 只有一个 Title，来自 epubmap 章名，不是哪条条目决定的），条目级 `#` 没有现成字段可落——
-//! 用户明确这是留给以后"纯手写笔记扫描"（会议/上课，没有 EPUB 章节可依附）那条还没做的线，
-//! 不要为了这条书摘注释线硬造一个用不上的字段。真要接的时候再回来加。
+//! **2026-09-07 用户定案**：标记表参照 Markdown 标题级别，零学习成本——`### 文字`＝小节标题；
+//! `#`（对应 Title）**这次不接**：Title 在当前设计里是整章级别的（一份生成的笔记本只有一个 Title，
+//! 来自 epubmap 章名，不是哪条条目决定的），条目级 `#` 没有现成字段可落——用户明确这是留给以后
+//! "纯手写笔记扫描"（会议/上课，没有 EPUB 章节可依附）那条还没做的线，不要为了这条书摘注释线
+//! 硬造一个用不上的字段。真要接的时候再回来加。
+//!
+//! **2026-09-08 三期**：`## 文字`（分区头）连同"分区"整个概念一起被砍掉了（用户拍板——AI 触发早就
+//! 是 `Entry.ask_ai`/`question` 的事，笔记本排版分组也不要了，条目按页序平铺）——`Marker::Section`
+//! 这个变体删了，`##`（两个 `#`）现在直接落空不识别（跟单 `#` 一样，理由见上一段——不为一条已经
+//! 死掉的功能留一个吃两个 `#` 却什么也不做的死判据）。
 use crate::model::Style;
 
-/// 行首标记认出来的结果：内容样式（`Style`）或结构性标记（分区/小节）。
+/// 行首标记认出来的结果：内容样式（`Style`）或结构性标记（小节）。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Marker {
     /// `-`/`1.`/`口` 等：这条内容本身该用什么样式。
     Style(Style),
-    /// `## 文字`：这条要挂到（新建或已有的）同名分区，见 `model::Book::section_id_for_name`。
-    Section(String),
     /// `### 文字`：这条的小节标题覆盖成这个（`Entry.subhead`，平时由 epubmap 自动填）。
     Subhead(String),
 }
@@ -30,18 +33,13 @@ pub fn split_leading_marker(text: &str) -> (Option<Marker>, String) {
     let f = first.trim_start();
     let strip = |body: &str| format!("{}{}", body.trim_start(), rest);
 
-    // `#` 计数一次性数完，按层级分派——不能先剥 "###" 再退回去试 "##"：那样 "###"（没文字）会把
-    // 最后一个 "#" 误当成 "## 文字" 的文字部分，这个坑写单测的时候真的踩过一次（见下方 `光标记没文字，不算数`）。
+    // `#` 计数一次性数完：三个及以上才认（`### 文字`＝小节标题），一两个 `#` 一律落空——单 `#`
+    // 从一开始就不接（见模块文档），双 `#` 是三期砍掉分区后跟着死掉的判据，不硬留。
     let hashes = f.chars().take_while(|&c| c == '#').count();
     if hashes >= 3 {
         let name = f[hashes..].trim();
         if !name.is_empty() {
             return (Some(Marker::Subhead(name.to_string())), strip(&f[hashes..]));
-        }
-    } else if hashes == 2 {
-        let name = f[hashes..].trim();
-        if !name.is_empty() {
-            return (Some(Marker::Section(name.to_string())), strip(&f[hashes..]));
         }
     }
     // 待办：空心方框（真方框或手写成的「口」字）
@@ -86,14 +84,14 @@ mod tests {
     }
 
     #[test]
-    fn recognizes_section_and_subhead_markers_and_strips() {
-        assert_eq!(split_leading_marker("## 查询相关"), (Some(Marker::Section("查询相关".into())), "查询相关".into()));
-        assert_eq!(split_leading_marker("##查询相关"), (Some(Marker::Section("查询相关".into())), "查询相关".into()), "没空格也认");
+    fn recognizes_subhead_marker_and_strips_but_double_hash_is_dead_now() {
         assert_eq!(split_leading_marker("### 人物关系"), (Some(Marker::Subhead("人物关系".into())), "人物关系".into()));
-        assert_eq!(split_leading_marker("###人物关系\n第二行"), (Some(Marker::Subhead("人物关系".into())), "人物关系\n第二行".into()), "### 要比 ## 先判，不能被 ## 抢走");
-        assert_eq!(split_leading_marker("##"), (None, "##".into()), "光标记没文字，不算数");
-        assert_eq!(split_leading_marker("###"), (None, "###".into()));
+        assert_eq!(split_leading_marker("###人物关系\n第二行"), (Some(Marker::Subhead("人物关系".into())), "人物关系\n第二行".into()), "没空格也认");
+        assert_eq!(split_leading_marker("###"), (None, "###".into()), "光标记没文字，不算数");
         assert_eq!(split_leading_marker("#### 更深一层"), (Some(Marker::Subhead("更深一层".into())), "更深一层".into()), "四个及以上 # 也按小节处理，不单独开第三级");
+        // 三期砍掉分区之后，`## 文字`（两个 #）不再识别成任何东西——原文原样返回。
+        assert_eq!(split_leading_marker("## 查询相关"), (None, "## 查询相关".into()), "分区标记已砍，双 # 落空");
+        assert_eq!(split_leading_marker("##"), (None, "##".into()));
     }
 
     #[test]
