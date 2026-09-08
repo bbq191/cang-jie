@@ -30,6 +30,10 @@ pub struct RunReport {
     pub failed: usize,
     pub skipped: usize,
     pub left: usize,
+    /// 这一轮成功调用累计花的 token（点「重转」弹出消耗要用，2026-09-08 第三轮反馈）——强制单条时
+    /// 这轮只有一次成功调用，这两个数就是那一次调用的实际消耗；批量跑一轮时是整轮的累计。
+    pub prompt_tokens: u64,
+    pub completion_tokens: u64,
     pub note: String,
 }
 

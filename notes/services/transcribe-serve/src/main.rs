@@ -202,7 +202,8 @@ fn main() {
             let (uuid, id) = (r.param("uuid").to_string(), r.param("id").to_string());
             let rep = s.run(Some(Target { uuid: &uuid, id: &id }));
             if rep.done == 1 {
-                Ok(Reply::ok(&serde_json::json!({"ok": true})))
+                // 点「重转」弹出这次调用的消耗（token）——不是账本累计，是这一次调用的实际数字。
+                Ok(Reply::ok(&serde_json::json!({"ok": true, "promptTokens": rep.prompt_tokens, "completionTokens": rep.completion_tokens})))
             } else {
                 Err(ApiError::bad(if rep.note.is_empty() { "没有这条目或它没有手写".to_string() } else { rep.note }))
             }

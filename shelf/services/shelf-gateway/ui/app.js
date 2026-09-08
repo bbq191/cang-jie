@@ -392,10 +392,12 @@ function renderNotes(sec){sec.innerHTML=`
                 <div class="grp"><button class="btn" data-dest title="落点：设备笔记本/Obsidian/都要，点击切换">${DEST_ICON[dv]}</button></div>
                 <div class="grp">${(e.ink&&e.ink.crop)?`<button class="btn${failed?' btn-bad':''}" data-transcribe title="用当前后端重新转写这一条（不动已校对文本）">${failed?'重转失败':(draft?'重转':'转写')}</button>`:''}<button class="btn" data-archive title="设备笔记本、Obsidian 导出都摘掉（软删，去「回收站」能看到并恢复）">不要了</button></div>
               </div>
+              <div class="small" data-txstat></div>
               <div class="entry-ask">
                 <div class="row"><label class="toggle"><input type="checkbox" data-ask ${e.ask_ai?'checked':''}> 问 AI</label>
                   <input type="text" data-question placeholder="问题…（如「他是谁」「这段什么意思」）" value="${e.question?e.question.replace(/"/g,'&quot;'):''}" style="flex:1;min-width:9em" ${e.ask_ai?'':'disabled'}>
                   <button class="btn pri" data-askbtn ${e.ask_ai&&e.question?'':'disabled'}>提问</button></div>
+                <div class="small" data-askstat></div>
                 ${e.answer?`<div class="entry-answer"><b>AI 回答</b>（问：${e.answer.brief}）<br>${e.answer.text}</div>`:''}
               </div>
             </div>
@@ -406,17 +408,26 @@ function renderNotes(sec){sec.innerHTML=`
         ta.onchange=ev=>{pendingText.delete(e.id);patch(e.id,{text:ev.target.value})};
         row.querySelector('[data-dest]').onclick=async()=>{const next=DEST_ORDER[(DEST_ORDER.indexOf(dv)+1)%3];await patch(e.id,{destination:next});await flushPendingText();book=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}`);renderBook()};
         row.querySelector('[data-archive]').onclick=()=>archiveEntry(e.id);
-        const tb=row.querySelector('[data-transcribe]');
-        if(tb)tb.onclick=async()=>{tb.disabled=true;const r=await j(`/api/transcribe/books/${encodeURIComponent(book.uuid)}/entries/${encodeURIComponent(e.id)}`,{method:'POST'});tb.disabled=false;if(r.ok===false)alert(r.message||'转写失败');await flushPendingText();book=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}`);renderBook()};
+        /* 点「重转」/「提问」弹出状态和这次调用的消耗（用户反馈"应该弹出状态及当前消耗"，2026-09-08
+           第三轮）：先显文字状态（转写中…/提问中…），拿到结果显示"✓ 完成 · token 入X 出Y"或错误，
+           停留一小会儿让用户真的看得到（不然紧接着的整页重画会立刻把这条状态盖掉，等于白显示）。 */
+        const wait=ms=>new Promise(res=>setTimeout(res,ms));
+        const tb=row.querySelector('[data-transcribe]'),txStat=row.querySelector('[data-txstat]');
+        if(tb)tb.onclick=async()=>{tb.disabled=true;txStat.textContent='转写中…';
+          const r=await j(`/api/transcribe/books/${encodeURIComponent(book.uuid)}/entries/${encodeURIComponent(e.id)}`,{method:'POST'});
+          tb.disabled=false;
+          txStat.textContent=r.ok===false?('✗ '+(r.message||'转写失败')):`✓ 转写完成 · 这次 token 入 ${r.promptTokens||0} 出 ${r.completionTokens||0}`;
+          await wait(1500);await flushPendingText();book=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}`);renderBook()};
         /* 「问AI」勾选框 + 问题 + 提问按钮：改即存（ink-serve），点提问才真的调 mind-serve。 */
-        const askBox=row.querySelector('[data-ask]'),qInput=row.querySelector('[data-question]'),askBtn=row.querySelector('[data-askbtn]');
+        const askBox=row.querySelector('[data-ask]'),qInput=row.querySelector('[data-question]'),askBtn=row.querySelector('[data-askbtn]'),askStat=row.querySelector('[data-askstat]');
         const syncAskUi=()=>{qInput.disabled=!askBox.checked;askBtn.disabled=!(askBox.checked&&qInput.value.trim())};
         askBox.onchange=()=>{patch(e.id,{askAi:askBox.checked});syncAskUi()};
         qInput.onchange=()=>{patch(e.id,{question:qInput.value});syncAskUi()};
-        askBtn.onclick=async()=>{askBtn.disabled=true;askBtn.textContent='提问中…';
+        askBtn.onclick=async()=>{askBtn.disabled=true;askStat.textContent='提问中…';
           const r=await j(`/api/mind/books/${encodeURIComponent(book.uuid)}/entries/${encodeURIComponent(e.id)}/ask`,{method:'POST'});
-          askBtn.disabled=false;askBtn.textContent='提问';
-          if(r.ok===false)alert(r.message||'提问失败');else{await flushPendingText();book=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}`);renderBook()}};
+          askBtn.disabled=false;
+          if(r.ok===false){askStat.textContent='✗ '+(r.message||'提问失败')}
+          else{askStat.textContent=`✓ 已回答 · 这次 token 入 ${r.promptTokens||0} 出 ${r.completionTokens||0}`;await wait(1500);await flushPendingText();book=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}`);renderBook()}};
         card.appendChild(row)});
       chaps.appendChild(card)});
     syncPickbar()};
@@ -439,9 +450,10 @@ function renderNotes(sec){sec.innerHTML=`
     pickmsg.textContent=ok?`✓ 已导出 ${ok} 章，点下面的按钮逐个下载`:'（选中的章节都没有去处含 Obsidian 的条目）'};
   $('[data-pick-retry]',sec).onclick=async()=>{const ids=selectedEntries().filter(e=>e.ink&&e.ink.crop).map(e=>e.id);
     if(!ids.length){pickmsg.textContent='选中的条目都没有手写裁图，没法转写';return}
-    await flushPendingText();let ok=0,fail=0;for(const[i,id]of ids.entries()){pickmsg.textContent=`转写中…（${i+1}/${ids.length}）`;
-      const r=await j(`/api/transcribe/books/${encodeURIComponent(book.uuid)}/entries/${encodeURIComponent(id)}`,{method:'POST'});if(r.ok===false)fail++;else ok++}
-    pickmsg.textContent=`✓ 成 ${ok} 败 ${fail}`;await flushPendingText();book=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}`);renderBook()};
+    await flushPendingText();let ok=0,fail=0,pt=0,ct=0;for(const[i,id]of ids.entries()){pickmsg.textContent=`转写中…（${i+1}/${ids.length}）`;
+      const r=await j(`/api/transcribe/books/${encodeURIComponent(book.uuid)}/entries/${encodeURIComponent(id)}`,{method:'POST'});
+      if(r.ok===false)fail++;else{ok++;pt+=r.promptTokens||0;ct+=r.completionTokens||0}}
+    pickmsg.textContent=`✓ 成 ${ok} 败 ${fail} · 本次消耗 token 入 ${pt} 出 ${ct}`;await flushPendingText();book=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}`);renderBook()};
   $('[data-pick-archive]',sec).onclick=async()=>{const ids=[...picked];if(!ids.length)return;
     if(!confirm(`这 ${ids.length} 条都不要了？（设备笔记本、Obsidian 导出都会摘掉；条目还留在「回收站」，能看到也能恢复）`))return;
     for(const id of ids)await postJ(`/api/ink/books/${encodeURIComponent(book.uuid)}/entries/${encodeURIComponent(id)}/archive`,{});

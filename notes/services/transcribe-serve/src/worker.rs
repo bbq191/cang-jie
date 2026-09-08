@@ -71,8 +71,15 @@ pub struct Ctx<'a> {
     pub now: u64,
 }
 
-/// 转写一条并写回；返回草稿文本。
-fn transcribe_entry(c: &Ctx<'_>, uuid: &str, e: &notecore::model::Entry) -> Result<String, String> {
+/// 一条转写成功调用花的 token（点「重转」弹出消耗要用，2026-09-08 第三轮反馈）。文本本身已经在函数里
+/// `post_draft` 写回条目库了，调用方不需要再要一份，这里只带调用方真正要用的数字。
+struct Transcribed {
+    prompt_tokens: u64,
+    completion_tokens: u64,
+}
+
+/// 转写一条并写回；返回这次调用的 token 消耗。
+fn transcribe_entry(c: &Ctx<'_>, uuid: &str, e: &notecore::model::Entry) -> Result<Transcribed, String> {
     let ink = e.ink.as_ref().ok_or("没有手写")?;
     if ink.crop.is_empty() {
         return Err("没有裁图".into());
@@ -86,7 +93,7 @@ fn transcribe_entry(c: &Ctx<'_>, uuid: &str, e: &notecore::model::Entry) -> Resu
     let draft = Draft { text: text.clone(), backend: c.vision.name().to_string(), at: c.now, hash: ink.hash.clone() };
     c.store.post_draft(uuid, &e.id, &draft, marker)?;
     c.ledger.record_ok(&c.cfg.usage_key(), t.prompt_tokens, t.completion_tokens, c.now);
-    Ok(text)
+    Ok(Transcribed { prompt_tokens: t.prompt_tokens, completion_tokens: t.completion_tokens })
 }
 
 /// 跑一轮。`only` 给定 → 只做那一条（强制）。
@@ -133,8 +140,10 @@ pub fn run_once(c: &Ctx<'_>, only: Option<Target<'_>>) -> RunReport {
                 continue;
             }
             match transcribe_entry(c, &b.uuid, e) {
-                Ok(_) => {
+                Ok(t) => {
                     r.done += 1;
+                    r.prompt_tokens += t.prompt_tokens;
+                    r.completion_tokens += t.completion_tokens;
                     c.failures.clear_one(&b.uuid, &e.id);
                 }
                 Err(err) => {
@@ -214,6 +223,7 @@ mod tests {
         let c = Ctx { store: &store, vision: &vision, cfg: &cfg(), ledger: &ledger, failures: &f, now: 9 };
         let r = run_once(&c, None);
         assert_eq!((r.scanned, r.done, r.failed, r.left), (3, 2, 0, 1), "max_per_run=2 剩 1: {r:?}");
+        assert_eq!((r.prompt_tokens, r.completion_tokens), (20, 4), "两次成功调用（各 10/2，见 backend::Fixed）累加，点「重转」弹出消耗要用这两个数");
         let posted = store.posted.lock().unwrap().clone();
         assert_eq!(posted[0].1, Draft { text: "背诵".into(), backend: "fixed".into(), at: 9, hash: "h1".into() });
         assert_eq!(posted[0].2, Some(Marker::Style(Style::Numbered)), "行首 1. → 有序，且标记剥掉");
@@ -223,6 +233,21 @@ mod tests {
         assert_eq!((r.scanned, r.done, r.left), (1, 1, 0));
         let r = run_once(&c, None);
         assert_eq!(r.scanned, 0, "全部有草稿后零调用");
+    }
+
+    #[test]
+    fn forced_single_entry_run_reports_only_that_calls_tokens() {
+        // 「重转」按钮走的就是这条路：uuid+id 强制指定一条，成功后返回的 promptTokens/completionTokens
+        // 只是这一次调用的消耗，不是整本书/整轮累加的——书里另一条待转写的（entry "b"）不该被碰。
+        let t = tempfile::tempdir().unwrap();
+        let ledger = Ledger::open(&t.path().join("l.json"));
+        let store = mem(vec![entry("a", "h1", "a.png", None), entry("b", "h2", "b.png", None)]);
+        let vision = Fixed("答案".into());
+        let f = Failures::default();
+        let c = Ctx { store: &store, vision: &vision, cfg: &cfg(), ledger: &ledger, failures: &f, now: 1 };
+        let r = run_once(&c, Some(Target { uuid: "u", id: "a" }));
+        assert_eq!((r.scanned, r.done, r.prompt_tokens, r.completion_tokens), (1, 1, 10, 2), "只强制转这一条，token 也只是这一条的: {r:?}");
+        assert_eq!(store.posted.lock().unwrap().len(), 1, "entry b 没被顺带转写");
     }
 
     #[test]
