@@ -25,7 +25,7 @@
 
 **代码落点**：`crates/rmv6`（`lib.rs` 低层 `RmFile::read` / `page.rs` 高层 `Page{strokes,highlights,text}` + `BBox` / `write.rs` 写 `RootTextBlock` + 模板替换拼 `.rm` / `v6/crdt.rs` `CrdtId` 的 `Display`（`"part1:part2"`，条目库落盘 id 字符串的唯一定义处），§03h/§03p）· `crates/epubmap`（`index.rs` 两张表取首现 / `toc.rs` nav→ncx 两策略 / `lib.rs` `BookMap::chapter_of`）· `crates/notecore`（`model` 条目/样式/状态/去处（`Entry.ask_ai`/`question`/`destination`、`Quote.id`，分区三期已删见 §03s）· `hash` FNV 簇指纹与条目 id · `geom` 聚簇/配对 · `ingest` 增量合并（含纯勾画路径，§03p）· `marker` 行首标记 OCR 兜底 · `project` 条目库→段落列表投影+变更指纹（三期改按页平铺，§03s）· `export` 条目库→Markdown 导出，§03r）· `services/ink-serve`（`doc.rs` 书库只读视图 / `ingest.rs` 变更页编排 / `crop.rs` **自渲染裁图**（`render_ink`，从笔画矢量数据画折线，不再吃缩略图，§03p）/ `bookdb.rs` Repository / `config.rs` 阈值与几何 / `main.rs` 路由+监听，接 `askAi`/`question`/`destination` 字段 + `archive`/`purge` 动作，§03r）· `services/transcribe-serve`（`config` key 与节制参数 / `backend` `Vision` Strategy + `OpenAiCompat` / `prompt` / `ledger` 用量账本 / `ink` `EntryStore` 客户端 / `worker` 一轮编排 / `main.rs` SSE 订阅 + 防抖工作线程）· `services/mind-serve`（**新增**，§03p：`config` key/模型（无节流字段）/ `backend` `TextModel` Strategy + `OpenAiCompat`（纯文本消息） / `prompt` 拼书名+章节+原文+文本+问题 / `ledger` 用量账本（无 `lastRun`） / `ink` `EntryStore` 客户端（只有 `book`/`post_answer` 两个动作） / `worker::ask_entry` 单条问答 / `main.rs` **无后台线程**，纯被动路由）· `services/note-serve`（`rmdoc.rs` 打包 `.rmdoc` + 生产模板常量 / `config.rs` xochitl host/超时/文件夹命名 / `ink.rs` 只读 `EntryStore` 客户端 / `trash.rs` 跨服务调 book-serve 回收站队列 / `notebooks.rs` 每章生成记录簿记 / `publish.rs` `Uploader` Strategy + `generate_chapter/generate_book` 编排，§03j / `export.rs` 落盘 vault + 浏览器下载的 `content_disposition()`，§03r / `main.rs` 路由）· 网关 `ui/app.js` `renderNotes`（「浏览」/「整理」两个子视图 + 每条「问AI」勾选框/问题框/提问按钮/去处下拉/「不要了」按钮 + 章头「生成笔记本」「导出 md」+ 书头「清空回收站」，§03o/§03p/§03r/§03s）· `shelf/{build,deploy,install,uninstall}.sh` 的 `NOTES_BINS`/令牌（含 `mind`）· `shelf-gateway::manage::MODULES` 注册表。
 
-**离线门槛**：`cargo test --workspace` 68 个（rmv6 7 · epubmap 5 · notecore 20 · ink-serve 10 · transcribe-serve 9 · note-serve 7 · **mind-serve 10（新）**）零警告；网关 `node --check app.js`；shell 过 shellcheck。
+**离线门槛**：`cargo test --workspace` **100 个**（rmv6 7 · epubmap 5 · notecore 40 · ink-serve 10 · transcribe-serve 12 · mind-serve 13 · note-serve 13）零警告；网关 `node --check app.js`；shell 过 shellcheck。
 
 **未闭环**：transcribe 转写质量再打磨（重转复验：坐标已对、结构读对，但汉字数字"一/二/三"被认成阿拉伯数字"1/2/3"，1 条仍混印刷体，见 §03g；提示词已补一条规则，待真机复验）· `### ` 小节标记真机验证（`## ` 分区那半已随三期砍掉分区一起删除，不再是待办，见 §03s；`### 小节名` 覆盖 `subhead` 后端已接线、离线单测全绿，真机复验两轮都没成功——第一轮撞印刷体泄漏、第二轮排除了管线问题但手写行草连笔视觉模型读错，属于识别准确率而非代码问题，见 §03o/§03p）· 浏览页/模型配置面板/三期新控件 UI 人眼确认（后端数据链路都真机走通，但纯前端可视渲染都没人眼确认过，见 §03o/§03q/§03r）· `notes pull`（host CLI 拉 md 到本机 Obsidian vault，见 §05——三期已做的是设备端落盘导出，host 侧拉取还没做）· archive/purge 两个端点没对真实历史数据实测过（不可逆操作，见 §03r）。步骤 0 真机样本已于 2026-09-07 采回、验证、且真机复验通过（§03f/§03g/§03i）。
 
@@ -49,8 +49,8 @@
 | 样式 | 码 | 笔记本用途 | 手写约定 | 判法 |
 |---|---|---|---|---|
 | Title | 2 (HEADING) | 页标题 = 章名 | `#`（**这条线不接**，见下方说明） | epubmap |
-| Subheading 1 | 3 (BOLD) + 7 字节标记 `21023403000000` | ~~分区头（名 + 简述 = AI 要求）~~ 三期已砍掉分区，这一级目前没有任何生产者在用，见 §03s | ~~`## 文字`~~（已删） | — |
-| Subheading 2 | 3 (BOLD)，不带标记 | 勾画所在小节 | `### 文字`（覆盖 epubmap 自动填的值） | OCR（`notecore::marker`）／epubmap 缺省 |
+| Subheading 1 | 3 (BOLD) + 7 字节标记 `21023403000000` | ~~分区头（名 + 简述 = AI 要求）~~ 三期已砍掉分区，这一级目前没有任何生产者在用，见 §03s | — | — |
+| Subheading 2 | 3 (BOLD)，不带标记 | 勾画所在小节 | `## 文字` / `### 文字`（两个/三个及以上 `#` 是同一件事，不分层级，覆盖 epubmap 自动填的值；三期先误删了 `##` 半又按用户要求恢复，见 §03t） | OCR（`notecore::marker`）／epubmap 缺省 |
 | Body | 1 (PLAIN) | 转写正文 / AI 回答 | 普通书写 | OCR |
 | Bulletpoint | 4 (BULLET) | 无序 | 行首短横 / 实心点 | OCR（`marker`：`- `/`• `/`· `/`* `/`—`/`－`） |
 | NumberedList | 10，格式子块跟其余样式一样只有 2 字节 | 有序 | 行首 `1.` | OCR（`marker`） |
@@ -59,7 +59,7 @@
 
 **2026-09-07 用户定案，更正了两处过期结论**：① 原计划"Subheading 1 靠几何 `has_underline`（一行字+下划线）判定"——查证 `has_underline` 函数确实存在且真机验证过（§03f），但**从没被 `ingest_doc`/`merge_page` 调用过，只在自己的单元测试里跑**，等于没接线；用户否掉了这条手势路线（"不好，没有学习成本"这个标准更重要），改用 Markdown 标题级别的文字标记：`## 文字`＝分区头、`### 文字`＝小节，复用已有的 OCR 兜底识别路径（`notecore::marker`），不需要额外的几何判定代码。② 表里"Bulletpoint/Checkbox 几何优先、OCR 兜底"这个说法核对代码后也是错的——`notecore::geom` 目前只有 `has_underline` 一个几何标记函数，无序/待办目前**只有 OCR 路径**（转写完成后才认，见下）。`#`（对应 Title）明确不接：Title 是整章级别的（一份生成的笔记本只有一个 Title，来自 epubmap 章名），条目级 `#` 没有现成字段可落——用户说这是留给以后"纯手写笔记扫描"（会议/上课，没有 EPUB 章节可依附）那条还没立项的线，不要为了勾书这条硬造用不上的字段。
 
-**`## 文字`/`### 文字` 落到哪个字段（历史结论，`##` 半已废）**：`### ` 直接覆盖 `Entry.subhead`（平时这个字段由 epubmap 从 EPUB 目录 h2/h3 自动填，手写标记可以人工盖过去）——这半继续有效。`##` 那半（找/建 `Section`）随三期分区整体删除已经不存在，`##` 现在直接落空不识别，见 §03s。
+**`## 文字`/`### 文字` 落到哪个字段（当前状态，§03t 定稿）**：两个/三个及以上 `#` 都直接覆盖 `Entry.subhead`（平时这个字段由 epubmap 从 EPUB 目录 h2/h3 自动填，手写标记可以人工盖过去），不分层级——`##` 那半原来是"找/建 `Section`"，三期删分区时被连带误删成完全不识别，用户当场纠正"这个手写标记本身要继续认"，改成跟 `###` 合并成同一件事（见 §03t）。
 
 **`Section.triggers` 死代码**：随分区整体删除，连字段带这段悬而未决的历史都一并消失了，不再是待办，见 §03s。
 
@@ -67,16 +67,16 @@
 
 | 用途 | 路径 |
 |---|---|
-| 二进制 | `~/.local/bin/{ink-serve,transcribe-serve,note-serve}`（随书架 `install.sh`，令牌 `ink`/`transcribe`/`note`） |
-| 配置 | `~/.config/notes/ink.json`（聚簇/配对阈值、页几何、防抖；首启写出缺省）· `~/.config/notes/transcribe.json`（**0600**，含 apiKey；backend/baseUrl/model/timeoutSecs/maxPerRun/pauseMs/auto/maxAttempts/prompt） |
-| 数据 | `~/.local/share/notes/crops/`（手写裁片 PNG）· `~/.local/share/notes/vault/`（md 导出，§03r 已落地） |
-| 状态 | `~/.local/state/notes/books/<uuid>.json`（**条目库**，一书一文件，原子写）· `~/.local/state/notes/transcribe.json`（用量账本：次数/token/最近错误/上轮报告，不存内容） |
+| 二进制 | `~/.local/bin/{ink-serve,transcribe-serve,mind-serve,note-serve}`（随书架 `install.sh`，令牌 `ink`/`transcribe`/`mind`/`note`） |
+| 配置 | `~/.config/notes/ink.json`（聚簇/配对阈值、页几何、防抖；首启写出缺省）· `~/.config/notes/transcribe.json`（**0600**，含 apiKey；backend/baseUrl/model/timeoutSecs/maxPerRun/pauseMs/auto/maxAttempts/prompt，三期加 `preset` 走 `PUT /config`，见 §03t）· `~/.config/notes/mind.json`（**0600**，同上但没有 maxPerRun/pauseMs/auto/maxAttempts 这些节流字段） |
+| 数据 | `~/.local/share/notes/crops/`（手写裁片 PNG）· `~/.local/share/notes/vault/`（md 导出，§03r 已落地，设备端落盘这一半；host 拉取 `notes pull` 还没做） |
+| 状态 | `~/.local/state/notes/books/<uuid>.json`（**条目库**，一书一文件，原子写）· `~/.local/state/notes/transcribe.json`/`~/.local/state/notes/mind.json`（用量账本：次数/token/最近错误/上轮报告，不存内容） |
 | 运行时 | 与书架共用注册表 `$XDG_RUNTIME_DIR/shelf/services/`（缺省回落 `/tmp/shelf-0/shelf/services`） |
 | 只读外部 | xochitl 书库 `~/.local/share/remarkable/xochitl/`（`<uuid>.{metadata,content,epub,epubindex}`、`<uuid>/<page>.rm`、`<uuid>.thumbnails/<page>.png`）——**绝不写** |
 
 ## 03｜systemd
 
-三个单元 `notes/systemd/*.service`，随书架载荷一起装：`PartOf=shelf.target` + `WantedBy=shelf.target`，`After=home.mount`（transcribe 另 `Wants/After=network-online.target`）；`Restart=on-failure`。**不给 xochitl 加任何依赖**（红线）。装/卸：`shelf/install.sh --only ink,transcribe,note`、`shelf/uninstall.sh`（条目库不在 `--purge` 范围，绝不删用户笔记）。
+四个单元 `notes/systemd/*.service`（`ink`/`transcribe`/`mind`/`note`），随书架载荷一起装：`PartOf=shelf.target` + `WantedBy=shelf.target`，`After=home.mount`（transcribe/mind 另 `Wants/After=network-online.target`，出网那两个才需要）；`Restart=on-failure`。**不给 xochitl 加任何依赖**（红线）。装/卸：`shelf/install.sh --only ink,transcribe,mind,note`、`shelf/uninstall.sh`（条目库不在 `--purge` 范围，绝不删用户笔记）。
 
 ## 03b｜地基三 crate（2026-09-06，离线）
 
@@ -417,7 +417,7 @@ note-serve 投影要往设备写打字文本，rmv6 之前是纯只读解析。�
 1. **转写质量两项**：① ~~entry3（高亮 3 旁 `口 第三段`）重转后仍没读对，裁图上下混进了相邻印刷行~~ 裁图已换自渲染（§03p），结构上不会再混印刷体了（自己画的图背景纯白），这条旧样本没有专门回归复验，但机制上已经解决；② ~~entry1/2 把手写的汉字数字"一/二"认成阿拉伯数字"1/2"~~ 提示词已加规则（2026-09-07），待真机重转复验是否真的不再转数字。entry4 那条旧的错误草稿是裁图坐标错时期的遗留数据，手机网页上人工清一下（一改字段就覆盖）。
 2. ~~NumberedList 补样本~~ ✅ 用户真机核对时一并补了：那 7 字节根本不属于 NumberedList，是分析失误，已更正、已解除限制（§03i）。
 3. ~~rmdoc 打包器 + 真机小范围验证~~ ✅ 2026-09-07 当场做完两轮：全部 7 种打字样式真机上传+渲染验证通过（§03h/§03i）。
-4. ~~note-serve 条目→文档编排~~ ✅ 2026-09-07 当晚三轮真机验证通过：首次生成（渲染全对）、改文本增量重传+旧本自动进回收站（`shelf-trash-agent.qmd` 全自动消费队列，没人手动点）、无变化跳过（见 §03k）。**剩的是前端接线**：网页「笔记」tab 还没有「生成笔记本」按钮，目前只能 curl/wget 手动触发 `POST /books/{uuid}/chapters/{idx}/generate`。
+4. ~~note-serve 条目→文档编排~~ ✅ 2026-09-07 当晚三轮真机验证通过：首次生成（渲染全对）、改文本增量重传+旧本自动进回收站（`shelf-trash-agent.qmd` 全自动消费队列，没人手动点）、无变化跳过（见 §03k）。~~剩的是前端接线~~ ✅ 2026-09-08 补上（§03r/§03t）：网页「整理」章头「生成笔记本」按钮已接线，`POST /books/{uuid}/chapters/{idx}/generate` 不再只能 curl/wget 手动触发。
 5. ~~书库动作代理扩展~~ ✅ 2026-09-07 真机验证通过：新增独立 `shelf-mkdir-agent.qmd`（锚点 MainView 而非 Sidebar，见 §03l 为什么不是"扩展"而是新文件）+ book-serve `mkdir.rs`，`Library.createCollection` 建《书名》夹真机确认能建、能落对、不重复。
 6. ~~`## `/`### ` 分区/小节标记真机验证~~ **`##` 半已随分区整体砍掉，不再是待办**（三期，见 §03s）；`### 小节名` 覆盖 `subhead` 那半继续有效，但仍然只有离线单测覆盖，没有真机拿真实手写走一遍完整闭环（写 `### 小节名` → 转写 → 核对 `subhead` 被覆盖）——2026-09-07 两轮真机复验撞的是手写行草连笔识别准确率（§03o/§03p），管线本身没问题，找一份写得工整一点的样本再试。
 7. ~~二期浏览页 UI + 状态机真机验证~~ ✅ 2026-09-07 真机验证通过（§03o）：`Mined`/`Skipped` 状态机、`request`/`skip` 两个端点、网关"浏览"/"整理"两个子视图全部部署，走了完整闭环（新批注落 `Mined`→不被自动转写→点"转入笔记"转 `Pending`→自动转写成 `Draft`→对 `Revoked` 条目操作被拒绝→"不需要"转 `Skipped` 后确认不再被扫到）。**剩浏览页 UI 本身还没人眼确认过截图**（这几轮验证走的是 SSH 直调 loopback API + 用户口头反馈，没有正式截图核对）。
