@@ -242,8 +242,8 @@ function assetTab(sec,api,o){sec.innerHTML=`<div class="card">${o.title?`<h2>${o
    发模型，二期，白皮书 §03n），分区兼职的笔记本排版分组也不要了，条目一律按页序平铺，格式=Entry.style。 */
 const STYLE_NAMES={body:'正文',bullet:'无序 -',numbered:'有序 1.',checkbox:'待办 口'};
 const STATUS_NAMES={mined:'待浏览',pending:'待转写',draft:'待校对',reviewed:'已校对',skipped:'已跳过',revoked:'已撤销',archived:'已删除'};
-/* 落设备笔记本/落 Obsidian/两处都要（三期，白皮书 §03n 之后）：缺省 both，不碰这个下拉就是老行为。 */
-const DEST_NAMES={notebook:'仅设备笔记本',obsidian:'仅 Obsidian',both:'两处都要'};
+/* 落设备笔记本/落 Obsidian/两处都要（三期，白皮书 §03n 之后）：缺省 both；第二轮反馈把下拉换成
+   条目卡片里的循环图标按钮（`DEST_ICON`/`DEST_ORDER`，见 renderBook）。 */
 /* 「浏览」（新批注先落这，点了才转笔记）与「整理」（真被要求转笔记的才在这核对）拆两个子视图，见二期设计（白皮书 §03n）。 */
 function renderNotes(sec){sec.innerHTML=`
   <div class="card"><h2>笔记</h2>
@@ -254,21 +254,22 @@ function renderNotes(sec){sec.innerHTML=`
   <div class="subnav"><button class="on">👀 浏览</button><button>✎ 整理</button><button>🗑 回收站</button></div>
   <div class="subpanel on" id="nbrowse"></div>
   <div class="subpanel" id="norganize">
-    <div class="card">
-      <details class="cmp" id="ntr"><summary>转写状态 <span class="small" id="ntrsum"></span></summary>
-        <p class="small" style="margin:.1em 0 .7em">合上书后台会自动转写手写批注，正常情况不用管这里——这里是给你看进度、失败了手动重试、或临时关掉自动转写用的。</p>
-        <div class="row small" id="ntrstat"></div>
-        <div class="row"><label class="toggle"><input type="checkbox" id="ntrauto"> 合书自动转写</label></div>
-        <div class="row"><button class="btn" id="ntrrun">立即转写待转写条目</button><button class="btn" id="ntrretry" title="清掉失败记录再跑">重试失败</button><span class="small" id="ntrmsg"></span></div>
-        <div class="small" id="ntrfail"></div>
-      </details>
+    <div class="card" id="npickbar" hidden>
+      <div class="row"><b id="npickcount"></b>
+        <button class="btn pri" data-pick-gen>生成笔记本</button>
+        <button class="btn" data-pick-exp>导出 md</button>
+        <button class="btn" data-pick-retry>重转</button>
+        <button class="btn" data-pick-archive>不要了</button>
+        <button class="btn" data-pick-clear>取消选择</button></div>
+      <div class="small" id="npickmsg"></div>
+      <div id="npicklinks"></div>
     </div>
     <div id="nchapters"></div>
   </div>
   <div class="subpanel" id="ntrashpanel">
     <div class="card">
-      <p class="lead">这里是「不需要」「不要了」跳过的批注，以及笔画被撤回后自动标记的条目——两处投影都不会用到它们，但条目库里还留着，直到你手动清空。</p>
-      <div class="row"><button class="btn" id="npurge" title="永久清掉下面列出的条目，不可恢复">清空回收站</button><span class="small" id="ntrashsum"></span></div>
+      <p class="lead">这里是「不需要」「不要了」跳过的批注，以及笔画被撤回后自动标记的条目——两处投影都不会用到它们，但条目库里还留着，直到你手动清空。恢复会回到大致原来的进度（校对过的文本还在就回「已校对」，只有草稿回「待校对」，只有手写没转写回「待转写」，什么都没留下回「浏览」重新决定）。</p>
+      <div class="row"><button class="btn" id="npurge" title="永久清掉下面列出的条目，不可恢复">清空回收站</button><button class="btn" id="nrestoreall" title="把下面列出的条目都恢复">全部恢复</button><span class="small" id="ntrashsum"></span></div>
       <div id="ntrashlist"></div>
     </div>
   </div>`;
@@ -280,6 +281,10 @@ function renderNotes(sec){sec.innerHTML=`
   const TRASH_STATUSES=['skipped','revoked','archived'];
   /* 回收站（点 3）：不是一个只会清空的黑盒按钮——列出「不需要」「不要了」「已撤销」的条目实际内容，
      清空前能看清要丢的是什么。数据不用额外接口：GET /books/{uuid} 本来就带全部条目（含终态的）。 */
+  /* 「恢复」（回收站点 3）：Skipped/Revoked/Archived 都能恢复，落点由服务端按条目已有内容倒推
+     （见 notecore::model::Entry::restore）——书里已经把笔画擦了也能恢复，找回的是条目库里已经存好
+     的裁图/校对文本，不代表设备原页面的笔迹会重新出现（这条限制在页面文案里说清楚，不是网页能力）。 */
+  const restoreOne=async id=>{const r=await postJ(`/api/ink/books/${encodeURIComponent(book.uuid)}/entries/${encodeURIComponent(id)}/restore`,{});if(r.ok===false)return false;return true};
   const renderTrash=()=>{trashList.innerHTML='';if(!book){trashSum.textContent='';return}
     const items=(book.entries||[]).filter(e=>TRASH_STATUSES.includes(e.status)).sort((a,b)=>b.updated-a.updated);
     trashSum.textContent=items.length?`共 ${items.length} 条`:'空的，没什么可清';
@@ -287,8 +292,16 @@ function renderNotes(sec){sec.innerHTML=`
     items.forEach(e=>{const row=document.createElement('div');row.className='trash-item';
       const text=e.text||(e.drafts&&e.drafts[0]&&e.drafts[0].text)||(e.quote&&e.quote.text)||'（无文字内容，可能纯手写还没转写）';
       row.innerHTML=`<span class="badge">${STATUS_NAMES[e.status]||e.status}</span>
-        <div class="txt">p.${e.page_index+1}${e.chapter_title?' · '+e.chapter_title:''}<br><span class="q">${text}</span></div>`;
+        <div class="txt">p.${e.page_index+1}${e.chapter_title?' · '+e.chapter_title:''}<br><span class="q">${text}</span>${e.status==='revoked'?'<br><span class="small">笔画可能已在设备上被擦——恢复只找回已保存的内容，不会让笔迹重新出现在原页面</span>':''}</div>
+        <button class="btn" data-restore>恢复</button>`;
+      row.querySelector('[data-restore]').onclick=async()=>{if(!(await restoreOne(e.id)))return;book=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}`);renderTrash();renderBrowse();renderBook()};
       trashList.appendChild(row)})};
+  $('#nrestoreall',sec).onclick=async()=>{if(!book)return;
+    const items=(book.entries||[]).filter(e=>TRASH_STATUSES.includes(e.status));
+    if(!items.length){alert('回收站是空的，没什么可恢复');return}
+    if(!confirm(`把这 ${items.length} 条都恢复？`))return;
+    for(const e of items)await restoreOne(e.id);
+    book=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}`);renderTrash();renderBrowse();renderBook()};
   /* 浏览态动作：Mined→Pending（转入笔记）/ Mined→Skipped（不需要），见 ink-serve::triage。三个子视图都要重画（条目跨视图搬家）。 */
   const triage=async(id,action)=>{const r=await postJ(`/api/ink/books/${encodeURIComponent(book.uuid)}/entries/${encodeURIComponent(id)}/${action}`,{});if(r.ok===false)return;
     book=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}`);renderBrowse();renderBook();renderTrash()};
@@ -327,47 +340,48 @@ function renderNotes(sec){sec.innerHTML=`
         card.appendChild(row)});
       browse.appendChild(card)})};
   /* 整理：只列真被要求转笔记的（Pending/Draft/Reviewed）——Mined 在「浏览」决定，Skipped/Revoked/Archived 去「回收站」。
-     每条卡片三块视觉分区（点 4）：左手写裁图 ｜ 中转写/校对文本 ｜ 下问 AI 区，宽屏并排、手机堆叠（style.css .entry-*）。 */
-  const renderBook=()=>{chaps.innerHTML='';if(!book)return;updateSummary();
+     每条卡片三块视觉分区（点 4）：左手写裁图 ｜ 中转写/校对文本 ｜ 下问 AI 区，宽屏并排、手机堆叠（style.css .entry-*）。
+     **第二轮反馈（2026-09-08）改动**：① 样式不再是下拉——`text` 一存，服务端就按行首 `-`/`1.`/`口`/`##`
+     标记自动判样式（`notecore::model::Entry::apply_marked_text`），这里只显示一个只读徽章。② 去处
+     （设备笔记本/Obsidian/都要）从下拉换成紧凑图标循环按钮，点一下切下一态。③ 每条一个勾选框，配合
+     顶部「已选」工具栏做生成笔记本/导出 md/重转/不要了这四个批量动作（先勾后点，不再是章头即时按钮）；
+     章头留一个「全选本章」链接方便单章的快捷用法。④ 转写失败的条目标红、按钮文案变「重转失败」——
+     失败清单原来在已删的转写折叠层，现在直接查一次 `/api/transcribe/status` 按条目 id 对上。 */
+  const DEST_ICON={notebook:'📓 设备',obsidian:'🔗 Obsidian',both:'📓🔗 都要'};
+  const DEST_ORDER=['notebook','obsidian','both'];
+  const picked=new Set();
+  const pickbar=$('#npickbar',sec),pickcount=$('#npickcount',sec),pickmsg=$('#npickmsg',sec),picklinks=$('#npicklinks',sec);
+  const syncPickbar=()=>{pickbar.hidden=picked.size===0;pickcount.textContent=`已选 ${picked.size} 条`};
+  const selectedEntries=()=>(book&&book.entries||[]).filter(e=>picked.has(e.id));
+  const renderBook=async()=>{chaps.innerHTML='';if(!book){syncPickbar();return}updateSummary();
+    const trst=await j('/api/transcribe/status');
+    const failedIds=new Set((trst.failures||[]).filter(f=>f.book===book.uuid).map(f=>f.id));
     const live=(book.entries||[]).filter(e=>['pending','draft','reviewed'].includes(e.status));
     const groups=new Map();live.forEach(e=>{const k=e.chapter==null?-1:e.chapter;if(!groups.has(k))groups.set(k,[]);groups.get(k).push(e)});
     [...groups.keys()].sort((a,b)=>a-b).forEach(k=>{const es=groups.get(k).sort((a,b)=>a.page_index-b.page_index||(a.ink?a.ink.bbox[1]:0)-(b.ink?b.ink.bbox[1]:0));
       const card=document.createElement('div');card.className='card';
-      const chapterOps=k<0?'':'<div class="row"><button class="btn" data-gen>生成笔记本</button><button class="btn" data-exp>导出 md</button><span class="small" data-genmsg></span></div>';
-      card.innerHTML=`<h3 style="margin-top:0">${k<0?'（未归章）':`第 ${k+1} 章 · ${es[0].chapter_title||''}`} <span class="small">${es.length} 条</span></h3>${chapterOps}`;
-      if(k>=0){
-        const genBtn=card.querySelector('[data-gen]'),expBtn=card.querySelector('[data-exp]'),msg=card.querySelector('[data-genmsg]');
-        genBtn.onclick=async()=>{genBtn.disabled=true;msg.textContent='生成中…';
-          const r=await j(`/api/notes/books/${encodeURIComponent(book.uuid)}/chapters/${k}/generate`,{method:'POST'});genBtn.disabled=false;
-          const c=(r.chapters&&r.chapters[0])||{};
-          msg.textContent=r.ok===false?('✗ '+(r.message||'失败')):c.status==='failed'?('✗ '+c.error):c.status==='empty'?'（本章没内容）':c.status==='unchanged'?'（没变化，未重传）':'✓ 已生成到设备'};
-        /* 导出既落设备 vault（给以后 host `notes pull` 用）也直接触发浏览器下载（用户当场就能拿到文件，
-           不用 SSH 上设备找）——下载存到哪由用户自己浏览器的下载设置决定（没配置就是系统默认下载目录，
-           配了"每次询问"会弹框选，网关/服务端管不到也不该管这一层）。 */
-        expBtn.onclick=async()=>{expBtn.disabled=true;msg.textContent='导出中…';
-          const r=await j(`/api/notes/books/${encodeURIComponent(book.uuid)}/chapters/${k}/export`,{method:'POST'});expBtn.disabled=false;
-          if(r.ok===false){msg.textContent='✗ '+(r.message||'失败');return}
-          if(!r.wrote){msg.textContent='（本章没有去处含 Obsidian 的条目）';return}
-          msg.textContent='✓ 已导出，下载中…';
-          window.open(`/api/notes/books/${encodeURIComponent(book.uuid)}/chapters/${k}/export.md`,'_blank')};
-      }
-      es.forEach(e=>{const row=document.createElement('div');row.className='entry';
-        const sty=Object.entries(STYLE_NAMES).map(([v,n])=>`<option value="${v}" ${e.style===v?'selected':''}>${n}</option>`).join('');
-        const dest=Object.entries(DEST_NAMES).map(([v,n])=>`<option value="${v}" ${(e.destination||'both')===v?'selected':''}>${n}</option>`).join('');
+      card.innerHTML=`<h3 style="margin-top:0">${k<0?'（未归章）':`第 ${k+1} 章 · ${es[0].chapter_title||''}`} <span class="small">${es.length} 条</span>${k>=0?' <button class="btn" data-selall style="padding:.15em .6em;font-size:.8em">全选本章</button>':''}</h3>`;
+      const selAllBtn=card.querySelector('[data-selall]');
+      if(selAllBtn)selAllBtn.onclick=()=>{const all=es.every(e=>picked.has(e.id));es.forEach(e=>all?picked.delete(e.id):picked.add(e.id));renderBook()};
+      es.forEach(e=>{const failed=failedIds.has(e.id);const row=document.createElement('div');row.className='entry'+(failed?' entry-failed':'');
         const draft=(e.drafts&&e.drafts[0])?e.drafts[0].text:'';
+        const dv=e.destination||'both';
         row.innerHTML=`
           <div class="entry-head">
+            <label class="toggle"><input type="checkbox" data-pick ${picked.has(e.id)?'checked':''}></label>
             <span>p.${e.page_index+1}${e.subhead?' · '+e.subhead:''}</span>
-            <span class="badge ${e.status==='reviewed'?'on':''}">${STATUS_NAMES[e.status]||e.status}</span>
+            <span class="badge">${STYLE_NAMES[e.style]||e.style}</span>
+            <span class="badge ${e.status==='reviewed'?'on':''}" style="margin-left:auto">${STATUS_NAMES[e.status]||e.status}</span>
           </div>
           <div class="entry-body">
             <div class="entry-crop">${cropHtml(e)}</div>
             <div class="entry-main">
               ${e.quote?`<div class="entry-quote">「${e.quote.text}」</div>`:''}
               <textarea class="entry-text" rows="2" placeholder="${draft?'转写建议：'+draft:'等待转写…（也可以直接手动填）'}">${e.text||draft}</textarea>
+              <div class="small">行首 <code>-</code>/<code>1.</code>/<code>口</code>/<code>## </code> 自动判样式/分区，跟手写识别是同一套约定</div>
               <div class="entry-ops">
-                <div class="grp"><select data-k="style">${sty}</select><select data-k="destination">${dest}</select></div>
-                <div class="grp">${(e.ink&&e.ink.crop)?`<button class="btn" data-transcribe title="用当前后端重新转写这一条（不动已校对文本）">${draft?'重转':'转写'}</button>`:''}<button class="btn" data-archive title="设备笔记本、Obsidian 导出都摘掉（软删，去「回收站」能看到）">不要了</button></div>
+                <div class="grp"><button class="btn" data-dest title="落点：设备笔记本/Obsidian/都要，点击切换">${DEST_ICON[dv]}</button></div>
+                <div class="grp">${(e.ink&&e.ink.crop)?`<button class="btn${failed?' btn-bad':''}" data-transcribe title="用当前后端重新转写这一条（不动已校对文本）">${failed?'重转失败':(draft?'重转':'转写')}</button>`:''}<button class="btn" data-archive title="设备笔记本、Obsidian 导出都摘掉（软删，去「回收站」能看到并恢复）">不要了</button></div>
               </div>
               <div class="entry-ask">
                 <div class="row"><label class="toggle"><input type="checkbox" data-ask ${e.ask_ai?'checked':''}> 问 AI</label>
@@ -377,11 +391,12 @@ function renderNotes(sec){sec.innerHTML=`
               </div>
             </div>
           </div>`;
+        row.querySelector('[data-pick]').onchange=ev=>{if(ev.target.checked)picked.add(e.id);else picked.delete(e.id);syncPickbar()};
         row.querySelector('textarea').onchange=ev=>patch(e.id,{text:ev.target.value});
-        row.querySelectorAll('select').forEach(s=>s.onchange=()=>patch(e.id,{[s.dataset.k]:s.value}));
+        row.querySelector('[data-dest]').onclick=async()=>{const next=DEST_ORDER[(DEST_ORDER.indexOf(dv)+1)%3];await patch(e.id,{destination:next});book=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}`);renderBook()};
         row.querySelector('[data-archive]').onclick=()=>archiveEntry(e.id);
         const tb=row.querySelector('[data-transcribe]');
-        if(tb)tb.onclick=async()=>{tb.disabled=true;const r=await j(`/api/transcribe/books/${encodeURIComponent(book.uuid)}/entries/${encodeURIComponent(e.id)}`,{method:'POST'});tb.disabled=false;if(r.ok===false)alert(r.message||'转写失败')};
+        if(tb)tb.onclick=async()=>{tb.disabled=true;const r=await j(`/api/transcribe/books/${encodeURIComponent(book.uuid)}/entries/${encodeURIComponent(e.id)}`,{method:'POST'});tb.disabled=false;if(r.ok===false)alert(r.message||'转写失败');book=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}`);renderBook()};
         /* 「问AI」勾选框 + 问题 + 提问按钮：改即存（ink-serve），点提问才真的调 mind-serve。 */
         const askBox=row.querySelector('[data-ask]'),qInput=row.querySelector('[data-question]'),askBtn=row.querySelector('[data-askbtn]');
         const syncAskUi=()=>{qInput.disabled=!askBox.checked;askBtn.disabled=!(askBox.checked&&qInput.value.trim())};
@@ -392,32 +407,51 @@ function renderNotes(sec){sec.innerHTML=`
           askBtn.disabled=false;askBtn.textContent='提问';
           if(r.ok===false)alert(r.message||'提问失败');else{book=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}`);renderBook()}};
         card.appendChild(row)});
-      chaps.appendChild(card)})};
-  const loadBook=async()=>{if(!sel.value){book=null;renderBrowse();renderBook();renderTrash();return}book=await j(`/api/ink/books/${encodeURIComponent(sel.value)}`);renderBrowse();renderBook();renderTrash()};
+      chaps.appendChild(card)});
+    syncPickbar()};
+  /* 批量工具栏（点 1）：生成笔记本/导出 md 按选中条目所在的（去重）章节各调一次；重转只对有裁图的
+     条目生效；不要了一次确认批量归档。导出的下载链接不能在 await 之后再 window.open——多数浏览器
+     把那当成非用户触发的弹窗拦掉，所以先把所有章节都导出完，再把每章的下载按钮摆出来让用户自己点
+     （那才是真正的用户手势，不会被拦）。 */
+  const pickChapters=()=>[...new Set(selectedEntries().filter(e=>e.chapter!=null).map(e=>e.chapter))].sort((a,b)=>a-b);
+  $('[data-pick-gen]',sec).onclick=async()=>{const chs=pickChapters();if(!chs.length){pickmsg.textContent='选中的条目都没有归章，没法生成笔记本';return}
+    pickmsg.textContent='生成中…';let ok=0,fail=0;
+    for(const k of chs){const r=await j(`/api/notes/books/${encodeURIComponent(book.uuid)}/chapters/${k}/generate`,{method:'POST'});const c=(r.chapters&&r.chapters[0])||{};if(r.ok===false||c.status==='failed')fail++;else ok++}
+    pickmsg.textContent=`✓ 完成 ${ok} 章${fail?`，失败 ${fail} 章`:''}`};
+  $('[data-pick-exp]',sec).onclick=async()=>{const chs=pickChapters();if(!chs.length){pickmsg.textContent='选中的条目都没有归章，没法导出';return}
+    pickmsg.textContent='导出中…';picklinks.innerHTML='';let ok=0;
+    for(const k of chs){const r=await j(`/api/notes/books/${encodeURIComponent(book.uuid)}/chapters/${k}/export`,{method:'POST'});
+      if(r.ok===false||!r.wrote)continue;ok++;
+      const b=document.createElement('button');b.className='btn';b.textContent=`⬇ 下载第 ${k+1} 章`;
+      b.onclick=()=>window.open(`/api/notes/books/${encodeURIComponent(book.uuid)}/chapters/${k}/export.md`,'_blank');
+      picklinks.appendChild(b)}
+    pickmsg.textContent=ok?`✓ 已导出 ${ok} 章，点下面的按钮逐个下载`:'（选中的章节都没有去处含 Obsidian 的条目）'};
+  $('[data-pick-retry]',sec).onclick=async()=>{const ids=selectedEntries().filter(e=>e.ink&&e.ink.crop).map(e=>e.id);
+    if(!ids.length){pickmsg.textContent='选中的条目都没有手写裁图，没法转写';return}
+    let ok=0,fail=0;for(const[i,id]of ids.entries()){pickmsg.textContent=`转写中…（${i+1}/${ids.length}）`;
+      const r=await j(`/api/transcribe/books/${encodeURIComponent(book.uuid)}/entries/${encodeURIComponent(id)}`,{method:'POST'});if(r.ok===false)fail++;else ok++}
+    pickmsg.textContent=`✓ 成 ${ok} 败 ${fail}`;book=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}`);renderBook()};
+  $('[data-pick-archive]',sec).onclick=async()=>{const ids=[...picked];if(!ids.length)return;
+    if(!confirm(`这 ${ids.length} 条都不要了？（设备笔记本、Obsidian 导出都会摘掉；条目还留在「回收站」，能看到也能恢复）`))return;
+    for(const id of ids)await postJ(`/api/ink/books/${encodeURIComponent(book.uuid)}/entries/${encodeURIComponent(id)}/archive`,{});
+    picked.clear();book=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}`);renderBook();renderTrash()};
+  $('[data-pick-clear]',sec).onclick=()=>{picked.clear();pickmsg.textContent='';picklinks.innerHTML='';renderBook()};
+  const loadBook=async()=>{picked.clear();if(!sel.value){book=null;renderBrowse();await renderBook();renderTrash();return}book=await j(`/api/ink/books/${encodeURIComponent(sel.value)}`);renderBrowse();await renderBook();renderTrash()};
   sel.onchange=loadBook;
-  /* 转写状态区（点 1，简化说明）：合书自动转写，正常不用管；这里只剩纯工作流的东西——开关/立即跑一次/
-     重试失败/失败清单，key 与模型选择已经搬到「管理」tab（点 2）。 */
-  const trMsg=$('#ntrmsg',sec);
-  const trRefresh=async()=>{const st=await j('/api/transcribe/status');const box=$('#ntr',sec);if(st.ok===false){box.style.display='none';return}box.style.display='';
-    const c=st.config||{},u=st.usage||{},lr=u.lastRun;
-    $('#ntrsum',sec).textContent=`${c.hasKey?'key 已配置':'未配 key（去「管理」配）'} · 待转写 ${st.pending||0}`;
-    $('#ntrstat',sec).textContent=`${c.model||''} · 累计 ${u.ok||0} 成 ${u.failed||0} 败 · token 入 ${u.promptTokens||0} 出 ${u.completionTokens||0}${lr?` · 上轮 扫 ${lr.scanned} 成 ${lr.done} 败 ${lr.failed}${lr.note?' · '+lr.note:''}`:''}${u.lastError?' · 最近错误：'+u.lastError:''}`;
-    $('#ntrauto',sec).checked=!!c.auto;
-    $('#ntrfail',sec).innerHTML=(st.failures||[]).length?'失败：'+st.failures.map(f=>`${f.id.slice(0,8)}… ×${f.attempts} ${f.error}`).join('；'):''};
-  $('#ntrauto',sec).onchange=async()=>{const r=await j('/api/transcribe/config',{method:'PUT',body:JSON.stringify({auto:$('#ntrauto',sec).checked})});if(r.ok===false)alert(r.message||'保存失败');trRefresh()};
-  const trRun=async(url)=>{trMsg.textContent='转写中…';const r=await j(url,{method:'POST'});trMsg.textContent=r.ok===false?('✗ '+(r.message||'失败')):(r.done!=null?`✓ 成 ${r.done} 败 ${r.failed} 余 ${r.left}${r.note?' · '+r.note:''}`:'✓');trRefresh()};
-  $('#ntrrun',sec).onclick=()=>trRun('/api/transcribe/run');
-  $('#ntrretry',sec).onclick=()=>trRun('/api/transcribe/retry');
   const refresh=async()=>{const d=await j('/api/ink/books');const cur=sel.value;sel.innerHTML=(d.items||[]).map(b=>`<option value="${b.uuid}">${b.title}（${b.entries}）</option>`).join('')||'<option value="">（还没有勾画过的书）</option>';
-    if(cur&&[...sel.options].some(o=>o.value===cur))sel.value=cur;await Promise.all([loadBook(),trRefresh()])};
+    if(cur&&[...sel.options].some(o=>o.value===cur))sel.value=cur;await loadBook()};
   refresh();sec.refresh=refresh;subtabs(sec)}
 
-/* 模型管理卡片（点 2，「管理」tab 用，transcribe/mind 共用同一套 UI）：预置下拉选模型（不用自己填地址，
-   选"自定义"才露出手填 model/baseUrl）；key 脱敏后只剩「删除」，没配 key 时才给输入框——不允许在已有
-   key 时直接改写覆盖，逼着"先删再填"，状态更明确、不会以为在编辑一个看不见的旧值。返回一个 refresh
-   函数，挂到 tab 的 sec.refresh 上，切回这个 tab 时数据不过期。 */
-function mountModelPanel(root,seg,title,icon){
-  const card=document.createElement('div');card.className='card';card.style.cssText='flex:1;min-width:16em;margin:0';
+/* 模型管理卡片（点 2「彻底重做」，「管理」tab 用，transcribe/mind 共用同一套 UI，2026-09-08 第二轮反馈）：
+   预置下拉现在横跨 DashScope/OpenAI/Gemini/DeepSeek 四家（不用自己填地址，选"自定义"才露出手填
+   model/baseUrl）；key 按厂商分开存、脱敏后只剩「删除」，没配 key 时才给输入框——不允许在已有 key 时
+   直接改写覆盖，逼着"先删再填"；切换预置不会丢别的厂商已存的 key（服务端按 provider 分格）。
+   新增：每个模型自己的用量+花费一行（`usageByModel`，花费＝用户自填单价×token，没填单价不显示金额，
+   见 config.rs 模块文档"花费不做官方定价表"——第三方定价常变，不猜）；`showAuto` 给 transcribe 用，
+   多一个"合书自动转写"开关（这是模型服务级别的设置，原来在「整理」页的折叠层已经去掉，见 renderNotes）。
+   返回一个 refresh 函数，挂到 tab 的 sec.refresh 上，切回这个 tab 时数据不过期。 */
+function mountModelPanel(root,seg,title,icon,showAuto){
+  const card=document.createElement('div');card.className='card';card.style.cssText='flex:1;min-width:18em;margin:0';
   card.innerHTML=`<h3 style="margin-top:0">${icon} ${title}</h3>
     <label class="field">模型</label>
     <select data-preset style="width:100%"></select>
@@ -426,16 +460,26 @@ function mountModelPanel(root,seg,title,icon){
       <input type="text" data-url placeholder="OpenAI 兼容口 baseUrl" style="flex:1;min-width:12em">
       <button class="btn" data-savecustom>保存自定义</button>
     </div>
-    <label class="field">API key</label>
+    <label class="field">API key（按厂商分开存，换模型不用重填）</label>
     <div class="row" data-keyrow></div>
+    ${showAuto?'<div class="row"><label class="toggle"><input type="checkbox" data-auto> 合书自动转写</label></div>':''}
+    <label class="field">当前模型单价（每 1K token，自己填；不填就只看 token 数不算钱）</label>
+    <div class="row" data-pricerow>
+      <input type="number" step="0.001" min="0" data-pricein placeholder="输入 ¥/1K" style="max-width:7em">
+      <input type="number" step="0.001" min="0" data-priceout placeholder="输出 ¥/1K" style="max-width:7em">
+      <button class="btn" data-pricesave>保存单价</button>
+    </div>
+    <label class="field">各模型用量/花费</label>
+    <div class="tblwrap" data-usagewrap><table class="cmp"><thead><tr><th>模型</th><th>调用</th><th>token（入/出）</th><th>花费</th></tr></thead><tbody data-usagebody></tbody></table></div>
     <div class="small" data-stat style="margin-top:.3em"></div>`;
   root.appendChild(card);
-  const presetSel=card.querySelector('[data-preset]'),customBox=card.querySelector('[data-custom]'),modelInp=card.querySelector('[data-model]'),urlInp=card.querySelector('[data-url]'),keyRow=card.querySelector('[data-keyrow]'),stat=card.querySelector('[data-stat]');
+  const presetSel=card.querySelector('[data-preset]'),customBox=card.querySelector('[data-custom]'),modelInp=card.querySelector('[data-model]'),urlInp=card.querySelector('[data-url]'),keyRow=card.querySelector('[data-keyrow]'),stat=card.querySelector('[data-stat]'),autoBox=card.querySelector('[data-auto]'),priceIn=card.querySelector('[data-pricein]'),priceOut=card.querySelector('[data-priceout]'),usageBody=card.querySelector('[data-usagebody]');
   const put=body=>j(`/api/${seg}/config`,{method:'PUT',body:JSON.stringify(body)});
+  const fmtCost=c=>c==null?'（未填单价）':'¥'+c.toFixed(4);
   const refresh=async()=>{
     const st=await j(`/api/${seg}/status`);
-    if(st.ok===false){stat.textContent='服务未就绪：'+(st.message||'安装/开启该服务后再配');presetSel.disabled=true;keyRow.innerHTML='';return}
-    const c=st.config||{},u=st.usage||{};
+    if(st.ok===false){stat.textContent='服务未就绪：'+(st.message||'安装/开启该服务后再配');presetSel.disabled=true;keyRow.innerHTML='';usageBody.innerHTML='';return}
+    const c=st.config||{};
     presetSel.disabled=false;
     presetSel.innerHTML=(c.presets||[]).map(p=>`<option value="${p.id}">${p.label}</option>`).join('')+'<option value="custom">自定义（手填地址）</option>';
     presetSel.value=c.activePreset||'custom';
@@ -444,14 +488,20 @@ function mountModelPanel(root,seg,title,icon){
     if(isCustom){modelInp.value=c.model||'';urlInp.value=c.baseUrl||''}
     keyRow.innerHTML=c.hasKey
       ?`<span class="small">已保存：<code>${c.keyMasked||'••••'}</code></span><button class="btn" data-delkey>删除</button>`
-      :`<input type="password" placeholder="粘贴 API key（DashScope 百炼）" data-keyinput style="flex:1;min-width:11em" autocomplete="off"><button class="btn pri" data-savekey>保存</button>`;
-    stat.textContent=`调用 ${u.calls||0} 次（成 ${u.ok||0} 败 ${u.failed||0}）· token 入 ${u.promptTokens||0} 出 ${u.completionTokens||0}${u.lastError?' · 最近错误：'+u.lastError:''}`;
+      :`<input type="password" placeholder="粘贴 API key" data-keyinput style="flex:1;min-width:11em" autocomplete="off"><button class="btn pri" data-savekey>保存</button>`;
+    if(autoBox){autoBox.checked=!!c.auto;autoBox.onchange=async()=>{const r=await put({auto:autoBox.checked});if(r.ok===false){alert(r.message||'保存失败');autoBox.checked=!autoBox.checked}}}
+    const price=c.price||{inputPer1k:0,outputPer1k:0};
+    priceIn.value=price.inputPer1k||'';priceOut.value=price.outputPer1k||'';
+    const rows=st.usageByModel||[];
+    usageBody.innerHTML=rows.length?rows.map(m=>`<tr${m.active?' style="font-weight:600"':''}><td>${m.label}${m.active?' <span class="badge on">当前</span>':''}</td><td>${m.calls}${m.failed?` <span style="color:var(--bad)">(败${m.failed})</span>`:''}</td><td>${m.promptTokens}/${m.completionTokens}</td><td>${fmtCost(m.costEstimate)}</td></tr>`).join(''):'<tr><td colspan="4" class="small">还没有调用记录</td></tr>';
+    stat.textContent=rows.find(m=>m.active&&m.lastError)?.lastError?'最近错误：'+rows.find(m=>m.active).lastError:'';
     const delBtn=keyRow.querySelector('[data-delkey]'),saveBtn=keyRow.querySelector('[data-savekey]');
     if(delBtn)delBtn.onclick=async()=>{if(!confirm(`删除已保存的${title} key？删掉之后要重新粘贴才能用`))return;const r=await put({clearKey:true});if(r.ok===false)alert(r.message||'删除失败');refresh()};
     if(saveBtn)saveBtn.onclick=async()=>{const v=keyRow.querySelector('[data-keyinput]').value.trim();if(!v)return;const r=await put({apiKey:v});if(r.ok===false)alert(r.message||'保存失败');refresh()};
   };
   presetSel.onchange=async()=>{const v=presetSel.value;customBox.hidden=v!=='custom';if(v==='custom')return;const r=await put({preset:v});if(r.ok===false)alert(r.message||'保存失败');refresh()};
   card.querySelector('[data-savecustom]').onclick=async()=>{const r=await put({preset:'custom',model:modelInp.value.trim(),baseUrl:urlInp.value.trim()});if(r.ok===false)alert(r.message||'保存失败');refresh()};
+  card.querySelector('[data-pricesave]').onclick=async()=>{const r=await put({price:{input:parseFloat(priceIn.value)||0,output:parseFloat(priceOut.value)||0}});if(r.ok===false)alert(r.message||'保存失败');refresh()};
   refresh();
   return refresh;
 }
@@ -510,7 +560,7 @@ function renderManage(sec){sec.innerHTML=`
     <div class="row" id="modelcards" style="align-items:flex-start;gap:1.2em"></div>
   </div>`;
   const badge=(t,ok)=>`<span class="badge ${ok?'on':'off'}">${t}</span>`;
-  const mvRefresh=mountModelPanel($('#modelcards',sec),'transcribe','视觉模型（转写批注）','👁');
+  const mvRefresh=mountModelPanel($('#modelcards',sec),'transcribe','视觉模型（转写批注）','👁',true);
   const mtRefresh=mountModelPanel($('#modelcards',sec),'mind','文字模型（问 AI）','✎');
   const refresh=async()=>{
     const f=await j('/api/foundation');$('#found',sec).innerHTML=f.ok===false?`<span>${f.message}</span>`:

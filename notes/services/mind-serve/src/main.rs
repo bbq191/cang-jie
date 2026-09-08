@@ -5,6 +5,8 @@
 //! （二期耗电评估第 5 点）。出网服务：设备自己的 WiFi 直连。
 //! 路由（经网关前缀 `/api/mind`）：`GET /status` · `GET /config` · `PUT /config`（`apiKey` 只写不读）·
 //! `POST /books/{uuid}/entries/{id}/ask`（回答这一条——要求条目已勾「问AI」且填了问题，否则 400）。
+//! **第二轮整理区反馈（2026-09-08）**：模型预置表横跨四家厂商，`GET /status` 的 `usageByModel` 按模型
+//! 分账、带用户自填单价算出的花费估算，见 `config.rs`/`ledger.rs` 模块文档。
 mod backend;
 mod config;
 mod ink;
@@ -28,6 +30,35 @@ pub const APP: &str = "notes";
 
 const SPEC: ServiceSpec = ServiceSpec { name: "mind-serve", label: "笔记·脑", version: env!("CARGO_PKG_VERSION"), default_bind: "127.0.0.1:8797", tab: None };
 
+/// 「各个模型的用量花费 profile」（同 `transcribe-serve::main::usage_profile`，理由见那边的文档）。
+fn usage_profile(cfg: &MindConfig, usage: &ledger::Usage) -> serde_json::Value {
+    let mut keys: Vec<String> = config::PRESETS.iter().map(|p| p.id.to_string()).collect();
+    for k in usage.by_model.keys() {
+        if !keys.contains(k) {
+            keys.push(k.clone());
+        }
+    }
+    let rows: Vec<serde_json::Value> = keys
+        .into_iter()
+        .map(|k| {
+            let label = config::PRESETS.iter().find(|p| p.id == k).map(|p| p.label.to_string()).unwrap_or_else(|| k.clone());
+            let m = usage.by_model.get(&k).cloned().unwrap_or_default();
+            let price = cfg.prices.get(&k).copied().unwrap_or_default();
+            let cost = if price.input_per1k > 0.0 || price.output_per1k > 0.0 {
+                Some((m.prompt_tokens as f64 / 1000.0) * price.input_per1k + (m.completion_tokens as f64 / 1000.0) * price.output_per1k)
+            } else {
+                None
+            };
+            serde_json::json!({"id": k, "label": label, "active": k == cfg.usage_key(),
+                "calls": m.calls, "ok": m.ok, "failed": m.failed,
+                "promptTokens": m.prompt_tokens, "completionTokens": m.completion_tokens,
+                "lastError": m.last_error, "lastAt": m.last_at,
+                "price": price, "costEstimate": cost})
+        })
+        .collect();
+    serde_json::Value::Array(rows)
+}
+
 struct State {
     cfg_path: PathBuf,
     cfg: Mutex<MindConfig>,
@@ -41,7 +72,7 @@ impl State {
     }
     fn model(&self, cfg: &MindConfig) -> Result<Box<dyn TextModel>, String> {
         let key = cfg.key().ok_or("未配置 API key（网页「模型」设置里粘贴，或环境变量 DASHSCOPE_API_KEY）")?;
-        Ok(Box::new(OpenAiCompat::new(&cfg.backend, &cfg.base_url, &cfg.model, &key, Duration::from_secs(cfg.timeout_secs))))
+        Ok(Box::new(OpenAiCompat::new(&cfg.backend, cfg.base_url(), cfg.model(), &key, Duration::from_secs(cfg.timeout_secs))))
     }
 }
 
@@ -50,11 +81,16 @@ fn main() {
     let bind_addr = service::parse_bind(&args, SPEC.default_bind);
     let paths = Paths::from_env();
     let cfg_path = paths.app_config_dir(APP).join("mind.json");
-    let cfg: MindConfig = shelf_core::config::load_or_seed(&cfg_path);
+    // `.migrate()`：老配置文件搬进新形状，不迁移会让真机已存的 key 在升级后凭空消失，见 config.rs 文档。
+    let cfg = shelf_core::config::load_or_seed::<MindConfig>(&cfg_path).migrate();
     shelf_core::fs::set_mode(&cfg_path, 0o600);
+    let _ = shelf_core::config::save(&cfg_path, &cfg, Some(0o600));
     let st = Arc::new(State { cfg_path, cfg: Mutex::new(cfg), ledger: Ledger::open(&paths.app_state_dir(APP).join("mind.json")), store: InkHttp::new(paths.clone()) });
     let router = Router::new()
-        .get("/status", bind(&st, |s, _| Ok(Reply::ok(&serde_json::json!({"config": s.cfg().public(), "usage": s.ledger.snapshot()})))))
+        .get("/status", bind(&st, |s, _| {
+            let cfg = s.cfg();
+            Ok(Reply::ok(&serde_json::json!({"config": cfg.public(), "usage": s.ledger.snapshot(), "usageByModel": usage_profile(&cfg, &s.ledger.snapshot())})))
+        }))
         .get("/config", bind(&st, |s, _| Ok(Reply::ok(&s.cfg().public()))))
         .put("/config", bind(&st, |s, r| {
             let j = r.json()?;
@@ -78,7 +114,7 @@ fn main() {
                 Err(msg) => Err(ApiError::bad(msg)),
             }
         }));
-    println!("[mind-serve] 配置 {}；后端 {} {}；key {:?}", st.cfg_path.display(), st.cfg().backend, st.cfg().model, st.cfg().key_source());
+    println!("[mind-serve] 配置 {}；后端 {} {}；key {:?}", st.cfg_path.display(), st.cfg().backend, st.cfg().model(), st.cfg().key_source());
     if let Err(e) = service::run(&SPEC, &bind_addr, &paths, router) {
         eprintln!("[mind-serve] {e}");
         std::process::exit(1);

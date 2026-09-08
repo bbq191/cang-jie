@@ -193,6 +193,54 @@ impl Entry {
         self.updated = now;
         Ok(())
     }
+
+    /// 回收站「恢复」（整理区第二轮反馈点 3，2026-09-08）：`Skipped`/`Revoked`/`Archived` 三种终态都能
+    /// 恢复——落点按"这条本来走到哪一步"倒推，不额外存一份"删除前的状态"：校对过的文本还在（`text`
+    /// 有值）就回 `Reviewed`；没校对但有转写草稿就回 `Draft`；有手写还没转写过就回 `Pending`；纯勾画
+    /// 或什么都没留下就回 `Mined`（退回「浏览」重新决定）。`Skipped` 单独处理，永远回 `Mined`——它当初
+    /// 就是从 `Mined` 点「不需要」过来的，恢复也该回那一步，不套上面那套"有没有转写内容"的推断。
+    ///
+    /// `Revoked` 恢复只是找回条目库里已经存好的内容（裁图/草稿/校对文本）——不代表设备原页面的笔迹会
+    /// 重新出现。如果笔迹其实还在，下次 `ink-serve` 重扫会照常认出来，不受这次恢复影响；如果笔迹真的
+    /// 被用户擦掉了，这条恢复后就是一条脱离设备实时状态的"孤儿条目"，正常参与两处投影，直到下次被操作。
+    pub fn restore(&mut self, now: u64) -> Result<(), String> {
+        if !matches!(self.status, Status::Skipped | Status::Revoked | Status::Archived) {
+            return Err("这条不是已跳过/已撤销/已删除，用不着恢复".into());
+        }
+        self.status = if self.status == Status::Skipped {
+            Status::Mined
+        } else if self.text.is_some() {
+            Status::Reviewed
+        } else if !self.drafts.is_empty() {
+            Status::Draft
+        } else if self.ink.is_some() {
+            Status::Pending
+        } else {
+            Status::Mined
+        };
+        self.updated = now;
+        Ok(())
+    }
+
+    /// 用户在浏览器文本框里直接改字（PATCH `text`）：跟转写草稿写回时（`transcribe-serve::worker`）
+    /// 走的是同一套 `crate::marker::split_leading_marker` 规则——行首 `-`/`1.`/`口`/`##`/`### ` 都认，
+    /// 不需要再给一个手动选样式的下拉框（整理区第二轮反馈点 1，2026-09-08：「文本规则由 md 符号对标至
+    /// rm 笔记符号＝手写识别符号」）。识别到分区/小节标记覆盖 `subhead`；识别到样式标记覆盖 `style` 并把
+    /// 标记从正文剥掉（笔记本样式自带项目符号/编号，正文里再留一份会重复）。空文本＝清空校对，状态退回
+    /// 有草稿则 `Draft`、没有则 `Pending`。
+    pub fn apply_marked_text(&mut self, raw: &str, now: u64) {
+        let (marker, clean) = crate::marker::split_leading_marker(raw);
+        if let Some(m) = marker {
+            match m {
+                crate::marker::Marker::Style(s) => self.style = s,
+                crate::marker::Marker::Subhead(name) => self.subhead = Some(name),
+            }
+        }
+        let clean = clean.trim();
+        self.text = (!clean.is_empty()).then(|| clean.to_string());
+        self.status = if self.text.is_some() { Status::Reviewed } else if self.drafts.is_empty() { Status::Pending } else { Status::Draft };
+        self.updated = now;
+    }
 }
 
 /// 一本书的条目库文件形状。
@@ -324,6 +372,62 @@ mod tests {
         let mut e: Entry = serde_json::from_str(r#"{"id":"e","page":"p","page_index":0,"created":0,"updated":0,"ink":{"strokes":["1:1"],"bbox":[0,0,1,1],"hash":"h"}}"#).unwrap();
         e.status = Status::Archived;
         assert!(!e.needs_transcribe(), "已归档的条目跟已撤销/已跳过一样不该被自动转写捡走");
+    }
+
+    #[test]
+    fn restore_maps_skipped_to_mined_and_others_by_content_present() {
+        fn entry(status: Status, text: Option<&str>, has_draft: bool, has_ink: bool) -> Entry {
+            let mut e: Entry = serde_json::from_str(r#"{"id":"e","page":"p","page_index":0,"created":0,"updated":0}"#).unwrap();
+            e.status = status;
+            e.text = text.map(str::to_string);
+            if has_draft { e.drafts.push(Draft { text: "草稿".into(), backend: "b".into(), at: 0, hash: "h".into() }); }
+            if has_ink { e.ink = Some(Ink { strokes: vec![], bbox: (0.0, 0.0, 0.0, 0.0), hash: "h".into(), crop: String::new() }); }
+            e
+        }
+        let mut e = entry(Status::Skipped, Some("已校对文本还在"), true, true);
+        e.restore(10).unwrap();
+        assert_eq!(e.status, Status::Mined, "Skipped 永远回 Mined，不看有没有内容");
+
+        let mut e = entry(Status::Archived, Some("校对文本"), true, true);
+        e.restore(10).unwrap();
+        assert_eq!(e.status, Status::Reviewed, "有校对文本优先回 Reviewed");
+
+        let mut e = entry(Status::Archived, None, true, true);
+        e.restore(10).unwrap();
+        assert_eq!(e.status, Status::Draft, "没校对文本但有草稿回 Draft");
+
+        let mut e = entry(Status::Revoked, None, false, true);
+        e.restore(10).unwrap();
+        assert_eq!(e.status, Status::Pending, "只有手写没转写回 Pending");
+
+        let mut e = entry(Status::Revoked, None, false, false);
+        e.restore(10).unwrap();
+        assert_eq!((e.status, e.updated), (Status::Mined, 10), "什么都没留下回 Mined 重新走浏览");
+
+        let mut live: Entry = serde_json::from_str(r#"{"id":"e","page":"p","page_index":0,"created":0,"updated":0,"status":"reviewed"}"#).unwrap();
+        let err = live.restore(1).unwrap_err();
+        assert!(err.contains("用不着恢复"), "{err}");
+    }
+
+    #[test]
+    fn apply_marked_text_infers_style_and_subhead_from_markdown_style_markers() {
+        let mut e: Entry = serde_json::from_str(r#"{"id":"e","page":"p","page_index":0,"created":0,"updated":0}"#).unwrap();
+        e.apply_marked_text("- 查作者", 5);
+        assert_eq!((e.style, e.text.as_deref(), e.status, e.updated), (Style::Bullet, Some("查作者"), Status::Reviewed, 5), "行首 - 自动判无序，标记剥掉");
+
+        e.apply_marked_text("### 人物关系", 6);
+        assert_eq!((e.subhead.as_deref(), e.text.as_deref()), (Some("人物关系"), Some("人物关系")), "分区标记覆盖 subhead，正文也剥了标记");
+
+        e.apply_marked_text("普通一句话", 7);
+        assert_eq!(e.text.as_deref(), Some("普通一句话"), "没有标记，样式/小节都不动（还是上一步设的）");
+        assert_eq!(e.subhead.as_deref(), Some("人物关系"), "没有新标记不清空旧 subhead");
+
+        e.apply_marked_text("", 8);
+        assert_eq!((e.text.as_deref(), e.status), (None, Status::Pending), "清空文本、没有草稿时退回 Pending");
+
+        e.drafts.push(Draft { text: "草稿".into(), backend: "b".into(), at: 0, hash: "h".into() });
+        e.apply_marked_text("  ", 9);
+        assert_eq!((e.text.as_deref(), e.status), (None, Status::Draft), "有草稿时清空文本退回 Draft 而不是 Pending");
     }
 
     #[test]
