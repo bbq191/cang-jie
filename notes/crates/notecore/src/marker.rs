@@ -10,8 +10,8 @@
 //!
 //! **2026-09-08 三期**：`## 文字`（分区头）连同"分区"整个概念一起被砍掉了（用户拍板——AI 触发早就
 //! 是 `Entry.ask_ai`/`question` 的事，笔记本排版分组也不要了，条目按页序平铺）——`Marker::Section`
-//! 这个变体删了，`##`（两个 `#`）现在直接落空不识别（跟单 `#` 一样，理由见上一段——不为一条已经
-//! 死掉的功能留一个吃两个 `#` 却什么也不做的死判据）。
+//! 这个变体删了，但 `## 文字` 这个**手写标记本身**不废：用户明确要求继续识别，跟 `### 文字` 合并
+//! 成同一件事——两个/三个（及以上）`#` 都覆盖 `Entry.subhead`，不分层级。单 `#` 仍然不接（见上一段）。
 use crate::model::Style;
 
 /// 行首标记认出来的结果：内容样式（`Style`）或结构性标记（小节）。
@@ -19,7 +19,8 @@ use crate::model::Style;
 pub enum Marker {
     /// `-`/`1.`/`口` 等：这条内容本身该用什么样式。
     Style(Style),
-    /// `### 文字`：这条的小节标题覆盖成这个（`Entry.subhead`，平时由 epubmap 自动填）。
+    /// `## 文字`/`### 文字`：这条的小节标题覆盖成这个（`Entry.subhead`，平时由 epubmap 自动填）——
+    /// 两个/三个及以上 `#` 不分层级，都是同一件事（三期合并，见模块文档）。
     Subhead(String),
 }
 
@@ -33,10 +34,10 @@ pub fn split_leading_marker(text: &str) -> (Option<Marker>, String) {
     let f = first.trim_start();
     let strip = |body: &str| format!("{}{}", body.trim_start(), rest);
 
-    // `#` 计数一次性数完：三个及以上才认（`### 文字`＝小节标题），一两个 `#` 一律落空——单 `#`
-    // 从一开始就不接（见模块文档），双 `#` 是三期砍掉分区后跟着死掉的判据，不硬留。
+    // `#` 计数一次性数完：两个及以上就认（`##`/`### 文字`＝小节标题，三期合并不分层级），单 `#`
+    // 仍然不接（Title 是整章级别的，见模块文档）。
     let hashes = f.chars().take_while(|&c| c == '#').count();
-    if hashes >= 3 {
+    if hashes >= 2 {
         let name = f[hashes..].trim();
         if !name.is_empty() {
             return (Some(Marker::Subhead(name.to_string())), strip(&f[hashes..]));
@@ -84,14 +85,16 @@ mod tests {
     }
 
     #[test]
-    fn recognizes_subhead_marker_and_strips_but_double_hash_is_dead_now() {
+    fn recognizes_subhead_marker_two_or_more_hashes_no_level_distinction() {
         assert_eq!(split_leading_marker("### 人物关系"), (Some(Marker::Subhead("人物关系".into())), "人物关系".into()));
         assert_eq!(split_leading_marker("###人物关系\n第二行"), (Some(Marker::Subhead("人物关系".into())), "人物关系\n第二行".into()), "没空格也认");
         assert_eq!(split_leading_marker("###"), (None, "###".into()), "光标记没文字，不算数");
         assert_eq!(split_leading_marker("#### 更深一层"), (Some(Marker::Subhead("更深一层".into())), "更深一层".into()), "四个及以上 # 也按小节处理，不单独开第三级");
-        // 三期砍掉分区之后，`## 文字`（两个 #）不再识别成任何东西——原文原样返回。
-        assert_eq!(split_leading_marker("## 查询相关"), (None, "## 查询相关".into()), "分区标记已砍，双 # 落空");
-        assert_eq!(split_leading_marker("##"), (None, "##".into()));
+        // 三期：`## 文字`（两个 #）跟 `### 文字` 合并成同一件事，都覆盖 subhead，不分层级（用户明确要求
+        // 继续识别 `##`，只是不再驱动"分区"那套已删除的数据结构）。
+        assert_eq!(split_leading_marker("## 查询相关"), (Some(Marker::Subhead("查询相关".into())), "查询相关".into()), "双 # 跟三个 # 是同一件事");
+        assert_eq!(split_leading_marker("##查询相关"), (Some(Marker::Subhead("查询相关".into())), "查询相关".into()), "没空格也认");
+        assert_eq!(split_leading_marker("##"), (None, "##".into()), "光标记没文字，不算数");
     }
 
     #[test]

@@ -247,57 +247,66 @@ const DEST_NAMES={notebook:'仅设备笔记本',obsidian:'仅 Obsidian',both:'�
 /* 「浏览」（新批注先落这，点了才转笔记）与「整理」（真被要求转笔记的才在这核对）拆两个子视图，见二期设计（白皮书 §03n）。 */
 function renderNotes(sec){sec.innerHTML=`
   <div class="card"><h2>笔记</h2>
-    <p class="lead">荧光笔勾书、在旁边手写，合上书先到「浏览」：看一眼，点「转入笔记」才会转写、进「整理」核对；点「不需要」就跳过，不再出现。</p>
-    <div class="row"><span class="small">书</span><select id="nbook" style="flex:1;min-width:10em"></select><button class="btn" id="nrescan" title="清掉页记录，整本重新摄取">重扫</button><button class="btn" id="npurge" title="永久清掉已删除/已撤销/已跳过的条目，不可恢复">清空回收站</button></div>
+    <p class="lead">荧光笔勾书、在旁边手写，合上书先到「浏览」：看一眼，点「转入笔记」才会转写、进「整理」核对；点「不需要」就跳过，不再出现。模型 key 在「管理」tab 配。</p>
+    <div class="row"><span class="small">书</span><select id="nbook" style="flex:1;min-width:10em"></select><button class="btn" id="nrescan" title="清掉页记录，整本重新摄取">重扫</button></div>
     <div class="row small" id="nsum"></div>
   </div>
-  <div class="subnav"><button class="on">👀 浏览</button><button>✎ 整理</button></div>
+  <div class="subnav"><button class="on">👀 浏览</button><button>✎ 整理</button><button>🗑 回收站</button></div>
   <div class="subpanel on" id="nbrowse"></div>
   <div class="subpanel" id="norganize">
     <div class="card">
-      <details class="cmp" id="nmodels"><summary>模型（视觉转写 + 文字问答，各自 key/模型/用量）</summary>
-        <div class="row" style="align-items:flex-start;gap:1.2em;flex-wrap:wrap">
-          <div style="flex:1;min-width:14em">
-            <div class="small" style="font-weight:600">👁 视觉（转写批注）</div>
-            <div class="small" id="mvstat"></div>
-            <div class="row"><input type="password" id="mvkey" placeholder="key（只写不回显；DashScope 百炼）" style="flex:1;min-width:10em" autocomplete="off"><button class="btn pri" id="mvsave">保存</button><button class="btn" id="mvclear" title="清掉已存的 key">清 key</button></div>
-            <div class="row"><input type="text" id="mvmodel" placeholder="模型" style="max-width:9em"><input type="text" id="mvurl" placeholder="OpenAI 兼容口 baseUrl" style="flex:1;min-width:10em"></div>
-          </div>
-          <div style="flex:1;min-width:14em">
-            <div class="small" style="font-weight:600">✎ 文字（问AI）</div>
-            <div class="small" id="mtstat"></div>
-            <div class="row"><input type="password" id="mtkey" placeholder="key（只写不回显；DashScope 百炼）" style="flex:1;min-width:10em" autocomplete="off"><button class="btn pri" id="mtsave">保存</button><button class="btn" id="mtclear" title="清掉已存的 key">清 key</button></div>
-            <div class="row"><input type="text" id="mtmodel" placeholder="模型" style="max-width:9em"><input type="text" id="mturl" placeholder="OpenAI 兼容口 baseUrl" style="flex:1;min-width:10em"></div>
-          </div>
-        </div>
-      </details>
-      <details class="cmp" id="ntr"><summary>转写 <span class="small" id="ntrsum"></span></summary>
+      <details class="cmp" id="ntr"><summary>转写状态 <span class="small" id="ntrsum"></span></summary>
+        <p class="small" style="margin:.1em 0 .7em">合上书后台会自动转写手写批注，正常情况不用管这里——这里是给你看进度、失败了手动重试、或临时关掉自动转写用的。</p>
         <div class="row small" id="ntrstat"></div>
         <div class="row"><label class="toggle"><input type="checkbox" id="ntrauto"> 合书自动转写</label></div>
-        <div class="row"><button class="btn" id="ntrrun">转写待转写条目</button><button class="btn" id="ntrretry" title="清掉失败记录再跑">重试失败</button><span class="small" id="ntrmsg"></span></div>
+        <div class="row"><button class="btn" id="ntrrun">立即转写待转写条目</button><button class="btn" id="ntrretry" title="清掉失败记录再跑">重试失败</button><span class="small" id="ntrmsg"></span></div>
         <div class="small" id="ntrfail"></div>
       </details>
     </div>
     <div id="nchapters"></div>
+  </div>
+  <div class="subpanel" id="ntrashpanel">
+    <div class="card">
+      <p class="lead">这里是「不需要」「不要了」跳过的批注，以及笔画被撤回后自动标记的条目——两处投影都不会用到它们，但条目库里还留着，直到你手动清空。</p>
+      <div class="row"><button class="btn" id="npurge" title="永久清掉下面列出的条目，不可恢复">清空回收站</button><span class="small" id="ntrashsum"></span></div>
+      <div id="ntrashlist"></div>
+    </div>
   </div>`;
   const sel=$('#nbook',sec),chaps=$('#nchapters',sec),browse=$('#nbrowse',sec),sum=$('#nsum',sec);let book=null;
   const cropUrl=(uuid,f)=>`/api/ink/books/${encodeURIComponent(uuid)}/crops/${encodeURIComponent(f)}`;
+  const cropHtml=e=>e.ink&&e.ink.crop?`<img src="${cropUrl(book.uuid,e.ink.crop)}" alt="手写批注裁图">`:'<div class="empty">（无裁图，纯勾画）</div>';
   const patch=async(id,body)=>{const r=await postJ(`/api/ink/books/${encodeURIComponent(book.uuid)}/entries/${encodeURIComponent(id)}`,body);if(r.ok===false)alert(r.message||'保存失败')};
-  /* 浏览态动作：Mined→Pending（转入笔记）/ Mined→Skipped（不需要），见 ink-serve::triage。成功后两个子视图都要重画（条目跨视图搬家）。 */
+  const trashList=$('#ntrashlist',sec),trashSum=$('#ntrashsum',sec);
+  const TRASH_STATUSES=['skipped','revoked','archived'];
+  /* 回收站（点 3）：不是一个只会清空的黑盒按钮——列出「不需要」「不要了」「已撤销」的条目实际内容，
+     清空前能看清要丢的是什么。数据不用额外接口：GET /books/{uuid} 本来就带全部条目（含终态的）。 */
+  const renderTrash=()=>{trashList.innerHTML='';if(!book){trashSum.textContent='';return}
+    const items=(book.entries||[]).filter(e=>TRASH_STATUSES.includes(e.status)).sort((a,b)=>b.updated-a.updated);
+    trashSum.textContent=items.length?`共 ${items.length} 条`:'空的，没什么可清';
+    if(!items.length){trashList.innerHTML='<p class="small">没有已跳过/已删除/已撤销的条目。</p>';return}
+    items.forEach(e=>{const row=document.createElement('div');row.className='trash-item';
+      const text=e.text||(e.drafts&&e.drafts[0]&&e.drafts[0].text)||(e.quote&&e.quote.text)||'（无文字内容，可能纯手写还没转写）';
+      row.innerHTML=`<span class="badge">${STATUS_NAMES[e.status]||e.status}</span>
+        <div class="txt">p.${e.page_index+1}${e.chapter_title?' · '+e.chapter_title:''}<br><span class="q">${text}</span></div>`;
+      trashList.appendChild(row)})};
+  /* 浏览态动作：Mined→Pending（转入笔记）/ Mined→Skipped（不需要），见 ink-serve::triage。三个子视图都要重画（条目跨视图搬家）。 */
   const triage=async(id,action)=>{const r=await postJ(`/api/ink/books/${encodeURIComponent(book.uuid)}/entries/${encodeURIComponent(id)}/${action}`,{});if(r.ok===false)return;
-    book=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}`);renderBrowse();renderBook()};
+    book=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}`);renderBrowse();renderBook();renderTrash()};
   const updateSummary=()=>{if(!book){sum.textContent='';return}const es=book.entries||[];
-    const c=st=>es.filter(e=>e.status===st).length,skipped=c('skipped');
-    sum.textContent=`待浏览 ${c('mined')} · 待转写 ${c('pending')} · 待校对 ${c('draft')} · 已校对 ${c('reviewed')}${skipped?` · 已跳过 ${skipped}（不再显示）`:''}`};
+    const c=st=>es.filter(e=>e.status===st).length;
+    sum.textContent=`待浏览 ${c('mined')} · 待转写 ${c('pending')} · 待校对 ${c('draft')} · 已校对 ${c('reviewed')}`};
   $('#nrescan',sec).onclick=async()=>{if(!book)return;await postJ(`/api/ink/books/${encodeURIComponent(book.uuid)}/rescan`,{});refresh()};
-  $('#npurge',sec).onclick=async()=>{if(!book)return;if(!confirm('永久清掉已删除/已撤销/已跳过的条目，条目库里再也找不回——确定？'))return;
+  $('#npurge',sec).onclick=async()=>{if(!book)return;
+    const items=(book.entries||[]).filter(e=>TRASH_STATUSES.includes(e.status));
+    if(!items.length){alert('回收站是空的，没什么可清');return}
+    if(!confirm(`永久清掉这 ${items.length} 条（已跳过/已删除/已撤销），条目库里再也找不回——确定？`))return;
     const r=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}/purge`,{method:'POST'});
     if(r.ok===false){alert(r.message||'清空失败');return}
-    alert(`已清 ${r.removed} 条`);refresh()};
-  /* 「不要了」（三期）：转 Archived，两处投影都摘掉，条目库里软删留痕（真删靠上面「清空回收站」）。 */
-  const archiveEntry=async(id)=>{if(!confirm('这条不要了？（设备笔记本、Obsidian 导出都会摘掉；条目库里还留着，能靠「清空回收站」真删，但没有撤销按钮）'))return;
+    book=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}`);renderTrash();refresh()};
+  /* 「不要了」（三期）：转 Archived，两处投影都摘掉，条目库里软删留痕（真删靠「回收站」清空）。 */
+  const archiveEntry=async(id)=>{if(!confirm('这条不要了？（设备笔记本、Obsidian 导出都会摘掉；条目还留在「回收站」，能看到但没有撤销按钮）'))return;
     const r=await postJ(`/api/ink/books/${encodeURIComponent(book.uuid)}/entries/${encodeURIComponent(id)}/archive`,{});if(r.ok===false)return;
-    book=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}`);renderBook()};
+    book=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}`);renderBook();renderTrash()};
   /* 浏览：按页分组、只列 Mined（待决定的），最近变更的页在前；转入笔记/不需要两个按钮直接调 triage。 */
   const renderBrowse=()=>{browse.innerHTML='';if(!book)return;updateSummary();
     const mined=(book.entries||[]).filter(e=>e.status==='mined');
@@ -306,16 +315,19 @@ function renderNotes(sec){sec.innerHTML=`
     const recency=k=>Math.max(...groups.get(k).map(e=>e.updated));
     [...groups.keys()].sort((a,b)=>recency(b)-recency(a)).forEach(k=>{const es=groups.get(k).sort((a,b)=>(a.ink?a.ink.bbox[1]:0)-(b.ink?b.ink.bbox[1]:0));
       const card=document.createElement('div');card.className='card';card.innerHTML=`<h3 style="margin-top:0">第 ${k+1} 页${es[0].chapter_title?' · '+es[0].chapter_title:''} <span class="small">${es.length} 条</span></h3>`;
-      es.forEach(e=>{const row=document.createElement('div');row.className='opt-note';row.style.cssText='display:flex;gap:.6em;flex-wrap:wrap;align-items:flex-start;margin:.4em 0';
-        const img=e.ink&&e.ink.crop?`<img src="${cropUrl(book.uuid,e.ink.crop)}" alt="手写" style="max-width:40%;max-height:9em;border:1px solid var(--line);background:#fff">`:'<span class="small">（无裁图）</span>';
-        row.innerHTML=`${img}<div style="flex:1;min-width:12em">
-          ${e.quote?`<div class="small" style="border-left:3px solid var(--line);padding-left:.5em;margin:.2em 0">「${e.quote.text}」</div>`:''}
-          <div class="row"><button class="btn pri" data-a="request">转入笔记</button><button class="btn" data-a="skip">不需要</button></div></div>`;
+      es.forEach(e=>{const row=document.createElement('div');row.className='entry';
+        row.innerHTML=`<div class="entry-body">
+          <div class="entry-crop">${cropHtml(e)}</div>
+          <div class="entry-main">
+            ${e.quote?`<div class="entry-quote">「${e.quote.text}」</div>`:''}
+            <div class="entry-ops"><div class="grp"><button class="btn pri" data-a="request">转入笔记</button><button class="btn" data-a="skip">不需要</button></div></div>
+          </div></div>`;
         row.querySelector('[data-a="request"]').onclick=()=>triage(e.id,'request');
         row.querySelector('[data-a="skip"]').onclick=()=>triage(e.id,'skip');
         card.appendChild(row)});
       browse.appendChild(card)})};
-  /* 整理：只列真被要求转笔记的（Pending/Draft/Reviewed）——Mined 在「浏览」决定，Skipped/Revoked 不再出现。 */
+  /* 整理：只列真被要求转笔记的（Pending/Draft/Reviewed）——Mined 在「浏览」决定，Skipped/Revoked/Archived 去「回收站」。
+     每条卡片三块视觉分区（点 4）：左手写裁图 ｜ 中转写/校对文本 ｜ 下问 AI 区，宽屏并排、手机堆叠（style.css .entry-*）。 */
   const renderBook=()=>{chaps.innerHTML='';if(!book)return;updateSummary();
     const live=(book.entries||[]).filter(e=>['pending','draft','reviewed'].includes(e.status));
     const groups=new Map();live.forEach(e=>{const k=e.chapter==null?-1:e.chapter;if(!groups.has(k))groups.set(k,[]);groups.get(k).push(e)});
@@ -339,25 +351,37 @@ function renderNotes(sec){sec.innerHTML=`
           msg.textContent='✓ 已导出，下载中…';
           window.open(`/api/notes/books/${encodeURIComponent(book.uuid)}/chapters/${k}/export.md`,'_blank')};
       }
-      es.forEach(e=>{const row=document.createElement('div');row.className='opt-note';row.style.cssText='display:flex;gap:.6em;flex-wrap:wrap;align-items:flex-start;margin:.4em 0';
-        const img=e.ink&&e.ink.crop?`<img src="${cropUrl(book.uuid,e.ink.crop)}" alt="手写" style="max-width:40%;max-height:9em;border:1px solid var(--line);background:#fff">`:'<span class="small">（无裁图）</span>';
+      es.forEach(e=>{const row=document.createElement('div');row.className='entry';
         const sty=Object.entries(STYLE_NAMES).map(([v,n])=>`<option value="${v}" ${e.style===v?'selected':''}>${n}</option>`).join('');
         const dest=Object.entries(DEST_NAMES).map(([v,n])=>`<option value="${v}" ${(e.destination||'both')===v?'selected':''}>${n}</option>`).join('');
         const draft=(e.drafts&&e.drafts[0])?e.drafts[0].text:'';
-        row.innerHTML=`${img}<div style="flex:1;min-width:12em">
-          <div class="small">p.${e.page_index+1}${e.subhead?' · '+e.subhead:''} <span class="badge ${e.status==='reviewed'?'on':''}">${STATUS_NAMES[e.status]||e.status}</span></div>
-          ${e.quote?`<div class="small" style="border-left:3px solid var(--line);padding-left:.5em;margin:.2em 0">「${e.quote.text}」</div>`:''}
-          <textarea rows="2" style="width:100%;box-sizing:border-box" placeholder="${draft?'转写：'+draft:'等待转写…'}">${e.text||draft}</textarea>
-          <div class="row"><select data-k="style">${sty}</select><select data-k="destination">${dest}</select><button class="btn" data-archive title="两处投影都摘掉（软删）">不要了</button></div>
-          <div class="row" style="margin-top:.3em"><label class="toggle"><input type="checkbox" data-ask ${e.ask_ai?'checked':''}> 问AI</label>
-            <input type="text" data-question placeholder="问题…（如「他是谁」）" value="${e.question?e.question.replace(/"/g,'&quot;'):''}" style="flex:1;min-width:9em" ${e.ask_ai?'':'disabled'}>
-            <button class="btn" data-askbtn ${e.ask_ai&&e.question?'':'disabled'}>提问</button></div>
-          ${e.answer?`<details class="cmp" open><summary>回答 <span class="small">「${e.answer.brief}」</span></summary><div class="small">${e.answer.text}</div></details>`:''}</div>`;
+        row.innerHTML=`
+          <div class="entry-head">
+            <span>p.${e.page_index+1}${e.subhead?' · '+e.subhead:''}</span>
+            <span class="badge ${e.status==='reviewed'?'on':''}">${STATUS_NAMES[e.status]||e.status}</span>
+          </div>
+          <div class="entry-body">
+            <div class="entry-crop">${cropHtml(e)}</div>
+            <div class="entry-main">
+              ${e.quote?`<div class="entry-quote">「${e.quote.text}」</div>`:''}
+              <textarea class="entry-text" rows="2" placeholder="${draft?'转写建议：'+draft:'等待转写…（也可以直接手动填）'}">${e.text||draft}</textarea>
+              <div class="entry-ops">
+                <div class="grp"><select data-k="style">${sty}</select><select data-k="destination">${dest}</select></div>
+                <div class="grp">${(e.ink&&e.ink.crop)?`<button class="btn" data-transcribe title="用当前后端重新转写这一条（不动已校对文本）">${draft?'重转':'转写'}</button>`:''}<button class="btn" data-archive title="设备笔记本、Obsidian 导出都摘掉（软删，去「回收站」能看到）">不要了</button></div>
+              </div>
+              <div class="entry-ask">
+                <div class="row"><label class="toggle"><input type="checkbox" data-ask ${e.ask_ai?'checked':''}> 问 AI</label>
+                  <input type="text" data-question placeholder="问题…（如「他是谁」「这段什么意思」）" value="${e.question?e.question.replace(/"/g,'&quot;'):''}" style="flex:1;min-width:9em" ${e.ask_ai?'':'disabled'}>
+                  <button class="btn pri" data-askbtn ${e.ask_ai&&e.question?'':'disabled'}>提问</button></div>
+                ${e.answer?`<div class="entry-answer"><b>AI 回答</b>（问：${e.answer.brief}）<br>${e.answer.text}</div>`:''}
+              </div>
+            </div>
+          </div>`;
         row.querySelector('textarea').onchange=ev=>patch(e.id,{text:ev.target.value});
         row.querySelectorAll('select').forEach(s=>s.onchange=()=>patch(e.id,{[s.dataset.k]:s.value}));
         row.querySelector('[data-archive]').onclick=()=>archiveEntry(e.id);
-        if(e.ink&&e.ink.crop){const rb=document.createElement('button');rb.className='btn';rb.textContent=draft?'重转':'转写';rb.title='用当前后端转写这一条（不动已校对文本）';rb.style.marginLeft='.4em';
-          rb.onclick=async()=>{rb.disabled=true;const r=await j(`/api/transcribe/books/${encodeURIComponent(book.uuid)}/entries/${encodeURIComponent(e.id)}`,{method:'POST'});rb.disabled=false;if(r.ok===false)alert(r.message||'转写失败')};row.querySelector('.row').appendChild(rb)}
+        const tb=row.querySelector('[data-transcribe]');
+        if(tb)tb.onclick=async()=>{tb.disabled=true;const r=await j(`/api/transcribe/books/${encodeURIComponent(book.uuid)}/entries/${encodeURIComponent(e.id)}`,{method:'POST'});tb.disabled=false;if(r.ok===false)alert(r.message||'转写失败')};
         /* 「问AI」勾选框 + 问题 + 提问按钮：改即存（ink-serve），点提问才真的调 mind-serve。 */
         const askBox=row.querySelector('[data-ask]'),qInput=row.querySelector('[data-question]'),askBtn=row.querySelector('[data-askbtn]');
         const syncAskUi=()=>{qInput.disabled=!askBox.checked;askBtn.disabled=!(askBox.checked&&qInput.value.trim())};
@@ -369,40 +393,68 @@ function renderNotes(sec){sec.innerHTML=`
           if(r.ok===false)alert(r.message||'提问失败');else{book=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}`);renderBook()}};
         card.appendChild(row)});
       chaps.appendChild(card)})};
-  const loadBook=async()=>{if(!sel.value){book=null;renderBrowse();renderBook();return}book=await j(`/api/ink/books/${encodeURIComponent(sel.value)}`);renderBrowse();renderBook()};
+  const loadBook=async()=>{if(!sel.value){book=null;renderBrowse();renderBook();renderTrash();return}book=await j(`/api/ink/books/${encodeURIComponent(sel.value)}`);renderBrowse();renderBook();renderTrash()};
   sel.onchange=loadBook;
-  /* 转写区（transcribe-serve）：状态 = 待转写数 / 用量 / 最近一轮 / 失败清单；key/模型改到「模型」统一面板 */
+  /* 转写状态区（点 1，简化说明）：合书自动转写，正常不用管；这里只剩纯工作流的东西——开关/立即跑一次/
+     重试失败/失败清单，key 与模型选择已经搬到「管理」tab（点 2）。 */
   const trMsg=$('#ntrmsg',sec);
   const trRefresh=async()=>{const st=await j('/api/transcribe/status');const box=$('#ntr',sec);if(st.ok===false){box.style.display='none';return}box.style.display='';
     const c=st.config||{},u=st.usage||{},lr=u.lastRun;
-    $('#ntrsum',sec).textContent=`${c.hasKey?'key ✓':'未配 key'} · 待转写 ${st.pending||0}`;
-    $('#ntrstat',sec).textContent=`${c.backend||''} ${c.model||''} · 累计 ${u.ok||0} 成 ${u.failed||0} 败 · token 入 ${u.promptTokens||0} 出 ${u.completionTokens||0}${lr?` · 上轮 扫 ${lr.scanned} 成 ${lr.done} 败 ${lr.failed}${lr.note?' · '+lr.note:''}`:''}${u.lastError?' · 最近错误：'+u.lastError:''}`;
+    $('#ntrsum',sec).textContent=`${c.hasKey?'key 已配置':'未配 key（去「管理」配）'} · 待转写 ${st.pending||0}`;
+    $('#ntrstat',sec).textContent=`${c.model||''} · 累计 ${u.ok||0} 成 ${u.failed||0} 败 · token 入 ${u.promptTokens||0} 出 ${u.completionTokens||0}${lr?` · 上轮 扫 ${lr.scanned} 成 ${lr.done} 败 ${lr.failed}${lr.note?' · '+lr.note:''}`:''}${u.lastError?' · 最近错误：'+u.lastError:''}`;
     $('#ntrauto',sec).checked=!!c.auto;
     $('#ntrfail',sec).innerHTML=(st.failures||[]).length?'失败：'+st.failures.map(f=>`${f.id.slice(0,8)}… ×${f.attempts} ${f.error}`).join('；'):''};
   $('#ntrauto',sec).onchange=async()=>{const r=await j('/api/transcribe/config',{method:'PUT',body:JSON.stringify({auto:$('#ntrauto',sec).checked})});if(r.ok===false)alert(r.message||'保存失败');trRefresh()};
   const trRun=async(url)=>{trMsg.textContent='转写中…';const r=await j(url,{method:'POST'});trMsg.textContent=r.ok===false?('✗ '+(r.message||'失败')):(r.done!=null?`✓ 成 ${r.done} 败 ${r.failed} 余 ${r.left}${r.note?' · '+r.note:''}`:'✓');trRefresh()};
   $('#ntrrun',sec).onclick=()=>trRun('/api/transcribe/run');
   $('#ntrretry',sec).onclick=()=>trRun('/api/transcribe/retry');
-  /* 「模型」统一面板（二期步骤 5）：视觉（transcribe）+ 文字（mind）并排，各自 key（脱敏预览+保存/清）+ 模型/baseUrl + 用量。 */
-  const mFill=(prefix,st)=>{
-    if(st.ok===false){$(`#${prefix}stat`,sec).textContent='服务未就绪：'+(st.message||'');return}
-    const c=st.config||{},u=st.usage||{};
-    $(`#${prefix}stat`,sec).textContent=`${c.keyMasked?'key '+c.keyMasked:(c.hasKey?'key ✓（环境变量）':'未配 key')} · 调用 ${u.calls||0}（成 ${u.ok||0} 败 ${u.failed||0}）· token 入 ${u.promptTokens||0} 出 ${u.completionTokens||0}${u.lastError?' · 最近错误：'+u.lastError:''}`;
-    $(`#${prefix}model`,sec).value=c.model||'';$(`#${prefix}url`,sec).value=c.baseUrl||''};
-  const mRefresh=async()=>{const [vt,tt]=await Promise.all([j('/api/transcribe/status'),j('/api/mind/status')]);mFill('mv',vt);mFill('mt',tt)};
-  const mSave=async(seg,prefix)=>{
-    const key=$(`#${prefix}key`,sec).value,model=$(`#${prefix}model`,sec).value,baseUrl=$(`#${prefix}url`,sec).value;
-    const r=await j(`/api/${seg}/config`,{method:'PUT',body:JSON.stringify({apiKey:key,model,baseUrl})});
-    if(r.ok===false)alert(r.message||'保存失败');else $(`#${prefix}key`,sec).value='';
-    mRefresh()};
-  const mClear=async(seg,label)=>{if(!confirm(`清掉${label}已存的 API key？`))return;const r=await j(`/api/${seg}/config`,{method:'PUT',body:JSON.stringify({clearKey:true})});if(r.ok===false)alert(r.message||'清除失败');mRefresh()};
-  $('#mvsave',sec).onclick=()=>mSave('transcribe','mv');
-  $('#mtsave',sec).onclick=()=>mSave('mind','mt');
-  $('#mvclear',sec).onclick=()=>mClear('transcribe','视觉模型');
-  $('#mtclear',sec).onclick=()=>mClear('mind','文字模型');
   const refresh=async()=>{const d=await j('/api/ink/books');const cur=sel.value;sel.innerHTML=(d.items||[]).map(b=>`<option value="${b.uuid}">${b.title}（${b.entries}）</option>`).join('')||'<option value="">（还没有勾画过的书）</option>';
-    if(cur&&[...sel.options].some(o=>o.value===cur))sel.value=cur;await Promise.all([loadBook(),trRefresh(),mRefresh()])};
+    if(cur&&[...sel.options].some(o=>o.value===cur))sel.value=cur;await Promise.all([loadBook(),trRefresh()])};
   refresh();sec.refresh=refresh;subtabs(sec)}
+
+/* 模型管理卡片（点 2，「管理」tab 用，transcribe/mind 共用同一套 UI）：预置下拉选模型（不用自己填地址，
+   选"自定义"才露出手填 model/baseUrl）；key 脱敏后只剩「删除」，没配 key 时才给输入框——不允许在已有
+   key 时直接改写覆盖，逼着"先删再填"，状态更明确、不会以为在编辑一个看不见的旧值。返回一个 refresh
+   函数，挂到 tab 的 sec.refresh 上，切回这个 tab 时数据不过期。 */
+function mountModelPanel(root,seg,title,icon){
+  const card=document.createElement('div');card.className='card';card.style.cssText='flex:1;min-width:16em;margin:0';
+  card.innerHTML=`<h3 style="margin-top:0">${icon} ${title}</h3>
+    <label class="field">模型</label>
+    <select data-preset style="width:100%"></select>
+    <div class="row" data-custom hidden>
+      <input type="text" data-model placeholder="模型名" style="max-width:11em">
+      <input type="text" data-url placeholder="OpenAI 兼容口 baseUrl" style="flex:1;min-width:12em">
+      <button class="btn" data-savecustom>保存自定义</button>
+    </div>
+    <label class="field">API key</label>
+    <div class="row" data-keyrow></div>
+    <div class="small" data-stat style="margin-top:.3em"></div>`;
+  root.appendChild(card);
+  const presetSel=card.querySelector('[data-preset]'),customBox=card.querySelector('[data-custom]'),modelInp=card.querySelector('[data-model]'),urlInp=card.querySelector('[data-url]'),keyRow=card.querySelector('[data-keyrow]'),stat=card.querySelector('[data-stat]');
+  const put=body=>j(`/api/${seg}/config`,{method:'PUT',body:JSON.stringify(body)});
+  const refresh=async()=>{
+    const st=await j(`/api/${seg}/status`);
+    if(st.ok===false){stat.textContent='服务未就绪：'+(st.message||'安装/开启该服务后再配');presetSel.disabled=true;keyRow.innerHTML='';return}
+    const c=st.config||{},u=st.usage||{};
+    presetSel.disabled=false;
+    presetSel.innerHTML=(c.presets||[]).map(p=>`<option value="${p.id}">${p.label}</option>`).join('')+'<option value="custom">自定义（手填地址）</option>';
+    presetSel.value=c.activePreset||'custom';
+    const isCustom=presetSel.value==='custom';
+    customBox.hidden=!isCustom;
+    if(isCustom){modelInp.value=c.model||'';urlInp.value=c.baseUrl||''}
+    keyRow.innerHTML=c.hasKey
+      ?`<span class="small">已保存：<code>${c.keyMasked||'••••'}</code></span><button class="btn" data-delkey>删除</button>`
+      :`<input type="password" placeholder="粘贴 API key（DashScope 百炼）" data-keyinput style="flex:1;min-width:11em" autocomplete="off"><button class="btn pri" data-savekey>保存</button>`;
+    stat.textContent=`调用 ${u.calls||0} 次（成 ${u.ok||0} 败 ${u.failed||0}）· token 入 ${u.promptTokens||0} 出 ${u.completionTokens||0}${u.lastError?' · 最近错误：'+u.lastError:''}`;
+    const delBtn=keyRow.querySelector('[data-delkey]'),saveBtn=keyRow.querySelector('[data-savekey]');
+    if(delBtn)delBtn.onclick=async()=>{if(!confirm(`删除已保存的${title} key？删掉之后要重新粘贴才能用`))return;const r=await put({clearKey:true});if(r.ok===false)alert(r.message||'删除失败');refresh()};
+    if(saveBtn)saveBtn.onclick=async()=>{const v=keyRow.querySelector('[data-keyinput]').value.trim();if(!v)return;const r=await put({apiKey:v});if(r.ok===false)alert(r.message||'保存失败');refresh()};
+  };
+  presetSel.onchange=async()=>{const v=presetSel.value;customBox.hidden=v!=='custom';if(v==='custom')return;const r=await put({preset:v});if(r.ok===false)alert(r.message||'保存失败');refresh()};
+  card.querySelector('[data-savecustom]').onclick=async()=>{const r=await put({preset:'custom',model:modelInp.value.trim(),baseUrl:urlInp.value.trim()});if(r.ok===false)alert(r.message||'保存失败');refresh()};
+  refresh();
+  return refresh;
+}
 
 /* 管理台/引导（固定 tab，始终在——它是网关自身页面，不由服务注册表驱动） */
 function renderManage(sec){sec.innerHTML=`
@@ -452,8 +504,14 @@ function renderManage(sec){sec.innerHTML=`
         <dd>安装要重挂载只读系统分区、写系统单元，风险偏高。<b>未装功能只给命令</b>：在电脑上 SSH 跑，或走 reManager 引导，更安全。</dd>
       </dl></details>
     <div class="row"><button class="btn" id="allon">全部开启</button><button class="btn" id="alloff">全部关闭（留网关）</button></div>
-    <ul class="list" id="mods"></ul></div>`;
+    <ul class="list" id="mods"></ul></div>
+  <div class="card"><h2>模型管理</h2>
+    <p class="lead">笔记线转写批注（视觉模型）和问 AI（文字模型）用的云端模型。选预置组合就行，不用自己填服务地址；某类型没配 key，对应功能就用不了。</p>
+    <div class="row" id="modelcards" style="align-items:flex-start;gap:1.2em"></div>
+  </div>`;
   const badge=(t,ok)=>`<span class="badge ${ok?'on':'off'}">${t}</span>`;
+  const mvRefresh=mountModelPanel($('#modelcards',sec),'transcribe','视觉模型（转写批注）','👁');
+  const mtRefresh=mountModelPanel($('#modelcards',sec),'mind','文字模型（问 AI）','✎');
   const refresh=async()=>{
     const f=await j('/api/foundation');$('#found',sec).innerHTML=f.ok===false?`<span>${f.message}</span>`:
       `<b>xovi</b><span>${badge(f.xovi?'已装':'未装',f.xovi)}</span><b>appload</b><span>${badge(f.appload?'已装':'未装',f.appload)}</span><b>qt-resource-rebuilder</b><span>${badge(f.qrr?'已装':'未装',f.qrr)}</span><b>KOReader</b><span>${badge(f.koreader?'已装':'未装',f.koreader)}</span>`;
@@ -470,7 +528,7 @@ function renderManage(sec){sec.innerHTML=`
       li.append(left,right);ul.appendChild(li)});};
   $('#allon',sec).onclick=async()=>{const d=await j('/api/manage');for(const m of (d.modules||[]))if(m.installable&&m.installed&&!m.running)await j('/api/manage/'+m.seg+'/start',{method:'POST'});refresh()};
   $('#alloff',sec).onclick=async()=>{if(!confirm('关闭全部领域服务（网关保留）？'))return;const d=await j('/api/manage');for(const m of (d.modules||[]))if(m.installable&&m.installed&&m.running)await j('/api/manage/'+m.seg+'/stop',{method:'POST'});refresh()};
-  refresh();sec.refresh=refresh;}
+  refresh();sec.refresh=()=>{refresh();mvRefresh();mtRefresh()};}
 
 (async()=>{const d=await j('/api/services');const svcs=(d.services||[]).filter(s=>s.ui&&TABS[s.name]).sort((a,b)=>a.ui.order-b.ui.order);
   $('#hdr').textContent=location.host;
