@@ -6,58 +6,18 @@
 //! 别家的密钥）。
 //! 对外（GET /config）永远只报 `hasKey`/`keySource`，**不回显 key**；写入走 PUT /config 的 `apiKey` 字段
 //! （空串=不改，`clearKey`=清当前预置所属厂商的那把）。
-//! **模型 id 是易变信息，不凭记忆写**：下表四家的 base_url／model 字符串都是 2026-09-08 当天过 WebSearch/
-//! WebFetch 核实官方文档页给出的（OpenAI `developers.openai.com/api/docs/models`、Gemini
-//! `ai.google.dev/gemini-api/docs/openai`、DeepSeek `api-docs.deepseek.com/quick_start/pricing`）——
-//! 这类字符串官方随时会改名，写死进代码本身就是权宜之计；真跑不通了首选去官方文档核对是不是又改了，
-//! 而不是怀疑这段注释。豆包（火山方舟）**没有**收进预置表：它的"模型"实际是账号自建的推理接入点 ID
-//! （`ep-xxxxxxxx`），不是一个所有用户通用的固定字符串，硬填一个占位模型名到预置表里反而是在提供一个
-//! 保真不了的"已知能用"承诺——用户要接豆包，走"自定义"，`baseUrl` 填 `https://ark.cn-beijing.volces.com/api/v3`，
-//! `model` 填自己在方舟控制台建的 Endpoint ID。
-//! **花费不做官方定价表**：第三方 API 定价比模型 id 还易变（区域/促销价随时变），写死一份价格表比模型 id
-//! 写死更容易在用户不知情的情况下把"预估花费"这个数字做错、误导用户的实际支出判断——干脆不猜，改成让
-//! 用户自己在模型面板填"每 1K token 输入/输出单价"（`prices`，缺省 0＝不计费，用量卡片只显示 token 数不
-//! 显示金额），这是他们自己账户下的真实价格，比我这边任何时点的快照都准。
+//! **预置选择/key 存取/迁移/PATCH 的核心逻辑现在共享给 mind-serve**（`vendorcfg` crate，2026-09-08 抽
+//! 出来），这里只留：① 这条服务自己的视觉模型预置表（型号跟 mind-serve 的文字表不同）；② 这条服务
+//! 独有的字段（`max_per_run`/`pause_ms`/`auto`/`max_attempts` 这套节流参数，mind-serve 没有，它不跑
+//! 批量循环）。模型 id 核实来源、豆包为什么不进预置表、花费为什么不做官方定价表，这几条设计理由见
+//! `vendorcfg` 的 crate 文档，不在这重复。
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use vendorcfg::{Preset, Price, DASHSCOPE, DEEPSEEK, GEMINI, KEY_ENV, OPENAI};
 
-pub const KEY_ENV: &str = "DASHSCOPE_API_KEY";
+pub use vendorcfg::KeySource;
 
-const DASHSCOPE: &str = "https://dashscope.aliyuncs.com/compatible-mode/v1";
-const OPENAI: &str = "https://api.openai.com/v1";
-const GEMINI: &str = "https://generativelanguage.googleapis.com/v1beta/openai/";
-const DEEPSEEK: &str = "https://api.deepseek.com/v1";
-
-/// baseUrl 兜底认厂商：一个厂商的 key 对它旗下所有模型都通用，不该按"这个具体型号在不在预置表里"来
-/// 分格——2026-09-08 真机在 mind-serve 那边踩过这个坑（那边预置表是文字模型，没收视觉模型
-/// `qwen3-vl-plus`，老配置迁移时判成"没匹配上"落进 `custom` 格，切到同样是 DashScope 的
-/// `qwen-plus` 预置后就找不到那把明明是同一账号的 key 了）；这边视觉预置表虽然目前没有类似的具体
-/// 案例，但同一个坑理论上一样会踩（比如以后有人先手填一个 DashScope 地址的自定义型号，再切换到某个
-/// DashScope 预置）。`provider()`/`migrate()` 都用它兜底：baseUrl 匹配上四家已知厂商之一，不管选的
-/// 是预置表里的型号还是"自定义"填的同一个地址，都能找到同一把 key。
-fn provider_for_base_url(base_url: &str) -> Option<&'static str> {
-    match base_url {
-        DASHSCOPE => Some("dashscope"),
-        OPENAI => Some("openai"),
-        GEMINI => Some("gemini"),
-        DEEPSEEK => Some("deepseek"),
-        _ => None,
-    }
-}
-
-/// 一个预置模型选项：网页下拉给的都是"已知能用"的组合，不需要用户自己填 baseUrl。`provider` 决定这条
-/// 预置的 key 存哪一格——同厂商换模型不用重新粘贴 key。
-#[derive(Serialize, Clone, Copy, Debug, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct Preset {
-    pub id: &'static str,
-    pub label: &'static str,
-    pub model: &'static str,
-    pub base_url: &'static str,
-    pub provider: &'static str,
-}
-
-/// 视觉模型预置表（换厂商/加型号在这加一行，网页自动出现新选项；核实来源见模块文档）。
+/// 视觉模型预置表（换厂商/加型号在这加一行，网页自动出现新选项；核实来源见 `vendorcfg` crate 文档）。
 pub const PRESETS: &[Preset] = &[
     Preset { id: "qwen3-vl-plus", label: "Qwen3-VL-Plus（推荐，速度快）", model: "qwen3-vl-plus", base_url: DASHSCOPE, provider: "dashscope" },
     Preset { id: "qwen-vl-max", label: "Qwen-VL-Max（更准，稍慢）", model: "qwen-vl-max", base_url: DASHSCOPE, provider: "dashscope" },
@@ -67,14 +27,6 @@ pub const PRESETS: &[Preset] = &[
     Preset { id: "gemini-3.8-flash", label: "Gemini 3.8 Flash（Google）", model: "gemini-3.8-flash", base_url: GEMINI, provider: "gemini" },
     Preset { id: "deepseek-v4-flash-vision-exp", label: "DeepSeek V4 Flash Vision（实验性视觉）", model: "deepseek-v4-flash-vision-exp", base_url: DEEPSEEK, provider: "deepseek" },
 ];
-
-/// 用户自填的每千 token 单价（缺省都是 0＝不计费）。分输入/输出两档是因为大多数厂商这两档价格不同。
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq)]
-#[serde(rename_all = "camelCase", default)]
-pub struct Price {
-    pub input_per1k: f64,
-    pub output_per1k: f64,
-}
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase", default)]
@@ -90,7 +42,7 @@ pub struct TranscribeConfig {
     /// 厂商（`Preset.provider`，或 `"custom"`）→ key。同厂商多个预置共用一把，切换预置不用重新粘贴。
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub keys: BTreeMap<String, String>,
-    /// 预置 id（或 `"custom"`）→ 用户自填单价，见模块文档"花费不做官方定价表"。
+    /// 预置 id（或 `"custom"`）→ 用户自填单价，见 `vendorcfg` 模块文档"花费不做官方定价表"。
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub prices: BTreeMap<String, Price>,
     /// 单次请求超时（秒）。设备走自己的 WiFi 直连，国内 API 通常 5–15 s。
@@ -139,90 +91,34 @@ impl Default for TranscribeConfig {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-pub enum KeySource {
-    Config,
-    Env,
-    None,
-}
-
 impl TranscribeConfig {
     /// 老配置文件（重做预置表之前，2026-09-08 上午之前落盘的）搬进新形状——只在启动加载时调用一次。
-    /// 判据：`preset` 是老形状里从没有过的字段，反序列化后拿到的是 `Default` 给的第一个预置 id；这时
-    /// 如果老的 `model`/`base_url` 三件套有值，说明这是一份没升级过的旧文件，需要迁移。已经是新形状的
-    /// 文件（`keys` 非空，或 `preset` 命中过真实保存动作）不会重复迁移——迁移只搬一次运行时状态，不改
-    /// 落盘文件本身（下一次 PUT /config 保存就会是新形状，旧字段因为 `skip_serializing` 自然消失）。
     pub fn migrate(mut self) -> Self {
-        if !self.keys.is_empty() {
-            return self; // 已经是新形状（迁移过或本来就是新写入的），no-op
-        }
-        if self.api_key.is_empty() && self.model.is_empty() && self.base_url.is_empty() {
-            return self; // 全新安装，没有老数据可迁
-        }
-        let matched = PRESETS.iter().find(|p| p.model == self.model && p.base_url == self.base_url);
-        match matched {
-            Some(p) => self.preset = p.id.to_string(),
-            None => {
-                self.preset = "custom".to_string();
-                self.custom_model = self.model.clone();
-                self.custom_base_url = self.base_url.clone();
-            }
-        }
-        if !self.api_key.is_empty() {
-            // 用 self.provider()（现在会按 baseUrl 兜底认厂商，不只是精确匹配预置型号），不要在这里
-            // 重复一遍"匹配不上就落 custom"的逻辑，保证迁移存 key 的位置永远跟运行时查 key 的位置一致。
-            let provider = self.provider().to_string();
-            self.keys.insert(provider, self.api_key.clone());
-        }
+        vendorcfg::migrate_legacy(PRESETS, &mut self.preset, &mut self.custom_model, &mut self.custom_base_url, &mut self.keys, &self.model, &self.base_url, &self.api_key);
         self
     }
-    fn active(&self) -> Option<&'static Preset> {
-        PRESETS.iter().find(|p| p.id == self.preset)
-    }
-    pub fn provider(&self) -> &str {
-        self.active().map(|p| p.provider).or_else(|| provider_for_base_url(self.base_url())).unwrap_or("custom")
+    pub fn provider(&self) -> String {
+        vendorcfg::resolve_provider(PRESETS, &self.preset, &self.custom_base_url)
     }
     pub fn model(&self) -> &str {
-        self.active().map(|p| p.model).unwrap_or(self.custom_model.as_str())
+        vendorcfg::resolve_model(PRESETS, &self.preset, &self.custom_model)
     }
     pub fn base_url(&self) -> &str {
-        self.active().map(|p| p.base_url).unwrap_or(self.custom_base_url.as_str())
+        vendorcfg::resolve_base_url(PRESETS, &self.preset, &self.custom_base_url)
     }
     /// 解析出可用的 key（不打印、不落日志）——按当前预置所属厂商去 `keys` 里找。
     pub fn key(&self) -> Option<String> {
         self.key_with_env(std::env::var(KEY_ENV).ok())
     }
     pub fn key_with_env(&self, env: Option<String>) -> Option<String> {
-        let provider = self.provider();
-        if let Some(k) = self.keys.get(provider).map(|s| s.trim()).filter(|s| !s.is_empty()) {
-            return Some(k.to_string());
-        }
-        // 环境变量只在缺省的 DashScope 组合下兜底——不该让 DashScope 的环境变量被误当成其它厂商的 key。
-        if provider == "dashscope" {
-            return env.map(|e| e.trim().to_string()).filter(|e| !e.is_empty());
-        }
-        None
+        vendorcfg::resolve_key(&self.keys, &self.provider(), env)
     }
     pub fn key_source(&self) -> KeySource {
-        let provider = self.provider();
-        if self.keys.get(provider).map(|k| !k.trim().is_empty()).unwrap_or(false) {
-            KeySource::Config
-        } else if provider == "dashscope" && std::env::var(KEY_ENV).map(|e| !e.trim().is_empty()).unwrap_or(false) {
-            KeySource::Env
-        } else {
-            KeySource::None
-        }
+        vendorcfg::key_source(&self.keys, &self.provider())
     }
     /// 脱敏预览：只回最后 4 位（如 `...ab12`），服务端算，绝不整串回显。
     pub fn key_masked(&self) -> Option<String> {
-        let k = self.key()?;
-        let n = k.chars().count();
-        if n <= 4 {
-            return Some("*".repeat(n));
-        }
-        let tail: String = k.chars().skip(n - 4).collect();
-        Some(format!("...{tail}"))
+        self.key().as_deref().map(vendorcfg::key_masked)
     }
     /// 当前预置的用户自填单价（没填过就是全 0，网页不显示金额只显示 token 数）。
     pub fn price(&self) -> Price {
@@ -230,59 +126,33 @@ impl TranscribeConfig {
     }
     /// 用量记账的分组键——按预置 id 分；自定义模型按 `"custom:<model>"` 分（不同自定义地址/模型各算各的）。
     pub fn usage_key(&self) -> String {
-        if self.preset == "custom" { format!("custom:{}", self.custom_model) } else { self.preset.clone() }
+        vendorcfg::usage_key(&self.preset, &self.custom_model)
     }
     /// 对外视图：去 key、加 hasKey/keySource/keyMasked/presets/activePreset/model/baseUrl/price。
     pub fn public(&self) -> serde_json::Value {
-        let mut v = serde_json::to_value(self).unwrap_or_default();
-        if let Some(o) = v.as_object_mut() {
-            o.remove("keys");
-            o.remove("model");
-            o.remove("baseUrl");
-            o.remove("apiKey");
-            o.insert("model".into(), serde_json::Value::String(self.model().to_string()));
-            o.insert("baseUrl".into(), serde_json::Value::String(self.base_url().to_string()));
-            o.insert("provider".into(), serde_json::Value::String(self.provider().to_string()));
-            o.insert("hasKey".into(), serde_json::Value::Bool(self.key().is_some()));
-            o.insert("keySource".into(), serde_json::to_value(self.key_source()).unwrap_or_default());
-            o.insert("keyMasked".into(), serde_json::to_value(self.key_masked()).unwrap_or(serde_json::Value::Null));
-            o.insert("presets".into(), serde_json::to_value(PRESETS).unwrap_or_default());
-            o.insert("activePreset".into(), serde_json::Value::String(self.preset.clone()));
-            o.insert("price".into(), serde_json::to_value(self.price()).unwrap_or_default());
-        }
-        v
+        vendorcfg::public_json(
+            serde_json::to_value(self).unwrap_or_default(),
+            PRESETS,
+            &self.preset,
+            self.model(),
+            self.base_url(),
+            &self.provider(),
+            self.key().is_some(),
+            self.key_source(),
+            self.key_masked(),
+            self.price(),
+        )
     }
     /// 套用 PUT /config 的 JSON：可改字段逐个覆盖；`apiKey` 非空才改（存到当前厂商名下）；
     /// `clearKey:true` 清当前厂商那把。`preset` 切换预置（未知预置名拒绝）；`preset:"custom"` 时
     /// `model`/`baseUrl` 才生效，写进 `customModel`/`customBaseUrl`。`price:{input,output}` 存到当前
-    /// 预置名下。
+    /// 预置名下。共享部分见 `vendorcfg::apply_common`，这里只补这条服务独有的字段
+    /// （`backend`/节流四件套/`prompt`）。
     pub fn apply(&mut self, j: &serde_json::Value) -> Result<(), String> {
-        let s = |k: &str| j.get(k).and_then(|v| v.as_str()).map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
-        if let Some(v) = s("backend") { self.backend = v; }
-        if let Some(v) = s("preset") {
-            if v != "custom" && !PRESETS.iter().any(|p| p.id == v) {
-                return Err(format!("未知的模型预置：{v}"));
-            }
-            self.preset = v;
+        if let Some(v) = j.get("backend").and_then(|v| v.as_str()).map(str::trim).filter(|s| !s.is_empty()) {
+            self.backend = v.to_string();
         }
-        if self.preset == "custom" {
-            if let Some(v) = s("model") { self.custom_model = v; }
-            if let Some(v) = s("baseUrl") {
-                if !v.starts_with("http://") && !v.starts_with("https://") {
-                    return Err("baseUrl 要以 http(s):// 开头".into());
-                }
-                self.custom_base_url = v.trim_end_matches('/').to_string();
-            }
-        }
-        let provider = self.provider().to_string();
-        if let Some(v) = s("apiKey") { self.keys.insert(provider.clone(), v); }
-        if j.get("clearKey").and_then(|v| v.as_bool()).unwrap_or(false) { self.keys.remove(&provider); }
-        if let Some(price) = j.get("price") {
-            let mut p = self.price();
-            if let Some(x) = price.get("input").and_then(|v| v.as_f64()) { p.input_per1k = x.max(0.0); }
-            if let Some(x) = price.get("output").and_then(|v| v.as_f64()) { p.output_per1k = x.max(0.0); }
-            self.prices.insert(self.preset.clone(), p);
-        }
+        vendorcfg::apply_common(PRESETS, j, &mut self.preset, &mut self.custom_model, &mut self.custom_base_url, &mut self.keys, &mut self.prices)?;
         if let Some(v) = j.get("timeoutSecs").and_then(|v| v.as_u64()) { self.timeout_secs = v.clamp(5, 600); }
         if let Some(v) = j.get("maxPerRun").and_then(|v| v.as_u64()) { self.max_per_run = (v as usize).clamp(1, 500); }
         if let Some(v) = j.get("pauseMs").and_then(|v| v.as_u64()) { self.pause_ms = v.min(60_000); }
@@ -415,5 +285,18 @@ mod tests {
     fn migrate_is_noop_for_fresh_install_with_no_legacy_data() {
         let c = TranscribeConfig::default().migrate();
         assert_eq!(c, TranscribeConfig::default(), "全新安装没有老字段，迁移不该改任何东西");
+    }
+
+    /// 真机 2026-09-08 实测采样的 transcribe.json 形状（key 值脱敏，字段名/大小写原样）：确认这次把
+    /// 核心逻辑挪进 `vendorcfg` 之后，原本已经落盘的真实配置文件还能原样读出来、`key()`/`model()` 等
+    /// 派生方法给出跟改之前一致的结果——这是这次重构最要紧的一条回归，真机上已经有用户配置好的 key。
+    #[test]
+    fn reads_real_device_config_shape_unchanged() {
+        let raw = r#"{"backend":"qwen","preset":"qwen3-vl-plus","keys":{"dashscope":"REDACTED-KEY"},"prices":{"qwen3-vl-plus":{"inputPer1k":0.0,"outputPer1k":0.0}},"timeoutSecs":60,"maxPerRun":20,"pauseMs":300,"auto":false,"maxAttempts":3}"#;
+        let c: TranscribeConfig = serde_json::from_str(raw).unwrap();
+        assert_eq!(c.model(), "qwen3-vl-plus");
+        assert_eq!(c.provider(), "dashscope");
+        assert_eq!(c.key().as_deref(), Some("REDACTED-KEY"));
+        assert!(!c.auto, "真机上这轮采样时自动转写是关的");
     }
 }

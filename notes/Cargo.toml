@@ -7,6 +7,7 @@ members = [
     "crates/rmv6",
     "crates/epubmap",
     "crates/notecore",
+    "crates/vendorcfg",
     "services/ink-serve",
     "services/transcribe-serve",
     "services/mind-serve",
