@@ -46,6 +46,17 @@
 - 每条笔记的 `.entry-head` 也贴一份章节级同步徽章（不止章头有）——受限于同步状态目前只精确到整章（不到单条），这是退而求其次的方案。
 - **按钮改名去歧义**：「同步本章」→「推送本章」（"同步"暗示双向，这个按钮其实只单向推）；「重转」/「重转失败」→「重新转写」/「转写失败」（跟「浏览」视图里完全不同的另一个动作「转入笔记」共享"转"字，容易混）。
 
+**上线后真机反馈两个真 bug（同一天，已修）**：① 选中章节校验对"编辑动作"和"推送完成"两种触发一视同仁，点条目自己的去处按钮就画面跳到别的章节——改成默认"跟随"，只有显式点 tab / 推送完成才换章；② 条目行的同步徽章直接复用整章聚合状态，导致跟条目自己去处无关的徽章也显示出来——`syncBadges` 加 `only` 参数按条目自己的 `destination` 过滤。详见白皮书 §03ab。
+
+## 代码质量重构：vendorcfg 共享 crate + note-serve 的 ChapterStore\<T\>（2026-09-08）
+
+用户要求"合理使用设计模式消除重复代码、合理抽象解耦"。逐文件比对后两处达到值得抽象的重复规模：
+
+- **`transcribe-serve`/`mind-serve` 的 `config.rs`（~85% 重叠）+ `ledger.rs`（~90% 重叠）**：预置模型表选择、key 按厂商分格存取（baseUrl 兜底认厂商）、老配置迁移、PATCH 语义、对外 JSON 整形、用量按模型分账，两边逐行相同，只有各自预置表数据和 transcribe 独有的节流参数/`RunReport` 不同。新增 `notes/crates/vendorcfg`（`preset`/`usage` 两个模块）承接共享逻辑——**只抽行为不抽数据结构**，两边的 `Config`/`Usage` 结构体和落盘 JSON 形状逐字节不变。
+- **`note-serve` 的 `notebooks.rs` + `export_state.rs`**：同一个"按书一文件、按章存一条记录"骨架，抽成泛型 `ChapterStore<T>`，两个原文件现在只剩记录类型定义 + 一行类型别名。
+
+磁盘格式零风险是这次重构的第一优先级：每处改动都拿真机 2026-09-08 实测采样的真实文件形状（脱敏）写成回归测试。真机验证不止"老数据读得出来"，还真实调用了一次强制单条转写，走完整条重构后的链路（key 解析→模型调用→用量记账），用量数字正确累加。详见白皮书 §03ac。
+
 ## 四步闭环
 
 ```
@@ -95,10 +106,11 @@ notes/
 ├── crates/rmv6/                       .rm v6 解析+写入（剥离移植 remarkable_lines 0.1.3，MIT，PROVENANCE.md 留痕；page::Page = 笔画 + 勾画 + 打字文本，墓碑剔除；write.rs 编 RootTextBlock，模板替换拼 .rm，全部 7 种打字样式真机验证过）
 ├── crates/epubmap/                    .epubindex 起始页（两张表取首现）+ nav/ncx 目录 → 页号→章/小节
 ├── crates/notecore/                   领域核心（纯函数）：model 条目/样式/状态/去处（**没有分区了**）· hash FNV 簇指纹 · geom 聚簇+配对（**没有 has_underline 了**）· ingest 增量合并（含纯勾画路径） · marker 行首标记 OCR 兜底（`##`/`### ` 都覆盖 subhead） · project 条目库→段落列表投影（按页平铺，不分组） · export 条目库→Markdown 导出
+├── crates/vendorcfg/                  **新增**（合理使用设计模式消重复）：AI 厂商预置模型表/key 按厂商分格存取/迁移/PATCH/对外 JSON 整形（preset）+ 泛型用量账本 UsageBook\<Extra\>/Ledger\<Extra\>（usage），transcribe-serve/mind-serve 共用；只抽行为不抽数据结构，两边各自的 Config/Usage 结构体+落盘格式不变
 ├── services/ink-serve/                矿：doc(书库只读视图) · ingest(变更页编排) · crop(**自渲染裁图**，笔画矢量数据画折线，不吃缩略图) · bookdb(Repository) · config · main(路由+监听，接 askAi/question/destination + archive/purge 动作)
-├── services/transcribe-serve/         转写：config(key/预置模型表/节制参数) · backend(Vision Strategy + OpenAiCompat) · prompt · ledger(用量) · ink(EntryStore 客户端) · worker(一轮编排) · main(SSE 订阅+防抖)
-├── services/mind-serve/               脑：config(key/预置模型表，无节流字段) · backend(TextModel Strategy + OpenAiCompat，纯文本消息) · prompt(拼书名+章节+原文+文本+问题) · ledger(用量) · ink(EntryStore 客户端，book/post_answer) · worker::ask_entry(单条问答) · main(**无后台线程**，纯被动路由)
-├── services/note-serve/               本：注册「笔记」tab；rmdoc.rs 打包 .rmdoc（上传复用 shelf-core::xochitl）；export.rs 落盘 vault + 浏览器下载的 content_disposition()；config/ink/trash/mkdir/notebooks/publish 生成编排+建夹
+├── services/transcribe-serve/         转写：config/ledger(vendorcfg 薄封装：自己的视觉预置表+节流四件套+RunReport) · backend(Vision Strategy + OpenAiCompat) · prompt · ink(EntryStore 客户端) · worker(一轮编排) · main(SSE 订阅+防抖)
+├── services/mind-serve/               脑：config/ledger(vendorcfg 薄封装：自己的文字预置表，Ledger\<Extra=()\> 没有 lastRun) · backend(TextModel Strategy + OpenAiCompat，纯文本消息) · prompt(拼书名+章节+原文+文本+问题) · ink(EntryStore 客户端，book/post_answer) · worker::ask_entry(单条问答) · main(**无后台线程**，纯被动路由)
+├── services/note-serve/               本：注册「笔记」tab；rmdoc.rs 打包 .rmdoc（上传复用 shelf-core::xochitl）；export.rs 落盘 vault + 浏览器下载的 content_disposition()；chapter_store.rs 通用"每书每章一条记录"泛型（notebooks/export_state 现在是类型别名）；config/ink/trash/mkdir/publish 生成编排+建夹
 ├── systemd/                           四个 .service（PartOf=shelf.target；随书架 install.sh 装，令牌 ink/transcribe/mind/note）
 ├── host/                              待建：CLI `notes pull`（把设备 vault/ 拉到本机 Obsidian vault；三期只做了"导出到设备"这一半）
 ├── testdata/renggu/                   真机 fixture（《人骨拼圖》墓碑页 .rm，测"解析成功零条目"）· renggu_marks/（同书真实勾画+手写）· seven_styles/（笔记本一页七样式，rmv6::write 模板）
@@ -144,7 +156,7 @@ notes/
 ## 构建 · 部署
 
 ```sh
-cd notes && cargo build --workspace && cargo test --workspace     # host：118 个测试（rmv6 7 · epubmap 5 · notecore 43 · ink 10 · transcribe 19 · mind 18 · note 16）
+cd notes && cargo build --workspace && cargo test --workspace     # host：136 个测试（rmv6 7 · epubmap 5 · notecore 43 · vendorcfg 12 · ink 10 · transcribe 21 · mind 20 · note 18）
 cd ../shelf && ./build.sh && ./deploy.sh <设备IP>                  # 随书架一起交叉编译/打包/装机（NOTES_BINS；设备在 WiFi 上时给 WiFi IP）
 ssh root@<设备IP> sh /home/root/shelf-pkg/shelf/install.sh --only ink,transcribe,mind,note   # 只装/更新笔记线
 ```
