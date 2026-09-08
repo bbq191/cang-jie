@@ -297,9 +297,15 @@ function renderNotes(sec){sec.innerHTML=`
      不用各自发请求。`refreshSync()` 在 loadBook 里、以及每次生成/导出动作之后调用刷新。 */
   let syncMap=new Map();
   const refreshSync=async()=>{if(!book){syncMap=new Map();return}const r=await j(`/api/notes/books/${encodeURIComponent(book.uuid)}/sync`);syncMap=new Map((r.chapters||[]).map(c=>[c.chapter,c]))};
-  const syncBadges=s=>{if(!s)return'';
-    const nb=s.notebookNeeded?`<span class="badge${s.notebookSynced?' on':''}" title="设备笔记本${s.notebookSynced?'已同步':'内容有改动，还没重新生成'}">📓${s.notebookSynced?'✓':'…'}</span>`:'';
-    const ob=s.obsidianNeeded?`<span class="badge${s.obsidianSynced?' on':''}" title="Obsidian md${s.obsidianSynced?'已同步':'内容有改动，还没重新导出'}">${OBSIDIAN_ICON}${s.obsidianSynced?'✓':'…'}</span>`:'';
+  /* s 是章节级同步状态（notebookNeeded/Synced、obsidianNeeded/Synced），本身只精确到"整章"，不到
+     "这一条"（`fingerprint_chapter` 把整章活条目内容拼一起算一个哈希，见白皮书 §03aa）。章头调用不传
+     `only`，如实显示整章的聚合状态；贴在每条笔记行上时传 `only=该条自己的 destination`，把跟这条本身
+     无关的那个去处的徽章过滤掉——不然一章里别的条目要笔记本，会让只选了 Obsidian 的那条也显示"笔记本
+     未同步"，真机反馈"我只导了 Obsidian，实际显示两者都有"就是这个问题，见白皮书 §03ab。 */
+  const syncBadges=(s,only)=>{if(!s)return'';
+    const wantsNb=!only||only==='notebook'||only==='both',wantsOb=!only||only==='obsidian'||only==='both';
+    const nb=wantsNb&&s.notebookNeeded?`<span class="badge${s.notebookSynced?' on':''}" title="设备笔记本${s.notebookSynced?'已同步':'内容有改动，还没重新生成'}">📓${s.notebookSynced?'✓':'…'}</span>`:'';
+    const ob=wantsOb&&s.obsidianNeeded?`<span class="badge${s.obsidianSynced?' on':''}" title="Obsidian md${s.obsidianSynced?'已同步':'内容有改动，还没重新导出'}">${OBSIDIAN_ICON}${s.obsidianSynced?'✓':'…'}</span>`:'';
     return nb+ob};
   const trashList=$('#ntrashlist',sec),trashSum=$('#ntrashsum',sec);
   const TRASH_STATUSES=['skipped','revoked','archived'];
@@ -320,7 +326,7 @@ function renderNotes(sec){sec.innerHTML=`
       // 这条本身去哪（配置的目的地）+ 它所在章节目前的生成/导出状态（章节维度，不是这条自己确认被
       // 收进去了没——归档/撤销后这条已经不在活条目集合里，没法再逆推"当初有没有被打进那次生成"，
       // 只能诚实地给"这一章大致是什么状态"这个参考信息，用户反馈"回收站该显示导出到哪里"）。
-      row.innerHTML=`<span class="badge">${STATUS_NAMES[e.status]||e.status}</span><span class="badge">${DEST_ICON[dv]}</span>${syncBadges(chSync)}
+      row.innerHTML=`<span class="badge">${STATUS_NAMES[e.status]||e.status}</span><span class="badge">${DEST_ICON[dv]}</span>${syncBadges(chSync,dv)}
         <div class="txt">p.${e.page_index+1}${e.chapter_title?' · '+e.chapter_title:''}<br><span class="q">${text}</span>${e.status==='revoked'?'<br><span class="small">笔画可能已在设备上被擦——恢复只找回已保存的内容，不会让笔迹重新出现在原页面</span>':''}</div>
         <button class="btn" data-restore>恢复</button>`;
       row.querySelector('[data-restore]').onclick=async()=>{if(!(await restoreOne(e.id)))return;await flushPendingText();book=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}`);await refreshSync();renderTrash();renderBrowse();renderBook()};
@@ -400,7 +406,8 @@ function renderNotes(sec){sec.innerHTML=`
      点哪章只显示哪一章的内容——任意时刻屏幕上最多一章的内容，不靠折叠/滚动去缓解。exportTab 跨
      换书保留（比照原复选框状态本来也不随换书重置），selectedChapter 换书清空（章节 key 按书算）。 */
   let exportTab='pending',selectedChapter=null;
-  const renderBook=async()=>{if(!book){chaptertabs.innerHTML='';chapterbody.innerHTML='';syncPickbar();return}updateSummary();
+  const renderBook=async(opts={})=>{if(!book){chaptertabs.innerHTML='';chapterbody.innerHTML='';syncPickbar();return}updateSummary();
+    const advance=!!opts.advance;
     const trst=await j('/api/transcribe/status');
     const failedIds=new Set((trst.failures||[]).filter(f=>f.book===book.uuid).map(f=>f.id));
     const live=(book.entries||[]).filter(e=>['pending','draft','reviewed'].includes(e.status));
@@ -411,11 +418,21 @@ function renderNotes(sec){sec.innerHTML=`
     const fullySynced=k=>{const s=k>=0?syncMap.get(k):null;return !!(s&&s.notebookSynced&&s.obsidianSynced)};
     const pendingKeys=sortedKeys.filter(k=>!fullySynced(k));
     const syncedKeys=sortedKeys.filter(k=>fullySynced(k));
+    /* 选中章节的归属判定：默认"跟随"——只要这一章还有活条目，不管编辑它之后它现在算未导出还是
+       已导出，都继续显示它、只是把 tab 高亮切到它现在所在的那边（真机反馈：点了条目自己的去处
+       按钮后画面跳到了别的章节，读起来像数据错乱——其实是没有跟随，被"选中章节必须在当前 tab
+       可见列表里"这条校验当成"消失"处理了，随手选中了列表里第一个不相干的章节）。只有两种情况
+       允许真的换到别的章节：显式点了顶层 tab 按钮（点击处理器会先把 selectedChapter 置空，走
+       下面的兜底分支）、或显式要求"推送完这章就跳下一个待处理的"（`advance`，只有「推送本章」
+       成功后传 true，是那个按钮特有的"处理完继续下一条"工作流，不该套用到编辑动作上）。 */
+    if(selectedChapter!=null&&groups.has(selectedChapter)&&!advance){
+      exportTab=fullySynced(selectedChapter)?'synced':'pending';
+    }else{
+      const pick=exportTab==='pending'?pendingKeys:syncedKeys;
+      selectedChapter=pick.length?pick[0]:null;
+    }
     exportTabsEl.querySelectorAll('button').forEach(b=>b.classList.toggle('on',b.dataset.etab===exportTab));
     const visibleKeys=exportTab==='pending'?pendingKeys:syncedKeys;
-    // 自动跳到下一个待处理章节：点「推送本章」把这章弄成已导出后，它从 pendingKeys 消失，重画时这里
-    // 自然选中下一个——不是额外写的特性，只是"选中章节必须在当前 tab 的可见列表里"这条校验的副产物。
-    if(!visibleKeys.includes(selectedChapter))selectedChapter=visibleKeys.length?visibleKeys[0]:null;
     chaptertabs.innerHTML='';
     visibleKeys.forEach(k=>{const b=document.createElement('button');b.className=k===selectedChapter?'on':'';
       b.textContent=k<0?'未归章':`第 ${k+1} 章`;b.onclick=()=>{selectedChapter=k;renderBook()};chaptertabs.appendChild(b)});
@@ -449,7 +466,7 @@ function renderNotes(sec){sec.innerHTML=`
         if(er.ok===false)parts.push('✗ md：'+(er.message||'失败'));
         else if(er.status==='written'){parts.push('✓ md 已导出');window.open(`/api/notes/books/${encodeURIComponent(book.uuid)}/chapters/${k}/export.md`,'_blank')}
         msg.textContent=parts.length?parts.join(' · '):'（跟当前去处对应的内容都已经同步，没有变化）';
-        await wait(1500);await refreshSync();renderBook()};
+        await wait(1500);await refreshSync();renderBook({advance:true})};
     }
     const selAllBtn=card.querySelector('[data-selall]');
     if(selAllBtn)selAllBtn.onclick=()=>{const all=es.every(e=>picked.has(e.id));es.forEach(e=>all?picked.delete(e.id):picked.add(e.id));renderBook()};
@@ -461,7 +478,7 @@ function renderNotes(sec){sec.innerHTML=`
           <label class="toggle"><input type="checkbox" data-pick ${picked.has(e.id)?'checked':''}></label>
           <span>p.${e.page_index+1}${e.subhead?' · '+e.subhead:''}</span>
           <span class="badge">${STYLE_NAMES[e.style]||e.style}</span>
-          ${syncBadges(s)}
+          ${syncBadges(s,dv)}
           <span class="badge ${e.status==='reviewed'?'on':''}" style="margin-left:auto">${STATUS_NAMES[e.status]||e.status}</span>
         </div>
         <div class="entry-body">
