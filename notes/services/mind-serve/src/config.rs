@@ -17,6 +17,23 @@ const OPENAI: &str = "https://api.openai.com/v1";
 const GEMINI: &str = "https://generativelanguage.googleapis.com/v1beta/openai/";
 const DEEPSEEK: &str = "https://api.deepseek.com/v1";
 
+/// baseUrl 兜底认厂商：一个厂商的 key 对它旗下所有模型都通用，不该按"这个具体型号在不在预置表里"
+/// 来分格——2026-09-08 真机踩过：这条服务的预置表里没有 `qwen3-vl-plus`（那是视觉模型，这边文字表
+/// 没收），老配置的这个模型迁移时被判成"没匹配上任何预置"落进 `custom` 格；用户后来在网页把预置
+/// 切到同样是 DashScope 的 `qwen-plus`，新预置能在 `dashscope` 格找到 key 吗？找不到——因为 key
+/// 其实存在 `custom` 格里，明明是同一把 DashScope key，只是当初落错格了。这个函数按 baseUrl（不是
+/// 具体型号）认厂商，`provider()`/`migrate()` 都用它兜底，保证只要 baseUrl 匹配上四家已知厂商之一，
+/// 不管选的是预置表里的型号还是"自定义"填的同一个地址，都能找到同一把 key。
+fn provider_for_base_url(base_url: &str) -> Option<&'static str> {
+    match base_url {
+        DASHSCOPE => Some("dashscope"),
+        OPENAI => Some("openai"),
+        GEMINI => Some("gemini"),
+        DEEPSEEK => Some("deepseek"),
+        _ => None,
+    }
+}
+
 /// 一个预置模型选项：网页下拉给的都是"已知能用"的组合，不需要用户自己填 baseUrl。`provider` 决定这条
 /// 预置的 key 存哪一格——同厂商换模型不用重新粘贴 key。
 #[derive(Serialize, Clone, Copy, Debug, PartialEq)]
@@ -126,8 +143,10 @@ impl MindConfig {
             }
         }
         if !self.api_key.is_empty() {
-            let provider = matched.map(|p| p.provider).unwrap_or("custom");
-            self.keys.insert(provider.to_string(), self.api_key.clone());
+            // 用 self.provider()（现在会按 baseUrl 兜底认厂商，不只是精确匹配预置型号），不要在这里
+            // 重复一遍"匹配不上就落 custom"的逻辑，保证迁移存 key 的位置永远跟运行时查 key 的位置一致。
+            let provider = self.provider().to_string();
+            self.keys.insert(provider, self.api_key.clone());
         }
         self
     }
@@ -135,7 +154,7 @@ impl MindConfig {
         PRESETS.iter().find(|p| p.id == self.preset)
     }
     pub fn provider(&self) -> &str {
-        self.active().map(|p| p.provider).unwrap_or("custom")
+        self.active().map(|p| p.provider).or_else(|| provider_for_base_url(self.base_url())).unwrap_or("custom")
     }
     pub fn model(&self) -> &str {
         self.active().map(|p| p.model).unwrap_or(self.custom_model.as_str())
@@ -324,6 +343,22 @@ mod tests {
         assert_eq!(c.preset, "qwen-max");
         assert_eq!(c.key().as_deref(), Some("real-device-key"));
         assert_eq!(c.clone().migrate(), c, "已经迁移过是 no-op");
+    }
+
+    /// 真机 2026-09-08 踩过的坑：老配置的 `model` 是 `qwen3-vl-plus`（视觉模型，这条服务的文字预置表
+    /// 压根没收），迁移时"精确匹配预置"这条路必然落空、判成 `custom`；如果 key 也存进字面意义的
+    /// `custom` 格，用户后来把预置切到同样是 DashScope 的 `qwen-plus`，新预置在 `dashscope` 格找不到
+    /// 那把明明是同一账号的 key——`provider()` 加了 baseUrl 兜底之后，这两步都应该找到同一把 key。
+    #[test]
+    fn migrate_unmatched_model_but_known_provider_base_url_shares_key_with_real_presets_of_that_provider() {
+        let old = serde_json::json!({"model":"qwen3-vl-plus","baseUrl":"https://dashscope.aliyuncs.com/compatible-mode/v1","apiKey":"real-device-key"});
+        let c: MindConfig = serde_json::from_value(old).unwrap();
+        let mut c = c.migrate();
+        assert_eq!(c.preset, "custom", "qwen3-vl-plus 不在文字预置表里，还是落 custom");
+        assert_eq!(c.provider(), "dashscope", "但 baseUrl 认出来是 DashScope，key 该存这一格");
+        assert_eq!(c.key().as_deref(), Some("real-device-key"));
+        c.apply(&serde_json::json!({"preset": "qwen-plus"})).unwrap();
+        assert_eq!(c.key().as_deref(), Some("real-device-key"), "切到同厂商的真实预置，key 还在，不用重新粘贴");
     }
 
     #[test]

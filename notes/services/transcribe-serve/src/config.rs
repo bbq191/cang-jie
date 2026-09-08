@@ -28,6 +28,23 @@ const OPENAI: &str = "https://api.openai.com/v1";
 const GEMINI: &str = "https://generativelanguage.googleapis.com/v1beta/openai/";
 const DEEPSEEK: &str = "https://api.deepseek.com/v1";
 
+/// baseUrl 兜底认厂商：一个厂商的 key 对它旗下所有模型都通用，不该按"这个具体型号在不在预置表里"来
+/// 分格——2026-09-08 真机在 mind-serve 那边踩过这个坑（那边预置表是文字模型，没收视觉模型
+/// `qwen3-vl-plus`，老配置迁移时判成"没匹配上"落进 `custom` 格，切到同样是 DashScope 的
+/// `qwen-plus` 预置后就找不到那把明明是同一账号的 key 了）；这边视觉预置表虽然目前没有类似的具体
+/// 案例，但同一个坑理论上一样会踩（比如以后有人先手填一个 DashScope 地址的自定义型号，再切换到某个
+/// DashScope 预置）。`provider()`/`migrate()` 都用它兜底：baseUrl 匹配上四家已知厂商之一，不管选的
+/// 是预置表里的型号还是"自定义"填的同一个地址，都能找到同一把 key。
+fn provider_for_base_url(base_url: &str) -> Option<&'static str> {
+    match base_url {
+        DASHSCOPE => Some("dashscope"),
+        OPENAI => Some("openai"),
+        GEMINI => Some("gemini"),
+        DEEPSEEK => Some("deepseek"),
+        _ => None,
+    }
+}
+
 /// 一个预置模型选项：网页下拉给的都是"已知能用"的组合，不需要用户自己填 baseUrl。`provider` 决定这条
 /// 预置的 key 存哪一格——同厂商换模型不用重新粘贴 key。
 #[derive(Serialize, Clone, Copy, Debug, PartialEq)]
@@ -153,8 +170,10 @@ impl TranscribeConfig {
             }
         }
         if !self.api_key.is_empty() {
-            let provider = matched.map(|p| p.provider).unwrap_or("custom");
-            self.keys.insert(provider.to_string(), self.api_key.clone());
+            // 用 self.provider()（现在会按 baseUrl 兜底认厂商，不只是精确匹配预置型号），不要在这里
+            // 重复一遍"匹配不上就落 custom"的逻辑，保证迁移存 key 的位置永远跟运行时查 key 的位置一致。
+            let provider = self.provider().to_string();
+            self.keys.insert(provider, self.api_key.clone());
         }
         self
     }
@@ -162,7 +181,7 @@ impl TranscribeConfig {
         PRESETS.iter().find(|p| p.id == self.preset)
     }
     pub fn provider(&self) -> &str {
-        self.active().map(|p| p.provider).unwrap_or("custom")
+        self.active().map(|p| p.provider).or_else(|| provider_for_base_url(self.base_url())).unwrap_or("custom")
     }
     pub fn model(&self) -> &str {
         self.active().map(|p| p.model).unwrap_or(self.custom_model.as_str())

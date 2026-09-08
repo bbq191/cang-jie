@@ -16,9 +16,18 @@ pub struct Ctx<'a> {
     pub now: u64,
 }
 
-/// 回答一条的问题并写回；返回回答文本。要求条目勾了「问AI」且填了问题——两者都是网页写的字段，
-/// 直接调这个端点绕过勾选框也会被拒（防止误触/脚本误调，语义上"问AI"这个开关就该管这件事）。
-pub fn ask_entry(c: &Ctx<'_>, uuid: &str, e: &Entry) -> Result<String, String> {
+/// 一次问答的结果：文本 + 这次调用花的 token（点「提问」弹出消耗要用，2026-09-08 第三轮反馈，跟
+/// transcribe-serve 的 `Transcribed` 同一个理由）。
+#[derive(Debug)]
+pub struct Answered {
+    pub text: String,
+    pub prompt_tokens: u64,
+    pub completion_tokens: u64,
+}
+
+/// 回答一条的问题并写回；返回回答文本 + token 消耗。要求条目勾了「问AI」且填了问题——两者都是网页写
+/// 的字段，直接调这个端点绕过勾选框也会被拒（防止误触/脚本误调，语义上"问AI"这个开关就该管这件事）。
+pub fn ask_entry(c: &Ctx<'_>, uuid: &str, e: &Entry) -> Result<Answered, String> {
     if !e.ask_ai {
         return Err("这条没勾「问AI」".into());
     }
@@ -36,7 +45,7 @@ pub fn ask_entry(c: &Ctx<'_>, uuid: &str, e: &Entry) -> Result<String, String> {
     let answer = Answer { text: reply.text.clone(), backend: c.model.name().to_string(), at: c.now, brief: question.to_string() };
     c.store.post_answer(uuid, &e.id, &answer)?;
     c.ledger.record_ok(&c.cfg.usage_key(), reply.prompt_tokens, reply.completion_tokens, c.now);
-    Ok(reply.text)
+    Ok(Answered { text: reply.text, prompt_tokens: reply.prompt_tokens, completion_tokens: reply.completion_tokens })
 }
 
 #[cfg(test)]
@@ -96,7 +105,7 @@ mod tests {
         let ledger = Ledger::open(&tempfile::tempdir().unwrap().path().join("mind.json"));
         let c = Ctx { store: &store, model: &model, cfg: &cfg(), ledger: &ledger, now: 42 };
         let out = ask_entry(&c, "u", &entry(true, Some("这是谁"))).unwrap();
-        assert_eq!(out, "答案文本");
+        assert_eq!((out.text.as_str(), out.prompt_tokens, out.completion_tokens), ("答案文本", 10, 2), "点「提问」弹出的消耗就是这次调用的实际数字（见 backend::Fixed）");
         let posted = store.posted.lock().unwrap();
         assert_eq!(posted.len(), 1);
         assert_eq!((posted[0].0.as_str(), posted[0].1.text.as_str(), posted[0].1.brief.as_str(), posted[0].1.backend.as_str()), ("e1", "答案文本", "这是谁", "fixed"));
