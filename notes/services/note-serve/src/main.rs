@@ -13,6 +13,7 @@
 //! 三期新增：光落设备盘用户够不着，见 `export.rs`）·
 //! `GET /books/{uuid}/sync`（整理区第三轮反馈新增：每章设备笔记本/Obsidian md 是否跟当前条目内容
 //! 同步，前端拿这个决定"生成完成后移出待处理列表"，见白皮书 §03x）。
+mod chapter_store;
 mod config;
 mod export;
 mod export_state;
