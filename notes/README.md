@@ -27,8 +27,16 @@
 
 - **删掉转写折叠层**：「浏览」页已经决定要不要转笔记，转成 `Pending` 就该自动转写，不需要单独的"立即转写待转写条目"/"重试失败"批量按钮；`auto`（合书自动转写）开关挪进「管理」tab 的模型面板。失败的条目直接在「整理」列表里标红、按钮文案变"重转失败"，下方列表每条独立重试。
 - **样式/去处两个下拉去掉**：样式改成行首标记（`-`/`1.`/`口`/`##`/`### `）自动识别——`Entry::apply_marked_text` 把转写草稿早就在用的 `notecore::marker::split_leading_marker` 规则也接到用户手动改字（`PATCH text`）上，打字跟手写是同一套约定，不用另选。去处（设备笔记本/Obsidian/都要）换成条目卡片上的紧凑图标循环按钮，点一下切下一态。
-- **批量工具栏**：生成笔记本/导出 md/重转/不要了四个动作先勾选多条再操作——「整理」每条卡片一个勾选框，顶部固定工具栏按选中条目所在章节去重调用（生成/导出）或逐条调用（重转/不要了）；章头留「全选本章」快捷链接。导出的下载按钮是先落盘再摆出来让用户逐个点，绕开异步 `window.open` 被浏览器拦掉的坑。
+- **批量工具栏**：只留重转/不要了两个真正逐条起作用的动作——「整理」每条卡片一个勾选框，顶部固定工具栏勾选后操作；章头留「全选本章」快捷链接。
 - **回收站可恢复**：`Entry::restore()`——`Skipped`/`Revoked`/`Archived` 都能恢复，按条目已有内容倒推落点（校对文本在→已校对，只有草稿→待校对，只有手写→待转写，没内容→回浏览）。书里笔画已经被擦的条目也能恢复，找回的是条目库存档（裁图/文本），不代表设备原页面笔迹重现——网页文案写清楚这条限制。每条一个「恢复」按钮 + 一个「全部恢复」批量按钮，跟「清空回收站」并排。
+
+## 「整理」区第三轮反馈：生成/导出去重复 + 同步状态追踪 + 回收站显示去处（2026-09-08）
+
+- **生成笔记本/导出 md 挪回章头直接按钮**：这两个操作本来就是整章一起投影，勾选条目对它们不起过滤作用——先勾选再点是绕远路，改成直接点按钮不用先选；批量工具栏就此收窄成只留重转/不要了。
+- **同步状态追踪**：`notecore::export::fingerprint_chapter`（对齐 `project::fingerprint_chapter`，只是收 `wants_obsidian()`）+ `note-serve::export_state.rs`（`ExportState`，照抄现成的 `NotebookState`）——导出 md 现在也有"指纹没变就跳过重写"的纪律，顺带记账。`GET /books/{uuid}/sync` 给出每章设备笔记本/Obsidian md 是否跟当前条目内容同步。
+- **同步后自动收起**：「整理」章头显示 📓/Obsidian 同步徽章，全同步的章节默认从列表收起（改字/新条目会让指纹变，自然又出现），配「显示已同步的章节」开关随时翻出来。
+- **回收站显示去处**：每条显示去处徽章（复用「整理」区已有的图标）+ 所在章节当前的同步徽章（章节维度的参考信息，不是这条自己确认被收进去了没）。
+- Obsidian 相关图标从占位 🔗 换成简化多面体 SVG（不是精确描摹官方 logo，形状+配色够认出来就行）。
 
 ## 四步闭环
 
@@ -67,7 +75,7 @@
 | ink | `GET /books` → `{items:[{uuid,title,chapters,entries,pending}]}`（`list_active`，只列还有活条目的书）· `GET /books/{uuid}`（整份条目库：chapters/entries，**没有 sections 了**）· `GET /books/{uuid}/crops/{file}` · `POST /books/{uuid}/entries/{id} {text?|style?|destination?|draft?|answer?|askAi?|question?|subheadHint?}`（`text` 走 `Entry::apply_marked_text`——行首标记自动定样式/覆盖 subhead 并剥掉标记，不再需要网页手动传 `style`；`draft` 追加最新在前；`destination` 三期新增）· `POST /books/{uuid}/entries/{id}/request`（浏览态"转入笔记"：`Mined→Pending`，纯勾画条目直接 `Reviewed`）· `POST /books/{uuid}/entries/{id}/skip`（"不需要"：`Mined→Skipped`）· `POST /books/{uuid}/entries/{id}/archive`（三期"不要了"：`→Archived`）· `POST /books/{uuid}/entries/{id}/restore`（**第二轮反馈新增**：`Skipped`/`Revoked`/`Archived` 按已有内容倒推恢复，非终态条目拒绝）· `POST /books/{uuid}/purge`（清空回收站：物理删 `Archived`/`Revoked`/`Skipped`，不可恢复）· `POST /books/{uuid}/rescan` · `GET /events` |
 | transcribe | `GET /status` → `{config(无 key), usage, usageByModel, failures, inkReachable, pending}` · `GET /config`（带 `presets`/`activePreset`/`price`）· `PUT /config {preset?, apiKey?（只写，存进当前厂商）, clearKey?, price?{input,output}, model?, baseUrl?（仅 preset="custom" 生效）, auto?, maxPerRun?, pauseMs?, timeoutSecs?, maxAttempts?, prompt?}` · `POST /run`（同步跑一轮，回 `{scanned,done,failed,skipped,left,note}`）· `POST /books/{uuid}/entries/{id}`（强制转写一条）· `POST /retry`（清失败记录再跑）· `GET /events` |
 | mind | `GET /status` → `{config(无 key), usage, usageByModel}` · `GET /config`（带 `presets`/`activePreset`/`price`）· `PUT /config {preset?, apiKey?（只写，存进当前厂商）, clearKey?, price?{input,output}, model?, baseUrl?（仅 preset="custom" 生效）, timeoutSecs?, prompt?}` · `POST /books/{uuid}/entries/{id}/ask`（回答这一条，要求已勾 `askAi` 且填了 `question`，否则 400）——**没有 `/events`**，纯被动，没有需要推送的状态 |
-| notes | `GET /status` · `GET /books`（各书章节生成状态）· `GET /books/{uuid}/notebooks` · `POST /books/{uuid}/generate`（全书按需重投影+上传）· `POST /books/{uuid}/chapters/{idx}/generate`（单章，网页已接线）· `POST /books/{uuid}/export`（全书导出 md，落设备 vault）· `POST /books/{uuid}/chapters/{idx}/export`（单章，网页已接线，附带触发浏览器下载）· `GET /books/{uuid}/chapters/{idx}/export.md`（同一份内容当下载吐给浏览器，`Content-Disposition` + RFC 5987 文件名）· `GET /events` |
+| notes | `GET /status` · `GET /books`（各书章节生成状态）· `GET /books/{uuid}/notebooks` · `GET /books/{uuid}/exports`（各章导出状态，同上但对应 md）· `GET /books/{uuid}/sync`（每章设备笔记本/Obsidian md 是否跟当前条目同步，第三轮反馈新增）· `POST /books/{uuid}/generate`（全书按需重投影+上传）· `POST /books/{uuid}/chapters/{idx}/generate`（单章，网页已接线）· `POST /books/{uuid}/export`（全书导出 md，落设备 vault，指纹没变自动跳过）· `POST /books/{uuid}/chapters/{idx}/export`（单章，网页已接线，附带触发浏览器下载，响应带 `status`：written/unchanged/empty）· `GET /books/{uuid}/chapters/{idx}/export.md`（同一份内容当下载吐给浏览器，`Content-Disposition` + RFC 5987 文件名）· `GET /events` |
 
 事件：`{"svc":"ink","area":"notes","kind":"entries"}`、`{"svc":"transcribe","area":"notes","kind":"transcribe"}` → 网页「笔记」tab 自动刷新。
 
@@ -128,7 +136,7 @@ notes/
 ## 构建 · 部署
 
 ```sh
-cd notes && cargo build --workspace && cargo test --workspace     # host：114 个测试（rmv6 7 · epubmap 5 · notecore 42 · ink 10 · transcribe 19 · mind 18 · note 13）
+cd notes && cargo build --workspace && cargo test --workspace     # host：118 个测试（rmv6 7 · epubmap 5 · notecore 43 · ink 10 · transcribe 19 · mind 18 · note 16）
 cd ../shelf && ./build.sh && ./deploy.sh <设备IP>                  # 随书架一起交叉编译/打包/装机（NOTES_BINS；设备在 WiFi 上时给 WiFi IP）
 ssh root@<设备IP> sh /home/root/shelf-pkg/shelf/install.sh --only ink,transcribe,mind,note   # 只装/更新笔记线
 ```
@@ -142,5 +150,7 @@ ssh root@<设备IP> sh /home/root/shelf-pkg/shelf/install.sh --only ink,transcri
 - transcribe 转写质量持续打磨（汉字数字误认、裁图边界样本）。
 - `archive`/`purge` 两个端点没有对真实历史数据实测过（一次性不可逆动作，底层逻辑单测覆盖充分，没事先问用户不该拿真实数据练手；`restore` 是反方向的可逆操作，已经真机验证过）。
 - OpenAI/Gemini/DeepSeek 三家新模型预置只验证了配置层（预置表匹配、key 按厂商隔离、老配置迁移），没有真实 key 走过一次实际调用——等有 key 再补。
+- "改条目 destination 后对应导出指纹立刻变"这条只有离线单测干净覆盖（真机测试书状态太活跃，没能单独复现，见白皮书 §03x）。
+- `notebooks.rs` 的 `ChapterRecord` 在章节内容变空时不清记录（`export_state.rs` 会清），是个小不一致，不影响数据正确性，顺手发现留着没修。
 
 演进记录、每一步的真机验证细节、踩过的坑，见 `docs/reMarkable笔记白皮书.md`。
