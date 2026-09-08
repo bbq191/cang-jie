@@ -176,6 +176,6 @@ ssh root@<设备IP> sh /home/root/shelf-pkg/shelf/install.sh --only ink,transcri
 - `archive`/`purge` 两个端点没有对真实历史数据实测过（一次性不可逆动作，底层逻辑单测覆盖充分，没事先问用户不该拿真实数据练手；`restore` 是反方向的可逆操作，已经真机验证过）。
 - OpenAI/Gemini/DeepSeek 三家新模型预置只验证了配置层（预置表匹配、key 按厂商隔离、老配置迁移），没有真实 key 走过一次实际调用——等有 key 再补。
 - "改条目 destination 后对应导出指纹立刻变"这条只有离线单测干净覆盖（真机测试书状态太活跃，没能单独复现，见白皮书 §03x）。
-- `notebooks.rs` 的 `ChapterRecord` 在章节内容变空时不清记录（`export_state.rs` 会清），是个小不一致，不影响数据正确性，顺手发现留着没修。
+- `notebooks.rs`（生成笔记本）在章节内容变空时不清记录，`export_state.rs`（导出 md）会清——`ChapterStore<T>` 泛型化时把 `clear()` 提到了两边共用的层，`notebooks.rs` 现在**有这个方法可以调**，但 `publish.rs` 还没接上，行为跟之前一样没变，是个小不一致，不影响数据正确性，顺手发现留着没修。
 
 演进记录、每一步的真机验证细节、踩过的坑，见 `docs/reMarkable笔记白皮书.md`。
