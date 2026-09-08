@@ -333,9 +333,15 @@ function renderNotes(sec){sec.innerHTML=`
           const r=await j(`/api/notes/books/${encodeURIComponent(book.uuid)}/chapters/${k}/generate`,{method:'POST'});genBtn.disabled=false;
           const c=(r.chapters&&r.chapters[0])||{};
           msg.textContent=r.ok===false?('✗ '+(r.message||'失败')):c.status==='failed'?('✗ '+c.error):c.status==='empty'?'（本章没内容）':c.status==='unchanged'?'（没变化，未重传）':'✓ 已生成到设备'};
+        /* 导出既落设备 vault（给以后 host `notes pull` 用）也直接触发浏览器下载（用户当场就能拿到文件，
+           不用 SSH 上设备找）——下载存到哪由用户自己浏览器的下载设置决定（没配置就是系统默认下载目录，
+           配了"每次询问"会弹框选，网关/服务端管不到也不该管这一层）。 */
         expBtn.onclick=async()=>{expBtn.disabled=true;msg.textContent='导出中…';
           const r=await j(`/api/notes/books/${encodeURIComponent(book.uuid)}/chapters/${k}/export`,{method:'POST'});expBtn.disabled=false;
-          msg.textContent=r.ok===false?('✗ '+(r.message||'失败')):(r.wrote?'✓ 已导出到 vault':'（本章没有去处含 Obsidian 的条目）')};
+          if(r.ok===false){msg.textContent='✗ '+(r.message||'失败');return}
+          if(!r.wrote){msg.textContent='（本章没有去处含 Obsidian 的条目）';return}
+          msg.textContent='✓ 已导出，下载中…';
+          window.open(`/api/notes/books/${encodeURIComponent(book.uuid)}/chapters/${k}/export.md`,'_blank')};
       }
       es.forEach(e=>{const row=document.createElement('div');row.className='opt-note';row.style.cssText='display:flex;gap:.6em;flex-wrap:wrap;align-items:flex-start;margin:.4em 0';
         const img=e.ink&&e.ink.crop?`<img src="${cropUrl(book.uuid,e.ink.crop)}" alt="手写" style="max-width:40%;max-height:9em;border:1px solid var(--line);background:#fff">`:'<span class="small">（无裁图）</span>';

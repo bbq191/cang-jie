@@ -6,7 +6,9 @@
 //! 路由（经网关前缀 `/api/notes`）：`GET /status` · `GET /events` ·
 //! `GET /books/{uuid}/notebooks`（本地记着的各章生成状态）·
 //! `POST /books/{uuid}/generate`（全书重新投影+按需上传）· `POST /books/{uuid}/chapters/{idx}/generate`（单章）·
-//! `POST /books/{uuid}/export`（全书导出 md）· `POST /books/{uuid}/chapters/{idx}/export`（单章导出 md）。
+//! `POST /books/{uuid}/export`（全书导出 md，落设备盘）· `POST /books/{uuid}/chapters/{idx}/export`（单章，同上）·
+//! `GET /books/{uuid}/chapters/{idx}/export.md`（单章同一份内容当浏览器下载吐回去，`Content-Disposition`，
+//! 三期新增：光落设备盘用户够不着，见 `export.rs`）。
 mod config;
 mod export;
 mod ink;
@@ -118,6 +120,18 @@ fn main() {
             export::export_book(&s.paths.app_data_dir(APP), &book).map_err(ApiError::internal)?;
             let wrote = notecore::export::export_chapter_md(&book, idx).is_some();
             Ok(Reply::ok(&serde_json::json!({"ok": true, "wrote": wrote})))
+        }))
+        // 光落设备盘用户够不着（得 SSH）——这个额外把同一份内容当浏览器下载直接吐回去，配合网关
+        // 新转发的 Content-Disposition 头，点「导出 md」之后浏览器会像正常网页下载一样存到本地
+        // （存到哪由浏览器自己的下载设置决定：没配置就是系统默认下载目录，配了"每次询问"就会弹框
+        // 让用户选，网关/服务端管不到也不该管这一层）。
+        .get("/books/{uuid}/chapters/{idx}/export.md", bind(&st, |s, r| {
+            let idx: usize = r.param("idx").parse().map_err(|_| ApiError::bad("章序号不对"))?;
+            let book = s.store.book(r.param("uuid")).map_err(ApiError::bad)?;
+            let title = book.chapters.get(idx).ok_or_else(|| ApiError::bad("没有这一章"))?.clone();
+            let md = notecore::export::export_chapter_md(&book, idx).ok_or_else(|| ApiError::not_found("本章没有可导出的内容"))?;
+            let filename = format!("{}.md", notecore::export::chapter_stem(idx, &title));
+            Ok(Reply::bytes("text/markdown; charset=utf-8", md.into_bytes()).with_header("Content-Disposition", &export::content_disposition(&filename)))
         }));
     println!("[note-serve] 状态 {}；文件夹样式 {}；xochitl {}", st.notebooks.dir().display(), st.cfg.folder_name_pattern, st.cfg.xochitl_host);
     if let Err(e) = service::run(&SPEC, &bind_addr, &paths, router) {

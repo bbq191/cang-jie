@@ -41,7 +41,14 @@ pub fn forward(paths: &Paths, req: &mut Request<'_>) -> ApiResult {
         Err(e) => return Err(ApiError { status: 502, message: format!("{name} 无响应: {e}") }),
     };
     let ctype = resp.header("Content-Type").unwrap_or("application/octet-stream").to_string();
+    // 只转发这一个头：后端服务想让浏览器"下载保存"而不是原地展示/跳转时设它（如 md/zip 导出、CA 证书下载，
+    // 见 shelf-gateway::main 的证书下载同款用法）；别的头一律不转发，不给后端服务借这条通道夹带别的东西。
+    let disposition = resp.header("Content-Disposition").map(str::to_string);
     let mut body = Vec::new();
     resp.into_reader().read_to_end(&mut body).map_err(|e| ApiError::internal(e.to_string()))?;
-    Ok(Reply { status, content_type: ctype, body, headers: vec![], stream: None })
+    let mut reply = Reply { status, content_type: ctype, body, headers: vec![], stream: None };
+    if let Some(v) = disposition {
+        reply = reply.with_header("Content-Disposition", &v);
+    }
+    Ok(reply)
 }
