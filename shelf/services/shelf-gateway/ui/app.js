@@ -240,12 +240,14 @@ function assetTab(sec,api,o){sec.innerHTML=`<div class="card">${o.title?`<h2>${o
    设备只负责写、不负责改：这里就是"改"的地方（e-ink 上打字太痛苦）。分区只管笔记本排版分组，不再驱动 AI；
    问 AI 改按条目单发——勾「问AI」+ 填问题+点提问，调 mind-serve 拼"书名+章节+勾画原文+转写文本+问题"发模型（二期，白皮书 §03n）。 */
 const STYLE_NAMES={body:'正文',bullet:'无序 -',numbered:'有序 1.',checkbox:'待办 口'};
-const STATUS_NAMES={mined:'待浏览',pending:'待转写',draft:'待校对',reviewed:'已校对',skipped:'已跳过',revoked:'已撤销'};
+const STATUS_NAMES={mined:'待浏览',pending:'待转写',draft:'待校对',reviewed:'已校对',skipped:'已跳过',revoked:'已撤销',archived:'已删除'};
+/* 落设备笔记本/落 Obsidian/两处都要（三期，白皮书 §03n 之后）：缺省 both，不碰这个下拉就是老行为。 */
+const DEST_NAMES={notebook:'仅设备笔记本',obsidian:'仅 Obsidian',both:'两处都要'};
 /* 「浏览」（新批注先落这，点了才转笔记）与「整理」（真被要求转笔记的才在这核对）拆两个子视图，见二期设计（白皮书 §03n）。 */
 function renderNotes(sec){sec.innerHTML=`
   <div class="card"><h2>笔记</h2>
     <p class="lead">荧光笔勾书、在旁边手写，合上书先到「浏览」：看一眼，点「转入笔记」才会转写、进「整理」核对；点「不需要」就跳过，不再出现。</p>
-    <div class="row"><span class="small">书</span><select id="nbook" style="flex:1;min-width:10em"></select><button class="btn" id="nrescan" title="清掉页记录，整本重新摄取">重扫</button></div>
+    <div class="row"><span class="small">书</span><select id="nbook" style="flex:1;min-width:10em"></select><button class="btn" id="nrescan" title="清掉页记录，整本重新摄取">重扫</button><button class="btn" id="npurge" title="永久清掉已删除/已撤销/已跳过的条目，不可恢复">清空回收站</button></div>
     <div class="row small" id="nsum"></div>
   </div>
   <div class="subnav"><button class="on">👀 浏览</button><button>✎ 整理</button></div>
@@ -292,6 +294,14 @@ function renderNotes(sec){sec.innerHTML=`
   $('#nsecadd',sec).onclick=()=>{book.sections.push({id:'s'+Date.now(),name:'',brief:'',ai:true,order:book.sections.length,triggers:[]});renderSections()};
   $('#nsecsave',sec).onclick=async()=>{const r=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}/sections`,{method:'PUT',body:JSON.stringify({sections:book.sections})});if(r.ok===false)alert(r.message);else renderBook()};
   $('#nrescan',sec).onclick=async()=>{if(!book)return;await postJ(`/api/ink/books/${encodeURIComponent(book.uuid)}/rescan`,{});refresh()};
+  $('#npurge',sec).onclick=async()=>{if(!book)return;if(!confirm('永久清掉已删除/已撤销/已跳过的条目，条目库里再也找不回——确定？'))return;
+    const r=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}/purge`,{method:'POST'});
+    if(r.ok===false){alert(r.message||'清空失败');return}
+    alert(`已清 ${r.removed} 条`);refresh()};
+  /* 「不要了」（三期）：转 Archived，两处投影都摘掉，条目库里软删留痕（真删靠上面「清空回收站」）。 */
+  const archiveEntry=async(id)=>{if(!confirm('这条不要了？（设备笔记本、Obsidian 导出都会摘掉；条目库里还留着，能靠「清空回收站」真删，但没有撤销按钮）'))return;
+    const r=await postJ(`/api/ink/books/${encodeURIComponent(book.uuid)}/entries/${encodeURIComponent(id)}/archive`,{});if(r.ok===false)return;
+    book=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}`);renderBook()};
   /* 浏览：按页分组、只列 Mined（待决定的），最近变更的页在前；转入笔记/不需要两个按钮直接调 triage。 */
   const renderBrowse=()=>{browse.innerHTML='';if(!book)return;updateSummary();
     const mined=(book.entries||[]).filter(e=>e.status==='mined');
@@ -314,23 +324,37 @@ function renderNotes(sec){sec.innerHTML=`
     const live=(book.entries||[]).filter(e=>['pending','draft','reviewed'].includes(e.status));
     const groups=new Map();live.forEach(e=>{const k=e.chapter==null?-1:e.chapter;if(!groups.has(k))groups.set(k,[]);groups.get(k).push(e)});
     [...groups.keys()].sort((a,b)=>a-b).forEach(k=>{const es=groups.get(k).sort((a,b)=>a.page_index-b.page_index||(a.ink?a.ink.bbox[1]:0)-(b.ink?b.ink.bbox[1]:0));
-      const card=document.createElement('div');card.className='card';card.innerHTML=`<h3 style="margin-top:0">${k<0?'（未归章）':`第 ${k+1} 章 · ${es[0].chapter_title||''}`} <span class="small">${es.length} 条</span></h3>`;
+      const card=document.createElement('div');card.className='card';
+      const chapterOps=k<0?'':'<div class="row"><button class="btn" data-gen>生成笔记本</button><button class="btn" data-exp>导出 md</button><span class="small" data-genmsg></span></div>';
+      card.innerHTML=`<h3 style="margin-top:0">${k<0?'（未归章）':`第 ${k+1} 章 · ${es[0].chapter_title||''}`} <span class="small">${es.length} 条</span></h3>${chapterOps}`;
+      if(k>=0){
+        const genBtn=card.querySelector('[data-gen]'),expBtn=card.querySelector('[data-exp]'),msg=card.querySelector('[data-genmsg]');
+        genBtn.onclick=async()=>{genBtn.disabled=true;msg.textContent='生成中…';
+          const r=await j(`/api/notes/books/${encodeURIComponent(book.uuid)}/chapters/${k}/generate`,{method:'POST'});genBtn.disabled=false;
+          const c=(r.chapters&&r.chapters[0])||{};
+          msg.textContent=r.ok===false?('✗ '+(r.message||'失败')):c.status==='failed'?('✗ '+c.error):c.status==='empty'?'（本章没内容）':c.status==='unchanged'?'（没变化，未重传）':'✓ 已生成到设备'};
+        expBtn.onclick=async()=>{expBtn.disabled=true;msg.textContent='导出中…';
+          const r=await j(`/api/notes/books/${encodeURIComponent(book.uuid)}/chapters/${k}/export`,{method:'POST'});expBtn.disabled=false;
+          msg.textContent=r.ok===false?('✗ '+(r.message||'失败')):(r.wrote?'✓ 已导出到 vault':'（本章没有去处含 Obsidian 的条目）')};
+      }
       es.forEach(e=>{const row=document.createElement('div');row.className='opt-note';row.style.cssText='display:flex;gap:.6em;flex-wrap:wrap;align-items:flex-start;margin:.4em 0';
         const img=e.ink&&e.ink.crop?`<img src="${cropUrl(book.uuid,e.ink.crop)}" alt="手写" style="max-width:40%;max-height:9em;border:1px solid var(--line);background:#fff">`:'<span class="small">（无裁图）</span>';
         const opts=(book.sections||[]).map(s=>`<option value="${s.id}" ${e.section===s.id?'selected':''}>${s.name}</option>`).join('');
         const sty=Object.entries(STYLE_NAMES).map(([v,n])=>`<option value="${v}" ${e.style===v?'selected':''}>${n}</option>`).join('');
+        const dest=Object.entries(DEST_NAMES).map(([v,n])=>`<option value="${v}" ${(e.destination||'both')===v?'selected':''}>${n}</option>`).join('');
         const draft=(e.drafts&&e.drafts[0])?e.drafts[0].text:'';
         row.innerHTML=`${img}<div style="flex:1;min-width:12em">
           <div class="small">p.${e.page_index+1}${e.subhead?' · '+e.subhead:''} <span class="badge ${e.status==='reviewed'?'on':''}">${STATUS_NAMES[e.status]||e.status}</span></div>
           ${e.quote?`<div class="small" style="border-left:3px solid var(--line);padding-left:.5em;margin:.2em 0">「${e.quote.text}」</div>`:''}
           <textarea rows="2" style="width:100%;box-sizing:border-box" placeholder="${draft?'转写：'+draft:'等待转写…'}">${e.text||draft}</textarea>
-          <div class="row"><select data-k="section"><option value="">（未分区）</option>${opts}</select><select data-k="style">${sty}</select></div>
+          <div class="row"><select data-k="section"><option value="">（未分区）</option>${opts}</select><select data-k="style">${sty}</select><select data-k="destination">${dest}</select><button class="btn" data-archive title="两处投影都摘掉（软删）">不要了</button></div>
           <div class="row" style="margin-top:.3em"><label class="toggle"><input type="checkbox" data-ask ${e.ask_ai?'checked':''}> 问AI</label>
             <input type="text" data-question placeholder="问题…（如「他是谁」）" value="${e.question?e.question.replace(/"/g,'&quot;'):''}" style="flex:1;min-width:9em" ${e.ask_ai?'':'disabled'}>
             <button class="btn" data-askbtn ${e.ask_ai&&e.question?'':'disabled'}>提问</button></div>
           ${e.answer?`<details class="cmp" open><summary>回答 <span class="small">「${e.answer.brief}」</span></summary><div class="small">${e.answer.text}</div></details>`:''}</div>`;
         row.querySelector('textarea').onchange=ev=>patch(e.id,{text:ev.target.value});
         row.querySelectorAll('select').forEach(s=>s.onchange=()=>patch(e.id,{[s.dataset.k]:s.value}));
+        row.querySelector('[data-archive]').onclick=()=>archiveEntry(e.id);
         if(e.ink&&e.ink.crop){const rb=document.createElement('button');rb.className='btn';rb.textContent=draft?'重转':'转写';rb.title='用当前后端转写这一条（不动已校对文本）';rb.style.marginLeft='.4em';
           rb.onclick=async()=>{rb.disabled=true;const r=await j(`/api/transcribe/books/${encodeURIComponent(book.uuid)}/entries/${encodeURIComponent(e.id)}`,{method:'POST'});rb.disabled=false;if(r.ok===false)alert(r.message||'转写失败')};row.querySelector('.row').appendChild(rb)}
         /* 「问AI」勾选框 + 问题 + 提问按钮：改即存（ink-serve），点提问才真的调 mind-serve。 */

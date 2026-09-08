@@ -58,6 +58,29 @@ impl Style {
     }
 }
 
+/// 转写/校对/问答完之后，这条内容最终要投影去哪（三期，2026-09-08）：默认 `Both`——两处都要，跟这个
+/// 字段加之前"两个投影都只看 `chapter`+`status`、来者不拒"的行为完全一致（`project.rs` 该收的还收，
+/// `export.rs` 新功能对已有内容立刻可用，不用先给每条条目手动选一遍才肯导出）。用户想收窄再改成
+/// `Notebook`（只留设备）/`Obsidian`（只导出，不回落设备笔记本）。`project.rs` 只收
+/// `wants_notebook()`；`export.rs` 只收 `wants_obsidian()`。
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum Destination {
+    Notebook,
+    Obsidian,
+    #[default]
+    Both,
+}
+
+impl Destination {
+    pub fn wants_notebook(self) -> bool {
+        matches!(self, Destination::Notebook | Destination::Both)
+    }
+    pub fn wants_obsidian(self) -> bool {
+        matches!(self, Destination::Obsidian | Destination::Both)
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum Status {
@@ -76,6 +99,11 @@ pub enum Status {
     Skipped,
     /// 笔画已从书页删除（不物理删，留痕）。
     Revoked,
+    /// 用户在「整理」里点了「不要了」（三期，2026-09-08）：转写/问答都看完了，两处投影
+    /// （设备笔记本 `project.rs` / Obsidian `export.rs`）都不要再出现——跟 `Revoked` 一样是终态、
+    /// 不物理删（留痕，靠 `Book::purge_terminal` 手动清），区别只是触发方是用户主动"删除"而不是
+    /// 笔画被擦掉。
+    Archived,
 }
 
 /// 配对到的勾画（GlyphRange）。
@@ -155,6 +183,9 @@ pub struct Entry {
     pub answer: Option<Answer>,
     #[serde(default)]
     pub status: Status,
+    /// 落设备笔记本 / 落 Obsidian / 两处都要（三期）。`#[serde(default)]` 兼容三期之前落盘的旧条目库。
+    #[serde(default)]
+    pub destination: Destination,
     pub created: u64,
     pub updated: u64,
 }
@@ -169,17 +200,17 @@ impl Entry {
     /// 已经在 `Pending`/`Draft`/`Reviewed` 的条目如果笔画又变了（补了几笔），仍然继续认，
     /// 不会因为已经校对过就不再建议新草稿（校对文本本身不会被覆盖，见增量规则）。
     pub fn needs_transcribe(&self) -> bool {
-        matches!((&self.ink, self.status), (Some(ink), s) if !matches!(s, Status::Revoked | Status::Mined | Status::Skipped) && !self.drafts.iter().any(|d| d.hash == ink.hash))
+        matches!((&self.ink, self.status), (Some(ink), s) if !matches!(s, Status::Revoked | Status::Mined | Status::Skipped | Status::Archived) && !self.drafts.iter().any(|d| d.hash == ink.hash))
     }
-    /// 浏览态动作：转成 `Pending`（转入笔记）或 `Skipped`（不需要）。已撤销的条目笔画都没了，
-    /// 操作没有意义，拒绝。**纯勾画条目**（`ink` 是 `None`，内容全是 `quote`）没有手写可转写——
-    /// 勾画文字是 `GlyphRange` 原生给的精确文字，不需要过一遍视觉模型；这种条目"转入笔记"
-    /// 就直接落定（`text = quote.text`、状态跳到 `Reviewed`），不经过 `Pending`/`Draft` 那两步，
-    /// 不然会卡在 `Pending` 里——`needs_transcribe()` 要求 `ink` 是 `Some`，永远不会被自动转写捡走
-    /// （2026-09-07 二期真机验证时发现的缺口，见笔记线白皮书 §03o）。
+    /// 浏览态动作：转成 `Pending`（转入笔记）/`Skipped`（不需要）/`Archived`（三期"不要了"）。
+    /// 已撤销/已归档的条目是终态，操作没有意义，拒绝。**纯勾画条目**（`ink` 是 `None`，内容全是
+    /// `quote`）没有手写可转写——勾画文字是 `GlyphRange` 原生给的精确文字，不需要过一遍视觉模型；
+    /// 这种条目"转入笔记"就直接落定（`text = quote.text`、状态跳到 `Reviewed`），不经过
+    /// `Pending`/`Draft` 那两步，不然会卡在 `Pending` 里——`needs_transcribe()` 要求 `ink` 是
+    /// `Some`，永远不会被自动转写捡走（2026-09-07 二期真机验证时发现的缺口，见笔记线白皮书 §03o）。
     pub fn set_triage(&mut self, target: Status, now: u64) -> Result<(), String> {
-        if self.status == Status::Revoked {
-            return Err("这条已撤销，笔画不在了，不能操作".into());
+        if matches!(self.status, Status::Revoked | Status::Archived) {
+            return Err("这条已撤销/已删除，不能再操作".into());
         }
         if target == Status::Pending && self.ink.is_none() {
             if let Some(q) = &self.quote {
@@ -228,6 +259,17 @@ impl Book {
         self.sections.push(Section { id: id.clone(), name: name.to_string(), brief: String::new(), ai: false, order, triggers: vec![] });
         id
     }
+
+    /// 清空回收站：物理移除 `Archived`/`Revoked`/`Skipped` 这三种"终态、不再活跃"的条目——软删会
+    /// 无限攒（每条撤销/跳过/归档的条目永远留痕），这是唯一真正腾空间的操作。**手动触发，不自动跑**，
+    /// 跟书级回收站"不自动清空回收站"是同一条纪律（见笔记线白皮书 §05 明确不做清单）；一旦清掉就是
+    /// 真删除，不可恢复——调用方（ink-serve）该在网页上给一个需要用户主动点的按钮，不要在别的操作
+    /// 里顺手带上。返回删了几条。
+    pub fn purge_terminal(&mut self) -> usize {
+        let before = self.entries.len();
+        self.entries.retain(|e| !matches!(e.status, Status::Archived | Status::Revoked | Status::Skipped));
+        before - self.entries.len()
+    }
 }
 
 #[cfg(test)]
@@ -256,7 +298,7 @@ mod tests {
 
     #[test]
     fn roundtrip_and_defaults() {
-        let e = Entry { id: "e1".into(), page: "p".into(), page_index: 3, chapter: Some(1), chapter_title: "一".into(), subhead: None, quote: None, ink: Some(Ink { strokes: vec!["1:2".into()], bbox: (0.0, 0.0, 1.0, 1.0), hash: "h".into(), crop: String::new() }), drafts: vec![], text: None, style: Style::Checkbox, section: None, ask_ai: false, question: None, answer: None, status: Status::Pending, created: 1, updated: 1 };
+        let e = Entry { id: "e1".into(), page: "p".into(), page_index: 3, chapter: Some(1), chapter_title: "一".into(), subhead: None, quote: None, ink: Some(Ink { strokes: vec!["1:2".into()], bbox: (0.0, 0.0, 1.0, 1.0), hash: "h".into(), crop: String::new() }), drafts: vec![], text: None, style: Style::Checkbox, section: None, ask_ai: false, question: None, answer: None, status: Status::Pending, destination: Default::default(), created: 1, updated: 1 };
         let j = serde_json::to_string(&e).unwrap();
         assert!(j.contains(r#""style":"checkbox""#) && j.contains(r#""status":"pending""#));
         let back: Entry = serde_json::from_str(&j).unwrap();
@@ -326,5 +368,50 @@ mod tests {
         e.text = None;
         e.set_triage(Status::Skipped, 20).unwrap();
         assert_eq!(e.status, Status::Skipped);
+    }
+
+    #[test]
+    fn destination_default_is_both_and_truth_table_is_correct() {
+        assert_eq!(Destination::default(), Destination::Both, "默认两处都要——新功能对已有内容立刻可用");
+        assert!(Destination::Notebook.wants_notebook() && !Destination::Notebook.wants_obsidian());
+        assert!(!Destination::Obsidian.wants_notebook() && Destination::Obsidian.wants_obsidian());
+        assert!(Destination::Both.wants_notebook() && Destination::Both.wants_obsidian());
+    }
+
+    #[test]
+    fn set_triage_can_archive_and_refuses_further_operations_on_archived() {
+        let mut e: Entry = serde_json::from_str(r#"{"id":"e","page":"p","page_index":0,"created":0,"updated":0,"status":"reviewed"}"#).unwrap();
+        e.set_triage(Status::Archived, 5).unwrap();
+        assert_eq!((e.status, e.updated), (Status::Archived, 5));
+        let err = e.set_triage(Status::Pending, 10).unwrap_err();
+        assert!(err.contains("已删除"), "{err}");
+        assert_eq!(e.status, Status::Archived, "拒绝后状态不变");
+    }
+
+    #[test]
+    fn archived_entries_are_never_auto_transcribed() {
+        let mut e: Entry = serde_json::from_str(r#"{"id":"e","page":"p","page_index":0,"created":0,"updated":0,"ink":{"strokes":["1:1"],"bbox":[0,0,1,1],"hash":"h"}}"#).unwrap();
+        e.status = Status::Archived;
+        assert!(!e.needs_transcribe(), "已归档的条目跟已撤销/已跳过一样不该被自动转写捡走");
+    }
+
+    #[test]
+    fn purge_terminal_removes_only_archived_revoked_skipped() {
+        fn entry(id: &str, status: Status) -> Entry {
+            let mut e: Entry = serde_json::from_str(&format!(r#"{{"id":"{id}","page":"p","page_index":0,"created":0,"updated":0}}"#)).unwrap();
+            e.status = status;
+            e
+        }
+        let mut b = Book {
+            uuid: "u".into(),
+            title: "t".into(),
+            entries: vec![entry("keep-mined", Status::Mined), entry("keep-pending", Status::Pending), entry("keep-reviewed", Status::Reviewed), entry("drop-skipped", Status::Skipped), entry("drop-revoked", Status::Revoked), entry("drop-archived", Status::Archived)],
+            ..Default::default()
+        };
+        let removed = b.purge_terminal();
+        assert_eq!(removed, 3);
+        let remaining: Vec<&str> = b.entries.iter().map(|e| e.id.as_str()).collect();
+        assert_eq!(remaining, ["keep-mined", "keep-pending", "keep-reviewed"]);
+        assert_eq!(b.purge_terminal(), 0, "再清一次没东西可清");
     }
 }

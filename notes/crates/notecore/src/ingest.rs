@@ -142,6 +142,7 @@ pub fn merge_page(entries: &mut Vec<Entry>, ctx: &PageCtx, drafts: Vec<PageDraft
                     question: None,
                     answer: None,
                     status: Status::Mined, // 只是探测到，还没被用户要求转笔记——见浏览态设计（2026-09-07 二期）
+                    destination: crate::model::Destination::default(), // 落设备笔记本——三期新字段，默认不变行为
                     created: ctx.now,
                     updated: ctx.now,
                 });

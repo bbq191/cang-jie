@@ -64,6 +64,7 @@ mod tests {
             question: question.map(str::to_string),
             answer: None,
             status: Status::Reviewed,
+            destination: Default::default(),
             created: 0,
             updated: 0,
         }
