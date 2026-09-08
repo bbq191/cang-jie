@@ -134,12 +134,17 @@ def test_comic_probe_palmdb_and_epub(tmp_path):
 
 
 def test_push_comic_route_lands_cbz_only(gateway, tmp_path, capsys, monkeypatch):
-    """漫画不投原生：只出 CBZ 进母版库，不产 PDF。"""
+    """体积超原生上限（本测试直接让 cbz_to_pdf 失败模拟）时只出 CBZ 进母版库，不产 PDF。"""
     src = tmp_path / "manga.azw3"
     src.write_bytes(b"x")
     monkeypatch.setattr(cb, "has_calibre", lambda: True)
     monkeypatch.setattr(comic, "is_comic", lambda p: True)
     monkeypatch.setattr(cb, "comic2cbz", lambda s, o: (o.write_bytes(b"PK"), o)[1])
+
+    def _no_pdf(s, o):
+        raise cb.CalibreError("mock: 这条测试不关心投原生 PDF")
+
+    monkeypatch.setattr(cb, "cbz_to_pdf", _no_pdf)
     FakeGateway.received.clear()
     rc, out = run(["push", str(src)], gateway, capsys)  # 缺省过 16 灰；假字节让 comic_gray 失败 → 退回原图 CBZ 不挡推送
     assert rc == 0 and "漫画 CBZ→母版库" in out and "16 灰失败，按原图 CBZ 推" in out
@@ -159,6 +164,104 @@ def test_push_comic_route_lands_cbz_only(gateway, tmp_path, capsys, monkeypatch)
     cbz.write_bytes(b"PK")
     rc, out = run(["push", "--no-eink-gray", str(cbz)], gateway, capsys)
     assert rc == 0 and "原样→母版库" in out
+
+
+def test_native_limit_bytes_queries_device_then_falls_back(gateway, monkeypatch):
+    """能查到设备的 nativeUploadLimitBytes 就用它；查不到（假网关没这个接口）退回静态兜底。"""
+    from shelf_cli import transport as tr
+
+    ctx = type("Ctx", (), {"transport": tr.HttpTransport(gateway, user="shelf", password="pw")})()
+    assert push._native_limit_bytes(ctx) == push.NATIVE_LIMIT_FALLBACK_MB * 2**20, "假网关没实现这个接口，该退回兜底值"
+
+
+def test_push_comic_native_pdf_added_when_small_enough(gateway, tmp_path, capsys, monkeypatch):
+    """灰阶 CBZ 体积估算转 PDF 后仍在原生上限内：CBZ 和 PDF 都落母版库，两次独立入库。"""
+    src = tmp_path / "manga.cbz"
+    src.write_bytes(b"PK\x03\x04")
+    gray = tmp_path / "manga.gray.cbz"
+    gray.write_bytes(b"g" * 1000)  # 体积远小于任何合理上限
+    pdf_calls = []
+
+    def _mk_pdf(s, o):
+        o.write_bytes(b"%PDF" + b"\0" * 100)
+        pdf_calls.append((s.name, o.name))
+        return o
+
+    monkeypatch.setattr(cb, "has_calibre", lambda: False)
+    monkeypatch.setattr(cb, "comic_gray", lambda s, o, rtl=True: (gray, {"pages": 1, "split": 0, "gray": 1, "color": 0, "bytes_in": 10, "bytes_out": 1000, "flagged": []}))
+    monkeypatch.setattr(cb, "cbz_to_pdf", _mk_pdf)
+    FakeGateway.received.clear()
+    rc, out = run(["push", str(src)], gateway, capsys)
+    assert rc == 0 and pdf_calls == [("manga.gray.cbz", "manga.pdf")]
+    assert "顺带出一份 PDF" in out
+    names = [r[0] for r in FakeGateway.received]
+    assert names.count("/api/books/staging") == 2, "CBZ 和 PDF 各自独立入库一次"
+    bodies = b"".join(r[2] for r in FakeGateway.received)
+    assert b"manga.gray.cbz" in bodies and b"manga.pdf" in bodies
+
+
+def test_push_comic_native_pdf_skipped_when_too_big(gateway, tmp_path, capsys, monkeypatch):
+    """灰阶 CBZ 体积估算超原生上限：只出 CBZ，cbz_to_pdf 压根不该被调用，也不该触发分卷。
+    用一个极小的上限（1 字节）代替真造一个大文件——只测"超限就不生成 PDF"这条逻辑分支，
+    不用真传几百 MB 数据折腾测试环境。"""
+    src = tmp_path / "manga.cbz"
+    src.write_bytes(b"PK\x03\x04")
+    gray = tmp_path / "manga.gray.cbz"
+    gray.write_bytes(b"g" * 10)
+    called = {"n": 0}
+
+    def _should_not_run(s, o):
+        called["n"] += 1
+        raise AssertionError("体积超限不该调用 cbz_to_pdf")
+
+    monkeypatch.setattr(cb, "has_calibre", lambda: False)
+    monkeypatch.setattr(cb, "comic_gray", lambda s, o, rtl=True: (gray, {"pages": 1, "split": 0, "gray": 1, "color": 0, "bytes_in": 10, "bytes_out": 10, "flagged": []}))
+    monkeypatch.setattr(cb, "cbz_to_pdf", _should_not_run)
+    monkeypatch.setattr(push, "_native_limit_bytes", lambda ctx: 1)  # 逼近"任何真实文件都超限"
+    FakeGateway.received.clear()
+    rc, out = run(["push", str(src)], gateway, capsys)
+    assert rc == 0 and called["n"] == 0 and "只出 CBZ" in out
+    names = [r[0] for r in FakeGateway.received]
+    assert names.count("/api/books/staging") == 1, "只有 CBZ 落库"
+
+
+def test_push_no_comic_native_flag_skips_pdf_generation(gateway, tmp_path, capsys, monkeypatch):
+    """--no-comic-native：不管体积多小，都不生成投原生用的 PDF。"""
+    src = tmp_path / "manga.cbz"
+    src.write_bytes(b"PK\x03\x04")
+    gray = tmp_path / "manga.gray.cbz"
+    gray.write_bytes(b"g" * 10)
+    called = {"n": 0}
+    monkeypatch.setattr(cb, "has_calibre", lambda: False)
+    monkeypatch.setattr(cb, "comic_gray", lambda s, o, rtl=True: (gray, {"pages": 1, "split": 0, "gray": 1, "color": 0, "bytes_in": 10, "bytes_out": 10, "flagged": []}))
+    monkeypatch.setattr(cb, "cbz_to_pdf", lambda s, o: called.__setitem__("n", called["n"] + 1))
+    FakeGateway.received.clear()
+    rc, out = run(["push", "--no-comic-native", str(src)], gateway, capsys)
+    assert rc == 0 and called["n"] == 0
+    names = [r[0] for r in FakeGateway.received]
+    assert names.count("/api/books/staging") == 1
+
+
+def test_comic_native_pdf_is_never_split_even_if_over_split_threshold(gateway, tmp_path, capsys, monkeypatch):
+    """漫画通道出的 PDF 绝不分卷——就算体积超过 split_pdf_mb（分卷是给普通 PDF 用的独立机制）。"""
+    src = tmp_path / "manga.cbz"
+    src.write_bytes(b"PK\x03\x04")
+    gray = tmp_path / "manga.gray.cbz"
+    gray.write_bytes(b"g" * 10)
+    split_called = {"n": 0}
+
+    def _mk_pdf(s, o):
+        o.write_bytes(b"%PDF" + b"\0" * 100)
+        return o
+
+    monkeypatch.setattr(cb, "has_calibre", lambda: False)
+    monkeypatch.setattr(cb, "comic_gray", lambda s, o, rtl=True: (gray, {"pages": 1, "split": 0, "gray": 1, "color": 0, "bytes_in": 10, "bytes_out": 10, "flagged": []}))
+    monkeypatch.setattr(cb, "cbz_to_pdf", _mk_pdf)
+    monkeypatch.setattr(pdfsplit, "needs_split", lambda *a: split_called.__setitem__("n", split_called["n"] + 1) or True)
+    FakeGateway.received.clear()
+    rc, out = run(["push", str(src)], gateway, capsys)
+    assert rc == 0 and split_called["n"] == 0, "route==comic 时压根不该问 pdfsplit.needs_split"
+    assert "分卷" not in out
 
 
 def test_split_fails_loudly_without_pymupdf(tmp_path, monkeypatch):
