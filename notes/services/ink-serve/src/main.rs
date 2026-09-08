@@ -2,15 +2,21 @@
 //! 勾画（GlyphRange）+ 旁边手写（笔画簇）→ 条目 → 裁图 → 条目库（**唯一写者**，其它服务经这里改字段）。零网络。
 //! 路由（经网关前缀 `/api/ink`）：`GET /books` · `GET /books/{uuid}` · `GET /books/{uuid}/crops/{file}` ·
 //! `POST /books/{uuid}/entries/{id}`（text/style/draft/answer/askAi/question/destination 字段更新，
-//! 缺省底座无 PATCH；`subheadHint` 是 `### 文字` 手写标记转写侧兜底认出来的，见 `notecore::marker::Marker`
-//! ——三期（2026-09-08）砍掉了"分区"这个概念，`## 文字`/`section`/`sectionHint`/`PUT .../sections`
-//! 整个都没了，AI 触发早就是 `askAi`+`question` 的事，笔记本排版分组也不要了，见白皮书 §03s；
-//! `askAi`+`question` 是"问AI"勾选框+问题输入框，`mind-serve` 读这两个字段触发按条目单发问答；
+//! 缺省底座无 PATCH；`text` 现在走 `notecore::model::Entry::apply_marked_text`——行首 `-`/`1.`/`口`/`##`/
+//! `### ` 标记自动定样式/覆盖 subhead 并从正文剥掉，不再需要网页手动选样式的下拉（整理区第二轮反馈点 1，
+//! 2026-09-08，见白皮书 §03u）；`style` 字段仍保留，给 `transcribe-serve::worker` 写草稿时的内部路径用
+//! （它走行首标记兜底出的是 `Marker::Style`，不经过 `text` 这条路）；`subheadHint` 是同一套兜底出的
+//! `Marker::Subhead`——三期（2026-09-08）砍掉了"分区"这个概念，`## 文字`/`section`/`sectionHint`/
+//! `PUT .../sections` 整个都没了，AI 触发早就是 `askAi`+`question` 的事，笔记本排版分组也不要了，见白皮书
+//! §03s；`askAi`+`question` 是"问AI"勾选框+问题输入框，`mind-serve` 读这两个字段触发按条目单发问答；
 //! `GET /books` 只列条目库里还有活条目的书）·
 //! `POST /books/{uuid}/entries/{id}/request`（浏览态"转入笔记"：`Mined→Pending`）·
 //! `POST /books/{uuid}/entries/{id}/skip`（浏览态"不需要"：`Mined→Skipped`）·
 //! `POST /books/{uuid}/entries/{id}/archive`（三期"不要了"：`→Archived`，两处投影都摘掉，见
 //! `notecore::model::Entry::set_triage`；已撤销/已归档的条目对以上三个动作都拒绝）·
+//! `POST /books/{uuid}/entries/{id}/restore`（回收站"恢复"，整理区第二轮反馈点 3，2026-09-08：
+//! `Skipped`/`Revoked`/`Archived` 都能恢复，落点按条目已有内容倒推，见 `notecore::model::Entry::restore`；
+//! 只对终态条目生效，对活条目调用会被拒）·
 //! `POST /books/{uuid}/purge`（清空回收站：物理删掉 `Archived`/`Revoked`/`Skipped` 这三种终态条目，
 //! 手动触发、不可恢复，见 `notecore::model::Book::purge_terminal`）·
 //! `POST /books/{uuid}/rescan` · `GET /events`。条目库 `$XDG_STATE_HOME/notes/books/<uuid>.json`，裁图 `$XDG_DATA_HOME/notes/crops/`。
@@ -139,9 +145,11 @@ fn main() {
             let found = s.db.update(&uuid, || Default::default(), |b| {
                 let subhead_hint = j.0.get("subheadHint").and_then(|v| v.as_str()).map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
                 let Some(e) = b.entries.iter_mut().find(|e| e.id == id) else { return false };
+                // 用户直接在网页文本框改字：跟转写草稿写回同一套行首标记规则（`notecore::model::Entry::
+                // apply_marked_text`）——`-`/`1.`/`口`/`##`/`### ` 都认，样式不再靠单独的下拉手动选
+                // （整理区第二轮反馈点 1，2026-09-08，见白皮书 §03u）。
                 if let Some(t) = j.0.get("text").and_then(|v| v.as_str()) {
-                    e.text = (!t.trim().is_empty()).then(|| t.to_string());
-                    e.status = if e.text.is_some() { Status::Reviewed } else if e.drafts.is_empty() { Status::Pending } else { Status::Draft };
+                    e.apply_marked_text(t, now);
                 }
                 // `### 文字` 手写标记（转写侧兜底认出来的，见 notecore::marker::Marker）：小节标题
                 // 覆盖 subhead（平时由 epubmap 自动填）。三期砍掉了 `## 文字`（分区）那半，见白皮书 §03s。
@@ -183,6 +191,21 @@ fn main() {
         .post("/books/{uuid}/entries/{id}/request", bind(&st, |s, r| triage(s, r, Status::Pending)))
         .post("/books/{uuid}/entries/{id}/skip", bind(&st, |s, r| triage(s, r, Status::Skipped)))
         .post("/books/{uuid}/entries/{id}/archive", bind(&st, |s, r| triage(s, r, Status::Archived)))
+        .post("/books/{uuid}/entries/{id}/restore", bind(&st, |s, r| {
+            let (uuid, id) = (r.param("uuid").to_string(), r.param("id").to_string());
+            if s.db.load(&uuid).is_none() {
+                return Err(ApiError::not_found("没有这本书的条目"));
+            }
+            let now = shelf_core::clock::now_secs();
+            let outcome = s.db.update(&uuid, || Default::default(), |b| b.entries.iter_mut().find(|e| e.id == id).map(|e| e.restore(now))).map_err(ApiError::internal)?;
+            match outcome {
+                None => return Err(ApiError::not_found("没有这条目")),
+                Some(Err(e)) => return Err(ApiError::bad(e)),
+                Some(Ok(())) => {}
+            }
+            s.bus.publish("notes", "entries");
+            Ok(Reply::ok(&serde_json::json!({"ok": true})))
+        }))
         .post("/books/{uuid}/purge", bind(&st, |s, r| {
             let uuid = r.param("uuid").to_string();
             if s.db.load(&uuid).is_none() {

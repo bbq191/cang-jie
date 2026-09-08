@@ -84,7 +84,7 @@ dl.help{margin:.3em 0 .2em}dl.help dt{font-weight:600;margin-top:.7em;color:var(
 dl.help dd{margin:.2em 0 .2em;color:var(--mute);font-size:.9em;line-height:1.65}
 /* 笔记条目卡片：手写裁图 / 转写文本 / AI 问答三块视觉分区，手机堆叠、宽屏并排（见笔记白皮书 §03t） */
 .entry{border:1px solid var(--line);border-radius:.7em;padding:.75em .85em;margin:.6em 0;background:var(--surface)}
-.entry-head{display:flex;justify-content:space-between;align-items:center;gap:.6em;margin-bottom:.5em;font-size:.85em;color:var(--mute)}
+.entry-head{display:flex;align-items:center;gap:.6em;margin-bottom:.5em;font-size:.85em;color:var(--mute)}
 .entry-head .btn{padding:.25em .7em;font-size:.85em}
 .entry-body{display:flex;gap:.9em;flex-wrap:wrap;align-items:flex-start}
 .entry-crop{flex:0 0 9em;width:9em;max-width:42%}
@@ -101,8 +101,18 @@ dl.help dd{margin:.2em 0 .2em;color:var(--mute);font-size:.9em;line-height:1.65}
 .entry-answer{font-size:.88em;line-height:1.6;background:color-mix(in srgb,var(--accent) 7%,var(--surface));border:1px solid var(--line);border-radius:.5em;padding:.55em .75em;white-space:pre-wrap}
 .entry-answer b{color:var(--accent)}
 @media(max-width:30em){.entry-crop{flex:1 1 100%;width:100%;max-width:100%}.entry-crop img{max-height:11em;object-fit:contain}}
+/* 转写失败的条目（整理区第二轮反馈点 1，2026-09-08）：标红，跟正常条目一眼区分开，不用去翻转写折叠层 */
+.entry-failed{border-color:color-mix(in srgb,var(--bad) 45%,var(--line))}
+.btn-bad{border-color:var(--bad);color:var(--bad)}
+.btn-bad:hover{background:color-mix(in srgb,var(--bad) 10%,var(--surface))}
 /* 回收站列表：紧凑一行，不需要完整卡片那么重 */
 .trash-item{display:flex;gap:.6em;align-items:flex-start;padding:.55em 0;border-bottom:1px solid var(--line2)}
 .trash-item:last-child{border-bottom:none}
 .trash-item .txt{flex:1;min-width:0;font-size:.9em}
 .trash-item .txt .q{color:var(--mute);font-size:.9em}
+/* 批量工具栏（整理区第二轮反馈点 1）：勾选后浮出的操作条 */
+#npickbar{position:sticky;top:6.6em;z-index:3;background:color-mix(in srgb,var(--accent) 8%,var(--surface))}
+#npicklinks{display:flex;gap:.5em;flex-wrap:wrap;margin-top:.4em}
+/* 各模型用量表（管理台模型面板，点 2「彻底重做」）：字号收紧一点，避免这张卡片被表格撑得太宽 */
+[data-usagewrap] table.cmp{font-size:.82em;min-width:0}
+[data-usagewrap] th,[data-usagewrap] td{padding:.35em .5em}

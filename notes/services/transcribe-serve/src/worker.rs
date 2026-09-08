@@ -85,7 +85,7 @@ fn transcribe_entry(c: &Ctx<'_>, uuid: &str, e: &notecore::model::Entry) -> Resu
     let (marker, text) = if e.style == Style::Body { split_leading_marker(&t.text) } else { (None, t.text.clone()) };
     let draft = Draft { text: text.clone(), backend: c.vision.name().to_string(), at: c.now, hash: ink.hash.clone() };
     c.store.post_draft(uuid, &e.id, &draft, marker)?;
-    c.ledger.record_ok(t.prompt_tokens, t.completion_tokens, c.now);
+    c.ledger.record_ok(&c.cfg.usage_key(), t.prompt_tokens, t.completion_tokens, c.now);
     Ok(text)
 }
 
@@ -139,7 +139,7 @@ pub fn run_once(c: &Ctx<'_>, only: Option<Target<'_>>) -> RunReport {
                 }
                 Err(err) => {
                     r.failed += 1;
-                    c.ledger.record_fail(&err, c.now);
+                    c.ledger.record_fail(&c.cfg.usage_key(), &err, c.now);
                     c.failures.note(&b.uuid, &e.id, hash, &err, c.now);
                     if forced {
                         r.note = err;
@@ -217,7 +217,7 @@ mod tests {
         let posted = store.posted.lock().unwrap().clone();
         assert_eq!(posted[0].1, Draft { text: "背诵".into(), backend: "fixed".into(), at: 9, hash: "h1".into() });
         assert_eq!(posted[0].2, Some(Marker::Style(Style::Numbered)), "行首 1. → 有序，且标记剥掉");
-        assert_eq!(ledger.snapshot().ok, 2);
+        assert_eq!(ledger.snapshot().by_model[&cfg().usage_key()].ok, 2);
         // 第二轮：只剩 c；a/b 已有同指纹草稿不重做
         let r = run_once(&c, None);
         assert_eq!((r.scanned, r.done, r.left), (1, 1, 0));
@@ -285,6 +285,6 @@ mod tests {
         let r = run_once(&c, None);
         assert_eq!(r.failed, 3, "连续 3 次失败即停: {r:?}");
         assert!(r.note.contains("停止"));
-        assert_eq!(ledger.snapshot().last_error, "模拟失败");
+        assert_eq!(ledger.snapshot().by_model[&big.usage_key()].last_error, "模拟失败");
     }
 }

@@ -29,13 +29,13 @@ pub fn ask_entry(c: &Ctx<'_>, uuid: &str, e: &Entry) -> Result<String, String> {
     let reply = match c.model.ask(&prompt) {
         Ok(r) => r,
         Err(err) => {
-            c.ledger.record_fail(&err, c.now);
+            c.ledger.record_fail(&c.cfg.usage_key(), &err, c.now);
             return Err(err);
         }
     };
     let answer = Answer { text: reply.text.clone(), backend: c.model.name().to_string(), at: c.now, brief: question.to_string() };
     c.store.post_answer(uuid, &e.id, &answer)?;
-    c.ledger.record_ok(reply.prompt_tokens, reply.completion_tokens, c.now);
+    c.ledger.record_ok(&c.cfg.usage_key(), reply.prompt_tokens, reply.completion_tokens, c.now);
     Ok(reply.text)
 }
 
@@ -100,7 +100,8 @@ mod tests {
         let posted = store.posted.lock().unwrap();
         assert_eq!(posted.len(), 1);
         assert_eq!((posted[0].0.as_str(), posted[0].1.text.as_str(), posted[0].1.brief.as_str(), posted[0].1.backend.as_str()), ("e1", "答案文本", "这是谁", "fixed"));
-        assert_eq!((ledger.snapshot().ok, ledger.snapshot().calls), (1, 1));
+        let m = &ledger.snapshot().by_model[&cfg().usage_key()];
+        assert_eq!((m.ok, m.calls), (1, 1));
     }
 
     #[test]
@@ -124,6 +125,7 @@ mod tests {
         let err = ask_entry(&c, "u", &entry(true, Some("问题"))).unwrap_err();
         assert_eq!(err, "模拟失败");
         assert!(store.posted.lock().unwrap().is_empty());
-        assert_eq!((ledger.snapshot().failed, ledger.snapshot().last_error.as_str()), (1, "模拟失败"));
+        let m = &ledger.snapshot().by_model[&cfg().usage_key()];
+        assert_eq!((m.failed, m.last_error.as_str()), (1, "模拟失败"));
     }
 }
