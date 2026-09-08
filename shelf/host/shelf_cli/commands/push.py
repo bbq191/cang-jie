@@ -5,8 +5,11 @@
 - `--no-optimize`：不洗，原样传母版库（用户可在网页按需点优化）。
 - `--to-pdf`：定稿成固定版式 PDF（手写批注用），落母版库。
 - **漫画**（AZW3/MOBI/EPUB 里全是整页图，`comic.is_comic` 自动判，`--comic/--no-comic` 覆盖；CBZ 天然）：不走洗书路，
-  只出 **CBZ**（原图按页打包）进母版库，去向是 KOReader 漫画模式。**漫画不投原生**（用户 2026-09-05 定）：xochitl 没有固定页
-  漫画体验，且整本几百 MB 撞 `/upload` 体积上限（《镖人》282MB EPUB / 188MB PDF 都被 "multipart body is too large" 拒）。
+  出 **CBZ**（原图按页打包，跨页图自动拆分+白边裁切）进母版库，去向 KOReader 漫画模式。大部头**漫画默认不投原生**
+  （用户 2026-09-05 定）：xochitl 没有固定页漫画体验，且整本几百 MB 撞 `/upload` 体积上限（《镖人》282MB EPUB /
+  188MB PDF 都被 "multipart body is too large" 拒）——**但灰阶 CBZ 估算转 PDF 后还在设备原生上传上限内的小体积
+  漫画，会顺带多出一份 PDF 一起落库**，母版库里就多一个「投入原生书库」的选项（不强制分卷，超限的照旧只有
+  CBZ，`--no-comic-native` 关掉这条，2026-09-08）。
 无 Calibre → 原样传母版库（设备端优化在网页母版库里点）。
 规则与网页一致：**所有书只落母版库**，没有绕过母版库直投读器的选项（2026-09-05 用户定）。
 """
@@ -72,6 +75,10 @@ def add_args(p):
     g2 = p.add_mutually_exclusive_group()
     g2.add_argument("--eink-gray", dest="eink_gray", action="store_true", default=True, help="漫画省刷新档（缺省开）：CBZ 逐页缩屏盒，黑白页转 16 灰抖动 4-bit PNG（轻波形、翻页明显少闪），彩页保色")
     g2.add_argument("--no-eink-gray", dest="eink_gray", action="store_false", help="漫画不转 16 灰，原图 CBZ")
+    p.add_argument("--manga-ltr", action="store_true", help="漫画跨页拆分按从左往右排（缺省从右往左，东亚漫画传统）")
+    g3 = p.add_mutually_exclusive_group()
+    g3.add_argument("--comic-native", dest="comic_native", action="store_true", default=True, help="漫画灰阶 CBZ 估算转 PDF 后在原生上传上限内就顺带出份 PDF，多一个「投入原生书库」选项（缺省开）")
+    g3.add_argument("--no-comic-native", dest="comic_native", action="store_false", help="漫画一律只出 CBZ，不生成投原生用的 PDF")
     p.add_argument("--no-split", action="store_true", help="大 PDF 不分卷")
     p.add_argument("--require-toc", action="store_true", help="洗书体检要求有目录")
     p.add_argument("--skip-check", action="store_true", help="跳过 check_output.py 体检（缺省不过不推）")
@@ -90,22 +97,64 @@ def _gate(out: Path, args) -> None:
         raise cb.CalibreError("体检未通过，未推送（--skip-check 强推）")
 
 
-def comic_prepare(path: Path, work: Path, args=None) -> list[Path]:
-    """漫画通道：→ CBZ 落母版库，去向 KOReader（漫画不投原生）。缺省再过 16 灰省刷新档（用户 2026-09-06 目视少闪后定默认开；
-    `--no-eink-gray` 关）；16 灰失败（如没 Pillow）退回原图 CBZ 并提示，不挡推送。"""
+def _mb(n: float) -> str:
+    return f"{n / 2**20:.1f}MB"
+
+
+# 灰阶 CBZ → PDF 实测体积膨胀约 1.45×（PNG 页解码后走纯 zlib 压缩，没有 PNG 自己的逐行预测滤波，
+# 压缩率不如原 PNG；JPEG 彩页原样直嵌不膨胀，但漫画多数是黑白页）——留点余量按 1.5× 估算，宁可保守
+# 少生成几次 PDF，也不要估漏了传上去被设备拒。
+NATIVE_PDF_SIZE_FACTOR = 1.5
+# 跟 book-serve `BookConfig::default()` 的 `native_upload_limit_mb` 一致；那边改了要手动同步。
+NATIVE_LIMIT_FALLBACK_MB = 150
+
+
+def _native_limit_bytes(ctx) -> int:
+    """查询设备当前原生上传上限（book-serve `/api/books/status` 的 `nativeUploadLimitBytes`）；查不到
+    （设备不可达/字段缺）就退回跟 book-serve 缺省值一致的静态兜底——查询失败不阻断推送，只是这次拿不到
+    「顺带出 PDF」这个加分项，纯 CBZ 照常传。"""
+    try:
+        v = ctx.transport.get("/api/books/status").get("nativeUploadLimitBytes")
+        if isinstance(v, (int, float)) and v > 0:
+            return int(v)
+    except Exception:  # noqa: BLE001
+        pass
+    return NATIVE_LIMIT_FALLBACK_MB * 1024 * 1024
+
+
+def comic_prepare(path: Path, work: Path, args=None, ctx=None) -> list[Path]:
+    """漫画通道：→ CBZ 落母版库，去向 KOReader。缺省再过 16 灰省刷新档（含跨页拆分+白边裁切，用户
+    2026-09-06 目视少闪后定默认开；`--no-eink-gray` 关，跨页拆分/白边裁切也跟着不做）；16 灰失败
+    （如没 Pillow）退回原图 CBZ 并提示，不挡推送。灰阶 CBZ 估算转 PDF 后仍在设备原生上传上限内，
+    就顺带转一份 PDF 一起落库——小体积漫画因此多一个「投入原生书库」的选项，大的照旧只有
+    CBZ/KOReader，不强制分卷（`ctx` 缺失/`--no-comic-native` 时跳过这一步，2026-09-08）。"""
     if path.suffix.lower() == ".cbz":
         cbz = path
     else:
         cbz = cb.comic2cbz(path, work / (path.stem + ".cbz"))
-        print("  漫画 → CBZ（加入 KOReader；漫画不投原生）")
+        print("  漫画 → CBZ（加入 KOReader）")
     if getattr(args, "eink_gray", True):
         try:
-            cbz, st = cb.comic_gray(cbz, work / (path.stem + ".gray.cbz"))
-            mb = lambda n: f"{n / 2**20:.1f}MB"  # noqa: E731
-            print(f"  省刷新档：16 灰 {st['gray']} 页 / 保色 {st['color']} 页；体积 {mb(st['bytes_in'])} → {mb(st['bytes_out'])}")
+            cbz, st = cb.comic_gray(cbz, work / (path.stem + ".gray.cbz"), rtl=not getattr(args, "manga_ltr", False))
+            print(f"  省刷新档：拆跨页 {st.get('split', 0)} 页 / 16 灰 {st['gray']} 页 / 保色 {st['color']} 页；体积 {_mb(st['bytes_in'])} → {_mb(st['bytes_out'])}")
+            for f in st.get("flagged", []):
+                print(f"  ⚠ {f}")
         except cb.CalibreError as e:
             print(f"  ⚠ 16 灰失败，按原图 CBZ 推（{str(e)[:160]}）")
-    return [cbz]
+    out = [cbz]
+    if getattr(args, "comic_native", True) and ctx is not None:
+        limit = _native_limit_bytes(ctx)
+        size = cbz.stat().st_size
+        if size * NATIVE_PDF_SIZE_FACTOR <= limit:
+            try:
+                pdf = cb.cbz_to_pdf(cbz, work / (path.stem + ".pdf"))
+                print(f"  体积估算在原生上传上限内（{_mb(limit)}）→ 顺带出一份 PDF（{_mb(pdf.stat().st_size)}），母版库多一个「投入原生书库」的选项")
+                out.append(pdf)
+            except cb.CalibreError as e:
+                print(f"  ⚠ 生成投原生用 PDF 失败，仍保留 CBZ（{str(e)[:160]}）")
+        else:
+            print(f"  体积估算超原生上传上限（{_mb(limit)}），只出 CBZ（KOReader）——不强制分卷投原生")
+    return out
 
 
 def is_comic(path: Path, args) -> bool:
@@ -123,11 +172,11 @@ def txt_prepare(path: Path, work: Path, wenv: dict | None) -> Path:
     return cb.wash(epub, work, env={**(wenv or {}), "WASH_AUTOTOC": "0"})
 
 
-def host_prepare(path: Path, args, work: Path) -> list[Path]:
+def host_prepare(path: Path, args, work: Path, ctx=None) -> list[Path]:
     """host 洗书：默认 EPUB 深洗 / 杂格式转 EPUB / TXT 切章 / PDF 结构化重排；--to-pdf 定稿 PDF；漫画走 comic_prepare。产物待落母版库。"""
     suf = path.suffix.lower()
     if is_comic(path, args):
-        return comic_prepare(path, work)
+        return comic_prepare(path, work, args, ctx)
     wenv = {"WASH_KEEP_PARA_SPACING": "1"} if getattr(args, "keep_spacing", False) else None  # 与网页档位对齐
     if suf == ".txt":
         out = txt_prepare(path, work, wenv)
@@ -197,14 +246,16 @@ def run(args, ctx) -> int:
         if args.dry_run:
             continue
         try:
-            outs = [path] if route == "raw" else comic_prepare(path, work, args) if route == "comic" else host_prepare(path, args, work)
+            outs = [path] if route == "raw" else comic_prepare(path, work, args, ctx) if route == "comic" else host_prepare(path, args, work, ctx)
         except cb.CalibreError as e:
             print(f"✗ {path.name}: {e}")
             rc = 1
             continue
         final: list[Path] = []
         for o in outs:
-            if not args.no_split and o.suffix.lower() == ".pdf" and pdfsplit.needs_split(o, ctx.config.split_pdf_mb):
+            # 漫画通道出的 PDF（体积已经卡过原生上限才生成，见 comic_prepare）绝不分卷——分卷跟这条路径无关，
+            # 用户要的是"不分卷、装不下就别投原生"，分卷了还硬投原生正是 §03t 被否决掉的那个方案。
+            if route != "comic" and not args.no_split and o.suffix.lower() == ".pdf" and pdfsplit.needs_split(o, ctx.config.split_pdf_mb):
                 parts = pdfsplit.split(o, ctx.config.split_pdf_mb, work)
                 if len(parts) > 1:
                     print(f"  分卷 {len(parts)} 份（>{ctx.config.split_pdf_mb}MB）")

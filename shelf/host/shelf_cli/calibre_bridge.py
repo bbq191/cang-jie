@@ -109,9 +109,15 @@ def check(path: Path, require_toc: bool = False) -> tuple[bool, str]:
     return r.returncode == 0, (r.stdout + r.stderr).strip()
 
 
-def comic_gray(src: Path, out: Path) -> tuple[Path, dict]:
-    """漫画省刷新档：CBZ → 16 灰 CBZ（comic_gray.py，Pillow 走 uv calibre 组）。返回 (产物, {pages,gray,color,bytes_in,bytes_out})。"""
-    d = _run_json([*py_with_pymupdf(), str(CALIBRE_DIR / "comic_gray.py"), str(src), str(out)], "comic_gray.py")
+def comic_gray(src: Path, out: Path, rtl: bool = True) -> tuple[Path, dict]:
+    """漫画省刷新档 + 跨页拆分 + 白边裁切：CBZ → CBZ（comic_gray.py，Pillow 走 uv calibre 组）。
+    `rtl=False` 时跨页拆分按从左往右排（`--ltr`；缺省从右往左，东亚漫画传统）。
+    返回 (产物, {pages,split,gray,color,bytes_in,bytes_out,flagged})。"""
+    cmd = [*py_with_pymupdf(), str(CALIBRE_DIR / "comic_gray.py")]
+    if not rtl:
+        cmd.append("--ltr")
+    cmd += [str(src), str(out)]
+    d = _run_json(cmd, "comic_gray.py")
     if not out.is_file():
         raise CalibreError("comic_gray.py 未产出 CBZ")
     return out, d
@@ -121,6 +127,34 @@ def txt_to_epub(src: Path, outdir: Path) -> tuple[Path, dict]:
     """中文 TXT → 带目录 EPUB（txt_to_epub.py，stdlib）。返回 (产物, 元数据 {chapters, volumes, encoding, detected,…})。"""
     d = _run_json(["python3", str(CALIBRE_DIR / "txt_to_epub.py"), str(src), str(outdir)], "txt_to_epub.py")
     return Path(d["out"]), d
+
+
+CBZ2PDF_BIN_ENV = "CBZ2PDF_BIN"
+
+
+def _cbz2pdf_bin() -> str | None:
+    """定位编译好的 `cbz2pdf`：环境变量覆盖 → PATH → `shelf/target/release/` 兜底（照抄 wash_epub.sh
+    找 epub-optimize 的顺序）。"""
+    env = os.environ.get(CBZ2PDF_BIN_ENV)
+    if env:
+        return env
+    found = shutil.which("cbz2pdf", path=clean_env().get("PATH"))
+    if found:
+        return found
+    fallback = REPO_ROOT / "shelf" / "target" / "release" / "cbz2pdf"
+    return str(fallback) if fallback.is_file() else None
+
+
+def cbz_to_pdf(src: Path, out: Path) -> Path:
+    """漫画 CBZ → 固定版式 PDF（`cbz2pdf` bin，包 `bookconv::convert::cbz::cbz_to_pdf`）。喂给它的该是
+    已经过 `comic_gray` 处理的 CBZ——缺省 `--off` 档原样直嵌，不重新抖动，避免二次处理损画质。"""
+    bin_path = _cbz2pdf_bin()
+    if not bin_path:
+        raise CalibreError(f"找不到 cbz2pdf（{CBZ2PDF_BIN_ENV} 指定路径 / PATH / shelf/target/release/ 都没有）；" "先 cd shelf && cargo build --release -p bookconv --bin cbz2pdf")
+    r = _run([bin_path, str(src), str(out)])
+    if r.returncode != 0 or not out.is_file():
+        raise CalibreError(f"cbz2pdf 失败（rc={r.returncode}）：{r.stderr.strip()[-800:]}")
+    return out
 
 
 def comic2cbz(src: Path, out: Path) -> Path:

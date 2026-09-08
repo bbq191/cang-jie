@@ -172,7 +172,12 @@ def test_push_cbz_with_eink_gray_routes_comic_and_calls_gray(gateway, tmp_path, 
     gray.write_bytes(b"PK\x03\x04g")
     calls = []
     monkeypatch.setattr(cb, "has_calibre", lambda: False)
-    monkeypatch.setattr(cb, "comic_gray", lambda s, o: (calls.append((s.name, o.name)) or (gray, {"pages": 3, "gray": 2, "color": 1, "bytes_in": 300, "bytes_out": 450})))
+    monkeypatch.setattr(cb, "comic_gray", lambda s, o, rtl=True: (calls.append((s.name, o.name)) or (gray, {"pages": 3, "split": 0, "gray": 2, "color": 1, "bytes_in": 300, "bytes_out": 450, "flagged": []})))
+
+    def _no_pdf(s, o):  # 这个测试不关心投原生 PDF 这条支线，交给 test_push.py 专门测
+        raise cb.CalibreError("mock: skip native-pdf in this test")
+
+    monkeypatch.setattr(cb, "cbz_to_pdf", _no_pdf)
     FakeGateway.received.clear()
     rc, out = run(["push", str(src)], gateway, capsys)  # 缺省开
     assert rc == 0 and calls == [("manga.cbz", "manga.gray.cbz")] and "16 灰 2 页" in out and "保色 1 页" in out
