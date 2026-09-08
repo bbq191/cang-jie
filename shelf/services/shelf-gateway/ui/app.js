@@ -277,6 +277,13 @@ function renderNotes(sec){sec.innerHTML=`
   const cropUrl=(uuid,f)=>`/api/ink/books/${encodeURIComponent(uuid)}/crops/${encodeURIComponent(f)}`;
   const cropHtml=e=>e.ink&&e.ink.crop?`<img src="${cropUrl(book.uuid,e.ink.crop)}" alt="手写批注裁图">`:'<div class="empty">（无裁图，纯勾画）</div>';
   const patch=async(id,body)=>{const r=await postJ(`/api/ink/books/${encodeURIComponent(book.uuid)}/entries/${encodeURIComponent(id)}`,body);if(r.ok===false)alert(r.message||'保存失败')};
+  /* 编辑区文本失焦才存（`onchange`），但点旁边的按钮（重转/去处/问AI…）会先让文本框失焦触发保存，
+     两件事几乎同时各发一个 HTTP 请求，谁先到服务端不一定——按钮那次的收尾动作会拉新数据整页重画，
+     如果保存请求还没落地，重画拿到的还是旧文本，编辑就跟着"消失"了（用户反馈"改了内容点重转不存"）。
+     用一个 pendingText 记住"还没确认存上"的最新值，任何会拉新数据重画的动作之前先 flush 一遍，
+     保证读到的一定是最新的。 */
+  const pendingText=new Map();
+  const flushPendingText=async()=>{if(!book||!pendingText.size)return;const items=[...pendingText];pendingText.clear();for(const[id,val]of items)await patch(id,{text:val})};
   const trashList=$('#ntrashlist',sec),trashSum=$('#ntrashsum',sec);
   const TRASH_STATUSES=['skipped','revoked','archived'];
   /* 回收站（点 3）：不是一个只会清空的黑盒按钮——列出「不需要」「不要了」「已撤销」的条目实际内容，
@@ -294,32 +301,33 @@ function renderNotes(sec){sec.innerHTML=`
       row.innerHTML=`<span class="badge">${STATUS_NAMES[e.status]||e.status}</span>
         <div class="txt">p.${e.page_index+1}${e.chapter_title?' · '+e.chapter_title:''}<br><span class="q">${text}</span>${e.status==='revoked'?'<br><span class="small">笔画可能已在设备上被擦——恢复只找回已保存的内容，不会让笔迹重新出现在原页面</span>':''}</div>
         <button class="btn" data-restore>恢复</button>`;
-      row.querySelector('[data-restore]').onclick=async()=>{if(!(await restoreOne(e.id)))return;book=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}`);renderTrash();renderBrowse();renderBook()};
+      row.querySelector('[data-restore]').onclick=async()=>{if(!(await restoreOne(e.id)))return;await flushPendingText();book=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}`);renderTrash();renderBrowse();renderBook()};
       trashList.appendChild(row)})};
   $('#nrestoreall',sec).onclick=async()=>{if(!book)return;
     const items=(book.entries||[]).filter(e=>TRASH_STATUSES.includes(e.status));
     if(!items.length){alert('回收站是空的，没什么可恢复');return}
     if(!confirm(`把这 ${items.length} 条都恢复？`))return;
     for(const e of items)await restoreOne(e.id);
-    book=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}`);renderTrash();renderBrowse();renderBook()};
+    await flushPendingText();book=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}`);renderTrash();renderBrowse();renderBook()};
   /* 浏览态动作：Mined→Pending（转入笔记）/ Mined→Skipped（不需要），见 ink-serve::triage。三个子视图都要重画（条目跨视图搬家）。 */
   const triage=async(id,action)=>{const r=await postJ(`/api/ink/books/${encodeURIComponent(book.uuid)}/entries/${encodeURIComponent(id)}/${action}`,{});if(r.ok===false)return;
-    book=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}`);renderBrowse();renderBook();renderTrash()};
+    await flushPendingText();book=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}`);renderBrowse();renderBook();renderTrash()};
   const updateSummary=()=>{if(!book){sum.textContent='';return}const es=book.entries||[];
     const c=st=>es.filter(e=>e.status===st).length;
     sum.textContent=`待浏览 ${c('mined')} · 待转写 ${c('pending')} · 待校对 ${c('draft')} · 已校对 ${c('reviewed')}`};
-  $('#nrescan',sec).onclick=async()=>{if(!book)return;await postJ(`/api/ink/books/${encodeURIComponent(book.uuid)}/rescan`,{});refresh()};
+  $('#nrescan',sec).onclick=async()=>{if(!book)return;await flushPendingText();await postJ(`/api/ink/books/${encodeURIComponent(book.uuid)}/rescan`,{});refresh()};
   $('#npurge',sec).onclick=async()=>{if(!book)return;
     const items=(book.entries||[]).filter(e=>TRASH_STATUSES.includes(e.status));
     if(!items.length){alert('回收站是空的，没什么可清');return}
     if(!confirm(`永久清掉这 ${items.length} 条（已跳过/已删除/已撤销），条目库里再也找不回——确定？`))return;
+    await flushPendingText();
     const r=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}/purge`,{method:'POST'});
     if(r.ok===false){alert(r.message||'清空失败');return}
     book=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}`);renderTrash();refresh()};
   /* 「不要了」（三期）：转 Archived，两处投影都摘掉，条目库里软删留痕（真删靠「回收站」清空）。 */
-  const archiveEntry=async(id)=>{if(!confirm('这条不要了？（设备笔记本、Obsidian 导出都会摘掉；条目还留在「回收站」，能看到但没有撤销按钮）'))return;
+  const archiveEntry=async(id)=>{if(!confirm('这条不要了？（设备笔记本、Obsidian 导出都会摘掉；条目还留在「回收站」，能看到也能恢复）'))return;
     const r=await postJ(`/api/ink/books/${encodeURIComponent(book.uuid)}/entries/${encodeURIComponent(id)}/archive`,{});if(r.ok===false)return;
-    book=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}`);renderBook();renderTrash()};
+    await flushPendingText();book=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}`);renderBook();renderTrash()};
   /* 浏览：按页分组、只列 Mined（待决定的），最近变更的页在前；转入笔记/不需要两个按钮直接调 triage。 */
   const renderBrowse=()=>{browse.innerHTML='';if(!book)return;updateSummary();
     const mined=(book.entries||[]).filter(e=>e.status==='mined');
@@ -353,11 +361,12 @@ function renderNotes(sec){sec.innerHTML=`
   const pickbar=$('#npickbar',sec),pickcount=$('#npickcount',sec),pickmsg=$('#npickmsg',sec),picklinks=$('#npicklinks',sec);
   const syncPickbar=()=>{pickbar.hidden=picked.size===0;pickcount.textContent=`已选 ${picked.size} 条`};
   const selectedEntries=()=>(book&&book.entries||[]).filter(e=>picked.has(e.id));
-  const renderBook=async()=>{chaps.innerHTML='';if(!book){syncPickbar();return}updateSummary();
+  const renderBook=async()=>{if(!book){chaps.innerHTML='';syncPickbar();return}updateSummary();
     const trst=await j('/api/transcribe/status');
     const failedIds=new Set((trst.failures||[]).filter(f=>f.book===book.uuid).map(f=>f.id));
     const live=(book.entries||[]).filter(e=>['pending','draft','reviewed'].includes(e.status));
     const groups=new Map();live.forEach(e=>{const k=e.chapter==null?-1:e.chapter;if(!groups.has(k))groups.set(k,[]);groups.get(k).push(e)});
+    chaps.innerHTML='';   // 清空放到网络请求（查失败清单）之后、紧接着同步重建，列表不会有中间空档闪一下
     [...groups.keys()].sort((a,b)=>a-b).forEach(k=>{const es=groups.get(k).sort((a,b)=>a.page_index-b.page_index||(a.ink?a.ink.bbox[1]:0)-(b.ink?b.ink.bbox[1]:0));
       const card=document.createElement('div');card.className='card';
       card.innerHTML=`<h3 style="margin-top:0">${k<0?'（未归章）':`第 ${k+1} 章 · ${es[0].chapter_title||''}`} <span class="small">${es.length} 条</span>${k>=0?' <button class="btn" data-selall style="padding:.15em .6em;font-size:.8em">全选本章</button>':''}</h3>`;
@@ -392,11 +401,13 @@ function renderNotes(sec){sec.innerHTML=`
             </div>
           </div>`;
         row.querySelector('[data-pick]').onchange=ev=>{if(ev.target.checked)picked.add(e.id);else picked.delete(e.id);syncPickbar()};
-        row.querySelector('textarea').onchange=ev=>patch(e.id,{text:ev.target.value});
-        row.querySelector('[data-dest]').onclick=async()=>{const next=DEST_ORDER[(DEST_ORDER.indexOf(dv)+1)%3];await patch(e.id,{destination:next});book=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}`);renderBook()};
+        const ta=row.querySelector('textarea');
+        ta.oninput=ev=>pendingText.set(e.id,ev.target.value);   // 还没失焦确认，先记住最新值，别的动作重画前会先冲掉
+        ta.onchange=ev=>{pendingText.delete(e.id);patch(e.id,{text:ev.target.value})};
+        row.querySelector('[data-dest]').onclick=async()=>{const next=DEST_ORDER[(DEST_ORDER.indexOf(dv)+1)%3];await patch(e.id,{destination:next});await flushPendingText();book=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}`);renderBook()};
         row.querySelector('[data-archive]').onclick=()=>archiveEntry(e.id);
         const tb=row.querySelector('[data-transcribe]');
-        if(tb)tb.onclick=async()=>{tb.disabled=true;const r=await j(`/api/transcribe/books/${encodeURIComponent(book.uuid)}/entries/${encodeURIComponent(e.id)}`,{method:'POST'});tb.disabled=false;if(r.ok===false)alert(r.message||'转写失败');book=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}`);renderBook()};
+        if(tb)tb.onclick=async()=>{tb.disabled=true;const r=await j(`/api/transcribe/books/${encodeURIComponent(book.uuid)}/entries/${encodeURIComponent(e.id)}`,{method:'POST'});tb.disabled=false;if(r.ok===false)alert(r.message||'转写失败');await flushPendingText();book=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}`);renderBook()};
         /* 「问AI」勾选框 + 问题 + 提问按钮：改即存（ink-serve），点提问才真的调 mind-serve。 */
         const askBox=row.querySelector('[data-ask]'),qInput=row.querySelector('[data-question]'),askBtn=row.querySelector('[data-askbtn]');
         const syncAskUi=()=>{qInput.disabled=!askBox.checked;askBtn.disabled=!(askBox.checked&&qInput.value.trim())};
@@ -405,7 +416,7 @@ function renderNotes(sec){sec.innerHTML=`
         askBtn.onclick=async()=>{askBtn.disabled=true;askBtn.textContent='提问中…';
           const r=await j(`/api/mind/books/${encodeURIComponent(book.uuid)}/entries/${encodeURIComponent(e.id)}/ask`,{method:'POST'});
           askBtn.disabled=false;askBtn.textContent='提问';
-          if(r.ok===false)alert(r.message||'提问失败');else{book=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}`);renderBook()}};
+          if(r.ok===false)alert(r.message||'提问失败');else{await flushPendingText();book=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}`);renderBook()}};
         card.appendChild(row)});
       chaps.appendChild(card)});
     syncPickbar()};
@@ -415,11 +426,11 @@ function renderNotes(sec){sec.innerHTML=`
      （那才是真正的用户手势，不会被拦）。 */
   const pickChapters=()=>[...new Set(selectedEntries().filter(e=>e.chapter!=null).map(e=>e.chapter))].sort((a,b)=>a-b);
   $('[data-pick-gen]',sec).onclick=async()=>{const chs=pickChapters();if(!chs.length){pickmsg.textContent='选中的条目都没有归章，没法生成笔记本';return}
-    pickmsg.textContent='生成中…';let ok=0,fail=0;
+    await flushPendingText();pickmsg.textContent='生成中…';let ok=0,fail=0;
     for(const k of chs){const r=await j(`/api/notes/books/${encodeURIComponent(book.uuid)}/chapters/${k}/generate`,{method:'POST'});const c=(r.chapters&&r.chapters[0])||{};if(r.ok===false||c.status==='failed')fail++;else ok++}
     pickmsg.textContent=`✓ 完成 ${ok} 章${fail?`，失败 ${fail} 章`:''}`};
   $('[data-pick-exp]',sec).onclick=async()=>{const chs=pickChapters();if(!chs.length){pickmsg.textContent='选中的条目都没有归章，没法导出';return}
-    pickmsg.textContent='导出中…';picklinks.innerHTML='';let ok=0;
+    await flushPendingText();pickmsg.textContent='导出中…';picklinks.innerHTML='';let ok=0;
     for(const k of chs){const r=await j(`/api/notes/books/${encodeURIComponent(book.uuid)}/chapters/${k}/export`,{method:'POST'});
       if(r.ok===false||!r.wrote)continue;ok++;
       const b=document.createElement('button');b.className='btn';b.textContent=`⬇ 下载第 ${k+1} 章`;
@@ -428,33 +439,38 @@ function renderNotes(sec){sec.innerHTML=`
     pickmsg.textContent=ok?`✓ 已导出 ${ok} 章，点下面的按钮逐个下载`:'（选中的章节都没有去处含 Obsidian 的条目）'};
   $('[data-pick-retry]',sec).onclick=async()=>{const ids=selectedEntries().filter(e=>e.ink&&e.ink.crop).map(e=>e.id);
     if(!ids.length){pickmsg.textContent='选中的条目都没有手写裁图，没法转写';return}
-    let ok=0,fail=0;for(const[i,id]of ids.entries()){pickmsg.textContent=`转写中…（${i+1}/${ids.length}）`;
+    await flushPendingText();let ok=0,fail=0;for(const[i,id]of ids.entries()){pickmsg.textContent=`转写中…（${i+1}/${ids.length}）`;
       const r=await j(`/api/transcribe/books/${encodeURIComponent(book.uuid)}/entries/${encodeURIComponent(id)}`,{method:'POST'});if(r.ok===false)fail++;else ok++}
-    pickmsg.textContent=`✓ 成 ${ok} 败 ${fail}`;book=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}`);renderBook()};
+    pickmsg.textContent=`✓ 成 ${ok} 败 ${fail}`;await flushPendingText();book=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}`);renderBook()};
   $('[data-pick-archive]',sec).onclick=async()=>{const ids=[...picked];if(!ids.length)return;
     if(!confirm(`这 ${ids.length} 条都不要了？（设备笔记本、Obsidian 导出都会摘掉；条目还留在「回收站」，能看到也能恢复）`))return;
     for(const id of ids)await postJ(`/api/ink/books/${encodeURIComponent(book.uuid)}/entries/${encodeURIComponent(id)}/archive`,{});
-    picked.clear();book=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}`);renderBook();renderTrash()};
+    picked.clear();await flushPendingText();book=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}`);renderBook();renderTrash()};
   $('[data-pick-clear]',sec).onclick=()=>{picked.clear();pickmsg.textContent='';picklinks.innerHTML='';renderBook()};
-  const loadBook=async()=>{picked.clear();if(!sel.value){book=null;renderBrowse();await renderBook();renderTrash();return}book=await j(`/api/ink/books/${encodeURIComponent(sel.value)}`);renderBrowse();await renderBook();renderTrash()};
+  const loadBook=async()=>{await flushPendingText();picked.clear();if(!sel.value){book=null;renderBrowse();await renderBook();renderTrash();return}book=await j(`/api/ink/books/${encodeURIComponent(sel.value)}`);renderBrowse();await renderBook();renderTrash()};
   sel.onchange=loadBook;
   const refresh=async()=>{const d=await j('/api/ink/books');const cur=sel.value;sel.innerHTML=(d.items||[]).map(b=>`<option value="${b.uuid}">${b.title}（${b.entries}）</option>`).join('')||'<option value="">（还没有勾画过的书）</option>';
     if(cur&&[...sel.options].some(o=>o.value===cur))sel.value=cur;await loadBook()};
   refresh();sec.refresh=refresh;subtabs(sec)}
 
-/* 模型管理卡片（点 2「彻底重做」，「管理」tab 用，transcribe/mind 共用同一套 UI，2026-09-08 第二轮反馈）：
-   预置下拉现在横跨 DashScope/OpenAI/Gemini/DeepSeek 四家（不用自己填地址，选"自定义"才露出手填
-   model/baseUrl）；key 按厂商分开存、脱敏后只剩「删除」，没配 key 时才给输入框——不允许在已有 key 时
-   直接改写覆盖，逼着"先删再填"；切换预置不会丢别的厂商已存的 key（服务端按 provider 分格）。
-   新增：每个模型自己的用量+花费一行（`usageByModel`，花费＝用户自填单价×token，没填单价不显示金额，
-   见 config.rs 模块文档"花费不做官方定价表"——第三方定价常变，不猜）；`showAuto` 给 transcribe 用，
-   多一个"合书自动转写"开关（这是模型服务级别的设置，原来在「整理」页的折叠层已经去掉，见 renderNotes）。
-   返回一个 refresh 函数，挂到 tab 的 sec.refresh 上，切回这个 tab 时数据不过期。 */
+const PROVIDER_NAMES={dashscope:'DashScope（阿里云百炼）',openai:'OpenAI',gemini:'Google Gemini',deepseek:'DeepSeek'};
+/* 模型管理卡片（点 2「彻底重做」，「管理」tab 用，transcribe/mind 共用同一套 UI，2026-09-08 第二轮反馈；
+   2026-09-08 又一轮反馈：厂家/模型拆成两级下拉，别把七八个不同厂家的模型糊在一个框里选）：
+   第一级「厂家」下拉（DashScope/OpenAI/Gemini/DeepSeek/自定义），第二级「模型」下拉只列选中厂家的
+   模型——选厂家会自动定位到该厂家的第一个模型（服务端 `preset` 立即原子切换，不用再点一次确认）；
+   选"自定义"隐藏模型下拉、露出手填 model/baseUrl。key 按厂商分开存、脱敏后只剩「删除」，没配 key
+   时才给输入框——不允许在已有 key 时直接改写覆盖，逼着"先删再填"；切换预置不会丢别的厂商已存的 key
+   （服务端按 provider 分格）。每个模型自己的用量+花费一行（`usageByModel`，花费＝用户自填单价×token，
+   没填单价不显示金额，见 config.rs 模块文档"花费不做官方定价表"——第三方定价常变，不猜）；`showAuto`
+   给 transcribe 用，多一个"合书自动转写"开关（模型服务级别的设置，原来在「整理」页的折叠层已经去掉，
+   见 renderNotes）。返回一个 refresh 函数，挂到 tab 的 sec.refresh 上，切回这个 tab 时数据不过期。 */
 function mountModelPanel(root,seg,title,icon,showAuto){
-  const card=document.createElement('div');card.className='card';card.style.cssText='flex:1;min-width:18em;margin:0';
+  const card=document.createElement('div');card.className='card';card.style.cssText='width:100%;margin:0';
   card.innerHTML=`<h3 style="margin-top:0">${icon} ${title}</h3>
-    <label class="field">模型</label>
-    <select data-preset style="width:100%"></select>
+    <div class="row">
+      <div style="flex:1;min-width:11em"><label class="field">厂家</label><select data-vendor style="width:100%"></select></div>
+      <div style="flex:1;min-width:11em" data-modelbox><label class="field">模型</label><select data-preset style="width:100%"></select></div>
+    </div>
     <div class="row" data-custom hidden>
       <input type="text" data-model placeholder="模型名" style="max-width:11em">
       <input type="text" data-url placeholder="OpenAI 兼容口 baseUrl" style="flex:1;min-width:12em">
@@ -473,19 +489,25 @@ function mountModelPanel(root,seg,title,icon,showAuto){
     <div class="tblwrap" data-usagewrap><table class="cmp"><thead><tr><th>模型</th><th>调用</th><th>token（入/出）</th><th>花费</th></tr></thead><tbody data-usagebody></tbody></table></div>
     <div class="small" data-stat style="margin-top:.3em"></div>`;
   root.appendChild(card);
-  const presetSel=card.querySelector('[data-preset]'),customBox=card.querySelector('[data-custom]'),modelInp=card.querySelector('[data-model]'),urlInp=card.querySelector('[data-url]'),keyRow=card.querySelector('[data-keyrow]'),stat=card.querySelector('[data-stat]'),autoBox=card.querySelector('[data-auto]'),priceIn=card.querySelector('[data-pricein]'),priceOut=card.querySelector('[data-priceout]'),usageBody=card.querySelector('[data-usagebody]');
+  const vendorSel=card.querySelector('[data-vendor]'),modelBox=card.querySelector('[data-modelbox]'),presetSel=card.querySelector('[data-preset]'),customBox=card.querySelector('[data-custom]'),modelInp=card.querySelector('[data-model]'),urlInp=card.querySelector('[data-url]'),keyRow=card.querySelector('[data-keyrow]'),stat=card.querySelector('[data-stat]'),autoBox=card.querySelector('[data-auto]'),priceIn=card.querySelector('[data-pricein]'),priceOut=card.querySelector('[data-priceout]'),usageBody=card.querySelector('[data-usagebody]');
   const put=body=>j(`/api/${seg}/config`,{method:'PUT',body:JSON.stringify(body)});
   const fmtCost=c=>c==null?'（未填单价）':'¥'+c.toFixed(4);
+  let presets=[];
+  const modelsOf=v=>presets.filter(p=>p.provider===v);
   const refresh=async()=>{
     const st=await j(`/api/${seg}/status`);
-    if(st.ok===false){stat.textContent='服务未就绪：'+(st.message||'安装/开启该服务后再配');presetSel.disabled=true;keyRow.innerHTML='';usageBody.innerHTML='';return}
+    if(st.ok===false){stat.textContent='服务未就绪：'+(st.message||'安装/开启该服务后再配');vendorSel.disabled=true;keyRow.innerHTML='';usageBody.innerHTML='';return}
     const c=st.config||{};
-    presetSel.disabled=false;
-    presetSel.innerHTML=(c.presets||[]).map(p=>`<option value="${p.id}">${p.label}</option>`).join('')+'<option value="custom">自定义（手填地址）</option>';
-    presetSel.value=c.activePreset||'custom';
-    const isCustom=presetSel.value==='custom';
-    customBox.hidden=!isCustom;
+    presets=c.presets||[];
+    vendorSel.disabled=false;
+    const vendors=[...new Set(presets.map(p=>p.provider))];
+    vendorSel.innerHTML=vendors.map(v=>`<option value="${v}">${PROVIDER_NAMES[v]||v}</option>`).join('')+'<option value="custom">自定义（手填地址）</option>';
+    const activeVendor=c.activePreset==='custom'?'custom':(presets.find(p=>p.id===c.activePreset)||{}).provider||'custom';
+    vendorSel.value=activeVendor;
+    const isCustom=activeVendor==='custom';
+    customBox.hidden=!isCustom;modelBox.hidden=isCustom;
     if(isCustom){modelInp.value=c.model||'';urlInp.value=c.baseUrl||''}
+    else{presetSel.innerHTML=modelsOf(activeVendor).map(p=>`<option value="${p.id}">${p.label}</option>`).join('');presetSel.value=c.activePreset}
     keyRow.innerHTML=c.hasKey
       ?`<span class="small">已保存：<code>${c.keyMasked||'••••'}</code></span><button class="btn" data-delkey>删除</button>`
       :`<input type="password" placeholder="粘贴 API key" data-keyinput style="flex:1;min-width:11em" autocomplete="off"><button class="btn pri" data-savekey>保存</button>`;
@@ -499,7 +521,13 @@ function mountModelPanel(root,seg,title,icon,showAuto){
     if(delBtn)delBtn.onclick=async()=>{if(!confirm(`删除已保存的${title} key？删掉之后要重新粘贴才能用`))return;const r=await put({clearKey:true});if(r.ok===false)alert(r.message||'删除失败');refresh()};
     if(saveBtn)saveBtn.onclick=async()=>{const v=keyRow.querySelector('[data-keyinput]').value.trim();if(!v)return;const r=await put({apiKey:v});if(r.ok===false)alert(r.message||'保存失败');refresh()};
   };
-  presetSel.onchange=async()=>{const v=presetSel.value;customBox.hidden=v!=='custom';if(v==='custom')return;const r=await put({preset:v});if(r.ok===false)alert(r.message||'保存失败');refresh()};
+  /* 选厂家：不是自定义就直接定位到该厂家第一个模型并原子切换（不用再点一次「确认」）；选自定义只切
+     UI（露出手填框），真正生效要等用户填完点「保存自定义」——避免半吊子状态被当成已保存的配置发出去。 */
+  vendorSel.onchange=async()=>{const v=vendorSel.value;customBox.hidden=v!=='custom';modelBox.hidden=v==='custom';
+    if(v==='custom')return;
+    const first=modelsOf(v)[0];if(!first)return;
+    const r=await put({preset:first.id});if(r.ok===false)alert(r.message||'保存失败');refresh()};
+  presetSel.onchange=async()=>{const r=await put({preset:presetSel.value});if(r.ok===false)alert(r.message||'保存失败');refresh()};
   card.querySelector('[data-savecustom]').onclick=async()=>{const r=await put({preset:'custom',model:modelInp.value.trim(),baseUrl:urlInp.value.trim()});if(r.ok===false)alert(r.message||'保存失败');refresh()};
   card.querySelector('[data-pricesave]').onclick=async()=>{const r=await put({price:{input:parseFloat(priceIn.value)||0,output:parseFloat(priceOut.value)||0}});if(r.ok===false)alert(r.message||'保存失败');refresh()};
   refresh();
@@ -557,7 +585,7 @@ function renderManage(sec){sec.innerHTML=`
     <ul class="list" id="mods"></ul></div>
   <div class="card"><h2>模型管理</h2>
     <p class="lead">笔记线转写批注（视觉模型）和问 AI（文字模型）用的云端模型。选预置组合就行，不用自己填服务地址；某类型没配 key，对应功能就用不了。</p>
-    <div class="row" id="modelcards" style="align-items:flex-start;gap:1.2em"></div>
+    <div id="modelcards" style="display:flex;flex-direction:column;gap:1em"></div>
   </div>`;
   const badge=(t,ok)=>`<span class="badge ${ok?'on':'off'}">${t}</span>`;
   const mvRefresh=mountModelPanel($('#modelcards',sec),'transcribe','视觉模型（转写批注）','👁',true);
