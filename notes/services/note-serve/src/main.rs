@@ -1,11 +1,14 @@
 //! note-serve —— 笔记·本（loopback 8798）。它是网页「笔记」tab 的注册方（tab 只挂一个服务，前端组合 ink/transcribe/mind/notes 四段）；
-//! 本体职责是把条目库投影成设备笔记本（《书名》文件夹一章一本，xochitl 7 种打字样式）与 md 导出（导出待建）。
+//! 本体职责是把条目库投影成设备笔记本（《书名》文件夹一章一本，xochitl 7 种打字样式）与 md 导出
+//! （`export.rs`，落 `$XDG_DATA_HOME/notes/vault/<书名>/`，供 host `notes pull` 拉走）。
 //! 生成编排见 `publish.rs`：只读 ink-serve 的条目库（改字段仍是 ink-serve 的事）、按章指纹判断要不要重传，
 //! 传完按 `visibleName`+时间窗认领设备新分配的 uuid，旧版本入 `book-serve` 回收站队列（真机验证过的软删路）。
 //! 路由（经网关前缀 `/api/notes`）：`GET /status` · `GET /events` ·
 //! `GET /books/{uuid}/notebooks`（本地记着的各章生成状态）·
-//! `POST /books/{uuid}/generate`（全书重新投影+按需上传）· `POST /books/{uuid}/chapters/{idx}/generate`（单章）。
+//! `POST /books/{uuid}/generate`（全书重新投影+按需上传）· `POST /books/{uuid}/chapters/{idx}/generate`（单章）·
+//! `POST /books/{uuid}/export`（全书导出 md）· `POST /books/{uuid}/chapters/{idx}/export`（单章导出 md）。
 mod config;
+mod export;
 mod ink;
 mod mkdir;
 mod notebooks;
@@ -75,7 +78,7 @@ fn main() {
     });
     let router = Router::new()
         .get("/events", bind(&st, |s, _| Ok(s.bus.sse_reply())))
-        .get("/status", bind(&st, |s, _| Ok(Reply::ok(&serde_json::json!({"ok": true, "vault": s.paths.app_data_dir(APP).join("vault"), "folderPattern": s.cfg.folder_name_pattern, "xochitlHost": s.cfg.xochitl_host, "export": "待建"})))))
+        .get("/status", bind(&st, |s, _| Ok(Reply::ok(&serde_json::json!({"ok": true, "vault": s.paths.app_data_dir(APP).join("vault"), "folderPattern": s.cfg.folder_name_pattern, "xochitlHost": s.cfg.xochitl_host})))))
         .get("/books", bind(&st, |s, _| {
             let items = s.store.list_books().map_err(ApiError::bad)?;
             let out: Vec<serde_json::Value> = items.iter().map(|b| serde_json::json!({"uuid": b.uuid, "notebooks": s.notebooks.list(&b.uuid)})).collect();
@@ -98,6 +101,23 @@ fn main() {
             let result = generate_chapter(&s.ctx(now_ms()), &book, idx);
             s.bus.publish("notes", "notebooks");
             results_reply(std::slice::from_ref(&result))
+        }))
+        .post("/books/{uuid}/export", bind(&st, |s, r| {
+            let book = s.store.book(r.param("uuid")).map_err(ApiError::bad)?;
+            let files = export::export_book(&s.paths.app_data_dir(APP), &book).map_err(ApiError::internal)?;
+            Ok(Reply::ok(&serde_json::json!({"ok": true, "files": files})))
+        }))
+        .post("/books/{uuid}/chapters/{idx}/export", bind(&st, |s, r| {
+            let idx: usize = r.param("idx").parse().map_err(|_| ApiError::bad("章序号不对"))?;
+            let book = s.store.book(r.param("uuid")).map_err(ApiError::bad)?;
+            if book.chapters.get(idx).is_none() {
+                return Err(ApiError::bad("没有这一章"));
+            }
+            // 单章按钮也整本重导：文件都很小，重写比"只动一个文件+另外判断索引要不要变"更简单可靠——
+            // 索引页"哪些章有内容"本来就得看全书才能算对。
+            export::export_book(&s.paths.app_data_dir(APP), &book).map_err(ApiError::internal)?;
+            let wrote = notecore::export::export_chapter_md(&book, idx).is_some();
+            Ok(Reply::ok(&serde_json::json!({"ok": true, "wrote": wrote})))
         }));
     println!("[note-serve] 状态 {}；文件夹样式 {}；xochitl {}", st.notebooks.dir().display(), st.cfg.folder_name_pattern, st.cfg.xochitl_host);
     if let Err(e) = service::run(&SPEC, &bind_addr, &paths, router) {

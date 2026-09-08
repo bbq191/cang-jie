@@ -6,9 +6,13 @@
 //! 分区找不到同名的会自动新建；`askAi`+`question` 是"问AI"勾选框+问题输入框，`mind-serve` 读这两个字段触发按条目单发问答；
 //! `GET /books` 只列条目库里还有活条目的书）·
 //! `POST /books/{uuid}/entries/{id}/request`（浏览态"转入笔记"：`Mined→Pending`）·
-//! `POST /books/{uuid}/entries/{id}/skip`（浏览态"不需要"：`Mined→Skipped`，两者都拒绝已撤销的条目，
-//! 见 `notecore::model::Entry::set_triage`，2026-09-07 二期）· `PUT /books/{uuid}/sections` ·
+//! `POST /books/{uuid}/entries/{id}/skip`（浏览态"不需要"：`Mined→Skipped`）·
+//! `POST /books/{uuid}/entries/{id}/archive`（三期"不要了"：`→Archived`，两处投影都摘掉，见
+//! `notecore::model::Entry::set_triage`；已撤销/已归档的条目对以上三个动作都拒绝）·
+//! `POST /books/{uuid}/purge`（清空回收站：物理删掉 `Archived`/`Revoked`/`Skipped` 这三种终态条目，
+//! 手动触发、不可恢复，见 `notecore::model::Book::purge_terminal`）· `PUT /books/{uuid}/sections` ·
 //! `POST /books/{uuid}/rescan` · `GET /events`。条目库 `$XDG_STATE_HOME/notes/books/<uuid>.json`，裁图 `$XDG_DATA_HOME/notes/crops/`。
+//! `destination` 字段（三期，落设备笔记本/Obsidian/两处都要，缺省两处都要）走通用 PATCH，见下方。
 mod bookdb;
 mod config;
 mod crop;
@@ -17,7 +21,7 @@ mod ingest;
 
 use bookdb::BookDb;
 use config::IngestConfig;
-use notecore::model::{Answer, Draft, Section, Status, Style};
+use notecore::model::{Answer, Destination, Draft, Section, Status, Style};
 use shelf_core::events::EventBus;
 use shelf_core::fs::plain_name;
 use shelf_core::http::{bind, ApiError, ApiResult, Reply, Request, Router};
@@ -170,6 +174,10 @@ fn main() {
                 if let Some(v) = j.0.get("question") {
                     e.question = v.as_str().filter(|s| !s.trim().is_empty()).map(str::to_string);
                 }
+                // 落设备笔记本 / 落 Obsidian / 两处都要（三期），见 notecore::model::Destination。
+                if let Some(v) = j.0.get("destination").and_then(|v| serde_json::from_value::<Destination>(v.clone()).ok()) {
+                    e.destination = v;
+                }
                 e.updated = now;
                 true
             }).map_err(ApiError::internal)?;
@@ -181,6 +189,18 @@ fn main() {
         }))
         .post("/books/{uuid}/entries/{id}/request", bind(&st, |s, r| triage(s, r, Status::Pending)))
         .post("/books/{uuid}/entries/{id}/skip", bind(&st, |s, r| triage(s, r, Status::Skipped)))
+        .post("/books/{uuid}/entries/{id}/archive", bind(&st, |s, r| triage(s, r, Status::Archived)))
+        .post("/books/{uuid}/purge", bind(&st, |s, r| {
+            let uuid = r.param("uuid").to_string();
+            if s.db.load(&uuid).is_none() {
+                return Err(ApiError::not_found("没有这本书的条目"));
+            }
+            let removed = s.db.update(&uuid, || Default::default(), |b| b.purge_terminal()).map_err(ApiError::internal)?;
+            if removed > 0 {
+                s.bus.publish("notes", "entries");
+            }
+            Ok(Reply::ok(&serde_json::json!({"ok": true, "removed": removed})))
+        }))
         .put("/books/{uuid}/sections", bind(&st, |s, r| {
             let uuid = r.param("uuid").to_string();
             let secs: Vec<Section> = serde_json::from_value(r.json()?.0.get("sections").cloned().unwrap_or_default()).map_err(|e| ApiError::bad(format!("sections 形状不对: {e}")))?;

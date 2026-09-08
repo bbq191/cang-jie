@@ -176,7 +176,7 @@ mod tests {
     }
 
     fn seeded_entry(id: &str, status: Status) -> notecore::model::Entry {
-        notecore::model::Entry { id: id.into(), page: "p".into(), page_index: 0, chapter: None, chapter_title: String::new(), subhead: None, quote: None, ink: None, drafts: vec![], text: None, style: Default::default(), section: None, ask_ai: false, question: None, answer: None, status, created: 0, updated: 0 }
+        notecore::model::Entry { id: id.into(), page: "p".into(), page_index: 0, chapter: None, chapter_title: String::new(), subhead: None, quote: None, ink: None, drafts: vec![], text: None, style: Default::default(), section: None, ask_ai: false, question: None, answer: None, status, destination: Default::default(), created: 0, updated: 0 }
     }
 
     /// 真机验证时发现的 bug（2026-09-07）：书被移进回收站、甚至彻底删除，条目库里的旧条目

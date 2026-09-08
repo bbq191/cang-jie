@@ -27,9 +27,14 @@ fn style_to_wire(s: crate::model::Style) -> ParagraphStyle {
     }
 }
 
-/// 参与投影的条目：本章、未撤销，按页序排。
+/// 参与投影的条目：本章、真被要求转笔记的（`Pending`/`Draft`/`Reviewed`——**不是**"非撤销"这种
+/// 反着写的判据；`Mined`/`Skipped` 都不该出现，之前拿 `!= Revoked` 当判据是个真 bug：`Skipped`
+/// （用户点了"不需要"）之前会一直混进投影，2026-09-08 真机导出 md 测试时亲眼看见一条"不需要"的
+/// 条目出现在导出文件里才揪出来，见笔记线白皮书 §03r；跟「整理」网页视图的过滤条件对齐，那边
+/// 一直是对的）、去处要设备笔记本（`Notebook`/`Both`——三期新增，见 `model::Destination`；缺省
+/// `Both`，不设置这个字段的老条目库行为不变），按页序排。
 fn live_entries(book: &Book, chapter_idx: usize) -> Vec<&Entry> {
-    let mut v: Vec<&Entry> = book.entries.iter().filter(|e| e.chapter == Some(chapter_idx) && e.status != Status::Revoked).collect();
+    let mut v: Vec<&Entry> = book.entries.iter().filter(|e| e.chapter == Some(chapter_idx) && matches!(e.status, Status::Pending | Status::Draft | Status::Reviewed) && e.destination.wants_notebook()).collect();
     v.sort_by_key(|e| e.page_index);
     v
 }
@@ -141,6 +146,7 @@ mod tests {
             question: None,
             answer: None,
             status: Status::Reviewed,
+            destination: Default::default(),
             created: 0,
             updated: 0,
         }
@@ -200,6 +206,34 @@ mod tests {
         assert!(fingerprint_chapter(&b, 1).is_none());
         // 撤销前后指纹一定不同（这里只需确认"有值"变"无值"，上面两条已覆盖）
         assert!(!fp_before.is_empty());
+    }
+
+    /// 真机 bug（2026-09-08，见白皮书 §03r）：之前判据是 `!= Revoked`，`Skipped`（用户点了「不需要」）
+    /// 会一直混进投影——真机导出 md 时亲眼看见一条"不需要"的条目出现在导出文件里才揪出来。
+    #[test]
+    fn skipped_and_mined_entries_are_excluded_not_just_revoked() {
+        let mut b = book();
+        b.entries[3].status = Status::Skipped;
+        assert!(project_chapter(&b, 1).is_none(), "「不需要」的条目不该出现在设备笔记本投影里");
+        b.entries[3].status = Status::Mined;
+        assert!(project_chapter(&b, 1).is_none(), "还没被要求转笔记的条目也不该出现");
+    }
+
+    #[test]
+    fn archived_entries_are_excluded_same_as_revoked() {
+        let mut b = book();
+        b.entries[3].status = Status::Archived;
+        assert!(project_chapter(&b, 1).is_none(), "归档跟撤销一样从投影里消失");
+    }
+
+    #[test]
+    fn destination_obsidian_only_excludes_entry_from_device_notebook_projection() {
+        use crate::model::Destination;
+        let mut b = book();
+        b.entries[3].destination = Destination::Obsidian; // 第二章唯一条目改成"只导出 Obsidian"
+        assert!(project_chapter(&b, 1).is_none(), "只想去 Obsidian 的条目不该出现在设备笔记本投影里");
+        b.entries[3].destination = Destination::Notebook;
+        assert!(project_chapter(&b, 1).is_some(), "改回只留设备/缺省 Both 都该重新出现");
     }
 
     #[test]
