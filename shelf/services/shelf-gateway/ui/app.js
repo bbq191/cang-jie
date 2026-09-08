@@ -265,14 +265,14 @@ function renderNotes(sec){sec.innerHTML=`
   <div class="subpanel" id="norganize">
     <div class="card" id="npickbar" hidden>
       <div class="row"><b id="npickcount"></b>
-        <button class="btn" data-pick-retry>重转</button>
+        <button class="btn" data-pick-retry>重新转写</button>
         <button class="btn" data-pick-archive>不要了</button>
         <button class="btn" data-pick-clear>取消选择</button></div>
       <div class="small" id="npickmsg"></div>
     </div>
-    <div class="row"><label class="toggle"><input type="checkbox" id="nshowsynced"> 显示已同步的章节</label>
-      <span class="small">生成笔记本/导出 md 后内容跟当前一致的章节默认收起，改过字或有新条目会自动重新出现</span></div>
-    <div id="nchapters"></div>
+    <div class="subnav" id="nexporttabs"><button class="on" data-etab="pending">未导出</button><button data-etab="synced">已导出</button></div>
+    <div class="subnav" id="nchaptertabs"></div>
+    <div id="nchapterbody"></div>
   </div>
   <div class="subpanel" id="ntrashpanel">
     <div class="card">
@@ -281,7 +281,7 @@ function renderNotes(sec){sec.innerHTML=`
       <div id="ntrashlist"></div>
     </div>
   </div>`;
-  const sel=$('#nbook',sec),chaps=$('#nchapters',sec),browse=$('#nbrowse',sec),sum=$('#nsum',sec);let book=null;
+  const sel=$('#nbook',sec),chaptertabs=$('#nchaptertabs',sec),chapterbody=$('#nchapterbody',sec),browse=$('#nbrowse',sec),sum=$('#nsum',sec);let book=null;
   const cropUrl=(uuid,f)=>`/api/ink/books/${encodeURIComponent(uuid)}/crops/${encodeURIComponent(f)}`;
   const cropHtml=e=>e.ink&&e.ink.crop?`<img src="${cropUrl(book.uuid,e.ink.crop)}" alt="手写批注裁图">`:'<div class="empty">（无裁图，纯勾画）</div>';
   const patch=async(id,body)=>{const r=await postJ(`/api/ink/books/${encodeURIComponent(book.uuid)}/entries/${encodeURIComponent(id)}`,body);if(r.ok===false)alert(r.message||'保存失败')};
@@ -381,124 +381,141 @@ function renderNotes(sec){sec.innerHTML=`
      （"生成完成后是不是应该移出列表"），有「显示已同步的章节」开关能翻出来；回收站每条显示去处徽章 +
      所在章节的同步状态（"回收站该显示导出到哪里"），见 `refreshSync()`/`syncBadges()`/白皮书 §03x。
      **第四轮反馈（同一天）**：生成笔记本/导出 md 这两个按钮又被指出跟条目已有的「去处」字段重复——
-     去处早就决定了这一章该不该落笔记本、该不该落 Obsidian，合并成一个「同步本章」按钮，内部按去处
-     该做哪样做哪样，不用用户自己对着两个按钮再选一遍"点哪个"，见白皮书 §03y。 */
+     去处早就决定了这一章该不该落笔记本、该不该落 Obsidian，合并成一个按钮，内部按去处该做哪样做哪样，
+     不用用户自己对着两个按钮再选一遍"点哪个"，见白皮书 §03y。
+     **第五轮反馈（同一天）**：与其用一个「显示已同步的章节」复选框过滤一条长列表，改成「未导出/已导出」
+     两个顶层 tab（复用 `fullySynced` 判据分组，两者互斥且穷尽，没有第三态），tab 下面章节做成第二层
+     可点标签，点哪章只显示哪一章的内容——比上一轮"章节默认折叠"更彻底：折叠只是不用看见内容，滚动
+     那条轴还在；这样任意时刻屏幕上最多一章的内容，滚动本身消失。旧的 `expandedChapters`（折叠/展开）
+     整个被 `exportTab`/`selectedChapter` 两个状态取代。同步状态目前只精确到整章，做不到"这条笔记本身
+     导出过没"，退而求其次把章节级同步徽章也贴一份到每条笔记行上。顺带把「同步本章」改名「推送本章」
+     （"同步"暗示双向，这个按钮其实只单向推）、「重转」改名「重新转写」（跟「浏览」视图里语义完全不同
+     的「转入笔记」共享"转"字，容易混），见白皮书 §03z。 */
   const picked=new Set();
-  const pickbar=$('#npickbar',sec),pickcount=$('#npickcount',sec),pickmsg=$('#npickmsg',sec),showSynced=$('#nshowsynced',sec);
+  const pickbar=$('#npickbar',sec),pickcount=$('#npickcount',sec),pickmsg=$('#npickmsg',sec),exportTabsEl=$('#nexporttabs',sec);
   const syncPickbar=()=>{pickbar.hidden=picked.size===0;pickcount.textContent=`已选 ${picked.size} 条`};
   const selectedEntries=()=>(book&&book.entries||[]).filter(e=>picked.has(e.id));
-  /* 章节默认折叠（用户反馈"1章10条笔记，10章就100条，手机划几分钟才到底"）：每章卡片只露头
-     （标题/条数/同步徽章/同步按钮/全选），条目本体（裁图+文本+问AI 那一整块，最占屏幕的部分）
-     收在下面，点章头展开——这样列表长度只取决于"有几章"，不再取决于"每章有几条"。展开状态记在
-     一个 Set 里，切换只是本地 DOM 隐藏/显示（不重新拉数据/不重画），保持响应快；换书才清空。
-     只有一章要显示时直接展开（没有"点开才看得到唯一内容"这种多余的一步）。 */
-  const expandedChapters=new Set();
-  const renderBook=async()=>{if(!book){chaps.innerHTML='';syncPickbar();return}updateSummary();
+  /* 双层导出状态视图（第五轮反馈，用户反馈"1章10条笔记，10章就100条，手机划几分钟才到底"）：
+     顶层「未导出/已导出」两个 tab（复用 fullySynced 判据分组），tab 下再按章节列第二层可点标签，
+     点哪章只显示哪一章的内容——任意时刻屏幕上最多一章的内容，不靠折叠/滚动去缓解。exportTab 跨
+     换书保留（比照原复选框状态本来也不随换书重置），selectedChapter 换书清空（章节 key 按书算）。 */
+  let exportTab='pending',selectedChapter=null;
+  const renderBook=async()=>{if(!book){chaptertabs.innerHTML='';chapterbody.innerHTML='';syncPickbar();return}updateSummary();
     const trst=await j('/api/transcribe/status');
     const failedIds=new Set((trst.failures||[]).filter(f=>f.book===book.uuid).map(f=>f.id));
     const live=(book.entries||[]).filter(e=>['pending','draft','reviewed'].includes(e.status));
     const groups=new Map();live.forEach(e=>{const k=e.chapter==null?-1:e.chapter;if(!groups.has(k))groups.set(k,[]);groups.get(k).push(e)});
-    chaps.innerHTML='';   // 清空放到网络请求（查失败清单）之后、紧接着同步重建，列表不会有中间空档闪一下
-    let hiddenSynced=0;
     const sortedKeys=[...groups.keys()].sort((a,b)=>a-b);
-    // 全同步的章节默认收起（用户反馈"生成完成后是不是应该移出列表"）：改过字/新条目会让指纹变，
-    // 这里自然又出现——不是靠"生成过一次就永久隐藏"这种一次性标记，是每次重画都按当前内容重新判。
-    const visibleKeys=sortedKeys.filter(k=>{const s=k>=0?syncMap.get(k):null;const fullySynced=!!(s&&s.notebookSynced&&s.obsidianSynced);if(fullySynced&&!showSynced.checked){hiddenSynced++;return false}return true});
-    visibleKeys.forEach(k=>{const es=groups.get(k).sort((a,b)=>a.page_index-b.page_index||(a.ink?a.ink.bbox[1]:0)-(b.ink?b.ink.bbox[1]:0));
-      const s=k>=0?syncMap.get(k):null;
-      const expanded=visibleKeys.length===1||expandedChapters.has(k);
-      const card=document.createElement('div');card.className='card';
-      card.innerHTML=`<h3 style="margin-top:0;cursor:pointer" data-chaphead><span data-caret>${expanded?'▾':'▸'}</span> ${k<0?'（未归章）':`第 ${k+1} 章 · ${es[0].chapter_title||''}`} <span class="small">${es.length} 条</span>${k>=0?' <button class="btn" data-selall style="padding:.15em .6em;font-size:.8em">全选本章</button>':''}</h3>${k>=0?`<div class="row"><button class="btn pri" data-sync title="按每条的去处（设备笔记本/Obsidian/都要）分别同步——去处已经决定了要不要生成笔记本、要不要导出 md，不用再分两个按钮各点一次">同步本章</button>${syncBadges(s)}<span class="small" data-genmsg></span></div>`:''}<div data-body ${expanded?'':'hidden'}></div>`;
-      const body=card.querySelector('[data-body]'),caret=card.querySelector('[data-caret]');
-      card.querySelector('[data-chaphead]').onclick=ev=>{if(ev.target.closest('button'))return;   // 点头部里的按钮（全选）不该顺带触发折叠
-        const now=!body.hidden;body.hidden=now;caret.textContent=now?'▸':'▾';if(now)expandedChapters.delete(k);else expandedChapters.add(k)};
-      if(k>=0){
-        const syncBtn=card.querySelector('[data-sync]'),msg=card.querySelector('[data-genmsg]');
-        // 直接章头按钮，不用先勾选条目——生成/导出本来就是整章一起投影（条目挑不挑没用，见白皮书
-        // §03x"是不是重复了"），批量勾选留给真正逐条有意义的重转/不要了。
-        // **合并成一个「同步本章」按钮（第四轮反馈）**：去处（Entry.destination）本来就已经决定了
-        // 这一章该不该生成笔记本、该不该导出 md——分两个按钮让用户自己再选一遍"点哪个"是重复劳动，
-        // 一个按钮内部按当前去处该做哪样做哪样：没有条目要那个去处，对应那步自然是 Empty（后端已有
-        // 这个语义，见 export::ExportOutcome/publish::ChapterOutcome），前端只是不重复提示"没做"。
-        syncBtn.onclick=async()=>{syncBtn.disabled=true;msg.textContent='同步中…';
-          const gr=await j(`/api/notes/books/${encodeURIComponent(book.uuid)}/chapters/${k}/generate`,{method:'POST'});
-          const er=await j(`/api/notes/books/${encodeURIComponent(book.uuid)}/chapters/${k}/export`,{method:'POST'});
-          syncBtn.disabled=false;
-          const gc=(gr.chapters&&gr.chapters[0])||{};
-          const parts=[];
-          if(gr.ok===false)parts.push('✗ 笔记本：'+(gr.message||'失败'));
-          else if(gc.status==='failed')parts.push('✗ 笔记本：'+gc.error);
-          else if(gc.status==='generated')parts.push('✓ 笔记本已更新');
-          if(er.ok===false)parts.push('✗ md：'+(er.message||'失败'));
-          else if(er.status==='written'){parts.push('✓ md 已导出');window.open(`/api/notes/books/${encodeURIComponent(book.uuid)}/chapters/${k}/export.md`,'_blank')}
-          msg.textContent=parts.length?parts.join(' · '):'（跟当前去处对应的内容都已经同步，没有变化）';
-          await wait(1500);await refreshSync();renderBook()};
-      }
-      const selAllBtn=card.querySelector('[data-selall]');
-      if(selAllBtn)selAllBtn.onclick=()=>{const all=es.every(e=>picked.has(e.id));es.forEach(e=>all?picked.delete(e.id):picked.add(e.id));renderBook()};
-      es.forEach(e=>{const failed=failedIds.has(e.id);const row=document.createElement('div');row.className='entry'+(failed?' entry-failed':'');
-        const draft=(e.drafts&&e.drafts[0])?e.drafts[0].text:'';
-        const dv=e.destination||'both';
-        row.innerHTML=`
-          <div class="entry-head">
-            <label class="toggle"><input type="checkbox" data-pick ${picked.has(e.id)?'checked':''}></label>
-            <span>p.${e.page_index+1}${e.subhead?' · '+e.subhead:''}</span>
-            <span class="badge">${STYLE_NAMES[e.style]||e.style}</span>
-            <span class="badge ${e.status==='reviewed'?'on':''}" style="margin-left:auto">${STATUS_NAMES[e.status]||e.status}</span>
-          </div>
-          <div class="entry-body">
-            <div class="entry-crop">${cropHtml(e)}</div>
-            <div class="entry-main">
-              ${e.quote?`<div class="entry-quote">「${e.quote.text}」</div>`:''}
-              <textarea class="entry-text" rows="2" placeholder="${draft?'转写建议：'+draft:'等待转写…（也可以直接手动填）'}">${e.text||draft}</textarea>
-              <div class="small">行首 <code>-</code>/<code>1.</code>/<code>口</code>/<code>## </code> 自动判样式/分区，跟手写识别是同一套约定</div>
-              <div class="entry-ops">
-                <div class="grp"><button class="btn" data-dest title="落点：设备笔记本/Obsidian/都要，点击切换">${DEST_ICON[dv]}</button></div>
-                <div class="grp">${(e.ink&&e.ink.crop)?`<button class="btn${failed?' btn-bad':''}" data-transcribe title="用当前后端重新转写这一条（不动已校对文本）">${failed?'重转失败':(draft?'重转':'转写')}</button>`:''}<button class="btn" data-archive title="设备笔记本、Obsidian 导出都摘掉（软删，去「回收站」能看到并恢复）">不要了</button></div>
-              </div>
-              <div class="small" data-txstat></div>
-              <div class="entry-ask">
-                <div class="row"><label class="toggle"><input type="checkbox" data-ask ${e.ask_ai?'checked':''}> 问 AI</label>
-                  <input type="text" data-question placeholder="问题…（如「他是谁」「这段什么意思」）" value="${e.question?e.question.replace(/"/g,'&quot;'):''}" style="flex:1;min-width:9em" ${e.ask_ai?'':'disabled'}>
-                  <button class="btn pri" data-askbtn ${e.ask_ai&&e.question?'':'disabled'}>提问</button></div>
-                <div class="small" data-askstat></div>
-                ${e.answer?`<div class="entry-answer"><b>AI 回答</b>（问：${e.answer.brief}）<br>${e.answer.text}</div>`:''}
-              </div>
+    // fullySynced 复用 /sync 的语义：没有条目要那个去处时 xxxSynced 恒真，所以"没什么要同步的"跟
+    // "已经同步过"在这个布尔值下是一回事——两个 tab 因此互斥且穷尽，没有第三态。
+    const fullySynced=k=>{const s=k>=0?syncMap.get(k):null;return !!(s&&s.notebookSynced&&s.obsidianSynced)};
+    const pendingKeys=sortedKeys.filter(k=>!fullySynced(k));
+    const syncedKeys=sortedKeys.filter(k=>fullySynced(k));
+    exportTabsEl.querySelectorAll('button').forEach(b=>b.classList.toggle('on',b.dataset.etab===exportTab));
+    const visibleKeys=exportTab==='pending'?pendingKeys:syncedKeys;
+    // 自动跳到下一个待处理章节：点「推送本章」把这章弄成已导出后，它从 pendingKeys 消失，重画时这里
+    // 自然选中下一个——不是额外写的特性，只是"选中章节必须在当前 tab 的可见列表里"这条校验的副产物。
+    if(!visibleKeys.includes(selectedChapter))selectedChapter=visibleKeys.length?visibleKeys[0]:null;
+    chaptertabs.innerHTML='';
+    visibleKeys.forEach(k=>{const b=document.createElement('button');b.className=k===selectedChapter?'on':'';
+      b.textContent=k<0?'未归章':`第 ${k+1} 章`;b.onclick=()=>{selectedChapter=k;renderBook()};chaptertabs.appendChild(b)});
+    chapterbody.innerHTML='';
+    if(selectedChapter==null){
+      chapterbody.innerHTML=`<p class="small">${exportTab==='pending'?'🎉 都同步了，没有待处理的章节':'还没有章节完成同步'}</p>`;
+      syncPickbar();return}
+    const k=selectedChapter,es=groups.get(k).sort((a,b)=>a.page_index-b.page_index||(a.ink?a.ink.bbox[1]:0)-(b.ink?b.ink.bbox[1]:0));
+    const s=k>=0?syncMap.get(k):null;
+    const card=document.createElement('div');card.className='card';
+    card.innerHTML=`<h3 style="margin-top:0">${k<0?'（未归章）':`第 ${k+1} 章 · ${es[0].chapter_title||''}`} <span class="small">${es.length} 条</span>${k>=0?' <button class="btn" data-selall style="padding:.15em .6em;font-size:.8em">全选本章</button>':''}</h3>${k>=0?`<div class="row"><button class="btn pri" data-sync title="按每条的去处（设备笔记本/Obsidian/都要）分别推送——去处已经决定了要不要生成笔记本、要不要导出 md，不用再分两个按钮各点一次">推送本章</button>${syncBadges(s)}<span class="small" data-genmsg></span></div>`:''}<div data-body></div>`;
+    const body=card.querySelector('[data-body]');
+    if(k>=0){
+      const syncBtn=card.querySelector('[data-sync]'),msg=card.querySelector('[data-genmsg]');
+      // 直接章头按钮，不用先勾选条目——生成/导出本来就是整章一起投影（条目挑不挑没用，见白皮书
+      // §03x"是不是重复了"），批量勾选留给真正逐条有意义的重新转写/不要了。
+      // **合并成一个按钮（第四轮反馈）、改名「推送本章」（第五轮反馈）**：去处（Entry.destination）
+      // 本来就已经决定了这一章该不该生成笔记本、该不该导出 md——分两个按钮让用户自己再选一遍"点哪个"
+      // 是重复劳动，一个按钮内部按当前去处该做哪样做哪样：没有条目要那个去处，对应那步自然是 Empty
+      // （后端已有这个语义，见 export::ExportOutcome/publish::ChapterOutcome），前端只是不重复提示
+      // "没做"；改名"推送"是因为"同步"暗示双向/拉取，这个按钮其实只单向推。
+      syncBtn.onclick=async()=>{syncBtn.disabled=true;msg.textContent='推送中…';
+        const gr=await j(`/api/notes/books/${encodeURIComponent(book.uuid)}/chapters/${k}/generate`,{method:'POST'});
+        const er=await j(`/api/notes/books/${encodeURIComponent(book.uuid)}/chapters/${k}/export`,{method:'POST'});
+        syncBtn.disabled=false;
+        const gc=(gr.chapters&&gr.chapters[0])||{};
+        const parts=[];
+        if(gr.ok===false)parts.push('✗ 笔记本：'+(gr.message||'失败'));
+        else if(gc.status==='failed')parts.push('✗ 笔记本：'+gc.error);
+        else if(gc.status==='generated')parts.push('✓ 笔记本已更新');
+        if(er.ok===false)parts.push('✗ md：'+(er.message||'失败'));
+        else if(er.status==='written'){parts.push('✓ md 已导出');window.open(`/api/notes/books/${encodeURIComponent(book.uuid)}/chapters/${k}/export.md`,'_blank')}
+        msg.textContent=parts.length?parts.join(' · '):'（跟当前去处对应的内容都已经同步，没有变化）';
+        await wait(1500);await refreshSync();renderBook()};
+    }
+    const selAllBtn=card.querySelector('[data-selall]');
+    if(selAllBtn)selAllBtn.onclick=()=>{const all=es.every(e=>picked.has(e.id));es.forEach(e=>all?picked.delete(e.id):picked.add(e.id));renderBook()};
+    es.forEach(e=>{const failed=failedIds.has(e.id);const row=document.createElement('div');row.className='entry'+(failed?' entry-failed':'');
+      const draft=(e.drafts&&e.drafts[0])?e.drafts[0].text:'';
+      const dv=e.destination||'both';
+      row.innerHTML=`
+        <div class="entry-head">
+          <label class="toggle"><input type="checkbox" data-pick ${picked.has(e.id)?'checked':''}></label>
+          <span>p.${e.page_index+1}${e.subhead?' · '+e.subhead:''}</span>
+          <span class="badge">${STYLE_NAMES[e.style]||e.style}</span>
+          ${syncBadges(s)}
+          <span class="badge ${e.status==='reviewed'?'on':''}" style="margin-left:auto">${STATUS_NAMES[e.status]||e.status}</span>
+        </div>
+        <div class="entry-body">
+          <div class="entry-crop">${cropHtml(e)}</div>
+          <div class="entry-main">
+            ${e.quote?`<div class="entry-quote">「${e.quote.text}」</div>`:''}
+            <textarea class="entry-text" rows="2" placeholder="${draft?'转写建议：'+draft:'等待转写…（也可以直接手动填）'}">${e.text||draft}</textarea>
+            <div class="small">行首 <code>-</code>/<code>1.</code>/<code>口</code>/<code>## </code> 自动判样式/分区，跟手写识别是同一套约定</div>
+            <div class="entry-ops">
+              <div class="grp"><button class="btn" data-dest title="落点：设备笔记本/Obsidian/都要，点击切换">${DEST_ICON[dv]}</button></div>
+              <div class="grp">${(e.ink&&e.ink.crop)?`<button class="btn${failed?' btn-bad':''}" data-transcribe title="用当前后端重新转写这一条（不动已校对文本）">${failed?'转写失败':(draft?'重新转写':'转写')}</button>`:''}<button class="btn" data-archive title="设备笔记本、Obsidian 导出都摘掉（软删，去「回收站」能看到并恢复）">不要了</button></div>
             </div>
-          </div>`;
-        row.querySelector('[data-pick]').onchange=ev=>{if(ev.target.checked)picked.add(e.id);else picked.delete(e.id);syncPickbar()};
-        const ta=row.querySelector('textarea');
-        ta.oninput=ev=>pendingText.set(e.id,ev.target.value);   // 还没失焦确认，先记住最新值，别的动作重画前会先冲掉
-        ta.onchange=ev=>{pendingText.delete(e.id);patch(e.id,{text:ev.target.value})};
-        row.querySelector('[data-dest]').onclick=async()=>{const next=DEST_ORDER[(DEST_ORDER.indexOf(dv)+1)%3];await patch(e.id,{destination:next});await flushPendingText();book=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}`);await refreshSync();renderBook()};
-        row.querySelector('[data-archive]').onclick=()=>archiveEntry(e.id);
-        /* 点「重转」/「提问」弹出状态和这次调用的消耗（用户反馈"应该弹出状态及当前消耗"，2026-09-08
-           第三轮）：先显文字状态（转写中…/提问中…），拿到结果显示"✓ 完成 · token 入X 出Y"或错误，
-           停留一小会儿让用户真的看得到（不然紧接着的整页重画会立刻把这条状态盖掉，等于白显示）。 */
-        const tb=row.querySelector('[data-transcribe]'),txStat=row.querySelector('[data-txstat]');
-        if(tb)tb.onclick=async()=>{tb.disabled=true;txStat.textContent='转写中…';
-          const r=await j(`/api/transcribe/books/${encodeURIComponent(book.uuid)}/entries/${encodeURIComponent(e.id)}`,{method:'POST'});
-          tb.disabled=false;
-          txStat.textContent=r.ok===false?('✗ '+(r.message||'转写失败')):`✓ 转写完成 · 这次 token 入 ${r.promptTokens||0} 出 ${r.completionTokens||0}`;
-          await wait(1500);await flushPendingText();book=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}`);await refreshSync();renderBook()};
-        /* 「问AI」勾选框 + 问题 + 提问按钮：改即存（ink-serve），点提问才真的调 mind-serve。 */
-        const askBox=row.querySelector('[data-ask]'),qInput=row.querySelector('[data-question]'),askBtn=row.querySelector('[data-askbtn]'),askStat=row.querySelector('[data-askstat]');
-        const syncAskUi=()=>{qInput.disabled=!askBox.checked;askBtn.disabled=!(askBox.checked&&qInput.value.trim())};
-        askBox.onchange=()=>{patch(e.id,{askAi:askBox.checked});syncAskUi()};
-        qInput.onchange=()=>{patch(e.id,{question:qInput.value});syncAskUi()};
-        askBtn.onclick=async()=>{askBtn.disabled=true;askStat.textContent='提问中…';
-          const r=await j(`/api/mind/books/${encodeURIComponent(book.uuid)}/entries/${encodeURIComponent(e.id)}/ask`,{method:'POST'});
-          askBtn.disabled=false;
-          if(r.ok===false){askStat.textContent='✗ '+(r.message||'提问失败')}
-          else{askStat.textContent=`✓ 已回答 · 这次 token 入 ${r.promptTokens||0} 出 ${r.completionTokens||0}`;await wait(1500);await flushPendingText();book=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}`);await refreshSync();renderBook()}};
-        body.appendChild(row)});
-      chaps.appendChild(card)});
-    if(hiddenSynced)chaps.insertAdjacentHTML('afterbegin',`<p class="small">另有 ${hiddenSynced} 章已同步、收起了——上面「显示已同步的章节」勾上能看到。</p>`);
+            <div class="small" data-txstat></div>
+            <div class="entry-ask">
+              <div class="row"><label class="toggle"><input type="checkbox" data-ask ${e.ask_ai?'checked':''}> 问 AI</label>
+                <input type="text" data-question placeholder="问题…（如「他是谁」「这段什么意思」）" value="${e.question?e.question.replace(/"/g,'&quot;'):''}" style="flex:1;min-width:9em" ${e.ask_ai?'':'disabled'}>
+                <button class="btn pri" data-askbtn ${e.ask_ai&&e.question?'':'disabled'}>提问</button></div>
+              <div class="small" data-askstat></div>
+              ${e.answer?`<div class="entry-answer"><b>AI 回答</b>（问：${e.answer.brief}）<br>${e.answer.text}</div>`:''}
+            </div>
+          </div>
+        </div>`;
+      row.querySelector('[data-pick]').onchange=ev=>{if(ev.target.checked)picked.add(e.id);else picked.delete(e.id);syncPickbar()};
+      const ta=row.querySelector('textarea');
+      ta.oninput=ev=>pendingText.set(e.id,ev.target.value);   // 还没失焦确认，先记住最新值，别的动作重画前会先冲掉
+      ta.onchange=ev=>{pendingText.delete(e.id);patch(e.id,{text:ev.target.value})};
+      row.querySelector('[data-dest]').onclick=async()=>{const next=DEST_ORDER[(DEST_ORDER.indexOf(dv)+1)%3];await patch(e.id,{destination:next});await flushPendingText();book=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}`);await refreshSync();renderBook()};
+      row.querySelector('[data-archive]').onclick=()=>archiveEntry(e.id);
+      /* 点「重新转写」/「提问」弹出状态和这次调用的消耗（用户反馈"应该弹出状态及当前消耗"，2026-09-08
+         第三轮）：先显文字状态（转写中…/提问中…），拿到结果显示"✓ 完成 · token 入X 出Y"或错误，
+         停留一小会儿让用户真的看得到（不然紧接着的整页重画会立刻把这条状态盖掉，等于白显示）。 */
+      const tb=row.querySelector('[data-transcribe]'),txStat=row.querySelector('[data-txstat]');
+      if(tb)tb.onclick=async()=>{tb.disabled=true;txStat.textContent='转写中…';
+        const r=await j(`/api/transcribe/books/${encodeURIComponent(book.uuid)}/entries/${encodeURIComponent(e.id)}`,{method:'POST'});
+        tb.disabled=false;
+        txStat.textContent=r.ok===false?('✗ '+(r.message||'转写失败')):`✓ 转写完成 · 这次 token 入 ${r.promptTokens||0} 出 ${r.completionTokens||0}`;
+        await wait(1500);await flushPendingText();book=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}`);await refreshSync();renderBook()};
+      /* 「问AI」勾选框 + 问题 + 提问按钮：改即存（ink-serve），点提问才真的调 mind-serve。 */
+      const askBox=row.querySelector('[data-ask]'),qInput=row.querySelector('[data-question]'),askBtn=row.querySelector('[data-askbtn]'),askStat=row.querySelector('[data-askstat]');
+      const syncAskUi=()=>{qInput.disabled=!askBox.checked;askBtn.disabled=!(askBox.checked&&qInput.value.trim())};
+      askBox.onchange=()=>{patch(e.id,{askAi:askBox.checked});syncAskUi()};
+      qInput.onchange=()=>{patch(e.id,{question:qInput.value});syncAskUi()};
+      askBtn.onclick=async()=>{askBtn.disabled=true;askStat.textContent='提问中…';
+        const r=await j(`/api/mind/books/${encodeURIComponent(book.uuid)}/entries/${encodeURIComponent(e.id)}/ask`,{method:'POST'});
+        askBtn.disabled=false;
+        if(r.ok===false){askStat.textContent='✗ '+(r.message||'提问失败')}
+        else{askStat.textContent=`✓ 已回答 · 这次 token 入 ${r.promptTokens||0} 出 ${r.completionTokens||0}`;await wait(1500);await flushPendingText();book=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}`);await refreshSync();renderBook()}};
+      body.appendChild(row)});
+    chapterbody.appendChild(card);
     syncPickbar()};
   /* 批量工具栏（点 1，2026-09-08 第三轮反馈收窄）：生成笔记本/导出 md 挪回章头直接按钮——这两个
      操作本来就是整章一起投影，勾选条目对它们不起过滤作用（选中哪几条不影响生成出来的内容），逼着
-     先勾选再点这两个按钮只是绕远路（见白皮书 §03x）。批量工具栏只留重转（对选中里有裁图的条目生效）
-     和不要了（一次确认批量归档）——这两个是真正逐条起作用的操作，勾选才有意义。 */
+     先勾选再点这两个按钮只是绕远路（见白皮书 §03x）。批量工具栏只留重新转写（对选中里有裁图的条目
+     生效）和不要了（一次确认批量归档）——这两个是真正逐条起作用的操作，勾选才有意义。 */
   $('[data-pick-retry]',sec).onclick=async()=>{const ids=selectedEntries().filter(e=>e.ink&&e.ink.crop).map(e=>e.id);
     if(!ids.length){pickmsg.textContent='选中的条目都没有手写裁图，没法转写';return}
     await flushPendingText();let ok=0,fail=0,pt=0,ct=0;for(const[i,id]of ids.entries()){pickmsg.textContent=`转写中…（${i+1}/${ids.length}）`;
@@ -510,8 +527,8 @@ function renderNotes(sec){sec.innerHTML=`
     for(const id of ids)await postJ(`/api/ink/books/${encodeURIComponent(book.uuid)}/entries/${encodeURIComponent(id)}/archive`,{});
     picked.clear();await flushPendingText();book=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}`);await refreshSync();renderBook();renderTrash()};
   $('[data-pick-clear]',sec).onclick=()=>{picked.clear();pickmsg.textContent='';renderBook()};
-  showSynced.onchange=renderBook;
-  const loadBook=async()=>{await flushPendingText();picked.clear();expandedChapters.clear();if(!sel.value){book=null;await refreshSync();renderBrowse();await renderBook();renderTrash();return}book=await j(`/api/ink/books/${encodeURIComponent(sel.value)}`);await refreshSync();renderBrowse();await renderBook();renderTrash()};
+  exportTabsEl.querySelectorAll('button').forEach(b=>b.onclick=()=>{if(exportTab===b.dataset.etab)return;exportTab=b.dataset.etab;selectedChapter=null;renderBook()});
+  const loadBook=async()=>{await flushPendingText();picked.clear();selectedChapter=null;if(!sel.value){book=null;await refreshSync();renderBrowse();await renderBook();renderTrash();return}book=await j(`/api/ink/books/${encodeURIComponent(sel.value)}`);await refreshSync();renderBrowse();await renderBook();renderTrash()};
   sel.onchange=loadBook;
   const refresh=async()=>{const d=await j('/api/ink/books');const cur=sel.value;sel.innerHTML=(d.items||[]).map(b=>`<option value="${b.uuid}">${b.title}（${b.entries}）</option>`).join('')||'<option value="">（还没有勾画过的书）</option>';
     if(cur&&[...sel.options].some(o=>o.value===cur))sel.value=cur;await loadBook()};
