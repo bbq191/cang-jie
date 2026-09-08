@@ -110,9 +110,6 @@ dl.help dd{margin:.2em 0 .2em;color:var(--mute);font-size:.9em;line-height:1.65}
 .trash-item:last-child{border-bottom:none}
 .trash-item .txt{flex:1;min-width:0;font-size:.9em}
 .trash-item .txt .q{color:var(--mute);font-size:.9em}
-/* 批量工具栏（整理区第二轮反馈点 1）：勾选后浮出的操作条 */
-#npickbar{position:sticky;top:6.6em;z-index:3;background:color-mix(in srgb,var(--accent) 8%,var(--surface))}
-#npicklinks{display:flex;gap:.5em;flex-wrap:wrap;margin-top:.4em}
 /* 各模型用量表（管理台模型面板，点 2「彻底重做」）：字号收紧一点，避免这张卡片被表格撑得太宽 */
 [data-usagewrap] table.cmp{font-size:.82em;min-width:0}
 [data-usagewrap] th,[data-usagewrap] td{padding:.35em .5em}

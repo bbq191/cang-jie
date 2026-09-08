@@ -263,13 +263,6 @@ function renderNotes(sec){sec.innerHTML=`
   <div class="subnav"><button class="on">👀 浏览</button><button>✎ 整理</button><button>🗑 回收站</button></div>
   <div class="subpanel on" id="nbrowse"></div>
   <div class="subpanel" id="norganize">
-    <div class="card" id="npickbar" hidden>
-      <div class="row"><b id="npickcount"></b>
-        <button class="btn" data-pick-retry>重新转写</button>
-        <button class="btn" data-pick-archive>不要了</button>
-        <button class="btn" data-pick-clear>取消选择</button></div>
-      <div class="small" id="npickmsg"></div>
-    </div>
     <div class="subnav" id="nexporttabs"><button class="on" data-etab="pending">未导出</button><button data-etab="synced">已导出</button></div>
     <div class="subnav" id="nchaptertabs"></div>
     <div id="nchapterbody"></div>
@@ -396,37 +389,47 @@ function renderNotes(sec){sec.innerHTML=`
      整个被 `exportTab`/`selectedChapter` 两个状态取代。同步状态目前只精确到整章，做不到"这条笔记本身
      导出过没"，退而求其次把章节级同步徽章也贴一份到每条笔记行上。顺带把「同步本章」改名「推送本章」
      （"同步"暗示双向，这个按钮其实只单向推）、「重转」改名「重新转写」（跟「浏览」视图里语义完全不同
-     的「转入笔记」共享"转"字，容易混），见白皮书 §03z。 */
-  const picked=new Set();
-  const pickbar=$('#npickbar',sec),pickcount=$('#npickcount',sec),pickmsg=$('#npickmsg',sec),exportTabsEl=$('#nexporttabs',sec);
-  const syncPickbar=()=>{pickbar.hidden=picked.size===0;pickcount.textContent=`已选 ${picked.size} 条`};
-  const selectedEntries=()=>(book&&book.entries||[]).filter(e=>picked.has(e.id));
+     的「转入笔记」共享"转"字，容易混），见白皮书 §03z。
+     **第七轮反馈（同一天）**：① 批量勾选（每条复选框/「全选本章」/顶部隐藏工具栏）整段删除——那两个
+     操作（重新转写/不要了）现在每条自己就有独立按钮，勾选层是纯粹的重复入口，跟这条线一贯"有独立
+     按钮就别再叠一层批量选择"的取舍一致。② tab 归属判据从"整章内容是否跟最近一次投影完全匹配"
+     （`fullySynced`）改成"这一章有没有被推送过"（`everExported`，只看 `notebookGeneratedAt`/
+     `obsidianExportedAt` 是否非空）——原判据是两个布尔值的组合，编辑任意一条笔记的内容/落点都可能
+     让整章的指纹对不上，"已导出"章节因为一次小编辑弹回"未导出"，用户反馈"多条数据的组合判断，一
+     改落点就变成未导出"。改判存在性之后，推送过一次就稳定留在「已导出」，不再随内容变化在两个 tab
+     间跳；`fullySynced`/`syncBadges` 没有被替换掉——它们继续管"章头/每条笔记的 ✓/… 徽章"，"这一章
+     还有没有新改动没推送"这条信息没有丢，只是从"决定进哪个 tab"降级成"已导出 tab 内的一个提示"，
+     见白皮书 §03ad。 */
+  const exportTabsEl=$('#nexporttabs',sec);
   /* 双层导出状态视图（第五轮反馈，用户反馈"1章10条笔记，10章就100条，手机划几分钟才到底"）：
-     顶层「未导出/已导出」两个 tab（复用 fullySynced 判据分组），tab 下再按章节列第二层可点标签，
-     点哪章只显示哪一章的内容——任意时刻屏幕上最多一章的内容，不靠折叠/滚动去缓解。exportTab 跨
-     换书保留（比照原复选框状态本来也不随换书重置），selectedChapter 换书清空（章节 key 按书算）。 */
+     顶层「未导出/已导出」两个 tab（第七轮反馈改成按 everExported 分组，见上），tab 下再按章节列第
+     二层可点标签，点哪章只显示哪一章的内容——任意时刻屏幕上最多一章的内容，不靠折叠/滚动去缓解。
+     exportTab 跨换书保留（比照原复选框状态本来也不随换书重置），selectedChapter 换书清空（章节 key
+     按书算）。 */
   let exportTab='pending',selectedChapter=null;
-  const renderBook=async(opts={})=>{if(!book){chaptertabs.innerHTML='';chapterbody.innerHTML='';syncPickbar();return}updateSummary();
+  const renderBook=async(opts={})=>{if(!book){chaptertabs.innerHTML='';chapterbody.innerHTML='';return}updateSummary();
     const advance=!!opts.advance;
     const trst=await j('/api/transcribe/status');
     const failedIds=new Set((trst.failures||[]).filter(f=>f.book===book.uuid).map(f=>f.id));
     const live=(book.entries||[]).filter(e=>['pending','draft','reviewed'].includes(e.status));
     const groups=new Map();live.forEach(e=>{const k=e.chapter==null?-1:e.chapter;if(!groups.has(k))groups.set(k,[]);groups.get(k).push(e)});
     const sortedKeys=[...groups.keys()].sort((a,b)=>a-b);
-    // fullySynced 复用 /sync 的语义：没有条目要那个去处时 xxxSynced 恒真，所以"没什么要同步的"跟
-    // "已经同步过"在这个布尔值下是一回事——两个 tab 因此互斥且穷尽，没有第三态。
+    // fullySynced：整章内容是否跟最近一次投影完全匹配——只用来算"✓/…"徽章，不再决定 tab 归属
+    // （第七轮反馈：这两件事拆开，见上面大注释）。everExported：这一章有没有被推送过至少一次，
+    // 决定 tab 归属，推送过就稳定留在「已导出」，不会因为后续编辑内容/落点又弹回「未导出」。
     const fullySynced=k=>{const s=k>=0?syncMap.get(k):null;return !!(s&&s.notebookSynced&&s.obsidianSynced)};
-    const pendingKeys=sortedKeys.filter(k=>!fullySynced(k));
-    const syncedKeys=sortedKeys.filter(k=>fullySynced(k));
-    /* 选中章节的归属判定：默认"跟随"——只要这一章还有活条目，不管编辑它之后它现在算未导出还是
-       已导出，都继续显示它、只是把 tab 高亮切到它现在所在的那边（真机反馈：点了条目自己的去处
-       按钮后画面跳到了别的章节，读起来像数据错乱——其实是没有跟随，被"选中章节必须在当前 tab
-       可见列表里"这条校验当成"消失"处理了，随手选中了列表里第一个不相干的章节）。只有两种情况
-       允许真的换到别的章节：显式点了顶层 tab 按钮（点击处理器会先把 selectedChapter 置空，走
-       下面的兜底分支）、或显式要求"推送完这章就跳下一个待处理的"（`advance`，只有「推送本章」
-       成功后传 true，是那个按钮特有的"处理完继续下一条"工作流，不该套用到编辑动作上）。 */
+    const everExported=k=>{const s=k>=0?syncMap.get(k):null;return !!(s&&(s.notebookGeneratedAt!=null||s.obsidianExportedAt!=null))};
+    const pendingKeys=sortedKeys.filter(k=>!everExported(k));
+    const syncedKeys=sortedKeys.filter(k=>everExported(k));
+    /* 选中章节的归属判定：默认"跟随"——只要这一章还有活条目，不管它现在算未导出还是已导出，都继续
+       显示它，只是把 tab 高亮切到它现在所在的那边（真机反馈：点了条目自己的去处按钮后画面跳到了别
+       的章节，读起来像数据错乱——其实是没有跟随，被"选中章节必须在当前 tab 可见列表里"这条校验当成
+       "消失"处理了，随手选中了列表里第一个不相干的章节）。只有两种情况允许真的换到别的章节：显式点
+       了顶层 tab 按钮（点击处理器会先把 selectedChapter 置空，走下面的兜底分支）、或显式要求"推送完
+       这章就跳下一个待处理的"（`advance`，只有「推送本章」成功后传 true，是那个按钮特有的"处理完
+       继续下一条"工作流，不该套用到编辑动作上）。 */
     if(selectedChapter!=null&&groups.has(selectedChapter)&&!advance){
-      exportTab=fullySynced(selectedChapter)?'synced':'pending';
+      exportTab=everExported(selectedChapter)?'synced':'pending';
     }else{
       const pick=exportTab==='pending'?pendingKeys:syncedKeys;
       selectedChapter=pick.length?pick[0]:null;
@@ -438,17 +441,18 @@ function renderNotes(sec){sec.innerHTML=`
       b.textContent=k<0?'未归章':`第 ${k+1} 章`;b.onclick=()=>{selectedChapter=k;renderBook()};chaptertabs.appendChild(b)});
     chapterbody.innerHTML='';
     if(selectedChapter==null){
-      chapterbody.innerHTML=`<p class="small">${exportTab==='pending'?'🎉 都同步了，没有待处理的章节':'还没有章节完成同步'}</p>`;
-      syncPickbar();return}
+      chapterbody.innerHTML=`<p class="small">${exportTab==='pending'?'🎉 都推送过了，没有待处理的章节':'还没有章节推送过'}</p>`;
+      return}
     const k=selectedChapter,es=groups.get(k).sort((a,b)=>a.page_index-b.page_index||(a.ink?a.ink.bbox[1]:0)-(b.ink?b.ink.bbox[1]:0));
     const s=k>=0?syncMap.get(k):null;
     const card=document.createElement('div');card.className='card';
-    card.innerHTML=`<h3 style="margin-top:0">${k<0?'（未归章）':`第 ${k+1} 章 · ${es[0].chapter_title||''}`} <span class="small">${es.length} 条</span>${k>=0?' <button class="btn" data-selall style="padding:.15em .6em;font-size:.8em">全选本章</button>':''}</h3>${k>=0?`<div class="row"><button class="btn pri" data-sync title="按每条的去处（设备笔记本/Obsidian/都要）分别推送——去处已经决定了要不要生成笔记本、要不要导出 md，不用再分两个按钮各点一次">推送本章</button>${syncBadges(s)}<span class="small" data-genmsg></span></div>`:''}<div data-body></div>`;
+    card.innerHTML=`<h3 style="margin-top:0">${k<0?'（未归章）':`第 ${k+1} 章 · ${es[0].chapter_title||''}`} <span class="small">${es.length} 条</span></h3>${k>=0?`<div class="row"><button class="btn pri" data-sync title="按每条的去处（设备笔记本/Obsidian/都要）分别推送——去处已经决定了要不要生成笔记本、要不要导出 md，不用再分两个按钮各点一次">推送本章</button>${syncBadges(s)}<span class="small" data-genmsg></span></div>`:''}<div data-body></div>`;
     const body=card.querySelector('[data-body]');
     if(k>=0){
       const syncBtn=card.querySelector('[data-sync]'),msg=card.querySelector('[data-genmsg]');
       // 直接章头按钮，不用先勾选条目——生成/导出本来就是整章一起投影（条目挑不挑没用，见白皮书
-      // §03x"是不是重复了"），批量勾选留给真正逐条有意义的重新转写/不要了。
+      // §03x"是不是重复了"）；批量勾选整层第七轮反馈已经整段删掉，重新转写/不要了现在各自逐条一个
+      // 独立按钮，见上面模块注释。
       // **合并成一个按钮（第四轮反馈）、改名「推送本章」（第五轮反馈）**：去处（Entry.destination）
       // 本来就已经决定了这一章该不该生成笔记本、该不该导出 md——分两个按钮让用户自己再选一遍"点哪个"
       // 是重复劳动，一个按钮内部按当前去处该做哪样做哪样：没有条目要那个去处，对应那步自然是 Empty
@@ -468,14 +472,11 @@ function renderNotes(sec){sec.innerHTML=`
         msg.textContent=parts.length?parts.join(' · '):'（跟当前去处对应的内容都已经同步，没有变化）';
         await wait(1500);await refreshSync();renderBook({advance:true})};
     }
-    const selAllBtn=card.querySelector('[data-selall]');
-    if(selAllBtn)selAllBtn.onclick=()=>{const all=es.every(e=>picked.has(e.id));es.forEach(e=>all?picked.delete(e.id):picked.add(e.id));renderBook()};
     es.forEach(e=>{const failed=failedIds.has(e.id);const row=document.createElement('div');row.className='entry'+(failed?' entry-failed':'');
       const draft=(e.drafts&&e.drafts[0])?e.drafts[0].text:'';
       const dv=e.destination||'both';
       row.innerHTML=`
         <div class="entry-head">
-          <label class="toggle"><input type="checkbox" data-pick ${picked.has(e.id)?'checked':''}></label>
           <span>p.${e.page_index+1}${e.subhead?' · '+e.subhead:''}</span>
           <span class="badge">${STYLE_NAMES[e.style]||e.style}</span>
           ${syncBadges(s,dv)}
@@ -501,7 +502,6 @@ function renderNotes(sec){sec.innerHTML=`
             </div>
           </div>
         </div>`;
-      row.querySelector('[data-pick]').onchange=ev=>{if(ev.target.checked)picked.add(e.id);else picked.delete(e.id);syncPickbar()};
       const ta=row.querySelector('textarea');
       ta.oninput=ev=>pendingText.set(e.id,ev.target.value);   // 还没失焦确认，先记住最新值，别的动作重画前会先冲掉
       ta.onchange=ev=>{pendingText.delete(e.id);patch(e.id,{text:ev.target.value})};
@@ -527,25 +527,9 @@ function renderNotes(sec){sec.innerHTML=`
         if(r.ok===false){askStat.textContent='✗ '+(r.message||'提问失败')}
         else{askStat.textContent=`✓ 已回答 · 这次 token 入 ${r.promptTokens||0} 出 ${r.completionTokens||0}`;await wait(1500);await flushPendingText();book=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}`);await refreshSync();renderBook()}};
       body.appendChild(row)});
-    chapterbody.appendChild(card);
-    syncPickbar()};
-  /* 批量工具栏（点 1，2026-09-08 第三轮反馈收窄）：生成笔记本/导出 md 挪回章头直接按钮——这两个
-     操作本来就是整章一起投影，勾选条目对它们不起过滤作用（选中哪几条不影响生成出来的内容），逼着
-     先勾选再点这两个按钮只是绕远路（见白皮书 §03x）。批量工具栏只留重新转写（对选中里有裁图的条目
-     生效）和不要了（一次确认批量归档）——这两个是真正逐条起作用的操作，勾选才有意义。 */
-  $('[data-pick-retry]',sec).onclick=async()=>{const ids=selectedEntries().filter(e=>e.ink&&e.ink.crop).map(e=>e.id);
-    if(!ids.length){pickmsg.textContent='选中的条目都没有手写裁图，没法转写';return}
-    await flushPendingText();let ok=0,fail=0,pt=0,ct=0;for(const[i,id]of ids.entries()){pickmsg.textContent=`转写中…（${i+1}/${ids.length}）`;
-      const r=await j(`/api/transcribe/books/${encodeURIComponent(book.uuid)}/entries/${encodeURIComponent(id)}`,{method:'POST'});
-      if(r.ok===false)fail++;else{ok++;pt+=r.promptTokens||0;ct+=r.completionTokens||0}}
-    pickmsg.textContent=`✓ 成 ${ok} 败 ${fail} · 本次消耗 token 入 ${pt} 出 ${ct}`;await flushPendingText();book=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}`);await refreshSync();renderBook()};
-  $('[data-pick-archive]',sec).onclick=async()=>{const ids=[...picked];if(!ids.length)return;
-    if(!confirm(`这 ${ids.length} 条都不要了？（设备笔记本、Obsidian 导出都会摘掉；条目还留在「回收站」，能看到也能恢复）`))return;
-    for(const id of ids)await postJ(`/api/ink/books/${encodeURIComponent(book.uuid)}/entries/${encodeURIComponent(id)}/archive`,{});
-    picked.clear();await flushPendingText();book=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}`);await refreshSync();renderBook();renderTrash()};
-  $('[data-pick-clear]',sec).onclick=()=>{picked.clear();pickmsg.textContent='';renderBook()};
+    chapterbody.appendChild(card)};
   exportTabsEl.querySelectorAll('button').forEach(b=>b.onclick=()=>{if(exportTab===b.dataset.etab)return;exportTab=b.dataset.etab;selectedChapter=null;renderBook()});
-  const loadBook=async()=>{await flushPendingText();picked.clear();selectedChapter=null;if(!sel.value){book=null;await refreshSync();renderBrowse();await renderBook();renderTrash();return}book=await j(`/api/ink/books/${encodeURIComponent(sel.value)}`);await refreshSync();renderBrowse();await renderBook();renderTrash()};
+  const loadBook=async()=>{await flushPendingText();selectedChapter=null;if(!sel.value){book=null;await refreshSync();renderBrowse();await renderBook();renderTrash();return}book=await j(`/api/ink/books/${encodeURIComponent(sel.value)}`);await refreshSync();renderBrowse();await renderBook();renderTrash()};
   sel.onchange=loadBook;
   const refresh=async()=>{const d=await j('/api/ink/books');const cur=sel.value;sel.innerHTML=(d.items||[]).map(b=>`<option value="${b.uuid}">${b.title}（${b.entries}）</option>`).join('')||'<option value="">（还没有勾画过的书）</option>';
     if(cur&&[...sel.options].some(o=>o.value===cur))sel.value=cur;await loadBook()};
