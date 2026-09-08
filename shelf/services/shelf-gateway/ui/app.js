@@ -387,6 +387,12 @@ function renderNotes(sec){sec.innerHTML=`
   const pickbar=$('#npickbar',sec),pickcount=$('#npickcount',sec),pickmsg=$('#npickmsg',sec),showSynced=$('#nshowsynced',sec);
   const syncPickbar=()=>{pickbar.hidden=picked.size===0;pickcount.textContent=`已选 ${picked.size} 条`};
   const selectedEntries=()=>(book&&book.entries||[]).filter(e=>picked.has(e.id));
+  /* 章节默认折叠（用户反馈"1章10条笔记，10章就100条，手机划几分钟才到底"）：每章卡片只露头
+     （标题/条数/同步徽章/同步按钮/全选），条目本体（裁图+文本+问AI 那一整块，最占屏幕的部分）
+     收在下面，点章头展开——这样列表长度只取决于"有几章"，不再取决于"每章有几条"。展开状态记在
+     一个 Set 里，切换只是本地 DOM 隐藏/显示（不重新拉数据/不重画），保持响应快；换书才清空。
+     只有一章要显示时直接展开（没有"点开才看得到唯一内容"这种多余的一步）。 */
+  const expandedChapters=new Set();
   const renderBook=async()=>{if(!book){chaps.innerHTML='';syncPickbar();return}updateSummary();
     const trst=await j('/api/transcribe/status');
     const failedIds=new Set((trst.failures||[]).filter(f=>f.book===book.uuid).map(f=>f.id));
@@ -394,14 +400,18 @@ function renderNotes(sec){sec.innerHTML=`
     const groups=new Map();live.forEach(e=>{const k=e.chapter==null?-1:e.chapter;if(!groups.has(k))groups.set(k,[]);groups.get(k).push(e)});
     chaps.innerHTML='';   // 清空放到网络请求（查失败清单）之后、紧接着同步重建，列表不会有中间空档闪一下
     let hiddenSynced=0;
-    [...groups.keys()].sort((a,b)=>a-b).forEach(k=>{const es=groups.get(k).sort((a,b)=>a.page_index-b.page_index||(a.ink?a.ink.bbox[1]:0)-(b.ink?b.ink.bbox[1]:0));
+    const sortedKeys=[...groups.keys()].sort((a,b)=>a-b);
+    // 全同步的章节默认收起（用户反馈"生成完成后是不是应该移出列表"）：改过字/新条目会让指纹变，
+    // 这里自然又出现——不是靠"生成过一次就永久隐藏"这种一次性标记，是每次重画都按当前内容重新判。
+    const visibleKeys=sortedKeys.filter(k=>{const s=k>=0?syncMap.get(k):null;const fullySynced=!!(s&&s.notebookSynced&&s.obsidianSynced);if(fullySynced&&!showSynced.checked){hiddenSynced++;return false}return true});
+    visibleKeys.forEach(k=>{const es=groups.get(k).sort((a,b)=>a.page_index-b.page_index||(a.ink?a.ink.bbox[1]:0)-(b.ink?b.ink.bbox[1]:0));
       const s=k>=0?syncMap.get(k):null;
-      const fullySynced=!!(s&&s.notebookSynced&&s.obsidianSynced);
-      // 全同步的章节默认收起（用户反馈"生成完成后是不是应该移出列表"）：改过字/新条目会让指纹变，
-      // 这里自然又出现——不是靠"生成过一次就永久隐藏"这种一次性标记，是每次重画都按当前内容重新判。
-      if(fullySynced&&!showSynced.checked){hiddenSynced++;return}
+      const expanded=visibleKeys.length===1||expandedChapters.has(k);
       const card=document.createElement('div');card.className='card';
-      card.innerHTML=`<h3 style="margin-top:0">${k<0?'（未归章）':`第 ${k+1} 章 · ${es[0].chapter_title||''}`} <span class="small">${es.length} 条</span>${k>=0?' <button class="btn" data-selall style="padding:.15em .6em;font-size:.8em">全选本章</button>':''}</h3>${k>=0?`<div class="row"><button class="btn pri" data-sync title="按每条的去处（设备笔记本/Obsidian/都要）分别同步——去处已经决定了要不要生成笔记本、要不要导出 md，不用再分两个按钮各点一次">同步本章</button>${syncBadges(s)}<span class="small" data-genmsg></span></div>`:''}`;
+      card.innerHTML=`<h3 style="margin-top:0;cursor:pointer" data-chaphead><span data-caret>${expanded?'▾':'▸'}</span> ${k<0?'（未归章）':`第 ${k+1} 章 · ${es[0].chapter_title||''}`} <span class="small">${es.length} 条</span>${k>=0?' <button class="btn" data-selall style="padding:.15em .6em;font-size:.8em">全选本章</button>':''}</h3>${k>=0?`<div class="row"><button class="btn pri" data-sync title="按每条的去处（设备笔记本/Obsidian/都要）分别同步——去处已经决定了要不要生成笔记本、要不要导出 md，不用再分两个按钮各点一次">同步本章</button>${syncBadges(s)}<span class="small" data-genmsg></span></div>`:''}<div data-body ${expanded?'':'hidden'}></div>`;
+      const body=card.querySelector('[data-body]'),caret=card.querySelector('[data-caret]');
+      card.querySelector('[data-chaphead]').onclick=ev=>{if(ev.target.closest('button'))return;   // 点头部里的按钮（全选）不该顺带触发折叠
+        const now=!body.hidden;body.hidden=now;caret.textContent=now?'▸':'▾';if(now)expandedChapters.delete(k);else expandedChapters.add(k)};
       if(k>=0){
         const syncBtn=card.querySelector('[data-sync]'),msg=card.querySelector('[data-genmsg]');
         // 直接章头按钮，不用先勾选条目——生成/导出本来就是整章一起投影（条目挑不挑没用，见白皮书
@@ -481,7 +491,7 @@ function renderNotes(sec){sec.innerHTML=`
           askBtn.disabled=false;
           if(r.ok===false){askStat.textContent='✗ '+(r.message||'提问失败')}
           else{askStat.textContent=`✓ 已回答 · 这次 token 入 ${r.promptTokens||0} 出 ${r.completionTokens||0}`;await wait(1500);await flushPendingText();book=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}`);await refreshSync();renderBook()}};
-        card.appendChild(row)});
+        body.appendChild(row)});
       chaps.appendChild(card)});
     if(hiddenSynced)chaps.insertAdjacentHTML('afterbegin',`<p class="small">另有 ${hiddenSynced} 章已同步、收起了——上面「显示已同步的章节」勾上能看到。</p>`);
     syncPickbar()};
@@ -501,7 +511,7 @@ function renderNotes(sec){sec.innerHTML=`
     picked.clear();await flushPendingText();book=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}`);await refreshSync();renderBook();renderTrash()};
   $('[data-pick-clear]',sec).onclick=()=>{picked.clear();pickmsg.textContent='';renderBook()};
   showSynced.onchange=renderBook;
-  const loadBook=async()=>{await flushPendingText();picked.clear();if(!sel.value){book=null;await refreshSync();renderBrowse();await renderBook();renderTrash();return}book=await j(`/api/ink/books/${encodeURIComponent(sel.value)}`);await refreshSync();renderBrowse();await renderBook();renderTrash()};
+  const loadBook=async()=>{await flushPendingText();picked.clear();expandedChapters.clear();if(!sel.value){book=null;await refreshSync();renderBrowse();await renderBook();renderTrash();return}book=await j(`/api/ink/books/${encodeURIComponent(sel.value)}`);await refreshSync();renderBrowse();await renderBook();renderTrash()};
   sel.onchange=loadBook;
   const refresh=async()=>{const d=await j('/api/ink/books');const cur=sel.value;sel.innerHTML=(d.items||[]).map(b=>`<option value="${b.uuid}">${b.title}（${b.entries}）</option>`).join('')||'<option value="">（还没有勾画过的书）</option>';
     if(cur&&[...sel.options].some(o=>o.value===cur))sel.value=cur;await loadBook()};
