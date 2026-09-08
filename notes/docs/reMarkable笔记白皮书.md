@@ -344,6 +344,12 @@ note-serve 投影要往设备写打字文本，rmv6 之前是纯只读解析。�
 
 **离线**：`cargo test --workspace` **93 个**（`notecore` 31→41、`note-serve` 11→15，其余不变）零警告；`cargo build --workspace`/`--target aarch64-unknown-linux-musl` 零警告；`node --check app.js` 通过。
 
+**补一版（同一天，用户当场反馈）**：用户看到"✓ 已导出到 vault"这句话追问"vault 在哪里"——落到设备自己的 `$XDG_DATA_HOME/notes/vault/` 里，普通用户没有 SSH 根本够不着，这句提示等于什么都没说。用户的预期很朴素：应该跟正常网页导出一样直接给浏览器一个文件下载，存到哪由浏览器自己的下载设置决定（没配置就是系统默认下载目录，配了"每次询问"会弹框选）——这正是**标准浏览器下载行为免费提供的**，不需要额外造"用户指定目录"的界面（Web 应用本来就管不到、也不该管本地文件系统的具体路径，那是浏览器的权限边界）。
+
+排查时发现一个此前没暴露过的缺口：`shelf-gateway::proxy::forward`（反代 `/api/<seg>/*` 转给后端服务的那层）**只转发 `Content-Type`，其余响应头一律丢弃**（`headers: vec![]` 硬编码）——之前证书下载端点能正常触发浏览器下载，是因为那个端点是网关自己直接处理、根本不经过 `proxy::forward` 这层，没人踩过这个坑。修法：`proxy::forward` 额外转发 `Content-Disposition`（只转发这一个，不给后端服务开口子夹带别的头，比如不会转发 `Set-Cookie` 这类敏感头）。`note-serve` 新增 `GET /books/{uuid}/chapters/{idx}/export.md`——跟 `POST .../export` 读同一份 `notecore::export::export_chapter_md`，内容当场用 `Content-Disposition: attachment` 吐给浏览器（不是从落盘文件读，避免"盘上文件是不是最新"的疑问）；文件名走 RFC 5987（`filename*=UTF-8''...`，中文章名要这个；`filename=` 给一个非 ASCII 字符替换成 `_` 的兜底，老客户端至少存成不乱码的文件名），新增 `content_disposition()` 纯函数 + 2 个单测。网关「导出 md」按钮改成：`POST` 落盘（还留着，给以后 `notes pull` 用）成功后紧接着 `window.open()` 那个新 `GET` 端点，真触发浏览器下载。
+
+**真机验证**（经真实 HTTPS 网关认证层）：`GET .../export.md` 响应头 `Content-Disposition` 正确带着人骨拼圖真实章名的 RFC 5987 编码（`filename*=UTF-8''%E7%AC%AC2%E7%AB%A0...`）、`Content-Type: text/markdown; charset=utf-8`、内容跟落盘那份一致（延续本节前面修的 `Mined`/`Skipped` 过滤，确认没有回归）；本章没内容时正确走 404 JSON、没有 `Content-Disposition` 头（确认这次改动没有影响原有的错误响应路径）。离线：`cargo test --workspace` **95 个**（`note-serve` 13→15）零警告。
+
 ## 04｜踩坑
 
 - **外部进程直改 `.metadata` `parent="trash"` 会被运行中 xochitl 覆写**（阅读线判死）；软删/建夹只能走 QML 代理（书架 `shelf-trash-agent.qmd`）。
@@ -373,6 +379,6 @@ note-serve 投影要往设备写打字文本，rmv6 之前是纯只读解析。�
 12. ~~md 导出~~ ✅ 2026-09-08 真机验证通过（§03r）：`vault/<书名>/第N章.md`（front-matter、`^id` 块锚、`[[书名]]` 反链、索引页）设备端落盘已完成。**剩 host `notes/host/bin/notes pull`**（拉到本机 Obsidian vault 路径）没做——三期只做了"导出到设备"这一半，"host 拉走"是新的独立待办。
 13. 文档收尾、旧 PKM 白皮书加"已退役、由 notes/ 取代"头注、`dev` 以 `--no-ff` 合入 `feature/shelf-p1`。
 
-**已闭环（真机）**：§03c ink-serve 首轮（active/注册/追平 38 章）· §03d 「笔记」tab 注册 · §03e transcribe-serve 部署（active/注册/0600/追平记 note）· §03f 步骤 0 样本标定（聚簇/配对阈值验证通过）· §03g 揪出裁图画布尺寸错（960×1280）并修复部署复验（3 条有勾画的条目裁图都对准了手写位置，但转写准确率另计——2 条数字被认错、1 条完全读错；1 条裁不到已优雅降级）· §03h `rmv6::write`/`note-serve::rmdoc`/上传三件套首次真机验证通过 · §03i 更正 NUMBERED 误判、解出 Subheading 1/2 区分开关、二次真机验证全部 7 种打字样式渲染正确 · §03j/§03k note-serve 生成编排离线写完当晚三轮真机验证通过（生成/增量重传+旧本自动回收/无变化跳过全绿）· §03l 建夹代理真机验证通过（《书名》文件夹自动创建、新文档正确落进去、不重复建夹）· §03m 修正 `list_active` 真机验证通过（书清空后正确从列表消失）· §03o 二期浏览态状态机 + 浏览页 UI 全套真机验证通过、顺带修复"回收站/删除仍赖在列表里"bug · §03p 纯勾画条目 + 裁图自渲染 + `mind-serve` 全部真机验证通过、顺带修复"浏览页对纯勾画条目排序崩溃"bug · §03q 模型配置统一面板（步骤 5）真机验证通过（经真实网关认证代理层验证数据契约，纯视觉排版未经人眼确认），**二期五步全部完成** · §03r 三期：md 导出 + 落设备笔记本/Obsidian/删除三选一真机验证通过，顺带修复"`Mined`/`Skipped` 混进两条投影"的真机 bug（`live_entries` 判据从排除法改允许列表）。离线：七 crate+服务 **93** 测。
+**已闭环（真机）**：§03c ink-serve 首轮（active/注册/追平 38 章）· §03d 「笔记」tab 注册 · §03e transcribe-serve 部署（active/注册/0600/追平记 note）· §03f 步骤 0 样本标定（聚簇/配对阈值验证通过）· §03g 揪出裁图画布尺寸错（960×1280）并修复部署复验（3 条有勾画的条目裁图都对准了手写位置，但转写准确率另计——2 条数字被认错、1 条完全读错；1 条裁不到已优雅降级）· §03h `rmv6::write`/`note-serve::rmdoc`/上传三件套首次真机验证通过 · §03i 更正 NUMBERED 误判、解出 Subheading 1/2 区分开关、二次真机验证全部 7 种打字样式渲染正确 · §03j/§03k note-serve 生成编排离线写完当晚三轮真机验证通过（生成/增量重传+旧本自动回收/无变化跳过全绿）· §03l 建夹代理真机验证通过（《书名》文件夹自动创建、新文档正确落进去、不重复建夹）· §03m 修正 `list_active` 真机验证通过（书清空后正确从列表消失）· §03o 二期浏览态状态机 + 浏览页 UI 全套真机验证通过、顺带修复"回收站/删除仍赖在列表里"bug · §03p 纯勾画条目 + 裁图自渲染 + `mind-serve` 全部真机验证通过、顺带修复"浏览页对纯勾画条目排序崩溃"bug · §03q 模型配置统一面板（步骤 5）真机验证通过（经真实网关认证代理层验证数据契约，纯视觉排版未经人眼确认），**二期五步全部完成** · §03r 三期：md 导出 + 落设备笔记本/Obsidian/删除三选一真机验证通过，顺带修复"`Mined`/`Skipped` 混进两条投影"的真机 bug（`live_entries` 判据从排除法改允许列表）+ 导出改直接触发浏览器下载（顺带修了 `shelf-gateway::proxy::forward` 丢弃 `Content-Disposition` 头的缺口）。离线：七 crate+服务 **95** 测。
 
 **明确不做（本期）**：扫描件 PDF、定稿 PDF（等步骤 0 ④）、笔记本手写批注回读（设备只读）、颜色语义（只进 tags）、自动清空回收站（网页按钮走 `emptyTrash()` 用户显式点）、Anki/Todoist/Readwise 外发（有 md 与稳定 id 之后再谈）、KOReader 高亮回流（书架砍下来留给笔记线，排在导出之后）。
