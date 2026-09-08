@@ -1,16 +1,18 @@
 //! ink-serve —— 笔记·矿（loopback 8795）。监听原生书库（事件驱动、防抖），书页 `.rm` 变了就只扫变更页：
 //! 勾画（GlyphRange）+ 旁边手写（笔画簇）→ 条目 → 裁图 → 条目库（**唯一写者**，其它服务经这里改字段）。零网络。
 //! 路由（经网关前缀 `/api/ink`）：`GET /books` · `GET /books/{uuid}` · `GET /books/{uuid}/crops/{file}` ·
-//! `POST /books/{uuid}/entries/{id}`（text/section/style/draft/answer/askAi/question 字段更新，缺省底座无 PATCH；
-//! `sectionHint`/`subheadHint` 是 `## 文字`/`### 文字` 手写标记转写侧兜底认出来的，见 `notecore::marker::Marker`——
-//! 分区找不到同名的会自动新建；`askAi`+`question` 是"问AI"勾选框+问题输入框，`mind-serve` 读这两个字段触发按条目单发问答；
+//! `POST /books/{uuid}/entries/{id}`（text/style/draft/answer/askAi/question/destination 字段更新，
+//! 缺省底座无 PATCH；`subheadHint` 是 `### 文字` 手写标记转写侧兜底认出来的，见 `notecore::marker::Marker`
+//! ——三期（2026-09-08）砍掉了"分区"这个概念，`## 文字`/`section`/`sectionHint`/`PUT .../sections`
+//! 整个都没了，AI 触发早就是 `askAi`+`question` 的事，笔记本排版分组也不要了，见白皮书 §03s；
+//! `askAi`+`question` 是"问AI"勾选框+问题输入框，`mind-serve` 读这两个字段触发按条目单发问答；
 //! `GET /books` 只列条目库里还有活条目的书）·
 //! `POST /books/{uuid}/entries/{id}/request`（浏览态"转入笔记"：`Mined→Pending`）·
 //! `POST /books/{uuid}/entries/{id}/skip`（浏览态"不需要"：`Mined→Skipped`）·
 //! `POST /books/{uuid}/entries/{id}/archive`（三期"不要了"：`→Archived`，两处投影都摘掉，见
 //! `notecore::model::Entry::set_triage`；已撤销/已归档的条目对以上三个动作都拒绝）·
 //! `POST /books/{uuid}/purge`（清空回收站：物理删掉 `Archived`/`Revoked`/`Skipped` 这三种终态条目，
-//! 手动触发、不可恢复，见 `notecore::model::Book::purge_terminal`）· `PUT /books/{uuid}/sections` ·
+//! 手动触发、不可恢复，见 `notecore::model::Book::purge_terminal`）·
 //! `POST /books/{uuid}/rescan` · `GET /events`。条目库 `$XDG_STATE_HOME/notes/books/<uuid>.json`，裁图 `$XDG_DATA_HOME/notes/crops/`。
 //! `destination` 字段（三期，落设备笔记本/Obsidian/两处都要，缺省两处都要）走通用 PATCH，见下方。
 mod bookdb;
@@ -21,7 +23,7 @@ mod ingest;
 
 use bookdb::BookDb;
 use config::IngestConfig;
-use notecore::model::{Answer, Destination, Draft, Section, Status, Style};
+use notecore::model::{Answer, Destination, Draft, Status, Style};
 use shelf_core::events::EventBus;
 use shelf_core::fs::plain_name;
 use shelf_core::http::{bind, ApiError, ApiResult, Reply, Request, Router};
@@ -135,23 +137,14 @@ fn main() {
             }
             let now = shelf_core::clock::now_secs();
             let found = s.db.update(&uuid, || Default::default(), |b| {
-                // 找/建分区在借 e（可变借 b.entries）之前算好——`Book::section_id_for_name` 要整个 &mut b，
-                // 跟同时持有 e 冲突不过借用检查，所以先落地成一个 id 字符串再往下走。
-                let section_hint_id = j.0.get("sectionHint").and_then(|v| v.as_str()).map(str::trim).filter(|s| !s.is_empty()).map(|name| b.section_id_for_name(name));
                 let subhead_hint = j.0.get("subheadHint").and_then(|v| v.as_str()).map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
                 let Some(e) = b.entries.iter_mut().find(|e| e.id == id) else { return false };
                 if let Some(t) = j.0.get("text").and_then(|v| v.as_str()) {
                     e.text = (!t.trim().is_empty()).then(|| t.to_string());
                     e.status = if e.text.is_some() { Status::Reviewed } else if e.drafts.is_empty() { Status::Pending } else { Status::Draft };
                 }
-                if let Some(v) = j.0.get("section") {
-                    e.section = v.as_str().filter(|s| !s.is_empty()).map(str::to_string);
-                }
-                // `## 文字`/`### 文字` 手写标记（转写侧兜底认出来的，见 notecore::marker::Marker）：
-                // 分区标记落 section（自动建/复用同名分区）；小节标记覆盖 subhead（平时由 epubmap 自动填）。
-                if let Some(id) = section_hint_id {
-                    e.section = Some(id);
-                }
+                // `### 文字` 手写标记（转写侧兜底认出来的，见 notecore::marker::Marker）：小节标题
+                // 覆盖 subhead（平时由 epubmap 自动填）。三期砍掉了 `## 文字`（分区）那半，见白皮书 §03s。
                 if let Some(name) = subhead_hint {
                     e.subhead = Some(name);
                 }
@@ -200,16 +193,6 @@ fn main() {
                 s.bus.publish("notes", "entries");
             }
             Ok(Reply::ok(&serde_json::json!({"ok": true, "removed": removed})))
-        }))
-        .put("/books/{uuid}/sections", bind(&st, |s, r| {
-            let uuid = r.param("uuid").to_string();
-            let secs: Vec<Section> = serde_json::from_value(r.json()?.0.get("sections").cloned().unwrap_or_default()).map_err(|e| ApiError::bad(format!("sections 形状不对: {e}")))?;
-            if s.db.load(&uuid).is_none() {
-                return Err(ApiError::not_found("没有这本书的条目"));
-            }
-            s.db.update(&uuid, || Default::default(), |b| b.sections = secs).map_err(ApiError::internal)?;
-            s.bus.publish("notes", "sections");
-            Ok(Reply::ok(&serde_json::json!({"ok": true})))
         }))
         .post("/books/{uuid}/rescan", bind(&st, |s, r| {
             let uuid = r.param("uuid").to_string();

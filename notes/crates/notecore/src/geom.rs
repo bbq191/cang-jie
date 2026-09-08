@@ -92,21 +92,6 @@ pub fn pair(clusters: &[Cluster], highlights: &[Highlight], th: &Thresholds) -> 
         .collect()
 }
 
-/// 簇里有没有"一行字 + 下面一条长横"（§02 分区头手写约定）：某条笔画几乎撑满簇宽、扁而矮、贴在簇下半部分。
-/// 真机样本（未配对到勾画的第四簇）核过：下划线是单独一笔，宽度≈簇全宽、高约为簇高的 1/6、贴底。
-/// 只给谓词，不建分区——落地到"新建分区"要过手机确认，先不在摄取阶段自动生效。
-pub fn has_underline(strokes: &[Stroke], cluster: &Cluster) -> bool {
-    let cb = cluster.bbox;
-    let (w, h) = (cb.width(), cb.height());
-    if w <= 0.0 || h <= 0.0 {
-        return false;
-    }
-    cluster.strokes.iter().any(|&i| {
-        let b = strokes[i].bbox;
-        b.width() >= w * 0.85 && b.height() <= h * 0.3 && b.y0 >= cb.y0 + h * 0.5
-    })
-}
-
 #[cfg(test)]
 pub(crate) mod fixtures {
     use rmv6::page::{BBox, Highlight, Stroke};
@@ -170,10 +155,5 @@ mod tests {
         assert_eq!(p[3], None, "第四簇（字+下划线）离最近勾画 ~305pt，超过 pair_gap → 本页批注");
         // 配对精确到"哪一条"：簇按 y 升序（同 cluster 排序），勾画顺序与页面从上到下一致。
         assert_eq!(p[..3], [Some(0), Some(1), Some(2)]);
-
-        assert!(!has_underline(&page.strokes, &cs[0]), "批注簇没有下划线");
-        assert!(!has_underline(&page.strokes, &cs[1]));
-        assert!(!has_underline(&page.strokes, &cs[2]));
-        assert!(has_underline(&page.strokes, &cs[3]), "第四簇=一行字+下划线，判定应为分区头候选");
     }
 }

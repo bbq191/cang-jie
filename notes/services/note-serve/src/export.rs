@@ -94,7 +94,6 @@ mod tests {
             drafts: vec![],
             text: Some("内容".into()),
             style: Style::Body,
-            section: None,
             ask_ai: false,
             question: None,
             answer: None,
@@ -106,7 +105,7 @@ mod tests {
     }
 
     fn book() -> Book {
-        Book { uuid: "u".into(), title: "人骨拼图".into(), author: String::new(), chapters: vec!["第一章".into(), "空章".into()], sections: vec![], entries: vec![entry("e1", 0, 0)], page_mtimes: Default::default() }
+        Book { uuid: "u".into(), title: "人骨拼图".into(), author: String::new(), chapters: vec!["第一章".into(), "空章".into()], entries: vec![entry("e1", 0, 0)], page_mtimes: Default::default() }
     }
 
     #[test]

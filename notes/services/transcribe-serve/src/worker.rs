@@ -81,7 +81,7 @@ fn transcribe_entry(c: &Ctx<'_>, uuid: &str, e: &notecore::model::Entry) -> Resu
     let prompt = crate::prompt::build(&c.cfg.prompt, e.quote.as_ref().map(|q| q.text.as_str()));
     let t = c.vision.transcribe(&png, &prompt)?;
     // 行首标记兜底：几何没认出来（仍是正文）时按转写结果认，并剥掉标记——可能认出内容样式（Style）
-    // 也可能认出结构性标记（## 分区 / ### 小节），见 `notecore::marker::Marker`。
+    // 也可能认出结构性标记（### 小节），见 `notecore::marker::Marker`。
     let (marker, text) = if e.style == Style::Body { split_leading_marker(&t.text) } else { (None, t.text.clone()) };
     let draft = Draft { text: text.clone(), backend: c.vision.name().to_string(), at: c.now, hash: ink.hash.clone() };
     c.store.post_draft(uuid, &e.id, &draft, marker)?;
@@ -195,7 +195,7 @@ mod tests {
         }
     }
     fn entry(id: &str, hash: &str, crop: &str, quote: Option<&str>) -> Entry {
-        Entry { id: id.into(), page: "p".into(), page_index: 0, chapter: None, chapter_title: String::new(), subhead: None, quote: quote.map(|q| Quote { id: "q".into(), text: q.into(), color: "y".into(), rects: vec![] }), ink: Some(Ink { strokes: vec![], bbox: (0.0, 0.0, 1.0, 1.0), hash: hash.into(), crop: crop.into() }), drafts: vec![], text: None, style: Style::Body, section: None, ask_ai: false, question: None, answer: None, status: Status::Pending, destination: Default::default(), created: 0, updated: 0 }
+        Entry { id: id.into(), page: "p".into(), page_index: 0, chapter: None, chapter_title: String::new(), subhead: None, quote: quote.map(|q| Quote { id: "q".into(), text: q.into(), color: "y".into(), rects: vec![] }), ink: Some(Ink { strokes: vec![], bbox: (0.0, 0.0, 1.0, 1.0), hash: hash.into(), crop: crop.into() }), drafts: vec![], text: None, style: Style::Body, ask_ai: false, question: None, answer: None, status: Status::Pending, destination: Default::default(), created: 0, updated: 0 }
     }
     fn mem(entries: Vec<Entry>) -> Mem {
         Mem { book: Mutex::new(Book { uuid: "u".into(), title: "t".into(), entries, ..Default::default() }), posted: Mutex::new(vec![]) }

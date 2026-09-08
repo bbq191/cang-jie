@@ -6,7 +6,7 @@ use crate::crop::render_ink;
 use crate::doc::Doc;
 use epubmap::BookMap;
 use notecore::ingest::{drafts_of_page, merge_page, MergeStats, PageCtx};
-use notecore::model::{default_sections, Book, Status};
+use notecore::model::{Book, Status};
 use std::path::Path;
 
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -47,7 +47,7 @@ pub fn ingest_doc(lib: &Path, crops_dir: &Path, db: &BookDb, cfg: &IngestConfig,
     let mut errors: Vec<String> = vec![];
     db.update(
         uuid,
-        || Book { uuid: uuid.to_string(), title: title.clone(), sections: default_sections(), ..Default::default() },
+        || Book { uuid: uuid.to_string(), title: title.clone(), ..Default::default() },
         |book| {
             book.title = title.clone();
             book.chapters = chapters.clone();
@@ -165,7 +165,7 @@ mod tests {
         let s = ingest_doc(&lib, &crops, &db, &cfg, u, 1).unwrap().unwrap();
         assert_eq!(s.pages, 1);
         let book = db.load(u).unwrap();
-        assert_eq!((book.title.as_str(), book.chapters.len(), book.entries.len(), book.sections.len()), ("人骨拼圖", 0, 0, 4), "没 .epub 文件 → 无目录；墓碑页零条目；缺省分区");
+        assert_eq!((book.title.as_str(), book.chapters.len(), book.entries.len()), ("人骨拼圖", 0, 0), "没 .epub 文件 → 无目录；墓碑页零条目");
         assert_eq!(book.page_mtimes.len(), 1);
         // 再来一次：页没变 → 零页
         let s2 = ingest_doc(&lib, &crops, &db, &cfg, u, 2).unwrap().unwrap();
@@ -176,7 +176,7 @@ mod tests {
     }
 
     fn seeded_entry(id: &str, status: Status) -> notecore::model::Entry {
-        notecore::model::Entry { id: id.into(), page: "p".into(), page_index: 0, chapter: None, chapter_title: String::new(), subhead: None, quote: None, ink: None, drafts: vec![], text: None, style: Default::default(), section: None, ask_ai: false, question: None, answer: None, status, destination: Default::default(), created: 0, updated: 0 }
+        notecore::model::Entry { id: id.into(), page: "p".into(), page_index: 0, chapter: None, chapter_title: String::new(), subhead: None, quote: None, ink: None, drafts: vec![], text: None, style: Default::default(), ask_ai: false, question: None, answer: None, status, destination: Default::default(), created: 0, updated: 0 }
     }
 
     /// 真机验证时发现的 bug（2026-09-07）：书被移进回收站、甚至彻底删除，条目库里的旧条目
