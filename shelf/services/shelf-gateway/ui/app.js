@@ -379,7 +379,10 @@ function renderNotes(sec){sec.innerHTML=`
      操作本来就是整章一起投影，选中哪几条对结果没有过滤作用，硬要求先勾选只是绕远路），批量勾选工具栏
      收窄成只剩真正逐条起作用的重转/不要了；章头新增 📓/Obsidian 同步徽章，全同步的章节默认从列表收起
      （"生成完成后是不是应该移出列表"），有「显示已同步的章节」开关能翻出来；回收站每条显示去处徽章 +
-     所在章节的同步状态（"回收站该显示导出到哪里"），见 `refreshSync()`/`syncBadges()`/白皮书 §03x。 */
+     所在章节的同步状态（"回收站该显示导出到哪里"），见 `refreshSync()`/`syncBadges()`/白皮书 §03x。
+     **第四轮反馈（同一天）**：生成笔记本/导出 md 这两个按钮又被指出跟条目已有的「去处」字段重复——
+     去处早就决定了这一章该不该落笔记本、该不该落 Obsidian，合并成一个「同步本章」按钮，内部按去处
+     该做哪样做哪样，不用用户自己对着两个按钮再选一遍"点哪个"，见白皮书 §03y。 */
   const picked=new Set();
   const pickbar=$('#npickbar',sec),pickcount=$('#npickcount',sec),pickmsg=$('#npickmsg',sec),showSynced=$('#nshowsynced',sec);
   const syncPickbar=()=>{pickbar.hidden=picked.size===0;pickcount.textContent=`已选 ${picked.size} 条`};
@@ -398,22 +401,27 @@ function renderNotes(sec){sec.innerHTML=`
       // 这里自然又出现——不是靠"生成过一次就永久隐藏"这种一次性标记，是每次重画都按当前内容重新判。
       if(fullySynced&&!showSynced.checked){hiddenSynced++;return}
       const card=document.createElement('div');card.className='card';
-      card.innerHTML=`<h3 style="margin-top:0">${k<0?'（未归章）':`第 ${k+1} 章 · ${es[0].chapter_title||''}`} <span class="small">${es.length} 条</span>${k>=0?' <button class="btn" data-selall style="padding:.15em .6em;font-size:.8em">全选本章</button>':''}</h3>${k>=0?`<div class="row"><button class="btn pri" data-gen>生成笔记本</button><button class="btn" data-exp>导出 md</button>${syncBadges(s)}<span class="small" data-genmsg></span></div>`:''}`;
+      card.innerHTML=`<h3 style="margin-top:0">${k<0?'（未归章）':`第 ${k+1} 章 · ${es[0].chapter_title||''}`} <span class="small">${es.length} 条</span>${k>=0?' <button class="btn" data-selall style="padding:.15em .6em;font-size:.8em">全选本章</button>':''}</h3>${k>=0?`<div class="row"><button class="btn pri" data-sync title="按每条的去处（设备笔记本/Obsidian/都要）分别同步——去处已经决定了要不要生成笔记本、要不要导出 md，不用再分两个按钮各点一次">同步本章</button>${syncBadges(s)}<span class="small" data-genmsg></span></div>`:''}`;
       if(k>=0){
-        const genBtn=card.querySelector('[data-gen]'),expBtn=card.querySelector('[data-exp]'),msg=card.querySelector('[data-genmsg]');
+        const syncBtn=card.querySelector('[data-sync]'),msg=card.querySelector('[data-genmsg]');
         // 直接章头按钮，不用先勾选条目——生成/导出本来就是整章一起投影（条目挑不挑没用，见白皮书
         // §03x"是不是重复了"），批量勾选留给真正逐条有意义的重转/不要了。
-        genBtn.onclick=async()=>{genBtn.disabled=true;msg.textContent='生成中…';
-          const r=await j(`/api/notes/books/${encodeURIComponent(book.uuid)}/chapters/${k}/generate`,{method:'POST'});genBtn.disabled=false;
-          const c=(r.chapters&&r.chapters[0])||{};
-          msg.textContent=r.ok===false?('✗ '+(r.message||'失败')):c.status==='failed'?('✗ '+c.error):c.status==='empty'?'（本章没内容）':c.status==='unchanged'?'（没变化，未重传）':'✓ 已生成到设备';
-          await wait(1500);await refreshSync();renderBook()};
-        expBtn.onclick=async()=>{expBtn.disabled=true;msg.textContent='导出中…';
-          const r=await j(`/api/notes/books/${encodeURIComponent(book.uuid)}/chapters/${k}/export`,{method:'POST'});expBtn.disabled=false;
-          if(r.ok===false){msg.textContent='✗ '+(r.message||'失败')}
-          else if(r.status==='empty'){msg.textContent='（本章没有去处含 Obsidian 的条目）'}
-          else if(r.status==='unchanged'){msg.textContent='（没变化，未重新导出）'}
-          else{msg.textContent='✓ 已导出，下载中…';window.open(`/api/notes/books/${encodeURIComponent(book.uuid)}/chapters/${k}/export.md`,'_blank')}
+        // **合并成一个「同步本章」按钮（第四轮反馈）**：去处（Entry.destination）本来就已经决定了
+        // 这一章该不该生成笔记本、该不该导出 md——分两个按钮让用户自己再选一遍"点哪个"是重复劳动，
+        // 一个按钮内部按当前去处该做哪样做哪样：没有条目要那个去处，对应那步自然是 Empty（后端已有
+        // 这个语义，见 export::ExportOutcome/publish::ChapterOutcome），前端只是不重复提示"没做"。
+        syncBtn.onclick=async()=>{syncBtn.disabled=true;msg.textContent='同步中…';
+          const gr=await j(`/api/notes/books/${encodeURIComponent(book.uuid)}/chapters/${k}/generate`,{method:'POST'});
+          const er=await j(`/api/notes/books/${encodeURIComponent(book.uuid)}/chapters/${k}/export`,{method:'POST'});
+          syncBtn.disabled=false;
+          const gc=(gr.chapters&&gr.chapters[0])||{};
+          const parts=[];
+          if(gr.ok===false)parts.push('✗ 笔记本：'+(gr.message||'失败'));
+          else if(gc.status==='failed')parts.push('✗ 笔记本：'+gc.error);
+          else if(gc.status==='generated')parts.push('✓ 笔记本已更新');
+          if(er.ok===false)parts.push('✗ md：'+(er.message||'失败'));
+          else if(er.status==='written'){parts.push('✓ md 已导出');window.open(`/api/notes/books/${encodeURIComponent(book.uuid)}/chapters/${k}/export.md`,'_blank')}
+          msg.textContent=parts.length?parts.join(' · '):'（跟当前去处对应的内容都已经同步，没有变化）';
           await wait(1500);await refreshSync();renderBook()};
       }
       const selAllBtn=card.querySelector('[data-selall]');
