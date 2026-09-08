@@ -128,7 +128,7 @@ notes/
 ## 构建 · 部署
 
 ```sh
-cd notes && cargo build --workspace && cargo test --workspace     # host：112 个测试（rmv6 7 · epubmap 5 · notecore 42 · ink 10 · transcribe 18 · mind 17 · note 13）
+cd notes && cargo build --workspace && cargo test --workspace     # host：114 个测试（rmv6 7 · epubmap 5 · notecore 42 · ink 10 · transcribe 19 · mind 18 · note 13）
 cd ../shelf && ./build.sh && ./deploy.sh <设备IP>                  # 随书架一起交叉编译/打包/装机（NOTES_BINS；设备在 WiFi 上时给 WiFi IP）
 ssh root@<设备IP> sh /home/root/shelf-pkg/shelf/install.sh --only ink,transcribe,mind,note   # 只装/更新笔记线
 ```
