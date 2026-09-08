@@ -6,9 +6,9 @@
 
 | 服务 | seg / 端口 | 职责 | 状态 |
 |---|---|---|---|
-| `ink-serve` 矿 | `ink` / 8795 | 监听书库 → 只扫变更页 → 勾画 ↔ 旁边手写配对（含无手写的纯勾画） → **自渲染裁图**（笔画矢量数据画折线，不依赖缩略图）→ **条目库（唯一写者）**；零网络 | ✅ 真机 active，浏览态状态机 + 纯勾画条目 + 自渲染裁图 + 归档/清空回收站全部真机验证 |
-| `transcribe-serve` 转写 | `transcribe` / 8796 | 订阅矿的事件 → 裁图喂视觉模型（预置下拉选，DashScope 缺省，OpenAI 兼容口可换）→ 草稿写回；只处理 `Pending`（用户点了「转入笔记」的）；唯一出网之一 | ✅ 真机 active、key 已配置、真调模型跑过；转写准确率还在打磨 |
-| `mind-serve` 脑 | `mind` / 8797 | 按条目单发：勾选「问AI」+ 输入问题 → 拼书名+章节+勾画原文+转写文本+问题 → 文字模型 → `answer` 写回；**没有批量循环/事件订阅**，纯被动等 HTTP，比 transcribe-serve 还轻 | ✅ 真机 active，端到端问答真机验证通过 |
+| `ink-serve` 矿 | `ink` / 8795 | 监听书库 → 只扫变更页 → 勾画 ↔ 旁边手写配对（含无手写的纯勾画） → **自渲染裁图**（笔画矢量数据画折线，不依赖缩略图）→ **条目库（唯一写者）**；零网络 | ✅ 真机 active，浏览态状态机 + 纯勾画条目 + 自渲染裁图 + 归档/清空回收站/**恢复**全部真机验证 |
+| `transcribe-serve` 转写 | `transcribe` / 8796 | 订阅矿的事件 → 裁图喂视觉模型（预置下拉选，横跨 DashScope/OpenAI/Gemini/DeepSeek 四厂商，key 按厂商分开存）→ 草稿写回（行首标记自动定样式）；只处理 `Pending`（用户点了「转入笔记」的）；唯一出网之一 | ✅ 真机 active、DashScope key 已配置真调过；OpenAI/Gemini/DeepSeek 三家只验证了配置层，没有真实 key 走过调用；转写准确率还在打磨 |
+| `mind-serve` 脑 | `mind` / 8797 | 按条目单发：勾选「问AI」+ 输入问题 → 拼书名+章节+勾画原文+转写文本+问题 → 文字模型（同样四厂商预置表）→ `answer` 写回；**没有批量循环/事件订阅**，纯被动等 HTTP，比 transcribe-serve 还轻 | ✅ 真机 active，端到端问答真机验证通过（DashScope） |
 | `note-serve` 本 | `notes` / 8798 | 注册「笔记」tab；打包 `.rmdoc`（全部 7 种打字样式）+ 上传 + 条目→文档生成编排（网页按钮已接线）；**md 导出**（落设备 vault + 直接触发浏览器下载） | ✅ 三件套+编排+导出全部真机验证通过 |
 
 ## 三期定案：去处三选一 + 砍掉分区（2026-09-08）
@@ -19,9 +19,16 @@
 - **`Status::Archived`**（"不要了"，软删终态，跟 `Revoked` 同类但用户主动触发）+ **`Book::purge_terminal()`**（物理清 `Archived`/`Revoked`/`Skipped`，手动触发不自动跑，回答"软删数据会不会无限扩充"——跟书级回收站"不自动清空"同一条纪律）。网页「回收站」子视图**真列出**这三种终态条目的实际内容（页码/原文/转写文本），不是一个盲清的按钮。
 - **~~分区~~ 整个概念砍掉**：`Section`/`Book.sections`/`Entry.section`/`Book::section_id_for_name()` 全删——AI 触发早就是 `Entry.ask_ai`/`question` 的事（二期已做），分区兼职的"笔记本排版分组"这半也不要了，条目一律按页序平铺，格式差异全靠 `Entry.style`。手写标记 `## 文字`/`### 文字`两个都覆盖 `Entry.subhead`（不分层级，`##` 曾被误删又按用户要求恢复识别）。
 
-## 模型管理：预置下拉，不用自己填地址（2026-09-08）
+## 模型管理：预置下拉横跨四厂商，key 按厂商分开存（2026-09-08 第二轮重做）
 
-`transcribe-serve`/`mind-serve` 的 `config.rs` 各维护一张 `Preset` 表（视觉/文字分开）：`PUT /config` 传 `preset` id，服务端查表原子设置 `model`+`base_url`，未知预置名直接拒绝；`"custom"` 是转义阀，留给真要接非 DashScope 的 OpenAI 兼容口。`GET /config`/`/status` 相应带 `presets`（表本身）+ `activePreset`（当前配置匹配哪个，不匹配算 `custom`）。key 脱敏显示后**只剩删除按钮**，不能直接改写——要换 key 先删再填。网页入口在**「管理」tab 的"模型管理"卡片**（不在笔记专属的「整理」区）。
+`transcribe-serve`/`mind-serve` 的 `config.rs` 各维护一张 `Preset` 表（视觉/文字分开，每条带 `provider`）：`PUT /config` 传 `preset` id，服务端查表原子设置 `model`+`base_url`，未知预置名直接拒绝；`"custom"` 是转义阀，留给真要接非预置表内厂商的 OpenAI 兼容口。预置表横跨 **DashScope/OpenAI/Gemini/DeepSeek** 四家（模型 id/baseUrl 经 WebSearch/WebFetch 核实官方文档，核实日期见 `config.rs` 模块文档；**豆包没收进预置表**——它的"模型"是账号自建的推理接入点 ID，不是通用字符串，走"自定义"接）。key **按厂商分开存**（`keys: provider→key`），切换预置不会互相冲掉、同厂商换模型不用重新粘贴；老配置文件（单一 `model`/`baseUrl`/`apiKey`）通过 `migrate()` 无损搬进新形状，真机验证过已保存的 key 升级后还在。`GET /config`/`/status` 带 `presets`+`activePreset`+`price`（当前模型单价，用户自填）+ `usageByModel`（按模型分账的用量，含花费估算——没填单价是 `null` 不是 `0`，因为**不做官方定价表**，第三方定价常变，写死一份容易把预估花费做错）。key 脱敏显示后**只剩删除按钮**，不能直接改写——要换 key 先删再填。网页入口在**「管理」tab 的"模型管理"卡片**（不在笔记专属的「整理」区）。
+
+## 「整理」区第二轮反馈：批量勾选 + 样式自动识别 + 回收站可恢复（2026-09-08）
+
+- **删掉转写折叠层**：「浏览」页已经决定要不要转笔记，转成 `Pending` 就该自动转写，不需要单独的"立即转写待转写条目"/"重试失败"批量按钮；`auto`（合书自动转写）开关挪进「管理」tab 的模型面板。失败的条目直接在「整理」列表里标红、按钮文案变"重转失败"，下方列表每条独立重试。
+- **样式/去处两个下拉去掉**：样式改成行首标记（`-`/`1.`/`口`/`##`/`### `）自动识别——`Entry::apply_marked_text` 把转写草稿早就在用的 `notecore::marker::split_leading_marker` 规则也接到用户手动改字（`PATCH text`）上，打字跟手写是同一套约定，不用另选。去处（设备笔记本/Obsidian/都要）换成条目卡片上的紧凑图标循环按钮，点一下切下一态。
+- **批量工具栏**：生成笔记本/导出 md/重转/不要了四个动作先勾选多条再操作——「整理」每条卡片一个勾选框，顶部固定工具栏按选中条目所在章节去重调用（生成/导出）或逐条调用（重转/不要了）；章头留「全选本章」快捷链接。导出的下载按钮是先落盘再摆出来让用户逐个点，绕开异步 `window.open` 被浏览器拦掉的坑。
+- **回收站可恢复**：`Entry::restore()`——`Skipped`/`Revoked`/`Archived` 都能恢复，按条目已有内容倒推落点（校对文本在→已校对，只有草稿→待校对，只有手写→待转写，没内容→回浏览）。书里笔画已经被擦的条目也能恢复，找回的是条目库存档（裁图/文本），不代表设备原页面笔迹重现——网页文案写清楚这条限制。每条一个「恢复」按钮 + 一个「全部恢复」批量按钮，跟「清空回收站」并排。
 
 ## 四步闭环
 
@@ -57,9 +64,9 @@
 
 | 服务 | 路由 |
 |---|---|
-| ink | `GET /books` → `{items:[{uuid,title,chapters,entries,pending}]}`（`list_active`，只列还有活条目的书）· `GET /books/{uuid}`（整份条目库：chapters/entries，**没有 sections 了**）· `GET /books/{uuid}/crops/{file}` · `POST /books/{uuid}/entries/{id} {text?|style?|destination?|draft?|answer?|askAi?|question?|subheadHint?}`（给 `text` 即已校对；`draft` 追加最新在前；`destination` 三期新增；**没有 `section`/`sectionHint` 了**）· `POST /books/{uuid}/entries/{id}/request`（浏览态"转入笔记"：`Mined→Pending`，纯勾画条目直接 `Reviewed`）· `POST /books/{uuid}/entries/{id}/skip`（"不需要"：`Mined→Skipped`）· `POST /books/{uuid}/entries/{id}/archive`（三期"不要了"：`→Archived`）· `POST /books/{uuid}/purge`（清空回收站：物理删 `Archived`/`Revoked`/`Skipped`，不可恢复）· `POST /books/{uuid}/rescan` · `GET /events` |
-| transcribe | `GET /status` → `{config(无 key), usage, failures, inkReachable, pending}` · `GET /config`（带 `presets`/`activePreset`）· `PUT /config {preset?, apiKey?（只写）, clearKey?, model?, baseUrl?, auto?, maxPerRun?, pauseMs?, timeoutSecs?, maxAttempts?, prompt?}` · `POST /run`（同步跑一轮，回 `{scanned,done,failed,skipped,left,note}`）· `POST /books/{uuid}/entries/{id}`（强制转写一条）· `POST /retry`（清失败记录再跑）· `GET /events` |
-| mind | `GET /status` → `{config(无 key), usage}` · `GET /config`（带 `presets`/`activePreset`）· `PUT /config {preset?, apiKey?（只写）, clearKey?, model?, baseUrl?, timeoutSecs?, prompt?}` · `POST /books/{uuid}/entries/{id}/ask`（回答这一条，要求已勾 `askAi` 且填了 `question`，否则 400）——**没有 `/events`**，纯被动，没有需要推送的状态 |
+| ink | `GET /books` → `{items:[{uuid,title,chapters,entries,pending}]}`（`list_active`，只列还有活条目的书）· `GET /books/{uuid}`（整份条目库：chapters/entries，**没有 sections 了**）· `GET /books/{uuid}/crops/{file}` · `POST /books/{uuid}/entries/{id} {text?|style?|destination?|draft?|answer?|askAi?|question?|subheadHint?}`（`text` 走 `Entry::apply_marked_text`——行首标记自动定样式/覆盖 subhead 并剥掉标记，不再需要网页手动传 `style`；`draft` 追加最新在前；`destination` 三期新增）· `POST /books/{uuid}/entries/{id}/request`（浏览态"转入笔记"：`Mined→Pending`，纯勾画条目直接 `Reviewed`）· `POST /books/{uuid}/entries/{id}/skip`（"不需要"：`Mined→Skipped`）· `POST /books/{uuid}/entries/{id}/archive`（三期"不要了"：`→Archived`）· `POST /books/{uuid}/entries/{id}/restore`（**第二轮反馈新增**：`Skipped`/`Revoked`/`Archived` 按已有内容倒推恢复，非终态条目拒绝）· `POST /books/{uuid}/purge`（清空回收站：物理删 `Archived`/`Revoked`/`Skipped`，不可恢复）· `POST /books/{uuid}/rescan` · `GET /events` |
+| transcribe | `GET /status` → `{config(无 key), usage, usageByModel, failures, inkReachable, pending}` · `GET /config`（带 `presets`/`activePreset`/`price`）· `PUT /config {preset?, apiKey?（只写，存进当前厂商）, clearKey?, price?{input,output}, model?, baseUrl?（仅 preset="custom" 生效）, auto?, maxPerRun?, pauseMs?, timeoutSecs?, maxAttempts?, prompt?}` · `POST /run`（同步跑一轮，回 `{scanned,done,failed,skipped,left,note}`）· `POST /books/{uuid}/entries/{id}`（强制转写一条）· `POST /retry`（清失败记录再跑）· `GET /events` |
+| mind | `GET /status` → `{config(无 key), usage, usageByModel}` · `GET /config`（带 `presets`/`activePreset`/`price`）· `PUT /config {preset?, apiKey?（只写，存进当前厂商）, clearKey?, price?{input,output}, model?, baseUrl?（仅 preset="custom" 生效）, timeoutSecs?, prompt?}` · `POST /books/{uuid}/entries/{id}/ask`（回答这一条，要求已勾 `askAi` 且填了 `question`，否则 400）——**没有 `/events`**，纯被动，没有需要推送的状态 |
 | notes | `GET /status` · `GET /books`（各书章节生成状态）· `GET /books/{uuid}/notebooks` · `POST /books/{uuid}/generate`（全书按需重投影+上传）· `POST /books/{uuid}/chapters/{idx}/generate`（单章，网页已接线）· `POST /books/{uuid}/export`（全书导出 md，落设备 vault）· `POST /books/{uuid}/chapters/{idx}/export`（单章，网页已接线，附带触发浏览器下载）· `GET /books/{uuid}/chapters/{idx}/export.md`（同一份内容当下载吐给浏览器，`Content-Disposition` + RFC 5987 文件名）· `GET /events` |
 
 事件：`{"svc":"ink","area":"notes","kind":"entries"}`、`{"svc":"transcribe","area":"notes","kind":"transcribe"}` → 网页「笔记」tab 自动刷新。
@@ -89,7 +96,7 @@ notes/
 | 用途 | 路径 |
 |---|---|
 | 二进制 | `~/.local/bin/{ink-serve,transcribe-serve,mind-serve,note-serve}` |
-| 配置 | `~/.config/notes/ink.json`（clusterGap 40 / pairGap 120 真机验证有效未改；cropMargin 24 / debounceSecs 4）· `~/.config/notes/transcribe.json`（**0600**，含 apiKey，三期加 `preset`）· `~/.config/notes/mind.json`（**0600**，同上，字段比 transcribe.json 少——没有 maxPerRun/pauseMs/auto/maxAttempts） |
+| 配置 | `~/.config/notes/ink.json`（clusterGap 40 / pairGap 120 真机验证有效未改；cropMargin 24 / debounceSecs 4）· `~/.config/notes/transcribe.json`（**0600**，`preset`+`keys`（厂商→key）+`prices`（预置→单价），老配置的 `apiKey`/`model`/`baseUrl` 只作迁移兼容字段）· `~/.config/notes/mind.json`（**0600**，同上，字段比 transcribe.json 少——没有 maxPerRun/pauseMs/auto/maxAttempts） |
 | 数据 | `~/.local/share/notes/crops/`（裁片 PNG，自渲染）· `~/.local/share/notes/vault/`（md 导出，§03r 已落地） |
 | 状态 | `~/.local/state/notes/books/<uuid>.json`（**条目库**）· `~/.local/state/notes/transcribe.json`（转写用量账本）· `~/.local/state/notes/mind.json`（问 AI 用量账本） |
 | 只读外部 | xochitl 书库 `~/.local/share/remarkable/xochitl/`——**绝不写** |
@@ -111,7 +118,7 @@ notes/
 
 ## 去处、删除与回收站
 
-条目校对/问答完之后，`destination` 决定它出现在哪：`Notebook`（只留设备笔记本）/ `Obsidian`（只导出）/ `Both`（缺省，两处都要）。不想要了点「不要了」→ `Archived`（软删，两处投影都摘掉，但条目库里还留着）。「回收站」子视图列出 `Skipped`/`Revoked`/`Archived` 三种终态条目的实际内容（不是纯按钮），确认无误后点「清空回收站」才是真删（`Book::purge_terminal()`，不可恢复，手动触发不自动跑）。
+条目校对/问答完之后，`destination` 决定它出现在哪：`Notebook`（只留设备笔记本）/ `Obsidian`（只导出）/ `Both`（缺省，两处都要）。不想要了点「不要了」→ `Archived`（软删，两处投影都摘掉，但条目库里还留着）。「回收站」子视图列出 `Skipped`/`Revoked`/`Archived` 三种终态条目的实际内容（不是纯按钮），每条一个「恢复」按钮（`Entry::restore()`，按条目已有内容倒推落点，第二轮反馈新增）+ 一个「全部恢复」批量按钮；确认无误后点「清空回收站」才是真删（`Book::purge_terminal()`，不可恢复，手动触发不自动跑）。恢复找回的是条目库存档（裁图/文本），不代表设备原页面笔迹重现——`Revoked` 条目本来就是"笔画在设备上被擦掉"触发的。
 
 ## 增量规则（回答"二次识别会不会把改好的字覆盖回去"）
 
@@ -121,7 +128,7 @@ notes/
 ## 构建 · 部署
 
 ```sh
-cd notes && cargo build --workspace && cargo test --workspace     # host：100 个测试（rmv6 7 · epubmap 5 · notecore 40 · ink 10 · transcribe 12 · mind 13 · note 13）
+cd notes && cargo build --workspace && cargo test --workspace     # host：112 个测试（rmv6 7 · epubmap 5 · notecore 42 · ink 10 · transcribe 18 · mind 17 · note 13）
 cd ../shelf && ./build.sh && ./deploy.sh <设备IP>                  # 随书架一起交叉编译/打包/装机（NOTES_BINS；设备在 WiFi 上时给 WiFi IP）
 ssh root@<设备IP> sh /home/root/shelf-pkg/shelf/install.sh --only ink,transcribe,mind,note   # 只装/更新笔记线
 ```
@@ -133,6 +140,7 @@ ssh root@<设备IP> sh /home/root/shelf-pkg/shelf/install.sh --only ink,transcri
 - 前端可视渲染人眼确认：浏览页/回收站/模型管理面板/条目卡片重设计，后端数据链路都真机走通，但没有浏览器渲染工具，实际排版效果没人看过。
 - `### `/`## ` 小节标记真机复验：后端已接线、离线单测全绿，两轮真机复验卡在手写行草连笔的 OCR 准确率，不是代码问题。
 - transcribe 转写质量持续打磨（汉字数字误认、裁图边界样本）。
-- `archive`/`purge` 两个端点没有对真实历史数据实测过（一次性不可逆动作，底层逻辑单测覆盖充分，没事先问用户不该拿真实数据练手）。
+- `archive`/`purge` 两个端点没有对真实历史数据实测过（一次性不可逆动作，底层逻辑单测覆盖充分，没事先问用户不该拿真实数据练手；`restore` 是反方向的可逆操作，已经真机验证过）。
+- OpenAI/Gemini/DeepSeek 三家新模型预置只验证了配置层（预置表匹配、key 按厂商隔离、老配置迁移），没有真实 key 走过一次实际调用——等有 key 再补。
 
 演进记录、每一步的真机验证细节、踩过的坑，见 `docs/reMarkable笔记白皮书.md`。
