@@ -8,6 +8,7 @@
 //! ⚠️ 已知限制（跟 `project.rs` 记的是同一类问题，这次同样不解决）：CommonMark 严格实现下，有序列表
 //! （`Style::Numbered`）条目之间如果夹着摘录/回答的引用块，可能不被认作连续列表、编号从 1 重来——
 //! 真要连续编号，条目间不能有摘录/回答。多数 Markdown 渲染器（含 Obsidian）对这个更宽容，先不处理。
+use crate::hash::{fnv1a, hex};
 use crate::model::{Book, Entry, Status, Style};
 
 /// YAML 双引号字符串字面量（转义反斜杠与双引号；标题/书名可能含冒号、井号等 YAML 特殊字符，
@@ -31,6 +32,32 @@ fn live_entries(book: &Book, chapter_idx: usize) -> Vec<&Entry> {
 /// `visibleName` 完全一致，方便人对照"这本 md 对应设备上哪本笔记本"。
 pub fn chapter_stem(chapter_idx: usize, title: &str) -> String {
     format!("第{}章 {}", chapter_idx + 1, title)
+}
+
+/// 这一章 Obsidian 导出的内容指纹——跟 `project::fingerprint_chapter` 同一套算法（标题+各条目
+/// id/样式/文本/勾画/回答拼起来算哈希），只是这边的 `live_entries` 收 `wants_obsidian()` 不是
+/// `wants_notebook()`：两条投影各看各的活条目集合，指纹自然也该分开算，不能共用 `project.rs`
+/// 那份（同一条目改了去处，比如从 `Notebook` 切到 `Obsidian`，两边该不该判"变了"是不一样的）。
+/// 没有任何该导出的条目 → `None`（跟 `export_chapter_md` 的"空章不落文件"是同一个判据）。
+/// **用途**（整理区第三轮反馈，2026-09-08）：`note-serve::export.rs` 用它判断"跟上次导出比有没有
+/// 变化"，没变就不重写文件、也不用刷新"已同步"记录——同一套"指纹没变就跳过"的纪律搬到导出这边。
+pub fn fingerprint_chapter(book: &Book, chapter_idx: usize) -> Option<String> {
+    let title = book.chapters.get(chapter_idx)?;
+    let entries = live_entries(book, chapter_idx);
+    if entries.is_empty() {
+        return None;
+    }
+    let mut buf = String::new();
+    buf.push_str(title);
+    buf.push('\u{2}');
+    for e in &entries {
+        let text = e.display_text().unwrap_or("");
+        let quote = e.quote.as_ref().map(|q| q.text.as_str()).unwrap_or("");
+        let answer = e.answer.as_ref().map(|a| a.text.as_str()).unwrap_or("");
+        buf.push_str(&format!("{}|{:?}|{}|{}|{}", e.id, e.style, text, quote, answer));
+        buf.push('\u{1}');
+    }
+    Some(hex(fnv1a(buf.as_bytes())))
 }
 
 fn push_entry_md(out: &mut String, e: &Entry) {
@@ -303,5 +330,24 @@ mod tests {
         b.title = "书名带\"引号\"和\\反斜杠".into();
         let md = export_chapter_md(&b, 0).unwrap();
         assert!(md.contains("book: \"书名带\\\"引号\\\"和\\\\反斜杠\"\n"), "{md}");
+    }
+
+    #[test]
+    fn fingerprint_changes_on_content_change_and_is_scoped_to_obsidian_destined_entries() {
+        let b = book();
+        let fp1 = fingerprint_chapter(&b, 0).unwrap();
+        assert_eq!(fingerprint_chapter(&b, 0), Some(fp1.clone()), "同样的书两次算出同一个指纹");
+
+        let mut edited = b.clone();
+        edited.entries[0].text = Some("换了校对文本".into());
+        assert_ne!(fingerprint_chapter(&edited, 0).unwrap(), fp1, "校对文本变了指纹要变");
+
+        // 去处切到 Notebook（不再要 Obsidian）→ 这条条目从这份指纹的输入集合里消失，指纹跟着变——
+        // 跟 project::fingerprint_chapter 该不该联动是两回事，这条只测 export 自己这份。
+        let mut moved = b.clone();
+        moved.entries[0].destination = crate::model::Destination::Notebook;
+        assert_ne!(fingerprint_chapter(&moved, 0).unwrap(), fp1, "去处改成不要 Obsidian 了，指纹要变");
+
+        assert_eq!(fingerprint_chapter(&b, 1), None, "空章没有指纹");
     }
 }

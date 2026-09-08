@@ -1,5 +1,8 @@
 const $=(s,r=document)=>r.querySelector(s);
 const fmtB=n=>n>1048576?(n/1048576).toFixed(1)+' MB':n>1024?(n/1024).toFixed(0)+' KB':n+' B';
+/* 停一会儿再继续：用在"先弹出一条状态文字，再触发会重画掉这条文字的动作"这种场景——不等的话状态
+   文字刚显示就被紧跟着的重画冲掉，用户根本来不及看见（点重转/生成笔记本弹出消耗那次踩过的坑）。 */
+const wait=ms=>new Promise(res=>setTimeout(res,ms));
 /* 轻量记忆：per-viewer 便利态，隐私窗口/禁用 storage 时静默回默认 */
 const LS={get(k,d){try{const v=localStorage.getItem('shelf.'+k);return v==null?d:v}catch{return d}},set(k,v){try{localStorage.setItem('shelf.'+k,v)}catch{}}};
 const onUsb=/^10\.11\.99\./.test(location.hostname);
@@ -242,6 +245,12 @@ function assetTab(sec,api,o){sec.innerHTML=`<div class="card">${o.title?`<h2>${o
    发模型，二期，白皮书 §03n），分区兼职的笔记本排版分组也不要了，条目一律按页序平铺，格式=Entry.style。 */
 const STYLE_NAMES={body:'正文',bullet:'无序 -',numbered:'有序 1.',checkbox:'待办 口'};
 const STATUS_NAMES={mined:'待浏览',pending:'待转写',draft:'待校对',reviewed:'已校对',skipped:'已跳过',revoked:'已撤销',archived:'已删除'};
+/* Obsidian 官方图标是紫色多面体"石头"，不是随便一个链接符号——真机反馈"能否用它自己的图标"，用一个
+   简化的多面体 SVG（不是官方 logo 的精确描边，商标图形不该随手照抄，这个形状+配色足够让人一眼认出
+   "这是 Obsidian"）替掉原来占位的 🔗。设备笔记本用 📓 emoji 就够直观，不用特别做图标。 */
+const OBSIDIAN_ICON='<svg viewBox="0 0 24 24" width="13" height="13" style="vertical-align:-2px;flex:none" aria-hidden="true"><path d="M12 2 19 7.5 17 15 12 22 7 15 5 7.5Z" fill="#8b6cef"/></svg>';
+const DEST_ICON={notebook:'📓 设备',obsidian:OBSIDIAN_ICON+' Obsidian',both:'📓'+OBSIDIAN_ICON+' 都要'};
+const DEST_ORDER=['notebook','obsidian','both'];
 /* 落设备笔记本/落 Obsidian/两处都要（三期，白皮书 §03n 之后）：缺省 both；第二轮反馈把下拉换成
    条目卡片里的循环图标按钮（`DEST_ICON`/`DEST_ORDER`，见 renderBook）。 */
 /* 「浏览」（新批注先落这，点了才转笔记）与「整理」（真被要求转笔记的才在这核对）拆两个子视图，见二期设计（白皮书 §03n）。 */
@@ -256,14 +265,13 @@ function renderNotes(sec){sec.innerHTML=`
   <div class="subpanel" id="norganize">
     <div class="card" id="npickbar" hidden>
       <div class="row"><b id="npickcount"></b>
-        <button class="btn pri" data-pick-gen>生成笔记本</button>
-        <button class="btn" data-pick-exp>导出 md</button>
         <button class="btn" data-pick-retry>重转</button>
         <button class="btn" data-pick-archive>不要了</button>
         <button class="btn" data-pick-clear>取消选择</button></div>
       <div class="small" id="npickmsg"></div>
-      <div id="npicklinks"></div>
     </div>
+    <div class="row"><label class="toggle"><input type="checkbox" id="nshowsynced"> 显示已同步的章节</label>
+      <span class="small">生成笔记本/导出 md 后内容跟当前一致的章节默认收起，改过字或有新条目会自动重新出现</span></div>
     <div id="nchapters"></div>
   </div>
   <div class="subpanel" id="ntrashpanel">
@@ -284,6 +292,15 @@ function renderNotes(sec){sec.innerHTML=`
      保证读到的一定是最新的。 */
   const pendingText=new Map();
   const flushPendingText=async()=>{if(!book||!pendingText.size)return;const items=[...pendingText];pendingText.clear();for(const[id,val]of items)await patch(id,{text:val})};
+  /* 每章"设备笔记本/Obsidian md 是不是已经跟当前条目内容同步"（整理区第三轮反馈）：一次性取整本书
+     的同步状态，章头徽章、「整理」列表默认收起已同步章节、回收站显示这条大概去哪了，三处共用同一份，
+     不用各自发请求。`refreshSync()` 在 loadBook 里、以及每次生成/导出动作之后调用刷新。 */
+  let syncMap=new Map();
+  const refreshSync=async()=>{if(!book){syncMap=new Map();return}const r=await j(`/api/notes/books/${encodeURIComponent(book.uuid)}/sync`);syncMap=new Map((r.chapters||[]).map(c=>[c.chapter,c]))};
+  const syncBadges=s=>{if(!s)return'';
+    const nb=s.notebookNeeded?`<span class="badge${s.notebookSynced?' on':''}" title="设备笔记本${s.notebookSynced?'已同步':'内容有改动，还没重新生成'}">📓${s.notebookSynced?'✓':'…'}</span>`:'';
+    const ob=s.obsidianNeeded?`<span class="badge${s.obsidianSynced?' on':''}" title="Obsidian md${s.obsidianSynced?'已同步':'内容有改动，还没重新导出'}">${OBSIDIAN_ICON}${s.obsidianSynced?'✓':'…'}</span>`:'';
+    return nb+ob};
   const trashList=$('#ntrashlist',sec),trashSum=$('#ntrashsum',sec);
   const TRASH_STATUSES=['skipped','revoked','archived'];
   /* 回收站（点 3）：不是一个只会清空的黑盒按钮——列出「不需要」「不要了」「已撤销」的条目实际内容，
@@ -298,20 +315,25 @@ function renderNotes(sec){sec.innerHTML=`
     if(!items.length){trashList.innerHTML='<p class="small">没有已跳过/已删除/已撤销的条目。</p>';return}
     items.forEach(e=>{const row=document.createElement('div');row.className='trash-item';
       const text=e.text||(e.drafts&&e.drafts[0]&&e.drafts[0].text)||(e.quote&&e.quote.text)||'（无文字内容，可能纯手写还没转写）';
-      row.innerHTML=`<span class="badge">${STATUS_NAMES[e.status]||e.status}</span>
+      const dv=e.destination||'both';
+      const chSync=e.chapter!=null?syncMap.get(e.chapter):null;
+      // 这条本身去哪（配置的目的地）+ 它所在章节目前的生成/导出状态（章节维度，不是这条自己确认被
+      // 收进去了没——归档/撤销后这条已经不在活条目集合里，没法再逆推"当初有没有被打进那次生成"，
+      // 只能诚实地给"这一章大致是什么状态"这个参考信息，用户反馈"回收站该显示导出到哪里"）。
+      row.innerHTML=`<span class="badge">${STATUS_NAMES[e.status]||e.status}</span><span class="badge">${DEST_ICON[dv]}</span>${syncBadges(chSync)}
         <div class="txt">p.${e.page_index+1}${e.chapter_title?' · '+e.chapter_title:''}<br><span class="q">${text}</span>${e.status==='revoked'?'<br><span class="small">笔画可能已在设备上被擦——恢复只找回已保存的内容，不会让笔迹重新出现在原页面</span>':''}</div>
         <button class="btn" data-restore>恢复</button>`;
-      row.querySelector('[data-restore]').onclick=async()=>{if(!(await restoreOne(e.id)))return;await flushPendingText();book=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}`);renderTrash();renderBrowse();renderBook()};
+      row.querySelector('[data-restore]').onclick=async()=>{if(!(await restoreOne(e.id)))return;await flushPendingText();book=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}`);await refreshSync();renderTrash();renderBrowse();renderBook()};
       trashList.appendChild(row)})};
   $('#nrestoreall',sec).onclick=async()=>{if(!book)return;
     const items=(book.entries||[]).filter(e=>TRASH_STATUSES.includes(e.status));
     if(!items.length){alert('回收站是空的，没什么可恢复');return}
     if(!confirm(`把这 ${items.length} 条都恢复？`))return;
     for(const e of items)await restoreOne(e.id);
-    await flushPendingText();book=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}`);renderTrash();renderBrowse();renderBook()};
+    await flushPendingText();book=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}`);await refreshSync();renderTrash();renderBrowse();renderBook()};
   /* 浏览态动作：Mined→Pending（转入笔记）/ Mined→Skipped（不需要），见 ink-serve::triage。三个子视图都要重画（条目跨视图搬家）。 */
   const triage=async(id,action)=>{const r=await postJ(`/api/ink/books/${encodeURIComponent(book.uuid)}/entries/${encodeURIComponent(id)}/${action}`,{});if(r.ok===false)return;
-    await flushPendingText();book=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}`);renderBrowse();renderBook();renderTrash()};
+    await flushPendingText();book=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}`);await refreshSync();renderBrowse();renderBook();renderTrash()};
   const updateSummary=()=>{if(!book){sum.textContent='';return}const es=book.entries||[];
     const c=st=>es.filter(e=>e.status===st).length;
     sum.textContent=`待浏览 ${c('mined')} · 待转写 ${c('pending')} · 待校对 ${c('draft')} · 已校对 ${c('reviewed')}`};
@@ -327,7 +349,7 @@ function renderNotes(sec){sec.innerHTML=`
   /* 「不要了」（三期）：转 Archived，两处投影都摘掉，条目库里软删留痕（真删靠「回收站」清空）。 */
   const archiveEntry=async(id)=>{if(!confirm('这条不要了？（设备笔记本、Obsidian 导出都会摘掉；条目还留在「回收站」，能看到也能恢复）'))return;
     const r=await postJ(`/api/ink/books/${encodeURIComponent(book.uuid)}/entries/${encodeURIComponent(id)}/archive`,{});if(r.ok===false)return;
-    await flushPendingText();book=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}`);renderBook();renderTrash()};
+    await flushPendingText();book=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}`);await refreshSync();renderBook();renderTrash()};
   /* 浏览：按页分组、只列 Mined（待决定的），最近变更的页在前；转入笔记/不需要两个按钮直接调 triage。 */
   const renderBrowse=()=>{browse.innerHTML='';if(!book)return;updateSummary();
     const mined=(book.entries||[]).filter(e=>e.status==='mined');
@@ -351,14 +373,15 @@ function renderNotes(sec){sec.innerHTML=`
      每条卡片三块视觉分区（点 4）：左手写裁图 ｜ 中转写/校对文本 ｜ 下问 AI 区，宽屏并排、手机堆叠（style.css .entry-*）。
      **第二轮反馈（2026-09-08）改动**：① 样式不再是下拉——`text` 一存，服务端就按行首 `-`/`1.`/`口`/`##`
      标记自动判样式（`notecore::model::Entry::apply_marked_text`），这里只显示一个只读徽章。② 去处
-     （设备笔记本/Obsidian/都要）从下拉换成紧凑图标循环按钮，点一下切下一态。③ 每条一个勾选框，配合
-     顶部「已选」工具栏做生成笔记本/导出 md/重转/不要了这四个批量动作（先勾后点，不再是章头即时按钮）；
-     章头留一个「全选本章」链接方便单章的快捷用法。④ 转写失败的条目标红、按钮文案变「重转失败」——
-     失败清单原来在已删的转写折叠层，现在直接查一次 `/api/transcribe/status` 按条目 id 对上。 */
-  const DEST_ICON={notebook:'📓 设备',obsidian:'🔗 Obsidian',both:'📓🔗 都要'};
-  const DEST_ORDER=['notebook','obsidian','both'];
+     （设备笔记本/Obsidian/都要）从下拉换成紧凑图标循环按钮，点一下切下一态。③ 每条一个勾选框；④ 转写
+     失败的条目标红、按钮文案变「重转失败」——失败清单查一次 `/api/transcribe/status` 按条目 id 对上。
+     **第三轮反馈（2026-09-08）改动**：生成笔记本/导出 md 挪回章头直接按钮（不再要求先勾选——这两个
+     操作本来就是整章一起投影，选中哪几条对结果没有过滤作用，硬要求先勾选只是绕远路），批量勾选工具栏
+     收窄成只剩真正逐条起作用的重转/不要了；章头新增 📓/Obsidian 同步徽章，全同步的章节默认从列表收起
+     （"生成完成后是不是应该移出列表"），有「显示已同步的章节」开关能翻出来；回收站每条显示去处徽章 +
+     所在章节的同步状态（"回收站该显示导出到哪里"），见 `refreshSync()`/`syncBadges()`/白皮书 §03x。 */
   const picked=new Set();
-  const pickbar=$('#npickbar',sec),pickcount=$('#npickcount',sec),pickmsg=$('#npickmsg',sec),picklinks=$('#npicklinks',sec);
+  const pickbar=$('#npickbar',sec),pickcount=$('#npickcount',sec),pickmsg=$('#npickmsg',sec),showSynced=$('#nshowsynced',sec);
   const syncPickbar=()=>{pickbar.hidden=picked.size===0;pickcount.textContent=`已选 ${picked.size} 条`};
   const selectedEntries=()=>(book&&book.entries||[]).filter(e=>picked.has(e.id));
   const renderBook=async()=>{if(!book){chaps.innerHTML='';syncPickbar();return}updateSummary();
@@ -367,9 +390,32 @@ function renderNotes(sec){sec.innerHTML=`
     const live=(book.entries||[]).filter(e=>['pending','draft','reviewed'].includes(e.status));
     const groups=new Map();live.forEach(e=>{const k=e.chapter==null?-1:e.chapter;if(!groups.has(k))groups.set(k,[]);groups.get(k).push(e)});
     chaps.innerHTML='';   // 清空放到网络请求（查失败清单）之后、紧接着同步重建，列表不会有中间空档闪一下
+    let hiddenSynced=0;
     [...groups.keys()].sort((a,b)=>a-b).forEach(k=>{const es=groups.get(k).sort((a,b)=>a.page_index-b.page_index||(a.ink?a.ink.bbox[1]:0)-(b.ink?b.ink.bbox[1]:0));
+      const s=k>=0?syncMap.get(k):null;
+      const fullySynced=!!(s&&s.notebookSynced&&s.obsidianSynced);
+      // 全同步的章节默认收起（用户反馈"生成完成后是不是应该移出列表"）：改过字/新条目会让指纹变，
+      // 这里自然又出现——不是靠"生成过一次就永久隐藏"这种一次性标记，是每次重画都按当前内容重新判。
+      if(fullySynced&&!showSynced.checked){hiddenSynced++;return}
       const card=document.createElement('div');card.className='card';
-      card.innerHTML=`<h3 style="margin-top:0">${k<0?'（未归章）':`第 ${k+1} 章 · ${es[0].chapter_title||''}`} <span class="small">${es.length} 条</span>${k>=0?' <button class="btn" data-selall style="padding:.15em .6em;font-size:.8em">全选本章</button>':''}</h3>`;
+      card.innerHTML=`<h3 style="margin-top:0">${k<0?'（未归章）':`第 ${k+1} 章 · ${es[0].chapter_title||''}`} <span class="small">${es.length} 条</span>${k>=0?' <button class="btn" data-selall style="padding:.15em .6em;font-size:.8em">全选本章</button>':''}</h3>${k>=0?`<div class="row"><button class="btn pri" data-gen>生成笔记本</button><button class="btn" data-exp>导出 md</button>${syncBadges(s)}<span class="small" data-genmsg></span></div>`:''}`;
+      if(k>=0){
+        const genBtn=card.querySelector('[data-gen]'),expBtn=card.querySelector('[data-exp]'),msg=card.querySelector('[data-genmsg]');
+        // 直接章头按钮，不用先勾选条目——生成/导出本来就是整章一起投影（条目挑不挑没用，见白皮书
+        // §03x"是不是重复了"），批量勾选留给真正逐条有意义的重转/不要了。
+        genBtn.onclick=async()=>{genBtn.disabled=true;msg.textContent='生成中…';
+          const r=await j(`/api/notes/books/${encodeURIComponent(book.uuid)}/chapters/${k}/generate`,{method:'POST'});genBtn.disabled=false;
+          const c=(r.chapters&&r.chapters[0])||{};
+          msg.textContent=r.ok===false?('✗ '+(r.message||'失败')):c.status==='failed'?('✗ '+c.error):c.status==='empty'?'（本章没内容）':c.status==='unchanged'?'（没变化，未重传）':'✓ 已生成到设备';
+          await wait(1500);await refreshSync();renderBook()};
+        expBtn.onclick=async()=>{expBtn.disabled=true;msg.textContent='导出中…';
+          const r=await j(`/api/notes/books/${encodeURIComponent(book.uuid)}/chapters/${k}/export`,{method:'POST'});expBtn.disabled=false;
+          if(r.ok===false){msg.textContent='✗ '+(r.message||'失败')}
+          else if(r.status==='empty'){msg.textContent='（本章没有去处含 Obsidian 的条目）'}
+          else if(r.status==='unchanged'){msg.textContent='（没变化，未重新导出）'}
+          else{msg.textContent='✓ 已导出，下载中…';window.open(`/api/notes/books/${encodeURIComponent(book.uuid)}/chapters/${k}/export.md`,'_blank')}
+          await wait(1500);await refreshSync();renderBook()};
+      }
       const selAllBtn=card.querySelector('[data-selall]');
       if(selAllBtn)selAllBtn.onclick=()=>{const all=es.every(e=>picked.has(e.id));es.forEach(e=>all?picked.delete(e.id):picked.add(e.id));renderBook()};
       es.forEach(e=>{const failed=failedIds.has(e.id);const row=document.createElement('div');row.className='entry'+(failed?' entry-failed':'');
@@ -406,18 +452,17 @@ function renderNotes(sec){sec.innerHTML=`
         const ta=row.querySelector('textarea');
         ta.oninput=ev=>pendingText.set(e.id,ev.target.value);   // 还没失焦确认，先记住最新值，别的动作重画前会先冲掉
         ta.onchange=ev=>{pendingText.delete(e.id);patch(e.id,{text:ev.target.value})};
-        row.querySelector('[data-dest]').onclick=async()=>{const next=DEST_ORDER[(DEST_ORDER.indexOf(dv)+1)%3];await patch(e.id,{destination:next});await flushPendingText();book=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}`);renderBook()};
+        row.querySelector('[data-dest]').onclick=async()=>{const next=DEST_ORDER[(DEST_ORDER.indexOf(dv)+1)%3];await patch(e.id,{destination:next});await flushPendingText();book=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}`);await refreshSync();renderBook()};
         row.querySelector('[data-archive]').onclick=()=>archiveEntry(e.id);
         /* 点「重转」/「提问」弹出状态和这次调用的消耗（用户反馈"应该弹出状态及当前消耗"，2026-09-08
            第三轮）：先显文字状态（转写中…/提问中…），拿到结果显示"✓ 完成 · token 入X 出Y"或错误，
            停留一小会儿让用户真的看得到（不然紧接着的整页重画会立刻把这条状态盖掉，等于白显示）。 */
-        const wait=ms=>new Promise(res=>setTimeout(res,ms));
         const tb=row.querySelector('[data-transcribe]'),txStat=row.querySelector('[data-txstat]');
         if(tb)tb.onclick=async()=>{tb.disabled=true;txStat.textContent='转写中…';
           const r=await j(`/api/transcribe/books/${encodeURIComponent(book.uuid)}/entries/${encodeURIComponent(e.id)}`,{method:'POST'});
           tb.disabled=false;
           txStat.textContent=r.ok===false?('✗ '+(r.message||'转写失败')):`✓ 转写完成 · 这次 token 入 ${r.promptTokens||0} 出 ${r.completionTokens||0}`;
-          await wait(1500);await flushPendingText();book=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}`);renderBook()};
+          await wait(1500);await flushPendingText();book=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}`);await refreshSync();renderBook()};
         /* 「问AI」勾选框 + 问题 + 提问按钮：改即存（ink-serve），点提问才真的调 mind-serve。 */
         const askBox=row.querySelector('[data-ask]'),qInput=row.querySelector('[data-question]'),askBtn=row.querySelector('[data-askbtn]'),askStat=row.querySelector('[data-askstat]');
         const syncAskUi=()=>{qInput.disabled=!askBox.checked;askBtn.disabled=!(askBox.checked&&qInput.value.trim())};
@@ -427,39 +472,28 @@ function renderNotes(sec){sec.innerHTML=`
           const r=await j(`/api/mind/books/${encodeURIComponent(book.uuid)}/entries/${encodeURIComponent(e.id)}/ask`,{method:'POST'});
           askBtn.disabled=false;
           if(r.ok===false){askStat.textContent='✗ '+(r.message||'提问失败')}
-          else{askStat.textContent=`✓ 已回答 · 这次 token 入 ${r.promptTokens||0} 出 ${r.completionTokens||0}`;await wait(1500);await flushPendingText();book=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}`);renderBook()}};
+          else{askStat.textContent=`✓ 已回答 · 这次 token 入 ${r.promptTokens||0} 出 ${r.completionTokens||0}`;await wait(1500);await flushPendingText();book=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}`);await refreshSync();renderBook()}};
         card.appendChild(row)});
       chaps.appendChild(card)});
+    if(hiddenSynced)chaps.insertAdjacentHTML('afterbegin',`<p class="small">另有 ${hiddenSynced} 章已同步、收起了——上面「显示已同步的章节」勾上能看到。</p>`);
     syncPickbar()};
-  /* 批量工具栏（点 1）：生成笔记本/导出 md 按选中条目所在的（去重）章节各调一次；重转只对有裁图的
-     条目生效；不要了一次确认批量归档。导出的下载链接不能在 await 之后再 window.open——多数浏览器
-     把那当成非用户触发的弹窗拦掉，所以先把所有章节都导出完，再把每章的下载按钮摆出来让用户自己点
-     （那才是真正的用户手势，不会被拦）。 */
-  const pickChapters=()=>[...new Set(selectedEntries().filter(e=>e.chapter!=null).map(e=>e.chapter))].sort((a,b)=>a-b);
-  $('[data-pick-gen]',sec).onclick=async()=>{const chs=pickChapters();if(!chs.length){pickmsg.textContent='选中的条目都没有归章，没法生成笔记本';return}
-    await flushPendingText();pickmsg.textContent='生成中…';let ok=0,fail=0;
-    for(const k of chs){const r=await j(`/api/notes/books/${encodeURIComponent(book.uuid)}/chapters/${k}/generate`,{method:'POST'});const c=(r.chapters&&r.chapters[0])||{};if(r.ok===false||c.status==='failed')fail++;else ok++}
-    pickmsg.textContent=`✓ 完成 ${ok} 章${fail?`，失败 ${fail} 章`:''}`};
-  $('[data-pick-exp]',sec).onclick=async()=>{const chs=pickChapters();if(!chs.length){pickmsg.textContent='选中的条目都没有归章，没法导出';return}
-    await flushPendingText();pickmsg.textContent='导出中…';picklinks.innerHTML='';let ok=0;
-    for(const k of chs){const r=await j(`/api/notes/books/${encodeURIComponent(book.uuid)}/chapters/${k}/export`,{method:'POST'});
-      if(r.ok===false||!r.wrote)continue;ok++;
-      const b=document.createElement('button');b.className='btn';b.textContent=`⬇ 下载第 ${k+1} 章`;
-      b.onclick=()=>window.open(`/api/notes/books/${encodeURIComponent(book.uuid)}/chapters/${k}/export.md`,'_blank');
-      picklinks.appendChild(b)}
-    pickmsg.textContent=ok?`✓ 已导出 ${ok} 章，点下面的按钮逐个下载`:'（选中的章节都没有去处含 Obsidian 的条目）'};
+  /* 批量工具栏（点 1，2026-09-08 第三轮反馈收窄）：生成笔记本/导出 md 挪回章头直接按钮——这两个
+     操作本来就是整章一起投影，勾选条目对它们不起过滤作用（选中哪几条不影响生成出来的内容），逼着
+     先勾选再点这两个按钮只是绕远路（见白皮书 §03x）。批量工具栏只留重转（对选中里有裁图的条目生效）
+     和不要了（一次确认批量归档）——这两个是真正逐条起作用的操作，勾选才有意义。 */
   $('[data-pick-retry]',sec).onclick=async()=>{const ids=selectedEntries().filter(e=>e.ink&&e.ink.crop).map(e=>e.id);
     if(!ids.length){pickmsg.textContent='选中的条目都没有手写裁图，没法转写';return}
     await flushPendingText();let ok=0,fail=0,pt=0,ct=0;for(const[i,id]of ids.entries()){pickmsg.textContent=`转写中…（${i+1}/${ids.length}）`;
       const r=await j(`/api/transcribe/books/${encodeURIComponent(book.uuid)}/entries/${encodeURIComponent(id)}`,{method:'POST'});
       if(r.ok===false)fail++;else{ok++;pt+=r.promptTokens||0;ct+=r.completionTokens||0}}
-    pickmsg.textContent=`✓ 成 ${ok} 败 ${fail} · 本次消耗 token 入 ${pt} 出 ${ct}`;await flushPendingText();book=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}`);renderBook()};
+    pickmsg.textContent=`✓ 成 ${ok} 败 ${fail} · 本次消耗 token 入 ${pt} 出 ${ct}`;await flushPendingText();book=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}`);await refreshSync();renderBook()};
   $('[data-pick-archive]',sec).onclick=async()=>{const ids=[...picked];if(!ids.length)return;
     if(!confirm(`这 ${ids.length} 条都不要了？（设备笔记本、Obsidian 导出都会摘掉；条目还留在「回收站」，能看到也能恢复）`))return;
     for(const id of ids)await postJ(`/api/ink/books/${encodeURIComponent(book.uuid)}/entries/${encodeURIComponent(id)}/archive`,{});
-    picked.clear();await flushPendingText();book=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}`);renderBook();renderTrash()};
-  $('[data-pick-clear]',sec).onclick=()=>{picked.clear();pickmsg.textContent='';picklinks.innerHTML='';renderBook()};
-  const loadBook=async()=>{await flushPendingText();picked.clear();if(!sel.value){book=null;renderBrowse();await renderBook();renderTrash();return}book=await j(`/api/ink/books/${encodeURIComponent(sel.value)}`);renderBrowse();await renderBook();renderTrash()};
+    picked.clear();await flushPendingText();book=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}`);await refreshSync();renderBook();renderTrash()};
+  $('[data-pick-clear]',sec).onclick=()=>{picked.clear();pickmsg.textContent='';renderBook()};
+  showSynced.onchange=renderBook;
+  const loadBook=async()=>{await flushPendingText();picked.clear();if(!sel.value){book=null;await refreshSync();renderBrowse();await renderBook();renderTrash();return}book=await j(`/api/ink/books/${encodeURIComponent(sel.value)}`);await refreshSync();renderBrowse();await renderBook();renderTrash()};
   sel.onchange=loadBook;
   const refresh=async()=>{const d=await j('/api/ink/books');const cur=sel.value;sel.innerHTML=(d.items||[]).map(b=>`<option value="${b.uuid}">${b.title}（${b.entries}）</option>`).join('')||'<option value="">（还没有勾画过的书）</option>';
     if(cur&&[...sel.options].some(o=>o.value===cur))sel.value=cur;await loadBook()};
