@@ -2,51 +2,19 @@
 //! **第二轮整理区反馈（2026-09-08，点 2「模型管理彻底重做」）**：一个服务不再只认一家厂商——预置表现在
 //! 横跨 DashScope/OpenAI/Gemini/DeepSeek 四家，切换预置只是换"这次用哪个模型"，key 按厂商（`provider`）
 //! 分开存（`keys` 表），不会出现"切到 OpenAI 却把 DashScope 的 key 发过去"这种事，也不用每切一次模型
-//! 就重新粘贴 key。`custom` 转义阀单独占一格 key。跟 `transcribe-serve::config` 是同一套设计，这边是
-//! 文字模型表，跟视觉模型表分开维护——模型 id 核实来源/豆包为什么不进预置表/花费为什么不做官方定价表，
-//! 见那边的模块文档，理由完全一样，不重复写。
+//! 就重新粘贴 key。`custom` 转义阀单独占一格 key。
+//! **预置选择/key 存取/迁移/PATCH 的核心逻辑跟 `transcribe-serve::config` 共享**（`vendorcfg` crate，
+//! 2026-09-08 抽出来，之前两边各抄一遍）——这里是文字模型表，跟视觉模型表分开维护；模型 id 核实来源/
+//! 豆包为什么不进预置表/花费为什么不做官方定价表，见 `vendorcfg` crate 文档，理由完全一样，不重复写。
 //! **没有 `maxPerRun`/`pauseMs`/`auto`/`maxAttempts` 这些节流字段**——mind-serve 不跑批量循环，纯粹是
 //! "问一条答一条"，见 `worker.rs`/`main.rs` 文档。
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use vendorcfg::{Preset, Price, DASHSCOPE, DEEPSEEK, GEMINI, KEY_ENV, OPENAI};
 
-pub const KEY_ENV: &str = "DASHSCOPE_API_KEY";
+pub use vendorcfg::KeySource;
 
-const DASHSCOPE: &str = "https://dashscope.aliyuncs.com/compatible-mode/v1";
-const OPENAI: &str = "https://api.openai.com/v1";
-const GEMINI: &str = "https://generativelanguage.googleapis.com/v1beta/openai/";
-const DEEPSEEK: &str = "https://api.deepseek.com/v1";
-
-/// baseUrl 兜底认厂商：一个厂商的 key 对它旗下所有模型都通用，不该按"这个具体型号在不在预置表里"
-/// 来分格——2026-09-08 真机踩过：这条服务的预置表里没有 `qwen3-vl-plus`（那是视觉模型，这边文字表
-/// 没收），老配置的这个模型迁移时被判成"没匹配上任何预置"落进 `custom` 格；用户后来在网页把预置
-/// 切到同样是 DashScope 的 `qwen-plus`，新预置能在 `dashscope` 格找到 key 吗？找不到——因为 key
-/// 其实存在 `custom` 格里，明明是同一把 DashScope key，只是当初落错格了。这个函数按 baseUrl（不是
-/// 具体型号）认厂商，`provider()`/`migrate()` 都用它兜底，保证只要 baseUrl 匹配上四家已知厂商之一，
-/// 不管选的是预置表里的型号还是"自定义"填的同一个地址，都能找到同一把 key。
-fn provider_for_base_url(base_url: &str) -> Option<&'static str> {
-    match base_url {
-        DASHSCOPE => Some("dashscope"),
-        OPENAI => Some("openai"),
-        GEMINI => Some("gemini"),
-        DEEPSEEK => Some("deepseek"),
-        _ => None,
-    }
-}
-
-/// 一个预置模型选项：网页下拉给的都是"已知能用"的组合，不需要用户自己填 baseUrl。`provider` 决定这条
-/// 预置的 key 存哪一格——同厂商换模型不用重新粘贴 key。
-#[derive(Serialize, Clone, Copy, Debug, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct Preset {
-    pub id: &'static str,
-    pub label: &'static str,
-    pub model: &'static str,
-    pub base_url: &'static str,
-    pub provider: &'static str,
-}
-
-/// 文字模型预置表（换厂商/加型号在这加一行，网页自动出现新选项；核实来源见 `transcribe-serve::config`）。
+/// 文字模型预置表（换厂商/加型号在这加一行，网页自动出现新选项；核实来源见 `vendorcfg` crate 文档）。
 pub const PRESETS: &[Preset] = &[
     Preset { id: "qwen-plus", label: "Qwen-Plus（推荐）", model: "qwen-plus", base_url: DASHSCOPE, provider: "dashscope" },
     Preset { id: "qwen-max", label: "Qwen-Max（更强，更贵）", model: "qwen-max", base_url: DASHSCOPE, provider: "dashscope" },
@@ -57,14 +25,6 @@ pub const PRESETS: &[Preset] = &[
     Preset { id: "deepseek-v4-flash", label: "DeepSeek V4 Flash（快省）", model: "deepseek-v4-flash", base_url: DEEPSEEK, provider: "deepseek" },
     Preset { id: "deepseek-v4-pro", label: "DeepSeek V4 Pro（更强）", model: "deepseek-v4-pro", base_url: DEEPSEEK, provider: "deepseek" },
 ];
-
-/// 用户自填的每千 token 单价（缺省都是 0＝不计费）。
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq)]
-#[serde(rename_all = "camelCase", default)]
-pub struct Price {
-    pub input_per1k: f64,
-    pub output_per1k: f64,
-}
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase", default)]
@@ -116,138 +76,63 @@ impl Default for MindConfig {
     }
 }
 
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
-#[serde(rename_all = "lowercase")]
-pub enum KeySource {
-    Config,
-    Env,
-    None,
-}
-
 impl MindConfig {
     /// 老配置文件搬进新形状——只在启动加载时调用一次，见 `transcribe-serve::config::migrate` 的说明。
     pub fn migrate(mut self) -> Self {
-        if !self.keys.is_empty() {
-            return self;
-        }
-        if self.api_key.is_empty() && self.model.is_empty() && self.base_url.is_empty() {
-            return self;
-        }
-        let matched = PRESETS.iter().find(|p| p.model == self.model && p.base_url == self.base_url);
-        match matched {
-            Some(p) => self.preset = p.id.to_string(),
-            None => {
-                self.preset = "custom".to_string();
-                self.custom_model = self.model.clone();
-                self.custom_base_url = self.base_url.clone();
-            }
-        }
-        if !self.api_key.is_empty() {
-            // 用 self.provider()（现在会按 baseUrl 兜底认厂商，不只是精确匹配预置型号），不要在这里
-            // 重复一遍"匹配不上就落 custom"的逻辑，保证迁移存 key 的位置永远跟运行时查 key 的位置一致。
-            let provider = self.provider().to_string();
-            self.keys.insert(provider, self.api_key.clone());
-        }
+        vendorcfg::migrate_legacy(PRESETS, &mut self.preset, &mut self.custom_model, &mut self.custom_base_url, &mut self.keys, &self.model, &self.base_url, &self.api_key);
         self
     }
-    fn active(&self) -> Option<&'static Preset> {
-        PRESETS.iter().find(|p| p.id == self.preset)
-    }
-    pub fn provider(&self) -> &str {
-        self.active().map(|p| p.provider).or_else(|| provider_for_base_url(self.base_url())).unwrap_or("custom")
+    pub fn provider(&self) -> String {
+        vendorcfg::resolve_provider(PRESETS, &self.preset, &self.custom_base_url)
     }
     pub fn model(&self) -> &str {
-        self.active().map(|p| p.model).unwrap_or(self.custom_model.as_str())
+        vendorcfg::resolve_model(PRESETS, &self.preset, &self.custom_model)
     }
     pub fn base_url(&self) -> &str {
-        self.active().map(|p| p.base_url).unwrap_or(self.custom_base_url.as_str())
+        vendorcfg::resolve_base_url(PRESETS, &self.preset, &self.custom_base_url)
     }
     /// 解析出可用的 key（不打印、不落日志）。
     pub fn key(&self) -> Option<String> {
         self.key_with_env(std::env::var(KEY_ENV).ok())
     }
     pub fn key_with_env(&self, env: Option<String>) -> Option<String> {
-        let provider = self.provider();
-        if let Some(k) = self.keys.get(provider).map(|s| s.trim()).filter(|s| !s.is_empty()) {
-            return Some(k.to_string());
-        }
-        if provider == "dashscope" {
-            return env.map(|e| e.trim().to_string()).filter(|e| !e.is_empty());
-        }
-        None
+        vendorcfg::resolve_key(&self.keys, &self.provider(), env)
     }
     pub fn key_source(&self) -> KeySource {
-        let provider = self.provider();
-        if self.keys.get(provider).map(|k| !k.trim().is_empty()).unwrap_or(false) {
-            KeySource::Config
-        } else if provider == "dashscope" && std::env::var(KEY_ENV).map(|e| !e.trim().is_empty()).unwrap_or(false) {
-            KeySource::Env
-        } else {
-            KeySource::None
-        }
+        vendorcfg::key_source(&self.keys, &self.provider())
     }
     /// 脱敏预览：只回最后 4 位（如 `...ab12`），服务端算，绝不整串回显。
     pub fn key_masked(&self) -> Option<String> {
-        let k = self.key()?;
-        let n = k.chars().count();
-        if n <= 4 {
-            return Some("*".repeat(n));
-        }
-        let tail: String = k.chars().skip(n - 4).collect();
-        Some(format!("...{tail}"))
+        self.key().as_deref().map(vendorcfg::key_masked)
     }
     pub fn price(&self) -> Price {
         self.prices.get(&self.preset).copied().unwrap_or_default()
     }
     /// 用量记账的分组键（同 `transcribe-serve::config::usage_key`）。
     pub fn usage_key(&self) -> String {
-        if self.preset == "custom" { format!("custom:{}", self.custom_model) } else { self.preset.clone() }
+        vendorcfg::usage_key(&self.preset, &self.custom_model)
     }
     /// 对外视图：去 key、加 hasKey/keySource/keyMasked/presets/activePreset/model/baseUrl/price。
     pub fn public(&self) -> serde_json::Value {
-        let mut v = serde_json::to_value(self).unwrap_or_default();
-        if let Some(o) = v.as_object_mut() {
-            o.remove("keys");
-            o.insert("model".into(), serde_json::Value::String(self.model().to_string()));
-            o.insert("baseUrl".into(), serde_json::Value::String(self.base_url().to_string()));
-            o.insert("provider".into(), serde_json::Value::String(self.provider().to_string()));
-            o.insert("hasKey".into(), serde_json::Value::Bool(self.key().is_some()));
-            o.insert("keySource".into(), serde_json::to_value(self.key_source()).unwrap_or_default());
-            o.insert("keyMasked".into(), serde_json::to_value(self.key_masked()).unwrap_or(serde_json::Value::Null));
-            o.insert("presets".into(), serde_json::to_value(PRESETS).unwrap_or_default());
-            o.insert("activePreset".into(), serde_json::Value::String(self.preset.clone()));
-            o.insert("price".into(), serde_json::to_value(self.price()).unwrap_or_default());
-        }
-        v
+        vendorcfg::public_json(
+            serde_json::to_value(self).unwrap_or_default(),
+            PRESETS,
+            &self.preset,
+            self.model(),
+            self.base_url(),
+            &self.provider(),
+            self.key().is_some(),
+            self.key_source(),
+            self.key_masked(),
+            self.price(),
+        )
     }
     /// 套用 PUT /config 的 JSON（同 `transcribe-serve::config::apply` 的规则，少了节流字段）。
     pub fn apply(&mut self, j: &serde_json::Value) -> Result<(), String> {
-        let s = |k: &str| j.get(k).and_then(|v| v.as_str()).map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
-        if let Some(v) = s("backend") { self.backend = v; }
-        if let Some(v) = s("preset") {
-            if v != "custom" && !PRESETS.iter().any(|p| p.id == v) {
-                return Err(format!("未知的模型预置：{v}"));
-            }
-            self.preset = v;
+        if let Some(v) = j.get("backend").and_then(|v| v.as_str()).map(str::trim).filter(|s| !s.is_empty()) {
+            self.backend = v.to_string();
         }
-        if self.preset == "custom" {
-            if let Some(v) = s("model") { self.custom_model = v; }
-            if let Some(v) = s("baseUrl") {
-                if !v.starts_with("http://") && !v.starts_with("https://") {
-                    return Err("baseUrl 要以 http(s):// 开头".into());
-                }
-                self.custom_base_url = v.trim_end_matches('/').to_string();
-            }
-        }
-        let provider = self.provider().to_string();
-        if let Some(v) = s("apiKey") { self.keys.insert(provider.clone(), v); }
-        if j.get("clearKey").and_then(|v| v.as_bool()).unwrap_or(false) { self.keys.remove(&provider); }
-        if let Some(price) = j.get("price") {
-            let mut p = self.price();
-            if let Some(x) = price.get("input").and_then(|v| v.as_f64()) { p.input_per1k = x.max(0.0); }
-            if let Some(x) = price.get("output").and_then(|v| v.as_f64()) { p.output_per1k = x.max(0.0); }
-            self.prices.insert(self.preset.clone(), p);
-        }
+        vendorcfg::apply_common(PRESETS, j, &mut self.preset, &mut self.custom_model, &mut self.custom_base_url, &mut self.keys, &mut self.prices)?;
         if let Some(v) = j.get("timeoutSecs").and_then(|v| v.as_u64()) { self.timeout_secs = v.clamp(5, 600); }
         if let Some(v) = j.get("prompt") {
             self.prompt = v.as_str().unwrap_or("").trim().to_string();
@@ -365,5 +250,17 @@ mod tests {
     fn migrate_is_noop_for_fresh_install_with_no_legacy_data() {
         let c = MindConfig::default().migrate();
         assert_eq!(c, MindConfig::default());
+    }
+
+    /// 真机 2026-09-08 实测采样的 mind.json 形状（key 值脱敏，字段名/大小写原样，含 customModel/
+    /// customBaseUrl——真机上这台设备的预置停在 custom 但 keys 里已经按 baseUrl 兜底认对了厂商）：
+    /// 确认核心逻辑挪进 `vendorcfg` 之后原样读得出来、`key()` 给出跟改之前一致的结果。
+    #[test]
+    fn reads_real_device_config_shape_unchanged() {
+        let raw = r#"{"backend":"qwen","preset":"qwen-plus","customModel":"qwen3-vl-plus","customBaseUrl":"https://dashscope.aliyuncs.com/compatible-mode/v1","keys":{"custom":"REDACTED-KEY","dashscope":"REDACTED-KEY"},"timeoutSecs":60}"#;
+        let c: MindConfig = serde_json::from_str(raw).unwrap();
+        assert_eq!(c.model(), "qwen-plus", "preset 已经切到真实预置，model() 走预置表不走 customModel");
+        assert_eq!(c.provider(), "dashscope");
+        assert_eq!(c.key().as_deref(), Some("REDACTED-KEY"), "dashscope 格的 key 能正常解出来");
     }
 }

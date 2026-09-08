@@ -1,24 +1,12 @@
 //! 用量账本 `~/.local/state/notes/transcribe.json`：调用/成功/失败次数、token 累计、最近一次错误与一轮报告。
 //! 只记数不记内容（不存 key、不存转写文本）。
+//! **存取逻辑共享给 mind-serve**（`vendorcfg::usage`，2026-09-08 抽出来，之前两边各抄一遍）——这里只
+//! 定义这条服务独有的东西：`RunReport`（一轮批量转写的结果，mind-serve 没有批量轮次，不需要它）。
+//! `Usage`/`Ledger` 是 `vendorcfg` 泛型在 `RunReport` 上的具体实例化。
 //! **第二轮整理区反馈（2026-09-08，点 2）**：按模型分账（`by_model`，键是 `TranscribeConfig::usage_key()`——
 //! 预置 id 或 `custom:<model>`）——同一个服务现在能在多家厂商之间切换预置，"各个模型的用量花费 profile"
 //! 要求每个用过的模型各算各的，不能只有一份全局聚合数字（不然切个模型历史用量就混一起分不清了）。
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
-use std::path::{Path, PathBuf};
-use std::sync::Mutex;
-
-#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
-#[serde(rename_all = "camelCase", default)]
-pub struct ModelUsage {
-    pub calls: u64,
-    pub ok: u64,
-    pub failed: u64,
-    pub prompt_tokens: u64,
-    pub completion_tokens: u64,
-    pub last_at: u64,
-    pub last_error: String,
-}
 
 /// 一轮转写的结果（网页状态区显示）。
 #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
@@ -37,53 +25,8 @@ pub struct RunReport {
     pub note: String,
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
-#[serde(rename_all = "camelCase", default)]
-pub struct Usage {
-    pub by_model: BTreeMap<String, ModelUsage>,
-    pub last_run: Option<RunReport>,
-}
-
-pub struct Ledger {
-    path: PathBuf,
-    usage: Mutex<Usage>,
-}
-
-impl Ledger {
-    pub fn open(path: &Path) -> Ledger {
-        Ledger { path: path.to_path_buf(), usage: Mutex::new(shelf_core::config::load_or_default(path)) }
-    }
-    pub fn snapshot(&self) -> Usage {
-        self.usage.lock().unwrap_or_else(|e| e.into_inner()).clone()
-    }
-    fn edit(&self, f: impl FnOnce(&mut Usage)) {
-        let mut u = self.usage.lock().unwrap_or_else(|e| e.into_inner());
-        f(&mut u);
-        let _ = shelf_core::config::save(&self.path, &*u, None);
-    }
-    pub fn record_ok(&self, model_key: &str, prompt_tokens: u64, completion_tokens: u64, now: u64) {
-        self.edit(|u| {
-            let m = u.by_model.entry(model_key.to_string()).or_default();
-            m.calls += 1;
-            m.ok += 1;
-            m.prompt_tokens += prompt_tokens;
-            m.completion_tokens += completion_tokens;
-            m.last_at = now;
-        });
-    }
-    pub fn record_fail(&self, model_key: &str, err: &str, now: u64) {
-        self.edit(|u| {
-            let m = u.by_model.entry(model_key.to_string()).or_default();
-            m.calls += 1;
-            m.failed += 1;
-            m.last_at = now;
-            m.last_error = err.chars().take(200).collect();
-        });
-    }
-    pub fn record_run(&self, r: RunReport) {
-        self.edit(|u| u.last_run = Some(r));
-    }
-}
+pub type Usage = vendorcfg::UsageBook<RunReport>;
+pub type Ledger = vendorcfg::Ledger<RunReport>;
 
 #[cfg(test)]
 mod tests {
@@ -104,5 +47,18 @@ mod tests {
         let gpt = &back.by_model["gpt-5.6-terra"];
         assert_eq!((gpt.calls, gpt.ok, gpt.prompt_tokens), (1, 1, 50), "不同模型各算各的，不会混到一起");
         assert_eq!(back.last_run.unwrap().done, 1);
+    }
+
+    /// 真机 2026-09-08 实测采样的 transcribe.json 用量账本形状（数值原样，非敏感）：`byModel` +
+    /// `lastRun` 都要原样读出来——这是重构最要紧的一条回归，真机上已经有累计的真实用量数字。
+    #[test]
+    fn reads_real_device_ledger_shape_unchanged() {
+        let t = tempfile::tempdir().unwrap();
+        let p = t.path().join("transcribe.json");
+        std::fs::write(&p, r#"{"byModel":{"qwen3-vl-plus":{"calls":8,"ok":8,"failed":0,"promptTokens":2528,"completionTokens":104,"lastAt":1788853946,"lastError":""}},"lastRun":{"at":1788853946,"scanned":1,"done":1,"failed":0,"skipped":0,"left":0,"promptTokens":316,"completionTokens":13,"note":""}}"#).unwrap();
+        let back = Ledger::open(&p).snapshot();
+        let m = &back.by_model["qwen3-vl-plus"];
+        assert_eq!((m.calls, m.ok, m.prompt_tokens, m.completion_tokens), (8, 8, 2528, 104));
+        assert_eq!(back.last_run.unwrap().prompt_tokens, 316);
     }
 }

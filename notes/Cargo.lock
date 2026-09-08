@@ -608,6 +608,7 @@ dependencies = [
  "shelf-core",
  "tempfile",
  "ureq",
+ "vendorcfg",
 ]
 
 [[package]]
@@ -1234,6 +1235,7 @@ dependencies = [
  "shelf-core",
  "tempfile",
  "ureq",
+ "vendorcfg",
 ]
 
 [[package]]
@@ -1303,6 +1305,16 @@ dependencies = [
  "getrandom 0.4.3",
  "js-sys",
  "wasm-bindgen",
+]
+
+[[package]]
+name = "vendorcfg"
+version = "0.1.0"
+dependencies = [
+ "serde",
+ "serde_json",
+ "shelf-core",
+ "tempfile",
 ]
 
 [[package]]

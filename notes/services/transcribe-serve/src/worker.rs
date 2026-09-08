@@ -51,7 +51,7 @@ impl Failures {
     }
     pub fn list(&self) -> Vec<Failure> {
         let mut v: Vec<Failure> = self.0.lock().unwrap_or_else(|e| e.into_inner()).values().cloned().collect();
-        v.sort_by(|a, b| b.at.cmp(&a.at));
+        v.sort_by_key(|f| std::cmp::Reverse(f.at));
         v
     }
 }
