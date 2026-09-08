@@ -253,10 +253,25 @@ function renderNotes(sec){sec.innerHTML=`
   <div class="subpanel" id="norganize">
     <div class="card">
       <details class="cmp" id="nsecs"><summary>分区（笔记本排版分组；不再驱动 AI，问 AI 见每条下面）</summary><div id="nseclist"></div><button class="btn" id="nsecadd">＋ 分区</button> <button class="btn pri" id="nsecsave">保存分区</button></details>
+      <details class="cmp" id="nmodels"><summary>模型（视觉转写 + 文字问答，各自 key/模型/用量）</summary>
+        <div class="row" style="align-items:flex-start;gap:1.2em;flex-wrap:wrap">
+          <div style="flex:1;min-width:14em">
+            <div class="small" style="font-weight:600">👁 视觉（转写批注）</div>
+            <div class="small" id="mvstat"></div>
+            <div class="row"><input type="password" id="mvkey" placeholder="key（只写不回显；DashScope 百炼）" style="flex:1;min-width:10em" autocomplete="off"><button class="btn pri" id="mvsave">保存</button><button class="btn" id="mvclear" title="清掉已存的 key">清 key</button></div>
+            <div class="row"><input type="text" id="mvmodel" placeholder="模型" style="max-width:9em"><input type="text" id="mvurl" placeholder="OpenAI 兼容口 baseUrl" style="flex:1;min-width:10em"></div>
+          </div>
+          <div style="flex:1;min-width:14em">
+            <div class="small" style="font-weight:600">✎ 文字（问AI）</div>
+            <div class="small" id="mtstat"></div>
+            <div class="row"><input type="password" id="mtkey" placeholder="key（只写不回显；DashScope 百炼）" style="flex:1;min-width:10em" autocomplete="off"><button class="btn pri" id="mtsave">保存</button><button class="btn" id="mtclear" title="清掉已存的 key">清 key</button></div>
+            <div class="row"><input type="text" id="mtmodel" placeholder="模型" style="max-width:9em"><input type="text" id="mturl" placeholder="OpenAI 兼容口 baseUrl" style="flex:1;min-width:10em"></div>
+          </div>
+        </div>
+      </details>
       <details class="cmp" id="ntr"><summary>转写 <span class="small" id="ntrsum"></span></summary>
         <div class="row small" id="ntrstat"></div>
-        <div class="row"><input type="password" id="ntrkey" placeholder="API key（只写不回显；DashScope 百炼）" style="flex:1;min-width:12em" autocomplete="off"><button class="btn pri" id="ntrsave">保存</button><button class="btn" id="ntrclear" title="清掉已存的 key">清 key</button></div>
-        <div class="row"><input type="text" id="ntrmodel" placeholder="模型" style="max-width:10em"><input type="text" id="ntrurl" placeholder="OpenAI 兼容口 baseUrl" style="flex:1;min-width:12em"><label class="toggle"><input type="checkbox" id="ntrauto"> 合书自动转写</label></div>
+        <div class="row"><label class="toggle"><input type="checkbox" id="ntrauto"> 合书自动转写</label></div>
         <div class="row"><button class="btn" id="ntrrun">转写待转写条目</button><button class="btn" id="ntrretry" title="清掉失败记录再跑">重试失败</button><span class="small" id="ntrmsg"></span></div>
         <div class="small" id="ntrfail"></div>
       </details>
@@ -331,23 +346,37 @@ function renderNotes(sec){sec.innerHTML=`
       chaps.appendChild(card)})};
   const loadBook=async()=>{if(!sel.value){book=null;renderBrowse();renderBook();return}book=await j(`/api/ink/books/${encodeURIComponent(sel.value)}`);renderBrowse();renderBook()};
   sel.onchange=loadBook;
-  /* 转写区（transcribe-serve）：key 只写不回显；状态 = 待转写数 / 用量 / 最近一轮 / 失败清单 */
-  const trKey=$('#ntrkey',sec),trMsg=$('#ntrmsg',sec);
+  /* 转写区（transcribe-serve）：状态 = 待转写数 / 用量 / 最近一轮 / 失败清单；key/模型改到「模型」统一面板 */
+  const trMsg=$('#ntrmsg',sec);
   const trRefresh=async()=>{const st=await j('/api/transcribe/status');const box=$('#ntr',sec);if(st.ok===false){box.style.display='none';return}box.style.display='';
     const c=st.config||{},u=st.usage||{},lr=u.lastRun;
     $('#ntrsum',sec).textContent=`${c.hasKey?'key ✓':'未配 key'} · 待转写 ${st.pending||0}`;
     $('#ntrstat',sec).textContent=`${c.backend||''} ${c.model||''} · 累计 ${u.ok||0} 成 ${u.failed||0} 败 · token 入 ${u.promptTokens||0} 出 ${u.completionTokens||0}${lr?` · 上轮 扫 ${lr.scanned} 成 ${lr.done} 败 ${lr.failed}${lr.note?' · '+lr.note:''}`:''}${u.lastError?' · 最近错误：'+u.lastError:''}`;
-    $('#ntrmodel',sec).value=c.model||'';$('#ntrurl',sec).value=c.baseUrl||'';$('#ntrauto',sec).checked=!!c.auto;
+    $('#ntrauto',sec).checked=!!c.auto;
     $('#ntrfail',sec).innerHTML=(st.failures||[]).length?'失败：'+st.failures.map(f=>`${f.id.slice(0,8)}… ×${f.attempts} ${f.error}`).join('；'):''};
-  const trPut=async(body)=>{const r=await j('/api/transcribe/config',{method:'PUT',body:JSON.stringify(body)});if(r.ok===false)alert(r.message||'保存失败');else{trKey.value='';trMsg.textContent='已保存'}trRefresh()};
-  $('#ntrsave',sec).onclick=()=>trPut({apiKey:trKey.value,model:$('#ntrmodel',sec).value,baseUrl:$('#ntrurl',sec).value,auto:$('#ntrauto',sec).checked});
-  $('#ntrclear',sec).onclick=()=>{if(confirm('清掉已存的 API key？'))trPut({clearKey:true})};
-  $('#ntrauto',sec).onchange=()=>trPut({auto:$('#ntrauto',sec).checked});
+  $('#ntrauto',sec).onchange=async()=>{const r=await j('/api/transcribe/config',{method:'PUT',body:JSON.stringify({auto:$('#ntrauto',sec).checked})});if(r.ok===false)alert(r.message||'保存失败');trRefresh()};
   const trRun=async(url)=>{trMsg.textContent='转写中…';const r=await j(url,{method:'POST'});trMsg.textContent=r.ok===false?('✗ '+(r.message||'失败')):(r.done!=null?`✓ 成 ${r.done} 败 ${r.failed} 余 ${r.left}${r.note?' · '+r.note:''}`:'✓');trRefresh()};
   $('#ntrrun',sec).onclick=()=>trRun('/api/transcribe/run');
   $('#ntrretry',sec).onclick=()=>trRun('/api/transcribe/retry');
+  /* 「模型」统一面板（二期步骤 5）：视觉（transcribe）+ 文字（mind）并排，各自 key（脱敏预览+保存/清）+ 模型/baseUrl + 用量。 */
+  const mFill=(prefix,st)=>{
+    if(st.ok===false){$(`#${prefix}stat`,sec).textContent='服务未就绪：'+(st.message||'');return}
+    const c=st.config||{},u=st.usage||{};
+    $(`#${prefix}stat`,sec).textContent=`${c.keyMasked?'key '+c.keyMasked:(c.hasKey?'key ✓（环境变量）':'未配 key')} · 调用 ${u.calls||0}（成 ${u.ok||0} 败 ${u.failed||0}）· token 入 ${u.promptTokens||0} 出 ${u.completionTokens||0}${u.lastError?' · 最近错误：'+u.lastError:''}`;
+    $(`#${prefix}model`,sec).value=c.model||'';$(`#${prefix}url`,sec).value=c.baseUrl||''};
+  const mRefresh=async()=>{const [vt,tt]=await Promise.all([j('/api/transcribe/status'),j('/api/mind/status')]);mFill('mv',vt);mFill('mt',tt)};
+  const mSave=async(seg,prefix)=>{
+    const key=$(`#${prefix}key`,sec).value,model=$(`#${prefix}model`,sec).value,baseUrl=$(`#${prefix}url`,sec).value;
+    const r=await j(`/api/${seg}/config`,{method:'PUT',body:JSON.stringify({apiKey:key,model,baseUrl})});
+    if(r.ok===false)alert(r.message||'保存失败');else $(`#${prefix}key`,sec).value='';
+    mRefresh()};
+  const mClear=async(seg,label)=>{if(!confirm(`清掉${label}已存的 API key？`))return;const r=await j(`/api/${seg}/config`,{method:'PUT',body:JSON.stringify({clearKey:true})});if(r.ok===false)alert(r.message||'清除失败');mRefresh()};
+  $('#mvsave',sec).onclick=()=>mSave('transcribe','mv');
+  $('#mtsave',sec).onclick=()=>mSave('mind','mt');
+  $('#mvclear',sec).onclick=()=>mClear('transcribe','视觉模型');
+  $('#mtclear',sec).onclick=()=>mClear('mind','文字模型');
   const refresh=async()=>{const d=await j('/api/ink/books');const cur=sel.value;sel.innerHTML=(d.items||[]).map(b=>`<option value="${b.uuid}">${b.title}（${b.entries}）</option>`).join('')||'<option value="">（还没有勾画过的书）</option>';
-    if(cur&&[...sel.options].some(o=>o.value===cur))sel.value=cur;await Promise.all([loadBook(),trRefresh()])};
+    if(cur&&[...sel.options].some(o=>o.value===cur))sel.value=cur;await Promise.all([loadBook(),trRefresh(),mRefresh()])};
   refresh();sec.refresh=refresh;subtabs(sec)}
 
 /* 管理台/引导（固定 tab，始终在——它是网关自身页面，不由服务注册表驱动） */

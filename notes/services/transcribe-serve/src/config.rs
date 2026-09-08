@@ -75,12 +75,23 @@ impl TranscribeConfig {
             KeySource::None
         }
     }
-    /// 对外视图：去 key、加 hasKey/keySource。
+    /// 脱敏预览：只回最后 4 位（如 `...ab12`），服务端算，绝不整串回显（二期步骤 5）。
+    pub fn key_masked(&self) -> Option<String> {
+        let k = self.key()?;
+        let n = k.chars().count();
+        if n <= 4 {
+            return Some("*".repeat(n));
+        }
+        let tail: String = k.chars().skip(n - 4).collect();
+        Some(format!("...{tail}"))
+    }
+    /// 对外视图：去 key、加 hasKey/keySource/keyMasked。
     pub fn public(&self) -> serde_json::Value {
         let mut v = serde_json::to_value(TranscribeConfig { api_key: String::new(), ..self.clone() }).unwrap_or_default();
         if let Some(o) = v.as_object_mut() {
             o.insert("hasKey".into(), serde_json::Value::Bool(self.key().is_some()));
             o.insert("keySource".into(), serde_json::to_value(self.key_source()).unwrap_or_default());
+            o.insert("keyMasked".into(), serde_json::to_value(self.key_masked()).unwrap_or(serde_json::Value::Null));
         }
         v
     }
@@ -124,6 +135,9 @@ mod tests {
         assert!(p.get("apiKey").is_none(), "对外不回显 key: {p}");
         assert_eq!(p["hasKey"], true);
         assert_eq!(p["model"], "qwen3-vl-plus");
+        assert_eq!(p["keyMasked"], "...le-k", "只露最后 4 位，不整串回显");
+        c.api_key.clear();
+        assert_eq!(c.public()["keyMasked"], serde_json::Value::Null, "没 key 时是 null");
     }
 
     #[test]
