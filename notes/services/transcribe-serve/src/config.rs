@@ -1,8 +1,31 @@
 //! 配置 `~/.config/notes/transcribe.json`（0600：含 key）。key 三来源按优先级：文件 `apiKey` → 环境 `DASHSCOPE_API_KEY` → 无。
 //! 对外（GET /config）永远只报 `hasKey`/`keySource`，**不回显 key**；写入走 PUT /config 的 `apiKey` 字段（空串=不改，`clearKey`=清）。
+//! **三期（2026-09-08）加预置模型表**：用户不该自己填 baseUrl——网页给的是"选哪个预置"（`preset`
+//! 字段），服务端查表原子设置 `model`+`base_url`，不认识的预置名直接拒绝。`custom` 是转义阀：
+//! 真要接一个不在表里的 OpenAI 兼容口（不同厂商），才退回到手填 `model`/`baseUrl` 这条老路径
+//! （`apply()` 保留，没删），网页把这条路径做成一个不常见的"自定义"选项，不是默认路。
 use serde::{Deserialize, Serialize};
 
 pub const KEY_ENV: &str = "DASHSCOPE_API_KEY";
+
+const DASHSCOPE: &str = "https://dashscope.aliyuncs.com/compatible-mode/v1";
+
+/// 一个预置模型选项：网页下拉给的都是"已知能用"的组合，不需要用户自己填 baseUrl。
+#[derive(Serialize, Clone, Copy, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct Preset {
+    pub id: &'static str,
+    pub label: &'static str,
+    pub model: &'static str,
+    pub base_url: &'static str,
+}
+
+/// 视觉模型预置表（DashScope 百炼；换厂商/加型号在这加一行，网页自动出现新选项）。
+pub const PRESETS: &[Preset] = &[
+    Preset { id: "qwen3-vl-plus", label: "Qwen3-VL-Plus（推荐，速度快）", model: "qwen3-vl-plus", base_url: DASHSCOPE },
+    Preset { id: "qwen-vl-max", label: "Qwen-VL-Max（更准，稍慢）", model: "qwen-vl-max", base_url: DASHSCOPE },
+    Preset { id: "qwen-vl-plus", label: "Qwen-VL-Plus（旧一代视觉模型）", model: "qwen-vl-plus", base_url: DASHSCOPE },
+];
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase", default)]
@@ -85,20 +108,35 @@ impl TranscribeConfig {
         let tail: String = k.chars().skip(n - 4).collect();
         Some(format!("...{tail}"))
     }
-    /// 对外视图：去 key、加 hasKey/keySource/keyMasked。
+    /// 当前 model+baseUrl 匹配哪个预置；不匹配任何一个 → `"custom"`（用户自己填的，网页显示"自定义"分支）。
+    pub fn active_preset(&self) -> &'static str {
+        PRESETS.iter().find(|p| p.model == self.model && p.base_url == self.base_url).map(|p| p.id).unwrap_or("custom")
+    }
+    /// 对外视图：去 key、加 hasKey/keySource/keyMasked/presets/activePreset。
     pub fn public(&self) -> serde_json::Value {
         let mut v = serde_json::to_value(TranscribeConfig { api_key: String::new(), ..self.clone() }).unwrap_or_default();
         if let Some(o) = v.as_object_mut() {
             o.insert("hasKey".into(), serde_json::Value::Bool(self.key().is_some()));
             o.insert("keySource".into(), serde_json::to_value(self.key_source()).unwrap_or_default());
             o.insert("keyMasked".into(), serde_json::to_value(self.key_masked()).unwrap_or(serde_json::Value::Null));
+            o.insert("presets".into(), serde_json::to_value(PRESETS).unwrap_or_default());
+            o.insert("activePreset".into(), serde_json::Value::String(self.active_preset().to_string()));
         }
         v
     }
     /// 套用 PUT /config 的 JSON：可改字段逐个覆盖；`apiKey` 非空才改；`clearKey:true` 清 key。
+    /// `preset` 原子设置 model+baseUrl（未知预置名直接拒绝，`"custom"` 不动、交给下面的
+    /// `model`/`baseUrl` 字段处理——那是留给"自定义"分支的老路径）。
     pub fn apply(&mut self, j: &serde_json::Value) -> Result<(), String> {
         let s = |k: &str| j.get(k).and_then(|v| v.as_str()).map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
         if let Some(v) = s("backend") { self.backend = v; }
+        if let Some(v) = s("preset") {
+            if v != "custom" {
+                let p = PRESETS.iter().find(|p| p.id == v).ok_or_else(|| format!("未知的模型预置：{v}"))?;
+                self.model = p.model.to_string();
+                self.base_url = p.base_url.to_string();
+            }
+        }
         if let Some(v) = s("baseUrl") {
             if !v.starts_with("http://") && !v.starts_with("https://") {
                 return Err("baseUrl 要以 http(s):// 开头".into());
@@ -152,5 +190,34 @@ mod tests {
         assert!(c.api_key.is_empty());
         assert!(c.apply(&serde_json::json!({"baseUrl": "dashscope"})).is_err());
         assert_eq!(c.timeout_secs, 60, "没给的字段不动");
+    }
+
+    #[test]
+    fn preset_selection_sets_model_and_base_url_atomically_and_rejects_unknown() {
+        let mut c = TranscribeConfig::default();
+        assert_eq!(c.active_preset(), "qwen3-vl-plus", "缺省值就是第一个预置");
+        c.apply(&serde_json::json!({"preset": "qwen-vl-max"})).unwrap();
+        assert_eq!((c.model.as_str(), c.base_url.as_str()), ("qwen-vl-max", "https://dashscope.aliyuncs.com/compatible-mode/v1"));
+        assert_eq!(c.active_preset(), "qwen-vl-max");
+        let err = c.apply(&serde_json::json!({"preset": "gpt-4o"})).unwrap_err();
+        assert!(err.contains("未知的模型预置"), "{err}");
+        assert_eq!(c.model, "qwen-vl-max", "拒绝后不改动");
+    }
+
+    #[test]
+    fn custom_preset_leaves_model_and_base_url_to_the_old_manual_fields() {
+        let mut c = TranscribeConfig::default();
+        c.apply(&serde_json::json!({"preset": "custom", "model": "my-model", "baseUrl": "https://x.example/v1"})).unwrap();
+        assert_eq!((c.model.as_str(), c.base_url.as_str()), ("my-model", "https://x.example/v1"));
+        assert_eq!(c.active_preset(), "custom", "不匹配任何预置");
+    }
+
+    #[test]
+    fn public_exposes_presets_and_active_preset() {
+        let c = TranscribeConfig::default();
+        let p = c.public();
+        assert_eq!(p["activePreset"], "qwen3-vl-plus");
+        assert!(p["presets"].as_array().unwrap().len() >= 3);
+        assert_eq!(p["presets"][0]["id"], "qwen3-vl-plus");
     }
 }
