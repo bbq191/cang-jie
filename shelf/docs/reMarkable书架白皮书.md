@@ -39,7 +39,7 @@
 
 **设备杂项（§03v/§03w，全真机通）**：3.28 字体菜单 qmd 已通（qmldiff 语法坑，§04）；原生休眠屏 `SleepScreenPath=current.png` 满屏且随轮换，bind-mount 整套已退役（§03x，`shelf_core::xochitl_conf` + wallpaper-serve `native.rs`）；WiFi 连上恰 60 秒必掉的真凶＝cfg80211 regdomain 宽限（精简 regdb 的 CN 无 5150–5350，路由 5G 信道 36 被判非法）→ 连接锁 2.4G + `powersave 2`，`packaging/wifi-watch` 常驻固化（§03w）；离 USB 数秒自动休眠关 WiFi 是设备正常行为（`push --wait` 应对）；chrony 国内 NTP `packaging/chrony-cn.sh`；OTA 后五步恢复见 §05（README 有"OTA 与恢复"表）。
 
-**未闭环**：镖人/阿拉蕾①的"超限只出 CBZ、不分卷"分支未真机复验，见 §05（§03ad）。Phase E ②③④、阅读线六项、代码体检均于 2026-09-06 闭环。
+**未闭环**：无（§05）。Phase E ②③④、阅读线六项、代码体检、漫画超限分支复验均已闭环。
 
 ## 01｜架构决策
 
@@ -524,7 +524,12 @@ book→「母版库 / 原生投递」、weread→「微信读书（内容源，�
 
 **小体积漫画可选投原生**：`cbz2pdf`（`bookconv::convert::cbz::cbz_to_pdf` 本体 2026-09-05 §03t 就没删过，只删了 shelf 侧调用方，这次复活成薄 CLI，`[[bin]]` 加进 `bookconv/Cargo.toml`，照抄 `epub-optimize.rs` 的风格）：`cbz2pdf [--mono] 输入.cbz 输出.pdf`，缺省 `EinkTone::Off`（原样直嵌不重新抖动——喂给它的是 `comic_gray.py` 已经处理过的 16 灰/保色 CBZ，再抖一遍只会烧画质）。`push.py::comic_prepare()` 灰阶 CBZ 处理完之后新增一步：查询设备当前原生上传上限（`ctx.transport.get("/api/books/status")` 的 `nativeUploadLimitBytes`，查不到就退回跟 book-serve 缺省值一致的 150MB 静态兜底，查询失败不阻断推送）。灰阶 CBZ 体积 **×1.5** 估算 PDF 体积（真机实测 PNG 页解码后走纯 zlib 压缩、没有 PNG 自己的逐行预测滤波，膨胀比预想的"5% 余量"大得多，实测约 1.45×，改用 1.5× 留余量）仍在上限内才调 `cbz_to_pdf` 生成 PDF，跟 CBZ 一起落母版库（两个独立文件，同一本书两种产物，复用现有"母版库同一本可投不同读者"模型，网页不用改）。超限只出 CBZ，跟以前一样，**绝不触发 `pdfsplit` 分卷**（`run()` 的分卷循环对 `route=="comic"` 整个跳过）。新增 `--manga-ltr`（跨页拆分从左往右）、`--comic-native`/`--no-comic-native`（默认开，关掉就完全不生成投原生 PDF）两个 CLI 开关。
 
-**真机验证通过**（拿真实《火影忍者》卷1 96 页 CBZ，过完整管线——comic_gray 拆跨页+裁白边+16灰 → 55.98MB 灰阶 CBZ → cbz2pdf → 80.97MB PDF）：设备真实 `nativeUploadLimitBytes` 查到是 157286400（=150MB，跟静态兜底值分毫不差）；80.97MB PDF 直接调 book-serve `/staging/deliver` 投原生成功，xochitl 正确解析出全部 192 页；设备生成的首页缩略图人工核对内容正确。**⚠ 未闭环**：原计划设想"阿拉蕾①会是够小的测试样本"不成立了——阿拉蕾①加了跨页裁切放大后灰阶体积从原来的 108MB 涨到 240MB，反而变成"太大"的测试样本；镖人和阿拉蕾①都会落进"太大只出 CBZ"分支，**没有单独拿它们真机复验这条分支**——分支逻辑本身已经在离线单测里覆盖了（体积超限时 `cbz_to_pdf` 压根不被调用、只落一次 CBZ；漫画通道的 PDF 绝不触发 `pdfsplit.needs_split`），真机这次没有刻意再测一遍"超限"路径，因为超限判断纯粹是本地体积比较，不涉及任何设备行为，但严格说仍是"只离线验证、未真机复验"的缺口，见 §05。
+**真机验证通过**（拿真实《火影忍者》卷1 96 页 CBZ，过完整管线——comic_gray 拆跨页+裁白边+16灰 → 55.98MB 灰阶 CBZ → cbz2pdf → 80.97MB PDF）：设备真实 `nativeUploadLimitBytes` 查到是 157286400（=150MB，跟静态兜底值分毫不差）；80.97MB PDF 直接调 book-serve `/staging/deliver` 投原生成功，xochitl 正确解析出全部 192 页；设备生成的首页缩略图人工核对内容正确。
+
+**"超限只出 CBZ、不分卷"分支复验（2026-09-09 真机）**：原计划设想"阿拉蕾①会是够小的测试样本"不成立——阿拉蕾①加了跨页裁切放大后灰阶体积反而涨过上限；这次拿阿拉蕾①与镖人两本实测都落进"太大只出 CBZ"分支，`shelf push --wait` 全程真机跑通：
+- **阿拉蕾①**（171.2MB AZW3，1092 页）：拆跨页 0 页（本来就是正常单页书，符合预期）／16 灰 1085 页／保色 7 页；体积 171.2MB → **229.0MB**（母版库落库实测 240,213,756 字节，与控制台估算一致）——超过 150MB 上限，控制台打印"体积估算超原生上传上限（150.0MB），只出 CBZ（KOReader）——不强制分卷投原生"，母版库确认**只有一个 `.gray.cbz` 条目，没有伴生 PDF**。全程 1m57s。
+- **镖人**（283.2MB AZW3，2473 页，§03t 最早报"投不了原生"bug 的那本）：拆跨页 **17 页**（首次真机验证到跨页拆分对真正的跨页图生效，之前只有火影忍者卷1 测过）／16 灰 2489 页／保色 1 页；体积 283.2MB → **686.9MB**（母版库落库实测 720,467,259 字节）——体积不降反涨超一倍，原因与阿拉蕾①同源：16 灰 Floyd–Steinberg 抖动后的位图是高熵噪点、Flate 压不动，叠加跨页拆分+放大后总像素数增加（§03t 早年"《镖人》mono 只缩到 3/4"那条踩坑记录的同一根因，这次在跨页拆分场景下更明显）；同样超过 150MB 上限，只落 `.gray.cbz`，没有 PDF。**17 处装订缝识别不出干净切割点，按"最空一列"猜测拆分并标记 `flagged` 建议人工核对**（如 `0090.jpg` 猜测切割点 x=624），符合设计预期（找不到干净装订缝时不会瞎切，而是标记出来）。全程 6m1s（页数是阿拉蕾①的 2.3 倍，处理时间约 3 倍，跨页识别+更多页数叠加）。
+- 两次推送母版库前后核对（`GET /api/books/staging`）确认**全程只多出这两个 `.gray.cbz` 条目，没有任何 `.pdf`、没有分卷 part 文件**——`route=="comic"` 时代码里对分卷循环的跳过逻辑真机同样生效，不是只在离线单测里成立。至此"超限只出 CBZ 不分卷"分支真机坐实，§05 未闭环清空。
 
 **离线测试**：`uv run --group calibre pytest shelf/host/tests/` 57→66（跨页拆分+白边裁切 +9）→71（体积门 +5）全绿；`cd shelf && cargo build --workspace && cargo test --workspace` 零警告全绿（新增 `cbz2pdf` bin）。
 
@@ -545,13 +550,13 @@ book→「母版库 / 原生投递」、weread→「微信读书（内容源，�
 - pytest 要从仓库根跑（`uv run pytest shelf/host/tests`）。
 - 多个测试文件对同一个 `http.server` Handler 类 monkeypatch，module fixture 共用服务器线程时 patch 链互相覆盖会递归死循环（pytest 挂死）。各文件用自己的 Handler **子类** + 自己的 fixture。
 
-## 05｜真机待办（2026-09-06 刷新；2026-09-08 补记 §03ad 一条）
+## 05｜真机待办（2026-09-06 刷新；2026-09-09 补记 §03ad 漫画超限分支复验）
 
-**未闭环**：镖人/阿拉蕾①的"漫画体积超原生上传上限、只出 CBZ 不分卷"这条分支没有单独真机复验（§03ad，2026-09-08）——离线单测已覆盖，且判断本身纯粹是本地体积比较不涉及设备行为，但严格说仍属"只验证过、够小可以投原生"这一半，"太大只出 CBZ"这一半没有真机坐实。此外 2026-09-06 当天测试书已全部清掉（五本用户手删、最后两本由回收站代理软删）；`push --wait` "睡着→点亮→续传"的时序在日常使用里顺手验过。
+**未闭环**：无。镖人/阿拉蕾①的"漫画体积超原生上传上限、只出 CBZ 不分卷"分支已于 2026-09-09 真机复验通过（§03ad，两本各自 `shelf push --wait` 成功、母版库确认只落 `.gray.cbz` 无伴生 PDF、无分卷痕迹）。2026-09-06 当天测试书已全部清掉（五本用户手删、最后两本由回收站代理软删）；`push --wait` "睡着→点亮→续传"的时序在日常使用里顺手验过。
 
 **OTA 后固定五步**（§03v）：`xovi/rebuild_hashtable` → `xovi/start` → `SHELF_NO_BUILD=1 sh deploy.sh 10.11.99.1` → `ssh root@10.11.99.1 sh -s < packaging/chrony-cn.sh` → `packaging/wifi-watch/install.sh`。升完顺手 `shelf doctor --render` 看 CSS 引擎有没有变。/home 里的（母版库、KOReader、WiFi 钩子与 `powersave 2`、休眠屏 conf 键、qmd 文件）不用动。
 
-**已闭环（真机）**：§03ac 可插拔机制接住独立仓库线（2026-09-06 晚，WiFi 部署书架+笔记线共八服务 active）· §03f 首轮五服务 · §03g/§03h 字体分开装/子目录/HTTPS · §03j 登录/CA/mDNS · §03k 字体两 bug · §03l 传书卡＝云同步 · §03m/§03n/§03o 网页改版/细节/管理台 · §03p 质量一轮 · §03q 优化做精 + 首行缩进 v10 · §03r 母版库 Phase A/B/C + 财新重排 · §03s 质量二轮 + 格式三档 · §03t 漫画通道（host 真书探针 → CBZ；漫画不投原生）+ 分卷静默失效修 + 投原生体积门 · §03v 固件 3.28 升级 + 3.28 字体菜单 qmd（首版整份不应用：qmldiff 解析不了 `({})` 与裸 `if (` handler，改 `[]`+`{ }` 后 `appended=4 count=8`，判官＝本机 asivery/qmldiff CLI）+ appload 3.28 复活（PR #59 qmd 等长回填进 .so，系统增强白皮书 §12.1；用户点侧栏 KOReader 正常起）· §03w 原生休眠屏 `SleepScreenPath` + WiFi regdomain 真凶 + wifi-watch + chrony 国内 NTP 脚本 · §03x 退役 bind-mount 壁纸整套（`xochitl_conf` + `native.rs`）· §03y xochitl CSS 引擎七条实测规则 + 英文首段顶格 v6 + 中文 br 书段落化 · §03z 事件推送（网页 + CLI 用户确认）· §03aa 阅读线六项（渲染自检 / `doctor --render` 用户 CLI PASS / `push --wait` / TXT 切章 / Phase E ④ Gulliver 两器脚注观感 / 漫画 16 灰默认开）· §03ab 代码体检四支 · PDF 结构化重排 v4（《财新》33 期：署名/图注/链接分类、节题 h3、标题分档，非句末段 15.1%→2.7%，`test_reflow.py` 锁纯函数）· §03ad 漫画跨页拆分+白边裁切放大（火影忍者卷1真机通）+ 小体积漫画可选投原生（火影忍者卷1真机通投原生；超限只出 CBZ 分支未复验，见上方未闭环）。
+**已闭环（真机）**：§03ac 可插拔机制接住独立仓库线（2026-09-06 晚，WiFi 部署书架+笔记线共八服务 active）· §03f 首轮五服务 · §03g/§03h 字体分开装/子目录/HTTPS · §03j 登录/CA/mDNS · §03k 字体两 bug · §03l 传书卡＝云同步 · §03m/§03n/§03o 网页改版/细节/管理台 · §03p 质量一轮 · §03q 优化做精 + 首行缩进 v10 · §03r 母版库 Phase A/B/C + 财新重排 · §03s 质量二轮 + 格式三档 · §03t 漫画通道（host 真书探针 → CBZ；漫画不投原生）+ 分卷静默失效修 + 投原生体积门 · §03v 固件 3.28 升级 + 3.28 字体菜单 qmd（首版整份不应用：qmldiff 解析不了 `({})` 与裸 `if (` handler，改 `[]`+`{ }` 后 `appended=4 count=8`，判官＝本机 asivery/qmldiff CLI）+ appload 3.28 复活（PR #59 qmd 等长回填进 .so，系统增强白皮书 §12.1；用户点侧栏 KOReader 正常起）· §03w 原生休眠屏 `SleepScreenPath` + WiFi regdomain 真凶 + wifi-watch + chrony 国内 NTP 脚本 · §03x 退役 bind-mount 壁纸整套（`xochitl_conf` + `native.rs`）· §03y xochitl CSS 引擎七条实测规则 + 英文首段顶格 v6 + 中文 br 书段落化 · §03z 事件推送（网页 + CLI 用户确认）· §03aa 阅读线六项（渲染自检 / `doctor --render` 用户 CLI PASS / `push --wait` / TXT 切章 / Phase E ④ Gulliver 两器脚注观感 / 漫画 16 灰默认开）· §03ab 代码体检四支 · PDF 结构化重排 v4（《财新》33 期：署名/图注/链接分类、节题 h3、标题分档，非句末段 15.1%→2.7%，`test_reflow.py` 锁纯函数）· §03ad 漫画跨页拆分+白边裁切放大（火影忍者卷1真机通）+ 小体积漫画可选投原生（火影忍者卷1真机通投原生 · 阿拉蕾①/镖人真机通超限只出 CBZ 不分卷，2026-09-09）。
 
 **Phase E 实录（②③④，2026-09-06 全部闭环，用《Tell Me Your Dreams》AZW3 与《Gulliver's Travels》推进）**：
 - 洗书发现两处实现缺口并修（bookconv `wash.rs`）：① 书自带类规则 `.calibre_ {text-indent:2em}` 未统一——xochitl 不认类规则走我们的 `p{1.2em}`，KOReader 认且类规则特异性更高走 2em，**两器同字节不同缩进**；现在书 css / 内联 style 里非零 `text-indent` 一律改写成本书缩进（0 与负值保留）。② "标题后首段不缩进"只写在注释里从未实现。
