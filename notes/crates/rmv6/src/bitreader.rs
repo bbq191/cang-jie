@@ -156,9 +156,105 @@ impl<N: Readable> Bitreader<N> {
     }
 }
 
-// #[test]
-// fn test_read_uuid() {
-//     let a: u128 = 0x495ba59fc9432b5cb4553682f6948906;
-//     Bitreader::new(&a.to_le_bytes())
-// }
-//
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // 2026-09-09 审计补：`bitreader.rs` 是整条 rmv6 解析链路的地基（所有上层解码模块最终都靠它
+    // 读字节），此前唯一的"测试"是一段被注释掉、没有任何断言的残留（本函数替换掉它）。这条
+    // crate 处理的是设备上传的外部 `.rm` 文件，测试策略此前完全依赖真机样本回归，缺"喂畸形字节
+    // 应该报错而不是 panic/静默错读"这类构造性反例——下面这批就是补这块。
+
+    #[test]
+    fn primitive_roundtrips() {
+        let data: &[u8] = &[0x2A, 0x01, 0x02, 0xCD, 0xCC, 0x8C, 0x3F, 1];
+        let mut r = Bitreader::new(data);
+        assert_eq!(r.read_u8().unwrap(), 0x2A);
+        assert_eq!(r.read_u16().unwrap(), 0x0201, "小端序");
+        assert!((r.read_f32().unwrap() - 1.1).abs() < 1e-6);
+        assert!(r.read_bool().unwrap());
+    }
+
+    #[test]
+    fn eof_true_only_after_all_bytes_consumed() {
+        let data: &[u8] = &[1, 2];
+        let mut r = Bitreader::new(data);
+        assert!(!r.eof().unwrap());
+        r.read_u8().unwrap();
+        assert!(!r.eof().unwrap(), "还剩一个字节，不该是 eof");
+        r.read_u8().unwrap();
+        assert!(r.eof().unwrap());
+        // eof() 探测不该移动游标——探测之后紧接着还能正常读到 EOF 错误，不会因为探测本身
+        // 悄悄往前挪了位置导致后续读出脏数据。
+        assert!(r.read_u8().is_err());
+    }
+
+    #[test]
+    fn truncated_input_is_io_error_not_panic() {
+        // 只给 1 个字节却要读 u32——这是最基础的"文件被截断一半"场景，必须干净返回 Io 错误。
+        let data: &[u8] = &[0x01];
+        let mut r = Bitreader::new(data);
+        let e = r.read_u32().unwrap_err();
+        assert_eq!(e.kind, ParseErrorKind::Io);
+    }
+
+    #[test]
+    fn empty_input_every_read_errors_cleanly() {
+        let data: &[u8] = &[];
+        let mut r = Bitreader::new(data);
+        assert!(r.eof().unwrap());
+        assert!(r.read_u8().is_err());
+        assert!(r.read_bytes(1).is_err());
+    }
+
+    #[test]
+    fn read_string_rejects_invalid_utf8_instead_of_panicking() {
+        let data: &[u8] = &[0xFF, 0xFE, 0xFD];
+        let mut r = Bitreader::new(data);
+        let e = r.read_string(3).unwrap_err();
+        assert_eq!(e.kind, ParseErrorKind::InvalidInput);
+    }
+
+    #[test]
+    fn read_varuint_multi_byte_and_truncated() {
+        // 0xAC 0x02 是标准 varuint 示例（值 300：0x2C | (0x02<<7) = 0x2C + 0x100 = 300）。
+        let data: &[u8] = &[0xAC, 0x02];
+        let mut r = Bitreader::new(data);
+        assert_eq!(r.read_varuint().unwrap(), 300);
+
+        // 截断：continuation bit（最高位）一直是 1，字节流却在读到之前耗尽——不该 panic，
+        // 该干净报 Io 错误（真机 §04 记过"畸形/超长 varuint"这类样本会出现，这条测试钉住
+        // 截断分支不会 panic，跟 bitreader.rs 里那条 wrapping_shl 补丁注释描述的"超长但没截断"
+        // 场景互补）。
+        let data2: &[u8] = &[0x80, 0x80, 0x80]; // 全部 continuation bit=1，没有终止字节
+        let mut r2 = Bitreader::new(data2);
+        assert!(r2.read_varuint().is_err());
+    }
+
+    #[test]
+    fn read_uuid_rejects_wrong_length_and_truncated_bytes() {
+        // 长度字段（varuint）声明的不是 16。
+        let data: &[u8] = &[15, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+        let mut r = Bitreader::new(data);
+        let e = r.read_uuid().unwrap_err();
+        assert_eq!(e.kind, ParseErrorKind::InvalidInput);
+
+        // 长度字段声明 16，但实际字节不够（截断）。
+        let data2: &[u8] = &[16, 1, 2, 3];
+        let mut r2 = Bitreader::new(data2);
+        assert!(r2.read_uuid().is_err());
+    }
+
+    #[test]
+    fn read_uuid_roundtrip_matches_known_layout() {
+        // 16 字节全零应该稳定得到全零 UUID（不用去核对具体的字节序变换规则，只钉住"合法输入
+        // 不会出错、格式对"）。
+        let mut bytes = vec![16u8];
+        bytes.extend([0u8; 16]);
+        let mut r = Bitreader::new(bytes.as_slice());
+        let uuid = r.read_uuid().unwrap();
+        assert_eq!(uuid, "00000000-0000-0000-0000-000000000000");
+        assert_eq!(uuid.len(), 36);
+    }
+}
+

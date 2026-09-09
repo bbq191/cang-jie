@@ -136,3 +136,84 @@ impl TypeParse for Block {
         return Ok(block);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::v6::TypeParse;
+
+    // 2026-09-09 审计补：`Block::parse` 是 rmv6 里"declared length（外层块的 size 字段）跟实际
+    // 内容是否对得上"这条纪律的把关点，此前零单测。构造字节序列覆盖 version 倒挂 / 未知
+    // block_type 兜底 / 头部截断三类畸形输入，另加一条已知块类型（MigrationInfoBlock）走完整
+    // dispatch 流程的正向用例。
+
+    fn header(size: u32, min_version: u8, current_version: u8, block_type: u8) -> Vec<u8> {
+        let mut v = size.to_le_bytes().to_vec();
+        v.push(0); // unknown 字节，Block::parse 读了不用
+        v.push(min_version);
+        v.push(current_version);
+        v.push(block_type);
+        v
+    }
+
+    #[test]
+    fn current_version_less_than_min_version_is_rejected() {
+        let data = header(0, 3, 2, 0xFF); // current(2) < min(3)
+        let mut br = Bitreader::new(data.as_slice());
+        let mut r = TaggedBitreader::new(&mut br);
+        let e = Block::parse(&mut r).unwrap_err();
+        assert!(e.message.contains("current_version"), "{}", e.message);
+    }
+
+    #[test]
+    fn unknown_block_type_captures_raw_bytes_without_error() {
+        // 0xFF 不在任何已知 block_type 分派表里——这条 crate 只关心自己认识的块类型，其余原样
+        // 收进 Unknown 变体，不该因为"不认识"就整份报错。
+        let content = [0xAAu8, 0xBB, 0xCC];
+        let mut data = header(content.len() as u32, 0, 0, 0xFF);
+        data.extend(content);
+        let mut br = Bitreader::new(data.as_slice());
+        let mut r = TaggedBitreader::new(&mut br);
+        match Block::parse(&mut r).unwrap() {
+            Block::Unknown { block_type, data } => {
+                assert_eq!(block_type, 0xFF);
+                assert_eq!(data, content);
+            }
+            other => panic!("应该落进 Unknown 变体: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn truncated_header_is_io_error_not_panic() {
+        // 只给 3 个字节（size 字段还没读完）——最基础的"文件在块头部就断了"场景。
+        let data: &[u8] = &[0x01, 0x00, 0x00];
+        let mut br = Bitreader::new(data);
+        let mut r = TaggedBitreader::new(&mut br);
+        assert!(Block::parse(&mut r).is_err());
+    }
+
+    #[test]
+    fn known_block_type_parses_through_full_dispatch() {
+        // MigrationInfoBlock（block_type=0x00）：read_id(1) + read_u8(2)，内容长度算好跟声明的
+        // size 精确对上，走一遍"认识的块类型"这条分派路径，跟上面两条"不认识的类型"/"版本倒挂"
+        // 互补。
+        let content = [
+            0x1Fu8, // tag: index=1, type=ID(0xF)
+            0x05,   // CrdtId.part1
+            0x07,   // CrdtId.part2（varuint 单字节，无续接位）
+            0x21,   // tag: index=2, type=Byte1(0x1)
+            0x01,   // is_device = true
+        ];
+        let mut data = header(content.len() as u32, 0, 0, 0x00);
+        data.extend(content);
+        let mut br = Bitreader::new(data.as_slice());
+        let mut r = TaggedBitreader::new(&mut br);
+        match Block::parse(&mut r).unwrap() {
+            Block::MigrationInfo(b) => {
+                assert_eq!((b.migration_id.part1, b.migration_id.part2), (5, 7));
+                assert!(b.is_device);
+            }
+            other => panic!("应该落进 MigrationInfo 变体: {other:?}"),
+        }
+    }
+}
