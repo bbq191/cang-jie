@@ -111,7 +111,11 @@ fn revoke_stale(db: &BookDb, uuid: &str, now: u64) -> Result<Option<DocStats>, S
     }
     let revoked = db.update(uuid, || Default::default(), |b| {
         let mut n = 0usize;
-        for e in b.entries.iter_mut().filter(|e| e.status != Status::Revoked) {
+        // 同一个"排除法"漏洞（见 notecore::ingest::merge_page 的注释）：`Skipped`/`Archived` 也是
+        // 终态，书被删/进回收站不该把它们悄悄改判成 `Revoked`——那样以后 `restore()` 会走错分支。
+        // 用 `is_terminal()` 排除全部三种终态，只把还活着（Mined/Pending/Draft/Reviewed）的条目
+        // 因"书不在了"而转 Revoked。
+        for e in b.entries.iter_mut().filter(|e| !e.is_terminal()) {
             e.status = Status::Revoked;
             e.updated = now;
             n += 1;
@@ -213,5 +217,37 @@ mod tests {
         let u3 = "33333333-5e28-4969-8926-c8973d49020d";
         assert!(ingest_doc(&lib, &crops, &db, &cfg, u3, 13).unwrap().is_none());
         assert!(db.load(u3).is_none());
+    }
+
+    /// 回归：书被删/进回收站时，`Skipped`/`Archived` 这两种终态不该被"排除法"漏判成 `Revoked`
+    /// （只有 Mined/Pending/Draft/Reviewed 这些还活着的条目才该因为"书不在了"转 Revoked）。
+    #[test]
+    fn revoke_stale_leaves_already_terminal_entries_alone() {
+        let t = tempfile::tempdir().unwrap();
+        let lib = t.path().join("xochitl");
+        let crops = t.path().join("crops");
+        std::fs::create_dir_all(&lib).unwrap();
+        std::fs::create_dir_all(&crops).unwrap();
+        let db = BookDb::new(t.path().join("books"));
+        db.ensure().unwrap();
+        let cfg = IngestConfig::default();
+
+        let u = "44444444-5e28-4969-8926-c8973d49020d";
+        db.update(
+            u,
+            || Book { uuid: u.into(), title: "测试书四".into(), ..Default::default() },
+            |b| {
+                b.entries.push(seeded_entry("skipped", Status::Skipped));
+                b.entries.push(seeded_entry("archived", Status::Archived));
+                b.entries.push(seeded_entry("pending", Status::Pending));
+            },
+        )
+        .unwrap();
+        let s = ingest_doc(&lib, &crops, &db, &cfg, u, 10).unwrap().unwrap();
+        assert_eq!(s.merge.revoked, 1, "只有 pending 那条该被转 Revoked");
+        let entries = db.load(u).unwrap().entries;
+        assert_eq!(entries[0].status, Status::Skipped, "Skipped 不该被改判");
+        assert_eq!(entries[1].status, Status::Archived, "Archived 不该被改判");
+        assert_eq!(entries[2].status, Status::Revoked, "真正活着的条目该转 Revoked");
     }
 }
