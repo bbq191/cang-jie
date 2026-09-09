@@ -263,7 +263,7 @@ function renderNotes(sec){sec.innerHTML=`
     <div class="row"><span class="small">书</span><select id="nbook" style="flex:1;min-width:10em"></select><button class="btn" id="nrescan" title="清掉页记录，整本重新摄取">重扫</button></div>
     <div class="row small" id="nsum"></div>
   </div>
-  <div class="subnav"><button class="on">👀 浏览</button><button>✎ 整理</button><button>🗑 回收站</button></div>
+  <div class="subnav"><button class="on">👀 浏览</button><button>✎ 整理</button><button>🗑 回收站</button><button>📝 导入</button></div>
   <div class="subpanel on" id="nbrowse"></div>
   <div class="subpanel" id="norganize">
     <div class="subnav" id="nexporttabs"><button class="on" data-etab="pending">未导出</button><button data-etab="synced">已导出</button></div>
@@ -275,6 +275,14 @@ function renderNotes(sec){sec.innerHTML=`
       <p class="lead">这里是「不需要」「不要了」跳过的批注，以及笔画被撤回后自动标记的条目——两处投影都不会用到它们，但条目库里还留着，直到你手动清空。恢复会回到大致原来的进度（校对过的文本还在就回「已校对」，只有草稿回「待校对」，只有手写没转写回「待转写」，什么都没留下回「浏览」重新决定）。</p>
       <div class="row"><button class="btn" id="npurge" title="永久清掉下面列出的条目，不可恢复">清空回收站</button><button class="btn" id="nrestoreall" title="把下面列出的条目都恢复">全部恢复</button><span class="small" id="ntrashsum"></span></div>
       <div id="ntrashlist"></div>
+    </div>
+  </div>
+  <div class="subpanel" id="nimport">
+    <div class="card">
+      <p class="lead">跟上面的「浏览/整理」是两条独立的路：不经条目库，把一段 markdown 直接转成一份新的设备笔记本文档，落在当前选中书本自己的设备文件夹里。标题/列表/待办会转成 xochitl 原生样式；行内加粗/斜体只剥符号不生效（打字样式是整段的，做不到半句加粗）；已勾选的待办写不出勾选态，会落地成未勾选。</p>
+      <div class="row"><span class="small">文档名</span><input type="text" id="nimporttitle" placeholder="设备上显示的笔记本名字" style="flex:1;min-width:12em"></div>
+      <div class="row"><textarea class="entry-text" id="nimportmd" rows="10" placeholder="# 标题&#10;&#10;- 要点一&#10;- 要点二&#10;&#10;- [ ] 待办事项"></textarea></div>
+      <div class="row"><button class="btn" id="nimportbtn">生成到设备</button><span class="small" id="nimportstat"></span></div>
     </div>
   </div>`;
   const sel=$('#nbook',sec),chaptertabs=$('#nchaptertabs',sec),chapterbody=$('#nchapterbody',sec),browse=$('#nbrowse',sec),sum=$('#nsum',sec);let book=null;
@@ -334,6 +342,21 @@ function renderNotes(sec){sec.innerHTML=`
         <button class="btn" data-restore>恢复</button>`;
       row.querySelector('[data-restore]').onclick=async()=>{if(!(await restoreOne(e.id)))return;await reloadBook(renderTrash,renderBrowse,renderBook)};
       trashList.appendChild(row)})};
+  /* 「导入」：单篇 markdown → 一份新设备笔记本文档，独立于条目库（不经浏览/整理/回收站那条状态机，
+     见 note-serve::publish::import_markdown）。用户明确要求别塞进「整理」——那边是审阅真被要求转
+     笔记的条目，跟"拿一段现成 markdown 直接生成一份新笔记"是两件不同的事，各自一个入口。 */
+  const importTitle=$('#nimporttitle',sec),importMd=$('#nimportmd',sec),importBtn=$('#nimportbtn',sec),importStat=$('#nimportstat',sec);
+  const renderImport=()=>{const ready=!!book;importTitle.disabled=importMd.disabled=importBtn.disabled=!ready;
+    importStat.textContent=ready?'':'先在上面选一本书。'};
+  importBtn.onclick=async()=>{if(!book)return;
+    const title=importTitle.value.trim(),markdown=importMd.value;
+    if(!title){alert('给这份笔记起个名字（会是设备上的文档名）');return}
+    if(!markdown.trim()){alert('markdown 内容是空的');return}
+    importBtn.disabled=true;importStat.textContent='生成中…';
+    const r=await postJ(`/api/notes/books/${encodeURIComponent(book.uuid)}/import-md`,{title,markdown}); // 失败 postJ 已经 alert 过
+    importBtn.disabled=false;
+    if(r.ok===false){importStat.textContent='';return}
+    importStat.textContent=`✓ 已生成：${r.visibleName}`;importMd.value=''};
   $('#nrestoreall',sec).onclick=async()=>{if(!book)return;
     const items=(book.entries||[]).filter(e=>TRASH_STATUSES.includes(e.status));
     if(!items.length){alert('回收站是空的，没什么可恢复');return}
@@ -548,7 +571,7 @@ function renderNotes(sec){sec.innerHTML=`
       body.appendChild(row)});
     chapterbody.appendChild(card)};
   exportTabsEl.querySelectorAll('button').forEach(b=>b.onclick=()=>{if(exportTab===b.dataset.etab)return;exportTab=b.dataset.etab;selectedChapter=null;renderBook()});
-  const loadBook=async()=>{await flushPendingText();selectedChapter=null;if(!sel.value){book=null;await refreshSync();renderBrowse();await renderBook();renderTrash();return}book=await j(`/api/ink/books/${encodeURIComponent(sel.value)}`);await refreshSync();renderBrowse();await renderBook();renderTrash()};
+  const loadBook=async()=>{await flushPendingText();selectedChapter=null;if(!sel.value){book=null;await refreshSync();renderBrowse();await renderBook();renderTrash();renderImport();return}book=await j(`/api/ink/books/${encodeURIComponent(sel.value)}`);await refreshSync();renderBrowse();await renderBook();renderTrash();renderImport()};
   sel.onchange=loadBook;
   const refresh=async()=>{const d=await j('/api/ink/books');const cur=sel.value;sel.innerHTML=(d.items||[]).map(b=>`<option value="${b.uuid}">${b.title}（${b.entries}）</option>`).join('')||'<option value="">（还没有勾画过的书）</option>';
     if(cur&&[...sel.options].some(o=>o.value===cur))sel.value=cur;await loadBook()};

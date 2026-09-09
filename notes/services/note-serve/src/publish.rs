@@ -127,6 +127,28 @@ pub fn generate_book(c: &Ctx, book_uuid: &str) -> Result<Vec<ChapterResult>, Str
     Ok((0..book.chapters.len()).map(|i| generate_chapter(c, &book, i)).collect())
 }
 
+/// 单篇 markdown → 一个新的设备笔记本文档（独立于条目库的生成编排，不经 `notecore::project`）。
+/// `title` 只当设备文档名用（撞名走跟章节生成同一套 `unique_name` 后缀规则），不会额外注入成
+/// 页面里的标题段落——markdown 正文自己的 `#` 标题（如果有）才决定页面里显示什么。不写
+/// `NotebookState`：这是一次性导入，没有"源数据"可供下次比对指纹、也就没有增量重传的概念，
+/// 重复导入同一段内容会各自生成一份新文档（靠去重后缀区分）。
+/// 返回 `(实际用上的设备文档名, 设备分配的 uuid)`——名字可能因为撞名被 `unique_name` 加了后缀，
+/// 调用方（网页）该显示这个真名，不是自己传进来的 `title` 原样，不然用户以为存的是自己起的名字，
+/// 实际设备上是带后缀的另一个名字，对不上。
+pub fn import_markdown(c: &Ctx, book_uuid: &str, title: &str, markdown: &str) -> Result<(String, String), String> {
+    c.store.book(book_uuid)?; // 只为确认这本书存在，错的 uuid 早点报错，比 best-effort 落根更清楚
+    let paragraphs = notecore::mdimport::markdown_to_paragraphs(markdown);
+    let rm = build_page_rm(rmdoc::TEMPLATE, &paragraphs)?;
+    let doc_uuid = uuid::Uuid::new_v4().to_string();
+    let page = Page { uuid: uuid::Uuid::new_v4().to_string(), rm_bytes: rm };
+    let folder = c.uploader.parent_folder(book_uuid).unwrap_or_default();
+    let visible_name = c.uploader.unique_name(&folder, title);
+    let bytes = rmdoc::pack(&doc_uuid, &visible_name, "", &page, rmdoc::TEMPLATE_AUTHOR, c.now_ms)?;
+    c.uploader.upload(&bytes, &format!("{doc_uuid}.rmdoc"), &folder)?;
+    let new_uuid = c.uploader.claim(&visible_name, c.now_ms)?;
+    Ok((visible_name, new_uuid))
+}
+
 /// 生产实现：包一层 `shelf_core::xochitl::Xochitl`。
 pub struct XochitlUploader {
     xochitl: shelf_core::xochitl::Xochitl,
@@ -381,5 +403,34 @@ mod tests {
         let trash = FakeTrash::default();
         let store = FakeStore(book());
         assert!(generate_book(&ctx(&store, &uploader, &trash, &state, 1000), "no-such-book").is_err());
+    }
+
+    #[test]
+    fn import_markdown_uploads_to_book_folder_with_deduped_title_and_no_state_written() {
+        let t = tempfile::tempdir().unwrap();
+        let state = NotebookState::new(t.path().to_path_buf());
+        let uploader = FolderAwareUploader::default();
+        let trash = FakeTrash::default();
+        let store = FakeStore(book());
+
+        let (visible_name, uuid) = import_markdown(&ctx(&store, &uploader, &trash, &state, 1000), "book1", "读书笔记", "# 标题\n\n- 要点").unwrap();
+        assert_eq!(visible_name, "读书笔记 (deduped)", "标题走跟章节生成同一套去重规则，返回的该是加过后缀的真名");
+        assert_eq!(uuid, "claimed-读书笔记 (deduped)-1000");
+        assert_eq!(uploader.uploads.lock().unwrap()[0].1, "book-folder", "落进书本自己的文件夹");
+        assert_eq!(*uploader.unique_name_calls.lock().unwrap(), 1);
+
+        // 独立于条目库的一次性导入，不写 NotebookState——不像章节生成那样有指纹可比对。
+        assert!(state.get("book1", 0).is_none());
+    }
+
+    #[test]
+    fn import_markdown_unknown_book_errors_before_touching_uploader() {
+        let t = tempfile::tempdir().unwrap();
+        let state = NotebookState::new(t.path().to_path_buf());
+        let uploader = FakeUploader::default();
+        let trash = FakeTrash::default();
+        let store = FakeStore(book());
+        assert!(import_markdown(&ctx(&store, &uploader, &trash, &state, 1000), "no-such-book", "标题", "正文").is_err());
+        assert!(uploader.uploads.lock().unwrap().is_empty(), "书都没找到，不该碰网络");
     }
 }
