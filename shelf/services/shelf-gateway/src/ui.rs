@@ -36,13 +36,18 @@ pub fn login_page(error: &str, next: &str) -> String {
 
 /// 改密码页：`forced`=首登必改（不给"返回"）。
 pub fn password_page(error: &str, forced: bool) -> String {
-    let hint = if forced { "首次登录：请先设置新密码（至少 6 位，不能是默认密码）。" } else { "至少 6 位。改完其它已登录设备需重新登录。" };
+    // 2026-09-09 审计修：密码最小长度原来在这里硬编码了两处 `minlength="6"` + 提示文案里的"6"，
+    // 跟 `config::MIN_PASSWORD_LEN`（服务端真正校验用的那个）各写各的——真改了那个常量，这里
+    // 三处不会跟着变，会出现"服务端要求 N 位，网页却只拦到 6 位就放行提交"的体验错配（不是安全
+    // 漏洞，服务端仍是最终裁决者，纯粹 UX 一致性问题）。改成从常量插值，单一事实源。
+    let n = crate::config::MIN_PASSWORD_LEN;
+    let hint = if forced { format!("首次登录：请先设置新密码（至少 {n} 位，不能是默认密码）。") } else { format!("至少 {n} 位。改完其它已登录设备需重新登录。") };
     let back = if forced { "" } else { r#"<p class="small"><a href="/">返回书架</a></p>"# };
     format!(r#"<!doctype html><html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>书架 · 改密码</title><style>{AUTH_CSS}</style></head><body>
 <form method="post" action="/password"><h1>设置密码</h1><p class="small" style="margin-top:0">{hint}</p>
 <label for="cur">当前密码</label><input id="cur" name="current" type="password" required autocomplete="current-password">
-<label for="new">新密码</label><input id="new" name="new" type="password" required minlength="6" autocomplete="new-password">
-<label for="cf">再输一次</label><input id="cf" name="confirm" type="password" required minlength="6" autocomplete="new-password">
+<label for="new">新密码</label><input id="new" name="new" type="password" required minlength="{n}" autocomplete="new-password">
+<label for="cf">再输一次</label><input id="cf" name="confirm" type="password" required minlength="{n}" autocomplete="new-password">
 <div class="err">{err}</div><button type="submit">保存</button>{back}</form></body></html>"#, err = esc(error))
 }
 
@@ -57,5 +62,14 @@ mod tests {
         assert!(std::ptr::eq(p, super::page()), "OnceLock 只渲染一次");
         assert!(!p.contains("__STYLE__") && !p.contains("__SCRIPT__") && p.contains("<style>") && p.contains("</script></body></html>"), "骨架三段拼接完整");
         assert!(super::APP_JS.contains("__EXTS__") && !super::APP_JS.contains("__STYLE__"), "白名单占位在 app.js");
+    }
+    #[test]
+    fn password_page_minlength_matches_config_constant() {
+        // 2026-09-09 审计修：改密码页的 minlength/提示文案该跟 config::MIN_PASSWORD_LEN 联动，
+        // 不是各写各的硬编码——常量改了，这里必须跟着变，否则回归会漏掉这条一致性。
+        let n = crate::config::MIN_PASSWORD_LEN;
+        let p = super::password_page("", false);
+        assert!(p.contains(&format!("minlength=\"{n}\"")), "页面里的 minlength 应该等于当前常量: {p}");
+        assert!(p.contains(&format!("至少 {n} 位")), "提示文案也该带上当前常量: {p}");
     }
 }
