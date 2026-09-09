@@ -13,7 +13,7 @@ reMarkable Paper Pro Move 的**读书与阅读质量层**：一个网页 / 一�
  网页上传                ~/.local/state/shelf/books/staging/            📖 投入原生书库（xochitl：EPUB / PDF）
  抓网文（Readability）    · 母版永久保留，可反复落库、两读器对照           📚 加入 KOReader（母版库收的任何格式）
  电脑 shelf push          · 「优化」只对 EPUB（清洗+优化，档位三选）      · 落库＝纯复制母版字节，不再优化
- scp 进 inbox/            · 漫画（CBZ）只加入 KOReader，不投原生          · 落库记录徽章（含投原生后的渲染自检）/ 清理已落库 / 剩余空间
+ scp 进 inbox/            · 漫画（CBZ）默认只加 KOReader，够小可选投原生   · 落库记录徽章（含投原生后的渲染自检）/ 清理已落库 / 剩余空间
 ```
 
 ![shelf 数据流：三层·三动作正交](docs/diagrams/data-flow.svg)
@@ -27,7 +27,7 @@ host `shelf push` 是唯一能"入库时顺带优化"的源（Calibre 深洗 / �
 |---|---|---|
 | 原生直读 | EPUB / PDF | 两个读器都能去 |
 | 电脑可转 | AZW3 / MOBI / AZW / PRC / FB2 / **TXT** | `shelf push` 转 EPUB 进原生（TXT 按「第X章/卷」切章建两级目录，GB18030/UTF-8 自动识别）；直接上传只能加入 KOReader |
-| 仅 KOReader | CBZ / CBR / DjVu / HTML / RTF / DOC / DOCX / CHM / XPS | 只能加入 KOReader（漫画 CBZ 也在此档：**漫画不投原生**；TXT 直传也落这档，走 `shelf push` 才切章进原生） |
+| 仅 KOReader | CBZ / CBR / DjVu / HTML / RTF / DOC / DOCX / CHM / XPS | 只能加入 KOReader（漫画 CBZ 也在此档：**默认不投原生，`shelf push` 出的灰阶 CBZ 体积够小时会顺带生成一份 PDF 给「投入原生书库」选项，超限的仍只出 CBZ、绝不分卷**，见白皮书 §03ad；TXT 直传也落这档，走 `shelf push` 才切章进原生） |
 
 **网页 tab**：「传书」（固定第一位：入库｜母版库）· xochitl（原生字体，font-serve）· KOReader（字体｜词典，koreader-serve）· 壁纸 · 「管理」（固定）。读器页不传书。
 
@@ -153,13 +153,15 @@ cargo build --release -p bookconv --bin epub-optimize   # host 侧 push 洗书�
 
 ```sh
 shelf/host/bin/shelf services | status | doctor
-shelf/host/bin/shelf push 论文.pdf 书.epub [--to-pdf] [--no-optimize] [--keep-spacing] [--no-reflow] [--no-split] [--skip-check] [-n] [--wait[=秒]] [--no-eink-gray]
-#   漫画缺省过省刷新档：CBZ 逐页缩到屏盒、黑白页转 16 灰抖动 4-bit PNG（轻波形，用户目视翻页明显少闪）、彩页保色（《阿拉蕾①》1092 页 171MB→108MB，16 灰 1085/保色 7）；--no-eink-gray 要原图
+shelf/host/bin/shelf push 论文.pdf 书.epub [--to-pdf] [--no-optimize] [--keep-spacing] [--no-reflow] [--no-split] [--skip-check] [-n] [--wait[=秒]] [--no-eink-gray] [--manga-ltr] [--no-comic-native]
+#   漫画缺省过省刷新档：先跨页拆分（东立扫描类两页拼一图，识别装订缝拆开，默认从右往左、--manga-ltr 改从左往右）+ 白边裁切放大，
+#   再 CBZ 逐页缩到屏盒、黑白页转 16 灰抖动 4-bit PNG（轻波形，用户目视翻页明显少闪）、彩页保色（《阿拉蕾①》1092 页 171MB→108MB，16 灰 1085/保色 7）；
+#   灰阶 CBZ 体积估算转 PDF 后仍在设备原生上传上限内，顺带生成一份 PDF 给「投入原生书库」选项（--no-comic-native 关掉）；--no-eink-gray 要原图（连带不做跨页拆分/白边裁切）
 #   --wait：设备离 USB 几秒就自动休眠关 WiFi，push 上传前先探 /health；不可达时每 5 秒探一次等它醒（点亮屏幕/接 USB），缺省最多 600 秒；不加 --wait 则直接报错、不传
    **只落母版库**，去向在网页「传书 → 母版库」选。路线自动定（`push.plan`）：
    · 有 Calibre → 洗书：EPUB 深洗 / AZW3·MOBI·AZW·PRC·FB2 转 EPUB / **PDF 默认结构化重排**（born-digital→EPUB→洗书；扫描件 k2pdfopt/裁边→PDF，`--no-reflow` 原样）；
      产物必过 `check_output.py` 质量门（`--skip-check` 强推）。`--to-pdf` 定稿固定版式 PDF（手写批注用）。>60MB PDF 自动分卷（需 uv `calibre` 组的 pymupdf；切不了会报错不推，xochitl 收不下 188MB 整本）。
-   · **漫画**（AZW3/MOBI/EPUB 里几乎全是整页图，`comic.py` 自动判）→ 转成 **CBZ** 进母版库，网页点「加入 KOReader」；**漫画不投原生**（用户定）。
+   · **漫画**（AZW3/MOBI/EPUB 里几乎全是整页图，`comic.py` 自动判）→ 转成 **CBZ** 进母版库，网页点「加入 KOReader」；**默认不投原生，体积够小时会顺带出一份 PDF 给「投入原生书库」选项，超限的仍只出 CBZ、绝不分卷**（§03ad，2026-09-08）。
      `--comic / --no-comic` 覆盖判断；CBZ 输入原样入库。
    · `--no-optimize` 或无 Calibre → 原样传母版库（网页里可再点优化）。
 shelf font add 字体.ttf | ls | rm <家族名>                # 只装原生阅读器：~/.local/share/fonts + fc-cache + fonts.json + 中文回退链
@@ -188,7 +190,7 @@ shelf passwd [--new …]
 | 书籍优化 | 做精做细做强：LangMode 中英文排版、目录 h1–h6、脚注 Inline/Anchor、host PDF 重排、**首行缩进根因＝xochitl 只认外链 css（v10）** | ✅ 真机通（§03q） |
 | **中间层** | **母版库三层架构**：入库/优化/落库正交、传书总入口、读器页不传书、落库记录、网文抓取、财新 PDF 重排修空白 | ✅ 真机通（§03r） |
 | 质量二轮 | 母版库领域化、直投路删除、上传模板/格式白名单/取参单一事实源、格式三档展示 | ✅ 真机通（§03s） |
-| 漫画通道 | AZW3/EPUB 漫画自动识别 → CBZ 给 KOReader；**漫画不投原生**（曾做过 CBZ→PDF 分卷投原生，用户否决后删）；镖人 282MB EPUB 撞 xochitl 上传上限根因；分卷静默失效修 | ✅ 真机通（§03t） |
+| 漫画通道 | AZW3/EPUB 漫画自动识别 → CBZ 给 KOReader；**漫画不投原生**（曾做过 CBZ→PDF **分卷**投原生，用户否决后删——2026-09-08 §03ad 部分修订：小体积不分卷可选投原生，跟这次被否决的"分卷了也投原生"是两回事）；镖人 282MB EPUB 撞 xochitl 上传上限根因；分卷静默失效修 | ✅ 真机通（§03t） |
 | 固件 3.28 | OTA 3.27.3.0→3.28.0.172 实录：appload 停用、hashtab 重建、deploy 重装；3.28 字体菜单 qmd 修 qmldiff 语法（`({})`/裸 `if(` 整份不应用）后通 | ✅ 真机通（§03v，§05 第 5 条） |
 | 设备杂项 | 原生休眠屏隐藏键 `SleepScreenPath`（满屏+随轮换）；WiFi 连上恰 60 秒必掉＝cfg80211 regdomain 宽限（精简 regdb 的 CN 无 5150–5350，路由 5G 信道 36 被判非法）→ 连接锁 2.4G + `powersave 2`，`packaging/wifi-watch` 常驻固化；chrony 国内 NTP 幂等脚本 `packaging/chrony-cn.sh` | ✅ 真机通（§03w） |
 | 壁纸退役 bind | wallpaper-serve 改写 `SleepScreenPath`（`shelf_core::xochitl_conf`），删 bind 单元/sleep 钩子/透明卡/`mount.rs`（安装器的旧残留清理块已于 2026-09-06 随体检删除，真机零残留） | ✅ 真机通（§03x） |
@@ -196,3 +198,4 @@ shelf passwd [--new …]
 | 阅读线六项 | 投原生后渲染自检（`pageCount` vs 正文字符数，<50% warn，边车+事件+徽章）· `shelf doctor --render` 排版回归探针（§03y 八轮手工诊断固化，真机 7/7）· `push --wait`（探 `/health` 等设备醒）· 中文 TXT 切章两级目录 · Phase E ④ 脚注（Gulliver 两器观感通过）· 漫画 16 灰省刷新档（默认开，171→108MB） | ✅ 真机通（§03aa） |
 | 代码体检 | shelf-core `clock` · 死项清除 · `xochitl` 扫 metadata 合一 · book-serve `sidecar.rs` · 网关 UI 拆 `ui/` 真文件（CI node --check）· host `epub_skel`/`_run_json`/`transport._open` · install.sh 删迁移块 | ✅（§03ab） |
 | **可插拔机制验证** | 笔记线（独立仓库线 `notes/`）挂上同一网关/build/deploy/install 机制，证明书架的插件式服务架构能接其他独立线，不用改书架自身代码；细节全在 `notes/README.md`/`notes/docs/reMarkable笔记白皮书.md`，本仓库不复述 | ✅ 真机验证通过 |
+| 漫画跨页拆分+投原生 | `comic_gray.py` 加跨页识别拆分（东立扫描类两页拼一图，找装订缝拆开）+ 白边裁切放大；`cbz2pdf` 复活成体积门控 CLI，灰阶 CBZ 够小顺带出投原生 PDF，超限只出 CBZ、绝不分卷 | ✅ 火影忍者卷1真机通；⚠ 镖人/阿拉蕾①"超限只出 CBZ"分支未真机复验（§03ad，§05） |
