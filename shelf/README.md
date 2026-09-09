@@ -198,4 +198,4 @@ shelf passwd [--new …]
 | 阅读线六项 | 投原生后渲染自检（`pageCount` vs 正文字符数，<50% warn，边车+事件+徽章）· `shelf doctor --render` 排版回归探针（§03y 八轮手工诊断固化，真机 7/7）· `push --wait`（探 `/health` 等设备醒）· 中文 TXT 切章两级目录 · Phase E ④ 脚注（Gulliver 两器观感通过）· 漫画 16 灰省刷新档（默认开，171→108MB） | ✅ 真机通（§03aa） |
 | 代码体检 | shelf-core `clock` · 死项清除 · `xochitl` 扫 metadata 合一 · book-serve `sidecar.rs` · 网关 UI 拆 `ui/` 真文件（CI node --check）· host `epub_skel`/`_run_json`/`transport._open` · install.sh 删迁移块 | ✅（§03ab） |
 | **可插拔机制验证** | 笔记线（独立仓库线 `notes/`）挂上同一网关/build/deploy/install 机制，证明书架的插件式服务架构能接其他独立线，不用改书架自身代码；细节全在 `notes/README.md`/`notes/docs/reMarkable笔记白皮书.md`，本仓库不复述 | ✅ 真机验证通过 |
-| 漫画跨页拆分+投原生 | `comic_gray.py` 加跨页识别拆分（东立扫描类两页拼一图，找装订缝拆开）+ 白边裁切放大；`cbz2pdf` 复活成体积门控 CLI，灰阶 CBZ 够小顺带出投原生 PDF，超限只出 CBZ、绝不分卷 | ✅ 火影忍者卷1真机通；⚠ 镖人/阿拉蕾①"超限只出 CBZ"分支未真机复验（§03ad，§05） |
+| 漫画跨页拆分+投原生 | `comic_gray.py` 加跨页识别拆分（东立扫描类两页拼一图，找装订缝拆开）+ 白边裁切放大；`cbz2pdf` 复活成体积门控 CLI，灰阶 CBZ 够小顺带出投原生 PDF，超限只出 CBZ、绝不分卷 | ✅ 真机通：火影忍者卷1（够小投原生）+ 阿拉蕾①/镖人（超限只出 CBZ 不分卷，2026-09-09，§03ad） |
