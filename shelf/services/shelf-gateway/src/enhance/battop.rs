@@ -1,8 +1,8 @@
 //! 电池刺客（battop）状态探测 + 开关。battop 是独立于 shelf 安装体系之外的诊断采样器
-//! （`misc/battery-audit/battop/`，固定装在 `/home/root/battop`，不走 shelf 的 XDG/`bin_dir` 那套），
+//! （`enhance/battop/`，固定装在 `/home/root/battop`，不走 shelf 的 XDG/`bin_dir` 那套），
 //! 原生「设置」App 只有一个只读展示页（读 `summary.json`），**从没有过开关**——这里是它第一次有开关。
 //!
-//! 2026-08-29 出过 cgroup/RCU 死锁事故（`misc/battery-audit/FINDINGS.md`），根因是"反复 service-start
+//! 2026-08-29 出过 cgroup/RCU 死锁事故（`enhance/battop/FINDINGS.md`），根因是"反复 service-start
 //! 触发的 cgroup 迁移撞上内核 RCU stall"，已经修复为常驻 `Type=simple`（进程内 `loop{sample;sleep}`，
 //! 开机只迁一次 cgroup）。单纯 `systemctl start/stop` 不会重现那次事故的触发条件——不是"曾经启动过
 //! 就危险"，是"反复重启"才危险，这里的开关只是一次性 start/stop，不循环拉起。

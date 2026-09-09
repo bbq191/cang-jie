@@ -38,7 +38,7 @@ ssh root@10.11.99.1 'cd /home/root && tar -xzf cangjie-ime-installer.tar.gz'
 ssh root@10.11.99.1 '/home/root/cangjie-ime/install.sh'
 ```
 
-`install.sh` 会：**拷 `cangjie-langhook.so` 到 `/home/root/xovi/extensions.d/`（xovi 自动加载）**、拷 5 词典到 `/home/root/.local/share/cangjie-ime/`（`.so` 从这读，`CJ_DATA_DIR`）、拷字体（霞鹜新致宋 + 花园明朝 B + 新晰黑/文楷/文楷 Mono + KF Readerly，见 install.sh 拷贝段）到 `~/.local/share/fonts/` 并装 fontconfig（**整个 xochitl UI** 与候选栏中文字体统一走**霞鹜新致宋（LXGW Neo ZhiSong Screen Full），扩展 B 生僻字字形级回退花园明朝 B（HanaMinB）**）、**CJK 字体覆盖预检**（`fc-list :lang=zh-cn` 为空即中止，防豆腐块）、拷 `candidatebar.qmd`/reading-qol/字体菜单 qmd 到 qt-resource-rebuilder、**拷 `reMarkable_zh_{CN,TW,HK}.qm` 到 `~/.local/share/cangjie-ime/translations/`（`/home` 持久）+ 装一个 pre-start bind-mount 脚本把它盖到 `/usr/share/.../translations/` 上（界面汉化，运行时 VFS 挂载、不改 `/usr` 块本身、无 verity 回滚风险，2026-08-16 起改用这套，见下）**、写 `~/xovi/services/xochitl.service/` 下的持久源 `.conf`（`LD_PRELOAD=xovi.so` + `XOVI_ROOT` + **`QML_DISABLE_DISK_CACHE=1` 等 QML env**——qt-resource-rebuilder 硬需求，`xovi/start` 会把它拷进 `/etc` tmpfs）、`daemon-reload` + 重启 `xochitl` + 健康检查（`is-active`=active / `MainPID` 变化 / `NRestarts` 不增 / **cangjie 扩展是否真加载**）。fail-safe 内建在 `.so` 的 `_xovi_shouldLoad`（扫 xochitl 特征码兼容才加载、否则裸启原生），不再需要外部 precheck。脚本自带 xovi/qt-resource-rebuilder 前置检查。卸载走 `uninstall.sh`（先把系统语言从 `zh_*` 改回 `en` 再删翻译，避免配置悬空）。
+`install.sh` 会：**拷 `cangjie-langhook.so` 到 `/home/root/xovi/extensions.d/`（xovi 自动加载）**、拷 5 词典到 `/home/root/.local/share/cangjie-ime/`（`.so` 从这读，`CJ_DATA_DIR`）、拷字体（霞鹜新致宋 + 花园明朝 B + 新晰黑/文楷/文楷 Mono + KF Readerly，见 install.sh 拷贝段）到 `~/.local/share/fonts/` 并装 fontconfig（**整个 xochitl UI** 与候选栏中文字体统一走**霞鹜新致宋（LXGW Neo ZhiSong Screen Full），扩展 B 生僻字字形级回退花园明朝 B（HanaMinB）**）、**CJK 字体覆盖预检**（`fc-list :lang=zh-cn` 为空即中止，防豆腐块）、拷 `candidatebar.qmd`/reading-qol/字体菜单 qmd 到 qt-resource-rebuilder、**拷 `reMarkable_zh_{CN,TW,HK}.qm` 到 `/usr/share/remarkable/xochitl/translations/`（界面汉化）**、写 `/usr/lib` 持久 drop-in（`LD_PRELOAD=xovi.so` + `XOVI_ROOT` + **`QML_DISABLE_DISK_CACHE=1` 等 QML env**——qt-resource-rebuilder 硬需求）、`daemon-reload` + 重启 `xochitl` + 健康检查（`is-active`=active / `MainPID` 变化 / `NRestarts` 不增 / **cangjie 扩展是否真加载**）。fail-safe 内建在 `.so` 的 `_xovi_shouldLoad`（扫 xochitl 特征码兼容才加载、否则裸启原生），不再需要外部 precheck。脚本自带 xovi/qt-resource-rebuilder 前置检查。卸载走 `uninstall.sh`（先把系统语言从 `zh_*` 改回 `en` 再删翻译，避免配置悬空）。
 
 装完：
 - **输入法**：点开任意文本框弹出键盘，**点地球**在「简体全拼 / 繁體全拼 / 简体双拼 / 繁體双拼」间切换开始输入。
@@ -46,25 +46,23 @@ ssh root@10.11.99.1 '/home/root/cangjie-ime/install.sh'
 
 **字体**（2026-08-23 定案）：整个界面 UI 和候选栏的中文统一走 **霞鹜新致宋（LXGW Neo ZhiSong Screen Full）**——宋体书卷气、BMP+扩展 A 全覆盖、Screen 版 e-ink 不发虚；打到 CJK 扩展 B 生僻字（词典雾凇 41448 大字表含约 1.3 万个，如 `hang` 尾部 𠡊）时字形级回退 **花园明朝 B（HanaMinB）**，不再豆腐块。靠 `/home/root/.config/fontconfig/fonts.conf`（`/home` 持久分区，重启不丢）把 `sans-serif` 及 zh-* 指向"致宋 + HanaMinB"两级链，另对致宋开 `embolden` 合成加粗补偿宋体笔画在低对比 e-ink 下发淡。候选栏字体由 `candidatebar.qmd` 的 `cjkFamily` 显式设为致宋（简/繁字形已由 `dict.bin`/`dict.zh_tw.bin` 决定，字体只管渲染、不按语言切族）。**不再部署 HarmonyOS / 按 SC/TC 切族的旧方案。**字体演进与扩展 B 兜底诊断 及《中文化白皮书》§3.3。
 
-### 重启持久化（2026-08-16 改用 vellum-xovi 官方机制，彻底弃掉 /usr drop-in）
+### 重启持久化（已解决那个坑）
 
-**早期方案（已放弃，别再照抄）**：drop-in 写根分区 `/usr/lib/systemd/system/xochitl.service.d/zz-cangjie-xovi.conf`。真机踩实两次：写 `/usr` 后完整重启触发 dm-verity root hash 变化 → A/B 回滚——**正是设备被搞成裸机的原因**。这条路线 2026-08-16 起彻底不用了。
+drop-in 写在根分区 `/usr/lib/systemd/system/xochitl.service.d/zz-cangjie-xovi.conf`（不是会被 overlay 清掉的 `/etc`——vellum 的 `/etc/00-xovi.conf` 普通重启就丢、靠 reenable 手动恢复），内容是 `LD_PRELOAD=xovi.so` + `XOVI_ROOT` + **`QML_DISABLE_DISK_CACHE=1` 等 QML env**（qt-resource-rebuilder 硬需求，缺了它自检 abort 拖垮 xochitl）。cangjie 本身是 `extensions.d/` 里的 xovi 扩展、由 xovi 自己加载，**不在 LD_PRELOAD 里**。`/usr/lib` 在 `/dev/root` 持久分区、**普通重启不丢**（实测删掉 vellum 的 /etc 00-xovi 后仍独立支撑）。装脚本已自动处理（临时 remount rw 根分区写入、再 remount ro）。
 
-**现行机制**：cangjie 的 env drop-in（`LD_PRELOAD=xovi.so` + `XOVI_ROOT` + `CANGJIE_IME_HOOKS`（若配了的话）等）写成一份 `.conf` 放进 `~/xovi/services/xochitl.service/`（**持久源，在 `/home`**，跟 `qt-resource-rebuilder.conf` 并列）。`/home/root/xovi/start` 遍历这些持久源目录，把内容整份拷进新挂载的 `/etc/systemd/system/xochitl.service.d/` **tmpfs**（overlay，普通重启就清）、再生成 `00-xovi.conf`、`daemon-reload`、重启对应 unit——**全程不碰 `/usr`，无 verity 回滚风险**。装脚本已自动处理这一步，正常装完不用手跑。
-
-- **真机重启后（不是休眠唤醒）需要手动跑一次 `/home/root/xovi/start`**（等价于 `vellum reenable`，两者殊途同归，都是重建 `/etc` tmpfs）——`/etc` 是 overlay，真重启即清空，这是接受的已知负担（真机大多是休眠不是重启，tmpfs 休眠不丢，负担很小）。**不要理解成"别跑官方 xovi/start"**——现在 cangjie 自己的持久化就是靠 `xovi/start` 生效的，跑它不会冲掉 cangjie，反而是让 cangjie 生效的正确步骤。
-- **界面汉化的 bind-mount**同样是 `xovi` pre-start 脚本（`cangjie-xlate-bindmount.sh`）负责，每次 `xovi/start` 自动重新挂载，跟 langhook 扩展本身的持久化是两回事、互不影响。
-- **OS 固件更新（OTA）后**会整个换新 `/usr`（`/home` 不受影响）——`extensions.d/` 里的 `.so`、`~/.local/share/cangjie-ime/` 的词典/配置本身**理论上不受 OTA 影响**（不在 `/usr`），但 `/etc` tmpfs 配置会因为重启而清空，**需要重新跑一次 `/home/root/xovi/start`**（不一定要整个重装 `install.sh`，除非 `/home` 下的 payload 本身也丢了——2026-09-09 真机踩过 payload 整个从设备上消失、只有配置文件残留的情况，原因不明，遇到这种"重跑 xovi/start 没用、journal 里根本没有 `[cangjie]` 日志"的情况先 `find / -iname "cangjie-langhook.so*"` 确认二进制还在不在，不在就得整个重跑 `install.sh`）。得益于韧性重构，`.so` 本身**不需要为新固件版本重新推导偏移**（函数体没大改就自动特征码定位）。
+- **vellum 的 xovi 配置（/etc 00-xovi）普通重启就丢**（overlay），靠 `vellum reenable` 手动恢复；我们的 `/usr/lib` drop-in 是独立一份、rootfs 持久、不受影响（cangjie 是 `extensions.d/` 扩展，不在任何 LD_PRELOAD 里，不会被"删掉那条"）。别主动跑官方 `xovi/start`。
+- **OS 固件更新（OTA）后**会重置 rootfs（`/usr/lib` 的 drop-in + `/usr/share` 的界面翻译一起冲掉），扩展静默失效、界面回英文 → 那时重跑一次 `install.sh` 即可全部恢复。得益于韧性重构，`.so` 本身**不需要为新固件版本重新推导偏移**（函数体没大改就自动特征码定位），OTA 只影响 rootfs 上的加载配置和翻译文件。
 
 ### 回退
 
 ```sh
-rm -f /home/root/xovi/extensions.d/cangjie-langhook.so                          # 摘掉 cangjie 扩展
-rm -f /home/root/xovi/services/xochitl.service/cangjie-langhook.conf            # 摘掉持久 env 源（若装过）
-/home/root/xovi/start                                                          # 重建 /etc tmpfs，不再含 cangjie，顺带重启 xochitl
+rm -f /home/root/xovi/extensions.d/cangjie-langhook.so   # 摘掉 cangjie 扩展
+mount -o remount,rw / && rm -f /usr/lib/systemd/system/xochitl.service.d/zz-cangjie-xovi.conf && mount -o remount,ro /
+rm -f /etc/systemd/system/xochitl.service.d/cangjie-langhook.conf   # 若还残留旧的 /etc 版
+systemctl daemon-reload && systemctl restart xochitl
 ```
 
-即恢复到没装输入法的状态（`.so`/词典/字体留在 `/home/root` 不影响，想清可手动删）。**不要用 `mount -o remount,rw / && rm .../usr/lib/...`那种写法**——现在没有任何东西写在 `/usr`，这条命令本身除了无谓地 remount 根分区之外什么也做不到。
+即恢复到没装输入法的状态（`.so`/词典/字体留在 `/home/root` 不影响，想清可手动删）。
 
 ### 重新打包（维护者）
 

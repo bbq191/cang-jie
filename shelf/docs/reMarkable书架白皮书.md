@@ -599,7 +599,7 @@ book→「母版库 / 原生投递」、weread→「微信读书（内容源，�
 **③是本轮唯一有真实后端工作量的点，三个"开关"现状差异很大**：
 - **cjk 画线吸附**＝`reading-qol.json` 的 `hlSnapCjk`（默认开，langhook C hook 消费，见系统增强白皮书 §04）。**有地基，做成真开关**。
 - **cjk 手写笔迹优化**：用户明确澄清是"设备手写笔锋按 CJK 书写习惯（运笔粗细/顿挫）渲染优化"，**跟 AI/大模型识别（`cardhw`）完全无关**（第一轮理解错了，以为是 `cardhwEnabled` 那个视觉转写开关）。全仓库搜索确认这个渲染优化功能**目前完全不存在**：没有配置键、没有 hook、没有反编译记录，唯一沾边的"够不够到 xochitl 原生渲染层"先例（笔记页背景滤镜想接近同一层）是**判死**的（：C++ `SceneView` tile 增量渲染够不到）。真要做需要独立立项做原生笔画渲染层的逆向工程，不是包一层网页开关就能上线的。**这次做成「未上线」占位卡片**，不接后端，等真正探路完成再回来接。
-- **电池刺客（battop）**：原生设置页只有只读展示（读 `summary.json`），**从没有过开关**——这是它第一次有开关。2026-08-29 出过 cgroup/RCU 死锁（`misc/battery-audit/FINDINGS.md`），已修复为常驻 `Type=simple`（不再靠 timer 反复拉起 oneshot触发 cgroup 迁移），单纯 `systemctl start/stop` 不重现那次事故的触发条件（触发条件是"反复重启"，不是"启动过一次"）。**有地基，做成真开关**。
+- **电池刺客（battop）**：原生设置页只有只读展示（读 `summary.json`），**从没有过开关**——这是它第一次有开关。2026-08-29 出过 cgroup/RCU 死锁（`enhance/battop/FINDINGS.md`），已修复为常驻 `Type=simple`（不再靠 timer 反复拉起 oneshot触发 cgroup 迁移），单纯 `systemctl start/stop` 不重现那次事故的触发条件（触发条件是"反复重启"，不是"启动过一次"）。**有地基，做成真开关**。
 
 `reading-qol.json` 有全量写回铁律（系统增强白皮书 §08）：新写 `shelf/services/shelf-gateway/src/enhance/qol.rs` **不照抄 QML 那种手写全部字段的方式**——`patch()` 把整份文件当成不透明的 `serde_json::Map` 读进来，只覆盖调用方明确要改的键，其余原样写回，天然不怕将来别处新增字段导致这里漏改。`enhance/battop.rs` 状态探测（unit 文件是否存在 + `systemctl is-active`）+ 开关（复用 `manage::run` 这个 `pub(crate)` helper，不重新实现一遍 `Command` 样板）。
 
