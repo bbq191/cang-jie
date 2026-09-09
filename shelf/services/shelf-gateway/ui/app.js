@@ -244,7 +244,10 @@ function assetTab(sec,api,o){sec.innerHTML=`<div class="card">${o.title?`<h2>${o
    AI 触发早就是按条目单发（勾「问AI」+ 填问题+点提问，调 mind-serve 拼"书名+章节+勾画原文+转写文本+问题"
    发模型，二期，白皮书 §03n），分区兼职的笔记本排版分组也不要了，条目一律按页序平铺，格式=Entry.style。 */
 const STYLE_NAMES={body:'正文',bullet:'无序 -',numbered:'有序 1.',checkbox:'待办 口'};
-const STATUS_NAMES={mined:'待浏览',pending:'待转写',draft:'待校对',reviewed:'已校对',skipped:'已跳过',revoked:'已撤销',archived:'已删除'};
+/* archived 显示"已删除（可恢复）"而不是单纯"已删除"：这是软删终态，回收站里随时能点「恢复」，
+   跟「清空回收站」那个真正不可逆的操作不该用同一个不加限定的"删除"措辞（2026-09-09 审计修：原文案
+   会让用户误以为回收站里这条已经彻底没了）。 */
+const STATUS_NAMES={mined:'待浏览',pending:'待转写',draft:'待校对',reviewed:'已校对',skipped:'已跳过',revoked:'已撤销',archived:'已删除（可恢复）'};
 /* Obsidian 官方图标是紫色多面体"石头"，不是随便一个链接符号——真机反馈"能否用它自己的图标"，用一个
    简化的多面体 SVG（不是官方 logo 的精确描边，商标图形不该随手照抄，这个形状+配色足够让人一眼认出
    "这是 Obsidian"）替掉原来占位的 🔗。设备笔记本用 📓 emoji 就够直观，不用特别做图标。 */
@@ -290,6 +293,11 @@ function renderNotes(sec){sec.innerHTML=`
      不用各自发请求。`refreshSync()` 在 loadBook 里、以及每次生成/导出动作之后调用刷新。 */
   let syncMap=new Map();
   const refreshSync=async()=>{if(!book){syncMap=new Map();return}const r=await j(`/api/notes/books/${encodeURIComponent(book.uuid)}/sync`);syncMap=new Map((r.chapters||[]).map(c=>[c.chapter,c]))};
+  /* 「保存并刷新」这条 5 步链（flush 未落地的改字 → 重取整本书 → 重取同步状态 → 重画指定的几个
+     子视图）原来在 triage/archiveEntry/restore/去处切换/转写/问 AI 七处各自逐字重复（2026-09-09
+     审计发现），任何一处漏改都容易造成"某个动作之后画面没更新"这类不容易被发现的 bug——收成一个
+     辅助函数，调用方只需要说清楚"这次要重画哪几个子视图"。 */
+  const reloadBook=async(...views)=>{await flushPendingText();book=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}`);await refreshSync();views.forEach(fn=>fn())};
   /* s 是章节级同步状态（notebookNeeded/Synced、obsidianNeeded/Synced），本身只精确到"整章"，不到
      "这一条"（`fingerprint_chapter` 把整章活条目内容拼一起算一个哈希，见白皮书 §03aa）。章头调用不传
      `only`，如实显示整章的聚合状态；贴在每条笔记行上时传 `only=该条自己的 destination`，把跟这条本身
@@ -297,8 +305,10 @@ function renderNotes(sec){sec.innerHTML=`
      未同步"，真机反馈"我只导了 Obsidian，实际显示两者都有"就是这个问题，见白皮书 §03ab。 */
   const syncBadges=(s,only)=>{if(!s)return'';
     const wantsNb=!only||only==='notebook'||only==='both',wantsOb=!only||only==='obsidian'||only==='both';
-    const nb=wantsNb&&s.notebookNeeded?`<span class="badge${s.notebookSynced?' on':''}" title="设备笔记本${s.notebookSynced?'已同步':'内容有改动，还没重新生成'}">📓${s.notebookSynced?'✓':'…'}</span>`:'';
-    const ob=wantsOb&&s.obsidianNeeded?`<span class="badge${s.obsidianSynced?' on':''}" title="Obsidian md${s.obsidianSynced?'已同步':'内容有改动，还没重新导出'}">${OBSIDIAN_ICON}${s.obsidianSynced?'✓':'…'}</span>`:'';
+    // aria-label 跟 title 重复一份（2026-09-09 审计修）：图标本身 aria-hidden，屏幕阅读器原来只能
+    // 念出 ✓/… 两个符号，丢了"这是关于设备笔记本/Obsidian"的语境。
+    const nb=wantsNb&&s.notebookNeeded?`<span class="badge${s.notebookSynced?' on':''}" title="设备笔记本${s.notebookSynced?'已同步':'内容有改动，还没重新生成'}" aria-label="设备笔记本${s.notebookSynced?'已同步':'未同步'}">📓${s.notebookSynced?'✓':'…'}</span>`:'';
+    const ob=wantsOb&&s.obsidianNeeded?`<span class="badge${s.obsidianSynced?' on':''}" title="Obsidian md${s.obsidianSynced?'已同步':'内容有改动，还没重新导出'}" aria-label="Obsidian md${s.obsidianSynced?'已同步':'未同步'}">${OBSIDIAN_ICON}${s.obsidianSynced?'✓':'…'}</span>`:'';
     return nb+ob};
   const trashList=$('#ntrashlist',sec),trashSum=$('#ntrashsum',sec);
   const TRASH_STATUSES=['skipped','revoked','archived'];
@@ -308,7 +318,7 @@ function renderNotes(sec){sec.innerHTML=`
      （见 notecore::model::Entry::restore）——书里已经把笔画擦了也能恢复，找回的是条目库里已经存好
      的裁图/校对文本，不代表设备原页面的笔迹会重新出现（这条限制在页面文案里说清楚，不是网页能力）。 */
   const restoreOne=async id=>{const r=await postJ(`/api/ink/books/${encodeURIComponent(book.uuid)}/entries/${encodeURIComponent(id)}/restore`,{});if(r.ok===false)return false;return true};
-  const renderTrash=()=>{trashList.innerHTML='';if(!book){trashSum.textContent='';return}
+  const renderTrash=()=>{if(!book){trashList.innerHTML='<p class="small">先在上面选一本已经勾画过的书。</p>';trashSum.textContent='';return}trashList.innerHTML='';
     const items=(book.entries||[]).filter(e=>TRASH_STATUSES.includes(e.status)).sort((a,b)=>b.updated-a.updated);
     trashSum.textContent=items.length?`共 ${items.length} 条`:'空的，没什么可清';
     if(!items.length){trashList.innerHTML='<p class="small">没有已跳过/已删除/已撤销的条目。</p>';return}
@@ -322,17 +332,17 @@ function renderNotes(sec){sec.innerHTML=`
       row.innerHTML=`<span class="badge">${STATUS_NAMES[e.status]||e.status}</span><span class="badge">${DEST_ICON[dv]}</span>${syncBadges(chSync,dv)}
         <div class="txt">p.${e.page_index+1}${e.chapter_title?' · '+e.chapter_title:''}<br><span class="q">${text}</span>${e.status==='revoked'?'<br><span class="small">笔画可能已在设备上被擦——恢复只找回已保存的内容，不会让笔迹重新出现在原页面</span>':''}</div>
         <button class="btn" data-restore>恢复</button>`;
-      row.querySelector('[data-restore]').onclick=async()=>{if(!(await restoreOne(e.id)))return;await flushPendingText();book=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}`);await refreshSync();renderTrash();renderBrowse();renderBook()};
+      row.querySelector('[data-restore]').onclick=async()=>{if(!(await restoreOne(e.id)))return;await reloadBook(renderTrash,renderBrowse,renderBook)};
       trashList.appendChild(row)})};
   $('#nrestoreall',sec).onclick=async()=>{if(!book)return;
     const items=(book.entries||[]).filter(e=>TRASH_STATUSES.includes(e.status));
     if(!items.length){alert('回收站是空的，没什么可恢复');return}
     if(!confirm(`把这 ${items.length} 条都恢复？`))return;
     for(const e of items)await restoreOne(e.id);
-    await flushPendingText();book=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}`);await refreshSync();renderTrash();renderBrowse();renderBook()};
+    await reloadBook(renderTrash,renderBrowse,renderBook)};
   /* 浏览态动作：Mined→Pending（转入笔记）/ Mined→Skipped（不需要），见 ink-serve::triage。三个子视图都要重画（条目跨视图搬家）。 */
   const triage=async(id,action)=>{const r=await postJ(`/api/ink/books/${encodeURIComponent(book.uuid)}/entries/${encodeURIComponent(id)}/${action}`,{});if(r.ok===false)return;
-    await flushPendingText();book=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}`);await refreshSync();renderBrowse();renderBook();renderTrash()};
+    await reloadBook(renderBrowse,renderBook,renderTrash)};
   const updateSummary=()=>{if(!book){sum.textContent='';return}const es=book.entries||[];
     const c=st=>es.filter(e=>e.status===st).length;
     sum.textContent=`待浏览 ${c('mined')} · 待转写 ${c('pending')} · 待校对 ${c('draft')} · 已校对 ${c('reviewed')}`};
@@ -348,9 +358,9 @@ function renderNotes(sec){sec.innerHTML=`
   /* 「不要了」（三期）：转 Archived，两处投影都摘掉，条目库里软删留痕（真删靠「回收站」清空）。 */
   const archiveEntry=async(id)=>{if(!confirm('这条不要了？（设备笔记本、Obsidian 导出都会摘掉；条目还留在「回收站」，能看到也能恢复）'))return;
     const r=await postJ(`/api/ink/books/${encodeURIComponent(book.uuid)}/entries/${encodeURIComponent(id)}/archive`,{});if(r.ok===false)return;
-    await flushPendingText();book=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}`);await refreshSync();renderBook();renderTrash()};
+    await reloadBook(renderBook,renderTrash)};
   /* 浏览：按页分组、只列 Mined（待决定的），最近变更的页在前；转入笔记/不需要两个按钮直接调 triage。 */
-  const renderBrowse=()=>{browse.innerHTML='';if(!book)return;updateSummary();
+  const renderBrowse=()=>{if(!book){browse.innerHTML='<div class="card"><p class="small">先在上面选一本已经勾画过的书。</p></div>';return}browse.innerHTML='';updateSummary();
     const mined=(book.entries||[]).filter(e=>e.status==='mined');
     if(!mined.length){browse.innerHTML='<div class="card"><p class="small">没有待浏览的批注——勾画/手写后合上书，稍等抓取即可出现在这里。</p></div>';return}
     const groups=new Map();mined.forEach(e=>{const k=e.page_index;if(!groups.has(k))groups.set(k,[]);groups.get(k).push(e)});
@@ -407,7 +417,7 @@ function renderNotes(sec){sec.innerHTML=`
      exportTab 跨换书保留（比照原复选框状态本来也不随换书重置），selectedChapter 换书清空（章节 key
      按书算）。 */
   let exportTab='pending',selectedChapter=null;
-  const renderBook=async(opts={})=>{if(!book){chaptertabs.innerHTML='';chapterbody.innerHTML='';return}updateSummary();
+  const renderBook=async(opts={})=>{if(!book){chaptertabs.innerHTML='';chapterbody.innerHTML='<p class="small">先在上面选一本已经勾画过的书。</p>';return}updateSummary();
     const advance=!!opts.advance;
     const trst=await j('/api/transcribe/status');
     const failedIds=new Set((trst.failures||[]).filter(f=>f.book===book.uuid).map(f=>f.id));
@@ -441,7 +451,13 @@ function renderNotes(sec){sec.innerHTML=`
       b.textContent=k<0?'未归章':`第 ${k+1} 章`;b.onclick=()=>{selectedChapter=k;renderBook()};chaptertabs.appendChild(b)});
     chapterbody.innerHTML='';
     if(selectedChapter==null){
-      chapterbody.innerHTML=`<p class="small">${exportTab==='pending'?'🎉 都推送过了，没有待处理的章节':'还没有章节推送过'}</p>`;
+      // 2026-09-09 审计修：pendingKeys 为空有两种完全不同的原因——"这本书压根没有条目被转入笔记过"
+      // （sortedKeys 本身是空的）vs"都推送完了"（sortedKeys 非空但全部落进了已导出）。原文案不分这
+      // 两种情况一律显示庆祝 emoji，容易让"还什么都没做"的用户误以为自己已经完成了操作。
+      const emptyMsg=exportTab==='pending'
+        ?(sortedKeys.length?'🎉 都推送过了，没有待处理的章节':'这本书还没有条目被转入笔记——先去「浏览」点「转入笔记」')
+        :'还没有章节推送过';
+      chapterbody.innerHTML=`<p class="small">${emptyMsg}</p>`;
       return}
     const k=selectedChapter,es=groups.get(k).sort((a,b)=>a.page_index-b.page_index||(a.ink?a.ink.bbox[1]:0)-(b.ink?b.ink.bbox[1]:0));
     const s=k>=0?syncMap.get(k):null;
@@ -489,7 +505,7 @@ function renderNotes(sec){sec.innerHTML=`
             <textarea class="entry-text" rows="2" placeholder="${draft?'转写建议：'+draft:'等待转写…（也可以直接手动填）'}">${e.text||draft}</textarea>
             <div class="small">行首 <code>-</code>/<code>1.</code>/<code>口</code>/<code>## </code> 自动判样式/分区，跟手写识别是同一套约定</div>
             <div class="entry-ops">
-              <div class="grp"><button class="btn" data-dest title="落点：设备笔记本/Obsidian/都要，点击切换">${DEST_ICON[dv]}</button></div>
+              <div class="grp"><button class="btn" data-dest title="落点：设备笔记本/Obsidian/都要，点击切换">${DEST_ICON[dv]} <span aria-hidden="true" style="opacity:.55">⟳</span></button></div>
               <div class="grp">${(e.ink&&e.ink.crop)?`<button class="btn${failed?' btn-bad':''}" data-transcribe title="用当前后端重新转写这一条（不动已校对文本）">${failed?'转写失败':(draft?'重新转写':'转写')}</button>`:''}<button class="btn" data-archive title="设备笔记本、Obsidian 导出都摘掉（软删，去「回收站」能看到并恢复）">不要了</button></div>
             </div>
             <div class="small" data-txstat></div>
@@ -505,7 +521,7 @@ function renderNotes(sec){sec.innerHTML=`
       const ta=row.querySelector('textarea');
       ta.oninput=ev=>pendingText.set(e.id,ev.target.value);   // 还没失焦确认，先记住最新值，别的动作重画前会先冲掉
       ta.onchange=ev=>{pendingText.delete(e.id);patch(e.id,{text:ev.target.value})};
-      row.querySelector('[data-dest]').onclick=async()=>{const next=DEST_ORDER[(DEST_ORDER.indexOf(dv)+1)%3];await patch(e.id,{destination:next});await flushPendingText();book=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}`);await refreshSync();renderBook()};
+      row.querySelector('[data-dest]').onclick=async()=>{const next=DEST_ORDER[(DEST_ORDER.indexOf(dv)+1)%3];await patch(e.id,{destination:next});await reloadBook(renderBook)};
       row.querySelector('[data-archive]').onclick=()=>archiveEntry(e.id);
       /* 点「重新转写」/「提问」弹出状态和这次调用的消耗（用户反馈"应该弹出状态及当前消耗"，2026-09-08
          第三轮）：先显文字状态（转写中…/提问中…），拿到结果显示"✓ 完成 · token 入X 出Y"或错误，
@@ -515,7 +531,7 @@ function renderNotes(sec){sec.innerHTML=`
         const r=await j(`/api/transcribe/books/${encodeURIComponent(book.uuid)}/entries/${encodeURIComponent(e.id)}`,{method:'POST'});
         tb.disabled=false;
         txStat.textContent=r.ok===false?('✗ '+(r.message||'转写失败')):`✓ 转写完成 · 这次 token 入 ${r.promptTokens||0} 出 ${r.completionTokens||0}`;
-        await wait(1500);await flushPendingText();book=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}`);await refreshSync();renderBook()};
+        await wait(1500);await reloadBook(renderBook)};
       /* 「问AI」勾选框 + 问题 + 提问按钮：改即存（ink-serve），点提问才真的调 mind-serve。 */
       const askBox=row.querySelector('[data-ask]'),qInput=row.querySelector('[data-question]'),askBtn=row.querySelector('[data-askbtn]'),askStat=row.querySelector('[data-askstat]');
       const syncAskUi=()=>{qInput.disabled=!askBox.checked;askBtn.disabled=!(askBox.checked&&qInput.value.trim())};
@@ -525,7 +541,7 @@ function renderNotes(sec){sec.innerHTML=`
         const r=await j(`/api/mind/books/${encodeURIComponent(book.uuid)}/entries/${encodeURIComponent(e.id)}/ask`,{method:'POST'});
         askBtn.disabled=false;
         if(r.ok===false){askStat.textContent='✗ '+(r.message||'提问失败')}
-        else{askStat.textContent=`✓ 已回答 · 这次 token 入 ${r.promptTokens||0} 出 ${r.completionTokens||0}`;await wait(1500);await flushPendingText();book=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}`);await refreshSync();renderBook()}};
+        else{askStat.textContent=`✓ 已回答 · 这次 token 入 ${r.promptTokens||0} 出 ${r.completionTokens||0}`;await wait(1500);await reloadBook(renderBook)}};
       body.appendChild(row)});
     chapterbody.appendChild(card)};
   exportTabsEl.querySelectorAll('button').forEach(b=>b.onclick=()=>{if(exportTab===b.dataset.etab)return;exportTab=b.dataset.etab;selectedChapter=null;renderBook()});
