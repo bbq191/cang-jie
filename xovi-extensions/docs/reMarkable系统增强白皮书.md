@@ -15,7 +15,7 @@
 
 **入口不走阅读器 FormatMenu，而是设置 App**：`settings-reading-enhance.qmd` 往 `Settings.qml` 左侧菜单**最下方**插「系统增强」`ArkControls.SidebarItem`（设置页用 `onTriggered`）+ 一个 **hub 中枢页**（`objectName:"cjEnhanceHub"`，哨兵 990001）。中枢页不直接堆开关，而是**原生 `ArkControls.Cell` 容器框 + 4 个 `CellItem` 导航行**（CellItem 自带 → 箭头 + 发丝分隔线，点击切 `_selectedPage`）；每个子分类是一个**独立 `Component`**（各自 `INSERT ... LOCATE AFTER Component#help`），靠 `_selectedPage` 哨兵切换 `payloadLoader.sourceComponent`（`REBUILD`+`LOCATE AFTER STREAM /{/` 注入早返回）。菜单是 `SettingsModel` 驱动的 `Repeater`（项不在 QML 里），故往 `ColumnLayout#settingsColumn` 插静态项。分类各带独立哨兵：**990001 中枢、990002 快捷输入、990003 翻页与刷新、990004 书籍与字体、990005 笔记增强、990006 电池审计**；**各子页均 `property bool fullscreen:true` 全宽无侧栏**（宿主 payloadLoader 据此左对齐 parent.left），顶部原生 `ArkControls.NavigationBar` 返回栏（chevron_left + "返回"）置回 990001；hub 一级页保留侧栏。UI 全面对齐原生详见 §01b。
 
-> **990006 电池审计**（`cjBatteryPage`，2026-08-27）是 hub 第 6 项，但**能力本体是 misc 工具 `battop`**（out-of-mainline，见 `misc/battery-audit/`）：一个类 htop、非实时、带时间窗（当日/7天/30天/全部）的电池/后台占用追踪器。采集器（Rust **常驻服务**，进程内每 ~10min 采样）产出 `summary.json`,此设置页只是**查看器**——QML XHR 读该 JSON 渲染:4 时间标签(当日/7天/30天/全部)+ **应用/进程/唤醒源** 3 段分组 + 条形排行,参考墨香衬线品牌。v2 加唤醒源维度(journal `active wakeup source`,真机发现触控笔 spi0.0 是头号唤醒源)。采集器架构 + 冻机事故 + 常驻修复详见 **§10**；方案/实现见 `misc/battery-audit/`。⚠️ **QML 踩坑**：`property var data` 会覆盖 Item 承载子元素的保留默认属性 `data` → 全子元素不被 parent → 空白页(无致命日志,apply-diffs 也过);属性名避开 `data`。
+> **990006 电池审计**（`cjBatteryPage`，2026-08-27）是 hub 第 6 项，但**能力本体是独立工具 `battop`**（out-of-mainline，见 `enhance/battop/`——2026-09-09 挪出 `misc/battery-audit/`，跟 `shelf`/`notes` 并列成新顶层项目线「系统增强线」，见 `enhance/README.md`）：一个类 htop、非实时、带时间窗（当日/7天/30天/全部）的电池/后台占用追踪器。采集器（Rust **常驻服务**，进程内每 ~10min 采样）产出 `summary.json`,此设置页只是**查看器**——QML XHR 读该 JSON 渲染:4 时间标签(当日/7天/30天/全部)+ **应用/进程/唤醒源** 3 段分组 + 条形排行,参考墨香衬线品牌。v2 加唤醒源维度(journal `active wakeup source`,真机发现触控笔 spi0.0 是头号唤醒源)。采集器架构 + 冻机事故 + 常驻修复详见 **§10**；方案/实现见 `enhance/battop/`。⚠️ **QML 踩坑**：`property var data` 会覆盖 Item 承载子元素的保留默认属性 `data` → 全子元素不被 parent → 空白页(无致命日志,apply-diffs 也过);属性名避开 `data`。
 
 **四个子分类 + 开关清单**（除快捷输入用独立文件外，其余写 `reading-qol.json`）：
 
@@ -204,15 +204,15 @@ OTA 到 `IMG_VERSION=3.28.0.169`（此前 .166）后用户报 5 个功能失效�
 
 回归防线另加 **CI**（`.github/workflows/ci.yml`：shellcheck + host pytest + 拼音 C 差分 + cargo test + aarch64 交叉编译冒烟），把可离线复现的回归挡在真机之前。
 
-## 10｜电池审计 · 采集器 battop（`misc/battery-audit/`，块4 辅助工具）
+## 10｜电池审计 · 采集器 battop（`enhance/battop/`，块4 辅助工具；2026-09-09 从 `misc/battery-audit/` 挪到新开的 `enhance/` 系统增强线，见 `enhance/README.md`）
 
-设置页 990006「电池审计」（§01）只是查看器，能力本体是纯 std Rust 采集器 **battop**（`misc/battery-audit/battop/`）。定位：类 htop、非实时、带时间窗（当日/7天/30天/全部）的电池/后台占用追踪器；**几乎不耗电**（醒时每 ~10min 采一次、休眠零 CPU、不持 wakelock、不阻止休眠）。
+设置页 990006「电池审计」（§01）只是查看器，能力本体是纯 std Rust 采集器 **battop**（`enhance/battop/`）。定位：类 htop、非实时、带时间窗（当日/7天/30天/全部）的电池/后台占用追踪器；**几乎不耗电**（醒时每 ~10min 采一次、休眠零 CPU、不持 wakelock、不阻止休眠）。
 
 - **每轮采样**：读 `/proc/*/stat` 各进程 CPU 累计 ticks + 电量 → 算「距上次 baseline 的增量」→ 按 **comm(进程)** 与 **systemd unit / cgroup(应用)** 双聚合 → 追加当日样本 `samples-YYYYMMDD.tsv` → 写新 baseline → 清 40 天前旧样本。应用归属读 `/proc/[pid]/cgroup` 尾段 unit 名。
 - **唤醒源维度（v2）**：`journalctl _TRANSPORT=kernel` 解析 `active wakeup source:` → 小时级缓存 `wakes.tsv`（超 50min 才重刷，多数轮仍 ~30ms）。真机发现触控笔 `spi0.0` 是头号唤醒源。
 - **预聚合**：`write_summary` 出 `summary.json`（4 窗口 × 应用/进程 CPU + 唤醒源计数 + 放电%），设置页 XHR 直读渲染。
 
-**★2026-08-29 冻机事故 + 常驻架构（真机验证通过）**：battop 原为 `battop.timer` 每 ~10min 拉起的 **oneshot**。真机上一次采样时**整机冻死**（UI 冻屏、ping/SSH 全断但 USB 链路仍 LOWER_UP＝硬卡死，长按电源 25-30s 才恢复）。内核日志坐实：`task:(battop) state:D` 卡在 `cgroup_procs_write→synchronize_rcu`（systemd 启 oneshot 时把子进程迁进 service cgroup 的常规动作），握 `cgroup_threadgroup_rwsem` 拖死 systemd(PID1)，`rcu_preempt` stall + 向 CPU1 发 NMI → 雪崩。**根因非 battop 逻辑 bug，是撞上罕见内核 RCU stall；但每 10min 重启 oneshot＝144次/天 cgroup 迁移把暴露窗口放大 144 倍**。**修法**：改 **Type=simple 常驻服务**（进程内 `loop{sample_once; sleep(10min)}`），内核只在开机迁一次 cgroup（144→1）；`sleep` 走 CLOCK_MONOTONIC 休眠不推进→保持 awake-only 语义；`journalctl` 改有界执行 `run_bounded`（超 20s SIGKILL，防常驻循环被卡住子进程拖死）；间隔 `BATTOP_INTERVAL_SECS` 缺省 600。踩坑史见 `misc/battery-audit/FINDINGS.md`、。
+**★2026-08-29 冻机事故 + 常驻架构（真机验证通过）**：battop 原为 `battop.timer` 每 ~10min 拉起的 **oneshot**。真机上一次采样时**整机冻死**（UI 冻屏、ping/SSH 全断但 USB 链路仍 LOWER_UP＝硬卡死，长按电源 25-30s 才恢复）。内核日志坐实：`task:(battop) state:D` 卡在 `cgroup_procs_write→synchronize_rcu`（systemd 启 oneshot 时把子进程迁进 service cgroup 的常规动作），握 `cgroup_threadgroup_rwsem` 拖死 systemd(PID1)，`rcu_preempt` stall + 向 CPU1 发 NMI → 雪崩。**根因非 battop 逻辑 bug，是撞上罕见内核 RCU stall；但每 10min 重启 oneshot＝144次/天 cgroup 迁移把暴露窗口放大 144 倍**。**修法**：改 **Type=simple 常驻服务**（进程内 `loop{sample_once; sleep(10min)}`），内核只在开机迁一次 cgroup（144→1）；`sleep` 走 CLOCK_MONOTONIC 休眠不推进→保持 awake-only 语义；`journalctl` 改有界执行 `run_bounded`（超 20s SIGKILL，防常驻循环被卡住子进程拖死）；间隔 `BATTOP_INTERVAL_SECS` 缺省 600。踩坑史见 `enhance/battop/FINDINGS.md`、。
 
 > **QML 查看器踩坑**：`property var data` 覆盖 Item 承载子元素的保留默认属性 `data` → 全子元素不被 parent、空白页（无致命日志、apply-diffs 也过）；属性名避开 `data`（同 §01 blockquote）。
 
