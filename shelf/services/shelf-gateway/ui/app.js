@@ -421,6 +421,9 @@ function renderNotes(sec){sec.innerHTML=`
     const advance=!!opts.advance;
     const trst=await j('/api/transcribe/status');
     const failedIds=new Set((trst.failures||[]).filter(f=>f.book===book.uuid).map(f=>f.id));
+    // 这份判据是 notes/crates/notecore/src/model.rs::Status::is_live_for_projection() 的镜像
+    // （2026-09-09 单一事实源化：Rust 侧 project.rs/export.rs 都改成调那个方法了，前端这份因为
+    // 跨语言/跨仓库做不到直接复用，改状态机时两边都要看一眼，别只改 Rust 那边）。
     const live=(book.entries||[]).filter(e=>['pending','draft','reviewed'].includes(e.status));
     const groups=new Map();live.forEach(e=>{const k=e.chapter==null?-1:e.chapter;if(!groups.has(k))groups.set(k,[]);groups.get(k).push(e)});
     const sortedKeys=[...groups.keys()].sort((a,b)=>a-b);
