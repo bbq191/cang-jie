@@ -28,6 +28,12 @@ pub struct Answered {
 /// 回答一条的问题并写回；返回回答文本 + token 消耗。要求条目勾了「问AI」且填了问题——两者都是网页写
 /// 的字段，直接调这个端点绕过勾选框也会被拒（防止误触/脚本误调，语义上"问AI"这个开关就该管这件事）。
 pub fn ask_entry(c: &Ctx<'_>, uuid: &str, e: &Entry) -> Result<Answered, String> {
+    // 终态守卫（2026-09-09 审计补）：只检查 ask_ai/question 两个字段，不检查 status——一条已"跳过/
+    // 撤销/删除"的条目只要 ask_ai 还留着 true 就能继续被问 AI、消耗 token，且对着一条用户认为已经
+    // 处理完的条目回答没有意义。
+    if e.is_terminal() {
+        return Err("这条已跳过/撤销/删除，不能再问 AI".into());
+    }
     if !e.ask_ai {
         return Err("这条没勾「问AI」".into());
     }
@@ -123,6 +129,23 @@ mod tests {
         assert!(ask_entry(&c, "u", &entry(true, None)).unwrap_err().contains("问题"));
         assert!(ask_entry(&c, "u", &entry(true, Some("  "))).unwrap_err().contains("问题"), "空白问题也算没有");
         assert!(store.posted.lock().unwrap().is_empty(), "拒绝的不该有任何写回");
+    }
+
+    #[test]
+    fn refuses_terminal_entry_even_if_ask_ai_still_flagged() {
+        // 2026-09-09 审计补：ask_ai/question 都还留着，但状态已经是终态（用户"不要了"）——不该被
+        // 问 AI 消耗 token。
+        let store = mem();
+        let model = Fixed("不该被调用".into());
+        let ledger = Ledger::open(&tempfile::tempdir().unwrap().path().join("mind.json"));
+        let c = Ctx { store: &store, model: &model, cfg: &cfg(), ledger: &ledger, now: 1 };
+        for s in [Status::Skipped, Status::Revoked, Status::Archived] {
+            let mut e = entry(true, Some("问题"));
+            e.status = s;
+            let err = ask_entry(&c, "u", &e).unwrap_err();
+            assert!(err.contains("跳过/撤销/删除"), "{s:?}: {err}");
+        }
+        assert!(store.posted.lock().unwrap().is_empty(), "终态条目一律不该有写回");
     }
 
     #[test]

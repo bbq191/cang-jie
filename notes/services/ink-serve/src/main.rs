@@ -142,9 +142,15 @@ fn main() {
                 return Err(ApiError::not_found("没有这本书的条目"));
             }
             let now = shelf_core::clock::now_secs();
-            let found = s.db.update(&uuid, || Default::default(), |b| {
+            let outcome = s.db.update(&uuid, || Default::default(), |b| {
                 let subhead_hint = j.0.get("subheadHint").and_then(|v| v.as_str()).map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
-                let Some(e) = b.entries.iter_mut().find(|e| e.id == id) else { return false };
+                let Some(e) = b.entries.iter_mut().find(|e| e.id == id) else { return None };
+                // 终态守卫（2026-09-09 审计补）：这条通用改字端点原来不检查状态，能把已"跳过/撤销/
+                // 删除"的条目通过 apply_marked_text/写草稿悄悄拉回 Draft，绕开 set_triage/restore
+                // 明文规定的业务规则——先恢复（`/restore`）才能再改。
+                if e.is_terminal() {
+                    return Some(Err("这条已跳过/撤销/删除，不能再改，请先在回收站里恢复".to_string()));
+                }
                 // 用户直接在网页文本框改字：跟转写草稿写回同一套行首标记规则（`notecore::model::Entry::
                 // apply_marked_text`）——`-`/`1.`/`口`/`##`/`### ` 都认，样式不再靠单独的下拉手动选
                 // （整理区第二轮反馈点 1，2026-09-08，见白皮书 §03u）。
@@ -180,10 +186,12 @@ fn main() {
                     e.destination = v;
                 }
                 e.updated = now;
-                true
+                Some(Ok(()))
             }).map_err(ApiError::internal)?;
-            if !found {
-                return Err(ApiError::not_found("没有这条目"));
+            match outcome {
+                None => return Err(ApiError::not_found("没有这条目")),
+                Some(Err(e)) => return Err(ApiError::bad(e)),
+                Some(Ok(())) => {}
             }
             s.bus.publish("notes", "entries");
             Ok(Reply::ok(&serde_json::json!({"ok": true})))
