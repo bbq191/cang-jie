@@ -1,8 +1,20 @@
-//! 密码哈希 + HTTP Basic 解析 + 内存会话表。哈希格式 `sha256$<salt-hex>$<digest-hex>`（salt 16 字节，随机）。
-//! 只保护对外的网关；loopback 领域服务不认证（只有设备本机能连）。
-//! 会话：登录页校验密码后发 Cookie 令牌（随机 32 字节 hex），令牌只在内存（重启网关=全部重新登录）。
+//! 密码哈希 + HTTP Basic 解析 + 内存会话表。只保护对外的网关；loopback 领域服务不认证（只有设备
+//! 本机能连）。会话：登录页校验密码后发 Cookie 令牌（随机 32 字节 hex），令牌只在内存（重启网关=
+//! 全部重新登录）。
+//!
+//! **哈希格式（2026-09-09 审计修）**：新哈希是 `pbkdf2$<rounds>$<salt-hex>$<digest-hex>`
+//! （PBKDF2-HMAC-SHA256，salt 16 字节随机）——旧格式 `sha256$<salt-hex>$<digest-hex>` 是单轮
+//! 加盐 SHA-256，没有任何迭代/慢哈希，网关是全系统唯一的网络暴露面，密码文件一旦泄露可被消费级
+//! 硬件快速离线暴力破解（尤其密码最小长度只有 6 位）。`verify_password` **两种格式都认**——已经
+//! 部署在真机上的旧哈希不用强制改密就能继续登录；下次用户改密码（`passwd`/网页改密）时
+//! `hash_password` 只会产出新格式，自然完成迁移，不需要额外的迁移脚本或强制登出。
 use base64::Engine;
 use sha2::{Digest, Sha256};
+
+/// PBKDF2 迭代次数：OWASP 2023 对 PBKDF2-HMAC-SHA256 的建议下限是 600,000；登录是低频操作（一次
+/// 会话一次，不是热路径），这个开销可接受。真机验证过实际耗时（见 auth.rs 测试/白皮书），如果
+/// 设备实测明显卡顿再下调，不要凭空猜数字改。
+const PBKDF2_ROUNDS: u32 = 600_000;
 
 fn random_bytes(n: usize) -> Vec<u8> {
     use std::io::Read;
@@ -24,12 +36,29 @@ fn hex(b: &[u8]) -> String {
     b.iter().map(|x| format!("{x:02x}")).collect()
 }
 
-pub fn hash_password(password: &str) -> String {
-    let salt = random_bytes(16);
-    hash_with_salt(password, &salt)
+fn hex_decode(s: &str) -> Option<Vec<u8>> {
+    (0..s.len()).step_by(2).map(|i| s.get(i..i + 2).and_then(|b| u8::from_str_radix(b, 16).ok())).collect()
 }
 
-fn hash_with_salt(password: &str, salt: &[u8]) -> String {
+/// 常数时间比较（长度相同时逐字节异或），两种格式共用。
+fn constant_time_eq(a: &str, b: &str) -> bool {
+    a.len() == b.len() && a.bytes().zip(b.bytes()).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+}
+
+pub fn hash_password(password: &str) -> String {
+    let salt = random_bytes(16);
+    hash_pbkdf2(password, &salt, PBKDF2_ROUNDS)
+}
+
+fn hash_pbkdf2(password: &str, salt: &[u8], rounds: u32) -> String {
+    let mut digest = [0u8; 32];
+    pbkdf2::pbkdf2_hmac::<Sha256>(password.as_bytes(), salt, rounds, &mut digest);
+    format!("pbkdf2${rounds}${}${}", hex(salt), hex(&digest))
+}
+
+/// 旧格式（2026-09 之前）：单轮加盐 SHA-256，没有迭代——只为兼容已部署在真机上的旧哈希保留读路径，
+/// `hash_password` 从不再产出这个格式。
+fn hash_sha256_legacy(password: &str, salt: &[u8]) -> String {
     let mut h = Sha256::new();
     h.update(salt);
     h.update(password.as_bytes());
@@ -38,13 +67,18 @@ fn hash_with_salt(password: &str, salt: &[u8]) -> String {
 
 pub fn verify_password(password: &str, stored: &str) -> bool {
     let parts: Vec<&str> = stored.split('$').collect();
-    if parts.len() != 3 || parts[0] != "sha256" {
-        return false;
+    match parts.as_slice() {
+        ["pbkdf2", rounds, salt_hex, _digest_hex] => {
+            let Ok(rounds) = rounds.parse::<u32>() else { return false };
+            let Some(salt) = hex_decode(salt_hex) else { return false };
+            constant_time_eq(&hash_pbkdf2(password, &salt, rounds), stored)
+        }
+        ["sha256", salt_hex, _digest_hex] => {
+            let Some(salt) = hex_decode(salt_hex) else { return false };
+            constant_time_eq(&hash_sha256_legacy(password, &salt), stored)
+        }
+        _ => false,
     }
-    let Ok(salt) = (0..parts[1].len()).step_by(2).map(|i| u8::from_str_radix(&parts[1][i..i + 2], 16)).collect::<Result<Vec<u8>, _>>() else { return false };
-    // 常数时间比较（长度相同时逐字节异或）
-    let a = hash_with_salt(password, &salt);
-    a.len() == stored.len() && a.bytes().zip(stored.bytes()).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
 }
 
 /// 解析 `Authorization: Basic …` 头 → (user, password)。
@@ -129,11 +163,30 @@ mod tests {
     #[test]
     fn hash_roundtrip_and_reject() {
         let h = hash_password("s3cret");
-        assert!(h.starts_with("sha256$"));
+        assert!(h.starts_with("pbkdf2$"), "新哈希该是 PBKDF2 格式：{h}");
         assert!(verify_password("s3cret", &h));
         assert!(!verify_password("s3cre", &h));
         assert!(!verify_password("s3cret", "garbage"));
         assert_ne!(hash_password("x"), hash_password("x"), "salt 随机");
+    }
+    #[test]
+    fn legacy_sha256_hash_still_verifies_but_new_hashes_never_produce_it() {
+        // 2026-09-09 升级 PBKDF2 后：已经部署在真机上的旧哈希（单轮 SHA-256）不能因为这次升级就
+        // 登不进去——旧格式必须继续能验证；但 hash_password 从此只产出新格式，不会再生成旧格式，
+        // 用户下次改密码时自然完成迁移。
+        let legacy = hash_sha256_legacy("s3cret", b"0123456789abcdef");
+        assert!(legacy.starts_with("sha256$"));
+        assert!(verify_password("s3cret", &legacy), "旧格式哈希应该继续能验证");
+        assert!(!verify_password("wrong", &legacy));
+        assert!(!hash_password("s3cret").starts_with("sha256$"), "新哈希永远不该是旧格式");
+    }
+    #[test]
+    fn pbkdf2_rejects_malformed_or_tampered_rounds() {
+        let h = hash_password("s3cret");
+        let tampered = h.replacen(&format!("${PBKDF2_ROUNDS}$"), "$1$", 1);
+        assert_ne!(tampered, h, "确认真的替换到了");
+        assert!(!verify_password("s3cret", &tampered), "轮数被改，摘要对不上");
+        assert!(!verify_password("s3cret", "pbkdf2$notanumber$aa$bb"), "轮数不是数字应直接拒绝而不是 panic");
     }
     #[test]
     fn basic_header() {
