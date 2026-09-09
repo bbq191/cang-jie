@@ -110,7 +110,14 @@ fn main() {
             Some(pem) => Reply::bytes("application/x-x509-ca-cert", pem).with_header("Content-Disposition", "attachment; filename=\"shelf-ca.crt\""),
             None => Reply::error(404, "HTTPS 未启用，无 CA"),
         }) })
-        .get("/api/services", bind(&paths, |p, _| Ok(Reply::ok(&serde_json::json!({"services": registry::list(p)})))));
+        .get("/api/services", bind(&paths, |p, _| Ok(Reply::ok(&serde_json::json!({"services": registry::list(p)})))))
+        // 语言包：`{lang}` 整段捕获（路由只支持整段 `{param}`，不支持段内混literal后缀），前端仍按
+        // `/ui/locales/zh-CN.json` 这种带扩展名的 URL 请求，这里自己剥掉 `.json`。不认识的语言码
+        // `ui::locale_json` 会落中文，不会 404/空白。
+        .get("/ui/locales/{lang}", |r| {
+            let lang = r.param("lang").trim_end_matches(".json");
+            Ok(Reply::bytes("application/json", ui::locale_json(lang).as_bytes().to_vec()))
+        });
     if let Some(st) = &state {
         let (a, b, c, d, e) = (st.clone(), st.clone(), st.clone(), st.clone(), st.clone());
         router = router

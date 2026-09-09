@@ -6,6 +6,13 @@ const wait=ms=>new Promise(res=>setTimeout(res,ms));
 /* 轻量记忆：per-viewer 便利态，隐私窗口/禁用 storage 时静默回默认 */
 const LS={get(k,d){try{const v=localStorage.getItem('shelf.'+k);return v==null?d:v}catch{return d}},set(k,v){try{localStorage.setItem('shelf.'+k,v)}catch{}}};
 const onUsb=/^10\.11\.99\./.test(location.hostname);
+/* i18n 架子（2026-09-09 审计新增，先只覆盖主界面外壳+顶层导航，登录页/改密码页/各模块正文文案暂不
+   迁移——那两页是 Rust 端独立拼接的机制，正文文案量大且不少是条件分支+插值的复合句，机械抽取风险
+   跟收益不成比例，留给以后真有需要再做）。`I18N` 在启动 IIFE 里异步填充，填充完成之前 `T()` 兜底
+   显示 key 本身（不留空白，也不会悄悄掩盖翻译缺口）。*/
+let I18N={};
+const T=key=>I18N[key]||key;
+const currentLang=()=>LS.get('lang',(navigator.language||'').toLowerCase().startsWith('en')?'en-US':'zh-CN');
 /* 格式白名单：服务端 shelf_core::formats 注入（同一份，网页 accept + 选中即拦 = 服务端上传门） */
 const EXT=__EXTS__, dot=l=>l.map(e=>'.'+e);
 const BOOK_EXT=dot(EXT.book), FONT_EXT=dot(EXT.font), DICT_EXT=dot(EXT.dict), IMG_EXT=dot(EXT.image);
@@ -55,11 +62,11 @@ function subtabs(sec){const nav=$('.subnav',sec);if(!nav)return;const btns=[...n
   btns.forEach((b,i)=>b.onclick=()=>{btns.forEach(x=>x.classList.remove('on'));panels.forEach(p=>p.classList.remove('on'));b.classList.add('on');if(panels[i])panels[i].classList.add('on')});}
 
 /* 列表渲染骨架：每项一行「左：名字等 ｜ 右：徽章/大小/按钮」；row(it,left,right,li) 填内容。字体/词典/壁纸共用 */
-function fillList(ul,items,row){ul.innerHTML='';if(!items.length){ul.innerHTML='<li class="small">（空）</li>';return}
+function fillList(ul,items,row){ul.innerHTML='';if(!items.length){ul.innerHTML=`<li class="small">${T('list.empty')}</li>`;return}
   items.forEach(it=>{const li=document.createElement('li');const left=document.createElement('span'),right=document.createElement('span');
     right.className='small';right.style.cssText='display:flex;align-items:center;gap:.4em;flex-wrap:wrap';row(it,left,right,li);li.append(left,right);ul.appendChild(li)})}
 /* 删除按钮：confirm → DELETE → 刷新 */
-function delBtn(msg,url,refresh){const d=document.createElement('button');d.className='btn';d.textContent='删除';
+function delBtn(msg,url,refresh){const d=document.createElement('button');d.className='btn';d.textContent=T('action.delete');
   d.onclick=async()=>{if(confirm(msg)){const r=await j(url,{method:'DELETE'});if(r.ok===false)alert(r.message);refresh()}};return d}
 const cjkBadge=p=>p==null?'':`<span class="badge ${p>=80?'on':(p>=8?'':'off')}" title="中文基本区覆盖率">中文 ${p}%</span>`;
 
@@ -172,7 +179,7 @@ function renderTransfer(sec){sec.innerHTML=`
 /* 服务 tab（按注册表出现）。key = 注册的服务名 */
 const AREA={'font-serve':'fonts','koreader-serve':'koreader','wallpaper-serve':'wallpapers','note-serve':'notes'};
 const TABS={
- 'note-serve':{title:'笔记',render:renderNotes},
+ 'note-serve':{titleKey:'tab.notes',title:'笔记',render:renderNotes},
  'font-serve':{title:'xochitl',render(sec){assetTab(sec,'/api/fonts',{
    title:'xochitl · 原生字体',
    hint:'ttf / otf → 装进 fontconfig 用户字体目录。上传后阅读器「文字与布局」菜单重开即可选，无需重启。传书在「传书」页；KOReader 的字体在 KOReader 页装。',
@@ -218,7 +225,7 @@ const TABS={
     fillList($('#kf',sec),f.items||[],(it,left,right)=>{left.textContent=it.name;right.insertAdjacentHTML('beforeend',cjkBadge(it.cjkPct)+`<span>${fmtB(it.bytes)}</span>`);right.appendChild(delBtn('从 KOReader 删除 '+it.name+'？','/api/koreader/fonts/'+encodeURIComponent(it.name),refresh))});
     fillList($('#kd',sec),dc.items||[],(it,left,right)=>{left.textContent='📖 '+it.name;right.textContent=it.ifo+' 本'})};
   refresh();sec.refresh=refresh;subtabs(sec)}},
- 'wallpaper-serve':{title:'壁纸',render(sec){assetTab(sec,'/api/wallpapers',{
+ 'wallpaper-serve':{titleKey:'tab.wallpaper',title:'壁纸',render(sec){assetTab(sec,'/api/wallpapers',{
    hint:'jpg / png 图片，自动裁到 954×1696。首张自动启用（写 xochitl.conf SleepScreenPath，首次需跑一次 xovi/start），之后换图下次休眠即生效。',
    header:`<label class="field">休眠轮换</label><div class="row"><select id="wpmode" style="max-width:12em"><option value="sequential">按顺序</option><option value="random">随机</option><option value="fixed">固定</option></select><span id="wpst" class="small"></span></div>`,
    icon:'🖼',label:'点击或拖入图片（可多选）',accept:IMG_EXT,btn:'上传',
@@ -732,16 +739,27 @@ function renderManage(sec){sec.innerHTML=`
   $('#alloff',sec).onclick=async()=>{if(!confirm('关闭全部领域服务（网关保留）？'))return;const d=await j('/api/manage');for(const m of (d.modules||[]))if(m.installable&&m.installed&&m.running)await j('/api/manage/'+m.seg+'/stop',{method:'POST'});refresh()};
   refresh();sec.refresh=()=>{refresh();mvRefresh();mtRefresh()};}
 
-(async()=>{const d=await j('/api/services');const svcs=(d.services||[]).filter(s=>s.ui&&TABS[s.name]).sort((a,b)=>a.ui.order-b.ui.order);
+(async()=>{
+  // 语言包先拿到手：下面 addTab 用得到 T()，晚拿会让顶层导航先短暂显示 key 本身再跳成文字。
+  // 拿不到（离线/服务重启中）静默留空对象——T() 兜底显示 key，不是白屏，也不阻塞页面其余部分。
+  const lang=currentLang();
+  try{I18N=await(await fetch(`/ui/locales/${lang}.json`)).json()}catch{I18N={}}
+  document.title=T('app.title');$('#applogo').textContent=T('app.title');
+  $('#navpw').textContent=T('nav.changePassword');$('#navca').textContent=T('nav.caCert');$('#logout').textContent=T('nav.signOut');
+  $('#mainloading').textContent=T('main.loading');
+  const langsel=$('#langsel');langsel.value=lang;
+  langsel.onchange=()=>{LS.set('lang',langsel.value);location.reload()};
+
+  const d=await j('/api/services');const svcs=(d.services||[]).filter(s=>s.ui&&TABS[s.name]).sort((a,b)=>a.ui.order-b.ui.order);
   $('#hdr').textContent=location.host;
   const nav=$('#tabs'),main=$('#main');main.innerHTML='';
   const secByArea={};const dirty=new Set();
   const addTab=(title,render,first,area)=>{const b=document.createElement('button');b.textContent=title;const sec=document.createElement('section');sec.area=area;secByArea[area]=sec;
     b.onclick=()=>{[...nav.children].forEach(x=>x.classList.remove('on'));[...main.children].forEach(x=>x.classList.remove('on'));b.classList.add('on');sec.classList.add('on');dirty.delete(area);if(sec.refresh)sec.refresh()};
     nav.appendChild(b);main.appendChild(sec);render(sec);if(first)b.onclick()};
-  addTab('传书',renderTransfer,true,'books');          // 总入口（入库｜母版库），固定第一位（book-serve 不在时列表里提示去管理页开）
-  svcs.forEach((s)=>addTab(TABS[s.name].title,TABS[s.name].render,false,AREA[s.name]||s.name));
-  addTab('管理',renderManage,false,'manage');            // 固定管理台，始终可进
+  addTab(T('tab.transfer'),renderTransfer,true,'books');          // 总入口（入库｜母版库），固定第一位（book-serve 不在时列表里提示去管理页开）
+  svcs.forEach((s)=>addTab(TABS[s.name].titleKey?T(TABS[s.name].titleKey):TABS[s.name].title,TABS[s.name].render,false,AREA[s.name]||s.name));
+  addTab(T('tab.manage'),renderManage,false,'manage');            // 固定管理台，始终可进
   /* 事件推送（SSE，零轮询）：服务在变更处发事件 → 网关 /api/events 汇聚 → 这里只刷对应 tab；不在前台的 tab 记脏，切过去时刷。
      manage 事件（服务启停）：tab 集合变了就整页重载，否则只刷管理台。断线（WiFi 掉/设备休眠醒来）EventSource 自动重连。 */
   const svcKey=svcs.map(s=>s.name).join(',');
