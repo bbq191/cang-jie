@@ -63,7 +63,7 @@ host `shelf push` 是唯一能"入库时顺带优化"的源（Calibre 深洗 / �
 | fonts | `GET /` · `POST /` · `DELETE /{family}` · `PUT /config {emboldenCjkFallback}` · `GET /status` |
 | wallpapers | `GET /` · `POST /[?activate=1]` · `PUT /current {name}` · `PUT /mode {mode}` · `DELETE /{name}` · `GET /{name}` · `GET /status` → `{native:{enabled,path,restartPending}}` |
 | 笔记线 ink / transcribe / notes | 见 `../notes/README.md`「主要 API」（条目库 / 转写 / 投影）；事件 `area=notes` |
-| 网关自身 | `GET /api/services` · `GET /api/manage` · `GET /api/foundation` · `POST /api/manage/{seg}/{start\|stop\|uninstall}` · **`GET /api/events`（SSE 事件流：各服务 `GET /events` 汇聚，`{svc,area,kind,at}`，`books/render` 另带 `name/status/pages/expected`；网页零轮询、host `shelf events`）** · `GET /ui/locales/{lang}`（语言包 JSON，前端按 `zh-CN.json`/`en-US.json` 请求、服务端剥 `.json`；不认识的语言码落中文，见白皮书 §03ae） · `/login` `/logout` `/password` `/ca.crt` |
+| 网关自身 | `GET /api/services` · `GET /api/manage` · `GET /api/foundation` · `POST /api/manage/{seg}/{start\|stop\|uninstall}` · **`GET /api/events`（SSE 事件流：各服务 `GET /events` 汇聚，`{svc,area,kind,at}`，`books/render` 另带 `name/status/pages/expected`；网页零轮询、host `shelf events`）** · `GET /ui/locales/{lang}`（语言包 JSON，前端按 `zh-CN.json`/`en-US.json` 请求、服务端剥 `.json`；不认识的语言码落中文，见白皮书 §03ae） · **系统增强开关**（「管理」页二级 tab，2026-09-09 §03aj）：`GET /api/enhance/status` → `{hlSnapCjk, battop:{installed,running,lastSampleAt}}` · `PUT /api/enhance/qol {hlSnapCjk}`（只 patch 传入的键，`reading-qol.json` 其余键原样保留） · `POST /api/enhance/battop/{start\|stop}`（未装 battop 时 400，不装） · `/login` `/logout` `/password` `/ca.crt` |
 
 上传回执统一 `{ok, items:[{name, ok, message, item?}], …}`（`shelf_core::asset::receipt`）；成功项 `name` 是落地名。
 
@@ -79,7 +79,7 @@ shelf/
 ├── services/book-serve/               staging.rs(母版库领域：入库/优化/落库) · sidecar.rs(落库记录边车) · render_check.rs(投原生后渲染自检) · pending_queue.rs(PendingQueue\<T\>：持久化+入队去重+剔除共用骨架，2026-09-09 §03ag) · trash.rs(原生回收站队列) · mkdir.rs(原生建文件夹队列，当前消费方存疑——note-serve 已改用别的机制不再调用，见模块注释) · spool.rs(inbox 队列) · api.rs(纯 HTTP 适配) · service_state.rs
 ├── services/koreader-serve/           koreader.rs(目录模型+KoStore) · config.rs(ConfigSync+merge.lua) · main.rs
 ├── services/{font-serve,wallpaper-serve}/
-├── services/shelf-gateway/            auth/proxy/manage/events(Hub 汇聚)；ui/{index.html,style.css,app.js,auth.css} 真文件，编译期 include_str! 拼成单页（CI node --check）；ui/locales/{zh-CN,en-US}.json 是 i18n 语言包（2026-09-09 起，只覆盖主界面外壳+顶层导航，登录页/模块正文暂不迁移，见白皮书 §03ae），GET /ui/locales/{lang} 分发
+├── services/shelf-gateway/            auth/proxy/manage/events(Hub 汇聚)/enhance/{mod,qol,battop}.rs(系统增强开关：hlSnapCjk+battop 真开关，CJK 手写笔迹优化纯占位无端点，2026-09-09 §03aj，刻意不升独立 service)；ui/{index.html,style.css,app.js,auth.css} 真文件，编译期 include_str! 拼成单页（CI node --check）；ui/locales/{zh-CN,en-US}.json 是 i18n 语言包（2026-09-09 起，只覆盖主界面外壳+顶层导航，登录页/模块正文暂不迁移，见白皮书 §03ae），GET /ui/locales/{lang} 分发
 ├── systemd/                           shelf.target + 5 个 .service（壁纸不再有开机单元/sleep 钩子，2026-09-06）；其余独立线自己的单元在各自仓库，随载荷一起装
 ├── install.sh · uninstall.sh          设备端安装/卸载（--only 按服务；写 /usr 前实检 dm-verity；--purge 不碰其余独立线的用户数据目录）
 ├── deploy.sh                          host 一键：build → tar-over-ssh → 设备 install.sh（自动备份到 /home/root/cangjie-backups；`NOTES_BINS` 顺带打包 `../notes` 的二进制与单元，见 `notes/README.md`）
@@ -203,3 +203,4 @@ shelf passwd [--new …]
 | 漫画跨页拆分+投原生 | `comic_gray.py` 加跨页识别拆分（东立扫描类两页拼一图，找装订缝拆开）+ 白边裁切放大；`cbz2pdf` 复活成体积门控 CLI，灰阶 CBZ 够小顺带出投原生 PDF，超限只出 CBZ、绝不分卷 | ✅ 真机通：火影忍者卷1（够小投原生）+ 阿拉蕾①/镖人（超限只出 CBZ 不分卷，2026-09-09，§03ad） |
 | UI i18n | 网页 UI 语言包架子：主界面外壳+顶层导航可切中/英，登录页/模块正文暂不迁移 | ⚠ 部分真机验证（§03ae，2026-09-09）：语言包端点/前端资源已验证，浏览器里人眼确认切换效果未做 |
 | 三维审计（设计模式/业务闭环/UI） | UI 人性化/触屏可用性一批小修（§03af）+ `book-serve` 两个队列消重复新增 `PendingQueue<T>`（§03ag）+ `proxy.rs` 模块注释修正（§03ah）+ `shelf-core::registry` 新增 `SvcClient`/`enc`（§03ai，消费方在 notes 线） | ✅ 离线全绿；§03af **前端渲染效果未经人眼确认**，其余三项纯内部重构/注释改动无需真机验证 |
+| 管理页拆二级 tab + 系统增强开关 | `shelf push` 卡片挪去「传书」页；「管理」拆三个二级 tab（基石与模块/模型管理/系统增强）；系统增强页新增 `hlSnapCjk`/battop 真开关（CJK 手写笔迹渲染优化无代码地基，纯占位）；命令说明改用独立 `.cmdblock` 视觉语言，不再借用引用摘录样式 | ✅ 真机通（§03aj，2026-09-09）：部署健康检查+功能性 curl 验证+用户确认字体清楚；⚠ 顺手发现 `hlSnapCjk` 实际吸附效果不生效（与本轮改动无关，需单独复核，见系统增强白皮书 §04） |
