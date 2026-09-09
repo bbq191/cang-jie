@@ -120,6 +120,8 @@ shelf/
 
 ## 构建 · 部署 · 卸载
 
+**前置依赖**（一次性）：`rustup target add aarch64-unknown-linux-musl` + 装 aarch64 交叉 gcc/ar（Arch：`pacman -S aarch64-linux-gnu-gcc`；只用来编 `ring` 的 C 部分，产物本身是 musl 全静态、跟设备 libc 版本无关）。链接器/CC/AR 配置在 `.cargo/config.toml`，不用手改。改代码前先看工程纪律（真机验证、分支策略、离线门槛等）——两条线（shelf/notes）都遵守同一份，日常提交分支是 `dev` 不是 `master`。
+
 ```sh
 cd shelf && sh build.sh                       # host 测试 + aarch64 musl 全静态（书架 5 个二进制；../notes 存在时顺带编它的二进制）
 sh deploy.sh 10.11.99.1                       # 组载荷 → 设备 /home/root/shelf-pkg → install.sh（先备份旧二进制/单元）；设备只在 WiFi 上时给 WiFi IP
