@@ -151,7 +151,17 @@ pub fn merge_page(entries: &mut Vec<Entry>, ctx: &PageCtx, drafts: Vec<PageDraft
         }
     }
     for (i, e) in entries.iter_mut().enumerate() {
-        if !claimed[i] && e.page == ctx.page && e.status != Status::Revoked && (e.ink.is_some() || e.quote.is_some()) {
+        // "排除法"曾经只挡 `!= Revoked`（白皮书 §04 记过的反模式，2026-09-09 那轮审计改了 project.rs/
+        // export.rs/三处写入口，唯独漏了这里）：`Skipped`/`Archived` 也是终态，笔画被擦掉不该把它们
+        // 悄悄改判成 `Revoked`——那样 `restore()` 会走错分支（`Skipped` 该固定回 `Mined`，被错判成
+        // `Revoked` 后会按内容倒推，ink 还在字段里就恢复成 `Pending`，用户明确"不需要"过的内容被拉回
+        // 转写队列）。改用 `is_terminal()` 单一事实源，三态终态一起排除。
+        //
+        // 注意：只改这一处，不改上面 `same_page` 的匹配判据（仍是 `!= Revoked`）——匹配判据管的是"这
+        // 是不是同一份还在原地的内容，别重复建条目"，Skipped/Archived 但笔迹没动过的条目理应继续被
+        // 匹配上（保持原状不动），如果连匹配都排除掉，笔迹没变但整页因为别处改动触发重扫时，会给同一份
+        // 已经"不需要"过的内容重新生成一条 `Mined`，那是另一个新 bug，不是这里要修的。
+        if !claimed[i] && e.page == ctx.page && !e.is_terminal() && (e.ink.is_some() || e.quote.is_some()) {
             e.status = Status::Revoked;
             e.updated = ctx.now;
             st.revoked += 1;
@@ -251,5 +261,29 @@ mod tests {
         let st3 = merge_page(&mut entries, &ctx(30), drafts_of_page(&page(vec![], vec![]), &th));
         assert_eq!(st3, MergeStats { revoked: 1, ..Default::default() });
         assert_eq!(entries[0].status, Status::Revoked);
+    }
+
+    /// 回归：`Skipped`/`Archived` 是终态，笔迹被擦掉不该被"排除法"漏判改成 `Revoked`——
+    /// 那样 `restore()` 会走错分支（详见 merge_page 里 `is_terminal()` 那段注释）。
+    #[test]
+    fn skipped_and_archived_entries_are_not_silently_flipped_to_revoked_when_ink_disappears() {
+        let th = Thresholds::default();
+        let p1 = page(vec![stroke(1, Tool::BallPoint, 900.0, 300.0, 1000.0, 340.0)], vec![hl(9, "勾画", 100.0, 320.0, 780.0, 30.0)]);
+        let mut entries = vec![];
+        merge_page(&mut entries, &ctx(10), drafts_of_page(&p1, &th));
+        entries[0].status = Status::Skipped; // 用户点了「不需要」
+
+        let mut archived_entries = entries.clone();
+        archived_entries[0].status = Status::Archived; // 独立一份对照「不要了」
+
+        // 笔迹被擦掉，页上啥都没了 → 重扫。
+        let empty_drafts = drafts_of_page(&page(vec![], vec![]), &th);
+        let st = merge_page(&mut entries, &ctx(20), empty_drafts.clone());
+        assert_eq!(st, MergeStats::default(), "终态条目不该再被计入 revoked 统计");
+        assert_eq!(entries[0].status, Status::Skipped, "该保持 Skipped，不是被错判成 Revoked");
+
+        let st2 = merge_page(&mut archived_entries, &ctx(20), empty_drafts);
+        assert_eq!(archived_entries[0].status, Status::Archived, "同理，Archived 也不该被改判");
+        assert_eq!(st2, MergeStats::default());
     }
 }

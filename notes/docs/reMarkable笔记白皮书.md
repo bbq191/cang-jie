@@ -578,7 +578,7 @@ CSS 上章节标签条复用 `.subnav` 按钮视觉（`subtabs()` 用 `$('.subna
 
 **离线**：纯前端改动，Rust 契约不变。
 
-## 03ae｜去掉建夹逻辑，复用书本自己的设备文件夹（2026-09-09，离线，⚠️ 待真机验证）
+## 03ae｜去掉建夹逻辑，复用书本自己的设备文件夹（2026-09-09，真机验证通过）
 
 用户提出：不再自动新建《书名》文件夹，笔记本直接复用书本自己已经在的设备文件夹；名字直接用章节标题（不再带"第N章"前缀），撞名在同一文件夹范围内加数字后缀。审计过程中坐实了 §03l 那条链路的真实问题：note-serve→book-serve 排队→真机 qmd 每 8 秒轮询 `Library.createCollection` 兜底建夹，是 fire-and-forget、无重名保护——`shelf-mkdir-agent.qmd` 自己的注释都承认"重复调用会不会建出两个同名文件夹"这条风险没验证过。
 
@@ -592,7 +592,7 @@ CSS 上章节标签条复用 `.subnav` 按钮视觉（`subtabs()` 用 `$('.subna
 
 **✅ 2026-09-09 真机验证通过**：拿真实《人骨拼圖》条目做（临时改一条已校对文本触发重生成、验证完立刻改回原文，设备上没留任何测试痕迹）——① 新文档 `.metadata` `parent=""`，落书本自己所在的根目录，不是旧的《人骨拼圖》文件夹；② 8 秒轮询建夹链路没有被触发（`note-serve` 已经不调用它了）；③ 重新生成时沿用了 `ChapterRecord` 记录的旧名字（`"第2章 第一部 一天的國王 1"`），没有被误判重名多加后缀；④ 旧版本正确入队 `book-serve` 回收站（`GET /api/books/trash` 确认），且**真机上跑着的 `shelf-trash-agent.qmd` 几秒内就把旧文档实际移进了回收站**（`parent` 变成 `"trash"`），整条"生成→入队→真机代理消费→实际软删"链路端到端打通。
 
-## 03af｜单篇 markdown → 设备笔记本（"导入"，2026-09-09，离线，⚠️ 待真机验证）
+## 03af｜单篇 markdown → 设备笔记本（"导入"，2026-09-09，后端管线真机验证通过）
 
 用户需求澄清很关键：一开始以为要做的是配合"host `notes pull`（vault 拉到本机 Obsidian）"的双向同步，用户纠正——vault/云端那套需要 WebDAV/云同步机制，规模完全不对；这里只是"单篇 markdown 转一个 rm 笔记本页面"，`notes/host` 目前是空目录，专门为这个小需求建一整套 host CLI crate 是过度设计。用户还明确要求入口**不放进现有「整理」tab**——那里是审阅真被要求转笔记的条目（浏览态状态机驱动），跟"拿一段现成 markdown 直接生成一份新笔记"是两件不同的事，混进去会让「整理」tab 语义变模糊。
 
@@ -612,6 +612,18 @@ CSS 上章节标签条复用 `.subnav` 按钮视觉（`subtabs()` 用 `$('.subna
 **离线**：`notecore` 新增 10 测（`mdimport`），`note-serve` 新增 2 测（成功路径含"落进书本文件夹+去重生效+不写 state"、书不存在提前报错不碰网络）；`cargo test --workspace`（notes）176 个测试，全绿零警告；`node --check app.js` 通过；`cargo clippy --all-targets` 核对没有新增警告（`strip_paired` 一处 `while let` 写法按 clippy 建议改过）；`sh build.sh` 交叉编译 aarch64-musl 零警告通过。
 
 **✅ 2026-09-09 真机验证通过（后端管线）**：真调 `POST /import-md`，传一段同时含 `#`/`##`/无序/有序/`- [ ]`/`- [x]`/行内加粗斜体的示例 markdown，落到《人骨拼圖》根目录（`parent=""`，正确复用书本文件夹）；`scp` 把设备真实生成的 `.rm` 页面拉回本机，用 `rmv6::page::Page::parse`（跟生产代码同一个解析器）逐段核对——9 段顺序、样式、文字**逐字节对得上设计**：`HEADING/"大标题"`、`BOLD(subheading1)/"小节"`、`BULLET×2/"要点一""要点二"`、`NUMBERED×2/"步骤一""步骤二"`（数字已剥离）、`CHECKBOX×2/"待办""已完成待办"`（`- [x]` 正确降级成未勾选、正文没有残留"x"）、`PLAIN/"普通段落，含加粗与斜体文字。"`（`**`/`*` 都被正确剥离，没有残留符号）。测试产物已排队软删（`POST /trash/add`），不留在用户真实书库里。**前端「导入」面板本身还没在浏览器里人眼点开验证**——这几轮笔记模块前端改动一直靠代码审查+服务健康检查，没有截图核对，是这条线持续存在的已知缺口（见"还没做的"），但支撑它的后端管线这次是真机字节级坐实的，不是占位数字。
+
+## 03ag｜摄取路径"排除法"反模式复发修复：`Skipped`/`Archived` 不再被误判成 `Revoked`（2026-09-09，离线）
+
+三维审计（代码结构/业务闭环/UI）挖出一个白皮书自己记录过的反模式在摄取路径复发：§04 踩坑早就写过"排除法（`!= X`）比允许列表更容易悄悄纳入不该要的状态"，2026-09-09 那轮审计把 `project.rs`/`export.rs`/三处写入口守卫都改成了允许列表（`is_live_for_projection()`/`is_terminal()`），唯独 `notecore::ingest::merge_page` 和 `ink-serve::ingest::revoke_stale` 这两处"给条目打 Revoked"的判据本身漏改，仍然只排除 `!= Revoked`。
+
+**具体后果**：`Skipped`（用户点"不需要"）、`Archived`（用户点"不要了"）都是终态，但只被排除法漏判——① `merge_page` 里"没被任何草稿认领的条目自动转 Revoked"这条逻辑（原本是给"笔迹被擦掉"设计的），会把还没被擦掉、只是用户已经决定"不需要"的 `Skipped`/`Archived` 条目也一起改判成 `Revoked`；② `revoke_stale`（书被删/进回收站时，条目库里的旧条目全标 Revoked）同理会把已经是终态的 `Skipped`/`Archived` 条目也覆盖成 `Revoked`。两处的共同后果是：`Entry::restore()`（`model.rs:228-245`）看到的 status 已经是错的 `Revoked`，会跳过"`Skipped` 固定回 `Mined`"这条专门规则，改走"按内容倒推"分支——`ink` 字段还留着旧值就恢复成 `Pending`，用户明确否决过的内容被拉回自动转写队列。
+
+**修复**：两处都改成 `!e.is_terminal()`（`Entry::is_terminal()` 已经是这条线的单一事实源，跟三处写入口守卫用的是同一个方法）。**只改这两处，没有改 `merge_page` 里 `same_page` 那条匹配判据**（仍是 `!= Revoked`）——匹配判据管的是"这是不是同一份还在原地的内容，别重复建条目"，如果连匹配都排除 Skipped/Archived，会导致另一个新问题：笔迹压根没动过、只是整页因为别处改动触发重扫时，会给同一份已经"不需要"过的内容重新生成一条 `Mined`（详见 `ingest.rs` 里对应的代码注释，判断这个不该改的理由写在那）。这是这次审计里少有的"审计报告给的建议照单全收会引入新 bug，需要多想一层"的例子。
+
+**离线**：`notecore` 新增 1 测（`skipped_and_archived_entries_are_not_silently_flipped_to_revoked_when_ink_disappears`），`ink-serve` 新增 1 测（`revoke_stale_leaves_already_terminal_entries_alone`，三种状态混在一本书里，只有真正活着的那条被转 Revoked，另外两条终态原样不动）；`cargo test --workspace`（notes）178 个测试全绿零警告；`cargo clippy --all-targets` 核对没有新增警告；`sh build.sh` 交叉编译 aarch64-musl 零警告通过。
+
+**⚠️ 还没真机验证**：这条改动改变的是"笔迹被擦掉/书被删"这类被动触发的后台逻辑，不容易在真机上主动构造场景（需要真的擦掉一条已跳过条目的笔迹、或真的删一本带已跳过条目的书，再等 fswatch 触发重扫）——离线测试已经覆盖了这条判据本身的正确性，真机验证留作后续有相应场景时顺手做。
 
 ## 04｜踩坑
 
