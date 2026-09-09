@@ -85,7 +85,6 @@ dl.help dd{margin:.2em 0 .2em;color:var(--mute);font-size:.9em;line-height:1.65}
 /* 笔记条目卡片：手写裁图 / 转写文本 / AI 问答三块视觉分区，手机堆叠、宽屏并排（见笔记白皮书 §03t） */
 .entry{border:1px solid var(--line);border-radius:.7em;padding:.75em .85em;margin:.6em 0;background:var(--surface)}
 .entry-head{display:flex;align-items:center;gap:.6em;margin-bottom:.5em;font-size:.85em;color:var(--mute)}
-.entry-head .btn{padding:.25em .7em;font-size:.85em}
 .entry-body{display:flex;gap:.9em;flex-wrap:wrap;align-items:flex-start}
 .entry-crop{flex:0 0 9em;width:9em;max-width:42%}
 .entry-crop img{width:100%;display:block;border:1px solid var(--line);border-radius:.4em;background:#fff}
