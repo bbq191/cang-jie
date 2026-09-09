@@ -3,12 +3,16 @@
 //! `shelf/xovi/shelf-mkdir-agent.qmd` 定时拉 `GET /mkdir/pending` 执行。本模块只管队列：`add()` 入队去重，
 //! `pending()` 顺手把已经真实存在的文件夹名剔除（QML 端无需 ack，跟 `trash.rs` 的剔除方式对称）。
 //! 队列文件 `$XDG_STATE_HOME/shelf/books/mkdir-pending.json`。
-//! 首个用途：`note-serve` 生成《书名》一章一本时，目标文件夹不存在就调 `POST /mkdir/add`（2026-09-07）。
+//! 首个用途：`note-serve` 生成《书名》一章一本时，目标文件夹不存在就调 `POST /mkdir/add`（2026-09-07；
+//! note-serve 侧这条调用 2026-09-09 已经改成复用书本自己的设备文件夹、不再新建，见笔记线白皮书
+//! §03ae——这套队列/qmd 代理本身还在，是否还有其它消费方留待单独评估，不在这次改动范围）。
+//!
+//! 持久化+入队去重+剔除这层通用外壳委托 `pending_queue::PendingQueue<T>`（2026-09-09 消重复，跟
+//! `trash.rs` 是同一份基础设施，见该模块文档）；这里只留领域校验（名字合法性/文件夹是否已存在）。
+use crate::pending_queue::PendingQueue;
 use serde::{Deserialize, Serialize};
-use shelf_core::fs::write_atomic;
 use shelf_core::xochitl::find_folder_by_name;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Pending {
@@ -17,25 +21,13 @@ pub struct Pending {
 }
 
 pub struct MkdirQueue {
-    file: PathBuf,
+    q: PendingQueue<Pending>,
     lib_dir: PathBuf,
-    lock: Mutex<()>,
 }
 
 impl MkdirQueue {
     pub fn new(state_books_dir: &Path, lib_dir: &Path) -> MkdirQueue {
-        MkdirQueue { file: state_books_dir.join("mkdir-pending.json"), lib_dir: lib_dir.to_path_buf(), lock: Mutex::new(()) }
-    }
-
-    fn load(&self) -> Vec<Pending> {
-        std::fs::read(&self.file).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
-    }
-
-    fn save(&self, items: &[Pending]) -> Result<(), String> {
-        if let Some(p) = self.file.parent() {
-            let _ = std::fs::create_dir_all(p);
-        }
-        write_atomic(&self.file, &serde_json::to_vec(items).map_err(|e| e.to_string())?).map_err(|e| format!("写建夹队列失败: {e}"))
+        MkdirQueue { q: PendingQueue::new(state_books_dir.join("mkdir-pending.json")), lib_dir: lib_dir.to_path_buf() }
     }
 
     /// 入队一个文件夹名；已经真实存在或已在队列里都不重复加。名字不能为空/带路径分隔符（防误传路径）。
@@ -50,30 +42,18 @@ impl MkdirQueue {
         if find_folder_by_name(&self.lib_dir, name).is_some() {
             return Ok(0); // 已经存在，不用建
         }
-        let _g = self.lock.lock().unwrap_or_else(|e| e.into_inner());
-        let mut items = self.load();
-        if !items.iter().any(|p| p.name == name) {
-            items.push(Pending { name: name.to_string(), at: shelf_core::clock::now_secs() });
-            self.save(&items)?;
-        }
-        Ok(items.len())
+        self.q.add(|p| p.name == name, || Pending { name: name.to_string(), at: shelf_core::clock::now_secs() })
     }
 
     /// 待办文件夹名（QML 代理拉取）：顺手清掉已经真实建出来的（QML 端无需 ack）。
     /// 返回 (待办文件夹名列表, 本次清掉几条)。
     pub fn pending(&self) -> Result<(Vec<String>, usize), String> {
-        let _g = self.lock.lock().unwrap_or_else(|e| e.into_inner());
-        let items = self.load();
-        let keep: Vec<Pending> = items.iter().filter(|p| find_folder_by_name(&self.lib_dir, &p.name).is_none()).cloned().collect();
-        let pruned = items.len() - keep.len();
-        if pruned > 0 {
-            self.save(&keep)?;
-        }
-        Ok((keep.iter().map(|p| p.name.clone()).collect(), pruned))
+        let (kept, pruned) = self.q.prune(|p| find_folder_by_name(&self.lib_dir, &p.name).is_none())?;
+        Ok((kept.into_iter().map(|p| p.name).collect(), pruned))
     }
 
     pub fn list(&self) -> Vec<Pending> {
-        self.load()
+        self.q.list()
     }
 }
 

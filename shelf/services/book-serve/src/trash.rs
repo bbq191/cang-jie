@@ -3,10 +3,12 @@
 //! `GET /trash/pending` 拉队列执行。本模块只管队列：入队时按 visibleName 核对 uuid（防错删），拉取时把已进回收站 /
 //! 已不存在的条目清掉（QML 端无需 ack）。队列文件 `$XDG_STATE_HOME/shelf/books/trash-pending.json`。
 //! 首个用途：`shelf doctor --render` 量完把探针书送进回收站，不在原生书库里累积（2026-09-06）。
+//!
+//! 持久化+入队去重+剔除这层通用外壳委托 `pending_queue::PendingQueue<T>`（2026-09-09 消重复，跟
+//! `mkdir.rs` 是同一份基础设施，见该模块文档）；这里只留领域校验（uuid 形状/名字核对/是否已在回收站）。
+use crate::pending_queue::PendingQueue;
 use serde::{Deserialize, Serialize};
-use shelf_core::fs::write_atomic;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Pending {
@@ -16,25 +18,13 @@ pub struct Pending {
 }
 
 pub struct TrashQueue {
-    file: PathBuf,
+    q: PendingQueue<Pending>,
     lib_dir: PathBuf,
-    lock: Mutex<()>,
 }
 
 impl TrashQueue {
     pub fn new(state_books_dir: &Path, lib_dir: &Path) -> TrashQueue {
-        TrashQueue { file: state_books_dir.join("trash-pending.json"), lib_dir: lib_dir.to_path_buf(), lock: Mutex::new(()) }
-    }
-
-    fn load(&self) -> Vec<Pending> {
-        std::fs::read(&self.file).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
-    }
-
-    fn save(&self, items: &[Pending]) -> Result<(), String> {
-        if let Some(p) = self.file.parent() {
-            let _ = std::fs::create_dir_all(p);
-        }
-        write_atomic(&self.file, &serde_json::to_vec(items).map_err(|e| e.to_string())?).map_err(|e| format!("写回收站队列失败: {e}"))
+        TrashQueue { q: PendingQueue::new(state_books_dir.join("trash-pending.json")), lib_dir: lib_dir.to_path_buf() }
     }
 
     /// 文档 `.metadata` 的 (visibleName, parent)；文件不存在 → None。
@@ -57,29 +47,19 @@ impl TrashQueue {
         if parent == "trash" {
             return Err("已经在回收站".into());
         }
-        let _g = self.lock.lock().unwrap_or_else(|e| e.into_inner());
-        let mut items = self.load();
-        if !items.iter().any(|p| p.uuid == uuid) {
-            items.push(Pending { uuid: uuid.to_string(), name: vis, at: shelf_core::clock::now_secs() });
-            self.save(&items)?;
-        }
-        Ok(items.len())
+        // `uuid: &str` 是 Copy，两个闭包各自拿一份拷贝就够——不要先转成 String 再共享，
+        // 那样第一个闭包借用、第二个闭包要移动，会被借用检查器拦下来。
+        self.q.add(|p| p.uuid == uuid, || Pending { uuid: uuid.to_string(), name: vis, at: shelf_core::clock::now_secs() })
     }
 
     /// 待办 uuid（QML 代理拉取）：顺手清掉已进回收站 / 已不存在的。返回 (待办 uuid 列表, 本次清掉几条)。
     pub fn pending(&self) -> Result<(Vec<String>, usize), String> {
-        let _g = self.lock.lock().unwrap_or_else(|e| e.into_inner());
-        let items = self.load();
-        let keep: Vec<Pending> = items.iter().filter(|p| matches!(self.meta(&p.uuid), Some((_, parent)) if parent != "trash")).cloned().collect();
-        let pruned = items.len() - keep.len();
-        if pruned > 0 {
-            self.save(&keep)?;
-        }
-        Ok((keep.iter().map(|p| p.uuid.clone()).collect(), pruned))
+        let (kept, pruned) = self.q.prune(|p| matches!(self.meta(&p.uuid), Some((_, parent)) if parent != "trash"))?;
+        Ok((kept.into_iter().map(|p| p.uuid).collect(), pruned))
     }
 
     pub fn list(&self) -> Vec<Pending> {
-        self.load()
+        self.q.list()
     }
 }
 
