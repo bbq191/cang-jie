@@ -75,6 +75,19 @@ pub enum Status {
     Archived,
 }
 
+impl Status {
+    /// 真被要求转笔记、该出现在两处投影（设备笔记本 `project.rs` / Obsidian `export.rs`）里的状态。
+    /// **单一事实源**（2026-09-09 审计补）：这条判据之前在 `project::live_entries`/
+    /// `export::live_entries` 里各写一遍 `matches!`，网关 `app.js::renderBook` 又单独抄了一份
+    /// `['pending','draft','reviewed'].includes(...)`——状态机还在演进（已经加到 7 个变体），
+    /// `Mined`/`Skipped` 引入时就真的漏改过一处（`!= Revoked` 那次真机 bug，见白皮书 §03r），
+    /// 收成一处避免下次再漏。前端那份因为是另一种语言/另一个仓库位置，做不到直接复用，
+    /// 只能在旁边留注释指回这里。
+    pub fn is_live_for_projection(self) -> bool {
+        matches!(self, Status::Pending | Status::Draft | Status::Reviewed)
+    }
+}
+
 /// 配对到的勾画（GlyphRange）。
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Quote {
@@ -416,6 +429,21 @@ mod tests {
         let mut live: Entry = serde_json::from_str(r#"{"id":"e","page":"p","page_index":0,"created":0,"updated":0,"status":"reviewed"}"#).unwrap();
         let err = live.restore(1).unwrap_err();
         assert!(err.contains("用不着恢复"), "{err}");
+    }
+
+    #[test]
+    fn is_live_for_projection_is_exactly_pending_draft_reviewed() {
+        // project.rs/export.rs 的 live_entries 判据单一事实源——2026-09-09 收进来之前，`Mined`/
+        // `Skipped` 混进两条投影是真出过的 bug（白皮书 §03r），这条测试钉住"只有这三个状态算活跃"，
+        // 以后状态机再加变体，忘了在这里更新的话至少这条测试会先崩，不会悄悄漏判。
+        let live = [Status::Pending, Status::Draft, Status::Reviewed];
+        let not_live = [Status::Mined, Status::Skipped, Status::Revoked, Status::Archived];
+        for s in live {
+            assert!(s.is_live_for_projection(), "{s:?} 该算活跃");
+        }
+        for s in not_live {
+            assert!(!s.is_live_for_projection(), "{s:?} 不该算活跃");
+        }
     }
 
     #[test]

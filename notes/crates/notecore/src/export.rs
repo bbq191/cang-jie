@@ -23,7 +23,7 @@ fn yaml_str(s: &str) -> String {
 /// `model::Destination`），按页序排；跟 `project::live_entries` 只有去处过滤方向相反
 /// （那边收 `wants_notebook()`，这边收 `wants_obsidian()`），两条投影路径本就该看到不同的条目集合。
 fn live_entries(book: &Book, chapter_idx: usize) -> Vec<&Entry> {
-    let mut v: Vec<&Entry> = book.entries.iter().filter(|e| e.chapter == Some(chapter_idx) && matches!(e.status, Status::Pending | Status::Draft | Status::Reviewed) && e.destination.wants_obsidian()).collect();
+    let mut v: Vec<&Entry> = book.entries.iter().filter(|e| e.chapter == Some(chapter_idx) && e.status.is_live_for_projection() && e.destination.wants_obsidian()).collect();
     v.sort_by_key(|e| e.page_index);
     v
 }

@@ -16,7 +16,7 @@
 //! Body 段插在两条 NUMBERED 条目之间会打断连续、导致编号从 1 重来——真要连续编号的清单，条目之间
 //! 目前不能有摘录/回答。留给以后有真机样本再决定要不要为此改变编排。
 use crate::hash::{fnv1a, hex};
-use crate::model::{Book, Entry, Status};
+use crate::model::{Book, Entry};
 use rmv6::v6::scene_item::text::ParagraphStyle;
 use rmv6::write::Paragraph;
 
@@ -36,7 +36,7 @@ fn style_to_wire(s: crate::model::Style) -> ParagraphStyle {
 /// 一直是对的）、去处要设备笔记本（`Notebook`/`Both`——三期新增，见 `model::Destination`；缺省
 /// `Both`，不设置这个字段的老条目库行为不变），按页序排。
 fn live_entries(book: &Book, chapter_idx: usize) -> Vec<&Entry> {
-    let mut v: Vec<&Entry> = book.entries.iter().filter(|e| e.chapter == Some(chapter_idx) && matches!(e.status, Status::Pending | Status::Draft | Status::Reviewed) && e.destination.wants_notebook()).collect();
+    let mut v: Vec<&Entry> = book.entries.iter().filter(|e| e.chapter == Some(chapter_idx) && e.status.is_live_for_projection() && e.destination.wants_notebook()).collect();
     v.sort_by_key(|e| e.page_index);
     v
 }
@@ -94,7 +94,7 @@ pub fn fingerprint_chapter(book: &Book, chapter_idx: usize) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::{Answer, Draft, Quote, Style};
+    use crate::model::{Answer, Draft, Quote, Status, Style};
 
     fn entry(id: &str, chapter: usize, page_index: usize, style: Style, text: &str) -> Entry {
         Entry {
