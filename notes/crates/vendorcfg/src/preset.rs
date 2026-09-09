@@ -15,12 +15,22 @@ pub const DEEPSEEK: &str = "https://api.deepseek.com/v1";
 /// baseUrl 匹配上四家已知厂商之一，不管选的是预置表里的型号还是"自定义"填的同一个地址，都能找到同一
 /// 把 key。
 pub fn provider_for_base_url(base_url: &str) -> Option<&'static str> {
-    match base_url {
-        DASHSCOPE => Some("dashscope"),
-        OPENAI => Some("openai"),
-        GEMINI => Some("gemini"),
-        DEEPSEEK => Some("deepseek"),
-        _ => None,
+    // 两侧都先去掉尾部 `/` 再比较（2026-09-09 审计修）：GEMINI 常量本身带尾斜杠（官方 OpenAI 兼容
+    // 端点就是这个形状），是四家里唯一一个；而 apply_common() 保存用户手填的 custom_base_url 时会
+    // `trim_end_matches('/')`。如果直接用 `==` 精确匹配，用户手填 Gemini 端点当"自定义"填会被判成
+    // 认不出厂商、落进 custom 桶存 key，之后切到 Gemini 预置又找不到这把 key——复现过 §03w 那次
+    // provider 隔离 bug 的同款体验。两侧一起 trim 后比较，不管常量以后是否再改是否带斜杠都稳。
+    let b = base_url.trim_end_matches('/');
+    if b == DASHSCOPE.trim_end_matches('/') {
+        Some("dashscope")
+    } else if b == OPENAI.trim_end_matches('/') {
+        Some("openai")
+    } else if b == GEMINI.trim_end_matches('/') {
+        Some("gemini")
+    } else if b == DEEPSEEK.trim_end_matches('/') {
+        Some("deepseek")
+    } else {
+        None
     }
 }
 
@@ -250,6 +260,16 @@ mod tests {
         assert_eq!(resolve_provider(PRESETS, "a", ""), "dashscope");
         assert_eq!(resolve_provider(PRESETS, "custom", DEEPSEEK), "deepseek", "预置里没有，但 baseUrl 认得出来");
         assert_eq!(resolve_provider(PRESETS, "custom", "https://x.example/v1"), "custom", "两边都认不出来才落 custom");
+    }
+
+    #[test]
+    fn gemini_base_url_recognized_regardless_of_trailing_slash() {
+        // 2026-09-09 审计修：GEMINI 常量自带尾斜杠，apply_common() 保存自定义 baseUrl 时会 trim 掉，
+        // 修前用户手填 Gemini 端点会被判成认不出厂商、落进 custom 桶——两侧都该被视为同一个厂商。
+        assert_eq!(provider_for_base_url(GEMINI), Some("gemini"), "常量本身（带尾斜杠）");
+        assert_eq!(provider_for_base_url(GEMINI.trim_end_matches('/')), Some("gemini"), "去掉尾斜杠（apply_common trim 之后的形状）");
+        assert_eq!(provider_for_base_url(&format!("{GEMINI}/")), Some("gemini"), "多打一个斜杠也该认得出来");
+        assert_eq!(resolve_provider(PRESETS, "custom", GEMINI.trim_end_matches('/')), "gemini", "手填 Gemini 端点当自定义，也该归到 gemini provider 存 key");
     }
 
     #[test]
