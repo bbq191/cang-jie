@@ -46,9 +46,9 @@ reading/notegen/
 rmfw/extracted
 rmfw/out/
 rmfw/*.bin
-ghidra-project/*.rep/
+ghidra-project*/*.rep/
 # Ghidra headless 运行产物（decompile/disasm/dump/find*/import 的 .log），可重生成，不入库
-ghidra-project/*.log
+ghidra-project*/*.log
 
 # 词典（源 .dict.yaml 与派生大 txt；递归匹配子目录）
 chinese-ime/pinyin-engine/data/**/*.dict.yaml
