@@ -110,7 +110,6 @@
  * 这里不重复）。
  */
 #include <stdio.h>
-#include <stdlib.h>
 #include <string.h>
 #include <errno.h>
 #include <sys/mman.h>
@@ -4681,26 +4680,11 @@ static void cj_install_virtualkeyboard_keyhandler_hook(void) {
             (void *)target);
 }
 
-/* 运行期开关：CANGJIE_IME_HOOKS=0 时只装荧光笔精确吸附，跳过拼音输入法/EF/KBS 那 8 个
- * hook（2026-09-09，用户要求"只要 CJK 精确吸附，不要整条中文输入法线"，风格照抄
- * reading/device-rs::wr_serve.rs 那套 CANGJIE_AUTO_OPTIMIZE/CANGJIE_FSWATCH_OBSERVE
- * 环境变量开关，同一项目里已经验证过的"部分功能可选禁用"惯例）。缺省开——不设这个变量
- * 就是原来的全量行为，不影响任何现有部署。设备端把它写进 xovi 的 xochitl.service 环境
- * （跟 LD_PRELOAD/XOVI_ROOT 同一处 systemd Environment=），不是 reading-qol.json 那种
- * 用户随时能在设置页翻的开关——这是"这台设备要不要装拼音输入法"这一级的部署决定。 */
-static int g_ime_hooks_enabled = 1;
-static void cj_read_ime_hooks_env(void) {
-    const char *v = getenv("CANGJIE_IME_HOOKS");
-    if (v && strcmp(v, "0") == 0) g_ime_hooks_enabled = 0;
-}
-
 /* 整合进 vellum 的 xovi 体系后,不再靠 __attribute__((constructor)) + 独立 LD_PRELOAD
  * 触发,改由 xovi 加载扩展时经 _xovi_construct 调用(见文件末尾)。 */
 static void cj_hook_init(void) {
     uintptr_t base = 0;
     size_t size = 0;
-
-    cj_read_ime_hooks_env();
 
     if (!cj_find_exec_module(TARGET_MODULE_SUFFIX, NULL, &base, &size)) {
         fprintf(stderr, "[cangjie] 找不到 %s 的可执行映射，跳过 hook（safe mode）\n",
@@ -4749,63 +4733,47 @@ static void cj_hook_init(void) {
     g_orig_call_through = (orig_fn_t)stub;
     fprintf(stderr, "[cangjie] setLanguageCode hook 安装完成\n");
 
-    /* 其余 8 个代码目标各自特征码自定位（7 精确 + 2 掩 1 条 BL）。
-     * g_ime_hooks_enabled：运行期开关，只要荧光笔精确吸附这一个功能时可以关掉其余 8 个目标
-     * 的定位+安装（2026-09-09 用户明确要求"只要 CJK 精确吸附，不要整条中文输入法线"）。用
-     * 运行期 if 而不是编译期 #ifdef——每个 install_*_hook 本来就是独立调用、互不依赖，单纯
-     * 少调几次不改变量任何已验证过的 hook 本身逻辑；#ifdef 会让这几个 install/handler 函数在
-     * 特殊构建里变成"定义了但没调用"，触发 -Wunused-function，还得维护两份构建产物，运行期
-     * if 一份二进制两种用法都覆盖，零多余警告。setLanguageCode 主 hook 不受这个开关影响、
-     * 仍然总是走（它是 `_xovi_shouldLoad`/`cj_hook_init` 的固件兼容性总闸，见上面 `if (!found)
-     * ...return`），但它在没定义 CJ_UI_TRANSLATION 时只是只读诊断 + 原样 call-through，不
-     * 做任何 UI 汉化，不算"中文输入法这条线"的一部分。 */
-    const int ime_hooks = g_ime_hooks_enabled;
-    if (ime_hooks) {
-        g_addr_fun9174d0 = cj_resolve_target(base, size, PROLOGUE_FUN_009174D0, NULL,
-                sizeof(PROLOGUE_FUN_009174D0), "FUN_009174d0 (Step G)");
-        g_addr_vk_dispatch = cj_resolve_target(base, size, PROLOGUE_VK_DISPATCH, NULL,
-                sizeof(PROLOGUE_VK_DISPATCH), "FUN_00695a60 (Step R+S)");
-        g_addr_vk_loadlayout = cj_resolve_target(base, size, PROLOGUE_VK_LOADLAYOUT, NULL,
-                sizeof(PROLOGUE_VK_LOADLAYOUT), "FUN_00c6f3c0 (Step U)");
-        g_addr_vk_inserttext = cj_resolve_target(base, size, PROLOGUE_VK_INSERTTEXT, NULL,
-                sizeof(PROLOGUE_VK_INSERTTEXT), "FUN_00695970 (Step L insertText)");
-        g_addr_vk_triggerbackspace = cj_resolve_target(base, size, PROLOGUE_VK_TRIGGERBACKSPACE,
-                PROLOGUE_VK_TRIGGERBACKSPACE_MASK, sizeof(PROLOGUE_VK_TRIGGERBACKSPACE),
-                "FUN_00695820 (Step L 退格, BL掩码)");
-        g_addr_vk_keyhandler = cj_resolve_target(base, size, PROLOGUE_VK_KEYHANDLER,
-                PROLOGUE_VK_KEYHANDLER_MASK, sizeof(PROLOGUE_VK_KEYHANDLER),
-                "FUN_00697610 (Step M 按键, BL掩码)");
-        g_addr_ef_staticmetacall = cj_resolve_target(base, size, PROLOGUE_EF_STATICMETACALL, NULL,
-                sizeof(PROLOGUE_EF_STATICMETACALL), "FUN_00606f40 (Step EF)");
-        g_addr_ef_settextformat = cj_resolve_target(base, size, PROLOGUE_EF_SETTEXTFORMAT, NULL,
-                sizeof(PROLOGUE_EF_SETTEXTFORMAT), "FUN_00c36530 (Step EF)");
-        g_addr_kbs_staticmetacall = cj_resolve_target(base, size, PROLOGUE_KBS_STATICMETACALL, NULL,
-                sizeof(PROLOGUE_KBS_STATICMETACALL), "KeyboardSettingsAttached::qt_static_metacall (Step KBS)");
-    } else {
-        fprintf(stderr, "[cangjie] CANGJIE_IME_HOOKS=0：跳过拼音输入法/EF/KBS 这 8 个 hook 的定位+安装，只留荧光笔精确吸附\n");
-    }
+    /* 其余 8 个代码目标各自特征码自定位（7 精确 + 2 掩 1 条 BL）。 */
+    g_addr_fun9174d0 = cj_resolve_target(base, size, PROLOGUE_FUN_009174D0, NULL,
+            sizeof(PROLOGUE_FUN_009174D0), "FUN_009174d0 (Step G)");
+    g_addr_vk_dispatch = cj_resolve_target(base, size, PROLOGUE_VK_DISPATCH, NULL,
+            sizeof(PROLOGUE_VK_DISPATCH), "FUN_00695a60 (Step R+S)");
+    g_addr_vk_loadlayout = cj_resolve_target(base, size, PROLOGUE_VK_LOADLAYOUT, NULL,
+            sizeof(PROLOGUE_VK_LOADLAYOUT), "FUN_00c6f3c0 (Step U)");
+    g_addr_vk_inserttext = cj_resolve_target(base, size, PROLOGUE_VK_INSERTTEXT, NULL,
+            sizeof(PROLOGUE_VK_INSERTTEXT), "FUN_00695970 (Step L insertText)");
+    g_addr_vk_triggerbackspace = cj_resolve_target(base, size, PROLOGUE_VK_TRIGGERBACKSPACE,
+            PROLOGUE_VK_TRIGGERBACKSPACE_MASK, sizeof(PROLOGUE_VK_TRIGGERBACKSPACE),
+            "FUN_00695820 (Step L 退格, BL掩码)");
+    g_addr_vk_keyhandler = cj_resolve_target(base, size, PROLOGUE_VK_KEYHANDLER,
+            PROLOGUE_VK_KEYHANDLER_MASK, sizeof(PROLOGUE_VK_KEYHANDLER),
+            "FUN_00697610 (Step M 按键, BL掩码)");
+    g_addr_ef_staticmetacall = cj_resolve_target(base, size, PROLOGUE_EF_STATICMETACALL, NULL,
+            sizeof(PROLOGUE_EF_STATICMETACALL), "FUN_00606f40 (Step EF)");
+    g_addr_ef_settextformat = cj_resolve_target(base, size, PROLOGUE_EF_SETTEXTFORMAT, NULL,
+            sizeof(PROLOGUE_EF_SETTEXTFORMAT), "FUN_00c36530 (Step EF)");
+    g_addr_kbs_staticmetacall = cj_resolve_target(base, size, PROLOGUE_KBS_STATICMETACALL, NULL,
+            sizeof(PROLOGUE_KBS_STATICMETACALL), "KeyboardSettingsAttached::qt_static_metacall (Step KBS)");
     g_addr_hl_expand = cj_resolve_target(base, size, PROLOGUE_HL_EXPAND, NULL,
             sizeof(PROLOGUE_HL_EXPAND), "FUN_00f05ad0 (Step HL2 荧光笔扩张)");
 
-    if (ime_hooks) {
-        /* 两个 metaobject：靠已定位的 static_metacall 函数地址反查唯一 qword−0x18。 */
-        g_vk_metaobject = cj_find_metaobject(base, size, g_addr_vk_dispatch, "VK_STATICMETAOBJECT");
-        g_ef_metaobject = cj_find_metaobject(base, size, g_addr_ef_staticmetacall, "EF_STATICMETAOBJECT");
-        /* Step KBS：靠特征码定位到的 static_metacall 地址反查 KeyboardSettingsAttached
-         * 的 metaobject（唯一 qword−0x18）。改它的 static_metacall 指针即安装 hook。 */
-        g_kbs_metaobject = cj_find_metaobject(base, size, g_addr_kbs_staticmetacall, "KBS_STATICMETAOBJECT");
+    /* 两个 metaobject：靠已定位的 static_metacall 函数地址反查唯一 qword−0x18。 */
+    g_vk_metaobject = cj_find_metaobject(base, size, g_addr_vk_dispatch, "VK_STATICMETAOBJECT");
+    g_ef_metaobject = cj_find_metaobject(base, size, g_addr_ef_staticmetacall, "EF_STATICMETAOBJECT");
+    /* Step KBS：靠特征码定位到的 static_metacall 地址反查 KeyboardSettingsAttached
+     * 的 metaobject（唯一 qword−0x18）。改它的 static_metacall 指针即安装 hook。 */
+    g_kbs_metaobject = cj_find_metaobject(base, size, g_addr_kbs_staticmetacall, "KBS_STATICMETAOBJECT");
 
-        /* 安装各 hook（每个内部判自己的解析结果是否为 0，为 0 即跳过 safe mode）。 */
-        cj_install_availablelanguagecodes_hook();
-        cj_install_virtualkeyboard_insert_hook();
-        cj_install_virtualkeyboard_triggerbackspace_hook();
-        cj_install_virtualkeyboard_keyhandler_hook();
-        cj_install_virtualkeyboard_dispatch_hook();
-        cj_install_virtualkeyboard_loadlayout_hook();
-        cj_install_epubproperties_staticmetacall_hook();
-        cj_install_epubproperties_settextformat_hook();
-        cj_install_keyboardsettings_staticmetacall_hook();
-    }
+    /* 安装各 hook（每个内部判自己的解析结果是否为 0，为 0 即跳过 safe mode）。 */
+    cj_install_availablelanguagecodes_hook();
+    cj_install_virtualkeyboard_insert_hook();
+    cj_install_virtualkeyboard_triggerbackspace_hook();
+    cj_install_virtualkeyboard_keyhandler_hook();
+    cj_install_virtualkeyboard_dispatch_hook();
+    cj_install_virtualkeyboard_loadlayout_hook();
+    cj_install_epubproperties_staticmetacall_hook();
+    cj_install_epubproperties_settextformat_hook();
+    cj_install_keyboardsettings_staticmetacall_hook();
     cj_install_hl_expand_hook();
 }
 
