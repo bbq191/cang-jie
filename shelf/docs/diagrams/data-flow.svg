@@ -60,7 +60,7 @@
   <circle cx="737" cy="238" r="5" fill="#4a6fa5"/>
   <text x="855" y="244" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">加入 KOReader</text>
   <text x="855" y="261" text-anchor="middle" font-size="10.8" fill="#5a5a5a">母版库收的任何格式都能去</text>
-  <text x="855" y="275" text-anchor="middle" font-size="10.3" fill="#5a5a5a">漫画 CBZ 只能去这（不投原生）</text>
+  <text x="855" y="275" text-anchor="middle" font-size="10" fill="#5a5a5a">漫画 CBZ 默认去这，够小可选投原生（§03ad）</text>
 
   <text x="855" y="304" text-anchor="middle" font-size="10.3" fill="#6a6a6a">落库记录徽章 · 清理已落库 · 剩余空间</text>
 

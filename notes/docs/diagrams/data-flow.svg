@@ -9,7 +9,7 @@
   </defs>
 
   <rect x="0" y="0" width="1080" height="480" fill="#fbfbfa"/>
-  <text x="540" y="26" text-anchor="middle" font-size="18" font-weight="bold" fill="#1a1a1a">notes 数据流：四步（半）闭环</text>
+  <text x="540" y="26" text-anchor="middle" font-size="18" font-weight="bold" fill="#1a1a1a">notes 数据流：四步闭环（三期完成）</text>
   <text x="540" y="44" text-anchor="middle" font-size="11.5" fill="#8a8a8a">条目库是唯一事实源；设备笔记本与 md 都只是投影——设备只负责写，改动都在手机</text>
 
   <!-- box1 摄取 -->
@@ -41,9 +41,9 @@
   <text x="410" y="140" text-anchor="middle" font-size="10.3" fill="#3a3a3a">书架网关「笔记」tab</text>
   <text x="410" y="160" text-anchor="middle" font-size="10.3" fill="#3a3a3a">左裁图、右文本框</text>
   <text x="410" y="174" text-anchor="middle" font-size="10.3" fill="#3a3a3a">（缺省填 text ?? draft）</text>
-  <text x="410" y="194" text-anchor="middle" font-size="10.3" fill="#3a3a3a">核对转写、选分区、选样式、</text>
-  <text x="410" y="208" text-anchor="middle" font-size="10.3" fill="#3a3a3a">勾「问AI」填问题——改即存</text>
-  <text x="410" y="228" text-anchor="middle" font-size="10.3" fill="#3a3a3a">POST /entries/{id}</text>
+  <text x="410" y="194" text-anchor="middle" font-size="10.3" fill="#3a3a3a">核对转写、选去处（设备/</text>
+  <text x="410" y="208" text-anchor="middle" font-size="10.3" fill="#3a3a3a">Obsidian/都要）、样式自动判</text>
+  <text x="410" y="228" text-anchor="middle" font-size="10.3" fill="#3a3a3a">勾「问AI」填问题——改即存</text>
   <text x="410" y="248" text-anchor="middle" font-size="10.3" fill="#3a3a3a">给 text 即"已校对"</text>
   <text x="410" y="272" text-anchor="middle" font-size="10" fill="#8a3a3a">为什么在手机：e-ink 上</text>
   <text x="410" y="286" text-anchor="middle" font-size="10" fill="#8a3a3a">打字太痛苦；设备只负责</text>
@@ -78,8 +78,8 @@
   <text x="930" y="166" text-anchor="middle" font-size="10.3" fill="#4a4a4a">（xochitl 7 种打字样式）</text>
   <text x="930" y="186" text-anchor="middle" font-size="10.3" fill="#4a4a4a">GET-then-upload；旧本</text>
   <text x="930" y="200" text-anchor="middle" font-size="10.3" fill="#4a4a4a">走书架回收站代理软删</text>
-  <text x="930" y="220" text-anchor="middle" font-size="10.3" fill="#4a4a4a">✅ 真机验证；网页按钮</text>
-  <text x="930" y="234" text-anchor="middle" font-size="10.3" fill="#4a4a4a">待接，md 导出待建</text>
+  <text x="930" y="220" text-anchor="middle" font-size="10.3" fill="#4a4a4a">✅ 真机验证；按钮已</text>
+  <text x="930" y="234" text-anchor="middle" font-size="10.3" fill="#4a4a4a">接线，md 可直接下载</text>
   <text x="930" y="254" text-anchor="middle" font-size="10" fill="#6a6a6a">设备笔记本只读——改动</text>
   <text x="930" y="268" text-anchor="middle" font-size="10" fill="#6a6a6a">还是得回②手机上改</text>
 
