@@ -29,17 +29,17 @@
 
 **host CLI**（`shelf`）：`push`（Calibre 洗书 / PDF 结构化重排 / TXT 切章 / 漫画→CBZ→16 灰；`--wait` 设备睡了探 `/health` 等醒；`--no-eink-gray` 要原图）· `doctor --render`（排版回归探针：投探针书→取回 xochitl 渲染缓存→pymupdf 量顶格/缩进→PASS/FAIL→探针自动进原生回收站，固件 OTA 后跑一次）· `events` · font/wallpaper/koreader/inbox/status/passwd。
 
-**代码落点**：book-serve `staging.rs`（领域）/ `sidecar.rs`（落库记录边车）/ `render_check.rs`（渲染自检）/ `pending_queue.rs`（**新增**，2026-09-09 §03ag：`PendingQueue<T>` 持久化+入队去重+剔除的共用骨架）/ `trash.rs`（原生回收站队列，执行方是 `xovi/shelf-trash-agent.qmd`，现在包一层 `PendingQueue<Pending>`）/ `mkdir.rs`（原生建文件夹队列，执行方是 `xovi/shelf-mkdir-agent.qmd`，同样包 `PendingQueue<Pending>`；**2026-09-07 首个用途是 note-serve 生成《书名》笔记本文件夹，但 note-serve 2026-09-09 起已经改成复用书本自己的设备文件夹、不再调用这条链路了，当前消费方存疑，见 `mkdir.rs` 模块注释与 `notes/docs/reMarkable笔记白皮书.md` §03ae**）/ `spool.rs`（inbox 队列）/ `api.rs`（纯适配）；koreader-serve 只做"从母版库 adopt"+字体/词典/配置同步（不依赖 bookconv）；shelf-core `clock`（时间戳唯一出处）、`xochitl`（注入 + 找书/页数）、`fswatch`（常驻 + 限时）、`events`、`registry`（**2026-09-09 新增 `SvcClient`/`enc`**，§03ai：按注册表建带标准超时的 HTTP 客户端骨架 + `percent_encode` 薄封装，供跨服务调用消重复用——四个消费者全在 `notes/` 那条线，物理代码落在这里，见 §03ai）；host `calibre/epub_skel.py`（三处手搓 EPUB 骨架收编）、`calibre_bridge._run_json`、`transport._open`（§03ab）；`comic.py` 漫画探针；bookconv CLI `epub-optimize`（与设备同一函数）。
+**代码落点**：book-serve `staging.rs`（领域）/ `sidecar.rs`（落库记录边车）/ `render_check.rs`（渲染自检）/ `pending_queue.rs`（**新增**，2026-09-09 §03ag：`PendingQueue<T>` 持久化+入队去重+剔除的共用骨架）/ `trash.rs`（原生回收站队列，执行方是 `xovi/shelf-trash-agent.qmd`，现在包一层 `PendingQueue<Pending>`）/ `mkdir.rs`（原生建文件夹队列，执行方是 `xovi/shelf-mkdir-agent.qmd`，同样包 `PendingQueue<Pending>`；**2026-09-07 首个用途是 note-serve 生成《书名》笔记本文件夹，但 note-serve 2026-09-09 起已经改成复用书本自己的设备文件夹、不再调用这条链路了，当前消费方存疑，见 `mkdir.rs` 模块注释与 `notes/docs/reMarkable笔记白皮书.md` §03ae**）/ `spool.rs`（inbox 队列）/ `api.rs`（纯适配）；koreader-serve 只做"从母版库 adopt"+字体/词典/配置同步（不依赖 bookconv）；shelf-core `clock`（时间戳唯一出处）、`xochitl`（注入 + 找书/页数）、`fswatch`（常驻 + 限时）、`events`、`registry`（**2026-09-09 新增 `SvcClient`/`enc`**，§03ai：按注册表建带标准超时的 HTTP 客户端骨架 + `percent_encode` 薄封装，供跨服务调用消重复用——四个消费者全在 `notes/` 那条线，物理代码落在这里，见 §03ai）；`services/shelf-gateway/src/enhance/`（**新增目录**，2026-09-09 §03aj：`mod.rs` 路由 + `qol.rs`（`reading-qol.json` 读全量/patch/写全量）+ `battop.rs`（battop 状态探测+开关），刻意分文件不升独立 service——没有独立进程边界的理由）；host `calibre/epub_skel.py`（三处手搓 EPUB 骨架收编）、`calibre_bridge._run_json`、`transport._open`（§03ab）；`comic.py` 漫画探针；bookconv CLI `epub-optimize`（与设备同一函数）。
 
 **已删（别再找）**：漫画 CBZ→PDF **分卷**投原生整条（`POST /staging/to-pdf`、`push --mono`，§03t 末，被否决方案）——⚠ `cbz2pdf` bin 本身 2026-09-08 已以新形态（体积门控、不分卷）复活，见 §03ad，别再当"已删"找不到；book-serve `POST /?target=native|annot` 直投路与 `target.rs`/`pipeline.rs`（Strategy/Pipeline）、`/targets`、`done/` LRU；koreader-serve 直传 `POST /books` 与 `optimizeEpub`；网页读器页的传书区与 KOReader 书库浏览；host `push -t/--direct/--quality`、config `default_target/quality`；`BookConfig.optimizeDirectEpub/comicMono`；壁纸 bind-mount 整套（§03x）与安装器里的旧壁纸/bind 迁移块（§03ab）；`paths::data_root`、`htmlproc::has_internal_anchor`、`optimize::is_current_version`（§03ab）。
 
-**网页 tab**：传书（入库｜母版库，固定第一）· xochitl（原生字体，由 font-serve 注册）· KOReader（字体｜词典）· 壁纸 · **笔记**（由 `../notes` 的 note-serve 注册，order 25）· 管理（固定）。
+**网页 tab**：传书（入库〔含电脑 `shelf push` 说明+命令，2026-09-09 §03aj 从「管理」搬来〕｜母版库，固定第一）· xochitl（原生字体，由 font-serve 注册）· KOReader（字体｜词典）· 壁纸 · **笔记**（由 `../notes` 的 note-serve 注册，order 25）· 管理（固定；**2026-09-09 起拆三个二级 tab**：基石与模块｜模型管理｜系统增强，§03aj）。
 
 **笔记线（`notes/`）是独立仓库线，只是挂在书架同一网关上**（§03ac 记的是"书架这套可插拔机制接得住独立线"这件事本身，不是笔记线的设计）：书架侧改动仅 `manage::MODULES` 加几行、`build.sh/deploy.sh/install.sh` 顺带打包、目录表行与网页 `renderNotes`。笔记线自己的架构决策/真机记录/踩坑全部在 `notes/docs/reMarkable笔记白皮书.md`，本文不重复也不代管。
 
 **设备杂项（§03v/§03w，全真机通）**：3.28 字体菜单 qmd 已通（qmldiff 语法坑，§04）；原生休眠屏 `SleepScreenPath=current.png` 满屏且随轮换，bind-mount 整套已退役（§03x，`shelf_core::xochitl_conf` + wallpaper-serve `native.rs`）；WiFi 连上恰 60 秒必掉的真凶＝cfg80211 regdomain 宽限（精简 regdb 的 CN 无 5150–5350，路由 5G 信道 36 被判非法）→ 连接锁 2.4G + `powersave 2`，`packaging/wifi-watch` 常驻固化（§03w）；离 USB 数秒自动休眠关 WiFi 是设备正常行为（`push --wait` 应对）；chrony 国内 NTP `packaging/chrony-cn.sh`；OTA 后五步恢复见 §05（README 有"OTA 与恢复"表）。
 
-**未闭环**：网页 UI i18n 架子（§03ae）+ UI 人性化/触屏可用性一批小修（§03af）——两者都只做到"数据链路/代码逻辑确认对"，浏览器里人眼实际确认渲染效果这一步都还没做，详见 §05。Phase E ②③④、阅读线六项、代码体检、漫画超限分支复验均已闭环。
+**未闭环**：网页 UI i18n 架子（§03ae）+ UI 人性化/触屏可用性一批小修（§03af）——两者都只做到"数据链路/代码逻辑确认对"，浏览器里人眼实际确认渲染效果这一步都还没做，详见 §05。Phase E ②③④、阅读线六项、代码体检、漫画超限分支复验均已闭环。「管理」二级 tab + 系统增强开关（§03aj）已真机验证通过；CJK 手写笔迹优化是纯占位卡片（没有代码地基，见 §03aj）；⚠ 真机测试顺手发现 `hlSnapCjk` 荧光笔精确吸附现在实际不生效（跟这次改动无关，文件全程没被碰过），需要单独复核，见系统增强白皮书 §04 追记。
 
 ## 01｜架构决策
 
@@ -391,6 +391,8 @@ book→「母版库 / 原生投递」、weread→「微信读书（内容源，�
 
 **砍掉的**：管理页目录表 weread 行（`installable` 机制保留）、入库页「微信读书 · 即将接入」占位与三处「待接」文案、`services/weread-serve/` 槽位 README、`weread-web/`（内嵌浏览器 spike 脚本，从未执行）。**不动的**：`reading/` 的 wr-* 下书栈、`/home/root/weread` 与 `~/.config/weread-client` 冻结路径（块③阅读旧线，与书架无关）；`bookconv` 里为微读书形态做的脚注/远程图规则保留（第三方书同样受益）。书架内容源定为四条：网页上传 / 抓网文 / 电脑 `shelf push` / scp inbox。
 
+**追记（2026-09-09，若将来又想把"墨香管理"接进书架网页，先看这条）**：`reading/device-rs` 的 `wr-serve`（墨香面板 API，`127.0.0.1:8777`）自己内嵌了一条上传页线程，**硬编码监听 `0.0.0.0:8778`**（`src/upload_server.rs`）——跟 `shelf-gateway` 本体绑定的端口完全一样。代码里有一行注释说"以书架为准，`CANGJIE_UPLOAD_PAGE=0` 让出端口"，但从没有任何 systemd/安装脚本真的设过这个环境变量。两者目前**没有一起跑过**（wr-serve 未接入书架的服务注册表，不受 `shelf.target` 管），所以现在不出事；但凡真要把墨香接进书架（哪怕只是「管理」页里加一个管理面板），第一步必须先处理这个端口冲突——建议方向是直接砍掉 wr-serve 那条内嵌上传页（它的"传文件到 inbox"功能跟 book-serve「传书」入库完全重复），而不是继续留着一个从没生效过的环境变量开关。
+
 ## 03v｜固件升级 3.27.3.0 → 3.28.0.172 实录（2026-09-05，真机）
 
 **为什么记**：这是书架落地后第一次跨固件 OTA，把"哪些会被冲、哪些活着、怎么不循环死机"钉成事实，下次升级照抄。
@@ -588,6 +590,27 @@ book→「母版库 / 原生投递」、weread→「微信读书（内容源，�
 
 **离线**：`shelf-core` 新增 2 测（`svc_client_base_url_uses_registry_and_errors_with_service_name_when_not_running`/`enc_percent_encodes_path_segments`）；`cargo test --workspace`（shelf 51 个）零回归；`cargo clippy -p shelf-core` 无新增警告；`sh build.sh` 交叉编译 aarch64-musl 零警告通过。
 
+## 03aj｜「管理」拆二级 tab + 系统增强开关上网页（2026-09-09，真机通）
+
+用户对「管理」tab 提了四点：① `shelf push` 卡片挪去「传书」页；② 原来挂在「管理」最下面的「模型管理」卡片单独拆成二级 tab；③「管理」再加一个二级 tab 放"系统增强工具开关"（cjk 画线吸附/cjk 手写笔迹优化/电池刺客）；④ 统一视觉风格，command 说明块看不清。
+
+**①②纯前端重排**：`renderTransfer()`「入库」子面板追加第三块 `shelf push` 说明（原样复用例子/强在哪/怎么装，去掉"命令见「管理」页"的间接引用）；`renderManage()` 顶部加 `.subnav`（复用 `subtabs()`），拆「🏗 基石与模块」/「🧠 模型管理」/「⚙️ 系统增强」三个二级 tab，模型管理卡片（`mountModelPanel` 两个挂载点）原样搬进第二个 tab。
+
+**③是本轮唯一有真实后端工作量的点，三个"开关"现状差异很大**：
+- **cjk 画线吸附**＝`reading-qol.json` 的 `hlSnapCjk`（默认开，langhook C hook 消费，见系统增强白皮书 §04）。**有地基，做成真开关**。
+- **cjk 手写笔迹优化**：用户明确澄清是"设备手写笔锋按 CJK 书写习惯（运笔粗细/顿挫）渲染优化"，**跟 AI/大模型识别（`cardhw`）完全无关**（第一轮理解错了，以为是 `cardhwEnabled` 那个视觉转写开关）。全仓库搜索确认这个渲染优化功能**目前完全不存在**：没有配置键、没有 hook、没有反编译记录，唯一沾边的"够不够到 xochitl 原生渲染层"先例（笔记页背景滤镜想接近同一层）是**判死**的（：C++ `SceneView` tile 增量渲染够不到）。真要做需要独立立项做原生笔画渲染层的逆向工程，不是包一层网页开关就能上线的。**这次做成「未上线」占位卡片**，不接后端，等真正探路完成再回来接。
+- **电池刺客（battop）**：原生设置页只有只读展示（读 `summary.json`），**从没有过开关**——这是它第一次有开关。2026-08-29 出过 cgroup/RCU 死锁（`misc/battery-audit/FINDINGS.md`），已修复为常驻 `Type=simple`（不再靠 timer 反复拉起 oneshot触发 cgroup 迁移），单纯 `systemctl start/stop` 不重现那次事故的触发条件（触发条件是"反复重启"，不是"启动过一次"）。**有地基，做成真开关**。
+
+`reading-qol.json` 有全量写回铁律（系统增强白皮书 §08）：新写 `shelf/services/shelf-gateway/src/enhance/qol.rs` **不照抄 QML 那种手写全部字段的方式**——`patch()` 把整份文件当成不透明的 `serde_json::Map` 读进来，只覆盖调用方明确要改的键，其余原样写回，天然不怕将来别处新增字段导致这里漏改。`enhance/battop.rs` 状态探测（unit 文件是否存在 + `systemctl is-active`）+ 开关（复用 `manage::run` 这个 `pub(crate)` helper，不重新实现一遍 `Command` 样板）。
+
+**目录结构**：`enhance.rs` 没做成单文件，改成 `enhance/{mod,qol,battop}.rs` 目录——用户主动问"以后可能会有很多系统增强能力，要不要单独文件夹"，权衡后**没有**升到独立 service/crate 那一级（这两个能力都是同机文件 I/O / `systemctl` 直调，没有独立进程边界的理由，硬拆一个新服务只会多一层 IPC/注册/代理开销），但目录级别的分文件是低成本的，以后每加一个新能力就是加一个新文件 + `mod.rs` 挂一个路由，不会让某个文件越滚越大。
+
+**④命令说明块视觉语言修正**：根因不是背景色对比度（第一轮猜错了）——`.opt-note` 和「笔记」页的 `.entry-quote`（划线摄取转写后显示的引用摘录）结构几乎一样：同量级小字号（`.82em`/`.85em`）、同 `color:var(--mute)`、同浅底、同左侧色条。命令是要人读要人抄的可操作内容，借用"安静小字引用摘录"的视觉语言会显得不起眼、字也偏小。新增 `.cmdblock` 组件：字号跟正文同级、等宽字体、整块实线边框（不是引用框那种只有左侧色条），跟 `.entry-quote` 拉开区分度。
+
+**真机验证（用户密码授权，curl 功能性测试）**：部署走完整备份→scp→md5 校验→`systemctl restart`→健康检查流程（`is-active=active`、MainPID 从 110918 变 120674、`NRestarts=0`、日志无崩溃）。功能性：`PUT /api/enhance/qol {hlSnapCjk:false}` → 设备上 `cat reading-qol.json` 确认其余 6 个键（`tapPageTurn`/`fastMono`/`refresh`/`refreshByChapter`/`refreshEvery`/`fontEnhance`）原样保留，只有 `hlSnapCjk` 变了；再 `PUT {hlSnapCjk:true}` 复原。`POST /api/enhance/battop/start`（该设备未装 battop）返回干净的 400 错误文案，不崩不 500。未登录状态下 `/api/enhance/status` 干净 401（确认新路由接进了鉴权守卫，没有意外裸露）。命令块字体清楚了（用户确认）。⚠ 用户顺手测试划线吸附（`hlSnapCjk` 全程未变、文件 mtime 事发前后都是 2026-09-02，跟这次改动无关）没观察到效果——见系统增强白皮书 §04 的独立追记，需要单独重新验证那个 C hook 现在还生不生效，不在这轮任务范围内。
+
+**离线**：`shelf-gateway` 新增 2 测（`hl_snap_cjk_defaults_true_when_missing`/`patch_preserves_unknown_keys`）；`cargo test -p shelf-gateway`（13 个）零回归；`cargo clippy -p shelf-gateway --all-targets` 无新增警告；`sh build.sh` 交叉编译 aarch64-musl release 零警告通过。
+
 ## 04｜踩坑
 
 - **xochitl CSS 引擎七条实测规则见 §03y**（尾分号 / 0 当没设 / 类规则认且压元素 / 同类先出现者胜 / 不认内联 style / text-indent 继承 / 混类选择器不废表）。改排版规则前先用诊断 EPUB 量渲染缓存，别靠肉眼。
@@ -603,7 +626,7 @@ book→「母版库 / 原生投递」、weread→「微信读书（内容源，�
 - pytest 要从仓库根跑（`uv run pytest shelf/host/tests`）。
 - 多个测试文件对同一个 `http.server` Handler 类 monkeypatch，module fixture 共用服务器线程时 patch 链互相覆盖会递归死循环（pytest 挂死）。各文件用自己的 Handler **子类** + 自己的 fixture。
 
-## 05｜真机待办（2026-09-06 刷新；2026-09-09 补记 §03ad 漫画超限分支复验、§03ae i18n 架子、§03af UI 人性化批量修复）
+## 05｜真机待办（2026-09-06 刷新；2026-09-09 补记 §03ad 漫画超限分支复验、§03ae i18n 架子、§03af UI 人性化批量修复、§03aj 管理二级 tab+系统增强开关）
 
 **未闭环**：网页 UI i18n 架子（§03ae，数据链路已真机验证——语言包端点按语言码正确分发+回退，新前端标记已 served）——剩浏览器里实际点开语言切换器、人眼确认文案真的切成英文这一步没做。网页 UI 人性化/触屏可用性一批小修（§03af，纯前端改动，同样没有浏览器截图核对实际渲染效果——禁用按钮说明文字是否真的显示、徽章点击 `alert` 是否真的弹出、`.btn-bad` 配色是否符合预期，这些都还没人眼确认过，只确认过新标记已 served）。
 
@@ -611,7 +634,7 @@ book→「母版库 / 原生投递」、weread→「微信读书（内容源，�
 
 **OTA 后固定五步**（§03v）：`xovi/rebuild_hashtable` → `xovi/start` → `SHELF_NO_BUILD=1 sh deploy.sh 10.11.99.1` → `ssh root@10.11.99.1 sh -s < packaging/chrony-cn.sh` → `packaging/wifi-watch/install.sh`。升完顺手 `shelf doctor --render` 看 CSS 引擎有没有变。/home 里的（母版库、KOReader、WiFi 钩子与 `powersave 2`、休眠屏 conf 键、qmd 文件）不用动。
 
-**已闭环（真机）**：§03ac 可插拔机制接住独立仓库线（2026-09-06 晚，WiFi 部署书架+笔记线共八服务 active）· §03f 首轮五服务 · §03g/§03h 字体分开装/子目录/HTTPS · §03j 登录/CA/mDNS · §03k 字体两 bug · §03l 传书卡＝云同步 · §03m/§03n/§03o 网页改版/细节/管理台 · §03p 质量一轮 · §03q 优化做精 + 首行缩进 v10 · §03r 母版库 Phase A/B/C + 财新重排 · §03s 质量二轮 + 格式三档 · §03t 漫画通道（host 真书探针 → CBZ；漫画不投原生）+ 分卷静默失效修 + 投原生体积门 · §03v 固件 3.28 升级 + 3.28 字体菜单 qmd（首版整份不应用：qmldiff 解析不了 `({})` 与裸 `if (` handler，改 `[]`+`{ }` 后 `appended=4 count=8`，判官＝本机 asivery/qmldiff CLI）+ appload 3.28 复活（PR #59 qmd 等长回填进 .so，系统增强白皮书 §12.1；用户点侧栏 KOReader 正常起）· §03w 原生休眠屏 `SleepScreenPath` + WiFi regdomain 真凶 + wifi-watch + chrony 国内 NTP 脚本 · §03x 退役 bind-mount 壁纸整套（`xochitl_conf` + `native.rs`）· §03y xochitl CSS 引擎七条实测规则 + 英文首段顶格 v6 + 中文 br 书段落化 · §03z 事件推送（网页 + CLI 用户确认）· §03aa 阅读线六项（渲染自检 / `doctor --render` 用户 CLI PASS / `push --wait` / TXT 切章 / Phase E ④ Gulliver 两器脚注观感 / 漫画 16 灰默认开）· §03ab 代码体检四支 · PDF 结构化重排 v4（《财新》33 期：署名/图注/链接分类、节题 h3、标题分档，非句末段 15.1%→2.7%，`test_reflow.py` 锁纯函数）· §03ad 漫画跨页拆分+白边裁切放大（火影忍者卷1真机通）+ 小体积漫画可选投原生（火影忍者卷1真机通投原生 · 阿拉蕾①/镖人真机通超限只出 CBZ 不分卷，2026-09-09）。
+**已闭环（真机）**：§03ac 可插拔机制接住独立仓库线（2026-09-06 晚，WiFi 部署书架+笔记线共八服务 active）· §03f 首轮五服务 · §03g/§03h 字体分开装/子目录/HTTPS · §03j 登录/CA/mDNS · §03k 字体两 bug · §03l 传书卡＝云同步 · §03m/§03n/§03o 网页改版/细节/管理台 · §03p 质量一轮 · §03q 优化做精 + 首行缩进 v10 · §03r 母版库 Phase A/B/C + 财新重排 · §03s 质量二轮 + 格式三档 · §03t 漫画通道（host 真书探针 → CBZ；漫画不投原生）+ 分卷静默失效修 + 投原生体积门 · §03v 固件 3.28 升级 + 3.28 字体菜单 qmd（首版整份不应用：qmldiff 解析不了 `({})` 与裸 `if (` handler，改 `[]`+`{ }` 后 `appended=4 count=8`，判官＝本机 asivery/qmldiff CLI）+ appload 3.28 复活（PR #59 qmd 等长回填进 .so，系统增强白皮书 §12.1；用户点侧栏 KOReader 正常起）· §03w 原生休眠屏 `SleepScreenPath` + WiFi regdomain 真凶 + wifi-watch + chrony 国内 NTP 脚本 · §03x 退役 bind-mount 壁纸整套（`xochitl_conf` + `native.rs`）· §03y xochitl CSS 引擎七条实测规则 + 英文首段顶格 v6 + 中文 br 书段落化 · §03z 事件推送（网页 + CLI 用户确认）· §03aa 阅读线六项（渲染自检 / `doctor --render` 用户 CLI PASS / `push --wait` / TXT 切章 / Phase E ④ Gulliver 两器脚注观感 / 漫画 16 灰默认开）· §03ab 代码体检四支 · PDF 结构化重排 v4（《财新》33 期：署名/图注/链接分类、节题 h3、标题分档，非句末段 15.1%→2.7%，`test_reflow.py` 锁纯函数）· §03ad 漫画跨页拆分+白边裁切放大（火影忍者卷1真机通）+ 小体积漫画可选投原生（火影忍者卷1真机通投原生 · 阿拉蕾①/镖人真机通超限只出 CBZ 不分卷，2026-09-09）· §03aj「管理」拆二级 tab + 系统增强开关（`hlSnapCjk`/battop 真开关：部署健康检查+`PUT /api/enhance/qol` 保留其余键+battop 未装时干净报错，用户确认命令块字体清楚了，2026-09-09）。
 
 **Phase E 实录（②③④，2026-09-06 全部闭环，用《Tell Me Your Dreams》AZW3 与《Gulliver's Travels》推进）**：
 - 洗书发现两处实现缺口并修（bookconv `wash.rs`）：① 书自带类规则 `.calibre_ {text-indent:2em}` 未统一——xochitl 不认类规则走我们的 `p{1.2em}`，KOReader 认且类规则特异性更高走 2em，**两器同字节不同缩进**；现在书 css / 内联 style 里非零 `text-indent` 一律改写成本书缩进（0 与负值保留）。② "标题后首段不缩进"只写在注释里从未实现。

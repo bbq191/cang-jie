@@ -33,6 +33,10 @@ async function j(url,opt){const r=await fetch(url,opt);if(r.status===401){locati
   let d;try{d=await r.json()}catch{d={ok:false,message:httpErr}}if(!r.ok&&d.ok!==false)d={ok:false,message:d.message||httpErr};return d}
 const postJ=async(url,body)=>{const r=await j(url,{method:'POST',body:JSON.stringify(body)});if(r.ok===false)alert(r.message||'失败');return r};
 
+/* 命令块：要人读要人抄的完整命令用这个，别再拿 .opt-note/.small 包（那套是"安静小字引用"的视觉
+   语言，命令套进去会显得不起眼、字也偏小，2026-09-09 用户反馈）。多行命令一行一个 <code>。 */
+const cmdBlock=lines=>`<div class="cmdblock">${lines.map(l=>`<code>${l}</code>`).join('')}</div>`;
+
 /* 上传区 HTML（拖放框 + 隐藏 input + 队列 + 按钮），一处生成、各页复用；uploader() 认这个 .up 容器 */
 const upHtml=(icon,label,ext,btn)=>`<div class="up"><div class="drop"><span class="big">${icon}</span>${label}</div><input type="file" multiple hidden accept="${ext.join(',')}"><ul class="q"></ul><div class="row"><button class="btn pri go">${btn}</button></div></div>`;
 
@@ -91,7 +95,7 @@ const GUIDE=`<details class="cmp"><summary>母版库怎么用？两个读器怎�
 <dt>📖 投入原生书库（xochitl）：要做笔记、批注的书</dt><dd>目录跳转、脚注、换字体、<b>直接手写批注</b>、AI 解读。学术 / 论文 / 要划线的书放这；PDF 手写定稿也放这。</dd>
 <dt>📚 加入 KOReader：消遣、查词的书</dt><dd>自由重排、<b>内置词典</b>、翻页手势。小说、漫画、外语书顺手。</dd>
 <dt>拿不准放哪？</dt><dd>先投一个。母版还在，觉得不对随时再投另一个对照——<b>不用纠结"闲书还是研读"，去向你说了算</b>（侦探小说有人当消遣、有人拿来推理画线索图；漫画有人看有人学画）。</dd>
-<dt>电脑 shelf push（进阶）</dt><dd>难搞的书走电脑：非标准格式转 EPUB、Calibre 深洗、PDF 论文重排。洗完<b>也落这个母版库</b>，去向一样在这里选。命令见「管理」页。</dd>
+<dt>电脑 shelf push（进阶）</dt><dd>难搞的书走电脑：非标准格式转 EPUB、Calibre 深洗、PDF 论文重排。洗完<b>也落这个母版库</b>，去向一样在这里选。命令见本页「入库」子页下方。</dd>
 </dl></details>`;
 
 /* 母版库「优化」档位说明（对应 /staging/optimize 的 mode） */
@@ -154,6 +158,32 @@ function renderTransfer(sec){sec.innerHTML=`
       <div class="row"><input type="text" id="arturl" placeholder="https://… 文章链接（公众号 / 博客 / 新闻）" style="flex:1;min-width:12em"><button class="btn" id="artgo">抓取进母版库</button></div>
       <div class="small" id="artmsg" style="margin-top:.3em"></div>
       <p class="small">静态网页效果好；纯 JS 页面、付费墙抓不出。单篇文章（连载分章后续）。</p>
+      <h3>电脑端 <code>shelf push</code>（进阶洗书 / PDF 重排）</h3>
+      <p class="small">难搞的书走电脑：非标准格式转 EPUB、Calibre 级深洗、PDF 论文重排、漫画转 CBZ——设备端做不到的都在这。洗完<b>也落这个母版库</b>，去向一样在下面「母版库」子页选。</p>
+      <p>命令长这样（在本仓库目录下跑；<code>shelf/host/bin/shelf</code> 就是那个命令，嫌长可 <code>alias shelf="$PWD/shelf/host/bin/shelf"</code>）：</p>
+      ${cmdBlock(['shelf/host/bin/shelf push &lt;书1&gt; [书2 …]'])}
+      <p class="small">
+        · 后面只跟<b>要投的书</b>（可一次多本）；<b>没有输出路径、也没有目标参数</b>——洗完一律落到<b>母版库</b>，放哪个读器你在下面「母版库」子页点。<br>
+        · 有 Calibre 就先洗（EPUB 深洗 / 杂格式转 EPUB / PDF 结构化重排，&gt;60MB 的 PDF 自动分卷）；漫画自动识别转 CBZ（<code>--comic/--no-comic</code> 覆盖）；<code>--no-optimize</code> 不洗原样传；<code>--to-pdf</code> 定稿成手写批注用的 PDF。<br>
+        · 和网页规则一致：<b>所有书只落母版库</b>，没有直投读器的选项。
+      </p>
+      <details class="cmp"><summary>例子 / 强在哪 / 怎么装</summary>
+      <dl class="help">
+        <dt>例子</dt>
+        <dd>${cmdBlock([
+          'shelf/host/bin/shelf push 论文.pdf        # PDF 结构化重排 → 母版库',
+          'shelf/host/bin/shelf push 小说.azw3       # 转干净 EPUB → 母版库（两个读器都能去）',
+          'shelf/host/bin/shelf push 漫画.azw3       # 自动识别漫画 → CBZ → 母版库（加入 KOReader；漫画不投原生）',
+          'shelf/host/bin/shelf push 书.epub --to-pdf # 定稿固定版式 PDF → 母版库（投 xochitl 手写批注）',
+          'shelf/host/bin/shelf push a.epub b.mobi   # 一次多本',
+          'shelf/host/bin/shelf status               # 看设备连通 / 环境',
+          'shelf/host/bin/shelf doctor',
+        ])}</dd>
+        <dt>强在哪</dt>
+        <dd>① <b>杂格式转干净 EPUB 进原生</b>：AZW3 / MOBI / AZW / PRC / FB2 直接上传只能进 KOReader，这里能转成 EPUB 投原生；② <b>Calibre 级深洗</b>：CSS 拍平比端上更彻底，排版锁死的书也能救；③ <b>PDF 论文重排</b>：多列 / 公式 / 图按阅读顺序重排到屏宽——<b>端上做不到</b>（端上 PDF 只原样直传）；④ 扫描件走 k2pdfopt。产物再叠加设备同款优化器，观感与网页直传一致。</dd>
+        <dt>怎么装</dt>
+        <dd>电脑装 <a href="https://calibre-ebook.com/" target="_blank" rel="noopener">Calibre</a>（含 ebook-convert）+ Python 3 → 克隆本仓库 → <code>cd shelf &amp;&amp; sh build.sh</code>（编出 <code>epub-optimize</code>）→ 就能用 <code>shelf/host/bin/shelf</code> 了。</dd>
+      </dl></details>
     </div>
   </div>
   <div class="subpanel">
@@ -691,57 +721,50 @@ function mountModelPanel(root,seg,title,icon,showAuto){
 }
 
 /* 管理台/引导（固定 tab，始终在——它是网关自身页面，不由服务注册表驱动） */
+/* 「管理」拆三个二级 tab（2026-09-09）：① 基石与模块（原来就有的引导/开关/卸载）② 模型管理
+   （原来挂在这页最下面，现在单独一屏，不用跟基石列表一起滚）③ 系统增强（新建，见下）。
+   shelf push 命令那张卡片已经搬到「传书」页「入库」子页——那才是它真正归属的地方（用户反馈）。 */
 function renderManage(sec){sec.innerHTML=`
-  <div class="card"><h2>引导 · 基石</h2><p class="lead">书架的功能建在 xovi + appload 之上。先用桌面端 <b>reManager</b>（或设备上的 vellum）把基石装好，KOReader 走官方仓库自装，再回这里管理书架各功能。</p>
-    <div class="kv small" id="found">检测中…</div>
-    <p class="small">下载 / 文档：<a href="https://github.com/rmitchellscott/reManager" target="_blank" rel="noopener">reManager</a>（桌面端 · vellum 生态）· <a href="https://github.com/asivery/rmpp-xovi" target="_blank" rel="noopener">xovi</a> · <a href="https://github.com/koreader/koreader/wiki" target="_blank" rel="noopener">KOReader Wiki</a></p></div>
-  <div class="card"><h2>电脑端 · <code>shelf push</code>（进阶洗书 / PDF 重排）</h2>
-    <p class="lead">难搞的书用它：非标准格式转 EPUB、Calibre 级深洗、PDF 论文重排、漫画转 CBZ——设备端做不到的都在这。</p>
-    <div class="opt-note">
-      <b>命令长这样</b>（在本仓库目录下跑；<code>shelf/host/bin/shelf</code> 就是那个命令，嫌长可 <code>alias shelf="$PWD/shelf/host/bin/shelf"</code>）：<br>
-      <code>shelf/host/bin/shelf push &lt;书1&gt; [书2 …]</code>
-      <div class="small" style="margin-top:.4em">
-        · 后面只跟<b>要投的书</b>（可一次多本）；<b>没有输出路径、也没有目标参数</b>——洗完一律落到<b>母版库</b>，放哪个读器你在网页「传书 → 母版库」里点。<br>
-        · 有 Calibre 就先洗（EPUB 深洗 / 杂格式转 EPUB / PDF 结构化重排，&gt;60MB 的 PDF 自动分卷）；漫画自动识别转 CBZ（<code>--comic/--no-comic</code> 覆盖）；<code>--no-optimize</code> 不洗原样传；<code>--to-pdf</code> 定稿成手写批注用的 PDF。<br>
-        · 和网页规则一致：<b>所有书只落母版库</b>，没有直投读器的选项。
-      </div>
+  <div class="subnav"><button class="on">🏗 基石与模块</button><button>🧠 模型管理</button><button>⚙️ 系统增强</button></div>
+  <div class="subpanel on">
+    <div class="card"><h2>引导 · 基石</h2><p class="lead">书架的功能建在 xovi + appload 之上。先用桌面端 <b>reManager</b>（或设备上的 vellum）把基石装好，KOReader 走官方仓库自装，再回这里管理书架各功能。</p>
+      <div class="kv small" id="found">检测中…</div>
+      <p class="small">下载 / 文档：<a href="https://github.com/rmitchellscott/reManager" target="_blank" rel="noopener">reManager</a>（桌面端 · vellum 生态）· <a href="https://github.com/asivery/rmpp-xovi" target="_blank" rel="noopener">xovi</a> · <a href="https://github.com/koreader/koreader/wiki" target="_blank" rel="noopener">KOReader Wiki</a></p></div>
+    <div class="card"><h2>书架功能</h2>
+      <p class="lead">每个功能可单独<b>开关</b>、<b>卸载</b>；未装的按命令安装。网关（本页）始终在。</p>
+      <details class="cmp"><summary>三态 / 开关 / 卸载 / 安装 是什么？（点开看说明）</summary>
+        <dl class="help">
+          <dt>三种状态</dt>
+          <dd><span class="badge off">未装</span> 设备上没这个程序 → 按给出的命令安装。<br>
+              <span class="badge">已装·未开</span> 程序在、后台没跑 → 网页看不到它的功能，点「开启」启用。<br>
+              <span class="badge on">已开</span> 后台在跑 → 顶部有它的标签页，功能可用。</dd>
+          <dt>开启 / 关闭</dt>
+          <dd><b>关闭＝只停后台服务</b>：网页隐藏该标签，但<b>已经生效的东西照常用</b>——已装字体仍能在阅读器里选、壁纸仍显示、KOReader 仍能打开；只是不能再用网页传 / 改它。用途是隐藏用不到的功能、减少对外暴露面。</dd>
+          <dt>常开会不会卡 / 费电？</dt>
+          <dd>不会。实测 5 个服务全部常开共约 <b>9 MB 内存</b>、开机一整天累计不到 <b>2 秒 CPU</b>（平均约 0.002%），平时都阻塞在等请求、不抢 CPU。<b>对看书 / 记笔记零可感影响，不卡、不额外费电。</b>建议全部常开，除非某功能你确定永远不用。</dd>
+          <dt>卸载</dt>
+          <dd>删掉该功能的程序、systemd 单元和相关注入文件（qmd）。<b>你传过的书 / 字体 / 壁纸等用户数据保留。</b>卸载后它从网页消失；想再用按安装命令重装。网关不能从网页关或卸——它是本管理页的宿主。</dd>
+          <dt>安装为什么不在网页做？</dt>
+          <dd>安装要重挂载只读系统分区、写系统单元，风险偏高。<b>未装功能只给命令</b>：在电脑上 SSH 跑，或走 reManager 引导，更安全。</dd>
+        </dl></details>
+      <div class="row"><button class="btn" id="allon">全部开启</button><button class="btn" id="alloff">全部关闭（留网关）</button></div>
+      <ul class="list" id="mods"></ul></div>
+  </div>
+  <div class="subpanel">
+    <div class="card"><p class="lead">笔记线转写批注（视觉模型）和问 AI（文字模型）用的云端模型。选预置组合就行，不用自己填服务地址；某类型没配 key，对应功能就用不了。</p>
+      <div id="modelcards" style="display:flex;flex-direction:column;gap:1em"></div>
     </div>
-    <details class="cmp"><summary>例子 / 强在哪 / 怎么装</summary>
-    <dl class="help">
-      <dt>例子</dt>
-      <dd><code>shelf/host/bin/shelf push 论文.pdf</code> — PDF 结构化重排 → 母版库，再到「传书 → 母版库」选去向<br>
-          <code>shelf/host/bin/shelf push 小说.azw3</code> — 转干净 EPUB → 母版库（两个读器都能去）<br>
-          <code>shelf/host/bin/shelf push 漫画.azw3</code> — 自动识别漫画 → CBZ → 母版库（点「加入 KOReader」；漫画不投原生）<br>
-          <code>shelf/host/bin/shelf push 书.epub --to-pdf</code> — 定稿固定版式 PDF → 母版库（投 xochitl 手写批注）<br>
-          <code>shelf/host/bin/shelf push a.epub b.mobi</code> — 一次多本<br>
-          <code>shelf/host/bin/shelf status</code> · <code>doctor</code> — 看设备连通 / 环境</dd>
-      <dt>强在哪</dt>
-      <dd>① <b>杂格式转干净 EPUB 进原生</b>：AZW3 / MOBI / AZW / PRC / FB2 直接上传只能进 KOReader，这里能转成 EPUB 投原生；② <b>Calibre 级深洗</b>：CSS 拍平比端上更彻底，排版锁死的书也能救；③ <b>PDF 论文重排</b>：多列 / 公式 / 图按阅读顺序重排到屏宽——<b>端上做不到</b>（端上 PDF 只原样直传）；④ 扫描件走 k2pdfopt。产物再叠加设备同款优化器，观感与网页直传一致。</dd>
-      <dt>怎么装</dt>
-      <dd>电脑装 <a href="https://calibre-ebook.com/" target="_blank" rel="noopener">Calibre</a>（含 ebook-convert）+ Python 3 → 克隆本仓库 → <code>cd shelf &amp;&amp; sh build.sh</code>（编出 <code>epub-optimize</code>）→ 就能用 <code>shelf/host/bin/shelf</code> 了。</dd>
-    </dl></details></div>
-  <div class="card"><h2>书架功能</h2>
-    <p class="lead">每个功能可单独<b>开关</b>、<b>卸载</b>；未装的按命令安装。网关（本页）始终在。</p>
-    <details class="cmp"><summary>三态 / 开关 / 卸载 / 安装 是什么？（点开看说明）</summary>
-      <dl class="help">
-        <dt>三种状态</dt>
-        <dd><span class="badge off">未装</span> 设备上没这个程序 → 按给出的命令安装。<br>
-            <span class="badge">已装·未开</span> 程序在、后台没跑 → 网页看不到它的功能，点「开启」启用。<br>
-            <span class="badge on">已开</span> 后台在跑 → 顶部有它的标签页，功能可用。</dd>
-        <dt>开启 / 关闭</dt>
-        <dd><b>关闭＝只停后台服务</b>：网页隐藏该标签，但<b>已经生效的东西照常用</b>——已装字体仍能在阅读器里选、壁纸仍显示、KOReader 仍能打开；只是不能再用网页传 / 改它。用途是隐藏用不到的功能、减少对外暴露面。</dd>
-        <dt>常开会不会卡 / 费电？</dt>
-        <dd>不会。实测 5 个服务全部常开共约 <b>9 MB 内存</b>、开机一整天累计不到 <b>2 秒 CPU</b>（平均约 0.002%），平时都阻塞在等请求、不抢 CPU。<b>对看书 / 记笔记零可感影响，不卡、不额外费电。</b>建议全部常开，除非某功能你确定永远不用。</dd>
-        <dt>卸载</dt>
-        <dd>删掉该功能的程序、systemd 单元和相关注入文件（qmd）。<b>你传过的书 / 字体 / 壁纸等用户数据保留。</b>卸载后它从网页消失；想再用按安装命令重装。网关不能从网页关或卸——它是本管理页的宿主。</dd>
-        <dt>安装为什么不在网页做？</dt>
-        <dd>安装要重挂载只读系统分区、写系统单元，风险偏高。<b>未装功能只给命令</b>：在电脑上 SSH 跑，或走 reManager 引导，更安全。</dd>
-      </dl></details>
-    <div class="row"><button class="btn" id="allon">全部开启</button><button class="btn" id="alloff">全部关闭（留网关）</button></div>
-    <ul class="list" id="mods"></ul></div>
-  <div class="card"><h2>模型管理</h2>
-    <p class="lead">笔记线转写批注（视觉模型）和问 AI（文字模型）用的云端模型。选预置组合就行，不用自己填服务地址；某类型没配 key，对应功能就用不了。</p>
-    <div id="modelcards" style="display:flex;flex-direction:column;gap:1em"></div>
+  </div>
+  <div class="subpanel">
+    <div class="card"><h3 style="margin-top:0">CJK 画线吸附</h3>
+      <p class="small">荧光笔划中文时精确吸附到词/行边界，不再"划一小段吸整行"。langhook 里的 C hook 进程内实时读这个开关，改了立即生效，不用重启任何东西；原生「设置」App「系统增强」页同一个开关，两边改哪边都算数。</p>
+      <label class="toggle"><input type="checkbox" id="erHlSnap"> 开启（默认开）</label></div>
+    <div class="card"><h3 style="margin-top:0">CJK 手写笔迹优化 <span class="badge">未上线</span></h3>
+      <p class="small">设备手写笔锋按中文书写习惯（运笔粗细/顿挫）渲染优化——跟"划线摄取转写"那条 AI 识别管线无关，这里说的是笔画本身怎么画出来。目前这个功能<b>完全没有代码地基</b>：要做需要先反编译定位 xochitl 原生笔画渲染层，摸清楚有没有可写内存的 hook 点，是独立的逆向工程课题，不是包一层开关就能上线的。这里先占位，等真正立项、探路完成后再接后端。</p></div>
+    <div class="card"><h3 style="margin-top:0">电池刺客（battop）</h3>
+      <p class="small">电量异常排查用的采样诊断进程，日常用不到。2026-08 出过一次 cgroup 死锁死机，已经修复为常驻低频采样（不再靠反复重启触发），这里的开关只是一次性启停，不会重现那次事故的触发条件。</p>
+      <div class="kv small" id="erBattop">检测中…</div>
+      <div class="row"><button class="btn" id="erBattopBtn" disabled>…</button></div></div>
   </div>`;
   const badge=(t,ok)=>`<span class="badge ${ok?'on':'off'}">${t}</span>`;
   const mvRefresh=mountModelPanel($('#modelcards',sec),'transcribe','视觉模型（转写批注）','👁',true);
@@ -762,7 +785,27 @@ function renderManage(sec){sec.innerHTML=`
       li.append(left,right);ul.appendChild(li)});};
   $('#allon',sec).onclick=async()=>{const d=await j('/api/manage');for(const m of (d.modules||[]))if(m.installable&&m.installed&&!m.running)await j('/api/manage/'+m.seg+'/start',{method:'POST'});refresh()};
   $('#alloff',sec).onclick=async()=>{if(!confirm('关闭全部领域服务（网关保留）？'))return;const d=await j('/api/manage');for(const m of (d.modules||[]))if(m.installable&&m.installed&&m.running)await j('/api/manage/'+m.seg+'/stop',{method:'POST'});refresh()};
-  refresh();sec.refresh=()=>{refresh();mvRefresh();mtRefresh()};}
+  /* 系统增强（Track 3，2026-09-09）：CJK 画线吸附是真开关（写 reading-qol.json），battop 是真开关
+     （systemctl start/stop）；CJK 手写笔迹优化是纯占位卡片，没有对应端点（上面 innerHTML 里已经
+     写死说明文字，不需要 JS 逻辑）。 */
+  const hlBox=$('#erHlSnap',sec),battopKv=$('#erBattop',sec),battopBtn=$('#erBattopBtn',sec);
+  let battopState=null;
+  const erRefresh=async()=>{const r=await j('/api/enhance/status');if(r.ok===false)return;
+    hlBox.checked=!!r.hlSnapCjk;
+    battopState=r.battop||{};
+    const b=battopState;
+    battopKv.innerHTML=!b.installed
+      ?`<b>状态</b><span>${badge('未装',false)} <span class="small">见 misc/battery-audit/battop/install.sh 手动装（这次网页只控制已装好的，不提供从网页装）</span></span>`
+      :`<b>状态</b><span>${badge(b.running?'运行中':'已装未开',!!b.running)}</span><b>最近采样</b><span>${b.lastSampleAt?new Date(b.lastSampleAt*1000).toLocaleString():'（还没有采样数据）'}</span>`;
+    battopBtn.textContent=b.running?'停止':'启动';battopBtn.disabled=!b.installed};
+  hlBox.onchange=async()=>{const want=hlBox.checked;hlBox.disabled=true;
+    const r=await j('/api/enhance/qol',{method:'PUT',body:JSON.stringify({hlSnapCjk:want})});
+    hlBox.disabled=false;if(r.ok===false){alert(r.message||'保存失败');hlBox.checked=!want}};
+  battopBtn.onclick=async()=>{if(!battopState)return;battopBtn.disabled=true;
+    const r=await j(`/api/enhance/battop/${battopState.running?'stop':'start'}`,{method:'POST'});
+    if(r.ok===false)alert(r.message||'操作失败');
+    await erRefresh()};
+  refresh();erRefresh();sec.refresh=()=>{refresh();mvRefresh();mtRefresh();erRefresh()};subtabs(sec);}
 
 (async()=>{
   // 语言包先拿到手：下面 addTab 用得到 T()，晚拿会让顶层导航先短暂显示 key 本身再跳成文字。

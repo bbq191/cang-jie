@@ -43,7 +43,8 @@ pub fn service_of(seg: &str) -> Option<&'static str> {
     by_seg(seg).map(|m| m.service)
 }
 
-fn run(cmd: &str, args: &[&str]) -> Result<String, String> {
+/// `pub(crate)`：`enhance::battop` 复用同一套 systemctl 调用（避免重新实现一遍 `Command` 样板）。
+pub(crate) fn run(cmd: &str, args: &[&str]) -> Result<String, String> {
     let out = std::process::Command::new(cmd).args(args).output().map_err(|e| format!("{cmd}: {e}"))?;
     if out.status.success() {
         Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
