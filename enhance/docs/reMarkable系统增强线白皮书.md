@@ -33,9 +33,9 @@ enhance/
 
 **`battop/`（§03b）**：✅ 真机通（历史更早，不是本线首创）。`git mv` 自 `misc/battery-audit/battop/`（含 `FINDINGS.md`），4 处仓库文档引用同步改了路径。
 
-**`handwriting-stroke/`（§03c）**：🔬 探路中，**零实现代码**。第一轮 `strings` 侦察找到 `Quill::strokev2` 笔画光栅化引擎的 RTTI 类名（`FillPencil`/`FillBallpoint`/`FillMaskedEraser`/`FillSolid_Opaque` 等）；第二轮上了 Ghidra 真机 3.28.0.172 二进制做完整分析，想反查这几个类的 vtable，**没成功**——反查出来的"vtable 候选"是另一段无关字符串（不是函数指针），说明假设的内存布局不对，这几个类甚至还不确定有没有虚函数。脚本化路子停在这，需要转 Ghidra GUI 交互排查。
+**`handwriting-stroke/`（§03c）**：🔬 探路中，**零实现代码**，但架构已经完整摸清。第一轮 `strings` 侦察找到 `Quill::strokev2` 笔画光栅化引擎的 RTTI 类名；第二轮脚本化反查 vtable 失败（错误地下结论"这几个类可能没有虚函数表"）；第三轮改用 Ghidra GUI 人工交互排查，完整走通了从 `ShapesOverlay::updateImage` 到 `StrokeRenderer` 构造再到具体的宽度插值函数 `VaryingGenerator_WidthLength::generate()`（`FUN_00f401f0`，一行代码：`宽度 = 原始值 × 缩放系数`）的完整调用链，并且**纠正了第二轮的错误结论**——这些类确实有 vtable，只是作为内联组合成员出现，第二轮的反查思路本身就找不到。
 
-**未闭环**：`handwriting-stroke/` 整条都是未闭环——连"能不能做"都还没有结论，见 §05。`hl-snap/` 和 `battop/` 都已经真机验证过，没有已知的未闭环项。
+**未闭环**：`handwriting-stroke/` 研究部分基本闭环（架构+具体函数都已定位），**但完全没有做过任何 hook/真机验证**——连"改这个函数会不会真的改变渲染出来的笔迹宽度"都还没试过，见 §05。`hl-snap/` 和 `battop/` 都已经真机验证过，没有已知的未闭环项。
 
 **命名遗留问题**：`enhance/` 跟 工程纪律 六分块「④系统增强」（`xovi-extensions/`）撞名，还没有正式理顺，见 §01。
 
@@ -92,7 +92,31 @@ enhance/
 2. 反查"谁指向这段字符串" → 各自唯一命中一次，候选 typeinfo 对象在 `0x16d0850`~`0x16d0db8` 一带。
 3. 再反查"谁指向这个 typeinfo 对象" → 各自也唯一命中一次，本以为是 vtable 起始，**dump 出来的头几个"槽位"解出来是 ASCII 文本**（`0x656b6f727473384e` 解出来字面是 `"N8stroke"`，Python 解码核实过，不是误判）——不是函数指针，是**另一段无关的字符串**，只是恰好挨在那个指针字段后面。
 
-**结论**：`.data.rel.ro`/`.rodata` 里这些 typeinfo 相关结构挨得很紧，"指针字段后面紧跟的就是 vtable"这个假设在这里不成立——命中的那个指针字段更可能是别的结构（比如某个更外层类型 `__si_class_type_info`/`__vmi_class_type_info` 的 `base_type` 字段，指向这几个模板类当基类）里的一环，不是这几个类自己的 vtable。**没有找到这几个类的虚函数表，也就还没确认它们是不是走虚函数分发的**——甚至不能排除它们根本没有虚函数（RTTI/typeid 不一定要求多态，模板类被拿去 `typeid()` 比较、丢异常、塞进类型擦除容器都会生成 typeinfo）。脚本化反查路子先停在这，需要转 Ghidra GUI 交互式排查（详见 `handwriting-stroke/README.md` 下一步清单）。
+**结论**（后来被第三轮推翻）：`.data.rel.ro`/`.rodata` 里这些 typeinfo 相关结构挨得很紧，"指针字段后面紧跟的就是 vtable"这个假设在这里不成立——命中的那个指针字段更可能是别的结构（比如某个更外层类型 `__si_class_type_info`/`__vmi_class_type_info` 的 `base_type` 字段，指向这几个模板类当基类）里的一环，不是这几个类自己的 vtable。**没有找到这几个类的虚函数表，也就还没确认它们是不是走虚函数分发的**——甚至不能排除它们根本没有虚函数（RTTI/typeid 不一定要求多态，模板类被拿去 `typeid()` 比较、丢异常、塞进类型擦除容器都会生成 typeinfo）。脚本化反查路子先停在这，需要转 Ghidra GUI 交互式排查。
+
+**第三轮：Ghidra GUI 人工交互排查，完整定位到具体函数（2026-09-09，同一天）**。用户直接问"为何以前的所有研究都没用 GUI 排查"——如实回答：不是不想用，是没有屏幕/鼠标控制类工具，驱动不了 GUI，只能走 headless 脚本；GUI 阶段改成"远程指导、用户操作截图回传"的协作模式完成。
+
+**起步先踩了个环境坑**：GUI 打开是空白页、没有菜单栏——不是工程损坏，是 Java Swing 在 Wayland 平铺式合成器（用户是 Hyprland/Sway 一类）下的经典渲染问题，`_JAVA_AWT_WM_NONREPARENTING=1` 环境变量修复，重开后正常。另外 Ghidra headless 建的工程 `.gpr` 文件本身是 0 字节属于正常现象（工程元数据实际存在 `.rep/` 目录里），不是文件损坏，走 `File → Open Project` 选中 `.gpr` 本身能正常打开，不用怀疑。
+
+**排查路径**（完整过程/每步截图判断见 `handwriting-stroke/README.md`，这里只记结论）：
+1. 从 RTTI name 字符串 `DAT_016d0810` 的**真实 Ghidra xref**（不是脚本裸扫，是分析器自动识别的两处引用）追出第一个具体类：函数 `FUN_00f36d40` 反编译后直接读到 Qt 编译进二进制的源码路径字符串 `/home/runner/work/xochitl/xochitl/src/xofm/libs/sceneview/src/shapesoverlay.cpp` 和方法名 `saveStroke`——**这批调试/异常字符串是 stripped 二进制里比符号表更可靠的类名/函数名来源**，全程靠它们一路挂上名字，不是猜出来的。
+2. 顺着 `saveStroke` 所在的 `qt_static_metacall`（moc 生成的方法分派表，`FUN_0087c290`）反查出 `ShapesOverlay`（继承 `QQuickPaintedItem`，QML 类型注册在模块 `com.remarkable` 下）完整类结构；`paint(QPainter*)` 覆写（`FUN_008b0120`）确认只是把内部 `QImage` 缓冲整张 blit 上屏，不含逐点渲染逻辑。
+3. `qt_static_metacall` 另一个分派项 `updateImage`（`FUN_008bbb80`）才是真正画像素的入口——反编译里能看到自由手写笔迹分支用 `QPainterPath::toFillPolygon()` 重采样多边形，每个重采样点重新打包回一个 14 字节点结构（字段：x/y 浮点 + 两个 u16×0.25 定点 + 方向角字节 + 压感字节），这个点结构跟前面 `FUN_00f36be0`（`saveStroke` 调试导出用的逐点写文件函数）反解出来的完全一致，两条独立路径互相印证。
+4. `updateImage` 调 `FUN_00f3e8a0`——反编译里有条调试日志字符串 `"New StrokeRenderer,"`，直接坐实这是 `StrokeRenderer` 的构造工厂；真正的构造函数 `FUN_00f3dcf0` 是个 2456 字节大对象初始化，内部逐个安装十几个 `&PTR_FUN_016d2xxx` vtable 指针——**这些地址恰好落在第二轮找到的 RTTI 字符串同一片 `.data.rel.ro` 区域**，证实 `StrokeRenderer` 把 `Fill*`/`CoverageBuffer`/`IVaryingsGenerator` 这些类当**内联组合成员**（不是独立 `new` 出来的堆对象）逐个塞进自己内存，vtable 指针构造时直接按值写入。
+5. 反过来验证：Ghidra `Show References To` 对这些组合成员的 typeinfo 地址是空的（跟第二轮撞见的问题同类——没有人存一个指向组合成员 typeinfo 的裸指针）。改用 `Search → Memory`（十六进制字节序列搜索，等价于本项目 `cj_find_metaobject` 手法但在 GUI 里能立刻看到命中上下文）直接搜 typeinfo 地址的字面字节，命中了构造函数自己的字段——**这就是第二轮结论错误的原因**：不是这些类没有 vtable，是"反查谁指向 typeinfo"这条路对内联组合成员天生找不到，得反过来从构造函数正向找。
+6. 沿着这个新方法，逐层验证出 `strokev2::CoverageBuffer`（像素覆盖率累加）、`strokev2::IVaryingsGenerator<Quill::Varying2D>`（插值生成器接口，用同样的 typeinfo→字节搜索法确认有 `VaryingGenerator_AA`/`VaryingGenerator_WidthLength`/`VaryingGenerator_ThresholdAndWidth` 三个具体实现，`base_type` 字段都指回接口自己的 typeinfo，继承关系交叉验证成立）等真实类名。
+7. **最终定位**：`VaryingGenerator_WidthLength` 的 vtable 只有 3 个槽位（析构×2 + 1 个业务方法），业务方法地址 `0x00f401f0`，反编译只有一行：
+   ```c
+   float FUN_00f401f0(float param_1, long param_2)
+   {
+     return param_1 * *(float *)(param_2 + 8);
+   }
+   ```
+   `param_1` 是点结构里的原始宽度值，`*(param_2+8)` 是生成器自带的可配置缩放系数——**宽度插值就是个线性缩放，没有额外曲线/顿挫逻辑**。这是"CJK 手写笔迹渲染优化"这个诉求目前找到的最具体的候选改动点。
+
+**跟第二轮结论的关系，明确写清楚**：§04 原有的"RTTI typeinfo 存在 ≠ 有 vtable"这条踩坑本身没错（判断方法论是对的），错的是第二轮**把这条通用原则套用到具体案例上得出的结论**——没找到 vtable不等于没有 vtable，只能说明当时那个反查手法找不到（详见新增的 §04 踩坑条目）。
+
+**这轮 GUI 排查完全没有写过一行代码、没有碰过真机**——纯静态反编译分析，`param_1` 的真实来源、改这个函数会不会真的影响渲染结果，都还没验证，见 §05。
 
 ## 03d｜Ghidra 环境搭建（2026-09-09）
 
@@ -112,10 +136,14 @@ JAVA_HOME=~/.local/share/sdkman/candidates/java/21.0.12-tem ghidra-analyzeHeadle
 - **stripped 二进制里，指向字符串的指针字段不会自动有 xref**——Ghidra 的引用分析靠"已经被定型为指针的数据"才能建立 xref，没被分析器识别/定型过的原始字节即使内容上是一个合法指针，也不会出现在 `getReferencesTo()` 里。这种情况下退回到"直接在内存里搜字节序列"（本项目 `cj_find_metaobject` 已经验证过的手法）比依赖 Ghidra 自动分析更可靠，但也更容易走偏——"扫到一个指针值"不等于"这个指针值就在我期望的那个结构体字段里"，`.data.rel.ro` 里紧密排列的多个对象会让"反查上一层"这种操作命中一个完全无关的邻居。**扫到命中不代表布局假设是对的，必须验证内容合理性**（这次是靠"dump 出来的槽位内容能不能解出人话"这个笨办法戳破了错误假设——早一点做这个校验能少走一层弯路）。
 - **工程纪律 记录会过期，而且过期的可能是"已经放弃的危险方案"**：这次踩到的不是"文档没跟上最新进展"这种常见滞后，而是文档还在推荐一条**已经因为真机变砖两次而被放弃**的路线。这种"过期文档指向危险操作"比"过期文档只是不够新"风险级别高得多，发现了要立刻改，不能当一般的文档债务处理。
 - **两个 xovi 扩展抢同一个 hook 目标会冲突**：`hl-snap.so` 和 `chinese-ime/langhook` 的 `cangjie-langhook.so` 都会 patch `FUN_00f05ad0`，同时部署行为未定义。凡是"从老项目里独立拆出一个功能子集"的场景，都要检查新旧两份产物有没有可能同时部署、目标有没有重叠，部署脚本/文档里要把这条互斥关系写清楚（已经在 `hl-snap/README.md` 里记了）。
+- **"反查 vtable 找不到"不等于"没有 vtable"，内联组合成员是反查思路的盲区**：§03c 第二轮曾错误地下结论"这几个类可能没有虚函数表"，第三轮证明它们确实有 vtable，只是作为另一个类（`StrokeRenderer`）的内联组合成员出现——vtable 指针是构造函数里按值直接写入对象内存，**没有任何地方存一个指向组合成员 typeinfo 的裸指针**，所以"反查谁指向 typeinfo"这条路对这类结构天生走不通，不是分析深度不够，是方法论本身对不上目标结构的内存布局。遇到反查走不通，先确认目标是不是"独立堆对象"（能反查）还是"别的对象的组合成员"（得反过来从容器对象的构造函数正向找）——这是比第二轮那次更早该做的判断。
+- **Ghidra `Show References To` 依赖分析器已识别的 xref，命中为空不代表真的没有引用**——`Show References To` 只查数据库里已经建立的 xref 记录，取决于分析器有没有把引用处认成"指针"类型；分析器没识别到的，即使内存里字面上就是那个地址的字节，也不会出现在结果里。Ghidra `Search → Memory`（十六进制字节序列搜索）是纯字节扫描，不依赖分析器识别，找不到 xref 时应该退回到这个而不是断定"没人引用"。
+- **stripped 二进制里，Qt 编译进二进制的调试/异常字符串（源码路径、断言文案、`QMessageLogger::warning` 里的类名/方法名字面量）是比符号表更可靠的类名/函数名来源**——本项目 xochitl 的函数符号表被剥得只剩 `FUN_xxxxx`，`Symbol Tree → Functions` 按类名/方法名搜是空的，但沿着任意一个已知函数反编译读下去，经常能撞见字面写死的源码路径/方法名/日志文案（这次连续撞见 `shapesoverlay.cpp`/`saveStroke`/`updateImage`/`"New StrokeRenderer,"` 四处），是最快的"确认这是哪个类"的手段，应该优先找这类线索，而不是先尝试反查 RTTI/vtable。
+- **Java Swing 在 Wayland 平铺式合成器下容易整窗口空白、没有菜单栏**——`_JAVA_AWT_WM_NONREPARENTING=1` 环境变量修复，遇到"GUI 程序打开是白屏"先检查 `$XDG_SESSION_TYPE` 是不是 `wayland`，不用怀疑程序本身或工程文件损坏。Ghidra headless 建的工程 `.gpr` 文件是 0 字节也是正常现象（元数据实际在 `.rep/` 目录里），同理不是文件损坏的信号。
 
 ## 05｜真机待办
 
-**未闭环**：`handwriting-stroke/` 整条——连"这几个 `Quill::strokev2` 类到底有没有虚函数"都还没确认，见 §03c 的具体待办清单（`handwriting-stroke/README.md` 有完整版本，这里不重复）。核心是需要 Ghidra GUI 交互排查，不是脚本能继续扫出来的，下一步谁来接手都可以照着清单走。
+**未闭环**：`handwriting-stroke/` ——架构+具体宽度插值函数（`VaryingGenerator_WidthLength::generate()`/`FUN_00f401f0`）都已经通过 Ghidra GUI 交互排查定位清楚（§03c 第三轮），但**完全没有做过任何 hook/真机验证**，`param_1` 的真实来源、改这个函数会不会真的影响渲染出来的笔迹宽度都还没试过，具体待办清单见 `handwriting-stroke/README.md`「下一步」——按项目"先离线摸清楚再写"纪律，动手前还要先打日志只读验证一轮，不能直接写内存。
 
 **已闭环（真机）**：`hl-snap/` 精确吸附 hook（§03a，journal 三行关键日志+健康检查+地址一致性交叉验证）；`battop/` 目录搬迁（§03b，纯文件系统操作，不涉及设备行为变化，不需要真机验证，`cargo build` 确认引用它的 `shelf-gateway` 仍能编译）。
 

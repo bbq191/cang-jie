@@ -47,6 +47,8 @@ rmfw/extracted
 rmfw/out/
 rmfw/*.bin
 ghidra-project*/*.rep/
+# Ghidra GUI 打开工程时生成的运行期锁文件，关闭/换机器后可能残留或重生成，不入库
+ghidra-project*/*.lock
 # Ghidra headless 运行产物（decompile/disasm/dump/find*/import 的 .log），可重生成，不入库
 ghidra-project*/*.log
 
