@@ -23,10 +23,20 @@ IMG_EXTS = (".jpg", ".jpeg", ".png", ".gif", ".webp")
 
 
 def spine_ordered_images(epub: zipfile.ZipFile) -> list[str]:
-    container = epub.read("META-INF/container.xml").decode("utf-8", "ignore")
-    opf_path = re.search(r'full-path="([^"]+)"', container).group(1)
+    # 2026-09-09 审计修：跟 shelf_cli/comic.py::epub_image_stats 一样包一层 try/except——中转 EPUB
+    # 缺 META-INF/container.xml、或 container.xml 没有 full-path 属性时，原来会在这里抛
+    # KeyError/AttributeError，冒到 main() 变成裸 traceback 甩给用户。解析失败按"抽不到图"处理，
+    # main() 现成的 `len(images) < 3` 分支会给出"不像漫画，放弃"这句人话，不用另外处理。
+    try:
+        container = epub.read("META-INF/container.xml").decode("utf-8", "ignore")
+        m = re.search(r'full-path="([^"]+)"', container)
+        if not m:
+            return []
+        opf_path = m.group(1)
+        opf = epub.read(opf_path).decode("utf-8", "ignore")
+    except (KeyError, zipfile.BadZipFile):
+        return []
     opf_dir = posixpath.dirname(opf_path)
-    opf = epub.read(opf_path).decode("utf-8", "ignore")
 
     manifest: dict[str, str] = {}
     for m in re.finditer(r"<item\b[^>]*>", opf):
