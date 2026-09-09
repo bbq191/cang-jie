@@ -643,6 +643,19 @@ CSS 上章节标签条复用 `.subnav` 按钮视觉（`subtabs()` 用 `$('.subna
 
 **离线**：`shelf-core` 新增 2 测（`svc_client_base_url_uses_registry_and_errors_with_service_name_when_not_running`/`enc_percent_encodes_path_segments`）；四个消费者原有测试全部不变、全绿（这层重构不改变任何可观察行为，只是内部实现换了个写法）；`cargo test --workspace`（notes+shelf 两边）全绿零警告；两边 `cargo clippy` 核对没有新增警告；`sh build.sh` 交叉编译 aarch64-musl 零警告通过。
 
+## 03aj｜低优先级收尾：字符截断函数消重复 + 有意识跳过的两项（2026-09-09，离线）
+
+三维审计低优先级清单里的几条这次一并处理：
+
+- **`trunc`/`take` 三处重复**：`mind-serve::backend`/`transcribe-serve::backend` 两份字节级相同的 `trunc()`，`mind-serve::prompt::take()` 只是多一步 `trim()`。既然两个服务都已经依赖 `vendorcfg`，收成 `vendorcfg::truncate_chars`（1 个新测试覆盖"按字符数不按字节数截断"这条最容易踩的坑——中文一个字不该被腰斩），`take()` 变成一行胶水 `vendorcfg::truncate_chars(s.trim(), n)`。
+- **`shelf-gateway::proxy` 模块文档"body 流式透传"跟实现不符**：只有请求方向真流式，响应方向整体缓冲进内存。评估过要不要顺手改成真流式（`shelf_core::http::Reply::stream`），结论是**不改行为，只改注释**——那套流式通道底层走 `tiny_http` 的 `upgrade("sse", ...)` 直接接管裸 socket，是专门为 SSE 场景设计的，拿去代理任意大小的下载响应之前要先确认对非 SSE 场景是不是语义正确（有没有 Content-Length/chunked 头协商），这条低优先级项本身的收益不值得为此承担这份不确定性，评估过程写进了 `proxy.rs` 的新模块注释里。
+- **`mind-serve`/`transcribe-serve` 的 `OpenAiCompat` 大段重复**：有意识跳过。两个文件的模块注释里本来就明确写了"专项专用，抽公共 crate 不值当"，是审计报告自己标注的"已知情并权衡过的决定，可复议但不算疏漏"——这次没有理由推翻它。
+- **投原生"超时误判+投完清母版"边界情况**（业务闭环 #3）、**"加入 KOReader"三步非原子**（业务闭环 #4）：有意识跳过。前者要做对（`keep=false` 时等渲染自检出结果再删母版）需要把 `deliver()` 从同步一次性操作改成跟 `render_check` 那条最长 10 分钟的后台轮询挂钩，改动面和当前"默认关闭+需要真上传失败+需要误判408"三重叠加的窄触发条件不成比例；后者已经有 `postJ` 的全局 `alert` 兜底（`mark`/`delete` 任一步失败用户会看到提示，不是完全静默），残余风险只是徽章短暂显示滞后，不丢数据，做真正的跨服务事务收益也对不上改动量。
+
+**离线**：`vendorcfg` 新增 1 测；`cargo test --workspace`（notes 182 个、shelf 全绿）零回归；两边 `cargo clippy` 核对没有新增警告；`sh build.sh` 交叉编译 aarch64-musl 零警告通过。
+
+三维审计（代码结构/业务闭环/UI）到此全部处理完：高优先级 3 项（摄取路径排除法反模式、触屏关键信息只在 title、认领失败孤儿文档风险）、中优先级打包项（UI 一批小修、InkHttp/PendingQueue 两处消重复）、这次的低优先级收尾——四项经评估后判断不值得做的都在上面写清楚了理由，不是漏做。
+
 ## 04｜踩坑
 
 - **外部进程直改 `.metadata` `parent="trash"` 会被运行中 xochitl 覆写**（阅读线判死）；软删/建夹只能走 QML 代理（书架 `shelf-trash-agent.qmd`）。

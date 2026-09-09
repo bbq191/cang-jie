@@ -1,8 +1,12 @@
 //! 文字后端（Strategy）：`TextModel` 一个方法——给拼好的提示词，回文本与用量。
 //! 生产实现 `OpenAiCompat`：`POST {base_url}/chat/completions`，纯文本消息，覆盖 DashScope（Qwen）与所有 OpenAI 兼容服务；
 //! 换厂只改配置 baseUrl/model/key。跟 transcribe-serve 的同名结构同一个模式，区别只是没有 `image_url`——
-//! 两边各自成文件，没有共享 crate：都是几十行胶水，抽公共 crate 不值当（shelf 工程原则"专项专用"）。
+//! 两边各自成文件，没有共享 crate：都是几十行胶水，抽公共 crate 不值当（shelf 工程原则"专项专用"）——
+//! 这条评估过没变，唯独字符截断这一个小工具函数（`trunc`）2026-09-09 审计发现三处（这里/
+//! transcribe-serve 同名函数/`mind-serve::prompt::take`）几乎逐字节重复，两边都已经依赖 `vendorcfg`，
+//! 收进去一行改动量，跟"不共享 OpenAiCompat 本体"这个决定不矛盾——只是复用一个通用字符串工具。
 use std::time::Duration;
+use vendorcfg::truncate_chars as trunc;
 
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Reply {
@@ -47,10 +51,6 @@ pub fn parse_chat_reply(v: &serde_json::Value) -> Result<Reply, String> {
     };
     let u = |k: &str| v.pointer(&format!("/usage/{k}")).and_then(|x| x.as_u64()).unwrap_or(0);
     Ok(Reply { text: text.trim().to_string(), prompt_tokens: u("prompt_tokens"), completion_tokens: u("completion_tokens") })
-}
-
-fn trunc(s: &str, n: usize) -> String {
-    if s.chars().count() <= n { s.to_string() } else { s.chars().take(n).collect::<String>() + "…" }
 }
 
 impl TextModel for OpenAiCompat {
