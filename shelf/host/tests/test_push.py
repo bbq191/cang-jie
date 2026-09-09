@@ -174,6 +174,22 @@ def test_native_limit_bytes_queries_device_then_falls_back(gateway, monkeypatch)
     assert push._native_limit_bytes(ctx) == push.NATIVE_LIMIT_FALLBACK_MB * 2**20, "假网关没实现这个接口，该退回兜底值"
 
 
+def test_native_limit_fallback_mb_matches_rust_default(monkeypatch):
+    """`NATIVE_LIMIT_FALLBACK_MB`（push.py 注释自称"跟 book-serve BookConfig::default() 一致，
+    那边改了要手动同步"）跟 Rust 侧真实默认值做一次跨语言正则核对（2026-09-09 审计建议：靠
+    人工记忆同步是"目前没出问题、迟早会有一次被漏掉"的模式，加这条低成本回归比指望记住注释更
+    可靠）。只在这个仓库布局下才断言，找不到源文件就跳过而不是报错——避免打包/CI 环境路径不
+    一样时误报。"""
+    import re
+
+    rs = Path(__file__).resolve().parents[2] / "services" / "book-serve" / "src" / "config.rs"
+    if not rs.is_file():
+        return
+    m = re.search(r"native_upload_limit_mb:\s*(\d+)", rs.read_text(encoding="utf-8"))
+    assert m, f"没在 {rs} 里找到 native_upload_limit_mb 默认值——是不是改了写法，这条检查也要跟着改"
+    assert int(m.group(1)) == push.NATIVE_LIMIT_FALLBACK_MB, "book-serve 的默认体积上限跟 push.py 的静态兜底值不一致了，两边要手动同步"
+
+
 def test_push_comic_native_pdf_added_when_small_enough(gateway, tmp_path, capsys, monkeypatch):
     """灰阶 CBZ 体积估算转 PDF 后仍在原生上限内：CBZ 和 PDF 都落母版库，两次独立入库。"""
     src = tmp_path / "manga.cbz"
