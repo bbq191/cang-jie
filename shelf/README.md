@@ -76,7 +76,7 @@ shelf/
 │   └── src/bin/epub_optimize.rs         host/设备共用 CLI（wash_epub.sh 末步）
 ├── crates/shelf-core/                 共享底座：paths(XDG) · formats(格式白名单) · registry · multipart(流式) · asset(AssetStore+上传模板+receipt) · xochitl_conf(休眠屏键) · events(事件总线+SSE)
 │                                      · http(Router/bind/JsonBody/Guard) · config · fs(原子写/plain_name/unique) · clock(时间戳唯一出处) · xochitl 注入/找书/页数 · fswatch(常驻+限时) · tls/auth/mdns/netinfo/ttf
-├── services/book-serve/               staging.rs(母版库领域：入库/优化/落库) · sidecar.rs(落库记录边车) · render_check.rs(投原生后渲染自检) · spool.rs(inbox 队列) · api.rs(纯 HTTP 适配) · service_state.rs
+├── services/book-serve/               staging.rs(母版库领域：入库/优化/落库) · sidecar.rs(落库记录边车) · render_check.rs(投原生后渲染自检) · trash.rs(原生回收站队列) · mkdir.rs(原生建文件夹队列) · spool.rs(inbox 队列) · api.rs(纯 HTTP 适配) · service_state.rs
 ├── services/koreader-serve/           koreader.rs(目录模型+KoStore) · config.rs(ConfigSync+merge.lua) · main.rs
 ├── services/{font-serve,wallpaper-serve}/
 ├── services/shelf-gateway/            auth/proxy/manage/events(Hub 汇聚)；ui/{index.html,style.css,app.js,auth.css} 真文件，编译期 include_str! 拼成单页（CI node --check）
