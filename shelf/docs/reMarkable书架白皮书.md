@@ -535,7 +535,7 @@ book→「母版库 / 原生投递」、weread→「微信读书（内容源，�
 
 **代码落点**：`shelf/host/calibre/comic_gray.py`（跨页拆分/白边裁切/放大本体，`looks_like_spread`/`find_gutter_x`/`split_spread`/`content_bbox`/`crop_border`）；`shelf/crates/bookconv/src/convert/cbz.rs::cbz_to_pdf`（本体未删过）；`shelf/crates/bookconv/src/bin/cbz2pdf.rs`（新 CLI，风格照抄 `epub_optimize.rs`）；`shelf/host/shelf_cli/calibre_bridge.py::_cbz2pdf_bin/cbz_to_pdf`（定位编译产物照抄 `wash_epub.sh` 找 `epub-optimize` 的顺序：环境变量 `CBZ2PDF_BIN` 覆盖 → PATH → `shelf/target/release/` 兜底）；`shelf/host/shelf_cli/commands/push.py::comic_prepare/_native_limit_bytes`。
 
-## 03ae｜网页 UI i18n 架子：主界面外壳 + 顶层导航（2026-09-09，离线，⚠️ 待真机验证）
+## 03ae｜网页 UI i18n 架子：主界面外壳 + 顶层导航（2026-09-09，部分真机验证）
 
 用户要求"考虑增加 UI 页面 i18n，可配置各国语言文件"。调研坐实现状：`app.js` 约 383 行（52%）+ `ui.rs` 35 行是中文硬编码，且不少是"条件分支+变量插值"的复合文案，登录页/改密码页更是 Rust 端独立拼接的一套机制，机械抽取全部工作量大、风险高。跟用户核实范围后按推荐方案落地：**先搭架子 + 只迁移主界面外壳与顶层导航**，登录页/改密码页与各模块正文文案（字体/词典/壁纸/传书/笔记的具体内容、批量操作提示等）暂不动，留作后续候选。
 
@@ -547,7 +547,7 @@ book→「母版库 / 原生投递」、weread→「微信读书（内容源，�
 
 **离线**：新增语言文件 key 集合一致性测试（`locale_files_have_identical_key_sets`，防止漏改一份 JSON 导致运行时查不到 key）+ 语言回退测试（`locale_json_falls_back_to_chinese_for_unknown_lang`）；`cargo test -p shelf-gateway` 9→11；`node --check app.js` 通过；`cargo clippy --all-targets` 核对没有新增警告；`sh build.sh` 交叉编译 aarch64-musl 零警告通过。
 
-**⚠️ 还没真机验证**：浏览器手动切换语言，确认已迁移的主界面文案（顶部 logo/导航/tab 标题）正确切换，未迁移部分（登录页、各模块正文）保持中文不受影响；语言切换器本身也还没人眼看过。
+**部分真机验证（2026-09-09）**：`curl` 真机确认三种情形都对——`/ui/locales/zh-CN.json`/`/ui/locales/en-US.json` 各自返回对应语言正确内容、`/ui/locales/fr-FR.json`（不认识的语言码）正确落回中文而不是 404/空白；主页 HTML 真机确认已经在served（`id="langsel"`/`id="applogo"`/`id="apptitle"` 等新标记都在）；服务部署后 `NRestarts=0`。**没做的部分**：浏览器里实际点开语言切换器、肉眼看文案真的切换成英文——这需要真实浏览器渲染，这次只做到"数据链路通"（服务端按语言码正确分发 + 前端资源已经served），没有做到"人眼看过切换后的页面"，跟这条线一贯的"前端可视渲染未经人眼确认"缺口一致。
 
 ## 04｜踩坑
 
@@ -566,7 +566,7 @@ book→「母版库 / 原生投递」、weread→「微信读书（内容源，�
 
 ## 05｜真机待办（2026-09-06 刷新；2026-09-09 补记 §03ad 漫画超限分支复验、§03ae i18n 架子）
 
-**未闭环**：网页 UI i18n 架子（§03ae，离线已完成，⚠️ 真机未验证）——浏览器切换语言，确认主界面文案（logo/导航/tab 标题）正确切换，未迁移部分保持中文；语言切换器本身也要人眼看一遍。
+**未闭环**：网页 UI i18n 架子（§03ae，数据链路已真机验证——语言包端点按语言码正确分发+回退，新前端标记已 served）——剩浏览器里实际点开语言切换器、人眼确认文案真的切成英文这一步没做。
 
 镖人/阿拉蕾①的"漫画体积超原生上传上限、只出 CBZ 不分卷"分支已于 2026-09-09 真机复验通过（§03ad，两本各自 `shelf push --wait` 成功、母版库确认只落 `.gray.cbz` 无伴生 PDF、无分卷痕迹）。2026-09-06 当天测试书已全部清掉（五本用户手删、最后两本由回收站代理软删）；`push --wait` "睡着→点亮→续传"的时序在日常使用里顺手验过。
 
