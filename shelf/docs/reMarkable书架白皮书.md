@@ -15,7 +15,7 @@
 3. **专项专用可插拔**：不做单体，按领域拆服务。
 4. **不引用旧项目 crate、不对接旧路径**：能力只许剥离移植；不读写 `/home/root/weread/**`；旧 wr-serve 微读线原样兜底。
 
-## 00b｜现状总览（2026-09-06，读本文其余历史节前先看这里）
+## 00b｜现状总览（2026-09-09 刷新，读本文其余历史节前先看这里）
 
 **架构**：网关（`0.0.0.0:8778`，HTTPS 私有 CA + 登录页密码 / CLI Basic + mDNS `shelf.local`；单页 UI 源码在 `services/shelf-gateway/ui/` 真文件，编译期 `include_str!`）+ 四个 loopback 领域服务（book 8790 / koreader 8791 / font 8792 / wallpaper 8793）+ 运行时注册表驱动 tab + 事件总线（各服务 `GET /events` → 网关 `Hub` 汇聚 `GET /api/events`，网页零轮询、host `shelf events`，§03z）。设备固件 **3.28.0.172**（2026-09-05 从 3.27.3.0 升级，实录 §03v；appload 0.5.3 经 qmd 回填补丁在 3.28 复活），KOReader v2026.07.1。
 
@@ -29,7 +29,7 @@
 
 **host CLI**（`shelf`）：`push`（Calibre 洗书 / PDF 结构化重排 / TXT 切章 / 漫画→CBZ→16 灰；`--wait` 设备睡了探 `/health` 等醒；`--no-eink-gray` 要原图）· `doctor --render`（排版回归探针：投探针书→取回 xochitl 渲染缓存→pymupdf 量顶格/缩进→PASS/FAIL→探针自动进原生回收站，固件 OTA 后跑一次）· `events` · font/wallpaper/koreader/inbox/status/passwd。
 
-**代码落点**：book-serve `staging.rs`（领域）/ `sidecar.rs`（落库记录边车）/ `render_check.rs`（渲染自检）/ `trash.rs`（原生回收站队列，执行方是 `xovi/shelf-trash-agent.qmd`）/ `mkdir.rs`（原生建文件夹队列，执行方是 `xovi/shelf-mkdir-agent.qmd`，2026-09-07 首个用途是 note-serve 生成《书名》笔记本文件夹）/ `spool.rs`（inbox 队列）/ `api.rs`（纯适配）；koreader-serve 只做"从母版库 adopt"+字体/词典/配置同步（不依赖 bookconv）；shelf-core `clock`（时间戳唯一出处）、`xochitl`（注入 + 找书/页数）、`fswatch`（常驻 + 限时）、`events`；host `calibre/epub_skel.py`（三处手搓 EPUB 骨架收编）、`calibre_bridge._run_json`、`transport._open`（§03ab）；`comic.py` 漫画探针；bookconv CLI `epub-optimize`（与设备同一函数）。
+**代码落点**：book-serve `staging.rs`（领域）/ `sidecar.rs`（落库记录边车）/ `render_check.rs`（渲染自检）/ `pending_queue.rs`（**新增**，2026-09-09 §03ag：`PendingQueue<T>` 持久化+入队去重+剔除的共用骨架）/ `trash.rs`（原生回收站队列，执行方是 `xovi/shelf-trash-agent.qmd`，现在包一层 `PendingQueue<Pending>`）/ `mkdir.rs`（原生建文件夹队列，执行方是 `xovi/shelf-mkdir-agent.qmd`，同样包 `PendingQueue<Pending>`；**2026-09-07 首个用途是 note-serve 生成《书名》笔记本文件夹，但 note-serve 2026-09-09 起已经改成复用书本自己的设备文件夹、不再调用这条链路了，当前消费方存疑，见 `mkdir.rs` 模块注释与 `notes/docs/reMarkable笔记白皮书.md` §03ae**）/ `spool.rs`（inbox 队列）/ `api.rs`（纯适配）；koreader-serve 只做"从母版库 adopt"+字体/词典/配置同步（不依赖 bookconv）；shelf-core `clock`（时间戳唯一出处）、`xochitl`（注入 + 找书/页数）、`fswatch`（常驻 + 限时）、`events`、`registry`（**2026-09-09 新增 `SvcClient`/`enc`**，§03ai：按注册表建带标准超时的 HTTP 客户端骨架 + `percent_encode` 薄封装，供跨服务调用消重复用——四个消费者全在 `notes/` 那条线，物理代码落在这里，见 §03ai）；host `calibre/epub_skel.py`（三处手搓 EPUB 骨架收编）、`calibre_bridge._run_json`、`transport._open`（§03ab）；`comic.py` 漫画探针；bookconv CLI `epub-optimize`（与设备同一函数）。
 
 **已删（别再找）**：漫画 CBZ→PDF **分卷**投原生整条（`POST /staging/to-pdf`、`push --mono`，§03t 末，被否决方案）——⚠ `cbz2pdf` bin 本身 2026-09-08 已以新形态（体积门控、不分卷）复活，见 §03ad，别再当"已删"找不到；book-serve `POST /?target=native|annot` 直投路与 `target.rs`/`pipeline.rs`（Strategy/Pipeline）、`/targets`、`done/` LRU；koreader-serve 直传 `POST /books` 与 `optimizeEpub`；网页读器页的传书区与 KOReader 书库浏览；host `push -t/--direct/--quality`、config `default_target/quality`；`BookConfig.optimizeDirectEpub/comicMono`；壁纸 bind-mount 整套（§03x）与安装器里的旧壁纸/bind 迁移块（§03ab）；`paths::data_root`、`htmlproc::has_internal_anchor`、`optimize::is_current_version`（§03ab）。
 
@@ -39,7 +39,7 @@
 
 **设备杂项（§03v/§03w，全真机通）**：3.28 字体菜单 qmd 已通（qmldiff 语法坑，§04）；原生休眠屏 `SleepScreenPath=current.png` 满屏且随轮换，bind-mount 整套已退役（§03x，`shelf_core::xochitl_conf` + wallpaper-serve `native.rs`）；WiFi 连上恰 60 秒必掉的真凶＝cfg80211 regdomain 宽限（精简 regdb 的 CN 无 5150–5350，路由 5G 信道 36 被判非法）→ 连接锁 2.4G + `powersave 2`，`packaging/wifi-watch` 常驻固化（§03w）；离 USB 数秒自动休眠关 WiFi 是设备正常行为（`push --wait` 应对）；chrony 国内 NTP `packaging/chrony-cn.sh`；OTA 后五步恢复见 §05（README 有"OTA 与恢复"表）。
 
-**未闭环**：无（§05）。Phase E ②③④、阅读线六项、代码体检、漫画超限分支复验均已闭环。
+**未闭环**：网页 UI i18n 架子（§03ae）+ UI 人性化/触屏可用性一批小修（§03af）——两者都只做到"数据链路/代码逻辑确认对"，浏览器里人眼实际确认渲染效果这一步都还没做，详见 §05。Phase E ②③④、阅读线六项、代码体检、漫画超限分支复验均已闭环。
 
 ## 01｜架构决策
 
@@ -484,7 +484,7 @@ book→「母版库 / 原生投递」、weread→「微信读书（内容源，�
 - 3.28 锚点核实：从设备 `/usr/bin/xochitl` 解出 556 个 QML（`extract_qml.py`），Sidebar.qml（blob qml_00dcd9d7）仍是 `#root > ColumnLayout#filterColumn`，`NavigationManager.activeContext.{explorer.entityListModel,selection}` 与 `selectionMoveToTrash` 都在（qml_00dcfe48）；本机重建 asivery/qmldiff CLI 用设备 hashtab 离线 `apply-diffs` 一次通过，再 `xovi/start` 上机。
 - 真机：xochitl 启动时不触发（进的是上次视图），投一本书 → `rowsInserted` → 5 s 内 `SHELF-TRASH: moved 2 to trash`（新探针 + 一本排队的旧测试书），队列清空、`parent:"trash"` 由 xochitl 自己写入。名字守卫真机验证：同 uuid 配错名 400。
 
-**原生建文件夹代理（2026-09-07，`xovi/shelf-mkdir-agent.qmd` + book-serve `mkdir.rs`；给 `notes/` note-serve 用）**：note-serve 生成《书名》一章一本，`Xochitl::upload` 找不到目标文件夹只会 best-effort 落库根——建文件夹跟软删一样，外部进程没有合法通道，必须走 xochitl 自己的代码路。同一轮 `extract_qml.py` 全量解出真机 QML（对拍固件 md5 952f1e28f...）反解出这条路：`library-ui/window/create-collection` 对话框确认按钮调 `root.library.createCollection(parentFolderId, name)`，`root.library` 在别处（如 `PageSelection{library:Library}`）被绑定为**裸全局单例 `Library`**（`import xofm.libs.library`；跟 `LibraryController` 不是同一个对象，只有 `Library` 才有 `createCollection`）；顶层（书库根）`parentFolderId` = 空字符串（`currentFolderId` 声明处缺省值就是 `""`，跟本项目"根 parent 为空串"的一贯约定一致）。**没有点开那个新建文件夹对话框做交叉验证**（会真建一个用户可见文件夹，干扰更高），这条结论止于"反编译 + 静态调用链一致"，用真实业务场景（note-serve）间接验证。锚点选 `MainView.qml`（`cardhw-notify.qmd` 用过的同一份文件）而不是 Sidebar：Sidebar 没 `import xofm.libs.library`，要用得先加一条 `IMPORT`，而 qmldiff 的 `IMPORT` 语句强制要显式版本号，源文件是 Qt6 无版本 import，硬造版本号风险不可控；MainView 本来就有这两个 import，改动面更小。Timer 8 s 轮询 `GET 127.0.0.1:8790/mkdir/pending`（没有类似 rowsInserted 的天然事件可等——建夹必须先于 `/upload` 发生，不能等上传后的事件才反应，只能轮询，量级同 cardhw 的 5 s/trash 的 4 s）。book-serve `mkdir.rs`（`MkdirQueue`，跟 `trash.rs` 同款套路）：`POST /mkdir/add {name}` 入队（已存在就不入队）、`GET /mkdir/pending` 拉取执行、顺手把已经真实建出来的名字剔除（无需 QML 端 ack）。
+**原生建文件夹代理（2026-09-07，`xovi/shelf-mkdir-agent.qmd` + book-serve `mkdir.rs`；当时是给 `notes/` note-serve 用，⚠ 2026-09-09 起 note-serve 已经改成复用书本自己的设备文件夹、不再调用这条链路，当前消费方存疑，见 `mkdir.rs` 模块注释与 notes 白皮书 §03ae——下面这段反编译/设计记录本身仍然是这套机制真实可用的证据，只是"给谁用"这句话已经过期）**：note-serve 生成《书名》一章一本，`Xochitl::upload` 找不到目标文件夹只会 best-effort 落库根——建文件夹跟软删一样，外部进程没有合法通道，必须走 xochitl 自己的代码路。同一轮 `extract_qml.py` 全量解出真机 QML（对拍固件 md5 952f1e28f...）反解出这条路：`library-ui/window/create-collection` 对话框确认按钮调 `root.library.createCollection(parentFolderId, name)`，`root.library` 在别处（如 `PageSelection{library:Library}`）被绑定为**裸全局单例 `Library`**（`import xofm.libs.library`；跟 `LibraryController` 不是同一个对象，只有 `Library` 才有 `createCollection`）；顶层（书库根）`parentFolderId` = 空字符串（`currentFolderId` 声明处缺省值就是 `""`，跟本项目"根 parent 为空串"的一贯约定一致）。**没有点开那个新建文件夹对话框做交叉验证**（会真建一个用户可见文件夹，干扰更高），这条结论止于"反编译 + 静态调用链一致"，用真实业务场景（note-serve）间接验证。锚点选 `MainView.qml`（`cardhw-notify.qmd` 用过的同一份文件）而不是 Sidebar：Sidebar 没 `import xofm.libs.library`，要用得先加一条 `IMPORT`，而 qmldiff 的 `IMPORT` 语句强制要显式版本号，源文件是 Qt6 无版本 import，硬造版本号风险不可控；MainView 本来就有这两个 import，改动面更小。Timer 8 s 轮询 `GET 127.0.0.1:8790/mkdir/pending`（没有类似 rowsInserted 的天然事件可等——建夹必须先于 `/upload` 发生，不能等上传后的事件才反应，只能轮询，量级同 cardhw 的 5 s/trash 的 4 s）。book-serve `mkdir.rs`（`MkdirQueue`，跟 `trash.rs` 同款套路）：`POST /mkdir/add {name}` 入队（已存在就不入队）、`GET /mkdir/pending` 拉取执行、顺手把已经真实建出来的名字剔除（无需 QML 端 ack）。
 - 真机（同日）：`POST /upload` 先起了个坑——`/home/root/xovi/start` 头一次跑完 `Job for xochitl.service canceled`，`/etc/systemd/system/xochitl.service.d/` 事后检查是空的（LD_PRELOAD 等全部没进程环境），本机没装 `xovi-reenable.service`、纯 vellum tmpfs 机制这次没吃上；**原地重跑一次 `xovi/start` 干净成功**（新 PID 环境变量核对齐全）。这不是 mkdir qmd 的问题，是这套 tmpfs 持久化本身偶发不稳，记一笔：`xovi/start` 跑完务必核对新 PID 的 `LD_PRELOAD`/`XOVI_ROOT` 环境变量，不能只看 `systemctl is-active`。
 - 真机（正式验证）：`journalctl` 见 `[qmldiff]: Loading file shelf-mkdir-agent.qmd` + `Processing file .../MainView.qml...` 无解析错误；note-serve 生成新章节（目标文件夹不存在）→ book-serve `mkdir` 队列即时出现 `《人骨拼圖》` → ~80 s 内（Timer 首次触发时机 + 8 s 周期）日志 `SHELF-MKDIR: created 《人骨拼圖》`、书库真多出一个 `CollectionType` 文件夹、队列自动清空；**再生成一次同书**，新文档 `parent` 字段正确指向刚建出来的文件夹 uuid（旧的、建夹前落根目录的那份原样留在根，没有被追加挪动——这是设计内行为，不是遗留 bug）；重复触发不产生重名文件夹（`add()`/`pending()` 双重"已存在即不建"兜底真机成立）。全程 `NRestarts=0`，五个服务与 xochitl 健康检查干净。
 
@@ -580,6 +580,14 @@ book→「母版库 / 原生投递」、weread→「微信读书（内容源，�
 
 **离线**：纯注释改动，`cargo test -p shelf-gateway` 不受影响；`sh build.sh` 交叉编译 aarch64-musl 零警告通过。
 
+## 03ai｜`shelf-core::registry` 新增 `SvcClient`/`enc`（2026-09-09，离线，代码改在这边、消费方全在 notes 那条线）
+
+三维审计的代码结构那一路发现 `notes/` 三个服务（`mind-serve`/`note-serve`/`transcribe-serve`）各自的 `ink.rs`（访问 ink-serve 的 HTTP 客户端）、`note-serve::trash.rs`（访问 book-serve 回收站队列的客户端）——四处 `struct{paths,agent}`、`new()`、`base()`、`get_json()`、`enc()` 几乎逐字节相同。这条重复只能在 `shelf-core` 修：`registry` 本来就管服务发现，加一层"按发现结果建客户端"是同一职责的自然延伸，且笔记线四个消费者已经全部依赖 `shelf-core`。新增 `SvcClient::new(paths, service, timeout_secs)` + `base()`/`get_json()`/`post_json()` + 逃生舱 `agent()`（`transcribe-serve::crop()` 要下载原始字节不是 JSON，走这个）；顺手把 `enc()` 也收成 `registry::enc()`（薄封装 `multipart::percent_encode`）。
+
+**这次改动的落点在 `shelf/crates/shelf-core/src/registry.rs`，但当前 shelf 自身代码（`services/`、`crates/bookconv`）零处调用 `SvcClient`**——纯粹是为了接住 notes 线的消重复需求；四个消费者改造、具体重复证据、错误文案格式等细节记在 `notes/docs/reMarkable笔记白皮书.md` §03ai（两边巧合用了同一个字母，不是同一节，注意区分：那边是"消费方视角"，这边是"shelf-core 这次多了什么"）。这条延续了 §03ac"笔记线自己的架构决策记在它自己的白皮书，本文只记'它那边为了接住我们、改了什么'"的一贯原则，反过来也成立——shelf-core 为了接住 notes 的需求改了什么，本文也该记一笔，不能完全空白。
+
+**离线**：`shelf-core` 新增 2 测（`svc_client_base_url_uses_registry_and_errors_with_service_name_when_not_running`/`enc_percent_encodes_path_segments`）；`cargo test --workspace`（shelf 51 个）零回归；`cargo clippy -p shelf-core` 无新增警告；`sh build.sh` 交叉编译 aarch64-musl 零警告通过。
+
 ## 04｜踩坑
 
 - **xochitl CSS 引擎七条实测规则见 §03y**（尾分号 / 0 当没设 / 类规则认且压元素 / 同类先出现者胜 / 不认内联 style / text-indent 继承 / 混类选择器不废表）。改排版规则前先用诊断 EPUB 量渲染缓存，别靠肉眼。
@@ -595,9 +603,9 @@ book→「母版库 / 原生投递」、weread→「微信读书（内容源，�
 - pytest 要从仓库根跑（`uv run pytest shelf/host/tests`）。
 - 多个测试文件对同一个 `http.server` Handler 类 monkeypatch，module fixture 共用服务器线程时 patch 链互相覆盖会递归死循环（pytest 挂死）。各文件用自己的 Handler **子类** + 自己的 fixture。
 
-## 05｜真机待办（2026-09-06 刷新；2026-09-09 补记 §03ad 漫画超限分支复验、§03ae i18n 架子）
+## 05｜真机待办（2026-09-06 刷新；2026-09-09 补记 §03ad 漫画超限分支复验、§03ae i18n 架子、§03af UI 人性化批量修复）
 
-**未闭环**：网页 UI i18n 架子（§03ae，数据链路已真机验证——语言包端点按语言码正确分发+回退，新前端标记已 served）——剩浏览器里实际点开语言切换器、人眼确认文案真的切成英文这一步没做。
+**未闭环**：网页 UI i18n 架子（§03ae，数据链路已真机验证——语言包端点按语言码正确分发+回退，新前端标记已 served）——剩浏览器里实际点开语言切换器、人眼确认文案真的切成英文这一步没做。网页 UI 人性化/触屏可用性一批小修（§03af，纯前端改动，同样没有浏览器截图核对实际渲染效果——禁用按钮说明文字是否真的显示、徽章点击 `alert` 是否真的弹出、`.btn-bad` 配色是否符合预期，这些都还没人眼确认过，只确认过新标记已 served）。
 
 镖人/阿拉蕾①的"漫画体积超原生上传上限、只出 CBZ 不分卷"分支已于 2026-09-09 真机复验通过（§03ad，两本各自 `shelf push --wait` 成功、母版库确认只落 `.gray.cbz` 无伴生 PDF、无分卷痕迹）。2026-09-06 当天测试书已全部清掉（五本用户手删、最后两本由回收站代理软删）；`push --wait` "睡着→点亮→续传"的时序在日常使用里顺手验过。
 
