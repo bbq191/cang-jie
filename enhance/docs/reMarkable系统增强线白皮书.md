@@ -105,14 +105,7 @@ enhance/
 4. `updateImage` 调 `FUN_00f3e8a0`——反编译里有条调试日志字符串 `"New StrokeRenderer,"`，直接坐实这是 `StrokeRenderer` 的构造工厂；真正的构造函数 `FUN_00f3dcf0` 是个 2456 字节大对象初始化，内部逐个安装十几个 `&PTR_FUN_016d2xxx` vtable 指针——**这些地址恰好落在第二轮找到的 RTTI 字符串同一片 `.data.rel.ro` 区域**，证实 `StrokeRenderer` 把 `Fill*`/`CoverageBuffer`/`IVaryingsGenerator` 这些类当**内联组合成员**（不是独立 `new` 出来的堆对象）逐个塞进自己内存，vtable 指针构造时直接按值写入。
 5. 反过来验证：Ghidra `Show References To` 对这些组合成员的 typeinfo 地址是空的（跟第二轮撞见的问题同类——没有人存一个指向组合成员 typeinfo 的裸指针）。改用 `Search → Memory`（十六进制字节序列搜索，等价于本项目 `cj_find_metaobject` 手法但在 GUI 里能立刻看到命中上下文）直接搜 typeinfo 地址的字面字节，命中了构造函数自己的字段——**这就是第二轮结论错误的原因**：不是这些类没有 vtable，是"反查谁指向 typeinfo"这条路对内联组合成员天生找不到，得反过来从构造函数正向找。
 6. 沿着这个新方法，逐层验证出 `strokev2::CoverageBuffer`（像素覆盖率累加）、`strokev2::IVaryingsGenerator<Quill::Varying2D>`（插值生成器接口，用同样的 typeinfo→字节搜索法确认有 `VaryingGenerator_AA`/`VaryingGenerator_WidthLength`/`VaryingGenerator_ThresholdAndWidth` 三个具体实现，`base_type` 字段都指回接口自己的 typeinfo，继承关系交叉验证成立）等真实类名。
-7. **最终定位**：`VaryingGenerator_WidthLength` 的 vtable 只有 3 个槽位（析构×2 + 1 个业务方法），业务方法地址 `0x00f401f0`，反编译只有一行：
-   ```c
-   float FUN_00f401f0(float param_1, long param_2)
-   {
-     return param_1 * *(float *)(param_2 + 8);
-   }
-   ```
-   `param_1` 是点结构里的原始宽度值，`*(param_2+8)` 是生成器自带的可配置缩放系数——**宽度插值就是个线性缩放，没有额外曲线/顿挫逻辑**。这是"CJK 手写笔迹渲染优化"这个诉求目前找到的最具体的候选改动点。
+7. **定位到 `VaryingGenerator_WidthLength` 的业务方法地址 `0x00f401f0`**（vtable 只有 3 个槽位：析构×2 + 1 个业务方法）。**⚠️ 2026-09-09 晚间勘误**：这里当时只信了反编译 C 代码（`return param_1 * *(float*)(param_2+8);`，看起来是一行线性缩放），没有交叉核实原始汇编——事后按项目"反编译要交叉核实"纪律补查，发现真实签名是 **3 个 float 入参 + 1 个对象指针、产出一对 `{float,float}`**（用了 `[x0+8]` 和 `[x0+0xc]` 两个配置字段，不是一个），反编译器把这个函数简化错了；而且 `getReferencesTo` 显示 `FUN_00f401f0` **从没有被真实调用点引用过**，`FUN_00f3f9d0` 里的宽度公式看起来是内联计算不是在调它——**这个函数是否真的会被真机执行到，静态反编译从来没有坐实过**。"这是最具体的候选改动点"这句断言收回，详见 `handwriting-stroke/README.md`「勘误」一节，改动目标改回确认会执行的 `FUN_00f3f9d0` 内联公式。
 
 **跟第二轮结论的关系，明确写清楚**：§04 原有的"RTTI typeinfo 存在 ≠ 有 vtable"这条踩坑本身没错（判断方法论是对的），错的是第二轮**把这条通用原则套用到具体案例上得出的结论**——没找到 vtable不等于没有 vtable，只能说明当时那个反查手法找不到（详见新增的 §04 踩坑条目）。
 
@@ -155,6 +148,7 @@ JAVA_HOME=~/.local/share/sdkman/candidates/java/21.0.12-tem ghidra-analyzeHeadle
 - **Ghidra `Show References To` 依赖分析器已识别的 xref，命中为空不代表真的没有引用**——`Show References To` 只查数据库里已经建立的 xref 记录，取决于分析器有没有把引用处认成"指针"类型；分析器没识别到的，即使内存里字面上就是那个地址的字节，也不会出现在结果里。Ghidra `Search → Memory`（十六进制字节序列搜索）是纯字节扫描，不依赖分析器识别，找不到 xref 时应该退回到这个而不是断定"没人引用"。
 - **stripped 二进制里，Qt 编译进二进制的调试/异常字符串（源码路径、断言文案、`QMessageLogger::warning` 里的类名/方法名字面量）是比符号表更可靠的类名/函数名来源**——本项目 xochitl 的函数符号表被剥得只剩 `FUN_xxxxx`，`Symbol Tree → Functions` 按类名/方法名搜是空的，但沿着任意一个已知函数反编译读下去，经常能撞见字面写死的源码路径/方法名/日志文案（这次连续撞见 `shapesoverlay.cpp`/`saveStroke`/`updateImage`/`"New StrokeRenderer,"` 四处），是最快的"确认这是哪个类"的手段，应该优先找这类线索，而不是先尝试反查 RTTI/vtable。
 - **Java Swing 在 Wayland 平铺式合成器下容易整窗口空白、没有菜单栏**——`_JAVA_AWT_WM_NONREPARENTING=1` 环境变量修复，遇到"GUI 程序打开是白屏"先检查 `$XDG_SESSION_TYPE` 是不是 `wayland`，不用怀疑程序本身或工程文件损坏。Ghidra headless 建的工程 `.gpr` 文件是 0 字节也是正常现象（元数据实际在 `.rep/` 目录里），同理不是文件损坏的信号。
+- **反编译 C 代码简化过头、必须交叉核实原始汇编——这次真撞见了，不是纪律走过场**：`VaryingGenerator_WidthLength::generate()`（`FUN_00f401f0`）反编译显示成"1 个 float 入参、一行线性缩放"，原始汇编显示真实签名是"3 个 float 入参+1 个对象指针、产出一对 `{float,float}`"，用了两个配置字段不是一个——反编译器把多寄存器传参/HFA 返回值简化丢了信息。**更严重的次生错误**：当时信了简化后的错误结论，直接写进"最终结论"里当成"最具体的候选改动点"宣称完成，没有先确认这个函数在真实调用链上有没有被引用（`getReferencesTo` 其实早就显示零真实调用者，这个信号当时没重视）。**教训**：反编译输出看着越"干净利落"（比如一行代码）越要留一个心眼——真实硬件计算很少这么巧合地简单，尤其是产出多个值的接口方法，简单到只有一行往往是反编译器漏看了寄存器；关键结论落地前，`getReferencesTo` 显示零调用者这个事实本身就该是暂停信号，不该被"反正找到了对的 vtable"这种部分正确掩盖过去。
 
 ## 05｜真机待办
 
