@@ -223,11 +223,11 @@ const TABS={
    header:`<label class="field">休眠轮换</label><div class="row"><select id="wpmode" style="max-width:12em"><option value="sequential">按顺序</option><option value="random">随机</option><option value="fixed">固定</option></select><span id="wpst" class="small"></span></div>`,
    icon:'🖼',label:'点击或拖入图片（可多选）',accept:IMG_EXT,btn:'上传',
    onRender:async(sec,refresh)=>{const st=await j('/api/wallpapers/status');const sel=$('#wpmode',sec);if(st.ok){sel.value=st.mode;const nv=st.native||{};$('#wpst',sec).textContent=`当前 ${st.current||'（无）'} · 原生休眠屏 ${nv.enabled?'已启用':'未启用（激活首张时自动写）'}${nv.restartPending?' · 需跑一次 xovi/start 生效':''}`}
-     sel.onchange=async()=>{await j('/api/wallpapers/mode',{method:'PUT',body:JSON.stringify({mode:sel.value})});refresh()}},
+     sel.onchange=async()=>{const r=await j('/api/wallpapers/mode',{method:'PUT',body:JSON.stringify({mode:sel.value})});if(r.ok===false){alert(r.message||'切换失败');return}refresh()}},
    row:(it,left,right,refresh)=>{const cur=(it.extra||{}).current;
      left.innerHTML=`<img src="/api/wallpapers/${encodeURIComponent(it.name)}" alt="" style="height:3.4em;border-radius:.3em;border:1px solid var(--line);margin-right:.6em;vertical-align:middle">${it.name}`;
      right.insertAdjacentHTML('beforeend',`<span>${fmtB(it.bytes)}</span>`+(cur?'<span class="badge on">当前</span>':''));
-     if(!cur){const b=document.createElement('button');b.className='btn';b.textContent='使用';b.onclick=async()=>{await j('/api/wallpapers/current',{method:'PUT',body:JSON.stringify({name:it.name})});refresh()};right.appendChild(b);
+     if(!cur){const b=document.createElement('button');b.className='btn';b.textContent='使用';b.onclick=async()=>{const r=await j('/api/wallpapers/current',{method:'PUT',body:JSON.stringify({name:it.name})});if(r.ok===false){alert(r.message||'设置失败');return}refresh()};right.appendChild(b);
        right.appendChild(delBtn('删除 '+it.name+'？','/api/wallpapers/'+encodeURIComponent(it.name),refresh))}}})}}
 };
 
