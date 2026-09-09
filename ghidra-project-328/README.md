@@ -14,6 +14,18 @@
 
 ## 现状
 
-2026-09-09：Ghidra 12.1.3（`~/.local/share/ghidra`，不进仓库——第三方工具装在 host 用户目录，不是项目内容）已装好，`analyzeHeadless`/`ghidraRun` 软链到 `~/.local/bin/`。**Ghidra 12.x 要求 JDK 21**（sdkman 默认是 17），已经在 `~/.local/share/ghidra/support/launch.properties` 里把 `JAVA_HOME_OVERRIDE` 指到 sdkman 的 `21.0.12-tem`，不改 sdkman 全局默认（`java -version` 命令行仍然是 17，只有 Ghidra 自己走 21）。
+2026-09-09：Ghidra 装好了——**改用 `paru -S ghidra`**（CachyOS/Arch 官方仓库有预编译包，不是手动装 zip 那条路了；手动装过一次 `~/.local/share/ghidra`，用户装好 pacman 版后已删掉，避免两份并存）。装的时候用 `--assume-installed` 跳过依赖里的 `java-environment>=21`（已有 sdkman 的 JDK 21，不需要 pacman 再装一份系统 JDK）：
 
-还没导入分析。下一步：`scp root@10.11.99.1:/usr/bin/xochitl` 拉当前固件二进制（不进仓库，太大且是 reMarkable 官方二进制，licensing 上也不该入库，跟 `ghidra-project/` 一直以来的做法一致——旧项目同样没把 .169 的 xochitl 本体提交进去，只提交分析脚本和发现文档），`analyzeHeadless <project_location> xochitl_328_analysis -import <xochitl路径>` 建库，再用 `scripts/` 里的脚本按 RTTI 名字反查 vtable/函数体（复用 `ghidra-project/scripts/DumpVtable*.java`/`FindXrefs*.java` 的套路，不是从零发明）。
+```sh
+paru -S ghidra --assume-installed java-environment=21
+```
+
+装完二进制在 `/usr/bin/ghidra`/`/usr/bin/ghidra-analyzeHeadless`/`/usr/bin/pyghidra`（PATH 直接能用），主目录 `/opt/ghidra`。**Ghidra 12.x 要求 JDK 21**，sdkman 默认还是 17，`/opt/ghidra/support/launch.properties` 是 root 拥有（pacman 包管理，没有 sudo 权限改不了），不像手动装那版能直接改 `JAVA_HOME_OVERRIDE`——改用 `JAVA_HOME` 环境变量每次调用时指定（`launch.sh` 会读这个变量，优先级仅次于 PATH 上的 `java`）：
+
+```sh
+JAVA_HOME=~/.local/share/sdkman/candidates/java/21.0.12-tem ghidra-analyzeHeadless ...
+```
+
+嫌每次都要写这串，想要一劳永逸可以自己 `sudo sed -i 's/^JAVA_HOME_OVERRIDE=.*/JAVA_HOME_OVERRIDE=\/home\/afu\/.local\/share\/sdkman\/candidates\/java\/21.0.12-tem/' /opt/ghidra/support/launch.properties`（这一步需要 sudo，这边没有 host sudo 权限，得自己跑）。
+
+还没导入分析。下一步：`scp root@10.11.99.1:/usr/bin/xochitl` 拉当前固件二进制（不进仓库，太大且是 reMarkable 官方二进制，licensing 上也不该入库，跟 `ghidra-project/` 一直以来的做法一致——旧项目同样没把 .169 的 xochitl 本体提交进去，只提交分析脚本和发现文档），`JAVA_HOME=~/.local/share/sdkman/candidates/java/21.0.12-tem ghidra-analyzeHeadless <project_location> xochitl_328_analysis -import <xochitl路径>` 建库，再用 `scripts/` 里的脚本按 RTTI 名字反查 vtable/函数体（复用 `ghidra-project/scripts/DumpVtable*.java`/`FindXrefs*.java` 的套路，不是从零发明）。
