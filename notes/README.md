@@ -2,14 +2,14 @@
 
 书架（`shelf/`）补读书短板，笔记线做强 reMarkable 的强项：**荧光笔勾书 + 在勾出来的内容旁边直接手写**。合上书自动摄取成条目（浏览页里挑要转笔记的、不要的直接跳过），手机整理页里修正转写、勾选按条目问 AI；每条内容可以选去哪——设备笔记本、Obsidian、或者干脆不要了；设备笔记本与 md 都由条目库投影生成。**不引入任何旧 `knowledge/pkm` 代码**，只借鉴功能与踩坑。决策/真机/踩坑见 `docs/reMarkable笔记白皮书.md`（开头「现状总览」§00b）。
 
-## 现状（2026-09-08，三期完成）
+## 现状（2026-09-08 三期完成；2026-09-09 补：去掉建夹逻辑复用书本文件夹 §03ae、单篇 markdown 导入 §03af、三维审计修复 §03ag-§03aj）
 
 | 服务 | seg / 端口 | 职责 | 状态 |
 |---|---|---|---|
 | `ink-serve` 矿 | `ink` / 8795 | 监听书库 → 只扫变更页 → 勾画 ↔ 旁边手写配对（含无手写的纯勾画） → **自渲染裁图**（笔画矢量数据画折线，不依赖缩略图）→ **条目库（唯一写者）**；零网络 | ✅ 真机 active，浏览态状态机 + 纯勾画条目 + 自渲染裁图 + 归档/清空回收站/**恢复**全部真机验证 |
 | `transcribe-serve` 转写 | `transcribe` / 8796 | 订阅矿的事件 → 裁图喂视觉模型（预置下拉选，横跨 DashScope/OpenAI/Gemini/DeepSeek 四厂商，key 按厂商分开存）→ 草稿写回（行首标记自动定样式）；只处理 `Pending`（用户点了「转入笔记」的）；唯一出网之一 | ✅ 真机 active、DashScope key 已配置真调过；OpenAI/Gemini/DeepSeek 三家只验证了配置层，没有真实 key 走过调用；转写准确率还在打磨 |
 | `mind-serve` 脑 | `mind` / 8797 | 按条目单发：勾选「问AI」+ 输入问题 → 拼书名+章节+勾画原文+转写文本+问题 → 文字模型（同样四厂商预置表）→ `answer` 写回；**没有批量循环/事件订阅**，纯被动等 HTTP，比 transcribe-serve 还轻 | ✅ 真机 active，端到端问答真机验证通过（DashScope） |
-| `note-serve` 本 | `notes` / 8798 | 注册「笔记」tab；打包 `.rmdoc`（全部 7 种打字样式）+ 上传 + 条目→文档生成编排（网页按钮已接线）；**md 导出**（落设备 vault + 直接触发浏览器下载） | ✅ 三件套+编排+导出全部真机验证通过 |
+| `note-serve` 本 | `notes` / 8798 | 注册「笔记」tab；打包 `.rmdoc`（全部 7 种打字样式）+ 上传 + 条目→文档生成编排（网页按钮已接线，落书本自己所在的设备文件夹，不再新建）；**md 导出**（落设备 vault + 直接触发浏览器下载）；**单篇 markdown 导入**（独立于条目库，`POST /import-md`） | ✅ 三件套+编排+导出+建夹逻辑简化全部真机验证通过；md 导入后端管线真机验证通过，前端「导入」面板未经人眼确认（§03af） |
 
 ## 三期定案：去处三选一 + 砍掉分区（2026-09-08）
 
@@ -99,7 +99,7 @@
 | ink | `GET /books` → `{items:[{uuid,title,chapters,entries,pending}]}`（`list_active`，只列还有活条目的书）· `GET /books/{uuid}`（整份条目库：chapters/entries，**没有 sections 了**）· `GET /books/{uuid}/crops/{file}` · `POST /books/{uuid}/entries/{id} {text?|style?|destination?|draft?|answer?|askAi?|question?|subheadHint?}`（`text` 走 `Entry::apply_marked_text`——行首标记自动定样式/覆盖 subhead 并剥掉标记，不再需要网页手动传 `style`；`draft` 追加最新在前；`destination` 三期新增）· `POST /books/{uuid}/entries/{id}/request`（浏览态"转入笔记"：`Mined→Pending`，纯勾画条目直接 `Reviewed`）· `POST /books/{uuid}/entries/{id}/skip`（"不需要"：`Mined→Skipped`）· `POST /books/{uuid}/entries/{id}/archive`（三期"不要了"：`→Archived`）· `POST /books/{uuid}/entries/{id}/restore`（**第二轮反馈新增**：`Skipped`/`Revoked`/`Archived` 按已有内容倒推恢复，非终态条目拒绝）· `POST /books/{uuid}/purge`（清空回收站：物理删 `Archived`/`Revoked`/`Skipped`，不可恢复）· `POST /books/{uuid}/rescan` · `GET /events` |
 | transcribe | `GET /status` → `{config(无 key), usage, usageByModel, failures, inkReachable, pending}` · `GET /config`（带 `presets`/`activePreset`/`price`）· `PUT /config {preset?, apiKey?（只写，存进当前厂商）, clearKey?, price?{input,output}, model?, baseUrl?（仅 preset="custom" 生效）, auto?, maxPerRun?, pauseMs?, timeoutSecs?, maxAttempts?, prompt?}` · `POST /run`（同步跑一轮，回 `{scanned,done,failed,skipped,left,note}`）· `POST /books/{uuid}/entries/{id}`（强制转写一条）· `POST /retry`（清失败记录再跑）· `GET /events` |
 | mind | `GET /status` → `{config(无 key), usage, usageByModel}` · `GET /config`（带 `presets`/`activePreset`/`price`）· `PUT /config {preset?, apiKey?（只写，存进当前厂商）, clearKey?, price?{input,output}, model?, baseUrl?（仅 preset="custom" 生效）, timeoutSecs?, prompt?}` · `POST /books/{uuid}/entries/{id}/ask`（回答这一条，要求已勾 `askAi` 且填了 `question`，否则 400）——**没有 `/events`**，纯被动，没有需要推送的状态 |
-| notes | `GET /status` · `GET /books`（各书章节生成状态）· `GET /books/{uuid}/notebooks` · `GET /books/{uuid}/exports`（各章导出状态，同上但对应 md）· `GET /books/{uuid}/sync`（每章设备笔记本/Obsidian md 是否跟当前条目同步，第三轮反馈新增）· `POST /books/{uuid}/generate`（全书按需重投影+上传）· `POST /books/{uuid}/chapters/{idx}/generate`（单章，网页已接线）· `POST /books/{uuid}/export`（全书导出 md，落设备 vault，指纹没变自动跳过）· `POST /books/{uuid}/chapters/{idx}/export`（单章，网页已接线，附带触发浏览器下载，响应带 `status`：written/unchanged/empty）· `GET /books/{uuid}/chapters/{idx}/export.md`（同一份内容当下载吐给浏览器，`Content-Disposition` + RFC 5987 文件名）· `GET /events` |
+| notes | `GET /status` · `GET /books`（各书章节生成状态）· `GET /books/{uuid}/notebooks` · `GET /books/{uuid}/exports`（各章导出状态，同上但对应 md）· `GET /books/{uuid}/sync`（每章设备笔记本/Obsidian md 是否跟当前条目同步，第三轮反馈新增）· `POST /books/{uuid}/generate`（全书按需重投影+上传）· `POST /books/{uuid}/chapters/{idx}/generate`（单章，网页已接线）· `POST /books/{uuid}/import-md {title, markdown}`（单篇 markdown→新设备笔记本文档，独立于条目库、不经章节投影，网页「导入」子视图已接线，见 §03af）· `POST /books/{uuid}/export`（全书导出 md，落设备 vault，指纹没变自动跳过）· `POST /books/{uuid}/chapters/{idx}/export`（单章，网页已接线，附带触发浏览器下载，响应带 `status`：written/unchanged/empty）· `GET /books/{uuid}/chapters/{idx}/export.md`（同一份内容当下载吐给浏览器，`Content-Disposition` + RFC 5987 文件名）· `GET /events` |
 
 事件：`{"svc":"ink","area":"notes","kind":"entries"}`、`{"svc":"transcribe","area":"notes","kind":"transcribe"}` → 网页「笔记」tab 自动刷新。
 
@@ -113,16 +113,16 @@ notes/
 ├── crates/notecore/                   领域核心（纯函数）：model 条目/样式/状态/去处（**没有分区了**）· hash FNV 簇指纹 · geom 聚簇+配对（**没有 has_underline 了**）· ingest 增量合并（含纯勾画路径） · marker 行首标记 OCR 兜底（`##`/`### ` 都覆盖 subhead） · project 条目库→段落列表投影（按页平铺，不分组） · export 条目库→Markdown 导出
 ├── crates/vendorcfg/                  **新增**（合理使用设计模式消重复）：AI 厂商预置模型表/key 按厂商分格存取/迁移/PATCH/对外 JSON 整形（preset）+ 泛型用量账本 UsageBook\<Extra\>/Ledger\<Extra\>（usage），transcribe-serve/mind-serve 共用；只抽行为不抽数据结构，两边各自的 Config/Usage 结构体+落盘格式不变
 ├── services/ink-serve/                矿：doc(书库只读视图) · ingest(变更页编排) · crop(**自渲染裁图**，笔画矢量数据画折线，不吃缩略图) · bookdb(Repository) · config · main(路由+监听，接 askAi/question/destination + archive/purge 动作)
-├── services/transcribe-serve/         转写：config/ledger(vendorcfg 薄封装：自己的视觉预置表+节流四件套+RunReport) · backend(Vision Strategy + OpenAiCompat) · prompt · ink(EntryStore 客户端) · worker(一轮编排) · main(SSE 订阅+防抖)
-├── services/mind-serve/               脑：config/ledger(vendorcfg 薄封装：自己的文字预置表，Ledger\<Extra=()\> 没有 lastRun) · backend(TextModel Strategy + OpenAiCompat，纯文本消息) · prompt(拼书名+章节+原文+文本+问题) · ink(EntryStore 客户端，book/post_answer) · worker::ask_entry(单条问答) · main(**无后台线程**，纯被动路由)
-├── services/note-serve/               本：注册「笔记」tab；rmdoc.rs 打包 .rmdoc（上传复用 shelf-core::xochitl）；export.rs 落盘 vault + 浏览器下载的 content_disposition()；chapter_store.rs 通用"每书每章一条记录"泛型（notebooks/export_state 现在是类型别名）；config/ink/trash/publish 生成编排（不建文件夹，复用书本自己的设备文件夹，撞名 shelf-core::xochitl::unique_document_name 加后缀）；publish::import_markdown（单篇 markdown→新笔记本文档，独立于条目库，不经章节投影，见 notecore::mdimport）
+├── services/transcribe-serve/         转写：config/ledger(vendorcfg 薄封装：自己的视觉预置表+节流四件套+RunReport) · backend(Vision Strategy + OpenAiCompat) · prompt · ink(EntryStore 客户端，传输层包 shelf_core::registry::SvcClient) · worker(一轮编排) · main(SSE 订阅+防抖)
+├── services/mind-serve/               脑：config/ledger(vendorcfg 薄封装：自己的文字预置表，Ledger\<Extra=()\> 没有 lastRun) · backend(TextModel Strategy + OpenAiCompat，纯文本消息) · prompt(拼书名+章节+原文+文本+问题) · ink(EntryStore 客户端，book/post_answer，传输层包 SvcClient) · worker::ask_entry(单条问答) · main(**无后台线程**，纯被动路由)
+├── services/note-serve/               本：注册「笔记」tab；rmdoc.rs 打包 .rmdoc（上传复用 shelf-core::xochitl）；export.rs 落盘 vault + 浏览器下载的 content_disposition()；chapter_store.rs 通用"每书每章一条记录"泛型（notebooks/export_state 现在是类型别名）；config/ink(SvcClient)/trash(SvcClient)/publish 生成编排（不建文件夹，复用书本自己的设备文件夹，撞名 shelf-core::xochitl::unique_document_name 加后缀）；publish::import_markdown（单篇 markdown→新笔记本文档，独立于条目库，不经章节投影，见 notecore::mdimport）
 ├── systemd/                           四个 .service（PartOf=shelf.target；随书架 install.sh 装，令牌 ink/transcribe/mind/note）
 ├── host/                              待建：CLI `notes pull`（把设备 vault/ 拉到本机 Obsidian vault；三期只做了"导出到设备"这一半）
 ├── testdata/renggu/                   真机 fixture（《人骨拼圖》墓碑页 .rm，测"解析成功零条目"）· renggu_marks/（同书真实勾画+手写）· seven_styles/（笔记本一页七样式，rmv6::write 模板）
 └── docs/reMarkable笔记白皮书.md          决策 / 真机 / 踩坑（开头「现状总览」§00b）
 ```
 
-网页部分在书架：`shelf/services/shelf-gateway/ui/app.js` 的 `renderNotes`（「浏览」/「整理」/「回收站」三个子视图）+ `renderManage` 里的"模型管理"卡片（`mountModelPanel()`）。
+网页部分在书架：`shelf/services/shelf-gateway/ui/app.js` 的 `renderNotes`（「浏览」/「整理」/「回收站」/「导入」四个子视图，「导入」是 §03af 新增，跟前三个不共享条目库状态机——单篇 markdown 直接转一份新设备笔记本文档）+ `renderManage` 里的"模型管理"卡片（`mountModelPanel()`）。
 
 ## 路径（XDG，设备 HOME=/home/root）
 
@@ -182,6 +182,7 @@ ssh root@<设备IP> sh /home/root/shelf-pkg/shelf/install.sh --only ink,transcri
 - `archive`/`purge` 两个端点没有对真实历史数据实测过（一次性不可逆动作，底层逻辑单测覆盖充分，没事先问用户不该拿真实数据练手；`restore` 是反方向的可逆操作，已经真机验证过）。
 - OpenAI/Gemini/DeepSeek 三家新模型预置只验证了配置层（预置表匹配、key 按厂商隔离、老配置迁移），没有真实 key 走过一次实际调用——等有 key 再补。
 - "改条目 destination 后对应导出指纹立刻变"这条只有离线单测干净覆盖（真机测试书状态太活跃，没能单独复现，见白皮书 §03x）。
-- `notebooks.rs`（生成笔记本）在章节内容变空时不清记录，`export_state.rs`（导出 md）会清——`ChapterStore<T>` 泛型化时把 `clear()` 提到了两边共用的层，`notebooks.rs` 现在**有这个方法可以调**，但 `publish.rs` 还没接上，行为跟之前一样没变，是个小不一致，不影响数据正确性，顺手发现留着没修。
+- 摄取路径"排除法"反模式复发修复（`is_terminal()` 替换 `!= Revoked`，§03ag）和生成笔记本认领失败短暂重试（§03ah）：改动都是被动触发的后台逻辑，离线测试已覆盖判据/重试机制本身，但都还没有主动构造真机场景复验（前者需要真的擦掉一条已跳过条目的笔迹，后者是低概率时序问题，难以主动触发）。
+- 单篇 markdown 导入（§03af）：后端投影/上传管线真机验证通过（真调接口+`scp`拉回设备真实生成的`.rm`字节核对结构），前端「导入」新入口本身没在浏览器里人眼点开过。
 
 演进记录、每一步的真机验证细节、踩过的坑，见 `docs/reMarkable笔记白皮书.md`。
