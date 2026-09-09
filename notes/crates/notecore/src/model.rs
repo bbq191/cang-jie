@@ -171,6 +171,15 @@ impl Entry {
     pub fn needs_transcribe(&self) -> bool {
         matches!((&self.ink, self.status), (Some(ink), s) if !matches!(s, Status::Revoked | Status::Mined | Status::Skipped | Status::Archived) && !self.drafts.iter().any(|d| d.hash == ink.hash))
     }
+    /// 终态：`Skipped`/`Revoked`/`Archived`，跟 `restore()` 认定"需要恢复"的三种状态完全一致——
+    /// 用户已经明确表态"不需要/已撤销/不要了"，除了 `restore()` 之外的写操作不该再碰它（继续转写/
+    /// 继续问 AI/被网页通用改字端点静默拉回活跃态）。2026-09-09 审计发现：`set_triage`/`restore`
+    /// 本身有守卫，但通用 PATCH 端点、强制重转写、`mind-serve` 问 AI 三个写入口当初没检查这个，
+    /// 会绕开业务规则把终态条目悄悄拉回 `Draft`（见三处调用点新增的守卫）。
+    pub fn is_terminal(&self) -> bool {
+        matches!(self.status, Status::Skipped | Status::Revoked | Status::Archived)
+    }
+
     /// 浏览态动作：转成 `Pending`（转入笔记）/`Skipped`（不需要）/`Archived`（三期"不要了"）。
     /// 已撤销/已归档的条目是终态，操作没有意义，拒绝。**纯勾画条目**（`ink` 是 `None`，内容全是
     /// `quote`）没有手写可转写——勾画文字是 `GlyphRange` 原生给的精确文字，不需要过一遍视觉模型；
@@ -407,6 +416,23 @@ mod tests {
         let mut live: Entry = serde_json::from_str(r#"{"id":"e","page":"p","page_index":0,"created":0,"updated":0,"status":"reviewed"}"#).unwrap();
         let err = live.restore(1).unwrap_err();
         assert!(err.contains("用不着恢复"), "{err}");
+    }
+
+    #[test]
+    fn is_terminal_matches_exactly_what_restore_would_accept() {
+        // is_terminal() 的定义就是"restore() 会接受的三种状态"，两者必须完全对应——否则一处改了
+        // 忘记改另一处，终态守卫又会重新出现旁路。
+        for s in [Status::Mined, Status::Pending, Status::Draft, Status::Reviewed] {
+            let mut e: Entry = serde_json::from_str(r#"{"id":"e","page":"p","page_index":0,"created":0,"updated":0}"#).unwrap();
+            e.status = s;
+            assert!(!e.is_terminal(), "{s:?} 不是终态");
+        }
+        for s in [Status::Skipped, Status::Revoked, Status::Archived] {
+            let mut e: Entry = serde_json::from_str(r#"{"id":"e","page":"p","page_index":0,"created":0,"updated":0}"#).unwrap();
+            e.status = s;
+            assert!(e.is_terminal(), "{s:?} 是终态");
+            assert!(e.restore(0).is_ok(), "is_terminal() 为真的状态 restore() 也该接受，两者定义必须一致");
+        }
     }
 
     #[test]

@@ -129,6 +129,13 @@ pub fn run_once(c: &Ctx<'_>, only: Option<Target<'_>>) -> RunReport {
             if !forced && !e.needs_transcribe() {
                 continue;
             }
+            // 终态守卫（2026-09-09 审计补）：needs_transcribe() 已经排除了 Mined/Skipped/Revoked/
+            // Archived，但那只挡自动扫描；forced（「重新转写」按钮强制指定一条）原来完全绕过这条
+            // 检查，能让已"跳过/撤销/删除"的条目被继续转写、静默拉回 Draft。
+            if forced && e.is_terminal() {
+                r.note = "这条已跳过/撤销/删除，不能转写".into();
+                continue;
+            }
             r.scanned += 1;
             let hash = e.ink.as_ref().map(|i| i.hash.as_str()).unwrap_or("");
             if !forced && c.failures.exhausted(&b.uuid, &e.id, hash, c.cfg.max_attempts) {
@@ -273,6 +280,24 @@ mod tests {
         let r = run_once(&c, None);
         assert_eq!(r.scanned, 1, "转成 Pending 后这条才进入扫描范围");
         assert_eq!(r.done, 1);
+    }
+
+    #[test]
+    fn forced_retry_on_terminal_entry_is_rejected_not_silently_transcribed() {
+        // 2026-09-09 审计补：forced（「重新转写」按钮强制指定一条）原来完全绕过 needs_transcribe()，
+        // 能让已"跳过/撤销/删除"的条目被继续转写、静默拉回 Draft——终态条目该先恢复才能再操作。
+        let t = tempfile::tempdir().unwrap();
+        let ledger = Ledger::open(&t.path().join("l.json"));
+        let mut archived = entry("a", "h1", "a.png", None);
+        archived.status = Status::Archived;
+        let store = mem(vec![archived]);
+        let vision = Fixed("不该被调用".into());
+        let f = Failures::default();
+        let c = Ctx { store: &store, vision: &vision, cfg: &cfg(), ledger: &ledger, failures: &f, now: 9 };
+        let r = run_once(&c, Some(Target { uuid: "u", id: "a" }));
+        assert_eq!((r.scanned, r.done, r.failed), (0, 0, 0), "终态条目不该被扫到，也不该调用模型");
+        assert!(r.note.contains("跳过/撤销/删除"), "{}", r.note);
+        assert!(store.posted.lock().unwrap().is_empty(), "没有草稿被写回");
     }
 
     #[test]
