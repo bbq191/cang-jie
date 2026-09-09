@@ -28,7 +28,7 @@
 
 ## 下一步（没做，需要单独立项）
 
-1. 装 Ghidra（已装，`~/.local/share/ghidra`，见 `ghidra-project-328/README.md`）+ 把 3.28.0.172 的 `xochitl` 导进新建的 Ghidra 项目（复用 `ghidra-project-328/`，别跟 `ghidra-project/` 那个 .169 项目混）。
+1. 装 Ghidra（已装，`paru -S ghidra`，见 `ghidra-project-328/README.md`）+ 把 3.28.0.172 的 `xochitl` 导进新建的 Ghidra 项目（复用 `ghidra-project-328/`，别跟 `ghidra-project/` 那个 .169 项目混）。
 2. 靠这些 RTTI typeinfo 字符串反查 vtable/函数体（`ghidra-project/scripts/DumpVtable*.java`/`FindXrefs*.java` 这套脚本本来就是干这个的，照搬套路，落 `ghidra-project-328/scripts/`）。
 3. 找到 `LerpRaster` 具体在哪算"宽度沿路径插值"、参数怎么传进来（大概率来自 `.rm` 每个采样点自带的 `pressure`/`width` 字段——`reading/device-rs/vendor/remarkable_lines/src/other/point.rs`/`notes/crates/rmv6/src/v6/scene_item/point.rs` 已经在解析这些字段，只是目前只读不用来改渲染）。
 4. 判断有没有稳定可 hook 的点（前 N 字节栈操作可安全 patch 的那种，参照 `enhance/hl-snap/src/hl_snap.c` 现有 hook 的判据）——这一步之前完全没做过，不能假设一定能找到。
