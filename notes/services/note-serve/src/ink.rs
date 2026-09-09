@@ -1,9 +1,10 @@
 //! 条目库的只读访问口（本服务只读，不改字段——改字段是 ink-serve/transcribe-serve/mind-serve 的事）。
 //! 生产走注册表找 ink-serve；测试用内存桩。同款套路见 `transcribe-serve::ink`。
+//!
+//! 传输层委托 `shelf_core::registry::SvcClient`（2026-09-09 消重复，见该模块文档）。
 use notecore::model::Book;
 use shelf_core::paths::Paths;
-use shelf_core::registry;
-use std::time::Duration;
+use shelf_core::registry::{enc, SvcClient};
 
 #[derive(serde::Deserialize, Debug, Clone)]
 pub struct BookBrief {
@@ -15,36 +16,20 @@ pub trait EntryStore: Send + Sync {
     fn book(&self, uuid: &str) -> Result<Book, String>;
 }
 
-pub struct InkHttp {
-    paths: Paths,
-    agent: ureq::Agent,
-}
+pub struct InkHttp(SvcClient);
 
 impl InkHttp {
     pub fn new(paths: Paths) -> InkHttp {
-        InkHttp { paths, agent: ureq::AgentBuilder::new().timeout_connect(Duration::from_secs(3)).timeout(Duration::from_secs(30)).build() }
-    }
-    fn base(&self) -> Result<String, String> {
-        registry::find(&self.paths, "ink-serve").map(|i| i.base_url()).ok_or_else(|| "ink-serve 未运行".to_string())
-    }
-}
-
-fn enc(s: &str) -> String {
-    shelf_core::multipart::percent_encode(s)
-}
-
-impl InkHttp {
-    fn get_json(&self, path: &str) -> Result<serde_json::Value, String> {
-        self.agent.get(&format!("{}{path}", self.base()?)).call().map_err(|e| format!("ink-serve GET {path}: {e}")).and_then(|r| serde_json::from_reader(r.into_reader()).map_err(|e| format!("ink-serve {path} 应答不是 JSON: {e}")))
+        InkHttp(SvcClient::new(paths, "ink-serve", 30))
     }
 }
 
 impl EntryStore for InkHttp {
     fn list_books(&self) -> Result<Vec<BookBrief>, String> {
-        let v = self.get_json("/books")?;
+        let v = self.0.get_json("/books")?;
         serde_json::from_value(v.get("items").cloned().unwrap_or_default()).map_err(|e| format!("books 形状不对: {e}"))
     }
     fn book(&self, uuid: &str) -> Result<Book, String> {
-        serde_json::from_value(self.get_json(&format!("/books/{}", enc(uuid)))?).map_err(|e| format!("book 形状不对: {e}"))
+        serde_json::from_value(self.0.get_json(&format!("/books/{}", enc(uuid)))?).map_err(|e| format!("book 形状不对: {e}"))
     }
 }

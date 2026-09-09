@@ -635,6 +635,14 @@ CSS 上章节标签条复用 `.subnav` 按钮视觉（`subtabs()` 用 `$('.subna
 
 **⚠️ 还没真机验证**：这条改动降低的是一个低概率、难以主动构造的时序问题（真机上"上传成功、认领恰好失败"这个窗口很窄），真机验证价值有限，留作后续如果真踩到孤儿文档现象时回来对照。
 
+## 03ai｜消掉 InkHttp 客户端骨架重复：shelf-core 新增 `SvcClient`（2026-09-09，离线）
+
+三维审计的代码结构那一路挖出一处真实重复：`mind-serve`/`note-serve`/`transcribe-serve` 三个服务各自的 `ink.rs`（访问 ink-serve 的 HTTP 客户端）、以及 `note-serve::trash.rs`（访问 book-serve 回收站队列的客户端）——四处 `struct { paths, agent }`、`new()`（`ureq::AgentBuilder` 建带标准超时的 agent）、`base()`（查注册表拿 base_url，查不到报"XXX 未运行"）、`get_json()`、`enc()`（percent-encode 包一层）几乎逐字节相同，只有目标服务名、超时秒数、业务方法（`book`/`post_answer`/`crop`/`post_draft`/`add`）不一样。这正是 `vendorcfg`/`ChapterStore<T>` 已经处理过的那类"形状相同、字段不同"的重复，只是这次没被套用到这四处。
+
+**修复**：`shelf_core::registry`（本来就管服务发现，加这层"按发现结果建客户端"是同一职责的自然延伸）新增 `SvcClient`：`new(paths, service, timeout_secs)` + `base()`/`get_json()`/`post_json()` + 逃生舱 `agent()`（`transcribe-serve::crop()` 要下载原始字节，不是 JSON，走这个直接发请求）；顺手把 `enc()` 也收成 `registry::enc()`（薄封装 `multipart::percent_encode`，四处各自的一行重复）。四个消费者（`mind-serve::ink::InkHttp`、`note-serve::ink::InkHttp`、`transcribe-serve::ink::InkHttp`、`note-serve::trash::BookServeTrash`）改成内部包一个 `SvcClient`，各自的 `EntryStore`/`TrashSink` trait 定义、方法签名、业务错误语义完全不变——那是各服务自己的关注点，合并了反而会把不同服务的语义耦合在一起，这次只抽传输样板这一层。
+
+**离线**：`shelf-core` 新增 2 测（`svc_client_base_url_uses_registry_and_errors_with_service_name_when_not_running`/`enc_percent_encodes_path_segments`）；四个消费者原有测试全部不变、全绿（这层重构不改变任何可观察行为，只是内部实现换了个写法）；`cargo test --workspace`（notes+shelf 两边）全绿零警告；两边 `cargo clippy` 核对没有新增警告；`sh build.sh` 交叉编译 aarch64-musl 零警告通过。
+
 ## 04｜踩坑
 
 - **外部进程直改 `.metadata` `parent="trash"` 会被运行中 xochitl 覆写**（阅读线判死）；软删/建夹只能走 QML 代理（书架 `shelf-trash-agent.qmd`）。
