@@ -1,42 +1,33 @@
 //! 条目库的访问口（只经 ink-serve 的 HTTP，**不直接碰文件**：条目库唯一写者是 ink-serve）。
 //! 比 transcribe-serve 的同名模块简单——不用列书/取裁图（没有批量扫描），只要读一本书（拿到问题所在
 //! 那条的书名/章节/勾画/转写文本）和写回 `answer` 两个动作。
+//!
+//! 传输层（查注册表/建 agent/取 JSON）委托 `shelf_core::registry::SvcClient`——2026-09-09 审计发现
+//! mind/note/transcribe-serve 这三个 `ink.rs` 此前各自把这层样板重写了一遍，收进共享骨架消重复；
+//! `EntryStore` trait 本身（业务方法签名）不变，各服务需要的动作不一样，不该合并。
 use notecore::model::{Answer, Book};
 use shelf_core::paths::Paths;
-use shelf_core::registry;
-use std::time::Duration;
+use shelf_core::registry::{enc, SvcClient};
 
 pub trait EntryStore: Send + Sync {
     fn book(&self, uuid: &str) -> Result<Book, String>;
     fn post_answer(&self, uuid: &str, id: &str, answer: &Answer) -> Result<(), String>;
 }
 
-pub struct InkHttp {
-    paths: Paths,
-    agent: ureq::Agent,
-}
+pub struct InkHttp(SvcClient);
 
 impl InkHttp {
     pub fn new(paths: Paths) -> InkHttp {
-        InkHttp { paths, agent: ureq::AgentBuilder::new().timeout_connect(Duration::from_secs(3)).timeout(Duration::from_secs(30)).build() }
+        InkHttp(SvcClient::new(paths, "ink-serve", 30))
     }
-    pub fn base(&self) -> Result<String, String> {
-        registry::find(&self.paths, "ink-serve").map(|i| i.base_url()).ok_or_else(|| "ink-serve 未运行".to_string())
-    }
-}
-
-fn enc(s: &str) -> String {
-    shelf_core::multipart::percent_encode(s)
 }
 
 impl EntryStore for InkHttp {
     fn book(&self, uuid: &str) -> Result<Book, String> {
-        let v: serde_json::Value = self.agent.get(&format!("{}/books/{}", self.base()?, enc(uuid))).call().map_err(|e| format!("ink-serve GET /books/{uuid}: {e}")).and_then(|r| serde_json::from_reader(r.into_reader()).map_err(|e| format!("book 应答不是 JSON: {e}")))?;
+        let v = self.0.get_json(&format!("/books/{}", enc(uuid)))?;
         serde_json::from_value(v).map_err(|e| format!("book 形状不对: {e}"))
     }
     fn post_answer(&self, uuid: &str, id: &str, answer: &Answer) -> Result<(), String> {
-        let body = serde_json::json!({"answer": answer});
-        self.agent.post(&format!("{}/books/{}/entries/{}", self.base()?, enc(uuid), enc(id))).set("Content-Type", "application/json").send_string(&body.to_string()).map_err(|e| format!("写回回答 {id}: {e}"))?;
-        Ok(())
+        self.0.post_json(&format!("/books/{}/entries/{}", enc(uuid), enc(id)), &serde_json::json!({"answer": answer}))
     }
 }

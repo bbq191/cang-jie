@@ -94,6 +94,49 @@ pub fn find(paths: &Paths, name: &str) -> Option<ServiceInfo> {
     list(paths).into_iter().find(|s| s.name == name)
 }
 
+/// 按注册表地址访问**另一个**服务的最小 HTTP 客户端骨架：查地址 → 带标准超时的 `ureq::Agent` →
+/// GET/POST JSON。笔记线 mind/note/transcribe-serve 访问 ink-serve、note-serve 访问 book-serve 的
+/// 回收站队列，此前各自把这层传输样板逐字节重写了一遍（2026-09-09 审计发现）——这里只抽这一层，
+/// 各服务自己的 `EntryStore`/`TrashSink` 这类业务 trait 定义、方法签名、错误文案都不变，那是各自的
+/// 关注点，合并了反而会把不同服务的语义耦合在一起。
+pub struct SvcClient {
+    paths: Paths,
+    agent: ureq::Agent,
+    service: &'static str,
+}
+
+impl SvcClient {
+    pub fn new(paths: Paths, service: &'static str, timeout_secs: u64) -> SvcClient {
+        SvcClient {
+            paths,
+            agent: ureq::AgentBuilder::new().timeout_connect(std::time::Duration::from_secs(3)).timeout(std::time::Duration::from_secs(timeout_secs)).build(),
+            service,
+        }
+    }
+    /// 目标服务当前的 base url；未运行时的错误文案统一成"<服务名> 未运行"。
+    pub fn base(&self) -> Result<String, String> {
+        find(&self.paths, self.service).map(|i| i.base_url()).ok_or_else(|| format!("{} 未运行", self.service))
+    }
+    /// 逃生舱：需要非 JSON 响应体（比如下载二进制裁图）时，调用方自己拼 URL、走这个 agent。
+    pub fn agent(&self) -> &ureq::Agent {
+        &self.agent
+    }
+    pub fn get_json(&self, path: &str) -> Result<serde_json::Value, String> {
+        let service = self.service;
+        self.agent.get(&format!("{}{path}", self.base()?)).call().map_err(|e| format!("{service} GET {path}: {e}")).and_then(|r| serde_json::from_reader(r.into_reader()).map_err(|e| format!("{service} {path} 应答不是 JSON: {e}")))
+    }
+    /// 响应体本身通常不需要（调用方要么忽略、要么自己按需再解析），失败时把状态错误带上。
+    pub fn post_json(&self, path: &str, body: &serde_json::Value) -> Result<(), String> {
+        self.agent.post(&format!("{}{path}", self.base()?)).set("Content-Type", "application/json").send_string(&body.to_string()).map_err(|e| format!("{} POST {path}: {e}", self.service))?;
+        Ok(())
+    }
+}
+
+/// URL 路径段编码（uuid/文件名这类需要转义的片段）。
+pub fn enc(s: &str) -> String {
+    crate::multipart::percent_encode(s)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -126,6 +169,26 @@ mod tests {
         assert_eq!(list(&p).len(), 1);
         assert!(find(&p, "b-svc").is_some());
         assert!(find(&p, "a-svc").is_none());
+    }
+
+    #[test]
+    fn svc_client_base_url_uses_registry_and_errors_with_service_name_when_not_running() {
+        let t = tempfile::tempdir().unwrap();
+        let p = paths(&t);
+        let me = std::process::id();
+        let _g = register(&p, &info("ink-serve", 1, me)).unwrap();
+
+        let c = SvcClient::new(p.clone(), "ink-serve", 30);
+        assert_eq!(c.base().unwrap(), "http://127.0.0.1:8790");
+
+        let c2 = SvcClient::new(p, "book-serve", 10);
+        let err = c2.base().unwrap_err();
+        assert_eq!(err, "book-serve 未运行", "错误文案该点名是哪个服务没起来，不是裸的通用提示");
+    }
+
+    #[test]
+    fn enc_percent_encodes_path_segments() {
+        assert_eq!(enc("a b"), crate::multipart::percent_encode("a b"), "就是 percent_encode 的薄封装，不重新发明编码规则");
     }
 
     #[test]
