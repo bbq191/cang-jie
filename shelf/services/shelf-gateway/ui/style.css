@@ -12,8 +12,11 @@ header{position:sticky;top:0;z-index:5;background:var(--surface);background:colo
 header .logo{font-size:1.15em;font-weight:700;letter-spacing:.02em;display:flex;align-items:center;gap:.4em}
 header .logo::before{content:"📚";font-size:1.1em}
 header small{color:var(--mute)}
-header .links{margin-left:auto;display:flex;gap:.9em;font-size:.85em}
-header .links a{color:var(--mute);text-decoration:none}header .links a:hover{color:var(--accent)}
+header .links{margin-left:auto;display:flex;gap:.6em;font-size:.85em}
+/* 纯文字链接原来零 padding，触控热区约等于文字包围盒——补一点垂直/水平留白扩大热区，
+   不明显改变视觉间距（2026-09-09 审计发现，退出跟改密码/CA证书视觉权重一样但后果完全不同，
+   这里只解决"点不准"，误触仍靠各自的确认/无副作用兜底，不在这里额外加区分）。 */
+header .links a{color:var(--mute);text-decoration:none;padding:.3em .25em;display:inline-block}header .links a:hover{color:var(--accent)}
 nav{display:flex;gap:.4em;padding:.7em 1.1em;overflow-x:auto;background:var(--bg);position:sticky;top:3.1em;z-index:4;-webkit-overflow-scrolling:touch}
 nav button{border:1px solid transparent;background:var(--surface2);color:var(--mute);padding:.45em 1.05em;border-radius:2em;cursor:pointer;font-size:.95em;white-space:nowrap;transition:.15s}
 nav button:hover{color:var(--fg)}
@@ -48,6 +51,9 @@ ul.q li.ok{border-color:color-mix(in srgb,var(--ok) 45%,var(--line))}ul.q li.bad
 progress{width:100%;height:.4em;margin:.35em 0;border:none;border-radius:1em;overflow:hidden}
 progress::-webkit-progress-bar{background:var(--surface2)}progress::-webkit-progress-value{background:var(--accent)}
 .btn{font-size:.95em;padding:.5em 1em;border:1px solid var(--line);background:var(--surface);color:var(--fg);border-radius:.5em;cursor:pointer;transition:.15s}
+/* 上传队列的"×"移除按钮：视觉上小、但触控热区不能跟着一起小（原来 padding 挤到约 17px 高，是全站
+   最小的可点元素，2026-09-09 审计发现）；用 min-width/height 撑热区，图形本身不放大。 */
+.btn.x{padding:.05em .45em;line-height:1;min-width:2.2em;min-height:2.2em}
 .btn:hover{border-color:var(--accent)}
 .btn.pri{background:var(--accent);color:var(--accent-fg);border-color:var(--accent);font-weight:600}
 .btn.pri:hover{filter:brightness(1.06)}.btn:disabled{opacity:.5;cursor:default}
@@ -64,18 +70,25 @@ details.cmp>summary::before{content:"▸ ";transition:.15s;display:inline-block}
 details.cmp[open]>summary::before{transform:rotate(90deg)}
 .tblwrap{overflow-x:auto;margin:.4em 0;border:1px solid var(--line);border-radius:.6em}
 table.cmp{border-collapse:collapse;width:100%;font-size:.85em;min-width:34em}
+/* 34em 的下限在手机竖屏（约 360-430px）会强制横向滚动——用量表之前单独修过（见 [data-usagewrap]），
+   这里改成窄屏媒体查询统一处理所有 table.cmp（说明表/优化档位表等），宽屏不受影响（2026-09-09 审计发现）。 */
+@media (max-width:36em){table.cmp{min-width:0}}
 table.cmp th,table.cmp td{text-align:left;padding:.55em .7em;border-bottom:1px solid var(--line2);vertical-align:top}
 table.cmp thead th{background:var(--surface2);font-weight:600;position:sticky;top:0}
 table.cmp tbody th{font-weight:600;color:var(--fg);white-space:nowrap;background:var(--surface)}
 table.cmp tbody tr:last-child td{border-bottom:none}
 table.cmp .pick{color:var(--accent);font-weight:600}
 .badge{display:inline-block;font-size:.72em;padding:.05em .5em;border-radius:1em;background:var(--surface2);color:var(--mute);border:1px solid var(--line)}
+.badge[title]{cursor:help} /* 点了会 alert 出完整说明（app.js 全局委托），触屏摸不到 hover 时的替代入口 */
 .badge.on{background:color-mix(in srgb,var(--ok) 18%,transparent);color:var(--ok);border-color:transparent}
 .badge.off{background:color-mix(in srgb,var(--bad) 15%,transparent);color:var(--bad);border-color:transparent}
 .crumb a{color:var(--accent);text-decoration:none}.crumb a:hover{text-decoration:underline}
 /* 二级标签（把一个大页面拆成几屏，手机不长拉） */
 .subnav{display:flex;gap:.4em;overflow-x:auto;margin:.2em 0 1em;padding-bottom:.15em;-webkit-overflow-scrolling:touch}
-.subnav button{border:1px solid var(--line);background:var(--surface);color:var(--mute);padding:.32em .95em;border-radius:2em;cursor:pointer;font-size:.9em;white-space:nowrap;transition:.15s}
+/* 垂直 padding 从 .32em 提到 .5em（2026-09-09 审计发现触控热区偏小）——笔记页常见两层 .subnav
+   叠着用，没有直接顶到 44px 建议值（那样两层叠加占屏太多，跟"整理"页几轮反馈压密度的方向冲突），
+   是密度和热区之间的折中，比原来小一大截已经好点。 */
+.subnav button{border:1px solid var(--line);background:var(--surface);color:var(--mute);padding:.5em .95em;border-radius:2em;cursor:pointer;font-size:.9em;white-space:nowrap;transition:.15s}
 .subnav button:hover{color:var(--fg)}
 .subnav button.on{background:var(--surface2);color:var(--fg);border-color:var(--accent);font-weight:600}
 .subpanel{display:none}.subpanel.on{display:block}

@@ -20,7 +20,17 @@ const up=l=>l.map(e=>e.toUpperCase()).join(' / ');
 /* 书籍格式三档说明（同一份白名单分档展示，不再一口气列 18 个） */
 const FMT_TIERS=`<b>${up(EXT.native)}</b>：两个读器都能去 · <b>${up(EXT.convertible)}</b>：电脑 <code>shelf push</code> 可转成 EPUB 进原生，直接上传则只能加入 KOReader · <b>${up(EXT.koOnly)}</b>：只能加入 KOReader · <b>漫画不投原生</b>：AZW3/EPUB 漫画走电脑 <code>shelf push</code> 自动转 CBZ，加入 KOReader 读`;
 $('#logout').onclick=e=>{e.preventDefault();fetch('/logout',{method:'POST'}).then(()=>location.href='/login')};
-async function j(url,opt){const r=await fetch(url,opt);if(r.status===401){location.href='/login?next='+encodeURIComponent(location.pathname);return {ok:false,message:'未登录'}}if(r.status===403){location.href='/password';return {ok:false,message:'需先改密码'}}let d;try{d=await r.json()}catch{d={ok:false,message:'HTTP '+r.status}}if(!r.ok&&d.ok!==false)d={ok:false,message:d.message||('HTTP '+r.status)};return d}
+// 徽章的完整解释（渲染自检失败原因、优化档位差异…）以前只写进 title——触屏摸不到 hover，只看得见
+// 图标+数字，看不见"为什么/该怎么办"（2026-09-09 审计发现）。这里全局委托一个点击处理：任何带
+// title 的徽章点一下就 alert 出完整内容，不用逐个改模板字符串；desktop 上点了也只是多一次确认，
+// 不冲突。`.badge[title]` 的 `cursor` 在 style.css 里配套改成 help，给一个"这能点"的视觉提示。
+document.addEventListener('click',e=>{const b=e.target.closest('.badge[title]');if(b&&b.title)alert(b.title)});
+// 响应不是合法 JSON（网关自身 502/504、反代错误页…）时，以前直接把裸状态码当 message 弹给用户
+// （"HTTP 502"），技术术语没翻译成人话（2026-09-09 审计发现）。改成一句人话+状态码放在括号里，
+// 报障时还能带出这个号。
+async function j(url,opt){const r=await fetch(url,opt);if(r.status===401){location.href='/login?next='+encodeURIComponent(location.pathname);return {ok:false,message:'未登录'}}if(r.status===403){location.href='/password';return {ok:false,message:'需先改密码'}}
+  const httpErr=`服务暂时无法响应，请稍后重试（HTTP ${r.status}）`;
+  let d;try{d=await r.json()}catch{d={ok:false,message:httpErr}}if(!r.ok&&d.ok!==false)d={ok:false,message:d.message||httpErr};return d}
 const postJ=async(url,body)=>{const r=await j(url,{method:'POST',body:JSON.stringify(body)});if(r.ok===false)alert(r.message||'失败');return r};
 
 /* 上传区 HTML（拖放框 + 隐藏 input + 队列 + 按钮），一处生成、各页复用；uploader() 认这个 .up 容器 */
@@ -35,7 +45,7 @@ function uploader(box,urlOf,queryOf,okExt,onFinish){
     const ok=files.filter(f=>f.st==='ok').length,bad=files.filter(f=>f.st==='bad').length;
     sum.innerHTML=files.length?`${ok}/${files.length} 完成${bad?` · <span style="color:var(--bad)">${bad} 失败</span>`:''}`:'';};
   const render=()=>{list.innerHTML='';files.forEach(f=>{const li=document.createElement('li');li.dataset.k=f.k;li.className=f.st||'';
-      li.innerHTML=`<div class="name">${f.file.name} <span class="small">${fmtB(f.file.size)}</span> <button class="btn x" type="button" title="移除" style="padding:.05em .45em;line-height:1">×</button></div><progress value="${f.st==='ok'?100:0}" max="100"></progress><div class="msg">${f.msg||'待传'}</div>`;
+      li.innerHTML=`<div class="name">${f.file.name} <span class="small">${fmtB(f.file.size)}</span> <button class="btn x" type="button" title="移除" aria-label="移除">×</button></div><progress value="${f.st==='ok'?100:0}" max="100"></progress><div class="msg">${f.msg||'待传'}</div>`;
       li.querySelector('.x').onclick=()=>{files=files.filter(x=>x.k!==f.k);render()};list.appendChild(li)});summary()};
   const add=fl=>{for(const f of fl){const rej=okExt&&!okExt.some(e=>f.name.toLowerCase().endsWith(e));
       files.push({file:f,k:Math.random().toString(36).slice(2),rej,st:rej?'bad':'',msg:rej?('格式不收：只接受 '+okExt.join(' / ')):''})}render()};
@@ -62,7 +72,10 @@ function subtabs(sec){const nav=$('.subnav',sec);if(!nav)return;const btns=[...n
   btns.forEach((b,i)=>b.onclick=()=>{btns.forEach(x=>x.classList.remove('on'));panels.forEach(p=>p.classList.remove('on'));b.classList.add('on');if(panels[i])panels[i].classList.add('on')});}
 
 /* 列表渲染骨架：每项一行「左：名字等 ｜ 右：徽章/大小/按钮」；row(it,left,right,li) 填内容。字体/词典/壁纸共用 */
-function fillList(ul,items,row){ul.innerHTML='';if(!items.length){ul.innerHTML=`<li class="small">${T('list.empty')}</li>`;return}
+// emptyMsg 可选：不给就用通用的"（空）"，母版库/浏览页/回收站这几处早就有各自的引导式空状态文案，
+// 这里字体/词典/壁纸列表原来共用的"（空）"完全没有引导，跟其它页面不一致（2026-09-09 审计发现）——
+// 各调用点按自己的场景传一句"去哪里做什么"。
+function fillList(ul,items,row,emptyMsg){ul.innerHTML='';if(!items.length){ul.innerHTML=`<li class="small">${emptyMsg||T('list.empty')}</li>`;return}
   items.forEach(it=>{const li=document.createElement('li');const left=document.createElement('span'),right=document.createElement('span');
     right.className='small';right.style.cssText='display:flex;align-items:center;gap:.4em;flex-wrap:wrap';row(it,left,right,li);li.append(left,right);ul.appendChild(li)})}
 /* 删除按钮：confirm → DELETE → 刷新 */
@@ -108,13 +121,20 @@ function stagingList(ul,opts){
     const rc=dv.render,rb=!rc?'':rc.status==='ok'?` <span class="badge on" title="xochitl 渲染 ${rc.pages} 页，与正文量相符（缺省字号预期≈${rc.expected}）">渲染 ${rc.pages} 页</span>`:rc.status==='warn'?` <span class="badge off" title="xochitl 只渲染出 ${rc.pages} 页，按正文量预期≈${rc.expected} 页——整章渲染失败的症状（如同一标签双 id）；点「优化」修复后重投">⚠ 只渲染 ${rc.pages} 页 / 预期≈${rc.expected}</span>`:rc.status==='pending'?` <span class="badge" title="投原生后等 xochitl 渲染完成自动核对页数（最长 10 分钟）">渲染中…</span>`:` <span class="badge" title="10 分钟内没等到 xochitl 的渲染结果；在设备上打开这本书一次再重投可复核">未见渲染</span>`;
     li.innerHTML=`<span><b>${it.name}</b> <span class="badge">${fmt}</span> ${st}${dl}${rb} <span class="small">${fmtB(it.bytes)}${hint}</span></span>`;
     const right=document.createElement('span');right.style.cssText='display:flex;gap:.4em;flex-wrap:wrap;align-items:center';
-    const btn=(t,pri,fn,dis,title)=>{const b=document.createElement('button');b.className='btn'+(pri?' pri':'');b.textContent=t;if(dis){b.disabled=true;b.title=title||''}else b.onclick=async()=>{b.disabled=true;b.textContent=t+'…';await fn();if(opts.refresh)opts.refresh()};right.appendChild(b)};
+    // 禁用态按钮的原因（超限/未安装）以前只写进 title——触屏设备摸不到 hover，等于完全看不到为什么点
+    // 不了、该去哪解决（2026-09-09 审计发现）。现在禁用时额外补一行可见小字，跟 title 内容一样，
+    // `flex-basis:100%` 让它在 `right`（flex-wrap 容器）里独占一行，不挤在按钮同一行。
+    const btn=(t,pri,fn,dis,title,cls)=>{const b=document.createElement('button');b.className='btn'+(pri?' pri':'')+(cls?' '+cls:'');b.textContent=t;if(dis){b.disabled=true;b.title=title||''}else b.onclick=async()=>{b.disabled=true;b.textContent=t+'…';await fn();if(opts.refresh)opts.refresh()};right.appendChild(b);
+      if(dis&&title){const hint=document.createElement('span');hint.className='small';hint.style.cssText='flex-basis:100%';hint.textContent=title;right.appendChild(hint)}};
     if(it.format==='epub'&&!it.optimized)btn('优化',false,()=>postJ('/api/books/staging/optimize',{name:it.name,mode:opts.mode()}));
     // 体积门：超过 xochitl /upload 上限的书灰掉按钮（服务端同样拦），提示走电脑分卷
     const tooBig=opts.nativeLimit&&it.bytes>opts.nativeLimit;
     if(it.format==='epub'||it.format==='pdf')btn('投入原生书库',true,()=>postJ('/api/books/staging/deliver',{name:it.name,keep:!opts.clear(),folder:opts.xFolder()}),tooBig,`超过原生阅读器上传上限 ${fmtB(opts.nativeLimit)}：PDF 在电脑 shelf push 重推会自动分卷；EPUB 用 KOReader 读`);
     btn('加入 KOReader',true,async()=>{const r=await postJ('/api/koreader/books/adopt',{name:it.name,folder:opts.kFolder()});if(r.ok!==false){await postJ('/api/books/staging/mark',{name:it.name,target:'koreader'});if(opts.clear())await postJ('/api/books/staging/delete',{name:it.name})}},!opts.koInstalled,'KOReader 未安装（「管理」页看基石）');
-    btn('删除',false,async()=>{if(confirm('从母版库删除 '+it.name+'？（已投到读器的不受影响）'))await postJ('/api/books/staging/delete',{name:it.name})});
+    // 单行最多 5 徽章+4 按钮时，"删除"（销毁）跟"优化"（编辑）视觉权重完全一样，只靠文案区分
+    // （2026-09-09 审计发现）；`.btn-bad` 早就存在但只用在转写失败按钮上，这里补上，破坏性操作至少
+    // 颜色上跟常规操作分开。
+    btn('删除',false,async()=>{if(confirm('从母版库删除 '+it.name+'？（已投到读器的不受影响）'))await postJ('/api/books/staging/delete',{name:it.name})},false,'','btn-bad');
     li.appendChild(right);ul.appendChild(li)});
 }
 
@@ -138,12 +158,12 @@ function renderTransfer(sec){sec.innerHTML=`
   </div>
   <div class="subpanel">
     <div class="card"><h3 style="margin-top:0">母版库 <span class="small" id="stgcap"></span></h3>
-      <div class="row"><span class="small">投原生 → 文件夹</span><select id="folderPreset" style="max-width:13em"><option value="lib">书库（默认）</option><option value="annot">批注文件夹</option><option value="custom">自定义…</option></select><input type="text" id="folder" placeholder="文件夹名" style="display:none;max-width:10em">
-        <span class="small">加入 KOReader → 目录</span><input type="text" id="kfolder" list="kodirs" placeholder="留空＝根目录" style="max-width:9em"><datalist id="kodirs"></datalist></div>
-      <div class="row"><span class="small">优化档位</span><select id="optmode" style="max-width:15em"><option value="auto">清洗＋优化（推荐）</option><option value="keep-spacing">清洗但保留段距（诗集 / 剧本）</option><option value="plain">只优化不清洗</option></select>
+      <div class="row"><label class="small" for="folderPreset">投原生 → 文件夹</label><select id="folderPreset" style="max-width:13em"><option value="lib">书库（默认）</option><option value="annot">批注文件夹</option><option value="custom">自定义…</option></select><input type="text" id="folder" placeholder="文件夹名" style="display:none;max-width:10em">
+        <label class="small" for="kfolder">加入 KOReader → 目录</label><input type="text" id="kfolder" list="kodirs" placeholder="留空＝根目录" style="max-width:9em"><datalist id="kodirs"></datalist></div>
+      <div class="row"><label class="small" for="optmode">优化档位</label><select id="optmode" style="max-width:15em"><option value="auto">清洗＋优化（推荐）</option><option value="keep-spacing">清洗但保留段距（诗集 / 剧本）</option><option value="plain">只优化不清洗</option></select>
         <label class="toggle"><input type="checkbox" id="stgclear"> 投完从母版库清除</label></div>
       <details class="cmp"><summary>档位说明 · 母版为什么默认保留</summary>${OPTTABLE}<p class="small">母版保留＝同一本可再投另一个读器对照、换设备重投；不需要了手动删。</p></details>
-      <div class="row"><input type="text" id="stgq" placeholder="搜书名…" style="flex:1;min-width:8em"><select id="stgfmt" style="max-width:8em"><option value="">全部格式</option><option value="epub">EPUB</option><option value="pdf">PDF</option><option value="other">其它</option></select><select id="stgst" style="max-width:8em"><option value="">全部状态</option><option value="0">未优化</option><option value="1">已优化</option></select><button class="btn" id="stgpurge" title="删除已投过读器的母版（读器里的书不受影响）">清理已落库</button></div>
+      <div class="row"><input type="text" id="stgq" placeholder="搜书名…" aria-label="搜书名" style="flex:1;min-width:8em"><select id="stgfmt" aria-label="按格式筛选" style="max-width:8em"><option value="">全部格式</option><option value="epub">EPUB</option><option value="pdf">PDF</option><option value="other">其它</option></select><select id="stgst" aria-label="按优化状态筛选" style="max-width:8em"><option value="">全部状态</option><option value="0">未优化</option><option value="1">已优化</option></select><button class="btn" id="stgpurge" title="删除已投过读器的母版（读器里的书不受影响）">清理已落库</button></div>
       <div class="small" id="stgfree" style="margin:-.3em 0 .4em"></div>
       <ul class="list" id="stglist"></ul>
     </div>
@@ -222,8 +242,8 @@ const TABS={
   const refresh=async()=>{
     const [s,f,dc]=await Promise.all([j('/api/koreader/status'),j('/api/koreader/fonts'),j('/api/koreader/dicts')]);
     $('#ks',sec).innerHTML=s.ok?`<b>安装</b><span>${s.installed?'是':'否'} ${s.version?'('+s.version+')':''}</span><b>运行中</b><span>${s.running?'是（改配置 / 删字体后需重启它）':'否'}</span><b>已装</b><span>字体 ${s.fonts} 个 · 词典 ${s.dicts||0} 本</span>`:`<span>${s.message}</span>`;
-    fillList($('#kf',sec),f.items||[],(it,left,right)=>{left.textContent=it.name;right.insertAdjacentHTML('beforeend',cjkBadge(it.cjkPct)+`<span>${fmtB(it.bytes)}</span>`);right.appendChild(delBtn('从 KOReader 删除 '+it.name+'？','/api/koreader/fonts/'+encodeURIComponent(it.name),refresh))});
-    fillList($('#kd',sec),dc.items||[],(it,left,right)=>{left.textContent='📖 '+it.name;right.textContent=it.ifo+' 本'})};
+    fillList($('#kf',sec),f.items||[],(it,left,right)=>{left.textContent=it.name;right.insertAdjacentHTML('beforeend',cjkBadge(it.cjkPct)+`<span>${fmtB(it.bytes)}</span>`);right.appendChild(delBtn('从 KOReader 删除 '+it.name+'？','/api/koreader/fonts/'+encodeURIComponent(it.name),refresh))},'还没有装 KOReader 字体，上面传一个');
+    fillList($('#kd',sec),dc.items||[],(it,left,right)=>{left.textContent='📖 '+it.name;right.textContent=it.ifo+' 本'},'还没有装词典，上面传一个')};
   refresh();sec.refresh=refresh;subtabs(sec)}},
  'wallpaper-serve':{titleKey:'tab.wallpaper',title:'壁纸',render(sec){assetTab(sec,'/api/wallpapers',{
    hint:'jpg / png 图片，自动裁到 954×1696。首张自动启用（写 xochitl.conf SleepScreenPath，首次需跑一次 xovi/start），之后换图下次休眠即生效。',
@@ -232,7 +252,9 @@ const TABS={
    onRender:async(sec,refresh)=>{const st=await j('/api/wallpapers/status');const sel=$('#wpmode',sec);if(st.ok){sel.value=st.mode;const nv=st.native||{};$('#wpst',sec).textContent=`当前 ${st.current||'（无）'} · 原生休眠屏 ${nv.enabled?'已启用':'未启用（激活首张时自动写）'}${nv.restartPending?' · 需跑一次 xovi/start 生效':''}`}
      sel.onchange=async()=>{const r=await j('/api/wallpapers/mode',{method:'PUT',body:JSON.stringify({mode:sel.value})});if(r.ok===false){alert(r.message||'切换失败');return}refresh()}},
    row:(it,left,right,refresh)=>{const cur=(it.extra||{}).current;
-     left.innerHTML=`<img src="/api/wallpapers/${encodeURIComponent(it.name)}" alt="" style="height:3.4em;border-radius:.3em;border:1px solid var(--line);margin-right:.6em;vertical-align:middle">${it.name}`;
+     // alt="" 原来把这张图当装饰性处理，但壁纸缩略图本身就是内容（"这张壁纸长什么样"），屏幕阅读器
+     // 会整个跳过（2026-09-09 审计发现）；文件名本身当描述最直接，跟右边视觉上显示的文字一致。
+     left.innerHTML=`<img src="/api/wallpapers/${encodeURIComponent(it.name)}" alt="壁纸缩略图：${it.name}" style="height:3.4em;border-radius:.3em;border:1px solid var(--line);margin-right:.6em;vertical-align:middle">${it.name}`;
      right.insertAdjacentHTML('beforeend',`<span>${fmtB(it.bytes)}</span>`+(cur?'<span class="badge on">当前</span>':''));
      if(!cur){const b=document.createElement('button');b.className='btn';b.textContent='使用';b.onclick=async()=>{const r=await j('/api/wallpapers/current',{method:'PUT',body:JSON.stringify({name:it.name})});if(r.ok===false){alert(r.message||'设置失败');return}refresh()};right.appendChild(b);
        right.appendChild(delBtn('删除 '+it.name+'？','/api/wallpapers/'+encodeURIComponent(it.name),refresh))}}})}}
@@ -242,7 +264,7 @@ const TABS={
 function assetTab(sec,api,o){sec.innerHTML=`<div class="card">${o.title?`<h2>${o.title}</h2>`:''}<p class="${o.title?'small':'lead'}">${o.hint}</p>${o.header||''}
   ${upHtml(o.icon,o.label,o.accept,o.btn)}
   <h3>${o.listTitle||'已安装'}</h3><ul class="list" id="al"></ul></div>`;
-  const refresh=async()=>{const d=await j(api);fillList($('#al',sec),d.items||[],(it,left,right)=>o.row(it,left,right,refresh));if(o.onRender)o.onRender(sec,refresh,d)};
+  const refresh=async()=>{const d=await j(api);fillList($('#al',sec),d.items||[],(it,left,right)=>o.row(it,left,right,refresh),`还没有内容，上面「${o.btn}」传一个`);if(o.onRender)o.onRender(sec,refresh,d)};
   uploader($('.up',sec),()=>api,()=>({}),o.accept,refresh);
   refresh();sec.refresh=refresh}
 
@@ -376,7 +398,10 @@ function renderNotes(sec){sec.innerHTML=`
   const updateSummary=()=>{if(!book){sum.textContent='';return}const es=book.entries||[];
     const c=st=>es.filter(e=>e.status===st).length;
     sum.textContent=`待浏览 ${c('mined')} · 待转写 ${c('pending')} · 待校对 ${c('draft')} · 已校对 ${c('reviewed')}`};
-  $('#nrescan',sec).onclick=async()=>{if(!book)return;await flushPendingText();await postJ(`/api/ink/books/${encodeURIComponent(book.uuid)}/rescan`,{});refresh()};
+  // 全站唯一一处"按钮文案暗示有代价、却没有二次确认"（2026-09-09 审计发现）：清掉页记录会强制整本
+  // 重新摄取。实际数据风险不大（已校对文本/条目不会被覆盖，见 notecore::ingest 的增量规则），但操作
+  // 本身不常用、容易误触，补一句说清楚"安全在哪"的确认。
+  $('#nrescan',sec).onclick=async()=>{if(!book)return;if(!confirm('清掉本书已抓取的页记录，重新整本摄取？（已校对/已转写的内容不会丢，只是重新走一遍识别）'))return;await flushPendingText();await postJ(`/api/ink/books/${encodeURIComponent(book.uuid)}/rescan`,{});refresh()};
   $('#npurge',sec).onclick=async()=>{if(!book)return;
     const items=(book.entries||[]).filter(e=>TRASH_STATUSES.includes(e.status));
     if(!items.length){alert('回收站是空的，没什么可清');return}
