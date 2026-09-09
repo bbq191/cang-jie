@@ -151,7 +151,11 @@ notes/
 
 ## 去处、删除与回收站
 
-条目校对/问答完之后，`destination` 决定它出现在哪：`Notebook`（只留设备笔记本）/ `Obsidian`（只导出）/ `Both`（缺省，两处都要）。不想要了点「不要了」→ `Archived`（软删，两处投影都摘掉，但条目库里还留着）。「回收站」子视图列出 `Skipped`/`Revoked`/`Archived` 三种终态条目的实际内容（不是纯按钮），每条一个「恢复」按钮（`Entry::restore()`，按条目已有内容倒推落点，第二轮反馈新增）+ 一个「全部恢复」批量按钮；确认无误后点「清空回收站」才是真删（`Book::purge_terminal()`，不可恢复，手动触发不自动跑）。恢复找回的是条目库存档（裁图/文本），不代表设备原页面笔迹重现——`Revoked` 条目本来就是"笔画在设备上被擦掉"触发的。
+条目校对/问答完之后，`destination` 决定它出现在哪：`Notebook`（只留设备笔记本）/ `Obsidian`（只导出）/ `Both`（缺省，两处都要）。不想要了点「不要了」→ `Archived`（软删，两处投影都摘掉，但条目库里还留着）。「回收站」子视图列出 `Skipped`/`Revoked`/`Archived` 三种终态条目的实际内容（不是纯按钮），每条一个「恢复」按钮（`Entry::restore()`，按条目已有内容倒推落点，第二轮反馈新增）+ 一个「全部恢复」批量按钮；确认无误后点「清空回收站」才是真删（`Book::purge_terminal()`，不可恢复，手动触发不自动跑）。恢复找回的是条目库存档（裁图/文本），不代表设备原页面笔迹重现——`Revoked` 条目本来就是"笔画在设备上被擦掉"触发的。三处写入口（通用改字端点、强制重转写、问 AI）都对终态条目（`is_terminal()`）加了守卫，不会被绕开悄悄拉回活跃态（2026-09-09 审计补）。
+
+`Entry.status` 全部 7 态 + `restore()` 落点规则是这条线复杂度最高的状态迁移，图示见下（此前只有散落在几处的文字描述）：
+
+![notes 条目状态机：7 态 + restore()](docs/diagrams/entry-status.svg)
 
 ## 增量规则（回答"二次识别会不会把改好的字覆盖回去"）
 
@@ -163,7 +167,7 @@ notes/
 **前置依赖**：跟书架共用同一套交叉编译环境（`rustup target add aarch64-unknown-linux-musl` + aarch64 交叉 gcc/ar），见 `../shelf/README.md`「构建」一节，不用单独装第二遍。改代码前先看工程纪律，日常提交分支是 `dev` 不是 `master`。
 
 ```sh
-cd notes && cargo build --workspace && cargo test --workspace     # host：141 个测试（rmv6 7 · epubmap 5 · notecore 44 · vendorcfg 13 · ink 10 · transcribe 22 · mind 21 · note 19，含 1 ignored）
+cd notes && cargo build --workspace && cargo test --workspace     # host：162 个测试（rmv6 27 · epubmap 5 · notecore 45 · vendorcfg 13 · ink 10 · transcribe 22 · mind 21 · note 19，含 1 ignored）
 cd ../shelf && ./build.sh && ./deploy.sh <设备IP>                  # 随书架一起交叉编译/打包/装机（NOTES_BINS；设备在 WiFi 上时给 WiFi IP）
 ssh root@<设备IP> sh /home/root/shelf-pkg/shelf/install.sh --only ink,transcribe,mind,note   # 只装/更新笔记线
 ```
