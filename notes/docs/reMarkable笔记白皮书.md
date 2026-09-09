@@ -244,6 +244,8 @@ note-serve 投影要往设备写打字文本，rmv6 之前是纯只读解析。�
 
 **仍是已知缺口**：网页「笔记」tab 还没有「生成笔记本」按钮（§05 第 4 项剩的那半）；`Library.createCollection` 重复调用传同名文件夹会不会建出两个重名文件夹这条风险，本轮验证走的是"add()/pending() 两层不重复请求"的正常路径，没有刻意去撞"两次并发请求建同名夹"这种边界，留意但不阻塞。
 
+**⚠️ 2026-09-09 起，这条链路不再是 note-serve 的依赖**：`ensure_folder` 这套连带 `note-serve::mkdir` 已经整个删掉，改成直接复用书本自己所在的设备文件夹，不再新建任何文件夹——上面这条"重名建夹"风险随之不再是笔记线要担心的问题（`book-serve::mkdir`/`shelf-mkdir-agent.qmd` 本身还在，是书架侧的机制，只是笔记线不再调用）。**当前设计以 §03ae 为准**。
+
 ## 03m｜用户真机核对揪出两个真问题 + 一次数据事故（2026-09-07）
 
 用户在真机上核对《人骨拼圖》的笔记 tab 时报了四点，理清后是**一个数据事故 + 两个真代码缺口**：
@@ -576,6 +578,20 @@ CSS 上章节标签条复用 `.subnav` 按钮视觉（`subtabs()` 用 `$('.subna
 
 **离线**：纯前端改动，Rust 契约不变。
 
+## 03ae｜去掉建夹逻辑，复用书本自己的设备文件夹（2026-09-09，离线，⚠️ 待真机验证）
+
+用户提出：不再自动新建《书名》文件夹，笔记本直接复用书本自己已经在的设备文件夹；名字直接用章节标题（不再带"第N章"前缀），撞名在同一文件夹范围内加数字后缀。审计过程中坐实了 §03l 那条链路的真实问题：note-serve→book-serve 排队→真机 qmd 每 8 秒轮询 `Library.createCollection` 兜底建夹，是 fire-and-forget、无重名保护——`shelf-mkdir-agent.qmd` 自己的注释都承认"重复调用会不会建出两个同名文件夹"这条风险没验证过。
+
+**方案**：`shelf_core::xochitl` 新增两个纯读函数——`parent_folder_of(dir, uuid)` 读文档 `.metadata` 的 `parent` 字段（书本自己在设备上已经在哪个文件夹，回收站视为查不到）；`unique_document_name(dir, folder, base_name)` 在同一文件夹范围内查重、撞名加数字后缀。`note-serve::publish::Uploader` trait 的 `ensure_folder` 换成 `parent_folder`/`unique_name` 两个方法（缺省分别是 `None`/原样返回，方便测试桩）；`generate_chapter` 不再算 `folder_name`，改成查书本父文件夹直传给 `upload`。
+
+**一个容易踩的坑，写测试时抓到了**：重新生成同一章时，如果照常调用 `unique_name` 去重，会把"这次要被替换、但还没来得及入回收站队列"的旧文档也算成"重名"，平白多加一次后缀（比如"楔子"变成"楔子 2"）——`ChapterRecord.doc_uuid` 的旧文档要等这次上传成功、`claim` 拿到新 uuid 之后才会入队。修法：**只有首次生成才走 `unique_name` 去重，重新生成时直接沿用 `ChapterRecord.visible_name` 里记录的名字**，不重新计算。`folder_reused_from_book_and_dedup_only_runs_once_not_on_regenerate` 这条测试专门钉住这一点（用一个每次调用都变返回值的去重桩，断言重新生成时调用次数不再增加）。
+
+移除：`NoteConfig::folder_name_pattern`/`folder_name()`（连带 `/status` 的 `folderPattern` 字段）、`Uploader::ensure_folder`、`note-serve/src/mkdir.rs`（`BookServeMkdir`/`MkdirSink`）。**范围边界**：`book-serve` 的 `MkdirQueue`/`/mkdir/add` 路由和真机 `shelf-mkdir-agent.qmd` 本身没有动——note-serve 是不是唯一消费方还没确认，物理清理留到单独评估（涉及卸载已部署的真机注入组件，按纪律要走"改设备前先备份、一步一确认"，不跟这次功能改动捆一起）。
+
+**离线**：`shelf-core` 新增 2 测（`parent_folder_of_reads_parent_field_and_treats_trash_as_none`/`unique_document_name_appends_suffix_only_within_same_folder`），`note-serve` 新增 1 测（上面那条去重时机测试），删 1 测（`config.rs` 的 `folder_name` 断言随字段一起删，改成只测默认值/覆盖）；`cargo test --workspace`（notes）164 个测试、`cargo test -p shelf-core`（shelf）49 个测试，全绿零警告；两边 `cargo clippy --all-targets` 核对过没有新增警告。
+
+**⚠️ 还没真机验证**：这条改动改变了设备行为（笔记本落点、命名规则），要按"真机验证再宣称完成"补一轮——给已有书本生成新章节，确认笔记本落进书本已有的文件夹而不是新建/落根，且不再触发 8 秒轮询建夹。
+
 ## 04｜踩坑
 
 - **外部进程直改 `.metadata` `parent="trash"` 会被运行中 xochitl 覆写**（阅读线判死）；软删/建夹只能走 QML 代理（书架 `shelf-trash-agent.qmd`）。
@@ -612,6 +628,7 @@ CSS 上章节标签条复用 `.subnav` 按钮视觉（`subtabs()` 用 `$('.subna
 19. ~~第六轮反馈上线后的两个真机 bug~~ ✅ 2026-09-08 真机验证通过（§03ab）：点条目自己的去处按钮画面跳到别的章节（选中章节校验没区分"编辑动作"和"推送完成"两种触发）+ 条目行同步徽章显示跟自己无关的去处（直接复用了整章聚合状态）。都已修：选中章节默认"跟随"、`syncBadges` 按条目自己的去处过滤。纯前端改动。
 20. ~~合理使用设计模式消除重复代码~~ ✅ 2026-09-08 真机验证通过（§03ac）：新增 `vendorcfg` 共享 crate（`transcribe-serve`/`mind-serve` 的 `config.rs`/`ledger.rs` 85%~90% 重叠，抽出预置/key/迁移/PATCH/用量账本的共享逻辑，只抽行为不抽数据结构，磁盘格式零风险）+ note-serve 的 `ChapterStore<T>` 泛型（`notebooks.rs`/`export_state.rs` 消重）。真机验证真实调用一次强制单条转写，走完整条重构后的链路（key 解析→模型调用→用量记账）全部正确。
 21. ~~「整理」区第七轮反馈~~ ✅ 2026-09-08 真机验证通过（§03ad）：去掉批量勾选层（每条已有独立按钮，批量是重复入口）；「已导出/未导出」tab 归属改判"是否被推送过"（`everExported`）而不是"内容是否跟最近一次投影匹配"（`fullySynced`），推送过就稳定留在已导出，`fullySynced`/`syncBadges` 继续管徽章不丢信息。方案分叉跟用户核实过（直接采纳"存在过就不再提示"会丢失"有没有新改动待推送"的追踪能力），用户选了保留提示这版。纯前端改动。
+22. **去掉建夹逻辑，复用书本自己的设备文件夹**（§03ae，离线已完成，⚠️ 真机未验证）：给已有书本生成新章节，确认笔记本落进书本已有的设备文件夹（不是新建/落根），且不再触发 `shelf-mkdir-agent.qmd` 8 秒轮询；同一章重新生成时名字保持稳定（不会因为去重逻辑被误判重名而多加后缀）。
 
 **已闭环（真机）**：§03c ink-serve 首轮（active/注册/追平 38 章）· §03d 「笔记」tab 注册 · §03e transcribe-serve 部署（active/注册/0600/追平记 note）· §03f 步骤 0 样本标定（聚簇/配对阈值验证通过）· §03g 揪出裁图画布尺寸错（960×1280）并修复部署复验（3 条有勾画的条目裁图都对准了手写位置，但转写准确率另计——2 条数字被认错、1 条完全读错；1 条裁不到已优雅降级）· §03h `rmv6::write`/`note-serve::rmdoc`/上传三件套首次真机验证通过 · §03i 更正 NUMBERED 误判、解出 Subheading 1/2 区分开关、二次真机验证全部 7 种打字样式渲染正确 · §03j/§03k note-serve 生成编排离线写完当晚三轮真机验证通过（生成/增量重传+旧本自动回收/无变化跳过全绿）· §03l 建夹代理真机验证通过（《书名》文件夹自动创建、新文档正确落进去、不重复建夹）· §03m 修正 `list_active` 真机验证通过（书清空后正确从列表消失）· §03o 二期浏览态状态机 + 浏览页 UI 全套真机验证通过、顺带修复"回收站/删除仍赖在列表里"bug · §03p 纯勾画条目 + 裁图自渲染 + `mind-serve` 全部真机验证通过、顺带修复"浏览页对纯勾画条目排序崩溃"bug · §03q 模型配置统一面板（步骤 5）真机验证通过（经真实网关认证代理层验证数据契约，纯视觉排版未经人眼确认），**二期五步全部完成** · §03r 三期：md 导出 + 落设备笔记本/Obsidian/删除三选一真机验证通过，顺带修复"`Mined`/`Skipped` 混进两条投影"的真机 bug（`live_entries` 判据从排除法改允许列表）+ 导出改直接触发浏览器下载（顺带修了 `shelf-gateway::proxy::forward` 丢弃 `Content-Disposition` 头的缺口） · §03s 三期：砍掉分区，条目按页序平铺真机验证通过（含旧数据向后兼容验证）· §03t「整理」区四点反馈：模型预置下拉+搬进管理台、回收站显内容、条目卡片重设计，真机验证数据契约通过（前端可视渲染仍未经人眼确认）· §03u「整理」区第二轮反馈：删转写折叠层+批量勾选工具栏、模型预置横跨四厂商（key 按厂商分开存+老配置迁移不丢 key）、回收站可恢复，真机验证数据契约通过（含对真实历史 `revoked` 条目跑通 `restore`；只有 DashScope 有真实 key 验证过实际调用，前端可视渲染仍未经人眼确认）· §03v「整理」区编辑丢失竞态+列表闪烁修复+模型两级下拉（纯前端）· §03w 点重转/提问弹出状态+消耗，顺带修复真机踩到的 provider baseUrl 隔离 bug（`mind-serve` 老配置 key 落错格、切换同厂商预置后找不到），真实调用（`/ask`+强制单条转写）双双验证通过，非占位数字 · §03x 生成/导出去重复（挪回章头直接按钮）+ 同步状态追踪（`export_state.rs` 补齐导出这条路径"指纹没变跳过"的纪律）+ 全同步章节默认收起 + 回收站显示去处/同步徽章，真机验证生成→导出→同步、二次导出跳过重写；destination 改变指纹这条只有离线单测干净覆盖，真机因活跃测试书的并发状态漂移没能单独复现 · §03y 生成笔记本/导出 md 合并成「同步本章」一个按钮（去处字段本来就决定了该做哪样，纯前端改动、服务端契约不变），真机验证新按钮已生效、服务健康 · §03z 章节默认折叠（"1章10条，10章就100条"，纯前端），真机验证新标识符已生效、服务健康 · §03aa 「未导出/已导出」双层 tab 取代复选框+章节折叠、按钮改名去歧义（纯前端），真机验证新标识符已生效、`/sync` 真实数据核对分组逻辑对得上、服务健康 · §03ab 修复选中章节误跳走+同步徽章显示跟本条无关去处两个真机 bug（纯前端）· §03ac 新增 `vendorcfg` 共享 crate 消掉 transcribe-serve/mind-serve 的 config/ledger 重复 + note-serve `ChapterStore<T>` 消掉 notebooks/export_state 重复，真机验证真实配置/用量数据零丢失、真实调用一次转写全链路验证通过 · §03ad 去掉批量勾选层+「已导出」改判存在性（纯前端），真机验证新标识符已生效、真实 `/sync` 数据核对逻辑对得上。离线：八 crate（新增 vendorcfg）+ 四服务 **136** 测（这轮全是前端改动，测试数不变）。
 

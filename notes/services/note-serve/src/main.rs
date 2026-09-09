@@ -1,5 +1,5 @@
 //! note-serve —— 笔记·本（loopback 8798）。它是网页「笔记」tab 的注册方（tab 只挂一个服务，前端组合 ink/transcribe/mind/notes 四段）；
-//! 本体职责是把条目库投影成设备笔记本（《书名》文件夹一章一本，xochitl 7 种打字样式）与 md 导出
+//! 本体职责是把条目库投影成设备笔记本（复用书本自己所在的设备文件夹，一章一本，xochitl 7 种打字样式）与 md 导出
 //! （`export.rs`，落 `$XDG_DATA_HOME/notes/vault/<书名>/`，供 host `notes pull` 拉走）。
 //! 生成编排见 `publish.rs`：只读 ink-serve 的条目库（改字段仍是 ink-serve 的事）、按章指纹判断要不要重传，
 //! 传完按 `visibleName`+时间窗认领设备新分配的 uuid，旧版本入 `book-serve` 回收站队列（真机验证过的软删路）。
@@ -18,7 +18,6 @@ mod config;
 mod export;
 mod export_state;
 mod ink;
-mod mkdir;
 mod notebooks;
 mod publish;
 mod rmdoc;
@@ -27,7 +26,6 @@ mod trash;
 use config::NoteConfig;
 use export_state::ExportState;
 use ink::{EntryStore, InkHttp};
-use mkdir::BookServeMkdir;
 use notebooks::NotebookState;
 use publish::{generate_book, generate_chapter, ChapterResult, Ctx, Uploader, XochitlUploader};
 use shelf_core::events::EventBus;
@@ -54,7 +52,7 @@ struct State {
 
 impl State {
     fn ctx(&self, now_ms: u64) -> Ctx<'_> {
-        Ctx { store: self.store.as_ref(), uploader: self.uploader.as_ref(), trash: self.trash.as_ref(), state: &self.notebooks, cfg: &self.cfg, now_ms }
+        Ctx { store: self.store.as_ref(), uploader: self.uploader.as_ref(), trash: self.trash.as_ref(), state: &self.notebooks, now_ms }
     }
 }
 
@@ -81,7 +79,7 @@ fn main() {
         eprintln!("[note-serve] 建目录失败: {e}");
         std::process::exit(1);
     }
-    let uploader = XochitlUploader::new(&cfg.xochitl_host, &paths.xochitl_dir(), cfg.upload_timeout_secs, Box::new(BookServeMkdir::new(paths.clone())));
+    let uploader = XochitlUploader::new(&cfg.xochitl_host, &paths.xochitl_dir(), cfg.upload_timeout_secs);
     let st = Arc::new(State {
         store: Box::new(InkHttp::new(paths.clone())),
         uploader: Box::new(uploader),
@@ -94,7 +92,7 @@ fn main() {
     });
     let router = Router::new()
         .get("/events", bind(&st, |s, _| Ok(s.bus.sse_reply())))
-        .get("/status", bind(&st, |s, _| Ok(Reply::ok(&serde_json::json!({"ok": true, "vault": s.paths.app_data_dir(APP).join("vault"), "folderPattern": s.cfg.folder_name_pattern, "xochitlHost": s.cfg.xochitl_host})))))
+        .get("/status", bind(&st, |s, _| Ok(Reply::ok(&serde_json::json!({"ok": true, "vault": s.paths.app_data_dir(APP).join("vault"), "xochitlHost": s.cfg.xochitl_host})))))
         .get("/books", bind(&st, |s, _| {
             let items = s.store.list_books().map_err(ApiError::bad)?;
             let out: Vec<serde_json::Value> = items.iter().map(|b| serde_json::json!({"uuid": b.uuid, "notebooks": s.notebooks.list(&b.uuid)})).collect();
@@ -181,7 +179,7 @@ fn main() {
             let filename = format!("{}.md", notecore::export::chapter_stem(idx, &title));
             Ok(Reply::bytes("text/markdown; charset=utf-8", md.into_bytes()).with_header("Content-Disposition", &export::content_disposition(&filename)))
         }));
-    println!("[note-serve] 状态 {}；文件夹样式 {}；xochitl {}", st.notebooks.dir().display(), st.cfg.folder_name_pattern, st.cfg.xochitl_host);
+    println!("[note-serve] 状态 {}；xochitl {}", st.notebooks.dir().display(), st.cfg.xochitl_host);
     if let Err(e) = service::run(&SPEC, &bind_addr, &paths, router) {
         eprintln!("[note-serve] {e}");
         std::process::exit(1);

@@ -45,6 +45,16 @@ impl Xochitl {
         find_folder_by_name(&self.library_dir, name)
     }
 
+    /// 给定文档 uuid，查它当前所在的设备文件夹 uuid（空串＝根）；查不到／在回收站 → `None`。
+    pub fn parent_folder(&self, uuid: &str) -> Option<String> {
+        parent_folder_of(&self.library_dir, uuid)
+    }
+
+    /// 在 `folder` 范围内给 `base_name` 去重，撞名就加数字后缀。
+    pub fn unique_name(&self, folder: &str, base_name: &str) -> String {
+        unique_document_name(&self.library_dir, folder, base_name)
+    }
+
     /// 书库目录（`<uuid>.{metadata,content,epub,pdf}` 所在）。
     pub fn library_dir(&self) -> &Path {
         &self.library_dir
@@ -94,6 +104,39 @@ fn is_live(v: &serde_json::Value) -> bool {
 
 pub fn find_folder_by_name(dir: &Path, name: &str) -> Option<String> {
     metadata_entries(dir).into_iter().find(|(_, v)| str_of(v, "type") == "CollectionType" && is_live(v) && str_of(v, "visibleName") == name).map(|(uuid, _)| uuid)
+}
+
+/// 给定一份文档的 uuid，读它 `.metadata` 的 `parent` 字段——就是它当前所在的设备文件夹 uuid
+/// （空串＝书库根）。找不到 `.metadata`、解析失败、或书在回收站（`parent=="trash"`），一律返回
+/// `None`，调用方按 best-effort 落书库根处理（2026-09-09 补：`note-serve` 生成章节笔记本时不再
+/// 新建/确保文件夹，改成直接复用书本自己已经在的文件夹）。
+pub fn parent_folder_of(dir: &Path, uuid: &str) -> Option<String> {
+    let t = std::fs::read_to_string(dir.join(format!("{uuid}.metadata"))).ok()?;
+    let v: serde_json::Value = serde_json::from_str(&t).ok()?;
+    let parent = v.get("parent").and_then(|x| x.as_str())?;
+    (parent != "trash").then(|| parent.to_string())
+}
+
+/// 在 `folder`（文件夹 uuid，空串＝根）范围内，如果 `base_name` 已经被别的活文档占用，就在末尾加
+/// 数字后缀（`"标题"` → `"标题 2"` → `"标题 3"` ...）直到不冲突；没冲突就原样返回。只读 `.metadata`，
+/// 不写、不建任何东西。
+pub fn unique_document_name(dir: &Path, folder: &str, base_name: &str) -> String {
+    let names: std::collections::HashSet<String> = metadata_entries(dir)
+        .into_iter()
+        .filter(|(_, v)| str_of(v, "type") == "DocumentType" && is_live(v) && str_of(v, "parent") == folder)
+        .map(|(_, v)| str_of(&v, "visibleName").to_string())
+        .collect();
+    if !names.contains(base_name) {
+        return base_name.to_string();
+    }
+    let mut n = 2u32;
+    loop {
+        let candidate = format!("{base_name} {n}");
+        if !names.contains(&candidate) {
+            return candidate;
+        }
+        n += 1;
+    }
 }
 
 /// 书库里一份文档（非文件夹、非回收站）。
@@ -173,6 +216,33 @@ mod tests {
         w("d.content", r#"{}"#);
         assert_eq!(find_folder_by_name(t.path(), "library"), Some("c".into()));
         assert_eq!(find_folder_by_name(t.path(), "none"), None);
+    }
+
+    #[test]
+    fn parent_folder_of_reads_parent_field_and_treats_trash_as_none() {
+        let t = tempfile::tempdir().unwrap();
+        let w = |n: &str, j: &str| std::fs::write(t.path().join(n), j).unwrap();
+        w("book-in-folder.metadata", r#"{"type":"DocumentType","visibleName":"人骨拼图","parent":"folder-uuid"}"#);
+        w("book-at-root.metadata", r#"{"type":"DocumentType","visibleName":"飘","parent":""}"#);
+        w("book-in-trash.metadata", r#"{"type":"DocumentType","visibleName":"删了","parent":"trash"}"#);
+        assert_eq!(parent_folder_of(t.path(), "book-in-folder"), Some("folder-uuid".into()));
+        assert_eq!(parent_folder_of(t.path(), "book-at-root"), Some(String::new()), "根目录是空串，不是 None");
+        assert_eq!(parent_folder_of(t.path(), "book-in-trash"), None, "书在回收站，别把笔记也生成进去");
+        assert_eq!(parent_folder_of(t.path(), "no-such-uuid"), None, "查不到就 None，调用方 best-effort 落根");
+    }
+
+    #[test]
+    fn unique_document_name_appends_suffix_only_within_same_folder() {
+        let t = tempfile::tempdir().unwrap();
+        let w = |n: &str, j: &str| std::fs::write(t.path().join(n), j).unwrap();
+        w("a.metadata", r#"{"type":"DocumentType","visibleName":"楔子","parent":"f1"}"#);
+        w("b.metadata", r#"{"type":"DocumentType","visibleName":"楔子 2","parent":"f1"}"#);
+        w("c.metadata", r#"{"type":"DocumentType","visibleName":"楔子","parent":"f2"}"#);
+        w("trashed.metadata", r#"{"type":"DocumentType","visibleName":"楔子 3","parent":"trash"}"#);
+        assert_eq!(unique_document_name(t.path(), "f1", "楔子"), "楔子 3", "f1 下已有「楔子」和「楔子 2」（后者活着占用），下一个该是 3");
+        assert_eq!(unique_document_name(t.path(), "f2", "楔子"), "楔子 2", "f2 只有一份同名，跟 f1 的计数互不影响");
+        assert_eq!(unique_document_name(t.path(), "f3", "楔子"), "楔子", "f3 没有同名文档，原样返回");
+        assert_eq!(unique_document_name(t.path(), "trash", "楔子 3"), "楔子 3", "回收站里的同名文档不算占用（is_live 过滤掉）");
     }
 
     #[test]
