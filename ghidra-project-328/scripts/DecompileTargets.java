@@ -24,7 +24,7 @@ public class DecompileTargets extends GhidraScript {
         // Reusable target list — edit the address(es) here and rerun. Requires the
         // GUI project to be closed first (headless and GUI can't share the .lock).
         String[] targets = {
-            "00f47530"
+            "00f374f0"
         };
 
         for (String t : targets) {
