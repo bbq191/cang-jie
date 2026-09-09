@@ -1,0 +1,113 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 620" font-family="sans-serif">
+  <defs>
+    <marker id="s1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#555"/>
+    </marker>
+    <marker id="s2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#8a6d00"/>
+    </marker>
+    <marker id="s3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#a03030"/>
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="1080" height="620" fill="#fbfbfa"/>
+  <text x="540" y="28" text-anchor="middle" font-size="18" font-weight="bold" fill="#1a1a1a">notes 条目状态机：Entry.status 7 态 + restore()</text>
+  <text x="540" y="47" text-anchor="middle" font-size="11.5" fill="#8a8a8a">notecore::model::Status（model.rs）；本图是全项目复杂度最高的状态迁移，此前只有文字描述，见白皮书 §03n/§03r/§03u</text>
+
+  <!-- top row: 活跃流程 -->
+  <rect x="30" y="90" width="180" height="76" rx="9" fill="#fff3d6" stroke="#c9971f" stroke-width="1.8"/>
+  <text x="120" y="118" text-anchor="middle" font-size="13.5" font-weight="bold" fill="#1a1a1a">Mined</text>
+  <text x="120" y="136" text-anchor="middle" font-size="10" fill="#5a4a1a">待浏览（ink-serve 摄取的初始态）</text>
+  <text x="120" y="152" text-anchor="middle" font-size="9.5" fill="#8a7a4a">「浏览」页等用户决定</text>
+
+  <rect x="290" y="90" width="180" height="76" rx="9" fill="#eaf3fb" stroke="#2f6fa3" stroke-width="1.8"/>
+  <text x="380" y="118" text-anchor="middle" font-size="13.5" font-weight="bold" fill="#1a1a1a">Pending</text>
+  <text x="380" y="136" text-anchor="middle" font-size="10" fill="#1a3a5a">待转写（点了「转入笔记」）</text>
+  <text x="380" y="152" text-anchor="middle" font-size="9.5" fill="#5a7a9a">transcribe-serve 会扫到</text>
+
+  <rect x="550" y="90" width="180" height="76" rx="9" fill="#fdf3e6" stroke="#c9701f" stroke-width="1.8"/>
+  <text x="640" y="118" text-anchor="middle" font-size="13.5" font-weight="bold" fill="#1a1a1a">Draft</text>
+  <text x="640" y="136" text-anchor="middle" font-size="10" fill="#5a3a1a">待校对（有转写草稿）</text>
+  <text x="640" y="152" text-anchor="middle" font-size="9.5" fill="#8a6a4a">text 仍是 None</text>
+
+  <rect x="810" y="90" width="180" height="76" rx="9" fill="#eaf7ec" stroke="#3e8e51" stroke-width="1.8"/>
+  <text x="900" y="118" text-anchor="middle" font-size="13.5" font-weight="bold" fill="#1a1a1a">Reviewed</text>
+  <text x="900" y="136" text-anchor="middle" font-size="10" fill="#1a5a2a">已校对（text 有值）</text>
+  <text x="900" y="152" text-anchor="middle" font-size="9.5" fill="#5a8a6a">两处投影都认这条</text>
+
+  <!-- forward arrows top row -->
+  <line x1="210" y1="128" x2="288" y2="128" stroke="#555" stroke-width="1.6" marker-end="url(#s1)"/>
+  <text x="249" y="118" text-anchor="middle" font-size="9.5" fill="#5a5a5a">「转入笔记」</text>
+  <line x1="470" y1="128" x2="548" y2="128" stroke="#555" stroke-width="1.6" marker-end="url(#s1)"/>
+  <text x="509" y="118" text-anchor="middle" font-size="9.5" fill="#5a5a5a">草稿写回</text>
+  <line x1="730" y1="128" x2="808" y2="128" stroke="#555" stroke-width="1.6" marker-end="url(#s1)"/>
+  <text x="769" y="118" text-anchor="middle" font-size="9.5" fill="#5a5a5a">填 text</text>
+
+  <!-- Pending -> Reviewed direct (纯勾画) -->
+  <path d="M 300 92 C 320 72, 850 72, 820 92" fill="none" stroke="#8a6d00" stroke-width="1.3" stroke-dasharray="4 3" marker-end="url(#s2)"/>
+  <text x="560" y="76" text-anchor="middle" font-size="9.8" fill="#8a6d00">纯勾画条目（ink=None）「转入笔记」直接落定：text=quote.text，一步到 Reviewed，不经 Pending/Draft</text>
+
+  <!-- bottom row: 终态/回收站 -->
+  <rect x="120" y="330" width="180" height="76" rx="9" fill="#f1f1f1" stroke="#8a8a8a" stroke-width="1.6"/>
+  <text x="210" y="358" text-anchor="middle" font-size="13.5" font-weight="bold" fill="#3a3a3a">Skipped</text>
+  <text x="210" y="376" text-anchor="middle" font-size="10" fill="#5a5a5a">已跳过（「不需要」）</text>
+  <text x="210" y="392" text-anchor="middle" font-size="9.5" fill="#8a8a8a">只能从 Mined 触发</text>
+
+  <rect x="450" y="330" width="180" height="76" rx="9" fill="#f1f1f1" stroke="#8a8a8a" stroke-width="1.6"/>
+  <text x="540" y="358" text-anchor="middle" font-size="13.5" font-weight="bold" fill="#3a3a3a">Revoked</text>
+  <text x="540" y="376" text-anchor="middle" font-size="10" fill="#5a5a5a">已撤销（笔画从书页被擦）</text>
+  <text x="540" y="392" text-anchor="middle" font-size="9.5" fill="#8a8a8a">ink-serve 自动触发，非用户点击</text>
+
+  <rect x="780" y="330" width="180" height="76" rx="9" fill="#f1f1f1" stroke="#8a8a8a" stroke-width="1.6"/>
+  <text x="870" y="358" text-anchor="middle" font-size="13.5" font-weight="bold" fill="#3a3a3a">Archived</text>
+  <text x="870" y="376" text-anchor="middle" font-size="10" fill="#5a5a5a">已删除（「不要了」）</text>
+  <text x="870" y="392" text-anchor="middle" font-size="9.5" fill="#8a8a8a">Pending/Draft/Reviewed 均可触发</text>
+
+  <text x="540" y="325" text-anchor="middle" font-size="11" font-weight="bold" fill="#6a6a6a">回收站三态（软删，靠 purge_terminal() 手动物理清，不自动清空）</text>
+
+  <!-- Mined -> Skipped -->
+  <path d="M 120 168 C 120 240, 210 260, 210 328" fill="none" stroke="#555" stroke-width="1.4" marker-end="url(#s1)"/>
+  <text x="145" y="250" text-anchor="middle" font-size="9.5" fill="#5a5a5a">「不需要」</text>
+
+  <!-- Pending/Draft/Reviewed -> Archived -->
+  <path d="M 400 168 C 500 260, 700 300, 800 328" fill="none" stroke="#a03030" stroke-width="1.3" marker-end="url(#s3)"/>
+  <path d="M 650 168 C 700 250, 780 290, 830 328" fill="none" stroke="#a03030" stroke-width="1.3" marker-end="url(#s3)"/>
+  <path d="M 900 168 C 900 240, 890 280, 875 328" fill="none" stroke="#a03030" stroke-width="1.3" marker-end="url(#s3)"/>
+  <text x="720" y="240" text-anchor="middle" font-size="9.8" fill="#a03030">「不要了」（Pending/Draft/Reviewed 都能点，三处箭头同一含义）</text>
+
+  <!-- Pending/Draft/Reviewed -> Revoked -->
+  <path d="M 390 168 C 420 230, 470 290, 510 328" fill="none" stroke="#8a8a8a" stroke-width="1.3" stroke-dasharray="3 2" marker-end="url(#s1)"/>
+  <path d="M 640 168 C 620 230, 580 290, 555 328" fill="none" stroke="#8a8a8a" stroke-width="1.3" stroke-dasharray="3 2" marker-end="url(#s1)"/>
+  <text x="500" y="270" text-anchor="middle" font-size="9.5" fill="#7a7a7a">笔画被擦（自动，ink-serve 重扫检出）</text>
+
+  <!-- restore arrows -->
+  <path d="M 240 328 C 200 260, 150 200, 120 168" fill="none" stroke="#2f6fa3" stroke-width="1.4" stroke-dasharray="6 3" marker-end="url(#s1)"/>
+  <text x="175" y="300" text-anchor="middle" font-size="9.5" fill="#2f6fa3">restore()：Skipped 永远回 Mined</text>
+
+  <!-- Revoked/Archived 各一条短箭头指向下方说明框，而不是直接连去某个具体的顶行状态——
+       真实落点由说明框里的规则决定，画多条长箭头去顶行反而会暗示"固定映射到某一个状态"，
+       跟实际的按内容分支逻辑不符。 -->
+  <path d="M 530 406 L 480 438" fill="none" stroke="#2f6fa3" stroke-width="1.3" stroke-dasharray="4 3" marker-end="url(#s1)"/>
+  <path d="M 860 406 L 760 438" fill="none" stroke="#2f6fa3" stroke-width="1.3" stroke-dasharray="4 3" marker-end="url(#s1)"/>
+
+  <rect x="380" y="440" width="480" height="72" rx="8" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.3" stroke-dasharray="4 3"/>
+  <text x="620" y="462" text-anchor="middle" font-size="11.5" font-weight="bold" fill="#1a1a1a">Revoked / Archived 的 restore() 按内容倒推落点（不额外存"删除前状态"）</text>
+  <text x="620" y="480" text-anchor="middle" font-size="10.3" fill="#3a3a3a">校对文本还在（text≠None）→ Reviewed ｜ 没校对但有草稿 → Draft</text>
+  <text x="620" y="496" text-anchor="middle" font-size="10.3" fill="#3a3a3a">有手写没转写（ink≠None）→ Pending ｜ 什么都没留下 → Mined（回浏览重新决定）</text>
+
+
+  <text x="270" y="500" text-anchor="middle" font-size="10" fill="#a03030">⚠ Revoked 的 restore() 找回的是条目库存档（裁图/草稿/校对文本），</text>
+  <text x="270" y="516" text-anchor="middle" font-size="10" fill="#a03030">不代表设备原页面的笔迹会重新出现——笔画是否还在由下次 ink-serve 重扫独立判定</text>
+
+  <!-- purge -->
+  <path d="M 210 406 L 210 560" fill="none" stroke="#5a5a5a" stroke-width="1.2" stroke-dasharray="2 2" marker-end="url(#s1)"/>
+  <path d="M 540 406 L 400 560" fill="none" stroke="#5a5a5a" stroke-width="1.2" stroke-dasharray="2 2" marker-end="url(#s1)"/>
+  <path d="M 870 406 L 600 560" fill="none" stroke="#5a5a5a" stroke-width="1.2" stroke-dasharray="2 2" marker-end="url(#s1)"/>
+  <rect x="330" y="562" width="340" height="40" rx="8" fill="#f5f5f5" stroke="#5a5a5a" stroke-width="1.2"/>
+  <text x="500" y="580" text-anchor="middle" font-size="11" font-weight="bold" fill="#3a3a3a">Book::purge_terminal()</text>
+  <text x="500" y="595" text-anchor="middle" font-size="9.8" fill="#6a6a6a">「清空回收站」按钮手动触发，物理删除，不可恢复；不自动清</text>
+
+  <text x="960" y="580" text-anchor="middle" font-size="10" fill="#8a8a8a">is_terminal() = Skipped|Revoked|Archived</text>
+  <text x="960" y="595" text-anchor="middle" font-size="9.5" fill="#8a8a8a">（三处写入口的终态守卫，2026-09-09 补）</text>
+</svg>
