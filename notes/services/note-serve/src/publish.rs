@@ -65,6 +65,14 @@ pub fn generate_chapter(c: &Ctx, book: &Book, idx: usize) -> ChapterResult {
         return ChapterResult { chapter: idx, title: String::new(), outcome: ChapterOutcome::Failed { error: "没有这一章".into() } };
     };
     let Some(paragraphs) = project_chapter(book, idx) else {
+        // 这一章没有可投影的条目了（全撤销/归档/跳过）——清掉旧记录，不然 `generated_at` 永远非空，
+        // 「整理」页的 `everExported` 会永久误判这一章"已导出"（幽灵已导出）。跟 export.rs::export_chapter
+        // 同一处理，两条投影路径保持对称（2026-09-09 补，此前只有 export.rs 这么做，见 chapter_store.rs
+        // 的 `clear()` 注释）。旧设备文档本身不联动清理——不是这次要解决的问题，且贸然删用户书库里的
+        // 文档风险更高，只清本地记录不会丢用户数据。
+        if let Err(e) = c.state.clear(&book.uuid, idx) {
+            eprintln!("[note-serve] 清空第 {} 章旧生成记录失败，先留着，不阻塞本次结果: {e}", idx + 1);
+        }
         return ChapterResult { chapter: idx, title, outcome: ChapterOutcome::Empty };
     };
     let fingerprint = fingerprint_chapter(book, idx).unwrap_or_default();
@@ -283,6 +291,29 @@ mod tests {
         *uploader.fail_upload.lock().unwrap() = false;
         let results2 = generate_book(&ctx(&store, &uploader, &trash, &state, &cfg, 2000), "book1").unwrap();
         assert!(matches!(results2[0].outcome, ChapterOutcome::Generated { .. }), "重试应该正常成功");
+    }
+
+    #[test]
+    fn chapter_emptied_after_generation_clears_stale_record_not_ghost_exported() {
+        // 幽灵已导出回归：一章生成过笔记本，之后这一章所有条目撤销/归档/跳过（project_chapter 返回
+        // None），第二次 generate 应该清掉旧记录（doc_uuid/generated_at 不再残留），不然「整理」页会
+        // 永久误判这一章"已导出"。
+        let t = tempfile::tempdir().unwrap();
+        let state = NotebookState::new(t.path().to_path_buf());
+        let cfg = NoteConfig::default();
+        let uploader = FakeUploader::default();
+        let trash = FakeTrash::default();
+        let store = FakeStore(book());
+        let results = generate_book(&ctx(&store, &uploader, &trash, &state, &cfg, 1000), "book1").unwrap();
+        assert!(matches!(results[0].outcome, ChapterOutcome::Generated { .. }), "先正常生成一次");
+        assert!(state.get("book1", 0).is_some(), "生成后应该留下记录");
+
+        let mut emptied = book();
+        emptied.entries[0].status = Status::Archived; // 这一章唯一的条目被"不要了"，project_chapter 应返回 None
+        let store2 = FakeStore(emptied);
+        let results2 = generate_book(&ctx(&store2, &uploader, &trash, &state, &cfg, 2000), "book1").unwrap();
+        assert_eq!(results2[0].outcome, ChapterOutcome::Empty, "章空了应该是 Empty 不是 Unchanged");
+        assert!(state.get("book1", 0).is_none(), "旧记录应该被清掉，不然会幽灵已导出");
     }
 
     #[test]
