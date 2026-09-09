@@ -7,6 +7,8 @@
 //! `GET /books/{uuid}/notebooks`（本地记着的各章生成状态）· `GET /books/{uuid}/exports`（本地记着的
 //! 各章导出状态，同上但对应 md）·
 //! `POST /books/{uuid}/generate`（全书重新投影+按需上传）· `POST /books/{uuid}/chapters/{idx}/generate`（单章）·
+//! `POST /books/{uuid}/import-md`（单篇 markdown → 新设备笔记本文档，独立于条目库，见 `publish::import_markdown`，
+//! 白皮书 §03af）·
 //! `POST /books/{uuid}/export`（全书导出 md，落设备盘，指纹没变的章节自动跳过）·
 //! `POST /books/{uuid}/chapters/{idx}/export`（单章，同上，响应带 `status`：written/unchanged/empty）·
 //! `GET /books/{uuid}/chapters/{idx}/export.md`（单章同一份内容当浏览器下载吐回去，`Content-Disposition`，
@@ -119,6 +121,16 @@ fn main() {
             let result = generate_chapter(&s.ctx(now_ms()), &book, idx);
             s.bus.publish("notes", "notebooks");
             results_reply(std::slice::from_ref(&result))
+        }))
+        // 单篇 markdown → 一个新的设备笔记本文档，独立于条目库（不经章节投影/指纹追踪，见
+        // `publish::import_markdown` 文档）。body：`{title, markdown}`，两者都必填。
+        .post("/books/{uuid}/import-md", bind(&st, |s, r| {
+            let uuid = r.param("uuid").to_string();
+            let j = r.json()?;
+            let title = j.str("title")?.to_string();
+            let markdown = j.str("markdown")?.to_string();
+            let (visible_name, doc_uuid) = publish::import_markdown(&s.ctx(now_ms()), &uuid, &title, &markdown).map_err(ApiError::bad)?;
+            Ok(Reply::ok(&serde_json::json!({"ok": true, "uuid": doc_uuid, "visibleName": visible_name})))
         }))
         .post("/books/{uuid}/export", bind(&st, |s, r| {
             let book = s.store.book(r.param("uuid")).map_err(ApiError::bad)?;
