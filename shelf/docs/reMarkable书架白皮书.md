@@ -566,6 +566,14 @@ book→「母版库 / 原生投递」、weread→「微信读书（内容源，�
 
 **⚠️ 还没真机验证**：这批全是前端改动，跟这条线一贯的缺口一样——没有浏览器截图核对实际渲染效果，只确认了代码逻辑本身（哪些是代码事实、哪些需要人眼确认，审计报告里已经分清楚）。
 
+## 03ag｜消掉 book-serve 两个队列的重复：新增 `PendingQueue<T>`（2026-09-09，离线）
+
+三维审计的代码结构那一路发现 `book-serve::trash.rs`（原生回收站队列）和 `mkdir.rs`（原生建文件夹队列）逐行重复：两者都是 `struct { file, lib_dir, lock }`，`load()`/`save()` 字节级相同（读 JSON、原子写），`add()` 都是"校验 → 查重 → push → save"，`pending()` 都是"按 `.metadata` 状态过滤 → 剔除已完成项 → save → 返回 (剩余, 剔除数)"——跟笔记线的 `ChapterStore<T>` 是同一类"形状相同、只有记录类型和校验/剔除谓词不一样"的重复，这次没被套用到这两处。
+
+**修复**：新增 `book-serve::pending_queue::PendingQueue<T>`，只抽持久化+入队去重+剔除这层通用外壳（`new(file)`/`list()`/`add(exists, make)`/`prune(keep)`）；`TrashQueue`/`MkdirQueue` 各自只留领域校验（uuid 形状/名字核对/是否已在回收站；文件夹名合法性/是否已存在）包一层 `PendingQueue<Pending>`。`add()` 里有个借用检查器的小坑：两个闭包（`exists`/`make`）都要用到同一个 `uuid`/`name`，如果先转成 `String` 再共享，第一个闭包借用、第二个闭包要移动会冲突——保持参数原样的 `&str`（`Copy` 类型）让两个闭包各自拷贝一份就没这问题，写进了 `trash.rs` 的代码注释里。
+
+**离线**：`pending_queue` 新增 2 测（入队去重+跨实例持久化、剔除后跳过无谓写盘）；`TrashQueue`/`MkdirQueue` 原有测试全部不变全绿（纯内部实现重构，不改变可观察行为）；`cargo test --workspace` 全绿零警告；`cargo clippy -p book-serve` 核对没有新增警告；`sh build.sh` 交叉编译 aarch64-musl 零警告通过。
+
 ## 04｜踩坑
 
 - **xochitl CSS 引擎七条实测规则见 §03y**（尾分号 / 0 当没设 / 类规则认且压元素 / 同类先出现者胜 / 不认内联 style / text-indent 继承 / 混类选择器不废表）。改排版规则前先用诊断 EPUB 量渲染缓存，别靠肉眼。
