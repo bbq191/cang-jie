@@ -1,0 +1,14 @@
+{
+  "app.title": "书架",
+  "nav.changePassword": "改密码",
+  "nav.caCert": "CA 证书",
+  "nav.signOut": "退出",
+  "nav.lang": "语言",
+  "main.loading": "加载服务列表…",
+  "tab.transfer": "传书",
+  "tab.manage": "管理",
+  "tab.notes": "笔记",
+  "tab.wallpaper": "壁纸",
+  "action.delete": "删除",
+  "list.empty": "（空）"
+}

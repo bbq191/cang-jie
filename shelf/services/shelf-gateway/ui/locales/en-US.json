@@ -1,0 +1,14 @@
+{
+  "app.title": "Shelf",
+  "nav.changePassword": "Change password",
+  "nav.caCert": "CA cert",
+  "nav.signOut": "Sign out",
+  "nav.lang": "Language",
+  "main.loading": "Loading services…",
+  "tab.transfer": "Send",
+  "tab.manage": "Manage",
+  "tab.notes": "Notes",
+  "tab.wallpaper": "Wallpaper",
+  "action.delete": "Delete",
+  "list.empty": "(empty)"
+}

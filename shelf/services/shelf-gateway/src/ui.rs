@@ -11,6 +11,20 @@ const STYLE_CSS: &str = include_str!("../ui/style.css");
 const APP_JS: &str = include_str!("../ui/app.js");
 const AUTH_CSS: &str = include_str!("../ui/auth.css");
 
+/// i18n 语言包（2026-09-09 起，只覆盖主界面外壳 + 顶层导航，登录/改密码页与各模块正文暂不迁移——
+/// 见 `ui/locales/` 目录说明与白皮书对应记录）。继续走 `include_str!` 编译进二进制，不破坏"单文件
+/// 零外链"部署（不用改 build/deploy/install 脚本，语言包新增/改词只是改这两个 JSON 再重新编译）。
+const LOCALE_ZH_CN: &str = include_str!("../ui/locales/zh-CN.json");
+const LOCALE_EN_US: &str = include_str!("../ui/locales/en-US.json");
+
+/// 按语言码取语言包 JSON；不认识的语言码一律落中文（不是空白页面）。
+pub fn locale_json(lang: &str) -> &'static str {
+    match lang {
+        "en-US" | "en" => LOCALE_EN_US,
+        _ => LOCALE_ZH_CN,
+    }
+}
+
 /// 渲染主页：骨架 + 样式 + 脚本拼成单文件，再把格式白名单注入（进程内只算一次）。
 pub fn page() -> &'static str {
     static PAGE: OnceLock<String> = OnceLock::new();
@@ -63,6 +77,25 @@ mod tests {
         assert!(!p.contains("__STYLE__") && !p.contains("__SCRIPT__") && p.contains("<style>") && p.contains("</script></body></html>"), "骨架三段拼接完整");
         assert!(super::APP_JS.contains("__EXTS__") && !super::APP_JS.contains("__STYLE__"), "白名单占位在 app.js");
     }
+    #[test]
+    fn locale_files_have_identical_key_sets() {
+        // 语言包 key 漂移是这套 i18n 最容易悄悄坏掉的地方：某个语言加了新 key、另一个忘了加，
+        // 前端查表查不到会静默显示 undefined（比显示错误语言更容易被漏看）——用一条离线测试钉住
+        // "两份文件 key 集合完全一致"，比指望人工记得同步两份 JSON 可靠。
+        let zh: serde_json::Value = serde_json::from_str(super::LOCALE_ZH_CN).unwrap();
+        let en: serde_json::Value = serde_json::from_str(super::LOCALE_EN_US).unwrap();
+        let keys = |v: &serde_json::Value| -> std::collections::BTreeSet<String> { v.as_object().unwrap().keys().cloned().collect() };
+        assert_eq!(keys(&zh), keys(&en), "两份语言包的 key 集合必须完全一致");
+        assert!(!keys(&zh).is_empty());
+    }
+
+    #[test]
+    fn locale_json_falls_back_to_chinese_for_unknown_lang() {
+        assert_eq!(super::locale_json("fr-FR"), super::LOCALE_ZH_CN);
+        assert_eq!(super::locale_json("en-US"), super::LOCALE_EN_US);
+        assert_eq!(super::locale_json("zh-CN"), super::LOCALE_ZH_CN);
+    }
+
     #[test]
     fn password_page_minlength_matches_config_constant() {
         // 2026-09-09 审计修：改密码页的 minlength/提示文案该跟 config::MIN_PASSWORD_LEN 联动，
