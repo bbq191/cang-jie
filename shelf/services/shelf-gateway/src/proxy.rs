@@ -1,4 +1,10 @@
-//! 反向代理（Facade）：把 `/api/<seg>[/<rest>]` 转给注册表里的服务（剥掉 `<seg>`），body 流式透传、状态码/JSON 原样回。
+//! 反向代理（Facade）：把 `/api/<seg>[/<rest>]` 转给注册表里的服务（剥掉 `<seg>`），状态码/JSON 原样回。
+//! **只有请求方向真的流式**（`send(&mut *req.body)` 直接转发原始请求体读取器，上传大文件不额外占内存）；
+//! **响应方向整体缓冲进内存**（`into_reader().read_to_end(...)`，2026-09-09 审计发现文档写的"body 流式
+//! 透传"跟实现不符，这里改成如实描述）——`shelf_core::http::Reply::stream` 现有的流式响应通道是给 SSE
+//! 用的，底层走 `tiny_http` 的 `upgrade()` 直接接管裸 socket（不走常规的 Content-Length/chunked 头协商），
+//! 拿来复用给任意大小的代理下载响应需要先确认这套机制对非 SSE 场景是否语义正确，评估下来风险和这条
+//! 低优先级审计项本身的收益不成比例，这次只改注释，没有改行为。
 use shelf_core::http::{ApiError, ApiResult, Method, Reply, Request};
 use shelf_core::multipart::percent_encode as enc;
 use shelf_core::paths::Paths;

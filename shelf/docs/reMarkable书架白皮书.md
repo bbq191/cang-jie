@@ -574,6 +574,12 @@ book→「母版库 / 原生投递」、weread→「微信读书（内容源，�
 
 **离线**：`pending_queue` 新增 2 测（入队去重+跨实例持久化、剔除后跳过无谓写盘）；`TrashQueue`/`MkdirQueue` 原有测试全部不变全绿（纯内部实现重构，不改变可观察行为）；`cargo test --workspace` 全绿零警告；`cargo clippy -p book-serve` 核对没有新增警告；`sh build.sh` 交叉编译 aarch64-musl 零警告通过。
 
+## 03ah｜`shelf-gateway::proxy` 模块文档修正："body 流式透传"跟实现不符（2026-09-09，离线）
+
+三维审计发现模块顶部注释写"body 流式透传"，实际只有请求方向真流式（`send(&mut *req.body)`），响应方向整体缓冲进内存（`into_reader().read_to_end(...)`）。评估过要不要顺手改成真流式（`shelf_core::http::Reply::stream`），结论是**不改行为，只改注释**——那套流式通道底层走 `tiny_http` 的 `upgrade("sse", ...)` 直接接管裸 socket，是专门给 SSE（`/api/events`）设计的，拿去代理任意大小的下载响应之前要先确认对非 SSE 场景是不是语义正确（有没有 Content-Length/chunked 头协商），这条低优先级项本身的收益不值得为此承担这份不确定性。详细评估记在笔记线白皮书 §03aj（这次是笔记/书架两条线一起收尾的一批低优先级审计项，字符截断函数消重复那部分是纯笔记线代码，写在那边）。
+
+**离线**：纯注释改动，`cargo test -p shelf-gateway` 不受影响；`sh build.sh` 交叉编译 aarch64-musl 零警告通过。
+
 ## 04｜踩坑
 
 - **xochitl CSS 引擎七条实测规则见 §03y**（尾分号 / 0 当没设 / 类规则认且压元素 / 同类先出现者胜 / 不认内联 style / text-indent 继承 / 混类选择器不废表）。改排版规则前先用诊断 EPUB 量渲染缓存，别靠肉眼。

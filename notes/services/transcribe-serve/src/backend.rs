@@ -3,6 +3,7 @@
 //! 换厂只改配置 baseUrl/model/key。测试用 `Fixed`。应答解析独立成纯函数（`parse_chat_reply`）可单测。
 use base64::Engine;
 use std::time::Duration;
+use vendorcfg::truncate_chars as trunc;
 
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Transcript {
@@ -54,10 +55,6 @@ pub fn parse_chat_reply(v: &serde_json::Value) -> Result<Transcript, String> {
     };
     let u = |k: &str| v.pointer(&format!("/usage/{k}")).and_then(|x| x.as_u64()).unwrap_or(0);
     Ok(Transcript { text: text.trim().to_string(), prompt_tokens: u("prompt_tokens"), completion_tokens: u("completion_tokens") })
-}
-
-fn trunc(s: &str, n: usize) -> String {
-    if s.chars().count() <= n { s.to_string() } else { s.chars().take(n).collect::<String>() + "…" }
 }
 
 impl Vision for OpenAiCompat {

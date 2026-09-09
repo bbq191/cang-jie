@@ -30,3 +30,26 @@ pub use preset::{
     Price, DASHSCOPE, DEEPSEEK, GEMINI, KEY_ENV, OPENAI,
 };
 pub use usage::{Ledger, ModelUsage, UsageBook};
+
+/// 按字符数截断，超长加省略号；不 trim（调用方如果需要先 trim 自己处理，跟原样保留空白的场景区分
+/// 开）。`mind-serve::backend`/`transcribe-serve::backend`/`mind-serve::prompt` 三处此前各自定义了
+/// 一份几乎相同的截断函数（2026-09-09 审计发现），既然两个服务都已经依赖这个 crate，收进来一行改动量。
+pub fn truncate_chars(s: &str, n: usize) -> String {
+    if s.chars().count() <= n {
+        s.to_string()
+    } else {
+        s.chars().take(n).collect::<String>() + "…"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn truncate_chars_counts_unicode_scalars_not_bytes() {
+        assert_eq!(truncate_chars("短", 5), "短", "没超长原样返回，不加省略号");
+        assert_eq!(truncate_chars("一二三四五六", 3), "一二三…", "按字符数不是字节数截断，中文一个字不该被腰斩");
+        assert_eq!(truncate_chars("  带前后空白  ", 20), "  带前后空白  ", "不 trim，原样保留");
+    }
+}

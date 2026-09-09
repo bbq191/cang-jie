@@ -167,7 +167,7 @@ notes/
 **前置依赖**：跟书架共用同一套交叉编译环境（`rustup target add aarch64-unknown-linux-musl` + aarch64 交叉 gcc/ar），见 `../shelf/README.md`「构建」一节，不用单独装第二遍。改代码前先看工程纪律，日常提交分支是 `dev` 不是 `master`。
 
 ```sh
-cd notes && cargo build --workspace && cargo test --workspace     # host：181 个测试（rmv6 27 · epubmap 5 · notecore 56 · vendorcfg 13 · ink 11 · transcribe 22 · mind 21 · note 26，含 1 ignored；claim 重试相关两条测试真吃约 1.5-4.5s）
+cd notes && cargo build --workspace && cargo test --workspace     # host：182 个测试（rmv6 27 · epubmap 5 · notecore 56 · vendorcfg 14 · ink 11 · transcribe 22 · mind 21 · note 26，含 1 ignored；claim 重试相关两条测试真吃约 1.5-4.5s）
 cd ../shelf && ./build.sh && ./deploy.sh <设备IP>                  # 随书架一起交叉编译/打包/装机（NOTES_BINS；设备在 WiFi 上时给 WiFi IP）
 ssh root@<设备IP> sh /home/root/shelf-pkg/shelf/install.sh --only ink,transcribe,mind,note   # 只装/更新笔记线
 ```

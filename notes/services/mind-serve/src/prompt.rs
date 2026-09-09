@@ -14,10 +14,10 @@ pub struct Context<'a> {
     pub question: &'a str,
 }
 
-/// 截断长字段，别把整本书的原文喂进去。
+/// 截断长字段，别把整本书的原文喂进去；先 trim 再截（跟 `backend.rs` 的 `trunc` 唯一的差别，
+/// 2026-09-09 收进 `vendorcfg::truncate_chars` 之后只剩这一行胶水）。
 fn take(s: &str, n: usize) -> String {
-    let s = s.trim();
-    if s.chars().count() <= n { s.to_string() } else { s.chars().take(n).collect::<String>() + "…" }
+    vendorcfg::truncate_chars(s.trim(), n)
 }
 
 pub fn build(custom: &str, ctx: &Context<'_>) -> String {
