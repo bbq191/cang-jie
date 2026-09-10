@@ -1,7 +1,7 @@
 //! HTTP 适配层（唯一碰 http 类型的地方，只做取参 + 调领域方法 + 回执）。路由（经网关时前缀 `/api/books`）：
 //! `GET /status` · `GET /inbox` · `POST /inbox/retry {name}` · `POST /inbox/delete {name}`
 //! 母版库：`GET /staging` → `{items, freeBytes}` · `POST /staging`（multipart，原样入库）· `POST /staging/optimize {name, mode}`
-//! · `POST /staging/deliver {name, folder?, keep?}` · `POST /staging/mark {name, target}` · `POST /staging/fetch-article {url}`
+//! · `POST /staging/deliver {name, folder?, keep?}` · `POST /staging/mark {name, target}` · `POST /staging/fetch-article {url, optimize?}`
 //! · `POST /staging/delete {name}` · `GET /staging/render/{uuid}`（xochitl 渲染缓存 PDF，doctor --render 用）· `GET /events`（SSE：母版库/inbox 变更即推，网页零轮询）。
 //! 原生回收站队列：`POST /trash/add {uuid, name}`（name 必须与书库 visibleName 相符）· `GET /trash/pending` → `{uuids}`（Sidebar 代理 qmd 拉取执行）· `GET /trash`。
 //! 原生建文件夹队列：`POST /mkdir/add {name}` · `GET /mkdir/pending` → `{names}`（MainView 代理 shelf-mkdir-agent.qmd 拉取执行）· `GET /mkdir`。
@@ -55,9 +55,15 @@ pub fn router(st: Arc<State>) -> Router {
             ok()
         }))
         .post("/staging/fetch-article", bind(&st, |s, r| {
-            let (landed, title) = s.staging.fetch_article(r.json()?.str("url")?).map_err(ApiError::bad)?;
+            let j = r.json()?;
+            let out = s.staging.fetch_article(j.str("url")?, j.bool_or("optimize", false)).map_err(ApiError::bad)?;
             s.bus.publish("books", "staging");
-            Ok(Reply::ok(&serde_json::json!({"ok": true, "name": landed, "title": title, "message": format!("已抓取《{title}》入母版库")})))
+            let message = match &out.optimize_error {
+                Some(e) => format!("已抓取《{}》入母版库（同步优化失败：{e}，可在列表里手动点「优化」）", out.title),
+                None if out.optimized => format!("已抓取《{}》入母版库并同步优化", out.title),
+                None => format!("已抓取《{}》入母版库", out.title),
+            };
+            Ok(Reply::ok(&serde_json::json!({"ok": true, "name": out.name, "title": out.title, "message": message})))
         }))
         .get("/staging/render/{uuid}", bind(&st, |s, r| {
             let pdf = s.staging.render_pdf(r.param("uuid")).map_err(ApiError::not_found)?;

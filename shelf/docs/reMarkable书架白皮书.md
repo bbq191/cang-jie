@@ -713,6 +713,20 @@ book→「母版库 / 原生投递」、weread→「微信读书（内容源，�
 
 **真机验证边界**：这是纯 host CLI 改动，不碰设备行为，不需要真机验证——但仍然做了"非 mock 的真实调用"验证（不满足于只测 monkeypatch）：`cargo build --release -p bookconv --bin epub-optimize` 编出真二进制，拿 `reading/.cache/publish/` 下一份真实缓存 EPUB 直接跑 `epub-optimize`（真产物、真字节数变化）+ `cb.optimize_only()` 真调用（非 mock）+ `shelf push --no-calibre --dry-run` 对 `.epub`/`.azw3` 两种输入的路由打印确认符合设计。同一个 `optimize_epub_with` 函数本身早就随设备网页「优化」按钮真机验证过，这次只是新开了一个不经 Calibre 的调用入口，不重复走真机流程。
 
+## 03ap｜「抓网文」补「同步优化」复选框（2026-09-10，真机通）
+
+用户反馈"抓网文需要增加一个复选框（同步优化），即设备端进行针对设备的优化。否则默认给设备渲染页面会有大量留空，但要给用户选择权"。核实根因（§03r 早年就记过这条技术债，但当时只改成"分级标记+手动优化按钮"，没有再往前一步做"抓取时同步优化"）：`bookconv::article` 抽正文时属性白名单本来就不留 `class`/`style`（`is_whitelisted`/`keep_attr`），网文产出的 XHTML 正文完全没有任何排版样式；`fetch_article` 走的是 `assemble_optimized`→`optimize_epub` 缺省（`wash: None`），只做核心遍（脚注/图片降采样/对比度），**不做**边距/段距归零、不注入外链缩进 css——xochitl 只认外链 `.css` 里的裸元素规则、无视内联 style（§03y 七条实测规则之一），两件事叠一起＝正文按阅读器默认段距渲染，页面大片留空。这条路径产出的 EPUB 标记是 `level:"core"`，母版库列表已经有「优化」按钮能补（`level!=='full'` 就给按钮），用户现在其实能手动点一步修复——这次要做的是把"手动补一步"变成"抓取时可选自动做"，不是新造一条修复路径。
+
+**实现**：`Staging::fetch_article` 加 `optimize: bool` 参数，落库后（`stage_new` 拿到落地名）若为 true 就紧接着调**同一个** `self.optimize(&name, OptimizeMode::Auto)`——不是另起一条优化实现，是母版库列表「优化」按钮那个函数原地复用；返回值改成 `FetchArticleOutcome{name,title,optimized,optimize_error}`。同步优化失败不阻断抓取结果（已经抓到的文章不因为这一步失败就整个丢掉，`Result` 仍是 `Ok`，只是 `optimize_error` 带上原因），API 层按 `optimize_error`/`optimized` 两种状态组不同的中文回执（"…并同步优化" / "…（同步优化失败：…，可在列表里手动点「优化」）" / 不带后缀的原样文案，向后兼容旧客户端不传 `optimize` 字段的情况）。
+
+前端「抓网文」卡片 URL 输入行下面加一个 `<label class="toggle">` 复选框，**缺省勾选**（本机 `localStorage` 记住选择，跟 `folderPreset`/`optmode`/`stgclear` 同一个"per-viewer 便利态"规矩，键名 `artopt`）——给用户选择权体现在"能关"，不是"缺省关"：默认解决"大量留空"这个已知问题，想要最原始抓取结果（比如想自己去母版库挑别的优化档位）可以手动关掉。
+
+**离线验证**：`book-serve` 17 个单测全绿（无回归，`fetch_article` 本身因为依赖真实网络抓取，这条项目一贯不写进 CI 单测——见 §04"会话里 shell cwd 漂移"附近几条踩坑记录同类考量，`optimize()`/`stage_new()` 各自的正确性已经被现成测试覆盖，新增的只是两者之间的组合调用，逻辑简单）；`cargo build -p book-serve` 零警告；`node --check app.js`+`cargo test -p shelf-gateway`（16/16，新增 2 个 `transfer.fetchArticle.*` key，`zh-CN`/`en-US` 439 key 集合一致）。
+
+**非 mock 真实调用验证**（先于真机，host 侧）：临时脚本（未提交）+ 临时 `#[test]`（未提交，验证完即删）直接对真实 URL（`runoob.com` 一篇教程页，跟 §03r 那次真机验证用的是同一类稳定站点）跑通整条链路——`optimize_epub_with(wash:None)` 产物不含外链 `cangjie-wash.css` 引用（现状/未勾选），`optimize_epub_with(wash:Some(default))` 产物含引用（勾选后）；`Staging::fetch_article(url, true)` 落库后 `level=="full"`，`fetch_article(url, false)` 落库后 `level=="core"`（现状行为不变）。
+
+**真机验证（2026-09-10）**：`sh build.sh`+`SHELF_NO_BUILD=1 sh deploy.sh 10.11.99.1` 部署；`curl` 真机 `POST /api/books/staging/fetch-article` 分别带 `optimize:true`/不带该字段各抓一次同一篇文章——`optimize:true` 落库 `level:"full"`、体积 3761 字节，回执"…并同步优化"；不带字段落库 `level:"core"`、体积 3488 字节，回执不变（旧格式请求向后兼容，行为跟改动前一致）；两次体积跟 host 侧非 mock 验证的字节数完全一致（同一份代码、同一份输入，确定性可复现）。首页 HTML 确认 `id="artopt"` 复选框+新 i18n key 已下发。验证完把两条测试文章从母版库删掉，设备恢复干净。
+
 ## 04｜踩坑
 
 - **挪代码时顺手带走的文案不代表内容还准（2026-09-10 用户真机测试逮到）**：§03ak 把「系统增强」卡片原样搬进「实验室」，battop"未装"提示里的路径 `misc/battery-audit/battop/install.sh` 是 §03aj 写的，那时候还没意识到这个路径已经在更早的 §03b 里 `git mv` 到 `enhance/battop/` 了——挪动/重构代码只挪了位置没重新核对内容，字面拷贝把旧错误也一起搬了过去，还搬了一次都没发现（两轮都没查）。**教训**：移动/复用一段包含具体路径/命令/版本号的文案时，顺手核对一遍还准不准，不能假设"没人提过所以肯定没问题"——原样复制不代表内容仍然正确，只代表格式没错。
