@@ -15,9 +15,8 @@ public class CheckFuncSizes extends GhidraScript {
     @Override
     public void run() throws Exception {
         String[] targets = {
-            "00f401f0", // VaryingGenerator_WidthLength::generate
-            "00f3f9d0", // per-point dispatch (updateImage's fill-type switch)
-            "00f47530", // variable-width quad geometry
+            "00f4f430", // bVar16==3 branch geometry generator (x,y,ctx / ctx+4=width, same as f47530)
+            "00f4c8d0", // bVar16==5/6 branch geometry generator (x,y,ctx / ctx+4=width, same as f47530)
         };
 
         for (String t : targets) {
