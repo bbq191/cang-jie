@@ -786,10 +786,19 @@ const battopTopList=items=>items&&items.length
   ?`<ul class="list">${items.map(it=>`<li><span>${it.name}</span><span class="small">${fmtMs(it.ms)} · ${it.pct}%</span></li>`).join('')}</ul>`
   :'<p class="small">（这个窗口没有数据）</p>';
 /* 时间窗 subnav+subpanel 骨架，耗电情况/唤醒源两处共用——contentFn(windowData)→这个窗口要显示的 HTML。 */
-function renderBattopWindowed(container,windowsData,contentFn){
-  container.innerHTML=`<div class="subnav">${BATTOP_WINDOWS.map((x,i)=>`<button${i===0?' class="on"':''}>${x.label}</button>`).join('')}</div>
-    ${BATTOP_WINDOWS.map((x,i)=>`<div class="subpanel${i===0?' on':''}">${contentFn(windowsData[x.key]||{})}</div>`).join('')}`;
+/* activeIdx：重画时保留原来选中的时间窗（比如耗电情况的"按应用/按进程"下拉切换只想换列表内容，
+   不想把用户刚选的"7天"弹回"今日"），不传就默认第一个。 */
+function renderBattopWindowed(container,windowsData,contentFn,activeIdx=0){
+  container.innerHTML=`<div class="subnav">${BATTOP_WINDOWS.map((x,i)=>`<button${i===activeIdx?' class="on"':''}>${x.label}</button>`).join('')}</div>
+    ${BATTOP_WINDOWS.map((x,i)=>`<div class="subpanel${i===activeIdx?' on':''}">${contentFn(windowsData[x.key]||{})}</div>`).join('')}`;
   subtabs(container);
+}
+/* 当前激活的时间窗下标——重画前先读一遍，喂给上面的 activeIdx。 */
+function battopActiveWindowIdx(container){
+  const nav=container.querySelector(':scope > .subnav');
+  if(!nav)return 0;
+  const i=[...nav.children].findIndex(b=>b.classList.contains('on'));
+  return i<0?0:i;
 }
 
 function mountBattopToggleCard(container){
@@ -827,24 +836,40 @@ function renderBattopDetail(sec){
       usageEl.innerHTML=msg;wakeEl.innerHTML=msg;return;
     }
     const w=r.summary.windows||{};
-    renderBattopWindowed(usageEl,w,d=>`<p class="small">放电 <b>${d.discharge||0}%</b> · <b>${d.mah||0}</b> mAh（均值约 ${d.ma||0} mA）· ${d.samples||0} 次采样</p>
-      <h4 style="margin:.6em 0 .2em">按应用（累计占用时长）</h4>${battopTopList(d.app)}
-      <h4 style="margin:.6em 0 .2em">按进程（累计占用时长）</h4>${battopTopList(d.proc)}`);
+    /* 耗电情况：「按应用/按进程」用下拉切换（用户要求，不再两份列表一起摆），下拉放在时间窗
+       subnav 外面，切下拉只换列表内容、不打乱时间窗选择（battopActiveWindowIdx 读一遍当前选中
+       的时间窗，重画时原样传回去）。 */
+    if(!usageEl.querySelector('[data-metric]')){
+      usageEl.innerHTML=`<div class="row"><label class="small" for="battopMetric">显示</label>
+        <select id="battopMetric" data-metric><option value="app">按应用</option><option value="proc">按进程</option></select></div>
+        <div data-usagewin></div>`;
+    }
+    const metricSel=usageEl.querySelector('[data-metric]'),usageWinEl=usageEl.querySelector('[data-usagewin]');
+    const renderUsage=()=>{
+      const label=metricSel.value==='app'?'按应用':'按进程';
+      renderBattopWindowed(usageWinEl,w,d=>`<p class="small">放电 <b>${d.discharge||0}%</b> · <b>${d.mah||0}</b> mAh（均值约 ${d.ma||0} mA）· ${d.samples||0} 次采样</p>
+        <h4 style="margin:.6em 0 .2em">${label}（累计占用时长）</h4>${battopTopList(metricSel.value==='app'?d.app:d.proc)}`,
+        battopActiveWindowIdx(usageWinEl));
+    };
+    metricSel.onchange=renderUsage;
+    renderUsage();
     renderBattopWindowed(wakeEl,w,d=>`<p class="small">${d.samples||0} 次采样</p>
-      <h4 style="margin:.6em 0 .2em">唤醒源（打断休眠次数）</h4>${battopTopList(d.wake)}`);
+      <h4 style="margin:.6em 0 .2em">唤醒源（打断休眠次数）</h4>${battopTopList(d.wake)}`,
+      battopActiveWindowIdx(wakeEl));
   };
   refresh();sec.refresh=refresh;subtabs(sec);
 }
 
 
 /* 管理台/引导（固定 tab，始终在——它是网关自身页面，不由服务注册表驱动） */
-/* 「管理」拆四个二级 tab（2026-09-09 起三个，2026-09-10 加「实验室」）：① 基石与模块（原来就有的
-   引导/开关/卸载）② 模型管理（原来挂在这页最下面，现在单独一屏，不用跟基石列表一起滚）③ 系统增强
-   （只留真正"系统级"的开关，CJK 画线吸附）④ 实验室（还在打磨/覆盖面没到日常好用程度的功能，
-   CJK 手写笔迹优化+电池刺客+导入md文档可见性开关，从②搬过来）。
+/* 「管理」二级 tab（2026-09-09 起三个，2026-09-10 加到五个）：① 基石与模块（原来就有的引导/开关/
+   卸载）② 模型管理（原来挂在这页最下面，现在单独一屏，不用跟基石列表一起滚）③ 系统增强（只留真正
+   "系统级"的开关，CJK 画线吸附）④ 电池刺客（`battop.running` 时才出现，放在「实验室」前面——用户
+   要求顺序）⑤ 实验室（还在打磨/覆盖面没到日常好用程度的功能：CJK 手写笔迹优化开关+电池刺客开关
+   本身+导入md文档可见性开关）。
    shelf push 命令那张卡片已经搬到「传书」页「入库」子页——那才是它真正归属的地方（用户反馈）。 */
 function renderManage(sec){sec.innerHTML=`
-  <div class="subnav"><button class="on">🏗 基石与模块</button><button>🧠 模型管理</button><button>⚙️ 系统增强</button><button>🧪 实验室</button><button hidden>🔋 电池刺客</button></div>
+  <div class="subnav"><button class="on">🏗 基石与模块</button><button>🧠 模型管理</button><button>⚙️ 系统增强</button><button hidden>🔋 电池刺客</button><button>🧪 实验室</button></div>
   <div class="subpanel on">
     <div class="card"><h2>引导 · 基石</h2><p class="lead">书架的功能建在 xovi + appload 之上。先用桌面端 <b>reManager</b>（或设备上的 vellum）把基石装好，KOReader 走官方仓库自装，再回这里管理书架各功能。</p>
       <div class="kv small" id="found">检测中…</div>
@@ -879,6 +904,7 @@ function renderManage(sec){sec.innerHTML=`
       <p class="small">荧光笔划中文时精确吸附到词/行边界，不再"划一小段吸整行"。langhook 里的 C hook 进程内实时读这个开关，改了立即生效，不用重启任何东西；原生「设置」App「系统增强」页同一个开关，两边改哪边都算数。</p>
       <label class="toggle"><input type="checkbox" id="erHlSnap"> 开启（默认开）</label></div>
   </div>
+  <div class="subpanel" id="battopDetail" hidden></div>
   <div class="subpanel">
     <div class="card"><h3 style="margin-top:0">CJK 手写笔迹优化</h3>
       <p class="small">设备手写笔锋按运笔方向/快慢调整粗细（笔尖角度模型+提按速度代理两个效果叠加）——跟"划线摄取转写"那条 AI 识别管线无关，这里说的是笔画本身怎么画出来。<b>目前只在部分笔型（书法笔、马克笔一类）上真机验证过生效</b>，日常最常用的钢笔/铅笔量级工具还摸不到（虚函数动态分发，运行时目标未确认，见 <code>enhance/handwriting-stroke/README.md</code>「下一步」）。这个开关直接改 <code>reading-qol.json</code> 里两个强度阈值，改了下一笔立即生效，不用重启 xochitl。</p>
@@ -887,8 +913,7 @@ function renderManage(sec){sec.innerHTML=`
     <div class="card"><h3 style="margin-top:0">导入 md 文档</h3>
       <p class="small">开启后「笔记」tab 才会出现「导入 md 文档」子标签（上传一个 .md 文件生成设备笔记本文档）。功能第一次上线，默认关——想用先在这里打开。</p>
       <label class="toggle"><input type="checkbox" id="labImportMd"> 开启（默认关）</label></div>
-  </div>
-  <div class="subpanel" id="battopDetail" hidden></div>`;
+  </div>`;
   const mvRefresh=mountModelPanel($('#modelcards',sec),'transcribe','视觉模型（转写批注）','👁',true);
   const mtRefresh=mountModelPanel($('#modelcards',sec),'mind','文字模型（问 AI）','✎');
   const refresh=async()=>{
@@ -916,7 +941,7 @@ function renderManage(sec){sec.innerHTML=`
   const hlBox=$('#erHlSnap',sec),hwBox=$('#labHwStroke',sec),importMdBox=$('#labImportMd',sec);
   const battopToggleRefresh=mountBattopToggleCard($('#labBattopCard',sec));
   const manageNav=sec.querySelector(':scope > .subnav');
-  const battopNavBtn=manageNav.children[4],battopPanel=$('#battopDetail',sec);
+  const battopNavBtn=manageNav.children[3],battopPanel=$('#battopDetail',sec);
   renderBattopDetail(battopPanel);
   const erRefresh=async()=>{const r=await j('/api/enhance/status');if(r.ok===false)return;
     hlBox.checked=!!r.hlSnapCjk;

@@ -670,6 +670,8 @@ book→「母版库 / 原生投递」、weread→「微信读书（内容源，�
 
 **真机验证**：`cargo build --workspace`/`cargo test -p shelf-gateway`（16 个）全绿，`node --check app.js` 语法过；交叉编译全 workspace（6 个 crate）+ `deploy.sh` 走完整备份→部署→健康检查（9 服务 active，`shelf-gateway` MainPID 变化、`NRestarts=0`）；curl 确认新标题/图标/443 端口都生效（`<title>秘密花园</title>`、`<link rel="icon">` 内容正确、`/api/services` 里 `shelf-gateway` 的 `port:443`、旧 8778 连接被拒）。**浏览器里"点开管理→电池刺客二级tab→耗电情况/唤醒源两个三级tab切换是否顺畅"这个纯交互细节，跟 §03al 那次「其他」tab 嵌套一样，没有拿到用户肉眼确认**——理论分析 + curl 数据层验证都过了，按项目纪律仍要如实标注这条缺口。
 
+**同一天追加两条小调整**：① 「耗电情况」的"按应用/按进程"改成下拉选择（`<select>`），不再两份列表一起摆——下拉放在时间窗 `subnav` 外面（跨时间窗持续存在，不随点时间窗按钮重建），切下拉时用新增的 `battopActiveWindowIdx()` 读一遍当前选中的是哪个时间窗，`renderBattopWindowed()` 也跟着加了 `activeIdx` 参数，重画列表内容时把原来选的时间窗原样传回去，不会因为切了下拉就把时间窗选择弹回"今日"。② 「电池刺客」二级 tab 挪到「实验室」前面（按钮+对应 subpanel 一起挪，下标 `manageNav.children[3]` 跟着改），纯 DOM 顺序调整。
+
 ## 04｜踩坑
 
 - **挪代码时顺手带走的文案不代表内容还准（2026-09-10 用户真机测试逮到）**：§03ak 把「系统增强」卡片原样搬进「实验室」，battop"未装"提示里的路径 `misc/battery-audit/battop/install.sh` 是 §03aj 写的，那时候还没意识到这个路径已经在更早的 §03b 里 `git mv` 到 `enhance/battop/` 了——挪动/重构代码只挪了位置没重新核对内容，字面拷贝把旧错误也一起搬了过去，还搬了一次都没发现（两轮都没查）。**教训**：移动/复用一段包含具体路径/命令/版本号的文案时，顺手核对一遍还准不准，不能假设"没人提过所以肯定没问题"——原样复制不代表内容仍然正确，只代表格式没错。
