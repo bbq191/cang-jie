@@ -29,7 +29,7 @@ host `shelf push` 是唯一能"入库时顺带优化"的源（Calibre 深洗 / �
 | 电脑可转 | AZW3 / MOBI / AZW / PRC / FB2 / **TXT** | `shelf push` 转 EPUB 进原生（TXT 按「第X章/卷」切章建两级目录，GB18030/UTF-8 自动识别）；直接上传只能加入 KOReader |
 | 仅 KOReader | CBZ / CBR / DjVu / HTML / RTF / DOC / DOCX / CHM / XPS | 只能加入 KOReader（漫画 CBZ 也在此档：**默认不投原生，`shelf push` 出的灰阶 CBZ 体积够小时会顺带生成一份 PDF 给「投入原生书库」选项，超限的仍只出 CBZ、绝不分卷**，见白皮书 §03ad；TXT 直传也落这档，走 `shelf push` 才切章进原生） |
 
-**网页 tab**：「传书」（固定第一位：入库｜母版库）· xochitl（原生字体，font-serve）· KOReader（字体｜词典，koreader-serve）· 壁纸 · 「管理」（固定）。读器页不传书。
+**网页 tab**（2026-09-10 重排为固定四段，见白皮书 §03al）：「传书」（固定第一位：入库拆三卡——上传/抓网文/电脑端 shelf push｜母版库）· 「笔记」（note-serve 注册，「导入 md 文档」子标签默认隐藏，开关控制）· 「其他」（xochitl(font-serve)/KOReader(koreader-serve)/壁纸(wallpaper-serve) 降一级包进来当二级子标签，只列真的装了的那几个）· 「管理」（固定；二级 tab：基石与模块/模型管理/系统增强/电池刺客〔`battop.running` 时才出现〕/实验室）。读器页不传书。
 
 ## 架构：网关 + 领域服务
 
@@ -63,7 +63,7 @@ host `shelf push` 是唯一能"入库时顺带优化"的源（Calibre 深洗 / �
 | fonts | `GET /` · `POST /` · `DELETE /{family}` · `PUT /config {emboldenCjkFallback}` · `GET /status` |
 | wallpapers | `GET /` · `POST /[?activate=1]` · `PUT /current {name}` · `PUT /mode {mode}` · `DELETE /{name}` · `GET /{name}` · `GET /status` → `{native:{enabled,path,restartPending}}` |
 | 笔记线 ink / transcribe / notes | 见 `../notes/README.md`「主要 API」（条目库 / 转写 / 投影）；事件 `area=notes` |
-| 网关自身 | `GET /api/services` · `GET /api/manage` · `GET /api/foundation` · `POST /api/manage/{seg}/{start\|stop\|uninstall}` · **`GET /api/events`（SSE 事件流：各服务 `GET /events` 汇聚，`{svc,area,kind,at}`，`books/render` 另带 `name/status/pages/expected`；网页零轮询、host `shelf events`）** · `GET /ui/locales/{lang}`（语言包 JSON，前端按 `zh-CN.json`/`en-US.json` 请求、服务端剥 `.json`；不认识的语言码落中文，见白皮书 §03ae） · **系统增强开关**（「管理」页二级 tab，2026-09-09 §03aj）：`GET /api/enhance/status` → `{hlSnapCjk, battop:{installed,running,lastSampleAt}}` · `PUT /api/enhance/qol {hlSnapCjk}`（只 patch 传入的键，`reading-qol.json` 其余键原样保留） · `POST /api/enhance/battop/{start\|stop}`（未装 battop 时 400，不装） · `/login` `/logout` `/password` `/ca.crt` |
+| 网关自身 | `GET /api/services` · `GET /api/manage` · `GET /api/foundation` · `POST /api/manage/{seg}/{start\|stop\|uninstall}` · **`GET /api/events`（SSE 事件流：各服务 `GET /events` 汇聚，`{svc,area,kind,at}`，`books/render` 另带 `name/status/pages/expected`；网页零轮询、host `shelf events`）** · `GET /ui/locales/{lang}`（语言包 JSON，前端按 `zh-CN.json`/`en-US.json` 请求、服务端剥 `.json`；不认识的语言码落中文，见白皮书 §03ae） · **系统增强开关**（「管理」页系统增强/实验室/电池刺客几个二级 tab，2026-09-09 §03aj 起、2026-09-10 §03ak-§03am 扩展）：`GET /api/enhance/status` → `{hlSnapCjk, hwStrokeEnabled, notesImportMdEnabled, battop:{installed,running,lastSampleAt}}` · `PUT /api/enhance/qol {hlSnapCjk?, hwStrokeEnabled?, notesImportMdEnabled?}`（只 patch 传入的键，`reading-qol.json` 其余键原样保留；`hwStrokeEnabled` 是网页层派生态，翻译成 `enhance/handwriting-stroke/` 的 `hwStrokeNibMinRatio`/`hwStrokeSpeedMinRatio` 两个真实字段） · `POST /api/enhance/battop/{start\|stop}`（未装 battop 时 400，不装） · `GET /api/enhance/battop/summary`（4 个时间窗×应用/进程/唤醒源 top15，原样转发 battop 自己聚合的 `summary.json`，未采样过返回 `{available:false}`） · `/login` `/logout` `/password` `/ca.crt` |
 
 上传回执统一 `{ok, items:[{name, ok, message, item?}], …}`（`shelf_core::asset::receipt`）；成功项 `name` 是落地名。
 
@@ -79,7 +79,7 @@ shelf/
 ├── services/book-serve/               staging.rs(母版库领域：入库/优化/落库) · sidecar.rs(落库记录边车) · render_check.rs(投原生后渲染自检) · pending_queue.rs(PendingQueue\<T\>：持久化+入队去重+剔除共用骨架，2026-09-09 §03ag) · trash.rs(原生回收站队列) · mkdir.rs(原生建文件夹队列，当前消费方存疑——note-serve 已改用别的机制不再调用，见模块注释) · spool.rs(inbox 队列) · api.rs(纯 HTTP 适配) · service_state.rs
 ├── services/koreader-serve/           koreader.rs(目录模型+KoStore) · config.rs(ConfigSync+merge.lua) · main.rs
 ├── services/{font-serve,wallpaper-serve}/
-├── services/shelf-gateway/            auth/proxy/manage/events(Hub 汇聚)/enhance/{mod,qol,battop}.rs(系统增强开关：hlSnapCjk+battop 真开关，CJK 手写笔迹优化纯占位无端点，2026-09-09 §03aj，刻意不升独立 service)；ui/{index.html,style.css,app.js,auth.css} 真文件，编译期 include_str! 拼成单页（CI node --check）；ui/locales/{zh-CN,en-US}.json 是 i18n 语言包（2026-09-09 起，只覆盖主界面外壳+顶层导航，登录页/模块正文暂不迁移，见白皮书 §03ae），GET /ui/locales/{lang} 分发
+├── services/shelf-gateway/            auth/proxy/manage/events(Hub 汇聚)/enhance/{mod,qol,battop}.rs(系统增强开关：hlSnapCjk/hwStrokeEnabled/notesImportMdEnabled+battop 均真开关，2026-09-09 §03aj 起、2026-09-10 §03ak-§03am 扩展，刻意不升独立 service)；ui/{index.html,style.css,app.js,auth.css} 真文件，编译期 include_str! 拼成单页（CI node --check）；ui/locales/{zh-CN,en-US}.json 是 i18n 语言包（2026-09-09 起，只覆盖主界面外壳+顶层导航，登录页/模块正文暂不迁移，见白皮书 §03ae），GET /ui/locales/{lang} 分发
 ├── systemd/                           shelf.target + 5 个 .service（壁纸不再有开机单元/sleep 钩子，2026-09-06）；其余独立线自己的单元在各自仓库，随载荷一起装
 ├── install.sh · uninstall.sh          设备端安装/卸载（--only 按服务；写 /usr 前实检 dm-verity；--purge 不碰其余独立线的用户数据目录）
 ├── deploy.sh                          host 一键：build → tar-over-ssh → 设备 install.sh（自动备份到 /home/root/cangjie-backups；`NOTES_BINS` 顺带打包 `../notes` 的二进制与单元，见 `notes/README.md`）
@@ -204,3 +204,5 @@ shelf passwd [--new …]
 | UI i18n | 网页 UI 语言包架子：主界面外壳+顶层导航可切中/英，登录页/模块正文暂不迁移 | ⚠ 部分真机验证（§03ae，2026-09-09）：语言包端点/前端资源已验证，浏览器里人眼确认切换效果未做 |
 | 三维审计（设计模式/业务闭环/UI） | UI 人性化/触屏可用性一批小修（§03af）+ `book-serve` 两个队列消重复新增 `PendingQueue<T>`（§03ag）+ `proxy.rs` 模块注释修正（§03ah）+ `shelf-core::registry` 新增 `SvcClient`/`enc`（§03ai，消费方在 notes 线） | ✅ 离线全绿；§03af **前端渲染效果未经人眼确认**，其余三项纯内部重构/注释改动无需真机验证 |
 | 管理页拆二级 tab + 系统增强开关 | `shelf push` 卡片挪去「传书」页；「管理」拆三个二级 tab（基石与模块/模型管理/系统增强）；系统增强页新增 `hlSnapCjk`/battop 真开关（CJK 手写笔迹渲染优化无代码地基，纯占位）；命令说明改用独立 `.cmdblock` 视觉语言，不再借用引用摘录样式 | ✅ 真机通（§03aj，2026-09-09）：部署健康检查+功能性 curl 验证+用户确认字体清楚；顺手发现的 `hlSnapCjk` 实际吸附不生效问题已查清修复（跟本轮改动无关，是 `cangjie-langhook.so` 整个从设备消失，见系统增强白皮书 §04 追记） |
+| 实验室 tab + 导入md改文件上传 | 「实验室」二级 tab（CJK 手写笔迹优化此时已有代码地基，接成真开关；battop 卡片下移；导入md文档可见性开关）；「入库」拆三卡；笔记「导入」改名「导入 md 文档」+ textarea 改文件选择 | ✅ 真机通（§03ak/§03al，2026-09-10）：curl 全链路验证+用户真机写字确认+battop 真机实装完整闭环 |
+| 电池刺客/标题/端口三连调 | 电池刺客最终落点「管理→电池刺客」二级 tab（耗电情况/唤醒源两个三级 tab，各自时间窗+按应用/按进程下拉，内容包 `.card` 统一风格）；「实验室」只留开关；总标题「书架」（内部项目名不变）→ 网页展示改「秘密花园」🌿；网关端口 8778→443（不用带端口号） | ✅ 真机通（§03am，2026-09-10）：curl 确认新标题/图标/443 端口/summary 数据端点全部生效，浏览器交互细节未经人眼确认（如实标注） |

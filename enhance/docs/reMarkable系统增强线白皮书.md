@@ -86,7 +86,7 @@ enhance/
 
 **第一轮：`strings` 侦察**（没装 Ghidra）。真机 `xochitl`（3.28.0.172）二进制里有一整套 C++ RTTI mangled 名字，命名空间 `Quill::strokev2`——按笔型分光栅化策略类：`FillPencil`（铅笔）、`FillBallpoint`/`FillBallpointAA`（圆珠笔，AA=抗锯齿）、`FillSolid_Opaque_AA`/`FillSolid_Composed_AA`、`FillMaskedEraser`（橡皮擦）、`FillAnts`、`FillShaderAA`。外层包一层 `LerpRaster`（linear-interpolation raster，名字直接暗示"沿路径插值"）或 `MonoRaster`（单色光栅化，无插值）。**判断**（未证实）：这套结构像是"笔画宽度/透明度沿路径插值渲染"的实现层，比笔记页背景滤镜那次判死的层级更底层、也更直接对应这个诉求。
 
-**第二轮：真上 Ghidra，反查 vtable 失败**。装 Ghidra（见 §03d）、真机拉 3.28.0.172 的 `xochitl`、`ghidra-project-328/xochitl_328_analysis.gpr` 完整分析 238 秒完成。写 `ghidra-project-328/scripts/FindQuillStrokeRTTI.java`，用跟 `cj_find_metaobject`（`chinese-ime/langhook/src/hook_init.c`）同一招——直接在内存里搜"字面等于某地址的 8 字节指针值"，不依赖 Ghidra 自动 xref（stripped 二进制，指向这些字符串的指针字段之前从没被识别/定型过，自动 xref 是空的）：
+**第二轮：真上 Ghidra，反查 vtable 失败**。装 Ghidra（见 §03d）、真机拉 3.28.0.172 的 `xochitl`、`defw/xochitl_328_analysis.gpr`（目录 2026-09-10 从 `ghidra-project-328` 改名，见 `defw/README.md`）完整分析 238 秒完成。写 `defw/scripts/FindQuillStrokeRTTI.java`，用跟 `cj_find_metaobject`（`chinese-ime/langhook/src/hook_init.c`）同一招——直接在内存里搜"字面等于某地址的 8 字节指针值"，不依赖 Ghidra 自动 xref（stripped 二进制，指向这些字符串的指针字段之前从没被识别/定型过，自动 xref 是空的）：
 
 1. 四个候选类名字符串各自唯一命中一次，地址在 `0x16d0818`~`0x16d0d80` 一带的 `.rodata`。
 2. 反查"谁指向这段字符串" → 各自唯一命中一次，候选 typeinfo 对象在 `0x16d0850`~`0x16d0db8` 一带。

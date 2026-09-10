@@ -5,7 +5,7 @@
 // 同样的"靠已知指针反查容器结构体"手法项目里已经用过（cj_find_metaobject，
 // chinese-ime/langhook/src/hook_init.c），这里是同一招用在 C++ RTTI 上。
 //
-// 用法：analyzeHeadless <project> <name> -process -scriptPath ghidra-project-328/scripts
+// 用法：analyzeHeadless <project> <name> -process -scriptPath defw/scripts
 //       -postScript FindQuillStrokeRTTI.java
 import ghidra.app.script.GhidraScript;
 import ghidra.program.model.address.Address;

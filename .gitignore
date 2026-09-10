@@ -51,6 +51,11 @@ ghidra-project*/*.rep/
 ghidra-project*/*.lock
 # Ghidra headless 运行产物（decompile/disasm/dump/find*/import 的 .log），可重生成，不入库
 ghidra-project*/*.log
+# defw/（3.28.0.172 逆向工程，原名 ghidra-project-328，2026-09-10 改名两次到 defw）同样三条——
+# `ghidra-project*` 通配符改名后不再匹配，不是覆盖旧规则，是新加一组，`ghidra-project/`（.169）不受影响。
+defw/*.rep/
+defw/*.lock
+defw/*.log
 
 # 词典（源 .dict.yaml 与派生大 txt；递归匹配子目录）
 chinese-ime/pinyin-engine/data/**/*.dict.yaml
