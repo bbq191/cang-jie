@@ -1,4 +1,4 @@
-//! 单页 UI（手机/电脑浏览器打开 `https://<设备IP>:8778/`）。固定 tab「传书」（母版库总入口）+「管理」，中间的服务 tab
+//! 单页 UI（手机/电脑浏览器打开 `https://<设备IP>/`，2026-09-10 起绑标准 443 端口，不用带端口号）。固定 tab「传书」（母版库总入口）+「管理」，中间的服务 tab
 //! 按 `/api/services` 注册表动态生成（xochitl 字体 = font-serve、KOReader = koreader-serve、壁纸 = wallpaper-serve）。
 //! 上传逐文件一请求（每本独立成败、独立进度条），所有上传口共用一个 `uploader` + 服务端同形回执（`asset::receipt`）；
 //! 格式白名单由 [`page`] 从 `shelf_core::formats` 注入（`__EXTS__`），网页 accept / 选中即拦与服务端上传门同源。
@@ -41,8 +41,8 @@ fn esc(s: &str) -> String {
 
 /// 登录页：只要密码，无用户名。`error` 空=无提示。
 pub fn login_page(error: &str, next: &str) -> String {
-    format!(r#"<!doctype html><html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>书架 · 登录</title><style>{AUTH_CSS}</style></head><body>
-<form method="post" action="/login" autocomplete="on"><h1>书架</h1>
+    format!(r#"<!doctype html><html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>秘密花园 · 登录</title><style>{AUTH_CSS}</style></head><body>
+<form method="post" action="/login" autocomplete="on"><h1>秘密花园</h1>
 <label for="pw">密码</label><input id="pw" name="password" type="password" autofocus required autocomplete="current-password">
 <input type="hidden" name="next" value="{next}"><div class="err">{err}</div><button type="submit">登录</button>
 <p class="small">首次使用密码为 <code>shelf</code>，登录后必须改。<br>浏览器提示"不安全"是自签证书所致：<a href="/ca.crt">下载 CA 证书</a> 装进手机/电脑信任库一次即不再提示。</p></form></body></html>"#, next = esc(next), err = esc(error))
@@ -56,8 +56,8 @@ pub fn password_page(error: &str, forced: bool) -> String {
     // 漏洞，服务端仍是最终裁决者，纯粹 UX 一致性问题）。改成从常量插值，单一事实源。
     let n = crate::config::MIN_PASSWORD_LEN;
     let hint = if forced { format!("首次登录：请先设置新密码（至少 {n} 位，不能是默认密码）。") } else { format!("至少 {n} 位。改完其它已登录设备需重新登录。") };
-    let back = if forced { "" } else { r#"<p class="small"><a href="/">返回书架</a></p>"# };
-    format!(r#"<!doctype html><html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>书架 · 改密码</title><style>{AUTH_CSS}</style></head><body>
+    let back = if forced { "" } else { r#"<p class="small"><a href="/">返回秘密花园</a></p>"# };
+    format!(r#"<!doctype html><html lang="zh"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>秘密花园 · 改密码</title><style>{AUTH_CSS}</style></head><body>
 <form method="post" action="/password"><h1>设置密码</h1><p class="small" style="margin-top:0">{hint}</p>
 <label for="cur">当前密码</label><input id="cur" name="current" type="password" required autocomplete="current-password">
 <label for="new">新密码</label><input id="new" name="new" type="password" required minlength="{n}" autocomplete="new-password">

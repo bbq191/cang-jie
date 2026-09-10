@@ -1,4 +1,5 @@
-//! 极简 mDNS 应答器：让浏览器用 `https://shelf.local:8778/` 而非记 IP（伪域名，零路由器/DNS 配置）。
+//! 极简 mDNS 应答器：让浏览器用 `https://shelf.local/` 而非记 IP（伪域名，零路由器/DNS 配置；
+//! 2026-09-10 改绑标准 443 端口后，连端口号都不用带了）。
 //! 只回答本机名字的 A 查询（`<name>.local`），应答地址选**与提问者同子网**的本机 IPv4（USB 网段问就答 10.11.99.1，
 //! WiFi 网段问就答 WiFi 地址）。iOS/macOS/Windows 10+/Linux(avahi 或 systemd-resolved) 都能解析 .local；
 //! **Android 系统解析器不查 mDNS**，安卓浏览器要走 host 热点的 dnsmasq 别名（见 shelf/docs §03j）。

@@ -34,7 +34,7 @@ host `shelf push` 是唯一能"入库时顺带优化"的源（Calibre 深洗 / �
 ## 架构：网关 + 领域服务
 
 ```
-浏览器 / shelf CLI ──► shelf-gateway  https://0.0.0.0:8778 · shelf.local（私有 CA TLS + 登录页密码/CLI Basic）  UI + /api/services + /api/manage + /api/<seg>/* 反向代理
+浏览器 / shelf CLI ──► shelf-gateway  https://0.0.0.0:443 · shelf.local（私有 CA TLS + 登录页密码/CLI Basic）  UI + /api/services + /api/manage + /api/<seg>/* 反向代理
                             │  按注册表转发（剥掉 <seg>，body 流式透传）
         ┌───────────────────┼─────────────────┬──────────────────┐
    book-serve          koreader-serve       font-serve       wallpaper-serve
@@ -109,8 +109,8 @@ shelf/
 
 ## 访问与密码
 
-- 地址：`https://<设备IP>:8778/`，或伪域名 **`https://shelf.local:8778/`**（网关自带 mDNS 应答；iOS/macOS/Windows/Linux 直接可用，
-  **安卓系统不解析 .local**——安卓手机走 host 热点时在 host 加 dnsmasq 别名，见白皮书 §03j）。**传大书走 USB `https://10.11.99.1:8778`**（不占 WiFi，白皮书 §03l）。
+- 地址：`https://<设备IP>/`，或伪域名 **`https://shelf.local/`**（网关自带 mDNS 应答；iOS/macOS/Windows/Linux 直接可用，
+  **安卓系统不解析 .local**——安卓手机走 host 热点时在 host 加 dnsmasq 别名，见白皮书 §03j）。**传大书走 USB `https://10.11.99.1`**（不占 WiFi，白皮书 §03l）。2026-09-10 起绑标准 443 端口，网址不用带端口号。
 - 登录页只要密码、无用户名：**首次默认 `shelf`，登录后强制改**（≥6 位、不能是默认）。改密：网页右上「改密码」/ `shelf passwd` /
   设备上 `shelf-gateway passwd <新密码>`；忘记：`shelf-gateway reset-password`（回默认并再次强制改）。改密后其它设备会话失效。
 - 证书：私有 CA 签发（`~/.config/shelf/tls/ca.pem`）。登录页「下载 CA 证书」装进手机/电脑信任库**一次**，此后不再有"不安全"提示

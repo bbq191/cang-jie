@@ -1,4 +1,6 @@
-//! shelf-gateway —— 书架对外唯一入口（`0.0.0.0:8778`）。
+//! shelf-gateway —— 书架对外唯一入口（部署固定 `0.0.0.0:443`，见 `systemd/shelf-gateway.service`
+//! 的 `--bind`；这里的 `default_bind` 只是本地手动跑 `shelf-gateway serve` 不带参数时的兜底，特意
+//! 留非特权端口，本地测试不用 root）。
 //! 职责：① 托管单页 UI；② `/api/services` 列注册表；③ `/api/<service>/*` 反向代理到
 //! 该服务的 loopback 端口（流式转发 body）。服务缺席 → 404 "未安装"，UI 据 `/api/services` 隐藏 tab。
 //! 对外 **HTTPS（私有 CA 签发，首启生成，`/ca.crt` 可下载装信任）+ 登录页密码**（无用户名；首次默认 `shelf`、
@@ -20,7 +22,7 @@ use std::sync::{Arc, Mutex};
 
 const SPEC: ServiceSpec = ServiceSpec {
     name: "shelf-gateway",
-    label: "书架",
+    label: "秘密花园",
     version: env!("CARGO_PKG_VERSION"),
     default_bind: "0.0.0.0:8778",
     tab: None,

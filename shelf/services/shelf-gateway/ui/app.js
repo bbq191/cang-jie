@@ -1,7 +1,6 @@
 const $=(s,r=document)=>r.querySelector(s);
 const fmtB=n=>n>1048576?(n/1048576).toFixed(1)+' MB':n>1024?(n/1024).toFixed(0)+' KB':n+' B';
-// 小徽章：本来只在 renderManage 里用，现在电池刺客卡片要在「实验室」子标签和独立顶层标签页
-// 两处挂载（见 mountBattopCard），提到文件作用域，两处共用同一份，不重复定义。
+// 小徽章：renderManage 的「基石与模块」列表用。
 const badge=(t,ok)=>`<span class="badge ${ok?'on':'off'}">${t}</span>`;
 /* 停一会儿再继续：用在"先弹出一条状态文字，再触发会重画掉这条文字的动作"这种场景——不等的话状态
    文字刚显示就被紧跟着的重画冲掉，用户根本来不及看见（点重转/生成笔记本弹出消耗那次踩过的坑）。 */
@@ -775,52 +774,66 @@ function mountModelPanel(root,seg,title,icon,showAuto){
   return refresh;
 }
 
-/* 电池刺客（battop）状态卡片：状态展示+启停按钮，挂进任意 container。「实验室」子标签和独立顶层
-   「电池刺客」标签页（见下 renderBattop）两处都要用同一份内容——各自独立挂载、各自独立 refresh
-   （两处不共享内存态，切换/刷新各自拉一遍 /api/enhance/status，是这个 app 里 tab 之间一贯的模式，
-   不是新行为）。返回 refresh() 给调用方自己决定何时/多频繁调用（sec.refresh 挂钩）。 */
-/* 时间窗展示用的格式化 helper：ms→人话时长，battop::write_summary 已经把 top15 应用/进程/唤醒源
-   都按 {name,ms,pct} 算好了（见 enhance/battop/src/main.rs），网页这边不重新聚合，只管排版。 */
+/* 电池刺客（battop）——2026-09-10 拆成两处：①「实验室」卡片只留开关+说明（mountBattopToggleCard，
+   checkbox 直接对应 systemd start/stop，不是 reading-qol.json 那种纯 JSON 开关）；②「管理→电池
+   刺客」二级 tab（renderBattopDetail，运行时才出现，见 renderManage 里的可见性同步逻辑）放真正的
+   数据——耗电情况（按应用/按进程）+ 唤醒源两个三级子标签，数据源是 battop 常驻聚合的 summary.json
+   （4 个时间窗：今日/7天/30天/全部），网页不重新聚合，只管排版，跟以前设备端 battery-audit.sh/
+   FINDINGS.md 那份报告对标的思路一样，只是这次是持续聚合不是一次性跑分析脚本。 */
 const fmtMs=ms=>ms>=3600000?(ms/3600000).toFixed(1)+' 小时':ms>=60000?(ms/60000).toFixed(1)+' 分':(ms/1000).toFixed(0)+' 秒';
 const BATTOP_WINDOWS=[{key:'today',label:'今日'},{key:'7d',label:'7 天'},{key:'30d',label:'30 天'},{key:'all',label:'全部'}];
+const battopTopList=items=>items&&items.length
+  ?`<ul class="list">${items.map(it=>`<li><span>${it.name}</span><span class="small">${fmtMs(it.ms)} · ${it.pct}%</span></li>`).join('')}</ul>`
+  :'<p class="small">（这个窗口没有数据）</p>';
+/* 时间窗 subnav+subpanel 骨架，耗电情况/唤醒源两处共用——contentFn(windowData)→这个窗口要显示的 HTML。 */
+function renderBattopWindowed(container,windowsData,contentFn){
+  container.innerHTML=`<div class="subnav">${BATTOP_WINDOWS.map((x,i)=>`<button${i===0?' class="on"':''}>${x.label}</button>`).join('')}</div>
+    ${BATTOP_WINDOWS.map((x,i)=>`<div class="subpanel${i===0?' on':''}">${contentFn(windowsData[x.key]||{})}</div>`).join('')}`;
+  subtabs(container);
+}
 
-function mountBattopCard(container){
+function mountBattopToggleCard(container){
   container.innerHTML=`<h3 style="margin-top:0">电池刺客（battop）</h3>
-    <p class="small">电量异常排查用的采样诊断进程，日常用不到。2026-08 出过一次 cgroup 死锁死机——根因是内核罕见的 RCU stall（没修，是概率事件），当时 timer 每 10 分钟重启一次把撞上它的概率放大了 144 倍。已经改成常驻低频采样，正常点一下开/关（偶尔用用）风险可忽略；但每次「启动」确实还是走一次同样的 cgroup 迁移操作，短时间内连续反复点启停不是绝对安全，别拿这个开关当没有代价的按钮反复点着玩。</p>
-    <div class="kv small" data-kv>检测中…</div>
-    <div class="row"><button class="btn" data-btn disabled>…</button></div>
-    <div data-summary></div>`;
-  const kv=container.querySelector('[data-kv]'),btn=container.querySelector('[data-btn]'),summaryEl=container.querySelector('[data-summary]');
-  let st=null;
-  /* 跟以前设备端 battery-audit.sh/FINDINGS.md 那份报告对标的表格（累计 CPU/机器归属应用/唤醒源），
-     只是这次数据源是 battop 常驻聚合的 summary.json（4 个时间窗），不是一次性跑分析脚本。 */
-  const topList=items=>items&&items.length
-    ?`<ul class="list">${items.map(it=>`<li><span>${it.name}</span><span class="small">${fmtMs(it.ms)} · ${it.pct}%</span></li>`).join('')}</ul>`
-    :'<p class="small">（这个窗口没有数据）</p>';
-  const renderSummary=data=>{
-    if(!data||!data.available){summaryEl.innerHTML='<p class="small">还没有采样数据——常驻服务每 ~10 分钟采一次，刚装/刚启动时先等一轮。</p>';return}
-    const w=data.summary.windows||{};
-    summaryEl.innerHTML=`<div class="subnav">${BATTOP_WINDOWS.map((x,i)=>`<button${i===0?' class="on"':''}>${x.label}</button>`).join('')}</div>
-      ${BATTOP_WINDOWS.map((x,i)=>{const d=w[x.key]||{};return `<div class="subpanel${i===0?' on':''}">
-        <p class="small">放电 <b>${d.discharge||0}%</b> · <b>${d.mah||0}</b> mAh（均值约 ${d.ma||0} mA）· ${d.samples||0} 次采样</p>
-        <h4 style="margin:.6em 0 .2em">按应用（累计占用时长）</h4>${topList(d.app)}
-        <h4 style="margin:.6em 0 .2em">唤醒源（打断休眠次数）</h4>${topList(d.wake)}
-      </div>`}).join('')}`;
-    subtabs(summaryEl);
-  };
+    <p class="small">电量异常排查用的采样诊断进程，日常用不到。2026-08 出过一次 cgroup 死锁死机——根因是内核罕见的 RCU stall（没修，是概率事件），当时 timer 每 10 分钟重启一次把撞上它的概率放大了 144 倍。已经改成常驻低频采样，正常点一下开/关（偶尔用用）风险可忽略；但每次「启动」确实还是走一次同样的 cgroup 迁移操作，短时间内连续反复点启停不是绝对安全，别拿这个开关当没有代价的按钮反复点着玩。开启后「管理」多一个「电池刺客」二级标签，看耗电情况/唤醒源详细数据。</p>
+    <label class="toggle"><input type="checkbox" data-box disabled> 开启</label>
+    <p class="small" data-note></p>`;
+  const box=container.querySelector('[data-box]'),note=container.querySelector('[data-note]');
+  let installed=false;
   const refresh=async()=>{const r=await j('/api/enhance/status');if(r.ok===false)return;
-    st=r.battop||{};
-    kv.innerHTML=!st.installed
-      ?`<b>状态</b><span>${badge('未装',false)} <span class="small">见 enhance/battop/install.sh 手动装（这次网页只控制已装好的，不提供从网页装）</span></span>`
-      :`<b>状态</b><span>${badge(st.running?'运行中':'已装未开',!!st.running)}</span><b>最近采样</b><span>${st.lastSampleAt?new Date(st.lastSampleAt*1000).toLocaleString():'（还没有采样数据）'}</span>`;
-    btn.textContent=st.running?'停止':'启动';btn.disabled=!st.installed;
-    if(st.installed){renderSummary(await j('/api/enhance/battop/summary'))}else{summaryEl.innerHTML=''}};
-  btn.onclick=async()=>{if(!st)return;btn.disabled=true;
-    const r=await j(`/api/enhance/battop/${st.running?'stop':'start'}`,{method:'POST'});
-    if(r.ok===false)alert(r.message||'操作失败');
-    await refresh()};
+    const st=r.battop||{};installed=!!st.installed;
+    box.checked=!!st.running;box.disabled=!installed;
+    note.textContent=installed?'':'见 enhance/battop/install.sh 手动装（这次网页只控制已经装好的，不提供从网页装）'};
+  box.onchange=async()=>{if(!installed)return;const want=box.checked;box.disabled=true;
+    const r=await j(`/api/enhance/battop/${want?'start':'stop'}`,{method:'POST'});
+    if(r.ok===false){alert(r.message||'操作失败');box.checked=!want}
+    box.disabled=false;await refresh()};
   refresh();
   return refresh;
+}
+
+/* 「管理→电池刺客」二级 tab 内容：耗电情况（按应用+按进程）/ 唤醒源，各自内部再按时间窗切换
+   （三级嵌套：管理 subnav → 电池刺客 subpanel → 这里的 subnav → 耗电情况/唤醒源 subpanel →
+   renderBattopWindowed 自己的 subnav → 时间窗 subpanel——subtabs() 的 `:scope >` 收紧保证每层
+   只认自己的直接子元素，见 subtabs() 头注）。 */
+function renderBattopDetail(sec){
+  sec.innerHTML=`<div class="subnav"><button class="on">🔋 耗电情况</button><button>⏰ 唤醒源</button></div>
+    <div class="subpanel on" data-usage></div>
+    <div class="subpanel" data-wake></div>`;
+  const usageEl=sec.querySelector('[data-usage]'),wakeEl=sec.querySelector('[data-wake]');
+  const refresh=async()=>{
+    const r=await j('/api/enhance/battop/summary');
+    if(r.ok===false||!r.available){
+      const msg='<p class="small">还没有采样数据——常驻服务每 ~10 分钟采一次，刚装/刚启动时先等一轮。</p>';
+      usageEl.innerHTML=msg;wakeEl.innerHTML=msg;return;
+    }
+    const w=r.summary.windows||{};
+    renderBattopWindowed(usageEl,w,d=>`<p class="small">放电 <b>${d.discharge||0}%</b> · <b>${d.mah||0}</b> mAh（均值约 ${d.ma||0} mA）· ${d.samples||0} 次采样</p>
+      <h4 style="margin:.6em 0 .2em">按应用（累计占用时长）</h4>${battopTopList(d.app)}
+      <h4 style="margin:.6em 0 .2em">按进程（累计占用时长）</h4>${battopTopList(d.proc)}`);
+    renderBattopWindowed(wakeEl,w,d=>`<p class="small">${d.samples||0} 次采样</p>
+      <h4 style="margin:.6em 0 .2em">唤醒源（打断休眠次数）</h4>${battopTopList(d.wake)}`);
+  };
+  refresh();sec.refresh=refresh;subtabs(sec);
 }
 
 
@@ -831,7 +844,7 @@ function mountBattopCard(container){
    CJK 手写笔迹优化+电池刺客+导入md文档可见性开关，从②搬过来）。
    shelf push 命令那张卡片已经搬到「传书」页「入库」子页——那才是它真正归属的地方（用户反馈）。 */
 function renderManage(sec){sec.innerHTML=`
-  <div class="subnav"><button class="on">🏗 基石与模块</button><button>🧠 模型管理</button><button>⚙️ 系统增强</button><button>🧪 实验室</button></div>
+  <div class="subnav"><button class="on">🏗 基石与模块</button><button>🧠 模型管理</button><button>⚙️ 系统增强</button><button>🧪 实验室</button><button hidden>🔋 电池刺客</button></div>
   <div class="subpanel on">
     <div class="card"><h2>引导 · 基石</h2><p class="lead">书架的功能建在 xovi + appload 之上。先用桌面端 <b>reManager</b>（或设备上的 vellum）把基石装好，KOReader 走官方仓库自装，再回这里管理书架各功能。</p>
       <div class="kv small" id="found">检测中…</div>
@@ -874,7 +887,8 @@ function renderManage(sec){sec.innerHTML=`
     <div class="card"><h3 style="margin-top:0">导入 md 文档</h3>
       <p class="small">开启后「笔记」tab 才会出现「导入 md 文档」子标签（上传一个 .md 文件生成设备笔记本文档）。功能第一次上线，默认关——想用先在这里打开。</p>
       <label class="toggle"><input type="checkbox" id="labImportMd"> 开启（默认关）</label></div>
-  </div>`;
+  </div>
+  <div class="subpanel" id="battopDetail" hidden></div>`;
   const mvRefresh=mountModelPanel($('#modelcards',sec),'transcribe','视觉模型（转写批注）','👁',true);
   const mtRefresh=mountModelPanel($('#modelcards',sec),'mind','文字模型（问 AI）','✎');
   const refresh=async()=>{
@@ -894,15 +908,25 @@ function renderManage(sec){sec.innerHTML=`
   $('#allon',sec).onclick=async()=>{const d=await j('/api/manage');for(const m of (d.modules||[]))if(m.installable&&m.installed&&!m.running)await j('/api/manage/'+m.seg+'/start',{method:'POST'});refresh()};
   $('#alloff',sec).onclick=async()=>{if(!confirm('关闭全部领域服务（网关保留）？'))return;const d=await j('/api/manage');for(const m of (d.modules||[]))if(m.installable&&m.installed&&m.running)await j('/api/manage/'+m.seg+'/stop',{method:'POST'});refresh()};
   /* 系统增强/实验室（Track 3，2026-09-09；实验室 2026-09-10 加）：CJK 画线吸附/CJK 手写笔迹优化/
-     导入md文档可见性都是真开关（写 reading-qol.json，走同一个 /api/enhance/qol）；battop 卡片
-     挂载逻辑抽进 mountBattopCard（跟独立顶层「电池刺客」标签页共用，各自独立 refresh）。 */
+     导入md文档可见性都是真开关（写 reading-qol.json，走同一个 /api/enhance/qol）。battop 拆两处：
+     「实验室」卡片只留开关+说明（mountBattopToggleCard），详细数据挪到本函数下面新增的第 5 个
+     二级 tab「电池刺客」（renderBattopDetail）——这个 tab 本身「运行才出现」，规则/实现都照抄
+     「笔记」tab「导入 md 文档」子标签那套 hidden 属性+点走再隐藏的写法（见 renderNotes 里
+     syncImportVisible 的注释，这里不重复讲一遍）。 */
   const hlBox=$('#erHlSnap',sec),hwBox=$('#labHwStroke',sec),importMdBox=$('#labImportMd',sec);
-  const battopRefresh=mountBattopCard($('#labBattopCard',sec));
+  const battopToggleRefresh=mountBattopToggleCard($('#labBattopCard',sec));
+  const manageNav=sec.querySelector(':scope > .subnav');
+  const battopNavBtn=manageNav.children[4],battopPanel=$('#battopDetail',sec);
+  renderBattopDetail(battopPanel);
   const erRefresh=async()=>{const r=await j('/api/enhance/status');if(r.ok===false)return;
     hlBox.checked=!!r.hlSnapCjk;
     hwBox.checked=!!r.hwStrokeEnabled;
     importMdBox.checked=!!r.notesImportMdEnabled;
-    await battopRefresh()};
+    await battopToggleRefresh();
+    const running=!!(r.battop&&r.battop.running);
+    if(!running&&battopNavBtn.classList.contains('on'))manageNav.children[0].click();
+    battopNavBtn.hidden=!running;battopPanel.hidden=!running;
+    if(running&&battopPanel.refresh)battopPanel.refresh()};
   hlBox.onchange=async()=>{const want=hlBox.checked;hlBox.disabled=true;
     const r=await j('/api/enhance/qol',{method:'PUT',body:JSON.stringify({hlSnapCjk:want})});
     hlBox.disabled=false;if(r.ok===false){alert(r.message||'保存失败');hlBox.checked=!want}};

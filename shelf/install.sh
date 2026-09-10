@@ -202,7 +202,7 @@ done
 REG="$(ls /tmp/shelf-0/shelf/services/ 2>/dev/null | sed 's/\.json$//' | tr '\n' ' ')"
 echo "  注册表        : ${REG:-（空）}"
 if [ "$ALL_OK" = "1" ] && [ -n "$REG" ]; then
-    echo "✅ 书架在线：https://<设备IP>:8778/  或 https://shelf.local:8778/（mDNS；安卓不支持 .local）"
+    echo "✅ 书架在线：https://<设备IP>/  或 https://shelf.local/（mDNS；安卓不支持 .local）——标准 443 端口，不用带端口号"
     if [ "${MUST_CHANGE:-0}" != "0" ]; then
         echo "   登录：密码 shelf（首次默认），登录后必须改；忘记密码：shelf-gateway reset-password"
     else

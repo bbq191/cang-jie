@@ -1,5 +1,5 @@
 [Unit]
-Description=书架网关（对外 0.0.0.0:8778：UI + 反向代理 + 服务发现）
+Description=书架网关（对外 0.0.0.0:443：UI + 反向代理 + 服务发现）
 # 二进制/数据在 /home，故依赖 home.mount；这是本服务自己的依赖，**不牵连 xochitl 本体**（红线）。
 After=home.mount network-online.target
 Wants=network-online.target
@@ -11,7 +11,7 @@ Type=simple
 ExecStartPre=-/bin/sh /home/root/.local/bin/cangjie-lo-alias.sh
 # fontconfig 索引在 tmpfs、真重启后丢，开机补跑一次（失败不阻断）。
 ExecStartPre=-/usr/bin/fc-cache
-ExecStart=/home/root/.local/bin/shelf-gateway serve --bind 0.0.0.0:8778
+ExecStart=/home/root/.local/bin/shelf-gateway serve --bind 0.0.0.0:443
 Restart=on-failure
 RestartSec=5
 # 与 wr-serve 同款软限：只降权不硬顶（交互式重活需要突发），MemoryMax 兜内存（上传走流式落盘）。
