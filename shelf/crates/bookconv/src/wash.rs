@@ -544,7 +544,15 @@ pub fn wash_css(opts: &WashOpts) -> String {
     // ⚠ 值用 0.01em 不用 0：xochitl 把 `text-indent:0` 当"没设"→ 落回从外层 `<div class="calibre1">` 之类**继承**来的缩进
     //   （诊断 14 V1/V7 vs Sheldon v5，2026-09-06）；0.01em ≈ 0.1pt 肉眼不可见，KOReader 同样视为顶格。
     let flush = if opts.keep_para_spacing { ".cj-flush{text-indent:0.01em;}" } else { ".cj-flush{text-indent:0.01em;margin-top:0;margin-bottom:0;}" };
-    format!("p{{{decl}}}\n{flush}\n")
+    // figure/figcaption：以前这条规则只管了 `<p>` 的边距，`article.rs` 网文管线常把图片包成
+    // `<figure><img/><figcaption>…</figcaption></figure>`（真机书里也不算罕见），这两个元素
+    // 完全没被清零过——默认（未洗）上下边距在"图片夹在正文中间"的场景会造成明显留白，2026-09-10
+    // 真机拿 aeon.co 一篇网文复现坐实（诊断EPUB→投原生→量 xochitl 渲染 PDF，不肉眼猜，见书架
+    // 白皮书 §03aq）。**两条规则分开写，不写成 `figure,figcaption{}`**——xochitl 的 CSS 解析器
+    // 脆，只认裸元素选择器，逗号/复合选择器直接整条规则失效（`lang_aware_indent` 测试断言过
+    // 这条红线，别在这里破例）。keep_para_spacing 档位同样清零：那档的意图是"保留正文段落之间
+    // 的呼吸感"，不是"保留图片周围的默认边距"，两件事语义不同，不该被同一个开关连带控制。
+    format!("p{{{decl}}}\n{flush}\nfigure{{margin:0;padding:0;}}\nfigcaption{{margin:0;padding:0;}}\n")
 }
 
 pub fn count_dup_id_tags(html: &str) -> usize {
@@ -1102,6 +1110,21 @@ mod tests {
         // keep_para_spacing 时不归零段距
         let keep = wash_css(&WashOpts { keep_para_spacing: true, ..Default::default() });
         assert!(!keep.contains("margin-top:0") && keep.contains("p{text-indent:2em;}"), "keep-spacing 也要尾分号: {keep}");
+    }
+
+    #[test]
+    fn figure_and_figcaption_margin_zeroed_as_separate_bare_rules() {
+        // 2026-09-10 真机 aeon.co 网文复现：figure/figcaption 默认边距没清零，图片夹在正文中间
+        // 造成留白。修法＝跟 p 一样清零，但必须各自一条裸元素选择器规则——xochitl 解析器脆，
+        // `figure,figcaption{}` 这种逗号选择器整条规则会失效（lang_aware_indent 测试断言过这条
+        // 红线：不带逗号/复合选择器）。
+        let css = wash_css(&WashOpts::default());
+        assert!(css.contains("figure{margin:0;padding:0;}"), "{css}");
+        assert!(css.contains("figcaption{margin:0;padding:0;}"), "{css}");
+        assert!(!css.contains("figure,figcaption") && !css.contains("figcaption,figure"), "禁止逗号选择器: {css}");
+        // keep_para_spacing 只管段落呼吸感，不该连带保留图片边距——不管这个档位开没开，figure/figcaption 都清零。
+        let keep = wash_css(&WashOpts { keep_para_spacing: true, ..Default::default() });
+        assert!(keep.contains("figure{margin:0;padding:0;}") && keep.contains("figcaption{margin:0;padding:0;}"), "{keep}");
     }
 
     #[test]
