@@ -700,7 +700,9 @@ function renderNotes(sec){sec.innerHTML=`
     if(cur&&[...sel.options].some(o=>o.value===cur))sel.value=cur;await loadBook();await syncImportVisible()};
   refresh();sec.refresh=refresh;subtabs(sec)}
 
-const PROVIDER_NAMES={dashscope:'DashScope（阿里云百炼）',openai:'OpenAI',gemini:'Google Gemini',deepseek:'DeepSeek'};
+// 只放 key 名，DashScope/OpenAI/Gemini/DeepSeek 本身是厂商专名不翻，括注里的中文说明才走 T()（同样是
+// 顶层 const 只存 key、真正查找挪到调用点的规则，见 T() 头注）。
+const PROVIDER_NAMES={dashscope:'models.provider.dashscope',openai:'models.provider.openai',gemini:'models.provider.gemini',deepseek:'models.provider.deepseek'};
 /* 模型管理卡片（点 2「彻底重做」，「管理」tab 用，transcribe/mind 共用同一套 UI，2026-09-08 第二轮反馈；
    2026-09-08 又一轮反馈：厂家/模型拆成两级下拉，别把七八个不同厂家的模型糊在一个框里选）：
    第一级「厂家」下拉（DashScope/OpenAI/Gemini/DeepSeek/自定义），第二级「模型」下拉只列选中厂家的
@@ -715,40 +717,40 @@ function mountModelPanel(root,seg,title,icon,showAuto){
   const card=document.createElement('div');card.className='card';card.style.cssText='width:100%;margin:0';
   card.innerHTML=`<h3 style="margin-top:0">${icon} ${title}</h3>
     <div class="row">
-      <div style="flex:1;min-width:11em"><label class="field">厂家</label><select data-vendor style="width:100%"></select></div>
-      <div style="flex:1;min-width:11em" data-modelbox><label class="field">模型</label><select data-preset style="width:100%"></select></div>
+      <div style="flex:1;min-width:11em"><label class="field">${T('models.vendorLabel')}</label><select data-vendor style="width:100%"></select></div>
+      <div style="flex:1;min-width:11em" data-modelbox><label class="field">${T('models.modelLabel')}</label><select data-preset style="width:100%"></select></div>
     </div>
     <div class="row" data-custom hidden>
-      <input type="text" data-model placeholder="模型名" style="max-width:11em">
-      <input type="text" data-url placeholder="OpenAI 兼容口 baseUrl" style="flex:1;min-width:12em">
-      <button class="btn" data-savecustom>保存自定义</button>
+      <input type="text" data-model placeholder="${T('models.customModelPlaceholder')}" style="max-width:11em">
+      <input type="text" data-url placeholder="${T('models.customUrlPlaceholder')}" style="flex:1;min-width:12em">
+      <button class="btn" data-savecustom>${T('models.saveCustomBtn')}</button>
     </div>
-    <label class="field">API key（按厂商分开存，换模型不用重填）</label>
+    <label class="field">${T('models.apiKeyLabel')}</label>
     <div class="row" data-keyrow></div>
-    ${showAuto?'<div class="row"><label class="toggle"><input type="checkbox" data-auto> 合书自动转写</label></div>':''}
-    <label class="field">当前模型单价（每 1K token，自己填；不填就只看 token 数不算钱）</label>
+    ${showAuto?`<div class="row"><label class="toggle"><input type="checkbox" data-auto> ${T('models.autoTranscribeToggle')}</label></div>`:''}
+    <label class="field">${T('models.priceLabel')}</label>
     <div class="row" data-pricerow>
-      <input type="number" step="0.001" min="0" data-pricein placeholder="输入 ¥/1K" style="max-width:7em">
-      <input type="number" step="0.001" min="0" data-priceout placeholder="输出 ¥/1K" style="max-width:7em">
-      <button class="btn" data-pricesave>保存单价</button>
+      <input type="number" step="0.001" min="0" data-pricein placeholder="${T('models.priceInPlaceholder')}" style="max-width:7em">
+      <input type="number" step="0.001" min="0" data-priceout placeholder="${T('models.priceOutPlaceholder')}" style="max-width:7em">
+      <button class="btn" data-pricesave>${T('models.savePriceBtn')}</button>
     </div>
-    <label class="field">各模型用量/花费</label>
-    <div class="tblwrap" data-usagewrap><table class="cmp"><thead><tr><th>模型</th><th>调用</th><th>token（入/出）</th><th>花费</th></tr></thead><tbody data-usagebody></tbody></table></div>
+    <label class="field">${T('models.usageLabel')}</label>
+    <div class="tblwrap" data-usagewrap><table class="cmp"><thead><tr><th>${T('models.usage.colModel')}</th><th>${T('models.usage.colCalls')}</th><th>${T('models.usage.colTokens')}</th><th>${T('models.usage.colCost')}</th></tr></thead><tbody data-usagebody></tbody></table></div>
     <div class="small" data-stat style="margin-top:.3em;overflow-wrap:anywhere"></div>`;
   root.appendChild(card);
   const vendorSel=card.querySelector('[data-vendor]'),modelBox=card.querySelector('[data-modelbox]'),presetSel=card.querySelector('[data-preset]'),customBox=card.querySelector('[data-custom]'),modelInp=card.querySelector('[data-model]'),urlInp=card.querySelector('[data-url]'),keyRow=card.querySelector('[data-keyrow]'),stat=card.querySelector('[data-stat]'),autoBox=card.querySelector('[data-auto]'),priceIn=card.querySelector('[data-pricein]'),priceOut=card.querySelector('[data-priceout]'),usageBody=card.querySelector('[data-usagebody]');
   const put=body=>j(`/api/${seg}/config`,{method:'PUT',body:JSON.stringify(body)});
-  const fmtCost=c=>c==null?'（未填单价）':'¥'+c.toFixed(4);
+  const fmtCost=c=>c==null?T('models.noPrice'):'¥'+c.toFixed(4);
   let presets=[];
   const modelsOf=v=>presets.filter(p=>p.provider===v);
   const refresh=async()=>{
     const st=await j(`/api/${seg}/status`);
-    if(st.ok===false){stat.textContent='服务未就绪：'+(st.message||'安装/开启该服务后再配');vendorSel.disabled=true;keyRow.innerHTML='';usageBody.innerHTML='';return}
+    if(st.ok===false){stat.textContent=T('models.notReady',{msg:st.message||T('models.notReadyDefault')});vendorSel.disabled=true;keyRow.innerHTML='';usageBody.innerHTML='';return}
     const c=st.config||{};
     presets=c.presets||[];
     vendorSel.disabled=false;
     const vendors=[...new Set(presets.map(p=>p.provider))];
-    vendorSel.innerHTML=vendors.map(v=>`<option value="${v}">${PROVIDER_NAMES[v]||v}</option>`).join('')+'<option value="custom">自定义（手填地址）</option>';
+    vendorSel.innerHTML=vendors.map(v=>`<option value="${v}">${T(PROVIDER_NAMES[v])||v}</option>`).join('')+`<option value="custom">${T('models.customVendor')}</option>`;
     const activeVendor=c.activePreset==='custom'?'custom':(presets.find(p=>p.id===c.activePreset)||{}).provider||'custom';
     vendorSel.value=activeVendor;
     const isCustom=activeVendor==='custom';
@@ -756,27 +758,27 @@ function mountModelPanel(root,seg,title,icon,showAuto){
     if(isCustom){modelInp.value=c.model||'';urlInp.value=c.baseUrl||''}
     else{presetSel.innerHTML=modelsOf(activeVendor).map(p=>`<option value="${p.id}">${p.label}</option>`).join('');presetSel.value=c.activePreset}
     keyRow.innerHTML=c.hasKey
-      ?`<span class="small">已保存：<code>${c.keyMasked||'••••'}</code></span><button class="btn" data-delkey>删除</button>`
-      :`<input type="password" placeholder="粘贴 API key" data-keyinput style="flex:1;min-width:11em" autocomplete="off"><button class="btn pri" data-savekey>保存</button>`;
-    if(autoBox){autoBox.checked=!!c.auto;autoBox.onchange=async()=>{const r=await put({auto:autoBox.checked});if(r.ok===false){alert(r.message||'保存失败');autoBox.checked=!autoBox.checked}}}
+      ?`<span class="small">${T('models.keySaved',{key:c.keyMasked||'••••'})}</span><button class="btn" data-delkey>${T('action.delete')}</button>`
+      :`<input type="password" placeholder="${T('models.keyInputPlaceholder')}" data-keyinput style="flex:1;min-width:11em" autocomplete="off"><button class="btn pri" data-savekey>${T('models.saveKeyBtn')}</button>`;
+    if(autoBox){autoBox.checked=!!c.auto;autoBox.onchange=async()=>{const r=await put({auto:autoBox.checked});if(r.ok===false){alert(r.message||T('common.failed'));autoBox.checked=!autoBox.checked}}}
     const price=c.price||{inputPer1k:0,outputPer1k:0};
     priceIn.value=price.inputPer1k||'';priceOut.value=price.outputPer1k||'';
     const rows=st.usageByModel||[];
-    usageBody.innerHTML=rows.length?rows.map(m=>`<tr${m.active?' style="font-weight:600"':''}><td>${m.label}${m.active?' <span class="badge on">当前</span>':''}</td><td>${m.calls}${m.failed?` <span style="color:var(--bad)">(败${m.failed})</span>`:''}</td><td>${m.promptTokens}/${m.completionTokens}</td><td>${fmtCost(m.costEstimate)}</td></tr>`).join(''):'<tr><td colspan="4" class="small">还没有调用记录</td></tr>';
-    stat.textContent=rows.find(m=>m.active&&m.lastError)?.lastError?'最近错误：'+rows.find(m=>m.active).lastError:'';
+    usageBody.innerHTML=rows.length?rows.map(m=>`<tr${m.active?' style="font-weight:600"':''}><td>${m.label}${m.active?` <span class="badge on">${T('models.usage.active')}</span>`:''}</td><td>${m.calls}${m.failed?` <span style="color:var(--bad)">${T('models.usage.failedCount',{n:m.failed})}</span>`:''}</td><td>${m.promptTokens}/${m.completionTokens}</td><td>${fmtCost(m.costEstimate)}</td></tr>`).join(''):`<tr><td colspan="4" class="small">${T('models.usage.none')}</td></tr>`;
+    stat.textContent=rows.find(m=>m.active&&m.lastError)?.lastError?T('models.lastError',{err:rows.find(m=>m.active).lastError}):'';
     const delBtn=keyRow.querySelector('[data-delkey]'),saveBtn=keyRow.querySelector('[data-savekey]');
-    if(delBtn)delBtn.onclick=async()=>{if(!confirm(`删除已保存的${title} key？删掉之后要重新粘贴才能用`))return;const r=await put({clearKey:true});if(r.ok===false)alert(r.message||'删除失败');refresh()};
-    if(saveBtn)saveBtn.onclick=async()=>{const v=keyRow.querySelector('[data-keyinput]').value.trim();if(!v)return;const r=await put({apiKey:v});if(r.ok===false)alert(r.message||'保存失败');refresh()};
+    if(delBtn)delBtn.onclick=async()=>{if(!confirm(T('models.confirmDeleteKey',{title})))return;const r=await put({clearKey:true});if(r.ok===false)alert(r.message||T('models.deleteFailed'));refresh()};
+    if(saveBtn)saveBtn.onclick=async()=>{const v=keyRow.querySelector('[data-keyinput]').value.trim();if(!v)return;const r=await put({apiKey:v});if(r.ok===false)alert(r.message||T('common.failed'));refresh()};
   };
   /* 选厂家：不是自定义就直接定位到该厂家第一个模型并原子切换（不用再点一次「确认」）；选自定义只切
      UI（露出手填框），真正生效要等用户填完点「保存自定义」——避免半吊子状态被当成已保存的配置发出去。 */
   vendorSel.onchange=async()=>{const v=vendorSel.value;customBox.hidden=v!=='custom';modelBox.hidden=v==='custom';
     if(v==='custom')return;
     const first=modelsOf(v)[0];if(!first)return;
-    const r=await put({preset:first.id});if(r.ok===false)alert(r.message||'保存失败');refresh()};
-  presetSel.onchange=async()=>{const r=await put({preset:presetSel.value});if(r.ok===false)alert(r.message||'保存失败');refresh()};
-  card.querySelector('[data-savecustom]').onclick=async()=>{const r=await put({preset:'custom',model:modelInp.value.trim(),baseUrl:urlInp.value.trim()});if(r.ok===false)alert(r.message||'保存失败');refresh()};
-  card.querySelector('[data-pricesave]').onclick=async()=>{const r=await put({price:{input:parseFloat(priceIn.value)||0,output:parseFloat(priceOut.value)||0}});if(r.ok===false)alert(r.message||'保存失败');refresh()};
+    const r=await put({preset:first.id});if(r.ok===false)alert(r.message||T('common.failed'));refresh()};
+  presetSel.onchange=async()=>{const r=await put({preset:presetSel.value});if(r.ok===false)alert(r.message||T('common.failed'));refresh()};
+  card.querySelector('[data-savecustom]').onclick=async()=>{const r=await put({preset:'custom',model:modelInp.value.trim(),baseUrl:urlInp.value.trim()});if(r.ok===false)alert(r.message||T('common.failed'));refresh()};
+  card.querySelector('[data-pricesave]').onclick=async()=>{const r=await put({price:{input:parseFloat(priceIn.value)||0,output:parseFloat(priceOut.value)||0}});if(r.ok===false)alert(r.message||T('common.failed'));refresh()};
   refresh();
   return refresh;
 }
@@ -787,18 +789,19 @@ function mountModelPanel(root,seg,title,icon,showAuto){
    数据——耗电情况（按应用/按进程）+ 唤醒源两个三级子标签，数据源是 battop 常驻聚合的 summary.json
    （4 个时间窗：今日/7天/30天/全部），网页不重新聚合，只管排版，跟以前设备端 battery-audit.sh/
    FINDINGS.md 那份报告对标的思路一样，只是这次是持续聚合不是一次性跑分析脚本。 */
-const fmtMs=ms=>ms>=3600000?(ms/3600000).toFixed(1)+' 小时':ms>=60000?(ms/60000).toFixed(1)+' 分':(ms/1000).toFixed(0)+' 秒';
-const BATTOP_WINDOWS=[{key:'today',label:'今日'},{key:'7d',label:'7 天'},{key:'30d',label:'30 天'},{key:'all',label:'全部'}];
+const fmtMs=ms=>ms>=3600000?T('battop.hours',{n:(ms/3600000).toFixed(1)}):ms>=60000?T('battop.minutes',{n:(ms/60000).toFixed(1)}):T('battop.seconds',{n:(ms/1000).toFixed(0)});
+// 顶层常量只放 key 名（label 字段），真正的 T() 查找挪到 renderBattopWindowed 里（渲染时执行），见 T() 头注。
+const BATTOP_WINDOWS=[{key:'today',label:'battop.window.today'},{key:'7d',label:'battop.window.7d'},{key:'30d',label:'battop.window.30d'},{key:'all',label:'battop.window.all'}];
 const battopTopList=items=>items&&items.length
   ?`<ul class="list">${items.map(it=>`<li><span>${it.name}</span><span class="small">${fmtMs(it.ms)} · ${it.pct}%</span></li>`).join('')}</ul>`
-  :'<p class="small">（这个窗口没有数据）</p>';
+  :`<p class="small">${T('battop.noData')}</p>`;
 /* 时间窗 subnav+subpanel 骨架，耗电情况/唤醒源两处共用——contentFn(windowData)→这个窗口要显示的 HTML。 */
 /* activeIdx：重画时保留原来选中的时间窗（比如耗电情况的"按应用/按进程"下拉切换只想换列表内容，
    不想把用户刚选的"7天"弹回"今日"），不传就默认第一个。每个时间窗的内容包一层 `.card`——跟这个
    app 别处"subnav 切换、每块内容各自一张卡"的样子统一（KOReader 字体/词典两个子标签各自一张卡
    是同一个规矩，battop 详情页之前漏了这层，2026-09-10 用户指出补上）。 */
 function renderBattopWindowed(container,windowsData,contentFn,activeIdx=0){
-  container.innerHTML=`<div class="subnav">${BATTOP_WINDOWS.map((x,i)=>`<button${i===activeIdx?' class="on"':''}>${x.label}</button>`).join('')}</div>
+  container.innerHTML=`<div class="subnav">${BATTOP_WINDOWS.map((x,i)=>`<button${i===activeIdx?' class="on"':''}>${T(x.label)}</button>`).join('')}</div>
     ${BATTOP_WINDOWS.map((x,i)=>`<div class="subpanel${i===activeIdx?' on':''}"><div class="card">${contentFn(windowsData[x.key]||{})}</div></div>`).join('')}`;
   subtabs(container);
 }
@@ -811,19 +814,19 @@ function battopActiveWindowIdx(container){
 }
 
 function mountBattopToggleCard(container){
-  container.innerHTML=`<h3 style="margin-top:0">电池刺客（battop）</h3>
-    <p class="small">电量异常排查用的采样诊断进程，日常用不到。2026-08 出过一次 cgroup 死锁死机——根因是内核罕见的 RCU stall（没修，是概率事件），当时 timer 每 10 分钟重启一次把撞上它的概率放大了 144 倍。已经改成常驻低频采样，正常点一下开/关（偶尔用用）风险可忽略；但每次「启动」确实还是走一次同样的 cgroup 迁移操作，短时间内连续反复点启停不是绝对安全，别拿这个开关当没有代价的按钮反复点着玩。开启后「管理」多一个「电池刺客」二级标签，看耗电情况/唤醒源详细数据。</p>
-    <label class="toggle"><input type="checkbox" data-box disabled> 开启</label>
+  container.innerHTML=`<h3 style="margin-top:0">${T('battop.title')}</h3>
+    <p class="small">${T('battop.toggle.desc')}</p>
+    <label class="toggle"><input type="checkbox" data-box disabled> ${T('battop.toggle.label')}</label>
     <p class="small" data-note></p>`;
   const box=container.querySelector('[data-box]'),note=container.querySelector('[data-note]');
   let installed=false;
   const refresh=async()=>{const r=await j('/api/enhance/status');if(r.ok===false)return;
     const st=r.battop||{};installed=!!st.installed;
     box.checked=!!st.running;box.disabled=!installed;
-    note.textContent=installed?'':'见 enhance/battop/install.sh 手动装（这次网页只控制已经装好的，不提供从网页装）'};
+    note.textContent=installed?'':T('battop.toggle.notInstalled')};
   box.onchange=async()=>{if(!installed)return;const want=box.checked;box.disabled=true;
     const r=await j(`/api/enhance/battop/${want?'start':'stop'}`,{method:'POST'});
-    if(r.ok===false){alert(r.message||'操作失败');box.checked=!want}
+    if(r.ok===false){alert(r.message||T('common.failed'));box.checked=!want}
     box.disabled=false;await refresh()};
   refresh();
   return refresh;
@@ -834,14 +837,14 @@ function mountBattopToggleCard(container){
    renderBattopWindowed 自己的 subnav → 时间窗 subpanel——subtabs() 的 `:scope >` 收紧保证每层
    只认自己的直接子元素，见 subtabs() 头注）。 */
 function renderBattopDetail(sec){
-  sec.innerHTML=`<div class="subnav"><button class="on">🔋 耗电情况</button><button>⏰ 唤醒源</button></div>
+  sec.innerHTML=`<div class="subnav"><button class="on">${T('battop.subnav.usage')}</button><button>${T('battop.subnav.wake')}</button></div>
     <div class="subpanel on" data-usage></div>
     <div class="subpanel" data-wake></div>`;
   const usageEl=sec.querySelector('[data-usage]'),wakeEl=sec.querySelector('[data-wake]');
   const refresh=async()=>{
     const r=await j('/api/enhance/battop/summary');
     if(r.ok===false||!r.available){
-      const msg='<div class="card"><p class="small">还没有采样数据——常驻服务每 ~10 分钟采一次，刚装/刚启动时先等一轮。</p></div>';
+      const msg=`<div class="card"><p class="small">${T('battop.noSamplesYet')}</p></div>`;
       usageEl.innerHTML=msg;wakeEl.innerHTML=msg;return;
     }
     const w=r.summary.windows||{};
@@ -850,28 +853,28 @@ function renderBattopDetail(sec){
        renderBattopWindowed 生成的、每次切时间窗都可能重画的内容里（2026-09-10 用户要求统一
        风格顺手理清楚这条边界）。 */
     if(!usageEl.querySelector('[data-metric]')){
-      usageEl.innerHTML=`<div class="card"><h3 style="margin-top:0">耗电情况</h3>
-        <p class="small">4 个时间窗（今日/7天/30天/全部）× 应用/进程累计占用时长排行，数据源是 battop 常驻聚合的 <code>summary.json</code>，网页不重新聚合。</p>
-        <div class="row"><label class="small" for="battopMetric">显示</label>
-        <select id="battopMetric" data-metric><option value="app">按应用</option><option value="proc">按进程</option></select></div></div>
+      usageEl.innerHTML=`<div class="card"><h3 style="margin-top:0">${T('battop.usage.title')}</h3>
+        <p class="small">${T('battop.usage.desc')}</p>
+        <div class="row"><label class="small" for="battopMetric">${T('battop.usage.metricLabel')}</label>
+        <select id="battopMetric" data-metric><option value="app">${T('battop.usage.byApp')}</option><option value="proc">${T('battop.usage.byProcess')}</option></select></div></div>
         <div data-usagewin></div>`;
     }
     const metricSel=usageEl.querySelector('[data-metric]'),usageWinEl=usageEl.querySelector('[data-usagewin]');
     const renderUsage=()=>{
-      const label=metricSel.value==='app'?'按应用':'按进程';
-      renderBattopWindowed(usageWinEl,w,d=>`<p class="small">放电 <b>${d.discharge||0}%</b> · <b>${d.mah||0}</b> mAh（均值约 ${d.ma||0} mA）· ${d.samples||0} 次采样</p>
-        <h4 style="margin:.6em 0 .2em">${label}（累计占用时长）</h4>${battopTopList(metricSel.value==='app'?d.app:d.proc)}`,
+      const label=metricSel.value==='app'?T('battop.usage.byApp'):T('battop.usage.byProcess');
+      renderBattopWindowed(usageWinEl,w,d=>`<p class="small">${T('battop.usage.statLine',{discharge:d.discharge||0,mah:d.mah||0,ma:d.ma||0,samples:d.samples||0})}</p>
+        <h4 style="margin:.6em 0 .2em">${T('battop.usage.rankHeading',{metric:label})}</h4>${battopTopList(metricSel.value==='app'?d.app:d.proc)}`,
         battopActiveWindowIdx(usageWinEl));
     };
     metricSel.onchange=renderUsage;
     renderUsage();
     if(!wakeEl.querySelector('[data-wakewin]')){
-      wakeEl.innerHTML=`<div class="card"><h3 style="margin-top:0">唤醒源</h3>
-        <p class="small">打断设备休眠的来源，按次数统计（同一个 4 个时间窗）。</p></div>
+      wakeEl.innerHTML=`<div class="card"><h3 style="margin-top:0">${T('battop.wake.title')}</h3>
+        <p class="small">${T('battop.wake.desc')}</p></div>
         <div data-wakewin></div>`;
     }
-    renderBattopWindowed(wakeEl.querySelector('[data-wakewin]'),w,d=>`<p class="small">${d.samples||0} 次采样</p>
-      <h4 style="margin:.6em 0 .2em">唤醒源（打断休眠次数）</h4>${battopTopList(d.wake)}`,
+    renderBattopWindowed(wakeEl.querySelector('[data-wakewin]'),w,d=>`<p class="small">${T('battop.wake.samples',{n:d.samples||0})}</p>
+      <h4 style="margin:.6em 0 .2em">${T('battop.wake.rankHeading')}</h4>${battopTopList(d.wake)}`,
       battopActiveWindowIdx(wakeEl.querySelector('[data-wakewin]')));
   };
   refresh();sec.refresh=refresh;subtabs(sec);
@@ -886,71 +889,69 @@ function renderBattopDetail(sec){
    本身+导入md文档可见性开关）。
    shelf push 命令那张卡片已经搬到「传书」页「入库」子页——那才是它真正归属的地方（用户反馈）。 */
 function renderManage(sec){sec.innerHTML=`
-  <div class="subnav"><button class="on">🏗 基石与模块</button><button>🧠 模型管理</button><button>⚙️ 系统增强</button><button hidden>🔋 电池刺客</button><button>🧪 实验室</button></div>
+  <div class="subnav"><button class="on">${T('manage.subnav.foundation')}</button><button>${T('manage.subnav.models')}</button><button>${T('manage.subnav.enhance')}</button><button hidden>${T('manage.subnav.battop')}</button><button>${T('manage.subnav.lab')}</button></div>
   <div class="subpanel on">
-    <div class="card"><h2>引导 · 基石</h2><p class="lead">书架的功能建在 xovi + appload 之上。先用桌面端 <b>reManager</b>（或设备上的 vellum）把基石装好，KOReader 走官方仓库自装，再回这里管理书架各功能。</p>
-      <div class="kv small" id="found">检测中…</div>
-      <p class="small">下载 / 文档：<a href="https://github.com/rmitchellscott/reManager" target="_blank" rel="noopener">reManager</a>（桌面端 · vellum 生态）· <a href="https://github.com/asivery/rmpp-xovi" target="_blank" rel="noopener">xovi</a> · <a href="https://github.com/koreader/koreader/wiki" target="_blank" rel="noopener">KOReader Wiki</a></p></div>
-    <div class="card"><h2>书架功能</h2>
-      <p class="lead">每个功能可单独<b>开关</b>、<b>卸载</b>；未装的按命令安装。网关（本页）始终在。</p>
-      <details class="cmp"><summary>三态 / 开关 / 卸载 / 安装 是什么？（点开看说明）</summary>
+    <div class="card"><h2>${T('manage.foundation.title')}</h2><p class="lead">${T('manage.foundation.lead')}</p>
+      <div class="kv small" id="found">${T('manage.foundation.checking')}</div>
+      <p class="small">${T('manage.foundation.links')}</p></div>
+    <div class="card"><h2>${T('manage.modules.title')}</h2>
+      <p class="lead">${T('manage.modules.lead')}</p>
+      <details class="cmp"><summary>${T('manage.modules.helpSummary')}</summary>
         <dl class="help">
-          <dt>三种状态</dt>
-          <dd><span class="badge off">未装</span> 设备上没这个程序 → 按给出的命令安装。<br>
-              <span class="badge">已装·未开</span> 程序在、后台没跑 → 网页看不到它的功能，点「开启」启用。<br>
-              <span class="badge on">已开</span> 后台在跑 → 顶部有它的标签页，功能可用。</dd>
-          <dt>开启 / 关闭</dt>
-          <dd><b>关闭＝只停后台服务</b>：网页隐藏该标签，但<b>已经生效的东西照常用</b>——已装字体仍能在阅读器里选、壁纸仍显示、KOReader 仍能打开；只是不能再用网页传 / 改它。用途是隐藏用不到的功能、减少对外暴露面。</dd>
-          <dt>常开会不会卡 / 费电？</dt>
-          <dd>不会。实测 5 个服务全部常开共约 <b>9 MB 内存</b>、开机一整天累计不到 <b>2 秒 CPU</b>（平均约 0.002%），平时都阻塞在等请求、不抢 CPU。<b>对看书 / 记笔记零可感影响，不卡、不额外费电。</b>建议全部常开，除非某功能你确定永远不用。</dd>
-          <dt>卸载</dt>
-          <dd>删掉该功能的程序、systemd 单元和相关注入文件（qmd）。<b>你传过的书 / 字体 / 壁纸等用户数据保留。</b>卸载后它从网页消失；想再用按安装命令重装。网关不能从网页关或卸——它是本管理页的宿主。</dd>
-          <dt>安装为什么不在网页做？</dt>
-          <dd>安装要重挂载只读系统分区、写系统单元，风险偏高。<b>未装功能只给命令</b>：在电脑上 SSH 跑，或走 reManager 引导，更安全。</dd>
+          <dt>${T('manage.modules.help.states.dt')}</dt>
+          <dd>${T('manage.modules.help.states.dd')}</dd>
+          <dt>${T('manage.modules.help.toggle.dt')}</dt>
+          <dd>${T('manage.modules.help.toggle.dd')}</dd>
+          <dt>${T('manage.modules.help.perf.dt')}</dt>
+          <dd>${T('manage.modules.help.perf.dd')}</dd>
+          <dt>${T('manage.modules.help.uninstall.dt')}</dt>
+          <dd>${T('manage.modules.help.uninstall.dd')}</dd>
+          <dt>${T('manage.modules.help.install.dt')}</dt>
+          <dd>${T('manage.modules.help.install.dd')}</dd>
         </dl></details>
-      <div class="row"><button class="btn" id="allon">全部开启</button><button class="btn" id="alloff">全部关闭（留网关）</button></div>
+      <div class="row"><button class="btn" id="allon">${T('manage.modules.allOn')}</button><button class="btn" id="alloff">${T('manage.modules.allOff')}</button></div>
       <ul class="list" id="mods"></ul></div>
   </div>
   <!-- 意图卡（h2+lead）单独一张、跟下面的模型卡是兄弟不是父子（2026-09-10 用户要求跟「管理」页
        其它子标签统一风格——「传书·入库」「引导·基石」都是这个样子：一张说明卡起头，后面各功能
        各自一张卡平铺；改之前这里是说明卡把 #modelcards 包在里面，卡中卡，跟别处不一样）。 -->
   <div class="subpanel">
-    <div class="card"><h2>模型管理</h2><p class="lead">笔记线转写批注（视觉模型）和问 AI（文字模型）用的云端模型。选预置组合就行，不用自己填服务地址；某类型没配 key，对应功能就用不了。</p></div>
+    <div class="card"><h2>${T('manage.models.title')}</h2><p class="lead">${T('manage.models.lead')}</p></div>
     <div id="modelcards" style="display:flex;flex-direction:column;gap:1em"></div>
   </div>
   <div class="subpanel">
-    <div class="card"><h3 style="margin-top:0">CJK 画线吸附</h3>
-      <p class="small">荧光笔划中文时精确吸附到词/行边界，不再"划一小段吸整行"。langhook 里的 C hook 进程内实时读这个开关，改了立即生效，不用重启任何东西；原生「设置」App「系统增强」页同一个开关，两边改哪边都算数。</p>
-      <label class="toggle"><input type="checkbox" id="erHlSnap"> 开启（默认开）</label></div>
+    <div class="card"><h3 style="margin-top:0">${T('manage.enhance.hlSnap.title')}</h3>
+      <p class="small">${T('manage.enhance.hlSnap.desc')}</p>
+      <label class="toggle"><input type="checkbox" id="erHlSnap"> ${T('manage.enhance.hlSnap.toggle')}</label></div>
   </div>
   <div class="subpanel" id="battopDetail" hidden></div>
   <div class="subpanel">
-    <div class="card"><h3 style="margin-top:0">CJK 手写笔迹优化</h3>
-      <p class="small">设备手写笔锋按运笔方向/快慢调整粗细（笔尖角度模型+提按速度代理两个效果叠加）——跟"划线摄取转写"那条 AI 识别管线无关，这里说的是笔画本身怎么画出来。<b>目前只在部分笔型（书法笔、马克笔一类）上真机验证过生效</b>，日常最常用的钢笔/铅笔量级工具还摸不到（虚函数动态分发，运行时目标未确认，见 <code>enhance/handwriting-stroke/README.md</code>「下一步」）。这个开关直接改 <code>reading-qol.json</code> 里两个强度阈值，改了下一笔立即生效，不用重启 xochitl。</p>
-      <label class="toggle"><input type="checkbox" id="labHwStroke"> 开启</label></div>
+    <div class="card"><h3 style="margin-top:0">${T('manage.lab.hwStroke.title')}</h3>
+      <p class="small">${T('manage.lab.hwStroke.desc')}</p>
+      <label class="toggle"><input type="checkbox" id="labHwStroke"> ${T('manage.lab.hwStroke.toggle')}</label></div>
     <div class="card" id="labBattopCard"></div>
-    <div class="card"><h3 style="margin-top:0">导入 md 文档</h3>
-      <p class="small">开启后「笔记」tab 才会出现「导入 md 文档」子标签（上传一个 .md 文件生成设备笔记本文档）。功能第一次上线，默认关——想用先在这里打开。</p>
-      <label class="toggle"><input type="checkbox" id="labImportMd"> 开启（默认关）</label></div>
+    <div class="card"><h3 style="margin-top:0">${T('manage.lab.importMd.title')}</h3>
+      <p class="small">${T('manage.lab.importMd.desc')}</p>
+      <label class="toggle"><input type="checkbox" id="labImportMd"> ${T('manage.lab.importMd.toggle')}</label></div>
   </div>`;
-  const mvRefresh=mountModelPanel($('#modelcards',sec),'transcribe','视觉模型（转写批注）','👁',true);
-  const mtRefresh=mountModelPanel($('#modelcards',sec),'mind','文字模型（问 AI）','✎');
+  const mvRefresh=mountModelPanel($('#modelcards',sec),'transcribe',T('manage.models.visionTitle'),'👁',true);
+  const mtRefresh=mountModelPanel($('#modelcards',sec),'mind',T('manage.models.textTitle'),'✎');
   const refresh=async()=>{
     const f=await j('/api/foundation');$('#found',sec).innerHTML=f.ok===false?`<span>${f.message}</span>`:
-      `<b>xovi</b><span>${badge(f.xovi?'已装':'未装',f.xovi)}</span><b>appload</b><span>${badge(f.appload?'已装':'未装',f.appload)}</span><b>qt-resource-rebuilder</b><span>${badge(f.qrr?'已装':'未装',f.qrr)}</span><b>KOReader</b><span>${badge(f.koreader?'已装':'未装',f.koreader)}</span>`;
+      `<b>xovi</b><span>${badge(f.xovi?T('common.installed'):T('common.notInstalled'),f.xovi)}</span><b>appload</b><span>${badge(f.appload?T('common.installed'):T('common.notInstalled'),f.appload)}</span><b>qt-resource-rebuilder</b><span>${badge(f.qrr?T('common.installed'):T('common.notInstalled'),f.qrr)}</span><b>KOReader</b><span>${badge(f.koreader?T('common.installed'):T('common.notInstalled'),f.koreader)}</span>`;
     const d=await j('/api/manage');const ul=$('#mods',sec);ul.innerHTML='';(d.modules||[]).forEach(m=>{const li=document.createElement('li');li.style.flexWrap='wrap';
-      let state,cls;if(!m.installable){state='未上线';cls=''}else if(!m.installed){state='未装';cls='off'}else if(m.running){state='已开';cls='on'}else{state='已装·未开';cls=''}
+      let state,cls;if(!m.installable){state=T('manage.modules.state.notLaunched');cls=''}else if(!m.installed){state=T('common.notInstalled');cls='off'}else if(m.running){state=T('manage.modules.state.on');cls='on'}else{state=T('manage.modules.state.installedOff');cls=''}
       const left=document.createElement('span');left.innerHTML=`${m.label} <span class="small">${m.service}</span> <span class="badge ${cls}">${state}</span>`;
       const right=document.createElement('span');right.style.cssText='display:flex;gap:.4em;align-items:center';
       if(m.installable&&m.installed){
-        const t=document.createElement('button');t.className='btn';t.textContent=m.running?'关闭':'开启';
+        const t=document.createElement('button');t.className='btn';t.textContent=m.running?T('manage.modules.turnOff'):T('manage.modules.turnOn');
         t.onclick=async()=>{const r=await j('/api/manage/'+m.seg+'/'+(m.running?'stop':'start'),{method:'POST'});if(r.ok===false)alert(r.message);setTimeout(refresh,600)};right.appendChild(t);
-        const u=document.createElement('button');u.className='btn';u.textContent='卸载';
-        u.onclick=async()=>{if(confirm('卸载 '+m.label+'？删除它的服务/单元/相关 qmd（用户数据保留）。')){const r=await j('/api/manage/'+m.seg+'/uninstall',{method:'POST'});if(r.ok===false)alert(r.message);else alert('已卸载 '+m.label);setTimeout(()=>location.reload(),800)}};right.appendChild(u);
-      }else if(m.installable){const g=document.createElement('span');g.className='small';g.innerHTML='装：<code>shelf/install.sh --only '+m.only+'</code>';right.appendChild(g)}
+        const u=document.createElement('button');u.className='btn';u.textContent=T('manage.modules.uninstallBtn');
+        u.onclick=async()=>{if(confirm(T('manage.modules.confirmUninstall',{label:m.label}))){const r=await j('/api/manage/'+m.seg+'/uninstall',{method:'POST'});if(r.ok===false)alert(r.message);else alert(T('manage.modules.uninstalled',{label:m.label}));setTimeout(()=>location.reload(),800)}};right.appendChild(u);
+      }else if(m.installable){const g=document.createElement('span');g.className='small';g.innerHTML=T('manage.modules.installCmd',{only:m.only});right.appendChild(g)}
       li.append(left,right);ul.appendChild(li)});};
   $('#allon',sec).onclick=async()=>{const d=await j('/api/manage');for(const m of (d.modules||[]))if(m.installable&&m.installed&&!m.running)await j('/api/manage/'+m.seg+'/start',{method:'POST'});refresh()};
-  $('#alloff',sec).onclick=async()=>{if(!confirm('关闭全部领域服务（网关保留）？'))return;const d=await j('/api/manage');for(const m of (d.modules||[]))if(m.installable&&m.installed&&m.running)await j('/api/manage/'+m.seg+'/stop',{method:'POST'});refresh()};
+  $('#alloff',sec).onclick=async()=>{if(!confirm(T('manage.modules.confirmAllOff')))return;const d=await j('/api/manage');for(const m of (d.modules||[]))if(m.installable&&m.installed&&m.running)await j('/api/manage/'+m.seg+'/stop',{method:'POST'});refresh()};
   /* 系统增强/实验室（Track 3，2026-09-09；实验室 2026-09-10 加）：CJK 画线吸附/CJK 手写笔迹优化/
      导入md文档可见性都是真开关（写 reading-qol.json，走同一个 /api/enhance/qol）。battop 拆两处：
      「实验室」卡片只留开关+说明（mountBattopToggleCard），详细数据挪到本函数下面新增的第 5 个
@@ -973,13 +974,13 @@ function renderManage(sec){sec.innerHTML=`
     if(running&&battopPanel.refresh)battopPanel.refresh()};
   hlBox.onchange=async()=>{const want=hlBox.checked;hlBox.disabled=true;
     const r=await j('/api/enhance/qol',{method:'PUT',body:JSON.stringify({hlSnapCjk:want})});
-    hlBox.disabled=false;if(r.ok===false){alert(r.message||'保存失败');hlBox.checked=!want}};
+    hlBox.disabled=false;if(r.ok===false){alert(r.message||T('common.saveFailed'));hlBox.checked=!want}};
   hwBox.onchange=async()=>{const want=hwBox.checked;hwBox.disabled=true;
     const r=await j('/api/enhance/qol',{method:'PUT',body:JSON.stringify({hwStrokeEnabled:want})});
-    hwBox.disabled=false;if(r.ok===false){alert(r.message||'保存失败');hwBox.checked=!want}};
+    hwBox.disabled=false;if(r.ok===false){alert(r.message||T('common.saveFailed'));hwBox.checked=!want}};
   importMdBox.onchange=async()=>{const want=importMdBox.checked;importMdBox.disabled=true;
     const r=await j('/api/enhance/qol',{method:'PUT',body:JSON.stringify({notesImportMdEnabled:want})});
-    importMdBox.disabled=false;if(r.ok===false){alert(r.message||'保存失败');importMdBox.checked=!want}};
+    importMdBox.disabled=false;if(r.ok===false){alert(r.message||T('common.saveFailed'));importMdBox.checked=!want}};
   refresh();erRefresh();sec.refresh=()=>{refresh();mvRefresh();mtRefresh();erRefresh()};subtabs(sec);}
 
 (async()=>{
@@ -1019,10 +1020,10 @@ function renderManage(sec){sec.innerHTML=`
   /* 事件推送（SSE，零轮询）：服务在变更处发事件 → 网关 /api/events 汇聚 → 这里只刷对应 tab；不在前台的 tab 记脏，切过去时刷。
      manage 事件（服务启停）：tab 集合变了就整页重载，否则只刷管理台。断线（WiFi 掉/设备休眠醒来）EventSource 自动重连。 */
   const svcKey=svcs.map(s=>s.name).join(',');
-  const dot=document.createElement('span');dot.id='live';dot.title='事件推送';dot.textContent='●';dot.style.cssText='margin-left:.5em;font-size:.8em;color:var(--bad)';$('#hdr').appendChild(dot);
+  const dot=document.createElement('span');dot.id='live';dot.title=T('common.eventStream');dot.textContent='●';dot.style.cssText='margin-left:.5em;font-size:.8em;color:var(--bad)';$('#hdr').appendChild(dot);
   const es=new EventSource('/api/events');
-  es.onopen=()=>{dot.style.color='var(--ok)';dot.title='事件推送已连接'};
-  es.onerror=()=>{dot.style.color='var(--bad)';dot.title='事件推送断开，自动重连中'};
+  es.onopen=()=>{dot.style.color='var(--ok)';dot.title=T('common.eventStreamConnected')};
+  es.onerror=()=>{dot.style.color='var(--bad)';dot.title=T('common.eventStreamReconnecting')};
   es.onmessage=async(e)=>{let ev;try{ev=JSON.parse(e.data)}catch{return}
     if(ev.area==='manage'){const d=await j('/api/services');const k=(d.services||[]).filter(s=>s.ui&&TABS[s.name]).map(s=>s.name).join(',');if(k!==svcKey){location.reload();return}}
     const sec=secByArea[ev.area];if(!sec)return;
