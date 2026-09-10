@@ -14,7 +14,7 @@
 
 **零 C 依赖原则**：EPUB 组装（`epub.rs`）全条目走 STORED（不压缩，免 zlib C 依赖，设备空间充足）；漫画 PDF 手搓（`pdfwrite`：JPEG 直嵌 `/DCTDecode`、PNG 走 `png` crate + miniz_oxide `/FlateDecode`）；MOBI/KF8 解析不依赖 `mobi` crate（它在真机词典样本上把 `extra_data_flags` 尾字节判错、解压乱码，见 `palm.rs`）。
 
-## 00b｜现状总览（2026-09-07 补，读其余节前先看这里）
+## 00b｜现状总览（2026-09-10 补，读其余节前先看这里）
 
 **模块地图**（`shelf/crates/bookconv/src/`）：`convert/{palm,mobi,kf8,fb2,cbz,pdfwrite,common}.rs`（格式转换，纯 Rust 零 C）· `optimize.rs`（`optimize_epub_with` 两遍 + 幂等版本标记）· `wash.rs`（`wash_entries`，对标 Calibre 六步）· `check.rs`（质量门）· `imgopt.rs`（两个降采样盒 + `header_dims` 只读头）· `htmlproc.rs`（脚注/字体锁等 HTML 处理原语）· `netimg.rs`（远程图内联）· `article.rs`（网文抓取，2026-09-05 从 `reading/device-rs` 下沉）· `epub.rs`（最小合规 EPUB3 组装）· `stats.rs`；host CLI 见 `bin/epub_optimize.rs`。
 
@@ -22,9 +22,9 @@
 
 **谁在调用**：设备 `book-serve::Staging::optimize` + host CLI `epub-optimize` 都过 `optimize_epub_with`（同一份代码两处共用，§11）；`convert`（mobi/kf8/fb2/cbz 格式转换）现在只剩 `reading/device-rs` 在用——shelf 自己的杂格式转换统一走电脑 Calibre（书架白皮书 §03s），`epub.rs`/`article.rs`/`imgopt.rs`/`pdfwrite.rs` 这类共享底层各线仍在用。
 
-**离线门槛**：`cargo test -p bookconv` 109 个零警告。
+**离线门槛**：`cargo test -p bookconv` 110 个零警告。
 
-**未闭环**：无阻塞项；§13 待办都是"打磨精度"级（学术论文多列/公式、公式图放大阈值）。
+**未闭环**：无阻塞项；§13 待办都是"打磨精度"级（学术论文多列/公式、公式图放大阈值）。**一条已排查清楚、确认不是 `optimize`/`wash` 层能解决的边界**（2026-09-10，§12）：图片密集的内容（尤其网文抓取，一篇里连续出现几张大图/画廊）在小尺寸墨水屏上分页时，图片块在页尾放不下会被渲染引擎整体推到下一页，当前页剩余空间不回填，视觉上是大片留白——真机 A/B 验证过跟外链样式表无关（`wash_css` 加了 `figure`/`figcaption` 边距归零，修复前后渲染像素级一致），这是分页引擎自身行为，本 crate 没有能调整它的杠杆，以后再有人问"能不能优化掉图片留白"，先看这条，不用重新排查一遍。
 
 ## 01｜架构：`optimize_epub_with` 两遍 + wash 前置
 

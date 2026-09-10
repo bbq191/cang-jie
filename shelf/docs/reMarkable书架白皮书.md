@@ -15,19 +15,19 @@
 3. **专项专用可插拔**：不做单体，按领域拆服务。
 4. **不引用旧项目 crate、不对接旧路径**：能力只许剥离移植；不读写 `/home/root/weread/**`；旧 wr-serve 微读线原样兜底。
 
-## 00b｜现状总览（2026-09-09 刷新，读本文其余历史节前先看这里）
+## 00b｜现状总览（2026-09-10 刷新，读本文其余历史节前先看这里）
 
 **架构**：网关（`0.0.0.0:443`，2026-09-10 起绑标准端口不用带端口号，历史上是 `:8778`，见 §03am；HTTPS 私有 CA + 登录页密码 / CLI Basic + mDNS `shelf.local`；单页 UI 源码在 `services/shelf-gateway/ui/` 真文件，编译期 `include_str!`；用户可见标题/图标 2026-09-10 起是「秘密花园」🌿，非 `shelf.local` 这类内部命名，见 §03am）+ 四个 loopback 领域服务（book 8790 / koreader 8791 / font 8792 / wallpaper 8793）+ 运行时注册表驱动 tab（首层固定四段：传书/笔记/其他/管理，2026-09-10 重排，§03al）+ 事件总线（各服务 `GET /events` → 网关 `Hub` 汇聚 `GET /api/events`，网页零轮询、host `shelf events`，§03z）。设备固件 **3.28.0.172**（2026-09-05 从 3.27.3.0 升级，实录 §03v；appload 0.5.3 经 qmd 回填补丁在 3.28 复活），KOReader v2026.07.1。
 
 ![shelf 架构：网关 + 领域服务](diagrams/architecture.svg)
 
-**读书线 = 三层 · 三动作正交**（§03r 定，§03s 收口）：内容源（网页上传 / 抓网文 / host `shelf push` / scp inbox；微读线已砍，§03u）→ **母版库** `~/.local/state/shelf/books/staging/`（原样入库，永久保留，不淘汰）→ 落库（人选：投 xochitl 只收 EPUB/PDF；加入 KOReader 收任意入库格式）。「优化」是母版库里对 EPUB 的独立动作（档位 auto / keep-spacing / plain，产物标记 full / core / old）；落库＝纯复制母版字节（投原生有体积门 `nativeUploadLimitMb`，缺省 150）。**投原生后自动渲染自检**（§03aa：xochitl 导入即渲染写 `pageCount`，与正文字符数期望比，<50% 判 warn，结果进边车 `.<书>.delivered.render` + `books/render` 事件 + 网页徽章）。**漫画默认只加入 KOReader，小体积时可选投原生**：AZW3/EPUB 漫画由 host `shelf push` 转 CBZ（缺省再过 16 灰省刷新档，含跨页拆分+白边裁切放大）入库；灰阶体积估算转 PDF 后仍在设备原生上传上限内，顺带生成一份 PDF 给「投入原生书库」选项，超限的仍只出 CBZ、绝不分卷（§03ad）。**所有书只落母版库，没有任何直投读器的路径**。
+**读书线 = 三层 · 三动作正交**（§03r 定，§03s 收口）：内容源（网页上传 / 抓网文〔可选「同步优化」，§03ap〕 / host `shelf push`〔`--no-calibre` 可选跳过 Calibre 纯跑 `epub-optimize`，§03ao〕 / scp inbox；微读线已砍，§03u）→ **母版库** `~/.local/state/shelf/books/staging/`（原样入库，永久保留，不淘汰）→ 落库（人选：投 xochitl 只收 EPUB/PDF；加入 KOReader 收任意入库格式）。「优化」是母版库里对 EPUB 的独立动作（档位 auto / keep-spacing / plain，产物标记 full / core / old）；落库＝纯复制母版字节（投原生有体积门 `nativeUploadLimitMb`，缺省 150）。**投原生后自动渲染自检**（§03aa：xochitl 导入即渲染写 `pageCount`，与正文字符数期望比，<50% 判 warn，结果进边车 `.<书>.delivered.render` + `books/render` 事件 + 网页徽章）。**漫画默认只加入 KOReader，小体积时可选投原生**：AZW3/EPUB 漫画由 host `shelf push` 转 CBZ（缺省再过 16 灰省刷新档，含跨页拆分+白边裁切放大）入库；灰阶体积估算转 PDF 后仍在设备原生上传上限内，顺带生成一份 PDF 给「投入原生书库」选项，超限的仍只出 CBZ、绝不分卷（§03ad）。**所有书只落母版库，没有任何直投读器的路径**。
 
 ![shelf 数据流：三层·三动作正交](diagrams/data-flow.svg)
 
 **格式三档**（`shelf_core::formats` 单一事实源）：原生 epub/pdf · 电脑可转 azw3/mobi/azw/prc/fb2/**txt**（TXT 由 host `txt_to_epub.py` 按「第X卷/章」切章建两级目录再洗，§03aa）· 仅 KOReader 其余 10 个。
 
-**host CLI**（`shelf`）：`push`（Calibre 洗书 / PDF 结构化重排 / TXT 切章 / 漫画→CBZ→16 灰；`--wait` 设备睡了探 `/health` 等醒；`--no-eink-gray` 要原图）· `doctor --render`（排版回归探针：投探针书→取回 xochitl 渲染缓存→pymupdf 量顶格/缩进→PASS/FAIL→探针自动进原生回收站，固件 OTA 后跑一次）· `events` · font/wallpaper/koreader/inbox/status/passwd。
+**host CLI**（`shelf`）：`push`（Calibre 洗书 / PDF 结构化重排 / TXT 切章 / 漫画→CBZ→16 灰；`--wait` 设备睡了探 `/health` 等醒；`--no-eink-gray` 要原图；**`--no-calibre`**，2026-09-10 §03ao：EPUB 输入跳过 `ebook-convert`，只跑 `epub-optimize`，不用装 Calibre）· `doctor --render`（排版回归探针：投探针书→取回 xochitl 渲染缓存→pymupdf 量顶格/缩进→PASS/FAIL→探针自动进原生回收站，固件 OTA 后跑一次）· `events` · font/wallpaper/koreader/inbox/status/passwd。
 
 **代码落点**：book-serve `staging.rs`（领域）/ `sidecar.rs`（落库记录边车）/ `render_check.rs`（渲染自检）/ `pending_queue.rs`（**新增**，2026-09-09 §03ag：`PendingQueue<T>` 持久化+入队去重+剔除的共用骨架）/ `trash.rs`（原生回收站队列，执行方是 `xovi/shelf-trash-agent.qmd`，现在包一层 `PendingQueue<Pending>`）/ `mkdir.rs`（原生建文件夹队列，执行方是 `xovi/shelf-mkdir-agent.qmd`，同样包 `PendingQueue<Pending>`；**2026-09-07 首个用途是 note-serve 生成《书名》笔记本文件夹，但 note-serve 2026-09-09 起已经改成复用书本自己的设备文件夹、不再调用这条链路了，当前消费方存疑，见 `mkdir.rs` 模块注释与 `notes/docs/reMarkable笔记白皮书.md` §03ae**）/ `spool.rs`（inbox 队列）/ `api.rs`（纯适配）；koreader-serve 只做"从母版库 adopt"+字体/词典/配置同步（不依赖 bookconv）；shelf-core `clock`（时间戳唯一出处）、`xochitl`（注入 + 找书/页数）、`fswatch`（常驻 + 限时）、`events`、`registry`（**2026-09-09 新增 `SvcClient`/`enc`**，§03ai：按注册表建带标准超时的 HTTP 客户端骨架 + `percent_encode` 薄封装，供跨服务调用消重复用——四个消费者全在 `notes/` 那条线，物理代码落在这里，见 §03ai）；`services/shelf-gateway/src/enhance/`（**新增目录**，2026-09-09 §03aj：`mod.rs` 路由 + `qol.rs`（`reading-qol.json` 读全量/patch/写全量）+ `battop.rs`（battop 状态探测+开关），刻意分文件不升独立 service——没有独立进程边界的理由）；host `calibre/epub_skel.py`（三处手搓 EPUB 骨架收编）、`calibre_bridge._run_json`、`transport._open`（§03ab）；`comic.py` 漫画探针；bookconv CLI `epub-optimize`（与设备同一函数）。
 
@@ -39,7 +39,9 @@
 
 **设备杂项（§03v/§03w，全真机通）**：3.28 字体菜单 qmd 已通（qmldiff 语法坑，§04）；原生休眠屏 `SleepScreenPath=current.png` 满屏且随轮换，bind-mount 整套已退役（§03x，`shelf_core::xochitl_conf` + wallpaper-serve `native.rs`）；WiFi 连上恰 60 秒必掉的真凶＝cfg80211 regdomain 宽限（精简 regdb 的 CN 无 5150–5350，路由 5G 信道 36 被判非法）→ 连接锁 2.4G + `powersave 2`，`packaging/wifi-watch` 常驻固化（§03w）；离 USB 数秒自动休眠关 WiFi 是设备正常行为（`push --wait` 应对）；chrony 国内 NTP `packaging/chrony-cn.sh`；OTA 后五步恢复见 §05（README 有"OTA 与恢复"表）。
 
-**未闭环**：网页 UI i18n 架子（§03ae）+ UI 人性化/触屏可用性一批小修（§03af）——两者都只做到"数据链路/代码逻辑确认对"，浏览器里人眼实际确认渲染效果这一步都还没做，详见 §05。Phase E ②③④、阅读线六项、代码体检、漫画超限分支复验均已闭环。「管理」二级 tab + 系统增强开关（§03aj）已真机验证通过；**CJK 手写笔迹优化 §03aj 那次还是纯占位卡片，2026-09-10 已经是真开关**（`enhance/handwriting-stroke/` 有了两个 hook 目标的真机验证，见 §03ak/系统增强白皮书 §03e-§03f，这句"纯占位"的旧结论已经过时，别再当现状引用）。真机测试顺手发现的 `hlSnapCjk` 荧光笔精确吸附不生效问题已经查清并修复——根因不在这次改动，是 `cangjie-langhook.so` 这个 xovi 扩展整个从设备上消失了，详见系统增强白皮书 §04 追记（不是书架线的事，跨块修复不在本白皮书重复记）。
+**2026-09-10 追加四轮（§03an-§03aq，都在同一天）**：网页正文全量 i18n（§03an，437 个 key，§03ae 那套架子当时只覆盖外壳+顶层导航，这次把传书/笔记/其他/管理四个 tab 的全部正文都补完）；host `shelf push --no-calibre`（§03ao，EPUB 输入跳过 Calibre 只跑 `epub-optimize`）；抓网文「同步优化」复选框（§03ap，`fetch_article` 加 `optimize` 参数，抓完紧接着跑一遍「清洗＋优化」）；`wash_css` 补 `figure`/`figcaption` 边距归零 + 真机排查"抓完优化还是大量留白"（§03aq，**这条排查最后的结论是"改了一处真实缺口，但没解决投诉"**，留白的真正成因是分页引擎对放不下的图片块整体挪页，没找到 CSS/EPUB 层面能调的杠杆，问题本身仍未解决，别把 §03aq 误当"留白问题已修"）。
+
+**未闭环**：网页 UI i18n（§03ae 架子 + §03an 正文全量补完，437 key）——数据链路/内容对照已经真机验证过（curl 交叉核对 served 语言包与部署页面全部 `T` 引用零缺失），剩浏览器里人眼确认切换后排版/换行效果这一步没做。UI 人性化/触屏可用性一批小修（§03af）同样只做到"数据链路/代码逻辑确认对"，没有浏览器截图核对实际渲染效果。**图片密集网文渲染大片留白**（§03aq）——这条不是"还没人眼确认"，是"人眼确认过了、问题还在"：真机 A/B 验证过 `figure`/`figcaption` 边距不是成因，真正成因（图片块页尾放不下整体挪页、当前页剩余空间不回填）目前没有已知修法，详见 §05。Phase E ②③④、阅读线六项、代码体检、漫画超限分支复验均已闭环。「管理」二级 tab + 系统增强开关（§03aj）已真机验证通过；**CJK 手写笔迹优化 §03aj 那次还是纯占位卡片，2026-09-10 已经是真开关**（`enhance/handwriting-stroke/` 有了两个 hook 目标的真机验证，见 §03ak/系统增强白皮书 §03e-§03f，这句"纯占位"的旧结论已经过时，别再当现状引用）。真机测试顺手发现的 `hlSnapCjk` 荧光笔精确吸附不生效问题已经查清并修复——根因不在这次改动，是 `cangjie-langhook.so` 这个 xovi 扩展整个从设备上消失了，详见系统增强白皮书 §04 追记（不是书架线的事，跨块修复不在本白皮书重复记）。
 
 ## 01｜架构决策
 
@@ -727,6 +729,29 @@ book→「母版库 / 原生投递」、weread→「微信读书（内容源，�
 
 **真机验证（2026-09-10）**：`sh build.sh`+`SHELF_NO_BUILD=1 sh deploy.sh 10.11.99.1` 部署；`curl` 真机 `POST /api/books/staging/fetch-article` 分别带 `optimize:true`/不带该字段各抓一次同一篇文章——`optimize:true` 落库 `level:"full"`、体积 3761 字节，回执"…并同步优化"；不带字段落库 `level:"core"`、体积 3488 字节，回执不变（旧格式请求向后兼容，行为跟改动前一致）；两次体积跟 host 侧非 mock 验证的字节数完全一致（同一份代码、同一份输入，确定性可复现）。首页 HTML 确认 `id="artopt"` 复选框+新 i18n key 已下发。验证完把两条测试文章从母版库删掉，设备恢复干净。
 
+**追记（2026-09-10，§03aq）**：本节"默认解决『大量留空』这个已知问题"这句判断**过于乐观**——同一天用户拿另一篇图片密集的网文复现，真机 A/B 逐页渲染对比证实：`optimize:true` 这一步（清洗+优化，含边距/段距归零、外链缩进 css）本身没问题、确实生效了，但对"图片夹在正文中间导致的大片留白"这类场景**没有实质改善**，那类留白的真正成因是分页引擎对图片块的处理方式，不是"正文没有排版样式"这条根因能覆盖的全部——本节修的是一个真实存在且已确认生效的缺口（网文正文样式缺失），但不是用户报告的留白问题的完整解法，详见 §03aq。
+
+## 03aq｜真机排查"抓完优化还是大量留白"：wash 补 figure/figcaption 边距 + 证伪 + 找到真正成因（2026-09-10，真机 A/B 验证）
+
+用户拿真实文章反馈"为何抓完优化后还是有大量留白"（<https://aeon.co/essays/why-the-pan-american-highway-only-half-exists>），并在消息里自己点出"有图，夹在中间"。没有直接照着这个猜测动手，先用项目一贯的方法核实：host 侧非 mock 真实抓取这篇文章（`bookconv::article::build_article_epub`），过 `optimize_epub_with`，检查产出的 XHTML。
+
+**第一个真实发现（但后来证明不是这次留白的成因）**：`wash_css()`（`crates/bookconv/src/wash.rs`）只对 `<p>` 元素清零过 margin/padding/text-indent，从来没管过 `<figure>`/`<figcaption>`——`article.rs` 网文管线的图片正是包成 `<figure><img/><figcaption>…</figcaption></figure>`，这两个元素的默认边距完全没被清零过。这是一处真实的代码缺口（不是这次凭空找的，是读 `wash_css()` 源码直接看出来的），补上了：
+```
+figure{margin:0;padding:0;}
+figcaption{margin:0;padding:0;}
+```
+**两条规则必须分开写，不能写成 `figure,figcaption{}`**——xochitl 的 CSS 解析器很脆，逗号/复合选择器整条规则直接失效，`wash::tests::lang_aware_indent` 测试早就断言过这条红线（`!cjk.contains(',')`），这次新增 `figure_and_figcaption_margin_zeroed_as_separate_bare_rules` 测试同样守住这条线。`keep_para_spacing` 档位（"清洗但保留段距"）不该连带保留图片边距——那个开关管的是段落呼吸感，跟图片周围该不该有默认边距是两件事，所以 figure/figcaption 不受这个开关影响，始终清零。
+
+**真机 A/B 验证（诊断EPUB→投原生→量 xochitl 渲染 PDF，不肉眼猜）**：把同一篇文章分别用修复前/修复后的 `optimize_epub_with(wash:Some(default))` 各生成一份 EPUB，上传母版库、投入原生书库，等 xochitl 渲染完，拉回它自己的渲染缓存 PDF（`GET /staging/render/{uuid}`），25 页逐页对比。**结果：修复前后像素级完全一致**——这条边距缺口不是这次投诉的留白成因，只是顺手堵上的一个真实但无关的缺口。
+
+**真正的成因（同一次诊断里直接看出来的）**：留白集中出现在两处——① 第 1 页正文结尾（"...he believed he was chasing the future."）后半页空白，翻页后整页是第一张图；② 一组两张图的画廊占满大半页后，剩余空间空白，翻页后是下一组图片。两处都是同一个模式：**图片块（单张或几张连续的画廊）在当前页剩余空间放不下时，被整体推到下一页，当前页剩下的空间不回填**——这是渲染引擎自己的分页决策，跟外链样式表毫无关系（改 CSS 前后像素级一致就是最直接的证据），项目这边没有找到能从 EPUB/CSS 层面调整这个行为的手段。图片密集的网文，尤其原站带"图片轮播/画廊"结构一次给出 3-4 张连续大图的，留白会更明显——本质是"一篇图多的文章在小尺寸墨水屏上分页，总有几页排不满"，跟传统印刷排版里"孤图不裂开、宁可留白也不切开"是同一类取舍，没有能同时做到"零改动/零留白/图片一张不少"的三全解法。
+
+**顺手发现、这次没有动手修的问题**：aeon.co 原站用 JS 轮播只显示 1 张图、点箭头切换，`readability_rust`+`article.rs` 白名单抽取时把轮播里全部 3-4 张**不同**图片（逐张核对过 `src`，不是重复）连同各自 figcaption 原样展开——内容更完整，但页数/留白也跟着涨，这是提取策略"要内容全还是要页数少"的取舍，不是 bug。另外渲染结果里出现"1 of 4"/"1 of 3"这类轮播页码指示文本混进正文——**在原始抓取的 HTML 源码里直接文本搜索找不到这几个字符串**，来源没有查清楚（确认不是 `article.rs` 自己拼的代码，猜测是 `readability_rust` 库内部对某种无障碍属性/隐藏计数元素的转写，没有深入验证），留作已知问题，不影响能不能读，只是正文里偶尔多出几句看着突兀的短句。
+
+**离线验证**：`wash::tests::figure_and_figcaption_margin_zeroed_as_separate_bare_rules`（新增，覆盖裸元素规则+禁止逗号选择器+`keep_para_spacing` 档位同样清零）；`cargo test -p bookconv` 110/110（原 109+新增 1）；`cargo test --workspace` 全绿。
+
+**真机验证边界**：这次的"真机验证"就是整个排查过程本身（诊断EPUB→投原生→渲染PDF逐页比对），不是事后补一道验证——诚实的结论是"改了一处真实存在的代码缺口，但这个缺口不是用户报告的留白问题的成因"，不是"已经解决用户报告的问题"。测试产物（母版库+原生书库两份 "Continental divide" 文档）已清理，原生库走的是回收站软删（可恢复）；核对时发现设备原生书库里已经有两份用户自己创建、打开过的同标题文档（`lastOpened`/`lastOpenedPage` 非零、时间戳早于本次测试），**只删了本次自己新建的两份**（uuid 精确匹配、`lastOpened:"0"` 确认从未被打开过），用户自己的两份原样保留未动。
+
 ## 04｜踩坑
 
 - **挪代码时顺手带走的文案不代表内容还准（2026-09-10 用户真机测试逮到）**：§03ak 把「系统增强」卡片原样搬进「实验室」，battop"未装"提示里的路径 `misc/battery-audit/battop/install.sh` 是 §03aj 写的，那时候还没意识到这个路径已经在更早的 §03b 里 `git mv` 到 `enhance/battop/` 了——挪动/重构代码只挪了位置没重新核对内容，字面拷贝把旧错误也一起搬了过去，还搬了一次都没发现（两轮都没查）。**教训**：移动/复用一段包含具体路径/命令/版本号的文案时，顺手核对一遍还准不准，不能假设"没人提过所以肯定没问题"——原样复制不代表内容仍然正确，只代表格式没错。
@@ -744,15 +769,15 @@ book→「母版库 / 原生投递」、weread→「微信读书（内容源，�
 - pytest 要从仓库根跑（`uv run pytest shelf/host/tests`）。
 - 多个测试文件对同一个 `http.server` Handler 类 monkeypatch，module fixture 共用服务器线程时 patch 链互相覆盖会递归死循环（pytest 挂死）。各文件用自己的 Handler **子类** + 自己的 fixture。
 
-## 05｜真机待办（2026-09-06 刷新；2026-09-09 补记 §03ad 漫画超限分支复验、§03ae i18n 架子、§03af UI 人性化批量修复、§03aj 管理二级 tab+系统增强开关；2026-09-10 补记 §03an 正文全量 i18n）
+## 05｜真机待办（2026-09-06 刷新；2026-09-09 补记 §03ad 漫画超限分支复验、§03ae i18n 架子、§03af UI 人性化批量修复、§03aj 管理二级 tab+系统增强开关；2026-09-10 补记 §03an 正文全量 i18n、§03aq 网文留白排查）
 
-**未闭环**：网页 UI i18n（§03ae 架子 + §03an 正文全量补完，437 个 key，数据链路+内容对照已真机验证——`curl` 交叉核对真机 served 的语言包与部署的 app.js 里全部 416 处 `T()` 引用零缺失）——剩浏览器里实际点开语言切换器、人眼确认文案切成英文后的排版/换行/组件对齐效果这一步没做，这条缺口从 §03ae 延续到现在，覆盖面已经从"只剩顶层导航几个词"变成"正文也翻完了，只是没用真实浏览器看过"。网页 UI 人性化/触屏可用性一批小修（§03af，纯前端改动，同样没有浏览器截图核对实际渲染效果——禁用按钮说明文字是否真的显示、徽章点击 `alert` 是否真的弹出、`.btn-bad` 配色是否符合预期，这些都还没人眼确认过，只确认过新标记已 served）。
+**未闭环**：网页 UI i18n（§03ae 架子 + §03an 正文全量补完，437 个 key，数据链路+内容对照已真机验证——`curl` 交叉核对真机 served 的语言包与部署的 app.js 里全部 416 处 `T()` 引用零缺失）——剩浏览器里实际点开语言切换器、人眼确认文案切成英文后的排版/换行/组件对齐效果这一步没做，这条缺口从 §03ae 延续到现在，覆盖面已经从"只剩顶层导航几个词"变成"正文也翻完了，只是没用真实浏览器看过"。网页 UI 人性化/触屏可用性一批小修（§03af，纯前端改动，同样没有浏览器截图核对实际渲染效果——禁用按钮说明文字是否真的显示、徽章点击 `alert` 是否真的弹出、`.btn-bad` 配色是否符合预期，这些都还没人眼确认过，只确认过新标记已 served）。**图片密集网文渲染大片留白**（§03aq，2026-09-10）——真机 A/B 验证过 `wash_css` 缺 `figure`/`figcaption` 边距归零不是成因（已经修了这个缺口，但对留白零帮助）；真正成因是分页引擎对放不下的图片块整体挪页、当前页剩余空间不回填，排查过没找到能从 EPUB/CSS 层面调的杠杆，**留白问题本身仍未解决**，比 i18n 那条视觉确认缺口更实质——不是"还没人眼看过"，是"看过了，问题还在，暂时没有已知修法"。
 
 镖人/阿拉蕾①的"漫画体积超原生上传上限、只出 CBZ 不分卷"分支已于 2026-09-09 真机复验通过（§03ad，两本各自 `shelf push --wait` 成功、母版库确认只落 `.gray.cbz` 无伴生 PDF、无分卷痕迹）。2026-09-06 当天测试书已全部清掉（五本用户手删、最后两本由回收站代理软删）；`push --wait` "睡着→点亮→续传"的时序在日常使用里顺手验过。
 
 **OTA 后固定五步**（§03v）：`xovi/rebuild_hashtable` → `xovi/start` → `SHELF_NO_BUILD=1 sh deploy.sh 10.11.99.1` → `ssh root@10.11.99.1 sh -s < packaging/chrony-cn.sh` → `packaging/wifi-watch/install.sh`。升完顺手 `shelf doctor --render` 看 CSS 引擎有没有变。/home 里的（母版库、KOReader、WiFi 钩子与 `powersave 2`、休眠屏 conf 键、qmd 文件）不用动。
 
-**已闭环（真机）**：§03ac 可插拔机制接住独立仓库线（2026-09-06 晚，WiFi 部署书架+笔记线共八服务 active）· §03f 首轮五服务 · §03g/§03h 字体分开装/子目录/HTTPS · §03j 登录/CA/mDNS · §03k 字体两 bug · §03l 传书卡＝云同步 · §03m/§03n/§03o 网页改版/细节/管理台 · §03p 质量一轮 · §03q 优化做精 + 首行缩进 v10 · §03r 母版库 Phase A/B/C + 财新重排 · §03s 质量二轮 + 格式三档 · §03t 漫画通道（host 真书探针 → CBZ；漫画不投原生）+ 分卷静默失效修 + 投原生体积门 · §03v 固件 3.28 升级 + 3.28 字体菜单 qmd（首版整份不应用：qmldiff 解析不了 `({})` 与裸 `if (` handler，改 `[]`+`{ }` 后 `appended=4 count=8`，判官＝本机 asivery/qmldiff CLI）+ appload 3.28 复活（PR #59 qmd 等长回填进 .so，系统增强白皮书 §12.1；用户点侧栏 KOReader 正常起）· §03w 原生休眠屏 `SleepScreenPath` + WiFi regdomain 真凶 + wifi-watch + chrony 国内 NTP 脚本 · §03x 退役 bind-mount 壁纸整套（`xochitl_conf` + `native.rs`）· §03y xochitl CSS 引擎七条实测规则 + 英文首段顶格 v6 + 中文 br 书段落化 · §03z 事件推送（网页 + CLI 用户确认）· §03aa 阅读线六项（渲染自检 / `doctor --render` 用户 CLI PASS / `push --wait` / TXT 切章 / Phase E ④ Gulliver 两器脚注观感 / 漫画 16 灰默认开）· §03ab 代码体检四支 · PDF 结构化重排 v4（《财新》33 期：署名/图注/链接分类、节题 h3、标题分档，非句末段 15.1%→2.7%，`test_reflow.py` 锁纯函数）· §03ad 漫画跨页拆分+白边裁切放大（火影忍者卷1真机通）+ 小体积漫画可选投原生（火影忍者卷1真机通投原生 · 阿拉蕾①/镖人真机通超限只出 CBZ 不分卷，2026-09-09）· §03aj「管理」拆二级 tab + 系统增强开关（`hlSnapCjk`/battop 真开关：部署健康检查+`PUT /api/enhance/qol` 保留其余键+battop 未装时干净报错，用户确认命令块字体清楚了，2026-09-09）· §03ak「实验室」二级 tab + 独立「电池刺客」标签页 + 「导入 md 文档」文件上传改造（curl 功能测试：四开关读写+全量防覆盖+`import-md` 真实生成 `.rmdoc`；用户真机写字确认 `[hw-stroke:f4c8d0]` journal 日志跟 `hwStrokeEnabled` 开关状态一致；用户测试顺手逮到 battop"未装"提示路径过时〔仍写着搬家前的 `misc/battery-audit/`〕，修复重部署确认，2026-09-10）· §03al 首层标签重排（传书/笔记/其他/管理）+「入库」拆三卡 + battop 真机实装闭环（`install/start/stop` 循环+`lastSampleAt` 刷新确认）+ 电池审计时间窗数据表接入（`GET /api/enhance/battop/summary` 真机返回真实聚合数据）+ 电池刺客独立顶层标签页撤销回「实验室」卡片（2026-09-10）· §03am 电池刺客再拆分为「管理→电池刺客」二级 tab（耗电情况/唤醒源两个三级 tab，耗电情况补齐按进程）+ 总标题「书架」改「秘密花园」（含图标/登录页/改密码页/服务标签同步）+ 网关端口 8778 改绑标准 443（真机确认旧端口连接拒绝、新端口 curl 正常返回，2026-09-10）。
+**已闭环（真机）**：§03ac 可插拔机制接住独立仓库线（2026-09-06 晚，WiFi 部署书架+笔记线共八服务 active）· §03f 首轮五服务 · §03g/§03h 字体分开装/子目录/HTTPS · §03j 登录/CA/mDNS · §03k 字体两 bug · §03l 传书卡＝云同步 · §03m/§03n/§03o 网页改版/细节/管理台 · §03p 质量一轮 · §03q 优化做精 + 首行缩进 v10 · §03r 母版库 Phase A/B/C + 财新重排 · §03s 质量二轮 + 格式三档 · §03t 漫画通道（host 真书探针 → CBZ；漫画不投原生）+ 分卷静默失效修 + 投原生体积门 · §03v 固件 3.28 升级 + 3.28 字体菜单 qmd（首版整份不应用：qmldiff 解析不了 `({})` 与裸 `if (` handler，改 `[]`+`{ }` 后 `appended=4 count=8`，判官＝本机 asivery/qmldiff CLI）+ appload 3.28 复活（PR #59 qmd 等长回填进 .so，系统增强白皮书 §12.1；用户点侧栏 KOReader 正常起）· §03w 原生休眠屏 `SleepScreenPath` + WiFi regdomain 真凶 + wifi-watch + chrony 国内 NTP 脚本 · §03x 退役 bind-mount 壁纸整套（`xochitl_conf` + `native.rs`）· §03y xochitl CSS 引擎七条实测规则 + 英文首段顶格 v6 + 中文 br 书段落化 · §03z 事件推送（网页 + CLI 用户确认）· §03aa 阅读线六项（渲染自检 / `doctor --render` 用户 CLI PASS / `push --wait` / TXT 切章 / Phase E ④ Gulliver 两器脚注观感 / 漫画 16 灰默认开）· §03ab 代码体检四支 · PDF 结构化重排 v4（《财新》33 期：署名/图注/链接分类、节题 h3、标题分档，非句末段 15.1%→2.7%，`test_reflow.py` 锁纯函数）· §03ad 漫画跨页拆分+白边裁切放大（火影忍者卷1真机通）+ 小体积漫画可选投原生（火影忍者卷1真机通投原生 · 阿拉蕾①/镖人真机通超限只出 CBZ 不分卷，2026-09-09）· §03aj「管理」拆二级 tab + 系统增强开关（`hlSnapCjk`/battop 真开关：部署健康检查+`PUT /api/enhance/qol` 保留其余键+battop 未装时干净报错，用户确认命令块字体清楚了，2026-09-09）· §03ak「实验室」二级 tab + 独立「电池刺客」标签页 + 「导入 md 文档」文件上传改造（curl 功能测试：四开关读写+全量防覆盖+`import-md` 真实生成 `.rmdoc`；用户真机写字确认 `[hw-stroke:f4c8d0]` journal 日志跟 `hwStrokeEnabled` 开关状态一致；用户测试顺手逮到 battop"未装"提示路径过时〔仍写着搬家前的 `misc/battery-audit/`〕，修复重部署确认，2026-09-10）· §03al 首层标签重排（传书/笔记/其他/管理）+「入库」拆三卡 + battop 真机实装闭环（`install/start/stop` 循环+`lastSampleAt` 刷新确认）+ 电池审计时间窗数据表接入（`GET /api/enhance/battop/summary` 真机返回真实聚合数据）+ 电池刺客独立顶层标签页撤销回「实验室」卡片（2026-09-10）· §03am 电池刺客再拆分为「管理→电池刺客」二级 tab（耗电情况/唤醒源两个三级 tab，耗电情况补齐按进程）+ 总标题「书架」改「秘密花园」（含图标/登录页/改密码页/服务标签同步）+ 网关端口 8778 改绑标准 443（真机确认旧端口连接拒绝、新端口 curl 正常返回，2026-09-10）· §03ao `shelf push --no-calibre`（EPUB 跳过 Calibre 纯跑 `epub-optimize`，8 个新单测 + 非 mock 真调用验证）· §03ap 抓网文「同步优化」复选框（真机 curl 分带/不带 `optimize` 各抓一次同一篇文章，`level` full/core 落地正确）。**§03aq 不放进这个列表**——那条排查修的是一个真实存在的代码缺口（`figure`/`figcaption` 边距归零），但没有解决它本来要排查的问题（网文留白），后者仍在上面「未闭环」段落里。
 
 **Phase E 实录（②③④，2026-09-06 全部闭环，用《Tell Me Your Dreams》AZW3 与《Gulliver's Travels》推进）**：
 - 洗书发现两处实现缺口并修（bookconv `wash.rs`）：① 书自带类规则 `.calibre_ {text-indent:2em}` 未统一——xochitl 不认类规则走我们的 `p{1.2em}`，KOReader 认且类规则特异性更高走 2em，**两器同字节不同缩进**；现在书 css / 内联 style 里非零 `text-indent` 一律改写成本书缩进（0 与负值保留）。② "标题后首段不缩进"只写在注释里从未实现。
