@@ -10,7 +10,7 @@ a{color:var(--accent)}
 /* 头部：纯色兜底（老 Safari 不认 color-mix 时头部仍不透明、正文滚过不透字）+ -webkit- 前缀让 iOS Safari 也模糊 */
 header{position:sticky;top:0;z-index:5;background:var(--surface);background:color-mix(in srgb,var(--surface) 88%,transparent);-webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);border-bottom:1px solid var(--line);padding:.7em 1.1em;display:flex;align-items:center;gap:.8em}
 header .logo{font-size:1.15em;font-weight:700;letter-spacing:.02em;display:flex;align-items:center;gap:.4em}
-header .logo::before{content:"📚";font-size:1.1em}
+header .logo::before{content:"🌿";font-size:1.1em}
 header small{color:var(--mute)}
 header .links{margin-left:auto;display:flex;gap:.6em;font-size:.85em}
 /* 纯文字链接原来零 padding，触控热区约等于文字包围盒——补一点垂直/水平留白扩大热区，
