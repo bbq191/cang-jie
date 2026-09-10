@@ -10,7 +10,7 @@
 |---|---|
 | `docs/reMarkable系统增强线白皮书.md` | 决策记录 + 真机验证轮次，读现状先看 §00b |
 | `README.md`（本文件） | 目录一览、跟其它目录的关系 |
-| `hl-snap/`、`battop/`、`handwriting-stroke/` 各自的 `README.md` | 组件自己的说明（前两个是"怎么建怎么部署"，第三个是纯研究记录） |
+| `hl-snap/`、`battop/`、`handwriting-stroke/` 各自的 `README.md` | 组件自己的说明（怎么建怎么部署，`handwriting-stroke/` 另外还有完整研究过程记录） |
 
 ## 组件一览
 
@@ -18,7 +18,7 @@
 |---|---|---|
 | `hl-snap/` | 独立最小 xovi 扩展（C，ARM64） | ✅ 真机通（荧光笔 CJK 精确吸附，划哪吸哪） |
 | `battop/` | 独立 Rust 二进制（诊断采样器） | ✅ 真机通（历史更早，`git mv` 过来的，非本线首创） |
-| `handwriting-stroke/` | 研究阶段，零实现代码 | 🔬 探路中（Ghidra RTTI 反查 vtable 第一轮未成功，见白皮书 §03c） |
+| `handwriting-stroke/` | 独立最小 xovi 扩展（C，ARM64） | ✅ 第一版真机通（西式书法笔尖角度模型，宽度按运笔方向+基础粗细调整，见白皮书 §03e）；真正的中文毛笔提按效果还没做 |
 
 ## 跟其它目录的关系
 
