@@ -755,7 +755,7 @@ function mountModelPanel(root,seg,title,icon,showAuto){
    不是新行为）。返回 refresh() 给调用方自己决定何时/多频繁调用（sec.refresh 挂钩）。 */
 function mountBattopCard(container){
   container.innerHTML=`<h3 style="margin-top:0">电池刺客（battop）</h3>
-    <p class="small">电量异常排查用的采样诊断进程，日常用不到。2026-08 出过一次 cgroup 死锁死机，已经修复为常驻低频采样（不再靠反复重启触发），这里的开关只是一次性启停，不会重现那次事故的触发条件。</p>
+    <p class="small">电量异常排查用的采样诊断进程，日常用不到。2026-08 出过一次 cgroup 死锁死机——根因是内核罕见的 RCU stall（没修，是概率事件），当时 timer 每 10 分钟重启一次把撞上它的概率放大了 144 倍。已经改成常驻低频采样，正常点一下开/关（偶尔用用）风险可忽略；但每次「启动」确实还是走一次同样的 cgroup 迁移操作，短时间内连续反复点启停不是绝对安全，别拿这个开关当没有代价的按钮反复点着玩。</p>
     <div class="kv small" data-kv>检测中…</div>
     <div class="row"><button class="btn" data-btn disabled>…</button></div>`;
   const kv=container.querySelector('[data-kv]'),btn=container.querySelector('[data-btn]');
@@ -883,7 +883,9 @@ function renderManage(sec){sec.innerHTML=`
   const langsel=$('#langsel');langsel.value=lang;
   langsel.onchange=()=>{LS.set('lang',langsel.value);location.reload()};
 
-  const d=await j('/api/services');const svcs=(d.services||[]).filter(s=>s.ui&&TABS[s.name]).sort((a,b)=>a.ui.order-b.ui.order);
+  const [d,er]=await Promise.all([j('/api/services'),j('/api/enhance/status')]);
+  const svcs=(d.services||[]).filter(s=>s.ui&&TABS[s.name]).sort((a,b)=>a.ui.order-b.ui.order);
+  const battopRunning=er.ok!==false&&!!(er.battop&&er.battop.running);   // 跟字体/KOReader/壁纸/笔记这些服务 tab 同一个约定：只有真的跑起来才有标签页
   $('#hdr').textContent=location.host;
   const nav=$('#tabs'),main=$('#main');main.innerHTML='';
   const secByArea={};const dirty=new Set();
@@ -892,17 +894,21 @@ function renderManage(sec){sec.innerHTML=`
     nav.appendChild(b);main.appendChild(sec);render(sec);if(first)b.onclick()};
   addTab(T('tab.transfer'),renderTransfer,true,'books');          // 总入口（入库｜母版库），固定第一位（book-serve 不在时列表里提示去管理页开）
   svcs.forEach((s)=>addTab(TABS[s.name].titleKey?T(TABS[s.name].titleKey):TABS[s.name].title,TABS[s.name].render,false,AREA[s.name]||s.name));
-  addTab(T('tab.battop'),renderBattop,false,'battop');             // 独立顶层标签页，battop 不在服务注册表里，手动固定注册
+  if(battopRunning)addTab(T('tab.battop'),renderBattop,false,'battop'); // 独立顶层标签页，battop 不在服务注册表里，手动固定注册；跑起来才出现（跟其它服务 tab 同规则，2026-09-10 用户纠正——原来固定常显跟这条约定不一致）
   addTab(T('tab.manage'),renderManage,false,'manage');            // 固定管理台，始终可进
   /* 事件推送（SSE，零轮询）：服务在变更处发事件 → 网关 /api/events 汇聚 → 这里只刷对应 tab；不在前台的 tab 记脏，切过去时刷。
-     manage 事件（服务启停）：tab 集合变了就整页重载，否则只刷管理台。断线（WiFi 掉/设备休眠醒来）EventSource 自动重连。 */
-  const svcKey=svcs.map(s=>s.name).join(',');
+     manage 事件（服务启停）：tab 集合变了就整页重载，否则只刷管理台。battop 不在服务注册表里，走同一个 "manage" 事件 tag（battop_toggle
+     成功后网关顺手 publish），比较时额外把 battop.running 拼进 key，运行态变化同样触发整页重载（tab 出现/消失）。
+     断线（WiFi 掉/设备休眠醒来）EventSource 自动重连。 */
+  const svcKey=svcs.map(s=>s.name).join(',')+'|battop:'+battopRunning;
   const dot=document.createElement('span');dot.id='live';dot.title='事件推送';dot.textContent='●';dot.style.cssText='margin-left:.5em;font-size:.8em;color:var(--bad)';$('#hdr').appendChild(dot);
   const es=new EventSource('/api/events');
   es.onopen=()=>{dot.style.color='var(--ok)';dot.title='事件推送已连接'};
   es.onerror=()=>{dot.style.color='var(--bad)';dot.title='事件推送断开，自动重连中'};
   es.onmessage=async(e)=>{let ev;try{ev=JSON.parse(e.data)}catch{return}
-    if(ev.area==='manage'){const d=await j('/api/services');const k=(d.services||[]).filter(s=>s.ui&&TABS[s.name]).map(s=>s.name).join(',');if(k!==svcKey){location.reload();return}}
+    if(ev.area==='manage'){const [d,er]=await Promise.all([j('/api/services'),j('/api/enhance/status')]);
+      const k=(d.services||[]).filter(s=>s.ui&&TABS[s.name]).map(s=>s.name).join(',')+'|battop:'+(er.ok!==false&&!!(er.battop&&er.battop.running));
+      if(k!==svcKey){location.reload();return}}
     const sec=secByArea[ev.area];if(!sec)return;
     if(sec.classList.contains('on')){if(sec.refresh)sec.refresh()}else dirty.add(ev.area)};
 })();

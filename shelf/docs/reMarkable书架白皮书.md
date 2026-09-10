@@ -631,6 +631,12 @@ book→「母版库 / 原生投递」、weread→「微信读书（内容源，�
 
 **离线**：`shelf-gateway` `qol.rs` 新增 3 测（`hw_stroke_enabled_defaults_false_when_missing`/`hw_stroke_enabled_true_when_ratio_below_one`/`notes_import_md_enabled_defaults_false`）；`cargo test -p shelf-gateway`（16 个）零回归；`node --check app.js` 语法过；`ui/locales/{zh-CN,en-US}.json` 各加一个 `tab.battop` key（顶层 tab 是这套 i18n 架子唯一覆盖的范围，新顶层 tab 照此惯例走 `T()`，其余卡片/子标签文案跟旁边现状一致继续硬编码中文不新增 key）；`locale_files_have_identical_key_sets` 测试确认两份文件 key 集合仍然一致。
 
+**用户当天追问了两点，都是对的，回来改**：
+
+1. **"反复启停 battop 是不是会触发 cgroup 死锁死机"**——重新核对 `FINDINGS.md` 原始事故记录，`battop.rs`/网页文案原来的"这里的开关只是一次性启停，不会重现那次事故的触发条件"这句话**没讲清楚边界**：真正触发崩溃的是`cgroup_procs_write`（进程启动时被 systemd 塞进 cgroup 这个动作）撞上内核罕见的 RCU stall——**这个内核问题本身没有被修复，是概率事件**；旧架构靠 `battop.timer` 每 10 分钟重启一次，把这个动作干到 144 次/天，144 倍放大了撞上那个罕见窗口的概率；新架构只在真正启动那一刻迁一次 cgroup，**是把触发频率降下来，不是把这类风险归零**——网页上点"启动"依然是同一类 cgroup 迁移操作，正常偶尔点几下风险可以忽略，但如果短时间内在网页上反复连点启停（现在这个按钮没做任何防连点/限流），理论上就是在人为复现旧 timer 那种高频触发条件。把这条边界写进 `battop.rs` 头注和网页卡片文案，不再只说"不会重现"。
+2. **"battop 启动才应该显示电池刺客标签"**——检查「管理」页自己的帮助文案（"已装·未开...网页看不到它的功能"、"已开...顶部有它的标签页"）确认：字体/KOReader/壁纸/笔记这些服务 tab 本来就是"运行才出现"，独立顶层「电池刺客」标签页固定常显是这次设计跟既有约定不一致，用户指出来是对的。改法：页面 IIFE 里 `addTab` 电池刺客之前先并行拉一次 `/api/enhance/status`，只有 `battop.running` 才 `addTab`；`battop_toggle()` 成功后 `hub.bus.publish("manage","battop")`（battop 不在服务注册表里，原来的"注册表目录 inotify → manage 事件"这条通路碰不到它，得手动发一次），前端 SSE 的 `ev.area==='manage'` 比较逻辑把 `battop.running` 拼进原来只比较 `/api/services` 的那个 key 里，运行态一变就跟服务启停一样触发整页重载，标签页才会跟着出现/消失。**这台测试设备没装 battop，只验证到"未装/未运行时标签页确实不出现"这一半**，"装上+启动后标签页真的动态出现"这一半没有真机条件验证，如实记录。
+
+
 ## 04｜踩坑
 
 - **挪代码时顺手带走的文案不代表内容还准（2026-09-10 用户真机测试逮到）**：§03ak 把「系统增强」卡片原样搬进「实验室」，battop"未装"提示里的路径 `misc/battery-audit/battop/install.sh` 是 §03aj 写的，那时候还没意识到这个路径已经在更早的 §03b 里 `git mv` 到 `enhance/battop/` 了——挪动/重构代码只挪了位置没重新核对内容，字面拷贝把旧错误也一起搬了过去，还搬了一次都没发现（两轮都没查）。**教训**：移动/复用一段包含具体路径/命令/版本号的文案时，顺手核对一遍还准不准，不能假设"没人提过所以肯定没问题"——原样复制不代表内容仍然正确，只代表格式没错。

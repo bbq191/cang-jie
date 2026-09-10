@@ -2,10 +2,14 @@
 //! （`enhance/battop/`，固定装在 `/home/root/battop`，不走 shelf 的 XDG/`bin_dir` 那套），
 //! 原生「设置」App 只有一个只读展示页（读 `summary.json`），**从没有过开关**——这里是它第一次有开关。
 //!
-//! 2026-08-29 出过 cgroup/RCU 死锁事故（`enhance/battop/FINDINGS.md`），根因是"反复 service-start
-//! 触发的 cgroup 迁移撞上内核 RCU stall"，已经修复为常驻 `Type=simple`（进程内 `loop{sample;sleep}`，
-//! 开机只迁一次 cgroup）。单纯 `systemctl start/stop` 不会重现那次事故的触发条件——不是"曾经启动过
-//! 就危险"，是"反复重启"才危险，这里的开关只是一次性 start/stop，不循环拉起。
+//! 2026-08-29 出过 cgroup/RCU 死锁事故（`enhance/battop/FINDINGS.md`），根因是内核罕见的 RCU
+//! stall（没有被修复，是概率事件，不是 battop 逻辑 bug）——当时 `battop.timer` 每 ~10 分钟重启一次
+//! oneshot，把"进程启动时 systemd 做 cgroup 迁移"这个动作干到 144 次/天，144 倍放大了撞上那个
+//! 罕见窗口的概率。已经修复为常驻 `Type=simple`（进程内 `loop{sample;sleep}`，开机只迁一次
+//! cgroup）。**这不是把风险归零，是把触发频率从"每天必然 144 次"降到"用户手点几次"**：每一次
+//! `systemctl start` 依然是同一类 cgroup 迁移操作，只是正常使用（偶尔开关）频率低到可以忽略——
+//! 短时间内在网页上反复连点启停，理论上就是在人为复现旧 timer 那种高频重复触发的条件，这里没做
+//! 任何防连点/限流，2026-09-10 用户问起后把这条边界条件补进注释和网页文案，不再只说"不会重现"。
 use std::path::Path;
 use std::time::UNIX_EPOCH;
 
