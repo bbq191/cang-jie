@@ -787,10 +787,12 @@ const battopTopList=items=>items&&items.length
   :'<p class="small">（这个窗口没有数据）</p>';
 /* 时间窗 subnav+subpanel 骨架，耗电情况/唤醒源两处共用——contentFn(windowData)→这个窗口要显示的 HTML。 */
 /* activeIdx：重画时保留原来选中的时间窗（比如耗电情况的"按应用/按进程"下拉切换只想换列表内容，
-   不想把用户刚选的"7天"弹回"今日"），不传就默认第一个。 */
+   不想把用户刚选的"7天"弹回"今日"），不传就默认第一个。每个时间窗的内容包一层 `.card`——跟这个
+   app 别处"subnav 切换、每块内容各自一张卡"的样子统一（KOReader 字体/词典两个子标签各自一张卡
+   是同一个规矩，battop 详情页之前漏了这层，2026-09-10 用户指出补上）。 */
 function renderBattopWindowed(container,windowsData,contentFn,activeIdx=0){
   container.innerHTML=`<div class="subnav">${BATTOP_WINDOWS.map((x,i)=>`<button${i===activeIdx?' class="on"':''}>${x.label}</button>`).join('')}</div>
-    ${BATTOP_WINDOWS.map((x,i)=>`<div class="subpanel${i===activeIdx?' on':''}">${contentFn(windowsData[x.key]||{})}</div>`).join('')}`;
+    ${BATTOP_WINDOWS.map((x,i)=>`<div class="subpanel${i===activeIdx?' on':''}"><div class="card">${contentFn(windowsData[x.key]||{})}</div></div>`).join('')}`;
   subtabs(container);
 }
 /* 当前激活的时间窗下标——重画前先读一遍，喂给上面的 activeIdx。 */
@@ -832,16 +834,19 @@ function renderBattopDetail(sec){
   const refresh=async()=>{
     const r=await j('/api/enhance/battop/summary');
     if(r.ok===false||!r.available){
-      const msg='<p class="small">还没有采样数据——常驻服务每 ~10 分钟采一次，刚装/刚启动时先等一轮。</p>';
+      const msg='<div class="card"><p class="small">还没有采样数据——常驻服务每 ~10 分钟采一次，刚装/刚启动时先等一轮。</p></div>';
       usageEl.innerHTML=msg;wakeEl.innerHTML=msg;return;
     }
     const w=r.summary.windows||{};
-    /* 耗电情况：「按应用/按进程」用下拉切换（用户要求，不再两份列表一起摆），下拉放在时间窗
-       subnav 外面，切下拉只换列表内容、不打乱时间窗选择（battopActiveWindowIdx 读一遍当前选中
-       的时间窗，重画时原样传回去）。 */
+    /* 每个子标签开头一张说明卡（标题+一句话说明），跟「系统增强」/KOReader 那些卡片同一个
+       视觉语言；「按应用/按进程」下拉放这张卡里——下拉要跨时间窗持续存在，不能放进
+       renderBattopWindowed 生成的、每次切时间窗都可能重画的内容里（2026-09-10 用户要求统一
+       风格顺手理清楚这条边界）。 */
     if(!usageEl.querySelector('[data-metric]')){
-      usageEl.innerHTML=`<div class="row"><label class="small" for="battopMetric">显示</label>
-        <select id="battopMetric" data-metric><option value="app">按应用</option><option value="proc">按进程</option></select></div>
+      usageEl.innerHTML=`<div class="card"><h3 style="margin-top:0">耗电情况</h3>
+        <p class="small">4 个时间窗（今日/7天/30天/全部）× 应用/进程累计占用时长排行，数据源是 battop 常驻聚合的 <code>summary.json</code>，网页不重新聚合。</p>
+        <div class="row"><label class="small" for="battopMetric">显示</label>
+        <select id="battopMetric" data-metric><option value="app">按应用</option><option value="proc">按进程</option></select></div></div>
         <div data-usagewin></div>`;
     }
     const metricSel=usageEl.querySelector('[data-metric]'),usageWinEl=usageEl.querySelector('[data-usagewin]');
@@ -853,9 +858,14 @@ function renderBattopDetail(sec){
     };
     metricSel.onchange=renderUsage;
     renderUsage();
-    renderBattopWindowed(wakeEl,w,d=>`<p class="small">${d.samples||0} 次采样</p>
+    if(!wakeEl.querySelector('[data-wakewin]')){
+      wakeEl.innerHTML=`<div class="card"><h3 style="margin-top:0">唤醒源</h3>
+        <p class="small">打断设备休眠的来源，按次数统计（同一个 4 个时间窗）。</p></div>
+        <div data-wakewin></div>`;
+    }
+    renderBattopWindowed(wakeEl.querySelector('[data-wakewin]'),w,d=>`<p class="small">${d.samples||0} 次采样</p>
       <h4 style="margin:.6em 0 .2em">唤醒源（打断休眠次数）</h4>${battopTopList(d.wake)}`,
-      battopActiveWindowIdx(wakeEl));
+      battopActiveWindowIdx(wakeEl.querySelector('[data-wakewin]')));
   };
   refresh();sec.refresh=refresh;subtabs(sec);
 }
