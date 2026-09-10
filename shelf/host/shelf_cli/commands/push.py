@@ -3,6 +3,11 @@
 统一后 push 不再有去向参数——一律落母版库（`/api/books/staging`）。host 是唯一能"入库时顺带优化"的源：
 - 默认：有 Calibre → 洗书（EPUB 深洗 / 杂格式转 EPUB / PDF 结构化重排）→ 落母版库（产物带优化标记）。
 - `--no-optimize`：不洗，原样传母版库（用户可在网页按需点优化）。
+- `--no-calibre`：**只对本来就是 EPUB 的输入有意义**——跳过 `ebook-convert`（CSS 拍平/series 命名那部分），
+  直接调跟网页「母版库→优化」按钮同一个函数的 `epub-optimize` 二进制（清洗+优化都做，不是"只优化不清洗"，
+  对应网页「清洗＋优化」档；`--keep-spacing` 同样生效＝对应「清洗但保留段距」档）。不装 Calibre 也能用——
+  两条路径唯一共同点只是都在编译产物 `shelf/target/release/epub-optimize`。非 EPUB 输入没法只靠这条路径
+  转格式，加了 `--no-calibre` 也一律原样传（等同 `--no-optimize` 的效果，母版库里再按需转/优化）。
 - `--to-pdf`：定稿成固定版式 PDF（手写批注用），落母版库。
 - **漫画**（AZW3/MOBI/EPUB 里全是整页图，`comic.is_comic` 自动判，`--comic/--no-comic` 覆盖；CBZ 天然）：不走洗书路，
   出 **CBZ**（原图按页打包，跨页图自动拆分+白边裁切）进母版库，去向 KOReader 漫画模式。大部头**漫画默认不投原生**
@@ -67,7 +72,8 @@ def add_args(p):
     p.add_argument("files", nargs="+", type=Path)
     p.add_argument("--to-pdf", action="store_true", help="定稿成固定版式 PDF（手写批注用）；默认洗成流式 EPUB")
     p.add_argument("--no-optimize", action="store_true", help="不洗，原样传母版库（网页里可再点优化）")
-    p.add_argument("--keep-spacing", action="store_true", help="洗书时保留原书段间距（诗集 / 剧本；对应网页「清洗但保留段距」档位）")
+    p.add_argument("--no-calibre", action="store_true", help="EPUB 只跑 epub-optimize（跳过 ebook-convert，不用装 Calibre）；非 EPUB 原样传")
+    p.add_argument("--keep-spacing", action="store_true", help="洗书时保留原书段间距（诗集 / 剧本；对应网页「清洗但保留段距」档位；--no-calibre 下同样生效）")
     p.add_argument("--no-reflow", action="store_true", help="PDF 不重排（原样传）")
     g = p.add_mutually_exclusive_group()
     g.add_argument("--comic", action="store_true", help="强制按漫画处理（出 CBZ，只加入 KOReader；漫画不投原生）")
@@ -163,6 +169,15 @@ def is_comic(path: Path, args) -> bool:
     return getattr(args, "comic", False) or comic.is_comic(path)
 
 
+def optimize_only_prepare(path: Path, args, work: Path) -> list[Path]:
+    """`--no-calibre` 通道：只对 EPUB 有意义（`plan()` 已经把非 EPUB 挡在 raw），直接调
+    `cb.optimize_only`——不经 `ebook-convert`，不需要装 Calibre，产物同样过 `_gate` 体检。"""
+    out = cb.optimize_only(path, work / path.name, keep_spacing=getattr(args, "keep_spacing", False))
+    print(f"  纯优化（跳过 Calibre）→ {out.name}")
+    _gate(out, args)
+    return [out]
+
+
 def txt_prepare(path: Path, work: Path, wenv: dict | None) -> Path:
     """中文 TXT：切章建 EPUB（带两级目录）→ wash（TOC 已有，关 Calibre 自动目录）。返回洗好的 EPUB。"""
     epub, meta = cb.txt_to_epub(path, work)
@@ -217,15 +232,20 @@ def host_prepare(path: Path, args, work: Path, ctx=None) -> list[Path]:
     return [path]
 
 
-ROUTE_LABEL = {"raw": "原样→", "comic": "漫画 CBZ→", "wash": "洗书→"}
+ROUTE_LABEL = {"raw": "原样→", "comic": "漫画 CBZ→", "wash": "洗书→", "optimize-only": "纯优化（跳过 Calibre）→"}
 
 
 def plan(path: Path, args, calibre: bool) -> str:
-    """一本书走哪条路：raw（原样）/ comic（→CBZ）/ wash（Calibre 洗书）。纯函数，便于测试。"""
+    """一本书走哪条路：raw（原样）/ comic（→CBZ）/ wash（Calibre 洗书）/ optimize-only（`--no-calibre`，
+    只对 EPUB 有意义）。纯函数，便于测试。`--no-calibre` 判在 is_comic 之前——AZW3/EPUB 漫画解包成 CBZ
+    本来就要 Calibre，用户明确要求跳过 Calibre 就不该再暗地里用它，漫画分支这时对 EPUB 输入退化成普通
+    优化（不拆 CBZ），非 EPUB 输入退化成 raw（母版库里再按需处理）。"""
     if path.suffix.lower() == ".cbz":
         return "comic" if getattr(args, "eink_gray", True) else "raw"  # CBZ 缺省再过 16 灰；--no-eink-gray 原样进母版库
     if args.no_optimize:
         return "raw"
+    if getattr(args, "no_calibre", False):
+        return "optimize-only" if path.suffix.lower() == ".epub" else "raw"
     if is_comic(path, args) and calibre:
         return "comic"  # AZW3/EPUB 漫画解包成 CBZ 要 Calibre
     return "wash" if calibre else "raw"
@@ -246,7 +266,14 @@ def run(args, ctx) -> int:
         if args.dry_run:
             continue
         try:
-            outs = [path] if route == "raw" else comic_prepare(path, work, args, ctx) if route == "comic" else host_prepare(path, args, work, ctx)
+            if route == "raw":
+                outs = [path]
+            elif route == "comic":
+                outs = comic_prepare(path, work, args, ctx)
+            elif route == "optimize-only":
+                outs = optimize_only_prepare(path, args, work)
+            else:
+                outs = host_prepare(path, args, work, ctx)
         except cb.CalibreError as e:
             print(f"✗ {path.name}: {e}")
             rc = 1

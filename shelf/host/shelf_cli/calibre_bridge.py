@@ -58,6 +58,39 @@ def wash(src: Path, out_dir: Path, env: dict | None = None) -> Path:
     return outs[-1]
 
 
+def epub_optimize_bin() -> str | None:
+    """定位 `epub-optimize` 二进制：`WASH_OPTIMIZE_BIN` 环境变量覆盖（跟 `wash_epub.sh` 认的是同一个变量，
+    两条路径共用一个"在哪找二进制"的旋钮）→ PATH → 仓库内 `shelf/target/release/`（`cargo build --release
+    -p bookconv --bin epub-optimize` 的默认产物位置）。找不到返回 None（调用方负责报错/提示）。"""
+    override = os.environ.get("WASH_OPTIMIZE_BIN")
+    if override:
+        return override
+    found = shutil.which("epub-optimize", path=clean_env().get("PATH"))
+    if found:
+        return found
+    local = REPO_ROOT / "shelf" / "target" / "release" / "epub-optimize"
+    return str(local) if local.is_file() else None
+
+
+def optimize_only(src: Path, out: Path, keep_spacing: bool = False) -> Path:
+    """C2'：`--no-calibre` 通道——直接调 `epub-optimize`（跟设备端 book-serve `Staging::optimize`/
+    `wash_epub.sh` 末步是同一个 Rust 函数 `optimize_epub_with`），不经 `ebook-convert`，不需要装 Calibre，
+    也就没有 `wash_epub.sh` 那部分"series 命名"（读 `ebook-meta`）——产物文件名跟输入一致，落在 `out`。
+    伪 DRM 剥离/CSS 锁剥离/边距段距归零/清洗+优化全部在 `optimize_epub_with` 内部完成，不需要额外步骤。"""
+    optbin = epub_optimize_bin()
+    if not optbin:
+        raise CalibreError("找不到 epub-optimize（cd shelf && cargo build --release -p bookconv --bin epub-optimize，"
+                            "或用 WASH_OPTIMIZE_BIN 指路径）")
+    cmd = [optbin]
+    if keep_spacing:
+        cmd.append("--keep-spacing")
+    cmd += [str(src), str(out)]
+    r = _run(cmd)
+    if r.returncode != 0:
+        raise CalibreError(f"epub-optimize 失败（rc={r.returncode}）：{r.stderr.strip()[-800:]}")
+    return out
+
+
 def to_pdf(src: Path, out: Path) -> Path:
     """C1 定稿：epub2pdf_move.sh → 954×1696 固定版式 PDF。"""
     r = _run(["sh", str(CALIBRE_DIR / "epub2pdf_move.sh"), str(src), str(out)])

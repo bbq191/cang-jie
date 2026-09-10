@@ -149,6 +149,8 @@ reMarkable 的 EPUB 渲染器闭源，行为多次跟 host / 常识不一致。�
 
 **目标脚注**：母版库「优化」传 `Inline`（xochitl 无弹窗，内联常显）；KOReader 从母版库纯复制拿到的也是 Inline 产物——**2026-09-06 用 Standard Ebooks《Gulliver's Travels》（7 处 noteref）两器对照，用户目视观感正常，不再为 KOReader 另跑 Anchor**（书架白皮书 §05 Phase E ④）；weread/pkm 线 `Anchor` 兜底。
 
+**`shelf push --no-calibre`（2026-09-10，见书架白皮书 §03ao）**：`host_prepare`/`wash_epub.sh` 那条路线把"Calibre 深洗（`ebook-convert` 拍平 CSS/series 命名）"跟"`epub-optimize`"两步捆在一起，之前没有只要后者的入口——EPUB 输入要么两步都走（有 Calibre 时的默认路），要么两步都不走（`--no-optimize`）。`push.py` 新增 `plan()` 第三条路 `optimize-only`：`--no-calibre` 且输入是 `.epub` 时直接调 `calibre_bridge.optimize_only()`（新函数，跟 `epub_optimize_bin()` 一起加在 `calibre_bridge.py`），不经 `wash_epub.sh`、不需要装 Calibre——这条路径不是"降级"，是**跟设备端「母版库→优化」按钮完全同一个函数**，伪 DRM 剥离/CSS 锁剥离/边距段距归零全部在 `optimize_epub_with` 内部做完，不缺 `wash_epub.sh` 那部分（唯一缺的是 series 文件名重命名，那个专属读 `ebook-meta`，跟优化无关）。非 EPUB 输入没法只靠这条路径转格式，`--no-calibre` 对它们退化成 `raw`（原样传，不静默切回 Calibre）；漫画判断也在 `--no-calibre` 分支之前短路，避免"用户明确说不要 Calibre，代码却因为看起来像漫画又偷偷用了它"。
+
 ## 12｜踩坑
 
 - **重优化跨版本脚注不得翻倍**：v6 产物（注释已移章末 + 同章锚点 marker）跑 v10 重优化——`double_optimize_inline_footnote_no_dup` / `reoptimize_relinked_footnote_no_dup` 测试坐实注释只出现一次。

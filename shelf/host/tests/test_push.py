@@ -74,6 +74,85 @@ def test_push_keep_spacing_passes_env(gateway, tmp_path, capsys, monkeypatch):
     assert seen["env"] is None, "不带 --keep-spacing 不设环境"
 
 
+def test_plan_no_calibre_epub_goes_optimize_only_regardless_of_calibre(tmp_path):
+    """--no-calibre：EPUB 走 optimize-only，装没装 Calibre 都一样——这条路径本来就是为了不依赖它。"""
+    args = type("A", (), {"no_optimize": False, "no_calibre": True, "comic": False, "no_comic": False})()
+    epub = tmp_path / "b.epub"
+    assert push.plan(epub, args, True) == "optimize-only"
+    assert push.plan(epub, args, False) == "optimize-only"
+
+
+def test_plan_no_calibre_non_epub_falls_back_to_raw(tmp_path):
+    """--no-calibre 对非 EPUB 没法只靠这条路径转格式，原样传（不是报错，也不是偷偷还是走 Calibre）。"""
+    args = type("A", (), {"no_optimize": False, "no_calibre": True, "comic": False, "no_comic": False})()
+    assert push.plan(tmp_path / "b.azw3", args, True) == "raw"
+    assert push.plan(tmp_path / "b.pdf", args, True) == "raw"
+
+
+def test_plan_no_calibre_takes_priority_over_comic(tmp_path):
+    """漫画 EPUB 也一样退化成 optimize-only，不因为看起来像漫画就偷偷换回 Calibre 路径。"""
+    args = type("A", (), {"no_optimize": False, "no_calibre": True, "comic": True, "no_comic": False})()
+    assert push.plan(tmp_path / "manga.epub", args, True) == "optimize-only"
+
+
+def test_push_no_calibre_calls_optimize_only_not_wash(gateway, tmp_path, capsys, monkeypatch):
+    """端到端：--no-calibre 落母版库这条路，`cb.wash`（走 Calibre 的那个）完全不该被调用。"""
+    (tmp_path / "b.epub").write_bytes(b"PK")
+    calls = {"optimize_only": 0, "wash": 0}
+
+    def fake_optimize_only(src, out, keep_spacing=False):
+        calls["optimize_only"] += 1
+        out.write_bytes(b"PK-optimized")
+        return out
+
+    def fake_wash(*a, **kw):
+        calls["wash"] += 1
+        raise AssertionError("--no-calibre 不该调 cb.wash")
+
+    monkeypatch.setattr(cb, "has_calibre", lambda: True)  # 装了也不该用
+    monkeypatch.setattr(cb, "optimize_only", fake_optimize_only)
+    monkeypatch.setattr(cb, "wash", fake_wash)
+    monkeypatch.setattr(push, "_gate", lambda out, args: None)
+    FakeGateway.received.clear()
+    rc, out = run(["push", "--no-calibre", str(tmp_path / "b.epub")], gateway, capsys)
+    assert rc == 0 and calls == {"optimize_only": 1, "wash": 0}
+    assert "纯优化（跳过 Calibre）→母版库" in out
+    assert FakeGateway.received[-1][0] == "/api/books/staging"
+
+
+def test_push_no_calibre_passes_keep_spacing(gateway, tmp_path, capsys, monkeypatch):
+    (tmp_path / "poem.epub").write_bytes(b"PK")
+    seen = {}
+
+    def fake_optimize_only(src, out, keep_spacing=False):
+        seen["keep_spacing"] = keep_spacing
+        out.write_bytes(b"PK")
+        return out
+
+    monkeypatch.setattr(cb, "has_calibre", lambda: False)
+    monkeypatch.setattr(cb, "optimize_only", fake_optimize_only)
+    monkeypatch.setattr(push, "_gate", lambda out, args: None)
+    FakeGateway.received.clear()
+    rc, _ = run(["push", "--no-calibre", "--keep-spacing", str(tmp_path / "poem.epub")], gateway, capsys)
+    assert rc == 0 and seen["keep_spacing"] is True
+
+
+def test_calibre_bridge_epub_optimize_bin_resolution(monkeypatch, tmp_path):
+    """定位优先级：WASH_OPTIMIZE_BIN 覆盖 > PATH > 仓库内 target/release/epub-optimize > 找不到返回 None。"""
+    monkeypatch.delenv("WASH_OPTIMIZE_BIN", raising=False)
+    monkeypatch.setattr(cb.shutil, "which", lambda *a, **kw: None)
+    monkeypatch.setattr(cb, "REPO_ROOT", tmp_path)
+    assert cb.epub_optimize_bin() is None, "PATH 没有、仓库内也没编译产物 → None"
+    local = tmp_path / "shelf" / "target" / "release" / "epub-optimize"
+    local.parent.mkdir(parents=True)
+    local.write_text("#!/bin/sh\n")
+    assert cb.epub_optimize_bin() == str(local)
+    monkeypatch.setattr(cb.shutil, "which", lambda *a, **kw: "/usr/local/bin/epub-optimize")
+    assert cb.epub_optimize_bin() == "/usr/local/bin/epub-optimize", "PATH 优先于仓库内产物"
+    monkeypatch.setenv("WASH_OPTIMIZE_BIN", "/custom/epub-optimize")
+    assert cb.epub_optimize_bin() == "/custom/epub-optimize", "环境变量优先级最高"
+
+
 def test_push_no_reflow_raw_to_staging(gateway, tmp_path, capsys, monkeypatch):
     pdf = tmp_path / "p.pdf"
     pdf.write_bytes(b"%PDF raw")
