@@ -51,8 +51,14 @@ pub fn set_qol(paths: &Paths, req: &mut Request<'_>) -> ApiResult {
     Ok(status(paths))
 }
 
-/// `POST /api/enhance/battop/{start|stop}`。
-pub fn battop_toggle(_paths: &Paths, action: &str) -> ApiResult {
+/// `POST /api/enhance/battop/{start|stop}`。battop 不在服务注册表里（独立 systemd unit，不走
+/// `manage::MODULES`），启停不会触发 `events::Hub` 现成的"注册表目录 inotify → manage 事件"那条
+/// 自动通路——这里手动 `publish`，复用同一个 "manage" area，前端 `es.onmessage` 的 tab 集合比较
+/// 顺便把 `battop.running` 拼进 key 里（见 app.js），运行态变化会跟服务启停一样触发整页重载，
+/// 独立顶层「电池刺客」标签页才能"跑起来才出现、停了就消失"（2026-09-10 用户纠正：原来固定常显，
+/// 跟字体/KOReader/壁纸/笔记这些服务 tab"运行才有标签页"的既有约定不一致）。
+pub fn battop_toggle(hub: &crate::events::Hub, action: &str) -> ApiResult {
     battop::toggle(action).map_err(ApiError::bad)?;
+    hub.bus.publish("manage", "battop");
     Ok(Reply::ok(&serde_json::json!({"ok": true})))
 }
