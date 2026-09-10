@@ -79,7 +79,7 @@
 ## 架构：挂书架网关的 loopback 服务
 
 ```
-浏览器 ──► shelf-gateway :8778 ──/api/<seg>/*──┬── ink-serve 127.0.0.1:8795 ──fswatch──► ~/.local/share/remarkable/xochitl（只读）
+浏览器 ──► shelf-gateway :443（2026-09-10 前是 :8778）──/api/<seg>/*──┬── ink-serve 127.0.0.1:8795 ──fswatch──► ~/.local/share/remarkable/xochitl（只读）
                  「笔记」tab（note-serve 注册）  ├── transcribe-serve :8796 ──订阅 ink /events──► DashScope（设备 WiFi 直连）
                  「管理」tab 模型管理卡片        ├── mind-serve :8797（纯被动，无订阅）──► DashScope（设备 WiFi 直连）
                  /api/events（area=notes）      ├── note-serve :8798 ──► xochitl /upload + vault/ 落盘

@@ -219,6 +219,7 @@ speed_ratio = 1 − clamp((len−len_low)/(len_high−len_low),0,1) × (1−effe
 - 四个 hook：`FUN_00f47530`（书法笔专属几何生成器，笔尖角度+提按效果生效）、`FUN_00f4c8d0`（钢笔/铅笔/马克笔等日常工具的几何生成器，同样两个效果生效，覆盖面是前者的近 5 倍）、`FUN_00f3f9d0`（分派诊断，纯只读，留着排查用）——四个 hook 各自独立 install，找不到目标只跳过自己，不拖累其它 hook
 - `reading-qol.json` 新增键：`hwStrokeWidthFactor`（整体缩放，默认 1.0）、`hwStrokeNibAngleDeg`（笔尖角度，默认 45°）、`hwStrokeNibMinRatio`（笔尖角度效果强度，默认 1.0=关闭）、`hwStrokeNibWidthLow`/`hwStrokeNibWidthHigh`（宽度渐变阈值，两个效果共用）、`hwStrokeSpeedMinRatio`（提按/速度效果强度，默认 1.0=关闭）、`hwStrokeSpeedLenLow`/`hwStrokeSpeedLenHigh`（速度渐变阈值）
 - 真机验证过：日志数值合理性、`factor` 缩放真实改变笔迹粗细（截图确认）、`hl-snap` 共存不冲突、两个效果的强度按宽度自动调节（细笔画自动趋近关闭）、速度效果方向正确（真机数据验证 `len` 与 `speed_ratio` 负相关）、书法笔原生方向效果不是我们引入的、`FUN_00f4c8d0` 真机命中 10033 次覆盖多种日常工具
+- **网页开关**（2026-09-10）：`shelf` 网页「管理→实验室」有一个纯网页层派生开关——开=把 `hwStrokeNibMinRatio`/`hwStrokeSpeedMinRatio` 都写 `0.6`，关=都写 `1.0`，不碰角度/宽度/速度阈值那几个精调字段（留给手改 `reading-qol.json`）。不需要重新编译部署这个 `.so`，纯改配置文件。细节见 `shelf/docs/reMarkable书架白皮书.md` §03ak。
 
 ## 下一步（没做，真要做需要更多真机验证/静态分析）
 
