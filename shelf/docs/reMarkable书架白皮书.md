@@ -699,6 +699,20 @@ book→「母版库 / 原生投递」、weread→「微信读书（内容源，�
 
 **真机验证（比 §03ae 那轮更进一步，但仍有边界）**：`sh build.sh` + `SHELF_NO_BUILD=1 sh deploy.sh 10.11.99.1` 部署；`curl` 拉取真机上实际 served 的 `zh-CN.json`/`en-US.json`（各 437 key，集合完全一致，抽查若干条翻译内容正确）+ 真机首页 HTML；写脚本把首页 HTML 里全部 416 处字面量 `T('key')` 引用跟真机 served 的 `zh-CN.json` 交叉核对，**零缺失**——这确认的是"部署到设备上的这份 app.js 里，每一个翻译引用在设备实际提供的语言包里都能查到对应内容"，比本地文件自查更进一步（排除了部署/`include_str!` 编译环节出岔子的可能）。**没做的部分**：跟 §03ae 一样，浏览器里真正打开语言切换器、人眼确认文案切成英文后的排版/换行/组件对齐效果——这次做到的是"数据链路+内容对照 100% 确认"，视觉渲染这一步仍待人眼确认，这条缺口跟着 §03ae 一起挪到 §05，不重复开一条。
 
+## 03ao｜`shelf push --no-calibre`：纯 EPUB 优化、跳过 Calibre（2026-09-10）
+
+用户问"我们是不是缺失一个单纯 EPUB 优化不转格式的逻辑"。先核实现状而不是直接动手：**核心能力本来就不缺**——`bookconv::optimize::optimize_epub_with` 是唯一的纯 EPUB→EPUB 优化实现，已经被两处调用且强制门控只收 EPUB：设备网页「母版库→优化」按钮（`book-serve::Staging::optimize`，非 EPUB 直接 400）、独立 CLI 二进制 `epub-optimize`（用法固定"输入.epub 输出.epub"，无任何格式转换参数）。真正缺的是**host `shelf push` 这条 CLI 没有暴露"跳过 Calibre、只跑 epub-optimize"的入口**——`push.plan()` 对 EPUB 输入原来只有两条路：有 Calibre 就必然先跑 `ebook-convert` 深洗再叠加 `epub-optimize`（两步捆死）；`--no-optimize` 则两步都不跑。没有 Calibre 装机时甚至连"只跑我们自己的 epub-optimize"都拿不到，直接掉进"什么优化都没有"。
+
+用户确认要补（`AskUserQuestion`，同时要求"也需要洗书"——即新开关不能只是 `epub-optimize --no-wash`「只优化不清洗」那档，要包含 `optimize_epub_with` 自带的清洗层，对应网页「清洗＋优化」默认档）。
+
+**实现**：`calibre_bridge.py` 新增 `epub_optimize_bin()`（定位二进制：`WASH_OPTIMIZE_BIN` 环境变量覆盖——跟 `wash_epub.sh` 认的是同一个变量名，两条路径共用一个"在哪找"的旋钮 → PATH → 仓库内 `shelf/target/release/epub-optimize`）+ `optimize_only(src, out, keep_spacing)`（直接调二进制，不经 shell 脚本，默认走清洗+优化，`keep_spacing=True` 对应「清洗但保留段距」档）。`push.py` 新增 `--no-calibre` 参数 + `optimize_only_prepare()` + `plan()` 第三条路 `optimize-only`：EPUB 输入直接调 `optimize_only`（产物仍过 `_gate` 体检）；非 EPUB 没法只靠这条路径转格式，退化成 `raw`（原样传，不是报错，也不静默切回 Calibre）；`--no-calibre` 判在漫画分支之前短路——用户明确要求不用 Calibre，AZW3/EPUB 漫画解包成 CBZ 本来就依赖它，这时不该偷偷还是用上。
+
+**跟已有代码的关系**：`optimize_only` 不是重新实现，是 `wash_epub.sh` 末步那个"叠加设备优化器"逻辑的独立 Python 化——`optimize_epub_with` 内部本来就含伪 DRM 剥离/CSS 锁剥离/边距段距归零，唯一没有的是 `wash_epub.sh` 专属的"读 `ebook-meta` 按 series 重命名"那部分（那属于 Calibre 元数据能力，不属于"优化"）。
+
+**离线验证**：`push.py`/`calibre_bridge.py` 新增 8 个单测（`plan()` 三种场景：EPUB 走 optimize-only 且不受 Calibre 装没装影响、非 EPUB 退化 raw、漫画 EPUB 也退化 optimize-only 不偷用 Calibre；端到端确认 `cb.wash` 不被调用；`--keep-spacing` 透传；`epub_optimize_bin()` 四级定位优先级）；`uv run pytest reading/tests knowledge/pkm-semantic/proto shelf/host/tests`（CI 原命令）271 个全绿。
+
+**真机验证边界**：这是纯 host CLI 改动，不碰设备行为，不需要真机验证——但仍然做了"非 mock 的真实调用"验证（不满足于只测 monkeypatch）：`cargo build --release -p bookconv --bin epub-optimize` 编出真二进制，拿 `reading/.cache/publish/` 下一份真实缓存 EPUB 直接跑 `epub-optimize`（真产物、真字节数变化）+ `cb.optimize_only()` 真调用（非 mock）+ `shelf push --no-calibre --dry-run` 对 `.epub`/`.azw3` 两种输入的路由打印确认符合设计。同一个 `optimize_epub_with` 函数本身早就随设备网页「优化」按钮真机验证过，这次只是新开了一个不经 Calibre 的调用入口，不重复走真机流程。
+
 ## 04｜踩坑
 
 - **挪代码时顺手带走的文案不代表内容还准（2026-09-10 用户真机测试逮到）**：§03ak 把「系统增强」卡片原样搬进「实验室」，battop"未装"提示里的路径 `misc/battery-audit/battop/install.sh` 是 §03aj 写的，那时候还没意识到这个路径已经在更早的 §03b 里 `git mv` 到 `enhance/battop/` 了——挪动/重构代码只挪了位置没重新核对内容，字面拷贝把旧错误也一起搬了过去，还搬了一次都没发现（两轮都没查）。**教训**：移动/复用一段包含具体路径/命令/版本号的文案时，顺手核对一遍还准不准，不能假设"没人提过所以肯定没问题"——原样复制不代表内容仍然正确，只代表格式没错。

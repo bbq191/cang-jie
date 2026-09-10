@@ -155,7 +155,7 @@ cargo build --release -p bookconv --bin epub-optimize   # host 侧 push 洗书�
 
 ```sh
 shelf/host/bin/shelf services | status | doctor
-shelf/host/bin/shelf push 论文.pdf 书.epub [--to-pdf] [--no-optimize] [--keep-spacing] [--no-reflow] [--no-split] [--skip-check] [-n] [--wait[=秒]] [--no-eink-gray] [--manga-ltr] [--no-comic-native]
+shelf/host/bin/shelf push 论文.pdf 书.epub [--to-pdf] [--no-optimize] [--no-calibre] [--keep-spacing] [--no-reflow] [--no-split] [--skip-check] [-n] [--wait[=秒]] [--no-eink-gray] [--manga-ltr] [--no-comic-native]
 #   漫画缺省过省刷新档：先跨页拆分（东立扫描类两页拼一图，识别装订缝拆开，默认从右往左、--manga-ltr 改从左往右）+ 白边裁切放大，
 #   再 CBZ 逐页缩到屏盒、黑白页转 16 灰抖动 4-bit PNG（轻波形，用户目视翻页明显少闪）、彩页保色（《阿拉蕾①》1092 页 171MB→108MB，16 灰 1085/保色 7）；
 #   灰阶 CBZ 体积估算转 PDF 后仍在设备原生上传上限内，顺带生成一份 PDF 给「投入原生书库」选项（--no-comic-native 关掉）；--no-eink-gray 要原图（连带不做跨页拆分/白边裁切）
@@ -166,6 +166,8 @@ shelf/host/bin/shelf push 论文.pdf 书.epub [--to-pdf] [--no-optimize] [--keep
    · **漫画**（AZW3/MOBI/EPUB 里几乎全是整页图，`comic.py` 自动判）→ 转成 **CBZ** 进母版库，网页点「加入 KOReader」；**默认不投原生，体积够小时会顺带出一份 PDF 给「投入原生书库」选项，超限的仍只出 CBZ、绝不分卷**（§03ad，2026-09-08）。
      `--comic / --no-comic` 覆盖判断；CBZ 输入原样入库。
    · `--no-optimize` 或无 Calibre → 原样传母版库（网页里可再点优化）。
+   · `--no-calibre`：**EPUB 输入**只跑 `epub-optimize`（跟网页「母版库→优化」按钮/`wash_epub.sh` 末步同一个函数），
+     跳过 `ebook-convert`，不用装 Calibre（`--keep-spacing` 同样生效）；非 EPUB 没法只靠这条路径转格式，一律原样传。
 shelf font add 字体.ttf | ls | rm <家族名>                # 只装原生阅读器：~/.local/share/fonts + fc-cache + fonts.json + 中文回退链
 shelf wallpaper add 图.jpg [--activate] | ls | set <name> | mode sequential|random|fixed | rm <name>
 shelf koreader pull | diff | sync [-n] [--fonts] [--dicts]   # 配置即代码（Lua 合并在设备端跑）
@@ -207,3 +209,4 @@ shelf passwd [--new …]
 | 实验室 tab + 导入md改文件上传 | 「实验室」二级 tab（CJK 手写笔迹优化此时已有代码地基，接成真开关；battop 卡片下移；导入md文档可见性开关）；「入库」拆三卡；笔记「导入」改名「导入 md 文档」+ textarea 改文件选择 | ✅ 真机通（§03ak/§03al，2026-09-10）：curl 全链路验证+用户真机写字确认+battop 真机实装完整闭环 |
 | 电池刺客/标题/端口三连调 | 电池刺客最终落点「管理→电池刺客」二级 tab（耗电情况/唤醒源两个三级 tab，各自时间窗+按应用/按进程下拉，内容包 `.card` 统一风格）；「实验室」只留开关；总标题「书架」（内部项目名不变）→ 网页展示改「秘密花园」🌿；网关端口 8778→443（不用带端口号） | ✅ 真机通（§03am，2026-09-10）：curl 确认新标题/图标/443 端口/summary 数据端点全部生效，浏览器交互细节未经人眼确认（如实标注） |
 | 正文全量 i18n + 两处小样式修复 | 传书/笔记/其他/管理四个 tab 全部正文（含 confirm/alert/badge title 深度嵌套文案）抽 key，437 个 `zh-CN`/`en-US` 对照 key（§03ae 架子的 13 个 key 之外全部补完）；模型管理子标签拆卡统一风格；模型卡「最近错误」行长文本溢出修复（`overflow-wrap:anywhere`） | ✅ 真机验证数据链路+内容对照（§03an，2026-09-10）：curl 交叉核对真机 served 语言包与部署 app.js 全部 416 处 `T()` 引用零缺失，浏览器人眼渲染确认未做（如实标注，延续 §03ae 缺口） |
+| `shelf push --no-calibre` | host CLI 补"跳过 Calibre、只跑 epub-optimize"这条路（EPUB 输入直调跟网页「优化」按钮同一个函数，`--keep-spacing` 同样生效）；核实后纯优化能力本来不缺（设备按钮+独立 `epub-optimize` 二进制早就有），缺的只是 `shelf push` 没暴露这个入口 | ✅ 离线全绿（§03ao，2026-09-10）：8 个新单测 + CI 原命令 271 个全绿；纯 host 改动不碰设备行为，另做了非 mock 真调用验证（真二进制+真 EPUB+真 CLI dry-run） |
