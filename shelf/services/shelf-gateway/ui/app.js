@@ -904,10 +904,12 @@ function renderManage(sec){sec.innerHTML=`
       <div class="row"><button class="btn" id="allon">全部开启</button><button class="btn" id="alloff">全部关闭（留网关）</button></div>
       <ul class="list" id="mods"></ul></div>
   </div>
+  <!-- 意图卡（h2+lead）单独一张、跟下面的模型卡是兄弟不是父子（2026-09-10 用户要求跟「管理」页
+       其它子标签统一风格——「传书·入库」「引导·基石」都是这个样子：一张说明卡起头，后面各功能
+       各自一张卡平铺；改之前这里是说明卡把 #modelcards 包在里面，卡中卡，跟别处不一样）。 -->
   <div class="subpanel">
-    <div class="card"><p class="lead">笔记线转写批注（视觉模型）和问 AI（文字模型）用的云端模型。选预置组合就行，不用自己填服务地址；某类型没配 key，对应功能就用不了。</p>
-      <div id="modelcards" style="display:flex;flex-direction:column;gap:1em"></div>
-    </div>
+    <div class="card"><h2>模型管理</h2><p class="lead">笔记线转写批注（视觉模型）和问 AI（文字模型）用的云端模型。选预置组合就行，不用自己填服务地址；某类型没配 key，对应功能就用不了。</p></div>
+    <div id="modelcards" style="display:flex;flex-direction:column;gap:1em"></div>
   </div>
   <div class="subpanel">
     <div class="card"><h3 style="margin-top:0">CJK 画线吸附</h3>
