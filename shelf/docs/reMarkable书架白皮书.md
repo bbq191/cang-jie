@@ -670,7 +670,7 @@ book→「母版库 / 原生投递」、weread→「微信读书（内容源，�
 
 **真机验证**：`cargo build --workspace`/`cargo test -p shelf-gateway`（16 个）全绿，`node --check app.js` 语法过；交叉编译全 workspace（6 个 crate）+ `deploy.sh` 走完整备份→部署→健康检查（9 服务 active，`shelf-gateway` MainPID 变化、`NRestarts=0`）；curl 确认新标题/图标/443 端口都生效（`<title>秘密花园</title>`、`<link rel="icon">` 内容正确、`/api/services` 里 `shelf-gateway` 的 `port:443`、旧 8778 连接被拒）。**浏览器里"点开管理→电池刺客二级tab→耗电情况/唤醒源两个三级tab切换是否顺畅"这个纯交互细节，跟 §03al 那次「其他」tab 嵌套一样，没有拿到用户肉眼确认**——理论分析 + curl 数据层验证都过了，按项目纪律仍要如实标注这条缺口。
 
-**同一天追加两条小调整**：① 「耗电情况」的"按应用/按进程"改成下拉选择（`<select>`），不再两份列表一起摆——下拉放在时间窗 `subnav` 外面（跨时间窗持续存在，不随点时间窗按钮重建），切下拉时用新增的 `battopActiveWindowIdx()` 读一遍当前选中的是哪个时间窗，`renderBattopWindowed()` 也跟着加了 `activeIdx` 参数，重画列表内容时把原来选的时间窗原样传回去，不会因为切了下拉就把时间窗选择弹回"今日"。② 「电池刺客」二级 tab 挪到「实验室」前面（按钮+对应 subpanel 一起挪，下标 `manageNav.children[3]` 跟着改），纯 DOM 顺序调整。
+**同一天追加两条小调整**：① 「耗电情况」的"按应用/按进程"改成下拉选择（`<select>`），不再两份列表一起摆——下拉放在时间窗 `subnav` 外面（跨时间窗持续存在，不随点时间窗按钮重建），切下拉时用新增的 `battopActiveWindowIdx()` 读一遍当前选中的是哪个时间窗，`renderBattopWindowed()` 也跟着加了 `activeIdx` 参数，重画列表内容时把原来选的时间窗原样传回去，不会因为切了下拉就把时间窗选择弹回"今日"。② 「电池刺客」二级 tab 挪到「实验室」前面（按钮+对应 subpanel 一起挪，下标 `manageNav.children[3]` 跟着改），纯 DOM 顺序调整。③ 用户指出电池刺客详情页跟其它页面风格不统一——之前 `renderBattopDetail` 的内容是"裸"的（直接躺在 subpanel 里，没有 `.card` 包边框/底色/阴影），补齐：`renderBattopWindowed` 每个时间窗的内容包一层 `.card`（跟 KOReader 字体/词典两个子标签各自一张卡同一个规矩）；耗电情况/唤醒源各自开头加一张说明卡（标题+一句话介绍，跟「系统增强」那些卡片一个语言）——"按应用/按进程"下拉放进耗电情况这张说明卡里（下拉要跨时间窗持续存在，不能塞进每次切时间窗都可能重画的 `renderBattopWindowed` 内容里，这条边界这次顺手理清楚，之前是含糊的）；"还没有采样数据"的空状态提示也包了 `.card`。
 
 ## 04｜踩坑
 
