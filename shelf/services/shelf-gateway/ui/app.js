@@ -727,7 +727,7 @@ function mountModelPanel(root,seg,title,icon,showAuto){
     </div>
     <label class="field">各模型用量/花费</label>
     <div class="tblwrap" data-usagewrap><table class="cmp"><thead><tr><th>模型</th><th>调用</th><th>token（入/出）</th><th>花费</th></tr></thead><tbody data-usagebody></tbody></table></div>
-    <div class="small" data-stat style="margin-top:.3em"></div>`;
+    <div class="small" data-stat style="margin-top:.3em;overflow-wrap:anywhere"></div>`;
   root.appendChild(card);
   const vendorSel=card.querySelector('[data-vendor]'),modelBox=card.querySelector('[data-modelbox]'),presetSel=card.querySelector('[data-preset]'),customBox=card.querySelector('[data-custom]'),modelInp=card.querySelector('[data-model]'),urlInp=card.querySelector('[data-url]'),keyRow=card.querySelector('[data-keyrow]'),stat=card.querySelector('[data-stat]'),autoBox=card.querySelector('[data-auto]'),priceIn=card.querySelector('[data-pricein]'),priceOut=card.querySelector('[data-priceout]'),usageBody=card.querySelector('[data-usagebody]');
   const put=body=>j(`/api/${seg}/config`,{method:'PUT',body:JSON.stringify(body)});
