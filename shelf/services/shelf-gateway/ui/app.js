@@ -1,5 +1,8 @@
 const $=(s,r=document)=>r.querySelector(s);
 const fmtB=n=>n>1048576?(n/1048576).toFixed(1)+' MB':n>1024?(n/1024).toFixed(0)+' KB':n+' B';
+// 小徽章：本来只在 renderManage 里用，现在电池刺客卡片要在「实验室」子标签和独立顶层标签页
+// 两处挂载（见 mountBattopCard），提到文件作用域，两处共用同一份，不重复定义。
+const badge=(t,ok)=>`<span class="badge ${ok?'on':'off'}">${t}</span>`;
 /* 停一会儿再继续：用在"先弹出一条状态文字，再触发会重画掉这条文字的动作"这种场景——不等的话状态
    文字刚显示就被紧跟着的重画冲掉，用户根本来不及看见（点重转/生成笔记本弹出消耗那次踩过的坑）。 */
 const wait=ms=>new Promise(res=>setTimeout(res,ms));
@@ -322,7 +325,7 @@ function renderNotes(sec){sec.innerHTML=`
     <div class="row"><span class="small">书</span><select id="nbook" style="flex:1;min-width:10em"></select><button class="btn" id="nrescan" title="清掉页记录，整本重新摄取">重扫</button></div>
     <div class="row small" id="nsum"></div>
   </div>
-  <div class="subnav"><button class="on">👀 浏览</button><button>✎ 整理</button><button>🗑 回收站</button><button>📝 导入</button></div>
+  <div class="subnav" id="nsubnav"><button class="on">👀 浏览</button><button>✎ 整理</button><button>🗑 回收站</button><button hidden>📝 导入 md 文档</button></div>
   <div class="subpanel on" id="nbrowse"></div>
   <div class="subpanel" id="norganize">
     <div class="subnav" id="nexporttabs"><button class="on" data-etab="pending">未导出</button><button data-etab="synced">已导出</button></div>
@@ -336,11 +339,12 @@ function renderNotes(sec){sec.innerHTML=`
       <div id="ntrashlist"></div>
     </div>
   </div>
-  <div class="subpanel" id="nimport">
+  <div class="subpanel" id="nimport" hidden>
     <div class="card">
-      <p class="lead">跟上面的「浏览/整理」是两条独立的路：不经条目库，把一段 markdown 直接转成一份新的设备笔记本文档，落在当前选中书本自己的设备文件夹里。标题/列表/待办会转成 xochitl 原生样式；行内加粗/斜体只剥符号不生效（打字样式是整段的，做不到半句加粗）；已勾选的待办写不出勾选态，会落地成未勾选。</p>
-      <div class="row"><span class="small">文档名</span><input type="text" id="nimporttitle" placeholder="设备上显示的笔记本名字" style="flex:1;min-width:12em"></div>
-      <div class="row"><textarea class="entry-text" id="nimportmd" rows="10" placeholder="# 标题&#10;&#10;- 要点一&#10;- 要点二&#10;&#10;- [ ] 待办事项"></textarea></div>
+      <p class="lead">跟上面的「浏览/整理」是两条独立的路：不经条目库，把一份 .md 文件直接转成一份新的设备笔记本文档，落在当前选中书本自己的设备文件夹里。标题/列表/待办会转成 xochitl 原生样式；行内加粗/斜体只剥符号不生效（打字样式是整段的，做不到半句加粗）；已勾选的待办写不出勾选态，会落地成未勾选。</p>
+      <div class="row"><span class="small">文档名</span><input type="text" id="nimporttitle" placeholder="设备上显示的笔记本名字（不填就用文件名）" style="flex:1;min-width:12em"></div>
+      <div class="row"><input type="file" id="nimportfile" accept=".md,.markdown"></div>
+      <div class="row small" id="nimportfilename"></div>
       <div class="row"><button class="btn" id="nimportbtn">生成到设备</button><span class="small" id="nimportstat"></span></div>
     </div>
   </div>`;
@@ -401,21 +405,34 @@ function renderNotes(sec){sec.innerHTML=`
         <button class="btn" data-restore>恢复</button>`;
       row.querySelector('[data-restore]').onclick=async()=>{if(!(await restoreOne(e.id)))return;await reloadBook(renderTrash,renderBrowse,renderBook)};
       trashList.appendChild(row)})};
-  /* 「导入」：单篇 markdown → 一份新设备笔记本文档，独立于条目库（不经浏览/整理/回收站那条状态机，
-     见 note-serve::publish::import_markdown）。用户明确要求别塞进「整理」——那边是审阅真被要求转
-     笔记的条目，跟"拿一段现成 markdown 直接生成一份新笔记"是两件不同的事，各自一个入口。 */
-  const importTitle=$('#nimporttitle',sec),importMd=$('#nimportmd',sec),importBtn=$('#nimportbtn',sec),importStat=$('#nimportstat',sec);
-  const renderImport=()=>{const ready=!!book;importTitle.disabled=importMd.disabled=importBtn.disabled=!ready;
+  /* 「导入 md 文档」：单篇 markdown → 一份新设备笔记本文档，独立于条目库（不经浏览/整理/回收站那条
+     状态机，见 note-serve::publish::import_markdown）。用户明确要求别塞进「整理」——那边是审阅真被
+     要求转笔记的条目，跟"拿一份现成 .md 文件直接生成一份新笔记"是两件不同的事，各自一个入口。
+     2026-09-10 从"文本框打字"改成"选一个 .md 文件"：文件内容用 FileReader 在浏览器里读成字符串，
+     继续走现有的 JSON POST（{title,markdown}）——后端 import_markdown() 本来就是吃一个纯字符串，
+     用户角度"选/拖文件"和"打字"的体验差异已经达到了，没必要为了这层不可见的传输差异去碰
+     note-serve 的路由/multipart 解析，多一层没必要的风险面。 */
+  const importTitle=$('#nimporttitle',sec),importFile=$('#nimportfile',sec),importFilename=$('#nimportfilename',sec),importBtn=$('#nimportbtn',sec),importStat=$('#nimportstat',sec);
+  let importFileContent='';
+  const renderImport=()=>{const ready=!!book;importTitle.disabled=importFile.disabled=importBtn.disabled=!ready;
     importStat.textContent=ready?'':'先在上面选一本书。'};
+  importFile.onchange=async()=>{
+    const f=importFile.files[0];
+    if(!f){importFileContent='';importFilename.textContent='';return}
+    importFileContent=await f.text();
+    importFilename.textContent=`${f.name}（${fmtB(f.size)}）`;
+    if(!importTitle.value.trim())importTitle.value=f.name.replace(/\.(md|markdown)$/i,''); // 顺手拿文件名当默认标题，仍可编辑
+  };
   importBtn.onclick=async()=>{if(!book)return;
-    const title=importTitle.value.trim(),markdown=importMd.value;
+    const title=importTitle.value.trim()||(importFile.files[0]?importFile.files[0].name.replace(/\.(md|markdown)$/i,''):'');
+    const markdown=importFileContent;
     if(!title){alert('给这份笔记起个名字（会是设备上的文档名）');return}
-    if(!markdown.trim()){alert('markdown 内容是空的');return}
+    if(!markdown.trim()){alert('先选一个 .md 文件');return}
     importBtn.disabled=true;importStat.textContent='生成中…';
     const r=await postJ(`/api/notes/books/${encodeURIComponent(book.uuid)}/import-md`,{title,markdown}); // 失败 postJ 已经 alert 过
     importBtn.disabled=false;
     if(r.ok===false){importStat.textContent='';return}
-    importStat.textContent=`✓ 已生成：${r.visibleName}`;importMd.value=''};
+    importStat.textContent=`✓ 已生成：${r.visibleName}`;importFile.value='';importFileContent='';importFilename.textContent=''};
   $('#nrestoreall',sec).onclick=async()=>{if(!book)return;
     const items=(book.entries||[]).filter(e=>TRASH_STATUSES.includes(e.status));
     if(!items.length){alert('回收站是空的，没什么可恢复');return}
@@ -635,8 +652,20 @@ function renderNotes(sec){sec.innerHTML=`
   exportTabsEl.querySelectorAll('button').forEach(b=>b.onclick=()=>{if(exportTab===b.dataset.etab)return;exportTab=b.dataset.etab;selectedChapter=null;renderBook()});
   const loadBook=async()=>{await flushPendingText();selectedChapter=null;if(!sel.value){book=null;await refreshSync();renderBrowse();await renderBook();renderTrash();renderImport();return}book=await j(`/api/ink/books/${encodeURIComponent(sel.value)}`);await refreshSync();renderBrowse();await renderBook();renderTrash();renderImport()};
   sel.onchange=loadBook;
+  /* 「导入 md 文档」子标签的显示/隐藏跟着「管理→实验室」的 notesImportMdEnabled 开关走——用
+     hidden 属性而不是从 DOM 移除（subtabs() 是纯位置下标配对，移除会让后面的子标签全部错位）。
+     没有 SSE 推送这个开关的变化，靠 sec.refresh（笔记 tab 每次从别的 tab 切回来都会调，见文件
+     末尾 IIFE 里 addTab 的点击处理）顺带每次重新拉一次状态，跟这个 app 里"tab 记脏、切回时刷新"
+     的既有设计一致。 */
+  const importNavBtn=$('#nsubnav',sec).children[3],importPanel=$('#nimport',sec);
+  const syncImportVisible=async()=>{
+    const r=await j('/api/enhance/status');
+    const show=r.ok!==false&&!!r.notesImportMdEnabled;
+    if(!show&&importNavBtn.classList.contains('on'))$('#nsubnav',sec).children[0].click(); // 正停在「导入」时先切回「浏览」，避免 hidden+on 类同时存在
+    importNavBtn.hidden=!show;importPanel.hidden=!show;
+  };
   const refresh=async()=>{const d=await j('/api/ink/books');const cur=sel.value;sel.innerHTML=(d.items||[]).map(b=>`<option value="${b.uuid}">${b.title}（${b.entries}）</option>`).join('')||'<option value="">（还没有勾画过的书）</option>';
-    if(cur&&[...sel.options].some(o=>o.value===cur))sel.value=cur;await loadBook()};
+    if(cur&&[...sel.options].some(o=>o.value===cur))sel.value=cur;await loadBook();await syncImportVisible()};
   refresh();sec.refresh=refresh;subtabs(sec)}
 
 const PROVIDER_NAMES={dashscope:'DashScope（阿里云百炼）',openai:'OpenAI',gemini:'Google Gemini',deepseek:'DeepSeek'};
@@ -720,12 +749,47 @@ function mountModelPanel(root,seg,title,icon,showAuto){
   return refresh;
 }
 
+/* 电池刺客（battop）状态卡片：状态展示+启停按钮，挂进任意 container。「实验室」子标签和独立顶层
+   「电池刺客」标签页（见下 renderBattop）两处都要用同一份内容——各自独立挂载、各自独立 refresh
+   （两处不共享内存态，切换/刷新各自拉一遍 /api/enhance/status，是这个 app 里 tab 之间一贯的模式，
+   不是新行为）。返回 refresh() 给调用方自己决定何时/多频繁调用（sec.refresh 挂钩）。 */
+function mountBattopCard(container){
+  container.innerHTML=`<h3 style="margin-top:0">电池刺客（battop）</h3>
+    <p class="small">电量异常排查用的采样诊断进程，日常用不到。2026-08 出过一次 cgroup 死锁死机，已经修复为常驻低频采样（不再靠反复重启触发），这里的开关只是一次性启停，不会重现那次事故的触发条件。</p>
+    <div class="kv small" data-kv>检测中…</div>
+    <div class="row"><button class="btn" data-btn disabled>…</button></div>`;
+  const kv=container.querySelector('[data-kv]'),btn=container.querySelector('[data-btn]');
+  let st=null;
+  const refresh=async()=>{const r=await j('/api/enhance/status');if(r.ok===false)return;
+    st=r.battop||{};
+    kv.innerHTML=!st.installed
+      ?`<b>状态</b><span>${badge('未装',false)} <span class="small">见 enhance/battop/install.sh 手动装（这次网页只控制已装好的，不提供从网页装）</span></span>`
+      :`<b>状态</b><span>${badge(st.running?'运行中':'已装未开',!!st.running)}</span><b>最近采样</b><span>${st.lastSampleAt?new Date(st.lastSampleAt*1000).toLocaleString():'（还没有采样数据）'}</span>`;
+    btn.textContent=st.running?'停止':'启动';btn.disabled=!st.installed};
+  btn.onclick=async()=>{if(!st)return;btn.disabled=true;
+    const r=await j(`/api/enhance/battop/${st.running?'stop':'start'}`,{method:'POST'});
+    if(r.ok===false)alert(r.message||'操作失败');
+    await refresh()};
+  refresh();
+  return refresh;
+}
+
+/* 独立顶层「电池刺客」标签页（2026-09-10）：battop 不是 /api/services 注册表里的 service
+   （独立 systemd unit，enhance/battop/，不走服务反代），走「传书」「管理」那种手动固定 addTab
+   注册，不能靠 svcs.forEach 动态生成。内容跟「实验室」里那张卡片是同一份（mountBattopCard），
+   这次只搬现有状态展示，不解析 summary.json 里的详细耗电数据（那是独立的后续任务）。 */
+function renderBattop(sec){sec.innerHTML='<div class="card" id="battopCard"></div>';
+  const refresh=mountBattopCard($('#battopCard',sec));
+  sec.refresh=refresh;}
+
 /* 管理台/引导（固定 tab，始终在——它是网关自身页面，不由服务注册表驱动） */
-/* 「管理」拆三个二级 tab（2026-09-09）：① 基石与模块（原来就有的引导/开关/卸载）② 模型管理
-   （原来挂在这页最下面，现在单独一屏，不用跟基石列表一起滚）③ 系统增强（新建，见下）。
+/* 「管理」拆四个二级 tab（2026-09-09 起三个，2026-09-10 加「实验室」）：① 基石与模块（原来就有的
+   引导/开关/卸载）② 模型管理（原来挂在这页最下面，现在单独一屏，不用跟基石列表一起滚）③ 系统增强
+   （只留真正"系统级"的开关，CJK 画线吸附）④ 实验室（还在打磨/覆盖面没到日常好用程度的功能，
+   CJK 手写笔迹优化+电池刺客+导入md文档可见性开关，从②搬过来）。
    shelf push 命令那张卡片已经搬到「传书」页「入库」子页——那才是它真正归属的地方（用户反馈）。 */
 function renderManage(sec){sec.innerHTML=`
-  <div class="subnav"><button class="on">🏗 基石与模块</button><button>🧠 模型管理</button><button>⚙️ 系统增强</button></div>
+  <div class="subnav"><button class="on">🏗 基石与模块</button><button>🧠 模型管理</button><button>⚙️ 系统增强</button><button>🧪 实验室</button></div>
   <div class="subpanel on">
     <div class="card"><h2>引导 · 基石</h2><p class="lead">书架的功能建在 xovi + appload 之上。先用桌面端 <b>reManager</b>（或设备上的 vellum）把基石装好，KOReader 走官方仓库自装，再回这里管理书架各功能。</p>
       <div class="kv small" id="found">检测中…</div>
@@ -759,14 +823,16 @@ function renderManage(sec){sec.innerHTML=`
     <div class="card"><h3 style="margin-top:0">CJK 画线吸附</h3>
       <p class="small">荧光笔划中文时精确吸附到词/行边界，不再"划一小段吸整行"。langhook 里的 C hook 进程内实时读这个开关，改了立即生效，不用重启任何东西；原生「设置」App「系统增强」页同一个开关，两边改哪边都算数。</p>
       <label class="toggle"><input type="checkbox" id="erHlSnap"> 开启（默认开）</label></div>
-    <div class="card"><h3 style="margin-top:0">CJK 手写笔迹优化 <span class="badge">未上线</span></h3>
-      <p class="small">设备手写笔锋按中文书写习惯（运笔粗细/顿挫）渲染优化——跟"划线摄取转写"那条 AI 识别管线无关，这里说的是笔画本身怎么画出来。目前这个功能<b>完全没有代码地基</b>：要做需要先反编译定位 xochitl 原生笔画渲染层，摸清楚有没有可写内存的 hook 点，是独立的逆向工程课题，不是包一层开关就能上线的。这里先占位，等真正立项、探路完成后再接后端。</p></div>
-    <div class="card"><h3 style="margin-top:0">电池刺客（battop）</h3>
-      <p class="small">电量异常排查用的采样诊断进程，日常用不到。2026-08 出过一次 cgroup 死锁死机，已经修复为常驻低频采样（不再靠反复重启触发），这里的开关只是一次性启停，不会重现那次事故的触发条件。</p>
-      <div class="kv small" id="erBattop">检测中…</div>
-      <div class="row"><button class="btn" id="erBattopBtn" disabled>…</button></div></div>
+  </div>
+  <div class="subpanel">
+    <div class="card"><h3 style="margin-top:0">CJK 手写笔迹优化</h3>
+      <p class="small">设备手写笔锋按运笔方向/快慢调整粗细（笔尖角度模型+提按速度代理两个效果叠加）——跟"划线摄取转写"那条 AI 识别管线无关，这里说的是笔画本身怎么画出来。<b>目前只在部分笔型（书法笔、马克笔一类）上真机验证过生效</b>，日常最常用的钢笔/铅笔量级工具还摸不到（虚函数动态分发，运行时目标未确认，见 <code>enhance/handwriting-stroke/README.md</code>「下一步」）。这个开关直接改 <code>reading-qol.json</code> 里两个强度阈值，改了下一笔立即生效，不用重启 xochitl。</p>
+      <label class="toggle"><input type="checkbox" id="labHwStroke"> 开启</label></div>
+    <div class="card" id="labBattopCard"></div>
+    <div class="card"><h3 style="margin-top:0">导入 md 文档</h3>
+      <p class="small">开启后「笔记」tab 才会出现「导入 md 文档」子标签（上传一个 .md 文件生成设备笔记本文档）。功能第一次上线，默认关——想用先在这里打开。</p>
+      <label class="toggle"><input type="checkbox" id="labImportMd"> 开启（默认关）</label></div>
   </div>`;
-  const badge=(t,ok)=>`<span class="badge ${ok?'on':'off'}">${t}</span>`;
   const mvRefresh=mountModelPanel($('#modelcards',sec),'transcribe','视觉模型（转写批注）','👁',true);
   const mtRefresh=mountModelPanel($('#modelcards',sec),'mind','文字模型（问 AI）','✎');
   const refresh=async()=>{
@@ -785,26 +851,25 @@ function renderManage(sec){sec.innerHTML=`
       li.append(left,right);ul.appendChild(li)});};
   $('#allon',sec).onclick=async()=>{const d=await j('/api/manage');for(const m of (d.modules||[]))if(m.installable&&m.installed&&!m.running)await j('/api/manage/'+m.seg+'/start',{method:'POST'});refresh()};
   $('#alloff',sec).onclick=async()=>{if(!confirm('关闭全部领域服务（网关保留）？'))return;const d=await j('/api/manage');for(const m of (d.modules||[]))if(m.installable&&m.installed&&m.running)await j('/api/manage/'+m.seg+'/stop',{method:'POST'});refresh()};
-  /* 系统增强（Track 3，2026-09-09）：CJK 画线吸附是真开关（写 reading-qol.json），battop 是真开关
-     （systemctl start/stop）；CJK 手写笔迹优化是纯占位卡片，没有对应端点（上面 innerHTML 里已经
-     写死说明文字，不需要 JS 逻辑）。 */
-  const hlBox=$('#erHlSnap',sec),battopKv=$('#erBattop',sec),battopBtn=$('#erBattopBtn',sec);
-  let battopState=null;
+  /* 系统增强/实验室（Track 3，2026-09-09；实验室 2026-09-10 加）：CJK 画线吸附/CJK 手写笔迹优化/
+     导入md文档可见性都是真开关（写 reading-qol.json，走同一个 /api/enhance/qol）；battop 卡片
+     挂载逻辑抽进 mountBattopCard（跟独立顶层「电池刺客」标签页共用，各自独立 refresh）。 */
+  const hlBox=$('#erHlSnap',sec),hwBox=$('#labHwStroke',sec),importMdBox=$('#labImportMd',sec);
+  const battopRefresh=mountBattopCard($('#labBattopCard',sec));
   const erRefresh=async()=>{const r=await j('/api/enhance/status');if(r.ok===false)return;
     hlBox.checked=!!r.hlSnapCjk;
-    battopState=r.battop||{};
-    const b=battopState;
-    battopKv.innerHTML=!b.installed
-      ?`<b>状态</b><span>${badge('未装',false)} <span class="small">见 misc/battery-audit/battop/install.sh 手动装（这次网页只控制已装好的，不提供从网页装）</span></span>`
-      :`<b>状态</b><span>${badge(b.running?'运行中':'已装未开',!!b.running)}</span><b>最近采样</b><span>${b.lastSampleAt?new Date(b.lastSampleAt*1000).toLocaleString():'（还没有采样数据）'}</span>`;
-    battopBtn.textContent=b.running?'停止':'启动';battopBtn.disabled=!b.installed};
+    hwBox.checked=!!r.hwStrokeEnabled;
+    importMdBox.checked=!!r.notesImportMdEnabled;
+    await battopRefresh()};
   hlBox.onchange=async()=>{const want=hlBox.checked;hlBox.disabled=true;
     const r=await j('/api/enhance/qol',{method:'PUT',body:JSON.stringify({hlSnapCjk:want})});
     hlBox.disabled=false;if(r.ok===false){alert(r.message||'保存失败');hlBox.checked=!want}};
-  battopBtn.onclick=async()=>{if(!battopState)return;battopBtn.disabled=true;
-    const r=await j(`/api/enhance/battop/${battopState.running?'stop':'start'}`,{method:'POST'});
-    if(r.ok===false)alert(r.message||'操作失败');
-    await erRefresh()};
+  hwBox.onchange=async()=>{const want=hwBox.checked;hwBox.disabled=true;
+    const r=await j('/api/enhance/qol',{method:'PUT',body:JSON.stringify({hwStrokeEnabled:want})});
+    hwBox.disabled=false;if(r.ok===false){alert(r.message||'保存失败');hwBox.checked=!want}};
+  importMdBox.onchange=async()=>{const want=importMdBox.checked;importMdBox.disabled=true;
+    const r=await j('/api/enhance/qol',{method:'PUT',body:JSON.stringify({notesImportMdEnabled:want})});
+    importMdBox.disabled=false;if(r.ok===false){alert(r.message||'保存失败');importMdBox.checked=!want}};
   refresh();erRefresh();sec.refresh=()=>{refresh();mvRefresh();mtRefresh();erRefresh()};subtabs(sec);}
 
 (async()=>{
@@ -827,6 +892,7 @@ function renderManage(sec){sec.innerHTML=`
     nav.appendChild(b);main.appendChild(sec);render(sec);if(first)b.onclick()};
   addTab(T('tab.transfer'),renderTransfer,true,'books');          // 总入口（入库｜母版库），固定第一位（book-serve 不在时列表里提示去管理页开）
   svcs.forEach((s)=>addTab(TABS[s.name].titleKey?T(TABS[s.name].titleKey):TABS[s.name].title,TABS[s.name].render,false,AREA[s.name]||s.name));
+  addTab(T('tab.battop'),renderBattop,false,'battop');             // 独立顶层标签页，battop 不在服务注册表里，手动固定注册
   addTab(T('tab.manage'),renderManage,false,'manage');            // 固定管理台，始终可进
   /* 事件推送（SSE，零轮询）：服务在变更处发事件 → 网关 /api/events 汇聚 → 这里只刷对应 tab；不在前台的 tab 记脏，切过去时刷。
      manage 事件（服务启停）：tab 集合变了就整页重载，否则只刷管理台。断线（WiFi 掉/设备休眠醒来）EventSource 自动重连。 */

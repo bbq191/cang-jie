@@ -39,6 +39,22 @@ pub fn hl_snap_cjk(paths: &Paths) -> bool {
     load(paths).get("hlSnapCjk").and_then(Value::as_bool).unwrap_or(true)
 }
 
+/// CJK 手写笔迹优化——纯网页层派生开关，不是 `reading-qol.json` 里单独存在的字段：
+/// `hwStrokeNibMinRatio < 1.0` 视为已开（`enhance/handwriting-stroke/src/hw_stroke.c` 里 `1.0`
+/// 是两个效果〔笔尖角度模型+提按速度代理〕全部关闭的 fail-safe 默认值，真机验证过 `0.6` 是效果
+/// 不错的强度）。只读 `hwStrokeNibMinRatio` 一个键就够判断开关态——网页层写入时两个 min_ratio
+/// 字段永远同步写（见 [`super::set_qol`]），不会出现只改了一个的情况。
+pub fn hw_stroke_enabled(paths: &Paths) -> bool {
+    load(paths).get("hwStrokeNibMinRatio").and_then(Value::as_f64).map(|v| v < 1.0).unwrap_or(false)
+}
+
+/// 「导入 md 文档」开关（`notesImportMdEnabled`），控制笔记 tab「导入」子标签是否显示。跟
+/// `hl_snap_cjk` 缺省开不同，这个缺省关——新功能第一次上线，不想让用户点开笔记 tab 就撞见一个
+/// 半成品，得手动去「管理→实验室」打开才看得到。
+pub fn notes_import_md_enabled(paths: &Paths) -> bool {
+    load(paths).get("notesImportMdEnabled").and_then(Value::as_bool).unwrap_or(false)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -77,5 +93,26 @@ mod tests {
         let full = load(&paths);
         assert_eq!(full["starTodoEnabled"], Value::Bool(true), "没碰过的键不能被冲掉");
         assert_eq!(full["cardhwEnabled"], Value::Bool(true), "没碰过的键不能被冲掉");
+    }
+
+    #[test]
+    fn hw_stroke_enabled_defaults_false_when_missing() {
+        let (_t, paths) = tmp_paths();
+        assert!(!hw_stroke_enabled(&paths), "文件不存在/字段缺失时缺省视为关（C 侧同一条 fail-safe 规则）");
+    }
+
+    #[test]
+    fn hw_stroke_enabled_true_when_ratio_below_one() {
+        let (_t, paths) = tmp_paths();
+        let mut seed = Map::new();
+        seed.insert("hwStrokeNibMinRatio".into(), serde_json::json!(0.6));
+        patch(&paths, seed).unwrap();
+        assert!(hw_stroke_enabled(&paths), "ratio < 1.0 视为已开");
+    }
+
+    #[test]
+    fn notes_import_md_enabled_defaults_false() {
+        let (_t, paths) = tmp_paths();
+        assert!(!notes_import_md_enabled(&paths), "新功能第一次上线，缺省关，不是缺省开");
     }
 }
