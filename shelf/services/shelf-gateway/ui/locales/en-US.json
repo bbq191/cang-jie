@@ -138,5 +138,20 @@
   "transfer.guide.unsure.dt": "Not sure which one?",
   "transfer.guide.unsure.dd": "Send it to one. The master copy stays, so you can send it to the other any time for comparison — <b>don't overthink \"casual vs. study\", it's your call</b> (some read detective novels for fun, others use them to map out clues; some just read comics, others study the art).",
   "transfer.guide.push.dt": "Computer-side shelf push (advanced)",
-  "transfer.guide.push.dd": "Tricky books go through the computer: convert non-standard formats to EPUB, deep-clean with Calibre, reflow PDF papers. The result also <b>lands in this master library</b> — pick its destination the same way here. See the command below on this page's \"Intake\" tab."
+  "transfer.guide.push.dd": "Tricky books go through the computer: convert non-standard formats to EPUB, deep-clean with Calibre, reflow PDF papers. The result also <b>lands in this master library</b> — pick its destination the same way here. See the command below on this page's \"Intake\" tab.",
+  "common.needLogin": "Not logged in",
+  "common.needChangePassword": "Password change required",
+  "common.httpErr": "The service isn't responding right now, try again shortly (HTTP {status})",
+  "common.failed": "failed",
+  "common.clear": "Clear",
+  "common.uploadSummary": "{ok}/{total} done{badPart}",
+  "common.uploadBadPart": " · <span style=\"color:var(--bad)\">{bad} failed</span>",
+  "common.remove": "Remove",
+  "common.waitingUpload": "waiting",
+  "common.rejectedExt": "Format not accepted: only {ext}",
+  "common.uploading": "Uploading…",
+  "common.done": "done",
+  "common.networkError": "network error",
+  "common.cjkCoverageTitle": "CJK basic-block coverage",
+  "common.cjkCoverage": "CJK {pct}%"
 }

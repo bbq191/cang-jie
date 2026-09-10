@@ -138,5 +138,20 @@
   "transfer.guide.unsure.dt": "拿不准放哪？",
   "transfer.guide.unsure.dd": "先投一个。母版还在，觉得不对随时再投另一个对照——<b>不用纠结\"闲书还是研读\"，去向你说了算</b>（侦探小说有人当消遣、有人拿来推理画线索图；漫画有人看有人学画）。",
   "transfer.guide.push.dt": "电脑 shelf push（进阶）",
-  "transfer.guide.push.dd": "难搞的书走电脑：非标准格式转 EPUB、Calibre 深洗、PDF 论文重排。洗完<b>也落这个母版库</b>，去向一样在这里选。命令见本页「入库」子页下方。"
+  "transfer.guide.push.dd": "难搞的书走电脑：非标准格式转 EPUB、Calibre 深洗、PDF 论文重排。洗完<b>也落这个母版库</b>，去向一样在这里选。命令见本页「入库」子页下方。",
+  "common.needLogin": "未登录",
+  "common.needChangePassword": "需先改密码",
+  "common.httpErr": "服务暂时无法响应，请稍后重试（HTTP {status}）",
+  "common.failed": "失败",
+  "common.clear": "清空",
+  "common.uploadSummary": "{ok}/{total} 完成{badPart}",
+  "common.uploadBadPart": " · <span style=\"color:var(--bad)\">{bad} 失败</span>",
+  "common.remove": "移除",
+  "common.waitingUpload": "待传",
+  "common.rejectedExt": "格式不收：只接受 {ext}",
+  "common.uploading": "上传中…",
+  "common.done": "完成",
+  "common.networkError": "网络错误",
+  "common.cjkCoverageTitle": "中文基本区覆盖率",
+  "common.cjkCoverage": "中文 {pct}%"
 }
