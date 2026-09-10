@@ -247,70 +247,70 @@ const AREA={'font-serve':'fonts','koreader-serve':'koreader','wallpaper-serve':'
 const TABS={
  'note-serve':{titleKey:'tab.notes',title:'笔记',render:renderNotes},
  'font-serve':{title:'xochitl',render(sec){assetTab(sec,'/api/fonts',{
-   title:'xochitl · 原生字体',
-   hint:'ttf / otf → 装进 fontconfig 用户字体目录。上传后阅读器「文字与布局」菜单重开即可选，无需重启。传书在「传书」页；KOReader 的字体在 KOReader 页装。',
+   title:T('assets.fonts.title'),
+   hint:T('assets.fonts.hint'),
    header:`<div id="fbchain" class="opt-note" style="display:none"></div>
-      <div class="row"><label class="toggle"><input type="checkbox" id="embold" checked> 中文加粗（墨水屏细笔画补偿）</label> <span class="small">默认开：对回退中文字体加粗，宋体在低对比墨水屏发淡时更清楚；翻书即见。</span></div>`,
-   icon:'🔤',label:'点击或拖入 ttf/otf（可多选）',accept:FONT_EXT,btn:'上传字体',listTitle:'已装字体',
+      <div class="row"><label class="toggle"><input type="checkbox" id="embold" checked> ${T('assets.fonts.emboldenLabel')}</label> <span class="small">${T('assets.fonts.emboldenHint')}</span></div>`,
+   icon:'🔤',label:T('assets.fonts.dropLabel'),accept:FONT_EXT,btn:T('assets.fonts.btn'),listTitle:T('assets.fonts.listTitle'),
    onRender:async(sec,refresh,fl)=>{
      // 中文缺字回退链：覆盖率≥8% 的中文字体，按覆盖率降序
      const cjk=(fl.items||[]).filter(it=>((it.extra||{}).cjkPct||0)>=8).sort((a,b)=>(b.extra.cjkPct||0)-(a.extra.cjkPct||0));
-     const fb=$('#fbchain',sec);fb.style.display='';fb.innerHTML=cjk.length?`中文缺字回退：${cjk.map(it=>`${it.name} <span class="small">${it.extra.cjkPct}%</span>`).join(' → ')}`:'⚠ 未装中文字体，正文缺字会显示方框——传一个全覆盖中文字体即可兜底。';
+     const fb=$('#fbchain',sec);fb.style.display='';fb.innerHTML=cjk.length?T('assets.fonts.fallbackChain',{chain:cjk.map(it=>`${it.name} <span class="small">${it.extra.cjkPct}%</span>`).join(' → ')}):T('assets.fonts.noCjkWarn');
      const fst=await j('/api/fonts/status');const eb=$('#embold',sec);if(fst.ok){eb.checked=!!fst.emboldenCjkFallback;eb.onchange=async()=>{const r=await j('/api/fonts/config',{method:'PUT',body:JSON.stringify({emboldenCjkFallback:eb.checked})});if(r.ok===false){alert(r.message);eb.checked=!eb.checked}}}},
    row:(it,left,right,refresh)=>{const ex=it.extra||{};
      left.innerHTML=`${it.name}${ex.names&&ex.names.cn&&ex.names.cn!==it.name?' <span class="small">'+ex.names.cn+'</span>':''}${ex.files&&ex.files.length>1?' <span class="small">×'+ex.files.length+'</span>':''}`;
-     right.insertAdjacentHTML('beforeend',cjkBadge(ex.cjkPct)+(ex.fontconfigRef?'<span title="界面中文回退引用">⚠</span>':''));
-     right.appendChild(delBtn('删除字体 '+it.name+(ex.files&&ex.files.length>1?'（含 '+ex.files.length+' 个文件）':'')+(ex.fontconfigRef?'？\n⚠ 该字体是界面中文回退字体':'？'),'/api/fonts/'+encodeURIComponent(it.name),refresh))}})}},
+     right.insertAdjacentHTML('beforeend',cjkBadge(ex.cjkPct)+(ex.fontconfigRef?`<span title="${T('assets.fonts.fallbackRefTitle')}">⚠</span>`:''));
+     right.appendChild(delBtn(T('assets.fonts.deleteConfirm',{name:it.name,filesNote:ex.files&&ex.files.length>1?T('assets.fonts.filesNote',{count:ex.files.length}):'',suffix:ex.fontconfigRef?T('assets.fonts.deleteSuffixFallback'):T('assets.fonts.deleteSuffixNormal')}),'/api/fonts/'+encodeURIComponent(it.name),refresh))}})}},
  'koreader-serve':{title:'KOReader',render(sec){sec.innerHTML=`
-  <div class="subnav"><button class="on">🔤 字体</button><button>📖 词典</button></div>
+  <div class="subnav"><button class="on">${T('koreader.subnav.fonts')}</button><button>${T('koreader.subnav.dicts')}</button></div>
   <div class="subpanel on">
-    <div class="card"><h2>KOReader</h2><div class="kv small" id="ks" style="margin-top:.5em">加载…</div>
-      <details class="cmp"><summary>KOReader 怎么装 / 已经帮你调好了什么</summary>
+    <div class="card"><h2>${T('koreader.title')}</h2><div class="kv small" id="ks" style="margin-top:.5em">${T('common.loading')}</div>
+      <details class="cmp"><summary>${T('koreader.installGuide.summary')}</summary>
       <dl class="help">
-        <dt>安装</dt><dd>走官方仓库自装：先备齐基石 xovi + appload（见「管理」页），再从 <a href="https://github.com/koreader/koreader/releases" target="_blank" rel="noopener">官方 releases</a> 装 reMarkable Paper Pro（rmpp）版。</dd>
-        <dt>已按 Move 屏调好（开箱即用，不用手动配）</dt><dd>本套件的 profile 贴近 xochitl 观感：中文主字体霞鹜新致宋、页边距、行距、脚注<b>底部弹窗</b>、悬挂标点、防误触、退出手势。</dd>
-        <dt>书从哪来</dt><dd>在「传书」页把书入母版库，点「加入 KOReader」即可（母版库收的所有格式 KOReader 都能读）。有什么书，去 KOReader 里看。</dd>
-        <dt>改配置 / 删字体后</dt><dd>KOReader 若正在跑，需<b>重启它</b>才生效（上方状态「运行中」会提示）。</dd>
+        <dt>${T('koreader.installGuide.install.dt')}</dt><dd>${T('koreader.installGuide.install.dd')}</dd>
+        <dt>${T('koreader.installGuide.tuned.dt')}</dt><dd>${T('koreader.installGuide.tuned.dd')}</dd>
+        <dt>${T('koreader.installGuide.books.dt')}</dt><dd>${T('koreader.installGuide.books.dd')}</dd>
+        <dt>${T('koreader.installGuide.restart.dt')}</dt><dd>${T('koreader.installGuide.restart.dd')}</dd>
       </dl></details></div>
-    <div class="card"><h3 style="margin-top:0">字体（KOReader）</h3><p class="small">只装进 KOReader；原生阅读器的字体在 xochitl 页装。</p>
-    ${upHtml('🔤','点击或拖入 ttf/otf（可多选）',FONT_EXT,'上传字体')}
-    <h3>已装字体</h3><ul class="list" id="kf"></ul></div>
+    <div class="card"><h3 style="margin-top:0">${T('koreader.fonts.title')}</h3><p class="small">${T('koreader.fonts.hint')}</p>
+    ${upHtml('🔤',T('assets.fonts.dropLabel'),FONT_EXT,T('assets.fonts.btn'))}
+    <h3>${T('assets.fonts.listTitle')}</h3><ul class="list" id="kf"></ul></div>
   </div>
   <div class="subpanel">
-    <div class="card"><h3 style="margin-top:0">词典（KOReader）</h3><p class="small">StarDict 词典：填词典名，拖入这本词典的全部文件（${DICT_EXT.join(' / ')}）一起传。</p>
-    <label class="field" for="dictname">词典名</label><input type="text" id="dictname" placeholder="如 牛津高阶 / cc-cedict">
-    ${upHtml('📖','点击或拖入词典文件（可多选）',DICT_EXT,'上传词典')}
-    <h3>已装词典</h3><ul class="list" id="kd"></ul></div>
+    <div class="card"><h3 style="margin-top:0">${T('koreader.dicts.title')}</h3><p class="small">${T('koreader.dicts.hint',{ext:DICT_EXT.join(' / ')})}</p>
+    <label class="field" for="dictname">${T('koreader.dicts.nameLabel')}</label><input type="text" id="dictname" placeholder="${T('koreader.dicts.namePlaceholder')}">
+    ${upHtml('📖',T('koreader.dicts.dropLabel'),DICT_EXT,T('koreader.dicts.btn'))}
+    <h3>${T('koreader.dicts.installedTitle')}</h3><ul class="list" id="kd"></ul></div>
   </div>`;
   const ups=sec.querySelectorAll('.up');
   uploader(ups[0],()=>'/api/koreader/fonts',()=>({}),FONT_EXT,()=>refresh());
   uploader(ups[1],()=>'/api/koreader/dicts',()=>({name:$('#dictname',sec).value.trim()}),DICT_EXT,()=>refresh());
   const refresh=async()=>{
     const [s,f,dc]=await Promise.all([j('/api/koreader/status'),j('/api/koreader/fonts'),j('/api/koreader/dicts')]);
-    $('#ks',sec).innerHTML=s.ok?`<b>安装</b><span>${s.installed?'是':'否'} ${s.version?'('+s.version+')':''}</span><b>运行中</b><span>${s.running?'是（改配置 / 删字体后需重启它）':'否'}</span><b>已装</b><span>字体 ${s.fonts} 个 · 词典 ${s.dicts||0} 本</span>`:`<span>${s.message}</span>`;
-    fillList($('#kf',sec),f.items||[],(it,left,right)=>{left.textContent=it.name;right.insertAdjacentHTML('beforeend',cjkBadge(it.cjkPct)+`<span>${fmtB(it.bytes)}</span>`);right.appendChild(delBtn('从 KOReader 删除 '+it.name+'？','/api/koreader/fonts/'+encodeURIComponent(it.name),refresh))},'还没有装 KOReader 字体，上面传一个');
-    fillList($('#kd',sec),dc.items||[],(it,left,right)=>{left.textContent='📖 '+it.name;right.textContent=it.ifo+' 本'},'还没有装词典，上面传一个')};
+    $('#ks',sec).innerHTML=s.ok?`<b>${T('koreader.status.installed')}</b><span>${s.installed?T('common.yes'):T('common.no')} ${s.version?'('+s.version+')':''}</span><b>${T('koreader.status.running')}</b><span>${s.running?T('koreader.status.runningYes'):T('common.no')}</span><b>${T('koreader.status.installedCount')}</b><span>${T('koreader.status.countLabel',{fonts:s.fonts,dicts:s.dicts||0})}</span>`:`<span>${s.message}</span>`;
+    fillList($('#kf',sec),f.items||[],(it,left,right)=>{left.textContent=it.name;right.insertAdjacentHTML('beforeend',cjkBadge(it.cjkPct)+`<span>${fmtB(it.bytes)}</span>`);right.appendChild(delBtn(T('koreader.fonts.deleteConfirm',{name:it.name}),'/api/koreader/fonts/'+encodeURIComponent(it.name),refresh))},T('koreader.fonts.emptyHint'));
+    fillList($('#kd',sec),dc.items||[],(it,left,right)=>{left.textContent='📖 '+it.name;right.textContent=T('koreader.dicts.countSuffix',{count:it.ifo})},T('koreader.dicts.emptyHint'))};
   refresh();sec.refresh=refresh;subtabs(sec)}},
  'wallpaper-serve':{titleKey:'tab.wallpaper',title:'壁纸',render(sec){assetTab(sec,'/api/wallpapers',{
-   hint:'jpg / png 图片，自动裁到 954×1696。首张自动启用（写 xochitl.conf SleepScreenPath，首次需跑一次 xovi/start），之后换图下次休眠即生效。',
-   header:`<label class="field">休眠轮换</label><div class="row"><select id="wpmode" style="max-width:12em"><option value="sequential">按顺序</option><option value="random">随机</option><option value="fixed">固定</option></select><span id="wpst" class="small"></span></div>`,
-   icon:'🖼',label:'点击或拖入图片（可多选）',accept:IMG_EXT,btn:'上传',
-   onRender:async(sec,refresh)=>{const st=await j('/api/wallpapers/status');const sel=$('#wpmode',sec);if(st.ok){sel.value=st.mode;const nv=st.native||{};$('#wpst',sec).textContent=`当前 ${st.current||'（无）'} · 原生休眠屏 ${nv.enabled?'已启用':'未启用（激活首张时自动写）'}${nv.restartPending?' · 需跑一次 xovi/start 生效':''}`}
-     sel.onchange=async()=>{const r=await j('/api/wallpapers/mode',{method:'PUT',body:JSON.stringify({mode:sel.value})});if(r.ok===false){alert(r.message||'切换失败');return}refresh()}},
+   hint:T('wallpaper.hint'),
+   header:`<label class="field">${T('wallpaper.rotateLabel')}</label><div class="row"><select id="wpmode" style="max-width:12em"><option value="sequential">${T('wallpaper.mode.sequential')}</option><option value="random">${T('wallpaper.mode.random')}</option><option value="fixed">${T('wallpaper.mode.fixed')}</option></select><span id="wpst" class="small"></span></div>`,
+   icon:'🖼',label:T('wallpaper.dropLabel'),accept:IMG_EXT,btn:T('wallpaper.btn'),
+   onRender:async(sec,refresh)=>{const st=await j('/api/wallpapers/status');const sel=$('#wpmode',sec);if(st.ok){sel.value=st.mode;const nv=st.native||{};$('#wpst',sec).textContent=T('wallpaper.status',{current:st.current||T('wallpaper.none'),nativeState:nv.enabled?T('wallpaper.nativeEnabled'):T('wallpaper.nativeDisabled'),restartNote:nv.restartPending?T('wallpaper.restartNote'):''})}
+     sel.onchange=async()=>{const r=await j('/api/wallpapers/mode',{method:'PUT',body:JSON.stringify({mode:sel.value})});if(r.ok===false){alert(r.message||T('wallpaper.switchFailed'));return}refresh()}},
    row:(it,left,right,refresh)=>{const cur=(it.extra||{}).current;
      // alt="" 原来把这张图当装饰性处理，但壁纸缩略图本身就是内容（"这张壁纸长什么样"），屏幕阅读器
      // 会整个跳过（2026-09-09 审计发现）；文件名本身当描述最直接，跟右边视觉上显示的文字一致。
-     left.innerHTML=`<img src="/api/wallpapers/${encodeURIComponent(it.name)}" alt="壁纸缩略图：${it.name}" style="height:3.4em;border-radius:.3em;border:1px solid var(--line);margin-right:.6em;vertical-align:middle">${it.name}`;
-     right.insertAdjacentHTML('beforeend',`<span>${fmtB(it.bytes)}</span>`+(cur?'<span class="badge on">当前</span>':''));
-     if(!cur){const b=document.createElement('button');b.className='btn';b.textContent='使用';b.onclick=async()=>{const r=await j('/api/wallpapers/current',{method:'PUT',body:JSON.stringify({name:it.name})});if(r.ok===false){alert(r.message||'设置失败');return}refresh()};right.appendChild(b);
-       right.appendChild(delBtn('删除 '+it.name+'？','/api/wallpapers/'+encodeURIComponent(it.name),refresh))}}})}}
+     left.innerHTML=`<img src="/api/wallpapers/${encodeURIComponent(it.name)}" alt="${T('wallpaper.thumbAlt',{name:it.name})}" style="height:3.4em;border-radius:.3em;border:1px solid var(--line);margin-right:.6em;vertical-align:middle">${it.name}`;
+     right.insertAdjacentHTML('beforeend',`<span>${fmtB(it.bytes)}</span>`+(cur?`<span class="badge on">${T('wallpaper.current')}</span>`:''));
+     if(!cur){const b=document.createElement('button');b.className='btn';b.textContent=T('wallpaper.use');b.onclick=async()=>{const r=await j('/api/wallpapers/current',{method:'PUT',body:JSON.stringify({name:it.name})});if(r.ok===false){alert(r.message||T('wallpaper.setFailed'));return}refresh()};right.appendChild(b);
+       right.appendChild(delBtn(T('wallpaper.deleteConfirm',{name:it.name}),'/api/wallpapers/'+encodeURIComponent(it.name),refresh))}}})}}
 };
 
 /* 资产页模板（字体 / 壁纸）：说明 + 可选头部 + 上传区 + 列表。o: {title?,hint,header?,icon,label,accept,btn,listTitle?,onRender?(sec,refresh,data),row(it,left,right,refresh)} */
 function assetTab(sec,api,o){sec.innerHTML=`<div class="card">${o.title?`<h2>${o.title}</h2>`:''}<p class="${o.title?'small':'lead'}">${o.hint}</p>${o.header||''}
   ${upHtml(o.icon,o.label,o.accept,o.btn)}
-  <h3>${o.listTitle||'已安装'}</h3><ul class="list" id="al"></ul></div>`;
-  const refresh=async()=>{const d=await j(api);fillList($('#al',sec),d.items||[],(it,left,right)=>o.row(it,left,right,refresh),`还没有内容，上面「${o.btn}」传一个`);if(o.onRender)o.onRender(sec,refresh,d)};
+  <h3>${o.listTitle||T('assets.installedDefault')}</h3><ul class="list" id="al"></ul></div>`;
+  const refresh=async()=>{const d=await j(api);fillList($('#al',sec),d.items||[],(it,left,right)=>o.row(it,left,right,refresh),T('assets.emptyHint',{btn:o.btn}));if(o.onRender)o.onRender(sec,refresh,d)};
   uploader($('.up',sec),()=>api,()=>({}),o.accept,refresh);
   refresh();sec.refresh=refresh}
 
@@ -321,7 +321,7 @@ function assetTab(sec,api,o){sec.innerHTML=`<div class="card">${o.title?`<h2>${o
    干扰，见 subtabs() 头注）。只装了其中一部分时，subnav 只列已装的那几个（笔记 tab 本身不在这
    里——note-serve 单独占「其他」前面那个固定位置，不受这条影响）。 */
 function renderOther(sec,svcs){
-  const items=[{name:'font-serve',icon:'🔤',label:'xochitl'},{name:'koreader-serve',icon:'📖',label:'KOReader'},{name:'wallpaper-serve',icon:'🖼️',label:'壁纸'}]
+  const items=[{name:'font-serve',icon:'🔤',label:'xochitl'},{name:'koreader-serve',icon:'📖',label:'KOReader'},{name:'wallpaper-serve',icon:'🖼️',label:T('tab.wallpaper')}]
     .filter(it=>svcs.some(s=>s.name===it.name));
   sec.innerHTML=`<div class="subnav">${items.map((it,i)=>`<button${i===0?' class="on"':''}>${it.icon} ${it.label}</button>`).join('')}</div>
     ${items.map((it,i)=>`<div class="subpanel${i===0?' on':''}" id="other-${it.name}"></div>`).join('')}`;
