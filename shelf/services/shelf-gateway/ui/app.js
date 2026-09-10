@@ -8,19 +8,27 @@ const wait=ms=>new Promise(res=>setTimeout(res,ms));
 /* 轻量记忆：per-viewer 便利态，隐私窗口/禁用 storage 时静默回默认 */
 const LS={get(k,d){try{const v=localStorage.getItem('shelf.'+k);return v==null?d:v}catch{return d}},set(k,v){try{localStorage.setItem('shelf.'+k,v)}catch{}}};
 const onUsb=/^10\.11\.99\./.test(location.hostname);
-/* i18n 架子（2026-09-09 审计新增，先只覆盖主界面外壳+顶层导航，登录页/改密码页/各模块正文文案暂不
-   迁移——那两页是 Rust 端独立拼接的机制，正文文案量大且不少是条件分支+插值的复合句，机械抽取风险
-   跟收益不成比例，留给以后真有需要再做）。`I18N` 在启动 IIFE 里异步填充，填充完成之前 `T()` 兜底
-   显示 key 本身（不留空白，也不会悄悄掩盖翻译缺口）。*/
+/* i18n 架子（2026-09-09 审计新增；2026-09-10 补全正文全覆盖）。登录页/改密码页（`src/ui.rs` 的
+   `login_page`/`password_page`）不在这次范围内——那两页是 Rust 端独立 `format!` 拼字符串，未登录态
+   不跑这份 JS、读不到 `LS`（localStorage）里的语言选择，要做需要另一套"未登录态也能传语言"的机制
+   （比如写 cookie 给 Rust 端读），跟这里的做法不是一回事，留给以后真有需要再做。`I18N` 在启动 IIFE
+   里异步填充，填充完成之前 `T()` 兜底显示 key 本身（不留空白，也不会悄悄掩盖翻译缺口）。
+   ⚠️ `T()` 只能在"渲染/交互时才执行"的函数体里调用——`I18N` 是异步填充的，如果把 `T()` 调用塞进
+   模块顶层 `const 模板字符串="..."` 这种脚本解析时就立即求值一次、以后不会重新求值的地方，结果会被
+   烤死成 key 兜底文本，永远显示不出真翻译，还不报错（`FMT_TIERS`/`GUIDE`/`OPTTABLE` 改成零参数函数
+   就是为了避开这个坑，见各自定义处）。 */
 let I18N={};
-const T=key=>I18N[key]||key;
+/* vars：可选的 {占位符名: 值} 插值表，key 对应的文案里用 {占位符名} 占位，逐个字符串替换（次数少，
+   用 split/join 够用，不必上正则）。零参数调用（`T('xxx')`）行为跟以前完全一样。 */
+const T=(key,vars)=>{let s=I18N[key]||key;if(vars)for(const k in vars)s=s.split('{'+k+'}').join(vars[k]);return s};
 const currentLang=()=>LS.get('lang',(navigator.language||'').toLowerCase().startsWith('en')?'en-US':'zh-CN');
 /* 格式白名单：服务端 shelf_core::formats 注入（同一份，网页 accept + 选中即拦 = 服务端上传门） */
 const EXT=__EXTS__, dot=l=>l.map(e=>'.'+e);
 const BOOK_EXT=dot(EXT.book), FONT_EXT=dot(EXT.font), DICT_EXT=dot(EXT.dict), IMG_EXT=dot(EXT.image);
 const up=l=>l.map(e=>e.toUpperCase()).join(' / ');
 /* 书籍格式三档说明（同一份白名单分档展示，不再一口气列 18 个） */
-const FMT_TIERS=`<b>${up(EXT.native)}</b>：两个读器都能去 · <b>${up(EXT.convertible)}</b>：电脑 <code>shelf push</code> 可转成 EPUB 进原生，直接上传则只能加入 KOReader · <b>${up(EXT.koOnly)}</b>：只能加入 KOReader · <b>漫画不投原生</b>：AZW3/EPUB 漫画走电脑 <code>shelf push</code> 自动转 CBZ，加入 KOReader 读`;
+// 顶层 const 改零参数函数：T() 求值必须等到渲染时（I18N 已填充），见上面 T() 头注的硬性规则。
+const FMT_TIERS=()=>T('transfer.fmtTiers',{native:up(EXT.native),convertible:up(EXT.convertible),koOnly:up(EXT.koOnly)});
 $('#logout').onclick=e=>{e.preventDefault();fetch('/logout',{method:'POST'}).then(()=>location.href='/login')};
 // 徽章的完整解释（渲染自检失败原因、优化档位差异…）以前只写进 title——触屏摸不到 hover，只看得见
 // 图标+数字，看不见"为什么/该怎么办"（2026-09-09 审计发现）。这里全局委托一个点击处理：任何带
@@ -94,21 +102,21 @@ function delBtn(msg,url,refresh){const d=document.createElement('button');d.clas
 const cjkBadge=p=>p==null?'':`<span class="badge ${p>=80?'on':(p>=8?'':'off')}" title="中文基本区覆盖率">中文 ${p}%</span>`;
 
 /* 决策辅助：不替用户分类（闲书/研读机器判不准），讲清母版库三步走 + 两读器各擅长；拿不准先投一个，母版还在 */
-const GUIDE=`<details class="cmp"><summary>母版库怎么用？两个读器怎么选？（点开）</summary>
+const GUIDE=()=>`<details class="cmp"><summary>${T('transfer.guide.summary')}</summary>
 <dl class="help">
-<dt>三步走</dt><dd>① <b>入库</b>：上传（书籍格式）/ 抓网文 / 电脑 <code>shelf push</code> / scp 进 inbox——书<b>原样</b>进母版库，不动字节。② <b>优化</b>（可选）：EPUB 点「优化」洗排版、脚注、中英文缩进（PDF 端上不动，重排走电脑）。③ <b>落库</b>：点「投入原生书库」或「加入 KOReader」。<b>母版留着</b>，随时再投另一个。读器页（xochitl / KOReader）只管各自的字体、词典，不传书。</dd>
-<dt>格式</dt><dd>${FMT_TIERS}。</dd>
-<dt>📖 投入原生书库（xochitl）：要做笔记、批注的书</dt><dd>目录跳转、脚注、换字体、<b>直接手写批注</b>、AI 解读。学术 / 论文 / 要划线的书放这；PDF 手写定稿也放这。</dd>
-<dt>📚 加入 KOReader：消遣、查词的书</dt><dd>自由重排、<b>内置词典</b>、翻页手势。小说、漫画、外语书顺手。</dd>
-<dt>拿不准放哪？</dt><dd>先投一个。母版还在，觉得不对随时再投另一个对照——<b>不用纠结"闲书还是研读"，去向你说了算</b>（侦探小说有人当消遣、有人拿来推理画线索图；漫画有人看有人学画）。</dd>
-<dt>电脑 shelf push（进阶）</dt><dd>难搞的书走电脑：非标准格式转 EPUB、Calibre 深洗、PDF 论文重排。洗完<b>也落这个母版库</b>，去向一样在这里选。命令见本页「入库」子页下方。</dd>
+<dt>${T('transfer.guide.steps.dt')}</dt><dd>${T('transfer.guide.steps.dd')}</dd>
+<dt>${T('transfer.guide.format.dt')}</dt><dd>${T('transfer.guide.format.dd',{tiers:FMT_TIERS()})}</dd>
+<dt>${T('transfer.guide.native.dt')}</dt><dd>${T('transfer.guide.native.dd')}</dd>
+<dt>${T('transfer.guide.koreader.dt')}</dt><dd>${T('transfer.guide.koreader.dd')}</dd>
+<dt>${T('transfer.guide.unsure.dt')}</dt><dd>${T('transfer.guide.unsure.dd')}</dd>
+<dt>${T('transfer.guide.push.dt')}</dt><dd>${T('transfer.guide.push.dd')}</dd>
 </dl></details>`;
 
 /* 母版库「优化」档位说明（对应 /staging/optimize 的 mode） */
-const OPTTABLE=`<div class="tblwrap"><table class="cmp"><thead><tr><th>档位</th><th>做什么</th><th>什么时候用</th></tr></thead><tbody>
-<tr><th class="pick">清洗＋优化<br><span class="small">默认</span></th><td>全套：剥字体/字号/颜色/对齐锁 · 边距段距归零+按中英文习惯首行缩进 · 缺目录按标题自动建 · 伪 DRM 剥离 · 脚注就地内联常显 · 远程图内联 · 图片降采样 · e-ink 提对比 · 双 id 去重</td><td>绝大多数第三方书</td></tr>
-<tr><th>清洗但保留段距</th><td>同上，但不动原书段间距</td><td>诗集 / 剧本 / 靠空行分节的书</td></tr>
-<tr><th>只优化不清洗</th><td>只修脚注 / 图片 / 对比度 / 双 id，不碰排版和字体锁</td><td>已排好版、只想修脚注和图的书</td></tr>
+const OPTTABLE=()=>`<div class="tblwrap"><table class="cmp"><thead><tr><th>${T('transfer.opttable.colTier')}</th><th>${T('transfer.opttable.colWhat')}</th><th>${T('transfer.opttable.colWhen')}</th></tr></thead><tbody>
+<tr><th class="pick">${T('transfer.opttable.full.tier')}<br><span class="small">${T('transfer.opttable.default')}</span></th><td>${T('transfer.opttable.full.what')}</td><td>${T('transfer.opttable.full.when')}</td></tr>
+<tr><th>${T('transfer.opttable.keepSpacing.tier')}</th><td>${T('transfer.opttable.keepSpacing.what')}</td><td>${T('transfer.opttable.keepSpacing.when')}</td></tr>
+<tr><th>${T('transfer.opttable.plain.tier')}</th><td>${T('transfer.opttable.plain.what')}</td><td>${T('transfer.opttable.plain.when')}</td></tr>
 </tbody></table></div>`;
 
 /* 母版库列表。按格式门控按钮：EPUB→优化(未优化时)/投原生/加入 KO；PDF→投原生/加入 KO；其它→只能加入 KO。
@@ -119,16 +127,16 @@ function stagingList(ul,opts){
   const q=(opts.q||'').toLowerCase();
   const fmtOf=it=>it.format==='cbz'?'other':it.format;   // 筛选里 CBZ 归「其它」
   const items=(opts.items||[]).filter(it=>(!q||it.name.toLowerCase().includes(q))&&(!opts.fmt||fmtOf(it)===opts.fmt)&&(!opts.st||(opts.st==='1')===!!it.optimized));
-  if(!items.length){ul.innerHTML='<li class="small">'+(opts.items&&opts.items.length?'（没有匹配的书）':'（母版库是空的——去「入库」把书弄进来）')+'</li>';return}
+  if(!items.length){ul.innerHTML='<li class="small">'+(opts.items&&opts.items.length?T('transfer.staging.emptyFiltered'):T('transfer.staging.emptyAll'))+'</li>';return}
   items.forEach(it=>{const li=document.createElement('li');li.style.flexWrap='wrap';
-    const fmt=it.format==='epub'?'EPUB':it.format==='pdf'?'PDF':(it.name.includes('.')?it.name.split('.').pop().toUpperCase():'其它');
-    const st=it.format!=='epub'?'<span class="badge">原样</span>':it.level==='full'?'<span class="badge on">已优化</span>':it.level==='core'?'<span class="badge" title="只跑了核心遍（脚注/图片/对比度），没洗排版缩进——点「优化」补全">已优化·未清洗</span>':it.level==='old'?'<span class="badge" title="旧版本优化，点「优化」升级">旧版优化</span>':'<span class="badge">未优化</span>';
-    const hint=it.format==='pdf'?' · 手写定稿放原生':it.format==='cbz'?' · 漫画：加入 KOReader 读（不投原生）':it.format==='other'?' · 原生读不了，只能加入 KOReader（想进原生用电脑 shelf push 转 EPUB）':'';
+    const fmt=it.format==='epub'?'EPUB':it.format==='pdf'?'PDF':(it.name.includes('.')?it.name.split('.').pop().toUpperCase():T('transfer.staging.fmtOther'));
+    const st=it.format!=='epub'?`<span class="badge">${T('transfer.staging.badge.asIs')}</span>`:it.level==='full'?`<span class="badge on">${T('transfer.staging.badge.optimized')}</span>`:it.level==='core'?`<span class="badge" title="${T('transfer.staging.badge.optimizedUncleanTitle')}">${T('transfer.staging.badge.optimizedUnclean')}</span>`:it.level==='old'?`<span class="badge" title="${T('transfer.staging.badge.oldOptimizedTitle')}">${T('transfer.staging.badge.oldOptimized')}</span>`:`<span class="badge">${T('transfer.staging.badge.notOptimized')}</span>`;
+    const hint=it.format==='pdf'?' · '+T('transfer.staging.hint.pdf'):it.format==='cbz'?' · '+T('transfer.staging.hint.comic'):it.format==='other'?' · '+T('transfer.staging.hint.other'):'';
     // 落库记录徽章；落库时间早于母版 mtime（之后又优化过）→ 标「旧」，提示可重投
     const dv=it.delivered||{},stale=t=>t&&it.mtime&&t<it.mtime;
-    const dl=(dv.native?` <span class="badge on" title="${stale(dv.native)?'投过，之后母版又优化过，可重投':'已投入原生书库'}">已投原生${stale(dv.native)?'·旧':''}</span>`:'')+(dv.koreader?` <span class="badge on" title="${stale(dv.koreader)?'加入过，之后母版又优化过，可重投':'已加入 KOReader'}">已加入KO${stale(dv.koreader)?'·旧':''}</span>`:'');
+    const dl=(dv.native?` <span class="badge on" title="${stale(dv.native)?T('transfer.staging.delivered.native.staleTitle'):T('transfer.staging.delivered.native.title')}">${T('transfer.staging.delivered.native.badge')}${stale(dv.native)?T('transfer.staging.staleSuffix'):''}</span>`:'')+(dv.koreader?` <span class="badge on" title="${stale(dv.koreader)?T('transfer.staging.delivered.koreader.staleTitle'):T('transfer.staging.delivered.koreader.title')}">${T('transfer.staging.delivered.koreader.badge')}${stale(dv.koreader)?T('transfer.staging.staleSuffix'):''}</span>`:'');
     // 渲染自检徽章（投原生后 book-serve 等 xochitl 渲染完核对页数；warn＝整章渲染失败的典型症状）
-    const rc=dv.render,rb=!rc?'':rc.status==='ok'?` <span class="badge on" title="xochitl 渲染 ${rc.pages} 页，与正文量相符（缺省字号预期≈${rc.expected}）">渲染 ${rc.pages} 页</span>`:rc.status==='warn'?` <span class="badge off" title="xochitl 只渲染出 ${rc.pages} 页，按正文量预期≈${rc.expected} 页——整章渲染失败的症状（如同一标签双 id）；点「优化」修复后重投">⚠ 只渲染 ${rc.pages} 页 / 预期≈${rc.expected}</span>`:rc.status==='pending'?` <span class="badge" title="投原生后等 xochitl 渲染完成自动核对页数（最长 10 分钟）">渲染中…</span>`:` <span class="badge" title="10 分钟内没等到 xochitl 的渲染结果；在设备上打开这本书一次再重投可复核">未见渲染</span>`;
+    const rc=dv.render,rb=!rc?'':rc.status==='ok'?` <span class="badge on" title="${T('transfer.staging.render.okTitle',{pages:rc.pages,expected:rc.expected})}">${T('transfer.staging.render.okBadge',{pages:rc.pages})}</span>`:rc.status==='warn'?` <span class="badge off" title="${T('transfer.staging.render.warnTitle',{pages:rc.pages,expected:rc.expected})}">${T('transfer.staging.render.warnBadge',{pages:rc.pages,expected:rc.expected})}</span>`:rc.status==='pending'?` <span class="badge" title="${T('transfer.staging.render.pendingTitle')}">${T('transfer.staging.render.pendingBadge')}</span>`:` <span class="badge" title="${T('transfer.staging.render.noneTitle')}">${T('transfer.staging.render.noneBadge')}</span>`;
     li.innerHTML=`<span><b>${it.name}</b> <span class="badge">${fmt}</span> ${st}${dl}${rb} <span class="small">${fmtB(it.bytes)}${hint}</span></span>`;
     const right=document.createElement('span');right.style.cssText='display:flex;gap:.4em;flex-wrap:wrap;align-items:center';
     // 禁用态按钮的原因（超限/未安装）以前只写进 title——触屏设备摸不到 hover，等于完全看不到为什么点
@@ -136,76 +144,72 @@ function stagingList(ul,opts){
     // `flex-basis:100%` 让它在 `right`（flex-wrap 容器）里独占一行，不挤在按钮同一行。
     const btn=(t,pri,fn,dis,title,cls)=>{const b=document.createElement('button');b.className='btn'+(pri?' pri':'')+(cls?' '+cls:'');b.textContent=t;if(dis){b.disabled=true;b.title=title||''}else b.onclick=async()=>{b.disabled=true;b.textContent=t+'…';await fn();if(opts.refresh)opts.refresh()};right.appendChild(b);
       if(dis&&title){const hint=document.createElement('span');hint.className='small';hint.style.cssText='flex-basis:100%';hint.textContent=title;right.appendChild(hint)}};
-    if(it.format==='epub'&&!it.optimized)btn('优化',false,()=>postJ('/api/books/staging/optimize',{name:it.name,mode:opts.mode()}));
+    if(it.format==='epub'&&!it.optimized)btn(T('transfer.staging.btn.optimize'),false,()=>postJ('/api/books/staging/optimize',{name:it.name,mode:opts.mode()}));
     // 体积门：超过 xochitl /upload 上限的书灰掉按钮（服务端同样拦），提示走电脑分卷
     const tooBig=opts.nativeLimit&&it.bytes>opts.nativeLimit;
-    if(it.format==='epub'||it.format==='pdf')btn('投入原生书库',true,()=>postJ('/api/books/staging/deliver',{name:it.name,keep:!opts.clear(),folder:opts.xFolder()}),tooBig,`超过原生阅读器上传上限 ${fmtB(opts.nativeLimit)}：PDF 在电脑 shelf push 重推会自动分卷；EPUB 用 KOReader 读`);
-    btn('加入 KOReader',true,async()=>{const r=await postJ('/api/koreader/books/adopt',{name:it.name,folder:opts.kFolder()});if(r.ok!==false){await postJ('/api/books/staging/mark',{name:it.name,target:'koreader'});if(opts.clear())await postJ('/api/books/staging/delete',{name:it.name})}},!opts.koInstalled,'KOReader 未安装（「管理」页看基石）');
+    if(it.format==='epub'||it.format==='pdf')btn(T('transfer.staging.btn.deliverNative'),true,()=>postJ('/api/books/staging/deliver',{name:it.name,keep:!opts.clear(),folder:opts.xFolder()}),tooBig,T('transfer.staging.btn.tooBigTitle',{limit:fmtB(opts.nativeLimit)}));
+    btn(T('transfer.staging.btn.addKoreader'),true,async()=>{const r=await postJ('/api/koreader/books/adopt',{name:it.name,folder:opts.kFolder()});if(r.ok!==false){await postJ('/api/books/staging/mark',{name:it.name,target:'koreader'});if(opts.clear())await postJ('/api/books/staging/delete',{name:it.name})}},!opts.koInstalled,T('transfer.staging.btn.koNotInstalled'));
     // 单行最多 5 徽章+4 按钮时，"删除"（销毁）跟"优化"（编辑）视觉权重完全一样，只靠文案区分
     // （2026-09-09 审计发现）；`.btn-bad` 早就存在但只用在转写失败按钮上，这里补上，破坏性操作至少
     // 颜色上跟常规操作分开。
-    btn('删除',false,async()=>{if(confirm('从母版库删除 '+it.name+'？（已投到读器的不受影响）'))await postJ('/api/books/staging/delete',{name:it.name})},false,'','btn-bad');
+    btn(T('action.delete'),false,async()=>{if(confirm(T('transfer.staging.confirmDeleteOne',{name:it.name})))await postJ('/api/books/staging/delete',{name:it.name})},false,'','btn-bad');
     li.appendChild(right);ul.appendChild(li)});
 }
 
 /* 「传书」固定 tab = 三层架构入口：入库（所有内容源汇入）｜母版库（可选优化 → 选去向落库）。放第一位。
    读器页（xochitl / KOReader）不再有任何传书入口，只管各自的字体 / 词典。 */
 function renderTransfer(sec){sec.innerHTML=`
-  <div class="subnav"><button class="on">📥 入库</button><button>📚 母版库</button></div>
+  <div class="subnav"><button class="on">${T('transfer.subnav.intake')}</button><button>${T('transfer.subnav.library')}</button></div>
   <div class="subpanel on">
-    <div class="card"><h2>传书 · 入库</h2>
-      <p class="lead">所有书从这里进：上传、抓网文、电脑 shelf push、scp 进 inbox。原样入库、不动字节；洗不洗、放哪读，到「母版库」再定。</p>
-      ${GUIDE}
-      ${onUsb?'':'<p class="opt-note">传大书建议走 USB <code>https://10.11.99.1:8778</code>，不占 Wi-Fi。</p>'}
+    <div class="card"><h2>${T('transfer.intake.title')}</h2>
+      <p class="lead">${T('transfer.intake.lead')}</p>
+      ${GUIDE()}
+      ${onUsb?'':`<p class="opt-note">${T('transfer.intake.usbHint')}</p>`}
     </div>
     <!-- 三个入库来源各自独立成卡（2026-09-10 用户要求：原来挤在同一张卡里用 h3 分隔，看着像
          "上传"下面附带两个子步骤，实际是三条互不依赖、各走各的入库路径，拆卡片才是"3个功能来源"
          该有的视觉分量，跟「系统增强」/「实验室」那种并排卡片同一个语言）。 -->
-    <div class="card"><h3 style="margin-top:0">上传</h3>
-      ${upHtml('⬆','点击或拖入书（可多选 · '+up(EXT.native)+' 及下列格式）',BOOK_EXT,'进母版库')}
-      <p class="small">${FMT_TIERS}。不是书的文件（图片 / 压缩包）不收。</p>
+    <div class="card"><h3 style="margin-top:0">${T('transfer.upload.title')}</h3>
+      ${upHtml('⬆',T('transfer.upload.dropLabel',{native:up(EXT.native)}),BOOK_EXT,T('transfer.upload.btn'))}
+      <p class="small">${T('transfer.upload.hint',{tiers:FMT_TIERS()})}</p>
     </div>
-    <div class="card"><h3 style="margin-top:0">抓网文</h3>
-      <div class="row"><input type="text" id="arturl" placeholder="https://… 文章链接（公众号 / 博客 / 新闻）" style="flex:1;min-width:12em"><button class="btn" id="artgo">抓取进母版库</button></div>
+    <div class="card"><h3 style="margin-top:0">${T('transfer.fetchArticle.title')}</h3>
+      <div class="row"><input type="text" id="arturl" placeholder="${T('transfer.fetchArticle.urlPlaceholder')}" style="flex:1;min-width:12em"><button class="btn" id="artgo">${T('transfer.fetchArticle.btn')}</button></div>
       <div class="small" id="artmsg" style="margin-top:.3em"></div>
-      <p class="small">静态网页效果好；纯 JS 页面、付费墙抓不出。单篇文章（连载分章后续）。</p>
+      <p class="small">${T('transfer.fetchArticle.hint')}</p>
     </div>
-    <div class="card"><h3 style="margin-top:0">电脑端 <code>shelf push</code>（进阶洗书 / PDF 重排）</h3>
-      <p class="small">难搞的书走电脑：非标准格式转 EPUB、Calibre 级深洗、PDF 论文重排、漫画转 CBZ——设备端做不到的都在这。洗完<b>也落这个母版库</b>，去向一样在下面「母版库」子页选。</p>
-      <p>命令长这样（在本仓库目录下跑；<code>shelf/host/bin/shelf</code> 就是那个命令，嫌长可 <code>alias shelf="$PWD/shelf/host/bin/shelf"</code>）：</p>
-      ${cmdBlock(['shelf/host/bin/shelf push &lt;书1&gt; [书2 …]'])}
-      <p class="small">
-        · 后面只跟<b>要投的书</b>（可一次多本）；<b>没有输出路径、也没有目标参数</b>——洗完一律落到<b>母版库</b>，放哪个读器你在下面「母版库」子页点。<br>
-        · 有 Calibre 就先洗（EPUB 深洗 / 杂格式转 EPUB / PDF 结构化重排，&gt;60MB 的 PDF 自动分卷）；漫画自动识别转 CBZ（<code>--comic/--no-comic</code> 覆盖）；<code>--no-optimize</code> 不洗原样传；<code>--to-pdf</code> 定稿成手写批注用的 PDF。<br>
-        · 和网页规则一致：<b>所有书只落母版库</b>，没有直投读器的选项。
-      </p>
-      <details class="cmp"><summary>例子 / 强在哪 / 怎么装</summary>
+    <div class="card"><h3 style="margin-top:0">${T('transfer.push.title')}</h3>
+      <p class="small">${T('transfer.push.desc')}</p>
+      <p>${T('transfer.push.cmdIntro')}</p>
+      ${cmdBlock(['shelf/host/bin/shelf push &lt;'+T('transfer.push.book1')+'&gt; ['+T('transfer.push.book2')+' …]'])}
+      <p class="small">${T('transfer.push.notes')}</p>
+      <details class="cmp"><summary>${T('transfer.push.detailsSummary')}</summary>
       <dl class="help">
-        <dt>例子</dt>
+        <dt>${T('transfer.push.example.dt')}</dt>
         <dd>${cmdBlock([
-          'shelf/host/bin/shelf push 论文.pdf        # PDF 结构化重排 → 母版库',
-          'shelf/host/bin/shelf push 小说.azw3       # 转干净 EPUB → 母版库（两个读器都能去）',
-          'shelf/host/bin/shelf push 漫画.azw3       # 自动识别漫画 → CBZ → 母版库（加入 KOReader；漫画不投原生）',
-          'shelf/host/bin/shelf push 书.epub --to-pdf # 定稿固定版式 PDF → 母版库（投 xochitl 手写批注）',
-          'shelf/host/bin/shelf push a.epub b.mobi   # 一次多本',
-          'shelf/host/bin/shelf status               # 看设备连通 / 环境',
+          'shelf/host/bin/shelf push 论文.pdf        # '+T('transfer.push.example.pdf'),
+          'shelf/host/bin/shelf push 小说.azw3       # '+T('transfer.push.example.novel'),
+          'shelf/host/bin/shelf push 漫画.azw3       # '+T('transfer.push.example.comic'),
+          'shelf/host/bin/shelf push 书.epub --to-pdf # '+T('transfer.push.example.toPdf'),
+          'shelf/host/bin/shelf push a.epub b.mobi   # '+T('transfer.push.example.multi'),
+          'shelf/host/bin/shelf status               # '+T('transfer.push.example.status'),
           'shelf/host/bin/shelf doctor',
         ])}</dd>
-        <dt>强在哪</dt>
-        <dd>① <b>杂格式转干净 EPUB 进原生</b>：AZW3 / MOBI / AZW / PRC / FB2 直接上传只能进 KOReader，这里能转成 EPUB 投原生；② <b>Calibre 级深洗</b>：CSS 拍平比端上更彻底，排版锁死的书也能救；③ <b>PDF 论文重排</b>：多列 / 公式 / 图按阅读顺序重排到屏宽——<b>端上做不到</b>（端上 PDF 只原样直传）；④ 扫描件走 k2pdfopt。产物再叠加设备同款优化器，观感与网页直传一致。</dd>
-        <dt>怎么装</dt>
-        <dd>电脑装 <a href="https://calibre-ebook.com/" target="_blank" rel="noopener">Calibre</a>（含 ebook-convert）+ Python 3 → 克隆本仓库 → <code>cd shelf &amp;&amp; sh build.sh</code>（编出 <code>epub-optimize</code>）→ 就能用 <code>shelf/host/bin/shelf</code> 了。</dd>
+        <dt>${T('transfer.push.strengths.dt')}</dt>
+        <dd>${T('transfer.push.strengths.dd')}</dd>
+        <dt>${T('transfer.push.install.dt')}</dt>
+        <dd>${T('transfer.push.install.dd')}</dd>
       </dl></details>
     </div>
   </div>
   <div class="subpanel">
-    <div class="card"><h3 style="margin-top:0">母版库 <span class="small" id="stgcap"></span></h3>
-      <div class="row"><label class="small" for="folderPreset">投原生 → 文件夹</label><select id="folderPreset" style="max-width:13em"><option value="lib">书库（默认）</option><option value="annot">批注文件夹</option><option value="custom">自定义…</option></select><input type="text" id="folder" placeholder="文件夹名" style="display:none;max-width:10em">
-        <label class="small" for="kfolder">加入 KOReader → 目录</label><input type="text" id="kfolder" list="kodirs" placeholder="留空＝根目录" style="max-width:9em"><datalist id="kodirs"></datalist></div>
-      <div class="row"><label class="small" for="optmode">优化档位</label><select id="optmode" style="max-width:15em"><option value="auto">清洗＋优化（推荐）</option><option value="keep-spacing">清洗但保留段距（诗集 / 剧本）</option><option value="plain">只优化不清洗</option></select>
-        <label class="toggle"><input type="checkbox" id="stgclear"> 投完从母版库清除</label></div>
-      <details class="cmp"><summary>档位说明 · 母版为什么默认保留</summary>${OPTTABLE}<p class="small">母版保留＝同一本可再投另一个读器对照、换设备重投；不需要了手动删。</p></details>
-      <div class="row"><input type="text" id="stgq" placeholder="搜书名…" aria-label="搜书名" style="flex:1;min-width:8em"><select id="stgfmt" aria-label="按格式筛选" style="max-width:8em"><option value="">全部格式</option><option value="epub">EPUB</option><option value="pdf">PDF</option><option value="other">其它</option></select><select id="stgst" aria-label="按优化状态筛选" style="max-width:8em"><option value="">全部状态</option><option value="0">未优化</option><option value="1">已优化</option></select><button class="btn" id="stgpurge" title="删除已投过读器的母版（读器里的书不受影响）">清理已落库</button></div>
+    <div class="card"><h3 style="margin-top:0">${T('transfer.staging.title')} <span class="small" id="stgcap"></span></h3>
+      <div class="row"><label class="small" for="folderPreset">${T('transfer.staging.folderPreset.label')}</label><select id="folderPreset" style="max-width:13em"><option value="lib">${T('transfer.staging.folderPreset.lib')}</option><option value="annot">${T('transfer.staging.folderPreset.annot')}</option><option value="custom">${T('transfer.staging.folderPreset.custom')}</option></select><input type="text" id="folder" placeholder="${T('transfer.staging.folder.placeholder')}" style="display:none;max-width:10em">
+        <label class="small" for="kfolder">${T('transfer.staging.kfolder.label')}</label><input type="text" id="kfolder" list="kodirs" placeholder="${T('transfer.staging.kfolder.placeholder')}" style="max-width:9em"><datalist id="kodirs"></datalist></div>
+      <div class="row"><label class="small" for="optmode">${T('transfer.staging.optmode.label')}</label><select id="optmode" style="max-width:15em"><option value="auto">${T('transfer.staging.optmode.auto')}</option><option value="keep-spacing">${T('transfer.staging.optmode.keepSpacing')}</option><option value="plain">${T('transfer.staging.optmode.plain')}</option></select>
+        <label class="toggle"><input type="checkbox" id="stgclear"> ${T('transfer.staging.clearToggle')}</label></div>
+      <details class="cmp"><summary>${T('transfer.staging.optDetailsSummary')}</summary>${OPTTABLE()}<p class="small">${T('transfer.staging.optNote')}</p></details>
+      <div class="row"><input type="text" id="stgq" placeholder="${T('transfer.staging.searchPlaceholder')}" aria-label="${T('transfer.staging.searchAria')}" style="flex:1;min-width:8em"><select id="stgfmt" aria-label="${T('transfer.staging.fmtFilterAria')}" style="max-width:8em"><option value="">${T('transfer.staging.fmtAll')}</option><option value="epub">EPUB</option><option value="pdf">PDF</option><option value="other">${T('transfer.staging.fmtOther')}</option></select><select id="stgst" aria-label="${T('transfer.staging.stFilterAria')}" style="max-width:8em"><option value="">${T('transfer.staging.stAll')}</option><option value="0">${T('transfer.staging.stRaw')}</option><option value="1">${T('transfer.staging.stDone')}</option></select><button class="btn" id="stgpurge" title="${T('transfer.staging.purgeTitle')}">${T('transfer.staging.purgeBtn')}</button></div>
       <div class="small" id="stgfree" style="margin:-.3em 0 .4em"></div>
       <ul class="list" id="stglist"></ul>
     </div>
@@ -224,18 +228,18 @@ function renderTransfer(sec){sec.innerHTML=`
     if(s.ok&&s.annotFolder)annotFolder=s.annotFolder;nativeLimit=(s.ok&&s.nativeUploadLimitBytes)||0;koInstalled=!!(k.ok&&k.installed);
     // KOReader 现有目录 → 下拉候选（免手打错）
     g('kodirs').innerHTML=(kb.items||[]).filter(x=>x.kind==='dir').map(x=>`<option value="${x.name}">`).join('');
-    if(d.ok===false){g('stglist').innerHTML=`<li class="small" style="color:var(--bad)">母版库不可用：${d.message||'book-serve 未开'}（去「管理」页开启）</li>`;g('stgcap').textContent='';return}
-    items=d.items||[];const tot=items.reduce((a,b)=>a+b.bytes,0);g('stgcap').textContent=items.length?`${items.length} 本 · ${fmtB(tot)}`:'';
-    const fr=d.freeBytes;const low=fr!=null&&fr<300*1048576;g('stgfree').style.color=low?'var(--bad)':'';g('stgfree').textContent=fr!=null?`设备剩余空间 ${fmtB(fr)}${low?' ⚠ 快满了：清理已落库或删不要的母版':''}`:'';
+    if(d.ok===false){g('stglist').innerHTML=`<li class="small" style="color:var(--bad)">${T('transfer.staging.unavailable',{msg:d.message||T('transfer.staging.notOpen')})}</li>`;g('stgcap').textContent='';return}
+    items=d.items||[];const tot=items.reduce((a,b)=>a+b.bytes,0);g('stgcap').textContent=items.length?T('transfer.staging.capSummary',{count:items.length,size:fmtB(tot)}):'';
+    const fr=d.freeBytes;const low=fr!=null&&fr<300*1048576;g('stgfree').style.color=low?'var(--bad)':'';g('stgfree').textContent=fr!=null?T('transfer.staging.freeSpace',{free:fmtB(fr),lowWarn:low?T('transfer.staging.lowWarn'):''}):'';
     render()};
-  g('stgpurge').onclick=async()=>{const done=items.filter(it=>it.delivered&&(it.delivered.native||it.delivered.koreader));if(!done.length){alert('没有已落库的母版');return}
-    if(!confirm(`删除 ${done.length} 本已投过读器的母版？（读器里的书不受影响，只是不能再重投）`))return;
+  g('stgpurge').onclick=async()=>{const done=items.filter(it=>it.delivered&&(it.delivered.native||it.delivered.koreader));if(!done.length){alert(T('transfer.staging.noneToPurge'));return}
+    if(!confirm(T('transfer.staging.confirmPurge',{count:done.length})))return;
     for(const it of done)await postJ('/api/books/staging/delete',{name:it.name});refresh()};
   uploader($('.up',sec),()=>'/api/books/staging',()=>({}),BOOK_EXT,()=>refresh());   // 书籍格式原样入库；选中即按 BOOK_EXT 拦
   const am=g('artmsg'),au=g('arturl'),ag=g('artgo');
-  ag.onclick=async()=>{const url=au.value.trim();if(!url){am.textContent='请填链接';return}ag.disabled=true;am.style.color='';am.textContent='抓取中…（联网抽取正文，十几秒）';
+  ag.onclick=async()=>{const url=au.value.trim();if(!url){am.textContent=T('transfer.fetchArticle.needUrl');return}ag.disabled=true;am.style.color='';am.textContent=T('transfer.fetchArticle.fetching');
     const r=await j('/api/books/staging/fetch-article',{method:'POST',body:JSON.stringify({url})});ag.disabled=false;
-    am.style.color=r.ok===false?'var(--bad)':'var(--ok)';am.textContent=r.ok===false?('✗ '+(r.message||'失败')):('✓ '+r.message);if(r.ok!==false){au.value='';refresh()}};
+    am.style.color=r.ok===false?'var(--bad)':'var(--ok)';am.textContent=r.ok===false?('✗ '+(r.message||T('transfer.fetchArticle.failed'))):('✓ '+r.message);if(r.ok!==false){au.value='';refresh()}};
   refresh();sec.refresh=refresh;subtabs(sec);}
 
 /* 服务 tab（按注册表出现）。key = 注册的服务名 */
