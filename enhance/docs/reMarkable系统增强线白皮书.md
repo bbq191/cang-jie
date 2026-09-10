@@ -179,4 +179,4 @@ JAVA_HOME=~/.local/share/sdkman/candidates/java/21.0.12-tem ghidra-analyzeHeadle
 
 **已闭环（真机）**：`hl-snap/` 精确吸附 hook（§03a，journal 三行关键日志+健康检查+地址一致性交叉验证）；`battop/` 目录搬迁（§03b，纯文件系统操作，不涉及设备行为变化，不需要真机验证，`cargo build` 确认引用它的 `shelf-gateway` 仍能编译）；`handwriting-stroke/` 笔尖角度模型+提按速度代理，两个 hook 目标均真机验证（§03e/§03f，journal 日志+真机截图+用户定性反馈三重验证，`hl-snap` 共存不冲突）。
 
-**已放弃**：`handwriting-stroke/` 按 `bVar16`（笔型标签）精确排除钢笔的方案（§03e/§04）——真机数据证伪了"`FUN_00f47530` 的 `ctx` 参数在钢笔调用路径下等于 `FUN_00f3f9d0` 的 `lVar7`"这个假设，退回纯宽度渐变。
+**已放弃**：`handwriting-stroke/` 按 `bVar16`（笔型标签）精确排除钢笔的方案（§03e/§04）——真机数据证伪了"`FUN_00f47530` 的 `ctx` 参数在钢笔调用路径下等于 `FUN_00f3f9d0` 的 `lVar7`"这个假设，退回纯宽度渐变。`handwriting-stroke/` 真实硬件压感跨函数传值方案（§03f）——压感数据本身验证是真的，但"`FUN_00f3f9d0` 入口设全局变量→`FUN_00f47530` 内部读"这套机制真机数据证伪（绝大多数 `FUN_00f47530` 调用不经过锁定的这一份 `FUN_00f3f9d0`），改用运笔速度代理。
