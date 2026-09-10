@@ -18,6 +18,6 @@ sudo sh install.sh
 
 装的是常驻服务（`Type=simple`，进程内 `loop{sample_once; sleep(10min)}`），**不是**早期那版靠 `battop.timer` 反复拉起 oneshot 的架构（那版触发过整机冻死，见 `FINDINGS.md`）。固定装在 `/home/root/battop`，不走 shelf 的 XDG/`bin_dir` 那套。
 
-## 开关
+## 开关 · 网页数据展示
 
-原生设置页「系统增强→电池审计」页只是只读展示（读 `summary.json`）；shelf 网页「管理→系统增强」页 2026-09-09 起有了第一个真开关（`systemctl start/stop battop.service`，见 `shelf/services/shelf-gateway/src/enhance/battop.rs`）。
+原生设置页「系统增强→电池审计」页只是只读展示（读 `summary.json`）。shelf 网页这边经过几轮调整（2026-09-09 §03aj 起、2026-09-10 §03ak-§03am 定型）：开关（`systemctl start/stop battop.service`，`shelf/services/shelf-gateway/src/enhance/battop.rs`）现在在「管理→实验室」，只留开关+风险说明；真正的数据展示挪到「管理→电池刺客」独立二级 tab（**运行时才出现**，`battop.running` 门控），下含「耗电情况」（按应用/按进程下拉切换）/「唤醒源」两个三级 tab，各自再按 4 个时间窗（今日/7天/30天/全部）切换——数据源就是本目录常驻聚合的 `summary.json`（`GET /api/enhance/battop/summary` 原样转发，网页不重新聚合）。细节见 `shelf/docs/reMarkable书架白皮书.md` §03ak-§03am。
