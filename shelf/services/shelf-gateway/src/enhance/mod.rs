@@ -51,14 +51,21 @@ pub fn set_qol(paths: &Paths, req: &mut Request<'_>) -> ApiResult {
     Ok(status(paths))
 }
 
-/// `POST /api/enhance/battop/{start|stop}`。battop 不在服务注册表里（独立 systemd unit，不走
-/// `manage::MODULES`），启停不会触发 `events::Hub` 现成的"注册表目录 inotify → manage 事件"那条
-/// 自动通路——这里手动 `publish`，复用同一个 "manage" area，前端 `es.onmessage` 的 tab 集合比较
-/// 顺便把 `battop.running` 拼进 key 里（见 app.js），运行态变化会跟服务启停一样触发整页重载，
-/// 独立顶层「电池刺客」标签页才能"跑起来才出现、停了就消失"（2026-09-10 用户纠正：原来固定常显，
-/// 跟字体/KOReader/壁纸/笔记这些服务 tab"运行才有标签页"的既有约定不一致）。
-pub fn battop_toggle(hub: &crate::events::Hub, action: &str) -> ApiResult {
+/// `POST /api/enhance/battop/{start|stop}`。**没有独立顶层「电池刺客」标签页了**（2026-09-10
+/// 用户拍板：降级移入「管理→实验室」，只留卡片，不单开顶层 tab）——上一版为了让那个独立标签页
+/// "跑起来才出现"而加的 `events::Hub` 事件 publish 已经跟着撤掉，这里恢复成不需要额外状态的
+/// 单一函数。
+pub fn battop_toggle(_paths: &Paths, action: &str) -> ApiResult {
     battop::toggle(action).map_err(ApiError::bad)?;
-    hub.bus.publish("manage", "battop");
     Ok(Reply::ok(&serde_json::json!({"ok": true})))
+}
+
+/// `GET /api/enhance/battop/summary`：原样转发 `battop::summary()`（4 个时间窗 × 应用/进程/唤醒源
+/// top15，battop 自己聚合好的，这里不重新算）。还没有数据（刚装/从没跑过一次采样）时 `available:false`，
+/// 网页显示"还没有数据，等下一次采样"而不是报错——这不是异常状态，是正常的"刚装上"过渡态。
+pub fn battop_summary(_paths: &Paths, _req: &mut Request<'_>) -> ApiResult {
+    match battop::summary() {
+        Some(v) => Ok(Reply::ok(&serde_json::json!({"available": true, "summary": v}))),
+        None => Ok(Reply::ok(&serde_json::json!({"available": false}))),
+    }
 }

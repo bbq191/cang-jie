@@ -74,8 +74,12 @@ function uploader(box,urlOf,queryOf,okExt,onFinish){
   return {clear(){files=[];render()}};
 }
 
-/* 二级标签：面板都由外层 render/refresh 预先填好，切换只显隐 */
-function subtabs(sec){const nav=$('.subnav',sec);if(!nav)return;const btns=[...nav.children],panels=[...sec.querySelectorAll('.subpanel')];
+/* 二级标签：面板都由外层 render/refresh 预先填好，切换只显隐。`:scope >` 限定只找 sec 的**直接
+   子元素**（2026-09-10 「其他」tab 把 KOReader 的 render() 原样嵌进自己某个 subpanel 里，KOReader
+   自己内部还有一层字体/词典 subnav——不加 `:scope >` 的话外层这次 querySelectorAll('.subpanel')
+   会把 KOReader 自己那两个内层 subpanel 也扫进来，外层按钮数对不上内层+外层 panel 总数，点哪个都
+   错位。对现有的非嵌套调用点（没有内层 subnav 的场景）结果完全一样，不是破坏性改动）。 */
+function subtabs(sec){const nav=sec.querySelector(':scope > .subnav');if(!nav)return;const btns=[...nav.children],panels=[...sec.querySelectorAll(':scope > .subpanel')];
   btns.forEach((b,i)=>b.onclick=()=>{btns.forEach(x=>x.classList.remove('on'));panels.forEach(p=>p.classList.remove('on'));b.classList.add('on');if(panels[i])panels[i].classList.add('on')});}
 
 /* 列表渲染骨架：每项一行「左：名字等 ｜ 右：徽章/大小/按钮」；row(it,left,right,li) 填内容。字体/词典/壁纸共用 */
@@ -154,14 +158,20 @@ function renderTransfer(sec){sec.innerHTML=`
       <p class="lead">所有书从这里进：上传、抓网文、电脑 shelf push、scp 进 inbox。原样入库、不动字节；洗不洗、放哪读，到「母版库」再定。</p>
       ${GUIDE}
       ${onUsb?'':'<p class="opt-note">传大书建议走 USB <code>https://10.11.99.1:8778</code>，不占 Wi-Fi。</p>'}
-      <h3>上传</h3>
+    </div>
+    <!-- 三个入库来源各自独立成卡（2026-09-10 用户要求：原来挤在同一张卡里用 h3 分隔，看着像
+         "上传"下面附带两个子步骤，实际是三条互不依赖、各走各的入库路径，拆卡片才是"3个功能来源"
+         该有的视觉分量，跟「系统增强」/「实验室」那种并排卡片同一个语言）。 -->
+    <div class="card"><h3 style="margin-top:0">上传</h3>
       ${upHtml('⬆','点击或拖入书（可多选 · '+up(EXT.native)+' 及下列格式）',BOOK_EXT,'进母版库')}
       <p class="small">${FMT_TIERS}。不是书的文件（图片 / 压缩包）不收。</p>
-      <h3>抓网文</h3>
+    </div>
+    <div class="card"><h3 style="margin-top:0">抓网文</h3>
       <div class="row"><input type="text" id="arturl" placeholder="https://… 文章链接（公众号 / 博客 / 新闻）" style="flex:1;min-width:12em"><button class="btn" id="artgo">抓取进母版库</button></div>
       <div class="small" id="artmsg" style="margin-top:.3em"></div>
       <p class="small">静态网页效果好；纯 JS 页面、付费墙抓不出。单篇文章（连载分章后续）。</p>
-      <h3>电脑端 <code>shelf push</code>（进阶洗书 / PDF 重排）</h3>
+    </div>
+    <div class="card"><h3 style="margin-top:0">电脑端 <code>shelf push</code>（进阶洗书 / PDF 重排）</h3>
       <p class="small">难搞的书走电脑：非标准格式转 EPUB、Calibre 级深洗、PDF 论文重排、漫画转 CBZ——设备端做不到的都在这。洗完<b>也落这个母版库</b>，去向一样在下面「母版库」子页选。</p>
       <p>命令长这样（在本仓库目录下跑；<code>shelf/host/bin/shelf</code> 就是那个命令，嫌长可 <code>alias shelf="$PWD/shelf/host/bin/shelf"</code>）：</p>
       ${cmdBlock(['shelf/host/bin/shelf push &lt;书1&gt; [书2 …]'])}
@@ -300,6 +310,22 @@ function assetTab(sec,api,o){sec.innerHTML=`<div class="card">${o.title?`<h2>${o
   const refresh=async()=>{const d=await j(api);fillList($('#al',sec),d.items||[],(it,left,right)=>o.row(it,left,right,refresh),`还没有内容，上面「${o.btn}」传一个`);if(o.onRender)o.onRender(sec,refresh,d)};
   uploader($('.up',sec),()=>api,()=>({}),o.accept,refresh);
   refresh();sec.refresh=refresh}
+
+/* 「其他」顶层 tab（2026-09-10 用户重排首层标签：传书/笔记/其他/管理）：xochitl(font-serve)/
+   KOReader(koreader-serve)/壁纸(wallpaper-serve) 三个原来各自独立的顶层 tab 降一级，包进这个
+   tab 当二级子标签——三个服务各自的 render() 原样复用，不重写内容，只是换个挂载点（KOReader 自己
+   内部还有一层字体/词典 subnav，三级嵌套，subtabs() 已经改成 `:scope >` 限定直接子元素，不会互相
+   干扰，见 subtabs() 头注）。只装了其中一部分时，subnav 只列已装的那几个（笔记 tab 本身不在这
+   里——note-serve 单独占「其他」前面那个固定位置，不受这条影响）。 */
+function renderOther(sec,svcs){
+  const items=[{name:'font-serve',icon:'🔤',label:'xochitl'},{name:'koreader-serve',icon:'📖',label:'KOReader'},{name:'wallpaper-serve',icon:'🖼️',label:'壁纸'}]
+    .filter(it=>svcs.some(s=>s.name===it.name));
+  sec.innerHTML=`<div class="subnav">${items.map((it,i)=>`<button${i===0?' class="on"':''}>${it.icon} ${it.label}</button>`).join('')}</div>
+    ${items.map((it,i)=>`<div class="subpanel${i===0?' on':''}" id="other-${it.name}"></div>`).join('')}`;
+  items.forEach(it=>TABS[it.name].render($('#other-'+it.name,sec)));
+  sec.refresh=()=>items.forEach(it=>{const c=$('#other-'+it.name,sec);if(c&&c.refresh)c.refresh()});
+  subtabs(sec);
+}
 
 /* 「笔记」tab（note-serve 注册；数据来自 ink-serve 条目库）：按书→按章列条目，左裁图右文本，改即存。
    设备只负责写、不负责改：这里就是"改"的地方（e-ink 上打字太痛苦）。三期（2026-09-08）砍掉了"分区"——
@@ -753,19 +779,42 @@ function mountModelPanel(root,seg,title,icon,showAuto){
    「电池刺客」标签页（见下 renderBattop）两处都要用同一份内容——各自独立挂载、各自独立 refresh
    （两处不共享内存态，切换/刷新各自拉一遍 /api/enhance/status，是这个 app 里 tab 之间一贯的模式，
    不是新行为）。返回 refresh() 给调用方自己决定何时/多频繁调用（sec.refresh 挂钩）。 */
+/* 时间窗展示用的格式化 helper：ms→人话时长，battop::write_summary 已经把 top15 应用/进程/唤醒源
+   都按 {name,ms,pct} 算好了（见 enhance/battop/src/main.rs），网页这边不重新聚合，只管排版。 */
+const fmtMs=ms=>ms>=3600000?(ms/3600000).toFixed(1)+' 小时':ms>=60000?(ms/60000).toFixed(1)+' 分':(ms/1000).toFixed(0)+' 秒';
+const BATTOP_WINDOWS=[{key:'today',label:'今日'},{key:'7d',label:'7 天'},{key:'30d',label:'30 天'},{key:'all',label:'全部'}];
+
 function mountBattopCard(container){
   container.innerHTML=`<h3 style="margin-top:0">电池刺客（battop）</h3>
     <p class="small">电量异常排查用的采样诊断进程，日常用不到。2026-08 出过一次 cgroup 死锁死机——根因是内核罕见的 RCU stall（没修，是概率事件），当时 timer 每 10 分钟重启一次把撞上它的概率放大了 144 倍。已经改成常驻低频采样，正常点一下开/关（偶尔用用）风险可忽略；但每次「启动」确实还是走一次同样的 cgroup 迁移操作，短时间内连续反复点启停不是绝对安全，别拿这个开关当没有代价的按钮反复点着玩。</p>
     <div class="kv small" data-kv>检测中…</div>
-    <div class="row"><button class="btn" data-btn disabled>…</button></div>`;
-  const kv=container.querySelector('[data-kv]'),btn=container.querySelector('[data-btn]');
+    <div class="row"><button class="btn" data-btn disabled>…</button></div>
+    <div data-summary></div>`;
+  const kv=container.querySelector('[data-kv]'),btn=container.querySelector('[data-btn]'),summaryEl=container.querySelector('[data-summary]');
   let st=null;
+  /* 跟以前设备端 battery-audit.sh/FINDINGS.md 那份报告对标的表格（累计 CPU/机器归属应用/唤醒源），
+     只是这次数据源是 battop 常驻聚合的 summary.json（4 个时间窗），不是一次性跑分析脚本。 */
+  const topList=items=>items&&items.length
+    ?`<ul class="list">${items.map(it=>`<li><span>${it.name}</span><span class="small">${fmtMs(it.ms)} · ${it.pct}%</span></li>`).join('')}</ul>`
+    :'<p class="small">（这个窗口没有数据）</p>';
+  const renderSummary=data=>{
+    if(!data||!data.available){summaryEl.innerHTML='<p class="small">还没有采样数据——常驻服务每 ~10 分钟采一次，刚装/刚启动时先等一轮。</p>';return}
+    const w=data.summary.windows||{};
+    summaryEl.innerHTML=`<div class="subnav">${BATTOP_WINDOWS.map((x,i)=>`<button${i===0?' class="on"':''}>${x.label}</button>`).join('')}</div>
+      ${BATTOP_WINDOWS.map((x,i)=>{const d=w[x.key]||{};return `<div class="subpanel${i===0?' on':''}">
+        <p class="small">放电 <b>${d.discharge||0}%</b> · <b>${d.mah||0}</b> mAh（均值约 ${d.ma||0} mA）· ${d.samples||0} 次采样</p>
+        <h4 style="margin:.6em 0 .2em">按应用（累计占用时长）</h4>${topList(d.app)}
+        <h4 style="margin:.6em 0 .2em">唤醒源（打断休眠次数）</h4>${topList(d.wake)}
+      </div>`}).join('')}`;
+    subtabs(summaryEl);
+  };
   const refresh=async()=>{const r=await j('/api/enhance/status');if(r.ok===false)return;
     st=r.battop||{};
     kv.innerHTML=!st.installed
       ?`<b>状态</b><span>${badge('未装',false)} <span class="small">见 enhance/battop/install.sh 手动装（这次网页只控制已装好的，不提供从网页装）</span></span>`
       :`<b>状态</b><span>${badge(st.running?'运行中':'已装未开',!!st.running)}</span><b>最近采样</b><span>${st.lastSampleAt?new Date(st.lastSampleAt*1000).toLocaleString():'（还没有采样数据）'}</span>`;
-    btn.textContent=st.running?'停止':'启动';btn.disabled=!st.installed};
+    btn.textContent=st.running?'停止':'启动';btn.disabled=!st.installed;
+    if(st.installed){renderSummary(await j('/api/enhance/battop/summary'))}else{summaryEl.innerHTML=''}};
   btn.onclick=async()=>{if(!st)return;btn.disabled=true;
     const r=await j(`/api/enhance/battop/${st.running?'stop':'start'}`,{method:'POST'});
     if(r.ok===false)alert(r.message||'操作失败');
@@ -774,13 +823,6 @@ function mountBattopCard(container){
   return refresh;
 }
 
-/* 独立顶层「电池刺客」标签页（2026-09-10）：battop 不是 /api/services 注册表里的 service
-   （独立 systemd unit，enhance/battop/，不走服务反代），走「传书」「管理」那种手动固定 addTab
-   注册，不能靠 svcs.forEach 动态生成。内容跟「实验室」里那张卡片是同一份（mountBattopCard），
-   这次只搬现有状态展示，不解析 summary.json 里的详细耗电数据（那是独立的后续任务）。 */
-function renderBattop(sec){sec.innerHTML='<div class="card" id="battopCard"></div>';
-  const refresh=mountBattopCard($('#battopCard',sec));
-  sec.refresh=refresh;}
 
 /* 管理台/引导（固定 tab，始终在——它是网关自身页面，不由服务注册表驱动） */
 /* 「管理」拆四个二级 tab（2026-09-09 起三个，2026-09-10 加「实验室」）：① 基石与模块（原来就有的
@@ -883,32 +925,38 @@ function renderManage(sec){sec.innerHTML=`
   const langsel=$('#langsel');langsel.value=lang;
   langsel.onchange=()=>{LS.set('lang',langsel.value);location.reload()};
 
-  const [d,er]=await Promise.all([j('/api/services'),j('/api/enhance/status')]);
+  const d=await j('/api/services');
   const svcs=(d.services||[]).filter(s=>s.ui&&TABS[s.name]).sort((a,b)=>a.ui.order-b.ui.order);
-  const battopRunning=er.ok!==false&&!!(er.battop&&er.battop.running);   // 跟字体/KOReader/壁纸/笔记这些服务 tab 同一个约定：只有真的跑起来才有标签页
+  /* 首层标签顺序（2026-09-10 用户重排）：传书 / 笔记 / 其他 / 管理。笔记单独占位，xochitl(font-serve)/
+     KOReader(koreader-serve)/壁纸(wallpaper-serve)——目前 svcs 里唯三除笔记外还带 ui.order 的候选——
+     一律降一级包进「其他」（见 renderOther）。 */
+  const noteSvc=svcs.filter(s=>s.name==='note-serve');
+  const otherSvcs=svcs.filter(s=>s.name!=='note-serve');
   $('#hdr').textContent=location.host;
   const nav=$('#tabs'),main=$('#main');main.innerHTML='';
   const secByArea={};const dirty=new Set();
   const addTab=(title,render,first,area)=>{const b=document.createElement('button');b.textContent=title;const sec=document.createElement('section');sec.area=area;secByArea[area]=sec;
     b.onclick=()=>{[...nav.children].forEach(x=>x.classList.remove('on'));[...main.children].forEach(x=>x.classList.remove('on'));b.classList.add('on');sec.classList.add('on');dirty.delete(area);if(sec.refresh)sec.refresh()};
-    nav.appendChild(b);main.appendChild(sec);render(sec);if(first)b.onclick()};
+    nav.appendChild(b);main.appendChild(sec);render(sec);if(first)b.onclick();return sec};
   addTab(T('tab.transfer'),renderTransfer,true,'books');          // 总入口（入库｜母版库），固定第一位（book-serve 不在时列表里提示去管理页开）
-  svcs.forEach((s)=>addTab(TABS[s.name].titleKey?T(TABS[s.name].titleKey):TABS[s.name].title,TABS[s.name].render,false,AREA[s.name]||s.name));
-  if(battopRunning)addTab(T('tab.battop'),renderBattop,false,'battop'); // 独立顶层标签页，battop 不在服务注册表里，手动固定注册；跑起来才出现（跟其它服务 tab 同规则，2026-09-10 用户纠正——原来固定常显跟这条约定不一致）
+  noteSvc.forEach((s)=>addTab(TABS[s.name].titleKey?T(TABS[s.name].titleKey):TABS[s.name].title,TABS[s.name].render,false,AREA[s.name]||s.name));
+  if(otherSvcs.length){
+    const otherSec=addTab(T('tab.other'),(sec)=>renderOther(sec,otherSvcs),false,'other');
+    // fonts/koreader/wallpapers 各自的 SSE 事件原来路由到各自独立顶层 section，现在都嵌进了同一个
+    // 「其他」section——三个 area 名都指向同一个 otherSec，事件到了随便哪个都触发它的合并 refresh
+    // （renderOther 里 sec.refresh 会把三块子面板一起刷一遍，不逐个精确匹配，简单可靠）。
+    otherSvcs.forEach(s=>{secByArea[AREA[s.name]||s.name]=otherSec});
+  }
   addTab(T('tab.manage'),renderManage,false,'manage');            // 固定管理台，始终可进
   /* 事件推送（SSE，零轮询）：服务在变更处发事件 → 网关 /api/events 汇聚 → 这里只刷对应 tab；不在前台的 tab 记脏，切过去时刷。
-     manage 事件（服务启停）：tab 集合变了就整页重载，否则只刷管理台。battop 不在服务注册表里，走同一个 "manage" 事件 tag（battop_toggle
-     成功后网关顺手 publish），比较时额外把 battop.running 拼进 key，运行态变化同样触发整页重载（tab 出现/消失）。
-     断线（WiFi 掉/设备休眠醒来）EventSource 自动重连。 */
-  const svcKey=svcs.map(s=>s.name).join(',')+'|battop:'+battopRunning;
+     manage 事件（服务启停）：tab 集合变了就整页重载，否则只刷管理台。断线（WiFi 掉/设备休眠醒来）EventSource 自动重连。 */
+  const svcKey=svcs.map(s=>s.name).join(',');
   const dot=document.createElement('span');dot.id='live';dot.title='事件推送';dot.textContent='●';dot.style.cssText='margin-left:.5em;font-size:.8em;color:var(--bad)';$('#hdr').appendChild(dot);
   const es=new EventSource('/api/events');
   es.onopen=()=>{dot.style.color='var(--ok)';dot.title='事件推送已连接'};
   es.onerror=()=>{dot.style.color='var(--bad)';dot.title='事件推送断开，自动重连中'};
   es.onmessage=async(e)=>{let ev;try{ev=JSON.parse(e.data)}catch{return}
-    if(ev.area==='manage'){const [d,er]=await Promise.all([j('/api/services'),j('/api/enhance/status')]);
-      const k=(d.services||[]).filter(s=>s.ui&&TABS[s.name]).map(s=>s.name).join(',')+'|battop:'+(er.ok!==false&&!!(er.battop&&er.battop.running));
-      if(k!==svcKey){location.reload();return}}
+    if(ev.area==='manage'){const d=await j('/api/services');const k=(d.services||[]).filter(s=>s.ui&&TABS[s.name]).map(s=>s.name).join(',');if(k!==svcKey){location.reload();return}}
     const sec=secByArea[ev.area];if(!sec)return;
     if(sec.classList.contains('on')){if(sec.refresh)sec.refresh()}else dirty.add(ev.area)};
 })();

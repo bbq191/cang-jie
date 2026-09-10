@@ -30,6 +30,14 @@ pub fn status() -> Status {
     Status { installed, running, last_sample_at }
 }
 
+/// `summary.json`（battop 自己写的预聚合：4 个时间窗 × 应用/进程/唤醒源 top15，见
+/// `enhance/battop/src/main.rs::write_summary` 头注）原样透传——网页这边不重新聚合一遍，battop
+/// 自己已经算好了要展示的数据，这里只是把文件内容读出来当 JSON 转发。文件不存在（刚装还没首次
+/// 采样，或者从没装过）返回 `None`，调用方决定怎么提示。
+pub fn summary() -> Option<serde_json::Value> {
+    std::fs::read_to_string(SUMMARY).ok().and_then(|s| serde_json::from_str(&s).ok())
+}
+
 /// `action`：`start`/`stop`。未装（unit 文件不在）时拒绝——网页这次不做"从零装 battop"。
 pub fn toggle(action: &str) -> Result<(), String> {
     if !Path::new(UNIT_FILE).is_file() {

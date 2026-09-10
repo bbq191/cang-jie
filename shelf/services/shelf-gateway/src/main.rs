@@ -145,7 +145,8 @@ fn main() {
         // 系统增强开关（Track 3）：网关自身固定能力，同样必须在 /api/{svc} 代理通配之前注册。
         .get("/api/enhance/status", bind(&paths, |p, _| Ok(enhance::status(p))))
         .put("/api/enhance/qol", bind(&paths, enhance::set_qol))
-        .post("/api/enhance/battop/{action}", bind(&hub, |h, r| { let action = r.param("action").to_string(); enhance::battop_toggle(h, &action) }))
+        .get("/api/enhance/battop/summary", bind(&paths, enhance::battop_summary))
+        .post("/api/enhance/battop/{action}", bind(&paths, |p, r| { let action = r.param("action").to_string(); enhance::battop_toggle(p, &action) }))
         .route(Method::Other, "/api/*", |_| Err(ApiError::bad("unsupported method")))
         .any(PROXIED, "/api/{svc}/*", bind(&paths, proxy::forward))
         .any(PROXIED, "/api/{svc}", bind(&paths, proxy::forward));
