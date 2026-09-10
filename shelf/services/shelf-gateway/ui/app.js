@@ -175,8 +175,10 @@ function renderTransfer(sec){sec.innerHTML=`
     </div>
     <div class="card"><h3 style="margin-top:0">${T('transfer.fetchArticle.title')}</h3>
       <div class="row"><input type="text" id="arturl" placeholder="${T('transfer.fetchArticle.urlPlaceholder')}" style="flex:1;min-width:12em"><button class="btn" id="artgo">${T('transfer.fetchArticle.btn')}</button></div>
+      <label class="toggle"><input type="checkbox" id="artopt"> ${T('transfer.fetchArticle.optimizeToggle')}</label>
       <div class="small" id="artmsg" style="margin-top:.3em"></div>
       <p class="small">${T('transfer.fetchArticle.hint')}</p>
+      <p class="small">${T('transfer.fetchArticle.optimizeHint')}</p>
     </div>
     <div class="card"><h3 style="margin-top:0">${T('transfer.push.title')}</h3>
       <p class="small">${T('transfer.push.desc')}</p>
@@ -236,9 +238,13 @@ function renderTransfer(sec){sec.innerHTML=`
     if(!confirm(T('transfer.staging.confirmPurge',{count:done.length})))return;
     for(const it of done)await postJ('/api/books/staging/delete',{name:it.name});refresh()};
   uploader($('.up',sec),()=>'/api/books/staging',()=>({}),BOOK_EXT,()=>refresh());   // 书籍格式原样入库；选中即按 BOOK_EXT 拦
-  const am=g('artmsg'),au=g('arturl'),ag=g('artgo');
+  const am=g('artmsg'),au=g('arturl'),ag=g('artgo'),ao=g('artopt');
+  // 「同步优化」记在本机（per-viewer 便利态，跟 folderPreset/optmode 那几个一个规矩）；缺省开——网文正文
+  // 没有任何 CSS（article.rs 属性白名单本来就不留 class/style），不经优化会在设备上按默认段距渲染出大片
+  // 留空（真机反馈），默认帮用户把这一步做了，不想要（比如想快点抓完自己再调）可以关掉。
+  ao.checked=LS.get('artopt','1')==='1';ao.onchange=()=>LS.set('artopt',ao.checked?'1':'0');
   ag.onclick=async()=>{const url=au.value.trim();if(!url){am.textContent=T('transfer.fetchArticle.needUrl');return}ag.disabled=true;am.style.color='';am.textContent=T('transfer.fetchArticle.fetching');
-    const r=await j('/api/books/staging/fetch-article',{method:'POST',body:JSON.stringify({url})});ag.disabled=false;
+    const r=await j('/api/books/staging/fetch-article',{method:'POST',body:JSON.stringify({url,optimize:ao.checked})});ag.disabled=false;
     am.style.color=r.ok===false?'var(--bad)':'var(--ok)';am.textContent=r.ok===false?('✗ '+(r.message||T('transfer.fetchArticle.failed'))):('✓ '+r.message);if(r.ok!==false){au.value='';refresh()}};
   refresh();sec.refresh=refresh;subtabs(sec);}
 

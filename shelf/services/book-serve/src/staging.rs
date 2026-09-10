@@ -75,6 +75,15 @@ pub struct DeliverOutcome {
     pub render: Option<RenderPlan>,
 }
 
+/// `fetch_article` 的结果：落地名 + 标题 + 同步优化态（没请求优化＝两个字段都是"未发生"，不是"失败"）。
+#[derive(Debug, PartialEq)]
+pub struct FetchArticleOutcome {
+    pub name: String,
+    pub title: String,
+    pub optimized: bool,
+    pub optimize_error: Option<String>,
+}
+
 /// 落库去向（记录用）。
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Reader {
@@ -144,11 +153,24 @@ impl Staging {
         Ok(landed_name(&target))
     }
 
-    /// 网文抓取（Readability + 白名单）→ 组 EPUB 原样落母版库（未优化，用户按需再点优化）。返回 (落地名, 标题)。
-    pub fn fetch_article(&self, url: &str) -> Result<(String, String), String> {
+    /// 网文抓取（Readability + 白名单）→ 组 EPUB 落母版库。`optimize`＝网页「同步优化」复选框：请求了就紧接着
+    /// 跑一遍跟「母版库→优化」按钮同一个 `optimize()`（Auto 档），不用用户再手动点一次——`article.rs` 的属性
+    /// 白名单本来就不留 class/style，正文没有任何 CSS，不经 wash 层的边距/段距归零会在 xochitl 上按默认段距
+    /// 渲染出大片留空（真机反馈）。`optimize=false` 保留原行为：core 级落库，用户按需再点。同步优化失败不影响
+    /// 入库结果（已经抓到的文章不因为这一步失败就整个丢掉），失败原因原样带回给调用方决定怎么措辞。
+    pub fn fetch_article(&self, url: &str, optimize: bool) -> Result<FetchArticleOutcome, String> {
         let (epub, title) = bookconv::article::build_article_epub(url)?;
         let fname = format!("{}.epub", bookconv::util::sanitize_filename(&title, "article"));
-        Ok((self.stage_new(&fname, &epub)?, title))
+        let name = self.stage_new(&fname, &epub)?;
+        let (optimized, optimize_error) = if optimize {
+            match self.optimize(&name, OptimizeMode::Auto) {
+                Ok(_) => (true, None),
+                Err(e) => (false, Some(e)),
+            }
+        } else {
+            (false, None)
+        };
+        Ok(FetchArticleOutcome { name, title, optimized, optimize_error })
     }
 
     // ───────────── 优化 ─────────────

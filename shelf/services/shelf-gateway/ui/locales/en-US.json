@@ -435,5 +435,7 @@
   "manage.lab.hwStroke.toggle": "Enable",
   "manage.lab.importMd.title": "Import md file",
   "manage.lab.importMd.desc": "Once enabled, an \"Import md file\" sub-tab appears on the \"Notes\" tab (upload a .md file to generate a device notebook document). New feature, off by default — turn it on here to use it.",
-  "manage.lab.importMd.toggle": "Enable (off by default)"
+  "manage.lab.importMd.toggle": "Enable (off by default)",
+  "transfer.fetchArticle.optimizeToggle": "Optimize right away (on by default)",
+  "transfer.fetchArticle.optimizeHint": "A fetched article's body has no layout styling at all — leave this unchecked and it renders on the device with default paragraph spacing, leaving large blank gaps. Checking it runs a \"clean + optimize\" pass immediately after fetching (the same thing as clicking \"Optimize\" in the master library list, just done for you). Uncheck it if you want the rawest possible result — e.g. to pick a different optimization tier yourself in \"Master library\"."
 }
