@@ -53,3 +53,7 @@ gateway.service`）代管，因为它历史上就是跟着书架整包一起装�
 XDG 运行时注册表路径、`shelf.target` systemd 目标、登录默认密码字面量 `shelf`、mDNS 域名
 `shelf.local` 这几处**仍然叫 "shelf"**——这次重构只改了 crate/二进制/systemd 单元这一层的名字，
 没有动这些会牵连已部署设备真实路径/配置的更深层命名，是刻意留白，不是遗漏。
+
+## 文档
+
+决策记录/踩坑/正名搬迁的完整过程见 [`docs/reMarkable网关白皮书.md`](docs/reMarkable网关白皮书.md)。

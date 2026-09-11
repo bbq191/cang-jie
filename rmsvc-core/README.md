@@ -37,3 +37,7 @@ XDG 路径本身仍然叫 `shelf`（`~/.config/shelf/`、`~/.local/share/shelf/`
 
 `cargo test --manifest-path rmsvc-core/Cargo.toml`（独立 crate，CI 单独一条 `rust` job 步骤，仿
 `device-core` 先例）。
+
+## 文档
+
+决策记录/踩坑/正名搬迁的完整过程见 [`docs/reMarkable设备端Web服务基座白皮书.md`](docs/reMarkable设备端Web服务基座白皮书.md)。

@@ -16,9 +16,9 @@
 2. **复用不复制**：需要老项目里现成的通用基础设施（`chinese-ime/langhook` 的特征码扫描/trampoline 工具文件）时，走**路径引用**，不 `cp` 一份、不改老项目一个字节——跟 shelf 的 `bookconv` 被 `reading/device-rs` 路径引用是同一个已有先例。
 3. **一份产物两种用法，别搞两份构建**：需要"只要功能子集"时优先选运行期开关而不是编译期 `#ifdef`/独立构建变体——后者要么让老项目里一批函数在特殊构建下变成死代码（触发 `-Wunused-function`，还得记两份构建产物的差异），要么真拆出一份新代码时又违反第 2 条。这条原则最终体现为：`hl-snap/` 是**全新独立源码**（不是从老项目 `#ifdef` 出来的变体），因为它连接口设计都不一样（`_xovi_shouldLoad` 判据从"借用 setLanguageCode"改成"用自己的目标特征码"）；但 `hl-snap/` 内部对 `chinese-ime/langhook` 的三个工具文件，用的是路径引用不是复制。
 
-## 00b｜现状总览（2026-09-09 初稿；2026-09-10 补记 shelf 消费方后续演进，读本文其余历史节前先看这里）
+## 00b｜现状总览（2026-09-09 初稿；2026-09-10 补记 shelf 消费方后续演进；2026-09-11 补记 wallpaper/font 迁入 + chinese-ime 挪出仓库，读本文其余历史节前先看这里）
 
-**目录结构**：
+**目录结构**（2026-09-11 刷新）：
 
 ```
 enhance/
@@ -26,8 +26,16 @@ enhance/
 ├── docs/reMarkable系统增强线白皮书.md   本文件
 ├── hl-snap/                     荧光笔 CJK 精确吸附，独立最小 xovi 扩展（C，ARM64）
 ├── battop/                      电池刺客，独立 Rust 二进制（诊断采样器，git mv 自 misc/battery-audit/）
-└── handwriting-stroke/          CJK 手写笔迹渲染优化，独立最小 xovi 扩展（C，ARM64），两个 hook 目标真机验证通过
+├── handwriting-stroke/          CJK 手写笔迹渲染优化，独立最小 xovi 扩展（C，ARM64），两个 hook 目标真机验证通过
+├── wallpaper-serve/             壁纸：上传即用+池化轮换，独立 Rust 二进制（网页服务，挂 ../gateway/），2026-09-11 从 shelf/services/wallpaper-serve 挪进来
+├── font-serve/                  字体：上传即装+中文回退链，独立 Rust 二进制（网页服务，挂 ../gateway/），2026-09-11 从 shelf/services/font-serve 挪进来
+├── shared/                      hl-snap/handwriting-stroke 共用的特征码扫描+trampoline 三个工具文件（C，剥离移植自 chinese-ime/langhook，chinese-ime 挪出仓库后不再路径引用）
+└── lo-alias/                    gateway.service 的 ExecStartPre 脚本（剥离移植自 chinese-ime/langhook/deploy，网络可达性修复，跟中文输入法无关）
 ```
+
+**`wallpaper-serve/`/`font-serve/`（2026-09-11）**：跟 `hl-snap`/`battop`/`handwriting-stroke` 不是一回事——它们是挂 `gateway/` 网页托管的领域服务（依赖顶层 `../rmsvc-core` 共享基座、有自己的上传/配置 HTTP API），不是零依赖独立诊断工具或 xovi 扩展。用户判断"壁纸"/"字体"概念上更该算系统增强、不是"书架内容管理"业务，才有了这次迁移；运行时行为零变化，只是编译产物来源目录变了。决策/踩坑细节见 `shelf/docs/reMarkable书架白皮书.md`（迁移动机+现状）、`rmsvc-core/docs/reMarkable设备端Web服务基座白皮书.md` §01（跨行依赖为什么现在能成立）、`gateway/docs/reMarkable网关白皮书.md`（网关那一半的正名过程）——本文只记它们现在挂在这条线下这件事，不重复搬运那三本白皮书的内容。
+
+**`shared/`/`lo-alias/`（2026-09-11）**：`chinese-ime/` 整体挪出了仓库（本身仍是现役，`cangjie-langhook.so` 还在设备上跑，只是不再是仓库里的活跃开发目标），`hl-snap`/`handwriting-stroke` 原本路径引用它的三个工具文件、`gateway` 原本路径引用它的 `cangjie-lo-alias.sh`，都改成了本目录下的剥离移植独立副本（`shared/PROVENANCE.md`/`lo-alias/README.md` 各自记了来龙去脉），不再对接旧路径。`lo-alias.sh` 顺带去掉了 `cangjie-` 前缀（用户明确以后新命名不再用这个前缀）。
 
 **`hl-snap/`（§03a）**：✅ 真机通。逻辑逐字节抄自 `chinese-ime/langhook` 已验证过的 Step HL2 代码段，路径引用（不复制）它的 `scan.c`/`pattern.c`/`trampoline_aarch64.c` 三个工具文件；`_xovi_shouldLoad` 直接用自己的目标特征码当固件兼容性判据，不借用 `setLanguageCode`。真机 journal 确认 hook 装上（`FUN_00f05ad0@0xf03670`），健康检查通过（`is-active`/`NRestarts`/`MainPID`，含延迟复查）。设备上目前**只有这一个扩展在跑**，完整拼音输入法/UI 汉化没装。
 
@@ -49,13 +57,17 @@ enhance/
 
 **命名撞车怎么处理**：目前**刻意不处理**——`enhance/` 和 `xovi-extensions/`（工程纪律「④系统增强」）没有从属关系，也没打算合并。如果以后要理顺，大概率的方向是：`xovi-extensions/` 继续管"设备端 QML/UI 层面的增强"（阅读体验、设置面板），`enhance/` 管"更底层、不需要 QML 参与、原来又没有明确归属的单点工具"——但这只是猜测，不是已经拍板的决定，真要动这条边界得再问用户。这次先如实记录"两个东西都叫系统增强，读者自己留神"，不强行统一。
 
-## 02｜跟 shelf 网页面板的关系（`shelf/services/shelf-gateway/src/enhance/`）
+**追记（2026-09-11）**：`xovi-extensions/` 这次全仓库整理时也挪出了仓库（见 工程纪律 现状更正段落），当前 git 仓库里已经没有这个目录了，撞车对象暂时物理上不存在了——但这不代表撞车问题"解决"了，`xovi-extensions/` 本身仍是现役概念（reading-qol/font-menu 那套设备端 QML/UI 增强，工程纪律 六分块「④系统增强」），只是源码暂时不在这个仓库里。如果它以后被捞回来或者以别的形式重新出现，上面这段分工设想依然适用，别当撞车问题已经被这次搬迁"顺便解决"了。
+
+## 02｜跟 shelf 网页面板的关系（`gateway/src/enhance/`，2026-09-11 前是 `shelf/services/shelf-gateway/src/enhance/`）
 
 这条项目线的名字不是巧合——2026-09-09 更早些时候，shelf 网页「管理」页新增了一个「系统增强」二级 tab（`shelf/services/shelf-gateway/src/enhance/{mod,qol,battop}.rs`），把 `hlSnapCjk` 开关和 battop 启停做成了网页可操作的面板（细节见 `shelf/docs/reMarkable书架白皮书.md` §03aj）。**那次改动完全没有涉及"这些工具本身该放在仓库哪个位置"**——`shelf-gateway::enhance` 只是拿设备上已经装好的东西（`reading-qol.json` 文件、`battop.service` 单元）走 HTTP/`systemctl`，跟仓库源码目录结构没有代码依赖。这次给"CJK 精确吸附"独立成项目线时顺着同一个名字延续下来，是有意保持一致，不是重复发明。
 
 两条线的分工：`enhance/`（本白皮书）管**这些工具本身怎么实现、怎么部署到设备**；`shelf-gateway::enhance`（`shelf/docs/reMarkable书架白皮书.md` §03aj）管**网页上怎么远程控制它们**。改这些工具的行为来 `enhance/`，改网页控制面板去 `shelf/`，两边通过约定的文件路径/systemd 单元名对接，不是直接代码调用。
 
 **追记（2026-09-10）**：上面这段是 §03aj 那次（2026-09-09）的原始状态，网页那边后续又演进了两轮，§03aj 不是终态——battop 从「系统增强」卡片拆成「实验室」开关+独立「电池刺客」二级 tab（含耗电情况/唤醒源两个三级 tab，真机接了 `summary.json` 时间窗数据展示，不再是纯启停按钮）；CJK 手写笔迹优化开关也从「系统增强」搬去「实验室」；`hlSnapCjk` 留在「系统增强」没动。另外网页正文（含这几个开关的说明文案）全量支持中英文切换。这些都是纯网页层演进，`enhance/` 本仓库代码零变化，细节见 `shelf/docs/reMarkable书架白皮书.md` §03ak-§03an，本文不重复记。
+
+**追记（2026-09-11）**：托管这些开关面板的网关本体正名搬顶层——`shelf/services/shelf-gateway` 改名 `gateway/`，挪到仓库顶层，因为它早就是 `shelf`/`notes`/`enhance` 三条线共用的唯一前端，不该继续算"shelf 的一个服务"。上面两段"两条线的分工"的说法依然成立，只是"网页那边"具体指向的路径从 `shelf/services/shelf-gateway/src/enhance/` 变成了 `gateway/src/enhance/`——代理机制本身（按服务名字符串转发，不关心源码物理位置）没有变化，这次搬迁对 `enhance/` 这条线零影响。同一批，`wallpaper-serve`/`font-serve` 两个领域服务从 `shelf/services/` 挪进了本目录，见 §00b。细节见 `gateway/docs/reMarkable网关白皮书.md`。
 
 ## 03a｜`hl-snap/` 诞生记（2026-09-09，真机通）
 

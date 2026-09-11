@@ -1,4 +1,4 @@
-> ⚠ **已退役，纯历史存档**（2026-09-11 从顶层 `misc/wallpaper/` 归档到这里）。2026-09-06 起 xochitl 3.28 隐藏键 `SleepScreenPath` 原生方案取代了本文档描述的 bind-mount 整套机制，现行实现在 `../`（`shelf/wallpaper/README.md` + `services/wallpaper-serve`）。下文是该方案 2026-08-27～09-05 的原始记录，不代表当前状态，保留供追溯参考。
+> ⚠ **已退役，纯历史存档**（2026-09-11 从顶层 `misc/wallpaper/` 归档到这里，同批又随 `wallpaper-serve` 从 `shelf/` 挪进 `enhance/`）。2026-09-06 起 xochitl 3.28 隐藏键 `SleepScreenPath` 原生方案取代了本文档描述的 bind-mount 整套机制，现行实现见上级目录 `../README.md`（`enhance/wallpaper-serve/`）。下文是该方案 2026-08-27～09-05 的原始记录，不代表当前状态，保留供追溯参考。
 >
 > ⚠ 2026-09-03：本工具计划并入书架 `shelf/`（`wallpaper-serve` 上传即用 + Rust 子命令承接 bind/roll/unbind，XDG 路径），Phase 2 落地后本目录只留指针。当前仍可独立使用。
 
