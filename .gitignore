@@ -68,9 +68,11 @@ shelf/koreader/profile/vendor-fonts/*.ttf
 shelf/koreader/profile/vendor-fonts/*.otf
 chinese-ime/fonts/**/*.otf
 
-# 媒体：宽忽略 assets 下所有，白名单留 logo（心法③）
+# 媒体：宽忽略 assets 下所有，白名单留 logo + 顶层 README 打赏二维码（心法③）
 assets/*
 !assets/logo.png
+!assets/sponsor-wechat.jpg
+!assets/sponsor-alipay.jpg
 
 # ── OS / 编辑器 / 解压垃圾 ──
 .DS_Store
