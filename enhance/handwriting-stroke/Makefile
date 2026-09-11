@@ -1,11 +1,10 @@
 CC ?= gcc
 AARCH64_CC ?= aarch64-linux-gnu-gcc
 
-# 复用 chinese-ime/langhook 已经模块化出来的三个纯工具文件（特征码扫描 + ARM64
-# 远跳转 trampoline，本来就是跟"装哪个 hook"无关的通用基础设施）——路径引用，
-# 不复制、不修改，跟 enhance/hl-snap 同样的做法。改这三个文件要去
-# chinese-ime/langhook/src/ 改，这边不重复维护。
-LANGHOOK_SRC_DIR = ../../chinese-ime/langhook/src
+# 特征码扫描 + ARM64 远跳转 trampoline 三个纯工具文件，跟 enhance/hl-snap 同一份
+# 独立副本（2026-09-11 起不再路径引用 chinese-ime/langhook/src），见
+# ../shared/PROVENANCE.md。
+LANGHOOK_SRC_DIR = ../shared
 SHARED_SRC = $(LANGHOOK_SRC_DIR)/scan.c $(LANGHOOK_SRC_DIR)/pattern.c $(LANGHOOK_SRC_DIR)/trampoline_aarch64.c
 # -fno-math-errno：让 GCC 把 sqrtf 内联成 ARM64 原生 FSQRT 指令而不是调 libm——
 # libm 的 sqrtf() 符号需要 GLIBC_2.43，设备上的 libm 版本没这么新，dlopen 会

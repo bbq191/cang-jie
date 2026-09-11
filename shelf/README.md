@@ -99,7 +99,7 @@ shelf/
 
 | 用途 | 路径 |
 |---|---|
-| 二进制 | `~/.local/bin/{shelf-gateway,*-serve,shelf-uninstall,cangjie-lo-alias.sh}` |
+| 二进制 | `~/.local/bin/{shelf-gateway,*-serve,shelf-uninstall,lo-alias.sh}` |
 | 配置 | `~/.config/shelf/<service>.json`（book：书库文件夹/xochitl 主机/超时/**`nativeUploadLimitMb` 投原生体积门 150**；font；gateway）· `~/.config/shelf/tls/`（CA+叶证书） |
 | 数据 | `~/.local/share/shelf/`（fonts.json、壁纸池）· `~/.local/share/fonts/`（用户字体，fontconfig 标准位） |
 | 状态 | `~/.local/state/shelf/books/staging/`（**母版库**，不淘汰）· `books/{inbox,.work,failed}`（追平队列）· `wallpaper-state.json` · `koreader-backups/` |

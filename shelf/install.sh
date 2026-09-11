@@ -3,8 +3,9 @@
 # 书架（shelf）设备端安装器 —— reMarkable Paper Pro Move，root 运行。可独立于中文化套件安装。
 #
 # 装什么（按服务可插拔，--only 挑选）：
-#   · 二进制 → ~/.local/bin/（XDG 用户可执行目录）；cangjie-lo-alias.sh 同目录（网关 ExecStartPre 用，
-#     让 10.11.99.1 常驻可达以便 /upload 注入；脚本单一事实源在 chinese-ime/langhook/deploy，包内为同一份）
+#   · 二进制 → ~/.local/bin/（XDG 用户可执行目录）；lo-alias.sh 同目录（网关 ExecStartPre 用，
+#     让 10.11.99.1 常驻可达以便 /upload 注入；脚本源在 enhance/lo-alias/，2026-09-11 起独立副本，见该目录
+#     README；不再用 cangjie- 前缀，往后新命名一律不带这个前缀）
 #   · XDG 目录：~/.config/shelf  ~/.local/share/shelf  ~/.local/state/shelf
 #   · systemd：shelf.target + 各服务单元 → /usr/lib/systemd/system（rootfs，普通重启不丢；OTA 冲掉后重跑本脚本）
 # 写 /usr 前实检 dm-verity，激活即跳过（ 红线）；绝不给 xochitl 加依赖。
@@ -74,8 +75,8 @@ for s in $SEL; do
     [ -f "$SRC/bin/$b" ] || { echo "!! 载荷缺 bin/$b"; exit 1; }
     cp "$SRC/bin/$b" "$BIN_DIR/$b" && chmod 755 "$BIN_DIR/$b"
 done
-if [ -f "$SRC/lo-alias/cangjie-lo-alias.sh" ]; then
-    cp "$SRC/lo-alias/cangjie-lo-alias.sh" "$BIN_DIR/cangjie-lo-alias.sh" && chmod 755 "$BIN_DIR/cangjie-lo-alias.sh"
+if [ -f "$SRC/lo-alias/lo-alias.sh" ]; then
+    cp "$SRC/lo-alias/lo-alias.sh" "$BIN_DIR/lo-alias.sh" && chmod 755 "$BIN_DIR/lo-alias.sh"
 fi
 # 装 uninstall.sh 为 shelf-uninstall（网关「管理台」网页卸载调它，单一事实源）
 if [ -f "$SRC/uninstall.sh" ]; then

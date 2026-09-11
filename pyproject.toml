@@ -26,7 +26,9 @@ requires-python = ">=3.11"
 dependencies = []   # 无「always-on」依赖；一切按线放进 dependency-groups
 
 [dependency-groups]
-# 微信读书集成 host 联调（下载/组包/登录/面板 bridge/highlights 反解）
+# 微信读书集成 host 联调（下载/组包/登录/面板 bridge/highlights 反解）。
+# 2026-09-11：这条下书链本身已确认停用（代码归档进 oldbak/reading/、oldbak/rm-export/），
+# 刻意移出 default-groups（同 calibre 组模式）——只在要跑归档代码考古时 `uv sync --group weread`。
 weread = [
     "requests",
     "requests-toolbelt",
@@ -71,4 +73,4 @@ dev = [
 
 [tool.uv]
 package = false                                   # 虚拟项目：管环境，不构建自身
-default-groups = ["weread", "pkm", "pinyin", "tools", "test"]
+default-groups = ["pkm", "pinyin", "tools", "test"]
