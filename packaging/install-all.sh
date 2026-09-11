@@ -2,23 +2,27 @@
 # ═══════════════════════════════════════════════════════════════════════════
 # cang-jie 全新设备统一安装器（host 侧编排，2026-09-11 新写）。
 #
-# 只编排、不重新实现任何构建/传输逻辑——依次调用四个已经各自独立可用的部署脚本：
+# 只编排、不重新实现任何构建/传输逻辑——依次调用七个已经各自独立可用的部署脚本：
+#   packaging/deploy-chrony-cn.sh           国内 NTP（跟 xovi/vellum 无关）
+#   packaging/deploy-timezone-cn.sh         默认时区 Asia/Shanghai（跟 xovi/vellum 无关）
 #   packaging/deploy-battop.sh              电池刺客（跟 xovi/vellum 无关）
+#   packaging/deploy-xovi-persist.sh        xovi 开机持久化恢复链（需要 vellum add xovi）
 #   packaging/deploy-hl-snap.sh             荧光笔 CJK 精确吸附（需要 vellum add xovi）
 #   packaging/deploy-handwriting-stroke.sh  CJK 手写笔迹渲染优化（需要 vellum add xovi）
 #   packaging/deploy.sh                     shelf 本体+网关+笔记线+两个领域服务（不需要 xovi）
 # 装前先过固件安全门（sha256(/usr/bin/xochitl) 比对 firmware-allowlist.txt），避免在没验证
 # 过注入定位的固件上装错。
 #
-# 明确不做的事（范围外，见 packaging/README.md「已知缺口」）：
-#   · 不装 vellum/xovi 本体——这是所有脚本共同的手动前置条件，本脚本只在缺失时把报错原样
-#     透出，不代为安装。
+# 明确不做的事（范围外，见 packaging/README.md「前置条件」「已知缺口」）：
+#   · 不装 vellum/xovi/qt-resource-rebuilder/appload 本体、不侧载 KOReader——这些是全新设备
+#     共同的手动前置条件，本脚本只在缺失时把报错原样透出，不代为安装。
 #   · 不装中文化（输入法/候选栏/UI 汉化）——那条链路还在 oldbak/chinese-ime/，没有回到 git
 #     版本控制，需要单独手动跑。
-#   · 不重建 xovi 开机持久化恢复链（xovi-reenable.service 那套）。
+#   · 不装 wifi-watch 常驻看护。
 #   · 没有对称的 uninstall-all.sh。
 #
-# 用法：./install-all.sh [host] [--force] [--skip battop,hl-snap,handwriting-stroke,shelf]
+# 用法：./install-all.sh [host] [--force]
+#            [--skip chrony-cn,timezone-cn,battop,xovi-persist,hl-snap,handwriting-stroke,shelf]
 #   host    默认 10.11.99.1（USB）
 #   --force 固件不在白名单也强装（会自动把当前哈希追加进 firmware-allowlist.txt）
 #   --skip  逗号分隔，跳过指定的安装步骤
@@ -78,7 +82,13 @@ run_step() {
     fi
 }
 
+# 顺序：先两个跟 xovi/vellum 完全无关的独立配置项（早点做，出问题跟后面几步互不牵连）；
+# 再 battop（同样跟 xovi 无关）；再三个依赖 xovi/vellum 已就绪的（xovi-persist 需要
+# /home/root/xovi/start 存在，跟 hl-snap/handwriting-stroke 同一前提，放一起）；shelf 最重，最后装。
+run_step chrony-cn ./deploy-chrony-cn.sh
+run_step timezone-cn ./deploy-timezone-cn.sh
 run_step battop ./deploy-battop.sh
+run_step xovi-persist ./deploy-xovi-persist.sh
 run_step hl-snap ./deploy-hl-snap.sh
 run_step handwriting-stroke ./deploy-handwriting-stroke.sh
 run_step shelf ./deploy.sh
@@ -90,10 +100,11 @@ if [ -n "$FAILED" ]; then
     echo "❌ 失败：$FAILED —— 看对应步骤上面的原始报错，不会自动重试"
 fi
 echo "─── 不在本脚本范围内，需要手动处理 ───"
-echo "· vellum/xovi 引导（若 hl-snap/handwriting-stroke 因缺 xovi.so 失败）：设备上先跑"
-echo "    vellum add xovi qt-resource-rebuilder"
+echo "· vellum/xovi/qt-resource-rebuilder/appload 引导（若 xovi-persist/hl-snap/handwriting-stroke"
+echo "    因缺 xovi.so 失败）：设备上先跑 vellum add xovi qt-resource-rebuilder"
+echo "· KOReader：通过 appload 侧载，本脚本不代装"
 echo "· 中文化（输入法/候选栏/UI 汉化）：这条链路目前只在 /home/afu/Projects/oldbak/chinese-ime/，"
 echo "    没有回到 git 版本控制，需要去那边手动编译 + 跑 deploy/install.sh"
-echo "· xovi 开机持久化恢复链、chrony 国内 NTP、wifi-watch：这次没有一并恢复，见 README「已知缺口」"
+echo "· wifi-watch 常驻看护：这次没有一并恢复，见 README「已知缺口」"
 echo "═══════════════════════════════════════════════════════════"
 [ -z "$FAILED" ]
