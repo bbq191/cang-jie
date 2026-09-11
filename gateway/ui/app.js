@@ -947,13 +947,14 @@ function renderManage(sec){sec.innerHTML=`
       `<b>xovi</b><span>${badge(f.xovi?T('common.installed'):T('common.notInstalled'),f.xovi)}</span><b>appload</b><span>${badge(f.appload?T('common.installed'):T('common.notInstalled'),f.appload)}</span><b>qt-resource-rebuilder</b><span>${badge(f.qrr?T('common.installed'):T('common.notInstalled'),f.qrr)}</span><b>KOReader</b><span>${badge(f.koreader?T('common.installed'):T('common.notInstalled'),f.koreader)}</span>`;
     const d=await j('/api/manage');const ul=$('#mods',sec);ul.innerHTML='';(d.modules||[]).forEach(m=>{const li=document.createElement('li');li.style.flexWrap='wrap';
       let state,cls;if(!m.installable){state=T('manage.modules.state.notLaunched');cls=''}else if(!m.installed){state=T('common.notInstalled');cls='off'}else if(m.running){state=T('manage.modules.state.on');cls='on'}else{state=T('manage.modules.state.installedOff');cls=''}
-      const left=document.createElement('span');left.innerHTML=`${m.label} <span class="small">${m.service}</span> <span class="badge ${cls}">${state}</span>`;
+      const label=T('manage.modules.label.'+m.seg)||m.label; // seg 缺对应 key 时兜底用后端 Rust 侧的中文 label，不留空
+      const left=document.createElement('span');left.innerHTML=`${label} <span class="small">${m.service}</span> <span class="badge ${cls}">${state}</span>`;
       const right=document.createElement('span');right.style.cssText='display:flex;gap:.4em;align-items:center';
       if(m.installable&&m.installed){
         const t=document.createElement('button');t.className='btn';t.textContent=m.running?T('manage.modules.turnOff'):T('manage.modules.turnOn');
         t.onclick=async()=>{const r=await j('/api/manage/'+m.seg+'/'+(m.running?'stop':'start'),{method:'POST'});if(r.ok===false)alert(r.message);setTimeout(refresh,600)};right.appendChild(t);
         const u=document.createElement('button');u.className='btn';u.textContent=T('manage.modules.uninstallBtn');
-        u.onclick=async()=>{if(confirm(T('manage.modules.confirmUninstall',{label:m.label}))){const r=await j('/api/manage/'+m.seg+'/uninstall',{method:'POST'});if(r.ok===false)alert(r.message);else alert(T('manage.modules.uninstalled',{label:m.label}));setTimeout(()=>location.reload(),800)}};right.appendChild(u);
+        u.onclick=async()=>{if(confirm(T('manage.modules.confirmUninstall',{label}))){const r=await j('/api/manage/'+m.seg+'/uninstall',{method:'POST'});if(r.ok===false)alert(r.message);else alert(T('manage.modules.uninstalled',{label}));setTimeout(()=>location.reload(),800)}};right.appendChild(u);
       }else if(m.installable){const g=document.createElement('span');g.className='small';g.innerHTML=T('manage.modules.installCmd',{only:m.only});right.appendChild(g)}
       li.append(left,right);ul.appendChild(li)});};
   $('#allon',sec).onclick=async()=>{const d=await j('/api/manage');for(const m of (d.modules||[]))if(m.installable&&m.installed&&!m.running)await j('/api/manage/'+m.seg+'/start',{method:'POST'});refresh()};
