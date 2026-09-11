@@ -189,16 +189,24 @@ if [ -x "$HOME_DIR/xovi/start" ] && [ ! -f "$SYSD/xovi-reenable.service" ] && [ 
     echo "═══════════════════════════════════════════════════"
 fi
 
-# ── 4. 健康检查 ──
-sleep 1
+# ── 4. 健康检查（轮询，不是固定 sleep 1——网关首次启动要签发私有 CA/自签证书，
+#     真机实测在这台设备上 1 秒不够，会把"只是还没起完"误报成"起不来"；最多等 10 秒）──
+ALL_OK=0
+for _try in 1 2 3 4 5 6 7 8 9 10; do
+    sleep 1
+    ALL_OK=1
+    for s in $SEL; do
+        st="$(systemctl is-active "$(svc_of "$s")" 2>/dev/null || echo '?')"
+        [ "$st" = "active" ] || ALL_OK=0
+    done
+    [ "$ALL_OK" = "1" ] && break
+done
 MUST_CHANGE="$(grep -c '"mustChangePassword": true' "${XDG_CONFIG_HOME:-$HOME/.config}/shelf/gateway.json" 2>/dev/null || true)"
 # 设备端 busybox wget 不认 --user/自签证书，HTTPS 探测交给 host 侧 deploy.sh（curl -k）；这里只看 systemd + 注册表。
 echo "═══════════════════════════════════════════════════"
-ALL_OK=1
 for s in $SEL; do
     st="$(systemctl is-active "$(svc_of "$s")" 2>/dev/null || echo '?')"
     printf '  %-16s %s\n' "$(svc_of "$s")" "$st"
-    [ "$st" = "active" ] || ALL_OK=0
 done
 REG="$(ls /tmp/shelf-0/shelf/services/ 2>/dev/null | sed 's/\.json$//' | tr '\n' ' ')"
 echo "  注册表        : ${REG:-（空）}"
