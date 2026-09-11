@@ -6,6 +6,11 @@ A device-enhancement suite for the reMarkable Paper Pro Move — built **without
 `xochitl`** (the device's stock reading app) itself. Everything runs as xovi extensions plus a
 set of standalone web services alongside the official system.
 
+> This is the **private** repository with the full development history. As of 2026-09-11 a
+> trimmed public release also exists at [`rm-tweak`](https://github.com/bbq191/rm-tweak) (no
+> dev history, just the current six project lines' code plus these four top-level docs,
+> Apache-2.0-licensed) — share/star that one; this repository stays internal-only.
+
 ## What this is
 
 A personal-use toolkit built around one e-ink tablet: get books onto the device, optionally
