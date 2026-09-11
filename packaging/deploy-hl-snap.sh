@@ -10,6 +10,10 @@
 # sh deploy-hl-snap.sh <host>`。
 #
 # 用法：./deploy-hl-snap.sh [host]      host 默认 10.11.99.1
+#   环境 DEFER_XOVI_START=1：只把 hl-snap.so 落盘，不在这一步跑 xovi/start（透传设备端
+#   install.sh 的 --no-restart）——install-all.sh 编排多个 xovi 扩展时用这个避免短时间内
+#   反复重启 xochitl（撞 watchdog+StartLimit 的风险，2026-09-11 真机踩过），改成全部落盘完
+#   最后统一跑一次。单独跑本脚本不用管这个变量，默认行为不变（装完立即生效）。
 set -eu
 cd "$(dirname "$0")"
 HOST="${1:-10.11.99.1}"
@@ -36,5 +40,11 @@ scp "$DIR/hl-snap.so" "root@$HOST:$DEST/hl-snap.so"
 scp "$DIR/deploy/install.sh" "root@$HOST:$DEST/deploy/install.sh"
 
 echo "== 设备端安装 =="
+ARGS=""
+# 注：不用 `[ ... ] && ARGS=...`——条件为假时该写法本身以非零退出，set -e 下会把整个脚本
+# 提前炸掉（timezone-cn.sh 踩过一次一模一样的坑），必须用 if/fi。
+if [ "${DEFER_XOVI_START:-0}" = "1" ]; then
+    ARGS="--no-restart"
+fi
 # shellcheck disable=SC2029  # 远端路径就是要在本地展开（固定字面量，无用户输入拼接风险）
-ssh "root@$HOST" "sh $DEST/deploy/install.sh"
+ssh "root@$HOST" "sh $DEST/deploy/install.sh $ARGS"

@@ -17,7 +17,22 @@
 #
 # 【重启后持久化】/etc tmpfs 重启即清、无开机自动服务 → 重启后需手动恢复：
 #   /home/root/xovi/start        （或 vellum reenable）
+#
+# 用法：./install.sh [--no-restart]
+#   --no-restart  只落盘 hw-stroke.so，不跑 xovi/start——理由同 hl-snap/deploy/install.sh 同一处
+#   注释：xovi/start 是全量重启 xochitl 重注入全部扩展，多个扩展各自跑一次等于短时间内重启
+#   xochitl 多次，真机验证过这样容易撞 xochitl 的 watchdog+StartLimit 触发整机重启。外部编排方
+#   （如 packaging/install-all.sh）用这个选项让多个 xovi 扩展只落盘、最后统一跑一次 xovi/start；
+#   脱离编排单独跑本脚本不传这个参数，行为不变。
 set -eu
+
+NO_RESTART=0
+for a in "$@"; do
+    case "$a" in
+        --no-restart) NO_RESTART=1 ;;
+        *) echo "!! 未知参数：$a"; exit 2 ;;
+    esac
+done
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 PAYLOAD="$(dirname "$HERE")"   # deploy/ 的上一级，hw-stroke.so 编译产物在这
@@ -44,6 +59,12 @@ if [ ! -s "$RQOL" ]; then
     echo "-- 建最小配置（hwStrokeWidthFactor 默认 1.0，不改变笔画粗细）-> $RQOL"
     mkdir -p "$DATADIR"
     printf '%s' '{"hwStrokeWidthFactor":1.0}' > "$RQOL"
+fi
+
+if [ "$NO_RESTART" = "1" ]; then
+    echo "-- --no-restart：hw-stroke.so 已落盘，未跑 xovi/start（由外部编排方稍后统一执行一次）"
+    echo "✅ 已就位，尚未生效——外部编排方跑完这轮 xovi/start 后再确认"
+    exit 0
 fi
 
 echo "-- 应用 xovi/start（/etc tmpfs 引导，不碰 /usr）"
