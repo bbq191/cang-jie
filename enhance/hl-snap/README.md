@@ -18,6 +18,8 @@ sudo sh deploy/install.sh
 
 设备上需要先有 `vellum add xovi`（基石，跟 `chinese-ime/langhook` 共用同一份）。装的是 `extensions.d/hl-snap.so`，跟 `cangjie-langhook.so`/`appload.so`/`qt-resource-rebuilder.so` 并列。
 
+**host 侧一键构建+推送+安装**：`packaging/deploy-hl-snap.sh <host>`（2026-09-11 新增，做的就是上面构建+部署两步的自动化，不改任何逻辑），也是 `packaging/install-all.sh` 全新设备统一安装器调用的其中一步，见 `../../packaging/README.md`。
+
 ⚠️ **不能跟完整版 `chinese-ime/langhook` 的 `cangjie-langhook.so` 同时部署**——两者都会尝试 patch 同一个 `FUN_00f05ad0`（荧光笔扩张函数）目标地址，谁后加载谁的 patch 生效，行为未定义。要装完整中文输入法前，先卸掉这个（删 `extensions.d/hl-snap.so`，`xovi/start` 重启一次）。
 
 ## 开关

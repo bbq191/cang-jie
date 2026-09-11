@@ -87,8 +87,8 @@ shelf/
 ../gateway/                           2026-09-11 从 services/shelf-gateway 正名搬顶层（shelf/notes/enhance 三条线共用的唯一前端，不是 shelf 一个服务）：
                                       auth/proxy/manage/events(Hub 汇聚)/enhance/{mod,qol,battop}.rs(系统增强开关：hlSnapCjk/hwStrokeEnabled/notesImportMdEnabled+battop 均真开关，2026-09-09 §03aj 起、2026-09-10 §03ak-§03am 扩展，刻意不升独立 service)；ui/{index.html,style.css,app.js,auth.css} 真文件，编译期 include_str! 拼成单页（CI node --check）；ui/locales/{zh-CN,en-US}.json 是 i18n 语言包（2026-09-09 起，§03ae 先搭架子+覆盖外壳/顶层导航；2026-09-10 §03an 补完传书/笔记/其他/管理四个 tab 的全部正文，437 key；登录页/改密码页仍不迁移，见白皮书 §03ae/§03an），GET /ui/locales/{lang} 分发
 ├── systemd/                           shelf.target + book/koreader-serve 两个 .service；font/wallpaper-serve 的单元跟着 2026-09-11 挪进各自 `../enhance/<name>/` 目录；其余独立线自己的单元在各自仓库，随载荷一起装
-├── install.sh · uninstall.sh          设备端安装/卸载（--only 按服务；写 /usr 前实检 dm-verity；--purge 不碰其余独立线的用户数据目录）
-├── deploy.sh                          host 一键：build → tar-over-ssh → 设备 install.sh（自动备份到 /home/root/cangjie-backups；`GATEWAY_BINS`/`ENHANCE_BINS`/`NOTES_BINS` 顺带打包 `../gateway`/`../enhance/{font,wallpaper}-serve`/`../notes` 的二进制与单元）
+├── install.sh · uninstall.sh          设备端安装/卸载（--only 按服务；写 /usr 前实检 dm-verity；--purge 不碰其余独立线的用户数据目录）；设备侧自包含脚本，随载荷推到设备上跑，不依赖 host 侧编排
+../packaging/deploy.sh                host 一键：build → tar-over-ssh → 设备 install.sh（自动备份到 /home/root/cangjie-backups；`GATEWAY_BINS`/`ENHANCE_BINS`/`NOTES_BINS` 顺带打包 `../gateway`/`../enhance/{font,wallpaper}-serve`/`../notes` 的二进制与单元）。2026-09-11 从 shelf/deploy.sh 搬到 `packaging/`——它编排的是跨四个目录的安装，逻辑上属于"全项目安装编排"，见 `../packaging/README.md`；也是 `packaging/install-all.sh` 统一安装器调用的其中一步
 ├── host/                              CLI `shelf`（纯 stdlib、系统 python3）+ pytest；shelf_cli/comic.py 漫画探针；host/calibre/ = Calibre 前置流水线 + 独立脚本（epub_skel 共享 EPUB 骨架 / txt_to_epub / comic_gray / render_probe+measure）
 ├── xovi/                              font-menu-dynamic{,-3.27}.qmd 字体菜单读 fonts.json 动态追加（3.28 / 3.27 真机通）· shelf-trash-agent.qmd 原生回收站代理（Sidebar 注入，拉 book-serve /trash/pending）· shelf-mkdir-agent.qmd 原生建文件夹代理（MainView 注入，拉 book-serve /mkdir/pending，真机通）；改 qmd 先用 qmldiff CLI 离线实跑（白皮书 §04）
 ├── koreader/                          配置即代码：profile/{settings.reader.patch,defaults.custom,gestures.patch}.lua + fonts.txt/dicts.txt + merge.lua
@@ -128,13 +128,18 @@ shelf/
 **前置依赖**（一次性）：`rustup target add aarch64-unknown-linux-musl` + 装 aarch64 交叉 gcc/ar（Arch：`pacman -S aarch64-linux-gnu-gcc`；只用来编 `ring` 的 C 部分，产物本身是 musl 全静态、跟设备 libc 版本无关）。链接器/CC/AR 配置在 `.cargo/config.toml`，不用手改。改代码前先看工程纪律（真机验证、分支策略、离线门槛等）——两条线（shelf/notes）都遵守同一份，日常提交分支是 `dev` 不是 `master`。
 
 ```sh
-cd shelf && sh build.sh                       # host 测试 + aarch64 musl 全静态（书架 5 个二进制；../notes 存在时顺带编它的二进制）
-sh deploy.sh 10.11.99.1                       # 组载荷 → 设备 /home/root/shelf-pkg → install.sh（先备份旧二进制/单元）；设备只在 WiFi 上时给 WiFi IP
-sh deploy.sh 10.11.99.1 --only font,wallpaper # 只装/更新部分服务；SHELF_NO_BUILD=1 跳过编译
+cd shelf && sh build.sh                                # host 测试 + aarch64 musl 全静态（书架 2 个二进制；../gateway/../enhance/{wallpaper,font}-serve/../notes 存在时顺带编它们）
+cd ../packaging && sh deploy.sh 10.11.99.1             # 组载荷 → 设备 /home/root/shelf-pkg → install.sh（先备份旧二进制/单元）；设备只在 WiFi 上时给 WiFi IP
+sh deploy.sh 10.11.99.1 --only font,wallpaper          # 只装/更新部分服务；SHELF_NO_BUILD=1 跳过编译
 ssh root@10.11.99.1 sh /home/root/shelf-pkg/shelf/uninstall.sh [--only font] [--purge]
 cargo build --release -p bookconv --bin epub-optimize   # host 侧 push 洗书要用的 CLI（shelf/target/release/）
 ```
-整包路径：`packaging/package.sh` 把 `shelf/` 作为第 5 层打进 `cangjie-full-*.tar.gz`，`install.sh` 直接调用 `shelf/install.sh`。
+整包路径：2026-09-11 起是 `packaging/install-all.sh <host>`——统一编排固件安全门 + `enhance/` 三个独立
+xovi 扩展/工具（hl-snap/handwriting-stroke/battop）+ `packaging/deploy.sh`（原 shelf/deploy.sh，处理
+shelf 本体+网关+笔记线+两个领域服务），见 `../packaging/README.md`。旧的 `packaging/package.sh` 打
+`cangjie-full-*.tar.gz` 那套单体打包方式已随 2026-09-11 大归档整体挪出仓库（现只在
+`/home/afu/Projects/oldbak/packaging/`，且经核实那份现在实际是断的——它按旧路径找 `shelf/` 载荷，
+`shelf/` 早就独立到仓库顶层了），不是这次 `install-all.sh` 的设计参照。
 ⚠ 设备上 `systemctl restart xochitl` 会丢 xovi（字体菜单/KOReader 入口一起没），重启 xochitl 一律 `/home/root/xovi/start`。
 
 ## 固件升级（OTA）与恢复
@@ -147,9 +152,9 @@ cargo build --release -p bookconv --bin epub-optimize   # host 侧 push 洗书�
 | 母版库 / KOReader / 字体 / 壁纸池 / 配置 / 证书 / 休眠屏 conf 键 `SleepScreenPath` | `/home` | 保留 | 无 |
 | WiFi 看护钩子 `xovi/scripts/post-start/` · NM `powersave 2` | `/home` | 保留 | 无 |
 | 字体菜单 qmd · 回收站代理 qmd | `/home`（hashtab 过期） | 文件在、未注入 | ① `xovi/rebuild_hashtable`（设备旁输密码）② `xovi/start` |
-| 书架五服务 | `/usr` | **冲掉** | ③ `SHELF_NO_BUILD=1 sh deploy.sh 10.11.99.1` |
-| chrony 国内 NTP | rootfs `/etc` | **冲掉** | ④ `ssh root@10.11.99.1 sh -s < packaging/chrony-cn.sh` |
-| wifi-watch 常驻看护（wlan0 假死自动 `nmcli con up`；固化所有 WiFi 连接 2.4G + 省电关——路由 5G 信道 36 不在设备精简 regdb 的 CN 允许段，白皮书 §03w） | `/usr` 单元 + `~/.local/bin` 脚本 | 单元**冲掉** | ⑤ `scp -r packaging/wifi-watch root@…:/home/root/wifi-watch-pkg && ssh root@… sh /home/root/wifi-watch-pkg/install.sh` |
+| 书架五服务 | `/usr` | **冲掉** | ③ `cd packaging && SHELF_NO_BUILD=1 sh deploy.sh 10.11.99.1` |
+| chrony 国内 NTP | rootfs `/etc` | **冲掉** | ④ ⚠️ `packaging/chrony-cn.sh` 随 2026-09-11 大归档挪出了仓库，现只在 `oldbak/packaging/chrony-cn.sh`——这一步目前只能从那份本机备份手动执行，不在 `install-all.sh` 范围内（未一并恢复，见 `../packaging/README.md` 已知缺口） |
+| wifi-watch 常驻看护（wlan0 假死自动 `nmcli con up`；固化所有 WiFi 连接 2.4G + 省电关——路由 5G 信道 36 不在设备精简 regdb 的 CN 允许段，白皮书 §03w） | `/usr` 单元 + `~/.local/bin` 脚本 | 单元**冲掉** | ⑤ ⚠️ 同上，`packaging/wifi-watch/` 目前只在 `oldbak/packaging/wifi-watch/`，未随这次 `install-all.sh` 恢复 |
 
 升级前把与新固件不兼容的 xovi 扩展（如 appload）挪出 `extensions.d/`（放 `/home/root/xovi-disabled/`，绝不留在目录里）；appload 的 3.28 补丁见系统增强白皮书 §12.1。
 **风险分层**（不要合成一个百分比）：书架这一层只用 xochitl 的 `/upload` 网页接口和系统标准组件，换固件重装即回（本次 100%）；
