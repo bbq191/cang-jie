@@ -41,6 +41,8 @@ host `shelf push` 是唯一能"入库时顺带优化"的源（Calibre 深洗 / �
   127.0.0.1:8790        :8791               :8792            :8793
   母版库(入库/优化/落库) 从母版库落书·字体·   原生字体上传即装   壁纸上传即用
   + 投 xochitl + inbox   词典·配置同步       (fontconfig 回退链)  (原生 SleepScreenPath 键)
+        │                                   `../enhance/font-serve`  `../enhance/wallpaper-serve`
+        │                                   2026-09-11 挪出 shelf（概念上更贴近系统增强）
         └── 笔记线（`../notes`，独立仓库线，只是挂在同一网关/同一载荷/同一 shelf.target 上）：服务列表/职责/端口见 `notes/README.md`
 ```
 
@@ -76,26 +78,27 @@ shelf/
 │   └── src/bin/epub_optimize.rs         host/设备共用 CLI（wash_epub.sh 末步）
 ├── services/book-serve/               staging.rs(母版库领域：入库/优化/落库) · sidecar.rs(落库记录边车) · render_check.rs(投原生后渲染自检) · pending_queue.rs(PendingQueue\<T\>：持久化+入队去重+剔除共用骨架，2026-09-09 §03ag) · trash.rs(原生回收站队列) · mkdir.rs(原生建文件夹队列，当前消费方存疑——note-serve 已改用别的机制不再调用，见模块注释) · spool.rs(inbox 队列) · api.rs(纯 HTTP 适配) · service_state.rs
 ├── services/koreader-serve/           koreader.rs(目录模型+KoStore) · config.rs(ConfigSync+merge.lua) · main.rs
-├── services/{font-serve,wallpaper-serve}/
+../enhance/{font-serve,wallpaper-serve}/  2026-09-11 从 services/ 挪出去（概念上更贴近系统增强，
+                                      不是"书架内容管理"业务）；wallpaper-serve 原依赖 bookconv 的两个
+                                      屏幕尺寸常量已复制成本地值，不再跨线依赖 bookconv，见各自 README。
 ../rmsvc-core/                         2026-09-11 从 crates/shelf-core 正名搬顶层（shelf/notes/gateway 三方共用，不是 shelf 私有）：
                                       paths(XDG) · formats(格式白名单) · registry(+SvcClient/enc：跨服务 HTTP 客户端骨架，供 notes 线四个服务消重复用，2026-09-09 §03ai) · multipart(流式) · asset(AssetStore+上传模板+receipt) · xochitl_conf(休眠屏键) · events(事件总线+SSE)
                                       · http(Router/bind/JsonBody/Guard) · config · fs(原子写/plain_name/unique) · clock(时间戳唯一出处) · xochitl 注入/找书/页数 · fswatch(常驻+限时) · tls/auth/mdns/netinfo/ttf
 ../gateway/                           2026-09-11 从 services/shelf-gateway 正名搬顶层（shelf/notes/enhance 三条线共用的唯一前端，不是 shelf 一个服务）：
                                       auth/proxy/manage/events(Hub 汇聚)/enhance/{mod,qol,battop}.rs(系统增强开关：hlSnapCjk/hwStrokeEnabled/notesImportMdEnabled+battop 均真开关，2026-09-09 §03aj 起、2026-09-10 §03ak-§03am 扩展，刻意不升独立 service)；ui/{index.html,style.css,app.js,auth.css} 真文件，编译期 include_str! 拼成单页（CI node --check）；ui/locales/{zh-CN,en-US}.json 是 i18n 语言包（2026-09-09 起，§03ae 先搭架子+覆盖外壳/顶层导航；2026-09-10 §03an 补完传书/笔记/其他/管理四个 tab 的全部正文，437 key；登录页/改密码页仍不迁移，见白皮书 §03ae/§03an），GET /ui/locales/{lang} 分发
-├── systemd/                           shelf.target + 5 个 .service（壁纸不再有开机单元/sleep 钩子，2026-09-06）；其余独立线自己的单元在各自仓库，随载荷一起装
+├── systemd/                           shelf.target + book/koreader-serve 两个 .service；font/wallpaper-serve 的单元跟着 2026-09-11 挪进各自 `../enhance/<name>/` 目录；其余独立线自己的单元在各自仓库，随载荷一起装
 ├── install.sh · uninstall.sh          设备端安装/卸载（--only 按服务；写 /usr 前实检 dm-verity；--purge 不碰其余独立线的用户数据目录）
-├── deploy.sh                          host 一键：build → tar-over-ssh → 设备 install.sh（自动备份到 /home/root/cangjie-backups；`GATEWAY_BINS`/`NOTES_BINS` 顺带打包 `../gateway`/`../notes` 的二进制与单元）
+├── deploy.sh                          host 一键：build → tar-over-ssh → 设备 install.sh（自动备份到 /home/root/cangjie-backups；`GATEWAY_BINS`/`ENHANCE_BINS`/`NOTES_BINS` 顺带打包 `../gateway`/`../enhance/{font,wallpaper}-serve`/`../notes` 的二进制与单元）
 ├── host/                              CLI `shelf`（纯 stdlib、系统 python3）+ pytest；shelf_cli/comic.py 漫画探针；host/calibre/ = Calibre 前置流水线 + 独立脚本（epub_skel 共享 EPUB 骨架 / txt_to_epub / comic_gray / render_probe+measure）
 ├── xovi/                              font-menu-dynamic{,-3.27}.qmd 字体菜单读 fonts.json 动态追加（3.28 / 3.27 真机通）· shelf-trash-agent.qmd 原生回收站代理（Sidebar 注入，拉 book-serve /trash/pending）· shelf-mkdir-agent.qmd 原生建文件夹代理（MainView 注入，拉 book-serve /mkdir/pending，真机通）；改 qmd 先用 qmldiff CLI 离线实跑（白皮书 §04）
-├── wallpaper/                         README（休眠屏机制＝xochitl.conf SleepScreenPath；逻辑在 wallpaper-serve）
 ├── koreader/                          配置即代码：profile/{settings.reader.patch,defaults.custom,gestures.patch}.lua + fonts.txt/dicts.txt + merge.lua
 └── docs/
     ├── reMarkable书架白皮书.md          书架侧设计决策 + 真机记录（服务/UI/母版库/字体/管理台）；开头有「现状总览」
     └── bookconv优化白皮书.md            书籍优化引擎：清洗层/优化遍/脚注/图片/格式转换/★xochitl 渲染硬规则/版本演进
 ```
 
-依赖方向（单向无环）：`services/* → ../rmsvc-core`；`book-serve、wallpaper-serve → bookconv`；`reading/device-rs → bookconv`（re-export 保路径，reading/ 现已归档）。
-**shelf 不依赖 device-core / weread-device**；koreader-serve 不依赖 bookconv（落库纯复制）。
+依赖方向（单向无环）：`services/* → ../rmsvc-core`；`book-serve → bookconv`；`reading/device-rs → bookconv`（re-export 保路径，reading/ 现已归档）。
+**shelf 不依赖 device-core / weread-device**；koreader-serve 不依赖 bookconv（落库纯复制）；`../enhance/wallpaper-serve` 也不再依赖 bookconv（两个屏幕尺寸常量已复制成本地值）。
 
 ## 路径（XDG，设备 HOME=/home/root）
 

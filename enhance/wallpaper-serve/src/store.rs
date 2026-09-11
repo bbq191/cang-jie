@@ -14,9 +14,11 @@ use rmsvc_core::paths::Paths;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
-/// 竖屏物理尺寸（长边/短边常量与 bookconv 同源：954×1696 @264PPI）。
-pub const W: u32 = bookconv::imgopt::MAX_SHORT_EDGE;
-pub const H: u32 = bookconv::imgopt::MAX_EDGE;
+/// 竖屏物理尺寸：954×1696 @264PPI。2026-09-11 从 shelf/crates/bookconv::imgopt 的同名常量复制
+/// 过来（剥离移植，不再路径依赖 bookconv——那是书处理业务 crate，不适合当 enhance/ 的依赖）；
+/// 跟 shelf 那边如果哪天屏幕规格变了，两处要分别改。
+pub const W: u32 = 954;
+pub const H: u32 = 1696;
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Default)]
 #[serde(rename_all = "lowercase")]
