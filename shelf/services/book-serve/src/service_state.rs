@@ -5,10 +5,10 @@ use crate::spool::Spool;
 use crate::staging::{self, Staging};
 use crate::trash::TrashQueue;
 use serde::Serialize;
-use shelf_core::events::EventBus;
-use shelf_core::formats::{self, BOOK_EXTS};
-use shelf_core::paths::Paths;
-use shelf_core::xochitl::Xochitl;
+use rmsvc_core::events::EventBus;
+use rmsvc_core::formats::{self, BOOK_EXTS};
+use rmsvc_core::paths::Paths;
+use rmsvc_core::xochitl::Xochitl;
 use std::sync::Arc;
 
 pub struct State {

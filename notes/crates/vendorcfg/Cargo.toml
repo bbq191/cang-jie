@@ -6,7 +6,7 @@ license.workspace = true
 description = "笔记线共享：AI 厂商预置模型表 + key 按厂商分格存取 + 用量账本，transcribe-serve/mind-serve 两边复用"
 
 [dependencies]
-shelf-core = { path = "../../../shelf/crates/shelf-core" }
+rmsvc-core = { path = "../../../rmsvc-core" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 

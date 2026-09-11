@@ -18,9 +18,9 @@ use backend::{OpenAiCompat, TextModel};
 use config::MindConfig;
 use ink::{EntryStore, InkHttp};
 use ledger::Ledger;
-use shelf_core::http::{bind, ApiError, Reply, Router};
-use shelf_core::paths::Paths;
-use shelf_core::service::{self, ServiceSpec};
+use rmsvc_core::http::{bind, ApiError, Reply, Router};
+use rmsvc_core::paths::Paths;
+use rmsvc_core::service::{self, ServiceSpec};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -82,9 +82,9 @@ fn main() {
     let paths = Paths::from_env();
     let cfg_path = paths.app_config_dir(APP).join("mind.json");
     // `.migrate()`：老配置文件搬进新形状，不迁移会让真机已存的 key 在升级后凭空消失，见 config.rs 文档。
-    let cfg = shelf_core::config::load_or_seed::<MindConfig>(&cfg_path).migrate();
-    shelf_core::fs::set_mode(&cfg_path, 0o600);
-    let _ = shelf_core::config::save(&cfg_path, &cfg, Some(0o600));
+    let cfg = rmsvc_core::config::load_or_seed::<MindConfig>(&cfg_path).migrate();
+    rmsvc_core::fs::set_mode(&cfg_path, 0o600);
+    let _ = rmsvc_core::config::save(&cfg_path, &cfg, Some(0o600));
     let st = Arc::new(State { cfg_path, cfg: Mutex::new(cfg), ledger: Ledger::open(&paths.app_state_dir(APP).join("mind.json")), store: InkHttp::new(paths.clone()) });
     let router = Router::new()
         .get("/status", bind(&st, |s, _| {
@@ -97,7 +97,7 @@ fn main() {
             let mut cfg = s.cfg.lock().unwrap_or_else(|e| e.into_inner());
             let mut next = cfg.clone();
             next.apply(&j.0).map_err(ApiError::bad)?;
-            shelf_core::config::save(&s.cfg_path, &next, Some(0o600)).map_err(ApiError::internal)?;
+            rmsvc_core::config::save(&s.cfg_path, &next, Some(0o600)).map_err(ApiError::internal)?;
             *cfg = next.clone();
             Ok(Reply::ok(&next.public()))
         }))
@@ -107,7 +107,7 @@ fn main() {
             let model = s.model(&cfg).map_err(ApiError::bad)?;
             let book = s.store.book(&uuid).map_err(ApiError::not_found)?;
             let e = book.entries.iter().find(|e| e.id == id).ok_or_else(|| ApiError::not_found("没有这条目"))?;
-            let now = shelf_core::clock::now_secs();
+            let now = rmsvc_core::clock::now_secs();
             let ctx = Ctx { store: &s.store, model: model.as_ref(), cfg: &cfg, ledger: &s.ledger, now };
             match worker::ask_entry(&ctx, &uuid, e) {
                 // 点「提问」弹出这次调用的消耗（token）——不是账本累计，是这一次调用的实际数字。

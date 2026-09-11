@@ -7,10 +7,10 @@
 use image::imageops::FilterType;
 use image::{GenericImageView, ImageFormat, RgbaImage};
 use serde::{Deserialize, Serialize};
-use shelf_core::asset::{AssetItem, AssetStore};
-use shelf_core::formats::IMAGE_EXTS;
-use shelf_core::fs::plain_name;
-use shelf_core::paths::Paths;
+use rmsvc_core::asset::{AssetItem, AssetStore};
+use rmsvc_core::formats::IMAGE_EXTS;
+use rmsvc_core::fs::plain_name;
+use rmsvc_core::paths::Paths;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
@@ -69,10 +69,10 @@ impl WallpaperStore {
     }
 
     pub fn state(&self) -> WpState {
-        shelf_core::config::load_or_default(&self.state_file)
+        rmsvc_core::config::load_or_default(&self.state_file)
     }
     pub fn save_state(&self, st: &WpState) -> Result<(), String> {
-        shelf_core::config::save(&self.state_file, st, None)
+        rmsvc_core::config::save(&self.state_file, st, None)
     }
     pub fn set_mode(&self, mode: Mode) -> Result<(), String> {
         let mut st = self.state();
@@ -118,7 +118,7 @@ impl WallpaperStore {
                 names[i].clone()
             }
             Mode::Random => {
-                let seed = shelf_core::clock::now_nanos() as usize;
+                let seed = rmsvc_core::clock::now_nanos() as usize;
                 let mut i = seed % names.len();
                 if names.len() > 1 && st.current.as_deref() == Some(names[i].as_str()) {
                     i = (i + 1) % names.len();
@@ -265,7 +265,7 @@ mod tests {
         body.extend_from_slice(b"--B\r\nContent-Disposition: form-data; name=\"file\"; filename=\"beach.jpg\"\r\n\r\n");
         body.extend_from_slice(&png(600, 400)); // 扩展名 jpg、内容 png：按魔数收
         body.extend_from_slice(b"\r\n--B\r\nContent-Disposition: form-data; name=\"file\"; filename=\"t.png\"\r\n\r\nnotimage\r\n--B--\r\n");
-        let out = shelf_core::asset::AssetUploadFlow::new(&paths).run(&s, &body[..], "B").unwrap();
+        let out = rmsvc_core::asset::AssetUploadFlow::new(&paths).run(&s, &body[..], "B").unwrap();
         assert!(out[0].ok && out[0].item.as_ref().unwrap().name == "beach.png");
         assert_eq!(out[1].message, "只收 JPEG/PNG");
         assert_eq!(s.names(), vec!["beach.png"]);

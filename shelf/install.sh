@@ -13,7 +13,7 @@
 # 用法：./install.sh [--only gateway,book,koreader,font,wallpaper,ink,transcribe,mind,note] [--no-systemd] [--src DIR] [--password PW]
 #   笔记线服务（ink…）与书架同一载荷、同一 shelf.target，令牌同规则 <令牌>-serve。
 #   --only        只装/更新列出的服务（网关总会装）；缺省全装
-#   --password    直接设网关密码（缺省首次默认 shelf、网页登录后强制改；之后可 shelf-gateway passwd <新密码>）
+#   --password    直接设网关密码（缺省首次默认 shelf、网页登录后强制改；之后可 gateway passwd <新密码>）
 #   --no-systemd  只落二进制与目录，不碰 /usr（重启后需手动 systemctl start）
 #   --src DIR     载荷目录（含 bin/ systemd/ lo-alias/），缺省=本脚本所在目录
 # 注：xovi 持久化（开机自动补 xovi）是**基石/xovi 层**的事，不属 shelf——用整包
@@ -55,7 +55,7 @@ BK="$HOME_DIR/cangjie-backups/shelf-$(date +%Y%m%d-%H%M%S)"
 
 ALL="gateway book koreader font wallpaper ink transcribe mind note"
 [ -n "$ONLY" ] && SEL="gateway $(echo "$ONLY" | tr ',' ' ' | sed 's/\bgateway\b//g')" || SEL="$ALL"
-svc_of() { case "$1" in gateway) echo shelf-gateway ;; *) echo "$1-serve" ;; esac; }
+svc_of() { case "$1" in gateway) echo gateway ;; *) echo "$1-serve" ;; esac; }
 
 echo "═══ 书架 shelf 安装（$(echo "$SEL" | tr ' ' ',')）═══"
 [ "$(id -u)" = "0" ] || { echo "!! 需 root"; exit 1; }
@@ -83,11 +83,11 @@ if [ -f "$SRC/uninstall.sh" ]; then
     cp "$SRC/uninstall.sh" "$BIN_DIR/shelf-uninstall" && chmod 755 "$BIN_DIR/shelf-uninstall"
 fi
 echo "-- 二进制已落 $BIN_DIR"
-[ -n "$PASSWORD" ] && "$BIN_DIR/shelf-gateway" passwd "$PASSWORD"
+[ -n "$PASSWORD" ] && "$BIN_DIR/gateway" passwd "$PASSWORD"
 
 # ── 3. systemd（写 /usr rootfs；dm-verity 门）──
 if [ "$DO_SYSTEMD" = "0" ]; then
-    echo "-- --no-systemd：跳过单元。手动：$BIN_DIR/shelf-gateway serve"
+    echo "-- --no-systemd：跳过单元。手动：$BIN_DIR/gateway serve"
 elif dmsetup ls --target verity 2>/dev/null | grep -q .; then
     echo "✋ dm-verity 激活 —— 跳过写 /usr（不装开机持久，避免变砖）。"
 elif [ ! -d "$SRC/systemd" ]; then
@@ -205,13 +205,13 @@ echo "  注册表        : ${REG:-（空）}"
 if [ "$ALL_OK" = "1" ] && [ -n "$REG" ]; then
     echo "✅ 书架在线：https://<设备IP>/  或 https://shelf.local/（mDNS；安卓不支持 .local）——标准 443 端口，不用带端口号"
     if [ "${MUST_CHANGE:-0}" != "0" ]; then
-        echo "   登录：密码 shelf（首次默认），登录后必须改；忘记密码：shelf-gateway reset-password"
+        echo "   登录：密码 shelf（首次默认），登录后必须改；忘记密码：gateway reset-password"
     else
-        echo "   登录：已设置的密码（改：网页右上「改密码」/ shelf passwd / 设备上 shelf-gateway passwd <新密码>）"
+        echo "   登录：已设置的密码（改：网页右上「改密码」/ shelf passwd / 设备上 gateway passwd <新密码>）"
     fi
     echo "   ⚠ 自签证书：登录页「下载 CA 证书」装进手机/电脑信任库一次即不再提示，否则点「高级 → 继续访问」"
 else
-    echo "⚠️  有服务未起（journalctl -u shelf-gateway 等）。备份在 $BK。"
+    echo "⚠️  有服务未起（journalctl -u gateway 等）。备份在 $BK。"
     [ "$DO_SYSTEMD" = "0" ] || exit 1
 fi
 echo "═══════════════════════════════════════════════════"

@@ -1,8 +1,8 @@
 //! 单页 UI（手机/电脑浏览器打开 `https://<设备IP>/`，2026-09-10 起绑标准 443 端口，不用带端口号）。固定 tab「传书」（母版库总入口）+「管理」，中间的服务 tab
 //! 按 `/api/services` 注册表动态生成（xochitl 字体 = font-serve、KOReader = koreader-serve、壁纸 = wallpaper-serve）。
 //! 上传逐文件一请求（每本独立成败、独立进度条），所有上传口共用一个 `uploader` + 服务端同形回执（`asset::receipt`）；
-//! 格式白名单由 [`page`] 从 `shelf_core::formats` 注入（`__EXTS__`），网页 accept / 选中即拦与服务端上传门同源。
-//! 页面源码在 `services/shelf-gateway/ui/`（index.html 骨架 + style.css + app.js + auth.css），编译期 `include_str!` 进二进制：
+//! 格式白名单由 [`page`] 从 `rmsvc_core::formats` 注入（`__EXTS__`），网页 accept / 选中即拦与服务端上传门同源。
+//! 页面源码在 `services/gateway/ui/`（index.html 骨架 + style.css + app.js + auth.css），编译期 `include_str!` 进二进制：
 //! 网页仍是单文件零外链，但 JS/CSS 是真文件——编辑器/`node --check`（CI）直接检查，改样式不用在 Rust 原始字符串里找。
 use std::sync::OnceLock;
 
@@ -29,7 +29,7 @@ pub fn locale_json(lang: &str) -> &'static str {
 pub fn page() -> &'static str {
     static PAGE: OnceLock<String> = OnceLock::new();
     PAGE.get_or_init(|| {
-        use shelf_core::formats::{BOOK_EXTS, DICT_EXTS, FONT_EXTS, HOST_CONVERTIBLE_EXTS, IMAGE_EXTS, KOREADER_ONLY_EXTS, NATIVE_EXTS};
+        use rmsvc_core::formats::{BOOK_EXTS, DICT_EXTS, FONT_EXTS, HOST_CONVERTIBLE_EXTS, IMAGE_EXTS, KOREADER_ONLY_EXTS, NATIVE_EXTS};
         let exts = serde_json::json!({"book": BOOK_EXTS, "native": NATIVE_EXTS, "convertible": HOST_CONVERTIBLE_EXTS, "koOnly": KOREADER_ONLY_EXTS, "font": FONT_EXTS, "dict": DICT_EXTS, "image": IMAGE_EXTS});
         INDEX_HTML.replace("__STYLE__", STYLE_CSS).replace("__SCRIPT__", APP_JS).replace("__EXTS__", &exts.to_string())
     })

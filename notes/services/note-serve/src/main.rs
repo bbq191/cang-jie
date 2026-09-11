@@ -30,10 +30,10 @@ use export_state::ExportState;
 use ink::{EntryStore, InkHttp};
 use notebooks::NotebookState;
 use publish::{generate_book, generate_chapter, ChapterResult, Ctx, Uploader, XochitlUploader};
-use shelf_core::events::EventBus;
-use shelf_core::http::{bind, ApiError, ApiResult, Reply, Router};
-use shelf_core::paths::Paths;
-use shelf_core::service::{self, ServiceSpec};
+use rmsvc_core::events::EventBus;
+use rmsvc_core::http::{bind, ApiError, ApiResult, Reply, Router};
+use rmsvc_core::paths::Paths;
+use rmsvc_core::service::{self, ServiceSpec};
 use std::sync::Arc;
 use trash::{BookServeTrash, TrashSink};
 
@@ -70,7 +70,7 @@ fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let bind_addr = service::parse_bind(&args, SPEC.default_bind);
     let paths = Paths::from_env();
-    let cfg: NoteConfig = shelf_core::config::load_or_seed(&paths.app_config_dir(APP).join("note.json"));
+    let cfg: NoteConfig = rmsvc_core::config::load_or_seed(&paths.app_config_dir(APP).join("note.json"));
     let notebooks = NotebookState::new(paths.app_state_dir(APP).join("notebooks"));
     if let Err(e) = notebooks.ensure() {
         eprintln!("[note-serve] 建目录失败: {e}");

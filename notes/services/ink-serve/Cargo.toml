@@ -10,7 +10,7 @@ name = "ink-serve"
 path = "src/main.rs"
 
 [dependencies]
-shelf-core = { path = "../../../shelf/crates/shelf-core" }
+rmsvc-core = { path = "../../../rmsvc-core" }
 rmv6 = { path = "../../crates/rmv6" }
 epubmap = { path = "../../crates/epubmap" }
 notecore = { path = "../../crates/notecore" }

@@ -6,8 +6,11 @@ set -e
 cd "$(dirname "$0")"
 
 TARGET=aarch64-unknown-linux-musl
-BINS="shelf-gateway book-serve koreader-serve font-serve wallpaper-serve"
-# 笔记线（../notes，独立 workspace）挂在同一网关下，随书架一起编/装（目录不存在则跳过）。
+BINS="book-serve koreader-serve font-serve wallpaper-serve"
+# 网关（../gateway）+ 笔记线（../notes）都是独立顶层 Cargo 项目，随书架一起编/装
+# （目录不存在则跳过）；网关是 shelf/notes/enhance 三条线共用的唯一前端，2026-09-11
+# 从 shelf 内部 workspace 正名搬出去，见 ../gateway/README.md。
+GATEWAY_BINS="gateway"
 NOTES_BINS="ink-serve transcribe-serve mind-serve note-serve"
 
 echo "== host 构建 + 测试 =="
@@ -16,6 +19,10 @@ cargo test --workspace --quiet
 
 echo "== 交叉编译 $TARGET（全静态）=="
 cargo build --release --workspace --target "$TARGET"
+if [ -f ../gateway/Cargo.toml ]; then
+    echo "== 网关 gateway/：host 测试 + 交叉编译 =="
+    (cd ../gateway && cargo test --quiet && cargo build --release --target "$TARGET")
+fi
 if [ -f ../notes/Cargo.toml ]; then
     echo "== 笔记线 notes/：host 测试 + 交叉编译 =="
     (cd ../notes && cargo test --workspace --quiet && cargo build --release --workspace --target "$TARGET")
@@ -25,6 +32,10 @@ echo
 echo "aarch64 全静态产物："
 for b in $BINS; do
     f="target/$TARGET/release/$b"
+    [ -f "$f" ] && echo "  $f  $(wc -c <"$f")B  $(file "$f" | grep -o 'statically linked' || echo dynamic)"
+done
+for b in $GATEWAY_BINS; do
+    f="../gateway/target/$TARGET/release/$b"
     [ -f "$f" ] && echo "  $f  $(wc -c <"$f")B  $(file "$f" | grep -o 'statically linked' || echo dynamic)"
 done
 for b in $NOTES_BINS; do

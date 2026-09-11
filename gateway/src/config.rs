@@ -1,9 +1,9 @@
 //! 网关配置 `$XDG_CONFIG_HOME/shelf/gateway.json`：HTTPS 开关、密码哈希、首登必改标志、mDNS 名、额外 SAN。
 //! **首次默认密码** [`DEFAULT_PASSWORD`]：首启写入哈希并置 `mustChangePassword=true`，网页登录后强制改密才能进；
-//! 忘记密码：设备上 `shelf-gateway reset-password`（回到默认并再次强制改）或 `shelf-gateway passwd <新密码>`。
+//! 忘记密码：设备上 `gateway reset-password`（回到默认并再次强制改）或 `gateway passwd <新密码>`。
 use serde::{Deserialize, Serialize};
-use shelf_core::auth;
-use shelf_core::paths::Paths;
+use rmsvc_core::auth;
+use rmsvc_core::paths::Paths;
 use std::path::PathBuf;
 
 pub const DEFAULT_PASSWORD: &str = "shelf";
@@ -35,11 +35,11 @@ impl GatewayConfig {
         paths.service_config("gateway")
     }
     pub fn load(paths: &Paths) -> GatewayConfig {
-        shelf_core::config::load_or_default(&Self::path(paths))
+        rmsvc_core::config::load_or_default(&Self::path(paths))
     }
     pub fn save(&self, paths: &Paths) -> Result<(), String> {
         // 含密码哈希 → 0o600。
-        shelf_core::config::save(&Self::path(paths), self, Some(0o600))
+        rmsvc_core::config::save(&Self::path(paths), self, Some(0o600))
     }
 
     /// 无密码哈希 → 写入默认密码并标记必改。返回 true 表示本次初始化。

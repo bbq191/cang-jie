@@ -7,10 +7,10 @@
 //! 书名（dc:title / 文件名 stem）相符者优先，否则取最新一本。只读 `.metadata/.content`，绝不写 xochitl 目录。
 use crate::sidecar::RenderCheck;
 use crate::staging::{RenderPlan, Staging};
-use shelf_core::clock::now_secs as now;
-use shelf_core::events::EventBus;
-use shelf_core::fswatch::watch_until;
-use shelf_core::xochitl::{find_documents_since, page_count, DocInfo};
+use rmsvc_core::clock::now_secs as now;
+use rmsvc_core::events::EventBus;
+use rmsvc_core::fswatch::watch_until;
+use rmsvc_core::xochitl::{find_documents_since, page_count, DocInfo};
 use std::path::Path;
 use std::time::Duration;
 

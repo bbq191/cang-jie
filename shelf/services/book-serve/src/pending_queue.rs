@@ -6,7 +6,7 @@
 //! `add()` 包装方法，那是两边真正不同、不该合并的部分。
 use serde::de::DeserializeOwned;
 use serde::Serialize;
-use shelf_core::fs::write_atomic;
+use rmsvc_core::fs::write_atomic;
 use std::marker::PhantomData;
 use std::path::PathBuf;
 use std::sync::Mutex;

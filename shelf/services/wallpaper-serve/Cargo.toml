@@ -10,7 +10,7 @@ name = "wallpaper-serve"
 path = "src/main.rs"
 
 [dependencies]
-shelf-core = { path = "../../crates/shelf-core" }
+rmsvc-core = { path = "../../../rmsvc-core" }
 bookconv = { path = "../../crates/bookconv" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

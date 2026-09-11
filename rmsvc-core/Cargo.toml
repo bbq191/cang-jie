@@ -1,8 +1,8 @@
 [package]
-name = "shelf-core"
+name = "rmsvc-core"
 version = "0.1.0"
 edition = "2021"
-description = "书架各服务共享底座：XDG 路径、服务注册/发现、流式 multipart、资产仓库、HTTP 适配层、xochitl 注入、目录监听"
+description = "reMarkable 设备端 Web 服务共享底座：XDG 路径、服务注册/发现、流式 multipart、资产仓库、HTTP 适配层、xochitl 注入、目录监听。2026-09-11 从 shelf/crates/shelf-core 正名搬顶层——shelf/notes/gateway 三方共用，不是 shelf 私有 crate。"
 license = "MIT"
 
 [dependencies]

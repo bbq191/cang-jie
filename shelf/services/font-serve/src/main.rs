@@ -4,10 +4,10 @@
 //! 字体菜单 qmd 读 `~/.local/share/shelf/fonts.json`（`shelf/xovi/font-menu-dynamic.qmd`）。
 mod store;
 
-use shelf_core::asset::{self, AssetStore, AssetUploadFlow};
-use shelf_core::http::{bind, ApiError, Reply, Router};
-use shelf_core::paths::Paths;
-use shelf_core::service::{self, ServiceSpec};
+use rmsvc_core::asset::{self, AssetStore, AssetUploadFlow};
+use rmsvc_core::http::{bind, ApiError, Reply, Router};
+use rmsvc_core::paths::Paths;
+use rmsvc_core::service::{self, ServiceSpec};
 use std::sync::Arc;
 use store::{FontConfig, FontStore};
 
@@ -23,7 +23,7 @@ const SPEC: ServiceSpec = ServiceSpec {
 struct State {
     store: FontStore,
     paths: Paths,
-    bus: Arc<shelf_core::events::EventBus>,
+    bus: Arc<rmsvc_core::events::EventBus>,
 }
 
 fn main() {
@@ -36,7 +36,7 @@ fn main() {
         Ok(f) => println!("[font-serve] 索引 {} 个家族", f.len()),
         Err(e) => eprintln!("[font-serve] 写 fonts.json 失败: {e}"),
     }
-    let st = Arc::new(State { store, paths: paths.clone(), bus: Arc::new(shelf_core::events::EventBus::new()) });
+    let st = Arc::new(State { store, paths: paths.clone(), bus: Arc::new(rmsvc_core::events::EventBus::new()) });
     let router = Router::new()
         .get("/", bind(&st, |s, _| Ok(Reply::ok(&serde_json::json!({"items": s.store.list(), "fontsDir": s.store.fonts_dir(), "index": s.store.json_path()})))))
         .post("/", bind(&st, |s, r| {

@@ -8,10 +8,10 @@ use bookconv::optimize::{self, FootnoteMode, OptimizeOpts};
 use crate::sidecar::{self, Delivered, RenderCheck};
 use bookconv::wash::WashOpts;
 use serde::Serialize;
-use shelf_core::asset::{AssetItem, AssetStore};
-use shelf_core::formats::{self, BOOK_EXTS};
-use shelf_core::fs::{plain_name, unique_path, write_atomic};
-use shelf_core::xochitl::{Delivery, Xochitl};
+use rmsvc_core::asset::{AssetItem, AssetStore};
+use rmsvc_core::formats::{self, BOOK_EXTS};
+use rmsvc_core::fs::{plain_name, unique_path, write_atomic};
+use rmsvc_core::xochitl::{Delivery, Xochitl};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -207,7 +207,7 @@ impl Staging {
         let folder = if folder.trim().is_empty() { self.library_folder.as_str() } else { folder.trim() };
         // 自检计划在上传前算好（投书时刻要早于 xochitl 给文档的 createdTime）；统计失败就不自检，不影响投书。
         let render = if formats::ext_of(name) == "epub" {
-            bookconv::stats::text_profile(&data).ok().map(|prof| RenderPlan { name: name.to_string(), title: prof.title.clone(), expected: prof.expected_pages(), since_ms: shelf_core::clock::now_ms() })
+            bookconv::stats::text_profile(&data).ok().map(|prof| RenderPlan { name: name.to_string(), title: prof.title.clone(), expected: prof.expected_pages(), since_ms: rmsvc_core::clock::now_ms() })
         } else {
             None
         };
@@ -231,7 +231,7 @@ impl Staging {
     /// 记一次落库：写 sidecar `.<name>.delivered`。
     pub fn mark_delivered(&self, name: &str, reader: Reader) -> Result<(), String> {
         let p = self.existing(name)?;
-        let now = shelf_core::clock::now_secs();
+        let now = rmsvc_core::clock::now_secs();
         sidecar::update(&p, |d| match reader {
             Reader::Native => d.native = Some(now),
             Reader::Koreader => d.koreader = Some(now),
@@ -290,7 +290,7 @@ impl Staging {
                     None => "none",
                 }
             };
-            let mtime = md.modified().ok().map(shelf_core::clock::secs_of).unwrap_or(0);
+            let mtime = md.modified().ok().map(rmsvc_core::clock::secs_of).unwrap_or(0);
             out.push(StagingEntry { name, bytes: md.len(), format, optimized: level == "full", level, mtime, delivered: sidecar::read(&e.path()) });
         }
         out.sort_by(|a, b| b.mtime.cmp(&a.mtime).then_with(|| a.name.cmp(&b.name)));
@@ -363,7 +363,7 @@ fn landed_name(p: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use shelf_core::asset::AssetUploadFlow;
+    use rmsvc_core::asset::AssetUploadFlow;
 
     fn staging(t: &tempfile::TempDir) -> Staging {
         let x = Arc::new(Xochitl::new("127.0.0.1:1", Path::new("/nonexistent"), 1));

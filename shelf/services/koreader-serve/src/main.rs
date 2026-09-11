@@ -8,12 +8,12 @@ mod koreader;
 
 use config::ConfigSync;
 use koreader::{KoReader, KoStore, KO_ANY};
-use shelf_core::asset::{self, AssetStore, AssetUploadFlow};
-use shelf_core::formats::{DICT_EXTS, FONT_EXTS};
-use shelf_core::fs::plain_name;
-use shelf_core::http::{bind, ApiError, ApiResult, Reply, Request, Router};
-use shelf_core::paths::Paths;
-use shelf_core::service::{self, ServiceSpec};
+use rmsvc_core::asset::{self, AssetStore, AssetUploadFlow};
+use rmsvc_core::formats::{DICT_EXTS, FONT_EXTS};
+use rmsvc_core::fs::plain_name;
+use rmsvc_core::http::{bind, ApiError, ApiResult, Reply, Request, Router};
+use rmsvc_core::paths::Paths;
+use rmsvc_core::service::{self, ServiceSpec};
 use std::sync::Arc;
 
 const SPEC: ServiceSpec = ServiceSpec {
@@ -28,7 +28,7 @@ struct State {
     ko: Arc<KoReader>,
     paths: Paths,
     sync: ConfigSync,
-    bus: Arc<shelf_core::events::EventBus>,
+    bus: Arc<rmsvc_core::events::EventBus>,
 }
 
 impl State {
@@ -77,7 +77,7 @@ fn main() {
         sync: ConfigSync { ko: ko.clone(), backup_dir: paths.state_dir().join("koreader-backups"), tmp_dir: paths.runtime_dir().join("koreader") },
         ko,
         paths: paths.clone(),
-        bus: Arc::new(shelf_core::events::EventBus::new()),
+        bus: Arc::new(rmsvc_core::events::EventBus::new()),
     });
     let router = Router::new()
         .get("/status", bind(&st, |s, _| Ok(Reply::ok(&s.status()))))
@@ -106,7 +106,7 @@ fn main() {
             let dir = s.ko.fonts_dir();
             let items: Vec<serde_json::Value> = koreader::list_files(&dir, FONT_EXTS).into_iter().map(|it| {
                 // 中文基本区覆盖率（同原生字体一致的判据），低覆盖当正文会缺字
-                let pct = std::fs::read(dir.join(&it.name)).ok().and_then(|b| shelf_core::ttf::han_coverage_pct(&b)).unwrap_or(0);
+                let pct = std::fs::read(dir.join(&it.name)).ok().and_then(|b| rmsvc_core::ttf::han_coverage_pct(&b)).unwrap_or(0);
                 serde_json::json!({"name": it.name, "bytes": it.bytes, "cjkPct": pct})
             }).collect();
             Ok(Reply::ok(&serde_json::json!({"items": items})))

@@ -86,7 +86,7 @@ pub fn ingest_doc(lib: &Path, crops_dir: &Path, db: &BookDb, cfg: &IngestConfig,
                         continue;
                     }
                     match render_ink(&page.strokes, &ink.strokes, ink.bbox, cfg.crop_margin) {
-                        Ok(png) => match shelf_core::fs::write_atomic(&crops_dir.join(&want), &png) {
+                        Ok(png) => match rmsvc_core::fs::write_atomic(&crops_dir.join(&want), &png) {
                             Ok(()) => ink.crop = want,
                             Err(err) => errors.push(format!("{page_id}: 写裁图失败 {err}")),
                         },

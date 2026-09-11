@@ -18,7 +18,7 @@ for a in "$@"; do
 done
 ALL="gateway book koreader font wallpaper ink transcribe mind note"   # 笔记线四服务同载荷同卸载；其条目库（~/.local/state/notes）不在 --purge 范围，绝不删用户笔记
 [ -n "$ONLY" ] && SEL="$(echo "$ONLY" | tr ',' ' ')" || SEL="$ALL"
-svc_of() { case "$1" in gateway) echo shelf-gateway ;; *) echo "$1-serve" ;; esac; }
+svc_of() { case "$1" in gateway) echo gateway ;; *) echo "$1-serve" ;; esac; }
 
 for s in $SEL; do systemctl disable --now "$(svc_of "$s").service" 2>/dev/null || true; done
 [ -z "$ONLY" ] && systemctl disable --now shelf.target 2>/dev/null || true

@@ -2,9 +2,9 @@
 //! 书=从母版库 adopt 原字节落 `books/`（不转换不改名——KOReader 原生读 EPUB/PDF/AZW3/MOBI/FB2/CBZ）；
 //! 运行态=扫 `/proc/*/cmdline` 含 koreader（改其配置必须在它退出后，退出回写会覆盖）。
 use serde::Serialize;
-use shelf_core::asset::{AssetItem, AssetStore};
-use shelf_core::formats;
-use shelf_core::fs::plain_name;
+use rmsvc_core::asset::{AssetItem, AssetStore};
+use rmsvc_core::formats;
+use rmsvc_core::fs::plain_name;
 use std::path::{Path, PathBuf};
 
 pub struct KoReader {
@@ -231,8 +231,8 @@ mod tests {
 
     #[test]
     fn kostore_install_via_flow_keeps_name_bytes_and_leaves_no_part() {
-        use shelf_core::asset::AssetUploadFlow;
-        use shelf_core::paths::Paths;
+        use rmsvc_core::asset::AssetUploadFlow;
+        use rmsvc_core::paths::Paths;
         let t = tempfile::tempdir().unwrap();
         let k = KoReader::new(&t.path().join("ko"));
         let h = t.path().to_str().unwrap().to_string();

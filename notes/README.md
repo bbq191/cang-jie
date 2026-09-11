@@ -79,7 +79,7 @@
 ## 架构：挂书架网关的 loopback 服务
 
 ```
-浏览器 ──► shelf-gateway :443（2026-09-10 前是 :8778）──/api/<seg>/*──┬── ink-serve 127.0.0.1:8795 ──fswatch──► ~/.local/share/remarkable/xochitl（只读）
+浏览器 ──► gateway :443（2026-09-10 前是 :8778；2026-09-11 从 shelf/services/shelf-gateway 正名搬顶层 ../gateway）──/api/<seg>/*──┬── ink-serve 127.0.0.1:8795 ──fswatch──► ~/.local/share/remarkable/xochitl（只读）
                  「笔记」tab（note-serve 注册）  ├── transcribe-serve :8796 ──订阅 ink /events──► DashScope（设备 WiFi 直连）
                  「管理」tab 模型管理卡片        ├── mind-serve :8797（纯被动，无订阅）──► DashScope（设备 WiFi 直连）
                  /api/events（area=notes）      ├── note-serve :8798 ──► xochitl /upload + vault/ 落盘
@@ -88,7 +88,7 @@
 ![notes 架构：条目库唯一写者 = ink-serve](docs/diagrams/architecture.svg)
 
 - 注册表 / 反向代理 / 事件汇聚 / 管理台三态全是书架的机制（`shelf/README.md`）；网关 `manage::MODULES` 加四行即接入。
-- 依赖方向单向无环：`services/* → shelf-core + crates/*`；**不依赖** `bookconv` / `device-core` / `knowledge/pkm` / `reading`。
+- 依赖方向单向无环：`services/* → ../rmsvc-core + crates/*`（2026-09-11 从 `shelf/crates/shelf-core` 正名搬顶层，见 `shelf/README.md`）；**不依赖** `bookconv` / `device-core` / `knowledge/pkm` / `reading`。
 - **零 xovi 依赖**：没有 qmd、没有 .so（2026-09-09 起彻底：note-serve 不再新建/确保任何文件夹，笔记本直接复用书本自己已经在的设备文件夹，`shelf-mkdir-agent.qmd` 不再是这条线的依赖，见 §03ae）。
 - 服务间只经 HTTP：条目库只有 ink-serve 写，转写/脑/本都 `POST /api/ink/books/{uuid}/entries/{id}` 改字段。
 
@@ -113,16 +113,16 @@ notes/
 ├── crates/notecore/                   领域核心（纯函数）：model 条目/样式/状态/去处（**没有分区了**）· hash FNV 簇指纹 · geom 聚簇+配对（**没有 has_underline 了**）· ingest 增量合并（含纯勾画路径） · marker 行首标记 OCR 兜底（`##`/`### ` 都覆盖 subhead） · project 条目库→段落列表投影（按页平铺，不分组） · export 条目库→Markdown 导出
 ├── crates/vendorcfg/                  **新增**（合理使用设计模式消重复）：AI 厂商预置模型表/key 按厂商分格存取/迁移/PATCH/对外 JSON 整形（preset）+ 泛型用量账本 UsageBook\<Extra\>/Ledger\<Extra\>（usage），transcribe-serve/mind-serve 共用；只抽行为不抽数据结构，两边各自的 Config/Usage 结构体+落盘格式不变
 ├── services/ink-serve/                矿：doc(书库只读视图) · ingest(变更页编排) · crop(**自渲染裁图**，笔画矢量数据画折线，不吃缩略图) · bookdb(Repository) · config · main(路由+监听，接 askAi/question/destination + archive/purge 动作)
-├── services/transcribe-serve/         转写：config/ledger(vendorcfg 薄封装：自己的视觉预置表+节流四件套+RunReport) · backend(Vision Strategy + OpenAiCompat) · prompt · ink(EntryStore 客户端，传输层包 shelf_core::registry::SvcClient) · worker(一轮编排) · main(SSE 订阅+防抖)
+├── services/transcribe-serve/         转写：config/ledger(vendorcfg 薄封装：自己的视觉预置表+节流四件套+RunReport) · backend(Vision Strategy + OpenAiCompat) · prompt · ink(EntryStore 客户端，传输层包 rmsvc_core::registry::SvcClient) · worker(一轮编排) · main(SSE 订阅+防抖)
 ├── services/mind-serve/               脑：config/ledger(vendorcfg 薄封装：自己的文字预置表，Ledger\<Extra=()\> 没有 lastRun) · backend(TextModel Strategy + OpenAiCompat，纯文本消息) · prompt(拼书名+章节+原文+文本+问题) · ink(EntryStore 客户端，book/post_answer，传输层包 SvcClient) · worker::ask_entry(单条问答) · main(**无后台线程**，纯被动路由)
-├── services/note-serve/               本：注册「笔记」tab；rmdoc.rs 打包 .rmdoc（上传复用 shelf-core::xochitl）；export.rs 落盘 vault + 浏览器下载的 content_disposition()；chapter_store.rs 通用"每书每章一条记录"泛型（notebooks/export_state 现在是类型别名）；config/ink(SvcClient)/trash(SvcClient)/publish 生成编排（不建文件夹，复用书本自己的设备文件夹，撞名 shelf-core::xochitl::unique_document_name 加后缀）；publish::import_markdown（单篇 markdown→新笔记本文档，独立于条目库，不经章节投影，见 notecore::mdimport）
+├── services/note-serve/               本：注册「笔记」tab；rmdoc.rs 打包 .rmdoc（上传复用 rmsvc_core::xochitl）；export.rs 落盘 vault + 浏览器下载的 content_disposition()；chapter_store.rs 通用"每书每章一条记录"泛型（notebooks/export_state 现在是类型别名）；config/ink(SvcClient)/trash(SvcClient)/publish 生成编排（不建文件夹，复用书本自己的设备文件夹，撞名 rmsvc_core::xochitl::unique_document_name 加后缀）；publish::import_markdown（单篇 markdown→新笔记本文档，独立于条目库，不经章节投影，见 notecore::mdimport）
 ├── systemd/                           四个 .service（PartOf=shelf.target；随书架 install.sh 装，令牌 ink/transcribe/mind/note）
 ├── host/                              待建：CLI `notes pull`（把设备 vault/ 拉到本机 Obsidian vault；三期只做了"导出到设备"这一半）
 ├── testdata/renggu/                   真机 fixture（《人骨拼圖》墓碑页 .rm，测"解析成功零条目"）· renggu_marks/（同书真实勾画+手写）· seven_styles/（笔记本一页七样式，rmv6::write 模板）
 └── docs/reMarkable笔记白皮书.md          决策 / 真机 / 踩坑（开头「现状总览」§00b）
 ```
 
-网页部分在书架：`shelf/services/shelf-gateway/ui/app.js` 的 `renderNotes`（「浏览」/「整理」/「回收站」/「导入 md 文档」四个子视图，跟前三个不共享条目库状态机——单篇 markdown 直接转一份新设备笔记本文档，后端端点/JSON body 不变，仍是 §03af 那条 `import_markdown` 管线）+ `renderManage` 里的"模型管理"卡片（`mountModelPanel()`）。「导入 md 文档」子标签**默认隐藏**，由 `notesImportMdEnabled` 开关控制显示（开关在书架「管理→实验室」，默认关，见书架白皮书 §03ak）；**2026-09-10 起交互也从"文本框粘贴"改成"选一个 .md 文件上传"**（浏览器 `FileReader` 读文件内容，继续 POST 同一份 `{title,markdown}` JSON body，后端 `import_markdown` 端点本身没有改动，见书架白皮书 §03ak）。**网页正文（含这四个子视图的全部文案）2026-09-10 起支持中英文切换**（i18n 由书架统一提供，`notes.*` 命名空间，见书架白皮书 §03an——这是书架侧的基础设施，本仓库不重复维护）。
+网页部分在网关：`../gateway/ui/app.js`（2026-09-11 从 `shelf/services/shelf-gateway/ui/app.js` 正名搬顶层）的 `renderNotes`（「浏览」/「整理」/「回收站」/「导入 md 文档」四个子视图，跟前三个不共享条目库状态机——单篇 markdown 直接转一份新设备笔记本文档，后端端点/JSON body 不变，仍是 §03af 那条 `import_markdown` 管线）+ `renderManage` 里的"模型管理"卡片（`mountModelPanel()`）。「导入 md 文档」子标签**默认隐藏**，由 `notesImportMdEnabled` 开关控制显示（开关在书架「管理→实验室」，默认关，见书架白皮书 §03ak）；**2026-09-10 起交互也从"文本框粘贴"改成"选一个 .md 文件上传"**（浏览器 `FileReader` 读文件内容，继续 POST 同一份 `{title,markdown}` JSON body，后端 `import_markdown` 端点本身没有改动，见书架白皮书 §03ak）。**网页正文（含这四个子视图的全部文案）2026-09-10 起支持中英文切换**（i18n 由书架统一提供，`notes.*` 命名空间，见书架白皮书 §03an——这是书架侧的基础设施，本仓库不重复维护）。
 
 ## 路径（XDG，设备 HOME=/home/root）
 

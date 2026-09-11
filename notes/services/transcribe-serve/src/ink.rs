@@ -1,13 +1,13 @@
 //! 条目库的访问口（只经 ink-serve 的 HTTP，**不直接碰文件**：条目库唯一写者是 ink-serve）。
 //! `EntryStore` 抽象出四个动作，生产走注册表找 ink-serve，测试用内存桩。
 //!
-//! 传输层委托 `shelf_core::registry::SvcClient`（2026-09-09 消重复，见该模块文档）；`crop` 要下载
+//! 传输层委托 `rmsvc_core::registry::SvcClient`（2026-09-09 消重复，见该模块文档）；`crop` 要下载
 //! 原始字节不是 JSON，用 `SvcClient::agent()` 逃生舱自己发请求。
 use notecore::marker::Marker;
 use notecore::model::{Book, Draft};
 use serde::Deserialize;
-use shelf_core::paths::Paths;
-use shelf_core::registry::{enc, SvcClient};
+use rmsvc_core::paths::Paths;
+use rmsvc_core::registry::{enc, SvcClient};
 use std::io::Read;
 
 #[derive(Deserialize, Debug, Clone)]

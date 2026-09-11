@@ -44,7 +44,7 @@ pub struct Ledger<Extra = ()> {
 
 impl<Extra: Clone + Serialize + DeserializeOwned> Ledger<Extra> {
     pub fn open(path: &Path) -> Ledger<Extra> {
-        Ledger { path: path.to_path_buf(), usage: Mutex::new(shelf_core::config::load_or_default(path)) }
+        Ledger { path: path.to_path_buf(), usage: Mutex::new(rmsvc_core::config::load_or_default(path)) }
     }
     pub fn snapshot(&self) -> UsageBook<Extra> {
         self.usage.lock().unwrap_or_else(|e| e.into_inner()).clone()
@@ -52,7 +52,7 @@ impl<Extra: Clone + Serialize + DeserializeOwned> Ledger<Extra> {
     fn edit(&self, f: impl FnOnce(&mut UsageBook<Extra>)) {
         let mut u = self.usage.lock().unwrap_or_else(|e| e.into_inner());
         f(&mut u);
-        let _ = shelf_core::config::save(&self.path, &*u, None);
+        let _ = rmsvc_core::config::save(&self.path, &*u, None);
     }
     pub fn record_ok(&self, model_key: &str, prompt_tokens: u64, completion_tokens: u64, now: u64) {
         self.edit(|u| {

@@ -8,8 +8,8 @@
 //! 2026-09-05 起规则统一"所有书只落母版库"：旧 `POST /?target=` 直投路已删（`/staging*` 是唯一入口）。
 use crate::service_state::State;
 use crate::staging::{OptimizeMode, Reader, StagingStore};
-use shelf_core::asset::{self, AssetUploadFlow};
-use shelf_core::http::{bind, ApiError, ApiResult, Reply, Request, Router};
+use rmsvc_core::asset::{self, AssetUploadFlow};
+use rmsvc_core::http::{bind, ApiError, ApiResult, Reply, Request, Router};
 use std::sync::Arc;
 
 pub fn router(st: Arc<State>) -> Router {

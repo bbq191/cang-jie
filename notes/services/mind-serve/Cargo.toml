@@ -10,7 +10,7 @@ name = "mind-serve"
 path = "src/main.rs"
 
 [dependencies]
-shelf-core = { path = "../../../shelf/crates/shelf-core" }
+rmsvc-core = { path = "../../../rmsvc-core" }
 notecore = { path = "../../crates/notecore" }
 vendorcfg = { path = "../../crates/vendorcfg" }
 serde = { version = "1", features = ["derive"] }

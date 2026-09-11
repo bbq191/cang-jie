@@ -1,5 +1,5 @@
 # notes 笔记线：矿(ink) / 转写(transcribe) / 脑(mind) / 本(note) 四服务 + 共享 crate 的内部 workspace。
-# 依赖方向单向无环：services/* → shelf-core（书架共享底座：paths/registry/http/events/fswatch/xochitl/clock）+ crates/*；
+# 依赖方向单向无环：services/* → rmsvc-core（三线共享底座：paths/registry/http/events/fswatch/xochitl/clock）+ crates/*；
 # **不依赖** bookconv / device-core / knowledge/pkm / reading（旧线只借鉴功能与踩坑，.rm 解析与页→章映射剥离移植成新 crate）。
 [workspace]
 resolver = "2"

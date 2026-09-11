@@ -5,10 +5,10 @@
 //! 上传→落目录→`fc-cache -f`→重建 `$XDG_DATA_HOME/shelf/fonts.json`（字体菜单 qmd 读）。**只管原生阅读器**：
 //! KOReader 的字体由 koreader-serve 单独管（用户 2026-09-03 定：两边各自装、不同时装填）。
 use serde::{Deserialize, Serialize};
-use shelf_core::asset::{AssetItem, AssetStore};
-use shelf_core::formats::{self, FONT_EXTS};
-use shelf_core::paths::Paths;
-use shelf_core::ttf;
+use rmsvc_core::asset::{AssetItem, AssetStore};
+use rmsvc_core::formats::{self, FONT_EXTS};
+use rmsvc_core::paths::Paths;
+use rmsvc_core::ttf;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -60,7 +60,7 @@ impl Default for FontConfig {
 
 impl FontConfig {
     pub fn load(paths: &Paths) -> FontConfig {
-        shelf_core::config::load_or_seed(&paths.service_config("font"))
+        rmsvc_core::config::load_or_seed(&paths.service_config("font"))
     }
 }
 
@@ -106,7 +106,7 @@ impl FontStore {
     /// 切换中文回退加粗：存配置 + 重写 fontconfig（fontconfig 实时生效，翻书即见，无需重启 xochitl）。
     pub fn set_embolden(&self, on: bool) -> Result<(), String> {
         self.embolden.store(on, std::sync::atomic::Ordering::Relaxed);
-        shelf_core::config::save(&self.config_path, &FontConfig { embolden_cjk_fallback: on }, None)?;
+        rmsvc_core::config::save(&self.config_path, &FontConfig { embolden_cjk_fallback: on }, None)?;
         self.write_fontconfig(&self.entries())?;
         Ok(())
     }
@@ -179,7 +179,7 @@ impl FontStore {
     /// 重建 fonts.json（qmd 消费）。
     pub fn write_index(&self) -> Result<Vec<FontEntry>, String> {
         let fonts = self.scan();
-        shelf_core::config::save(&self.json_path, &FontsJson { version: 1, fonts: fonts.clone() }, None)?;
+        rmsvc_core::config::save(&self.json_path, &FontsJson { version: 1, fonts: fonts.clone() }, None)?;
         if let Err(e) = self.write_fontconfig(&fonts) {
             eprintln!("[font-serve] 写 fontconfig 回退失败: {e}");
         }
@@ -348,7 +348,7 @@ impl AssetStore for FontStore {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use shelf_core::asset::AssetUploadFlow;
+    use rmsvc_core::asset::AssetUploadFlow;
 
     fn setup() -> (tempfile::TempDir, Paths, FontStore) {
         let t = tempfile::tempdir().unwrap();

@@ -2,9 +2,9 @@
 //! loopback 长连接订阅它的 `GET /events`，收到的事件补上 `svc` 后转发。服务没起 / 重启 → 3 s 后重连（阻塞等待，零轮询 CPU）。
 //! 另监听注册表目录（inotify，tmpfs）：服务注册/注销时发 `{"area":"manage"}`，网页管理台与 tab 列表据此刷新。
 //! 设计约束（用户 2026-09-06）：不轮询、不监听全盘、日志写入不触发——事件只来自服务代码里的变更点与这两处 inotify。
-use shelf_core::events::{parse_sse_line, EventBus};
-use shelf_core::paths::Paths;
-use shelf_core::registry;
+use rmsvc_core::events::{parse_sse_line, EventBus};
+use rmsvc_core::paths::Paths;
+use rmsvc_core::registry;
 use std::io::{BufRead, BufReader};
 use std::sync::Arc;
 use std::time::Duration;
@@ -24,7 +24,7 @@ impl Hub {
         {
             let (bus, dir) = (bus.clone(), paths.services_dir());
             std::thread::spawn(move || {
-                shelf_core::fswatch::watch_debounced(&dir, Duration::from_millis(500), |_| bus.publish("manage", "services"));
+                rmsvc_core::fswatch::watch_debounced(&dir, Duration::from_millis(500), |_| bus.publish("manage", "services"));
             });
         }
         Hub { bus }

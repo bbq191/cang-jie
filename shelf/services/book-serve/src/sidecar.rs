@@ -2,7 +2,7 @@
 //! 最近一次投原生的渲染自检结果。只管"读 / 改 / 删这份记录"，母版库动作（入库/优化/落库）在 `staging`，
 //! 自检逻辑在 `render_check`；两边都通过这里落盘，谁也不碰对方的字段语义（2026-09-06 从 staging.rs 拆出）。
 use serde::{Deserialize, Serialize};
-use shelf_core::fs::write_atomic;
+use rmsvc_core::fs::write_atomic;
 use std::path::{Path, PathBuf};
 
 /// 落库记录：各读器最近一次落库的 unix 秒；`render`=最近一次投原生的渲染自检结果。
