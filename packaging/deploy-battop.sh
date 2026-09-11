@@ -22,7 +22,10 @@ BIN="$DIR/target/$TARGET/release/battop"
 [ -f "$BIN" ] || { echo "!! 构建后仍缺 $BIN"; exit 1; }
 
 echo "== 推送到 root@$HOST:$DEST =="
-ssh "root@$HOST" "mkdir -p $DEST"
+# ⚠️ 重装（不是首次装）时 battop.service 可能已经在跑——scp 直接覆盖一个正在执行的二进制会被
+# 内核拒绝（ETXTBSY，scp 报 "dest open ... Failure"，真机实测过一次）。先停服务再传，
+# install.sh 最后会自己重新 enable --now，不影响"停了忘记重启"的风险。
+ssh "root@$HOST" "mkdir -p $DEST; systemctl stop battop.service 2>/dev/null || true"
 scp "$BIN" "root@$HOST:$DEST/battop"
 scp "$DIR/install.sh" "root@$HOST:$DEST/install.sh"
 

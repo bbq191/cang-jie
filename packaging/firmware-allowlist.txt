@@ -25,5 +25,5 @@
 # 当前实际在用的设备固件是 3.28.0.172，那一行哈希对不上。保留只作历史记录（万一有设备还
 # 停留在 .169），不代表当前设备。3.28.0.172 那一行是用户当场 `ssh root@10.11.99.1
 # sha256sum /usr/bin/xochitl` 现取、报给我加进来的——真实设备实测值，不是推算/凭记忆写的。
-6361610111c381ce730a8bfcc889bd933ef5fef173563a9156e435233714e7ee  3.28.0.169 (imx93-chiappa / Paper Pro Move，历史记录，非当前设备固件)
+# 6361610111c381ce730a8bfcc889bd933ef5fef173563a9156e435233714e7ee  3.28.0.169 (imx93-chiappa / Paper Pro Move，历史记录，非当前设备固件)
 5ba79d1b5656df1a771217d29a8d3938c40256be53361b10a0d17cd4752807f4  3.28.0.172 (imx93-chiappa / Paper Pro Move，2026-09-11 用户设备实测 sha256sum /usr/bin/xochitl 核对)
