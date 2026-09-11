@@ -1,5 +1,8 @@
 #!/bin/sh
-# host 侧一键部署书架到设备（独立于整包 packaging/，Phase 验证期用）：
+# host 侧一键部署书架+网关+笔记线+两个 enhance 领域服务到设备。2026-09-11 从 shelf/deploy.sh
+# 搬到这里——它编排的是跨 shelf/gateway/enhance/notes 四个目录的一整套安装，本质上是"全项目安装
+# 编排"的一部分，该跟 packaging/ 放一起，不该继续散在 shelf/ 下（shelf/build.sh、shelf/install.sh、
+# shelf/uninstall.sh 没有跟着搬，见 packaging/README.md）。
 #   组载荷（bin/ systemd/ lo-alias/ xovi/ install.sh uninstall.sh）→ tar-over-ssh → 设备端 install.sh。
 # 用法：./deploy.sh [host] [install.sh 的参数…]      host 默认 10.11.99.1
 #   环境 SHELF_NO_BUILD=1 跳过交叉编译（直接用 target/ 里现成产物）
@@ -12,11 +15,11 @@ GATEWAY_BINS="gateway"   # 网关（../gateway）2026-09-11 正名搬顶层，�
 ENHANCE_BINS="wallpaper-serve font-serve"   # 2026-09-11 从 shelf 挪进 ../enhance/，单元跟着各自目录走
 NOTES_BINS="ink-serve transcribe-serve mind-serve note-serve"   # 笔记线（../notes）二进制与单元一并打进载荷
 
-[ "${SHELF_NO_BUILD:-0}" = "1" ] || sh ./build.sh
+[ "${SHELF_NO_BUILD:-0}" = "1" ] || sh ../shelf/build.sh
 STAGE="$(mktemp -d)"; trap 'rm -rf "$STAGE"' EXIT
 mkdir -p "$STAGE/shelf/bin" "$STAGE/shelf/systemd" "$STAGE/shelf/lo-alias" "$STAGE/shelf/xovi"
-for b in $BINS; do cp "target/$TARGET/release/$b" "$STAGE/shelf/bin/"; done
-cp systemd/* "$STAGE/shelf/systemd/"
+for b in $BINS; do cp "../shelf/target/$TARGET/release/$b" "$STAGE/shelf/bin/"; done
+cp ../shelf/systemd/* "$STAGE/shelf/systemd/"
 for b in $GATEWAY_BINS; do
     [ -f "../gateway/target/$TARGET/release/$b" ] && cp "../gateway/target/$TARGET/release/$b" "$STAGE/shelf/bin/"
 done
@@ -30,8 +33,8 @@ for b in $NOTES_BINS; do
 done
 [ -d ../notes/systemd ] && cp ../notes/systemd/*.service "$STAGE/shelf/systemd/"
 cp ../enhance/lo-alias/lo-alias.sh "$STAGE/shelf/lo-alias/"
-cp install.sh uninstall.sh "$STAGE/shelf/"
-cp xovi/*.qmd "$STAGE/shelf/xovi/"
+cp ../shelf/install.sh ../shelf/uninstall.sh "$STAGE/shelf/"
+cp ../shelf/xovi/*.qmd "$STAGE/shelf/xovi/"
 echo "-- 推送到 root@$HOST:/home/root/shelf-pkg/ 并安装"
 tar -C "$STAGE" -cf - shelf | ssh "root@$HOST" 'rm -rf /home/root/shelf-pkg && mkdir -p /home/root/shelf-pkg && tar -C /home/root/shelf-pkg -xf -'
 # shellcheck disable=SC2029  # 参数就是要在远端展开
