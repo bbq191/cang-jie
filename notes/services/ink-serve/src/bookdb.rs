@@ -1,7 +1,7 @@
 //! 条目库（Repository）：一书一文件 `$XDG_STATE_HOME/notes/books/<uuid>.json`，原子写。ink-serve 是**唯一写者**——
 //! 转写/脑/本三服务都通过它的 HTTP 改条目字段，避免多进程同时改一份 JSON。
 use notecore::model::{Book, Status};
-use shelf_core::fs::write_atomic;
+use rmsvc_core::fs::write_atomic;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 

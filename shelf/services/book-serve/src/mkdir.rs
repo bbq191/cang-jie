@@ -11,7 +11,7 @@
 //! `trash.rs` 是同一份基础设施，见该模块文档）；这里只留领域校验（名字合法性/文件夹是否已存在）。
 use crate::pending_queue::PendingQueue;
 use serde::{Deserialize, Serialize};
-use shelf_core::xochitl::find_folder_by_name;
+use rmsvc_core::xochitl::find_folder_by_name;
 use std::path::{Path, PathBuf};
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -42,7 +42,7 @@ impl MkdirQueue {
         if find_folder_by_name(&self.lib_dir, name).is_some() {
             return Ok(0); // 已经存在，不用建
         }
-        self.q.add(|p| p.name == name, || Pending { name: name.to_string(), at: shelf_core::clock::now_secs() })
+        self.q.add(|p| p.name == name, || Pending { name: name.to_string(), at: rmsvc_core::clock::now_secs() })
     }
 
     /// 待办文件夹名（QML 代理拉取）：顺手清掉已经真实建出来的（QML 端无需 ack）。

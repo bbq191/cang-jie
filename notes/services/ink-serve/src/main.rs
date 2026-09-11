@@ -30,11 +30,11 @@ mod ingest;
 use bookdb::BookDb;
 use config::IngestConfig;
 use notecore::model::{Answer, Destination, Draft, Status, Style};
-use shelf_core::events::EventBus;
-use shelf_core::fs::plain_name;
-use shelf_core::http::{bind, ApiError, ApiResult, Reply, Request, Router};
-use shelf_core::paths::Paths;
-use shelf_core::service::{self, ServiceSpec};
+use rmsvc_core::events::EventBus;
+use rmsvc_core::fs::plain_name;
+use rmsvc_core::http::{bind, ApiError, ApiResult, Reply, Request, Router};
+use rmsvc_core::paths::Paths;
+use rmsvc_core::service::{self, ServiceSpec};
 use std::sync::Arc;
 
 pub const APP: &str = "notes";
@@ -53,7 +53,7 @@ impl State {
         self.paths.app_data_dir(APP).join("crops")
     }
     fn ingest(&self, uuid: &str) {
-        match ingest::ingest_doc(&self.paths.xochitl_dir(), &self.crops_dir(), &self.db, &self.cfg, uuid, shelf_core::clock::now_secs()) {
+        match ingest::ingest_doc(&self.paths.xochitl_dir(), &self.crops_dir(), &self.db, &self.cfg, uuid, rmsvc_core::clock::now_secs()) {
             // `s.merge.revoked > 0` 单独成立的情况＝书被移进回收站/删除、`revoke_stale` 撤了条目但没扫任何页（pages==0）；
             // 这时也要发事件，不然网页「笔记」列表要等到下一次不相干的事件才会把这本书摘掉。
             Ok(Some(s)) if s.pages > 0 || s.merge.revoked > 0 => {
@@ -72,7 +72,7 @@ fn triage(s: &State, r: &mut Request<'_>, target: Status) -> ApiResult {
     if s.db.load(&uuid).is_none() {
         return Err(ApiError::not_found("没有这本书的条目"));
     }
-    let now = shelf_core::clock::now_secs();
+    let now = rmsvc_core::clock::now_secs();
     let outcome = s.db.update(&uuid, || Default::default(), |b| b.entries.iter_mut().find(|e| e.id == id).map(|e| e.set_triage(target, now))).map_err(ApiError::internal)?;
     match outcome {
         None => return Err(ApiError::not_found("没有这条目")),
@@ -87,7 +87,7 @@ fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let bind_addr = service::parse_bind(&args, SPEC.default_bind);
     let paths = Paths::from_env();
-    let cfg: IngestConfig = shelf_core::config::load_or_seed(&paths.app_config_dir(APP).join("ink.json"));
+    let cfg: IngestConfig = rmsvc_core::config::load_or_seed(&paths.app_config_dir(APP).join("ink.json"));
     let db = BookDb::new(paths.app_state_dir(APP).join("books"));
     let st = Arc::new(State { paths: paths.clone(), cfg, db, bus: Arc::new(EventBus::new()) });
     if let Err(e) = std::fs::create_dir_all(st.crops_dir()).and_then(|_| st.db.ensure()) {
@@ -107,7 +107,7 @@ fn main() {
             }
             let lib = st.paths.xochitl_dir();
             let debounce = std::time::Duration::from_secs(st.cfg.debounce_secs.max(1));
-            shelf_core::fswatch::watch_debounced(&lib, debounce, |names| {
+            rmsvc_core::fswatch::watch_debounced(&lib, debounce, |names| {
                 let mut seen = std::collections::BTreeSet::new();
                 for n in names {
                     if let Some(u) = doc::uuid_of_event(n) {
@@ -141,7 +141,7 @@ fn main() {
             if s.db.load(&uuid).is_none() {
                 return Err(ApiError::not_found("没有这本书的条目"));
             }
-            let now = shelf_core::clock::now_secs();
+            let now = rmsvc_core::clock::now_secs();
             let outcome = s.db.update(&uuid, || Default::default(), |b| {
                 let subhead_hint = j.0.get("subheadHint").and_then(|v| v.as_str()).map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
                 let Some(e) = b.entries.iter_mut().find(|e| e.id == id) else { return None };
@@ -204,7 +204,7 @@ fn main() {
             if s.db.load(&uuid).is_none() {
                 return Err(ApiError::not_found("没有这本书的条目"));
             }
-            let now = shelf_core::clock::now_secs();
+            let now = rmsvc_core::clock::now_secs();
             let outcome = s.db.update(&uuid, || Default::default(), |b| b.entries.iter_mut().find(|e| e.id == id).map(|e| e.restore(now))).map_err(ApiError::internal)?;
             match outcome {
                 None => return Err(ApiError::not_found("没有这条目")),

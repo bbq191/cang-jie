@@ -4,7 +4,7 @@
 //! - `failed/` 失败源（封顶 50MB，可重试/删除，`<name>.reason` sidecar 记原因）。
 //! 处理成功的书进母版库（`staging/`，见 `staging.rs`），本队列不再另存一份。
 use serde::Serialize;
-use shelf_core::fs::{move_unique, plain_name, unique_path};
+use rmsvc_core::fs::{move_unique, plain_name, unique_path};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 

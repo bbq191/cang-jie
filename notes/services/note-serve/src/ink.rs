@@ -1,10 +1,10 @@
 //! 条目库的只读访问口（本服务只读，不改字段——改字段是 ink-serve/transcribe-serve/mind-serve 的事）。
 //! 生产走注册表找 ink-serve；测试用内存桩。同款套路见 `transcribe-serve::ink`。
 //!
-//! 传输层委托 `shelf_core::registry::SvcClient`（2026-09-09 消重复，见该模块文档）。
+//! 传输层委托 `rmsvc_core::registry::SvcClient`（2026-09-09 消重复，见该模块文档）。
 use notecore::model::Book;
-use shelf_core::paths::Paths;
-use shelf_core::registry::{enc, SvcClient};
+use rmsvc_core::paths::Paths;
+use rmsvc_core::registry::{enc, SvcClient};
 
 #[derive(serde::Deserialize, Debug, Clone)]
 pub struct BookBrief {

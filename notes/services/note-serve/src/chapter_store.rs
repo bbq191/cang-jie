@@ -9,7 +9,7 @@
 //! 这是 note-serve 自己的簿记，不是条目库（条目库的唯一写者仍是 ink-serve）——丢了任意一份文件最坏
 //! 后果只是"重新判一次要不要重生成/重写"，不丢数据。
 use serde::{de::DeserializeOwned, Serialize};
-use shelf_core::fs::write_atomic;
+use rmsvc_core::fs::write_atomic;
 use std::collections::BTreeMap;
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};

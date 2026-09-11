@@ -6,9 +6,9 @@
 //!   Basic 同理只放行 `POST /password`（CLI `shelf passwd`）。
 //! - 未登录：浏览器请求（Accept 含 text/html）303 → `/login?next=…`，其它 401 JSON。密码错延时 500ms。
 use crate::config::GatewayConfig;
-use shelf_core::auth::{parse_basic, parse_cookie, SessionStore};
-use shelf_core::http::{ApiError, ApiResult, Guard, GuardRequest, Method, Reply, Request};
-use shelf_core::paths::Paths;
+use rmsvc_core::auth::{parse_basic, parse_cookie, SessionStore};
+use rmsvc_core::http::{ApiError, ApiResult, Guard, GuardRequest, Method, Reply, Request};
+use rmsvc_core::paths::Paths;
 use std::sync::{Arc, Mutex};
 
 pub const COOKIE: &str = "shelf_session";
@@ -67,7 +67,7 @@ impl AuthState {
                 let html = wants_html(r.header("Accept"));
                 match st.identify(r) {
                     Who::Nobody => Some(if html {
-                        Reply::redirect(&format!("/login?next={}", shelf_core::multipart::percent_encode(&r.path)))
+                        Reply::redirect(&format!("/login?next={}", rmsvc_core::multipart::percent_encode(&r.path)))
                     } else {
                         Reply::error(401, "需要登录（网页 /login；CLI 用 Basic 密码）").with_header("WWW-Authenticate", "Basic realm=\"shelf\", charset=\"UTF-8\"")
                     }),

@@ -69,7 +69,7 @@ impl Doc {
                     return None;
                 }
                 let id = p.file_stem()?.to_str()?.to_string();
-                let mtime = e.metadata().ok()?.modified().ok().map(shelf_core::clock::secs_of).unwrap_or(0);
+                let mtime = e.metadata().ok()?.modified().ok().map(rmsvc_core::clock::secs_of).unwrap_or(0);
                 Some((id, mtime))
             })
             .collect();

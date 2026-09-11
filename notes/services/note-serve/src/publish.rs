@@ -20,7 +20,7 @@ use notecore::project::{fingerprint_chapter, project_chapter};
 use rmv6::write::build_page_rm;
 use serde::Serialize;
 
-/// 传书 + 认领 + 查文件夹/去重三件事的抽象；生产实现包一层 `shelf_core::xochitl::Xochitl`，测试用
+/// 传书 + 认领 + 查文件夹/去重三件事的抽象；生产实现包一层 `rmsvc_core::xochitl::Xochitl`，测试用
 /// 内存桩——不真的碰网络。
 pub trait Uploader: Send + Sync {
     /// 上传一份 `.rmdoc`，进 `folder_name`（找不到该文件夹 → best-effort 落书库根）。
@@ -156,14 +156,14 @@ pub fn import_markdown(c: &Ctx, book_uuid: &str, title: &str, markdown: &str) ->
 const CLAIM_RETRY_ATTEMPTS: u32 = 4;
 const CLAIM_RETRY_DELAY_MS: u64 = 1500;
 
-/// 生产实现：包一层 `shelf_core::xochitl::Xochitl`。
+/// 生产实现：包一层 `rmsvc_core::xochitl::Xochitl`。
 pub struct XochitlUploader {
-    xochitl: shelf_core::xochitl::Xochitl,
+    xochitl: rmsvc_core::xochitl::Xochitl,
 }
 
 impl XochitlUploader {
     pub fn new(host: &str, library_dir: &std::path::Path, timeout_secs: u64) -> XochitlUploader {
-        XochitlUploader { xochitl: shelf_core::xochitl::Xochitl::new(host, library_dir, timeout_secs) }
+        XochitlUploader { xochitl: rmsvc_core::xochitl::Xochitl::new(host, library_dir, timeout_secs) }
     }
 }
 
@@ -183,7 +183,7 @@ impl Uploader for XochitlUploader {
             if attempt > 0 {
                 std::thread::sleep(std::time::Duration::from_millis(CLAIM_RETRY_DELAY_MS));
             }
-            match shelf_core::xochitl::find_documents_since(self.xochitl.library_dir(), since_ms).into_iter().find(|d| d.visible_name == visible_name) {
+            match rmsvc_core::xochitl::find_documents_since(self.xochitl.library_dir(), since_ms).into_iter().find(|d| d.visible_name == visible_name) {
                 Some(d) => return Ok(d.uuid),
                 None => last_err = format!("上传后没能在书库里认领到《{visible_name}》（createdTime>={since_ms}），重试 {CLAIM_RETRY_ATTEMPTS} 次仍未见到——设备可能处理得比平时慢，稍后在网页重试（⚠ 多次重试有极小概率在设备上留下同名孤儿文档，看着重复可以手动去设备上删掉多的那份）"),
             }

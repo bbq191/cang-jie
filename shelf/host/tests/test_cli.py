@@ -19,7 +19,7 @@ from shelf_cli.commands import doctor  # noqa: E402
 
 class FakeGateway(BaseHTTPRequestHandler):
     services = [
-        {"name": "shelf-gateway", "port": 8778, "label": "书架", "version": "0.1.0", "pid": 1},
+        {"name": "gateway", "port": 8778, "label": "秘密花园", "version": "0.1.0", "pid": 1},
         {"name": "font-serve", "port": 8792, "label": "字体", "version": "0.1.0", "pid": 2, "ui": {"title": "字体", "order": 30}},
     ]
     received: list = []

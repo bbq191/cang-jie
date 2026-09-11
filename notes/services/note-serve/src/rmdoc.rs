@@ -1,7 +1,7 @@
 //! 打包一份 xochitl 认的原生文档 zip（reMarkable 官方叫 `.rmdoc`）：`<uuid>.metadata` +
 //! `<uuid>.content` + `<uuid>/<page-uuid>.rm`。**格式不是自己猜的**：`reading/protocol/inject.py`
 //! （2026-08-16 真机验证）+ `device-core/src/inject.rs` + `knowledge/pkm/src/cardnote.rs` 都验证过
-//! `POST /upload`（`shelf_core::xochitl::Xochitl::upload`，本模块直接复用这个共享底座，不是"旧代码"）
+//! `POST /upload`（`rmsvc_core::xochitl::Xochitl::upload`，本模块直接复用这个共享底座，不是"旧代码"）
 //! 除 EPUB/PDF 外也吃 `.rmdoc`：multipart 字段名 `file`、`.rmdoc` 用 `application/zip`；导入端**会
 //! 重新分配设备 UUID**（不是包里写的那个），落库后免重启出现，调用方按 `visibleName` 事后认领。
 //! 按"不引入任何旧代码到 notes/"的红线，本模块是照这些事实全新写的，不是搬运（笔记线白皮书 §03h）。

@@ -4,9 +4,9 @@
 //! `add()` 按 uuid+visibleName 入队，`book-serve` 拒绝名字对不上的 uuid（防错删），所以调用方必须传
 //! 生成时记录下来的、这份旧文档当时的 visibleName，不能拿当前（可能已变）的书名/章名重算。
 //!
-//! 传输层委托 `shelf_core::registry::SvcClient`（2026-09-09 消重复，见该模块文档）。
-use shelf_core::paths::Paths;
-use shelf_core::registry::SvcClient;
+//! 传输层委托 `rmsvc_core::registry::SvcClient`（2026-09-09 消重复，见该模块文档）。
+use rmsvc_core::paths::Paths;
+use rmsvc_core::registry::SvcClient;
 
 pub trait TrashSink: Send + Sync {
     /// 入队；`book-serve` 未运行 / 名字对不上 / uuid 不在库里都算失败，调用方应当"不阻塞本次生成"

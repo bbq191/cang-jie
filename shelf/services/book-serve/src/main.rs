@@ -13,8 +13,8 @@ mod spool;
 mod staging;
 mod trash;
 
-use shelf_core::paths::Paths;
-use shelf_core::service::{self, ServiceSpec};
+use rmsvc_core::paths::Paths;
+use rmsvc_core::service::{self, ServiceSpec};
 use std::sync::Arc;
 
 const SPEC: ServiceSpec = ServiceSpec {
@@ -44,7 +44,7 @@ fn main() {
         std::thread::spawn(move || {
             st.process_inbox(None);
             let inbox = st.spool.inbox();
-            shelf_core::fswatch::watch_debounced(&inbox, std::time::Duration::from_secs(8), |_| {
+            rmsvc_core::fswatch::watch_debounced(&inbox, std::time::Duration::from_secs(8), |_| {
                 st.process_inbox(None);
             });
         });

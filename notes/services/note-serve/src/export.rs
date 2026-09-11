@@ -10,7 +10,7 @@
 use crate::export_state::{ExportRecord, ExportState};
 use notecore::model::Book;
 use serde::Serialize;
-use shelf_core::multipart::percent_encode;
+use rmsvc_core::multipart::percent_encode;
 use std::path::{Path, PathBuf};
 
 /// 浏览器"另存为"用的 `Content-Disposition` 值：非 ASCII 字符（书名/章名几乎总是中文）替换成 `_`
@@ -83,7 +83,7 @@ pub fn export_chapter(dir: &Path, book: &Book, chapter_idx: usize, title: &str, 
     let md = notecore::export::export_chapter_md(book, chapter_idx).expect("指纹是 Some，md 也该有内容——两者算的是同一份 live_entries");
     let path = dir.join(format!("{}.md", sanitize(&notecore::export::chapter_stem(chapter_idx, title))));
     std::fs::write(&path, md).map_err(|e| format!("写 {} 失败: {e}", path.display()))?;
-    state.set(&book.uuid, chapter_idx, ExportRecord { fingerprint, exported_at: shelf_core::clock::now_secs() })?;
+    state.set(&book.uuid, chapter_idx, ExportRecord { fingerprint, exported_at: rmsvc_core::clock::now_secs() })?;
     Ok(ExportOutcome::Written)
 }
 

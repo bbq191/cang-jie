@@ -1,6 +1,6 @@
 //! `$XDG_CONFIG_HOME/shelf/book.json`。缺省即可用；首启写出缺省文件供用户改。
 use serde::{Deserialize, Serialize};
-use shelf_core::paths::Paths;
+use rmsvc_core::paths::Paths;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(default, rename_all = "camelCase")]
@@ -20,13 +20,13 @@ pub struct BookConfig {
 
 impl Default for BookConfig {
     fn default() -> Self {
-        BookConfig { library_folder: "library".into(), annot_folder: "library".into(), xochitl_host: shelf_core::xochitl::DEFAULT_HOST.into(), upload_timeout_secs: 300, native_upload_limit_mb: 150 }
+        BookConfig { library_folder: "library".into(), annot_folder: "library".into(), xochitl_host: rmsvc_core::xochitl::DEFAULT_HOST.into(), upload_timeout_secs: 300, native_upload_limit_mb: 150 }
     }
 }
 
 impl BookConfig {
     pub fn load(paths: &Paths) -> BookConfig {
-        shelf_core::config::load_or_seed(&paths.service_config("book"))
+        rmsvc_core::config::load_or_seed(&paths.service_config("book"))
     }
     /// 体积门（字节）；0=不拦。
     pub fn native_upload_limit_bytes(&self) -> u64 {

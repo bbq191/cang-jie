@@ -5,9 +5,9 @@
 //! **已开**（跑着→网页有该功能）。开关＝`systemctl start/stop`（仅关后台省占用，非省电）；卸载＝调已装的
 //! `shelf-uninstall --only <令牌>`（对称删单元/二进制/qmd）；**安装不走网页**（不让网页 remount /usr 装系统单元），
 //! 未装模块只给引导。网关自身永远在（管理台宿主），不可从网页关/卸。基石（xovi/appload/qrr/KOReader）只读探测。
-use shelf_core::http::{ApiError, ApiResult, Reply, Request};
-use shelf_core::paths::Paths;
-use shelf_core::registry;
+use rmsvc_core::http::{ApiError, ApiResult, Reply, Request};
+use rmsvc_core::paths::Paths;
+use rmsvc_core::registry;
 
 /// 一个可管理的领域模块（网关自身不在此列）。
 pub struct Module {

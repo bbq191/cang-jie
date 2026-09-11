@@ -49,7 +49,7 @@ impl TrashQueue {
         }
         // `uuid: &str` 是 Copy，两个闭包各自拿一份拷贝就够——不要先转成 String 再共享，
         // 那样第一个闭包借用、第二个闭包要移动，会被借用检查器拦下来。
-        self.q.add(|p| p.uuid == uuid, || Pending { uuid: uuid.to_string(), name: vis, at: shelf_core::clock::now_secs() })
+        self.q.add(|p| p.uuid == uuid, || Pending { uuid: uuid.to_string(), name: vis, at: rmsvc_core::clock::now_secs() })
     }
 
     /// 待办 uuid（QML 代理拉取）：顺手清掉已进回收站 / 已不存在的。返回 (待办 uuid 列表, 本次清掉几条)。

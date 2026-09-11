@@ -14,7 +14,7 @@ pub fn is_wake_line(line: &str) -> bool {
     line.contains("Changing display state from DeepSleep to Normal")
 }
 
-pub fn spawn(store: Arc<WallpaperStore>, bus: Arc<shelf_core::events::EventBus>) {
+pub fn spawn(store: Arc<WallpaperStore>, bus: Arc<rmsvc_core::events::EventBus>) {
     std::thread::spawn(move || loop {
         let child = Command::new("journalctl").args(["-f", "-n", "0", "-u", "xochitl", "-o", "cat"]).stdout(Stdio::piped()).stderr(Stdio::null()).spawn();
         let mut child = match child {

@@ -548,10 +548,10 @@ dependencies = [
  "epubmap",
  "image",
  "notecore",
+ "rmsvc-core",
  "rmv6",
  "serde",
  "serde_json",
- "shelf-core",
  "tempfile",
 ]
 
@@ -633,9 +633,9 @@ name = "mind-serve"
 version = "0.1.0"
 dependencies = [
  "notecore",
+ "rmsvc-core",
  "serde",
  "serde_json",
- "shelf-core",
  "tempfile",
  "ureq",
  "vendorcfg",
@@ -692,10 +692,10 @@ name = "note-serve"
 version = "0.1.0"
 dependencies = [
  "notecore",
+ "rmsvc-core",
  "rmv6",
  "serde",
  "serde_json",
- "shelf-core",
  "tempfile",
  "ureq",
  "uuid",
@@ -924,6 +924,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "rmsvc-core"
+version = "0.1.0"
+dependencies = [
+ "base64 0.22.1",
+ "inotify",
+ "pbkdf2",
+ "rcgen",
+ "serde",
+ "serde_json",
+ "sha2",
+ "socket2",
+ "time",
+ "tiny_http",
+ "ureq",
+ "uuid",
+]
+
+[[package]]
 name = "rmv6"
 version = "0.1.0"
 
@@ -1073,24 +1091,6 @@ dependencies = [
  "cfg-if",
  "cpufeatures",
  "digest",
-]
-
-[[package]]
-name = "shelf-core"
-version = "0.1.0"
-dependencies = [
- "base64 0.22.1",
- "inotify",
- "pbkdf2",
- "rcgen",
- "serde",
- "serde_json",
- "sha2",
- "socket2",
- "time",
- "tiny_http",
- "ureq",
- "uuid",
 ]
 
 [[package]]
@@ -1272,9 +1272,9 @@ version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
  "notecore",
+ "rmsvc-core",
  "serde",
  "serde_json",
- "shelf-core",
  "tempfile",
  "ureq",
  "vendorcfg",
@@ -1353,9 +1353,9 @@ dependencies = [
 name = "vendorcfg"
 version = "0.1.0"
 dependencies = [
+ "rmsvc-core",
  "serde",
  "serde_json",
- "shelf-core",
  "tempfile",
 ]
 

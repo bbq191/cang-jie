@@ -13,8 +13,8 @@
 mod battop;
 mod qol;
 
-use shelf_core::http::{ApiError, ApiResult, Reply, Request};
-use shelf_core::paths::Paths;
+use rmsvc_core::http::{ApiError, ApiResult, Reply, Request};
+use rmsvc_core::paths::Paths;
 
 pub fn status(paths: &Paths) -> Reply {
     let b = battop::status();

@@ -5,7 +5,7 @@
 //! 手写识别配置…）冲掉。这里不照抄 QML 那种手写全部字段的方式：[`patch`] 把整份文件当成不透明的
 //! `serde_json::Map` 读进来，只覆盖调用方明确要改的键，其余原样写回——不知道、不关心的键天然不会丢，
 //! 也不怕将来别处新增字段时这边漏改。
-use shelf_core::paths::Paths;
+use rmsvc_core::paths::Paths;
 use serde_json::{Map, Value};
 use std::path::PathBuf;
 
@@ -30,7 +30,7 @@ pub fn patch(paths: &Paths, changes: Map<String, Value>) -> Result<(), String> {
         std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     }
     let bytes = serde_json::to_vec_pretty(&Value::Object(map)).map_err(|e| e.to_string())?;
-    shelf_core::fs::write_atomic(&p, &bytes).map_err(|e| e.to_string())
+    rmsvc_core::fs::write_atomic(&p, &bytes).map_err(|e| e.to_string())
 }
 
 /// CJK 荧光笔精确吸附开关（`hlSnapCjk`，langhook C hook 消费）。缺省视为开——跟 QML 侧 `c.hlSnapCjk !== false`

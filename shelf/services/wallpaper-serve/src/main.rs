@@ -10,10 +10,10 @@ mod store;
 mod wake;
 
 use native::Native;
-use shelf_core::asset::{self, AssetStore, AssetUploadFlow};
-use shelf_core::http::{bind, ApiError, Reply, Router};
-use shelf_core::paths::Paths;
-use shelf_core::service::{self, ServiceSpec};
+use rmsvc_core::asset::{self, AssetStore, AssetUploadFlow};
+use rmsvc_core::http::{bind, ApiError, Reply, Router};
+use rmsvc_core::paths::Paths;
+use rmsvc_core::service::{self, ServiceSpec};
 use std::sync::Arc;
 use store::{Mode, WallpaperStore};
 
@@ -29,7 +29,7 @@ struct State {
     store: WallpaperStore,
     native: Native,
     paths: Paths,
-    bus: Arc<shelf_core::events::EventBus>,
+    bus: Arc<rmsvc_core::events::EventBus>,
 }
 
 impl State {
@@ -83,7 +83,7 @@ fn main() {
         }
     }
     let bind_addr = service::parse_bind(&args, SPEC.default_bind);
-    let bus = Arc::new(shelf_core::events::EventBus::new());
+    let bus = Arc::new(rmsvc_core::events::EventBus::new());
     let st = Arc::new(State { store, native, paths: paths.clone(), bus: bus.clone() });
     let router = Router::new()
         .get("/", bind(&st, |s, _| {

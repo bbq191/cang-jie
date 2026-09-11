@@ -1,13 +1,14 @@
-# shelf 书架：网关 + 领域服务 + 共享 crate 的内部 workspace（仓库根仍不建 workspace，
-# 旧三 crate device-core / weread-device / pkm-device 各自独立、路径依赖不变）。
-# 依赖方向单向无环：services/* → shelf-core；book-serve / wallpaper-serve → bookconv；
-# reading/device-rs（旧 weread-device）→ bookconv（re-export 保路径）。shelf 不依赖旧 crate。
+# shelf 书架：领域服务 + bookconv 的内部 workspace（仓库根仍不建 workspace）。
+# 2026-09-11：共享基座 crate 正名搬顶层 `../rmsvc-core`（原 crates/shelf-core，
+# 三条线共用，不再是 shelf 私有——notes/ 早就在依赖它，gateway/ 也依赖它）；
+# 网关本身也搬顶层 `../gateway`（原 services/shelf-gateway，它是 shelf/notes/
+# enhance 三条线共用的唯一前端，不该继续算"shelf 的一个服务"）。两者都不再是
+# 本 workspace 成员，各自独立 Cargo 项目，见各自 README。
+# 依赖方向单向无环：services/* → ../rmsvc-core；book-serve / wallpaper-serve → bookconv。
 [workspace]
 resolver = "2"
 members = [
     "crates/bookconv",
-    "crates/shelf-core",
-    "services/shelf-gateway",
     "services/book-serve",
     "services/koreader-serve",
     "services/font-serve",

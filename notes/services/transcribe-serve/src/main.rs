@@ -13,11 +13,11 @@ use backend::{OpenAiCompat, Vision};
 use config::TranscribeConfig;
 use ink::{EntryStore, InkHttp};
 use ledger::Ledger;
-use shelf_core::events::{parse_sse_line, EventBus};
-use shelf_core::http::{bind, ApiError, Reply, Router};
-use shelf_core::paths::Paths;
-use shelf_core::registry;
-use shelf_core::service::{self, ServiceSpec};
+use rmsvc_core::events::{parse_sse_line, EventBus};
+use rmsvc_core::http::{bind, ApiError, Reply, Router};
+use rmsvc_core::paths::Paths;
+use rmsvc_core::registry;
+use rmsvc_core::service::{self, ServiceSpec};
 use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender, TrySendError};
@@ -88,7 +88,7 @@ impl State {
     fn run(&self, only: Option<Target<'_>>) -> ledger::RunReport {
         let _g = self.run_lock.lock().unwrap_or_else(|e| e.into_inner());
         let cfg = self.cfg();
-        let now = shelf_core::clock::now_secs();
+        let now = rmsvc_core::clock::now_secs();
         let report = match self.vision(&cfg) {
             Ok(v) => worker::run_once(&Ctx { store: &self.store, vision: v.as_ref(), cfg: &cfg, ledger: &self.ledger, failures: &self.failures, now }, only),
             Err(e) => {
@@ -146,9 +146,9 @@ fn main() {
     let cfg_path = paths.app_config_dir(APP).join("transcribe.json");
     // `.migrate()`：老配置文件（重做模型预置表之前，2026-09-08 上午之前落盘的，单一 model/baseUrl/apiKey
     // 三件套）搬进新形状——不迁移的话真机已经保存的 key 会在升级后凭空消失，见 config.rs 模块文档。
-    let cfg = shelf_core::config::load_or_seed::<TranscribeConfig>(&cfg_path).migrate();
-    shelf_core::fs::set_mode(&cfg_path, 0o600);
-    let _ = shelf_core::config::save(&cfg_path, &cfg, Some(0o600)); // 迁移后落盘一次，文件形状跟运行时一致
+    let cfg = rmsvc_core::config::load_or_seed::<TranscribeConfig>(&cfg_path).migrate();
+    rmsvc_core::fs::set_mode(&cfg_path, 0o600);
+    let _ = rmsvc_core::config::save(&cfg_path, &cfg, Some(0o600)); // 迁移后落盘一次，文件形状跟运行时一致
     let (tx, rx) = sync_channel::<()>(2);
     let st = Arc::new(State {
         paths: paths.clone(),
@@ -187,7 +187,7 @@ fn main() {
             let mut cfg = s.cfg.lock().unwrap_or_else(|e| e.into_inner());
             let mut next = cfg.clone();
             next.apply(&j.0).map_err(ApiError::bad)?;
-            shelf_core::config::save(&s.cfg_path, &next, Some(0o600)).map_err(ApiError::internal)?;
+            rmsvc_core::config::save(&s.cfg_path, &next, Some(0o600)).map_err(ApiError::internal)?;
             *cfg = next.clone();
             drop(cfg);
             let has_key = next.key().is_some();
