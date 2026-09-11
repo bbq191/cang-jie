@@ -8,7 +8,7 @@
 #     README；不再用 cangjie- 前缀，往后新命名一律不带这个前缀）
 #   · XDG 目录：~/.config/shelf  ~/.local/share/shelf  ~/.local/state/shelf
 #   · systemd：shelf.target + 各服务单元 → /usr/lib/systemd/system（rootfs，普通重启不丢；OTA 冲掉后重跑本脚本）
-# 写 /usr 前实检 dm-verity，激活即跳过（ 红线）；绝不给 xochitl 加依赖。
+#     写 /usr 前实检 dm-verity，激活即跳过（安全红线）；绝不给 xochitl 加依赖。
 #
 # 用法：./install.sh [--only gateway,book,koreader,font,wallpaper,ink,transcribe,mind,note] [--no-systemd] [--src DIR] [--password PW]
 #   笔记线服务（ink…）与书架同一载荷、同一 shelf.target，令牌同规则 <令牌>-serve。
