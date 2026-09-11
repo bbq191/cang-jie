@@ -80,6 +80,8 @@ enhance/
 
 `git mv misc/battery-audit/battop enhance/battop`（含 `.cargo/config.toml`/`Cargo.{toml,lock}`/`install.sh`/`src/main.rs`，`target/` 构建产物本来就 gitignore 不用管）+ `git mv misc/battery-audit/FINDINGS.md enhance/battop/FINDINGS.md`。同步更新 4 处仓库路径引用（`xovi-extensions`/`shelf`/`notes` 三本白皮书 + `shelf-gateway::enhance::battop.rs` 模块注释）。`misc/battery-audit/` 下的诊断脚本历史（`bataudit*.sh`/`APP-DESIGN.md`/`battery-audit.sh`）留在原处，理由见 §01。设备端部署路径（`/home/root/battop`）不受影响——那是 `install.sh` 自己的固定拷贝目标，跟仓库里源码目录搬到哪无关。
 
+**追记（2026-09-11）**：全仓库梳理"哪些老目录该归档进实际依赖它的现役模块"时，`misc/battery-audit/` 剩下的诊断脚本历史也 `git mv` 进了 `enhance/battop/history/`——当初"没搬"是因为它是调查方法论历史、不属于 battop 工具本身（见上段理由），但既然 `misc/` 下已经没有别的内容还占着这个目录，让它继续挂在一个无主的顶层 `misc/` 下也没有意义，不如跟着唯一引用它的 battop 一起走。`misc/` 目录本身随之删空。
+
 ## 03c｜`handwriting-stroke/` 研究：找到线索，反查 vtable 失败（2026-09-09）
 
 **目标**：CJK 手写笔迹渲染优化——设备手写笔锋按中文书写习惯（运笔粗细/顿挫）渲染优化，**跟 `cardhw`（笔迹→文字 AI 视觉识别）完全无关**，用户第一轮就澄清过这个区分。

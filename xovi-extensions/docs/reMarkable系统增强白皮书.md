@@ -218,7 +218,7 @@ OTA 到 `IMG_VERSION=3.28.0.169`（此前 .166）后用户报 5 个功能失效�
 
 ## 11｜小工具 · 休眠壁纸（`misc/wallpaper/`，个人向）
 
-设备休眠屏用自备彩色图替换、两张每次唤醒自动交替、并消掉中央原生「休眠插画卡」。**bind-mount 盖 `suspended.png`**（ro rootfs 可挂）+ 透明盖 carousel 插画卡；xochitl 每次休眠重读、sleep 钩子唤醒滚图。独立于主线、不改设备核心行为。实现见 `misc/wallpaper/`。 **2026-09-06 翻案**：xochitl 3.28 隐藏键 `xochitl.conf [General] SleepScreenPath=<png>` 原生满屏+隐插画卡+每次休眠重读，bind-mount 整套退役（书架 wallpaper-serve 已改，书架白皮书 §03w/§03x）。
+设备休眠屏用自备彩色图替换、两张每次唤醒自动交替、并消掉中央原生「休眠插画卡」。**bind-mount 盖 `suspended.png`**（ro rootfs 可挂）+ 透明盖 carousel 插画卡；xochitl 每次休眠重读、sleep 钩子唤醒滚图。独立于主线、不改设备核心行为。当时实现见 `misc/wallpaper/`。 **2026-09-06 翻案**：xochitl 3.28 隐藏键 `xochitl.conf [General] SleepScreenPath=<png>` 原生满屏+隐插画卡+每次休眠重读，bind-mount 整套退役（书架 wallpaper-serve 已改，书架白皮书 §03w/§03x）。**2026-09-11 追记**：`misc/wallpaper/` 已 `git mv` 归档进 `shelf/wallpaper/legacy-bind-mount/`——退役方案的唯一现实关联方是接手它的 `shelf` wallpaper-serve，不再挂在无主的顶层 `misc/` 下；本节内容是当时方案的真实记录，原样保留。
 
 ## 12｜Sidebar 一级直达「KOReader」入口（2026-09-02 真机通，固件 3.27.3.0）
 
