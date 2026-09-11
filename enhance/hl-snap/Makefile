@@ -1,11 +1,10 @@
 CC ?= gcc
 AARCH64_CC ?= aarch64-linux-gnu-gcc
 
-# 复用 chinese-ime/langhook 已经模块化出来的三个纯工具文件（特征码扫描 + ARM64
-# 远跳转 trampoline，本来就是跟"装哪个 hook"无关的通用基础设施）——路径引用，
-# 不复制、不修改，跟 shelf 的 bookconv 被 reading/device-rs 路径引用是同一个已
-# 有先例。改这三个文件要去 chinese-ime/langhook/src/ 改，这边不重复维护。
-LANGHOOK_SRC_DIR = ../../chinese-ime/langhook/src
+# 特征码扫描 + ARM64 远跳转 trampoline 三个纯工具文件（跟"装哪个 hook"无关的通用
+# 基础设施）。2026-09-11 起改为**剥离移植**（独立副本，不再路径引用 chinese-ime/
+# langhook/src——那边挪出仓库后不再适合当活跃路径依赖），见 ../shared/PROVENANCE.md。
+LANGHOOK_SRC_DIR = ../shared
 SHARED_SRC = $(LANGHOOK_SRC_DIR)/scan.c $(LANGHOOK_SRC_DIR)/pattern.c $(LANGHOOK_SRC_DIR)/trampoline_aarch64.c
 CFLAGS_COMMON = -std=gnu17 -Wall -Wextra -g -I$(LANGHOOK_SRC_DIR)
 

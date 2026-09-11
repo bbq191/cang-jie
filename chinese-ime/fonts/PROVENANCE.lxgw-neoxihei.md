@@ -1,7 +1,0 @@
-# LXGW Neo XiHei Screen Full（霞鹜新晰黑 屏幕阅读版·补全）
-
-- 用途：xochitl 中文字体候选之一（黑体，Screen 版为屏幕清晰预优化，e-ink 不发虚）。简繁+英单文件覆盖（46324 码位，门/門·见/見·国/國·臺 均含）。**⚠️ 已非 UI 主字体**：曾于 2026-08-16 结项时定为 UI/候选栏主字体，但 08-23 又被换下——单字重在 e-ink 下发虚、且只覆盖到 CJK 扩展 A（词典雾凇 41448 大字表含约 1.3 万扩展 B 生僻字会豆腐块）。**现主字体=霞鹜新致宋（LXGW Neo ZhiSong Screen Full）+ 花园明朝 B（HanaMinB）扩展 B 兜底**（见 `PROVENANCE.hanaminb.md` 与《中文化白皮书》§3.3）。本字体仍随安装包拷到设备 `~/.local/share/fonts/`（install.sh 未移除），但 `fontconfig-cangjie.conf` 不再引用它，实际不参与 UI/候选栏渲染。
-- 来源：`lxgw/LxgwNeoXiZhi-Screen` release `26.07.14` 的 `LXGWNeoXiHeiScreenFull.ttf`（本仓库存为 `LXGWNeoXiHeiScreenFull.ttf`）。
-- 许可证：**IPA Font License Agreement v1.0**（实测下载 LICENSE 确认，`LXGWNeoXiHei-IPA-License.md`）。允许免费使用、原样不改名可再分发（须附许可证副本）；派生（改字体）须同证且不得用同名。
-- 本项目用法：**原样、不改名、独立 `.ttf` 放 /home 运行时 mmap，不编译进 `.so`、不修改**——符合 IPA 原样再分发条款。历史：设备 3.28.0.169 一度设为 sans-serif 首选、界面清晰不发虚（对比过 Sarasa UI SC Regular/SemiBold/合成Medium），后因上述原因被致宋+HanaMinB 取代。
-- 部署：`.ttf` → `/home/root/.local/share/fonts/`（install.sh 仍拷贝，随时可切回）；但当前 `deploy/fontconfig-cangjie.conf` 已把 `sans-serif` 及 zh-* 指向 `LXGW Neo ZhiSong Screen Full` + `HanaMinB`，**不再指向本字体**（纯 /home，无 verity 风险）。

@@ -19,7 +19,7 @@ for b in $NOTES_BINS; do
     [ -f "../notes/target/$TARGET/release/$b" ] && cp "../notes/target/$TARGET/release/$b" "$STAGE/shelf/bin/"
 done
 [ -d ../notes/systemd ] && cp ../notes/systemd/*.service "$STAGE/shelf/systemd/"
-cp ../chinese-ime/langhook/deploy/cangjie-lo-alias.sh "$STAGE/shelf/lo-alias/"
+cp ../enhance/lo-alias/lo-alias.sh "$STAGE/shelf/lo-alias/"
 cp install.sh uninstall.sh "$STAGE/shelf/"
 cp xovi/*.qmd "$STAGE/shelf/xovi/"
 echo "-- 推送到 root@$HOST:/home/root/shelf-pkg/ 并安装"
