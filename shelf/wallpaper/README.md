@@ -1,7 +1,7 @@
 # 壁纸（wallpaper-serve）
 
 休眠屏"上传即用"。逻辑全在 Rust `services/wallpaper-serve`（缩放 954×1696、池化、`enable|disable|roll|activate` 子命令）；
-本目录只剩这份说明（2026-09-06 起没有任何脚本）。
+本目录 2026-09-06～09-11 只剩这份说明，2026-09-11 起多了 [`legacy-bind-mount/`](legacy-bind-mount/)——下面「历史（已退役）」提到的 bind-mount 方案脚本本体，从无主的顶层 `misc/wallpaper/` `git mv` 归档到这里（本工具的唯一现实关联方就是接手它的 `wallpaper-serve`）。
 
 **机制（2026-09-06 定稿，3.28.0.172 真机）**：xochitl 有隐藏键 `xochitl.conf [General] SleepScreenPath=<png>`——指向
 `~/.local/share/shelf/wallpapers/current.png` 后，休眠屏原生满屏显示该图、插画卡自动隐藏、**每次休眠重读文件**。

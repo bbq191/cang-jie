@@ -1,6 +1,6 @@
 # battop —— 电池刺客
 
-电量异常排查用的常驻采样诊断进程（Rust，纯 std 零依赖）。类 htop、非实时、带时间窗（当日/7天/30天/全部）的电池/后台占用追踪器。2026-09-09 `git mv` 自 `misc/battery-audit/battop/`（早于 `enhance/` 这条线，不是本线首创，只是搬了家）；`misc/battery-audit/` 下的诊断脚本历史（`bataudit*.sh`/`battery-audit.sh`/`APP-DESIGN.md`）留在原处没跟着搬，`FINDINGS.md` 是那次调查的产物、跟着搬过来了——2026-08-29 那次 cgroup/RCU 死锁事故+修复的完整记录在里面。
+电量异常排查用的常驻采样诊断进程（Rust，纯 std 零依赖）。类 htop、非实时、带时间窗（当日/7天/30天/全部）的电池/后台占用追踪器。2026-09-09 `git mv` 自 `misc/battery-audit/battop/`（早于 `enhance/` 这条线，不是本线首创，只是搬了家）；`FINDINGS.md` 是那次调查的产物、跟着搬过来了——2026-08-29 那次 cgroup/RCU 死锁事故+修复的完整记录在里面。2026-09-11 `misc/battery-audit/` 剩下的诊断脚本历史（`bataudit*.sh`/`battery-audit.sh`/`APP-DESIGN.md`）也一并 `git mv` 进 [`history/`](history/)——那是"怎么发现该建 battop"这个更早期过程的遗留，跟 battop 本体（真正依赖它的模块）放一起比继续留在无主的 `misc/` 下更合适，`misc/` 目录本身已删空。
 
 决策过程/真机验证见 `../docs/reMarkable系统增强线白皮书.md` §03b；设备端采样器的定位/架构见系统增强白皮书（`xovi-extensions/docs/reMarkable系统增强白皮书.md`）§10。
 
