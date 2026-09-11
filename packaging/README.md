@@ -28,7 +28,7 @@ sh install-all.sh <host> --skip chrony-cn,timezone-cn,xovi-persist   # 跳过指
 
 ## 装什么、按什么顺序
 
-`install-all.sh` 只编排，不重新实现任何构建/传输逻辑——先过固件安全门，再依次调用七个
+`install-all.sh` 只编排，不重新实现任何构建/传输逻辑——先过固件安全门，再依次调用八个
 各自独立可用的部署脚本：
 
 | 顺序 | 脚本 | 装什么 | 前置 |
@@ -37,12 +37,22 @@ sh install-all.sh <host> --skip chrony-cn,timezone-cn,xovi-persist   # 跳过指
 | 2 | `deploy-timezone-cn.sh` | 默认时区设为 Asia/Shanghai | 无，跟 xovi/vellum 完全无关；设备镜像缺 `/usr/share/zoneinfo/Asia/Shanghai` 时优雅跳过 |
 | 3 | `deploy-battop.sh` | 电池刺客（纯 Rust systemd 常驻采样服务） | 无，跟 xovi/vellum 完全无关 |
 | 4 | `deploy-xovi-persist.sh` | xovi 开机持久化恢复链（`xovi-reenable.service`） | 设备已 `vellum add xovi`（`/home/root/xovi/start` 存在） |
-| 5 | `deploy-hl-snap.sh` | 荧光笔 CJK 精确吸附（独立最小 xovi 扩展） | 同上 |
-| 6 | `deploy-handwriting-stroke.sh` | CJK 手写笔迹渲染优化（独立最小 xovi 扩展） | 同上 |
+| 5 | `deploy-hl-snap.sh` | 荧光笔 CJK 精确吸附（独立最小 xovi 扩展）——只落盘，不重启 xochitl | 同上 |
+| 6 | `deploy-handwriting-stroke.sh` | CJK 手写笔迹渲染优化（独立最小 xovi 扩展）——只落盘，不重启 xochitl | 同上 |
 | 7 | `deploy.sh` | 网关 + book/koreader/font/wallpaper 四个领域服务 + 笔记线（ink/transcribe/mind/note） | 无（`font`/`book` 的回收站/建夹代理 qmd 这两个可选特性依赖 `qt-resource-rebuilder` 已存在，缺了自动跳过不阻塞） |
+| 8 | `deploy-xovi-apply.sh` | 统一跑一次 `xovi/start`，把第 5/6 步落盘的扩展 + 第 7 步落盘的 qmd 一次性生效 | 同 4/5/6 |
 
-七个脚本都可以单独跑（`sh deploy-battop.sh <host>` 等），不依赖 `install-all.sh`——它只是把
-七步串起来 + 加一层固件门 + 汇总结果。任何一步失败：打印清楚是哪一步、原始错误，**不自动
+**为什么第 5/6 步"只落盘不重启"、单独挪出第 8 步统一跑一次 `xovi/start`**：`xovi/start`
+是全量重启 xochitl、重新扫描注入 `extensions.d/` 全部内容，没有"只重载一个扩展"的机制——
+hl-snap、handwriting-stroke 各自的设备端 `install.sh` 原本都会各自跑一次 `xovi/start`；
+真机验证过这样连续跑两次短时间内重启 xochitl 两次，撞上了 xochitl 自带的
+watchdog+StartLimit，触发过一次意外整机重启（2026-09-11）。`install-all.sh` 给这两步传
+`DEFER_XOVI_START=1`（对应设备端 `install.sh --no-restart`）让它们只落盘、不各自重启，
+全部落盘完在最后一步统一跑一次。单独跑 `deploy-hl-snap.sh`/`deploy-handwriting-stroke.sh`
+（不设这个环境变量）行为不变——落盘后立即跑 `xovi/start` 并做健康检查。
+
+八个脚本都可以单独跑（`sh deploy-battop.sh <host>` 等），不依赖 `install-all.sh`——它只是把
+八步串起来 + 加一层固件门 + 汇总结果。任何一步失败：打印清楚是哪一步、原始错误，**不自动
 重试、不静默跳过**，退出非零。
 
 ## 固件安全门
@@ -108,8 +118,23 @@ qmd/hook 偏移错了轻则功能不生效重则设备行为异常）；确认�
 - `deploy-timezone-cn.sh`：**全新脚本，零真机验证**——`/usr/share/zoneinfo/Asia/Shanghai`
   这台设备镜像是否真的存在都没有确认过；脚本设计了"缺失就优雅跳过"分支，但这个分支本身
   也没有真机触发验证过。
+- `deploy-xovi-apply.sh`：全新脚本，零真机验证。
 
 真要下"已验证"的结论，等有真机跑完一整轮再回来补这条记录。
+
+**真机第一轮实测暴露的真坑（已修，改动本身还没复验）**：
+- `timezone-cn.sh` 幂等分支（设备本来就已经是 Asia/Shanghai）打印"✅ 已是目标时区"却仍被
+  `install-all.sh` 判定为失败——脚本最后一条语句写成 `[ "$changed" = "1" ] && echo ...`，
+  `changed=0` 时这条 `[ ]` 测试本身为假，没有 `set -e` 不中断，但也没有后续语句覆盖 `$?`，
+  脚本用这条判断的非零退出码收尾。改成显式 `if`+`exit 0`。
+- `deploy-hl-snap.sh`/`deploy-handwriting-stroke.sh` 各自的设备端 `install.sh` 都会自己跑一次
+  `xovi/start`——`install-all.sh` 连续调用这两步时，短时间内重启 xochitl 两次，真机撞上
+  watchdog+StartLimit，触发了一次意外整机重启（`uptime` 显示重启后刚起来几分钟），紧接着的
+  下一步 `handwriting-stroke` 因为设备正在重启窗口期撞上 `ssh: Connection refused`。改成
+  见上一节"为什么第 5/6 步只落盘不重启"——两个设备端 `install.sh` 加 `--no-restart`，
+  `install-all.sh` 新增 `deploy-xovi-apply.sh` 作为唯一的 `xovi/start` 调用点，放在最后。
+  意外之喜：这次重启恰好把刚装的 `xovi-reenable.service` 现场测了一遍，但当时还没来得及
+  跑健康检查确认它是否真的在这次重启里自动重新加载了 xovi（下一轮真机验证要看这个）。
 
 编排这几个脚本的过程中踩到两个真坑（离线阶段发现，已修）：
 - `deploy-battop.sh` 最初用 `cargo build --manifest-path ../enhance/battop/Cargo.toml` 在

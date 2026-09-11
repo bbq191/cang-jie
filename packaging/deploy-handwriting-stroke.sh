@@ -8,6 +8,8 @@
 # 不在默认位置就 `XOVI_DIR=<clone路径> sh deploy-handwriting-stroke.sh <host>`。
 #
 # 用法：./deploy-handwriting-stroke.sh [host]      host 默认 10.11.99.1
+#   环境 DEFER_XOVI_START=1：只把 hw-stroke.so 落盘，不在这一步跑 xovi/start，理由同
+#   deploy-hl-snap.sh 同一处注释——install-all.sh 编排时用这个避免短时间内反复重启 xochitl。
 set -eu
 cd "$(dirname "$0")"
 HOST="${1:-10.11.99.1}"
@@ -33,5 +35,9 @@ scp "$DIR/hw-stroke.so" "root@$HOST:$DEST/hw-stroke.so"
 scp "$DIR/deploy/install.sh" "root@$HOST:$DEST/deploy/install.sh"
 
 echo "== 设备端安装 =="
+ARGS=""
+if [ "${DEFER_XOVI_START:-0}" = "1" ]; then
+    ARGS="--no-restart"
+fi
 # shellcheck disable=SC2029  # 远端路径就是要在本地展开（固定字面量，无用户输入拼接风险）
-ssh "root@$HOST" "sh $DEST/deploy/install.sh"
+ssh "root@$HOST" "sh $DEST/deploy/install.sh $ARGS"
