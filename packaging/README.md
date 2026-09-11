@@ -96,7 +96,21 @@ qmd/hook 偏移错了轻则功能不生效重则设备行为异常）；确认�
 
 **真机验证过、确认能跑通的部分**：固件安全门（3.28.0.172 真机 sha256 命中白名单）；
 `deploy-hl-snap.sh`/`deploy-handwriting-stroke.sh` 两步整个流程（构建→推送→设备端安装→
-`journalctl` 确认 hook 已加载、`is-active`=active、`NRestarts`=0）。
+`journalctl` 确认 hook 已加载、`is-active`=active、`NRestarts`=0）；`install-all.sh` 整个
+八步全部跑通（用户 2026-09-11 确认"已成功安装"）。
+
+**`xovi-persist` 核心承诺——已用真机重启证实**：`packaging/xovi-reenable.service` 装完后，
+那台设备真的经历过一次整机重启（见下面"真机第一轮实测暴露的真坑"那条 watchdog+StartLimit
+触发的意外重启），重启后 `systemctl status xovi-reenable.service` 显示
+`Active: active (exited)`、`Main PID: ... (code=exited, status=0/SUCCESS)`，journal 里
+`Starting → Finished` 完整走了一遍——这是系统在开机时**自动**触发的（手动跑 `xovi/start`
+不会经过这个 systemd 单元），且当时运行中的 xochitl 进程 `grep -c xovi.so .../maps` 返回
+非零，证实 xovi 确实被自动重新注入了，不需要人手动跑一次 `xovi/start`。
+⚠️ **已知无害的显示怪癖**：`systemctl status` 同时显示 `Loaded: ...disabled; preset:
+disabled`——这不代表没生效，是"手写 `/usr/lib/systemd/system/multi-user.target.wants/`
+软链装单元"这个安装方式的已知 `is-enabled` 显示怪癖（不是走 `systemctl enable` 命令生成的
+软链，systemd 判定"是否 enabled"的标签逻辑对不上，但开机是否激活看的是 `.wants/` 目录里
+软链在不在，这条已经真机验证过在），别被这个标签误导成"没装上"。
 
 **真机跑过、发现问题、已修但改动本身还没有复验的部分**：
 - `deploy-battop.sh`：重装（非首次装）时若 `battop.service` 已在跑，`scp` 直接覆盖正在执行的
@@ -106,35 +120,36 @@ qmd/hook 偏移错了轻则功能不生效重则设备行为异常）；确认�
   `gateway` 首次启动要签发私有 CA/自签证书，1 秒不够、还在 `activating` 就被判定为"没起来"。
   修法：`shelf/install.sh` 的健康检查改成轮询（最多等 10 秒）。
 
-**离线验证过，真机完全没跑过的部分**（这次新加的三步，没有真机可用）：
-- `shellcheck --severity=warning` 全部新脚本零告警；假 host 测试确认参数解析、本地路径拼接
-  正确、卡在 ssh 连不上这步符合预期（详见各脚本内注释）。
-- `deploy-xovi-persist.sh`：设备端写 `/usr` 那段逻辑是照抄 `shelf/install.sh` 已经真机验证过的
-  dm-verity 门+remount 模式，**但"装完重启一次、xovi 真的自动恢复"这个核心承诺没有真机验证
-  过**，需要用户自己重启设备确认。
+**离线验证过、后来经真机确认整体跑通、但没有单独逐项复核细节输出的部分**：
 - `deploy-chrony-cn.sh`：`chrony-cn.sh` 本体的 remount+bind 机制此前在旧版本（`oldbak/`）上
-  真机验证过，这次是重写，逻辑照抄未改，理论上行为一致，但这次重写后的版本本身没有单独
-  重新在真机上跑过。
-- `deploy-timezone-cn.sh`：**全新脚本，零真机验证**——`/usr/share/zoneinfo/Asia/Shanghai`
-  这台设备镜像是否真的存在都没有确认过；脚本设计了"缺失就优雅跳过"分支，但这个分支本身
-  也没有真机触发验证过。
-- `deploy-xovi-apply.sh`：全新脚本，零真机验证。
+  真机验证过，这次是重写，逻辑照抄未改；用户实测过第一轮跑到"rootfs 底层已是国内 NTP，跳过"
+  分支（幂等分支，`timedatectl` 确认 synchronized: yes、服务器是 ntp.aliyun.com），改动分支
+  （从非国内 NTP 状态第一次改写）还没见过真机输出。
+- `deploy-timezone-cn.sh`：真机实测跑过一次（这次改动前，触发了下面那条退出码 bug），确认
+  设备已经是 Asia/Shanghai 的幂等分支逻辑没问题（bug 只在退出码，不在改没改对）；`/usr/share/
+  zoneinfo/Asia/Shanghai` 缺失时的优雅跳过分支仍然零真机验证（这台设备本来就带这份 zoneinfo，
+  没机会触发那个分支）。
+- `deploy-xovi-apply.sh`：整体流程（`xovi/start` + 健康检查）已经随 `install-all.sh` 整轮
+  真机跑通，但没有单独逐项核对过它自己打印的 hl-snap/hw-stroke 段数、NRestarts 这些细节
+  输出，只知道整轮成功、xovi.so 确实加载了（见上面 xovi-persist 那条 `grep -c xovi.so`）。
 
-真要下"已验证"的结论，等有真机跑完一整轮再回来补这条记录。
+真要下"逐项都已验证"的结论，还需要用户后续贴出更细的单步输出再回来补充。
 
-**真机第一轮实测暴露的真坑（已修，改动本身还没复验）**：
+**真机第一轮实测暴露的真坑（已修，且改动本身已经在后续真机跑通中间接验证过）**：
 - `timezone-cn.sh` 幂等分支（设备本来就已经是 Asia/Shanghai）打印"✅ 已是目标时区"却仍被
   `install-all.sh` 判定为失败——脚本最后一条语句写成 `[ "$changed" = "1" ] && echo ...`，
   `changed=0` 时这条 `[ ]` 测试本身为假，没有 `set -e` 不中断，但也没有后续语句覆盖 `$?`，
-  脚本用这条判断的非零退出码收尾。改成显式 `if`+`exit 0`。
+  脚本用这条判断的非零退出码收尾。改成显式 `if`+`exit 0`；用户之后跑通的整轮
+  `install-all.sh` 没再报这一步失败，间接确认修好了。
 - `deploy-hl-snap.sh`/`deploy-handwriting-stroke.sh` 各自的设备端 `install.sh` 都会自己跑一次
   `xovi/start`——`install-all.sh` 连续调用这两步时，短时间内重启 xochitl 两次，真机撞上
   watchdog+StartLimit，触发了一次意外整机重启（`uptime` 显示重启后刚起来几分钟），紧接着的
   下一步 `handwriting-stroke` 因为设备正在重启窗口期撞上 `ssh: Connection refused`。改成
   见上一节"为什么第 5/6 步只落盘不重启"——两个设备端 `install.sh` 加 `--no-restart`，
   `install-all.sh` 新增 `deploy-xovi-apply.sh` 作为唯一的 `xovi/start` 调用点，放在最后。
-  意外之喜：这次重启恰好把刚装的 `xovi-reenable.service` 现场测了一遍，但当时还没来得及
-  跑健康检查确认它是否真的在这次重启里自动重新加载了 xovi（下一轮真机验证要看这个）。
+  意外之喜：这次重启恰好把刚装的 `xovi-reenable.service` 现场测了一遍——**已经确认它真的在
+  这次重启里自动重新加载了 xovi**（见上面"xovi-persist 核心承诺"那条，`systemctl status`
+  显示自动触发+成功退出，运行中的 xochitl 也确实加载了 xovi.so）。
 
 编排这几个脚本的过程中踩到两个真坑（离线阶段发现，已修）：
 - `deploy-battop.sh` 最初用 `cargo build --manifest-path ../enhance/battop/Cargo.toml` 在
