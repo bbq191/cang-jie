@@ -78,7 +78,15 @@ fi
 echo "-- $(date '+%F %T %Z')"
 if is_shanghai "$LOCALTIME"; then
     echo "✅ 时区已是 Asia/Shanghai"
-    [ "$changed" = "1" ] && echo "   （首次生效或刚改，若发现服务里有缓存旧时区的进程，建议重启确认）"
+    # ⚠️ 之前这行写成 `[ "$changed" = "1" ] && echo ...` 且是脚本最后一条语句——changed=0 时
+    # `[ ]` 测试本身为假、且没有 set -e，脚本不会中断，但也没有后续语句再覆盖 $?，于是整个
+    # 脚本以这条 `[ ]` 的非零退出码收尾：明明打印"✅ 已是目标时区"却整体判定失败，真机 install-
+    # all.sh 实测踩过（changed=0 的幂等分支必现）。改成 if 分支+显式 exit 0，不依赖最后一条
+    # 语句的隐式退出码。
+    if [ "$changed" = "1" ]; then
+        echo "   （首次生效或刚改，若发现服务里有缓存旧时区的进程，建议重启确认）"
+    fi
+    exit 0
 else
     echo "⚠ 时区设置后校验仍不是 Asia/Shanghai，检查上面输出"; exit 2
 fi
