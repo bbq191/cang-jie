@@ -10,7 +10,7 @@ ExecStart=/home/root/.local/bin/mind-serve serve --bind 127.0.0.1:8797
 Restart=on-failure
 RestartSec=5
 # 没有后台线程/事件订阅，纯被动等 HTTP 请求——比 transcribe-serve 还轻（连 SSE 订阅都不用起，
-# 二期耗电评估第 5 点，见 未入库的计划文件）。
+# 二期耗电评估第 5 点已确认这版改动更省电，不会更费）。
 CPUWeight=20
 MemoryMax=128M
 Nice=5

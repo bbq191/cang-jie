@@ -5,8 +5,8 @@ Documentation=https://github.com/asivery/xovi
 # （00-xovi.conf 等）跟着一起丢，不手动跑一次 /home/root/xovi/start（vellum add xovi 自带的
 # 工具，本单元不重新实现它，只是帮用户自动跑一遍）就不会重新生效。
 #
-# ⚠️ 绝不给 xochitl.service 本体加任何依赖（红线，见 工程纪律：
-# 2026-08-15 真机曾因给 xochitl 加 /home 依赖导致 watchdog 超时→重启循环→变砖）。本单元只是
+# ⚠️ 绝不给 xochitl.service 本体加任何依赖（安全红线：2026-08-15 真机曾因给 xochitl 加 /home
+# 依赖导致 watchdog 超时→重启循环→变砖）。本单元只是
 # 单向等待 xochitl.service/home.mount 先起来，xochitl 完全不知道这个单元的存在、不因它失败而
 # 受影响。/home 是加密盘，挂载可能晚于 xochitl 裸启动，所以让 xochitl 先用原厂状态起来，本单元
 # 再在后面把 xovi 补上去（重启一次 xochitl，非关键路径，失败也不影响开机）。
