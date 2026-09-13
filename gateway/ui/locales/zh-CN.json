@@ -152,6 +152,7 @@
   "common.uploading": "上传中…",
   "common.done": "完成",
   "common.networkError": "网络错误",
+  "common.alreadyStaged": "已在母版库（同名同大小），跳过重传",
   "common.cjkCoverageTitle": "中文基本区覆盖率",
   "common.cjkCoverage": "中文 {pct}%",
   "common.loading": "加载…",
