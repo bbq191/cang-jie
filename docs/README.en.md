@@ -1,6 +1,6 @@
 # cang-jie
 
-**[中文](README.md)**
+**[中文](../README.md)**
 
 A device-enhancement suite for the reMarkable Paper Pro Move — built **without modifying
 `xochitl`** (the device's stock reading app) itself. Everything runs as xovi extensions plus a
@@ -30,13 +30,13 @@ Seven independent top-level project lines, each individually installable:
 
 | Project | What it is | Docs |
 |---|---|---|
-| [`shelf/`](shelf/) — bookshelf | Import books → clean up / convert / optimize → deliver to the stock library or KOReader; a web UI plus a host-side CLI | [README](shelf/README.md) |
-| [`notes/`](notes/) — notes pipeline | Highlighted text + handwritten notes next to it, auto-ingested on closing the book → review/transcribe/ask-AI on your phone → project back into device notebooks or Obsidian | [README](notes/README.md) |
-| [`enhance/`](enhance/) — device enhancements | Precise CJK highlight-snap and handwritten-stroke rendering tuning (two standalone xovi extensions); a battery diagnostics sampler; upload-and-use font/wallpaper web services | [README](enhance/README.md) |
-| [`gateway/`](gateway/) — web gateway | The single shared web entry point for the three lines above: HTTPS (private CA) + login password + reverse proxy to each domain service | [README](gateway/README.md) |
-| [`rmsvc-core/`](rmsvc-core/) — service foundation | Shared infrastructure crate for the web services above (paths / service registry / HTTP adapter / event bus, etc.) — no business logic | [README](rmsvc-core/README.md) |
-| [`defw/`](defw/) — firmware reverse engineering | Ghidra reverse-engineering artifacts for `xochitl` 3.28.0.172, backing the hook locations used by the extensions above | [README](defw/README.md) |
-| [`packaging/`](packaging/) — installer | One command to install everything above on a fresh device (with firmware-compatibility checking) | [README](packaging/README.md) |
+| [`shelf/`](../shelf/) — bookshelf | Import books → clean up / convert / optimize → deliver to the stock library or KOReader; a web UI plus a host-side CLI | [README](../shelf/README.md) |
+| [`notes/`](../notes/) — notes pipeline | Highlighted text + handwritten notes next to it, auto-ingested on closing the book → review/transcribe/ask-AI on your phone → project back into device notebooks or Obsidian | [README](../notes/README.md) |
+| [`enhance/`](../enhance/) — device enhancements | Precise CJK highlight-snap and handwritten-stroke rendering tuning (two standalone xovi extensions); a battery diagnostics sampler; upload-and-use font/wallpaper web services | [README](../enhance/README.md) |
+| [`gateway/`](../gateway/) — web gateway | The single shared web entry point for the three lines above: HTTPS (private CA) + login password + reverse proxy to each domain service | [README](../gateway/README.md) |
+| [`rmsvc-core/`](../rmsvc-core/) — service foundation | Shared infrastructure crate for the web services above (paths / service registry / HTTP adapter / event bus, etc.) — no business logic | [README](../rmsvc-core/README.md) |
+| [`defw/`](../defw/) — firmware reverse engineering | Ghidra reverse-engineering artifacts for `xochitl` 3.28.0.172, backing the hook locations used by the extensions above | [README](../defw/README.md) |
+| [`packaging/`](../packaging/) — installer | One command to install everything above on a fresh device (with firmware-compatibility checking) | [README](../packaging/README.md) |
 
 ## Recent updates
 

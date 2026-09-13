@@ -6,8 +6,8 @@ If this project has been useful to you, feel free to buy the author a coffee —
 optional, and has no effect on any feature whether you do or don't.
 
 <p align="center">
-  <img src="assets/sponsor-wechat.jpg" width="220" alt="WeChat Pay QR code">&nbsp;&nbsp;&nbsp;&nbsp;
-  <img src="assets/sponsor-alipay.jpg" width="220" alt="Alipay QR code">
+  <img src="../assets/sponsor-wechat.jpg" width="220" alt="WeChat Pay QR code">&nbsp;&nbsp;&nbsp;&nbsp;
+  <img src="../assets/sponsor-alipay.jpg" width="220" alt="Alipay QR code">
 </p>
 <p align="center">WeChat Pay&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;Alipay</p>
 

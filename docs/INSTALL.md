@@ -1,6 +1,6 @@
 # 安装部署指南
 
-**[English](INSTALL.en.md)**
+**[English](INSTALL.en.md)** · 返回 [README](../README.md)
 
 ## 适用范围
 
@@ -35,6 +35,11 @@ vellum 本身怎么安装、appload/KOReader 侧载的具体步骤，请参考 v
       3.28 上官方发行版可能不行，不行要先处理，否则后面 Sidebar 一级入口那步会静默跳过）
    4. 通过 appload 侧载 KOReader
    5. （可选）想要 WeRead 侧边栏入口：先按 WeRead 官方发行包自己的说明装好、能正常登录
+
+   ⚠ **第 3 步和第 5 步之间留个几分钟间隔，别背靠背连着做**（详见风险③）：检查 AppLoad 图标
+   本身可能需要重启一次 xochitl，WeRead 每次启动/退出各自会再让 xochitl 停一次、起一次——
+   短时间内堆几次重启，真机验证过确实会撞上重启保护、意外触发整机重启（2026-09-11）。等第 3
+   步确认 `is-active`=active 稳定几分钟之后，再做第 5 步。
 3. **跑 `install-all.sh`**（不带 `--skip`，一次装全部）：
    ```sh
    cd packaging && sh install-all.sh 10.11.99.1
@@ -114,13 +119,13 @@ sh install-all.sh 10.11.99.1 --skip chrony-cn,timezone-cn,xovi-persist
 
 - **不装 vellum/xovi/qt-resource-rebuilder/appload 本体，不侧载 KOReader**——见上面「装之前」，
   这些是手动前置条件。
-- **不装中文输入法**——这条功能线已经从本仓库归档（见顶层 [README](README.md)「历史与范围」），
+- **不装中文输入法**——这条功能线已经从本仓库归档（见顶层 [README](../README.md)「历史与范围」），
   当前不随本安装器分发。
 - **不装 wifi-watch 常驻看护**（WiFi 载波异常自动重连）。
 - **没有对称的一键卸载**——`shelf/uninstall.sh` 能卸掉书架那部分，其余组件靠手动
   `systemctl disable --now <单元>` 清理。
 
-完整的架构决策、每一步踩过的坑、真机验证现状，见 [`packaging/README.md`](packaging/README.md)——
+完整的架构决策、每一步踩过的坑、真机验证现状，见 [`packaging/README.md`](../packaging/README.md)——
 这是面向工程细节的参考文档，本文件只是面向"第一次装"的快速上手指南。
 
 ## 风险项预警：哪些模块容易出问题
@@ -141,13 +146,17 @@ sh install-all.sh 10.11.99.1 --skip chrony-cn,timezone-cn,xovi-persist
    不相关的功能同时缺失，容易怀疑是不是哪一步真的失败了；实际上都是同一个原因，`install-all.sh`
    的汇总输出会分别标"跳过"，不是"失败"。
 
-③ **手动单独跑多个 xovi 扩展的部署脚本，容易撞上设备重启保护触发意外整机重启**
-   `hl-snap`/`handwriting-stroke`/`sidebar-entry` 三步默认（单独跑、不通过 `install-all.sh`）
-   落盘后都会各自跑一次 `xovi/start`（全量重启 xochitl）。短时间内连续重启 xochitl 好几次会
-   撞上它自带的看门狗保护，**真机验证过触发一次意外整机重启**（2026-09-11）。`install-all.sh`
-   编排这几步时已经处理好了（落盘先不重启，最后统一跑一次），**只有你选择绕开
-   `install-all.sh`、自己手动逐个跑这几个脚本时才需要留意**——间隔几分钟再跑下一个，别背靠背
-   连续跑。
+③ **短时间内让 xochitl 反复重启/停起，不管是谁触发的，都有撞上重启保护的风险**
+   `xochitl.service` 当前配置 `Restart=on-failure`、`StartLimitBurst=4`（10 分钟窗口内），
+   触发条件不看"谁"发起了重启——本仓库自己的部署脚本（`hl-snap`/`handwriting-stroke`/
+   `sidebar-entry` 三步单独跑、不通过 `install-all.sh` 时都会各自跑一次 `xovi/start`）、
+   `vellum add appload` 这类第三方安装器的自身重启、WeRead 这类"启动时接管屏幕/退出时交还"
+   的 app（每次进出各让 xochitl 停一次起一次）——都算。**真机验证过短时间内连续重启两次就
+   触发了一次意外整机重启**（2026-09-11，见「推荐安装顺序」第 3/5 步之间的提醒）。
+   `install-all.sh` 编排自己那几步时已经处理好了（落盘先不重启，最后统一跑一次），**手动逐个
+   跑部署脚本、或者手动交替折腾 appload/WeRead 这类会重启 xochitl 的第三方 app 时**才需要
+   自己留意——间隔几分钟、确认上一次重启已经 `is-active`=active 稳定下来，再做下一件事，别
+   背靠背连续折腾。
 
 ④ **固件安全门拒装不是 bug，是设计如此——`--force` 前先确认真的是同一份固件**
    字体菜单、回收站代理这类功能靠字节级 QML 注入定位，版本号相同不代表内部布局一定没变
@@ -170,7 +179,7 @@ cd packaging && sh install-all.sh 10.11.99.1
 ```
 
 即可恢复全部功能——所有脚本设计为幂等，重复运行不会出问题。更详细的 OTA 影响范围表格见
-[`shelf/README.md`](shelf/README.md)「固件升级（OTA）与恢复」一节。
+[`shelf/README.md`](../shelf/README.md)「固件升级（OTA）与恢复」一节。
 
 ## 遇到问题
 
