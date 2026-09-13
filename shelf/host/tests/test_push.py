@@ -36,6 +36,50 @@ def test_push_lands_in_staging(gateway, tmp_path, capsys, monkeypatch):
     assert FakeGateway.received[-1][0] == "/api/books/staging"
 
 
+def test_push_rerun_skips_already_staged_file(gateway, tmp_path, capsys, monkeypatch):
+    """2026-09-13 Reddit 用户报告的场景：批量推送中途失败后原样重跑，已经成功落地的那份不该
+    再传一次（否则撞 unique_path 的"同名不覆盖"变出 1_x 副本）。同名同大小 → 跳过；同名不同
+    大小（内容真的换了）→ 照样传，不能因为名字一样就误伤真正想更新的文件。"""
+    f = tmp_path / "a.epub"
+    f.write_bytes(b"PK" * 5)  # 10 字节
+    monkeypatch.setattr(cb, "has_calibre", lambda: False)
+    try:
+        FakeGateway.staging_items = [{"name": "a.epub", "bytes": 10}]  # 假装上一轮已经成功落地
+        FakeGateway.received.clear()
+        rc, out = run(["push", str(f)], gateway, capsys)
+        assert rc == 0 and "已在母版库（同名同大小），跳过重传" in out
+        assert not FakeGateway.received, "同名同大小不该再 POST 一次"
+
+        FakeGateway.staging_items = [{"name": "a.epub", "bytes": 999}]  # 名字一样但大小对不上＝内容真的不同
+        FakeGateway.received.clear()
+        rc, out = run(["push", str(f)], gateway, capsys)
+        assert rc == 0 and "跳过重传" not in out
+        assert FakeGateway.received and FakeGateway.received[-1][0] == "/api/books/staging", "大小对不上要照常传"
+    finally:
+        FakeGateway.staging_items = []  # module-scope fixture 复用同一个 FakeGateway，别漏给后面的测试
+
+
+def test_push_batch_partial_failure_then_rerun_lands_once(gateway, tmp_path, capsys, monkeypatch):
+    """更贴近 Reddit 原话的完整场景：`push a.epub b.epub` 里 a 先成功、b 失败，原样重跑整条命令——
+    a 不重复落库，b 补传成功。"""
+    a = tmp_path / "a.epub"
+    a.write_bytes(b"A" * 4)
+    b = tmp_path / "b.epub"
+    b.write_bytes(b"BB" * 3)
+    monkeypatch.setattr(cb, "has_calibre", lambda: False)
+    try:
+        FakeGateway.staging_items = [{"name": "a.epub", "bytes": 4}]  # 第一轮 a 已经成功、b 那次失败
+        FakeGateway.received.clear()
+        rc, out = run(["push", str(a), str(b)], gateway, capsys)
+        assert rc == 0
+        assert "a.epub: 已在母版库（同名同大小），跳过重传" in out
+        posted = [r[0] for r in FakeGateway.received]
+        assert posted == ["/api/books/staging"], "只有 b 应该被 POST，a 跳过"
+        assert b"b.epub" in FakeGateway.received[-1][2] and b"a.epub" not in FakeGateway.received[-1][2]
+    finally:
+        FakeGateway.staging_items = []
+
+
 def test_push_has_no_direct_escape(gateway, tmp_path, capsys):
     # 规则与网页一致：所有书只落母版库，--direct 不存在
     (tmp_path / "b.epub").write_bytes(b"PK")

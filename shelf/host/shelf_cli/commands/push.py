@@ -115,6 +115,21 @@ NATIVE_PDF_SIZE_FACTOR = 1.5
 NATIVE_LIMIT_FALLBACK_MB = 150
 
 
+def _staging_snapshot(transport) -> set[tuple[str, int]] | None:
+    """已在母版库的 (文件名, 字节数) 快照，上传前查一次，用来在批量部分失败后原样重跑时跳过已经
+    成功落地的文件——不然会撞上 `rmsvc_core::fs::unique_path`"同名不覆盖"，把已经成功的文件在
+    母版库里再落一份 `1_x` 副本（2026-09-13，Reddit 用户报告；见书架白皮书 §04）。纯按文件名+
+    字节数比较，不做内容 hash（同名同大小但内容真的换了这种极端情况会被误判为"已存在"而跳过——
+    已知取舍，换了内容通常也会换体积，真撞上了改个文件名就绕过去）。查不到（设备不可达/接口
+    异常）返回 `None`——不阻断推送，只是这次拿不到这层保护，照常全部上传，行为退回这次修复前
+    的样子。"""
+    try:
+        items = transport.get("/api/books/staging").get("items") or []
+        return {(it["name"], it["bytes"]) for it in items if "name" in it and "bytes" in it}
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def _native_limit_bytes(ctx) -> int:
     """查询设备当前原生上传上限（book-serve `/api/books/status` 的 `nativeUploadLimitBytes`）；查不到
     （设备不可达/字段缺）就退回跟 book-serve 缺省值一致的静态兜底——查询失败不阻断推送，只是这次拿不到
@@ -257,6 +272,7 @@ def run(args, ctx) -> int:
     landed = 0
     work = cb.workdir()
     ready: bool | None = None  # 首本洗完、上传前探活一次；不可达就停，不再洗后面的书
+    staged: set[tuple[str, int]] | None = None  # 首次探活成功后查一次，见 _staging_snapshot
     for idx, path in enumerate(args.files):
         if not guard_file(path):
             rc = 1
@@ -291,12 +307,28 @@ def run(args, ctx) -> int:
                 final.append(o)
         if ready is None:
             ready = ensure_reachable(ctx.transport, args.wait)
+            if ready:
+                staged = _staging_snapshot(ctx.transport)
         if not ready:
             rest = [p.name for p in args.files[idx:]]
             print(f"✗ 未上传：{', '.join(rest)}（洗好的产物在 {work}）")
             return 2
+        # 部分失败后原样重跑：已经在母版库里的（同名同大小）跳过，不重复上传——不然
+        # unique_path 会把它再落一份 1_x（见 _staging_snapshot 头注）。
+        to_upload = final
+        if staged is not None:
+            to_upload = []
+            for f in final:
+                key = (f.name, f.stat().st_size)
+                if key in staged:
+                    print(f"✓ {f.name}: 已在母版库（同名同大小），跳过重传")
+                else:
+                    to_upload.append(f)
         # 只落母版库（原样落，host 已洗则带优化标记）；去向在网页「传书 → 母版库」选。
-        rc |= upload_each(ctx.transport, "/api/books/staging", final)
+        if to_upload:
+            rc |= upload_each(ctx.transport, "/api/books/staging", to_upload)
+            if staged is not None:
+                staged.update((f.name, f.stat().st_size) for f in to_upload)
         landed += len(final)
     if landed and not args.dry_run:
         scheme = getattr(ctx.config, "scheme", "https")
