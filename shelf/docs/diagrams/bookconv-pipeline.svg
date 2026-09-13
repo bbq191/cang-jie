@@ -1,0 +1,77 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1180 440" font-family="sans-serif">
+  <defs>
+    <marker id="p1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#555"/>
+    </marker>
+    <marker id="p2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#9a9a9a"/>
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="1180" height="440" fill="#fbfbfa"/>
+  <text x="590" y="26" text-anchor="middle" font-size="17" font-weight="bold" fill="#1a1a1a">optimize_epub_with：两遍 + wash 前置</text>
+  <text x="590" y="44" text-anchor="middle" font-size="11" fill="#8a8a8a">母版库「优化」（book-serve）与 host CLI epub-optimize 同调这一份代码</text>
+
+  <!-- bypass arc -->
+  <path d="M 206 160 C 206 90, 402 90, 402 160" fill="none" stroke="#9a9a9a" stroke-width="1.3" stroke-dasharray="5 3" marker-end="url(#p2)"/>
+  <text x="304" y="95" text-anchor="middle" font-size="10" fill="#8a8a8a">opts.wash = None 时跳过</text>
+
+  <!-- box1 输入 -->
+  <rect x="10" y="170" width="100" height="90" rx="8" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.5"/>
+  <text x="60" y="210" text-anchor="middle" font-size="12" font-weight="bold" fill="#1a1a1a">输入</text>
+  <text x="60" y="228" text-anchor="middle" font-size="10" fill="#4a4a4a">EPUB bytes</text>
+
+  <line x1="110" y1="215" x2="122" y2="215" stroke="#555" stroke-width="1.5" marker-end="url(#p1)"/>
+
+  <!-- box2 读取+重排 -->
+  <rect x="126" y="160" width="160" height="110" rx="8" fill="#eaf7ec" stroke="#3e8e51" stroke-width="1.5"/>
+  <text x="206" y="182" text-anchor="middle" font-size="12" font-weight="bold" fill="#1a1a1a">读取 + 重排</text>
+  <text x="206" y="200" text-anchor="middle" font-size="9.8" fill="#3a3a3a">check::read_entries</text>
+  <text x="206" y="215" text-anchor="middle" font-size="9.3" fill="#8a3a3a">失败整体报错，不产残书</text>
+  <text x="206" y="235" text-anchor="middle" font-size="9.8" fill="#3a3a3a">mimetype 置顶 STORED</text>
+  <text x="206" y="250" text-anchor="middle" font-size="9.8" fill="#3a3a3a">旧优化标记剔除</text>
+
+  <line x1="286" y1="215" x2="298" y2="215" stroke="#555" stroke-width="1.5" marker-end="url(#p1)"/>
+
+  <!-- wash 可选 -->
+  <rect x="302" y="160" width="200" height="110" rx="8" fill="#fdf6e3" stroke="#8a6d00" stroke-width="1.5" stroke-dasharray="6 3"/>
+  <text x="402" y="182" text-anchor="middle" font-size="12" font-weight="bold" fill="#5a3a00">wash 前置（可选，02 节）</text>
+  <text x="402" y="200" text-anchor="middle" font-size="9.5" fill="#6a5a2a">伪DRM剥离 → 空页清理</text>
+  <text x="402" y="215" text-anchor="middle" font-size="9.5" fill="#6a5a2a">主语言探测 → CSS 锁剥离</text>
+  <text x="402" y="230" text-anchor="middle" font-size="9.5" fill="#6a5a2a">边距段距 → 外链 wash.css</text>
+  <text x="402" y="245" text-anchor="middle" font-size="9.5" fill="#6a5a2a">自动目录 → 双 id 折叠</text>
+  <text x="402" y="260" text-anchor="middle" font-size="9" fill="#8a7a4a">对标 host Calibre 六步</text>
+
+  <line x1="502" y1="215" x2="514" y2="215" stroke="#555" stroke-width="1.5" marker-end="url(#p1)"/>
+
+  <!-- 第一遍 -->
+  <rect x="518" y="160" width="220" height="110" rx="8" fill="#fdf3f0" stroke="#b5541f" stroke-width="1.5"/>
+  <text x="628" y="182" text-anchor="middle" font-size="12" font-weight="bold" fill="#1a1a1a">第一遍</text>
+  <text x="628" y="200" text-anchor="middle" font-size="9.8" fill="#3a3a3a">strip_font_locks（剥字体锁）</text>
+  <text x="628" y="215" text-anchor="middle" font-size="9.8" fill="#3a3a3a">扫 marker 得 referenced 集</text>
+  <text x="628" y="230" text-anchor="middle" font-size="9.8" fill="#3a3a3a">判目录页（≥阈值不同 html）</text>
+  <text x="628" y="248" text-anchor="middle" font-size="9.5" fill="#8a5a2a">被引用注释块移出 → 建 aside_index</text>
+
+  <line x1="738" y1="215" x2="750" y2="215" stroke="#555" stroke-width="1.5" marker-end="url(#p1)"/>
+
+  <!-- 第二遍 -->
+  <rect x="754" y="160" width="260" height="110" rx="8" fill="#fdf3f0" stroke="#b5541f" stroke-width="1.5"/>
+  <text x="884" y="182" text-anchor="middle" font-size="12" font-weight="bold" fill="#1a1a1a">第二遍</text>
+  <text x="884" y="200" text-anchor="middle" font-size="9.6" fill="#3a3a3a">preserve_relink_footnotes</text>
+  <text x="884" y="214" text-anchor="middle" font-size="9.6" fill="#3a3a3a">→ break_footnote_cycles → fix_duokan_markers</text>
+  <text x="884" y="228" text-anchor="middle" font-size="9.6" fill="#3a3a3a">→ inline_remote_images</text>
+  <text x="884" y="242" text-anchor="middle" font-size="9.6" fill="#3a3a3a">→ 图片降采样 → boost_text_contrast</text>
+  <text x="884" y="256" text-anchor="middle" font-size="9.6" fill="#3a3a3a">→ dedup_ids_in_chapter</text>
+
+  <line x1="1014" y1="215" x2="1026" y2="215" stroke="#555" stroke-width="1.5" marker-end="url(#p1)"/>
+
+  <!-- 打包输出 -->
+  <rect x="1030" y="170" width="140" height="90" rx="8" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.5"/>
+  <text x="1100" y="195" text-anchor="middle" font-size="11.5" font-weight="bold" fill="#1a1a1a">打包 + 输出</text>
+  <text x="1100" y="212" text-anchor="middle" font-size="9.3" fill="#4a4a4a">写标记 com.cangjie</text>
+  <text x="1100" y="226" text-anchor="middle" font-size="9.3" fill="#4a4a4a">.optimized = v10</text>
+  <text x="1100" y="242" text-anchor="middle" font-size="9.3" fill="#4a4a4a">→ 输出 EPUB</text>
+
+  <text x="590" y="315" text-anchor="middle" font-size="11.5" fill="#6a6a6a">幂等：`optimized_version()` 读标记按版本判 full/core/old——旧版本重传按当前版本重新走一遍（不翻倍脚注）</text>
+  <text x="590" y="336" text-anchor="middle" font-size="11" fill="#8a8a8a">详见白皮书 01/02/10 节；xochitl 渲染硬规则（为什么要这么处理）见 09 节</text>
+</svg>

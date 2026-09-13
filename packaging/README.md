@@ -1,0 +1,193 @@
+# packaging —— 全新设备统一安装器
+
+host 侧编排层，2026-09-11 新写。全新（或愿意重装的现有）reMarkable Paper Pro Move，固件跟
+`firmware-allowlist.txt` 对得上时，一条命令装完当前仓库能装的一切：
+
+```sh
+cd packaging
+sh install-all.sh <host>                                        # 装全部
+sh install-all.sh <host> --force                                # 固件不在白名单也强装
+sh install-all.sh <host> --skip chrony-cn,timezone-cn,xovi-persist   # 跳过指定步骤
+```
+
+`<host>` 默认 `10.11.99.1`（USB 网段）。
+
+## 前置条件（全新设备，需手动，本脚本不代装）
+
+以下几样是 reMarkable 官方/`vellum`/`appload` 生态自己的东西，不属于这个仓库，`install-all.sh`
+**不会**帮你装，缺了会在对应步骤报清楚的错误：
+
+1. **`vellum add xovi`**——xovi 本体（`hl-snap`/`handwriting-stroke`/`xovi-persist` 三步的硬前提）。
+2. **`vellum add qt-resource-rebuilder`**——`shelf` 里 `font`/`book` 的字体菜单、回收站/建夹代理，
+   以及 `sidebar-entry` 这几个可选特性依赖它；缺了这些特性自动跳过，不阻塞其它安装。
+3. **`vellum add appload`**——第三方 App 加载器，KOReader 要通过它侧载；`sidebar-entry` 那步
+   靠它暴露的 `AppLoadLauncher` 单例发起启动，缺了自动跳过。**⚠ 3.28 固件官方发行版
+   appload v0.5.3 有兼容问题**——它自己内嵌的 qmd 钩的是 3.27 的旧 Sidebar/MainView 锚点，
+   3.28 已经改名，不打补丁会导致它自己的注入失败（症状：`AppLoadLauncher` 单例建不起来，
+   `sidebar-entry` 装的按钮点了没反应）。补丁工具（`appload_patch_328.py`）目前还在
+   `oldbak/xovi-extensions/reading-qol/tools/`，没有回到版本控制、不是 `install-all.sh` 能
+   代劳的一步——`sidebar-entry` 那步会读当前开机日志探测这个补丁生没生效，没生效就跳过而不是
+   装一个不会响应的按钮。
+4. **KOReader**（经 appload 侧载）——`shelf` 的 `koreader-serve` 只是管理/配置这个已装好的
+   KOReader，不负责把 KOReader 本身装上去；`sidebar-entry` 那步的「KOReader」入口同理，点了
+   没反应说明这一步没做。
+
+装好以上四样、再跑 `install-all.sh`，才是完整的"全新设备"安装顺序。
+
+**可选、不算前置条件**：**WeRead**（第三方 reMarkable 版微信读书 app，见
+）——不是这个仓库能装的东西，要装得自己下载官方发行
+包 SSH 装；`sidebar-entry` 那步会自动探测这台设备装没装，装了就把 Sidebar 入口换成
+「KOReader + WeRead」两项版本，没装就只有「KOReader」一项，不会因为没装 WeRead 而报错或跳过
+整步。
+
+## 装什么、按什么顺序
+
+`install-all.sh` 只编排，不重新实现任何构建/传输逻辑——先过固件安全门，再依次调用九个
+各自独立可用的部署脚本：
+
+| 顺序 | 脚本 | 装什么 | 前置 |
+|---|---|---|---|
+| 1 | `deploy-chrony-cn.sh` | 国内 NTP（chrony 服务器换成阿里云/腾讯云等） | 无，跟 xovi/vellum 完全无关 |
+| 2 | `deploy-timezone-cn.sh` | 默认时区设为 Asia/Shanghai | 无，跟 xovi/vellum 完全无关；设备镜像缺 `/usr/share/zoneinfo/Asia/Shanghai` 时优雅跳过 |
+| 3 | `deploy-battop.sh` | 电池刺客（纯 Rust systemd 常驻采样服务） | 无，跟 xovi/vellum 完全无关 |
+| 4 | `deploy-xovi-persist.sh` | xovi 开机持久化恢复链（`xovi-reenable.service`） | 设备已 `vellum add xovi`（`/home/root/xovi/start` 存在） |
+| 5 | `deploy-hl-snap.sh` | 荧光笔 CJK 精确吸附（独立最小 xovi 扩展）——只落盘，不重启 xochitl | 同上 |
+| 6 | `deploy-handwriting-stroke.sh` | CJK 手写笔迹渲染优化（独立最小 xovi 扩展）——只落盘，不重启 xochitl | 同上 |
+| 7 | `deploy-sidebar-entry.sh` | Sidebar 一级直达「KOReader」入口（装了 WeRead 就自动带上「WeRead」项）——只落盘，不重启 xochitl | 设备已 `vellum add qt-resource-rebuilder` + `vellum add appload`（且 appload 在这台固件上验证过能正常挂载，见上面「前置条件」第 3 条）；任一条件不满足自动跳过（exit 0），不阻塞 |
+| 8 | `deploy.sh` | 网关 + book/koreader/font/wallpaper 四个领域服务 + 笔记线（ink/transcribe/mind/note） | 无（`font`/`book` 的回收站/建夹代理 qmd 这两个可选特性依赖 `qt-resource-rebuilder` 已存在，缺了自动跳过不阻塞） |
+| 9 | `deploy-xovi-apply.sh` | 统一跑一次 `xovi/start`，把第 5/6/7 步落盘的扩展/qmd + 第 8 步落盘的 qmd 一次性生效 | 同 4/5/6/7 |
+
+**为什么第 5/6/7 步"只落盘不重启"、单独挪出第 9 步统一跑一次 `xovi/start`**：`xovi/start`
+是全量重启 xochitl、重新扫描注入 `extensions.d/` 全部内容，没有"只重载一个扩展"的机制——
+hl-snap、handwriting-stroke 各自的设备端 `install.sh` 原本都会各自跑一次 `xovi/start`；
+真机验证过这样连续跑两次短时间内重启 xochitl 两次，撞上了 xochitl 自带的
+watchdog+StartLimit，触发过一次意外整机重启（2026-09-11）。`install-all.sh` 给这三步传
+`DEFER_XOVI_START=1`（`deploy-sidebar-entry.sh` 直接认这个环境变量，`deploy-hl-snap.sh`/
+`deploy-handwriting-stroke.sh` 对应设备端 `install.sh --no-restart`）让它们只落盘、不各自
+重启，全部落盘完在最后一步统一跑一次。单独跑
+`deploy-hl-snap.sh`/`deploy-handwriting-stroke.sh`/`deploy-sidebar-entry.sh`（不设这个环境
+变量）行为不变——落盘后立即跑 `xovi/start` 并做健康检查。
+
+九个脚本都可以单独跑（`sh deploy-battop.sh <host>` 等），不依赖 `install-all.sh`——它只是把
+九步串起来 + 加一层固件门 + 汇总结果。任何一步失败：打印清楚是哪一步、原始错误，**不自动
+重试、不静默跳过**，退出非零。
+
+## 固件安全门
+
+`firmware-allowlist.txt`：每行 `sha256(/usr/bin/xochitl)  <人读标签>`，装前 ssh 拉设备上
+`/usr/bin/xochitl` 的哈希跟这张表比对。不命中默认拒装（避免在没验证过注入定位的固件上装错，
+qmd/hook 偏移错了轻则功能不生效重则设备行为异常）；确认要装用 `--force`（自动把当前哈希追加
+进表里）。文件本身详细讲了为什么用 sha256 而不是版本号，见文件内注释。
+
+## xovi-reenable.service 为什么放在 packaging/，不放 shelf/
+
+`shelf/docs/reMarkable书架白皮书.md` §03o 记过一次相关的历史决策（历史文档，不改写，这里只
+引用结论）：2026-09-03 曾经有一版把 `--with-xovi-reenable` 装进 `shelf/install.sh`、单元源放
+`reading/device-rs/systemd/`，被撤回——理由是 xovi 持久化是**整个 xovi 层**通用的（重跑
+`xovi/start` 会重注入全部扩展，不分 shelf/中文化/enhance），`shelf` 耦合它反而破坏"网关+领域
+服务独立可插拔"的原则。`shelf/install.sh` 现在的头注也仍然写着这层该由"整包"装。`packaging/`
+正是这次大归档后 `install-on-device.sh` 的精神继承者，装它是把当初就规划好、只是归档时连带
+消失的一层补回来，不是重新踩同一个耦合坑。
+
+## 明确不做的事（已知缺口，别当成已经解决）
+
+- **不装 vellum/xovi/qt-resource-rebuilder/appload 本体、不侧载 KOReader**——这是所有脚本
+  （新旧）共同的手动前置条件，见上面「前置条件」一节，本脚本不代为安装，缺失时子脚本会清楚
+  报错，`install-all.sh` 收尾摘要会再提醒一次。
+- **不装中文化**（输入法/候选栏/词典/UI 汉化）——那条链路（`chinese-ime/langhook/`）随
+  2026-09-11 全仓库大归档挪出了 git 仓库，目前只在本机 `/home/afu/Projects/oldbak/chinese-ime/`，
+  没有回到版本控制。要装：去那边手动编译 + 跑 `deploy/install.sh`（前置同样是
+  `vellum add xovi qt-resource-rebuilder`）。
+- **不装 wifi-watch 常驻看护**——目前只在 `oldbak/packaging/wifi-watch/`，没有随这次恢复。
+- **没有对称的 `uninstall-all.sh`**——三个 enhance 工具 + xovi-persist/chrony-cn/timezone-cn
+  目前只能各自手动清理（`shelf/uninstall.sh` 能卸 shelf 那部分；`xovi-reenable.service` 卸载
+  是 `systemctl disable --now xovi-reenable.service` + 删 `/usr/lib/systemd/system/` 里的单元
+  和软链；chrony/timezone 两个是配置覆写，没有"卸载"语义）。
+
+旧的 `packaging/package.sh`（打 `cangjie-full-*.tar.gz` 单体安装包那套）**没有**在这次一并
+恢复/重写——经核实那份现在实际上是断的（`oldbak/packaging/package.sh` 按旧路径找 `shelf/` 载荷，
+但 `shelf/` 早就独立成仓库顶层项目了，`oldbak/` 下没有这个子目录），也不是这次 `install-all.sh`
+的设计参照；这次是纯编排现有独立脚本，不是复刻旧的单体打包架构。
+
+## 验证现状（如实说明，不夸大）
+
+**真机验证过、确认能跑通的部分**：固件安全门（3.28.0.172 真机 sha256 命中白名单）；
+`deploy-hl-snap.sh`/`deploy-handwriting-stroke.sh` 两步整个流程（构建→推送→设备端安装→
+`journalctl` 确认 hook 已加载、`is-active`=active、`NRestarts`=0）；`install-all.sh` 整个
+八步全部跑通（用户 2026-09-11 确认"已成功安装"，当时还没有 `sidebar-entry` 这步）。
+`deploy-sidebar-entry.sh`（2026-09-13 新写，从 §「明确不做的事」上一版遗留的空白里补上）：
+独立跑过两条路径都真机通过——① 默认模式（这台设备当时已装 WeRead）：探测到
+`qt-resource-rebuilder` 存在→探测到 WeRead 已装→选中两项版 qmd→本地 `rcc` 编译→推送→
+md5 校验一致→`xovi/start`→`journalctl` 确认 `CJ-SIDEBAR[8]: KOReader`/`CJ-SIDEBAR[9]:
+WeRead`、`NRestarts=0`；② `DEFER_XOVI_START=1` 模式：同样的探测+推送+校验，最后打印"只落盘
+不跑 xovi/start"就退出，没有触发 xochitl 重启（人工核对期间 xochitl 进程没变化）。**没有真机
+验证过的**：qt-resource-rebuilder 缺失时的跳过分支（这台设备本来就装了它，没机会触发）、
+没装 WeRead 时退回单项 qmd 的分支（这台设备已经装了 WeRead，同样没机会触发，只审过代码逻辑）；
+appload 缺失/appload 补丁未生效这两条跳过分支（这台设备两个条件都满足——appload 已装、
+journalctl 里能看到 `Loaded external AppLoad hooks in main UI`，同样没机会触发跳过分支，
+只审过代码逻辑，靠这次真机日志确认了"正面信号确实存在"这一半）。
+
+**`xovi-persist` 核心承诺——已用真机重启证实**：`packaging/xovi-reenable.service` 装完后，
+那台设备真的经历过一次整机重启（见下面"真机第一轮实测暴露的真坑"那条 watchdog+StartLimit
+触发的意外重启），重启后 `systemctl status xovi-reenable.service` 显示
+`Active: active (exited)`、`Main PID: ... (code=exited, status=0/SUCCESS)`，journal 里
+`Starting → Finished` 完整走了一遍——这是系统在开机时**自动**触发的（手动跑 `xovi/start`
+不会经过这个 systemd 单元），且当时运行中的 xochitl 进程 `grep -c xovi.so .../maps` 返回
+非零，证实 xovi 确实被自动重新注入了，不需要人手动跑一次 `xovi/start`。
+⚠️ **已知无害的显示怪癖**：`systemctl status` 同时显示 `Loaded: ...disabled; preset:
+disabled`——这不代表没生效，是"手写 `/usr/lib/systemd/system/multi-user.target.wants/`
+软链装单元"这个安装方式的已知 `is-enabled` 显示怪癖（不是走 `systemctl enable` 命令生成的
+软链，systemd 判定"是否 enabled"的标签逻辑对不上，但开机是否激活看的是 `.wants/` 目录里
+软链在不在，这条已经真机验证过在），别被这个标签误导成"没装上"。
+
+**真机跑过、发现问题、已修但改动本身还没有复验的部分**：
+- `deploy-battop.sh`：重装（非首次装）时若 `battop.service` 已在跑，`scp` 直接覆盖正在执行的
+  二进制被内核拒绝（`ETXTBSY`，报 `scp: dest open ... Failure`）。修法：推送前先
+  `systemctl stop battop.service`（`install.sh` 最后会自己重新 `enable --now`）。
+- `deploy.sh`（原 `shelf/deploy.sh`）：健康检查原来固定 `sleep 1` 就查 `systemctl is-active`，
+  `gateway` 首次启动要签发私有 CA/自签证书，1 秒不够、还在 `activating` 就被判定为"没起来"。
+  修法：`shelf/install.sh` 的健康检查改成轮询（最多等 10 秒）。
+
+**离线验证过、后来经真机确认整体跑通、但没有单独逐项复核细节输出的部分**：
+- `deploy-chrony-cn.sh`：`chrony-cn.sh` 本体的 remount+bind 机制此前在旧版本（`oldbak/`）上
+  真机验证过，这次是重写，逻辑照抄未改；用户实测过第一轮跑到"rootfs 底层已是国内 NTP，跳过"
+  分支（幂等分支，`timedatectl` 确认 synchronized: yes、服务器是 ntp.aliyun.com），改动分支
+  （从非国内 NTP 状态第一次改写）还没见过真机输出。
+- `deploy-timezone-cn.sh`：真机实测跑过一次（这次改动前，触发了下面那条退出码 bug），确认
+  设备已经是 Asia/Shanghai 的幂等分支逻辑没问题（bug 只在退出码，不在改没改对）；`/usr/share/
+  zoneinfo/Asia/Shanghai` 缺失时的优雅跳过分支仍然零真机验证（这台设备本来就带这份 zoneinfo，
+  没机会触发那个分支）。
+- `deploy-xovi-apply.sh`：整体流程（`xovi/start` + 健康检查）已经随 `install-all.sh` 整轮
+  真机跑通，但没有单独逐项核对过它自己打印的 hl-snap/hw-stroke 段数、NRestarts 这些细节
+  输出，只知道整轮成功、xovi.so 确实加载了（见上面 xovi-persist 那条 `grep -c xovi.so`）。
+
+真要下"逐项都已验证"的结论，还需要用户后续贴出更细的单步输出再回来补充。
+
+**真机第一轮实测暴露的真坑（已修，且改动本身已经在后续真机跑通中间接验证过）**：
+- `timezone-cn.sh` 幂等分支（设备本来就已经是 Asia/Shanghai）打印"✅ 已是目标时区"却仍被
+  `install-all.sh` 判定为失败——脚本最后一条语句写成 `[ "$changed" = "1" ] && echo ...`，
+  `changed=0` 时这条 `[ ]` 测试本身为假，没有 `set -e` 不中断，但也没有后续语句覆盖 `$?`，
+  脚本用这条判断的非零退出码收尾。改成显式 `if`+`exit 0`；用户之后跑通的整轮
+  `install-all.sh` 没再报这一步失败，间接确认修好了。
+- `deploy-hl-snap.sh`/`deploy-handwriting-stroke.sh` 各自的设备端 `install.sh` 都会自己跑一次
+  `xovi/start`——`install-all.sh` 连续调用这两步时，短时间内重启 xochitl 两次，真机撞上
+  watchdog+StartLimit，触发了一次意外整机重启（`uptime` 显示重启后刚起来几分钟），紧接着的
+  下一步 `handwriting-stroke` 因为设备正在重启窗口期撞上 `ssh: Connection refused`。改成
+  见上一节"为什么第 5/6 步只落盘不重启"——两个设备端 `install.sh` 加 `--no-restart`，
+  `install-all.sh` 新增 `deploy-xovi-apply.sh` 作为唯一的 `xovi/start` 调用点，放在最后。
+  意外之喜：这次重启恰好把刚装的 `xovi-reenable.service` 现场测了一遍——**已经确认它真的在
+  这次重启里自动重新加载了 xovi**（见上面"xovi-persist 核心承诺"那条，`systemctl status`
+  显示自动触发+成功退出，运行中的 xochitl 也确实加载了 xovi.so）。
+
+编排这几个脚本的过程中踩到两个真坑（离线阶段发现，已修）：
+- `deploy-battop.sh` 最初用 `cargo build --manifest-path ../enhance/battop/Cargo.toml` 在
+  `packaging/` 目录下直接调用——**Cargo 搜 `.cargo/config.toml`（CC/AR 覆盖）是按当前工作
+  目录往上找，不看 `--manifest-path`**，导致 battop 的 CC 覆盖没生效，本机实测直接在链接
+  `crt1.o` 这步报 `Relocations in generic ELF` 炸掉。改成先 `cd` 进 `enhance/battop/` 再跑
+  `cargo build` 后立刻恢复正常。
+- `deploy-hl-snap.sh`/`deploy-handwriting-stroke.sh` 最初在构建前跑了 `make clean`——两个
+  `.so` 都已提交进仓库（不用每次现建才能部署），但本机没有 `asivery/xovi` 的 clone、编不出
+  新的，`make clean` 先把已提交的 `.so`/`xovi_glue.{c,h}` 删了，重编又失败，**结果是仓库里
+  能用的产物被脚本自己删掉却没能力补回来**（当场发现、`git checkout HEAD --` 救回，没有提交
+  这个状态）。改成不清、构建失败时退回用仓库里已提交的版本（缺 xovi clone 时会打印清楚的
+  提示，而不是留一个空洞）。

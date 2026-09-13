@@ -46,9 +46,16 @@ reading/notegen/
 rmfw/extracted
 rmfw/out/
 rmfw/*.bin
-ghidra-project/*.rep/
+ghidra-project*/*.rep/
+# Ghidra GUI 打开工程时生成的运行期锁文件，关闭/换机器后可能残留或重生成，不入库
+ghidra-project*/*.lock
 # Ghidra headless 运行产物（decompile/disasm/dump/find*/import 的 .log），可重生成，不入库
-ghidra-project/*.log
+ghidra-project*/*.log
+# defw/（3.28.0.172 逆向工程，原名 ghidra-project-328，2026-09-10 改名两次到 defw）同样三条——
+# `ghidra-project*` 通配符改名后不再匹配，不是覆盖旧规则，是新加一组，`ghidra-project/`（.169）不受影响。
+defw/*.rep/
+defw/*.lock
+defw/*.log
 
 # 词典（源 .dict.yaml 与派生大 txt；递归匹配子目录）
 chinese-ime/pinyin-engine/data/**/*.dict.yaml
@@ -57,11 +64,15 @@ chinese-ime/pinyin-engine/data/english/frequency_dictionary_*.txt
 
 # 大字体（第三方，可重新下载）
 chinese-ime/fonts/**/*.ttf
+shelf/koreader/profile/vendor-fonts/*.ttf
+shelf/koreader/profile/vendor-fonts/*.otf
 chinese-ime/fonts/**/*.otf
 
-# 媒体：宽忽略 assets 下所有，白名单留 logo（心法③）
+# 媒体：宽忽略 assets 下所有，白名单留 logo + 顶层 README 打赏二维码（心法③）
 assets/*
 !assets/logo.png
+!assets/sponsor-wechat.jpg
+!assets/sponsor-alipay.jpg
 
 # ── OS / 编辑器 / 解压垃圾 ──
 .DS_Store

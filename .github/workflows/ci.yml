@@ -39,21 +39,29 @@ jobs:
       # 它 import/构建时需 ~70MB 有意 gitignore 的 rime-ice 词典源（base/iorest/luna_pinyin.dict.yaml
       # 等），全新 checkout 没有 → 只能在本地 `uv run pytest chinese-ime/pinyin-engine/tests` +
       # `make -C chinese-ime/pinyin-engine/c test diff-check`（有本地词典）跑，见 README。
-      - name: pytest（阅读 + PKM 语义原型，自足 fixtures）
-        run: uv run pytest reading/tests knowledge/pkm-semantic/proto -q
+      - name: pytest（书架 host CLI，自足 fixtures；reading/tests、knowledge/pkm-semantic/proto
+          随 2026-09-11 归档已移除，notes/ 纯 Rust 无 host Python 测试）
+        run: uv run pytest shelf/host/tests -q
+      - name: 网关内嵌 JS 语法检查（ui/app.js 是真文件，编译期 include_str! 进二进制）
+        run: node --check gateway/ui/app.js
 
-  # ── 三个设备端 Rust crate 的 host 测试（device-core / weread-device / pkm-device）──
+  # ── 设备端 Rust crate 的 host 测试（rmsvc-core / gateway / shelf / notes，各自独立无根 workspace）──
   rust:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: cargo test（各 crate 独立，无根 workspace）
+      - name: cargo test（共享基座 + 网关 + enhance 的两个网页服务，各自独立 crate）
         run: |
-          cargo test --manifest-path device-core/Cargo.toml
-          cargo test --manifest-path reading/device-rs/Cargo.toml
-          cargo test --manifest-path knowledge/pkm/Cargo.toml
+          cargo test --manifest-path rmsvc-core/Cargo.toml
+          cargo test --manifest-path gateway/Cargo.toml
+          cargo test --manifest-path enhance/wallpaper-serve/Cargo.toml
+          cargo test --manifest-path enhance/font-serve/Cargo.toml
+      - name: cargo test（shelf 内部 workspace：bookconv/book-serve/koreader-serve）
+        run: cargo test --manifest-path shelf/Cargo.toml --workspace
+      - name: cargo test（notes 内部 workspace：rmv6/notecore/vendorcfg/四服务）
+        run: cargo test --manifest-path notes/Cargo.toml --workspace
 
   # ── aarch64 全静态交叉编译冒烟（打包器分发的设备二进制，别让 musl/链接悄悄坏掉）──
   cross-build:
@@ -68,7 +76,5 @@ jobs:
           key: cross
       - name: 装 aarch64 交叉 gcc（编 ring 的 C；musl 链接由 rust-lld 完成）
         run: sudo apt-get update && sudo apt-get install -y gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu
-      - name: reading + pkm 交叉编译（复用仓库 build.sh，与打包器同路径）
-        run: |
-          sh reading/device-rs/build.sh
-          sh knowledge/pkm/build.sh
+      - name: shelf + gateway + notes 交叉编译（shelf/build.sh 顺手编译 ../gateway、../notes，复用仓库 build.sh，与打包器同路径）
+        run: sh shelf/build.sh
