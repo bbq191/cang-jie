@@ -14,9 +14,23 @@
 # qt-resource-rebuilder 已经在用的资源文件同名，直接覆盖）。
 #
 # 前置：设备已 vellum add qt-resource-rebuilder（qmd/rcc 靠它的 .rcc 通道加载，缺失时本脚本
-# 探测不到 ~/xovi/exthome/qt-resource-rebuilder/ 就跳过，不算失败）。KOReader 本身是否已经
-# 通过 appload 侧载不在本脚本探测范围——沿用 2026-09-02 首版设计（未装 KOReader 时这个按钮
-# 点了也没反应，属已知取舍，见 sidebar-entry-koreader-only.qmd 头注）。
+# 探测不到 ~/xovi/exthome/qt-resource-rebuilder/ 就跳过，不算失败）+ 已 vellum add appload
+# （本 qmd 的 onClicked 靠 appload 暴露的 CJAppLoad.AppLoadLauncher 单例发起启动，appload 没装
+# 这个调用打不到目标，缺失时探测不到 ~/xovi/exthome/appload/ 也跳过，不算失败）。KOReader 本身
+# 是否已经通过 appload 侧载不在本脚本探测范围——沿用 2026-09-02 首版设计（未装 KOReader 时这个
+# 按钮点了也没反应，属已知取舍，见 sidebar-entry-koreader-only.qmd 头注）。
+#
+# 【appload 在 3.28 上要打过 PR #59 兼容补丁】appload v0.5.3 自带的内嵌 qmd 钩的是 3.27 的旧
+# Sidebar/MainView 锚点，3.28 已经改了名字——没打这个补丁时 qmldiff 会报 "Couldn't resolve
+# the hashed identifier"，appload 自己往 MainView 注入的常驻 Loader（CJAppLoad.AppLoadLauncher
+# 单例就活在这个 Loader 里）根本建不起来，这样即使本脚本把 Sidebar 按钮插上去了，点了也没反应
+# ——不是本脚本的 bug，是 appload 那份 .so 本身在这个固件版本上不兼容。检测靠读当前这次开机
+# 的 journalctl：appload 自己的 qmd 处理成功会打一行 "Loaded external AppLoad hooks in main
+# UI"；没这行说明大概率没打过这个补丁（或者压根还没重启过 xochitl 应用刚装好的 appload），本
+# 脚本探测不到就跳过、不硬装一个不会响应的按钮。真要修：见
+# `oldbak/xovi-extensions/reading-qol/tools/appload_patch_328.py` + 该目录 README「3.28 适配」
+# 一节——这一步需要拿到上游 PR #59 的 qmd 文本手动打补丁，不是 install-all.sh 能代劳的，`vellum
+# add appload` 装的是官方发行版，不会带这个第三方未合并的修复。
 #
 # 用法：./deploy-sidebar-entry.sh [host]      host 默认 10.11.99.1
 #   环境 DEFER_XOVI_START=1：只把 qmd/rcc 落盘，不在这一步跑 xovi/start——install-all.sh 编排
@@ -33,6 +47,23 @@ trap 'rm -f "$RCC_LOCAL"' EXIT
 echo "== 探测设备端 qt-resource-rebuilder =="
 if ! ssh "root@$HOST" "[ -d $QRR_DIR ]"; then
     echo "-- 设备没装 qt-resource-rebuilder（vellum add qt-resource-rebuilder）——跳过，非失败"
+    exit 0
+fi
+
+echo "== 探测设备端 appload =="
+if ! ssh "root@$HOST" "[ -d /home/root/xovi/exthome/appload ]"; then
+    echo "-- 设备没装 appload（vellum add appload）——跳过，非失败"
+    exit 0
+fi
+
+echo "== 探测 appload 自己的 qmd 在这台固件上是否兼容 =="
+# 正面信号："Loaded external AppLoad hooks in main UI" 是 appload 自己那份内嵌 qmd 成功处理后
+# 打的日志——没这行不代表一定没打过 PR #59 补丁（也可能是装完 appload 后还没重启过 xochitl），
+# 但按钮多半点了没反应，所以一律当作"暂不满足"处理，不硬装。
+if ! ssh "root@$HOST" "journalctl -b 0 -u xochitl --no-pager 2>/dev/null | grep -q 'Loaded external AppLoad hooks in main UI'"; then
+    echo "-- 没在这次开机日志里看到 appload 成功挂载的信号（可能是 appload 在这个固件版本上没打"
+    echo "   过 PR #59 兼容补丁，也可能是刚装完 appload 还没 xovi/start 过一次）——跳过，非失败。"
+    echo "   见本脚本头注「appload 在 3.28 上要打过 PR #59 兼容补丁」一节。"
     exit 0
 fi
 
