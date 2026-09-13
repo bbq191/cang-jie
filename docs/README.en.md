@@ -53,25 +53,19 @@ each change lives in the corresponding project line's whitepaper (Chinese only).
 
 ## Known issues, not yet fixed
 
-Found but not yet acted on, in discovery order; the full investigation is in
-`shelf/docs/reMarkable书架白皮书.md` §04 (Chinese only).
+Found but not yet acted on, in discovery order:
 
-- **A scanned-comic PDF pushed through `shelf push` fails outright.** `comic.is_comic()` is
-  designed to never check `.pdf` at all (it only recognizes CBZ / the PalmDB family / EPUB), so
-  these books (a common shape for downloads from sources like Anna's Archive) only ever go
-  through the text-reflow path built for papers/magazines — and when the host doesn't have
-  `k2pdfopt` installed (deliberately not bundled, and this project provides no install
-  instructions for it), that path errors out rather than silently degrading. `shelf push
-  --no-reflow` works around it today by passing the file through as-is; whether `.pdf` should
-  eventually be routed into the comic/CBZ pipeline is still undecided (found 2026-09-13; the
-  user explicitly asked to leave this alone for now).
-- **The staging "skip already-uploaded files" protection only saves upload bandwidth, not
-  host-side processing time.** The dedup check runs after processing, right before upload — so
-  re-running a push for a large book that already succeeded re-runs the expensive Calibre /
-  PDF-reflow processing in full before discovering it should be skipped. Moving the check
-  earlier would require the server to record an "original input size/hash" per staging entry and
-  a matching change to the upload protocol; that hasn't been built yet (found 2026-09-13; the
-  user explicitly asked to just record the finding for now).
+- **A scanned comic PDF fails outright when you push it.** Books like this (common from sources
+  such as Anna's Archive) currently aren't recognized as "comics" — they go through the text
+  reflow path built for papers/magazines instead, and when the computer doesn't have the
+  optional external reflow tool installed, that fails outright rather than degrading silently.
+  There's a "pass it through as-is" flag that works around it for now; whether this kind of PDF
+  should eventually get its own comic-handling path is still undecided.
+- **Re-pushing a book that already succeeded wastes processing time.** If a batch push fails
+  partway through and you re-run it, books that already landed won't be uploaded a second time
+  or duplicated — but if a book needed the computer to clean up / reflow it first, that expensive
+  processing step still reruns before the system realizes there's nothing new to upload. Bandwidth
+  is saved; the processing time isn't, yet.
 
 ## Quick start
 
