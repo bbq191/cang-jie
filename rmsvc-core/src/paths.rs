@@ -9,7 +9,9 @@
 //! | `XDG_RUNTIME_DIR` | `/tmp/shelf-<uid>` | `shelf/{services/,upload/}` 注册表与上传分片（重启即清） |
 //! | 可执行 | `~/.local/bin` | 各服务二进制 |
 //! （host 侧缓存 `XDG_CACHE_HOME` 由 Python `shelf_cli/paths.py` 各自处理，不在此 Rust 表内。）
-//! 外部约定单点可覆盖：`SHELF_KOREADER_ROOT`（appload 外部应用目录）。
+//! 外部约定单点可覆盖：`SHELF_KOREADER_ROOT`（appload 外部应用目录）、`SHELF_WEREAD_ROOT`
+//! （WeRead 第三方 app 安装目录——跟本项目早年自建、已在 2026-09-05 砍掉的旧微读管线无关，
+//! 是外部下载的独立发行包自带 `install.sh` 直接 SSH 装到设备，本项目只做只读装机探测）。
 //! qmd 里的 XHR 只能写绝对路径，写的是这些缺省值的展开（文档注明，非新约定）。
 use std::path::{Path, PathBuf};
 
@@ -23,6 +25,7 @@ pub struct Paths {
     state: PathBuf,
     runtime: PathBuf,
     koreader_root: PathBuf,
+    weread_root: PathBuf,
 }
 
 impl Paths {
@@ -47,6 +50,7 @@ impl Paths {
             state: pick("XDG_STATE_HOME", home.join(".local/state")),
             runtime: pick("XDG_RUNTIME_DIR", PathBuf::from(format!("/tmp/{APP}-{uid}"))),
             koreader_root: pick("SHELF_KOREADER_ROOT", home.join("xovi/exthome/appload/koreader")),
+            weread_root: pick("SHELF_WEREAD_ROOT", home.join(".local/opt/remarkable-weread")),
             home,
         }
     }
@@ -102,6 +106,10 @@ impl Paths {
     pub fn koreader_root(&self) -> &Path {
         &self.koreader_root
     }
+    /// WeRead（第三方 app，官方安装器落点，非本项目服务）安装目录。
+    pub fn weread_root(&self) -> &Path {
+        &self.weread_root
+    }
     /// 服务注册表目录。
     pub fn services_dir(&self) -> PathBuf {
         self.runtime_dir().join("services")
@@ -145,6 +153,7 @@ mod tests {
         assert_eq!(p.user_fonts_dir(), PathBuf::from("/home/root/.local/share/fonts"));
         assert_eq!(p.xochitl_dir(), PathBuf::from("/home/root/.local/share/remarkable/xochitl"));
         assert_eq!(p.koreader_root(), Path::new("/home/root/xovi/exthome/appload/koreader"));
+        assert_eq!(p.weread_root(), Path::new("/home/root/.local/opt/remarkable-weread"));
     }
 
     #[test]
@@ -155,12 +164,14 @@ mod tests {
             ("XDG_DATA_HOME", "rel/ignored"),
             ("XDG_RUNTIME_DIR", "/run/user/1000"),
             ("SHELF_KOREADER_ROOT", "/opt/ko"),
+            ("SHELF_WEREAD_ROOT", "/opt/wr"),
             ("UID", "1000"),
         ]));
         assert_eq!(p.config_dir(), PathBuf::from("/etc/x/shelf"));
         assert_eq!(p.data_dir(), PathBuf::from("/h/.local/share/shelf"));
         assert_eq!(p.services_dir(), PathBuf::from("/run/user/1000/shelf/services"));
         assert_eq!(p.koreader_root(), Path::new("/opt/ko"));
+        assert_eq!(p.weread_root(), Path::new("/opt/wr"));
         assert_eq!(p.app_state_dir("notes"), PathBuf::from("/h/.local/state/notes"), "笔记线私有目录与书架并列");
         assert_eq!(p.app_config_dir("notes"), PathBuf::from("/etc/x/notes"));
     }
