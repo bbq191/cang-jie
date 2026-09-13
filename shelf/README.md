@@ -20,6 +20,10 @@ reMarkable Paper Pro Move 的**读书与阅读质量层**：一个网页 / 一�
 
 **统一规则**：所有书**只落母版库**——网页、CLI、inbox 都没有直投读器的路径；"入库是入库，优化是优化，落库是落库"。
 host `shelf push` 是唯一能"入库时顺带优化"的源（Calibre 深洗 / 杂格式转 EPUB / PDF 结构化重排 / **漫画出 CBZ**）。
+母版库同名不覆盖、按数字前缀（`1_x`/`2_x`…）各自入库是有意设计（避免不同书撞名互相吞掉）；**网页上传和
+`shelf push` 都会在传之前先核对一遍母版库现有条目，同名同大小＝已经成功落地过，自动跳过不重传**（2026-09-13
+补，见白皮书 §04）——批量推送中途失败、原样重跑整条命令/整个上传队列是安全的，不会把已经成功的那几份
+又传一遍变成编号副本；这条保护按文件名+字节数比较、不比内容 hash，同名不同大小（内容真的换了）仍照常传。
 
 **格式三档**（`shelf_core::formats` 单一事实源，网页 accept、服务端上传门、inbox、CLI 同源；按设备装的 KOReader 注册表核过）：
 
@@ -175,7 +179,7 @@ shelf/host/bin/shelf push 论文.pdf 书.epub [--to-pdf] [--no-optimize] [--no-c
 #   灰阶 CBZ 体积估算转 PDF 后仍在设备原生上传上限内，顺带生成一份 PDF 给「投入原生书库」选项（--no-comic-native 关掉）；--no-eink-gray 要原图（连带不做跨页拆分/白边裁切）
 #   --wait：设备离 USB 几秒就自动休眠关 WiFi，push 上传前先探 /health；不可达时每 5 秒探一次等它醒（点亮屏幕/接 USB），缺省最多 600 秒；不加 --wait 则直接报错、不传
    **只落母版库**，去向在网页「传书 → 母版库」选。路线自动定（`push.plan`）：
-   · 有 Calibre → 洗书：EPUB 深洗 / AZW3·MOBI·AZW·PRC·FB2 转 EPUB / **PDF 默认结构化重排**（born-digital→EPUB→洗书；扫描件 k2pdfopt/裁边→PDF，`--no-reflow` 原样）；
+   · 有 Calibre → 洗书：EPUB 深洗 / AZW3·MOBI·AZW·PRC·FB2 转 EPUB / **PDF 默认结构化重排**（born-digital→EPUB→洗书；扫描件优先 k2pdfopt——**host 通常没装这个外部工具（本项目有意不内嵌，没有安装指引），没装时唯一的回退是裁边脚本，但裁边对纯扫描图片按设计主动拒绝产出，两条路都不通就直接报错退出**，不是静默降级；报错时按提示改用 `--no-reflow` 原样传，或自行装好 `k2pdfopt`（本仓库没有安装指引）再重跑，见白皮书 §04「扫描版漫画 PDF」条）；
      产物必过 `check_output.py` 质量门（`--skip-check` 强推）。`--to-pdf` 定稿固定版式 PDF（手写批注用）。>60MB PDF 自动分卷（需 uv `calibre` 组的 pymupdf；切不了会报错不推，xochitl 收不下 188MB 整本）。
    · **漫画**（AZW3/MOBI/EPUB 里几乎全是整页图，`comic.py` 自动判）→ 转成 **CBZ** 进母版库，网页点「加入 KOReader」；**默认不投原生，体积够小时会顺带出一份 PDF 给「投入原生书库」选项，超限的仍只出 CBZ、绝不分卷**（§03ad，2026-09-08）。
      `--comic / --no-comic` 覆盖判断；CBZ 输入原样入库。
