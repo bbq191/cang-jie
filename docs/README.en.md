@@ -40,11 +40,11 @@ Seven independent top-level project lines, each individually installable:
 
 ## Recent updates
 
-Only actual new features/capabilities, not a full commit log; the detailed pitfall record for
-each change lives in the corresponding project line's whitepaper (Chinese only).
+Only actual new features/capabilities, not a full commit log.
 
 | Date | Added |
 |---|---|
+| 2026-09-13 | Batch book transfers are now duplicate-safe: both the web upload and the desktop command-line push check beforehand whether a file was already transferred, so a partial failure followed by an as-is rerun won't re-transfer a book that already succeeded into a duplicate |
 | 2026-09-13 | A Sidebar shortcut straight to "KOReader"; if the third-party WeRead app is installed it's auto-detected and a "WeRead" entry appears too — both are wired into `packaging/`, repeatable via `install-all.sh` |
 | 2026-09-13 | The gateway's "Setup · foundation" page now also probes whether WeRead is installed (read-only, same as the KOReader check) |
 | 2026-09-11 | `packaging/install-all.sh`: one command installs everything on a fresh device, including a firmware safety gate (sha256 match required, refuses otherwise) |
