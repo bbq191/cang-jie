@@ -26,7 +26,7 @@ def build_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(prog="shelf", description="reMarkable 书架 host CLI（与设备网页共用同一 HTTP API）")
     p.add_argument("--version", action="version", version=f"shelf {__version__}")
     p.add_argument("--host", help="设备 IP（缺省 config.toml 或 10.11.99.1）")
-    p.add_argument("--port", type=int, help="网关端口（缺省 8778）")
+    p.add_argument("--port", type=int, help="网关端口（缺省 443）")
     p.add_argument("--http", action="store_true", help="用明文 HTTP（网关关了 https 时）")
     p.add_argument("--password", "-p", help="网关密码（缺省 config.toml / $SHELF_PASSWORD / 交互输入）")
     sub = p.add_subparsers(dest="cmd", required=True)

@@ -8,7 +8,7 @@ from .paths import Paths
 
 DEFAULTS = {
     "host": "10.11.99.1",
-    "port": 8778,
+    "port": 443,
     "scheme": "https",
     "password": "",
     "verify_tls": False,
