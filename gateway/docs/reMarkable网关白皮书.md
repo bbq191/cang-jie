@@ -215,6 +215,16 @@ systemd/gateway.service` 打进同一个部署包）代管，跟它代管 `../no
   `assets/we-icon.png`（原 `wr-icon.png` 删除）+ `cangjie-icons.qrc` 里那一行 `alias`，
   QML 结构完全没动，不需要重新跑 qmldiff 离线管线，只重建 `.rcc`、备份旧的
   （`.bak.pre-we-resize`）、部署、`systemctl restart xochitl` 确认 `active`/`NRestarts=0`。
+  **追记四（同日，收尾）**：用户直接看设备肉眼确认"侧边栏有 Ko 和 We"，两个入口图标显示
+  正常、大小视觉重量也对齐——这条 WeRead 线到此闭环。中途试过用设备内置 `/usr/bin/screenshot`
+  （给 xochitl 发 `SIGUSR2` 触发它自己截图）想留一张真机截图当证据，结果这个固件版本的
+  xochitl 根本没接这个信号的处理逻辑，发信号的默认效果是终止进程——连续两次把 xochitl 干崩
+  （`journalctl`：`Main process exited, code=killed, status=12/USR2`），systemd
+  `Restart=on-failure` 都自动拉回来了、没造成实质损坏，但 `NRestarts` 一度顶到 3（该服务
+  `StartLimitBurst=4`/10 分钟窗口，见 `docs/INSTALL.md`「风险项预警」③），没敢再试第三次。
+  最终还是靠用户肉眼确认收尾，没有留下截图——工具拿不到证据时老实说拿不到，不假装/不硬凑。
+  这个"内置 screenshot 脚本在这固件上会崩 xochitl"的坑记进了本机项目记忆
+  `screenshot-sigusr2-crashes-xochitl`，以后别再走这条路。
 
 ## 05｜命名遗留 + 待办
 
