@@ -768,6 +768,7 @@ figcaption{margin:0;padding:0;}
 - 本机冒烟别忘 `env -i`：host 桌面环境自带 `XDG_STATE_HOME/XDG_CONFIG_HOME` 会盖过 `HOME` 覆盖，把测试数据写进真实用户目录。
 - pytest 要从仓库根跑（`uv run pytest shelf/host/tests`）。
 - 多个测试文件对同一个 `http.server` Handler 类 monkeypatch，module fixture 共用服务器线程时 patch 链互相覆盖会递归死循环（pytest 挂死）。各文件用自己的 Handler **子类** + 自己的 fixture。
+- **`shelf push` 多文件批量部分失败后重跑不是幂等的，会静默产生重复条目（2026-09-13，Reddit 用户提问，读代码坐实非猜测）**：`push.py::run()` 顺序遍历 `args.files`，`receipts.py::upload_each` 逐文件单独 POST，一个文件失败只置 `rc=1` 继续下一个（不中止整批），**整条命令没有任何跨次运行的状态记忆**——重跑同一条命令永远对参数列表里全部文件重新走一遍。落到 staging 端，`rmsvc-core::fs::unique_path`（`dir/name` 存在就依次退到 `1_name`/`2_name`…）**纯按文件名判重、不比内容 hash、绝不覆盖**——这条本身是 §03r 那次重构就定下的有意设计（避免不同书撞名互相吞掉，见上面"⑤ 同名重复入库回执"那条），但组合上 CLI 零跳过逻辑就成了一个真实 gap：`shelf push a.epub b.epub` 若 a.epub 已经成功、b.epub 失败，原样重跑会让 a.epub 在母版库里落成 `1_a.epub`——**成功的静默重复，不是报错，容易被回执文案"已有同名，存为 1_a.epub"一句话带过忽略**。目前没有 CLI 命令能列出 staging 内容核对（`shelf status` 只给 pending/failed 计数，`shelf inbox` 是 SCP 补录队列，跟 staging 是两码事），唯一现实的规避是重跑前去网页确认哪些文件已经成功、只重传真正失败的那些。**待修**：CLI 侧按文件名+大小（或 hash）跳过已经在 staging 里落地的文件，或者让部分失败可续跑；这条目前只是发现，还没有动手修。
 
 ## 05｜真机待办（2026-09-06 刷新；2026-09-09 补记 §03ad 漫画超限分支复验、§03ae i18n 架子、§03af UI 人性化批量修复、§03aj 管理二级 tab+系统增强开关；2026-09-10 补记 §03an 正文全量 i18n、§03aq 网文留白排查）
 
