@@ -139,6 +139,25 @@ systemd/gateway.service` 打进同一个部署包）代管，跟它代管 `../no
   `T('manage.modules.label.'+m.seg)`，`zh-CN.json`/`en-US.json` 各补 8 个 key，`m.label`
   降级为查不到 key 时的兜底。`cargo test`（含 locale 两文件 key 集合一致性测试）+
   `node --check` 全过。
+- **`/api/foundation` 新增 WeRead 只读探测**（2026-09-13）：用户拿到一份外部第三方发行包
+  `remarkable-weread-v1.0.0-universal-*`（跟本项目早年自建、2026-09-05 已砍的旧微读双向同步
+  管线完全无关——是别人做的独立 app，自带 `install.sh`，纯 SSH 直装到设备
+  `~/.local/opt/remarkable-weread/`，不经过 `shelf-install`/`packaging/`），装完要求"以同样
+  的形式显示在 KOReader 下方"。`koreader` 本来就同时出现在两处：`MODULES`（`koreader-serve`，
+  本项目自己的服务，管 adopt 书进 KOReader）和 `foundation()`（对 KOReader 本体装没装的只读
+  探测，跟本项目服务无关）。WeRead 没有 adopt 需求（微信扫码云同步，不需要书架传书），只对应
+  第二处——`Paths` 加 `weread_root()`（默认 `~/.local/opt/remarkable-weread`，可用
+  `SHELF_WEREAD_ROOT` 覆盖，跟 `koreader_root`/`SHELF_KOREADER_ROOT` 同构），`foundation()`
+  探测标记文件 `bin/start-remarkable-weread.sh`（装机脚本给出的确定性 SSH 启动入口），
+  `app.js` 基石 kv 列表里紧跟 `KOReader` 那对 `<b>/<span>` 后面加一对 `WeRead`——kv 是
+  `grid-template-columns:auto 1fr` 两列网格，紧跟着写就是下一行，天然渲染在 KOReader 正下方，
+  不需要额外布局代码。真机验证：真的把这份包 SSH 装到设备（`sh remarkable-weread/install.sh`，
+  日志确认 `RemarkableWeRead 1.0.0 installed for move`+3.28 走 SSH 启动器不装 AppLoad 入口）、
+  交叉编译新 `gateway` 二进制、备份旧二进制后原地替换、`systemctl restart gateway.service`
+  确认 `active`/`NRestarts=0`、HTTPS 401（需登录，非崩溃）；`foundation()` 返回值里
+  `weread` 字段的真实布尔值没有登录态截图肉眼确认（没有网页密码），但探测路径
+  `bin/start-remarkable-weread.sh` 已经用 `ls`/`cat` 直接核对过在设备上确实存在，逻辑由
+  `foundation_probes_weread_alongside_koreader` 单测覆盖。
 
 ## 05｜命名遗留 + 待办
 

@@ -81,7 +81,9 @@ pub fn status(paths: &Paths) -> Reply {
     Reply::ok(&serde_json::json!({ "modules": modules, "gateway": {"running": true} }))
 }
 
-/// `GET /api/foundation`：基石（xovi 栈 + KOReader）只读探测——引导页据此显示红绿 + 官方链接。
+/// `GET /api/foundation`：基石（xovi 栈 + KOReader + WeRead）只读探测——引导页据此显示红绿 + 官方链接。
+/// WeRead 不是本项目服务（不在 [`MODULES`] 里、没有 `-serve` 后端），是外部发行包自带 `install.sh`
+/// 直接 SSH 装到设备的第三方 app（跟 2026-09-05 已砍的旧微读管线无关），这里只探测装没装。
 pub fn foundation(paths: &Paths) -> Reply {
     let home = paths.home();
     let xovi = home.join("xovi");
@@ -91,6 +93,7 @@ pub fn foundation(paths: &Paths) -> Reply {
         "appload": exists(xovi.join("exthome/appload")),
         "qrr": exists(xovi.join("exthome/qt-resource-rebuilder")),
         "koreader": exists(paths.koreader_root().join("reader.lua")) || exists(paths.koreader_root().to_path_buf()),
+        "weread": exists(paths.weread_root().join("bin/start-remarkable-weread.sh")) || exists(paths.weread_root().to_path_buf()),
     }))
 }
 
@@ -150,5 +153,17 @@ mod tests {
         assert_eq!(find("font-serve")["installed"], false);
         assert_eq!(find("font-serve")["hasWeb"], false, "未装则网页无该功能");
         assert!(mods.iter().all(|m| m["service"] != "weread-serve"));
+    }
+    #[test]
+    fn foundation_probes_weread_alongside_koreader() {
+        let t = tempfile::tempdir().unwrap();
+        let h = t.path().to_str().unwrap().to_string();
+        let paths = Paths::resolve(move |k| if k == "HOME" || k == "XDG_RUNTIME_DIR" { Some(h.clone()) } else { None });
+        let v: serde_json::Value = serde_json::from_slice(&foundation(&paths).body).unwrap();
+        assert_eq!(v["weread"], false, "没装时探测为 false");
+        std::fs::create_dir_all(paths.weread_root().join("bin")).unwrap();
+        std::fs::write(paths.weread_root().join("bin/start-remarkable-weread.sh"), b"x").unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&foundation(&paths).body).unwrap();
+        assert_eq!(v["weread"], true);
     }
 }
