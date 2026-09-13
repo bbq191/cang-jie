@@ -2,13 +2,15 @@
 # ═══════════════════════════════════════════════════════════════════════════
 # cang-jie 全新设备统一安装器（host 侧编排，2026-09-11 新写）。
 #
-# 只编排、不重新实现任何构建/传输逻辑——依次调用八个已经各自独立可用的部署脚本：
+# 只编排、不重新实现任何构建/传输逻辑——依次调用九个已经各自独立可用的部署脚本：
 #   packaging/deploy-chrony-cn.sh           国内 NTP（跟 xovi/vellum 无关）
 #   packaging/deploy-timezone-cn.sh         默认时区 Asia/Shanghai（跟 xovi/vellum 无关）
 #   packaging/deploy-battop.sh              电池刺客（跟 xovi/vellum 无关）
 #   packaging/deploy-xovi-persist.sh        xovi 开机持久化恢复链（需要 vellum add xovi）
 #   packaging/deploy-hl-snap.sh             荧光笔 CJK 精确吸附（需要 vellum add xovi；只落盘）
 #   packaging/deploy-handwriting-stroke.sh  CJK 手写笔迹渲染优化（需要 vellum add xovi；只落盘）
+#   packaging/deploy-sidebar-entry.sh       Sidebar 一级直达 KOReader/WeRead 入口（需要
+#                                           qt-resource-rebuilder；缺了自动跳过不阻塞；只落盘）
 #   packaging/deploy.sh                     shelf 本体+网关+笔记线+两个领域服务（不需要 xovi）
 #   packaging/deploy-xovi-apply.sh          统一跑一次 xovi/start，重注入上面落盘的全部内容
 # 装前先过固件安全门（sha256(/usr/bin/xochitl) 比对 firmware-allowlist.txt），避免在没验证
@@ -31,7 +33,7 @@
 #   · 没有对称的 uninstall-all.sh。
 #
 # 用法：./install-all.sh [host] [--force]
-#     [--skip chrony-cn,timezone-cn,battop,xovi-persist,hl-snap,handwriting-stroke,shelf,xovi-apply]
+#     [--skip chrony-cn,timezone-cn,battop,xovi-persist,hl-snap,handwriting-stroke,sidebar-entry,shelf,xovi-apply]
 #   host    默认 10.11.99.1（USB）
 #   --force 固件不在白名单也强装（会自动把当前哈希追加进 firmware-allowlist.txt）
 #   --skip  逗号分隔，跳过指定的安装步骤
@@ -99,9 +101,10 @@ run_step chrony-cn ./deploy-chrony-cn.sh
 run_step timezone-cn ./deploy-timezone-cn.sh
 run_step battop ./deploy-battop.sh
 run_step xovi-persist ./deploy-xovi-persist.sh
-export DEFER_XOVI_START=1   # hl-snap/handwriting-stroke 只落盘，不各自触发 xochitl 重启
+export DEFER_XOVI_START=1   # hl-snap/handwriting-stroke/sidebar-entry 只落盘，不各自触发 xochitl 重启
 run_step hl-snap ./deploy-hl-snap.sh
 run_step handwriting-stroke ./deploy-handwriting-stroke.sh
+run_step sidebar-entry ./deploy-sidebar-entry.sh
 unset DEFER_XOVI_START
 run_step shelf ./deploy.sh
 run_step xovi-apply ./deploy-xovi-apply.sh
@@ -116,6 +119,8 @@ echo "─── 不在本脚本范围内，需要手动处理 ───"
 echo "· vellum/xovi/qt-resource-rebuilder/appload 引导（若 xovi-persist/hl-snap/handwriting-stroke/"
 echo "    xovi-apply 因缺 xovi.so 失败）：设备上先跑 vellum add xovi qt-resource-rebuilder"
 echo "· KOReader：通过 appload 侧载，本脚本不代装"
+echo "· WeRead（可选第三方 app）：本脚本不代装，需要自己下载官方发行包 SSH 装；装了的话"
+echo "    sidebar-entry 这步会自动探测到、把 Sidebar 入口换成带 WeRead 的两项版本"
 echo "· 中文化（输入法/候选栏/UI 汉化）：这条链路目前只在 /home/afu/Projects/oldbak/chinese-ime/，"
 echo "    没有回到 git 版本控制，需要去那边手动编译 + 跑 deploy/install.sh"
 echo "· wifi-watch 常驻看护：这次没有一并恢复，见 README「已知缺口」"
