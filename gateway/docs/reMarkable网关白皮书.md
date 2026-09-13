@@ -158,6 +158,18 @@ systemd/gateway.service` 打进同一个部署包）代管，跟它代管 `../no
   `weread` 字段的真实布尔值没有登录态截图肉眼确认（没有网页密码），但探测路径
   `bin/start-remarkable-weread.sh` 已经用 `ls`/`cat` 直接核对过在设备上确实存在，逻辑由
   `foundation_probes_weread_alongside_koreader` 单测覆盖。
+  **追记（2026-09-13，同日）**：装完用户反馈"设备端 KOReader 下没有入口"——上面说的"不装
+  AppLoad 入口"是这份第三方发行包自己的保守判断（作者大概率不知道本项目已经用 PR#59 补丁把
+  AppLoad 在 3.28 上救活了，见），它其实**随包带了**
+  一份现成的 AppLoad 应用包（`~/.local/opt/remarkable-weread/appload/{external.manifest.json,
+  appload-launch.sh,icon.png}`，`appload-launch.sh` 注释原文就写"AppLoad 和 3.28 及以后的
+  无图标模式共用同一个持久启动入口"），只是装机脚本按 OS 版本判断跳过了"拷进 AppLoad 目录"这
+  一步。既然这台设备的 AppLoad 本来就是活的（`~/xovi/exthome/appload/koreader/` 现役），手动把
+  这份随包目录原样复制（不是软链，没把握 AppLoad 扫描器对符号链接目录的 `d_type` 处理方式，
+  用真文件更稳）到 `~/xovi/exthome/appload/weread/`，`xovi/start` 重扫后 xochitl 重启完成、
+  `xovi.so` 重新出现在其 `/proc/<pid>/maps`、`xochitl.service`/`gateway.service` 都
+  `active`——图标应该已经在设备侧边栏 KOReader 下方出现，但侧边栏本身长什么样只有肉眼能看，
+  这条最终还是要用户自己看设备确认。
 
 ## 05｜命名遗留 + 待办
 
