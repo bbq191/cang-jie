@@ -152,6 +152,7 @@
   "common.uploading": "Uploading…",
   "common.done": "done",
   "common.networkError": "network error",
+  "common.alreadyStaged": "already staged (same name & size) — skipped",
   "common.cjkCoverageTitle": "CJK basic-block coverage",
   "common.cjkCoverage": "CJK {pct}%",
   "common.loading": "Loading…",

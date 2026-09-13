@@ -232,6 +232,14 @@ systemd/gateway.service` 打进同一个部署包）代管，跟它代管 `../no
   xochitl 干净重启（非崩溃触发）→`remarkable-weread-app.service: Deactivated
   successfully`，全程零错误日志。至此从"Sidebar 点击启动"到"扫码登录"到"实际读书"到
   "干净退出回系统"整条链路端到端真机验证通过，不再只是"图标显示对了"这一层。
+- **母版库网页上传口补齐 CLI 同款"跳过已存在文件"保护（2026-09-13）**：Reddit 用户对
+  `shelf push` CLI 提的重跑重复问题修完后，用户追问网页 `uploader()`（`gateway/ui/app.js`）
+  是不是也有同一个坑——有，只是触发方式不同（同一页面会话内重传是安全的，刷新页面重新拖同一批
+  文件/手滑拖两次同一文件这两条路会撞上）。修法、真机+本机隔离浏览器端到端验证细节记在
+  `shelf/docs/reMarkable书架白皮书.md` §04（母版库/staging 概念本身归 shelf 线，这条只在这
+  记一笔指路，不重复整段）——包含改动点（`uploader()` 新增 `dedupeApi` 参数，只有母版库这个
+  调用点传）、新增 i18n key、以及验证过程里又踩了一次"本机冒烟忘 env -i"的老坑（及时发现清理，
+  没有污染宿主机真实数据）。
 
 ## 05｜命名遗留 + 待办
 

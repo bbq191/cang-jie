@@ -51,7 +51,7 @@ const cmdBlock=lines=>`<div class="cmdblock">${lines.map(l=>`<code>${l}</code>`)
 const upHtml=(icon,label,ext,btn)=>`<div class="up"><div class="drop"><span class="big">${icon}</span>${label}</div><input type="file" multiple hidden accept="${ext.join(',')}"><ul class="q"></ul><div class="row"><button class="btn pri go">${btn}</button></div></div>`;
 
 /* 通用上传器：逐文件一请求，进度条，逐项回执；失败项可重传，队列可逐项删/清空，顶部总进度。box=.up 容器 */
-function uploader(box,urlOf,queryOf,okExt,onFinish){
+function uploader(box,urlOf,queryOf,okExt,onFinish,dedupeApi){
   const list=$('ul.q',box), input=$('input[type=file]',box), drop=$('.drop',box), go=$('.go',box);
   let files=[], sum=null;
   const clr=document.createElement('button');clr.type='button';clr.className='btn';clr.textContent=T('common.clear');clr.onclick=()=>{files=[];render()};go.after(clr);
@@ -68,8 +68,15 @@ function uploader(box,urlOf,queryOf,okExt,onFinish){
   drop.ondrop=e=>{e.preventDefault();drop.classList.remove('hi');add(e.dataTransfer.files)};
   drop.onclick=()=>input.click();
   go.onclick=async()=>{go.disabled=true;clr.disabled=true;
+    // 母版库上传口传 dedupeApi（`/api/books/staging`）：先查一次现有条目，同名同大小＝上一轮已经
+    // 成功落地，跳过重传——不然 unique_path 同名不覆盖会把它再落一份 1_x（2026-09-13，跟 shelf
+    // push CLI 那次同一个 gap，见书架白皮书 §04；只有母版库这个上传口传这个参数，字体/壁纸/词典
+    // 那几个 uploader() 调用点不传，行为不变）。查询失败（网络/未登录）就当没查到，照常全部传。
+    let existing=null;
+    if(dedupeApi){try{const d=await j(dedupeApi);existing=new Set((d.items||[]).map(it=>it.name+'|'+it.bytes))}catch{existing=null}}
     for(const f of files){if(f.st==='ok'||f.rej)continue;          // 成功项跳过；格式不收项不上传；失败项允许重传
       const li=list.querySelector(`li[data-k="${f.k}"]`);if(!li)continue;const pg=$('progress',li),msg=$('.msg',li);
+      if(existing&&existing.has(f.file.name+'|'+f.file.size)){f.st='ok';li.className='ok';pg.value=100;f.msg=T('common.alreadyStaged');msg.textContent=f.msg;summary();continue}
       f.st='';li.className='';pg.value=0;msg.textContent=T('common.uploading');
       await new Promise(res=>{const x=new XMLHttpRequest();const q=queryOf();x.open('POST',urlOf()+(q?'?'+new URLSearchParams(q):''));
         x.upload.onprogress=e=>{if(e.lengthComputable)pg.value=e.loaded/e.total*100};
@@ -237,7 +244,7 @@ function renderTransfer(sec){sec.innerHTML=`
   g('stgpurge').onclick=async()=>{const done=items.filter(it=>it.delivered&&(it.delivered.native||it.delivered.koreader));if(!done.length){alert(T('transfer.staging.noneToPurge'));return}
     if(!confirm(T('transfer.staging.confirmPurge',{count:done.length})))return;
     for(const it of done)await postJ('/api/books/staging/delete',{name:it.name});refresh()};
-  uploader($('.up',sec),()=>'/api/books/staging',()=>({}),BOOK_EXT,()=>refresh());   // 书籍格式原样入库；选中即按 BOOK_EXT 拦
+  uploader($('.up',sec),()=>'/api/books/staging',()=>({}),BOOK_EXT,()=>refresh(),'/api/books/staging');   // 书籍格式原样入库；选中即按 BOOK_EXT 拦；传 dedupeApi 防重传出重复
   const am=g('artmsg'),au=g('arturl'),ag=g('artgo'),ao=g('artopt');
   // 「同步优化」记在本机（per-viewer 便利态，跟 folderPreset/optmode 那几个一个规矩）；缺省开——网文正文
   // 没有任何 CSS（article.rs 属性白名单本来就不留 class/style），不经优化会在设备上按默认段距渲染出大片
