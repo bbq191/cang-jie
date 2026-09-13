@@ -193,6 +193,28 @@ systemd/gateway.service` 打进同一个部署包）代管，跟它代管 `../no
   不认识这个 app"这一层就下结论，没有反向确认"隐藏了原生入口之后，新装的第三方 app 到底还有
   没有别的路能进沙盒外部启动"。详见 `oldbak/xovi-extensions/reading-qol/README.md`
   「koreader-sidebar-entry」条目 2026-09-13 追加说明。
+  **追记三（同日，两个后续问题）**：①用户问"退出 WeRead 每次都要 `xovi/start` 吗"——查真机
+  日志证实**不需要**：WeRead 自带的 `return-to-appload.sh` 退出钩子只是
+  `systemctl stop/start xochitl.service`（普通服务重启，不是设备断电重启），`/etc` 里
+  `xovi/start` 早先写好的 `00-xovi.conf` 这份 systemd drop-in 留在 tmpfs 里不受影响，
+  任何一次 xochitl 服务重启（不管谁触发的）都会重新吃到它——真机 `journalctl` 看到用户这次
+  登录/退出 WeRead 之后新 PID 照样自动 `Loading file koreader-sidebar-entry.qmd`+
+  `CJ-SIDEBAR[9]: WeRead`，`xovi.so` 也还在 maps 里。只有设备真的断电重启（tmpfs 清空）才
+  需要手动 `xovi/start`，这是老规矩，跟装 WeRead 无关。②用户问"退出 WeRead 有个重新加载的
+  读条，KOReader 没有，是 WeRead 自己的机制吗"——是的，两者架构不同：KOReader 的
+  `external.manifest.json` 是 `"qtfb": true`，走 appload 的 qtfb 桥显示，**xochitl 全程不停**，
+  切换零感知；WeRead 的清单是 `"qtfb": false` + `"disablesWindowedMode": true`，走独占物理
+  framebuffer 的"接管"模式（systemd 单元 `ExecStartPre` 直接 `mask`+`stop xochitl.service`），
+  退出时 `return-to-appload.sh` 要重新 `start xochitl.service`——那条读条就是 xochitl 真的被
+  完整重启一遍的正常现象，不是故障。③用户反馈图标"WR"两个字母看着比 KOReader 的"Ko"小一号、
+  W 看着没有大写——测量两张 alpha 蒙版图的字形包围盒实锤坐实了"看着小"是真的（Ko 高 87px、
+  WR 高仅 69px，同一张 192px 画布）；"W 没大写"是错觉，实际是大小写都对（W/R 都是大写）只是
+  显得局促。改成跟"Ko"同样"首字母大写+第二个字母小写"的 `We`（呼应 KOReader→Ko 的截取规则，
+  WeRead→We），重新量字号让高度对齐 Ko（前两字母 `We`，Noto Sans Bold 110px，包围盒
+  165×79，Ko 是 139×87，视觉重量基本打平，比硬凑 WR 两个大写字母挤边框更协调）。改的只是
+  `assets/we-icon.png`（原 `wr-icon.png` 删除）+ `cangjie-icons.qrc` 里那一行 `alias`，
+  QML 结构完全没动，不需要重新跑 qmldiff 离线管线，只重建 `.rcc`、备份旧的
+  （`.bak.pre-we-resize`）、部署、`systemctl restart xochitl` 确认 `active`/`NRestarts=0`。
 
 ## 05｜命名遗留 + 待办
 
