@@ -20,7 +20,14 @@ sh install-all.sh <host> --skip chrony-cn,timezone-cn,xovi-persist   # 跳过指
 1. **`vellum add xovi`**——xovi 本体（`hl-snap`/`handwriting-stroke`/`xovi-persist` 三步的硬前提）。
 2. **`vellum add qt-resource-rebuilder`**——`shelf` 里 `font`/`book` 的字体菜单、回收站/建夹代理，
    以及 `sidebar-entry` 这几个可选特性依赖它；缺了这些特性自动跳过，不阻塞其它安装。
-3. **`vellum add appload`**——第三方 App 加载器，KOReader 要通过它侧载。
+3. **`vellum add appload`**——第三方 App 加载器，KOReader 要通过它侧载；`sidebar-entry` 那步
+   靠它暴露的 `AppLoadLauncher` 单例发起启动，缺了自动跳过。**⚠ 3.28 固件官方发行版
+   appload v0.5.3 有兼容问题**——它自己内嵌的 qmd 钩的是 3.27 的旧 Sidebar/MainView 锚点，
+   3.28 已经改名，不打补丁会导致它自己的注入失败（症状：`AppLoadLauncher` 单例建不起来，
+   `sidebar-entry` 装的按钮点了没反应）。补丁工具（`appload_patch_328.py`）目前还在
+   `oldbak/xovi-extensions/reading-qol/tools/`，没有回到版本控制、不是 `install-all.sh` 能
+   代劳的一步——`sidebar-entry` 那步会读当前开机日志探测这个补丁生没生效，没生效就跳过而不是
+   装一个不会响应的按钮。
 4. **KOReader**（经 appload 侧载）——`shelf` 的 `koreader-serve` 只是管理/配置这个已装好的
    KOReader，不负责把 KOReader 本身装上去；`sidebar-entry` 那步的「KOReader」入口同理，点了
    没反应说明这一步没做。
@@ -46,7 +53,7 @@ sh install-all.sh <host> --skip chrony-cn,timezone-cn,xovi-persist   # 跳过指
 | 4 | `deploy-xovi-persist.sh` | xovi 开机持久化恢复链（`xovi-reenable.service`） | 设备已 `vellum add xovi`（`/home/root/xovi/start` 存在） |
 | 5 | `deploy-hl-snap.sh` | 荧光笔 CJK 精确吸附（独立最小 xovi 扩展）——只落盘，不重启 xochitl | 同上 |
 | 6 | `deploy-handwriting-stroke.sh` | CJK 手写笔迹渲染优化（独立最小 xovi 扩展）——只落盘，不重启 xochitl | 同上 |
-| 7 | `deploy-sidebar-entry.sh` | Sidebar 一级直达「KOReader」入口（装了 WeRead 就自动带上「WeRead」项）——只落盘，不重启 xochitl | 设备已 `vellum add qt-resource-rebuilder`；缺了自动跳过（exit 0），不阻塞 |
+| 7 | `deploy-sidebar-entry.sh` | Sidebar 一级直达「KOReader」入口（装了 WeRead 就自动带上「WeRead」项）——只落盘，不重启 xochitl | 设备已 `vellum add qt-resource-rebuilder` + `vellum add appload`（且 appload 在这台固件上验证过能正常挂载，见上面「前置条件」第 3 条）；任一条件不满足自动跳过（exit 0），不阻塞 |
 | 8 | `deploy.sh` | 网关 + book/koreader/font/wallpaper 四个领域服务 + 笔记线（ink/transcribe/mind/note） | 无（`font`/`book` 的回收站/建夹代理 qmd 这两个可选特性依赖 `qt-resource-rebuilder` 已存在，缺了自动跳过不阻塞） |
 | 9 | `deploy-xovi-apply.sh` | 统一跑一次 `xovi/start`，把第 5/6/7 步落盘的扩展/qmd + 第 8 步落盘的 qmd 一次性生效 | 同 4/5/6/7 |
 
@@ -115,7 +122,10 @@ md5 校验一致→`xovi/start`→`journalctl` 确认 `CJ-SIDEBAR[8]: KOReader`/
 WeRead`、`NRestarts=0`；② `DEFER_XOVI_START=1` 模式：同样的探测+推送+校验，最后打印"只落盘
 不跑 xovi/start"就退出，没有触发 xochitl 重启（人工核对期间 xochitl 进程没变化）。**没有真机
 验证过的**：qt-resource-rebuilder 缺失时的跳过分支（这台设备本来就装了它，没机会触发）、
-没装 WeRead 时退回单项 qmd 的分支（这台设备已经装了 WeRead，同样没机会触发，只审过代码逻辑）。
+没装 WeRead 时退回单项 qmd 的分支（这台设备已经装了 WeRead，同样没机会触发，只审过代码逻辑）；
+appload 缺失/appload 补丁未生效这两条跳过分支（这台设备两个条件都满足——appload 已装、
+journalctl 里能看到 `Loaded external AppLoad hooks in main UI`，同样没机会触发跳过分支，
+只审过代码逻辑，靠这次真机日志确认了"正面信号确实存在"这一半）。
 
 **`xovi-persist` 核心承诺——已用真机重启证实**：`packaging/xovi-reenable.service` 装完后，
 那台设备真的经历过一次整机重启（见下面"真机第一轮实测暴露的真坑"那条 watchdog+StartLimit
