@@ -170,6 +170,29 @@ systemd/gateway.service` 打进同一个部署包）代管，跟它代管 `../no
   `xovi.so` 重新出现在其 `/proc/<pid>/maps`、`xochitl.service`/`gateway.service` 都
   `active`——图标应该已经在设备侧边栏 KOReader 下方出现，但侧边栏本身长什么样只有肉眼能看，
   这条最终还是要用户自己看设备确认。
+  **追记二（2026-09-13，同日，真正根因）**：用户反馈"没出现"——上一条追记的判断是错的。
+  往 `~/xovi/exthome/appload/weread/` 补目录只解决了"AppLoad 自己认不认识这个外部 app"，不
+  解决"用户怎么点到它"：Sidebar 上原生真的有一个"AppLoad"二级菜单入口，AppLoad 扫到的新
+  app 本该出现在那个菜单里——但 `koreader-sidebar-entry.qmd`（本项目 2026-09-02 就写好、一直
+  部署到今天的 QMLDiff 补丁，代码不在这个 git 仓库、在 `oldbak/xovi-extensions/reading-qol/`，
+  仍是这台设备的现役 payload）**运行时把原生"AppLoad"那一级菜单项直接隐藏了**（`c.visible =
+  false`，为了把 KOReader 从二级菜单提到侧边栏一级直达）——这条路当时是死的，`~/xovi/exthome/
+  appload/weread/` 目录再对也没有入口能点进去。真正需要的是照同一套机制**再给 WeRead 也开一条
+  一级直达**：同一个 QMLDiff INSERT 块里紧跟 `cjKoreaderEntry` 后面加一个同构
+  `ArkControls.SidebarItem`（`id: cjWereadEntry`，`iconSource: qrc:/cangjie/icons/weread`，
+  `onClicked` 调 `CJAppLoad.AppLoadLauncher.launchApplication("external::weread", …)`），图标
+  换成 "WR" 字标（`assets/cangjie-icons.qrc` 从单图标扩成两图标，同一套 alpha 蒙版 + `rcc`
+  编译 + qt-resource-rebuilder `.rcc` 通道，见该目录 `README.md`）。**真机验证**：用真实
+  `xochitl` 3.28.0.172 二进制（`md5 952f1e28f…`，跟这条 qmd 头注记录的 `qml_00dcd9d7` blob
+  一致，同一个固件版本）离线跑通整条 `extract_qml→qmldiff apply-diffs` 管线，零解析错误、
+  产物结构正确（KOReader 项后紧跟 WeRead 项）；再备份设备上原 `.qmd`/`.rcc`（`.bak.pre-weread`
+  后缀）、部署新版、`systemctl restart xochitl` 后 `NRestarts=0`/`active`，
+  `journalctl` 里 `CJ-SIDEBAR[8]: KOReader`→`CJ-SIDEBAR[9]: WeRead` 顺序确认无误——这是
+  真机日志坐实的，不是猜的。**教训**：这条线索本该在第一次回复"应该已经出现"之前就想到——
+  `koreader-sidebar-entry.qmd` 的头注原文明确写着"隐藏 AppLoad 菜单项"，只检查了"appload 认
+  不认识这个 app"这一层就下结论，没有反向确认"隐藏了原生入口之后，新装的第三方 app 到底还有
+  没有别的路能进沙盒外部启动"。详见 `oldbak/xovi-extensions/reading-qol/README.md`
+  「koreader-sidebar-entry」条目 2026-09-13 追加说明。
 
 ## 05｜命名遗留 + 待办
 
