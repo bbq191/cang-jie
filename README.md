@@ -1,6 +1,6 @@
 # cang-jie
 
-**[English](README.en.md)**
+**[English](docs/README.en.md)**
 
 reMarkable Paper Pro Move 的设备增强套件——**不修改 xochitl（设备官方阅读应用）本体**，通过
 xovi 扩展 + 独立 Web 服务，给设备加上书籍管理、笔记增强、系统优化等一整套功能。
@@ -55,7 +55,7 @@ cd cang-jie/packaging
 sh install-all.sh 10.11.99.1
 ```
 
-完整的前置条件、分步说明、固件安全门、故障排查见 **[INSTALL.md](INSTALL.md)**。
+完整的前置条件、分步说明、固件安全门、故障排查见 **[INSTALL.md](docs/INSTALL.md)**。
 
 ## 历史与范围
 
@@ -70,7 +70,7 @@ sh install-all.sh 10.11.99.1
 ## 打赏
 
 如果这个项目帮到了你，欢迎请作者喝杯咖啡——纯自愿，打不打赏都不影响任何功能的使用。收款码、
-金额使用说明等详见独立页面 **[DONATE.md](DONATE.md)**。
+金额使用说明等详见独立页面 **[DONATE.md](docs/DONATE.md)**。
 
 ## 协议 / 免责
 

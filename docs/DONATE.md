@@ -1,12 +1,12 @@
 # 打赏
 
-**[English](DONATE.en.md)** · 返回 [README](README.md)
+**[English](DONATE.en.md)** · 返回 [README](../README.md)
 
 如果这个项目帮到了你，欢迎请作者喝杯咖啡——纯自愿，打不打赏都不影响任何功能的使用。
 
 <p align="center">
-  <img src="assets/sponsor-wechat.jpg" width="220" alt="微信赞赏码">&nbsp;&nbsp;&nbsp;&nbsp;
-  <img src="assets/sponsor-alipay.jpg" width="220" alt="支付宝赞赏码">
+  <img src="../assets/sponsor-wechat.jpg" width="220" alt="微信赞赏码">&nbsp;&nbsp;&nbsp;&nbsp;
+  <img src="../assets/sponsor-alipay.jpg" width="220" alt="支付宝赞赏码">
 </p>
 <p align="center">微信&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;支付宝</p>
 

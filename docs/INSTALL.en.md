@@ -1,6 +1,6 @@
 # Installation Guide
 
-**[中文](INSTALL.md)**
+**[中文](INSTALL.md)** · back to [README](README.en.md)
 
 ## Scope
 
@@ -46,6 +46,13 @@ warnings" further down):
    4. Sideload KOReader through appload
    5. (optional) Want the WeRead sidebar shortcut? Install and log into WeRead first, following
       its own official release instructions
+
+   ⚠ **Leave a gap of a few minutes between steps 3 and 5 — don't do them back-to-back** (see
+   risk ③): confirming the AppLoad icon may itself require restarting xochitl once, and WeRead
+   stops/starts xochitl once each on launch and on exit. Stacking several restarts in a short
+   window has, on real hardware, actually tripped the crash-loop protection and triggered an
+   unplanned full device reboot (2026-09-11). Wait until step 3 shows `is-active`=active and
+   stable for a few minutes before doing step 5.
 3. **Run `install-all.sh`** (no `--skip`, install everything at once):
    ```sh
    cd packaging && sh install-all.sh 10.11.99.1
@@ -147,7 +154,7 @@ Skippable step names: `chrony-cn`, `timezone-cn`, `battop`, `xovi-persist`, `hl-
   everything else is removed by hand with `systemctl disable --now <unit>`.
 
 For the full architectural decisions, every real-hardware pitfall found along the way, and the
-current verification status, see [`packaging/README.md`](packaging/README.md) — that document is
+current verification status, see [`packaging/README.md`](../packaging/README.md) — that document is
 aimed at engineering detail; this one is meant as a quick-start guide for a first install.
 
 ## Risk warnings: which modules are prone to trouble
@@ -171,16 +178,22 @@ conditions. Knowing about them ahead of time saves a lot of guessing later.
    several seemingly-unrelated features missing at once, easy to suspect something actually
    failed; in reality they're all the same root cause, and `install-all.sh`'s summary marks each
    one "skipped", not "failed".
-③ **Running several xovi-extension deploy scripts by hand, one at a time, risks tripping the
-   device's crash-loop protection into an unplanned full reboot.** `hl-snap`,
-   `handwriting-stroke`, and `sidebar-entry`, when run standalone (not through
-   `install-all.sh`), each run `xovi/start` (a full xochitl restart) on their own by default.
-   Restarting xochitl several times in quick succession can trip its built-in watchdog
-   protection — **this triggered one unplanned full device reboot during real-hardware testing**
-   (2026-09-11). `install-all.sh` already handles this correctly when orchestrating these steps
-   (stage everything first, run `xovi/start` exactly once at the end) — **this only matters if
-   you deliberately bypass `install-all.sh` and run these scripts one by one yourself** — leave
-   a few minutes between each rather than running them back-to-back.
+③ **Restarting/stopping-and-starting xochitl repeatedly in a short window risks tripping the
+   crash-loop protection — it doesn't matter who triggers it.** `xochitl.service` is currently
+   configured with `Restart=on-failure` and `StartLimitBurst=4` (within a 10-minute window),
+   and the trigger condition doesn't care *who* asked for the restart — this repository's own
+   deploy scripts (`hl-snap`/`handwriting-stroke`/`sidebar-entry`, when run standalone, not
+   through `install-all.sh`, each run `xovi/start` on their own), a third-party installer like
+   `vellum add appload` restarting things on its own, or an app like WeRead that takes over the
+   screen on launch and hands it back on exit (each stopping and starting xochitl once per
+   round-trip) — all count. **On real hardware, just two restarts in quick succession actually
+   tripped this and triggered one unplanned full device reboot** (2026-09-11, see the note
+   between steps 3 and 5 in "Recommended install order"). `install-all.sh` already handles this
+   correctly for its own steps (stage everything first, run `xovi/start` exactly once at the
+   end) — **this only needs your attention when you run deploy scripts by hand one at a time, or
+   go back and forth between third-party apps like appload/WeRead that restart xochitl on their
+   own** — leave a few minutes between each, confirm the previous restart settled into
+   `is-active`=active, before doing the next thing. Don't stack them back-to-back.
 ④ **The firmware safety gate refusing to install isn't a bug — it's working as designed. Verify
    before you `--force`.** Features like the font menu and the trash/new-folder proxy rely on
    byte-level QML injection offsets — a matching version string doesn't guarantee the internal
@@ -207,7 +220,7 @@ cd packaging && sh install-all.sh 10.11.99.1
 
 to restore everything — every script is designed to be idempotent, so running it again is
 never harmful. For a more detailed table of exactly what OTA affects, see
-[`shelf/README.md`](shelf/README.md) (Chinese), section "固件升级（OTA）与恢复".
+[`shelf/README.md`](../shelf/README.md) (Chinese), section "固件升级（OTA）与恢复".
 
 ## Running into trouble
 
