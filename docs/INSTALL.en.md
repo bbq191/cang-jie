@@ -163,14 +163,25 @@ These aren't "random low-probability glitches" — they're known issues with cle
 conditions. Knowing about them ahead of time saves a lot of guessing later.
 
 ① **The official AppLoad release (v0.5.3) has a compatibility issue on 3.28 firmware, and it
-   fails silently.** AppLoad's own built-in injection patch targets 3.27's old UI anchors, which
-   were renamed in 3.28 — without a third-party compatibility patch, the launcher component
-   AppLoad injects into the UI never gets built. **Symptom**: the `sidebar-entry` step detects
-   this automatically and skips (not an error, not a failed install) — the sidebar simply won't
-   show a KOReader/WeRead entry, which is easy to mistake for "this feature was never built".
-   **How to tell if you hit this**: check whether `install-all.sh`'s summary lists
-   `sidebar-entry` as "installed" or "skipped"; if skipped and you actually need the shortcut,
-   see the fix pointer under item 3 of "Before you install" in `packaging/README.md`.
+   fails silently — but it won't fail to install, won't stop xochitl from starting, and won't
+   brick the device.** AppLoad's own built-in injection patch targets 3.27's old UI anchors,
+   which were renamed in 3.28 — without a third-party compatibility patch, the launcher
+   component AppLoad injects into the UI never gets built, and `journalctl` logs a qmldiff-level
+   "Couldn't resolve the hashed identifier". **This has actually happened on this exact
+   device's history** (2026-09-06, when the unpatched original v0.5.3 was installed):
+   **`vellum add appload` itself installed successfully** (a plain file-level install that
+   doesn't check firmware version), **and xochitl started and worked normally** — the only
+   observable symptom was the AppLoad icon never showing up / not being clickable. That's "one
+   feature didn't take effect", not "failed to restart" and definitely not "bricked the
+   device". The kind of issue that actually can brick a device or prevent it from booting
+   (breaking xochitl's systemd startup dependencies into a deadlock) is a completely different
+   category of accident from a missing QML anchor — the two mechanisms don't interact.
+   **Symptom**: the `sidebar-entry` step detects this automatically and skips (not an error, not
+   a failed install) — the sidebar simply won't show a KOReader/WeRead entry, which is easy to
+   mistake for "this feature was never built". **How to tell if you hit this**: check whether
+   `install-all.sh`'s summary lists `sidebar-entry` as "installed" or "skipped"; if skipped and
+   you actually need the shortcut, see the fix pointer under item 3 of "Before you install" in
+   `packaging/README.md`.
 ② **Missing `qt-resource-rebuilder` silently disables several unrelated-looking features at
    once, easy to mistake for a broken install.** The font-menu enhancement, the trash/new-folder
    web proxy, and the Sidebar entry — three otherwise-unrelated features — all share the same
@@ -188,7 +199,12 @@ conditions. Knowing about them ahead of time saves a lot of guessing later.
    screen on launch and hands it back on exit (each stopping and starting xochitl once per
    round-trip) — all count. **On real hardware, just two restarts in quick succession actually
    tripped this and triggered one unplanned full device reboot** (2026-09-11, see the note
-   between steps 3 and 5 in "Recommended install order"). `install-all.sh` already handles this
+   between steps 3 and 5 in "Recommended install order") — **and that reboot was just the device
+   rebooting and coming back up fine, not a brick**: `uptime` showed a clean boot afterward, and
+   it incidentally exercised the `xovi-persist` boot-recovery unit installed earlier in the same
+   run (see "Verification status" in `packaging/README.md`) with no lasting side effects — purely
+   a few extra minutes of waiting, not lost data or a damaged device. `install-all.sh` already
+   handles this
    correctly for its own steps (stage everything first, run `xovi/start` exactly once at the
    end) — **this only needs your attention when you run deploy scripts by hand one at a time, or
    go back and forth between third-party apps like appload/WeRead that restart xochitl on their
