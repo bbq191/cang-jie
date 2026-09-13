@@ -225,6 +225,13 @@ systemd/gateway.service` 打进同一个部署包）代管，跟它代管 `../no
   最终还是靠用户肉眼确认收尾，没有留下截图——工具拿不到证据时老实说拿不到，不假装/不硬凑。
   这个"内置 screenshot 脚本在这固件上会崩 xochitl"的坑记进了本机项目记忆
   `screenshot-sigusr2-crashes-xochitl`，以后别再走这条路。
+  **追记五（同日，全链路真机通）**：用户报告"扫码登录后使用正常，退出后回到系统正常"，
+  查 `journalctl -u remarkable-weread-app.service` 完整时间线核实：启动→扫码登录成功→
+  书架加载（18 本书）→进阅读器、下载并自动缓存全部章节→切换两次阅读字体+翻章节→
+  `AppController::exitApp: showing notice, will restore xochitl`→e-ink 面板正常关闭→
+  xochitl 干净重启（非崩溃触发）→`remarkable-weread-app.service: Deactivated
+  successfully`，全程零错误日志。至此从"Sidebar 点击启动"到"扫码登录"到"实际读书"到
+  "干净退出回系统"整条链路端到端真机验证通过，不再只是"图标显示对了"这一层。
 
 ## 05｜命名遗留 + 待办
 
