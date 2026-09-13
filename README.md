@@ -33,6 +33,18 @@ xochitl 或 KOReader）；荧光笔勾画配合手写批注，自动转写成 AI
 | [`defw/`](defw/) 固件逆向 | xochitl 3.28.0.172 的 Ghidra 逆向工程产物，支撑上面几个 xovi 扩展的 hook 定位 | [README](defw/README.md) |
 | [`packaging/`](packaging/) 安装器 | 全新设备一条命令装完以上全部（含固件兼容性校验） | [README](packaging/README.md) |
 
+## 近期更新
+
+只记实际新增的功能/能力，不是完整 commit 日志；每条改动的详细踩坑记录见对应项目线的白皮书。
+
+| 日期 | 新增 |
+|---|---|
+| 2026-09-13 | Sidebar 侧边栏一级直达「KOReader」入口；装了第三方 WeRead app 会自动检测到、多加一项「WeRead」——两者都接入 `packaging/`，可随 `install-all.sh` 重复部署 |
+| 2026-09-13 | 网关「引导·基石」页新增 WeRead 装机状态探测（跟 KOReader 一样只读检测装没装） |
+| 2026-09-11 | `packaging/install-all.sh`：全新设备一条命令装完全部功能，含固件安全门（sha256 比对，不匹配默认拒装） |
+| 2026-09-11 | 新增 xovi 开机持久化恢复链（重启后自动补 `xovi/start`）、国内 NTP、默认时区三项系统级配置 |
+| 2026-09-11 | 顶层 README/INSTALL 中英双语文档、打赏渠道上线 |
+
 ## 快速开始
 
 只支持 **reMarkable Paper Pro Move，固件 3.28.0.172**（目前唯一验证过的版本）。
@@ -57,19 +69,8 @@ sh install-all.sh 10.11.99.1
 
 ## 打赏
 
-如果这个项目帮到了你，欢迎请作者喝杯咖啡——纯自愿，打不打赏都不影响任何功能的使用。
-
-<p align="center">
-  <img src="assets/sponsor-wechat.jpg" width="220" alt="微信赞赏码">&nbsp;&nbsp;&nbsp;&nbsp;
-  <img src="assets/sponsor-alipay.jpg" width="220" alt="支付宝赞赏码">
-</p>
-<p align="center">微信&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;支付宝</p>
-
-> **重要提醒**
-> - 上述两个收款账户是本项目**唯二正式受捐账户**，无任何售卖渠道，本项目开源免费使用。若你
->   发现本页面展示的账户信息/二维码与实际收款方不符，请立刻举报，必要时可协助相关司法机关调查。
-> - 打赏捐助款项一经转账，**恕不退还**，请慎重决定；未成年人请先取得法定监护人许可后再行捐助。
-> - 打赏捐助费用的使用解释权归作者本人（BBQ191）所有，不接受任何形式的监督。
+如果这个项目帮到了你，欢迎请作者喝杯咖啡——纯自愿，打不打赏都不影响任何功能的使用。收款码、
+金额使用说明等详见独立页面 **[DONATE.md](DONATE.md)**。
 
 ## 协议 / 免责
 
