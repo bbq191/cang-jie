@@ -51,6 +51,28 @@ each change lives in the corresponding project line's whitepaper (Chinese only).
 | 2026-09-11 | Added xovi boot-persistence (auto re-runs `xovi/start` after a reboot), domestic NTP, and a default timezone — three system-level config steps |
 | 2026-09-11 | Top-level bilingual README/INSTALL docs and a donation channel went live |
 
+## Known issues, not yet fixed
+
+Found but not yet acted on, in discovery order; the full investigation is in
+`shelf/docs/reMarkable书架白皮书.md` §04 (Chinese only).
+
+- **A scanned-comic PDF pushed through `shelf push` fails outright.** `comic.is_comic()` is
+  designed to never check `.pdf` at all (it only recognizes CBZ / the PalmDB family / EPUB), so
+  these books (a common shape for downloads from sources like Anna's Archive) only ever go
+  through the text-reflow path built for papers/magazines — and when the host doesn't have
+  `k2pdfopt` installed (deliberately not bundled, and this project provides no install
+  instructions for it), that path errors out rather than silently degrading. `shelf push
+  --no-reflow` works around it today by passing the file through as-is; whether `.pdf` should
+  eventually be routed into the comic/CBZ pipeline is still undecided (found 2026-09-13; the
+  user explicitly asked to leave this alone for now).
+- **The staging "skip already-uploaded files" protection only saves upload bandwidth, not
+  host-side processing time.** The dedup check runs after processing, right before upload — so
+  re-running a push for a large book that already succeeded re-runs the expensive Calibre /
+  PDF-reflow processing in full before discovering it should be skipped. Moving the check
+  earlier would require the server to record an "original input size/hash" per staging entry and
+  a matching change to the upload protocol; that hasn't been built yet (found 2026-09-13; the
+  user explicitly asked to just record the finding for now).
+
 ## Quick start
 
 Only supports the **reMarkable Paper Pro Move on firmware 3.28.0.172** (the only version
