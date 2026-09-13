@@ -24,6 +24,7 @@ class FakeGateway(BaseHTTPRequestHandler):
     ]
     received: list = []
     must_change = False
+    staging_items: list = []  # 测过 push 重跑跳过已存在文件（同名同大小）后须手动清回 []，见 test_push.py
 
     def _json(self, code, obj):
         b = json.dumps(obj).encode()
@@ -48,6 +49,8 @@ class FakeGateway(BaseHTTPRequestHandler):
             return self._json(200, {"ok": True, "service": "font-serve", "version": "0.1.0"})
         if self.path == "/api/books/inbox":
             return self._json(200, {"items": [{"name": "bad.epub", "state": "failed", "bytes": 12, "reason": "质量门未过：双 id"}]})
+        if self.path == "/api/books/staging":
+            return self._json(200, {"items": self.staging_items, "freeBytes": 999999999})
         return self._json(404, {"ok": False, "message": "not found"})
 
     def do_POST(self):
