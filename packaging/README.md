@@ -18,17 +18,24 @@ sh install-all.sh <host> --skip chrony-cn,timezone-cn,xovi-persist   # 跳过指
 **不会**帮你装，缺了会在对应步骤报清楚的错误：
 
 1. **`vellum add xovi`**——xovi 本体（`hl-snap`/`handwriting-stroke`/`xovi-persist` 三步的硬前提）。
-2. **`vellum add qt-resource-rebuilder`**——`shelf` 里 `font`/`book` 的字体菜单、回收站/建夹代理这
-   几个可选特性依赖它；缺了这两个特性自动跳过，不阻塞其它安装。
+2. **`vellum add qt-resource-rebuilder`**——`shelf` 里 `font`/`book` 的字体菜单、回收站/建夹代理，
+   以及 `sidebar-entry` 这几个可选特性依赖它；缺了这些特性自动跳过，不阻塞其它安装。
 3. **`vellum add appload`**——第三方 App 加载器，KOReader 要通过它侧载。
 4. **KOReader**（经 appload 侧载）——`shelf` 的 `koreader-serve` 只是管理/配置这个已装好的
-   KOReader，不负责把 KOReader 本身装上去。
+   KOReader，不负责把 KOReader 本身装上去；`sidebar-entry` 那步的「KOReader」入口同理，点了
+   没反应说明这一步没做。
 
 装好以上四样、再跑 `install-all.sh`，才是完整的"全新设备"安装顺序。
 
+**可选、不算前置条件**：**WeRead**（第三方 reMarkable 版微信读书 app，见
+）——不是这个仓库能装的东西，要装得自己下载官方发行
+包 SSH 装；`sidebar-entry` 那步会自动探测这台设备装没装，装了就把 Sidebar 入口换成
+「KOReader + WeRead」两项版本，没装就只有「KOReader」一项，不会因为没装 WeRead 而报错或跳过
+整步。
+
 ## 装什么、按什么顺序
 
-`install-all.sh` 只编排，不重新实现任何构建/传输逻辑——先过固件安全门，再依次调用八个
+`install-all.sh` 只编排，不重新实现任何构建/传输逻辑——先过固件安全门，再依次调用九个
 各自独立可用的部署脚本：
 
 | 顺序 | 脚本 | 装什么 | 前置 |
@@ -39,20 +46,23 @@ sh install-all.sh <host> --skip chrony-cn,timezone-cn,xovi-persist   # 跳过指
 | 4 | `deploy-xovi-persist.sh` | xovi 开机持久化恢复链（`xovi-reenable.service`） | 设备已 `vellum add xovi`（`/home/root/xovi/start` 存在） |
 | 5 | `deploy-hl-snap.sh` | 荧光笔 CJK 精确吸附（独立最小 xovi 扩展）——只落盘，不重启 xochitl | 同上 |
 | 6 | `deploy-handwriting-stroke.sh` | CJK 手写笔迹渲染优化（独立最小 xovi 扩展）——只落盘，不重启 xochitl | 同上 |
-| 7 | `deploy.sh` | 网关 + book/koreader/font/wallpaper 四个领域服务 + 笔记线（ink/transcribe/mind/note） | 无（`font`/`book` 的回收站/建夹代理 qmd 这两个可选特性依赖 `qt-resource-rebuilder` 已存在，缺了自动跳过不阻塞） |
-| 8 | `deploy-xovi-apply.sh` | 统一跑一次 `xovi/start`，把第 5/6 步落盘的扩展 + 第 7 步落盘的 qmd 一次性生效 | 同 4/5/6 |
+| 7 | `deploy-sidebar-entry.sh` | Sidebar 一级直达「KOReader」入口（装了 WeRead 就自动带上「WeRead」项）——只落盘，不重启 xochitl | 设备已 `vellum add qt-resource-rebuilder`；缺了自动跳过（exit 0），不阻塞 |
+| 8 | `deploy.sh` | 网关 + book/koreader/font/wallpaper 四个领域服务 + 笔记线（ink/transcribe/mind/note） | 无（`font`/`book` 的回收站/建夹代理 qmd 这两个可选特性依赖 `qt-resource-rebuilder` 已存在，缺了自动跳过不阻塞） |
+| 9 | `deploy-xovi-apply.sh` | 统一跑一次 `xovi/start`，把第 5/6/7 步落盘的扩展/qmd + 第 8 步落盘的 qmd 一次性生效 | 同 4/5/6/7 |
 
-**为什么第 5/6 步"只落盘不重启"、单独挪出第 8 步统一跑一次 `xovi/start`**：`xovi/start`
+**为什么第 5/6/7 步"只落盘不重启"、单独挪出第 9 步统一跑一次 `xovi/start`**：`xovi/start`
 是全量重启 xochitl、重新扫描注入 `extensions.d/` 全部内容，没有"只重载一个扩展"的机制——
 hl-snap、handwriting-stroke 各自的设备端 `install.sh` 原本都会各自跑一次 `xovi/start`；
 真机验证过这样连续跑两次短时间内重启 xochitl 两次，撞上了 xochitl 自带的
-watchdog+StartLimit，触发过一次意外整机重启（2026-09-11）。`install-all.sh` 给这两步传
-`DEFER_XOVI_START=1`（对应设备端 `install.sh --no-restart`）让它们只落盘、不各自重启，
-全部落盘完在最后一步统一跑一次。单独跑 `deploy-hl-snap.sh`/`deploy-handwriting-stroke.sh`
-（不设这个环境变量）行为不变——落盘后立即跑 `xovi/start` 并做健康检查。
+watchdog+StartLimit，触发过一次意外整机重启（2026-09-11）。`install-all.sh` 给这三步传
+`DEFER_XOVI_START=1`（`deploy-sidebar-entry.sh` 直接认这个环境变量，`deploy-hl-snap.sh`/
+`deploy-handwriting-stroke.sh` 对应设备端 `install.sh --no-restart`）让它们只落盘、不各自
+重启，全部落盘完在最后一步统一跑一次。单独跑
+`deploy-hl-snap.sh`/`deploy-handwriting-stroke.sh`/`deploy-sidebar-entry.sh`（不设这个环境
+变量）行为不变——落盘后立即跑 `xovi/start` 并做健康检查。
 
-八个脚本都可以单独跑（`sh deploy-battop.sh <host>` 等），不依赖 `install-all.sh`——它只是把
-八步串起来 + 加一层固件门 + 汇总结果。任何一步失败：打印清楚是哪一步、原始错误，**不自动
+九个脚本都可以单独跑（`sh deploy-battop.sh <host>` 等），不依赖 `install-all.sh`——它只是把
+九步串起来 + 加一层固件门 + 汇总结果。任何一步失败：打印清楚是哪一步、原始错误，**不自动
 重试、不静默跳过**，退出非零。
 
 ## 固件安全门
@@ -97,7 +107,15 @@ qmd/hook 偏移错了轻则功能不生效重则设备行为异常）；确认�
 **真机验证过、确认能跑通的部分**：固件安全门（3.28.0.172 真机 sha256 命中白名单）；
 `deploy-hl-snap.sh`/`deploy-handwriting-stroke.sh` 两步整个流程（构建→推送→设备端安装→
 `journalctl` 确认 hook 已加载、`is-active`=active、`NRestarts`=0）；`install-all.sh` 整个
-八步全部跑通（用户 2026-09-11 确认"已成功安装"）。
+八步全部跑通（用户 2026-09-11 确认"已成功安装"，当时还没有 `sidebar-entry` 这步）。
+`deploy-sidebar-entry.sh`（2026-09-13 新写，从 §「明确不做的事」上一版遗留的空白里补上）：
+独立跑过两条路径都真机通过——① 默认模式（这台设备当时已装 WeRead）：探测到
+`qt-resource-rebuilder` 存在→探测到 WeRead 已装→选中两项版 qmd→本地 `rcc` 编译→推送→
+md5 校验一致→`xovi/start`→`journalctl` 确认 `CJ-SIDEBAR[8]: KOReader`/`CJ-SIDEBAR[9]:
+WeRead`、`NRestarts=0`；② `DEFER_XOVI_START=1` 模式：同样的探测+推送+校验，最后打印"只落盘
+不跑 xovi/start"就退出，没有触发 xochitl 重启（人工核对期间 xochitl 进程没变化）。**没有真机
+验证过的**：qt-resource-rebuilder 缺失时的跳过分支（这台设备本来就装了它，没机会触发）、
+没装 WeRead 时退回单项 qmd 的分支（这台设备已经装了 WeRead，同样没机会触发，只审过代码逻辑）。
 
 **`xovi-persist` 核心承诺——已用真机重启证实**：`packaging/xovi-reenable.service` 装完后，
 那台设备真的经历过一次整机重启（见下面"真机第一轮实测暴露的真坑"那条 watchdog+StartLimit
