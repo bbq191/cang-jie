@@ -38,6 +38,19 @@ Seven independent top-level project lines, each individually installable:
 | [`defw/`](defw/) — firmware reverse engineering | Ghidra reverse-engineering artifacts for `xochitl` 3.28.0.172, backing the hook locations used by the extensions above | [README](defw/README.md) |
 | [`packaging/`](packaging/) — installer | One command to install everything above on a fresh device (with firmware-compatibility checking) | [README](packaging/README.md) |
 
+## Recent updates
+
+Only actual new features/capabilities, not a full commit log; the detailed pitfall record for
+each change lives in the corresponding project line's whitepaper (Chinese only).
+
+| Date | Added |
+|---|---|
+| 2026-09-13 | A Sidebar shortcut straight to "KOReader"; if the third-party WeRead app is installed it's auto-detected and a "WeRead" entry appears too — both are wired into `packaging/`, repeatable via `install-all.sh` |
+| 2026-09-13 | The gateway's "Setup · foundation" page now also probes whether WeRead is installed (read-only, same as the KOReader check) |
+| 2026-09-11 | `packaging/install-all.sh`: one command installs everything on a fresh device, including a firmware safety gate (sha256 match required, refuses otherwise) |
+| 2026-09-11 | Added xovi boot-persistence (auto re-runs `xovi/start` after a reboot), domestic NTP, and a default timezone — three system-level config steps |
+| 2026-09-11 | Top-level bilingual README/INSTALL docs and a donation channel went live |
+
 ## Quick start
 
 Only supports the **reMarkable Paper Pro Move on firmware 3.28.0.172** (the only version
@@ -70,23 +83,8 @@ surface) than the earlier, more deeply invasive hook suite.
 ## Sponsor
 
 If this project has been useful to you, feel free to buy the author a coffee — entirely
-optional, and has no effect on any feature whether you do or don't.
-
-<p align="center">
-  <img src="assets/sponsor-wechat.jpg" width="220" alt="WeChat Pay QR code">&nbsp;&nbsp;&nbsp;&nbsp;
-  <img src="assets/sponsor-alipay.jpg" width="220" alt="Alipay QR code">
-</p>
-<p align="center">WeChat Pay&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;&emsp;Alipay</p>
-
-> **Please read before donating**
-> - The two accounts above are this project's **only two official donation accounts** — there
->   is no sales channel of any kind; the project itself is free and open-source. If the account
->   information or QR code shown elsewhere doesn't match what's on this page, report it
->   immediately, and cooperate with law enforcement if necessary.
-> - Donations are **non-refundable** once transferred — please decide carefully. Minors must
->   obtain consent from a legal guardian before donating.
-> - How donated funds are used is at the sole discretion of the author (BBQ191) and is not
->   subject to any form of oversight.
+optional, and has no effect on any feature whether you do or don't. QR codes and how the funds
+are used are on a separate page: **[DONATE.en.md](DONATE.en.md)**.
 
 ## License / disclaimer
 
