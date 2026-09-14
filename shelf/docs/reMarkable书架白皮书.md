@@ -857,7 +857,37 @@ figcaption{margin:0;padding:0;}
   文件的身份去查一遍这份记录，查到匹配就直接跳过整个处理+上传。这是要新加字段、改一点上传
   协议的功能，比 2026-09-13 那两处纯 bug fix（CLI push + 网页上传各自补的"同名同大小跳过重传"）
   量级大一截——服务端 `StagingEntry`/上传参数、CLI 处理前置检查都要跟着改。**用户明确说先记
-  发现，暂不动手**，留在这里等排期。
+  发现，暂不动手**，留在这里等排期。**已修（2026-09-14）**，就是按上面这条"真要做需要"的
+  方案落地：
+  - **服务端**：`sidecar::Delivered` 新增 `source: Option<SourceRef>` 字段（`SourceRef{name,
+    bytes}`）——不新开一个 sidecar 文件，复用现有 `.<name>.delivered` 这份，`serde default`
+    保证旧记录照读。`POST /staging`（`api.rs::staging_upload`）新增可选查询参数
+    `?srcName=&srcBytes=`，成功入库后调 `Staging::set_source()` 写进落地文件的 sidecar；
+    `GET /staging` 本来就把整份 `delivered` 序列化进 `StagingEntry`，不用改。没带这两个参数
+    的旧版本 CLI / 网页原样上传，`delivered` 里就没有 `source`，不受影响。
+  - **CLI**：`_staging_snapshot()` 现在返回两层集合——`staged`（原有那层，处理后产物
+    (name,bytes)）+ `sources`（新的这层，从每条 `delivered.source` 里抠出来的原始输入
+    (name,bytes)）。`run()` 探活+两层快照挪到循环最前面、处理任何一本书之前查（原来是"首本
+    处理完才探活"，见 `ensure_reachable` 头注记的取舍：`--wait` 场景下第一本不再能跟"等设备
+    醒"的时间重叠处理，换来命中 `sources` 的书完全不用处理——重跑一批大部分已成功的场景
+    通常设备已经在线，这个代价不影响它）；处理前先查 `(原始文件名, 原始字节数)` 在不在
+    `sources` 里，命中就直接打印"✓ 原始文件已处理过（同名同大小），跳过重新处理"整本跳过，
+    不命中才走原来的处理流程，上传时带上 `?srcName=&srcBytes=` 供服务端记录，供下一轮命中。
+  - **验证**：Rust 侧新增 `sidecar::tests::source_ref_roundtrips_alongside_other_fields`
+    单测 + 全部 18 个 book-serve 测试通过；Python 侧新增
+    `test_staging_snapshot_splits_processed_and_source_identity`（纯函数层）+
+    `test_push_skips_reprocessing_when_source_already_uploaded`（命中/不命中两个分支，用
+    `wash` 调用计数确认命中时处理步骤真的一次没跑）+ 修了因为上传 URL 现在多带查询参数而
+    炸的 14 个既有测试断言（原来精确比较 `"/api/books/staging"`，改成先 `.split("?")[0]`
+    再比较），全部 90 个 host 测试通过。**真机层面**：起了一个独立 `book-serve` 实例（`env -i`
+    隔离 XDG，跟这次前面验证 chrony/timezone 用的同一套隔离手法），直接对真实 Rust HTTP
+    栈 `curl -X POST ".../staging?srcName=原始.pdf&srcBytes=99999"` 上传，`GET /staging`
+    确认 `delivered.source` 字段精确回显（含中文文件名 URL 编解码正确），另传一份不带
+    这两个参数的验证 `delivered` 整个键都不出现（旧版本/网页上传不受影响）——这一段是真实
+    Rust 服务器，不是 Python 测试里的假网关。**没有验证到的**：没有经过真正的 `gateway`
+    反向代理 + HTTPS + 密码层跑完整的三跳（CLI→gateway→book-serve），这一段仍然只靠上面的
+    假网关集成测试覆盖，没有起真实 gateway 实例复测；也没有在真机上跑一次真实的
+    "重跑一批、命中 source 跳过处理"（本地 book-serve 验证的是 HTTP 层线路通，不是真机场景）。
 - **host CLI 默认端口三天前就该跟着改却漏了，`shelf push` 报"设备不可达"其实是连错端口，跟
   WiFi/USB 无关（2026-09-13，用户真机踩到）**：用户反馈"明明 WiFi 和有线都存在"却报设备不可达，
   真机排查：`curl https://10.11.99.1:8778/health` 连接失败（`HTTP 000`），`curl

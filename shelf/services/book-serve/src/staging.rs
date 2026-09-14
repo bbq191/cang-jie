@@ -228,6 +228,13 @@ impl Staging {
         sidecar::update(&p, |d| d.render = Some(rc))
     }
 
+    /// 记这份母版库文件是由哪个原始输入处理出来的（CLI push 上传时带 `?srcName=&srcBytes=` 才有，见
+    /// `sidecar::SourceRef` 文档）。书已从母版库删除 → Err，调用方（`staging_upload`）只记日志不阻断上传结果。
+    pub fn set_source(&self, name: &str, source: sidecar::SourceRef) -> Result<(), String> {
+        let p = self.existing(name)?;
+        sidecar::update(&p, |d| d.source = Some(source))
+    }
+
     /// 记一次落库：写 sidecar `.<name>.delivered`。
     pub fn mark_delivered(&self, name: &str, reader: Reader) -> Result<(), String> {
         let p = self.existing(name)?;
