@@ -127,13 +127,21 @@ WeRead`、`NRestarts=0`；② `DEFER_XOVI_START=1` 模式：同样的探测+推�
 真机验证通过**。两条检查都在做任何实际操作（本地 `rcc` 编译/`scp`/`xovi/start`）之前就
 `exit 0`，真机上临时把对应目录改名挪开（`mv .../qt-resource-rebuilder{,.testmove}` 等）、
 跑本脚本、确认打印跳过信息+`exit=0`+没有触发任何后续步骤、再把目录名改回来——全程可逆，
-没有碰 xochitl。**仍然没有真机验证过的**：没装 WeRead 时退回单项 qmd 的分支（这台设备
-已经装了 WeRead，要测得真的推一次单项版再推回两项版，各触发一次 xochitl 重启，项目史上
-短时间内连续重启撞过 StartLimit 触发过一次意外整机重启，这条暂不主动去测，等有理由需要
-真的验证这条路径时再做，做的话必须跟别的重启测试分开、间隔开）；appload 补丁未生效这条——
-检查的是"这次开机 journal 里有没有那行日志"，这是既成历史事实，没法在不重装 appload 的
-情况下伪造"没有"，逻辑只是一行 `grep -q`，复杂度低，靠代码审查，这次真机日志只确认了
-"正面信号确实存在"这一半。
+没有碰 xochitl。
+
+**2026-09-14 补验（有真实代价的分支）：没装 WeRead 时退回单项 qmd——已用真机验证通过**。
+这条不是跳过退出，是真的换一份 qmd 并重启一次 xochitl，测完还要测回去，一共两次真实重启：
+① 把 `/home/root/.local/opt/remarkable-weread` 整个目录改名挪开，跑本脚本——正确探测到
+"没装 WeRead"、选中 `sidebar-entry-koreader-only.qmd`，真实推送+重启，`journalctl` 按
+新 `MainPID` 过滤确认这次启动的 `CJ-SIDEBAR` 列表里**只有** `[8]: KOReader`、没有 WeRead
+那一项；② 把目录改回原名，再跑一次本脚本——正确探测回"装了 WeRead"、换回两项版，
+`journalctl` 按这次新 `MainPID` 过滤确认 `[8]: KOReader`+`[9]: WeRead` 都在，设备恢复到
+测试前的原始状态。两次重启都健康（`is-active=active`、`NRestarts=0`、`MainPID` 有变化），
+间隔约一分钟，没有连续触发到 StartLimit。
+
+**仍然没有真机验证过的**：appload 补丁未生效这条——检查的是"这次开机 journal 里有没有
+那行日志"，这是既成历史事实，没法在不重装 appload 的情况下伪造"没有"，逻辑只是一行
+`grep -q`，复杂度低，靠代码审查，这次真机日志只确认了"正面信号确实存在"这一半。
 
 **`xovi-persist` 核心承诺——已用真机重启证实**：`packaging/xovi-reenable.service` 装完后，
 那台设备真的经历过一次整机重启（见下面"真机第一轮实测暴露的真坑"那条 watchdog+StartLimit
