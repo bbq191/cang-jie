@@ -121,12 +121,19 @@ qmd/hook 偏移错了轻则功能不生效重则设备行为异常）；确认�
 `qt-resource-rebuilder` 存在→探测到 WeRead 已装→选中两项版 qmd→本地 `rcc` 编译→推送→
 md5 校验一致→`xovi/start`→`journalctl` 确认 `CJ-SIDEBAR[8]: KOReader`/`CJ-SIDEBAR[9]:
 WeRead`、`NRestarts=0`；② `DEFER_XOVI_START=1` 模式：同样的探测+推送+校验，最后打印"只落盘
-不跑 xovi/start"就退出，没有触发 xochitl 重启（人工核对期间 xochitl 进程没变化）。**没有真机
-验证过的**：qt-resource-rebuilder 缺失时的跳过分支（这台设备本来就装了它，没机会触发）、
-没装 WeRead 时退回单项 qmd 的分支（这台设备已经装了 WeRead，同样没机会触发，只审过代码逻辑）；
-appload 缺失/appload 补丁未生效这两条跳过分支（这台设备两个条件都满足——appload 已装、
-journalctl 里能看到 `Loaded external AppLoad hooks in main UI`，同样没机会触发跳过分支，
-只审过代码逻辑，靠这次真机日志确认了"正面信号确实存在"这一半）。
+不跑 xovi/start"就退出，没有触发 xochitl 重启（人工核对期间 xochitl 进程没变化）。
+
+**2026-09-14 补验（零风险分支）：qt-resource-rebuilder / appload 缺失这两条跳过分支——已用
+真机验证通过**。两条检查都在做任何实际操作（本地 `rcc` 编译/`scp`/`xovi/start`）之前就
+`exit 0`，真机上临时把对应目录改名挪开（`mv .../qt-resource-rebuilder{,.testmove}` 等）、
+跑本脚本、确认打印跳过信息+`exit=0`+没有触发任何后续步骤、再把目录名改回来——全程可逆，
+没有碰 xochitl。**仍然没有真机验证过的**：没装 WeRead 时退回单项 qmd 的分支（这台设备
+已经装了 WeRead，要测得真的推一次单项版再推回两项版，各触发一次 xochitl 重启，项目史上
+短时间内连续重启撞过 StartLimit 触发过一次意外整机重启，这条暂不主动去测，等有理由需要
+真的验证这条路径时再做，做的话必须跟别的重启测试分开、间隔开）；appload 补丁未生效这条——
+检查的是"这次开机 journal 里有没有那行日志"，这是既成历史事实，没法在不重装 appload 的
+情况下伪造"没有"，逻辑只是一行 `grep -q`，复杂度低，靠代码审查，这次真机日志只确认了
+"正面信号确实存在"这一半。
 
 **`xovi-persist` 核心承诺——已用真机重启证实**：`packaging/xovi-reenable.service` 装完后，
 那台设备真的经历过一次整机重启（见下面"真机第一轮实测暴露的真坑"那条 watchdog+StartLimit
@@ -165,8 +172,10 @@ disabled`——这不代表没生效，是"手写 `/usr/lib/systemd/system/multi
   google），改写持久化成立。
 - `timezone-cn.sh`：手动把 `/etc/localtime`（含底层）改回 `UTC`，跑本脚本——正确检测、改写、
   当场生效（`date` 立刻显示 CST）。重启设备后复核：`readlink /etc/localtime` 仍指向
-  `Asia/Shanghai`，持久化成立。`/usr/share/zoneinfo/Asia/Shanghai` 缺失时的优雅跳过分支仍然
-  零真机验证（这台设备本来就带这份 zoneinfo，没机会触发那个分支）。
+  `Asia/Shanghai`，持久化成立。**2026-09-14 补验**：`/usr/share/zoneinfo/Asia/Shanghai`
+  缺失时的优雅跳过分支——临时把这份 zoneinfo 文件改名挪开（remount rw）、跑 `timezone-cn.sh`，
+  确认打印"⚠ 设备镜像没有...跳过时区设置"+`exit=0`，没有动 `/etc/localtime`；随后改回原名、
+  确认 `readlink -f /etc/localtime` 恢复正常——全程可逆，真机验证通过。
 
 **同一轮意外发现的新现象，2026-09-14 当天追查到根因并修好（`chrony-boot-wakelock.service`，
 已加进第 2 步）**：重启后 `chrony-cn.sh` 写好的国内 NTP 服务器**配置本身没问题**（真机核对过
