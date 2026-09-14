@@ -42,22 +42,23 @@ sh install-all.sh <host> --skip chrony-cn,timezone-cn,xovi-persist   # 跳过指
 
 ## 装什么、按什么顺序
 
-`install-all.sh` 只编排，不重新实现任何构建/传输逻辑——先过固件安全门，再依次调用九个
+`install-all.sh` 只编排，不重新实现任何构建/传输逻辑——先过固件安全门，再依次调用十个
 各自独立可用的部署脚本：
 
 | 顺序 | 脚本 | 装什么 | 前置 |
 |---|---|---|---|
 | 1 | `deploy-chrony-cn.sh` | 国内 NTP（chrony 服务器换成阿里云/腾讯云等） | 无，跟 xovi/vellum 完全无关 |
-| 2 | `deploy-timezone-cn.sh` | 默认时区设为 Asia/Shanghai | 无，跟 xovi/vellum 完全无关；设备镜像缺 `/usr/share/zoneinfo/Asia/Shanghai` 时优雅跳过 |
-| 3 | `deploy-battop.sh` | 电池刺客（纯 Rust systemd 常驻采样服务） | 无，跟 xovi/vellum 完全无关 |
-| 4 | `deploy-xovi-persist.sh` | xovi 开机持久化恢复链（`xovi-reenable.service`） | 设备已 `vellum add xovi`（`/home/root/xovi/start` 存在） |
-| 5 | `deploy-hl-snap.sh` | 荧光笔 CJK 精确吸附（独立最小 xovi 扩展）——只落盘，不重启 xochitl | 同上 |
-| 6 | `deploy-handwriting-stroke.sh` | CJK 手写笔迹渲染优化（独立最小 xovi 扩展）——只落盘，不重启 xochitl | 同上 |
-| 7 | `deploy-sidebar-entry.sh` | Sidebar 一级直达「KOReader」入口（装了 WeRead 就自动带上「WeRead」项）——只落盘，不重启 xochitl | 设备已 `vellum add qt-resource-rebuilder` + `vellum add appload`（且 appload 在这台固件上验证过能正常挂载，见上面「前置条件」第 3 条）；任一条件不满足自动跳过（exit 0），不阻塞 |
-| 8 | `deploy.sh` | 网关 + book/koreader/font/wallpaper 四个领域服务 + 笔记线（ink/transcribe/mind/note） | 无（`font`/`book` 的回收站/建夹代理 qmd 这两个可选特性依赖 `qt-resource-rebuilder` 已存在，缺了自动跳过不阻塞） |
-| 9 | `deploy-xovi-apply.sh` | 统一跑一次 `xovi/start`，把第 5/6/7 步落盘的扩展/qmd + 第 8 步落盘的 qmd 一次性生效 | 同 4/5/6/7 |
+| 2 | `deploy-chrony-boot-wakelock.sh` | 开机头几十秒持一把 wakelock，防自动休眠打断 chronyd 首次校时（根因/为什么见「验证现状」章节） | 无，跟 xovi/vellum 完全无关；设备镜像缺 `/sys/power/wake_lock` 时优雅跳过 |
+| 3 | `deploy-timezone-cn.sh` | 默认时区设为 Asia/Shanghai | 无，跟 xovi/vellum 完全无关；设备镜像缺 `/usr/share/zoneinfo/Asia/Shanghai` 时优雅跳过 |
+| 4 | `deploy-battop.sh` | 电池刺客（纯 Rust systemd 常驻采样服务） | 无，跟 xovi/vellum 完全无关 |
+| 5 | `deploy-xovi-persist.sh` | xovi 开机持久化恢复链（`xovi-reenable.service`） | 设备已 `vellum add xovi`（`/home/root/xovi/start` 存在） |
+| 6 | `deploy-hl-snap.sh` | 荧光笔 CJK 精确吸附（独立最小 xovi 扩展）——只落盘，不重启 xochitl | 同上 |
+| 7 | `deploy-handwriting-stroke.sh` | CJK 手写笔迹渲染优化（独立最小 xovi 扩展）——只落盘，不重启 xochitl | 同上 |
+| 8 | `deploy-sidebar-entry.sh` | Sidebar 一级直达「KOReader」入口（装了 WeRead 就自动带上「WeRead」项）——只落盘，不重启 xochitl | 设备已 `vellum add qt-resource-rebuilder` + `vellum add appload`（且 appload 在这台固件上验证过能正常挂载，见上面「前置条件」第 3 条）；任一条件不满足自动跳过（exit 0），不阻塞 |
+| 9 | `deploy.sh` | 网关 + book/koreader/font/wallpaper 四个领域服务 + 笔记线（ink/transcribe/mind/note） | 无（`font`/`book` 的回收站/建夹代理 qmd 这两个可选特性依赖 `qt-resource-rebuilder` 已存在，缺了自动跳过不阻塞） |
+| 10 | `deploy-xovi-apply.sh` | 统一跑一次 `xovi/start`，把第 6/7/8 步落盘的扩展/qmd + 第 9 步落盘的 qmd 一次性生效 | 同 5/6/7/8 |
 
-**为什么第 5/6/7 步"只落盘不重启"、单独挪出第 9 步统一跑一次 `xovi/start`**：`xovi/start`
+**为什么第 6/7/8 步"只落盘不重启"、单独挪出第 10 步统一跑一次 `xovi/start`**：`xovi/start`
 是全量重启 xochitl、重新扫描注入 `extensions.d/` 全部内容，没有"只重载一个扩展"的机制——
 hl-snap、handwriting-stroke 各自的设备端 `install.sh` 原本都会各自跑一次 `xovi/start`；
 真机验证过这样连续跑两次短时间内重启 xochitl 两次，撞上了 xochitl 自带的
@@ -68,8 +69,8 @@ watchdog+StartLimit，触发过一次意外整机重启（2026-09-11）。`insta
 `deploy-hl-snap.sh`/`deploy-handwriting-stroke.sh`/`deploy-sidebar-entry.sh`（不设这个环境
 变量）行为不变——落盘后立即跑 `xovi/start` 并做健康检查。
 
-九个脚本都可以单独跑（`sh deploy-battop.sh <host>` 等），不依赖 `install-all.sh`——它只是把
-九步串起来 + 加一层固件门 + 汇总结果。任何一步失败：打印清楚是哪一步、原始错误，**不自动
+十个脚本都可以单独跑（`sh deploy-battop.sh <host>` 等），不依赖 `install-all.sh`——它只是把
+十步串起来 + 加一层固件门 + 汇总结果。任何一步失败：打印清楚是哪一步、原始错误，**不自动
 重试、不静默跳过**，退出非零。
 
 ## 固件安全门
@@ -167,22 +168,41 @@ disabled`——这不代表没生效，是"手写 `/usr/lib/systemd/system/multi
   `Asia/Shanghai`，持久化成立。`/usr/share/zoneinfo/Asia/Shanghai` 缺失时的优雅跳过分支仍然
   零真机验证（这台设备本来就带这份 zoneinfo，没机会触发那个分支）。
 
-**同一轮意外发现的新现象（设备原有 chronyd 配置的固有行为，跟这次两个新脚本的逻辑无关，
-不是这次改动引入的 bug，只是记录下来免得以后被这个假阳性误导）**：重启后 `chrony-cn.sh`
-写好的国内 NTP 服务器**配置本身没问题**（真机核对过 `date -u`/`hwclock -r` 跟宿主机 UTC
-时间分毫不差），但 `timedatectl` 的 `System clock synchronized` 标志在重启后卡在 `no`
-长达 10 分钟以上没有恢复。追查 `journalctl -u chronyd`：`chronyd` 选中源后打出
-`System clock wrong by 1.13 秒`，紧接着自己把这次修正误判成`Forward time jump detected!`
-从而判定该源不可信、`Can't synchronise: no selectable sources`，此后每轮重试间隔越拉越长
-（2m21s→3m19s→5m11s→5m04s，典型的失败退避）；手动 `systemctl restart chronyd` 复现了同样
-的模式（`System clock wrong by 1.13 秒` → 立刻 `Forward time jump detected!`）。也就是说
-**这是 chrony 自己"发现小误差要修正"和"发现有人动了系统钟就不信任这个源"两条内部逻辑打架**，
-跟 `chrony.conf` 写的是哪几台服务器、是不是这次新脚本改的无关（改配置前这台设备本来就是这份
-`rtcsync`+`makestep 1.0 3` 配置）。**实际影响**：设备时间本身是准的，只是 `timedatectl`/
-`chrony-cn.sh` 自己的 `synced()` 判断在刚重启后一段时间内会误报"未同步"——如果以后要用
-`chrony-cn.sh` 的退出码或 `timedatectl` 的输出去判断"这台设备时间对不对"，刚重启完那几分钟
-内的"未同步"不能当真。根治需要进一步研究 chrony 4.5 在这颗 i.MX93 板子上 `makestep`+
-`rtcsync` 的具体交互，这次没有深入到那一步，先如实记录现象，不改代码。
+**同一轮意外发现的新现象，2026-09-14 当天追查到根因并修好（`chrony-boot-wakelock.service`，
+已加进第 2 步）**：重启后 `chrony-cn.sh` 写好的国内 NTP 服务器**配置本身没问题**（真机核对过
+`date -u`/`hwclock -r` 跟宿主机 UTC 时间分毫不差），但 `timedatectl` 的 `System clock
+synchronized` 标志在重启后卡在 `no` 长达 10 分钟以上没有恢复。追查 `journalctl -u chronyd`：
+`chronyd` 选中源后打出 `System clock wrong by 1.13 秒`，紧接着 `Forward time jump
+detected!` → `Can't synchronise: no selectable sources`，此后每轮重试间隔越拉越长
+（2m21s→3m19s→5m11s→5m04s，典型失败退避）。
+
+**根因（查了 chrony 上游邮件列表 [chrony-users 2020-10 帖](https://listengine.tuxfamily.org/chrony.tuxfamily.org/chrony-users/2020/10/msg00019.html)，
+维护者 Miroslav Lichvar 原话确认这条消息的触发条件：系统钟被 chronyd 自己控制之外的东西
+"移动"了一下，chronyd 就会整个丢弃已有测量重新开始——常见场景正是笔记本挂起/唤醒）**：
+真机 `journalctl -k` 核对同一台设备同一次重启的内核日志，"Forward time jump detected!"
+第一次出现的时刻，跟内核 `PM: suspend entry (deep)` / `suspend exit` 完全对上——根因是
+reMarkable 官方 `remarkable-enable-slumber.service`（`After=xochitl.service`）开机后几十秒
+内就 `echo mem > /sys/power/autosleep` 打开自动休眠，这台设备离 USB/触屏几秒真的会挂起，
+`chronyd` 刚选中源、正准备 `makestep` 校正系统钟的这几十秒窗口一旦撞上这次挂起/唤醒，就被
+chrony 自己的连续性检查误判成"外部动了系统钟"，触发上面那条失败退避链。**不是** `chrony.conf`
+配错、也不是这次改的 NTP 服务器列表的问题（这台设备改配置前本来就是这份 `rtcsync`+
+`makestep 1.0 3` 配置，问题一直都在，只是这次才第一次在无人值守的重启后原样复现出来）。
+
+**修法**：新增 `packaging/chrony-boot-wakelock.service`（+ `deploy-chrony-boot-wakelock.sh`，
+已加进 `install-all.sh` 第 2 步）——不碰 `remarkable-enable-slumber.service` 本身（红线：改
+核心服务的启动依赖/时机推演有误就是真机变砖级别的事故），只加一个独立的新单元：开机后持一把
+标准 Linux wakelock（`/sys/power/wake_lock`），轮询 `timedatectl show -p NTPSynchronized`
+最多 120 秒、一旦同步立刻放锁退出；`Before=remarkable-enable-slumber.service`（纯排序声明，
+不是 `Requires=`）让自动休眠晚这几十秒才打开，不影响它最终生效。这个单元本身失败/超时/设备
+缺 `/sys/power/wake_lock` 都不会拖累 `remarkable-enable-slumber.service` 或任何其它单元——
+最坏情况退回没有这层保护之前的样子，不会引发级联故障。
+
+**真机验证（2026-09-14）**：部署后重启，`journalctl -u chronyd -b` 这次全程**零** "Forward
+time jump detected"；`cat /sys/power/wake_lock` 在 chronyd 完成首次同步前显示持锁中，同步
+达成后自动放锁（服务 34 秒内 `Deactivated successfully`，早于 120 秒上限提前退出）；
+`timedatectl` 显示 `System clock synchronized: yes`——从"卡 10+ 分钟"变成"重启后几十秒内
+同步"。另外确认 `remarkable-enable-slumber.service` 紧接着正常触发、`cat /sys/power/autosleep`
+仍是 `mem`——设备的自动休眠功能长期不受影响，只是这次开机延后了三十几秒才打开。
 
 **真机第一轮实测暴露的真坑（已修，且改动本身已经在后续真机跑通中间接验证过）**：
 - `timezone-cn.sh` 幂等分支（设备本来就已经是 Asia/Shanghai）打印"✅ 已是目标时区"却仍被

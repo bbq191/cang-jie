@@ -2,8 +2,10 @@
 # ═══════════════════════════════════════════════════════════════════════════
 # cang-jie 全新设备统一安装器（host 侧编排，2026-09-11 新写）。
 #
-# 只编排、不重新实现任何构建/传输逻辑——依次调用九个已经各自独立可用的部署脚本：
+# 只编排、不重新实现任何构建/传输逻辑——依次调用十个已经各自独立可用的部署脚本：
 #   packaging/deploy-chrony-cn.sh           国内 NTP（跟 xovi/vellum 无关）
+#   packaging/deploy-chrony-boot-wakelock.sh 开机头几十秒防自动休眠打断 chronyd 首次校时（跟
+#                                            xovi/vellum 无关；根因见该 .service 头注）
 #   packaging/deploy-timezone-cn.sh         默认时区 Asia/Shanghai（跟 xovi/vellum 无关）
 #   packaging/deploy-battop.sh              电池刺客（跟 xovi/vellum 无关）
 #   packaging/deploy-xovi-persist.sh        xovi 开机持久化恢复链（需要 vellum add xovi）
@@ -33,7 +35,7 @@
 #   · 没有对称的 uninstall-all.sh。
 #
 # 用法：./install-all.sh [host] [--force]
-#     [--skip chrony-cn,timezone-cn,battop,xovi-persist,hl-snap,handwriting-stroke,sidebar-entry,shelf,xovi-apply]
+#     [--skip chrony-cn,chrony-boot-wakelock,timezone-cn,battop,xovi-persist,hl-snap,handwriting-stroke,sidebar-entry,shelf,xovi-apply]
 #   host    默认 10.11.99.1（USB）
 #   --force 固件不在白名单也强装（会自动把当前哈希追加进 firmware-allowlist.txt）
 #   --skip  逗号分隔，跳过指定的安装步骤
@@ -98,6 +100,7 @@ run_step() {
 # /home/root/xovi/start 存在，跟 hl-snap/handwriting-stroke 同一前提，放一起）；shelf 最重；
 # xovi-apply 放最后，统一跑一次 xovi/start（见上面头注为什么不让每一步各自跑）。
 run_step chrony-cn ./deploy-chrony-cn.sh
+run_step chrony-boot-wakelock ./deploy-chrony-boot-wakelock.sh
 run_step timezone-cn ./deploy-timezone-cn.sh
 run_step battop ./deploy-battop.sh
 run_step xovi-persist ./deploy-xovi-persist.sh
