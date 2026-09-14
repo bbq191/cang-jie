@@ -149,19 +149,40 @@ disabled`——这不代表没生效，是"手写 `/usr/lib/systemd/system/multi
   修法：`shelf/install.sh` 的健康检查改成轮询（最多等 10 秒）。
 
 **离线验证过、后来经真机确认整体跑通、但没有单独逐项复核细节输出的部分**：
-- `deploy-chrony-cn.sh`：`chrony-cn.sh` 本体的 remount+bind 机制此前在旧版本（`oldbak/`）上
-  真机验证过，这次是重写，逻辑照抄未改；用户实测过第一轮跑到"rootfs 底层已是国内 NTP，跳过"
-  分支（幂等分支，`timedatectl` 确认 synchronized: yes、服务器是 ntp.aliyun.com），改动分支
-  （从非国内 NTP 状态第一次改写）还没见过真机输出。
-- `deploy-timezone-cn.sh`：真机实测跑过一次（这次改动前，触发了下面那条退出码 bug），确认
-  设备已经是 Asia/Shanghai 的幂等分支逻辑没问题（bug 只在退出码，不在改没改对）；`/usr/share/
-  zoneinfo/Asia/Shanghai` 缺失时的优雅跳过分支仍然零真机验证（这台设备本来就带这份 zoneinfo，
-  没机会触发那个分支）。
 - `deploy-xovi-apply.sh`：整体流程（`xovi/start` + 健康检查）已经随 `install-all.sh` 整轮
   真机跑通，但没有单独逐项核对过它自己打印的 hl-snap/hw-stroke 段数、NRestarts 这些细节
   输出，只知道整轮成功、xovi.so 确实加载了（见上面 xovi-persist 那条 `grep -c xovi.so`）。
 
 真要下"逐项都已验证"的结论，还需要用户后续贴出更细的单步输出再回来补充。
+
+**2026-09-14 补验：`chrony-cn.sh`/`timezone-cn.sh` 的改写分支 + 重启持久化——已用真机验证**。
+此前（2026-09-13）只验证过两者的幂等跳过分支，这次故意把设备状态改回非目标状态再验证"改写"
+这个动作本身：
+- `chrony-cn.sh`：手动把 `/etc/chrony.conf`（含 rootfs 底层）改成 `time1/2.google.com`，跑本脚本——
+  正确检测到不是国内配置、改写、重启 `chronyd`、当次打印 `✅ 时钟已同步`（源选中
+  `cn.pool.ntp.org`）。重启设备后复核：`/etc/chrony.conf` 仍是国内四个服务器（没有打回
+  google），改写持久化成立。
+- `timezone-cn.sh`：手动把 `/etc/localtime`（含底层）改回 `UTC`，跑本脚本——正确检测、改写、
+  当场生效（`date` 立刻显示 CST）。重启设备后复核：`readlink /etc/localtime` 仍指向
+  `Asia/Shanghai`，持久化成立。`/usr/share/zoneinfo/Asia/Shanghai` 缺失时的优雅跳过分支仍然
+  零真机验证（这台设备本来就带这份 zoneinfo，没机会触发那个分支）。
+
+**同一轮意外发现的新现象（设备原有 chronyd 配置的固有行为，跟这次两个新脚本的逻辑无关，
+不是这次改动引入的 bug，只是记录下来免得以后被这个假阳性误导）**：重启后 `chrony-cn.sh`
+写好的国内 NTP 服务器**配置本身没问题**（真机核对过 `date -u`/`hwclock -r` 跟宿主机 UTC
+时间分毫不差），但 `timedatectl` 的 `System clock synchronized` 标志在重启后卡在 `no`
+长达 10 分钟以上没有恢复。追查 `journalctl -u chronyd`：`chronyd` 选中源后打出
+`System clock wrong by 1.13 秒`，紧接着自己把这次修正误判成`Forward time jump detected!`
+从而判定该源不可信、`Can't synchronise: no selectable sources`，此后每轮重试间隔越拉越长
+（2m21s→3m19s→5m11s→5m04s，典型的失败退避）；手动 `systemctl restart chronyd` 复现了同样
+的模式（`System clock wrong by 1.13 秒` → 立刻 `Forward time jump detected!`）。也就是说
+**这是 chrony 自己"发现小误差要修正"和"发现有人动了系统钟就不信任这个源"两条内部逻辑打架**，
+跟 `chrony.conf` 写的是哪几台服务器、是不是这次新脚本改的无关（改配置前这台设备本来就是这份
+`rtcsync`+`makestep 1.0 3` 配置）。**实际影响**：设备时间本身是准的，只是 `timedatectl`/
+`chrony-cn.sh` 自己的 `synced()` 判断在刚重启后一段时间内会误报"未同步"——如果以后要用
+`chrony-cn.sh` 的退出码或 `timedatectl` 的输出去判断"这台设备时间对不对"，刚重启完那几分钟
+内的"未同步"不能当真。根治需要进一步研究 chrony 4.5 在这颗 i.MX93 板子上 `makestep`+
+`rtcsync` 的具体交互，这次没有深入到那一步，先如实记录现象，不改代码。
 
 **真机第一轮实测暴露的真坑（已修，且改动本身已经在后续真机跑通中间接验证过）**：
 - `timezone-cn.sh` 幂等分支（设备本来就已经是 Asia/Shanghai）打印"✅ 已是目标时区"却仍被
