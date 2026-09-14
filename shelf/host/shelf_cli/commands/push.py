@@ -9,7 +9,7 @@
   两条路径唯一共同点只是都在编译产物 `shelf/target/release/epub-optimize`。非 EPUB 输入没法只靠这条路径
   转格式，加了 `--no-calibre` 也一律原样传（等同 `--no-optimize` 的效果，母版库里再按需转/优化）。
 - `--to-pdf`：定稿成固定版式 PDF（手写批注用），落母版库。
-- **漫画**（AZW3/MOBI/EPUB 里全是整页图，`comic.is_comic` 自动判，`--comic/--no-comic` 覆盖；CBZ 天然）：不走洗书路，
+- **漫画**（AZW3/MOBI/EPUB/PDF 里全是整页图，`comic.is_comic` 自动判，`--comic/--no-comic` 覆盖；CBZ 天然）：不走洗书路，
   出 **CBZ**（原图按页打包，跨页图自动拆分+白边裁切）进母版库，去向 KOReader 漫画模式。大部头**漫画默认不投原生**
   （用户 2026-09-05 定）：xochitl 没有固定页漫画体验，且整本几百 MB 撞 `/upload` 体积上限（《镖人》282MB EPUB /
   188MB PDF 都被 "multipart body is too large" 拒）——**但灰阶 CBZ 估算转 PDF 后还在设备原生上传上限内的小体积

@@ -127,6 +127,18 @@ def _run_json(cmd: list[str], label: str, env_extra: dict | None = None) -> dict
         raise CalibreError(f"{label} 输出不可解析（{e}）：{r.stdout.strip()[-400:]}") from None
 
 
+def pdf_comic_stats(path: Path) -> tuple[int, float]:
+    """PDF 是否漫画的探针（pymupdf 子进程，见 `shelf/host/calibre/pdf_comic_probe.py`）：抽样统计
+    "有图且几乎无文字"的页占比。查询失败（没装 pymupdf 的 calibre 依赖组/PDF 损坏）返回
+    `(0, 0.0)`——`comic.is_comic()` 据此算出 False，不阻断推送，退回这次改动前的行为（PDF 一律
+    走文字书洗书路）。"""
+    try:
+        d = _run_json([*py_with_pymupdf(), str(CALIBRE_DIR / "pdf_comic_probe.py"), str(path)], "pdf_comic_probe.py")
+        return int(d.get("pages", 0)), float(d.get("ratio", 0.0))
+    except CalibreError:
+        return 0, 0.0
+
+
 def reflow_pdf(src: Path, outdir: Path) -> tuple[Path, str]:
     """PDF 重排（born-digital 结构化→EPUB / 扫描件 k2pdfopt|裁边→PDF）。返回 (产物路径, kind∈{'epub','pdf'})。"""
     d = _run_json([*py_with_pymupdf(), str(CALIBRE_DIR / "pdf_reflow_move.py"), str(src), str(outdir)], "pdf_reflow_move.py")

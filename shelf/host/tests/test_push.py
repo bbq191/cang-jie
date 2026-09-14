@@ -256,6 +256,31 @@ def test_comic_probe_palmdb_and_epub(tmp_path):
     assert comic.is_comic(tmp_path / "c.epub") and not comic.is_comic(tmp_path / "t.epub")
 
 
+def test_comic_probe_pdf(monkeypatch, tmp_path):
+    """PDF 分支（2026-09-14 补，真根因见书架白皮书 §04）：pdf_comic_stats 走 pymupdf 子进程，单测里
+    mock 掉不真的 spawn（CI 没装 calibre 依赖组），只验证 comic.py 自己的阈值判断逻辑。真实探针本身
+    的正确性已经拿用户真机报的扫描漫画 PDF（照明商店，2375 页、抽样 ratio=1.0）手动跑通验证过，见
+    commit message 与白皮书记录，不是靠这条单测背书。"""
+    pdf = tmp_path / "scan.pdf"
+    pdf.write_bytes(b"%PDF-1.4\n%mock content, pdf_comic_stats is fully mocked below")
+    monkeypatch.setattr(cb, "pdf_comic_stats", lambda p: (2375, 1.0))
+    assert comic.is_comic(pdf)
+    monkeypatch.setattr(cb, "pdf_comic_stats", lambda p: (5, 1.0))  # 页数不够 MIN_PAGES
+    assert not comic.is_comic(pdf)
+    monkeypatch.setattr(cb, "pdf_comic_stats", lambda p: (30, 0.3))  # 图片页占比不够（比如论文扫描件插了几张图）
+    assert not comic.is_comic(pdf)
+    # 非 PDF 头（含不存在的路径）：连子进程都不该 spawn，直接 False——这条也保证了
+    # test_comic_probe_palmdb_and_epub 里 `not comic.is_comic(tmp_path / "x.pdf")`（路径不存在）
+    # 不会真的去 spawn pymupdf 子进程拖慢/搞挂那条测试。
+    called = []
+    monkeypatch.setattr(cb, "pdf_comic_stats", lambda p: called.append(p) or (999, 1.0))
+    fake = tmp_path / "fake.pdf"
+    fake.write_bytes(b"not a pdf")
+    assert not comic.is_comic(fake)
+    assert not comic.is_comic(tmp_path / "missing.pdf")
+    assert not called, "非 PDF 头 / 不存在的路径不该 spawn 子进程去探测"
+
+
 def test_push_comic_route_lands_cbz_only(gateway, tmp_path, capsys, monkeypatch):
     """体积超原生上限（本测试直接让 cbz_to_pdf 失败模拟）时只出 CBZ 进母版库，不产 PDF。"""
     src = tmp_path / "manga.azw3"
