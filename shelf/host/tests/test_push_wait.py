@@ -53,7 +53,7 @@ def test_push_stops_before_upload_when_device_asleep(gateway, tmp_path, capsys, 
     monkeypatch.setattr(tr.HttpTransport, "reachable", lambda self, timeout=3.0: False)
     FakeGateway.received.clear()
     rc, out = run(["push", str(tmp_path / "a.epub"), str(tmp_path / "b.epub")], gateway, capsys)
-    assert rc == 2 and "点亮屏幕" in out and "未上传：a.epub, b.epub" in out
+    assert rc == 2 and "点亮屏幕" in out and "未处理：a.epub, b.epub" in out
     assert FakeGateway.received == [], "探活不通就不该碰上传接口"
 
 
@@ -66,7 +66,7 @@ def test_push_wait_then_uploads(gateway, tmp_path, capsys, monkeypatch):
     FakeGateway.received.clear()
     rc, out = run(["push", "--wait", "60", str(tmp_path / "a.epub")], gateway, capsys)
     assert rc == 0 and "设备醒了" in out and "✓" in out
-    assert FakeGateway.received[-1][0] == "/api/books/staging"
+    assert FakeGateway.received[-1][0].split("?")[0] == "/api/books/staging"
 
 
 def test_real_transport_reachable_against_fake_gateway(gateway):
