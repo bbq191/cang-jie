@@ -5,7 +5,7 @@ AARCH64_CC ?= aarch64-linux-gnu-gcc
 # 基础设施）。2026-09-11 起改为**剥离移植**（独立副本，不再路径引用 chinese-ime/
 # langhook/src——那边挪出仓库后不再适合当活跃路径依赖），见 ../shared/PROVENANCE.md。
 LANGHOOK_SRC_DIR = ../shared
-SHARED_SRC = $(LANGHOOK_SRC_DIR)/scan.c $(LANGHOOK_SRC_DIR)/pattern.c $(LANGHOOK_SRC_DIR)/trampoline_aarch64.c
+SHARED_SRC = $(LANGHOOK_SRC_DIR)/scan.c $(LANGHOOK_SRC_DIR)/pattern.c $(LANGHOOK_SRC_DIR)/trampoline_aarch64.c $(LANGHOOK_SRC_DIR)/trampoline_patch.c
 CFLAGS_COMMON = -std=gnu17 -Wall -Wextra -g -I$(LANGHOOK_SRC_DIR)
 
 .PHONY: aarch64 clean

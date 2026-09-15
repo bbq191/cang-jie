@@ -6,13 +6,13 @@
  * 逐字节照抄自 `chinese-ime/langhook/src/hook_init.c` 的 Step HL2 代码段（真机
  * 2026-08-23 验证过），不是重新发明。
  *
- * 复用 chinese-ime/langhook 已经模块化出来的三个纯工具文件（scan.c/pattern.c/
- * trampoline_aarch64.c——特征码扫描 + ARM64 远跳转 trampoline，本来就是跟"装的
- * 是哪个 hook"无关的通用基础设施，不是"老项目的业务逻辑"）；不复制、不修改，
- * 用相对路径引用，跟 shelf 的 bookconv 被 reading/device-rs 路径引用是同一个
- * 已有先例（"跨目录路径依赖可行"）。patch_target/make_call_through_stub 这两个
- * 通用 trampoline 安装函数本身很小（~60 行），逐字节复制过来，让这个扩展完全
- * 自包含、不依赖 chinese-ime/langhook 里任何跟 IME 相关的代码。
+ * 复用 enhance/shared/ 下的通用工具文件（scan.c/pattern.c/trampoline_aarch64.c——
+ * 特征码扫描 + ARM64 远跳转 trampoline，本来就是跟"装的是哪个 hook"无关的通用
+ * 基础设施，不是"老项目的业务逻辑"）。通用 trampoline 安装（cj_patch_target，
+ * 2026-09-15 前是 patch_target/make_call_through_stub 两个函数逐字节复制在这个
+ * 文件里，跟 hw_stroke.c 那份逐字节重复，全量代码审查审出后收进
+ * `enhance/shared/trampoline_patch.c`）也在 shared/ 里，这个文件现在完全自
+ * 包含、不依赖 chinese-ime/langhook 里任何跟 IME 相关的代码。
  *
  * 跟原来在 chinese-ime/langhook 里不一样的地方：_xovi_shouldLoad 的固件兼容性
  * 判据直接就是这个 hook 自己的目标函数特征码（不再借用 setLanguageCode 那个跟
@@ -21,15 +21,13 @@
  */
 #include <stdio.h>
 #include <string.h>
-#include <errno.h>
-#include <sys/mman.h>
-#include <unistd.h>
 #include <stdint.h>
 #include <stdbool.h>
 
 #include "scan.h"
 #include "pattern.h"
 #include "trampoline_aarch64.h"
+#include "trampoline_patch.h"
 
 #define TARGET_MODULE_SUFFIX "/usr/bin/xochitl"
 #define CJ_DATA_DIR "/home/root/.local/share/cangjie-ime"
@@ -48,61 +46,10 @@ static const uint8_t PROLOGUE_HL_EXPAND[] = {
     0xf3, 0x53, 0x01, 0xa9, 0xf4, 0x03, 0x01, 0xaa, 0x80, 0x00, 0x00, 0xb4,
     0x01, 0x00, 0x40, 0xb9,
 };
-#define CJ_FAR_JUMP_LEN_LOCAL (5 * 4)
-#define PATCH_LEN CJ_FAR_JUMP_LEN_LOCAL /* 覆盖目标函数开头的字节数，跟远跳转指令长度一致 */
+#define PATCH_LEN CJ_FAR_JUMP_LEN /* 覆盖目标函数开头的字节数，跟远跳转指令长度一致 */
 
-/* ---- 通用 trampoline 安装（逐字节抄自 hook_init.c，不做任何改动） ---- */
-
-static void *make_call_through_stub(const uint8_t *original_bytes, void *jump_back_target) {
-    size_t stub_len = PATCH_LEN + CJ_FAR_JUMP_LEN;
-    void *stub = mmap(NULL, stub_len, PROT_READ | PROT_WRITE,
-                       MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    if (stub == MAP_FAILED) return NULL;
-
-    memcpy(stub, original_bytes, PATCH_LEN);
-
-    uint32_t jump_instrs[5];
-    cj_build_far_jump(jump_instrs, jump_back_target);
-    memcpy((uint8_t *)stub + PATCH_LEN, jump_instrs, CJ_FAR_JUMP_LEN);
-
-    if (mprotect(stub, stub_len, PROT_READ | PROT_EXEC) != 0) {
-        munmap(stub, stub_len);
-        return NULL;
-    }
-    __builtin___clear_cache((char *)stub, (char *)stub + stub_len);
-    return stub;
-}
-
-static int patch_target(void *target_addr, void *handler, void **out_stub) {
-    long pagesize = sysconf(_SC_PAGESIZE);
-    if (pagesize <= 0) pagesize = 4096;
-
-    uintptr_t page_base = (uintptr_t)target_addr & ~((uintptr_t)pagesize - 1);
-    size_t region_len = (size_t)pagesize;
-    if ((((uintptr_t)target_addr - page_base) + PATCH_LEN) > region_len) {
-        region_len += (size_t)pagesize;
-    }
-
-    if (mprotect((void *)page_base, region_len, PROT_READ | PROT_WRITE | PROT_EXEC) != 0) {
-        fprintf(stderr, "[hl-snap] mprotect 失败，放弃 hook（safe mode）：%s\n", strerror(errno));
-        return 0;
-    }
-
-    void *jump_back_target = (uint8_t *)target_addr + PATCH_LEN;
-    void *stub = make_call_through_stub((const uint8_t *)target_addr, jump_back_target);
-    if (!stub) {
-        fprintf(stderr, "[hl-snap] 调用桩分配失败，放弃 hook（safe mode）\n");
-        return 0;
-    }
-    *out_stub = stub;
-
-    uint32_t jump_to_handler[5];
-    cj_build_far_jump(jump_to_handler, handler);
-    memcpy(target_addr, jump_to_handler, CJ_FAR_JUMP_LEN);
-    __builtin___clear_cache((char *)target_addr, (char *)target_addr + CJ_FAR_JUMP_LEN);
-
-    return 1;
-}
+/* 通用 trampoline 安装（cj_patch_target）在 enhance/shared/trampoline_patch.c，
+ * 2026-09-15 全量代码审查发现这里跟 hw_stroke.c 逐字节重复后收进去了，见该文件头注。 */
 
 /* ---- 荧光笔精确吸附本体（逐字节抄自 hook_init.c 的 Step HL2 代码段） ---- */
 
@@ -162,7 +109,7 @@ static void cj_hl_expand_handler(long scene, void *rng_v) {
 
 static void cj_install_hl_expand_hook(uintptr_t target) {
     void *stub = NULL;
-    if (!patch_target((void *)target, (void *)cj_hl_expand_handler, &stub)) {
+    if (!cj_patch_target((void *)target, (void *)cj_hl_expand_handler, PATCH_LEN, "hl-snap", &stub)) {
         fprintf(stderr, "[hl-snap] 荧光笔EXPAND hook 安装失败（safe mode）\n");
         return;
     }
