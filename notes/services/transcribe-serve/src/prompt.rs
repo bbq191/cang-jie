@@ -14,7 +14,11 @@ const DEFAULT: &str = "这是 reMarkable 墨水屏上一片手写笔记的裁图
 pub fn build(custom: &str, quote: Option<&str>) -> String {
     let mut p = if custom.trim().is_empty() { DEFAULT.to_string() } else { custom.trim().to_string() };
     if let Some(q) = quote.map(str::trim).filter(|q| !q.is_empty()) {
-        let q: String = q.chars().take(300).collect();
+        // 用共享的 vendorcfg::truncate_chars（原来手写 chars().take(300).collect()，2026-09-15
+        // 全量代码审查审出：跟共享函数行为不一致，截断了看不出来，也是"改共享函数忘了改这处"
+        // 的重复风险源）；超长会多带一个「…」，`quote_appended_and_custom_replaces` 测试按
+        // "字"字符计数不受这个影响，仍然断言得住。
+        let q: String = vendorcfg::truncate_chars(q, 300);
         p.push_str("\n\n这片手写写在书页里被荧光笔勾出的这段原文旁边，转写时可参考其中的人名、术语，但不要把原文抄进来：「");
         p.push_str(&q);
         p.push('」');
