@@ -1,7 +1,7 @@
 """上传回执/守卫的单点实现：各命令（font/wallpaper/koreader/push）共用「✗ 不是文件」守卫、
 「✓/✗ <名>: <消息>」回执行，以及"逐文件上传并打回执"的循环。
 
-服务端回执统一形状 `{ok, items:[{name, ok, message, item?}]}`（`shelf_core::asset::receipt`）；旧服务用过 `file` 键，
+服务端回执统一形状 `{ok, items:[{name, ok, message, item?}]}`（`rmsvc_core::asset::receipt`）；旧服务用过 `file` 键，
 `item_name` 两个都认。成功项的额外尾注（如字体家族）走 `extra` 回调。"""
 from __future__ import annotations
 

@@ -21,7 +21,7 @@
 | `handwriting-stroke/` | 独立最小 xovi 扩展（C，ARM64） | ✅ 两个 hook 目标真机通（笔尖角度模型+提按速度代理，覆盖书法笔+钢笔/铅笔/马克笔等日常工具，见白皮书 §03e-§03f）；真实硬件压感接不上已放弃改用速度代理；最常用的钢笔/铅笔量级工具（`bVar16<4`）仍摸不到 |
 | `wallpaper-serve/` | 独立 Rust 二进制（网页服务，挂 `gateway/`） | ✅ 真机通；2026-09-11 从 `shelf/services/wallpaper-serve` 挪进来（概念上更贴近系统增强），壁纸上传即用+池化轮换，`gateway/` 网页「其他→壁纸」二级子标签 |
 | `font-serve/` | 独立 Rust 二进制（网页服务，挂 `gateway/`） | ✅ 真机通；2026-09-11 从 `shelf/services/font-serve` 挪进来（概念上更贴近系统增强），xochitl 字体上传即装+中文回退链，`gateway/` 网页「其他→xochitl 字体」二级子标签 |
-| `shared/` | 剥离移植的公共源文件（C） | `hl-snap`/`handwriting-stroke` 共用的特征码扫描+trampoline 三个工具文件，见 `PROVENANCE.md` |
+| `shared/` | 剥离移植的公共源文件（C） | `hl-snap`/`handwriting-stroke` 共用的特征码扫描+trampoline 安装工具文件（2026-09-15 全量代码审查后从各自逐字节重复的独立拷贝收进这里，新增 `trampoline_patch.c`），见 `PROVENANCE.md` |
 | `lo-alias/` | 剥离移植的独立脚本 | `gateway.service` 的 `ExecStartPre` 用，治的是网络可达性问题，见 `README.md` |
 
 ## 跟其它目录的关系

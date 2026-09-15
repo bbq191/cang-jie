@@ -477,7 +477,7 @@ mod tests {
     }
 
     // `XochitlUploader::claim` 的重试只碰本地文件（`find_documents_since` 读 `.metadata`），不碰
-    // 网络，所以能像 shelf-core::xochitl 那批测试一样直接拿真实临时目录测，不用桩。
+    // 网络，所以能像 rmsvc-core::xochitl 那批测试一样直接拿真实临时目录测，不用桩。
 
     #[test]
     fn xochitl_uploader_claim_retries_until_the_document_shows_up() {

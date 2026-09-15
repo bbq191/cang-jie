@@ -34,8 +34,7 @@ sh install-all.sh <host> --skip chrony-cn,timezone-cn,xovi-persist   # 跳过指
 
 装好以上四样、再跑 `install-all.sh`，才是完整的"全新设备"安装顺序。
 
-**可选、不算前置条件**：**WeRead**（第三方 reMarkable 版微信读书 app，见
-）——不是这个仓库能装的东西，要装得自己下载官方发行
+**可选、不算前置条件**：**WeRead**（第三方 reMarkable 版微信读书 app）——不是这个仓库能装的东西，要装得自己下载官方发行
 包 SSH 装；`sidebar-entry` 那步会自动探测这台设备装没装，装了就把 Sidebar 入口换成
 「KOReader + WeRead」两项版本，没装就只有「KOReader」一项，不会因为没装 WeRead 而报错或跳过
 整步。
@@ -100,10 +99,11 @@ qmd/hook 偏移错了轻则功能不生效重则设备行为异常）；确认�
   没有回到版本控制。要装：去那边手动编译 + 跑 `deploy/install.sh`（前置同样是
   `vellum add xovi qt-resource-rebuilder`）。
 - **不装 wifi-watch 常驻看护**——目前只在 `oldbak/packaging/wifi-watch/`，没有随这次恢复。
-- **没有对称的 `uninstall-all.sh`**——三个 enhance 工具 + xovi-persist/chrony-cn/timezone-cn
-  目前只能各自手动清理（`shelf/uninstall.sh` 能卸 shelf 那部分；`xovi-reenable.service` 卸载
-  是 `systemctl disable --now xovi-reenable.service` + 删 `/usr/lib/systemd/system/` 里的单元
-  和软链；chrony/timezone 两个是配置覆写，没有"卸载"语义）。
+- **没有对称的 `uninstall-all.sh`**——三个 enhance 工具 + xovi-persist/chrony-cn/
+  chrony-boot-wakelock/timezone-cn 目前只能各自手动清理（`shelf/uninstall.sh` 能卸 shelf
+  那部分；`xovi-reenable.service`/`chrony-boot-wakelock.service` 卸载都是
+  `systemctl disable --now <单元>` + 删 `/usr/lib/systemd/system/` 里的单元和软链；
+  chrony-cn/timezone-cn 两个是配置覆写，没有"卸载"语义）。
 
 旧的 `packaging/package.sh`（打 `cangjie-full-*.tar.gz` 单体安装包那套）**没有**在这次一并
 恢复/重写——经核实那份现在实际上是断的（`oldbak/packaging/package.sh` 按旧路径找 `shelf/` 载荷，

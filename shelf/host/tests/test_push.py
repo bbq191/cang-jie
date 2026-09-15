@@ -396,7 +396,7 @@ def test_native_limit_fallback_mb_matches_rust_default(monkeypatch):
 
 
 def test_wash_ext_matches_rust_host_convertible_exts(monkeypatch):
-    """`WASH_EXT`（push.py 注释自称"= shelf_core::formats::HOST_CONVERTIBLE_EXTS ∪ {epub} − {txt}，
+    """`WASH_EXT`（push.py 注释自称"= rmsvc_core::formats::HOST_CONVERTIBLE_EXTS ∪ {epub} − {txt}，
     改一处另一处同步"）跟 Rust 侧真实常量做一次跨语言正则核对——同一类"手动同步、迟早漏掉"的
     风险，`NATIVE_LIMIT_FALLBACK_MB` 那条测试已经这么处理过，这里照搬同款套路（全量代码审查
     2026-09-15 审出的重复缺口）。只在这个仓库布局下才断言，找不到源文件就跳过。"""
