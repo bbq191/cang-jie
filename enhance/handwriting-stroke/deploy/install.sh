@@ -47,6 +47,17 @@ echo "== hw-stroke 安装（第一轮真机实验：变宽笔画几何 hook）==
 [ -f "$XOVI/xovi.so" ] || { echo "!! 没找到 $XOVI/xovi.so —— 先跑：vellum add xovi"; exit 1; }
 [ -f "$PAYLOAD/hw-stroke.so" ] || { echo "!! 没找到 $PAYLOAD/hw-stroke.so，先在这边跑 make aarch64"; exit 1; }
 
+BACKUP_DIR="$ROOT/cangjie-backups"
+if [ -f "$EXTDIR/hw-stroke.so" ]; then
+    # 备份绝不能留在 $EXTDIR（extensions.d/）里——xovi 把这个目录下任意文件都当扩展加载
+    # （不看后缀），备份文件会被当成另一个扩展重复注册，是致命错误（工程纪律 记录过的
+    # 教训）。落进专门的 cangjie-backups/ 目录，2026-09-15 全量代码审查补（deploy-sidebar-
+    # entry.sh 已经这么做，这几个 xovi 扩展的安装脚本当时漏了）。
+    mkdir -p "$BACKUP_DIR"
+    cp "$EXTDIR/hw-stroke.so" "$BACKUP_DIR/hw-stroke.so.bak.pre-$(date +%Y%m%d-%H%M%S)"
+    echo "-- 已备份旧版本 -> $BACKUP_DIR/"
+fi
+
 echo "-- 拷 hw-stroke.so -> $EXTDIR/"
 mkdir -p "$EXTDIR"
 cp "$PAYLOAD/hw-stroke.so" "$EXTDIR/hw-stroke.so"
