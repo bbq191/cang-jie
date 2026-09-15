@@ -395,6 +395,23 @@ def test_native_limit_fallback_mb_matches_rust_default(monkeypatch):
     assert int(m.group(1)) == push.NATIVE_LIMIT_FALLBACK_MB, "book-serve 的默认体积上限跟 push.py 的静态兜底值不一致了，两边要手动同步"
 
 
+def test_wash_ext_matches_rust_host_convertible_exts(monkeypatch):
+    """`WASH_EXT`（push.py 注释自称"= shelf_core::formats::HOST_CONVERTIBLE_EXTS ∪ {epub} − {txt}，
+    改一处另一处同步"）跟 Rust 侧真实常量做一次跨语言正则核对——同一类"手动同步、迟早漏掉"的
+    风险，`NATIVE_LIMIT_FALLBACK_MB` 那条测试已经这么处理过，这里照搬同款套路（全量代码审查
+    2026-09-15 审出的重复缺口）。只在这个仓库布局下才断言，找不到源文件就跳过。"""
+    import re
+
+    rs = Path(__file__).resolve().parents[3] / "rmsvc-core" / "src" / "formats.rs"
+    if not rs.is_file():
+        return
+    m = re.search(r'HOST_CONVERTIBLE_EXTS:\s*&\[&str\]\s*=\s*&\[([^\]]*)\]', rs.read_text(encoding="utf-8"))
+    assert m, f"没在 {rs} 里找到 HOST_CONVERTIBLE_EXTS——是不是改了写法，这条检查也要跟着改"
+    rust_exts = {"." + e.strip().strip('"') for e in m.group(1).split(",") if e.strip()}
+    expected = (rust_exts | {".epub"}) - {".txt"}
+    assert push.WASH_EXT == expected, "push.py 的 WASH_EXT 跟 Rust HOST_CONVERTIBLE_EXTS 不一致了，两边要手动同步"
+
+
 def test_push_comic_native_pdf_added_when_small_enough(gateway, tmp_path, capsys, monkeypatch):
     """灰阶 CBZ 体积估算转 PDF 后仍在原生上限内：CBZ 和 PDF 都落母版库，两次独立入库。"""
     src = tmp_path / "manga.cbz"
