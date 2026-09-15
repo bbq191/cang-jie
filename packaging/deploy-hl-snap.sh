@@ -39,6 +39,15 @@ ssh "root@$HOST" "mkdir -p $DEST/deploy"
 scp "$DIR/hl-snap.so" "root@$HOST:$DEST/hl-snap.so"
 scp "$DIR/deploy/install.sh" "root@$HOST:$DEST/deploy/install.sh"
 
+echo "== md5 校验（跟 deploy-sidebar-entry.sh 同款套路，2026-09-15 全量代码审查补）=="
+LOCAL_MD5="$(md5sum "$DIR/hl-snap.so" | awk '{print $1}')"
+REMOTE_MD5="$(ssh "root@$HOST" "md5sum $DEST/hl-snap.so" | awk '{print $1}')"
+if [ "$LOCAL_MD5" != "$REMOTE_MD5" ]; then
+    echo "!! md5 对不上（$LOCAL_MD5 vs $REMOTE_MD5），传输可能损坏，不继续安装"
+    exit 1
+fi
+echo "-- md5 一致"
+
 echo "== 设备端安装 =="
 ARGS=""
 # 注：不用 `[ ... ] && ARGS=...`——条件为假时该写法本身以非零退出，set -e 下会把整个脚本
