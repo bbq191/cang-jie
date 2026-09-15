@@ -4,6 +4,13 @@
 是特征码扫描 + ARM64 远跳转 trampoline 三个纯工具文件，2026-09-11 **剥离移植**
 （copy，不是路径依赖）自 `chinese-ime/langhook/src/`。
 
+`trampoline_patch.c`/`trampoline_patch.h`（通用 trampoline 安装：`cj_patch_target`，
+mmap+mprotect+调用 `cj_build_far_jump` 拼跳转指令+`__builtin___clear_cache`）不是从
+`chinese-ime/langhook/` 移植的——那边的 `hook_init.c` 从没拆出过这一层，是
+`enhance/hl-snap/src/hl_snap.c`/`enhance/handwriting-stroke/src/hw_stroke.c` 两边各自
+"逐字节抄自 hook_init.c"独立复制的产物，2026-09-15 全量代码审查发现两份代码逐字节相同后
+收进这里，来源是这两个文件各自当时的副本（内容一致，选哪份复制过来都一样）。
+
 ## 为什么从路径引用改成拷贝
 
 原先 `enhance/hl-snap/`、`enhance/handwriting-stroke/` 两个 xovi 扩展的 Makefile 用

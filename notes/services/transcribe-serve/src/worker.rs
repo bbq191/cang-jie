@@ -10,6 +10,7 @@ use notecore::model::{Draft, Style};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::sync::Mutex;
+use vendorcfg::VendorConfig;
 
 #[derive(Serialize, Clone, Debug, PartialEq)]
 pub struct Failure {

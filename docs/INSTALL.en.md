@@ -90,6 +90,7 @@ part of it" below):
 |---|---|---|
 | Firmware safety gate | Checks the device's firmware against the verified version | — |
 | Domestic NTP | Swaps chrony's servers for reachable ones (Aliyun/Tencent Cloud, etc.) | — |
+| Anti-autosuspend wakelock for time sync | Holds a wakelock for the first minute after boot so autosuspend can't interrupt chronyd's first sync | — |
 | Default timezone | Sets Asia/Shanghai | — |
 | Battery diagnostics | A resident sampling service, viewable under the web UI's Manage → Battery Detective | — |
 | xovi boot-persistence | Installs a unit that re-runs `xovi/start` automatically on every boot, so you no longer have to do it by hand after a reboot | requires `vellum add xovi` |
@@ -137,7 +138,7 @@ sh install-all.sh 10.11.99.1 --force
 sh install-all.sh 10.11.99.1 --skip chrony-cn,timezone-cn,xovi-persist
 ```
 
-Skippable step names: `chrony-cn`, `timezone-cn`, `battop`, `xovi-persist`, `hl-snap`,
+Skippable step names: `chrony-cn`, `chrony-boot-wakelock`, `timezone-cn`, `battop`, `xovi-persist`, `hl-snap`,
 `handwriting-stroke`, `sidebar-entry`, `shelf`, `xovi-apply`. Each step's underlying script
 (`packaging/deploy-<step>.sh <host>`) can also be run on its own, independent of
 `install-all.sh`.

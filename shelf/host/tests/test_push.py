@@ -33,7 +33,7 @@ def test_push_lands_in_staging(gateway, tmp_path, capsys, monkeypatch):
     FakeGateway.received.clear()
     rc, out = run(["push", str(tmp_path / "b.epub")], gateway, capsys)
     assert rc == 0 and "母版库" in out and "✓" in out
-    assert FakeGateway.received[-1][0] == "/api/books/staging"
+    assert FakeGateway.received[-1][0].split("?")[0] == "/api/books/staging"
 
 
 def test_push_rerun_skips_already_staged_file(gateway, tmp_path, capsys, monkeypatch):
@@ -54,9 +54,66 @@ def test_push_rerun_skips_already_staged_file(gateway, tmp_path, capsys, monkeyp
         FakeGateway.received.clear()
         rc, out = run(["push", str(f)], gateway, capsys)
         assert rc == 0 and "跳过重传" not in out
-        assert FakeGateway.received and FakeGateway.received[-1][0] == "/api/books/staging", "大小对不上要照常传"
+        assert FakeGateway.received and FakeGateway.received[-1][0].split("?")[0] == "/api/books/staging", "大小对不上要照常传"
     finally:
         FakeGateway.staging_items = []  # module-scope fixture 复用同一个 FakeGateway，别漏给后面的测试
+
+
+def test_staging_snapshot_splits_processed_and_source_identity(gateway, monkeypatch):
+    """`_staging_snapshot` 返回两层独立集合：`staged`=处理后产物 (name, bytes)（旧的那层，
+    直接读条目自身）；`sources`=原始输入 (name, bytes)（新加的那层，从 `delivered.source`
+    里抠出来，没这个字段的条目——网页原样上传/旧版本 CLI 上传——不进这层集合）。"""
+    FakeGateway.staging_items = [
+        {"name": "a.epub", "bytes": 100, "delivered": {"source": {"name": "a原始.pdf", "bytes": 900}}},
+        {"name": "b.cbz", "bytes": 50},  # 没有 delivered（网页原样上传），不该出现在 sources 里
+        {"name": "c.epub", "bytes": 10, "delivered": {"native": 123}},  # 有 delivered 但没有 source 字段
+    ]
+    try:
+        from shelf_cli import transport as tr
+
+        t = tr.HttpTransport(gateway, user="shelf", password="pw")
+        staged, sources = push._staging_snapshot(t)
+        assert staged == {("a.epub", 100), ("b.cbz", 50), ("c.epub", 10)}
+        assert sources == {("a原始.pdf", 900)}
+    finally:
+        FakeGateway.staging_items = []
+
+
+def test_push_skips_reprocessing_when_source_already_uploaded(gateway, tmp_path, capsys, monkeypatch):
+    """2026-09-14 补：命中原始输入身份（source）时，处理步骤（这里用 wash 计数）完全不该被
+    调用，不只是跳过上传——这是白皮书记录的"跳过已存在文件只省上传流量、没省处理时间"这个
+    gap 的真正修复。同一条命令换一个不匹配的原始大小，照常处理+上传，且带上 srcName/srcBytes
+    查询参数（服务端据此记 sidecar，供下一次命中）。"""
+    f = tmp_path / "novel.epub"
+    f.write_bytes(b"PK" * 20)  # 40 字节
+    monkeypatch.setattr(cb, "has_calibre", lambda: True)
+    calls = {"wash": 0}
+
+    def _wash(src, work, **kw):
+        calls["wash"] += 1
+        return src
+
+    monkeypatch.setattr(cb, "wash", _wash)
+    monkeypatch.setattr(push, "_gate", lambda o, a: None)
+    try:
+        FakeGateway.staging_items = [{"name": "novel.epub", "bytes": 999, "delivered": {"source": {"name": "novel.epub", "bytes": 40}}}]
+        FakeGateway.received.clear()
+        rc, out = run(["push", str(f)], gateway, capsys)
+        assert rc == 0 and "原始文件已处理过（同名同大小），跳过重新处理" in out
+        assert calls["wash"] == 0, "命中 source 不该再跑处理"
+        assert not FakeGateway.received, "命中 source 也不该再上传"
+
+        # 换一个不匹配的原始大小（source 记的是 999 字节的原始输入，这份是 40 字节）：照常处理+上传
+        FakeGateway.staging_items = [{"name": "novel.epub", "bytes": 999, "delivered": {"source": {"name": "novel.epub", "bytes": 12345}}}]
+        FakeGateway.received.clear()
+        rc, out = run(["push", str(f)], gateway, capsys)
+        assert rc == 0 and "跳过重新处理" not in out
+        assert calls["wash"] == 1, "source 对不上要照常处理"
+        assert FakeGateway.received, "source 对不上也要照常上传"
+        posted_query = FakeGateway.received[-1][0]
+        assert "srcName=novel.epub" in posted_query and "srcBytes=40" in posted_query, "带上原始输入身份供服务端记录"
+    finally:
+        FakeGateway.staging_items = []
 
 
 def test_push_batch_partial_failure_then_rerun_lands_once(gateway, tmp_path, capsys, monkeypatch):
@@ -73,7 +130,7 @@ def test_push_batch_partial_failure_then_rerun_lands_once(gateway, tmp_path, cap
         rc, out = run(["push", str(a), str(b)], gateway, capsys)
         assert rc == 0
         assert "a.epub: 已在母版库（同名同大小），跳过重传" in out
-        posted = [r[0] for r in FakeGateway.received]
+        posted = [r[0].split("?")[0] for r in FakeGateway.received]
         assert posted == ["/api/books/staging"], "只有 b 应该被 POST，a 跳过"
         assert b"b.epub" in FakeGateway.received[-1][2] and b"a.epub" not in FakeGateway.received[-1][2]
     finally:
@@ -101,7 +158,7 @@ def test_push_native_pdf_reflow_to_staging(gateway, tmp_path, capsys, monkeypatc
     FakeGateway.received.clear()
     rc, out = run(["push", str(pdf)], gateway, capsys)
     assert rc == 0 and "结构化重排 → EPUB" in out
-    assert FakeGateway.received[-1][0] == "/api/books/staging", FakeGateway.received
+    assert FakeGateway.received[-1][0].split("?")[0] == "/api/books/staging", FakeGateway.received
     assert "已入母版库。去 " in out and "传书 → 母版库" in out, "推完要给网页去向提示"
 
 
@@ -161,7 +218,7 @@ def test_push_no_calibre_calls_optimize_only_not_wash(gateway, tmp_path, capsys,
     rc, out = run(["push", "--no-calibre", str(tmp_path / "b.epub")], gateway, capsys)
     assert rc == 0 and calls == {"optimize_only": 1, "wash": 0}
     assert "纯优化（跳过 Calibre）→母版库" in out
-    assert FakeGateway.received[-1][0] == "/api/books/staging"
+    assert FakeGateway.received[-1][0].split("?")[0] == "/api/books/staging"
 
 
 def test_push_no_calibre_passes_keep_spacing(gateway, tmp_path, capsys, monkeypatch):
@@ -207,7 +264,7 @@ def test_push_no_reflow_raw_to_staging(gateway, tmp_path, capsys, monkeypatch):
     FakeGateway.received.clear()
     rc, out = run(["push", "--no-reflow", str(pdf)], gateway, capsys)
     assert rc == 0 and called["n"] == 0, "--no-reflow 不应调用 reflow"
-    assert FakeGateway.received[-1][0] == "/api/books/staging"
+    assert FakeGateway.received[-1][0].split("?")[0] == "/api/books/staging"
 
 
 def test_push_dry_run_and_missing_file(gateway, tmp_path, capsys):
@@ -256,6 +313,31 @@ def test_comic_probe_palmdb_and_epub(tmp_path):
     assert comic.is_comic(tmp_path / "c.epub") and not comic.is_comic(tmp_path / "t.epub")
 
 
+def test_comic_probe_pdf(monkeypatch, tmp_path):
+    """PDF 分支（2026-09-14 补，真根因见书架白皮书 §04）：pdf_comic_stats 走 pymupdf 子进程，单测里
+    mock 掉不真的 spawn（CI 没装 calibre 依赖组），只验证 comic.py 自己的阈值判断逻辑。真实探针本身
+    的正确性已经拿用户真机报的扫描漫画 PDF（照明商店，2375 页、抽样 ratio=1.0）手动跑通验证过，见
+    commit message 与白皮书记录，不是靠这条单测背书。"""
+    pdf = tmp_path / "scan.pdf"
+    pdf.write_bytes(b"%PDF-1.4\n%mock content, pdf_comic_stats is fully mocked below")
+    monkeypatch.setattr(cb, "pdf_comic_stats", lambda p: (2375, 1.0))
+    assert comic.is_comic(pdf)
+    monkeypatch.setattr(cb, "pdf_comic_stats", lambda p: (5, 1.0))  # 页数不够 MIN_PAGES
+    assert not comic.is_comic(pdf)
+    monkeypatch.setattr(cb, "pdf_comic_stats", lambda p: (30, 0.3))  # 图片页占比不够（比如论文扫描件插了几张图）
+    assert not comic.is_comic(pdf)
+    # 非 PDF 头（含不存在的路径）：连子进程都不该 spawn，直接 False——这条也保证了
+    # test_comic_probe_palmdb_and_epub 里 `not comic.is_comic(tmp_path / "x.pdf")`（路径不存在）
+    # 不会真的去 spawn pymupdf 子进程拖慢/搞挂那条测试。
+    called = []
+    monkeypatch.setattr(cb, "pdf_comic_stats", lambda p: called.append(p) or (999, 1.0))
+    fake = tmp_path / "fake.pdf"
+    fake.write_bytes(b"not a pdf")
+    assert not comic.is_comic(fake)
+    assert not comic.is_comic(tmp_path / "missing.pdf")
+    assert not called, "非 PDF 头 / 不存在的路径不该 spawn 子进程去探测"
+
+
 def test_push_comic_route_lands_cbz_only(gateway, tmp_path, capsys, monkeypatch):
     """体积超原生上限（本测试直接让 cbz_to_pdf 失败模拟）时只出 CBZ 进母版库，不产 PDF。"""
     src = tmp_path / "manga.azw3"
@@ -271,7 +353,7 @@ def test_push_comic_route_lands_cbz_only(gateway, tmp_path, capsys, monkeypatch)
     FakeGateway.received.clear()
     rc, out = run(["push", str(src)], gateway, capsys)  # 缺省过 16 灰；假字节让 comic_gray 失败 → 退回原图 CBZ 不挡推送
     assert rc == 0 and "漫画 CBZ→母版库" in out and "16 灰失败，按原图 CBZ 推" in out
-    names = [r[0] for r in FakeGateway.received]
+    names = [r[0].split("?")[0] for r in FakeGateway.received]
     assert names.count("/api/books/staging") == 1, "只有 CBZ 一次入库"
     assert b"manga.cbz" in FakeGateway.received[-1][2]
     # --no-comic 强制走洗书路；--no-optimize 原样
@@ -313,6 +395,23 @@ def test_native_limit_fallback_mb_matches_rust_default(monkeypatch):
     assert int(m.group(1)) == push.NATIVE_LIMIT_FALLBACK_MB, "book-serve 的默认体积上限跟 push.py 的静态兜底值不一致了，两边要手动同步"
 
 
+def test_wash_ext_matches_rust_host_convertible_exts(monkeypatch):
+    """`WASH_EXT`（push.py 注释自称"= rmsvc_core::formats::HOST_CONVERTIBLE_EXTS ∪ {epub} − {txt}，
+    改一处另一处同步"）跟 Rust 侧真实常量做一次跨语言正则核对——同一类"手动同步、迟早漏掉"的
+    风险，`NATIVE_LIMIT_FALLBACK_MB` 那条测试已经这么处理过，这里照搬同款套路（全量代码审查
+    2026-09-15 审出的重复缺口）。只在这个仓库布局下才断言，找不到源文件就跳过。"""
+    import re
+
+    rs = Path(__file__).resolve().parents[3] / "rmsvc-core" / "src" / "formats.rs"
+    if not rs.is_file():
+        return
+    m = re.search(r'HOST_CONVERTIBLE_EXTS:\s*&\[&str\]\s*=\s*&\[([^\]]*)\]', rs.read_text(encoding="utf-8"))
+    assert m, f"没在 {rs} 里找到 HOST_CONVERTIBLE_EXTS——是不是改了写法，这条检查也要跟着改"
+    rust_exts = {"." + e.strip().strip('"') for e in m.group(1).split(",") if e.strip()}
+    expected = (rust_exts | {".epub"}) - {".txt"}
+    assert push.WASH_EXT == expected, "push.py 的 WASH_EXT 跟 Rust HOST_CONVERTIBLE_EXTS 不一致了，两边要手动同步"
+
+
 def test_push_comic_native_pdf_added_when_small_enough(gateway, tmp_path, capsys, monkeypatch):
     """灰阶 CBZ 体积估算转 PDF 后仍在原生上限内：CBZ 和 PDF 都落母版库，两次独立入库。"""
     src = tmp_path / "manga.cbz"
@@ -333,7 +432,7 @@ def test_push_comic_native_pdf_added_when_small_enough(gateway, tmp_path, capsys
     rc, out = run(["push", str(src)], gateway, capsys)
     assert rc == 0 and pdf_calls == [("manga.gray.cbz", "manga.pdf")]
     assert "顺带出一份 PDF" in out
-    names = [r[0] for r in FakeGateway.received]
+    names = [r[0].split("?")[0] for r in FakeGateway.received]
     assert names.count("/api/books/staging") == 2, "CBZ 和 PDF 各自独立入库一次"
     bodies = b"".join(r[2] for r in FakeGateway.received)
     assert b"manga.gray.cbz" in bodies and b"manga.pdf" in bodies
@@ -360,7 +459,7 @@ def test_push_comic_native_pdf_skipped_when_too_big(gateway, tmp_path, capsys, m
     FakeGateway.received.clear()
     rc, out = run(["push", str(src)], gateway, capsys)
     assert rc == 0 and called["n"] == 0 and "只出 CBZ" in out
-    names = [r[0] for r in FakeGateway.received]
+    names = [r[0].split("?")[0] for r in FakeGateway.received]
     assert names.count("/api/books/staging") == 1, "只有 CBZ 落库"
 
 
@@ -377,7 +476,7 @@ def test_push_no_comic_native_flag_skips_pdf_generation(gateway, tmp_path, capsy
     FakeGateway.received.clear()
     rc, out = run(["push", "--no-comic-native", str(src)], gateway, capsys)
     assert rc == 0 and called["n"] == 0
-    names = [r[0] for r in FakeGateway.received]
+    names = [r[0].split("?")[0] for r in FakeGateway.received]
     assert names.count("/api/books/staging") == 1
 
 

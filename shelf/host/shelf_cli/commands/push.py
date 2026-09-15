@@ -9,7 +9,7 @@
   两条路径唯一共同点只是都在编译产物 `shelf/target/release/epub-optimize`。非 EPUB 输入没法只靠这条路径
   转格式，加了 `--no-calibre` 也一律原样传（等同 `--no-optimize` 的效果，母版库里再按需转/优化）。
 - `--to-pdf`：定稿成固定版式 PDF（手写批注用），落母版库。
-- **漫画**（AZW3/MOBI/EPUB 里全是整页图，`comic.is_comic` 自动判，`--comic/--no-comic` 覆盖；CBZ 天然）：不走洗书路，
+- **漫画**（AZW3/MOBI/EPUB/PDF 里全是整页图，`comic.is_comic` 自动判，`--comic/--no-comic` 覆盖；CBZ 天然）：不走洗书路，
   出 **CBZ**（原图按页打包，跨页图自动拆分+白边裁切）进母版库，去向 KOReader 漫画模式。大部头**漫画默认不投原生**
   （用户 2026-09-05 定）：xochitl 没有固定页漫画体验，且整本几百 MB 撞 `/upload` 体积上限（《镖人》282MB EPUB /
   188MB PDF 都被 "multipart body is too large" 拒）——**但灰阶 CBZ 估算转 PDF 后还在设备原生上传上限内的小体积
@@ -30,8 +30,9 @@ from ..receipts import guard_file, upload_each
 NAME = "push"
 HELP = "投书到母版库（host 有 Calibre 先洗书；漫画自动转 CBZ 给 KOReader）；去向在网页选。难搞的书/PDF 重排用这条"
 
-# host 能洗/转成 EPUB 的源格式（其余原样传母版库）。= Rust `shelf_core::formats::HOST_CONVERTIBLE_EXTS` ∪ {epub} − {txt}，
-# 网页「格式」提示里"电脑可转"那一档就是它——改一处另一处同步（Python 不链接 Rust crate，只能镜像）。
+# host 能洗/转成 EPUB 的源格式（其余原样传母版库）。= Rust `rmsvc_core::formats::HOST_CONVERTIBLE_EXTS` ∪ {epub} − {txt}，
+# 网页「格式」提示里"电脑可转"那一档就是它——改一处另一处同步（Python 不链接 Rust crate，只能镜像；
+# `tests/test_push.py::test_wash_ext_matches_rust_host_convertible_exts` 跨语言正则核对，改漏了会报）。
 # `.txt` 也是电脑可转，但先走 txt_to_epub.py 切章（Calibre 不认中文"第X章"），再进 wash——见 host_prepare。
 WASH_EXT = {".epub", ".azw3", ".mobi", ".azw", ".prc", ".fb2"}
 
@@ -41,8 +42,10 @@ UNREACHABLE_HINT = "设备不可达（离 USB 后几秒就自动休眠、关 WiF
 
 
 def ensure_reachable(transport, wait: int | None, sleep=time.sleep, clock=time.monotonic) -> bool:
-    """上传前探活（`GET /health`，不用密码）。不可达：无 `--wait` → 提示后 False；有 → 每 WAIT_PROBE_SECS 秒探一次直到可达/超时/Ctrl-C。
-    洗书在这之前已做完，等待期间不白占；探活放在上传循环之前，避免逐本各报一次"连不上"。"""
+    """探活（`GET /health`，不用密码）。不可达：无 `--wait` → 提示后 False；有 → 每 WAIT_PROBE_SECS 秒探一次直到可达/超时/Ctrl-C。
+    整批处理前只探一次，避免逐本各报一次"连不上"。2026-09-14 起放在处理任何一本书之前（原来放
+    在第一本洗完之后，好处是等设备醒的时间能顺带处理第一本、不白占；这次为了让 `_staging_snapshot`
+    的 source 判重能在处理前生效，改成先探活——见 run() 头部注释里记的这个取舍）。"""
     probe = getattr(transport, "reachable", None)
     if probe is None or probe():
         return True
@@ -115,19 +118,31 @@ NATIVE_PDF_SIZE_FACTOR = 1.5
 NATIVE_LIMIT_FALLBACK_MB = 150
 
 
-def _staging_snapshot(transport) -> set[tuple[str, int]] | None:
-    """已在母版库的 (文件名, 字节数) 快照，上传前查一次，用来在批量部分失败后原样重跑时跳过已经
-    成功落地的文件——不然会撞上 `rmsvc_core::fs::unique_path`"同名不覆盖"，把已经成功的文件在
-    母版库里再落一份 `1_x` 副本（2026-09-13，Reddit 用户报告；见书架白皮书 §04）。纯按文件名+
-    字节数比较，不做内容 hash（同名同大小但内容真的换了这种极端情况会被误判为"已存在"而跳过——
-    已知取舍，换了内容通常也会换体积，真撞上了改个文件名就绕过去）。查不到（设备不可达/接口
-    异常）返回 `None`——不阻断推送，只是这次拿不到这层保护，照常全部上传，行为退回这次修复前
-    的样子。"""
+def _staging_snapshot(transport) -> tuple[set[tuple[str, int]] | None, set[tuple[str, int]] | None]:
+    """母版库快照，上传/处理前各查一次，返回两层独立的判重集合：
+    ① `staged`——已在母版库的**处理后产物** (文件名, 字节数)，用来在批量部分失败后原样重跑时跳过
+      已经成功落地的文件——不然会撞上 `rmsvc_core::fs::unique_path`"同名不覆盖"，把已经成功的
+      文件在母版库里再落一份 `1_x` 副本（2026-09-13，Reddit 用户报告；见书架白皮书 §04）。
+    ② `sources`——每份母版库文件对应的**原始输入身份** (文件名, 字节数)（`sidecar::SourceRef`，
+      只有 CLI push 洗书产物才带这个字段，上传时随 `?srcName=&srcBytes=` 记进去），
+      2026-09-14 补：用来在**处理之前**（不是处理完的产物之后）就判断"这份原始输入是不是已经
+      成功处理过"，真正省掉洗书/重排这类耗时的 host 处理步骤，不只是省上传流量——①判重靠的是
+      处理后产物的字节数，洗书/优化会改变体积，跟原始输入的字节数对不上，只能在处理完之后才用
+      得上，这正是白皮书记录的"只省上传流量、没省处理时间"那个局限，②是为解决它新加的一层。
+    两层都是纯文件名+字节数比较，不做内容 hash（同名同大小但内容真的换了会被误判为"已处理过"
+    ——已知取舍，见 ① 的头注，换个文件名就绕过去）。查不到（设备不可达/接口异常）两个都返回
+    `None`——不阻断推送，只是这次拿不到这两层保护，照常全部处理+上传。"""
     try:
         items = transport.get("/api/books/staging").get("items") or []
-        return {(it["name"], it["bytes"]) for it in items if "name" in it and "bytes" in it}
     except Exception:  # noqa: BLE001
-        return None
+        return None, None
+    staged = {(it["name"], it["bytes"]) for it in items if "name" in it and "bytes" in it}
+    sources = set()
+    for it in items:
+        src = (it.get("delivered") or {}).get("source") or {}
+        if "name" in src and "bytes" in src:
+            sources.add((src["name"], src["bytes"]))
+    return staged, sources
 
 
 def _native_limit_bytes(ctx) -> int:
@@ -271,16 +286,40 @@ def run(args, ctx) -> int:
     rc = 0
     landed = 0
     work = cb.workdir()
-    ready: bool | None = None  # 首本洗完、上传前探活一次；不可达就停，不再洗后面的书
-    staged: set[tuple[str, int]] | None = None  # 首次探活成功后查一次，见 _staging_snapshot
-    for idx, path in enumerate(args.files):
+    if args.dry_run:
+        # dry-run 只打印路由决定，不碰网络（不探活、不查母版库快照）——跟这次新加的两层判重
+        # 都用不上：没有 sources 就没法预判"会不会跳过重新处理"，这点信息 dry-run 天生给不了，
+        # 维持它原本"只看路由"的语义，不做半吊子的网络访问。
+        for path in args.files:
+            if not guard_file(path):
+                rc = 1
+                continue
+            route = plan(path, args, calibre)
+            print(f"→ {path.name}  {ROUTE_LABEL[route]}母版库")
+        return rc
+    # 探活 + 两层快照挪到循环最前面、处理任何一本书之前查（2026-09-14 补，见书架白皮书 §04）：
+    # 源身份判重（sources，见 _staging_snapshot）要在处理前查才有意义，不能像原来那样等第一本
+    # 处理完才探活——不然永远只能在处理完之后才知道"其实不用处理"，白干。
+    # 代价：以前"探活放第一本处理完之后"是有意为之（洗书在这之前已做完，--wait 等设备醒的时间
+    # 不白占），这次改成先探活、不可达就直接整批不处理，`--wait` 场景下第一本也要等设备醒了才
+    # 开始处理，不再有这份"顺带白嫖"的重叠时间——重跑一批大部分已成功的场景（这个功能真正要
+    # 省的场景）设备通常已经在线，这个损失不影响它；换来的是命中 source 的书完全不用处理。
+    ready = ensure_reachable(ctx.transport, args.wait)  # 不可达时已经自己打印过原因（见 ensure_reachable）
+    if not ready:
+        print(f"✗ 未处理：{', '.join(p.name for p in args.files)}")
+        return 2
+    staged, sources = _staging_snapshot(ctx.transport)
+    for path in args.files:
         if not guard_file(path):
             rc = 1
             continue
+        # 源身份命中：这份原始输入之前已经成功处理过（同名同大小），处理都不用做，直接跳过——
+        # 这是这次要补的那一层，跟下面"处理后产物判重"（staged）是两回事，见 _staging_snapshot。
+        if sources is not None and (path.name, path.stat().st_size) in sources:
+            print(f"✓ {path.name}: 原始文件已处理过（同名同大小），跳过重新处理")
+            continue
         route = plan(path, args, calibre)
         print(f"→ {path.name}  {ROUTE_LABEL[route]}母版库")
-        if args.dry_run:
-            continue
         try:
             if route == "raw":
                 outs = [path]
@@ -305,14 +344,6 @@ def run(args, ctx) -> int:
                 final.extend(parts)
             else:
                 final.append(o)
-        if ready is None:
-            ready = ensure_reachable(ctx.transport, args.wait)
-            if ready:
-                staged = _staging_snapshot(ctx.transport)
-        if not ready:
-            rest = [p.name for p in args.files[idx:]]
-            print(f"✗ 未上传：{', '.join(rest)}（洗好的产物在 {work}）")
-            return 2
         # 部分失败后原样重跑：已经在母版库里的（同名同大小）跳过，不重复上传——不然
         # unique_path 会把它再落一份 1_x（见 _staging_snapshot 头注）。
         to_upload = final
@@ -324,13 +355,17 @@ def run(args, ctx) -> int:
                     print(f"✓ {f.name}: 已在母版库（同名同大小），跳过重传")
                 else:
                     to_upload.append(f)
-        # 只落母版库（原样落，host 已洗则带优化标记）；去向在网页「传书 → 母版库」选。
+        # 只落母版库（原样落，host 已洗则带优化标记）；去向在网页「传书 → 母版库」选。带上
+        # ?srcName=&srcBytes=（这份产物的原始输入身份），服务端记进 sidecar，供下次命中 sources。
         if to_upload:
-            rc |= upload_each(ctx.transport, "/api/books/staging", to_upload)
+            src_query = {"srcName": path.name, "srcBytes": path.stat().st_size}
+            rc |= upload_each(ctx.transport, "/api/books/staging", to_upload, query=lambda i, f: src_query)
             if staged is not None:
                 staged.update((f.name, f.stat().st_size) for f in to_upload)
+            if sources is not None:
+                sources.add((path.name, path.stat().st_size))
         landed += len(final)
-    if landed and not args.dry_run:
+    if landed:
         scheme = getattr(ctx.config, "scheme", "https")
         print(f"→ 已入母版库。去 {scheme}://{ctx.config.host}:{ctx.config.port}/ 「传书 → 母版库」点优化 / 选去向（xochitl / KOReader）")
     return rc

@@ -60,6 +60,11 @@ echo "== 探测 appload 自己的 qmd 在这台固件上是否兼容 =="
 # 正面信号："Loaded external AppLoad hooks in main UI" 是 appload 自己那份内嵌 qmd 成功处理后
 # 打的日志——没这行不代表一定没打过 PR #59 补丁（也可能是装完 appload 后还没重启过 xochitl），
 # 但按钮多半点了没反应，所以一律当作"暂不满足"处理，不硬装。
+# ⚠ 这条只是"本次开机内某个时刻出现过"的一次性判据，不代表现在正在跑的 xochitl 就是那次成功
+# 挂载的同一个实例——如果这行日志之后设备上跑过 `vellum upgrade`（会用未打补丁的官方版本盖掉
+# appload，见 工程纪律 记录）却还没重启过 xochitl，这里还是会读到旧的成功信号（2026-09-15
+# 全量代码审查审出）。真正当次生效与否，靠下面本脚本自己触发的这次重启之后重新核对同一行信号
+# （`DEFER_XOVI_START=1` 模式不在这一步重启，没法当场复核，见该分支注释）。
 if ! ssh "root@$HOST" "journalctl -b 0 -u xochitl --no-pager 2>/dev/null | grep -q 'Loaded external AppLoad hooks in main UI'"; then
     echo "-- 没在这次开机日志里看到 appload 成功挂载的信号（可能是 appload 在这个固件版本上没打"
     echo "   过 PR #59 兼容补丁，也可能是刚装完 appload 还没 xovi/start 过一次）——跳过，非失败。"
@@ -109,13 +114,22 @@ echo "-- md5 一致"
 
 if [ "${DEFER_XOVI_START:-0}" = "1" ]; then
     echo "-- DEFER_XOVI_START=1：只落盘，不在这一步跑 xovi/start（由后续统一步骤处理）"
+    echo "   ⚠ appload 兼容信号只在上面探测的那一刻核对过，这一步不重启就没法当场复核；"
+    echo "     后续统一步骤（deploy-xovi-apply.sh）真正重启后如果按钮点了没反应，先查"
+    echo "     一遍 appload 是不是重启前又被 vellum upgrade 覆盖过。"
     exit 0
 fi
 
 echo "== 设备端跑一次 xovi/start 让新 qmd/rcc 生效 + 健康检查 =="
-# shellcheck disable=SC2087  # heredoc 内变量就是要在本地展开，全部是固定字面量，无远端注入风险
-ssh "root@$HOST" "sh -s" <<'DEVICE_SCRIPT'
+# 重启前打个时间戳，重启后拿它重新核对 appload 兼容信号——只信"本次重启之后新出现的"这一条，
+# 不再相信上面探测阶段那次可能已经过期的"本次开机内某个时刻出现过"（见上面探测那步的头注）。
+SINCE="$(ssh "root@$HOST" "date '+%Y-%m-%d %H:%M:%S'")"
+# shellcheck disable=SC2087  # heredoc 内变量就是要在本地展开，全部是固定字面量，无远端注入风险；
+# $SINCE 是唯一需要传给远端的本地值，走位置参数（$1），不塞进带引号的 heredoc 正文里（那样只会被
+# 远端 shell 当成它自己从未定义过的变量，展开成空字符串）。
+ssh "root@$HOST" "sh -s" "$SINCE" <<'DEVICE_SCRIPT'
 set -eu
+SINCE="$1"
 OLD_PID="$(systemctl show xochitl -p MainPID --value 2>/dev/null || echo 0)"
 /home/root/xovi/start
 sleep 5
@@ -125,10 +139,17 @@ NREST="$(systemctl show xochitl -p NRestarts --value 2>/dev/null || echo '?')"
 echo "  is-active : $STATE   (期望 active)"
 echo "  MainPID   : $OLD_PID -> $NEW_PID   (期望有变化)"
 echo "  NRestarts : $NREST   (期望 0/不增)"
-if [ "$STATE" = "active" ] && [ "$NEW_PID" != "0" ]; then
-    echo "✅ 部署完成"
-else
+if [ "$STATE" != "active" ] || [ "$NEW_PID" = "0" ]; then
     echo "⚠️  健康检查未达预期。查 journalctl -u xochitl"
+    exit 1
+fi
+if journalctl -u xochitl --since "$SINCE" --no-pager 2>/dev/null | grep -q 'Loaded external AppLoad hooks in main UI'; then
+    echo "✅ 部署完成（appload 兼容信号在这次重启之后重新出现，不是复用重启前的旧信号）"
+else
+    echo "⚠️  部署已落盘、xochitl 重启健康，但这次重启之后没有重新看到 appload 兼容信号——"
+    echo "   探测阶段那次可能已经过期（比如中间跑过 vellum upgrade 把 appload 换回未打补丁的"
+    echo "   官方版本）。Sidebar 按钮大概率点了没反应，去 journalctl -u xochitl --since \"$SINCE\""
+    echo "   核实，必要时重新走一遍「appload 3.28 免SDK补丁法」。"
     exit 1
 fi
 DEVICE_SCRIPT

@@ -89,7 +89,7 @@ def test_push_txt_routes_through_txt_to_epub_then_wash(gateway, tmp_path, capsys
     rc, out = run(["push", str(txt)], gateway, capsys)
     assert rc == 0 and "TXT 切章 → EPUB（1 章" in out
     assert calls[0] == "txt" and calls[1][0] == "wash" and calls[1][1] == "小说.epub" and calls[1][2]["WASH_AUTOTOC"] == "0"
-    assert FakeGateway.received[-1][0] == "/api/books/staging"
+    assert FakeGateway.received[-1][0].split("?")[0] == "/api/books/staging"
     assert push.plan(txt, type("A", (), {"no_optimize": False, "comic": False, "no_comic": False})(), True) == "wash"
 
 

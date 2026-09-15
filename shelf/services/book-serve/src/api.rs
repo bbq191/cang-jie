@@ -4,7 +4,6 @@
 //! · `POST /staging/deliver {name, folder?, keep?}` · `POST /staging/mark {name, target}` · `POST /staging/fetch-article {url, optimize?}`
 //! · `POST /staging/delete {name}` · `GET /staging/render/{uuid}`（xochitl 渲染缓存 PDF，doctor --render 用）· `GET /events`（SSE：母版库/inbox 变更即推，网页零轮询）。
 //! 原生回收站队列：`POST /trash/add {uuid, name}`（name 必须与书库 visibleName 相符）· `GET /trash/pending` → `{uuids}`（Sidebar 代理 qmd 拉取执行）· `GET /trash`。
-//! 原生建文件夹队列：`POST /mkdir/add {name}` · `GET /mkdir/pending` → `{names}`（MainView 代理 shelf-mkdir-agent.qmd 拉取执行）· `GET /mkdir`。
 //! 2026-09-05 起规则统一"所有书只落母版库"：旧 `POST /?target=` 直投路已删（`/staging*` 是唯一入口）。
 use crate::service_state::State;
 use crate::staging::{OptimizeMode, Reader, StagingStore};
@@ -84,22 +83,6 @@ pub fn router(st: Arc<State>) -> Router {
             Ok(Reply::ok(&serde_json::json!({"uuids": uuids})))
         }))
         .get("/trash", bind(&st, |s, _| Ok(Reply::ok(&serde_json::json!({"items": s.trash.list()})))))
-        // ── 原生书库建文件夹队列（真正的建夹由 xochitl 自己的 Library.createCollection 执行，见 mkdir.rs / shelf-mkdir-agent.qmd）──
-        .post("/mkdir/add", bind(&st, |s, r| {
-            let n = s.mkdir.add(r.json()?.str("name")?).map_err(ApiError::bad)?;
-            if n > 0 {
-                s.bus.publish("books", "mkdir");
-            }
-            Ok(Reply::ok(&serde_json::json!({"ok": true, "pending": n})))
-        }))
-        .get("/mkdir/pending", bind(&st, |s, _| {
-            let (names, pruned) = s.mkdir.pending().map_err(ApiError::internal)?;
-            if pruned > 0 {
-                s.bus.publish("books", "mkdir");
-            }
-            Ok(Reply::ok(&serde_json::json!({"names": names})))
-        }))
-        .get("/mkdir", bind(&st, |s, _| Ok(Reply::ok(&serde_json::json!({"items": s.mkdir.list()})))))
         .post("/staging/delete", bind(&st, |s, r| {
             s.staging.remove(r.json()?.str("name")?).map_err(ApiError::bad)?;
             s.bus.publish("books", "staging");
@@ -112,10 +95,24 @@ fn ok() -> ApiResult {
 }
 
 /// multipart 逐文件原样落母版库（不优化、不落库）：走共享上传模板，暂存在 spool `.work/`（与母版库同分区，入库 rename）。
+/// 可选 `?srcName=&srcBytes=`（CLI push 洗书产物才带）：记这份产物的原始输入身份到 sidecar，供下次
+/// push 同一份原始文件时**处理前**就能查到已经处理过，见 `sidecar::SourceRef` 文档。
 fn staging_upload(st: &State, r: &mut Request<'_>) -> ApiResult {
     let boundary = r.multipart_boundary()?;
+    let source = match (r.q("srcName"), r.q("srcBytes").and_then(|v| v.parse::<u64>().ok())) {
+        (Some(name), Some(bytes)) => Some(crate::sidecar::SourceRef { name: name.to_string(), bytes }),
+        _ => None,
+    };
     let _g = st.spool.guard();
     let items = AssetUploadFlow::in_dir(st.spool.work()).run(&StagingStore(&st.staging), &mut *r.body, &boundary).map_err(ApiError::bad)?;
+    if let Some(src) = &source {
+        // 一次 staging_upload 请求实际上永远只有一个文件部分（CLI/网页都逐文件各发一个 POST），
+        // 但这里不假设，多个成功项就都记同一个来源——理论上不会发生，发生了也无害（都是同一份
+        // 原始输入触发的上传）。
+        for it in items.iter().filter(|i| i.ok) {
+            let _ = st.staging.set_source(&it.name, src.clone());
+        }
+    }
     if items.iter().any(|i| i.ok) {
         st.bus.publish("books", "staging");
     }

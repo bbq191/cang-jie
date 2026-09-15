@@ -215,7 +215,7 @@ speed_ratio = 1 − clamp((len−len_low)/(len_high−len_low),0,1) × (1−effe
 
 ### 当前状态（真机验证通过）
 
-- 部署：`enhance/handwriting-stroke/src/hw_stroke.c`+`Makefile`+`deploy/install.sh`，逐字节参照 `enhance/hl-snap/` 结构（`patch_target`/`make_call_through_stub` 通用 trampoline 代码抄自那边）
+- 部署：`enhance/handwriting-stroke/src/hw_stroke.c`+`Makefile`+`deploy/install.sh`，逐字节参照 `enhance/hl-snap/` 结构（通用 trampoline 安装 `cj_patch_target` 2026-09-15 全量代码审查后收进 `enhance/shared/trampoline_patch.c`，两边共用一份，不再各自逐字节复制）
 - 四个 hook：`FUN_00f47530`（书法笔专属几何生成器，笔尖角度+提按效果生效）、`FUN_00f4c8d0`（钢笔/铅笔/马克笔等日常工具的几何生成器，同样两个效果生效，覆盖面是前者的近 5 倍）、`FUN_00f3f9d0`（分派诊断，纯只读，留着排查用）——四个 hook 各自独立 install，找不到目标只跳过自己，不拖累其它 hook
 - `reading-qol.json` 新增键：`hwStrokeWidthFactor`（整体缩放，默认 1.0）、`hwStrokeNibAngleDeg`（笔尖角度，默认 45°）、`hwStrokeNibMinRatio`（笔尖角度效果强度，默认 1.0=关闭）、`hwStrokeNibWidthLow`/`hwStrokeNibWidthHigh`（宽度渐变阈值，两个效果共用）、`hwStrokeSpeedMinRatio`（提按/速度效果强度，默认 1.0=关闭）、`hwStrokeSpeedLenLow`/`hwStrokeSpeedLenHigh`（速度渐变阈值）
 - 真机验证过：日志数值合理性、`factor` 缩放真实改变笔迹粗细（截图确认）、`hl-snap` 共存不冲突、两个效果的强度按宽度自动调节（细笔画自动趋近关闭）、速度效果方向正确（真机数据验证 `len` 与 `speed_ratio` 负相关）、书法笔原生方向效果不是我们引入的、`FUN_00f4c8d0` 真机命中 10033 次覆盖多种日常工具
@@ -229,5 +229,3 @@ speed_ratio = 1 − clamp((len−len_low)/(len_high−len_low),0,1) × (1−effe
 4. **smoothstep 缓动曲线（`fVar15`，存进 `plVar6+0xe`）的下游用途没有确认**——猜测是喂给填充透明度/羽化半径。
 5. **当前参数（角度 45°/宽度阈值 5~20/速度阈值 1~10/两个强度都是 0.6）是按这一轮真机数据校准的起点，没有精细打磨**——"看上去还行"到"效果好"之间还有调参空间，非阻塞性后续工作。
 6. **压感数据的跨函数传值问题没有彻底解决**——如果以后想换回真实硬件压感（比精度上运笔速度代理更贴近真实"提按"语义），需要先搞清楚 `FUN_00f47530`/`FUN_00f4c8d0` 各自还有哪些调用路径、`FUN_00f3f9d0` 这份实例覆盖了其中哪些，见上面「压感预研」小节。
-
-（内容跟这份文档同步，那边是给未来会话快速定位用的索引指针，细节以这份文档为准）。

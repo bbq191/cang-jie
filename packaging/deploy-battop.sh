@@ -26,8 +26,21 @@ echo "== 推送到 root@$HOST:$DEST =="
 # 内核拒绝（ETXTBSY，scp 报 "dest open ... Failure"，真机实测过一次）。先停服务再传，
 # install.sh 最后会自己重新 enable --now，不影响"停了忘记重启"的风险。
 ssh "root@$HOST" "mkdir -p $DEST; systemctl stop battop.service 2>/dev/null || true"
+# 备份旧二进制（若是重装）——必须在 scp 覆盖它之前做，$DEST 本身不是 xovi extensions.d，
+# 同目录放备份没有"被当成扩展重复加载"的风险。2026-09-15 全量代码审查补（deploy-sidebar-
+# entry.sh 已经这么做，这几个部署脚本当时漏了）。
+ssh "root@$HOST" "[ -f $DEST/battop ] && cp $DEST/battop $DEST/battop.bak.pre-\$(date +%Y%m%d-%H%M%S) && echo '-- 已备份旧版本' || true"
 scp "$BIN" "root@$HOST:$DEST/battop"
 scp "$DIR/install.sh" "root@$HOST:$DEST/install.sh"
+
+echo "== md5 校验（跟 deploy-sidebar-entry.sh 同款套路，2026-09-15 全量代码审查补）=="
+LOCAL_MD5="$(md5sum "$BIN" | awk '{print $1}')"
+REMOTE_MD5="$(ssh "root@$HOST" "md5sum $DEST/battop" | awk '{print $1}')"
+if [ "$LOCAL_MD5" != "$REMOTE_MD5" ]; then
+    echo "!! md5 对不上（$LOCAL_MD5 vs $REMOTE_MD5），传输可能损坏，不继续安装"
+    exit 1
+fi
+echo "-- md5 一致"
 
 echo "== 设备端安装 =="
 # shellcheck disable=SC2029  # 远端路径就是要在本地展开（固定字面量，无用户输入拼接风险）

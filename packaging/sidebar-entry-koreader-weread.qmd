@@ -4,8 +4,8 @@
 ; 2026-09-13 从 oldbak/xovi-extensions/reading-qol/koreader-sidebar-entry.qmd 捞回 packaging/
 ; 重新纳入版本控制（内容跟设备现役那份逐字一致，没有重写）。`deploy-sidebar-entry.sh` 探测到
 ; 设备已经装了第三方 WeRead app 时用这份；没装就退回姊妹文件 `sidebar-entry-koreader-only.qmd`
-; ——WeRead 不是这个仓库能装的东西（要求用户自己下载官方发行包 SSH 装，见
-），不能假设它一定在，硬塞一个点了没反应的按钮。
+; ——WeRead 不是这个仓库能装的东西（要求用户自己下载官方发行包 SSH 装），不能假设它一定在，
+;   硬塞一个点了没反应的按钮。
 ;
 ; 【背景】双阅读器分工后 KOReader 是消遣阅读主力，但入口藏在 Sidebar→AppLoad 二级菜单。
 ;   「彻底取代 xochitl」在 Move 上架构判死（无 /dev/fb，显示合成器活在 xochitl 进程内，
@@ -13,8 +13,8 @@
 ;   本 qmd 做「最外层入口」：Import files 折叠区正下方一条原生同款隔离线 + 「KOReader」项
 ;   （Ko 字标），并运行时隐藏 AppLoad 菜单项。
 ;
-; 【2026-09-13 追加 WeRead】用户另外装了一份第三方 WeRead app（跟本项目已砍的旧微读管线无关，
-; 见），装机脚本因为 OS 是 3.28 而保守跳过了拷 AppLoad
+; 【2026-09-13 追加 WeRead】用户另外装了一份第三方 WeRead app（跟本项目已砍的旧微读管线无关），
+;   装机脚本因为 OS 是 3.28 而保守跳过了拷 AppLoad
 ;   图标那步，但随包其实带了现成的 `appload/{external.manifest.json,appload-launch.sh,icon.png}`
 ;   （已手动补拷到 `~/xovi/exthome/appload/weread/`）。要求"以同样的形式显示在 KOReader 下方"——
 ;   直接在同一个 INSERT 块里紧跟 KOReader 项后面再插一个同构 `ArkControls.SidebarItem`，两者共用

@@ -24,6 +24,7 @@ use rmsvc_core::service::{self, ServiceSpec};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use vendorcfg::VendorConfig;
 use worker::Ctx;
 
 pub const APP: &str = "notes";

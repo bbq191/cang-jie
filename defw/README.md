@@ -4,7 +4,7 @@
 
 ## 起因
 
-2026-09-09：研究"CJK 手写笔迹渲染优化"（笔锋按中文书写习惯运笔粗细/顿挫，跟 `cardhw` 那条 AI 转写完全无关）。`strings`/`c++filt` 在真机 `xochitl`（3.28.0.172）二进制上找到一套 C++ RTTI 名字，命名空间 `Quill::strokev2`，按笔型分光栅化策略（`FillPencil`/`FillBallpoint`/`FillBallpointAA`/`FillMaskedEraser`…），外层包 `LerpRaster`（插值光栅化）/`MonoRaster`——这只是字符串层面的侦察，**没有定位到实际代码地址、没验证能不能 hook**，要往下挖必须上 Ghidra。
+2026-09-09：研究"CJK 手写笔迹渲染优化"（笔锋按中文书写习惯运笔粗细/顿挫，跟 `cardhw` 那条 AI 转写完全无关，详见 `enhance/handwriting-stroke/README.md`）。`strings`/`c++filt` 在真机 `xochitl`（3.28.0.172）二进制上找到一套 C++ RTTI 名字，命名空间 `Quill::strokev2`，按笔型分光栅化策略（`FillPencil`/`FillBallpoint`/`FillBallpointAA`/`FillMaskedEraser`…），外层包 `LerpRaster`（插值光栅化）/`MonoRaster`——这只是字符串层面的侦察，**没有定位到实际代码地址、没验证能不能 hook**，要往下挖必须上 Ghidra。
 
 ## 目录约定（照抄 `ghidra-project/` 的成功模式）
 

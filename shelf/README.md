@@ -24,8 +24,13 @@ host `shelf push` 是唯一能"入库时顺带优化"的源（Calibre 深洗 / �
 `shelf push` 都会在传之前先核对一遍母版库现有条目，同名同大小＝已经成功落地过，自动跳过不重传**（2026-09-13
 补，见白皮书 §04）——批量推送中途失败、原样重跑整条命令/整个上传队列是安全的，不会把已经成功的那几份
 又传一遍变成编号副本；这条保护按文件名+字节数比较、不比内容 hash，同名不同大小（内容真的换了）仍照常传。
+**`shelf push` 2026-09-14 起再加一层**：处理任何一本书之前先查一遍原始输入文件（未洗书前的
+名字+字节数）是不是已经处理成功过——命中就连洗书/重排这类耗时步骤都跳过，不只是省上传流量，
+真正省下处理时间（服务端 sidecar 记一份"这份母版库文件是哪个原始输入处理出来的"，`GET
+/api/books/staging` 一并带出）；这层只有 `shelf push` 有，网页原样上传本来就不经处理，不受
+这个局限影响。
 
-**格式三档**（`shelf_core::formats` 单一事实源，网页 accept、服务端上传门、inbox、CLI 同源；按设备装的 KOReader 注册表核过）：
+**格式三档**（`rmsvc_core::formats` 单一事实源，网页 accept、服务端上传门、inbox、CLI 同源；按设备装的 KOReader 注册表核过）：
 
 | 档 | 格式 | 去向 |
 |---|---|---|
@@ -64,14 +69,14 @@ host `shelf push` 是唯一能"入库时顺带优化"的源（Calibre 深洗 / �
 
 | 服务 | 路由 |
 |---|---|
-| books | `GET /events`（SSE） · `GET /status` · `GET /inbox` · `POST /inbox/{retry,delete}` · `GET /staging` → `{items, freeBytes}`（条目 `delivered.render`＝投原生后的渲染自检 `{uuid,pages,expected,status}`）· `POST /staging`（multipart 原样入库）· `POST /staging/optimize {name, mode}` · `POST /staging/deliver {name, folder?, keep?}`（EPUB 投完起线程等 xochitl 渲染、核对页数，结果推 `books/render` 事件）· `POST /staging/mark {name, target}` · `POST /staging/fetch-article {url, optimize?}`（`optimize` 缺省 false，请求了就抓完紧接着跑一遍「清洗＋优化」再落库，跟母版库列表里点「优化」是同一个函数，见白皮书 §03ap） · `POST /staging/delete {name}` · `GET /staging/render/{uuid}`（xochitl 渲染缓存 PDF，`doctor --render` 取回量测）· **原生回收站队列** `POST /trash/add {uuid, name}`（name 须与书库 visibleName 相符）· `GET /trash/pending`（Sidebar 代理 qmd 拉取，由 xochitl 自己的 `selectionMoveToTrash` 执行）· `GET /trash` · **原生建文件夹队列** `POST /mkdir/add {name}` · `GET /mkdir/pending`（MainView 代理 qmd 拉取，由 xochitl 自己的 `Library.createCollection` 执行）· `GET /mkdir` |
+| books | `GET /events`（SSE） · `GET /status` · `GET /inbox` · `POST /inbox/{retry,delete}` · `GET /staging` → `{items, freeBytes}`（条目 `delivered.render`＝投原生后的渲染自检 `{uuid,pages,expected,status}`）· `POST /staging`（multipart 原样入库）· `POST /staging/optimize {name, mode}` · `POST /staging/deliver {name, folder?, keep?}`（EPUB 投完起线程等 xochitl 渲染、核对页数，结果推 `books/render` 事件）· `POST /staging/mark {name, target}` · `POST /staging/fetch-article {url, optimize?}`（`optimize` 缺省 false，请求了就抓完紧接着跑一遍「清洗＋优化」再落库，跟母版库列表里点「优化」是同一个函数，见白皮书 §03ap） · `POST /staging/delete {name}` · `GET /staging/render/{uuid}`（xochitl 渲染缓存 PDF，`doctor --render` 取回量测）· **原生回收站队列** `POST /trash/add {uuid, name}`（name 须与书库 visibleName 相符）· `GET /trash/pending`（Sidebar 代理 qmd 拉取，由 xochitl 自己的 `selectionMoveToTrash` 执行）· `GET /trash` |
 | koreader | `GET /status` · `GET /books[?folder=]` · `POST /books/adopt {name, folder}`（从母版库落书）· `GET|POST /fonts` · `DELETE /fonts/{file}` · `GET|POST /dicts[?name=]` · `GET|POST /config/{settings\|defaults\|gestures}[?dry_run=1]` |
 | fonts | `GET /` · `POST /` · `DELETE /{family}` · `PUT /config {emboldenCjkFallback}` · `GET /status` |
 | wallpapers | `GET /` · `POST /[?activate=1]` · `PUT /current {name}` · `PUT /mode {mode}` · `DELETE /{name}` · `GET /{name}` · `GET /status` → `{native:{enabled,path,restartPending}}` |
 | 笔记线 ink / transcribe / notes | 见 `../notes/README.md`「主要 API」（条目库 / 转写 / 投影）；事件 `area=notes` |
 | 网关自身 | `GET /api/services` · `GET /api/manage` · `GET /api/foundation` · `POST /api/manage/{seg}/{start\|stop\|uninstall}` · **`GET /api/events`（SSE 事件流：各服务 `GET /events` 汇聚，`{svc,area,kind,at}`，`books/render` 另带 `name/status/pages/expected`；网页零轮询、host `shelf events`）** · `GET /ui/locales/{lang}`（语言包 JSON，前端按 `zh-CN.json`/`en-US.json` 请求、服务端剥 `.json`；不认识的语言码落中文，见白皮书 §03ae） · **系统增强开关**（「管理」页系统增强/实验室/电池刺客几个二级 tab，2026-09-09 §03aj 起、2026-09-10 §03ak-§03am 扩展）：`GET /api/enhance/status` → `{hlSnapCjk, hwStrokeEnabled, notesImportMdEnabled, battop:{installed,running,lastSampleAt}}` · `PUT /api/enhance/qol {hlSnapCjk?, hwStrokeEnabled?, notesImportMdEnabled?}`（只 patch 传入的键，`reading-qol.json` 其余键原样保留；`hwStrokeEnabled` 是网页层派生态，翻译成 `enhance/handwriting-stroke/` 的 `hwStrokeNibMinRatio`/`hwStrokeSpeedMinRatio` 两个真实字段） · `POST /api/enhance/battop/{start\|stop}`（未装 battop 时 400，不装） · `GET /api/enhance/battop/summary`（4 个时间窗×应用/进程/唤醒源 top15，原样转发 battop 自己聚合的 `summary.json`，未采样过返回 `{available:false}`） · `/login` `/logout` `/password` `/ca.crt` |
 
-上传回执统一 `{ok, items:[{name, ok, message, item?}], …}`（`shelf_core::asset::receipt`）；成功项 `name` 是落地名。
+上传回执统一 `{ok, items:[{name, ok, message, item?}], …}`（`rmsvc_core::asset::receipt`）；成功项 `name` 是落地名。
 
 ## 目录
 
@@ -80,7 +85,7 @@ shelf/
 ├── Cargo.toml · build.sh · .cargo/    内部 workspace（仓库根仍无 workspace）；musl 全静态交叉编译
 ├── crates/bookconv/                   ★ 通用内容层：多格式→EPUB/PDF、EPUB 优化器+清洗层+质量门、e-ink 图片处理、EPUB 组装、网文抽取
 │   └── src/bin/epub_optimize.rs         host/设备共用 CLI（wash_epub.sh 末步）
-├── services/book-serve/               staging.rs(母版库领域：入库/优化/落库) · sidecar.rs(落库记录边车) · render_check.rs(投原生后渲染自检) · pending_queue.rs(PendingQueue\<T\>：持久化+入队去重+剔除共用骨架，2026-09-09 §03ag) · trash.rs(原生回收站队列) · mkdir.rs(原生建文件夹队列，当前消费方存疑——note-serve 已改用别的机制不再调用，见模块注释) · spool.rs(inbox 队列) · api.rs(纯 HTTP 适配) · service_state.rs
+├── services/book-serve/               staging.rs(母版库领域：入库/优化/落库) · sidecar.rs(落库记录边车) · render_check.rs(投原生后渲染自检) · pending_queue.rs(PendingQueue\<T\>：持久化+入队去重+剔除共用骨架，2026-09-09 §03ag) · trash.rs(原生回收站队列) · spool.rs(inbox 队列) · api.rs(纯 HTTP 适配) · service_state.rs
 ├── services/koreader-serve/           koreader.rs(目录模型+KoStore) · config.rs(ConfigSync+merge.lua) · main.rs
 ../enhance/{font-serve,wallpaper-serve}/  2026-09-11 从 services/ 挪出去（概念上更贴近系统增强，
                                       不是"书架内容管理"业务）；wallpaper-serve 原依赖 bookconv 的两个
@@ -93,8 +98,8 @@ shelf/
 ├── systemd/                           shelf.target + book/koreader-serve 两个 .service；font/wallpaper-serve 的单元跟着 2026-09-11 挪进各自 `../enhance/<name>/` 目录；其余独立线自己的单元在各自仓库，随载荷一起装
 ├── install.sh · uninstall.sh          设备端安装/卸载（--only 按服务；写 /usr 前实检 dm-verity；--purge 不碰其余独立线的用户数据目录）；设备侧自包含脚本，随载荷推到设备上跑，不依赖 host 侧编排
 ../packaging/deploy.sh                host 一键：build → tar-over-ssh → 设备 install.sh（自动备份到 /home/root/cangjie-backups；`GATEWAY_BINS`/`ENHANCE_BINS`/`NOTES_BINS` 顺带打包 `../gateway`/`../enhance/{font,wallpaper}-serve`/`../notes` 的二进制与单元）。2026-09-11 从 shelf/deploy.sh 搬到 `packaging/`——它编排的是跨四个目录的安装，逻辑上属于"全项目安装编排"，见 `../packaging/README.md`；也是 `packaging/install-all.sh` 统一安装器调用的其中一步
-├── host/                              CLI `shelf`（纯 stdlib、系统 python3）+ pytest；shelf_cli/comic.py 漫画探针；host/calibre/ = Calibre 前置流水线 + 独立脚本（epub_skel 共享 EPUB 骨架 / txt_to_epub / comic_gray / render_probe+measure）
-├── xovi/                              font-menu-dynamic{,-3.27}.qmd 字体菜单读 fonts.json 动态追加（3.28 / 3.27 真机通）· shelf-trash-agent.qmd 原生回收站代理（Sidebar 注入，拉 book-serve /trash/pending）· shelf-mkdir-agent.qmd 原生建文件夹代理（MainView 注入，拉 book-serve /mkdir/pending，真机通）；改 qmd 先用 qmldiff CLI 离线实跑（白皮书 §04）
+├── host/                              CLI `shelf`（纯 stdlib、系统 python3）+ pytest；shelf_cli/comic.py 漫画探针（PDF 分支要 spawn pymupdf 子进程 pdf_comic_probe.py，2026-09-14 补）；host/calibre/ = Calibre 前置流水线 + 独立脚本（epub_skel 共享 EPUB 骨架 / txt_to_epub / comic_gray / pdf_comic_probe / render_probe+measure）
+├── xovi/                              font-menu-dynamic{,-3.27}.qmd 字体菜单读 fonts.json 动态追加（3.28 / 3.27 真机通）· shelf-trash-agent.qmd 原生回收站代理（Sidebar 注入，拉 book-serve /trash/pending）；改 qmd 先用 qmldiff CLI 离线实跑（白皮书 §04）
 ├── koreader/                          配置即代码：profile/{settings.reader.patch,defaults.custom,gestures.patch}.lua + fonts.txt/dicts.txt + merge.lua
 └── docs/
     ├── reMarkable书架白皮书.md          书架侧设计决策 + 真机记录（服务/UI/母版库/字体/管理台）；开头有「现状总览」
@@ -179,9 +184,11 @@ shelf/host/bin/shelf push 论文.pdf 书.epub [--to-pdf] [--no-optimize] [--no-c
 #   灰阶 CBZ 体积估算转 PDF 后仍在设备原生上传上限内，顺带生成一份 PDF 给「投入原生书库」选项（--no-comic-native 关掉）；--no-eink-gray 要原图（连带不做跨页拆分/白边裁切）
 #   --wait：设备离 USB 几秒就自动休眠关 WiFi，push 上传前先探 /health；不可达时每 5 秒探一次等它醒（点亮屏幕/接 USB），缺省最多 600 秒；不加 --wait 则直接报错、不传
    **只落母版库**，去向在网页「传书 → 母版库」选。路线自动定（`push.plan`）：
-   · 有 Calibre → 洗书：EPUB 深洗 / AZW3·MOBI·AZW·PRC·FB2 转 EPUB / **PDF 默认结构化重排**（born-digital→EPUB→洗书；扫描件优先 k2pdfopt——**host 通常没装这个外部工具（本项目有意不内嵌，没有安装指引），没装时唯一的回退是裁边脚本，但裁边对纯扫描图片按设计主动拒绝产出，两条路都不通就直接报错退出**，不是静默降级；报错时按提示改用 `--no-reflow` 原样传，或自行装好 `k2pdfopt`（本仓库没有安装指引）再重跑，见白皮书 §04「扫描版漫画 PDF」条）；
+   · 有 Calibre → 洗书：EPUB 深洗 / AZW3·MOBI·AZW·PRC·FB2 转 EPUB / **PDF 默认结构化重排**（born-digital→EPUB→洗书；扫描件优先 k2pdfopt——**host 通常没装这个外部工具（本项目有意不内嵌，没有安装指引），没装时唯一的回退是裁边脚本，但裁边对纯扫描图片按设计主动拒绝产出，两条路都不通就直接报错退出**，不是静默降级；报错时按提示改用 `--no-reflow` 原样传，或自行装好 `k2pdfopt`（本仓库没有安装指引）再重跑）——**这条路只吃到非漫画的扫描 PDF（如扫描版论文/杂志）**，扫描版漫画 PDF
+     2026-09-14 起会被下面的漫画判定先拦下来走 CBZ 管线，不会碰到这条报错路，见白皮书 §04「扫描版漫画 PDF」条）；
      产物必过 `check_output.py` 质量门（`--skip-check` 强推）。`--to-pdf` 定稿固定版式 PDF（手写批注用）。>60MB PDF 自动分卷（需 uv `calibre` 组的 pymupdf；切不了会报错不推，xochitl 收不下 188MB 整本）。
-   · **漫画**（AZW3/MOBI/EPUB 里几乎全是整页图，`comic.py` 自动判）→ 转成 **CBZ** 进母版库，网页点「加入 KOReader」；**默认不投原生，体积够小时会顺带出一份 PDF 给「投入原生书库」选项，超限的仍只出 CBZ、绝不分卷**（§03ad，2026-09-08）。
+   · **漫画**（AZW3/MOBI/EPUB 里几乎全是整页图，或 PDF 抽样页几乎全是"有图无字"——`comic.py`
+     自动判，PDF 分支 2026-09-14 补）→ 转成 **CBZ** 进母版库，网页点「加入 KOReader」；**默认不投原生，体积够小时会顺带出一份 PDF 给「投入原生书库」选项，超限的仍只出 CBZ、绝不分卷**（§03ad，2026-09-08）。
      `--comic / --no-comic` 覆盖判断；CBZ 输入原样入库。
    · `--no-optimize` 或无 Calibre → 原样传母版库（网页里可再点优化）。
    · `--no-calibre`：**EPUB 输入**只跑 `epub-optimize`（跟网页「母版库→优化」按钮/`wash_epub.sh` 末步同一个函数），

@@ -44,28 +44,15 @@ Only actual new features/capabilities, not a full commit log.
 
 | Date | Added |
 |---|---|
+| 2026-09-14 | Scanned comic PDFs (common from sources like Anna's Archive) are now correctly recognized as comics and routed through that pipeline, instead of failing outright on push |
+| 2026-09-14 | Re-running a batch push now actually skips the processing step for books that already succeeded, not just the upload — saves computer time, not just bandwidth |
+| 2026-09-14 | Fixed a "device time sync often shows as failed right after a reboot" issue: the root cause was autosuspend interrupting the very first time-sync attempt after boot; the actual time was already correct, only the status display was wrong |
 | 2026-09-13 | Batch book transfers are now duplicate-safe: both the web upload and the desktop command-line push check beforehand whether a file was already transferred, so a partial failure followed by an as-is rerun won't re-transfer a book that already succeeded into a duplicate |
 | 2026-09-13 | A Sidebar shortcut straight to "KOReader"; if the third-party WeRead app is installed it's auto-detected and a "WeRead" entry appears too — both are wired into `packaging/`, repeatable via `install-all.sh` |
 | 2026-09-13 | The gateway's "Setup · foundation" page now also probes whether WeRead is installed (read-only, same as the KOReader check) |
 | 2026-09-11 | `packaging/install-all.sh`: one command installs everything on a fresh device, including a firmware safety gate (sha256 match required, refuses otherwise) |
 | 2026-09-11 | Added xovi boot-persistence (auto re-runs `xovi/start` after a reboot), domestic NTP, and a default timezone — three system-level config steps |
 | 2026-09-11 | Top-level bilingual README/INSTALL docs and a donation channel went live |
-
-## Known issues, not yet fixed
-
-Found but not yet acted on, in discovery order:
-
-- **A scanned comic PDF fails outright when you push it.** Books like this (common from sources
-  such as Anna's Archive) currently aren't recognized as "comics" — they go through the text
-  reflow path built for papers/magazines instead, and when the computer doesn't have the
-  optional external reflow tool installed, that fails outright rather than degrading silently.
-  There's a "pass it through as-is" flag that works around it for now; whether this kind of PDF
-  should eventually get its own comic-handling path is still undecided.
-- **Re-pushing a book that already succeeded wastes processing time.** If a batch push fails
-  partway through and you re-run it, books that already landed won't be uploaded a second time
-  or duplicated — but if a book needed the computer to clean up / reflow it first, that expensive
-  processing step still reruns before the system realizes there's nothing new to upload. Bandwidth
-  is saved; the processing time isn't, yet.
 
 ## Quick start
 

@@ -492,6 +492,14 @@ book→「母版库 / 原生投递」、weread→「微信读书（内容源，�
 - 真机（同日）：`POST /upload` 先起了个坑——`/home/root/xovi/start` 头一次跑完 `Job for xochitl.service canceled`，`/etc/systemd/system/xochitl.service.d/` 事后检查是空的（LD_PRELOAD 等全部没进程环境），本机没装 `xovi-reenable.service`、纯 vellum tmpfs 机制这次没吃上；**原地重跑一次 `xovi/start` 干净成功**（新 PID 环境变量核对齐全）。这不是 mkdir qmd 的问题，是这套 tmpfs 持久化本身偶发不稳，记一笔：`xovi/start` 跑完务必核对新 PID 的 `LD_PRELOAD`/`XOVI_ROOT` 环境变量，不能只看 `systemctl is-active`。
 - 真机（正式验证）：`journalctl` 见 `[qmldiff]: Loading file shelf-mkdir-agent.qmd` + `Processing file .../MainView.qml...` 无解析错误；note-serve 生成新章节（目标文件夹不存在）→ book-serve `mkdir` 队列即时出现 `《人骨拼圖》` → ~80 s 内（Timer 首次触发时机 + 8 s 周期）日志 `SHELF-MKDIR: created 《人骨拼圖》`、书库真多出一个 `CollectionType` 文件夹、队列自动清空；**再生成一次同书**，新文档 `parent` 字段正确指向刚建出来的文件夹 uuid（旧的、建夹前落根目录的那份原样留在根，没有被追加挪动——这是设计内行为，不是遗留 bug）；重复触发不产生重名文件夹（`add()`/`pending()` 双重"已存在即不建"兜底真机成立）。全程 `NRestarts=0`，五个服务与 xochitl 健康检查干净。
 
+**已物理删除（2026-09-15，全量代码审查审出的死代码）**：全仓库确认除本模块自身外再无任何消费方
+（note-serve 唯一记录在案的调用方 2026-09-09 已改用别的机制，见上），`book-serve::mkdir.rs`/
+`/mkdir/*` 三条路由/`shelf-mkdir-agent.qmd`/`shelf/install.sh` 里部署这份 qmd 的那段全部删除，
+`shelf/README.md` 三处目录说明同步去掉。**已部署在真机上的旧版 qmd 不受影响，可以放着不管**：
+它的轮询逻辑是 `if (x.status !== 200) { return; }`，本模块下线后请求变 404，QML 端就静默不做
+任何事，不会报错/崩溃，不需要专门去手动摘除——这条链路本身就是设计成"后端消失就自然失活"的
+轮询代理，跟 `shelf-trash-agent.qmd`（还在用）不是一回事，别搞混了去动它。
+
 **中文 TXT 切章（同日，`host/calibre/txt_to_epub.py`）**：网文以 TXT 为主，此前 `.txt` 原样进母版库→只能 KOReader 且无章节（bookconv/book-serve 零 TXT 处理，Calibre 也不认中文"第X章"）。host 路：stdlib 脚本解码（utf-8-sig → utf-16 BOM → gb18030 严格 → utf-8 替换）→ 一行一段、行首全角空格/nbsp 剥掉（缩进交 css）→ `第X卷/部/集`（一级）/`第X章/回/节/话`、`序章|楔子|尾声|番外…`（二级或一级）切章，标题行 ≤40 字防"第三章说过……"误判，一个没认出就每 8000 字硬切「第 N 部分」→ 极简 EPUB3（两级 nav、dc:title/creator 取自文件名 `书名 - 作者`）→ `wash_epub.sh`（`WASH_AUTOTOC=0`，目录已有）→ `check_output.py`。`formats.rs` 把 txt 从「只能 KOReader」挪到「电脑可转」（网页格式说明随之变）。
 - 真机（样本：把《人骨拼圖》EPUB 正文抽成 GB18030 TXT，38 章 24.8 万字）：`shelf push` 链 txt_to_epub → wash_epub.sh → check_output（NCX 48 条全命中）→ 投原生 **531 页（自检期望 526，ok）**，正文页 x0 只有 17.8/41.9 两档 = 首行缩进 24.1 pt = 2em，章名 24.1 pt。样本暴露一坑：TXT 开头常自带一份目录（每行"第一部　一天的國王　1"），会被切成一串空章——`drop_contents_listing`：没正文且标题（去尾页码）在后面再次出现的章视为目录行丢掉。另一事实：**xochitl 渲染缓存 PDF 从不带书签**（Tell Me Your Dreams 的也是 0 条），目录只能从 EPUB 的 ncx/nav 验，不能从缓存验。
 
@@ -827,7 +835,24 @@ figcaption{margin:0;padding:0;}
   走给论文/杂志设计的文字结构化重排路，而这条路对纯图片扫描件唯一的兜底又是可选外部依赖。
   这个组合失败场景、以及"扫描漫画 PDF 该不该走漫画管线"这个问题，此前都没有被讨论过——
   **这次只记发现，用户明确说暂不验证 `--comic` 效果、也暂不扩展 `is_comic()` 支持 PDF**，
-  留在这里等以后要做再回来接。
+  留在这里等以后要做再回来接。**已修（2026-09-14）**：`comic.is_comic()` 补上 `.pdf` 分支——
+  抽样统计"有图且几乎无文字"的页占比，图片页 ≥20 且占比 ≥60% 判漫画，跟 PalmDB/EPUB 两条判定
+  同一套阈值；判定本身要真正打开、逐页解析，做不到其余分支"零依赖毫秒级"，拆成独立子进程脚本
+  `shelf/host/calibre/pdf_comic_probe.py`（pymupdf，走 `calibre_bridge.py::pdf_comic_stats()`），
+  不直接拖累 `comic.py` 其余分支的"廉价探针"承诺，缺 pymupdf（`calibre` 依赖组）时静默退回
+  False（走原来的文字书重排路，不阻断推送）；magic 头不是 `%PDF-`（含路径不存在）时提前 False，
+  连子进程都不 spawn。**这次顺带验证了之前"未经验证、不当确定可靠方案"的 `--comic`/
+  `ebook-convert` 这条路，结论是可靠**：拿用户真机报的原始文件（照明商店 第11-20话，81MB）
+  实测——探针判出 2375 页、抽样 ratio=1.0；`ebook-convert` 3.3 秒转出 76MB 中转 EPUB；
+  `comic2cbz.py` 抽出 2376 张真实页图（含自动生成封面），肉眼核对多张（含中段 1187 页）画面
+  完整、对话气泡文字清晰、没有乱码/黑屏/裁切错位；`comic_prepare()` 全流程（含 16 灰+跨页
+  拆分）跑通，155 秒出一份 247MB 灰阶 CBZ，过程里的"装订缝不够干净"提示是 `comic_gray.py`
+  既有逻辑，不是这次改动引入的新问题。`shelf push --dry-run` 复核路由从"扫描件重排失败"变成
+  正确的"漫画 CBZ→母版库"。**没有验证到的**：这次没有设备密码，没有做真正的网络上传落地
+  这最后一步（上传逻辑本身没改，风险低，但没有"落进真机母版库"这条实锤）；新增
+  `test_comic_probe_pdf` 单测（mock 掉 pymupdf 子进程，CI 不装 calibre 依赖组）只验证
+  `comic.py` 自己的阈值分支逻辑，探针脚本本身的正确性靠上面这次手动真实文件验证背书，不是
+  靠单测。
 - **"跳过已存在文件"这层保护只省了上传流量，没省 host 端处理时间（2026-09-13，用户追问发现的
   设计局限，暂不动手）**：`_staging_snapshot()` 判重放在 `push.py::run()` 的"处理完之后、上传
   之前"——重跑一个之前已经成功过的大部头，Calibre 洗书 / PDF 结构化重排这类**耗时的 host 处理
@@ -840,7 +865,37 @@ figcaption{margin:0;padding:0;}
   文件的身份去查一遍这份记录，查到匹配就直接跳过整个处理+上传。这是要新加字段、改一点上传
   协议的功能，比 2026-09-13 那两处纯 bug fix（CLI push + 网页上传各自补的"同名同大小跳过重传"）
   量级大一截——服务端 `StagingEntry`/上传参数、CLI 处理前置检查都要跟着改。**用户明确说先记
-  发现，暂不动手**，留在这里等排期。
+  发现，暂不动手**，留在这里等排期。**已修（2026-09-14）**，就是按上面这条"真要做需要"的
+  方案落地：
+  - **服务端**：`sidecar::Delivered` 新增 `source: Option<SourceRef>` 字段（`SourceRef{name,
+    bytes}`）——不新开一个 sidecar 文件，复用现有 `.<name>.delivered` 这份，`serde default`
+    保证旧记录照读。`POST /staging`（`api.rs::staging_upload`）新增可选查询参数
+    `?srcName=&srcBytes=`，成功入库后调 `Staging::set_source()` 写进落地文件的 sidecar；
+    `GET /staging` 本来就把整份 `delivered` 序列化进 `StagingEntry`，不用改。没带这两个参数
+    的旧版本 CLI / 网页原样上传，`delivered` 里就没有 `source`，不受影响。
+  - **CLI**：`_staging_snapshot()` 现在返回两层集合——`staged`（原有那层，处理后产物
+    (name,bytes)）+ `sources`（新的这层，从每条 `delivered.source` 里抠出来的原始输入
+    (name,bytes)）。`run()` 探活+两层快照挪到循环最前面、处理任何一本书之前查（原来是"首本
+    处理完才探活"，见 `ensure_reachable` 头注记的取舍：`--wait` 场景下第一本不再能跟"等设备
+    醒"的时间重叠处理，换来命中 `sources` 的书完全不用处理——重跑一批大部分已成功的场景
+    通常设备已经在线，这个代价不影响它）；处理前先查 `(原始文件名, 原始字节数)` 在不在
+    `sources` 里，命中就直接打印"✓ 原始文件已处理过（同名同大小），跳过重新处理"整本跳过，
+    不命中才走原来的处理流程，上传时带上 `?srcName=&srcBytes=` 供服务端记录，供下一轮命中。
+  - **验证**：Rust 侧新增 `sidecar::tests::source_ref_roundtrips_alongside_other_fields`
+    单测 + 全部 18 个 book-serve 测试通过；Python 侧新增
+    `test_staging_snapshot_splits_processed_and_source_identity`（纯函数层）+
+    `test_push_skips_reprocessing_when_source_already_uploaded`（命中/不命中两个分支，用
+    `wash` 调用计数确认命中时处理步骤真的一次没跑）+ 修了因为上传 URL 现在多带查询参数而
+    炸的 14 个既有测试断言（原来精确比较 `"/api/books/staging"`，改成先 `.split("?")[0]`
+    再比较），全部 90 个 host 测试通过。**真机层面**：起了一个独立 `book-serve` 实例（`env -i`
+    隔离 XDG，跟这次前面验证 chrony/timezone 用的同一套隔离手法），直接对真实 Rust HTTP
+    栈 `curl -X POST ".../staging?srcName=原始.pdf&srcBytes=99999"` 上传，`GET /staging`
+    确认 `delivered.source` 字段精确回显（含中文文件名 URL 编解码正确），另传一份不带
+    这两个参数的验证 `delivered` 整个键都不出现（旧版本/网页上传不受影响）——这一段是真实
+    Rust 服务器，不是 Python 测试里的假网关。**没有验证到的**：没有经过真正的 `gateway`
+    反向代理 + HTTPS + 密码层跑完整的三跳（CLI→gateway→book-serve），这一段仍然只靠上面的
+    假网关集成测试覆盖，没有起真实 gateway 实例复测；也没有在真机上跑一次真实的
+    "重跑一批、命中 source 跳过处理"（本地 book-serve 验证的是 HTTP 层线路通，不是真机场景）。
 - **host CLI 默认端口三天前就该跟着改却漏了，`shelf push` 报"设备不可达"其实是连错端口，跟
   WiFi/USB 无关（2026-09-13，用户真机踩到）**：用户反馈"明明 WiFi 和有线都存在"却报设备不可达，
   真机排查：`curl https://10.11.99.1:8778/health` 连接失败（`HTTP 000`），`curl

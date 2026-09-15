@@ -34,6 +34,15 @@ ssh "root@$HOST" "mkdir -p $DEST/deploy"
 scp "$DIR/hw-stroke.so" "root@$HOST:$DEST/hw-stroke.so"
 scp "$DIR/deploy/install.sh" "root@$HOST:$DEST/deploy/install.sh"
 
+echo "== md5 校验（跟 deploy-sidebar-entry.sh 同款套路，2026-09-15 全量代码审查补）=="
+LOCAL_MD5="$(md5sum "$DIR/hw-stroke.so" | awk '{print $1}')"
+REMOTE_MD5="$(ssh "root@$HOST" "md5sum $DEST/hw-stroke.so" | awk '{print $1}')"
+if [ "$LOCAL_MD5" != "$REMOTE_MD5" ]; then
+    echo "!! md5 对不上（$LOCAL_MD5 vs $REMOTE_MD5），传输可能损坏，不继续安装"
+    exit 1
+fi
+echo "-- md5 一致"
+
 echo "== 设备端安装 =="
 ARGS=""
 if [ "${DEFER_XOVI_START:-0}" = "1" ]; then

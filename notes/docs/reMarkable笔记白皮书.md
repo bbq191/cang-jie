@@ -244,7 +244,7 @@ note-serve 投影要往设备写打字文本，rmv6 之前是纯只读解析。�
 
 **仍是已知缺口**：网页「笔记」tab 还没有「生成笔记本」按钮（§05 第 4 项剩的那半）；`Library.createCollection` 重复调用传同名文件夹会不会建出两个重名文件夹这条风险，本轮验证走的是"add()/pending() 两层不重复请求"的正常路径，没有刻意去撞"两次并发请求建同名夹"这种边界，留意但不阻塞。
 
-**⚠️ 2026-09-09 起，这条链路不再是 note-serve 的依赖**：`ensure_folder` 这套连带 `note-serve::mkdir` 已经整个删掉，改成直接复用书本自己所在的设备文件夹，不再新建任何文件夹——上面这条"重名建夹"风险随之不再是笔记线要担心的问题（`book-serve::mkdir`/`shelf-mkdir-agent.qmd` 本身还在，是书架侧的机制，只是笔记线不再调用）。**当前设计以 §03ae 为准**。
+**⚠️ 2026-09-09 起，这条链路不再是 note-serve 的依赖**：`ensure_folder` 这套连带 `note-serve::mkdir` 已经整个删掉，改成直接复用书本自己所在的设备文件夹，不再新建任何文件夹——上面这条"重名建夹"风险随之不再是笔记线要担心的问题（`book-serve::mkdir`/`shelf-mkdir-agent.qmd` 当时还在，是书架侧的机制，只是笔记线不再调用；**2026-09-15 起这套书架侧机制本身也已确认全仓库无消费方、物理删除，见书架白皮书对应段落**）。**当前设计以 §03ae 为准**。
 
 ## 03m｜用户真机核对揪出两个真问题 + 一次数据事故（2026-09-07）
 
@@ -586,7 +586,7 @@ CSS 上章节标签条复用 `.subnav` 按钮视觉（`subtabs()` 用 `$('.subna
 
 **一个容易踩的坑，写测试时抓到了**：重新生成同一章时，如果照常调用 `unique_name` 去重，会把"这次要被替换、但还没来得及入回收站队列"的旧文档也算成"重名"，平白多加一次后缀（比如"楔子"变成"楔子 2"）——`ChapterRecord.doc_uuid` 的旧文档要等这次上传成功、`claim` 拿到新 uuid 之后才会入队。修法：**只有首次生成才走 `unique_name` 去重，重新生成时直接沿用 `ChapterRecord.visible_name` 里记录的名字**，不重新计算。`folder_reused_from_book_and_dedup_only_runs_once_not_on_regenerate` 这条测试专门钉住这一点（用一个每次调用都变返回值的去重桩，断言重新生成时调用次数不再增加）。
 
-移除：`NoteConfig::folder_name_pattern`/`folder_name()`（连带 `/status` 的 `folderPattern` 字段）、`Uploader::ensure_folder`、`note-serve/src/mkdir.rs`（`BookServeMkdir`/`MkdirSink`）。**范围边界**：`book-serve` 的 `MkdirQueue`/`/mkdir/add` 路由和真机 `shelf-mkdir-agent.qmd` 本身没有动——note-serve 是不是唯一消费方还没确认，物理清理留到单独评估（涉及卸载已部署的真机注入组件，按纪律要走"改设备前先备份、一步一确认"，不跟这次功能改动捆一起）。
+移除：`NoteConfig::folder_name_pattern`/`folder_name()`（连带 `/status` 的 `folderPattern` 字段）、`Uploader::ensure_folder`、`note-serve/src/mkdir.rs`（`BookServeMkdir`/`MkdirSink`）。**范围边界（当时）**：`book-serve` 的 `MkdirQueue`/`/mkdir/add` 路由和真机 `shelf-mkdir-agent.qmd` 本身没有动——note-serve 是不是唯一消费方还没确认，物理清理留到单独评估（涉及卸载已部署的真机注入组件，按纪律要走"改设备前先备份、一步一确认"，不跟这次功能改动捆一起）。**2026-09-15 补**：单独评估确认全仓库确实无其它消费方，已物理删除，见书架白皮书对应段落——已部署的旧 qmd 本身设计成后端消失就静默失活，不需要专门去设备上摘除。
 
 **离线**：`shelf-core` 新增 2 测（`parent_folder_of_reads_parent_field_and_treats_trash_as_none`/`unique_document_name_appends_suffix_only_within_same_folder`），`note-serve` 新增 1 测（上面那条去重时机测试），删 1 测（`config.rs` 的 `folder_name` 断言随字段一起删，改成只测默认值/覆盖）；`cargo test --workspace`（notes）164 个测试、`cargo test -p shelf-core`（shelf）49 个测试，全绿零警告；两边 `cargo clippy --all-targets` 核对过没有新增警告。
 

@@ -32,10 +32,11 @@
  * （`cj_hw_dispatch_handler`）保留，纯只读不参与行为，留给以后想再查"到底还
  * 有哪些路径能到 FUN_00f47530"用。
  *
- * 复用 chinese-ime/langhook 已经模块化出来的三个纯工具文件（跟 enhance/hl-snap
- * 同样的路径引用方式，见那边的头注）；patch_target/make_call_through_stub 逐
- * 字节抄自 enhance/hl-snap/src/hl_snap.c（这两个通用 trampoline 安装函数不是本
- * 次功能定制逻辑）。
+ * 复用 enhance/shared/ 下的通用工具文件（跟 enhance/hl-snap 同一份独立副本，见
+ * 那边的头注）；通用 trampoline 安装（cj_patch_target）同样在 shared/ 里
+ * （2026-09-15 前这里跟 hl_snap.c 各有一份逐字节重复的 patch_target/
+ * make_call_through_stub，全量代码审查审出后收进 enhance/shared/trampoline_patch.c，
+ * 不是本次功能定制逻辑）。
  *
  * `FUN_00f47530(float x, float y, void *ctx)` 是标准 AAPCS64 调用约定
  * （两个 float 走 s0/s1，一个指针走 x0），handler 签名照抄这个约定，不需要
@@ -46,9 +47,6 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <errno.h>
-#include <sys/mman.h>
-#include <unistd.h>
 #include <stdint.h>
 #include <stdbool.h>
 #include <math.h>
@@ -56,6 +54,7 @@
 #include "scan.h"
 #include "pattern.h"
 #include "trampoline_aarch64.h"
+#include "trampoline_patch.h"
 
 #define TARGET_MODULE_SUFFIX "/usr/bin/xochitl"
 #define CJ_DATA_DIR "/home/root/.local/share/cangjie-ime"
@@ -104,61 +103,10 @@ static const uint8_t PROLOGUE_HW_QUAD2[] = {
     0x00, 0xa0, 0x41, 0x39, 0xee, 0x3f, 0x0a, 0x6d,
 };
 
-#define CJ_FAR_JUMP_LEN_LOCAL (5 * 4)
-#define PATCH_LEN CJ_FAR_JUMP_LEN_LOCAL /* 覆盖目标函数开头的字节数，跟远跳转指令长度一致 */
+#define PATCH_LEN CJ_FAR_JUMP_LEN /* 覆盖目标函数开头的字节数，跟远跳转指令长度一致 */
 
-/* ---- 通用 trampoline 安装（逐字节抄自 hl_snap.c，不做任何改动） ---- */
-
-static void *make_call_through_stub(const uint8_t *original_bytes, void *jump_back_target) {
-    size_t stub_len = PATCH_LEN + CJ_FAR_JUMP_LEN;
-    void *stub = mmap(NULL, stub_len, PROT_READ | PROT_WRITE,
-                       MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
-    if (stub == MAP_FAILED) return NULL;
-
-    memcpy(stub, original_bytes, PATCH_LEN);
-
-    uint32_t jump_instrs[5];
-    cj_build_far_jump(jump_instrs, jump_back_target);
-    memcpy((uint8_t *)stub + PATCH_LEN, jump_instrs, CJ_FAR_JUMP_LEN);
-
-    if (mprotect(stub, stub_len, PROT_READ | PROT_EXEC) != 0) {
-        munmap(stub, stub_len);
-        return NULL;
-    }
-    __builtin___clear_cache((char *)stub, (char *)stub + stub_len);
-    return stub;
-}
-
-static int patch_target(void *target_addr, void *handler, void **out_stub) {
-    long pagesize = sysconf(_SC_PAGESIZE);
-    if (pagesize <= 0) pagesize = 4096;
-
-    uintptr_t page_base = (uintptr_t)target_addr & ~((uintptr_t)pagesize - 1);
-    size_t region_len = (size_t)pagesize;
-    if ((((uintptr_t)target_addr - page_base) + PATCH_LEN) > region_len) {
-        region_len += (size_t)pagesize;
-    }
-
-    if (mprotect((void *)page_base, region_len, PROT_READ | PROT_WRITE | PROT_EXEC) != 0) {
-        fprintf(stderr, "[hw-stroke] mprotect 失败，放弃 hook（safe mode）：%s\n", strerror(errno));
-        return 0;
-    }
-
-    void *jump_back_target = (uint8_t *)target_addr + PATCH_LEN;
-    void *stub = make_call_through_stub((const uint8_t *)target_addr, jump_back_target);
-    if (!stub) {
-        fprintf(stderr, "[hw-stroke] 调用桩分配失败，放弃 hook（safe mode）\n");
-        return 0;
-    }
-    *out_stub = stub;
-
-    uint32_t jump_to_handler[5];
-    cj_build_far_jump(jump_to_handler, handler);
-    memcpy(target_addr, jump_to_handler, CJ_FAR_JUMP_LEN);
-    __builtin___clear_cache((char *)target_addr, (char *)target_addr + CJ_FAR_JUMP_LEN);
-
-    return 1;
-}
+/* 通用 trampoline 安装（cj_patch_target）在 enhance/shared/trampoline_patch.c，
+ * 2026-09-15 全量代码审查发现这里跟 hl_snap.c 逐字节重复后收进去了，见该文件头注。 */
 
 /* ---- 宽度实验本体 ---- */
 
@@ -404,7 +352,7 @@ static void cj_hw_quad2_handler(float x, float y, void *ctx) {
 
 static void cj_install_hw_quad_hook(uintptr_t target) {
     void *stub = NULL;
-    if (!patch_target((void *)target, (void *)cj_hw_quad_handler, &stub)) {
+    if (!cj_patch_target((void *)target, (void *)cj_hw_quad_handler, PATCH_LEN, "hw-stroke", &stub)) {
         fprintf(stderr, "[hw-stroke] 变宽几何 hook 安装失败（safe mode）\n");
         return;
     }
@@ -418,7 +366,7 @@ static void cj_install_hw_quad_hook(uintptr_t target) {
  * 原则）。 */
 static void cj_install_hw_quad2_hook(uintptr_t target) {
     void *stub = NULL;
-    if (!patch_target((void *)target, (void *)cj_hw_quad2_handler, &stub)) {
+    if (!cj_patch_target((void *)target, (void *)cj_hw_quad2_handler, PATCH_LEN, "hw-stroke", &stub)) {
         fprintf(stderr, "[hw-stroke] 第二几何 hook 安装失败（safe mode，不影响主 hook）\n");
         return;
     }
@@ -491,7 +439,7 @@ static void cj_hw_dispatch_handler(void *param_1, void *param_2, int param_3) {
 
 static void cj_install_hw_dispatch_hook(uintptr_t target) {
     void *stub = NULL;
-    if (!patch_target((void *)target, (void *)cj_hw_dispatch_handler, &stub)) {
+    if (!cj_patch_target((void *)target, (void *)cj_hw_dispatch_handler, PATCH_LEN, "hw-stroke", &stub)) {
         fprintf(stderr, "[hw-stroke] 分派诊断 hook 安装失败（safe mode，不影响变宽几何 hook）\n");
         return;
     }
