@@ -9,7 +9,7 @@ use image::{GenericImageView, ImageFormat, RgbaImage};
 use serde::{Deserialize, Serialize};
 use rmsvc_core::asset::{AssetItem, AssetStore};
 use rmsvc_core::formats::IMAGE_EXTS;
-use rmsvc_core::fs::plain_name;
+use rmsvc_core::fs::{plain_name, write_atomic};
 use rmsvc_core::paths::Paths;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -188,7 +188,7 @@ impl AssetStore for WallpaperStore {
         let stem = name.rsplit_once('.').map(|(s, _)| s).unwrap_or(name);
         let out_name = format!("{stem}.png");
         let dest = self.pool.join(&out_name);
-        std::fs::write(&dest, &png).map_err(|e| e.to_string())?;
+        write_atomic(&dest, &png).map_err(|e| e.to_string())?;
         Ok(AssetItem { name: out_name, bytes: png.len() as u64, extra: serde_json::json!({"width": W, "height": H}) })
     }
     fn success_message(&self, _requested: &str, _item: &AssetItem) -> String {

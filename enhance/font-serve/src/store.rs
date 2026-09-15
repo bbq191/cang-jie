@@ -7,6 +7,7 @@
 use serde::{Deserialize, Serialize};
 use rmsvc_core::asset::{AssetItem, AssetStore};
 use rmsvc_core::formats::{self, FONT_EXTS};
+use rmsvc_core::fs::write_atomic;
 use rmsvc_core::paths::Paths;
 use rmsvc_core::ttf;
 use std::collections::BTreeMap;
@@ -211,17 +212,12 @@ impl FontStore {
     /// 首次接管前，把已存在的非 shelf 配置备份到 `~/.config/shelf/fontconfig-fonts.conf.pre-shelf.bak`。
     pub fn write_fontconfig(&self, fonts: &[FontEntry]) -> Result<(), String> {
         let cjk = Self::cjk_fallback_order(fonts);
-        let dir = self.fontconfig_conf.parent().ok_or("fontconfig 路径无父目录")?;
-        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
         // 备份既有的非 shelf 配置（只备份一次）
         if let Ok(existing) = std::fs::read_to_string(&self.fontconfig_conf) {
             if !existing.contains(FC_MARK) {
                 let bak = self.config_root_backup();
                 if !bak.exists() {
-                    if let Some(p) = bak.parent() {
-                        let _ = std::fs::create_dir_all(p);
-                    }
-                    let _ = std::fs::write(&bak, &existing);
+                    let _ = write_atomic(&bak, existing.as_bytes());
                 }
             }
         }
@@ -258,10 +254,7 @@ impl FontStore {
             }
         }
         x.push_str("</fontconfig>\n");
-        let tmp = self.fontconfig_conf.with_extension("conf.shelf.tmp");
-        std::fs::write(&tmp, x).map_err(|e| e.to_string())?;
-        std::fs::rename(&tmp, &self.fontconfig_conf).map_err(|e| e.to_string())?;
-        Ok(())
+        write_atomic(&self.fontconfig_conf, x.as_bytes()).map_err(|e| e.to_string())
     }
 
     /// ~/.config/shelf/fontconfig-fonts.conf.pre-shelf.bak（首次接管前的原配置备份）。
