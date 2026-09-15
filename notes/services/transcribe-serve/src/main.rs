@@ -23,6 +23,7 @@ use std::path::PathBuf;
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use vendorcfg::VendorConfig;
 use worker::{Ctx, Failures, Target};
 
 pub const APP: &str = "notes";

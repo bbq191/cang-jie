@@ -246,6 +246,103 @@ pub fn public_json(
     raw
 }
 
+/// `TranscribeConfig`/`MindConfig` 字段形状（`preset`/`custom_model`/`custom_base_url`/`keys`/
+/// `prices` 五个核心字段 + 迁移专用的 `model`/`base_url`/`api_key` 三个平铺字段）完全一致，
+/// 上面这批 `resolve_*`/`key_*`/`usage_key`/`public_json` 自由函数两边此前各自包一层同名转发
+/// 方法（`provider()`/`model()`/`base_url()`/`key()`/... 每边约 50 行、逐字节相同）——2026-09-15
+/// 全量代码审查审出，这层转发收进这个 trait，一次写好。**不违反本 crate 头注"只抽行为不抽数据
+/// 结构"的既定原则**：两边的 struct 定义/`Default`/`apply()`/序列化形状完全不动，这里只要求
+/// 实现方给出六个字段访问器，派生方法（含 `public()`）就都能用默认实现，磁盘格式字节不变。
+/// `migrate()` 不放进来——它要同时读三个"老字段"和写四个"新字段"，硬塞进 trait 得先把老字段
+/// 值拷出来打破借用冲突，绕的弯子比每边自己写一行 `vendorcfg::migrate_legacy(...)` 转发更绕，
+/// 不值得，两边继续各自保留这一行。
+pub trait VendorConfig: serde::Serialize {
+    fn presets() -> &'static [Preset]
+    where
+        Self: Sized;
+    fn preset(&self) -> &str;
+    fn custom_model(&self) -> &str;
+    fn custom_base_url(&self) -> &str;
+    fn keys(&self) -> &BTreeMap<String, String>;
+    fn prices(&self) -> &BTreeMap<String, Price>;
+
+    fn provider(&self) -> String
+    where
+        Self: Sized,
+    {
+        resolve_provider(Self::presets(), self.preset(), self.custom_base_url())
+    }
+    fn model(&self) -> &str
+    where
+        Self: Sized,
+    {
+        resolve_model(Self::presets(), self.preset(), self.custom_model())
+    }
+    fn base_url(&self) -> &str
+    where
+        Self: Sized,
+    {
+        resolve_base_url(Self::presets(), self.preset(), self.custom_base_url())
+    }
+    /// 解析出可用的 key（不打印、不落日志）。
+    fn key(&self) -> Option<String>
+    where
+        Self: Sized,
+    {
+        self.key_with_env(std::env::var(KEY_ENV).ok())
+    }
+    fn key_with_env(&self, env: Option<String>) -> Option<String>
+    where
+        Self: Sized,
+    {
+        resolve_key(self.keys(), &self.provider(), env)
+    }
+    fn key_source(&self) -> KeySource
+    where
+        Self: Sized,
+    {
+        key_source(self.keys(), &self.provider())
+    }
+    /// 脱敏预览：只回最后 4 位（如 `...ab12`），服务端算，绝不整串回显。
+    fn key_masked(&self) -> Option<String>
+    where
+        Self: Sized,
+    {
+        self.key().as_deref().map(key_masked)
+    }
+    fn price(&self) -> Price
+    where
+        Self: Sized,
+    {
+        self.prices().get(self.preset()).copied().unwrap_or_default()
+    }
+    /// 用量记账的分组键。
+    fn usage_key(&self) -> String
+    where
+        Self: Sized,
+    {
+        usage_key(self.preset(), self.custom_model())
+    }
+    /// 对外视图：去 key、加 hasKey/keySource/keyMasked/presets/activePreset/model/baseUrl/price。
+    fn public(&self) -> serde_json::Value
+    where
+        Self: Sized,
+    {
+        public_json(
+            serde_json::to_value(self).unwrap_or_default(),
+            Self::presets(),
+            self.preset(),
+            self.model(),
+            self.base_url(),
+            &self.provider(),
+            self.key().is_some(),
+            self.key_source(),
+            self.key_masked(),
+            self.price(),
+        )
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

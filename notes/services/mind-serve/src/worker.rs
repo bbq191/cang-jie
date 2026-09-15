@@ -7,6 +7,7 @@ use crate::config::MindConfig;
 use crate::ink::EntryStore;
 use crate::ledger::Ledger;
 use notecore::model::{Answer, Entry};
+use vendorcfg::VendorConfig;
 
 pub struct Ctx<'a> {
     pub store: &'a dyn EntryStore,
