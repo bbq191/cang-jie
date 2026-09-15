@@ -30,8 +30,9 @@ from ..receipts import guard_file, upload_each
 NAME = "push"
 HELP = "投书到母版库（host 有 Calibre 先洗书；漫画自动转 CBZ 给 KOReader）；去向在网页选。难搞的书/PDF 重排用这条"
 
-# host 能洗/转成 EPUB 的源格式（其余原样传母版库）。= Rust `shelf_core::formats::HOST_CONVERTIBLE_EXTS` ∪ {epub} − {txt}，
-# 网页「格式」提示里"电脑可转"那一档就是它——改一处另一处同步（Python 不链接 Rust crate，只能镜像）。
+# host 能洗/转成 EPUB 的源格式（其余原样传母版库）。= Rust `rmsvc_core::formats::HOST_CONVERTIBLE_EXTS` ∪ {epub} − {txt}，
+# 网页「格式」提示里"电脑可转"那一档就是它——改一处另一处同步（Python 不链接 Rust crate，只能镜像；
+# `tests/test_push.py::test_wash_ext_matches_rust_host_convertible_exts` 跨语言正则核对，改漏了会报）。
 # `.txt` 也是电脑可转，但先走 txt_to_epub.py 切章（Calibre 不认中文"第X章"），再进 wash——见 host_prepare。
 WASH_EXT = {".epub", ".azw3", ".mobi", ".azw", ".prc", ".fb2"}
 
