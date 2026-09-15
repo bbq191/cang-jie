@@ -117,26 +117,28 @@ qmd/hook 偏移错了轻则功能不生效重则设备行为异常）；确认�
 `journalctl` 确认 hook 已加载、`is-active`=active、`NRestarts`=0）；`install-all.sh` 整个
 八步全部跑通（用户 2026-09-11 确认"已成功安装"，当时还没有 `sidebar-entry` 这步）。
 
-**2026-09-15 补（全量代码审查批2，涉及 xovi/mprotect 高危代码路径，还没有真机验证）**：
+**2026-09-15 补（全量代码审查批2，涉及 xovi/mprotect 高危代码路径）——已用真机验证通过**：
 - `enhance/hl-snap/src/hl_snap.c`/`enhance/handwriting-stroke/src/hw_stroke.c` 各自约 50 行
   逐字节重复的通用 trampoline 安装代码（`patch_target`/`make_call_through_stub`）收进
   `enhance/shared/trampoline_patch.c`（新文件，见该目录 `PROVENANCE.md`），两边改成调用
   `cj_patch_target(target, handler, PATCH_LEN, tag, &stub)`，纯参数化提取、不改任何逻辑。
-  **已验证**：`aarch64-linux-gnu-gcc -Wall -Wextra` 单独编译两个 `.c` 各自零警告；
-  `-shared -fPIC` 完整链接（含 `scan.c`/`pattern.c`/`trampoline_aarch64.c`/
-  `trampoline_patch.c` + 各自的 `hl_snap.c`/`hw_stroke.c`）成功，`nm -D` 核对
-  `cj_patch_target`/`cj_build_far_jump`/`_xovi_shouldLoad` 符号都在。**没有验证**：没有
-  真机部署这两个重新编译出的 `.so`——设备当前不可达，改变的是"安装谁的可执行内存"这类
-  高危代码路径，编译通过不等于真机行为不变，必须补一次真机装机确认 hook 还在正常工作
-  （荧光笔划线精确吸附、手写笔迹粗细效果）才能算数。
+  **真机验证**：`make aarch64`（真实 Makefile，走已提交的 `xovi_glue.c`，非手动模拟）编出
+  两个新 `.so`，经 `deploy-hl-snap.sh`/`deploy-handwriting-stroke.sh` 部署到真机，
+  `journalctl` 核对最终存活的 xochitl 进程上 `[hl-snap] 荧光笔EXPAND hook 安装完成`、
+  `[hw-stroke]` 三个 hook（变宽几何/第二几何/分派诊断）全部"安装完成"，日志格式/行为跟
+  重构前逐字节一致；两次连续重启 `NRestarts` 全程 `0`；`reading-qol.json` 里用户原有配置
+  原样保留没被覆盖。
 - `deploy-hl-snap.sh`/`deploy-handwriting-stroke.sh`/`deploy-battop.sh` 补齐"部署前备份+
   md5 校验"（`deploy-sidebar-entry.sh` 一直有这两步，另外几个部署脚本当时漏了）：host 侧
   推送后 md5 核对本地/远端文件一致；hl-snap/hw-stroke 的设备端 `install.sh` 在覆盖
   `extensions.d/` 里的旧 `.so` 前先备份到 `$HOME/cangjie-backups/`（**绝不能**备份在
   `extensions.d/` 里，xovi 会把目录下任意文件当扩展加载，见 工程纪律 记录的教训）；
   battop 的二进制不在 extensions.d，备份改在 host 侧 scp 覆盖前、通过 ssh 在同目录里做。
-  shellcheck 全部零警告，**同样没有真机验证**——设备不可达，等下次可达时一并跟上面
-  trampoline 改动一起补验证（同一批改动、同一次装机顺便测）。
+  **真机验证**：两次部署 host 侧 md5 校验都显示"一致"；设备端 `ls`/`md5sum` 确认
+  `/home/root/cangjie-backups/` 下真的新增了 `hl-snap.so.bak.pre-20260915-100340`/
+  `hw-stroke.so.bak.pre-20260915-100429`，且备份文件的 md5 精确匹配部署前抓的旧版本
+  基线（不是误备份成刚部署的新版本）。battop 那条host 侧 scp 前备份分支这次没有触发
+  （没有重跑 `deploy-battop.sh`），仍待下次装 battop 时顺带确认。
 
 `deploy-sidebar-entry.sh`（2026-09-13 新写，从 §「明确不做的事」上一版遗留的空白里补上）：
 独立跑过两条路径都真机通过——① 默认模式（这台设备当时已装 WeRead）：探测到
