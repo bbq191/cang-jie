@@ -69,6 +69,7 @@ sh install-all.sh 10.11.99.1
 |---|---|---|
 | 固件安全门 | 核对设备固件跟已验证版本是否一致 | — |
 | 国内 NTP | chrony 服务器换成国内可达的（阿里云/腾讯云等） | — |
+| 防自动休眠打断校时 | 开机头几十秒持一把 wakelock，防设备自动休眠打断 chronyd 首次同步 | — |
 | 默认时区 | 设为 Asia/Shanghai | — |
 | 电池诊断 | 常驻采样服务，网页「管理→电池刺客」可查看 | — |
 | xovi 开机持久化 | 装一个开机自动重跑 `xovi/start` 的单元，往后重启不用再手动补 | 已 `vellum add xovi` |
@@ -111,8 +112,8 @@ sh install-all.sh 10.11.99.1 --force
 sh install-all.sh 10.11.99.1 --skip chrony-cn,timezone-cn,xovi-persist
 ```
 
-可跳过的步骤名：`chrony-cn`、`timezone-cn`、`battop`、`xovi-persist`、`hl-snap`、
-`handwriting-stroke`、`sidebar-entry`、`shelf`、`xovi-apply`。每一步对应的脚本
+可跳过的步骤名：`chrony-cn`、`chrony-boot-wakelock`、`timezone-cn`、`battop`、`xovi-persist`、
+`hl-snap`、`handwriting-stroke`、`sidebar-entry`、`shelf`、`xovi-apply`。每一步对应的脚本
 （`packaging/deploy-<step>.sh <host>`）也都可以脱离 `install-all.sh` 单独运行。
 
 ## 这套安装器不做什么
