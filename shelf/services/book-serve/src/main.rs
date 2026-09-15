@@ -4,7 +4,6 @@
 //! 网页 tab 「传书」是网关固定页（不由本服务注册），本服务不挂 tab。
 mod api;
 mod config;
-mod mkdir;
 mod pending_queue;
 mod render_check;
 mod service_state;
