@@ -13,9 +13,7 @@
 //! `vendorcfg` 的 crate 文档，不在这重复。
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use vendorcfg::{Preset, Price, DASHSCOPE, DEEPSEEK, GEMINI, KEY_ENV, OPENAI};
-
-pub use vendorcfg::KeySource;
+use vendorcfg::{Preset, Price, VendorConfig, DASHSCOPE, DEEPSEEK, GEMINI, OPENAI};
 
 /// 视觉模型预置表（换厂商/加型号在这加一行，网页自动出现新选项；核实来源见 `vendorcfg` crate 文档）。
 pub const PRESETS: &[Preset] = &[
@@ -91,57 +89,32 @@ impl Default for TranscribeConfig {
     }
 }
 
+impl VendorConfig for TranscribeConfig {
+    fn presets() -> &'static [Preset] {
+        PRESETS
+    }
+    fn preset(&self) -> &str {
+        &self.preset
+    }
+    fn custom_model(&self) -> &str {
+        &self.custom_model
+    }
+    fn custom_base_url(&self) -> &str {
+        &self.custom_base_url
+    }
+    fn keys(&self) -> &BTreeMap<String, String> {
+        &self.keys
+    }
+    fn prices(&self) -> &BTreeMap<String, Price> {
+        &self.prices
+    }
+}
+
 impl TranscribeConfig {
     /// 老配置文件（重做预置表之前，2026-09-08 上午之前落盘的）搬进新形状——只在启动加载时调用一次。
     pub fn migrate(mut self) -> Self {
         vendorcfg::migrate_legacy(PRESETS, &mut self.preset, &mut self.custom_model, &mut self.custom_base_url, &mut self.keys, &self.model, &self.base_url, &self.api_key);
         self
-    }
-    pub fn provider(&self) -> String {
-        vendorcfg::resolve_provider(PRESETS, &self.preset, &self.custom_base_url)
-    }
-    pub fn model(&self) -> &str {
-        vendorcfg::resolve_model(PRESETS, &self.preset, &self.custom_model)
-    }
-    pub fn base_url(&self) -> &str {
-        vendorcfg::resolve_base_url(PRESETS, &self.preset, &self.custom_base_url)
-    }
-    /// 解析出可用的 key（不打印、不落日志）——按当前预置所属厂商去 `keys` 里找。
-    pub fn key(&self) -> Option<String> {
-        self.key_with_env(std::env::var(KEY_ENV).ok())
-    }
-    pub fn key_with_env(&self, env: Option<String>) -> Option<String> {
-        vendorcfg::resolve_key(&self.keys, &self.provider(), env)
-    }
-    pub fn key_source(&self) -> KeySource {
-        vendorcfg::key_source(&self.keys, &self.provider())
-    }
-    /// 脱敏预览：只回最后 4 位（如 `...ab12`），服务端算，绝不整串回显。
-    pub fn key_masked(&self) -> Option<String> {
-        self.key().as_deref().map(vendorcfg::key_masked)
-    }
-    /// 当前预置的用户自填单价（没填过就是全 0，网页不显示金额只显示 token 数）。
-    pub fn price(&self) -> Price {
-        self.prices.get(&self.preset).copied().unwrap_or_default()
-    }
-    /// 用量记账的分组键——按预置 id 分；自定义模型按 `"custom:<model>"` 分（不同自定义地址/模型各算各的）。
-    pub fn usage_key(&self) -> String {
-        vendorcfg::usage_key(&self.preset, &self.custom_model)
-    }
-    /// 对外视图：去 key、加 hasKey/keySource/keyMasked/presets/activePreset/model/baseUrl/price。
-    pub fn public(&self) -> serde_json::Value {
-        vendorcfg::public_json(
-            serde_json::to_value(self).unwrap_or_default(),
-            PRESETS,
-            &self.preset,
-            self.model(),
-            self.base_url(),
-            &self.provider(),
-            self.key().is_some(),
-            self.key_source(),
-            self.key_masked(),
-            self.price(),
-        )
     }
     /// 套用 PUT /config 的 JSON：可改字段逐个覆盖；`apiKey` 非空才改（存到当前厂商名下）；
     /// `clearKey:true` 清当前厂商那把。`preset` 切换预置（未知预置名拒绝）；`preset:"custom"` 时

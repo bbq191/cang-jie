@@ -4,11 +4,14 @@
 //!
 //! **只抽"行为"，不抽"数据结构"**：两个服务各自的 `TranscribeConfig`/`MindConfig`（字段不同——
 //! transcribe 多一套节流参数 `max_per_run`/`pause_ms`/`auto`/`max_attempts`，mind 没有）和
-//! `Usage`（transcribe 多一个 `last_run`）仍然各自定义、各自的 serde 落盘形状完全不变，这里的函数
-//! 都是接受"引用/可变引用到相关字段"的自由函数，不强行把两个服务的 Config/Usage 结构本身合并成一个
-//! 泛型类型——真机上已经有用户配置好的 `~/.config/notes/{transcribe,mind}.json` 和用量账本文件，
-//! 保住磁盘格式字节不变比"抽得更彻底"更重要（`preset`/`usage` 两个模块下的测试都拿真机 2026-09-08
-//! 实测采样的 JSON 形状做回归）。
+//! `Usage`（transcribe 多一个 `last_run`）仍然各自定义、各自的 serde 落盘形状完全不变，不强行把
+//! 两个服务的 Config/Usage 结构本身合并成一个泛型类型——真机上已经有用户配置好的
+//! `~/.config/notes/{transcribe,mind}.json` 和用量账本文件，保住磁盘格式字节不变比"抽得更彻底"
+//! 更重要（`preset`/`usage` 两个模块下的测试都拿真机 2026-09-08 实测采样的 JSON 形状做回归）。
+//! **2026-09-15 补**：两边共有的只读派生方法（`provider()`/`model()`/`key()`/`public()` 等，
+//! 之前两边各包一层同名转发、逐字节相同）收进 [`preset::VendorConfig`] trait——两个 Config
+//! 结构体各自实现六个字段访问器即可拿到全部默认方法，字段/序列化形状仍然完全不动，跟上面这条
+//! "只抽行为不抽数据结构"的原则一致，是同一条原则的延伸，不是推翻。
 //!
 //! **模型 id 是易变信息，不凭记忆写**：`DASHSCOPE`/`OPENAI`/`GEMINI`/`DEEPSEEK` 四个 baseUrl 常量、
 //! 以及两个服务各自预置表里的型号字符串，都是 2026-09-08 当天过 WebSearch/WebFetch 核实官方文档页
@@ -27,7 +30,7 @@ pub mod usage;
 pub use preset::{
     apply_common, key_masked, key_source, migrate_legacy, provider_for_base_url, public_json,
     resolve_base_url, resolve_key, resolve_model, resolve_provider, usage_key, KeySource, Preset,
-    Price, DASHSCOPE, DEEPSEEK, GEMINI, KEY_ENV, OPENAI,
+    Price, VendorConfig, DASHSCOPE, DEEPSEEK, GEMINI, KEY_ENV, OPENAI,
 };
 pub use usage::{Ledger, ModelUsage, UsageBook};
 
