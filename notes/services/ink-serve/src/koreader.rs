@@ -86,7 +86,9 @@ pub struct ImportStats {
 
 /// 拉一遍 koreader-serve 的高亮+生词、按规则并入 `BookDb`。
 /// 高亮：一本 KOReader 书一个 `Book` 记录（`uuid = "koreader:<books/ 下的相对路径>"`——KOReader 书
-/// 本身没有 uuid，用相对路径当稳定标识，见白皮书 §03al）。
+/// 本身没有 uuid，用相对路径当稳定标识，见白皮书 §03al）；`Book.chapters` 按 annotations 数组给的
+/// 阅读顺序去重出真实章节名，每条高亮的 `chapter` 落到章节表里的下标（`export`/`project` 两处投影
+/// 都靠这个下标分组，缺了条目永远导不出去，见下方 `merge_highlights` 调用点注释）。
 /// 生词：全局一份合集 `Book`（`uuid = "koreader-vocab"`）——KOReader 自己的生词表按 `word` 全局去重、
 /// 不分书存（同一个词换本书查一次只更新复习进度），这边跟着不拆分；`chapters` 借来存来源书名分组。
 pub fn import(db: &BookDb, src: &dyn KoreaderSource, now: u64) -> Result<ImportStats, String> {
@@ -109,9 +111,21 @@ pub fn import(db: &BookDb, src: &dyn KoreaderSource, now: u64) -> Result<ImportS
         if items.is_empty() {
             continue;
         }
+        // 按 annotations 数组给的阅读顺序去重出章节列表（不排序——"第一章"/"第十章" 字典序会乱掉，
+        // 阅读顺序才是自然顺序）；`export`/`project` 两处投影都按 `entry.chapter == Some(idx)` 匹配
+        // `Book.chapters[idx]`，`chapter` 一直是 `None` 的条目找不到自己该落的章节，2026-09-16 真机
+        // 验证时发现的缺口——能被点到 `Reviewed`，但导出永远 0 文件。
+        let mut chapters: Vec<String> = Vec::new();
+        for it in &items {
+            let ct = it.chapter_title.unwrap_or_default().to_string();
+            if !chapters.contains(&ct) {
+                chapters.push(ct);
+            }
+        }
         let stats = db.update(&uuid, || Book { uuid: uuid.clone(), title: b.title.clone(), ..Default::default() }, |book| {
             book.title = b.title.clone();
-            merge_highlights(&mut book.entries, &items, now)
+            book.chapters = chapters.clone();
+            merge_highlights(&mut book.entries, &items, |t| chapters.iter().position(|c| c == t).unwrap_or(0), now)
         })?;
         st.highlight_books += 1;
         st.highlights.added += stats.added;
@@ -177,6 +191,8 @@ mod tests {
         assert_eq!(book.title, "人骨拼图");
         assert_eq!(book.entries.len(), 2);
         assert!(book.entries.iter().all(|e| e.source == Source::KoreaderHighlight && e.status == Status::Mined));
+        assert_eq!(book.chapters, vec!["第一章".to_string()], "章节表要真的落进 Book.chapters");
+        assert!(book.entries.iter().all(|e| e.chapter == Some(0)), "chapter 必须是 Some——真机验证发现过 chapter 一直是 None 导致导出 0 文件的缺口");
 
         // 重扫：同样的输入，不重复新建。
         let stats2 = import(&db, &src, 20).unwrap();
