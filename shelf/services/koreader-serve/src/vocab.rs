@@ -1,4 +1,5 @@
-//! KOReader 生词本读取：`data/vocabulary_builder.sqlite3`（内置生词本插件的数据库，schema 抄自
+//! KOReader 生词本读取：`settings/vocabulary_builder.sqlite3`（内置生词本插件的数据库，2026-09-16 真机
+//! 核对过路径在 `settings/` 不在 `data/`，schema 抄自
 //! `plugins/vocabbuilder.koplugin/db.lua` 的 `CREATE TABLE`，2026-09-16 核实）。解析走 `sqlite_min`
 //! （手写纯 Rust 只读解析器，见该模块顶部注释——`rusqlite` 在本项目交叉编译环境下链接失败，生产
 //! 二进制不能依赖它）。库不存在＝用户没用过这个插件，返回空列表，不是错误。
