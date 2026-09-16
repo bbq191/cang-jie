@@ -134,7 +134,7 @@ shelf/
 
 ## 构建 · 部署 · 卸载
 
-**前置依赖**（一次性）：`rustup target add aarch64-unknown-linux-musl` + 装 aarch64 交叉 gcc/ar（Arch：`pacman -S aarch64-linux-gnu-gcc`；只用来编 `ring` 的 C 部分，产物本身是 musl 全静态、跟设备 libc 版本无关）。链接器/CC/AR 配置在 `.cargo/config.toml`，不用手改。改代码前先看工程纪律（真机验证、分支策略、离线门槛等）——两条线（shelf/notes）都遵守同一份，日常提交分支是 `dev` 不是 `master`。
+**前置依赖**（一次性）：`rustup target add aarch64-unknown-linux-musl` + 装 aarch64 交叉 gcc/ar（Arch：`pacman -S aarch64-linux-gnu-gcc`；只用来编 `ring` 的 C 部分，产物本身是 musl 全静态、跟设备 libc 版本无关）。链接器/CC/AR 配置在 `.cargo/config.toml`，不用手改。改代码前先看工程纪律（真机验证、分支策略、离线门槛等）——两条线（shelf/notes）都遵守同一份；2026-09-16 起 `dev` 分支已删除，日常开发直接在 `master` 上开 feature 分支。
 
 ```sh
 cd shelf && sh build.sh                                # host 测试 + aarch64 musl 全静态（书架 2 个二进制；../gateway/../enhance/{wallpaper,font}-serve/../notes 存在时顺带编它们）
@@ -197,13 +197,13 @@ shelf font add 字体.ttf | ls | rm <家族名>                # 只装原生阅
 shelf wallpaper add 图.jpg [--activate] | ls | set <name> | mode sequential|random|fixed | rm <name>
 shelf koreader pull | diff | sync [-n] [--fonts] [--dicts]   # 配置即代码（Lua 合并在设备端跑）
 shelf koreader font add 字体.ttf | ls | rm <file>         # 只装进 KOReader
-shelf notes pull [--out 目录]                              # 笔记线 md 导出拉到本机 Obsidian vault（缺省 $XDG_DATA_HOME/shelf/notes-vault，见笔记白皮书 §03ak；镜像覆盖不是合并，本机手改过的文件下次拉取会被覆盖）
+shelf notes pull [--out 目录]                              # 笔记线 md 导出拉到本机 Obsidian vault（--out > config.toml 的 notes_vault > 缺省 $XDG_DATA_HOME/shelf/notes-vault，见笔记白皮书 §03ak；镜像覆盖不是合并，本机手改过的文件下次拉取会被覆盖）
 shelf inbox [--retry 名 | --delete 名]                    # scp 追平队列里失败的书
 shelf events [--once] [--area books|koreader|fonts|wallpapers|manage] [--raw]   # 订阅设备事件流（SSE），有变更就打印
 shelf doctor --render [--keep]     # 真机排版回归探针：投探针书→等渲染自检→取回 xochitl 渲染缓存→pymupdf 量顶格/首行缩进→PASS/FAIL（固件 OTA 后跑一次）；量完探针自动排进原生回收站（设备回到书库视图即执行）
 shelf passwd [--new …]
 ```
-配置 `$XDG_CONFIG_HOME/shelf/config.toml`（host/port/scheme/password/verify_tls/split_pdf_mb）。
+配置 `$XDG_CONFIG_HOME/shelf/config.toml`（host/port/scheme/password/verify_tls/split_pdf_mb/notes_vault——最后这个是 `shelf notes pull` 缺省落地目录，不设就用 XDG 缺省位置，见上）。
 
 ## 演进记录（详见白皮书各节）
 

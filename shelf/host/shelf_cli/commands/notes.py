@@ -15,14 +15,16 @@ HELP = "笔记：pull（拉 md 导出到本机 Obsidian vault）"
 def add_args(p):
     sub = p.add_subparsers(dest="op", required=True)
     pl = sub.add_parser("pull", help="拉全部书的 md 导出到本机目录")
-    pl.add_argument("--out", type=Path, help="本机 Obsidian vault 路径（缺省 $XDG_DATA_HOME/shelf/notes-vault）")
+    pl.add_argument("--out", type=Path, help="本机 Obsidian vault 路径（缺省 config.toml 的 notes_vault，再缺省 $XDG_DATA_HOME/shelf/notes-vault）")
 
 
 def run(args, ctx) -> int:
     t = ctx.transport
     if args.op != "pull":
         return 1
-    out = args.out or (ctx.paths.data / "notes-vault")
+    # 优先级：--out 命令行 > config.toml 的 notes_vault（用户自己真实的 vault 路径，不该由这边猜）
+    # > XDG 缺省位置。
+    out = args.out or (Path(ctx.config.notes_vault) if ctx.config.notes_vault else ctx.paths.data / "notes-vault")
     out.mkdir(parents=True, exist_ok=True)
     books = t.get("/api/notes/books").get("items", [])
     if not books:

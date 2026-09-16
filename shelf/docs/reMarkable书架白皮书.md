@@ -770,6 +770,14 @@ figcaption{margin:0;padding:0;}
 
 **验证**：`koreader-serve` 新增 `annot`（3 测）+`vocab`（2 测）+`sqlite_min`（5 测）共 10 个测试，`cargo test -p koreader-serve` 14 个全绿（原 4 + 新增 10）；`shelf/build.sh` 完整跑一遍（host 构建+测试+aarch64-musl 交叉编译，CI 同路径）全过；clippy 零新增告警。**host 侧真实端到端跑通**（细节/踩坑见笔记线白皮书 §03al，两个仓库共同验证的同一次冒烟测试）：真实 `koreader-serve` 起服务、真实 `luajit` 解析手写的标注 sidecar fixture、真实 `sqlite3` 文件（Python `sqlite3` 库现造）读取正确。**当天设备恢复连接后补做真机验证**：拉真机上真实积累的 6 本书 `.sdr`（3 漫画+3 小说，两种后缀 `metadata.cbz.lua`/`metadata.epub.lua`）验证 `annot.lua` 全部解析正确（含一条"纯书签无文字"标注被正确过滤）；拉真机 `vocabulary_builder.sqlite3` 时**发现真 bug**：路径读源码时想当然写成 `data/`，真机实测在 `settings/`（两张表结构/字段名本身是对的），已修复（`main.rs`/`vocab.rs`）。修复后部署到真机（`koreader-serve`+`ink-serve` 各自备份原二进制、逐个重启+健康检查 `active`/新 PID/`NRestarts=0`，现有条目库数据完好），真实划一条高亮+真实加一个生词，两次 `POST /koreader/import` 都正确识别新内容并落条目库，细节见笔记线白皮书 §03al（同一次真机验证，两个仓库共同确认）。
 
+## 03as｜`shelf notes pull` 补 `config.toml` 的 `notes_vault` 配置项（2026-09-16）
+
+真机验证 `shelf notes pull`（笔记线白皮书 §03ak/§03al）时用户指出：本机 Obsidian vault 落哪个目录不该只靠每次手敲 `--out`，得有个配置项——vault 在用户磁盘上哪个位置只有用户自己知道，CLI 不该替用户猜（缺省 `$XDG_DATA_HOME/shelf/notes-vault` 只是兜底，不是大多数人真实 vault 的位置）。
+
+`shelf_cli/config.py` 的 `DEFAULTS`/`Config` 加一个 `notes_vault: str` 字段（缺省空串＝未设置）；`commands/notes.py` 的落地目录判定改成三级优先级：`--out` 命令行 > `config.toml` 的 `notes_vault` > 缺省 XDG 位置。跟本 CLI 其它配置项（`host`/`password` 等）同一套 `tomllib` 读取机制，没有新加载路径。
+
+**验证**：新增 1 个测试（`test_pull_without_out_uses_configured_notes_vault_not_xdg_default`，临时 `XDG_CONFIG_HOME` 写一份真实 `config.toml` 验证不给 `--out` 时确实落到配置的目录，不是 XDG 缺省位置），`uv run pytest shelf/host/tests` 94 个全绿（原 93 + 新增 1）。纯 host 侧 Python 改动，不涉及设备端代码，不需要真机验证。
+
 ## 04｜踩坑
 
 - **挪代码时顺手带走的文案不代表内容还准（2026-09-10 用户真机测试逮到）**：§03ak 把「系统增强」卡片原样搬进「实验室」，battop"未装"提示里的路径 `misc/battery-audit/battop/install.sh` 是 §03aj 写的，那时候还没意识到这个路径已经在更早的 §03b 里 `git mv` 到 `enhance/battop/` 了——挪动/重构代码只挪了位置没重新核对内容，字面拷贝把旧错误也一起搬了过去，还搬了一次都没发现（两轮都没查）。**教训**：移动/复用一段包含具体路径/命令/版本号的文案时，顺手核对一遍还准不准，不能假设"没人提过所以肯定没问题"——原样复制不代表内容仍然正确，只代表格式没错。
