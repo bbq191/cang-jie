@@ -63,3 +63,17 @@ def test_pull_overwrites_on_second_run(gateway, tmp_path, capsys):
     (out / "人骨拼图" / "第1章 楔子.md").write_text("手滑改坏的内容", encoding="utf-8")
     run(["notes", "pull", "--out", str(out)], gateway, capsys)
     assert (out / "人骨拼图" / "第1章 楔子.md").read_text(encoding="utf-8") == "内容 ^e1\n"
+
+
+def test_pull_without_out_uses_configured_notes_vault_not_xdg_default(gateway, tmp_path, capsys, monkeypatch):
+    """用户自己的 Obsidian vault 在哪，只有用户知道——不该替用户猜，config.toml 的 notes_vault
+    没设才落 XDG 缺省位置（2026-09-16 用户明确要求：这条路径必须有配置项，不能只靠 --out）。"""
+    configured = tmp_path / "我的真实笔记库" / "reading"
+    config_dir = tmp_path / "xdg-config" / "shelf"
+    config_dir.mkdir(parents=True)
+    (config_dir / "config.toml").write_text(f'notes_vault = "{configured}"\n', encoding="utf-8")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path / "xdg-config"))
+    rc, o = run(["notes", "pull"], gateway, capsys)
+    assert rc == 0
+    assert (configured / "人骨拼图" / "人骨拼图.md").is_file()
+    assert f"vault：{configured}" in o

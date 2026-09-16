@@ -13,6 +13,9 @@ DEFAULTS = {
     "password": "",
     "verify_tls": False,
     "split_pdf_mb": 60,
+    # 空串＝未设置，`shelf notes pull` 落回 $XDG_DATA_HOME/shelf/notes-vault；设了就是用户自己真实的
+    # Obsidian vault 路径（不该由这边替用户猜，2026-09-16 用户明确要求给一个配置项）。
+    "notes_vault": "",
 }
 
 
@@ -24,6 +27,7 @@ class Config:
     password: str
     verify_tls: bool
     split_pdf_mb: int
+    notes_vault: str
 
     @property
     def base_url(self) -> str:
