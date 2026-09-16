@@ -646,7 +646,7 @@ function renderNotes(sec){sec.innerHTML=`
         if(er.ok===false)parts.push('✗ md：'+(er.message||T('common.failed')));
         else if(er.status==='written'){parts.push('✓ '+T('notes.push.mdExported'));window.open(`/api/notes/books/${encodeURIComponent(book.uuid)}/chapters/${k}/export.md`,'_blank')}
         msg.textContent=parts.length?parts.join(' · '):T('notes.push.noChange');
-        await wait(1500);await refreshSync();renderBook({advance:true})};
+        await wait(3000);await refreshSync();renderBook({advance:true})};
     }
     es.forEach(e=>{const failed=failedIds.has(e.id);const row=document.createElement('div');row.className='entry'+(failed?' entry-failed':'');
       const draft=(e.drafts&&e.drafts[0])?e.drafts[0].text:'';
@@ -685,13 +685,15 @@ function renderNotes(sec){sec.innerHTML=`
       row.querySelector('[data-archive]').onclick=()=>archiveEntry(e.id);
       /* 点「重新转写」/「提问」弹出状态和这次调用的消耗（用户反馈"应该弹出状态及当前消耗"，2026-09-08
          第三轮）：先显文字状态（转写中…/提问中…），拿到结果显示"✓ 完成 · token 入X 出Y"或错误，
-         停留一小会儿让用户真的看得到（不然紧接着的整页重画会立刻把这条状态盖掉，等于白显示）。 */
+         停留一小会儿让用户真的看得到（不然紧接着的整页重画会立刻把这条状态盖掉，等于白显示）——
+         最初给的 1.5s 真机反馈"闪一下就没了"根本来不及读，2026-09-16 延长到 3s（「推送本章」
+         那条同款状态提示也一起延长，三处是同一个模式）。 */
       const tb=row.querySelector('[data-transcribe]'),txStat=row.querySelector('[data-txstat]');
       if(tb)tb.onclick=async()=>{tb.disabled=true;txStat.textContent=T('notes.transcribing');
         const r=await j(`/api/transcribe/books/${encodeURIComponent(book.uuid)}/entries/${encodeURIComponent(e.id)}`,{method:'POST'});
         tb.disabled=false;
         txStat.textContent=r.ok===false?('✗ '+(r.message||T('notes.transcribeFailed'))):T('notes.transcribeDone',{promptTokens:r.promptTokens||0,completionTokens:r.completionTokens||0});
-        await wait(1500);await reloadBook(renderBook)};
+        await wait(3000);await reloadBook(renderBook)};
       /* 「问AI」勾选框 + 问题 + 提问按钮：改即存（ink-serve），点提问才真的调 mind-serve。 */
       const askBox=row.querySelector('[data-ask]'),qInput=row.querySelector('[data-question]'),askBtn=row.querySelector('[data-askbtn]'),askStat=row.querySelector('[data-askstat]');
       const syncAskUi=()=>{qInput.disabled=!askBox.checked;askBtn.disabled=!(askBox.checked&&qInput.value.trim())};
@@ -701,7 +703,7 @@ function renderNotes(sec){sec.innerHTML=`
         const r=await j(`/api/mind/books/${encodeURIComponent(book.uuid)}/entries/${encodeURIComponent(e.id)}/ask`,{method:'POST'});
         askBtn.disabled=false;
         if(r.ok===false){askStat.textContent='✗ '+(r.message||T('notes.askFailed'))}
-        else{askStat.textContent=T('notes.askDone',{promptTokens:r.promptTokens||0,completionTokens:r.completionTokens||0});await wait(1500);await reloadBook(renderBook)}};
+        else{askStat.textContent=T('notes.askDone',{promptTokens:r.promptTokens||0,completionTokens:r.completionTokens||0});await wait(3000);await reloadBook(renderBook)}};
       body.appendChild(row)});
     chapterbody.appendChild(card)};
   exportTabsEl.querySelectorAll('button').forEach(b=>b.onclick=()=>{if(exportTab===b.dataset.etab)return;exportTab=b.dataset.etab;selectedChapter=null;renderBook()});
