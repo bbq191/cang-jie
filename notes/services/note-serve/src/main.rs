@@ -14,7 +14,9 @@
 //! `GET /books/{uuid}/chapters/{idx}/export.md`（单章同一份内容当浏览器下载吐回去，`Content-Disposition`，
 //! 三期新增：光落设备盘用户够不着，见 `export.rs`）·
 //! `GET /books/{uuid}/sync`（整理区第三轮反馈新增：每章设备笔记本/Obsidian md 是否跟当前条目内容
-//! 同步，前端拿这个决定"生成完成后移出待处理列表"，见白皮书 §03x）。
+//! 同步，前端拿这个决定"生成完成后移出待处理列表"，见白皮书 §03x）·
+//! `GET /books/{uuid}/vault.json`（2026-09-16 新增：读回已落盘的 vault 目录内容，供 host
+//! `shelf notes pull` 拉到本机 Obsidian vault，见 `export::manifest` 文档）。
 mod chapter_store;
 mod config;
 mod export;
@@ -97,7 +99,9 @@ fn main() {
         .get("/status", bind(&st, |s, _| Ok(Reply::ok(&serde_json::json!({"ok": true, "vault": s.paths.app_data_dir(APP).join("vault"), "xochitlHost": s.cfg.xochitl_host})))))
         .get("/books", bind(&st, |s, _| {
             let items = s.store.list_books().map_err(ApiError::bad)?;
-            let out: Vec<serde_json::Value> = items.iter().map(|b| serde_json::json!({"uuid": b.uuid, "notebooks": s.notebooks.list(&b.uuid)})).collect();
+            // `title` 是 2026-09-16 加的：host `shelf notes pull` 靠它认书（不用另起一个 book detail
+            // 端点），别的既有消费方（前端）本来就不用这个列表拿标题，加字段不影响它们。
+            let out: Vec<serde_json::Value> = items.iter().map(|b| serde_json::json!({"uuid": b.uuid, "title": b.title, "notebooks": s.notebooks.list(&b.uuid)})).collect();
             Ok(Reply::ok(&serde_json::json!({"items": out})))
         }))
         .get("/books/{uuid}/notebooks", bind(&st, |s, r| {
@@ -190,6 +194,13 @@ fn main() {
             let md = notecore::export::export_chapter_md(&book, idx).ok_or_else(|| ApiError::not_found("本章没有可导出的内容"))?;
             let filename = format!("{}.md", notecore::export::chapter_stem(idx, &title));
             Ok(Reply::bytes("text/markdown; charset=utf-8", md.into_bytes()).with_header("Content-Disposition", &export::content_disposition(&filename)))
+        }))
+        // host `shelf notes pull` 用：读回 `POST .../export` 已经落盘的 vault 目录内容（不触发导出，
+        // 纯读——调用方该自己先 POST export 保证内容是最新的）。见 `export::manifest` 文档。
+        .get("/books/{uuid}/vault.json", bind(&st, |s, r| {
+            let book = s.store.book(r.param("uuid")).map_err(ApiError::bad)?;
+            let m = export::manifest(&s.paths.app_data_dir(APP), &book.title).map_err(ApiError::internal)?;
+            Ok(Reply::ok(&m))
         }));
     println!("[note-serve] 状态 {}；xochitl {}", st.notebooks.dir().display(), st.cfg.xochitl_host);
     if let Err(e) = service::run(&SPEC, &bind_addr, &paths, router) {

@@ -99,7 +99,7 @@
 | ink | `GET /books` → `{items:[{uuid,title,chapters,entries,pending}]}`（`list_active`，只列还有活条目的书）· `GET /books/{uuid}`（整份条目库：chapters/entries，**没有 sections 了**）· `GET /books/{uuid}/crops/{file}` · `POST /books/{uuid}/entries/{id} {text?|style?|destination?|draft?|answer?|askAi?|question?|subheadHint?}`（`text` 走 `Entry::apply_marked_text`——行首标记自动定样式/覆盖 subhead 并剥掉标记，不再需要网页手动传 `style`；`draft` 追加最新在前；`destination` 三期新增）· `POST /books/{uuid}/entries/{id}/request`（浏览态"转入笔记"：`Mined→Pending`，纯勾画条目直接 `Reviewed`）· `POST /books/{uuid}/entries/{id}/skip`（"不需要"：`Mined→Skipped`）· `POST /books/{uuid}/entries/{id}/archive`（三期"不要了"：`→Archived`）· `POST /books/{uuid}/entries/{id}/restore`（**第二轮反馈新增**：`Skipped`/`Revoked`/`Archived` 按已有内容倒推恢复，非终态条目拒绝）· `POST /books/{uuid}/purge`（清空回收站：物理删 `Archived`/`Revoked`/`Skipped`，不可恢复）· `POST /books/{uuid}/rescan` · `GET /events` |
 | transcribe | `GET /status` → `{config(无 key), usage, usageByModel, failures, inkReachable, pending}` · `GET /config`（带 `presets`/`activePreset`/`price`）· `PUT /config {preset?, apiKey?（只写，存进当前厂商）, clearKey?, price?{input,output}, model?, baseUrl?（仅 preset="custom" 生效）, auto?, maxPerRun?, pauseMs?, timeoutSecs?, maxAttempts?, prompt?}` · `POST /run`（同步跑一轮，回 `{scanned,done,failed,skipped,left,note}`）· `POST /books/{uuid}/entries/{id}`（强制转写一条）· `POST /retry`（清失败记录再跑）· `GET /events` |
 | mind | `GET /status` → `{config(无 key), usage, usageByModel}` · `GET /config`（带 `presets`/`activePreset`/`price`）· `PUT /config {preset?, apiKey?（只写，存进当前厂商）, clearKey?, price?{input,output}, model?, baseUrl?（仅 preset="custom" 生效）, timeoutSecs?, prompt?}` · `POST /books/{uuid}/entries/{id}/ask`（回答这一条，要求已勾 `askAi` 且填了 `question`，否则 400）——**没有 `/events`**，纯被动，没有需要推送的状态 |
-| notes | `GET /status` · `GET /books`（各书章节生成状态）· `GET /books/{uuid}/notebooks` · `GET /books/{uuid}/exports`（各章导出状态，同上但对应 md）· `GET /books/{uuid}/sync`（每章设备笔记本/Obsidian md 是否跟当前条目同步，第三轮反馈新增）· `POST /books/{uuid}/generate`（全书按需重投影+上传）· `POST /books/{uuid}/chapters/{idx}/generate`（单章，网页已接线）· `POST /books/{uuid}/import-md {title, markdown}`（单篇 markdown→新设备笔记本文档，独立于条目库、不经章节投影，网页「导入 md 文档」子视图已接线，见 §03af；端点/body 自接线以来没变过）· `POST /books/{uuid}/export`（全书导出 md，落设备 vault，指纹没变自动跳过）· `POST /books/{uuid}/chapters/{idx}/export`（单章，网页已接线，附带触发浏览器下载，响应带 `status`：written/unchanged/empty）· `GET /books/{uuid}/chapters/{idx}/export.md`（同一份内容当下载吐给浏览器，`Content-Disposition` + RFC 5987 文件名）· `GET /events` |
+| notes | `GET /status` · `GET /books`（各书章节生成状态，`title` 字段 2026-09-16 起补上，见 §03ak）· `GET /books/{uuid}/notebooks` · `GET /books/{uuid}/exports`（各章导出状态，同上但对应 md）· `GET /books/{uuid}/sync`（每章设备笔记本/Obsidian md 是否跟当前条目同步，第三轮反馈新增）· `POST /books/{uuid}/generate`（全书按需重投影+上传）· `POST /books/{uuid}/chapters/{idx}/generate`（单章，网页已接线）· `POST /books/{uuid}/import-md {title, markdown}`（单篇 markdown→新设备笔记本文档，独立于条目库、不经章节投影，网页「导入 md 文档」子视图已接线，见 §03af；端点/body 自接线以来没变过）· `POST /books/{uuid}/export`（全书导出 md，落设备 vault，指纹没变自动跳过）· `POST /books/{uuid}/chapters/{idx}/export`（单章，网页已接线，附带触发浏览器下载，响应带 `status`：written/unchanged/empty）· `GET /books/{uuid}/chapters/{idx}/export.md`（同一份内容当下载吐给浏览器，`Content-Disposition` + RFC 5987 文件名）· `GET /books/{uuid}/vault.json`（**2026-09-16 新增**：读回已落盘的 vault 目录内容，`{title,dir,files:[{name,content}]}`，纯读不触发导出，供 host `shelf notes pull` 用，见 §03ak）· `GET /events` |
 
 事件：`{"svc":"ink","area":"notes","kind":"entries"}`、`{"svc":"transcribe","area":"notes","kind":"transcribe"}` → 网页「笔记」tab 自动刷新。
 
@@ -117,7 +117,7 @@ notes/
 ├── services/mind-serve/               脑：config/ledger(vendorcfg 薄封装：自己的文字预置表，Ledger\<Extra=()\> 没有 lastRun) · backend(TextModel Strategy + OpenAiCompat，纯文本消息) · prompt(拼书名+章节+原文+文本+问题) · ink(EntryStore 客户端，book/post_answer，传输层包 SvcClient) · worker::ask_entry(单条问答) · main(**无后台线程**，纯被动路由)
 ├── services/note-serve/               本：注册「笔记」tab；rmdoc.rs 打包 .rmdoc（上传复用 rmsvc_core::xochitl）；export.rs 落盘 vault + 浏览器下载的 content_disposition()；chapter_store.rs 通用"每书每章一条记录"泛型（notebooks/export_state 现在是类型别名）；config/ink(SvcClient)/trash(SvcClient)/publish 生成编排（不建文件夹，复用书本自己的设备文件夹，撞名 rmsvc_core::xochitl::unique_document_name 加后缀）；publish::import_markdown（单篇 markdown→新笔记本文档，独立于条目库，不经章节投影，见 notecore::mdimport）
 ├── systemd/                           四个 .service（PartOf=shelf.target；随书架 install.sh 装，令牌 ink/transcribe/mind/note）
-├── host/                              待建：CLI `notes pull`（把设备 vault/ 拉到本机 Obsidian vault；三期只做了"导出到设备"这一半）
+├── host/                              空目录，未建 CLI crate——`notes pull` 实现在 `shelf` host CLI（`../shelf/host/shelf_cli/commands/notes.py`），不是本目录，见 §03ak「为什么不另起一套」
 ├── testdata/renggu/                   真机 fixture（《人骨拼圖》墓碑页 .rm，测"解析成功零条目"）· renggu_marks/（同书真实勾画+手写）· seven_styles/（笔记本一页七样式，rmv6::write 模板）
 └── docs/reMarkable笔记白皮书.md          决策 / 真机 / 踩坑（开头「现状总览」§00b）
 ```
@@ -167,7 +167,7 @@ notes/
 **前置依赖**：跟书架共用同一套交叉编译环境（`rustup target add aarch64-unknown-linux-musl` + aarch64 交叉 gcc/ar），见 `../shelf/README.md`「构建」一节，不用单独装第二遍。改代码前先看工程纪律，日常提交分支是 `dev` 不是 `master`。
 
 ```sh
-cd notes && cargo build --workspace && cargo test --workspace     # host：182 个测试（rmv6 27 · epubmap 5 · notecore 56 · vendorcfg 14 · ink 11 · transcribe 22 · mind 21 · note 26，含 1 ignored；claim 重试相关两条测试真吃约 1.5-4.5s）
+cd notes && cargo build --workspace && cargo test --workspace     # host：184 个测试（rmv6 27 · epubmap 5 · notecore 56 · vendorcfg 14 · ink 11 · transcribe 22 · mind 21 · note 28，含 1 ignored；claim 重试相关两条测试真吃约 1.5-4.5s）
 cd ../shelf && ./build.sh && ./deploy.sh <设备IP>                  # 随书架一起交叉编译/打包/装机（NOTES_BINS；设备在 WiFi 上时给 WiFi IP）
 ssh root@<设备IP> sh /home/root/shelf-pkg/shelf/install.sh --only ink,transcribe,mind,note   # 只装/更新笔记线
 ```
@@ -175,11 +175,11 @@ ssh root@<设备IP> sh /home/root/shelf-pkg/shelf/install.sh --only ink,transcri
 
 ## 还没做的
 
-- host `notes/host/bin/notes pull`：把设备 `vault/` 拉到本机 Obsidian vault——三期只做了"导出到设备+浏览器下载"这一半。
-- 前端可视渲染人眼确认：浏览页/回收站/模型管理面板/条目卡片重设计，后端数据链路都真机走通，但没有浏览器渲染工具，实际排版效果没人看过。
+- 前端可视渲染人眼确认：浏览页/回收站/模型管理面板/条目卡片重设计，后端数据链路都真机走通；`gateway/tools/screenshot-walkthrough/` 已经能自动起服务+灌 fixture+截图，但只覆盖顶层 nav + 一层子 tab，还没针对这几处重设计跑过一轮专门核对。
 - `### `/`## ` 小节标记真机复验：后端已接线、离线单测全绿，两轮真机复验卡在手写行草连笔的 OCR 准确率，不是代码问题。
 - transcribe 转写质量持续打磨（汉字数字误认、裁图边界样本）。
 - `archive`/`purge` 两个端点没有对真实历史数据实测过（一次性不可逆动作，底层逻辑单测覆盖充分，没事先问用户不该拿真实数据练手；`restore` 是反方向的可逆操作，已经真机验证过）。
+- `shelf notes pull`（host 拉 md 到本机 Obsidian vault，§03ak）host 侧真实端到端跑通（真实三进程+HTTPS 认证），但没有拿真机上已有的历史条目库实测过——本轮设备不可达。
 - OpenAI/Gemini/DeepSeek 三家新模型预置只验证了配置层（预置表匹配、key 按厂商隔离、老配置迁移），没有真实 key 走过一次实际调用——等有 key 再补。
 - "改条目 destination 后对应导出指纹立刻变"这条只有离线单测干净覆盖（真机测试书状态太活跃，没能单独复现，见白皮书 §03x）。
 - 摄取路径"排除法"反模式复发修复（`is_terminal()` 替换 `!= Revoked`，§03ag）和生成笔记本认领失败短暂重试（§03ah）：改动都是被动触发的后台逻辑，离线测试已覆盖判据/重试机制本身，但都还没有主动构造真机场景复验（前者需要真的擦掉一条已跳过条目的笔迹，后者是低概率时序问题，难以主动触发）。
