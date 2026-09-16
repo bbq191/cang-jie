@@ -123,8 +123,9 @@ sh install-all.sh 10.11.99.1 --skip chrony-cn,timezone-cn,xovi-persist
 - **不装中文输入法**——这条功能线已经从本仓库归档（见顶层 [README](../README.md)「历史与范围」），
   当前不随本安装器分发。
 - **不装 wifi-watch 常驻看护**（WiFi 载波异常自动重连）。
-- **没有对称的一键卸载**——`shelf/uninstall.sh` 能卸掉书架那部分，其余组件靠手动
-  `systemctl disable --now <单元>` 清理。
+- ~~没有对称的一键卸载~~——`packaging/uninstall-all.sh`（2026-09-16 补）一次性卸掉
+  `install-all.sh` 装的全部组件（`chrony-cn`/`timezone-cn` 是配置覆写除外，没有卸载语义），
+  用法同 `install-all.sh`。
 
 完整的架构决策、每一步踩过的坑、真机验证现状，见 [`packaging/README.md`](../packaging/README.md)——
 这是面向工程细节的参考文档，本文件只是面向"第一次装"的快速上手指南。
@@ -176,9 +177,6 @@ sh install-all.sh 10.11.99.1 --skip chrony-cn,timezone-cn,xovi-persist
 
 ⑤ **装的过程中设备屏幕会多次闪烁/重启界面，属于正常现象**——每次 `xovi/start` 都会完整重启
    xochitl（合成器+界面进程），装的时候不要在设备上做其它操作，等收尾汇总打印完再用设备。
-
-⑥ **没有对称的一键卸载**——见上「这套安装器不做什么」；哪一步装完想反悔，目前只能手动清理，
-   没有 `uninstall-all.sh` 帮你一次性撤销。装之前想清楚要不要这个功能，比装完再后悔的成本低。
 
 ## 固件升级（OTA）之后
 

@@ -12,6 +12,14 @@ sh install-all.sh <host> --skip chrony-cn,timezone-cn,xovi-persist   # 跳过指
 
 `<host>` 默认 `10.11.99.1`（USB 网段）。
 
+反悔想卸：
+
+```sh
+sh uninstall-all.sh <host>                                       # 卸全部（chrony-cn/timezone-cn 除外，见下）
+sh uninstall-all.sh <host> --purge                                # 卸的同时连 battop 历史数据一起删
+sh uninstall-all.sh <host> --skip shelf                            # 跳过指定步骤，用法同 --skip
+```
+
 ## 前置条件（全新设备，需手动，本脚本不代装）
 
 以下几样是 reMarkable 官方/`vellum`/`appload` 生态自己的东西，不属于这个仓库，`install-all.sh`
@@ -99,11 +107,15 @@ qmd/hook 偏移错了轻则功能不生效重则设备行为异常）；确认�
   没有回到版本控制。要装：去那边手动编译 + 跑 `deploy/install.sh`（前置同样是
   `vellum add xovi qt-resource-rebuilder`）。
 - **不装 wifi-watch 常驻看护**——目前只在 `oldbak/packaging/wifi-watch/`，没有随这次恢复。
-- **没有对称的 `uninstall-all.sh`**——三个 enhance 工具 + xovi-persist/chrony-cn/
-  chrony-boot-wakelock/timezone-cn 目前只能各自手动清理（`shelf/uninstall.sh` 能卸 shelf
-  那部分；`xovi-reenable.service`/`chrony-boot-wakelock.service` 卸载都是
-  `systemctl disable --now <单元>` + 删 `/usr/lib/systemd/system/` 里的单元和软链；
-  chrony-cn/timezone-cn 两个是配置覆写，没有"卸载"语义）。
+- ~~没有对称的 `uninstall-all.sh`~~ ✅ 2026-09-16 补：`packaging/uninstall-all.sh`
+  编排 `chrony-boot-wakelock`/`xovi-persist`/`hl-snap`/`handwriting-stroke`/`sidebar-entry`/
+  `battop`（停用+删 `/usr` 单元或摘除 `extensions.d`/`exthome` 里的文件，`--purge` 才连
+  `/home/root/battop` 数据一起删）+ `shelf`（调用设备上已推送的 `shelf/uninstall.sh`，默认
+  保留用户数据）。`chrony-cn`/`timezone-cn` 仍然不在范围内——它们是配置覆写（改
+  `/etc/chrony.conf`、`/etc/localtime` 指向），没有"卸载"语义，这条限制本身不是缺口，见该
+  脚本头注。本地 `shellcheck --severity=warning` 过，假 host 验证过参数解析/`--skip`/收尾
+  摘要逻辑；**真机卸载效果没有验证过**（需要用户在已装过 install-all.sh 的设备上跑一遍，
+  确认各单元/扩展确实被摘掉、shelf 服务确实停用，且不影响没被点名要卸的其它功能）。
 
 旧的 `packaging/package.sh`（打 `cangjie-full-*.tar.gz` 单体安装包那套）**没有**在这次一并
 恢复/重写——经核实那份现在实际上是断的（`oldbak/packaging/package.sh` 按旧路径找 `shelf/` 载荷，
