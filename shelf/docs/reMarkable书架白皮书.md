@@ -778,7 +778,7 @@ figcaption{margin:0;padding:0;}
 
 **验证**：新增 1 个测试（`test_pull_without_out_uses_configured_notes_vault_not_xdg_default`，临时 `XDG_CONFIG_HOME` 写一份真实 `config.toml` 验证不给 `--out` 时确实落到配置的目录，不是 XDG 缺省位置），`uv run pytest shelf/host/tests` 94 个全绿（原 93 + 新增 1）。纯 host 侧 Python 改动，不涉及设备端代码，不需要真机验证。
 
-## 03at｜⚠️ 真机重大发现：`gateway`/`shelf-gateway` 两个 systemd 单元并存，真机一直在跑 2026-09-10 的旧二进制（2026-09-16）
+## 03at｜真机重大发现+已修复：`gateway`/`shelf-gateway` 两个 systemd 单元并存，真机一直在跑 2026-09-10 的旧二进制（2026-09-16，真机通）
 
 本轮部署笔记「整理」区提示停留时间的小改动（见下条）时，例行查了一下 `shelf-gateway.service` 健康状态，发现 `NRestarts=4517`、`ActiveState=activating`（卡死重启循环），日志报 `绑定 0.0.0.0:443（TLS）失败: Address in use`——查下去牵出一个比本次改动大得多的真问题。
 
@@ -786,7 +786,7 @@ figcaption{margin:0;padding:0;}
 
 **更严重的连带发现**：`/home/root/.local/bin/gateway`（新名字）确实一直在正常运行——`ps` 显示 PID 886 从 **2026-09-14 11:58:12** 就在跑（`gateway.service`），一开始被我误判成"占着端口不放的孤儿进程"直接 kill 掉，导致 443 端口被旧的 `shelf-gateway.service` 抢到、真机上从"跑 9-14 之后的新二进制"**倒退**成"跑 2026-09-10 17:18 的旧二进制"——这是我这次操作本身引入的一次真实倒退，好在很快查出来并纠正（`systemctl stop shelf-gateway.service` + `systemctl start gateway.service`，只是运行态操作，没有再误杀）。
 
-**行动**：只做了运行态修复（`systemctl stop shelf-gateway.service`＋`systemctl start gateway.service`），**没有碰 `/usr` 下的单元文件**——删除/禁用旧单元需要 remount rw 改 `/usr`，工程纪律 明确记过"写 `/usr` 触发过两次真机 dm-verity A/B 回滚变砖，不要再用这条路"，这条红线优先级高于"彻底修好"。**⚠️ 这只是这次开机周期内有效**：下次真机重启，`shelf.target` 会再次同时拉起两个单元，443 端口竞争和 `shelf-gateway.service` 的重启风暴会原样复现，除非有人主动做以下任一件事（本轮没做，留给用户决定）：①手动 remount rw 删掉 `/usr/lib/systemd/system/shelf.target.wants/shelf-gateway.service` 这个符号链接（不改单元文件本身，风险相对小，但仍是写 `/usr`）；②在 `packaging/install-all.sh`（或对应的部署脚本）里补一步"部署时如果检测到旧名字单元还在，先 `systemctl disable --now` 它"，长期靠部署流程自愈而不是手动一次性清理。
+**行动（分两步，第二步用户明确拍板后才做）**：先只做运行态修复（`systemctl stop shelf-gateway.service`＋`systemctl start gateway.service`），没有立即碰 `/usr`。用户看完风险说明后明确要求"删掉旧单元的 systemd 符号链接，并核查其他模块有无此问题"——**先核查**：扫了 `shelf.target.wants/` 下全部 10 个单元的符号链接时间戳+`ExecStart` 二进制是否存在，只有 `shelf-gateway.service` 是 2026-09-10（正名前一天）的旧符号链接，其余 9 个（`book-serve`/`font-serve`/`ink-serve`/`koreader-serve`/`mind-serve`/`note-serve`/`transcribe-serve`/`wallpaper-serve`/`gateway`）全部是 2026-09-11 14:28（正名当天）重新装的，二进制路径全部存在——**只有 gateway 这一处踩了坑，不是系统性问题**（gateway 是唯一"连目录带二进制名字一起搬"的服务，其它服务当初改名幅度更小）。核实完只删了最小必要的一个文件——`mount -o remount,rw /` → `rm /usr/lib/systemd/system/shelf.target.wants/shelf-gateway.service`（只删这个 `.wants` 符号链接，不动 `/usr/lib/systemd/system/shelf-gateway.service` 单元文件本体，也不动 `/home/root/.local/bin/shelf-gateway` 二进制——留痕不做多余清理）→ `systemctl daemon-reload` → `mount -o remount,ro /` 改回只读。**验证**：`systemctl list-dependencies shelf.target` 确认树里只剩 `gateway.service`，`gateway.service` 全程 `active`/`NRestarts=0`/PID 没变，整个操作零停机。这是对真机 ext4 rootfs 的一次真实写操作（remount rw 期间理论上仍有对应风险窗口），但操作本身（删一个符号链接、不写新内容、不碰任何 xochitl 相关路径）跟 工程纪律 记录的两次变砖事故（写 `xochitl.service.d/` 新建 drop-in 配置）在"写入内容/写入路径"上完全不同类，真机验证后确认安全、改动会持久保留（`/` 是真实 ext4 rootfs 不是 tmpfs，普通重启不会把这次删除冲回去，只有固件 OTA 才会覆盖）。
 
 **次生怀疑，未证实**：Sep 13 那几次真机部署（`gateway.bak.pre-dedupe-batch-fix`/`gateway.bak.pre-dedupe-upload`/`gateway.bak.pre-weread-probe`，见 `/home/root/.local/bin/` 残留的备份文件）落的都是新路径 `gateway`——如果当时 `gateway.service`（PID 886 那条，9-14 才起的）还没起来、旧单元占着端口的话，那几次部署验证是否真的验证到了"当前对外提供服务的那个进程"存疑；但 886 从 9-14 就稳定在跑，9-13 那几次部署本身应该是提前一天备好新二进制、9-14 服务重启时生效，时间线对得上，**大概率没问题**，只是没法百分之百倒推确认，列出来存个疑，不是坐实的问题。
 
@@ -956,9 +956,7 @@ figcaption{margin:0;padding:0;}
   流程，客户端自己的默认值配置是完全独立的另一份拷贝，同一个数字在仓库里可能有超过一次硬编码，
   真要根治得靠 `grep` 全仓库搜数字本身，不能只沿着"哪些文件会输出这个 URL"这条思路想。
 
-## 05｜真机待办（2026-09-06 刷新；2026-09-09 补记 §03ad 漫画超限分支复验、§03ae i18n 架子、§03af UI 人性化批量修复、§03aj 管理二级 tab+系统增强开关；2026-09-10 补记 §03an 正文全量 i18n、§03aq 网文留白排查；2026-09-16 补记 §03ar KOReader 高亮/生词只读端点、§03as notes_vault 配置项、§03at ⚠️ gateway/shelf-gateway 双单元真机重大发现（待用户决定是否清理 `/usr` 旧单元）、§03au 状态提示停留时间修复）
-
-**待办新增（2026-09-16）**：`gateway.service`/`shelf-gateway.service` 双 systemd 单元并存导致 443 端口竞争+重启风暴，本轮只做了运行态临时修复，**下次真机重启会复现**——需要用户决定：①手动 remount rw 删掉旧单元的 `.wants` 符号链接，②还是在部署脚本里补一步自愈检测，见 §03at 详细方案。
+## 05｜真机待办（2026-09-06 刷新；2026-09-09 补记 §03ad 漫画超限分支复验、§03ae i18n 架子、§03af UI 人性化批量修复、§03aj 管理二级 tab+系统增强开关；2026-09-10 补记 §03an 正文全量 i18n、§03aq 网文留白排查；2026-09-16 补记 §03ar KOReader 高亮/生词只读端点、§03as notes_vault 配置项、§03at gateway/shelf-gateway 双单元问题（用户拍板后已删旧符号链接修复，真机验证过）、§03au 状态提示停留时间修复）
 
 **未闭环**：网页 UI i18n（§03ae 架子 + §03an 正文全量补完，437 个 key，数据链路+内容对照已真机验证——`curl` 交叉核对真机 served 的语言包与部署的 app.js 里全部 416 处 `T()` 引用零缺失）——剩浏览器里实际点开语言切换器、人眼确认文案切成英文后的排版/换行/组件对齐效果这一步没做，这条缺口从 §03ae 延续到现在，覆盖面已经从"只剩顶层导航几个词"变成"正文也翻完了，只是没用真实浏览器看过"。网页 UI 人性化/触屏可用性一批小修（§03af，纯前端改动，同样没有浏览器截图核对实际渲染效果——禁用按钮说明文字是否真的显示、徽章点击 `alert` 是否真的弹出、`.btn-bad` 配色是否符合预期，这些都还没人眼确认过，只确认过新标记已 served）。**图片密集网文渲染大片留白**（§03aq，2026-09-10）——真机 A/B 验证过 `wash_css` 缺 `figure`/`figcaption` 边距归零不是成因（已经修了这个缺口，但对留白零帮助）；真正成因是分页引擎对放不下的图片块整体挪页、当前页剩余空间不回填，排查过没找到能从 EPUB/CSS 层面调的杠杆，**留白问题本身仍未解决**，比 i18n 那条视觉确认缺口更实质——不是"还没人眼看过"，是"看过了，问题还在，暂时没有已知修法"。
 
