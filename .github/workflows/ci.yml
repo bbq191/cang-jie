@@ -44,6 +44,12 @@ jobs:
         run: uv run pytest shelf/host/tests -q
       - name: 网关内嵌 JS 语法检查（ui/app.js 是真文件，编译期 include_str! 进二进制）
         run: node --check gateway/ui/app.js
+      # enhance/shared 四个纯 C 工具文件（hl-snap/handwriting-stroke 两个"涉及 xovi/mprotect
+      # 高危代码路径"共用的特征码扫描 + trampoline patch）：host gcc 编译+跑，不需要 aarch64
+      # 交叉工具链，不需要真机——2026-09-16 补，此前这块完全零自动化覆盖，见 enhance/shared/
+      # tests/test_shared.c 头注。
+      - name: enhance/shared host 单测（特征码扫描 + trampoline patch，纯字节级验证不涉真机）
+        run: make -C enhance/shared test
 
   # ── 设备端 Rust crate 的 host 测试（rmsvc-core / gateway / shelf / notes，各自独立无根 workspace）──
   rust:
