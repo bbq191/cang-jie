@@ -8,7 +8,7 @@ set of standalone web services alongside the official system.
 
 > This is the **private** repository with the full development history. As of 2026-09-11 a
 > trimmed public release also exists at [`rm-tweak`](https://github.com/bbq191/rm-tweak) (no
-> dev history, just the current six project lines' code plus these four top-level docs,
+> dev history, just the current seven project lines' code plus these four top-level docs,
 > Apache-2.0-licensed) — share/star that one; this repository stays internal-only.
 
 ## What this is

@@ -151,8 +151,9 @@ Skippable step names: `chrony-cn`, `chrony-boot-wakelock`, `timezone-cn`, `batto
   (see the top-level [README](README.en.md), "History and scope") and isn't distributed by this
   installer.
 - **Doesn't install wifi-watch** (automatic WiFi carrier-loss reconnection).
-- **No symmetric one-command uninstall** — `shelf/uninstall.sh` can remove the shelf portion;
-  everything else is removed by hand with `systemctl disable --now <unit>`.
+- ~~No symmetric one-command uninstall~~ — `packaging/uninstall-all.sh` (added 2026-09-16) removes
+  everything `install-all.sh` installs in one pass (except `chrony-cn`/`timezone-cn`, which are
+  config overwrites with no uninstall semantics); same usage as `install-all.sh`.
 
 For the full architectural decisions, every real-hardware pitfall found along the way, and the
 current verification status, see [`packaging/README.md`](../packaging/README.md) — that document is
@@ -221,10 +222,6 @@ conditions. Knowing about them ahead of time saves a lot of guessing later.
 ⑤ **The screen will flash / the UI will restart several times during install — this is
    expected.** Every `xovi/start` fully restarts xochitl (the compositor and UI process). Don't
    use the device while installing; wait for the closing summary to print before touching it.
-⑥ **There's no symmetric one-command uninstall** — see "What this installer deliberately does
-   not do" above. If you change your mind about a step after installing it, cleanup is currently
-   manual — there's no `uninstall-all.sh` to undo everything at once. Deciding whether you want a
-   feature before installing it is cheaper than regretting it afterward.
 
 ## After a firmware update (OTA)
 

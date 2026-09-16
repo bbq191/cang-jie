@@ -32,7 +32,7 @@
 #   · 不装中文化（输入法/候选栏/UI 汉化）——那条链路还在 oldbak/chinese-ime/，没有回到 git
 #     版本控制，需要单独手动跑。
 #   · 不装 wifi-watch 常驻看护。
-#   · 没有对称的 uninstall-all.sh。
+# 对称卸载见 packaging/uninstall-all.sh（2026-09-16 补）。
 #
 # 用法：./install-all.sh [host] [--force]
 #     [--skip chrony-cn,chrony-boot-wakelock,timezone-cn,battop,xovi-persist,hl-snap,handwriting-stroke,sidebar-entry,shelf,xovi-apply]
