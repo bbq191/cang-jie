@@ -3,7 +3,7 @@ name = "ink-serve"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "笔记·矿：监听原生书库，解析书页 .rm（勾画 + 旁边手写）→ 条目库（唯一事实源）+ 裁图；零网络"
+description = "笔记·矿：监听原生书库，解析书页 .rm（勾画 + 旁边手写）→ 条目库（唯一事实源）+ 裁图；另拉 koreader-serve 的高亮/生词回流"
 
 [[bin]]
 name = "ink-serve"

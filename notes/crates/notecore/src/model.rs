@@ -88,6 +88,19 @@ impl Status {
     }
 }
 
+/// 条目摄取来源：默认 xochitl（手写簇/勾画）；KOReader 高亮/生词回流（2026-09-16，见笔记线白皮书
+/// §03al）两条都是纯文本、没有笔画坐标——`ink` 永远 `None`，天然走 `Entry::set_triage` 已有的
+/// "纯勾画直接定稿"快路径，不需要为它们单独加状态机分支。`#[serde(default)]` 兼容这个字段加之前
+/// 落盘的旧条目库（旧数据反序列化成 `Xochitl`，语义上也确实都是）。
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum Source {
+    #[default]
+    Xochitl,
+    KoreaderHighlight,
+    KoreaderVocab,
+}
+
 /// 配对到的勾画（GlyphRange）。
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Quote {
@@ -168,6 +181,10 @@ pub struct Entry {
     /// 落设备笔记本 / 落 Obsidian / 两处都要（三期）。`#[serde(default)]` 兼容三期之前落盘的旧条目库。
     #[serde(default)]
     pub destination: Destination,
+    /// 来自哪条摄取线（xochitl 手写 / KOReader 高亮 / KOReader 生词），见 [`Source`]。`#[serde(default)]`
+    /// 兼容这个字段加之前落盘的旧条目库。
+    #[serde(default)]
+    pub source: Source,
     pub created: u64,
     pub updated: u64,
 }
@@ -300,7 +317,7 @@ mod tests {
 
     #[test]
     fn roundtrip_and_defaults() {
-        let e = Entry { id: "e1".into(), page: "p".into(), page_index: 3, chapter: Some(1), chapter_title: "一".into(), subhead: None, quote: None, ink: Some(Ink { strokes: vec!["1:2".into()], bbox: (0.0, 0.0, 1.0, 1.0), hash: "h".into(), crop: String::new() }), drafts: vec![], text: None, style: Style::Checkbox, ask_ai: false, question: None, answer: None, status: Status::Pending, destination: Default::default(), created: 1, updated: 1 };
+        let e = Entry { id: "e1".into(), page: "p".into(), page_index: 3, chapter: Some(1), chapter_title: "一".into(), subhead: None, quote: None, ink: Some(Ink { strokes: vec!["1:2".into()], bbox: (0.0, 0.0, 1.0, 1.0), hash: "h".into(), crop: String::new() }), drafts: vec![], text: None, style: Style::Checkbox, ask_ai: false, question: None, answer: None, status: Status::Pending, destination: Default::default(), source: Default::default(), created: 1, updated: 1 };
         let j = serde_json::to_string(&e).unwrap();
         assert!(j.contains(r#""style":"checkbox""#) && j.contains(r#""status":"pending""#));
         let back: Entry = serde_json::from_str(&j).unwrap();
