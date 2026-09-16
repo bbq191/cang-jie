@@ -15,8 +15,15 @@ pub struct DocStats {
     pub merge: MergeStats,
 }
 
-/// 摄取一份文档。返回 None = 不该管（非 EPUB / 回收站 / 没有手写页）。
+/// 摄取一份文档。返回 None = 不该管（非 EPUB / 回收站 / 没有手写页 / KOReader 摄取线的 Book）。
 pub fn ingest_doc(lib: &Path, crops_dir: &Path, db: &BookDb, cfg: &IngestConfig, uuid: &str, now: u64) -> Result<Option<DocStats>, String> {
+    // KOReader 高亮/生词回流线的 Book（`uuid` 形如 `koreader:...`/`koreader-vocab`，见 `koreader.rs`）
+    // 不是 xochitl 设备文档——不能走下面的 `Doc::new` 找不到就当"书被删了"那条路径，不然每次启动追平
+    // （`main.rs` 的 catchup 会把 `db.list()` 里所有已知 uuid 都过一遍这个函数）都会把它们的条目
+    // 整批标 `Revoked`，2026-09-16 设计阶段发现的坑，写进白皮书 §03al。
+    if uuid.starts_with("koreader:") || uuid == "koreader-vocab" {
+        return Ok(None);
+    }
     let doc = Doc::new(lib, uuid);
     let Some(meta) = doc.metadata().filter(|m| m.is_live_document()) else {
         // 书被移进回收站，或彻底删除（连 .metadata 都没了）：撤销条目库里这本书还没撤销的条目。
@@ -180,7 +187,7 @@ mod tests {
     }
 
     fn seeded_entry(id: &str, status: Status) -> notecore::model::Entry {
-        notecore::model::Entry { id: id.into(), page: "p".into(), page_index: 0, chapter: None, chapter_title: String::new(), subhead: None, quote: None, ink: None, drafts: vec![], text: None, style: Default::default(), ask_ai: false, question: None, answer: None, status, destination: Default::default(), created: 0, updated: 0 }
+        notecore::model::Entry { id: id.into(), page: "p".into(), page_index: 0, chapter: None, chapter_title: String::new(), subhead: None, quote: None, ink: None, drafts: vec![], text: None, style: Default::default(), ask_ai: false, question: None, answer: None, status, destination: Default::default(), source: Default::default(), created: 0, updated: 0 }
     }
 
     /// 真机验证时发现的 bug（2026-09-07）：书被移进回收站、甚至彻底删除，条目库里的旧条目

@@ -274,7 +274,7 @@ mod tests {
     }
 
     fn entry(id: &str, chapter: usize, text: &str) -> Entry {
-        Entry { id: id.into(), page: "p".into(), page_index: 0, chapter: Some(chapter), chapter_title: String::new(), subhead: None, quote: None, ink: None, drafts: vec![], text: Some(text.into()), style: Style::Body, ask_ai: false, question: None, answer: None, status: Status::Reviewed, destination: Default::default(), created: 0, updated: 0 }
+        Entry { id: id.into(), page: "p".into(), page_index: 0, chapter: Some(chapter), chapter_title: String::new(), subhead: None, quote: None, ink: None, drafts: vec![], text: Some(text.into()), style: Style::Body, ask_ai: false, question: None, answer: None, status: Status::Reviewed, destination: Default::default(), source: Default::default(), created: 0, updated: 0 }
     }
 
     fn book() -> Book {

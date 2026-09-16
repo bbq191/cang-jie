@@ -66,7 +66,7 @@
 ## 03b｜Phase 1 统一投递（2026-09-03，离线完成）
 
 **book-serve**（loopback 8790）：（⚠ 本段直投路 `POST /?target=` 与 `Native`/`Annot` Strategy 已于 2026-09-05 删除，见 §03s；现行唯一入口是母版库 `/staging*`，§03r）`POST /?target=native|annot&folder=&optimize=auto|off` multipart 多文件流式落 `.work` → 目标 Strategy（`Native`=Precheck→Convert→Optimize→Inject；`Annot`=Precheck→Convert(cbz)→Inject，只收 PDF/CBZ、EPUB 回执"去 host 定稿"）→ done/failed 归档；`GET /status|/targets|/inbox`、`POST /inbox/retry|/inbox/delete`。自有 spool `$XDG_STATE_HOME/shelf/books/`（inbox 供 scp 追平：启动扫一遍 + inotify 8s 防抖；`.work` 崩溃残留启动时移回）。配置 `~/.config/shelf/book.json` 首启写出缺省。
-**koreader-serve**（8791）：（⚠ 直传 `POST /books` 已于 §03s 删除，现只从母版库 `POST /books/adopt`）`POST /books?folder=` 原字节落 `books/[folder]/`（先 `.part` 再 rename，KOReader 扫目录不见半成品）；`GET /status`（installed/running(扫 /proc cmdline)/version(git-rev)/计数）、`GET /books`、`GET|POST /fonts`（字体镜像口，供 font-serve）、`GET /dicts`。
+**koreader-serve**（8791）：（⚠ 直传 `POST /books` 已于 §03s 删除，现只从母版库 `POST /books/adopt`）`POST /books?folder=` 原字节落 `books/[folder]/`（先 `.part` 再 rename，KOReader 扫目录不见半成品）；`GET /status`（installed/running(扫 /proc cmdline)/version(git-rev)/计数）、`GET /books`、`GET|POST /fonts`（字体镜像口，供 font-serve）、`GET /dicts`；`GET /annotations`/`GET /vocabulary`（**新增**，2026-09-16：`books/` 下每本书的高亮标注 `<book>.sdr/metadata.*.lua` 原样读回 + 生词本插件库 `data/vocabulary_builder.sqlite3` 原样读回，只读、不写条目库——笔记线 ink-serve 拉这两个端点回流成条目，本服务只吐原始数据，见笔记线白皮书 §03al）。
 **网关 UI**：tab 按注册表；传书 tab 目标下拉三档→按档打 `/api/books` 或 `/api/koreader/books`；逐文件一请求 + 进度条 + 逐项回执；失败项重试/删除；字体/壁纸 tab 复用同一上传器（AssetUploadFlow 回执同形）。
 **host CLI `shelf push`**：`decide_route(quality,target,ext,has_calibre)` 纯函数（单测矩阵）；Calibre 桥统一清 `VIRTUAL_ENV`/`.venv/bin`；`pdfsplit` >60MB 分卷（pymupdf 可选）。Calibre 八件套自 `reading/tools/calibre/` **整体 git mv** 到 `shelf/host/calibre/`；`epub-optimize` CLI 随之迁 `bookconv` bin（书架不引用旧项目）。
 **本机冒烟（三服务，干净 env）**：注册/代理 ✓；KOReader 中文名+子目录落盘字节正确 ✓；native 在 xochitl 不可达时 `inject:` 失败入 failed、可重试/删除 ✓；annot 拒 EPUB ✓；未知目标 400 ✓；inbox 追平认领进 .work ✓。修正：xochitl 客户端加 10s 连接超时（整体 300s 只防大书误判）。
@@ -760,6 +760,16 @@ figcaption{margin:0;padding:0;}
 
 **真机验证边界**：这次的"真机验证"就是整个排查过程本身（诊断EPUB→投原生→渲染PDF逐页比对），不是事后补一道验证——诚实的结论是"改了一处真实存在的代码缺口，但这个缺口不是用户报告的留白问题的成因"，不是"已经解决用户报告的问题"。测试产物（母版库+原生书库两份 "Continental divide" 文档）已清理，原生库走的是回收站软删（可恢复）；核对时发现设备原生书库里已经有两份用户自己创建、打开过的同标题文档（`lastOpened`/`lastOpenedPage` 非零、时间戳早于本次测试），**只删了本次自己新建的两份**（uuid 精确匹配、`lastOpened:"0"` 确认从未被打开过），用户自己的两份原样保留未动。
 
+## 03ar｜koreader-serve 新增高亮/生词只读端点，绕开一个 SQLite 交叉编译坑（2026-09-16，host 侧真机通）
+
+给笔记线（notes/）的 KOReader 高亮/生词回流功能（笔记线白皮书 §03al）打地基：本仓库只加两个只读端点，条目库的创建/合并逻辑不在这边（"KOReader 高亮/生词回流 PKM"§05 已放弃列表原来记的"留给笔记线"，这次真正落地）。
+
+**`GET /annotations`**：扫 `books/` 下每本书的 `<basename>.sdr/metadata.<ext>.lua` 标注 sidecar（KOReader 原生格式，路径规则读它自己的 `docsettings.lua` 核实）。不在 Rust 里写 Lua 语法解析器，沿用 `config.rs`（`merge.lua`）同一策略——交给 KOReader 自带 `luajit` 跑新脚本 `shelf/koreader/annot.lua`（`dofile` 出真表、手写 JSON 序列化，逻辑抄自 `merge.lua` 的 `jval`）。
+
+**`GET /vocabulary`**：读 `data/vocabulary_builder.sqlite3`（KOReader 内置生词本插件库）。第一版用 `rusqlite`（bundled sqlite3 C 源码）做生产依赖，host 编译/测试都过，但交叉编译到 `aarch64-unknown-linux-musl` 链接失败——`sqlite3.c` 调 `open64`/`stat64` 这类 glibc LFS64 符号名，本仓库交叉工具链是"`aarch64-linux-gnu-gcc`（glibc 头文件）编 C + `rust-lld` 链 musl"的组合（`.cargo/config.toml` 注释"ring 的 C 用 glibc 的 gcc 编，产物 libc 无关，能链进 musl"）——这句话对 `ring`（纯计算不碰 libc 文件 I/O）成立，对真要读文件的 SQLite 不成立；本机没装 musl 原生交叉 gcc。跟用户过了三个选项（`koreader-serve` 单独退到 `aarch64-unknown-linux-gnu` 动态链 / 手写纯 Rust 只读解析器 / 装 musl 原生交叉工具链），拍板选手写：`sqlite_min.rs`，零 C 依赖，只实现读表要的最小子集（文件头+table b-tree interior/leaf+溢出页+record 变长编码，sqlite 官方文件格式文档，十余年没变过的公开格式）。`rusqlite` 降级成**只在 host 测试用**的 dev-dependency，生产二进制不链它，只用它造真实 `.sqlite3` 文件当 fixture 差分测试手写解析器（单页小表/`INTEGER PRIMARY KEY` 别名/3000 行强制 interior page/长文本强制溢出页链/真实 `vocabulary`+`title` 两表 schema 端到端，14 个测试）。交叉编译恢复成功，产物仍是全静态（`file` 确认 `statically linked`）。
+
+**验证**：`koreader-serve` 新增 `annot`（3 测）+`vocab`（2 测）+`sqlite_min`（5 测）共 10 个测试，`cargo test -p koreader-serve` 14 个全绿（原 4 + 新增 10）；`shelf/build.sh` 完整跑一遍（host 构建+测试+aarch64-musl 交叉编译，CI 同路径）全过；clippy 零新增告警。**host 侧真实端到端跑通**（细节/踩坑见笔记线白皮书 §03al，两个仓库共同验证的同一次冒烟测试）：真实 `koreader-serve` 起服务、真实 `luajit` 解析手写的标注 sidecar fixture、真实 `sqlite3` 文件（Python `sqlite3` 库现造）读取正确。⚠️ 没有拿真实设备上 KOReader 已经积累的 `.sdr`/`vocabulary_builder.sqlite3` 实测过——本轮设备不可达（`ping 10.11.99.1` 不通，主机内核/模块目录不匹配，见会话记录，非本项目代码问题）。
+
 ## 04｜踩坑
 
 - **挪代码时顺手带走的文案不代表内容还准（2026-09-10 用户真机测试逮到）**：§03ak 把「系统增强」卡片原样搬进「实验室」，battop"未装"提示里的路径 `misc/battery-audit/battop/install.sh` 是 §03aj 写的，那时候还没意识到这个路径已经在更早的 §03b 里 `git mv` 到 `enhance/battop/` 了——挪动/重构代码只挪了位置没重新核对内容，字面拷贝把旧错误也一起搬了过去，还搬了一次都没发现（两轮都没查）。**教训**：移动/复用一段包含具体路径/命令/版本号的文案时，顺手核对一遍还准不准，不能假设"没人提过所以肯定没问题"——原样复制不代表内容仍然正确，只代表格式没错。
@@ -920,7 +930,7 @@ figcaption{margin:0;padding:0;}
   流程，客户端自己的默认值配置是完全独立的另一份拷贝，同一个数字在仓库里可能有超过一次硬编码，
   真要根治得靠 `grep` 全仓库搜数字本身，不能只沿着"哪些文件会输出这个 URL"这条思路想。
 
-## 05｜真机待办（2026-09-06 刷新；2026-09-09 补记 §03ad 漫画超限分支复验、§03ae i18n 架子、§03af UI 人性化批量修复、§03aj 管理二级 tab+系统增强开关；2026-09-10 补记 §03an 正文全量 i18n、§03aq 网文留白排查）
+## 05｜真机待办（2026-09-06 刷新；2026-09-09 补记 §03ad 漫画超限分支复验、§03ae i18n 架子、§03af UI 人性化批量修复、§03aj 管理二级 tab+系统增强开关；2026-09-10 补记 §03an 正文全量 i18n、§03aq 网文留白排查；2026-09-16 补记 §03ar KOReader 高亮/生词只读端点）
 
 **未闭环**：网页 UI i18n（§03ae 架子 + §03an 正文全量补完，437 个 key，数据链路+内容对照已真机验证——`curl` 交叉核对真机 served 的语言包与部署的 app.js 里全部 416 处 `T()` 引用零缺失）——剩浏览器里实际点开语言切换器、人眼确认文案切成英文后的排版/换行/组件对齐效果这一步没做，这条缺口从 §03ae 延续到现在，覆盖面已经从"只剩顶层导航几个词"变成"正文也翻完了，只是没用真实浏览器看过"。网页 UI 人性化/触屏可用性一批小修（§03af，纯前端改动，同样没有浏览器截图核对实际渲染效果——禁用按钮说明文字是否真的显示、徽章点击 `alert` 是否真的弹出、`.btn-bad` 配色是否符合预期，这些都还没人眼确认过，只确认过新标记已 served）。**图片密集网文渲染大片留白**（§03aq，2026-09-10）——真机 A/B 验证过 `wash_css` 缺 `figure`/`figcaption` 边距归零不是成因（已经修了这个缺口，但对留白零帮助）；真正成因是分页引擎对放不下的图片块整体挪页、当前页剩余空间不回填，排查过没找到能从 EPUB/CSS 层面调的杠杆，**留白问题本身仍未解决**，比 i18n 那条视觉确认缺口更实质——不是"还没人眼看过"，是"看过了，问题还在，暂时没有已知修法"。
 
@@ -936,4 +946,4 @@ figcaption{margin:0;padding:0;}
 - **②**：用户追问"英文习惯不是首段不缩进吗"→ 泛化判定（前一块是 `</hN>` / 标题样段落 / 段末 ≥2 个 `<br>` 或空段·`* * *` 分隔 / 章首第一段）；内联 `style="text-indent:0"` 在 KOReader 顶格、xochitl 不顶格 → **xochitl 不认内联 `style=""` 属性**（§03y 硬规则）；改为换元素 `<div class="cj-flush">` + 外链 `.cj-flush{text-indent:0.01em}`（`0` 被当没设）→ v6 真机：章首/场景切换 0pt、续段 14.2pt，KOReader 同。用户观察"中文换字体缩进跟着变、英文不变"：em 制只随字号；随家族变的是烘进正文的全角空格——已剥。
 - **④**：Sheldon 无脚注 → 用户定拉公版书 Standard Ebooks《Gulliver's Travels》（7 处 `epub:type="noteref"` 尾注），`shelf push` 链洗后（Inline：7 处内联成 cj-note；NCX 52 条）投原生 404 页（自检 ok）+ 加入 KOReader，**用户目视两器脚注观感正常**：xochitl 内联注文不碍眼、KOReader 没有弹窗被替代的落差；Inline 一条产物两器通用成立，不为 KOReader 另跑 Anchor。
 
-**已放弃**：**微读线整条**（§03u，2026-09-05：先是内嵌浏览器 spike 未推进，后内容源方案评估后用户砍掉）；设备端 AZW3/MOBI/FB2 → EPUB 转换（§03s，杂格式走电脑 Calibre，`bookconv::convert` 本体留给 reading 线）；KOReader 高亮/生词回流 PKM（2026-09-06 用户定留给笔记线）与"稍后读"URL 队列（网文少，不做）。
+**已放弃**：**微读线整条**（§03u，2026-09-05：先是内嵌浏览器 spike 未推进，后内容源方案评估后用户砍掉）；设备端 AZW3/MOBI/FB2 → EPUB 转换（§03s，杂格式走电脑 Calibre，`bookconv::convert` 本体留给 reading 线）；KOReader 高亮/生词回流 PKM（2026-09-06 用户定留给笔记线，2026-09-16 已在笔记线落地——本条线只保留 `koreader-serve` 新增的两个只读原始数据端点 `GET /annotations`/`GET /vocabulary`，条目库的创建/合并逻辑不在本仓库，见笔记线白皮书 §03al）与"稍后读"URL 队列（网文少，不做）。

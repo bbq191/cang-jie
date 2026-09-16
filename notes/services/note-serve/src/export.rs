@@ -161,6 +161,7 @@ mod tests {
             answer: None,
             status: Status::Reviewed,
             destination: Default::default(),
+            source: Default::default(),
             created: 0,
             updated: 0,
         }

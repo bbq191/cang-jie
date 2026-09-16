@@ -1,5 +1,5 @@
 //! ink-serve —— 笔记·矿（loopback 8795）。监听原生书库（事件驱动、防抖），书页 `.rm` 变了就只扫变更页：
-//! 勾画（GlyphRange）+ 旁边手写（笔画簇）→ 条目 → 裁图 → 条目库（**唯一写者**，其它服务经这里改字段）。零网络。
+//! 勾画（GlyphRange）+ 旁边手写（笔画簇）→ 条目 → 裁图 → 条目库（**唯一写者**，其它服务经这里改字段）。
 //! 路由（经网关前缀 `/api/ink`）：`GET /books` · `GET /books/{uuid}` · `GET /books/{uuid}/crops/{file}` ·
 //! `POST /books/{uuid}/entries/{id}`（text/style/draft/answer/askAi/question/destination 字段更新，
 //! 缺省底座无 PATCH；`text` 现在走 `notecore::model::Entry::apply_marked_text`——行首 `-`/`1.`/`口`/`##`/
@@ -21,14 +21,19 @@
 //! 手动触发、不可恢复，见 `notecore::model::Book::purge_terminal`）·
 //! `POST /books/{uuid}/rescan` · `GET /events`。条目库 `$XDG_STATE_HOME/notes/books/<uuid>.json`，裁图 `$XDG_DATA_HOME/notes/crops/`。
 //! `destination` 字段（三期，落设备笔记本/Obsidian/两处都要，缺省两处都要）走通用 PATCH，见下方。
+//! `POST /koreader/import`（KOReader 高亮/生词回流，2026-09-16，见 `koreader.rs`+笔记线白皮书 §03al：
+//! 拉 koreader-serve 的 `/annotations`+`/vocabulary` 原始数据，按增量规则并入条目库——手动触发，不像
+//! xochitl 那条线自动 fswatch，KOReader 那边没有等价的"改了就通知"事件源）。
 mod bookdb;
 mod config;
 mod crop;
 mod doc;
 mod ingest;
+mod koreader;
 
 use bookdb::BookDb;
 use config::IngestConfig;
+use koreader::KoreaderHttp;
 use notecore::model::{Answer, Destination, Draft, Status, Style};
 use rmsvc_core::events::EventBus;
 use rmsvc_core::fs::plain_name;
@@ -46,6 +51,7 @@ struct State {
     cfg: IngestConfig,
     db: BookDb,
     bus: Arc<EventBus>,
+    koreader: KoreaderHttp,
 }
 
 impl State {
@@ -89,7 +95,8 @@ fn main() {
     let paths = Paths::from_env();
     let cfg: IngestConfig = rmsvc_core::config::load_or_seed(&paths.app_config_dir(APP).join("ink.json"));
     let db = BookDb::new(paths.app_state_dir(APP).join("books"));
-    let st = Arc::new(State { paths: paths.clone(), cfg, db, bus: Arc::new(EventBus::new()) });
+    let koreader = KoreaderHttp::new(paths.clone());
+    let st = Arc::new(State { paths: paths.clone(), cfg, db, bus: Arc::new(EventBus::new()), koreader });
     if let Err(e) = std::fs::create_dir_all(st.crops_dir()).and_then(|_| st.db.ensure()) {
         eprintln!("[ink-serve] 建目录失败: {e}");
         std::process::exit(1);
@@ -231,6 +238,13 @@ fn main() {
             let _ = s.db.update(&uuid, || Default::default(), |b| b.page_mtimes.clear());
             s.ingest(&uuid);
             Ok(Reply::ok(&serde_json::json!({"ok": true})))
+        }))
+        .post("/koreader/import", bind(&st, |s, _| {
+            let stats = koreader::import(&s.db, &s.koreader, rmsvc_core::clock::now_secs()).map_err(ApiError::internal)?;
+            if stats.highlight_books > 0 || stats.highlights.added > 0 || stats.vocab.added > 0 {
+                s.bus.publish("notes", "entries");
+            }
+            Ok(Reply::ok(&serde_json::json!({"ok": true, "highlightBooks": stats.highlight_books, "highlightsAdded": stats.highlights.added, "highlightsRevoked": stats.highlights.revoked, "vocabAdded": stats.vocab.added})))
         }));
     println!("[ink-serve] 条目库 {}；裁图 {}；监听 {}", st.db.dir().display(), st.crops_dir().display(), st.paths.xochitl_dir().display());
     if let Err(e) = service::run(&SPEC, &bind_addr, &paths, router) {

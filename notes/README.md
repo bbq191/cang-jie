@@ -6,7 +6,7 @@
 
 | 服务 | seg / 端口 | 职责 | 状态 |
 |---|---|---|---|
-| `ink-serve` 矿 | `ink` / 8795 | 监听书库 → 只扫变更页 → 勾画 ↔ 旁边手写配对（含无手写的纯勾画） → **自渲染裁图**（笔画矢量数据画折线，不依赖缩略图）→ **条目库（唯一写者）**；零网络 | ✅ 真机 active，浏览态状态机 + 纯勾画条目 + 自渲染裁图 + 归档/清空回收站/**恢复**全部真机验证 |
+| `ink-serve` 矿 | `ink` / 8795 | 监听书库 → 只扫变更页 → 勾画 ↔ 旁边手写配对（含无手写的纯勾画） → **自渲染裁图**（笔画矢量数据画折线，不依赖缩略图）→ **条目库（唯一写者）**；另有 `POST /koreader/import`（2026-09-16，§03al）手动拉书架线 `koreader-serve` 的高亮/生词回流，其余零网络 | ✅ 真机 active，浏览态状态机 + 纯勾画条目 + 自渲染裁图 + 归档/清空回收站/**恢复**全部真机验证；KOReader 回流 host 侧端到端跑通，⚠️ 未拿真实设备数据测过、无网页触发按钮 |
 | `transcribe-serve` 转写 | `transcribe` / 8796 | 订阅矿的事件 → 裁图喂视觉模型（预置下拉选，横跨 DashScope/OpenAI/Gemini/DeepSeek 四厂商，key 按厂商分开存）→ 草稿写回（行首标记自动定样式）；只处理 `Pending`（用户点了「转入笔记」的）；唯一出网之一 | ✅ 真机 active、DashScope key 已配置真调过；OpenAI/Gemini/DeepSeek 三家只验证了配置层，没有真实 key 走过调用；转写准确率还在打磨 |
 | `mind-serve` 脑 | `mind` / 8797 | 按条目单发：勾选「问AI」+ 输入问题 → 拼书名+章节+勾画原文+转写文本+问题 → 文字模型（同样四厂商预置表）→ `answer` 写回；**没有批量循环/事件订阅**，纯被动等 HTTP，比 transcribe-serve 还轻 | ✅ 真机 active，端到端问答真机验证通过（DashScope） |
 | `note-serve` 本 | `notes` / 8798 | 注册「笔记」tab；打包 `.rmdoc`（全部 7 种打字样式）+ 上传 + 条目→文档生成编排（网页按钮已接线，落书本自己所在的设备文件夹，不再新建）；**md 导出**（落设备 vault + 直接触发浏览器下载）；**单篇 markdown 导入**（独立于条目库，`POST /import-md`，网页端 2026-09-10 起改文件上传+默认隐藏，端点/body 不变） | ✅ 三件套+编排+导出+建夹逻辑简化全部真机验证通过；md 导入后端管线真机验证通过，前端「导入 md 文档」面板（含文件上传交互+可见性开关）未经人眼确认（§03af/书架白皮书 §03ak） |
@@ -110,9 +110,9 @@ notes/
 ├── Cargo.toml · .cargo/               内部 workspace（与 shelf 同款 musl 全静态；`opt-level=z` + lto + strip）
 ├── crates/rmv6/                       .rm v6 解析+写入（剥离移植 remarkable_lines 0.1.3，MIT，PROVENANCE.md 留痕；page::Page = 笔画 + 勾画 + 打字文本，墓碑剔除；write.rs 编 RootTextBlock，模板替换拼 .rm，全部 7 种打字样式真机验证过）
 ├── crates/epubmap/                    .epubindex 起始页（两张表取首现）+ nav/ncx 目录 → 页号→章/小节
-├── crates/notecore/                   领域核心（纯函数）：model 条目/样式/状态/去处（**没有分区了**）· hash FNV 簇指纹 · geom 聚簇+配对（**没有 has_underline 了**）· ingest 增量合并（含纯勾画路径） · marker 行首标记 OCR 兜底（`##`/`### ` 都覆盖 subhead） · project 条目库→段落列表投影（按页平铺，不分组） · export 条目库→Markdown 导出
+├── crates/notecore/                   领域核心（纯函数）：model 条目/样式/状态/去处/来源（**没有分区了**）· hash FNV 簇指纹 · geom 聚簇+配对（**没有 has_underline 了**）· ingest 增量合并（含纯勾画路径） · koreader（**新增**，§03al：KOReader 高亮/生词 → 条目，跟 ingest 平行的另一条摄取入口） · marker 行首标记 OCR 兜底（`##`/`### ` 都覆盖 subhead） · project 条目库→段落列表投影（按页平铺，不分组） · export 条目库→Markdown 导出
 ├── crates/vendorcfg/                  **新增**（合理使用设计模式消重复）：AI 厂商预置模型表/key 按厂商分格存取/迁移/PATCH/对外 JSON 整形（preset）+ 泛型用量账本 UsageBook\<Extra\>/Ledger\<Extra\>（usage），transcribe-serve/mind-serve 共用；只抽行为不抽数据结构，两边各自的 Config/Usage 结构体+落盘格式不变
-├── services/ink-serve/                矿：doc(书库只读视图) · ingest(变更页编排) · crop(**自渲染裁图**，笔画矢量数据画折线，不吃缩略图) · bookdb(Repository) · config · main(路由+监听，接 askAi/question/destination + archive/purge 动作)
+├── services/ink-serve/                矿：doc(书库只读视图) · ingest(变更页编排) · crop(**自渲染裁图**，笔画矢量数据画折线，不吃缩略图) · bookdb(Repository) · config · koreader(**新增**，§03al：拉书架线 koreader-serve 的 /annotations+/vocabulary，按 notecore::koreader 规则并入条目库) · main(路由+监听，接 askAi/question/destination + archive/purge 动作 + koreader/import)
 ├── services/transcribe-serve/         转写：config/ledger(vendorcfg 薄封装：自己的视觉预置表+节流四件套+RunReport) · backend(Vision Strategy + OpenAiCompat) · prompt · ink(EntryStore 客户端，传输层包 rmsvc_core::registry::SvcClient) · worker(一轮编排) · main(SSE 订阅+防抖)
 ├── services/mind-serve/               脑：config/ledger(vendorcfg 薄封装：自己的文字预置表，Ledger\<Extra=()\> 没有 lastRun) · backend(TextModel Strategy + OpenAiCompat，纯文本消息) · prompt(拼书名+章节+原文+文本+问题) · ink(EntryStore 客户端，book/post_answer，传输层包 SvcClient) · worker::ask_entry(单条问答) · main(**无后台线程**，纯被动路由)
 ├── services/note-serve/               本：注册「笔记」tab；rmdoc.rs 打包 .rmdoc（上传复用 rmsvc_core::xochitl）；export.rs 落盘 vault + 浏览器下载的 content_disposition()；chapter_store.rs 通用"每书每章一条记录"泛型（notebooks/export_state 现在是类型别名）；config/ink(SvcClient)/trash(SvcClient)/publish 生成编排（不建文件夹，复用书本自己的设备文件夹，撞名 rmsvc_core::xochitl::unique_document_name 加后缀）；publish::import_markdown（单篇 markdown→新笔记本文档，独立于条目库，不经章节投影，见 notecore::mdimport）
@@ -167,7 +167,7 @@ notes/
 **前置依赖**：跟书架共用同一套交叉编译环境（`rustup target add aarch64-unknown-linux-musl` + aarch64 交叉 gcc/ar），见 `../shelf/README.md`「构建」一节，不用单独装第二遍。改代码前先看工程纪律，日常提交分支是 `dev` 不是 `master`。
 
 ```sh
-cd notes && cargo build --workspace && cargo test --workspace     # host：184 个测试（rmv6 27 · epubmap 5 · notecore 56 · vendorcfg 14 · ink 11 · transcribe 22 · mind 21 · note 28，含 1 ignored；claim 重试相关两条测试真吃约 1.5-4.5s）
+cd notes && cargo build --workspace && cargo test --workspace     # host：191 个测试（rmv6 27 · epubmap 5 · notecore 60 · vendorcfg 14 · ink 14 · transcribe 22 · mind 21 · note 28，含 1 ignored；claim 重试相关两条测试真吃约 1.5-4.5s）
 cd ../shelf && ./build.sh && ./deploy.sh <设备IP>                  # 随书架一起交叉编译/打包/装机（NOTES_BINS；设备在 WiFi 上时给 WiFi IP）
 ssh root@<设备IP> sh /home/root/shelf-pkg/shelf/install.sh --only ink,transcribe,mind,note   # 只装/更新笔记线
 ```
@@ -184,5 +184,6 @@ ssh root@<设备IP> sh /home/root/shelf-pkg/shelf/install.sh --only ink,transcri
 - "改条目 destination 后对应导出指纹立刻变"这条只有离线单测干净覆盖（真机测试书状态太活跃，没能单独复现，见白皮书 §03x）。
 - 摄取路径"排除法"反模式复发修复（`is_terminal()` 替换 `!= Revoked`，§03ag）和生成笔记本认领失败短暂重试（§03ah）：改动都是被动触发的后台逻辑，离线测试已覆盖判据/重试机制本身，但都还没有主动构造真机场景复验（前者需要真的擦掉一条已跳过条目的笔迹，后者是低概率时序问题，难以主动触发）。
 - 单篇 markdown 导入（§03af）：后端投影/上传管线真机验证通过（真调接口+`scp`拉回设备真实生成的`.rm`字节核对结构），前端「导入 md 文档」入口本身（2026-09-10 起改文件上传交互+默认隐藏在可见性开关后，见书架白皮书 §03ak）没在浏览器里人眼点开过。
+- KOReader 高亮/生词回流（§03al）：host 侧真实端到端跑通（真实 `koreader-serve`+`ink-serve` 两进程、真 `luajit` 解析 `.sdr` 标注、真 `sqlite3` 文件读取），但①没有拿真实设备上真实 KOReader 用了很久积累的 `.sdr`/`vocabulary_builder.sqlite3` 实测过——本轮设备不可达；②`POST /koreader/import` 还没有网页按钮触发，目前只能 curl。
 
 演进记录、每一步的真机验证细节、踩过的坑，见 `docs/reMarkable笔记白皮书.md`。

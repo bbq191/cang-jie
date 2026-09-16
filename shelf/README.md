@@ -86,7 +86,7 @@ shelf/
 ├── crates/bookconv/                   ★ 通用内容层：多格式→EPUB/PDF、EPUB 优化器+清洗层+质量门、e-ink 图片处理、EPUB 组装、网文抽取
 │   └── src/bin/epub_optimize.rs         host/设备共用 CLI（wash_epub.sh 末步）
 ├── services/book-serve/               staging.rs(母版库领域：入库/优化/落库) · sidecar.rs(落库记录边车) · render_check.rs(投原生后渲染自检) · pending_queue.rs(PendingQueue\<T\>：持久化+入队去重+剔除共用骨架，2026-09-09 §03ag) · trash.rs(原生回收站队列) · spool.rs(inbox 队列) · api.rs(纯 HTTP 适配) · service_state.rs
-├── services/koreader-serve/           koreader.rs(目录模型+KoStore) · config.rs(ConfigSync+merge.lua) · main.rs
+├── services/koreader-serve/           koreader.rs(目录模型+KoStore) · config.rs(ConfigSync+merge.lua) · annot.rs(**新增**，读 .sdr 高亮标注，annot.lua+luajit) · vocab.rs(**新增**，读生词本 sqlite) · sqlite_min.rs(**新增**，手写纯 Rust 只读 SQLite 解析器，交叉编译避坑见白皮书 §03ar) · main.rs
 ../enhance/{font-serve,wallpaper-serve}/  2026-09-11 从 services/ 挪出去（概念上更贴近系统增强，
                                       不是"书架内容管理"业务）；wallpaper-serve 原依赖 bookconv 的两个
                                       屏幕尺寸常量已复制成本地值，不再跨线依赖 bookconv，见各自 README。
