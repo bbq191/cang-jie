@@ -325,6 +325,7 @@
   "notes.noBooks": "(no highlighted books yet)",
   "notes.cropAlt": "Handwritten annotation crop",
   "notes.noCrop": "(no crop, plain highlight)",
+  "notes.cropMissing": "(has handwriting, crop pending — server-side render failed; rescanning this book may regenerate it)",
   "common.installed": "installed",
   "common.notInstalled": "not installed",
   "common.saveFailed": "Save failed",

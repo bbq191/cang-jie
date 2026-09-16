@@ -401,7 +401,11 @@ function renderNotes(sec){sec.innerHTML=`
   </div>`;
   const sel=$('#nbook',sec),chaptertabs=$('#nchaptertabs',sec),chapterbody=$('#nchapterbody',sec),browse=$('#nbrowse',sec),sum=$('#nsum',sec);let book=null;
   const cropUrl=(uuid,f)=>`/api/ink/books/${encodeURIComponent(uuid)}/crops/${encodeURIComponent(f)}`;
-  const cropHtml=e=>e.ink&&e.ink.crop?`<img src="${cropUrl(book.uuid,e.ink.crop)}" alt="${T('notes.cropAlt')}">`:`<div class="empty">${T('notes.noCrop')}</div>`;
+  // 2026-09-16 截图走查发现：`e.ink` 有值但 `e.ink.crop` 是空串（ink-serve 自渲染裁图失败/写盘失败时
+  // 会发生，见 ingest.rs 的 render_ink/write_atomic 错误分支，只记服务端日志、条目照常落盘）此前被
+  // cropHtml 误判成"纯勾画没有手写"（notes.noCrop），实际上这条明明有手写，只是裁图暂时没生成——
+  // 两种情况分开提示，别让用户误以为手写没被识别到。
+  const cropHtml=e=>e.ink&&e.ink.crop?`<img src="${cropUrl(book.uuid,e.ink.crop)}" alt="${T('notes.cropAlt')}">`:`<div class="empty">${T(e.ink?'notes.cropMissing':'notes.noCrop')}</div>`;
   const patch=async(id,body)=>{const r=await postJ(`/api/ink/books/${encodeURIComponent(book.uuid)}/entries/${encodeURIComponent(id)}`,body);if(r.ok===false)alert(r.message||T('notes.saveFailed'))};
   /* 编辑区文本失焦才存（`onchange`），但点旁边的按钮（重转/去处/问AI…）会先让文本框失焦触发保存，
      两件事几乎同时各发一个 HTTP 请求，谁先到服务端不一定——按钮那次的收尾动作会拉新数据整页重画，
