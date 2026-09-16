@@ -778,6 +778,24 @@ figcaption{margin:0;padding:0;}
 
 **验证**：新增 1 个测试（`test_pull_without_out_uses_configured_notes_vault_not_xdg_default`，临时 `XDG_CONFIG_HOME` 写一份真实 `config.toml` 验证不给 `--out` 时确实落到配置的目录，不是 XDG 缺省位置），`uv run pytest shelf/host/tests` 94 个全绿（原 93 + 新增 1）。纯 host 侧 Python 改动，不涉及设备端代码，不需要真机验证。
 
+## 03at｜⚠️ 真机重大发现：`gateway`/`shelf-gateway` 两个 systemd 单元并存，真机一直在跑 2026-09-10 的旧二进制（2026-09-16）
+
+本轮部署笔记「整理」区提示停留时间的小改动（见下条）时，例行查了一下 `shelf-gateway.service` 健康状态，发现 `NRestarts=4517`、`ActiveState=activating`（卡死重启循环），日志报 `绑定 0.0.0.0:443（TLS）失败: Address in use`——查下去牵出一个比本次改动大得多的真问题。
+
+**根因**：网关 2026-09-11 正名（`shelf-gateway`→`gateway`）之后，`/usr/lib/systemd/system/` 下同时存在**两份 systemd 单元**——旧的 `shelf-gateway.service`（`ExecStart=/home/root/.local/bin/shelf-gateway`）和新的 `gateway.service`（`ExecStart=/home/root/.local/bin/gateway`），**两个都被 `shelf.target` 静态 `Wants` 着**（`/usr/lib/systemd/system/shelf.target.wants/` 下两个符号链接都在）。这台设备上正名之后没有人清理掉旧单元——本该只保留新的一份。开机/`shelf.target` 启动时两个单元竞争同一个 443 端口，谁先起来谁占住，另一个陷入"启动即失败再重启"的死循环，`RestartSec=5` 意味着**每 5 秒失败重启一次、可能已经持续了两天多**（4517 次 ≈ 6.5 小时是保守估计，真实次数取决于这个状态存在了多久，`NRestarts` 计数器不会自己清零）。
+
+**更严重的连带发现**：`/home/root/.local/bin/gateway`（新名字）确实一直在正常运行——`ps` 显示 PID 886 从 **2026-09-14 11:58:12** 就在跑（`gateway.service`），一开始被我误判成"占着端口不放的孤儿进程"直接 kill 掉，导致 443 端口被旧的 `shelf-gateway.service` 抢到、真机上从"跑 9-14 之后的新二进制"**倒退**成"跑 2026-09-10 17:18 的旧二进制"——这是我这次操作本身引入的一次真实倒退，好在很快查出来并纠正（`systemctl stop shelf-gateway.service` + `systemctl start gateway.service`，只是运行态操作，没有再误杀）。
+
+**行动**：只做了运行态修复（`systemctl stop shelf-gateway.service`＋`systemctl start gateway.service`），**没有碰 `/usr` 下的单元文件**——删除/禁用旧单元需要 remount rw 改 `/usr`，工程纪律 明确记过"写 `/usr` 触发过两次真机 dm-verity A/B 回滚变砖，不要再用这条路"，这条红线优先级高于"彻底修好"。**⚠️ 这只是这次开机周期内有效**：下次真机重启，`shelf.target` 会再次同时拉起两个单元，443 端口竞争和 `shelf-gateway.service` 的重启风暴会原样复现，除非有人主动做以下任一件事（本轮没做，留给用户决定）：①手动 remount rw 删掉 `/usr/lib/systemd/system/shelf.target.wants/shelf-gateway.service` 这个符号链接（不改单元文件本身，风险相对小，但仍是写 `/usr`）；②在 `packaging/install-all.sh`（或对应的部署脚本）里补一步"部署时如果检测到旧名字单元还在，先 `systemctl disable --now` 它"，长期靠部署流程自愈而不是手动一次性清理。
+
+**次生怀疑，未证实**：Sep 13 那几次真机部署（`gateway.bak.pre-dedupe-batch-fix`/`gateway.bak.pre-dedupe-upload`/`gateway.bak.pre-weread-probe`，见 `/home/root/.local/bin/` 残留的备份文件）落的都是新路径 `gateway`——如果当时 `gateway.service`（PID 886 那条，9-14 才起的）还没起来、旧单元占着端口的话，那几次部署验证是否真的验证到了"当前对外提供服务的那个进程"存疑；但 886 从 9-14 就稳定在跑，9-13 那几次部署本身应该是提前一天备好新二进制、9-14 服务重启时生效，时间线对得上，**大概率没问题**，只是没法百分之百倒推确认，列出来存个疑，不是坐实的问题。
+
+## 03au｜「整理」区状态提示停留时间 1.5s→3s（2026-09-16，真机通）
+
+用户真机反馈「推送本章」/「重新转写」/「提问」三处点完之后弹出的状态文字（"✓ md 已导出"这类）"闪一下就没了"——`gateway/ui/app.js` 里这三处操作共用同一个模式：显示结果文案 → `wait(1500)` → 触发整页重画（`renderBook`/`reloadBook`），重画会把状态文案连同整个 DOM 一起冲掉。1.5 秒对短句都不够看清，改成 3 秒。纯前端常量改动，`node --check` 通过，无需改后端。
+
+真机验证：部署新 `gateway` 二进制（见上条 §03at 的部署过程）后 `curl` 核对首页返回的正文里确实是 `wait(3000)`（3 处都改了，不是只改了用户点开的那一处）。
+
 ## 04｜踩坑
 
 - **挪代码时顺手带走的文案不代表内容还准（2026-09-10 用户真机测试逮到）**：§03ak 把「系统增强」卡片原样搬进「实验室」，battop"未装"提示里的路径 `misc/battery-audit/battop/install.sh` 是 §03aj 写的，那时候还没意识到这个路径已经在更早的 §03b 里 `git mv` 到 `enhance/battop/` 了——挪动/重构代码只挪了位置没重新核对内容，字面拷贝把旧错误也一起搬了过去，还搬了一次都没发现（两轮都没查）。**教训**：移动/复用一段包含具体路径/命令/版本号的文案时，顺手核对一遍还准不准，不能假设"没人提过所以肯定没问题"——原样复制不代表内容仍然正确，只代表格式没错。
@@ -938,7 +956,9 @@ figcaption{margin:0;padding:0;}
   流程，客户端自己的默认值配置是完全独立的另一份拷贝，同一个数字在仓库里可能有超过一次硬编码，
   真要根治得靠 `grep` 全仓库搜数字本身，不能只沿着"哪些文件会输出这个 URL"这条思路想。
 
-## 05｜真机待办（2026-09-06 刷新；2026-09-09 补记 §03ad 漫画超限分支复验、§03ae i18n 架子、§03af UI 人性化批量修复、§03aj 管理二级 tab+系统增强开关；2026-09-10 补记 §03an 正文全量 i18n、§03aq 网文留白排查；2026-09-16 补记 §03ar KOReader 高亮/生词只读端点）
+## 05｜真机待办（2026-09-06 刷新；2026-09-09 补记 §03ad 漫画超限分支复验、§03ae i18n 架子、§03af UI 人性化批量修复、§03aj 管理二级 tab+系统增强开关；2026-09-10 补记 §03an 正文全量 i18n、§03aq 网文留白排查；2026-09-16 补记 §03ar KOReader 高亮/生词只读端点、§03as notes_vault 配置项、§03at ⚠️ gateway/shelf-gateway 双单元真机重大发现（待用户决定是否清理 `/usr` 旧单元）、§03au 状态提示停留时间修复）
+
+**待办新增（2026-09-16）**：`gateway.service`/`shelf-gateway.service` 双 systemd 单元并存导致 443 端口竞争+重启风暴，本轮只做了运行态临时修复，**下次真机重启会复现**——需要用户决定：①手动 remount rw 删掉旧单元的 `.wants` 符号链接，②还是在部署脚本里补一步自愈检测，见 §03at 详细方案。
 
 **未闭环**：网页 UI i18n（§03ae 架子 + §03an 正文全量补完，437 个 key，数据链路+内容对照已真机验证——`curl` 交叉核对真机 served 的语言包与部署的 app.js 里全部 416 处 `T()` 引用零缺失）——剩浏览器里实际点开语言切换器、人眼确认文案切成英文后的排版/换行/组件对齐效果这一步没做，这条缺口从 §03ae 延续到现在，覆盖面已经从"只剩顶层导航几个词"变成"正文也翻完了，只是没用真实浏览器看过"。网页 UI 人性化/触屏可用性一批小修（§03af，纯前端改动，同样没有浏览器截图核对实际渲染效果——禁用按钮说明文字是否真的显示、徽章点击 `alert` 是否真的弹出、`.btn-bad` 配色是否符合预期，这些都还没人眼确认过，只确认过新标记已 served）。**图片密集网文渲染大片留白**（§03aq，2026-09-10）——真机 A/B 验证过 `wash_css` 缺 `figure`/`figcaption` 边距归零不是成因（已经修了这个缺口，但对留白零帮助）；真正成因是分页引擎对放不下的图片块整体挪页、当前页剩余空间不回填，排查过没找到能从 EPUB/CSS 层面调的杠杆，**留白问题本身仍未解决**，比 i18n 那条视觉确认缺口更实质——不是"还没人眼看过"，是"看过了，问题还在，暂时没有已知修法"。
 
