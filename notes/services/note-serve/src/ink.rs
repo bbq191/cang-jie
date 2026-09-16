@@ -9,6 +9,9 @@ use rmsvc_core::registry::{enc, SvcClient};
 #[derive(serde::Deserialize, Debug, Clone)]
 pub struct BookBrief {
     pub uuid: String,
+    // ink-serve 的 `/books` 本来就吐这个字段（`main.rs` 的 `list_active` 投影），2026-09-16 之前
+    // 这里没声明只是没人用；host `shelf notes pull` 靠它认书，不用另起一个 book-detail 端点。
+    pub title: String,
 }
 
 pub trait EntryStore: Send + Sync {

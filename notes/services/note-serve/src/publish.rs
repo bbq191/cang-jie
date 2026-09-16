@@ -208,7 +208,7 @@ mod tests {
     struct FakeStore(Book);
     impl EntryStore for FakeStore {
         fn list_books(&self) -> Result<Vec<BookBrief>, String> {
-            Ok(vec![BookBrief { uuid: self.0.uuid.clone() }])
+            Ok(vec![BookBrief { uuid: self.0.uuid.clone(), title: self.0.title.clone() }])
         }
         fn book(&self, uuid: &str) -> Result<Book, String> {
             if uuid == self.0.uuid { Ok(self.0.clone()) } else { Err("没有这本书".into()) }

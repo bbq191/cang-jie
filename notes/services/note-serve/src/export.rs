@@ -1,5 +1,8 @@
 //! Markdown 导出落盘：`notecore::export` 产出的纯文本写到 `$XDG_DATA_HOME/notes/vault/<书名>/`
-//! （一章一个 `.md` + 一个书索引页），供 host `notes pull` 拉到本机 Obsidian vault（这条还没做）。
+//! （一章一个 `.md` + 一个书索引页），`manifest()`（2026-09-16）把这份落盘内容读回 JSON 供
+//! `GET .../vault.json` 吐给 host `shelf notes pull`——目录名单独回一个 `dir` 字段（已经跑过
+//! `sanitize()`，跟磁盘上真实子目录同名），CLI 端直接拿来当本机子目录名用，不用在 Python 里再抄一遍
+//! 这份转义规则（唯一事实源在这边）。
 //! **整理区第三轮反馈（2026-09-08）加了指纹比对**：`export_state.rs` 记"上次导出时的内容指纹"，
 //! 指纹没变就跳过重写（不再是无条件每次全量重写）——跟落设备笔记本那条投影路径（`publish.rs` +
 //! `notebooks.rs`）用同一套纪律；顺带给「整理」页提供"这一章 md 是不是已经跟当前内容同步"的判据，
@@ -85,6 +88,42 @@ pub fn export_chapter(dir: &Path, book: &Book, chapter_idx: usize, title: &str, 
     std::fs::write(&path, md).map_err(|e| format!("写 {} 失败: {e}", path.display()))?;
     state.set(&book.uuid, chapter_idx, ExportRecord { fingerprint, exported_at: rmsvc_core::clock::now_secs() })?;
     Ok(ExportOutcome::Written)
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct VaultFile {
+    pub name: String,
+    pub content: String,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct VaultManifest {
+    pub title: String,
+    pub dir: String,
+    pub files: Vec<VaultFile>,
+}
+
+/// 读回已落盘的 vault 目录内容（不触发导出，纯读——`POST .../export` 才负责写，`GET .../vault.json`
+/// 只读它写下的东西，两个端点各管各的，避免"GET 有副作用"这种反直觉行为）。目录不存在（从没导出过）
+/// 按空 `files` 处理，不是错误——host `notes pull` 对"这本书还没导出过"该跳过而不是报错中断。
+pub fn manifest(data_dir: &Path, book_title: &str) -> Result<VaultManifest, String> {
+    let dir = vault_dir(data_dir, book_title);
+    let mut files = Vec::new();
+    if dir.is_dir() {
+        let entries = std::fs::read_dir(&dir).map_err(|e| format!("读 {} 失败: {e}", dir.display()))?;
+        for ent in entries {
+            let ent = ent.map_err(|e| format!("读 {} 失败: {e}", dir.display()))?;
+            let path = ent.path();
+            if path.extension().and_then(|e| e.to_str()) != Some("md") {
+                continue;
+            }
+            let name = ent.file_name().to_string_lossy().into_owned();
+            let content = std::fs::read_to_string(&path).map_err(|e| format!("读 {} 失败: {e}", path.display()))?;
+            files.push(VaultFile { name, content });
+        }
+        files.sort_by(|a, b| a.name.cmp(&b.name));
+    }
+    Ok(VaultManifest { title: book_title.to_string(), dir: sanitize(book_title), files })
 }
 
 #[cfg(test)]
@@ -207,5 +246,37 @@ mod tests {
         export_book(tmp.path(), &b, &st).unwrap();
         assert!(vault_dir(tmp.path(), "带/斜杠的书名").is_dir());
         assert_eq!(vault_dir(tmp.path(), "带/斜杠的书名").file_name().unwrap(), "带_斜杠的书名");
+    }
+
+    #[test]
+    fn manifest_of_never_exported_book_is_empty_not_error() {
+        let tmp = tempfile::tempdir().unwrap();
+        let m = manifest(tmp.path(), "从没导出过的书").unwrap();
+        assert_eq!(m.title, "从没导出过的书");
+        assert_eq!(m.dir, "从没导出过的书");
+        assert!(m.files.is_empty());
+    }
+
+    #[test]
+    fn manifest_reads_back_exported_files_sorted_by_name() {
+        let tmp = tempfile::tempdir().unwrap();
+        let st = state(tmp.path());
+        export_book(tmp.path(), &book(), &st).unwrap();
+        let m = manifest(tmp.path(), "人骨拼图").unwrap();
+        assert_eq!(m.dir, "人骨拼图");
+        let names: Vec<&str> = m.files.iter().map(|f| f.name.as_str()).collect();
+        assert_eq!(names, ["人骨拼图.md", "第1章 第一章.md"], "按文件名排序，索引页跟章节文件都在里面");
+        let chapter = m.files.iter().find(|f| f.name == "第1章 第一章.md").unwrap();
+        assert!(chapter.content.contains("内容 ^e1\n"));
+    }
+
+    #[test]
+    fn manifest_only_lists_md_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let st = state(tmp.path());
+        export_book(tmp.path(), &book(), &st).unwrap();
+        std::fs::write(vault_dir(tmp.path(), "人骨拼图").join("noise.txt"), "不该出现").unwrap();
+        let m = manifest(tmp.path(), "人骨拼图").unwrap();
+        assert!(m.files.iter().all(|f| f.name.ends_with(".md")));
     }
 }

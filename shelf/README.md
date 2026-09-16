@@ -197,6 +197,7 @@ shelf font add 字体.ttf | ls | rm <家族名>                # 只装原生阅
 shelf wallpaper add 图.jpg [--activate] | ls | set <name> | mode sequential|random|fixed | rm <name>
 shelf koreader pull | diff | sync [-n] [--fonts] [--dicts]   # 配置即代码（Lua 合并在设备端跑）
 shelf koreader font add 字体.ttf | ls | rm <file>         # 只装进 KOReader
+shelf notes pull [--out 目录]                              # 笔记线 md 导出拉到本机 Obsidian vault（缺省 $XDG_DATA_HOME/shelf/notes-vault，见笔记白皮书 §03ak；镜像覆盖不是合并，本机手改过的文件下次拉取会被覆盖）
 shelf inbox [--retry 名 | --delete 名]                    # scp 追平队列里失败的书
 shelf events [--once] [--area books|koreader|fonts|wallpapers|manage] [--raw]   # 订阅设备事件流（SSE），有变更就打印
 shelf doctor --render [--keep]     # 真机排版回归探针：投探针书→等渲染自检→取回 xochitl 渲染缓存→pymupdf 量顶格/首行缩进→PASS/FAIL（固件 OTA 后跑一次）；量完探针自动排进原生回收站（设备回到书库视图即执行）
