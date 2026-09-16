@@ -42,6 +42,8 @@ jobs:
       - name: pytest（书架 host CLI，自足 fixtures；reading/tests、knowledge/pkm-semantic/proto
           随 2026-09-11 归档已移除，notes/ 纯 Rust 无 host Python 测试）
         run: uv run pytest shelf/host/tests -q
+      - name: pytest（packaging/appload_patch_328.py 纯字节操作，不需要真机/真实 appload.so）
+        run: uv run pytest packaging/tests -q
       - name: 网关内嵌 JS 语法检查（ui/app.js 是真文件，编译期 include_str! 进二进制）
         run: node --check gateway/ui/app.js
       # enhance/shared 四个纯 C 工具文件（hl-snap/handwriting-stroke 两个"涉及 xovi/mprotect

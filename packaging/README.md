@@ -32,10 +32,13 @@ sh uninstall-all.sh <host> --skip shelf                            # 跳过指�
    靠它暴露的 `AppLoadLauncher` 单例发起启动，缺了自动跳过。**⚠ 3.28 固件官方发行版
    appload v0.5.3 有兼容问题**——它自己内嵌的 qmd 钩的是 3.27 的旧 Sidebar/MainView 锚点，
    3.28 已经改名，不打补丁会导致它自己的注入失败（症状：`AppLoadLauncher` 单例建不起来，
-   `sidebar-entry` 装的按钮点了没反应）。补丁工具（`appload_patch_328.py`）目前还在
-   `oldbak/xovi-extensions/reading-qol/tools/`，没有回到版本控制、不是 `install-all.sh` 能
-   代劳的一步——`sidebar-entry` 那步会读当前开机日志探测这个补丁生没生效，没生效就跳过而不是
-   装一个不会响应的按钮。
+   `sidebar-entry` 装的按钮点了没反应）。~~补丁工具目前还在 oldbak/，没有回到版本控制~~
+   ✅ 2026-09-16：`packaging/appload_patch_328.py`（等长字节回填内嵌 qmd，来源/许可见
+   `appload-qmd-PROVENANCE.md`）+ `packaging/deploy-appload-patch.sh <host>` 已回收进版本
+   控制——**独立手动步骤，没有接入 `install-all.sh` 自动编排**（对真实 appload.so 还没有
+   真机验证过，见该脚本头注）；`sidebar-entry` 那步本身仍然只探测开机日志、探测不到就跳过，
+   不会自动去调用打补丁脚本。上游 PR #59 已在 2026-09-07 合并进 `master`，但至今没有发布
+   带这个修复的新 tag，`vellum add appload` 装的官方发行版依然是没修复的 v0.5.3。
 4. **KOReader**（经 appload 侧载）——`shelf` 的 `koreader-serve` 只是管理/配置这个已装好的
    KOReader，不负责把 KOReader 本身装上去；`sidebar-entry` 那步的「KOReader」入口同理，点了
    没反应说明这一步没做。

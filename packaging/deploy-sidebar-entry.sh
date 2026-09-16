@@ -27,10 +27,12 @@
 # ——不是本脚本的 bug，是 appload 那份 .so 本身在这个固件版本上不兼容。检测靠读当前这次开机
 # 的 journalctl：appload 自己的 qmd 处理成功会打一行 "Loaded external AppLoad hooks in main
 # UI"；没这行说明大概率没打过这个补丁（或者压根还没重启过 xochitl 应用刚装好的 appload），本
-# 脚本探测不到就跳过、不硬装一个不会响应的按钮。真要修：见
-# `oldbak/xovi-extensions/reading-qol/tools/appload_patch_328.py` + 该目录 README「3.28 适配」
-# 一节——这一步需要拿到上游 PR #59 的 qmd 文本手动打补丁，不是 install-all.sh 能代劳的，`vellum
-# add appload` 装的是官方发行版，不会带这个第三方未合并的修复。
+# 脚本探测不到就跳过、不硬装一个不会响应的按钮。真要修：`packaging/appload_patch_328.py`
+# 2026-09-16 已从"只在本机 oldbak/ 没进版本控制"这个缺口里回收（见同目录
+# appload-qmd-PROVENANCE.md），独立跑 `packaging/deploy-appload-patch.sh <host>`——**没有
+# 接入 install-all.sh 的自动编排**，字节替换逻辑还没有对真实 appload.so 做过真机验证，见该
+# 脚本头注。PR #59 本身已在 2026-09-07 合并进上游 master，但上游至今没有发布带这个修复的新
+# tag，`vellum add appload` 装的官方发行版（仍是 v0.5.3）因此依然没有这个修复。
 #
 # 用法：./deploy-sidebar-entry.sh [host]      host 默认 10.11.99.1
 #   环境 DEFER_XOVI_START=1：只把 qmd/rcc 落盘，不在这一步跑 xovi/start——install-all.sh 编排
