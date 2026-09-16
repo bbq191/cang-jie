@@ -48,6 +48,13 @@ gateway.service`）代管，因为它历史上就是跟着书架整包一起装�
 一套独立的安装流程。真要单独重编：`cargo build --release --target aarch64-unknown-linux-musl`（需要
 本目录 `.cargo/config.toml` 的 CC/AR 覆盖，跟 `shelf/`、`notes/` 同一份）。
 
+## 工具
+
+`tools/screenshot-walkthrough/`——前端可视渲染走查（2026-09-16 新增）：起 `book-serve`/
+`ink-serve`/`note-serve`/`gateway` 四个服务 + 灌 fixture 数据 + Playwright 登录中英文各切一遍
+tab、全页截图，补"改完前端反复迭代却从没人眼看过浏览器实际渲染"这个长期缺口（不是自动化断言
+测试，截图仍要人看；第一次真跑就抓到一个真实前端 bug，见该目录 README「已知局限」末尾）。
+
 ## 命名遗留
 
 XDG 运行时注册表路径、`shelf.target` systemd 目标、登录默认密码字面量 `shelf`、mDNS 域名

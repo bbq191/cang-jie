@@ -325,6 +325,7 @@
   "notes.noBooks": "（还没有勾画过的书）",
   "notes.cropAlt": "手写批注裁图",
   "notes.noCrop": "（无裁图，纯勾画）",
+  "notes.cropMissing": "（有手写，裁图暂缺——服务端渲染失败，重扫这本书可能会重新生成）",
   "common.installed": "已装",
   "common.notInstalled": "未装",
   "common.saveFailed": "保存失败",
