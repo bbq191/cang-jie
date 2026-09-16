@@ -83,24 +83,35 @@ pub struct MergeStats {
 /// KOReader 那边被删掉的——当前列表里认领不到的、且还没被用户手动处理过的——标 `Revoked`，不物理删）。
 /// 只动 `source == KoreaderHighlight` 的条目，不碰同一本书里可能存在的其它来源条目（这条书 uuid 命名空间
 /// 本身就只装 KOReader 高亮，见 ink-serve::koreader 的 `koreader:<relpath>` 前缀，但多一道判据更安全）。
-pub fn merge_highlights(entries: &mut Vec<Entry>, items: &[RawHighlight], now: u64) -> MergeStats {
+///
+/// `chapter_index_of` 必须给：`export::live_entries`/`project::live_entries` 两处投影都按
+/// `entry.chapter == Some(idx)` 匹配 `Book.chapters[idx]` 分组，`chapter` 一直是 `None` 的条目
+/// 在任何一处投影里都找不到自己该落的章节、永远不会被导出/生成笔记本——2026-09-16 真机验证时
+/// 发现的真缺口：条目能被"转入笔记"点到 `Reviewed`，但 `POST .../export` 吐 0 文件，因为压根没有
+/// 章节容得下它。调用方（ink-serve）按 `chapter_title` 去重排出 `Book.chapters` 再传这个闭包。
+pub fn merge_highlights(entries: &mut Vec<Entry>, items: &[RawHighlight], chapter_index_of: impl Fn(&str) -> usize, now: u64) -> MergeStats {
     let mut st = MergeStats::default();
     let seen: std::collections::BTreeSet<&str> = items.iter().map(|h| h.id.as_str()).collect();
     for h in items {
+        let chapter_title = h.chapter_title.unwrap_or_default();
+        let chapter = Some(chapter_index_of(chapter_title));
         match entries.iter_mut().find(|e| e.source == Source::KoreaderHighlight && e.id == h.id) {
             Some(e) => {
                 let text = quote_text(h);
-                let changed = e.quote.as_ref().map(|q| q.text != text || q.color != h.color).unwrap_or(true) || e.page_index != h.order;
+                let changed = e.quote.as_ref().map(|q| q.text != text || q.color != h.color).unwrap_or(true) || e.page_index != h.order || e.chapter != chapter;
                 if changed {
                     e.quote = Some(Quote { id: h.id.clone(), text, color: h.color.to_string(), rects: vec![] });
                     e.page_index = h.order;
-                    e.chapter_title = h.chapter_title.unwrap_or_default().to_string();
+                    e.chapter_title = chapter_title.to_string();
+                    e.chapter = chapter;
                     e.updated = now;
                 }
                 st.unchanged += 1;
             }
             None => {
-                entries.push(new_entry(h.id.clone(), h.order, h.chapter_title.unwrap_or_default().to_string(), Quote { id: h.id.clone(), text: quote_text(h), color: h.color.to_string(), rects: vec![] }, Source::KoreaderHighlight, now));
+                let mut e = new_entry(h.id.clone(), h.order, chapter_title.to_string(), Quote { id: h.id.clone(), text: quote_text(h), color: h.color.to_string(), rects: vec![] }, Source::KoreaderHighlight, now);
+                e.chapter = chapter;
+                entries.push(e);
                 st.added += 1;
             }
         }
@@ -159,17 +170,21 @@ mod tests {
         RawHighlight { id: id.to_string(), text, note: None, chapter_title: Some("第一章"), color: "yellow", order }
     }
 
+    fn hl2<'a>(id: &str, text: &'a str, order: usize, chapter_title: &'a str) -> RawHighlight<'a> {
+        RawHighlight { id: id.to_string(), text, note: None, chapter_title: Some(chapter_title), color: "yellow", order }
+    }
+
     #[test]
     fn merge_highlights_adds_new_and_is_idempotent_on_rescan() {
         let mut entries = vec![];
         let items = vec![hl("h1", "第一句", 0), hl("h2", "第二句", 1)];
-        let st = merge_highlights(&mut entries, &items, 10);
+        let st = merge_highlights(&mut entries, &items, |_| 0, 10);
         assert_eq!(st, MergeStats { added: 2, ..Default::default() });
         assert_eq!(entries.len(), 2);
-        assert!(entries.iter().all(|e| e.ink.is_none() && e.source == Source::KoreaderHighlight && e.status == Status::Mined));
+        assert!(entries.iter().all(|e| e.ink.is_none() && e.source == Source::KoreaderHighlight && e.status == Status::Mined && e.chapter == Some(0)), "chapter 必须落到 Some，不然 export/project 两处投影按 chapter 分组永远找不到这条（2026-09-16 真机验证发现的缺口）");
 
         // 同样的列表再合并一次：不新增，内容不变（unchanged）。
-        let st2 = merge_highlights(&mut entries, &items, 20);
+        let st2 = merge_highlights(&mut entries, &items, |_| 0, 20);
         assert_eq!(st2, MergeStats { unchanged: 2, ..Default::default() });
         assert_eq!(entries.len(), 2);
     }
@@ -177,7 +192,7 @@ mod tests {
     #[test]
     fn merge_highlights_finalizes_straight_to_reviewed_via_existing_set_triage() {
         let mut entries = vec![];
-        merge_highlights(&mut entries, &[hl("h1", "原文", 0)], 10);
+        merge_highlights(&mut entries, &[hl("h1", "原文", 0)], |_| 0, 10);
         entries[0].set_triage(Status::Pending, 20).unwrap();
         assert_eq!((entries[0].status, entries[0].text.as_deref()), (Status::Reviewed, Some("原文")), "纯 quote 条目直接定稿，KOReader 高亮复用这条既有快路径");
     }
@@ -185,13 +200,24 @@ mod tests {
     #[test]
     fn merge_highlights_revokes_ones_missing_from_a_rescan_but_leaves_terminal_alone() {
         let mut entries = vec![];
-        merge_highlights(&mut entries, &[hl("h1", "还在", 0), hl("h2", "被删了", 1), hl("h3", "跳过的", 2)], 10);
+        merge_highlights(&mut entries, &[hl("h1", "还在", 0), hl("h2", "被删了", 1), hl("h3", "跳过的", 2)], |_| 0, 10);
         entries.iter_mut().find(|e| e.id == "h3").unwrap().status = Status::Skipped;
         // 重扫：h2 从 KOReader 里消失了（用户删了这条高亮）。
-        let st = merge_highlights(&mut entries, &[hl("h1", "还在", 0), hl("h3", "跳过的", 2)], 30);
+        let st = merge_highlights(&mut entries, &[hl("h1", "还在", 0), hl("h3", "跳过的", 2)], |_| 0, 30);
         assert_eq!(st, MergeStats { unchanged: 2, revoked: 1, ..Default::default() });
         assert_eq!(entries.iter().find(|e| e.id == "h2").unwrap().status, Status::Revoked);
         assert_eq!(entries.iter().find(|e| e.id == "h3").unwrap().status, Status::Skipped, "终态不该被重扫时的消失判定悄悄改判");
+    }
+
+    #[test]
+    fn merge_highlights_groups_by_chapter_title_into_distinct_indices() {
+        let mut entries = vec![];
+        let items = vec![hl("h1", "第一章的话", 0), hl2("h2", "第二章的话", 0, "第二章")];
+        let chapters = vec!["第一章".to_string(), "第二章".to_string()];
+        let idx_of = |t: &str| chapters.iter().position(|c| c == t).unwrap_or(0);
+        merge_highlights(&mut entries, &items, idx_of, 10);
+        assert_eq!(entries.iter().find(|e| e.id == "h1").unwrap().chapter, Some(0));
+        assert_eq!(entries.iter().find(|e| e.id == "h2").unwrap().chapter, Some(1));
     }
 
     #[test]

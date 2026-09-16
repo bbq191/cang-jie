@@ -167,7 +167,7 @@ notes/
 **前置依赖**：跟书架共用同一套交叉编译环境（`rustup target add aarch64-unknown-linux-musl` + aarch64 交叉 gcc/ar），见 `../shelf/README.md`「构建」一节，不用单独装第二遍。改代码前先看工程纪律，日常提交分支是 `dev` 不是 `master`。
 
 ```sh
-cd notes && cargo build --workspace && cargo test --workspace     # host：191 个测试（rmv6 27 · epubmap 5 · notecore 60 · vendorcfg 14 · ink 14 · transcribe 22 · mind 21 · note 28，含 1 ignored；claim 重试相关两条测试真吃约 1.5-4.5s）
+cd notes && cargo build --workspace && cargo test --workspace     # host：192 个测试（rmv6 27 · epubmap 5 · notecore 61 · vendorcfg 14 · ink 14 · transcribe 22 · mind 21 · note 28，含 1 ignored；claim 重试相关两条测试真吃约 1.5-4.5s）
 cd ../shelf && ./build.sh && ./deploy.sh <设备IP>                  # 随书架一起交叉编译/打包/装机（NOTES_BINS；设备在 WiFi 上时给 WiFi IP）
 ssh root@<设备IP> sh /home/root/shelf-pkg/shelf/install.sh --only ink,transcribe,mind,note   # 只装/更新笔记线
 ```
@@ -179,7 +179,6 @@ ssh root@<设备IP> sh /home/root/shelf-pkg/shelf/install.sh --only ink,transcri
 - `### `/`## ` 小节标记真机复验：后端已接线、离线单测全绿，两轮真机复验卡在手写行草连笔的 OCR 准确率，不是代码问题。
 - transcribe 转写质量持续打磨（汉字数字误认、裁图边界样本）。
 - `archive`/`purge` 两个端点没有对真实历史数据实测过（一次性不可逆动作，底层逻辑单测覆盖充分，没事先问用户不该拿真实数据练手；`restore` 是反方向的可逆操作，已经真机验证过）。
-- `shelf notes pull`（host 拉 md 到本机 Obsidian vault，§03ak）host 侧真实端到端跑通（真实三进程+HTTPS 认证），但没有拿真机上已有的历史条目库实测过——本轮设备不可达。
 - OpenAI/Gemini/DeepSeek 三家新模型预置只验证了配置层（预置表匹配、key 按厂商隔离、老配置迁移），没有真实 key 走过一次实际调用——等有 key 再补。
 - "改条目 destination 后对应导出指纹立刻变"这条只有离线单测干净覆盖（真机测试书状态太活跃，没能单独复现，见白皮书 §03x）。
 - 摄取路径"排除法"反模式复发修复（`is_terminal()` 替换 `!= Revoked`，§03ag）和生成笔记本认领失败短暂重试（§03ah）：改动都是被动触发的后台逻辑，离线测试已覆盖判据/重试机制本身，但都还没有主动构造真机场景复验（前者需要真的擦掉一条已跳过条目的笔迹，后者是低概率时序问题，难以主动触发）。
