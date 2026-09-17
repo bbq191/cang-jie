@@ -34,9 +34,13 @@
 - **读全条目**（`check::read_entries`，读失败整体报错——绝不静默跳过条目产出残缺 EPUB 破坏原书）。
 - **wash 前置**（`opts.wash=Some` 时）：作用于解包后的**条目表**（`Vec<Entry>`），见 §02。
 - **重排**：`mimetype` 首个 STORED（EPUB 规范），其余原序；旧优化标记剔除。
-- **第一遍**：每个 (x)html → `strip_font_locks`；扫全书 marker 得**被引用**的尾注 frag 集（`referenced`）；判目录页（指向 ≥ 阈值个不同 html）。后半：把被引用的注释块从各章移除、建全书 `aside_index`，交第二遍搬进引用章。
-- **第二遍**：`preserve_relink_footnotes`（按 `FootnoteMode`）→ `break_footnote_cycles` → `fix_duokan_markers` → `inline_remote_images` → 图片降采样 → `boost_text_contrast` → `dedup_ids_in_chapter`（跨章 id 去重防撞车）→ 打包。
+- **第一遍**（`first_pass_html`）：每个 (x)html → `strip_font_locks`；扫全书 marker 得**被引用**的尾注 frag 集（`referenced`）。后半：把被引用的注释块从各章移除、建全书 `aside_index`，交第二遍搬进引用章。~~判目录页（指向 ≥ 阈值个不同 html）~~ 2026-09-18 已删，见 §03。
+- **第二遍**（`transform_html_chapter`/`transform_image_bytes`）：`preserve_relink_footnotes`（按 `FootnoteMode`）→ `break_footnote_cycles` → `fix_duokan_markers` → `inline_remote_images` → 图片降采样 → `boost_text_contrast` → `dedup_ids_in_chapter`（跨章 id 去重防撞车）→ 打包。
 - **幂等标记**：产物写 `META-INF/com.cangjie.optimized` = `OPTIMIZE_VERSION`。`optimized_version()` 读标记判是否当前版本（母版库列表据此标 full / core / old）；旧版本重传**重优化升级**（`double_optimize_*` 测试坐实重优化不翻倍脚注）。
+- **2026-09-19 起两条并行实现路径**：`optimize_epub_with(&[u8])`（整本内存进/出，测试/CLI 小书用）
+  跟 `optimize_epub_file_streaming(路径, 路径)`（真机大书用，book-serve/CLI 默认路径，峰值内存
+  不随书体积线性涨）共用 `first_pass_html`/`transform_html_chapter`/`transform_image_bytes` 三个
+  函数，业务逻辑是同一份代码，不会两条路径分叉走样，见 §14 内存架构。
 
 `FootnoteMode`：`Anchor`（缺省，注释移章末 + 同章锚点跳转 + 原生「返回」浮标；weread/pkm/第三方书历史行为，2026-09-17 起 native→xochitl 设备侧优化也统一用它）· `Inline`（就地内联 `〔…〕` 常显，第三方书历史行为）。⚠ 2026-09-17 当天曾短暂加过第三种 `ParagraphEnd`（注释移到引用它的段落末尾），真机用真实转换书验证后用户反馈"不是当前页最下面，是段末"——EPUB 流式重排做不到真正的页底部定位，撤回并整个删除，见 §04。
 
@@ -165,6 +169,7 @@ reMarkable 的 EPUB 渲染器闭源，行为多次跟 host / 常识不一致。�
 | **v10** | **首行缩进根治：排版规则改外链 `cangjie-wash.css`**（xochitl 只认外链 / 不认内联 `!important` / 类选择器，§09④）。撤回 nbsp。 |
 | **v11** | 删 `remove_toc_from_spine`——早期启发式会把书内 HTML 目录页当"跟原生 TOC 冗余"从 spine 摘掉，真书《疯探》坐实这违背原则①"保留目录页"（§03）。 |
 | **v12** | `wash::fix_ncx_uid` 同步 `toc.ncx` 的 `dtb:uid` 跟 OPF `dc:identifier`——真机对照《疯探》（不一致，原生目录入口整个消失）vs《雪人》（一致，入口正常）坐实；`build_ncx` 也从硬编码 `"cj-wash"` 改接真实标识符（§06）。 |
+| **v13** | `wash::strip_ncx_doctype` 剥 `toc.ncx` 外部 DTD 引用——dtb:uid 修一致后《疯探》目录入口真机复测仍不出现，跟《雪人》剩下唯一结构性差异是这个（daisy.org DTD 引用），真机隧道环境很可能因解析器联网取 DTD 失败让整份 NCX 被判不可用（§06）。 |
 
 （幂等门修：`is_optimized` 曾只看标记存在不看版本 → 旧版本重传被整步跳过、拿不到新改进；改按 `optimized_version()` 与 `OPTIMIZE_VERSION` 直接比对判断是否当前版本。⚠ 2026-09-06 代码体检删了当时封装这个比对的 `optimize::is_current_version`——它本身没调用方，真正在用的比对早已内联在 `book-serve::staging.rs` 判 full/core/old 那处，此处曾把这层薄封装错记成"关键改动"，特此更正。）
 
@@ -213,5 +218,55 @@ reMarkable 的 EPUB 渲染器闭源，行为多次跟 host / 常识不一致。�
 §10）**，已修复+真机字节验证通。用户测试后反馈"依然没有 TOC"，一度以为修复没生效——实际原因
 是设备上攒了 3 份同名《疯探》，用户测的是没修过的旧份；查清后经用户授权清理成 1 份。同一轮，
 《雪人》"已有目录不拆两级"用户拍板要做，已实现 `wash::restructure_existing_toc_parts`（见 §03/
-§06），真机字节验证通。**两本书的视觉效果（原生目录面板是否真的显示出正确内容）都还没有用户
-肉眼确认**，见书架白皮书 §05。
+§06），真机字节验证通，**《雪人》已经用户肉眼确认正常**。
+
+**2026-09-19 同一天：dtb:uid 修完《疯探》目录入口仍不出现，真机对照坐实第二根因是 toc.ncx 外部
+DTD 引用（v13，§10/§14）**，已剥离+真机字节验证通，**视觉效果仍待用户确认**；期间顺带查出真机
+拿用户自己的 552MB《镖人》全集跑内存版优化会把设备逼近系统级 OOM，已改两阶段流式架构，真机同一
+本书复测优化成功、内存全程 8-53MB，见 §14。**当前真机待验证清单**：①《疯探》目录入口这轮（两处
+根因都修完）是否真的出现；② 552MB《镖人》优化产物投原生阅读器后翻页/渲染是否正常——这个体积/
+章节数远超此前任何测试样本，是全新的观感验证盲区。
+
+## 14｜内存架构：流式 vs 整本内存（`optimize_epub_file_streaming`，2026-09-19）
+
+**触发**：用户担心"超限书籍整本一起优化会不会 OOM"。真机拿 staging 里现成的用户自己上传的
+552MB《镖人（套装共11卷）》EPUB 触发一次真实优化坐实——`VmRSS` 几十秒内冲到 1.4GB+，系统可用
+内存从 ~950MB 探底到 ~25MB，抢在真 OOM 前手动重启 book-serve 叫停。顺带查出
+`book-serve.service` 的 `MemoryMax=192M` 从未真正生效——这台设备的 systemd 没把 memory 控制器
+代理进 `system.slice` 子树，`cgroup.subtree_control` 是空的，内核支持这个控制器但没人启用它。
+这意味着当时那 1.4GB 完全没被拦住，继续涨下去大概率触发全系统级 OOM（内核挑内存最大的进程杀，
+可能殃及 xochitl 本体），不是"book-serve 自己被杀、干净重启"这种可控失败。
+
+**为什么不是简单"拆一章处理一章"**：跨文件脚注回链、自动目录、目录分部重建、dtb:uid 同步、
+空页清理这些步骤都要先看完整本书结构才能决定怎么处理某一章，没法真的把章节互相独立地处理。但
+内存占用的大头几乎全是图片字节（漫画尤其如此），文字类结构信息本来就小——这才是真正可以拆开的
+维度。
+
+**两阶段设计**：
+- **阶段一**（轻量全扫）：非图片条目（html/css/opf/ncx/字体等）整份读进内存（本来就小，全书一起
+  拿着无所谓）；图片条目只记文件名，字节留空占位。wash 层（空页清理/自动目录/分部重建/dtb:uid
+  同步/DOCTYPE 剥离）跟漫画识别（`comic_detect::is_comic`）只看 html 文字内容和 `<img>` 标签
+  *引用*，从来不需要图片真实字节，占位不影响任何判断。
+- **阶段二**（流式写出）：按阶段一处理好的顺序重新遍历——非图片条目直接用阶段一的处理结果；图片
+  条目才从**源文件**按需重新 seek 读回这一张的真实字节、处理（trim/downscale）、立刻写进**直接
+  落盘**的目标文件，读完这张就丢，不会有第二张图同时留在内存里。输出用 `ZipWriter` 包
+  `BufWriter<File>`，不再攒一份完整产物在内存里。
+
+峰值内存量级降到"一张图 + 全书文字部分"，不随书体积线性涨。
+
+**避免两条路径分叉走样**：抽出 `first_pass_html`/`transform_html_chapter`/`transform_image_bytes`
+三个函数，内存版 `optimize_epub_with`（继续保留，供测试/CLI 小书场景用，签名不变，100+ 既有单测
+零改动）跟流式版 `optimize_epub_file_streaming`（`book-serve::Staging::optimize()`、CLI
+`epub-optimize` 默认改走这条）共用同一份业务逻辑；新增对拍测试
+`streaming_matches_in_memory_output_for_footnote_book`/`streaming_downscales_comic_images_same_as_in_memory`
+证明两条路径产出逐字节一致，不是"抽了函数就当一样"。
+
+**真机复测**：同一本 552MB《镖人》再跑一次，`VmRSS` 全程保持在 8-53MB 区间，从没冲高，173 章
+全部处理完成，579MB→785MB（漫画路径高质量重编码，体积涨是预期行为）。从触发真机 OOM 到彻底
+解决，同一天内。
+
+**附带发现**：`Staging::optimize()` 的临时产物命名一开始没带点前缀（`....epub.optimizing.tmp`），
+真机复现过一次它被 `GET /staging` 当成一条离谱的母版库条目列出（`format:"other"`）——因为流式
+优化现在真的要跑到分钟级，不再是"同步写一次内存 buffer"那种毫秒级窗口，暴露了这条本来就该有、
+以前从没被撞见过的过滤缺口。补点前缀（复用 sidecar 已有的隐藏命名约定：`list()` 本来就跳过
+`.` 开头的文件），真机验证过。
