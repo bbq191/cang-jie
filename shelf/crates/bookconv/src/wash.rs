@@ -94,6 +94,8 @@ pub struct WashReport {
     pub empty_pages_removed: Vec<String>,
     pub toc_generated: usize,
     pub dup_id_tags_collapsed: usize,
+    /// `toc.ncx` 的 `dtb:uid` 跟 OPF 标识符不一致、被改到一致（0 或 1——一本书只有一个 ncx）。
+    pub ncx_uid_fixed: usize,
 }
 
 pub fn is_html(name: &str) -> bool {
@@ -770,11 +772,11 @@ fn collect_headings(entries: &mut [Entry], spine: &[String], nav_doc: Option<&St
     out
 }
 
-fn build_ncx(items: &[(u8, String, String, String)], ncx_dir: &str, title: &str) -> String {
+fn build_ncx(items: &[(u8, String, String, String)], ncx_dir: &str, title: &str, uid: &str) -> String {
     let ranks = dense_ranks(items);
     let depth_max = ranks.iter().copied().max().unwrap_or(1);
     let mut s = format!(r#"<?xml version="1.0" encoding="UTF-8"?>
-<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1"><head><meta name="dtb:uid" content="cj-wash"/><meta name="dtb:depth" content="{depth_max}"/></head><docTitle><text>{}</text></docTitle><navMap>"#, xml_escape(title));
+<ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1"><head><meta name="dtb:uid" content="{}"/><meta name="dtb:depth" content="{depth_max}"/></head><docTitle><text>{}</text></docTitle><navMap>"#, xml_escape(uid), xml_escape(title));
     let mut depth = 0u8; // 当前打开的 navPoint 层数
     for (i, (_, t, path, frag)) in items.iter().enumerate() {
         let d = ranks[i].min(depth + 1); // 钳制：不跳跃深入 >1 层，保证良构
@@ -899,6 +901,46 @@ fn fallback_spine_toc(entries: &[Entry], spine: &[String], nav_doc: Option<&Stri
     }).collect()
 }
 
+/// OPF 的 `unique-identifier` 实际取值（`<package unique-identifier="X">` 指向的那个
+/// `<dc:identifier id="X">` 元素的文本内容）。EPUB2 规范要求 `toc.ncx` 的 `dtb:uid` 跟这个值
+/// 完全一致——真机《疯探》坐实：这本"番茄小说 EPUB Generator"产物的 `toc.ncx` navMap 结构完全
+/// 正确（94 条 navPoint 全部可达），但 `dtb:uid` 是生成器随手写的另一个 uuid，跟 OPF 的
+/// `dc:identifier` 对不上；reMarkable 原生目录面板遇到这种不匹配**直接不显示目录入口**（不是
+/// 显示空列表），换一本 `dtb:uid` 匹配的书（《雪人》）目录入口就在。见 `fix_ncx_uid`。
+fn opf_unique_identifier(entries: &[Entry]) -> Option<String> {
+    let i = find_opf(entries)?;
+    let text = String::from_utf8_lossy(&entries[i].data);
+    static PKG: OnceLock<Regex> = OnceLock::new();
+    let pkg_re = PKG.get_or_init(|| Regex::new(r#"<package\b[^>]*\bunique-identifier="([^"]+)""#).unwrap());
+    let uid_attr = &pkg_re.captures(&text)?[1];
+    static ID: OnceLock<Regex> = OnceLock::new();
+    let id_re = ID.get_or_init(|| Regex::new(r#"(?s)<dc:identifier\b[^>]*\bid="([^"]+)"[^>]*>([^<]*)</dc:identifier>"#).unwrap());
+    id_re.captures_iter(&text).find(|c| &c[1] == uid_attr).map(|c| c[2].trim().to_string())
+}
+
+/// 修 `toc.ncx` 的 `dtb:uid` 跟 OPF 实际标识符不一致的问题（见 `opf_unique_identifier` 注释）。
+/// 幂等、只在真的不一致时改；OPF 没有可解析的标识符（极少见）时不动。
+fn fix_ncx_uid(entries: &mut Vec<Entry>, rep: &mut WashReport) {
+    let Some(uid) = opf_unique_identifier(entries) else { return };
+    static META: OnceLock<Regex> = OnceLock::new();
+    let re = META.get_or_init(|| Regex::new(r#"(<meta\s+name="dtb:uid"\s+content=")[^"]*("\s*/?>)"#).unwrap());
+    for e in entries.iter_mut() {
+        if e.name.to_ascii_lowercase().ends_with(".ncx") {
+            if let Ok(text) = std::str::from_utf8(&e.data) {
+                if let Some(c) = re.captures(text) {
+                    if c.get(0).map(|m| m.as_str()) != Some(&format!("{}{}{}", &c[1], xml_escape(&uid), &c[2])) {
+                        let new = re.replace(text, |c: &regex::Captures| format!("{}{}{}", &c[1], xml_escape(&uid), &c[2])).into_owned();
+                        if new != text {
+                            e.data = new.into_bytes();
+                            rep.ncx_uid_fixed += 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 fn auto_toc(entries: &mut Vec<Entry>, mode: AutoToc, rep: &mut WashReport) {
     if mode == AutoToc::Off || (mode == AutoToc::IfMissing && toc_entry_count(entries) > 0) {
         return;
@@ -916,7 +958,8 @@ fn auto_toc(entries: &mut Vec<Entry>, mode: AutoToc, rep: &mut WashReport) {
     };
     let ncx_path = opf.ncx.clone().unwrap_or_else(|| resolve(&opf.dir, "toc.ncx"));
     let nav_path = opf.nav_doc.clone().unwrap_or_else(|| resolve(&opf.dir, "nav.xhtml"));
-    let ncx = build_ncx(&headings, dir_of(&ncx_path), &title).into_bytes();
+    let uid = opf_unique_identifier(entries).unwrap_or_else(|| WASH_MARK.to_string());
+    let ncx = build_ncx(&headings, dir_of(&ncx_path), &title, &uid).into_bytes();
     let nav = build_nav(&headings, dir_of(&nav_path)).into_bytes();
     let mut text = String::from_utf8_lossy(&entries[opf.index].data).into_owned();
     if opf.ncx.is_none() {
@@ -1013,6 +1056,7 @@ pub fn wash_entries(entries: &mut Vec<Entry>, opts: &WashOpts) -> Result<WashRep
     }
     add_wash_css_entry(entries, &css_path, &wash_css(opts));
     auto_toc(entries, opts.auto_toc, &mut rep);
+    fix_ncx_uid(entries, &mut rep);
     Ok(rep)
 }
 
@@ -1186,6 +1230,32 @@ mod tests {
     }
 
     #[test]
+    fn existing_ncx_dtb_uid_synced_to_opf_identifier() {
+        // 真机回归（2026-09-19，《疯探》）：navMap 结构完全正确，但 dtb:uid 是第三方生成器随手写的
+        // 另一个 uuid，跟 OPF 的 dc:identifier 对不上——reMarkable 原生目录面板遇到这种不匹配
+        // 直接不显示目录入口（不是空列表），换一本 dtb:uid 匹配的书目录入口就在。
+        let opf = r#"<package version="2.0" unique-identifier="bookid"><metadata><dc:title>书</dc:title><dc:identifier id="bookid">urn:uuid:real-book-id</dc:identifier></metadata><manifest><item id="toc" href="toc.ncx" media-type="application/x-dtbncx+xml"/><item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/></manifest><spine toc="toc"><itemref idref="c1"/></spine></package>"#;
+        let mut v = vec![
+            e("content.opf", opf),
+            e("toc.ncx", r#"<ncx><head><meta name="dtb:uid" content="urn:uuid:stale-generator-id"/></head><navMap><navPoint><navLabel><text>章一</text></navLabel><content src="c1.xhtml"/></navPoint></navMap></ncx>"#),
+            e("c1.xhtml", "<html><body><p>正文</p></body></html>"),
+        ];
+        let rep = wash_entries(&mut v, &WashOpts::default()).unwrap();
+        assert_eq!(rep.ncx_uid_fixed, 1);
+        let ncx = s(&v, "toc.ncx");
+        assert!(ncx.contains(r#"content="urn:uuid:real-book-id""#), "dtb:uid 该改成跟 OPF 一致: {ncx}");
+        assert!(!ncx.contains("stale-generator-id"), "旧的错误 uid 不该残留: {ncx}");
+        // 已经一致时不误报、不改动字节（幂等）
+        let mut w = vec![
+            e("content.opf", opf),
+            e("toc.ncx", r#"<ncx><head><meta name="dtb:uid" content="urn:uuid:real-book-id"/></head><navMap><navPoint><navLabel><text>章一</text></navLabel><content src="c1.xhtml"/></navPoint></navMap></ncx>"#),
+            e("c1.xhtml", "<html><body><p>正文</p></body></html>"),
+        ];
+        let rep2 = wash_entries(&mut w, &WashOpts::default()).unwrap();
+        assert_eq!(rep2.ncx_uid_fixed, 0, "已经一致不该误报修复过");
+    }
+
+    #[test]
     fn lang_aware_indent() {
         // 只用裸 p{} 元素选择器（xochitl 解析器脆）、不带 !important（xochitl 吃不下）；中文 2em / 拉丁 1.2em。
         let cjk = wash_css(&WashOpts { lang: LangMode::Cjk, ..Default::default() });
@@ -1320,7 +1390,7 @@ mod tests {
         let items = vec![(1u8, "A".into(), "c.xhtml".into(), "a".into()), (2, "B".into(), "c.xhtml".into(), "b".into()), (3, "C".into(), "c.xhtml".into(), "c".into()), (1, "D".into(), "c.xhtml".into(), "d".into())];
         let nav = build_nav(&items, "");
         assert!(nav.contains(r#"<li><a href="c.xhtml#a">A</a><ol><li><a href="c.xhtml#b">B</a><ol><li><a href="c.xhtml#c">C</a></li></ol></li></ol></li><li><a href="c.xhtml#d">D</a></li></ol>"#), "{nav}");
-        let ncx = build_ncx(&items, "", "T");
+        let ncx = build_ncx(&items, "", "T", "cj-wash");
         assert!(ncx.contains(r#"<navPoint id="np1" playOrder="1"><navLabel><text>A</text></navLabel><content src="c.xhtml#a"/><navPoint id="np2""#), "{ncx}");
         assert!(ncx.contains(r#"</navPoint></navPoint></navPoint><navPoint id="np4""#), "C 收 3 层再开 D: {ncx}");
     }

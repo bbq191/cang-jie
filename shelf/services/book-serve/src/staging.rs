@@ -531,6 +531,9 @@ fn optimize_note(rep: &optimize::Report) -> String {
         if w.toc_generated > 0 {
             note.push_str(&format!("，自动目录 {} 条", w.toc_generated));
         }
+        if w.ncx_uid_fixed > 0 {
+            note.push_str("，修复目录标识符不匹配");
+        }
     }
     note.push('）');
     note

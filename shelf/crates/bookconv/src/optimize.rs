@@ -40,7 +40,12 @@ pub const OPTIMIZE_MARKER: &str = "META-INF/com.cangjie.optimized";
 /// v11：真机《疯探》坐实——删掉 `remove_toc_from_spine`（指向 ≥10 个不同 html 文件的页面曾被当
 /// "跟原生 TOC 冗余"的目录页从 spine 剥掉）。假设站不住：这类页面是书籍正文本身，不是能丢的冗余物，
 /// 违背 EPUB 线原则①"保留目录页"；已优化过的旧书需 `force:true` 重优化才能拿回被剥掉的目录页。
-pub const OPTIMIZE_VERSION: &str = "11";
+/// v12：真机《疯探》vs《雪人》对照坐实——`toc.ncx` 的 `dtb:uid` 跟 OPF `dc:identifier` 不一致时
+/// （第三方生成器常见 bug，如"番茄小说 EPUB Generator"）reMarkable 原生目录面板**直接不显示目录
+/// 入口**（不是空列表），navMap 结构再完整都没用；`dtb:uid` 匹配的书目录入口就在。新增
+/// `wash::fix_ncx_uid` 把 `dtb:uid` 同步成 OPF 实际标识符（含我们自己 `build_ncx` 生成的也一并
+/// 从硬编码 `cj-wash` 改用真实标识符）；旧书需 `force:true` 重优化。
+pub const OPTIMIZE_VERSION: &str = "12";
 
 /// 脚注呈现方式。xochitl 无弹窗脚注（穷尽真机实测判死）；weread/pkm 线与第三方书历史行为、
 /// EPUB 线设备侧优化（母版库「优化」）2026-09-17 起统一用 `Anchor`（章末可见 + 同章锚点跳转 +

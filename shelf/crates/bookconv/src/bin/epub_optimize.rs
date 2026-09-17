@@ -56,7 +56,10 @@ fn main() {
     }
     println!("epub-optimize v{}: {} 文件/{} 章, {} → {} 字节", optimize::OPTIMIZE_VERSION, rep.total_files, rep.html_files, rep.bytes_before, rep.bytes_after);
     if let Some(w) = &rep.wash {
-        println!("清洗: css {} / html {} / 伪DRM剥离 {:?} / 空页 {:?} / 自动目录 {} 条 / 双id折叠 {}", w.css_files, w.html_files, w.pseudo_drm_stripped, w.empty_pages_removed, w.toc_generated, w.dup_id_tags_collapsed);
+        println!(
+            "清洗: css {} / html {} / 伪DRM剥离 {:?} / 空页 {:?} / 自动目录 {} 条 / 双id折叠 {} / ncx uid 修复 {}",
+            w.css_files, w.html_files, w.pseudo_drm_stripped, w.empty_pages_removed, w.toc_generated, w.dup_id_tags_collapsed, w.ncx_uid_fixed
+        );
     }
     if flags.contains(&"--check") {
         match bookconv::check::check_epub(&out, flags.contains(&"--require-toc")) {
