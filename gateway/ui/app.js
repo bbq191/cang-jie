@@ -433,8 +433,15 @@ function renderNotes(sec){sec.innerHTML=`
     const wantsNb=!only||only==='notebook'||only==='both',wantsOb=!only||only==='obsidian'||only==='both';
     // aria-label 跟 title 重复一份（2026-09-09 审计修）：图标本身 aria-hidden，屏幕阅读器原来只能
     // 念出 ✓/… 两个符号，丢了"这是关于设备笔记本/Obsidian"的语境。
-    const nb=wantsNb&&s.notebookNeeded?`<span class="badge${s.notebookSynced?' on':''}" title="${T('notes.sync.notebook',{state:s.notebookSynced?T('notes.sync.synced'):T('notes.sync.notebookPending')})}" aria-label="${T('notes.sync.notebook',{state:s.notebookSynced?T('notes.sync.synced'):T('notes.sync.notSynced')})}">📓${s.notebookSynced?'✓':'…'}</span>`:'';
-    const ob=wantsOb&&s.obsidianNeeded?`<span class="badge${s.obsidianSynced?' on':''}" title="${T('notes.sync.obsidian',{state:s.obsidianSynced?T('notes.sync.synced'):T('notes.sync.obsidianPending')})}" aria-label="${T('notes.sync.obsidian',{state:s.obsidianSynced?T('notes.sync.synced'):T('notes.sync.notSynced')})}">${OBSIDIAN_ICON}${s.obsidianSynced?'✓':'…'}</span>`:'';
+    // `xxxNeeded` 是"现在这一刻还有没有条目要这个去处"，条目的 destination 一改就可能立刻翻成 false——
+    // 徽章原来只看这个字段，导致真机 bug（2026-09-17 反馈）：一章先推过笔记本，再把（唯一）那条条目的
+    // 去处切成 Obsidian，笔记本徽章直接消失，像是"刚推过的笔记本状态丢了"，但设备上的笔记本文档其实
+    // 完好无损，只是网页不再显示它存在过。改成"现在要 或者 历史上推过"（`xxxGeneratedAt`/`xxxExportedAt`
+    // 是 `notebooks.rs`/`export_state.rs` 记的历史事实，不会因为条目 destination 改了就清空）都显示，
+    // ✓/… 仍然只看 `xxxSynced`（是否跟当前条目内容一致）——这样"曾经推过但现在没有条目要了"会诚实地
+    // 显示成"…"（不是当前状态的镜像，见标题文案），而不是整个徽章凭空消失。
+    const nb=wantsNb&&(s.notebookNeeded||s.notebookGeneratedAt!=null)?`<span class="badge${s.notebookSynced?' on':''}" title="${T('notes.sync.notebook',{state:s.notebookSynced?T('notes.sync.synced'):T('notes.sync.notebookPending')})}" aria-label="${T('notes.sync.notebook',{state:s.notebookSynced?T('notes.sync.synced'):T('notes.sync.notSynced')})}">📓${s.notebookSynced?'✓':'…'}</span>`:'';
+    const ob=wantsOb&&(s.obsidianNeeded||s.obsidianExportedAt!=null)?`<span class="badge${s.obsidianSynced?' on':''}" title="${T('notes.sync.obsidian',{state:s.obsidianSynced?T('notes.sync.synced'):T('notes.sync.obsidianPending')})}" aria-label="${T('notes.sync.obsidian',{state:s.obsidianSynced?T('notes.sync.synced'):T('notes.sync.notSynced')})}">${OBSIDIAN_ICON}${s.obsidianSynced?'✓':'…'}</span>`:'';
     return nb+ob};
   const trashList=$('#ntrashlist',sec),trashSum=$('#ntrashsum',sec);
   const TRASH_STATUSES=['skipped','revoked','archived'];
