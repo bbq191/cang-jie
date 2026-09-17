@@ -182,7 +182,7 @@ impl Staging {
         }
         let p = self.existing(name)?;
         let data = std::fs::read(&p).map_err(|e| format!("读母版库文件失败: {e}"))?;
-        let (out, rep) = optimize::optimize_epub_with(&data, &OptimizeOpts { wash: mode.wash(), footnote: FootnoteMode::Inline })?;
+        let (out, rep) = optimize::optimize_epub_with(&data, &OptimizeOpts { wash: mode.wash(), footnote: FootnoteMode::ParagraphEnd })?;
         write_atomic(&p, &out).map_err(|e| format!("回写母版库失败: {e}"))?;
         Ok(format!("已优化《{name}》{}", optimize_note(&rep)))
     }

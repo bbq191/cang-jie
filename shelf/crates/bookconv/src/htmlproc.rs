@@ -1043,6 +1043,108 @@ pub fn preserve_relink_footnotes(html: &str, index: &std::collections::HashMap<S
     }
 }
 
+/// `paragraph_end_footnotes` 内部：解析一个 frag 是否指向已知注释，登记进段内/全章去重表、分配编号。
+/// `doc_seen` 是**全章**作用域（跨段共享），供 `paragraph_end_footnotes` 收尾时识别"哪些被引用的注释
+/// 没有被任何段落收走"（少见排版：marker 不在 `<p>` 内）——避免那些注释文字被 `collect_footnote_notes`
+/// 挪走后又没人接住，静默从书里消失。`assigned`/`notes`/`counter` 是**段内**作用域，每段重新传入。
+fn resolve_paragraph_note(
+    frag: Option<String>,
+    index: &std::collections::HashMap<String, String>,
+    assigned: &mut std::collections::HashMap<String, usize>,
+    notes: &mut Vec<String>,
+    counter: &mut usize,
+    doc_seen: &mut std::collections::HashSet<String>,
+) -> Option<usize> {
+    let frag = frag?;
+    if !index.contains_key(&frag) {
+        return None;
+    }
+    doc_seen.insert(frag.clone());
+    if let Some(&n) = assigned.get(&frag) {
+        return Some(n);
+    }
+    *counter += 1;
+    let n = *counter;
+    notes.push(format!("<p>{n}. {}</p>", inline_note_text(&index[&frag])));
+    assigned.insert(frag, n);
+    Some(n)
+}
+
+/// `FootnoteMode::ParagraphEnd` 专用：注释块紧跟在"含有该引用的整段"之后（分割线+注释块），不新增
+/// 反向锚点（marker 改纯 `<sup>N</sup>`、不再是链接，天然绕开 reMarkable 会吞互指锚点对的坑），既不
+/// 打断段内阅读（跟 `Inline` 不同，注释文字不再塞进句子中间），也不用跳到章末再翻回来（跟 `Anchor`
+/// 不同，那条模式真机验证过"点了没法点回来"）。
+/// 编号/去重按**段落内**作用域：同一注释被同段落多个 marker 引用只列一次；不同段落各自独立编号——
+/// 一条注释在不同段落各出现一次是设计意图（就近可见优先于全局唯一），不是重复。
+/// 只处理落在 `<p>...</p>` 内的 marker：这条 mode 给"母版库→优化"设备侧路径用，书已过 wash 层
+/// `cjk_paragraphize`，绝大多数正文已是 `<p>` 包裹；**不在任何 `<p>` 内的 marker**（少见排版）原样
+/// 不动，但对应的注释文字已经被上游 `collect_footnote_notes` 从原位置搬走——若不接住会静默丢失，
+/// 所以收尾时把这类"没被任何段落收走"的注释补插到章末（同样分割线+块的呈现，只是退化成章末落点）。
+pub fn paragraph_end_footnotes(html: &str, index: &std::collections::HashMap<String, String>) -> String {
+    static P: OnceLock<Regex> = OnceLock::new();
+    let p = P.get_or_init(|| Regex::new(r#"(?si)(<p\b[^>]*>)(.*?)(</p>)"#).unwrap());
+    let mut doc_seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut out = p
+        .replace_all(html, |c: &regex::Captures| {
+            let open = c.get(1).unwrap().as_str();
+            let close = c.get(3).unwrap().as_str();
+            let mut inner = c.get(2).unwrap().as_str().to_string();
+            let mut assigned: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
+            let mut notes: Vec<String> = Vec::new();
+            let mut counter = 0usize;
+
+            inner = sup_noteref_re()
+                .replace_all(&inner, |m: &regex::Captures| {
+                    let attrs = m.get(1).unwrap().as_str();
+                    match resolve_paragraph_note(href_fragment(attrs), index, &mut assigned, &mut notes, &mut counter, &mut doc_seen) {
+                        Some(n) => format!("<sup>{n}</sup>"),
+                        None => m.get(0).unwrap().as_str().to_string(),
+                    }
+                })
+                .into_owned();
+            inner = noteref_a_re()
+                .replace_all(&inner, |m: &regex::Captures| {
+                    let attrs = m.get(1).unwrap().as_str();
+                    match resolve_paragraph_note(href_fragment(attrs), index, &mut assigned, &mut notes, &mut counter, &mut doc_seen) {
+                        Some(n) => format!("<sup>{n}</sup>"),
+                        None => m.get(0).unwrap().as_str().to_string(),
+                    }
+                })
+                .into_owned();
+            inner = a_generic_re()
+                .replace_all(&inner, |m: &regex::Captures| {
+                    let attrs = m.get(1).unwrap().as_str();
+                    let frag = href_crossfile_fragment(attrs).filter(|f| index.contains_key(f));
+                    match resolve_paragraph_note(frag, index, &mut assigned, &mut notes, &mut counter, &mut doc_seen) {
+                        Some(n) => format!("<sup>{n}</sup>"),
+                        None => m.get(0).unwrap().as_str().to_string(),
+                    }
+                })
+                .into_owned();
+
+            if notes.is_empty() {
+                format!("{open}{inner}{close}")
+            } else {
+                format!("{open}{inner}{close}\n<hr/>\n<div class=\"cj-fnote-para\">\n{}\n</div>\n", notes.join("\n"))
+            }
+        })
+        .into_owned();
+
+    // 兜底：不在任何 <p> 内被引用、但确实指向已知注释的 marker——注释文字已被搬走，这里没被收走会
+    // 静默消失，补插到章末（跟 Anchor 的章末块同款呈现，纯粹是保底，不代表这条 mode 常态在章末）。
+    let referenced_here: std::collections::HashSet<String> = referenced_note_frags(html).into_iter().collect();
+    let orphans: Vec<String> = referenced_here.into_iter().filter(|f| !doc_seen.contains(f) && index.contains_key(f)).collect();
+    if !orphans.is_empty() {
+        let block = orphans.iter().map(|f| format!("<p>{}</p>", inline_note_text(&index[f]))).collect::<Vec<_>>().join("\n");
+        let block = format!("\n<hr/>\n<div class=\"cj-fnote-para\">\n{block}\n</div>\n");
+        out = match out.rfind("</body>") {
+            Some(pos) => format!("{}{}{}", &out[..pos], block, &out[pos..]),
+            None => format!("{out}{block}"),
+        };
+    }
+    out
+}
+
 #[cfg(test)]
 mod font_lock_tests {
     use super::strip_font_locks;
@@ -1300,6 +1402,56 @@ mod optimizer_footnote_tests {
         let out = preserve_relink_footnotes(chapter, &index, crate::optimize::FootnoteMode::Inline);
         assert!(!out.contains("<img"), "内联模式应丢弃图标 marker: {out}");
         assert!(out.contains("〔注释文字〕"), "应内联注释: {out}");
+    }
+
+    #[test]
+    fn paragraph_end_inserts_block_right_after_referencing_paragraph() {
+        let mut index: HashMap<String, String> = HashMap::new();
+        index.insert("fn1".to_string(), "第一条注释".to_string());
+        index.insert("fn2".to_string(), "第二条注释".to_string());
+        let chapter = r##"<html><body><p>正文甲<a epub:type="noteref" href="#fn1">1</a>结束</p><p>正文乙<a epub:type="noteref" href="#fn2">2</a>结束</p></body></html>"##;
+        let out = paragraph_end_footnotes(chapter, &index);
+        assert!(out.contains(r#"<p>正文甲<sup>1</sup>结束</p>"#), "marker 改纯 sup、不再是链接: {out}");
+        assert!(out.contains(r#"<div class="cj-fnote-para">"#) && out.contains("<p>1. 第一条注释</p>"), "{out}");
+        let p1_end = out.find("正文甲").unwrap();
+        let block1 = out.find("第一条注释").unwrap();
+        let p2_start = out.find("正文乙").unwrap();
+        assert!(p1_end < block1 && block1 < p2_start, "注释块紧跟在甲段之后、乙段之前: {out}");
+        assert!(out.contains(r#"<p>正文乙<sup>1</sup>结束</p>"#), "不同段落各自独立编号，都从 1 开始: {out}");
+        assert!(out.contains("第二条注释"), "{out}");
+    }
+
+    #[test]
+    fn paragraph_end_dedups_same_note_within_one_paragraph_but_not_across_paragraphs() {
+        let mut index: HashMap<String, String> = HashMap::new();
+        index.insert("fn1".to_string(), "共用注释".to_string());
+        let chapter = r##"<p>甲<a epub:type="noteref" href="#fn1">1</a>乙<a epub:type="noteref" href="#fn1">1</a></p><p>丙<a epub:type="noteref" href="#fn1">1</a></p>"##;
+        let out = paragraph_end_footnotes(chapter, &index);
+        assert_eq!(out.matches("共用注释").count(), 2, "同段落重复引用只列一次注释文字，不同段落各列一次: {out}");
+        assert_eq!(out.matches("<sup>1</sup>").count(), 3, "同一段内重复引用复用同一个编号: {out}");
+    }
+
+    #[test]
+    fn paragraph_end_drops_image_marker_like_inline() {
+        let mut index: HashMap<String, String> = HashMap::new();
+        index.insert("fn1".to_string(), "注释文字".to_string());
+        let chapter = r##"<p>正文<a epub:type="noteref" href="#fn1"><span class="koboSpan"><img alt="note" src="../Images/i.png"/></span></a>后续</p>"##;
+        let out = paragraph_end_footnotes(chapter, &index);
+        assert!(!out.contains("<img"), "跟 Inline 一样丢弃图标 marker: {out}");
+        assert!(out.contains("<sup>1</sup>") && out.contains("注释文字"), "{out}");
+    }
+
+    #[test]
+    fn paragraph_end_falls_back_to_chapter_tail_when_marker_outside_any_p() {
+        // marker 不在 <p> 内（少见排版）——注释已被 collect_footnote_notes 搬走，必须补插到章末，不能丢。
+        let mut index: HashMap<String, String> = HashMap::new();
+        index.insert("fn1".to_string(), "不该丢失的注释".to_string());
+        let chapter = r##"<html><body><div>正文<a epub:type="noteref" href="#fn1">1</a>结束</div></body></html>"##;
+        let out = paragraph_end_footnotes(chapter, &index);
+        assert!(out.contains("不该丢失的注释"), "章末兜底应保留注释文字，不能静默丢失: {out}");
+        assert!(out.contains(r##"href="#fn1""##), "不在 <p> 内的 marker 本身不处理，原样保留: {out}");
+        let body_end = out.find("</body>").unwrap();
+        assert!(out[..body_end].contains("不该丢失的注释"), "兜底块必须落在 </body> 之内: {out}");
     }
 
     #[test]
