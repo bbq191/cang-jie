@@ -200,14 +200,31 @@ impl Staging {
     /// 对母版库里的 EPUB 跑通用优化（Inline 脚注 + 外链 css 缩进：两读器都能显示），原子回写。返回回执文案。
     /// **同步、阻塞**——大漫画真机实测能跑到分钟级（`trim_margins` 裁边扫描，见书架白皮书 §05），
     /// HTTP 接口不该直接暴露这个方法，用 [`Self::spawn_optimize`] 走后台线程。
+    ///
+    /// **流式路径**（2026-09-19 真机坐实）：改走 [`optimize::optimize_epub_file_streaming`] 而不是
+    /// 整本读进内存的 [`optimize::optimize_epub_with`]——真机拿用户自己传的 552MB《镖人》全集测过
+    /// 内存版，`VmRSS` 几十秒冲到 1.4GB+、系统可用内存探底到 ~25MB，逼近全系统级 OOM（book-serve
+    /// 自己的 `systemd` `MemoryMax=192M` 没有真正生效，见白皮书 §03az）。流式版峰值内存量级是
+    /// "一张图 + 全书文字部分"，不随书变大线性涨，细节见该函数文档注释。
     pub fn optimize(&self, name: &str, mode: OptimizeMode) -> Result<String, String> {
         if formats::ext_of(name) != "epub" {
             return Err("只有 EPUB 能优化（PDF 重排请在电脑用 shelf push）".into());
         }
         let p = self.existing(name)?;
-        let data = std::fs::read(&p).map_err(|e| format!("读母版库文件失败: {e}"))?;
-        let (out, rep) = optimize::optimize_epub_with(&data, &OptimizeOpts { wash: mode.wash(), footnote: FootnoteMode::Anchor })?;
-        write_atomic(&p, &out).map_err(|e| format!("回写母版库失败: {e}"))?;
+        // 点前缀隐藏名——真机 552MB《镖人》全集坐实优化能跑到分钟级（流式虽然不再吃内存，但大书
+        // 图片多、逐张处理仍要时间），这份临时产物会在目录里存在相当一段时间；`list()` 本来就按
+        // `.` 前缀跳过 sidecar，不带点前缀的话这份半成品会被当成一条离谱的"母版库条目"混进列表
+        // （2026-09-19 真机复现：真显示过一条 `format:"other"` 的 `....epub.optimizing.tmp`）。
+        let tmp = p.with_file_name(format!(".{}.optimizing.tmp", name));
+        let result = optimize::optimize_epub_file_streaming(&p, &tmp, &OptimizeOpts { wash: mode.wash(), footnote: FootnoteMode::Anchor });
+        let rep = match result {
+            Ok(r) => r,
+            Err(e) => {
+                let _ = std::fs::remove_file(&tmp); // 半成品清掉，不留垃圾在母版库目录
+                return Err(e);
+            }
+        };
+        std::fs::rename(&tmp, &p).map_err(|e| format!("回写母版库失败: {e}"))?;
         Ok(format!("已优化《{name}》{}", optimize_note(&rep)))
     }
 
@@ -537,6 +554,9 @@ fn optimize_note(rep: &optimize::Report) -> String {
         if w.ncx_uid_fixed > 0 {
             note.push_str("，修复目录标识符不匹配");
         }
+        if w.ncx_doctype_stripped > 0 {
+            note.push_str("，剥离目录外部DTD引用");
+        }
     }
     note.push('）');
     note
@@ -631,6 +651,20 @@ mod tests {
         assert!(e.optimized && e.level == "full");
         assert_eq!(OptimizeMode::parse("keep-spacing").wash().unwrap().keep_para_spacing, true);
         assert!(OptimizeMode::parse("plain").wash().is_none() && OptimizeMode::parse("").wash().is_some());
+    }
+
+    #[test]
+    fn optimize_temp_file_dot_prefixed_so_list_does_not_surface_mid_flight_product() {
+        // 真机回归（2026-09-19，《镖人》552MB 全集）：流式优化耗时到分钟级，临时产物在目录里存在
+        // 的时间不再是"同步写一次内存 buffer"那种毫秒级窗口——之前用不带点前缀的命名，真机
+        // `GET /staging` 撞见过一条 `format:"other"` 的 `....epub.optimizing.tmp` 离谱条目。
+        // 这里不模拟并发时序（太脆），直接断言临时产物命名遵循 `list()` 已有的点前缀过滤规则。
+        let t = tempfile::tempdir().unwrap();
+        let s = staging(&t);
+        s.stage_new("x.epub", b"PK").unwrap();
+        std::fs::write(s.dir().join(".x.epub.optimizing.tmp"), b"partial").unwrap();
+        let names: Vec<String> = s.list().into_iter().map(|e| e.name).collect();
+        assert_eq!(names, vec!["x.epub".to_string()], "优化中途产物不该出现在列表里: {names:?}");
     }
 
     #[test]

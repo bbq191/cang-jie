@@ -3,7 +3,9 @@
 //! （脚注拆环 / duokan 标记 / 远程图内联 / 双 id 去重 / 图片降采样 / e-ink 提对比），产物自带
 //! `META-INF/com.cangjie.optimized` 标记，设备 autoopt 不会再优化一遍。`wash_epub.sh` 末步用它。
 //!
-//! 用法: epub-optimize [选项] 输入.epub 输出.epub    （输入输出可同路径=就地覆盖，先整本写内存再落盘）
+//! 用法: epub-optimize [选项] 输入.epub 输出.epub    （流式路径进路径出，2026-09-19 起不再整本读进
+//!   内存——真机 552MB 漫画全集坐实内存版会把设备逼近系统级 OOM，见 book-serve staging.rs 同一天
+//!   的改动记录；输入输出同路径=就地覆盖时内部先写临时文件再改名，安全）
 //!   --no-wash        只跑优化器不清洗（= v5 行为）
 //!   --keep-spacing   清洗但保留原书段间距（诗集/剧本）
 //!   --auto-toc       强制从 h1–h6 重建目录（缺省仅在无目录时生成）
@@ -25,13 +27,6 @@ fn main() {
         eprintln!("用法: epub-optimize [--no-wash] [--keep-spacing] [--auto-toc] [--footnote-anchor] [--check] [--require-toc] 输入.epub 输出.epub");
         std::process::exit(1);
     }
-    let epub = match std::fs::read(files[0]) {
-        Ok(b) => b,
-        Err(e) => {
-            eprintln!("读 {}: {e}", files[0]);
-            std::process::exit(2);
-        }
-    };
     let wash = if flags.contains(&"--no-wash") {
         None
     } else {
@@ -43,25 +38,45 @@ fn main() {
     };
     // --footnote-anchor 现在是 no-op（缺省已经是 Anchor），继续留在允许的 flag 列表里只是不破坏已有脚本调用。
     let footnote = FootnoteMode::Anchor;
-    let (out, rep) = match optimize::optimize_epub_with(&epub, &OptimizeOpts { wash, footnote }) {
-        Ok(x) => x,
+    // 输入输出同路径（就地覆盖）时不能边读边写同一个文件——先写临时文件，成功后再改名覆盖。
+    let same_path = files[0] == files[1];
+    let out_target: std::path::PathBuf = if same_path {
+        let mut t = std::path::PathBuf::from(files[1]).into_os_string();
+        t.push(".optimizing.tmp");
+        std::path::PathBuf::from(t)
+    } else {
+        std::path::PathBuf::from(files[1])
+    };
+    let rep = match optimize::optimize_epub_file_streaming(std::path::Path::new(files[0]), &out_target, &OptimizeOpts { wash, footnote }) {
+        Ok(r) => r,
         Err(e) => {
+            let _ = std::fs::remove_file(&out_target);
             eprintln!("优化失败: {e}");
             std::process::exit(2);
         }
     };
-    if let Err(e) = std::fs::write(files[1], &out) {
-        eprintln!("写 {}: {e}", files[1]);
-        std::process::exit(2);
+    if same_path {
+        if let Err(e) = std::fs::rename(&out_target, files[1]) {
+            eprintln!("改名覆盖 {}: {e}", files[1]);
+            std::process::exit(2);
+        }
     }
     println!("epub-optimize v{}: {} 文件/{} 章, {} → {} 字节", optimize::OPTIMIZE_VERSION, rep.total_files, rep.html_files, rep.bytes_before, rep.bytes_after);
     if let Some(w) = &rep.wash {
         println!(
-            "清洗: css {} / html {} / 伪DRM剥离 {:?} / 空页 {:?} / 自动目录 {} 条 / 双id折叠 {} / 分部重建 {} 条 / ncx uid 修复 {}",
-            w.css_files, w.html_files, w.pseudo_drm_stripped, w.empty_pages_removed, w.toc_generated, w.dup_id_tags_collapsed, w.toc_parts_restructured, w.ncx_uid_fixed
+            "清洗: css {} / html {} / 伪DRM剥离 {:?} / 空页 {:?} / 自动目录 {} 条 / 双id折叠 {} / 分部重建 {} 条 / ncx uid 修复 {} / ncx doctype 剥离 {}",
+            w.css_files, w.html_files, w.pseudo_drm_stripped, w.empty_pages_removed, w.toc_generated, w.dup_id_tags_collapsed, w.toc_parts_restructured, w.ncx_uid_fixed, w.ncx_doctype_stripped
         );
     }
     if flags.contains(&"--check") {
+        // 质量门要整本读回内存核对结构——只有 --check 时才付这个代价，不影响默认路径的流式内存省。
+        let out = match std::fs::read(files[1]) {
+            Ok(b) => b,
+            Err(e) => {
+                eprintln!("质量门读产物失败: {e}");
+                std::process::exit(3);
+            }
+        };
         match bookconv::check::check_epub(&out, flags.contains(&"--require-toc")) {
             Ok(r) => {
                 println!("{}", serde_json::to_string_pretty(&r).unwrap_or_default());

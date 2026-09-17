@@ -99,6 +99,8 @@ pub struct WashReport {
     /// 书自带的扁平目录（"第X部　编号　章名"排版惯例）被重建成两级后的条目数；0＝没检测到这种
     /// 惯例、原样没动。
     pub toc_parts_restructured: usize,
+    /// `toc.ncx` 里指向外部 DTD 的 `<!DOCTYPE>` 声明被剥掉（0 或 1）。
+    pub ncx_doctype_stripped: usize,
 }
 
 pub fn is_html(name: &str) -> bool {
@@ -944,6 +946,29 @@ fn fix_ncx_uid(entries: &mut Vec<Entry>, rep: &mut WashReport) {
     }
 }
 
+/// 剥 `toc.ncx` 里指向外部 DTD 的 `<!DOCTYPE ncx PUBLIC "..." "http://www.daisy.org/...dtd">` 声明
+/// （2026-09-19 真机对照《疯探》vs《雪人》坐实的第二个差异——dtb:uid 修一致后原生目录入口仍然不见，
+/// 两本书剩下的结构性区别就是这条：《疯探》的 `toc.ncx` 带这个外部 DTD 引用，《雪人》没有，也没有
+/// 任何其它 reader/工具要求 NCX 必须带 DOCTYPE 才能解析——它纯粹是历史遗留的验证声明。真机是
+/// USB/WiFi 隧道环境，如果 xochitl 的 XML 解析器老实去联网取这个外部 DTD，离线或路由不通时很可能
+/// 卡住/超时/直接判整份 NCX 不可用，原生目录入口因此消失，但书本身照常能读——不影响 spine 阅读，
+/// 只影响"目录"这个附加功能，症状完全吻合。剥掉不改变 NCX 的任何实际语义，纯粹去掉这个外部依赖，
+/// `build_ncx` 自己生成的 NCX 也从来不带 DOCTYPE，这里是让已有 NCX 向那个已经验证过没问题的形态看齐。
+fn strip_ncx_doctype(entries: &mut Vec<Entry>, rep: &mut WashReport) {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    let re = RE.get_or_init(|| Regex::new(r#"(?is)<!DOCTYPE\s+ncx\b[^>]*>\s*"#).unwrap());
+    for e in entries.iter_mut() {
+        if e.name.to_ascii_lowercase().ends_with(".ncx") {
+            if let Ok(text) = std::str::from_utf8(&e.data) {
+                if re.is_match(text) {
+                    e.data = re.replace(text, "").into_owned().into_bytes();
+                    rep.ncx_doctype_stripped += 1;
+                }
+            }
+        }
+    }
+}
+
 /// OPF `<dc:title>` 的纯文本内容，取不到时兜底"目录"。
 fn opf_book_title(entries: &[Entry], opf_index: usize) -> String {
     let t = String::from_utf8_lossy(&entries[opf_index].data);
@@ -1133,6 +1158,7 @@ pub fn wash_entries(entries: &mut Vec<Entry>, opts: &WashOpts) -> Result<WashRep
     restructure_existing_toc_parts(entries, opts.auto_toc, &mut rep);
     auto_toc(entries, opts.auto_toc, &mut rep);
     fix_ncx_uid(entries, &mut rep);
+    strip_ncx_doctype(entries, &mut rep);
     Ok(rep)
 }
 
@@ -1329,6 +1355,32 @@ mod tests {
         ];
         let rep2 = wash_entries(&mut w, &WashOpts::default()).unwrap();
         assert_eq!(rep2.ncx_uid_fixed, 0, "已经一致不该误报修复过");
+    }
+
+    #[test]
+    fn ncx_external_doctype_stripped() {
+        // 真机回归（2026-09-19，dtb:uid 修一致后原生目录入口仍不出现）：《疯探》"番茄小说 EPUB
+        // Generator" 产物的 toc.ncx 带外部 DTD 引用（daisy.org），《雪人》没有——这是两本书唯一
+        // 剩下的结构性差异。剥掉不改变 NCX 语义，只去掉这个外部依赖。
+        let ncx_with_doctype = "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE ncx PUBLIC \"-//NISO//DTD ncx 2005-1//EN\" \"http://www.daisy.org/z3986/2005/ncx-2005-1.dtd\">\n<ncx xmlns=\"http://www.daisy.org/z3986/2005/ncx/\" version=\"2005-1\"><navMap><navPoint><navLabel><text>章一</text></navLabel><content src=\"c1.xhtml\"/></navPoint></navMap></ncx>";
+        let mut v = vec![
+            e("content.opf", r#"<package version="2.0"><metadata><dc:title>书</dc:title></metadata><manifest><item id="toc" href="toc.ncx" media-type="application/x-dtbncx+xml"/><item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/></manifest><spine toc="toc"><itemref idref="c1"/></spine></package>"#),
+            e("toc.ncx", ncx_with_doctype),
+            e("c1.xhtml", "<html><body><p>正文</p></body></html>"),
+        ];
+        let rep = wash_entries(&mut v, &WashOpts::default()).unwrap();
+        assert_eq!(rep.ncx_doctype_stripped, 1);
+        let ncx = s(&v, "toc.ncx");
+        assert!(!ncx.to_ascii_uppercase().contains("DOCTYPE"), "DOCTYPE 该被剥掉: {ncx}");
+        assert!(ncx.contains("<navPoint>") || ncx.contains(r#"<content src="c1.xhtml"/>"#), "navMap 内容不该被动: {ncx}");
+        // 没有 DOCTYPE 的书原样不动、不误报
+        let mut w = vec![
+            e("content.opf", r#"<package version="2.0"><metadata><dc:title>书</dc:title></metadata><manifest><item id="toc" href="toc.ncx" media-type="application/x-dtbncx+xml"/><item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/></manifest><spine toc="toc"><itemref idref="c1"/></spine></package>"#),
+            e("toc.ncx", r#"<ncx><navMap><navPoint><navLabel><text>章一</text></navLabel><content src="c1.xhtml"/></navPoint></navMap></ncx>"#),
+            e("c1.xhtml", "<html><body><p>正文</p></body></html>"),
+        ];
+        let rep2 = wash_entries(&mut w, &WashOpts::default()).unwrap();
+        assert_eq!(rep2.ncx_doctype_stripped, 0, "没有 DOCTYPE 不该误报剥过");
     }
 
     #[test]

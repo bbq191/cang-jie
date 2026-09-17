@@ -25,6 +25,9 @@ readability-rust = "0.1.0"
 scraper = "0.18"
 ego-tree = "0.6"
 
+[dev-dependencies]
+tempfile = "3"
+
 # host/设备通用 CLI：对一本 EPUB 跑同一 optimize_epub（wash_epub.sh 末步用）。随内容层从 weread-device 迁入。
 [[bin]]
 name = "epub-optimize"

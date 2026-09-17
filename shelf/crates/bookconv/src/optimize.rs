@@ -45,7 +45,11 @@ pub const OPTIMIZE_MARKER: &str = "META-INF/com.cangjie.optimized";
 /// 入口**（不是空列表），navMap 结构再完整都没用；`dtb:uid` 匹配的书目录入口就在。新增
 /// `wash::fix_ncx_uid` 把 `dtb:uid` 同步成 OPF 实际标识符（含我们自己 `build_ncx` 生成的也一并
 /// 从硬编码 `cj-wash` 改用真实标识符）；旧书需 `force:true` 重优化。
-pub const OPTIMIZE_VERSION: &str = "12";
+/// v13：dtb:uid 修一致后《疯探》原生目录入口真机复测仍不出现——跟《雪人》剩下唯一的结构性差异是
+/// `toc.ncx` 带外部 DTD 引用（`http://www.daisy.org/...dtd`），《雪人》没有。新增
+/// `wash::strip_ncx_doctype` 无条件剥掉这个声明（不改变 NCX 语义，纯粹去掉外部依赖，真机 USB/WiFi
+/// 隧道环境很可能因为解析器联网取 DTD 卡住/失败而让整份 NCX 被判不可用）；旧书需 `force:true`。
+pub const OPTIMIZE_VERSION: &str = "13";
 
 /// 脚注呈现方式。xochitl 无弹窗脚注（穷尽真机实测判死）；weread/pkm 线与第三方书历史行为、
 /// EPUB 线设备侧优化（母版库「优化」）2026-09-17 起统一用 `Anchor`（章末可见 + 同章锚点跳转 +
@@ -196,6 +200,51 @@ fn svg_cover_to_img(html: &str) -> String {
     .into_owned()
 }
 
+/// 第一遍 html 处理：归一同文件 href（part0004.html#x 写在 part0004.html 里→改裸锚 #x，否则下面
+/// referenced/搬注释/拆环全把同章脚注误当跨文件）→ 剥字体锁 → 扫这章引用了哪些脚注 frag。
+/// `optimize_epub_with`/`optimize_epub_file_streaming` 共用，避免两条路径的第一遍处理逻辑分叉走样。
+fn first_pass_html(text: &str, name: &str) -> (String, Vec<String>) {
+    let own = std::path::Path::new(name).file_name().and_then(|s| s.to_str()).unwrap_or("");
+    let text = crate::htmlproc::normalize_self_hrefs(text, own);
+    let stripped = crate::htmlproc::strip_font_locks(&text);
+    let referenced = crate::htmlproc::referenced_note_frags(&stripped);
+    (stripped, referenced)
+}
+
+/// 章节 html 最终变换链：解双向脚注互指环 → duokan 图片脚注标记换上标 → 封面拉伸/SVG 修复 →
+/// 脚注就地关联重排 → e-ink 提对比 → 远程图内联 → 全书 id 去重。第一遍（`first_pass_html`）跟这遍
+/// 分开是因为这遍要用到第一遍扫全书才拿得到的 `aside_index`（跨章注释索引），顺序不能换。返回
+/// (最终字节, 这章新增的远程图资源 [(zip 路径, 字节)])。同上，两条优化路径共用。
+fn transform_html_chapter(
+    text: &str,
+    name: &str,
+    aside_index: &std::collections::HashMap<String, String>,
+    footnote: FootnoteMode,
+    remote_counter: &mut usize,
+    img_agent: &ureq::Agent,
+    seen_ids: &mut HashSet<String>,
+) -> (Vec<u8>, Vec<(String, Vec<u8>)>) {
+    let t = crate::htmlproc::break_footnote_cycles(text);
+    let t = crate::htmlproc::fix_duokan_markers(&t);
+    let t = fix_cover_aspect(&t);
+    let t = svg_cover_to_img(&t);
+    let t = crate::htmlproc::preserve_relink_footnotes(&t, aside_index, footnote);
+    let t = crate::htmlproc::boost_text_contrast(&t);
+    let chap_dir = std::path::Path::new(name).parent().and_then(|p| p.to_str()).unwrap_or("");
+    let (t, imgs) = inline_remote_images(&t, chap_dir, remote_counter, remote_img_fetcher(img_agent));
+    (crate::htmlproc::dedup_ids_in_chapter(&t, seen_ids).into_bytes(), imgs)
+}
+
+/// 图片最终变换：按漫画/文字书分流（EPUB 线原则④：漫画只裁边/适配屏幕，不许压画质）。
+fn transform_image_bytes(bytes: &[u8], is_comic_book: bool) -> Vec<u8> {
+    if is_comic_book {
+        let trimmed = crate::imgopt::trim_margins(bytes).unwrap_or_else(|| bytes.to_vec());
+        crate::imgopt::downscale_for_epub_comic(&trimmed).unwrap_or(trimmed)
+    } else {
+        crate::imgopt::downscale_for_epub(bytes).unwrap_or_else(|| bytes.to_vec())
+    }
+}
+
 /// 解包 → 每个 (x)html 走 strip_font_locks → 原样保留其余 → 重打包。返回 (新epub, 统计)。
 pub fn optimize_epub(epub: &[u8]) -> Result<(Vec<u8>, Report), String> {
     optimize_epub_with(epub, &OptimizeOpts::default())
@@ -237,14 +286,8 @@ pub fn optimize_epub_with(epub: &[u8], opts: &OptimizeOpts) -> Result<(Vec<u8>, 
         let ish = is_html(name);
         if ish {
             if let Ok(text) = String::from_utf8(data.clone()) {
-                // 同文件带文件名 href（Calibre 写法 part0004.html#x 写在 part0004.html 里）先归一成裸锚，
-                // 否则下面 referenced/搬注释/拆环全把同章脚注误当跨文件（v5）。
-                let own = std::path::Path::new(name).file_name().and_then(|s| s.to_str()).unwrap_or("");
-                let text = crate::htmlproc::normalize_self_hrefs(&text, own);
-                let stripped = crate::htmlproc::strip_font_locks(&text);
-                for f in crate::htmlproc::referenced_note_frags(&stripped) {
-                    referenced.insert(f);
-                }
+                let (stripped, refs) = first_pass_html(&text, name);
+                referenced.extend(refs);
                 data = stripped.into_bytes();
                 rep.html_files += 1;
             }
@@ -287,22 +330,9 @@ pub fn optimize_epub_with(epub: &[u8], opts: &OptimizeOpts) -> Result<(Vec<u8>, 
             let final_data: Vec<u8> = if *ish {
                 match String::from_utf8(data.clone()) {
                     Ok(text) => {
-                        // break_footnote_cycles：拆双向脚注互指对（reMarkable 索引器遇互指整对丢弃→点不动），
-                        //   calibre filepos 脚注/微信读书脚注都是这个形态。封面：先试 aspect，再 SVG→img。
-                        let t = crate::htmlproc::break_footnote_cycles(&text);
-                        // duokan 图片脚注标记（注释块同文件、img 是转义死图/远程 CDN 不可点）换成可点上标。
-                        // 与下载路径 inline_footnotes 共用同一处理，导入的 duokan 书也固化（不再分情况漏）。
-                        let t = crate::htmlproc::fix_duokan_markers(&t);
-                        let t = fix_cover_aspect(&t);
-                        let t = svg_cover_to_img(&t);
-                        let t = crate::htmlproc::preserve_relink_footnotes(&t, &aside_index, opts.footnote);
-                        // ② e-ink 提对比：灰字→纯黑、细字重→400（style 属性 + <style> 块）。
-                        let t = crate::htmlproc::boost_text_contrast(&t);
-                        // 远程图内联（抓下降采样进 zip / 抓不到删 img，免大放大镜）。
-                        let chap_dir = std::path::Path::new(name).parent().and_then(|p| p.to_str()).unwrap_or("");
-                        let (t, imgs) = inline_remote_images(&t, chap_dir, &mut remote_counter, remote_img_fetcher(&img_agent));
+                        let (bytes, imgs) = transform_html_chapter(&text, name, &aside_index, opts.footnote, &mut remote_counter, &img_agent, &mut seen_ids);
                         fetched_imgs.extend(imgs);
-                        crate::htmlproc::dedup_ids_in_chapter(&t, &mut seen_ids).into_bytes()
+                        bytes
                     }
                     Err(_) => data.clone(),
                 }
@@ -316,12 +346,7 @@ pub fn optimize_epub_with(epub: &[u8], opts: &OptimizeOpts) -> Result<(Vec<u8>, 
                 // ① 按 Move 屏竖向框（宽≤954）降采样超大图——EPUB 图可能行内，宽超 954 会溢出竖屏（缩不动/失败则原样）。
                 // 漫画书（EPUB 线原则④"不允许压画质，只能裁边/适配屏幕"）：先裁四边纯色留白，
                 // 超限时改用更高 JPEG 质量重编码。
-                if is_comic_book {
-                    let trimmed = crate::imgopt::trim_margins(data).unwrap_or_else(|| data.clone());
-                    crate::imgopt::downscale_for_epub_comic(&trimmed).unwrap_or(trimmed)
-                } else {
-                    crate::imgopt::downscale_for_epub(data).unwrap_or_else(|| data.clone())
-                }
+                transform_image_bytes(data, is_comic_book)
             } else {
                 data.clone()
             };
@@ -341,6 +366,154 @@ pub fn optimize_epub_with(epub: &[u8], opts: &OptimizeOpts) -> Result<(Vec<u8>, 
     }
     rep.bytes_after = out_buf.len();
     Ok((out_buf, rep))
+}
+
+/// [`optimize_epub_with`] 的流式版：路径进、路径出，峰值内存不随书体积线性涨。**真机 2026-09-19
+/// 坐实**——552MB《镖人》全集走内存版优化，`VmRSS` 几十秒内冲到 1.4GB+，真机系统可用内存探底到
+/// ~25MB（book-serve `systemd` 的 `MemoryMax=192M` 没生效——这台设备的 systemd 压根没把 memory
+/// 控制器代理进 `system.slice` 子树，这条"软限"从来没真正兜住过），逼近全系统级 OOM（内核会不分
+/// 青红皂白挑内存最大的进程杀，可能殃及 xochitl 本体），手动重启服务才止血。
+///
+/// 内存的大头几乎全是图片字节——漫画书尤其如此，正文 html/css/opf/ncx 这些结构信息本来就很小。
+/// 两阶段拆开：**阶段一**只把非图片条目（html/css/opf/ncx/字体等）整份读进内存（本来就小，全书
+/// 一起拿着无所谓），图片条目只记名字、字节留空占位——后续 wash 层（空页清理/自动目录/目录分部
+/// 重建/dtb:uid 同步）跟漫画识别只看 html 文字内容和 `<img>` 标签*引用*，从来不需要图片真实字节，
+/// 占位不影响任何判断。**阶段二**（最终写出）按 `entries` 顺序重新遍历：非图片条目直接用阶段一
+/// 已经处理好的字节；图片条目才从源文件按需流式读回这一张的真实字节、处理、立刻写进目标文件，
+/// 读完这张就丢，从不会有第二张同时留在内存里。输出直接流式写文件（`ZipWriter` 包 `BufWriter<File>`），
+/// 不再攒一份完整产物在内存里。峰值内存量级降到"一张图 + 全书文字部分"，不随书变大线性涨。
+///
+/// 跟 [`optimize_epub_with`] 共用 [`first_pass_html`]/[`transform_html_chapter`]/
+/// [`transform_image_bytes`] 这几个抽出来的变换函数——两条路径的业务逻辑是同一份代码，不会因为
+/// "整本内存版"跟"流式版"分叉走样；`optimize_epub_with` 继续保留给测试/CLI 小书场景用（签名不变，
+/// 100+ 既有单测零改动），book-serve 真机场景（真书可能上百 MB）改走这条流式路径。
+pub fn optimize_epub_file_streaming(input_path: &std::path::Path, output_path: &std::path::Path, opts: &OptimizeOpts) -> Result<Report, String> {
+    let in_file = std::fs::File::open(input_path).map_err(|e| format!("打开输入失败: {e}"))?;
+    let bytes_before = in_file.metadata().map(|m| m.len() as usize).unwrap_or(0);
+    let mut archive = ZipArchive::new(std::io::BufReader::new(in_file)).map_err(|e| format!("解 EPUB(非 zip?): {e}"))?;
+
+    // 阶段一：非图片条目整份读；图片条目占位（真实字节留到阶段二按需流式读）。
+    let mut raw: Vec<crate::wash::Entry> = Vec::with_capacity(archive.len());
+    for i in 0..archive.len() {
+        let mut f = archive.by_index(i).map_err(|e| format!("读 EPUB 条目 {i}: {e}"))?;
+        if f.is_dir() {
+            continue;
+        }
+        let name = f.name().to_string();
+        let data = if crate::imgopt::is_downscalable(&name) {
+            Vec::new()
+        } else {
+            let mut d = Vec::new();
+            f.read_to_end(&mut d).map_err(|e| e.to_string())?;
+            d
+        };
+        raw.push(crate::wash::Entry { name, data });
+    }
+    let wash_rep = match &opts.wash {
+        Some(w) => Some(crate::wash::wash_entries(&mut raw, w)?),
+        None => None,
+    };
+    let mut ordered: Vec<crate::wash::Entry> = Vec::with_capacity(raw.len());
+    if let Some(i) = raw.iter().position(|e| e.name == "mimetype") {
+        ordered.push(raw[i].clone());
+    }
+    for e in raw.into_iter() {
+        if e.name != "mimetype" && e.name != OPTIMIZE_MARKER {
+            ordered.push(e);
+        }
+    }
+    // 漫画识别只看 html 文字里的 <img> 计数 + 正文字数，图片占位（空字节）不影响判定。
+    let is_comic_book = crate::comic_detect::is_comic(&ordered);
+
+    let mut rep = Report { wash: wash_rep, total_files: 0, html_files: 0, bytes_before, bytes_after: 0 };
+
+    let mut entries: Vec<(String, Vec<u8>, bool)> = Vec::new();
+    let mut referenced: HashSet<String> = HashSet::new();
+    for crate::wash::Entry { name, mut data } in ordered {
+        let name = &name;
+        rep.total_files += 1;
+        let ish = is_html(name);
+        if ish {
+            if let Ok(text) = String::from_utf8(data.clone()) {
+                let (stripped, refs) = first_pass_html(&text, name);
+                referenced.extend(refs);
+                data = stripped.into_bytes();
+                rep.html_files += 1;
+            }
+        }
+        entries.push((name.clone(), data, ish));
+    }
+
+    let mut aside_index: std::collections::HashMap<String, String> = std::collections::HashMap::new();
+    for (name, data, ish) in entries.iter_mut() {
+        if !*ish {
+            continue;
+        }
+        if let Ok(text) = String::from_utf8(data.clone()) {
+            let (cleaned, notes) = crate::htmlproc::collect_footnote_notes(&text, &referenced, true);
+            if !notes.is_empty() {
+                for (id, note) in notes {
+                    aside_index.insert(id, note);
+                }
+                *data = cleaned.into_bytes();
+            }
+            let _ = name;
+        }
+    }
+
+    // 阶段二：流式写出。非图片条目用阶段一已处理好的字节；图片条目现在才从源文件按需读回真实
+    // 字节，处理完立刻写文件、立刻丢——峰值只有"当前这一张"，不会随全书图片数量线性涨。
+    let out_file = std::fs::File::create(output_path).map_err(|e| format!("建输出文件失败: {e}"))?;
+    let mut zw = ZipWriter::new(std::io::BufWriter::new(out_file));
+    let stored = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
+    let deflated = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
+    let mut seen_ids: HashSet<String> = HashSet::new();
+    let img_agent = crate::netimg::http_agent(15);
+    let mut remote_counter = 0usize;
+    let mut fetched_imgs: Vec<(String, Vec<u8>)> = Vec::new();
+    for (name, data, ish) in &entries {
+        let final_data: Vec<u8> = if *ish {
+            match String::from_utf8(data.clone()) {
+                Ok(text) => {
+                    let (bytes, imgs) = transform_html_chapter(&text, name, &aside_index, opts.footnote, &mut remote_counter, &img_agent, &mut seen_ids);
+                    fetched_imgs.extend(imgs);
+                    bytes
+                }
+                Err(_) => data.clone(),
+            }
+        } else if name.to_lowercase().ends_with(".css") {
+            match String::from_utf8(data.clone()) {
+                Ok(text) => crate::htmlproc::boost_contrast_css(&text).into_bytes(),
+                Err(_) => data.clone(),
+            }
+        } else if crate::imgopt::is_downscalable(name) {
+            // 这一张的真实字节现在才读——archive 支持随时按名字重新 seek 读，跟阶段一是同一个源文件。
+            let mut f = archive.by_name(name).map_err(|e| format!("重读图片 {name} 失败: {e}"))?;
+            let mut real_bytes = Vec::new();
+            f.read_to_end(&mut real_bytes).map_err(|e| e.to_string())?;
+            transform_image_bytes(&real_bytes, is_comic_book)
+        } else {
+            data.clone()
+        };
+        let file_opts = if name == "mimetype" { stored } else { deflated };
+        zw.start_file(name.as_str(), file_opts).map_err(|e| e.to_string())?;
+        zw.write_all(&final_data).map_err(|e| e.to_string())?;
+    }
+    for (path, bytes) in &fetched_imgs {
+        zw.start_file(path.as_str(), deflated).map_err(|e| e.to_string())?;
+        zw.write_all(bytes).map_err(|e| e.to_string())?;
+    }
+    zw.start_file(OPTIMIZE_MARKER, deflated).map_err(|e| e.to_string())?;
+    let marker = marker_value(opts.wash.is_some());
+    zw.write_all(marker.as_bytes()).map_err(|e| e.to_string())?;
+    // `finish()` 只保证写完中央目录，底下 `BufWriter` 自己的缓冲区不一定落盘——显式 flush，
+    // 不指望 Drop 的静默兜底（出错会被吞掉）。
+    let mut out = zw.finish().map_err(|e| e.to_string())?;
+    out.flush().map_err(|e| e.to_string())?;
+    // 产物文件大小（跟内存版 out_buf.len() 同语义——压缩后的 zip 体积），直接 stat 落盘文件，比
+    // 流式写的时候自己攒一份计数更简单也更准确。
+    rep.bytes_after = std::fs::metadata(output_path).map(|m| m.len() as usize).unwrap_or(0);
+    Ok(rep)
 }
 
 #[cfg(test)]
@@ -467,6 +640,89 @@ mod tests {
             "两边尺寸约束一致，都要缩进屏幕框"
         );
         assert!(comic_img.len() > text_img.len(), "漫画书判定应触发更高质量重编码，体积应更大: comic={} text={}", comic_img.len(), text_img.len());
+    }
+
+    #[test]
+    fn streaming_matches_in_memory_output_for_footnote_book() {
+        // 内存版跟流式版共用 first_pass_html/transform_html_chapter，这条测试证明两条路径对同一本
+        // 带跨文件脚注的书产出一致的正文——不是"抽了函数就当一样"，是真跑两条路径对拍。
+        let epub = make_crossfile_endnote_epub();
+        let (mem_out, mem_rep) = optimize_epub(&epub).unwrap();
+
+        let t = tempfile::tempdir().unwrap();
+        let input_path = t.path().join("in.epub");
+        let output_path = t.path().join("out.epub");
+        std::fs::write(&input_path, &epub).unwrap();
+        let stream_rep = optimize_epub_file_streaming(&input_path, &output_path, &OptimizeOpts::default()).unwrap();
+        let stream_out = std::fs::read(&output_path).unwrap();
+
+        assert_eq!(mem_rep.total_files, stream_rep.total_files);
+        assert_eq!(mem_rep.html_files, stream_rep.html_files);
+
+        let read = |bytes: &[u8], n: &str| {
+            let mut ar = ZipArchive::new(Cursor::new(bytes)).unwrap();
+            let mut s = String::new();
+            ar.by_name(n).unwrap().read_to_string(&mut s).unwrap();
+            s
+        };
+        for name in ["ch1.xhtml", "ch2.xhtml"] {
+            let mem_ch = read(&mem_out, name);
+            let stream_ch = read(&stream_out, name);
+            assert_eq!(mem_ch, stream_ch, "{name} 内存版跟流式版应产出完全一致的正文");
+        }
+    }
+
+    #[test]
+    fn streaming_downscales_comic_images_same_as_in_memory() {
+        // 内存版跟流式版共用 transform_image_bytes，图片处理结果应该逐字节一致——流式版的差别只在
+        // "什么时候、从哪读图片字节"，不该影响处理结果本身。
+        use image::{codecs::jpeg::JpegEncoder, DynamicImage, GenericImageView, RgbImage};
+        let big = DynamicImage::ImageRgb8(RgbImage::from_fn(2000, 3000, |x, y| image::Rgb([(x % 256) as u8, (y % 256) as u8, 150])));
+        let mut jpg = Vec::new();
+        JpegEncoder::new_with_quality(&mut jpg, 90).encode_image(&big).unwrap();
+
+        let mut comic_buf = Vec::new();
+        {
+            let mut zw = ZipWriter::new(Cursor::new(&mut comic_buf));
+            let stored = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
+            zw.start_file("mimetype", stored).unwrap();
+            zw.write_all(b"application/epub+zip").unwrap();
+            let items: String = (1..=25).map(|i| format!(r#"<item id="c{i}" href="c{i}.xhtml" media-type="application/xhtml+xml"/>"#)).collect();
+            let spine: String = (1..=25).map(|i| format!(r#"<itemref idref="c{i}"/>"#)).collect();
+            zw.start_file("content.opf", stored).unwrap();
+            zw.write_all(format!(r#"<package version="3.0"><metadata><dc:title>漫画</dc:title></metadata><manifest>{items}</manifest><spine>{spine}</spine></package>"#).as_bytes()).unwrap();
+            for i in 1..=25 {
+                zw.start_file(format!("c{i}.xhtml"), stored).unwrap();
+                zw.write_all(format!(r#"<html><body><img src="p{i}.jpg"/></body></html>"#).as_bytes()).unwrap();
+            }
+            zw.start_file("p1.jpg", stored).unwrap();
+            zw.write_all(&jpg).unwrap();
+            zw.finish().unwrap();
+        }
+
+        let (mem_out, _) = optimize_epub(&comic_buf).unwrap();
+        let t = tempfile::tempdir().unwrap();
+        let input_path = t.path().join("comic.epub");
+        let output_path = t.path().join("comic_out.epub");
+        std::fs::write(&input_path, &comic_buf).unwrap();
+        optimize_epub_file_streaming(&input_path, &output_path, &OptimizeOpts::default()).unwrap();
+        let stream_out = std::fs::read(&output_path).unwrap();
+
+        let mut mem_img = Vec::new();
+        ZipArchive::new(Cursor::new(&mem_out)).unwrap().by_name("p1.jpg").unwrap().read_to_end(&mut mem_img).unwrap();
+        let mut stream_img = Vec::new();
+        ZipArchive::new(Cursor::new(&stream_out)).unwrap().by_name("p1.jpg").unwrap().read_to_end(&mut stream_img).unwrap();
+        assert_eq!(mem_img, stream_img, "同一张图内存版跟流式版处理结果应逐字节一致");
+        assert!(image::load_from_memory(&stream_img).unwrap().dimensions().0 <= 954, "流式版也该按漫画框约束缩放");
+    }
+
+    #[test]
+    fn streaming_rejects_missing_input_and_leaves_no_partial_output() {
+        let t = tempfile::tempdir().unwrap();
+        let output_path = t.path().join("out.epub");
+        let err = optimize_epub_file_streaming(&t.path().join("does-not-exist.epub"), &output_path, &OptimizeOpts::default()).unwrap_err();
+        assert!(err.contains("打开输入失败"), "{err}");
+        assert!(!output_path.exists(), "输入都打不开，不该产生任何输出文件");
     }
 
     /// 造一个最小 EPUB(mimetype + 一章带锁字体的 xhtml)，过优化器后字体锁应被剥掉、结构保留。
