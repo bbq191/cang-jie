@@ -8,9 +8,12 @@
 //!   1. **按书内目录（TOC）切章**——TOC 链文字即真章名（MOBI6 的 NCX 等价物），无 TOC 退化按 pagebreak 切。
 //!   2. **为每个被引用的 filepos 目标注入 `id="fpN"` 锚点**（属性注入进目标元素，保留原属性）。
 //!   3. **就地把 `filepos=N` 改写成 `href="chap_X.xhtml#fpN"`**（脚注/目录跳转可用）。
-//! 副产品：目录页链接改写后指向大量 chap 文件 → **现有优化器 `remove_toc_from_spine` 自动识别并剥离**，
-//! 与原生 EPUB「只留 TOC、无冗余目录页」彻底对齐（当初"去链"反而破坏了这一对齐——去链后目录页变纯文字
-//! 不被识别、留在 spine）。
+//! 副产品：目录页链接改写后指向大量 chap 文件，读起来是一份正常可点的书内目录页，跟原生 EPUB
+//! 自带的 HTML 目录页同构（2026-09-19 前 `optimize::remove_toc_from_spine` 会把这种"指向一堆
+//! chap 文件"的页面从 spine 剥掉——当时的假设是"reMarkable 有自己的原生 TOC，书内目录页冗余"，
+//! 但真机反馈（《疯探》真书）证明这个假设站不住：这类页面就是书籍**正文**，不是能安全丢的冗余物，
+//! 违背 EPUB 线原则①"保留目录页"，已整个删掉这个剥离机制——MOBI 转换产物现在跟原生 EPUB 一样，
+//! 目录页原样留在 spine 里）。
 
 use super::{common, palm};
 use crate::epub::{Book, BookMeta, Chapter, Resource};

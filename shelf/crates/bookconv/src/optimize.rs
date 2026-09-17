@@ -37,7 +37,10 @@ pub const OPTIMIZE_MARKER: &str = "META-INF/com.cangjie.optimized";
 /// 写成**外链 `cangjie-wash.css`** + 每章 `<link>` + OPF manifest 补 item（xochitl/KOReader 都认）。⚠ xochitl css
 /// 解析器脆，外链 css **只用裸 `p{}` 元素选择器**（一条类/复杂选择器就让整表失效，《缩进诊断5》坐实）。撤回 v9 的
 /// nbsp 段首缩进（nbsp 宽随字体变、且被折叠，做不到精确 2 字；外链 text-indent 精确且字体无关）。
-pub const OPTIMIZE_VERSION: &str = "10";
+/// v11：真机《疯探》坐实——删掉 `remove_toc_from_spine`（指向 ≥10 个不同 html 文件的页面曾被当
+/// "跟原生 TOC 冗余"的目录页从 spine 剥掉）。假设站不住：这类页面是书籍正文本身，不是能丢的冗余物，
+/// 违背 EPUB 线原则①"保留目录页"；已优化过的旧书需 `force:true` 重优化才能拿回被剥掉的目录页。
+pub const OPTIMIZE_VERSION: &str = "11";
 
 /// 脚注呈现方式。xochitl 无弹窗脚注（穷尽真机实测判死）；weread/pkm 线与第三方书历史行为、
 /// EPUB 线设备侧优化（母版库「优化」）2026-09-17 起统一用 `Anchor`（章末可见 + 同章锚点跳转 +
@@ -172,25 +175,6 @@ fn fix_cover_aspect(html: &str) -> String {
         .replace("preserveAspectRatio=\"none\"", "preserveAspectRatio=\"xMidYMid meet\"")
 }
 
-/// 目录页判据：一个 (x)html 指向多少个**不同的** html 文件。目录页会指向全书几十个章节文件，
-/// 正文页的脚注是同文件 `#frag`（不带 .html）——两者天差地别，阈值取 10 足以区分。
-const TOC_LINK_THRESHOLD: usize = 10;
-
-fn count_distinct_html_links(html: &str) -> usize {
-    static R: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
-    let re = R.get_or_init(|| Regex::new(r#"href="([^"]+)""#).unwrap());
-    let mut set: HashSet<String> = HashSet::new();
-    for c in re.captures_iter(html) {
-        let file = c[1].split('#').next().unwrap_or("");
-        let l = file.to_lowercase();
-        if l.ends_with(".html") || l.ends_with(".xhtml") || l.ends_with(".htm") {
-            let base = file.rsplit('/').next().unwrap_or(file);
-            set.insert(base.to_string());
-        }
-    }
-    set.len()
-}
-
 /// 封面 SVG 换普通 img：calibre 封面页 `<svg ...><image (xlink:)href="X"/></svg>` 被 xochitl
 /// 拉伸放大（改 preserveAspectRatio 都不吃），换成标准 `<img src="X" style=max-width:100%>` 更可控。
 fn svg_cover_to_img(html: &str) -> String {
@@ -205,37 +189,6 @@ fn svg_cover_to_img(html: &str) -> String {
         )
     })
     .into_owned()
-}
-
-/// 从 opf 的 spine 移除目录页——把 toc_basenames 里的文件对应的 `<itemref>` 删掉，阅读翻页即跳过
-/// 冗余 HTML 目录页（reMarkable 有自己的 TOC）。只动 spine，manifest 条目保留（无害、不产悬空）。
-fn remove_toc_from_spine(opf: &str, toc_basenames: &HashSet<String>) -> String {
-    if toc_basenames.is_empty() {
-        return opf.to_string();
-    }
-    let item_re = Regex::new(r#"(?is)<item\b[^>]*?/?>"#).unwrap();
-    let href_re = Regex::new(r#"href="([^"]+)""#).unwrap();
-    let id_re = Regex::new(r#"\bid="([^"]+)""#).unwrap();
-    let mut toc_ids: HashSet<String> = HashSet::new();
-    for m in item_re.find_iter(opf) {
-        let tag = m.as_str();
-        let href = match href_re.captures(tag) {
-            Some(c) => c[1].to_string(),
-            None => continue,
-        };
-        let base = href.split('#').next().unwrap_or("").rsplit('/').next().unwrap_or("").to_string();
-        if toc_basenames.contains(&base) {
-            if let Some(c) = id_re.captures(tag) {
-                toc_ids.insert(c[1].to_string());
-            }
-        }
-    }
-    let mut out = opf.to_string();
-    for id in &toc_ids {
-        let re = Regex::new(&format!(r#"(?s)<itemref\b[^>]*?\bidref="{}"[^>]*?/?>\s*"#, regex::escape(id))).unwrap();
-        out = re.replace_all(&out, "").into_owned();
-    }
-    out
 }
 
 /// 解包 → 每个 (x)html 走 strip_font_locks → 原样保留其余 → 重打包。返回 (新epub, 统计)。
@@ -273,19 +226,12 @@ pub fn optimize_epub_with(epub: &[u8], opts: &OptimizeOpts) -> Result<(Vec<u8>, 
     // （referenced），供下一步"只搬被引用的注释块"用。dir 条目跳过。
     let mut entries: Vec<(String, Vec<u8>, bool)> = Vec::new(); // (name, data, is_html)
     let mut referenced: HashSet<String> = HashSet::new(); // 被 marker 引用的注释 id（noteref + 跨文件普通<a>）
-    let mut toc_basenames: HashSet<String> = HashSet::new(); // 指向大量 html 的目录页(basename)
     for crate::wash::Entry { name, mut data } in ordered {
         let name = &name;
         rep.total_files += 1;
         let ish = is_html(name);
         if ish {
             if let Ok(text) = String::from_utf8(data.clone()) {
-                // 目录页判据：指向 >= 阈值 个不同 html 文件 → 记为目录页，第二遍从 spine 删。
-                if count_distinct_html_links(&text) >= TOC_LINK_THRESHOLD {
-                    if let Some(base) = std::path::Path::new(name).file_name().and_then(|s| s.to_str()) {
-                        toc_basenames.insert(base.to_string());
-                    }
-                }
                 // 同文件带文件名 href（Calibre 写法 part0004.html#x 写在 part0004.html 里）先归一成裸锚，
                 // 否则下面 referenced/搬注释/拆环全把同章脚注误当跨文件（v5）。
                 let own = std::path::Path::new(name).file_name().and_then(|s| s.to_str()).unwrap_or("");
@@ -370,12 +316,6 @@ pub fn optimize_epub_with(epub: &[u8], opts: &OptimizeOpts) -> Result<(Vec<u8>, 
                     crate::imgopt::downscale_for_epub_comic(&trimmed).unwrap_or(trimmed)
                 } else {
                     crate::imgopt::downscale_for_epub(data).unwrap_or_else(|| data.clone())
-                }
-            } else if name.to_lowercase().ends_with(".opf") {
-                // opf：从 spine 删目录页 itemref（去掉冗余 HTML 目录，reMarkable 有自己的 TOC）。
-                match String::from_utf8(data.clone()) {
-                    Ok(text) => remove_toc_from_spine(&text, &toc_basenames).into_bytes(),
-                    Err(_) => data.clone(),
                 }
             } else {
                 data.clone()
@@ -617,6 +557,48 @@ mod tests {
             zw.finish().unwrap();
         }
         buf
+    }
+
+    /// 带真实 content.opf 的最小书：spine 里第一页是一份「目录页」（链到一堆不同章节文件，形状
+    /// 跟 Calibre 常见排版一致），后面跟几章正文。
+    fn make_epub_with_html_toc_page(n_chapters: usize) -> Vec<u8> {
+        let mut buf = Vec::new();
+        {
+            let mut zw = ZipWriter::new(Cursor::new(&mut buf));
+            let stored = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
+            zw.start_file("mimetype", stored).unwrap();
+            zw.write_all(b"application/epub+zip").unwrap();
+            let links: String = (1..=n_chapters).map(|i| format!(r#"<li><a href="c{i}.xhtml">第{i}章</a></li>"#)).collect();
+            zw.start_file("OEBPS/toc.html", stored).unwrap();
+            zw.write_all(format!(r#"<html><body><h1>目录</h1><ul>{links}</ul></body></html>"#).as_bytes()).unwrap();
+            for i in 1..=n_chapters {
+                zw.start_file(format!("OEBPS/c{i}.xhtml"), stored).unwrap();
+                zw.write_all(format!("<html><body><p>第{i}章正文</p></body></html>").as_bytes()).unwrap();
+            }
+            let manifest_chapters: String = (1..=n_chapters).map(|i| format!(r#"<item id="c{i}" href="c{i}.xhtml" media-type="application/xhtml+xml"/>"#)).collect();
+            let spine_chapters: String = (1..=n_chapters).map(|i| format!(r#"<itemref idref="c{i}"/>"#)).collect();
+            zw.start_file("OEBPS/content.opf", stored).unwrap();
+            zw.write_all(
+                format!(
+                    r#"<package version="3.0"><metadata><dc:title>书</dc:title></metadata><manifest><item id="toc-html" href="toc.html" media-type="application/xhtml+xml"/>{manifest_chapters}</manifest><spine><itemref idref="toc-html"/>{spine_chapters}</spine></package>"#
+                )
+                .as_bytes(),
+            )
+            .unwrap();
+            zw.finish().unwrap();
+        }
+        buf
+    }
+
+    #[test]
+    fn html_toc_page_kept_in_spine_not_stripped_as_redundant() {
+        // 真机回归（2026-09-19，《疯探》）：书自带的 HTML 目录页（链到几十个章节文件）曾被旧逻辑当
+        // "跟原生 TOC 冗余"从 spine 删掉，翻页再也看不到目录——违背 EPUB 线原则①"保留目录页"。
+        let (out, _) = optimize_epub(&make_epub_with_html_toc_page(20)).unwrap();
+        let mut ar = ZipArchive::new(Cursor::new(&out)).unwrap();
+        let mut opf = String::new();
+        ar.by_name("OEBPS/content.opf").unwrap().read_to_string(&mut opf).unwrap();
+        assert!(opf.contains(r#"idref="toc-html""#), "目录页的 itemref 不该从 spine 被删: {opf}");
     }
 
     #[test]
