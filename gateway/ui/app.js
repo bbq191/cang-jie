@@ -5,6 +5,12 @@ const badge=(t,ok)=>`<span class="badge ${ok?'on':'off'}">${t}</span>`;
 /* 停一会儿再继续：用在"先弹出一条状态文字，再触发会重画掉这条文字的动作"这种场景——不等的话状态
    文字刚显示就被紧跟着的重画冲掉，用户根本来不及看见（点重转/生成笔记本弹出消耗那次踩过的坑）。 */
 const wait=ms=>new Promise(res=>setTimeout(res,ms));
+/* 防双击：按钮点击后立即禁用，异步操作完成（不管成功失败）再解禁。很多按钮的异步操作是删除/
+   落库这类不该被同一次操作重复触发两遍的动作——不加这一层，手指点快了或者网络慢的时候网络请求
+   还没回来就能再点一次，2026-09-18 真机反馈"优化过程中点击删除"这类并发操作会撞在一起。已经
+   自己内联管理 disabled 状态的按钮（母版库列表 btn() 助手、几处一开始就手动 disabled=true 的）
+   不需要再套这层，避免重复禁用逻辑打架。*/
+const guardClick=(el,fn)=>{el.onclick=async()=>{if(el.disabled)return;el.disabled=true;try{await fn()}finally{el.disabled=false}}};
 /* 轻量记忆：per-viewer 便利态，隐私窗口/禁用 storage 时静默回默认 */
 const LS={get(k,d){try{const v=localStorage.getItem('shelf.'+k);return v==null?d:v}catch{return d}},set(k,v){try{localStorage.setItem('shelf.'+k,v)}catch{}}};
 const onUsb=/^10\.11\.99\./.test(location.hostname);
@@ -109,7 +115,7 @@ function fillList(ul,items,row,emptyMsg){ul.innerHTML='';if(!items.length){ul.in
     right.className='small';right.style.cssText='display:flex;align-items:center;gap:.4em;flex-wrap:wrap';row(it,left,right,li);li.append(left,right);ul.appendChild(li)})}
 /* 删除按钮：confirm → DELETE → 刷新 */
 function delBtn(msg,url,refresh){const d=document.createElement('button');d.className='btn';d.textContent=T('action.delete');
-  d.onclick=async()=>{if(confirm(msg)){const r=await j(url,{method:'DELETE'});if(r.ok===false)alert(r.message);refresh()}};return d}
+  guardClick(d,async()=>{if(confirm(msg)){const r=await j(url,{method:'DELETE'});if(r.ok===false)alert(r.message);refresh()}});return d}
 const cjkBadge=p=>p==null?'':`<span class="badge ${p>=80?'on':(p>=8?'':'off')}" title="${T('common.cjkCoverageTitle')}">${T('common.cjkCoverage',{pct:p})}</span>`;
 
 /* 决策辅助：不替用户分类（闲书/研读机器判不准），讲清母版库三步走 + 两读器各擅长；拿不准先投一个，母版还在 */
@@ -148,22 +154,29 @@ function stagingList(ul,opts){
     const dl=(dv.native?` <span class="badge on" title="${stale(dv.native)?T('transfer.staging.delivered.native.staleTitle'):T('transfer.staging.delivered.native.title')}">${T('transfer.staging.delivered.native.badge')}${stale(dv.native)?T('transfer.staging.staleSuffix'):''}</span>`:'')+(dv.koreader?` <span class="badge on" title="${stale(dv.koreader)?T('transfer.staging.delivered.koreader.staleTitle'):T('transfer.staging.delivered.koreader.title')}">${T('transfer.staging.delivered.koreader.badge')}${stale(dv.koreader)?T('transfer.staging.staleSuffix'):''}</span>`:'');
     // 渲染自检徽章（投原生后 book-serve 等 xochitl 渲染完核对页数；warn＝整章渲染失败的典型症状）
     const rc=dv.render,rb=!rc?'':rc.status==='ok'?` <span class="badge on" title="${T('transfer.staging.render.okTitle',{pages:rc.pages,expected:rc.expected})}">${T('transfer.staging.render.okBadge',{pages:rc.pages})}</span>`:rc.status==='warn'?` <span class="badge off" title="${T('transfer.staging.render.warnTitle',{pages:rc.pages,expected:rc.expected})}">${T('transfer.staging.render.warnBadge',{pages:rc.pages,expected:rc.expected})}</span>`:rc.status==='pending'?` <span class="badge" title="${T('transfer.staging.render.pendingTitle')}">${T('transfer.staging.render.pendingBadge')}</span>`:` <span class="badge" title="${T('transfer.staging.render.noneTitle')}">${T('transfer.staging.render.noneBadge')}</span>`;
-    li.innerHTML=`<span><b>${it.name}</b> <span class="badge">${fmt}</span> ${st}${dl}${rb} <span class="small">${fmtB(it.bytes)}${hint}</span></span>`;
+    // 异步优化状态：进行中（忙锁，服务端权威——不是这次点击本地临时禁用那种，跨刷新/跨设备都准）；
+    // 完成后短暂展示一次成功/失败（不常驻，避免列表被历史结果占满；失败保留到下次点优化前，方便看清原因）。
+    const oc=dv.optimize,ob=it.busy?` <span class="badge" title="${T('transfer.staging.optimizing.title')}">${T('transfer.staging.optimizing.badge')}</span>`:(oc&&oc.status==='failed'?` <span class="badge off" title="${oc.message}">${T('transfer.staging.optimizeFailed.badge')}</span>`:'');
+    li.innerHTML=`<span><b>${it.name}</b> <span class="badge">${fmt}</span> ${st}${dl}${rb}${ob} <span class="small">${fmtB(it.bytes)}${hint}</span></span>`;
     const right=document.createElement('span');right.style.cssText='display:flex;gap:.4em;flex-wrap:wrap;align-items:center';
     // 禁用态按钮的原因（超限/未安装）以前只写进 title——触屏设备摸不到 hover，等于完全看不到为什么点
     // 不了、该去哪解决（2026-09-09 审计发现）。现在禁用时额外补一行可见小字，跟 title 内容一样，
     // `flex-basis:100%` 让它在 `right`（flex-wrap 容器）里独占一行，不挤在按钮同一行。
     const btn=(t,pri,fn,dis,title,cls)=>{const b=document.createElement('button');b.className='btn'+(pri?' pri':'')+(cls?' '+cls:'');b.textContent=t;if(dis){b.disabled=true;b.title=title||''}else b.onclick=async()=>{b.disabled=true;b.textContent=t+'…';await fn();if(opts.refresh)opts.refresh()};right.appendChild(b);
       if(dis&&title){const hint=document.createElement('span');hint.className='small';hint.style.cssText='flex-basis:100%';hint.textContent=title;right.appendChild(hint)}};
-    if(it.format==='epub'&&!it.optimized)btn(T('transfer.staging.btn.optimize'),false,()=>postJ('/api/books/staging/optimize',{name:it.name,mode:opts.mode()}));
+    // it.busy：这条目正有一个异步优化在后台跑（真机实测大漫画能到分钟级）——删除/落库/加入 KOReader/
+    // 再次优化全部先禁掉，防止跟正在跑的优化并发冲突（2026-09-18 真机反馈：点了优化又点删除）；
+    // busy 状态由服务端权威判定（GET /staging 的 busy 字段），完成后 SSE 推事件、列表自动刷新解禁。
+    const busyTitle=T('transfer.staging.busy.btnTitle');
+    if(it.format==='epub'&&!it.optimized)btn(T('transfer.staging.btn.optimize'),false,()=>postJ('/api/books/staging/optimize',{name:it.name,mode:opts.mode()}),it.busy,busyTitle);
     // 体积门：超过 xochitl /upload 上限的书灰掉按钮（服务端同样拦），提示走电脑分卷
     const tooBig=opts.nativeLimit&&it.bytes>opts.nativeLimit;
-    if(it.format==='epub'||it.format==='pdf')btn(T('transfer.staging.btn.deliverNative'),true,()=>postJ('/api/books/staging/deliver',{name:it.name,keep:!opts.clear(),folder:opts.xFolder()}),tooBig,T('transfer.staging.btn.tooBigTitle',{limit:fmtB(opts.nativeLimit)}));
-    btn(T('transfer.staging.btn.addKoreader'),true,async()=>{const r=await postJ('/api/koreader/books/adopt',{name:it.name,folder:opts.kFolder()});if(r.ok!==false){await postJ('/api/books/staging/mark',{name:it.name,target:'koreader'});if(opts.clear())await postJ('/api/books/staging/delete',{name:it.name})}},!opts.koInstalled,T('transfer.staging.btn.koNotInstalled'));
+    if(it.format==='epub'||it.format==='pdf')btn(T('transfer.staging.btn.deliverNative'),true,()=>postJ('/api/books/staging/deliver',{name:it.name,keep:!opts.clear(),folder:opts.xFolder()}),it.busy||tooBig,it.busy?busyTitle:T('transfer.staging.btn.tooBigTitle',{limit:fmtB(opts.nativeLimit)}));
+    btn(T('transfer.staging.btn.addKoreader'),true,async()=>{const r=await postJ('/api/koreader/books/adopt',{name:it.name,folder:opts.kFolder()});if(r.ok!==false){await postJ('/api/books/staging/mark',{name:it.name,target:'koreader'});if(opts.clear())await postJ('/api/books/staging/delete',{name:it.name})}},it.busy||!opts.koInstalled,it.busy?busyTitle:T('transfer.staging.btn.koNotInstalled'));
     // 单行最多 5 徽章+4 按钮时，"删除"（销毁）跟"优化"（编辑）视觉权重完全一样，只靠文案区分
     // （2026-09-09 审计发现）；`.btn-bad` 早就存在但只用在转写失败按钮上，这里补上，破坏性操作至少
     // 颜色上跟常规操作分开。
-    btn(T('action.delete'),false,async()=>{if(confirm(T('transfer.staging.confirmDeleteOne',{name:it.name})))await postJ('/api/books/staging/delete',{name:it.name})},false,'','btn-bad');
+    btn(T('action.delete'),false,async()=>{if(confirm(T('transfer.staging.confirmDeleteOne',{name:it.name})))await postJ('/api/books/staging/delete',{name:it.name})},it.busy,busyTitle,'btn-bad');
     li.appendChild(right);ul.appendChild(li)});
 }
 
@@ -245,9 +258,9 @@ function renderTransfer(sec){sec.innerHTML=`
     items=d.items||[];const tot=items.reduce((a,b)=>a+b.bytes,0);g('stgcap').textContent=items.length?T('transfer.staging.capSummary',{count:items.length,size:fmtB(tot)}):'';
     const fr=d.freeBytes;const low=fr!=null&&fr<300*1048576;g('stgfree').style.color=low?'var(--bad)':'';g('stgfree').textContent=fr!=null?T('transfer.staging.freeSpace',{free:fmtB(fr),lowWarn:low?T('transfer.staging.lowWarn'):''}):'';
     render()};
-  g('stgpurge').onclick=async()=>{const done=items.filter(it=>it.delivered&&(it.delivered.native||it.delivered.koreader));if(!done.length){alert(T('transfer.staging.noneToPurge'));return}
+  guardClick(g('stgpurge'),async()=>{const done=items.filter(it=>it.delivered&&(it.delivered.native||it.delivered.koreader));if(!done.length){alert(T('transfer.staging.noneToPurge'));return}
     if(!confirm(T('transfer.staging.confirmPurge',{count:done.length})))return;
-    for(const it of done)await postJ('/api/books/staging/delete',{name:it.name});refresh()};
+    for(const it of done)await postJ('/api/books/staging/delete',{name:it.name});refresh()});
   uploader($('.up',sec),()=>'/api/books/staging',()=>({}),BOOK_EXT,()=>refresh(),'/api/books/staging');   // 书籍格式原样入库；选中即按 BOOK_EXT 拦；传 dedupeApi 防重传出重复
   const am=g('artmsg'),au=g('arturl'),ag=g('artgo'),ao=g('artopt');
   // 「同步优化」记在本机（per-viewer 便利态，跟 folderPreset/optmode 那几个一个规矩）；缺省开——网文正文
@@ -321,7 +334,7 @@ const TABS={
      // 会整个跳过（2026-09-09 审计发现）；文件名本身当描述最直接，跟右边视觉上显示的文字一致。
      left.innerHTML=`<img src="/api/wallpapers/${encodeURIComponent(it.name)}" alt="${T('wallpaper.thumbAlt',{name:it.name})}" style="height:3.4em;border-radius:.3em;border:1px solid var(--line);margin-right:.6em;vertical-align:middle">${it.name}`;
      right.insertAdjacentHTML('beforeend',`<span>${fmtB(it.bytes)}</span>`+(cur?`<span class="badge on">${T('wallpaper.current')}</span>`:''));
-     if(!cur){const b=document.createElement('button');b.className='btn';b.textContent=T('wallpaper.use');b.onclick=async()=>{const r=await j('/api/wallpapers/current',{method:'PUT',body:JSON.stringify({name:it.name})});if(r.ok===false){alert(r.message||T('wallpaper.setFailed'));return}refresh()};right.appendChild(b);
+     if(!cur){const b=document.createElement('button');b.className='btn';b.textContent=T('wallpaper.use');guardClick(b,async()=>{const r=await j('/api/wallpapers/current',{method:'PUT',body:JSON.stringify({name:it.name})});if(r.ok===false){alert(r.message||T('wallpaper.setFailed'));return}refresh()});right.appendChild(b);
        right.appendChild(delBtn(T('wallpaper.deleteConfirm',{name:it.name}),'/api/wallpapers/'+encodeURIComponent(it.name),refresh))}}})}}
 };
 
@@ -473,7 +486,7 @@ function renderNotes(sec){sec.innerHTML=`
       row.innerHTML=`<span class="badge">${T(STATUS_NAMES[e.status])||e.status}</span><span class="badge">${DEST_ICON[dv]()}</span>${syncBadges(chSync,dv)}
         <div class="txt">p.${e.page_index+1}${e.chapter_title?' · '+e.chapter_title:''}<br><span class="q">${text}</span>${e.status==='revoked'?`<br><span class="small">${T('notes.trash.revokedHint')}</span>`:''}</div>
         <button class="btn" data-restore>${T('notes.trash.restoreBtn')}</button>`;
-      row.querySelector('[data-restore]').onclick=async()=>{if(!(await restoreOne(e.id)))return;await reloadBook(renderTrash,renderBrowse,renderBook)};
+      guardClick(row.querySelector('[data-restore]'),async()=>{if(!(await restoreOne(e.id)))return;await reloadBook(renderTrash,renderBrowse,renderBook)});
       trashList.appendChild(row)})};
   /* 「导入 md 文档」：单篇 markdown → 一份新设备笔记本文档，独立于条目库（不经浏览/整理/回收站那条
      状态机，见 note-serve::publish::import_markdown）。用户明确要求别塞进「整理」——那边是审阅真被
@@ -503,12 +516,12 @@ function renderNotes(sec){sec.innerHTML=`
     importBtn.disabled=false;
     if(r.ok===false){importStat.textContent='';return}
     importStat.textContent=T('notes.import.done',{name:r.visibleName});importFile.value='';importFileContent='';importFilename.textContent=''};
-  $('#nrestoreall',sec).onclick=async()=>{if(!book)return;
+  guardClick($('#nrestoreall',sec),async()=>{if(!book)return;
     const items=(book.entries||[]).filter(e=>TRASH_STATUSES.includes(e.status));
     if(!items.length){alert(T('notes.trash.noneToRestore'));return}
     if(!confirm(T('notes.trash.confirmRestoreAll',{count:items.length})))return;
     for(const e of items)await restoreOne(e.id);
-    await reloadBook(renderTrash,renderBrowse,renderBook)};
+    await reloadBook(renderTrash,renderBrowse,renderBook)});
   /* 浏览态动作：Mined→Pending（转入笔记）/ Mined→Skipped（不需要），见 ink-serve::triage。三个子视图都要重画（条目跨视图搬家）。 */
   const triage=async(id,action)=>{const r=await postJ(`/api/ink/books/${encodeURIComponent(book.uuid)}/entries/${encodeURIComponent(id)}/${action}`,{});if(r.ok===false)return;
     await reloadBook(renderBrowse,renderBook,renderTrash)};
@@ -518,15 +531,15 @@ function renderNotes(sec){sec.innerHTML=`
   // 全站唯一一处"按钮文案暗示有代价、却没有二次确认"（2026-09-09 审计发现）：清掉页记录会强制整本
   // 重新摄取。实际数据风险不大（已校对文本/条目不会被覆盖，见 notecore::ingest 的增量规则），但操作
   // 本身不常用、容易误触，补一句说清楚"安全在哪"的确认。
-  $('#nrescan',sec).onclick=async()=>{if(!book)return;if(!confirm(T('notes.confirmRescan')))return;await flushPendingText();await postJ(`/api/ink/books/${encodeURIComponent(book.uuid)}/rescan`,{});refresh()};
-  $('#npurge',sec).onclick=async()=>{if(!book)return;
+  guardClick($('#nrescan',sec),async()=>{if(!book)return;if(!confirm(T('notes.confirmRescan')))return;await flushPendingText();await postJ(`/api/ink/books/${encodeURIComponent(book.uuid)}/rescan`,{});refresh()});
+  guardClick($('#npurge',sec),async()=>{if(!book)return;
     const items=(book.entries||[]).filter(e=>TRASH_STATUSES.includes(e.status));
     if(!items.length){alert(T('notes.trash.noneToPurge'));return}
     if(!confirm(T('notes.trash.confirmPurge',{count:items.length})))return;
     await flushPendingText();
     const r=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}/purge`,{method:'POST'});
     if(r.ok===false){alert(r.message||T('notes.trash.purgeFailed'));return}
-    book=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}`);renderTrash();refresh()};
+    book=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}`);renderTrash();refresh()});
   /* 「不要了」（三期）：转 Archived，两处投影都摘掉，条目库里软删留痕（真删靠「回收站」清空）。 */
   const archiveEntry=async(id)=>{if(!confirm(T('notes.confirmArchive')))return;
     const r=await postJ(`/api/ink/books/${encodeURIComponent(book.uuid)}/entries/${encodeURIComponent(id)}/archive`,{});if(r.ok===false)return;
@@ -697,7 +710,7 @@ function renderNotes(sec){sec.innerHTML=`
       const ta=row.querySelector('textarea');
       ta.oninput=ev=>pendingText.set(e.id,ev.target.value);   // 还没失焦确认，先记住最新值，别的动作重画前会先冲掉
       ta.onchange=ev=>{pendingText.delete(e.id);patch(e.id,{text:ev.target.value})};
-      row.querySelector('[data-dest]').onclick=async()=>{const next=DEST_ORDER[(DEST_ORDER.indexOf(dv)+1)%3];await patch(e.id,{destination:next});await reloadBook(renderBook)};
+      guardClick(row.querySelector('[data-dest]'),async()=>{const next=DEST_ORDER[(DEST_ORDER.indexOf(dv)+1)%3];await patch(e.id,{destination:next});await reloadBook(renderBook)});
       row.querySelector('[data-archive]').onclick=()=>archiveEntry(e.id);
       /* 点「重新转写」/「提问」弹出状态和这次调用的消耗（用户反馈"应该弹出状态及当前消耗"，2026-09-08
          第三轮）：先显文字状态（转写中…/提问中…），拿到结果显示"✓ 完成 · token 入X 出Y"或错误，
@@ -810,8 +823,8 @@ function mountModelPanel(root,seg,title,icon,showAuto){
     usageBody.innerHTML=rows.length?rows.map(m=>`<tr${m.active?' style="font-weight:600"':''}><td>${m.label}${m.active?` <span class="badge on">${T('models.usage.active')}</span>`:''}</td><td>${m.calls}${m.failed?` <span style="color:var(--bad)">${T('models.usage.failedCount',{n:m.failed})}</span>`:''}</td><td>${m.promptTokens}/${m.completionTokens}</td><td>${fmtCost(m.costEstimate)}</td></tr>`).join(''):`<tr><td colspan="4" class="small">${T('models.usage.none')}</td></tr>`;
     stat.textContent=rows.find(m=>m.active&&m.lastError)?.lastError?T('models.lastError',{err:rows.find(m=>m.active).lastError}):'';
     const delBtn=keyRow.querySelector('[data-delkey]'),saveBtn=keyRow.querySelector('[data-savekey]');
-    if(delBtn)delBtn.onclick=async()=>{if(!confirm(T('models.confirmDeleteKey',{title})))return;const r=await put({clearKey:true});if(r.ok===false)alert(r.message||T('models.deleteFailed'));refresh()};
-    if(saveBtn)saveBtn.onclick=async()=>{const v=keyRow.querySelector('[data-keyinput]').value.trim();if(!v)return;const r=await put({apiKey:v});if(r.ok===false)alert(r.message||T('common.failed'));refresh()};
+    if(delBtn)guardClick(delBtn,async()=>{if(!confirm(T('models.confirmDeleteKey',{title})))return;const r=await put({clearKey:true});if(r.ok===false)alert(r.message||T('models.deleteFailed'));refresh()});
+    if(saveBtn)guardClick(saveBtn,async()=>{const v=keyRow.querySelector('[data-keyinput]').value.trim();if(!v)return;const r=await put({apiKey:v});if(r.ok===false)alert(r.message||T('common.failed'));refresh()});
   };
   /* 选厂家：不是自定义就直接定位到该厂家第一个模型并原子切换（不用再点一次「确认」）；选自定义只切
      UI（露出手填框），真正生效要等用户填完点「保存自定义」——避免半吊子状态被当成已保存的配置发出去。 */
@@ -820,8 +833,8 @@ function mountModelPanel(root,seg,title,icon,showAuto){
     const first=modelsOf(v)[0];if(!first)return;
     const r=await put({preset:first.id});if(r.ok===false)alert(r.message||T('common.failed'));refresh()};
   presetSel.onchange=async()=>{const r=await put({preset:presetSel.value});if(r.ok===false)alert(r.message||T('common.failed'));refresh()};
-  card.querySelector('[data-savecustom]').onclick=async()=>{const r=await put({preset:'custom',model:modelInp.value.trim(),baseUrl:urlInp.value.trim()});if(r.ok===false)alert(r.message||T('common.failed'));refresh()};
-  card.querySelector('[data-pricesave]').onclick=async()=>{const r=await put({price:{input:parseFloat(priceIn.value)||0,output:parseFloat(priceOut.value)||0}});if(r.ok===false)alert(r.message||T('common.failed'));refresh()};
+  guardClick(card.querySelector('[data-savecustom]'),async()=>{const r=await put({preset:'custom',model:modelInp.value.trim(),baseUrl:urlInp.value.trim()});if(r.ok===false)alert(r.message||T('common.failed'));refresh()});
+  guardClick(card.querySelector('[data-pricesave]'),async()=>{const r=await put({price:{input:parseFloat(priceIn.value)||0,output:parseFloat(priceOut.value)||0}});if(r.ok===false)alert(r.message||T('common.failed'));refresh()});
   refresh();
   return refresh;
 }
@@ -989,13 +1002,13 @@ function renderManage(sec){sec.innerHTML=`
       const right=document.createElement('span');right.style.cssText='display:flex;gap:.4em;align-items:center';
       if(m.installable&&m.installed){
         const t=document.createElement('button');t.className='btn';t.textContent=m.running?T('manage.modules.turnOff'):T('manage.modules.turnOn');
-        t.onclick=async()=>{const r=await j('/api/manage/'+m.seg+'/'+(m.running?'stop':'start'),{method:'POST'});if(r.ok===false)alert(r.message);setTimeout(refresh,600)};right.appendChild(t);
+        guardClick(t,async()=>{const r=await j('/api/manage/'+m.seg+'/'+(m.running?'stop':'start'),{method:'POST'});if(r.ok===false)alert(r.message);setTimeout(refresh,600)});right.appendChild(t);
         const u=document.createElement('button');u.className='btn';u.textContent=T('manage.modules.uninstallBtn');
-        u.onclick=async()=>{if(confirm(T('manage.modules.confirmUninstall',{label}))){const r=await j('/api/manage/'+m.seg+'/uninstall',{method:'POST'});if(r.ok===false)alert(r.message);else alert(T('manage.modules.uninstalled',{label}));setTimeout(()=>location.reload(),800)}};right.appendChild(u);
+        guardClick(u,async()=>{if(confirm(T('manage.modules.confirmUninstall',{label}))){const r=await j('/api/manage/'+m.seg+'/uninstall',{method:'POST'});if(r.ok===false)alert(r.message);else alert(T('manage.modules.uninstalled',{label}));setTimeout(()=>location.reload(),800)}});right.appendChild(u);
       }else if(m.installable){const g=document.createElement('span');g.className='small';g.innerHTML=T('manage.modules.installCmd',{only:m.only});right.appendChild(g)}
       li.append(left,right);ul.appendChild(li)});};
-  $('#allon',sec).onclick=async()=>{const d=await j('/api/manage');for(const m of (d.modules||[]))if(m.installable&&m.installed&&!m.running)await j('/api/manage/'+m.seg+'/start',{method:'POST'});refresh()};
-  $('#alloff',sec).onclick=async()=>{if(!confirm(T('manage.modules.confirmAllOff')))return;const d=await j('/api/manage');for(const m of (d.modules||[]))if(m.installable&&m.installed&&m.running)await j('/api/manage/'+m.seg+'/stop',{method:'POST'});refresh()};
+  guardClick($('#allon',sec),async()=>{const d=await j('/api/manage');for(const m of (d.modules||[]))if(m.installable&&m.installed&&!m.running)await j('/api/manage/'+m.seg+'/start',{method:'POST'});refresh()});
+  guardClick($('#alloff',sec),async()=>{if(!confirm(T('manage.modules.confirmAllOff')))return;const d=await j('/api/manage');for(const m of (d.modules||[]))if(m.installable&&m.installed&&m.running)await j('/api/manage/'+m.seg+'/stop',{method:'POST'});refresh()});
   /* 系统增强/实验室（Track 3，2026-09-09；实验室 2026-09-10 加）：CJK 画线吸附/CJK 手写笔迹优化/
      导入md文档可见性都是真开关（写 reading-qol.json，走同一个 /api/enhance/qol）。battop 拆两处：
      「实验室」卡片只留开关+说明（mountBattopToggleCard），详细数据挪到本函数下面新增的第 5 个
