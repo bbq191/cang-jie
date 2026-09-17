@@ -39,14 +39,15 @@ pub fn router(st: Arc<State>) -> Router {
             Ok(Reply::ok(&serde_json::json!({"ok": true, "message": format!("《{name}》已开始优化，完成后自动刷新"), "async": true})))
         }))
         .post("/staging/deliver", bind(&st, |s, r| {
+            // 异步：耗时的落库（超限漫画按卷拆分要挨个建包+上传，真机能到分钟级）挪到后台线程，这里
+            // 立即回"已开始"；真正结果通过 books/staging 事件 + GET /staging 列表里的 delivered.deliver
+            // 呈现（渲染自检、mark_delivered、keep=false 清母版库都在线程内部完成，见 spawn_deliver）。
             let j = r.json()?;
+            let name = j.str("name")?.to_string();
             // 母版库默认保留（可再投另一读器对照）；folder 空＝配置缺省。
-            let out = s.staging.deliver(j.str("name")?, j.str_or("folder", ""), j.bool_or("keep", true)).map_err(ApiError::bad)?;
-            if let Some(plan) = out.render {
-                s.spawn_render_check(plan); // EPUB：等 xochitl 渲染完核对页数（结果写边车 + 推 books/render）
-            }
-            s.bus.publish("books", "staging");
-            Ok(Reply::ok(&serde_json::json!({"ok": true, "message": out.message})))
+            s.staging.spawn_deliver(&name, j.str_or("folder", ""), j.bool_or("keep", true), s.bus.clone()).map_err(ApiError::bad)?;
+            s.bus.publish("books", "staging"); // 立即推一次，UI 马上看到这条目进入 busy 状态
+            Ok(Reply::ok(&serde_json::json!({"ok": true, "message": format!("《{name}》已开始投递，完成后自动刷新"), "async": true})))
         }))
         // 落库记录：KOReader adopt 在 koreader-serve 完成后由前端调这里记一笔（各服务只写自己的目录）。
         .post("/staging/mark", bind(&st, |s, r| {

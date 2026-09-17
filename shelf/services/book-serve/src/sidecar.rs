@@ -21,12 +21,28 @@ pub struct Delivered {
     /// 最近一次「优化」的结果（`staging::Staging::spawn_optimize` 异步执行时写）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub optimize: Option<OptimizeCheck>,
+    /// 最近一次「落库」的结果（`staging::Staging::spawn_deliver` 异步执行时写，2026-09-19）。
+    /// `keep=false` 成功落库后书本身已从母版库删除、这个字段也就跟着边车一起没了——只有「留母版」
+    /// 或「失败」的落库才会真的被人看到。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deliver: Option<DeliverCheck>,
 }
 
 /// 异步优化的结果：`status` = pending（后台线程跑着）/ ok / failed。`message` 是回执文案
 /// （成功＝跟原同步接口一样的"已优化《...》（...）"；失败＝错误原因）。
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
 pub struct OptimizeCheck {
+    pub status: String,
+    pub message: String,
+    pub at: u64,
+}
+
+/// 异步落库的结果：`status` = pending（后台线程跑着）/ ok / failed。`message` 是回执文案（成功＝跟
+/// 原同步接口一样的"已投入原生书库《...》"；失败＝错误原因）。跟 [`OptimizeCheck`] 字段形状一样，
+/// 分开成两个类型是因为它们是两件独立的事——不想靠一个字段名影射来区分"这次记录的到底是优化还是
+/// 落库"。
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
+pub struct DeliverCheck {
     pub status: String,
     pub message: String,
     pub at: u64,
@@ -95,7 +111,7 @@ mod tests {
         assert_eq!(d.render.as_ref().map(|r| r.pages), Some(3));
         // 旧版边车（无 render/source 字段）照读
         std::fs::write(path_for(&book), br#"{"native":1,"koreader":2}"#).unwrap();
-        assert_eq!(read(&book), Some(Delivered { native: Some(1), koreader: Some(2), render: None, source: None, optimize: None }));
+        assert_eq!(read(&book), Some(Delivered { native: Some(1), koreader: Some(2), render: None, source: None, optimize: None, deliver: None }));
         remove(&book);
         assert!(read(&book).is_none());
         remove(&book);

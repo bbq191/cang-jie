@@ -57,8 +57,9 @@ pub struct StagingEntry {
     /// 落库记录。时间早于 `mtime`（之后又优化过）= 母版已变，UI 标"旧"。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub delivered: Option<Delivered>,
-    /// 是否正有一个异步操作（目前只有「优化」）在这条目上跑——UI 据此禁用删除/落库/再次优化等按钮，
-    /// 防止双击/并发操作同一条目（2026-09-18 真机反馈：优化耗时可能到分钟级，同步阻塞体验像卡死）。
+    /// 是否正有一个异步操作（「优化」或「落库」）在这条目上跑——UI 据此禁用删除/落库/再次优化等按钮，
+    /// 防止双击/并发操作同一条目（2026-09-18 真机反馈：优化耗时可能到分钟级，同步阻塞体验像卡死；
+    /// 2026-09-19 落库同理补上——超限漫画按卷拆分要挨个建包+上传，同样能拖到分钟级）。
     #[serde(default)]
     pub busy: bool,
 }
@@ -113,10 +114,11 @@ pub struct Staging {
     library_folder: String,
     /// 投原生体积门（字节，0=不拦）：xochitl `/upload` 超限会直接断连，先拦下来给指引。
     native_limit: u64,
-    /// 正在跑异步操作（目前只有「优化」）的条目名集合——进程内存态，**不落盘**：进程重启＝没有任何
+    /// 正在跑异步操作（「优化」/「落库」）的条目名集合——进程内存态，**不落盘**：进程重启＝没有任何
     /// 操作还在跑，"忙"状态天然清零是正确语义（不是遗留 bug），比落盘更简单也更不会出现"重启后
-    /// 永久卡忙、谁都清不掉"的死锁。sidecar 里的 `OptimizeCheck.status` 只管"上次结果展示"，
-    /// 不参与这个忙锁判断——两者职责分开。
+    /// 永久卡忙、谁都清不掉"的死锁。sidecar 里的 `OptimizeCheck`/`DeliverCheck`.status 只管"上次
+    /// 结果展示"，不参与这个忙锁判断——两者职责分开。加锁是全局唯一入口（`try_start_busy`），
+    /// 同一条目「优化」跟「落库」互斥——不允许同时跑（两个都要读/写同一份母版库文件）。
     busy: Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
 }
 
@@ -250,10 +252,11 @@ impl Staging {
 
     /// 投入 xochitl 书库：纯复制原字节（不再优化）。原生阅读器只读 EPUB/PDF（CBZ 漫画不投原生，用户定）。`folder` 空＝配置缺省；
     /// `keep=false` 投完从母版库删除。返回回执文案 + EPUB 的渲染自检计划（调用方起线程跑 `render_check::run`）。
+    /// **同步、阻塞**——超限漫画按卷拆分要挨个建包+上传，真机能到分钟级；跟 [`Self::optimize`] 一样，
+    /// HTTP 接口不该直接暴露这个方法，用 [`Self::spawn_deliver`] 走后台线程。不自己管忙锁——忙锁是
+    /// `spawn_deliver` 的职责，这个方法假定调用方已经拿到独占权（内部清母版库走 `remove_unlocked`
+    /// 而不是 `remove`，因为 `remove` 会撞上调用方自己持有的忙锁）。
     pub fn deliver(&self, name: &str, folder: &str, keep: bool) -> Result<DeliverOutcome, String> {
-        if self.is_busy(name) {
-            return Err(format!("《{name}》正在优化中，请等它跑完再落库"));
-        }
         let ct = bookconv::convert::direct_content_type(name)
             .ok_or("原生阅读器只读 EPUB / PDF；此格式请「加入 KOReader」，或在电脑用 shelf push 转成 EPUB")?;
         let p = self.existing(name)?;
@@ -287,9 +290,52 @@ impl Staging {
         };
         let _ = self.mark_delivered(name, Reader::Native);
         if !keep {
-            let _ = self.remove(name);
+            let _ = self.remove_unlocked(name);
         }
         Ok(DeliverOutcome { message, render })
+    }
+
+    /// [`Self::deliver`] 的异步版：同 [`Self::spawn_optimize`] 套路——先做零耗时校验（格式/文件存在），
+    /// 校验过了才加忙锁、起后台线程跑真正耗时的部分。成功返回后 HTTP 层立即回"已开始"，真正结果通过
+    /// `bus` 的 `books`/`staging` 事件 + `GET /staging` 列表里这条目的 `delivered.deliver`
+    /// （[`sidecar::DeliverCheck`]）异步呈现；渲染自检计划、`mark_delivered`、`keep=false` 清母版库
+    /// 全部在 `deliver` 内部完成，不劳 HTTP 层操心。`catch_unwind` 兜底同 `spawn_optimize`。
+    pub fn spawn_deliver(&self, name: &str, folder: &str, keep: bool, bus: Arc<rmsvc_core::events::EventBus>) -> Result<(), String> {
+        bookconv::convert::direct_content_type(name)
+            .ok_or("原生阅读器只读 EPUB / PDF；此格式请「加入 KOReader」，或在电脑用 shelf push 转成 EPUB")?;
+        self.existing(name)?;
+        if !self.try_start_busy(name) {
+            return Err(format!("《{name}》正在处理中，请稍候"));
+        }
+        let now = rmsvc_core::clock::now_secs();
+        let _ = self.set_deliver_check(name, sidecar::DeliverCheck { status: "pending".into(), message: String::new(), at: now });
+        let (this, name, folder) = (self.clone(), name.to_string(), folder.to_string());
+        std::thread::spawn(move || {
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| this.deliver(&name, &folder, keep)))
+                .unwrap_or_else(|_| Err("落库过程内部异常（已捕获，不影响其他操作）".to_string()));
+            let at = rmsvc_core::clock::now_secs();
+            let dc = match &result {
+                Ok(outcome) => sidecar::DeliverCheck { status: "ok".into(), message: outcome.message.clone(), at },
+                Err(e) => sidecar::DeliverCheck { status: "failed".into(), message: e.clone(), at },
+            };
+            let _ = this.set_deliver_check(&name, dc);
+            if let Ok(outcome) = &result {
+                if let Some(plan) = outcome.render.clone() {
+                    let (staging2, bus2, lib2) = (this.clone(), bus.clone(), this.xochitl.library_dir().to_path_buf());
+                    std::thread::spawn(move || crate::render_check::run(&staging2, &bus2, &lib2, &plan));
+                }
+            }
+            this.end_busy(&name);
+            bus.publish("books", "staging");
+        });
+        Ok(())
+    }
+
+    /// 写异步落库结果到边车（书已从母版库删除 → Err，调用方只记日志/静默丢弃；`keep=false` 落库时
+    /// `deliver` 自己已经把书删了，走到这里必然是这种情况，属预期不是异常）。
+    pub fn set_deliver_check(&self, name: &str, dc: sidecar::DeliverCheck) -> Result<(), String> {
+        let p = self.existing(name)?;
+        sidecar::update(&p, |d| d.deliver = Some(dc))
     }
 
     /// 超限 EPUB 漫画的拆分投递：不是漫画 / 拆不出方案 → `Ok(None)`（调用方退回改动前的整本拒绝）；
@@ -375,8 +421,14 @@ impl Staging {
 
     pub fn remove(&self, name: &str) -> Result<(), String> {
         if self.is_busy(name) {
-            return Err(format!("《{name}》正在优化中，请等它跑完再删除"));
+            return Err(format!("《{name}》正在处理中，请稍候再删除"));
         }
+        self.remove_unlocked(name)
+    }
+
+    /// 实际删除，不查忙锁——只给已经自己持有忙锁的调用方（[`Self::deliver`] 的 `keep=false` 清理）用，
+    /// 外部一律走 [`Self::remove`]。
+    fn remove_unlocked(&self, name: &str) -> Result<(), String> {
         let p = self.path_of(name)?;
         sidecar::remove(&p);
         std::fs::remove_file(&p).map_err(|e| format!("删除失败: {e}"))
@@ -583,12 +635,45 @@ mod tests {
         assert!(s.try_start_busy("x.epub"), "第一次加锁应该成功");
         assert!(!s.try_start_busy("x.epub"), "已经忙着，第二次应该失败");
         assert!(s.is_busy("x.epub"));
-        assert!(s.remove("x.epub").unwrap_err().contains("正在优化中"), "忙的时候不该能删");
-        assert!(s.deliver("x.epub", "", true).unwrap_err().contains("正在优化中"), "忙的时候不该能落库");
+        assert!(s.remove("x.epub").unwrap_err().contains("正在处理中"), "忙的时候不该能删");
+        let bus = Arc::new(rmsvc_core::events::EventBus::new());
+        assert!(s.spawn_deliver("x.epub", "", true, bus).unwrap_err().contains("正在处理中"), "忙的时候不该能起第二个落库");
         assert_eq!(s.list().iter().find(|e| e.name == "x.epub").unwrap().busy, true, "GET /staging 列表应体现 busy");
         s.end_busy("x.epub");
         assert!(!s.is_busy("x.epub"));
         assert!(s.remove("x.epub").is_ok(), "解锁后恢复正常");
+    }
+
+    #[test]
+    fn spawn_deliver_runs_in_background_records_result_then_clears_busy() {
+        let t = tempfile::tempdir().unwrap();
+        let s = staging(&t); // xochitl 指向不可达地址（见 staging() 测试 helper），deliver 必然失败——够测异步管线本身
+        s.stage_new("d.pdf", &vec![b'%'; 10]).unwrap();
+        let bus = Arc::new(rmsvc_core::events::EventBus::new());
+        s.spawn_deliver("d.pdf", "", true, bus).unwrap();
+        assert!(s.is_busy("d.pdf"), "spawn 返回时忙锁应已生效");
+        let bus2 = Arc::new(rmsvc_core::events::EventBus::new());
+        assert!(s.spawn_deliver("d.pdf", "", true, bus2).unwrap_err().contains("正在处理中"));
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while s.is_busy("d.pdf") && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(!s.is_busy("d.pdf"), "后台线程应该在超时前跑完并清忙锁");
+        let e = s.list().into_iter().find(|e| e.name == "d.pdf").unwrap();
+        assert!(!e.busy);
+        let dc = e.delivered.and_then(|d| d.deliver).expect("应该写了异步落库结果");
+        assert_eq!(dc.status, "failed", "测试环境 xochitl 不可达，落库必然失败");
+    }
+
+    #[test]
+    fn spawn_deliver_rejects_bad_format_synchronously_without_busy_lock() {
+        let t = tempfile::tempdir().unwrap();
+        let s = staging(&t);
+        s.stage_new("c.cbz", b"PK").unwrap();
+        let bus = Arc::new(rmsvc_core::events::EventBus::new());
+        assert!(s.spawn_deliver("c.cbz", "", true, bus.clone()).unwrap_err().contains("只读 EPUB / PDF"));
+        assert!(!s.is_busy("c.cbz"), "校验失败不该留下忙锁");
+        assert!(s.spawn_deliver("none.epub", "", true, bus).is_err());
     }
 
     #[test]

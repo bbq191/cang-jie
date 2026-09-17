@@ -154,9 +154,14 @@ function stagingList(ul,opts){
     const dl=(dv.native?` <span class="badge on" title="${stale(dv.native)?T('transfer.staging.delivered.native.staleTitle'):T('transfer.staging.delivered.native.title')}">${T('transfer.staging.delivered.native.badge')}${stale(dv.native)?T('transfer.staging.staleSuffix'):''}</span>`:'')+(dv.koreader?` <span class="badge on" title="${stale(dv.koreader)?T('transfer.staging.delivered.koreader.staleTitle'):T('transfer.staging.delivered.koreader.title')}">${T('transfer.staging.delivered.koreader.badge')}${stale(dv.koreader)?T('transfer.staging.staleSuffix'):''}</span>`:'');
     // 渲染自检徽章（投原生后 book-serve 等 xochitl 渲染完核对页数；warn＝整章渲染失败的典型症状）
     const rc=dv.render,rb=!rc?'':rc.status==='ok'?` <span class="badge on" title="${T('transfer.staging.render.okTitle',{pages:rc.pages,expected:rc.expected})}">${T('transfer.staging.render.okBadge',{pages:rc.pages})}</span>`:rc.status==='warn'?` <span class="badge off" title="${T('transfer.staging.render.warnTitle',{pages:rc.pages,expected:rc.expected})}">${T('transfer.staging.render.warnBadge',{pages:rc.pages,expected:rc.expected})}</span>`:rc.status==='pending'?` <span class="badge" title="${T('transfer.staging.render.pendingTitle')}">${T('transfer.staging.render.pendingBadge')}</span>`:` <span class="badge" title="${T('transfer.staging.render.noneTitle')}">${T('transfer.staging.render.noneBadge')}</span>`;
-    // 异步优化状态：进行中（忙锁，服务端权威——不是这次点击本地临时禁用那种，跨刷新/跨设备都准）；
-    // 完成后短暂展示一次成功/失败（不常驻，避免列表被历史结果占满；失败保留到下次点优化前，方便看清原因）。
-    const oc=dv.optimize,ob=it.busy?` <span class="badge" title="${T('transfer.staging.optimizing.title')}">${T('transfer.staging.optimizing.badge')}</span>`:(oc&&oc.status==='failed'?` <span class="badge off" title="${oc.message}">${T('transfer.staging.optimizeFailed.badge')}</span>`:'');
+    // 异步优化/落库状态：进行中（忙锁，服务端权威——不是这次点击本地临时禁用那种，跨刷新/跨设备都准，
+    // 优化跟落库共用同一把忙锁所以徽章文案不分是哪个在跑）；完成后短暂展示一次失败（不常驻，避免列表
+    // 被历史结果占满；失败保留到下次点同一操作前，方便看清原因；成功不额外提示——优化有「已优化」徽章、
+    // 落库有「已投原生」徽章，各自已经是"成功了"的证明，2026-09-19 把落库也接进同一套异步管线时补）。
+    const oc=dv.optimize,dc=dv.deliver;
+    const ob=it.busy?` <span class="badge" title="${T('transfer.staging.processing.title')}">${T('transfer.staging.processing.badge')}</span>`
+      :(oc&&oc.status==='failed'?` <span class="badge off" title="${oc.message}">${T('transfer.staging.optimizeFailed.badge')}</span>`:'')
+      +(dc&&dc.status==='failed'?` <span class="badge off" title="${dc.message}">${T('transfer.staging.deliverFailed.badge')}</span>`:'');
     li.innerHTML=`<span><b>${it.name}</b> <span class="badge">${fmt}</span> ${st}${dl}${rb}${ob} <span class="small">${fmtB(it.bytes)}${hint}</span></span>`;
     const right=document.createElement('span');right.style.cssText='display:flex;gap:.4em;flex-wrap:wrap;align-items:center';
     // 禁用态按钮的原因（超限/未安装）以前只写进 title——触屏设备摸不到 hover，等于完全看不到为什么点
@@ -173,7 +178,10 @@ function stagingList(ul,opts){
     // 超限的 EPUB 漫画服务端会按卷拆分投递（2026-09-18，见 book-serve::Staging::try_deliver_split），
     // 按钮不能提前灰掉，得让服务端判过是不是漫画才知道能不能救；PDF 没有这条救援路径，继续照原样灰。
     const tooBig=opts.nativeLimit&&it.bytes>opts.nativeLimit&&it.format!=='epub';
-    if(it.format==='epub'||it.format==='pdf')btn(T('transfer.staging.btn.deliverNative'),true,async()=>{const r=await postJ('/api/books/staging/deliver',{name:it.name,keep:!opts.clear(),folder:opts.xFolder()});if(r.ok!==false&&r.message)alert(r.message)},it.busy||tooBig,it.busy?busyTitle:T('transfer.staging.btn.tooBigTitle',{limit:fmtB(opts.nativeLimit)}));
+    // 落库改异步同 optimize（2026-09-19：超限漫画按卷拆分要挨个建包+上传，真机能到分钟级，之前同步
+    // 阻塞的体验跟优化改异步前一样像卡死）；点了立即回"已开始"，不再 alert 最终结果——完成状态跟优化
+    // 一样靠徽章看（成功＝「已投原生」时间戳徽章出现，失败＝「上次投递失败」徽章，见上面 ob 那段）。
+    if(it.format==='epub'||it.format==='pdf')btn(T('transfer.staging.btn.deliverNative'),true,()=>postJ('/api/books/staging/deliver',{name:it.name,keep:!opts.clear(),folder:opts.xFolder()}),it.busy||tooBig,it.busy?busyTitle:T('transfer.staging.btn.tooBigTitle',{limit:fmtB(opts.nativeLimit)}));
     btn(T('transfer.staging.btn.addKoreader'),true,async()=>{const r=await postJ('/api/koreader/books/adopt',{name:it.name,folder:opts.kFolder()});if(r.ok!==false){await postJ('/api/books/staging/mark',{name:it.name,target:'koreader'});if(opts.clear())await postJ('/api/books/staging/delete',{name:it.name})}},it.busy||!opts.koInstalled,it.busy?busyTitle:T('transfer.staging.btn.koNotInstalled'));
     // 单行最多 5 徽章+4 按钮时，"删除"（销毁）跟"优化"（编辑）视觉权重完全一样，只靠文案区分
     // （2026-09-09 审计发现）；`.btn-bad` 早就存在但只用在转写失败按钮上，这里补上，破坏性操作至少
