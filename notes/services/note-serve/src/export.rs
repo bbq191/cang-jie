@@ -72,11 +72,16 @@ pub fn export_book(data_dir: &Path, book: &Book, state: &ExportState) -> Result<
 }
 
 /// 导出单章（+ 顺带刷新索引页，因为这一章"有没有内容"可能因此变化）：指纹跟上次导出一样就跳过
-/// （`Unchanged`），没有可导出的条目就清掉旧记录（`Empty`，避免"整理"页一直显示"已同步"）。
+/// （`Unchanged`），这一章真的没有活条目了才清掉旧记录（`Empty`，避免"整理"页一直显示"已同步"）——
+/// 条目还活着、只是这次不想要 Obsidian 这个去处（比如切到 `Notebook`）不算"没有"，不清（2026-09-17
+/// 真机 bug 修复，跟 `publish.rs::generate_chapter` 同一处理，见那边的详细注释；`.md` 文件本身这条
+/// 路径从来不删，只是本地记录清了会让「整理」页的徽章凭空消失）。
 pub fn export_chapter(dir: &Path, book: &Book, chapter_idx: usize, title: &str, state: &ExportState) -> Result<ExportOutcome, String> {
     std::fs::create_dir_all(dir).map_err(|e| format!("建目录 {} 失败: {e}", dir.display()))?;
     let Some(fingerprint) = notecore::export::fingerprint_chapter(book, chapter_idx) else {
-        state.clear(&book.uuid, chapter_idx)?;
+        if !book.chapter_has_live_entries(chapter_idx) {
+            state.clear(&book.uuid, chapter_idx)?;
+        }
         return Ok(ExportOutcome::Empty);
     };
     let existing = state.get(&book.uuid, chapter_idx);
@@ -236,6 +241,22 @@ mod tests {
         emptied.entries.clear();
         export_book(tmp.path(), &emptied, &st).unwrap();
         assert!(st.get("u", 0).is_none(), "章没内容了，旧的\"已同步\"记录该清掉，不然「整理」页会误判成还同步着");
+    }
+
+    /// 2026-09-17 真机 bug 的另一半（对称于 `publish.rs` 的同名场景）：条目没死，只是从
+    /// `Notebook`/`Both` 切成纯笔记本（不再要 Obsidian），`.md` 文件本身这条路径不删，但旧版本
+    /// 会把 `exported_at` 记录也清掉，「整理」页的 Obsidian 徽章因此凭空消失。
+    #[test]
+    fn switching_destination_away_from_obsidian_keeps_the_record_not_ghost_synced() {
+        let tmp = tempfile::tempdir().unwrap();
+        let st = state(tmp.path());
+        export_book(tmp.path(), &book(), &st).unwrap();
+        assert!(st.get("u", 0).is_some(), "先正常导出一次");
+        let mut switched = book();
+        switched.entries[0].destination = notecore::model::Destination::Notebook; // 条目还活着，只是不再要 Obsidian 了
+        let outcomes = export_book(tmp.path(), &switched, &st).unwrap();
+        assert_eq!(outcomes[0], ExportOutcome::Empty, "这次没有条目要 Obsidian，仍然是 Empty");
+        assert!(st.get("u", 0).is_some(), "但条目没死，历史记录不该被清掉——已经导出的 .md 文件还在磁盘上");
     }
 
     #[test]
