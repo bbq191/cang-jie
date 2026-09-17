@@ -101,6 +101,8 @@ pub struct WashReport {
     pub toc_parts_restructured: usize,
     /// `toc.ncx` 里指向外部 DTD 的 `<!DOCTYPE>` 声明被剥掉（0 或 1）。
     pub ncx_doctype_stripped: usize,
+    /// manifest 里 NCX 条目的 `id` 被改成 `"ncx"`（0 或 1）。见 `fix_ncx_manifest_id`。
+    pub ncx_manifest_id_fixed: usize,
 }
 
 pub fn is_html(name: &str) -> bool {
@@ -946,6 +948,52 @@ fn fix_ncx_uid(entries: &mut Vec<Entry>, rep: &mut WashReport) {
     }
 }
 
+/// xochitl 定位目录文件不是走 EPUB 规范的 `<spine toc="IDREF">`，而是在二进制里**硬编码死查**
+/// manifest 里 `id="ncx"` 这个字符串字面量（2026-09-19 反编译 xochitl 二进制坐实：在
+/// `GeneratePdfFromEpub` 调用链里直接挖到这个写死的 3 字符哈希查找 key；`<spine toc="...">`
+/// 只是这条硬编码查找失败时的一个后备分支，实测这条后备分支没能救回《疯探》——原因未查清，
+/// 可能是 OPF 解析阶段没把 `<spine>` 的 `toc` 属性值正确落到后备分支读的那个字段）。《疯探》的
+/// `<item id="toc" href="toc.ncx" .../>` + `<spine toc="toc">` 完全符合规范，但因为 manifest
+/// id 不叫 "ncx"，navMap 里的标题全部提取失败、原生目录入口整个不出现（书本身照常能翻页——
+/// 页面渲染走另一条不依赖这个 id 的路径）。真机验证：拿真实 content.opf 原封不动，只把这一个
+/// id 从 "toc" 改成 "ncx"（`<spine toc="...">` 同步改，否则 idref 悬空），94 条章节标题全部
+/// 恢复（`.epubindex` 从 7188 字节涨到 15558 字节）。幂等；已经叫 "ncx"、或跟另一条目 id 冲突
+/// （改了会撞车，极罕见）时不动。
+fn fix_ncx_manifest_id(entries: &mut Vec<Entry>, rep: &mut WashReport) {
+    let Some(opf) = parse_opf(entries) else { return };
+    if opf.items.contains_key("ncx") {
+        return; // 已经叫 ncx，或者已有另一条目占了这个 id——两种情况都不该动
+    }
+    let text = String::from_utf8_lossy(&entries[opf.index].data).into_owned();
+    static ITEM: OnceLock<Regex> = OnceLock::new();
+    let item_re = ITEM.get_or_init(|| Regex::new(r#"(?s)<item\b[^>]*\bmedia-type="application/x-dtbncx\+xml"[^>]*/?>"#).unwrap());
+    let Some(m) = item_re.find(&text) else { return };
+    static IDATTR: OnceLock<Regex> = OnceLock::new();
+    let id_re = IDATTR.get_or_init(|| Regex::new(r#"\bid="([^"]+)""#).unwrap());
+    let Some(idc) = id_re.captures(m.as_str()) else { return };
+    let old_id = idc[1].to_string();
+    if old_id == "ncx" {
+        return;
+    }
+    let new_tag = m.as_str().replacen(&format!(r#"id="{old_id}""#), r#"id="ncx""#, 1);
+    let mut new_text = text.clone();
+    new_text.replace_range(m.range(), &new_tag);
+    // <spine toc="OLD_ID"> 同步改，不然这个属性从此指向一个不存在的 id（没有这个属性的书——极少
+    // 见——说明它压根没靠 spine 的 toc 属性定位目录，不用管）。
+    static SPINE_TOC: OnceLock<Regex> = OnceLock::new();
+    let spine_re = SPINE_TOC.get_or_init(|| Regex::new(r#"(<spine\b[^>]*\btoc=")([^"]+)(")"#).unwrap());
+    if let Some(c) = spine_re.captures(&new_text) {
+        if &c[2] == old_id {
+            let whole = c.get(0).unwrap();
+            let replaced = format!("{}ncx{}", &c[1], &c[3]);
+            let range = whole.range();
+            new_text.replace_range(range, &replaced);
+        }
+    }
+    entries[opf.index].data = new_text.into_bytes();
+    rep.ncx_manifest_id_fixed += 1;
+}
+
 /// 剥 `toc.ncx` 里指向外部 DTD 的 `<!DOCTYPE ncx PUBLIC "..." "http://www.daisy.org/...dtd">` 声明
 /// （2026-09-19 真机对照《疯探》vs《雪人》坐实的第二个差异——dtb:uid 修一致后原生目录入口仍然不见，
 /// 两本书剩下的结构性区别就是这条：《疯探》的 `toc.ncx` 带这个外部 DTD 引用，《雪人》没有，也没有
@@ -1063,7 +1111,9 @@ fn auto_toc(entries: &mut Vec<Entry>, mode: AutoToc, rep: &mut WashReport) {
     let nav = build_nav(&headings, dir_of(&nav_path)).into_bytes();
     let mut text = String::from_utf8_lossy(&entries[opf.index].data).into_owned();
     if opf.ncx.is_none() {
-        text = text.replacen("</manifest>", &format!(r#"<item id="cj-ncx" href="{}" media-type="application/x-dtbncx+xml"/></manifest>"#, relative_to(&opf.dir, &ncx_path)), 1);
+        // id 必须叫 "ncx"（不是随便起的标记）——xochitl 定位目录文件靠二进制里硬编码死查这个
+        // 字符串字面量，见 `fix_ncx_manifest_id` 的注释。
+        text = text.replacen("</manifest>", &format!(r#"<item id="ncx" href="{}" media-type="application/x-dtbncx+xml"/></manifest>"#, relative_to(&opf.dir, &ncx_path)), 1);
         static SPINE: OnceLock<Regex> = OnceLock::new();
         let sp = SPINE.get_or_init(|| Regex::new(r#"<spine\b([^>]*)>"#).unwrap());
         text = sp.replace(&text, |c: &regex::Captures| {
@@ -1071,7 +1121,7 @@ fn auto_toc(entries: &mut Vec<Entry>, mode: AutoToc, rep: &mut WashReport) {
             if attrs.contains("toc=") {
                 format!("<spine{attrs}>")
             } else {
-                format!("<spine{attrs} toc=\"cj-ncx\">")
+                format!("<spine{attrs} toc=\"ncx\">")
             }
         }).into_owned();
     }
@@ -1155,6 +1205,7 @@ pub fn wash_entries(entries: &mut Vec<Entry>, opts: &WashOpts) -> Result<WashRep
         }
     }
     add_wash_css_entry(entries, &css_path, &wash_css(opts));
+    fix_ncx_manifest_id(entries, &mut rep);
     restructure_existing_toc_parts(entries, opts.auto_toc, &mut rep);
     auto_toc(entries, opts.auto_toc, &mut rep);
     fix_ncx_uid(entries, &mut rep);
@@ -1320,7 +1371,7 @@ mod tests {
         let nav = s(&v, "OEBPS/nav.xhtml");
         assert!(nav.contains(r#"<li><a href="text/c1.xhtml#cj-toc-1">第一章</a><ol><li><a href="text/c1.xhtml#s1">一节</a></li></ol></li>"#), "{nav}");
         let opf = s(&v, "OEBPS/content.opf");
-        assert!(opf.contains(r#"toc="cj-ncx""#) && opf.contains(r#"properties="nav""#), "{opf}");
+        assert!(opf.contains(r#"toc="ncx""#) && opf.contains(r#"properties="nav""#), "{opf}");
         assert!(s(&v, "OEBPS/text/c1.xhtml").contains(r#"<h1 id="cj-toc-1">"#));
         assert_eq!(toc_entry_count(&v), 6, "ncx 3 + nav 3");
         // 已有目录 → IfMissing 不动
@@ -1355,6 +1406,35 @@ mod tests {
         ];
         let rep2 = wash_entries(&mut w, &WashOpts::default()).unwrap();
         assert_eq!(rep2.ncx_uid_fixed, 0, "已经一致不该误报修复过");
+    }
+
+    #[test]
+    fn ncx_manifest_id_renamed_to_ncx_and_spine_toc_synced() {
+        // 真机回归（2026-09-19，《疯探》，反编译 xochitl 二进制坐实）：dtb:uid、DOCTYPE 都修一致
+        // 后原生目录入口依然不出现——根因是 xochitl 定位目录文件硬编码死查 manifest 里 id="ncx"，
+        // 不是走 `<spine toc="IDREF">`；《疯探》完全合规的 `id="toc"` + `<spine toc="toc">`
+        // 因此找不到。只改这一个 id 名字，真机验证 94 条章节标题全部恢复。
+        let opf = r#"<package version="2.0"><metadata><dc:title>疯探</dc:title></metadata><manifest><item id="toc" href="toc.ncx" media-type="application/x-dtbncx+xml"/><item id="c1" href="text/c1.xhtml" media-type="application/xhtml+xml"/></manifest><spine toc="toc"><itemref idref="c1"/></spine></package>"#;
+        let mut v = vec![
+            e("content.opf", opf),
+            e("toc.ncx", r#"<ncx><navMap><navPoint><navLabel><text>第一章</text></navLabel><content src="text/c1.xhtml"/></navPoint></navMap></ncx>"#),
+            e("text/c1.xhtml", "<html><body><p>正文</p></body></html>"),
+        ];
+        let rep = wash_entries(&mut v, &WashOpts::default()).unwrap();
+        assert_eq!(rep.ncx_manifest_id_fixed, 1);
+        let opf_out = s(&v, "content.opf");
+        assert!(opf_out.contains(r#"<item id="ncx" href="toc.ncx""#), "manifest 里 ncx 条目的 id 该改成 \"ncx\": {opf_out}");
+        assert!(opf_out.contains(r#"<spine toc="ncx">"#), "spine 的 toc 属性该同步指向新 id: {opf_out}");
+        assert!(!opf_out.contains(r#"id="toc""#), "旧 id 不该残留: {opf_out}");
+        // 已经叫 "ncx" 时原样不动、不误报（幂等）
+        let already_ok = r#"<package version="2.0"><metadata><dc:title>书</dc:title></metadata><manifest><item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/><item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/></manifest><spine toc="ncx"><itemref idref="c1"/></spine></package>"#;
+        let mut w = vec![
+            e("content.opf", already_ok),
+            e("toc.ncx", r#"<ncx><navMap><navPoint><navLabel><text>第一章</text></navLabel><content src="c1.xhtml"/></navPoint></navMap></ncx>"#),
+            e("c1.xhtml", "<html><body><p>正文</p></body></html>"),
+        ];
+        let rep2 = wash_entries(&mut w, &WashOpts::default()).unwrap();
+        assert_eq!(rep2.ncx_manifest_id_fixed, 0, "已经叫 ncx 不该误报修复过");
     }
 
     #[test]

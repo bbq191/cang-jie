@@ -1373,7 +1373,65 @@ DOCTYPE 修复后的最新那份）。dtb:uid（§03az）+ DOCTYPE（§03ba）�
 调试产物，全程有完整 uuid 记录，不是用户上传的内容，判断上不构成"删用户数据"的红线）。当前
 设备上只保留 `07b33e06`（dtb:uid+DOCTYPE 已修但目录入口仍不出现的那份，供后续继续排查用）。
 
-## 05｜真机待办（2026-09-06 刷新；2026-09-09 补记 §03ad 漫画超限分支复验、§03ae i18n 架子、§03af UI 人性化批量修复、§03aj 管理二级 tab+系统增强开关；2026-09-10 补记 §03an 正文全量 i18n、§03aq 网文留白排查；2026-09-16 补记 §03ar KOReader 高亮/生词只读端点、§03as notes_vault 配置项、§03at gateway/shelf-gateway 双单元问题（用户拍板后已删旧符号链接修复，真机验证过）、§03au 状态提示停留时间修复；2026-09-17 补记 §03av EPUB 线四原则功能层真机验证通过，发现 `trim_margins` 真机性能问题；2026-09-18 补记 §03aw 脚注撤回复核+异步优化全链路真机通+防双击，发现 Anchor 模式嵌套 `<p>` 潜在问题；2026-09-18 补记 §03ax 脚注返回浮标已有解（更正 §03aw 的不准确记录）、裁边真机核实无误、超限漫画按卷拆分投原生真机通、用户拍照发现拆分卷原生留白+已修复待复验；2026-09-18 补记
+## 03bc｜《疯探》目录入口真正根因：反编译 xochitl 二进制坐实——硬编码死查 manifest `id="ncx"`，不走 `<spine toc="IDREF">`（2026-09-19，真机通，✅已解决）
+
+接上节 §03bb 暂停的排查。用户明确表态"继续投入去反编译"，遂正式对真机拉回的 `xochitl` 二进制
+（ARM64、Qt6/C++、stripped，`/usr/bin/xochitl`）做反编译。
+
+**方法**：本地无现成的 Ghidra 逆向工程；Ghidra 12.1 已经把 Jython 脚本支持整个砍掉、headless
+`-postScript` 默认要求 PyGhidra（Java 内嵌 CPython，需要 `jep` 原生库，环境没现成），装
+Jython 扩展也救不回来（`PyGhidraScriptProvider` 仍然抢注 `.py` 后缀）。改用 PyGhidra 官方
+Python API（`pyghidra.start()` 用 `JPype` 从 Python 侧拉起 JVM，不依赖 `jep`）离线跑一遍完整
+自动分析（237 秒，AARCH64 ELF、23.6MB），再用同一份 Python 会话反复按地址反编译目标函数、查
+调用者/被调者——这条工具链本身值得记一笔，以后设备上其它闭源可执行文件的反编译可以直接复用。
+
+**关键发现**：以 `strings`（含 UTF-16LE，Qt `QStringLiteral` 常量按 UTF-16 编译进二进制、
+普通 `strings` 默认按 8-bit 扫描会漏掉）定位到一批 EPUB 解析相关的调试字符串（`Cannot find
+<navMap> element`、`Found metadata for Epub:`、`Invalid spine item at line` 等），顺藤摸到
+xochitl 内部真正的 EPUB→PDF 转换/索引构建管线（`epubcontext.cpp`，函数名已 strip，用
+`FUN_xxxxxx` 占位）：`container.xml` 找 `content.opf` → 解析 OPF（metadata/manifest/spine/
+guide，全程宽松，单条 `<itemref>`/`<guide><reference>` 解析失败只打 warning、不影响整体
+返回成功）→ 生成 PDF 的同时**遍历 `toc.ncx` 的 navMap 构建标题索引**。定位到给 navMap 找
+`toc.ncx` 文件这一步的反编译代码里，直接挖出一个**硬编码的 3 字符字符串字面量 "ncx"**——
+用它去哈希查找 OPF **manifest 的 `id` 哈希表**，找 `id="ncx"` 的那一条 `<item>`；只有查不到
+时才会退回到读 `<spine toc="IDREF">` 属性这条规范路径（后备分支实测没能救回《疯探》，原因
+未继续深挖——反编译到这一步已经足够定位+验证根因，没必要为一个用不上的后备路径继续投入）。
+
+《疯探》真实 `content.opf` 里 NCX 条目写的是完全合规的 `<item id="toc" href="toc.ncx" .../>`
++ `<spine toc="toc">`（EPUB2 规范只要求 `<spine>` 的 `toc` 属性能正确指向 NCX 条目，从没规定
+manifest 里这个 id 必须叫什么）——但因为不叫字面量 "ncx"，xochitl 的硬编码查找找不到它，
+navMap 标题提取整体失败，原生目录入口消失，书本身照常能翻页（渲染走另一条不依赖这个 id 的
+路径，跟索引构建是两条独立代码路径）。回头看 §03az 的《雪人》测试夹具，manifest id 写的正好
+是 `id="ncx"`——纯属这本书/这个测试夹具恰好撞对了约定俗成的命名（Calibre 等主流工具默认就把
+NCX 条目叫 "ncx"），从没人往"这个 id 名字本身有讲究"这个方向想过，之前 20+ 轮真机二分测试
+全部聚焦在 `content.opf` 的*内容*字段（描述文本/linear 属性/声明顺序），没人测过*id 命名*
+这个维度。
+
+**验证**（两轮，从窄到宽）：
+1. 最小精确验证：拿《疯探》真实 `content.opf` 原封不动，只改一行——`id="toc"` → `id="ncx"`，
+   `<spine toc="toc">` 同步改成 `<spine toc="ncx">`，其余一字节不动，真机投递。`.epubindex`
+   从 7188 字节（无标题）涨到 15558 字节，94 条标题全部正确提取（"第二章 影音室"、
+   "第三章 切入点"……逐条核对无误）。
+2. 端到端全链路验证：把 `fix_ncx_manifest_id` 实现写进 `bookconv::wash`（检测 manifest 里
+   `media-type="application/x-dtbncx+xml"` 那条 `<item>` 的 `id`，不是 "ncx" 就改成 "ncx"、
+   同步 `<spine toc="...">`；已经叫 "ncx" 或者会跟别的 id 冲突时原样不动，幂等），
+   `bookconv`/`book-serve` 136 个 host 测试全过，交叉编译部署真机 `book-serve`（备份旧二进制、
+   md5 核对一致、`systemctl restart` 后 `is-active=active`/`NRestarts=0`），走真实
+   `POST /staging/optimize` + `/staging/deliver` API（不是手工 patch）重新处理同一本
+   《疯探》——回执带上"修复目录条目标识符"，拉回的 `.epubindex` 同样 15558 字节、标题同样
+   全部正确，跟第 1 步手工验证结果逐字节一致。
+
+**顺带修的第二处同源 bug**：`wash::auto_toc`（书完全没有目录、从标题自动生成 `toc.ncx` 那条
+分支）自己插入的 manifest 条目一直写的是 `id="cj-ncx"`（当初起名图个"标记出这是我们自己插的"，
+没意识到这个 id 字符串本身就是 xochitl 硬编码查找的那个 key）——这是当前代码里一个真实存在、
+还没被用户撞见过的活 bug：任何触发自动生成目录这条分支的书，原生目录入口一样会因为同样的原因
+不出现。这次一并改成 `id="ncx"`，不依赖后续 `fix_ncx_manifest_id` 二次扫描修正。
+
+**结论**：dtb:uid（§03az）+ DOCTYPE（§03ba）两处修复依然保留——都是真实、有 EPUB 规范/
+交互健壮性依据的独立问题，只是都不是《疯探》这本书失败的根因；manifest id 硬编码查找
+才是。`OPTIMIZE_VERSION` 13→14。
+
+## 05｜真机待办（2026-09-06 刷新；2026-09-09 补记 §03ad 漫画超限分支复验、§03ae i18n 架子、§03af UI 人性化批量修复、§03aj 管理二级 tab+系统增强开关；2026-09-10 补记 §03an 正文全量 i18n、§03aq 网文留白排查；2026-09-16 补记 §03ar KOReader 高亮/生词只读端点、§03as notes_vault 配置项、§03at gateway/shelf-gateway 双单元问题（用户拍板后已删旧符号链接修复，真机验证过）、§03au 状态提示停留时间修复；2026-09-17 补记 §03av EPUB 线四原则功能层真机验证通过，发现 `trim_margins` 真机性能问题；2026-09-18 补记 §03aw 脚注撤回复核+异步优化全链路真机通+防双击，发现 Anchor 模式嵌套 `<p>` 潜在问题；2026-09-18 补记 §03ax 脚注返回浮标已有解（更正 §03aw 的不准确记录）、裁边真机核实无误、超限漫画按卷拆分投原生真机通、用户拍照发现拆分卷原生留白+已修复待复验；2026-09-19 补记 §03ay 落库改异步+《疯探》"目录被误删"根因修复、§03az dtb:uid 根因修复+《雪人》分部目录重建真机通、§03ba 真机内存 OOM 危机→流式优化架构真机通+DOCTYPE 第二根因、§03bb《疯探》目录入口深度排查暂停在"确认是 content.opf 但未锁定触发点"；2026-09-19 补记 §03bc 反编译 xochitl 二进制坐实真正根因——硬编码死查 manifest `id="ncx"`，真机验证通过，问题✅已解决（`OPTIMIZE_VERSION` 14）
 §03ay 落库改异步（补齐防双击）真机全链路通、《疯探》目录页被老代码 `remove_toc_from_spine`
 误删的根因坐实+修复+真机验证通，设备上留了一份重复《疯探》待处理；2026-09-19 补记 §03az
 《疯探》"无目录入口"根因是 dtb:uid 跟 OPF 标识符不一致（真机对照《雪人》坐实）+已修复，字节

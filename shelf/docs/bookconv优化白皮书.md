@@ -117,6 +117,19 @@ EPUB Generator"产物）——navMap 结构再完整，reMarkable 原生目录�
 目录入口（不是空列表）。`wash::fix_ncx_uid` 无条件跑一遍修正，`build_ncx` 自己生成的 ncx 也
 接真实标识符而不是硬编码占位值。
 
+**2026-09-19 补充（manifest id 硬编码，真正根因，见 §10 v14）**：dtb:uid（v12）+ DOCTYPE（v13）
+都修完，《疯探》原生目录入口真机复测依然不出现——反编译 xochitl 本体（ARM64 stripped 二进制，
+方法见白皮书主线 §03bc）坐实真正根因：xochitl 定位 `toc.ncx` 不是走 EPUB 规范的
+`<spine toc="IDREF">`，而是在代码里**硬编码死查 manifest 里 `id="ncx"` 这个字符串字面量**，
+只有查不到才退回读 `<spine toc="...">`（后备分支实测没能救回《疯探》）。《疯探》完全合规的
+`<item id="toc" .../>` + `<spine toc="toc">` 因此被当成"没有 toc.ncx"，navMap 标题提取
+整体失败（书照常能翻页，渲染走另一条不依赖这个 id 的路径）。`wash::fix_ncx_manifest_id`
+检测 NCX 条目的 manifest id，不是 "ncx" 就改（`<spine toc="...">` 同步改）；`auto_toc` 自己
+生成的 NCX 条目原来写的是 `id="cj-ncx"`（同一个坑，之前没人意识到这个 id 字符串本身有讲究），
+一并改成 `id="ncx"`。真机验证：拿真实 `content.opf` 只改这一行，`.epubindex` 从 7188 字节
+（94 条标题全空）涨到 15558 字节（标题全部正确提取）；走真实 `/staging/optimize`+`/deliver`
+全链路复测结果逐字节一致。
+
 **2026-09-17 两处补充（EPUB 线原则①）**：① `split_numbered_title` 启发式——标题文本"标题+编号"结尾（如原书「第一章 1」，正则匹配空白/全角空格分隔的纯数字或中文数字编号）拆成父级标题 + 缩进子级编号两条目、同指一个锚点（`split_numbered_titles` 对 `collect_headings` 的结果做后处理，子级 `level = 父级+1`，天然兼容 `dense_ranks` 的嵌套机制）；编号 >99 判定是印刷页码残留（如「第一章 237」），不拆，避免误伤。② `fallback_spine_toc`：全书连 h1–h6 都没有（`headings.is_empty()`）时，退化到按 spine 文件边界逐条生成，条目文本取该文件正文首段（截断 24 字）、纯图片页/取不到文本用"正文 N"占位；多数 spine 文件没有可提取文本（疑似漫画/画册）时整个不生成，避免灌一堆无信息量条目——那种书更适合走 `comic_detect` 的漫画路径。
 
 ## 07｜格式转换 `convert`（纯 Rust，零 C）
@@ -170,6 +183,7 @@ reMarkable 的 EPUB 渲染器闭源，行为多次跟 host / 常识不一致。�
 | **v11** | 删 `remove_toc_from_spine`——早期启发式会把书内 HTML 目录页当"跟原生 TOC 冗余"从 spine 摘掉，真书《疯探》坐实这违背原则①"保留目录页"（§03）。 |
 | **v12** | `wash::fix_ncx_uid` 同步 `toc.ncx` 的 `dtb:uid` 跟 OPF `dc:identifier`——真机对照《疯探》（不一致，原生目录入口整个消失）vs《雪人》（一致，入口正常）坐实；`build_ncx` 也从硬编码 `"cj-wash"` 改接真实标识符（§06）。 |
 | **v13** | `wash::strip_ncx_doctype` 剥 `toc.ncx` 外部 DTD 引用——dtb:uid 修一致后《疯探》目录入口真机复测仍不出现，跟《雪人》剩下唯一结构性差异是这个（daisy.org DTD 引用），真机隧道环境很可能因解析器联网取 DTD 失败让整份 NCX 被判不可用（§06）。 |
+| **v14** | `wash::fix_ncx_manifest_id`——反编译 xochitl 坐实真正根因：硬编码死查 manifest `id="ncx"`，不走 `<spine toc="IDREF">`；`auto_toc` 自建 NCX 条目的 `id="cj-ncx"` 同源 bug 一并改掉（§06）。 |
 
 （幂等门修：`is_optimized` 曾只看标记存在不看版本 → 旧版本重传被整步跳过、拿不到新改进；改按 `optimized_version()` 与 `OPTIMIZE_VERSION` 直接比对判断是否当前版本。⚠ 2026-09-06 代码体检删了当时封装这个比对的 `optimize::is_current_version`——它本身没调用方，真正在用的比对早已内联在 `book-serve::staging.rs` 判 full/core/old 那处，此处曾把这层薄封装错记成"关键改动"，特此更正。）
 
@@ -226,6 +240,11 @@ DTD 引用（v13，§10/§14）**，已剥离+真机字节验证通，**视觉�
 本书复测优化成功、内存全程 8-53MB，见 §14。**当前真机待验证清单**：①《疯探》目录入口这轮（两处
 根因都修完）是否真的出现；② 552MB《镖人》优化产物投原生阅读器后翻页/渲染是否正常——这个体积/
 章节数远超此前任何测试样本，是全新的观感验证盲区。
+
+**2026-09-19 同一天，①已解决**：dtb:uid/DOCTYPE 都修完仍不出现，用户明确表态"继续投入去
+反编译"——反编译 xochitl 本体坐实真正根因是硬编码死查 manifest `id="ncx"`（v14，§06/§10/
+书架白皮书 §03bc 完整方法论记录），`wash::fix_ncx_manifest_id` 修复，真机 94 条标题全部恢复。
+②（552MB《镖人》投原生阅读器翻页/渲染是否正常）仍待验证，未变。
 
 ## 14｜内存架构：流式 vs 整本内存（`optimize_epub_file_streaming`，2026-09-19）
 

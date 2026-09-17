@@ -557,6 +557,9 @@ fn optimize_note(rep: &optimize::Report) -> String {
         if w.ncx_doctype_stripped > 0 {
             note.push_str("，剥离目录外部DTD引用");
         }
+        if w.ncx_manifest_id_fixed > 0 {
+            note.push_str("，修复目录条目标识符");
+        }
     }
     note.push('）');
     note
