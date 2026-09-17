@@ -38,7 +38,7 @@
 - **第二遍**：`preserve_relink_footnotes`（按 `FootnoteMode`）→ `break_footnote_cycles` → `fix_duokan_markers` → `inline_remote_images` → 图片降采样 → `boost_text_contrast` → `dedup_ids_in_chapter`（跨章 id 去重防撞车）→ 打包。
 - **幂等标记**：产物写 `META-INF/com.cangjie.optimized` = `OPTIMIZE_VERSION`。`optimized_version()` 读标记判是否当前版本（母版库列表据此标 full / core / old）；旧版本重传**重优化升级**（`double_optimize_*` 测试坐实重优化不翻倍脚注）。
 
-`FootnoteMode`：`Anchor`（缺省，注释移章末 + 同章锚点跳转 + 原生「返回」浮标；weread/pkm/第三方书历史行为）· `Inline`（就地内联 `〔…〕` 常显，第三方书历史行为）· `ParagraphEnd`（2026-09-17 起 native→xochitl 设备侧优化用，见 §04/§09）。
+`FootnoteMode`：`Anchor`（缺省，注释移章末 + 同章锚点跳转 + 原生「返回」浮标；weread/pkm/第三方书历史行为，2026-09-17 起 native→xochitl 设备侧优化也统一用它）· `Inline`（就地内联 `〔…〕` 常显，第三方书历史行为）。⚠ 2026-09-17 当天曾短暂加过第三种 `ParagraphEnd`（注释移到引用它的段落末尾），真机用真实转换书验证后用户反馈"不是当前页最下面，是段末"——EPUB 流式重排做不到真正的页底部定位，撤回并整个删除，见 §04。
 
 ## 02｜清洗层 wash（`wash_entries`，对标 Calibre）
 
@@ -70,8 +70,9 @@
 
 **FootnoteMode**：
 - `Anchor`：marker 改**同章朴素文字锚点** `<a href="#nX">1</a>`（xochitl 可点铁律：只有同章朴素文字锚点可点，`<a><img></a>` 不可点，注释区必须在 `</body>` 内），注释移章末 `<div class="footnotes">`，原生浮标返回。
-- `Inline`：注释文字就地内联 `<span class="cj-fnote">〔纯文本〕</span>` 始终可见、不跳转——xochitl **无弹窗脚注**（穷尽真机判死）。⚠ 必须**丢弃原 marker**（若 marker 是图标 `<img>` 会按固有尺寸巨大重复，§09①）+ **去标签取纯文本**（防块级标签塞进 `<p>` 致严格 XML 整章白屏，§09 双 id）。2026-09-17 起设备侧优化改用 `ParagraphEnd`，`Inline` 只剩第三方书历史行为在用——它"始终可见"是靠塞进句子中间实现的，会打断阅读，不是理想默认。
-- `ParagraphEnd`（2026-09-17 新增，`paragraph_end_footnotes`，独立函数，不走 `preserve_relink_footnotes`）：不跳转、不建反向锚点，在"含有该引用的整段"结束后插 `<hr/>` + 注释块，marker 原地改纯 `<sup>N</sup>`（丢弃原图标，同 `Inline` 的处理）。编号/去重按**段落内**作用域（`resolve_paragraph_note` 每段重置 `assigned`/`counter`，同段重复引用同一注释只列一次；跨段各自独立编号，不是重复）。只处理落在 `<p>...</p>` 内的 marker（正则匹配段落边界，非 DOM 树）；不在 `<p>` 内的少见排版会被 `doc_seen` 全章级去重表识别出"没被任何段落收走"，退化插到章末兜底——避免 `collect_footnote_notes` 搬走的注释文字没人接住、静默丢失。
+- `Inline`：注释文字就地内联 `<span class="cj-fnote">〔纯文本〕</span>` 始终可见、不跳转——xochitl **无弹窗脚注**（穷尽真机判死）。⚠ 必须**丢弃原 marker**（若 marker 是图标 `<img>` 会按固有尺寸巨大重复，§09①）+ **去标签取纯文本**（防块级标签塞进 `<p>` 致严格 XML 整章白屏，§09 双 id）。第三方书历史行为在用，"始终可见"是靠塞进句子中间实现的，会打断阅读，不是设备侧默认。
+
+**已删除的尝试：`ParagraphEnd`（2026-09-17，上线又下线，同一天内）**——注释移到"含有该引用的整段"结束后（`<hr/>` + 注释块，marker 改纯 `<sup>N</sup>`，不跳转不建反向锚点），编号/去重按段落内作用域。功能层面完全按设计跑通、host 单测 + 真机 API 级测试都过了（真机产物字节精确核对过位置对）。**但真机用真实转换书测试后，用户反馈"注释并未在当前页最下面，而是在注释标记的段末"**——这才发现设计初衷有个没对齐的地方：用户要的"当前页最下面"指的是**物理翻页后的那一页**，"段末"只是我这边对"就近可见"的一种近似实现，两者在用户预期里是不同的东西。核实后确认这不是能靠调整实现修好的——EPUB 是流式重排文本，"这段文字落在第几页"是阅读器翻页时才计算出来的运行时结果，做书阶段（也就是这个优化器能碰到的唯一阶段）根本不知道最终会落在哪页，没有办法把"这条注释属于第 N 页"这种信息预先写进源文件。真正能做到"注释卡死在某个物理页底部"的只有固定版式排版（每页内容和物理位置在制作时就定死，即 PDF 线的领地），不是 EPUB 格式的重排机制原生能表达的语义。用户确认后拍板"改回章末 Anchor 模式"，`FootnoteMode::ParagraphEnd`/`paragraph_end_footnotes`/`resolve_paragraph_note` 连同测试整个删除——不留作死代码，因为这不是"部分正确、以后也许还用得上"的方案，是已经证实不符合预期的方案。
 
 `normalize_self_hrefs`：Calibre 写法 `part0004.html#x` 写在 `part0004.html` 里 → 先归一成裸锚 `#x`，否则被误当跨文件脚注。
 
@@ -150,9 +151,9 @@ reMarkable 的 EPUB 渲染器闭源，行为多次跟 host / 常识不一致。�
 
 **同源**：设备 `book-serve` 母版库「优化」与 host `epub-optimize` 二进制都调 `optimize_epub_with`；host `wash_epub.sh` 末步叠加同一 `epub-optimize`。host 只多一层 Calibre 级 CSS 拍平 + 非 EPUB/PDF 转码 + 质量门。
 
-**CLI `epub-optimize`**（`cargo build --release -p bookconv --bin epub-optimize`）：`[--no-wash] [--keep-spacing] [--auto-toc] [--footnote-anchor] [--check] [--require-toc] 输入.epub 输出.epub`。缺省 = 清洗 + 优化 + 脚注 `ParagraphEnd`（2026-09-17 前缺省是 `Inline`，跟着设备端一起切，见下）；`--footnote-anchor` 切到 `Anchor`；`Inline` 目前没有 CLI 入口，只在测试里还在用（保留是因为逻辑/测试都还在，不是被删掉，只是没有任何生产路径默认选它了）。退出码 0 成功 / 1 用法 / 2 优化失败（输入不动）/ 3 质量门未过。
+**CLI `epub-optimize`**（`cargo build --release -p bookconv --bin epub-optimize`）：`[--no-wash] [--keep-spacing] [--auto-toc] [--footnote-anchor] [--check] [--require-toc] 输入.epub 输出.epub`。缺省 = 清洗 + 优化 + 脚注 `Anchor`（2026-09-17 之前缺省是 `Inline`，同一天先改成 `ParagraphEnd` 又撤回改成 `Anchor`，见 §04 那段完整记录）；`--footnote-anchor` 现在是 no-op（缺省已经是它），继续留着只是不破坏已有脚本调用；`Inline` 目前没有 CLI 入口，只在测试里还在用。退出码 0 成功 / 1 用法 / 2 优化失败（输入不动）/ 3 质量门未过。
 
-**目标脚注**：2026-09-17 起母版库「优化」（`book-serve::Staging::optimize`）与 host CLI `epub-optimize` 缺省**都**从 `Inline` 切到 `ParagraphEnd`（书架白皮书 §03av；CLI 那处改动是本节发现 CLI 缺省仍是旧的 `Inline`、为保持"host/端一致"这条设计原则顺手一起改的，不是遗漏后来补的两次改动）；KOReader 从母版库纯复制拿到的也是同一份产物。**2026-09-06 用 Standard Ebooks《Gulliver's Travels》（7 处 noteref）两器对照过 `Inline` 观感正常**（书架白皮书 §05 Phase E ④）——`ParagraphEnd` 是否同样观感正常在两个读器上都还没有真机对照过，属于 §13 待办清单的一部分；weread/pkm 线仍用 `Anchor` 兜底，未受这次调整影响。
+**目标脚注**：母版库「优化」（`book-serve::Staging::optimize`）与 host CLI `epub-optimize` 缺省都是 `Anchor`——2026-09-17 这天经历了 `Inline`→`ParagraphEnd`→`Anchor` 两次切换（§04 记录了完整的真机验证驱动决策过程），最终定案跟 weread/pkm 线保持一致。**2026-09-06 用 Standard Ebooks《Gulliver's Travels》（7 处 noteref）两器对照过 `Inline` 观感正常**（书架白皮书 §05 Phase E ④），但那是旧缺省；`Anchor` 在两个读器上的观感目前没有专门对照过，注释跳章末后"没法点回来、要手动翻回去"是已知限制（reMarkable 会吞互指锚点对），不是这次改动引入的新问题。
 
 **格式收窄（2026-09-17，书架白皮书 §03av）**：`shelf push` 不再用 Calibre 把 AZW3/MOBI/AZW/PRC/FB2/TXT 自动转 EPUB——那条转换代码在 `host_prepare()` 里整段删除，这几个格式现在原样透传给母版库，被 `rmsvc_core::formats::BOOK_EXTS`（已不含它们）拒收。跟 `optimize_epub_with`/`wash`/`epub-optimize` 本身无关，是上游路由层的改动，纯 EPUB 输入的洗+优化行为不受影响。
 
@@ -174,7 +175,10 @@ reMarkable 的 EPUB 渲染器闭源，行为多次跟 host / 常识不一致。�
 ~~英文书拉丁排版（1.2em）真机观感；KOReader 里 Inline 内联脚注能否接受~~（两项 2026-09-06 均闭环：§03y 配方 + Gulliver 对照）；PDF 结构化重排（host `pdf_reflow_move.py`）杂志观感已通（财新 v3；v4 2026-09-06：署名/图注/链接分类、节题 h3、标题分档，非句末段 15%→2.7%，书架白皮书 §05）；清洗层同日：书 css 非零 text-indent 统一改本书缩进（KOReader 与 xochitl 同缩进）+ 拉丁首段顶格（终版：`<div class="cj-flush">` 剥书类 + `.cj-flush{text-indent:0.01em;…;}`，xochitl 七条 CSS 规则见书架白皮书 §03y）+ 中文 br 分行书段落化/剥段首全角空格 + 所有 css 声明尾分号，学术论文多列/公式待验；公式图 intrinsic 放大阈值。诊断法：xochitl 导入渲染 `<uuid>.pdf` scp 回 host、pymupdf 量列宽/图尺寸/outline/内链 kind。
 
 **2026-09-17 EPUB 线四原则（书架白皮书 §03av 详记）功能层真机验证已过**——四条原则各构造一本
-测试 EPUB，真实 HTTP 上传+优化+解包核对产物字节，`ParagraphEnd` 脚注/颜色保留/TOC 拆分/漫画
-裁边全部行为正确；意外发现 `trim_margins` 在真机上明显慢（25 页 2200×3400 测试漫画耗时 2 分
-19 秒），已记入 §05 待办。**仍待用户拿真书在设备屏幕上肉眼确认视觉效果**（处理产物字节正确不
-等于渲染出来观感正常），按 §03av 那条清单走。
+测试 EPUB，真实 HTTP 上传+优化+解包核对产物字节，颜色保留/TOC 拆分/漫画裁边全部行为正确；
+意外发现 `trim_margins` 在真机上明显慢（25 页 2200×3400 测试漫画耗时 2 分 19 秒），已记入
+§05 待办。**脚注这一项后续又出过一轮真机反馈**：`ParagraphEnd` 段末块虽然功能层验证通过，但
+用户拿真实转换书测试后发现不是想要的效果（要的是"当前页最下面"，段末块给的是"引用它的段落
+后面"，EPUB 流式重排做不到前者），已撤回改回 `Anchor`，见 §04 完整记录——**不要照抄这条已经
+被删除的历史结论**。**仍待用户拿真书在设备屏幕上肉眼确认视觉效果**（处理产物字节正确不等于
+渲染出来观感正常），按 §03av 那条清单走。
