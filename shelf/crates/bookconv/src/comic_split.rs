@@ -14,6 +14,7 @@ use crate::epub::{assemble, Book, BookMeta, Chapter, Resource};
 use crate::wash::{dir_of, is_html, parse_opf, posix_norm, resolve, Entry};
 use regex::Regex;
 use std::collections::HashMap;
+use std::io::Write;
 use std::sync::OnceLock;
 
 fn navpoint_event_re() -> &'static Regex {
@@ -224,7 +225,53 @@ pub fn build_piece(entries: &[Entry], start: usize, end: usize, title: &str, boo
         chapters,
         resources,
     };
-    assemble(&mut book)
+    let bytes = assemble(&mut book)?;
+    repack_with_comic_css(bytes)
+}
+
+/// `assemble()`吐出来的页面没有任何 CSS——真机拿真实拆出来的一卷在原生阅读器打开量过
+/// （`<uuid>.pdf` pymupdf 测页面 303×538pt，图片实际只占 (17.8,35.5)-(284.8,447.9)，
+/// 上下左右都空出一圈，底部尤其空出 90pt），根因是 xochitl 默认文档边距没被清零、`<img>`
+/// 没有撑满容器的样式——KOReader 对比之下是真正贴边满屏。补一段外链 `comic.css`（**只用裸元素
+/// 选择器**，xochitl CSS 解析器脆，见书架白皮书 §03y 七条实测规则）：`body{margin:0;padding:0}`
+/// 清零默认边距，`img{width:100%;height:auto}` 让图片撑满可用宽度。每章头部插入 `<link>`
+/// （xochitl 只认外链 css，不认内联 `<style>`，同一条规则）。
+fn repack_with_comic_css(bytes: Vec<u8>) -> Result<Vec<u8>, String> {
+    let mut entries = crate::check::read_entries(&bytes)?;
+    const CSS_PATH: &str = "OEBPS/comic.css";
+    const CSS: &str = "body{margin:0;padding:0;}\nimg{width:100%;height:auto;}\n";
+    entries.push(Entry { name: CSS_PATH.into(), data: CSS.as_bytes().to_vec() });
+    for e in entries.iter_mut() {
+        if e.name.starts_with("OEBPS/chap_") && e.name.ends_with(".xhtml") {
+            if let Ok(html) = std::str::from_utf8(&e.data) {
+                let linked = html.replacen("</head>", "<link rel=\"stylesheet\" type=\"text/css\" href=\"comic.css\"/></head>", 1);
+                e.data = linked.into_bytes();
+            }
+        } else if e.name == "OEBPS/content.opf" {
+            if let Ok(opf) = std::str::from_utf8(&e.data) {
+                let patched = opf.replacen("</manifest>", "<item id=\"comic-css\" href=\"comic.css\" media-type=\"text/css\"/></manifest>", 1);
+                e.data = patched.into_bytes();
+            }
+        }
+    }
+    let mut out = Vec::new();
+    {
+        let cursor = std::io::Cursor::new(&mut out);
+        let mut z = zip::ZipWriter::new(cursor);
+        let stored = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+        // mimetype 必须首个、STORED（EPUB 规范）。
+        if let Some(i) = entries.iter().position(|e| e.name == "mimetype") {
+            let m = entries.remove(i);
+            z.start_file("mimetype", stored).map_err(|e| e.to_string())?;
+            z.write_all(&m.data).map_err(|e| e.to_string())?;
+        }
+        for e in &entries {
+            z.start_file(&e.name, stored).map_err(|e| e.to_string())?;
+            z.write_all(&e.data).map_err(|e| e.to_string())?;
+        }
+        z.finish().map_err(|e| e.to_string())?;
+    }
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -328,7 +375,6 @@ mod tests {
     #[test]
     fn build_piece_produces_valid_epub_with_remapped_images() {
         let entries = make_multivol(&[2], 50);
-        let opf = parse_opf(&entries).unwrap();
         let bytes = build_piece(&entries, 0, 2, "卷0", "t0").unwrap();
         let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
         assert!(zip.by_name("OEBPS/images/0001.jpg").is_ok(), "第一页图片应该被收进新资源目录");
@@ -337,5 +383,26 @@ mod tests {
         let mut c1 = String::new();
         zip.by_name("OEBPS/chap_0001.xhtml").unwrap().read_to_string(&mut c1).unwrap();
         assert!(c1.contains(r#"src="images/0001.jpg""#), "{c1}");
+    }
+
+    #[test]
+    fn build_piece_injects_external_comic_css_link_and_manifest_entry() {
+        // 真机拿拆出来的一卷在原生阅读器打开、量 <uuid>.pdf 坐实：assemble() 吐出来的页面没有清零
+        // 默认文档边距，图片也没有撑满容器样式，导致页面四周（尤其底部）空出一大圈——跟 KOReader
+        // 贴边满屏的效果不一致。补一段外链 comic.css 治本，这条测试钉住"外链+manifest 都要有"
+        // （xochitl 只认外链 css，漏了 manifest 声明也可能不生效，两处都不能省，见书架白皮书 §03y）。
+        let entries = make_multivol(&[2], 50);
+        let bytes = build_piece(&entries, 0, 2, "卷0", "t0").unwrap();
+        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+        use std::io::Read;
+        let mut css = String::new();
+        zip.by_name("OEBPS/comic.css").expect("应该有外链 comic.css").read_to_string(&mut css).unwrap();
+        assert!(css.contains("body{margin:0;padding:0;}") && css.contains("img{width:100%;height:auto;}"), "{css}");
+        let mut c1 = String::new();
+        zip.by_name("OEBPS/chap_0001.xhtml").unwrap().read_to_string(&mut c1).unwrap();
+        assert!(c1.contains(r#"<link rel="stylesheet" type="text/css" href="comic.css"/>"#), "章节头部应该链外链 css: {c1}");
+        let mut opf = String::new();
+        zip.by_name("OEBPS/content.opf").unwrap().read_to_string(&mut opf).unwrap();
+        assert!(opf.contains(r#"<item id="comic-css" href="comic.css" media-type="text/css"/>"#), "manifest 也要声明这个资源: {opf}");
     }
 }
