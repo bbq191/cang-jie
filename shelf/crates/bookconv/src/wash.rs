@@ -4,8 +4,11 @@
 //! 规则（与 Calibre 参数一一对应）：
 //! 1. 伪 DRM 剥离（= `strip_pseudo_drm.py`）：`META-INF/encryption.xml` 只列样式/字体/脚本 → 丢弃这些文件 +
 //!    encryption.xml + OPF manifest 项；列了正文/图片/导航 = 真 DRM → **报错停下**。
-//! 2. CSS 锁剥离（= `--filter-css font-family,font-size,color,background-color,text-align`）：独立 .css、`<style>`、
-//!    `style=""` 三处都剥；补优化器 `strip_font_locks` 只剥内联字体锁的缺口。
+//! 2. CSS 锁剥离（**只剥字号/字体锁**：独立 .css、`<style>`、`style=""` 三处剥 `font-family`/`font-size`/`font`；
+//!    补优化器 `strip_font_locks` 只剥内联字体锁的缺口）：2026-09-17 前 `color`/`background-color`/`text-align`
+//!    也在剥离名单里，那是照抄 Calibre `--filter-css` 的通用参数、不是针对 xochitl 验证过的必要行为——EPUB 线
+//!    原则明确要求保留原书颜色/加粗等元素样式，只解锁字号，故收窄。`background`/`background-image` 仍然剥
+//!    （见规则⑧，xochitl 平铺背景图盖正文是坐实的渲染 bug，跟字号锁无关，不能一起放开）。
 //! 3. 边距归零（= `--margin-* 0`）：body/html/@page 的 margin/padding 删掉，并注入 `html,body{margin:0;padding:0}`。
 //! 4. 段距归零 + 首行缩进（= `--remove-paragraph-spacing --remove-paragraph-spacing-indent-size 2`）：p/div 的
 //!    上下 margin/padding 归零（左右保留：blockquote/列表缩进不伤），`p{text-indent:2em}`；`keep_para_spacing` 时
@@ -74,7 +77,11 @@ const WASH_CSS_NAME: &str = "cangjie-wash.css";
 // background / background-image：书常在 body/分卷页用 CSS 背景图（装饰纹样、分卷插画）。xochitl **无视
 // no-repeat / background-size** → 把背景图**平铺**满页盖住正文（真机《飘》body.fen 的 `background:url() no-repeat`
 // 被铺成多幅）。剥掉背景图声明即净页（章头 <img> 装饰不受影响，仍保留）。@font-face 的 src:url() 由 filter_css 豁免。
-pub const DEFAULT_FILTER_PROPS: &[&str] = &["font-family", "font-size", "font", "color", "background-color", "background-image", "background", "text-align"];
+// ⚠ 2026-09-17 起不再剥 `color`/`background-color`/`text-align`——EPUB 线原则要求保留原书颜色/加粗等元素样式，
+// 只解锁字号；这三项此前只是照抄 Calibre `--filter-css` 通用参数，没有真机验证过是必须剥的。放开后如果书里有
+// "深底浅字"高亮块，Paper Pro Move 彩色 e-ink 屏在低对比场景下可能比剥离前更难读——`boost_text_contrast()`
+// 目前只处理文字颜色/字重，不处理背景色对比度，真机验证时要专门挑一本带彩色底纹的书测。
+pub const DEFAULT_FILTER_PROPS: &[&str] = &["font-family", "font-size", "font", "background-image", "background"];
 /// 伪 DRM 允许加密的扩展名（= strip_pseudo_drm.py SAFE_EXTS）。
 pub const PSEUDO_DRM_SAFE_EXTS: &[&str] = &[".css", ".ttf", ".otf", ".woff", ".woff2", ".js"];
 const WASH_MARK: &str = "cj-wash";
@@ -774,7 +781,7 @@ fn build_ncx(items: &[(u8, String, String, String)], ncx_dir: &str, title: &str)
                 s.push_str("</navPoint>");
             }
         }
-        let href = format!("{}#{}", relative_to(ncx_dir, path), frag);
+        let href = toc_href(&relative_to(ncx_dir, path), frag);
         s.push_str(&format!(r#"<navPoint id="np{}" playOrder="{}"><navLabel><text>{}</text></navLabel><content src="{}"/>"#, i + 1, i + 1, xml_escape(t), xml_escape(&href)));
         depth = d;
     }
@@ -803,7 +810,7 @@ fn build_nav(items: &[(u8, String, String, String)], nav_dir: &str) -> String {
             s.push_str("</li>");
         }
         depth = d;
-        let href = format!("{}#{}", relative_to(nav_dir, path), frag);
+        let href = toc_href(&relative_to(nav_dir, path), frag);
         s.push_str(&format!(r#"<li><a href="{}">{}</a>"#, xml_escape(&href), xml_escape(t)));
     }
     for _ in 0..depth {
@@ -813,12 +820,90 @@ fn build_nav(items: &[(u8, String, String, String)], nav_dir: &str) -> String {
     s
 }
 
+/// 目录条目的 href：`frag` 为空（正文没有锚点可指，退化条目直接指文件本身）时不带 `#`。
+fn toc_href(rel_path: &str, frag: &str) -> String {
+    if frag.is_empty() { rel_path.to_string() } else { format!("{rel_path}#{frag}") }
+}
+
+/// 标题文本"标题+编号"拆分启发式（EPUB 线原则①：原书标题跟小节/章节编号拼在一行，如「第一章 1」，
+/// TOC 要显示成两级——父级标题 + 缩进子级编号）。只在编号看起来像"小节序号"而非"印刷页码残留"时拆：
+/// 数字编号要求 ≤99（页码常见三位数以上，且小节编号在同一本书里通常不会突然跳到几十以上）；中文数字编号
+/// （〇一二三四五六七八九十百千，常见于章节内小节"之一/之二"变体的「1」以中文数字呈现）不做位数限制，
+/// 因为原书不会用中文数字写页码。标题与编号之间的分隔允许普通空格与全角空格（U+3000）。
+fn split_numbered_title(title: &str) -> Option<(String, String)> {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    let re = RE.get_or_init(|| Regex::new(r#"^(.+?)[ \u{3000}\t]+([0-9]+|[〇一二三四五六七八九十百千]+)$"#).unwrap());
+    let c = re.captures(title.trim())?;
+    let head = c[1].trim();
+    let num = &c[2];
+    if head.is_empty() {
+        return None;
+    }
+    if let Ok(n) = num.parse::<u32>() {
+        if n == 0 || n > 99 {
+            return None; // 三位数以上大概率是印刷页码残留，不是小节编号，原样保留避免拆错
+        }
+    }
+    Some((head.to_string(), num.to_string()))
+}
+
+/// 对已收集的标题条目做"标题+编号"拆分：命中的条目拆成父级(标题) + 子级(编号)两条，子级 level = 父级+1、
+/// 指向同一锚点（不是两个可跳转目标，只是给 TOC 一个视觉分级，跟 `dense_ranks` 的嵌套机制天然兼容）。
+fn split_numbered_titles(items: Vec<(u8, String, String, String)>) -> Vec<(u8, String, String, String)> {
+    let mut out = Vec::with_capacity(items.len());
+    for (level, title, path, frag) in items {
+        match split_numbered_title(&title) {
+            Some((head, num)) => {
+                out.push((level, head, path.clone(), frag.clone()));
+                out.push((level.saturating_add(1), num, path, frag));
+            }
+            None => out.push((level, title, path, frag)),
+        }
+    }
+    out
+}
+
+/// 无任何 h1–h6 语义标题时的兜底 TOC：退化到按 spine 文件边界逐条生成，条目文本取该文件正文首个非空
+/// 文本片段（截断），纯图片页/取不到文本则用"正文 N"占位——保证"没有目录的书优化后至少有可用目录"这个
+/// 底线，而不是无声放弃。只在**多数** spine 文件确实有可提取文本时才生成，避免给纯图片书（漫画/画册）
+/// 灌一堆没有信息量的"正文 N"占目录——那种书更适合交给漫画识别走专门路径，不该占用这条兜底。
+fn fallback_spine_toc(entries: &[Entry], spine: &[String], nav_doc: Option<&String>) -> Vec<(u8, String, String, String)> {
+    let pages: Vec<&String> = spine.iter().filter(|p| Some(*p) != nav_doc).collect();
+    if pages.is_empty() {
+        return Vec::new();
+    }
+    let texts: Vec<Option<String>> = pages
+        .iter()
+        .map(|p| {
+            let e = entries.iter().find(|e| &&e.name == p)?;
+            let html = std::str::from_utf8(&e.data).ok()?;
+            static BODY: OnceLock<Regex> = OnceLock::new();
+            let body_re = BODY.get_or_init(|| Regex::new(r#"(?is)<body\b[^>]*>(.*?)</body>"#).unwrap());
+            let inner = body_re.captures(html).map(|c| c[1].to_string()).unwrap_or_default();
+            let t = plain_text(&inner);
+            if t.is_empty() { None } else { Some(t) }
+        })
+        .collect();
+    let with_text = texts.iter().filter(|t| t.is_some()).count();
+    if with_text * 2 < pages.len() {
+        return Vec::new(); // 多数页面没有可提取文本(疑似漫画/画册)，不生成兜底目录
+    }
+    pages.iter().zip(texts.iter()).enumerate().map(|(i, (p, t))| {
+        let title = match t {
+            Some(s) => s.chars().take(24).collect::<String>(),
+            None => format!("正文 {}", i + 1),
+        };
+        (1u8, title, (*p).clone(), String::new())
+    }).collect()
+}
+
 fn auto_toc(entries: &mut Vec<Entry>, mode: AutoToc, rep: &mut WashReport) {
     if mode == AutoToc::Off || (mode == AutoToc::IfMissing && toc_entry_count(entries) > 0) {
         return;
     }
     let Some(opf) = parse_opf(entries) else { return };
     let headings = collect_headings(entries, &opf.spine, opf.nav_doc.as_ref());
+    let headings = if headings.is_empty() { fallback_spine_toc(entries, &opf.spine, opf.nav_doc.as_ref()) } else { split_numbered_titles(headings) };
     if headings.is_empty() {
         return;
     }
@@ -974,7 +1059,7 @@ mod tests {
     #[test]
     fn decl_filter_and_spacing() {
         let f: Vec<String> = DEFAULT_FILTER_PROPS.iter().map(|s| s.to_string()).collect();
-        assert_eq!(filter_decls("font-family:'A';color:#333;text-indent:1em;font:12px x", &f, Spacing::Keep), "text-indent:1em;");
+        assert_eq!(filter_decls("font-family:'A';color:#333;text-indent:1em;font:12px x", &f, Spacing::Keep), "color:#333;text-indent:1em;", "color 不再剥离（EPUB 线保留原书颜色）");
         assert_eq!(filter_decls("margin:1em 2em;padding-top:3px;padding-left:4px", &f, Spacing::Vertical), "margin:0 2em;padding-left:4px;");
         assert_eq!(filter_decls("margin:1em 2em 3em 4em", &f, Spacing::Vertical), "margin:0 2em 0 4em;");
         assert_eq!(filter_decls("margin:5pt", &f, Spacing::Vertical), "margin:0 5pt;");
@@ -994,9 +1079,9 @@ mod tests {
         let css = "@font-face{font-family:X;src:url(x.ttf)} body{margin:5pt;color:#333} p{margin:1em 0;text-align:justify;text-indent:0} @media print{ p{margin-top:2em} } .c{margin:1em}";
         let out = filter_css(css, &o);
         assert!(out.contains("@font-face{font-family:X;src:url(x.ttf)}"), "{out}");
-        assert!(out.contains("body{}"), "{out}");
-        assert!(out.contains(" p{margin:0 0;text-indent:0;}"), "{out}");
-        assert!(out.contains("p{}"), "media 内规则也处理: {out}");
+        assert!(out.contains("body{color:#333;}"), "margin 因 Spacing::All 剥、color 保留(不再剥): {out}");
+        assert!(out.contains(" p{margin:0 0;text-align:justify;text-indent:0;}"), "text-align 保留(不再剥): {out}");
+        assert!(out.contains("p{}"), "media 内规则也处理(单独 margin-top 整条丢弃，与 color/text-align 剥离与否无关): {out}");
         assert!(out.contains(".c{margin:1em;}"), "类选择器不动: {out}");
         let k = WashOpts { keep_para_spacing: true, ..Default::default() };
         assert!(filter_css("p{margin:1em 0}", &k).contains("p{margin:1em 0;}"));
@@ -1020,9 +1105,9 @@ mod tests {
         let (out, dups) = wash_html(html, &o);
         assert_eq!(dups, 1);
         assert!(out.contains(r#"<p id="a" style="margin-left:2em;">x</p>"#), "{out}");
-        assert!(out.contains("<div>y</div>"), "空 style 整个删: {out}");
+        assert!(out.contains(r#"<div style="color:gray;">y</div>"#), "color 不再剥离、style 非空保留: {out}");
         assert!(out.contains("<body>"), "{out}");
-        assert!(out.contains("<style>p{margin:0 1em;}</style>"), "1em 四边→上下归零左右保留: {out}");
+        assert!(out.contains("<style>p{color:#333;margin:0 1em;}</style>"), "color 保留 + 1em 四边→上下归零左右保留: {out}");
         // wash_html 不再注入内联 <style>（排版规则改外链 css，由 wash_entries 注）——见 external_css_injected_and_linked。
         assert!(!out.contains(&format!(r#"class="{WASH_MARK}""#)), "不该再注入内联 cj-wash: {out}");
         // 旧版内联 cj-wash 块重洗时清掉
@@ -1236,5 +1321,61 @@ mod tests {
         let ncx = build_ncx(&items, "", "T");
         assert!(ncx.contains(r#"<navPoint id="np1" playOrder="1"><navLabel><text>A</text></navLabel><content src="c.xhtml#a"/><navPoint id="np2""#), "{ncx}");
         assert!(ncx.contains(r#"</navPoint></navPoint></navPoint><navPoint id="np4""#), "C 收 3 层再开 D: {ncx}");
+    }
+
+    #[test]
+    fn split_numbered_title_splits_section_number_not_page_number() {
+        assert_eq!(split_numbered_title("第一章 1"), Some(("第一章".into(), "1".into())));
+        assert_eq!(split_numbered_title("第一章　1"), Some(("第一章".into(), "1".into())), "全角空格分隔也要认");
+        assert_eq!(split_numbered_title("第一章 三"), Some(("第一章".into(), "三".into())), "中文数字编号");
+        assert_eq!(split_numbered_title("第一章 237"), None, "三位数以上大概率是印刷页码残留，不拆");
+        assert_eq!(split_numbered_title("第一章"), None, "没有编号尾巴不拆");
+        assert_eq!(split_numbered_title("1984"), None, "整体是数字不是「标题+编号」结构");
+        assert_eq!(split_numbered_title("第一章 0"), None, "0 不是有效小节编号");
+    }
+
+    #[test]
+    fn auto_toc_splits_numbered_titles_into_nested_entries() {
+        let mut v = vec![
+            e("content.opf", r#"<package version="3.0"><metadata><dc:title>书</dc:title></metadata><manifest><item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="c1"/></spine></package>"#),
+            e("c1.xhtml", "<html><body><h1>第一章 1</h1><p>a</p><h1>后记</h1></body></html>"),
+        ];
+        wash_entries(&mut v, &WashOpts::default()).unwrap();
+        let nav = s(&v, "nav.xhtml");
+        assert!(
+            nav.contains(r#"<li><a href="c1.xhtml#cj-toc-1">第一章</a><ol><li><a href="c1.xhtml#cj-toc-1">1</a></li></ol></li><li><a href="c1.xhtml#cj-toc-2">后记</a></li>"#),
+            "「第一章 1」拆成父子两级、都指向同一锚点；「后记」没有编号尾巴不拆: {nav}"
+        );
+    }
+
+    #[test]
+    fn auto_toc_fallback_when_no_headings_at_all() {
+        // 全书没有 h1–h6，退化到按 spine 文件生成目录（取正文首段文本当标题）
+        let mut v = vec![
+            e("content.opf", r#"<package version="3.0"><metadata><dc:title>书</dc:title></metadata><manifest><item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/><item id="c2" href="c2.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="c1"/><itemref idref="c2"/></spine></package>"#),
+            e("c1.xhtml", "<html><body><p>从前有座山，山里有座庙。</p></body></html>"),
+            e("c2.xhtml", "<html><body><p>庙里有个老和尚在讲故事。</p></body></html>"),
+        ];
+        let rep = wash_entries(&mut v, &WashOpts::default()).unwrap();
+        assert_eq!(rep.toc_generated, 2, "无标题也要生成兜底目录");
+        let nav = s(&v, "nav.xhtml");
+        assert!(nav.contains(r#"<a href="c1.xhtml">从前有座山，山里有座庙。</a>"#), "无锚点、直接指文件本身: {nav}");
+        assert!(nav.contains(r#"<a href="c2.xhtml">庙里有个老和尚在讲故事。</a>"#), "{nav}");
+        let ncx = s(&v, "toc.ncx");
+        assert!(ncx.contains(r#"content src="c1.xhtml"/"#), "ncx 同样不带 # : {ncx}");
+    }
+
+    #[test]
+    fn auto_toc_fallback_skipped_when_mostly_imageonly_pages() {
+        // 多数页是纯图片(无可提取文本)——疑似漫画/画册，不该被兜底目录灌一堆"正文 N"
+        let mut v = vec![
+            e("content.opf", r#"<package version="3.0"><metadata><dc:title>书</dc:title></metadata><manifest><item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/><item id="c2" href="c2.xhtml" media-type="application/xhtml+xml"/><item id="c3" href="c3.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="c1"/><itemref idref="c2"/><itemref idref="c3"/></spine></package>"#),
+            e("c1.xhtml", r#"<html><body><img src="p1.jpg"/></body></html>"#),
+            e("c2.xhtml", r#"<html><body><img src="p2.jpg"/></body></html>"#),
+            e("c3.xhtml", "<html><body><p>唯一一页有字。</p></body></html>"),
+        ];
+        let rep = wash_entries(&mut v, &WashOpts::default()).unwrap();
+        assert_eq!(rep.toc_generated, 0, "多数纯图片页不生成兜底目录");
+        assert!(!v.iter().any(|x| x.name == "nav.xhtml"));
     }
 }
