@@ -96,6 +96,9 @@ pub struct WashReport {
     pub dup_id_tags_collapsed: usize,
     /// `toc.ncx` 的 `dtb:uid` 跟 OPF 标识符不一致、被改到一致（0 或 1——一本书只有一个 ncx）。
     pub ncx_uid_fixed: usize,
+    /// 书自带的扁平目录（"第X部　编号　章名"排版惯例）被重建成两级后的条目数；0＝没检测到这种
+    /// 惯例、原样没动。
+    pub toc_parts_restructured: usize,
 }
 
 pub fn is_html(name: &str) -> bool {
@@ -941,6 +944,82 @@ fn fix_ncx_uid(entries: &mut Vec<Entry>, rep: &mut WashReport) {
     }
 }
 
+/// OPF `<dc:title>` 的纯文本内容，取不到时兜底"目录"。
+fn opf_book_title(entries: &[Entry], opf_index: usize) -> String {
+    let t = String::from_utf8_lossy(&entries[opf_index].data);
+    static T: OnceLock<Regex> = OnceLock::new();
+    T.get_or_init(|| Regex::new(r#"(?s)<dc:title[^>]*>(.*?)</dc:title>"#).unwrap()).captures(&t).map(|c| plain_text(&c[1])).unwrap_or_else(|| "目录".into())
+}
+
+/// 分部标题前缀："第X部/卷/篇/辑"（X 为阿拉伯数字或中文数字），后面可能紧跟同一条目剩下的文本
+/// （如"第一部　01　雪人"里"01　雪人"是这条目自己的章节标识，不是下一条的）。
+fn part_prefix_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r#"^(第[0-9〇一二三四五六七八九十百千]+[部卷篇辑])[ \u{3000}\t]*(.*)$"#).unwrap())
+}
+
+/// 从已有 `toc.ncx` 的 navMap 里按文档顺序拍平抽取 (标题, content src) ——不管当前层级，只服务
+/// `restructure_existing_toc_parts` 这种"重新看一眼已有目录内容决定要不要升级结构"的场景。
+fn ncx_navpoint_titles_and_targets(ncx_text: &str) -> Vec<(String, String)> {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    let re = RE.get_or_init(|| Regex::new(r#"(?s)<navLabel>\s*<text>(.*?)</text>\s*</navLabel>\s*<content\s+src="([^"]+)"\s*/?>"#).unwrap());
+    re.captures_iter(ncx_text).map(|c| (plain_text(&c[1]), c[2].to_string())).collect()
+}
+
+/// 书自带的扁平目录如果符合"第X部　编号　章名"这种排版惯例（分部标题只在每部第一条出现、其余
+/// 条目隐式归属该部——真机《雪人》坐实：reMarkable 原生目录面板显示的是完全扁平的列表，"01 雪人"
+/// 没有嵌在"第一部"下面），重建成两级：分部标题单独成一条父级（沿用该条目自己的跳转目标——分部
+/// 标题这条本身就是这部的开篇章节，能跳）；分部前缀后剩下的文本（如"01　雪人"）连同后续不带
+/// 前缀的条目一起降一级当子级。**一条"第X部"前缀都没匹配到＝原样不动**——不是所有书都用这种
+/// 排版惯例，没信号时贸然重建有误伤风险，见 §03az。
+fn restructure_existing_toc_parts(entries: &mut Vec<Entry>, mode: AutoToc, rep: &mut WashReport) {
+    if mode == AutoToc::Off {
+        return;
+    }
+    let Some(opf) = parse_opf(entries) else { return };
+    let Some(ncx_path) = opf.ncx.clone() else { return };
+    let Some(e) = entries.iter().find(|e| e.name == ncx_path) else { return };
+    let Ok(ncx_text) = std::str::from_utf8(&e.data) else { return };
+    let flat = ncx_navpoint_titles_and_targets(ncx_text);
+    let re = part_prefix_re();
+    if flat.len() < 2 || !flat.iter().any(|(t, _)| re.is_match(t)) {
+        return;
+    }
+    let ncx_dir = dir_of(&ncx_path).to_string();
+    let mut items: Vec<(u8, String, String, String)> = Vec::with_capacity(flat.len());
+    let mut in_part = false;
+    for (title, src) in &flat {
+        let (raw_path, frag) = match src.split_once('#') {
+            Some((p, f)) => (p, f.to_string()),
+            None => (src.as_str(), String::new()),
+        };
+        let path = resolve(&ncx_dir, &percent_decode(raw_path));
+        if let Some(c) = re.captures(title) {
+            items.push((1, c[1].to_string(), path.clone(), frag.clone()));
+            let rest = c[2].trim();
+            if !rest.is_empty() {
+                items.push((2, rest.to_string(), path, frag));
+            }
+            in_part = true;
+        } else {
+            items.push((if in_part { 2 } else { 1 }, title.clone(), path, frag));
+        }
+    }
+    let title = opf_book_title(entries, opf.index);
+    let uid = opf_unique_identifier(entries).unwrap_or_else(|| WASH_MARK.to_string());
+    let ncx = build_ncx(&items, &ncx_dir, &title, &uid).into_bytes();
+    if let Some(idx) = entries.iter().position(|e| e.name == ncx_path) {
+        entries[idx].data = ncx;
+    }
+    if let Some(nav_path) = opf.nav_doc.clone() {
+        let nav = build_nav(&items, dir_of(&nav_path)).into_bytes();
+        if let Some(idx) = entries.iter().position(|e| e.name == nav_path) {
+            entries[idx].data = nav;
+        }
+    }
+    rep.toc_parts_restructured = items.len();
+}
+
 fn auto_toc(entries: &mut Vec<Entry>, mode: AutoToc, rep: &mut WashReport) {
     if mode == AutoToc::Off || (mode == AutoToc::IfMissing && toc_entry_count(entries) > 0) {
         return;
@@ -951,11 +1030,7 @@ fn auto_toc(entries: &mut Vec<Entry>, mode: AutoToc, rep: &mut WashReport) {
     if headings.is_empty() {
         return;
     }
-    let title = {
-        let t = String::from_utf8_lossy(&entries[opf.index].data);
-        static T: OnceLock<Regex> = OnceLock::new();
-        T.get_or_init(|| Regex::new(r#"(?s)<dc:title[^>]*>(.*?)</dc:title>"#).unwrap()).captures(&t).map(|c| plain_text(&c[1])).unwrap_or_else(|| "目录".into())
-    };
+    let title = opf_book_title(entries, opf.index);
     let ncx_path = opf.ncx.clone().unwrap_or_else(|| resolve(&opf.dir, "toc.ncx"));
     let nav_path = opf.nav_doc.clone().unwrap_or_else(|| resolve(&opf.dir, "nav.xhtml"));
     let uid = opf_unique_identifier(entries).unwrap_or_else(|| WASH_MARK.to_string());
@@ -1055,6 +1130,7 @@ pub fn wash_entries(entries: &mut Vec<Entry>, opts: &WashOpts) -> Result<WashRep
         }
     }
     add_wash_css_entry(entries, &css_path, &wash_css(opts));
+    restructure_existing_toc_parts(entries, opts.auto_toc, &mut rep);
     auto_toc(entries, opts.auto_toc, &mut rep);
     fix_ncx_uid(entries, &mut rep);
     Ok(rep)
@@ -1253,6 +1329,48 @@ mod tests {
         ];
         let rep2 = wash_entries(&mut w, &WashOpts::default()).unwrap();
         assert_eq!(rep2.ncx_uid_fixed, 0, "已经一致不该误报修复过");
+    }
+
+    #[test]
+    fn existing_flat_toc_with_part_prefix_restructured_into_two_levels() {
+        // 真机回归（2026-09-19，《雪人》）：书自带扁平 toc.ncx，条目形如"第一部　01　雪人"
+        // （首条，部+编号+章名）/"　02　卵石眼"（后续，只有编号+章名，隐式归属同一部）——原生
+        // 目录面板显示的是完全扁平的列表，"01 雪人"没有嵌在"第一部"下面。
+        let opf = r#"<package version="2.0" unique-identifier="BookId"><metadata><dc:title>雪人</dc:title><dc:identifier id="BookId">www.haodoo.net</dc:identifier></metadata><manifest><item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/><item id="c1" href="1.xhtml" media-type="application/xhtml+xml"/><item id="c2" href="2.xhtml" media-type="application/xhtml+xml"/><item id="c10" href="10.xhtml" media-type="application/xhtml+xml"/><item id="c11" href="11.xhtml" media-type="application/xhtml+xml"/></manifest><spine toc="ncx"><itemref idref="c1"/><itemref idref="c2"/><itemref idref="c10"/><itemref idref="c11"/></spine></package>"#;
+        let ncx = r#"<ncx><head><meta name="dtb:uid" content="www.haodoo.net"/></head><navMap>
+<navPoint><navLabel><text>第一部　01　雪人</text></navLabel><content src="1.xhtml"/></navPoint>
+<navPoint><navLabel><text>　02　卵石眼</text></navLabel><content src="2.xhtml"/></navPoint>
+<navPoint><navLabel><text>第二部　10　粉筆</text></navLabel><content src="10.xhtml"/></navPoint>
+<navPoint><navLabel><text>　11　死亡面具</text></navLabel><content src="11.xhtml"/></navPoint>
+</navMap></ncx>"#;
+        let mut v = vec![
+            e("content.opf", opf),
+            e("toc.ncx", ncx),
+            e("1.xhtml", "<html><body><p>正文</p></body></html>"),
+            e("2.xhtml", "<html><body><p>正文</p></body></html>"),
+            e("10.xhtml", "<html><body><p>正文</p></body></html>"),
+            e("11.xhtml", "<html><body><p>正文</p></body></html>"),
+        ];
+        let rep = wash_entries(&mut v, &WashOpts::default()).unwrap();
+        assert_eq!(rep.toc_parts_restructured, 6, "2 个分部标题 + 4 条章节＝6 条");
+        let out = s(&v, "toc.ncx");
+        // 分部标题单独成父级、指向自己这条的目标（第一部开篇就是 1.xhtml）
+        assert!(out.contains(r#"<text>第一部</text></navLabel><content src="1.xhtml"/>"#), "{out}");
+        // "01 雪人" 降一级挂在"第一部"下面，同样指向 1.xhtml（分部标题那条自己也是这一章）；
+        // plain_text 会把全角空格归一成半角（split_whitespace 统一处理，跟标题里其它空白一视同仁）
+        assert!(out.contains(r#"<text>01 雪人</text></navLabel><content src="1.xhtml"/>"#), "{out}");
+        // "02 卵石眼"（原来没有分部前缀）也降一级，挂在当前活跃的"第一部"下
+        assert!(out.contains(r#"<text>02 卵石眼</text></navLabel><content src="2.xhtml"/>"#), "{out}");
+        assert!(out.contains(r#"<text>第二部</text></navLabel><content src="10.xhtml"/>"#), "{out}");
+        assert!(out.contains(r#"<text>10 粉筆</text></navLabel><content src="10.xhtml"/>"#), "{out}");
+        // dtb:depth 该反映真的有两层
+        assert!(out.contains(r#"<meta name="dtb:depth" content="2""#), "{out}");
+        // 没有分部信号的书原样不动（不该被误伤）
+        let opf2 = r#"<package version="2.0"><metadata><dc:title>书</dc:title></metadata><manifest><item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/><item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/><item id="c2" href="c2.xhtml" media-type="application/xhtml+xml"/></manifest><spine toc="ncx"><itemref idref="c1"/><itemref idref="c2"/></spine></package>"#;
+        let ncx2 = r#"<ncx><navMap><navPoint><navLabel><text>楔子</text></navLabel><content src="c1.xhtml"/></navPoint><navPoint><navLabel><text>尾声</text></navLabel><content src="c2.xhtml"/></navPoint></navMap></ncx>"#;
+        let mut w = vec![e("content.opf", opf2), e("toc.ncx", ncx2), e("c1.xhtml", "<html><body><p>a</p></body></html>"), e("c2.xhtml", "<html><body><p>b</p></body></html>")];
+        let rep2 = wash_entries(&mut w, &WashOpts::default()).unwrap();
+        assert_eq!(rep2.toc_parts_restructured, 0, "没有'第X部'前缀不该重建");
     }
 
     #[test]
