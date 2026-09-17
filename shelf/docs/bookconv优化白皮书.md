@@ -16,13 +16,13 @@
 
 ## 00b｜现状总览（2026-09-10 补，读其余节前先看这里）
 
-**模块地图**（`shelf/crates/bookconv/src/`）：`convert/{palm,mobi,kf8,fb2,cbz,pdfwrite,common}.rs`（格式转换，纯 Rust 零 C）· `optimize.rs`（`optimize_epub_with` 两遍 + 幂等版本标记）· `wash.rs`（`wash_entries`，对标 Calibre 六步）· `check.rs`（质量门）· `imgopt.rs`（两个降采样盒 + `header_dims` 只读头）· `htmlproc.rs`（脚注/字体锁等 HTML 处理原语）· `netimg.rs`（远程图内联）· `article.rs`（网文抓取，2026-09-05 从 `reading/device-rs` 下沉）· `epub.rs`（最小合规 EPUB3 组装）· `stats.rs`；host CLI 见 `bin/epub_optimize.rs`。
+**模块地图**（`shelf/crates/bookconv/src/`）：`convert/{palm,mobi,kf8,fb2,cbz,pdfwrite,common}.rs`（格式转换，纯 Rust 零 C）· `optimize.rs`（`optimize_epub_with` 两遍 + 幂等版本标记）· `wash.rs`（`wash_entries`，对标 Calibre 六步）· `check.rs`（质量门）· `imgopt.rs`（两个降采样盒 + `trim_margins` 裁边 + `header_dims` 只读头）· `htmlproc.rs`（脚注/字体锁等 HTML 处理原语）· `comic_detect.rs`（2026-09-17 新增，EPUB 漫画判定，移植自 host `comic.py`）· `netimg.rs`（远程图内联）· `article.rs`（网文抓取，2026-09-05 从 `reading/device-rs` 下沉）· `epub.rs`（最小合规 EPUB3 组装）· `stats.rs`；host CLI 见 `bin/epub_optimize.rs`。
 
 **当前版本** `OPTIMIZE_VERSION = "10"`（首行缩进改外链 css 根治，§09④/§10）。
 
 **谁在调用**：设备 `book-serve::Staging::optimize` + host CLI `epub-optimize` 都过 `optimize_epub_with`（同一份代码两处共用，§11）；`convert`（mobi/kf8/fb2/cbz 格式转换）现在只剩 `reading/device-rs` 在用——shelf 自己的杂格式转换统一走电脑 Calibre（书架白皮书 §03s），`epub.rs`/`article.rs`/`imgopt.rs`/`pdfwrite.rs` 这类共享底层各线仍在用。
 
-**离线门槛**：`cargo test -p bookconv` 110 个零警告。
+**离线门槛**：`cargo test -p bookconv` 127 个零警告（2026-09-17：EPUB 线四原则 + `comic_detect` 新增后）。
 
 **未闭环**：无阻塞项；§13 待办都是"打磨精度"级（学术论文多列/公式、公式图放大阈值）。**一条已排查清楚、确认不是 `optimize`/`wash` 层能解决的边界**（2026-09-10，§12）：图片密集的内容（尤其网文抓取，一篇里连续出现几张大图/画廊）在小尺寸墨水屏上分页时，图片块在页尾放不下会被渲染引擎整体推到下一页，当前页剩余空间不回填，视觉上是大片留白——真机 A/B 验证过跟外链样式表无关（`wash_css` 加了 `figure`/`figcaption` 边距归零，修复前后渲染像素级一致），这是分页引擎自身行为，本 crate 没有能调整它的杠杆，以后再有人问"能不能优化掉图片留白"，先看这条，不用重新排查一遍。
 
@@ -38,7 +38,7 @@
 - **第二遍**：`preserve_relink_footnotes`（按 `FootnoteMode`）→ `break_footnote_cycles` → `fix_duokan_markers` → `inline_remote_images` → 图片降采样 → `boost_text_contrast` → `dedup_ids_in_chapter`（跨章 id 去重防撞车）→ 打包。
 - **幂等标记**：产物写 `META-INF/com.cangjie.optimized` = `OPTIMIZE_VERSION`。`optimized_version()` 读标记判是否当前版本（母版库列表据此标 full / core / old）；旧版本重传**重优化升级**（`double_optimize_*` 测试坐实重优化不翻倍脚注）。
 
-`FootnoteMode`：`Anchor`（缺省，注释移章末 + 同章锚点跳转 + 原生「返回」浮标；weread/pkm/第三方书历史行为）· `Inline`（就地内联 `〔…〕` 常显，native→xochitl 用，见 §04/§09）。
+`FootnoteMode`：`Anchor`（缺省，注释移章末 + 同章锚点跳转 + 原生「返回」浮标；weread/pkm/第三方书历史行为）· `Inline`（就地内联 `〔…〕` 常显，第三方书历史行为）· `ParagraphEnd`（2026-09-17 起 native→xochitl 设备侧优化用，见 §04/§09）。
 
 ## 02｜清洗层 wash（`wash_entries`，对标 Calibre）
 
@@ -46,7 +46,7 @@
 1. **伪 DRM 剥离** `strip_pseudo_drm`：`META-INF/encryption.xml` 只加密样式/字体/脚本（字体混淆合法）→ 丢弃这些文件 + 删 OPF manifest 项。**加密了正文/图片 = 真 DRM → 报错停下**（不产残书）。
 2. **空页清理** `remove_empty_pages`：无文字无图的页（Calibre MOBI 转出的 `mbppagebreak` 独占页）→ 从 spine / manifest / zip 删。
 3. **主语言探测** `detect_dominant_script`：全书 CJK vs 拉丁字符占比 → `LangMode::{Cjk,Latin}`（`Auto` 在此解析）。
-4. **CSS 锁剥离** `filter_css`：独立 `.css` / `<style>` / `style=` 三处剥 `DEFAULT_FILTER_PROPS` = `font-family, font-size, font, color, background-color, background-image, background, text-align`。`@font-face` 的 `src:url` 豁免。`@media{}` 嵌套从内向外匹配最内层规则。
+4. **CSS 锁剥离** `filter_css`：独立 `.css` / `<style>` / `style=` 三处剥 `DEFAULT_FILTER_PROPS` = `font-family, font-size, font, background-image, background`（2026-09-17 起不再剥 `color`/`background-color`/`text-align`——EPUB 线原则要求保留原书颜色/加粗等元素样式，只解锁字号；这三项此前只是照抄 Calibre `--filter-css` 通用参数，没有真机验证过是必须剥的行为）。`@font-face` 的 `src:url` 豁免。`@media{}` 嵌套从内向外匹配最内层规则。
 5. **边距/段距** `wash_html`：`style=` 按标签名定策略（body/html 全删边距、p/div 上下归零左右保留——不伤 blockquote/列表缩进）。
 6. **外链排版 css**（§09④ 治本）：`add_wash_css_entry` 写外链 `cangjie-wash.css`（`p{text-indent:2em;margin-top:0;…}`）+ 每章 `<link>` + OPF manifest 补 item。
 7. **自动目录** `auto_toc`（§06）· **单标签双 id 折叠** `collapse_dup_id_attrs`（§09 双 id 白屏）。
@@ -70,7 +70,8 @@
 
 **FootnoteMode**：
 - `Anchor`：marker 改**同章朴素文字锚点** `<a href="#nX">1</a>`（xochitl 可点铁律：只有同章朴素文字锚点可点，`<a><img></a>` 不可点，注释区必须在 `</body>` 内），注释移章末 `<div class="footnotes">`，原生浮标返回。
-- `Inline`：注释文字就地内联 `<span class="cj-fnote">〔纯文本〕</span>` 始终可见、不跳转——xochitl **无弹窗脚注**（穷尽真机判死），Inline 是它的「自动呈现」。⚠ 必须**丢弃原 marker**（若 marker 是图标 `<img>` 会按固有尺寸巨大重复，§09①）+ **去标签取纯文本**（防块级标签塞进 `<p>` 致严格 XML 整章白屏，§09 双 id）。
+- `Inline`：注释文字就地内联 `<span class="cj-fnote">〔纯文本〕</span>` 始终可见、不跳转——xochitl **无弹窗脚注**（穷尽真机判死）。⚠ 必须**丢弃原 marker**（若 marker 是图标 `<img>` 会按固有尺寸巨大重复，§09①）+ **去标签取纯文本**（防块级标签塞进 `<p>` 致严格 XML 整章白屏，§09 双 id）。2026-09-17 起设备侧优化改用 `ParagraphEnd`，`Inline` 只剩第三方书历史行为在用——它"始终可见"是靠塞进句子中间实现的，会打断阅读，不是理想默认。
+- `ParagraphEnd`（2026-09-17 新增，`paragraph_end_footnotes`，独立函数，不走 `preserve_relink_footnotes`）：不跳转、不建反向锚点，在"含有该引用的整段"结束后插 `<hr/>` + 注释块，marker 原地改纯 `<sup>N</sup>`（丢弃原图标，同 `Inline` 的处理）。编号/去重按**段落内**作用域（`resolve_paragraph_note` 每段重置 `assigned`/`counter`，同段重复引用同一注释只列一次；跨段各自独立编号，不是重复）。只处理落在 `<p>...</p>` 内的 marker（正则匹配段落边界，非 DOM 树）；不在 `<p>` 内的少见排版会被 `doc_seen` 全章级去重表识别出"没被任何段落收走"，退化插到章末兜底——避免 `collect_footnote_notes` 搬走的注释文字没人接住、静默丢失。
 
 `normalize_self_hrefs`：Calibre 写法 `part0004.html#x` 写在 `part0004.html` 里 → 先归一成裸锚 `#x`，否则被误当跨文件脚注。
 
@@ -86,9 +87,13 @@ Move 屏 = **954×1696 px、7.3″、264 PPI、Gallery 3 彩色墨水屏**（hos
 
 **1-bit 抖动的体积真相**：Floyd–Steinberg 位图对 Flate 是高熵噪点——927×1327 一页压后仍 ~90KB，只比 120KB JPEG 小 1/4；"~1/8"是相对 8-bit 灰 Flate 说的。要真省体积得换 CCITT G4 / JBIG2（待办）。〔shelf 已不再把漫画转 PDF（漫画不投原生），此段留给 reading 线的 CBZ→PDF 参考。〕
 
+**EPUB 内嵌漫画的画质保留**（2026-09-17，EPUB 线原则④）：新增 `comic_detect::is_comic`（移植 host `comic.py::epub_image_stats()` 的算法——OPF spine 统计 `<img>`/`<image>` 数与可见文字数，图 ≥20 张且平均每张图配的文字 <40 字判漫画），`optimize_epub_with` 内部判定一次。命中后两处跟普通插图路径不同：① `imgopt::trim_margins` 先裁四边纯色/近纯色留白（逐行/列像素两两 RGB 通道极差 ≤8 才算"纯色"，一遇到不满足就停，单边最多裁 15% 防误判裁没内容）；② 超限仍需缩进 954×1696 屏幕框时，用 `downscale_for_epub_comic`（quality 95）而非普通插图的 `downscale_for_epub`（quality 85）。跟 `dither_bilevel`（§05 上文"漫画省刷新"，CBZ 转换路径专用的有损灰阶抖动）方向相反——一个是"不允许压画质"，一个是"允许压画质换省刷新"，服务不同管线，别混用。
+
 ## 06｜自动目录（`auto_toc`，缺目录才建）
 
 `AutoToc::IfMissing`（缺省）仅在无 nav/ncx 或零条目时生成。`heading_re` 从 h1/h2 **扩到 h1–h6**（v7：只用 h3 当章标题的书不再漏目录）；`dense_ranks` + level-stack 生成**多级嵌套** navPoint/`<li>`（`d = ranks[i].min(depth+1)` 钳制层级不跳级）。质量门 `check` 按目录锚点命中率告警（丢失则 xochitl 退化到文件级跳转）。
+
+**2026-09-17 两处补充（EPUB 线原则①）**：① `split_numbered_title` 启发式——标题文本"标题+编号"结尾（如原书「第一章 1」，正则匹配空白/全角空格分隔的纯数字或中文数字编号）拆成父级标题 + 缩进子级编号两条目、同指一个锚点（`split_numbered_titles` 对 `collect_headings` 的结果做后处理，子级 `level = 父级+1`，天然兼容 `dense_ranks` 的嵌套机制）；编号 >99 判定是印刷页码残留（如「第一章 237」），不拆，避免误伤。② `fallback_spine_toc`：全书连 h1–h6 都没有（`headings.is_empty()`）时，退化到按 spine 文件边界逐条生成，条目文本取该文件正文首段（截断 24 字）、纯图片页/取不到文本用"正文 N"占位；多数 spine 文件没有可提取文本（疑似漫画/画册）时整个不生成，避免灌一堆无信息量条目——那种书更适合走 `comic_detect` 的漫画路径。
 
 ## 07｜格式转换 `convert`（纯 Rust，零 C）
 
@@ -145,9 +150,11 @@ reMarkable 的 EPUB 渲染器闭源，行为多次跟 host / 常识不一致。�
 
 **同源**：设备 `book-serve` 母版库「优化」与 host `epub-optimize` 二进制都调 `optimize_epub_with`；host `wash_epub.sh` 末步叠加同一 `epub-optimize`。host 只多一层 Calibre 级 CSS 拍平 + 非 EPUB/PDF 转码 + 质量门。
 
-**CLI `epub-optimize`**（`cargo build --release -p bookconv --bin epub-optimize`）：`[--no-wash] [--keep-spacing] [--auto-toc] [--footnote-anchor] [--check] [--require-toc] 输入.epub 输出.epub`。缺省 = 清洗 + 优化 + 脚注 Inline（对齐 native→xochitl）。退出码 0 成功 / 1 用法 / 2 优化失败（输入不动）/ 3 质量门未过。
+**CLI `epub-optimize`**（`cargo build --release -p bookconv --bin epub-optimize`）：`[--no-wash] [--keep-spacing] [--auto-toc] [--footnote-anchor] [--check] [--require-toc] 输入.epub 输出.epub`。缺省 = 清洗 + 优化 + 脚注 `ParagraphEnd`（2026-09-17 前缺省是 `Inline`，跟着设备端一起切，见下）；`--footnote-anchor` 切到 `Anchor`；`Inline` 目前没有 CLI 入口，只在测试里还在用（保留是因为逻辑/测试都还在，不是被删掉，只是没有任何生产路径默认选它了）。退出码 0 成功 / 1 用法 / 2 优化失败（输入不动）/ 3 质量门未过。
 
-**目标脚注**：母版库「优化」传 `Inline`（xochitl 无弹窗，内联常显）；KOReader 从母版库纯复制拿到的也是 Inline 产物——**2026-09-06 用 Standard Ebooks《Gulliver's Travels》（7 处 noteref）两器对照，用户目视观感正常，不再为 KOReader 另跑 Anchor**（书架白皮书 §05 Phase E ④）；weread/pkm 线 `Anchor` 兜底。
+**目标脚注**：2026-09-17 起母版库「优化」（`book-serve::Staging::optimize`）与 host CLI `epub-optimize` 缺省**都**从 `Inline` 切到 `ParagraphEnd`（书架白皮书 §03av；CLI 那处改动是本节发现 CLI 缺省仍是旧的 `Inline`、为保持"host/端一致"这条设计原则顺手一起改的，不是遗漏后来补的两次改动）；KOReader 从母版库纯复制拿到的也是同一份产物。**2026-09-06 用 Standard Ebooks《Gulliver's Travels》（7 处 noteref）两器对照过 `Inline` 观感正常**（书架白皮书 §05 Phase E ④）——`ParagraphEnd` 是否同样观感正常在两个读器上都还没有真机对照过，属于 §13 待办清单的一部分；weread/pkm 线仍用 `Anchor` 兜底，未受这次调整影响。
+
+**格式收窄（2026-09-17，书架白皮书 §03av）**：`shelf push` 不再用 Calibre 把 AZW3/MOBI/AZW/PRC/FB2/TXT 自动转 EPUB——那条转换代码在 `host_prepare()` 里整段删除，这几个格式现在原样透传给母版库，被 `rmsvc_core::formats::BOOK_EXTS`（已不含它们）拒收。跟 `optimize_epub_with`/`wash`/`epub-optimize` 本身无关，是上游路由层的改动，纯 EPUB 输入的洗+优化行为不受影响。
 
 **`shelf push --no-calibre`（2026-09-10，见书架白皮书 §03ao）**：`host_prepare`/`wash_epub.sh` 那条路线把"Calibre 深洗（`ebook-convert` 拍平 CSS/series 命名）"跟"`epub-optimize`"两步捆在一起，之前没有只要后者的入口——EPUB 输入要么两步都走（有 Calibre 时的默认路），要么两步都不走（`--no-optimize`）。`push.py` 新增 `plan()` 第三条路 `optimize-only`：`--no-calibre` 且输入是 `.epub` 时直接调 `calibre_bridge.optimize_only()`（新函数，跟 `epub_optimize_bin()` 一起加在 `calibre_bridge.py`），不经 `wash_epub.sh`、不需要装 Calibre——这条路径不是"降级"，是**跟设备端「母版库→优化」按钮完全同一个函数**，伪 DRM 剥离/CSS 锁剥离/边距段距归零全部在 `optimize_epub_with` 内部做完，不缺 `wash_epub.sh` 那部分（唯一缺的是 series 文件名重命名，那个专属读 `ebook-meta`，跟优化无关）。非 EPUB 输入没法只靠这条路径转格式，`--no-calibre` 对它们退化成 `raw`（原样传，不静默切回 Calibre）；漫画判断也在 `--no-calibre` 分支之前短路，避免"用户明确说不要 Calibre，代码却因为看起来像漫画又偷偷用了它"。
 
@@ -165,3 +172,7 @@ reMarkable 的 EPUB 渲染器闭源，行为多次跟 host / 常识不一致。�
 ## 13｜真机待办
 
 ~~英文书拉丁排版（1.2em）真机观感；KOReader 里 Inline 内联脚注能否接受~~（两项 2026-09-06 均闭环：§03y 配方 + Gulliver 对照）；PDF 结构化重排（host `pdf_reflow_move.py`）杂志观感已通（财新 v3；v4 2026-09-06：署名/图注/链接分类、节题 h3、标题分档，非句末段 15%→2.7%，书架白皮书 §05）；清洗层同日：书 css 非零 text-indent 统一改本书缩进（KOReader 与 xochitl 同缩进）+ 拉丁首段顶格（终版：`<div class="cj-flush">` 剥书类 + `.cj-flush{text-indent:0.01em;…;}`，xochitl 七条 CSS 规则见书架白皮书 §03y）+ 中文 br 分行书段落化/剥段首全角空格 + 所有 css 声明尾分号，学术论文多列/公式待验；公式图 intrinsic 放大阈值。诊断法：xochitl 导入渲染 `<uuid>.pdf` scp 回 host、pymupdf 量列宽/图尺寸/outline/内链 kind。
+
+**⚠️ 2026-09-17 EPUB 线四原则（书架白皮书 §03av 详记）只过了 host 单测，一条都没上真机**——
+`ParagraphEnd` 脚注、颜色保留、TOC 拆分/兜底、漫画裁边/保画质全部待验，按 §03av 那条真机验证
+清单走。这条排在本节最前面，比上面这些已闭环的旧条目优先级更高。

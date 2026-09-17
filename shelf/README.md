@@ -30,13 +30,12 @@ host `shelf push` 是唯一能"入库时顺带优化"的源（Calibre 深洗 / �
 /api/books/staging` 一并带出）；这层只有 `shelf push` 有，网页原样上传本来就不经处理，不受
 这个局限影响。
 
-**格式三档**（`rmsvc_core::formats` 单一事实源，网页 accept、服务端上传门、inbox、CLI 同源；按设备装的 KOReader 注册表核过）：
+**格式两档**（`rmsvc_core::formats` 单一事实源，网页 accept、服务端上传门、inbox、CLI 同源；按设备装的 KOReader 注册表核过）：**2026-09-17 起不再有"电脑可转"这一档**——EPUB 线架构调整，AZW3/MOBI/AZW/PRC/FB2/TXT 不再自动转 EPUB，母版库直接拒收，请自行转换成 EPUB/PDF 后再上传（书架白皮书 §03av；这几个格式实测确实是 KOReader 真能读的格式，这次是主动收窄换规则一致性，不是读不了）。
 
 | 档 | 格式 | 去向 |
 |---|---|---|
-| 原生直读 | EPUB / PDF | 两个读器都能去 |
-| 电脑可转 | AZW3 / MOBI / AZW / PRC / FB2 / **TXT** | `shelf push` 转 EPUB 进原生（TXT 按「第X章/卷」切章建两级目录，GB18030/UTF-8 自动识别）；直接上传只能加入 KOReader |
-| 仅 KOReader | CBZ / CBR / DjVu / HTML / RTF / DOC / DOCX / CHM / XPS | 只能加入 KOReader（漫画 CBZ 也在此档：**默认不投原生，`shelf push` 出的灰阶 CBZ 体积够小时会顺带生成一份 PDF 给「投入原生书库」选项，超限的仍只出 CBZ、绝不分卷**，见白皮书 §03ad；TXT 直传也落这档，走 `shelf push` 才切章进原生） |
+| 原生直读 | EPUB / PDF | 两个读器都能去；母版库「优化」按钮在设备侧就地优化（字号解锁/保留原书颜色/注释移段末/漫画自动识别保画质，§03av） |
+| 仅 KOReader | CBZ / CBR / DjVu / HTML / RTF / DOC / DOCX / CHM / XPS | 只能加入 KOReader（漫画 CBZ 也在此档：**默认不投原生，`shelf push` 出的灰阶 CBZ 体积够小时会顺带生成一份 PDF 给「投入原生书库」选项，超限的仍只出 CBZ、绝不分卷**，见白皮书 §03ad） |
 
 **网页 tab**（2026-09-10 重排为固定四段，见白皮书 §03al）：「传书」（固定第一位：入库拆三卡——上传/抓网文/电脑端 shelf push｜母版库）· 「笔记」（note-serve 注册，「导入 md 文档」子标签默认隐藏，开关控制）· 「其他」（xochitl(font-serve)/KOReader(koreader-serve)/壁纸(wallpaper-serve) 降一级包进来当二级子标签，只列真的装了的那几个）· 「管理」（固定；二级 tab：基石与模块/模型管理/系统增强/电池刺客〔`battop.running` 时才出现〕/实验室）。读器页不传书。
 
@@ -184,12 +183,12 @@ shelf/host/bin/shelf push 论文.pdf 书.epub [--to-pdf] [--no-optimize] [--no-c
 #   灰阶 CBZ 体积估算转 PDF 后仍在设备原生上传上限内，顺带生成一份 PDF 给「投入原生书库」选项（--no-comic-native 关掉）；--no-eink-gray 要原图（连带不做跨页拆分/白边裁切）
 #   --wait：设备离 USB 几秒就自动休眠关 WiFi，push 上传前先探 /health；不可达时每 5 秒探一次等它醒（点亮屏幕/接 USB），缺省最多 600 秒；不加 --wait 则直接报错、不传
    **只落母版库**，去向在网页「传书 → 母版库」选。路线自动定（`push.plan`）：
-   · 有 Calibre → 洗书：EPUB 深洗 / AZW3·MOBI·AZW·PRC·FB2 转 EPUB / **PDF 默认结构化重排**（born-digital→EPUB→洗书；扫描件优先 k2pdfopt——**host 通常没装这个外部工具（本项目有意不内嵌，没有安装指引），没装时唯一的回退是裁边脚本，但裁边对纯扫描图片按设计主动拒绝产出，两条路都不通就直接报错退出**，不是静默降级；报错时按提示改用 `--no-reflow` 原样传，或自行装好 `k2pdfopt`（本仓库没有安装指引）再重跑）——**这条路只吃到非漫画的扫描 PDF（如扫描版论文/杂志）**，扫描版漫画 PDF
+   · 有 Calibre → 洗书：EPUB 深洗 / **PDF 默认结构化重排**（born-digital→EPUB→洗书；扫描件优先 k2pdfopt——**host 通常没装这个外部工具（本项目有意不内嵌，没有安装指引），没装时唯一的回退是裁边脚本，但裁边对纯扫描图片按设计主动拒绝产出，两条路都不通就直接报错退出**，不是静默降级；报错时按提示改用 `--no-reflow` 原样传，或自行装好 `k2pdfopt`（本仓库没有安装指引）再重跑）——**这条路只吃到非漫画的扫描 PDF（如扫描版论文/杂志）**，扫描版漫画 PDF
      2026-09-14 起会被下面的漫画判定先拦下来走 CBZ 管线，不会碰到这条报错路，见白皮书 §04「扫描版漫画 PDF」条）；
-     产物必过 `check_output.py` 质量门（`--skip-check` 强推）。`--to-pdf` 定稿固定版式 PDF（手写批注用）。>60MB PDF 自动分卷（需 uv `calibre` 组的 pymupdf；切不了会报错不推，xochitl 收不下 188MB 整本）。
-   · **漫画**（AZW3/MOBI/EPUB 里几乎全是整页图，或 PDF 抽样页几乎全是"有图无字"——`comic.py`
+     产物必过 `check_output.py` 质量门（`--skip-check` 强推）。`--to-pdf` 定稿固定版式 PDF（手写批注用）。>60MB PDF 自动分卷（需 uv `calibre` 组的 pymupdf；切不了会报错不推，xochitl 收不下 188MB 整本）。**2026-09-17 起 AZW3/MOBI/AZW/PRC/FB2/TXT 不再走这条洗书路（也不再自动转 EPUB）**，这些格式已从母版库收的格式里退役，见上面「格式两档」表。
+   · **漫画**（EPUB 里几乎全是整页图，或 PDF 抽样页几乎全是"有图无字"——`comic.py`
      自动判，PDF 分支 2026-09-14 补）→ 转成 **CBZ** 进母版库，网页点「加入 KOReader」；**默认不投原生，体积够小时会顺带出一份 PDF 给「投入原生书库」选项，超限的仍只出 CBZ、绝不分卷**（§03ad，2026-09-08）。
-     `--comic / --no-comic` 覆盖判断；CBZ 输入原样入库。
+     `--comic / --no-comic` 覆盖判断；CBZ 输入原样入库。**AZW3/MOBI 漫画的 PalmDB 直判 2026-09-17 一并退役**（那几个格式已经进不了母版库）。
    · `--no-optimize` 或无 Calibre → 原样传母版库（网页里可再点优化）。
    · `--no-calibre`：**EPUB 输入**只跑 `epub-optimize`（跟网页「母版库→优化」按钮/`wash_epub.sh` 末步同一个函数），
      跳过 `ebook-convert`，不用装 Calibre（`--keep-spacing` 同样生效）；非 EPUB 没法只靠这条路径转格式，一律原样传。
@@ -220,7 +219,7 @@ shelf passwd [--new …]
 | 书籍优化 | 做精做细做强：LangMode 中英文排版、目录 h1–h6、脚注 Inline/Anchor、host PDF 重排、**首行缩进根因＝xochitl 只认外链 css（v10）** | ✅ 真机通（§03q） |
 | **中间层** | **母版库三层架构**：入库/优化/落库正交、传书总入口、读器页不传书、落库记录、网文抓取、财新 PDF 重排修空白 | ✅ 真机通（§03r） |
 | 质量二轮 | 母版库领域化、直投路删除、上传模板/格式白名单/取参单一事实源、格式三档展示 | ✅ 真机通（§03s） |
-| 漫画通道 | AZW3/EPUB 漫画自动识别 → CBZ 给 KOReader；**漫画不投原生**（曾做过 CBZ→PDF **分卷**投原生，用户否决后删——2026-09-08 §03ad 部分修订：小体积不分卷可选投原生，跟这次被否决的"分卷了也投原生"是两回事）；镖人 282MB EPUB 撞 xochitl 上传上限根因；分卷静默失效修 | ✅ 真机通（§03t） |
+| 漫画通道 | EPUB 漫画自动识别 → CBZ 给 KOReader（2026-09-17 起 AZW3/MOBI 判定连带退役，见 §03av）；**漫画不投原生**（曾做过 CBZ→PDF **分卷**投原生，用户否决后删——2026-09-08 §03ad 部分修订：小体积不分卷可选投原生，跟这次被否决的"分卷了也投原生"是两回事）；镖人 282MB EPUB 撞 xochitl 上传上限根因；分卷静默失效修 | ✅ 真机通（§03t） |
 | 固件 3.28 | OTA 3.27.3.0→3.28.0.172 实录：appload 停用、hashtab 重建、deploy 重装；3.28 字体菜单 qmd 修 qmldiff 语法（`({})`/裸 `if(` 整份不应用）后通 | ✅ 真机通（§03v，§05 第 5 条） |
 | 设备杂项 | 原生休眠屏隐藏键 `SleepScreenPath`（满屏+随轮换）；WiFi 连上恰 60 秒必掉＝cfg80211 regdomain 宽限（精简 regdb 的 CN 无 5150–5350，路由 5G 信道 36 被判非法）→ 连接锁 2.4G + `powersave 2`，`packaging/wifi-watch` 常驻固化；chrony 国内 NTP 幂等脚本 `packaging/chrony-cn.sh` | ✅ 真机通（§03w） |
 | 壁纸退役 bind | wallpaper-serve 改写 `SleepScreenPath`（`shelf_core::xochitl_conf`），删 bind 单元/sleep 钩子/透明卡/`mount.rs`（安装器的旧残留清理块已于 2026-09-06 随体检删除，真机零残留） | ✅ 真机通（§03x） |
@@ -238,3 +237,4 @@ shelf passwd [--new …]
 | `shelf push --no-calibre` | host CLI 补"跳过 Calibre、只跑 epub-optimize"这条路（EPUB 输入直调跟网页「优化」按钮同一个函数，`--keep-spacing` 同样生效）；核实后纯优化能力本来不缺（设备按钮+独立 `epub-optimize` 二进制早就有），缺的只是 `shelf push` 没暴露这个入口 | ✅ 离线全绿（§03ao，2026-09-10）：8 个新单测 + CI 原命令 271 个全绿；纯 host 改动不碰设备行为，另做了非 mock 真调用验证（真二进制+真 EPUB+真 CLI dry-run） |
 | 抓网文「同步优化」复选框 | `fetch_article` 加 `optimize` 参数，请求了就抓完紧接着跑一遍「清洗＋优化」（跟母版库「优化」按钮同一个函数），补齐网文正文没有任何排版样式（边距/段距/缩进）这个真实缺口；网页复选框缺省勾选、本机记住选择，用户可关掉要最原始结果 | ✅ 真机通（§03ap，2026-09-10）：curl 真机分别带/不带 `optimize` 各抓一次同一篇文章，`level` full/core 各自落地正确、体积跟 host 侧非 mock 验证完全一致；**不是"留白根因"的完整修复**，见下一行 §03aq——同一篇文章真机 A/B 渲染对比后确认图片密集网文的大片留白另有成因，不是这一步能解决的 |
 | wash 补 figure/figcaption 边距 + 留白成因排查 | 用户拿真实网文反馈"抓完优化还是大量留白，图夹在中间"；核实 `wash_css()` 确实只清零过 `<p>`，`figure`/`figcaption` 从没被管过，补上（两条裸元素规则分开写，不能用逗号选择器，xochitl 解析器脆）；真机 A/B 逐页渲染对比证明这条修复对该文章的留白**零改善**，真正成因是图片块在页尾放不下时整体推到下一页、页尾剩余空间不回填——分页引擎自身行为，非 CSS 可调；顺手发现 aeon.co 轮播组件被整组抽出+来源不明的"N of M"页码文本混入正文，留作已知问题未修 | ✅ 真机 A/B 验证 + 离线全绿（§03aq，2026-09-10）：`cargo test -p bookconv` 110/110（新增 1 个测试）；如实记录"改了但没解决投诉"，不算已闭环的留白问题，算已闭环的 figure/figcaption 缺口修复 |
+| EPUB 线四原则 + 格式收窄 | 拆 EPUB 线/PDF 线（PDF 线原则待定）；TOC 标题+编号拆两级/无标题兜底、只解锁字号保留原书颜色/加粗、注释新增 `ParagraphEnd`（段末块）模式替代设备侧 `Inline`、漫画自动识别（`comic_detect` 移植进 Rust）不压画质+裁边；AZW3/MOBI/AZW/PRC/FB2/TXT host 转换（含 AZW3/MOBI 漫画 PalmDB 直判）**用户明确要求连带退役**，母版库格式白名单从三档收窄成两档 | ⚠️ 只离线验证：`cargo test --workspace`（shelf/rmsvc-core/gateway 三处，127+18+52+17 全绿）+ `uv run pytest shelf/host/tests` 94 全绿；**没有任何一条在真机上跑过**，按纪律不算完成，见白皮书 §03av 真机验证清单（§03av，2026-09-17） |

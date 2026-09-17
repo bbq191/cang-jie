@@ -800,6 +800,75 @@ figcaption{margin:0;padding:0;}
 
 **教训**：跟 §03am 那次"用户反馈还没修复才发现真根因"是同一类教训——第一轮只对着"延时是不是不够长"这一个可能性动手，没有去验证"到底是不是这个计时器把文案冲掉的"，如果当时去查一下重画到底是从哪条代码路径触发的，会立刻看到 SSE 那条路径快得多，延时数字改多大都没用。
 
+## 03av｜书籍优化架构调整：拆 EPUB 线/PDF 线，EPUB 线四原则落地（2026-09-17，⚠️ 只 host 单测验证，未上真机）
+
+用户拍板把「书籍优化」拆成 **EPUB 线**和 **PDF 线**两条独立业务逻辑（PDF 线原则用户还没给，本节
+只记 EPUB 线），并提了三个架构约束：① 设备端只收 EPUB/PDF，其余格式请用户自行转换后上传；
+② EPUB 优化全部在设备侧进行；③ EPUB 线四条优化原则（保留目录+拆分章节序号、解锁字号但保留
+原书颜色/加粗、注释移到引用段落之后、漫画自动识别不压画质）。
+
+**架构收敛**：优化前 EPUB 优化有两条并行路径——host CLI `epub-optimize`（`shelf push` 前置调用）
+和设备 `book-serve`（母版库「优化」按钮手动触发），同一个 Rust 函数
+`bookconv::optimize::optimize_epub_with` 两处调用。这次不动"两条路径都在"这件事本身（host CLI
+仍保留，给 `--no-calibre` 等场景用），但把"host 会用 Calibre 自动把 AZW3/MOBI/AZW/PRC/FB2/TXT
+转成 EPUB 再推设备"这条**彻底退役**（用户原话，且明确要求连带禁止这几个格式的其他用途——见下）。
+
+**四条原则的落地，全部在 `shelf/crates/bookconv`（Rust，设备侧/host CLI 共用同一份逻辑）**：
+
+1. **目录**：`wash.rs::auto_toc()` 原来只在**全书完全没有目录**时从 h1–h6 生成；这次补两处：
+   ① 新增 `split_numbered_title` 启发式——标题文本"标题+编号"结尾（如原书「第一章 1」）拆成
+   父级标题+缩进子级编号两条 TOC 条目、同指一个锚点（EPUB3 nav 文档规范原生支持的嵌套 `<ol>`
+   结构，不是 hack）；编号 >99 判定是印刷页码残留、不拆，避免误伤。② 新增无 h1–h6 语义标题时的
+   兜底——退化到按 spine 文件边界生成目录、取正文首段文本当标题；多数页面没有可提取文本（疑似
+   漫画/画册）时不生成，避免灌一堆无信息量的"正文 N"。
+2. **字号解锁、保留原书样式**：`wash.rs::DEFAULT_FILTER_PROPS` 从
+   `["font-family","font-size","font","color","background-color","background-image","background","text-align"]`
+   收窄成 `["font-family","font-size","font","background-image","background"]`——`color`/
+   `background-color`/`text-align` 不再剥。查证发现这条本来就是照抄 Calibre `--filter-css` 的
+   通用参数集，不是针对 xochitl 真机验证过的必要行为；`background`/`background-image` 因为是
+   坐实的渲染 bug（§03③，xochitl 无视 `no-repeat` 把背景图平铺满页盖正文）继续剥，跟字号锁无关。
+   **风险未验证**：放开 `background-color` 后如果原书有"深底浅字"高亮块，Paper Pro Move 彩色
+   e-ink 屏低对比场景下可能比剥离前更难读——`boost_text_contrast()` 目前只处理文字颜色/字重，
+   不处理背景色对比度，真机验证时要专门挑一本带彩色底纹的技术书测。
+3. **注释移到引用段落之后**：现有 `FootnoteMode` 只有 `Anchor`（跳章末，但 reMarkable 会吞互相
+   引用的锚点对导致**点了跳不回来**，真机坐实过）和 `Inline`（就地内联，**打断段内阅读**）两种，
+   都不完全符合"既不影响连续阅读体验也不影响注释理解"。新增第三种 `ParagraphEnd`：不跳转、不建
+   反向锚点，在"含有该引用的整段"结束后插分割线+注释块，marker 原地改纯 `<sup>N</sup>`。编号/
+   去重按**段落内**作用域（同段落重复引用同一注释只列一次，不同段落各自独立编号——就近可见优先
+   于全局唯一，不是重复）。只处理落在 `<p>` 内的 marker；不在 `<p>` 内的少见排版会退化到章末
+   兜底插入，避免注释文字被上游 `collect_footnote_notes` 搬走后又没人接住、静默丢失。设备侧
+   `book-serve::Staging::optimize()` 的调用参数从 `FootnoteMode::Inline` 切到 `ParagraphEnd`。
+4. **漫画自动识别、不压画质、允许裁边**：新增 `comic_detect` 模块，移植 host 侧
+   `comic.py::epub_image_stats()` 的判定算法（沿 OPF spine 统计 `<img>`/`<image>` 数与可见文字数，
+   图 ≥20 张且平均每张图配的文字 <40 字判漫画）到 Rust，供 `optimize_epub_with` 内部直接判——
+   之前一本 EPUB 格式的漫画走母版库「优化」会被当成普通文字书处理。命中后：`imgopt::trim_margins`
+   四边纯色/近纯色留白裁边（边缘整行/列颜色高度一致才裁、单边最多裁 15% 防误判裁没内容），
+   `imgopt::downscale_for_epub_comic` 超限时仍缩进屏幕框但用 quality 95（普通插图是 85）。跟已有
+   的"漫画省刷新"灰阶抖动（`imgopt.rs::dither_bilevel`，CBZ 转换路径专用）方向相反，两者不共用。
+
+**格式收窄的连带影响（用户明确拍板，非默认选项）**：问过用户"AZW3/MOBI/PRC 除了转 EPUB 洗书
+外还有一条独立用途——`shelf push` 会解析 PalmDB 直判它们是不是漫画、是则转 CBZ 进 KOReader，
+这条跟书籍优化无关，是现有能用的漫画管线，退役要不要连带影响它"，用户选择**连带禁止，一律
+拒收**——于是 `comic.py` 的 `palmdb_image_ratio`/AZW3 分支也一并删除。⚠️ **这是主动放弃一条已验证
+可用的能力**：书架白皮书本节以上（§03，2026-09-05 格式分档那次调查）实测坐实过 AZW3/MOBI/AZW/
+PRC/FB2/TXT 全部是设备装的 KOReader crengine 真能读的格式，不是"读不了才收窄"，是用户为了规则
+一致性主动收窄。`rmsvc_core::formats::HOST_CONVERTIBLE_EXTS` 整档删除，`BOOK_EXTS` 现在等于
+`NATIVE_EXTS ∪ KOREADER_ONLY_EXTS`——母版库上传门（各服务共用同一份白名单）自动拒收，`shelf push`
+一侧不需要额外的拒绝逻辑，非 EPUB/PDF 源格式原样透传给服务端、由既有回执机制清楚打回执。
+
+**待确认、未落地的一条建议**：host 不再预优化 EPUB 后，网页直接上传的 EPUB 在用户手动点母版库
+「优化」按钮前仍是未解锁字号/未拆注释的原始状态——这个 gap 在改动前就存在（不是这次引入的
+回归），建议 `book-serve` 收到 EPUB/PDF 上传时自动跑一遍优化（`OPTIMIZE_MARKER` 幂等标记已经
+支持"跳过已优化产物"，具备做自动触发的基础设施），但这条只是建议，还没有得到用户拍板，未实现。
+
+**验证状态**：以上全部改动只过了 host 单测（`cargo test --workspace` 在 `shelf/`、`rmsvc-core/`、
+`gateway/` 三处全绿 + `uv run pytest shelf/host/tests` 94 项全绿），**没有任何一条在真机上跑过**
+——按 工程纪律 工程纪律，这不算"验证通过"，只是"实现完成、待验证"。真机验证清单（下次连上设备
+按这个走）：① 带编号尾巴标题的书验证 TOC 两级显示；② 带彩色高亮块的技术书验证颜色保留后可读性
+（原则2标注的风险点）；③ 已知带内联脚注图标的书（如《飘》）验证段末块不引入新的死链/白屏；
+④ 一本 EPUB 格式漫画验证不裁尺寸不重编码、留白确实被裁掉；⑤ 一本长期在跑的普通文字书回归验证
+没有破坏现有正常渲染；⑥ `shelf push` 对 azw3/mobi/fb2/txt 确认给出清晰拒绝提示而不是裸错误。
+
 ## 04｜踩坑
 
 - **挪代码时顺手带走的文案不代表内容还准（2026-09-10 用户真机测试逮到）**：§03ak 把「系统增强」卡片原样搬进「实验室」，battop"未装"提示里的路径 `misc/battery-audit/battop/install.sh` 是 §03aj 写的，那时候还没意识到这个路径已经在更早的 §03b 里 `git mv` 到 `enhance/battop/` 了——挪动/重构代码只挪了位置没重新核对内容，字面拷贝把旧错误也一起搬了过去，还搬了一次都没发现（两轮都没查）。**教训**：移动/复用一段包含具体路径/命令/版本号的文案时，顺手核对一遍还准不准，不能假设"没人提过所以肯定没问题"——原样复制不代表内容仍然正确，只代表格式没错。
