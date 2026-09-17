@@ -18,6 +18,18 @@ pub struct Delivered {
     pub render: Option<RenderCheck>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source: Option<SourceRef>,
+    /// 最近一次「优化」的结果（`staging::Staging::spawn_optimize` 异步执行时写）。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub optimize: Option<OptimizeCheck>,
+}
+
+/// 异步优化的结果：`status` = pending（后台线程跑着）/ ok / failed。`message` 是回执文案
+/// （成功＝跟原同步接口一样的"已优化《...》（...）"；失败＝错误原因）。
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
+pub struct OptimizeCheck {
+    pub status: String,
+    pub message: String,
+    pub at: u64,
 }
 
 /// "这份母版库文件是由哪个原始输入处理出来的"——host `shelf push` 洗书/重排/转 CBZ 前的原始文件
@@ -83,7 +95,7 @@ mod tests {
         assert_eq!(d.render.as_ref().map(|r| r.pages), Some(3));
         // 旧版边车（无 render/source 字段）照读
         std::fs::write(path_for(&book), br#"{"native":1,"koreader":2}"#).unwrap();
-        assert_eq!(read(&book), Some(Delivered { native: Some(1), koreader: Some(2), render: None, source: None }));
+        assert_eq!(read(&book), Some(Delivered { native: Some(1), koreader: Some(2), render: None, source: None, optimize: None }));
         remove(&book);
         assert!(read(&book).is_none());
         remove(&book);

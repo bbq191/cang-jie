@@ -30,10 +30,13 @@ pub fn router(st: Arc<State>) -> Router {
         .get("/staging", bind(&st, |s, _| Ok(Reply::ok(&serde_json::json!({"items": s.staging.list(), "freeBytes": s.staging.free_bytes()})))))
         .post("/staging", bind(&st, staging_upload))
         .post("/staging/optimize", bind(&st, |s, r| {
+            // 异步：耗时的优化（真机实测大漫画能跑到分钟级，见书架白皮书 §05）挪到后台线程，这里立即
+            // 回"已开始"；真正结果通过 books/staging 事件 + GET /staging 列表里的 delivered.optimize 呈现。
             let j = r.json()?;
-            let msg = s.staging.optimize(j.str("name")?, OptimizeMode::parse(j.str_or("mode", "auto"))).map_err(ApiError::bad)?;
-            s.bus.publish("books", "staging");
-            Ok(Reply::ok(&serde_json::json!({"ok": true, "message": msg})))
+            let name = j.str("name")?.to_string();
+            s.staging.spawn_optimize(&name, OptimizeMode::parse(j.str_or("mode", "auto")), s.bus.clone()).map_err(ApiError::bad)?;
+            s.bus.publish("books", "staging"); // 立即推一次，UI 马上看到这条目进入 busy 状态
+            Ok(Reply::ok(&serde_json::json!({"ok": true, "message": format!("《{name}》已开始优化，完成后自动刷新"), "async": true})))
         }))
         .post("/staging/deliver", bind(&st, |s, r| {
             let j = r.json()?;

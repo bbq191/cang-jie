@@ -57,6 +57,10 @@ pub struct StagingEntry {
     /// 落库记录。时间早于 `mtime`（之后又优化过）= 母版已变，UI 标"旧"。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub delivered: Option<Delivered>,
+    /// 是否正有一个异步操作（目前只有「优化」）在这条目上跑——UI 据此禁用删除/落库/再次优化等按钮，
+    /// 防止双击/并发操作同一条目（2026-09-18 真机反馈：优化耗时可能到分钟级，同步阻塞体验像卡死）。
+    #[serde(default)]
+    pub busy: bool,
 }
 
 /// 投原生成功后交给自检线程的计划：投书时刻（毫秒，圈"之后进库"的候选）+ 书名 + 期望页数。
@@ -109,11 +113,27 @@ pub struct Staging {
     library_folder: String,
     /// 投原生体积门（字节，0=不拦）：xochitl `/upload` 超限会直接断连，先拦下来给指引。
     native_limit: u64,
+    /// 正在跑异步操作（目前只有「优化」）的条目名集合——进程内存态，**不落盘**：进程重启＝没有任何
+    /// 操作还在跑，"忙"状态天然清零是正确语义（不是遗留 bug），比落盘更简单也更不会出现"重启后
+    /// 永久卡忙、谁都清不掉"的死锁。sidecar 里的 `OptimizeCheck.status` 只管"上次结果展示"，
+    /// 不参与这个忙锁判断——两者职责分开。
+    busy: Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
 }
 
 impl Staging {
     pub fn new(dir: PathBuf, xochitl: Arc<Xochitl>, library_folder: String, native_limit: u64) -> Staging {
-        Staging { dir, xochitl, library_folder, native_limit }
+        Staging { dir, xochitl, library_folder, native_limit, busy: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())) }
+    }
+    /// 这条目当前是否有异步操作在跑。
+    pub fn is_busy(&self, name: &str) -> bool {
+        self.busy.lock().unwrap().contains(name)
+    }
+    /// 尝试给条目加忙锁；已经忙着 → false（调用方据此拒绝这次操作，不排队不覆盖）。
+    fn try_start_busy(&self, name: &str) -> bool {
+        self.busy.lock().unwrap().insert(name.to_string())
+    }
+    fn end_busy(&self, name: &str) {
+        self.busy.lock().unwrap().remove(name);
     }
     pub fn dir(&self) -> &Path {
         &self.dir
@@ -176,6 +196,8 @@ impl Staging {
     // ───────────── 优化 ─────────────
 
     /// 对母版库里的 EPUB 跑通用优化（Inline 脚注 + 外链 css 缩进：两读器都能显示），原子回写。返回回执文案。
+    /// **同步、阻塞**——大漫画真机实测能跑到分钟级（`trim_margins` 裁边扫描，见书架白皮书 §05），
+    /// HTTP 接口不该直接暴露这个方法，用 [`Self::spawn_optimize`] 走后台线程。
     pub fn optimize(&self, name: &str, mode: OptimizeMode) -> Result<String, String> {
         if formats::ext_of(name) != "epub" {
             return Err("只有 EPUB 能优化（PDF 重排请在电脑用 shelf push）".into());
@@ -187,11 +209,51 @@ impl Staging {
         Ok(format!("已优化《{name}》{}", optimize_note(&rep)))
     }
 
+    /// [`Self::optimize`] 的异步版：先做零耗时的格式/存在性校验（错误立即回给调用方，不用等后台线程），
+    /// 校验过了才加忙锁、起后台线程跑真正耗时的部分。成功返回后 HTTP 层应立即回"已开始"，真正结果
+    /// 通过 `bus` 的 `books`/`staging` 事件 + `GET /staging` 列表里这条目的 `delivered.optimize`
+    /// （[`sidecar::OptimizeCheck`]）异步呈现。`catch_unwind` 兜底优化过程中的 panic（如损坏文件触发
+    /// 库内部意外崩溃）——绝不能让忙锁卡死在 true 再也清不掉、这条目从此删不掉优化不了。
+    pub fn spawn_optimize(&self, name: &str, mode: OptimizeMode, bus: Arc<rmsvc_core::events::EventBus>) -> Result<(), String> {
+        if formats::ext_of(name) != "epub" {
+            return Err("只有 EPUB 能优化（PDF 重排请在电脑用 shelf push）".into());
+        }
+        self.existing(name)?;
+        if !self.try_start_busy(name) {
+            return Err(format!("《{name}》正在处理中，请稍候"));
+        }
+        let now = rmsvc_core::clock::now_secs();
+        let _ = self.set_optimize_check(name, sidecar::OptimizeCheck { status: "pending".into(), message: String::new(), at: now });
+        let (this, name) = (self.clone(), name.to_string());
+        std::thread::spawn(move || {
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| this.optimize(&name, mode)))
+                .unwrap_or_else(|_| Err("优化过程内部异常（已捕获，不影响其他操作）".to_string()));
+            let at = rmsvc_core::clock::now_secs();
+            let oc = match &result {
+                Ok(msg) => sidecar::OptimizeCheck { status: "ok".into(), message: msg.clone(), at },
+                Err(e) => sidecar::OptimizeCheck { status: "failed".into(), message: e.clone(), at },
+            };
+            let _ = this.set_optimize_check(&name, oc);
+            this.end_busy(&name);
+            bus.publish("books", "staging");
+        });
+        Ok(())
+    }
+
+    /// 写异步优化结果到边车（书已从母版库删除 → Err，调用方只记日志/静默丢弃，不阻断别的流程）。
+    pub fn set_optimize_check(&self, name: &str, oc: sidecar::OptimizeCheck) -> Result<(), String> {
+        let p = self.existing(name)?;
+        sidecar::update(&p, |d| d.optimize = Some(oc))
+    }
+
     // ───────────── 落库 ─────────────
 
     /// 投入 xochitl 书库：纯复制原字节（不再优化）。原生阅读器只读 EPUB/PDF（CBZ 漫画不投原生，用户定）。`folder` 空＝配置缺省；
     /// `keep=false` 投完从母版库删除。返回回执文案 + EPUB 的渲染自检计划（调用方起线程跑 `render_check::run`）。
     pub fn deliver(&self, name: &str, folder: &str, keep: bool) -> Result<DeliverOutcome, String> {
+        if self.is_busy(name) {
+            return Err(format!("《{name}》正在优化中，请等它跑完再落库"));
+        }
         let ct = bookconv::convert::direct_content_type(name)
             .ok_or("原生阅读器只读 EPUB / PDF；此格式请「加入 KOReader」，或在电脑用 shelf push 转成 EPUB")?;
         let p = self.existing(name)?;
@@ -256,6 +318,9 @@ impl Staging {
     // ───────────── 查 / 删 ─────────────
 
     pub fn remove(&self, name: &str) -> Result<(), String> {
+        if self.is_busy(name) {
+            return Err(format!("《{name}》正在优化中，请等它跑完再删除"));
+        }
         let p = self.path_of(name)?;
         sidecar::remove(&p);
         std::fs::remove_file(&p).map_err(|e| format!("删除失败: {e}"))
@@ -298,7 +363,8 @@ impl Staging {
                 }
             };
             let mtime = md.modified().ok().map(rmsvc_core::clock::secs_of).unwrap_or(0);
-            out.push(StagingEntry { name, bytes: md.len(), format, optimized: level == "full", level, mtime, delivered: sidecar::read(&e.path()) });
+            let busy = self.is_busy(&name);
+            out.push(StagingEntry { name, bytes: md.len(), format, optimized: level == "full", level, mtime, delivered: sidecar::read(&e.path()), busy });
         }
         out.sort_by(|a, b| b.mtime.cmp(&a.mtime).then_with(|| a.name.cmp(&b.name)));
         out
@@ -451,6 +517,60 @@ mod tests {
         assert!(e.optimized && e.level == "full");
         assert_eq!(OptimizeMode::parse("keep-spacing").wash().unwrap().keep_para_spacing, true);
         assert!(OptimizeMode::parse("plain").wash().is_none() && OptimizeMode::parse("").wash().is_some());
+    }
+
+    #[test]
+    fn busy_lock_blocks_second_start_and_conflicting_delete_deliver() {
+        let t = tempfile::tempdir().unwrap();
+        let s = staging(&t);
+        s.stage_new("x.epub", b"PK").unwrap();
+        assert!(s.try_start_busy("x.epub"), "第一次加锁应该成功");
+        assert!(!s.try_start_busy("x.epub"), "已经忙着，第二次应该失败");
+        assert!(s.is_busy("x.epub"));
+        assert!(s.remove("x.epub").unwrap_err().contains("正在优化中"), "忙的时候不该能删");
+        assert!(s.deliver("x.epub", "", true).unwrap_err().contains("正在优化中"), "忙的时候不该能落库");
+        assert_eq!(s.list().iter().find(|e| e.name == "x.epub").unwrap().busy, true, "GET /staging 列表应体现 busy");
+        s.end_busy("x.epub");
+        assert!(!s.is_busy("x.epub"));
+        assert!(s.remove("x.epub").is_ok(), "解锁后恢复正常");
+    }
+
+    #[test]
+    fn spawn_optimize_runs_in_background_and_records_result_then_clears_busy() {
+        let t = tempfile::tempdir().unwrap();
+        let s = staging(&t);
+        let opf = r#"<package version="2.0"><metadata><dc:title>t</dc:title></metadata><manifest><item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="c1"/></spine></package>"#;
+        let epub = mini_epub(&[("content.opf", opf), ("c1.xhtml", "<html><head></head><body><h1>第一章</h1><p>正文</p></body></html>")]);
+        s.stage_new("x.epub", &epub).unwrap();
+        let bus = Arc::new(rmsvc_core::events::EventBus::new());
+        s.spawn_optimize("x.epub", OptimizeMode::Auto, bus).unwrap();
+        // 起线程那一刻就该忙（同步部分：格式校验+加锁，不依赖线程调度时机）
+        assert!(s.is_busy("x.epub"), "spawn 返回时忙锁应已生效");
+        // 忙着的时候第二次调用应该被拒绝，不会排队/覆盖
+        let bus2 = Arc::new(rmsvc_core::events::EventBus::new());
+        assert!(s.spawn_optimize("x.epub", OptimizeMode::Auto, bus2).unwrap_err().contains("正在处理中"));
+        // 等后台线程跑完（真实测试书毫秒级，给足超时兜底 CI 慢机器）
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while s.is_busy("x.epub") && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(!s.is_busy("x.epub"), "后台线程应该在超时前跑完并清忙锁");
+        let e = s.list().into_iter().find(|e| e.name == "x.epub").unwrap();
+        assert!(!e.busy);
+        let oc = e.delivered.and_then(|d| d.optimize).expect("应该写了异步优化结果");
+        assert_eq!(oc.status, "ok");
+        assert!(oc.message.contains("已优化"), "{}", oc.message);
+    }
+
+    #[test]
+    fn spawn_optimize_rejects_non_epub_and_missing_file_synchronously() {
+        let t = tempfile::tempdir().unwrap();
+        let s = staging(&t);
+        s.stage_new("p.pdf", b"%PDF").unwrap();
+        let bus = Arc::new(rmsvc_core::events::EventBus::new());
+        assert!(s.spawn_optimize("p.pdf", OptimizeMode::Auto, bus.clone()).unwrap_err().contains("只有 EPUB"));
+        assert!(!s.is_busy("p.pdf"), "校验失败不该留下忙锁");
+        assert!(s.spawn_optimize("none.epub", OptimizeMode::Auto, bus).is_err());
     }
 
     #[test]
