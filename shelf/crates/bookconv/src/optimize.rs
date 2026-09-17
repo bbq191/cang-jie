@@ -262,6 +262,11 @@ pub fn optimize_epub_with(epub: &[u8], opts: &OptimizeOpts) -> Result<(Vec<u8>, 
         }
     }
 
+    // 漫画识别（EPUB 线原则④）：图 ≥20 张且平均每张图配的文字 <40 字判漫画，决定下面图片降采样时
+    // 是否保原画（不跳过必要的屏幕适配缩放，但避免不必要的有损重编码）。用 wash 之后的 `ordered` 判——
+    // wash 层已把空页清理、目录归一，判定更准，漫画书也不该被这些文字书专属步骤打扰。
+    let is_comic_book = crate::comic_detect::is_comic(&ordered);
+
     let mut rep = Report { wash: wash_rep, total_files: 0, html_files: 0, bytes_before: epub.len(), bytes_after: 0 };
 
     // 第一遍：读所有条目。xhtml → strip_font_locks；同时扫全书 marker 得**被引用**的尾注 frag 集
@@ -362,7 +367,14 @@ pub fn optimize_epub_with(epub: &[u8], opts: &OptimizeOpts) -> Result<(Vec<u8>, 
                 }
             } else if crate::imgopt::is_downscalable(name) {
                 // ① 按 Move 屏竖向框（宽≤954）降采样超大图——EPUB 图可能行内，宽超 954 会溢出竖屏（缩不动/失败则原样）。
-                crate::imgopt::downscale_for_epub(data).unwrap_or_else(|| data.clone())
+                // 漫画书（EPUB 线原则④"不允许压画质，只能裁边/适配屏幕"）：先裁四边纯色留白，
+                // 超限时改用更高 JPEG 质量重编码。
+                if is_comic_book {
+                    let trimmed = crate::imgopt::trim_margins(data).unwrap_or_else(|| data.clone());
+                    crate::imgopt::downscale_for_epub_comic(&trimmed).unwrap_or(trimmed)
+                } else {
+                    crate::imgopt::downscale_for_epub(data).unwrap_or_else(|| data.clone())
+                }
             } else if name.to_lowercase().ends_with(".opf") {
                 // opf：从 spine 删目录页 itemref（去掉冗余 HTML 目录，reMarkable 有自己的 TOC）。
                 match String::from_utf8(data.clone()) {
@@ -454,6 +466,66 @@ mod tests {
         let mut x = String::new();
         ar.by_name("OEBPS/c1.xhtml").unwrap().read_to_string(&mut x).unwrap();
         assert!(x.contains(r#"style="color:#000000;font-weight:400""#), "内联提对比: {x}");
+    }
+
+    #[test]
+    fn comic_epub_gets_higher_quality_reencode_than_text_book() {
+        use image::{codecs::jpeg::JpegEncoder, DynamicImage, GenericImageView, RgbImage};
+        // x、y 都要变化——否则整张图任意一列（或行）颜色恒定，会被 trim_margins 的"纯色留白"判据
+        // 误判成可裁的边框，让漫画路径意外比对照组多裁一刀，干扰这条测试本身要验证的"质量差异"。
+        let big = DynamicImage::ImageRgb8(RgbImage::from_fn(2000, 3000, |x, y| image::Rgb([(x % 256) as u8, (y % 256) as u8, 150])));
+        let mut jpg = Vec::new();
+        JpegEncoder::new_with_quality(&mut jpg, 90).encode_image(&big).unwrap();
+
+        // 漫画书：25 张纯图片页（其中一张是超框大图）
+        let mut comic_buf = Vec::new();
+        {
+            let mut zw = ZipWriter::new(Cursor::new(&mut comic_buf));
+            let stored = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
+            zw.start_file("mimetype", stored).unwrap();
+            zw.write_all(b"application/epub+zip").unwrap();
+            let items: String = (1..=25).map(|i| format!(r#"<item id="c{i}" href="c{i}.xhtml" media-type="application/xhtml+xml"/>"#)).collect();
+            let spine: String = (1..=25).map(|i| format!(r#"<itemref idref="c{i}"/>"#)).collect();
+            zw.start_file("content.opf", stored).unwrap();
+            zw.write_all(format!(r#"<package version="3.0"><metadata><dc:title>漫画</dc:title></metadata><manifest>{items}</manifest><spine>{spine}</spine></package>"#).as_bytes()).unwrap();
+            for i in 1..=25 {
+                zw.start_file(format!("c{i}.xhtml"), stored).unwrap();
+                zw.write_all(format!(r#"<html><body><img src="p{i}.jpg"/></body></html>"#).as_bytes()).unwrap();
+            }
+            zw.start_file("p1.jpg", stored).unwrap();
+            zw.write_all(&jpg).unwrap();
+            zw.finish().unwrap();
+        }
+        // 文字书：同一张超框大图，但正文是长文字（不判漫画）
+        let long_text = "正".repeat(500);
+        let mut text_buf = Vec::new();
+        {
+            let mut zw = ZipWriter::new(Cursor::new(&mut text_buf));
+            let stored = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
+            zw.start_file("mimetype", stored).unwrap();
+            zw.write_all(b"application/epub+zip").unwrap();
+            zw.start_file("content.opf", stored).unwrap();
+            zw.write_all(r#"<package version="3.0"><metadata><dc:title>文字书</dc:title></metadata><manifest><item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="c1"/></spine></package>"#.as_bytes()).unwrap();
+            zw.start_file("c1.xhtml", stored).unwrap();
+            zw.write_all(format!("<html><body><p>{long_text}</p><img src=\"p1.jpg\"/></body></html>").as_bytes()).unwrap();
+            zw.start_file("p1.jpg", stored).unwrap();
+            zw.write_all(&jpg).unwrap();
+            zw.finish().unwrap();
+        }
+
+        let (comic_out, _) = optimize_epub(&comic_buf).unwrap();
+        let (text_out, _) = optimize_epub(&text_buf).unwrap();
+        let mut comic_img = Vec::new();
+        ZipArchive::new(Cursor::new(&comic_out)).unwrap().by_name("p1.jpg").unwrap().read_to_end(&mut comic_img).unwrap();
+        let mut text_img = Vec::new();
+        ZipArchive::new(Cursor::new(&text_out)).unwrap().by_name("p1.jpg").unwrap().read_to_end(&mut text_img).unwrap();
+
+        assert_eq!(
+            image::load_from_memory(&comic_img).unwrap().dimensions(),
+            image::load_from_memory(&text_img).unwrap().dimensions(),
+            "两边尺寸约束一致，都要缩进屏幕框"
+        );
+        assert!(comic_img.len() > text_img.len(), "漫画书判定应触发更高质量重编码，体积应更大: comic={} text={}", comic_img.len(), text_img.len());
     }
 
     /// 造一个最小 EPUB(mimetype + 一章带锁字体的 xhtml)，过优化器后字体锁应被剥掉、结构保留。

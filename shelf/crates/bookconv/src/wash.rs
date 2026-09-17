@@ -572,18 +572,20 @@ pub fn count_dup_id_tags(html: &str) -> usize {
 
 // ───────────────────────── OPF 视图 ─────────────────────────
 
-struct Opf {
-    index: usize,
-    dir: String,
+pub(crate) struct Opf {
+    pub(crate) index: usize,
+    pub(crate) dir: String,
     /// manifest id → zip 路径
-    items: HashMap<String, String>,
+    #[allow(dead_code)]
+    pub(crate) items: HashMap<String, String>,
     /// spine 顺序的 zip 路径
-    spine: Vec<String>,
-    nav_doc: Option<String>,
-    ncx: Option<String>,
+    pub(crate) spine: Vec<String>,
+    pub(crate) nav_doc: Option<String>,
+    #[allow(dead_code)]
+    pub(crate) ncx: Option<String>,
 }
 
-fn parse_opf(entries: &[Entry]) -> Option<Opf> {
+pub(crate) fn parse_opf(entries: &[Entry]) -> Option<Opf> {
     let index = find_opf(entries)?;
     let dir = dir_of(&entries[index].name).to_string();
     let text = String::from_utf8_lossy(&entries[index].data);

@@ -8,6 +8,7 @@
 //! 两者互不依赖，只共用本 crate；weread-device 以 `pub use bookconv::…` re-export 保旧路径不变。
 pub mod article;
 pub mod check;
+pub mod comic_detect;
 pub mod convert;
 pub mod epub;
 pub mod htmlproc;
