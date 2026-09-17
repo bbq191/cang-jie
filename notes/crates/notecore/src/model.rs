@@ -309,6 +309,19 @@ impl Book {
         self.entries.retain(|e| !matches!(e.status, Status::Archived | Status::Revoked | Status::Skipped));
         before - self.entries.len()
     }
+
+    /// 这一章还有没有活条目——**跟去处无关**，只看 `status.is_live_for_projection()`。`project::live_entries`/
+    /// `export::live_entries` 各自还会再按 `wants_notebook()`/`wants_obsidian()` 过滤一层，那是"这条现在
+    /// 要不要投这个去处"；这个方法回答的是更底层的问题："这一章的内容本身还在不在"，两者不是一回事——
+    /// 2026-09-17 真机 bug 发现：`generate_chapter`/`export_chapter` 原来拿"这个去处现在没条目要了"
+    /// （`project_chapter`/`fingerprint_chapter` 返回 `None`）直接当"这一章空了"处理，清掉 `generated_at`/
+    /// `exported_at` 历史记录——用户把一章唯一的条目从 `Notebook` 切到 `Obsidian` 后，笔记本那边的历史
+    /// 记录被误清空（设备上的笔记本文档本身没删，只是本地记录被清了，"已导出"徽章因此凭空消失），根因
+    /// 是没有区分"条目还在，只是这次不想要这个去处"和"条目真的没了"。加这个方法给两处清空判据用来正确
+    /// 区分这两种情况。
+    pub fn chapter_has_live_entries(&self, chapter_idx: usize) -> bool {
+        self.entries.iter().any(|e| e.chapter == Some(chapter_idx) && e.status.is_live_for_projection())
+    }
 }
 
 #[cfg(test)]
@@ -519,5 +532,27 @@ mod tests {
         let remaining: Vec<&str> = b.entries.iter().map(|e| e.id.as_str()).collect();
         assert_eq!(remaining, ["keep-mined", "keep-pending", "keep-reviewed"]);
         assert_eq!(b.purge_terminal(), 0, "再清一次没东西可清");
+    }
+
+    #[test]
+    fn chapter_has_live_entries_ignores_destination_and_terminal_status() {
+        fn entry(chapter: usize, status: Status, dest: Destination) -> Entry {
+            let mut e: Entry = serde_json::from_str(&format!(r#"{{"id":"e","page":"p","page_index":0,"chapter":{chapter},"created":0,"updated":0}}"#)).unwrap();
+            e.status = status;
+            e.destination = dest;
+            e
+        }
+        let b = Book {
+            uuid: "u".into(),
+            title: "t".into(),
+            chapters: vec!["第一章".into(), "第二章".into()],
+            // 第一章：唯一一条活条目去处是 Obsidian（不要笔记本）——章节本身仍然"有内容"，
+            // 不该被当成空章清掉笔记本那边的历史记录（2026-09-17 真机 bug 的具体场景）。
+            entries: vec![entry(0, Status::Reviewed, Destination::Obsidian), entry(1, Status::Revoked, Destination::Both)],
+            ..Default::default()
+        };
+        assert!(b.chapter_has_live_entries(0), "条目还活着，只是这次不想要笔记本这个去处");
+        assert!(!b.chapter_has_live_entries(1), "唯一条目已撤销，这一章真的没内容了");
+        assert!(!b.chapter_has_live_entries(2), "压根没有第三章");
     }
 }

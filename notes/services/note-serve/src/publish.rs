@@ -75,13 +75,18 @@ pub fn generate_chapter(c: &Ctx, book: &Book, idx: usize) -> ChapterResult {
         return ChapterResult { chapter: idx, title: String::new(), outcome: ChapterOutcome::Failed { error: "没有这一章".into() } };
     };
     let Some(paragraphs) = project_chapter(book, idx) else {
-        // 这一章没有可投影的条目了（全撤销/归档/跳过）——清掉旧记录，不然 `generated_at` 永远非空，
-        // 「整理」页的 `everExported` 会永久误判这一章"已导出"（幽灵已导出）。跟 export.rs::export_chapter
-        // 同一处理，两条投影路径保持对称（2026-09-09 补，此前只有 export.rs 这么做，见 chapter_store.rs
-        // 的 `clear()` 注释）。旧设备文档本身不联动清理——不是这次要解决的问题，且贸然删用户书库里的
-        // 文档风险更高，只清本地记录不会丢用户数据。
-        if let Err(e) = c.state.clear(&book.uuid, idx) {
-            eprintln!("[note-serve] 清空第 {} 章旧生成记录失败，先留着，不阻塞本次结果: {e}", idx + 1);
+        // `project_chapter` 返回 `None` 有两种不同的原因，处理方式不能一样（2026-09-17 真机 bug
+        // 修复）：①这一章真的没有活条目了（全撤销/归档/跳过）——历史记录该清，不然 `generated_at`
+        // 永远非空，「整理」页的 `everExported` 会永久误判这一章"已导出"（幽灵已导出）；②条目还活着，
+        // 只是这次这一章没有条目的去处想要笔记本了（比如唯一一条从 `Notebook` 切到 `Obsidian`）——
+        // 设备上的笔记本文档本身没删（下面这条 `clear()` 从来不碰真文档，只清本地记录），这种情况下
+        // 清掉记录就是把"曾经真的生成过"这个事实凭空抹掉，「整理」页的笔记本徽章会跟着消失，用户
+        // 反馈"切换去处后另一个去处的状态丢了"就是这个根因。`chapter_has_live_entries` 忽略去处、
+        // 只看条目死没死，用它区分这两种情况，只在真是①的时候才清。
+        if !book.chapter_has_live_entries(idx) {
+            if let Err(e) = c.state.clear(&book.uuid, idx) {
+                eprintln!("[note-serve] 清空第 {} 章旧生成记录失败，先留着，不阻塞本次结果: {e}", idx + 1);
+            }
         }
         return ChapterResult { chapter: idx, title, outcome: ChapterOutcome::Empty };
     };
@@ -202,7 +207,7 @@ impl Uploader for XochitlUploader {
 mod tests {
     use super::*;
     use crate::ink::BookBrief;
-    use notecore::model::{Entry, Status, Style};
+    use notecore::model::{Destination, Entry, Status, Style};
     use std::sync::Mutex;
 
     struct FakeStore(Book);
@@ -435,6 +440,30 @@ mod tests {
         let results2 = generate_book(&ctx(&store2, &uploader, &trash, &state, 2000), "book1").unwrap();
         assert_eq!(results2[0].outcome, ChapterOutcome::Empty, "章空了应该是 Empty 不是 Unchanged");
         assert!(state.get("book1", 0).is_none(), "旧记录应该被清掉，不然会幽灵已导出");
+    }
+
+    /// 2026-09-17 真机 bug：跟上面那条"幽灵已导出"回归长得像，但根因不一样——条目没有被撤销/归档，
+    /// 只是把这一章唯一条目的去处从 `Notebook`/`Both` 切成纯 `Obsidian`（不再要笔记本）。这种情况下
+    /// `project_chapter` 同样返回 `None`（没有条目要笔记本了），但条目本身还活着，设备上的笔记本
+    /// 文档也没有被删——历史记录不该被清掉，不然「整理」页的笔记本徽章会凭空消失，用户真机反馈
+    /// "推送至原生、再推送至Obsidian，刚才的推送至原生状态就丢了"就是这个根因。
+    #[test]
+    fn switching_destination_away_from_notebook_keeps_the_record_not_ghost_exported() {
+        let t = tempfile::tempdir().unwrap();
+        let state = NotebookState::new(t.path().to_path_buf());
+        let uploader = FakeUploader::default();
+        let trash = FakeTrash::default();
+        let store = FakeStore(book());
+        let results = generate_book(&ctx(&store, &uploader, &trash, &state, 1000), "book1").unwrap();
+        assert!(matches!(results[0].outcome, ChapterOutcome::Generated { .. }), "先正常生成一次");
+        assert!(state.get("book1", 0).is_some(), "生成后应该留下记录");
+
+        let mut switched = book();
+        switched.entries[0].destination = Destination::Obsidian; // 条目还活着，只是不再要笔记本了
+        let store2 = FakeStore(switched);
+        let results2 = generate_book(&ctx(&store2, &uploader, &trash, &state, 2000), "book1").unwrap();
+        assert_eq!(results2[0].outcome, ChapterOutcome::Empty, "这次没有条目要笔记本，仍然是 Empty");
+        assert!(state.get("book1", 0).is_some(), "但条目没死，历史记录不该被清掉——设备上的文档还在");
     }
 
     #[test]
