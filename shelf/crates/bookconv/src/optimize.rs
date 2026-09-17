@@ -39,10 +39,13 @@ pub const OPTIMIZE_MARKER: &str = "META-INF/com.cangjie.optimized";
 /// nbsp 段首缩进（nbsp 宽随字体变、且被折叠，做不到精确 2 字；外链 text-indent 精确且字体无关）。
 pub const OPTIMIZE_VERSION: &str = "10";
 
-/// 脚注呈现方式。xochitl 无弹窗脚注（穷尽真机实测判死）；weread/pkm 线与第三方书历史行为用
-/// `Anchor`（章末可见 + 同章锚点跳转 + 原生「返回」浮标）。EPUB 线设备侧优化（母版库「优化」）
-/// 2026-09-17 起改用 `ParagraphEnd`——`Inline` 会打断段内阅读、`Anchor` 跳到章末后没法点回来
-/// （reMarkable 会吞互指锚点对），两者都不完全符合"既不影响连续阅读体验也不影响注释理解"的要求。
+/// 脚注呈现方式。xochitl 无弹窗脚注（穷尽真机实测判死）；weread/pkm 线与第三方书历史行为、
+/// EPUB 线设备侧优化（母版库「优化」）2026-09-17 起统一用 `Anchor`（章末可见 + 同章锚点跳转 +
+/// 原生「返回」浮标）。⚠ 同日曾短暂加过 `ParagraphEnd`（注释移到引用它的段落末尾），真机验证后
+/// 撤回并整个删除——用户真实期望是"翻到哪页注释固定在那页最下面"，EPUB 流式重排做不到真正的
+/// 页底部定位（"页"是阅读器翻页时才算出来的，做书时不知道内容最终落在第几页），`ParagraphEnd`
+/// 那种"跟着段落走"的近似方案不符合预期；真正的页底部定位是固定版式（PDF 线）的能力，不是
+/// EPUB 能原生支持的，见书架白皮书 §03av 补记。
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum FootnoteMode {
     /// 注释移章末 `<div class="footnotes">` + marker 改同章锚点，点跳、原生浮标返回。
@@ -50,9 +53,6 @@ pub enum FootnoteMode {
     Anchor,
     /// 注释文字就地内联显示在引用处 `<span class="cj-fnote">〔…〕</span>`，始终可见、不跳转。
     Inline,
-    /// 注释移到"含有该引用的整段"结束后（分割线+注释块），marker 改纯 `<sup>N</sup>`（不再是链接）。
-    /// 不跳转、不建反向锚点，段内阅读不被打断，注释又贴着上下文可见。EPUB 线设备侧优化默认用它。
-    ParagraphEnd,
 }
 
 /// 优化选项：`wash=Some` 时先过清洗层（书架母版库「优化」与 host `epub-optimize` 缺省开；weread 线不开）。
@@ -344,11 +344,7 @@ pub fn optimize_epub_with(epub: &[u8], opts: &OptimizeOpts) -> Result<(Vec<u8>, 
                         let t = crate::htmlproc::fix_duokan_markers(&t);
                         let t = fix_cover_aspect(&t);
                         let t = svg_cover_to_img(&t);
-                        let t = if opts.footnote == FootnoteMode::ParagraphEnd {
-                            crate::htmlproc::paragraph_end_footnotes(&t, &aside_index)
-                        } else {
-                            crate::htmlproc::preserve_relink_footnotes(&t, &aside_index, opts.footnote)
-                        };
+                        let t = crate::htmlproc::preserve_relink_footnotes(&t, &aside_index, opts.footnote);
                         // ② e-ink 提对比：灰字→纯黑、细字重→400（style 属性 + <style> 块）。
                         let t = crate::htmlproc::boost_text_contrast(&t);
                         // 远程图内联（抓下降采样进 zip / 抓不到删 img，免大放大镜）。

@@ -7,7 +7,9 @@
 //!   --no-wash        只跑优化器不清洗（= v5 行为）
 //!   --keep-spacing   清洗但保留原书段间距（诗集/剧本）
 //!   --auto-toc       强制从 h1–h6 重建目录（缺省仅在无目录时生成）
-//!   --footnote-anchor 脚注用章末锚点跳转（缺省 ParagraphEnd 段末块，对齐设备 native→xochitl，2026-09-17 起）
+//!   --footnote-anchor 脚注用章末锚点跳转（缺省即 Anchor，此参数保留兼容；2026-09-17 曾短暂改缺省
+//!                      为段末块，真机验证用户实际期望是"翻到哪页注释跟哪页"而不是"跟着引用它的段落"，
+//!                      EPUB 是流式重排做不到真正的页底部定位，撤回改回 Anchor，段末块整个下线）
 //!   --check          产物过质量门，打印 JSON 报告；不过则退出码 3（产物仍写出）
 //!   --require-toc    质量门把"无目录"升为失败
 //! 退出码: 0 成功；1 用法错；2 优化失败（输入原样不动）；3 质量门未过。
@@ -39,7 +41,8 @@ fn main() {
             ..Default::default()
         })
     };
-    let footnote = if flags.contains(&"--footnote-anchor") { FootnoteMode::Anchor } else { FootnoteMode::ParagraphEnd };
+    // --footnote-anchor 现在是 no-op（缺省已经是 Anchor），继续留在允许的 flag 列表里只是不破坏已有脚本调用。
+    let footnote = FootnoteMode::Anchor;
     let (out, rep) = match optimize::optimize_epub_with(&epub, &OptimizeOpts { wash, footnote }) {
         Ok(x) => x,
         Err(e) => {
