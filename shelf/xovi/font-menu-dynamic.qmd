@@ -57,6 +57,22 @@ AFFECT /qml/device/view/documentview/FormatFont.qml
                 if (!fe) { console.warn("SHELF-FONT: " + reason + " fontEnhance=false, skip"); return; }
                 var lng = cjLang();
                 var fonts = cjFonts();
+                // 先删：fonts.json 里不再有的（字体在 font-serve 那边被删了），从后往前扫，
+                // 只删我们自己 append 过的（cjAdded 记过），原生自带的 4 项不受影响。
+                // 2026-09-19 真机回归：这一段之前完全没有，删除的字体永远留在菜单里，直到重启才消失。
+                var want = {};
+                for (var wi = 0; wi < fonts.length; wi++) {
+                    if (fonts[wi] && fonts[wi].key) want[fonts[wi].key] = true;
+                }
+                var removed = 0;
+                for (var ri = fontModel.count - 1; ri >= 0; ri--) {
+                    var rk = fontModel.get(ri).key;
+                    if (cjAdded[rk] && !want[rk]) {
+                        fontModel.remove(ri);
+                        delete cjAdded[rk];
+                        removed++;
+                    }
+                }
                 var n = 0;
                 for (var i = 0; i < fonts.length; i++) {
                     var f = fonts[i];
@@ -66,7 +82,7 @@ AFFECT /qml/device/view/documentview/FormatFont.qml
                     cjAdded[f.key] = true;
                     n++;
                 }
-                console.warn("SHELF-FONT: " + reason + " lang=" + lng + " appended=" + n + " count=" + fontModel.count);
+                console.warn("SHELF-FONT: " + reason + " lang=" + lng + " appended=" + n + " removed=" + removed + " count=" + fontModel.count);
             }
             // handler 一律写成 `{ … }` 块：不带花括号的 `if (` 会让 qmldiff 报同一句解析错误（离线 CLI 二分坐实）。
             Component.onCompleted: { cjSync("onCompleted") }
