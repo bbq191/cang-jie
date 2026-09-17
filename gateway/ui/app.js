@@ -400,6 +400,14 @@ function renderNotes(sec){sec.innerHTML=`
     </div>
   </div>`;
   const sel=$('#nbook',sec),chaptertabs=$('#nchaptertabs',sec),chapterbody=$('#nchapterbody',sec),browse=$('#nbrowse',sec),sum=$('#nsum',sec);let book=null;
+  // 「推送本章」/「重新转写」/「提问」点完显示结果文案、停留 3s 再让用户看清（见下面三处 wait(3000)）——
+  // 但这三个动作本身会让 ink-serve 发 `entries` 事件，笔记 tab 正开着时 SSE 会立刻调 `sec.refresh`
+  // 整段重画，比 3s 计时器快得多，文案实际上一闪就被这个"我以为没关系的"刷新冲掉了（真机反馈"重复
+  // 推送的提示看不清，一闪而过"，2026-09-17；上一轮把 1.5s 延到 3s 完全没解决，根子根本不在计时器
+  // 长短）。这里挡一下：显示文案的同时记一个"暂停到几点"的时间戳，`refresh()` 起手先看这个时间戳，
+  // 没过就直接跳过这次 SSE 触发的重画——不会漏刷新，三处调用点末尾自己的 `wait(3000)` 之后本来就会
+  // 主动重画一次，只是不再被 SSE 抢跑。
+  let holdRefreshUntil=0;
   const cropUrl=(uuid,f)=>`/api/ink/books/${encodeURIComponent(uuid)}/crops/${encodeURIComponent(f)}`;
   // 2026-09-16 截图走查发现：`e.ink` 有值但 `e.ink.crop` 是空串（ink-serve 自渲染裁图失败/写盘失败时
   // 会发生，见 ingest.rs 的 render_ink/write_atomic 错误分支，只记服务端日志、条目照常落盘）此前被
@@ -641,7 +649,7 @@ function renderNotes(sec){sec.innerHTML=`
       // 是重复劳动，一个按钮内部按当前去处该做哪样做哪样：没有条目要那个去处，对应那步自然是 Empty
       // （后端已有这个语义，见 export::ExportOutcome/publish::ChapterOutcome），前端只是不重复提示
       // "没做"；改名"推送"是因为"同步"暗示双向/拉取，这个按钮其实只单向推。
-      syncBtn.onclick=async()=>{syncBtn.disabled=true;msg.textContent=T('notes.pushing');
+      syncBtn.onclick=async()=>{syncBtn.disabled=true;msg.textContent=T('notes.pushing');holdRefreshUntil=Date.now()+15000;
         const gr=await j(`/api/notes/books/${encodeURIComponent(book.uuid)}/chapters/${k}/generate`,{method:'POST'});
         const er=await j(`/api/notes/books/${encodeURIComponent(book.uuid)}/chapters/${k}/export`,{method:'POST'});
         syncBtn.disabled=false;
@@ -653,6 +661,7 @@ function renderNotes(sec){sec.innerHTML=`
         if(er.ok===false)parts.push('✗ md：'+(er.message||T('common.failed')));
         else if(er.status==='written'){parts.push('✓ '+T('notes.push.mdExported'));window.open(`/api/notes/books/${encodeURIComponent(book.uuid)}/chapters/${k}/export.md`,'_blank')}
         msg.textContent=parts.length?parts.join(' · '):T('notes.push.noChange');
+        holdRefreshUntil=Date.now()+3000; // 结果文案刚显示出来，从这一刻起再保 3s，不管上面两次请求实际花了多久
         await wait(3000);await refreshSync();renderBook({advance:true})};
     }
     es.forEach(e=>{const failed=failedIds.has(e.id);const row=document.createElement('div');row.className='entry'+(failed?' entry-failed':'');
@@ -696,21 +705,22 @@ function renderNotes(sec){sec.innerHTML=`
          最初给的 1.5s 真机反馈"闪一下就没了"根本来不及读，2026-09-16 延长到 3s（「推送本章」
          那条同款状态提示也一起延长，三处是同一个模式）。 */
       const tb=row.querySelector('[data-transcribe]'),txStat=row.querySelector('[data-txstat]');
-      if(tb)tb.onclick=async()=>{tb.disabled=true;txStat.textContent=T('notes.transcribing');
+      if(tb)tb.onclick=async()=>{tb.disabled=true;txStat.textContent=T('notes.transcribing');holdRefreshUntil=Date.now()+15000;
         const r=await j(`/api/transcribe/books/${encodeURIComponent(book.uuid)}/entries/${encodeURIComponent(e.id)}`,{method:'POST'});
         tb.disabled=false;
         txStat.textContent=r.ok===false?('✗ '+(r.message||T('notes.transcribeFailed'))):T('notes.transcribeDone',{promptTokens:r.promptTokens||0,completionTokens:r.completionTokens||0});
+        holdRefreshUntil=Date.now()+3000;
         await wait(3000);await reloadBook(renderBook)};
       /* 「问AI」勾选框 + 问题 + 提问按钮：改即存（ink-serve），点提问才真的调 mind-serve。 */
       const askBox=row.querySelector('[data-ask]'),qInput=row.querySelector('[data-question]'),askBtn=row.querySelector('[data-askbtn]'),askStat=row.querySelector('[data-askstat]');
       const syncAskUi=()=>{qInput.disabled=!askBox.checked;askBtn.disabled=!(askBox.checked&&qInput.value.trim())};
       askBox.onchange=()=>{patch(e.id,{askAi:askBox.checked});syncAskUi()};
       qInput.onchange=()=>{patch(e.id,{question:qInput.value});syncAskUi()};
-      askBtn.onclick=async()=>{askBtn.disabled=true;askStat.textContent=T('notes.asking');
+      askBtn.onclick=async()=>{askBtn.disabled=true;askStat.textContent=T('notes.asking');holdRefreshUntil=Date.now()+15000;
         const r=await j(`/api/mind/books/${encodeURIComponent(book.uuid)}/entries/${encodeURIComponent(e.id)}/ask`,{method:'POST'});
         askBtn.disabled=false;
-        if(r.ok===false){askStat.textContent='✗ '+(r.message||T('notes.askFailed'))}
-        else{askStat.textContent=T('notes.askDone',{promptTokens:r.promptTokens||0,completionTokens:r.completionTokens||0});await wait(3000);await reloadBook(renderBook)}};
+        if(r.ok===false){askStat.textContent='✗ '+(r.message||T('notes.askFailed'));holdRefreshUntil=0}
+        else{askStat.textContent=T('notes.askDone',{promptTokens:r.promptTokens||0,completionTokens:r.completionTokens||0});holdRefreshUntil=Date.now()+3000;await wait(3000);await reloadBook(renderBook)}};
       body.appendChild(row)});
     chapterbody.appendChild(card)};
   exportTabsEl.querySelectorAll('button').forEach(b=>b.onclick=()=>{if(exportTab===b.dataset.etab)return;exportTab=b.dataset.etab;selectedChapter=null;renderBook()});
@@ -728,7 +738,8 @@ function renderNotes(sec){sec.innerHTML=`
     if(!show&&importNavBtn.classList.contains('on'))$('#nsubnav',sec).children[0].click(); // 正停在「导入」时先切回「浏览」，避免 hidden+on 类同时存在
     importNavBtn.hidden=!show;importPanel.hidden=!show;
   };
-  const refresh=async()=>{const d=await j('/api/ink/books');const cur=sel.value;sel.innerHTML=(d.items||[]).map(b=>`<option value="${b.uuid}">${b.title}（${b.entries}）</option>`).join('')||`<option value="">${T('notes.noBooks')}</option>`;
+  const refresh=async()=>{if(Date.now()<holdRefreshUntil)return; // 正显示着结果提示，别被 SSE 抢跑冲掉（见 holdRefreshUntil 声明处注释）
+    const d=await j('/api/ink/books');const cur=sel.value;sel.innerHTML=(d.items||[]).map(b=>`<option value="${b.uuid}">${b.title}（${b.entries}）</option>`).join('')||`<option value="">${T('notes.noBooks')}</option>`;
     if(cur&&[...sel.options].some(o=>o.value===cur))sel.value=cur;await loadBook();await syncImportVisible()};
   refresh();sec.refresh=refresh;subtabs(sec)}
 
