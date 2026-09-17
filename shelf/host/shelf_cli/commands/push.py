@@ -1,20 +1,24 @@
 """`shelf push`：host 洗书 → 落**母版库**（中间层），去向由用户在网页选（xochitl / KOReader）。
 
 统一后 push 不再有去向参数——一律落母版库（`/api/books/staging`）。host 是唯一能"入库时顺带优化"的源：
-- 默认：有 Calibre → 洗书（EPUB 深洗 / 杂格式转 EPUB / PDF 结构化重排）→ 落母版库（产物带优化标记）。
+- 默认：EPUB 有 Calibre → 洗书（`ebook-convert` 深洗，CSS 拍平/series 命名等）→ 落母版库（产物带优化标记）；
+  PDF → 结构化重排。**AZW3/MOBI/AZW/PRC/FB2/TXT 这些非 EPUB/PDF 源格式 2026-09-17 起不再自动转 EPUB**
+  （EPUB 线架构调整：设备端只收 EPUB/PDF，其余格式请用户自行转换后再推——书架白皮书 §03ar 附近记这次调整）；
+  这些格式原样传母版库，会被服务端上传门拒收（`rmsvc_core::formats::BOOK_EXTS` 已不含它们），CLI 打印服务端
+  的拒收回执，不是裸错误堆栈。
 - `--no-optimize`：不洗，原样传母版库（用户可在网页按需点优化）。
 - `--no-calibre`：**只对本来就是 EPUB 的输入有意义**——跳过 `ebook-convert`（CSS 拍平/series 命名那部分），
   直接调跟网页「母版库→优化」按钮同一个函数的 `epub-optimize` 二进制（清洗+优化都做，不是"只优化不清洗"，
-  对应网页「清洗＋优化」档；`--keep-spacing` 同样生效＝对应「清洗但保留段距」档）。不装 Calibre 也能用——
-  两条路径唯一共同点只是都在编译产物 `shelf/target/release/epub-optimize`。非 EPUB 输入没法只靠这条路径
-  转格式，加了 `--no-calibre` 也一律原样传（等同 `--no-optimize` 的效果，母版库里再按需转/优化）。
-- `--to-pdf`：定稿成固定版式 PDF（手写批注用），落母版库。
-- **漫画**（AZW3/MOBI/EPUB/PDF 里全是整页图，`comic.is_comic` 自动判，`--comic/--no-comic` 覆盖；CBZ 天然）：不走洗书路，
-  出 **CBZ**（原图按页打包，跨页图自动拆分+白边裁切）进母版库，去向 KOReader 漫画模式。大部头**漫画默认不投原生**
-  （用户 2026-09-05 定）：xochitl 没有固定页漫画体验，且整本几百 MB 撞 `/upload` 体积上限（《镖人》282MB EPUB /
-  188MB PDF 都被 "multipart body is too large" 拒）——**但灰阶 CBZ 估算转 PDF 后还在设备原生上传上限内的小体积
-  漫画，会顺带多出一份 PDF 一起落库**，母版库里就多一个「投入原生书库」的选项（不强制分卷，超限的照旧只有
-  CBZ，`--no-comic-native` 关掉这条，2026-09-08）。
+  对应网页「清洗＋优化」档；`--keep-spacing` 同样生效＝对应「清洗但保留段距」档）。不装 Calibre 也能用。
+- `--to-pdf`：定稿成固定版式 PDF（手写批注用），落母版库。EPUB 输入直接定稿；PDF 输入裁边定稿。
+- **漫画**（EPUB/PDF 里全是整页图，`comic.is_comic` 自动判，`--comic/--no-comic` 覆盖；CBZ 天然）：不走洗书路，
+  出 **CBZ**（原图按页打包，跨页图自动拆分+白边裁切）进母版库，去向 KOReader 漫画模式。**AZW3/MOBI 漫画的
+  PalmDB 直判逻辑同样 2026-09-17 一并退役**——那几个格式现在会在到达 `is_comic` 判定之前就被服务端上传门
+  拒收，判了也没有意义（漫画请用户自己先转成 CBZ/EPUB/PDF）。大部头**漫画默认不投原生**（用户 2026-09-05
+  定）：xochitl 没有固定页漫画体验，且整本几百 MB 撞 `/upload` 体积上限（《镖人》282MB EPUB / 188MB PDF 都被
+  "multipart body is too large" 拒）——**但灰阶 CBZ 估算转 PDF 后还在设备原生上传上限内的小体积漫画，会顺带
+  多出一份 PDF 一起落库**，母版库里就多一个「投入原生书库」的选项（不强制分卷，超限的照旧只有 CBZ，
+  `--no-comic-native` 关掉这条，2026-09-08）。
 无 Calibre → 原样传母版库（设备端优化在网页母版库里点）。
 规则与网页一致：**所有书只落母版库**，没有绕过母版库直投读器的选项（2026-09-05 用户定）。
 """
@@ -29,12 +33,6 @@ from ..receipts import guard_file, upload_each
 
 NAME = "push"
 HELP = "投书到母版库（host 有 Calibre 先洗书；漫画自动转 CBZ 给 KOReader）；去向在网页选。难搞的书/PDF 重排用这条"
-
-# host 能洗/转成 EPUB 的源格式（其余原样传母版库）。= Rust `rmsvc_core::formats::HOST_CONVERTIBLE_EXTS` ∪ {epub} − {txt}，
-# 网页「格式」提示里"电脑可转"那一档就是它——改一处另一处同步（Python 不链接 Rust crate，只能镜像；
-# `tests/test_push.py::test_wash_ext_matches_rust_host_convertible_exts` 跨语言正则核对，改漏了会报）。
-# `.txt` 也是电脑可转，但先走 txt_to_epub.py 切章（Calibre 不认中文"第X章"），再进 wash——见 host_prepare。
-WASH_EXT = {".epub", ".azw3", ".mobi", ".azw", ".prc", ".fb2"}
 
 WAIT_DEFAULT_SECS = 600
 WAIT_PROBE_SECS = 5
@@ -208,32 +206,18 @@ def optimize_only_prepare(path: Path, args, work: Path) -> list[Path]:
     return [out]
 
 
-def txt_prepare(path: Path, work: Path, wenv: dict | None) -> Path:
-    """中文 TXT：切章建 EPUB（带两级目录）→ wash（TOC 已有，关 Calibre 自动目录）。返回洗好的 EPUB。"""
-    epub, meta = cb.txt_to_epub(path, work)
-    note = "" if meta.get("detected", True) else "；没认出「第X章」标题，按 8000 字硬切"
-    vols = f"{meta['volumes']} 卷 " if meta.get("volumes") else ""
-    print(f"  TXT 切章 → EPUB（{vols}{meta['chapters']} 章，{meta['encoding']}{note}）")
-    return cb.wash(epub, work, env={**(wenv or {}), "WASH_AUTOTOC": "0"})
-
-
 def host_prepare(path: Path, args, work: Path, ctx=None) -> list[Path]:
-    """host 洗书：默认 EPUB 深洗 / 杂格式转 EPUB / TXT 切章 / PDF 结构化重排；--to-pdf 定稿 PDF；漫画走 comic_prepare。产物待落母版库。"""
+    """host 洗书：默认 EPUB 深洗 / PDF 结构化重排；--to-pdf 定稿 PDF；漫画走 comic_prepare。产物待落母版库。
+    非 EPUB/PDF/CBZ 的源格式（AZW3/MOBI/FB2/TXT 等）2026-09-17 起不再在这里转换，原样传给母版库——
+    会被服务端上传门拒收（`rmsvc_core::formats::BOOK_EXTS` 已不含它们），落到下面末尾的 `return [path]`。"""
     suf = path.suffix.lower()
     if is_comic(path, args):
         return comic_prepare(path, work, args, ctx)
     wenv = {"WASH_KEEP_PARA_SPACING": "1"} if getattr(args, "keep_spacing", False) else None  # 与网页档位对齐
-    if suf == ".txt":
-        out = txt_prepare(path, work, wenv)
-        if args.to_pdf:
-            out = cb.to_pdf(out, work / (path.stem + ".pdf"))
-        _gate(out, args)
-        return [out]
     if args.to_pdf:
-        # 定稿固定版式 PDF（EPUB/杂格式先转 EPUB 再定稿；PDF 裁边）。
-        if suf == ".epub" or suf in WASH_EXT:
-            src = path if suf == ".epub" else cb.wash(path, work, env=wenv)
-            out = cb.to_pdf(src, work / (path.stem + ".pdf"))
+        # 定稿固定版式 PDF（EPUB 直接定稿；PDF 裁边）。
+        if suf == ".epub":
+            out = cb.to_pdf(path, work / (path.stem + ".pdf"))
         elif suf == ".pdf":
             try:
                 out = cb.crop_pdf(path, work / (path.stem + ".crop.pdf"))
@@ -243,7 +227,7 @@ def host_prepare(path: Path, args, work: Path, ctx=None) -> list[Path]:
             return [path]
         _gate(out, args)
         return [out]
-    # 默认：PDF 结构化重排 / EPUB·杂格式深洗成流式 EPUB。
+    # 默认：PDF 结构化重排 / EPUB 深洗成流式 EPUB。
     if suf == ".pdf":
         if args.no_reflow:
             return [path]
@@ -255,8 +239,8 @@ def host_prepare(path: Path, args, work: Path, ctx=None) -> list[Path]:
             return [out]
         print(f"  扫描件位图重排 → PDF（{reflowed.name}）")
         return [reflowed]
-    if suf == ".epub" or suf in WASH_EXT:
-        out = cb.wash(path, work, env=wenv)  # wash_epub.sh 泛化收 AZW3/MOBI（内部 ebook-convert），末步叠加 epub-optimize
+    if suf == ".epub":
+        out = cb.wash(path, work, env=wenv)
         _gate(out, args)
         return [out]
     return [path]
@@ -267,9 +251,11 @@ ROUTE_LABEL = {"raw": "原样→", "comic": "漫画 CBZ→", "wash": "洗书→"
 
 def plan(path: Path, args, calibre: bool) -> str:
     """一本书走哪条路：raw（原样）/ comic（→CBZ）/ wash（Calibre 洗书）/ optimize-only（`--no-calibre`，
-    只对 EPUB 有意义）。纯函数，便于测试。`--no-calibre` 判在 is_comic 之前——AZW3/EPUB 漫画解包成 CBZ
+    只对 EPUB 有意义）。纯函数，便于测试。`--no-calibre` 判在 is_comic 之前——EPUB 漫画解包成 CBZ
     本来就要 Calibre，用户明确要求跳过 Calibre 就不该再暗地里用它，漫画分支这时对 EPUB 输入退化成普通
-    优化（不拆 CBZ），非 EPUB 输入退化成 raw（母版库里再按需处理）。"""
+    优化（不拆 CBZ），非 EPUB 输入退化成 raw（母版库里再按需处理，或被服务端上传门拒收）。
+    2026-09-17 起 `is_comic` 只认 CBZ/EPUB/PDF——AZW3/MOBI/PRC 的 PalmDB 漫画直判一并退役
+    （那几个格式本身已经进不了母版库，判了也没有意义），非漫画格式统一退化成 raw。"""
     if path.suffix.lower() == ".cbz":
         return "comic" if getattr(args, "eink_gray", True) else "raw"  # CBZ 缺省再过 16 灰；--no-eink-gray 原样进母版库
     if args.no_optimize:
@@ -277,7 +263,7 @@ def plan(path: Path, args, calibre: bool) -> str:
     if getattr(args, "no_calibre", False):
         return "optimize-only" if path.suffix.lower() == ".epub" else "raw"
     if is_comic(path, args) and calibre:
-        return "comic"  # AZW3/EPUB 漫画解包成 CBZ 要 Calibre
+        return "comic"  # EPUB 漫画解包成 CBZ 要 Calibre
     return "wash" if calibre else "raw"
 
 

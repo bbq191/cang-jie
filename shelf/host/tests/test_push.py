@@ -276,27 +276,11 @@ def test_push_dry_run_and_missing_file(gateway, tmp_path, capsys):
     assert rc == 0 and "母版库" in out and not FakeGateway.received
 
 
-def _palmdb(records: list[bytes]) -> bytes:
-    """最小 PalmDB：78 字节头 + 记录表 + 记录体。"""
-    n = len(records)
-    head = bytearray(78)
-    head[76:78] = n.to_bytes(2, "big")
-    off = 78 + n * 8
-    table = bytearray()
-    for i, r in enumerate(records):
-        table += off.to_bytes(4, "big") + bytes([0, 0, 0, i & 0xFF])
-        off += len(r)
-    return bytes(head) + bytes(table) + b"".join(records)
-
-
-def test_comic_probe_palmdb_and_epub(tmp_path):
-    jpg = b"\xff\xd8\xff" + b"\0" * 2000
-    comic_book = tmp_path / "manga.azw3"
-    comic_book.write_bytes(_palmdb([b"MOBIhdr" + b"\0" * 100] + [jpg] * 30))
-    text_book = tmp_path / "novel.azw3"
-    text_book.write_bytes(_palmdb([b"text record " * 200] * 40 + [jpg] * 2))
-    assert comic.is_comic(comic_book) and not comic.is_comic(text_book)
+def test_comic_probe_cbz_and_epub(tmp_path):
+    # 2026-09-17 起 AZW3/MOBI/PRC 不再走漫画直判（EPUB 线架构调整后这几个格式进不了母版库，判了
+    # 也没有意义）——这条测试原来也覆盖 PalmDB 分支，那部分连带 comic.palmdb_image_ratio 一并删除。
     assert comic.is_comic(tmp_path / "x.cbz") and not comic.is_comic(tmp_path / "x.pdf")
+    assert not comic.is_comic(tmp_path / "manga.azw3"), "AZW3 已退役，不该再被判成漫画"
     import zipfile
 
     def epub(path, pages, imgs_per_page, text_per_page):
@@ -395,21 +379,18 @@ def test_native_limit_fallback_mb_matches_rust_default(monkeypatch):
     assert int(m.group(1)) == push.NATIVE_LIMIT_FALLBACK_MB, "book-serve 的默认体积上限跟 push.py 的静态兜底值不一致了，两边要手动同步"
 
 
-def test_wash_ext_matches_rust_host_convertible_exts(monkeypatch):
-    """`WASH_EXT`（push.py 注释自称"= rmsvc_core::formats::HOST_CONVERTIBLE_EXTS ∪ {epub} − {txt}，
-    改一处另一处同步"）跟 Rust 侧真实常量做一次跨语言正则核对——同一类"手动同步、迟早漏掉"的
-    风险，`NATIVE_LIMIT_FALLBACK_MB` 那条测试已经这么处理过，这里照搬同款套路（全量代码审查
-    2026-09-15 审出的重复缺口）。只在这个仓库布局下才断言，找不到源文件就跳过。"""
-    import re
-
-    rs = Path(__file__).resolve().parents[3] / "rmsvc-core" / "src" / "formats.rs"
-    if not rs.is_file():
-        return
-    m = re.search(r'HOST_CONVERTIBLE_EXTS:\s*&\[&str\]\s*=\s*&\[([^\]]*)\]', rs.read_text(encoding="utf-8"))
-    assert m, f"没在 {rs} 里找到 HOST_CONVERTIBLE_EXTS——是不是改了写法，这条检查也要跟着改"
-    rust_exts = {"." + e.strip().strip('"') for e in m.group(1).split(",") if e.strip()}
-    expected = (rust_exts | {".epub"}) - {".txt"}
-    assert push.WASH_EXT == expected, "push.py 的 WASH_EXT 跟 Rust HOST_CONVERTIBLE_EXTS 不一致了，两边要手动同步"
+def test_non_epub_pdf_source_formats_fall_through_to_raw(tmp_path):
+    """2026-09-17 EPUB 线架构调整：host 不再转换 AZW3/MOBI/AZW/PRC/FB2/TXT，`WASH_EXT` 常量连带
+    删除——这些格式的 `host_prepare` 现在原样透传（不调 cb.wash/txt_to_epub），由服务端上传门
+    拒收（`rmsvc_core::formats::BOOK_EXTS` 已不含它们）。用户想用这些格式，请先自行转换成 EPUB/PDF。"""
+    assert not hasattr(push, "WASH_EXT"), "WASH_EXT 应已整个移除，不是留着当死代码"
+    assert not hasattr(push, "txt_prepare"), "txt_prepare 应已整个移除"
+    args = type("A", (), {"no_optimize": False, "no_calibre": False, "comic": False, "no_comic": True, "to_pdf": False, "no_reflow": False, "keep_spacing": False})()
+    for ext in (".azw3", ".mobi", ".azw", ".prc", ".fb2", ".txt"):
+        f = tmp_path / f"b{ext}"
+        f.write_bytes(b"x")
+        assert push.plan(f, args, True) == "wash", f"{ext} 走的是 wash 路由标签，host_prepare 内部才真正退化成原样"
+        assert push.host_prepare(f, args, tmp_path) == [f], f"{ext} 应原样透传，不该被转换"
 
 
 def test_push_comic_native_pdf_added_when_small_enough(gateway, tmp_path, capsys, monkeypatch):

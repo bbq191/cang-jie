@@ -5,14 +5,14 @@
 
 /// 原生 xochitl 直读（两个读器都能去）。
 pub const NATIVE_EXTS: &[&str] = &["epub", "pdf"];
-/// 电脑 `shelf push` 能转成 EPUB 进原生的源格式（= host `push.py` 的 `WASH_EXT` ∪ txt；两处同一份，改一处另一处同步）。
-/// txt：中文网文，host `txt_to_epub.py` 按「第X章」切章建目录再洗（2026-09-06）；直接上传仍只能加入 KOReader（无章节）。
-pub const HOST_CONVERTIBLE_EXTS: &[&str] = &["azw3", "mobi", "azw", "prc", "fb2", "txt"];
 /// 只能加入 KOReader 的格式（设备装的 KOReader v2026.07.1 `documentregistry` 真机核对：crengine 收 txt/html/rtf/doc/docx/chm，
 /// mupdf 收 cbz/cbr(libarchive 带 rar)/xps，djvu 引擎收 djvu）。
 pub const KOREADER_ONLY_EXTS: &[&str] = &["cbz", "cbr", "djvu", "html", "htm", "rtf", "doc", "docx", "chm", "xps"];
-/// 母版库收的书籍格式 = 上面三档之并（有测试钉死一致）。能投哪个读器按格式在落库时门控。
-pub const BOOK_EXTS: &[&str] = &["epub", "pdf", "azw3", "mobi", "azw", "prc", "fb2", "txt", "cbz", "cbr", "djvu", "html", "htm", "rtf", "doc", "docx", "chm", "xps"];
+/// 母版库收的书籍格式 = 上面两档之并（有测试钉死一致）。能投哪个读器按格式在落库时门控。
+/// ⚠ 2026-09-17 起不再收 azw3/mobi/azw/prc/fb2/txt（原 `HOST_CONVERTIBLE_EXTS` 档，host `shelf push`
+/// 会用 Calibre 自动转成 EPUB）——EPUB 线架构调整：设备端只收 EPUB/PDF，母版库只保证原生优化管线
+/// 覆盖这两种源格式，其余格式请用户自行转换后再上传（见 shelf 白皮书 §03ar 附近记这次调整）。
+pub const BOOK_EXTS: &[&str] = &["epub", "pdf", "cbz", "cbr", "djvu", "html", "htm", "rtf", "doc", "docx", "chm", "xps"];
 /// TrueType / OpenType 字体（原生 fontconfig 与 KOReader 同一份）。
 pub const FONT_EXTS: &[&str] = &["ttf", "otf", "ttc"];
 /// StarDict 词典的组成文件。
@@ -54,11 +54,19 @@ mod tests {
 
     #[test]
     fn book_exts_is_union_of_tiers() {
-        let mut tiers: Vec<&str> = [NATIVE_EXTS, HOST_CONVERTIBLE_EXTS, KOREADER_ONLY_EXTS].concat();
+        let mut tiers: Vec<&str> = [NATIVE_EXTS, KOREADER_ONLY_EXTS].concat();
         let mut all: Vec<&str> = BOOK_EXTS.to_vec();
         tiers.sort();
         all.sort();
-        assert_eq!(all, tiers, "BOOK_EXTS 必须等于三档之并");
+        assert_eq!(all, tiers, "BOOK_EXTS 必须等于两档之并");
         assert_eq!(all.len(), BOOK_EXTS.len(), "无重复");
+    }
+
+    #[test]
+    fn retired_host_convertible_exts_no_longer_accepted() {
+        // 2026-09-17 EPUB 线架构调整：azw3/mobi/azw/prc/fb2/txt 不再自动转 EPUB，母版库也不收。
+        for ext in ["azw3", "mobi", "azw", "prc", "fb2", "txt"] {
+            assert!(!has_ext(&format!("x.{ext}"), BOOK_EXTS), "{ext} 应已从 BOOK_EXTS 退役");
+        }
     }
 }

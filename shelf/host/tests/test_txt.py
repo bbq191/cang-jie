@@ -75,22 +75,23 @@ def test_convert_builds_epub_with_nested_nav(tmp_path):
         assert "<h1>第一卷 风起</h1>" in z.read("OEBPS/text/c2.xhtml").decode()
 
 
-def test_push_txt_routes_through_txt_to_epub_then_wash(gateway, tmp_path, capsys, monkeypatch):
+def test_push_txt_no_longer_auto_converted_even_with_calibre(gateway, tmp_path, capsys, monkeypatch):
+    """2026-09-17 EPUB 线架构调整：`shelf push` 不再自动把 TXT 切章转成 EPUB（`txt_prepare`/
+    对 `.txt` 的特殊分支已从 `host_prepare` 整个移除）——即便装了 Calibre，TXT 也原样透传母版库，
+    由服务端上传门拒收（`.txt` 已不在 `rmsvc_core::formats::BOOK_EXTS` 里）。想切章请用
+    `shelf_cli/calibre/txt_to_epub.py` 单独转换后再传 EPUB。"""
     txt = tmp_path / "小说.txt"
     txt.write_text("第一章 开始\n正文。\n", encoding="utf-8")
-    epub = tmp_path / "小说.epub"
-    epub.write_bytes(b"PK\x03\x04")
     calls = []
     monkeypatch.setattr(cb, "has_calibre", lambda: True)
-    monkeypatch.setattr(cb, "txt_to_epub", lambda src, work: (calls.append("txt") or (epub, {"chapters": 1, "volumes": 0, "encoding": "utf-8", "detected": True})))
-    monkeypatch.setattr(cb, "wash", lambda src, work, **kw: (calls.append(("wash", src.name, kw.get("env"))) or src))
-    monkeypatch.setattr(push, "_gate", lambda out, args: None)
+    monkeypatch.setattr(cb, "txt_to_epub", lambda src, work: calls.append("txt"))  # 不该被调用
+    monkeypatch.setattr(cb, "wash", lambda src, work, **kw: calls.append("wash"))  # 也不该被调用
     FakeGateway.received.clear()
     rc, out = run(["push", str(txt)], gateway, capsys)
-    assert rc == 0 and "TXT 切章 → EPUB（1 章" in out
-    assert calls[0] == "txt" and calls[1][0] == "wash" and calls[1][1] == "小说.epub" and calls[1][2]["WASH_AUTOTOC"] == "0"
+    assert rc == 0 and calls == [], "txt_to_epub/wash 都不该被调用"
     assert FakeGateway.received[-1][0].split("?")[0] == "/api/books/staging"
-    assert push.plan(txt, type("A", (), {"no_optimize": False, "comic": False, "no_comic": False})(), True) == "wash"
+    assert txt.read_bytes() in FakeGateway.received[-1][2], "原始字节原样传（在 multipart body 里能找到），没被转换"
+    assert push.plan(txt, type("A", (), {"no_optimize": False, "comic": False, "no_comic": False})(), True) == "wash", "路由标签仍是 wash，host_prepare 内部才退化成原样（跟其余非 epub/pdf 源格式一致）"
 
 
 def test_push_txt_without_calibre_goes_raw(gateway, tmp_path, capsys, monkeypatch):

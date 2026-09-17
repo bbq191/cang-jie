@@ -111,13 +111,28 @@ mod tests {
         let paths = Paths::resolve(move |k| if k == "HOME" || k == "XDG_RUNTIME_DIR" { Some(h.clone()) } else { None });
         let st = State::new(&paths);
         st.ensure_dirs().unwrap();
-        std::fs::write(st.spool.inbox().join("b.mobi"), b"x").unwrap();
+        std::fs::write(st.spool.inbox().join("b.cbz"), b"x").unwrap();
         std::fs::write(st.spool.inbox().join("p.jpg"), b"x").unwrap();
         let out = st.process_inbox(None);
         assert_eq!(out.len(), 2);
-        assert!(out.iter().any(|o| o.ok && o.name == "b.mobi"));
+        assert!(out.iter().any(|o| o.ok && o.name == "b.cbz"));
         assert!(out.iter().any(|o| !o.ok && o.name == "p.jpg" && o.message.contains("不是书籍格式")));
-        assert!(st.staging.dir().join("b.mobi").is_file() && !st.spool.inbox().join("b.mobi").exists());
+        assert!(st.staging.dir().join("b.cbz").is_file() && !st.spool.inbox().join("b.cbz").exists());
         assert_eq!(st.spool.list().iter().filter(|e| e.state == "failed").count(), 1);
+    }
+
+    #[test]
+    fn inbox_rejects_retired_host_convertible_exts() {
+        // 2026-09-17 EPUB 线架构调整：azw3/mobi/fb2/txt 不再自动转 EPUB，母版库直接拒收。
+        let t = tempfile::tempdir().unwrap();
+        let h = t.path().to_str().unwrap().to_string();
+        let paths = Paths::resolve(move |k| if k == "HOME" || k == "XDG_RUNTIME_DIR" { Some(h.clone()) } else { None });
+        let st = State::new(&paths);
+        st.ensure_dirs().unwrap();
+        for name in ["b.azw3", "b.mobi", "b.fb2", "b.txt"] {
+            std::fs::write(st.spool.inbox().join(name), b"x").unwrap();
+        }
+        let out = st.process_inbox(None);
+        assert!(out.iter().all(|o| !o.ok && o.message.contains("不是书籍格式")), "{out:?}");
     }
 }

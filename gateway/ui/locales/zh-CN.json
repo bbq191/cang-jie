@@ -125,7 +125,7 @@
   "transfer.opttable.plain.tier": "只优化不清洗",
   "transfer.opttable.plain.what": "只修脚注 / 图片 / 对比度 / 双 id，不碰排版和字体锁",
   "transfer.opttable.plain.when": "已排好版、只想修脚注和图的书",
-  "transfer.fmtTiers": "<b>{native}</b>：两个读器都能去 · <b>{convertible}</b>：电脑 <code>shelf push</code> 可转成 EPUB 进原生，直接上传则只能加入 KOReader · <b>{koOnly}</b>：只能加入 KOReader · <b>漫画不投原生</b>：AZW3/EPUB 漫画走电脑 <code>shelf push</code> 自动转 CBZ，加入 KOReader 读",
+  "transfer.fmtTiers": "<b>{native}</b>：两个读器都能去，母版库「优化」按钮在设备侧就地优化 · <b>{koOnly}</b>：只能加入 KOReader · 不是 EPUB/PDF 的书请自行转换后再上传 · <b>漫画不投原生</b>：EPUB 漫画走电脑 <code>shelf push</code> 自动转 CBZ，加入 KOReader 读",
   "transfer.guide.summary": "母版库怎么用？两个读器怎么选？（点开）",
   "transfer.guide.steps.dt": "三步走",
   "transfer.guide.steps.dd": "① <b>入库</b>：上传（书籍格式）/ 抓网文 / 电脑 <code>shelf push</code> / scp 进 inbox——书<b>原样</b>进母版库，不动字节。② <b>优化</b>（可选）：EPUB 点「优化」洗排版、脚注、中英文缩进（PDF 端上不动，重排走电脑）。③ <b>落库</b>：点「投入原生书库」或「加入 KOReader」。<b>母版留着</b>，随时再投另一个。读器页（xochitl / KOReader）只管各自的字体、词典，不传书。",

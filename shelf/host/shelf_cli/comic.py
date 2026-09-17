@@ -1,47 +1,29 @@
 """漫画识别：决定 `shelf push` 走文字书洗书路还是漫画路（CBZ + PDF）。
 
 - `.cbz`：天然漫画。
-- `.azw3/.mobi/.azw/.prc`（PalmDB 容器）：数以 JPEG/PNG 魔数开头的记录，**图片记录字节占文件 ≥ 60% 且 ≥ 20 张**判漫画
-  （漫画 KF8 几乎全是图片记录，文字书图片只占零头；不解 KF8、不解压文本，毫秒级，不调 Calibre）。
 - `.epub`：按 OPF spine 统计全书 `<img>` 数与可见文字数：图 ≥ 20 张且**平均每张图配的文字 < 40 字**判漫画
   （Calibre 洗过的漫画 EPUB 一页 xhtml 塞十几张图、几乎无字；文字书是几百字配零星插图；不调 Calibre，毫秒级）。
 - `.pdf`（2026-09-14 补：此前完全不判，扫描版漫画 PDF 会误入文字书重排路必然失败，见书架白皮书 §04）：
-  抽样页统计"有图且几乎无文字"的页占比，图片页 ≥ 20 张且占比 ≥ 60% 判漫画——跟上面两条同一套阈值，但
+  抽样页统计"有图且几乎无文字"的页占比，图片页 ≥ 20 张且占比 ≥ 60% 判漫画——跟上面这条同一套阈值，但
   判定本身要真正打开、逐页解析（pymupdf 子进程，见 `calibre_bridge.py::pdf_comic_stats()` /
   `shelf/host/calibre/pdf_comic_probe.py`），做不到"零依赖毫秒级"，是本模块唯一需要 pymupdf（`calibre`
   依赖组）的分支，缺这个依赖时静默退回 False（走原来的文字书路，不阻断推送）。
 其余格式不判（False）。判错可用 `--comic / --no-comic` 手动覆盖。
+
+⚠ 2026-09-17 起不再判 `.azw3/.mobi/.azw/.prc`（原是解析 PalmDB 记录表判漫画）——EPUB 线架构调整后
+这几个格式已经进不了母版库（服务端上传门拒收，见 `rmsvc_core::formats::BOOK_EXTS`），判了也没有意义，
+`palmdb_image_ratio` 连带移除；用户想传 AZW3/MOBI 漫画，请自行先转成 CBZ/EPUB/PDF。
 """
 from __future__ import annotations
 
 import posixpath
 import re
-import struct
 import zipfile
 from pathlib import Path
 
 MIN_PAGES = 20
-PALM_IMAGE_RATIO = 0.6
+PALM_IMAGE_RATIO = 0.6  # 名字沿用历史（原给 PalmDB 判据），现在只有 PDF 分支还在用这个阈值。
 EPUB_TEXT_PER_IMAGE = 40
-_JPEG = b"\xff\xd8\xff"
-_PNG = b"\x89PNG"
-
-
-def palmdb_image_ratio(data: bytes) -> tuple[int, float]:
-    """(图片记录数, 图片字节占比)。非 PalmDB → (0, 0)。"""
-    if len(data) < 78:
-        return 0, 0.0
-    nrec = struct.unpack(">H", data[76:78])[0]
-    if nrec == 0 or len(data) < 78 + nrec * 8:
-        return 0, 0.0
-    offs = [struct.unpack(">I", data[78 + i * 8: 82 + i * 8])[0] for i in range(nrec)] + [len(data)]
-    n = 0
-    img_bytes = 0
-    for a, b in zip(offs, offs[1:]):
-        if a < b <= len(data) and (data[a:a + 3] == _JPEG or data[a:a + 4] == _PNG):
-            n += 1
-            img_bytes += b - a
-    return n, (img_bytes / len(data) if data else 0.0)
 
 
 def epub_image_stats(z: zipfile.ZipFile) -> tuple[int, int]:
@@ -83,9 +65,6 @@ def is_comic(path: Path) -> bool:
     suf = path.suffix.lower()
     if suf == ".cbz":
         return True
-    if suf in (".azw3", ".mobi", ".azw", ".prc"):
-        n, ratio = palmdb_image_ratio(path.read_bytes())
-        return n >= MIN_PAGES and ratio >= PALM_IMAGE_RATIO
     if suf == ".epub":
         try:
             with zipfile.ZipFile(path) as z:

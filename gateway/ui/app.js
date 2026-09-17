@@ -28,7 +28,7 @@ const BOOK_EXT=dot(EXT.book), FONT_EXT=dot(EXT.font), DICT_EXT=dot(EXT.dict), IM
 const up=l=>l.map(e=>e.toUpperCase()).join(' / ');
 /* 书籍格式三档说明（同一份白名单分档展示，不再一口气列 18 个） */
 // 顶层 const 改零参数函数：T() 求值必须等到渲染时（I18N 已填充），见上面 T() 头注的硬性规则。
-const FMT_TIERS=()=>T('transfer.fmtTiers',{native:up(EXT.native),convertible:up(EXT.convertible),koOnly:up(EXT.koOnly)});
+const FMT_TIERS=()=>T('transfer.fmtTiers',{native:up(EXT.native),koOnly:up(EXT.koOnly)});
 $('#logout').onclick=e=>{e.preventDefault();fetch('/logout',{method:'POST'}).then(()=>location.href='/login')};
 // 徽章的完整解释（渲染自检失败原因、优化档位差异…）以前只写进 title——触屏摸不到 hover，只看得见
 // 图标+数字，看不见"为什么/该怎么办"（2026-09-09 审计发现）。这里全局委托一个点击处理：任何带

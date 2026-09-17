@@ -29,8 +29,10 @@ pub fn locale_json(lang: &str) -> &'static str {
 pub fn page() -> &'static str {
     static PAGE: OnceLock<String> = OnceLock::new();
     PAGE.get_or_init(|| {
-        use rmsvc_core::formats::{BOOK_EXTS, DICT_EXTS, FONT_EXTS, HOST_CONVERTIBLE_EXTS, IMAGE_EXTS, KOREADER_ONLY_EXTS, NATIVE_EXTS};
-        let exts = serde_json::json!({"book": BOOK_EXTS, "native": NATIVE_EXTS, "convertible": HOST_CONVERTIBLE_EXTS, "koOnly": KOREADER_ONLY_EXTS, "font": FONT_EXTS, "dict": DICT_EXTS, "image": IMAGE_EXTS});
+        use rmsvc_core::formats::{BOOK_EXTS, DICT_EXTS, FONT_EXTS, IMAGE_EXTS, KOREADER_ONLY_EXTS, NATIVE_EXTS};
+        // "convertible" 档（azw3/mobi/azw/prc/fb2/txt）2026-09-17 随 EPUB 线架构调整退役——母版库
+        // 只收 EPUB/PDF/KOReader-only 格式，不再有"电脑可转"这一档，见 rmsvc_core::formats 的头注。
+        let exts = serde_json::json!({"book": BOOK_EXTS, "native": NATIVE_EXTS, "koOnly": KOREADER_ONLY_EXTS, "font": FONT_EXTS, "dict": DICT_EXTS, "image": IMAGE_EXTS});
         INDEX_HTML.replace("__STYLE__", STYLE_CSS).replace("__SCRIPT__", APP_JS).replace("__EXTS__", &exts.to_string())
     })
 }
@@ -72,7 +74,8 @@ mod tests {
         let p = super::page();
         assert!(!p.contains("__EXTS__"), "占位应被替换");
         assert!(p.contains(r#""book":["epub","pdf""#) && p.contains(r#""font":["ttf""#) && p.contains(r#""dict":["ifo""#) && p.contains(r#""image":["jpg""#));
-        assert!(p.contains(r#""native":["epub","pdf"]"#) && p.contains(r#""convertible":["azw3""#) && p.contains(r#""koOnly":["cbz""#), "三档格式说明注入");
+        assert!(p.contains(r#""native":["epub","pdf"]"#) && p.contains(r#""koOnly":["cbz""#), "格式说明注入");
+        assert!(!p.contains(r#""convertible""#), "convertible 档已随 EPUB 线架构调整退役");
         assert!(std::ptr::eq(p, super::page()), "OnceLock 只渲染一次");
         assert!(!p.contains("__STYLE__") && !p.contains("__SCRIPT__") && p.contains("<style>") && p.contains("</script></body></html>"), "骨架三段拼接完整");
         assert!(super::APP_JS.contains("__EXTS__") && !super::APP_JS.contains("__STYLE__"), "白名单占位在 app.js");
