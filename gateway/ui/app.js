@@ -169,9 +169,11 @@ function stagingList(ul,opts){
     // busy 状态由服务端权威判定（GET /staging 的 busy 字段），完成后 SSE 推事件、列表自动刷新解禁。
     const busyTitle=T('transfer.staging.busy.btnTitle');
     if(it.format==='epub'&&!it.optimized)btn(T('transfer.staging.btn.optimize'),false,()=>postJ('/api/books/staging/optimize',{name:it.name,mode:opts.mode()}),it.busy,busyTitle);
-    // 体积门：超过 xochitl /upload 上限的书灰掉按钮（服务端同样拦），提示走电脑分卷
-    const tooBig=opts.nativeLimit&&it.bytes>opts.nativeLimit;
-    if(it.format==='epub'||it.format==='pdf')btn(T('transfer.staging.btn.deliverNative'),true,()=>postJ('/api/books/staging/deliver',{name:it.name,keep:!opts.clear(),folder:opts.xFolder()}),it.busy||tooBig,it.busy?busyTitle:T('transfer.staging.btn.tooBigTitle',{limit:fmtB(opts.nativeLimit)}));
+    // 体积门：超过 xochitl /upload 上限的书灰掉按钮（服务端同样拦），提示走电脑分卷。EPUB 例外——
+    // 超限的 EPUB 漫画服务端会按卷拆分投递（2026-09-18，见 book-serve::Staging::try_deliver_split），
+    // 按钮不能提前灰掉，得让服务端判过是不是漫画才知道能不能救；PDF 没有这条救援路径，继续照原样灰。
+    const tooBig=opts.nativeLimit&&it.bytes>opts.nativeLimit&&it.format!=='epub';
+    if(it.format==='epub'||it.format==='pdf')btn(T('transfer.staging.btn.deliverNative'),true,async()=>{const r=await postJ('/api/books/staging/deliver',{name:it.name,keep:!opts.clear(),folder:opts.xFolder()});if(r.ok!==false&&r.message)alert(r.message)},it.busy||tooBig,it.busy?busyTitle:T('transfer.staging.btn.tooBigTitle',{limit:fmtB(opts.nativeLimit)}));
     btn(T('transfer.staging.btn.addKoreader'),true,async()=>{const r=await postJ('/api/koreader/books/adopt',{name:it.name,folder:opts.kFolder()});if(r.ok!==false){await postJ('/api/books/staging/mark',{name:it.name,target:'koreader'});if(opts.clear())await postJ('/api/books/staging/delete',{name:it.name})}},it.busy||!opts.koInstalled,it.busy?busyTitle:T('transfer.staging.btn.koNotInstalled'));
     // 单行最多 5 徽章+4 按钮时，"删除"（销毁）跟"优化"（编辑）视觉权重完全一样，只靠文案区分
     // （2026-09-09 审计发现）；`.btn-bad` 早就存在但只用在转写失败按钮上，这里补上，破坏性操作至少

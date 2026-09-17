@@ -258,7 +258,16 @@ impl Staging {
             .ok_or("原生阅读器只读 EPUB / PDF；此格式请「加入 KOReader」，或在电脑用 shelf push 转成 EPUB")?;
         let p = self.existing(name)?;
         let size = std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0);
+        let folder = if folder.trim().is_empty() { self.library_folder.as_str() } else { folder.trim() };
         if self.native_limit > 0 && size > self.native_limit {
+            // 超限：EPUB 格式的漫画按 NCX 结构递归拆分成若干份分别投递，不再是全有全无
+            // （2026-09-18 用户真机反馈驱动，见 bookconv::comic_split 与书架白皮书 §03aw）。
+            // 非 EPUB、非漫画、或拆不出方案（没有可用 toc.ncx）的原样保留改动前的整本拒绝行为。
+            if formats::ext_of(name) == "epub" {
+                if let Some(outcome) = self.try_deliver_split(name, &p, folder)? {
+                    return Ok(outcome);
+                }
+            }
             return Err(format!(
                 "《{name}》{} MB 超过原生阅读器上传上限（{} MB），xochitl 会直接断连。PDF 请在电脑用 shelf push 重推（自动按 60MB 分卷）；EPUB 无法分卷，用 KOReader 读",
                 size >> 20,
@@ -266,7 +275,6 @@ impl Staging {
             ));
         }
         let data = std::fs::read(&p).map_err(|e| format!("读母版库文件失败: {e}"))?;
-        let folder = if folder.trim().is_empty() { self.library_folder.as_str() } else { folder.trim() };
         // 自检计划在上传前算好（投书时刻要早于 xochitl 给文档的 createdTime）；统计失败就不自检，不影响投书。
         let render = if formats::ext_of(name) == "epub" {
             bookconv::stats::text_profile(&data).ok().map(|prof| RenderPlan { name: name.to_string(), title: prof.title.clone(), expected: prof.expected_pages(), since_ms: rmsvc_core::clock::now_ms() })
@@ -282,6 +290,54 @@ impl Staging {
             let _ = self.remove(name);
         }
         Ok(DeliverOutcome { message, render })
+    }
+
+    /// 超限 EPUB 漫画的拆分投递：不是漫画 / 拆不出方案 → `Ok(None)`（调用方退回改动前的整本拒绝）；
+    /// 拆出方案 → 挨个上传能塞进预算的那几份，聚合成一条回执。原书字节在母版库/KOReader 完全不受
+    /// 影响（`keep=false` 时只删原书这一份、不删任何东西是"拆出来的"——那些份本来就只存在于内存里，
+    /// 上传即弃，从不落母版库）。渲染自检对拆分出来的每一份跳过——`RenderPlan` 按母版库条目名找书，
+    /// 拆分份没有母版库条目，硬接只会认错书，留作已知范围限制（见书架白皮书 §03aw）。
+    fn try_deliver_split(&self, name: &str, p: &Path, folder: &str) -> Result<Option<DeliverOutcome>, String> {
+        let data = std::fs::read(p).map_err(|e| format!("读母版库文件失败: {e}"))?;
+        let entries = bookconv::check::read_entries(&data)?;
+        if !bookconv::comic_detect::is_comic(&entries) {
+            return Ok(None);
+        }
+        let pieces = match bookconv::comic_split::plan_splits(&entries, self.native_limit) {
+            Ok(Some(p)) => p,
+            Ok(None) => return Ok(None), // 理论上不会到这——调用方已经确认过超限；留着防御
+            Err(_) => return Ok(None),   // 没有可用 toc.ncx／目录对不上 spine，拆不了，退回整本拒绝
+        };
+        let stem = name.strip_suffix(".epub").unwrap_or(name);
+        let mut ok_parts: Vec<String> = Vec::new();
+        let mut fail_parts: Vec<String> = Vec::new();
+        for piece in &pieces {
+            if !piece.fits {
+                fail_parts.push(format!("{}（拆到底仍超限，未投）", piece.title));
+                continue;
+            }
+            let piece_name = format!("{stem} - {}.epub", piece.title);
+            let built = match bookconv::comic_split::build_piece(&entries, piece.start, piece.end, &piece.title, &piece.title) {
+                Ok(b) => b,
+                Err(e) => {
+                    fail_parts.push(format!("{}（组包失败：{e}）", piece.title));
+                    continue;
+                }
+            };
+            match self.xochitl.upload(&built, &piece_name, "application/epub+zip", folder) {
+                Ok(_) => ok_parts.push(piece.title.clone()),
+                Err(e) => fail_parts.push(format!("{}（上传失败：{e}）", piece.title)),
+            }
+        }
+        if ok_parts.is_empty() {
+            return Err(format!("《{name}》按卷拆分后一份都没能投上：{}", fail_parts.join("；")));
+        }
+        let mut message = format!("《{name}》超限，已按卷拆分投入原生书库：{}", ok_parts.join("、"));
+        if !fail_parts.is_empty() {
+            message.push_str(&format!("（{} 未投：{}）", fail_parts.len(), fail_parts.join("；")));
+        }
+        let _ = self.mark_delivered(name, Reader::Native);
+        Ok(Some(DeliverOutcome { message, render: None }))
     }
 
     /// 写渲染自检结果到边车（书已从母版库删除 → Err，调用方只记日志）。
@@ -571,6 +627,72 @@ mod tests {
         assert!(s.spawn_optimize("p.pdf", OptimizeMode::Auto, bus.clone()).unwrap_err().contains("只有 EPUB"));
         assert!(!s.is_busy("p.pdf"), "校验失败不该留下忙锁");
         assert!(s.spawn_optimize("none.epub", OptimizeMode::Auto, bus).is_err());
+    }
+
+    /// 造一本 2 卷合集漫画（跟 bookconv::comic_split 测试用例同一套结构），塞进 mini_epub 装不了的
+    /// 二进制字节所以这里直接手搓 zip——is_comic/comic_split 只看扩展名和 NCX 结构，不校验图片
+    /// 内容本身是不是合法 JPEG，够测这条集成路径。
+    fn multivol_comic_epub(pages_per_vol: &[usize]) -> Vec<u8> {
+        use std::io::Write;
+        let mut buf = Vec::new();
+        let mut manifest = String::new();
+        let mut spine = String::new();
+        let mut navpoints = String::new();
+        let mut page_no = 0usize;
+        let mut files: Vec<(String, Vec<u8>)> = Vec::new();
+        for (vi, &n) in pages_per_vol.iter().enumerate() {
+            let vol_start = page_no;
+            for _ in 0..n {
+                files.push((format!("text/p{page_no:04}.html"), format!(r#"<html><body><img src="../images/{page_no:04}.jpg"/></body></html>"#).into_bytes()));
+                files.push((format!("images/{page_no:04}.jpg"), vec![7u8; 200]));
+                manifest += &format!(r#"<item id="h{page_no}" href="text/p{page_no:04}.html" media-type="application/xhtml+xml"/><item id="i{page_no}" href="images/{page_no:04}.jpg" media-type="image/jpeg"/>"#);
+                spine += &format!(r#"<itemref idref="h{page_no}"/>"#);
+                page_no += 1;
+            }
+            navpoints += &format!(r#"<navPoint id="nv{vi}"><navLabel><text>卷{vi}</text></navLabel><content src="text/p{vol_start:04}.html"/></navPoint>"#);
+        }
+        files.push(("content.opf".into(), format!(r#"<package version="3.0"><metadata><dc:title>t</dc:title></metadata><manifest>{manifest}<item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/></manifest><spine toc="ncx">{spine}</spine></package>"#).into_bytes()));
+        files.push(("toc.ncx".into(), format!(r#"<ncx><navMap>{navpoints}</navMap></ncx>"#).into_bytes()));
+        files.push(("META-INF/container.xml".into(), br#"<container><rootfiles><rootfile full-path="content.opf"/></rootfiles></container>"#.to_vec()));
+        let mut zw = zip::ZipWriter::new(std::io::Cursor::new(&mut buf));
+        let o = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+        zw.start_file("mimetype", o).unwrap();
+        zw.write_all(b"application/epub+zip").unwrap();
+        for (n, d) in files {
+            zw.start_file(n, o).unwrap();
+            zw.write_all(&d).unwrap();
+        }
+        zw.finish().unwrap();
+        buf
+    }
+
+    #[test]
+    fn deliver_oversized_epub_comic_attempts_split_instead_of_flat_reject() {
+        // 25+ 张图满足 is_comic 阈值（2 卷各 15 张，每页 html+img 约 200B）；native_limit 给 1KB
+        // 逼近强制超限，触发拆分路径。测试环境 Xochitl 指向不可达地址，upload() 必然失败，验证不了
+        // 真正投递成功——那部分已经在真机+bookconv 单测（`comic_split::tests::against_real_naruto_book`）
+        // 分别验证过；这里只验证 deliver() 确实走了"按卷拆分尝试"这条新路径，不是笼统整本拒绝。
+        let t = tempfile::tempdir().unwrap();
+        let x = Arc::new(Xochitl::new("127.0.0.1:1", Path::new("/nonexistent"), 1));
+        let s = Staging::new(t.path().join("staging"), x, "library".into(), 1024);
+        s.ensure().unwrap();
+        let epub = multivol_comic_epub(&[15, 15]);
+        s.stage_new("manga.epub", &epub).unwrap();
+        let err = s.deliver("manga.epub", "", true).unwrap_err();
+        assert!(err.contains("按卷拆分") || err.contains("上传失败") || err.contains("拆分后一份都没能投上"), "应该走拆分路径而不是整本拒绝: {err}");
+        assert!(err.contains("卷0") || err.contains("卷1"), "错误信息应该点出具体是哪一卷: {err}");
+    }
+
+    #[test]
+    fn deliver_oversized_non_comic_epub_keeps_flat_reject() {
+        let t = tempfile::tempdir().unwrap();
+        let opf = r#"<package version="2.0"><metadata><dc:title>t</dc:title></metadata><manifest><item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="c1"/></spine></package>"#;
+        let long_text = "正".repeat(600_000); // 600_000 * 3 字节(UTF-8) ≈ 1.7MB，确保超过测试用 1MB native_limit
+        let epub = mini_epub(&[("content.opf", opf), ("c1.xhtml", &format!("<html><body><p>{long_text}</p></body></html>"))]);
+        let s = staging(&t);
+        s.stage_new("novel.epub", &epub).unwrap();
+        let err = s.deliver("novel.epub", "", true).unwrap_err();
+        assert!(err.contains("超过原生阅读器上传上限") && err.contains("分卷"), "非漫画超限应该保持改动前的整本拒绝: {err}");
     }
 
     #[test]
