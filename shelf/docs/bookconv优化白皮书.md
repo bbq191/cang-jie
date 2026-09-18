@@ -111,6 +111,18 @@ Move 屏 = **954×1696 px、7.3″、264 PPI、Gallery 3 彩色墨水屏**（hos
 
 **EPUB 内嵌漫画的画质保留**（2026-09-17，EPUB 线原则④）：新增 `comic_detect::is_comic`（移植 host `comic.py::epub_image_stats()` 的算法——OPF spine 统计 `<img>`/`<image>` 数与可见文字数，图 ≥20 张且平均每张图配的文字 <40 字判漫画），`optimize_epub_with` 内部判定一次。命中后两处跟普通插图路径不同：① `imgopt::trim_margins` 先裁四边纯色/近纯色留白（逐行/列像素两两 RGB 通道极差 ≤8 才算"纯色"，一遇到不满足就停，单边最多裁 15% 防误判裁没内容）；② 超限仍需缩进 954×1696 屏幕框时，用 `downscale_for_epub_comic`（quality 95）而非普通插图的 `downscale_for_epub`（quality 85）。跟 `dither_bilevel`（§05 上文"漫画省刷新"，CBZ 转换路径专用的有损灰阶抖动）方向相反——一个是"不允许压画质"，一个是"允许压画质换省刷新"，服务不同管线，别混用。
 
+**§05 追记（2026-09-19）：单张图片解码像素上限，修一次真实 271MB 内存尖峰**。`trim_margins`/
+`downscale_into_q`/`dither_bilevel` 三处解码前只用 `header_dims` 读宽高判断"要不要处理"，没有对
+"这张图大到不该整个解出来"设上限——用户真实投递一套漫画（《乱马1/2》第9~16卷），其中一页异常
+高分辨率扫描页解码成未压缩 RGB8 位图，把 `book-serve` 的 `VmHWM` 顶到 271MB（书架白皮书 §03bh
+先记为"理论边缘风险、没有真实样本、这轮不处理"，§03bi 几小时后补上修复，本节记 bookconv 侧的
+具体实现）。新增 `MAX_DECODE_PIXELS = 25_000_000`（约 5000×5000，真实扫描页极少超过 4000px 长边，
+留约 1.5 倍余量）+ `within_decode_budget(w,h)`，三处解码入口统一 guard：超限直接放弃处理、原样
+保留原图字节（三个函数对调用方本来就是"`None`＝原样保留"语义，天然兜底）。真机复现：host 合成
+25 页测试漫画、其中一页故意 6500×8000（5200 万像素）真实走 `/staging/optimize`，`VmHWM` 全程
+个位数 MB，产物核对超限页维度原封不动（确认安全跳过，没有被裁边/降采样），其余页正常处理（确认
+没有误伤）。回归测试 `imgopt::tests::oversized_image_skipped_by_all_decode_entries`。
+
 ## 06｜自动目录（`auto_toc`，缺目录才建）
 
 `AutoToc::IfMissing`（缺省）仅在无 nav/ncx 或零条目时生成。`heading_re` 从 h1/h2 **扩到 h1–h6**（v7：只用 h3 当章标题的书不再漏目录）；`dense_ranks` + level-stack 生成**多级嵌套** navPoint/`<li>`（`d = ranks[i].min(depth+1)` 钳制层级不跳级）。质量门 `check` 按目录锚点命中率告警（丢失则 xochitl 退化到文件级跳转）。

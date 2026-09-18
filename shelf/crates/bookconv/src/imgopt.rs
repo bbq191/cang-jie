@@ -15,6 +15,21 @@ use std::io::Cursor;
 /// Move 屏最长像素边 / 最短像素边。
 pub const MAX_EDGE: u32 = 1696;
 pub const MAX_SHORT_EDGE: u32 = 954;
+/// 单张图片允许解码的像素数上限（w×h，跟格式/用途无关）——防极端高分辨率原图解码成未压缩位图
+/// 把内存顶爆。2026-09-19 真机坐实：用户真实投递一套漫画（《乱马1/2》8 卷）触发超限按卷拆分
+/// 落库，book-serve `VmHWM` 冲到 271MB，明显高于同一天修的"落库不拆分路径"那个量级（几 KB）——
+/// 定位到这里：`downscale_into_q`/`trim_margins`/`dither_bilevel` 三处解码前只用 `header_dims`
+/// 读了宽高判断"要不要处理"，没有对"这张图本身大到不该整个解出来"设硬上限；单张扫描页解码成
+/// 未压缩 RGB8 缓冲区，量级足以单张图就把峰值顶到几百 MB。阈值取 2500 万像素（约 5000×5000）：
+/// 真实书籍/漫画扫描页极少超过 4000px 长边（4:3 比例约 1600 万像素），留约 1.5 倍余量；对应
+/// RGB8 缓冲区上限约 75MB，加上 resize/dither 过程中的临时缓冲区，单张图处理峰值控制在可控量级，
+/// 不会再出现单张图就把进程顶到 270MB+ 这种情况。超限的图直接放弃处理、原样保留原图字节——
+/// 调用方对这三个函数返回 `None` 本来就是"原样保留"语义，天然兜底，不是新错误路径。
+const MAX_DECODE_PIXELS: u64 = 25_000_000;
+
+fn within_decode_budget(w: u32, h: u32) -> bool {
+    (w as u64) * (h as u64) <= MAX_DECODE_PIXELS
+}
 /// 重编码 JPEG 质量（0–100）。85 = 视觉无损级，体积/画质平衡；e-ink 上更看不出差异。
 const JPEG_QUALITY: u8 = 85;
 /// 漫画页专用重编码质量——EPUB 线原则④"漫画不允许压画质"：超限时仍必须缩到屏幕框内（否则设备渲染
@@ -27,6 +42,9 @@ fn downscale_into_q(bytes: &[u8], max_w: u32, max_h: u32, quality: u8) -> Option
     let (fmt, (w, h)) = header_dims(bytes)?;
     if w <= max_w && h <= max_h {
         return None; // 已达标：不解码不重编码（避免无谓的二次有损压缩；2473 页漫画只读头是秒级、全解是分钟级）
+    }
+    if !within_decode_budget(w, h) {
+        return None; // 极端高分辨率原图：不整个解出来，原样保留（见 MAX_DECODE_PIXELS 文档）
     }
     let img = image::load_from_memory_with_format(bytes, fmt).ok()?;
     let resized = img.resize(max_w, max_h, FilterType::Lanczos3);
@@ -115,7 +133,10 @@ fn col_is_uniform(img: &image::RgbImage, x: u32) -> bool {
 /// 单边最多裁 [`TRIM_MAX_FRACTION`]，兜底极端误判。没有可裁的留白 / 非 JPEG·PNG / 解码失败 → `None`
 /// （调用方原样保留）。重编码用漫画质量（[`JPEG_QUALITY_COMIC`]），裁边不等于允许压画质。
 pub fn trim_margins(bytes: &[u8]) -> Option<Vec<u8>> {
-    let (fmt, _) = header_dims(bytes)?;
+    let (fmt, (w, h)) = header_dims(bytes)?;
+    if !within_decode_budget(w, h) {
+        return None; // 极端高分辨率原图：不整个解出来，原样保留（见 MAX_DECODE_PIXELS 文档）
+    }
     let img = image::load_from_memory_with_format(bytes, fmt).ok()?.to_rgb8();
     let (w, h) = img.dimensions();
     if w < 4 || h < 4 {
@@ -190,9 +211,9 @@ fn mean_chroma(img: &image::DynamicImage) -> f32 {
 /// 抖动成双色（0/255）返回 `GrayImage`。抖动保住网点/灰面观感，双色触发面板更轻的 mono 波形（真机坐实：
 /// 1-bit 翻页显著更快更轻），且比 8-bit 灰度 FlateDecode 体积小得多。只碰 JPEG/PNG，其余/解码失败=`None`。
 pub fn dither_bilevel(bytes: &[u8]) -> Option<image::GrayImage> {
-    let fmt = image::guess_format(bytes).ok()?;
-    if !matches!(fmt, ImageFormat::Jpeg | ImageFormat::Png) {
-        return None;
+    let (fmt, (w, h)) = header_dims(bytes)?;
+    if !within_decode_budget(w, h) {
+        return None; // 极端高分辨率原图：不整个解出来，原样保留（见 MAX_DECODE_PIXELS 文档）
     }
     let img = image::load_from_memory_with_format(bytes, fmt).ok()?;
     if mean_chroma(&img) >= COLOR_KEEP_CHROMA {
@@ -320,6 +341,24 @@ mod tests {
     #[test]
     fn ignores_non_image_bytes() {
         assert!(downscale_for_device(b"not an image at all").is_none());
+    }
+
+    #[test]
+    fn within_decode_budget_boundary() {
+        assert!(within_decode_budget(5000, 5000), "2500 万像素，等于上限，应允许");
+        assert!(!within_decode_budget(5001, 5000), "超一点点也该拒绝");
+    }
+
+    /// 2026-09-19 真机事故回归测试：用户真实投递一套漫画，某张扫描页解码成未压缩位图把
+    /// book-serve `VmHWM` 顶到 271MB。三个解码入口都该对超限图直接放弃处理、原样保留，不再
+    /// 整张解出来。5001×5000（略超 `MAX_DECODE_PIXELS`）足够验证真实调用链路，不需要造更大的图。
+    #[test]
+    fn oversized_image_skipped_by_all_decode_entries() {
+        let huge = jpeg_of(5001, 5000);
+        assert!(downscale_for_device(&huge).is_none(), "超限图应跳过降采样");
+        assert!(downscale_for_epub(&huge).is_none(), "超限图应跳过降采样");
+        assert!(trim_margins(&huge).is_none(), "超限图应跳过裁边");
+        assert!(dither_bilevel(&huge).is_none(), "超限图应跳过省刷新转换");
     }
 
     #[test]
