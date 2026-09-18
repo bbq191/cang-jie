@@ -5,6 +5,7 @@
 //! 目录 `$XDG_STATE_HOME/shelf/books/staging/`（/home 分区，重启/OTA 不丢；**不套 LRU 淘汰**，留住用户还没落库的书）。
 //! 落库记录是同目录隐藏 sidecar `.<name>.delivered`（`sidecar` 模块管读写；本模块只在落库/删书时调它）。
 use bookconv::optimize::{self, FootnoteMode, OptimizeOpts};
+use crate::render_check;
 use crate::sidecar::{self, Delivered, RenderCheck};
 use bookconv::wash::WashOpts;
 use serde::Serialize;
@@ -14,6 +15,10 @@ use rmsvc_core::fs::{plain_name, unique_path, write_atomic};
 use rmsvc_core::xochitl::{Delivery, Xochitl};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+
+/// 漫画按卷拆分投递，单份等渲染确认的上限（真机观测单卷渲染+缩略图+建索引耗时 15-30 秒，给足
+/// 余量；超时不算失败，只是没等到确认就接着投下一份，见 `Staging::try_deliver_split`）。
+const PIECE_RENDER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(90);
 
 /// 「优化」档位：`auto`（清洗+优化，缺省）/ `keep-spacing`（清洗但保留段距）/ `plain`（只优化不清洗）。
 /// 与 host `epub-optimize --keep-spacing` / `--no-wash` 一一对应。
@@ -360,44 +365,41 @@ impl Staging {
     /// 影响（`keep=false` 时只删原书这一份、不删任何东西是"拆出来的"——那些份本来就只存在于内存里，
     /// 上传即弃，从不落母版库）。渲染自检对拆分出来的每一份跳过——`RenderPlan` 按母版库条目名找书，
     /// 拆分份没有母版库条目，硬接只会认错书，留作已知范围限制（见书架白皮书 §03aw）。
+    /// 2026-09-19 改走流式路径 `comic_split::deliver_split_streaming`——真机 785MB《镖人（11 卷）》
+    /// 坐实旧写法（`std::fs::read` 整本读 + `check::read_entries` 整本解压进 `Vec<Entry>`）把
+    /// book-serve 逼近系统内存上限（`VmRSS` 观测到 1.65GB/2GB，同一天早些时候修的
+    /// `optimize_epub_file_streaming` 是同一类风险，这条落库拆分路径当时没顺带改）。流式版只在
+    /// 规划阶段读小文件（OPF/NCX/HTML 文本），图片体积从 zip 目录直接查表拿、不解压；逐份处理时
+    /// 才把这一份需要的图片读回真实字节，传完立刻丢，峰值内存只有"一份的体积"（≤ `native_limit`）。
+    ///
+    /// **上传完一份等 xochitl 真的渲染完再传下一份，不猜固定等待时间**（真机《镖人》11 卷三轮
+    /// 真实投递坐实：连续紧挨着上传，xochitl 那边忙着给刚收到的那卷渲染 PDF+生成封面缩略图+建
+    /// `.epubindex`——`journalctl` 能看到每卷这套处理耗时 15-30 秒不等（`entryUploadTimer timed
+    /// out` 反复出现），下一份的上传连接精确被同一卷打断（`Connection reset by peer`/`Broken
+    /// pipe`，三轮位置一致，不是随机网络抖动）；固定 5 秒/15 秒间隔都是瞎猜、不可靠，改用整本投递
+    /// 渲染自检同一套机制（`render_check::probe`+`fswatch::watch_until`）等这一份真的出现页数再
+    /// 放行下一份——每份限时 [`PIECE_RENDER_TIMEOUT`]，超时也不算失败（上传本身已经成功，只是没
+    /// 等到确认，继续投下一份，不为等不到的确认阻塞整本书）。
     fn try_deliver_split(&self, name: &str, p: &Path, folder: &str) -> Result<Option<DeliverOutcome>, String> {
-        let data = std::fs::read(p).map_err(|e| format!("读母版库文件失败: {e}"))?;
-        let entries = bookconv::check::read_entries(&data)?;
-        if !bookconv::comic_detect::is_comic(&entries) {
-            return Ok(None);
-        }
-        let pieces = match bookconv::comic_split::plan_splits(&entries, self.native_limit) {
-            Ok(Some(p)) => p,
-            Ok(None) => return Ok(None), // 理论上不会到这——调用方已经确认过超限；留着防御
-            Err(_) => return Ok(None),   // 没有可用 toc.ncx／目录对不上 spine，拆不了，退回整本拒绝
-        };
-        let stem = name.strip_suffix(".epub").unwrap_or(name);
-        let mut ok_parts: Vec<String> = Vec::new();
-        let mut fail_parts: Vec<String> = Vec::new();
-        for piece in &pieces {
-            if !piece.fits {
-                fail_parts.push(format!("{}（拆到底仍超限，未投）", piece.title));
-                continue;
+        let stem = name.strip_suffix(".epub").unwrap_or(name).to_string();
+        let native_limit = self.native_limit;
+        let lib_dir = self.xochitl.library_dir().to_path_buf();
+        let outcome = bookconv::comic_split::deliver_split_streaming(p, native_limit, |piece_name, bytes| {
+            let since_ms = rmsvc_core::clock::now_ms();
+            self.xochitl.upload(bytes, piece_name, "application/epub+zip", folder).map(|_| ())?;
+            let plan = RenderPlan { name: piece_name.to_string(), title: None, expected: 0, since_ms };
+            if render_check::probe(&lib_dir, &plan).is_none() {
+                rmsvc_core::fswatch::watch_until(&lib_dir, render_check::DEBOUNCE, PIECE_RENDER_TIMEOUT, |_| render_check::probe(&lib_dir, &plan).is_some());
             }
-            let piece_name = format!("{stem} - {}.epub", piece.title);
-            let built = match bookconv::comic_split::build_piece(&entries, piece.start, piece.end, &piece.title, &piece.title) {
-                Ok(b) => b,
-                Err(e) => {
-                    fail_parts.push(format!("{}（组包失败：{e}）", piece.title));
-                    continue;
-                }
-            };
-            match self.xochitl.upload(&built, &piece_name, "application/epub+zip", folder) {
-                Ok(_) => ok_parts.push(piece.title.clone()),
-                Err(e) => fail_parts.push(format!("{}（上传失败：{e}）", piece.title)),
-            }
+            Ok(())
+        })?;
+        let Some(outcome) = outcome else { return Ok(None) }; // 不是漫画，或没超预算——退回原来的整本流程
+        if outcome.delivered.is_empty() {
+            return Err(format!("《{name}》按卷拆分后一份都没能投上：{}", outcome.failed.join("；")));
         }
-        if ok_parts.is_empty() {
-            return Err(format!("《{name}》按卷拆分后一份都没能投上：{}", fail_parts.join("；")));
-        }
-        let mut message = format!("《{name}》超限，已按卷拆分投入原生书库：{}", ok_parts.join("、"));
-        if !fail_parts.is_empty() {
-            message.push_str(&format!("（{} 未投：{}）", fail_parts.len(), fail_parts.join("；")));
+        let mut message = format!("《{stem}》超限，已按卷拆分投入原生书库：{}", outcome.delivered.join("、"));
+        if !outcome.failed.is_empty() {
+            message.push_str(&format!("（{} 未投：{}）", outcome.failed.len(), outcome.failed.join("；")));
         }
         let _ = self.mark_delivered(name, Reader::Native);
         Ok(Some(DeliverOutcome { message, render: None }))
