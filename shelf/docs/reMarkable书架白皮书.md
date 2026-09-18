@@ -1505,7 +1505,67 @@ qmd 确认夹具形状兼容、输出符合预期，再跑改动后的版本确�
 **结论**：两条症状是同一个根因（QML `ListModel` 只增不删），已在 3.28 固件线修复+真机验证
 通过；3.27 线的 `font-menu-dynamic-3.27.qmd` 本来就没有这个问题，不用同步改。
 
-## 05｜真机待办（2026-09-06 刷新；2026-09-09 补记 §03ad 漫画超限分支复验、§03ae i18n 架子、§03af UI 人性化批量修复、§03aj 管理二级 tab+系统增强开关；2026-09-10 补记 §03an 正文全量 i18n、§03aq 网文留白排查；2026-09-16 补记 §03ar KOReader 高亮/生词只读端点、§03as notes_vault 配置项、§03at gateway/shelf-gateway 双单元问题（用户拍板后已删旧符号链接修复，真机验证过）、§03au 状态提示停留时间修复；2026-09-17 补记 §03av EPUB 线四原则功能层真机验证通过，发现 `trim_margins` 真机性能问题；2026-09-18 补记 §03aw 脚注撤回复核+异步优化全链路真机通+防双击，发现 Anchor 模式嵌套 `<p>` 潜在问题；2026-09-18 补记 §03ax 脚注返回浮标已有解（更正 §03aw 的不准确记录）、裁边真机核实无误、超限漫画按卷拆分投原生真机通、用户拍照发现拆分卷原生留白+已修复待复验；2026-09-19 补记 §03ay 落库改异步+《疯探》"目录被误删"根因修复、§03az dtb:uid 根因修复+《雪人》分部目录重建真机通、§03ba 真机内存 OOM 危机→流式优化架构真机通+DOCTYPE 第二根因、§03bb《疯探》目录入口深度排查暂停在"确认是 content.opf 但未锁定触发点"；2026-09-19 补记 §03bc 反编译 xochitl 二进制坐实真正根因——硬编码死查 manifest `id="ncx"`，真机验证通过，问题✅已解决（`OPTIMIZE_VERSION` 14）；2026-09-19 补记 §03bd font-serve 字体菜单"换字体不生效/删除后仍显示存在"（用户自诊同根因）真机验证通过，问题✅已解决；2026-09-19 补记《镖人》投原生无反应排查——comic_split.rs 多层嵌套 NCX 边界计算 panic（book-serve 进程被摔炸）+ 落库拆分路径 OOM 风险+xochitl `/upload` 真实硬上限 100MB（原配置 150MB 是从未验证过的猜测值）+ 单卷仍超限的按页再拆兜底，四层独立问题全部修完，11 卷真机全部投递成功，完整方法论见 `bookconv优化白皮书.md` §15
+## 03be｜落库进度条不刷新 + 「加入 xochitl → 文件夹」填名不建文件夹：两条独立反馈，一条补事件推送、一条复活死代码（2026-09-19，真机通，✅已解决）
+
+用户对同一天上午刚做完的「进度条取代静态文案」功能追加两条反馈：① "进度条不会动，要自己刷新"；
+② "加入原生书库->文件夹里写了名字依然不会创建文件夹"。
+
+**① 进度条冻结**：查 `try_deliver_split`——每完成一份漫画拆分卷确实把 `progress:{done,total}`
+写进了 sidecar，但这个函数当时没拿到 `EventBus`，写完不会 `bus.publish`。网页那套"SSE 推事件才
+刷新列表"的零轮询机制根本不知道这条记录变了，进度条数字冻结在第一次渲染的值，只有手动刷新页面
+才看得到最新进度。修法：`Staging::deliver`/`try_deliver_split` 签名新增 `bus: &EventBus` 参数，
+每完成一份紧跟着 `bus.publish("books", "staging")`。真机部署后订阅 `GET /events` 确认 SSE 流本身
+仍正常（真实触发一次优化，收到入库/开始/完成三条真实事件）；漫画拆分卷的逐份推送这次没有用真实
+超限漫画重新端到端验证——结构性改动（在已经成功写 sidecar 之后紧跟一行 publish 调用），风险很小，
+如实说明未重新走一遍真实大漫画投递。
+
+**② 文件夹不会自动创建**：先反编译坐实事实——`strings` 真机 xochitl 二进制，本地网页上传接口
+（`httpinterface`）只有 `/documents/`/`/upload`/`/download`/`/thumbnail` 四个路由，没有任何
+创建文件夹的 HTTP 接口；`extract_qml.py`（从 `~/.local/share/Trash/files/oldbak/`——项目历史工具
+目录已被移到本机回收站，纯只读引用没有恢复/移动任何东西）解出真机内嵌 QML 全量比对，坐实"新建
+文件夹"对话框走的是 `root.library.createCollection(parentFolderId, collectionName)`，`root.library`
+在别处（如 MainView.qml）被绑定为裸全局单例 `Library`（跟另一个同模块单例 `LibraryController`
+不是同一个对象，只有 `Library` 有 `createCollection`/`entryForId`/`isReady` 这批方法）。
+
+**巧合发现**：`git log` 挖出这条能力 2026-09-07 就为 note-serve 的《书名》自动建夹需求写过一整套——
+`book-serve::mkdir.rs`（`MkdirQueue`，跟 `trash.rs` 同款 JSON 落盘队列）+ `shelf-mkdir-agent.qmd`
+（注入 MainView，8 秒一次 Timer 轮询 `GET /mkdir/pending`，逐个调 `Library.createCollection`），
+2026-09-09 note-serve 改用复用书本自己的设备文件夹后没了消费方，2026-09-15 被当死代码物理删除——
+但删除提交的作者当时留了一句"已部署在真机上的旧版 qmd 不受影响……不需要专门去设备上摘除"，
+`shelf-mkdir-agent.qmd` 因此**在真机上原封不动跑了一周多，一直安静轮询着一个早就 404 的接口**。
+`journalctl -u xochitl` 核实这份 qmd 从 2026-09-11 起被 `qmldiff` 反复成功加载、零解析错误——
+这是这条注入路径本身早已稳定的额外真机证据，不是这次新踩出来的。用 `git show <删除提交>^:路径`
+把 `mkdir.rs` 和 `shelf-mkdir-agent.qmd` 原样捞回（qmd 内容一个字没改——反编译分析当年就做完了，
+只是一直没等到真消费方），`Staging::deliver` 新增 `ensure_folder`：目标文件夹不存在就往 mkdir
+队列入队，`fswatch::watch_until`（inotify，3 秒防抖，20 秒超时）同步等代理真建出来再继续投递，
+等不到就原样走以前"找不到就落书库根"的 best-effort 兜底（不是新错误）。
+
+离线验证：`asivery/qmldiff` 克隆到本机编译，把从固件二进制解出的真实 `MainView.qml` 拿来跑
+`apply-diffs`（真机 xochitl md5 与当年反编译记录的 md5 完全一致，确认固件字节没变过），确认
+`Timer{ id: shelfMkdirAgent ... }` 正确插进 `FocusScope#rootItem` 之后、`Connections{target:
+Library}` 之前，语法/结构合法，`Library.createCollection` 引用不需要额外 `IMPORT`（MainView.qml
+本来就 `import xofm.libs.library`——这也是当年选 MainView 而不是 Sidebar 当注入点的原因：Sidebar
+没有这个 import，qmldiff 的 `IMPORT` 语句强制要求显式版本号，而真实源码是 Qt6 新式无版本
+import，硬造版本号风险不可控）。
+
+**真机端到端验证（完整闭环，反编译当年没做到的最后一步）**：真实上传一本测试 EPUB，`POST
+/staging/deliver` 指定一个全新的、设备上原本不存在的文件夹名，8 秒内状态从 `pending` 变
+`ok`；真机 SSH 直接核对 `.metadata`——新文件夹真的建出来了（`type:"CollectionType"`，
+`parent:""`），测试文档的 `.metadata` `parent` 字段精确指向这个新文件夹的 uuid。这是
+`Library.createCollection` 这条调用链第一次有真机交叉验证（当年反编译版本只做到"静态调用链
+一致"，注释里明确写了"没有真机点过这个对话框"）。测试文档/文件夹已排进 `POST /trash/add`
+队列等原生回收站代理清掉（`shelf-trash-agent.qmd` 要书库视图下次有动静才会真的执行，这次
+没有额外触发，如实记录还没确认清掉）。
+
+**教训**：① 砍掉一个功能时，如果真机上已经部署的旧版本"优雅降级"（这里是 404 静默不做事），
+不代表这个功能设计本身有问题，只是没等到真消费方——`git log --diff-filter=D` 找回一份反编译
+分析已经做完、只是缺消费方的死代码，比从零重新反编译快得多，也更可信（旧分析里已经踩过的坑
+不用再踩一遍，比如 `Library` vs `LibraryController` 哪个单例有 `createCollection` 这种细节）。
+② `~/.local/share/Trash/` 是本机回收站，用户可能因为其它原因清理过工作区把 `oldbak/` 挪进去了——
+这次只读引用了里面的 `extract_qml.py`，没有恢复/移动/删除任何东西，`oldbak/` 最终去留仍然是
+用户自己的决定，不代表这次改动对它做了任何处置。
+
+## 05｜真机待办（2026-09-06 刷新；2026-09-09 补记 §03ad 漫画超限分支复验、§03ae i18n 架子、§03af UI 人性化批量修复、§03aj 管理二级 tab+系统增强开关；2026-09-10 补记 §03an 正文全量 i18n、§03aq 网文留白排查；2026-09-16 补记 §03ar KOReader 高亮/生词只读端点、§03as notes_vault 配置项、§03at gateway/shelf-gateway 双单元问题（用户拍板后已删旧符号链接修复，真机验证过）、§03au 状态提示停留时间修复；2026-09-17 补记 §03av EPUB 线四原则功能层真机验证通过，发现 `trim_margins` 真机性能问题；2026-09-18 补记 §03aw 脚注撤回复核+异步优化全链路真机通+防双击，发现 Anchor 模式嵌套 `<p>` 潜在问题；2026-09-18 补记 §03ax 脚注返回浮标已有解（更正 §03aw 的不准确记录）、裁边真机核实无误、超限漫画按卷拆分投原生真机通、用户拍照发现拆分卷原生留白+已修复待复验；2026-09-19 补记 §03ay 落库改异步+《疯探》"目录被误删"根因修复、§03az dtb:uid 根因修复+《雪人》分部目录重建真机通、§03ba 真机内存 OOM 危机→流式优化架构真机通+DOCTYPE 第二根因、§03bb《疯探》目录入口深度排查暂停在"确认是 content.opf 但未锁定触发点"；2026-09-19 补记 §03bc 反编译 xochitl 二进制坐实真正根因——硬编码死查 manifest `id="ncx"`，真机验证通过，问题✅已解决（`OPTIMIZE_VERSION` 14）；2026-09-19 补记 §03bd font-serve 字体菜单"换字体不生效/删除后仍显示存在"（用户自诊同根因）真机验证通过，问题✅已解决；2026-09-19 补记《镖人》投原生无反应排查——comic_split.rs 多层嵌套 NCX 边界计算 panic（book-serve 进程被摔炸）+ 落库拆分路径 OOM 风险+xochitl `/upload` 真实硬上限 100MB（原配置 150MB 是从未验证过的猜测值）+ 单卷仍超限的按页再拆兜底，四层独立问题全部修完，11 卷真机全部投递成功，完整方法论见 `bookconv优化白皮书.md` §15；2026-09-19 补记 §03be 落库进度条不推 SSE 事件已修+「加入 xochitl → 文件夹」填名不建文件夹真机端到端已解决（`git show` 从 2026-09-15 死代码删除提交里原样捞回 `mkdir.rs`+`shelf-mkdir-agent.qmd`，真机核对 `.metadata` 坐实文件夹真的建出来了，反编译当年"没有真机点过对话框"这条缺口这次补上）
 §03ay 落库改异步（补齐防双击）真机全链路通、《疯探》目录页被老代码 `remove_toc_from_spine`
 误删的根因坐实+修复+真机验证通，设备上留了一份重复《疯探》待处理；2026-09-19 补记 §03az
 《疯探》"无目录入口"根因是 dtb:uid 跟 OPF 标识符不一致（真机对照《雪人》坐实）+已修复，字节

@@ -167,6 +167,18 @@ case " $SEL " in *" book "*)
     ;;
 esac
 
+# ── 3c3. 原生建文件夹代理 qmd（选了 book 才做；qrr 目录在才装；2026-09-19 复活，见 mkdir.rs 模块
+#         文档——网页母版库「加入 xochitl → 文件夹」目标文件夹不存在时，靠这条队列（book-serve
+#         /mkdir/*，MainView 注入）真建出来）──
+case " $SEL " in *" book "*)
+    QRR="$HOME_DIR/xovi/exthome/qt-resource-rebuilder"
+    if [ -d "$QRR" ] && [ -f "$SRC/xovi/shelf-mkdir-agent.qmd" ]; then
+        cp "$SRC/xovi/shelf-mkdir-agent.qmd" "$QRR/shelf-mkdir-agent.qmd"
+        echo "-- 建夹代理 qmd 已放 $QRR/（3.28 锚点）—— 生效同样需 $HOME_DIR/xovi/start 一次"
+    fi
+    ;;
+esac
+
 # ── 3d. xovi 持久化诊断（借鉴踩过的坑，不引用/不安装外层单元——那是 xovi 层的事）──
 if [ -x "$HOME_DIR/xovi/start" ] && [ ! -f "$SYSD/xovi-reenable.service" ] && [ ! -f "$SYSD/cangjie-xovi-reenable.service" ]; then
     echo "═══════════════════════════════════════════════════"

@@ -1,5 +1,6 @@
 //! 服务组合根：配置、inbox 队列、母版库、xochitl 客户端；inbox 追平处理。
 use crate::config::BookConfig;
+use crate::mkdir::MkdirQueue;
 use crate::spool::Spool;
 use crate::staging::{self, Staging};
 use crate::trash::TrashQueue;
@@ -19,6 +20,9 @@ pub struct State {
     pub bus: Arc<EventBus>,
     /// 原生书库「移进回收站」队列（QML 代理 shelf-trash-agent.qmd 拉取执行）。
     pub trash: TrashQueue,
+    /// 原生书库「建文件夹」队列（QML 代理 shelf-mkdir-agent.qmd 拉取执行，2026-09-19 复活，
+    /// 见 mkdir.rs 模块文档）；`Arc` 是因为 `Staging::deliver` 的后台线程要跟 `bus` 一样带着走。
+    pub mkdir: Arc<MkdirQueue>,
 }
 
 /// inbox 追平一项的结果（日志 / `POST /inbox/retry` 回执）。
@@ -36,7 +40,8 @@ impl State {
         let spool = Spool::new(paths.state_dir().join("books"));
         let staging = Staging::new(paths.staging_dir(), xochitl.clone(), cfg.library_folder.clone(), cfg.native_upload_limit_bytes());
         let trash = TrashQueue::new(&paths.state_dir().join("books"), &paths.xochitl_dir());
-        State { cfg, spool, staging, xochitl, bus: Arc::new(EventBus::new()), trash }
+        let mkdir = Arc::new(MkdirQueue::new(&paths.state_dir().join("books"), &paths.xochitl_dir()));
+        State { cfg, spool, staging, xochitl, bus: Arc::new(EventBus::new()), trash, mkdir }
     }
 
     pub fn ensure_dirs(&self) -> std::io::Result<()> {

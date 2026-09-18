@@ -5,6 +5,7 @@
 //! 目录 `$XDG_STATE_HOME/shelf/books/staging/`（/home 分区，重启/OTA 不丢；**不套 LRU 淘汰**，留住用户还没落库的书）。
 //! 落库记录是同目录隐藏 sidecar `.<name>.delivered`（`sidecar` 模块管读写；本模块只在落库/删书时调它）。
 use bookconv::optimize::{self, FootnoteMode, OptimizeOpts};
+use crate::mkdir::MkdirQueue;
 use crate::render_check;
 use crate::sidecar::{self, Delivered, RenderCheck};
 use bookconv::wash::WashOpts;
@@ -19,6 +20,11 @@ use std::sync::Arc;
 /// 漫画按卷拆分投递，单份等渲染确认的上限（真机观测单卷渲染+缩略图+建索引耗时 15-30 秒，给足
 /// 余量；超时不算失败，只是没等到确认就接着投下一份，见 `Staging::try_deliver_split`）。
 const PIECE_RENDER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(90);
+
+/// 落库前等待「建文件夹」代理真的建出来目标文件夹的上限——`shelf-mkdir-agent.qmd` 是 8 秒一次
+/// Timer 轮询，给够 2-3 个周期的余量；等不到不算错误，`ensure_folder` 会原样放行，交给
+/// `Xochitl::upload` 现有的"找不到就落书库根"兜底（改动前就有的行为，不是新错误）。
+const FOLDER_WAIT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
 
 /// 母版库一本书的展示条目。`format`（epub / pdf / cbz / other）从扩展名判、优化等级从内埋标记判（轻量只读中央目录）。
 #[derive(Serialize, Clone, Debug, PartialEq)]
@@ -254,12 +260,13 @@ impl Staging {
     /// 删除）。返回回执文案 + EPUB 的渲染自检计划（调用方起线程跑 `render_check::run`）。
     /// **同步、阻塞**——超限漫画按卷拆分要挨个建包+上传，真机能到分钟级；跟 [`Self::optimize`] 一样，
     /// HTTP 接口不该直接暴露这个方法，用 [`Self::spawn_deliver`] 走后台线程。
-    pub fn deliver(&self, name: &str, folder: &str, bus: &rmsvc_core::events::EventBus) -> Result<DeliverOutcome, String> {
+    pub fn deliver(&self, name: &str, folder: &str, mkdir: &MkdirQueue, bus: &rmsvc_core::events::EventBus) -> Result<DeliverOutcome, String> {
         let ct = bookconv::convert::direct_content_type(name)
             .ok_or("xochitl 只读 EPUB / PDF；此格式请「加入 KOReader」")?;
         let p = self.existing(name)?;
         let size = std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0);
         let folder = if folder.trim().is_empty() { self.library_folder.as_str() } else { folder.trim() };
+        self.ensure_folder(folder, mkdir);
         if self.native_limit > 0 && size > self.native_limit {
             // 超限：EPUB 格式的漫画按 NCX 结构递归拆分成若干份分别投递，不再是全有全无
             // （2026-09-18 用户真机反馈驱动，见 bookconv::comic_split 与书架白皮书 §03aw）。
@@ -290,12 +297,29 @@ impl Staging {
         Ok(DeliverOutcome { message, render })
     }
 
+    /// 落库前确保目标文件夹真的存在（2026-09-19，用户反馈"文件夹里写了名字依然不会创建文件夹"）：
+    /// 已经存在（或本来就是空串＝书库根）直接放行；不存在就往 `mkdir` 队列扔一个"建文件夹"请求，
+    /// 同步等 `shelf-mkdir-agent.qmd`（MainView 注入，8 秒一次 Timer 轮询，唯一合法的建文件夹路径，
+    /// 外部进程不能直接写 xochitl 书库的 `.metadata`）真的建出来再放行。等不到就超时放弃——不是
+    /// 新错误，[`rmsvc_core::xochitl::Xochitl::upload`] 本来就有"文件夹名找不到就落书库根"的
+    /// best-effort 兜底，改动前就是这个行为，这里只是尽量把"真建出来"这条更好的结果多等一会。
+    fn ensure_folder(&self, folder: &str, mkdir: &MkdirQueue) {
+        if folder.is_empty() || self.xochitl.find_folder(folder).is_some() {
+            return;
+        }
+        if mkdir.add(folder).is_err() {
+            return; // 名字不合法（带路径分隔符等）——不是这里的职责去挑错，交给 upload 的兜底
+        }
+        let lib_dir = self.xochitl.library_dir();
+        rmsvc_core::fswatch::watch_until(lib_dir, render_check::DEBOUNCE, FOLDER_WAIT_TIMEOUT, |_| self.xochitl.find_folder(folder).is_some());
+    }
+
     /// [`Self::deliver`] 的异步版：同 [`Self::spawn_optimize`] 套路——先做零耗时校验（格式/文件存在），
     /// 校验过了才加忙锁、起后台线程跑真正耗时的部分。成功返回后 HTTP 层立即回"已开始"，真正结果通过
     /// `bus` 的 `books`/`staging` 事件 + `GET /staging` 列表里这条目的 `delivered.deliver`
     /// （[`sidecar::DeliverCheck`]）异步呈现；渲染自检计划、`mark_delivered` 全部在 `deliver` 内部
     /// 完成，不劳 HTTP 层操心。`catch_unwind` 兜底同 `spawn_optimize`。
-    pub fn spawn_deliver(&self, name: &str, folder: &str, bus: Arc<rmsvc_core::events::EventBus>) -> Result<(), String> {
+    pub fn spawn_deliver(&self, name: &str, folder: &str, mkdir: Arc<MkdirQueue>, bus: Arc<rmsvc_core::events::EventBus>) -> Result<(), String> {
         bookconv::convert::direct_content_type(name)
             .ok_or("xochitl 只读 EPUB / PDF；此格式请「加入 KOReader」")?;
         self.existing(name)?;
@@ -306,7 +330,7 @@ impl Staging {
         let _ = self.set_deliver_check(name, sidecar::DeliverCheck { status: "pending".into(), message: String::new(), at: now, progress: None });
         let (this, name, folder) = (self.clone(), name.to_string(), folder.to_string());
         std::thread::spawn(move || {
-            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| this.deliver(&name, &folder, &bus)))
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| this.deliver(&name, &folder, &mkdir, &bus)))
                 .unwrap_or_else(|_| Err("落库过程内部异常（已捕获，不影响其他操作）".to_string()));
             let at = rmsvc_core::clock::now_secs();
             let dc = match &result {
@@ -579,6 +603,12 @@ mod tests {
         s
     }
 
+    /// 测试用的 mkdir 队列——这些 deliver 测试全部传空 folder（`ensure_folder` 见到空串直接短路
+    /// 返回，压根不会碰 mkdir），队列本身指哪个临时目录不重要，只要类型对得上。
+    fn empty_mkdir(t: &tempfile::TempDir) -> MkdirQueue {
+        MkdirQueue::new(&t.path().join("state"), &t.path().join("xochitl"))
+    }
+
     fn mini_epub(files: &[(&str, &str)]) -> Vec<u8> {
         use std::io::Write;
         let mut buf = Vec::new();
@@ -674,7 +704,7 @@ mod tests {
         assert!(s.is_busy("x.epub"));
         assert!(s.remove("x.epub").unwrap_err().contains("正在处理中"), "忙的时候不该能删");
         let bus = Arc::new(rmsvc_core::events::EventBus::new());
-        assert!(s.spawn_deliver("x.epub", "", bus).unwrap_err().contains("正在处理中"), "忙的时候不该能起第二个落库");
+        assert!(s.spawn_deliver("x.epub", "", Arc::new(empty_mkdir(&t)), bus).unwrap_err().contains("正在处理中"), "忙的时候不该能起第二个落库");
         assert_eq!(s.list().iter().find(|e| e.name == "x.epub").unwrap().busy, true, "GET /staging 列表应体现 busy");
         s.end_busy("x.epub");
         assert!(!s.is_busy("x.epub"));
@@ -687,10 +717,10 @@ mod tests {
         let s = staging(&t); // xochitl 指向不可达地址（见 staging() 测试 helper），deliver 必然失败——够测异步管线本身
         s.stage_new("d.pdf", &vec![b'%'; 10]).unwrap();
         let bus = Arc::new(rmsvc_core::events::EventBus::new());
-        s.spawn_deliver("d.pdf", "", bus).unwrap();
+        s.spawn_deliver("d.pdf", "", Arc::new(empty_mkdir(&t)), bus).unwrap();
         assert!(s.is_busy("d.pdf"), "spawn 返回时忙锁应已生效");
         let bus2 = Arc::new(rmsvc_core::events::EventBus::new());
-        assert!(s.spawn_deliver("d.pdf", "", bus2).unwrap_err().contains("正在处理中"));
+        assert!(s.spawn_deliver("d.pdf", "", Arc::new(empty_mkdir(&t)), bus2).unwrap_err().contains("正在处理中"));
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
         while s.is_busy("d.pdf") && std::time::Instant::now() < deadline {
             std::thread::sleep(std::time::Duration::from_millis(10));
@@ -708,9 +738,9 @@ mod tests {
         let s = staging(&t);
         s.stage_new("c.cbz", b"PK").unwrap();
         let bus = Arc::new(rmsvc_core::events::EventBus::new());
-        assert!(s.spawn_deliver("c.cbz", "", bus.clone()).unwrap_err().contains("只读 EPUB / PDF"));
+        assert!(s.spawn_deliver("c.cbz", "", Arc::new(empty_mkdir(&t)), bus.clone()).unwrap_err().contains("只读 EPUB / PDF"));
         assert!(!s.is_busy("c.cbz"), "校验失败不该留下忙锁");
-        assert!(s.spawn_deliver("none.epub", "", bus).is_err());
+        assert!(s.spawn_deliver("none.epub", "", Arc::new(empty_mkdir(&t)), bus).is_err());
     }
 
     #[test]
@@ -800,7 +830,7 @@ mod tests {
         s.ensure().unwrap();
         let epub = multivol_comic_epub(&[15, 15]);
         s.stage_new("manga.epub", &epub).unwrap();
-        let err = s.deliver("manga.epub", "", &rmsvc_core::events::EventBus::new()).unwrap_err();
+        let err = s.deliver("manga.epub", "", &empty_mkdir(&t), &rmsvc_core::events::EventBus::new()).unwrap_err();
         assert!(err.contains("按卷拆分") || err.contains("上传失败") || err.contains("拆分后一份都没能投上"), "应该走拆分路径而不是整本拒绝: {err}");
         assert!(err.contains("卷0") || err.contains("卷1"), "错误信息应该点出具体是哪一卷: {err}");
     }
@@ -813,7 +843,7 @@ mod tests {
         let epub = mini_epub(&[("content.opf", opf), ("c1.xhtml", &format!("<html><body><p>{long_text}</p></body></html>"))]);
         let s = staging(&t);
         s.stage_new("novel.epub", &epub).unwrap();
-        let err = s.deliver("novel.epub", "", &rmsvc_core::events::EventBus::new()).unwrap_err();
+        let err = s.deliver("novel.epub", "", &empty_mkdir(&t), &rmsvc_core::events::EventBus::new()).unwrap_err();
         assert!(err.contains("超过 xochitl 上传上限") && err.contains("分卷"), "非漫画超限应该保持改动前的整本拒绝: {err}");
     }
 
@@ -824,14 +854,47 @@ mod tests {
         s.stage_new("c.cbz", b"PK").unwrap();
         s.stage_new("d.pdf", b"%PDF").unwrap();
         assert_eq!(s.list().iter().find(|e| e.name == "c.cbz").unwrap().format, "cbz");
-        assert!(s.deliver("c.cbz", "", &rmsvc_core::events::EventBus::new()).unwrap_err().contains("只读 EPUB / PDF"));
+        assert!(s.deliver("c.cbz", "", &empty_mkdir(&t), &rmsvc_core::events::EventBus::new()).unwrap_err().contains("只读 EPUB / PDF"));
         // 体积门：超过 native_limit（测试设 1MB）不碰 xochitl，回执指引分卷
         s.stage_new("huge.pdf", &vec![b'%'; 2 * 1024 * 1024]).unwrap();
-        let e = s.deliver("huge.pdf", "", &rmsvc_core::events::EventBus::new()).unwrap_err();
+        let e = s.deliver("huge.pdf", "", &empty_mkdir(&t), &rmsvc_core::events::EventBus::new()).unwrap_err();
         assert!(e.contains("超过 xochitl 上传上限") && e.contains("分卷"), "{e}");
         // PDF 走到 xochitl 才失败（不可达），母版仍在、无落库记录
-        assert!(s.deliver("d.pdf", "", &rmsvc_core::events::EventBus::new()).is_err());
+        assert!(s.deliver("d.pdf", "", &empty_mkdir(&t), &rmsvc_core::events::EventBus::new()).is_err());
         assert!(s.list().iter().any(|e| e.name == "d.pdf" && e.delivered.is_none()));
+    }
+
+    #[test]
+    fn deliver_ensures_folder_enqueues_and_waits_for_agent_to_create_it() {
+        // 2026-09-19 用户反馈"文件夹里写了名字依然不会创建文件夹"：deliver() 落库前要先经
+        // ensure_folder 确认目标文件夹真实存在，不存在就入队等 shelf-mkdir-agent.qmd 建出来。
+        // 这里模拟"代理真的建出来了"（另起一个线程，短延迟后往 lib_dir 写一份 CollectionType
+        // .metadata，等价于 Library.createCollection 真机执行后落盘的结果），验证 ensure_folder
+        // 真的会在代理建好之后很快继续（而不是傻等满 20s 超时）。
+        let t = tempfile::tempdir().unwrap();
+        let lib_dir = t.path().join("xochitl");
+        std::fs::create_dir_all(&lib_dir).unwrap();
+        let x = Arc::new(Xochitl::new("127.0.0.1:1", &lib_dir, 1)); // 端口 1 必然连不上，只测 ensure_folder 本身
+        let s = Staging::new(t.path().join("staging"), x, "library".into(), 1024 * 1024);
+        s.ensure().unwrap();
+        s.stage_new("x.epub", b"PK").unwrap();
+        let mkdir = MkdirQueue::new(&t.path().join("state"), &lib_dir);
+        assert!(mkdir.list().is_empty());
+
+        let lib_dir2 = lib_dir.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(std::time::Duration::from_millis(300));
+            std::fs::write(lib_dir2.join("f1.metadata"), r#"{"type":"CollectionType","visibleName":"新文件夹","parent":""}"#).unwrap();
+        });
+
+        let started = std::time::Instant::now();
+        let _ = s.deliver("x.epub", "新文件夹", &mkdir, &rmsvc_core::events::EventBus::new());
+        // 20s 超时是"等不到才放弃"的兜底上限；代理已经在 300ms+3s 防抖内把文件夹建出来了，
+        // ensure_folder 应该在远小于超时的时间内就继续往下走（这里用 15s 卡一个宽松上限，
+        // 只为区分"真的检测到了"和"傻等满超时"两种情况，不是卡精确耗时）。
+        assert!(started.elapsed() < std::time::Duration::from_secs(15), "elapsed={:?}，看起来是等满了超时而不是检测到文件夹已建出来", started.elapsed());
+        assert_eq!(mkdir.list().len(), 1, "ensure_folder 应该把这个文件夹名入队过");
+        assert_eq!(mkdir.list()[0].name, "新文件夹");
     }
 
     #[test]
