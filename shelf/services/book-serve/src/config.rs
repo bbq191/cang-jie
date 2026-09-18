@@ -5,8 +5,6 @@ use rmsvc_core::paths::Paths;
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(default, rename_all = "camelCase")]
 pub struct BookConfig {
-    /// 「投入原生书库」未指定文件夹时落进的书库文件夹（visibleName；找不到→书库根）。
-    pub library_folder: String,
     /// xochitl web 主机（`/upload`）。
     pub xochitl_host: String,
     /// `/upload` 超时（大书处理慢；超时但已送达会被判 LikelyDelivered、绝不重试）。
@@ -23,7 +21,7 @@ pub struct BookConfig {
 
 impl Default for BookConfig {
     fn default() -> Self {
-        BookConfig { library_folder: "library".into(), xochitl_host: rmsvc_core::xochitl::DEFAULT_HOST.into(), upload_timeout_secs: 300, native_upload_limit_mb: 90 }
+        BookConfig { xochitl_host: rmsvc_core::xochitl::DEFAULT_HOST.into(), upload_timeout_secs: 300, native_upload_limit_mb: 90 }
     }
 }
 
@@ -44,8 +42,11 @@ mod tests {
     fn partial_json_fills_defaults_and_ignores_retired_keys() {
         // annotFolder：2026-09-19 随「加入原生书库 → 文件夹」改真实文件夹下拉候选一起退役
         // （见 rmsvc_core::xochitl::list_folders + service_state::status 的 xochitlFolders）。
+        // libraryFolder：同一天再退役——「加入 xochitl」留空改成落书库根（跟 KOReader 那边
+        // "留空＝根目录"语义对齐），不再有一个不写在界面上的"默认文件夹"概念，`Staging::deliver`
+        // 不再读这个配置项，字段整个删除；旧配置文件里可能还留着这个 key，反正解析时当未知字段
+        // 静默忽略，不用迁移。
         let c: BookConfig = serde_json::from_str(r#"{"libraryFolder":"books","comicMono":true,"optimizeDirectEpub":false,"annotFolder":"批注"}"#).unwrap();
-        assert_eq!(c.library_folder, "books");
         assert_eq!(c.upload_timeout_secs, 300);
         assert_eq!(c.native_upload_limit_bytes(), 90 * 1024 * 1024);
     }

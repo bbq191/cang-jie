@@ -29,7 +29,7 @@
   "transfer.fetchArticle.fetching": "抓取中…（联网抽取正文，十几秒）",
   "transfer.fetchArticle.failed": "失败",
   "transfer.staging.title": "母版库",
-  "transfer.staging.folder.placeholder": "留空＝默认书库文件夹",
+  "transfer.staging.folder.placeholder": "留空＝根目录",
   "transfer.staging.kfolder.label": "加入 KOReader → 目录",
   "transfer.staging.kfolder.placeholder": "留空＝根目录",
   "transfer.staging.optDetailsSummary": "优化做什么 · 母版为什么永远保留",

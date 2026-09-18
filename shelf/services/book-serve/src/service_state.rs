@@ -38,7 +38,7 @@ impl State {
         let cfg = BookConfig::load(paths);
         let xochitl = Arc::new(Xochitl::new(&cfg.xochitl_host, &paths.xochitl_dir(), cfg.upload_timeout_secs));
         let spool = Spool::new(paths.state_dir().join("books"));
-        let staging = Staging::new(paths.staging_dir(), xochitl.clone(), cfg.library_folder.clone(), cfg.native_upload_limit_bytes());
+        let staging = Staging::new(paths.staging_dir(), xochitl.clone(), cfg.native_upload_limit_bytes());
         let trash = TrashQueue::new(&paths.state_dir().join("books"), &paths.xochitl_dir());
         let mkdir = Arc::new(MkdirQueue::new(&paths.state_dir().join("books"), &paths.xochitl_dir()));
         State { cfg, spool, staging, xochitl, bus: Arc::new(EventBus::new()), trash, mkdir }
@@ -54,7 +54,6 @@ impl State {
         serde_json::json!({
             "ok": true,
             "uploadReachable": self.xochitl.reachable(),
-            "libraryFolder": self.cfg.library_folder,
             // 原生书库里真实存在的文件夹名（去重排序），给网页「加入原生书库 → 文件夹」下拉候选用——
             // 2026-09-19 取代原来写死的「书库/批注/自定义」三选一预设（`annotFolder` 已删），跟
             // KOReader 那边的目录下拉候选（`GET /koreader/books` 过滤 `kind==='dir'`）同一个道理。

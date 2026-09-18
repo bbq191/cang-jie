@@ -105,8 +105,6 @@ impl Reader {
 pub struct Staging {
     dir: PathBuf,
     xochitl: Arc<Xochitl>,
-    /// 投原生时未指定文件夹的缺省（配置 `libraryFolder`）。
-    library_folder: String,
     /// 投原生体积门（字节，0=不拦）：xochitl `/upload` 超限会直接断连，先拦下来给指引。
     native_limit: u64,
     /// 正在跑异步操作（「优化」/「落库」）的条目名集合——进程内存态，**不落盘**：进程重启＝没有任何
@@ -118,8 +116,8 @@ pub struct Staging {
 }
 
 impl Staging {
-    pub fn new(dir: PathBuf, xochitl: Arc<Xochitl>, library_folder: String, native_limit: u64) -> Staging {
-        Staging { dir, xochitl, library_folder, native_limit, busy: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())) }
+    pub fn new(dir: PathBuf, xochitl: Arc<Xochitl>, native_limit: u64) -> Staging {
+        Staging { dir, xochitl, native_limit, busy: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())) }
     }
     /// 这条目当前是否有异步操作在跑。
     pub fn is_busy(&self, name: &str) -> bool {
@@ -296,7 +294,10 @@ impl Staging {
 
     // ───────────── 落库 ─────────────
 
-    /// 加入 xochitl：纯复制原字节（不再优化）。xochitl 只读 EPUB/PDF（CBZ 漫画不加入 xochitl，用户定）。`folder` 空＝配置缺省；
+    /// 加入 xochitl：纯复制原字节（不再优化）。xochitl 只读 EPUB/PDF（CBZ 漫画不加入 xochitl，用户定）。`folder`
+    /// 空＝书库根目录（2026-09-19 用户明确要求去掉"留空落进配置里的缺省文件夹"这条隐藏行为——跟
+    /// KOReader 那边"留空＝根目录"的语义对齐，不再有一个不写在界面上的"默认文件夹"概念；
+    /// [`crate::config::BookConfig::library_folder`] 配置项随这次改动一并删除，不再有任何地方读它）；
     /// 母版库条目投完**永远保留**（2026-09-19 用户明确要求去掉"投完自动删除"这个功能——母版是可以
     /// 反复投给两个读器对照、换设备重投的底本，不该被一次性动作悄悄清掉；要删由用户自己在列表里点
     /// 删除）。返回回执文案 + EPUB 的渲染自检计划（调用方起线程跑 `render_check::run`）。
@@ -307,7 +308,7 @@ impl Staging {
             .ok_or("xochitl 只读 EPUB / PDF；此格式请「加入 KOReader」")?;
         let p = self.existing(name)?;
         let size = std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0);
-        let folder = if folder.trim().is_empty() { self.library_folder.as_str() } else { folder.trim() };
+        let folder = folder.trim();
         self.ensure_folder(folder, mkdir);
         if self.native_limit > 0 && size > self.native_limit {
             // 超限：EPUB 格式的漫画按 NCX 结构递归拆分成若干份分别投递，不再是全有全无
@@ -642,7 +643,7 @@ mod tests {
 
     fn staging(t: &tempfile::TempDir) -> Staging {
         let x = Arc::new(Xochitl::new("127.0.0.1:1", Path::new("/nonexistent"), 1));
-        let s = Staging::new(t.path().join("staging"), x, "library".into(), 1024 * 1024);
+        let s = Staging::new(t.path().join("staging"), x, 1024 * 1024);
         s.ensure().unwrap();
         s
     }
@@ -873,7 +874,7 @@ mod tests {
         // 分别验证过；这里只验证 deliver() 确实走了"按卷拆分尝试"这条新路径，不是笼统整本拒绝。
         let t = tempfile::tempdir().unwrap();
         let x = Arc::new(Xochitl::new("127.0.0.1:1", Path::new("/nonexistent"), 1));
-        let s = Staging::new(t.path().join("staging"), x, "library".into(), 1024);
+        let s = Staging::new(t.path().join("staging"), x, 1024);
         s.ensure().unwrap();
         let epub = multivol_comic_epub(&[15, 15]);
         s.stage_new("manga.epub", &epub).unwrap();
@@ -922,7 +923,7 @@ mod tests {
         let lib_dir = t.path().join("xochitl");
         std::fs::create_dir_all(&lib_dir).unwrap();
         let x = Arc::new(Xochitl::new("127.0.0.1:1", &lib_dir, 1)); // 端口 1 必然连不上，只测 ensure_folder 本身
-        let s = Staging::new(t.path().join("staging"), x, "library".into(), 1024 * 1024);
+        let s = Staging::new(t.path().join("staging"), x, 1024 * 1024);
         s.ensure().unwrap();
         s.stage_new("x.epub", b"PK").unwrap();
         let mkdir = MkdirQueue::new(&t.path().join("state"), &lib_dir);

@@ -49,7 +49,7 @@ fn main() {
             });
         });
     }
-    println!("[book-serve] 母版库 {}；书库文件夹 {:?}；xochitl {}", st.staging.dir().display(), st.cfg.library_folder, st.cfg.xochitl_host);
+    println!("[book-serve] 母版库 {}；xochitl {}", st.staging.dir().display(), st.cfg.xochitl_host);
     if let Err(e) = service::run(&SPEC, &bind, &paths, api::router(st)) {
         eprintln!("[book-serve] {e}");
         std::process::exit(1);

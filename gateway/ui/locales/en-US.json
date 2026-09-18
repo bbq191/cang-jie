@@ -29,7 +29,7 @@
   "transfer.fetchArticle.fetching": "Fetching…(extracting text over the network, a dozen seconds)",
   "transfer.fetchArticle.failed": "failed",
   "transfer.staging.title": "Master library",
-  "transfer.staging.folder.placeholder": "Blank = default library folder",
+  "transfer.staging.folder.placeholder": "Blank = library root",
   "transfer.staging.kfolder.label": "Add to KOReader → directory",
   "transfer.staging.kfolder.placeholder": "Blank = root",
   "transfer.staging.optDetailsSummary": "What \"Optimize\" does · why the master copy is always kept",
