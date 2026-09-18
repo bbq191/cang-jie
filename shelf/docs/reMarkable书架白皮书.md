@@ -1711,18 +1711,32 @@ cgroup 从未真正生效（§03ba 已查实），不能指望它兜底。
   "推送中…"，现在跟 `stagingList` 无数据场景一样有不确定态滚动条）。**范围限定**：不对全文件其余
   ~24 处手写 DOM 做机械式无差别替换；`uploader()` 已有自己一套基于 `XMLHttpRequest.upload.
   onprogress` 的真实字节级进度条（连续字节 vs 服务端步数是两种不同的进度语义），不强行统一；
-  `manage.modules` 启停按钮是近乎瞬时操作，没有"进度"可言，不套组件。**前端验证缺口**：`node
+  `manage.modules` 启停按钮是近乎瞬时操作，没有"进度"可言，不套组件。**前端验证**：`node
   --check app.js` 语法通过 + 逐处静态审读确认作用域/选择器正确 + `cargo test --workspace`
-  （`gateway` 17 测试全绿，含 `include_str!` 把新 JS 编进二进制的骨架测试）；但本机没有浏览器
-  自动化工具、也没有设备网页登录凭证，**没能在真实浏览器里点一遍**（工程纪律 要求的"用浏览器
-  验证"这一步做不到），如实记录，不谎称已验证——用户下次用网页时留意一下母版库列表按钮/进度条、
-  笔记「推送本章」按钮是否跟改动前观感一致。
+  （`gateway` 17 测试全绿，含 `include_str!` 把新 JS 编进二进制的骨架测试）。**用户随后给了网页
+  登录密码，补做了一轮真机认证态 HTTP 全链路验证**：`curl` 走真实 `POST /login` 拿到
+  `shelf_session` cookie，确认登录态首页里确实嵌了新代码（`el(tag`/`guardClick(b,async`/
+  `renderStepProgress` 都在）；再原样走一遍网页按钮背后的真实请求序列——`POST /api/books/staging`
+  （multipart 入库，跟 `uploader()` 同一条路）→ `POST /api/books/staging/optimize` → 轮询
+  `GET /api/books/staging` 确认 `delivered.optimize.status:"ok"` → `POST /api/books/staging/
+  deliver`（这次改动的核心：不拆分路径）→ 确认 `delivered.deliver.status:"ok"` +
+  `delivered.render` 自检数字吻合 → `POST /api/koreader/books/adopt` + `POST /api/books/
+  staging/mark`（「加入 KOReader」按钮背后两次调用）→ 确认 `delivered.koreader` 时间戳落盘 →
+  `POST /api/books/staging/delete` 清理，都通过认证后的网关代理（不是直连 book-serve 的
+  loopback 端口），响应 JSON 形状（`oc`/`dc`/`render` 字段）跟 `app.js` 读取的字段一一对上。
+  **仍然没做的**：本机没有浏览器自动化工具（chromium/playwright/puppeteer 都没装），这一轮验证
+  证明了"按钮点击后触发的每个真实请求、以及请求返回的数据形状"全部正确，但**没有验证 DOM 渲染
+  出来的像素/交互观感本身**（比如按钮是不是真的禁用变灰、进度条动画是不是真的跑起来）——这一层
+  仍然是静态代码审读的结论，不是肉眼所见。测试产物（母版库条目、xochitl 文档、KOReader 书籍
+  文件）均已清理，四个服务重启后 `NRestarts=0` 确认健康。
 
 ## 05｜真机待办（2026-09-06 刷新；2026-09-09 补记 §03ad 漫画超限分支复验、§03ae i18n 架子、§03af UI 人性化批量修复、§03aj 管理二级 tab+系统增强开关；2026-09-10 补记 §03an 正文全量 i18n、§03aq 网文留白排查；2026-09-16 补记 §03ar KOReader 高亮/生词只读端点、§03as notes_vault 配置项、§03at gateway/shelf-gateway 双单元问题（用户拍板后已删旧符号链接修复，真机验证过）、§03au 状态提示停留时间修复；2026-09-17 补记 §03av EPUB 线四原则功能层真机验证通过，发现 `trim_margins` 真机性能问题；2026-09-18 补记 §03aw 脚注撤回复核+异步优化全链路真机通+防双击，发现 Anchor 模式嵌套 `<p>` 潜在问题；2026-09-18 补记 §03ax 脚注返回浮标已有解（更正 §03aw 的不准确记录）、裁边真机核实无误、超限漫画按卷拆分投原生真机通、用户拍照发现拆分卷原生留白+已修复待复验；2026-09-19 补记 §03ay 落库改异步+《疯探》"目录被误删"根因修复、§03az dtb:uid 根因修复+《雪人》分部目录重建真机通、§03ba 真机内存 OOM 危机→流式优化架构真机通+DOCTYPE 第二根因、§03bb《疯探》目录入口深度排查暂停在"确认是 content.opf 但未锁定触发点"；2026-09-19 补记 §03bc 反编译 xochitl 二进制坐实真正根因——硬编码死查 manifest `id="ncx"`，真机验证通过，问题✅已解决（`OPTIMIZE_VERSION` 14）；2026-09-19 补记 §03bd font-serve 字体菜单"换字体不生效/删除后仍显示存在"（用户自诊同根因）真机验证通过，问题✅已解决；2026-09-19 补记《镖人》投原生无反应排查——comic_split.rs 多层嵌套 NCX 边界计算 panic（book-serve 进程被摔炸）+ 落库拆分路径 OOM 风险+xochitl `/upload` 真实硬上限 100MB（原配置 150MB 是从未验证过的猜测值）+ 单卷仍超限的按页再拆兜底，四层独立问题全部修完，11 卷真机全部投递成功，完整方法论见 `bookconv优化白皮书.md` §15；2026-09-19 补记 §03be 落库进度条不推 SSE 事件已修+「加入 xochitl → 文件夹」填名不建文件夹真机端到端已解决（`git show` 从 2026-09-15 死代码删除提交里原样捞回 `mkdir.rs`+`shelf-mkdir-agent.qmd`，真机核对 `.metadata` 坐实文件夹真的建出来了，反编译当年"没有真机点过对话框"这条缺口这次补上）；2026-09-19 补记 §03bf「加入 KOReader」进度条不刷新（koreader-serve 同步调用没接入忙态系统，补前端本地忙态）已修+《乱马1/2》带斜杠文件夹名建不出来（`MkdirQueue::add` 误伤性拒绝含 `/` 的合法书名/文件夹名，整条删除）已修，均真机端到端复现+验证通过，问题✅已解决；2026-09-19 补记 §03bg 优化操作补真实分步进度（`OptimizeCheck.progress`，跟漫画/流式与否无关，之前压根没有这个字段）+确认加进度回调不能实质省内存（图片瓶颈已经是逐张处理，§03ba 解决过了），真机拿《飘·上册》端到端观察到进度数字推进，问题✅已解决；2026-09-19 补记 §03bh OOM 排查坐实
 `Staging::deliver()` 落库不拆分路径是唯一未修的真实内存风险（三份数据叠加峰值 ~180-270MB）→
 改流式上传+流式自检，真机 `VmHWM` 观测 80MB 测试书投递全程 3.2-3.5KB 数量级，问题✅已解决；
 顺带 Rust 后端（`spawn_bg`/`busy_err` 去重）+ 前端（`el`/`renderStepProgress`/`guardClick` 合并
-`btn()`）代码质量重构，前端因无浏览器工具/设备登录凭证未能真机点一遍验证，如实记录为验证缺口
+`btn()`）代码质量重构；用户随后给了网页登录密码，补做认证态 `curl` 全链路验证（登录→入库→优化→
+落库→加入 KOReader→删除，逐一核对响应 JSON 跟 `app.js` 读取的字段吻合），仍缺浏览器里的像素/
+交互观感人眼确认（本机无浏览器自动化工具），如实记录这一层残留缺口
 §03ay 落库改异步（补齐防双击）真机全链路通、《疯探》目录页被老代码 `remove_toc_from_spine`
 误删的根因坐实+修复+真机验证通，设备上留了一份重复《疯探》待处理；2026-09-19 补记 §03az
 《疯探》"无目录入口"根因是 dtb:uid 跟 OPF 标识符不一致（真机对照《雪人》坐实）+已修复，字节
