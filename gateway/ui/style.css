@@ -135,3 +135,10 @@ dl.help dd{margin:.2em 0 .2em;color:var(--mute);font-size:.9em;line-height:1.65}
 .toast.ok{border-color:color-mix(in srgb,var(--ok) 50%,var(--line));color:var(--ok)}
 .toast.warn{border-color:color-mix(in srgb,var(--warn) 50%,var(--line));color:var(--warn)}
 .toast.info{border-color:var(--line);color:var(--fg)}
+/* 自定义确认框（2026-09-19：浏览器原生 confirm() 跟已经禁掉的 alert() 是同一类问题——阻塞整个
+   页面、样式跟站内其它地方完全脱节，全站 9 处 confirm() 统一换这个，见 app.js confirmDialog()）。
+   z-index 比 toast 高一档，理论上会话内很少同时出现，但确认框语义上更该压在最上面。 */
+.confirm-overlay{position:fixed;inset:0;background:rgba(0,0,0,.4);display:flex;align-items:center;justify-content:center;z-index:60;padding:1em}
+.confirm-box{background:var(--surface);color:var(--fg);border:1px solid var(--line);border-radius:.9em;box-shadow:var(--shadow);max-width:26em;width:100%;padding:1.2em}
+.confirm-msg{font-size:.95em;line-height:1.6;white-space:pre-wrap;word-break:break-word}
+.confirm-actions{display:flex;justify-content:flex-end;gap:.5em;margin-top:1em}
