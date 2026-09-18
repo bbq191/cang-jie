@@ -7,10 +7,31 @@ const badge=(t,ok)=>`<span class="badge ${ok?'on':'off'}">${t}</span>`;
 const wait=ms=>new Promise(res=>setTimeout(res,ms));
 /* 防双击：按钮点击后立即禁用，异步操作完成（不管成功失败）再解禁。很多按钮的异步操作是删除/
    落库这类不该被同一次操作重复触发两遍的动作——不加这一层，手指点快了或者网络慢的时候网络请求
-   还没回来就能再点一次，2026-09-18 真机反馈"优化过程中点击删除"这类并发操作会撞在一起。已经
-   自己内联管理 disabled 状态的按钮（母版库列表 btn() 助手、几处一开始就手动 disabled=true 的）
-   不需要再套这层，避免重复禁用逻辑打架。*/
+   还没回来就能再点一次，2026-09-18 真机反馈"优化过程中点击删除"这类并发操作会撞在一起。母版库
+   列表 stagingList 的 btn() 助手（2026-09-19 起）也走这个——原来自己手写了一遍禁用/复位逻辑，
+   跟这里是同一件事的第二份实现，改成在这层之外只叠列表特有的按钮文案/本地忙态记账。已经自己
+   一开始就手动 disabled=true 的按钮（超限/未安装这类"根本点不了"，不是"点了在跑"）不需要套这层。*/
 const guardClick=(el,fn)=>{el.onclick=async()=>{if(el.disabled)return;el.disabled=true;try{await fn()}finally{el.disabled=false}}};
+/* 轻量 DOM 构建 helper：`el('div',{class:'small',style:'...'},[child1,child2])`。`attrs` 里
+   `class`/其余属性走 `setAttribute`，`style` 走 `style.cssText`，`text`/`html` 分别设
+   `textContent`/`innerHTML`；`children` 接单个节点/字符串或数组。不是要把全站手写 DOM 都机械
+   替换一遍——只在改动到的地方（stagingList 这类同类节点最密集的函数）顺手用，别的地方不动
+   （2026-09-19 代码质量审计范围说明）。*/
+const el=(tag,attrs,children)=>{const n=document.createElement(tag);
+  if(attrs)for(const k in attrs){const v=attrs[k];if(k==='style')n.style.cssText=v;else if(k==='text')n.textContent=v;else if(k==='html')n.innerHTML=v;else n.setAttribute(k,v)}
+  if(children!=null)for(const c of [].concat(children))n.appendChild(typeof c==='string'?document.createTextNode(c):c);
+  return n};
+/* 结构化步数进度展示：`prog={done,total}` 有数据画真百分比，没有画不确定态滚动条（浏览器原生
+   `<progress>` 不带 value/max 渲染成不确定态动画）——从 stagingList 原地实现抽出来，同样适用于
+   任何"耗时不短、有时有分步数据有时没有"的忙态展示（`container` 是要挂这块的父节点，自己占
+   一整行）。 */
+const renderStepProgress=(container,{label,prog,msg})=>{
+  const bar=el('progress');
+  if(prog){bar.max=prog.total;bar.value=prog.done}
+  const text=el('div',{class:'small',text:prog?`${label} ${prog.done}/${prog.total}（${Math.round(prog.done/prog.total*100)}%）${msg?' · '+msg:''}`:label});
+  const wrap=el('div',{style:'flex-basis:100%;margin-top:.2em'},[bar,text]);
+  container.appendChild(wrap);
+  return wrap};
 /* 全局 toast：系统里不允许用浏览器原生 alert（打断操作、要点掉才能继续，风格跟页面其它地方的行内
    小字状态提示完全不一致），全站原来散落的 26 处 alert() 统一改走这个（2026-09-19 用户明确要求）。
    #toasthost 惰性建：第一次调用 toast() 时才挂进 body，不用改 index.html。kind 决定配色（跟徽章
@@ -189,18 +210,14 @@ function stagingList(ul,opts){
     // 能看见走到哪一步/大概多久才有用）。漫画拆分卷落库、普通 EPUB 优化都有结构化步数
     // （`dc.progress`/`oc.progress`，形状同为 `{done,total}`，见 book-serve `try_deliver_split`/
     // `spawn_optimize`）→ 真百分比进度条；普通整本落库（没有拆分）后端没法给出精确进度（耗时来自
-    // 单次上传，没有天然的"第几步"）→ 不确定时长的滚动进度条（`<progress>` 不带 value/max，浏览器
-    // 原生渲染成不确定态动画），至少比一句不会变化的静态文字更能传达"真的在动、不是卡死了"。
+    // 单次上传，没有天然的"第几步"）→ 不确定时长的滚动进度条，至少比一句不会变化的静态文字更能
+    // 传达"真的在动、不是卡死了"（`renderStepProgress` 定义见文件顶部，跟笔记「推送本章」共用）。
     if(busy){
       const dcPending=dc&&dc.status==='pending',ocPending=oc&&oc.status==='pending';
       const label=localBusy?T('transfer.staging.progress.addingKoreader'):dcPending?T('transfer.staging.progress.delivering'):ocPending?T('transfer.staging.progress.optimizing'):T('transfer.staging.progress.working');
       const prog=(dcPending&&dc.progress)||(ocPending&&oc.progress)||null;
       const msg=dcPending?dc.message:ocPending?oc.message:'';
-      const wrap=document.createElement('div');wrap.style.cssText='flex-basis:100%;margin-top:.2em';
-      const bar=document.createElement('progress');if(prog){bar.max=prog.total;bar.value=prog.done}
-      const text=document.createElement('div');text.className='small';
-      text.textContent=prog?`${label} ${prog.done}/${prog.total}（${Math.round(prog.done/prog.total*100)}%）${msg?' · '+msg:''}`:label;
-      wrap.append(bar,text);li.appendChild(wrap);
+      renderStepProgress(li,{label,prog,msg});
     }
     const right=document.createElement('span');right.style.cssText='display:flex;gap:.4em;flex-wrap:wrap;align-items:center';
     // 禁用态按钮的原因（超限/未安装）以前只写进 title——触屏设备摸不到 hover，等于完全看不到为什么点
@@ -209,11 +226,13 @@ function stagingList(ul,opts){
     // 禁用不再重复这行小字——上面已经有整行的进度条，三个按钮各自重复一遍"正在处理中"没有信息量。
     // trackLocal=true：这个按钮的操作没有服务端忙态可查（目前只有「加入 KOReader」），点击时先把
     // 这条目名记进 `opts.localBusy` 并立即用 `opts.render`（不重新拉数据、只重画）把进度条画出来，
-    // 操作结束（无论成不成功）都要清掉，再走一次真正的 `opts.refresh` 落地最终状态。
-    const btn=(t,pri,fn,dis,title,cls,trackLocal)=>{const b=document.createElement('button');b.className='btn'+(pri?' pri':'')+(cls?' '+cls:'');b.textContent=t;if(dis){b.disabled=true;b.title=title||''}else b.onclick=async()=>{b.disabled=true;b.textContent=t+'…';
+    // 操作结束（无论成不成功）都要清掉，再走一次真正的 `opts.refresh` 落地最终状态。禁用/复位本身
+    // 委托给全局 `guardClick`（2026-09-19 代码质量审计——这里以前自己又手写了一遍同一件事）；
+    // 这层只叠列表特有的文案/记账/收尾。
+    const btn=(t,pri,fn,dis,title,cls,trackLocal)=>{const b=document.createElement('button');b.className='btn'+(pri?' pri':'')+(cls?' '+cls:'');b.textContent=t;if(dis){b.disabled=true;b.title=title||''}else guardClick(b,async()=>{b.textContent=t+'…';
       if(trackLocal&&opts.localBusy){opts.localBusy.add(it.name);if(opts.render)opts.render()}
       try{await fn()}finally{if(trackLocal&&opts.localBusy)opts.localBusy.delete(it.name)}
-      if(opts.refresh)opts.refresh()};right.appendChild(b);
+      if(opts.refresh)opts.refresh()});right.appendChild(b);
       if(dis&&title){const hint=document.createElement('span');hint.className='small';hint.style.cssText='flex-basis:100%';hint.textContent=title;right.appendChild(hint)}};
     // busy（it.busy 服务端忙锁 或 localBusy 本地忙态）：这条目正有一个异步操作在跑（优化/落库真机
     // 实测都能到分钟级，KOReader 加入虽快但也不该看着像没反应）——删除/落库/加入 KOReader/再次优化
@@ -689,7 +708,7 @@ function renderNotes(sec){sec.innerHTML=`
     card.innerHTML=`<h3 style="margin-top:0">${k<0?T('notes.unfiledChapterParen'):T('notes.chapterHeadingTitled',{n:k+1,title:es[0].chapter_title||''})} <span class="small">${T('notes.entryCount',{count:es.length})}</span></h3>${k>=0?`<div class="row"><button class="btn pri" data-sync title="${T('notes.pushChapterTitle')}">${T('notes.pushChapterBtn')}</button>${syncBadges(s)}<span class="small" data-genmsg></span></div>`:''}<div data-body></div>`;
     const body=card.querySelector('[data-body]');
     if(k>=0){
-      const syncBtn=card.querySelector('[data-sync]'),msg=card.querySelector('[data-genmsg]');
+      const syncBtn=card.querySelector('[data-sync]'),msg=card.querySelector('[data-genmsg]'),row=card.querySelector('.row');
       // 直接章头按钮，不用先勾选条目——生成/导出本来就是整章一起投影（条目挑不挑没用，见白皮书
       // §03x"是不是重复了"）；批量勾选整层第七轮反馈已经整段删掉，重新转写/不要了现在各自逐条一个
       // 独立按钮，见上面模块注释。
@@ -698,9 +717,14 @@ function renderNotes(sec){sec.innerHTML=`
       // 是重复劳动，一个按钮内部按当前去处该做哪样做哪样：没有条目要那个去处，对应那步自然是 Empty
       // （后端已有这个语义，见 export::ExportOutcome/publish::ChapterOutcome），前端只是不重复提示
       // "没做"；改名"推送"是因为"同步"暗示双向/拉取，这个按钮其实只单向推。
-      syncBtn.onclick=async()=>{syncBtn.disabled=true;msg.textContent=T('notes.pushing');holdRefreshUntil=Date.now()+15000;
+      syncBtn.onclick=async()=>{syncBtn.disabled=true;msg.textContent='';holdRefreshUntil=Date.now()+15000;
+        // 服务端没有天然的分步数据（耗时来自生成笔记本+导出 md 两次整章调用，不是可数的"第几步"）——
+        // 跟 stagingList 普通整本落库同一处境，共用同一套不确定态滚动条（2026-09-19 代码质量审计，
+        // 原来这里只有一句不会变的静态文字"推送中…"）。
+        const prog=renderStepProgress(row,{label:T('notes.pushing'),prog:null,msg:''});
         const gr=await j(`/api/notes/books/${encodeURIComponent(book.uuid)}/chapters/${k}/generate`,{method:'POST'});
         const er=await j(`/api/notes/books/${encodeURIComponent(book.uuid)}/chapters/${k}/export`,{method:'POST'});
+        prog.remove();
         syncBtn.disabled=false;
         const gc=(gr.chapters&&gr.chapters[0])||{};
         const parts=[];

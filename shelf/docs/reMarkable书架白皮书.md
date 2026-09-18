@@ -1637,7 +1637,92 @@ createCollection(parentId, name)` 收的是普通 JS 字符串参数（来自 `J
 用完即删。`cargo test --workspace` 全绿（`bookconv` 新增流式进度单测断言 done 严格递增+最后一次
 done==total，`book-serve` 新增 `optimize()` 转发校验）。
 
-## 05｜真机待办（2026-09-06 刷新；2026-09-09 补记 §03ad 漫画超限分支复验、§03ae i18n 架子、§03af UI 人性化批量修复、§03aj 管理二级 tab+系统增强开关；2026-09-10 补记 §03an 正文全量 i18n、§03aq 网文留白排查；2026-09-16 补记 §03ar KOReader 高亮/生词只读端点、§03as notes_vault 配置项、§03at gateway/shelf-gateway 双单元问题（用户拍板后已删旧符号链接修复，真机验证过）、§03au 状态提示停留时间修复；2026-09-17 补记 §03av EPUB 线四原则功能层真机验证通过，发现 `trim_margins` 真机性能问题；2026-09-18 补记 §03aw 脚注撤回复核+异步优化全链路真机通+防双击，发现 Anchor 模式嵌套 `<p>` 潜在问题；2026-09-18 补记 §03ax 脚注返回浮标已有解（更正 §03aw 的不准确记录）、裁边真机核实无误、超限漫画按卷拆分投原生真机通、用户拍照发现拆分卷原生留白+已修复待复验；2026-09-19 补记 §03ay 落库改异步+《疯探》"目录被误删"根因修复、§03az dtb:uid 根因修复+《雪人》分部目录重建真机通、§03ba 真机内存 OOM 危机→流式优化架构真机通+DOCTYPE 第二根因、§03bb《疯探》目录入口深度排查暂停在"确认是 content.opf 但未锁定触发点"；2026-09-19 补记 §03bc 反编译 xochitl 二进制坐实真正根因——硬编码死查 manifest `id="ncx"`，真机验证通过，问题✅已解决（`OPTIMIZE_VERSION` 14）；2026-09-19 补记 §03bd font-serve 字体菜单"换字体不生效/删除后仍显示存在"（用户自诊同根因）真机验证通过，问题✅已解决；2026-09-19 补记《镖人》投原生无反应排查——comic_split.rs 多层嵌套 NCX 边界计算 panic（book-serve 进程被摔炸）+ 落库拆分路径 OOM 风险+xochitl `/upload` 真实硬上限 100MB（原配置 150MB 是从未验证过的猜测值）+ 单卷仍超限的按页再拆兜底，四层独立问题全部修完，11 卷真机全部投递成功，完整方法论见 `bookconv优化白皮书.md` §15；2026-09-19 补记 §03be 落库进度条不推 SSE 事件已修+「加入 xochitl → 文件夹」填名不建文件夹真机端到端已解决（`git show` 从 2026-09-15 死代码删除提交里原样捞回 `mkdir.rs`+`shelf-mkdir-agent.qmd`，真机核对 `.metadata` 坐实文件夹真的建出来了，反编译当年"没有真机点过对话框"这条缺口这次补上）；2026-09-19 补记 §03bf「加入 KOReader」进度条不刷新（koreader-serve 同步调用没接入忙态系统，补前端本地忙态）已修+《乱马1/2》带斜杠文件夹名建不出来（`MkdirQueue::add` 误伤性拒绝含 `/` 的合法书名/文件夹名，整条删除）已修，均真机端到端复现+验证通过，问题✅已解决；2026-09-19 补记 §03bg 优化操作补真实分步进度（`OptimizeCheck.progress`，跟漫画/流式与否无关，之前压根没有这个字段）+确认加进度回调不能实质省内存（图片瓶颈已经是逐张处理，§03ba 解决过了），真机拿《飘·上册》端到端观察到进度数字推进，问题✅已解决
+## 03bh｜OOM 排查：`Staging::deliver()` 落库不拆分路径是唯一未修的真实风险；顺带 Rust/前端代码质量去重（2026-09-19，真机通，✅已解决）
+
+用户要求"核查目前最有可能发生 OOM 的服务，确认是否立即优化或拆分"。三路并行审计（OOM 风险面/
+Rust 后端重复代码/前端 `app.js` 重复代码）覆盖 `book-serve`、`koreader-serve`、`bookconv` 全部
+上传/优化/落库路径。结论：**`book-serve` 是唯一有实质 OOM 历史和现存风险的服务**（`koreader-serve`
+投递全程走 `fs::copy`，纯 OS 层流式，不占用户态内存）；`try_deliver_split`/
+`comic_split::deliver_split_streaming`（§03ba 已改流式）跟 `/staging/upload` multipart 落盘
+（`rmsvc_core::multipart` 本来就流式落盘）都已确认不是风险，不用动。**是否拆服务：不涉及**——
+`bookconv` 拆独立服务的问题上一轮已经定案不拆（见白皮书 §03bg 前一轮讨论/记忆
+`bookconv-service-split-tradeoff.md`），这次 OOM 是函数级内存管理问题，不是架构边界问题，拆服务
+解决不了"同一份数据在内存里叠好几份"这个根因，反而多一层 IPC 序列化成本，不动摇不拆的结论。
+
+**唯一确认未修的风险**：`Staging::deliver()`（`services/book-serve/src/staging.rs`）落库「不拆分」
+这条路（≤90MB 的 EPUB/PDF，`native_upload_limit_mb` 缺省 90）：`std::fs::read(&p)` 整本读进
+`Vec<u8>` + `bookconv::stats::text_profile(&data)` 内部 `read_entries` 把 zip **全部条目（含图片）**
+解压进 `Vec<Entry>`（自检只用得上 OPF/HTML 文本，图片解压出来即弃，纯浪费）+ `Xochitl::upload`
+内部再克隆一份拼 multipart body，三份同时在内存，峰值估算 ~180-270MB——跟 §03ba 修的 552MB《镖人》
+OOM 是同一类"读了又整体拷贝"问题，只是这条路径当时没顺带改，且这台设备 `MemoryMax=192M` 的
+cgroup 从未真正生效（§03ba 已查实），不能指望它兜底。
+
+**修复**：
+1. `rmsvc-core/src/xochitl.rs`：`upload_document` 改名 `send_multipart`，接 `impl Read + body_len`
+   而不是 `&[u8]`，用 `Cursor(header).chain(body).chain(Cursor(footer))` 流式发送、显式设
+   `Content-Length` 头（`ureq::Request::send` 文档：设了 Content-Length 就不退化成 chunked，线上
+   字节序列跟改动前逐字节相同，只是不再整块囤在 `Vec<u8>` 里）。`upload(&[u8],...)` 现有公开签名
+   不变（内部包一层 `Cursor::new(data)`），新增 `upload_file(path,...)` 流式开文件直传，从不整体
+   入内存。三个既有调用点（`book-serve` 落库拆分份/`note-serve` 推笔记本 zip）零改动，顺带也各省
+   一次内部克隆。
+2. `crates/bookconv/src/stats.rs`：新增 `text_profile_file(path)`——直接开文件当 zip 按条目遍历，
+   图片等非 OPF/HTML 条目连解压都不做（`wants_entry` 判据先看条目名）；逐字符统计逻辑抽成私有共享
+   `accumulate()`，`text_profile(&[u8])`（内存版）跟 `text_profile_file`（流式版）共用，避免修 OOM
+   的同时长出第二份文本统计逻辑。差分测试断言两个入口在同一份数据上结果完全相等。
+3. `services/book-serve/src/staging.rs`：`deliver()` 非拆分路径删掉 `std::fs::read`，自检走
+   `text_profile_file(&p)`，上传走 `upload_file(&p,...)`——这条路径整个函数体内再也不会把整本
+   文件读进一个 `Vec<u8>`。
+
+**真机验证（VmHWM，不是估算）**：host 用 Python 合成一本 80MB 测试 EPUB（20 张 4MB 随机字节图片
+模拟真实插画书的图片主导体积构成，接近 90MB 上限但走不拆分路径），scp 进设备母版库目录，真机调
+`POST /staging/deliver` 真实投递成功（`status:"ok"`，`render` 自检 `expected:46/pages:48` 吻合，
+证明 `text_profile_file` 端到端工作正常）。投递前后查 `book-serve` 进程 `/proc/<pid>/status` 的
+`VmHWM`（进程有生以来的内存峰值，比瞬时采样更权威）：**投递前后全程 3.2-3.5KB 数量级**（`VmHWM`
+从 3484 kB 起就没变过）——不是"峰值明显更低"，是这条路径现在对 80MB 文件几乎零内存开销，完全对上
+"流式读、从不整体入内存"的设计预期。测试产物用完即删（母版库 `/staging/delete` + 设备原生书库
+`/trash/add` 排队回收站）。`note-serve` 共用改动的 `xochitl.rs`，重启后 `/status`/`/books`
+基础功能确认正常；设备上目前没有真实笔记本数据可做完整推送链路复测，这条不是"验证过"，如实记录
+为已知验证缺口，不是没做只是没条件做。
+
+**顺带发现、这轮不处理**：`crates/bookconv/src/imgopt.rs` 单张图片解码
+（`image::load_from_memory_with_format`）没有像素数上限，极端高分辨率原图解码后未压缩位图理论上
+可到几百 MB；但处理是逐图片进行、不随全书图片数累加，边缘风险，中置信度，没有真实触发样本，这轮
+不加防护，记在这里免得以后重复审计当新发现。
+
+**代码质量去重**（同一轮顺手做，行为保持不变，`cargo test --workspace` 全绿）：
+- `staging.rs` 新增 `spawn_bg()`——`spawn_optimize`/`spawn_deliver` 原来各自手写一遍"起后台线程
+  +catch_unwind+`end_busy`+`bus.publish`"（约 20-25 行同构），业务内容（调 `optimize`/`deliver`、
+  写哪个 `sidecar::*Check`）不同、留在各自 `body` 闭包里不下沉；范围只到外壳这一层，不引入
+  `rmsvc_core` 通用泛型任务框架——`koreader-serve` 目前没有同类异步操作，为它预留抽象属于给假设
+  中的未来需求设计，不做。
+- `busy_err(name, extra)` 合并三处（优化/落库/删除）近乎逐字重复的"《{name}》正在处理中，请稍候"
+  忙锁提示。
+- 评估过但决定不做：`OptimizeCheck`/`DeliverCheck` 合并成泛型结构（代码里已经有注释说明是故意
+  分开，收益低）；bookconv 各处 zip 打开模式（核心解析已经共享在 `check.rs::read_entries`/
+  `wash::Opf`，重复的都是测试样板，不值得为测试代码抽 helper）；`try_deliver_split` 的逐份进度
+  写入抽共享函数（细看之后发现跟 `spawn_deliver` 的终态写入形状不同，是三种不同语义状态的写入，
+  不是真重复，硬抽反而多一层间接、可读性更差）。
+- 前端 `gateway/ui/app.js`：新增 `el(tag,attrs,children)` 轻量 DOM 构建 helper +
+  `renderStepProgress(container,{label,prog,msg})` 可复用进度展示（`{done,total}` 真百分比/无数据
+  不确定态滚动条两种模式，从 `stagingList` 原地实现抽出来）；`stagingList` 局部 `btn()` 助手原来
+  自己手写一遍禁用/复位逻辑，跟全局 `guardClick`（13 处其它异步按钮统一用这个）是同一件事的第二份
+  实现，改成委托给 `guardClick`，`btn()` 只保留列表特有的文案/本地忙态记账/收尾逻辑；
+  `renderStepProgress` 应用到笔记「整理」页「推送本章」按钮（原来只有一句不会变的静态文字
+  "推送中…"，现在跟 `stagingList` 无数据场景一样有不确定态滚动条）。**范围限定**：不对全文件其余
+  ~24 处手写 DOM 做机械式无差别替换；`uploader()` 已有自己一套基于 `XMLHttpRequest.upload.
+  onprogress` 的真实字节级进度条（连续字节 vs 服务端步数是两种不同的进度语义），不强行统一；
+  `manage.modules` 启停按钮是近乎瞬时操作，没有"进度"可言，不套组件。**前端验证缺口**：`node
+  --check app.js` 语法通过 + 逐处静态审读确认作用域/选择器正确 + `cargo test --workspace`
+  （`gateway` 17 测试全绿，含 `include_str!` 把新 JS 编进二进制的骨架测试）；但本机没有浏览器
+  自动化工具、也没有设备网页登录凭证，**没能在真实浏览器里点一遍**（工程纪律 要求的"用浏览器
+  验证"这一步做不到），如实记录，不谎称已验证——用户下次用网页时留意一下母版库列表按钮/进度条、
+  笔记「推送本章」按钮是否跟改动前观感一致。
+
+## 05｜真机待办（2026-09-06 刷新；2026-09-09 补记 §03ad 漫画超限分支复验、§03ae i18n 架子、§03af UI 人性化批量修复、§03aj 管理二级 tab+系统增强开关；2026-09-10 补记 §03an 正文全量 i18n、§03aq 网文留白排查；2026-09-16 补记 §03ar KOReader 高亮/生词只读端点、§03as notes_vault 配置项、§03at gateway/shelf-gateway 双单元问题（用户拍板后已删旧符号链接修复，真机验证过）、§03au 状态提示停留时间修复；2026-09-17 补记 §03av EPUB 线四原则功能层真机验证通过，发现 `trim_margins` 真机性能问题；2026-09-18 补记 §03aw 脚注撤回复核+异步优化全链路真机通+防双击，发现 Anchor 模式嵌套 `<p>` 潜在问题；2026-09-18 补记 §03ax 脚注返回浮标已有解（更正 §03aw 的不准确记录）、裁边真机核实无误、超限漫画按卷拆分投原生真机通、用户拍照发现拆分卷原生留白+已修复待复验；2026-09-19 补记 §03ay 落库改异步+《疯探》"目录被误删"根因修复、§03az dtb:uid 根因修复+《雪人》分部目录重建真机通、§03ba 真机内存 OOM 危机→流式优化架构真机通+DOCTYPE 第二根因、§03bb《疯探》目录入口深度排查暂停在"确认是 content.opf 但未锁定触发点"；2026-09-19 补记 §03bc 反编译 xochitl 二进制坐实真正根因——硬编码死查 manifest `id="ncx"`，真机验证通过，问题✅已解决（`OPTIMIZE_VERSION` 14）；2026-09-19 补记 §03bd font-serve 字体菜单"换字体不生效/删除后仍显示存在"（用户自诊同根因）真机验证通过，问题✅已解决；2026-09-19 补记《镖人》投原生无反应排查——comic_split.rs 多层嵌套 NCX 边界计算 panic（book-serve 进程被摔炸）+ 落库拆分路径 OOM 风险+xochitl `/upload` 真实硬上限 100MB（原配置 150MB 是从未验证过的猜测值）+ 单卷仍超限的按页再拆兜底，四层独立问题全部修完，11 卷真机全部投递成功，完整方法论见 `bookconv优化白皮书.md` §15；2026-09-19 补记 §03be 落库进度条不推 SSE 事件已修+「加入 xochitl → 文件夹」填名不建文件夹真机端到端已解决（`git show` 从 2026-09-15 死代码删除提交里原样捞回 `mkdir.rs`+`shelf-mkdir-agent.qmd`，真机核对 `.metadata` 坐实文件夹真的建出来了，反编译当年"没有真机点过对话框"这条缺口这次补上）；2026-09-19 补记 §03bf「加入 KOReader」进度条不刷新（koreader-serve 同步调用没接入忙态系统，补前端本地忙态）已修+《乱马1/2》带斜杠文件夹名建不出来（`MkdirQueue::add` 误伤性拒绝含 `/` 的合法书名/文件夹名，整条删除）已修，均真机端到端复现+验证通过，问题✅已解决；2026-09-19 补记 §03bg 优化操作补真实分步进度（`OptimizeCheck.progress`，跟漫画/流式与否无关，之前压根没有这个字段）+确认加进度回调不能实质省内存（图片瓶颈已经是逐张处理，§03ba 解决过了），真机拿《飘·上册》端到端观察到进度数字推进，问题✅已解决；2026-09-19 补记 §03bh OOM 排查坐实
+`Staging::deliver()` 落库不拆分路径是唯一未修的真实内存风险（三份数据叠加峰值 ~180-270MB）→
+改流式上传+流式自检，真机 `VmHWM` 观测 80MB 测试书投递全程 3.2-3.5KB 数量级，问题✅已解决；
+顺带 Rust 后端（`spawn_bg`/`busy_err` 去重）+ 前端（`el`/`renderStepProgress`/`guardClick` 合并
+`btn()`）代码质量重构，前端因无浏览器工具/设备登录凭证未能真机点一遍验证，如实记录为验证缺口
 §03ay 落库改异步（补齐防双击）真机全链路通、《疯探》目录页被老代码 `remove_toc_from_spine`
 误删的根因坐实+修复+真机验证通，设备上留了一份重复《疯探》待处理；2026-09-19 补记 §03az
 《疯探》"无目录入口"根因是 dtb:uid 跟 OPF 标识符不一致（真机对照《雪人》坐实）+已修复，字节

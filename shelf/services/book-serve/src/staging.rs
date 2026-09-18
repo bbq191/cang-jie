@@ -32,6 +32,12 @@ const FOLDER_WAIT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(
 /// 和"到 100% 了"，中间稀疏一点不影响"看着在动"这个体验目标。
 const OPTIMIZE_PROGRESS_STRIDE: usize = 5;
 
+/// 忙锁占用时的统一提示——优化/落库/删除三处几乎逐字重复过（2026-09-19 代码质量审计）。`extra`
+/// 是各自独有的后缀（删除那处要额外提示"再删除"），其余传空串。
+fn busy_err(name: &str, extra: &str) -> String {
+    format!("《{name}》正在处理中，请稍候{extra}")
+}
+
 /// 母版库一本书的展示条目。`format`（epub / pdf / cbz / other）从扩展名判、优化等级从内埋标记判（轻量只读中央目录）。
 #[derive(Serialize, Clone, Debug, PartialEq)]
 pub struct StagingEntry {
@@ -235,17 +241,16 @@ impl Staging {
         }
         self.existing(name)?;
         if !self.try_start_busy(name) {
-            return Err(format!("《{name}》正在处理中，请稍候"));
+            return Err(busy_err(name, ""));
         }
         let now = rmsvc_core::clock::now_secs();
         let _ = self.set_optimize_check(name, sidecar::OptimizeCheck { status: "pending".into(), message: String::new(), at: now, progress: None });
-        let (this, name) = (self.clone(), name.to_string());
-        std::thread::spawn(move || {
+        self.spawn_bg(name, bus, |this, name, bus| {
             let mut last_reported = 0usize;
             let on_progress = |done: usize, total: usize| {
                 if done == total || done == 1 || done - last_reported >= OPTIMIZE_PROGRESS_STRIDE {
                     last_reported = done;
-                    let _ = this.set_optimize_check(&name, sidecar::OptimizeCheck {
+                    let _ = this.set_optimize_check(name, sidecar::OptimizeCheck {
                         status: "pending".into(),
                         message: String::new(),
                         at: rmsvc_core::clock::now_secs(),
@@ -254,18 +259,33 @@ impl Staging {
                     bus.publish("books", "staging");
                 }
             };
-            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| this.optimize(&name, on_progress)))
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| this.optimize(name, on_progress)))
                 .unwrap_or_else(|_| Err("优化过程内部异常（已捕获，不影响其他操作）".to_string()));
             let at = rmsvc_core::clock::now_secs();
             let oc = match &result {
                 Ok(msg) => sidecar::OptimizeCheck { status: "ok".into(), message: msg.clone(), at, progress: None },
                 Err(e) => sidecar::OptimizeCheck { status: "failed".into(), message: e.clone(), at, progress: None },
             };
-            let _ = this.set_optimize_check(&name, oc);
+            let _ = this.set_optimize_check(name, oc);
+        });
+        Ok(())
+    }
+
+    /// [`Self::spawn_optimize`]/[`Self::spawn_deliver`] 共用的"起后台线程"外壳（2026-09-19 代码
+    /// 质量审计：两处 `thread::spawn`+`end_busy`+`bus.publish` 逐行同构，业务内容——调
+    /// `optimize`/`deliver`、写哪个 `sidecar::*Check`、`spawn_deliver` 还要另起渲染自检子线程——
+    /// 本身不同，不下沉进来，留在各自的 `body` 闭包里。`body` 内部对业务调用本身的 `catch_unwind`
+    /// （把 panic 转成带具体原因的 `Err` 写进 sidecar）**保留在各自闭包里、不合并**——两处 panic
+    /// 提示文案不同（"优化过程内部异常"/"落库过程内部异常"），硬并到这一层反而丢信息；这里外层
+    /// 再包一层 `catch_unwind` 只是兜底 `body` 自身（比如 sidecar 写入）意外 panic 时仍能
+    /// `end_busy`+`publish`，不影响正常路径的行为。
+    fn spawn_bg(&self, name: &str, bus: Arc<rmsvc_core::events::EventBus>, body: impl FnOnce(&Staging, &str, &Arc<rmsvc_core::events::EventBus>) + Send + 'static) {
+        let (this, name) = (self.clone(), name.to_string());
+        std::thread::spawn(move || {
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| body(&this, &name, &bus)));
             this.end_busy(&name);
             bus.publish("books", "staging");
         });
-        Ok(())
     }
 
     /// 写异步优化结果到边车（书已从母版库删除 → Err，调用方只记日志/静默丢弃，不阻断别的流程）。
@@ -304,14 +324,18 @@ impl Staging {
                 self.native_limit >> 20
             ));
         }
-        let data = std::fs::read(&p).map_err(|e| format!("读母版库文件失败: {e}"))?;
-        // 自检计划在上传前算好（投书时刻要早于 xochitl 给文档的 createdTime）；统计失败就不自检，不影响投书。
+        // 2026-09-19 OOM 审计：这条路径以前 `std::fs::read` 整本读进 `Vec<u8>`，自检+上传各自又在
+        // 内部再叠一份（`text_profile` 解压全部条目含图片、`Xochitl::upload` 内部克隆一份拼
+        // multipart body），≤90MB 的书峰值能叠到 ~180-270MB。现在全程不把整本读进内存：自检走
+        // `text_profile_file`（流式开文件，图片条目连解压都跳过），上传走 `upload_file`（流式发送
+        // 体，见 rmsvc_core::xochitl 文档）。自检计划在上传前算好（投书时刻要早于 xochitl 给文档的
+        // createdTime）；统计失败就不自检，不影响投书。
         let render = if formats::ext_of(name) == "epub" {
-            bookconv::stats::text_profile(&data).ok().map(|prof| RenderPlan { name: name.to_string(), title: prof.title.clone(), expected: prof.expected_pages(), since_ms: rmsvc_core::clock::now_ms() })
+            bookconv::stats::text_profile_file(&p).ok().map(|prof| RenderPlan { name: name.to_string(), title: prof.title.clone(), expected: prof.expected_pages(), since_ms: rmsvc_core::clock::now_ms() })
         } else {
             None
         };
-        let message = match self.xochitl.upload(&data, name, ct.mime(), folder)? {
+        let message = match self.xochitl.upload_file(&p, name, ct.mime(), folder)? {
             Delivery::Delivered(_) => format!("已加入 xochitl《{name}》"),
             Delivery::LikelyDelivered(_) => format!("已加入 xochitl《{name}》（设备处理较慢，稍候刷新书库）"),
         };
@@ -346,13 +370,13 @@ impl Staging {
             .ok_or("xochitl 只读 EPUB / PDF；此格式请「加入 KOReader」")?;
         self.existing(name)?;
         if !self.try_start_busy(name) {
-            return Err(format!("《{name}》正在处理中，请稍候"));
+            return Err(busy_err(name, ""));
         }
         let now = rmsvc_core::clock::now_secs();
         let _ = self.set_deliver_check(name, sidecar::DeliverCheck { status: "pending".into(), message: String::new(), at: now, progress: None });
-        let (this, name, folder) = (self.clone(), name.to_string(), folder.to_string());
-        std::thread::spawn(move || {
-            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| this.deliver(&name, &folder, &mkdir, &bus)))
+        let folder = folder.to_string();
+        self.spawn_bg(name, bus, move |this, name, bus| {
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| this.deliver(name, &folder, &mkdir, bus)))
                 .unwrap_or_else(|_| Err("落库过程内部异常（已捕获，不影响其他操作）".to_string()));
             let at = rmsvc_core::clock::now_secs();
             let dc = match &result {
@@ -361,15 +385,13 @@ impl Staging {
                 Ok(outcome) => sidecar::DeliverCheck { status: "ok".into(), message: outcome.message.clone(), at, progress: None },
                 Err(e) => sidecar::DeliverCheck { status: "failed".into(), message: e.clone(), at, progress: None },
             };
-            let _ = this.set_deliver_check(&name, dc);
+            let _ = this.set_deliver_check(name, dc);
             if let Ok(outcome) = &result {
                 if let Some(plan) = outcome.render.clone() {
                     let (staging2, bus2, lib2) = (this.clone(), bus.clone(), this.xochitl.library_dir().to_path_buf());
                     std::thread::spawn(move || crate::render_check::run(&staging2, &bus2, &lib2, &plan));
                 }
             }
-            this.end_busy(&name);
-            bus.publish("books", "staging");
         });
         Ok(())
     }
@@ -481,7 +503,7 @@ impl Staging {
 
     pub fn remove(&self, name: &str) -> Result<(), String> {
         if self.is_busy(name) {
-            return Err(format!("《{name}》正在处理中，请稍候再删除"));
+            return Err(busy_err(name, "再删除"));
         }
         self.remove_unlocked(name)
     }

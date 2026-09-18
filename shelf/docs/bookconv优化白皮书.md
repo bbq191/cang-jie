@@ -321,6 +321,19 @@ DTD 引用（v13，§10/§14）**，已剥离+真机字节验证通，**视觉�
 《飘·上册》（10.6MB/35 章）走 `/staging/optimize`，轮询看到进度 `36/56→41/56→46/56` 真实推进，
 不是代码审查层面的"看着对"。
 
+**§14 追记②（2026-09-19，OOM 审计）：`stats.rs` 新增流式 `text_profile_file`，落库自检不再解压
+图片**。本节讲的是 `optimize()` 的内存架构，这条追记是同一天另一处发现的、`optimize()` 之外的
+OOM 风险——`Staging::deliver()` 落库不拆分路径（不经过 `optimize`）用 `bookconv::stats::
+text_profile(&data)` 做渲染自检（估算期望页数用来跟 xochitl 渲染后的真实页数对比），内部
+`check::read_entries` 把 zip **全部条目（含图片）**无差别解压进 `Vec<Entry>`——`text_profile`
+根本用不上图片字节，解压出来即弃，纯浪费。新增 `text_profile_file(path: &Path)`：直接开文件当
+zip 按条目遍历，`wants_entry()` 先看条目名是不是 OPF/HTML，不是就连 `read_to_end` 都不做；逐字符
+统计逻辑抽成私有 `accumulate()` 共享给内存版 `text_profile(&[u8])`（保留，测试/小 buffer 场景用），
+差分测试断言两个入口在同一份数据上结果完全相等。`Staging::deliver()` 改调这个新入口，配合
+`rmsvc_core::xochitl::upload_file`（流式上传，见书架白皮书 §03bh），这条路径不再把整本文件读进
+`Vec<u8>`。真机 `VmHWM` 观测：80MB 测试书走这条路径投递全程 3.2-3.5KB 数量级，详细验证过程见
+书架白皮书 §03bh，本节只记 bookconv 侧的具体实现。
+
 ## 15｜漫画超限按卷拆分（`comic_split.rs`）：从 panic 到真机全通的完整排查（2026-09-19）
 
 触发：用户点《镖人（套装共11卷）》"投入原生书库"无反应。追出四层独立问题，逐层修完才真机全通——

@@ -8,7 +8,10 @@
 use crate::check::read_entries;
 use crate::wash::{is_html, is_toc_file, plain_text, LangMode};
 use regex::Regex;
+use std::io::Read;
+use std::path::Path;
 use std::sync::OnceLock;
+use zip::ZipArchive;
 
 pub const CJK_CHARS_PER_PAGE: u64 = 460;
 pub const LATIN_CHARS_PER_PAGE: u64 = 960;
@@ -42,34 +45,70 @@ impl TextProfile {
     }
 }
 
-/// 解 EPUB 统计正文。非 zip / 无正文都按 Err 报，调用方决定要不要自检。
-pub fn text_profile(epub: &[u8]) -> Result<TextProfile, String> {
+/// OPF/HTML 正文条目名判据——决定一个 zip 条目值不值得解压/累加统计，[`text_profile`]（内存版，
+/// 已经整本解压过）跟 [`text_profile_file`]（流式版，靠这个判据在解压前就跳过图片等无关条目）
+/// 共用同一份判断，不能各写一套走偏。
+fn wants_entry(name: &str) -> bool {
+    name.to_ascii_lowercase().ends_with(".opf") || (is_html(name) && !is_toc_file(name))
+}
+
+/// 单个条目（OPF 或正文 HTML）累加进统计——[`text_profile`]/[`text_profile_file`] 共用，
+/// 避免修 OOM 的同时长出第二份逐字符统计逻辑。
+fn accumulate(p: &mut TextProfile, name: &str, data: &[u8]) {
     static BLOCK: OnceLock<Regex> = OnceLock::new();
     static TITLE: OnceLock<Regex> = OnceLock::new();
     let block = BLOCK.get_or_init(|| Regex::new(r#"(?is)<(script|style)[^>]*>.*?</(script|style)>"#).unwrap());
     let title_re = TITLE.get_or_init(|| Regex::new(r#"(?s)<dc:title[^>]*>(.*?)</dc:title>"#).unwrap());
+    let Ok(t) = std::str::from_utf8(data) else { return };
+    if name.to_ascii_lowercase().ends_with(".opf") {
+        if p.title.is_none() {
+            p.title = title_re.captures(t).map(|c| plain_text(&c[1])).filter(|s| !s.is_empty());
+        }
+        return;
+    }
+    for ch in plain_text(&block.replace_all(t, "")).chars() {
+        if ch.is_whitespace() {
+            continue;
+        }
+        p.chars += 1;
+        if matches!(ch, '\u{4E00}'..='\u{9FFF}' | '\u{3400}'..='\u{4DBF}' | '\u{F900}'..='\u{FAFF}') {
+            p.han += 1;
+        } else if ch.is_ascii_alphabetic() {
+            p.latin += 1;
+        }
+    }
+}
+
+/// 解 EPUB 统计正文。非 zip / 无正文都按 Err 报，调用方决定要不要自检。整本已经在内存里时用这个；
+/// 只有磁盘路径、不想先把整本读进 `Vec<u8>` 用 [`text_profile_file`]。
+pub fn text_profile(epub: &[u8]) -> Result<TextProfile, String> {
     let entries = read_entries(epub)?;
     let mut p = TextProfile::default();
     for e in &entries {
-        let Ok(t) = std::str::from_utf8(&e.data) else { continue };
-        if e.name.to_ascii_lowercase().ends_with(".opf") && p.title.is_none() {
-            p.title = title_re.captures(t).map(|c| plain_text(&c[1])).filter(|s| !s.is_empty());
+        if wants_entry(&e.name) {
+            accumulate(&mut p, &e.name, &e.data);
+        }
+    }
+    Ok(p)
+}
+
+/// [`text_profile`] 的流式版：直接开文件当 zip 按条目遍历，**图片等非 OPF/HTML 条目连解压都不做**
+/// （`ZipArchive::by_index` 先看条目名，值得要的条目才 `read_to_end`）——2026-09-19 OOM 审计：
+/// 落库自检之前是 `read_entries` 把 zip 全部条目（含图片）解压进 `Vec<Entry>`，自检只用得上 OPF/
+/// 文本，图片解压出来即弃，纯浪费；这里连这份浪费都省掉，而且从不要求整本先进内存。
+pub fn text_profile_file(path: &Path) -> Result<TextProfile, String> {
+    let file = std::fs::File::open(path).map_err(|e| e.to_string())?;
+    let mut archive = ZipArchive::new(std::io::BufReader::new(file)).map_err(|e| format!("解 EPUB(非 zip?): {e}"))?;
+    let mut p = TextProfile::default();
+    for i in 0..archive.len() {
+        let mut f = archive.by_index(i).map_err(|e| format!("读 EPUB 条目 {i}: {e}"))?;
+        if f.is_dir() || !wants_entry(f.name()) {
             continue;
         }
-        if !is_html(&e.name) || is_toc_file(&e.name) {
-            continue;
-        }
-        for ch in plain_text(&block.replace_all(t, "")).chars() {
-            if ch.is_whitespace() {
-                continue;
-            }
-            p.chars += 1;
-            if matches!(ch, '\u{4E00}'..='\u{9FFF}' | '\u{3400}'..='\u{4DBF}' | '\u{F900}'..='\u{FAFF}') {
-                p.han += 1;
-            } else if ch.is_ascii_alphabetic() {
-                p.latin += 1;
-            }
-        }
+        let name = f.name().to_string();
+        let mut data = Vec::new();
+        f.read_to_end(&mut data).map_err(|e| e.to_string())?;
+        accumulate(&mut p, &name, &data);
     }
     Ok(p)
 }
@@ -118,5 +157,30 @@ mod tests {
         assert_eq!(p.lang(), LangMode::Latin);
         assert_eq!(p.expected_pages(), 1);
         assert!(text_profile(b"not a zip").is_err());
+    }
+
+    /// 2026-09-19 OOM 审计：`text_profile_file`（流式，不整本读进内存）跟 `text_profile`（内存版）
+    /// 必须给出完全一致的结果——差分测试，不能只测其中一个就当两条路径等价。
+    #[test]
+    fn text_profile_file_matches_in_memory_text_profile() {
+        let han = "汉".repeat(500);
+        let b = epub(&[
+            ("content.opf", "<package><metadata><dc:title>飘 <i>上册</i></dc:title></metadata></package>"),
+            ("c1.xhtml", &format!("<html><body><p>{han}</p></body></html>")),
+            ("c2.xhtml", "<html><body><p>Hello world, second chapter</p></body></html>"),
+            ("nav.xhtml", "<html><body><nav><p>目录目录目录</p></nav></body></html>"),
+            // 非文本条目：流式版应该跳过解压，内存版的 read_entries 会照样解出来（不影响统计结果，
+            // 只影响要不要浪费内存去解），两边结果必须仍然一致。
+            ("images/cover.jpg", "假装是二进制图片数据，反正不是 HTML/OPF 就不该被计入统计"),
+        ]);
+        let t = tempfile::tempdir().unwrap();
+        let path = t.path().join("book.epub");
+        std::fs::write(&path, &b).unwrap();
+        let mem = text_profile(&b).unwrap();
+        let file = text_profile_file(&path).unwrap();
+        assert_eq!(mem, file);
+        assert_eq!(file.title.as_deref(), Some("飘 上册"));
+        assert!(file.chars > 0);
+        assert!(text_profile_file(&t.path().join("no-such.epub")).is_err());
     }
 }

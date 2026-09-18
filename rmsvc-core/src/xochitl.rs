@@ -5,7 +5,7 @@
 //! - **GET-then-upload 归档**：`GET /documents/<folder-uuid>` 设"当前文件夹"是全局服务端状态，
 //!   之后的 `/upload` 落进该文件夹（metadata.parent 会被忽略）。
 //! - **防复制风暴**：大书 `/upload` 处理慢 → 408/读超时但文档已创建，此类错误**绝不重试**。
-use std::io::Write;
+use std::io::{Cursor, Read, Write};
 use std::path::Path;
 
 pub const DEFAULT_HOST: &str = "10.11.99.1";
@@ -65,12 +65,27 @@ impl Xochitl {
         self.agent.get(&format!("http://{}/{}", self.host, path)).call().is_ok()
     }
 
-    /// 上传进指定名字的文件夹（找不到→书库根，best-effort）。
+    /// 上传进指定名字的文件夹（找不到→书库根，best-effort）。数据已经在内存里（漫画拆分份、
+    /// note-serve 笔记本 zip 这类合成产物）用这个；落地文件直接上传用 [`Self::upload_file`]，
+    /// 别自己先 `fs::read` 整个再传进来。
     pub fn upload(&self, data: &[u8], filename: &str, content_type: &str, folder_name: &str) -> Result<Delivery, String> {
+        self.upload_body(Cursor::new(data), data.len() as u64, filename, content_type, folder_name)
+    }
+
+    /// 直接流式上传一个磁盘文件——内容全程不整体读进内存，只在 `send_multipart` 里按块过一遍
+    /// （2026-09-19 OOM 审计：`Staging::deliver()` 落库不拆分路径曾经 `fs::read` 整本＋这里内部
+    /// 再克隆一份拼 multipart body，峰值能到原文件 2 倍+；改流式后这条路径不再囤整本字节）。
+    pub fn upload_file(&self, path: &Path, filename: &str, content_type: &str, folder_name: &str) -> Result<Delivery, String> {
+        let file = std::fs::File::open(path).map_err(|e| format!("打开 {}: {e}", path.display()))?;
+        let len = file.metadata().map_err(|e| e.to_string())?.len();
+        self.upload_body(std::io::BufReader::new(file), len, filename, content_type, folder_name)
+    }
+
+    fn upload_body(&self, body: impl Read, body_len: u64, filename: &str, content_type: &str, folder_name: &str) -> Result<Delivery, String> {
         let folder = if folder_name.is_empty() { String::new() } else { self.find_folder(folder_name).unwrap_or_default() };
         self.set_folder(&folder);
-        match upload_document(&self.agent, &self.host, data, filename, content_type) {
-            Ok(body) => Ok(Delivery::Delivered(body)),
+        match send_multipart(&self.agent, &self.host, body, body_len, filename, content_type) {
+            Ok(resp) => Ok(Delivery::Delivered(resp)),
             Err(e) if upload_likely_delivered(&e) => Ok(Delivery::LikelyDelivered(e)),
             Err(e) => Err(e),
         }
@@ -184,17 +199,24 @@ pub fn page_count(dir: &Path, uuid: &str) -> Option<u64> {
     v.get("pageCount").and_then(|x| x.as_u64()).filter(|&n| n > 0)
 }
 
-fn upload_document(agent: &ureq::Agent, host: &str, data: &[u8], filename: &str, content_type: &str) -> Result<String, String> {
+/// 流式发一份 multipart `/upload` 请求：`body`（文件内容，长度已知 `body_len`）不整体缓冲，
+/// 用 `Cursor(头).chain(body).chain(Cursor(尾))` 直接喂给 `ureq`；显式给 `Content-Length` 让
+/// `ureq` 按已知长度发送而不是退化成 chunked（`ureq::Request::send` 文档：调用方可设
+/// `Content-Length`，设了就不用 chunked）——线上字节序列跟改动前逐字节相同，只是不再囤在一个
+/// `Vec<u8>` 里。
+fn send_multipart(agent: &ureq::Agent, host: &str, body: impl Read, body_len: u64, filename: &str, content_type: &str) -> Result<String, String> {
     let boundary = format!("----shelf{}", uuid::Uuid::new_v4().simple());
-    let mut body: Vec<u8> = Vec::with_capacity(data.len() + 256);
-    write!(body, "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{filename}\"\r\nContent-Type: {content_type}\r\n\r\n")
+    let mut header = Vec::new();
+    write!(header, "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{filename}\"\r\nContent-Type: {content_type}\r\n\r\n")
         .map_err(|e| e.to_string())?;
-    body.extend_from_slice(data);
-    write!(body, "\r\n--{boundary}--\r\n").map_err(|e| e.to_string())?;
+    let footer = format!("\r\n--{boundary}--\r\n").into_bytes();
+    let total_len = header.len() as u64 + body_len + footer.len() as u64;
+    let reader = Cursor::new(header).chain(body).chain(Cursor::new(footer));
     let resp = agent
         .post(&format!("http://{host}/upload"))
         .set("Content-Type", &format!("multipart/form-data; boundary={boundary}"))
-        .send_bytes(&body);
+        .set("Content-Length", &total_len.to_string())
+        .send(reader);
     match resp {
         Ok(r) => r.into_string().map_err(|e| e.to_string()),
         Err(ureq::Error::Status(c, r)) => Err(format!("HTTP {c}: {}", r.into_string().unwrap_or_default())),
@@ -289,5 +311,92 @@ mod tests {
         assert_eq!(page_count(t.path(), "new"), Some(352));
         assert_eq!(page_count(t.path(), "mid"), None, "0 页＝还没渲染");
         assert_eq!(page_count(t.path(), "old"), None, "没有 .content");
+    }
+}
+
+/// 2026-09-19 OOM 审计：`upload`/`upload_file` 改流式发送体后，线上字节序列应该跟改动前的
+/// "整块 Vec 拼 body" 写法完全一致，只是不再整块囤内存。起一个最小 HTTP mock（GET 任意路径回
+/// 200 空体，POST /upload 把收到的原始 body 送回 channel）验证这一点——不需要真连 xochitl。
+#[cfg(test)]
+mod upload_tests {
+    use super::*;
+    use std::io::{BufRead, BufReader};
+    use std::net::TcpListener;
+    use std::sync::mpsc;
+
+    /// 强制每个请求 `Connection: close`（下一个请求另起连接），mock 逻辑不用管 keep-alive 复用；
+    /// `upload`/`upload_file` 先各发一次 `set_folder` 的 GET 再发 POST /upload，遇到 POST 就把
+    /// body 送回 channel 并停止收连接。
+    fn mock_xochitl() -> (String, mpsc::Receiver<Vec<u8>>) {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            for stream in listener.incoming() {
+                let Ok(mut stream) = stream else { break };
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut request_line = String::new();
+                if reader.read_line(&mut request_line).unwrap_or(0) == 0 {
+                    break;
+                }
+                let mut content_length = 0usize;
+                loop {
+                    let mut line = String::new();
+                    if reader.read_line(&mut line).unwrap_or(0) == 0 {
+                        break;
+                    }
+                    if line == "\r\n" || line == "\n" {
+                        break;
+                    }
+                    let lower = line.to_ascii_lowercase();
+                    if let Some(v) = lower.strip_prefix("content-length:") {
+                        content_length = v.trim().parse().unwrap_or(0);
+                    }
+                }
+                let mut body = vec![0u8; content_length];
+                reader.read_exact(&mut body).unwrap();
+                stream.write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok").unwrap();
+                let is_post = request_line.starts_with("POST");
+                if is_post {
+                    let _ = tx.send(body);
+                    break;
+                }
+            }
+        });
+        (format!("127.0.0.1:{}", addr.port()), rx)
+    }
+
+    fn assert_well_formed_upload(body: &[u8], data: &[u8], filename: &str, content_type: &str) {
+        let text = String::from_utf8_lossy(body);
+        assert!(text.contains(&format!("filename=\"{filename}\"")), "{text}");
+        assert!(text.contains(&format!("Content-Type: {content_type}")), "{text}");
+        assert!(body.windows(data.len().max(1)).any(|w| w == data), "body 应该原样包含完整数据");
+        assert!(text.trim_end().ends_with("--"), "multipart 尾部 boundary 收尾要完整");
+    }
+
+    #[test]
+    fn upload_streams_in_memory_data_as_well_formed_multipart() {
+        let t = tempfile::tempdir().unwrap();
+        let (host, rx) = mock_xochitl();
+        let x = Xochitl::new(&host, t.path(), 5);
+        let data = b"hello epub bytes, this is the whole book content".to_vec();
+        let r = x.upload(&data, "book.epub", "application/epub+zip", "");
+        assert!(matches!(r, Ok(Delivery::Delivered(_))), "{r:?}");
+        let body = rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+        assert_well_formed_upload(&body, &data, "book.epub", "application/epub+zip");
+    }
+
+    #[test]
+    fn upload_file_streams_disk_file_as_well_formed_multipart() {
+        let t = tempfile::tempdir().unwrap();
+        let data = b"streamed straight from disk, never buffered whole in memory".to_vec();
+        let path = t.path().join("src.epub");
+        std::fs::write(&path, &data).unwrap();
+        let (host, rx) = mock_xochitl();
+        let x = Xochitl::new(&host, t.path(), 5);
+        let r = x.upload_file(&path, "book.epub", "application/epub+zip", "");
+        assert!(matches!(r, Ok(Delivery::Delivered(_))), "{r:?}");
+        let body = rx.recv_timeout(std::time::Duration::from_secs(5)).unwrap();
+        assert_well_formed_upload(&body, &data, "book.epub", "application/epub+zip");
     }
 }
