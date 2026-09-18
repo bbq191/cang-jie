@@ -26,6 +26,12 @@ const PIECE_RENDER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs
 /// `Xochitl::upload` 现有的"找不到就落书库根"兜底（改动前就有的行为，不是新错误）。
 const FOLDER_WAIT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
 
+/// 优化进度回调节流：`optimize_epub_file_streaming` 阶段二可能有几百个条目（大漫画），每条目都
+/// 写 sidecar+推 SSE 事件在这台设备的存储上是真实开销（原子写=开临时文件+写+改名，不是内存操作）；
+/// 每 N 条目才落一次盘/推一次事件，首尾两条（第 1 条、最后一条）永远落，保证 UI 能看到"刚开始动"
+/// 和"到 100% 了"，中间稀疏一点不影响"看着在动"这个体验目标。
+const OPTIMIZE_PROGRESS_STRIDE: usize = 5;
+
 /// 母版库一本书的展示条目。`format`（epub / pdf / cbz / other）从扩展名判、优化等级从内埋标记判（轻量只读中央目录）。
 #[derive(Serialize, Clone, Debug, PartialEq)]
 pub struct StagingEntry {
@@ -168,7 +174,7 @@ impl Staging {
         let fname = format!("{}.epub", bookconv::util::sanitize_filename(&title, "article"));
         let name = self.stage_new(&fname, &epub)?;
         let (optimized, optimize_error) = if optimize {
-            match self.optimize(&name) {
+            match self.optimize(&name, |_, _| {}) {
                 Ok(_) => (true, None),
                 Err(e) => (false, Some(e)),
             }
@@ -193,7 +199,10 @@ impl Staging {
     /// 内存版，`VmRSS` 几十秒冲到 1.4GB+、系统可用内存探底到 ~25MB，逼近全系统级 OOM（book-serve
     /// 自己的 `systemd` `MemoryMax=192M` 没有真正生效，见白皮书 §03az）。流式版峰值内存量级是
     /// "一张图 + 全书文字部分"，不随书变大线性涨，细节见该函数文档注释。
-    pub fn optimize(&self, name: &str) -> Result<String, String> {
+    /// `on_progress(done, total)` 原样转发给 [`optimize::optimize_epub_file_streaming`]（2026-09-19
+    /// 补，给 [`Self::spawn_optimize`] 挂真实进度用；这个方法本身不关心怎么展示，不耦合 sidecar/
+    /// EventBus——同步调用方（如 [`Self::fetch_article`] 的"同步优化"复选框）传空闭包即可）。
+    pub fn optimize(&self, name: &str, mut on_progress: impl FnMut(usize, usize)) -> Result<String, String> {
         if formats::ext_of(name) != "epub" {
             return Err("只有 EPUB 能优化，PDF 不支持".into());
         }
@@ -203,7 +212,7 @@ impl Staging {
         // `.` 前缀跳过 sidecar，不带点前缀的话这份半成品会被当成一条离谱的"母版库条目"混进列表
         // （2026-09-19 真机复现：真显示过一条 `format:"other"` 的 `....epub.optimizing.tmp`）。
         let tmp = p.with_file_name(format!(".{}.optimizing.tmp", name));
-        let result = optimize::optimize_epub_file_streaming(&p, &tmp, &OptimizeOpts { wash: Some(WashOpts::default()), footnote: FootnoteMode::Anchor });
+        let result = optimize::optimize_epub_file_streaming(&p, &tmp, &OptimizeOpts { wash: Some(WashOpts::default()), footnote: FootnoteMode::Anchor }, &mut on_progress);
         let rep = match result {
             Ok(r) => r,
             Err(e) => {
@@ -229,15 +238,28 @@ impl Staging {
             return Err(format!("《{name}》正在处理中，请稍候"));
         }
         let now = rmsvc_core::clock::now_secs();
-        let _ = self.set_optimize_check(name, sidecar::OptimizeCheck { status: "pending".into(), message: String::new(), at: now });
+        let _ = self.set_optimize_check(name, sidecar::OptimizeCheck { status: "pending".into(), message: String::new(), at: now, progress: None });
         let (this, name) = (self.clone(), name.to_string());
         std::thread::spawn(move || {
-            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| this.optimize(&name)))
+            let mut last_reported = 0usize;
+            let on_progress = |done: usize, total: usize| {
+                if done == total || done == 1 || done - last_reported >= OPTIMIZE_PROGRESS_STRIDE {
+                    last_reported = done;
+                    let _ = this.set_optimize_check(&name, sidecar::OptimizeCheck {
+                        status: "pending".into(),
+                        message: String::new(),
+                        at: rmsvc_core::clock::now_secs(),
+                        progress: Some(sidecar::StepProgress { done: done as u32, total: total as u32 }),
+                    });
+                    bus.publish("books", "staging");
+                }
+            };
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| this.optimize(&name, on_progress)))
                 .unwrap_or_else(|_| Err("优化过程内部异常（已捕获，不影响其他操作）".to_string()));
             let at = rmsvc_core::clock::now_secs();
             let oc = match &result {
-                Ok(msg) => sidecar::OptimizeCheck { status: "ok".into(), message: msg.clone(), at },
-                Err(e) => sidecar::OptimizeCheck { status: "failed".into(), message: e.clone(), at },
+                Ok(msg) => sidecar::OptimizeCheck { status: "ok".into(), message: msg.clone(), at, progress: None },
+                Err(e) => sidecar::OptimizeCheck { status: "failed".into(), message: e.clone(), at, progress: None },
             };
             let _ = this.set_optimize_check(&name, oc);
             this.end_busy(&name);
@@ -406,7 +428,7 @@ impl Staging {
                 status: "pending".into(),
                 message: format!("已加入：{}", done_titles.join("、")),
                 at: rmsvc_core::clock::now_secs(),
-                progress: Some(sidecar::DeliverProgress { done: idx as u32, total: total as u32 }),
+                progress: Some(sidecar::StepProgress { done: idx as u32, total: total as u32 }),
             };
             let _ = self.set_deliver_check(name, progress);
             bus.publish("books", "staging");
@@ -672,10 +694,13 @@ mod tests {
         let epub = mini_epub(&[("content.opf", opf), ("c1.xhtml", r#"<html><head></head><body><h1>第一章</h1><p style="font-size:9px;margin:1em">正文</p></body></html>"#)]);
         s.stage_new("x.epub", &epub).unwrap();
         s.stage_new("p.pdf", b"%PDF").unwrap();
-        assert!(s.optimize("p.pdf").unwrap_err().contains("只有 EPUB"));
-        assert!(s.optimize("none.epub").is_err());
-        let msg = s.optimize("x.epub").unwrap();
+        assert!(s.optimize("p.pdf", |_, _| {}).unwrap_err().contains("只有 EPUB"));
+        assert!(s.optimize("none.epub", |_, _| {}).is_err());
+        let mut progresses = Vec::new();
+        let msg = s.optimize("x.epub", |done, total| progresses.push((done, total))).unwrap();
         assert!(msg.contains("清洗+优化") && msg.contains("自动目录 1 条"), "{msg}");
+        assert!(!progresses.is_empty(), "on_progress 应该原样转发自 optimize_epub_file_streaming");
+        assert_eq!(progresses.last().unwrap().0, progresses.last().unwrap().1, "最后一次回调应该是 done==total");
         let e = s.list().into_iter().find(|e| e.name == "x.epub").unwrap();
         assert!(e.optimized && e.level == "full");
     }

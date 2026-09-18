@@ -186,19 +186,20 @@ function stagingList(ul,opts){
       :(stalePending(oc)||stalePending(dc))?T('transfer.staging.stalePending.title'):'';
     if(statusMsg){const line=document.createElement('div');line.className='small';line.style.cssText='flex-basis:100%;margin-top:.2em;color:var(--bad)';line.textContent=statusMsg;li.appendChild(line)}
     // 真在跑：进度条取代"正在处理中，请稍候"这句静态文案（2026-09-19 用户反馈——干等的文字没意义，
-    // 能看见走到哪一步/大概多久才有用）。漫画拆分卷落库有结构化份数（`dc.progress.{done,total}`，
-    // 见 book-serve `try_deliver_split`）→ 真百分比进度条；其余场景（单本优化、普通整本落库）后端
-    // 没法给出精确进度（耗时来自流式处理/单次上传，没有天然的"第几步"）→ 不确定时长的滚动进度条
-    // （`<progress>` 不带 value/max，浏览器原生渲染成不确定态动画），至少比一句不会变化的静态文字
-    // 更能传达"真的在动、不是卡死了"。
+    // 能看见走到哪一步/大概多久才有用）。漫画拆分卷落库、普通 EPUB 优化都有结构化步数
+    // （`dc.progress`/`oc.progress`，形状同为 `{done,total}`，见 book-serve `try_deliver_split`/
+    // `spawn_optimize`）→ 真百分比进度条；普通整本落库（没有拆分）后端没法给出精确进度（耗时来自
+    // 单次上传，没有天然的"第几步"）→ 不确定时长的滚动进度条（`<progress>` 不带 value/max，浏览器
+    // 原生渲染成不确定态动画），至少比一句不会变化的静态文字更能传达"真的在动、不是卡死了"。
     if(busy){
       const dcPending=dc&&dc.status==='pending',ocPending=oc&&oc.status==='pending';
       const label=localBusy?T('transfer.staging.progress.addingKoreader'):dcPending?T('transfer.staging.progress.delivering'):ocPending?T('transfer.staging.progress.optimizing'):T('transfer.staging.progress.working');
-      const prog=dcPending&&dc.progress?dc.progress:null;
+      const prog=(dcPending&&dc.progress)||(ocPending&&oc.progress)||null;
+      const msg=dcPending?dc.message:ocPending?oc.message:'';
       const wrap=document.createElement('div');wrap.style.cssText='flex-basis:100%;margin-top:.2em';
       const bar=document.createElement('progress');if(prog){bar.max=prog.total;bar.value=prog.done}
       const text=document.createElement('div');text.className='small';
-      text.textContent=prog?`${label} ${prog.done}/${prog.total}（${Math.round(prog.done/prog.total*100)}%）${dc.message?' · '+dc.message:''}`:label;
+      text.textContent=prog?`${label} ${prog.done}/${prog.total}（${Math.round(prog.done/prog.total*100)}%）${msg?' · '+msg:''}`:label;
       wrap.append(bar,text);li.appendChild(wrap);
     }
     const right=document.createElement('span');right.style.cssText='display:flex;gap:.4em;flex-wrap:wrap;align-items:center';

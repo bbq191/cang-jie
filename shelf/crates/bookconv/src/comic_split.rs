@@ -326,7 +326,7 @@ pub struct StreamSplitOutcome {
 /// 挂钩、不是固定数字，猜时间不可靠，见 book-serve `try_deliver_split` 改成等渲染真正完成再放行
 /// 下一份，不在这里瞎猜）。第 3/4 个参数是 1-based 进度（2026-09-19 补，给调用方画进度条用）——
 /// "预算内共几份"只数拆到底仍超限、注定不投的那几份**之外**的份数，见调用方 `sidecar::
-/// DeliverProgress` 的文档注释。
+/// StepProgress` 的文档注释。
 /// 返回 `None`＝不适用这条路径（整本已经在预算内，或压根不是漫画），调用方按"不用拆，走原来的
 /// 整本流程"处理；`Err`＝解不出 OPF/spine 这类致命问题，调用方退回"超限直接拒绝"老路径。
 pub fn deliver_split_streaming(

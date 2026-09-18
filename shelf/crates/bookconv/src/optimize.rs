@@ -387,7 +387,14 @@ pub fn optimize_epub_with(epub: &[u8], opts: &OptimizeOpts) -> Result<(Vec<u8>, 
 /// [`transform_image_bytes`] 这几个抽出来的变换函数——两条路径的业务逻辑是同一份代码，不会因为
 /// "整本内存版"跟"流式版"分叉走样；`optimize_epub_with` 继续保留给测试/CLI 小书场景用（签名不变，
 /// 100+ 既有单测零改动），book-serve 真机场景（真书可能上百 MB）改走这条流式路径。
-pub fn optimize_epub_file_streaming(input_path: &std::path::Path, output_path: &std::path::Path, opts: &OptimizeOpts) -> Result<Report, String> {
+///
+/// `on_progress(done, total)`（2026-09-19 补，给调用方画进度条用）：阶段二每写完一个条目回调一次，
+/// `total`＝这本书要写出的条目总数（`entries.len()`，含 mimetype 之外的所有文本/图片条目，不含
+/// 末尾的 marker）。只在阶段二回调——阶段一（读入+清洗）对文字书通常是毫秒级，真正拖时间的是阶段
+/// 二逐张图片的重编码，回调粒度对齐"真正在做的工作"，跟 `comic_split::deliver_split_streaming` 的
+/// `upload_piece` 进度粒度同一个道理。**这个回调纯粹是可观测性，不改变内存峰值**——阶段二本来就是
+/// 逐条目处理+立刻写文件+立刻丢，回调只是在这个已有的循环里多做一次通知，不持有任何额外数据。
+pub fn optimize_epub_file_streaming(input_path: &std::path::Path, output_path: &std::path::Path, opts: &OptimizeOpts, mut on_progress: impl FnMut(usize, usize)) -> Result<Report, String> {
     let in_file = std::fs::File::open(input_path).map_err(|e| format!("打开输入失败: {e}"))?;
     let bytes_before = in_file.metadata().map(|m| m.len() as usize).unwrap_or(0);
     let mut archive = ZipArchive::new(std::io::BufReader::new(in_file)).map_err(|e| format!("解 EPUB(非 zip?): {e}"))?;
@@ -471,7 +478,8 @@ pub fn optimize_epub_file_streaming(input_path: &std::path::Path, output_path: &
     let img_agent = crate::netimg::http_agent(15);
     let mut remote_counter = 0usize;
     let mut fetched_imgs: Vec<(String, Vec<u8>)> = Vec::new();
-    for (name, data, ish) in &entries {
+    let total_entries = entries.len();
+    for (i, (name, data, ish)) in entries.iter().enumerate() {
         let final_data: Vec<u8> = if *ish {
             match String::from_utf8(data.clone()) {
                 Ok(text) => {
@@ -498,6 +506,7 @@ pub fn optimize_epub_file_streaming(input_path: &std::path::Path, output_path: &
         let file_opts = if name == "mimetype" { stored } else { deflated };
         zw.start_file(name.as_str(), file_opts).map_err(|e| e.to_string())?;
         zw.write_all(&final_data).map_err(|e| e.to_string())?;
+        on_progress(i + 1, total_entries);
     }
     for (path, bytes) in &fetched_imgs {
         zw.start_file(path.as_str(), deflated).map_err(|e| e.to_string())?;
@@ -653,11 +662,16 @@ mod tests {
         let input_path = t.path().join("in.epub");
         let output_path = t.path().join("out.epub");
         std::fs::write(&input_path, &epub).unwrap();
-        let stream_rep = optimize_epub_file_streaming(&input_path, &output_path, &OptimizeOpts::default()).unwrap();
+        let mut progresses = Vec::new();
+        let stream_rep = optimize_epub_file_streaming(&input_path, &output_path, &OptimizeOpts::default(), |done, total| progresses.push((done, total))).unwrap();
         let stream_out = std::fs::read(&output_path).unwrap();
 
         assert_eq!(mem_rep.total_files, stream_rep.total_files);
         assert_eq!(mem_rep.html_files, stream_rep.html_files);
+        assert!(!progresses.is_empty(), "阶段二应该至少回调一次进度");
+        assert!(progresses.iter().all(|(_, total)| *total == progresses[0].1), "total 全程不变");
+        assert_eq!(progresses.last().unwrap().0, progresses[0].1, "最后一次回调 done 应该等于 total（全部写完）");
+        assert!(progresses.windows(2).all(|w| w[0].0 < w[1].0), "done 应该严格递增，不重复不倒退");
 
         let read = |bytes: &[u8], n: &str| {
             let mut ar = ZipArchive::new(Cursor::new(bytes)).unwrap();
@@ -705,7 +719,7 @@ mod tests {
         let input_path = t.path().join("comic.epub");
         let output_path = t.path().join("comic_out.epub");
         std::fs::write(&input_path, &comic_buf).unwrap();
-        optimize_epub_file_streaming(&input_path, &output_path, &OptimizeOpts::default()).unwrap();
+        optimize_epub_file_streaming(&input_path, &output_path, &OptimizeOpts::default(), |_, _| {}).unwrap();
         let stream_out = std::fs::read(&output_path).unwrap();
 
         let mut mem_img = Vec::new();
@@ -720,7 +734,7 @@ mod tests {
     fn streaming_rejects_missing_input_and_leaves_no_partial_output() {
         let t = tempfile::tempdir().unwrap();
         let output_path = t.path().join("out.epub");
-        let err = optimize_epub_file_streaming(&t.path().join("does-not-exist.epub"), &output_path, &OptimizeOpts::default()).unwrap_err();
+        let err = optimize_epub_file_streaming(&t.path().join("does-not-exist.epub"), &output_path, &OptimizeOpts::default(), |_, _| {}).unwrap_err();
         assert!(err.contains("打开输入失败"), "{err}");
         assert!(!output_path.exists(), "输入都打不开，不该产生任何输出文件");
     }

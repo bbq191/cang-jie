@@ -33,6 +33,12 @@ pub struct OptimizeCheck {
     pub status: String,
     pub message: String,
     pub at: u64,
+    /// 条目级进度（已处理/总条目数，不是字节）——`optimize_epub_file_streaming` 阶段二逐条目写出
+    /// 时回调（2026-09-19 用户反馈"进度条一直感觉不会动"，查明根因是 `OptimizeCheck` 从没有过
+    /// 这个字段，不管书是不是漫画、流不流式都没有分步进度可报）。跟 [`DeliverCheck::progress`] 同
+    /// 一个 [`StepProgress`] 类型，用途一致就不重复定义结构体。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub progress: Option<StepProgress>,
 }
 
 /// 异步落库的结果：`status` = pending（后台线程跑着）/ ok / failed。`message` 是回执文案（成功＝跟
@@ -46,18 +52,20 @@ pub struct DeliverCheck {
     pub at: u64,
     /// 超限漫画按卷拆分投递时才有的结构化进度（份数，不是字节）——`message` 一直是给人读的一句话，
     /// 这个字段是给网页画进度条用的数字（2026-09-19 用户反馈"正在处理中请稍候"这种静态文案该换成
-    /// 进度条/百分比）。非拆分路径（普通整本落库、优化）没有这个字段，网页据此判断走"有精确进度
-    /// 的百分比条"还是"不确定要多久的滚动条"。`total` 只数"预算内、真会尝试上传"的份数——拆到底
-    /// 仍超限、注定不投的那几份不计入分母，所以能上传的那些传完百分比就会到 100%，不会因为几份
-    /// 铁定失败的卡在中间；那几份的存在与否体现在最终回执文案的"N 未投"里，不影响这个进度条。
+    /// 进度条/百分比）。非拆分路径（普通整本落库）没有这个字段，网页据此判断走"有精确进度的百分比
+    /// 条"还是"不确定要多久的滚动条"。`total` 只数"预算内、真会尝试上传"的份数——拆到底仍超限、
+    /// 注定不投的那几份不计入分母，所以能上传的那些传完百分比就会到 100%，不会因为几份铁定失败的
+    /// 卡在中间；那几份的存在与否体现在最终回执文案的"N 未投"里，不影响这个进度条。
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub progress: Option<DeliverProgress>,
+    pub progress: Option<StepProgress>,
 }
 
-/// 漫画拆分投递的份数进度：`done`＝已经成功上传+等到渲染确认的份数，`total`＝预算内会尝试上传的
-/// 总份数。
+/// 分步进度：`done`＝已经完成的步数，`total`＝这次操作总共会有多少步。两个消费方：漫画拆分投递
+/// （一步＝一份成功上传+等到渲染确认，见 [`DeliverCheck::progress`]）、EPUB 优化（一步＝阶段二
+/// 写出一个条目，见 [`OptimizeCheck::progress`]）——形状完全一样，共用一个类型（2026-09-19 加
+/// 优化进度时把原来专属落库的 `DeliverProgress` 改名成这个通用名，字段/JSON 序列化形状不变）。
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
-pub struct DeliverProgress {
+pub struct StepProgress {
     pub done: u32,
     pub total: u32,
 }
