@@ -92,7 +92,7 @@ Delivered {
   deliver:  Option<DeliverCheck  { status, message, at, progress: Option<StepProgress{done,total}> }>,
   native:   Option<u64>,   // 最近一次投原生的时间戳
   koreader: Option<u64>,   // 最近一次加入 KOReader 的时间戳
-  render:   Option<RenderCheck>,  // 渲染自检结果，见 §5
+  render:   Option<RenderCheck>,  // 渲染自检结果，见 §2.3
   source:   Option<SourceRef>,
 }
 ```
@@ -108,7 +108,13 @@ Delivered {
 - **加入 xochitl（原生）**：`Staging::deliver()`，纯复制字节（不再优化）。`folder` 留空＝书库根
   （2026-09-19 起——之前会落进配置里的默认文件夹，已去掉这条隐藏行为，跟 KOReader 那边"留空＝
   根目录"的语义对齐）；文件夹不存在会经 `MkdirQueue` 排队等设备端 QML 代理建出来（见 §4）。
-  超过体积门（默认 90MB）触发漫画按卷拆分（见 §5.2）。xochitl 只读 EPUB/PDF，CBZ 不投原生。
+  超过体积门（默认 90MB）触发漫画按卷拆分（见 §6）。xochitl 只读 EPUB/PDF，CBZ 不投原生。
+  投完 EPUB 会另起一条**渲染自检**线程（`render_check::run`，不阻塞落库请求）：xochitl 导入时
+  会同步渲染出页数，自检线程限时（最长 10 分钟）轮询书库目录，等到页数后跟优化时统计的"期望
+  页数"比——低于一半判 `warn`（真机标定：好书页数比 0.86-0.99，整章渲染失败的坏书能低到 0.34，
+  见 `render_check::WARN_RATIO`），结果写回 sidecar 的 `render` 字段+推 SSE 事件。`/upload`
+  接口不直接回 uuid、书名也可能跟文件名不一致，认书靠"投书时刻之后新出现的文档 + visibleName
+  跟书名/文件名相符者优先，否则取最新一本"这套启发式（`render_check::pick`）。
 - **加入 KOReader**：`koreader-serve` 的 `adopt`，本地同分区文件拷贝，不经过 `bookconv`。这个
   操作没有服务端忙态可查（跟 book-serve 是两个独立进程），网页补了一个纯前端的 `localBusy` 集合
   凑齐"点了有反应"的体验，不是真的服务端异步状态。
@@ -202,7 +208,7 @@ xochitl 自己的 QML 代码（`Library.createCollection`/`selectionMoveToTrash`
 | 风险点 | 修复前 | 修复方式 | 真机验证 |
 |---|---|---|---|
 | 整本优化（旧版） | 552MB 书 `VmRSS` 冲 1.4GB+ | 两阶段流式（§3），峰值＝一张图+全书文字 | 同一本书优化成功，`VmRSS` 全程 8-53MB |
-| 超限漫画拆分投递（旧版） | 785MB 书把 book-serve 逼近系统内存上限 | `comic_split::deliver_split_streaming`（§5.2），峰值≈单份体积 | 11 卷《镖人》真机全部投递成功 |
+| 超限漫画拆分投递（旧版） | 785MB 书把 book-serve 逼近系统内存上限 | `comic_split::deliver_split_streaming`（§6），峰值≈单份体积 | 11 卷《镖人》真机全部投递成功 |
 | 落库不拆分路径 | ≤90MB 书仍叠 3 份数据（整本读+自检整本解压+上传内部克隆），峰值 ~180-270MB | `rmsvc_core::xochitl::upload_file` 流式上传 + `bookconv::stats::text_profile_file` 流式自检（跳过图片） | 80MB 测试书投递，`VmHWM` 全程 3.2-3.5KB |
 | 单图解码无像素上限 | 真实漫画页解码成未压缩位图，`VmHWM` 冲 262-271MB | `imgopt::MAX_DECODE_PIXELS`（§3.3），实测数据校准（不是理论估算） | 25 页测试漫画一页故意 1600 万像素，`VmHWM` 全程个位数 MB |
 
