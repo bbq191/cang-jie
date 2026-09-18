@@ -856,16 +856,18 @@ mod tests {
         let s = staging(&t);
         let work = t.path().join(".work");
         let mut body = Vec::new();
-        for (f, d) in [("../中文 名.cbz", "内容"), ("pic.jpg", "x"), ("e.epub", ""), ("中文 名.cbz", "again")] {
+        // 2026-09-18 起母版库只收 EPUB/PDF（cbz 已随"仅 KOReader"档退役）：接受项/重名项都改用
+        // .epub 夹具，pic.jpg 仍测"非书籍格式拒收"，e.pdf 空内容仍测"空文件拒收"（合法格式但空）。
+        for (f, d) in [("../中文 名.epub", "内容"), ("pic.jpg", "x"), ("e.pdf", ""), ("中文 名.epub", "again")] {
             body.extend_from_slice(format!("--B\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{f}\"\r\n\r\n{d}\r\n").as_bytes());
         }
         body.extend_from_slice(b"--B--\r\n");
         let out = AssetUploadFlow::in_dir(work.clone()).run(&StagingStore(&s), &body[..], "B").unwrap();
-        assert!(out[0].ok && out[0].name == "中文 名.cbz" && out[0].message == "已入母版库");
+        assert!(out[0].ok && out[0].name == "中文 名.epub" && out[0].message == "已入母版库");
         assert!(!out[1].ok && out[1].message.contains("不是书籍格式") && out[1].message.contains(".epub"));
         assert!(!out[2].ok && out[2].message == "空文件");
-        assert!(out[3].ok && out[3].name == "1_中文 名.cbz" && out[3].message.contains("存为 1_中文 名.cbz"));
-        assert_eq!(std::fs::read(s.dir().join("中文 名.cbz")).unwrap(), "内容".as_bytes());
+        assert!(out[3].ok && out[3].name == "1_中文 名.epub" && out[3].message.contains("存为 1_中文 名.epub"));
+        assert_eq!(std::fs::read(s.dir().join("中文 名.epub")).unwrap(), "内容".as_bytes());
         assert!(std::fs::read_dir(&work).unwrap().next().is_none(), "暂存 .work 应清空");
     }
 }

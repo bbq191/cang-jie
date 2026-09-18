@@ -105,13 +105,14 @@ mod tests {
         let paths = Paths::resolve(move |k| if k == "HOME" || k == "XDG_RUNTIME_DIR" { Some(h.clone()) } else { None });
         let st = State::new(&paths);
         st.ensure_dirs().unwrap();
-        std::fs::write(st.spool.inbox().join("b.cbz"), b"x").unwrap();
+        // 2026-09-18 起母版库只收 EPUB/PDF（cbz 已随"仅 KOReader"档退役），接受项夹具改用 .epub。
+        std::fs::write(st.spool.inbox().join("b.epub"), b"x").unwrap();
         std::fs::write(st.spool.inbox().join("p.jpg"), b"x").unwrap();
         let out = st.process_inbox(None);
         assert_eq!(out.len(), 2);
-        assert!(out.iter().any(|o| o.ok && o.name == "b.cbz"));
+        assert!(out.iter().any(|o| o.ok && o.name == "b.epub"));
         assert!(out.iter().any(|o| !o.ok && o.name == "p.jpg" && o.message.contains("不是书籍格式")));
-        assert!(st.staging.dir().join("b.cbz").is_file() && !st.spool.inbox().join("b.cbz").exists());
+        assert!(st.staging.dir().join("b.epub").is_file() && !st.spool.inbox().join("b.epub").exists());
         assert_eq!(st.spool.list().iter().filter(|e| e.state == "failed").count(), 1);
     }
 

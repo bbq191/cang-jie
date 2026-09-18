@@ -17,11 +17,15 @@ reMarkable Paper Pro Move 的**读书与阅读质量层**：一个网页，把�
 > Obsidian vault，详见 `notes/README.md`）、其余 `shelf font/wallpaper/koreader/events/inbox`
 > 等子命令。下面这节和"host CLI"整节是**改前的旧架构描述，为了不误导先整段砍掉**；被砍的历史
 > 决策/完整命令参考仍能在 git 历史里找到这份 README 旧版本。
+>
+> **同一天再收紧一步**：用户接着明确要求"从此开始入库只入 PDF 和 EPUB，不论格式是否支持"——
+> 原「仅 KOReader」档（CBZ/CBR/DjVu/HTML/HTM/RTF/DOC/DOCX/CHM/XPS）**整档砍掉**，两档收成一档，
+> 见下方「格式」小节，`rmsvc_core::formats::KOREADER_ONLY_EXTS` 常量已删除。
 
 ```
 内容源 ──原样入库──►  母版库（中间层暂存池）  ──可选「优化」──►  落库（去向由人选）
  网页上传                ~/.local/state/shelf/books/staging/            📖 投入原生书库（xochitl：EPUB / PDF）
- 抓网文（Readability）    · 母版永久保留，可反复落库、两读器对照           📚 加入 KOReader（母版库收的任何格式）
+ 抓网文（Readability）    · 母版永久保留，可反复落库、两读器对照           📚 加入 KOReader（EPUB/PDF；旧格式遗留条目也能加）
  scp 进 inbox/            · 「优化」只对 EPUB（清洗+优化，档位三选）      · 落库＝纯复制母版字节，不再优化
                          · 漫画（EPUB）自动识别保画质+裁边，超限按卷拆分   · 落库记录徽章（含投原生后的渲染自检）/ 清理已落库 / 剩余空间
 ```
@@ -35,12 +39,11 @@ reMarkable Paper Pro Move 的**读书与阅读质量层**：一个网页，把�
 有意设计（避免不同书撞名互相吞掉）；网页上传会在传之前先核对一遍母版库现有条目，同名同大小＝已经
 成功落地过，自动跳过不重传（2026-09-13 补，见白皮书 §04）。
 
-**格式两档**（`rmsvc_core::formats` 单一事实源，网页 accept、服务端上传门、inbox 同源；按设备装的 KOReader 注册表核过）：**2026-09-17 起不再有"电脑可转"这一档**——EPUB 线架构调整，AZW3/MOBI/AZW/PRC/FB2/TXT 不再自动转 EPUB，母版库直接拒收，请自行转换成 EPUB/PDF 后再上传（书架白皮书 §03av；这几个格式实测确实是 KOReader 真能读的格式，这次是主动收窄换规则一致性，不是读不了）。**2026-09-18 起 CBZ/CBR 等"仅 KOReader"格式也只能靠原样上传**（转换/生成这些格式原来是 `shelf push` 的 Calibre 管线专属能力，已随 host 一并砍掉）。
+**格式：只收 EPUB / PDF**（`rmsvc_core::formats` 单一事实源，`BOOK_EXTS == NATIVE_EXTS`，网页 accept、服务端上传门、inbox 同源）。演进：2026-09-17 起不再有"电脑可转"这一档——AZW3/MOBI/AZW/PRC/FB2/TXT 不再自动转 EPUB，母版库直接拒收（书架白皮书 §03av）；**2026-09-18 起"仅 KOReader"那一档（CBZ/CBR/DjVu/HTML/HTM/RTF/DOC/DOCX/CHM/XPS）也整档砍掉**——用户明确要求"从此开始入库只入 PDF 和 EPUB，不论格式是否支持"：**这是策略收紧，不是技术能力判断**，KOReader 本来能读这些格式，但不想再维护两档，一律只收两个读器都能去的 EPUB/PDF。两档收成一档，`KOREADER_ONLY_EXTS` 常量已删除。已经在库里的旧格式条目（改规则前上传的）不受影响，仍可加入 KOReader，只是不会再有新的这类条目。
 
 | 档 | 格式 | 去向 |
 |---|---|---|
-| 原生直读 | EPUB / PDF | 两个读器都能去；母版库「优化」按钮在设备侧就地优化（字号解锁/保留原书颜色/注释移段末/漫画自动识别保画质，§03av） |
-| 仅 KOReader | CBZ / CBR / DjVu / HTML / RTF / DOC / DOCX / CHM / XPS | 只能加入 KOReader；只接受原样上传，不再有任何格式转换入口（host 转换管线已砍，见上） |
+| 原生直读（唯一档） | EPUB / PDF | 两个读器都能去；母版库「优化」按钮在设备侧就地优化（字号解锁/保留原书颜色/注释移段末/漫画自动识别保画质+超限按卷拆分投原生，§03av/§03ax） |
 
 **网页 tab**（2026-09-10 重排为固定四段，2026-09-18 入库卡从三张收窄成两张，见白皮书 §03al）：「传书」（固定第一位：入库拆两卡——上传/抓网文｜母版库）· 「笔记」（note-serve 注册，「导入 md 文档」子标签默认隐藏，开关控制）· 「其他」（xochitl(font-serve)/KOReader(koreader-serve)/壁纸(wallpaper-serve) 降一级包进来当二级子标签，只列真的装了的那几个）· 「管理」（固定；二级 tab：基石与模块/模型管理/系统增强/电池刺客〔`battop.running` 时才出现〕/实验室）。读器页不传书。
 
@@ -234,3 +237,4 @@ shelf 本体+网关+笔记线+两个领域服务），见 `../packaging/README.m
 | EPUB 线四原则 + 格式收窄 | 拆 EPUB 线/PDF 线（PDF 线原则待定）；TOC 标题+编号拆两级/无标题兜底、只解锁字号保留原书颜色/加粗、脚注最终定案 `Anchor`（当天 `Inline`→`ParagraphEnd`→`Anchor` 两次真机反馈驱动的切换，§03aw/§03av 完整记录）、漫画自动识别（`comic_detect` 移植进 Rust）不压画质+裁边；AZW3/MOBI/AZW/PRC/FB2/TXT host 转换（含 AZW3/MOBI 漫画 PalmDB 直判）**用户明确要求连带退役**，母版库格式白名单从三档收窄成两档 | ✅ 真机通（§03av/§03aw/§03ax，2026-09-17/18）：TOC 拆分/颜色保留/脚注段落位置/漫画裁边+保画质/格式拒收全部真机 API 级验证过；`trim_margins` 真机性能问题+异步优化+防双击已修复（§03aw）；脚注最终改回 `Anchor`（§03aw），"跳转回不去"经用户指出其实已有原生返回浮标兜底、不是真限制（§03ax 更正） |
 | 超限漫画按卷拆分投原生 | EPUB 漫画超过原生上传上限时，按自带 `toc.ncx` 结构递归拆分成若干份分别投递（新增 `bookconv::comic_split`），不再"大部头一律只出 CBZ"；复用原「投入原生书库」按钮，不新增入口；只做 EPUB 格式（CBZ 走 host 管线不碰） | ✅ 真机通（§03ax，2026-09-18）：《火影忍者》281MB 7 卷合集拆成 8 份（每份 38-40MB）全部真实上传成功，设备端 `.metadata` 确认 xochitl 已自动渲染打开（非"传上去但读不了"） |
 | host 部分整体砍除 | 用户明确表态以后不再使用 PC 端：`shelf/host/`（Python CLI `shelf push`/`font`/`wallpaper`/`koreader`/`notes pull`/`inbox`/`events`/`doctor --render`/`passwd` + Calibre 转换管线）整个移出仓库（留档 `oldbak/`，不再维护）；`notes/host/` 空目录一并删除；`pyproject.toml` 删 `calibre` 依赖组；CI 删对应 pytest 步骤；网页「传书·入库」页原第三张"电脑 shelf push"卡片删除，入库只剩「上传」+「抓网文」两条路；`transfer.push.*`/`transfer.guide.push.*` 共 20 个 i18n key 一并删除 | ✅ 离线全绿：`cargo test`（gateway 17 + shelf workspace 183）全过、`node --check`、locale key 对称差为空、`uv sync`+剩余 `pytest` 全过；**这是真实的功能减法不是搬家**——Calibre 深洗/PDF k2pdfopt 重排/漫画转 CBZ/`doctor --render` 排版回归探针/`notes pull` 拉 Obsidian vault 均无网页等价物，随这次砍除一起消失，不是"以后要补" |
+| 格式两档收成一档：只收 EPUB/PDF | 同一天用户接着明确要求"从此开始入库只入 PDF 和 EPUB，不论格式是否支持"——`rmsvc_core::formats` 的「仅 KOReader」档（CBZ/CBR/DjVu/HTML/HTM/RTF/DOC/DOCX/CHM/XPS）整档砍掉，`KOREADER_ONLY_EXTS` 常量删除，`BOOK_EXTS` 现在就是 `NATIVE_EXTS`（`["epub","pdf"]`）；网页格式说明文案（`transfer.guide.format.dd`/`transfer.upload.hint`/`transfer.upload.dropLabel`）同步简化成单档描述，`transfer.fmtTiers` key 删除；已经在库里的旧格式条目不受影响（仍可加入 KOReader），只是不会再有新的 | ✅ 离线全绿：`rmsvc-core`（53）/`gateway`（17，含格式白名单注入测试）/`shelf` workspace（183，两处上传/inbox 单测夹具改用 epub 重新验证空文件+非书籍格式+重名三条路径）/`notes`/`enhance` 三个 crate 全过、`node --check`、locale key 对称差为空 |

@@ -3,16 +3,16 @@
 //! 改一处全链同步（2026-09-05 用户定：所有上传口都要有格式限制，且网页与服务端同一份）。
 //! 扩展名一律**小写、不带点**。
 
-/// 原生 xochitl 直读（两个读器都能去）。
+/// 原生 xochitl 直读（两个读器都能去）。母版库收的书籍格式与这份完全相同（见 `BOOK_EXTS`）。
 pub const NATIVE_EXTS: &[&str] = &["epub", "pdf"];
-/// 只能加入 KOReader 的格式（设备装的 KOReader v2026.07.1 `documentregistry` 真机核对：crengine 收 txt/html/rtf/doc/docx/chm，
-/// mupdf 收 cbz/cbr(libarchive 带 rar)/xps，djvu 引擎收 djvu）。
-pub const KOREADER_ONLY_EXTS: &[&str] = &["cbz", "cbr", "djvu", "html", "htm", "rtf", "doc", "docx", "chm", "xps"];
-/// 母版库收的书籍格式 = 上面两档之并（有测试钉死一致）。能投哪个读器按格式在落库时门控。
-/// ⚠ 2026-09-17 起不再收 azw3/mobi/azw/prc/fb2/txt（原 `HOST_CONVERTIBLE_EXTS` 档，host `shelf push`
-/// 会用 Calibre 自动转成 EPUB）——EPUB 线架构调整：设备端只收 EPUB/PDF，母版库只保证原生优化管线
-/// 覆盖这两种源格式，其余格式请用户自行转换后再上传（见 shelf 白皮书 §03ar 附近记这次调整）。
-pub const BOOK_EXTS: &[&str] = &["epub", "pdf", "cbz", "cbr", "djvu", "html", "htm", "rtf", "doc", "docx", "chm", "xps"];
+/// 母版库收的书籍格式。⚠ 2026-09-18 用户明确要求"从此开始入库只入 PDF 和 EPUB，不论格式是否
+/// 支持"——**这是策略收紧，不是技术能力判断**：CBZ/CBR/DJVU/HTML/HTM/RTF/DOC/DOCX/CHM/XPS 这些
+/// 格式设备装的 KOReader 本来能读（真机 `documentregistry` 核对过：crengine 收 txt/html/rtf/doc/
+/// docx/chm，mupdf 收 cbz/cbr(libarchive 带 rar)/xps，djvu 引擎收 djvu），但用户不想再维护"仅
+/// KOReader 能读"这一档，一律拒收，只留原生两读器都能去的 EPUB/PDF。2026-09-17 那次已经砍掉的
+/// azw3/mobi/azw/prc/fb2/txt（原"电脑可转"档，靠已砍的 host `shelf push` Calibre 管线转 EPUB）
+/// 保持不收，这次是在那次基础上把仅 KOReader 那一档也砍掉，两档收成一档。
+pub const BOOK_EXTS: &[&str] = NATIVE_EXTS;
 /// TrueType / OpenType 字体（原生 fontconfig 与 KOReader 同一份）。
 pub const FONT_EXTS: &[&str] = &["ttf", "otf", "ttc"];
 /// StarDict 词典的组成文件。
@@ -53,19 +53,24 @@ mod tests {
     }
 
     #[test]
-    fn book_exts_is_union_of_tiers() {
-        let mut tiers: Vec<&str> = [NATIVE_EXTS, KOREADER_ONLY_EXTS].concat();
-        let mut all: Vec<&str> = BOOK_EXTS.to_vec();
-        tiers.sort();
-        all.sort();
-        assert_eq!(all, tiers, "BOOK_EXTS 必须等于两档之并");
-        assert_eq!(all.len(), BOOK_EXTS.len(), "无重复");
+    fn book_exts_equals_native_exts() {
+        // 2026-09-18 起两档收成一档：母版库只收 EPUB/PDF，不再区分"仅 KOReader"。
+        assert_eq!(BOOK_EXTS, NATIVE_EXTS);
     }
 
     #[test]
     fn retired_host_convertible_exts_no_longer_accepted() {
         // 2026-09-17 EPUB 线架构调整：azw3/mobi/azw/prc/fb2/txt 不再自动转 EPUB，母版库也不收。
         for ext in ["azw3", "mobi", "azw", "prc", "fb2", "txt"] {
+            assert!(!has_ext(&format!("x.{ext}"), BOOK_EXTS), "{ext} 应已从 BOOK_EXTS 退役");
+        }
+    }
+
+    #[test]
+    fn retired_koreader_only_tier_no_longer_accepted() {
+        // 2026-09-18 用户明确要求"入库只入 PDF 和 EPUB，不论格式是否支持"——KOReader 技术上能读
+        // 这些格式，但策略上不再收，母版库直接拒收。
+        for ext in ["cbz", "cbr", "djvu", "html", "htm", "rtf", "doc", "docx", "chm", "xps"] {
             assert!(!has_ext(&format!("x.{ext}"), BOOK_EXTS), "{ext} 应已从 BOOK_EXTS 退役");
         }
     }

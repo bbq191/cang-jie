@@ -31,7 +31,7 @@ const onUsb=/^10\.11\.99\./.test(location.hostname);
    里异步填充，填充完成之前 `T()` 兜底显示 key 本身（不留空白，也不会悄悄掩盖翻译缺口）。
    ⚠️ `T()` 只能在"渲染/交互时才执行"的函数体里调用——`I18N` 是异步填充的，如果把 `T()` 调用塞进
    模块顶层 `const 模板字符串="..."` 这种脚本解析时就立即求值一次、以后不会重新求值的地方，结果会被
-   烤死成 key 兜底文本，永远显示不出真翻译，还不报错（`FMT_TIERS`/`GUIDE`/`OPTTABLE` 改成零参数函数
+   烤死成 key 兜底文本，永远显示不出真翻译，还不报错（`GUIDE`/`OPTTABLE` 改成零参数函数
    就是为了避开这个坑，见各自定义处）。 */
 let I18N={};
 /* vars：可选的 {占位符名: 值} 插值表，key 对应的文案里用 {占位符名} 占位，逐个字符串替换（次数少，
@@ -42,9 +42,8 @@ const currentLang=()=>LS.get('lang',(navigator.language||'').toLowerCase().start
 const EXT=__EXTS__, dot=l=>l.map(e=>'.'+e);
 const BOOK_EXT=dot(EXT.book), FONT_EXT=dot(EXT.font), DICT_EXT=dot(EXT.dict), IMG_EXT=dot(EXT.image);
 const up=l=>l.map(e=>e.toUpperCase()).join(' / ');
-/* 书籍格式三档说明（同一份白名单分档展示，不再一口气列 18 个） */
-// 顶层 const 改零参数函数：T() 求值必须等到渲染时（I18N 已填充），见上面 T() 头注的硬性规则。
-const FMT_TIERS=()=>T('transfer.fmtTiers',{native:up(EXT.native),koOnly:up(EXT.koOnly)});
+// 2026-09-18 起母版库只收 EPUB/PDF（BOOK_EXT===EXT.native，见 rmsvc_core::formats 头注）——原来
+// 这里有个 FMT_TIERS() 分两档（原生/仅 KOReader）拼文案，两档收成一档后不再需要，删掉。
 $('#logout').onclick=e=>{e.preventDefault();fetch('/logout',{method:'POST'}).then(()=>location.href='/login')};
 // 徽章的完整解释（渲染自检失败原因、优化档位差异…）以前只写进 title——触屏摸不到 hover，只看得见
 // 图标+数字，看不见"为什么/该怎么办"（2026-09-09 审计发现）。这里全局委托一个点击处理：任何带
@@ -128,7 +127,7 @@ const cjkBadge=p=>p==null?'':`<span class="badge ${p>=80?'on':(p>=8?'':'off')}" 
 const GUIDE=()=>`<details class="cmp"><summary>${T('transfer.guide.summary')}</summary>
 <dl class="help">
 <dt>${T('transfer.guide.steps.dt')}</dt><dd>${T('transfer.guide.steps.dd')}</dd>
-<dt>${T('transfer.guide.format.dt')}</dt><dd>${T('transfer.guide.format.dd',{tiers:FMT_TIERS()})}</dd>
+<dt>${T('transfer.guide.format.dt')}</dt><dd>${T('transfer.guide.format.dd',{native:up(EXT.native)})}</dd>
 <dt>${T('transfer.guide.native.dt')}</dt><dd>${T('transfer.guide.native.dd')}</dd>
 <dt>${T('transfer.guide.koreader.dt')}</dt><dd>${T('transfer.guide.koreader.dd')}</dd>
 <dt>${T('transfer.guide.unsure.dt')}</dt><dd>${T('transfer.guide.unsure.dd')}</dd>
@@ -228,7 +227,7 @@ function renderTransfer(sec){sec.innerHTML=`
          入库只剩「上传」+「抓网文」两条路，都走网页本身，不用任何 host CLI）。 -->
     <div class="card"><h3 style="margin-top:0">${T('transfer.upload.title')}</h3>
       ${upHtml('⬆',T('transfer.upload.dropLabel',{native:up(EXT.native)}),BOOK_EXT,T('transfer.upload.btn'))}
-      <p class="small">${T('transfer.upload.hint',{tiers:FMT_TIERS()})}</p>
+      <p class="small">${T('transfer.upload.hint')}</p>
     </div>
     <div class="card"><h3 style="margin-top:0">${T('transfer.fetchArticle.title')}</h3>
       <div class="row"><input type="text" id="arturl" placeholder="${T('transfer.fetchArticle.urlPlaceholder')}" style="flex:1;min-width:12em"><button class="btn" id="artgo">${T('transfer.fetchArticle.btn')}</button></div>

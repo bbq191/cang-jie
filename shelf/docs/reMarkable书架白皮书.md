@@ -24,11 +24,16 @@
 > Calibre 深洗、PDF k2pdfopt 结构化重排、TXT 切章建目录、漫画→CBZ 转换（跨页拆分/白边裁切/16
 > 灰省刷新档）、`doctor --render` 排版回归探针、`shelf notes pull`（笔记线 md 导出拉本机
 > Obsidian vault）、`shelf font/wallpaper/koreader/events/inbox/passwd` 等全部子命令——这些都
-> **没有网页等价物，是真实的功能减法**，不是挪去别处。母版库格式三档也已收窄成两档（"电脑可转"
-> 那一档随 host 一起没了，AZW3/MOBI/AZW/PRC/FB2/TXT 母版库直接拒收，见 §03av 更早一轮已经砍过
-> 一半、这次是彻底砍干净）；网页「传书·入库」原三张卡（上传/抓网文/电脑 shelf push）收窄成两张。
-> 完整决策记录/受影响范围见 `shelf/README.md`「host CLI（2026-09-18 已砍）」节 + 演进记录表最后
-> 一行；笔记线自己受影响的部分（`shelf notes pull`）由 `notes/` 那条线自己的 README/白皮书记录，
+> **没有网页等价物，是真实的功能减法**，不是挪去别处。**同一天用户接着把格式白名单再收紧一步**：
+> "从此开始入库只入 PDF 和 EPUB，不论格式是否支持"——母版库原三档（原生 / 电脑可转 / 仅
+> KOReader）现在收成**一档**：§03av 那一轮先砍掉"电脑可转"档（AZW3/MOBI/AZW/PRC/FB2/TXT），
+> 这次连"仅 KOReader"档（CBZ/CBR/DjVu/HTML/HTM/RTF/DOC/DOCX/CHM/XPS）也整档砍掉，
+> `rmsvc_core::formats::KOREADER_ONLY_EXTS` 常量已删除，`BOOK_EXTS` 现在就等于 `NATIVE_EXTS`
+> （只有 epub/pdf）——**这是策略收紧不是技术判断**，KOReader 本来能读那些格式，用户就是不想再
+> 收；已在库里的旧格式条目不受影响，仍可加入 KOReader，只是不会再有新的。网页「传书·入库」原
+> 三张卡（上传/抓网文/电脑 shelf push）收窄成两张。完整决策记录/受影响范围见 `shelf/README.md`
+> 「host CLI（2026-09-18 已砍）」节 + 「格式」小节 + 演进记录表最后两行；笔记线自己受影响的
+> 部分（`shelf notes pull`）由 `notes/` 那条线自己的 README/白皮书记录，
 > 本白皮书不代管。
 
 **架构**：网关（`0.0.0.0:443`，2026-09-10 起绑标准端口不用带端口号，历史上是 `:8778`，见 §03am；HTTPS 私有 CA + 登录页密码 / CLI Basic + mDNS `shelf.local`；单页 UI 源码在 `services/shelf-gateway/ui/` 真文件，编译期 `include_str!`；用户可见标题/图标 2026-09-10 起是「秘密花园」🌿，非 `shelf.local` 这类内部命名，见 §03am）+ 四个 loopback 领域服务（book 8790 / koreader 8791 / font 8792 / wallpaper 8793）+ 运行时注册表驱动 tab（首层固定四段：传书/笔记/其他/管理，2026-09-10 重排，§03al）+ 事件总线（各服务 `GET /events` → 网关 `Hub` 汇聚 `GET /api/events`，网页零轮询、host `shelf events`，§03z）。设备固件 **3.28.0.172**（2026-09-05 从 3.27.3.0 升级，实录 §03v；appload 0.5.3 经 qmd 回填补丁在 3.28 复活），KOReader v2026.07.1。
