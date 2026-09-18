@@ -39,9 +39,8 @@ jobs:
       # 它 import/构建时需 ~70MB 有意 gitignore 的 rime-ice 词典源（base/iorest/luna_pinyin.dict.yaml
       # 等），全新 checkout 没有 → 只能在本地 `uv run pytest chinese-ime/pinyin-engine/tests` +
       # `make -C chinese-ime/pinyin-engine/c test diff-check`（有本地词典）跑，见 README。
-      - name: pytest（书架 host CLI，自足 fixtures；reading/tests、knowledge/pkm-semantic/proto
-          随 2026-09-11 归档已移除，notes/ 纯 Rust 无 host Python 测试）
-        run: uv run pytest shelf/host/tests -q
+      # 2026-09-18：`shelf/host/`（Python CLI + Calibre 转换管线）整个已砍——用户明确表态以后
+      # 不再使用 PC 端，只留网页/设备端交互；源码留档在本机 oldbak/（不随仓库走），CI 这步跟着删。
       - name: pytest（packaging/appload_patch_328.py 纯字节操作，不需要真机/真实 appload.so）
         run: uv run pytest packaging/tests -q
       - name: 网关内嵌 JS 语法检查（ui/app.js 是真文件，编译期 include_str! 进二进制）

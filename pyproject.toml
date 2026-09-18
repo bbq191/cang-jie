@@ -60,12 +60,8 @@ pinyin = [
 tools = [
     "zstandard",
 ]
-# Calibre 前置渲染流水线（shelf/host/calibre/：产物体检 check_output.py、PDF 裁边；2026-09-03 自 reading/tools/calibre 迁入）
-# 刻意不进 default-groups：仅 host 侧按需 `uv run --group calibre`，CI 不背这份重量。
-calibre = [
-    "pymupdf",
-    "pillow",  # comic_gray.py 漫画 16 灰
-]
+# 2026-09-18：calibre 组（原给 shelf/host/calibre/ 的 Calibre 前置渲染流水线用）随 shelf/host/
+# 整体退役一并删除——用户明确表态以后不再使用 PC 端，源码留档在本机 oldbak/，不随仓库走。
 # 差分测试 / 单测（全线共用）
 test = [
     "pytest",

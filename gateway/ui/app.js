@@ -59,10 +59,6 @@ async function j(url,opt){const r=await fetch(url,opt);if(r.status===401){locati
   let d;try{d=await r.json()}catch{d={ok:false,message:httpErr}}if(!r.ok&&d.ok!==false)d={ok:false,message:d.message||httpErr};return d}
 const postJ=async(url,body)=>{const r=await j(url,{method:'POST',body:JSON.stringify(body)});if(r.ok===false)toast(r.message||T('common.failed'));return r};
 
-/* 命令块：要人读要人抄的完整命令用这个，别再拿 .opt-note/.small 包（那套是"安静小字引用"的视觉
-   语言，命令套进去会显得不起眼、字也偏小，2026-09-09 用户反馈）。多行命令一行一个 <code>。 */
-const cmdBlock=lines=>`<div class="cmdblock">${lines.map(l=>`<code>${l}</code>`).join('')}</div>`;
-
 /* 上传区 HTML（拖放框 + 隐藏 input + 队列 + 按钮），一处生成、各页复用；uploader() 认这个 .up 容器 */
 const upHtml=(icon,label,ext,btn)=>`<div class="up"><div class="drop"><span class="big">${icon}</span>${label}</div><input type="file" multiple hidden accept="${ext.join(',')}"><ul class="q"></ul><div class="row"><button class="btn pri go">${btn}</button></div></div>`;
 
@@ -136,7 +132,6 @@ const GUIDE=()=>`<details class="cmp"><summary>${T('transfer.guide.summary')}</s
 <dt>${T('transfer.guide.native.dt')}</dt><dd>${T('transfer.guide.native.dd')}</dd>
 <dt>${T('transfer.guide.koreader.dt')}</dt><dd>${T('transfer.guide.koreader.dd')}</dd>
 <dt>${T('transfer.guide.unsure.dt')}</dt><dd>${T('transfer.guide.unsure.dd')}</dd>
-<dt>${T('transfer.guide.push.dt')}</dt><dd>${T('transfer.guide.push.dd')}</dd>
 </dl></details>`;
 
 /* 母版库「优化」档位说明（对应 /staging/optimize 的 mode） */
@@ -226,9 +221,11 @@ function renderTransfer(sec){sec.innerHTML=`
       ${GUIDE()}
       ${onUsb?'':`<p class="opt-note">${T('transfer.intake.usbHint')}</p>`}
     </div>
-    <!-- 三个入库来源各自独立成卡（2026-09-10 用户要求：原来挤在同一张卡里用 h3 分隔，看着像
-         "上传"下面附带两个子步骤，实际是三条互不依赖、各走各的入库路径，拆卡片才是"3个功能来源"
-         该有的视觉分量，跟「系统增强」/「实验室」那种并排卡片同一个语言）。 -->
+    <!-- 入库来源各自独立成卡（2026-09-10 用户要求：原来挤在同一张卡里用 h3 分隔，看着像
+         "上传"下面附带子步骤，实际是几条互不依赖、各走各的入库路径，拆卡片才是"独立功能来源"
+         该有的视觉分量，跟「系统增强」/「实验室」那种并排卡片同一个语言。2026-09-18：原第三张
+         「电脑 shelf push」卡片随 host 整条线退役一并删除——用户明确表态以后不再使用 PC 端，
+         入库只剩「上传」+「抓网文」两条路，都走网页本身，不用任何 host CLI）。 -->
     <div class="card"><h3 style="margin-top:0">${T('transfer.upload.title')}</h3>
       ${upHtml('⬆',T('transfer.upload.dropLabel',{native:up(EXT.native)}),BOOK_EXT,T('transfer.upload.btn'))}
       <p class="small">${T('transfer.upload.hint',{tiers:FMT_TIERS()})}</p>
@@ -239,29 +236,6 @@ function renderTransfer(sec){sec.innerHTML=`
       <div class="small" id="artmsg" style="margin-top:.3em"></div>
       <p class="small">${T('transfer.fetchArticle.hint')}</p>
       <p class="small">${T('transfer.fetchArticle.optimizeHint')}</p>
-    </div>
-    <div class="card"><h3 style="margin-top:0">${T('transfer.push.title')}</h3>
-      <p class="small">${T('transfer.push.desc')}</p>
-      <p>${T('transfer.push.cmdIntro')}</p>
-      ${cmdBlock(['shelf/host/bin/shelf push &lt;'+T('transfer.push.book1')+'&gt; ['+T('transfer.push.book2')+' …]'])}
-      <p class="small">${T('transfer.push.notes')}</p>
-      <details class="cmp"><summary>${T('transfer.push.detailsSummary')}</summary>
-      <dl class="help">
-        <dt>${T('transfer.push.example.dt')}</dt>
-        <dd>${cmdBlock([
-          'shelf/host/bin/shelf push 论文.pdf        # '+T('transfer.push.example.pdf'),
-          'shelf/host/bin/shelf push 小说.azw3       # '+T('transfer.push.example.novel'),
-          'shelf/host/bin/shelf push 漫画.azw3       # '+T('transfer.push.example.comic'),
-          'shelf/host/bin/shelf push 书.epub --to-pdf # '+T('transfer.push.example.toPdf'),
-          'shelf/host/bin/shelf push a.epub b.mobi   # '+T('transfer.push.example.multi'),
-          'shelf/host/bin/shelf status               # '+T('transfer.push.example.status'),
-          'shelf/host/bin/shelf doctor',
-        ])}</dd>
-        <dt>${T('transfer.push.strengths.dt')}</dt>
-        <dd>${T('transfer.push.strengths.dd')}</dd>
-        <dt>${T('transfer.push.install.dt')}</dt>
-        <dd>${T('transfer.push.install.dd')}</dd>
-      </dl></details>
     </div>
   </div>
   <div class="subpanel">

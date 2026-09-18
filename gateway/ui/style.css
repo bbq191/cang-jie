@@ -40,14 +40,6 @@ select,input[type=text]{font-size:1em;padding:.55em .6em;border:1px solid var(--
 .seg .t{font-weight:700;font-size:.98em}.seg .d{font-size:.82em;color:var(--mute);margin-top:.15em}
 .seg .fmt{font-size:.72em;color:var(--accent);margin-top:.35em;font-variant:tabular-nums}
 .opt-note{font-size:.82em;color:var(--mute);margin:.4em 0 0;padding:.5em .7em;background:var(--surface2);border-radius:.5em;border-left:3px solid var(--accent)}
-/* 命令块：字号跟正文同级、等宽、比 .opt-note 更高的对比度/权重——原来一段完整命令套在 .opt-note
-   里显示，跟「笔记」页 .entry-quote 那种"安静小字引用摘录"几乎是同一套视觉语言（同量级小字号+
-   同 mute 灰色+同浅底），命令是要人读要人抄的可操作内容，借用被动展示摘录的样式会显得不起眼、
-   字也偏小（2026-09-09 用户反馈）。整块实线边框（不是引用框那种只有左侧色条），内部横向滚动
-   兜底超长命令，不撑爆手机屏。 */
-.cmdblock{margin:.6em 0;border:1px solid var(--line);border-radius:.6em;overflow:hidden}
-.cmdblock code{display:block;padding:.6em .85em;font-size:.95em;line-height:1.5;background:var(--surface2);color:var(--fg);overflow-x:auto;white-space:pre;border-radius:0}
-.cmdblock code+code{border-top:1px solid var(--line)}
 .toggle{display:inline-flex;align-items:center;gap:.45em;font-size:.92em;cursor:pointer}
 .drop{border:2px dashed var(--line);border-radius:.8em;padding:1.6em 1em;text-align:center;color:var(--mute);margin:.9em 0;transition:.15s;cursor:pointer}
 .drop:hover,.drop.hi{border-color:var(--accent);color:var(--fg);background:color-mix(in srgb,var(--accent) 6%,transparent)}

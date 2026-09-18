@@ -1,6 +1,16 @@
 # bookconv 电子书优化白皮书
 
 > `shelf/crates/bookconv` —— 通用电子书内容层：多格式转换 + EPUB 优化器 + 清洗层 + 质量门。记"为什么这么做、真机怎么验、踩了什么坑"，尤其 **xochitl（reMarkable EPUB 渲染器）的硬规则**（§09，本项目最贵的一批真机知识）。上层用法/服务见 `reMarkable书架白皮书.md`（book-serve 母版库「优化」、host `shelf push`；KOReader 只从母版库纯复制落书，不再单独优化）。
+>
+> **⚠️ 2026-09-18 现状更正**：本文下面正文里凡是提到 **host `shelf push`/`wash_epub.sh`/
+> `comic.py`/`check_output.py`/Calibre 转换管线**的地方，说的都是**已经砍掉的旧能力**——用户
+> 明确表态以后不再使用 PC 端，`shelf/host/` 整个移出仓库（留档 `/home/afu/Projects/oldbak/
+> cang-jie/shelf-host/`），格式转换/Calibre 深洗/质量门 `check_output.py`/漫画→CBZ 转换这些
+> **host 独有的能力随之消失，没有网页等价物**。这条更正**不影响**下面正文里"host 单测"/"host
+> 侧" 这类说的是"在开发机/CI 上跑测试"（跟 `shelf/host/` 目录无关的另一个含义）的地方，那些依旧
+> 准确。`bin/epub_optimize.rs`（设备/开发机共用的 CLI 小工具，跟 `optimize_epub_with` 同一份
+> 代码）本身没有删，只是不再有 `shelf push`/`wash_epub.sh` 这样的自动化调用方了。完整决策记录
+> 见 `shelf/README.md`「host CLI（2026-09-18 已砍）」节。
 
 ## 00｜定位与职责
 

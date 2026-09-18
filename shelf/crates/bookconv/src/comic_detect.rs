@@ -1,8 +1,8 @@
 //! EPUB 漫画识别：给 `optimize_epub_with` 用，决定该书走"漫画路"（画质/裁边保留原图）还是"文字书路"
-//! （常规降采样）。判定逻辑照搬 host 侧 `shelf/host/shelf_cli/comic.py::epub_image_stats()`
-//! （2026-09-14 定案的阈值：图 ≥20 张且平均每张图配的文字 <40 字）——这里是移植成 Rust 供设备侧
-//! 优化器内部直接判；host 那份继续给 `shelf push` 的路由分流（转 CBZ）用，两份实现基于同一套
-//! spine 遍历+阈值，行为应保持一致（改一边记得改另一边，或至少拿同一批真实样本对拍）。
+//! （常规降采样）。判定逻辑当初是从 host 侧 `shelf_cli/comic.py::epub_image_stats()` 移植过来的
+//! （2026-09-14 定案的阈值：图 ≥20 张且平均每张图配的文字 <40 字），host 那份原来继续给 `shelf push`
+//! 的路由分流（转 CBZ）用——**2026-09-18 host 整条线（含这份 Python 原版）已砍**，不再使用 PC 端，
+//! 现在这份 Rust 实现是唯一在用的版本，不用再顾虑"改一边忘改另一边"。
 
 use crate::wash::{parse_opf, Entry};
 use regex::Regex;
