@@ -170,26 +170,39 @@ function stagingList(ul,opts){
       +(dc&&dc.status==='failed'?` <span class="badge off" title="${dc.message}">${T('transfer.staging.deliverFailed.badge')}</span>`:'');
     li.innerHTML=`<span><b>${it.name}</b> <span class="badge">${fmt}</span> ${st}${dl}${rb}${ob} <span class="small">${fmtB(it.bytes)}${hint}</span></span>`;
     // 报错/进度原因以前只写进徽章的 title（hover 才看得到，触屏设备摸不到）——补一行可见小字，跟
-    // 上面 167 行"禁用态按钮原因"同一套做法（2026-09-19 用户反馈"报错最下方显示错误原因"）。
-    // 优先级：真在跑且有进度文案（漫画拆分卷逐份汇报）＞ 投递失败 ＞ 优化失败 ＞ 处理被打断。
-    const inProgress=it.busy&&dc&&dc.status==='pending'&&dc.message;
-    const statusMsg=inProgress?dc.message
-      :dc&&dc.status==='failed'?T('transfer.staging.deliverFailedPrefix')+dc.message
+    // 下面"禁用态按钮原因"同一套做法（2026-09-19 用户反馈"报错最下方显示错误原因"）。
+    // 优先级：投递失败 ＞ 优化失败 ＞ 处理被打断（真在跑走下面单独的进度条分支，不进这条文字级联）。
+    const statusMsg=dc&&dc.status==='failed'?T('transfer.staging.deliverFailedPrefix')+dc.message
       :oc&&oc.status==='failed'?T('transfer.staging.optimizeFailedPrefix')+oc.message
       :(stalePending(oc)||stalePending(dc))?T('transfer.staging.stalePending.title'):'';
-    // 进度汇报是中性信息，不该跟失败一样标红——只有失败/被打断才用 --bad。
-    if(statusMsg){const line=document.createElement('div');line.className='small';line.style.cssText='flex-basis:100%;margin-top:.2em'+(inProgress?'':';color:var(--bad)');line.textContent=statusMsg;li.appendChild(line)}
+    if(statusMsg){const line=document.createElement('div');line.className='small';line.style.cssText='flex-basis:100%;margin-top:.2em;color:var(--bad)';line.textContent=statusMsg;li.appendChild(line)}
+    // 真在跑：进度条取代"正在处理中，请稍候"这句静态文案（2026-09-19 用户反馈——干等的文字没意义，
+    // 能看见走到哪一步/大概多久才有用）。漫画拆分卷落库有结构化份数（`dc.progress.{done,total}`，
+    // 见 book-serve `try_deliver_split`）→ 真百分比进度条；其余场景（单本优化、普通整本落库）后端
+    // 没法给出精确进度（耗时来自流式处理/单次上传，没有天然的"第几步"）→ 不确定时长的滚动进度条
+    // （`<progress>` 不带 value/max，浏览器原生渲染成不确定态动画），至少比一句不会变化的静态文字
+    // 更能传达"真的在动、不是卡死了"。
+    if(it.busy){
+      const dcPending=dc&&dc.status==='pending',ocPending=oc&&oc.status==='pending';
+      const label=dcPending?T('transfer.staging.progress.delivering'):ocPending?T('transfer.staging.progress.optimizing'):T('transfer.staging.progress.working');
+      const prog=dcPending&&dc.progress?dc.progress:null;
+      const wrap=document.createElement('div');wrap.style.cssText='flex-basis:100%;margin-top:.2em';
+      const bar=document.createElement('progress');if(prog){bar.max=prog.total;bar.value=prog.done}
+      const text=document.createElement('div');text.className='small';
+      text.textContent=prog?`${label} ${prog.done}/${prog.total}（${Math.round(prog.done/prog.total*100)}%）${dc.message?' · '+dc.message:''}`:label;
+      wrap.append(bar,text);li.appendChild(wrap);
+    }
     const right=document.createElement('span');right.style.cssText='display:flex;gap:.4em;flex-wrap:wrap;align-items:center';
     // 禁用态按钮的原因（超限/未安装）以前只写进 title——触屏设备摸不到 hover，等于完全看不到为什么点
     // 不了、该去哪解决（2026-09-09 审计发现）。现在禁用时额外补一行可见小字，跟 title 内容一样，
-    // `flex-basis:100%` 让它在 `right`（flex-wrap 容器）里独占一行，不挤在按钮同一行。
+    // `flex-basis:100%` 让它在 `right`（flex-wrap 容器）里独占一行，不挤在按钮同一行。busy 引起的
+    // 禁用不再重复这行小字——上面已经有整行的进度条，三个按钮各自重复一遍"正在处理中"没有信息量。
     const btn=(t,pri,fn,dis,title,cls)=>{const b=document.createElement('button');b.className='btn'+(pri?' pri':'')+(cls?' '+cls:'');b.textContent=t;if(dis){b.disabled=true;b.title=title||''}else b.onclick=async()=>{b.disabled=true;b.textContent=t+'…';await fn();if(opts.refresh)opts.refresh()};right.appendChild(b);
       if(dis&&title){const hint=document.createElement('span');hint.className='small';hint.style.cssText='flex-basis:100%';hint.textContent=title;right.appendChild(hint)}};
     // it.busy：这条目正有一个异步优化在后台跑（真机实测大漫画能到分钟级）——删除/落库/加入 KOReader/
     // 再次优化全部先禁掉，防止跟正在跑的优化并发冲突（2026-09-18 真机反馈：点了优化又点删除）；
     // busy 状态由服务端权威判定（GET /staging 的 busy 字段），完成后 SSE 推事件、列表自动刷新解禁。
-    const busyTitle=T('transfer.staging.busy.btnTitle');
-    if(it.format==='epub'&&!it.optimized)btn(T('transfer.staging.btn.optimize'),false,()=>postJ('/api/books/staging/optimize',{name:it.name}),it.busy,busyTitle);
+    if(it.format==='epub'&&!it.optimized)btn(T('transfer.staging.btn.optimize'),false,()=>postJ('/api/books/staging/optimize',{name:it.name}),it.busy,'');
     // 体积门：超过 xochitl /upload 上限的书灰掉按钮（服务端同样拦），提示走电脑分卷。EPUB 例外——
     // 超限的 EPUB 漫画服务端会按卷拆分投递（2026-09-18，见 book-serve::Staging::try_deliver_split），
     // 按钮不能提前灰掉，得让服务端判过是不是漫画才知道能不能救；PDF 没有这条救援路径，继续照原样灰。
@@ -198,12 +211,12 @@ function stagingList(ul,opts){
     // 阻塞的体验跟优化改异步前一样像卡死）；点了立即回"已开始"，不再 alert 最终结果——完成状态跟优化
     // 一样靠徽章看（成功＝「已加入原生」时间戳徽章出现，失败＝「上次加入失败」徽章，见上面 ob 那段）。
     // 2026-09-19 去掉「投完自动删除」：母版永远保留，不再传 keep（服务端也已删这个参数）。
-    if(it.format==='epub'||it.format==='pdf')btn(T('transfer.staging.btn.deliverNative'),true,()=>postJ('/api/books/staging/deliver',{name:it.name,folder:opts.xFolder()}),it.busy||tooBig,it.busy?busyTitle:T('transfer.staging.btn.tooBigTitle',{limit:fmtB(opts.nativeLimit)}));
-    btn(T('transfer.staging.btn.addKoreader'),true,async()=>{const r=await postJ('/api/koreader/books/adopt',{name:it.name,folder:opts.kFolder()});if(r.ok!==false)await postJ('/api/books/staging/mark',{name:it.name,target:'koreader'})},it.busy||!opts.koInstalled,it.busy?busyTitle:T('transfer.staging.btn.koNotInstalled'));
+    if(it.format==='epub'||it.format==='pdf')btn(T('transfer.staging.btn.deliverNative'),true,()=>postJ('/api/books/staging/deliver',{name:it.name,folder:opts.xFolder()}),it.busy||tooBig,it.busy?'':T('transfer.staging.btn.tooBigTitle',{limit:fmtB(opts.nativeLimit)}));
+    btn(T('transfer.staging.btn.addKoreader'),true,async()=>{const r=await postJ('/api/koreader/books/adopt',{name:it.name,folder:opts.kFolder()});if(r.ok!==false)await postJ('/api/books/staging/mark',{name:it.name,target:'koreader'})},it.busy||!opts.koInstalled,it.busy?'':T('transfer.staging.btn.koNotInstalled'));
     // 单行最多 5 徽章+4 按钮时，"删除"（销毁）跟"优化"（编辑）视觉权重完全一样，只靠文案区分
     // （2026-09-09 审计发现）；`.btn-bad` 早就存在但只用在转写失败按钮上，这里补上，破坏性操作至少
     // 颜色上跟常规操作分开。
-    btn(T('action.delete'),false,async()=>{if(confirm(T('transfer.staging.confirmDeleteOne',{name:it.name})))await postJ('/api/books/staging/delete',{name:it.name})},it.busy,busyTitle,'btn-bad');
+    btn(T('action.delete'),false,async()=>{if(confirm(T('transfer.staging.confirmDeleteOne',{name:it.name})))await postJ('/api/books/staging/delete',{name:it.name})},it.busy,'','btn-bad');
     li.appendChild(right);ul.appendChild(li)});
 }
 

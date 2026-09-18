@@ -303,15 +303,17 @@ impl Staging {
             return Err(format!("《{name}》正在处理中，请稍候"));
         }
         let now = rmsvc_core::clock::now_secs();
-        let _ = self.set_deliver_check(name, sidecar::DeliverCheck { status: "pending".into(), message: String::new(), at: now });
+        let _ = self.set_deliver_check(name, sidecar::DeliverCheck { status: "pending".into(), message: String::new(), at: now, progress: None });
         let (this, name, folder) = (self.clone(), name.to_string(), folder.to_string());
         std::thread::spawn(move || {
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| this.deliver(&name, &folder)))
                 .unwrap_or_else(|_| Err("落库过程内部异常（已捕获，不影响其他操作）".to_string()));
             let at = rmsvc_core::clock::now_secs();
             let dc = match &result {
-                Ok(outcome) => sidecar::DeliverCheck { status: "ok".into(), message: outcome.message.clone(), at },
-                Err(e) => sidecar::DeliverCheck { status: "failed".into(), message: e.clone(), at },
+                // 成功/失败落定后进度条意义不大（`status` 本身就是终态），不保留最后一次的
+                // `progress`——避免网页刷新时短暂显示一条"3/8"却又同时是 ok/failed 的矛盾态。
+                Ok(outcome) => sidecar::DeliverCheck { status: "ok".into(), message: outcome.message.clone(), at, progress: None },
+                Err(e) => sidecar::DeliverCheck { status: "failed".into(), message: e.clone(), at, progress: None },
             };
             let _ = this.set_deliver_check(&name, dc);
             if let Ok(outcome) = &result {
@@ -358,11 +360,12 @@ impl Staging {
         let native_limit = self.native_limit;
         let lib_dir = self.xochitl.library_dir().to_path_buf();
         // 逐份上传/等渲染都可能耗时到分钟级（真机《镖人》11 卷坐实）——每完成一份就把进度写进
-        // sidecar 的 `deliver` 字段（status 仍是 "pending"，只是 message 从空串变成"已完成 N
-        // 份：…"），`GET /staging` 就能看到实时进度，不用等整本投完才有任何反馈（2026-09-19
-        // 用户反馈"能否显示优化及投书进度"）。
+        // sidecar 的 `deliver` 字段（status 仍是 "pending"，`progress.{done,total}` 是结构化
+        // 份数给网页画真百分比进度条用，`message` 仍留一句人话＋已完成的具体卷名），`GET /staging`
+        // 就能看到实时进度，不用等整本投完才有任何反馈（2026-09-19 用户先反馈"能否显示优化及投书
+        // 进度"，后又反馈"正在处理中请稍候"这种静态文案该换成进度条/百分比，这里是后一条的落地）。
         let mut done_titles: Vec<String> = Vec::new();
-        let outcome = bookconv::comic_split::deliver_split_streaming(p, native_limit, |piece_name, bytes| {
+        let outcome = bookconv::comic_split::deliver_split_streaming(p, native_limit, |piece_name, bytes, idx, total| {
             let since_ms = rmsvc_core::clock::now_ms();
             self.xochitl.upload(bytes, piece_name, "application/epub+zip", folder).map(|_| ())?;
             let plan = RenderPlan { name: piece_name.to_string(), title: None, expected: 0, since_ms };
@@ -370,7 +373,14 @@ impl Staging {
                 rmsvc_core::fswatch::watch_until(&lib_dir, render_check::DEBOUNCE, PIECE_RENDER_TIMEOUT, |_| render_check::probe(&lib_dir, &plan).is_some());
             }
             done_titles.push(piece_name.to_string());
-            let progress = sidecar::DeliverCheck { status: "pending".into(), message: format!("正在按卷拆分投递，已完成 {} 份：{}", done_titles.len(), done_titles.join("、")), at: rmsvc_core::clock::now_secs() };
+            // 份数（几完成/共几份）交给 `progress` 结构化字段，网页拿去画真百分比进度条，这里
+            // `message` 只留"具体是哪几卷"——两边不重复说同一件事（份数），各自负责一半信息。
+            let progress = sidecar::DeliverCheck {
+                status: "pending".into(),
+                message: format!("已加入：{}", done_titles.join("、")),
+                at: rmsvc_core::clock::now_secs(),
+                progress: Some(sidecar::DeliverProgress { done: idx as u32, total: total as u32 }),
+            };
             let _ = self.set_deliver_check(name, progress);
             Ok(())
         })?;

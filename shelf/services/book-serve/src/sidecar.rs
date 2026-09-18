@@ -44,6 +44,22 @@ pub struct DeliverCheck {
     pub status: String,
     pub message: String,
     pub at: u64,
+    /// 超限漫画按卷拆分投递时才有的结构化进度（份数，不是字节）——`message` 一直是给人读的一句话，
+    /// 这个字段是给网页画进度条用的数字（2026-09-19 用户反馈"正在处理中请稍候"这种静态文案该换成
+    /// 进度条/百分比）。非拆分路径（普通整本落库、优化）没有这个字段，网页据此判断走"有精确进度
+    /// 的百分比条"还是"不确定要多久的滚动条"。`total` 只数"预算内、真会尝试上传"的份数——拆到底
+    /// 仍超限、注定不投的那几份不计入分母，所以能上传的那些传完百分比就会到 100%，不会因为几份
+    /// 铁定失败的卡在中间；那几份的存在与否体现在最终回执文案的"N 未投"里，不影响这个进度条。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub progress: Option<DeliverProgress>,
+}
+
+/// 漫画拆分投递的份数进度：`done`＝已经成功上传+等到渲染确认的份数，`total`＝预算内会尝试上传的
+/// 总份数。
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub struct DeliverProgress {
+    pub done: u32,
+    pub total: u32,
 }
 
 /// "这份母版库文件是由哪个原始输入处理出来的"——host `shelf push` 洗书/重排/转 CBZ 前的原始文件

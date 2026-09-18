@@ -87,7 +87,6 @@
   "transfer.staging.stalePending.title": "A service or device restart interrupted the last run — the status got stuck at \"in progress\" and was never updated. It is not still running; please retry.",
   "transfer.staging.optimizeFailedPrefix": "Last optimize failed: ",
   "transfer.staging.deliverFailedPrefix": "Last add failed: ",
-  "transfer.staging.busy.btnTitle": "Currently processing, please wait (unlocks automatically when done)",
   "transfer.staging.btn.optimize": "Optimize",
   "transfer.staging.btn.deliverNative": "Add to native library",
   "transfer.staging.btn.tooBigTitle": "Exceeds the native reader's upload limit of {limit}: for PDF, resending via computer-side shelf push auto-splits it; for EPUB, read it in KOReader instead",
@@ -414,5 +413,8 @@
   "manage.lab.importMd.toggle": "Enable (off by default)",
   "transfer.fetchArticle.optimizeToggle": "Optimize right away (on by default)",
   "transfer.fetchArticle.optimizeHint": "A fetched article’s body has no layout styling at all — leave this unchecked and it renders on the device with default paragraph spacing, leaving large blank gaps. Checking it runs a \"clean + optimize\" pass immediately after fetching (the same thing as clicking \"Optimize\" in the master library list, just done for you). Uncheck it if you want the rawest possible result — e.g. to decide later yourself whether to optimize it.",
-  "transfer.staging.folder.label": "Add to native library → folder"
+  "transfer.staging.folder.label": "Add to native library → folder",
+  "transfer.staging.progress.optimizing": "Optimizing…",
+  "transfer.staging.progress.delivering": "Adding to native library…",
+  "transfer.staging.progress.working": "Working…"
 }

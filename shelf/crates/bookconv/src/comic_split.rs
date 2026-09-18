@@ -319,17 +319,20 @@ pub struct StreamSplitOutcome {
 /// 真正引用到的图片从源文件按需读回真实字节、组包、上传，传完立刻丢，不留给下一份——峰值内存只有
 /// "一份的体积"（受 budget 钳制，通常 ≤150MB），不会随全书体积/卷数线性涨。
 ///
-/// `upload_piece(文件名, 字节) -> Result<(), String>` 由调用方提供（book-serve 侧接 xochitl 上传），
-/// 本函数不关心具体怎么投、要不要等 xochitl 消化完才传下一份，只管规划+组包+逐份调用、把这个决定
-/// 完全交给调用方（真机《镖人（11 卷）》坐实连续紧挨着传会把 xochitl 冲垮——`Connection reset by
-/// peer`/`Broken pipe`，但"该等多久"跟 xochitl 端渲染+缩略图+建索引的耗时挂钩、不是固定数字，
-/// 猜时间不可靠，见 book-serve `try_deliver_split` 改成等渲染真正完成再放行下一份，不在这里瞎猜）。
+/// `upload_piece(文件名, 字节, 第几份, 预算内共几份) -> Result<(), String>` 由调用方提供（book-serve
+/// 侧接 xochitl 上传），本函数不关心具体怎么投、要不要等 xochitl 消化完才传下一份，只管规划+组包+
+/// 逐份调用、把这个决定完全交给调用方（真机《镖人（11 卷）》坐实连续紧挨着传会把 xochitl 冲垮——
+/// `Connection reset by peer`/`Broken pipe`，但"该等多久"跟 xochitl 端渲染+缩略图+建索引的耗时
+/// 挂钩、不是固定数字，猜时间不可靠，见 book-serve `try_deliver_split` 改成等渲染真正完成再放行
+/// 下一份，不在这里瞎猜）。第 3/4 个参数是 1-based 进度（2026-09-19 补，给调用方画进度条用）——
+/// "预算内共几份"只数拆到底仍超限、注定不投的那几份**之外**的份数，见调用方 `sidecar::
+/// DeliverProgress` 的文档注释。
 /// 返回 `None`＝不适用这条路径（整本已经在预算内，或压根不是漫画），调用方按"不用拆，走原来的
 /// 整本流程"处理；`Err`＝解不出 OPF/spine 这类致命问题，调用方退回"超限直接拒绝"老路径。
 pub fn deliver_split_streaming(
     path: &std::path::Path,
     budget: u64,
-    mut upload_piece: impl FnMut(&str, &[u8]) -> Result<(), String>,
+    mut upload_piece: impl FnMut(&str, &[u8], usize, usize) -> Result<(), String>,
 ) -> Result<Option<StreamSplitOutcome>, String> {
     let file = std::fs::File::open(path).map_err(|e| format!("打开母版库文件失败: {e}"))?;
     let mut zip = zip::ZipArchive::new(std::io::BufReader::new(file)).map_err(|e| format!("解 EPUB(非 zip?): {e}"))?;
@@ -369,6 +372,8 @@ pub fn deliver_split_streaming(
     let file2 = std::fs::File::open(path).map_err(|e| format!("重开母版库文件失败: {e}"))?;
     let mut zip2 = zip::ZipArchive::new(std::io::BufReader::new(file2)).map_err(|e| e.to_string())?;
 
+    let total_fitting = pieces.iter().filter(|p| p.fits).count();
+    let mut idx = 0usize;
     let mut delivered = Vec::new();
     let mut failed = Vec::new();
     for piece in &pieces {
@@ -376,6 +381,7 @@ pub fn deliver_split_streaming(
             failed.push(format!("{}（拆到底仍超限，未投）", piece.title));
             continue;
         }
+        idx += 1;
         // 只克隆这一份用得到的骨架（entries 里 html/opf/ncx 已经是真实字节，图片仍是占位，克隆便宜）。
         let mut piece_entries = entries.clone();
         for p in &opf.spine[piece.start..piece.end] {
@@ -401,7 +407,7 @@ pub fn deliver_split_streaming(
             Ok(bytes) => {
                 let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("book");
                 let piece_name = format!("{stem} - {}.epub", piece.title);
-                match upload_piece(&piece_name, &bytes) {
+                match upload_piece(&piece_name, &bytes, idx, total_fitting) {
                     Ok(()) => delivered.push(piece.title.clone()),
                     Err(e) => failed.push(format!("{}（上传失败：{e}）", piece.title)),
                 }
@@ -679,8 +685,10 @@ mod tests {
         write_epub_zip(&entries, &path);
 
         let mut uploaded: Vec<(String, Vec<u8>)> = Vec::new();
-        let outcome = deliver_split_streaming(&path, 9000, |name, bytes| {
+        let mut progresses: Vec<(usize, usize)> = Vec::new();
+        let outcome = deliver_split_streaming(&path, 9000, |name, bytes, idx, total| {
             uploaded.push((name.to_string(), bytes.to_vec()));
+            progresses.push((idx, total));
             Ok(())
         })
         .unwrap()
@@ -689,6 +697,7 @@ mod tests {
         assert_eq!(outcome.delivered.len(), 3, "三卷各自成一份");
         assert!(outcome.failed.is_empty(), "{:?}", outcome.failed);
         assert_eq!(uploaded.len(), 3);
+        assert_eq!(progresses, vec![(1, 3), (2, 3), (3, 3)], "进度按上传顺序 1-based 递增，分母是预算内总份数");
         for (name, bytes) in &uploaded {
             let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
             let mut img = Vec::new();
@@ -703,7 +712,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("book.epub");
         write_epub_zip(&entries, &path);
-        let outcome = deliver_split_streaming(&path, 10_000, |_, _| Ok(())).unwrap();
+        let outcome = deliver_split_streaming(&path, 10_000, |_, _, _, _| Ok(())).unwrap();
         assert!(outcome.is_none(), "预算够就不该拆，调用方按整本投处理");
     }
 
@@ -715,7 +724,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("book.epub");
         write_epub_zip(&entries, &path);
-        let outcome = deliver_split_streaming(&path, 15_000, |_, _| Ok(())).unwrap().expect("应该要拆");
+        let outcome = deliver_split_streaming(&path, 15_000, |_, _, _, _| Ok(())).unwrap().expect("应该要拆");
         assert_eq!(outcome.delivered.len(), 2);
         assert!(outcome.failed.is_empty());
     }

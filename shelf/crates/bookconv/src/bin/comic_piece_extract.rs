@@ -15,7 +15,7 @@ fn main() {
     let budget: u64 = args.get(3).and_then(|s| s.parse().ok()).unwrap_or(150 * 1024 * 1024);
 
     let mut found = false;
-    let result = comic_split::deliver_split_streaming(input, budget, |piece_name, bytes| {
+    let result = comic_split::deliver_split_streaming(input, budget, |piece_name, bytes, _idx, _total| {
         if piece_name.contains(want.as_str()) {
             found = true;
             std::fs::write(output, bytes).map_err(|e| e.to_string())?;
