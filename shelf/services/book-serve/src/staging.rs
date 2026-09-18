@@ -384,6 +384,11 @@ impl Staging {
         let stem = name.strip_suffix(".epub").unwrap_or(name).to_string();
         let native_limit = self.native_limit;
         let lib_dir = self.xochitl.library_dir().to_path_buf();
+        // 逐份上传/等渲染都可能耗时到分钟级（真机《镖人》11 卷坐实）——每完成一份就把进度写进
+        // sidecar 的 `deliver` 字段（status 仍是 "pending"，只是 message 从空串变成"已完成 N
+        // 份：…"），`GET /staging` 就能看到实时进度，不用等整本投完才有任何反馈（2026-09-19
+        // 用户反馈"能否显示优化及投书进度"）。
+        let mut done_titles: Vec<String> = Vec::new();
         let outcome = bookconv::comic_split::deliver_split_streaming(p, native_limit, |piece_name, bytes| {
             let since_ms = rmsvc_core::clock::now_ms();
             self.xochitl.upload(bytes, piece_name, "application/epub+zip", folder).map(|_| ())?;
@@ -391,6 +396,9 @@ impl Staging {
             if render_check::probe(&lib_dir, &plan).is_none() {
                 rmsvc_core::fswatch::watch_until(&lib_dir, render_check::DEBOUNCE, PIECE_RENDER_TIMEOUT, |_| render_check::probe(&lib_dir, &plan).is_some());
             }
+            done_titles.push(piece_name.to_string());
+            let progress = sidecar::DeliverCheck { status: "pending".into(), message: format!("正在按卷拆分投递，已完成 {} 份：{}", done_titles.len(), done_titles.join("、")), at: rmsvc_core::clock::now_secs() };
+            let _ = self.set_deliver_check(name, progress);
             Ok(())
         })?;
         let Some(outcome) = outcome else { return Ok(None) }; // 不是漫画，或没超预算——退回原来的整本流程

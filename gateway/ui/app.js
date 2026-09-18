@@ -159,10 +159,26 @@ function stagingList(ul,opts){
     // 被历史结果占满；失败保留到下次点同一操作前，方便看清原因；成功不额外提示——优化有「已优化」徽章、
     // 落库有「已投原生」徽章，各自已经是"成功了"的证明，2026-09-19 把落库也接进同一套异步管线时补）。
     const oc=dv.optimize,dc=dv.deliver;
+    // "卡在 pending 但 busy 已经变 false"＝上次处理被服务/设备重启打断，状态没能写成
+    // ok/failed（2026-09-19 真机撞过：进程被摔炸后忙锁在内存里、重启即清零，但 sidecar
+    // 里的 pending 记录留在磁盘上）——不是"还在跑"，之前这种状态界面上什么都不显示，跟"点了
+    // 没反应"没区别；现在单独标出来，别再跟"真的在跑"混在一起看。
+    const stalePending=k=>k&&k.status==='pending'&&!it.busy;
     const ob=it.busy?` <span class="badge" title="${T('transfer.staging.processing.title')}">${T('transfer.staging.processing.badge')}</span>`
-      :(oc&&oc.status==='failed'?` <span class="badge off" title="${oc.message}">${T('transfer.staging.optimizeFailed.badge')}</span>`:'')
+      :(stalePending(oc)||stalePending(dc)?` <span class="badge off" title="${T('transfer.staging.stalePending.title')}">${T('transfer.staging.stalePending.badge')}</span>`:'')
+      +(oc&&oc.status==='failed'?` <span class="badge off" title="${oc.message}">${T('transfer.staging.optimizeFailed.badge')}</span>`:'')
       +(dc&&dc.status==='failed'?` <span class="badge off" title="${dc.message}">${T('transfer.staging.deliverFailed.badge')}</span>`:'');
     li.innerHTML=`<span><b>${it.name}</b> <span class="badge">${fmt}</span> ${st}${dl}${rb}${ob} <span class="small">${fmtB(it.bytes)}${hint}</span></span>`;
+    // 报错/进度原因以前只写进徽章的 title（hover 才看得到，触屏设备摸不到）——补一行可见小字，跟
+    // 上面 167 行"禁用态按钮原因"同一套做法（2026-09-19 用户反馈"报错最下方显示错误原因"）。
+    // 优先级：真在跑且有进度文案（漫画拆分卷逐份汇报）＞ 投递失败 ＞ 优化失败 ＞ 处理被打断。
+    const inProgress=it.busy&&dc&&dc.status==='pending'&&dc.message;
+    const statusMsg=inProgress?dc.message
+      :dc&&dc.status==='failed'?T('transfer.staging.deliverFailedPrefix')+dc.message
+      :oc&&oc.status==='failed'?T('transfer.staging.optimizeFailedPrefix')+oc.message
+      :(stalePending(oc)||stalePending(dc))?T('transfer.staging.stalePending.title'):'';
+    // 进度汇报是中性信息，不该跟失败一样标红——只有失败/被打断才用 --bad。
+    if(statusMsg){const line=document.createElement('div');line.className='small';line.style.cssText='flex-basis:100%;margin-top:.2em'+(inProgress?'':';color:var(--bad)');line.textContent=statusMsg;li.appendChild(line)}
     const right=document.createElement('span');right.style.cssText='display:flex;gap:.4em;flex-wrap:wrap;align-items:center';
     // 禁用态按钮的原因（超限/未安装）以前只写进 title——触屏设备摸不到 hover，等于完全看不到为什么点
     // 不了、该去哪解决（2026-09-09 审计发现）。现在禁用时额外补一行可见小字，跟 title 内容一样，
