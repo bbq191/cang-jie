@@ -30,7 +30,7 @@ reMarkable Paper Pro Move 的**读书与阅读质量层**：一个网页，把�
                          · 漫画（EPUB）自动识别保画质+裁边，超限按卷拆分   · 落库记录徽章（含加入原生后的渲染自检）/ 清理已落库 / 剩余空间
 ```
 
-![shelf 数据流：三层·三动作正交（旧图，含已砍的 host 一路，未重画）](docs/diagrams/data-flow.svg)
+![传书 EPUB 线：三层·三动作正交](docs/diagrams/epub-line-dataflow.svg)（详细架构见 `docs/传书EPUB线架构.md`）
 
 **统一规则**：所有书**只落母版库**——网页、inbox 都没有直投读器的路径；"入库是入库，优化是优化，落库是落库"。
 入库来源只剩网页上传/抓网文/scp 进 inbox 三条，**入库时不再有"顺带优化/顺带转格式"这一步**（那是
@@ -76,7 +76,7 @@ reMarkable Paper Pro Move 的**读书与阅读质量层**：一个网页，把�
 
 | 服务 | 路由 |
 |---|---|
-| books | `GET /events`（SSE） · `GET /status` · `GET /inbox` · `POST /inbox/{retry,delete}` · `GET /staging` → `{items, freeBytes}`（条目 `delivered.render`＝投原生后的渲染自检 `{uuid,pages,expected,status}`）· `POST /staging`（multipart 原样入库）· `POST /staging/optimize {name}`（2026-09-19 起不再分档位，永远跑完整清洗+优化）· `POST /staging/deliver {name, folder?}`（folder 空＝配置缺省文件夹；folder 非空且真不存在会先经 mkdir 队列同步等真建出来再投，最长等 20 秒，等不到就原样落书库根，见 `staging.rs::ensure_folder`；EPUB 投完起线程等 xochitl 渲染、核对页数，结果推 `books/render` 事件；2026-09-19 起不再有 `keep` 参数，母版库条目永远保留）· `POST /staging/mark {name, target}` · `POST /staging/fetch-article {url, optimize?}`（`optimize` 缺省 false，请求了就抓完紧接着跑一遍「清洗＋优化」再落库，跟母版库列表里点「优化」是同一个函数，见白皮书 §03ap） · `POST /staging/delete {name}` · `GET /staging/render/{uuid}`（xochitl 渲染缓存 PDF，原给已砍的 `doctor --render` CLI 取回量测用，接口本身还在，只是没有自动化消费方了）· **原生回收站队列** `POST /trash/add {uuid, name}`（name 须与书库 visibleName 相符）· `GET /trash/pending`（Sidebar 代理 qmd 拉取，由 xochitl 自己的 `selectionMoveToTrash` 执行）· `GET /trash` · **原生建文件夹队列** `POST /mkdir/add {name}` · `GET /mkdir/pending`（MainView 代理 shelf-mkdir-agent.qmd 拉取，调 xochitl 自己的 `Library.createCollection` 执行）· `GET /mkdir` |
+| books | `GET /events`（SSE） · `GET /status` · `GET /inbox` · `POST /inbox/{retry,delete}` · `GET /staging` → `{items, freeBytes}`（条目 `delivered.render`＝投原生后的渲染自检 `{uuid,pages,expected,status}`）· `POST /staging`（multipart 原样入库）· `POST /staging/optimize {name}`（2026-09-19 起不再分档位，永远跑完整清洗+优化）· `POST /staging/deliver {name, folder?}`（folder 空＝书库根目录，2026-09-19 起去掉"留空落配置缺省文件夹"这条隐藏行为；folder 非空且真不存在会先经 mkdir 队列同步等真建出来再投，最长等 20 秒，等不到就原样落书库根，见 `staging.rs::ensure_folder`；EPUB 投完起线程等 xochitl 渲染、核对页数，结果推 `books/render` 事件；2026-09-19 起不再有 `keep` 参数，母版库条目永远保留）· `POST /staging/mark {name, target}` · `POST /staging/fetch-article {url, optimize?}`（`optimize` 缺省 false，请求了就抓完紧接着跑一遍「清洗＋优化」再落库，跟母版库列表里点「优化」是同一个函数，见白皮书 §03ap） · `POST /staging/delete {name}` · `GET /staging/render/{uuid}`（xochitl 渲染缓存 PDF，原给已砍的 `doctor --render` CLI 取回量测用，接口本身还在，只是没有自动化消费方了）· **原生回收站队列** `POST /trash/add {uuid, name}`（name 须与书库 visibleName 相符）· `GET /trash/pending`（Sidebar 代理 qmd 拉取，由 xochitl 自己的 `selectionMoveToTrash` 执行）· `GET /trash` · **原生建文件夹队列** `POST /mkdir/add {name}` · `GET /mkdir/pending`（MainView 代理 shelf-mkdir-agent.qmd 拉取，调 xochitl 自己的 `Library.createCollection` 执行）· `GET /mkdir` |
 | koreader | `GET /status` · `GET /books[?folder=]` · `POST /books/adopt {name, folder}`（从母版库落书）· `GET|POST /fonts` · `DELETE /fonts/{file}` · `GET|POST /dicts[?name=]` · `GET|POST /config/{settings\|defaults\|gestures}[?dry_run=1]` |
 | fonts | `GET /` · `POST /` · `DELETE /{family}` · `PUT /config {emboldenCjkFallback}` · `GET /status` |
 | wallpapers | `GET /` · `POST /[?activate=1]` · `PUT /current {name}` · `PUT /mode {mode}` · `DELETE /{name}` · `GET /{name}` · `GET /status` → `{native:{enabled,path,restartPending}}` |
@@ -108,6 +108,7 @@ shelf/
 ├── xovi/                              font-menu-dynamic{,-3.27}.qmd 字体菜单读 fonts.json 动态追加（3.28 / 3.27 真机通）· shelf-trash-agent.qmd 原生回收站代理（Sidebar 注入，拉 book-serve /trash/pending）· shelf-mkdir-agent.qmd 原生建文件夹代理（MainView 注入，拉 book-serve /mkdir/pending，调 `Library.createCollection`；2026-09-15 因无消费方删过、2026-09-19 复活并真机验证，见白皮书对应记录）；改 qmd 先用 qmldiff CLI 离线实跑（白皮书 §04）
 ├── koreader/                          配置即代码：profile/{settings.reader.patch,defaults.custom,gestures.patch}.lua + fonts.txt/dicts.txt + merge.lua
 └── docs/
+    ├── 传书EPUB线架构.md                传书模块 EPUB 线**当前状态**参考文档（非时间顺序日志）：架构/数据流/优化管线/内存安全设计/漫画拆分/API 一览，四张 SVG 图，想快速建立心智模型看这份
     ├── reMarkable书架白皮书.md          书架侧设计决策 + 真机记录（服务/UI/母版库/字体/管理台）；开头有「现状总览」
     └── bookconv优化白皮书.md            书籍优化引擎：清洗层/优化遍/脚注/图片/格式转换/★xochitl 渲染硬规则/版本演进
 ```

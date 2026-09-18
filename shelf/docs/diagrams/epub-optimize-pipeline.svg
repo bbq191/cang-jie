@@ -1,0 +1,89 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1040 560" font-family="sans-serif">
+  <defs>
+    <marker id="eop-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#555"/>
+    </marker>
+  </defs>
+
+  <rect x="0" y="0" width="1040" height="560" fill="#fbfbfa"/>
+  <text x="520" y="30" text-anchor="middle" font-size="18" font-weight="bold" fill="#1a1a1a">EPUB 优化：两阶段流式管线（optimize_epub_file_streaming）</text>
+  <text x="520" y="50" text-anchor="middle" font-size="12.5" fill="#6a6a6a">2026-09-19 因 552MB 真书 VmRSS 冲 1.4GB+ 真机事故而生；峰值＝"一张图 + 全书文字部分"，不随书体积线性涨</text>
+
+  <!-- input -->
+  <rect x="20" y="80" width="150" height="56" rx="8" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.5"/>
+  <text x="95" y="102" text-anchor="middle" font-size="12" font-weight="bold" fill="#1a1a1a">输入 EPUB</text>
+  <text x="95" y="120" text-anchor="middle" font-size="10" fill="#3a3a3a">母版库文件（磁盘）</text>
+
+  <line x1="170" y1="108" x2="210" y2="108" stroke="#555" stroke-width="1.5" marker-end="url(#eop-arrow)"/>
+
+  <!-- phase 1 -->
+  <rect x="215" y="70" width="380" height="150" rx="10" fill="#fff3d6" stroke="#c9971f" stroke-width="1.8"/>
+  <text x="405" y="92" text-anchor="middle" font-size="13.5" font-weight="bold" fill="#1a1a1a">阶段一：规划（轻量）</text>
+  <rect x="232" y="102" width="346" height="30" rx="5" fill="#ffffff" stroke="#c9971f" stroke-width="1"/>
+  <text x="405" y="122" text-anchor="middle" font-size="10.5" fill="#2a2a2a">逐条目遍历：html/css/opf/ncx 整读；图片条目留空占位</text>
+  <rect x="232" y="138" width="346" height="26" rx="5" fill="#ffffff" stroke="#c9971f" stroke-width="1"/>
+  <text x="405" y="156" text-anchor="middle" font-size="10.5" fill="#2a2a2a">wash_entries 十步清洗（占位不影响文字/标签判断）</text>
+  <rect x="232" y="170" width="346" height="26" rx="5" fill="#ffffff" stroke="#c9971f" stroke-width="1"/>
+  <text x="405" y="188" text-anchor="middle" font-size="10.5" fill="#2a2a2a">comic_detect 判定 + TOC 处理 + 脚注重排（Anchor/Inline）</text>
+
+  <line x1="405" y1="220" x2="405" y2="250" stroke="#555" stroke-width="1.5" marker-end="url(#eop-arrow)"/>
+
+  <!-- phase 2 -->
+  <rect x="150" y="252" width="510" height="200" rx="10" fill="#eaf7ec" stroke="#3e8e51" stroke-width="1.8"/>
+  <text x="405" y="274" text-anchor="middle" font-size="13.5" font-weight="bold" fill="#1a1a1a">阶段二：逐图片流式处理（真正耗内存的部分）</text>
+  <text x="405" y="290" text-anchor="middle" font-size="10.5" fill="#3a3a3a">循环体，每张图独立作用域，出循环即释放——下一张开始前上一张已收回</text>
+
+  <rect x="170" y="300" width="140" height="60" rx="6" fill="#ffffff" stroke="#3e8e51" stroke-width="1"/>
+  <text x="240" y="320" text-anchor="middle" font-size="10.5" font-weight="bold" fill="#1a1a1a">按需读</text>
+  <text x="240" y="336" text-anchor="middle" font-size="9.5" fill="#4a4a4a">重开文件 seek</text>
+  <text x="240" y="350" text-anchor="middle" font-size="9.5" fill="#4a4a4a">取这张图真实字节</text>
+
+  <line x1="310" y1="330" x2="336" y2="330" stroke="#555" stroke-width="1.3" marker-end="url(#eop-arrow)"/>
+
+  <rect x="340" y="300" width="140" height="60" rx="6" fill="#ffffff" stroke="#3e8e51" stroke-width="1"/>
+  <text x="410" y="317" text-anchor="middle" font-size="10.5" font-weight="bold" fill="#1a1a1a">像素上限 guard</text>
+  <text x="410" y="333" text-anchor="middle" font-size="9.5" fill="#4a4a4a">&gt;900 万像素</text>
+  <text x="410" y="347" text-anchor="middle" font-size="9.5" fill="#4a4a4a">直接跳过、原样保留</text>
+
+  <line x1="480" y1="330" x2="506" y2="330" stroke="#555" stroke-width="1.3" marker-end="url(#eop-arrow)"/>
+
+  <rect x="510" y="300" width="140" height="60" rx="6" fill="#ffffff" stroke="#3e8e51" stroke-width="1"/>
+  <text x="580" y="317" text-anchor="middle" font-size="10.5" font-weight="bold" fill="#1a1a1a">trim+downscale</text>
+  <text x="580" y="333" text-anchor="middle" font-size="9.5" fill="#4a4a4a">漫画：裁边+95质量</text>
+  <text x="580" y="347" text-anchor="middle" font-size="9.5" fill="#4a4a4a">普通：954×1696 框</text>
+
+  <line x1="580" y1="360" x2="580" y2="384" stroke="#555" stroke-width="1.3" marker-end="url(#eop-arrow)"/>
+  <line x1="240" y1="360" x2="240" y2="384" stroke="#8a8a8a" stroke-width="1.1" stroke-dasharray="3 2"/>
+  <line x1="240" y1="384" x2="560" y2="384" stroke="#8a8a8a" stroke-width="1.1" stroke-dasharray="3 2"/>
+
+  <rect x="340" y="386" width="240" height="46" rx="6" fill="#ffffff" stroke="#3e8e51" stroke-width="1"/>
+  <text x="460" y="404" text-anchor="middle" font-size="10.5" font-weight="bold" fill="#1a1a1a">写出 + 丢弃</text>
+  <text x="460" y="420" text-anchor="middle" font-size="9.5" fill="#4a4a4a">直接写进输出 zip，缓冲区立即释放</text>
+
+  <line x1="405" y1="432" x2="405" y2="450" stroke="#3e8e51" stroke-width="1.3" stroke-dasharray="2 2"/>
+  <text x="405" y="446" text-anchor="middle" font-size="9.5" fill="#3e8e51">on_progress(done,total) 回调</text>
+
+  <line x1="660" y1="352" x2="700" y2="352" stroke="#555" stroke-width="1.5" marker-end="url(#eop-arrow)"/>
+
+  <!-- output -->
+  <rect x="705" y="322" width="150" height="60" rx="8" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.5"/>
+  <text x="780" y="344" text-anchor="middle" font-size="12" font-weight="bold" fill="#1a1a1a">输出 EPUB</text>
+  <text x="780" y="360" text-anchor="middle" font-size="9.5" fill="#3a3a3a">回写母版库，原文件覆盖</text>
+  <text x="780" y="374" text-anchor="middle" font-size="9.5" fill="#3a3a3a">埋 OPTIMIZE_VERSION 幂等标记</text>
+
+  <!-- progress sidebar -->
+  <rect x="880" y="252" width="140" height="200" rx="8" fill="#fdf3f0" stroke="#b5541f" stroke-width="1.4"/>
+  <text x="950" y="272" text-anchor="middle" font-size="11" font-weight="bold" fill="#1a1a1a">book-serve 侧</text>
+  <text x="950" y="290" text-anchor="middle" font-size="9.5" fill="#5a3a2a">spawn_optimize 起线程</text>
+  <text x="950" y="306" text-anchor="middle" font-size="9.5" fill="#5a3a2a">每 5 条目才落一次盘</text>
+  <text x="950" y="320" text-anchor="middle" font-size="9.5" fill="#5a3a2a">（节流，避免真实 I/O</text>
+  <text x="950" y="334" text-anchor="middle" font-size="9.5" fill="#5a3a2a">开销随条目数线性涨）</text>
+  <text x="950" y="356" text-anchor="middle" font-size="9.5" fill="#5a3a2a">首尾两条永远落盘</text>
+  <text x="950" y="372" text-anchor="middle" font-size="9.5" fill="#5a3a2a">写 sidecar.progress</text>
+  <text x="950" y="388" text-anchor="middle" font-size="9.5" fill="#5a3a2a">+ bus.publish → SSE</text>
+  <text x="950" y="410" text-anchor="middle" font-size="9.5" fill="#5a3a2a">网页画真百分比进度条</text>
+
+  <text x="520" y="490" text-anchor="middle" font-size="12" fill="#3a3a3a">内存版 optimize_epub_with（整本读入一次性产出）保留给测试/CLI 小书场景，业务逻辑函数共用，逐字节对拍一致</text>
+  <text x="520" y="512" text-anchor="middle" font-size="11" fill="#8a8a8a">像素上限 900 万取值史：第一版按"3 字节/像素"理论估算给 2500 万，真机 VmHWM 撞到 230MB+ 几乎白修</text>
+  <text x="520" y="530" text-anchor="middle" font-size="11" fill="#8a8a8a">改用真机实测数据（不同像素数下实测 VmHWM）重新校准，才真正把峰值压到 100MB 量级以下</text>
+</svg>
