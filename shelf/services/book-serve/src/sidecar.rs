@@ -22,8 +22,6 @@ pub struct Delivered {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub optimize: Option<OptimizeCheck>,
     /// 最近一次「落库」的结果（`staging::Staging::spawn_deliver` 异步执行时写，2026-09-19）。
-    /// `keep=false` 成功落库后书本身已从母版库删除、这个字段也就跟着边车一起没了——只有「留母版」
-    /// 或「失败」的落库才会真的被人看到。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deliver: Option<DeliverCheck>,
 }

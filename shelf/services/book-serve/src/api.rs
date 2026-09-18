@@ -1,12 +1,13 @@
 //! HTTP 适配层（唯一碰 http 类型的地方，只做取参 + 调领域方法 + 回执）。路由（经网关时前缀 `/api/books`）：
 //! `GET /status` · `GET /inbox` · `POST /inbox/retry {name}` · `POST /inbox/delete {name}`
-//! 母版库：`GET /staging` → `{items, freeBytes}` · `POST /staging`（multipart，原样入库）· `POST /staging/optimize {name, mode}`
-//! · `POST /staging/deliver {name, folder?, keep?}` · `POST /staging/mark {name, target}` · `POST /staging/fetch-article {url, optimize?}`
+//! 母版库：`GET /staging` → `{items, freeBytes}` · `POST /staging`（multipart，原样入库）· `POST /staging/optimize {name}`
+//! （2026-09-19 起不再分档位，只有一种"清洗+优化"行为）
+//! · `POST /staging/deliver {name, folder?}`（2026-09-19 起投完永远保留母版，不再有 `keep` 参数）· `POST /staging/mark {name, target}` · `POST /staging/fetch-article {url, optimize?}`
 //! · `POST /staging/delete {name}` · `GET /staging/render/{uuid}`（xochitl 渲染缓存 PDF，doctor --render 用）· `GET /events`（SSE：母版库/inbox 变更即推，网页零轮询）。
 //! 原生回收站队列：`POST /trash/add {uuid, name}`（name 必须与书库 visibleName 相符）· `GET /trash/pending` → `{uuids}`（Sidebar 代理 qmd 拉取执行）· `GET /trash`。
 //! 2026-09-05 起规则统一"所有书只落母版库"：旧 `POST /?target=` 直投路已删（`/staging*` 是唯一入口）。
 use crate::service_state::State;
-use crate::staging::{OptimizeMode, Reader, StagingStore};
+use crate::staging::{Reader, StagingStore};
 use rmsvc_core::asset::{self, AssetUploadFlow};
 use rmsvc_core::http::{bind, ApiError, ApiResult, Reply, Request, Router};
 use std::sync::Arc;
@@ -34,18 +35,19 @@ pub fn router(st: Arc<State>) -> Router {
             // 回"已开始"；真正结果通过 books/staging 事件 + GET /staging 列表里的 delivered.optimize 呈现。
             let j = r.json()?;
             let name = j.str("name")?.to_string();
-            s.staging.spawn_optimize(&name, OptimizeMode::parse(j.str_or("mode", "auto")), s.bus.clone()).map_err(ApiError::bad)?;
+            s.staging.spawn_optimize(&name, s.bus.clone()).map_err(ApiError::bad)?;
             s.bus.publish("books", "staging"); // 立即推一次，UI 马上看到这条目进入 busy 状态
             Ok(Reply::ok(&serde_json::json!({"ok": true, "message": format!("《{name}》已开始优化，完成后自动刷新"), "async": true})))
         }))
         .post("/staging/deliver", bind(&st, |s, r| {
             // 异步：耗时的落库（超限漫画按卷拆分要挨个建包+上传，真机能到分钟级）挪到后台线程，这里
             // 立即回"已开始"；真正结果通过 books/staging 事件 + GET /staging 列表里的 delivered.deliver
-            // 呈现（渲染自检、mark_delivered、keep=false 清母版库都在线程内部完成，见 spawn_deliver）。
+            // 呈现（渲染自检、mark_delivered 都在线程内部完成，见 spawn_deliver）。
             let j = r.json()?;
             let name = j.str("name")?.to_string();
-            // 母版库默认保留（可再投另一读器对照）；folder 空＝配置缺省。
-            s.staging.spawn_deliver(&name, j.str_or("folder", ""), j.bool_or("keep", true), s.bus.clone()).map_err(ApiError::bad)?;
+            // 母版库永远保留（可再投另一读器对照，2026-09-19 起不再有"投完自动删除"这条路）；
+            // folder 空＝配置缺省。
+            s.staging.spawn_deliver(&name, j.str_or("folder", ""), s.bus.clone()).map_err(ApiError::bad)?;
             s.bus.publish("books", "staging"); // 立即推一次，UI 马上看到这条目进入 busy 状态
             Ok(Reply::ok(&serde_json::json!({"ok": true, "message": format!("《{name}》已开始投递，完成后自动刷新"), "async": true})))
         }))

@@ -31,7 +31,7 @@ const onUsb=/^10\.11\.99\./.test(location.hostname);
    里异步填充，填充完成之前 `T()` 兜底显示 key 本身（不留空白，也不会悄悄掩盖翻译缺口）。
    ⚠️ `T()` 只能在"渲染/交互时才执行"的函数体里调用——`I18N` 是异步填充的，如果把 `T()` 调用塞进
    模块顶层 `const 模板字符串="..."` 这种脚本解析时就立即求值一次、以后不会重新求值的地方，结果会被
-   烤死成 key 兜底文本，永远显示不出真翻译，还不报错（`GUIDE`/`OPTTABLE` 改成零参数函数
+   烤死成 key 兜底文本，永远显示不出真翻译，还不报错（`GUIDE` 改成零参数函数
    就是为了避开这个坑，见各自定义处）。 */
 let I18N={};
 /* vars：可选的 {占位符名: 值} 插值表，key 对应的文案里用 {占位符名} 占位，逐个字符串替换（次数少，
@@ -133,16 +133,12 @@ const GUIDE=()=>`<details class="cmp"><summary>${T('transfer.guide.summary')}</s
 <dt>${T('transfer.guide.unsure.dt')}</dt><dd>${T('transfer.guide.unsure.dd')}</dd>
 </dl></details>`;
 
-/* 母版库「优化」档位说明（对应 /staging/optimize 的 mode） */
-const OPTTABLE=()=>`<div class="tblwrap"><table class="cmp"><thead><tr><th>${T('transfer.opttable.colTier')}</th><th>${T('transfer.opttable.colWhat')}</th><th>${T('transfer.opttable.colWhen')}</th></tr></thead><tbody>
-<tr><th class="pick">${T('transfer.opttable.full.tier')}<br><span class="small">${T('transfer.opttable.default')}</span></th><td>${T('transfer.opttable.full.what')}</td><td>${T('transfer.opttable.full.when')}</td></tr>
-<tr><th>${T('transfer.opttable.keepSpacing.tier')}</th><td>${T('transfer.opttable.keepSpacing.what')}</td><td>${T('transfer.opttable.keepSpacing.when')}</td></tr>
-<tr><th>${T('transfer.opttable.plain.tier')}</th><td>${T('transfer.opttable.plain.what')}</td><td>${T('transfer.opttable.plain.when')}</td></tr>
-</tbody></table></div>`;
-
-/* 母版库列表。按格式门控按钮：EPUB→优化(未优化时)/投原生/加入 KO；PDF→投原生/加入 KO；其它→只能加入 KO。
-   CBZ 漫画只能加入 KOReader（不投原生）；超体积门（nativeLimit 字节）的书灰掉投原生。「加入 KOReader」按 koInstalled 门控。
-   opts: {items,q,fmt,st,xFolder(),kFolder(),mode(),clear(),koInstalled,nativeLimit,refresh()} */
+/* 母版库列表。按格式门控按钮：EPUB→优化(未优化时)/加入原生书库/加入 KO；PDF→加入原生书库/加入 KO；其它→只能加入 KO。
+   CBZ 漫画只能加入 KOReader（不加入原生书库）；超体积门（nativeLimit 字节）的书灰掉「加入原生书库」。「加入 KOReader」按 koInstalled 门控。
+   2026-09-19 用户明确要求去掉两样东西：① 优化分档位（不再有 mode 选择，永远跑完整清洗+优化）；
+   ② 投完自动从母版库删除（母版永远保留，用户自己删）——opts 里原来的 `mode()`/`clear()` 两个
+   参数已删，跟着一起删的还有 xFolder 那个"书库/批注/自定义"三选一预设（见 renderTransfer）。
+   opts: {items,q,fmt,st,xFolder(),kFolder(),koInstalled,nativeLimit,refresh()} */
 function stagingList(ul,opts){
   ul.innerHTML='';
   const q=(opts.q||'').toLowerCase();
@@ -193,16 +189,17 @@ function stagingList(ul,opts){
     // 再次优化全部先禁掉，防止跟正在跑的优化并发冲突（2026-09-18 真机反馈：点了优化又点删除）；
     // busy 状态由服务端权威判定（GET /staging 的 busy 字段），完成后 SSE 推事件、列表自动刷新解禁。
     const busyTitle=T('transfer.staging.busy.btnTitle');
-    if(it.format==='epub'&&!it.optimized)btn(T('transfer.staging.btn.optimize'),false,()=>postJ('/api/books/staging/optimize',{name:it.name,mode:opts.mode()}),it.busy,busyTitle);
+    if(it.format==='epub'&&!it.optimized)btn(T('transfer.staging.btn.optimize'),false,()=>postJ('/api/books/staging/optimize',{name:it.name}),it.busy,busyTitle);
     // 体积门：超过 xochitl /upload 上限的书灰掉按钮（服务端同样拦），提示走电脑分卷。EPUB 例外——
     // 超限的 EPUB 漫画服务端会按卷拆分投递（2026-09-18，见 book-serve::Staging::try_deliver_split），
     // 按钮不能提前灰掉，得让服务端判过是不是漫画才知道能不能救；PDF 没有这条救援路径，继续照原样灰。
     const tooBig=opts.nativeLimit&&it.bytes>opts.nativeLimit&&it.format!=='epub';
     // 落库改异步同 optimize（2026-09-19：超限漫画按卷拆分要挨个建包+上传，真机能到分钟级，之前同步
     // 阻塞的体验跟优化改异步前一样像卡死）；点了立即回"已开始"，不再 alert 最终结果——完成状态跟优化
-    // 一样靠徽章看（成功＝「已投原生」时间戳徽章出现，失败＝「上次投递失败」徽章，见上面 ob 那段）。
-    if(it.format==='epub'||it.format==='pdf')btn(T('transfer.staging.btn.deliverNative'),true,()=>postJ('/api/books/staging/deliver',{name:it.name,keep:!opts.clear(),folder:opts.xFolder()}),it.busy||tooBig,it.busy?busyTitle:T('transfer.staging.btn.tooBigTitle',{limit:fmtB(opts.nativeLimit)}));
-    btn(T('transfer.staging.btn.addKoreader'),true,async()=>{const r=await postJ('/api/koreader/books/adopt',{name:it.name,folder:opts.kFolder()});if(r.ok!==false){await postJ('/api/books/staging/mark',{name:it.name,target:'koreader'});if(opts.clear())await postJ('/api/books/staging/delete',{name:it.name})}},it.busy||!opts.koInstalled,it.busy?busyTitle:T('transfer.staging.btn.koNotInstalled'));
+    // 一样靠徽章看（成功＝「已加入原生」时间戳徽章出现，失败＝「上次加入失败」徽章，见上面 ob 那段）。
+    // 2026-09-19 去掉「投完自动删除」：母版永远保留，不再传 keep（服务端也已删这个参数）。
+    if(it.format==='epub'||it.format==='pdf')btn(T('transfer.staging.btn.deliverNative'),true,()=>postJ('/api/books/staging/deliver',{name:it.name,folder:opts.xFolder()}),it.busy||tooBig,it.busy?busyTitle:T('transfer.staging.btn.tooBigTitle',{limit:fmtB(opts.nativeLimit)}));
+    btn(T('transfer.staging.btn.addKoreader'),true,async()=>{const r=await postJ('/api/koreader/books/adopt',{name:it.name,folder:opts.kFolder()});if(r.ok!==false)await postJ('/api/books/staging/mark',{name:it.name,target:'koreader'})},it.busy||!opts.koInstalled,it.busy?busyTitle:T('transfer.staging.btn.koNotInstalled'));
     // 单行最多 5 徽章+4 按钮时，"删除"（销毁）跟"优化"（编辑）视觉权重完全一样，只靠文案区分
     // （2026-09-09 审计发现）；`.btn-bad` 早就存在但只用在转写失败按钮上，这里补上，破坏性操作至少
     // 颜色上跟常规操作分开。
@@ -239,29 +236,26 @@ function renderTransfer(sec){sec.innerHTML=`
   </div>
   <div class="subpanel">
     <div class="card"><h3 style="margin-top:0">${T('transfer.staging.title')} <span class="small" id="stgcap"></span></h3>
-      <div class="row"><label class="small" for="folderPreset">${T('transfer.staging.folderPreset.label')}</label><select id="folderPreset" style="max-width:13em"><option value="lib">${T('transfer.staging.folderPreset.lib')}</option><option value="annot">${T('transfer.staging.folderPreset.annot')}</option><option value="custom">${T('transfer.staging.folderPreset.custom')}</option></select><input type="text" id="folder" placeholder="${T('transfer.staging.folder.placeholder')}" style="display:none;max-width:10em">
+      <div class="row"><label class="small" for="folder">${T('transfer.staging.folder.label')}</label><input type="text" id="folder" list="xodirs" placeholder="${T('transfer.staging.folder.placeholder')}" style="max-width:10em"><datalist id="xodirs"></datalist>
         <label class="small" for="kfolder">${T('transfer.staging.kfolder.label')}</label><input type="text" id="kfolder" list="kodirs" placeholder="${T('transfer.staging.kfolder.placeholder')}" style="max-width:9em"><datalist id="kodirs"></datalist></div>
-      <div class="row"><label class="small" for="optmode">${T('transfer.staging.optmode.label')}</label><select id="optmode" style="max-width:15em"><option value="auto">${T('transfer.staging.optmode.auto')}</option><option value="keep-spacing">${T('transfer.staging.optmode.keepSpacing')}</option><option value="plain">${T('transfer.staging.optmode.plain')}</option></select>
-        <label class="toggle"><input type="checkbox" id="stgclear"> ${T('transfer.staging.clearToggle')}</label></div>
-      <details class="cmp"><summary>${T('transfer.staging.optDetailsSummary')}</summary>${OPTTABLE()}<p class="small">${T('transfer.staging.optNote')}</p></details>
+      <details class="cmp"><summary>${T('transfer.staging.optDetailsSummary')}</summary><p class="small">${T('transfer.staging.optNote')}</p></details>
       <div class="row"><input type="text" id="stgq" placeholder="${T('transfer.staging.searchPlaceholder')}" aria-label="${T('transfer.staging.searchAria')}" style="flex:1;min-width:8em"><select id="stgfmt" aria-label="${T('transfer.staging.fmtFilterAria')}" style="max-width:8em"><option value="">${T('transfer.staging.fmtAll')}</option><option value="epub">EPUB</option><option value="pdf">PDF</option><option value="other">${T('transfer.staging.fmtOther')}</option></select><select id="stgst" aria-label="${T('transfer.staging.stFilterAria')}" style="max-width:8em"><option value="">${T('transfer.staging.stAll')}</option><option value="0">${T('transfer.staging.stRaw')}</option><option value="1">${T('transfer.staging.stDone')}</option></select><button class="btn" id="stgpurge" title="${T('transfer.staging.purgeTitle')}">${T('transfer.staging.purgeBtn')}</button></div>
       <div class="small" id="stgfree" style="margin:-.3em 0 .4em"></div>
       <ul class="list" id="stglist"></ul>
     </div>
   </div>`;
-  let annotFolder='',koInstalled=false,items=[],nativeLimit=0;
+  let koInstalled=false,items=[],nativeLimit=0;
   const g=id=>$('#'+id,sec);
-  const xFolder=()=>{const p=g('folderPreset').value;return p==='lib'?'':p==='annot'?annotFolder:g('folder').value.trim()};
-  const syncFolder=()=>{g('folder').style.display=g('folderPreset').value==='custom'?'':'none'};
-  // 落库设置记在本机（per-viewer 便利态）
-  [['folderPreset','fpreset','lib'],['folder','folder',''],['kfolder','kfolder',''],['optmode','optmode','auto']].forEach(([id,k,d])=>{g(id).value=LS.get(k,d);['input','change'].forEach(ev=>g(id).addEventListener(ev,()=>{LS.set(k,g(id).value);if(id==='folderPreset')syncFolder()}))});
-  g('stgclear').checked=LS.get('stgclear','0')==='1';g('stgclear').onchange=()=>LS.set('stgclear',g('stgclear').checked?'1':'0');
-  syncFolder();
-  const render=()=>stagingList(g('stglist'),{items,q:g('stgq').value,fmt:g('stgfmt').value,st:g('stgst').value,xFolder,kFolder:()=>g('kfolder').value.trim(),mode:()=>g('optmode').value,clear:()=>g('stgclear').checked,koInstalled,nativeLimit,refresh:()=>refresh()});
+  // 落库设置记在本机（per-viewer 便利态）。2026-09-19：原来的「书库/批注/自定义」三选一预设
+  // （`folderPreset`）删掉，改跟 KOReader 目录同一个模式——自由输入框 + datalist 真实候选
+  // （见下面 refresh() 里的 xodirs 填充），留空＝落配置缺省的书库文件夹。
+  [['folder','folder',''],['kfolder','kfolder','']].forEach(([id,k,d])=>{g(id).value=LS.get(k,d);['input','change'].forEach(ev=>g(id).addEventListener(ev,()=>LS.set(k,g(id).value)))});
+  const render=()=>stagingList(g('stglist'),{items,q:g('stgq').value,fmt:g('stgfmt').value,st:g('stgst').value,xFolder:()=>g('folder').value.trim(),kFolder:()=>g('kfolder').value.trim(),koInstalled,nativeLimit,refresh:()=>refresh()});
   ['stgq','stgfmt','stgst'].forEach(id=>['input','change'].forEach(ev=>g(id).addEventListener(ev,render)));
   const refresh=async()=>{const [d,s,k,kb]=await Promise.all([j('/api/books/staging'),j('/api/books/status'),j('/api/koreader/status'),j('/api/koreader/books')]);
-    if(s.ok&&s.annotFolder)annotFolder=s.annotFolder;nativeLimit=(s.ok&&s.nativeUploadLimitBytes)||0;koInstalled=!!(k.ok&&k.installed);
-    // KOReader 现有目录 → 下拉候选（免手打错）
+    nativeLimit=(s.ok&&s.nativeUploadLimitBytes)||0;koInstalled=!!(k.ok&&k.installed);
+    // 原生书库/KOReader 现有目录 → 下拉候选（免手打错，跟真实文件夹保持一致，不是写死的预设）
+    g('xodirs').innerHTML=(s.ok?s.xochitlFolders||[]:[]).map(n=>`<option value="${n}">`).join('');
     g('kodirs').innerHTML=(kb.items||[]).filter(x=>x.kind==='dir').map(x=>`<option value="${x.name}">`).join('');
     if(d.ok===false){g('stglist').innerHTML=`<li class="small" style="color:var(--bad)">${T('transfer.staging.unavailable',{msg:d.message||T('transfer.staging.notOpen')})}</li>`;g('stgcap').textContent='';return}
     items=d.items||[];const tot=items.reduce((a,b)=>a+b.bytes,0);g('stgcap').textContent=items.length?T('transfer.staging.capSummary',{count:items.length,size:fmtB(tot)}):'';
@@ -272,7 +266,7 @@ function renderTransfer(sec){sec.innerHTML=`
     for(const it of done)await postJ('/api/books/staging/delete',{name:it.name});refresh()});
   uploader($('.up',sec),()=>'/api/books/staging',()=>({}),BOOK_EXT,()=>refresh(),'/api/books/staging');   // 书籍格式原样入库；选中即按 BOOK_EXT 拦；传 dedupeApi 防重传出重复
   const am=g('artmsg'),au=g('arturl'),ag=g('artgo'),ao=g('artopt');
-  // 「同步优化」记在本机（per-viewer 便利态，跟 folderPreset/optmode 那几个一个规矩）；缺省开——网文正文
+  // 「同步优化」记在本机（per-viewer 便利态，跟 folder/kfolder 那几个一个规矩）；缺省开——网文正文
   // 没有任何 CSS（article.rs 属性白名单本来就不留 class/style），不经优化会在设备上按默认段距渲染出大片
   // 留空（真机反馈），默认帮用户把这一步做了，不想要（比如想快点抓完自己再调）可以关掉。
   ao.checked=LS.get('artopt','1')==='1';ao.onchange=()=>LS.set('artopt',ao.checked?'1':'0');

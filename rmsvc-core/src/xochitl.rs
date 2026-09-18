@@ -106,6 +106,20 @@ pub fn find_folder_by_name(dir: &Path, name: &str) -> Option<String> {
     metadata_entries(dir).into_iter().find(|(_, v)| str_of(v, "type") == "CollectionType" && is_live(v) && str_of(v, "visibleName") == name).map(|(uuid, _)| uuid)
 }
 
+/// 原生书库里所有活文件夹的名字（去重、按名排序）——给网页「加入原生书库 → 文件夹」下拉候选用，
+/// 跟 koreader-serve 给 KOReader 目录下拉候选同一个道理：反映设备上**真实存在**的文件夹，不是
+/// 写死的预设列表（2026-09-19 用户反馈：原来的「书库/批注/自定义」三选一预设看不出真实文件夹，
+/// 批注那档还常年跟书库撞成一样，见书架白皮书对应记录）。
+pub fn list_folders(dir: &Path) -> Vec<String> {
+    metadata_entries(dir)
+        .into_iter()
+        .filter(|(_, v)| str_of(v, "type") == "CollectionType" && is_live(v))
+        .map(|(_, v)| str_of(&v, "visibleName").to_string())
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect()
+}
+
 /// 给定一份文档的 uuid，读它 `.metadata` 的 `parent` 字段——就是它当前所在的设备文件夹 uuid
 /// （空串＝书库根）。找不到 `.metadata`、解析失败、或书在回收站（`parent=="trash"`），一律返回
 /// `None`，调用方按 best-effort 落书库根处理（2026-09-09 补：`note-serve` 生成章节笔记本时不再
@@ -216,6 +230,18 @@ mod tests {
         w("d.content", r#"{}"#);
         assert_eq!(find_folder_by_name(t.path(), "library"), Some("c".into()));
         assert_eq!(find_folder_by_name(t.path(), "none"), None);
+    }
+
+    #[test]
+    fn lists_folders_deduped_sorted_skipping_trash_and_documents() {
+        let t = tempfile::tempdir().unwrap();
+        let w = |n: &str, j: &str| std::fs::write(t.path().join(n), j).unwrap();
+        w("a.metadata", r#"{"type":"CollectionType","visibleName":"雪人","parent":""}"#);
+        w("b.metadata", r#"{"type":"CollectionType","visibleName":"批注","parent":""}"#);
+        w("c.metadata", r#"{"type":"CollectionType","visibleName":"批注","parent":""}"#); // 同名文件夹去重
+        w("d.metadata", r#"{"type":"CollectionType","visibleName":"回收站里的","parent":"trash"}"#);
+        w("e.metadata", r#"{"type":"DocumentType","visibleName":"这是本书不是文件夹","parent":""}"#);
+        assert_eq!(list_folders(t.path()), vec!["批注".to_string(), "雪人".to_string()]);
     }
 
     #[test]

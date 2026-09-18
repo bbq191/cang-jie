@@ -7,8 +7,6 @@ use rmsvc_core::paths::Paths;
 pub struct BookConfig {
     /// 「投入原生书库」未指定文件夹时落进的书库文件夹（visibleName；找不到→书库根）。
     pub library_folder: String,
-    /// 网页「批注文件夹」预设对应的文件夹（PDF 手写定稿）。
-    pub annot_folder: String,
     /// xochitl web 主机（`/upload`）。
     pub xochitl_host: String,
     /// `/upload` 超时（大书处理慢；超时但已送达会被判 LikelyDelivered、绝不重试）。
@@ -25,7 +23,7 @@ pub struct BookConfig {
 
 impl Default for BookConfig {
     fn default() -> Self {
-        BookConfig { library_folder: "library".into(), annot_folder: "library".into(), xochitl_host: rmsvc_core::xochitl::DEFAULT_HOST.into(), upload_timeout_secs: 300, native_upload_limit_mb: 90 }
+        BookConfig { library_folder: "library".into(), xochitl_host: rmsvc_core::xochitl::DEFAULT_HOST.into(), upload_timeout_secs: 300, native_upload_limit_mb: 90 }
     }
 }
 
@@ -44,7 +42,9 @@ mod tests {
     use super::*;
     #[test]
     fn partial_json_fills_defaults_and_ignores_retired_keys() {
-        let c: BookConfig = serde_json::from_str(r#"{"libraryFolder":"books","comicMono":true,"optimizeDirectEpub":false}"#).unwrap();
+        // annotFolder：2026-09-19 随「加入原生书库 → 文件夹」改真实文件夹下拉候选一起退役
+        // （见 rmsvc_core::xochitl::list_folders + service_state::status 的 xochitlFolders）。
+        let c: BookConfig = serde_json::from_str(r#"{"libraryFolder":"books","comicMono":true,"optimizeDirectEpub":false,"annotFolder":"批注"}"#).unwrap();
         assert_eq!(c.library_folder, "books");
         assert_eq!(c.upload_timeout_secs, 300);
         assert_eq!(c.native_upload_limit_bytes(), 90 * 1024 * 1024);

@@ -50,7 +50,10 @@ impl State {
             "ok": true,
             "uploadReachable": self.xochitl.reachable(),
             "libraryFolder": self.cfg.library_folder,
-            "annotFolder": self.cfg.annot_folder,
+            // 原生书库里真实存在的文件夹名（去重排序），给网页「加入原生书库 → 文件夹」下拉候选用——
+            // 2026-09-19 取代原来写死的「书库/批注/自定义」三选一预设（`annotFolder` 已删），跟
+            // KOReader 那边的目录下拉候选（`GET /koreader/books` 过滤 `kind==='dir'`）同一个道理。
+            "xochitlFolders": rmsvc_core::xochitl::list_folders(self.xochitl.library_dir()),
             // 投原生的体积门（字节），网页据此灰掉超限书的「投入原生书库」
             "nativeUploadLimitBytes": self.cfg.native_upload_limit_bytes(),
             "spool": {

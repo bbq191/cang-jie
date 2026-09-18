@@ -71,7 +71,7 @@ details.cmp[open]>summary::before{transform:rotate(90deg)}
 .tblwrap{overflow-x:auto;margin:.4em 0;border:1px solid var(--line);border-radius:.6em}
 table.cmp{border-collapse:collapse;width:100%;font-size:.85em;min-width:34em}
 /* 34em 的下限在手机竖屏（约 360-430px）会强制横向滚动——用量表之前单独修过（见 [data-usagewrap]），
-   这里改成窄屏媒体查询统一处理所有 table.cmp（说明表/优化档位表等），宽屏不受影响（2026-09-09 审计发现）。 */
+   这里改成窄屏媒体查询统一处理所有 table.cmp（如模型用量表），宽屏不受影响（2026-09-09 审计发现）。 */
 @media (max-width:36em){table.cmp{min-width:0}}
 table.cmp th,table.cmp td{text-align:left;padding:.55em .7em;border-bottom:1px solid var(--line2);vertical-align:top}
 table.cmp thead th{background:var(--surface2);font-weight:600;position:sticky;top:0}

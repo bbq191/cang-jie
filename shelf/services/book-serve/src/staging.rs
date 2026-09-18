@@ -20,34 +20,6 @@ use std::sync::Arc;
 /// 余量；超时不算失败，只是没等到确认就接着投下一份，见 `Staging::try_deliver_split`）。
 const PIECE_RENDER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(90);
 
-/// 「优化」档位：`auto`（清洗+优化，缺省）/ `keep-spacing`（清洗但保留段距）/ `plain`（只优化不清洗）。
-/// 与 host `epub-optimize --keep-spacing` / `--no-wash` 一一对应。
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub enum OptimizeMode {
-    #[default]
-    Auto,
-    KeepSpacing,
-    Plain,
-}
-
-impl OptimizeMode {
-    pub fn parse(s: &str) -> OptimizeMode {
-        match s {
-            "plain" => OptimizeMode::Plain,
-            "keep-spacing" | "keep_spacing" => OptimizeMode::KeepSpacing,
-            _ => OptimizeMode::Auto,
-        }
-    }
-    /// 档位 → 清洗层选项（`Plain` 不清洗）。
-    pub fn wash(self) -> Option<WashOpts> {
-        match self {
-            OptimizeMode::Auto => Some(WashOpts::default()),
-            OptimizeMode::KeepSpacing => Some(WashOpts { keep_para_spacing: true, ..Default::default() }),
-            OptimizeMode::Plain => None,
-        }
-    }
-}
-
 /// 母版库一本书的展示条目。`format`（epub / pdf / cbz / other）从扩展名判、优化等级从内埋标记判（轻量只读中央目录）。
 #[derive(Serialize, Clone, Debug, PartialEq)]
 pub struct StagingEntry {
@@ -181,7 +153,7 @@ impl Staging {
     }
 
     /// 网文抓取（Readability + 白名单）→ 组 EPUB 落母版库。`optimize`＝网页「同步优化」复选框：请求了就紧接着
-    /// 跑一遍跟「母版库→优化」按钮同一个 `optimize()`（Auto 档），不用用户再手动点一次——`article.rs` 的属性
+    /// 跑一遍跟「母版库→优化」按钮同一个 `optimize()`，不用用户再手动点一次——`article.rs` 的属性
     /// 白名单本来就不留 class/style，正文没有任何 CSS，不经 wash 层的边距/段距归零会在 xochitl 上按默认段距
     /// 渲染出大片留空（真机反馈）。`optimize=false` 保留原行为：core 级落库，用户按需再点。同步优化失败不影响
     /// 入库结果（已经抓到的文章不因为这一步失败就整个丢掉），失败原因原样带回给调用方决定怎么措辞。
@@ -190,7 +162,7 @@ impl Staging {
         let fname = format!("{}.epub", bookconv::util::sanitize_filename(&title, "article"));
         let name = self.stage_new(&fname, &epub)?;
         let (optimized, optimize_error) = if optimize {
-            match self.optimize(&name, OptimizeMode::Auto) {
+            match self.optimize(&name) {
                 Ok(_) => (true, None),
                 Err(e) => (false, Some(e)),
             }
@@ -202,7 +174,11 @@ impl Staging {
 
     // ───────────── 优化 ─────────────
 
-    /// 对母版库里的 EPUB 跑通用优化（Inline 脚注 + 外链 css 缩进：两读器都能显示），原子回写。返回回执文案。
+    /// 对母版库里的 EPUB 跑通用优化（清洗+优化：Inline 脚注 + 外链 css 缩进 + 边距段距归零等，两读器
+    /// 都能显示），原子回写。返回回执文案。**不再分档位**（2026-09-19 用户明确要求去掉"优化分档位"
+    /// 这个选择——原来还有「清洗但保留段距」「只优化不清洗」两档给诗集/剧本/已排好版的书用，但这个
+    /// 选择埋在母版库页一个全局下拉里、跟"点哪本书的优化按钮"脱节，容易选错却不易发现；只保留最
+    /// 常用、原本就标"推荐"的那档，即完整清洗+优化）。
     /// **同步、阻塞**——大漫画真机实测能跑到分钟级（`trim_margins` 裁边扫描，见书架白皮书 §05），
     /// HTTP 接口不该直接暴露这个方法，用 [`Self::spawn_optimize`] 走后台线程。
     ///
@@ -211,9 +187,9 @@ impl Staging {
     /// 内存版，`VmRSS` 几十秒冲到 1.4GB+、系统可用内存探底到 ~25MB，逼近全系统级 OOM（book-serve
     /// 自己的 `systemd` `MemoryMax=192M` 没有真正生效，见白皮书 §03az）。流式版峰值内存量级是
     /// "一张图 + 全书文字部分"，不随书变大线性涨，细节见该函数文档注释。
-    pub fn optimize(&self, name: &str, mode: OptimizeMode) -> Result<String, String> {
+    pub fn optimize(&self, name: &str) -> Result<String, String> {
         if formats::ext_of(name) != "epub" {
-            return Err("只有 EPUB 能优化（PDF 重排请在电脑用 shelf push）".into());
+            return Err("只有 EPUB 能优化，PDF 不支持".into());
         }
         let p = self.existing(name)?;
         // 点前缀隐藏名——真机 552MB《镖人》全集坐实优化能跑到分钟级（流式虽然不再吃内存，但大书
@@ -221,7 +197,7 @@ impl Staging {
         // `.` 前缀跳过 sidecar，不带点前缀的话这份半成品会被当成一条离谱的"母版库条目"混进列表
         // （2026-09-19 真机复现：真显示过一条 `format:"other"` 的 `....epub.optimizing.tmp`）。
         let tmp = p.with_file_name(format!(".{}.optimizing.tmp", name));
-        let result = optimize::optimize_epub_file_streaming(&p, &tmp, &OptimizeOpts { wash: mode.wash(), footnote: FootnoteMode::Anchor });
+        let result = optimize::optimize_epub_file_streaming(&p, &tmp, &OptimizeOpts { wash: Some(WashOpts::default()), footnote: FootnoteMode::Anchor });
         let rep = match result {
             Ok(r) => r,
             Err(e) => {
@@ -238,9 +214,9 @@ impl Staging {
     /// 通过 `bus` 的 `books`/`staging` 事件 + `GET /staging` 列表里这条目的 `delivered.optimize`
     /// （[`sidecar::OptimizeCheck`]）异步呈现。`catch_unwind` 兜底优化过程中的 panic（如损坏文件触发
     /// 库内部意外崩溃）——绝不能让忙锁卡死在 true 再也清不掉、这条目从此删不掉优化不了。
-    pub fn spawn_optimize(&self, name: &str, mode: OptimizeMode, bus: Arc<rmsvc_core::events::EventBus>) -> Result<(), String> {
+    pub fn spawn_optimize(&self, name: &str, bus: Arc<rmsvc_core::events::EventBus>) -> Result<(), String> {
         if formats::ext_of(name) != "epub" {
-            return Err("只有 EPUB 能优化（PDF 重排请在电脑用 shelf push）".into());
+            return Err("只有 EPUB 能优化，PDF 不支持".into());
         }
         self.existing(name)?;
         if !self.try_start_busy(name) {
@@ -250,7 +226,7 @@ impl Staging {
         let _ = self.set_optimize_check(name, sidecar::OptimizeCheck { status: "pending".into(), message: String::new(), at: now });
         let (this, name) = (self.clone(), name.to_string());
         std::thread::spawn(move || {
-            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| this.optimize(&name, mode)))
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| this.optimize(&name)))
                 .unwrap_or_else(|_| Err("优化过程内部异常（已捕获，不影响其他操作）".to_string()));
             let at = rmsvc_core::clock::now_secs();
             let oc = match &result {
@@ -273,14 +249,14 @@ impl Staging {
     // ───────────── 落库 ─────────────
 
     /// 投入 xochitl 书库：纯复制原字节（不再优化）。原生阅读器只读 EPUB/PDF（CBZ 漫画不投原生，用户定）。`folder` 空＝配置缺省；
-    /// `keep=false` 投完从母版库删除。返回回执文案 + EPUB 的渲染自检计划（调用方起线程跑 `render_check::run`）。
+    /// 母版库条目投完**永远保留**（2026-09-19 用户明确要求去掉"投完自动删除"这个功能——母版是可以
+    /// 反复投给两个读器对照、换设备重投的底本，不该被一次性动作悄悄清掉；要删由用户自己在列表里点
+    /// 删除）。返回回执文案 + EPUB 的渲染自检计划（调用方起线程跑 `render_check::run`）。
     /// **同步、阻塞**——超限漫画按卷拆分要挨个建包+上传，真机能到分钟级；跟 [`Self::optimize`] 一样，
-    /// HTTP 接口不该直接暴露这个方法，用 [`Self::spawn_deliver`] 走后台线程。不自己管忙锁——忙锁是
-    /// `spawn_deliver` 的职责，这个方法假定调用方已经拿到独占权（内部清母版库走 `remove_unlocked`
-    /// 而不是 `remove`，因为 `remove` 会撞上调用方自己持有的忙锁）。
-    pub fn deliver(&self, name: &str, folder: &str, keep: bool) -> Result<DeliverOutcome, String> {
+    /// HTTP 接口不该直接暴露这个方法，用 [`Self::spawn_deliver`] 走后台线程。
+    pub fn deliver(&self, name: &str, folder: &str) -> Result<DeliverOutcome, String> {
         let ct = bookconv::convert::direct_content_type(name)
-            .ok_or("原生阅读器只读 EPUB / PDF；此格式请「加入 KOReader」，或在电脑用 shelf push 转成 EPUB")?;
+            .ok_or("原生阅读器只读 EPUB / PDF；此格式请「加入 KOReader」")?;
         let p = self.existing(name)?;
         let size = std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0);
         let folder = if folder.trim().is_empty() { self.library_folder.as_str() } else { folder.trim() };
@@ -294,7 +270,7 @@ impl Staging {
                 }
             }
             return Err(format!(
-                "《{name}》{} MB 超过原生阅读器上传上限（{} MB），xochitl 会直接断连。PDF 请在电脑用 shelf push 重推（自动按 60MB 分卷）；EPUB 无法分卷，用 KOReader 读",
+                "《{name}》{} MB 超过原生阅读器上传上限（{} MB），xochitl 会直接断连。PDF 请自行分割成多份后重新上传；非漫画或没有可用目录结构的 EPUB 无法自动分卷，请改用 KOReader 读",
                 size >> 20,
                 self.native_limit >> 20
             ));
@@ -311,20 +287,17 @@ impl Staging {
             Delivery::LikelyDelivered(_) => format!("已投入原生书库《{name}》（设备处理较慢，稍候刷新书库）"),
         };
         let _ = self.mark_delivered(name, Reader::Native);
-        if !keep {
-            let _ = self.remove_unlocked(name);
-        }
         Ok(DeliverOutcome { message, render })
     }
 
     /// [`Self::deliver`] 的异步版：同 [`Self::spawn_optimize`] 套路——先做零耗时校验（格式/文件存在），
     /// 校验过了才加忙锁、起后台线程跑真正耗时的部分。成功返回后 HTTP 层立即回"已开始"，真正结果通过
     /// `bus` 的 `books`/`staging` 事件 + `GET /staging` 列表里这条目的 `delivered.deliver`
-    /// （[`sidecar::DeliverCheck`]）异步呈现；渲染自检计划、`mark_delivered`、`keep=false` 清母版库
-    /// 全部在 `deliver` 内部完成，不劳 HTTP 层操心。`catch_unwind` 兜底同 `spawn_optimize`。
-    pub fn spawn_deliver(&self, name: &str, folder: &str, keep: bool, bus: Arc<rmsvc_core::events::EventBus>) -> Result<(), String> {
+    /// （[`sidecar::DeliverCheck`]）异步呈现；渲染自检计划、`mark_delivered` 全部在 `deliver` 内部
+    /// 完成，不劳 HTTP 层操心。`catch_unwind` 兜底同 `spawn_optimize`。
+    pub fn spawn_deliver(&self, name: &str, folder: &str, bus: Arc<rmsvc_core::events::EventBus>) -> Result<(), String> {
         bookconv::convert::direct_content_type(name)
-            .ok_or("原生阅读器只读 EPUB / PDF；此格式请「加入 KOReader」，或在电脑用 shelf push 转成 EPUB")?;
+            .ok_or("原生阅读器只读 EPUB / PDF；此格式请「加入 KOReader」")?;
         self.existing(name)?;
         if !self.try_start_busy(name) {
             return Err(format!("《{name}》正在处理中，请稍候"));
@@ -333,7 +306,7 @@ impl Staging {
         let _ = self.set_deliver_check(name, sidecar::DeliverCheck { status: "pending".into(), message: String::new(), at: now });
         let (this, name, folder) = (self.clone(), name.to_string(), folder.to_string());
         std::thread::spawn(move || {
-            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| this.deliver(&name, &folder, keep)))
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| this.deliver(&name, &folder)))
                 .unwrap_or_else(|_| Err("落库过程内部异常（已捕获，不影响其他操作）".to_string()));
             let at = rmsvc_core::clock::now_secs();
             let dc = match &result {
@@ -353,8 +326,8 @@ impl Staging {
         Ok(())
     }
 
-    /// 写异步落库结果到边车（书已从母版库删除 → Err，调用方只记日志/静默丢弃；`keep=false` 落库时
-    /// `deliver` 自己已经把书删了，走到这里必然是这种情况，属预期不是异常）。
+    /// 写异步落库结果到边车（书已从母版库删除 → Err，调用方只记日志/静默丢弃，不阻断别的流程——
+    /// 比如落库还在跑的时候用户自己手动删了这本书）。
     pub fn set_deliver_check(&self, name: &str, dc: sidecar::DeliverCheck) -> Result<(), String> {
         let p = self.existing(name)?;
         sidecar::update(&p, |d| d.deliver = Some(dc))
@@ -362,8 +335,8 @@ impl Staging {
 
     /// 超限 EPUB 漫画的拆分投递：不是漫画 / 拆不出方案 → `Ok(None)`（调用方退回改动前的整本拒绝）；
     /// 拆出方案 → 挨个上传能塞进预算的那几份，聚合成一条回执。原书字节在母版库/KOReader 完全不受
-    /// 影响（`keep=false` 时只删原书这一份、不删任何东西是"拆出来的"——那些份本来就只存在于内存里，
-    /// 上传即弃，从不落母版库）。渲染自检对拆分出来的每一份跳过——`RenderPlan` 按母版库条目名找书，
+    /// 影响——拆出来的那几份只存在于内存里，上传即弃，从不落母版库，母版库原书一份字节不动。
+    /// 渲染自检对拆分出来的每一份跳过——`RenderPlan` 按母版库条目名找书，
     /// 拆分份没有母版库条目，硬接只会认错书，留作已知范围限制（见书架白皮书 §03aw）。
     /// 2026-09-19 改走流式路径 `comic_split::deliver_split_streaming`——真机 785MB《镖人（11 卷）》
     /// 坐实旧写法（`std::fs::read` 整本读 + `check::read_entries` 整本解压进 `Vec<Entry>`）把
@@ -453,8 +426,8 @@ impl Staging {
         self.remove_unlocked(name)
     }
 
-    /// 实际删除，不查忙锁——只给已经自己持有忙锁的调用方（[`Self::deliver`] 的 `keep=false` 清理）用，
-    /// 外部一律走 [`Self::remove`]。
+    /// 实际删除，不查忙锁——[`Self::remove`] 自己查完忙锁之后调这个真正干活；外部一律走
+    /// [`Self::remove`]，不要绕过忙锁检查直接调这个。
     fn remove_unlocked(&self, name: &str) -> Result<(), String> {
         let p = self.path_of(name)?;
         sidecar::remove(&p);
@@ -646,24 +619,21 @@ mod tests {
     }
 
     #[test]
-    fn optimize_levels_and_gates() {
+    fn optimize_gates_and_runs_single_full_pass() {
+        // 2026-09-19 用户明确要求去掉"优化分档位"——不再有 Plain/KeepSpacing 两档，`optimize()`
+        // 永远跑完整的清洗+优化（原来标"推荐"的那档，也是绝大多数书要的那档）。
         let t = tempfile::tempdir().unwrap();
         let s = staging(&t);
         let opf = r#"<package version="2.0"><metadata><dc:title>t</dc:title></metadata><manifest><item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="c1"/></spine></package>"#;
         let epub = mini_epub(&[("content.opf", opf), ("c1.xhtml", r#"<html><head></head><body><h1>第一章</h1><p style="font-size:9px;margin:1em">正文</p></body></html>"#)]);
         s.stage_new("x.epub", &epub).unwrap();
         s.stage_new("p.pdf", b"%PDF").unwrap();
-        assert!(s.optimize("p.pdf", OptimizeMode::Auto).unwrap_err().contains("只有 EPUB"));
-        assert!(s.optimize("none.epub", OptimizeMode::Auto).is_err());
-        let msg = s.optimize("x.epub", OptimizeMode::Plain).unwrap();
-        assert!(msg.contains("只优化") && msg.contains("1 章"), "{msg}");
-        assert_eq!(s.list().iter().find(|e| e.name == "x.epub").unwrap().level, "core", "不清洗只算核心遍");
-        let msg = s.optimize("x.epub", OptimizeMode::KeepSpacing).unwrap();
+        assert!(s.optimize("p.pdf").unwrap_err().contains("只有 EPUB"));
+        assert!(s.optimize("none.epub").is_err());
+        let msg = s.optimize("x.epub").unwrap();
         assert!(msg.contains("清洗+优化") && msg.contains("自动目录 1 条"), "{msg}");
         let e = s.list().into_iter().find(|e| e.name == "x.epub").unwrap();
         assert!(e.optimized && e.level == "full");
-        assert_eq!(OptimizeMode::parse("keep-spacing").wash().unwrap().keep_para_spacing, true);
-        assert!(OptimizeMode::parse("plain").wash().is_none() && OptimizeMode::parse("").wash().is_some());
     }
 
     #[test]
@@ -690,7 +660,7 @@ mod tests {
         assert!(s.is_busy("x.epub"));
         assert!(s.remove("x.epub").unwrap_err().contains("正在处理中"), "忙的时候不该能删");
         let bus = Arc::new(rmsvc_core::events::EventBus::new());
-        assert!(s.spawn_deliver("x.epub", "", true, bus).unwrap_err().contains("正在处理中"), "忙的时候不该能起第二个落库");
+        assert!(s.spawn_deliver("x.epub", "", bus).unwrap_err().contains("正在处理中"), "忙的时候不该能起第二个落库");
         assert_eq!(s.list().iter().find(|e| e.name == "x.epub").unwrap().busy, true, "GET /staging 列表应体现 busy");
         s.end_busy("x.epub");
         assert!(!s.is_busy("x.epub"));
@@ -703,10 +673,10 @@ mod tests {
         let s = staging(&t); // xochitl 指向不可达地址（见 staging() 测试 helper），deliver 必然失败——够测异步管线本身
         s.stage_new("d.pdf", &vec![b'%'; 10]).unwrap();
         let bus = Arc::new(rmsvc_core::events::EventBus::new());
-        s.spawn_deliver("d.pdf", "", true, bus).unwrap();
+        s.spawn_deliver("d.pdf", "", bus).unwrap();
         assert!(s.is_busy("d.pdf"), "spawn 返回时忙锁应已生效");
         let bus2 = Arc::new(rmsvc_core::events::EventBus::new());
-        assert!(s.spawn_deliver("d.pdf", "", true, bus2).unwrap_err().contains("正在处理中"));
+        assert!(s.spawn_deliver("d.pdf", "", bus2).unwrap_err().contains("正在处理中"));
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
         while s.is_busy("d.pdf") && std::time::Instant::now() < deadline {
             std::thread::sleep(std::time::Duration::from_millis(10));
@@ -724,9 +694,9 @@ mod tests {
         let s = staging(&t);
         s.stage_new("c.cbz", b"PK").unwrap();
         let bus = Arc::new(rmsvc_core::events::EventBus::new());
-        assert!(s.spawn_deliver("c.cbz", "", true, bus.clone()).unwrap_err().contains("只读 EPUB / PDF"));
+        assert!(s.spawn_deliver("c.cbz", "", bus.clone()).unwrap_err().contains("只读 EPUB / PDF"));
         assert!(!s.is_busy("c.cbz"), "校验失败不该留下忙锁");
-        assert!(s.spawn_deliver("none.epub", "", true, bus).is_err());
+        assert!(s.spawn_deliver("none.epub", "", bus).is_err());
     }
 
     #[test]
@@ -737,12 +707,12 @@ mod tests {
         let epub = mini_epub(&[("content.opf", opf), ("c1.xhtml", "<html><head></head><body><h1>第一章</h1><p>正文</p></body></html>")]);
         s.stage_new("x.epub", &epub).unwrap();
         let bus = Arc::new(rmsvc_core::events::EventBus::new());
-        s.spawn_optimize("x.epub", OptimizeMode::Auto, bus).unwrap();
+        s.spawn_optimize("x.epub", bus).unwrap();
         // 起线程那一刻就该忙（同步部分：格式校验+加锁，不依赖线程调度时机）
         assert!(s.is_busy("x.epub"), "spawn 返回时忙锁应已生效");
         // 忙着的时候第二次调用应该被拒绝，不会排队/覆盖
         let bus2 = Arc::new(rmsvc_core::events::EventBus::new());
-        assert!(s.spawn_optimize("x.epub", OptimizeMode::Auto, bus2).unwrap_err().contains("正在处理中"));
+        assert!(s.spawn_optimize("x.epub", bus2).unwrap_err().contains("正在处理中"));
         // 等后台线程跑完（真实测试书毫秒级，给足超时兜底 CI 慢机器）
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
         while s.is_busy("x.epub") && std::time::Instant::now() < deadline {
@@ -762,9 +732,9 @@ mod tests {
         let s = staging(&t);
         s.stage_new("p.pdf", b"%PDF").unwrap();
         let bus = Arc::new(rmsvc_core::events::EventBus::new());
-        assert!(s.spawn_optimize("p.pdf", OptimizeMode::Auto, bus.clone()).unwrap_err().contains("只有 EPUB"));
+        assert!(s.spawn_optimize("p.pdf", bus.clone()).unwrap_err().contains("只有 EPUB"));
         assert!(!s.is_busy("p.pdf"), "校验失败不该留下忙锁");
-        assert!(s.spawn_optimize("none.epub", OptimizeMode::Auto, bus).is_err());
+        assert!(s.spawn_optimize("none.epub", bus).is_err());
     }
 
     /// 造一本 2 卷合集漫画（跟 bookconv::comic_split 测试用例同一套结构），塞进 mini_epub 装不了的
@@ -816,7 +786,7 @@ mod tests {
         s.ensure().unwrap();
         let epub = multivol_comic_epub(&[15, 15]);
         s.stage_new("manga.epub", &epub).unwrap();
-        let err = s.deliver("manga.epub", "", true).unwrap_err();
+        let err = s.deliver("manga.epub", "").unwrap_err();
         assert!(err.contains("按卷拆分") || err.contains("上传失败") || err.contains("拆分后一份都没能投上"), "应该走拆分路径而不是整本拒绝: {err}");
         assert!(err.contains("卷0") || err.contains("卷1"), "错误信息应该点出具体是哪一卷: {err}");
     }
@@ -829,7 +799,7 @@ mod tests {
         let epub = mini_epub(&[("content.opf", opf), ("c1.xhtml", &format!("<html><body><p>{long_text}</p></body></html>"))]);
         let s = staging(&t);
         s.stage_new("novel.epub", &epub).unwrap();
-        let err = s.deliver("novel.epub", "", true).unwrap_err();
+        let err = s.deliver("novel.epub", "").unwrap_err();
         assert!(err.contains("超过原生阅读器上传上限") && err.contains("分卷"), "非漫画超限应该保持改动前的整本拒绝: {err}");
     }
 
@@ -840,13 +810,13 @@ mod tests {
         s.stage_new("c.cbz", b"PK").unwrap();
         s.stage_new("d.pdf", b"%PDF").unwrap();
         assert_eq!(s.list().iter().find(|e| e.name == "c.cbz").unwrap().format, "cbz");
-        assert!(s.deliver("c.cbz", "", true).unwrap_err().contains("只读 EPUB / PDF"));
+        assert!(s.deliver("c.cbz", "").unwrap_err().contains("只读 EPUB / PDF"));
         // 体积门：超过 native_limit（测试设 1MB）不碰 xochitl，回执指引分卷
         s.stage_new("huge.pdf", &vec![b'%'; 2 * 1024 * 1024]).unwrap();
-        let e = s.deliver("huge.pdf", "", true).unwrap_err();
+        let e = s.deliver("huge.pdf", "").unwrap_err();
         assert!(e.contains("超过原生阅读器上传上限") && e.contains("分卷"), "{e}");
         // PDF 走到 xochitl 才失败（不可达），母版仍在、无落库记录
-        assert!(s.deliver("d.pdf", "", true).is_err());
+        assert!(s.deliver("d.pdf", "").is_err());
         assert!(s.list().iter().any(|e| e.name == "d.pdf" && e.delivered.is_none()));
     }
 
