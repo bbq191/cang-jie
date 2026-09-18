@@ -87,7 +87,7 @@ table.cmp tbody th{font-weight:600;color:var(--fg);white-space:nowrap;background
 table.cmp tbody tr:last-child td{border-bottom:none}
 table.cmp .pick{color:var(--accent);font-weight:600}
 .badge{display:inline-block;font-size:.72em;padding:.05em .5em;border-radius:1em;background:var(--surface2);color:var(--mute);border:1px solid var(--line)}
-.badge[title]{cursor:help} /* 点了会 alert 出完整说明（app.js 全局委托），触屏摸不到 hover 时的替代入口 */
+.badge[title]{cursor:help} /* 点了会弹出一条 toast 展示完整说明（app.js 全局委托），触屏摸不到 hover 时的替代入口 */
 .badge.on{background:color-mix(in srgb,var(--ok) 18%,transparent);color:var(--ok);border-color:transparent}
 .badge.off{background:color-mix(in srgb,var(--bad) 15%,transparent);color:var(--bad);border-color:transparent}
 .crumb a{color:var(--accent);text-decoration:none}.crumb a:hover{text-decoration:underline}
@@ -133,3 +133,13 @@ dl.help dd{margin:.2em 0 .2em;color:var(--mute);font-size:.9em;line-height:1.65}
 /* 各模型用量表（管理台模型面板，点 2「彻底重做」）：字号收紧一点，避免这张卡片被表格撑得太宽 */
 [data-usagewrap] table.cmp{font-size:.82em;min-width:0}
 [data-usagewrap] th,[data-usagewrap] td{padding:.35em .5em}
+/* 全局 toast（2026-09-19：系统内不允许用浏览器原生 alert，风格跟页面其它地方的行内提示完全不一致，
+   还会阻塞交互——统一改这个轻量提示，颜色沿用徽章同一套 --ok/--bad/--warn 变量）。#toasthost 固定在
+   底部居中堆叠，pointer-events:none 不挡页面点击，每条 toast 自己开回 pointer-events 好点掉。 */
+#toasthost{position:fixed;left:0;right:0;bottom:1.2em;display:flex;flex-direction:column;align-items:center;gap:.5em;z-index:50;pointer-events:none;padding:0 1em}
+.toast{pointer-events:auto;max-width:26em;background:var(--surface);color:var(--fg);border:1px solid var(--line);border-radius:.7em;box-shadow:var(--shadow);padding:.7em 1em;font-size:.9em;line-height:1.5;opacity:0;transform:translateY(6px);transition:opacity .2s ease,transform .2s ease;cursor:pointer;word-break:break-word}
+.toast.show{opacity:1;transform:none}
+.toast.bad{border-color:color-mix(in srgb,var(--bad) 50%,var(--line));color:var(--bad)}
+.toast.ok{border-color:color-mix(in srgb,var(--ok) 50%,var(--line));color:var(--ok)}
+.toast.warn{border-color:color-mix(in srgb,var(--warn) 50%,var(--line));color:var(--warn)}
+.toast.info{border-color:var(--line);color:var(--fg)}

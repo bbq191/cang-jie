@@ -11,6 +11,16 @@ const wait=ms=>new Promise(res=>setTimeout(res,ms));
    自己内联管理 disabled 状态的按钮（母版库列表 btn() 助手、几处一开始就手动 disabled=true 的）
    不需要再套这层，避免重复禁用逻辑打架。*/
 const guardClick=(el,fn)=>{el.onclick=async()=>{if(el.disabled)return;el.disabled=true;try{await fn()}finally{el.disabled=false}}};
+/* 全局 toast：系统里不允许用浏览器原生 alert（打断操作、要点掉才能继续，风格跟页面其它地方的行内
+   小字状态提示完全不一致），全站原来散落的 26 处 alert() 统一改走这个（2026-09-19 用户明确要求）。
+   #toasthost 惰性建：第一次调用 toast() 时才挂进 body，不用改 index.html。kind 决定配色（跟徽章
+   同一套 --ok/--bad/--warn 变量，见 style.css），缺省 'bad'——历史上这堆 alert() 十有八九是报错。
+   点一下提前关掉；到时自动淡出+移除。 */
+const toastHost=(()=>{let el=document.getElementById('toasthost');if(!el){el=document.createElement('div');el.id='toasthost';document.body.appendChild(el)}return el})();
+const toast=(msg,kind='bad',ms=4200)=>{if(!msg)return;const t=document.createElement('div');t.className='toast '+kind;t.textContent=msg;toastHost.appendChild(t);
+  requestAnimationFrame(()=>t.classList.add('show'));
+  const kill=()=>{t.classList.remove('show');setTimeout(()=>t.remove(),200)};
+  t.onclick=kill;setTimeout(kill,ms)};
 /* 轻量记忆：per-viewer 便利态，隐私窗口/禁用 storage 时静默回默认 */
 const LS={get(k,d){try{const v=localStorage.getItem('shelf.'+k);return v==null?d:v}catch{return d}},set(k,v){try{localStorage.setItem('shelf.'+k,v)}catch{}}};
 const onUsb=/^10\.11\.99\./.test(location.hostname);
@@ -40,14 +50,14 @@ $('#logout').onclick=e=>{e.preventDefault();fetch('/logout',{method:'POST'}).the
 // 图标+数字，看不见"为什么/该怎么办"（2026-09-09 审计发现）。这里全局委托一个点击处理：任何带
 // title 的徽章点一下就 alert 出完整内容，不用逐个改模板字符串；desktop 上点了也只是多一次确认，
 // 不冲突。`.badge[title]` 的 `cursor` 在 style.css 里配套改成 help，给一个"这能点"的视觉提示。
-document.addEventListener('click',e=>{const b=e.target.closest('.badge[title]');if(b&&b.title)alert(b.title)});
+document.addEventListener('click',e=>{const b=e.target.closest('.badge[title]');if(b&&b.title)toast(b.title,'info',6500)});
 // 响应不是合法 JSON（网关自身 502/504、反代错误页…）时，以前直接把裸状态码当 message 弹给用户
 // （"HTTP 502"），技术术语没翻译成人话（2026-09-09 审计发现）。改成一句人话+状态码放在括号里，
 // 报障时还能带出这个号。
 async function j(url,opt){const r=await fetch(url,opt);if(r.status===401){location.href='/login?next='+encodeURIComponent(location.pathname);return {ok:false,message:T('common.needLogin')}}if(r.status===403){location.href='/password';return {ok:false,message:T('common.needChangePassword')}}
   const httpErr=T('common.httpErr',{status:r.status});
   let d;try{d=await r.json()}catch{d={ok:false,message:httpErr}}if(!r.ok&&d.ok!==false)d={ok:false,message:d.message||httpErr};return d}
-const postJ=async(url,body)=>{const r=await j(url,{method:'POST',body:JSON.stringify(body)});if(r.ok===false)alert(r.message||T('common.failed'));return r};
+const postJ=async(url,body)=>{const r=await j(url,{method:'POST',body:JSON.stringify(body)});if(r.ok===false)toast(r.message||T('common.failed'));return r};
 
 /* 命令块：要人读要人抄的完整命令用这个，别再拿 .opt-note/.small 包（那套是"安静小字引用"的视觉
    语言，命令套进去会显得不起眼、字也偏小，2026-09-09 用户反馈）。多行命令一行一个 <code>。 */
@@ -115,7 +125,7 @@ function fillList(ul,items,row,emptyMsg){ul.innerHTML='';if(!items.length){ul.in
     right.className='small';right.style.cssText='display:flex;align-items:center;gap:.4em;flex-wrap:wrap';row(it,left,right,li);li.append(left,right);ul.appendChild(li)})}
 /* 删除按钮：confirm → DELETE → 刷新 */
 function delBtn(msg,url,refresh){const d=document.createElement('button');d.className='btn';d.textContent=T('action.delete');
-  guardClick(d,async()=>{if(confirm(msg)){const r=await j(url,{method:'DELETE'});if(r.ok===false)alert(r.message);refresh()}});return d}
+  guardClick(d,async()=>{if(confirm(msg)){const r=await j(url,{method:'DELETE'});if(r.ok===false)toast(r.message);refresh()}});return d}
 const cjkBadge=p=>p==null?'':`<span class="badge ${p>=80?'on':(p>=8?'':'off')}" title="${T('common.cjkCoverageTitle')}">${T('common.cjkCoverage',{pct:p})}</span>`;
 
 /* 决策辅助：不替用户分类（闲书/研读机器判不准），讲清母版库三步走 + 两读器各擅长；拿不准先投一个，母版还在 */
@@ -284,7 +294,7 @@ function renderTransfer(sec){sec.innerHTML=`
     items=d.items||[];const tot=items.reduce((a,b)=>a+b.bytes,0);g('stgcap').textContent=items.length?T('transfer.staging.capSummary',{count:items.length,size:fmtB(tot)}):'';
     const fr=d.freeBytes;const low=fr!=null&&fr<300*1048576;g('stgfree').style.color=low?'var(--bad)':'';g('stgfree').textContent=fr!=null?T('transfer.staging.freeSpace',{free:fmtB(fr),lowWarn:low?T('transfer.staging.lowWarn'):''}):'';
     render()};
-  guardClick(g('stgpurge'),async()=>{const done=items.filter(it=>it.delivered&&(it.delivered.native||it.delivered.koreader));if(!done.length){alert(T('transfer.staging.noneToPurge'));return}
+  guardClick(g('stgpurge'),async()=>{const done=items.filter(it=>it.delivered&&(it.delivered.native||it.delivered.koreader));if(!done.length){toast(T('transfer.staging.noneToPurge'),'warn');return}
     if(!confirm(T('transfer.staging.confirmPurge',{count:done.length})))return;
     for(const it of done)await postJ('/api/books/staging/delete',{name:it.name});refresh()});
   uploader($('.up',sec),()=>'/api/books/staging',()=>({}),BOOK_EXT,()=>refresh(),'/api/books/staging');   // 书籍格式原样入库；选中即按 BOOK_EXT 拦；传 dedupeApi 防重传出重复
@@ -314,7 +324,7 @@ const TABS={
      // 中文缺字回退链：覆盖率≥8% 的中文字体，按覆盖率降序
      const cjk=(fl.items||[]).filter(it=>((it.extra||{}).cjkPct||0)>=8).sort((a,b)=>(b.extra.cjkPct||0)-(a.extra.cjkPct||0));
      const fb=$('#fbchain',sec);fb.style.display='';fb.innerHTML=cjk.length?T('assets.fonts.fallbackChain',{chain:cjk.map(it=>`${it.name} <span class="small">${it.extra.cjkPct}%</span>`).join(' → ')}):T('assets.fonts.noCjkWarn');
-     const fst=await j('/api/fonts/status');const eb=$('#embold',sec);if(fst.ok){eb.checked=!!fst.emboldenCjkFallback;eb.onchange=async()=>{const r=await j('/api/fonts/config',{method:'PUT',body:JSON.stringify({emboldenCjkFallback:eb.checked})});if(r.ok===false){alert(r.message);eb.checked=!eb.checked}}}},
+     const fst=await j('/api/fonts/status');const eb=$('#embold',sec);if(fst.ok){eb.checked=!!fst.emboldenCjkFallback;eb.onchange=async()=>{const r=await j('/api/fonts/config',{method:'PUT',body:JSON.stringify({emboldenCjkFallback:eb.checked})});if(r.ok===false){toast(r.message);eb.checked=!eb.checked}}}},
    row:(it,left,right,refresh)=>{const ex=it.extra||{};
      left.innerHTML=`${it.name}${ex.names&&ex.names.cn&&ex.names.cn!==it.name?' <span class="small">'+ex.names.cn+'</span>':''}${ex.files&&ex.files.length>1?' <span class="small">×'+ex.files.length+'</span>':''}`;
      right.insertAdjacentHTML('beforeend',cjkBadge(ex.cjkPct)+(ex.fontconfigRef?`<span title="${T('assets.fonts.fallbackRefTitle')}">⚠</span>`:''));
@@ -354,13 +364,13 @@ const TABS={
    header:`<label class="field">${T('wallpaper.rotateLabel')}</label><div class="row"><select id="wpmode" style="max-width:12em"><option value="sequential">${T('wallpaper.mode.sequential')}</option><option value="random">${T('wallpaper.mode.random')}</option><option value="fixed">${T('wallpaper.mode.fixed')}</option></select><span id="wpst" class="small"></span></div>`,
    icon:'🖼',label:T('wallpaper.dropLabel'),accept:IMG_EXT,btn:T('wallpaper.btn'),
    onRender:async(sec,refresh)=>{const st=await j('/api/wallpapers/status');const sel=$('#wpmode',sec);if(st.ok){sel.value=st.mode;const nv=st.native||{};$('#wpst',sec).textContent=T('wallpaper.status',{current:st.current||T('wallpaper.none'),nativeState:nv.enabled?T('wallpaper.nativeEnabled'):T('wallpaper.nativeDisabled'),restartNote:nv.restartPending?T('wallpaper.restartNote'):''})}
-     sel.onchange=async()=>{const r=await j('/api/wallpapers/mode',{method:'PUT',body:JSON.stringify({mode:sel.value})});if(r.ok===false){alert(r.message||T('wallpaper.switchFailed'));return}refresh()}},
+     sel.onchange=async()=>{const r=await j('/api/wallpapers/mode',{method:'PUT',body:JSON.stringify({mode:sel.value})});if(r.ok===false){toast(r.message||T('wallpaper.switchFailed'));return}refresh()}},
    row:(it,left,right,refresh)=>{const cur=(it.extra||{}).current;
      // alt="" 原来把这张图当装饰性处理，但壁纸缩略图本身就是内容（"这张壁纸长什么样"），屏幕阅读器
      // 会整个跳过（2026-09-09 审计发现）；文件名本身当描述最直接，跟右边视觉上显示的文字一致。
      left.innerHTML=`<img src="/api/wallpapers/${encodeURIComponent(it.name)}" alt="${T('wallpaper.thumbAlt',{name:it.name})}" style="height:3.4em;border-radius:.3em;border:1px solid var(--line);margin-right:.6em;vertical-align:middle">${it.name}`;
      right.insertAdjacentHTML('beforeend',`<span>${fmtB(it.bytes)}</span>`+(cur?`<span class="badge on">${T('wallpaper.current')}</span>`:''));
-     if(!cur){const b=document.createElement('button');b.className='btn';b.textContent=T('wallpaper.use');guardClick(b,async()=>{const r=await j('/api/wallpapers/current',{method:'PUT',body:JSON.stringify({name:it.name})});if(r.ok===false){alert(r.message||T('wallpaper.setFailed'));return}refresh()});right.appendChild(b);
+     if(!cur){const b=document.createElement('button');b.className='btn';b.textContent=T('wallpaper.use');guardClick(b,async()=>{const r=await j('/api/wallpapers/current',{method:'PUT',body:JSON.stringify({name:it.name})});if(r.ok===false){toast(r.message||T('wallpaper.setFailed'));return}refresh()});right.appendChild(b);
        right.appendChild(delBtn(T('wallpaper.deleteConfirm',{name:it.name}),'/api/wallpapers/'+encodeURIComponent(it.name),refresh))}}})}}
 };
 
@@ -453,7 +463,7 @@ function renderNotes(sec){sec.innerHTML=`
   // cropHtml 误判成"纯勾画没有手写"（notes.noCrop），实际上这条明明有手写，只是裁图暂时没生成——
   // 两种情况分开提示，别让用户误以为手写没被识别到。
   const cropHtml=e=>e.ink&&e.ink.crop?`<img src="${cropUrl(book.uuid,e.ink.crop)}" alt="${T('notes.cropAlt')}">`:`<div class="empty">${T(e.ink?'notes.cropMissing':'notes.noCrop')}</div>`;
-  const patch=async(id,body)=>{const r=await postJ(`/api/ink/books/${encodeURIComponent(book.uuid)}/entries/${encodeURIComponent(id)}`,body);if(r.ok===false)alert(r.message||T('notes.saveFailed'))};
+  const patch=async(id,body)=>{const r=await postJ(`/api/ink/books/${encodeURIComponent(book.uuid)}/entries/${encodeURIComponent(id)}`,body);if(r.ok===false)toast(r.message||T('notes.saveFailed'))};
   /* 编辑区文本失焦才存（`onchange`），但点旁边的按钮（重转/去处/问AI…）会先让文本框失焦触发保存，
      两件事几乎同时各发一个 HTTP 请求，谁先到服务端不一定——按钮那次的收尾动作会拉新数据整页重画，
      如果保存请求还没落地，重画拿到的还是旧文本，编辑就跟着"消失"了（用户反馈"改了内容点重转不存"）。
@@ -535,8 +545,8 @@ function renderNotes(sec){sec.innerHTML=`
   importBtn.onclick=async()=>{if(!book)return;
     const title=importTitle.value.trim()||(importFile.files[0]?importFile.files[0].name.replace(/\.(md|markdown)$/i,''):'');
     const markdown=importFileContent;
-    if(!title){alert(T('notes.import.needTitle'));return}
-    if(!markdown.trim()){alert(T('notes.import.needFile'));return}
+    if(!title){toast(T('notes.import.needTitle'),'warn');return}
+    if(!markdown.trim()){toast(T('notes.import.needFile'),'warn');return}
     importBtn.disabled=true;importStat.textContent=T('notes.import.generating');
     const r=await postJ(`/api/notes/books/${encodeURIComponent(book.uuid)}/import-md`,{title,markdown}); // 失败 postJ 已经 alert 过
     importBtn.disabled=false;
@@ -544,7 +554,7 @@ function renderNotes(sec){sec.innerHTML=`
     importStat.textContent=T('notes.import.done',{name:r.visibleName});importFile.value='';importFileContent='';importFilename.textContent=''};
   guardClick($('#nrestoreall',sec),async()=>{if(!book)return;
     const items=(book.entries||[]).filter(e=>TRASH_STATUSES.includes(e.status));
-    if(!items.length){alert(T('notes.trash.noneToRestore'));return}
+    if(!items.length){toast(T('notes.trash.noneToRestore'),'warn');return}
     if(!confirm(T('notes.trash.confirmRestoreAll',{count:items.length})))return;
     for(const e of items)await restoreOne(e.id);
     await reloadBook(renderTrash,renderBrowse,renderBook)});
@@ -560,11 +570,11 @@ function renderNotes(sec){sec.innerHTML=`
   guardClick($('#nrescan',sec),async()=>{if(!book)return;if(!confirm(T('notes.confirmRescan')))return;await flushPendingText();await postJ(`/api/ink/books/${encodeURIComponent(book.uuid)}/rescan`,{});refresh()});
   guardClick($('#npurge',sec),async()=>{if(!book)return;
     const items=(book.entries||[]).filter(e=>TRASH_STATUSES.includes(e.status));
-    if(!items.length){alert(T('notes.trash.noneToPurge'));return}
+    if(!items.length){toast(T('notes.trash.noneToPurge'),'warn');return}
     if(!confirm(T('notes.trash.confirmPurge',{count:items.length})))return;
     await flushPendingText();
     const r=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}/purge`,{method:'POST'});
-    if(r.ok===false){alert(r.message||T('notes.trash.purgeFailed'));return}
+    if(r.ok===false){toast(r.message||T('notes.trash.purgeFailed'));return}
     book=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}`);renderTrash();refresh()});
   /* 「不要了」（三期）：转 Archived，两处投影都摘掉，条目库里软删留痕（真删靠「回收站」清空）。 */
   const archiveEntry=async(id)=>{if(!confirm(T('notes.confirmArchive')))return;
@@ -842,25 +852,25 @@ function mountModelPanel(root,seg,title,icon,showAuto){
     keyRow.innerHTML=c.hasKey
       ?`<span class="small">${T('models.keySaved',{key:c.keyMasked||'••••'})}</span><button class="btn" data-delkey>${T('action.delete')}</button>`
       :`<input type="password" placeholder="${T('models.keyInputPlaceholder')}" data-keyinput style="flex:1;min-width:11em" autocomplete="off"><button class="btn pri" data-savekey>${T('models.saveKeyBtn')}</button>`;
-    if(autoBox){autoBox.checked=!!c.auto;autoBox.onchange=async()=>{const r=await put({auto:autoBox.checked});if(r.ok===false){alert(r.message||T('common.failed'));autoBox.checked=!autoBox.checked}}}
+    if(autoBox){autoBox.checked=!!c.auto;autoBox.onchange=async()=>{const r=await put({auto:autoBox.checked});if(r.ok===false){toast(r.message||T('common.failed'));autoBox.checked=!autoBox.checked}}}
     const price=c.price||{inputPer1k:0,outputPer1k:0};
     priceIn.value=price.inputPer1k||'';priceOut.value=price.outputPer1k||'';
     const rows=st.usageByModel||[];
     usageBody.innerHTML=rows.length?rows.map(m=>`<tr${m.active?' style="font-weight:600"':''}><td>${m.label}${m.active?` <span class="badge on">${T('models.usage.active')}</span>`:''}</td><td>${m.calls}${m.failed?` <span style="color:var(--bad)">${T('models.usage.failedCount',{n:m.failed})}</span>`:''}</td><td>${m.promptTokens}/${m.completionTokens}</td><td>${fmtCost(m.costEstimate)}</td></tr>`).join(''):`<tr><td colspan="4" class="small">${T('models.usage.none')}</td></tr>`;
     stat.textContent=rows.find(m=>m.active&&m.lastError)?.lastError?T('models.lastError',{err:rows.find(m=>m.active).lastError}):'';
     const delBtn=keyRow.querySelector('[data-delkey]'),saveBtn=keyRow.querySelector('[data-savekey]');
-    if(delBtn)guardClick(delBtn,async()=>{if(!confirm(T('models.confirmDeleteKey',{title})))return;const r=await put({clearKey:true});if(r.ok===false)alert(r.message||T('models.deleteFailed'));refresh()});
-    if(saveBtn)guardClick(saveBtn,async()=>{const v=keyRow.querySelector('[data-keyinput]').value.trim();if(!v)return;const r=await put({apiKey:v});if(r.ok===false)alert(r.message||T('common.failed'));refresh()});
+    if(delBtn)guardClick(delBtn,async()=>{if(!confirm(T('models.confirmDeleteKey',{title})))return;const r=await put({clearKey:true});if(r.ok===false)toast(r.message||T('models.deleteFailed'));refresh()});
+    if(saveBtn)guardClick(saveBtn,async()=>{const v=keyRow.querySelector('[data-keyinput]').value.trim();if(!v)return;const r=await put({apiKey:v});if(r.ok===false)toast(r.message||T('common.failed'));refresh()});
   };
   /* 选厂家：不是自定义就直接定位到该厂家第一个模型并原子切换（不用再点一次「确认」）；选自定义只切
      UI（露出手填框），真正生效要等用户填完点「保存自定义」——避免半吊子状态被当成已保存的配置发出去。 */
   vendorSel.onchange=async()=>{const v=vendorSel.value;customBox.hidden=v!=='custom';modelBox.hidden=v==='custom';
     if(v==='custom')return;
     const first=modelsOf(v)[0];if(!first)return;
-    const r=await put({preset:first.id});if(r.ok===false)alert(r.message||T('common.failed'));refresh()};
-  presetSel.onchange=async()=>{const r=await put({preset:presetSel.value});if(r.ok===false)alert(r.message||T('common.failed'));refresh()};
-  guardClick(card.querySelector('[data-savecustom]'),async()=>{const r=await put({preset:'custom',model:modelInp.value.trim(),baseUrl:urlInp.value.trim()});if(r.ok===false)alert(r.message||T('common.failed'));refresh()});
-  guardClick(card.querySelector('[data-pricesave]'),async()=>{const r=await put({price:{input:parseFloat(priceIn.value)||0,output:parseFloat(priceOut.value)||0}});if(r.ok===false)alert(r.message||T('common.failed'));refresh()});
+    const r=await put({preset:first.id});if(r.ok===false)toast(r.message||T('common.failed'));refresh()};
+  presetSel.onchange=async()=>{const r=await put({preset:presetSel.value});if(r.ok===false)toast(r.message||T('common.failed'));refresh()};
+  guardClick(card.querySelector('[data-savecustom]'),async()=>{const r=await put({preset:'custom',model:modelInp.value.trim(),baseUrl:urlInp.value.trim()});if(r.ok===false)toast(r.message||T('common.failed'));refresh()});
+  guardClick(card.querySelector('[data-pricesave]'),async()=>{const r=await put({price:{input:parseFloat(priceIn.value)||0,output:parseFloat(priceOut.value)||0}});if(r.ok===false)toast(r.message||T('common.failed'));refresh()});
   refresh();
   return refresh;
 }
@@ -908,7 +918,7 @@ function mountBattopToggleCard(container){
     note.textContent=installed?'':T('battop.toggle.notInstalled')};
   box.onchange=async()=>{if(!installed)return;const want=box.checked;box.disabled=true;
     const r=await j(`/api/enhance/battop/${want?'start':'stop'}`,{method:'POST'});
-    if(r.ok===false){alert(r.message||T('common.failed'));box.checked=!want}
+    if(r.ok===false){toast(r.message||T('common.failed'));box.checked=!want}
     box.disabled=false;await refresh()};
   refresh();
   return refresh;
@@ -1028,9 +1038,9 @@ function renderManage(sec){sec.innerHTML=`
       const right=document.createElement('span');right.style.cssText='display:flex;gap:.4em;align-items:center';
       if(m.installable&&m.installed){
         const t=document.createElement('button');t.className='btn';t.textContent=m.running?T('manage.modules.turnOff'):T('manage.modules.turnOn');
-        guardClick(t,async()=>{const r=await j('/api/manage/'+m.seg+'/'+(m.running?'stop':'start'),{method:'POST'});if(r.ok===false)alert(r.message);setTimeout(refresh,600)});right.appendChild(t);
+        guardClick(t,async()=>{const r=await j('/api/manage/'+m.seg+'/'+(m.running?'stop':'start'),{method:'POST'});if(r.ok===false)toast(r.message);setTimeout(refresh,600)});right.appendChild(t);
         const u=document.createElement('button');u.className='btn';u.textContent=T('manage.modules.uninstallBtn');
-        guardClick(u,async()=>{if(confirm(T('manage.modules.confirmUninstall',{label}))){const r=await j('/api/manage/'+m.seg+'/uninstall',{method:'POST'});if(r.ok===false)alert(r.message);else alert(T('manage.modules.uninstalled',{label}));setTimeout(()=>location.reload(),800)}});right.appendChild(u);
+        guardClick(u,async()=>{if(confirm(T('manage.modules.confirmUninstall',{label}))){const r=await j('/api/manage/'+m.seg+'/uninstall',{method:'POST'});if(r.ok===false)toast(r.message);else toast(T('manage.modules.uninstalled',{label}),'ok');setTimeout(()=>location.reload(),800)}});right.appendChild(u);
       }else if(m.installable){const g=document.createElement('span');g.className='small';g.innerHTML=T('manage.modules.installCmd',{only:m.only});right.appendChild(g)}
       li.append(left,right);ul.appendChild(li)});};
   guardClick($('#allon',sec),async()=>{const d=await j('/api/manage');for(const m of (d.modules||[]))if(m.installable&&m.installed&&!m.running)await j('/api/manage/'+m.seg+'/start',{method:'POST'});refresh()});
@@ -1057,13 +1067,13 @@ function renderManage(sec){sec.innerHTML=`
     if(running&&battopPanel.refresh)battopPanel.refresh()};
   hlBox.onchange=async()=>{const want=hlBox.checked;hlBox.disabled=true;
     const r=await j('/api/enhance/qol',{method:'PUT',body:JSON.stringify({hlSnapCjk:want})});
-    hlBox.disabled=false;if(r.ok===false){alert(r.message||T('common.saveFailed'));hlBox.checked=!want}};
+    hlBox.disabled=false;if(r.ok===false){toast(r.message||T('common.saveFailed'));hlBox.checked=!want}};
   hwBox.onchange=async()=>{const want=hwBox.checked;hwBox.disabled=true;
     const r=await j('/api/enhance/qol',{method:'PUT',body:JSON.stringify({hwStrokeEnabled:want})});
-    hwBox.disabled=false;if(r.ok===false){alert(r.message||T('common.saveFailed'));hwBox.checked=!want}};
+    hwBox.disabled=false;if(r.ok===false){toast(r.message||T('common.saveFailed'));hwBox.checked=!want}};
   importMdBox.onchange=async()=>{const want=importMdBox.checked;importMdBox.disabled=true;
     const r=await j('/api/enhance/qol',{method:'PUT',body:JSON.stringify({notesImportMdEnabled:want})});
-    importMdBox.disabled=false;if(r.ok===false){alert(r.message||T('common.saveFailed'));importMdBox.checked=!want}};
+    importMdBox.disabled=false;if(r.ok===false){toast(r.message||T('common.saveFailed'));importMdBox.checked=!want}};
   refresh();erRefresh();sec.refresh=()=>{refresh();mvRefresh();mtRefresh();erRefresh()};subtabs(sec);}
 
 (async()=>{
