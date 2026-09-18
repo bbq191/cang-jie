@@ -23,11 +23,11 @@ reMarkable Paper Pro Move 的**读书与阅读质量层**：一个网页，把�
 > 见下方「格式」小节，`rmsvc_core::formats::KOREADER_ONLY_EXTS` 常量已删除。
 
 ```
-内容源 ──原样入库──►  母版库（中间层暂存池）  ──可选「优化」──►  落库（去向由人选）
- 网页上传                ~/.local/state/shelf/books/staging/            📖 投入原生书库（xochitl：EPUB / PDF）
+内容源 ──原样入库──►  母版库（中间层暂存池）  ──可选「优化」──►  落库（去向由人选，永远保留）
+ 网页上传                ~/.local/state/shelf/books/staging/            📖 加入原生书库（xochitl：EPUB / PDF）
  抓网文（Readability）    · 母版永久保留，可反复落库、两读器对照           📚 加入 KOReader（EPUB/PDF；旧格式遗留条目也能加）
- scp 进 inbox/            · 「优化」只对 EPUB（清洗+优化，档位三选）      · 落库＝纯复制母版字节，不再优化
-                         · 漫画（EPUB）自动识别保画质+裁边，超限按卷拆分   · 落库记录徽章（含投原生后的渲染自检）/ 清理已落库 / 剩余空间
+ scp 进 inbox/            · 「优化」只对 EPUB（清洗+优化，不分档位）       · 落库＝纯复制母版字节，不再优化
+                         · 漫画（EPUB）自动识别保画质+裁边，超限按卷拆分   · 落库记录徽章（含加入原生后的渲染自检）/ 清理已落库 / 剩余空间
 ```
 
 ![shelf 数据流：三层·三动作正交（旧图，含已砍的 host 一路，未重画）](docs/diagrams/data-flow.svg)
@@ -76,7 +76,7 @@ reMarkable Paper Pro Move 的**读书与阅读质量层**：一个网页，把�
 
 | 服务 | 路由 |
 |---|---|
-| books | `GET /events`（SSE） · `GET /status` · `GET /inbox` · `POST /inbox/{retry,delete}` · `GET /staging` → `{items, freeBytes}`（条目 `delivered.render`＝投原生后的渲染自检 `{uuid,pages,expected,status}`）· `POST /staging`（multipart 原样入库）· `POST /staging/optimize {name, mode}` · `POST /staging/deliver {name, folder?, keep?}`（EPUB 投完起线程等 xochitl 渲染、核对页数，结果推 `books/render` 事件）· `POST /staging/mark {name, target}` · `POST /staging/fetch-article {url, optimize?}`（`optimize` 缺省 false，请求了就抓完紧接着跑一遍「清洗＋优化」再落库，跟母版库列表里点「优化」是同一个函数，见白皮书 §03ap） · `POST /staging/delete {name}` · `GET /staging/render/{uuid}`（xochitl 渲染缓存 PDF，原给已砍的 `doctor --render` CLI 取回量测用，接口本身还在，只是没有自动化消费方了）· **原生回收站队列** `POST /trash/add {uuid, name}`（name 须与书库 visibleName 相符）· `GET /trash/pending`（Sidebar 代理 qmd 拉取，由 xochitl 自己的 `selectionMoveToTrash` 执行）· `GET /trash` |
+| books | `GET /events`（SSE） · `GET /status` · `GET /inbox` · `POST /inbox/{retry,delete}` · `GET /staging` → `{items, freeBytes}`（条目 `delivered.render`＝投原生后的渲染自检 `{uuid,pages,expected,status}`）· `POST /staging`（multipart 原样入库）· `POST /staging/optimize {name}`（2026-09-19 起不再分档位，永远跑完整清洗+优化）· `POST /staging/deliver {name, folder?}`（folder 空＝配置缺省文件夹；EPUB 投完起线程等 xochitl 渲染、核对页数，结果推 `books/render` 事件；2026-09-19 起不再有 `keep` 参数，母版库条目永远保留）· `POST /staging/mark {name, target}` · `POST /staging/fetch-article {url, optimize?}`（`optimize` 缺省 false，请求了就抓完紧接着跑一遍「清洗＋优化」再落库，跟母版库列表里点「优化」是同一个函数，见白皮书 §03ap） · `POST /staging/delete {name}` · `GET /staging/render/{uuid}`（xochitl 渲染缓存 PDF，原给已砍的 `doctor --render` CLI 取回量测用，接口本身还在，只是没有自动化消费方了）· **原生回收站队列** `POST /trash/add {uuid, name}`（name 须与书库 visibleName 相符）· `GET /trash/pending`（Sidebar 代理 qmd 拉取，由 xochitl 自己的 `selectionMoveToTrash` 执行）· `GET /trash` |
 | koreader | `GET /status` · `GET /books[?folder=]` · `POST /books/adopt {name, folder}`（从母版库落书）· `GET|POST /fonts` · `DELETE /fonts/{file}` · `GET|POST /dicts[?name=]` · `GET|POST /config/{settings\|defaults\|gestures}[?dry_run=1]` |
 | fonts | `GET /` · `POST /` · `DELETE /{family}` · `PUT /config {emboldenCjkFallback}` · `GET /status` |
 | wallpapers | `GET /` · `POST /[?activate=1]` · `PUT /current {name}` · `PUT /mode {mode}` · `DELETE /{name}` · `GET /{name}` · `GET /status` → `{native:{enabled,path,restartPending}}` |
@@ -120,7 +120,7 @@ shelf/
 | 用途 | 路径 |
 |---|---|
 | 二进制 | `~/.local/bin/{gateway,*-serve,shelf-uninstall,lo-alias.sh}` |
-| 配置 | `~/.config/shelf/<service>.json`（book：书库文件夹/xochitl 主机/超时/**`nativeUploadLimitMb` 投原生体积门 150**；font；gateway）· `~/.config/shelf/tls/`（CA+叶证书） |
+| 配置 | `~/.config/shelf/<service>.json`（book：书库文件夹/xochitl 主机/超时/**`nativeUploadLimitMb` 加入原生体积门 90**，2026-09-19 真机精确测出 xochitl `/upload` 硬上限后从未验证过的 150 改成留够安全余量的 90，见 `config.rs`；font；gateway）· `~/.config/shelf/tls/`（CA+叶证书） |
 | 数据 | `~/.local/share/shelf/`（fonts.json、壁纸池）· `~/.local/share/fonts/`（用户字体，fontconfig 标准位） |
 | 状态 | `~/.local/state/shelf/books/staging/`（**母版库**，不淘汰）· `books/{inbox,.work,failed}`（追平队列）· `wallpaper-state.json` · `koreader-backups/` |
 | 运行时 | `/tmp/shelf-0/shelf/{services,upload,koreader}`（`XDG_RUNTIME_DIR` 缺省回落；重启即清） |
@@ -238,3 +238,4 @@ shelf 本体+网关+笔记线+两个领域服务），见 `../packaging/README.m
 | 超限漫画按卷拆分投原生 | EPUB 漫画超过原生上传上限时，按自带 `toc.ncx` 结构递归拆分成若干份分别投递（新增 `bookconv::comic_split`），不再"大部头一律只出 CBZ"；复用原「投入原生书库」按钮，不新增入口；只做 EPUB 格式（CBZ 走 host 管线不碰） | ✅ 真机通（§03ax，2026-09-18）：《火影忍者》281MB 7 卷合集拆成 8 份（每份 38-40MB）全部真实上传成功，设备端 `.metadata` 确认 xochitl 已自动渲染打开（非"传上去但读不了"） |
 | host 部分整体砍除 | 用户明确表态以后不再使用 PC 端：`shelf/host/`（Python CLI `shelf push`/`font`/`wallpaper`/`koreader`/`notes pull`/`inbox`/`events`/`doctor --render`/`passwd` + Calibre 转换管线）整个移出仓库（留档 `oldbak/`，不再维护）；`notes/host/` 空目录一并删除；`pyproject.toml` 删 `calibre` 依赖组；CI 删对应 pytest 步骤；网页「传书·入库」页原第三张"电脑 shelf push"卡片删除，入库只剩「上传」+「抓网文」两条路；`transfer.push.*`/`transfer.guide.push.*` 共 20 个 i18n key 一并删除 | ✅ 离线全绿：`cargo test`（gateway 17 + shelf workspace 183）全过、`node --check`、locale key 对称差为空、`uv sync`+剩余 `pytest` 全过；**这是真实的功能减法不是搬家**——Calibre 深洗/PDF k2pdfopt 重排/漫画转 CBZ/`doctor --render` 排版回归探针/`notes pull` 拉 Obsidian vault 均无网页等价物，随这次砍除一起消失，不是"以后要补" |
 | 格式两档收成一档：只收 EPUB/PDF | 同一天用户接着明确要求"从此开始入库只入 PDF 和 EPUB，不论格式是否支持"——`rmsvc_core::formats` 的「仅 KOReader」档（CBZ/CBR/DjVu/HTML/HTM/RTF/DOC/DOCX/CHM/XPS）整档砍掉，`KOREADER_ONLY_EXTS` 常量删除，`BOOK_EXTS` 现在就是 `NATIVE_EXTS`（`["epub","pdf"]`）；网页格式说明文案（`transfer.guide.format.dd`/`transfer.upload.hint`/`transfer.upload.dropLabel`）同步简化成单档描述，`transfer.fmtTiers` key 删除；已经在库里的旧格式条目不受影响（仍可加入 KOReader），只是不会再有新的 | ✅ 离线全绿：`rmsvc-core`（53）/`gateway`（17，含格式白名单注入测试）/`shelf` workspace（183，两处上传/inbox 单测夹具改用 epub 重新验证空文件+非书籍格式+重名三条路径）/`notes`/`enhance` 三个 crate 全过、`node --check`、locale key 对称差为空 |
+| 母版库页三项修复：真实文件夹下拉/用词统一/去掉优化分档与投完自动删除 | 用户反馈三点：① 「加入原生书库」文件夹下拉原来是写死的「书库/批注/自定义」预设（`annot_folder` 默认跟 `library_folder` 撞成同一个值），不反映真实文件夹——新增 `xochitl::list_folders` 扫真实 `CollectionType` 条目，`GET /status` 新增 `xochitlFolders`，网页改跟 KOReader 目录同一套自由输入框+datalist 真实候选，`annot_folder`/`folderPreset` 删除；② "投入原生书库"跟"加入 KOReader"两个按钮动词不一致，统一改「加入」，23 个 i18n key（含英文版）一并改；③ 去掉优化分档位（`OptimizeMode` 枚举+`mode` 参数删除，永远跑完整清洗+优化）和投完自动删除（`keep` 参数删除，母版永远保留，`stgclear` 复选框删除）。顺手修了三处指引用户"用电脑 shelf push"的过期文案（host 已砍） | ✅ 真机通：`GET /status` 的 `xochitlFolders` 对照设备实际 `.metadata` 核实为空（设备确无自建文件夹，坐实旧"批注"选项是假的）；真实上传 EPUB→`POST /staging/optimize`（不带 mode）→确认 `level=full`→清理测试产物；`deliver`/`keep` 移除由 26 个 book-serve 单测覆盖，未做真实投递到原生阅读器的端到端验证（会在用户设备书库留下真实文档，这次跳过，upload 路径字节本身不变）。`cargo test` 全绿：rmsvc-core 54、gateway 17、shelf workspace 183 |
