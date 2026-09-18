@@ -416,5 +416,6 @@
   "transfer.staging.folder.label": "Add to xochitl → folder",
   "transfer.staging.progress.optimizing": "Optimizing…",
   "transfer.staging.progress.delivering": "Adding to xochitl…",
+  "transfer.staging.progress.addingKoreader": "Adding to KOReader…",
   "transfer.staging.progress.working": "Working…"
 }

@@ -37,14 +37,16 @@ impl MkdirQueue {
         MkdirQueue { q: PendingQueue::new(state_books_dir.join("mkdir-pending.json")), lib_dir: lib_dir.to_path_buf() }
     }
 
-    /// 入队一个文件夹名；已经真实存在或已在队列里都不重复加。名字不能为空/带路径分隔符（防误传路径）。
+    /// 入队一个文件夹名；已经真实存在或已在队列里都不重复加。名字不能为空——`/`、`\` 曾经也被当
+    /// "路径分隔符防误传"拦掉，2026-09-19 真机反馈坐实是误伤：这个名字全程只当 JSON `visibleName`
+    /// 字符串走（`Library.createCollection(parentId, name)` 收的是普通 JS 字符串，不是文件系统路径，
+    /// 本模块也不支持"按路径建多级文件夹"这种语义），真实书名/文件夹名带斜杠很常见（如《乱马1/2》），
+    /// 拦它没有技术依据、只会挡合法输入——见 `find_folder_by_name`/`Xochitl::upload` 全程都是按
+    /// `visibleName` 字符串整体比较，folder 的文件系统路径只走 uuid，从不落到名字里。
     pub fn add(&self, name: &str) -> Result<usize, String> {
         let name = name.trim();
         if name.is_empty() {
             return Err("文件夹名不能为空".into());
-        }
-        if name.contains('/') || name.contains('\\') {
-            return Err("文件夹名不能带路径分隔符".into());
         }
         if find_folder_by_name(&self.lib_dir, name).is_some() {
             return Ok(0); // 已经存在，不用建
@@ -81,7 +83,6 @@ mod tests {
         let q = MkdirQueue::new(&t.path().join("state"), &lib_dir);
 
         assert!(q.add("").unwrap_err().contains("不能为空"));
-        assert!(q.add("a/b").unwrap_err().contains("路径分隔符"));
 
         assert_eq!(q.add("《人骨拼圖》").unwrap(), 1);
         assert_eq!(q.add("《人骨拼圖》").unwrap(), 1, "重复入队不翻倍");
@@ -101,5 +102,18 @@ mod tests {
         // 已存在的文件夹再入队直接判"不用建"，不落队列
         assert_eq!(q.add("《人骨拼圖》").unwrap(), 0);
         assert_eq!(q.list().len(), 1, "没有新增");
+    }
+
+    /// 2026-09-19 真机反馈：《乱马1/2》这类带 `/` 的真实文件夹名曾被当"路径分隔符防误传"拒绝，
+    /// 导致 `ensure_folder` 静默放弃、书落回根目录——这个名字全程只当 JSON `visibleName` 字符串走
+    /// （`Library.createCollection` 收的是普通 JS 字符串，不是文件系统路径），拦它没有技术依据。
+    #[test]
+    fn add_accepts_names_with_slash() {
+        let t = tempfile::tempdir().unwrap();
+        let lib_dir = lib(&t);
+        let q = MkdirQueue::new(&t.path().join("state"), &lib_dir);
+        assert_eq!(q.add("乱马1/2").unwrap(), 1);
+        assert_eq!(q.list()[0].name, "乱马1/2");
+        assert_eq!(q.add(r"a\b").unwrap(), 2);
     }
 }

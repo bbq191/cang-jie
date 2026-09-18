@@ -416,5 +416,6 @@
   "transfer.staging.folder.label": "加入 xochitl → 文件夹",
   "transfer.staging.progress.optimizing": "优化中…",
   "transfer.staging.progress.delivering": "加入 xochitl 中…",
+  "transfer.staging.progress.addingKoreader": "加入 KOReader 中…",
   "transfer.staging.progress.working": "处理中…"
 }

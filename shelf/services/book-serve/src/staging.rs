@@ -308,7 +308,7 @@ impl Staging {
             return;
         }
         if mkdir.add(folder).is_err() {
-            return; // 名字不合法（带路径分隔符等）——不是这里的职责去挑错，交给 upload 的兜底
+            return; // 名字不合法（目前只剩"空"这一种情况——2026-09-19 起 `/`\`\` 不再算不合法，见 mkdir.rs::add）
         }
         let lib_dir = self.xochitl.library_dir();
         rmsvc_core::fswatch::watch_until(lib_dir, render_check::DEBOUNCE, FOLDER_WAIT_TIMEOUT, |_| self.xochitl.find_folder(folder).is_some());

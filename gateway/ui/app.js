@@ -164,7 +164,16 @@ function stagingList(ul,opts){
     // 里的 pending 记录留在磁盘上）——不是"还在跑"，之前这种状态界面上什么都不显示，跟"点了
     // 没反应"没区别；现在单独标出来，别再跟"真的在跑"混在一起看。
     const stalePending=k=>k&&k.status==='pending'&&!it.busy;
-    const ob=it.busy?` <span class="badge" title="${T('transfer.staging.processing.title')}">${T('transfer.staging.processing.badge')}</span>`
+    // 「加入 KOReader」是 koreader-serve 一次同步阻塞调用（本地文件复制，不走 book-serve 忙锁——
+    // 两个服务各自独立进程，book-serve 的 `it.busy` 天然管不到它），server 端没有等价的忙态可查。
+    // 2026-09-19 用户反馈"加入 KOReader 进度条也不刷新"：根因是这个操作从没接进过忙态系统，之前
+    // 按钮点击只有本地"文字+省略号"，跟其余按钮的进度条待遇完全脱节。这里补一个纯前端的本地忙态
+    // （`opts.localBusy`，按钮点击时加入、操作完成后移除，见下面按钮定义），跟服务端 `it.busy`
+    // 合并成同一个 `busy` 判据，统一走下面的禁用/进度条逻辑——不假装有真实进度（本地复制没有
+    // 天然的分步骤可报），但至少不再是"点了没反应"。
+    const localBusy=!!(opts.localBusy&&opts.localBusy.has(it.name));
+    const busy=it.busy||localBusy;
+    const ob=busy?` <span class="badge" title="${T('transfer.staging.processing.title')}">${T('transfer.staging.processing.badge')}</span>`
       :(stalePending(oc)||stalePending(dc)?` <span class="badge off" title="${T('transfer.staging.stalePending.title')}">${T('transfer.staging.stalePending.badge')}</span>`:'')
       +(oc&&oc.status==='failed'?` <span class="badge off" title="${oc.message}">${T('transfer.staging.optimizeFailed.badge')}</span>`:'')
       +(dc&&dc.status==='failed'?` <span class="badge off" title="${dc.message}">${T('transfer.staging.deliverFailed.badge')}</span>`:'');
@@ -182,9 +191,9 @@ function stagingList(ul,opts){
     // 没法给出精确进度（耗时来自流式处理/单次上传，没有天然的"第几步"）→ 不确定时长的滚动进度条
     // （`<progress>` 不带 value/max，浏览器原生渲染成不确定态动画），至少比一句不会变化的静态文字
     // 更能传达"真的在动、不是卡死了"。
-    if(it.busy){
+    if(busy){
       const dcPending=dc&&dc.status==='pending',ocPending=oc&&oc.status==='pending';
-      const label=dcPending?T('transfer.staging.progress.delivering'):ocPending?T('transfer.staging.progress.optimizing'):T('transfer.staging.progress.working');
+      const label=localBusy?T('transfer.staging.progress.addingKoreader'):dcPending?T('transfer.staging.progress.delivering'):ocPending?T('transfer.staging.progress.optimizing'):T('transfer.staging.progress.working');
       const prog=dcPending&&dc.progress?dc.progress:null;
       const wrap=document.createElement('div');wrap.style.cssText='flex-basis:100%;margin-top:.2em';
       const bar=document.createElement('progress');if(prog){bar.max=prog.total;bar.value=prog.done}
@@ -197,12 +206,19 @@ function stagingList(ul,opts){
     // 不了、该去哪解决（2026-09-09 审计发现）。现在禁用时额外补一行可见小字，跟 title 内容一样，
     // `flex-basis:100%` 让它在 `right`（flex-wrap 容器）里独占一行，不挤在按钮同一行。busy 引起的
     // 禁用不再重复这行小字——上面已经有整行的进度条，三个按钮各自重复一遍"正在处理中"没有信息量。
-    const btn=(t,pri,fn,dis,title,cls)=>{const b=document.createElement('button');b.className='btn'+(pri?' pri':'')+(cls?' '+cls:'');b.textContent=t;if(dis){b.disabled=true;b.title=title||''}else b.onclick=async()=>{b.disabled=true;b.textContent=t+'…';await fn();if(opts.refresh)opts.refresh()};right.appendChild(b);
+    // trackLocal=true：这个按钮的操作没有服务端忙态可查（目前只有「加入 KOReader」），点击时先把
+    // 这条目名记进 `opts.localBusy` 并立即用 `opts.render`（不重新拉数据、只重画）把进度条画出来，
+    // 操作结束（无论成不成功）都要清掉，再走一次真正的 `opts.refresh` 落地最终状态。
+    const btn=(t,pri,fn,dis,title,cls,trackLocal)=>{const b=document.createElement('button');b.className='btn'+(pri?' pri':'')+(cls?' '+cls:'');b.textContent=t;if(dis){b.disabled=true;b.title=title||''}else b.onclick=async()=>{b.disabled=true;b.textContent=t+'…';
+      if(trackLocal&&opts.localBusy){opts.localBusy.add(it.name);if(opts.render)opts.render()}
+      try{await fn()}finally{if(trackLocal&&opts.localBusy)opts.localBusy.delete(it.name)}
+      if(opts.refresh)opts.refresh()};right.appendChild(b);
       if(dis&&title){const hint=document.createElement('span');hint.className='small';hint.style.cssText='flex-basis:100%';hint.textContent=title;right.appendChild(hint)}};
-    // it.busy：这条目正有一个异步优化在后台跑（真机实测大漫画能到分钟级）——删除/落库/加入 KOReader/
-    // 再次优化全部先禁掉，防止跟正在跑的优化并发冲突（2026-09-18 真机反馈：点了优化又点删除）；
-    // busy 状态由服务端权威判定（GET /staging 的 busy 字段），完成后 SSE 推事件、列表自动刷新解禁。
-    if(it.format==='epub'&&!it.optimized)btn(T('transfer.staging.btn.optimize'),false,()=>postJ('/api/books/staging/optimize',{name:it.name}),it.busy,'');
+    // busy（it.busy 服务端忙锁 或 localBusy 本地忙态）：这条目正有一个异步操作在跑（优化/落库真机
+    // 实测都能到分钟级，KOReader 加入虽快但也不该看着像没反应）——删除/落库/加入 KOReader/再次优化
+    // 全部先禁掉，防止并发冲突（2026-09-18 真机反馈：点了优化又点删除）；服务端忙锁完成后 SSE 推
+    // 事件、列表自动刷新解禁，本地忙态在 `fn()` resolve 后立即清。
+    if(it.format==='epub'&&!it.optimized)btn(T('transfer.staging.btn.optimize'),false,()=>postJ('/api/books/staging/optimize',{name:it.name}),busy,'');
     // 体积门：超过 xochitl /upload 上限的书灰掉按钮（服务端同样拦），提示走电脑分卷。EPUB 例外——
     // 超限的 EPUB 漫画服务端会按卷拆分投递（2026-09-18，见 book-serve::Staging::try_deliver_split），
     // 按钮不能提前灰掉，得让服务端判过是不是漫画才知道能不能救；PDF 没有这条救援路径，继续照原样灰。
@@ -211,12 +227,12 @@ function stagingList(ul,opts){
     // 阻塞的体验跟优化改异步前一样像卡死）；点了立即回"已开始"，不再 alert 最终结果——完成状态跟优化
     // 一样靠徽章看（成功＝「已加入 xochitl」时间戳徽章出现，失败＝「上次加入失败」徽章，见上面 ob 那段）。
     // 2026-09-19 去掉「投完自动删除」：母版永远保留，不再传 keep（服务端也已删这个参数）。
-    if(it.format==='epub'||it.format==='pdf')btn(T('transfer.staging.btn.deliverNative'),true,()=>postJ('/api/books/staging/deliver',{name:it.name,folder:opts.xFolder()}),it.busy||tooBig,it.busy?'':T('transfer.staging.btn.tooBigTitle',{limit:fmtB(opts.nativeLimit)}));
-    btn(T('transfer.staging.btn.addKoreader'),true,async()=>{const r=await postJ('/api/koreader/books/adopt',{name:it.name,folder:opts.kFolder()});if(r.ok!==false)await postJ('/api/books/staging/mark',{name:it.name,target:'koreader'})},it.busy||!opts.koInstalled,it.busy?'':T('transfer.staging.btn.koNotInstalled'));
+    if(it.format==='epub'||it.format==='pdf')btn(T('transfer.staging.btn.deliverNative'),true,()=>postJ('/api/books/staging/deliver',{name:it.name,folder:opts.xFolder()}),busy||tooBig,busy?'':T('transfer.staging.btn.tooBigTitle',{limit:fmtB(opts.nativeLimit)}));
+    btn(T('transfer.staging.btn.addKoreader'),true,async()=>{const r=await postJ('/api/koreader/books/adopt',{name:it.name,folder:opts.kFolder()});if(r.ok!==false)await postJ('/api/books/staging/mark',{name:it.name,target:'koreader'})},busy||!opts.koInstalled,busy?'':T('transfer.staging.btn.koNotInstalled'),undefined,true);
     // 单行最多 5 徽章+4 按钮时，"删除"（销毁）跟"优化"（编辑）视觉权重完全一样，只靠文案区分
     // （2026-09-09 审计发现）；`.btn-bad` 早就存在但只用在转写失败按钮上，这里补上，破坏性操作至少
     // 颜色上跟常规操作分开。
-    btn(T('action.delete'),false,async()=>{if(confirm(T('transfer.staging.confirmDeleteOne',{name:it.name})))await postJ('/api/books/staging/delete',{name:it.name})},it.busy,'','btn-bad');
+    btn(T('action.delete'),false,async()=>{if(confirm(T('transfer.staging.confirmDeleteOne',{name:it.name})))await postJ('/api/books/staging/delete',{name:it.name})},busy,'','btn-bad');
     li.appendChild(right);ul.appendChild(li)});
 }
 
@@ -258,12 +274,15 @@ function renderTransfer(sec){sec.innerHTML=`
     </div>
   </div>`;
   let koInstalled=false,items=[],nativeLimit=0;
+  // 「加入 KOReader」没有服务端忙态可查（见 stagingList 内注释）——本地忙态集合，per-render 存活，
+  // 不落 LS（纯瞬时 UI 态，刷新页面/切 tab 就该清空，不是需要记住的用户设置）。
+  const localBusy=new Set();
   const g=id=>$('#'+id,sec);
   // 落库设置记在本机（per-viewer 便利态）。2026-09-19：原来的「书库/批注/自定义」三选一预设
   // （`folderPreset`）删掉，改跟 KOReader 目录同一个模式——自由输入框 + datalist 真实候选
   // （见下面 refresh() 里的 xodirs 填充），留空＝落配置缺省的书库文件夹。
   [['folder','folder',''],['kfolder','kfolder','']].forEach(([id,k,d])=>{g(id).value=LS.get(k,d);['input','change'].forEach(ev=>g(id).addEventListener(ev,()=>LS.set(k,g(id).value)))});
-  const render=()=>stagingList(g('stglist'),{items,q:g('stgq').value,fmt:g('stgfmt').value,st:g('stgst').value,xFolder:()=>g('folder').value.trim(),kFolder:()=>g('kfolder').value.trim(),koInstalled,nativeLimit,refresh:()=>refresh()});
+  const render=()=>stagingList(g('stglist'),{items,q:g('stgq').value,fmt:g('stgfmt').value,st:g('stgst').value,xFolder:()=>g('folder').value.trim(),kFolder:()=>g('kfolder').value.trim(),koInstalled,nativeLimit,localBusy,render:()=>render(),refresh:()=>refresh()});
   ['stgq','stgfmt','stgst'].forEach(id=>['input','change'].forEach(ev=>g(id).addEventListener(ev,render)));
   const refresh=async()=>{const [d,s,k,kb]=await Promise.all([j('/api/books/staging'),j('/api/books/status'),j('/api/koreader/status'),j('/api/koreader/books')]);
     nativeLimit=(s.ok&&s.nativeUploadLimitBytes)||0;koInstalled=!!(k.ok&&k.installed);
