@@ -133,8 +133,8 @@ const GUIDE=()=>`<details class="cmp"><summary>${T('transfer.guide.summary')}</s
 <dt>${T('transfer.guide.unsure.dt')}</dt><dd>${T('transfer.guide.unsure.dd')}</dd>
 </dl></details>`;
 
-/* 母版库列表。按格式门控按钮：EPUB→优化(未优化时)/加入原生书库/加入 KO；PDF→加入原生书库/加入 KO；其它→只能加入 KO。
-   CBZ 漫画只能加入 KOReader（不加入原生书库）；超体积门（nativeLimit 字节）的书灰掉「加入原生书库」。「加入 KOReader」按 koInstalled 门控。
+/* 母版库列表。按格式门控按钮：EPUB→优化(未优化时)/加入 xochitl/加入 KO；PDF→加入 xochitl/加入 KO；其它→只能加入 KO。
+   CBZ 漫画只能加入 KOReader（不加入 xochitl）；超体积门（nativeLimit 字节）的书灰掉「加入 xochitl」。「加入 KOReader」按 koInstalled 门控。
    2026-09-19 用户明确要求去掉两样东西：① 优化分档位（不再有 mode 选择，永远跑完整清洗+优化）；
    ② 投完自动从母版库删除（母版永远保留，用户自己删）——opts 里原来的 `mode()`/`clear()` 两个
    参数已删，跟着一起删的还有 xFolder 那个"书库/批注/自定义"三选一预设（见 renderTransfer）。
@@ -209,7 +209,7 @@ function stagingList(ul,opts){
     const tooBig=opts.nativeLimit&&it.bytes>opts.nativeLimit&&it.format!=='epub';
     // 落库改异步同 optimize（2026-09-19：超限漫画按卷拆分要挨个建包+上传，真机能到分钟级，之前同步
     // 阻塞的体验跟优化改异步前一样像卡死）；点了立即回"已开始"，不再 alert 最终结果——完成状态跟优化
-    // 一样靠徽章看（成功＝「已加入原生」时间戳徽章出现，失败＝「上次加入失败」徽章，见上面 ob 那段）。
+    // 一样靠徽章看（成功＝「已加入 xochitl」时间戳徽章出现，失败＝「上次加入失败」徽章，见上面 ob 那段）。
     // 2026-09-19 去掉「投完自动删除」：母版永远保留，不再传 keep（服务端也已删这个参数）。
     if(it.format==='epub'||it.format==='pdf')btn(T('transfer.staging.btn.deliverNative'),true,()=>postJ('/api/books/staging/deliver',{name:it.name,folder:opts.xFolder()}),it.busy||tooBig,it.busy?'':T('transfer.staging.btn.tooBigTitle',{limit:fmtB(opts.nativeLimit)}));
     btn(T('transfer.staging.btn.addKoreader'),true,async()=>{const r=await postJ('/api/koreader/books/adopt',{name:it.name,folder:opts.kFolder()});if(r.ok!==false)await postJ('/api/books/staging/mark',{name:it.name,target:'koreader'})},it.busy||!opts.koInstalled,it.busy?'':T('transfer.staging.btn.koNotInstalled'));
@@ -267,7 +267,7 @@ function renderTransfer(sec){sec.innerHTML=`
   ['stgq','stgfmt','stgst'].forEach(id=>['input','change'].forEach(ev=>g(id).addEventListener(ev,render)));
   const refresh=async()=>{const [d,s,k,kb]=await Promise.all([j('/api/books/staging'),j('/api/books/status'),j('/api/koreader/status'),j('/api/koreader/books')]);
     nativeLimit=(s.ok&&s.nativeUploadLimitBytes)||0;koInstalled=!!(k.ok&&k.installed);
-    // 原生书库/KOReader 现有目录 → 下拉候选（免手打错，跟真实文件夹保持一致，不是写死的预设）
+    // xochitl/KOReader 现有目录 → 下拉候选（免手打错，跟真实文件夹保持一致，不是写死的预设）
     g('xodirs').innerHTML=(s.ok?s.xochitlFolders||[]:[]).map(n=>`<option value="${n}">`).join('');
     g('kodirs').innerHTML=(kb.items||[]).filter(x=>x.kind==='dir').map(x=>`<option value="${x.name}">`).join('');
     if(d.ok===false){g('stglist').innerHTML=`<li class="small" style="color:var(--bad)">${T('transfer.staging.unavailable',{msg:d.message||T('transfer.staging.notOpen')})}</li>`;g('stgcap').textContent='';return}

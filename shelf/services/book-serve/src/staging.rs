@@ -248,7 +248,7 @@ impl Staging {
 
     // ───────────── 落库 ─────────────
 
-    /// 投入 xochitl 书库：纯复制原字节（不再优化）。原生阅读器只读 EPUB/PDF（CBZ 漫画不投原生，用户定）。`folder` 空＝配置缺省；
+    /// 加入 xochitl：纯复制原字节（不再优化）。xochitl 只读 EPUB/PDF（CBZ 漫画不加入 xochitl，用户定）。`folder` 空＝配置缺省；
     /// 母版库条目投完**永远保留**（2026-09-19 用户明确要求去掉"投完自动删除"这个功能——母版是可以
     /// 反复投给两个读器对照、换设备重投的底本，不该被一次性动作悄悄清掉；要删由用户自己在列表里点
     /// 删除）。返回回执文案 + EPUB 的渲染自检计划（调用方起线程跑 `render_check::run`）。
@@ -256,7 +256,7 @@ impl Staging {
     /// HTTP 接口不该直接暴露这个方法，用 [`Self::spawn_deliver`] 走后台线程。
     pub fn deliver(&self, name: &str, folder: &str, bus: &rmsvc_core::events::EventBus) -> Result<DeliverOutcome, String> {
         let ct = bookconv::convert::direct_content_type(name)
-            .ok_or("原生阅读器只读 EPUB / PDF；此格式请「加入 KOReader」")?;
+            .ok_or("xochitl 只读 EPUB / PDF；此格式请「加入 KOReader」")?;
         let p = self.existing(name)?;
         let size = std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0);
         let folder = if folder.trim().is_empty() { self.library_folder.as_str() } else { folder.trim() };
@@ -270,7 +270,7 @@ impl Staging {
                 }
             }
             return Err(format!(
-                "《{name}》{} MB 超过原生阅读器上传上限（{} MB），xochitl 会直接断连。PDF 请自行分割成多份后重新上传；非漫画或没有可用目录结构的 EPUB 无法自动分卷，请改用 KOReader 读",
+                "《{name}》{} MB 超过 xochitl 上传上限（{} MB），会直接断连。PDF 请自行分割成多份后重新上传；非漫画或没有可用目录结构的 EPUB 无法自动分卷，请改用 KOReader 读",
                 size >> 20,
                 self.native_limit >> 20
             ));
@@ -283,8 +283,8 @@ impl Staging {
             None
         };
         let message = match self.xochitl.upload(&data, name, ct.mime(), folder)? {
-            Delivery::Delivered(_) => format!("已投入原生书库《{name}》"),
-            Delivery::LikelyDelivered(_) => format!("已投入原生书库《{name}》（设备处理较慢，稍候刷新书库）"),
+            Delivery::Delivered(_) => format!("已加入 xochitl《{name}》"),
+            Delivery::LikelyDelivered(_) => format!("已加入 xochitl《{name}》（设备处理较慢，稍候刷新书库）"),
         };
         let _ = self.mark_delivered(name, Reader::Native);
         Ok(DeliverOutcome { message, render })
@@ -297,7 +297,7 @@ impl Staging {
     /// 完成，不劳 HTTP 层操心。`catch_unwind` 兜底同 `spawn_optimize`。
     pub fn spawn_deliver(&self, name: &str, folder: &str, bus: Arc<rmsvc_core::events::EventBus>) -> Result<(), String> {
         bookconv::convert::direct_content_type(name)
-            .ok_or("原生阅读器只读 EPUB / PDF；此格式请「加入 KOReader」")?;
+            .ok_or("xochitl 只读 EPUB / PDF；此格式请「加入 KOReader」")?;
         self.existing(name)?;
         if !self.try_start_busy(name) {
             return Err(format!("《{name}》正在处理中，请稍候"));
@@ -392,7 +392,7 @@ impl Staging {
         if outcome.delivered.is_empty() {
             return Err(format!("《{name}》按卷拆分后一份都没能投上：{}", outcome.failed.join("；")));
         }
-        let mut message = format!("《{stem}》超限，已按卷拆分投入原生书库：{}", outcome.delivered.join("、"));
+        let mut message = format!("《{stem}》超限，已按卷拆分加入 xochitl：{}", outcome.delivered.join("、"));
         if !outcome.failed.is_empty() {
             message.push_str(&format!("（{} 未投：{}）", outcome.failed.len(), outcome.failed.join("；")));
         }
@@ -814,7 +814,7 @@ mod tests {
         let s = staging(&t);
         s.stage_new("novel.epub", &epub).unwrap();
         let err = s.deliver("novel.epub", "", &rmsvc_core::events::EventBus::new()).unwrap_err();
-        assert!(err.contains("超过原生阅读器上传上限") && err.contains("分卷"), "非漫画超限应该保持改动前的整本拒绝: {err}");
+        assert!(err.contains("超过 xochitl 上传上限") && err.contains("分卷"), "非漫画超限应该保持改动前的整本拒绝: {err}");
     }
 
     #[test]
@@ -828,7 +828,7 @@ mod tests {
         // 体积门：超过 native_limit（测试设 1MB）不碰 xochitl，回执指引分卷
         s.stage_new("huge.pdf", &vec![b'%'; 2 * 1024 * 1024]).unwrap();
         let e = s.deliver("huge.pdf", "", &rmsvc_core::events::EventBus::new()).unwrap_err();
-        assert!(e.contains("超过原生阅读器上传上限") && e.contains("分卷"), "{e}");
+        assert!(e.contains("超过 xochitl 上传上限") && e.contains("分卷"), "{e}");
         // PDF 走到 xochitl 才失败（不可达），母版仍在、无落库记录
         assert!(s.deliver("d.pdf", "", &rmsvc_core::events::EventBus::new()).is_err());
         assert!(s.list().iter().any(|e| e.name == "d.pdf" && e.delivered.is_none()));
