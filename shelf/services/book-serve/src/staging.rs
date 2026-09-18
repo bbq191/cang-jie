@@ -254,7 +254,7 @@ impl Staging {
     /// 删除）。返回回执文案 + EPUB 的渲染自检计划（调用方起线程跑 `render_check::run`）。
     /// **同步、阻塞**——超限漫画按卷拆分要挨个建包+上传，真机能到分钟级；跟 [`Self::optimize`] 一样，
     /// HTTP 接口不该直接暴露这个方法，用 [`Self::spawn_deliver`] 走后台线程。
-    pub fn deliver(&self, name: &str, folder: &str) -> Result<DeliverOutcome, String> {
+    pub fn deliver(&self, name: &str, folder: &str, bus: &rmsvc_core::events::EventBus) -> Result<DeliverOutcome, String> {
         let ct = bookconv::convert::direct_content_type(name)
             .ok_or("原生阅读器只读 EPUB / PDF；此格式请「加入 KOReader」")?;
         let p = self.existing(name)?;
@@ -265,7 +265,7 @@ impl Staging {
             // （2026-09-18 用户真机反馈驱动，见 bookconv::comic_split 与书架白皮书 §03aw）。
             // 非 EPUB、非漫画、或拆不出方案（没有可用 toc.ncx）的原样保留改动前的整本拒绝行为。
             if formats::ext_of(name) == "epub" {
-                if let Some(outcome) = self.try_deliver_split(name, &p, folder)? {
+                if let Some(outcome) = self.try_deliver_split(name, &p, folder, bus)? {
                     return Ok(outcome);
                 }
             }
@@ -306,7 +306,7 @@ impl Staging {
         let _ = self.set_deliver_check(name, sidecar::DeliverCheck { status: "pending".into(), message: String::new(), at: now, progress: None });
         let (this, name, folder) = (self.clone(), name.to_string(), folder.to_string());
         std::thread::spawn(move || {
-            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| this.deliver(&name, &folder)))
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| this.deliver(&name, &folder, &bus)))
                 .unwrap_or_else(|_| Err("落库过程内部异常（已捕获，不影响其他操作）".to_string()));
             let at = rmsvc_core::clock::now_secs();
             let dc = match &result {
@@ -355,7 +355,7 @@ impl Staging {
     /// 渲染自检同一套机制（`render_check::probe`+`fswatch::watch_until`）等这一份真的出现页数再
     /// 放行下一份——每份限时 [`PIECE_RENDER_TIMEOUT`]，超时也不算失败（上传本身已经成功，只是没
     /// 等到确认，继续投下一份，不为等不到的确认阻塞整本书）。
-    fn try_deliver_split(&self, name: &str, p: &Path, folder: &str) -> Result<Option<DeliverOutcome>, String> {
+    fn try_deliver_split(&self, name: &str, p: &Path, folder: &str, bus: &rmsvc_core::events::EventBus) -> Result<Option<DeliverOutcome>, String> {
         let stem = name.strip_suffix(".epub").unwrap_or(name).to_string();
         let native_limit = self.native_limit;
         let lib_dir = self.xochitl.library_dir().to_path_buf();
@@ -364,6 +364,9 @@ impl Staging {
         // 份数给网页画真百分比进度条用，`message` 仍留一句人话＋已完成的具体卷名），`GET /staging`
         // 就能看到实时进度，不用等整本投完才有任何反馈（2026-09-19 用户先反馈"能否显示优化及投书
         // 进度"，后又反馈"正在处理中请稍候"这种静态文案该换成进度条/百分比，这里是后一条的落地）。
+        // **每写完一份 sidecar 进度也要 `bus.publish`**——不发事件的话，网页那套"SSE 推事件才刷新
+        // 列表"的零轮询机制根本不知道这条记录变了，进度条数字冻结在第一份，要手动刷新页面才看得到
+        // 新值（2026-09-19 用户反馈"进度条不会动，要自己刷新"，根因是这个函数当时没拿到 `bus`）。
         let mut done_titles: Vec<String> = Vec::new();
         let outcome = bookconv::comic_split::deliver_split_streaming(p, native_limit, |piece_name, bytes, idx, total| {
             let since_ms = rmsvc_core::clock::now_ms();
@@ -382,6 +385,7 @@ impl Staging {
                 progress: Some(sidecar::DeliverProgress { done: idx as u32, total: total as u32 }),
             };
             let _ = self.set_deliver_check(name, progress);
+            bus.publish("books", "staging");
             Ok(())
         })?;
         let Some(outcome) = outcome else { return Ok(None) }; // 不是漫画，或没超预算——退回原来的整本流程
@@ -796,7 +800,7 @@ mod tests {
         s.ensure().unwrap();
         let epub = multivol_comic_epub(&[15, 15]);
         s.stage_new("manga.epub", &epub).unwrap();
-        let err = s.deliver("manga.epub", "").unwrap_err();
+        let err = s.deliver("manga.epub", "", &rmsvc_core::events::EventBus::new()).unwrap_err();
         assert!(err.contains("按卷拆分") || err.contains("上传失败") || err.contains("拆分后一份都没能投上"), "应该走拆分路径而不是整本拒绝: {err}");
         assert!(err.contains("卷0") || err.contains("卷1"), "错误信息应该点出具体是哪一卷: {err}");
     }
@@ -809,7 +813,7 @@ mod tests {
         let epub = mini_epub(&[("content.opf", opf), ("c1.xhtml", &format!("<html><body><p>{long_text}</p></body></html>"))]);
         let s = staging(&t);
         s.stage_new("novel.epub", &epub).unwrap();
-        let err = s.deliver("novel.epub", "").unwrap_err();
+        let err = s.deliver("novel.epub", "", &rmsvc_core::events::EventBus::new()).unwrap_err();
         assert!(err.contains("超过原生阅读器上传上限") && err.contains("分卷"), "非漫画超限应该保持改动前的整本拒绝: {err}");
     }
 
@@ -820,13 +824,13 @@ mod tests {
         s.stage_new("c.cbz", b"PK").unwrap();
         s.stage_new("d.pdf", b"%PDF").unwrap();
         assert_eq!(s.list().iter().find(|e| e.name == "c.cbz").unwrap().format, "cbz");
-        assert!(s.deliver("c.cbz", "").unwrap_err().contains("只读 EPUB / PDF"));
+        assert!(s.deliver("c.cbz", "", &rmsvc_core::events::EventBus::new()).unwrap_err().contains("只读 EPUB / PDF"));
         // 体积门：超过 native_limit（测试设 1MB）不碰 xochitl，回执指引分卷
         s.stage_new("huge.pdf", &vec![b'%'; 2 * 1024 * 1024]).unwrap();
-        let e = s.deliver("huge.pdf", "").unwrap_err();
+        let e = s.deliver("huge.pdf", "", &rmsvc_core::events::EventBus::new()).unwrap_err();
         assert!(e.contains("超过原生阅读器上传上限") && e.contains("分卷"), "{e}");
         // PDF 走到 xochitl 才失败（不可达），母版仍在、无落库记录
-        assert!(s.deliver("d.pdf", "").is_err());
+        assert!(s.deliver("d.pdf", "", &rmsvc_core::events::EventBus::new()).is_err());
         assert!(s.list().iter().any(|e| e.name == "d.pdf" && e.delivered.is_none()));
     }
 
