@@ -223,8 +223,17 @@ fn fixed_page_chunks_range_sized(entries: &[Entry], spine: &[String], range_star
     out
 }
 
+/// 一页 (x)html 的 `<body>...</body>` 内部原文（不含 body 标签本身）。用于纯文字页——没有一张
+/// 图、原样保留正文不当成漫画图片页处理。解不出 `<body>` 时返回 `None`（异常文件，调用方按空页
+/// 处理，不硬凑）。
+fn body_inner(html: &str) -> Option<&str> {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    let re = RE.get_or_init(|| Regex::new(r#"(?is)<body\b[^>]*>(.*?)</body>"#).unwrap());
+    re.captures(html).and_then(|c| c.get(1)).map(|m| m.as_str())
+}
+
 /// 按规划出的一段 spine range 组一份独立 EPUB：range 内每页各自的图片重新收进
-/// `images/NNNN.{ext}`（去重、路径全新分配，不依赖原书目录结构），页面本身简化成
+/// `images/NNNN.{ext}`（去重、路径全新分配，不依赖原书目录结构），漫画图片页简化成
 /// "一张图占一页"的最小 body（原页面的 CSS/装饰 wrapper 对纯图片漫画页没有实质意义，不带过去，
 /// 避免连带原书内联 style/字体锁这类已经被 `optimize_epub_with` 处理过的东西节外生枝）。
 /// 只接 `entries`（不接 `spine`）——`Opf`/`parse_opf` 是 `pub(crate)`，跨 crate（book-serve）调
@@ -236,6 +245,16 @@ fn fixed_page_chunks_range_sized(entries: &[Entry], spine: &[String], range_star
 /// 当章节标题；不管有没有这类更细的节点，这一份的第一页永远钉上这一份自己的标题（`title` 参数，
 /// 跟切分时报进度条用的名字一致）——保证不管原书 NCX 长什么样，拆出来的每一份自己至少有一条
 /// 能点的目录项、点开就跳回开头，不是拆一份就丢一份目录。
+///
+/// **文字页原样保留**（2026-09-19 真机反馈修复：镖人的"后记""特别附录"这类零配图的纯文字页
+/// 之前被整段丢掉——旧代码只认"这一页有没有图"，没图 `body` 就是空字符串，直接被下面的
+/// `!body.is_empty()` 过滤掉，等于把作者写的文章从书里删了，不是"裁"是"删"，绝不能接受）。
+/// 一页有没有图，判定看 `imgs_referenced` 是否为空：**零图的页整段按纯文字页处理**，原样保留
+/// 这一页 `<body>` 内部原文（含 `<p>` 段落结构），既不套图片专属的居中/撑满逻辑，章节头部也
+/// 不挂 `comic.css`（见 `repack_with_comic_css`）——不清零默认页边距、不强撑图片框，这类页面
+/// 按正常书页排版走。**已知简化**：只按"这一页有没有图"二选一分流，一页里图文混排（既有正文
+/// 段落又有配图）目前仍走纯图片分支（历史行为不变）——镖人这本书目前抽样到的都是"整页图"或
+/// "整页字"两种，没见过真正混排的页面，等真遇到再补。
 pub fn build_piece(entries: &[Entry], start: usize, end: usize, title: &str, book_id_suffix: &str) -> Result<Vec<u8>, String> {
     let opf = parse_opf(entries).ok_or("解不出 OPF/spine")?;
     let spine = &opf.spine;
@@ -250,22 +269,28 @@ pub fn build_piece(entries: &[Entry], start: usize, end: usize, title: &str, boo
             continue;
         }
         let Ok(html) = std::str::from_utf8(&e.data) else { continue };
-        let mut body = String::new();
-        for img in imgs_referenced(html, dir_of(p)) {
-            let new_path = match remap.get(&img) {
-                Some(np) => np.clone(),
-                None => {
-                    let Some(ie) = entries.iter().find(|e| e.name == img) else { continue };
-                    let ext = img.rsplit('.').next().unwrap_or("jpg").to_ascii_lowercase();
-                    let media = if ext == "png" { "image/png" } else { "image/jpeg" };
-                    let np = format!("images/{:04}.{ext}", resources.len() + 1);
-                    resources.push(Resource { path: np.clone(), media_type: media.into(), bytes: ie.data.clone() });
-                    remap.insert(img.clone(), np.clone());
-                    np
-                }
-            };
-            body.push_str(&format!(r#"<div style="text-align:center"><img src="{new_path}"/></div>"#));
-        }
+        let imgs = imgs_referenced(html, dir_of(p));
+        let body = if imgs.is_empty() {
+            body_inner(html).unwrap_or_default().trim().to_string()
+        } else {
+            let mut b = String::new();
+            for img in imgs {
+                let new_path = match remap.get(&img) {
+                    Some(np) => np.clone(),
+                    None => {
+                        let Some(ie) = entries.iter().find(|e| e.name == img) else { continue };
+                        let ext = img.rsplit('.').next().unwrap_or("jpg").to_ascii_lowercase();
+                        let media = if ext == "png" { "image/png" } else { "image/jpeg" };
+                        let np = format!("images/{:04}.{ext}", resources.len() + 1);
+                        resources.push(Resource { path: np.clone(), media_type: media.into(), bytes: ie.data.clone() });
+                        remap.insert(img.clone(), np.clone());
+                        np
+                    }
+                };
+                b.push_str(&format!(r#"<div class="cj-imgwrap"><img src="{new_path}"/></div>"#));
+            }
+            b
+        };
         if !body.is_empty() {
             chapters.push(Chapter { title: ncx_titles.get(&idx).cloned().unwrap_or_default(), html_body: body, level: 1 });
         }
@@ -296,19 +321,36 @@ pub fn build_piece(entries: &[Entry], start: usize, end: usize, title: &str, boo
 /// （`<uuid>.pdf` pymupdf 测页面 303×538pt，图片实际只占 (17.8,35.5)-(284.8,447.9)，
 /// 上下左右都空出一圈，底部尤其空出 90pt），根因是 xochitl 默认文档边距没被清零、`<img>`
 /// 没有撑满容器的样式——KOReader 对比之下是真正贴边满屏。补一段外链 `comic.css`（**只用裸元素
-/// 选择器**，xochitl CSS 解析器脆，见书架白皮书 §03y 七条实测规则）：`body{margin:0;padding:0}`
-/// 清零默认边距，`img{width:100%;height:auto}` 让图片撑满可用宽度。每章头部插入 `<link>`
-/// （xochitl 只认外链 css，不认内联 `<style>`，同一条规则）。
+/// 选择器+一个 class**，xochitl CSS 解析器脆，见书架白皮书 §03y 七条实测规则；**不用内联
+/// `style=`**——同一条规则实测内联样式不生效，之前 `<div style="text-align:center">` 这行内联
+/// 属性在真机上其实从没起过作用，2026-09-19 改走外链 class）：`body{margin:0;padding:0}`
+/// 清零默认边距。
+///
+/// **2026-09-19 追记：单靠 `img{width:100%;height:auto}` 治不好"底部留白太多"**——镖人真机
+/// 复验坐实：漫画原图长宽比（约 0.7）跟设备页面长宽比（303:538pt≈0.563）本来就对不上，`width:
+/// 100%` 只保证撑满宽度，高度是按图片自身比例算出来的，天然比页面矮一截，缺口全部堆在底部（默认
+/// 顶对齐）。改用 `max-width/max-height:100%` 双向限制 + `display:table`/`table-cell`（比
+/// flexbox 更老、更广泛被弱 CSS 引擎支持的居中写法）让图片在页面内垂直+水平都居中——**这治的是
+/// "空白堆在一边显得像渲染坏了"的观感问题，不是把空白总量消掉**：只要图片长宽比跟设备页面长宽比
+/// 不一致，缺口在数学上就一定存在，除非允许裁掉画面的一部分去贴合页面比例（用户明确要求不能裁
+/// 真实内容，所以留白无法完全消除，只能把它摆得不那么突兀）。真机复验见白皮书。
+///
+/// **只给真正含图的章节挂这份 CSS**——2026-09-19 同一轮修复顺带补的边界：纯文字页
+/// （`build_piece` 的 `body_inner` 分支，如"后记"）不该被这里的 `body{margin:0}` 清零默认页
+/// 边距（正文段落需要正常的阅读边距），也不需要居中撑满图片这套规则，所以按"这一章的 body 里
+/// 有没有 `<img`"分流，只有含图的才挂 `<link>`。
 fn repack_with_comic_css(bytes: Vec<u8>) -> Result<Vec<u8>, String> {
     let mut entries = crate::check::read_entries(&bytes)?;
     const CSS_PATH: &str = "OEBPS/comic.css";
-    const CSS: &str = "body{margin:0;padding:0;}\nimg{width:100%;height:auto;}\n";
+    const CSS: &str = "html{height:100%;}\nbody{margin:0;padding:0;height:100%;display:table;width:100%;}\n.cj-imgwrap{display:table-cell;vertical-align:middle;text-align:center;}\nimg{max-width:100%;max-height:100%;}\n";
     entries.push(Entry { name: CSS_PATH.into(), data: CSS.as_bytes().to_vec() });
     for e in entries.iter_mut() {
         if e.name.starts_with("OEBPS/chap_") && e.name.ends_with(".xhtml") {
             if let Ok(html) = std::str::from_utf8(&e.data) {
-                let linked = html.replacen("</head>", "<link rel=\"stylesheet\" type=\"text/css\" href=\"comic.css\"/></head>", 1);
-                e.data = linked.into_bytes();
+                if html.to_ascii_lowercase().contains("<img") {
+                    let linked = html.replacen("</head>", "<link rel=\"stylesheet\" type=\"text/css\" href=\"comic.css\"/></head>", 1);
+                    e.data = linked.into_bytes();
+                }
             }
         } else if e.name == "OEBPS/content.opf" {
             if let Ok(opf) = std::str::from_utf8(&e.data) {
@@ -676,6 +718,61 @@ mod tests {
         assert!(c1.contains(r#"src="images/0001.jpg""#), "{c1}");
     }
 
+    /// 造一份 2 张漫画图 + 1 页零配图纯文字（如"后记"）的书，spine 顺序：图、图、文字。
+    fn make_book_with_trailing_text_page() -> Vec<Entry> {
+        let mut entries = vec![
+            html_e("text/p0000.html", "../images/0000.jpg"),
+            e("images/0000.jpg", &[7u8; 50]),
+            html_e("text/p0001.html", "../images/0001.jpg"),
+            e("images/0001.jpg", &[7u8; 50]),
+        ];
+        entries.push(e(
+            "text/p0002.html",
+            r#"<html><head><title>x</title></head><body><h1>后记</h1><p>司马迁在《史记》中写道。</p><p>第二段正文。</p></body></html>"#.as_bytes(),
+        ));
+        let manifest = r#"<item id="h0" href="text/p0000.html" media-type="application/xhtml+xml"/><item id="i0" href="images/0000.jpg" media-type="image/jpeg"/><item id="h1" href="text/p0001.html" media-type="application/xhtml+xml"/><item id="i1" href="images/0001.jpg" media-type="image/jpeg"/><item id="h2" href="text/p0002.html" media-type="application/xhtml+xml"/>"#;
+        let spine = r#"<itemref idref="h0"/><itemref idref="h1"/><itemref idref="h2"/>"#;
+        entries.push(e(
+            "content.opf",
+            format!(r#"<package version="3.0"><metadata><dc:title>t</dc:title></metadata><manifest>{manifest}</manifest><spine>{spine}</spine></package>"#).as_bytes(),
+        ));
+        entries.push(e(
+            "META-INF/container.xml",
+            br#"<container><rootfiles><rootfile full-path="content.opf"/></rootfiles></container>"#,
+        ));
+        entries
+    }
+
+    #[test]
+    fn build_piece_keeps_zero_image_text_page_instead_of_dropping_it() {
+        // 真机反馈（2026-09-19，《镖人》"后记"/"特别附录"这类零配图纯文字页被整段丢掉）：build_piece
+        // 之前只认"这一页有没有图"，没图直接被 `!body.is_empty()` 过滤掉，等于把作者写的文章删了。
+        let entries = make_book_with_trailing_text_page();
+        let bytes = build_piece(&entries, 0, 3, "卷0", "t0").unwrap();
+        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+        use std::io::Read;
+        let mut c3 = String::new();
+        zip.by_name("OEBPS/chap_0003.xhtml").unwrap().read_to_string(&mut c3).unwrap();
+        assert!(c3.contains("司马迁在《史记》中写道"), "纯文字页正文不该被丢：{c3}");
+        assert!(c3.contains("第二段正文"), "多段正文都要保留：{c3}");
+    }
+
+    #[test]
+    fn build_piece_text_page_does_not_get_comic_css_link() {
+        // 纯文字页不该被套 comic.css 的 body{margin:0} 清零默认页边距（正文需要正常阅读边距），
+        // 图片页照常挂 <link>。
+        let entries = make_book_with_trailing_text_page();
+        let bytes = build_piece(&entries, 0, 3, "卷0", "t0").unwrap();
+        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+        use std::io::Read;
+        let mut c1 = String::new();
+        zip.by_name("OEBPS/chap_0001.xhtml").unwrap().read_to_string(&mut c1).unwrap();
+        assert!(c1.contains("comic.css"), "图片页应该照常挂外链 css: {c1}");
+        let mut c3 = String::new();
+        zip.by_name("OEBPS/chap_0003.xhtml").unwrap().read_to_string(&mut c3).unwrap();
+        assert!(!c3.contains("comic.css"), "纯文字页不该挂图片专属的 comic.css: {c3}");
+    }
+
     #[test]
     fn build_piece_toc_carries_own_title_when_ncx_has_no_deeper_nodes() {
         // 真机反馈（2026-09-19）：拆出来的这一份目录整个是空的。单层 NCX（真机《火影忍者》那种，
@@ -724,7 +821,7 @@ mod tests {
         use std::io::Read;
         let mut css = String::new();
         zip.by_name("OEBPS/comic.css").expect("应该有外链 comic.css").read_to_string(&mut css).unwrap();
-        assert!(css.contains("body{margin:0;padding:0;}") && css.contains("img{width:100%;height:auto;}"), "{css}");
+        assert!(css.contains("body{margin:0;padding:0;") && css.contains("max-width:100%;max-height:100%;"), "{css}");
         let mut c1 = String::new();
         zip.by_name("OEBPS/chap_0001.xhtml").unwrap().read_to_string(&mut c1).unwrap();
         assert!(c1.contains(r#"<link rel="stylesheet" type="text/css" href="comic.css"/>"#), "章节头部应该链外链 css: {c1}");
