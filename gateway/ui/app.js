@@ -307,7 +307,9 @@ function stagingList(ul,opts){
     // 实测都能到分钟级，KOReader 加入虽快但也不该看着像没反应）——删除/落库/加入 KOReader/再次优化
     // 全部先禁掉，防止并发冲突（2026-09-18 真机反馈：点了优化又点删除）；服务端忙锁完成后 SSE 推
     // 事件、列表自动刷新解禁，本地忙态在 `fn()` resolve 后立即清。
-    const lockTitle=busy?'':(opts.batchActive?T('transfer.staging.batchLockedTitle'):(gatedPending||gatedActive)?T('transfer.staging.gatedLockedTitle'):'');
+    // 2026-09-19 用户反馈这两句锁定原因太啰嗦——批量/跨会话排队本身已经有进度条/顶部小结/
+    // 「取消排队」按钮把状态交代清楚了，单条按钮下面再重复一遍解释文字是多余的，去掉。
+    const lockTitle='';
     if(it.format==='epub'&&!it.optimized)btn(T('transfer.staging.btn.optimize'),false,()=>postJ('/api/books/staging/optimize',{name:it.name}),locked,lockTitle);
     // 体积门：超过 xochitl /upload 上限的书灰掉按钮（服务端同样拦），提示走电脑分卷。EPUB/PDF 都
     // 例外——超限的 EPUB 漫画服务端按 NCX 拆分投递，超限的漫画 PDF（optimize 阶段自己产出、带
