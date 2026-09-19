@@ -484,7 +484,10 @@ pub fn deliver_split_streaming(
         match build_piece(&piece_entries, piece.start, piece.end, &piece.title, &piece.title) {
             Ok(bytes) => {
                 let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("book");
-                let piece_name = format!("{stem} - {}.epub", piece.title);
+                // 2026-09-19 真机撞过同一类问题（见 comic_pdf.rs 同款注释+`util::
+                // safe_piece_filename` 文档）：原书名+分卷标题各自独立可能超长，直接拼会撞
+                // 255 字节文件系统上限。
+                let piece_name = crate::util::safe_piece_filename(stem, &piece.title, "epub");
                 match upload_piece(&piece_name, &bytes, idx, total_fitting) {
                     Ok(()) => delivered.push(piece.title.clone()),
                     Err(e) => failed.push(format!("{}（上传失败：{e}）", piece.title)),

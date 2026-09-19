@@ -230,7 +230,10 @@ pub fn deliver_split_pdf_streaming(
         }
         match writer.finish(&[(0, title.clone())]) {
             Ok(bytes) => {
-                let piece_name = format!("{stem} - {title}.pdf");
+                // 2026-09-19 真机撞过：原书名+分卷标题（源文件自己的目录/书签，可能整份就
+                // 一条、内容等于原书名本身）两段各自独立超长，直接拼会撞 255 字节文件系统上限，
+                // 表现成 xochitl 泛化的"Filesystem error"，见 `util::safe_piece_filename` 文档。
+                let piece_name = crate::util::safe_piece_filename(&stem, &title, "pdf");
                 match upload_piece(&piece_name, &bytes, idx + 1, total) {
                     Ok(()) => delivered.push(title),
                     Err(e) => failed.push(format!("{title}（上传失败：{e}）")),
