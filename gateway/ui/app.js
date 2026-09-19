@@ -205,7 +205,16 @@ function stagingList(ul,opts){
   const shown=items.slice(0,cap);
   shown.forEach(it=>{const li=document.createElement('li');li.style.flexWrap='wrap';
     const fmt=it.format==='epub'?'EPUB':it.format==='pdf'?'PDF':(it.name.includes('.')?it.name.split('.').pop().toUpperCase():T('transfer.staging.fmtOther'));
-    const st=it.format!=='epub'?`<span class="badge">${T('transfer.staging.badge.asIs')}</span>`:it.level==='full'?`<span class="badge on">${T('transfer.staging.badge.optimized')}</span>`:it.level==='core'?`<span class="badge" title="${T('transfer.staging.badge.optimizedUncleanTitle')}">${T('transfer.staging.badge.optimizedUnclean')}</span>`:it.level==='old'?`<span class="badge" title="${T('transfer.staging.badge.oldOptimizedTitle')}">${T('transfer.staging.badge.oldOptimized')}</span>`:`<span class="badge">${T('transfer.staging.badge.notOptimized')}</span>`;
+    // PDF 原样是"原样"徽章——除了一种例外：漫画 EPUB 优化管线自己产出的 PDF（书签目录+左右留白
+    // 已根治），服务端靠有没有自己写的书签目录廉价识别（looks_like_own_comic_pdf），体现在
+    // it.level==='full'/it.optimized===true；用户自己上传的原生 PDF 这俩字段维持 none/false，
+    // 徽章不受影响，还是原样（2026-09-19 用户反馈"优化后的漫画 PDF 跟直接上传的 PDF 分不清"）。
+    const st=it.format==='pdf'?(it.optimized?`<span class="badge on" title="${T('transfer.staging.badge.comicPdfTitle')}">${T('transfer.staging.badge.comicPdf')}</span>`:`<span class="badge">${T('transfer.staging.badge.asIs')}</span>`)
+      :it.format!=='epub'?`<span class="badge">${T('transfer.staging.badge.asIs')}</span>`
+      :it.level==='full'?`<span class="badge on">${T('transfer.staging.badge.optimized')}</span>`
+      :it.level==='core'?`<span class="badge" title="${T('transfer.staging.badge.optimizedUncleanTitle')}">${T('transfer.staging.badge.optimizedUnclean')}</span>`
+      :it.level==='old'?`<span class="badge" title="${T('transfer.staging.badge.oldOptimizedTitle')}">${T('transfer.staging.badge.oldOptimized')}</span>`
+      :`<span class="badge">${T('transfer.staging.badge.notOptimized')}</span>`;
     const hint=it.format==='pdf'?' · '+T('transfer.staging.hint.pdf'):it.format==='cbz'?' · '+T('transfer.staging.hint.comic'):it.format==='other'?' · '+T('transfer.staging.hint.other'):'';
     // 落库记录徽章；落库时间早于母版 mtime（之后又优化过）→ 标「旧」，提示可重投
     const dv=it.delivered||{},stale=t=>t&&it.mtime&&t<it.mtime;

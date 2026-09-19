@@ -61,6 +61,8 @@
   "transfer.staging.badge.oldOptimized": "old optimization",
   "transfer.staging.badge.oldOptimizedTitle": "Optimized by an older version — click \"Optimize\" to upgrade",
   "transfer.staging.badge.notOptimized": "not optimized",
+  "transfer.staging.badge.comicPdf": "optimized (comic)",
+  "transfer.staging.badge.comicPdfTitle": "PDF produced by the comic EPUB optimize pipeline: left/right margins trimmed to ≈0, with a bookmark outline — not the same as a PDF you uploaded directly",
   "transfer.staging.hint.pdf": "handwritten finals go to xochitl",
   "transfer.staging.hint.comic": "comic: add to KOReader (not added to xochitl)",
   "transfer.staging.hint.other": "Legacy item in an old format xochitl can’t open — only KOReader can take it (since 2026-09-18 intake only accepts EPUB/PDF, so no new items like this will appear)",

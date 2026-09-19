@@ -61,6 +61,8 @@
   "transfer.staging.badge.oldOptimized": "旧版优化",
   "transfer.staging.badge.oldOptimizedTitle": "旧版本优化，点「优化」升级",
   "transfer.staging.badge.notOptimized": "未优化",
+  "transfer.staging.badge.comicPdf": "已优化(漫画)",
+  "transfer.staging.badge.comicPdfTitle": "漫画 EPUB 优化管线产出的 PDF：左右留白已裁到≈0，带书签目录；跟自己上传的原生 PDF 是两回事",
   "transfer.staging.hint.pdf": "手写定稿放 xochitl",
   "transfer.staging.hint.comic": "漫画：加入 KOReader 读（不加入 xochitl）",
   "transfer.staging.hint.other": "旧格式遗留条目，xochitl 读不了，只能加入 KOReader（2026-09-18 起新入库只收 EPUB/PDF，不会再有新的这类条目）",
