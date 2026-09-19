@@ -97,7 +97,7 @@
   "transfer.staging.pick.batchDeliver": "Batch add to xochitl",
   "transfer.staging.pick.batchKoreader": "Batch add to KOReader",
   "transfer.staging.pick.cancel": "Clear selection",
-  "transfer.staging.pick.submitted": "{count} submitted; large files queue automatically",
+  "transfer.staging.pick.progress": "Submitting {done}/{total} (large files queue automatically; the list is locked meanwhile)",
   "transfer.staging.pick.submittedDone": "{count} submitted",
   "transfer.staging.pick.done": "{count} done",
   "transfer.staging.pick.skipped": "Skipped {count} (not eligible)",
@@ -429,5 +429,7 @@
   "transfer.staging.progress.optimizing": "Optimizing…",
   "transfer.staging.progress.delivering": "Adding to xochitl…",
   "transfer.staging.progress.addingKoreader": "Adding to KOReader…",
-  "transfer.staging.progress.working": "Working…"
+  "transfer.staging.progress.working": "Working…",
+  "transfer.staging.progress.queued": "Waiting for a concurrency slot…",
+  "transfer.staging.batchLockedTitle": "A batch operation is running — wait for it to finish"
 }

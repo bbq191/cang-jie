@@ -97,7 +97,7 @@
   "transfer.staging.pick.batchDeliver": "批量加入 xochitl",
   "transfer.staging.pick.batchKoreader": "批量加入 KOReader",
   "transfer.staging.pick.cancel": "取消选择",
-  "transfer.staging.pick.submitted": "{count} 本已提交，大文件会自动排队处理，不用等",
+  "transfer.staging.pick.progress": "提交中 {done}/{total}（大文件会自动排队，此时列表已锁定）",
   "transfer.staging.pick.submittedDone": "{count} 本已提交",
   "transfer.staging.pick.done": "{count} 本已完成",
   "transfer.staging.pick.skipped": "已跳过 {count} 本（不满足条件）",
@@ -429,5 +429,7 @@
   "transfer.staging.progress.optimizing": "优化中…",
   "transfer.staging.progress.delivering": "加入 xochitl 中…",
   "transfer.staging.progress.addingKoreader": "加入 KOReader 中…",
-  "transfer.staging.progress.working": "处理中…"
+  "transfer.staging.progress.working": "处理中…",
+  "transfer.staging.progress.queued": "排队等待并发名额…",
+  "transfer.staging.batchLockedTitle": "批量处理进行中，请等它跑完"
 }
