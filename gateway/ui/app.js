@@ -245,7 +245,7 @@ function stagingList(ul,opts){
     // 批量勾选（2026-09-19）：跟三个单条按钮并存，不是替代——价值点是"选中的书受网关并发闸门
     // 保护"，单条按钮做不到这个（见 budget.rs/proxy.rs），不是历史上笔记模块那种纯重复入口。
     if(opts.picked){
-      const cb=el('input',{type:'checkbox'});cb.checked=opts.picked.has(it.name);cb.disabled=!!opts.batchActive;
+      const cb=el('input',{type:'checkbox'});cb.checked=opts.picked.has(it.name);
       cb.onchange=()=>{if(cb.checked)opts.picked.add(it.name);else opts.picked.delete(it.name);if(opts.syncPickbar)opts.syncPickbar()};
       li.querySelector('span').prepend(cb,' ');
     }
@@ -292,10 +292,13 @@ function stagingList(ul,opts){
     // 事件、列表自动刷新解禁，本地忙态在 `fn()` resolve 后立即清。
     const lockTitle=busy?'':(opts.batchActive?T('transfer.staging.batchLockedTitle'):'');
     if(it.format==='epub'&&!it.optimized)btn(T('transfer.staging.btn.optimize'),false,()=>postJ('/api/books/staging/optimize',{name:it.name}),locked,lockTitle);
-    // 体积门：超过 xochitl /upload 上限的书灰掉按钮（服务端同样拦），提示走电脑分卷。EPUB 例外——
-    // 超限的 EPUB 漫画服务端会按卷拆分投递（2026-09-18，见 book-serve::Staging::try_deliver_split），
-    // 按钮不能提前灰掉，得让服务端判过是不是漫画才知道能不能救；PDF 没有这条救援路径，继续照原样灰。
-    const tooBig=opts.nativeLimit&&it.bytes>opts.nativeLimit&&it.format!=='epub';
+    // 体积门：超过 xochitl /upload 上限的书灰掉按钮（服务端同样拦），提示走电脑分卷。EPUB/PDF 都
+    // 例外——超限的 EPUB 漫画服务端按 NCX 拆分投递，超限的漫画 PDF（optimize 阶段自己产出、带
+    // 书签的那种）服务端也一样按卷拆分投递（2026-09-19 并入 feat/comic-pdf-optimize，见
+    // book-serve::Staging::try_deliver_split/try_deliver_split_pdf）；按钮不能提前灰掉，得让
+    // 服务端判过是不是能拆才知道能不能救——不是漫画/拆不出方案的普通大 PDF，deliver 会返回清楚的
+    // 拒绝原因（"PDF 请自行分割成多份后重新上传"），走既有失败徽章/状态行展示，不是静默失败。
+    const tooBig=opts.nativeLimit&&it.bytes>opts.nativeLimit&&it.format!=='epub'&&it.format!=='pdf';
     // 落库改异步同 optimize（2026-09-19：超限漫画按卷拆分要挨个建包+上传，真机能到分钟级，之前同步
     // 阻塞的体验跟优化改异步前一样像卡死）；点了立即回"已开始"，不再 alert 最终结果——完成状态跟优化
     // 一样靠徽章看（成功＝「已加入 xochitl」时间戳徽章出现，失败＝「上次加入失败」徽章，见上面 ob 那段）。
@@ -377,7 +380,7 @@ function renderTransfer(sec){sec.innerHTML=`
   // 复选框+另外三个批量按钮，见 stagingList/下面 setPickBtnsDisabled）；batchQueued 是本轮已提交、
   // 还没等到网关并发闸门放行的书名集合，驱动每行的"排队中"提示（2026-09-19 用户反馈：点了批量
   // 优化后单本操作/其它批量按钮还能点，而且看不出在优化哪本、无反馈像没在跑）。
-  let batchActive=false;
+  let batchActive=false,batchAbort=false;
   const batchQueued=new Set();
   const g=id=>$('#'+id,sec);
   const syncPickbar=()=>{const bar=g('stgpickbar');bar.hidden=picked.size===0;g('stgpickcount').textContent=T('transfer.staging.pick.count',{count:picked.size})};
@@ -394,36 +397,42 @@ function renderTransfer(sec){sec.innerHTML=`
   hd.addEventListener('change',()=>{hideDone=hd.checked;LS.set('stgHideDone',hideDone?'1':'0');resetPage();render()});
   const render=()=>stagingList(g('stglist'),{items,q:g('stgq').value,fmt:g('stgfmt').value,st:g('stgst').value,hideDone,visibleCount,showMore:()=>{visibleCount+=30;render()},xFolder:()=>g('folder').value.trim(),kFolder:()=>g('kfolder').value.trim(),koInstalled,nativeLimit,localBusy,picked,syncPickbar,batchActive,batchQueued,render:()=>render(),refresh:()=>refresh()});
   ['stgq','stgfmt','stgst'].forEach(id=>['input','change'].forEach(ev=>g(id).addEventListener(ev,()=>{resetPage();render()})));
-  // 三个批量按钮：各自按单条按钮同样的资格条件过滤 picked，不满足的跳过+汇总提示；满足的
-  // Promise.all 并发提交——网关会按体积分档限流（大文件基本排队到一个一个跑，小文件允许并发），
-  // 前端不用自己实现节流，`postJ` 慢下来就是在排队，不是卡死。
-  const pickBtnIds=['stgpickoptimize','stgpickdeliver','stgpickkoreader','stgpickclear'];
+  // 三个批量按钮：各自按单条按钮同样的资格条件过滤 picked，不满足的跳过+汇总提示；满足的**逐个
+  // 顺序提交**（2026-09-19 改，原来是 Promise.all 一次性并发提交，用户反馈"看不出来哪本在优化"——
+  // 网关并发闸门本来就会把排不到号的大书卡在 fetch() 本身没返回，并发提交时好几个请求同时卡着，
+  // 分不清谁是谁；改成一个接一个提交，`batchQueued` 任意时刻最多一个名字，行内进度条天然变成
+  // "当前正在处理哪一本"的准确指示，不用额外发明"当前项"这个概念）。
+  const pickBtnIds=['stgpickoptimize','stgpickdeliver','stgpickkoreader'];   // 不含 stgpickclear：那个按钮运行期间要变身"停止"，必须一直能点
   const setPickBtnsDisabled=v=>pickBtnIds.forEach(id=>g(id).disabled=v);
-  // ① batchActive 锁住整个列表+另外三个批量按钮，一次只能跑一个批量任务，不分是不是本轮选中的
-  // 那些书（2026-09-19 用户反馈"点了批量优化还能点单本操作/另外几个批量按钮"会互相打架）。
-  // ② 逐项提交、逐项结算更新进度文案，不是一次性 Promise.all 完事才有反应——网关并发闸门会让
-  // 排不到号的大书卡在 fetch() 本身没返回，逐项进 batchQueued（渲染成"排队等待并发名额"）+
-  // 结算一个更新一次"已提交 X/N"，才不会看着像点了没反应。③ 这里的"完成计数"是"请求结算"（fetch
-  // 返回），不是"真正处理完"——优化/落库是异步操作，真进度靠既有 SSE→refresh()→逐行进度条链路，
-  // 这里只管"提交"这一层，两层文案不混着说。
+  const syncClearBtnLabel=()=>{g('stgpickclear').textContent=batchActive?T('transfer.staging.pick.stop'):T('transfer.staging.pick.cancel')};
+  // ① batchActive 锁住列表里的单条按钮+另外两个批量按钮，一次只能跑一个批量任务，不分是不是
+  // 本轮选中的那些书（2026-09-19 用户反馈"点了批量优化还能点单本操作/另外几个批量按钮"会互相
+  // 打架）。② "取消选择"运行期间变身"停止"——用户反馈"选错了没法停"：批量开跑前锁死取消键等于
+  // 选错了只能干等全部跑完，现在改成随时能点，点了置 batchAbort，循环里每轮检查，还没发出去的
+  // 请求直接跳过（已经发出去、正在服务端跑的这一项救不回来，是诚实的边界，不是没做全）。复选框
+  // 同理不再锁——运行中取消勾选某本，轮到它时会被跳过，这是用户能拿到的最直接的"改主意"手段。
   const batchRun=async(eligible,run,doneMsgKey)=>{
     const chosen=items.filter(it=>picked.has(it.name));
     const ok=chosen.filter(eligible),skip=chosen.length-ok.length;
     if(!ok.length){toast(T('transfer.staging.pick.none'),'warn');return}
-    batchActive=true;setPickBtnsDisabled(true);
-    ok.forEach(it=>batchQueued.add(it.name));
-    let done=0;const total=ok.length;
-    const updateMsg=()=>{g('stgpickmsg').textContent=T('transfer.staging.pick.progress',{done,total})};
+    batchActive=true;batchAbort=false;setPickBtnsDisabled(true);syncClearBtnLabel();
+    let done=0,aborted=0;const total=ok.length;
+    const updateMsg=cur=>{g('stgpickmsg').textContent=T('transfer.staging.pick.progress',{done,total})+(cur?T('transfer.staging.pick.current',{current:cur}):'')};
     updateMsg();render();
-    await Promise.allSettled(ok.map(it=>Promise.resolve(run(it)).finally(()=>{batchQueued.delete(it.name);done++;updateMsg();render()})));
-    batchActive=false;setPickBtnsDisabled(false);
-    g('stgpickmsg').textContent=T(doneMsgKey,{count:ok.length})+(skip?' · '+T('transfer.staging.pick.skipped',{count:skip}):'');
+    for(const it of ok){
+      if(batchAbort||!picked.has(it.name)){aborted++;continue}
+      batchQueued.add(it.name);updateMsg(it.name);render();
+      try{await run(it)}catch{}
+      batchQueued.delete(it.name);done++;updateMsg();render();
+    }
+    batchActive=false;setPickBtnsDisabled(false);syncClearBtnLabel();
+    g('stgpickmsg').textContent=T(doneMsgKey,{count:done})+(skip?' · '+T('transfer.staging.pick.skipped',{count:skip}):'')+(aborted?' · '+T('transfer.staging.pick.aborted',{count:aborted}):'');
     render();refresh();
   };
   guardClick(g('stgpickoptimize'),()=>batchRun(it=>it.format==='epub'&&!it.optimized,it=>postJ('/api/books/staging/optimize',{name:it.name}),'transfer.staging.pick.submittedDone'));
-  guardClick(g('stgpickdeliver'),()=>batchRun(it=>(it.format==='epub'||it.format==='pdf')&&!(nativeLimit&&it.bytes>nativeLimit&&it.format!=='epub'),it=>postJ('/api/books/staging/deliver',{name:it.name,folder:g('folder').value.trim()}),'transfer.staging.pick.submittedDone'));
+  guardClick(g('stgpickdeliver'),()=>batchRun(it=>(it.format==='epub'||it.format==='pdf')&&!(nativeLimit&&it.bytes>nativeLimit&&it.format!=='epub'&&it.format!=='pdf'),it=>postJ('/api/books/staging/deliver',{name:it.name,folder:g('folder').value.trim()}),'transfer.staging.pick.submittedDone'));
   guardClick(g('stgpickkoreader'),()=>batchRun(it=>koInstalled,async it=>{const r=await postJ('/api/koreader/books/adopt',{name:it.name,folder:g('kfolder').value.trim()});if(r.ok!==false)await postJ('/api/books/staging/mark',{name:it.name,target:'koreader'})},'transfer.staging.pick.done'));
-  guardClick(g('stgpickclear'),async()=>{picked.clear();syncPickbar();render()});
+  guardClick(g('stgpickclear'),async()=>{if(batchActive){batchAbort=true;return}picked.clear();syncPickbar();render()});
   const refresh=async()=>{const [d,s,k,kb]=await Promise.all([j('/api/books/staging'),j('/api/books/status'),j('/api/koreader/status'),j('/api/koreader/books')]);
     nativeLimit=(s.ok&&s.nativeUploadLimitBytes)||0;koInstalled=!!(k.ok&&k.installed);
     // xochitl/KOReader 现有目录 → 下拉候选（免手打错，跟真实文件夹保持一致，不是写死的预设）
@@ -431,6 +440,12 @@ function renderTransfer(sec){sec.innerHTML=`
     g('kodirs').innerHTML=(kb.items||[]).filter(x=>x.kind==='dir').map(x=>`<option value="${x.name}">`).join('');
     if(d.ok===false){g('stglist').innerHTML=`<li class="small" style="color:var(--bad)">${T('transfer.staging.unavailable',{msg:d.message||T('transfer.staging.notOpen')})}</li>`;g('stgcap').textContent='';return}
     items=d.items||[];const tot=items.reduce((a,b)=>a+b.bytes,0);g('stgcap').textContent=items.length?T('transfer.staging.capSummary',{count:items.length,size:fmtB(tot)}):'';
+    // 清掉选中集合里的"幽灵条目"：漫画 optimize 会把 EPUB 改名成 PDF（同一本书换了名字），旧名字
+    // 从此不会再出现在任何一行里，留在 picked 里既选不中也取不掉，只会让「N 本已选」的计数跟
+    // 肉眼看到的勾选状态对不上（2026-09-19 用户反馈"已经转成 PDF 了为何还可以选"，根因是这个）。
+    const names=new Set(items.map(it=>it.name));
+    for(const n of [...picked])if(!names.has(n))picked.delete(n);
+    syncPickbar();
     const fr=d.freeBytes;const low=fr!=null&&fr<300*1048576;g('stgfree').style.color=low?'var(--bad)':'';g('stgfree').textContent=fr!=null?T('transfer.staging.freeSpace',{free:fmtB(fr),lowWarn:low?T('transfer.staging.lowWarn'):''}):'';
     // "KOReader 未安装"以前每行按钮下面都重复一遍（2026-09-19 用户反馈列表太长时发现的冗余），
     // 改成这里只提示一次。
