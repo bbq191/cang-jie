@@ -48,7 +48,7 @@ fn parse_ncx_flat(ncx_text: &str) -> Vec<(usize, String, String)> {
 }
 
 /// 一页 (x)html 里引用的图片，解析成 zip 内绝对路径（相对该页自身目录解析，去重按出现顺序）。
-fn imgs_referenced(html: &str, page_dir: &str) -> Vec<String> {
+pub(crate) fn imgs_referenced(html: &str, page_dir: &str) -> Vec<String> {
     static RE: OnceLock<Regex> = OnceLock::new();
     let re = RE.get_or_init(|| Regex::new(r#"(?i)<img\b[^>]*\bsrc="([^"]+)""#).unwrap());
     let mut seen = std::collections::HashSet::new();
@@ -191,7 +191,7 @@ fn ncx_top_level(entries: &[Entry], opf: &crate::wash::Opf) -> Option<Vec<(Strin
 /// 的这一份补目录用。原书 NCX 如果在这一卷范围内还有更深一层节点（如"话"级子目录），各自照抄
 /// 过来；`build_piece` 自己另外把第一页强制钉上这一份自己的标题（见那边注释），这里不用为"卷
 /// 自己的标题"操心，只管卷内部还有什么。
-fn ncx_titles_in_range(entries: &[Entry], opf: &crate::wash::Opf, start: usize, end: usize) -> HashMap<usize, String> {
+pub(crate) fn ncx_titles_in_range(entries: &[Entry], opf: &crate::wash::Opf, start: usize, end: usize) -> HashMap<usize, String> {
     let mut map = HashMap::new();
     let Some(resolved) = ncx_resolved(entries, opf) else { return map };
     for (_, title, idx) in resolved {
