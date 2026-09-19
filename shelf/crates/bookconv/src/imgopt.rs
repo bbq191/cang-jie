@@ -111,18 +111,22 @@ const DEVICE_PAGE_ASPECT: f32 = MAX_SHORT_EDGE as f32 / MAX_EDGE as f32;
 /// 补白容差：跟设备页面长宽比相对误差在这个范围内不补（避免"差一点点也要重新编码一遍"）。
 const PAD_ASPECT_TOLERANCE: f32 = 0.02;
 
-/// 漫画整页图片补白成跟设备页面完全一致的长宽比（2026-09-19 真机反馈"底部留白太多"排查到底：
-/// 五种候选 CSS——`width:100%;height:auto`、`max-width/height:100%`、`vw`/`vh` 单位、
-/// `display:table/table-cell` 居中——真机逐像素对比，**只有 `width` 生效，任何跟 `height` 相关的
-/// 声明 xochitl 一律不认，图片高度永远是"宽度撑满后按原图长宽比算出来的"，没有例外**。CSS 层面
-/// 彻底没有办法控制留白多大、摆在哪——唯一能动的只剩图片像素本身。这个函数不裁一个像素、只加：
-/// 原图长宽比比页面"宽"（如典型漫画页约 0.7 vs 页面约 0.5625）就在上下对称补白，比页面"窄"就在
-/// 左右对称补白，补完这张图自己的长宽比就等于设备页面长宽比——`width:100%`（唯一生效的规则）
-/// 撑满宽度后，高度恰好也撑满整页，原来堆在底部的留白现在均匀分在图片内容两侧，不再显得像渲染
-/// 坏了。**只加白边不动内容**：原始像素一个都不裁、不缩、不挪，只是外面套一圈新画布。
+/// 漫画整页图片贴边策略（2026-09-19 真机反馈"底部留白太多"排查到底：五种候选 CSS——`width:
+/// 100%;height:auto`、`max-width/height:100%`、`vw`/`vh` 单位、`display:table/table-cell`
+/// 居中——真机逐像素对比，**只有 `width` 生效，任何跟 `height` 相关的声明 xochitl 一律不认，
+/// 图片高度永远是"宽度撑满后按原图长宽比算出来的"，没有例外**）。CSS 层面没法控制留白，但也
+/// 因此不需要控制——**用户明确要求"尽量左右贴边，只要上下不溢出"**：这正好是 `width:100%` 唯一
+/// 生效那条规则的默认行为，典型漫画整页长宽比（约 0.7）本来就比设备页面（约 0.5625）"宽"，撑满
+/// 宽度后高度自然小于页面高度，天然不溢出——**这种最常见的情况本来就不需要补白，原样直接撑满
+/// 宽度即可，多此一举反而在图两侧新增白边、不是用户想要的效果**。
+///
+/// 唯一需要补白的是反过来的情况：原图长宽比比页面"窄"（比如竖版海报式的整页），`width:100%`
+/// 会让算出来的高度超过页面高度——CSS 治不了溢出，只能靠加左右白边把长宽比拉回设备比例，让
+/// 算出来的高度不超页面。**只在这种会溢出的方向补白**，补的时候只加不裁，原始像素一个不动。
 ///
 /// 只对**已经接近整页大小**的图片生效（短边 < 设备短边的 1/3 直接跳过）——漫画书里偶尔混的小
-/// 装饰图标不该被强行拉伸成竖直长条。已经在容差内（[`PAD_ASPECT_TOLERANCE`]）不重新编码，幂等。
+/// 装饰图标不该被强行拉伸成竖直长条。已经在容差内（[`PAD_ASPECT_TOLERANCE`]）或本来就不会
+/// 溢出（长宽比≥页面长宽比）都不重新编码，幂等。
 pub fn pad_to_device_aspect(bytes: &[u8]) -> Option<Vec<u8>> {
     let (fmt, (w, h)) = header_dims(bytes)?;
     if !within_decode_budget(w, h) {
@@ -132,20 +136,17 @@ pub fn pad_to_device_aspect(bytes: &[u8]) -> Option<Vec<u8>> {
         return None; // 太小，大概率是装饰图标而不是整页扫描，别硬套页面比例
     }
     let cur_aspect = w as f32 / h as f32;
+    if cur_aspect >= DEVICE_PAGE_ASPECT - PAD_ASPECT_TOLERANCE {
+        return None; // 本来就够"宽"，width:100% 撑满宽度不会溢出，原样直接贴边最大化画面
+    }
     if ((cur_aspect - DEVICE_PAGE_ASPECT) / DEVICE_PAGE_ASPECT).abs() <= PAD_ASPECT_TOLERANCE {
         return None; // 已经够接近，不用补
     }
     let img = image::load_from_memory_with_format(bytes, fmt).ok()?.to_rgb8();
     let (w, h) = img.dimensions();
-    let (new_w, new_h, off_x, off_y) = if cur_aspect > DEVICE_PAGE_ASPECT {
-        // 图片相对页面更"宽"（常见：漫画整页扫描）——上下对称补白
-        let new_h = (w as f32 / DEVICE_PAGE_ASPECT).round() as u32;
-        (w, new_h, 0u32, (new_h - h) / 2)
-    } else {
-        // 图片相对页面更"窄/高"——左右对称补白
-        let new_w = (h as f32 * DEVICE_PAGE_ASPECT).round() as u32;
-        (new_w, h, (new_w - w) / 2, 0u32)
-    };
+    // 只会走到这里：图片比页面"窄"，width:100% 会让高度溢出页面——左右对称补白拉回设备长宽比。
+    let new_w = (h as f32 * DEVICE_PAGE_ASPECT).round() as u32;
+    let (new_w, new_h, off_x, off_y) = (new_w, h, (new_w - w) / 2, 0u32);
     let mut canvas = image::RgbImage::from_pixel(new_w, new_h, image::Rgb([255, 255, 255]));
     image::imageops::overlay(&mut canvas, &img, off_x as i64, off_y as i64);
     let dyn_img = image::DynamicImage::ImageRgb8(canvas);
@@ -408,27 +409,25 @@ mod tests {
     }
 
     #[test]
-    fn pad_to_device_aspect_adds_symmetric_top_bottom_bars_for_wide_image() {
-        // 真机反馈（2026-09-19，CSS 五种写法逐像素对比坐实 height 相关声明全部不生效后的最终修法）：
-        // 典型漫画整页长宽比（约 0.7）比设备页面（约 0.5625）"宽"，应该在上下对称补白，图片自身
-        // 长宽比补完后等于设备页面比例。
-        let img = jpeg_of(700, 1000); // 0.7，明显偏离 0.5625
-        let out = pad_to_device_aspect(&img).expect("长宽比偏离容差应该触发补白");
-        let (w, h) = image::load_from_memory(&out).unwrap().dimensions();
-        assert_eq!(w, 700, "只加高度方向的白边，宽度不变");
-        assert!(h > 1000, "补白后应该更高: {h}");
-        let new_aspect = w as f32 / h as f32;
-        assert!((new_aspect - DEVICE_PAGE_ASPECT).abs() < 0.005, "补完应该正好等于设备页面比例: {new_aspect}");
+    fn pad_to_device_aspect_leaves_wide_image_untouched() {
+        // 用户明确要求（2026-09-19）"尽量左右贴边，只要上下不溢出"：典型漫画整页长宽比（约 0.7）
+        // 比设备页面（约 0.5625）"宽"，width:100% 撑满宽度后高度本来就小于页面高度，不会溢出——
+        // 这种最常见的情况不该被补白，补了反而在图两侧多出不必要的白边。
+        let img = jpeg_of(700, 1000); // 0.7，比设备页面更"宽"
+        assert!(pad_to_device_aspect(&img).is_none(), "比页面宽、不会溢出的图不该被补白");
     }
 
     #[test]
-    fn pad_to_device_aspect_adds_symmetric_left_right_bars_for_tall_image() {
-        // 长宽比比设备页面更"窄/高"的图（如竖版海报），应该在左右对称补白。
-        let img = jpeg_of(400, 1200); // 0.333，比 0.5625 更窄
-        let out = pad_to_device_aspect(&img).expect("长宽比偏离容差应该触发补白");
+    fn pad_to_device_aspect_adds_symmetric_left_right_bars_for_narrow_image_to_prevent_overflow() {
+        // 长宽比比设备页面更"窄/高"的图（如竖版海报）：width:100% 算出来的高度会超过页面高度、
+        // 溢出——CSS 治不了溢出，只能靠左右补白把长宽比拉回设备比例。
+        let img = jpeg_of(400, 1200); // 0.333，比 0.5625 更窄，会溢出
+        let out = pad_to_device_aspect(&img).expect("会溢出的长宽比应该触发补白");
         let (w, h) = image::load_from_memory(&out).unwrap().dimensions();
         assert_eq!(h, 1200, "只加宽度方向的白边，高度不变");
         assert!(w > 400, "补白后应该更宽: {w}");
+        let new_aspect = w as f32 / h as f32;
+        assert!((new_aspect - DEVICE_PAGE_ASPECT).abs() < 0.005, "补完应该正好等于设备页面比例，不再溢出: {new_aspect}");
     }
 
     #[test]
