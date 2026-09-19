@@ -583,3 +583,104 @@ xochitl。大部头（600 页/245MB）optimize 耗时 ~3 分 18 秒（600 张图
    进内存"**——②的第一次误判正是以为"只要不整份 `std::fs::read`"就叫流式，忽略了多个中间
    层（`objects` 中间态、调用方自己攒的 `Vec<PdfImage>`）各自持有同一批数据完整副本、叠加
    起来才是真正的峰值来源。
+
+## 17｜入库 PDF → EPUB（有文字层保图片+公式+TOC）/ 仅裁边（无文字层/漫画）（2026-09-19）
+
+**背景**：漫画 PDF 优化线（§16）跑通后用户提出反方向需求：入库的 PDF 本身也该走「优化」——
+带文字层的（不是扫描图片、真能提取出文字）转成 EPUB，保留图片、保留公式、必须有 TOC；没有
+文字层的扫描件和 PDF 漫画只做裁边，格式不变。**这次范围明确"只写代码不上真机"**，验证方式
+相应从"真机 VmHWM/systemd 健康检查"换成"真实样本+产物字节/结构核对"。
+
+**用户拍板的两处取舍**（都是问过之后选的更难/更精确那条，不是默认走简单路径）：
+- **公式保留**：先问过"没有纯 Rust PDF 渲染器，公式没法整块渲染成图保真，具体按哪种方案"，
+  用户追问"这个有什么 rust 工具库可用吗"——查到 `hayro`（纯 Rust PDF 光栅化引擎）后改问
+  "整页渲染 vs 按行/区域裁剪，选哪种粒度"，用户选了**按行/区域裁剪**（更精确、工作量大得多），
+  不是"整页转图片"那条简单路径。
+- **TOC 兜底**：没有书签目录时怎么生成 TOC，用户选了**按字号识别标题**（启发式、不保证
+  100% 准，但比"没结构信息硬瞎编"强），不是"无脑按固定页数分块"（那条只留作字号识别也识别
+  不出候选时的最后兜底，见下）。
+
+**新依赖**（均纯 Rust、无 C 依赖，先过 aarch64-unknown-linux-musl 交叉编译零告警这道 go/no-go
+关才动手写业务逻辑，不是想当然假设能编过）：`lopdf` 0.45（本模块直接依赖，页树/字体资源/
+图片 XObject/`/Outlines` 书签树读取+`PdfPieceWriter` 写）、`pdf-extract` 0.12（**内部锁定
+lopdf 0.42，跟本模块直接依赖的 0.45 是两个不同类型、永远不互传**——只用来驱动它的
+`OutputDev` 钩子拿逐字符位置+字号，永远喂原始字节让它自己独立解析一遍）、`hayro` 0.7
+（Apache-2.0/MIT，纯 Rust PDF 光栅化，只用来把有公式的页渲染成位图供裁剪，自己也是独立解析
+一遍 PDF 字节）。一份 PDF 因此在 `optimize_pdf_to_epub` 里最多被解析三遍——host 侧一次性
+处理场景可接受这份重复解析开销，换三个子系统互不耦合、互相独立可测。`book-serve`/`gateway`
+两个产物交叉编译后 `file` 核对仍是 statically linked/stripped，三个新依赖没有破坏全静态
+构建。
+
+**设计**（`shelf/crates/bookconv/src/pdf_ingest.rs`，新模块）：
+
+- **`classify_pdf`**：镜像 `comic_detect::is_comic`"图多字少判漫画"的哲学，从"图片数量"
+  换算成 PDF 天然的"页"为单位——`COMIC_PAGE_RATIO=0.9`（≥90% 的页是"一张图基本铺满整页"才
+  判漫画，靠图片宽高比跟页面宽高比接近度判断，`COMIC_IMAGE_AREA_RATIO=0.85`）、
+  `MIN_CHARS_PER_PAGE=40`（每页平均可提取字符数低于此判无文字层）。**解析失败一律退到
+  `NoTextLayer`**（只裁边，不做破坏性格式转换）——跟 `is_comic_epub_file`"打不开当不是
+  漫画、走现状老路径"同一条"失败模式选更保守那条"原则。
+- **裁边路径**（`optimize_pdf_trim_only`，Comic/NoTextLayer 共用）：逐页取主图→
+  `imgopt::trim_margins` 裁边→复用 §16 的 `PdfPieceWriter` 写出新 PDF，格式不变、原地
+  覆盖（对齐文字 EPUB 优化"原地覆盖"那条现状路径）。
+- **PDF→EPUB 路径**（`optimize_pdf_to_epub`，TextLayer）：`lopdf` 读结构（页树/字体资源/
+  图片 XObject/`Document::get_toc()` 书签）；`pdf-extract` 的 `OutputDev` 钩子拿逐字符
+  位置+字号；公式区域探测靠 **Unicode 数学符号区块**判定（`OutputDev::output_character`
+  不暴露字体名，没法按 `cmmi`/`cmsy` 这类数学字体族名判断，只能退而求其次用码位——真实
+  pdflatex 样本核对过 Computer Modern 数学字体在这份样本里 ToUnicode 映射基本正确，
+  `∫ ∑ √ ∞ π α β γ ±` 这类符号能提取出正确 Unicode）；`hayro` 整页光栅化后按公式区域包围
+  盒裁出图片；TOC 优先用 PDF 自带书签，没有书签按字号识别标题层级（正文基准字号=页内出现
+  次数最多的字号，字号显著更大的行判成标题候选，按不同字号分档映射 1-3 级），**标题候选也
+  识别不出来时**才兜底按固定页数分块（`FALLBACK_CHUNK_PAGES=20`），如实标注不是真实章节
+  结构，不假装有结构。
+- **来源标记**：`PdfPieceWriter::finish` 补写一个 `/Producer (cangjie-bookconv/1)` Info
+  对象（纯追加在所有页/书签对象之后、xref 之前，**不改动既有页对象编号方案**，对 §16 已
+  真机验证过的漫画 PDF 产出字节结构是非破坏性变动）；`looks_like_own_comic_pdf` 改名泛化成
+  `looks_like_own_bookconv_pdf`（头部查 `/Outlines` 或尾部查 Producer 标记，两条产线共用
+  同一个"自己优化过的"信号）。PDF→EPUB 产物同理靠 `dc:identifier` 里 `"weread:pdf:"` 前缀
+  标记，`looks_like_pdf_derived_epub` 识别。
+- **`book-serve` 接入**：`optimize()`/`spawn_optimize()` 白名单从"只 EPUB"扩到"EPUB/PDF"，
+  新增 `optimize_pdf()` 按 `classify_pdf` 分派；`resolved_optimize_target()` 泛化成双向
+  （原来只处理漫画那条线的 epub→pdf 改名，这次加对称的 pdf→epub）；`StagingEntry` 新增
+  `pdf_source: bool`（挂 `rename_all="camelCase"` 序列化成 `pdfSource`）——PDF 转出的
+  EPUB 直接报 `level:"full"`，**不进常规 EPUB 优化的 full/core/old/none 阶梯**（一次性
+  产物，二次跑通用清洗流程有搞坏公式/图片资源的风险，这次范围内不允许）。
+- **`gateway` 接入**：「优化」按钮门控扩到 PDF（转 EPUB 还是裁边由后端透明决定，前端不用
+  关心，跟漫画 EPUB 那条线同一套"透明分发"哲学）；EPUB 条目新增"PDF转EPUB"徽章（跟既有
+  优化档位徽章并列展示，不是互斥替换）。
+
+**真实样本验证方法**（这次没有真机，验证方式对应调整）：`tests/fixtures/sample.tex` +
+`pdflatex` 编译出的 `sample.pdf`（3 页，含真实 `cmmi`/`cmsy`/`cmex` 数学字体、
+`\section`/`\subsection` 两级标题字号、一张嵌入 PNG、多处行内+多行公式，**故意不加
+`\tableofcontents`**专测"没有书签、靠字号识别标题"那条路径）——不是拍脑袋合成数据，是
+"无文字层判定阈值"/"字号识别标题阈值"/"公式字体识别"这几处启发式系数落地前核对用的真实
+参照。跑出来暴露并修复了两个真 bug：
+
+1. **`end_word()` 无条件插空格 → 词内乱插空格**："Introduction" 被拆成 "In tro duction"。
+   根因：专业排版的 PDF 内容流常因字距微调（kerning）把同一个词拆成好几个 `Tj`/`TJ` 片段，
+   `OutputDev::end_word()` 钩子在每个片段边界都会触发，不代表真的是词边界。修法：照抄
+   `pdf-extract` 自带 `PlainTextOutput` 的算法——只在 `begin_word()` 标记"下一个字符要
+   检查"，实际插不插空格看这个字符的真实 x 坐标跟"上一个字符右边缘的预期位置"差多少（超过
+   字号的一成才算真跳空），不是无条件信任词边界钩子。
+2. **手动 zlib inflate 图片流 → 像素数据错位**：pdflatex 产出的 `/FlateDecode` 图片流常带
+   PNG 预测器（`/DecodeParms /Predictor 10`），裸 `miniz_oxide::inflate` 解压出来的字节
+   每行多一个过滤类型前缀字节（真实样本：200×100×3=60000 应有字节，裸 inflate 出 60100，
+   多出来的 100 字节精确等于行数）。修法：改用 `lopdf::Stream::decompressed_content()`
+   （已经正确处理 PNG/TIFF 两种预测器），不能图省事对 `PdfImage.content`（未解预测器的裸
+   字节）手动 inflate。
+
+**已知局限（如实标注，没有修，不是遗漏）**：行内公式紧贴正文时（如 "the identity
+$e^{i\pi}+1=0$ is..."），公式区域探测按**整行字符包围盒**算——`sample.pdf` 里 "identity"
+被吞成 "i e" 就是这个问题，根因是 pdf-extract 在字体切换处（正文字体切数学斜体/符号字体）
+就会分出新的 `line`（比真实视觉行更细），公式区域跟这个细分行的边界不完全重合。要根治需要
+按字符级别（不是行级别）精确圈公式区域，这次没做，模块文档里专门记了避免以后误当新 bug 查。
+
+**验证现状**：`bookconv` 186 测试（+15 新增）、`book-serve` 34 测试（+2 新增）、`shelf`
+workspace 34+186+14 全绿；`gateway` 17 测试全绿（这条分支基于 `feat/comic-pdf-optimize`，
+没有并入并发闸门那条线，测试数比那条线少属正常，不是回归）；`aarch64-unknown-linux-musl`
+交叉编译确认 `book-serve`/`gateway` 两个产物均 statically linked/stripped。**这次全程没有
+部署到真机**（用户明确要求"只写代码不上真机"）——唯一做过的人工核对是开发过程中一个临时
+inspection 二进制（解压生成的 EPUB、肉眼看 `nav.xhtml`/章节 HTML/图片是否结构合理），验证
+完就删了，没有提交进仓库，也不等同于真机渲染确认。分支 `feat/pdf-text-layer-to-epub`（基于
+`feat/comic-pdf-optimize`），**未合并 master、也未合并** `feat/gateway-concurrency-budget`
+（同一时期的另一条兄弟分支——按 §16 记的教训，这两条分支各自独立部署验证过一次的话，未来
+排查"功能应该支持却不生效"类反馈时要先想到分支拓扑，不要只在当前分支内找）。
