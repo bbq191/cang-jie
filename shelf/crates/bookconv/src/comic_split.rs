@@ -380,6 +380,7 @@ fn repack_with_comic_css(bytes: Vec<u8>) -> Result<Vec<u8>, String> {
 }
 
 /// 结果：成功投递的份 / 拆到底仍超限或组包失败没能投的份（标题+原因）。
+#[derive(Debug)]
 pub struct StreamSplitOutcome {
     pub delivered: Vec<String>,
     pub failed: Vec<String>,

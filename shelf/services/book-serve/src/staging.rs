@@ -525,36 +525,43 @@ impl Staging {
     /// 漫画 PDF"（没有书签目录，比如用户自己上传的原生大部头 PDF）/ 整本已在预算内 →
     /// `Ok(None)`，调用方退回改动前的整本拒绝。
     ///
-    /// ⚠️ 跟 EPUB 那条流式版不同：`comic_pdf::split_comic_pdf_if_oversized` 是"一次性把所有分卷
-    /// 都攒出来"而不是逐份读逐份丢（见该函数文档注释的已知内存权衡），真机验证阶段要用大部头样本
-    /// 测 `VmHWM`，峰值如果确实随书变大顶到风险区需要回来改成流式重新解析。单页体积本身超预算
-    /// 这种边界情况这里没有单独处理——上游 `imgopt::downscale_for_epub_comic` 已经把每张图钳制
-    /// 在 954×1696 像素以内，JPEG 质量 95 下单页实际不可能逼近 90MB 量级的预算，这个假设不成立
-    /// 时（比如以后画质/尺寸上限调高很多）需要回来重新评估。
+    /// 2026-09-19 改走流式 `comic_pdf::deliver_split_pdf_streaming`——真机 245MB/600页 样本坐实
+    /// 过前身版本（一次性 `extract_pages` 把全书图片攒成 `Vec<PdfImage>`）`VmHWM` 峰值到过
+    /// 525MB；现在逐份读逐份传逐份丢，峰值只有"一份的体积"，跟 EPUB 那条 [`Self::try_deliver_
+    /// split`] 是同一套纪律。单页体积本身超预算这种边界情况这里没有单独处理——上游 `imgopt::
+    /// downscale_for_epub_comic` 已经把每张图钳制在 954×1696 像素以内，JPEG 质量 95 下单页实际
+    /// 不可能逼近 90MB 量级的预算，这个假设不成立时（比如以后画质/尺寸上限调高很多）需要回来
+    /// 重新评估。
     fn try_deliver_split_pdf(&self, name: &str, p: &Path, folder: &str, bus: &rmsvc_core::events::EventBus) -> Result<Option<DeliverOutcome>, String> {
         let stem = name.strip_suffix(".pdf").unwrap_or(name).to_string();
         let lib_dir = self.xochitl.library_dir().to_path_buf();
-        let Some(pieces) = bookconv::comic_pdf::split_comic_pdf_if_oversized(p, self.native_limit)? else { return Ok(None) };
-        let total = pieces.len();
         let mut done_titles: Vec<String> = Vec::new();
-        for (idx, (piece_name, bytes)) in pieces.into_iter().enumerate() {
+        let outcome = bookconv::comic_pdf::deliver_split_pdf_streaming(p, self.native_limit, |piece_name, bytes, idx, total| {
             let since_ms = rmsvc_core::clock::now_ms();
-            self.xochitl.upload(&bytes, &piece_name, "application/pdf", folder)?;
-            let plan = RenderPlan { name: piece_name.clone(), title: None, expected: 0, since_ms };
+            self.xochitl.upload(bytes, piece_name, "application/pdf", folder).map(|_| ())?;
+            let plan = RenderPlan { name: piece_name.to_string(), title: None, expected: 0, since_ms };
             if render_check::probe(&lib_dir, &plan).is_none() {
                 rmsvc_core::fswatch::watch_until(&lib_dir, render_check::DEBOUNCE, PIECE_RENDER_TIMEOUT, |_| render_check::probe(&lib_dir, &plan).is_some());
             }
-            done_titles.push(piece_name.clone());
+            done_titles.push(piece_name.to_string());
             let progress = sidecar::DeliverCheck {
                 status: "pending".into(),
                 message: format!("已加入：{}", done_titles.join("、")),
                 at: rmsvc_core::clock::now_secs(),
-                progress: Some(sidecar::StepProgress { done: (idx + 1) as u32, total: total as u32 }),
+                progress: Some(sidecar::StepProgress { done: idx as u32, total: total as u32 }),
             };
             let _ = self.set_deliver_check(name, progress);
             bus.publish("books", "staging");
+            Ok(())
+        })?;
+        let Some(outcome) = outcome else { return Ok(None) };
+        if outcome.delivered.is_empty() {
+            return Err(format!("《{name}》按卷拆分后一份都没能投上：{}", outcome.failed.join("；")));
         }
-        let message = format!("《{stem}》超限，已按卷拆分加入 xochitl：{}", done_titles.join("、"));
+        let mut message = format!("《{stem}》超限，已按卷拆分加入 xochitl：{}", outcome.delivered.join("、"));
+        if !outcome.failed.is_empty() {
+            message.push_str(&format!("（{} 未投：{}）", outcome.failed.len(), outcome.failed.join("；")));
+        }
         let _ = self.mark_delivered(name, Reader::Native);
         Ok(Some(DeliverOutcome { message, render: None }))
     }

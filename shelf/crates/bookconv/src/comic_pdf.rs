@@ -138,22 +138,24 @@ pub fn optimize_comic_epub_to_pdf_streaming(
 /// 简化"只切一层"是同一个理由：真实漫画每卷体积通常远低于上传预算，为这种边界情况维护一整套
 /// 递归复杂度不值得。
 ///
-/// ⚠️ 已知内存权衡：解析的是"已经写到磁盘的完整 PDF"，`extract_pages` 会把所有页的图片流字节
-/// 拷贝进内存（峰值 ≈ 1-2 倍这份超限 PDF 自身体积），不是像 `comic_split::deliver_split_streaming`
-/// 那样逐份读逐份丢。这条路径只在漫画整本优化后仍超 90MB 上传上限时才触发，真机验证阶段必须用
-/// 大部头样本测 `VmHWM`，如果峰值确实随书变大顶到风险区，需要回来改成流式重新解析（读 xref 定位
-/// 每份要用到的对象、只把这一份的图片字节读进内存），这次先用直读换实现简单，不是最终定论。
-pub fn split_comic_pdf_if_oversized(
+/// **流式**（2026-09-19 用户反馈驱动，见下）：规划阶段只用 [`pdfwrite::PdfFileReader::
+/// page_byte_span_len`] 这种纯查表的"体积代理"，不读任何图片字节；真正组包时逐份读（这一份
+/// 引用到的图片才读进内存），`upload_piece` 回调处理完这一份、函数往下一份继续之前，这一份的
+/// `Vec<PdfImage>` 出作用域即释放——峰值内存只有"一份的体积"（受 `budget` 钳制），不随全书
+/// 页数/体积线性涨，跟 `comic_split::deliver_split_streaming` 是同一套纪律。
+///
+/// 前身是一次性 `std::fs::read` 整份文件 + `extract_pages` 把全书图片一次性抽成 `Vec<PdfImage>`
+/// 再逐份切片——真机 245MB/600页 样本坐实这个前身版本 `VmHWM` 峰值到过 525MB，用户反馈后改成
+/// 这一版。
+pub fn deliver_split_pdf_streaming(
     pdf_path: &Path,
     budget: u64,
-) -> Result<Option<Vec<(String, Vec<u8>)>>, String> {
-    let pdf_bytes = std::fs::read(pdf_path).map_err(|e| format!("读 PDF 失败: {e}"))?;
-    let whole_file_size = pdf_bytes.len() as u64; // 跟调用方 `deliver()` 判超限用的同一个量（整份文件体积）
-    let Ok(n) = pdfwrite::page_count(&pdf_bytes) else { return Ok(None) };
-    let Ok((all_images, all_titles)) = pdfwrite::extract_pages(&pdf_bytes, 0, n) else {
-        return Ok(None);
-    };
-    drop(pdf_bytes); // 已经拷进 all_images/all_titles，原始整份文件字节不用再留着。
+    mut upload_piece: impl FnMut(&str, &[u8], usize, usize) -> Result<(), String>,
+) -> Result<Option<crate::comic_split::StreamSplitOutcome>, String> {
+    let whole_file_size = std::fs::metadata(pdf_path).map(|m| m.len()).unwrap_or(0); // 跟调用方 `deliver()` 判超限用的同一个量
+    let Ok(mut reader) = pdfwrite::PdfFileReader::open(pdf_path) else { return Ok(None) };
+    let Ok(n) = reader.page_count() else { return Ok(None) };
+    let Ok(all_titles) = reader.outline_titles() else { return Ok(None) };
     if all_titles.is_empty() {
         return Ok(None); // 没有书签目录——不是我们自己产出的漫画 PDF，不拆。
     }
@@ -161,11 +163,9 @@ pub fn split_comic_pdf_if_oversized(
         return Ok(None); // 整本已经在预算内，调用方按"不用拆，直接投原生"处理
     }
 
-    // 按页分组用图片字节数做比例（PDF 对象结构/xref 的固定开销相对图片体积可以忽略——真实漫画
-    // 单张图几十到几百 KB，几千个对象的 xref 表也就几十 KB），页数级预算判断已经用真实整份文件
-    // 体积（上面那句），这里只是分组比例尺，不需要跟整份文件体积一样精确。
-    let sizes: Vec<u64> = all_images.iter().map(|im| im.data.len() as u64).collect();
-
+    // 规划阶段：纯查表算每页"占多少字节"（对象在文件里的字节范围，不读实际图片内容），
+    // 按卷边界贪心分组、卷内超预算再按页贪心细切——逻辑跟前身版本一致，只是数据来源变了。
+    let sizes: Vec<u64> = (0..n).map(|p| reader.page_byte_span_len(p)).collect();
     let mut boundaries: Vec<usize> = all_titles.iter().map(|(idx, _)| *idx).collect();
     boundaries.sort_unstable();
     boundaries.dedup();
@@ -173,48 +173,63 @@ pub fn split_comic_pdf_if_oversized(
         boundaries.insert(0, 0);
     }
     let title_at: std::collections::HashMap<usize, String> = all_titles.into_iter().collect();
-    let stem = pdf_path.file_stem().and_then(|s| s.to_str()).unwrap_or("漫画");
-    let mut pieces: Vec<(String, Vec<u8>)> = Vec::new();
 
+    let mut ranges: Vec<(usize, usize, String)> = Vec::new();
     for (i, &start) in boundaries.iter().enumerate() {
         let end = boundaries.get(i + 1).copied().unwrap_or(n);
         let vol_title = title_at.get(&start).cloned().unwrap_or_else(|| format!("第 {}-{} 页", start + 1, end));
         let vol_size: u64 = sizes[start..end].iter().sum();
         if vol_size <= budget {
-            let images: Vec<PdfImage> = all_images[start..end].to_vec();
-            let out = pdfwrite::images_to_pdf_with_toc(&images, &[(0, vol_title.clone())])?;
-            pieces.push((format!("{stem} - {vol_title}.pdf"), out));
+            ranges.push((start, end, vol_title));
             continue;
         }
         // 这一卷本身还超预算：按页贪心再切一层。
         let (mut s, mut acc) = (start, 0u64);
         for i in start..end {
             if acc > 0 && acc + sizes[i] > budget {
-                push_sub_piece(&mut pieces, stem, &vol_title, &all_images, s, i);
+                ranges.push((s, i, format!("{vol_title}（第 {}-{} 页）", s + 1, i)));
                 s = i;
                 acc = 0;
             }
             acc += sizes[i];
         }
-        push_sub_piece(&mut pieces, stem, &vol_title, &all_images, s, end);
+        ranges.push((s, end, format!("{vol_title}（第 {}-{} 页）", s + 1, end)));
     }
-    Ok(Some(pieces))
-}
 
-fn push_sub_piece(
-    pieces: &mut Vec<(String, Vec<u8>)>,
-    stem: &str,
-    vol_title: &str,
-    all_images: &[PdfImage],
-    start: usize,
-    end: usize,
-) {
-    let sub_title = format!("{vol_title}（第 {}-{} 页）", start + 1, end);
-    let images: Vec<PdfImage> = all_images[start..end].to_vec();
-    match pdfwrite::images_to_pdf_with_toc(&images, &[(0, sub_title.clone())]) {
-        Ok(out) => pieces.push((format!("{stem} - {sub_title}.pdf"), out)),
-        Err(_) => {} // 单份组包失败极罕见（图片列表非空即不会失败）——按"这份跳过"而不是让整体拆分失败。
+    // 组包+上传阶段：逐份来，每份只读这份自己范围内的图片，处理完（无论成败）立刻释放。
+    let total = ranges.len();
+    let stem = pdf_path.file_stem().and_then(|s| s.to_str()).unwrap_or("漫画").to_string();
+    let mut delivered = Vec::new();
+    let mut failed = Vec::new();
+    for (idx, (start, end, title)) in ranges.into_iter().enumerate() {
+        let mut images = Vec::with_capacity(end - start);
+        let mut read_err = None;
+        for page_idx in start..end {
+            match reader.read_page_image(page_idx) {
+                Ok(img) => images.push(img),
+                Err(e) => {
+                    read_err = Some(e);
+                    break;
+                }
+            }
+        }
+        if let Some(e) = read_err {
+            failed.push(format!("{title}（读页失败：{e}）"));
+            continue;
+        }
+        match pdfwrite::images_to_pdf_with_toc(&images, &[(0, title.clone())]) {
+            Ok(bytes) => {
+                let piece_name = format!("{stem} - {title}.pdf");
+                match upload_piece(&piece_name, &bytes, idx + 1, total) {
+                    Ok(()) => delivered.push(title),
+                    Err(e) => failed.push(format!("{title}（上传失败：{e}）")),
+                }
+            }
+            Err(e) => failed.push(format!("{title}（组包失败：{e}）")),
+        }
+        // images/bytes 出循环体作用域即释放，下一份开始前这一份占的内存已经收回。
     }
+    Ok(Some(crate::comic_split::StreamSplitOutcome { delivered, failed }))
 }
 
 #[cfg(test)]
@@ -300,9 +315,9 @@ mod tests {
         assert_eq!(rep.pages, 21, "21 张图应展开成 21 个 PDF 页");
         assert_eq!(calls.last(), Some(&(21, 21)));
 
-        let pdf_bytes = std::fs::read(&output).unwrap();
-        assert_eq!(pdfwrite::page_count(&pdf_bytes).unwrap(), 21);
-        let (_, titles) = pdfwrite::extract_pages(&pdf_bytes, 0, 21).unwrap();
+        let mut reader = pdfwrite::PdfFileReader::open(&output).unwrap();
+        assert_eq!(reader.page_count().unwrap(), 21);
+        let titles = reader.outline_titles().unwrap();
         assert_eq!(titles, vec![(0, "第0章".to_string()), (10, "第1章".to_string())], "标题应落在各章第一张图对应的页码上");
     }
 
@@ -324,7 +339,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("small.pdf");
         std::fs::write(&path, &pdf).unwrap();
-        assert!(split_comic_pdf_if_oversized(&path, 10_000_000).unwrap().is_none());
+        assert!(deliver_split_pdf_streaming(&path, 10_000_000, |_, _, _, _| Ok(())).unwrap().is_none());
     }
 
     #[test]
@@ -334,25 +349,34 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("plain.pdf");
         std::fs::write(&path, &pdf).unwrap();
-        assert!(split_comic_pdf_if_oversized(&path, 1).unwrap().is_none());
+        assert!(deliver_split_pdf_streaming(&path, 1, |_, _, _, _| Ok(())).unwrap().is_none());
     }
 
     #[test]
     fn split_comic_pdf_splits_by_volume_boundary_when_oversized() {
-        // 每张图的 JPEG 骨架体积一样，两卷各 3 张图，budget 卡在刚好装不下 6 张但装得下 3 张。
+        // 两卷各 3 张图；先用 PdfFileReader 量出单页真实的对象字节范围，budget 卡在刚好装不下
+        // 6 页但装得下 3 页（不再靠猜 JPEG 骨架长度换算，直接用生产代码同一套量法）。
         let jpeg = one_px_jpeg();
-        let per_img = jpeg.len() as u64;
         let images: Vec<PdfImage> = (0..6).map(|_| pdfwrite::image_from_bytes(&jpeg).unwrap()).collect();
         let titles = vec![(0, "卷一".to_string()), (3, "卷二".to_string())];
         let pdf = pdfwrite::images_to_pdf_with_toc(&images, &titles).unwrap();
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("big.pdf");
         std::fs::write(&path, &pdf).unwrap();
+        let per_page = pdfwrite::PdfFileReader::open(&path).unwrap().page_byte_span_len(0);
 
-        let budget = per_img * 4; // 装得下一卷（3张），装不下两卷（6张）
-        let pieces = split_comic_pdf_if_oversized(&path, budget).unwrap().unwrap();
-        assert_eq!(pieces.len(), 2, "应该按卷边界切成两份");
-        for (name, bytes) in &pieces {
+        let mut collected: Vec<(String, Vec<u8>)> = Vec::new();
+        let budget = per_page * 4; // 装得下一卷（3页），装不下两卷（6页）
+        let outcome = deliver_split_pdf_streaming(&path, budget, |name, bytes, _idx, _total| {
+            collected.push((name.to_string(), bytes.to_vec()));
+            Ok(())
+        })
+        .unwrap()
+        .unwrap();
+        assert_eq!(outcome.delivered.len(), 2, "应该按卷边界切成两份: {outcome:?}");
+        assert!(outcome.failed.is_empty(), "{outcome:?}");
+        assert_eq!(collected.len(), 2);
+        for (name, bytes) in &collected {
             assert!(name.contains("卷"));
             assert_eq!(pdfwrite::page_count(bytes).unwrap(), 3);
         }
