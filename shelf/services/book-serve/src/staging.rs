@@ -39,7 +39,10 @@ fn busy_err(name: &str, extra: &str) -> String {
 }
 
 /// 母版库一本书的展示条目。`format`（epub / pdf / cbz / other）从扩展名判、优化等级从内埋标记判（轻量只读中央目录）。
+/// `rename_all = "camelCase"`：既有字段全是单词、camelCase 变换不影响它们的 JSON key，这次
+/// 新增的 `pdf_source` 借这个转成前端习惯的 `pdfSource`，不用单独给这一个字段挂 `rename`。
 #[derive(Serialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
 pub struct StagingEntry {
     pub name: String,
     pub bytes: u64,
@@ -57,6 +60,11 @@ pub struct StagingEntry {
     /// 2026-09-19 落库同理补上——超限漫画按卷拆分要挨个建包+上传，同样能拖到分钟级）。
     #[serde(default)]
     pub busy: bool,
+    /// 这份 EPUB 是不是入库 PDF 转出来的（`format=="epub"` 才有意义；跟 `optimized`/`level` 的
+    /// 常规 full/core/old/none 阶梯正交——PDF 转出来是一次性产物，视为已经完成，不再进那条
+    /// 阶梯，也不再显示「优化」按钮，见 `looks_like_pdf_derived_epub` 文档）。
+    #[serde(default)]
+    pub pdf_source: bool,
 }
 
 /// 投原生成功后交给自检线程的计划：投书时刻（毫秒，圈"之后进库"的候选）+ 书名 + 期望页数。
@@ -207,10 +215,14 @@ impl Staging {
     /// 补，给 [`Self::spawn_optimize`] 挂真实进度用；这个方法本身不关心怎么展示，不耦合 sidecar/
     /// EventBus——同步调用方（如 [`Self::fetch_article`] 的"同步优化"复选框）传空闭包即可）。
     pub fn optimize(&self, name: &str, mut on_progress: impl FnMut(usize, usize)) -> Result<String, String> {
-        if formats::ext_of(name) != "epub" {
-            return Err("只有 EPUB 能优化，PDF 不支持".into());
+        let ext = formats::ext_of(name);
+        if ext != "epub" && ext != "pdf" {
+            return Err("只有 EPUB/PDF 能优化".into());
         }
         let p = self.existing(name)?;
+        if ext == "pdf" {
+            return self.optimize_pdf(name, &p, on_progress);
+        }
         // 漫画类 EPUB 改产出 PDF——真机反复实测坐实 xochitl 的 EPUB 渲染走文字排版盒模型，内容区
         // 相对物理页面有个消不掉的固定内边距（UI 只给 28/56/112 三档、改 `.content` 文件也没用，
         // xochitl 渲染时会用自己的逻辑覆盖回去），CSS 层面也测过绕不开；PDF 是完全独立的直接光栅化
@@ -258,14 +270,62 @@ impl Staging {
         ))
     }
 
+    /// 入库 PDF 的「优化」分支：`bookconv::pdf_ingest::classify_pdf` 先判漫画/无文字层/有文字层——
+    /// 漫画或无文字层只裁边（格式不变，原地覆盖，对齐文字 EPUB 优化那条"原地覆盖"路径）；有文字层
+    /// 转 EPUB（产出 `<stem>.epub`，成功后删掉原 `.pdf`，完整照抄 [`Self::optimize_comic_to_pdf`]
+    /// 的"改名删原文件"结构，只是方向相反）。详见 `bookconv::pdf_ingest` 模块文档（分类阈值、
+    /// 三个新依赖的分工、已知的公式区域边界粗粒度限制）。
+    fn optimize_pdf(&self, name: &str, p: &Path, mut on_progress: impl FnMut(usize, usize)) -> Result<String, String> {
+        use bookconv::pdf_ingest::{self, PdfKind};
+        match pdf_ingest::classify_pdf(p) {
+            PdfKind::Comic | PdfKind::NoTextLayer => {
+                let tmp = p.with_file_name(format!(".{name}.optimizing.tmp"));
+                let result = pdf_ingest::optimize_pdf_trim_only(p, &tmp, &mut on_progress);
+                let rep = match result {
+                    Ok(r) => r,
+                    Err(e) => {
+                        let _ = std::fs::remove_file(&tmp);
+                        return Err(e);
+                    }
+                };
+                std::fs::rename(&tmp, p).map_err(|e| format!("回写母版库失败: {e}"))?;
+                Ok(format!("已优化《{name}》（裁边，{} 页）", rep.pages))
+            }
+            PdfKind::TextLayer => {
+                let stem = name.strip_suffix(".pdf").unwrap_or(name);
+                let epub_path = p.with_file_name(format!("{stem}.epub"));
+                let tmp = p.with_file_name(format!(".{stem}.epub.optimizing.tmp"));
+                let (mut book, rep) = match pdf_ingest::optimize_pdf_to_epub(p, &mut on_progress) {
+                    Ok(ok) => ok,
+                    Err(e) => return Err(e),
+                };
+                let bytes = match bookconv::epub::assemble(&mut book) {
+                    Ok(b) => b,
+                    Err(e) => return Err(format!("组装 EPUB 失败: {e}")),
+                };
+                if let Err(e) = std::fs::write(&tmp, &bytes) {
+                    let _ = std::fs::remove_file(&tmp);
+                    return Err(format!("写出临时文件失败: {e}"));
+                }
+                std::fs::rename(&tmp, &epub_path).map_err(|e| format!("回写母版库失败: {e}"))?;
+                std::fs::remove_file(p).map_err(|e| format!("删除原 PDF 失败: {e}"))?;
+                Ok(format!(
+                    "已优化《{stem}》（PDF→EPUB，{} 页，{} 章，{} 张图，{} 处公式）",
+                    rep.pages, rep.chapters, rep.images, rep.formula_blocks
+                ))
+            }
+        }
+    }
+
     /// [`Self::optimize`] 的异步版：先做零耗时的格式/存在性校验（错误立即回给调用方，不用等后台线程），
     /// 校验过了才加忙锁、起后台线程跑真正耗时的部分。成功返回后 HTTP 层应立即回"已开始"，真正结果
     /// 通过 `bus` 的 `books`/`staging` 事件 + `GET /staging` 列表里这条目的 `delivered.optimize`
     /// （[`sidecar::OptimizeCheck`]）异步呈现。`catch_unwind` 兜底优化过程中的 panic（如损坏文件触发
     /// 库内部意外崩溃）——绝不能让忙锁卡死在 true 再也清不掉、这条目从此删不掉优化不了。
     pub fn spawn_optimize(&self, name: &str, bus: Arc<rmsvc_core::events::EventBus>) -> Result<(), String> {
-        if formats::ext_of(name) != "epub" {
-            return Err("只有 EPUB 能优化，PDF 不支持".into());
+        let ext = formats::ext_of(name);
+        if ext != "epub" && ext != "pdf" {
+            return Err("只有 EPUB/PDF 能优化".into());
         }
         self.existing(name)?;
         if !self.try_start_busy(name) {
@@ -308,8 +368,15 @@ impl Staging {
     /// 参数是异步操作发起时的原名，这本书如果发生过这次改名，原名此时已经找不到文件，返回改名后的
     /// 新名字给 sidecar 写终态用；其余情况（普通文字书优化、失败）原样返回 `name`。
     fn resolved_optimize_target(&self, name: &str) -> String {
+        // 双向：漫画 EPUB→PDF（既有）、入库 PDF 有文字层→EPUB（新增，方向相反但同一个
+        // "格式变了、条目改名"场景，`existing(name)` 都找不到原名时才去找改名后的候选）。
         if let Some(stem) = name.strip_suffix(".epub") {
             let candidate = format!("{stem}.pdf");
+            if self.existing(name).is_err() && self.existing(&candidate).is_ok() {
+                return candidate;
+            }
+        } else if let Some(stem) = name.strip_suffix(".pdf") {
+            let candidate = format!("{stem}.epub");
             if self.existing(name).is_err() && self.existing(&candidate).is_ok() {
                 return candidate;
             }
@@ -639,10 +706,19 @@ impl Staging {
                 "cbz" => "cbz",
                 _ => "other",
             };
-            // 优化状态对 EPUB 有意义；PDF 里"漫画→PDF 优化出来的产物"也算已优化（靠有没有书签目录
-            // 廉价识别，见 `comic_pdf.rs` 文档注释——用户自己上传的原生 PDF 没有这个标记，维持 none）。
+            // 优化状态对 EPUB 有意义；PDF 里"我们自己优化产出的产物"（漫画→PDF 或入库 PDF 裁边）
+            // 也算已优化（靠书签目录或 Producer 标记廉价识别，见 `pdfwrite.rs::looks_like_own_
+            // bookconv_pdf` 文档注释——用户自己上传的原生 PDF 没有这俩标记，维持 none）。
+            // 入库 PDF 转出来的 EPUB（`pdf_source`）视为一次性产物已经完成，直接报 full，不进
+            // 常规文字 EPUB 那条 full/core/old/none 优化阶梯——真跑一遍 `optimized_version_file`
+            // 只会白白报 none（这类 EPUB 从没被 `optimize_epub_file_streaming` 处理过，没有那个
+            // 内嵌版本标记），误导前端以为它"未优化"、显示可以点「优化」，见 `StagingEntry::
+            // pdf_source` 文档。
+            let pdf_source = format == "epub" && bookconv::pdf_ingest::looks_like_pdf_derived_epub(&e.path());
             let level = if format == "pdf" {
-                if bookconv::convert::pdfwrite::looks_like_own_comic_pdf(&e.path()) { "full" } else { "none" }
+                if bookconv::convert::pdfwrite::looks_like_own_bookconv_pdf(&e.path()) { "full" } else { "none" }
+            } else if pdf_source {
+                "full"
             } else if format != "epub" {
                 "none"
             } else {
@@ -655,7 +731,7 @@ impl Staging {
             };
             let mtime = md.modified().ok().map(rmsvc_core::clock::secs_of).unwrap_or(0);
             let busy = self.is_busy(&name);
-            out.push(StagingEntry { name, bytes: md.len(), format, optimized: level == "full", level, mtime, delivered: sidecar::read(&e.path()), busy });
+            out.push(StagingEntry { name, bytes: md.len(), format, optimized: level == "full", level, mtime, delivered: sidecar::read(&e.path()), busy, pdf_source });
         }
         out.sort_by(|a, b| b.mtime.cmp(&a.mtime).then_with(|| a.name.cmp(&b.name)));
         out
@@ -816,9 +892,14 @@ mod tests {
         let opf = r#"<package version="2.0"><metadata><dc:title>t</dc:title></metadata><manifest><item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="c1"/></spine></package>"#;
         let epub = mini_epub(&[("content.opf", opf), ("c1.xhtml", r#"<html><head></head><body><h1>第一章</h1><p style="font-size:9px;margin:1em">正文</p></body></html>"#)]);
         s.stage_new("x.epub", &epub).unwrap();
+        // 2026-09-19 起 PDF 也能「优化」（入库 PDF 线，见 `optimize_pdf`）——这份 `%PDF` 字面量
+        // 不是真实可解析的 PDF 结构，走到 `pdf_ingest::classify_pdf` 会解析失败，这里只断言
+        // "确实报错、不是静默成功"，不再断言旧版"PDF 一律不支持"那句文案。
         s.stage_new("p.pdf", b"%PDF").unwrap();
-        assert!(s.optimize("p.pdf", |_, _| {}).unwrap_err().contains("只有 EPUB"));
+        assert!(s.optimize("p.pdf", |_, _| {}).is_err());
         assert!(s.optimize("none.epub", |_, _| {}).is_err());
+        assert!(s.optimize("x.cbz", |_, _| {}).is_err()); // 格式白名单之外的仍然拒绝
+
         let mut progresses = Vec::new();
         let msg = s.optimize("x.epub", |done, total| progresses.push((done, total))).unwrap();
         assert!(msg.contains("清洗+优化") && msg.contains("自动目录 1 条"), "{msg}");
@@ -922,10 +1003,12 @@ mod tests {
     fn spawn_optimize_rejects_non_epub_and_missing_file_synchronously() {
         let t = tempfile::tempdir().unwrap();
         let s = staging(&t);
-        s.stage_new("p.pdf", b"%PDF").unwrap();
+        s.stage_new("x.cbz", b"not a real cbz").unwrap();
         let bus = Arc::new(rmsvc_core::events::EventBus::new());
-        assert!(s.spawn_optimize("p.pdf", bus.clone()).unwrap_err().contains("只有 EPUB"));
-        assert!(!s.is_busy("p.pdf"), "校验失败不该留下忙锁");
+        // 格式白名单之外（CBZ 等）依然同步拒绝，不占忙锁——PDF 2026-09-19 起已经在白名单内，
+        // 不能再拿它当"非法格式"的例子（见 `optimize_gates_and_runs_single_full_pass`）。
+        assert!(s.spawn_optimize("x.cbz", bus.clone()).unwrap_err().contains("只有 EPUB/PDF"));
+        assert!(!s.is_busy("x.cbz"), "校验失败不该留下忙锁");
         assert!(s.spawn_optimize("none.epub", bus).is_err());
     }
 
@@ -1049,6 +1132,49 @@ mod tests {
 
         let pdf_bytes = std::fs::read(t.path().join("staging").join("manga.pdf")).unwrap();
         assert_eq!(bookconv::convert::pdfwrite::page_count(&pdf_bytes).unwrap(), 25);
+    }
+
+    /// 拿真实 pdflatex 编译的样本（bookconv 那条线的测试夹具，两个 crate 同一个仓库共享一份
+    /// 真实样本，不在 book-serve 这边另造一份假数据）核对：入库有文字层的 PDF「优化」真的会
+    /// 转成 EPUB、原 PDF 被删、新 EPUB 在 `list()` 里报 `pdfSource: true` 且不再显示优化档位
+    /// 的 none（视为已完成）。
+    #[test]
+    fn optimize_text_layer_pdf_produces_epub_output() {
+        const SAMPLE_PDF: &[u8] = include_bytes!("../../../crates/bookconv/tests/fixtures/sample.pdf");
+        let t = tempfile::tempdir().unwrap();
+        let s = staging(&t);
+        s.stage_new("paper.pdf", SAMPLE_PDF).unwrap();
+
+        let msg = s.optimize("paper.pdf", |_, _| {}).unwrap();
+        assert!(msg.contains("PDF→EPUB"), "{msg}");
+
+        let list = s.list();
+        assert!(list.iter().all(|e| e.name != "paper.pdf"), "原 PDF 条目应该被替换掉");
+        let epub_entry = list.iter().find(|e| e.name == "paper.epub").expect("应该产出 paper.epub");
+        assert_eq!(epub_entry.format, "epub");
+        assert!(epub_entry.pdf_source, "应该标记来源是 PDF 转换: {epub_entry:?}");
+        assert!(epub_entry.optimized && epub_entry.level == "full", "PDF 转出的 EPUB 应该直接报已完成: {epub_entry:?}");
+
+        let epub_bytes = std::fs::read(t.path().join("staging").join("paper.epub")).unwrap();
+        assert!(!epub_bytes.is_empty());
+    }
+
+    /// 漫画/无文字层 PDF 走裁边分支，格式不变仍是 PDF，且能被识别成"自己优化过的"。
+    #[test]
+    fn optimize_comic_shaped_pdf_stays_pdf_and_gets_trimmed() {
+        let img = bookconv::convert::pdfwrite::image_from_bytes(&fake_jpeg()).unwrap();
+        let comic_pdf = bookconv::convert::pdfwrite::images_to_pdf(&[img.clone(), img.clone(), img]).unwrap();
+        let t = tempfile::tempdir().unwrap();
+        let s = staging(&t);
+        s.stage_new("scan.pdf", &comic_pdf).unwrap();
+
+        let msg = s.optimize("scan.pdf", |_, _| {}).unwrap();
+        assert!(msg.contains("裁边"), "{msg}");
+
+        let list = s.list();
+        let entry = list.iter().find(|e| e.name == "scan.pdf").expect("格式不该变，还是 scan.pdf");
+        assert_eq!(entry.format, "pdf");
+        assert!(entry.optimized && entry.level == "full", "裁边后应该报已优化: {entry:?}");
     }
 
     #[test]

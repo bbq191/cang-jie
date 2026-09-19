@@ -24,6 +24,20 @@ quick-xml = { version = "0.30", features = ["serialize", "encoding"] }
 readability-rust = "0.1.0"
 scraper = "0.18"
 ego-tree = "0.6"
+# 入库 PDF「优化」（有文字层→转 EPUB，无文字层/漫画→仅裁边，2026-09-19）：三者均纯 Rust、
+# 无 C 依赖，aarch64-unknown-linux-musl 全静态交叉编译已验证过（含传递依赖 hayro-*/vello_cpu/
+# skrifa/rayon 等，`file` 核对 book-serve 产物仍是 statically linked）。
+# lopdf：通用 PDF 对象/xref/content stream 解析+构造，读第三方 PDF 结构（页树/字体资源/
+# 图片 XObject/书签目录），现有 `convert/pdfwrite.rs` 的手搓读写器只认自己产出的简单结构，
+# 读不了第三方复杂 PDF。
+lopdf = "0.45.0"
+# pdf-extract：基于 lopdf，暴露 OutputDev::output_character(变换矩阵+字体名+字号) 钩子，
+# 给文字层探测/字号识别标题/公式区域探测三处用，不用自己写 content stream 算子解释器。
+pdf-extract = "0.12.1"
+# hayro：纯 Rust PDF 光栅化引擎（Apache-2.0/MIT，1000+ PDF 回归测试套件），把整页渲染成
+# 位图供公式区域裁剪用（没有按区域渲染的精确 API，渲染整页后用已有 `imgopt::trim_margins`
+# 同款 `image::imageops::crop_imm` 裁出公式小块）。
+hayro = "0.7.1"
 
 [dev-dependencies]
 tempfile = "3"

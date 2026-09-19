@@ -249,6 +249,10 @@ pub fn images_to_pdf(images: &[PdfImage]) -> Result<Vec<u8>, String> {
 /// （真机实测 PDF 页面尺寸精确等于这组数字时，左右留白量得 0.00%，是这次新增摆位逻辑的依据）。
 pub const PDF_PAGE_W: u32 = crate::imgopt::MAX_SHORT_EDGE;
 pub const PDF_PAGE_H: u32 = crate::imgopt::MAX_EDGE;
+/// 写进 Info 字典 `/Producer` 的标记字符串——`looks_like_own_bookconv_pdf` 靠这个识别"没有
+/// 书签目录也是我们自己产出的 PDF"（裁边路径的产物大概率没有章节结构，不能只靠 `/Outlines`
+/// 判断，见该函数文档）。
+const PRODUCER_MARKER: &str = "cangjie-bookconv/1";
 
 /// 图片在统一设备页面里怎么摆：优先按宽度撑满、左右各留 1%（常见情况——漫画页比设备"矮"，
 /// 撑满宽度后自然在上下留出对称留白，居中摆）；如果这样会导致高度溢出页面（罕见的极端竖长图），
@@ -420,6 +424,16 @@ impl PdfPieceWriter {
             }
         }
 
+        // Info 对象（`/Producer` 标记）放在所有页/书签对象之后、xref 之前——下一个可用对象号
+        // 就是"到这里为止已经写了几个对象"（`self.offsets.len()` 跟已写对象数严格一一对应，
+        // 因为这个写手从来没有跳号）。不影响页/书签对象的既有编号方案，纯追加，对已部署真机的
+        // 漫画 PDF 产出字节结构不构成破坏性变动（Info 只是新增，不是改写）。
+        let info_id = self.offsets.len() + 1;
+        self.offsets.push(self.out.len());
+        self.out.extend_from_slice(format!("{info_id} 0 obj\n<< /Producer ").as_bytes());
+        self.out.extend_from_slice(&pdf_literal_string(PRODUCER_MARKER.as_bytes()));
+        self.out.extend_from_slice(b" >>\nendobj\n");
+
         let xref_off = self.out.len();
         let count = self.offsets.len() + 1;
         self.out.extend_from_slice(format!("xref\n0 {count}\n").as_bytes());
@@ -428,7 +442,7 @@ impl PdfPieceWriter {
             self.out.extend_from_slice(format!("{off:010} 00000 n \n").as_bytes());
         }
         self.out.extend_from_slice(
-            format!("trailer\n<< /Size {count} /Root 1 0 R >>\nstartxref\n{xref_off}\n%%EOF\n").as_bytes(),
+            format!("trailer\n<< /Size {count} /Root 1 0 R /Info {info_id} 0 R >>\nstartxref\n{xref_off}\n%%EOF\n").as_bytes(),
         );
         Ok(self.out)
     }
@@ -560,14 +574,31 @@ fn utf16be_to_string(mut bytes: &[u8]) -> String {
 /// 廉价识别"这份 PDF 是不是我们自己 `images_to_pdf_with_toc` 产出的"——只读文件开头一小段
 /// （Catalog 永远是第一个写的对象，在文件最前面），不用把整份 PDF 读进内存解析对象结构。给
 /// `book-serve::Staging::list()` 这种高频调用场景判断"漫画 PDF 是否已优化"用。
-pub fn looks_like_own_comic_pdf(path: &std::path::Path) -> bool {
-    use std::io::Read;
-    let Ok(f) = std::fs::File::open(path) else { return false };
+/// 泛化自原来的 `looks_like_own_comic_pdf`（2026-09-19，入库 PDF 裁边那条产线接入时）：裁边
+/// 输出大概率没有章节结构（原书可能就没有书签目录），不能只靠头部 `/Outlines` 判断——补一条
+/// 尾部检查 `PRODUCER_MARKER`（`PdfPieceWriter::finish` 写的 Info 对象，固定在 xref 之前、
+/// 文件末尾附近）。两条检查任一命中即可，两条产线（漫画 EPUB→PDF / PDF 裁边）共用同一个
+/// "这是我们自己优化过的" 信号，`list()`/前端徽章逻辑不用关心具体是哪条产线产出的。
+pub fn looks_like_own_bookconv_pdf(path: &std::path::Path) -> bool {
+    use std::io::{Read, Seek, SeekFrom};
+    let Ok(mut f) = std::fs::File::open(path) else { return false };
     let mut head = Vec::with_capacity(4096);
-    if f.take(4096).read_to_end(&mut head).is_err() {
+    if (&f).take(4096).read_to_end(&mut head).is_err() {
         return false;
     }
-    memfind(&head, b"/Type /Catalog").is_some() && memfind(&head, b"/Outlines").is_some()
+    if memfind(&head, b"/Type /Catalog").is_some() && memfind(&head, b"/Outlines").is_some() {
+        return true;
+    }
+    let len = f.metadata().map(|m| m.len()).unwrap_or(0);
+    let tail_len = len.min(4096);
+    if f.seek(SeekFrom::End(-(tail_len as i64))).is_err() {
+        return false;
+    }
+    let mut tail = Vec::with_capacity(tail_len as usize);
+    if f.take(tail_len).read_to_end(&mut tail).is_err() {
+        return false;
+    }
+    memfind(&tail, PRODUCER_MARKER.as_bytes()).is_some()
 }
 
 /// 总页数（`/Type /Pages` 对象的 `/Count`）——只认自己生成的固定对象编号结构，喂陌生 PDF 大概率 `Err`。
@@ -856,7 +887,7 @@ mod tests {
     }
 
     #[test]
-    fn looks_like_own_comic_pdf_detects_outline_not_plain_pdf() {
+    fn looks_like_own_bookconv_pdf_detects_outline_not_plain_pdf() {
         let img = image_from_bytes(RED_PNG).unwrap();
         let with_toc = images_to_pdf_with_toc(&[img], &[(0, "卷一".to_string())]).unwrap();
         let img2 = image_from_bytes(RED_PNG).unwrap();
@@ -866,8 +897,19 @@ mod tests {
         let p2 = dir.path().join("b.pdf");
         std::fs::write(&p1, &with_toc).unwrap();
         std::fs::write(&p2, &plain).unwrap();
-        assert!(looks_like_own_comic_pdf(&p1));
-        assert!(!looks_like_own_comic_pdf(&p2), "无 Outlines 的普通 PDF 不该被误判为我们自己的产物");
+        assert!(looks_like_own_bookconv_pdf(&p1));
+        assert!(!looks_like_own_bookconv_pdf(&p2), "无 Outlines/Producer 标记的普通 PDF 不该被误判为我们自己的产物");
+    }
+
+    #[test]
+    fn looks_like_own_bookconv_pdf_detects_producer_marker_without_outline() {
+        // 裁边路径没有书签目录（原书可能就没有章节结构）——靠 finish() 写的 Producer 标记识别。
+        let img = image_from_bytes(RED_PNG).unwrap();
+        let no_toc = images_to_pdf_with_toc(&[img], &[]).unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("trim_only.pdf");
+        std::fs::write(&p, &no_toc).unwrap();
+        assert!(looks_like_own_bookconv_pdf(&p), "无书签但带 Producer 标记的自产 PDF 应该被识别");
     }
 
     #[test]
