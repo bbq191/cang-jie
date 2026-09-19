@@ -522,7 +522,12 @@ warn,info}`），底部居中堆叠、定时自动淡出，点一下可提前关
 **实现**（分支 `feat/comic-pdf-optimize`，基于 `fix/imgopt-pad-to-device-aspect`——那条分支
 本身是 `fix/comic-split-toc-loss`+`fix/imgopt-trim-margin-cap`+`fix/comic-split-text-and-
 layout` 三条 EPUB 修复分支的叠加；**这一批共四条分支截至写这条时都还没合并 master**，等用户
-决定）：
+决定。**追记（2026-09-19，同日）**：`feat/comic-pdf-optimize` 已合并进另一条兄弟分支
+`feat/gateway-concurrency-budget`（自动合并无冲突，`shelf` workspace 32+171+14 测试全绿）
+——根因是网关并发闸门那条分支的前端"加入 xochitl"按钮还按"PDF 不能分卷"的旧假设灰按钮，
+但设备上实际跑的 `book-serve` 早就是这条分支、已经支持 PDF 分卷，两条分支互相不知道对方
+的存在，完整经过见 `gateway/docs/reMarkable网关白皮书.md` §04。合并后那条分支同时带着两块
+功能，**仍未合并 master**）：
 
 - 新增 `comic_pdf.rs`：`optimize_comic_epub_to_pdf_streaming`（漫画 EPUB→PDF，一图一页，
   NCX 标题→书签）、`deliver_split_pdf_streaming`（超限按卷流式拆分）。
