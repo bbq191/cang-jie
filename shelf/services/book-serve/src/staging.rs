@@ -639,10 +639,11 @@ impl Staging {
                 "cbz" => "cbz",
                 _ => "other",
             };
-            // 优化状态对 EPUB 有意义；PDF 里"漫画→PDF 优化出来的产物"也算已优化（靠有没有书签目录
-            // 廉价识别，见 `comic_pdf.rs` 文档注释——用户自己上传的原生 PDF 没有这个标记，维持 none）。
+            // 优化状态对 EPUB 有意义；PDF 里"我们自己优化产出的产物"（漫画→PDF 或入库 PDF 裁边）
+            // 也算已优化（靠书签目录或 Producer 标记廉价识别，见 `pdfwrite.rs::looks_like_own_
+            // bookconv_pdf` 文档注释——用户自己上传的原生 PDF 没有这俩标记，维持 none）。
             let level = if format == "pdf" {
-                if bookconv::convert::pdfwrite::looks_like_own_comic_pdf(&e.path()) { "full" } else { "none" }
+                if bookconv::convert::pdfwrite::looks_like_own_bookconv_pdf(&e.path()) { "full" } else { "none" }
             } else if format != "epub" {
                 "none"
             } else {
