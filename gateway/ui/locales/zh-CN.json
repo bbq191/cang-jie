@@ -436,5 +436,10 @@
   "transfer.staging.progress.addingKoreader": "加入 KOReader 中…",
   "transfer.staging.progress.working": "处理中…",
   "transfer.staging.progress.queued": "排队等待并发名额…",
-  "transfer.staging.batchLockedTitle": "批量处理进行中，请等它跑完"
+  "transfer.staging.batchLockedTitle": "批量处理进行中，请等它跑完",
+  "transfer.staging.gatedLockedTitle": "正在排队或处理中，换个设备/重开页面也看得到——还没轮到的可以点「取消排队」，已经开始的等它跑完",
+  "transfer.staging.btn.cancelQueued": "取消排队",
+  "transfer.staging.gatedSummary": "⏳ 排队 {pending} 本 · 处理中 {active} 本",
+  "transfer.staging.cancelQueuedOk": "已取消《{name}》的排队",
+  "transfer.staging.cancelQueuedTooLate": "《{name}》刚好轮到、已经开始处理，来不及取消了"
 }

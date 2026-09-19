@@ -436,5 +436,10 @@
   "transfer.staging.progress.addingKoreader": "Adding to KOReader…",
   "transfer.staging.progress.working": "Working…",
   "transfer.staging.progress.queued": "Waiting for a concurrency slot…",
-  "transfer.staging.batchLockedTitle": "A batch operation is running — wait for it to finish"
+  "transfer.staging.batchLockedTitle": "A batch operation is running — wait for it to finish",
+  "transfer.staging.gatedLockedTitle": "Queued or processing — visible even from another device or after reopening this page. Not started yet? You can cancel it. Already running? Let it finish",
+  "transfer.staging.btn.cancelQueued": "Cancel queue",
+  "transfer.staging.gatedSummary": "⏳ {pending} queued · {active} processing",
+  "transfer.staging.cancelQueuedOk": "Cancelled the queue for “{name}”",
+  "transfer.staging.cancelQueuedTooLate": "“{name}” just got its turn and already started — too late to cancel"
 }

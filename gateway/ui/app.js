@@ -244,8 +244,16 @@ function stagingList(ul,opts){
     // busy 还没变 true，不加这个的话用户点了批量看着跟没点一样，2026-09-19 用户反馈）；locked=
     // 批量运行期间整个列表锁住，不止本轮选中的那些书——用户反馈"点了批量优化还能点单本操作/
     // 另外几个批量按钮"会互相打架，运行期间干脆禁掉所有单条按钮+复选框。
-    const queued=!!(opts.batchQueued&&opts.batchQueued.has(it.name));
-    const locked=busy||!!opts.batchActive;
+    // gatedPending/gatedActive 是网关 `/api/budget/status` 的服务端真相（2026-09-19 用户
+    // 反馈驱动：关掉浏览器标签页后 batchActive/batchQueued 这类纯客户端状态全部清零，但网关
+    // 那边真正排队等并发名额的书完全不受影响、还在傻等——新打开的页面对此一无所知，队列里的书
+    // 既看不出"正在排队"也点不了停止，还能被当成"闲置条目"删除/再次提交）。不管是不是这个
+    // 浏览器标签页提交的批量任务，只要网关认为这本书正在排队/正在跑，就该锁住+能取消，
+    // 这两个集合天然跨会话/跨设备/跨标签页关闭都读得到，不依赖 batchActive/batchQueued。
+    const gatedPending=!!(opts.gatedPending&&opts.gatedPending.has(it.name));
+    const gatedActive=!!(opts.gatedActive&&opts.gatedActive.has(it.name));
+    const queued=!!(opts.batchQueued&&opts.batchQueued.has(it.name))||gatedPending;
+    const locked=busy||!!opts.batchActive||gatedPending||gatedActive;
     const ob=busy?` <span class="badge" title="${T('transfer.staging.processing.title')}">${T('transfer.staging.processing.badge')}</span>`
       :(stalePending(oc)||stalePending(dc)?` <span class="badge off" title="${T('transfer.staging.stalePending.title')}">${T('transfer.staging.stalePending.badge')}</span>`:'')
       +(oc&&oc.status==='failed'?` <span class="badge off" title="${oc.message}">${T('transfer.staging.optimizeFailed.badge')}</span>`:'')
@@ -299,7 +307,7 @@ function stagingList(ul,opts){
     // 实测都能到分钟级，KOReader 加入虽快但也不该看着像没反应）——删除/落库/加入 KOReader/再次优化
     // 全部先禁掉，防止并发冲突（2026-09-18 真机反馈：点了优化又点删除）；服务端忙锁完成后 SSE 推
     // 事件、列表自动刷新解禁，本地忙态在 `fn()` resolve 后立即清。
-    const lockTitle=busy?'':(opts.batchActive?T('transfer.staging.batchLockedTitle'):'');
+    const lockTitle=busy?'':(opts.batchActive?T('transfer.staging.batchLockedTitle'):(gatedPending||gatedActive)?T('transfer.staging.gatedLockedTitle'):'');
     if(it.format==='epub'&&!it.optimized)btn(T('transfer.staging.btn.optimize'),false,()=>postJ('/api/books/staging/optimize',{name:it.name}),locked,lockTitle);
     // 体积门：超过 xochitl /upload 上限的书灰掉按钮（服务端同样拦），提示走电脑分卷。EPUB/PDF 都
     // 例外——超限的 EPUB 漫画服务端按 NCX 拆分投递，超限的漫画 PDF（optimize 阶段自己产出、带
@@ -321,6 +329,15 @@ function stagingList(ul,opts){
     // （2026-09-09 审计发现）；`.btn-bad` 早就存在但只用在转写失败按钮上，这里补上，破坏性操作至少
     // 颜色上跟常规操作分开。
     btn(T('action.delete'),false,async()=>{if(await confirmDialog(T('transfer.staging.confirmDeleteOne',{name:it.name})))await postJ('/api/books/staging/delete',{name:it.name})},locked,lockTitle,'btn-bad');
+    // 取消排队：只在这本书真的还卡在网关排队（`gatedPending`，服务端真相）时出现，永远不受
+    // `locked` 影响——这是用户唯一能拿到的、不依赖"提交那次请求的浏览器标签页还活着"的停止
+    // 手段（对应 budget::Budget::cancel：已经拿到名额真正在跑的救不回来，只能取消还在排队的）。
+    // 点了给个明确的结果反馈，不是静默刷新完事——`cancelled:false` 是真实可能发生的（点的
+    // 一瞬间它可能刚好轮到名额、已经开始处理了），不说清楚的话用户会以为"点了没反应"。
+    if(gatedPending&&!busy)btn(T('transfer.staging.btn.cancelQueued'),false,async()=>{
+      const r=await postJ('/api/budget/cancel',{name:it.name});
+      if(r.ok!==false)toast(r.cancelled?T('transfer.staging.cancelQueuedOk',{name:it.name}):T('transfer.staging.cancelQueuedTooLate',{name:it.name}),r.cancelled?'ok':'warn');
+    },false,'','btn-bad');
     li.appendChild(right);ul.appendChild(li)});
   if(items.length>cap){
     const li=document.createElement('li');li.style.justifyContent='center';
@@ -365,6 +382,7 @@ function renderTransfer(sec){sec.innerHTML=`
       <div class="row"><input type="text" id="stgq" placeholder="${T('transfer.staging.searchPlaceholder')}" aria-label="${T('transfer.staging.searchAria')}" style="flex:1;min-width:8em"><select id="stgfmt" aria-label="${T('transfer.staging.fmtFilterAria')}" style="max-width:8em"><option value="">${T('transfer.staging.fmtAll')}</option><option value="epub">EPUB</option><option value="pdf">PDF</option><option value="other">${T('transfer.staging.fmtOther')}</option></select><select id="stgst" aria-label="${T('transfer.staging.stFilterAria')}" style="max-width:8em"><option value="">${T('transfer.staging.stAll')}</option><option value="0">${T('transfer.staging.stRaw')}</option><option value="1">${T('transfer.staging.stDone')}</option></select><button class="btn" id="stgpurge" title="${T('transfer.staging.purgeTitle')}">${T('transfer.staging.purgeBtn')}</button></div>
       <div class="row"><label class="toggle"><input type="checkbox" id="stghidedone"> ${T('transfer.staging.hideDone')}</label></div>
       <div class="small" id="stgfree" style="margin:-.3em 0 .4em"></div>
+      <div class="small" id="stggated" style="margin:-.3em 0 .4em"></div>
       <div class="small" id="stgkonotice" style="margin:-.3em 0 .4em"></div>
       <div class="card" id="stgpickbar" hidden style="margin:0 0 .5em">
         <span class="small" id="stgpickcount"></span>
@@ -391,6 +409,9 @@ function renderTransfer(sec){sec.innerHTML=`
   // 优化后单本操作/其它批量按钮还能点，而且看不出在优化哪本、无反馈像没在跑）。
   let batchActive=false,batchAbort=false;
   const batchQueued=new Set();
+  // 网关并发闸门的服务端真相（2026-09-19，见 stagingList 内 gatedPending/gatedActive 用法的
+  // 注释）：每次 refresh() 顺带拉一次 `/api/budget/status`，不依赖这个标签页自己提交过什么。
+  let gatedPending=new Set(),gatedActive=new Set();
   const g=id=>$('#'+id,sec);
   const syncPickbar=()=>{const bar=g('stgpickbar');bar.hidden=picked.size===0;g('stgpickcount').textContent=T('transfer.staging.pick.count',{count:picked.size})};
   // 落库设置记在本机（per-viewer 便利态）。2026-09-19：原来的「书库/批注/自定义」三选一预设
@@ -404,7 +425,7 @@ function renderTransfer(sec){sec.innerHTML=`
   let hideDone=hd.checked,visibleCount=30;
   const resetPage=()=>{visibleCount=30};
   hd.addEventListener('change',()=>{hideDone=hd.checked;LS.set('stgHideDone',hideDone?'1':'0');resetPage();render()});
-  const render=()=>stagingList(g('stglist'),{items,q:g('stgq').value,fmt:g('stgfmt').value,st:g('stgst').value,hideDone,visibleCount,showMore:()=>{visibleCount+=30;render()},xFolder:()=>g('folder').value.trim(),kFolder:()=>g('kfolder').value.trim(),koInstalled,nativeLimit,localBusy,picked,syncPickbar,batchActive,batchQueued,render:()=>render(),refresh:()=>refresh()});
+  const render=()=>stagingList(g('stglist'),{items,q:g('stgq').value,fmt:g('stgfmt').value,st:g('stgst').value,hideDone,visibleCount,showMore:()=>{visibleCount+=30;render()},xFolder:()=>g('folder').value.trim(),kFolder:()=>g('kfolder').value.trim(),koInstalled,nativeLimit,localBusy,picked,syncPickbar,batchActive,batchQueued,gatedPending,gatedActive,render:()=>render(),refresh:()=>refresh()});
   ['stgq','stgfmt','stgst'].forEach(id=>['input','change'].forEach(ev=>g(id).addEventListener(ev,()=>{resetPage();render()})));
   // 三个批量按钮：各自按单条按钮同样的资格条件过滤 picked，不满足的跳过+汇总提示；满足的**逐个
   // 顺序提交**（2026-09-19 改，原来是 Promise.all 一次性并发提交，用户反馈"看不出来哪本在优化"——
@@ -441,9 +462,22 @@ function renderTransfer(sec){sec.innerHTML=`
   guardClick(g('stgpickoptimize'),()=>batchRun(it=>it.format==='epub'&&!it.optimized,it=>postJ('/api/books/staging/optimize',{name:it.name}),'transfer.staging.pick.submittedDone'));
   guardClick(g('stgpickdeliver'),()=>batchRun(it=>(it.format==='epub'||it.format==='pdf')&&!(nativeLimit&&it.bytes>nativeLimit&&it.format!=='epub'&&it.format!=='pdf'),it=>postJ('/api/books/staging/deliver',{name:it.name,folder:g('folder').value.trim()}),'transfer.staging.pick.submittedDone'));
   guardClick(g('stgpickkoreader'),()=>batchRun(it=>koInstalled,async it=>{const r=await postJ('/api/koreader/books/adopt',{name:it.name,folder:g('kfolder').value.trim()});if(r.ok!==false)await postJ('/api/books/staging/mark',{name:it.name,target:'koreader'})},'transfer.staging.pick.done'));
-  guardClick(g('stgpickclear'),async()=>{if(batchActive){batchAbort=true;return}picked.clear();syncPickbar();render()});
-  const refresh=async()=>{const [d,s,k,kb]=await Promise.all([j('/api/books/staging'),j('/api/books/status'),j('/api/koreader/status'),j('/api/koreader/books')]);
+  guardClick(g('stgpickclear'),async()=>{if(batchActive){batchAbort=true;
+    // 停止不只是"别再提交剩下的"——这一轮顺序循环任意时刻最多一本书在 batchQueued 里（正在
+    // 提交/可能卡在网关排队），既然现在有了真正的取消排队能力，顺手也帮这本书取消掉，"停止"
+    // 才是真的把能停的都停了，不是只挡住还没发生的那部分。取消失败（碰巧已经开始处理）静默
+    // 跳过——batchRun 自己的收尾文案已经会报"已停止"，不需要这里再单独弹一次。
+    for(const name of batchQueued)await postJ('/api/budget/cancel',{name});
+    return}
+    picked.clear();syncPickbar();render()});
+  const refresh=async()=>{const [d,s,k,kb,bg]=await Promise.all([j('/api/books/staging'),j('/api/books/status'),j('/api/koreader/status'),j('/api/koreader/books'),j('/api/budget/status')]);
     nativeLimit=(s.ok&&s.nativeUploadLimitBytes)||0;koInstalled=!!(k.ok&&k.installed);
+    gatedPending=new Set(bg.ok!==false?bg.pending||[]:[]);gatedActive=new Set(bg.ok!==false?bg.active||[]:[]);
+    // 网关排队/处理状态一眼可见的小结（2026-09-19 用户反馈驱动）：以前要把整个列表翻一遍才能
+    // 发现"哦原来还有几本在排队"，尤其是别人（或自己关掉重开的标签页）提交的批量任务——这条
+    // 小结直接把 gatedPending/gatedActive 的数量摆在列表最上面，不用逐行找。两个都是空的时候
+    // 不占地方（跟 stgfree/stgkonotice 同一个"没事就不占视线"的规矩）。
+    g('stggated').textContent=(gatedPending.size||gatedActive.size)?T('transfer.staging.gatedSummary',{pending:gatedPending.size,active:gatedActive.size}):'';
     // xochitl/KOReader 现有目录 → 下拉候选（免手打错，跟真实文件夹保持一致，不是写死的预设）
     g('xodirs').innerHTML=(s.ok?s.xochitlFolders||[]:[]).map(n=>`<option value="${n}">`).join('');
     g('kodirs').innerHTML=(kb.items||[]).filter(x=>x.kind==='dir').map(x=>`<option value="${x.name}">`).join('');
