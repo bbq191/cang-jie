@@ -189,6 +189,12 @@ function stagingList(ul,opts){
   items.forEach(it=>{const li=document.createElement('li');li.style.flexWrap='wrap';
     const fmt=it.format==='epub'?'EPUB':it.format==='pdf'?'PDF':(it.name.includes('.')?it.name.split('.').pop().toUpperCase():T('transfer.staging.fmtOther'));
     const st=it.format!=='epub'?`<span class="badge">${T('transfer.staging.badge.asIs')}</span>`:it.level==='full'?`<span class="badge on">${T('transfer.staging.badge.optimized')}</span>`:it.level==='core'?`<span class="badge" title="${T('transfer.staging.badge.optimizedUncleanTitle')}">${T('transfer.staging.badge.optimizedUnclean')}</span>`:it.level==='old'?`<span class="badge" title="${T('transfer.staging.badge.oldOptimizedTitle')}">${T('transfer.staging.badge.oldOptimized')}</span>`:`<span class="badge">${T('transfer.staging.badge.notOptimized')}</span>`;
+    // 入库 PDF「优化」有文字层会转成 EPUB（后端 book-serve::staging.rs::optimize_pdf 的
+    // TextLayer 分支），这类 EPUB 跟原生上传的 EPUB 在列表里视觉上分不出来——服务端已经在
+    // list() 里用 looks_like_pdf_derived_epub 正确算出 it.pdfSource，这里补一条徽章分支，
+    // 跟上面 st 的 full/core/old/none 那条链并列展示，不是互斥替换（PDF 转出的 EPUB 已经
+    // 是 level:"full" 了，st 本身会显示"已优化"，这里再叠一个来源说明）。
+    const ps=(it.format==='epub'&&it.pdfSource)?` <span class="badge on" title="${T('transfer.staging.badge.pdfSourceTitle')}">${T('transfer.staging.badge.pdfSource')}</span>`:'';
     const hint=it.format==='pdf'?' · '+T('transfer.staging.hint.pdf'):it.format==='cbz'?' · '+T('transfer.staging.hint.comic'):it.format==='other'?' · '+T('transfer.staging.hint.other'):'';
     // 落库记录徽章；落库时间早于母版 mtime（之后又优化过）→ 标「旧」，提示可重投
     const dv=it.delivered||{},stale=t=>t&&it.mtime&&t<it.mtime;
@@ -218,7 +224,7 @@ function stagingList(ul,opts){
       :(stalePending(oc)||stalePending(dc)?` <span class="badge off" title="${T('transfer.staging.stalePending.title')}">${T('transfer.staging.stalePending.badge')}</span>`:'')
       +(oc&&oc.status==='failed'?` <span class="badge off" title="${oc.message}">${T('transfer.staging.optimizeFailed.badge')}</span>`:'')
       +(dc&&dc.status==='failed'?` <span class="badge off" title="${dc.message}">${T('transfer.staging.deliverFailed.badge')}</span>`:'');
-    li.innerHTML=`<span><b>${it.name}</b> <span class="badge">${fmt}</span> ${st}${dl}${rb}${ob} <span class="small">${fmtB(it.bytes)}${hint}</span></span>`;
+    li.innerHTML=`<span><b>${it.name}</b> <span class="badge">${fmt}</span> ${st}${ps}${dl}${rb}${ob} <span class="small">${fmtB(it.bytes)}${hint}</span></span>`;
     // 报错/进度原因以前只写进徽章的 title（hover 才看得到，触屏设备摸不到）——补一行可见小字，跟
     // 下面"禁用态按钮原因"同一套做法（2026-09-19 用户反馈"报错最下方显示错误原因"）。
     // 优先级：投递失败 ＞ 优化失败 ＞ 处理被打断（真在跑走下面单独的进度条分支，不进这条文字级联）。
@@ -258,7 +264,11 @@ function stagingList(ul,opts){
     // 实测都能到分钟级，KOReader 加入虽快但也不该看着像没反应）——删除/落库/加入 KOReader/再次优化
     // 全部先禁掉，防止并发冲突（2026-09-18 真机反馈：点了优化又点删除）；服务端忙锁完成后 SSE 推
     // 事件、列表自动刷新解禁，本地忙态在 `fn()` resolve 后立即清。
-    if(it.format==='epub'&&!it.optimized)btn(T('transfer.staging.btn.optimize'),false,()=>postJ('/api/books/staging/optimize',{name:it.name}),busy,'');
+    // PDF 2026-09-19 起也能点「优化」——按下去到底是转 EPUB（有文字层）还是原地裁边（漫画/
+    // 无文字层）由后端 book-serve::staging.rs::optimize_pdf 透明决定，前端不用关心；PDF 转
+    // 出的 EPUB 一落地就是 optimized:true（见 list() 的 pdf_source 处理），`!it.optimized`
+    // 这个既有条件天然把它们挡在外面，不需要额外判断排除。
+    if((it.format==='epub'||it.format==='pdf')&&!it.optimized)btn(T('transfer.staging.btn.optimize'),false,()=>postJ('/api/books/staging/optimize',{name:it.name}),busy,'');
     // 体积门：超过 xochitl /upload 上限的书灰掉按钮（服务端同样拦），提示走电脑分卷。EPUB 例外——
     // 超限的 EPUB 漫画服务端会按卷拆分投递（2026-09-18，见 book-serve::Staging::try_deliver_split），
     // 按钮不能提前灰掉，得让服务端判过是不是漫画才知道能不能救；PDF 没有这条救援路径，继续照原样灰。
