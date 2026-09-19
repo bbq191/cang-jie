@@ -403,10 +403,61 @@ fn memfind(hay: &[u8], needle: &[u8]) -> Option<usize> {
     hay.windows(needle.len()).position(|w| w == needle)
 }
 
-fn find_obj_body(pdf: &[u8], id: usize) -> Result<&[u8], String> {
-    let marker = format!("\n{id} 0 obj\n");
-    let start = memfind(pdf, marker.as_bytes()).ok_or(format!("找不到对象 {id}"))? + marker.len();
-    let rel_end = memfind(&pdf[start..], b"\nendobj").ok_or(format!("对象 {id} 缺 endobj"))?;
+/// 对象号 → 字节偏移索引，从我们自己写的 xref 表一次性解出（真机 600 页/200MB 样本坐实：早期版本
+/// `find_obj_body` 每次都从文件开头线性扫一遍找 `"{id} 0 obj"`，`extract_pages` 对几百个对象各
+/// 扫一次，等效扫描量接近"页数×文件体积"，600 页的书卡了 11 分钟没跑完；这里改成先解一次 xref
+/// （单次线性扫，O(文件体积)）拿到每个对象号的精确偏移，后续每次对象查找变成 O(1) 定位 + 只在
+/// **这一个对象自身**范围内找 `endobj`，不再牵连整份文件）。
+/// 只认自己 `images_to_pdf`/`images_to_pdf_with_toc` 写出的经典 xref 表格式（每条固定 20 字节：
+/// `"{10位偏移} 00000 {f|n} \n"`），喂陌生 PDF（比如带交叉引用流的现代 PDF）大概率直接 `Err`。
+fn parse_obj_index(pdf: &[u8]) -> Result<Vec<usize>, String> {
+    // "startxref\n{偏移}\n%%EOF\n" 是我们写的固定尾巴，最长不过几十字节，只在文件最后一小段找，
+    // 不用扫全文件。
+    let tail_from = pdf.len().saturating_sub(256);
+    let tail = &pdf[tail_from..];
+    let marker = b"startxref";
+    let rel = memfind(tail, marker).ok_or("缺 startxref")?;
+    let after = &tail[rel + marker.len()..];
+    let ds = after.iter().position(|b| b.is_ascii_digit()).ok_or("startxref 后缺数字")?;
+    let de = after[ds..].iter().position(|b| !b.is_ascii_digit()).map(|o| ds + o).unwrap_or(after.len());
+    let xref_off: usize =
+        std::str::from_utf8(&after[ds..de]).ok().and_then(|s| s.parse().ok()).ok_or("startxref 数值解析失败")?;
+
+    let header = b"xref\n0 ";
+    if pdf.len() < xref_off + header.len() || &pdf[xref_off..xref_off + header.len()] != header {
+        return Err("xref 头格式不认识（不是我们自己写的经典表）".into());
+    }
+    let mut p = xref_off + header.len();
+    let count_start = p;
+    while p < pdf.len() && pdf[p].is_ascii_digit() {
+        p += 1;
+    }
+    let count: usize =
+        std::str::from_utf8(&pdf[count_start..p]).ok().and_then(|s| s.parse().ok()).ok_or("xref count 解析失败")?;
+    if pdf.get(p) != Some(&b'\n') {
+        return Err("xref count 后缺换行".into());
+    }
+    p += 1;
+    if pdf.len() < p + count * 20 {
+        return Err("xref 条目数据被截断".into());
+    }
+    let mut offsets = vec![0usize; count];
+    for (i, off) in offsets.iter_mut().enumerate() {
+        let line = &pdf[p + i * 20..p + i * 20 + 10];
+        *off = std::str::from_utf8(line).ok().and_then(|s| s.parse().ok()).unwrap_or(0);
+    }
+    Ok(offsets)
+}
+
+/// `index` 是 [`parse_obj_index`] 的结果，`index[id]` = 对象 `id` 的 `"{id} 0 obj\n"` 起始偏移。
+fn find_obj_body_indexed<'a>(pdf: &'a [u8], index: &[usize], id: usize) -> Result<&'a [u8], String> {
+    let pos = *index.get(id).ok_or_else(|| format!("对象 {id} 不在 xref 索引范围内"))?;
+    let marker = format!("{id} 0 obj\n");
+    if !pdf[pos..].starts_with(marker.as_bytes()) {
+        return Err(format!("对象 {id} 的 xref 偏移跟实际内容对不上（{pos}）"));
+    }
+    let start = pos + marker.len();
+    let rel_end = memfind(&pdf[start..], b"\nendobj").ok_or_else(|| format!("对象 {id} 缺 endobj"))?;
     Ok(&pdf[start..start + rel_end])
 }
 
@@ -469,7 +520,8 @@ pub fn looks_like_own_comic_pdf(path: &std::path::Path) -> bool {
 
 /// 总页数（`/Type /Pages` 对象的 `/Count`）——只认自己生成的固定对象编号结构，喂陌生 PDF 大概率 `Err`。
 pub fn page_count(pdf: &[u8]) -> Result<usize, String> {
-    let pages_body = find_obj_body(pdf, 2)?;
+    let index = parse_obj_index(pdf)?;
+    let pages_body = find_obj_body_indexed(pdf, &index, 2)?;
     parse_uint_after(pages_body, "/Count ").ok_or_else(|| "Pages 对象缺 /Count".to_string()).map(|n| n as usize)
 }
 
@@ -477,8 +529,12 @@ pub fn page_count(pdf: &[u8]) -> Result<usize, String> {
 /// 抽出 `[start,end)` 页范围的图片数据 + 落在这个范围内的书签（页码改写成范围内的本地下标）。
 /// 不是通用 PDF 解析器，喂陌生第三方 PDF 大概率直接 `Err`（找不到期望的对象），这是有意为之——
 /// 分卷投递只该处理"我们自己产出的漫画 PDF"，别的 PDF 走现状"整本超限拒绝"的老路径。
+///
+/// 对象查找全程走 [`parse_obj_index`] 一次性解出的偏移表（真机坐实：改之前是"每个对象都从文件
+/// 开头线性扫一遍"，600 页的书能卡 11 分钟没跑完，见这两个函数的文档注释）。
 pub fn extract_pages(pdf: &[u8], start: usize, end: usize) -> Result<(Vec<PdfImage>, Vec<(usize, String)>), String> {
-    let pages_body = find_obj_body(pdf, 2)?;
+    let index = parse_obj_index(pdf)?;
+    let pages_body = find_obj_body_indexed(pdf, &index, 2)?;
     let n = parse_uint_after(pages_body, "/Count ").ok_or("Pages 对象缺 /Count")? as usize;
     if start >= end || end > n {
         return Err(format!("页码范围 [{start},{end}) 超出总页数 {n}"));
@@ -487,7 +543,7 @@ pub fn extract_pages(pdf: &[u8], start: usize, end: usize) -> Result<(Vec<PdfIma
     let mut images = Vec::with_capacity(end - start);
     for page_idx in start..end {
         let image_id = 3 + page_idx * 3 + 1;
-        let body = find_obj_body(pdf, image_id)?;
+        let body = find_obj_body_indexed(pdf, &index, image_id)?;
         let w = parse_uint_after(body, "/Width ").ok_or("图片对象缺 /Width")?;
         let h = parse_uint_after(body, "/Height ").ok_or("图片对象缺 /Height")?;
         let color = if memfind(body, b"/DeviceGray").is_some() { ColorSpace::Gray } else { ColorSpace::Rgb };
@@ -503,13 +559,13 @@ pub fn extract_pages(pdf: &[u8], start: usize, end: usize) -> Result<(Vec<PdfIma
     }
 
     let mut titles = Vec::new();
-    let catalog = find_obj_body(pdf, 1)?;
+    let catalog = find_obj_body_indexed(pdf, &index, 1)?;
     if let Some(outline_root) = parse_uint_after(catalog, "/Outlines ") {
-        let root_body = find_obj_body(pdf, outline_root as usize)?;
+        let root_body = find_obj_body_indexed(pdf, &index, outline_root as usize)?;
         let first = parse_uint_after(root_body, "/First ").ok_or("Outlines 缺 /First")? as usize;
         let last = parse_uint_after(root_body, "/Last ").ok_or("Outlines 缺 /Last")? as usize;
         for item_id in first..=last {
-            let item_body = find_obj_body(pdf, item_id)?;
+            let item_body = find_obj_body_indexed(pdf, &index, item_id)?;
             let dest_page_id = parse_uint_after(item_body, "/Dest [").ok_or("书签缺 /Dest")? as usize;
             let page_idx = (dest_page_id - 3) / 3;
             if page_idx >= start && page_idx < end {
@@ -662,6 +718,23 @@ mod tests {
         std::fs::write(&p2, &plain).unwrap();
         assert!(looks_like_own_comic_pdf(&p1));
         assert!(!looks_like_own_comic_pdf(&p2), "无 Outlines 的普通 PDF 不该被误判为我们自己的产物");
+    }
+
+    #[test]
+    fn extract_pages_stays_fast_on_many_pages() {
+        // 真机 600 页/200MB 样本坐实过：改索引化之前 extract_pages 对象查找是"每次都从文件开头
+        // 线性扫一遍"，等效扫描量接近页数×文件体积，卡了 11 分钟没跑完。这里页数不小（500）但
+        // 图片本身很小，测不出真机那种"大文件"效应，但至少守住"页数变多不该让每次对象查找的
+        // 常数复杂度跟着退化"这条——如果哪天又不小心改回线性扫，这个测试的跑起来会明显变慢
+        // （虽然不会像真机那样卡 11 分钟，CI 环境下应该秒出）。
+        let images: Vec<PdfImage> = (0..500).map(|_| image_from_bytes(RED_PNG).unwrap()).collect();
+        let titles: Vec<(usize, String)> = (0..500).step_by(50).map(|i| (i, format!("第{i}页"))).collect();
+        let pdf = images_to_pdf_with_toc(&images, &titles).unwrap();
+        let started = std::time::Instant::now();
+        let (extracted, extracted_titles) = extract_pages(&pdf, 0, 500).unwrap();
+        assert_eq!(extracted.len(), 500);
+        assert_eq!(extracted_titles.len(), 10);
+        assert!(started.elapsed() < std::time::Duration::from_secs(2), "500 页抽取耗时异常: {:?}", started.elapsed());
     }
 
     #[test]
