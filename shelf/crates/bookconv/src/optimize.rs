@@ -644,15 +644,16 @@ mod tests {
         let mut text_img = Vec::new();
         ZipArchive::new(Cursor::new(&text_out)).unwrap().by_name("p1.jpg").unwrap().read_to_end(&mut text_img).unwrap();
 
-        // 2026-09-19 起漫画路径多了 `pad_to_device_aspect` 这一步（真机反馈"底部留白太多"，CSS
-        // 治不了；用户随后明确要求"尽量左右贴边，只要上下不溢出"，见该函数文档）——这张测试图
-        // 长宽比（2000:3000≈0.667）比设备页面（约 0.5625）"宽"，本来就不会溢出，属于"原样贴边"
-        // 分支，不该被补白，两边缩放后的尺寸这次应该还是一致的。
+        // 2026-09-19 起两边不再要求尺寸完全一致：漫画路径多了 `pad_to_device_aspect` 这一步
+        // （真机反馈"底部留白太多"，CSS 治不了；用户明确目标是"上下留白尽量等比、左右留白尽可能
+        // 接近 0"，见该函数文档），文字书路径的内嵌图不是整页漫画，不需要补白。这里只保留还站得
+        // 住脚的部分：两边都应该被缩进屏幕框内（不超限），漫画路径的高度应该补到刚好等于设备
+        // 页面长宽比对应的高度（宽度不变，左右留白全程是 0）。
         let (cw, ch) = image::load_from_memory(&comic_img).unwrap().dimensions();
         let (tw, th) = image::load_from_memory(&text_img).unwrap().dimensions();
         assert!(cw <= crate::imgopt::MAX_SHORT_EDGE && ch <= crate::imgopt::MAX_EDGE, "漫画路径应该缩进屏幕框: {cw}x{ch}");
         assert!(tw <= crate::imgopt::MAX_SHORT_EDGE && th <= crate::imgopt::MAX_EDGE, "文字书内嵌图也应该缩进屏幕框: {tw}x{th}");
-        assert_eq!((cw, ch), (tw, th), "这张测试图长宽比不会溢出页面，不该被补白，两边尺寸约束一致");
+        assert_eq!((cw, ch), (crate::imgopt::MAX_SHORT_EDGE, crate::imgopt::MAX_EDGE), "漫画整页应该补白到刚好等于设备页面长宽比: {cw}x{ch}");
         assert!(comic_img.len() > text_img.len(), "漫画书判定应触发更高质量重编码，体积应更大: comic={} text={}", comic_img.len(), text_img.len());
     }
 
