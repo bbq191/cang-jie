@@ -211,6 +211,13 @@ impl Staging {
             return Err("只有 EPUB 能优化，PDF 不支持".into());
         }
         let p = self.existing(name)?;
+        // 漫画类 EPUB 改产出 PDF——真机反复实测坐实 xochitl 的 EPUB 渲染走文字排版盒模型，内容区
+        // 相对物理页面有个消不掉的固定内边距（UI 只给 28/56/112 三档、改 `.content` 文件也没用，
+        // xochitl 渲染时会用自己的逻辑覆盖回去），CSS 层面也测过绕不开；PDF 是完全独立的直接光栅化
+        // 路径，真机测左右留白能到 0.00%。详见 `bookconv::comic_pdf` 模块文档注释。
+        if bookconv::comic_detect::is_comic_epub_file(&p) {
+            return self.optimize_comic_to_pdf(name, &p, on_progress);
+        }
         // 点前缀隐藏名——真机 552MB《镖人》全集坐实优化能跑到分钟级（流式虽然不再吃内存，但大书
         // 图片多、逐张处理仍要时间），这份临时产物会在目录里存在相当一段时间；`list()` 本来就按
         // `.` 前缀跳过 sidecar，不带点前缀的话这份半成品会被当成一条离谱的"母版库条目"混进列表
@@ -226,6 +233,29 @@ impl Staging {
         };
         std::fs::rename(&tmp, &p).map_err(|e| format!("回写母版库失败: {e}"))?;
         Ok(format!("已优化《{name}》{}", optimize_note(&rep)))
+    }
+
+    /// 漫画 EPUB → PDF 分支：产出 `<去掉.epub前缀>.pdf`，成功后删掉原 `.epub`（同一个母版库条目，
+    /// 格式变了，不是新增一条）。跟文字书分支一样先写点前缀临时文件，成功才落地，失败原样清掉，
+    /// 不留半成品。
+    fn optimize_comic_to_pdf(&self, name: &str, p: &Path, mut on_progress: impl FnMut(usize, usize)) -> Result<String, String> {
+        let stem = name.strip_suffix(".epub").unwrap_or(name);
+        let pdf_path = p.with_file_name(format!("{stem}.pdf"));
+        let tmp = p.with_file_name(format!(".{stem}.pdf.optimizing.tmp"));
+        let result = bookconv::comic_pdf::optimize_comic_epub_to_pdf_streaming(p, &tmp, &mut on_progress);
+        let rep = match result {
+            Ok(r) => r,
+            Err(e) => {
+                let _ = std::fs::remove_file(&tmp);
+                return Err(e);
+            }
+        };
+        std::fs::rename(&tmp, &pdf_path).map_err(|e| format!("回写母版库失败: {e}"))?;
+        std::fs::remove_file(p).map_err(|e| format!("删除原 EPUB 失败: {e}"))?;
+        Ok(format!(
+            "已优化《{stem}》（漫画→PDF，{} 页，{}→{} 字节）",
+            rep.pages, rep.bytes_before, rep.bytes_after
+        ))
     }
 
     /// [`Self::optimize`] 的异步版：先做零耗时的格式/存在性校验（错误立即回给调用方，不用等后台线程），
@@ -264,9 +294,27 @@ impl Staging {
                 Ok(msg) => sidecar::OptimizeCheck { status: "ok".into(), message: msg.clone(), at, progress: None },
                 Err(e) => sidecar::OptimizeCheck { status: "failed".into(), message: e.clone(), at, progress: None },
             };
-            let _ = this.set_optimize_check(name, oc);
+            // 漫画→PDF 分支成功后，原 `.epub` 已经被删、条目改名成 `.pdf`——sidecar 是按条目名找
+            // 文件的（`existing()`），原名这时候已经找不到文件，写进度/结果会静默失败。这里探测一下
+            // 有没有发生这次改名，写去正确的新名字（`on_progress` 那些中途写的进度还是按旧名字写，
+            // 那时候文件确实还是 .epub，没问题；只有这最后一次终态写需要跟着改名走）。
+            let target = this.resolved_optimize_target(name);
+            let _ = this.set_optimize_check(&target, oc);
         });
         Ok(())
+    }
+
+    /// 漫画→PDF 分支把 `<stem>.epub` 换成了 `<stem>.pdf`（同一个母版库条目改名，不是新增）——`name`
+    /// 参数是异步操作发起时的原名，这本书如果发生过这次改名，原名此时已经找不到文件，返回改名后的
+    /// 新名字给 sidecar 写终态用；其余情况（普通文字书优化、失败）原样返回 `name`。
+    fn resolved_optimize_target(&self, name: &str) -> String {
+        if let Some(stem) = name.strip_suffix(".epub") {
+            let candidate = format!("{stem}.pdf");
+            if self.existing(name).is_err() && self.existing(&candidate).is_ok() {
+                return candidate;
+            }
+        }
+        name.to_string()
     }
 
     /// [`Self::spawn_optimize`]/[`Self::spawn_deliver`] 共用的"起后台线程"外壳（2026-09-19 代码
@@ -316,6 +364,10 @@ impl Staging {
             // 非 EPUB、非漫画、或拆不出方案（没有可用 toc.ncx）的原样保留改动前的整本拒绝行为。
             if formats::ext_of(name) == "epub" {
                 if let Some(outcome) = self.try_deliver_split(name, &p, folder, bus)? {
+                    return Ok(outcome);
+                }
+            } else if formats::ext_of(name) == "pdf" {
+                if let Some(outcome) = self.try_deliver_split_pdf(name, &p, folder, bus)? {
                     return Ok(outcome);
                 }
             }
@@ -469,6 +521,51 @@ impl Staging {
         Ok(Some(DeliverOutcome { message, render: None }))
     }
 
+    /// 超预算漫画 PDF 的拆分投递——[`Self::try_deliver_split`] 的 PDF 版本。不是"我们自己产出的
+    /// 漫画 PDF"（没有书签目录，比如用户自己上传的原生大部头 PDF）/ 整本已在预算内 →
+    /// `Ok(None)`，调用方退回改动前的整本拒绝。
+    ///
+    /// 2026-09-19 改走流式 `comic_pdf::deliver_split_pdf_streaming`——真机 245MB/600页 样本坐实
+    /// 过前身版本（一次性 `extract_pages` 把全书图片攒成 `Vec<PdfImage>`）`VmHWM` 峰值到过
+    /// 525MB；现在逐份读逐份传逐份丢，峰值只有"一份的体积"，跟 EPUB 那条 [`Self::try_deliver_
+    /// split`] 是同一套纪律。单页体积本身超预算这种边界情况这里没有单独处理——上游 `imgopt::
+    /// downscale_for_epub_comic` 已经把每张图钳制在 954×1696 像素以内，JPEG 质量 95 下单页实际
+    /// 不可能逼近 90MB 量级的预算，这个假设不成立时（比如以后画质/尺寸上限调高很多）需要回来
+    /// 重新评估。
+    fn try_deliver_split_pdf(&self, name: &str, p: &Path, folder: &str, bus: &rmsvc_core::events::EventBus) -> Result<Option<DeliverOutcome>, String> {
+        let stem = name.strip_suffix(".pdf").unwrap_or(name).to_string();
+        let lib_dir = self.xochitl.library_dir().to_path_buf();
+        let mut done_titles: Vec<String> = Vec::new();
+        let outcome = bookconv::comic_pdf::deliver_split_pdf_streaming(p, self.native_limit, |piece_name, bytes, idx, total| {
+            let since_ms = rmsvc_core::clock::now_ms();
+            self.xochitl.upload(bytes, piece_name, "application/pdf", folder).map(|_| ())?;
+            let plan = RenderPlan { name: piece_name.to_string(), title: None, expected: 0, since_ms };
+            if render_check::probe(&lib_dir, &plan).is_none() {
+                rmsvc_core::fswatch::watch_until(&lib_dir, render_check::DEBOUNCE, PIECE_RENDER_TIMEOUT, |_| render_check::probe(&lib_dir, &plan).is_some());
+            }
+            done_titles.push(piece_name.to_string());
+            let progress = sidecar::DeliverCheck {
+                status: "pending".into(),
+                message: format!("已加入：{}", done_titles.join("、")),
+                at: rmsvc_core::clock::now_secs(),
+                progress: Some(sidecar::StepProgress { done: idx as u32, total: total as u32 }),
+            };
+            let _ = self.set_deliver_check(name, progress);
+            bus.publish("books", "staging");
+            Ok(())
+        })?;
+        let Some(outcome) = outcome else { return Ok(None) };
+        if outcome.delivered.is_empty() {
+            return Err(format!("《{name}》按卷拆分后一份都没能投上：{}", outcome.failed.join("；")));
+        }
+        let mut message = format!("《{stem}》超限，已按卷拆分加入 xochitl：{}", outcome.delivered.join("、"));
+        if !outcome.failed.is_empty() {
+            message.push_str(&format!("（{} 未投：{}）", outcome.failed.len(), outcome.failed.join("；")));
+        }
+        let _ = self.mark_delivered(name, Reader::Native);
+        Ok(Some(DeliverOutcome { message, render: None }))
+    }
+
     /// 写渲染自检结果到边车（书已从母版库删除 → Err，调用方只记日志）。
     pub fn set_render(&self, name: &str, rc: RenderCheck) -> Result<(), String> {
         let p = self.existing(name)?;
@@ -542,8 +639,11 @@ impl Staging {
                 "cbz" => "cbz",
                 _ => "other",
             };
-            // 优化状态只对 EPUB 有意义。标记分等级：完整（含 wash）= 版本号本身；只跑核心遍 = `<版本>-core`；旧版本号 = old。
-            let level = if format != "epub" {
+            // 优化状态对 EPUB 有意义；PDF 里"漫画→PDF 优化出来的产物"也算已优化（靠有没有书签目录
+            // 廉价识别，见 `comic_pdf.rs` 文档注释——用户自己上传的原生 PDF 没有这个标记，维持 none）。
+            let level = if format == "pdf" {
+                if bookconv::convert::pdfwrite::looks_like_own_comic_pdf(&e.path()) { "full" } else { "none" }
+            } else if format != "epub" {
                 "none"
             } else {
                 match e.path().to_str().and_then(optimize::optimized_version_file) {
@@ -881,6 +981,101 @@ mod tests {
         let err = s.deliver("manga.epub", "", &empty_mkdir(&t), &rmsvc_core::events::EventBus::new()).unwrap_err();
         assert!(err.contains("按卷拆分") || err.contains("上传失败") || err.contains("拆分后一份都没能投上"), "应该走拆分路径而不是整本拒绝: {err}");
         assert!(err.contains("卷0") || err.contains("卷1"), "错误信息应该点出具体是哪一卷: {err}");
+    }
+
+    /// SOI+SOF0(16x16,3分量)+EOI 最小 JPEG 骨架——`imgopt::trim_margins`/`downscale_for_epub_comic`
+    /// 真解码会失败（没有 SOS/熵编码数据），两者都优雅降级回原字节（`unwrap_or`），不 panic 不报错；
+    /// `pdfwrite::image_from_bytes` 只解析 SOF 段拿宽高、原字节直嵌，不需要真解码，够用。
+    fn fake_jpeg() -> Vec<u8> {
+        vec![
+            0xFF, 0xD8, 0xFF, 0xC0, 0x00, 0x11, 0x08, 0x00, 0x10, 0x00, 0x10, 0x03, 0x01, 0x11,
+            0x00, 0x02, 0x11, 0x01, 0x03, 0x11, 0x01, 0xFF, 0xD9,
+        ]
+    }
+
+    /// 带 NCX 目录、真图片字节的漫画 EPUB——给"优化改产出 PDF"这条新路径用的测试夹具，跟
+    /// `multivol_comic_epub`（图片纯占位、拆分不解码）区别在于图片是真能被 `pdfwrite::
+    /// image_from_bytes` 编进去的字节。
+    fn comic_epub_with_real_images(pages_per_vol: &[usize]) -> Vec<u8> {
+        use std::io::Write;
+        let mut manifest = String::new();
+        let mut spine = String::new();
+        let mut navpoints = String::new();
+        let mut page_no = 0usize;
+        let mut files: Vec<(String, Vec<u8>)> = Vec::new();
+        let jpeg = fake_jpeg();
+        for (vi, &n) in pages_per_vol.iter().enumerate() {
+            let vol_start = page_no;
+            for _ in 0..n {
+                files.push((format!("text/p{page_no:04}.html"), format!(r#"<html><body><img src="../images/{page_no:04}.jpg"/></body></html>"#).into_bytes()));
+                files.push((format!("images/{page_no:04}.jpg"), jpeg.clone()));
+                manifest += &format!(r#"<item id="h{page_no}" href="text/p{page_no:04}.html" media-type="application/xhtml+xml"/><item id="i{page_no}" href="images/{page_no:04}.jpg" media-type="image/jpeg"/>"#);
+                spine += &format!(r#"<itemref idref="h{page_no}"/>"#);
+                page_no += 1;
+            }
+            navpoints += &format!(r#"<navPoint id="nv{vi}"><navLabel><text>卷{vi}</text></navLabel><content src="text/p{vol_start:04}.html"/></navPoint>"#);
+        }
+        files.push(("content.opf".into(), format!(r#"<package version="3.0"><metadata><dc:title>t</dc:title></metadata><manifest>{manifest}<item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/></manifest><spine toc="ncx">{spine}</spine></package>"#).into_bytes()));
+        files.push(("toc.ncx".into(), format!(r#"<ncx><navMap>{navpoints}</navMap></ncx>"#).into_bytes()));
+        files.push(("META-INF/container.xml".into(), br#"<container><rootfiles><rootfile full-path="content.opf"/></rootfiles></container>"#.to_vec()));
+        let mut buf = Vec::new();
+        let mut zw = zip::ZipWriter::new(std::io::Cursor::new(&mut buf));
+        let o = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+        zw.start_file("mimetype", o).unwrap();
+        zw.write_all(b"application/epub+zip").unwrap();
+        for (n, d) in files {
+            zw.start_file(n, o).unwrap();
+            zw.write_all(&d).unwrap();
+        }
+        zw.finish().unwrap();
+        buf
+    }
+
+    #[test]
+    fn optimize_comic_epub_produces_pdf_output() {
+        let t = tempfile::tempdir().unwrap();
+        let s = staging(&t);
+        let epub = comic_epub_with_real_images(&[12, 13]); // 25 张图，够 is_comic 阈值
+        s.stage_new("manga.epub", &epub).unwrap();
+
+        let msg = s.optimize("manga.epub", |_, _| {}).unwrap();
+        assert!(msg.contains("漫画→PDF") && msg.contains("25 页"), "{msg}");
+
+        let list = s.list();
+        assert!(list.iter().all(|e| e.name != "manga.epub"), "原 EPUB 条目应该被替换掉");
+        let pdf_entry = list.iter().find(|e| e.name == "manga.pdf").expect("应该产出 manga.pdf");
+        assert_eq!(pdf_entry.format, "pdf");
+        assert!(pdf_entry.optimized && pdf_entry.level == "full", "漫画 PDF 应该报已优化: {pdf_entry:?}");
+
+        let pdf_bytes = std::fs::read(t.path().join("staging").join("manga.pdf")).unwrap();
+        assert_eq!(bookconv::convert::pdfwrite::page_count(&pdf_bytes).unwrap(), 25);
+    }
+
+    #[test]
+    fn optimize_comic_epub_rejects_when_no_images_found() {
+        // is_comic_epub_file 判定要图够多；混进正好 20+ 张图但真正 spine 引用为空的极端情况这里不测，
+        // 只覆盖最直接的"根本没图"分支走不到漫画判定，仍归普通 EPUB 分支（现状行为不变）。
+        let t = tempfile::tempdir().unwrap();
+        let s = staging(&t);
+        let opf = r#"<package version="2.0"><metadata><dc:title>t</dc:title></metadata><manifest><item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="c1"/></spine></package>"#;
+        let epub = mini_epub(&[("content.opf", opf), ("c1.xhtml", "<html><body><p>正文</p></body></html>")]);
+        s.stage_new("plain.epub", &epub).unwrap();
+        let msg = s.optimize("plain.epub", |_, _| {}).unwrap();
+        assert!(!msg.contains("漫画→PDF"), "没有图片不该走漫画→PDF 分支: {msg}");
+    }
+
+    #[test]
+    fn deliver_oversized_comic_pdf_attempts_split_instead_of_flat_reject() {
+        let t = tempfile::tempdir().unwrap();
+        let x = Arc::new(Xochitl::new("127.0.0.1:1", Path::new("/nonexistent"), 1));
+        let s = Staging::new(t.path().join("staging"), x, 1024); // 1KB 预算，逼近强制超限
+        s.ensure().unwrap();
+        let epub = comic_epub_with_real_images(&[12, 13]);
+        s.stage_new("manga.epub", &epub).unwrap();
+        s.optimize("manga.epub", |_, _| {}).unwrap(); // 产出 manga.pdf
+
+        let err = s.deliver("manga.pdf", "", &empty_mkdir(&t), &rmsvc_core::events::EventBus::new()).unwrap_err();
+        assert!(err.contains("按卷拆分") || err.contains("上传失败"), "应该走 PDF 拆分路径而不是整本拒绝: {err}");
     }
 
     #[test]
