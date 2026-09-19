@@ -14,7 +14,7 @@
 //! pdfwrite::images_to_pdf`/`convert::cbz`（CBZ→PDF 现状路径），只用新增的 `images_to_pdf_
 //! with_toc`/`extract_pages`/`page_count`。
 
-use crate::convert::pdfwrite::{self, PdfImage};
+use crate::convert::pdfwrite;
 use crate::wash::{dir_of, is_html, parse_opf, Entry};
 use std::io::Read;
 use std::path::Path;
@@ -92,15 +92,22 @@ pub fn optimize_comic_epub_to_pdf_streaming(
     let file2 = std::fs::File::open(input_path).map_err(|e| format!("重开母版库文件失败: {e}"))?;
     let mut zip2 = zip::ZipArchive::new(std::io::BufReader::new(file2)).map_err(|e| e.to_string())?;
 
-    let mut images: Vec<PdfImage> = Vec::with_capacity(total_imgs);
+    // 用 PdfPieceWriter 逐页读逐页写——`total_imgs`（总页数）已经在上面数出来了，不用先攒出
+    // 整本书的 `Vec<PdfImage>` 才知道有几页。真机 245MB/600页 样本坐实过：先攒整本 `Vec<PdfImage>`
+    // 再一次性序列化，`VmHWM` 峰值到过 595MB（images 副本 + 序列化中间态叠加）；这里改成一张图
+    // 处理完立刻写进 writer 内部缓冲区、这张图的 `PdfImage`/原始字节就地释放，峰值只剩 writer
+    // 自己那份累积输出（约等于最终 PDF 体积本身，不再叠加一份"全书图片"的额外副本）。
+    // `has_toc` 恒为 true——下面兜底逻辑保证 `titles` 最终不可能是空的（至少有整本书名这一条）。
+    let mut writer = pdfwrite::PdfPieceWriter::begin(total_imgs, true);
     let mut titles: Vec<(usize, String)> = Vec::new();
     let mut done = 0usize;
+    let mut written = 0usize;
     for (spine_idx, imgs) in per_page_imgs.iter().enumerate() {
         if imgs.is_empty() {
             continue;
         }
         if let Some(title) = titles_by_spine_idx.get(&spine_idx) {
-            titles.push((images.len(), title.clone()));
+            titles.push((written, title.clone()));
         }
         for img_path in imgs {
             let mut f = zip2
@@ -112,7 +119,8 @@ pub fn optimize_comic_epub_to_pdf_streaming(
             let sized = crate::imgopt::downscale_for_epub_comic(&trimmed).unwrap_or(trimmed);
             let pdf_img = pdfwrite::image_from_bytes(&sized)
                 .map_err(|e| format!("图片 {img_path} 编不进 PDF: {e}"))?;
-            images.push(pdf_img);
+            writer.write_page(&pdf_img)?;
+            written += 1;
             done += 1;
             on_progress(done, total_imgs);
         }
@@ -123,9 +131,9 @@ pub fn optimize_comic_epub_to_pdf_streaming(
         titles.push((0, name.to_string()));
     }
 
-    let pdf_bytes = pdfwrite::images_to_pdf_with_toc(&images, &titles)?;
+    let pdf_bytes = writer.finish(&titles)?;
     let bytes_after = pdf_bytes.len();
-    let pages = images.len();
+    let pages = written;
     std::fs::write(output_path, &pdf_bytes).map_err(|e| format!("写出 PDF 失败: {e}"))?;
     Ok(PdfReport { pages, bytes_before, bytes_after })
 }
@@ -202,11 +210,14 @@ pub fn deliver_split_pdf_streaming(
     let mut delivered = Vec::new();
     let mut failed = Vec::new();
     for (idx, (start, end, title)) in ranges.into_iter().enumerate() {
-        let mut images = Vec::with_capacity(end - start);
+        // 用 PdfPieceWriter 逐页读逐页写：每页的 PdfImage 只在这一次循环迭代里活着，写进
+        // writer 内部缓冲区后立刻释放——不再像之前那样先攒出这一份的 `Vec<PdfImage>`（那样峰值
+        // 会贴着"这一份的体积"再乘二），峰值现在约等于"这一份的体积"本身。
+        let mut writer = pdfwrite::PdfPieceWriter::begin(end - start, true);
         let mut read_err = None;
         for page_idx in start..end {
-            match reader.read_page_image(page_idx) {
-                Ok(img) => images.push(img),
+            match reader.read_page_image(page_idx).and_then(|img| writer.write_page(&img)) {
+                Ok(()) => {}
                 Err(e) => {
                     read_err = Some(e);
                     break;
@@ -217,7 +228,7 @@ pub fn deliver_split_pdf_streaming(
             failed.push(format!("{title}（读页失败：{e}）"));
             continue;
         }
-        match pdfwrite::images_to_pdf_with_toc(&images, &[(0, title.clone())]) {
+        match writer.finish(&[(0, title.clone())]) {
             Ok(bytes) => {
                 let piece_name = format!("{stem} - {title}.pdf");
                 match upload_piece(&piece_name, &bytes, idx + 1, total) {
@@ -235,6 +246,7 @@ pub fn deliver_split_pdf_streaming(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::convert::pdfwrite::PdfImage;
     use std::io::Write;
 
     fn one_px_jpeg() -> Vec<u8> {

@@ -298,102 +298,154 @@ fn pdf_literal_string(bytes: &[u8]) -> Vec<u8> {
 /// ——`titles` 是 `(0-based 页码, 标题)` 列表，允许为空（不带任何目录，此时 Catalog 不含
 /// `/Outlines`，效果等同旧版 `images_to_pdf` 只是页面尺寸统一了）。**不修改 `images_to_pdf`
 /// 本体**——CBZ→PDF 那条现有路径继续用它，互不影响。
-pub fn images_to_pdf_with_toc(images: &[PdfImage], titles: &[(usize, String)]) -> Result<Vec<u8>, String> {
-    if images.is_empty() {
-        return Err("PDF 至少要有一页".into());
-    }
-    let n = images.len();
-    let has_toc = !titles.is_empty();
-    let mut objects: Vec<Vec<u8>> = Vec::with_capacity(2 + n * 3 + if has_toc { 1 + titles.len() } else { 0 });
+/// 单遍流式写一份 PDF：调用方逐页 `write_page` 喂图片，**每喂一页就直接写进内部输出缓冲区，
+/// 喂完这一页那张 [`PdfImage`] 就可以丢了**，不需要先攒成 `Vec<PdfImage>` 再一次性序列化。
+/// 真机 245MB/600页 样本坐实过两轮问题：①最早的写法先把每个对象各自建一份 `Vec<u8>` 存进
+/// `objects`、最后再拼一遍，图片字节在"调用方持有的 images / objects 副本 / 最终 out"三处
+/// 同时占内存；②改成一遍写完 `out`（不建 `objects` 中间层）后降到两份，但分卷投递那条路径当时
+/// 仍然是"先把一份要用到的图片全部读成 `Vec<PdfImage>`，再整个传给 `images_to_pdf_with_toc`"，
+/// 峰值还是贴着"一份的体积"两倍。这个类型是第三轮修法：`page_count` 从页码范围直接算好（不用
+/// 等真的读完每一页才知道有几页），`write_page` 每调一次就地把这一页的对象写进 `out`、调用方读
+/// 完一页的 [`PdfImage`] 传进来、这次调用结束后那份图片数据就可以释放——峰值降到约等于"一份的
+/// 体积"本身，不再是它的两倍。[`images_to_pdf_with_toc`] 现在是这个类型的薄封装，行为/输出字节
+/// 完全不变（`images_to_pdf_with_toc_*` 系列测试原样覆盖）。
+pub struct PdfPieceWriter {
+    out: Vec<u8>,
+    offsets: Vec<usize>,
+    n: usize,
+    written: usize,
+    has_toc: bool,
+    outline_root_id: usize,
+}
 
-    objects.push(Vec::new()); // obj 1 = Catalog，占位，末尾知道 outline id 再回填
-    let mut kids = String::new();
-    for i in 0..n {
-        kids.push_str(&format!("{} 0 R ", 3 + i * 3));
-    }
-    objects.push(format!("<< /Type /Pages /Kids [{}] /Count {} >>", kids.trim_end(), n).into_bytes());
+impl PdfPieceWriter {
+    /// `page_count`＝这份 PDF 总共几页（**调用方必须提前知道**——通常就是页码范围的长度，不需要
+    /// 真的读出图片内容才能知道），`has_toc`＝是否会有书签（决定 Catalog 要不要写 `/Outlines`）。
+    pub fn begin(page_count: usize, has_toc: bool) -> Self {
+        let outline_root_id = 3 + page_count * 3;
+        let mut out = Vec::new();
+        out.extend_from_slice(b"%PDF-1.7\n%\xE2\xE3\xCF\xD3\n");
+        let mut offsets = Vec::with_capacity(2 + page_count * 3);
 
-    for (i, img) in images.iter().enumerate() {
+        let obj1_off = out.len();
+        out.extend_from_slice(b"1 0 obj\n");
+        if has_toc {
+            out.extend_from_slice(format!("<< /Type /Catalog /Pages 2 0 R /Outlines {outline_root_id} 0 R /PageMode /UseOutlines >>").as_bytes());
+        } else {
+            out.extend_from_slice(b"<< /Type /Catalog /Pages 2 0 R >>");
+        }
+        out.extend_from_slice(b"\nendobj\n");
+        offsets.push(obj1_off);
+
+        let obj2_off = out.len();
+        out.extend_from_slice(b"2 0 obj\n<< /Type /Pages /Kids [");
+        for i in 0..page_count {
+            out.extend_from_slice(format!("{} 0 R ", 3 + i * 3).as_bytes());
+        }
+        out.extend_from_slice(format!("] /Count {page_count} >>\nendobj\n").as_bytes());
+        offsets.push(obj2_off);
+
+        Self { out, offsets, n: page_count, written: 0, has_toc, outline_root_id }
+    }
+
+    /// 喂下一页的图片——按调用顺序对应页码 0,1,2,...；这次调用结束后，传进来的 `img` 本身
+    /// 就可以被调用方释放了（它的字节已经拷进内部 `out` 缓冲区，不再需要）。
+    pub fn write_page(&mut self, img: &PdfImage) -> Result<(), String> {
+        if self.written >= self.n {
+            return Err(format!("PdfPieceWriter 声明了 {} 页，多喂了一页", self.n));
+        }
+        let i = self.written;
         let page_id = 3 + i * 3;
         let image_id = page_id + 1;
         let contents_id = page_id + 2;
         let (dw, dh, x, y) = place_image(img.width, img.height, PDF_PAGE_W, PDF_PAGE_H);
-        objects.push(
+
+        self.offsets.push(self.out.len());
+        self.out.extend_from_slice(
             format!(
-                "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {pw} {ph}] /Resources << /XObject << /Im0 {im} 0 R >> >> /Contents {con} 0 R >>",
-                pw = PDF_PAGE_W, ph = PDF_PAGE_H, im = image_id, con = contents_id
-            )
-            .into_bytes(),
+                "{page_id} 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {PDF_PAGE_W} {PDF_PAGE_H}] /Resources << /XObject << /Im0 {image_id} 0 R >> >> /Contents {contents_id} 0 R >>\nendobj\n"
+            ).as_bytes(),
         );
-        let mut xobj = format!(
-            "<< /Type /XObject /Subtype /Image /Width {w} /Height {h} /ColorSpace {cs} /BitsPerComponent {bpc} /Filter {f} /Length {len} >>\nstream\n",
-            w = img.width, h = img.height, cs = img.color.pdf_name(), bpc = img.bits, f = img.filter.pdf_name(), len = img.data.len()
-        ).into_bytes();
-        xobj.extend_from_slice(&img.data);
-        xobj.extend_from_slice(b"\nendstream");
-        objects.push(xobj);
+
+        self.offsets.push(self.out.len());
+        self.out.extend_from_slice(
+            format!(
+                "{image_id} 0 obj\n<< /Type /XObject /Subtype /Image /Width {w} /Height {h} /ColorSpace {cs} /BitsPerComponent {bpc} /Filter {f} /Length {len} >>\nstream\n",
+                w = img.width, h = img.height, cs = img.color.pdf_name(), bpc = img.bits, f = img.filter.pdf_name(), len = img.data.len()
+            ).as_bytes(),
+        );
+        self.out.extend_from_slice(&img.data); // 图片字节唯一一次拷贝：从调用方的 img 直接进 out
+        self.out.extend_from_slice(b"\nendstream\nendobj\n");
+
+        self.offsets.push(self.out.len());
         let content = format!("q\n{dw} 0 0 {dh} {x} {y} cm\n/Im0 Do\nQ\n");
-        objects.push(
-            format!("<< /Length {} >>\nstream\n{}endstream", content.len(), content).into_bytes(),
+        self.out.extend_from_slice(
+            format!("{contents_id} 0 obj\n<< /Length {} >>\nstream\n{}endstream\nendobj\n", content.len(), content).as_bytes(),
         );
+
+        self.written += 1;
+        Ok(())
     }
 
-    let mut outline_root_id = 0usize;
-    if has_toc {
-        let base = 3 + n * 3; // 下一个空闲对象号（page 三元组全部占完之后）
-        outline_root_id = base;
-        let first_id = base + 1;
-        let last_id = base + titles.len();
-        objects.push(
-            format!(
-                "<< /Type /Outlines /First {first_id} 0 R /Last {last_id} 0 R /Count {} >>",
-                titles.len()
-            )
-            .into_bytes(),
-        );
-        for (i, (page_idx, title)) in titles.iter().enumerate() {
-            let page_id = 3 + page_idx * 3;
-            let mut obj = b"<< /Title ".to_vec();
-            obj.extend_from_slice(&pdf_literal_string(&pdf_text_utf16be(title)));
-            obj.extend_from_slice(format!(" /Parent {outline_root_id} 0 R").as_bytes());
-            if i > 0 {
-                obj.extend_from_slice(format!(" /Prev {} 0 R", base + i).as_bytes());
-            }
-            if i + 1 < titles.len() {
-                obj.extend_from_slice(format!(" /Next {} 0 R", base + 2 + i).as_bytes());
-            }
-            obj.extend_from_slice(format!(" /Dest [{page_id} 0 R /Fit] >>").as_bytes());
-            objects.push(obj);
+    /// 全部页写完后调用一次，补书签目录（如果有）+ xref + trailer，收尾成完整 PDF 字节。
+    pub fn finish(mut self, titles: &[(usize, String)]) -> Result<Vec<u8>, String> {
+        if self.written != self.n {
+            return Err(format!("PdfPieceWriter 声明了 {} 页，实际只写了 {}", self.n, self.written));
         }
-    }
+        if self.has_toc != !titles.is_empty() {
+            return Err("PdfPieceWriter::begin 的 has_toc 跟 finish 传的 titles 对不上".into());
+        }
+        if self.has_toc {
+            let base = self.outline_root_id;
+            let first_id = base + 1;
+            let last_id = base + titles.len();
+            self.offsets.push(self.out.len());
+            self.out.extend_from_slice(
+                format!("{base} 0 obj\n<< /Type /Outlines /First {first_id} 0 R /Last {last_id} 0 R /Count {} >>\nendobj\n", titles.len()).as_bytes(),
+            );
+            for (i, (page_idx, title)) in titles.iter().enumerate() {
+                let item_id = base + 1 + i;
+                let page_id = 3 + page_idx * 3;
+                self.offsets.push(self.out.len());
+                self.out.extend_from_slice(format!("{item_id} 0 obj\n<< /Title ").as_bytes());
+                self.out.extend_from_slice(&pdf_literal_string(&pdf_text_utf16be(title)));
+                self.out.extend_from_slice(format!(" /Parent {base} 0 R").as_bytes());
+                if i > 0 {
+                    self.out.extend_from_slice(format!(" /Prev {} 0 R", base + i).as_bytes());
+                }
+                if i + 1 < titles.len() {
+                    self.out.extend_from_slice(format!(" /Next {} 0 R", base + 2 + i).as_bytes());
+                }
+                self.out.extend_from_slice(format!(" /Dest [{page_id} 0 R /Fit] >>\nendobj\n").as_bytes());
+            }
+        }
 
-    objects[0] = if has_toc {
-        format!("<< /Type /Catalog /Pages 2 0 R /Outlines {outline_root_id} 0 R /PageMode /UseOutlines >>").into_bytes()
-    } else {
-        b"<< /Type /Catalog /Pages 2 0 R >>".to_vec()
-    };
+        let xref_off = self.out.len();
+        let count = self.offsets.len() + 1;
+        self.out.extend_from_slice(format!("xref\n0 {count}\n").as_bytes());
+        self.out.extend_from_slice(b"0000000000 65535 f \n");
+        for off in &self.offsets {
+            self.out.extend_from_slice(format!("{off:010} 00000 n \n").as_bytes());
+        }
+        self.out.extend_from_slice(
+            format!("trailer\n<< /Size {count} /Root 1 0 R >>\nstartxref\n{xref_off}\n%%EOF\n").as_bytes(),
+        );
+        Ok(self.out)
+    }
+}
 
-    let mut out: Vec<u8> = Vec::new();
-    out.extend_from_slice(b"%PDF-1.7\n%\xE2\xE3\xCF\xD3\n");
-    let mut offsets: Vec<usize> = Vec::with_capacity(objects.len());
-    for (i, obj) in objects.iter().enumerate() {
-        offsets.push(out.len());
-        out.extend_from_slice(format!("{} 0 obj\n", i + 1).as_bytes());
-        out.extend_from_slice(obj);
-        out.extend_from_slice(b"\nendobj\n");
+/// [`PdfPieceWriter`] 的薄封装——一次性喂完整个 `images` 切片，行为/输出字节跟改用
+/// `PdfPieceWriter` 之前完全一致。调用方如果自己逐页读图片（比如分卷投递流式路径），直接用
+/// `PdfPieceWriter` 更省内存，不用先攒出这个 `&[PdfImage]`。
+pub fn images_to_pdf_with_toc(images: &[PdfImage], titles: &[(usize, String)]) -> Result<Vec<u8>, String> {
+    if images.is_empty() {
+        return Err("PDF 至少要有一页".into());
     }
-    let xref_off = out.len();
-    let count = objects.len() + 1;
-    out.extend_from_slice(format!("xref\n0 {count}\n").as_bytes());
-    out.extend_from_slice(b"0000000000 65535 f \n");
-    for off in &offsets {
-        out.extend_from_slice(format!("{off:010} 00000 n \n").as_bytes());
+    let mut w = PdfPieceWriter::begin(images.len(), !titles.is_empty());
+    for img in images {
+        w.write_page(img)?;
     }
-    out.extend_from_slice(
-        format!("trailer\n<< /Size {count} /Root 1 0 R >>\nstartxref\n{xref_off}\n%%EOF\n")
-            .as_bytes(),
-    );
-    Ok(out)
+    w.finish(titles)
 }
 
 fn memfind(hay: &[u8], needle: &[u8]) -> Option<usize> {
