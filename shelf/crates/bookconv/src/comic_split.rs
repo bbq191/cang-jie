@@ -154,9 +154,11 @@ fn plan_pieces_sized(entries: &[Entry], opf: &crate::wash::Opf, budget: u64, siz
     Ok(Some(fixed_page_chunks_range_sized(entries, &opf.spine, 0, opf.spine.len(), budget, size_of)))
 }
 
-/// NCX 第一层 `(标题, spine 起始下标)` 列表；没有 `toc.ncx`、entry 缺失、或全部目标都对不上 spine
-/// （拿不到任何有效切点）时返回 `None`，调用方据此退化到 `fixed_page_chunks`。
-fn ncx_top_level(entries: &[Entry], opf: &crate::wash::Opf) -> Option<Vec<(String, usize)>> {
+/// NCX 展平并解析成 `(depth, 标题, spine 下标)` 的完整列表，不按深度过滤——`ncx_top_level`
+/// （切分用，只要第一层）和 `ncx_titles_in_range`（组包用，某一份范围内不拘深度的所有节点）
+/// 各自按需过滤，避免两处各自重新解析一遍 NCX。没有 `toc.ncx`、entry 缺失、或全部目标都对不上
+/// spine（拿不到任何有效节点）时返回 `None`。
+fn ncx_resolved(entries: &[Entry], opf: &crate::wash::Opf) -> Option<Vec<(usize, String, usize)>> {
     let ncx_path = opf.ncx.as_ref()?;
     let ncx_entry = entries.iter().find(|e| &e.name == ncx_path)?;
     let ncx_text = String::from_utf8_lossy(&ncx_entry.data);
@@ -171,10 +173,33 @@ fn ncx_top_level(entries: &[Entry], opf: &crate::wash::Opf) -> Option<Vec<(Strin
         })
         .collect();
     if resolved.is_empty() {
-        return None;
+        None
+    } else {
+        Some(resolved)
     }
+}
+
+/// NCX 第一层 `(标题, spine 起始下标)` 列表；没有可用 NCX 节点时返回 `None`，调用方据此退化到
+/// `fixed_page_chunks`。
+fn ncx_top_level(entries: &[Entry], opf: &crate::wash::Opf) -> Option<Vec<(String, usize)>> {
+    let resolved = ncx_resolved(entries, opf)?;
     let min_depth = resolved.iter().map(|n| n.0).min().unwrap();
     Some(resolved.into_iter().filter(|n| n.0 == min_depth).map(|(_, t, s)| (t, s)).collect())
+}
+
+/// `[start,end)` 范围内，spine 绝对下标 → NCX 标题的映射，不拘深度——供 `build_piece` 给拆出来
+/// 的这一份补目录用。原书 NCX 如果在这一卷范围内还有更深一层节点（如"话"级子目录），各自照抄
+/// 过来；`build_piece` 自己另外把第一页强制钉上这一份自己的标题（见那边注释），这里不用为"卷
+/// 自己的标题"操心，只管卷内部还有什么。
+fn ncx_titles_in_range(entries: &[Entry], opf: &crate::wash::Opf, start: usize, end: usize) -> HashMap<usize, String> {
+    let mut map = HashMap::new();
+    let Some(resolved) = ncx_resolved(entries, opf) else { return map };
+    for (_, title, idx) in resolved {
+        if idx >= start && idx < end && !title.trim().is_empty() {
+            map.entry(idx).or_insert(title);
+        }
+    }
+    map
 }
 
 /// 没有可用目录结构时的退路：贪心按页累加体积，快超预算（加上这一页会超）就切一刀开新的一份；
@@ -204,13 +229,22 @@ fn fixed_page_chunks_range_sized(entries: &[Entry], spine: &[String], range_star
 /// 避免连带原书内联 style/字体锁这类已经被 `optimize_epub_with` 处理过的东西节外生枝）。
 /// 只接 `entries`（不接 `spine`）——`Opf`/`parse_opf` 是 `pub(crate)`，跨 crate（book-serve）调
 /// 不到，`spine` 在这里重新解一遍（跟 `plan_splits` 内部解的那次逻辑相同、成本可忽略）。
+///
+/// **目录**（2026-09-19 真机反馈修复：拆出来的书目录整个是空的）：之前每页都拍成 `title:
+/// String::new()`，`epub::nav_body` 只收非空标题章，于是拆完的书 `nav.xhtml` 里一条都没有。
+/// 现在原书 NCX 落在这个范围内的节点（不拘深度，如果这一卷底下本来就有"话"级子目录）原样接过来
+/// 当章节标题；不管有没有这类更细的节点，这一份的第一页永远钉上这一份自己的标题（`title` 参数，
+/// 跟切分时报进度条用的名字一致）——保证不管原书 NCX 长什么样，拆出来的每一份自己至少有一条
+/// 能点的目录项、点开就跳回开头，不是拆一份就丢一份目录。
 pub fn build_piece(entries: &[Entry], start: usize, end: usize, title: &str, book_id_suffix: &str) -> Result<Vec<u8>, String> {
     let opf = parse_opf(entries).ok_or("解不出 OPF/spine")?;
     let spine = &opf.spine;
+    let ncx_titles = ncx_titles_in_range(entries, &opf, start, end);
     let mut chapters = Vec::new();
     let mut resources = Vec::new();
     let mut remap: HashMap<String, String> = HashMap::new();
-    for p in &spine[start..end] {
+    for (offset, p) in spine[start..end].iter().enumerate() {
+        let idx = start + offset;
         let Some(e) = entries.iter().find(|e| &e.name == p) else { continue };
         if !is_html(p) {
             continue;
@@ -233,12 +267,13 @@ pub fn build_piece(entries: &[Entry], start: usize, end: usize, title: &str, boo
             body.push_str(&format!(r#"<div style="text-align:center"><img src="{new_path}"/></div>"#));
         }
         if !body.is_empty() {
-            chapters.push(Chapter { title: String::new(), html_body: body, level: 1 });
+            chapters.push(Chapter { title: ncx_titles.get(&idx).cloned().unwrap_or_default(), html_body: body, level: 1 });
         }
     }
     if chapters.is_empty() {
         return Err(format!("《{title}》这一段没有找到可用页面，跳过"));
     }
+    chapters[0].title = title.to_string();
     let mut book = Book {
         meta: BookMeta {
             book_id: format!("cangjie-comic-split-{book_id_suffix}"),
@@ -639,6 +674,42 @@ mod tests {
         let mut c1 = String::new();
         zip.by_name("OEBPS/chap_0001.xhtml").unwrap().read_to_string(&mut c1).unwrap();
         assert!(c1.contains(r#"src="images/0001.jpg""#), "{c1}");
+    }
+
+    #[test]
+    fn build_piece_toc_carries_own_title_when_ncx_has_no_deeper_nodes() {
+        // 真机反馈（2026-09-19）：拆出来的这一份目录整个是空的。单层 NCX（真机《火影忍者》那种，
+        // 卷内没有更细子目录）时，拆出来的这一份至少要在 nav.xhtml 里留一条指回自己开头的目录项，
+        // 标题就是传进来的卷名，不能是空标题被 nav_body 直接过滤掉。
+        let entries = make_multivol(&[3], 50);
+        let bytes = build_piece(&entries, 0, 3, "卷0", "t0").unwrap();
+        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+        use std::io::Read;
+        let mut nav = String::new();
+        zip.by_name("OEBPS/nav.xhtml").unwrap().read_to_string(&mut nav).unwrap();
+        assert!(nav.contains("卷0"), "目录应该至少有一条指回卷名的条目: {nav}");
+        assert_eq!(nav.matches("<li>").count(), 1, "没有更细子结构时目录应该恰好一条: {nav}");
+        assert!(nav.contains(r#"href="chap_0001.xhtml""#), "这一条应该指向这一份的第一页: {nav}");
+    }
+
+    #[test]
+    fn build_piece_toc_keeps_deeper_ncx_nodes_within_range() {
+        // 卷内如果本来就有更细的子目录（如"话"级，见 make_multivol_nested），拆出来的这一份除了
+        // 卷名那一条，卷内的子节点也要各自出现在目录里，不能被拍扁成空标题。`make_multivol_nested`
+        // 卷自身的 navPoint 跟它第一个子节点（章0）目标是同一页（都是这一卷的开头页）——这一页的
+        // 目录标题按"这一份自己的标题优先"钉成卷名（build_piece 的既定规则，见函数注释），章0
+        // 这个子节点标题让位，不算漏收；章1/章2 目标是各自独立的页，不受影响，照常保留。
+        let entries = make_multivol_nested(&[3], 50);
+        let bytes = build_piece(&entries, 0, 3, "卷0", "t0").unwrap();
+        let mut zip = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+        use std::io::Read;
+        let mut nav = String::new();
+        zip.by_name("OEBPS/nav.xhtml").unwrap().read_to_string(&mut nav).unwrap();
+        assert!(nav.contains("卷0"), "卷名本身那一条还在: {nav}");
+        for i in 1..3 {
+            assert!(nav.contains(&format!("卷0章{i}")), "子节点第 {i} 条应该保留: {nav}");
+        }
+        assert_eq!(nav.matches("<li>").count(), 3, "三页应该各自一条目录: {nav}");
     }
 
     #[test]
