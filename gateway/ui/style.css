@@ -60,6 +60,9 @@ progress::-webkit-progress-bar{background:var(--surface2)}progress::-webkit-prog
 .kv{display:grid;grid-template-columns:auto 1fr;gap:.35em .9em;font-size:.92em;align-items:baseline}.kv b{color:var(--mute);font-weight:500}
 .list{list-style:none;padding:0;margin:.3em 0}
 .list li{display:flex;justify-content:space-between;gap:1em;align-items:center;padding:.5em .1em;border-bottom:1px solid var(--line2)}
+/* 母版库列表书多时很长（2026-09-19 用户反馈）——单独收紧行内边距，不动全站共用的 .list（笔记/
+   其它列表沿用原样，只有这里书多到需要专门收紧）。 */
+#stglist li{padding:.3em .1em}
 .small{font-size:.83em;color:var(--mute)}
 code{background:var(--surface2);padding:.1em .35em;border-radius:.3em;font-size:.88em}
 /* 对比表 */

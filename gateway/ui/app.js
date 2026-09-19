@@ -2,6 +2,17 @@ const $=(s,r=document)=>r.querySelector(s);
 const fmtB=n=>n>1048576?(n/1048576).toFixed(1)+' MB':n>1024?(n/1024).toFixed(0)+' KB':n+' B';
 // 小徽章：renderManage 的「基石与模块」列表用。
 const badge=(t,ok)=>`<span class="badge ${ok?'on':'off'}">${t}</span>`;
+/* 母版库一本书是不是"已经不用管了"——给 stagingList 的"隐藏已完成"开关用（2026-09-19 用户反馈
+   母版库列表太长）。正在处理/失败态都不算"完成"（还需要用户看见），格式不是 EPUB 就没有"优化"
+   这个概念、只看有没有落库；EPUB 要优化完+落库才算。 */
+const isBookDone=it=>{
+  if(it.busy)return false;
+  const dv=it.delivered||{};
+  if((dv.optimize&&dv.optimize.status==='failed')||(dv.deliver&&dv.deliver.status==='failed'))return false;
+  const optimizedOk=it.format!=='epub'||it.optimized;
+  const deliveredOk=!!(dv.native||dv.koreader);
+  return optimizedOk&&deliveredOk;
+};
 /* 停一会儿再继续：用在"先弹出一条状态文字，再触发会重画掉这条文字的动作"这种场景——不等的话状态
    文字刚显示就被紧跟着的重画冲掉，用户根本来不及看见（点重转/生成笔记本弹出消耗那次踩过的坑）。 */
 const wait=ms=>new Promise(res=>setTimeout(res,ms));
@@ -184,9 +195,15 @@ function stagingList(ul,opts){
   ul.innerHTML='';
   const q=(opts.q||'').toLowerCase();
   const fmtOf=it=>it.format==='cbz'?'other':it.format;   // 筛选里 CBZ 归「其它」
-  const items=(opts.items||[]).filter(it=>(!q||it.name.toLowerCase().includes(q))&&(!opts.fmt||fmtOf(it)===opts.fmt)&&(!opts.st||(opts.st==='1')===!!it.optimized));
+  let items=(opts.items||[]).filter(it=>(!q||it.name.toLowerCase().includes(q))&&(!opts.fmt||fmtOf(it)===opts.fmt)&&(!opts.st||(opts.st==='1')===!!it.optimized));
+  if(opts.hideDone)items=items.filter(it=>!isBookDone(it));
   if(!items.length){ul.innerHTML='<li class="small">'+(opts.items&&opts.items.length?T('transfer.staging.emptyFiltered'):T('transfer.staging.emptyAll'))+'</li>';return}
-  items.forEach(it=>{const li=document.createElement('li');li.style.flexWrap='wrap';
+  // 分页（2026-09-19 用户反馈母版库列表太长）：一次只渲染前 visibleCount 条，超出的用一个
+  // "显示更多"行触发 opts.showMore 追加一页，不做真正的虚拟滚动——书的规模量级（几十到几百本）
+  // 不值得为此引入额外复杂度，简单的"按需追加"足够把首屏渲染量压下来。
+  const cap=opts.visibleCount||items.length;
+  const shown=items.slice(0,cap);
+  shown.forEach(it=>{const li=document.createElement('li');li.style.flexWrap='wrap';
     const fmt=it.format==='epub'?'EPUB':it.format==='pdf'?'PDF':(it.name.includes('.')?it.name.split('.').pop().toUpperCase():T('transfer.staging.fmtOther'));
     const st=it.format!=='epub'?`<span class="badge">${T('transfer.staging.badge.asIs')}</span>`:it.level==='full'?`<span class="badge on">${T('transfer.staging.badge.optimized')}</span>`:it.level==='core'?`<span class="badge" title="${T('transfer.staging.badge.optimizedUncleanTitle')}">${T('transfer.staging.badge.optimizedUnclean')}</span>`:it.level==='old'?`<span class="badge" title="${T('transfer.staging.badge.oldOptimizedTitle')}">${T('transfer.staging.badge.oldOptimized')}</span>`:`<span class="badge">${T('transfer.staging.badge.notOptimized')}</span>`;
     const hint=it.format==='pdf'?' · '+T('transfer.staging.hint.pdf'):it.format==='cbz'?' · '+T('transfer.staging.hint.comic'):it.format==='other'?' · '+T('transfer.staging.hint.other'):'';
@@ -275,12 +292,21 @@ function stagingList(ul,opts){
     // 一样靠徽章看（成功＝「已加入 xochitl」时间戳徽章出现，失败＝「上次加入失败」徽章，见上面 ob 那段）。
     // 2026-09-19 去掉「投完自动删除」：母版永远保留，不再传 keep（服务端也已删这个参数）。
     if(it.format==='epub'||it.format==='pdf')btn(T('transfer.staging.btn.deliverNative'),true,()=>postJ('/api/books/staging/deliver',{name:it.name,folder:opts.xFolder()}),busy||tooBig,busy?'':T('transfer.staging.btn.tooBigTitle',{limit:fmtB(opts.nativeLimit)}));
-    btn(T('transfer.staging.btn.addKoreader'),true,async()=>{const r=await postJ('/api/koreader/books/adopt',{name:it.name,folder:opts.kFolder()});if(r.ok!==false)await postJ('/api/books/staging/mark',{name:it.name,target:'koreader'})},busy||!opts.koInstalled,busy?'':T('transfer.staging.btn.koNotInstalled'),undefined,true);
+    // KOReader 未安装这条原因以前每行都重复一遍小字（2026-09-19 用户反馈列表太长时发现的纯冗余：
+    // 没装 KOReader 时这行文字在每一本书下面重复出现），改成只在列表顶部提示一次（见 renderTransfer），
+    // 这里禁用态不再重复挂 title 文案。
+    btn(T('transfer.staging.btn.addKoreader'),true,async()=>{const r=await postJ('/api/koreader/books/adopt',{name:it.name,folder:opts.kFolder()});if(r.ok!==false)await postJ('/api/books/staging/mark',{name:it.name,target:'koreader'})},busy||!opts.koInstalled,'',undefined,true);
     // 单行最多 5 徽章+4 按钮时，"删除"（销毁）跟"优化"（编辑）视觉权重完全一样，只靠文案区分
     // （2026-09-09 审计发现）；`.btn-bad` 早就存在但只用在转写失败按钮上，这里补上，破坏性操作至少
     // 颜色上跟常规操作分开。
     btn(T('action.delete'),false,async()=>{if(await confirmDialog(T('transfer.staging.confirmDeleteOne',{name:it.name})))await postJ('/api/books/staging/delete',{name:it.name})},busy,'','btn-bad');
     li.appendChild(right);ul.appendChild(li)});
+  if(items.length>cap){
+    const li=document.createElement('li');li.style.justifyContent='center';
+    const more=el('button',{class:'btn',text:T('transfer.staging.showMore',{count:Math.min(30,items.length-cap)})});
+    more.onclick=()=>{if(opts.showMore)opts.showMore()};
+    li.appendChild(more);ul.appendChild(li);
+  }
 }
 
 /* 「传书」固定 tab = 三层架构入口：入库（所有内容源汇入）｜母版库（可选优化 → 选去向落库）。放第一位。
@@ -316,7 +342,9 @@ function renderTransfer(sec){sec.innerHTML=`
         <label class="small" for="kfolder">${T('transfer.staging.kfolder.label')}</label><input type="text" id="kfolder" list="kodirs" placeholder="${T('transfer.staging.kfolder.placeholder')}" style="max-width:9em"><datalist id="kodirs"></datalist></div>
       <details class="cmp"><summary>${T('transfer.staging.optDetailsSummary')}</summary><p class="small">${T('transfer.staging.optNote')}</p></details>
       <div class="row"><input type="text" id="stgq" placeholder="${T('transfer.staging.searchPlaceholder')}" aria-label="${T('transfer.staging.searchAria')}" style="flex:1;min-width:8em"><select id="stgfmt" aria-label="${T('transfer.staging.fmtFilterAria')}" style="max-width:8em"><option value="">${T('transfer.staging.fmtAll')}</option><option value="epub">EPUB</option><option value="pdf">PDF</option><option value="other">${T('transfer.staging.fmtOther')}</option></select><select id="stgst" aria-label="${T('transfer.staging.stFilterAria')}" style="max-width:8em"><option value="">${T('transfer.staging.stAll')}</option><option value="0">${T('transfer.staging.stRaw')}</option><option value="1">${T('transfer.staging.stDone')}</option></select><button class="btn" id="stgpurge" title="${T('transfer.staging.purgeTitle')}">${T('transfer.staging.purgeBtn')}</button></div>
+      <div class="row"><label class="toggle"><input type="checkbox" id="stghidedone"> ${T('transfer.staging.hideDone')}</label></div>
       <div class="small" id="stgfree" style="margin:-.3em 0 .4em"></div>
+      <div class="small" id="stgkonotice" style="margin:-.3em 0 .4em"></div>
       <div class="card" id="stgpickbar" hidden style="margin:0 0 .5em">
         <span class="small" id="stgpickcount"></span>
         <button class="btn" id="stgpickoptimize">${T('transfer.staging.pick.batchOptimize')}</button>
@@ -342,8 +370,15 @@ function renderTransfer(sec){sec.innerHTML=`
   // （`folderPreset`）删掉，改跟 KOReader 目录同一个模式——自由输入框 + datalist 真实候选
   // （见下面 refresh() 里的 xodirs 填充），留空＝落配置缺省的书库文件夹。
   [['folder','folder',''],['kfolder','kfolder','']].forEach(([id,k,d])=>{g(id).value=LS.get(k,d);['input','change'].forEach(ev=>g(id).addEventListener(ev,()=>LS.set(k,g(id).value)))});
-  const render=()=>stagingList(g('stglist'),{items,q:g('stgq').value,fmt:g('stgfmt').value,st:g('stgst').value,xFolder:()=>g('folder').value.trim(),kFolder:()=>g('kfolder').value.trim(),koInstalled,nativeLimit,localBusy,picked,syncPickbar,render:()=>render(),refresh:()=>refresh()});
-  ['stgq','stgfmt','stgst'].forEach(id=>['input','change'].forEach(ev=>g(id).addEventListener(ev,render)));
+  // 母版库列表太长（2026-09-19 用户反馈）：默认隐藏"已经不用管了"的书（isBookDone），配合分页
+  // 一次只渲染一部分——两者都改变了"这次该显示哪些/多少条"，任何一个变了都要把分页重置回第一页，
+  // 不然容易出现"筛选变了但翻页位置没变、显示的不是预期的那批"的错觉。
+  const hd=g('stghidedone');hd.checked=LS.get('stgHideDone','1')==='1';
+  let hideDone=hd.checked,visibleCount=30;
+  const resetPage=()=>{visibleCount=30};
+  hd.addEventListener('change',()=>{hideDone=hd.checked;LS.set('stgHideDone',hideDone?'1':'0');resetPage();render()});
+  const render=()=>stagingList(g('stglist'),{items,q:g('stgq').value,fmt:g('stgfmt').value,st:g('stgst').value,hideDone,visibleCount,showMore:()=>{visibleCount+=30;render()},xFolder:()=>g('folder').value.trim(),kFolder:()=>g('kfolder').value.trim(),koInstalled,nativeLimit,localBusy,picked,syncPickbar,render:()=>render(),refresh:()=>refresh()});
+  ['stgq','stgfmt','stgst'].forEach(id=>['input','change'].forEach(ev=>g(id).addEventListener(ev,()=>{resetPage();render()})));
   // 三个批量按钮：各自按单条按钮同样的资格条件过滤 picked，不满足的跳过+汇总提示；满足的
   // Promise.all 并发提交——网关会按体积分档限流（大文件基本排队到一个一个跑，小文件允许并发），
   // 前端不用自己实现节流，`postJ` 慢下来就是在排队，不是卡死。
@@ -368,6 +403,9 @@ function renderTransfer(sec){sec.innerHTML=`
     if(d.ok===false){g('stglist').innerHTML=`<li class="small" style="color:var(--bad)">${T('transfer.staging.unavailable',{msg:d.message||T('transfer.staging.notOpen')})}</li>`;g('stgcap').textContent='';return}
     items=d.items||[];const tot=items.reduce((a,b)=>a+b.bytes,0);g('stgcap').textContent=items.length?T('transfer.staging.capSummary',{count:items.length,size:fmtB(tot)}):'';
     const fr=d.freeBytes;const low=fr!=null&&fr<300*1048576;g('stgfree').style.color=low?'var(--bad)':'';g('stgfree').textContent=fr!=null?T('transfer.staging.freeSpace',{free:fmtB(fr),lowWarn:low?T('transfer.staging.lowWarn'):''}):'';
+    // "KOReader 未安装"以前每行按钮下面都重复一遍（2026-09-19 用户反馈列表太长时发现的冗余），
+    // 改成这里只提示一次。
+    g('stgkonotice').textContent=koInstalled?'':T('transfer.staging.btn.koNotInstalled');
     render()};
   guardClick(g('stgpurge'),async()=>{const done=items.filter(it=>it.delivered&&(it.delivered.native||it.delivered.koreader));if(!done.length){toast(T('transfer.staging.noneToPurge'),'warn');return}
     if(!await confirmDialog(T('transfer.staging.confirmPurge',{count:done.length})))return;

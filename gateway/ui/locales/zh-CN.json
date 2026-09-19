@@ -102,6 +102,8 @@
   "transfer.staging.pick.done": "{count} 本已完成",
   "transfer.staging.pick.skipped": "已跳过 {count} 本（不满足条件）",
   "transfer.staging.pick.none": "选中的书里没有满足条件的",
+  "transfer.staging.hideDone": "隐藏已完成（已优化+已加入过读器）",
+  "transfer.staging.showMore": "显示更多（+{count}）",
   "transfer.staging.confirmDeleteOne": "从母版库删除 {name}？（已加入过读器的不受影响）",
   "transfer.guide.summary": "母版库怎么用？两个读器怎么选？（点开）",
   "transfer.guide.steps.dt": "三步走",

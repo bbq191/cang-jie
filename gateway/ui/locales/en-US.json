@@ -102,6 +102,8 @@
   "transfer.staging.pick.done": "{count} done",
   "transfer.staging.pick.skipped": "Skipped {count} (not eligible)",
   "transfer.staging.pick.none": "None of the selected books are eligible",
+  "transfer.staging.hideDone": "Hide done (optimized + added to a reader)",
+  "transfer.staging.showMore": "Show more (+{count})",
   "transfer.staging.confirmDeleteOne": "Delete {name} from the master library? (a copy already added to a reader is unaffected)",
   "transfer.guide.summary": "How does the master library work? Which reader should I pick? (click to expand)",
   "transfer.guide.steps.dt": "Three steps",
