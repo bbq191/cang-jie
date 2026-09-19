@@ -219,6 +219,13 @@ function stagingList(ul,opts){
       +(oc&&oc.status==='failed'?` <span class="badge off" title="${oc.message}">${T('transfer.staging.optimizeFailed.badge')}</span>`:'')
       +(dc&&dc.status==='failed'?` <span class="badge off" title="${dc.message}">${T('transfer.staging.deliverFailed.badge')}</span>`:'');
     li.innerHTML=`<span><b>${it.name}</b> <span class="badge">${fmt}</span> ${st}${dl}${rb}${ob} <span class="small">${fmtB(it.bytes)}${hint}</span></span>`;
+    // 批量勾选（2026-09-19）：跟三个单条按钮并存，不是替代——价值点是"选中的书受网关并发闸门
+    // 保护"，单条按钮做不到这个（见 budget.rs/proxy.rs），不是历史上笔记模块那种纯重复入口。
+    if(opts.picked){
+      const cb=el('input',{type:'checkbox'});cb.checked=opts.picked.has(it.name);
+      cb.onchange=()=>{if(cb.checked)opts.picked.add(it.name);else opts.picked.delete(it.name);if(opts.syncPickbar)opts.syncPickbar()};
+      li.querySelector('span').prepend(cb,' ');
+    }
     // 报错/进度原因以前只写进徽章的 title（hover 才看得到，触屏设备摸不到）——补一行可见小字，跟
     // 下面"禁用态按钮原因"同一套做法（2026-09-19 用户反馈"报错最下方显示错误原因"）。
     // 优先级：投递失败 ＞ 优化失败 ＞ 处理被打断（真在跑走下面单独的进度条分支，不进这条文字级联）。
@@ -310,6 +317,14 @@ function renderTransfer(sec){sec.innerHTML=`
       <details class="cmp"><summary>${T('transfer.staging.optDetailsSummary')}</summary><p class="small">${T('transfer.staging.optNote')}</p></details>
       <div class="row"><input type="text" id="stgq" placeholder="${T('transfer.staging.searchPlaceholder')}" aria-label="${T('transfer.staging.searchAria')}" style="flex:1;min-width:8em"><select id="stgfmt" aria-label="${T('transfer.staging.fmtFilterAria')}" style="max-width:8em"><option value="">${T('transfer.staging.fmtAll')}</option><option value="epub">EPUB</option><option value="pdf">PDF</option><option value="other">${T('transfer.staging.fmtOther')}</option></select><select id="stgst" aria-label="${T('transfer.staging.stFilterAria')}" style="max-width:8em"><option value="">${T('transfer.staging.stAll')}</option><option value="0">${T('transfer.staging.stRaw')}</option><option value="1">${T('transfer.staging.stDone')}</option></select><button class="btn" id="stgpurge" title="${T('transfer.staging.purgeTitle')}">${T('transfer.staging.purgeBtn')}</button></div>
       <div class="small" id="stgfree" style="margin:-.3em 0 .4em"></div>
+      <div class="card" id="stgpickbar" hidden style="margin:0 0 .5em">
+        <span class="small" id="stgpickcount"></span>
+        <button class="btn" id="stgpickoptimize">${T('transfer.staging.pick.batchOptimize')}</button>
+        <button class="btn" id="stgpickdeliver">${T('transfer.staging.pick.batchDeliver')}</button>
+        <button class="btn" id="stgpickkoreader">${T('transfer.staging.pick.batchKoreader')}</button>
+        <button class="btn" id="stgpickclear">${T('transfer.staging.pick.cancel')}</button>
+        <div class="small" id="stgpickmsg" style="margin-top:.3em"></div>
+      </div>
       <ul class="list" id="stglist"></ul>
     </div>
   </div>`;
@@ -317,13 +332,34 @@ function renderTransfer(sec){sec.innerHTML=`
   // 「加入 KOReader」没有服务端忙态可查（见 stagingList 内注释）——本地忙态集合，per-render 存活，
   // 不落 LS（纯瞬时 UI 态，刷新页面/切 tab 就该清空，不是需要记住的用户设置）。
   const localBusy=new Set();
+  // 批量勾选状态（同样 per-render 存活、不落 LS）——选中的书名集合，三个批量按钮各自按单条按钮
+  // 同样的资格条件过滤后批量提交，真正的节流/排队交给网关的并发闸门（budget.rs），这层不重新
+  // 实现节流逻辑。
+  const picked=new Set();
   const g=id=>$('#'+id,sec);
+  const syncPickbar=()=>{const bar=g('stgpickbar');bar.hidden=picked.size===0;g('stgpickcount').textContent=T('transfer.staging.pick.count',{count:picked.size})};
   // 落库设置记在本机（per-viewer 便利态）。2026-09-19：原来的「书库/批注/自定义」三选一预设
   // （`folderPreset`）删掉，改跟 KOReader 目录同一个模式——自由输入框 + datalist 真实候选
   // （见下面 refresh() 里的 xodirs 填充），留空＝落配置缺省的书库文件夹。
   [['folder','folder',''],['kfolder','kfolder','']].forEach(([id,k,d])=>{g(id).value=LS.get(k,d);['input','change'].forEach(ev=>g(id).addEventListener(ev,()=>LS.set(k,g(id).value)))});
-  const render=()=>stagingList(g('stglist'),{items,q:g('stgq').value,fmt:g('stgfmt').value,st:g('stgst').value,xFolder:()=>g('folder').value.trim(),kFolder:()=>g('kfolder').value.trim(),koInstalled,nativeLimit,localBusy,render:()=>render(),refresh:()=>refresh()});
+  const render=()=>stagingList(g('stglist'),{items,q:g('stgq').value,fmt:g('stgfmt').value,st:g('stgst').value,xFolder:()=>g('folder').value.trim(),kFolder:()=>g('kfolder').value.trim(),koInstalled,nativeLimit,localBusy,picked,syncPickbar,render:()=>render(),refresh:()=>refresh()});
   ['stgq','stgfmt','stgst'].forEach(id=>['input','change'].forEach(ev=>g(id).addEventListener(ev,render)));
+  // 三个批量按钮：各自按单条按钮同样的资格条件过滤 picked，不满足的跳过+汇总提示；满足的
+  // Promise.all 并发提交——网关会按体积分档限流（大文件基本排队到一个一个跑，小文件允许并发），
+  // 前端不用自己实现节流，`postJ` 慢下来就是在排队，不是卡死。
+  const batchRun=async(eligible,run,doneMsgKey)=>{
+    const chosen=items.filter(it=>picked.has(it.name));
+    const ok=chosen.filter(eligible),skip=chosen.length-ok.length;
+    if(!ok.length){toast(T('transfer.staging.pick.none'),'warn');return}
+    g('stgpickmsg').textContent=T('transfer.staging.pick.submitted',{count:ok.length});
+    await Promise.allSettled(ok.map(run));
+    g('stgpickmsg').textContent=T(doneMsgKey,{count:ok.length})+(skip?' · '+T('transfer.staging.pick.skipped',{count:skip}):'');
+    refresh();
+  };
+  guardClick(g('stgpickoptimize'),()=>batchRun(it=>it.format==='epub'&&!it.optimized,it=>postJ('/api/books/staging/optimize',{name:it.name}),'transfer.staging.pick.submittedDone'));
+  guardClick(g('stgpickdeliver'),()=>batchRun(it=>(it.format==='epub'||it.format==='pdf')&&!(nativeLimit&&it.bytes>nativeLimit&&it.format!=='epub'),it=>postJ('/api/books/staging/deliver',{name:it.name,folder:g('folder').value.trim()}),'transfer.staging.pick.submittedDone'));
+  guardClick(g('stgpickkoreader'),()=>batchRun(it=>koInstalled,async it=>{const r=await postJ('/api/koreader/books/adopt',{name:it.name,folder:g('kfolder').value.trim()});if(r.ok!==false)await postJ('/api/books/staging/mark',{name:it.name,target:'koreader'})},'transfer.staging.pick.done'));
+  guardClick(g('stgpickclear'),async()=>{picked.clear();syncPickbar();render()});
   const refresh=async()=>{const [d,s,k,kb]=await Promise.all([j('/api/books/staging'),j('/api/books/status'),j('/api/koreader/status'),j('/api/koreader/books')]);
     nativeLimit=(s.ok&&s.nativeUploadLimitBytes)||0;koInstalled=!!(k.ok&&k.installed);
     // xochitl/KOReader 现有目录 → 下拉候选（免手打错，跟真实文件夹保持一致，不是写死的预设）

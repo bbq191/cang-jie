@@ -7,6 +7,7 @@
 //! 登录后必改；CLI 用 Basic）+ **mDNS `shelf.local`** 伪域名（用户 2026-09-03 要求）。策略见 `auth.rs`。
 //! 子命令：`serve [--bind]` · `passwd <新密码>` · `reset-password`（回默认并强制改）· `regen-tls`（重签叶证书）。
 mod auth;
+mod budget;
 mod config;
 mod enhance;
 mod events;
