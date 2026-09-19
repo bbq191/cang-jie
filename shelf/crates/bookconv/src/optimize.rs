@@ -239,7 +239,8 @@ fn transform_html_chapter(
 fn transform_image_bytes(bytes: &[u8], is_comic_book: bool) -> Vec<u8> {
     if is_comic_book {
         let trimmed = crate::imgopt::trim_margins(bytes).unwrap_or_else(|| bytes.to_vec());
-        crate::imgopt::downscale_for_epub_comic(&trimmed).unwrap_or(trimmed)
+        let sized = crate::imgopt::downscale_for_epub_comic(&trimmed).unwrap_or(trimmed);
+        crate::imgopt::pad_to_device_aspect(&sized).unwrap_or(sized)
     } else {
         crate::imgopt::downscale_for_epub(bytes).unwrap_or_else(|| bytes.to_vec())
     }
@@ -643,11 +644,16 @@ mod tests {
         let mut text_img = Vec::new();
         ZipArchive::new(Cursor::new(&text_out)).unwrap().by_name("p1.jpg").unwrap().read_to_end(&mut text_img).unwrap();
 
-        assert_eq!(
-            image::load_from_memory(&comic_img).unwrap().dimensions(),
-            image::load_from_memory(&text_img).unwrap().dimensions(),
-            "两边尺寸约束一致，都要缩进屏幕框"
-        );
+        // 2026-09-19 起两边不再要求尺寸完全一致：漫画路径多了 `pad_to_device_aspect` 这一步
+        // （真机反馈"底部留白太多"，CSS 治不了、只能靠图片本身补白成设备页面长宽比，见
+        // `imgopt::pad_to_device_aspect` 文档），文字书路径的内嵌图不是整页漫画，不需要补白。
+        // 这里只保留还站得住脚的部分：两边都应该被缩进屏幕框内（不超限），漫画路径的高度应该
+        // 补到刚好等于设备页面长宽比对应的高度。
+        let (cw, ch) = image::load_from_memory(&comic_img).unwrap().dimensions();
+        let (tw, th) = image::load_from_memory(&text_img).unwrap().dimensions();
+        assert!(cw <= crate::imgopt::MAX_SHORT_EDGE && ch <= crate::imgopt::MAX_EDGE, "漫画路径应该缩进屏幕框: {cw}x{ch}");
+        assert!(tw <= crate::imgopt::MAX_SHORT_EDGE && th <= crate::imgopt::MAX_EDGE, "文字书内嵌图也应该缩进屏幕框: {tw}x{th}");
+        assert_eq!((cw, ch), (crate::imgopt::MAX_SHORT_EDGE, crate::imgopt::MAX_EDGE), "漫画整页应该补白到刚好等于设备页面长宽比: {cw}x{ch}");
         assert!(comic_img.len() > text_img.len(), "漫画书判定应触发更高质量重编码，体积应更大: comic={} text={}", comic_img.len(), text_img.len());
     }
 

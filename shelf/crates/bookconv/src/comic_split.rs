@@ -324,25 +324,25 @@ pub fn build_piece(entries: &[Entry], start: usize, end: usize, title: &str, boo
 /// 选择器+一个 class**，xochitl CSS 解析器脆，见书架白皮书 §03y 七条实测规则；**不用内联
 /// `style=`**——同一条规则实测内联样式不生效，之前 `<div style="text-align:center">` 这行内联
 /// 属性在真机上其实从没起过作用，2026-09-19 改走外链 class）：`body{margin:0;padding:0}`
-/// 清零默认边距。
+/// 清零默认边距，`img{width:100%;height:auto}` 撑满可用宽度。
 ///
-/// **2026-09-19 追记：单靠 `img{width:100%;height:auto}` 治不好"底部留白太多"**——镖人真机
-/// 复验坐实：漫画原图长宽比（约 0.7）跟设备页面长宽比（303:538pt≈0.563）本来就对不上，`width:
-/// 100%` 只保证撑满宽度，高度是按图片自身比例算出来的，天然比页面矮一截，缺口全部堆在底部（默认
-/// 顶对齐）。改用 `max-width/max-height:100%` 双向限制 + `display:table`/`table-cell`（比
-/// flexbox 更老、更广泛被弱 CSS 引擎支持的居中写法）让图片在页面内垂直+水平都居中——**这治的是
-/// "空白堆在一边显得像渲染坏了"的观感问题，不是把空白总量消掉**：只要图片长宽比跟设备页面长宽比
-/// 不一致，缺口在数学上就一定存在，除非允许裁掉画面的一部分去贴合页面比例（用户明确要求不能裁
-/// 真实内容，所以留白无法完全消除，只能把它摆得不那么突兀）。真机复验见白皮书。
+/// **2026-09-19 追记：`height` 相关 CSS 在 xochitl 里全部不生效，"底部留白太多"没法靠 CSS 治**——
+/// 镖人真机排查五种候选写法（`max-width/height:100%`、`vw`/`vh` 单位、`display:table`/
+/// `table-cell` 居中）逐像素对比，**跟纯 `width:100%;height:auto` 渲染结果完全一样**：图片高度
+/// 永远是"宽度撑满后按原图长宽比算出来的"，任何 `height`/`max-height` 声明（无论 `%` 还是
+/// `vh`）xochitl 一律不认。CSS 这条路已经走到头，真正的修法挪到图片像素本身——见
+/// `imgopt::pad_to_device_aspect`（优化阶段把图片本身补白成设备页面长宽比，`width:100%` 撑满宽度
+/// 后高度自然也撑满，原来堆在底部的缺口现在摆在图片内容两侧，不是消掉、是摆得不突兀）。这里的
+/// CSS 保持最简单的"撑满宽度"就够，不用再猜其它花活。
 ///
 /// **只给真正含图的章节挂这份 CSS**——2026-09-19 同一轮修复顺带补的边界：纯文字页
 /// （`build_piece` 的 `body_inner` 分支，如"后记"）不该被这里的 `body{margin:0}` 清零默认页
-/// 边距（正文段落需要正常的阅读边距），也不需要居中撑满图片这套规则，所以按"这一章的 body 里
-/// 有没有 `<img`"分流，只有含图的才挂 `<link>`。
+/// 边距（正文段落需要正常的阅读边距），所以按"这一章的 body 里有没有 `<img`"分流，只有含图的
+/// 才挂 `<link>`。
 fn repack_with_comic_css(bytes: Vec<u8>) -> Result<Vec<u8>, String> {
     let mut entries = crate::check::read_entries(&bytes)?;
     const CSS_PATH: &str = "OEBPS/comic.css";
-    const CSS: &str = "html{height:100%;}\nbody{margin:0;padding:0;height:100%;display:table;width:100%;}\n.cj-imgwrap{display:table-cell;vertical-align:middle;text-align:center;}\nimg{max-width:100%;max-height:100%;}\n";
+    const CSS: &str = "body{margin:0;padding:0;}\nimg{width:100%;height:auto;}\n";
     entries.push(Entry { name: CSS_PATH.into(), data: CSS.as_bytes().to_vec() });
     for e in entries.iter_mut() {
         if e.name.starts_with("OEBPS/chap_") && e.name.ends_with(".xhtml") {
@@ -821,7 +821,7 @@ mod tests {
         use std::io::Read;
         let mut css = String::new();
         zip.by_name("OEBPS/comic.css").expect("应该有外链 comic.css").read_to_string(&mut css).unwrap();
-        assert!(css.contains("body{margin:0;padding:0;") && css.contains("max-width:100%;max-height:100%;"), "{css}");
+        assert!(css.contains("body{margin:0;padding:0;") && css.contains("img{width:100%;height:auto;}"), "{css}");
         let mut c1 = String::new();
         zip.by_name("OEBPS/chap_0001.xhtml").unwrap().read_to_string(&mut c1).unwrap();
         assert!(c1.contains(r#"<link rel="stylesheet" type="text/css" href="comic.css"/>"#), "章节头部应该链外链 css: {c1}");
