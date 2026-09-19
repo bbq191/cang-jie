@@ -71,7 +71,7 @@ pub fn forward(paths: &Paths, req: &mut Request<'_>) -> ApiResult {
             .ok_or_else(|| ApiError::bad("缺 name"))?;
         let bytes = paths.staging_dir().join(&book_name).metadata().map(|m| m.len()).unwrap_or(0);
         let tier = crate::budget::tier_of(bytes);
-        slot = Some(crate::budget::global().admit(tier).map_err(|e| ApiError { status: 503, message: e })?);
+        slot = Some(crate::budget::global().admit(tier, &book_name).map_err(|e| ApiError { status: 503, message: e })?);
         body_override = Some(buf);
     }
 
