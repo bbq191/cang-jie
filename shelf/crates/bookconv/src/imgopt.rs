@@ -109,7 +109,11 @@ pub fn downscale_for_epub_comic(bytes: &[u8]) -> Option<Vec<u8>> {
 /// 噪声，但不到能吃掉真实画面渐变的地步。
 const TRIM_TOLERANCE: u8 = 8;
 /// 单边最多裁掉原图这个比例——防止极端图（比如整页近乎纯色）被误判成"全是留白"裁没内容。
-const TRIM_MAX_FRACTION: f32 = 0.15;
+/// 真机《镖人》母版库实测坐实过 0.15 太保守（2026-09-19 用户反馈"优化没把大量留白裁切完"）：
+/// 每卷开头的版权页（CIP 页，中文漫画常见排版）实际留白单边能到 22%-29%，旧阈值在 15% 就强行
+/// 停手，裁不干净。抽样 43 张真实页量出的最大值约 28.6%，0.35 留出约 6 个百分点余量；两边独立
+/// 累加最多到 0.7×边长，仍留 30% 给内容，不会把整页裁没。
+const TRIM_MAX_FRACTION: f32 = 0.35;
 
 fn row_is_uniform(img: &image::RgbImage, y: u32) -> bool {
     let w = img.width();
@@ -321,7 +325,32 @@ mod tests {
         JpegEncoder::new_with_quality(&mut buf, 100).encode_image(&img).unwrap();
         let out = trim_margins(&buf).expect("大片留白应触发裁边");
         let (w, h) = image::load_from_memory(&out).unwrap().dimensions();
-        assert!(w >= 200 - 2 * 30 && h >= 200 - 2 * 30, "单边最多裁 15%，不能把画面裁没: got {w}x{h}");
+        let cap = (200.0 * TRIM_MAX_FRACTION) as u32;
+        assert!(w >= 200 - 2 * cap && h >= 200 - 2 * cap, "单边最多裁 TRIM_MAX_FRACTION，不能把画面裁没: got {w}x{h}");
+    }
+
+    #[test]
+    fn trim_margins_handles_margin_beyond_old_cap() {
+        // 真机回归（2026-09-19，《镖人》母版库反馈"优化没把大量留白裁切完"）：中文漫画常见的
+        // 版权页（CIP 页）实测单边留白能到 22%-29%（抽样见会话记录），旧的 15% 上限在这里会
+        // 强行停手、裁不干净。造一张留白比例超过旧上限、但仍在新上限内的图，确认新阈值下能
+        // 裁到位（不是卡在旧的 15% 就停）。
+        let (w, h, margin_frac) = (400u32, 600u32, 0.25f32);
+        let margin = (w as f32 * margin_frac) as u32;
+        let img = DynamicImage::ImageRgb8(RgbImage::from_fn(w, h, |x, y| {
+            if x < margin || y < margin || x >= w - margin || y >= h - margin {
+                image::Rgb([255, 255, 255])
+            } else {
+                image::Rgb([(x % 256) as u8, (y % 256) as u8, 128])
+            }
+        }));
+        let mut buf = Vec::new();
+        JpegEncoder::new_with_quality(&mut buf, 100).encode_image(&img).unwrap();
+        let out = trim_margins(&buf).expect("留白应触发裁边");
+        let (got_w, got_h) = image::load_from_memory(&out).unwrap().dimensions();
+        let old_cap = (w as f32 * 0.15) as u32;
+        assert!(got_w < w - 2 * old_cap, "25% 留白不该被旧的 15% 上限卡住: got {got_w}");
+        assert_eq!((got_w, got_h), (w - 2 * margin, h - 2 * margin), "留白在新上限内应该精确裁掉: got {got_w}x{got_h}");
     }
 
     #[test]
