@@ -50,6 +50,34 @@ pub fn is_comic(entries: &[Entry]) -> bool {
     images >= MIN_IMAGES && (text as f64) < TEXT_PER_IMAGE * images as f64
 }
 
+/// 只读 html/opf 真实字节判断是不是漫画，图片条目留空占位（`is_comic`/`epub_image_stats` 从不读
+/// 图片字节，只数 html 里 `<img>` 标签出现次数），不解码任何图片——给 `book-serve::Staging::
+/// optimize()` 在决定"这本 EPUB 优化后走 PDF 还是 EPUB"之前用的轻量预判。打不开/解不了 zip 一律
+/// 当"不是漫画"（安全默认——判不准就走现状 EPUB 老路径，不是新引入的失败模式）。
+pub fn is_comic_epub_file(path: &std::path::Path) -> bool {
+    let Ok(file) = std::fs::File::open(path) else { return false };
+    let Ok(mut zip) = zip::ZipArchive::new(std::io::BufReader::new(file)) else { return false };
+    let mut entries = Vec::with_capacity(zip.len());
+    for i in 0..zip.len() {
+        let Ok(mut f) = zip.by_index(i) else { continue };
+        if f.is_dir() {
+            continue;
+        }
+        let name = f.name().to_string();
+        let data = if crate::imgopt::is_downscalable(&name) {
+            Vec::new()
+        } else {
+            let mut d = Vec::new();
+            if std::io::Read::read_to_end(&mut f, &mut d).is_err() {
+                continue;
+            }
+            d
+        };
+        entries.push(Entry { name, data });
+    }
+    is_comic(&entries)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -105,5 +133,38 @@ mod tests {
         let (images, text) = epub_image_stats(&v);
         assert_eq!(images, 1);
         assert_eq!(text, 0, "script/style 内容不该计入可见文字: got {text}");
+    }
+
+    #[test]
+    fn is_comic_epub_file_reads_from_disk_without_decoding_images() {
+        use std::io::Write;
+        let items: String = (1..=25).map(|i| format!(r#"<item id="c{i}" href="c{i}.xhtml" media-type="application/xhtml+xml"/>"#)).collect();
+        let spine: String = (1..=25).map(|i| format!(r#"<itemref idref="c{i}"/>"#)).collect();
+        let opf_xml = format!(r#"<package version="3.0"><metadata><dc:title>书</dc:title></metadata><manifest>{items}</manifest><spine>{spine}</spine></package>"#);
+
+        let mut buf = Vec::new();
+        {
+            let cursor = std::io::Cursor::new(&mut buf);
+            let mut z = zip::ZipWriter::new(cursor);
+            let opt = zip::write::SimpleFileOptions::default();
+            z.start_file("content.opf", opt).unwrap();
+            z.write_all(opf_xml.as_bytes()).unwrap();
+            for i in 1..=25 {
+                z.start_file(format!("c{i}.xhtml"), opt).unwrap();
+                z.write_all(format!(r#"<html><body><img src="p{i}.jpg"/></body></html>"#).as_bytes()).unwrap();
+                // 图片条目故意写非法/空字节——is_comic_epub_file 不该尝试解码它，判定应该照常通过。
+                z.start_file(format!("p{i}.jpg"), opt).unwrap();
+                z.write_all(b"not a real jpeg").unwrap();
+            }
+            z.finish().unwrap();
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("test.epub");
+        std::fs::write(&path, &buf).unwrap();
+        assert!(is_comic_epub_file(&path), "25 张纯图片页应判定为漫画");
+
+        let not_epub = dir.path().join("not.epub");
+        std::fs::write(&not_epub, b"garbage").unwrap();
+        assert!(!is_comic_epub_file(&not_epub), "解不了 zip 的文件应安全返回 false");
     }
 }

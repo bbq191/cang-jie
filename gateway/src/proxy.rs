@@ -5,11 +5,49 @@
 //! 用的，底层走 `tiny_http` 的 `upgrade()` 直接接管裸 socket（不走常规的 Content-Length/chunked 头协商），
 //! 拿来复用给任意大小的代理下载响应需要先确认这套机制对非 SSE 场景是否语义正确，评估下来风险和这条
 //! 低优先级审计项本身的收益不成比例，这次只改注释，没有改行为。
+//!
+//! **并发/内存预算闸门**（2026-09-19）：`优化`/`加入xochitl`/`加入KOReader` 这三个操作在这里统一
+//! 拦一道——真机测出漫画 optimize/超限分卷投递内存峰值 ≈ 处理的文件体积本身，`book-serve`/
+//! `koreader-serve` 的忙锁都是按书名分别加的、点不同的书互不阻塞，同时点几本大部头会线性叠加内存。
+//! `gateway` 是这三个操作物理上唯一必经的转发关口（三个服务是独立进程，互不共享内存），闸门放这里
+//! 不需要任何跨进程锁，详见 `budget.rs` 文档注释。只有这三条命中路由才会额外读一次 body（几十字节
+//! 的小 JSON，`Request::read_small_body` 本来就有 1MB 上限）+ 查一次文件体积，其余请求（含真正的
+//! 大文件上传）完全不受影响、维持原有纯流式转发。
 use rmsvc_core::http::{ApiError, ApiResult, Method, Reply, Request};
 use rmsvc_core::multipart::percent_encode as enc;
 use rmsvc_core::paths::Paths;
 use rmsvc_core::registry;
 use std::io::Read;
+use std::time::{Duration, Instant};
+
+const POLL_INTERVAL: Duration = Duration::from_secs(5);
+/// 轮询等一个异步任务（优化/落库）真正跑完的上限——不是永久卡死，服务崩溃/重启导致侦测不到
+/// 结果时，超时后如实放弃、让名额自然释放，不为一个查不到结果的任务永久占着并发档位。
+const SETTLE_POLL_TIMEOUT: Duration = Duration::from_secs(60 * 60);
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum GatedOp {
+    /// `book-serve` 的"优化"——异步：HTTP 响应几乎立即回"已开始"，真正处理在后台线程跑。
+    Optimize,
+    /// `book-serve` 的"加入 xochitl"——同上，异步。
+    Deliver,
+    /// `koreader-serve` 的"加入 KOReader"——同步：`fs::copy`+`fs::rename`，HTTP 响应返回=真正做完。
+    KoreaderAdopt,
+}
+
+/// 这个请求是不是命中要限流的三个操作之一。`service_name` 是解析过的后端服务名
+/// （`book-serve`/`koreader-serve`，不是 URL 段 `books`/`koreader`）。
+fn gated_operation(service_name: &str, rest: &str, method: Method) -> Option<GatedOp> {
+    if method != Method::Post {
+        return None;
+    }
+    match (service_name, rest) {
+        ("book-serve", "staging/optimize") => Some(GatedOp::Optimize),
+        ("book-serve", "staging/deliver") => Some(GatedOp::Deliver),
+        ("koreader-serve", "books/adopt") => Some(GatedOp::KoreaderAdopt),
+        _ => None,
+    }
+}
 
 /// `/api/{svc}/*` → 按 URL 段查目录表找服务名再转发（段不在表里 404）。
 pub fn forward(paths: &Paths, req: &mut Request<'_>) -> ApiResult {
@@ -19,6 +57,24 @@ pub fn forward(paths: &Paths, req: &mut Request<'_>) -> ApiResult {
     };
     // 剥掉服务段：`/api/fonts/x` → 后端 `/x`，`/api/fonts` → 后端 `/`。后端直连（SSH 调试）与经网关同一套路由。
     let rest = req.param("*").to_string();
+    let gated = gated_operation(name, &rest, req.method);
+
+    // 命中三个限流操作才读 body 拿书名、过闸门；其余请求原样走下面已有的流式转发，不碰这段。
+    let mut body_override: Option<Vec<u8>> = None;
+    let mut slot: Option<crate::budget::Slot<'static>> = None;
+    let mut book_name = String::new();
+    if gated.is_some() {
+        let buf = req.read_small_body().map_err(ApiError::bad)?;
+        book_name = serde_json::from_slice::<serde_json::Value>(&buf)
+            .ok()
+            .and_then(|v| v.get("name").and_then(|n| n.as_str()).map(str::to_string))
+            .ok_or_else(|| ApiError::bad("缺 name"))?;
+        let bytes = paths.staging_dir().join(&book_name).metadata().map(|m| m.len()).unwrap_or(0);
+        let tier = crate::budget::tier_of(bytes);
+        slot = Some(crate::budget::global().admit(tier, &book_name).map_err(|e| ApiError { status: 503, message: e })?);
+        body_override = Some(buf);
+    }
+
     let mut url = format!("{}/{}", info.base_url(), rest);
     if !req.query.is_empty() {
         let q: Vec<String> = req.query.iter().map(|(k, v)| format!("{}={}", enc(k), enc(v))).collect();
@@ -40,7 +96,13 @@ pub fn forward(paths: &Paths, req: &mut Request<'_>) -> ApiResult {
     if let Some(n) = req.content_length {
         r = r.set("Content-Length", &n.to_string());
     }
-    let resp = if matches!(req.method, Method::Get | Method::Delete) { r.call() } else { r.send(&mut *req.body) };
+    let resp = if matches!(req.method, Method::Get | Method::Delete) {
+        r.call()
+    } else if let Some(buf) = body_override {
+        r.send(&mut std::io::Cursor::new(buf))
+    } else {
+        r.send(&mut *req.body)
+    };
     let (status, resp) = match resp {
         Ok(r) => (r.status(), r),
         Err(ureq::Error::Status(c, r)) => (c, r),
@@ -56,5 +118,67 @@ pub fn forward(paths: &Paths, req: &mut Request<'_>) -> ApiResult {
     if let Some(v) = disposition {
         reply = reply.with_header("Content-Disposition", &v);
     }
+
+    // 名额释放时机：`KoreaderAdopt` 是同步操作，走到这里真正的复制已经做完，`slot` 出函数作用域
+    // 自然 Drop 释放，不用特殊处理。`Optimize`/`Deliver` 是异步的，HTTP 响应此刻只代表"已经开始"，
+    // 真正的内存开销在后台线程里继续——把 `slot` 转移进一个监控线程，轮询该服务自己的 `/staging`
+    // 列表直到这本书不再 busy（或条目已经不在了，比如漫画→PDF 改名），`slot` 才出那个线程的作用域
+    // 释放；轮询/线程本身跟这次 HTTP 响应完全解耦，不影响这次请求的返回时间。
+    if let Some(kind) = gated {
+        if matches!(kind, GatedOp::Optimize | GatedOp::Deliver) {
+            if let Some(slot) = slot.take() {
+                let base = info.base_url();
+                std::thread::spawn(move || {
+                    poll_until_settled(&base, &book_name);
+                    drop(slot);
+                });
+            }
+        }
+    }
+
     Ok(reply)
+}
+
+/// 轮询 `{base_url}/staging`（直连后端服务，不经网关自己这层转发，避免自己调自己）直到
+/// [`crate::budget::is_settled`] 判定这本书已经不再忙，或等到 [`SETTLE_POLL_TIMEOUT`] 放弃。
+/// 服务查不到/请求失败（可能重启中）也直接放弃轮询——宁可名额提前释放，不要因为侦测本身不可靠
+/// 就把并发档位永久卡住。
+fn poll_until_settled(base_url: &str, name: &str) {
+    let agent = ureq::AgentBuilder::new().timeout(Duration::from_secs(10)).build();
+    let deadline = Instant::now() + SETTLE_POLL_TIMEOUT;
+    loop {
+        match agent.get(&format!("{base_url}/staging")).call() {
+            Ok(resp) => match serde_json::from_reader::<_, serde_json::Value>(resp.into_reader()) {
+                Ok(json) if crate::budget::is_settled(&json, name) => return,
+                Ok(_) => {}      // 还在忙，继续轮询
+                Err(_) => return, // 应答不是预期 JSON——不可靠，放弃而不是死等
+            },
+            Err(_) => return, // 服务不可达，同上
+        }
+        if Instant::now() >= deadline {
+            return;
+        }
+        std::thread::sleep(POLL_INTERVAL);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn gated_operation_matches_exactly_three_routes() {
+        assert_eq!(gated_operation("book-serve", "staging/optimize", Method::Post), Some(GatedOp::Optimize));
+        assert_eq!(gated_operation("book-serve", "staging/deliver", Method::Post), Some(GatedOp::Deliver));
+        assert_eq!(gated_operation("koreader-serve", "books/adopt", Method::Post), Some(GatedOp::KoreaderAdopt));
+    }
+
+    #[test]
+    fn gated_operation_ignores_everything_else() {
+        assert_eq!(gated_operation("book-serve", "staging", Method::Post), None, "落库入库本身走多文件上传，不该被拦下来读 body");
+        assert_eq!(gated_operation("book-serve", "staging", Method::Get), None, "列表查询不限流");
+        assert_eq!(gated_operation("book-serve", "staging/optimize", Method::Get), None, "方法不对不该命中");
+        assert_eq!(gated_operation("koreader-serve", "books", Method::Get), None);
+        assert_eq!(gated_operation("font-serve", "staging/optimize", Method::Post), None, "服务名对不上不该误命中");
+    }
 }

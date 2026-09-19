@@ -7,6 +7,7 @@
 //! 登录后必改；CLI 用 Basic）+ **mDNS `shelf.local`** 伪域名（用户 2026-09-03 要求）。策略见 `auth.rs`。
 //! 子命令：`serve [--bind]` · `passwd <新密码>` · `reset-password`（回默认并强制改）· `regen-tls`（重签叶证书）。
 mod auth;
+mod budget;
 mod config;
 mod enhance;
 mod events;
@@ -149,6 +150,22 @@ fn main() {
         .put("/api/enhance/qol", bind(&paths, enhance::set_qol))
         .get("/api/enhance/battop/summary", bind(&paths, enhance::battop_summary))
         .post("/api/enhance/battop/{action}", bind(&paths, |p, r| { let action = r.param("action").to_string(); enhance::battop_toggle(p, &action) }))
+        // 并发/内存预算闸门的排队/处理状态（2026-09-19 用户反馈驱动，见 budget.rs::State 文档
+        // 注释）：跟 /api/manage、/api/enhance/* 一样是网关自身固定能力，必须在 /api/{svc}
+        // 代理通配之前注册。GET 给任何会话（含关掉浏览器重开）看真实排队/处理状态；POST cancel
+        // 只对还在排队（没真正拿到名额开始跑）的书名生效，见 budget::Budget::cancel 文档。
+        .get("/api/budget/status", |_| {
+            let (pending, active) = budget::global().snapshot();
+            Ok(Reply::ok(&serde_json::json!({"pending": pending, "active": active})))
+        })
+        .post("/api/budget/cancel", |r| {
+            let buf = r.read_small_body().map_err(ApiError::bad)?;
+            let name = serde_json::from_slice::<serde_json::Value>(&buf)
+                .ok()
+                .and_then(|v| v.get("name").and_then(|n| n.as_str()).map(str::to_string))
+                .ok_or_else(|| ApiError::bad("缺 name"))?;
+            Ok(Reply::ok(&serde_json::json!({"cancelled": budget::global().cancel(&name)})))
+        })
         .route(Method::Other, "/api/*", |_| Err(ApiError::bad("unsupported method")))
         .any(PROXIED, "/api/{svc}/*", bind(&paths, proxy::forward))
         .any(PROXIED, "/api/{svc}", bind(&paths, proxy::forward));

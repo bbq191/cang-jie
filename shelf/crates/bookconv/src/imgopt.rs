@@ -105,11 +105,75 @@ pub fn downscale_for_epub_comic(bytes: &[u8]) -> Option<Vec<u8>> {
     downscale_into_q(bytes, MAX_SHORT_EDGE, MAX_EDGE, JPEG_QUALITY_COMIC)
 }
 
+/// 设备页面长宽比（短边/长边），跟 [`MAX_SHORT_EDGE`]/[`MAX_EDGE`] 同一组数字。
+const DEVICE_PAGE_ASPECT: f32 = MAX_SHORT_EDGE as f32 / MAX_EDGE as f32;
+
+/// 补白容差：跟设备页面长宽比相对误差在这个范围内不补（避免"差一点点也要重新编码一遍"）。
+const PAD_ASPECT_TOLERANCE: f32 = 0.02;
+
+/// 漫画整页图片补白（2026-09-19 真机反馈"底部留白太多"排查到底：五种候选 CSS——`width:100%;
+/// height:auto`、`max-width/height:100%`、`vw`/`vh` 单位、`display:table/table-cell` 居中——
+/// 真机逐像素对比，**只有 `width` 生效，任何跟 `height` 相关的声明 xochitl 一律不认，图片高度
+/// 永远是"宽度撑满后按原图长宽比算出来的"，没有例外**）。CSS 层面没法控制留白，只能靠图片像素
+/// 本身。**用户明确的目标：上下留白尽量等比、左右留白尽可能接近 0**——两条同时满足：
+///
+/// - 原图长宽比比页面"宽"（典型漫画整页约 0.7 vs 页面约 0.5625，`width:100%` 撑满宽度后高度
+///   天然小于页面高度）：**上下对称补白**到刚好等于设备页面长宽比，宽度全程没动——`width:100%`
+///   本来就已经贴到左右边缘，补白只加高度方向，左右留白全程是 0，不会变多。
+/// - 原图长宽比比页面"窄"（如竖版海报，`width:100%` 会让高度溢出页面，CSS 治不了溢出）：
+///   **左右对称补白**拉回设备长宽比，补完之后长宽比精确等于设备页面比例，`width:100%` 渲染出来
+///   刚好不多不少填满整页，上下左右四边留白全部是 0。
+///
+/// 两种情况补完，图片自身长宽比都精确等于设备页面长宽比——不是"消掉留白"（那是裁进画面才能做到，
+/// 用户明确要求不裁），是"让留白变得对称、可预期"。**只加白边不动内容**：原始像素一个都不裁、
+/// 不缩、不挪，只是外面套一圈新画布。
+///
+/// 只对**已经接近整页大小**的图片生效（短边 < 设备短边的 1/3 直接跳过）——漫画书里偶尔混的小
+/// 装饰图标不该被强行拉伸成竖直长条。已经在容差内（[`PAD_ASPECT_TOLERANCE`]）不重新编码，幂等。
+pub fn pad_to_device_aspect(bytes: &[u8]) -> Option<Vec<u8>> {
+    let (fmt, (w, h)) = header_dims(bytes)?;
+    if !within_decode_budget(w, h) {
+        return None; // 极端高分辨率原图：不整个解出来，原样保留
+    }
+    if w.min(h) < MAX_SHORT_EDGE / 3 {
+        return None; // 太小，大概率是装饰图标而不是整页扫描，别硬套页面比例
+    }
+    let cur_aspect = w as f32 / h as f32;
+    if ((cur_aspect - DEVICE_PAGE_ASPECT) / DEVICE_PAGE_ASPECT).abs() <= PAD_ASPECT_TOLERANCE {
+        return None; // 已经够接近，不用补
+    }
+    let img = image::load_from_memory_with_format(bytes, fmt).ok()?.to_rgb8();
+    let (w, h) = img.dimensions();
+    let (new_w, new_h, off_x, off_y) = if cur_aspect > DEVICE_PAGE_ASPECT {
+        // 图片比页面"宽"（常见：漫画整页扫描）——宽度已经贴边，只在高度方向对称补白。
+        let new_h = (w as f32 / DEVICE_PAGE_ASPECT).round() as u32;
+        (w, new_h, 0u32, (new_h - h) / 2)
+    } else {
+        // 图片比页面"窄"，width:100% 会溢出页面——左右对称补白拉回设备长宽比防止溢出。
+        let new_w = (h as f32 * DEVICE_PAGE_ASPECT).round() as u32;
+        (new_w, h, (new_w - w) / 2, 0u32)
+    };
+    let mut canvas = image::RgbImage::from_pixel(new_w, new_h, image::Rgb([255, 255, 255]));
+    image::imageops::overlay(&mut canvas, &img, off_x as i64, off_y as i64);
+    let dyn_img = image::DynamicImage::ImageRgb8(canvas);
+    let mut out = Vec::new();
+    match fmt {
+        ImageFormat::Jpeg => JpegEncoder::new_with_quality(&mut out, JPEG_QUALITY_COMIC).encode_image(&dyn_img).ok()?,
+        ImageFormat::Png => dyn_img.write_to(&mut Cursor::new(&mut out), ImageFormat::Png).ok()?,
+        _ => return None,
+    }
+    Some(out)
+}
+
 /// 裁边判定容差：一行/列里像素两两 RGB 通道极差都 ≤ 这个值才算"纯色留白"。留够松（8）容 JPEG 压缩
 /// 噪声，但不到能吃掉真实画面渐变的地步。
 const TRIM_TOLERANCE: u8 = 8;
 /// 单边最多裁掉原图这个比例——防止极端图（比如整页近乎纯色）被误判成"全是留白"裁没内容。
-const TRIM_MAX_FRACTION: f32 = 0.15;
+/// 真机《镖人》母版库实测坐实过 0.15 太保守（2026-09-19 用户反馈"优化没把大量留白裁切完"）：
+/// 每卷开头的版权页（CIP 页，中文漫画常见排版）实际留白单边能到 22%-29%，旧阈值在 15% 就强行
+/// 停手，裁不干净。抽样 43 张真实页量出的最大值约 28.6%，0.35 留出约 6 个百分点余量；两边独立
+/// 累加最多到 0.7×边长，仍留 30% 给内容，不会把整页裁没。
+const TRIM_MAX_FRACTION: f32 = 0.35;
 
 fn row_is_uniform(img: &image::RgbImage, y: u32) -> bool {
     let w = img.width();
@@ -242,6 +306,7 @@ mod tests {
     use super::*;
     use image::{DynamicImage, GenericImageView, RgbImage};
 
+
     fn jpeg_of(w: u32, h: u32) -> Vec<u8> {
         let img = DynamicImage::ImageRgb8(RgbImage::from_fn(w, h, |x, y| {
             image::Rgb([(x % 256) as u8, (y % 256) as u8, 128])
@@ -321,7 +386,73 @@ mod tests {
         JpegEncoder::new_with_quality(&mut buf, 100).encode_image(&img).unwrap();
         let out = trim_margins(&buf).expect("大片留白应触发裁边");
         let (w, h) = image::load_from_memory(&out).unwrap().dimensions();
-        assert!(w >= 200 - 2 * 30 && h >= 200 - 2 * 30, "单边最多裁 15%，不能把画面裁没: got {w}x{h}");
+        let cap = (200.0 * TRIM_MAX_FRACTION) as u32;
+        assert!(w >= 200 - 2 * cap && h >= 200 - 2 * cap, "单边最多裁 TRIM_MAX_FRACTION，不能把画面裁没: got {w}x{h}");
+    }
+
+    #[test]
+    fn trim_margins_handles_margin_beyond_old_cap() {
+        // 真机回归（2026-09-19，《镖人》母版库反馈"优化没把大量留白裁切完"）：中文漫画常见的
+        // 版权页（CIP 页）实测单边留白能到 22%-29%（抽样见会话记录），旧的 15% 上限在这里会
+        // 强行停手、裁不干净。造一张留白比例超过旧上限、但仍在新上限内的图，确认新阈值下能
+        // 裁到位（不是卡在旧的 15% 就停）。
+        let (w, h, margin_frac) = (400u32, 600u32, 0.25f32);
+        let margin = (w as f32 * margin_frac) as u32;
+        let img = DynamicImage::ImageRgb8(RgbImage::from_fn(w, h, |x, y| {
+            if x < margin || y < margin || x >= w - margin || y >= h - margin {
+                image::Rgb([255, 255, 255])
+            } else {
+                image::Rgb([(x % 256) as u8, (y % 256) as u8, 128])
+            }
+        }));
+        let mut buf = Vec::new();
+        JpegEncoder::new_with_quality(&mut buf, 100).encode_image(&img).unwrap();
+        let out = trim_margins(&buf).expect("留白应触发裁边");
+        let (got_w, got_h) = image::load_from_memory(&out).unwrap().dimensions();
+        let old_cap = (w as f32 * 0.15) as u32;
+        assert!(got_w < w - 2 * old_cap, "25% 留白不该被旧的 15% 上限卡住: got {got_w}");
+        assert_eq!((got_w, got_h), (w - 2 * margin, h - 2 * margin), "留白在新上限内应该精确裁掉: got {got_w}x{got_h}");
+    }
+
+    #[test]
+    fn pad_to_device_aspect_adds_symmetric_top_bottom_bars_for_wide_image() {
+        // 用户明确的目标（2026-09-19）：上下留白尽量等比、左右留白尽可能接近 0。典型漫画整页
+        // 长宽比（约 0.7）比设备页面（约 0.5625）"宽"，应该在上下对称补白，左右（宽度）全程
+        // 不动——`width:100%` 本来就已经贴边，补白不该让左右留白变多。
+        let img = jpeg_of(700, 1000); // 0.7，明显偏离 0.5625
+        let out = pad_to_device_aspect(&img).expect("长宽比偏离容差应该触发补白");
+        let (w, h) = image::load_from_memory(&out).unwrap().dimensions();
+        assert_eq!(w, 700, "只加高度方向的白边，宽度（左右留白）不变");
+        assert!(h > 1000, "补白后应该更高: {h}");
+        let new_aspect = w as f32 / h as f32;
+        assert!((new_aspect - DEVICE_PAGE_ASPECT).abs() < 0.005, "补完应该正好等于设备页面比例: {new_aspect}");
+    }
+
+    #[test]
+    fn pad_to_device_aspect_adds_symmetric_left_right_bars_for_narrow_image_to_prevent_overflow() {
+        // 长宽比比设备页面更"窄/高"的图（如竖版海报）：width:100% 算出来的高度会超过页面高度、
+        // 溢出——CSS 治不了溢出，只能靠左右补白把长宽比拉回设备比例。
+        let img = jpeg_of(400, 1200); // 0.333，比 0.5625 更窄，会溢出
+        let out = pad_to_device_aspect(&img).expect("会溢出的长宽比应该触发补白");
+        let (w, h) = image::load_from_memory(&out).unwrap().dimensions();
+        assert_eq!(h, 1200, "只加宽度方向的白边，高度不变");
+        assert!(w > 400, "补白后应该更宽: {w}");
+        let new_aspect = w as f32 / h as f32;
+        assert!((new_aspect - DEVICE_PAGE_ASPECT).abs() < 0.005, "补完应该正好等于设备页面比例，不再溢出: {new_aspect}");
+    }
+
+    #[test]
+    fn pad_to_device_aspect_skips_when_already_close_enough() {
+        let (w, h) = (954u32, 1696u32); // 正好是设备屏幕比例
+        let img = jpeg_of(w, h);
+        assert!(pad_to_device_aspect(&img).is_none(), "已经贴合设备比例不该重新编码");
+    }
+
+    #[test]
+    fn pad_to_device_aspect_skips_small_decorative_icons() {
+        // 漫画书里偶尔混的小装饰图标（如章节分隔符）不该被强行拉伸成竖直长条。
+        let img = jpeg_of(100, 50); // 短边远小于 MAX_SHORT_EDGE/3
+        assert!(pad_to_device_aspect(&img).is_none(), "小图标不该被套页面比例");
     }
 
     #[test]

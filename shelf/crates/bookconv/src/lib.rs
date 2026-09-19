@@ -9,6 +9,7 @@
 pub mod article;
 pub mod check;
 pub mod comic_detect;
+pub mod comic_pdf;
 pub mod comic_split;
 pub mod convert;
 pub mod epub;
@@ -16,6 +17,7 @@ pub mod htmlproc;
 pub mod imgopt;
 pub mod netimg;
 pub mod optimize;
+pub mod pdf_ingest;
 pub mod stats;
 pub mod util;
 pub mod wash;
