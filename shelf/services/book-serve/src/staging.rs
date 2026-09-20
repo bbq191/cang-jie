@@ -348,7 +348,9 @@ impl Staging {
         let stem = name.strip_suffix(".epub").unwrap_or(name);
         let canon_title = bookconv::naming::has_volume_marker(stem).then(|| bookconv::naming::canonical_book_name(stem));
         self.mark_cancellable(name);
-        let result = optimize::optimize_epub_file_streaming_ctl(&p, &tmp, &OptimizeOpts { wash: Some(WashOpts::default()), footnote: FootnoteMode::Anchor }, canon_title.as_deref(), &|| self.is_cancelled(name), &mut on_progress);
+        let opts = OptimizeOpts { wash: Some(WashOpts::default()), footnote: FootnoteMode::Anchor };
+        let cancel = || self.is_cancelled(name);
+        let result = optimize::StreamingOptimize::new(&p, &tmp, &opts).title(canon_title.as_deref()).cancel(&cancel).run(&mut on_progress);
         let rep = match result {
             Ok(r) => r,
             Err(e) => {
