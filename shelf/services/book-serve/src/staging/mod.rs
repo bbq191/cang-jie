@@ -1,0 +1,249 @@
+//! 母版库（中间层暂存池）领域模块——三层架构（内容源 → **母版库** → 读器）的交汇点。
+//! 三个正交动作各一个方法：**入库**（`stage_new` / `stage_from_path` / [`StagingStore`] 上传模板 / `fetch_article`）、
+//! **优化**（`optimize`，只对 EPUB）、**落库**（`deliver` 投 xochitl；KOReader 由 koreader-serve 从同一目录 adopt，
+//! 之后前端调 `mark_delivered` 记一笔）。落库＝纯复制母版字节（两读器同字节可对照），母版默认保留可反复落库。
+//! 目录 `$XDG_STATE_HOME/shelf/books/staging/`（/home 分区，重启/OTA 不丢；**不套 LRU 淘汰**，留住用户还没落库的书）。
+//! 落库记录是同目录隐藏 sidecar `.<name>.delivered`（`sidecar` 模块管读写；本模块只在落库/删书时调它）。
+use bookconv::optimize::{self, FootnoteMode, OptimizeOpts};
+use crate::mkdir::MkdirQueue;
+use crate::ops::OpRegistry;
+use crate::render_check;
+use crate::sidecar::{self, Delivered, RenderCheck};
+use bookconv::wash::WashOpts;
+use serde::Serialize;
+use rmsvc_core::asset::{AssetItem, AssetStore};
+use rmsvc_core::formats::{self, BOOK_EXTS};
+use rmsvc_core::fs::{plain_name, unique_path, write_atomic};
+use rmsvc_core::xochitl::{Delivery, Xochitl};
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+// 按职责拆成子模块（原 `staging.rs` 一个文件 1800+ 行）：`Staging` 的方法按动作分散在各子模块的 `impl Staging` 里，
+// 对外路径（`crate::staging::Staging` 等）不变；子模块内的私有项以 `pub(super)` 提供给兄弟模块与测试。
+mod deliver;
+mod intake;
+mod library;
+mod optimizing;
+
+use self::library::ProbeCache;
+
+#[cfg(test)]
+mod tests;
+
+
+/// 忙锁占用时的统一提示——优化/落库/删除三处几乎逐字重复过（2026-09-19 代码质量审计）。`extra`
+/// 是各自独有的后缀（删除那处要额外提示"再删除"），其余传空串。
+fn busy_err(name: &str, extra: &str) -> String {
+    format!("《{name}》正在处理中，请稍候{extra}")
+}
+
+/// 母版库一本书的展示条目。`format`（epub / pdf / cbz / other）从扩展名判、优化等级从内埋标记判（轻量只读中央目录）。
+/// `rename_all = "camelCase"`：既有字段全是单词、camelCase 变换不影响它们的 JSON key，这次
+/// 新增的 `pdf_source` 借这个转成前端习惯的 `pdfSource`，不用单独给这一个字段挂 `rename`。
+#[derive(Serialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct StagingEntry {
+    pub name: String,
+    pub bytes: u64,
+    pub format: &'static str,
+    /// 是否**当前版本的完整优化**（含清洗层）。`level` 更细：full / core（只跑核心遍，如网文·格式转换产物）/ old / none。
+    pub optimized: bool,
+    pub level: &'static str,
+    /// 入库时间（unix 秒），列表最新在前。
+    pub mtime: u64,
+    /// 落库记录。时间早于 `mtime`（之后又优化过）= 母版已变，UI 标"旧"。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub delivered: Option<Delivered>,
+    /// 是否正有一个异步操作（「优化」或「落库」）在这条目上跑——UI 据此禁用删除/落库/再次优化等按钮，
+    /// 防止双击/并发操作同一条目（2026-09-18 真机反馈：优化耗时可能到分钟级，同步阻塞体验像卡死；
+    /// 2026-09-19 落库同理补上——超限漫画按卷拆分要挨个建包+上传，同样能拖到分钟级）。
+    #[serde(default)]
+    pub busy: bool,
+    /// 这份 EPUB 是不是入库 PDF 转出来的（`format=="epub"` 才有意义；跟 `optimized`/`level` 的
+    /// 常规 full/core/old/none 阶梯正交——PDF 转出来是一次性产物，视为已经完成，不再进那条
+    /// 阶梯，也不再显示「优化」按钮，见 `looks_like_pdf_derived_epub` 文档）。
+    #[serde(default)]
+    pub pdf_source: bool,
+}
+
+/// 投原生成功后交给自检线程的计划：投书时刻（毫秒，圈"之后进库"的候选）+ 书名 + 期望页数。
+#[derive(Clone, Debug, PartialEq)]
+pub struct RenderPlan {
+    pub name: String,
+    pub title: Option<String>,
+    pub expected: u64,
+    pub since_ms: u64,
+}
+
+/// `deliver` 的结果：回执文案 + （EPUB 才有）渲染自检计划。
+#[derive(Debug, PartialEq)]
+pub struct DeliverOutcome {
+    pub message: String,
+    pub render: Option<RenderPlan>,
+}
+
+/// `fetch_article` 的结果：落地名 + 标题 + 同步优化态（没请求优化＝两个字段都是"未发生"，不是"失败"）。
+#[derive(Debug, PartialEq)]
+pub struct FetchArticleOutcome {
+    pub name: String,
+    pub title: String,
+    pub optimized: bool,
+    pub optimize_error: Option<String>,
+}
+
+/// 落库去向（记录用）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Reader {
+    Native,
+    Koreader,
+}
+
+impl Reader {
+    pub fn parse(s: &str) -> Result<Reader, String> {
+        match s {
+            "native" => Ok(Reader::Native),
+            "koreader" => Ok(Reader::Koreader),
+            _ => Err("target 只能是 native / koreader".into()),
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct Staging {
+    dir: PathBuf,
+    xochitl: Arc<Xochitl>,
+    /// 投原生体积门（字节，0=不拦）：xochitl `/upload` 超限会直接断连，先拦下来给指引。
+    native_limit: u64,
+    /// 正在跑异步操作（「优化」/「落库」）的登记簿：忙锁 + 取消协作，见 [`crate::ops`]。
+    ops: OpRegistry,
+    /// 列表里"优化等级 / 是否 PDF 转来"的判定缓存：判定要开 zip 读中央目录，书多时前端每 3 秒轮询一次
+    /// 列表会持续吃 CPU（电池）。文件内容只随「优化」改写——按（大小, 修改时间）失效，命中就不再碰文件。
+    probes: Arc<std::sync::Mutex<std::collections::HashMap<String, ProbeCache>>>,
+}
+
+/// 上传模板适配：母版库作为 [`AssetStore`]——扩展名门＝书籍格式白名单，install＝同分区 rename 入库。
+/// 暂存目录应传 spool 的 `.work/`（与母版库同分区），见 `AssetUploadFlow::in_dir`。
+pub struct StagingStore<'a>(pub &'a Staging);
+
+impl AssetStore for StagingStore<'_> {
+    fn kind(&self) -> &'static str {
+        "book"
+    }
+    fn allowed_ext(&self) -> &'static [&'static str] {
+        BOOK_EXTS
+    }
+    fn install(&self, name: &str, staged: &Path) -> Result<AssetItem, String> {
+        let landed = self.0.stage_from_path(name, staged)?;
+        let bytes = std::fs::metadata(self.0.dir.join(&landed)).map(|m| m.len()).unwrap_or(0);
+        Ok(AssetItem::plain(landed, bytes))
+    }
+    fn list(&self) -> Vec<AssetItem> {
+        self.0.list().into_iter().map(|e| AssetItem::plain(e.name, e.bytes)).collect()
+    }
+    fn remove(&self, name: &str) -> Result<(), String> {
+        self.0.remove(name)
+    }
+    fn reject_message(&self) -> String {
+        reject_message()
+    }
+    fn success_message(&self, requested: &str, item: &AssetItem) -> String {
+        if item.name == requested {
+            "已入母版库".into()
+        } else {
+            // 落地名与请求名不同有两种原因：EPUB 按 `书名 - N卷` 规范命名，或母版库里已有同名（加数字前缀）。
+            // 规范命名是常态，不该说成"已有同名"；只有落地名不是规范名的改动才是撞名。
+            if item.name == canonical_staged_name(requested) {
+                format!("已入母版库（按规范命名存为 {}）", item.name)
+            } else {
+                format!("已入母版库（已有同名，存为 {}）", item.name)
+            }
+        }
+    }
+}
+
+/// 非书籍文件的拒收文案（上传门与 inbox 追平同一句）。
+pub fn reject_message() -> String {
+    format!("不是书籍格式，母版库只收 {}", formats::dotted(BOOK_EXTS))
+}
+
+fn canonical_staged_name(name: &str) -> String {
+    if formats::ext_of(name) == "epub" {
+        bookconv::naming::canonical_file_name(name)
+    } else {
+        name.to_string()
+    }
+}
+
+impl Staging {
+    pub fn new(dir: PathBuf, xochitl: Arc<Xochitl>, native_limit: u64) -> Staging {
+        Staging {
+            dir,
+            xochitl,
+            native_limit,
+            ops: OpRegistry::default(),
+            probes: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+        }
+    }
+    /// 这条目当前是否有异步操作在跑。
+    pub fn is_busy(&self, name: &str) -> bool {
+        self.ops.is_busy(name)
+    }
+    /// 尝试给条目加忙锁；已经忙着 → false（调用方据此拒绝这次操作，不排队不覆盖）。
+    pub(crate) fn try_start_busy(&self, name: &str) -> bool {
+        self.ops.try_start(name)
+    }
+    pub(crate) fn end_busy(&self, name: &str) {
+        self.ops.end(name);
+    }
+    /// 当前这步操作声明"我会检查取消标记"。
+    pub(crate) fn mark_cancellable(&self, name: &str) {
+        self.ops.mark_cancellable(name);
+    }
+    pub(crate) fn is_cancelled(&self, name: &str) -> bool {
+        self.ops.is_cancelled(name)
+    }
+    /// 请求取消这本书正在跑的优化/投递。`Ok(true)`＝已登记，会在下一个检查点停下；`Ok(false)`＝这一步无法中途停止
+    /// （如单文件上传）；`Err`＝这本书当前没有在处理。
+    pub fn request_cancel(&self, name: &str) -> Result<bool, String> {
+        self.ops.request_cancel(name)
+    }
+    pub fn dir(&self) -> &Path {
+        &self.dir
+    }
+    pub fn ensure(&self) -> std::io::Result<()> {
+        std::fs::create_dir_all(&self.dir)
+    }
+
+    /// 母版库里某本书的路径（校验单段文件名）。
+    fn path_of(&self, name: &str) -> Result<PathBuf, String> {
+        Ok(self.dir.join(plain_name(name)?))
+    }
+    /// 母版库里是否还有这本书。
+    pub fn has(&self, name: &str) -> bool {
+        self.existing(name).is_ok()
+    }
+    fn existing(&self, name: &str) -> Result<PathBuf, String> {
+        let p = self.path_of(name)?;
+        if !p.is_file() {
+            return Err("母版库里没有这本书".into());
+        }
+        Ok(p)
+    }
+
+    /// [`Self::spawn_optimize`]/[`Self::spawn_deliver`] 共用的"起后台线程"外壳（2026-09-19 代码
+    /// 质量审计：两处 `thread::spawn`+`end_busy`+`bus.publish` 逐行同构，业务内容——调
+    /// `optimize`/`deliver`、写哪个 `sidecar::*Check`、`spawn_deliver` 还要另起渲染自检子线程——
+    /// 本身不同，不下沉进来，留在各自的 `body` 闭包里。`body` 内部对业务调用本身的 `catch_unwind`
+    /// （把 panic 转成带具体原因的 `Err` 写进 sidecar）**保留在各自闭包里、不合并**——两处 panic
+    /// 提示文案不同（"优化过程内部异常"/"落库过程内部异常"），硬并到这一层反而丢信息；这里外层
+    /// 再包一层 `catch_unwind` 只是兜底 `body` 自身（比如 sidecar 写入）意外 panic 时仍能
+    /// `end_busy`+`publish`，不影响正常路径的行为。
+    fn spawn_bg(&self, name: &str, bus: Arc<rmsvc_core::events::EventBus>, body: impl FnOnce(&Staging, &str, &Arc<rmsvc_core::events::EventBus>) + Send + 'static) {
+        let (this, name) = (self.clone(), name.to_string());
+        std::thread::spawn(move || {
+            let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| body(&this, &name, &bus)));
+            this.end_busy(&name);
+            bus.publish("books", "staging");
+        });
+    }
+}
