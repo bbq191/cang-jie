@@ -1,4 +1,9 @@
 const $=(s,r=document)=>r.querySelector(s);
+/* HTML 转义：**所有外部数据**（文件名、字体内部名、书里的划线/手写转写文本、AI 回答、服务端错误文案）插进
+   innerHTML/insertAdjacentHTML/属性值之前必须过它。文件名允许含 `<`（rmsvc_core::fs::plain_name 只拒 `/` `\` 和
+   开头的 `.`），抓取的网文标题、字体 name 表、OCR/大模型输出也都是外部内容——不转义就是存储型 XSS。
+   textContent/el({text}) 天然安全，不需要它。 */
+const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const fmtB=n=>n>1048576?(n/1048576).toFixed(1)+' MB':n>1024?(n/1024).toFixed(0)+' KB':n+' B';
 // 小徽章：renderManage 的「基石与模块」列表用。
 const badge=(t,ok)=>`<span class="badge ${ok?'on':'off'}">${t}</span>`;
@@ -122,7 +127,7 @@ function uploader(box,urlOf,queryOf,okExt,onFinish,dedupeApi){
     const ok=files.filter(f=>f.st==='ok').length,bad=files.filter(f=>f.st==='bad').length;
     sum.innerHTML=files.length?T('common.uploadSummary',{ok,total:files.length,badPart:bad?T('common.uploadBadPart',{bad}):''}):'';};
   const render=()=>{list.innerHTML='';files.forEach(f=>{const li=document.createElement('li');li.dataset.k=f.k;li.className=f.st||'';
-      li.innerHTML=`<div class="name">${f.file.name} <span class="small">${fmtB(f.file.size)}</span> <button class="btn x" type="button" title="${T('common.remove')}" aria-label="${T('common.remove')}">×</button></div><progress value="${f.st==='ok'?100:0}" max="100"></progress><div class="msg">${f.msg||T('common.waitingUpload')}</div>`;
+      li.innerHTML=`<div class="name">${esc(f.file.name)} <span class="small">${fmtB(f.file.size)}</span> <button class="btn x" type="button" title="${T('common.remove')}" aria-label="${T('common.remove')}">×</button></div><progress value="${f.st==='ok'?100:0}" max="100"></progress><div class="msg">${esc(f.msg||T('common.waitingUpload'))}</div>`;
       li.querySelector('.x').onclick=()=>{files=files.filter(x=>x.k!==f.k);render()};list.appendChild(li)});summary()};
   const add=fl=>{for(const f of fl){const rej=okExt&&!okExt.some(e=>f.name.toLowerCase().endsWith(e));
       files.push({file:f,k:Math.random().toString(36).slice(2),rej,st:rej?'bad':'',msg:rej?T('common.rejectedExt',{ext:okExt.join(' / ')}):''})}render()};
@@ -194,7 +199,7 @@ const stgClean=n=>{const s=n.replace(/\.(epub|pdf|cbz)$/i,'');return (s.split(' 
 /* 搜索框的下拉建议：**书名 = 第一个 "-" 之前的内容**（用户 2026-09-20 指定）。"亂馬1⁄2 典藏版 - 07卷" → "亂馬1⁄2 典藏版"，
    同一本书的多卷合成一条；选中后按名字包含匹配，正好筛出这本书的所有卷。 */
 const stgTitle=n=>stgClean(n).split('-')[0].trim();
-const stgNameOptions=items=>[...new Set(items.map(it=>stgTitle(it.name)).filter(Boolean))].map(n=>`<option value="${n.replace(/"/g,'&quot;')}">`).join('');
+const stgNameOptions=items=>[...new Set(items.map(it=>stgTitle(it.name)).filter(Boolean))].map(n=>`<option value="${esc(n)}">`).join('');
 const stgIsTodo=it=>(it.format==='epub'||it.format==='pdf')&&!it.optimized;
 /* 一本书的徽章 HTML + 一条可见的状态文字（失败原因等）。逻辑沿用旧列表：优化档位/PDF 来源/落库记录/渲染自检/忙态。 */
 function stgBadges(it,busy){
@@ -213,12 +218,12 @@ function stgBadges(it,busy){
   // 卡在 pending 但 busy=false＝上次处理被服务/设备重启打断（2026-09-19 真机撞过），不是"还在跑"。
   const stalePending=k=>k&&k.status==='pending'&&!it.busy;
   const fails=(stalePending(oc)||stalePending(dc)?`<span class="badge off" title="${T('transfer.staging.stalePending.title')}">${T('transfer.staging.stalePending.badge')}</span>`:'')
-    +(oc&&oc.status==='failed'?`<span class="badge off" title="${oc.message}">${T('transfer.staging.optimizeFailed.badge')}</span>`:'')
-    +(dc&&dc.status==='failed'?`<span class="badge off" title="${dc.message}">${T('transfer.staging.deliverFailed.badge')}</span>`:'');
+    +(oc&&oc.status==='failed'?`<span class="badge off" title="${esc(oc.message)}">${T('transfer.staging.optimizeFailed.badge')}</span>`:'')
+    +(dc&&dc.status==='failed'?`<span class="badge off" title="${esc(dc.message)}">${T('transfer.staging.deliverFailed.badge')}</span>`:'');
   const msg=dc&&dc.status==='failed'?T('transfer.staging.deliverFailedPrefix')+dc.message
     :oc&&oc.status==='failed'?T('transfer.staging.optimizeFailedPrefix')+oc.message
     :(oc&&oc.status==='cancelled')||(dc&&dc.status==='cancelled')?T('stg.row.cancelled'):(stalePending(oc)||stalePending(dc))?T('transfer.staging.stalePending.title'):'';
-  return {html:`<span class="badge fmt">${fmt}</span><span class="stg-size">${fmtB(it.bytes)}</span>${st}${ps}${dl}${rb}${busy?'':fails}`,msg};
+  return {html:`<span class="badge fmt">${esc(fmt)}</span><span class="stg-size">${fmtB(it.bytes)}</span>${st}${ps}${dl}${rb}${busy?'':fails}`,msg};
 }
 /* 一行。ctx: {picked,localBusy,gatedPending,gatedActive,batchQueued,bs,koInstalled,xFolder(),kFolder(),syncSel(),render(),refresh()} */
 function stgRow(it,ctx){
@@ -407,7 +412,7 @@ function renderTransfer(sec){sec.innerHTML=`
       bar.hidden=false;bar.className='stgbar done';
       const fail=bs.failed.length;
       bar.appendChild(el('div',{class:'stgbar-main'},[el('span',{text:T('stg.batch.finished',{title:batchTitle(bs.action||'optimize'),ok:bs.done-fail,fail})})]));
-      if(fail)bar.appendChild(el('details',{class:'small stgbar-fails'},[el('summary',{text:T('stg.batch.failedN',{n:fail})}),el('div',{html:bs.failed.map(f=>`<div>${stgClean(f.name)}：${f.message}</div>`).join('')})]));
+      if(fail)bar.appendChild(el('details',{class:'small stgbar-fails'},[el('summary',{text:T('stg.batch.failedN',{n:fail})}),el('div',{html:bs.failed.map(f=>`<div>${esc(stgClean(f.name))}：${esc(f.message)}</div>`).join('')})]));
       const x=el('button',{class:'btn',type:'button',text:T('stg.batch.dismiss')});x.onclick=()=>{dismissedSig=sig;renderBar()};bar.appendChild(x);
     }else{bar.hidden=true}};
   const render=()=>{
@@ -427,7 +432,7 @@ function renderTransfer(sec){sec.innerHTML=`
     if(!bs.running&&pollTimer){clearInterval(pollTimer);pollTimer=null}
     fillSel('folder',s.ok?s.xochitlFolders||[]:[],'folder');
     fillSel('kfolder',(kb.items||[]).filter(x=>x.kind==='dir').map(x=>x.name),'kfolder');
-    if(d.ok===false){g('stglist').innerHTML=`<li class="small" style="color:var(--bad)">${T('transfer.staging.unavailable',{msg:d.message||T('transfer.staging.notOpen')})}</li>`;g('stgcap').textContent='';return}
+    if(d.ok===false){g('stglist').innerHTML=`<li class="small" style="color:var(--bad)">${esc(T('transfer.staging.unavailable',{msg:d.message||T('transfer.staging.notOpen')}))}</li>`;g('stgcap').textContent='';return}
     items=d.items||[];const tot=items.reduce((a,b)=>a+b.bytes,0);g('stgcap').textContent=items.length?T('transfer.staging.capSummary',{count:items.length,size:fmtB(tot)}):'';
     // 清掉选中集合里的幽灵条目（书被改名/删除后旧名字再也选不中也取消不掉）
     const names=new Set(items.map(it=>it.name));for(const n of [...picked])if(!names.has(n))picked.delete(n);
@@ -461,10 +466,10 @@ const TABS={
    onRender:async(sec,refresh,fl)=>{
      // 中文缺字回退链：覆盖率≥8% 的中文字体，按覆盖率降序
      const cjk=(fl.items||[]).filter(it=>((it.extra||{}).cjkPct||0)>=8).sort((a,b)=>(b.extra.cjkPct||0)-(a.extra.cjkPct||0));
-     const fb=$('#fbchain',sec);fb.style.display='';fb.innerHTML=cjk.length?T('assets.fonts.fallbackChain',{chain:cjk.map(it=>`${it.name} <span class="small">${it.extra.cjkPct}%</span>`).join(' → ')}):T('assets.fonts.noCjkWarn');
+     const fb=$('#fbchain',sec);fb.style.display='';fb.innerHTML=cjk.length?T('assets.fonts.fallbackChain',{chain:cjk.map(it=>`${esc(it.name)} <span class="small">${esc(it.extra.cjkPct)}%</span>`).join(' → ')}):T('assets.fonts.noCjkWarn');
      const fst=await j('/api/fonts/status');const eb=$('#embold',sec);if(fst.ok){eb.checked=!!fst.emboldenCjkFallback;eb.onchange=async()=>{const r=await j('/api/fonts/config',{method:'PUT',body:JSON.stringify({emboldenCjkFallback:eb.checked})});if(r.ok===false){toast(r.message);eb.checked=!eb.checked}}}},
    row:(it,left,right,refresh)=>{const ex=it.extra||{};
-     left.innerHTML=`${it.name}${ex.names&&ex.names.cn&&ex.names.cn!==it.name?' <span class="small">'+ex.names.cn+'</span>':''}${ex.files&&ex.files.length>1?' <span class="small">×'+ex.files.length+'</span>':''}`;
+     left.innerHTML=`${esc(it.name)}${ex.names&&ex.names.cn&&ex.names.cn!==it.name?' <span class="small">'+esc(ex.names.cn)+'</span>':''}${ex.files&&ex.files.length>1?' <span class="small">×'+ex.files.length+'</span>':''}`;
      right.insertAdjacentHTML('beforeend',cjkBadge(ex.cjkPct)+(ex.fontconfigRef?`<span title="${T('assets.fonts.fallbackRefTitle')}">⚠</span>`:''));
      right.appendChild(delBtn(T('assets.fonts.deleteConfirm',{name:it.name,filesNote:ex.files&&ex.files.length>1?T('assets.fonts.filesNote',{count:ex.files.length}):'',suffix:ex.fontconfigRef?T('assets.fonts.deleteSuffixFallback'):T('assets.fonts.deleteSuffixNormal')}),'/api/fonts/'+encodeURIComponent(it.name),refresh))}})}},
  'koreader-serve':{title:'KOReader',render(sec){sec.innerHTML=`
@@ -493,7 +498,7 @@ const TABS={
   uploader(ups[1],()=>'/api/koreader/dicts',()=>({name:$('#dictname',sec).value.trim()}),DICT_EXT,()=>refresh());
   const refresh=async()=>{
     const [s,f,dc]=await Promise.all([j('/api/koreader/status'),j('/api/koreader/fonts'),j('/api/koreader/dicts')]);
-    $('#ks',sec).innerHTML=s.ok?`<b>${T('koreader.status.installed')}</b><span>${s.installed?T('common.yes'):T('common.no')} ${s.version?'('+s.version+')':''}</span><b>${T('koreader.status.running')}</b><span>${s.running?T('koreader.status.runningYes'):T('common.no')}</span><b>${T('koreader.status.installedCount')}</b><span>${T('koreader.status.countLabel',{fonts:s.fonts,dicts:s.dicts||0})}</span>`:`<span>${s.message}</span>`;
+    $('#ks',sec).innerHTML=s.ok?`<b>${T('koreader.status.installed')}</b><span>${s.installed?T('common.yes'):T('common.no')} ${s.version?'('+esc(s.version)+')':''}</span><b>${T('koreader.status.running')}</b><span>${s.running?T('koreader.status.runningYes'):T('common.no')}</span><b>${T('koreader.status.installedCount')}</b><span>${T('koreader.status.countLabel',{fonts:s.fonts,dicts:s.dicts||0})}</span>`:`<span>${esc(s.message)}</span>`;
     fillList($('#kf',sec),f.items||[],(it,left,right)=>{left.textContent=it.name;right.insertAdjacentHTML('beforeend',cjkBadge(it.cjkPct)+`<span>${fmtB(it.bytes)}</span>`);right.appendChild(delBtn(T('koreader.fonts.deleteConfirm',{name:it.name}),'/api/koreader/fonts/'+encodeURIComponent(it.name),refresh))},T('koreader.fonts.emptyHint'));
     fillList($('#kd',sec),dc.items||[],(it,left,right)=>{left.textContent='📖 '+it.name;right.textContent=T('koreader.dicts.countSuffix',{count:it.ifo})},T('koreader.dicts.emptyHint'))};
   refresh();sec.refresh=refresh;subtabs(sec)}},
@@ -506,7 +511,7 @@ const TABS={
    row:(it,left,right,refresh)=>{const cur=(it.extra||{}).current;
      // alt="" 原来把这张图当装饰性处理，但壁纸缩略图本身就是内容（"这张壁纸长什么样"），屏幕阅读器
      // 会整个跳过（2026-09-09 审计发现）；文件名本身当描述最直接，跟右边视觉上显示的文字一致。
-     left.innerHTML=`<img src="/api/wallpapers/${encodeURIComponent(it.name)}" alt="${T('wallpaper.thumbAlt',{name:it.name})}" style="height:3.4em;border-radius:.3em;border:1px solid var(--line);margin-right:.6em;vertical-align:middle">${it.name}`;
+     left.innerHTML=`<img src="/api/wallpapers/${encodeURIComponent(it.name)}" alt="${esc(T('wallpaper.thumbAlt',{name:it.name}))}" style="height:3.4em;border-radius:.3em;border:1px solid var(--line);margin-right:.6em;vertical-align:middle">${esc(it.name)}`;
      right.insertAdjacentHTML('beforeend',`<span>${fmtB(it.bytes)}</span>`+(cur?`<span class="badge on">${T('wallpaper.current')}</span>`:''));
      if(!cur){const b=document.createElement('button');b.className='btn';b.textContent=T('wallpaper.use');guardClick(b,async()=>{const r=await j('/api/wallpapers/current',{method:'PUT',body:JSON.stringify({name:it.name})});if(r.ok===false){toast(r.message||T('wallpaper.setFailed'));return}refresh()});right.appendChild(b);
        right.appendChild(delBtn(T('wallpaper.deleteConfirm',{name:it.name}),'/api/wallpapers/'+encodeURIComponent(it.name),refresh))}}})}}
@@ -658,7 +663,7 @@ function renderNotes(sec){sec.innerHTML=`
       // 收进去了没——归档/撤销后这条已经不在活条目集合里，没法再逆推"当初有没有被打进那次生成"，
       // 只能诚实地给"这一章大致是什么状态"这个参考信息，用户反馈"回收站该显示导出到哪里"）。
       row.innerHTML=`<span class="badge">${T(STATUS_NAMES[e.status])||e.status}</span><span class="badge">${DEST_ICON[dv]()}</span>${syncBadges(chSync,dv)}
-        <div class="txt">p.${e.page_index+1}${e.chapter_title?' · '+e.chapter_title:''}<br><span class="q">${text}</span>${e.status==='revoked'?`<br><span class="small">${T('notes.trash.revokedHint')}</span>`:''}</div>
+        <div class="txt">p.${e.page_index+1}${e.chapter_title?' · '+esc(e.chapter_title):''}<br><span class="q">${esc(text)}</span>${e.status==='revoked'?`<br><span class="small">${T('notes.trash.revokedHint')}</span>`:''}</div>
         <button class="btn" data-restore>${T('notes.trash.restoreBtn')}</button>`;
       guardClick(row.querySelector('[data-restore]'),async()=>{if(!(await restoreOne(e.id)))return;await reloadBook(renderTrash,renderBrowse,renderBook)});
       trashList.appendChild(row)})};
@@ -725,12 +730,12 @@ function renderNotes(sec){sec.innerHTML=`
     const groups=new Map();mined.forEach(e=>{const k=e.page_index;if(!groups.has(k))groups.set(k,[]);groups.get(k).push(e)});
     const recency=k=>Math.max(...groups.get(k).map(e=>e.updated));
     [...groups.keys()].sort((a,b)=>recency(b)-recency(a)).forEach(k=>{const es=groups.get(k).sort((a,b)=>(a.ink?a.ink.bbox[1]:0)-(b.ink?b.ink.bbox[1]:0));
-      const card=document.createElement('div');card.className='card';card.innerHTML=`<h3 style="margin-top:0">${T('notes.pageHeading',{page:k+1})}${es[0].chapter_title?' · '+es[0].chapter_title:''} <span class="small">${T('notes.entryCount',{count:es.length})}</span></h3>`;
+      const card=document.createElement('div');card.className='card';card.innerHTML=`<h3 style="margin-top:0">${T('notes.pageHeading',{page:k+1})}${es[0].chapter_title?' · '+esc(es[0].chapter_title):''} <span class="small">${T('notes.entryCount',{count:es.length})}</span></h3>`;
       es.forEach(e=>{const row=document.createElement('div');row.className='entry';
         row.innerHTML=`<div class="entry-body">
           <div class="entry-crop">${cropHtml(e)}</div>
           <div class="entry-main">
-            ${e.quote?`<div class="entry-quote">「${e.quote.text}」</div>`:''}
+            ${e.quote?`<div class="entry-quote">「${esc(e.quote.text)}」</div>`:''}
             <div class="entry-ops"><div class="grp"><button class="btn pri" data-a="request">${T('notes.browse.request')}</button><button class="btn" data-a="skip">${T('notes.browse.skip')}</button></div></div>
           </div></div>`;
         row.querySelector('[data-a="request"]').onclick=()=>triage(e.id,'request');
@@ -824,7 +829,7 @@ function renderNotes(sec){sec.innerHTML=`
     const k=selectedChapter,es=groups.get(k).sort((a,b)=>a.page_index-b.page_index||(a.ink?a.ink.bbox[1]:0)-(b.ink?b.ink.bbox[1]:0));
     const s=k>=0?syncMap.get(k):null;
     const card=document.createElement('div');card.className='card';
-    card.innerHTML=`<h3 style="margin-top:0">${k<0?T('notes.unfiledChapterParen'):T('notes.chapterHeadingTitled',{n:k+1,title:es[0].chapter_title||''})} <span class="small">${T('notes.entryCount',{count:es.length})}</span></h3>${k>=0?`<div class="row"><button class="btn pri" data-sync title="${T('notes.pushChapterTitle')}">${T('notes.pushChapterBtn')}</button>${syncBadges(s)}<span class="small" data-genmsg></span></div>`:''}<div data-body></div>`;
+    card.innerHTML=`<h3 style="margin-top:0">${k<0?T('notes.unfiledChapterParen'):esc(T('notes.chapterHeadingTitled',{n:k+1,title:es[0].chapter_title||''}))} <span class="small">${T('notes.entryCount',{count:es.length})}</span></h3>${k>=0?`<div class="row"><button class="btn pri" data-sync title="${T('notes.pushChapterTitle')}">${T('notes.pushChapterBtn')}</button>${syncBadges(s)}<span class="small" data-genmsg></span></div>`:''}<div data-body></div>`;
     const body=card.querySelector('[data-body]');
     if(k>=0){
       const syncBtn=card.querySelector('[data-sync]'),msg=card.querySelector('[data-genmsg]'),row=card.querySelector('.row');
@@ -861,7 +866,7 @@ function renderNotes(sec){sec.innerHTML=`
       const dv=e.destination||'both';
       row.innerHTML=`
         <div class="entry-head">
-          <span>p.${e.page_index+1}${e.subhead?' · '+e.subhead:''}</span>
+          <span>p.${e.page_index+1}${e.subhead?' · '+esc(e.subhead):''}</span>
           <span class="badge">${T(STYLE_NAMES[e.style])||e.style}</span>
           ${syncBadges(s,dv)}
           <span class="badge ${e.status==='reviewed'?'on':''}" style="margin-left:auto">${T(STATUS_NAMES[e.status])||e.status}</span>
@@ -869,8 +874,8 @@ function renderNotes(sec){sec.innerHTML=`
         <div class="entry-body">
           <div class="entry-crop">${cropHtml(e)}</div>
           <div class="entry-main">
-            ${e.quote?`<div class="entry-quote">「${e.quote.text}」</div>`:''}
-            <textarea class="entry-text" rows="2" placeholder="${draft?T('notes.draftPlaceholder',{draft}):T('notes.waitingTranscribe')}">${e.text||draft}</textarea>
+            ${e.quote?`<div class="entry-quote">「${esc(e.quote.text)}」</div>`:''}
+            <textarea class="entry-text" rows="2" placeholder="${esc(draft?T('notes.draftPlaceholder',{draft}):T('notes.waitingTranscribe'))}">${esc(e.text||draft)}</textarea>
             <div class="small">${T('notes.styleHint')}</div>
             <div class="entry-ops">
               <div class="grp"><button class="btn" data-dest title="${T('notes.dest.switchTitle')}">${DEST_ICON[dv]()} <span aria-hidden="true" style="opacity:.55">⟳</span></button></div>
@@ -879,10 +884,10 @@ function renderNotes(sec){sec.innerHTML=`
             <div class="small" data-txstat></div>
             <div class="entry-ask">
               <div class="row"><label class="toggle"><input type="checkbox" data-ask ${e.ask_ai?'checked':''}> ${T('notes.askAi')}</label>
-                <input type="text" data-question placeholder="${T('notes.questionPlaceholder')}" value="${e.question?e.question.replace(/"/g,'&quot;'):''}" style="flex:1;min-width:9em" ${e.ask_ai?'':'disabled'}>
+                <input type="text" data-question placeholder="${T('notes.questionPlaceholder')}" value="${e.question?esc(e.question):''}" style="flex:1;min-width:9em" ${e.ask_ai?'':'disabled'}>
                 <button class="btn pri" data-askbtn ${e.ask_ai&&e.question?'':'disabled'}>${T('notes.askBtn')}</button></div>
               <div class="small" data-askstat></div>
-              ${e.answer?`<div class="entry-answer"><b>${T('notes.aiAnswer')}</b>（${T('notes.askedLabel',{brief:e.answer.brief})}）<br>${e.answer.text}</div>`:''}
+              ${e.answer?`<div class="entry-answer"><b>${T('notes.aiAnswer')}</b>（${esc(T('notes.askedLabel',{brief:e.answer.brief}))}）<br>${esc(e.answer.text).replace(/\n/g,'<br>')}</div>`:''}
             </div>
           </div>
         </div>`;
@@ -931,7 +936,7 @@ function renderNotes(sec){sec.innerHTML=`
     importNavBtn.hidden=!show;importPanel.hidden=!show;
   };
   const refresh=async()=>{if(Date.now()<holdRefreshUntil)return; // 正显示着结果提示，别被 SSE 抢跑冲掉（见 holdRefreshUntil 声明处注释）
-    const d=await j('/api/ink/books');const cur=sel.value;sel.innerHTML=(d.items||[]).map(b=>`<option value="${b.uuid}">${b.title}（${b.entries}）</option>`).join('')||`<option value="">${T('notes.noBooks')}</option>`;
+    const d=await j('/api/ink/books');const cur=sel.value;sel.innerHTML=(d.items||[]).map(b=>`<option value="${esc(b.uuid)}">${esc(b.title)}（${b.entries}）</option>`).join('')||`<option value="">${T('notes.noBooks')}</option>`;
     if(cur&&[...sel.options].some(o=>o.value===cur))sel.value=cur;await loadBook();await syncImportVisible()};
   refresh();sec.refresh=refresh;subtabs(sec)}
 
@@ -985,21 +990,21 @@ function mountModelPanel(root,seg,title,icon,showAuto){
     presets=c.presets||[];
     vendorSel.disabled=false;
     const vendors=[...new Set(presets.map(p=>p.provider))];
-    vendorSel.innerHTML=vendors.map(v=>`<option value="${v}">${T(PROVIDER_NAMES[v])||v}</option>`).join('')+`<option value="custom">${T('models.customVendor')}</option>`;
+    vendorSel.innerHTML=vendors.map(v=>`<option value="${esc(v)}">${esc(T(PROVIDER_NAMES[v])||v)}</option>`).join('')+`<option value="custom">${T('models.customVendor')}</option>`;
     const activeVendor=c.activePreset==='custom'?'custom':(presets.find(p=>p.id===c.activePreset)||{}).provider||'custom';
     vendorSel.value=activeVendor;
     const isCustom=activeVendor==='custom';
     customBox.hidden=!isCustom;modelBox.hidden=isCustom;
     if(isCustom){modelInp.value=c.model||'';urlInp.value=c.baseUrl||''}
-    else{presetSel.innerHTML=modelsOf(activeVendor).map(p=>`<option value="${p.id}">${p.label}</option>`).join('');presetSel.value=c.activePreset}
+    else{presetSel.innerHTML=modelsOf(activeVendor).map(p=>`<option value="${esc(p.id)}">${esc(p.label)}</option>`).join('');presetSel.value=c.activePreset}
     keyRow.innerHTML=c.hasKey
-      ?`<span class="small">${T('models.keySaved',{key:c.keyMasked||'••••'})}</span><button class="btn" data-delkey>${T('action.delete')}</button>`
+      ?`<span class="small">${esc(T('models.keySaved',{key:c.keyMasked||'••••'}))}</span><button class="btn" data-delkey>${T('action.delete')}</button>`
       :`<input type="password" placeholder="${T('models.keyInputPlaceholder')}" data-keyinput style="flex:1;min-width:11em" autocomplete="off"><button class="btn pri" data-savekey>${T('models.saveKeyBtn')}</button>`;
     if(autoBox){autoBox.checked=!!c.auto;autoBox.onchange=async()=>{const r=await put({auto:autoBox.checked});if(r.ok===false){toast(r.message||T('common.failed'));autoBox.checked=!autoBox.checked}}}
     const price=c.price||{inputPer1k:0,outputPer1k:0};
     priceIn.value=price.inputPer1k||'';priceOut.value=price.outputPer1k||'';
     const rows=st.usageByModel||[];
-    usageBody.innerHTML=rows.length?rows.map(m=>`<tr${m.active?' style="font-weight:600"':''}><td>${m.label}${m.active?` <span class="badge on">${T('models.usage.active')}</span>`:''}</td><td>${m.calls}${m.failed?` <span style="color:var(--bad)">${T('models.usage.failedCount',{n:m.failed})}</span>`:''}</td><td>${m.promptTokens}/${m.completionTokens}</td><td>${fmtCost(m.costEstimate)}</td></tr>`).join(''):`<tr><td colspan="4" class="small">${T('models.usage.none')}</td></tr>`;
+    usageBody.innerHTML=rows.length?rows.map(m=>`<tr${m.active?' style="font-weight:600"':''}><td>${esc(m.label)}${m.active?` <span class="badge on">${T('models.usage.active')}</span>`:''}</td><td>${m.calls}${m.failed?` <span style="color:var(--bad)">${T('models.usage.failedCount',{n:m.failed})}</span>`:''}</td><td>${m.promptTokens}/${m.completionTokens}</td><td>${fmtCost(m.costEstimate)}</td></tr>`).join(''):`<tr><td colspan="4" class="small">${T('models.usage.none')}</td></tr>`;
     stat.textContent=rows.find(m=>m.active&&m.lastError)?.lastError?T('models.lastError',{err:rows.find(m=>m.active).lastError}):'';
     const delBtn=keyRow.querySelector('[data-delkey]'),saveBtn=keyRow.querySelector('[data-savekey]');
     if(delBtn)guardClick(delBtn,async()=>{if(!await confirmDialog(T('models.confirmDeleteKey',{title})))return;const r=await put({clearKey:true});if(r.ok===false)toast(r.message||T('models.deleteFailed'));refresh()});
@@ -1028,7 +1033,7 @@ const fmtMs=ms=>ms>=3600000?T('battop.hours',{n:(ms/3600000).toFixed(1)}):ms>=60
 // 顶层常量只放 key 名（label 字段），真正的 T() 查找挪到 renderBattopWindowed 里（渲染时执行），见 T() 头注。
 const BATTOP_WINDOWS=[{key:'today',label:'battop.window.today'},{key:'7d',label:'battop.window.7d'},{key:'30d',label:'battop.window.30d'},{key:'all',label:'battop.window.all'}];
 const battopTopList=items=>items&&items.length
-  ?`<ul class="list">${items.map(it=>`<li><span>${it.name}</span><span class="small">${fmtMs(it.ms)} · ${it.pct}%</span></li>`).join('')}</ul>`
+  ?`<ul class="list">${items.map(it=>`<li><span>${esc(it.name)}</span><span class="small">${fmtMs(it.ms)} · ${it.pct}%</span></li>`).join('')}</ul>`
   :`<p class="small">${T('battop.noData')}</p>`;
 /* 时间窗 subnav+subpanel 骨架，耗电情况/唤醒源两处共用——contentFn(windowData)→这个窗口要显示的 HTML。 */
 /* activeIdx：重画时保留原来选中的时间窗（比如耗电情况的"按应用/按进程"下拉切换只想换列表内容，
@@ -1172,12 +1177,12 @@ function renderManage(sec){sec.innerHTML=`
   const mvRefresh=mountModelPanel($('#modelcards',sec),'transcribe',T('manage.models.visionTitle'),'👁',true);
   const mtRefresh=mountModelPanel($('#modelcards',sec),'mind',T('manage.models.textTitle'),'✎');
   const refresh=async()=>{
-    const f=await j('/api/foundation');$('#found',sec).innerHTML=f.ok===false?`<span>${f.message}</span>`:
+    const f=await j('/api/foundation');$('#found',sec).innerHTML=f.ok===false?`<span>${esc(f.message)}</span>`:
       `<b>xovi</b><span>${badge(f.xovi?T('common.installed'):T('common.notInstalled'),f.xovi)}</span><b>appload</b><span>${badge(f.appload?T('common.installed'):T('common.notInstalled'),f.appload)}</span><b>qt-resource-rebuilder</b><span>${badge(f.qrr?T('common.installed'):T('common.notInstalled'),f.qrr)}</span><b>KOReader</b><span>${badge(f.koreader?T('common.installed'):T('common.notInstalled'),f.koreader)}</span><b>WeRead</b><span>${badge(f.weread?T('common.installed'):T('common.notInstalled'),f.weread)}</span>`;
     const d=await j('/api/manage');const ul=$('#mods',sec);ul.innerHTML='';(d.modules||[]).forEach(m=>{const li=document.createElement('li');li.style.flexWrap='wrap';
       let state,cls;if(!m.installable){state=T('manage.modules.state.notLaunched');cls=''}else if(!m.installed){state=T('common.notInstalled');cls='off'}else if(m.running){state=T('manage.modules.state.on');cls='on'}else{state=T('manage.modules.state.installedOff');cls=''}
       const label=T('manage.modules.label.'+m.seg)||m.label; // seg 缺对应 key 时兜底用后端 Rust 侧的中文 label，不留空
-      const left=document.createElement('span');left.innerHTML=`${label} <span class="small">${m.service}</span> <span class="badge ${cls}">${state}</span>`;
+      const left=document.createElement('span');left.innerHTML=`${esc(label)} <span class="small">${esc(m.service)}</span> <span class="badge ${cls}">${state}</span>`;
       const right=document.createElement('span');right.style.cssText='display:flex;gap:.4em;align-items:center';
       if(m.installable&&m.installed){
         const t=document.createElement('button');t.className='btn';t.textContent=m.running?T('manage.modules.turnOff'):T('manage.modules.turnOn');
