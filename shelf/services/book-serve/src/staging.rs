@@ -221,6 +221,24 @@ impl Staging {
     fn path_of(&self, name: &str) -> Result<PathBuf, String> {
         Ok(self.dir.join(plain_name(name)?))
     }
+    /// 母版库里是否还有这本书。
+    pub fn has(&self, name: &str) -> bool {
+        self.existing(name).is_ok()
+    }
+    /// 清理没有对应书的落库边车（`.<书名>.delivered`）：书早已删除/被外部清掉，边车成了孤儿。留着不仅占目录，
+    /// 更会让**同名新书**误继承旧的"已加入/渲染"记录。返回清掉的个数。
+    pub fn gc_orphan_sidecars(&self) -> usize {
+        let Ok(rd) = std::fs::read_dir(&self.dir) else { return 0 };
+        let mut n = 0;
+        for e in rd.flatten() {
+            let name = e.file_name().to_string_lossy().to_string();
+            let Some(book) = name.strip_prefix('.').and_then(|s| s.strip_suffix(".delivered")) else { continue };
+            if !self.dir.join(book).is_file() && std::fs::remove_file(e.path()).is_ok() {
+                n += 1;
+            }
+        }
+        n
+    }
     fn existing(&self, name: &str) -> Result<PathBuf, String> {
         let p = self.path_of(name)?;
         if !p.is_file() {
@@ -234,6 +252,7 @@ impl Staging {
     /// 新入库（字节）：原子写，同名加数字前缀不覆盖。返回落地文件名。
     pub fn stage_new(&self, name: &str, bytes: &[u8]) -> Result<String, String> {
         let target = unique_path(&self.dir, &canonical_staged_name(plain_name(name)?));
+        sidecar::remove(&target); // 目标名是全新的，遗留的同名边车一定是旧书的，别让新书继承
         write_atomic(&target, bytes).map_err(|e| format!("写母版库失败: {e}"))?;
         Ok(landed_name(&target))
     }
@@ -241,6 +260,7 @@ impl Staging {
     /// 新入库（已落盘的暂存文件）：同分区 rename 不拷贝（上传 / inbox 追平的大书走这里）。返回落地文件名。
     pub fn stage_from_path(&self, name: &str, src: &Path) -> Result<String, String> {
         let target = unique_path(&self.dir, &canonical_staged_name(plain_name(name)?));
+        sidecar::remove(&target);
         if std::fs::rename(src, &target).is_err() {
             std::fs::copy(src, &target).map_err(|e| format!("写母版库失败: {e}"))?;
             let _ = std::fs::remove_file(src);
@@ -1384,6 +1404,27 @@ mod tests {
         assert_eq!((rc(&s).status.as_str(), rc(&s).pages), ("onopen", 2), "没打开过：保持 onopen");
         std::fs::write(lib.join("u1.content"), r#"{"pageCount":351}"#).unwrap();
         assert_eq!((rc(&s).status.as_str(), rc(&s).pages), ("ok", 351), "打开过（页数变了）：升级成真页数");
+    }
+
+    #[test]
+    fn new_book_does_not_inherit_orphan_sidecar_and_gc_removes_orphans() {
+        let t = tempfile::tempdir().unwrap();
+        let s = staging(&t);
+        // 旧书被外部删掉（没走 remove）→ 留下孤儿边车
+        let name = s.stage_new("a.epub", &mini_epub(&[("OEBPS/a.xhtml", "<p>x</p>")])).unwrap();
+        s.mark_delivered(&name, Reader::Native).unwrap();
+        std::fs::remove_file(s.dir.join(&name)).unwrap();
+        assert!(sidecar::path_for(&s.dir.join(&name)).exists());
+        // 同名新书入库：不能带着旧的"已加入"
+        let name2 = s.stage_new("a.epub", &mini_epub(&[("OEBPS/a.xhtml", "<p>y</p>")])).unwrap();
+        assert_eq!(name2, name);
+        assert!(s.list()[0].delivered.is_none(), "新书不继承孤儿边车");
+        // 启动清理：只清孤儿，不动有书的边车
+        s.mark_delivered(&name2, Reader::Native).unwrap();
+        std::fs::write(s.dir.join(".gone.epub.delivered"), b"{}").unwrap();
+        assert_eq!(s.gc_orphan_sidecars(), 1);
+        assert!(sidecar::path_for(&s.dir.join(&name2)).exists());
+        assert!(!s.dir.join(".gone.epub.delivered").exists());
     }
 
     #[test]

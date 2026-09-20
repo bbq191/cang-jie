@@ -47,6 +47,10 @@ impl State {
     pub fn ensure_dirs(&self) -> std::io::Result<()> {
         self.spool.ensure()?;
         self.staging.ensure()?;
+        let orphans = self.staging.gc_orphan_sidecars();
+        if orphans > 0 {
+            println!("[book-serve] 清掉 {orphans} 个没有对应书的落库记录");
+        }
         // 给"已加入 xochitl 但没有渲染记录"的书补记（大文件通道上线前直接投入的），让列表里渲染徽章统一。幂等。
         let n = self.staging.backfill_render_records();
         if n > 0 {
