@@ -908,6 +908,15 @@ fn fallback_spine_toc(entries: &[Entry], spine: &[String], nav_doc: Option<&Stri
     }).collect()
 }
 
+/// 按 spine 页分段的兜底目录：每 `FALLBACK_TOC_PAGES` 页一条，标题"第 N–M 页"，指向该段第一页。
+fn page_chunk_toc(spine: &[String], nav_doc: Option<&String>) -> Vec<(u8, String, String, String)> {
+    let pages: Vec<&String> = spine.iter().filter(|p| Some(*p) != nav_doc).collect();
+    crate::comic_pdf::page_chunk_titles(pages.len())
+        .into_iter()
+        .map(|(start, title)| (1u8, title, pages[start].clone(), String::new()))
+        .collect()
+}
+
 /// OPF 的 `unique-identifier` 实际取值（`<package unique-identifier="X">` 指向的那个
 /// `<dc:identifier id="X">` 元素的文本内容）。EPUB2 规范要求 `toc.ncx` 的 `dtb:uid` 跟这个值
 /// 完全一致——真机《疯探》坐实：这本"番茄小说 EPUB Generator"产物的 `toc.ncx` navMap 结构完全
@@ -1100,6 +1109,10 @@ fn auto_toc(entries: &mut Vec<Entry>, mode: AutoToc, rep: &mut WashReport) {
     let Some(opf) = parse_opf(entries) else { return };
     let headings = collect_headings(entries, &opf.spine, opf.nav_doc.as_ref());
     let headings = if headings.is_empty() { fallback_spine_toc(entries, &opf.spine, opf.nav_doc.as_ref()) } else { split_numbered_titles(headings) };
+    // 纯图片书（漫画/画册）：没有标题也没有可提取文字，`fallback_spine_toc` 故意不生成"正文 N"。但用户要求
+    // **所有书都要有目录**（2026-09-20，乱马源书 NCX 是空的，转出来没目录），所以按页分段生成"第 N–M 页"
+    // ——如实标注不是章节，只为能按段跳转（同 `comic_pdf::page_chunk_titles`，PDF 路径也是这套）。
+    let headings = if headings.is_empty() { page_chunk_toc(&opf.spine, opf.nav_doc.as_ref()) } else { headings };
     if headings.is_empty() {
         return;
     }
@@ -1354,6 +1367,29 @@ mod tests {
         assert!(s(&v, "toc.ncx").contains(r#"src="c2.xhtml""#), "指向空页的目录改指下一篇: {}", s(&v, "toc.ncx"));
         // 有图的页不算空
         assert!(!is_empty_page(r#"<html><body><img src="a.png"/></body></html>"#));
+    }
+
+    #[test]
+    fn image_only_book_with_empty_ncx_gets_page_range_toc() {
+        // 乱马/火影同款：25 个纯图片页、NCX 存在但 navMap 为空 → 生成"第 N–M 页"分段目录，且指向真实页面。
+        let items: String = (1..=25).map(|i| format!(r#"<item id="p{i}" href="Text/p{i}.xhtml" media-type="application/xhtml+xml"/>"#)).collect();
+        let spine: String = (1..=25).map(|i| format!(r#"<itemref idref="p{i}"/>"#)).collect();
+        let opf = format!(r#"<package version="2.0" unique-identifier="id"><metadata><dc:title>漫画</dc:title><dc:identifier id="id">urn:x</dc:identifier></metadata><manifest><item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>{items}</manifest><spine toc="ncx">{spine}</spine></package>"#);
+        let mut es = vec![
+            e("content.opf", &opf),
+            e("toc.ncx", r#"<ncx><head/><docTitle><text>Unknown</text></docTitle><navMap></navMap></ncx>"#),
+        ];
+        for i in 1..=25 {
+            es.push(e(&format!("Text/p{i}.xhtml"), r#"<html><body><img src="../Images/x.jpg"/></body></html>"#));
+        }
+        assert_eq!(toc_entry_count(&es), 0);
+        let mut rep = WashReport::default();
+        auto_toc(&mut es, AutoToc::IfMissing, &mut rep);
+        assert_eq!(rep.toc_generated, 2, "25 页 → 20+5 两段");
+        let ncx = String::from_utf8_lossy(&es.iter().find(|x| x.name == "toc.ncx").unwrap().data).to_string();
+        assert!(ncx.contains("第 1–20 页") && ncx.contains("第 21–25 页"), "{ncx}");
+        assert!(ncx.contains("Text/p1.xhtml") && ncx.contains("Text/p21.xhtml"), "目录必须指向段首页: {ncx}");
+        assert_eq!(toc_entry_count(&es) > 0, true);
     }
 
     #[test]
@@ -1688,8 +1724,9 @@ mod tests {
     }
 
     #[test]
-    fn auto_toc_fallback_skipped_when_mostly_imageonly_pages() {
-        // 多数页是纯图片(无可提取文本)——疑似漫画/画册，不该被兜底目录灌一堆"正文 N"
+    fn auto_toc_fallback_for_mostly_imageonly_pages_is_page_ranges_not_body_n() {
+        // 多数页是纯图片(无可提取文本)——疑似漫画/画册，不该灌一堆"正文 N"；但所有书都要有目录（2026-09-20 用户要求），
+        // 所以改为按页分段的"第 N–M 页"（3 页 → 1 段）。
         let mut v = vec![
             e("content.opf", r#"<package version="3.0"><metadata><dc:title>书</dc:title></metadata><manifest><item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/><item id="c2" href="c2.xhtml" media-type="application/xhtml+xml"/><item id="c3" href="c3.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="c1"/><itemref idref="c2"/><itemref idref="c3"/></spine></package>"#),
             e("c1.xhtml", r#"<html><body><img src="p1.jpg"/></body></html>"#),
@@ -1697,7 +1734,8 @@ mod tests {
             e("c3.xhtml", "<html><body><p>唯一一页有字。</p></body></html>"),
         ];
         let rep = wash_entries(&mut v, &WashOpts::default()).unwrap();
-        assert_eq!(rep.toc_generated, 0, "多数纯图片页不生成兜底目录");
-        assert!(!v.iter().any(|x| x.name == "nav.xhtml"));
+        assert_eq!(rep.toc_generated, 1, "多数纯图片页 → 按页分段目录");
+        let nav = s(&v, "nav.xhtml");
+        assert!(nav.contains("第 1–3 页") && !nav.contains("正文 "), "{nav}");
     }
 }

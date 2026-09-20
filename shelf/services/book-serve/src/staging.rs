@@ -799,7 +799,13 @@ impl AssetStore for StagingStore<'_> {
         if item.name == requested {
             "已入母版库".into()
         } else {
-            format!("已入母版库（已有同名，存为 {}）", item.name)
+            // 落地名与请求名不同有两种原因：EPUB 按 `书名 - N卷` 规范命名，或母版库里已有同名（加数字前缀）。
+            // 规范命名是常态，不该说成"已有同名"；只有落地名不是规范名的改动才是撞名。
+            if item.name == canonical_staged_name(requested) {
+                format!("已入母版库（按规范命名存为 {}）", item.name)
+            } else {
+                format!("已入母版库（已有同名，存为 {}）", item.name)
+            }
         }
     }
 }
