@@ -350,15 +350,8 @@ impl Staging {
         self.mark_cancellable(name);
         let opts = OptimizeOpts { wash: Some(WashOpts::default()), footnote: FootnoteMode::Anchor };
         let cancel = || self.is_cancelled(name);
-        let result = optimize::StreamingOptimize::new(&p, &tmp, &opts).title(canon_title.as_deref()).cancel(&cancel).run(&mut on_progress);
-        let rep = match result {
-            Ok(r) => r,
-            Err(e) => {
-                let _ = std::fs::remove_file(&tmp); // 半成品清掉，不留垃圾在母版库目录
-                return Err(e);
-            }
-        };
-        std::fs::rename(&tmp, &p).map_err(|e| format!("回写母版库失败: {e}"))?;
+        // 产出到点前缀临时文件、成功才改名覆盖；出错清掉半成品，不留垃圾在母版库目录。
+        let rep = bookconv::util::produce_then_replace(&tmp, &p, |t| optimize::StreamingOptimize::new(&p, t, &opts).title(canon_title.as_deref()).cancel(&cancel).run(&mut on_progress))?;
         // 已有的长下载名在这里一并规范成 `书名 - N卷`；目标已存在（重复的同一卷）就保持原名，不覆盖。
         let canon = canonical_staged_name(name);
         let shown = if canon != name && !self.dir.join(&canon).exists() && std::fs::rename(&p, self.dir.join(&canon)).is_ok() {
@@ -383,15 +376,7 @@ impl Staging {
         match pdf_ingest::classify_pdf(p) {
             PdfKind::Comic | PdfKind::NoTextLayer => {
                 let tmp = p.with_file_name(format!(".{name}.optimizing.tmp"));
-                let result = pdf_ingest::optimize_pdf_trim_only(p, &tmp, &mut on_progress);
-                let rep = match result {
-                    Ok(r) => r,
-                    Err(e) => {
-                        let _ = std::fs::remove_file(&tmp);
-                        return Err(e);
-                    }
-                };
-                std::fs::rename(&tmp, p).map_err(|e| format!("回写母版库失败: {e}"))?;
+                let rep = bookconv::util::produce_then_replace(&tmp, p, |t| pdf_ingest::optimize_pdf_trim_only(p, t, &mut on_progress))?;
                 Ok(format!("已优化《{name}》（裁边，{} 页）", rep.pages))
             }
             PdfKind::TextLayer => {
@@ -406,11 +391,7 @@ impl Staging {
                     Ok(b) => b,
                     Err(e) => return Err(format!("组装 EPUB 失败: {e}")),
                 };
-                if let Err(e) = std::fs::write(&tmp, &bytes) {
-                    let _ = std::fs::remove_file(&tmp);
-                    return Err(format!("写出临时文件失败: {e}"));
-                }
-                std::fs::rename(&tmp, &epub_path).map_err(|e| format!("回写母版库失败: {e}"))?;
+                bookconv::util::produce_then_replace(&tmp, &epub_path, |t| std::fs::write(t, &bytes).map_err(|e| format!("写出临时文件失败: {e}")))?;
                 std::fs::remove_file(p).map_err(|e| format!("删除原 PDF 失败: {e}"))?;
                 Ok(format!(
                     "已优化《{stem}》（PDF→EPUB，{} 页，{} 章，{} 张图，{} 处公式）",

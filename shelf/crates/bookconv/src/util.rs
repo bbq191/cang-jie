@@ -34,6 +34,24 @@ pub fn image_media_type_of_ext(ext: &str) -> &'static str {
     }
 }
 
+/// "先产出到临时文件、成功才改名覆盖目标、失败清掉半成品"的统一外壳（母版库优化的三处原先各写一遍
+/// `产出→出错删 tmp→rename→map_err`）。`produce(tmp)` 负责把产物写到 `tmp` 并返回任意结果（如统计报告）；
+/// 它出错或最后 `rename` 失败，`tmp` 都会被删掉，不在目录里留半成品。`tmp` 应与 `target` 同分区（rename 才原子）。
+pub fn produce_then_replace<T>(tmp: &std::path::Path, target: &std::path::Path, produce: impl FnOnce(&std::path::Path) -> Result<T, String>) -> Result<T, String> {
+    let value = match produce(tmp) {
+        Ok(v) => v,
+        Err(e) => {
+            let _ = std::fs::remove_file(tmp);
+            return Err(e);
+        }
+    };
+    if let Err(e) = std::fs::rename(tmp, target) {
+        let _ = std::fs::remove_file(tmp);
+        return Err(format!("回写母版库失败: {e}"));
+    }
+    Ok(value)
+}
+
 /// 书名 → 安全文件名：控制字符与路径字符（`/\:*?"<>|`）换下划线、去首尾空白、截断 80 字符；
 /// 空则用 `default`。ingest（转换落名）、autoopt（优化落名）、readlater（文章落名）共用。
 pub fn sanitize_filename(title: &str, default: &str) -> String {
@@ -105,6 +123,32 @@ mod tests {
         assert!(s.is_char_boundary(t.len()));
         assert!(std::str::from_utf8(t.as_bytes()).is_ok());
         assert_eq!(t, "中文"); // 截到 6 字节（2 个字），不是硬切出半个字符
+    }
+
+    #[test]
+    fn produce_then_replace_swaps_on_success_and_cleans_tmp_on_failure() {
+        let d = tempfile::tempdir().unwrap();
+        let (tmp, target) = (d.path().join(".t.tmp"), d.path().join("t.bin"));
+        std::fs::write(&target, b"old").unwrap();
+        let n = produce_then_replace(&tmp, &target, |t| std::fs::write(t, b"new").map(|_| 7).map_err(|e| e.to_string())).unwrap();
+        assert_eq!(n, 7);
+        assert_eq!(std::fs::read(&target).unwrap(), b"new");
+        assert!(!tmp.exists(), "rename 后 tmp 不该残留");
+        // 产出失败：原文件不动，半成品被清
+        let err = produce_then_replace(&tmp, &target, |t| -> Result<(), String> {
+            std::fs::write(t, b"half").unwrap();
+            Err("boom".into())
+        })
+        .unwrap_err();
+        assert_eq!(err, "boom");
+        assert_eq!(std::fs::read(&target).unwrap(), b"new", "失败不动原文件");
+        assert!(!tmp.exists(), "失败清掉半成品");
+        // rename 失败（目标是个非空目录）：报回写失败并清 tmp
+        let dir_target = d.path().join("dir");
+        std::fs::create_dir_all(dir_target.join("x")).unwrap();
+        let err = produce_then_replace(&tmp, &dir_target, |t| std::fs::write(t, b"z").map_err(|e| e.to_string())).unwrap_err();
+        assert!(err.contains("回写母版库失败"), "{err}");
+        assert!(!tmp.exists());
     }
 
     #[test]
