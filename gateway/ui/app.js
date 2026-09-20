@@ -21,6 +21,12 @@ const isBookDone=it=>{
 /* 停一会儿再继续：用在"先弹出一条状态文字，再触发会重画掉这条文字的动作"这种场景——不等的话状态
    文字刚显示就被紧跟着的重画冲掉，用户根本来不及看见（点重转/生成笔记本弹出消耗那次踩过的坑）。 */
 const wait=ms=>new Promise(res=>setTimeout(res,ms));
+/* 合并并发刷新：包一个异步刷新函数，同一时刻最多一个在飞；跑的时候又被调用只记一个"跑完再来一次"，多次调用合成
+   一次。SSE 事件突发、切 tab、别的触发源叠在一起时不会并发出一堆请求，旧响应也不会盖过新响应（串行执行，
+   结果按顺序落地）。返回的 Promise 在"包含本次调用之后的那一轮"结束时完成。 */
+const coalesce=fn=>{let running=null,again=false;
+  const loop=async()=>{do{again=false;try{await fn()}catch(e){console.error(e)}}while(again)};
+  return()=>{if(running){again=true;return running}running=loop().finally(()=>{running=null});return running}};
 /* 防双击：按钮点击后立即禁用，异步操作完成（不管成功失败）再解禁。很多按钮的异步操作是删除/
    落库这类不该被同一次操作重复触发两遍的动作——不加这一层，手指点快了或者网络慢的时候网络请求
    还没回来就能再点一次，2026-09-18 真机反馈"优化过程中点击删除"这类并发操作会撞在一起。母版库
@@ -113,6 +119,10 @@ document.addEventListener('click',e=>{const b=e.target.closest('.badge[title]');
 async function j(url,opt){const r=await fetch(url,opt);if(r.status===401){location.href='/login?next='+encodeURIComponent(location.pathname);return {ok:false,message:T('common.needLogin')}}if(r.status===403){location.href='/password';return {ok:false,message:T('common.needChangePassword')}}
   const httpErr=T('common.httpErr',{status:r.status});
   let d;try{d=await r.json()}catch{d={ok:false,message:httpErr}}if(!r.ok&&d.ok!==false)d={ok:false,message:d.message||httpErr};return d}
+/* 开关复选框绑定 PUT：勾选即 PUT `{key:checked}`，期间禁用；失败弹 toast 并把勾选还原。三个「实验室」开关共用。 */
+const bindToggle=(box,url,key)=>{box.onchange=async()=>{const want=box.checked;box.disabled=true;
+  const r=await j(url,{method:'PUT',body:JSON.stringify({[key]:want})});
+  box.disabled=false;if(r.ok===false){toast(r.message||T('common.saveFailed'));box.checked=!want}}};
 const postJ=async(url,body)=>{const r=await j(url,{method:'POST',body:JSON.stringify(body)});if(r.ok===false)toast(r.message||T('common.failed'));return r};
 
 /* 上传区 HTML（拖放框 + 隐藏 input + 队列 + 按钮），一处生成、各页复用；uploader() 认这个 .up 容器 */
@@ -223,7 +233,8 @@ function stgBadges(it,busy){
   const msg=dc&&dc.status==='failed'?T('transfer.staging.deliverFailedPrefix')+dc.message
     :oc&&oc.status==='failed'?T('transfer.staging.optimizeFailedPrefix')+oc.message
     :(oc&&oc.status==='cancelled')||(dc&&dc.status==='cancelled')?T('stg.row.cancelled'):(stalePending(oc)||stalePending(dc))?T('transfer.staging.stalePending.title'):'';
-  return {html:`<span class="badge fmt">${esc(fmt)}</span><span class="stg-size">${fmtB(it.bytes)}</span>${st}${ps}${dl}${rb}${busy?'':fails}`,msg};
+  const muted=!(dc&&dc.status==='failed')&&!(oc&&oc.status==='failed')&&((oc&&oc.status==='cancelled')||(dc&&dc.status==='cancelled')); // 仅"上次已取消"这类淡色提示，不再靠正则匹配文案
+  return {html:`<span class="badge fmt">${esc(fmt)}</span><span class="stg-size">${fmtB(it.bytes)}</span>${st}${ps}${dl}${rb}${busy?'':fails}`,msg,muted};
 }
 /* 一行。ctx: {picked,localBusy,gatedPending,gatedActive,batchQueued,bs,koInstalled,xFolder(),kFolder(),syncSel(),render(),refresh()} */
 function stgRow(it,ctx){
@@ -238,7 +249,7 @@ function stgRow(it,ctx){
   const title=el('div',{class:'stg-name',title:it.name,text:stgClean(it.name)});
   const meta=el('div',{class:'stg-meta',html:b.html});
   const main=el('div',{class:'stg-main'},[title,meta]);
-  if(b.msg)main.appendChild(el('div',{class:'small stg-err'+(/^(上次已取消|Cancelled)/.test(b.msg)?' stg-muted':''),text:b.msg}));
+  if(b.msg)main.appendChild(el('div',{class:'small stg-err'+(b.muted?' stg-muted':''),text:b.msg}));
   if(busy){
     const dcP=dc&&dc.status==='pending',ocP=oc&&oc.status==='pending';
     const label=localBusy?T('transfer.staging.progress.addingKoreader'):dcP?T('transfer.staging.progress.delivering'):ocP?T('transfer.staging.progress.optimizing'):T('transfer.staging.progress.working');
@@ -422,14 +433,11 @@ function renderTransfer(sec){sec.innerHTML=`
     else{const c=ctx();list.slice((page-1)*pageSize,page*pageSize).forEach(it=>ul.appendChild(stgRow(it,c)))}
     renderChips();renderPager(list.length);syncSelUi();renderBar()};
   ['stgq','stgfmt'].forEach(id=>['input','change'].forEach(ev=>g(id).addEventListener(ev,()=>{page=1;render()})));
-  let pollTimer=null;
-  const refresh=async()=>{const [d,s,k,kb,bg,bt]=await Promise.all([j('/api/books/staging'),j('/api/books/status'),j('/api/koreader/status'),j('/api/koreader/books'),j('/api/budget/status'),j('/api/batch/status')]);
+  const refresh=coalesce(async()=>{const [d,s,k,kb,bg,bt]=await Promise.all([j('/api/books/staging'),j('/api/books/status'),j('/api/koreader/status'),j('/api/koreader/books'),j('/api/budget/status'),j('/api/batch/status')]);
     koInstalled=!!(k.ok&&k.installed);
     gatedPending=new Set(bg.ok!==false?bg.pending||[]:[]);gatedActive=new Set(bg.ok!==false?bg.active||[]:[]);
     if(bt.ok!==false){bs={running:!!bt.running,action:bt.action,total:bt.total||0,done:bt.done||0,current:bt.current,queued:bt.queued||[],failed:bt.failed||[]};batchQueued=new Set(bs.queued)}
-    // 批量在跑时轮询（进度要走），不跑了就停；页面被换掉（切 tab 重渲染）也停。
-    if(bs.running&&!pollTimer)pollTimer=setInterval(()=>{if(!document.body.contains(sec)){clearInterval(pollTimer);pollTimer=null;return}refresh()},3000);
-    if(!bs.running&&pollTimer){clearInterval(pollTimer);pollTimer=null}
+    // 批量/闸门进度不再轮询：网关在批量队列与并发闸门状态变化时发 SSE（area=books），和别的书库事件走同一条推送。
     fillSel('folder',s.ok?s.xochitlFolders||[]:[],'folder');
     fillSel('kfolder',(kb.items||[]).filter(x=>x.kind==='dir').map(x=>x.name),'kfolder');
     if(d.ok===false){g('stglist').innerHTML=`<li class="small" style="color:var(--bad)">${esc(T('transfer.staging.unavailable',{msg:d.message||T('transfer.staging.notOpen')}))}</li>`;g('stgcap').textContent='';return}
@@ -439,7 +447,7 @@ function renderTransfer(sec){sec.innerHTML=`
     const fr=d.freeBytes;const low=fr!=null&&fr<300*1048576;g('stgfree').style.color=low?'var(--bad)':'';g('stgfree').textContent=fr!=null?T('transfer.staging.freeSpace',{free:fmtB(fr),lowWarn:low?T('transfer.staging.lowWarn'):''}):'';
     const gated=(gatedPending.size||gatedActive.size)?T('transfer.staging.gatedSummary',{pending:gatedPending.size,active:gatedActive.size}):'';
     g('stgnotice').textContent=[koInstalled?'':T('transfer.staging.btn.koNotInstalled'),gated].filter(Boolean).join(' · ');
-    g('stgnames').innerHTML=stgNameOptions(items);render()};
+    g('stgnames').innerHTML=stgNameOptions(items);render()});
   uploader($('.up',sec),()=>'/api/books/staging',()=>({}),BOOK_EXT,()=>refresh(),'/api/books/staging');   // 书籍格式原样入库；选中即按 BOOK_EXT 拦；传 dedupeApi 防重传出重复
   const am=g('artmsg'),au=g('arturl'),ag=g('artgo'),ao=g('artopt');
   // 「同步优化」记在本机（per-viewer 便利态，跟 folder/kfolder 那几个一个规矩）；缺省开——网文正文
@@ -591,6 +599,8 @@ function renderNotes(sec){sec.innerHTML=`
       <div class="row"><button class="btn" id="nimportbtn">${T('notes.import.btn')}</button><span class="small" id="nimportstat"></span></div>
     </div>
   </div>`;
+  // 当前书的后端路径：`bookApi('ink')` → `/api/ink/books/<uuid>`，`bookApi('ink',`/entries/${id}`)` 带后缀（读 `book`，调用时求值）。
+  const bookApi=(svc,sub='')=>`/api/${svc}/books/${encodeURIComponent(book.uuid)}${sub}`;
   const sel=$('#nbook',sec),chaptertabs=$('#nchaptertabs',sec),chapterbody=$('#nchapterbody',sec),browse=$('#nbrowse',sec),sum=$('#nsum',sec);let book=null;
   // 「推送本章」/「重新转写」/「提问」点完显示结果文案、停留 3s 再让用户看清（见下面三处 wait(3000)）——
   // 但这三个动作本身会让 ink-serve 发 `entries` 事件，笔记 tab 正开着时 SSE 会立刻调 `sec.refresh`
@@ -606,7 +616,7 @@ function renderNotes(sec){sec.innerHTML=`
   // cropHtml 误判成"纯勾画没有手写"（notes.noCrop），实际上这条明明有手写，只是裁图暂时没生成——
   // 两种情况分开提示，别让用户误以为手写没被识别到。
   const cropHtml=e=>e.ink&&e.ink.crop?`<img src="${cropUrl(book.uuid,e.ink.crop)}" alt="${T('notes.cropAlt')}">`:`<div class="empty">${T(e.ink?'notes.cropMissing':'notes.noCrop')}</div>`;
-  const patch=async(id,body)=>{const r=await postJ(`/api/ink/books/${encodeURIComponent(book.uuid)}/entries/${encodeURIComponent(id)}`,body);if(r.ok===false)toast(r.message||T('notes.saveFailed'))};
+  const patch=async(id,body)=>{const r=await postJ(bookApi('ink',`/entries/${encodeURIComponent(id)}`),body);if(r.ok===false)toast(r.message||T('notes.saveFailed'))};
   /* 编辑区文本失焦才存（`onchange`），但点旁边的按钮（重转/去处/问AI…）会先让文本框失焦触发保存，
      两件事几乎同时各发一个 HTTP 请求，谁先到服务端不一定——按钮那次的收尾动作会拉新数据整页重画，
      如果保存请求还没落地，重画拿到的还是旧文本，编辑就跟着"消失"了（用户反馈"改了内容点重转不存"）。
@@ -618,12 +628,12 @@ function renderNotes(sec){sec.innerHTML=`
      的同步状态，章头徽章、「整理」列表默认收起已同步章节、回收站显示这条大概去哪了，三处共用同一份，
      不用各自发请求。`refreshSync()` 在 loadBook 里、以及每次生成/导出动作之后调用刷新。 */
   let syncMap=new Map();
-  const refreshSync=async()=>{if(!book){syncMap=new Map();return}const r=await j(`/api/notes/books/${encodeURIComponent(book.uuid)}/sync`);syncMap=new Map((r.chapters||[]).map(c=>[c.chapter,c]))};
+  const refreshSync=async()=>{if(!book){syncMap=new Map();return}const r=await j(bookApi('notes',`/sync`));syncMap=new Map((r.chapters||[]).map(c=>[c.chapter,c]))};
   /* 「保存并刷新」这条 5 步链（flush 未落地的改字 → 重取整本书 → 重取同步状态 → 重画指定的几个
      子视图）原来在 triage/archiveEntry/restore/去处切换/转写/问 AI 七处各自逐字重复（2026-09-09
      审计发现），任何一处漏改都容易造成"某个动作之后画面没更新"这类不容易被发现的 bug——收成一个
      辅助函数，调用方只需要说清楚"这次要重画哪几个子视图"。 */
-  const reloadBook=async(...views)=>{await flushPendingText();book=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}`);await refreshSync();views.forEach(fn=>fn())};
+  const reloadBook=async(...views)=>{await flushPendingText();book=await j(bookApi('ink'));await refreshSync();views.forEach(fn=>fn())};
   /* s 是章节级同步状态（notebookNeeded/Synced、obsidianNeeded/Synced），本身只精确到"整章"，不到
      "这一条"（`fingerprint_chapter` 把整章活条目内容拼一起算一个哈希，见白皮书 §03aa）。章头调用不传
      `only`，如实显示整章的聚合状态；贴在每条笔记行上时传 `only=该条自己的 destination`，把跟这条本身
@@ -650,7 +660,7 @@ function renderNotes(sec){sec.innerHTML=`
   /* 「恢复」（回收站点 3）：Skipped/Revoked/Archived 都能恢复，落点由服务端按条目已有内容倒推
      （见 notecore::model::Entry::restore）——书里已经把笔画擦了也能恢复，找回的是条目库里已经存好
      的裁图/校对文本，不代表设备原页面的笔迹会重新出现（这条限制在页面文案里说清楚，不是网页能力）。 */
-  const restoreOne=async id=>{const r=await postJ(`/api/ink/books/${encodeURIComponent(book.uuid)}/entries/${encodeURIComponent(id)}/restore`,{});if(r.ok===false)return false;return true};
+  const restoreOne=async id=>{const r=await postJ(bookApi('ink',`/entries/${encodeURIComponent(id)}/restore`),{});if(r.ok===false)return false;return true};
   const renderTrash=()=>{if(!book){trashList.innerHTML=`<p class="small">${T('notes.pickBookFirst')}</p>`;trashSum.textContent='';return}trashList.innerHTML='';
     const items=(book.entries||[]).filter(e=>TRASH_STATUSES.includes(e.status)).sort((a,b)=>b.updated-a.updated);
     trashSum.textContent=items.length?T('notes.trash.count',{count:items.length}):T('notes.trash.empty');
@@ -691,7 +701,7 @@ function renderNotes(sec){sec.innerHTML=`
     if(!title){toast(T('notes.import.needTitle'),'warn');return}
     if(!markdown.trim()){toast(T('notes.import.needFile'),'warn');return}
     importBtn.disabled=true;importStat.textContent=T('notes.import.generating');
-    const r=await postJ(`/api/notes/books/${encodeURIComponent(book.uuid)}/import-md`,{title,markdown}); // 失败 postJ 已经 alert 过
+    const r=await postJ(bookApi('notes',`/import-md`),{title,markdown}); // 失败 postJ 已经 alert 过
     importBtn.disabled=false;
     if(r.ok===false){importStat.textContent='';return}
     importStat.textContent=T('notes.import.done',{name:r.visibleName});importFile.value='';importFileContent='';importFilename.textContent=''};
@@ -702,7 +712,7 @@ function renderNotes(sec){sec.innerHTML=`
     for(const e of items)await restoreOne(e.id);
     await reloadBook(renderTrash,renderBrowse,renderBook)});
   /* 浏览态动作：Mined→Pending（转入笔记）/ Mined→Skipped（不需要），见 ink-serve::triage。三个子视图都要重画（条目跨视图搬家）。 */
-  const triage=async(id,action)=>{const r=await postJ(`/api/ink/books/${encodeURIComponent(book.uuid)}/entries/${encodeURIComponent(id)}/${action}`,{});if(r.ok===false)return;
+  const triage=async(id,action)=>{const r=await postJ(bookApi('ink',`/entries/${encodeURIComponent(id)}/${action}`),{});if(r.ok===false)return;
     await reloadBook(renderBrowse,renderBook,renderTrash)};
   const updateSummary=()=>{if(!book){sum.textContent='';return}const es=book.entries||[];
     const c=st=>es.filter(e=>e.status===st).length;
@@ -710,18 +720,18 @@ function renderNotes(sec){sec.innerHTML=`
   // 全站唯一一处"按钮文案暗示有代价、却没有二次确认"（2026-09-09 审计发现）：清掉页记录会强制整本
   // 重新摄取。实际数据风险不大（已校对文本/条目不会被覆盖，见 notecore::ingest 的增量规则），但操作
   // 本身不常用、容易误触，补一句说清楚"安全在哪"的确认。
-  guardClick($('#nrescan',sec),async()=>{if(!book)return;if(!await confirmDialog(T('notes.confirmRescan')))return;await flushPendingText();await postJ(`/api/ink/books/${encodeURIComponent(book.uuid)}/rescan`,{});refresh()});
+  guardClick($('#nrescan',sec),async()=>{if(!book)return;if(!await confirmDialog(T('notes.confirmRescan')))return;await flushPendingText();await postJ(bookApi('ink',`/rescan`),{});refresh()});
   guardClick($('#npurge',sec),async()=>{if(!book)return;
     const items=(book.entries||[]).filter(e=>TRASH_STATUSES.includes(e.status));
     if(!items.length){toast(T('notes.trash.noneToPurge'),'warn');return}
     if(!await confirmDialog(T('notes.trash.confirmPurge',{count:items.length})))return;
     await flushPendingText();
-    const r=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}/purge`,{method:'POST'});
+    const r=await j(bookApi('ink',`/purge`),{method:'POST'});
     if(r.ok===false){toast(r.message||T('notes.trash.purgeFailed'));return}
-    book=await j(`/api/ink/books/${encodeURIComponent(book.uuid)}`);renderTrash();refresh()});
+    book=await j(bookApi('ink'));renderTrash();refresh()});
   /* 「不要了」（三期）：转 Archived，两处投影都摘掉，条目库里软删留痕（真删靠「回收站」清空）。 */
   const archiveEntry=async(id)=>{if(!await confirmDialog(T('notes.confirmArchive')))return;
-    const r=await postJ(`/api/ink/books/${encodeURIComponent(book.uuid)}/entries/${encodeURIComponent(id)}/archive`,{});if(r.ok===false)return;
+    const r=await postJ(bookApi('ink',`/entries/${encodeURIComponent(id)}/archive`),{});if(r.ok===false)return;
     await reloadBook(renderBook,renderTrash)};
   /* 浏览：按页分组、只列 Mined（待决定的），最近变更的页在前；转入笔记/不需要两个按钮直接调 triage。 */
   const renderBrowse=()=>{if(!book){browse.innerHTML=`<div class="card"><p class="small">${T('notes.pickBookFirst')}</p></div>`;return}browse.innerHTML='';updateSummary();
@@ -846,8 +856,8 @@ function renderNotes(sec){sec.innerHTML=`
         // 跟 stagingList 普通整本落库同一处境，共用同一套不确定态滚动条（2026-09-19 代码质量审计，
         // 原来这里只有一句不会变的静态文字"推送中…"）。
         const prog=renderStepProgress(row,{label:T('notes.pushing'),prog:null,msg:''});
-        const gr=await j(`/api/notes/books/${encodeURIComponent(book.uuid)}/chapters/${k}/generate`,{method:'POST'});
-        const er=await j(`/api/notes/books/${encodeURIComponent(book.uuid)}/chapters/${k}/export`,{method:'POST'});
+        const gr=await j(bookApi('notes',`/chapters/${k}/generate`),{method:'POST'});
+        const er=await j(bookApi('notes',`/chapters/${k}/export`),{method:'POST'});
         prog.remove();
         syncBtn.disabled=false;
         const gc=(gr.chapters&&gr.chapters[0])||{};
@@ -856,7 +866,7 @@ function renderNotes(sec){sec.innerHTML=`
         else if(gc.status==='failed')parts.push('✗ '+T('notes.push.notebook')+'：'+gc.error);
         else if(gc.status==='generated')parts.push('✓ '+T('notes.push.notebookUpdated'));
         if(er.ok===false)parts.push('✗ md：'+(er.message||T('common.failed')));
-        else if(er.status==='written'){parts.push('✓ '+T('notes.push.mdExported'));window.open(`/api/notes/books/${encodeURIComponent(book.uuid)}/chapters/${k}/export.md`,'_blank')}
+        else if(er.status==='written'){parts.push('✓ '+T('notes.push.mdExported'));window.open(bookApi('notes',`/chapters/${k}/export.md`),'_blank')}
         msg.textContent=parts.length?parts.join(' · '):T('notes.push.noChange');
         holdRefreshUntil=Date.now()+3000; // 结果文案刚显示出来，从这一刻起再保 3s，不管上面两次请求实际花了多久
         await wait(3000);await refreshSync();renderBook({advance:true})};
@@ -903,7 +913,7 @@ function renderNotes(sec){sec.innerHTML=`
          那条同款状态提示也一起延长，三处是同一个模式）。 */
       const tb=row.querySelector('[data-transcribe]'),txStat=row.querySelector('[data-txstat]');
       if(tb)tb.onclick=async()=>{tb.disabled=true;txStat.textContent=T('notes.transcribing');holdRefreshUntil=Date.now()+15000;
-        const r=await j(`/api/transcribe/books/${encodeURIComponent(book.uuid)}/entries/${encodeURIComponent(e.id)}`,{method:'POST'});
+        const r=await j(bookApi('transcribe',`/entries/${encodeURIComponent(e.id)}`),{method:'POST'});
         tb.disabled=false;
         txStat.textContent=r.ok===false?('✗ '+(r.message||T('notes.transcribeFailed'))):T('notes.transcribeDone',{promptTokens:r.promptTokens||0,completionTokens:r.completionTokens||0});
         holdRefreshUntil=Date.now()+3000;
@@ -914,7 +924,7 @@ function renderNotes(sec){sec.innerHTML=`
       askBox.onchange=()=>{patch(e.id,{askAi:askBox.checked});syncAskUi()};
       qInput.onchange=()=>{patch(e.id,{question:qInput.value});syncAskUi()};
       askBtn.onclick=async()=>{askBtn.disabled=true;askStat.textContent=T('notes.asking');holdRefreshUntil=Date.now()+15000;
-        const r=await j(`/api/mind/books/${encodeURIComponent(book.uuid)}/entries/${encodeURIComponent(e.id)}/ask`,{method:'POST'});
+        const r=await j(bookApi('mind',`/entries/${encodeURIComponent(e.id)}/ask`),{method:'POST'});
         askBtn.disabled=false;
         if(r.ok===false){askStat.textContent='✗ '+(r.message||T('notes.askFailed'));holdRefreshUntil=0}
         else{askStat.textContent=T('notes.askDone',{promptTokens:r.promptTokens||0,completionTokens:r.completionTokens||0});holdRefreshUntil=Date.now()+3000;await wait(3000);await reloadBook(renderBook)}};
@@ -1213,15 +1223,7 @@ function renderManage(sec){sec.innerHTML=`
     if(!running&&battopNavBtn.classList.contains('on'))manageNav.children[0].click();
     battopNavBtn.hidden=!running;battopPanel.hidden=!running;
     if(running&&battopPanel.refresh)battopPanel.refresh()};
-  hlBox.onchange=async()=>{const want=hlBox.checked;hlBox.disabled=true;
-    const r=await j('/api/enhance/qol',{method:'PUT',body:JSON.stringify({hlSnapCjk:want})});
-    hlBox.disabled=false;if(r.ok===false){toast(r.message||T('common.saveFailed'));hlBox.checked=!want}};
-  hwBox.onchange=async()=>{const want=hwBox.checked;hwBox.disabled=true;
-    const r=await j('/api/enhance/qol',{method:'PUT',body:JSON.stringify({hwStrokeEnabled:want})});
-    hwBox.disabled=false;if(r.ok===false){toast(r.message||T('common.saveFailed'));hwBox.checked=!want}};
-  importMdBox.onchange=async()=>{const want=importMdBox.checked;importMdBox.disabled=true;
-    const r=await j('/api/enhance/qol',{method:'PUT',body:JSON.stringify({notesImportMdEnabled:want})});
-    importMdBox.disabled=false;if(r.ok===false){toast(r.message||T('common.saveFailed'));importMdBox.checked=!want}};
+  bindToggle(hlBox,'/api/enhance/qol','hlSnapCjk');bindToggle(hwBox,'/api/enhance/qol','hwStrokeEnabled');bindToggle(importMdBox,'/api/enhance/qol','notesImportMdEnabled');
   refresh();erRefresh();sec.refresh=()=>{refresh();mvRefresh();mtRefresh();erRefresh()};subtabs(sec);}
 
 (async()=>{
@@ -1249,8 +1251,10 @@ function renderManage(sec){sec.innerHTML=`
   $('#hdr').textContent=location.host;
   const nav=$('#tabs'),main=$('#main');main.innerHTML='';
   const secByArea={};const dirty=new Set();
+  /* 各 tab 的刷新统一走它（切 tab、SSE、可见性恢复）：coalesce 合并并发触发。 */
+  const refreshSec=sec=>{if(!sec.refresh)return;(sec._rf||(sec._rf=coalesce(async()=>{await sec.refresh()})))()};
   const addTab=(title,render,first,area)=>{const b=document.createElement('button');b.textContent=title;const sec=document.createElement('section');sec.area=area;secByArea[area]=sec;
-    b.onclick=()=>{[...nav.children].forEach(x=>x.classList.remove('on'));[...main.children].forEach(x=>x.classList.remove('on'));b.classList.add('on');sec.classList.add('on');dirty.delete(area);if(sec.refresh)sec.refresh()};
+    b.onclick=()=>{[...nav.children].forEach(x=>x.classList.remove('on'));[...main.children].forEach(x=>x.classList.remove('on'));b.classList.add('on');sec.classList.add('on');dirty.delete(area);if(sec.refresh)refreshSec(sec)};
     nav.appendChild(b);main.appendChild(sec);render(sec);if(first)b.onclick();return sec};
   addTab(T('tab.transfer'),renderTransfer,true,'books');          // 总入口（入库｜母版库），固定第一位（book-serve 不在时列表里提示去管理页开）
   noteSvc.forEach((s)=>addTab(TABS[s.name].titleKey?T(TABS[s.name].titleKey):TABS[s.name].title,TABS[s.name].render,false,AREA[s.name]||s.name));
@@ -1263,14 +1267,23 @@ function renderManage(sec){sec.innerHTML=`
   }
   addTab(T('tab.manage'),renderManage,false,'manage');            // 固定管理台，始终可进
   /* 事件推送（SSE，零轮询）：服务在变更处发事件 → 网关 /api/events 汇聚 → 这里只刷对应 tab；不在前台的 tab 记脏，切过去时刷。
-     manage 事件（服务启停）：tab 集合变了就整页重载，否则只刷管理台。断线（WiFi 掉/设备休眠醒来）EventSource 自动重连。 */
+     manage 事件（服务启停）：tab 集合变了就整页重载，否则只刷管理台。断线（WiFi 掉/设备休眠醒来）EventSource 自动重连，
+     重连成功（非首次 onopen）补刷一次当前 tab——断线期间的事件没人推给我们。
+     省电/省流量：页面被隐藏（切标签页、手机锁屏）时**不刷新**，只记"当前 tab 待刷"，`visibilitychange` 变可见时补刷一次；
+     每个 tab 的刷新用 coalesce 合并（事件突发/多来源叠加时同一时刻最多一个在飞）。 */
   const svcKey=svcs.map(s=>s.name).join(',');
-  const dot=document.createElement('span');dot.id='live';dot.title=T('common.eventStream');dot.textContent='●';dot.style.cssText='margin-left:.5em;font-size:.8em;color:var(--bad)';$('#hdr').appendChild(dot);
+  const liveDot=document.createElement('span');liveDot.id='live';liveDot.title=T('common.eventStream');liveDot.textContent='●';liveDot.style.cssText='margin-left:.5em;font-size:.8em;color:var(--bad)';$('#hdr').appendChild(liveDot);
+  const activeSec=()=>[...main.children].find(x=>x.classList.contains('on'));
+  let activeStale=false,opened=false;
+  document.addEventListener('visibilitychange',()=>{if(document.hidden||!activeStale)return;activeStale=false;const s=activeSec();if(s)refreshSec(s)});
   const es=new EventSource('/api/events');
-  es.onopen=()=>{dot.style.color='var(--ok)';dot.title=T('common.eventStreamConnected')};
-  es.onerror=()=>{dot.style.color='var(--bad)';dot.title=T('common.eventStreamReconnecting')};
+  es.onopen=()=>{liveDot.style.color='var(--ok)';liveDot.title=T('common.eventStreamConnected');
+    if(opened){if(document.hidden)activeStale=true;else{const s=activeSec();if(s)refreshSec(s)}}opened=true};
+  es.onerror=()=>{liveDot.style.color='var(--bad)';liveDot.title=T('common.eventStreamReconnecting')};
   es.onmessage=async(e)=>{let ev;try{ev=JSON.parse(e.data)}catch{return}
     if(ev.area==='manage'){const d=await j('/api/services');const k=(d.services||[]).filter(s=>s.ui&&TABS[s.name]).map(s=>s.name).join(',');if(k!==svcKey){location.reload();return}}
     const sec=secByArea[ev.area];if(!sec)return;
-    if(sec.classList.contains('on')){if(sec.refresh)sec.refresh()}else dirty.add(ev.area)};
+    if(!sec.classList.contains('on'))dirty.add(ev.area);
+    else if(document.hidden)activeStale=true;
+    else refreshSec(sec)};
 })();
