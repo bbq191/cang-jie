@@ -249,36 +249,59 @@ pub fn resume(paths: &Paths) {
         *lock() = saved;
         return;
     }
+    // 先把读回的队列装进内存（`worker_alive=true` 表示"有 worker 会来处理它"）：状态页立刻能看到排队项，
+    // 等待 book-serve 期间用户再提交新批量也会并进这一份（不会 spawn 第二个 worker，也不会覆盖它）。
+    // 此前是 120 秒等不到 book-serve 就直接 return，队列既没进内存、也没人再管，随后任何一次入队的
+    // `persist` 都会把磁盘上这份未完成队列覆盖掉——开机时 book-serve 起得慢就会丢整个队列。
+    {
+        let mut st = lock();
+        *st = saved;
+        st.worker_alive = true;
+    }
     let paths = paths.clone();
     std::thread::spawn(move || {
-        let mut items = None;
-        for _ in 0..60 {
-            if let Ok(i) = staging_items(&paths) {
-                items = Some(i);
-                break;
+        let mut waited = Duration::ZERO;
+        let mut n = 0u32;
+        let items = loop {
+            match staging_items(&paths) {
+                Ok(i) => break Some(i),
+                Err(_) if waited >= RESUME_WAIT_MAX => break None,
+                Err(_) => {
+                    // 开机/整体重启时网关可能先起：前 30 秒每 2 秒试一次，之后放宽到每 30 秒（极少见的长等待不必勤快探测）。
+                    let step = Duration::from_secs(if n < 15 { 2 } else { 30 });
+                    std::thread::sleep(step);
+                    waited += step;
+                    n += 1;
+                }
             }
-            std::thread::sleep(Duration::from_secs(2));
-        }
-        let Some(items) = items else { return };
-        let koreader = registry::find(&paths, "koreader-serve").is_some();
-        let before = saved.queue.len();
-        saved.queue.retain(|j| items.iter().find(|it| it.get("name").and_then(|v| v.as_str()) == Some(j.name.as_str())).map(|it| eligible(j.action, it, koreader)).unwrap_or(false));
-        let dropped = (before - saved.queue.len()) as u32;
-        saved.total = saved.total.saturating_sub(dropped);
-        let spawn = {
-            let mut st = lock();
-            if st.worker_alive || !st.queue.is_empty() {
-                return; // 等待期间用户已经提交了新的批量，别覆盖
-            }
-            *st = saved;
-            st.worker_alive = !st.queue.is_empty();
-            st.worker_alive
         };
-        persist(&paths);
-        if spawn {
-            worker(&paths);
+        match items {
+            Some(items) => {
+                let koreader = registry::find(&paths, "koreader-serve").is_some();
+                validate_queue(&mut lock(), &items, koreader);
+            }
+            // 等了 RESUME_WAIT_MAX 仍没有 book-serve：队列**保留**在内存和磁盘上（不清空、不丢），只是不再有人主动跑；
+            // 下一次入队会带起 worker 连同这份旧队列一起处理，或用户在页面点"全部中止"清掉。
+            None => {
+                lock().worker_alive = false;
+                eprintln!("[gateway] 批量队列恢复：等了 {} 分钟 book-serve 仍不可用，队列已保留，待下次入队时继续", RESUME_WAIT_MAX.as_secs() / 60);
+                return;
+            }
         }
+        persist(&paths);
+        worker(&paths); // 队列被 stop 清空则 worker 一进来就结束
     });
+}
+
+/// 等 book-serve 就绪的上限（见 [`resume`]）。
+const RESUME_WAIT_MAX: Duration = Duration::from_secs(30 * 60);
+
+/// 按最新母版库状态重新校验队列：不存在/已不适用（比如上次进行中的那本已经优化完）的项剔除，总数同步扣减。
+fn validate_queue(st: &mut State, items: &[Value], koreader: bool) {
+    let before = st.queue.len();
+    st.queue.retain(|j| items.iter().find(|it| it.get("name").and_then(|v| v.as_str()) == Some(j.name.as_str())).map(|it| eligible(j.action, it, koreader)).unwrap_or(false));
+    let dropped = (before - st.queue.len()) as u32;
+    st.total = st.total.saturating_sub(dropped);
 }
 
 fn worker(paths: &Paths) {
@@ -434,6 +457,19 @@ mod tests {
         // 老版本落盘文件没有 attempts 字段：默认 0，按第一次中断处理
         let old: Job = serde_json::from_str(r#"{"action":"optimize","name":"x","folder":""}"#).unwrap();
         assert_eq!(old.attempts, 0);
+    }
+
+    #[test]
+    fn validate_queue_drops_missing_or_done_and_adjusts_total() {
+        let job = |n: &str, a: Action| Job { action: a, name: n.into(), folder: String::new(), attempts: 0 };
+        let mut st = State { total: 3, ..Default::default() };
+        st.queue.push_back(job("keep.epub", Action::Optimize));
+        st.queue.push_back(job("done.epub", Action::Optimize)); // 已优化 → 不再适用
+        st.queue.push_back(job("gone.epub", Action::Deliver)); // 母版库里没了
+        let items = vec![json!({"name": "keep.epub", "format": "epub", "optimized": false}), json!({"name": "done.epub", "format": "epub", "optimized": true})];
+        validate_queue(&mut st, &items, false);
+        assert_eq!(st.queue.iter().map(|j| j.name.as_str()).collect::<Vec<_>>(), ["keep.epub"]);
+        assert_eq!(st.total, 1);
     }
 
     #[test]
