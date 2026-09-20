@@ -742,13 +742,12 @@ pub fn optimize_pdf_to_epub(src: &Path, mut on_progress: impl FnMut(usize, usize
     }
 
     let title = pdf_doc_title(&doc).unwrap_or_else(|| src.file_stem().and_then(|s| s.to_str()).unwrap_or("PDF").to_string());
-    let mut book = Book {
-        meta: BookMeta { book_id: format!("pdf:{title}"), title, author: String::new(), language: "zh".to_string(), publisher: String::new(), cover: None, cover_ext: String::new(), cover_media_type: String::new() },
+    let book = Book {
+        meta: BookMeta { book_id: format!("{PDF_BOOK_ID_PREFIX}{title}"), title, author: String::new(), language: "zh".to_string(), publisher: String::new(), cover: None, cover_ext: String::new(), cover_media_type: String::new() },
         chapters,
         resources,
     };
     let report = PdfToEpubReport { pages: page_count, chapters: book.chapters.len(), images: total_images, formula_blocks: total_formula_blocks };
-    mark_pdf_source(&mut book);
     Ok((book, report))
 }
 
@@ -813,15 +812,9 @@ fn crop_pixmap_to_png(pixmap: &hayro::vello_cpu::Pixmap, region: &BBox, page: &h
     Some(out)
 }
 
-/// PDF 转出的 EPUB 来源标记：往 `content.opf` 塞一个自定义 meta，写法对齐 `epub.rs::
-/// content_opf` 现有 `<meta name="cover" ...>` 那套——实现细节见下方 `mark_pdf_source`（塞进
-/// `BookMeta.publisher` 是不行的，会污染真实元数据；改成往第一章标题前加一个不可见占位不优雅；
-/// 最终用最不破坏既有 `epub::assemble` 结构的办法：约定 `BookMeta.book_id` 前缀
-/// `"pdf:"`——跟 `looks_like_pdf_derived_epub` 配对识别，见该函数文档）。
-fn mark_pdf_source(_book: &mut Book) {
-    // book_id 已经在 optimize_pdf_to_epub 里用 "pdf:" 前缀构造，这里不需要额外操作——
-    // 保留这个函数是为了让"标记来源"这个步骤在调用点显式可见，不是悄悄藏在 book_id 构造里。
-}
+/// PDF 转出的 EPUB 的 `BookMeta.book_id` 前缀（来源标记）。塞进 `publisher` 会污染真实元数据、往正文塞不可见
+/// 占位不优雅，所以约定 `book_id` 前缀——跟 [`looks_like_pdf_derived_epub`] 配对识别。
+const PDF_BOOK_ID_PREFIX: &str = "pdf:";
 
 /// 识别"这份 EPUB 是入库 PDF 转出来的"——检查 `content.opf` 里的 `dc:identifier` 是不是
 /// `"pdf:"` 前缀（`optimize_pdf_to_epub` 用 `book_id: format!("pdf:{title}")` 构造，
@@ -831,12 +824,12 @@ fn mark_pdf_source(_book: &mut Book) {
 pub fn looks_like_pdf_derived_epub(path: &Path) -> bool {
     let Ok(file) = std::fs::File::open(path) else { return false };
     let Ok(mut zip) = zip::ZipArchive::new(std::io::BufReader::new(file)) else { return false };
-    let Ok(mut entry) = zip.by_name("OEBPS/content.opf") else { return false };
+    let Ok(mut entry) = zip.by_name(crate::epub::OPF_PATH) else { return false };
     let mut buf = String::new();
     if std::io::Read::read_to_string(&mut entry, &mut buf).is_err() {
         return false;
     }
-    buf.contains("weread:pdf:")
+    buf.contains(&format!("{}{PDF_BOOK_ID_PREFIX}", crate::epub::ID_SCHEME))
 }
 
 #[cfg(test)]

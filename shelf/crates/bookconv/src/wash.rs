@@ -518,7 +518,7 @@ fn flush_first_para_after_heading(html: &str) -> String {
             return c[0].to_string();
         }
         let bold_wrapped = (inner.contains("<b>") || inner.contains("<strong") || inner.contains("bold")) && text.chars().count() <= 80;
-        let heading_like = !_terminal_latin(&text) && text.chars().count() <= 80 && (bold_wrapped || head_word.is_match(&text));
+        let heading_like = !terminal_latin(&text) && text.chars().count() <= 80 && (bold_wrapped || head_word.is_match(&text));
         let out = if flush_next && !heading_like && !already_div {
             // 只留 cj-flush 一个类、去掉 style：书的类规则（如 `.calibre_ {text-indent:1.2em}`）在 xochitl 里同为类规则时
             // **先出现者胜**（诊断 13/14），带着书的类就压不住；元素/内联通道又都不通（诊断 7–10）。id 等其它属性保留。
@@ -537,7 +537,7 @@ fn flush_first_para_after_heading(html: &str) -> String {
 }
 
 /// 拉丁段落是否以句末标点结束（标题样段落判定用）。
-fn _terminal_latin(t: &str) -> bool {
+fn terminal_latin(t: &str) -> bool {
     t.trim_end().chars().last().map(|c| ".!?\"'”’)".contains(c)).unwrap_or(false)
 }
 

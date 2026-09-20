@@ -456,32 +456,26 @@ impl Staging {
                 Err(e) if e.contains(optimize::CANCELLED_MSG) => sidecar::OptimizeCheck { status: "cancelled".into(), message: e.clone(), at, progress: None },
                 Err(e) => sidecar::OptimizeCheck { status: "failed".into(), message: e.clone(), at, progress: None },
             };
-            // 漫画→PDF 分支成功后，原 `.epub` 已经被删、条目改名成 `.pdf`——sidecar 是按条目名找
-            // 文件的（`existing()`），原名这时候已经找不到文件，写进度/结果会静默失败。这里探测一下
-            // 有没有发生这次改名，写去正确的新名字（`on_progress` 那些中途写的进度还是按旧名字写，
-            // 那时候文件确实还是 .epub，没问题；只有这最后一次终态写需要跟着改名走）。
+            // 优化成功后条目可能改了名（长下载名规范成 `书名 - N卷`；有文字层 PDF 转成同名 `.epub` 并删掉原 `.pdf`）——
+            // sidecar 是按条目名找文件的（`existing()`），原名这时候已经找不到文件，终态写会静默失败。这里探测一下
+            // 有没有发生改名，写去正确的新名字（`on_progress` 那些中途写的进度还是按旧名字写，那时候文件确实
+            // 还在原名下，没问题；只有这最后一次终态写需要跟着改名走）。
             let target = this.resolved_optimize_target(name);
             let _ = this.set_optimize_check(&target, oc);
         });
         Ok(())
     }
 
-    /// 漫画→PDF 分支把 `<stem>.epub` 换成了 `<stem>.pdf`（同一个母版库条目改名，不是新增）——`name`
-    /// 参数是异步操作发起时的原名，这本书如果发生过这次改名，原名此时已经找不到文件，返回改名后的
-    /// 新名字给 sidecar 写终态用；其余情况（普通文字书优化、失败）原样返回 `name`。
+    /// 优化过程中同一个母版库条目可能被改名（不是新增）：长下载名规范成 `书名 - N卷`（同格式），或有文字层
+    /// PDF 转成 `<stem>.epub`（格式变了、原 `.pdf` 已删）。`name` 是异步操作发起时的原名，改名后原名找不到
+    /// 文件，返回改名后的新名字给 sidecar 写终态用；其余情况（没改名、失败）原样返回 `name`。
+    /// （漫画 EPUB 优化保持 EPUB，不会再变成 `.pdf`——2026-09-20 起。）
     fn resolved_optimize_target(&self, name: &str) -> String {
-        // 优化时把长下载名规范成 `书名 - N卷`（同格式改名）；PDF 有文字层→EPUB（格式变了、条目改名）。
-        // `existing(name)` 找不到原名时才去找改名后的候选。
         let canon = canonical_staged_name(name);
         if canon != name && self.existing(name).is_err() && self.existing(&canon).is_ok() {
             return canon;
         }
-        if let Some(stem) = name.strip_suffix(".epub") {
-            let candidate = format!("{stem}.pdf");
-            if self.existing(name).is_err() && self.existing(&candidate).is_ok() {
-                return candidate;
-            }
-        } else if let Some(stem) = name.strip_suffix(".pdf") {
+        if let Some(stem) = name.strip_suffix(".pdf") {
             let candidate = format!("{stem}.epub");
             if self.existing(name).is_err() && self.existing(&candidate).is_ok() {
                 return candidate;
@@ -912,7 +906,7 @@ impl Staging {
                 "cbz" => "cbz",
                 _ => "other",
             };
-            // 优化状态对 EPUB 有意义；PDF 里"我们自己优化产出的产物"（漫画→PDF 或入库 PDF 裁边）
+            // 优化状态对 EPUB 有意义；PDF 里"我们自己优化产出的产物"（漫画 EPUB 分卷投递的 PDF 件或入库 PDF 裁边）
             // 也算已优化（靠书签目录或 Producer 标记廉价识别，见 `pdfwrite.rs::looks_like_own_
             // bookconv_pdf` 文档注释——用户自己上传的原生 PDF 没有这俩标记，维持 none）。
             // 入库 PDF 转出来的 EPUB（`pdf_source`）视为一次性产物已经完成，直接报 full，不进

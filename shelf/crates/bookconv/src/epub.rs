@@ -42,6 +42,12 @@ pub struct Book {
 /// 对齐 xml.sax.saxutils.escape：只转 & < >（不动引号）。
 use crate::util::xml_escape as xesc;
 
+/// `assemble` 写出的 OPF 在 zip 里的路径（`container.xml` 指向它；PDF 来源识别等也按这个路径读）。
+pub(crate) const OPF_PATH: &str = "OEBPS/content.opf";
+/// OPF `dc:identifier` 的前缀：`weread:{book_id}`。`pdf_ingest::looks_like_pdf_derived_epub` 靠
+/// 它加 `book_id` 的 `pdf:` 前缀识别"PDF 转出的 EPUB"，两边必须同源。
+pub(crate) const ID_SCHEME: &str = "weread:";
+
 pub(crate) fn chapter_filename(i: usize) -> String {
     format!("chap_{:04}.xhtml", i + 1)
 }
@@ -117,7 +123,7 @@ fn content_opf(book: &Book) -> String {
         ""
     };
     format!(
-        "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<package xmlns=\"http://www.idpf.org/2007/opf\" version=\"3.0\" unique-identifier=\"pub-id\">\n  <metadata xmlns:dc=\"http://purl.org/dc/elements/1.1/\">\n    <dc:identifier id=\"pub-id\">weread:{}</dc:identifier>\n    <dc:title>{}</dc:title>\n    <dc:language>{}</dc:language>{}{}{}\n  </metadata>\n  <manifest>\n{}\n  </manifest>\n  <spine>\n{}\n  </spine>\n</package>\n",
+        "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<package xmlns=\"http://www.idpf.org/2007/opf\" version=\"3.0\" unique-identifier=\"pub-id\">\n  <metadata xmlns:dc=\"http://purl.org/dc/elements/1.1/\">\n    <dc:identifier id=\"pub-id\">{ID_SCHEME}{}</dc:identifier>\n    <dc:title>{}</dc:title>\n    <dc:language>{}</dc:language>{}{}{}\n  </metadata>\n  <manifest>\n{}\n  </manifest>\n  <spine>\n{}\n  </spine>\n</package>\n",
         xesc(&m.book_id),
         xesc(&m.title),
         xesc(&m.language),
@@ -251,7 +257,7 @@ pub fn assemble(book: &mut Book) -> Result<Vec<u8>, String> {
         z.write_all(b"application/epub+zip").map_err(|e| e.to_string())?;
         z.start_file("META-INF/container.xml", stored).map_err(|e| e.to_string())?;
         z.write_all(container_xml().as_bytes()).map_err(|e| e.to_string())?;
-        z.start_file("OEBPS/content.opf", stored).map_err(|e| e.to_string())?;
+        z.start_file(OPF_PATH, stored).map_err(|e| e.to_string())?;
         z.write_all(content_opf(book).as_bytes()).map_err(|e| e.to_string())?;
         z.start_file("OEBPS/nav.xhtml", stored).map_err(|e| e.to_string())?;
         z.write_all(nav_xhtml(book).as_bytes()).map_err(|e| e.to_string())?;

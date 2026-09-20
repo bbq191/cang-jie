@@ -25,6 +25,11 @@ pub struct PdfReport {
     pub bytes_after: usize,
 }
 
+/// **当前生产路径不调用**（2026-09-20 用户拍板"优化不改格式"，漫画 EPUB 优化保持 EPUB，见
+/// `book-serve::Staging::optimize`）。保留是因为"漫画 EPUB→整本 PDF"仍是有测试覆盖的可用能力（含 `PdfPieceWriter`
+/// 流式写出与目录书签），日后若要重开这条路（如超限漫画改投 PDF）不必重写；本仓库内只有单测引用它。
+/// 不标 `#[cfg(test)]`：book-serve 的测试也要跨 crate 调用它。
+///
 /// 读入方式仿 `comic_split::deliver_split_streaming` 阶段一：图片条目留空占位、只读 html/opf/ncx
 /// 真实字节判断是不是漫画+抽标题；真正的图片字节按需读、处理完立刻编进 `PdfImage` 就丢原始字节，
 /// 峰值内存是"处理到哪张图"而不是"全书图片"，跟现有 EPUB 拆分路径同一套纪律。
