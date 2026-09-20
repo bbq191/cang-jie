@@ -5,11 +5,11 @@
 reMarkable Paper Pro Move 的设备增强套件——**不修改 xochitl（设备官方阅读应用）本体**，通过
 xovi 扩展 + 独立 Web 服务，给设备加上书籍管理、笔记增强、系统优化等一整套功能。
 
-> 这是完整开发历史的**私有**仓库。2026-09-11 起也维护一份精简的公开发行版
-> [`rm-tweak`](https://github.com/bbq191/rm-tweak)（不带开发历史，只含当前七条项目线的代码 +
-> 顶层 README/INSTALL 四份文档，Apache-2.0 开源）——对外分享/收藏用那个仓库，这个仓库继续
-> 只是内部开发用，不对外。两边同步规则见本机，不写进这份
-> README（跟对外文档无关，纯维护者自用笔记）。
+> **读者与用途**：第一次来到这个仓库的人。这里回答"这是什么、有哪些部分、怎么装、去哪看细节"；
+> 10 分钟看懂全貌读 [`docs/OVERVIEW.md`](docs/OVERVIEW.md)，最近改了什么读 [`docs/CHANGELOG.md`](docs/CHANGELOG.md)。
+>
+> 这是带完整开发历史的**私有**仓库；另有一份精简的公开发行版 [`rm-tweak`](https://github.com/bbq191/rm-tweak)
+> （不带开发历史，只含当前七条项目线的代码和顶层 README/INSTALL 等文档，Apache-2.0 开源）——对外分享/收藏用那个。
 
 ## 这是什么
 
@@ -25,29 +25,17 @@ xochitl 或 KOReader）；荧光笔勾画配合手写批注，自动转写成 AI
 
 | 项目 | 是什么 | 文档 |
 |---|---|---|
-| [`shelf/`](shelf/) 书架 | 书籍导入 → 清洗/格式转换/优化 → 落库到原生书库或 KOReader；网页 + host CLI 双入口 | [README](shelf/README.md) |
+| [`shelf/`](shelf/) 书架 | 书籍（EPUB/PDF）导入 → 母版库 → 按需优化 → 加入原生书库或 KOReader；纯网页操作（含批量队列） | [README](shelf/README.md) |
 | [`notes/`](notes/) 笔记线 | 荧光笔勾画 + 旁边手写批注，合书自动摄取 → 手机整理页校对/选 AI 模型转写与问答 → 投影回设备笔记本或 Obsidian | [README](notes/README.md) |
 | [`enhance/`](enhance/) 系统增强 | 荧光笔 CJK 精确吸附、手写笔锋渲染优化（两个独立 xovi 扩展）；电池诊断采样器；字体/壁纸上传即用（两个 Web 服务） | [README](enhance/README.md) |
-| [`gateway/`](gateway/) 网关 | 上面三条线共用的唯一 Web 入口：HTTPS（私有 CA）+ 登录密码 + 反向代理到各领域服务 | [README](gateway/README.md) |
+| [`gateway/`](gateway/) 网关 | 上面三条线共用的唯一 Web 入口：HTTPS（私有 CA）+ 登录密码 + 反向代理到各领域服务 + 批量队列与并发闸门 | [README](gateway/README.md) |
 | [`rmsvc-core/`](rmsvc-core/) 服务基座 | 各 Web 服务共用的基础设施 crate（路径/注册表/HTTP 适配/事件总线等），不含任何业务逻辑 | [README](rmsvc-core/README.md) |
 | [`defw/`](defw/) 固件逆向 | xochitl 3.28.0.172 的 Ghidra 逆向工程产物，支撑上面几个 xovi 扩展的 hook 定位 | [README](defw/README.md) |
 | [`packaging/`](packaging/) 安装器 | 全新设备一条命令装完以上全部（含固件兼容性校验） | [README](packaging/README.md) |
 
 ## 近期更新
 
-只记实际新增的功能/能力，不是完整 commit 日志。
-
-| 日期 | 新增 |
-|---|---|
-| 2026-09-14 | 扫描版漫画 PDF（常见于 Anna's Archive 一类来源）现在会被正确识别成漫画、走对应处理流程，不再必然直接推送失败 |
-| 2026-09-14 | 批量重传现在真正跳过已经成功过的书的处理步骤（不只是跳过上传）——省下的是电脑洗书/排版的时间，不只是流量 |
-| 2026-09-14 | 修了真机重启后"设备时间同步状态经常显示失败"的问题：根因是自动休眠打断了刚开机时的第一次校时，实际时间其实是对的，只是这个状态显示不对 |
-| 2026-09-13 | 传书批量操作补齐防重复保护：网页上传和电脑端命令行传书都会在传之前核对一遍是否已经传过，中途失败、原样重跑不会把已经成功的书再传一份变成重复文件 |
-| 2026-09-13 | Sidebar 侧边栏一级直达「KOReader」入口；装了第三方 WeRead app 会自动检测到、多加一项「WeRead」——两者都接入 `packaging/`，可随 `install-all.sh` 重复部署 |
-| 2026-09-13 | 网关「引导·基石」页新增 WeRead 装机状态探测（跟 KOReader 一样只读检测装没装） |
-| 2026-09-11 | `packaging/install-all.sh`：全新设备一条命令装完全部功能，含固件安全门（sha256 比对，不匹配默认拒装） |
-| 2026-09-11 | 新增 xovi 开机持久化恢复链（重启后自动补 `xovi/start`）、国内 NTP、默认时区三项系统级配置 |
-| 2026-09-11 | 顶层 README/INSTALL 中英双语文档、打赏渠道上线 |
+用户可见的变化按日期记在 **[docs/CHANGELOG.md](docs/CHANGELOG.md)**。最近几项：漫画优化保持 EPUB、书名统一规范、突破 xochitl 约 100MB 上传上限（占位 + 磁盘替换）、服务端批量队列与母版库页重做、优化提速与省电。
 
 ## 快速开始
 
@@ -60,6 +48,15 @@ sh install-all.sh 10.11.99.1
 ```
 
 完整的前置条件、分步说明、固件安全门、故障排查见 **[INSTALL.md](docs/INSTALL.md)**。
+
+## 文档导航
+
+| 想了解 | 读 |
+|---|---|
+| 10 分钟看懂全貌（架构图、一本书的旅程、术语表） | [docs/OVERVIEW.md](docs/OVERVIEW.md) |
+| 怎么安装、固件升级后怎么恢复 | [docs/INSTALL.md](docs/INSTALL.md) |
+| 最近改了什么 | [docs/CHANGELOG.md](docs/CHANGELOG.md) |
+| 各条线的细节与决策记录 | 上表各线 README 与其 `docs/` 白皮书 |
 
 ## 历史与范围
 
