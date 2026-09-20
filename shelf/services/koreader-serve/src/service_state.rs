@@ -6,8 +6,9 @@ use rmsvc_core::cache::TtlCache;
 use rmsvc_core::formats::FONT_EXTS;
 use rmsvc_core::http::{ApiError, ApiResult, Reply, Request};
 use rmsvc_core::paths::Paths;
-use std::sync::Arc;
-use std::time::Duration;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, SystemTime};
 
 pub struct State {
     pub ko: Arc<KoReader>,
@@ -19,6 +20,9 @@ pub struct State {
     /// 走 [`State::notify`]，先失效再发事件；KOReader 启停这类外部变化最多滞后一个 TTL。
     /// 注意：会**改配置**的安全判断（`ConfigSync::apply` 里的"运行中拒写"）用的是实时 `running()`，不走这个缓存。
     status_cache: TtlCache<serde_json::Value>,
+    /// 字体汉字覆盖率缓存：文件名 → (大小, 修改时间, 覆盖率%)。算一次要把整份字体（中文字体常 10-20MB）读进内存
+    /// 解 cmap，而 `GET /fonts` 每次 refresh 都要列——文件没变（大小+mtime 一致）就不再碰它。
+    font_cov: Mutex<HashMap<String, (u64, Option<SystemTime>, u8)>>,
 }
 
 /// `/status` 缓存时长：够挡住"连续几次 refresh"，又短到 KOReader 启停几秒内就能在页面上看到。
@@ -33,6 +37,7 @@ impl State {
             paths: paths.clone(),
             bus: Arc::new(rmsvc_core::events::EventBus::new()),
             status_cache: TtlCache::new(STATUS_TTL),
+            font_cov: Mutex::new(HashMap::new()),
         }
     }
 
@@ -67,6 +72,37 @@ impl State {
             "fonts": koreader::list_files(&k.fonts_dir(), FONT_EXTS).len(),
             "dicts": k.list_dicts().len(),
         })
+    }
+
+    /// `GET /fonts` 的条目：名字、字节数、中文基本区覆盖率（同原生字体一致的判据，低覆盖当正文会缺字）。
+    pub fn fonts_json(&self) -> Vec<serde_json::Value> {
+        self.fonts_json_with(|b| rmsvc_core::ttf::han_coverage_pct(b))
+    }
+
+    /// 同 [`Self::fonts_json`]，覆盖率计算可注入（单测数调用次数用）。按（大小, mtime）缓存；已被删掉的字体从缓存里清掉。
+    fn fonts_json_with(&self, coverage: impl Fn(&[u8]) -> Option<u8>) -> Vec<serde_json::Value> {
+        let dir = self.ko.fonts_dir();
+        let mut cache = self.font_cov.lock().unwrap_or_else(|e| e.into_inner());
+        let mut seen = std::collections::HashSet::new();
+        let items = koreader::list_files(&dir, FONT_EXTS)
+            .into_iter()
+            .map(|it| {
+                let path = dir.join(&it.name);
+                let modified = std::fs::metadata(&path).and_then(|m| m.modified()).ok();
+                let pct = match cache.get(&it.name) {
+                    Some(&(len, mt, pct)) if len == it.bytes && mt == modified => pct,
+                    _ => {
+                        let pct = std::fs::read(&path).ok().and_then(|b| coverage(&b)).unwrap_or(0);
+                        cache.insert(it.name.clone(), (it.bytes, modified, pct));
+                        pct
+                    }
+                };
+                seen.insert(it.name.clone());
+                serde_json::json!({"name": it.name, "bytes": it.bytes, "cjkPct": pct})
+            })
+            .collect();
+        cache.retain(|k, _| seen.contains(k));
+        items
     }
 
     /// multipart 多文件 → `store`（fonts/dicts 共用同一 [`AssetUploadFlow`]）。KOReader 未装→409。
@@ -107,5 +143,29 @@ mod tests {
         assert_eq!(st.status()["fonts"], 0, "TTL 内命中缓存，不重扫目录");
         st.notify("fonts");
         assert_eq!(st.status()["fonts"], 1, "操作完成路径 notify 后，马上刷新就看到变化");
+    }
+
+    #[test]
+    fn font_coverage_computed_once_per_unchanged_file() {
+        use std::cell::Cell;
+        let t = tempfile::tempdir().unwrap();
+        let st = state_in(t.path());
+        std::fs::create_dir_all(st.ko.fonts_dir()).unwrap();
+        let f = st.ko.fonts_dir().join("a.ttf");
+        std::fs::write(&f, b"first").unwrap();
+        let calls = Cell::new(0);
+        let cov = |_: &[u8]| {
+            calls.set(calls.get() + 1);
+            Some(77)
+        };
+        assert_eq!(st.fonts_json_with(cov)[0]["cjkPct"], 77);
+        st.fonts_json_with(cov);
+        assert_eq!(calls.get(), 1, "文件没变（大小+mtime 一致）不重读重算");
+        std::fs::write(&f, b"changed-and-longer").unwrap();
+        st.fonts_json_with(cov);
+        assert_eq!(calls.get(), 2, "内容变了（大小变）就重算");
+        std::fs::remove_file(&f).unwrap();
+        assert!(st.fonts_json_with(cov).is_empty());
+        assert!(st.font_cov.lock().unwrap().is_empty(), "删掉的字体从缓存清掉");
     }
 }

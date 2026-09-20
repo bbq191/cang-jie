@@ -1,11 +1,11 @@
 //! HTTP 适配层（唯一碰 http 类型的地方，只做取参 + 调领域方法 + 回执），与 book-serve 的 `api.rs` 对称。
 //! 路由清单见 `main.rs` 顶部文档。
 use crate::annot;
-use crate::koreader::{self, KoStore, KO_ANY};
+use crate::koreader::{KoStore, KO_ANY};
 use crate::service_state::State;
 use crate::vocab;
 use rmsvc_core::asset::AssetStore;
-use rmsvc_core::formats::{DICT_EXTS, FONT_EXTS};
+use rmsvc_core::formats::DICT_EXTS;
 use rmsvc_core::fs::plain_name;
 use rmsvc_core::http::{bind, ApiError, Reply, Router};
 use std::sync::Arc;
@@ -46,15 +46,7 @@ pub fn router(st: Arc<State>) -> Router {
             s.notify("books");
             Ok(Reply::ok(&serde_json::json!({"ok": true, "message": format!("已加入 KOReader《{}》（{} 字节）", name, item.bytes), "note": s.ko.running_note("KOReader 运行中：在其文件浏览器刷新可见")})))
         }))
-        .get("/fonts", bind(&st, |s, _| {
-            let dir = s.ko.fonts_dir();
-            let items: Vec<serde_json::Value> = koreader::list_files(&dir, FONT_EXTS).into_iter().map(|it| {
-                // 中文基本区覆盖率（同原生字体一致的判据），低覆盖当正文会缺字
-                let pct = std::fs::read(dir.join(&it.name)).ok().and_then(|b| rmsvc_core::ttf::han_coverage_pct(&b)).unwrap_or(0);
-                serde_json::json!({"name": it.name, "bytes": it.bytes, "cjkPct": pct})
-            }).collect();
-            Ok(Reply::ok(&serde_json::json!({"items": items})))
-        }))
+        .get("/fonts", bind(&st, |s, _| Ok(Reply::ok(&serde_json::json!({"items": s.fonts_json()})))))
         .post("/fonts", bind(&st, |s, r| { let rep = s.upload(r, &s.font_store())?; s.notify("fonts"); Ok(rep) }))
         .delete("/fonts/{file}", bind(&st, |s, r| {
             s.font_store().remove(r.param("file")).map_err(|e| ApiError::not_found(format!("删除失败: {e}")))?;
