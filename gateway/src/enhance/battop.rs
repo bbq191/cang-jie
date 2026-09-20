@@ -11,7 +11,6 @@
 //! 短时间内在网页上反复连点启停，理论上就是在人为复现旧 timer 那种高频重复触发的条件，这里没做
 //! 任何防连点/限流，2026-09-10 用户问起后把这条边界条件补进注释和网页文案，不再只说"不会重现"。
 use std::path::Path;
-use std::time::UNIX_EPOCH;
 
 const UNIT_FILE: &str = "/usr/lib/systemd/system/battop.service";
 const BIN: &str = "/home/root/battop/battop";
@@ -26,7 +25,7 @@ pub struct Status {
 pub fn status() -> Status {
     let installed = Path::new(UNIT_FILE).is_file() && Path::new(BIN).is_file();
     let running = installed && crate::manage::run("systemctl", &["is-active", "battop.service"]).map(|s| s.trim() == "active").unwrap_or(false);
-    let last_sample_at = std::fs::metadata(SUMMARY).ok().and_then(|m| m.modified().ok()).and_then(|t| t.duration_since(UNIX_EPOCH).ok()).map(|d| d.as_secs());
+    let last_sample_at = std::fs::metadata(SUMMARY).ok().and_then(|m| m.modified().ok()).map(rmsvc_core::clock::secs_of);
     Status { installed, running, last_sample_at }
 }
 

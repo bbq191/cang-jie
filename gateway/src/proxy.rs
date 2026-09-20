@@ -13,7 +13,7 @@
 //! 不需要任何跨进程锁，详见 `budget.rs` 文档注释。只有这三条命中路由才会额外读一次 body（几十字节
 //! 的小 JSON，`Request::read_small_body` 本来就有 1MB 上限）+ 查一次文件体积，其余请求（含真正的
 //! 大文件上传）完全不受影响、维持原有纯流式转发。
-use rmsvc_core::http::{ApiError, ApiResult, Method, Reply, Request};
+use rmsvc_core::http::{ApiError, ApiResult, JsonBody, Method, Reply, Request};
 use rmsvc_core::multipart::percent_encode as enc;
 use rmsvc_core::paths::Paths;
 use rmsvc_core::registry;
@@ -64,11 +64,10 @@ pub fn forward(paths: &Paths, req: &mut Request<'_>) -> ApiResult {
     let mut slot: Option<crate::budget::Slot<'static>> = None;
     let mut book_name = String::new();
     if gated.is_some() {
+        // 读一次 body 拿书名、过闸门后还要原样转发给后端，所以先读成字节再解析（`req.json()` 会把流读空）。
         let buf = req.read_small_body().map_err(ApiError::bad)?;
-        book_name = serde_json::from_slice::<serde_json::Value>(&buf)
-            .ok()
-            .and_then(|v| v.get("name").and_then(|n| n.as_str()).map(str::to_string))
-            .ok_or_else(|| ApiError::bad("缺 name"))?;
+        let parsed: serde_json::Value = serde_json::from_slice(&buf).map_err(|e| ApiError::bad(format!("请求不是 JSON: {e}")))?;
+        book_name = JsonBody(parsed).str("name")?.to_string();
         let bytes = paths.staging_dir().join(&book_name).metadata().map(|m| m.len()).unwrap_or(0);
         let tier = crate::budget::tier_of(bytes);
         slot = Some(crate::budget::global().admit(tier, &book_name).map_err(|e| ApiError { status: e.status(), message: e.message() })?);

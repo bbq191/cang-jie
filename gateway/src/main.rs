@@ -161,25 +161,19 @@ fn main() {
             Ok(Reply::ok(&serde_json::json!({"pending": pending, "active": active})))
         })
         .post("/api/budget/cancel", |r| {
-            let buf = r.read_small_body().map_err(ApiError::bad)?;
-            let name = serde_json::from_slice::<serde_json::Value>(&buf)
-                .ok()
-                .and_then(|v| v.get("name").and_then(|n| n.as_str()).map(str::to_string))
-                .ok_or_else(|| ApiError::bad("缺 name"))?;
+            let name = r.json()?.str("name")?.to_string();
             Ok(Reply::ok(&serde_json::json!({"cancelled": budget::global().cancel(&name)})))
         })
         // 服务端批量队列（见 batch.rs）：提交 `{action, names?, all?, folder?}`；`names` 缺省且 `all:true` 表示"所有适用的"。
         // 状态任何会话都能看（关掉浏览器重开、换设备都在）。同样必须在 /api/{svc} 代理通配之前注册。
         .post("/api/batch", bind(&paths, |p, r| {
-            let buf = r.read_small_body().map_err(ApiError::bad)?;
-            let v: serde_json::Value = serde_json::from_slice(&buf).map_err(|e| ApiError::bad(format!("请求不是 JSON: {e}")))?;
-            let action = v.get("action").and_then(|a| a.as_str()).and_then(batch::Action::parse).ok_or_else(|| ApiError::bad("action 只能是 optimize/deliver/koreader"))?;
-            let names = v.get("names").and_then(|n| n.as_array()).map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect::<Vec<_>>());
-            if names.is_none() && v.get("all").and_then(|a| a.as_bool()) != Some(true) {
+            let j = r.json()?;
+            let action = j.0.get("action").and_then(|a| a.as_str()).and_then(batch::Action::parse).ok_or_else(|| ApiError::bad("action 只能是 optimize/deliver/koreader"))?;
+            let names = j.0.get("names").and_then(|n| n.as_array()).map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect::<Vec<_>>());
+            if names.is_none() && !j.bool_or("all", false) {
                 return Err(ApiError::bad("要么给 names，要么 all:true"));
             }
-            let folder = v.get("folder").and_then(|f| f.as_str()).unwrap_or("");
-            let e = batch::enqueue(p, action, names, folder).map_err(ApiError::bad)?;
+            let e = batch::enqueue(p, action, names, j.str_or("folder", "")).map_err(ApiError::bad)?;
             Ok(Reply::ok(&serde_json::json!({"queued": e.queued, "skipped": e.skipped})))
         }))
         .get("/api/batch/status", |_| Ok(Reply::ok(&batch::status())))

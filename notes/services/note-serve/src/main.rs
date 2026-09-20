@@ -60,10 +60,6 @@ impl State {
     }
 }
 
-fn now_ms() -> u64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
-}
-
 fn results_reply(results: &[ChapterResult]) -> ApiResult {
     Ok(Reply::ok(&serde_json::json!({"chapters": results})))
 }
@@ -114,7 +110,7 @@ fn main() {
         }))
         .post("/books/{uuid}/generate", bind(&st, |s, r| {
             let uuid = r.param("uuid").to_string();
-            let results = generate_book(&s.ctx(now_ms()), &uuid).map_err(ApiError::bad)?;
+            let results = generate_book(&s.ctx(rmsvc_core::clock::now_ms()), &uuid).map_err(ApiError::bad)?;
             s.bus.publish("notes", "notebooks");
             results_reply(&results)
         }))
@@ -122,7 +118,7 @@ fn main() {
             let uuid = r.param("uuid").to_string();
             let idx: usize = r.param("idx").parse().map_err(|_| ApiError::bad("章序号不对"))?;
             let book = s.store.book(&uuid).map_err(ApiError::bad)?;
-            let result = generate_chapter(&s.ctx(now_ms()), &book, idx);
+            let result = generate_chapter(&s.ctx(rmsvc_core::clock::now_ms()), &book, idx);
             s.bus.publish("notes", "notebooks");
             results_reply(std::slice::from_ref(&result))
         }))
@@ -133,7 +129,7 @@ fn main() {
             let j = r.json()?;
             let title = j.str("title")?.to_string();
             let markdown = j.str("markdown")?.to_string();
-            let (visible_name, doc_uuid) = publish::import_markdown(&s.ctx(now_ms()), &uuid, &title, &markdown).map_err(ApiError::bad)?;
+            let (visible_name, doc_uuid) = publish::import_markdown(&s.ctx(rmsvc_core::clock::now_ms()), &uuid, &title, &markdown).map_err(ApiError::bad)?;
             Ok(Reply::ok(&serde_json::json!({"ok": true, "uuid": doc_uuid, "visibleName": visible_name})))
         }))
         .post("/books/{uuid}/export", bind(&st, |s, r| {
