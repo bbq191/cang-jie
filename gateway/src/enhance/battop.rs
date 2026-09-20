@@ -11,6 +11,8 @@
 //! 短时间内在网页上反复连点启停，理论上就是在人为复现旧 timer 那种高频重复触发的条件，这里没做
 //! 任何防连点/限流，2026-09-10 用户问起后把这条边界条件补进注释和网页文案，不再只说"不会重现"。
 use std::path::Path;
+use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 
 const UNIT_FILE: &str = "/usr/lib/systemd/system/battop.service";
 const BIN: &str = "/home/root/battop/battop";
@@ -22,9 +24,30 @@ pub struct Status {
     pub last_sample_at: Option<u64>,
 }
 
+/// `systemctl is-active` 结果缓存时长。`/api/enhance/status` 每次都 fork 一个 `systemctl` 进程（管理页每次刷新、
+/// 每个 manage 事件都会调），而 battop 是否在跑几乎不会在几秒内变化（开关走 [`toggle`]，会主动清缓存）。
+const ACTIVE_TTL: Duration = Duration::from_secs(5);
+
+fn active_cache() -> &'static Mutex<Option<(Instant, bool)>> {
+    static C: OnceLock<Mutex<Option<(Instant, bool)>>> = OnceLock::new();
+    C.get_or_init(|| Mutex::new(None))
+}
+
+fn is_active_cached() -> bool {
+    let mut c = active_cache().lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((at, v)) = *c {
+        if at.elapsed() < ACTIVE_TTL {
+            return v;
+        }
+    }
+    let v = crate::manage::run("systemctl", &["is-active", "battop.service"]).map(|s| s.trim() == "active").unwrap_or(false);
+    *c = Some((Instant::now(), v));
+    v
+}
+
 pub fn status() -> Status {
     let installed = Path::new(UNIT_FILE).is_file() && Path::new(BIN).is_file();
-    let running = installed && crate::manage::run("systemctl", &["is-active", "battop.service"]).map(|s| s.trim() == "active").unwrap_or(false);
+    let running = installed && is_active_cached();
     let last_sample_at = std::fs::metadata(SUMMARY).ok().and_then(|m| m.modified().ok()).map(rmsvc_core::clock::secs_of);
     Status { installed, running, last_sample_at }
 }
@@ -43,7 +66,11 @@ pub fn toggle(action: &str) -> Result<(), String> {
         return Err("设备上没有装 battop（这次网页开关只控制已经手动装好的 battop，不提供从网页安装）".into());
     }
     match action {
-        "start" | "stop" => crate::manage::run("systemctl", &[action, "battop.service"]).map(|_| ()),
+        "start" | "stop" => {
+            let r = crate::manage::run("systemctl", &[action, "battop.service"]).map(|_| ());
+            *active_cache().lock().unwrap_or_else(|e| e.into_inner()) = None; // 状态变了，下次 status 重新问 systemd
+            r
+        }
         _ => Err("action 只能 start|stop".into()),
     }
 }
