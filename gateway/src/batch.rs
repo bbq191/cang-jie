@@ -338,7 +338,7 @@ fn run_one(paths: &Paths, job: &Job) -> Result<(), String> {
     let book = registry::find(paths, "book-serve").ok_or("book-serve 未安装或未运行")?.base_url();
     let bytes = paths.staging_dir().join(&job.name).metadata().map(|m| m.len()).unwrap_or(0);
     // 同单条操作一样过并发/内存预算闸门；批量顺序执行，所以通常立即放行，只在别处同时在跑大书时才排队。
-    let slot = crate::budget::global().admit(crate::budget::tier_of(bytes), &job.name)?;
+    let slot = crate::budget::global().admit(crate::budget::tier_of(bytes), &job.name).map_err(|e| e.message())?;
     let settled = |kind: &str, slot: crate::budget::Slot<'static>| -> Result<(), String> {
         crate::proxy::poll_until_settled(&book, &job.name);
         drop(slot);
