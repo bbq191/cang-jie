@@ -2,7 +2,7 @@
 # host 侧一键构建+推送 Sidebar 一级直达入口（KOReader，装了第三方 WeRead app 时自动带上它）。
 #
 # 2026-09-13 从「手动 SSH 上机部署」捞回 packaging/ 变成可重复脚本：源 QML 补丁本来在
-# oldbak/xovi-extensions/reading-qol/（2026-09-11 大整理搬出 git 仓库时带走的），2026-09-13
+# 2026-09-11 大整理时搬出 git 仓库的 reading-qol/ 里，2026-09-13
 # 给这台设备装第三方 WeRead app 时又手动改过一次、手动重新部署过——这次把最终版本捞回
 # packaging/，往后走这个脚本，不用再记住那一串手动步骤。
 #
@@ -28,32 +28,42 @@
 # 的 journalctl：appload 自己的 qmd 处理成功会打一行 "Loaded external AppLoad hooks in main
 # UI"；没这行说明大概率没打过这个补丁（或者压根还没重启过 xochitl 应用刚装好的 appload），本
 # 脚本探测不到就跳过、不硬装一个不会响应的按钮。真要修：`packaging/appload_patch_328.py`
-# 2026-09-16 已从"只在本机 oldbak/ 没进版本控制"这个缺口里回收（见同目录
+# 2026-09-16 已回收进版本控制（见同目录
 # appload-qmd-PROVENANCE.md），独立跑 `packaging/deploy-appload-patch.sh <host>`——**没有
 # 接入 install-all.sh 的自动编排**，字节替换逻辑还没有对真实 appload.so 做过真机验证，见该
 # 脚本头注。PR #59 本身已在 2026-09-07 合并进上游 master，但上游至今没有发布带这个修复的新
 # tag，`vellum add appload` 装的官方发行版（仍是 v0.5.3）因此依然没有这个修复。
 #
 # 用法：./deploy-sidebar-entry.sh [host]      host 默认 10.11.99.1
-#   环境 DEFER_XOVI_START=1：只把 qmd/rcc 落盘，不在这一步跑 xovi/start——install-all.sh 编排
+#   环境 DEFER_XOVI_START=1：只把 qmd/rcc 落盘，不在这一步重启 xochitl——install-all.sh 编排
 #   多个 xovi 扩展时用这个避免短时间内反复重启 xochitl（撞 watchdog+StartLimit 的风险，
-#   2026-09-11 真机踩过），改成全部落盘完最后统一跑一次（deploy-xovi-apply.sh）。单独跑本脚本
-#   不用管这个变量，默认行为不变（装完立即 xovi/start 生效 + 健康检查）。
+#   2026-09-11 真机踩过），改成全部落盘完最后统一重启一次（deploy-xovi-apply.sh）。单独跑本脚本
+#   不用管这个变量：装完立即重启 xochitl 生效 + 健康检查——怎么重启由设备端 devlib.sh 的
+#   cj_xochitl_apply 判定（xovi 已生效 → systemctl restart；没生效才 xovi/start，2026-09-20 修，
+#   见 deploy-xovi-apply.sh 头注），重启前会提示"打断阅读"并留 5 秒宽限。
+#
+# 2026-09-20 改动（脚本审计）：qmd/rcc 先推到暂存目录并 md5 校验，通过后设备端才原子 rename 进 qrr 目录
+# （旧版直接 scp 覆盖，md5 不符时坏文件已在 qrr 里）；旧文件备份进 cangjie-backups（保留最近几份），
+# 不再在 qrr 目录里放 .bak.pre-*。
 set -eu
 cd "$(dirname "$0")"
+# shellcheck disable=SC1091
+. ./lib.sh
+# shellcheck disable=SC2034  # HOST 由 lib.sh 的 rssh/rscp/dev_script 使用
 HOST="${1:-10.11.99.1}"
 QRR_DIR=/home/root/xovi/exthome/qt-resource-rebuilder
+STAGE="$CJ_STAGE_REMOTE"
 RCC_LOCAL="$(mktemp -t sidebar-icons.XXXXXX.rcc)"
 trap 'rm -f "$RCC_LOCAL"' EXIT
 
 echo "== 探测设备端 qt-resource-rebuilder =="
-if ! ssh "root@$HOST" "[ -d $QRR_DIR ]"; then
+if ! rssh "[ -d $QRR_DIR ]"; then
     echo "-- 设备没装 qt-resource-rebuilder（vellum add qt-resource-rebuilder）——跳过，非失败"
     exit 0
 fi
 
 echo "== 探测设备端 appload =="
-if ! ssh "root@$HOST" "[ -d /home/root/xovi/exthome/appload ]"; then
+if ! rssh "[ -d /home/root/xovi/exthome/appload ]"; then
     echo "-- 设备没装 appload（vellum add appload）——跳过，非失败"
     exit 0
 fi
@@ -67,15 +77,15 @@ echo "== 探测 appload 自己的 qmd 在这台固件上是否兼容 =="
 # appload，见 工程纪律 记录）却还没重启过 xochitl，这里还是会读到旧的成功信号（2026-09-15
 # 全量代码审查审出）。真正当次生效与否，靠下面本脚本自己触发的这次重启之后重新核对同一行信号
 # （`DEFER_XOVI_START=1` 模式不在这一步重启，没法当场复核，见该分支注释）。
-if ! ssh "root@$HOST" "journalctl -b 0 -u xochitl --no-pager 2>/dev/null | grep -q 'Loaded external AppLoad hooks in main UI'"; then
+if ! rssh "journalctl -b 0 -u xochitl --no-pager 2>/dev/null | grep -q 'Loaded external AppLoad hooks in main UI'"; then
     echo "-- 没在这次开机日志里看到 appload 成功挂载的信号（可能是 appload 在这个固件版本上没打"
-    echo "   过 PR #59 兼容补丁，也可能是刚装完 appload 还没 xovi/start 过一次）——跳过，非失败。"
+    echo "   过 PR #59 兼容补丁，也可能是刚装完 appload 还没重启过 xochitl）——跳过，非失败。"
     echo "   见本脚本头注「appload 在 3.28 上要打过 PR #59 兼容补丁」一节。"
     exit 0
 fi
 
 echo "== 探测设备是否已装第三方 WeRead app =="
-if ssh "root@$HOST" "[ -x /home/root/.local/opt/remarkable-weread/bin/start-remarkable-weread.sh ]"; then
+if rssh "[ -x /home/root/.local/opt/remarkable-weread/bin/start-remarkable-weread.sh ]"; then
     QMD_SRC=sidebar-entry-koreader-weread.qmd
     echo "-- 装了 WeRead，用 $QMD_SRC（KOReader + WeRead 两项）"
 else
@@ -90,61 +100,44 @@ if ! command -v rcc >/dev/null 2>&1; then
 fi
 rcc --binary -o "$RCC_LOCAL" sidebar-icons.qrc
 
-echo "== 备份设备上现有的 qmd/rcc（若存在）=="
-# shellcheck disable=SC2029  # 远端路径固定字面量，无用户输入拼接风险
-ssh "root@$HOST" "
-    [ -f $QRR_DIR/koreader-sidebar-entry.qmd ] && cp $QRR_DIR/koreader-sidebar-entry.qmd $QRR_DIR/koreader-sidebar-entry.qmd.bak.pre-sidebar-entry-deploy
-    [ -f $QRR_DIR/cangjie-icons.rcc ] && cp $QRR_DIR/cangjie-icons.rcc $QRR_DIR/cangjie-icons.rcc.bak.pre-sidebar-entry-deploy
-    true
-"
+echo "== 推送到设备暂存目录（md5 校验；通过前不碰 qrr 目录）=="
+push_verified "$QMD_SRC" "$STAGE/koreader-sidebar-entry.qmd"
+push_verified "$RCC_LOCAL" "$STAGE/cangjie-icons.rcc"
 
-echo "== 推送到 root@$HOST =="
-scp "$QMD_SRC" "root@$HOST:$QRR_DIR/koreader-sidebar-entry.qmd"
-scp "$RCC_LOCAL" "root@$HOST:$QRR_DIR/cangjie-icons.rcc"
-
-echo "== md5 校验 =="
-LOCAL_QMD_MD5="$(md5sum "$QMD_SRC" | awk '{print $1}')"
-LOCAL_RCC_MD5="$(md5sum "$RCC_LOCAL" | awk '{print $1}')"
-REMOTE_MD5S="$(ssh "root@$HOST" "md5sum $QRR_DIR/koreader-sidebar-entry.qmd $QRR_DIR/cangjie-icons.rcc" | awk '{print $1}')"
-REMOTE_QMD_MD5="$(echo "$REMOTE_MD5S" | sed -n 1p)"
-REMOTE_RCC_MD5="$(echo "$REMOTE_MD5S" | sed -n 2p)"
-if [ "$LOCAL_QMD_MD5" != "$REMOTE_QMD_MD5" ] || [ "$LOCAL_RCC_MD5" != "$REMOTE_RCC_MD5" ]; then
-    echo "!! md5 对不上（qmd: $LOCAL_QMD_MD5 vs $REMOTE_QMD_MD5；rcc: $LOCAL_RCC_MD5 vs $REMOTE_RCC_MD5）"
-    exit 1
-fi
-echo "-- md5 一致"
+echo "== 设备端落位（备份进 cangjie-backups + 原子 rename）=="
+dev_script "$QRR_DIR" "$STAGE" <<'DEVICE_SCRIPT'
+set -eu
+QRR="$1"; STG="$2"
+[ -f "$STG/koreader-sidebar-entry.qmd" ] && [ -f "$STG/cangjie-icons.rcc" ] || { echo "!! 暂存文件缺失"; exit 1; }
+for f in koreader-sidebar-entry.qmd cangjie-icons.rcc; do
+    if [ -f "$QRR/$f" ] && ! cmp -s "$STG/$f" "$QRR/$f"; then cj_backup_file "$QRR/$f"; fi   # 内容没变就不堆重复备份
+done
+cj_safe_replace "$STG/koreader-sidebar-entry.qmd" "$QRR/koreader-sidebar-entry.qmd" "$STG" 644
+cj_safe_replace "$STG/cangjie-icons.rcc" "$QRR/cangjie-icons.rcc" "$STG" 644
+rm -f "$STG/koreader-sidebar-entry.qmd" "$STG/cangjie-icons.rcc"
+rmdir "$STG" 2>/dev/null || true
+echo "-- 已落位 $QRR/{koreader-sidebar-entry.qmd,cangjie-icons.rcc}"
+DEVICE_SCRIPT
 
 if [ "${DEFER_XOVI_START:-0}" = "1" ]; then
-    echo "-- DEFER_XOVI_START=1：只落盘，不在这一步跑 xovi/start（由后续统一步骤处理）"
+    echo "-- DEFER_XOVI_START=1：只落盘，不在这一步重启 xochitl（由后续统一步骤处理）"
     echo "   ⚠ appload 兼容信号只在上面探测的那一刻核对过，这一步不重启就没法当场复核；"
     echo "     后续统一步骤（deploy-xovi-apply.sh）真正重启后如果按钮点了没反应，先查"
     echo "     一遍 appload 是不是重启前又被 vellum upgrade 覆盖过。"
     exit 0
 fi
 
-echo "== 设备端跑一次 xovi/start 让新 qmd/rcc 生效 + 健康检查 =="
+echo "== 设备端重启 xochitl 让新 qmd/rcc 生效 + 健康检查（会打断设备上的阅读/书写）=="
 # 重启前打个时间戳，重启后拿它重新核对 appload 兼容信号——只信"本次重启之后新出现的"这一条，
 # 不再相信上面探测阶段那次可能已经过期的"本次开机内某个时刻出现过"（见上面探测那步的头注）。
-SINCE="$(ssh "root@$HOST" "date '+%Y-%m-%d %H:%M:%S'")"
-# shellcheck disable=SC2087  # heredoc 内变量就是要在本地展开，全部是固定字面量，无远端注入风险；
-# $SINCE 是唯一需要传给远端的本地值，走位置参数（$1），不塞进带引号的 heredoc 正文里（那样只会被
-# 远端 shell 当成它自己从未定义过的变量，展开成空字符串）。
-ssh "root@$HOST" "sh -s" "$SINCE" <<'DEVICE_SCRIPT'
+SINCE="$(rssh "date '+%Y-%m-%d %H:%M:%S'")"
+dev_script "$SINCE" <<'DEVICE_SCRIPT'
 set -eu
 SINCE="$1"
-OLD_PID="$(systemctl show xochitl -p MainPID --value 2>/dev/null || echo 0)"
-/home/root/xovi/start
-sleep 5
-STATE="$(systemctl is-active xochitl 2>/dev/null || true)"
-NEW_PID="$(systemctl show xochitl -p MainPID --value 2>/dev/null || echo 0)"
-NREST="$(systemctl show xochitl -p NRestarts --value 2>/dev/null || echo '?')"
-echo "  is-active : $STATE   (期望 active)"
-echo "  MainPID   : $OLD_PID -> $NEW_PID   (期望有变化)"
-echo "  NRestarts : $NREST   (期望 0/不增)"
-if [ "$STATE" != "active" ] || [ "$NEW_PID" = "0" ]; then
-    echo "⚠️  健康检查未达预期。查 journalctl -u xochitl"
-    exit 1
-fi
+cj_require_root || exit 1
+OLD_PID="$(cj_xochitl_pid)"
+cj_xochitl_apply || exit 1
+cj_xochitl_health "$OLD_PID" || { echo "⚠️  健康检查未达预期。查 journalctl -u xochitl"; exit 1; }
 if journalctl -u xochitl --since "$SINCE" --no-pager 2>/dev/null | grep -q 'Loaded external AppLoad hooks in main UI'; then
     echo "✅ 部署完成（appload 兼容信号在这次重启之后重新出现，不是复用重启前的旧信号）"
 else
