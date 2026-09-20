@@ -21,18 +21,21 @@ pub struct Module {
     pub label: &'static str,
     /// 门控未上线 → 不可装、不可开（当前全为 true；机制保留给将来的新模块）。
     pub installable: bool,
+    /// 该服务是否提供 `GET /events`（SSE）。网关只给提供的服务起订阅线程：mind-serve 是纯被动的
+    /// 问答服务（没有事件流，见其 main.rs 头注），此前网关对它每 3 秒打一个 404、白白唤醒它。
+    pub events: bool,
 }
 
 pub const MODULES: &[Module] = &[
-    Module { seg: "books", service: "book-serve", only: "book", label: "母版库 / 落原生", installable: true },
-    Module { seg: "fonts", service: "font-serve", only: "font", label: "xochitl 字体", installable: true },
-    Module { seg: "koreader", service: "koreader-serve", only: "koreader", label: "KOReader", installable: true },
-    Module { seg: "wallpapers", service: "wallpaper-serve", only: "wallpaper", label: "壁纸", installable: true },
+    Module { seg: "books", service: "book-serve", only: "book", label: "母版库 / 落原生", installable: true, events: true },
+    Module { seg: "fonts", service: "font-serve", only: "font", label: "xochitl 字体", installable: true, events: true },
+    Module { seg: "koreader", service: "koreader-serve", only: "koreader", label: "KOReader", installable: true, events: true },
+    Module { seg: "wallpapers", service: "wallpaper-serve", only: "wallpaper", label: "壁纸", installable: true, events: true },
     // 笔记线（notes/）：矿 / 转写 / 脑 / 本，挂同一网关；网页只有 note-serve 注册「笔记」tab，前端组合四个 seg。
-    Module { seg: "ink", service: "ink-serve", only: "ink", label: "笔记·矿（条目库）", installable: true },
-    Module { seg: "transcribe", service: "transcribe-serve", only: "transcribe", label: "笔记·转写（手写→文字）", installable: true },
-    Module { seg: "mind", service: "mind-serve", only: "mind", label: "笔记·脑（问AI）", installable: true },
-    Module { seg: "notes", service: "note-serve", only: "note", label: "笔记·本（笔记本/导出）", installable: true },
+    Module { seg: "ink", service: "ink-serve", only: "ink", label: "笔记·矿（条目库）", installable: true, events: true },
+    Module { seg: "transcribe", service: "transcribe-serve", only: "transcribe", label: "笔记·转写（手写→文字）", installable: true, events: true },
+    Module { seg: "mind", service: "mind-serve", only: "mind", label: "笔记·脑（问AI）", installable: true, events: false },
+    Module { seg: "notes", service: "note-serve", only: "note", label: "笔记·本（笔记本/导出）", installable: true, events: true },
 ];
 
 pub fn by_seg(seg: &str) -> Option<&'static Module> {
@@ -185,6 +188,12 @@ mod tests {
         assert_eq!(service_of("nope"), None);
         assert_eq!(service_of("weread"), None, "微读线已砍（2026-09-05），目录表不再有它");
         assert!(MODULES.iter().all(|m| m.installable));
+    }
+    #[test]
+    fn only_mind_serve_has_no_event_stream() {
+        // mind-serve 没有 /events 路由；其余都有。表和服务真实情况不一致会让网关白打 404（耗电）或漏掉事件。
+        let no: Vec<&str> = MODULES.iter().filter(|m| !m.events).map(|m| m.service).collect();
+        assert_eq!(no, ["mind-serve"]);
     }
     #[test]
     fn status_reports_three_states() {
