@@ -256,15 +256,27 @@ fn parse_headers(head: &str) -> (String, Option<String>, Option<String>) {
     (name, filename, ctype)
 }
 
+fn hex_val(c: u8) -> Option<u8> {
+    match c {
+        b'0'..=b'9' => Some(c - b'0'),
+        b'a'..=b'f' => Some(c - b'a' + 10),
+        b'A'..=b'F' => Some(c - b'A' + 10),
+        _ => None,
+    }
+}
+
 /// 百分号解码（filename*= 与查询串共用）。
 pub fn percent_decode(s: &str) -> String {
     let b = s.as_bytes();
     let mut out = Vec::with_capacity(b.len());
     let mut i = 0;
     while i < b.len() {
+        // 按字节取两位 hex，不对 &str 按字节下标切片：`%` 后若跟多字节 UTF-8 字符，`&s[i+1..i+3]`
+        // 会切在字符中间直接 panic（release 是 panic=abort，一条恶意查询串就能摔掉整个进程）。
+        // 同时不再借 `from_str_radix`（它会把 `+1` 当合法输入）。
         if b[i] == b'%' && i + 2 < b.len() {
-            if let Ok(v) = u8::from_str_radix(&s[i + 1..i + 3], 16) {
-                out.push(v);
+            if let (Some(h), Some(l)) = (hex_val(b[i + 1]), hex_val(b[i + 2])) {
+                out.push(h << 4 | l);
                 i += 3;
                 continue;
             }
@@ -412,5 +424,27 @@ mod tests {
     fn percent_roundtrip() {
         assert_eq!(percent_encode("a b/中"), "a%20b%2F%E4%B8%AD");
         assert_eq!(percent_decode(&percent_encode("x=1&y=中 文")), "x=1&y=中 文");
+    }
+
+    /// 回归：`%` 后跟多字节 UTF-8 字符曾在 `&s[i+1..i+3]` 处 panic（切到字符中间）。
+    #[test]
+    fn percent_decode_never_panics_on_non_ascii_or_malformed() {
+        assert_eq!(percent_decode("%aé!"), "%aé!", "非法转义原样保留、不 panic");
+        assert_eq!(percent_decode("%é"), "%é");
+        assert_eq!(percent_decode("中%中文"), "中%中文");
+        assert_eq!(percent_decode("%+1"), "% 1", "`+1` 不是合法 hex，不该被 from_str_radix 式地吞掉");
+        assert_eq!(percent_decode("%4"), "%4");
+        assert_eq!(percent_decode("%41"), "A");
+        assert_eq!(percent_decode("%e4%b8%ad+x"), "中 x");
+        // 穷举：任意由 % 与若干多字节/ASCII 字符拼出的短串都不能 panic
+        let alphabet = ["%", "a", "F", "é", "中", "+", "\u{1F600}"];
+        for x in alphabet {
+            for y in alphabet {
+                for z in alphabet {
+                    let _ = percent_decode(&format!("{x}{y}{z}"));
+                    let _ = percent_decode(&format!("{x}{y}{z}!"));
+                }
+            }
+        }
     }
 }
