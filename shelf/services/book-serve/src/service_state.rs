@@ -46,7 +46,13 @@ impl State {
 
     pub fn ensure_dirs(&self) -> std::io::Result<()> {
         self.spool.ensure()?;
-        self.staging.ensure()
+        self.staging.ensure()?;
+        // 给"已加入 xochitl 但没有渲染记录"的书补记（大文件通道上线前直接投入的），让列表里渲染徽章统一。幂等。
+        let n = self.staging.backfill_render_records();
+        if n > 0 {
+            println!("[book-serve] 补记 {n} 本已加入 xochitl 的书的渲染记录");
+        }
+        Ok(())
     }
 
     pub fn status(&self) -> serde_json::Value {

@@ -502,6 +502,40 @@ impl Staging {
         Ok(DeliverOutcome { message, render })
     }
 
+    /// 给"已加入 xochitl 但没有渲染记录"的书补记（2026-09-20：大文件通道上线前直接投入的书没有渲染徽章，列表里不统一）。
+    /// 按书名（规范名或文件名 stem）+ 文件大小在 xochitl 书库里认领对应文档；没渲染缓存（`.pdf`）＝没打开过 → `onopen`（记当前
+    /// 占位页数，之后 `list()` 看到页数变了就升级）；有缓存＝已渲染过 → 直接 `ok` 记真页数。返回补记了几本。幂等、只补缺的。
+    pub fn backfill_render_records(&self) -> usize {
+        let lib = self.xochitl.library_dir().to_path_buf();
+        if !lib.is_dir() {
+            return 0;
+        }
+        let docs = rmsvc_core::xochitl::find_documents_since(&lib, 0);
+        let mut n = 0;
+        for e in self.list() {
+            let has_native = e.delivered.as_ref().map(|d| d.native.is_some() && d.render.is_none()).unwrap_or(false);
+            let ext = formats::ext_of(&e.name);
+            if !has_native || (ext != "epub" && ext != "pdf") {
+                continue;
+            }
+            let stem = e.name.strip_suffix(&format!(".{ext}")).unwrap_or(&e.name).to_string();
+            let canon = bookconv::naming::canonical_book_name(&stem);
+            let eq = |a: &str, b: &str| a.trim().eq_ignore_ascii_case(b.trim());
+            let doc = docs.iter().find(|d| {
+                (eq(&d.visible_name, &canon) || eq(&d.visible_name, &stem) || eq(&d.visible_name, &e.name))
+                    && std::fs::metadata(lib.join(format!("{}.{ext}", d.uuid))).map(|m| m.len() == e.bytes).unwrap_or(false)
+            });
+            let Some(doc) = doc else { continue };
+            let pages = rmsvc_core::xochitl::page_count(&lib, &doc.uuid).unwrap_or(0);
+            let opened = ext == "pdf" || lib.join(format!("{}.pdf", doc.uuid)).exists();
+            let rc = sidecar::RenderCheck { uuid: doc.uuid.clone(), pages, expected: 0, status: if opened { "ok".into() } else { "onopen".into() }, at: rmsvc_core::clock::now_secs() };
+            if self.set_render(&e.name, rc).is_ok() {
+                n += 1;
+            }
+        }
+        n
+    }
+
     /// 大文件通道（见 [`rmsvc_core::xochitl::Xochitl::upload_large_file`]）：成功 `Ok(Some)`；条件不满足（非
     /// EPUB/PDF、超过安全上限、本机没有 xochitl 书库目录、造占位失败）→ `Ok(None)` 让调用方退回旧路径；
     /// 占位已上传之后才出的错 → `Err`（不再退回分卷，否则会在书库里留下重复内容）。
@@ -1312,6 +1346,36 @@ mod tests {
         assert_eq!((rc(&s).status.as_str(), rc(&s).pages), ("onopen", 2), "没打开过：保持 onopen");
         std::fs::write(lib.join("u1.content"), r#"{"pageCount":351}"#).unwrap();
         assert_eq!((rc(&s).status.as_str(), rc(&s).pages), ("ok", 351), "打开过（页数变了）：升级成真页数");
+    }
+
+    #[test]
+    fn backfill_claims_delivered_books_without_render_record_by_name_and_size() {
+        let t = tempfile::tempdir().unwrap();
+        let lib = t.path().join("lib");
+        std::fs::create_dir_all(&lib).unwrap();
+        let x = Arc::new(Xochitl::new("127.0.0.1:1", &lib, 1));
+        let s = Staging::new(t.path().join("staging"), x, 1024 * 1024);
+        s.ensure().unwrap();
+        let epub = comic_epub_with_real_images(&[12, 13]);
+        for n in ["镖人 - 二卷.epub", "镖人 - 三卷.epub"] {
+            s.stage_new(n, &epub).unwrap();
+            s.mark_delivered(n, Reader::Native).unwrap();
+        }
+        let mk = |uuid: &str, name: &str, opened: bool| {
+            std::fs::write(lib.join(format!("{uuid}.metadata")), format!(r#"{{"type":"DocumentType","visibleName":"{name}","parent":"","createdTime":"{}"}}"#, rmsvc_core::clock::now_ms())).unwrap();
+            std::fs::write(lib.join(format!("{uuid}.epub")), &epub).unwrap();
+            std::fs::write(lib.join(format!("{uuid}.content")), if opened { r#"{"pageCount":264}"# } else { r#"{"pageCount":2}"# }).unwrap();
+            if opened {
+                std::fs::write(lib.join(format!("{uuid}.pdf")), b"render").unwrap();
+            }
+        };
+        mk("u-unopened", "镖人 - 二卷", false);
+        mk("u-opened", "镖人 - 三卷", true);
+        assert_eq!(s.backfill_render_records(), 2);
+        let get = |name: &str| s.list().into_iter().find(|e| e.name == name).unwrap().delivered.unwrap().render.unwrap();
+        assert_eq!((get("镖人 - 二卷.epub").status.as_str(), get("镖人 - 二卷.epub").pages), ("onopen", 2));
+        assert_eq!((get("镖人 - 三卷.epub").status.as_str(), get("镖人 - 三卷.epub").pages), ("ok", 264));
+        assert_eq!(s.backfill_render_records(), 0, "幂等：已有记录的不再补");
     }
 
     #[test]
