@@ -6,8 +6,8 @@
 //! **整理区第三轮反馈（2026-09-08）加了指纹比对**：`export_state.rs` 记"上次导出时的内容指纹"，
 //! 指纹没变就跳过重写（不再是无条件每次全量重写）——跟落设备笔记本那条投影路径（`publish.rs` +
 //! `notebooks.rs`）用同一套纪律；顺带给「整理」页提供"这一章 md 是不是已经跟当前内容同步"的判据，
-//! 见 `main.rs` 新增的 `GET .../sync`。出错只影响那一章内容旧，不会半写坏文件（`fs::write` 本身是
-//! 整文件替换）。**2026-09-08 三期追加**：光落盘在设备上用户够不着（得 SSH），`GET .../export.md`
+//! 见 `main.rs` 新增的 `GET .../sync`。出错只影响那一章内容旧，不会半写坏文件（落盘走 `rmsvc_core::fs::write_atomic`：
+//! 同目录临时文件 → rename；此前直接 `fs::write` 是先截断再写，掉电/崩溃会留下半截 md）。**2026-09-08 三期追加**：光落盘在设备上用户够不着（得 SSH），`GET .../export.md`
 //! （`main.rs`）额外把同一份内容直接当浏览器下载返回——`content_disposition()` 给的文件名走
 //! RFC 5987（`filename*=UTF-8''...`，中文文件名要这个；纯 ASCII 兜底 `filename=` 给老客户端）。
 use crate::export_state::{ExportRecord, ExportState};
@@ -65,7 +65,7 @@ pub fn export_book(data_dir: &Path, book: &Book, state: &ExportState) -> Result<
     if any_content {
         if let Some(md) = notecore::export::export_index_md(book) {
             let path = dir.join(format!("{}.md", sanitize(&book.title)));
-            std::fs::write(&path, md).map_err(|e| format!("写 {} 失败: {e}", path.display()))?;
+            rmsvc_core::fs::write_atomic(&path, md.as_bytes()).map_err(|e| format!("写 {} 失败: {e}", path.display()))?;
         }
     }
     Ok(outcomes)
@@ -90,7 +90,7 @@ pub fn export_chapter(dir: &Path, book: &Book, chapter_idx: usize, title: &str, 
     }
     let md = notecore::export::export_chapter_md(book, chapter_idx).expect("指纹是 Some，md 也该有内容——两者算的是同一份 live_entries");
     let path = dir.join(format!("{}.md", sanitize(&notecore::export::chapter_stem(chapter_idx, title))));
-    std::fs::write(&path, md).map_err(|e| format!("写 {} 失败: {e}", path.display()))?;
+    rmsvc_core::fs::write_atomic(&path, md.as_bytes()).map_err(|e| format!("写 {} 失败: {e}", path.display()))?;
     state.set(&book.uuid, chapter_idx, ExportRecord { fingerprint, exported_at: rmsvc_core::clock::now_secs() })?;
     Ok(ExportOutcome::Written)
 }

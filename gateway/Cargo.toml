@@ -24,5 +24,8 @@ base64 = "0.22"
 opt-level = "z"
 lto = true
 strip = true
-panic = "abort"
+# unwind（不是 abort）：abort 下 catch_unwind 完全无效，一次 panic 会摔掉整个进程（与 shelf 同理，
+# 见 shelf/Cargo.toml；2026-09-19《镖人》真机踩过）。网关批量队列 worker 与请求线程里有 `catch_unwind` 兜底的后台线程/批量 worker，
+# 失败应该只影响那一项，不该让所有在途操作一起陪葬；代价是二进制体积略增（见提交说明）。
+panic = "unwind"
 codegen-units = 1

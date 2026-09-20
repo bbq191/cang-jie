@@ -1,16 +1,12 @@
 //! 视觉后端（Strategy）：`Vision` 一个方法——给裁片 PNG 与提示词，回文本与用量。
 //! 生产实现 `OpenAiCompat`：`POST {base_url}/chat/completions` + `image_url` data URI，覆盖 DashScope（Qwen）与所有 OpenAI 兼容服务；
-//! 换厂只改配置 baseUrl/model/key。测试用 `Fixed`。应答解析独立成纯函数（`parse_chat_reply`）可单测。
+//! 换厂只改配置 baseUrl/model/key。测试用 `Fixed`。传输与应答解析（`post_chat`/`parse_chat_reply`）已收进
+//! `vendorcfg::chat`（2026-09-20，跟 mind-serve 此前各抄一份）；这里只留带 `image_url` 的请求体与 `Vision` trait。
 use base64::Engine;
 use std::time::Duration;
-use vendorcfg::truncate_chars as trunc;
 
-#[derive(Debug, Clone, PartialEq, Default)]
-pub struct Transcript {
-    pub text: String,
-    pub prompt_tokens: u64,
-    pub completion_tokens: u64,
-}
+/// 一次转写的结果（文本 + token 用量）：与文字问答同形，共用 `vendorcfg::ChatReply`。
+pub type Transcript = vendorcfg::ChatReply;
 
 pub trait Vision: Send + Sync {
     fn name(&self) -> &str;
@@ -27,7 +23,7 @@ pub struct OpenAiCompat {
 
 impl OpenAiCompat {
     pub fn new(backend: &str, base_url: &str, model: &str, key: &str, timeout: Duration) -> OpenAiCompat {
-        let agent = ureq::AgentBuilder::new().timeout_connect(Duration::from_secs(10)).timeout(timeout).build();
+        let agent = vendorcfg::chat::agent(timeout);
         OpenAiCompat { backend: backend.into(), base_url: base_url.trim_end_matches('/').into(), model: model.into(), key: key.into(), agent }
     }
 }
@@ -45,34 +41,16 @@ pub fn chat_request(model: &str, png: &[u8], prompt: &str) -> serde_json::Value 
     })
 }
 
-/// 解析 chat/completions 应答：`choices[0].message.content` 可能是字符串或分段数组；`usage` 缺省 0。
-pub fn parse_chat_reply(v: &serde_json::Value) -> Result<Transcript, String> {
-    let msg = v.pointer("/choices/0/message/content").ok_or_else(|| format!("应答无 choices[0].message.content：{}", trunc(&v.to_string(), 300)))?;
-    let text = match msg {
-        serde_json::Value::String(s) => s.clone(),
-        serde_json::Value::Array(parts) => parts.iter().filter_map(|p| p.get("text").and_then(|t| t.as_str())).collect::<Vec<_>>().join(""),
-        _ => return Err("content 形状不认识".into()),
-    };
-    let u = |k: &str| v.pointer(&format!("/usage/{k}")).and_then(|x| x.as_u64()).unwrap_or(0);
-    Ok(Transcript { text: text.trim().to_string(), prompt_tokens: u("prompt_tokens"), completion_tokens: u("completion_tokens") })
-}
+/// 解析 chat/completions 应答（应答形状是 OpenAI 兼容口的通用约定，传输与解析共用 `vendorcfg::chat`）。
+#[cfg(test)]
+use vendorcfg::parse_chat_reply;
 
 impl Vision for OpenAiCompat {
     fn name(&self) -> &str {
         &self.backend
     }
     fn transcribe(&self, png: &[u8], prompt: &str) -> Result<Transcript, String> {
-        let url = format!("{}/chat/completions", self.base_url);
-        let body = chat_request(&self.model, png, prompt);
-        let resp = self.agent.post(&url).set("Authorization", &format!("Bearer {}", self.key)).set("Content-Type", "application/json").send_string(&body.to_string());
-        let resp = match resp {
-            Ok(r) => r,
-            // 错误文本可能带回显，只截前 300 字，且 key 从不在应答里
-            Err(ureq::Error::Status(c, r)) => return Err(format!("HTTP {c}：{}", trunc(&r.into_string().unwrap_or_default(), 300))),
-            Err(e) => return Err(format!("连不上 {url}：{e}")),
-        };
-        let v: serde_json::Value = serde_json::from_reader(resp.into_reader()).map_err(|e| format!("应答不是 JSON：{e}"))?;
-        parse_chat_reply(&v)
+        vendorcfg::post_chat(&self.agent, &self.base_url, &self.key, &chat_request(&self.model, png, prompt))
     }
 }
 

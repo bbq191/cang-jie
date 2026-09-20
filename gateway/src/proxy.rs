@@ -13,10 +13,10 @@
 //! 不需要任何跨进程锁，详见 `budget.rs` 文档注释。只有这三条命中路由才会额外读一次 body（几十字节
 //! 的小 JSON，`Request::read_small_body` 本来就有 1MB 上限）+ 查一次文件体积，其余请求（含真正的
 //! 大文件上传）完全不受影响、维持原有纯流式转发。
-use rmsvc_core::http::{ApiError, ApiResult, Method, Reply, Request};
+use rmsvc_core::http::{ApiError, ApiResult, JsonBody, Method, Reply, Request};
 use rmsvc_core::multipart::percent_encode as enc;
 use rmsvc_core::paths::Paths;
-use rmsvc_core::registry;
+use rmsvc_core::registry::{self, SvcClient};
 use std::io::Read;
 use std::time::{Duration, Instant};
 
@@ -64,14 +64,13 @@ pub fn forward(paths: &Paths, req: &mut Request<'_>) -> ApiResult {
     let mut slot: Option<crate::budget::Slot<'static>> = None;
     let mut book_name = String::new();
     if gated.is_some() {
+        // 读一次 body 拿书名、过闸门后还要原样转发给后端，所以先读成字节再解析（`req.json()` 会把流读空）。
         let buf = req.read_small_body().map_err(ApiError::bad)?;
-        book_name = serde_json::from_slice::<serde_json::Value>(&buf)
-            .ok()
-            .and_then(|v| v.get("name").and_then(|n| n.as_str()).map(str::to_string))
-            .ok_or_else(|| ApiError::bad("缺 name"))?;
+        let parsed: serde_json::Value = serde_json::from_slice(&buf).map_err(|e| ApiError::bad(format!("请求不是 JSON: {e}")))?;
+        book_name = JsonBody(parsed).str("name")?.to_string();
         let bytes = paths.staging_dir().join(&book_name).metadata().map(|m| m.len()).unwrap_or(0);
         let tier = crate::budget::tier_of(bytes);
-        slot = Some(crate::budget::global().admit(tier, &book_name).map_err(|e| ApiError { status: 503, message: e })?);
+        slot = Some(crate::budget::global().admit(tier, &book_name).map_err(|e| ApiError { status: e.status(), message: e.message() })?);
         body_override = Some(buf);
     }
 
@@ -127,9 +126,9 @@ pub fn forward(paths: &Paths, req: &mut Request<'_>) -> ApiResult {
     if let Some(kind) = gated {
         if matches!(kind, GatedOp::Optimize | GatedOp::Deliver) {
             if let Some(slot) = slot.take() {
-                let base = info.base_url();
+                let client = SvcClient::new(paths.clone(), "book-serve", 10);
                 std::thread::spawn(move || {
-                    poll_until_settled(&base, &book_name);
+                    poll_until_settled(&client, &book_name);
                     drop(slot);
                 });
             }
@@ -139,21 +138,17 @@ pub fn forward(paths: &Paths, req: &mut Request<'_>) -> ApiResult {
     Ok(reply)
 }
 
-/// 轮询 `{base_url}/staging`（直连后端服务，不经网关自己这层转发，避免自己调自己）直到
+/// 轮询 book-serve 的 `/staging`（直连后端服务，不经网关自己这层转发，避免自己调自己）直到
 /// [`crate::budget::is_settled`] 判定这本书已经不再忙，或等到 [`SETTLE_POLL_TIMEOUT`] 放弃。
 /// 服务查不到/请求失败（可能重启中）也直接放弃轮询——宁可名额提前释放，不要因为侦测本身不可靠
 /// 就把并发档位永久卡住。
-pub(crate) fn poll_until_settled(base_url: &str, name: &str) {
-    let agent = ureq::AgentBuilder::new().timeout(Duration::from_secs(10)).build();
+pub(crate) fn poll_until_settled(client: &SvcClient, name: &str) {
     let deadline = Instant::now() + SETTLE_POLL_TIMEOUT;
     loop {
-        match agent.get(&format!("{base_url}/staging")).call() {
-            Ok(resp) => match serde_json::from_reader::<_, serde_json::Value>(resp.into_reader()) {
-                Ok(json) if crate::budget::is_settled(&json, name) => return,
-                Ok(_) => {}      // 还在忙，继续轮询
-                Err(_) => return, // 应答不是预期 JSON——不可靠，放弃而不是死等
-            },
-            Err(_) => return, // 服务不可达，同上
+        match client.get_json("/staging") {
+            Ok(json) if crate::budget::is_settled(&json, name) => return,
+            Ok(_) => {}      // 还在忙，继续轮询
+            Err(_) => return, // 服务不可达/应答不是预期 JSON——不可靠，放弃而不是死等
         }
         if Instant::now() >= deadline {
             return;

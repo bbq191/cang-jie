@@ -139,9 +139,77 @@ impl SessionStore {
     }
 }
 
+/// 登录失败限速（全局滑动窗口）：`window` 内累计失败 `max` 次即锁定，锁到最早那次失败滑出窗口为止。
+/// 锁定期间调用方应**不做密码校验**直接拒绝（校验是 60 万轮 PBKDF2，被并发猜密码时既是暴力破解通道
+/// 又是 CPU 消耗通道；单靠"失败后 sleep 500ms"挡不住并行连接）。
+/// 用全局计数而不是按来源 IP：HTTP 层的 `Request` 不带对端地址；局域网单用户设备，代价是攻击者
+/// 能让主人最多被锁一个窗口——比暴力破解风险小得多，且到期自动解锁、重启网关也清零。
+pub struct FailLimiter {
+    max: usize,
+    window: std::time::Duration,
+    fails: std::sync::Mutex<std::collections::VecDeque<std::time::Instant>>,
+}
+
+impl FailLimiter {
+    pub fn new(max: usize, window: std::time::Duration) -> FailLimiter {
+        FailLimiter { max, window, fails: std::sync::Mutex::new(std::collections::VecDeque::new()) }
+    }
+    fn prune(&self, q: &mut std::collections::VecDeque<std::time::Instant>, now: std::time::Instant) {
+        while q.front().is_some_and(|t| now.duration_since(*t) >= self.window) {
+            q.pop_front();
+        }
+    }
+    /// 被锁定时返回还要等多久，否则 `None`。
+    pub fn locked_for(&self) -> Option<std::time::Duration> {
+        self.locked_for_at(std::time::Instant::now())
+    }
+    pub fn locked_for_at(&self, now: std::time::Instant) -> Option<std::time::Duration> {
+        let mut q = self.fails.lock().unwrap_or_else(|e| e.into_inner());
+        self.prune(&mut q, now);
+        if q.len() >= self.max {
+            q.front().map(|t| self.window.saturating_sub(now.duration_since(*t)))
+        } else {
+            None
+        }
+    }
+    pub fn record_failure(&self) {
+        self.record_failure_at(std::time::Instant::now());
+    }
+    pub fn record_failure_at(&self, now: std::time::Instant) {
+        let mut q = self.fails.lock().unwrap_or_else(|e| e.into_inner());
+        self.prune(&mut q, now);
+        if q.len() >= self.max {
+            return; // 已锁定：不再累计，避免攻击者不停撞把锁定期无限续下去
+        }
+        q.push_back(now);
+    }
+    /// 登录成功：清零。
+    pub fn reset(&self) {
+        self.fails.lock().unwrap_or_else(|e| e.into_inner()).clear();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn fail_limiter_locks_after_max_and_expires() {
+        use std::time::{Duration, Instant};
+        let l = FailLimiter::new(3, Duration::from_secs(60));
+        let t0 = Instant::now();
+        assert!(l.locked_for_at(t0).is_none());
+        l.record_failure_at(t0);
+        l.record_failure_at(t0 + Duration::from_secs(1));
+        assert!(l.locked_for_at(t0 + Duration::from_secs(2)).is_none(), "未满 3 次不锁");
+        l.record_failure_at(t0 + Duration::from_secs(2));
+        let w = l.locked_for_at(t0 + Duration::from_secs(10)).expect("满 3 次锁定");
+        assert_eq!(w, Duration::from_secs(50), "锁到最早那次失败滑出窗口");
+        l.record_failure_at(t0 + Duration::from_secs(11)); // 锁定期间再有失败不延长
+        assert_eq!(l.locked_for_at(t0 + Duration::from_secs(20)), Some(Duration::from_secs(40)));
+        assert!(l.locked_for_at(t0 + Duration::from_secs(61)).is_none(), "最早一次滑出窗口后解锁");
+        l.reset();
+        assert!(l.locked_for_at(t0).is_none());
+    }
     #[test]
     fn cookie_and_sessions() {
         assert_eq!(parse_cookie("a=1; shelf_session=abc ; b=2", "shelf_session").as_deref(), Some("abc"));

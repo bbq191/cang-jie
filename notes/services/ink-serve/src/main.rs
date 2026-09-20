@@ -233,7 +233,7 @@ fn main() {
             Ok(Reply::ok(&serde_json::json!({"ok": true, "removed": removed})))
         }))
         .post("/books/{uuid}/rescan", bind(&st, |s, r| {
-            let uuid = r.param("uuid").to_string();
+            let uuid = plain_name(r.param("uuid")).map_err(ApiError::bad)?.to_string(); // ingest 会拼 xochitl 目录路径，同样要防穿越
             // 强制：清掉页 mtime 记录再摄取
             let _ = s.db.update(&uuid, || Default::default(), |b| b.page_mtimes.clear());
             s.ingest(&uuid);

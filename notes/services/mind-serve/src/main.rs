@@ -21,55 +21,24 @@ use ledger::Ledger;
 use rmsvc_core::http::{bind, ApiError, Reply, Router};
 use rmsvc_core::paths::Paths;
 use rmsvc_core::service::{self, ServiceSpec};
-use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
-use vendorcfg::VendorConfig;
+use vendorcfg::{ConfigCell, VendorConfig};
 use worker::Ctx;
 
 pub const APP: &str = "notes";
 
 const SPEC: ServiceSpec = ServiceSpec { name: "mind-serve", label: "笔记·脑", version: env!("CARGO_PKG_VERSION"), default_bind: "127.0.0.1:8797", tab: None };
 
-/// 「各个模型的用量花费 profile」（同 `transcribe-serve::main::usage_profile`，理由见那边的文档）。
-fn usage_profile(cfg: &MindConfig, usage: &ledger::Usage) -> serde_json::Value {
-    let mut keys: Vec<String> = config::PRESETS.iter().map(|p| p.id.to_string()).collect();
-    for k in usage.by_model.keys() {
-        if !keys.contains(k) {
-            keys.push(k.clone());
-        }
-    }
-    let rows: Vec<serde_json::Value> = keys
-        .into_iter()
-        .map(|k| {
-            let label = config::PRESETS.iter().find(|p| p.id == k).map(|p| p.label.to_string()).unwrap_or_else(|| k.clone());
-            let m = usage.by_model.get(&k).cloned().unwrap_or_default();
-            let price = cfg.prices.get(&k).copied().unwrap_or_default();
-            let cost = if price.input_per1k > 0.0 || price.output_per1k > 0.0 {
-                Some((m.prompt_tokens as f64 / 1000.0) * price.input_per1k + (m.completion_tokens as f64 / 1000.0) * price.output_per1k)
-            } else {
-                None
-            };
-            serde_json::json!({"id": k, "label": label, "active": k == cfg.usage_key(),
-                "calls": m.calls, "ok": m.ok, "failed": m.failed,
-                "promptTokens": m.prompt_tokens, "completionTokens": m.completion_tokens,
-                "lastError": m.last_error, "lastAt": m.last_at,
-                "price": price, "costEstimate": cost})
-        })
-        .collect();
-    serde_json::Value::Array(rows)
-}
-
 struct State {
-    cfg_path: PathBuf,
-    cfg: Mutex<MindConfig>,
+    cfg: ConfigCell<MindConfig>,
     ledger: Ledger,
     store: InkHttp,
 }
 
 impl State {
     fn cfg(&self) -> MindConfig {
-        self.cfg.lock().unwrap_or_else(|e| e.into_inner()).clone()
+        self.cfg.get()
     }
     fn model(&self, cfg: &MindConfig) -> Result<Box<dyn TextModel>, String> {
         let key = cfg.key().ok_or("未配置 API key（网页「模型」设置里粘贴，或环境变量 DASHSCOPE_API_KEY）")?;
@@ -81,25 +50,19 @@ fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let bind_addr = service::parse_bind(&args, SPEC.default_bind);
     let paths = Paths::from_env();
-    let cfg_path = paths.app_config_dir(APP).join("mind.json");
-    // `.migrate()`：老配置文件搬进新形状，不迁移会让真机已存的 key 在升级后凭空消失，见 config.rs 文档。
-    let cfg = rmsvc_core::config::load_or_seed::<MindConfig>(&cfg_path).migrate();
-    rmsvc_core::fs::set_mode(&cfg_path, 0o600);
-    let _ = rmsvc_core::config::save(&cfg_path, &cfg, Some(0o600));
-    let st = Arc::new(State { cfg_path, cfg: Mutex::new(cfg), ledger: Ledger::open(&paths.app_state_dir(APP).join("mind.json")), store: InkHttp::new(paths.clone()) });
+    // `.migrate()`：老配置文件搬进新形状，不迁移会让真机已存的 key 在升级后凭空消失，见 config.rs 文档；
+    // 读→迁移→0600→落盘一次这套启动流程收在 `ConfigCell::load`。
+    let cfg = ConfigCell::load(&paths.app_config_dir(APP).join("mind.json"), MindConfig::migrate);
+    let st = Arc::new(State { cfg, ledger: Ledger::open(&paths.app_state_dir(APP).join("mind.json")), store: InkHttp::new(paths.clone()) });
     let router = Router::new()
         .get("/status", bind(&st, |s, _| {
             let cfg = s.cfg();
-            Ok(Reply::ok(&serde_json::json!({"config": cfg.public(), "usage": s.ledger.snapshot(), "usageByModel": usage_profile(&cfg, &s.ledger.snapshot())})))
+            Ok(Reply::ok(&serde_json::json!({"config": cfg.public(), "usage": s.ledger.snapshot(), "usageByModel": vendorcfg::usage::usage_profile(&cfg, config::PRESETS, &s.ledger.snapshot())})))
         }))
         .get("/config", bind(&st, |s, _| Ok(Reply::ok(&s.cfg().public()))))
         .put("/config", bind(&st, |s, r| {
             let j = r.json()?;
-            let mut cfg = s.cfg.lock().unwrap_or_else(|e| e.into_inner());
-            let mut next = cfg.clone();
-            next.apply(&j.0).map_err(ApiError::bad)?;
-            rmsvc_core::config::save(&s.cfg_path, &next, Some(0o600)).map_err(ApiError::internal)?;
-            *cfg = next.clone();
+            let next = s.cfg.update(|c| c.apply(&j.0)).map_err(ApiError::bad)?;
             Ok(Reply::ok(&next.public()))
         }))
         .post("/books/{uuid}/entries/{id}/ask", bind(&st, |s, r| {
@@ -116,7 +79,7 @@ fn main() {
                 Err(msg) => Err(ApiError::bad(msg)),
             }
         }));
-    println!("[mind-serve] 配置 {}；后端 {} {}；key {:?}", st.cfg_path.display(), st.cfg().backend, st.cfg().model(), st.cfg().key_source());
+    println!("[mind-serve] 配置 {}；后端 {} {}；key {:?}", st.cfg.path().display(), st.cfg().backend, st.cfg().model(), st.cfg().key_source());
     if let Err(e) = service::run(&SPEC, &bind_addr, &paths, router) {
         eprintln!("[mind-serve] {e}");
         std::process::exit(1);

@@ -40,6 +40,35 @@ pub fn tier_of(bytes: u64) -> Tier {
     }
 }
 
+/// `admit` 拿不到名额的原因；`status()` 是给 HTTP 层用的状态码。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum AdmitError {
+    /// 同名的书已经在排队或处理中（`pending`/`active` 都以书名为键，同名并存会互相抹掉记录、
+    /// 第二个排队者还取消不掉，所以在入口直接拒绝）。
+    Duplicate,
+    /// 排队时被 [`Budget::cancel`] 取消。
+    Cancelled,
+    /// 等名额超过 [`ADMIT_WAIT_TIMEOUT`]。
+    Timeout,
+}
+
+impl AdmitError {
+    pub fn message(&self) -> String {
+        match self {
+            AdmitError::Duplicate => "这本书已经在排队或处理中，请等它完成（或先取消排队）".into(),
+            AdmitError::Cancelled => "已取消排队".into(),
+            AdmitError::Timeout => "排队等待并发处理名额超时，请稍后重试（可能有大部头正在处理）".into(),
+        }
+    }
+    /// 409 冲突（重复提交）/ 503 暂时不可用（超时、被取消）。
+    pub fn status(&self) -> u16 {
+        match self {
+            AdmitError::Duplicate => 409,
+            _ => 503,
+        }
+    }
+}
+
 #[derive(Debug, Default)]
 struct State {
     large: u32,
@@ -79,21 +108,27 @@ impl Budget {
     /// 阻塞直到拿到这个档位的名额（或等到 [`ADMIT_WAIT_TIMEOUT`] 超时/被 [`Budget::cancel`]
     /// 取消），返回一个 RAII guard，`Drop` 时自动释放名额、唤醒其他等待者。`name` 只用于
     /// 展示/取消（[`Budget::snapshot`]/[`Budget::cancel`]），不参与准入判断。
-    pub fn admit(&self, tier: Tier, name: &str) -> Result<Slot<'_>, String> {
+    pub fn admit(&self, tier: Tier, name: &str) -> Result<Slot<'_>, AdmitError> {
         self.admit_within(tier, name, ADMIT_WAIT_TIMEOUT)
     }
 
     /// `admit` 的实现，超时时长可注入——真实调用方永远用 [`ADMIT_WAIT_TIMEOUT`]（分钟级），
     /// 单测用毫秒级超时验证"占满后确实会超时报错"这条路径，不用真的空等 30 分钟。
-    pub fn admit_within(&self, tier: Tier, name: &str, timeout: Duration) -> Result<Slot<'_>, String> {
+    pub fn admit_within(&self, tier: Tier, name: &str, timeout: Duration) -> Result<Slot<'_>, AdmitError> {
         let deadline = Instant::now() + timeout;
         let mut guard = self.state.lock().unwrap();
+        if guard.pending.contains(name) || guard.active.contains(name) {
+            return Err(AdmitError::Duplicate);
+        }
+        guard.cancel_requested.remove(name); // 清掉上一次遗留（排队超时的同一刻收到 cancel）的取消标记，别误杀这次
         guard.pending.insert(name.to_string());
+        crate::events::notify_books("budget"); // 排队状态变了（在锁内通知只是往有界通道 try_send，不阻塞）
         loop {
             if guard.cancel_requested.remove(name) {
                 guard.pending.remove(name);
                 self.cv.notify_all();
-                return Err("已取消排队".into());
+                crate::events::notify_books("budget");
+                return Err(AdmitError::Cancelled);
             }
             let has_room = match tier {
                 Tier::Large => guard.large == 0,
@@ -106,12 +141,15 @@ impl Budget {
                 }
                 guard.pending.remove(name);
                 guard.active.insert(name.to_string());
+                crate::events::notify_books("budget");
                 return Ok(Slot { budget: self, tier, name: name.to_string() });
             }
             let now = Instant::now();
             if now >= deadline {
                 guard.pending.remove(name);
-                return Err("排队等待并发处理名额超时，请稍后重试（可能有大部头正在处理）".into());
+                guard.cancel_requested.remove(name);
+                crate::events::notify_books("budget");
+                return Err(AdmitError::Timeout);
             }
             let (g2, _) = self.cv.wait_timeout(guard, deadline - now).unwrap();
             guard = g2; // 醒来（虚假唤醒/真超时/真释放/真取消都在这里）重新判一次条件，不额外分支处理
@@ -126,6 +164,7 @@ impl Budget {
         }
         guard.active.remove(name);
         self.cv.notify_all();
+        crate::events::notify_books("budget");
     }
 
     /// 当前排队中/正在跑的书名快照（`pending`, `active`）——给 `GET /api/budget/status` 用，
@@ -244,7 +283,8 @@ mod tests {
         let _held = b.admit(Tier::Large, "held.pdf").unwrap(); // 占满 Large 档且不释放
         let started = Instant::now();
         let err = b.admit_within(Tier::Large, "stuck.pdf", Duration::from_millis(80)).unwrap_err();
-        assert!(err.contains("超时"), "{err}");
+        assert_eq!(err, AdmitError::Timeout);
+        assert!(err.message().contains("超时"), "{}", err.message());
         assert!(started.elapsed() >= Duration::from_millis(80), "应该是真的等到超时才返回，不是立刻失败");
     }
 
@@ -294,14 +334,14 @@ mod tests {
     fn cancel_unblocks_a_pending_admit_with_clear_error() {
         let b = Arc::new(Budget::new());
         let _held = b.admit(Tier::Large, "held.pdf").unwrap(); // 占满 Large 档
-        let (b2, result) = (b.clone(), Arc::new(Mutex::new(None::<Result<(), String>>)));
+        let (b2, result) = (b.clone(), Arc::new(Mutex::new(None::<Result<(), AdmitError>>)));
         let (started, result2) = (Arc::new(AtomicU32::new(0)), result.clone());
         let handle = std::thread::spawn({
             let started = started.clone();
             move || {
                 started.store(1, Ordering::SeqCst);
                 let r = b2.admit_within(Tier::Large, "waiting.pdf", Duration::from_secs(5)).map(|_| ());
-                *result2.lock().unwrap() = Some(r.map_err(|e| e));
+                *result2.lock().unwrap() = Some(r);
             }
         });
         while started.load(Ordering::SeqCst) == 0 {
@@ -311,8 +351,39 @@ mod tests {
         assert!(b.cancel("waiting.pdf"), "确实在排队，取消应该成功");
         handle.join().unwrap();
         let got = result.lock().unwrap().take().unwrap();
-        assert!(got.unwrap_err().contains("取消"), "应该是清楚的取消错误，不是超时/挤占错误");
+        assert_eq!(got.unwrap_err(), AdmitError::Cancelled, "应该是清楚的取消错误，不是超时/挤占错误");
         assert!(!b.snapshot().0.contains(&"waiting.pdf".to_string()), "取消后不该再留在 pending 快照里");
+    }
+
+    #[test]
+    fn duplicate_name_is_rejected_while_pending_or_active() {
+        let b = Arc::new(Budget::new());
+        let held = b.admit(Tier::Large, "same.pdf").unwrap();
+        // 已在处理中 → 同名直接 409，且不影响原记录
+        assert_eq!(b.admit(Tier::Small, "same.pdf").unwrap_err(), AdmitError::Duplicate);
+        assert_eq!(AdmitError::Duplicate.status(), 409);
+        assert_eq!(b.snapshot().1, vec!["same.pdf".to_string()], "原来的 active 记录不能被抹掉");
+        // 排队中的同名也拒绝
+        let b2 = b.clone();
+        let h = std::thread::spawn(move || b2.admit_within(Tier::Large, "q.pdf", Duration::from_secs(5)).map(|_| ()));
+        while !b.snapshot().0.contains(&"q.pdf".to_string()) {
+            std::thread::yield_now();
+        }
+        assert_eq!(b.admit(Tier::Large, "q.pdf").unwrap_err(), AdmitError::Duplicate);
+        assert!(b.cancel("q.pdf"), "排队者仍然取消得掉");
+        assert_eq!(h.join().unwrap().unwrap_err(), AdmitError::Cancelled);
+        drop(held);
+        assert!(b.admit(Tier::Small, "same.pdf").is_ok(), "释放后可再次提交");
+    }
+
+    #[test]
+    fn stale_cancel_flag_does_not_kill_next_admit() {
+        let b = Budget::new();
+        {
+            let mut g = b.state.lock().unwrap();
+            g.cancel_requested.insert("x.pdf".into()); // 模拟上次超时同一刻遗留的取消标记
+        }
+        assert!(b.admit(Tier::Small, "x.pdf").is_ok(), "遗留标记不该误杀新的提交");
     }
 
     #[test]

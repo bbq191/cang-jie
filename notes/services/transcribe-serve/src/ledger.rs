@@ -25,7 +25,6 @@ pub struct RunReport {
     pub note: String,
 }
 
-pub type Usage = vendorcfg::UsageBook<RunReport>;
 pub type Ledger = vendorcfg::Ledger<RunReport>;
 
 #[cfg(test)]

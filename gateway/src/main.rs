@@ -20,7 +20,7 @@ use rmsvc_core::http::{bind, ApiError, Method, Reply, Router, ServeOpts};
 use rmsvc_core::paths::Paths;
 use rmsvc_core::registry;
 use rmsvc_core::service::{self, ServiceSpec};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 const SPEC: ServiceSpec = ServiceSpec {
     name: "gateway",
@@ -95,7 +95,7 @@ fn main() {
             None
         } else {
             let ttl = std::time::Duration::from_secs(u64::from(cfg.session_days.max(1)) * 86400);
-            Some(Arc::new(auth::AuthState { cfg: Mutex::new(cfg.clone()), sessions: rmsvc_core::auth::SessionStore::new(ttl, 64), paths: paths.clone(), secure_cookie }))
+            Some(Arc::new(auth::AuthState::new(cfg.clone(), rmsvc_core::auth::SessionStore::new(ttl, 64), paths.clone(), secure_cookie)))
         }
     } else {
         None
@@ -108,8 +108,8 @@ fn main() {
         println!("[gateway] mDNS 名 {}.local（iOS/macOS/Windows/Linux 可直接访问；安卓走热点 dnsmasq 别名）", cfg.mdns_name.trim());
     }
     let paths = Arc::new(paths);
+    let hub = Arc::new(events::Hub::spawn(paths.clone())); // 先建总线：batch/budget 的进度事件要发到它
     batch::resume(&paths); // 读回上次没跑完的批量队列继续跑（网关重启/部署新版本不丢）
-    let hub = Arc::new(events::Hub::spawn(paths.clone()));
     let mut router = Router::new()
         .get("/", |_| Ok(Reply::html(ui::page())))
         .get("/ca.crt", { let d = tls_dir.clone(); move |_| Ok(match rmsvc_core::tls::ca_pem(&d) {
@@ -161,25 +161,19 @@ fn main() {
             Ok(Reply::ok(&serde_json::json!({"pending": pending, "active": active})))
         })
         .post("/api/budget/cancel", |r| {
-            let buf = r.read_small_body().map_err(ApiError::bad)?;
-            let name = serde_json::from_slice::<serde_json::Value>(&buf)
-                .ok()
-                .and_then(|v| v.get("name").and_then(|n| n.as_str()).map(str::to_string))
-                .ok_or_else(|| ApiError::bad("缺 name"))?;
+            let name = r.json()?.str("name")?.to_string();
             Ok(Reply::ok(&serde_json::json!({"cancelled": budget::global().cancel(&name)})))
         })
         // 服务端批量队列（见 batch.rs）：提交 `{action, names?, all?, folder?}`；`names` 缺省且 `all:true` 表示"所有适用的"。
         // 状态任何会话都能看（关掉浏览器重开、换设备都在）。同样必须在 /api/{svc} 代理通配之前注册。
         .post("/api/batch", bind(&paths, |p, r| {
-            let buf = r.read_small_body().map_err(ApiError::bad)?;
-            let v: serde_json::Value = serde_json::from_slice(&buf).map_err(|e| ApiError::bad(format!("请求不是 JSON: {e}")))?;
-            let action = v.get("action").and_then(|a| a.as_str()).and_then(batch::Action::parse).ok_or_else(|| ApiError::bad("action 只能是 optimize/deliver/koreader"))?;
-            let names = v.get("names").and_then(|n| n.as_array()).map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect::<Vec<_>>());
-            if names.is_none() && v.get("all").and_then(|a| a.as_bool()) != Some(true) {
+            let j = r.json()?;
+            let action = j.0.get("action").and_then(|a| a.as_str()).and_then(batch::Action::parse).ok_or_else(|| ApiError::bad("action 只能是 optimize/deliver/koreader"))?;
+            let names = j.0.get("names").and_then(|n| n.as_array()).map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect::<Vec<_>>());
+            if names.is_none() && !j.bool_or("all", false) {
                 return Err(ApiError::bad("要么给 names，要么 all:true"));
             }
-            let folder = v.get("folder").and_then(|f| f.as_str()).unwrap_or("");
-            let e = batch::enqueue(p, action, names, folder).map_err(ApiError::bad)?;
+            let e = batch::enqueue(p, action, names, j.str_or("folder", "")).map_err(ApiError::bad)?;
             Ok(Reply::ok(&serde_json::json!({"queued": e.queued, "skipped": e.skipped})))
         }))
         .get("/api/batch/status", |_| Ok(Reply::ok(&batch::status())))

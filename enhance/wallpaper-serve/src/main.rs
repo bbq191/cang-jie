@@ -26,7 +26,7 @@ const SPEC: ServiceSpec = ServiceSpec {
 };
 
 struct State {
-    store: WallpaperStore,
+    store: Arc<WallpaperStore>,
     native: Native,
     paths: Paths,
     bus: Arc<rmsvc_core::events::EventBus>,
@@ -60,7 +60,7 @@ fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let paths = Paths::from_env();
     let _ = paths.ensure();
-    let store = WallpaperStore::new(&paths);
+    let store = Arc::new(WallpaperStore::new(&paths));
     if let Err(e) = store.ensure() {
         eprintln!("[wallpaper-serve] 建目录失败: {e}");
         std::process::exit(1);
@@ -96,7 +96,7 @@ fn main() {
             let b = r.multipart_boundary()?;
             // `?activate=1` 显式激活首张成功项；池里还没有当前图时也自动激活（上传即可用）。
             let want = r.q_flag("activate") || s.store.state().current.is_none();
-            let items = AssetUploadFlow::new(&s.paths).run(&s.store, &mut *r.body, &b).map_err(ApiError::bad)?;
+            let items = AssetUploadFlow::new(&s.paths).run(&*s.store, &mut *r.body, &b).map_err(ApiError::bad)?;
             let mut activated = None;
             let mut changed = false;
             if want {
@@ -131,7 +131,7 @@ fn main() {
             Ok(Reply::ok(&serde_json::json!({"ok": true})))
         }))
         .get("/{name}", bind(&st, |s, r| Ok(Reply::bytes("image/png", s.store.read(r.param("name")).map_err(ApiError::not_found)?))));
-    wake::spawn(Arc::new(WallpaperStore::new(&paths)), bus);
+    wake::spawn(st.store.clone(), bus); // 与 API 共用同一个 store 实例（同一把状态锁）
     println!("[wallpaper-serve] 池 {}，原生休眠屏键 {}；监听 xochitl 唤醒日志轮换", st.store.pool().display(), if st.native.enabled() { "已就位" } else { "未写（激活首张时自动写）" });
     if let Err(e) = service::run(&SPEC, &bind_addr, &paths, router) {
         eprintln!("[wallpaper-serve] {e}");

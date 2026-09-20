@@ -8,6 +8,7 @@
 use rmsvc_core::http::{ApiError, ApiResult, Reply, Request};
 use rmsvc_core::paths::Paths;
 use rmsvc_core::registry;
+use std::time::{Duration, Instant};
 
 /// 一个可管理的领域模块（网关自身不在此列）。
 pub struct Module {
@@ -20,18 +21,21 @@ pub struct Module {
     pub label: &'static str,
     /// 门控未上线 → 不可装、不可开（当前全为 true；机制保留给将来的新模块）。
     pub installable: bool,
+    /// 该服务是否提供 `GET /events`（SSE）。网关只给提供的服务起订阅线程：mind-serve 是纯被动的
+    /// 问答服务（没有事件流，见其 main.rs 头注），此前网关对它每 3 秒打一个 404、白白唤醒它。
+    pub events: bool,
 }
 
 pub const MODULES: &[Module] = &[
-    Module { seg: "books", service: "book-serve", only: "book", label: "母版库 / 落原生", installable: true },
-    Module { seg: "fonts", service: "font-serve", only: "font", label: "xochitl 字体", installable: true },
-    Module { seg: "koreader", service: "koreader-serve", only: "koreader", label: "KOReader", installable: true },
-    Module { seg: "wallpapers", service: "wallpaper-serve", only: "wallpaper", label: "壁纸", installable: true },
+    Module { seg: "books", service: "book-serve", only: "book", label: "母版库 / 落原生", installable: true, events: true },
+    Module { seg: "fonts", service: "font-serve", only: "font", label: "xochitl 字体", installable: true, events: true },
+    Module { seg: "koreader", service: "koreader-serve", only: "koreader", label: "KOReader", installable: true, events: true },
+    Module { seg: "wallpapers", service: "wallpaper-serve", only: "wallpaper", label: "壁纸", installable: true, events: true },
     // 笔记线（notes/）：矿 / 转写 / 脑 / 本，挂同一网关；网页只有 note-serve 注册「笔记」tab，前端组合四个 seg。
-    Module { seg: "ink", service: "ink-serve", only: "ink", label: "笔记·矿（条目库）", installable: true },
-    Module { seg: "transcribe", service: "transcribe-serve", only: "transcribe", label: "笔记·转写（手写→文字）", installable: true },
-    Module { seg: "mind", service: "mind-serve", only: "mind", label: "笔记·脑（问AI）", installable: true },
-    Module { seg: "notes", service: "note-serve", only: "note", label: "笔记·本（笔记本/导出）", installable: true },
+    Module { seg: "ink", service: "ink-serve", only: "ink", label: "笔记·矿（条目库）", installable: true, events: true },
+    Module { seg: "transcribe", service: "transcribe-serve", only: "transcribe", label: "笔记·转写（手写→文字）", installable: true, events: true },
+    Module { seg: "mind", service: "mind-serve", only: "mind", label: "笔记·脑（问AI）", installable: true, events: false },
+    Module { seg: "notes", service: "note-serve", only: "note", label: "笔记·本（笔记本/导出）", installable: true, events: true },
 ];
 
 pub fn by_seg(seg: &str) -> Option<&'static Module> {
@@ -43,13 +47,49 @@ pub fn service_of(seg: &str) -> Option<&'static str> {
     by_seg(seg).map(|m| m.service)
 }
 
+/// 外部命令默认超时。`systemctl start/stop` 正常几十毫秒到几秒；给 30 秒是为了容纳慢启动服务，
+/// 又不至于在 systemd 卡死（2026-08-29 cgroup/RCU 事故那类）时让请求线程无限堆积。
+const RUN_TIMEOUT: Duration = Duration::from_secs(30);
+/// 卸载脚本要 stop 单元、删二进制/qmd，宽一些。
+const UNINSTALL_TIMEOUT: Duration = Duration::from_secs(180);
+
 /// `pub(crate)`：`enhance::battop` 复用同一套 systemctl 调用（避免重新实现一遍 `Command` 样板）。
+/// 带 [`RUN_TIMEOUT`] 超时，超时会 kill 子进程并报错。
 pub(crate) fn run(cmd: &str, args: &[&str]) -> Result<String, String> {
-    let out = std::process::Command::new(cmd).args(args).output().map_err(|e| format!("{cmd}: {e}"))?;
-    if out.status.success() {
-        Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+    run_timeout(cmd, args, RUN_TIMEOUT)
+}
+
+/// 起子进程等它结束，最多等 `timeout`。stdout/stderr 各用一条线程排空（否则输出超过管道缓冲会把子进程写阻塞，
+/// 被误判成超时）；超时 kill 并返回错误，不 join 读线程（孙进程可能还握着管道，别被它拖住）。
+pub(crate) fn run_timeout(cmd: &str, args: &[&str], timeout: Duration) -> Result<String, String> {
+    use std::io::Read;
+    use std::process::Stdio;
+    let mut child = std::process::Command::new(cmd).args(args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().map_err(|e| format!("{cmd}: {e}"))?;
+    let drain = |mut r: Box<dyn Read + Send>| std::thread::spawn(move || {
+        let mut v = Vec::new();
+        let _ = r.read_to_end(&mut v);
+        v
+    });
+    let out_t = child.stdout.take().map(|s| drain(Box::new(s)));
+    let err_t = child.stderr.take().map(|s| drain(Box::new(s)));
+    let deadline = Instant::now() + timeout;
+    let status = loop {
+        match child.try_wait().map_err(|e| format!("{cmd}: {e}"))? {
+            Some(st) => break st,
+            None if Instant::now() >= deadline => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!("{cmd} 超过 {} 秒未结束，已终止", timeout.as_secs()));
+            }
+            None => std::thread::sleep(Duration::from_millis(20)),
+        }
+    };
+    let text = |t: Option<std::thread::JoinHandle<Vec<u8>>>| t.and_then(|h| h.join().ok()).map(|v| String::from_utf8_lossy(&v).trim().to_string()).unwrap_or_default();
+    let (out, err) = (text(out_t), text(err_t));
+    if status.success() {
+        Ok(out)
     } else {
-        Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
+        Err(err)
     }
 }
 
@@ -121,13 +161,25 @@ pub fn uninstall(paths: &Paths, seg: &str, req: &mut Request<'_>) -> ApiResult {
     if !script.is_file() {
         return Err(ApiError::bad("设备上没有 shelf-uninstall（重装一次 shelf 会装上它），网页卸载不可用；可 SSH 跑 uninstall.sh --only"));
     }
-    let out = run("sh", &[&script.to_string_lossy(), "--only", m.only]).map_err(ApiError::internal)?;
+    let out = run_timeout("sh", &[&script.to_string_lossy(), "--only", m.only], UNINSTALL_TIMEOUT).map_err(ApiError::internal)?;
     Ok(Reply::ok(&serde_json::json!({"ok": true, "service": m.service, "log": out})))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn run_timeout_captures_output_kills_hung_child_and_survives_big_output() {
+        assert_eq!(run_timeout("sh", &["-c", "echo hi"], Duration::from_secs(5)).unwrap(), "hi");
+        assert_eq!(run_timeout("sh", &["-c", "echo bad >&2; exit 3"], Duration::from_secs(5)).unwrap_err(), "bad");
+        let t = Instant::now();
+        let e = run_timeout("sh", &["-c", "sleep 30"], Duration::from_millis(200)).unwrap_err();
+        assert!(e.contains("未结束") && t.elapsed() < Duration::from_secs(5), "{e}");
+        // 输出远超管道缓冲（64KB）也不能因为没人读而被误判超时
+        let big = run_timeout("sh", &["-c", "head -c 300000 /dev/zero | tr '\\0' 'x'"], Duration::from_secs(10)).unwrap();
+        assert_eq!(big.len(), 300000);
+    }
+
     #[test]
     fn service_of_from_catalog() {
         assert_eq!(service_of("books"), Some("book-serve"));
@@ -136,6 +188,12 @@ mod tests {
         assert_eq!(service_of("nope"), None);
         assert_eq!(service_of("weread"), None, "微读线已砍（2026-09-05），目录表不再有它");
         assert!(MODULES.iter().all(|m| m.installable));
+    }
+    #[test]
+    fn only_mind_serve_has_no_event_stream() {
+        // mind-serve 没有 /events 路由；其余都有。表和服务真实情况不一致会让网关白打 404（耗电）或漏掉事件。
+        let no: Vec<&str> = MODULES.iter().filter(|m| !m.events).map(|m| m.service).collect();
+        assert_eq!(no, ["mind-serve"]);
     }
     #[test]
     fn status_reports_three_states() {

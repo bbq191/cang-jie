@@ -209,6 +209,11 @@ impl Pattern {
     }
 
     /// 匹配则返回参数表（`{x}` 解码后；前缀模式额外给 `*`=余下路径）。
+    /// 具体程度：(字面段个数, 是否精确匹配)。值大者更具体。
+    fn specificity(&self) -> (usize, bool) {
+        (self.segs.iter().filter(|s| !(s.starts_with('{') && s.ends_with('}'))).count(), !self.prefix)
+    }
+
     fn matches(&self, path: &str) -> Option<HashMap<String, String>> {
         let segs: Vec<&str> = path.trim_matches('/').split('/').filter(|s| !s.is_empty()).collect();
         if self.prefix {
@@ -232,6 +237,9 @@ impl Pattern {
         Some(params)
     }
 }
+
+/// 分发时的候选：(具体程度, 路由, 解出的路径参数)。
+type Candidate<'a> = ((usize, bool), &'a Arc<Route>, HashMap<String, String>);
 
 struct Route {
     method: Method,
@@ -297,15 +305,27 @@ impl Router {
     }
 
     /// 分发（纯函数，可单测）。路径匹配但方法不对 → 405。
+    /// **最具体的路由优先**（字面段个数多者胜，同数时精确匹配胜过尾部 `/*`，仍相同才按注册先后）：
+    /// 此前是"注册顺序第一个匹配者胜"，`GET /{name}` 这类通配路由只要注册在字面路由前面就会把
+    /// `/events`、`/health` 抢走（真机 wallpaper-serve 踩过，靠"必须先注册字面路由"的口头纪律避免）。
     pub fn dispatch(&self, req: &mut Request<'_>) -> Reply {
         let mut path_exists = false;
+        let mut best: Option<Candidate<'_>> = None;
         for r in &self.routes {
             let Some(params) = r.pattern.matches(&req.path) else { continue };
             if r.method != req.method {
                 path_exists = true;
                 continue;
             }
+            let score = r.pattern.specificity();
+            if best.as_ref().map(|(b, _, _)| score > *b).unwrap_or(true) {
+                best = Some((score, r, params));
+            }
+        }
+        if let Some((_, r, params)) = best {
             req.params = params;
+            // `?ka=<秒>`：让本请求里创建的 SSE 流用指定心跳（见 `events::parse_keepalive_param`）。
+            let _ka = crate::events::enter_request(crate::events::parse_keepalive_param(req.q("ka")));
             return match (r.handler)(req) {
                 Ok(rep) => rep,
                 Err(e) => e.into(),
@@ -333,11 +353,46 @@ pub fn parse_query(q: &str) -> HashMap<String, String> {
         .collect()
 }
 
+/// 同时在处理的请求数缺省上限（含一直挂着的 SSE 流，每个请求占一条线程）。
+/// 取值依据：设备 2 核、约 2GB 内存；合法并发上限 ≈ 浏览器每源 6 条连接 × 几个标签页 + 网关到各服务的
+/// 8 条 loopback SSE 订阅 ≈ 30 上下；每条线程栈虚拟 2MB、常驻只有几十 KB，64 条最坏也就几 MB 常驻，
+/// 既给合法用法留一倍以上余量，又让局域网内恶意/失控的大量连接（每个请求一条线程、登录还要做 60 万轮
+/// PBKDF2）吃不掉整台设备。超限的请求直接 503 + `Retry-After`，不再 spawn 线程。
+pub const DEFAULT_MAX_CONCURRENT: usize = 64;
+
 /// 服务选项：TLS（PEM）与请求守卫（登录/密码策略由服务自己定义，HTTP 层只负责"先问守卫再分发"）。
-#[derive(Default)]
 pub struct ServeOpts {
     pub tls: Option<crate::tls::TlsPem>,
     pub guard: Option<Guard>,
+    /// 并发请求上限；`None`=不限。缺省 [`DEFAULT_MAX_CONCURRENT`]。
+    pub max_concurrent: Option<usize>,
+}
+
+impl Default for ServeOpts {
+    fn default() -> Self {
+        ServeOpts { tls: None, guard: None, max_concurrent: Some(DEFAULT_MAX_CONCURRENT) }
+    }
+}
+
+/// 并发名额：`try_acquire` 成功后随请求线程存活，Drop 归还（线程 panic 展开时同样归还）。
+struct Permit(Arc<std::sync::atomic::AtomicUsize>);
+
+impl Permit {
+    fn try_acquire(counter: &Arc<std::sync::atomic::AtomicUsize>, max: Option<usize>) -> Option<Permit> {
+        use std::sync::atomic::Ordering;
+        let prev = counter.fetch_add(1, Ordering::AcqRel);
+        if max.is_some_and(|m| prev >= m) {
+            counter.fetch_sub(1, Ordering::AcqRel);
+            return None;
+        }
+        Some(Permit(counter.clone()))
+    }
+}
+
+impl Drop for Permit {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
+    }
 }
 
 /// 守卫：看到请求（方法/路径/头）后返回 `None`=放行，`Some(reply)`=拦下并直接回这个应答。
@@ -411,10 +466,16 @@ pub fn serve_with(bind: &str, router: Router, opts: ServeOpts) -> Result<(), Str
     };
     let router = Arc::new(router);
     let guard = opts.guard.map(Arc::new);
+    let inflight = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     for mut req in server.incoming_requests() {
+        let Some(permit) = Permit::try_acquire(&inflight, opts.max_concurrent) else {
+            let _ = req.respond(reply_to_tiny(Reply::error(503, "服务繁忙（并发请求过多），请稍后重试").with_header("Retry-After", "2")));
+            continue;
+        };
         let router = router.clone();
         let guard = guard.clone();
         std::thread::spawn(move || {
+            let _permit = permit;
             let url = req.url().to_string();
             let (path, query) = url.split_once('?').unwrap_or((&url, ""));
             let method = Method::from_tiny(req.method());
@@ -471,6 +532,39 @@ mod tests {
         let r = a.merge(b);
         assert_eq!(call(&r, Method::Get, "/health", "").1, r#"{"h":1}"#);
         assert_eq!(call(&r, Method::Get, "/x.png", "").1, r#"{"name":"x.png"}"#);
+    }
+
+    /// 回归：字面路由不因注册在通配路由之后而被抢走（原来靠注册顺序纪律）。
+    #[test]
+    fn literal_route_beats_param_route_regardless_of_registration_order() {
+        let router = Router::new()
+            .get("/{name}", |r| Ok(Reply::ok(&serde_json::json!({"wild": r.param("name")}))))
+            .get("/events", |_| Ok(Reply::ok(&serde_json::json!({"lit": "events"}))))
+            .get("/books/{id}", |r| Ok(Reply::ok(&serde_json::json!({"id": r.param("id")}))))
+            .get("/books/adopt", |_| Ok(Reply::ok(&serde_json::json!({"lit": "adopt"}))))
+            .get("/api/*", |_| Ok(Reply::ok(&serde_json::json!({"prefix": true}))))
+            .get("/api/{x}", |r| Ok(Reply::ok(&serde_json::json!({"exact": r.param("x")}))));
+        assert_eq!(call(&router, Method::Get, "/events", "").1, r#"{"lit":"events"}"#);
+        assert_eq!(call(&router, Method::Get, "/other", "").1, r#"{"wild":"other"}"#);
+        assert_eq!(call(&router, Method::Get, "/books/adopt", "").1, r#"{"lit":"adopt"}"#);
+        assert_eq!(call(&router, Method::Get, "/books/7", "").1, r#"{"id":"7"}"#);
+        assert_eq!(call(&router, Method::Get, "/api/v", "").1, r#"{"exact":"v"}"#, "同字面段数时精确匹配胜过尾部通配");
+        assert_eq!(call(&router, Method::Get, "/api/v/w", "").1, r#"{"prefix":true}"#);
+        assert_eq!(call(&router, Method::Post, "/events", "").0, 405);
+    }
+
+    #[test]
+    fn permit_caps_concurrency_and_releases_on_drop() {
+        let c = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let a = Permit::try_acquire(&c, Some(2)).unwrap();
+        let b = Permit::try_acquire(&c, Some(2)).unwrap();
+        assert!(Permit::try_acquire(&c, Some(2)).is_none(), "满额后拒绝，且失败的尝试不占名额");
+        assert_eq!(c.load(std::sync::atomic::Ordering::SeqCst), 2);
+        drop(a);
+        let c3 = Permit::try_acquire(&c, Some(2)).expect("释放后可再取");
+        drop((b, c3));
+        assert_eq!(c.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert!(Permit::try_acquire(&c, None).is_some(), "None=不限");
     }
 
     #[test]

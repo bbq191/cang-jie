@@ -1,7 +1,7 @@
 //! 条目库（Repository）：一书一文件 `$XDG_STATE_HOME/notes/books/<uuid>.json`，原子写。ink-serve 是**唯一写者**——
 //! 转写/脑/本三服务都通过它的 HTTP 改条目字段，避免多进程同时改一份 JSON。
 use notecore::model::{Book, Status};
-use rmsvc_core::fs::write_atomic;
+use rmsvc_core::fs::{plain_name, write_atomic};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -20,21 +20,24 @@ impl BookDb {
     pub fn ensure(&self) -> std::io::Result<()> {
         std::fs::create_dir_all(&self.dir)
     }
-    fn path(&self, uuid: &str) -> PathBuf {
-        self.dir.join(format!("{uuid}.json"))
+    /// `<dir>/<uuid>.json`。uuid 来自 URL 路径参数（网关解码后可含 `/`、`..`），过 `plain_name`
+    /// 单段校验，防止读写条目库目录之外的 .json。
+    fn path(&self, uuid: &str) -> Result<PathBuf, String> {
+        Ok(self.dir.join(format!("{}.json", plain_name(uuid)?)))
     }
 
     pub fn load(&self, uuid: &str) -> Option<Book> {
-        serde_json::from_slice(&std::fs::read(self.path(uuid)).ok()?).ok()
+        serde_json::from_slice(&std::fs::read(self.path(uuid).ok()?).ok()?).ok()
     }
 
     pub fn save(&self, book: &Book) -> Result<(), String> {
         let bytes = serde_json::to_vec_pretty(book).map_err(|e| e.to_string())?;
-        write_atomic(&self.path(&book.uuid), &bytes).map_err(|e| format!("写条目库失败: {e}"))
+        write_atomic(&self.path(&book.uuid)?, &bytes).map_err(|e| format!("写条目库失败: {e}"))
     }
 
     /// 读—改—写（进程内串行化）。书不存在时以 `seed()` 起。
     pub fn update<T>(&self, uuid: &str, seed: impl FnOnce() -> Book, f: impl FnOnce(&mut Book) -> T) -> Result<T, String> {
+        self.path(uuid)?; // 先验 key：非法 uuid 不跑 f、不落盘
         let _g = self.lock.lock().unwrap_or_else(|e| e.into_inner());
         let mut book = self.load(uuid).unwrap_or_else(seed);
         let out = f(&mut book);
@@ -93,5 +96,19 @@ mod tests {
         db.update("u2", || Book { uuid: "u2".into(), title: "甲".into(), ..Default::default() }, |_| ()).unwrap();
         assert_eq!(db.load("u1").unwrap().chapters, vec!["一"]);
         assert_eq!(db.list().iter().map(|b| b.title.as_str()).collect::<Vec<_>>(), ["乙", "甲"], "按标题码位排序（乙 U+4E59 < 甲 U+7532）");
+    }
+
+    /// 回归：uuid 带 `/`、`..` 不能读写条目库目录之外的文件。
+    #[test]
+    fn rejects_path_traversal_uuid() {
+        let t = tempfile::tempdir().unwrap();
+        let db = BookDb::new(t.path().join("books"));
+        db.ensure().unwrap();
+        std::fs::write(t.path().join("outside.json"), r#"{"uuid":"o","title":"外面"}"#).unwrap();
+        assert!(db.load("../outside").is_none(), "不能读到目录之外的 json");
+        let mut ran = false;
+        let r = db.update("../evil", || Book { uuid: "../evil".into(), title: "x".into(), ..Default::default() }, |_| ran = true);
+        assert!(r.is_err() && !ran, "非法 uuid 直接拒绝，不跑闭包");
+        assert!(!t.path().join("evil.json").exists());
     }
 }

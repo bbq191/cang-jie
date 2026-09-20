@@ -2,17 +2,26 @@
 //! 收编 registry / 字体 fonts.json / 各 config-save 里各自重复的"写 tmp 再 rename"实现，
 //! 也把壁纸 state、book config 从"原地 write（非原子）"统一到原子写。
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
-/// 原子写：先写 `<path>.tmp` 再 rename 覆盖。写前建齐父目录。
+/// 原子写：先写同目录临时文件再 rename 覆盖。写前建齐父目录。
+/// 临时名 `<path>.<pid>.<序号>.tmp`：进程内用原子计数保证唯一，多线程/多进程同时写同一个目标文件时
+/// 各写各的临时文件、各自 rename（最后一个 rename 胜出），不会再像固定 `<path>.tmp` 那样互相截断，
+/// 或者一个线程 rename 走了另一个线程正在写的文件。仍以 `.tmp` 结尾，按后缀忽略半成品的规则继续有效。
+/// 写/rename 失败时清掉自己的临时文件，不留垃圾。
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    static SEQ: AtomicU64 = AtomicU64::new(0);
     if let Some(p) = path.parent() {
         std::fs::create_dir_all(p)?;
     }
     let mut tmp = path.as_os_str().to_owned();
-    tmp.push(".tmp");
+    tmp.push(format!(".{}.{}.tmp", std::process::id(), SEQ.fetch_add(1, Ordering::Relaxed)));
     let tmp = PathBuf::from(tmp);
-    std::fs::write(&tmp, bytes)?;
-    std::fs::rename(&tmp, path)
+    let r = std::fs::write(&tmp, bytes).and_then(|_| std::fs::rename(&tmp, path));
+    if r.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    r
 }
 
 /// 校验"单段普通文件名"：非空、无路径分隔符、非 `.`/`..`、不以 `.` 开头（隐藏名留给各目录的半成品 / sidecar）。
@@ -76,6 +85,32 @@ mod tests {
         let mut tmp = p.as_os_str().to_owned();
         tmp.push(".tmp");
         assert!(!PathBuf::from(tmp).exists(), "tmp 应已 rename 掉");
+    }
+
+    /// 回归：多线程同时原子写同一个目标，内容始终是某一次完整写入（不被截断/撕裂），且不留 tmp。
+    #[test]
+    fn concurrent_atomic_writes_never_tear() {
+        let t = tempfile::tempdir().unwrap();
+        let p = std::sync::Arc::new(t.path().join("c.json"));
+        let hs: Vec<_> = (0..8)
+            .map(|i| {
+                let p = p.clone();
+                std::thread::spawn(move || {
+                    let body = vec![b'a' + i as u8; 64 * 1024];
+                    for _ in 0..50 {
+                        write_atomic(&p, &body).unwrap();
+                    }
+                })
+            })
+            .collect();
+        for h in hs {
+            h.join().unwrap();
+        }
+        let got = std::fs::read(&*p).unwrap();
+        assert_eq!(got.len(), 64 * 1024);
+        assert!(got.iter().all(|b| *b == got[0]), "内容必须来自同一次完整写入");
+        let left: Vec<_> = std::fs::read_dir(t.path()).unwrap().flatten().map(|e| e.file_name().to_string_lossy().to_string()).filter(|n| n.ends_with(".tmp")).collect();
+        assert!(left.is_empty(), "不该残留临时文件: {left:?}");
     }
 
     #[test]
