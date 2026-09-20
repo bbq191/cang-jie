@@ -325,6 +325,100 @@ pub fn prepare_comic_page_for_pdf(bytes: &[u8], page_w: u32, page_h: u32) -> Opt
     Some(out)
 }
 
+/// 解码并归一到 `Luma8`/`Rgb8`（灰度保持灰度），并做四边留白裁边。返回 `(图, 格式, 是否裁过)`。
+/// [`prepare_comic_page_for_pdf`] / [`prepare_comic_page_for_epub`] 共用的前半段。
+fn decode_trim_comic(bytes: &[u8]) -> Option<(image::DynamicImage, ImageFormat, bool)> {
+    use image::DynamicImage;
+    let (fmt, (w, h)) = header_dims(bytes)?;
+    if !within_decode_budget(w, h) {
+        return None; // 极端高分辨率原图：不整个解出来，原样保留（见 MAX_DECODE_PIXELS 文档）
+    }
+    let decoded = image::load_from_memory_with_format(bytes, fmt).ok()?;
+    let gray = matches!(
+        decoded.color(),
+        image::ColorType::L8 | image::ColorType::L16 | image::ColorType::La8 | image::ColorType::La16
+    );
+    let img = if gray { DynamicImage::ImageLuma8(decoded.to_luma8()) } else { DynamicImage::ImageRgb8(decoded.to_rgb8()) };
+    drop(decoded);
+    let bounds = match &img {
+        DynamicImage::ImageRgb8(rgb) => trim_bounds(rgb),
+        other => trim_bounds(&other.to_rgb8()),
+    };
+    Some(match bounds {
+        Some((l, t, cw, ch)) => (img.crop_imm(l, t, cw, ch), fmt, true),
+        None => (img, fmt, false),
+    })
+}
+
+/// 白底画布上居中放置 `img`（保持 `Luma8`/`Rgb8` 类型）。
+fn paste_on_white(img: &image::DynamicImage, cw: u32, ch: u32, off_x: u32, off_y: u32) -> image::DynamicImage {
+    use image::DynamicImage;
+    match img {
+        DynamicImage::ImageLuma8(g) => {
+            let mut canvas = image::GrayImage::from_pixel(cw, ch, image::Luma([255]));
+            image::imageops::overlay(&mut canvas, g, off_x as i64, off_y as i64);
+            DynamicImage::ImageLuma8(canvas)
+        }
+        other => {
+            let mut canvas = image::RgbImage::from_pixel(cw, ch, image::Rgb([255, 255, 255]));
+            image::imageops::overlay(&mut canvas, &other.to_rgb8(), off_x as i64, off_y as i64);
+            DynamicImage::ImageRgb8(canvas)
+        }
+    }
+}
+
+/// **EPUB 漫画整页的单趟处理**（取代 `trim_margins` → `downscale_for_epub_comic` → `pad_to_device_aspect`
+/// 三道串联：每道各自解码+编码一遍，三代 JPEG 有损、灰度被转 RGB、三次整图缩放/合成）。
+///
+/// 解码一次 → 裁边 → 等比放进设备页框（954×1696）**一次**缩放（缩小，或 JPEG 小图放大，见
+/// [`prepare_comic_page_for_pdf`] 的 A/B 结论：让 xochitl 自己放大偏糊，我们预放大更清晰）→ 白底补到
+/// 设备页长宽比（`width:100%` 渲染正好填满，见 [`pad_to_device_aspect`] 的实测依据）→ 编码一次，
+/// 灰度保持单分量。小于设备短边 1/3 的装饰小图只裁边，不缩放/补白（同 `pad_to_device_aspect`）。
+/// 什么都不需要做时返回 `None`（原字节零损失）。
+pub fn prepare_comic_page_for_epub(bytes: &[u8]) -> Option<Vec<u8>> {
+    let (img, fmt, trimmed) = decode_trim_comic(bytes)?;
+    let (cw, ch) = (img.width(), img.height());
+    let quality_default = JPEG_QUALITY_COMIC;
+    let (out_img, quality) = if cw.min(ch) < MAX_SHORT_EDGE / 3 {
+        if !trimmed {
+            return None; // 装饰小图且没白边：原样
+        }
+        (img, quality_default)
+    } else {
+        let s = (MAX_SHORT_EDGE as f32 / cw as f32).min(MAX_EDGE as f32 / ch as f32);
+        let shrink = s < 1.0;
+        let upscale = fmt == ImageFormat::Jpeg && s > 1.0 && s <= MAX_PDF_UPSCALE;
+        let (img, quality) = if shrink || upscale {
+            let nw = ((cw as f32 * s).round() as u32).clamp(1, MAX_SHORT_EDGE);
+            let nh = ((ch as f32 * s).round() as u32).clamp(1, MAX_EDGE);
+            (resize_lanczos3(&img, nw, nh), if upscale { JPEG_QUALITY_UPSCALED } else { quality_default })
+        } else {
+            (img, quality_default)
+        };
+        let (w, h) = (img.width(), img.height());
+        let cur_aspect = w as f32 / h as f32;
+        if ((cur_aspect - DEVICE_PAGE_ASPECT) / DEVICE_PAGE_ASPECT).abs() <= PAD_ASPECT_TOLERANCE {
+            if !trimmed && !shrink && !upscale {
+                return None;
+            }
+            (img, quality)
+        } else if cur_aspect > DEVICE_PAGE_ASPECT {
+            let new_h = (w as f32 / DEVICE_PAGE_ASPECT).round() as u32;
+            (paste_on_white(&img, w, new_h, 0, (new_h - h) / 2), quality)
+        } else {
+            let new_w = (h as f32 * DEVICE_PAGE_ASPECT).round() as u32;
+            (paste_on_white(&img, new_w, h, (new_w - w) / 2, 0), quality)
+        }
+    };
+    let mut out = Vec::new();
+    match fmt {
+        ImageFormat::Jpeg => encode_jpeg_keep_gray(&out_img, quality, &mut out)?,
+        ImageFormat::Png => out_img.write_to(&mut Cursor::new(&mut out), ImageFormat::Png).ok()?,
+        _ => return None,
+    }
+    Some(out)
+}
+
 /// Lanczos3 重采样，SIMD 实现（`fast_image_resize`，x86 SSE4/AVX2、aarch64 NEON 运行期自动选）。
 ///
 /// 替换 `DynamicImage::resize_exact(.., Lanczos3)` 的原因：2026-09-20 分阶段计时（乱马/镖人，
@@ -460,6 +554,47 @@ mod tests {
         )
         .unwrap();
         buf
+    }
+
+    #[test]
+    fn prepare_epub_page_upscales_low_res_and_pads_to_exact_device_page() {
+        // 镖人同款 566×800 灰度：等比放大到 954 宽（1348 高）→ 白底补到 954×1696，灰度保持。
+        let out = prepare_comic_page_for_epub(&gray_jpeg_of(566, 800, 0)).expect("低分辨率必须预放大");
+        let img = image::load_from_memory(&out).unwrap();
+        assert_eq!((img.width(), img.height()), (954, 1696));
+        assert_eq!(img.color(), image::ColorType::L8);
+    }
+
+    #[test]
+    fn prepare_epub_page_shrinks_large_page_once_and_pads() {
+        // 乱马同款 1091×1592：缩到 954×1392，补白到 954×1696。
+        let out = prepare_comic_page_for_epub(&gray_jpeg_of(1091, 1592, 0)).expect("超框必须缩");
+        assert_eq!(image::load_from_memory(&out).unwrap().dimensions(), (954, 1696));
+    }
+
+    #[test]
+    fn prepare_epub_page_trim_then_fit_in_one_pass() {
+        // 带 60px 白边：先裁再适配，仍是设备页尺寸，且只编码一次（尺寸即证明一趟到位）。
+        let out = prepare_comic_page_for_epub(&gray_jpeg_of(800, 1200, 60)).unwrap();
+        assert_eq!(image::load_from_memory(&out).unwrap().dimensions(), (954, 1696));
+    }
+
+    #[test]
+    fn prepare_epub_page_leaves_untouched_when_already_device_page_or_tiny_icon() {
+        assert!(prepare_comic_page_for_epub(&gray_jpeg_of(954, 1696, 0)).is_none(), "已是设备页、无白边：原字节零损失");
+        assert!(prepare_comic_page_for_epub(&gray_jpeg_of(200, 300, 0)).is_none(), "装饰小图且无白边：原样");
+    }
+
+    #[test]
+    fn prepare_epub_page_does_not_upscale_png() {
+        // PNG 不放大（无损放大体积暴涨）：700×1000 只补白到设备长宽比，宽仍 700。
+        let img = DynamicImage::ImageRgb8(RgbImage::from_fn(700, 1000, |x, y| image::Rgb([(x % 256) as u8, (y % 256) as u8, 9])));
+        let mut png = Vec::new();
+        img.write_to(&mut Cursor::new(&mut png), ImageFormat::Png).unwrap();
+        let out = prepare_comic_page_for_epub(&png).unwrap();
+        let (w, h) = image::load_from_memory(&out).unwrap().dimensions();
+        assert_eq!(w, 700, "PNG 不放大");
+        assert!(h > 1000, "补白后应更高: {h}");
     }
 
     #[test]

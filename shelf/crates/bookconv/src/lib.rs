@@ -16,6 +16,7 @@ pub mod epub;
 pub mod htmlproc;
 pub mod imgopt;
 pub mod netimg;
+pub mod naming;
 pub mod optimize;
 pub mod pdf_ingest;
 pub mod stats;
