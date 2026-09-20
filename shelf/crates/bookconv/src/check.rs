@@ -9,7 +9,6 @@ use crate::wash::{count_dup_id_tags, dir_of, href_re, is_html, is_toc_file, perc
 use regex::Regex;
 use std::collections::HashMap;
 use std::io::{Cursor, Read};
-use std::sync::OnceLock;
 use zip::ZipArchive;
 
 #[derive(Clone, Debug, Default, PartialEq, serde::Serialize)]
@@ -67,10 +66,8 @@ pub fn check_entries(entries: &[Entry], require_toc: bool) -> CheckReport {
 
     // 1. DRM
     if let Some(enc) = names.get("META-INF/encryption.xml") {
-        static RE: OnceLock<Regex> = OnceLock::new();
-        let re = RE.get_or_init(|| Regex::new(r#"CipherReference\s+URI="([^"]+)""#).unwrap());
         let t = String::from_utf8_lossy(&enc.data);
-        let targets: Vec<String> = re.captures_iter(&t).map(|c| c[1].to_string()).collect();
+        let targets: Vec<String> = crate::wash::cipher_reference_re().captures_iter(&t).map(|c| c[1].to_string()).collect();
         let non_font: Vec<&String> = targets.iter().filter(|x| { let l = x.to_ascii_lowercase(); !(l.ends_with(".ttf") || l.ends_with(".otf") || l.ends_with(".woff") || l.ends_with(".woff2")) }).collect();
         if !non_font.is_empty() {
             rep.errors.push(format!("加密 EPUB（DRM，加密了 {} 等），xochitl/KOReader 都读不了", non_font.iter().take(3).map(|s| s.as_str()).collect::<Vec<_>>().join("、")));

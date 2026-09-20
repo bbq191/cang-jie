@@ -108,9 +108,7 @@ impl ConfigSync {
 mod tests {
     use super::*;
 
-    fn has_luajit() -> bool {
-        std::process::Command::new("luajit").arg("-v").output().map(|o| o.status.success()).unwrap_or(false)
-    }
+    use crate::koreader::has_luajit;
 
     #[test]
     fn apply_dry_run_then_write_with_backup_and_idempotent() {

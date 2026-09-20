@@ -21,6 +21,12 @@ pub struct KoStore {
     into: String,
 }
 
+/// 单测用：host PATH 上有没有 luajit（没有就让依赖 luajit 的用例自行跳过）。
+#[cfg(test)]
+pub(crate) fn has_luajit() -> bool {
+    std::process::Command::new("luajit").arg("-v").output().map(|o| o.status.success()).unwrap_or(false)
+}
+
 pub const KO_ANY: &[&str] = &[];
 
 impl KoStore {

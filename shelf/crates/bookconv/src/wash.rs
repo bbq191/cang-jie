@@ -21,6 +21,7 @@
 //!
 //! 全部规则幂等：注入块带 `class="cj-wash"` 标记，重复过不再叠加。
 use crate::htmlproc::collapse_dup_id_attrs;
+use crate::util::{is_image_ext, xml_escape};
 use regex::Regex;
 use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
@@ -189,12 +190,16 @@ fn find_opf(entries: &[Entry]) -> Option<usize> {
 // ───────────────────────── 1. 伪 DRM ─────────────────────────
 
 /// encryption.xml 里的加密目标（zip 内路径）。
+/// `META-INF/encryption.xml` 里 `<CipherReference URI="…">` 的匹配（质量门 `check` 与清洗层共用）。
+pub(crate) fn cipher_reference_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r#"CipherReference\s+URI="([^"]+)""#).unwrap())
+}
+
 pub fn encrypted_targets(entries: &[Entry]) -> Option<Vec<String>> {
     let enc = entries.iter().find(|e| e.name == "META-INF/encryption.xml")?;
     let t = String::from_utf8_lossy(&enc.data);
-    static RE: OnceLock<Regex> = OnceLock::new();
-    let re = RE.get_or_init(|| Regex::new(r#"CipherReference\s+URI="([^"]+)""#).unwrap());
-    Some(re.captures_iter(&t).map(|c| posix_norm(&percent_decode(&c[1]))).filter(|u| !u.starts_with('#')).collect())
+    Some(cipher_reference_re().captures_iter(&t).map(|c| posix_norm(&percent_decode(&c[1]))).filter(|u| !u.starts_with('#')).collect())
 }
 
 /// 真 DRM 判据：加密了非样式/字体/脚本的文件。返回违规项。
@@ -638,11 +643,6 @@ pub(crate) fn parse_opf(entries: &[Entry]) -> Option<Opf> {
 
 // ───────────────────────── 封面声明 ─────────────────────────
 
-fn is_image_path(p: &str) -> bool {
-    let l = p.to_ascii_lowercase();
-    l.ends_with(".jpg") || l.ends_with(".jpeg") || l.ends_with(".png") || l.ends_with(".gif") || l.ends_with(".webp")
-}
-
 /// 保证 OPF 声明了一个**有效的封面图**（xochitl 靠它生成书库里的封面缩略图）。2026-09-20 用户要求核查日志时发现：
 /// 设备日志 `rm.epub.container Asked for unknown item ""` + `rm.docworker failed extracting cover: got null cover
 /// image`——9 本已投的书里 7 本没有封面。原因有两类：①OPF 根本没有 `<meta name="cover">`（如火影）；②声明了但**指向的不是
@@ -673,7 +673,7 @@ pub fn ensure_cover_declared(entries: &mut [Entry]) -> bool {
             let attrs: HashMap<String, String> = attr_re.captures_iter(m.as_str()).map(|a| (a[1].to_ascii_lowercase(), a[2].to_string())).collect();
             let (id, href) = (attrs.get("id")?, attrs.get("href")?);
             let path = resolve(&opf.dir, &percent_decode(href));
-            let image = attrs.get("media-type").map(|t| t.starts_with("image/")).unwrap_or(false) || is_image_path(&path);
+            let image = attrs.get("media-type").map(|t| t.starts_with("image/")).unwrap_or(false) || is_image_ext(&path);
             Some(It { tag: m.as_str().to_string(), id: id.clone(), path, props: attrs.get("properties").cloned().unwrap_or_default(), image })
         })
         .collect();
@@ -968,10 +968,6 @@ pub(crate) fn plain_text(html: &str) -> String {
     let tag = TAG.get_or_init(|| Regex::new(r#"(?s)<[^>]*>"#).unwrap());
     let t = tag.replace_all(html, "");
     t.replace("&nbsp;", " ").replace("&#160;", " ").split_whitespace().collect::<Vec<_>>().join(" ")
-}
-
-fn xml_escape(s: &str) -> String {
-    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;").replace('"', "&quot;")
 }
 
 /// 从 spine 各章 h1/h2 生成目录；标题无 id 则补 `id="cj-toc-N"`。返回条目 (level, title, zip路径, frag)。

@@ -287,7 +287,7 @@ pub fn build_piece(entries: &[Entry], start: usize, end: usize, title: &str, boo
                     None => {
                         let Some(ie) = entries.iter().find(|e| e.name == img) else { continue };
                         let ext = img.rsplit('.').next().unwrap_or("jpg").to_ascii_lowercase();
-                        let media = if ext == "png" { "image/png" } else { "image/jpeg" };
+                        let media = crate::util::image_media_type_of_ext(&ext);
                         let np = format!("images/{:04}.{ext}", resources.len() + 1);
                         resources.push(Resource { path: np.clone(), media_type: media.into(), bytes: ie.data.clone() });
                         remap.insert(img.clone(), np.clone());

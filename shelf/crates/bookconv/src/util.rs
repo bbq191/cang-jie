@@ -17,6 +17,23 @@ pub fn xml_escape(s: &str) -> String {
     out
 }
 
+/// 路径/文件名是不是常见位图（按扩展名，忽略大小写）：jpg/jpeg/png/gif/webp。封面声明、占位封面探测共用；
+/// 注意跟 `imgopt::is_downscalable`（只认 jpg/jpeg/png——能重编码降采样的那几种）是两个不同的判据。
+pub fn is_image_ext(name: &str) -> bool {
+    let l = name.to_ascii_lowercase();
+    l.ends_with(".jpg") || l.ends_with(".jpeg") || l.ends_with(".png") || l.ends_with(".gif") || l.ends_with(".webp")
+}
+
+/// 图片扩展名（不带点、小写）→ media-type；认不出的当 JPEG（EPUB 里绝大多数图是 JPEG）。
+pub fn image_media_type_of_ext(ext: &str) -> &'static str {
+    match ext {
+        "png" => "image/png",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        _ => "image/jpeg",
+    }
+}
+
 /// 书名 → 安全文件名：控制字符与路径字符（`/\:*?"<>|`）换下划线、去首尾空白、截断 80 字符；
 /// 空则用 `default`。ingest（转换落名）、autoopt（优化落名）、readlater（文章落名）共用。
 pub fn sanitize_filename(title: &str, default: &str) -> String {
@@ -88,6 +105,16 @@ mod tests {
         assert!(s.is_char_boundary(t.len()));
         assert!(std::str::from_utf8(t.as_bytes()).is_ok());
         assert_eq!(t, "中文"); // 截到 6 字节（2 个字），不是硬切出半个字符
+    }
+
+    #[test]
+    fn image_ext_and_media_type() {
+        assert!(is_image_ext("a/B.JPG") && is_image_ext("c.webp") && is_image_ext("x.gif"));
+        assert!(!is_image_ext("cover.txt") && !is_image_ext("style.css"));
+        assert_eq!(image_media_type_of_ext("png"), "image/png");
+        assert_eq!(image_media_type_of_ext("gif"), "image/gif");
+        assert_eq!(image_media_type_of_ext("jpg"), "image/jpeg");
+        assert_eq!(image_media_type_of_ext("bmp"), "image/jpeg", "认不出当 JPEG");
     }
 
     #[test]

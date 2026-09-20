@@ -121,9 +121,7 @@ pub fn scan(ko_root: &Path, books_dir: &Path, tmp_dir: &Path) -> Result<Vec<Book
 mod tests {
     use super::*;
 
-    fn has_luajit() -> bool {
-        std::process::Command::new("luajit").arg("-v").output().map(|o| o.status.success()).unwrap_or(false)
-    }
+    use crate::koreader::has_luajit;
 
     fn write_sidecar(books: &Path, rel_book: &str, lua: &str) {
         let book = books.join(rel_book);
