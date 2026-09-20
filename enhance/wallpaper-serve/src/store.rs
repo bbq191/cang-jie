@@ -12,6 +12,7 @@ use rmsvc_core::formats::IMAGE_EXTS;
 use rmsvc_core::fs::{plain_name, write_atomic};
 use rmsvc_core::paths::Paths;
 use std::io::Write;
+use std::sync::Mutex;
 use std::path::{Path, PathBuf};
 
 /// 竖屏物理尺寸：954×1696 @264PPI。2026-09-11 从 shelf/crates/bookconv::imgopt 的同名常量复制
@@ -49,12 +50,16 @@ pub struct WallpaperStore {
     current: PathBuf,
     state_file: PathBuf,
     pub fit: Fit,
+    /// 串行化 `state_file` 的读-改-写与 current.png 的覆盖：API 线程（激活/改模式/删除）和唤醒线程
+    /// （`wake` 的 roll）共用**同一个** `Arc<WallpaperStore>`，state 文件每次现读现写、没有内存副本，
+    /// 不加锁时两边交错会互相覆盖对方刚写的 current/mode。
+    lock: Mutex<()>,
 }
 
 impl WallpaperStore {
     pub fn new(paths: &Paths) -> WallpaperStore {
         let base = paths.data_dir().join("wallpapers");
-        WallpaperStore { pool: base.join("pool"), current: base.join("current.png"), state_file: paths.state_dir().join("wallpaper-state.json"), fit: Fit::Cover }
+        WallpaperStore { pool: base.join("pool"), current: base.join("current.png"), state_file: paths.state_dir().join("wallpaper-state.json"), fit: Fit::Cover, lock: Mutex::new(()) }
     }
     pub fn pool(&self) -> &Path {
         &self.pool
@@ -76,7 +81,12 @@ impl WallpaperStore {
     pub fn save_state(&self, st: &WpState) -> Result<(), String> {
         rmsvc_core::config::save(&self.state_file, st, None)
     }
+    fn guard(&self) -> std::sync::MutexGuard<'_, ()> {
+        self.lock.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     pub fn set_mode(&self, mode: Mode) -> Result<(), String> {
+        let _g = self.guard();
         let mut st = self.state();
         st.mode = mode;
         self.save_state(&st)
@@ -97,6 +107,12 @@ impl WallpaperStore {
 
     /// 原地覆盖 current.png（truncate 写、保 inode；xochitl 每次休眠按 SleepScreenPath 重读）。
     pub fn activate(&self, name: &str) -> Result<(), String> {
+        let _g = self.guard();
+        self.activate_locked(name)
+    }
+
+    /// 调用方已持有 [`Self::guard`]（`roll` 在同一把锁里选图+激活，不能重入）。
+    fn activate_locked(&self, name: &str) -> Result<(), String> {
         let src = self.pool.join(plain_name(name)?);
         let data = std::fs::read(&src).map_err(|_| "池里没有这张图".to_string())?;
         let mut f = std::fs::OpenOptions::new().write(true).create(true).truncate(true).open(&self.current).map_err(|e| e.to_string())?;
@@ -109,6 +125,7 @@ impl WallpaperStore {
 
     /// 按 mode 选下一张并激活；返回激活的名字（fixed/空池 → None）。
     pub fn roll(&self) -> Result<Option<String>, String> {
+        let _g = self.guard();
         let st = self.state();
         let names = self.names();
         if names.is_empty() || st.mode == Mode::Fixed {
@@ -129,7 +146,7 @@ impl WallpaperStore {
             }
             Mode::Fixed => unreachable!(),
         };
-        self.activate(&next)?;
+        self.activate_locked(&next)?;
         Ok(Some(next))
     }
 }
@@ -199,6 +216,7 @@ impl AssetStore for WallpaperStore {
     }
     fn remove(&self, name: &str) -> Result<(), String> {
         let n = plain_name(name)?;
+        let _g = self.guard();
         if self.state().current.as_deref() == Some(n) {
             return Err("正在使用的壁纸不能删，先换一张".into());
         }
