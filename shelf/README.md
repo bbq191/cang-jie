@@ -39,7 +39,7 @@ reMarkable Paper Pro Move 的**读书与阅读质量层**：一个网页，把�
 
 - **注册表**：服务启动写 `$XDG_RUNTIME_DIR/shelf/services/<name>.json`（含 pid、端口、UI tab），退出即删；网关按它出 tab、缺席回 404「未安装」。装/卸一个服务 = 一个二进制 + 一个 systemd 单元。
 - **URL 段 ↔ 服务**（`../gateway/src/manage.rs` 的 `MODULES` 单一事实源）：`books→book-serve`、`koreader→koreader-serve`、`fonts→font-serve`、`wallpapers→wallpaper-serve`。经网关 `GET /api/fonts/health` = 后端直连 `GET 127.0.0.1:8792/health`。
-- **systemd**：`shelf.target`（挂 multi-user）+ 各服务 `PartOf=shelf.target`；`systemctl disable --now font-serve` 即拔掉字体服务。所有单元只 `After=home.mount`，**绝不给 xochitl 加依赖**。
+- **systemd**：`shelf.target`（挂 multi-user）+ 各服务 `PartOf=shelf.target`；`systemctl disable --now font-serve` 即拔掉字体服务。所有单元都 `After=home.mount`，除 `ink-serve`、`note-serve` 外还带 `After`+`Wants=network-online.target`，`PartOf=shelf.target`、`WantedBy=shelf.target`；**绝不给 xochitl 加依赖**（改核心服务启动依赖曾导致变砖）。
 
 ### 主要 API（经网关前缀 `/api/<seg>`）
 
@@ -67,7 +67,7 @@ shelf/
 ├── systemd/                          shelf.target + book/koreader-serve 单元（font/wallpaper 的单元在 ../enhance/<name>/）
 ├── xovi/                             qmd 注入：字体菜单动态项 · 回收站代理 · 建文件夹代理（改 qmd 先用 qmldiff CLI 离线实跑）
 ├── koreader/                         配置即代码：profile 补丁 + fonts/dicts 清单 + merge.lua
-├── install.sh · uninstall.sh         设备端安装/卸载（--only 按服务；写 /usr 前实检 dm-verity）
+├── install.sh · uninstall.sh · manifest.sh   设备端安装/卸载与两者共用的清单（--only 按服务，未知令牌退出 2；写 /usr 前实检 dm-verity）。install.sh 依赖同目录的 manifest.sh 与 packaging/devlib.sh（deploy.sh 打包时已带上）
 └── docs/                             白皮书 · 传书EPUB线架构 · bookconv优化白皮书 · diagrams/
 ```
 
@@ -79,6 +79,8 @@ shelf/
 | 用途 | 路径 |
 |---|---|
 | 二进制 | `~/.local/bin/{gateway,*-serve,shelf-uninstall,lo-alias.sh}` |
+| 库（供 `shelf-uninstall` source） | `~/.local/lib/shelf/{manifest.sh,devlib.sh}`（整包安装才装；`--only` 不动它们） |
+| 备份 | `~/cangjie-backups/shelf-<时间戳>/`（旧二进制/单元/qmd，保留最近 5 份） |
 | 配置 | `~/.config/shelf/<service>.json`（book：书库文件夹/xochitl 主机/超时/**`nativeUploadLimitMb` 加入原生体积门 90（超过则走占位+磁盘替换通道，§03bn）**，2026-09-19 真机精确测出 xochitl `/upload` 硬上限后从未验证过的 150 改成留够安全余量的 90，见 `config.rs`；font；gateway）· `~/.config/shelf/tls/`（CA+叶证书） |
 | 数据 | `~/.local/share/shelf/`（fonts.json、壁纸池）· `~/.local/share/fonts/`（用户字体，fontconfig 标准位） |
 | 状态 | `~/.local/state/shelf/books/staging/`（**母版库**，不淘汰）· `books/{inbox,.work,failed}`（追平队列）· `wallpaper-state.json` · `koreader-backups/` |
@@ -104,40 +106,20 @@ shelf/
 ```sh
 cd shelf && sh build.sh                                # host 测试 + aarch64 musl 全静态（书架 2 个二进制；../gateway/../enhance/{wallpaper,font}-serve/../notes 存在时顺带编它们）
 cd ../packaging && sh deploy.sh 10.11.99.1             # 组载荷 → 设备 /home/root/shelf-pkg → install.sh（先备份旧二进制/单元）；设备只在 WiFi 上时给 WiFi IP
-sh deploy.sh 10.11.99.1 --only font,wallpaper          # 只装/更新部分服务；SHELF_NO_BUILD=1 跳过编译
-ssh root@10.11.99.1 sh /home/root/shelf-pkg/shelf/uninstall.sh [--only font] [--purge]
+sh deploy.sh 10.11.99.1 --only font,wallpaper          # 只装/更新部分服务（令牌见下）；SHELF_NO_BUILD=1 跳过编译
+sh deploy.sh 10.11.99.1 --password '新密码'             # 同时设网关密码（值经 ssh 标准输入写进设备 0600 临时文件，install.sh --password-file 读后即删，不上命令行）
+ssh root@10.11.99.1 '~/.local/bin/shelf-uninstall' [--only font] [--purge]   # 设备上已装的卸载脚本（~/.local/bin，install.sh 每次更新）；也可 sh ~/shelf-pkg/shelf/uninstall.sh
 cargo build --release -p bookconv --bin epub-optimize   # 手动跑一遍清洗+优化器的开发期小工具（shelf/target/release/），不再有任何 CLI 调用它
 ```
-整包路径：2026-09-11 起是 `packaging/install-all.sh <host>`——统一编排固件安全门 + `enhance/` 三个独立
-xovi 扩展/工具（hl-snap/handwriting-stroke/battop）+ `packaging/deploy.sh`（原 shelf/deploy.sh，处理
-shelf 本体+网关+笔记线+两个领域服务），见 `../packaging/README.md`。旧的 `packaging/package.sh` 打
-`cangjie-full-*.tar.gz` 那套单体打包方式已随 2026-09-11 大归档整体挪出仓库（现只在
-`/home/afu/Projects/oldbak/packaging/`，且经核实那份现在实际是断的——它按旧路径找 `shelf/` 载荷，
-`shelf/` 早就独立到仓库顶层了），不是这次 `install-all.sh` 的设计参照。
-⚠ 设备上 `systemctl restart xochitl` 会丢 xovi（字体菜单/KOReader 入口一起没），重启 xochitl 一律 `/home/root/xovi/start`。
+`--only` 可选令牌：`gateway book koreader font wallpaper ink transcribe mind note`（网关总会装；写了别的令牌设备端 `install.sh` 报错退出，退出码 2）。`install.sh` 需要同目录的 `manifest.sh` 与 `devlib.sh`（`deploy.sh` 已把它们一起打进载荷，**手拷单个 `install.sh` 到设备不够**）。安装是幂等的：先校验载荷（缺任何东西一个字节都不写），旧文件备份进 `~/cangjie-backups/shelf-<时间戳>/`（保留最近 5 份），二进制/qmd 原子替换，`/usr` 写入在带 trap 的 rw 窗口里，只重启内容有变化或没在跑的服务。
+
+整包路径：`packaging/install-all.sh <host>`——统一编排固件安全门 + `wifi-watch`/`battop` 等系统项 + `enhance/` 的 xovi 扩展 + `packaging/deploy.sh`（shelf 本体+网关+笔记线+两个领域服务）+ 最后统一重启 xochitl，见 `../packaging/README.md`。旧的单体打包脚本 `package.sh` 已随 2026-09-11 大归档挪出仓库，不是 `install-all.sh` 的设计参照。
+
+⚠ **重启 xochitl 的判定**：xovi 已在运行的 xochitl 里生效时，**用 `systemctl restart xochitl`，不要跑 `xovi/start`**（后者会让运行中的 xochitl SEGV，整机自动重启，2026-09-20 事故）；只有 xovi 没生效（刚开机/OTA 之后）才用 `xovi/start`。`packaging/` 的脚本已内建这条判定（`devlib.sh` 的 `cj_xochitl_apply`），且重启前会提示"将打断阅读"并留 5 秒宽限。
 
 ## 固件升级（OTA）与恢复
 
-**升级零风险、数据零丢失，随时可升；升完要手工装一遍功能才回来**——不是"升了就能用"。设计上我们不在启动路径留任何东西
-（xovi 预载在 `/etc` tmpfs、单元在 `/usr`），新固件永远以纯原厂起来；`/home` 原样。3.27.3.0 → 3.28.0.172 实录见白皮书 §03v。
-
-| 项目 | 位置 | OTA 后 | 恢复 |
-|---|---|---|---|
-| 母版库 / KOReader / 字体 / 壁纸池 / 配置 / 证书 / 休眠屏 conf 键 `SleepScreenPath` | `/home` | 保留 | 无 |
-| WiFi 看护钩子 `xovi/scripts/post-start/` · NM `powersave 2` | `/home` | 保留 | 无 |
-| 字体菜单 qmd · 回收站代理 qmd | `/home`（hashtab 过期） | 文件在、未注入 | ① `xovi/rebuild_hashtable`（设备旁输密码）② `xovi/start` |
-| 书架服务（gateway / book / koreader / font / wallpaper + 笔记线四服务） | `/usr` | **冲掉** | ③ `cd packaging && SHELF_NO_BUILD=1 sh deploy.sh 10.11.99.1`（或整体用 `sh install-all.sh 10.11.99.1`，见下） |
-| xovi 开机持久化恢复链（`xovi-reenable.service`，重启自动重跑 `xovi/start`，2026-09-11 补，`../packaging/README.md`） | `/usr` | **冲掉** | ⑥ `cd packaging && sh deploy-xovi-persist.sh 10.11.99.1` |
-| chrony 国内 NTP | rootfs `/etc` | **冲掉** | ④ `cd packaging && sh deploy-chrony-cn.sh 10.11.99.1`（2026-09-11 补，脚本已经从 `oldbak/` 重写回 `packaging/chrony-cn.sh`，不再需要手动从本机备份找） |
-| 默认时区 Asia/Shanghai（`timezone-cn.sh`，2026-09-11 新增，`../packaging/README.md`） | rootfs `/etc` | **冲掉** | ⑦ `cd packaging && sh deploy-timezone-cn.sh 10.11.99.1` |
-| wifi-watch 常驻看护（wlan0 假死自动 `nmcli con up`；固化所有 WiFi 连接 2.4G + 省电关——路由 5G 信道 36 不在设备精简 regdb 的 CN 允许段，白皮书 §03w） | `/usr` 单元 + `~/.local/bin` 脚本 | 单元**冲掉** | ⑤ ⚠️ `packaging/wifi-watch/` 目前仍只在 `oldbak/packaging/wifi-watch/`，未随 `install-all.sh` 恢复（这一条是真实缺口，跟上面几条不同——那几条已经补回仓库了） |
-
-④⑥⑦ 三步（连同 ③ 书架五服务）现在也可以一条命令全做：`cd packaging && sh install-all.sh 10.11.99.1`（见该目录 `README.md`）。①②（`rebuild_hashtable`/`xovi/start`）仍然只能手动——前者要交互输密码，后者是它们的共同前提，`install-all.sh` 不代做。
-
-升级前把与新固件不兼容的 xovi 扩展（如 appload）挪出 `extensions.d/`（放 `/home/root/xovi-disabled/`，绝不留在目录里）；appload 的 3.28 补丁见系统增强白皮书 §12.1。
-**风险分层**（不要合成一个百分比）：书架这一层只用 xochitl 的 `/upload` 网页接口和系统标准组件，换固件重装即回（本次 100%）；
-字体菜单这类 qmldiff 注入依赖 xochitl 内部 QML，大版本常要重适配（3.27→3.28 已是两版 qmd）；KOReader 本体独立无碍，
-但侧栏入口靠第三方 appload，每个大版本可能要重打补丁（3.28 靠 PR #59 qmd 回填，系统增强白皮书 §12.1）。
+**权威说明（恢复流程、逐项对照表、流程图）统一在 [`../docs/INSTALL.md`](../docs/INSTALL.md)「固件升级（OTA）之后」**，这里不再另写一份表。一句话：升级不丢 `/home` 数据；升完先设备旁手动 `xovi/rebuild_hashtable`，再在电脑上重跑 `cd ../packaging && sh install-all.sh <host>`（幂等，缺什么补什么；也可只重装书架：`SHELF_NO_BUILD=1 sh deploy.sh <host>`）。3.27.3.0 → 3.28.0.172 的实录见白皮书 §03v；2026-09-20 前的旧版 OTA 表原文保留在白皮书附录 D。
 
 ## 文档索引
 
