@@ -101,6 +101,8 @@ fn persist(paths: &Paths) {
         let _ = std::fs::create_dir_all(paths.state_dir());
         let _ = rmsvc_core::fs::write_atomic(&file_of(paths), &b);
     }
+    // 状态每变一次就落一次盘，正好是"该通知网页刷新"的时机（前端不再批量运行时每 3 秒轮询）。
+    crate::events::notify_books("batch");
 }
 
 /// 这本书该动作是否有意义（跟界面批量按钮同一套资格条件）：优化=EPUB/PDF 且还没优化；加入 xochitl=EPUB/PDF；

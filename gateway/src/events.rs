@@ -4,11 +4,22 @@
 //! 设计约束（用户 2026-09-06）：不轮询、不监听全盘、日志写入不触发——事件只来自服务代码里的变更点与这两处 inotify。
 use rmsvc_core::events::{follow, EventBus};
 use rmsvc_core::paths::Paths;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 pub struct Hub {
     pub bus: Arc<EventBus>,
+}
+
+/// 网关自己产生的事件（批量队列进度、并发闸门排队/处理状态变化）要发到同一条总线，而 batch/budget 是
+/// 进程级单例、拿不到 `Hub`——`Hub::spawn` 把总线登记在这里，[`notify_books`] 取用（没登记时是空操作，测试里就是这样）。
+static BUS: OnceLock<Arc<EventBus>> = OnceLock::new();
+
+/// 通知网页"传书/母版库"区域刷新：批量队列状态、闸门排队/处理状态变了。取代前端在批量运行时每 3 秒轮询。
+pub fn notify_books(kind: &str) {
+    if let Some(b) = BUS.get() {
+        b.publish("books", kind);
+    }
 }
 
 impl Hub {
@@ -26,6 +37,7 @@ impl Hub {
                 rmsvc_core::fswatch::watch_debounced(&dir, Duration::from_millis(500), |_| bus.publish("manage", "services"));
             });
         }
+        let _ = BUS.set(bus.clone());
         Hub { bus }
     }
 }

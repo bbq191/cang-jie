@@ -108,8 +108,8 @@ fn main() {
         println!("[gateway] mDNS 名 {}.local（iOS/macOS/Windows/Linux 可直接访问；安卓走热点 dnsmasq 别名）", cfg.mdns_name.trim());
     }
     let paths = Arc::new(paths);
+    let hub = Arc::new(events::Hub::spawn(paths.clone())); // 先建总线：batch/budget 的进度事件要发到它
     batch::resume(&paths); // 读回上次没跑完的批量队列继续跑（网关重启/部署新版本不丢）
-    let hub = Arc::new(events::Hub::spawn(paths.clone()));
     let mut router = Router::new()
         .get("/", |_| Ok(Reply::html(ui::page())))
         .get("/ca.crt", { let d = tls_dir.clone(); move |_| Ok(match rmsvc_core::tls::ca_pem(&d) {

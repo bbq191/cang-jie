@@ -122,10 +122,12 @@ impl Budget {
         }
         guard.cancel_requested.remove(name); // 清掉上一次遗留（排队超时的同一刻收到 cancel）的取消标记，别误杀这次
         guard.pending.insert(name.to_string());
+        crate::events::notify_books("budget"); // 排队状态变了（在锁内通知只是往有界通道 try_send，不阻塞）
         loop {
             if guard.cancel_requested.remove(name) {
                 guard.pending.remove(name);
                 self.cv.notify_all();
+                crate::events::notify_books("budget");
                 return Err(AdmitError::Cancelled);
             }
             let has_room = match tier {
@@ -139,12 +141,14 @@ impl Budget {
                 }
                 guard.pending.remove(name);
                 guard.active.insert(name.to_string());
+                crate::events::notify_books("budget");
                 return Ok(Slot { budget: self, tier, name: name.to_string() });
             }
             let now = Instant::now();
             if now >= deadline {
                 guard.pending.remove(name);
                 guard.cancel_requested.remove(name);
+                crate::events::notify_books("budget");
                 return Err(AdmitError::Timeout);
             }
             let (g2, _) = self.cv.wait_timeout(guard, deadline - now).unwrap();
@@ -160,6 +164,7 @@ impl Budget {
         }
         guard.active.remove(name);
         self.cv.notify_all();
+        crate::events::notify_books("budget");
     }
 
     /// 当前排队中/正在跑的书名快照（`pending`, `active`）——给 `GET /api/budget/status` 用，
