@@ -12,6 +12,12 @@ use std::time::Duration;
 const GROUP: Ipv4Addr = Ipv4Addr::new(224, 0, 0, 251);
 const PORT: u16 = 5353;
 const TTL: u32 = 120;
+/// 接口重扫间隔 = socket 读超时。此前读超时 5 秒（没有 mDNS 流量也每 5 秒醒一次）+ 每 30 秒 fork 一次 `ip`；
+/// 现在读超时与重扫合并成 60 秒：**只在读超时那次（或收到包但距上次重扫已过一个间隔）顺带重扫**，
+/// 重扫本身改读 `/proc`（见 `netinfo`），不 fork。代价：WiFi 后连/换网后，新地址最迟 60 秒内才会
+/// 加入多播组、被应答——`shelf.local` 首次发现晚一点，用户主要通过已经解析出的地址访问，可接受；
+/// 换来空闲时的定时唤醒从 12 次/分钟降到 1 次/分钟（LAN 上别的设备的 mDNS 查询仍会唤醒，那部分不可控）。
+const RESCAN_INTERVAL: Duration = Duration::from_secs(60);
 
 /// 解析一个 DNS 报文里的问题名（第一段 label 序列，不支持压缩指针——mDNS 查询极少用）。
 /// 返回 (names, qtypes) 对列表。
@@ -79,11 +85,11 @@ fn open_socket() -> Result<Socket, String> {
     s.bind(&SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, PORT)).into()).map_err(|e| format!("绑定 udp/{PORT}: {e}"))?;
     let _ = s.set_multicast_loop_v4(false);
     let _ = s.set_multicast_ttl_v4(255);
-    s.set_read_timeout(Some(Duration::from_secs(5))).map_err(|e| e.to_string())?;
+    s.set_read_timeout(Some(RESCAN_INTERVAL)).map_err(|e| e.to_string())?;
     Ok(s)
 }
 
-/// 阻塞跑应答器（放线程里）。`names` 不带 `.local`。接口每 30s 重扫（WiFi 后连也能答）。
+/// 阻塞跑应答器（放线程里）。`names` 不带 `.local`。接口每 [`RESCAN_INTERVAL`]（60s）重扫（WiFi 后连也能答）。
 pub fn serve(names: Vec<String>) -> Result<(), String> {
     let raw = open_socket()?;
     let sock: std::net::UdpSocket = raw.try_clone().map_err(|e| e.to_string())?.into();
@@ -93,22 +99,37 @@ pub fn serve(names: Vec<String>) -> Result<(), String> {
     }
     let mut ifaces: Vec<Iface> = Vec::new();
     let mut joined: Vec<Ipv4Addr> = Vec::new();
-    let mut last_scan = std::time::Instant::now() - Duration::from_secs(60);
+    let mut last_scan: Option<std::time::Instant> = None;
     let mut buf = [0u8; 1500];
-    loop {
-        if last_scan.elapsed() >= Duration::from_secs(30) {
-            ifaces = ipv4_ifaces();
-            for i in &ifaces {
-                if !joined.contains(&i.ip) && sock.join_multicast_v4(&GROUP, &i.ip).is_ok() {
-                    joined.push(i.ip);
-                }
+    let rescan = |ifaces: &mut Vec<Iface>, joined: &mut Vec<Ipv4Addr>| {
+        *ifaces = ipv4_ifaces();
+        for i in ifaces.iter() {
+            if !joined.contains(&i.ip) && sock.join_multicast_v4(&GROUP, &i.ip).is_ok() {
+                joined.push(i.ip);
             }
-            last_scan = std::time::Instant::now();
+        }
+    };
+    loop {
+        // 启动时扫一次；之后只在"读超时"或"收到包但已过一个重扫间隔"时重扫。
+        if last_scan.is_none() {
+            rescan(&mut ifaces, &mut joined);
+            last_scan = Some(std::time::Instant::now());
         }
         let (n, from) = match sock.recv_from(&mut buf) {
-            Ok(x) => x,
-            // EINTR（Interrupted，如进程 spawn 子进程时 SIGCHLD 打断阻塞 recv）与超时/WouldBlock 一样只是重试，别刷屏
-            Err(e) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut | std::io::ErrorKind::Interrupted) => continue,
+            Ok(x) => {
+                if last_scan.is_some_and(|t| t.elapsed() >= RESCAN_INTERVAL) {
+                    rescan(&mut ifaces, &mut joined);
+                    last_scan = Some(std::time::Instant::now());
+                }
+                x
+            }
+            // 超时：顺带重扫（WiFi 后连也能答）；EINTR（Interrupted，如进程 spawn 子进程时 SIGCHLD 打断阻塞 recv）只是重试，别刷屏
+            Err(e) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) => {
+                rescan(&mut ifaces, &mut joined);
+                last_scan = Some(std::time::Instant::now());
+                continue;
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::Interrupted => continue,
             Err(e) => {
                 std::thread::sleep(Duration::from_secs(1));
                 eprintln!("[mdns] recv: {e}");
