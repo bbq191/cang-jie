@@ -6,7 +6,8 @@
 //! 自检在导入当下跑，xochitl 用缺省字号/边距渲染，页数只随文字密度浮动（真书 0.99、随机词探针 0.86）；阈值见
 //! book-serve `render_check::WARN_RATIO`（50%）。
 use crate::check::read_entries;
-use crate::wash::{is_html, is_toc_file, plain_text, LangMode};
+use crate::epubzip::is_html;
+use crate::wash::{is_toc_file, plain_text, LangMode};
 use regex::Regex;
 use std::io::Read;
 use std::path::Path;

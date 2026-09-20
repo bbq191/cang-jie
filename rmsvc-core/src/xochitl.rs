@@ -176,6 +176,12 @@ fn is_live(v: &serde_json::Value) -> bool {
     str_of(v, "parent") != "trash" && v.get("deleted").and_then(|x| x.as_bool()) != Some(true)
 }
 
+/// 是不是 xochitl 文档 uuid 的形状（36 字符，只含十六进制与 `-`）。拿来当文件名片段之前先过一遍，
+/// 防路径注入（`../`）；只看形状，不代表书库里真有这份文档。
+pub fn is_uuid_shape(s: &str) -> bool {
+    s.len() == 36 && s.chars().all(|c| c.is_ascii_hexdigit() || c == '-')
+}
+
 pub fn find_folder_by_name(dir: &Path, name: &str) -> Option<String> {
     metadata_entries(dir).into_iter().find(|(_, v)| str_of(v, "type") == "CollectionType" && is_live(v) && str_of(v, "visibleName") == name).map(|(uuid, _)| uuid)
 }
@@ -306,6 +312,14 @@ pub fn upload_likely_delivered(err: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn uuid_shape_accepts_real_uuid_rejects_traversal() {
+        assert!(is_uuid_shape("0a1b2c3d-4e5f-6789-abcd-ef0123456789"));
+        assert!(!is_uuid_shape("../../etc/passwd"));
+        assert!(!is_uuid_shape("0a1b2c3d-4e5f-6789-abcd-ef012345678"), "少一位");
+        assert!(!is_uuid_shape("0a1b2c3d-4e5f-6789-abcd-ef012345678g"), "非十六进制");
+    }
+
     /// 假 xochitl：`GET /documents/..` 回 200；`POST /upload` 解出 multipart 里的文件部分，落成
     /// `<uuid>.{ext}` + `.metadata`（+ EPUB 的渲染缓存 `.pdf`/`.epubindex` 与 PDF 的 `.content`），回 201。
     fn fake_xochitl(lib: std::path::PathBuf) -> String {

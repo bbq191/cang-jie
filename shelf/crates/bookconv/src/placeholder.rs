@@ -38,7 +38,7 @@ fn read_entry(zip: &mut zip::ZipArchive<std::io::BufReader<std::fs::File>>, name
 }
 
 fn join(dir: &str, href: &str) -> String {
-    let href = crate::wash::percent_decode(href);
+    let href = crate::epubzip::percent_decode(href);
     let mut parts: Vec<&str> = if dir.is_empty() { vec![] } else { dir.split('/').collect() };
     for seg in href.split('/') {
         match seg {
@@ -74,7 +74,7 @@ fn find_cover(zip: &mut zip::ZipArchive<std::io::BufReader<std::fs::File>>, opf_
     }
     // 声明必须真指向图片：Calibre 产物常见 `<meta name="cover" content="cover.txt"/>` 指向 txt，直接拿来当封面
     // 会得到一个不是图片的"封面"，xochitl 取不到封面缩略图（2026-09-20 真机日志 `null cover image`）。
-    let candidate = candidate.filter(|h| is_image_href(h));
+    let candidate = candidate.filter(|h| crate::util::is_image_ext(h));
     if candidate.is_none() {
         // 第一个 spine 页里的第一张图。
         static SPINE: OnceLock<Regex> = OnceLock::new();
@@ -102,11 +102,6 @@ fn find_cover(zip: &mut zip::ZipArchive<std::io::BufReader<std::fs::File>>, opf_
     Some((ext, read_entry(zip, &path)?))
 }
 
-fn is_image_href(h: &str) -> bool {
-    let l = h.to_ascii_lowercase();
-    l.ends_with(".jpg") || l.ends_with(".jpeg") || l.ends_with(".png") || l.ends_with(".gif") || l.ends_with(".webp")
-}
-
 /// 读出一本 EPUB 的封面图（扩展名, 字节）：OPF 声明的有效封面，否则第一个 spine 页里的第一张图（同占位构造的规则）。
 /// 给"给已有文档补封面缩略图"的小工具用；找不到返回 `None`。
 pub fn cover_image_of(epub: &Path) -> Option<(String, Vec<u8>)> {
@@ -116,15 +111,6 @@ pub fn cover_image_of(epub: &Path) -> Option<(String, Vec<u8>)> {
     let opf_path = attr_of(&container, "full-path")?;
     let opf = String::from_utf8_lossy(&read_entry(&mut zip, &opf_path)?).to_string();
     find_cover(&mut zip, &opf_path, &opf)
-}
-
-fn media_type_of(ext: &str) -> &'static str {
-    match ext {
-        "png" => "image/png",
-        "gif" => "image/gif",
-        "webp" => "image/webp",
-        _ => "image/jpeg",
-    }
 }
 
 /// 造占位 EPUB：显示名 = `title`（`None` 取真书自己的 `dc:title`），封面 = 真书的封面（找不到就没有封面页，
@@ -149,7 +135,7 @@ pub fn epub_placeholder(real_epub: &Path, title: Option<&str>) -> Result<Vec<u8>
     let t = crate::util::xml_escape(title);
     let (cover_item, cover_meta, page_body) = match &cover {
         Some((ext, _)) => (
-            format!(r#"<item id="cover-img" href="cover.{ext}" media-type="{}" properties="cover-image"/>"#, media_type_of(ext)),
+            format!(r#"<item id="cover-img" href="cover.{ext}" media-type="{}" properties="cover-image"/>"#, crate::util::image_media_type_of_ext(ext)),
             r#"<meta name="cover" content="cover-img"/>"#.to_string(),
             format!(r#"<div><img src="cover.{ext}" alt="cover"/></div>"#),
         ),

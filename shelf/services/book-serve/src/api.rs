@@ -20,10 +20,12 @@ pub fn router(st: Arc<State>) -> Router {
         .post("/inbox/retry", bind(&st, |s, r| {
             let name = r.json()?.str("name")?.to_string();
             s.spool.retry(&name).map_err(ApiError::bad)?;
+            s.invalidate_status();
             Ok(Reply::ok(&serde_json::json!({"ok": true, "items": s.process_inbox(Some(&name))})))
         }))
         .post("/inbox/delete", bind(&st, |s, r| {
             s.spool.delete_failed(r.json()?.str("name")?).map_err(ApiError::bad)?;
+            s.invalidate_status();
             s.bus.publish("books", "inbox");
             ok()
         }))
@@ -93,6 +95,7 @@ pub fn router(st: Arc<State>) -> Router {
         // ── 原生书库建文件夹队列（真正的建夹由 xochitl 自己的 Library.createCollection 执行，见 mkdir.rs / shelf-mkdir-agent.qmd）──
         .post("/mkdir/add", bind(&st, |s, r| {
             let n = s.mkdir.add(r.json()?.str("name")?).map_err(ApiError::bad)?;
+            s.invalidate_status(); // 文件夹候选可能变了
             if n > 0 {
                 s.bus.publish("books", "mkdir");
             }
@@ -147,4 +150,131 @@ fn staging_upload(st: &State, r: &mut Request<'_>) -> ApiResult {
         st.bus.publish("books", "staging");
     }
     Ok(Reply::ok(&asset::receipt(&items, serde_json::Value::Null)))
+}
+
+#[cfg(test)]
+mod tests {
+    //! 进程内路由测试：不起 socket，直接 `Router::dispatch`——覆盖参数解析、错误码映射与忙锁冲突（这些以前只能上真机验证）。
+    use super::*;
+    use rmsvc_core::http::{parse_query, Method};
+    use rmsvc_core::paths::Paths;
+    use std::collections::HashMap;
+
+    fn state(t: &tempfile::TempDir) -> Arc<State> {
+        let h = t.path().to_str().unwrap().to_string();
+        let paths = Paths::resolve(move |k| if k == "HOME" || k == "XDG_RUNTIME_DIR" { Some(h.clone()) } else { None });
+        let cfg = paths.service_config("book");
+        std::fs::create_dir_all(cfg.parent().unwrap()).unwrap();
+        std::fs::write(&cfg, r#"{"xochitlHost":"127.0.0.1:9"}"#).unwrap(); // 关闭端口：连接秒拒，不真等超时
+        let st = State::new(&paths);
+        st.ensure_dirs().unwrap();
+        Arc::new(st)
+    }
+
+    fn call(router: &Router, m: Method, path: &str, body: &str) -> (u16, serde_json::Value) {
+        let mut b = body.as_bytes();
+        let mut r = Request { method: m, path: path.into(), query: parse_query(""), params: HashMap::new(), content_type: "application/json".into(), content_length: Some(body.len()), headers: vec![], body: &mut b };
+        let rep = router.dispatch(&mut r);
+        (rep.status, serde_json::from_slice(&rep.body).unwrap_or(serde_json::Value::Null))
+    }
+
+    fn msg(v: &serde_json::Value) -> String {
+        v["message"].as_str().unwrap_or("").to_string()
+    }
+
+    #[test]
+    fn busy_book_rejects_optimize_deliver_delete_with_400_and_hint() {
+        let t = tempfile::tempdir().unwrap();
+        let st = state(&t);
+        let router = router(st.clone());
+        st.staging.stage_new("x.epub", b"PK").unwrap();
+        assert!(st.staging.try_start_busy("x.epub"));
+        for (path, body) in [
+            ("/staging/optimize", r#"{"name":"x.epub"}"#),
+            ("/staging/deliver", r#"{"name":"x.epub"}"#),
+            ("/staging/delete", r#"{"name":"x.epub"}"#),
+        ] {
+            let (code, v) = call(&router, Method::Post, path, body);
+            assert_eq!(code, 400, "{path}");
+            assert!(msg(&v).contains("正在处理中"), "{path}: {v}");
+            assert_eq!(v["ok"], false);
+        }
+        assert!(msg(&call(&router, Method::Post, "/staging/delete", r#"{"name":"x.epub"}"#).1).contains("再删除"), "删除的忙提示带后缀");
+        // 解锁后删除恢复正常（200），列表里没有了
+        st.staging.end_busy("x.epub");
+        assert_eq!(call(&router, Method::Post, "/staging/delete", r#"{"name":"x.epub"}"#).0, 200);
+        assert!(st.staging.list().is_empty());
+    }
+
+    #[test]
+    fn optimize_and_deliver_validate_before_starting_anything() {
+        let t = tempfile::tempdir().unwrap();
+        let st = state(&t);
+        let router = router(st.clone());
+        // 不存在的书 / 不支持的格式：400，且没有留下忙锁
+        for (path, body, hint) in [
+            ("/staging/optimize", r#"{"name":"nope.epub"}"#, "没有这本书"),
+            ("/staging/optimize", r#"{"name":"a.cbz"}"#, "只有 EPUB/PDF"),
+            ("/staging/deliver", r#"{"name":"nope.epub"}"#, "没有这本书"),
+            ("/staging/deliver", r#"{"name":"a.cbz"}"#, "xochitl 只读 EPUB"),
+        ] {
+            let (code, v) = call(&router, Method::Post, path, body);
+            assert_eq!(code, 400, "{path} {body}");
+            assert!(msg(&v).contains(hint), "{path} {body}: {v}");
+        }
+        assert!(!st.staging.is_busy("nope.epub") && !st.staging.is_busy("a.cbz"));
+        // 缺字段 400；非法 JSON 400
+        assert_eq!(call(&router, Method::Post, "/staging/optimize", "{}").0, 400);
+        assert_eq!(call(&router, Method::Post, "/staging/optimize", "not json").0, 400);
+    }
+
+    #[test]
+    fn cancel_reports_three_states_not_busy_uncancellable_cancellable() {
+        let t = tempfile::tempdir().unwrap();
+        let st = state(&t);
+        let router = router(st.clone());
+        let cancel = |name: &str| call(&router, Method::Post, "/staging/cancel", &format!(r#"{{"name":"{name}"}}"#));
+        // 没在处理 → 400
+        let (code, v) = cancel("x.epub");
+        assert_eq!(code, 400);
+        assert!(msg(&v).contains("没有在处理"), "{v}");
+        // 在处理但这一步不能中途停（如单文件上传）→ 200 cancelled:false
+        assert!(st.staging.try_start_busy("x.epub"));
+        let (code, v) = cancel("x.epub");
+        assert_eq!((code, &v["cancelled"]), (200, &serde_json::json!(false)), "{v}");
+        assert!(msg(&v).contains("无法中途停止"));
+        // 声明可取消 → 200 cancelled:true，且取消标记已登记
+        st.staging.mark_cancellable("x.epub");
+        let (code, v) = cancel("x.epub");
+        assert_eq!((code, &v["cancelled"]), (200, &serde_json::json!(true)), "{v}");
+        assert!(st.staging.is_cancelled("x.epub"));
+    }
+
+    #[test]
+    fn mark_and_render_and_unknown_routes() {
+        let t = tempfile::tempdir().unwrap();
+        let st = state(&t);
+        let router = router(st.clone());
+        st.staging.stage_new("m.epub", b"PK").unwrap();
+        assert_eq!(call(&router, Method::Post, "/staging/mark", r#"{"name":"m.epub","target":"koreader"}"#).0, 200);
+        assert!(st.staging.list()[0].delivered.as_ref().unwrap().koreader.is_some(), "记了一笔 KOReader 落库");
+        let (code, v) = call(&router, Method::Post, "/staging/mark", r#"{"name":"m.epub","target":"kindle"}"#);
+        assert_eq!(code, 400);
+        assert!(msg(&v).contains("native / koreader"));
+        // 渲染缓存 uuid 形状不对：404（路径穿越防线）；方法不对 405；路径不存在 404
+        assert_eq!(call(&router, Method::Get, "/staging/render/..%2Fetc", "").0, 404);
+        assert_eq!(call(&router, Method::Get, "/staging/optimize", "").0, 405);
+        assert_eq!(call(&router, Method::Get, "/nope", "").0, 404);
+    }
+
+    #[test]
+    fn status_route_reports_spool_and_dead_xochitl() {
+        let t = tempfile::tempdir().unwrap();
+        let st = state(&t);
+        let router = router(st.clone());
+        let (code, v) = call(&router, Method::Get, "/status", "");
+        assert_eq!(code, 200);
+        assert_eq!((v["ok"].clone(), v["uploadReachable"].clone()), (serde_json::json!(true), serde_json::json!(false)));
+        assert_eq!(v["spool"]["pending"], 0);
+    }
 }

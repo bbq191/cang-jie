@@ -24,6 +24,11 @@ pub const DEBOUNCE: Duration = Duration::from_secs(3);
 pub const WARN_RATIO: f64 = 0.5;
 
 pub fn run(staging: &Staging, bus: &EventBus, lib_dir: &Path, plan: &RenderPlan) {
+    run_with(staging, bus, lib_dir, plan, DEBOUNCE, TIMEOUT)
+}
+
+/// 同 [`run`]，防抖与总时限可调（单测用毫秒级值，不真等 3 秒 / 10 分钟）。
+pub fn run_with(staging: &Staging, bus: &EventBus, lib_dir: &Path, plan: &RenderPlan, debounce: Duration, timeout: Duration) {
     let write = |uuid: &str, pages: u64, status: &str| {
         // 用户在自检期间把书从母版库删了（投完就删很常见）：结果没处可记，静默跳过，不当成失败刷日志。
         if !staging.has(&plan.name) {
@@ -41,7 +46,7 @@ pub fn run(staging: &Staging, bus: &EventBus, lib_dir: &Path, plan: &RenderPlan)
     if check().is_some() {
         return;
     }
-    let found = watch_until(lib_dir, DEBOUNCE, TIMEOUT, |_| check().is_some());
+    let found = watch_until(lib_dir, debounce, timeout, |_| check().is_some());
     if !found && check().is_none() {
         write("", 0, "timeout");
     }
@@ -75,6 +80,101 @@ mod tests {
 
     fn d(uuid: &str, name: &str, t: u64) -> DocInfo {
         DocInfo { uuid: uuid.into(), visible_name: name.into(), created_ms: t }
+    }
+
+    use crate::sidecar;
+    use rmsvc_core::xochitl::Xochitl;
+    use std::io::Read;
+    use std::sync::Arc;
+
+    /// 母版库里有 a.epub，书库目录 `xochitl/`（空）；返回 (staging, 书库目录)。
+    fn setup(t: &tempfile::TempDir) -> (Staging, std::path::PathBuf) {
+        let lib = t.path().join("xochitl");
+        std::fs::create_dir_all(&lib).unwrap();
+        let x = Arc::new(Xochitl::new("127.0.0.1:1", &lib, 1));
+        let s = Staging::new(t.path().join("staging"), x, 1024 * 1024);
+        s.ensure().unwrap();
+        s.stage_new("a.epub", b"PK").unwrap();
+        (s, lib)
+    }
+
+    /// 造一份"xochitl 已渲染完"的文档：`.metadata`（createdTime 晚于投书时刻）+ `.content`（pageCount）。
+    fn render_doc(lib: &Path, uuid: &str, name: &str, pages: u64) {
+        std::fs::write(lib.join(format!("{uuid}.metadata")), format!(r#"{{"type":"DocumentType","visibleName":"{name}","parent":"","createdTime":"5000"}}"#)).unwrap();
+        std::fs::write(lib.join(format!("{uuid}.content")), format!(r#"{{"pageCount":{pages}}}"#)).unwrap();
+    }
+
+    fn plan(expected: u64) -> RenderPlan {
+        RenderPlan { name: "a.epub".into(), title: None, expected, since_ms: 1000 }
+    }
+
+    const MS: fn(u64) -> Duration = Duration::from_millis;
+
+    fn render_of(s: &Staging) -> Option<RenderCheck> {
+        sidecar::read(&s.dir().join("a.epub")).and_then(|d| d.render)
+    }
+
+    #[test]
+    fn run_records_ok_when_already_rendered_and_publishes_events() {
+        let t = tempfile::tempdir().unwrap();
+        let (s, lib) = setup(&t);
+        render_doc(&lib, "u1", "a", 100);
+        let bus = EventBus::new();
+        let mut sub = bus.subscribe();
+        run_with(&s, &bus, &lib, &plan(100), MS(20), MS(200));
+        let rc = render_of(&s).unwrap();
+        assert_eq!((rc.status.as_str(), rc.pages, rc.uuid.as_str(), rc.expected), ("ok", 100, "u1", 100));
+        let mut buf = [0u8; 1024];
+        let n = sub.read(&mut buf).unwrap();
+        assert!(String::from_utf8_lossy(&buf[..n]).contains(r#""kind":"render""#), "应推 books/render 事件");
+    }
+
+    #[test]
+    fn run_records_warn_when_pages_far_below_expected() {
+        let t = tempfile::tempdir().unwrap();
+        let (s, lib) = setup(&t);
+        render_doc(&lib, "u1", "a", 100);
+        run_with(&s, &EventBus::new(), &lib, &plan(300), MS(20), MS(200));
+        assert_eq!(render_of(&s).unwrap().status, "warn", "100/300 < 50% → 整章渲染失败嫌疑");
+    }
+
+    #[test]
+    fn run_records_timeout_when_book_never_appears() {
+        let t = tempfile::tempdir().unwrap();
+        let (s, lib) = setup(&t);
+        let started = std::time::Instant::now();
+        run_with(&s, &EventBus::new(), &lib, &plan(100), MS(20), MS(150));
+        let rc = render_of(&s).unwrap();
+        assert_eq!((rc.status.as_str(), rc.pages), ("timeout", 0));
+        assert!(started.elapsed() < Duration::from_secs(5), "限时监听按给定 timeout 收工");
+    }
+
+    #[test]
+    fn run_picks_up_book_that_renders_after_check_started() {
+        let t = tempfile::tempdir().unwrap();
+        let (s, lib) = setup(&t);
+        let lib2 = lib.clone();
+        std::thread::spawn(move || {
+            std::thread::sleep(MS(200));
+            render_doc(&lib2, "u2", "a", 42);
+        });
+        run_with(&s, &EventBus::new(), &lib, &plan(40), MS(30), Duration::from_secs(10));
+        let rc = render_of(&s).unwrap();
+        assert_eq!((rc.status.as_str(), rc.pages, rc.uuid.as_str()), ("ok", 42, "u2"), "watch_until 应在书出现后很快检出");
+    }
+
+    #[test]
+    fn run_skips_silently_when_book_deleted_during_check() {
+        // 投完就删很常见：结果没处可记，静默跳过——不 panic、不复活 sidecar、不推事件。
+        let t = tempfile::tempdir().unwrap();
+        let (s, lib) = setup(&t);
+        render_doc(&lib, "u1", "a", 100);
+        s.remove("a.epub").unwrap();
+        let bus = EventBus::new();
+        let _sub = bus.subscribe();
+        run_with(&s, &bus, &lib, &plan(100), MS(20), MS(100));
+        assert!(sidecar::read(&s.dir().join("a.epub")).is_none(), "书已删，不该再生成边车");
+        assert!(!s.has("a.epub"));
     }
 
     #[test]

@@ -37,7 +37,7 @@ impl TrashQueue {
 
     /// 入队：uuid 必须真在书库且 visibleName 与 `name` 相符（忽略大小写、首尾空白），否则拒绝——错 uuid 就是错删别的书。
     pub fn add(&self, uuid: &str, name: &str) -> Result<usize, String> {
-        if uuid.len() != 36 || !uuid.chars().all(|c| c.is_ascii_hexdigit() || c == '-') {
+        if !rmsvc_core::xochitl::is_uuid_shape(uuid) {
             return Err("uuid 形状不对".into());
         }
         let (vis, parent) = self.meta(uuid).ok_or("书库里没有这份文档")?;

@@ -13,6 +13,7 @@ pub mod comic_pdf;
 pub mod comic_split;
 pub mod convert;
 pub mod epub;
+pub mod epubzip;
 pub mod htmlproc;
 pub mod imgopt;
 pub mod netimg;

@@ -4,7 +4,8 @@
 //! 的路由分流（转 CBZ）用——**2026-09-18 host 整条线（含这份 Python 原版）已砍**，不再使用 PC 端，
 //! 现在这份 Rust 实现是唯一在用的版本，不用再顾虑"改一边忘改另一边"。
 
-use crate::wash::{parse_opf, Entry};
+use crate::epubzip::Entry;
+use crate::wash::parse_opf;
 use regex::Regex;
 use std::sync::OnceLock;
 
@@ -77,24 +78,8 @@ pub fn is_text_free_comic_epub_file(path: &std::path::Path) -> bool {
 fn read_entries_without_images(path: &std::path::Path) -> Option<Vec<Entry>> {
     let file = std::fs::File::open(path).ok()?;
     let mut zip = zip::ZipArchive::new(std::io::BufReader::new(file)).ok()?;
-    let mut entries = Vec::with_capacity(zip.len());
-    for i in 0..zip.len() {
-        let Ok(mut f) = zip.by_index(i) else { continue };
-        if f.is_dir() {
-            continue;
-        }
-        let name = f.name().to_string();
-        let data = if crate::imgopt::is_downscalable(&name) {
-            Vec::new()
-        } else {
-            let mut d = Vec::new();
-            if std::io::Read::read_to_end(&mut f, &mut d).is_err() {
-                continue;
-            }
-            d
-        };
-        entries.push(Entry { name, data });
-    }
+    // 读不动的条目当整本"识别不了"（None，调用方按非漫画走）；此前是悄悄跳过坏条目继续判——坏 zip 后续优化本来就会报错。
+    let entries = crate::epubzip::read_skeleton(&mut zip).ok()?.entries;
     Some(entries)
 }
 

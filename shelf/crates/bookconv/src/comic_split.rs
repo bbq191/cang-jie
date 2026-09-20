@@ -12,7 +12,8 @@
 //! 母版库/KOReader，不会为了硬塞进预算而损内容）。
 
 use crate::epub::{assemble, Book, BookMeta, Chapter, Resource};
-use crate::wash::{dir_of, is_html, parse_opf, posix_norm, resolve, Entry};
+use crate::epubzip::{dir_of, is_html, posix_norm, resolve, Entry};
+use crate::wash::parse_opf;
 use regex::Regex;
 use std::collections::HashMap;
 use std::io::{Read, Write};
@@ -67,7 +68,8 @@ pub(crate) fn imgs_referenced(html: &str, page_dir: &str) -> Vec<String> {
 fn range_bytes_sized(entries: &[Entry], spine: &[String], start: usize, end: usize, size_of: &dyn Fn(&Entry) -> u64) -> u64 {
     let mut total = 0u64;
     let mut counted_imgs = std::collections::HashSet::new();
-    for p in &spine[start..end] {
+    // `get` 而不是直接切片：调用方边界一旦出错（start>end / 越界）只是当空范围，不让 book-serve 整个进程 panic。
+    for p in spine.get(start..end).unwrap_or(&[]) {
         let Some(e) = entries.iter().find(|e| &e.name == p) else { continue };
         total += size_of(e);
         if !is_html(p) {
@@ -183,8 +185,14 @@ fn ncx_resolved(entries: &[Entry], opf: &crate::wash::Opf) -> Option<Vec<(usize,
 /// `fixed_page_chunks`。
 fn ncx_top_level(entries: &[Entry], opf: &crate::wash::Opf) -> Option<Vec<(String, usize)>> {
     let resolved = ncx_resolved(entries, opf)?;
-    let min_depth = resolved.iter().map(|n| n.0).min().unwrap();
-    Some(resolved.into_iter().filter(|n| n.0 == min_depth).map(|(_, t, s)| (t, s)).collect())
+    let min_depth = resolved.iter().map(|n| n.0).min()?;
+    let mut top: Vec<(String, usize)> = resolved.into_iter().filter(|n| n.0 == min_depth).map(|(_, t, s)| (t, s)).collect();
+    // 切分逻辑把"下一条的起点"当上一份的终点，所以起点必须严格递增：NCX 顶层条目不一定按 spine 顺序
+    // 排（手工/工具生成的书有逆序），也可能有两条指向同一页——不规整会得到 end<start（切片 panic）或
+    // 空份。稳定排序后同起点只留第一条（标题取先出现的）。
+    top.sort_by_key(|(_, s)| *s);
+    top.dedup_by_key(|(_, s)| *s);
+    Some(top)
 }
 
 /// `[start,end)` 范围内，spine 绝对下标 → NCX 标题的映射，不拘深度——供 `build_piece` 给拆出来
@@ -280,7 +288,7 @@ pub fn build_piece(entries: &[Entry], start: usize, end: usize, title: &str, boo
                     None => {
                         let Some(ie) = entries.iter().find(|e| e.name == img) else { continue };
                         let ext = img.rsplit('.').next().unwrap_or("jpg").to_ascii_lowercase();
-                        let media = if ext == "png" { "image/png" } else { "image/jpeg" };
+                        let media = crate::util::image_media_type_of_ext(&ext);
                         let np = format!("images/{:04}.{ext}", resources.len() + 1);
                         resources.push(Resource { path: np.clone(), media_type: media.into(), bytes: ie.data.clone() });
                         remap.insert(img.clone(), np.clone());
@@ -415,26 +423,8 @@ pub fn deliver_split_streaming(
     let file = std::fs::File::open(path).map_err(|e| format!("打开母版库文件失败: {e}"))?;
     let mut zip = zip::ZipArchive::new(std::io::BufReader::new(file)).map_err(|e| format!("解 EPUB(非 zip?): {e}"))?;
 
-    // 名字 → 真实解压大小（zip 目录直读，逐条 by_index 只取 size()，不解压 data）。
-    let mut sizes: HashMap<String, u64> = HashMap::with_capacity(zip.len());
-    // 阶段一：非图片条目整份读；图片条目占位（真实字节留到阶段二按需读）。
-    let mut entries: Vec<Entry> = Vec::with_capacity(zip.len());
-    for i in 0..zip.len() {
-        let mut f = zip.by_index(i).map_err(|e| format!("读 EPUB 条目 {i}: {e}"))?;
-        if f.is_dir() {
-            continue;
-        }
-        let name = f.name().to_string();
-        sizes.insert(name.clone(), f.size());
-        let data = if crate::imgopt::is_downscalable(&name) {
-            Vec::new()
-        } else {
-            let mut d = Vec::with_capacity(f.size() as usize);
-            f.read_to_end(&mut d).map_err(|e| e.to_string())?;
-            d
-        };
-        entries.push(Entry { name, data });
-    }
+    // 阶段一：非图片条目整份读；图片条目占位（真实字节留到阶段二按需读）。sizes＝名字 → 真实解压大小（zip 目录直读，不解压）。
+    let crate::epubzip::Skeleton { entries, sizes } = crate::epubzip::read_skeleton(&mut zip)?;
     drop(zip); // 阶段一读完关掉，阶段二按需重开——避免整个函数生命周期内都占着文件句柄/内部缓冲。
 
     if !crate::comic_detect::is_comic(&entries) {
@@ -633,6 +623,47 @@ mod tests {
         assert_eq!(pieces.len(), 3, "每卷都只有一页，切不动，维持三份");
         assert!(pieces.iter().all(|p| !p.fits));
         assert_eq!(pieces[1].title, "卷1", "切不动时标题不该被加 (N/M) 后缀");
+    }
+
+    /// 把 `make_multivol` 造的书的 toc.ncx 换成手写的顶层导航点（`(标题, 起始页号)`），造"NCX 不规整"的书。
+    fn with_top_level_ncx(mut entries: Vec<Entry>, tops: &[(&str, usize)]) -> Vec<Entry> {
+        let navpoints: String = tops
+            .iter()
+            .enumerate()
+            .map(|(i, (t, p))| format!(r#"<navPoint id="n{i}"><navLabel><text>{t}</text></navLabel><content src="text/p{p:04}.html"/></navPoint>"#))
+            .collect();
+        let ncx = entries.iter_mut().find(|e| e.name == "toc.ncx").unwrap();
+        ncx.data = format!(r#"<ncx><navMap>{navpoints}</navMap></ncx>"#).into_bytes();
+        entries
+    }
+
+    #[test]
+    fn out_of_order_top_level_ncx_is_sorted_not_panic() {
+        // 审计发现（2026-09-20）：NCX 顶层条目不按 spine 顺序时 end<start，`spine[start..end]` 切片 panic。
+        let entries = with_top_level_ncx(make_multivol(&[3, 3, 3], 1000), &[("卷2", 6), ("卷0", 0), ("卷1", 3)]);
+        let pieces = plan_splits(&entries, 4000).unwrap().expect("应该要拆");
+        assert_eq!(pieces.iter().map(|p| p.title.as_str()).collect::<Vec<_>>(), ["卷0", "卷1", "卷2"], "按 spine 位置排序");
+        assert_eq!(pieces.iter().map(|p| (p.start, p.end)).collect::<Vec<_>>(), [(0, 3), (3, 6), (6, 9)]);
+        assert!(pieces.iter().all(|p| p.fits));
+    }
+
+    #[test]
+    fn duplicate_top_level_ncx_targets_do_not_make_empty_pieces() {
+        // 两条顶层导航点指向同一页：不能切出 start==end 的空份（会投出一本空书）。
+        let entries = with_top_level_ncx(make_multivol(&[3, 3, 3], 1000), &[("卷0", 0), ("卷0又", 0), ("卷1", 3), ("卷2", 6)]);
+        let pieces = plan_splits(&entries, 4000).unwrap().expect("应该要拆");
+        assert_eq!(pieces.len(), 3);
+        assert_eq!(pieces[0].title, "卷0", "同起点保留先出现的标题");
+        assert!(pieces.iter().all(|p| p.end > p.start), "不许有空份");
+    }
+
+    #[test]
+    fn range_bytes_tolerates_reversed_or_out_of_range_bounds() {
+        let entries = make_multivol(&[2], 100);
+        let opf = parse_opf(&entries).unwrap();
+        let size_of = |e: &Entry| e.data.len() as u64;
+        assert_eq!(range_bytes_sized(&entries, &opf.spine, 2, 1, &size_of), 0, "start>end 当空范围");
+        assert_eq!(range_bytes_sized(&entries, &opf.spine, 0, 99, &size_of), 0, "越界当空范围而不是 panic");
     }
 
     #[test]
