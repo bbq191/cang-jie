@@ -38,7 +38,7 @@ fn read_entry(zip: &mut zip::ZipArchive<std::io::BufReader<std::fs::File>>, name
 }
 
 fn join(dir: &str, href: &str) -> String {
-    let href = crate::wash::percent_decode(href);
+    let href = crate::epubzip::percent_decode(href);
     let mut parts: Vec<&str> = if dir.is_empty() { vec![] } else { dir.split('/').collect() };
     for seg in href.split('/') {
         match seg {

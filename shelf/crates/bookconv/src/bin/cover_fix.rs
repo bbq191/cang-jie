@@ -6,7 +6,7 @@
 //!   - 第三个参数给出时，另外把封面图按 xochitl 缩略图规格（552×981 RGB PNG、白底居中等比）写出，
 //!     供直接放进设备书库文档的 `<uuid>.thumbnails/cover.png`。
 //! 退出码: 0 成功（含"本来就有有效封面，无需改"）；1 用法错；2 失败。
-use bookconv::wash::Entry;
+use bookconv::epubzip::Entry;
 use std::io::Read;
 
 fn main() {

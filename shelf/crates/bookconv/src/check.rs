@@ -5,11 +5,10 @@
 //! 3. 单标签双 `id=` 属性（非法 XHTML，xochitl 严格 XML 解析整章白屏，《消失的爱人》7 页事故）。
 //! 告警（不拦）：无 nav/ncx 或零条目（`require_toc` 时升为失败）；目录锚点丢失（xochitl 退化到文件级跳转）。
 //! PDF 门（pymupdf）不移植：PDF 定稿只在 host 产出，门留 host。
-use crate::wash::{count_dup_id_tags, dir_of, href_re, is_html, is_toc_file, percent_decode, resolve, Entry};
+use crate::epubzip::{dir_of, is_html, percent_decode, resolve, Entry};
+use crate::wash::{count_dup_id_tags, href_re, is_toc_file};
 use regex::Regex;
 use std::collections::HashMap;
-use std::io::{Cursor, Read};
-use zip::ZipArchive;
 
 #[derive(Clone, Debug, Default, PartialEq, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -40,21 +39,8 @@ impl CheckReport {
     }
 }
 
-/// 从 zip 字节读条目表（目录项剔除）。优化器与质量门共用。
-pub fn read_entries(epub: &[u8]) -> Result<Vec<Entry>, String> {
-    let mut archive = ZipArchive::new(Cursor::new(epub)).map_err(|e| format!("解 EPUB(非 zip?): {e}"))?;
-    let mut out = Vec::with_capacity(archive.len());
-    for i in 0..archive.len() {
-        let mut f = archive.by_index(i).map_err(|e| format!("读 EPUB 条目 {i}: {e}"))?;
-        if f.is_dir() {
-            continue;
-        }
-        let mut data = Vec::new();
-        f.read_to_end(&mut data).map_err(|e| e.to_string())?;
-        out.push(Entry { name: f.name().to_string(), data });
-    }
-    Ok(out)
-}
+// `read_entries` 已迁到 `epubzip`（与 Entry/路径工具同处）；re-export 保住 `check::read_entries` 旧路径。
+pub use crate::epubzip::read_entries;
 
 pub fn check_epub(epub: &[u8], require_toc: bool) -> Result<CheckReport, String> {
     Ok(check_entries(&read_entries(epub)?, require_toc))

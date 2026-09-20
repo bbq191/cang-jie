@@ -21,17 +21,12 @@
 //!
 //! 全部规则幂等：注入块带 `class="cj-wash"` 标记，重复过不再叠加。
 use crate::htmlproc::collapse_dup_id_attrs;
+// zip 条目与 zip 内 posix 路径工具已迁到 `epubzip`；这里 re-export，保住 `crate::wash::Entry`/`wash::resolve` 等旧路径。
+pub use crate::epubzip::{dir_of, is_html, percent_decode, posix_norm, relative_to, resolve, Entry};
 use crate::util::{is_image_ext, xml_escape};
 use regex::Regex;
 use std::collections::{HashMap, HashSet};
 use std::sync::OnceLock;
-
-/// zip 条目（目录项已剔除）。
-#[derive(Clone, Debug, PartialEq)]
-pub struct Entry {
-    pub name: String,
-    pub data: Vec<u8>,
-}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AutoToc {
@@ -108,68 +103,6 @@ pub struct WashReport {
     pub dead_refs_removed: usize,
 }
 
-pub fn is_html(name: &str) -> bool {
-    let l = name.to_ascii_lowercase();
-    l.ends_with(".xhtml") || l.ends_with(".html") || l.ends_with(".htm")
-}
-
-// ───────────────────────── 路径工具（zip 内 posix 路径） ─────────────────────────
-
-pub fn posix_norm(p: &str) -> String {
-    let mut out: Vec<&str> = Vec::new();
-    for seg in p.split('/') {
-        match seg {
-            "" | "." => {}
-            ".." => {
-                out.pop();
-            }
-            s => out.push(s),
-        }
-    }
-    out.join("/")
-}
-
-pub fn dir_of(p: &str) -> &str {
-    p.rfind('/').map(|i| &p[..i]).unwrap_or("")
-}
-
-pub fn resolve(base_dir: &str, rel: &str) -> String {
-    if base_dir.is_empty() {
-        posix_norm(rel)
-    } else {
-        posix_norm(&format!("{base_dir}/{rel}"))
-    }
-}
-
-/// `target` 相对 `base_dir` 的路径（都是 zip 内绝对路径）。
-pub fn relative_to(base_dir: &str, target: &str) -> String {
-    let b: Vec<&str> = base_dir.split('/').filter(|s| !s.is_empty()).collect();
-    let t: Vec<&str> = target.split('/').filter(|s| !s.is_empty()).collect();
-    let common = b.iter().zip(t.iter()).take_while(|(x, y)| x == y).count();
-    let mut out: Vec<String> = vec!["..".into(); b.len() - common];
-    out.extend(t[common..].iter().map(|s| s.to_string()));
-    out.join("/")
-}
-
-pub fn percent_decode(s: &str) -> String {
-    let b = s.as_bytes();
-    let mut out = Vec::with_capacity(b.len());
-    let mut i = 0;
-    while i < b.len() {
-        if b[i] == b'%' && i + 2 < b.len() {
-            if let (Some(h), Some(l)) = (b.get(i + 1), b.get(i + 2)) {
-                if let Ok(v) = u8::from_str_radix(&format!("{}{}", *h as char, *l as char), 16) {
-                    out.push(v);
-                    i += 3;
-                    continue;
-                }
-            }
-        }
-        out.push(b[i]);
-        i += 1;
-    }
-    String::from_utf8_lossy(&out).into_owned()
-}
 
 fn find_opf(entries: &[Entry]) -> Option<usize> {
     // container.xml 指向优先，否则第一个 .opf
@@ -1488,16 +1421,6 @@ mod tests {
         String::from_utf8(entries.iter().find(|e| e.name == name).unwrap().data.clone()).unwrap()
     }
     const OPF: &str = r#"<?xml version="1.0"?><package version="2.0"><metadata><dc:title>测试书</dc:title></metadata><manifest><item id="css" href="style.css" media-type="text/css"/><item id="dk" href="dkagent.css" media-type="text/css"/><item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/><item id="pb" href="pb.xhtml" media-type="application/xhtml+xml"/><item id="c2" href="c2.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="c1"/><itemref idref="pb"/><itemref idref="c2"/></spine></package>"#;
-
-    #[test]
-    fn paths() {
-        assert_eq!(posix_norm("OEBPS/../a/./b"), "a/b");
-        assert_eq!(resolve("OEBPS/text", "../style.css"), "OEBPS/style.css");
-        assert_eq!(relative_to("OEBPS", "OEBPS/text/c1.xhtml"), "text/c1.xhtml");
-        assert_eq!(relative_to("OEBPS/text", "OEBPS/style.css"), "../style.css");
-        assert_eq!(relative_to("", "a.xhtml"), "a.xhtml");
-        assert_eq!(percent_decode("%E5%AD%97.xhtml"), "字.xhtml");
-    }
 
     #[test]
     fn decl_filter_and_spacing() {

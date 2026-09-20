@@ -177,7 +177,7 @@ pub fn optimized_version_file(path: &str) -> Option<String> {
     marker_in(std::io::BufReader::new(std::fs::File::open(path).ok()?))
 }
 
-use crate::wash::is_html;
+use crate::epubzip::is_html;
 
 /// 修封面拉伸变形：calibre 封面页 SVG 常用 preserveAspectRatio="none"（强制铺满、不保宽高比，
 /// 封面被拉伸放大变形），改成 "xMidYMid meet"（保持比例缩放到适配）。覆盖小写/标准两种写法。
@@ -264,7 +264,7 @@ pub fn optimize_epub_with(epub: &[u8], opts: &OptimizeOpts) -> Result<(Vec<u8>, 
         None => None,
     };
     // mimetype 必须首个且 STORED（EPUB 规范），其余原序；旧标记剔除(结尾统一重写当前版本，避免重优化时残留两条)。
-    let mut ordered: Vec<crate::wash::Entry> = Vec::with_capacity(raw.len());
+    let mut ordered: Vec<crate::epubzip::Entry> = Vec::with_capacity(raw.len());
     if let Some(i) = raw.iter().position(|e| e.name == "mimetype") {
         ordered.push(raw[i].clone());
     }
@@ -285,7 +285,7 @@ pub fn optimize_epub_with(epub: &[u8], opts: &OptimizeOpts) -> Result<(Vec<u8>, 
     // （referenced），供下一步"只搬被引用的注释块"用。dir 条目跳过。
     let mut entries: Vec<(String, Vec<u8>, bool)> = Vec::new(); // (name, data, is_html)
     let mut referenced: HashSet<String> = HashSet::new(); // 被 marker 引用的注释 id（noteref + 跨文件普通<a>）
-    for crate::wash::Entry { name, mut data } in ordered {
+    for crate::epubzip::Entry { name, mut data } in ordered {
         let name = &name;
         rep.total_files += 1;
         let ish = is_html(name);
@@ -422,22 +422,7 @@ pub fn optimize_epub_file_streaming_ctl(input_path: &std::path::Path, output_pat
     let mut archive = ZipArchive::new(std::io::BufReader::new(in_file)).map_err(|e| format!("解 EPUB(非 zip?): {e}"))?;
 
     // 阶段一：非图片条目整份读；图片条目占位（真实字节留到阶段二按需流式读）。
-    let mut raw: Vec<crate::wash::Entry> = Vec::with_capacity(archive.len());
-    for i in 0..archive.len() {
-        let mut f = archive.by_index(i).map_err(|e| format!("读 EPUB 条目 {i}: {e}"))?;
-        if f.is_dir() {
-            continue;
-        }
-        let name = f.name().to_string();
-        let data = if crate::imgopt::is_downscalable(&name) {
-            Vec::new()
-        } else {
-            let mut d = Vec::new();
-            f.read_to_end(&mut d).map_err(|e| e.to_string())?;
-            d
-        };
-        raw.push(crate::wash::Entry { name, data });
-    }
+    let mut raw: Vec<crate::epubzip::Entry> = crate::epubzip::read_skeleton(&mut archive)?.entries;
     // 保证 OPF 声明了有效封面（设备日志核查发现 7/9 本已投的书没有封面，见 `wash::ensure_cover_declared`）。
     // 必须在清洗之前：清洗会把只含 SVG 封面的 titlepage 当空页删掉。
     crate::wash::ensure_cover_declared(&mut raw);
@@ -445,7 +430,7 @@ pub fn optimize_epub_file_streaming_ctl(input_path: &std::path::Path, output_pat
         Some(w) => Some(crate::wash::wash_entries(&mut raw, w)?),
         None => None,
     };
-    let mut ordered: Vec<crate::wash::Entry> = Vec::with_capacity(raw.len());
+    let mut ordered: Vec<crate::epubzip::Entry> = Vec::with_capacity(raw.len());
     if let Some(i) = raw.iter().position(|e| e.name == "mimetype") {
         ordered.push(raw[i].clone());
     }
@@ -462,7 +447,7 @@ pub fn optimize_epub_file_streaming_ctl(input_path: &std::path::Path, output_pat
 
     let mut entries: Vec<(String, Vec<u8>, bool)> = Vec::new();
     let mut referenced: HashSet<String> = HashSet::new();
-    for crate::wash::Entry { name, mut data } in ordered {
+    for crate::epubzip::Entry { name, mut data } in ordered {
         let name = &name;
         rep.total_files += 1;
         let ish = is_html(name);

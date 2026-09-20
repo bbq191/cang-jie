@@ -12,7 +12,8 @@
 //! 母版库/KOReader，不会为了硬塞进预算而损内容）。
 
 use crate::epub::{assemble, Book, BookMeta, Chapter, Resource};
-use crate::wash::{dir_of, is_html, parse_opf, posix_norm, resolve, Entry};
+use crate::epubzip::{dir_of, is_html, posix_norm, resolve, Entry};
+use crate::wash::parse_opf;
 use regex::Regex;
 use std::collections::HashMap;
 use std::io::{Read, Write};
@@ -422,26 +423,8 @@ pub fn deliver_split_streaming(
     let file = std::fs::File::open(path).map_err(|e| format!("打开母版库文件失败: {e}"))?;
     let mut zip = zip::ZipArchive::new(std::io::BufReader::new(file)).map_err(|e| format!("解 EPUB(非 zip?): {e}"))?;
 
-    // 名字 → 真实解压大小（zip 目录直读，逐条 by_index 只取 size()，不解压 data）。
-    let mut sizes: HashMap<String, u64> = HashMap::with_capacity(zip.len());
-    // 阶段一：非图片条目整份读；图片条目占位（真实字节留到阶段二按需读）。
-    let mut entries: Vec<Entry> = Vec::with_capacity(zip.len());
-    for i in 0..zip.len() {
-        let mut f = zip.by_index(i).map_err(|e| format!("读 EPUB 条目 {i}: {e}"))?;
-        if f.is_dir() {
-            continue;
-        }
-        let name = f.name().to_string();
-        sizes.insert(name.clone(), f.size());
-        let data = if crate::imgopt::is_downscalable(&name) {
-            Vec::new()
-        } else {
-            let mut d = Vec::with_capacity(f.size() as usize);
-            f.read_to_end(&mut d).map_err(|e| e.to_string())?;
-            d
-        };
-        entries.push(Entry { name, data });
-    }
+    // 阶段一：非图片条目整份读；图片条目占位（真实字节留到阶段二按需读）。sizes＝名字 → 真实解压大小（zip 目录直读，不解压）。
+    let crate::epubzip::Skeleton { entries, sizes } = crate::epubzip::read_skeleton(&mut zip)?;
     drop(zip); // 阶段一读完关掉，阶段二按需重开——避免整个函数生命周期内都占着文件句柄/内部缓冲。
 
     if !crate::comic_detect::is_comic(&entries) {
