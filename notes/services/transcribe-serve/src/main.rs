@@ -13,12 +13,10 @@ use backend::{OpenAiCompat, Vision};
 use config::TranscribeConfig;
 use ink::{EntryStore, InkHttp};
 use ledger::Ledger;
-use rmsvc_core::events::{parse_sse_line, EventBus};
+use rmsvc_core::events::{follow, EventBus};
 use rmsvc_core::http::{bind, ApiError, Reply, Router};
 use rmsvc_core::paths::Paths;
-use rmsvc_core::registry;
 use rmsvc_core::service::{self, ServiceSpec};
-use std::io::{BufRead, BufReader};
 use std::path::PathBuf;
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex};
@@ -112,23 +110,15 @@ impl State {
     }
 }
 
-/// 订阅 ink-serve `/events`：条目变了就踢一下工作线程（断线 3 s 重连，与网关汇聚同一套路）。
+/// 订阅 ink-serve `/events`：条目变了就踢一下工作线程（`rmsvc_core::events::follow`：注册表 inotify 唤醒、断线退避、
+/// loopback 长心跳，与网关汇聚同一套实现）。
 fn watch_ink(st: Arc<State>) {
-    let agent = ureq::AgentBuilder::new().timeout_connect(Duration::from_secs(3)).build();
-    loop {
-        if let Some(info) = registry::find(&st.paths, "ink-serve") {
-            if let Ok(resp) = agent.get(&format!("{}/events", info.base_url())).call() {
-                for line in BufReader::new(resp.into_reader()).lines().map_while(Result::ok) {
-                    let Some(json) = parse_sse_line(&line) else { continue };
-                    let v: serde_json::Value = serde_json::from_str(json).unwrap_or_default();
-                    if v["area"] == "notes" && v["kind"] == "entries" && st.cfg().auto {
-                        st.kick();
-                    }
-                }
-            }
+    follow(&st.paths.clone(), "ink-serve", |json| {
+        let v: serde_json::Value = serde_json::from_str(json).unwrap_or_default();
+        if v["area"] == "notes" && v["kind"] == "entries" && st.cfg().auto {
+            st.kick();
         }
-        std::thread::sleep(Duration::from_secs(3));
-    }
+    });
 }
 
 /// 工作线程：收到踢 → 防抖 → 跑一轮。
