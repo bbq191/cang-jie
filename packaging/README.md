@@ -1,94 +1,91 @@
 # packaging —— 全新设备统一安装器
 
-host 侧编排层，2026-09-11 新写。全新（或愿意重装的现有）reMarkable Paper Pro Move，固件跟
-`firmware-allowlist.txt` 对得上时，一条命令装完当前仓库能装的一切：
+> **读者与用途**：要给设备装/卸/更新这套增强的人，以及要改这些脚本的维护者。这里讲**脚本的结构、每一步做什么、目录里各文件的职责、怎么本机测试**；
+> "第一次怎么装、风险有哪些、固件升级后怎么恢复"这类面向使用者的说明在 [`../docs/INSTALL.md`](../docs/INSTALL.md)（中文）/ [`INSTALL.en.md`](../docs/INSTALL.en.md)。
+> 末尾的「验证现状」是按时间累积的真机验证与踩坑记录，读现状先看前面的章节。
+
+host 侧编排层。全新（或愿意重装的现有）reMarkable Paper Pro Move，固件跟 `firmware-allowlist.txt` 对得上时，一条命令装完当前仓库能装的一切：
 
 ```sh
 cd packaging
 sh install-all.sh <host>                                        # 装全部
-sh install-all.sh <host> --force                                # 固件不在白名单也强装
-sh install-all.sh <host> --skip chrony-cn,timezone-cn,xovi-persist   # 跳过指定步骤
+sh install-all.sh <host> --force                                # 固件不在白名单也强装（哈希追加进本机 firmware-allowlist.local.txt）
+sh install-all.sh <host> --skip chrony-cn,timezone-cn,xovi-persist   # 跳过指定步骤（写错名字会警告，不会静默忽略）
 ```
 
-`<host>` 默认 `10.11.99.1`（USB 网段）。
-
-反悔想卸：
+`<host>` 默认 `10.11.99.1`（USB 网段）。反悔想卸：
 
 ```sh
-sh uninstall-all.sh <host>                                       # 卸全部（chrony-cn/timezone-cn 除外，见下）
+sh uninstall-all.sh <host>                                       # 卸全部（chrony-cn/timezone-cn/xovi-apply 除外，见下）
 sh uninstall-all.sh <host> --purge                                # 卸的同时连 battop 历史数据一起删
 sh uninstall-all.sh <host> --skip shelf                            # 跳过指定步骤，用法同 --skip
 ```
 
 ## 前置条件（全新设备，需手动，本脚本不代装）
 
-以下几样是 reMarkable 官方/`vellum`/`appload` 生态自己的东西，不属于这个仓库，`install-all.sh`
-**不会**帮你装，缺了会在对应步骤报清楚的错误：
+以下几样是 reMarkable 官方/`vellum`/`appload` 生态自己的东西，不属于这个仓库，`install-all.sh` **不会**帮你装，缺了会在对应步骤报清楚的错误：
 
-1. **`vellum add xovi`**——xovi 本体（`hl-snap`/`handwriting-stroke`/`xovi-persist` 三步的硬前提）。
-2. **`vellum add qt-resource-rebuilder`**——`shelf` 里 `font`/`book` 的字体菜单、回收站/建夹代理，
-   以及 `sidebar-entry` 这几个可选特性依赖它；缺了这些特性自动跳过，不阻塞其它安装。
-3. **`vellum add appload`**——第三方 App 加载器，KOReader 要通过它侧载；`sidebar-entry` 那步
-   靠它暴露的 `AppLoadLauncher` 单例发起启动，缺了自动跳过。**⚠ 3.28 固件官方发行版
-   appload v0.5.3 有兼容问题**——它自己内嵌的 qmd 钩的是 3.27 的旧 Sidebar/MainView 锚点，
-   3.28 已经改名，不打补丁会导致它自己的注入失败（症状：`AppLoadLauncher` 单例建不起来，
-   `sidebar-entry` 装的按钮点了没反应）。~~补丁工具目前还在 oldbak/，没有回到版本控制~~
-   ✅ 2026-09-16：`packaging/appload_patch_328.py`（等长字节回填内嵌 qmd，来源/许可见
-   `appload-qmd-PROVENANCE.md`）+ `packaging/deploy-appload-patch.sh <host>` 已回收进版本
-   控制——**独立手动步骤，没有接入 `install-all.sh` 自动编排**（对真实 appload.so 还没有
-   真机验证过，见该脚本头注）；`sidebar-entry` 那步本身仍然只探测开机日志、探测不到就跳过，
-   不会自动去调用打补丁脚本。上游 PR #59 已在 2026-09-07 合并进 `master`，但至今没有发布
-   带这个修复的新 tag，`vellum add appload` 装的官方发行版依然是没修复的 v0.5.3。
-4. **KOReader**（经 appload 侧载）——`shelf` 的 `koreader-serve` 只是管理/配置这个已装好的
-   KOReader，不负责把 KOReader 本身装上去；`sidebar-entry` 那步的「KOReader」入口同理，点了
-   没反应说明这一步没做。
+1. **`vellum add xovi`**——xovi 本体（`xovi-persist`/`hl-snap`/`handwriting-stroke`/`xovi-apply` 的硬前提）。
+2. **`vellum add qt-resource-rebuilder`**——`shelf` 里 `font`/`book` 的字体菜单、回收站/建夹代理，以及 `sidebar-entry` 这几个可选特性依赖它；缺了这些特性自动跳过，不阻塞其它安装。
+3. **`vellum add appload`**——第三方 App 加载器，KOReader 要通过它侧载；`sidebar-entry` 那步靠它暴露的 `AppLoadLauncher` 单例发起启动，缺了自动跳过。**⚠ 3.28 固件官方发行版 appload v0.5.3 有兼容问题**——它自己内嵌的 qmd 钩的是 3.27 的旧 Sidebar/MainView 锚点，3.28 已经改名，不打补丁会导致它自己的注入失败（症状：`AppLoadLauncher` 单例建不起来，`sidebar-entry` 装的按钮点了没反应）。补丁工具已在版本控制里：`appload_patch_328.py`（等长字节回填内嵌 qmd，来源/许可见 `appload-qmd-PROVENANCE.md`）+ `deploy-appload-patch.sh <host>`——**独立手动步骤，没有接入 `install-all.sh` 自动编排**（对真实 appload.so 还没有真机验证过，见该脚本头注）；`sidebar-entry` 那步本身仍然只探测开机日志、探测不到就跳过，不会自动去调用打补丁脚本。上游 PR #59 已在 2026-09-07 合并进 `master`，但至今没有发布带这个修复的新 tag，`vellum add appload` 装的官方发行版依然是没修复的 v0.5.3。
+4. **KOReader**（经 appload 侧载）——`shelf` 的 `koreader-serve` 只是管理/配置这个已装好的 KOReader，不负责把 KOReader 本身装上去；`sidebar-entry` 那步的「KOReader」入口同理，点了没反应说明这一步没做。
 
-装好以上四样、再跑 `install-all.sh`，才是完整的"全新设备"安装顺序。
-
-**可选、不算前置条件**：**WeRead**（第三方 reMarkable 版微信读书 app）——不是这个仓库能装的东西，要装得自己下载官方发行
-包 SSH 装；`sidebar-entry` 那步会自动探测这台设备装没装，装了就把 Sidebar 入口换成
-「KOReader + WeRead」两项版本，没装就只有「KOReader」一项，不会因为没装 WeRead 而报错或跳过
-整步。
+装好以上四样、再跑 `install-all.sh`，才是完整的"全新设备"安装顺序。**可选、不算前置条件**：**WeRead**（第三方 reMarkable 版微信读书 app）——要装得自己下载官方发行包 SSH 装；`sidebar-entry` 会自动探测装没装，装了就把 Sidebar 入口换成「KOReader + WeRead」两项版本，没装就只有「KOReader」一项，不会因为没装 WeRead 而报错或跳过整步。
 
 ## 装什么、按什么顺序
 
-`install-all.sh` 只编排，不重新实现任何构建/传输逻辑——先过固件安全门，再依次调用十个
-各自独立可用的部署脚本：
+`install-all.sh` 只编排，不重新实现任何构建/传输逻辑——先过固件安全门，再按 `lib.sh` 里的**步骤表 `STEP_ORDER`** 依次调用十一个各自独立可用的部署脚本（`uninstall-all.sh` 共用同一张表，所以安装与卸载清单对称）：
 
-| 顺序 | 脚本 | 装什么 | 前置 |
-|---|---|---|---|
-| 1 | `deploy-chrony-cn.sh` | 国内 NTP（chrony 服务器换成阿里云/腾讯云等） | 无，跟 xovi/vellum 完全无关 |
-| 2 | `deploy-chrony-boot-wakelock.sh` | 开机头几十秒持一把 wakelock，防自动休眠打断 chronyd 首次校时（根因/为什么见「验证现状」章节） | 无，跟 xovi/vellum 完全无关；设备镜像缺 `/sys/power/wake_lock` 时优雅跳过 |
-| 3 | `deploy-timezone-cn.sh` | 默认时区设为 Asia/Shanghai | 无，跟 xovi/vellum 完全无关；设备镜像缺 `/usr/share/zoneinfo/Asia/Shanghai` 时优雅跳过 |
-| 4 | `deploy-battop.sh` | 电池刺客（纯 Rust systemd 常驻采样服务） | 无，跟 xovi/vellum 完全无关 |
-| 5 | `deploy-xovi-persist.sh` | xovi 开机持久化恢复链（`xovi-reenable.service`） | 设备已 `vellum add xovi`（`/home/root/xovi/start` 存在） |
-| 6 | `deploy-hl-snap.sh` | 荧光笔 CJK 精确吸附（独立最小 xovi 扩展）——只落盘，不重启 xochitl | 同上 |
-| 7 | `deploy-handwriting-stroke.sh` | CJK 手写笔迹渲染优化（独立最小 xovi 扩展）——只落盘，不重启 xochitl | 同上 |
-| 8 | `deploy-sidebar-entry.sh` | Sidebar 一级直达「KOReader」入口（装了 WeRead 就自动带上「WeRead」项）——只落盘，不重启 xochitl | 设备已 `vellum add qt-resource-rebuilder` + `vellum add appload`（且 appload 在这台固件上验证过能正常挂载，见上面「前置条件」第 3 条）；任一条件不满足自动跳过（exit 0），不阻塞 |
-| 9 | `deploy.sh` | 网关 + book/koreader/font/wallpaper 四个领域服务 + 笔记线（ink/transcribe/mind/note） | 无（`font`/`book` 的回收站/建夹代理 qmd 这两个可选特性依赖 `qt-resource-rebuilder` 已存在，缺了自动跳过不阻塞） |
-| 10 | `deploy-xovi-apply.sh` | 统一跑一次 `xovi/start`，把第 6/7/8 步落盘的扩展/qmd + 第 9 步落盘的 qmd 一次性生效 | 同 5/6/7/8 |
+| 顺序 | 步骤名 | 脚本 | 装什么 | 前置 |
+|---|---|---|---|---|
+| 1 | `chrony-cn` | `deploy-chrony-cn.sh` | 国内 NTP（chrony 服务器换成阿里云/腾讯云等） | 无，跟 xovi/vellum 完全无关 |
+| 2 | `chrony-boot-wakelock` | `deploy-chrony-boot-wakelock.sh` | 开机头几十秒持一把 wakelock，防自动休眠打断 chronyd 首次校时（根因见「验证现状」） | 无；设备镜像缺 `/sys/power/wake_lock` 时优雅跳过 |
+| 3 | `timezone-cn` | `deploy-timezone-cn.sh` | 默认时区设为 Asia/Shanghai | 无；缺 `/usr/share/zoneinfo/Asia/Shanghai` 时优雅跳过 |
+| 4 | `battop` | `deploy-battop.sh` | 电池刺客（纯 Rust systemd 常驻采样服务）；装完 start、**有意不开机自启** | 无 |
+| 5 | `wifi-watch` | `deploy-wifi-watch.sh` | WiFi 载波假死看护（`wifi-watch/`：脚本 → `~/.local/bin`，单元 → `/usr`）；链路正常时只读 sysfs carrier、零 fork | 无 |
+| 6 | `xovi-persist` | `deploy-xovi-persist.sh` | xovi 开机持久化恢复链（`xovi-reenable.service`） | 设备已 `vellum add xovi` |
+| 7 | `hl-snap` | `deploy-hl-snap.sh` | 荧光笔 CJK 精确吸附（独立最小 xovi 扩展）——只落盘 | 同上 |
+| 8 | `handwriting-stroke` | `deploy-handwriting-stroke.sh` | CJK 手写笔迹渲染优化（独立最小 xovi 扩展）——只落盘 | 同上 |
+| 9 | `sidebar-entry` | `deploy-sidebar-entry.sh` | Sidebar 一级直达「KOReader」入口（装了 WeRead 就自动带上「WeRead」项）——只落盘 | 设备已 `vellum add qt-resource-rebuilder` + `vellum add appload`（且 appload 在这台固件上验证过能正常挂载，见上面「前置条件」第 3 条）；任一条件不满足自动跳过 |
+| 10 | `shelf` | `deploy.sh` | 网关 + book/koreader/font/wallpaper 四个领域服务 + 笔记线（ink/transcribe/mind/note） | 无（字体菜单、回收站/建夹代理 qmd 依赖 `qt-resource-rebuilder`，缺了自动跳过，只落盘） |
+| 11 | `xovi-apply` | `deploy-xovi-apply.sh` | 统一让上面落盘的扩展/qmd 生效：重启 xochitl 一次 + 健康检查 | 同 6/7/8/9 |
 
-**为什么第 6/7/8 步"只落盘不重启"、单独挪出第 10 步统一跑一次 `xovi/start`**：`xovi/start`
-是全量重启 xochitl、重新扫描注入 `extensions.d/` 全部内容，没有"只重载一个扩展"的机制——
-hl-snap、handwriting-stroke 各自的设备端 `install.sh` 原本都会各自跑一次 `xovi/start`；
-真机验证过这样连续跑两次短时间内重启 xochitl 两次，撞上了 xochitl 自带的
-watchdog+StartLimit，触发过一次意外整机重启（2026-09-11）。`install-all.sh` 给这三步传
-`DEFER_XOVI_START=1`（`deploy-sidebar-entry.sh` 直接认这个环境变量，`deploy-hl-snap.sh`/
-`deploy-handwriting-stroke.sh` 对应设备端 `install.sh --no-restart`）让它们只落盘、不各自
-重启，全部落盘完在最后一步统一跑一次。单独跑
-`deploy-hl-snap.sh`/`deploy-handwriting-stroke.sh`/`deploy-sidebar-entry.sh`（不设这个环境
-变量）行为不变——落盘后立即跑 `xovi/start` 并做健康检查。
+### 为什么 hl-snap / handwriting-stroke / sidebar-entry 只落盘、最后统一重启
 
-十个脚本都可以单独跑（`sh deploy-battop.sh <host>` 等），不依赖 `install-all.sh`——它只是把
-十步串起来 + 加一层固件门 + 汇总结果。任何一步失败：打印清楚是哪一步、原始错误，**不自动
-重试、不静默跳过**，退出非零。
+xovi 没有"只重载一个扩展"的机制，让新扩展/qmd 生效的唯一办法是重启 xochitl。如果每一步各自重启，短时间内重启多次会撞 xochitl 自带的 watchdog + StartLimit——真机验证过连续两次就触发了一次意外整机重启（2026-09-11）。所以 `install-all.sh` 给这三步传 `DEFER_XOVI_START=1`（设备端 `install.sh --no-restart`）让它们只落盘，`shelf` 的 qmd 本来就只落盘，全部落盘完在最后由 `xovi-apply` 统一重启一次。单独跑这几个脚本（不设这个环境变量）行为不变——落盘后立即重启并做健康检查。
+
+### 怎么"重启"xochitl：`cj_xochitl_apply` 的判定（2026-09-20）
+
+重启不是无条件 `xovi/start`：设备端 `devlib.sh` 的 `cj_xochitl_apply` 先看运行中的 xochitl 进程 `LD_PRELOAD` 里有没有 `xovi.so`——**已生效 → `systemctl restart xochitl`**；**没生效（刚开机/OTA 之后）→ `xovi/start`**。因为在 xovi 已生效时跑 `xovi/start` 会 umount 再重挂 xochitl 的 drop-in 目录，运行中的 xochitl 读文件失败 SEGV，系统按设计整机自动重启（2026-09-20 真机事故；旧版无条件 `xovi/start`，重跑 `install-all.sh` 必踩）。重启前会先打印"将打断阅读"并留 `CJ_APPLY_GRACE` 秒（默认 5）宽限，不想被打断就 `--skip xovi-apply`。重启后核对 `is-active` / `MainPID` 是否变化 / `NRestarts` 不增 / 各扩展在 `maps` 里的段数。
+
+十一个脚本都可以单独跑（`sh deploy-battop.sh <host>` 等），不依赖 `install-all.sh`——它只是把它们串起来 + 加一层固件门 + 汇总结果。任何一步失败：打印清楚是哪一步、原始错误，**不自动重试、不静默跳过**，退出非零。
+
+## 本目录文件导览
+
+| 文件 | 职责 |
+|---|---|
+| `install-all.sh` / `uninstall-all.sh` | 统一安装/卸载编排；步骤表来自 `lib.sh`，卸载对每个非"配置覆写/纯动作"步骤都必须有 `uninstall_<步骤名>` 函数（测试会核对） |
+| `lib.sh` | host 侧共用库：`rssh`/`rssh_in`/`rscp`（统一 `BatchMode` + `ConnectTimeout`，`CJ_SSH_TIMEOUT` 缺省 8 秒，设备休眠/断线时快速失败而不是卡死）、`shquote`（把任意字符串安全拼进远端命令行）、`dev_script`（把 `devlib.sh` + heredoc 脚本体经 `ssh sh -s` 送上设备执行）、`push_verified`（scp 到暂存路径后逐个 md5 对拍，不对就删暂存并失败，绝不落到最终位置）、步骤表 `STEP_ORDER`/`STEP_DEFER`/`STEP_CONFIG_ONLY`、参数解析、固件安全门 |
+| `devlib.sh` | **设备侧**共用库（POSIX sh，兼容 busybox）：rootfs 读写窗口（remount rw 后无论成败/被信号打断都恢复 ro）、`cj_safe_replace` 原子替换（先写暂存再 rename，不在运行中进程已映射的 inode 上原地写）、备份与轮转、`/usr` 下单元的安装/删除（先过 dm-verity 门）、`cj_xochitl_apply`/`cj_xochitl_health` |
+| `deploy-usr-unit.sh` | 把一个 systemd 单元装进设备 `/usr` 的统一部署器；`deploy-chrony-boot-wakelock.sh` / `deploy-xovi-persist.sh` / `deploy-wifi-watch.sh` 是它的薄包装 |
+| `deploy-xovi-ext.sh` + `xovi-ext-install.sh` | 装一个"独立最小 xovi 扩展"的统一部署器（host 侧构建+推送）与设备侧安装流程；`deploy-hl-snap.sh` / `deploy-handwriting-stroke.sh` 是薄包装，各扩展的 `deploy/install.sh` 只剩数据（名字、配置键）并 source `xovi-ext-install.sh` |
+| `deploy.sh` | shelf 整包部署：组载荷（`bin/ systemd/ lo-alias/ xovi/ install.sh uninstall.sh manifest.sh devlib.sh`）→ 本地打成 tar → 推到设备 `shelf-pkg.new`，校验有 `install.sh` 后才换掉 `shelf-pkg` → 设备端 `install.sh`；`--password` 经标准输入走 0600 临时文件，不上命令行 |
+| `deploy-battop.sh` / `deploy-sidebar-entry.sh` / `deploy-xovi-apply.sh` / `deploy-chrony-cn.sh` / `deploy-timezone-cn.sh` / `deploy-appload-patch.sh` | 各自的部署脚本；`deploy-appload-patch.sh` 不在编排里 |
+| `firmware-allowlist.txt` / `firmware-allowlist.local.txt` | 固件白名单：仓库里被 git 跟踪的一份 + 本机一份（`--force` 追加到后者，已 gitignore） |
+| `wifi-watch/` | 看护脚本与单元；`xovi-reenable.service`、`chrony-boot-wakelock.service`、`sidebar-entry-*.qmd`/`.qrc`/`.png`、`chrony-cn.sh`、`timezone-cn.sh` 是其余步骤的载荷 |
+| `tests/` | 本机模拟测试，见下 |
+
+设备侧共享库的另一处消费者：shelf 载荷里带 `manifest.sh`（安装/卸载共用的清单）与 `devlib.sh`，`install.sh` 会把它们装到设备的 `~/.local/lib/shelf/`，`shelf-uninstall` 运行时 source。
 
 ## 固件安全门
 
-`firmware-allowlist.txt`：每行 `sha256(/usr/bin/xochitl)  <人读标签>`，装前 ssh 拉设备上
-`/usr/bin/xochitl` 的哈希跟这张表比对。不命中默认拒装（避免在没验证过注入定位的固件上装错，
-qmd/hook 偏移错了轻则功能不生效重则设备行为异常）；确认要装用 `--force`（自动把当前哈希追加
-进表里）。文件本身详细讲了为什么用 sha256 而不是版本号，见文件内注释。
+装前 ssh 拉设备上 `/usr/bin/xochitl` 的 sha256，跟白名单比对：**仓库里的 `firmware-allowlist.txt`（每行 `sha256  <人读标签>`）+ 本机的 `firmware-allowlist.local.txt`**，命中任一份才继续。不命中默认拒装（避免在没验证过注入定位的固件上装错，qmd/hook 偏移错了轻则功能不生效重则设备行为异常）；确认要装用 `--force`，当前哈希追加进**本机**文件（已 gitignore，不再改动被 git 跟踪的白名单，避免"未验证的哈希"被误提交；路径可用 `CJ_ALLOWLIST_LOCAL` 覆盖）。为什么用 sha256 而不是版本号，见 `firmware-allowlist.txt` 内注释。
+
+## 备份与幂等
+
+- 设备上被覆盖的旧文件统一备份进 `/home/root/cangjie-backups/`（**绝不留在 `extensions.d/` 里**——xovi 把该目录下任意文件当扩展加载，同名重复注册是致命错误，2026-08-15 踩过）；单文件 `<basename>.bak.pre-<时间戳>`，目录型（shelf）`shelf-<时间戳>/`。
+- 只保留最近 5 份（设备端环境变量 `CJ_BACKUP_KEEP`），只轮转脚本自己生成的严格时间戳命名备份；超过 `CJ_BACKUP_MAXBYTES`（64MB）的单文件备份不自动删；全程无 `rm -rf`。
+- 内容没变就不备份、不重启服务；写 `/usr` 前先过 dm-verity 门。
 
 ## xovi-reenable.service 为什么放在 packaging/，不放 shelf/
 
@@ -100,30 +97,44 @@ qmd/hook 偏移错了轻则功能不生效重则设备行为异常）；确认�
 正是这次大归档后 `install-on-device.sh` 的精神继承者，装它是把当初就规划好、只是归档时连带
 消失的一层补回来，不是重新踩同一个耦合坑。
 
+## 卸载（`uninstall-all.sh`）
+
+对称卸载，步骤表与安装共用。每一步：
+
+| 步骤 | 卸载动作 |
+|---|---|
+| `chrony-boot-wakelock` / `xovi-persist` / `wifi-watch` | 停用并删 `/usr` 单元（同一套 dm-verity 门 + 带 trap 的 rw 窗口）；`wifi-watch` 另删 `~/.local/bin/wifi-watch.sh` |
+| `hl-snap` / `handwriting-stroke` | 从 `extensions.d` 摘除 `.so`（含 `.crashed` 标记）；不碰 `reading-qol.json`（多个扩展共用）、不碰 `cangjie-backups/` |
+| `sidebar-entry` | 从 qt-resource-rebuilder `exthome` 摘除 qmd/rcc |
+| `battop` | 停用并删单元；`--purge` 才连 `/home/root/battop`（二进制 + 历史采样数据）一起删 |
+| `shelf` | **优先**调设备上的 `~/.local/bin/shelf-uninstall`（`install.sh` 每次更新它，单一事实源），没有才退回 `shelf-pkg/shelf/uninstall.sh`；清单与安装共用 `manifest.sh`；默认保留用户数据，`--purge` 不作用于 shelf |
+| `chrony-cn` / `timezone-cn` / `xovi-apply` | 配置覆写与纯动作，没有卸载语义，不动 |
+
+摘掉 xovi 内容后当前运行中的 xochitl 仍是旧映射，要等下次重启才真正停止生效；卸载脚本不主动重启（要重启：`systemctl restart xochitl`，xovi 已生效时别用 `xovi/start`）。
+
+## 测试：不碰真机验证脚本
+
+```sh
+bash packaging/tests/run_sim_tests.sh      # 也由 packaging/tests/test_install_scripts_sim.py 的 pytest 调用，CI 会跑
+```
+
+做法：`tests/stubs/` 下放假的 `ssh`/`scp`/`systemctl`/`mount`/`dmsetup`/`id`/`sleep`/`curl`/`journalctl`/`rcc`/`python3` 塞进 `PATH`，用临时目录当"设备"；假 `ssh` 把远端命令直接在本机沙箱里执行，所以设备端脚本（`devlib.sh`、`shelf/install.sh`、各 heredoc 脚本）跑的是**真代码**，只是 rootfs/systemd/mount 被桩住并写日志，可断言"有没有 remount rw、最后一次 mount 是不是 ro、有没有跑 `xovi/start`"。覆盖：`devlib` 各函数、shelf 安装的幂等/缺载荷不留半成品/rw 窗口失败恢复 ro/只重启有变化的服务、shelf 卸载与安装清单对称、`deploy.sh`（密码含特殊字符、`shelf-pkg` 换位）、hl-snap 部署（原子落位/备份不进 `extensions.d`）、`xovi-apply` 与 `sidebar-entry` 的"xovi 已生效 → restart、绝不 `xovi/start`"判定、整轮 `install-all` → `uninstall-all` 对称，以及静态守卫（`remount,rw` / `xovi/start` 只许出现在库里）。**拒绝以 root 运行**（设 `CJ_SIM_ALLOW_ROOT=1` 才强行跑）。这些是本机模拟，**不能代替真机验证**。
+
+## 固件升级（OTA）之后
+
+恢复流程、逐项对照表与流程图统一放在 [`../docs/INSTALL.md`](../docs/INSTALL.md)「固件升级（OTA）之后」一节（本文不再另写一份）。要点：先设备旁手动 `xovi/rebuild_hashtable`，再在电脑上重跑 `sh install-all.sh <host>`（新固件哈希不在白名单要 `--force`）。
+
 ## 明确不做的事（已知缺口，别当成已经解决）
 
-- **不装 vellum/xovi/qt-resource-rebuilder/appload 本体、不侧载 KOReader**——这是所有脚本
-  （新旧）共同的手动前置条件，见上面「前置条件」一节，本脚本不代为安装，缺失时子脚本会清楚
-  报错，`install-all.sh` 收尾摘要会再提醒一次。
-- **不装中文化**（输入法/候选栏/词典/UI 汉化）——那条链路（`chinese-ime/langhook/`）随
-  2026-09-11 全仓库大归档挪出了 git 仓库，目前只在本机 `/home/afu/Projects/oldbak/chinese-ime/`，
-  没有回到版本控制。要装：去那边手动编译 + 跑 `deploy/install.sh`（前置同样是
-  `vellum add xovi qt-resource-rebuilder`）。
-- **不装 wifi-watch 常驻看护**——目前只在 `oldbak/packaging/wifi-watch/`，没有随这次恢复。
-- ~~没有对称的 `uninstall-all.sh`~~ ✅ 2026-09-16 补：`packaging/uninstall-all.sh`
-  编排 `chrony-boot-wakelock`/`xovi-persist`/`hl-snap`/`handwriting-stroke`/`sidebar-entry`/
-  `battop`（停用+删 `/usr` 单元或摘除 `extensions.d`/`exthome` 里的文件，`--purge` 才连
-  `/home/root/battop` 数据一起删）+ `shelf`（调用设备上已推送的 `shelf/uninstall.sh`，默认
-  保留用户数据）。`chrony-cn`/`timezone-cn` 仍然不在范围内——它们是配置覆写（改
-  `/etc/chrony.conf`、`/etc/localtime` 指向），没有"卸载"语义，这条限制本身不是缺口，见该
-  脚本头注。本地 `shellcheck --severity=warning` 过，假 host 验证过参数解析/`--skip`/收尾
-  摘要逻辑；**真机卸载效果没有验证过**（需要用户在已装过 install-all.sh 的设备上跑一遍，
-  确认各单元/扩展确实被摘掉、shelf 服务确实停用，且不影响没被点名要卸的其它功能）。
+- **不装 vellum/xovi/qt-resource-rebuilder/appload 本体、不侧载 KOReader**——这是所有脚本共同的手动前置条件，见上面「前置条件」一节，本脚本不代为安装，缺失时子脚本会清楚报错，`install-all.sh` 收尾摘要会再提醒一次。
+- **不装中文化**（输入法/候选栏/词典/UI 汉化）——那条链路（`chinese-ime/langhook/`）随 2026-09-11 全仓库大归档挪出了 git 仓库，不随本安装器分发；设备上已部署的部分仍在运行。
+- **不打 appload 3.28 兼容补丁**——独立手动步骤 `deploy-appload-patch.sh`，不在编排里。
+- **`chrony-cn` / `timezone-cn` 没有卸载语义**（配置覆写），见上面「卸载」。
+- **卸载的真机效果没有验证过**：`uninstall-all.sh` 只做过本机模拟测试（假 host 验证参数解析/`--skip`/摘除动作/与安装对称），需要用户在已装过 `install-all.sh` 的设备上跑一遍，确认各单元/扩展确实被摘掉、shelf 服务确实停用，且不影响没被点名要卸的其它功能。
+- 旧的 `packaging/package.sh`（打 `cangjie-full-*.tar.gz` 单体安装包那套）**没有**恢复——它已随归档挪出仓库且按旧目录结构找载荷，不是 `install-all.sh` 的设计参照；这次是纯编排现有独立脚本，不是复刻旧的单体打包架构。
 
-旧的 `packaging/package.sh`（打 `cangjie-full-*.tar.gz` 单体安装包那套）**没有**在这次一并
-恢复/重写——经核实那份现在实际上是断的（`oldbak/packaging/package.sh` 按旧路径找 `shelf/` 载荷，
-但 `shelf/` 早就独立成仓库顶层项目了，`oldbak/` 下没有这个子目录），也不是这次 `install-all.sh`
-的设计参照；这次是纯编排现有独立脚本，不是复刻旧的单体打包架构。
+
+> **⚠ 下面「验证现状」是按时间累积的真机验证与踩坑记录（2026-09-11 起）**，其中的步骤号、"八步/十个脚本"等是当时的说法，以上面的步骤表为准；2026-09-20 脚本重构（共用 `lib.sh`/`devlib.sh`、原子替换、备份轮转、xovi 已生效走 `systemctl restart`）之后，个别做法（如 battop 部署"先 stop 再 scp 覆盖"）已被取代，保留原文作依据。
 
 ## 验证现状（如实说明，不夸大）
 
@@ -270,7 +281,7 @@ time jump detected"；`cat /sys/power/wake_lock` 在 chronyd 完成首次同步�
   `xovi/start`——`install-all.sh` 连续调用这两步时，短时间内重启 xochitl 两次，真机撞上
   watchdog+StartLimit，触发了一次意外整机重启（`uptime` 显示重启后刚起来几分钟），紧接着的
   下一步 `handwriting-stroke` 因为设备正在重启窗口期撞上 `ssh: Connection refused`。改成
-  见上一节"为什么第 5/6 步只落盘不重启"——两个设备端 `install.sh` 加 `--no-restart`，
+  见「为什么 hl-snap / handwriting-stroke / sidebar-entry 只落盘、最后统一重启」一节——两个设备端 `install.sh` 加 `--no-restart`，
   `install-all.sh` 新增 `deploy-xovi-apply.sh` 作为唯一的 `xovi/start` 调用点，放在最后。
   意外之喜：这次重启恰好把刚装的 `xovi-reenable.service` 现场测了一遍——**已经确认它真的在
   这次重启里自动重新加载了 xovi**（见上面"xovi-persist 核心承诺"那条，`systemctl status`
