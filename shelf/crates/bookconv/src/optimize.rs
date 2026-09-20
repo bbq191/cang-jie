@@ -172,7 +172,9 @@ pub fn marker_value(full: bool) -> String {
 
 /// 同 optimized_version，但直接开文件——不把整本 epub 读进内存，供书库列表逐本轻量标注。
 pub fn optimized_version_file(path: &str) -> Option<String> {
-    marker_in(std::fs::File::open(path).ok()?)
+    // 必须套缓冲：ZipArchive 解析中央目录是逐字段几字节的小读，裸 File 每条目十几次系统调用，
+    // 漫画 EPUB 动辄几百上千条目，设备上一次列表就吃掉可观的 CPU（2026-09-20 battop 实测）。
+    marker_in(std::io::BufReader::new(std::fs::File::open(path).ok()?))
 }
 
 use crate::wash::is_html;
