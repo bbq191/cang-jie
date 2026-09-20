@@ -17,11 +17,10 @@ use rmsvc_core::events::{follow, EventBus};
 use rmsvc_core::http::{bind, ApiError, Reply, Router};
 use rmsvc_core::paths::Paths;
 use rmsvc_core::service::{self, ServiceSpec};
-use std::path::PathBuf;
 use std::sync::mpsc::{sync_channel, Receiver, SyncSender, TrySendError};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
-use vendorcfg::VendorConfig;
+use vendorcfg::{ConfigCell, VendorConfig};
 use worker::{Ctx, Failures, Target};
 
 pub const APP: &str = "notes";
@@ -30,42 +29,9 @@ const SPEC: ServiceSpec = ServiceSpec { name: "transcribe-serve", label: "笔记
 /// 事件到跑之间的防抖：合上书 ink-serve 会连发几条。
 const DEBOUNCE: Duration = Duration::from_secs(3);
 
-/// 「各个模型的用量花费 profile」（整理区第二轮反馈点 2，2026-09-08）：预置表里的每个模型都出一行
-/// （哪怕还没调用过，用量全 0——方便用户先把价格填上）；账本里出现过但不在预置表里的（比如用过的
-/// 自定义模型）也补进来。花费只在用户填过单价（`config.rs` 的 `prices`）时才算，没填就是 `null`，
-/// 网页只显示 token 数不显示金额——理由见 `config.rs` 模块文档"花费不做官方定价表"。
-fn usage_profile(cfg: &TranscribeConfig, usage: &ledger::Usage) -> serde_json::Value {
-    let mut keys: Vec<String> = config::PRESETS.iter().map(|p| p.id.to_string()).collect();
-    for k in usage.by_model.keys() {
-        if !keys.contains(k) {
-            keys.push(k.clone());
-        }
-    }
-    let rows: Vec<serde_json::Value> = keys
-        .into_iter()
-        .map(|k| {
-            let label = config::PRESETS.iter().find(|p| p.id == k).map(|p| p.label.to_string()).unwrap_or_else(|| k.clone());
-            let m = usage.by_model.get(&k).cloned().unwrap_or_default();
-            let price = cfg.prices.get(&k).copied().unwrap_or_default();
-            let cost = if price.input_per1k > 0.0 || price.output_per1k > 0.0 {
-                Some((m.prompt_tokens as f64 / 1000.0) * price.input_per1k + (m.completion_tokens as f64 / 1000.0) * price.output_per1k)
-            } else {
-                None
-            };
-            serde_json::json!({"id": k, "label": label, "active": k == cfg.usage_key(),
-                "calls": m.calls, "ok": m.ok, "failed": m.failed,
-                "promptTokens": m.prompt_tokens, "completionTokens": m.completion_tokens,
-                "lastError": m.last_error, "lastAt": m.last_at,
-                "price": price, "costEstimate": cost})
-        })
-        .collect();
-    serde_json::Value::Array(rows)
-}
-
 struct State {
     paths: Paths,
-    cfg_path: PathBuf,
-    cfg: Mutex<TranscribeConfig>,
+    cfg: ConfigCell<TranscribeConfig>,
     ledger: Ledger,
     failures: Failures,
     bus: Arc<EventBus>,
@@ -77,7 +43,7 @@ struct State {
 
 impl State {
     fn cfg(&self) -> TranscribeConfig {
-        self.cfg.lock().unwrap_or_else(|e| e.into_inner()).clone()
+        self.cfg.get()
     }
     fn vision(&self, cfg: &TranscribeConfig) -> Result<Box<dyn Vision>, String> {
         let key = cfg.key().ok_or("未配置 API key（网页「转写设置」里粘贴，或环境变量 DASHSCOPE_API_KEY）")?;
@@ -134,17 +100,14 @@ fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let bind_addr = service::parse_bind(&args, SPEC.default_bind);
     let paths = Paths::from_env();
-    let cfg_path = paths.app_config_dir(APP).join("transcribe.json");
     // `.migrate()`：老配置文件（重做模型预置表之前，2026-09-08 上午之前落盘的，单一 model/baseUrl/apiKey
-    // 三件套）搬进新形状——不迁移的话真机已经保存的 key 会在升级后凭空消失，见 config.rs 模块文档。
-    let cfg = rmsvc_core::config::load_or_seed::<TranscribeConfig>(&cfg_path).migrate();
-    rmsvc_core::fs::set_mode(&cfg_path, 0o600);
-    let _ = rmsvc_core::config::save(&cfg_path, &cfg, Some(0o600)); // 迁移后落盘一次，文件形状跟运行时一致
+    // 三件套）搬进新形状——不迁移的话真机已经保存的 key 会在升级后凭空消失，见 config.rs 模块文档；
+    // 读→迁移→0600→落盘一次这套启动流程收在 `ConfigCell::load`。
+    let cfg = ConfigCell::load(&paths.app_config_dir(APP).join("transcribe.json"), TranscribeConfig::migrate);
     let (tx, rx) = sync_channel::<()>(2);
     let st = Arc::new(State {
         paths: paths.clone(),
-        cfg_path,
-        cfg: Mutex::new(cfg),
+        cfg,
         ledger: Ledger::open(&paths.app_state_dir(APP).join("transcribe.json")),
         failures: Failures::default(),
         bus: Arc::new(EventBus::new()),
@@ -170,17 +133,12 @@ fn main() {
                 Err(_) => (false, 0),
             };
             let cfg = s.cfg();
-            Ok(Reply::ok(&serde_json::json!({"config": cfg.public(), "usage": s.ledger.snapshot(), "usageByModel": usage_profile(&cfg, &s.ledger.snapshot()), "failures": s.failures.list(), "inkReachable": ink, "pending": pending})))
+            Ok(Reply::ok(&serde_json::json!({"config": cfg.public(), "usage": s.ledger.snapshot(), "usageByModel": vendorcfg::usage::usage_profile(&cfg, config::PRESETS, &s.ledger.snapshot()), "failures": s.failures.list(), "inkReachable": ink, "pending": pending})))
         }))
         .get("/config", bind(&st, |s, _| Ok(Reply::ok(&s.cfg().public()))))
         .put("/config", bind(&st, |s, r| {
             let j = r.json()?;
-            let mut cfg = s.cfg.lock().unwrap_or_else(|e| e.into_inner());
-            let mut next = cfg.clone();
-            next.apply(&j.0).map_err(ApiError::bad)?;
-            rmsvc_core::config::save(&s.cfg_path, &next, Some(0o600)).map_err(ApiError::internal)?;
-            *cfg = next.clone();
-            drop(cfg);
+            let next = s.cfg.update(|c| c.apply(&j.0)).map_err(ApiError::bad)?;
             let has_key = next.key().is_some();
             s.bus.publish("notes", "transcribe");
             if has_key && next.auto {
@@ -204,7 +162,7 @@ fn main() {
             s.kick();
             Ok(Reply::ok(&serde_json::json!({"ok": true})))
         }));
-    println!("[transcribe-serve] 配置 {}；后端 {} {}；key {:?}", st.cfg_path.display(), st.cfg().backend, st.cfg().model(), st.cfg().key_source());
+    println!("[transcribe-serve] 配置 {}；后端 {} {}；key {:?}", st.cfg.path().display(), st.cfg().backend, st.cfg().model(), st.cfg().key_source());
     if let Err(e) = service::run(&SPEC, &bind_addr, &paths, router) {
         eprintln!("[transcribe-serve] {e}");
         std::process::exit(1);

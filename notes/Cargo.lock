@@ -1357,6 +1357,8 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
+ "tiny_http",
+ "ureq",
 ]
 
 [[package]]

@@ -24,6 +24,8 @@
 //! 控制台建的 Endpoint ID。**花费不做官方定价表**：第三方 API 定价比模型 id 还易变，写死一份价格表
 //! 更容易在用户不知情的情况下把"预估花费"做错——干脆不猜，改成让用户自己填单价（`prices`，缺省 0）。
 
+pub mod cell;
+pub mod chat;
 pub mod preset;
 pub mod usage;
 
@@ -32,6 +34,8 @@ pub use preset::{
     resolve_base_url, resolve_key, resolve_model, resolve_provider, usage_key, KeySource, Preset,
     Price, VendorConfig, DASHSCOPE, DEEPSEEK, GEMINI, KEY_ENV, OPENAI,
 };
+pub use cell::ConfigCell;
+pub use chat::{parse_chat_reply, post_chat, ChatReply};
 pub use usage::{Ledger, ModelUsage, UsageBook};
 
 /// 按字符数截断，超长加省略号；不 trim（调用方如果需要先 trim 自己处理，跟原样保留空白的场景区分

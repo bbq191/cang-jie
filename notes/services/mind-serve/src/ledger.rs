@@ -5,7 +5,6 @@
 //! **存取逻辑跟 transcribe-serve 共享**（`vendorcfg::usage`，2026-09-08 抽出来，之前两边各抄一遍）。
 //! **第二轮整理区反馈（2026-09-08，点 2）**：按模型分账（`by_model`，见 `transcribe-serve::ledger` 同样
 //! 的设计理由）。
-pub type Usage = vendorcfg::UsageBook;
 pub type Ledger = vendorcfg::Ledger;
 
 #[cfg(test)]

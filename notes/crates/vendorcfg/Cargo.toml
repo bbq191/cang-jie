@@ -9,6 +9,8 @@ description = "笔记线共享：AI 厂商预置模型表 + key 按厂商分格�
 rmsvc-core = { path = "../../../rmsvc-core" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+ureq = "2"
 
 [dev-dependencies]
 tempfile = "3"
+tiny_http = "0.12"

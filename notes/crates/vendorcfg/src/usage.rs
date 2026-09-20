@@ -81,9 +81,91 @@ impl<Extra: Clone + Serialize + DeserializeOwned> Ledger<Extra> {
     }
 }
 
+/// 「各个模型的用量花费 profile」（网页「模型」面板的用量表）：预置表里的每个模型都出一行（哪怕还没调用过、
+/// 用量全 0——方便用户先把价格填上）；账本里出现过但不在预置表里的（比如用过的自定义模型）也补进来。
+/// 花费只在用户填过单价（`prices`，缺省 0）时才算，没填就是 `null`，网页只显示 token 数不显示金额——理由见
+/// crate 头注"花费不做官方定价表"。`transcribe-serve`/`mind-serve` 此前各写一份逐行相同的版本。
+pub fn usage_profile<C: crate::VendorConfig, E>(cfg: &C, presets: &[crate::Preset], usage: &UsageBook<E>) -> serde_json::Value {
+    let mut keys: Vec<String> = presets.iter().map(|p| p.id.to_string()).collect();
+    for k in usage.by_model.keys() {
+        if !keys.contains(k) {
+            keys.push(k.clone());
+        }
+    }
+    let active = cfg.usage_key();
+    let rows: Vec<serde_json::Value> = keys
+        .into_iter()
+        .map(|k| {
+            let label = presets.iter().find(|p| p.id == k).map(|p| p.label.to_string()).unwrap_or_else(|| k.clone());
+            let m = usage.by_model.get(&k).cloned().unwrap_or_default();
+            let price = cfg.prices().get(&k).copied().unwrap_or_default();
+            let cost = if price.input_per1k > 0.0 || price.output_per1k > 0.0 {
+                Some((m.prompt_tokens as f64 / 1000.0) * price.input_per1k + (m.completion_tokens as f64 / 1000.0) * price.output_per1k)
+            } else {
+                None
+            };
+            serde_json::json!({"id": k, "label": label, "active": k == active,
+                "calls": m.calls, "ok": m.ok, "failed": m.failed,
+                "promptTokens": m.prompt_tokens, "completionTokens": m.completion_tokens,
+                "lastError": m.last_error, "lastAt": m.last_at,
+                "price": price, "costEstimate": cost})
+        })
+        .collect();
+    serde_json::Value::Array(rows)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[derive(Serialize)]
+    struct TestCfg {
+        preset: String,
+        keys: BTreeMap<String, String>,
+        prices: BTreeMap<String, crate::Price>,
+    }
+    const TEST_PRESETS: &[crate::Preset] = &[
+        crate::Preset { id: "m1", label: "模型一", model: "m1", base_url: crate::DASHSCOPE, provider: "dashscope" },
+        crate::Preset { id: "m2", label: "模型二", model: "m2", base_url: crate::DASHSCOPE, provider: "dashscope" },
+    ];
+    impl crate::VendorConfig for TestCfg {
+        fn presets() -> &'static [crate::Preset] {
+            TEST_PRESETS
+        }
+        fn preset(&self) -> &str {
+            &self.preset
+        }
+        fn custom_model(&self) -> &str {
+            ""
+        }
+        fn custom_base_url(&self) -> &str {
+            ""
+        }
+        fn keys(&self) -> &BTreeMap<String, String> {
+            &self.keys
+        }
+        fn prices(&self) -> &BTreeMap<String, crate::Price> {
+            &self.prices
+        }
+    }
+
+    #[test]
+    fn usage_profile_lists_every_preset_plus_unknown_used_models_and_costs_only_with_price() {
+        let mut prices = BTreeMap::new();
+        prices.insert("m1".to_string(), crate::Price { input_per1k: 0.5, output_per1k: 1.0 });
+        let cfg = TestCfg { preset: "m1".into(), keys: BTreeMap::new(), prices };
+        let mut book: UsageBook = UsageBook::default();
+        book.by_model.insert("m1".into(), ModelUsage { calls: 2, ok: 2, prompt_tokens: 2000, completion_tokens: 1000, ..Default::default() });
+        book.by_model.insert("custom:x".into(), ModelUsage { calls: 1, ok: 1, prompt_tokens: 10, ..Default::default() });
+        let v = usage_profile(&cfg, TEST_PRESETS, &book);
+        let rows = v.as_array().unwrap();
+        assert_eq!(rows.iter().map(|r| r["id"].as_str().unwrap()).collect::<Vec<_>>(), ["m1", "m2", "custom:x"], "预置全列（没用过的用量 0），账本里的自定义模型补在后面");
+        assert_eq!(rows[0]["active"], true);
+        assert_eq!(rows[0]["costEstimate"], 2.0, "2 千入 × 0.5 + 1 千出 × 1.0");
+        assert!(rows[1]["costEstimate"].is_null() && rows[2]["costEstimate"].is_null(), "没填单价不估算");
+        assert_eq!(rows[2]["label"], "custom:x", "不在预置表里的用 id 当标签");
+    }
+
 
     #[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
     #[serde(rename_all = "camelCase", default)]
