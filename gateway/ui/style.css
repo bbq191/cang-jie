@@ -62,7 +62,6 @@ progress::-webkit-progress-bar{background:var(--surface2)}progress::-webkit-prog
 .list li{display:flex;justify-content:space-between;gap:1em;align-items:center;padding:.5em .1em;border-bottom:1px solid var(--line2)}
 /* 母版库列表书多时很长（2026-09-19 用户反馈）——单独收紧行内边距，不动全站共用的 .list（笔记/
    其它列表沿用原样，只有这里书多到需要专门收紧）。 */
-#stglist li{padding:.3em .1em}
 .small{font-size:.83em;color:var(--mute)}
 code{background:var(--surface2);padding:.1em .35em;border-radius:.3em;font-size:.88em}
 /* 对比表 */
@@ -145,3 +144,64 @@ dl.help dd{margin:.2em 0 .2em;color:var(--mute);font-size:.9em;line-height:1.65}
 .confirm-box{background:var(--surface);color:var(--fg);border:1px solid var(--line);border-radius:.9em;box-shadow:var(--shadow);max-width:26em;width:100%;padding:1.2em}
 .confirm-msg{font-size:.95em;line-height:1.6;white-space:pre-wrap;word-break:break-word}
 .confirm-actions{display:flex;justify-content:flex-end;gap:.5em;margin-top:1em}
+
+/* 母版库（2026-09-20 重设计，手机+PC）。PC 上放宽 main（其它页保持 48em 阅读宽度）、列表两列；手机上每行动作换到
+   书名下面、页码收成"上一页 第 x/y 页 下一页"、批量操作栏固定在屏幕底部。 */
+[hidden]{display:none!important}
+main:has(#stgroot.on){max-width:72em}
+.stg-head{margin:.4em 0}
+.stg-headrow{display:flex;align-items:baseline;gap:.6em;flex-wrap:wrap}
+.stg-dest summary{cursor:pointer;list-style:none;color:var(--accent);padding:.4em 0;font-size:.88em}
+.stg-dest summary::-webkit-details-marker{display:none}
+.stg-tools{display:flex;gap:.5em;margin:.6em 0 .3em}
+.stg-tools input{flex:1;min-width:0}
+.stg-tools select{width:auto;max-width:9em}
+.stg-chips{display:flex;gap:.4em;flex-wrap:wrap;margin:.4em 0}
+.chip{border:1px solid var(--line);background:var(--surface);color:var(--mute);padding:.4em .9em;border-radius:2em;cursor:pointer;font-size:.9em;white-space:nowrap}
+.chip.on{background:var(--accent);color:var(--accent-fg);border-color:var(--accent);font-weight:600}
+.stg-selrow{display:flex;align-items:center;gap:.6em;flex-wrap:wrap;margin:.4em 0;padding:.5em .2em;border-bottom:1px solid var(--line)}
+.stg-spacer{flex:1}
+.stg-list{list-style:none;margin:.5em 0 0;padding:0;display:flex;flex-direction:column;gap:.5em}
+.stg-row{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:.5em .8em;align-items:start;padding:.65em .8em;border:1px solid var(--line);border-radius:.7em;background:var(--surface)}
+.stg-row.sel{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 6%,var(--surface))}
+.stg-check{display:flex;padding-top:.2em}.stg-check input{width:1.25em;height:1.25em;margin:0}
+.stg-name{font-weight:600;line-height:1.35;overflow-wrap:anywhere}
+.stg-meta{display:flex;flex-wrap:wrap;gap:.3em .4em;align-items:center;margin-top:.3em}
+.stg-size{font-size:.8em;color:var(--mute)}
+.badge.fmt{font-weight:600}
+.stg-err{color:var(--bad);margin-top:.3em}
+.stg-empty{padding:1em;text-align:center}
+.stg-actions{display:flex;gap:.4em;align-items:center}
+.stg-menu{position:relative}
+.stg-menu summary{list-style:none;cursor:pointer;border:1px solid var(--line);background:var(--surface);border-radius:.5em;padding:.5em .85em;min-width:2.5em;text-align:center;line-height:1.2;user-select:none}
+.stg-menu summary::-webkit-details-marker{display:none}
+.stg-menu[open] summary{border-color:var(--accent)}
+.stg-pop{position:absolute;right:0;top:calc(100% + .3em);z-index:8;background:var(--surface);border:1px solid var(--line);border-radius:.6em;box-shadow:var(--shadow);padding:.35em;display:flex;flex-direction:column;gap:.3em;min-width:12em}
+.stg-pop .btn{text-align:left;width:100%}
+.stg-pager{display:flex;flex-wrap:wrap;align-items:center;gap:.6em 1em;justify-content:space-between;margin:.9em 0 1em}
+.stg-pgnav{display:flex;align-items:center;gap:.35em;flex-wrap:wrap}
+.stg-pgnums{display:inline-flex;gap:.3em;align-items:center}
+.stg-pager select{width:auto}
+.stgbar{position:sticky;bottom:.6em;z-index:9;display:flex;gap:.5em;align-items:center;flex-wrap:wrap;background:var(--surface);border:1px solid var(--accent);border-radius:.9em;box-shadow:0 4px 22px rgba(0,0,0,.2);padding:.6em .8em;margin-top:.5em}
+.stgbar progress{flex:1 1 100%;margin:.1em 0}
+.stgbar-main{flex:1 1 12em;min-width:0;overflow-wrap:anywhere}
+.stgbar-count{margin-right:.3em}
+.stgbar.done{border-color:var(--line)}
+.stgbar-fails{flex:1 1 100%}
+@media(min-width:1100px){.stg-list{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:34em){
+ .stg-row{grid-template-columns:auto minmax(0,1fr)}
+ .stg-actions{grid-column:1 / -1;justify-content:flex-end}
+ .stg-actions>.btn.pri{flex:1}
+ .stg-pgnums{display:none}
+ .stgbar .btn{flex:1 1 auto}
+}
+@media(min-width:35em){.stg-pgtxt{display:none}}
+.stgbar.sel{flex-direction:column;align-items:stretch;gap:.5em}
+.stgbar-top{display:flex;align-items:center;justify-content:space-between;gap:.6em}
+.stgbar-btns{display:flex;gap:.5em}.stgbar-btns .btn{flex:1 1 0;padding:.6em .4em;white-space:nowrap}
+/* 页头在手机窄屏上被挤成竖排（"秘密花园"一字一行）：logo 不换行、主机名/次要链接收起来 */
+header .logo{white-space:nowrap}
+header .links{white-space:nowrap}
+@media(max-width:34em){header{flex-wrap:wrap;gap:.3em .6em;padding:.55em .8em}header small#hdr{display:none}header .links{margin-left:auto;gap:.45em}header .links a{padding:.3em .1em}nav{top:2.9em;padding:.55em .8em}main{padding:.8em}}
+.stgbar-top .btn{flex:0 0 auto}

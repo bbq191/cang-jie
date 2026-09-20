@@ -143,7 +143,7 @@ pub fn forward(paths: &Paths, req: &mut Request<'_>) -> ApiResult {
 /// [`crate::budget::is_settled`] 判定这本书已经不再忙，或等到 [`SETTLE_POLL_TIMEOUT`] 放弃。
 /// 服务查不到/请求失败（可能重启中）也直接放弃轮询——宁可名额提前释放，不要因为侦测本身不可靠
 /// 就把并发档位永久卡住。
-fn poll_until_settled(base_url: &str, name: &str) {
+pub(crate) fn poll_until_settled(base_url: &str, name: &str) {
     let agent = ureq::AgentBuilder::new().timeout(Duration::from_secs(10)).build();
     let deadline = Instant::now() + SETTLE_POLL_TIMEOUT;
     loop {
