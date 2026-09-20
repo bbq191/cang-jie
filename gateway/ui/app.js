@@ -208,7 +208,7 @@ function stgBadges(it,busy){
   const ps=(it.format==='epub'&&it.pdfSource)?`<span class="badge on" title="${T('transfer.staging.badge.pdfSourceTitle')}">${T('transfer.staging.badge.pdfSource')}</span>`:'';
   const dv=it.delivered||{},stale=t=>t&&it.mtime&&t<it.mtime;
   const dl=(dv.native?`<span class="badge on" title="${stale(dv.native)?T('transfer.staging.delivered.native.staleTitle'):T('transfer.staging.delivered.native.title')}">${T('transfer.staging.delivered.native.badge')}${stale(dv.native)?T('transfer.staging.staleSuffix'):''}</span>`:'')+(dv.koreader?`<span class="badge on" title="${stale(dv.koreader)?T('transfer.staging.delivered.koreader.staleTitle'):T('transfer.staging.delivered.koreader.title')}">${T('transfer.staging.delivered.koreader.badge')}${stale(dv.koreader)?T('transfer.staging.staleSuffix'):''}</span>`:'');
-  const rc=dv.render,rb=!rc?'':rc.status==='ok'?`<span class="badge on" title="${T('transfer.staging.render.okTitle',{pages:rc.pages,expected:rc.expected})}">${T('transfer.staging.render.okBadge',{pages:rc.pages})}</span>`:rc.status==='warn'?`<span class="badge off" title="${T('transfer.staging.render.warnTitle',{pages:rc.pages,expected:rc.expected})}">${T('transfer.staging.render.warnBadge',{pages:rc.pages,expected:rc.expected})}</span>`:rc.status==='pending'?`<span class="badge" title="${T('transfer.staging.render.pendingTitle')}">${T('transfer.staging.render.pendingBadge')}</span>`:`<span class="badge" title="${T('transfer.staging.render.noneTitle')}">${T('transfer.staging.render.noneBadge')}</span>`;
+  const rc=dv.render,rb=!rc?'':rc.status==='onopen'?`<span class="badge" title="${T('stg.render.onopenTitle')}">${T('stg.render.onopenBadge')}</span>`:rc.status==='ok'?`<span class="badge on" title="${rc.expected>=20?T('transfer.staging.render.okTitle',{pages:rc.pages,expected:rc.expected}):T('stg.render.okTitle',{pages:rc.pages})}">${T('transfer.staging.render.okBadge',{pages:rc.pages})}</span>`:rc.status==='warn'?`<span class="badge off" title="${T('transfer.staging.render.warnTitle',{pages:rc.pages,expected:rc.expected})}">${T('transfer.staging.render.warnBadge',{pages:rc.pages,expected:rc.expected})}</span>`:rc.status==='pending'?`<span class="badge" title="${T('transfer.staging.render.pendingTitle')}">${T('transfer.staging.render.pendingBadge')}</span>`:`<span class="badge" title="${T('transfer.staging.render.noneTitle')}">${T('transfer.staging.render.noneBadge')}</span>`;
   const oc=dv.optimize,dc=dv.deliver;
   // 卡在 pending 但 busy=false＝上次处理被服务/设备重启打断（2026-09-19 真机撞过），不是"还在跑"。
   const stalePending=k=>k&&k.status==='pending'&&!it.busy;
@@ -302,7 +302,7 @@ function renderTransfer(sec){sec.innerHTML=`
     </div>
     <div class="stg-tools"><input type="text" id="stgq" list="stgnames" autocomplete="off" placeholder="${T('transfer.staging.searchPlaceholder')}" aria-label="${T('transfer.staging.searchAria')}"><datalist id="stgnames"></datalist><select id="stgfmt" aria-label="${T('transfer.staging.fmtFilterAria')}"><option value="">${T('transfer.staging.fmtAll')}</option><option value="epub">EPUB</option><option value="pdf">PDF</option><option value="other">${T('transfer.staging.fmtOther')}</option></select></div>
     <div class="stg-chips" id="stgchips"></div>
-    <div class="stg-selrow"><label class="toggle"><input type="checkbox" id="stgall"> <span id="stgalltxt"></span></label></div>
+    <div class="stg-selrow"><label class="toggle"><input type="checkbox" id="stgall"> <span id="stgalltxt"></span></label><span class="stg-spacer"></span><label class="toggle"><input type="checkbox" id="stghide"> ${T('stg.hideDone')}</label></div>
     <ul class="stg-list" id="stglist"></ul>
     <div class="stg-pager" id="stgpager"></div>
     <div class="stgbar" id="stgbar" hidden></div>
@@ -340,6 +340,7 @@ function renderTransfer(sec){sec.innerHTML=`
     const r=await postJ('/api/koreader/books/mkdir',{folder:name});if(r.ok===false)return false;toast(T('stg.dest.createdKo',{name}),'ok');return true});
   // 筛选/分页状态。"隐藏已完成"只在「全部」筛选下生效（选了「已优化」就是想看它们）。
   let st=LS.get('stgSt','all'),hideDone=LS.get('stgHideDone','1')==='1',page=1,pageSize=+LS.get('stgPageSize','25')||25;
+  g('stghide').checked=hideDone;g('stghide').onchange=()=>{hideDone=g('stghide').checked;LS.set('stgHideDone',hideDone?'1':'0');page=1;render()};
   const fmtOf=it=>it.format==='cbz'?'other':it.format;
   const filtered=()=>{const q=g('stgq').value.toLowerCase(),f=g('stgfmt').value;
     return items.filter(it=>(!q||it.name.toLowerCase().includes(q))&&(!f||fmtOf(it)===f)&&(st==='todo'?stgIsTodo(it):st==='done'?!!it.optimized:st==='finished'?isBookDone(it):(!hideDone||!isBookDone(it))))};
@@ -352,14 +353,11 @@ function renderTransfer(sec){sec.innerHTML=`
   const syncSelUi=()=>{const list=filtered();const n=list.length,all=n>0&&list.every(it=>picked.has(it.name));
     g('stgall').checked=all;g('stgall').indeterminate=!all&&list.some(it=>picked.has(it.name));g('stgalltxt').textContent=T('stg.selectAll',{n})};
   g('stgall').onchange=()=>{const list=filtered();if(g('stgall').checked)list.forEach(it=>picked.add(it.name));else list.forEach(it=>picked.delete(it.name));render()};
-  const renderChips=()=>{const todo=items.filter(stgIsTodo).length,hidden=items.filter(isBookDone).length;
-    const chips=g('stgchips');chips.innerHTML='';
-    [['all',T('stg.chip.all')],['todo',T('stg.chip.todo',{n:todo})],['done',T('stg.chip.done')],['finished',T('stg.chip.finished',{n:hidden})]].forEach(([k,t])=>{
-      const b=el('button',{class:'chip'+(st===k?' on':''),type:'button',text:t});b.onclick=()=>{st=k;LS.set('stgSt',k);page=1;render()};chips.appendChild(b)});
-    if(st==='all'&&hidden>0||hideDone===false&&hidden>0){
-      const b=el('button',{class:'chip'+(hideDone?' on':''),type:'button',text:T('stg.hideDone',{n:hidden})});
-      b.onclick=()=>{hideDone=!hideDone;LS.set('stgHideDone',hideDone?'1':'0');page=1;render()};chips.appendChild(b)}
-  };
+  const renderChips=()=>{const chips=g('stgchips');chips.innerHTML='';
+    // 四个筛选统一都带数量（数量 = 该筛选下的书本数，与"隐藏已完成"开关无关）。
+    const cnt={all:items.length,todo:items.filter(stgIsTodo).length,done:items.filter(it=>!!it.optimized).length,finished:items.filter(isBookDone).length};
+    [['all','stg.chip.all'],['todo','stg.chip.todo'],['done','stg.chip.done'],['finished','stg.chip.finished']].forEach(([k,key])=>{
+      const b=el('button',{class:'chip'+(st===k?' on':''),type:'button',text:T(key,{n:cnt[k]})});b.onclick=()=>{st=k;LS.set('stgSt',k);page=1;render()};chips.appendChild(b)})};
   const renderPager=(total)=>{const box=g('stgpager');box.innerHTML='';if(total<=0)return;
     const pages=Math.max(1,Math.ceil(total/pageSize));const from=(page-1)*pageSize+1,to=Math.min(total,page*pageSize);
     const go=p=>{page=Math.min(pages,Math.max(1,p));render();g('stglist').scrollIntoView({block:'start'})};

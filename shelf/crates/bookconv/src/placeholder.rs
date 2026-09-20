@@ -72,6 +72,9 @@ fn find_cover(zip: &mut zip::ZipArchive<std::io::BufReader<std::fs::File>>, opf_
     if candidate.is_none() {
         candidate = items.iter().find(|(_, _, p)| p.contains("cover-image")).map(|(_, h, _)| h.clone());
     }
+    // 声明必须真指向图片：Calibre 产物常见 `<meta name="cover" content="cover.txt"/>` 指向 txt，直接拿来当封面
+    // 会得到一个不是图片的"封面"，xochitl 取不到封面缩略图（2026-09-20 真机日志 `null cover image`）。
+    let candidate = candidate.filter(|h| is_image_href(h));
     if candidate.is_none() {
         // 第一个 spine 页里的第一张图。
         static SPINE: OnceLock<Regex> = OnceLock::new();
@@ -97,6 +100,11 @@ fn find_cover(zip: &mut zip::ZipArchive<std::io::BufReader<std::fs::File>>, opf_
     let path = join(dir, &candidate?);
     let ext = path.rsplit('.').next().unwrap_or("jpg").to_lowercase();
     Some((ext, read_entry(zip, &path)?))
+}
+
+fn is_image_href(h: &str) -> bool {
+    let l = h.to_ascii_lowercase();
+    l.ends_with(".jpg") || l.ends_with(".jpeg") || l.ends_with(".png") || l.ends_with(".gif") || l.ends_with(".webp")
 }
 
 fn media_type_of(ext: &str) -> &'static str {
@@ -232,6 +240,32 @@ mod tests {
         let d = tempfile::tempdir().unwrap();
         let out = epub_placeholder(&real_epub(d.path(), true), None).unwrap();
         assert!(String::from_utf8_lossy(&entries_of(&out)["content.opf"]).contains("<dc:title>Unknown</dc:title>"));
+    }
+
+    #[test]
+    fn cover_declared_as_non_image_falls_back_to_first_page_image() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("calibre.epub");
+        let f = std::fs::File::create(&p).unwrap();
+        let mut z = zip::ZipWriter::new(f);
+        let o = zip::write::SimpleFileOptions::default();
+        z.start_file("mimetype", o).unwrap();
+        z.write_all(b"application/epub+zip").unwrap();
+        z.start_file("META-INF/container.xml", o).unwrap();
+        z.write_all(br#"<container><rootfiles><rootfile full-path="content.opf"/></rootfiles></container>"#).unwrap();
+        z.start_file("content.opf", o).unwrap();
+        z.write_all(br#"<package><metadata><dc:title>t</dc:title><meta name="cover" content="cover.txt"/></metadata><manifest><item id="cover.txt" href="cover.txt" media-type="text/plain"/><item id="c1" href="p1.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="c1"/></spine></package>"#).unwrap();
+        z.start_file("cover.txt", o).unwrap();
+        z.write_all(b"not an image").unwrap();
+        z.start_file("p1.xhtml", o).unwrap();
+        z.write_all(br#"<html><body><img src="real.jpg"/></body></html>"#).unwrap();
+        z.start_file("real.jpg", o).unwrap();
+        z.write_all(b"\xFF\xD8REALCOVER\xFF\xD9").unwrap();
+        z.finish().unwrap();
+        let out = epub_placeholder(&p, Some("t")).unwrap();
+        let e = entries_of(&out);
+        assert_eq!(e["cover.jpg"], b"\xFF\xD8REALCOVER\xFF\xD9", "必须回退到第一页的真图片，而不是 txt");
+        assert!(!e.contains_key("cover.txt"));
     }
 
     #[test]

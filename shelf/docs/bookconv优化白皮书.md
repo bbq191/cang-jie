@@ -853,3 +853,13 @@ xochitl 的 PDF 放大滤镜偏糊，我们预放大后设备只需 1:1 贴。
 
 ### 漫画 EPUB 缺目录（2026-09-20，同日真机发现并修复）
 乱马/火影源书的 NCX 是空的，清洗层原本对纯图片书**故意**不生成兜底目录（设想漫画走专门路径），漫画换回 EPUB 后成了漏洞——设备上打开没有目录。现在没有任何目录又没有文字标题时按每 20 页一段生成"第 N–M 页"（同 PDF 兜底，`wash::page_chunk_toc`）。乱马 01 优化回执"自动目录 18 条"，本机质量门通过。
+
+### 设备日志核查（2026-09-20，用户投入 9 本后要求核查）
+
+看了设备上 book-serve/gateway/xochitl 的日志与文档实际状态，**没有崩溃/OOM/服务重启**（内核 `OOM killer enabled/disabled` 只是休眠唤醒的开关记录，无 kill；可用内存 786MB；gateway 无警告；book-serve 只有渲染自检信息）。值得优化的点：
+1. **封面缺失（已修）**：xochitl 日志 `rm.docworker failed extracting cover: got null cover image` + `rm.epub.container Asked for unknown item ""`；9 本里 7 本没有封面缩略图。两类原因：①OPF 没有 `<meta name="cover">`（火影）；②声明指向非图片条目（Calibre 产物 `content="cover.txt"`，而《镖人(卷四)》这本连封面图本身都是 239 字节的文本残片，标题页/封面页引用的都是它）。修：`wash::ensure_cover_declared` 在**清洗之前**保证 OPF 声明有效封面图（取前 12 个 spine 页里第一张真实图片，找不到不乱猜；不碰图片字节）；`placeholder` 找封面时校验是图片。真书验证：镖人(卷四)→`image_000.jpg`、火影 09→`x00000001.jpg`、镖人 02→`cover_img`，均指向图片条目。**已投的旧书不会自动补封面**（要重新优化+投入，而重新优化已优化的漫画会多一代 JPEG 有损，所以没自动做）。
+2. **渲染徽章不一致（已修）**：≤90MB 的书走普通上传有"渲染 N 页"，>90MB 走大文件通道没有。现在两条路都写渲染记录：PDF 直接 ok；EPUB 记 `onopen`（首次打开才渲染），`list()` 之后读该文档 `.content` 的 pageCount，用户打开后页数一变就自动显示真页数。
+3. **渲染自检对漫画无意义（已修界面）**：`expected` 由正文字数估，漫画只有 2~4 页，"预期≈2"的提示会误导；`expected<20` 时界面改用中性文案。
+4. **良性噪音（不处理）**：`epubindex ... failed to open`（导入前本来就没有）、`documenttype telemetry reportActions failed`（xochitl 自身遥测）。
+5. **`navMap contains no navPoints`**（13:17）：当时那本没有目录，已由漫画 EPUB 自动分段目录修复。
+6. **未修、可讨论**：`native_limit` 取 90MB 而 xochitl 实际硬限约 100MB，90~100MB 的书本可以走普通上传（有即时渲染验证），现在走大文件通道；直接投入的 EPUB 首次打开要等 xochitl 渲染（146MB 实测约 25s）。

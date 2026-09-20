@@ -406,10 +406,10 @@
   "transfer.staging.cancelQueuedOk": "已取消《{name}》的排队",
   "transfer.staging.cancelQueuedTooLate": "《{name}》刚好轮到、已经开始处理，来不及取消了",
   "stg.dest.root": "根目录",
-  "stg.chip.all": "全部",
+  "stg.chip.all": "全部 {n}",
   "stg.chip.todo": "待优化 {n}",
-  "stg.chip.done": "已优化",
-  "stg.hideDone": "隐藏已完成 {n}",
+  "stg.chip.done": "已优化 {n}",
+  "stg.hideDone": "隐藏已完成",
   "stg.selectAll": "全选当前筛选（{n}）",
   "stg.selected": "已选 {n} 本",
   "stg.pager.prev": "上一页",
@@ -452,5 +452,8 @@
   "stg.batch.deleted": "已删除 {n} 本",
   "stg.batch.deleteSkipped": " · {n} 本正在处理，已跳过",
   "stg.chip.finished": "已完成 {n}",
-  "stg.batch.stopAll": "全部中止"
+  "stg.batch.stopAll": "全部中止",
+  "stg.render.onopenBadge": "首次打开时渲染",
+  "stg.render.onopenTitle": "xochitl 要在你第一次打开这本书时才渲染，之前设备上显示的页数是占位的；打开过之后这里会自动变成真实页数",
+  "stg.render.okTitle": "xochitl 渲染 {pages} 页"
 }

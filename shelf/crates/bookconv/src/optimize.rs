@@ -254,6 +254,9 @@ pub fn optimize_epub(epub: &[u8]) -> Result<(Vec<u8>, Report), String> {
 pub fn optimize_epub_with(epub: &[u8], opts: &OptimizeOpts) -> Result<(Vec<u8>, Report), String> {
     // 读失败必须整体报错——绝不能静默跳过条目产出残缺 EPUB（会破坏原书）。
     let mut raw = crate::check::read_entries(epub)?;
+    // 保证 OPF 声明了有效封面（设备日志核查发现 7/9 本已投的书没有封面，见 `wash::ensure_cover_declared`）。
+    // 必须在清洗之前：清洗会把只含 SVG 封面的 titlepage 当空页删掉。
+    crate::wash::ensure_cover_declared(&mut raw);
     let wash_rep = match &opts.wash {
         Some(w) => Some(crate::wash::wash_entries(&mut raw, w)?),
         None => None,
@@ -433,6 +436,9 @@ pub fn optimize_epub_file_streaming_ctl(input_path: &std::path::Path, output_pat
         };
         raw.push(crate::wash::Entry { name, data });
     }
+    // 保证 OPF 声明了有效封面（设备日志核查发现 7/9 本已投的书没有封面，见 `wash::ensure_cover_declared`）。
+    // 必须在清洗之前：清洗会把只含 SVG 封面的 titlepage 当空页删掉。
+    crate::wash::ensure_cover_declared(&mut raw);
     let wash_rep = match &opts.wash {
         Some(w) => Some(crate::wash::wash_entries(&mut raw, w)?),
         None => None,

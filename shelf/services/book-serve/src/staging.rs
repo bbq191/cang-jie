@@ -528,8 +528,23 @@ impl Staging {
                 Err(_) => return Ok(None),
             }
         };
-        self.xochitl.upload_large_file(p, name, content_type, folder, &placeholder, pages)?;
+        let uuid = self.xochitl.upload_large_file(p, name, content_type, folder, &placeholder, pages)?;
         let _ = self.mark_delivered(name, Reader::Native);
+        // 渲染记录也写上，让"加入 xochitl"的书在列表里都有统一的渲染徽章（此前直接投入的书没有）：
+        // - PDF：页数就是我们写进 `.content` 的真页数 → 直接 ok；
+        // - EPUB：xochitl 要**首次打开**才渲染，此刻 `.content` 里是占位的页数。记 `onopen` + 占位页数，`list()` 之后每次
+        //   读该文档 `.content` 的 pageCount，一变（用户打开过、xochitl 渲染完）就自动显示成真页数。
+        let rc = match pages {
+            Some(n) => sidecar::RenderCheck { uuid: uuid.clone(), pages: n as u64, expected: 0, status: "ok".into(), at: rmsvc_core::clock::now_secs() },
+            None => sidecar::RenderCheck {
+                uuid: uuid.clone(),
+                pages: rmsvc_core::xochitl::page_count(self.xochitl.library_dir(), &uuid).unwrap_or(0),
+                expected: 0,
+                status: "onopen".into(),
+                at: rmsvc_core::clock::now_secs(),
+            },
+        };
+        let _ = self.set_render(name, rc);
         Ok(Some(DeliverOutcome {
             message: format!("《{stem}》{} MB 超过网页上传上限，已直接写入 xochitl 书库（未分卷）；首次打开需重新渲染，请稍候", size >> 20),
             render: None,
@@ -813,7 +828,20 @@ impl Staging {
             };
             let mtime = md.modified().ok().map(rmsvc_core::clock::secs_of).unwrap_or(0);
             let busy = self.is_busy(&name);
-            out.push(StagingEntry { name, bytes: md.len(), format, optimized: level == "full", level, mtime, delivered: sidecar::read(&e.path()), busy, pdf_source });
+            let mut delivered = sidecar::read(&e.path());
+            if let Some(rc) = delivered.as_mut().and_then(|d| d.render.as_mut()) {
+                // 直接投入的 EPUB 首次打开才渲染：xochitl 渲染完会把 `.content` 的 pageCount 改成真页数，跟记录里的占位页数不同
+                // 就说明已经渲染过 → 升级成 ok。没打开过 → 保持 onopen。
+                if rc.status == "onopen" {
+                    if let Some(n) = rmsvc_core::xochitl::page_count(self.xochitl.library_dir(), &rc.uuid) {
+                        if n != rc.pages {
+                            rc.status = "ok".into();
+                            rc.pages = n;
+                        }
+                    }
+                }
+            }
+            out.push(StagingEntry { name, bytes: md.len(), format, optimized: level == "full", level, mtime, delivered, busy, pdf_source });
         }
         out.sort_by(|a, b| b.mtime.cmp(&a.mtime).then_with(|| a.name.cmp(&b.name)));
         out
@@ -1266,6 +1294,24 @@ mod tests {
         s.optimize(long, |_, _| {}).unwrap();
         let names: Vec<String> = s.list().into_iter().map(|e| e.name).collect();
         assert!(names.contains(&long.to_string()) && names.contains(&"书 - 01卷.epub".to_string()), "重复的同一卷不能互相覆盖: {names:?}");
+    }
+
+    #[test]
+    fn onopen_render_record_upgrades_to_ok_once_xochitl_rewrites_page_count() {
+        // 直接投入的 EPUB：记 onopen + 占位页数(2)；用户打开后 xochitl 把 .content 的 pageCount 改成 351 → 列表自动显示 ok/351。
+        let t = tempfile::tempdir().unwrap();
+        let lib = t.path().join("lib");
+        std::fs::create_dir_all(&lib).unwrap();
+        let x = Arc::new(Xochitl::new("127.0.0.1:1", &lib, 1));
+        let s = Staging::new(t.path().join("staging"), x, 1024 * 1024);
+        s.ensure().unwrap();
+        s.stage_new("big.epub", &comic_epub_with_real_images(&[12, 13])).unwrap();
+        std::fs::write(lib.join("u1.content"), r#"{"pageCount":2}"#).unwrap();
+        s.set_render("big.epub", sidecar::RenderCheck { uuid: "u1".into(), pages: 2, expected: 0, status: "onopen".into(), at: 1 }).unwrap();
+        let rc = |s: &Staging| s.list()[0].delivered.clone().unwrap().render.unwrap();
+        assert_eq!((rc(&s).status.as_str(), rc(&s).pages), ("onopen", 2), "没打开过：保持 onopen");
+        std::fs::write(lib.join("u1.content"), r#"{"pageCount":351}"#).unwrap();
+        assert_eq!((rc(&s).status.as_str(), rc(&s).pages), ("ok", 351), "打开过（页数变了）：升级成真页数");
     }
 
     #[test]

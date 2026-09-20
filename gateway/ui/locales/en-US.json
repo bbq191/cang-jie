@@ -406,10 +406,10 @@
   "transfer.staging.cancelQueuedOk": "Cancelled the queue for “{name}”",
   "transfer.staging.cancelQueuedTooLate": "“{name}” just got its turn and already started — too late to cancel",
   "stg.dest.root": "root",
-  "stg.chip.all": "All",
+  "stg.chip.all": "All {n}",
   "stg.chip.todo": "To optimize {n}",
-  "stg.chip.done": "Optimized",
-  "stg.hideDone": "Hide finished {n}",
+  "stg.chip.done": "Optimized {n}",
+  "stg.hideDone": "Hide finished",
   "stg.selectAll": "Select all in current filter ({n})",
   "stg.selected": "{n} selected",
   "stg.pager.prev": "Prev",
@@ -452,5 +452,8 @@
   "stg.batch.deleted": "Deleted {n}",
   "stg.batch.deleteSkipped": " · {n} busy, skipped",
   "stg.chip.finished": "Finished {n}",
-  "stg.batch.stopAll": "Stop all"
+  "stg.batch.stopAll": "Stop all",
+  "stg.render.onopenBadge": "Renders on first open",
+  "stg.render.onopenTitle": "xochitl only renders this book the first time you open it; the page count shown on the device until then is a placeholder. After you open it, this turns into the real page count",
+  "stg.render.okTitle": "xochitl rendered {pages} pages"
 }
