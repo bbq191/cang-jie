@@ -209,6 +209,11 @@ impl Pattern {
     }
 
     /// 匹配则返回参数表（`{x}` 解码后；前缀模式额外给 `*`=余下路径）。
+    /// 具体程度：(字面段个数, 是否精确匹配)。值大者更具体。
+    fn specificity(&self) -> (usize, bool) {
+        (self.segs.iter().filter(|s| !(s.starts_with('{') && s.ends_with('}'))).count(), !self.prefix)
+    }
+
     fn matches(&self, path: &str) -> Option<HashMap<String, String>> {
         let segs: Vec<&str> = path.trim_matches('/').split('/').filter(|s| !s.is_empty()).collect();
         if self.prefix {
@@ -297,14 +302,24 @@ impl Router {
     }
 
     /// 分发（纯函数，可单测）。路径匹配但方法不对 → 405。
+    /// **最具体的路由优先**（字面段个数多者胜，同数时精确匹配胜过尾部 `/*`，仍相同才按注册先后）：
+    /// 此前是"注册顺序第一个匹配者胜"，`GET /{name}` 这类通配路由只要注册在字面路由前面就会把
+    /// `/events`、`/health` 抢走（真机 wallpaper-serve 踩过，靠"必须先注册字面路由"的口头纪律避免）。
     pub fn dispatch(&self, req: &mut Request<'_>) -> Reply {
         let mut path_exists = false;
+        let mut best: Option<((usize, bool), &Arc<Route>, HashMap<String, String>)> = None;
         for r in &self.routes {
             let Some(params) = r.pattern.matches(&req.path) else { continue };
             if r.method != req.method {
                 path_exists = true;
                 continue;
             }
+            let score = r.pattern.specificity();
+            if best.as_ref().map(|(b, _, _)| score > *b).unwrap_or(true) {
+                best = Some((score, r, params));
+            }
+        }
+        if let Some((_, r, params)) = best {
             req.params = params;
             return match (r.handler)(req) {
                 Ok(rep) => rep,
@@ -471,6 +486,25 @@ mod tests {
         let r = a.merge(b);
         assert_eq!(call(&r, Method::Get, "/health", "").1, r#"{"h":1}"#);
         assert_eq!(call(&r, Method::Get, "/x.png", "").1, r#"{"name":"x.png"}"#);
+    }
+
+    /// 回归：字面路由不因注册在通配路由之后而被抢走（原来靠注册顺序纪律）。
+    #[test]
+    fn literal_route_beats_param_route_regardless_of_registration_order() {
+        let router = Router::new()
+            .get("/{name}", |r| Ok(Reply::ok(&serde_json::json!({"wild": r.param("name")}))))
+            .get("/events", |_| Ok(Reply::ok(&serde_json::json!({"lit": "events"}))))
+            .get("/books/{id}", |r| Ok(Reply::ok(&serde_json::json!({"id": r.param("id")}))))
+            .get("/books/adopt", |_| Ok(Reply::ok(&serde_json::json!({"lit": "adopt"}))))
+            .get("/api/*", |_| Ok(Reply::ok(&serde_json::json!({"prefix": true}))))
+            .get("/api/{x}", |r| Ok(Reply::ok(&serde_json::json!({"exact": r.param("x")}))));
+        assert_eq!(call(&router, Method::Get, "/events", "").1, r#"{"lit":"events"}"#);
+        assert_eq!(call(&router, Method::Get, "/other", "").1, r#"{"wild":"other"}"#);
+        assert_eq!(call(&router, Method::Get, "/books/adopt", "").1, r#"{"lit":"adopt"}"#);
+        assert_eq!(call(&router, Method::Get, "/books/7", "").1, r#"{"id":"7"}"#);
+        assert_eq!(call(&router, Method::Get, "/api/v", "").1, r#"{"exact":"v"}"#, "同字面段数时精确匹配胜过尾部通配");
+        assert_eq!(call(&router, Method::Get, "/api/v/w", "").1, r#"{"prefix":true}"#);
+        assert_eq!(call(&router, Method::Post, "/events", "").0, 405);
     }
 
     #[test]
