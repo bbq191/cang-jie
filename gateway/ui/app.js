@@ -191,10 +191,10 @@ const GUIDE=()=>`<details class="cmp"><summary>${T('transfer.guide.summary')}</s
    **一个主按钮**（随状态变：待优化→优化；已优化→加入 xochitl；cbz/其它→加入 KOReader）+ `⋯` 菜单（其余操作）。
    批量走服务端队列（网关 `/api/batch`），全选/一键"优化全部待优化"，关掉页面照跑。 */
 const stgClean=n=>{const s=n.replace(/\.(epub|pdf|cbz)$/i,'');return (s.split(' -- ')[0]||s).trim()};
-/* 搜索框的下拉建议：系列名（多卷合一条，如「亂馬1⁄2 典藏版」）+ 每本的清爽书名。 */
-const stgSeries=n=>n.replace(/\s+-\s+(?:[0-9一二三四五六七八九十百零〇两]+[卷部册集]|[上中下](?:[册部卷篇])?)$/,'');
-const stgNameOptions=items=>{const names=items.map(it=>stgClean(it.name)),count={};names.forEach(n=>{const k=stgSeries(n);count[k]=(count[k]||0)+1});
-  const series=Object.keys(count).filter(k=>count[k]>1);return [...new Set([...series,...names])].map(n=>`<option value="${n.replace(/"/g,'&quot;')}">`).join('')};
+/* 搜索框的下拉建议：**书名 = 第一个 "-" 之前的内容**（用户 2026-09-20 指定）。"亂馬1⁄2 典藏版 - 07卷" → "亂馬1⁄2 典藏版"，
+   同一本书的多卷合成一条；选中后按名字包含匹配，正好筛出这本书的所有卷。 */
+const stgTitle=n=>stgClean(n).split('-')[0].trim();
+const stgNameOptions=items=>[...new Set(items.map(it=>stgTitle(it.name)).filter(Boolean))].map(n=>`<option value="${n.replace(/"/g,'&quot;')}">`).join('');
 const stgIsTodo=it=>(it.format==='epub'||it.format==='pdf')&&!it.optimized;
 /* 一本书的徽章 HTML + 一条可见的状态文字（失败原因等）。逻辑沿用旧列表：优化档位/PDF 来源/落库记录/渲染自检/忙态。 */
 function stgBadges(it,busy){
@@ -289,10 +289,12 @@ function renderTransfer(sec){sec.innerHTML=`
     <div class="card stg-head">
       <div class="stg-headrow"><h3 style="margin:0">${T('transfer.staging.title')}</h3><span class="small" id="stgcap"></span></div>
       <div class="stg-dest">
-        <div class="stg-destrow"><label class="small" for="folder">${T('stg.dest.xochitl')}</label><select id="folder"></select>
-          <span class="stg-newrow" id="xnew" hidden><input type="text" id="xnewname" placeholder="${T('stg.dest.newPlaceholder')}"><button class="btn pri" id="xnewgo">${T('stg.dest.create')}</button><button class="btn" id="xnewx">${T('stg.dest.cancel')}</button></span></div>
-        <div class="stg-destrow"><label class="small" for="kfolder">${T('stg.dest.koreader')}</label><select id="kfolder"></select>
-          <span class="stg-newrow" id="knew" hidden><input type="text" id="knewname" placeholder="${T('stg.dest.newPlaceholder')}"><button class="btn pri" id="knewgo">${T('stg.dest.create')}</button><button class="btn" id="knewx">${T('stg.dest.cancel')}</button></span></div>
+        <div class="stg-destpair">
+          <div class="stg-destcol"><label class="small" for="folder">${T('stg.dest.xochitl')}</label><select id="folder"></select></div>
+          <div class="stg-destcol"><label class="small" for="kfolder">${T('stg.dest.koreader')}</label><select id="kfolder"></select></div>
+        </div>
+        <span class="stg-newrow" id="xnew" hidden><input type="text" id="xnewname" placeholder="${T('stg.dest.newPlaceholder')}"><button class="btn pri" id="xnewgo">${T('stg.dest.create')}</button><button class="btn" id="xnewx">${T('stg.dest.cancel')}</button></span>
+        <span class="stg-newrow" id="knew" hidden><input type="text" id="knewname" placeholder="${T('stg.dest.newPlaceholder')}"><button class="btn pri" id="knewgo">${T('stg.dest.create')}</button><button class="btn" id="knewx">${T('stg.dest.cancel')}</button></span>
         <details class="cmp"><summary>${T('transfer.staging.optDetailsSummary')}</summary><p class="small">${T('transfer.staging.optNote')}</p></details>
       </div>
       <div class="small" id="stgfree"></div>

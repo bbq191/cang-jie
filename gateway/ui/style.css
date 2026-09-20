@@ -190,9 +190,6 @@ header .links{white-space:nowrap}
 @media(max-width:34em){header{flex-wrap:wrap;gap:.3em .6em;padding:.55em .8em}header small#hdr{display:none}header .links{margin-left:auto;gap:.45em}header .links a{padding:.3em .1em}nav{top:2.9em;padding:.55em .8em}main{padding:.8em}}
 .stgbar-top .btn{flex:0 0 auto}
 .stg-dest{display:flex;flex-direction:column;gap:.4em;margin:.5em 0}
-.stg-destrow{display:flex;align-items:center;gap:.5em;flex-wrap:wrap}
-.stg-destrow>label{min-width:8.5em}
-.stg-destrow select{flex:1 1 10em;width:auto;max-width:22em}
 .stg-newrow{display:flex;gap:.4em;flex:1 1 100%;align-items:center}
 .stg-newrow input{flex:1;min-width:0}
 .stg-muted{color:var(--mute)}
@@ -201,10 +198,11 @@ header .links{white-space:nowrap}
 .stg-row{min-width:0}
 .stg-main{min-width:0;overflow-wrap:anywhere}
 .stg-meta{min-width:0}
-.stg-destrow{flex-direction:row;align-items:center;flex-wrap:wrap;gap:.3em .6em}
-.stg-destrow>label{min-width:8.6em;white-space:nowrap}
-.stg-destrow select{flex:1 1 9em;width:auto;max-width:none;min-width:0}
 .stgbar-btns{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.5em}
 .stgbar-btns .btn{min-width:0;padding:.6em .3em;overflow-wrap:anywhere}
 @media(min-width:35em){.stgbar-btns{grid-template-columns:repeat(4,minmax(0,1fr))}}
 .stg-actions{flex-shrink:0}
+/* 加入位置：两个下拉同一行（各自上方一个小标签），手机上也并排 */
+.stg-destpair{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.6em}
+.stg-destcol{display:flex;flex-direction:column;gap:.2em;min-width:0}
+.stg-destcol select{width:100%;min-width:0}
