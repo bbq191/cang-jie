@@ -1697,7 +1697,7 @@ staging/optimize`：**修复前的代码逻辑下这张图会被完整解码**�
 > **现状结论**
 > - 只支持 reMarkable Paper Pro Move、固件 **3.28.0.172**；换固件后功能需要重新安装一遍（`/home` 数据保留，`/usr` 与 `/etc` 会被冲掉）——安装/恢复流程见 `docs/INSTALL.md`。
 > - 字体（`font-serve`）与壁纸（`wallpaper-serve`）"上传即可用"；壁纸写 xochitl 的 `SleepScreenPath` 隐藏键，bind-mount 方案已退役；字体菜单靠 qmd 注入，改字体/删字体后菜单是否刷新曾是坑（§03bd）。
-> - WiFi 连上恰好 60 秒必掉的真凶是 cfg80211 regdomain 宽限（精简 regdb 的 CN 无 5150–5350，路由 5G 信道 36 被判非法）→ 连接锁 2.4G；`wifi-watch` 常驻看护脚本与单元在 `packaging/wifi-watch/`（2026-09-20 起零 fork 快路径）。
+> - WiFi 连上恰好 60 秒必掉的真凶是 cfg80211 regdomain 宽限（精简 regdb 的 CN 无 5150–5350，路由 5G 信道 36 被判非法）→ 连接锁 2.4G；`wifi-watch` 常驻看护脚本与单元在 `packaging/wifi-watch/`（2026-09-20 起零 fork 快路径，并已作为一个步骤接入 `install-all.sh`）。
 > - `systemctl restart xochitl` 会丢 xovi；xovi 已生效时不要跑 `xovi/start`（会让运行中的 xochitl SEGV 并整机自动重启）。
 
 ### 03c｜Phase 2 字体/壁纸上传即可用（2026-09-03，离线完成）
