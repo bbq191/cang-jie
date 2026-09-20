@@ -1,0 +1,85 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1240 700" font-family="sans-serif">
+<defs><marker id="bq-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#555"/></marker><marker id="bq-r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#b0451f"/></marker><marker id="bq-g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2f7d45"/></marker></defs>
+<rect x="0" y="0" width="1240" height="700" fill="#fbfbfa"/>
+<text x="620.0" y="30" text-anchor="middle" font-size="18" font-weight="bold" fill="#1a1a1a">批量队列状态机（网关 batch.rs）</text>
+<text x="620.0" y="52" text-anchor="middle" font-size="12.5" fill="#6a6a6a">浏览器只负责提交和看进度；排队与执行都在网关进程里，关掉页面照跑</text>
+<text x="30" y="84" text-anchor="start" font-size="12.5" font-weight="bold" fill="#1a1a1a">一、一批任务的生命周期</text>
+<rect x="30" y="98" width="180" height="110" rx="10" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.6"/>
+<text x="120.0" y="118" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">提交</text>
+<text x="120.0" y="144" text-anchor="middle" font-size="10" fill="#4a4a4a">POST /api/batch</text>
+<text x="120.0" y="157" text-anchor="middle" font-size="10" fill="#4a4a4a">action: 优化 / 加入 xochitl</text>
+<text x="120.0" y="170" text-anchor="middle" font-size="10" fill="#4a4a4a">/ 加入 KOReader</text>
+<text x="120.0" y="183" text-anchor="middle" font-size="10" fill="#4a4a4a">names 点名 或 all:true</text>
+<rect x="250" y="98" width="190" height="110" rx="10" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.6"/>
+<text x="345.0" y="118" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">资格校验</text>
+<text x="345.0" y="144" text-anchor="middle" font-size="10" fill="#4a4a4a">已优化的不再优化</text>
+<text x="345.0" y="157" text-anchor="middle" font-size="10" fill="#4a4a4a">非 EPUB/PDF 不加入 xochitl</text>
+<text x="345.0" y="170" text-anchor="middle" font-size="10" fill="#4a4a4a">已在队列 / 处理中：不重复</text>
+<text x="345.0" y="183" text-anchor="middle" font-size="10" fill="#4a4a4a">不合格 → 计入“跳过”</text>
+<rect x="480" y="98" width="170" height="110" rx="10" fill="#fff3d6" stroke="#c9971f" stroke-width="1.6"/>
+<text x="565.0" y="118" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">queue 排队中</text>
+<text x="565.0" y="144" text-anchor="middle" font-size="10" fill="#4a4a4a">先进先出</text>
+<text x="565.0" y="157" text-anchor="middle" font-size="10" fill="#4a4a4a">同一队列可混合动作</text>
+<text x="565.0" y="170" text-anchor="middle" font-size="10" fill="#4a4a4a">界面显示 queuedCount</text>
+<rect x="690" y="98" width="200" height="110" rx="10" fill="#eaf6ec" stroke="#3f9a55" stroke-width="1.6"/>
+<text x="790.0" y="118" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">current 处理中</text>
+<text x="790.0" y="144" text-anchor="middle" font-size="10" fill="#4a4a4a">worker 线程，一次一本</text>
+<text x="790.0" y="157" text-anchor="middle" font-size="10" fill="#4a4a4a">（设备双核，优化内部</text>
+<text x="790.0" y="170" text-anchor="middle" font-size="10" fill="#4a4a4a">已在并行处理图片）</text>
+<rect x="930" y="98" width="280" height="50" rx="10" fill="#eaf6ec" stroke="#3f9a55" stroke-width="1.6"/>
+<text x="1070.0" y="116.5" text-anchor="middle" font-size="11.5" font-weight="bold" fill="#1a1a1a">done 成功  →  done+1</text>
+<rect x="930" y="158" width="280" height="50" rx="10" fill="#fdf1ec" stroke="#c0602d" stroke-width="1.6"/>
+<text x="1070.0" y="176.5" text-anchor="middle" font-size="11.5" font-weight="bold" fill="#1a1a1a">failed[]  →  记下书名和原因</text>
+<polyline points="210,153 250,153" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#bq-a)"/>
+<polyline points="440,153 480,153" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#bq-a)"/>
+<polyline points="650,153 690,153" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#bq-a)"/>
+<polyline points="890,123 930,123" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#bq-a)"/>
+<polyline points="890,183 930,183" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#bq-a)"/>
+<polyline points="790,208 790,236 565,236 565,208" fill="none" stroke="#555" stroke-width="1.6" stroke-dasharray="6 4" marker-end="url(#bq-a)"/>
+<text x="678" y="231" text-anchor="middle" font-size="10" fill="#555">取下一本</text>
+<text x="30" y="268" text-anchor="start" font-size="12.5" font-weight="bold" fill="#1a1a1a">二、处理“一本书”的内部</text>
+<rect x="30" y="282" width="270" height="124" rx="10" fill="#fff3d6" stroke="#c9971f" stroke-width="1.6"/>
+<text x="165.0" y="302" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">① 过并发/内存预算闸门</text>
+<text x="165.0" y="328" text-anchor="middle" font-size="10" fill="#4a4a4a">按体积分档：&gt;90MB 大档同时 1 个</text>
+<text x="165.0" y="341" text-anchor="middle" font-size="10" fill="#4a4a4a">≤90MB 小档同时 3 个</text>
+<text x="165.0" y="354" text-anchor="middle" font-size="10" fill="#4a4a4a">排队最长 30 分钟，可取消排队</text>
+<rect x="340" y="282" width="290" height="124" rx="10" fill="#ffffff" stroke="#3f9a55" stroke-width="1.6"/>
+<text x="485.0" y="302" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">② 调对应服务</text>
+<text x="485.0" y="328" text-anchor="middle" font-size="10" fill="#4a4a4a">优化 / 加入 xochitl：POST book-serve</text>
+<text x="485.0" y="341" text-anchor="middle" font-size="10" fill="#4a4a4a">  异步，网关轮询到 busy=false</text>
+<text x="485.0" y="354" text-anchor="middle" font-size="10" fill="#4a4a4a">加入 KOReader：koreader-serve 同步</text>
+<text x="485.0" y="367" text-anchor="middle" font-size="10" fill="#4a4a4a">  成功后代记“已加入”</text>
+<rect x="670" y="282" width="250" height="124" rx="10" fill="#ffffff" stroke="#3f9a55" stroke-width="1.6"/>
+<text x="795.0" y="302" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">③ 读终态</text>
+<text x="795.0" y="328" text-anchor="middle" font-size="10" fill="#4a4a4a">查母版库条目的</text>
+<text x="795.0" y="341" text-anchor="middle" font-size="10" fill="#4a4a4a">delivered.&lt;kind&gt;</text>
+<text x="795.0" y="354" text-anchor="middle" font-size="10" fill="#4a4a4a">ok → 成功</text>
+<text x="795.0" y="367" text-anchor="middle" font-size="10" fill="#4a4a4a">failed / cancelled → 失败并记原因</text>
+<rect x="960" y="282" width="250" height="124" rx="10" fill="#eaf6ec" stroke="#3f9a55" stroke-width="1.6"/>
+<text x="1085.0" y="302" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">④ 释放闸门</text>
+<text x="1085.0" y="328" text-anchor="middle" font-size="10" fill="#4a4a4a">名额归还，唤醒排队者</text>
+<text x="1085.0" y="341" text-anchor="middle" font-size="10" fill="#4a4a4a">worker 捕获 panic，</text>
+<text x="1085.0" y="354" text-anchor="middle" font-size="10" fill="#4a4a4a">一本出错不拖垮整队</text>
+<polyline points="300,344 340,344" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#bq-a)"/>
+<polyline points="630,344 670,344" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#bq-a)"/>
+<polyline points="920,344 960,344" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#bq-a)"/>
+<text x="30" y="442" text-anchor="start" font-size="12.5" font-weight="bold" fill="#1a1a1a">三、中止与断点续跑</text>
+<rect x="30" y="456" width="570" height="190" rx="10" fill="#fdf1ec" stroke="#c0602d" stroke-width="1.6" stroke-dasharray="6 4"/>
+<text x="315.0" y="476" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">全部中止（POST /api/batch/stop）</text>
+<text x="315.0" y="502" text-anchor="middle" font-size="10" fill="#4a4a4a">1  清空还没开始的（总数同步扣减）</text>
+<text x="315.0" y="515" text-anchor="middle" font-size="10" fill="#4a4a4a">2  正在处理的那本：</text>
+<text x="315.0" y="528" text-anchor="middle" font-size="10" fill="#4a4a4a">   · 还在等闸门 → 直接取消排队</text>
+<text x="315.0" y="541" text-anchor="middle" font-size="10" fill="#4a4a4a">   · 已在 book-serve 里 → POST /staging/cancel</text>
+<text x="315.0" y="554" text-anchor="middle" font-size="10" fill="#4a4a4a">3  EPUB 优化每处理完一个条目检查一次；按卷拆分每份之间检查</text>
+<text x="315.0" y="567" text-anchor="middle" font-size="10" fill="#4a4a4a">   → 终态 cancelled（不是 failed），原文件字节不变</text>
+<text x="315.0" y="580" text-anchor="middle" font-size="10" fill="#4a4a4a">4  单文件上传、PDF 优化没有安全中断点：如实回“无法中途停止”，跑完为止</text>
+<rect x="640" y="456" width="570" height="190" rx="10" fill="#fff3d6" stroke="#c9971f" stroke-width="1.6" stroke-dasharray="6 4"/>
+<text x="925.0" y="476" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">状态落盘与续跑</text>
+<text x="925.0" y="502" text-anchor="middle" font-size="10" fill="#4a4a4a">每次队列变化都写 state/batch.json（原子写）</text>
+<text x="925.0" y="515" text-anchor="middle" font-size="10" fill="#4a4a4a">网关重启（例如部署新版本）→ resume：</text>
+<text x="925.0" y="528" text-anchor="middle" font-size="10" fill="#4a4a4a">  · 上次进行中的那本放回队首</text>
+<text x="925.0" y="541" text-anchor="middle" font-size="10" fill="#4a4a4a">  · 后台等 book-serve 就绪（最多约 2 分钟）</text>
+<text x="925.0" y="554" text-anchor="middle" font-size="10" fill="#4a4a4a">  · 按最新母版库重新校验每一本，已优化的不重做</text>
+<text x="925.0" y="567" text-anchor="middle" font-size="10" fill="#4a4a4a">  · 等待期间用户提交了新批量则不覆盖</text>
+<text x="925.0" y="580" text-anchor="middle" font-size="10" fill="#4a4a4a">没有未完成任务时，只读回“上次结果”供界面展示</text>
+</svg>

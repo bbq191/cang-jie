@@ -1,0 +1,98 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1400 790" font-family="sans-serif">
+<defs><marker id="top-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#555"/></marker><marker id="top-r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#b0451f"/></marker><marker id="top-g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2f7d45"/></marker></defs>
+<rect x="0" y="0" width="1400" height="790" fill="#fbfbfa"/>
+<text x="700.0" y="30" text-anchor="middle" font-size="18" font-weight="bold" fill="#1a1a1a">整体架构与部署拓扑</text>
+<text x="700.0" y="52" text-anchor="middle" font-size="12.5" fill="#6a6a6a">所有服务都跑在设备上；只有网关对外，其余只听本机 127.0.0.1；服务经 /upload 或直接读写目录与设备原生部分交互</text>
+<rect x="240" y="72" width="950" height="690" rx="14" fill="#f7f7f8" stroke="#8a8a99" stroke-width="1.4" stroke-dasharray="6 4"/>
+<text x="255" y="92" text-anchor="start" font-size="11.5" font-weight="bold" fill="#5a5a6a">reMarkable Paper Pro Move · 固件 3.28.0.172（不修改 xochitl 本体）</text>
+<rect x="30" y="100" width="190" height="110" rx="10" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.6"/>
+<text x="125.0" y="120" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">手机 / 电脑浏览器</text>
+<text x="125.0" y="146.5" text-anchor="middle" font-size="10.5" fill="#4a4a4a">https://10.11.99.1</text>
+<text x="125.0" y="160.0" text-anchor="middle" font-size="10.5" fill="#4a4a4a">或 https://shelf.local</text>
+<text x="125.0" y="173.5" text-anchor="middle" font-size="10.5" fill="#4a4a4a">（装一次私有 CA 证书）</text>
+<text x="125" y="232" text-anchor="middle" font-size="10.5" fill="#6a6a6a">USB 网线走 10.11.99.1</text>
+<text x="125" y="247" text-anchor="middle" font-size="10.5" fill="#6a6a6a">WiFi 走设备 IP</text>
+<rect x="262" y="104" width="886" height="90" rx="10" fill="#fff3d6" stroke="#c9971f" stroke-width="1.6"/>
+<text x="705.0" y="124" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">gateway · 0.0.0.0:443（唯一对外入口）</text>
+<text x="705.0" y="150.5" text-anchor="middle" font-size="10.5" fill="#4a4a4a">HTTPS（私有 CA）+ 登录密码 · 网页 UI · /api/&lt;服务&gt;/* 反向代理 · 服务注册表发现</text>
+<text x="705.0" y="164.0" text-anchor="middle" font-size="10.5" fill="#4a4a4a">批量队列（落盘续跑）· 并发/内存预算闸门 · SSE 事件汇聚 · 系统增强开关</text>
+<polyline points="220,150 262,150" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#top-a)"/>
+<text x="241" y="140" text-anchor="middle" font-size="10.5" fill="#555">HTTPS</text>
+<rect x="262" y="222" width="886" height="144" rx="10" fill="#f3faf4" stroke="#3f9a55" stroke-width="1.3" stroke-dasharray="6 4"/>
+<text x="274" y="240" text-anchor="start" font-size="11" font-weight="bold" fill="#2f6f40">书架线 shelf · 系统增强线 enhance 的 Web 服务</text>
+<rect x="274" y="250" width="206" height="104" rx="10" fill="#ffffff" stroke="#3f9a55" stroke-width="1.6"/>
+<text x="377.0" y="269" text-anchor="middle" font-size="12" font-weight="bold" fill="#1a1a1a">book-serve :8790</text>
+<text x="377.0" y="294" text-anchor="middle" font-size="10" fill="#4a4a4a">母版库：入库·优化·落库</text>
+<text x="377.0" y="307" text-anchor="middle" font-size="10" fill="#4a4a4a">投 xochitl（含 &gt;90MB 占位通道）</text>
+<text x="377.0" y="320" text-anchor="middle" font-size="10" fill="#4a4a4a">回收站 / 建文件夹队列</text>
+<rect x="494" y="250" width="206" height="104" rx="10" fill="#ffffff" stroke="#3f9a55" stroke-width="1.6"/>
+<text x="597.0" y="269" text-anchor="middle" font-size="12" font-weight="bold" fill="#1a1a1a">koreader-serve :8791</text>
+<text x="597.0" y="294" text-anchor="middle" font-size="10" fill="#4a4a4a">从母版库拷书进 KOReader</text>
+<text x="597.0" y="307" text-anchor="middle" font-size="10" fill="#4a4a4a">字体·词典·配置同步</text>
+<text x="597.0" y="320" text-anchor="middle" font-size="10" fill="#4a4a4a">高亮/生词只读端点</text>
+<rect x="714" y="250" width="206" height="104" rx="10" fill="#ffffff" stroke="#3f9a55" stroke-width="1.6"/>
+<text x="817.0" y="269" text-anchor="middle" font-size="12" font-weight="bold" fill="#1a1a1a">font-serve :8792</text>
+<text x="817.0" y="294" text-anchor="middle" font-size="10" fill="#4a4a4a">字体上传即装</text>
+<text x="817.0" y="307" text-anchor="middle" font-size="10" fill="#4a4a4a">fontconfig 中文回退链</text>
+<text x="817.0" y="320" text-anchor="middle" font-size="10" fill="#4a4a4a">字体菜单动态项</text>
+<rect x="934" y="250" width="206" height="104" rx="10" fill="#ffffff" stroke="#3f9a55" stroke-width="1.6"/>
+<text x="1037.0" y="269" text-anchor="middle" font-size="12" font-weight="bold" fill="#1a1a1a">wallpaper-serve :8793</text>
+<text x="1037.0" y="294" text-anchor="middle" font-size="10" fill="#4a4a4a">壁纸上传即用</text>
+<text x="1037.0" y="307" text-anchor="middle" font-size="10" fill="#4a4a4a">池化轮换</text>
+<text x="1037.0" y="320" text-anchor="middle" font-size="10" fill="#4a4a4a">写 SleepScreenPath 键</text>
+<polyline points="705,194 705,222" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#top-a)"/>
+<text x="770" y="213" text-anchor="middle" font-size="10.5" fill="#555">按注册表转发</text>
+<rect x="262" y="378" width="886" height="124" rx="10" fill="#f7f4fc" stroke="#7a56b5" stroke-width="1.3" stroke-dasharray="6 4"/>
+<text x="274" y="396" text-anchor="start" font-size="11" font-weight="bold" fill="#5a3f8a">笔记线 notes（独立目录，挂同一网关、同一载荷）</text>
+<rect x="274" y="404" width="206" height="88" rx="10" fill="#ffffff" stroke="#7a56b5" stroke-width="1.6"/>
+<text x="377.0" y="423" text-anchor="middle" font-size="12" font-weight="bold" fill="#1a1a1a">ink-serve :8795</text>
+<text x="377.0" y="448" text-anchor="middle" font-size="10" fill="#4a4a4a">监听书库→勾画与手写配对</text>
+<text x="377.0" y="461" text-anchor="middle" font-size="10" fill="#4a4a4a">条目库唯一写者 · 零网络</text>
+<rect x="494" y="404" width="206" height="88" rx="10" fill="#ffffff" stroke="#7a56b5" stroke-width="1.6"/>
+<text x="597.0" y="423" text-anchor="middle" font-size="12" font-weight="bold" fill="#1a1a1a">transcribe-serve :8796</text>
+<text x="597.0" y="448" text-anchor="middle" font-size="10" fill="#4a4a4a">裁图→视觉模型→草稿</text>
+<text x="597.0" y="461" text-anchor="middle" font-size="10" fill="#4a4a4a">出网</text>
+<rect x="714" y="404" width="206" height="88" rx="10" fill="#ffffff" stroke="#7a56b5" stroke-width="1.6"/>
+<text x="817.0" y="423" text-anchor="middle" font-size="12" font-weight="bold" fill="#1a1a1a">mind-serve :8797</text>
+<text x="817.0" y="448" text-anchor="middle" font-size="10" fill="#4a4a4a">按条目单发问 AI</text>
+<text x="817.0" y="461" text-anchor="middle" font-size="10" fill="#4a4a4a">出网</text>
+<rect x="934" y="404" width="206" height="88" rx="10" fill="#ffffff" stroke="#7a56b5" stroke-width="1.6"/>
+<text x="1037.0" y="423" text-anchor="middle" font-size="12" font-weight="bold" fill="#1a1a1a">note-serve :8798</text>
+<text x="1037.0" y="448" text-anchor="middle" font-size="10" fill="#4a4a4a">条目→设备笔记本 / md</text>
+<text x="1037.0" y="461" text-anchor="middle" font-size="10" fill="#4a4a4a">单篇 markdown 导入</text>
+<polyline points="1148,150 1172,150 1172,432 1148,432" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#top-a)"/>
+<text x="1172" y="196" text-anchor="middle" font-size="10.5" fill="#6a6a6a">同样</text>
+<text x="1172" y="210" text-anchor="middle" font-size="10.5" fill="#6a6a6a">经网关</text>
+<text x="1172" y="224" text-anchor="middle" font-size="10.5" fill="#6a6a6a">代理</text>
+<rect x="1215" y="404" width="170" height="88" rx="10" fill="#fff3d6" stroke="#c9971f" stroke-width="1.6" stroke-dasharray="6 4"/>
+<text x="1300.0" y="423" text-anchor="middle" font-size="12" font-weight="bold" fill="#1a1a1a">云端模型 API</text>
+<text x="1300.0" y="448" text-anchor="middle" font-size="10" fill="#4a4a4a">DashScope / OpenAI</text>
+<text x="1300.0" y="461" text-anchor="middle" font-size="10" fill="#4a4a4a">Gemini / DeepSeek</text>
+<text x="1300.0" y="474" text-anchor="middle" font-size="10" fill="#4a4a4a">设备自己 WiFi 直连</text>
+<polyline points="1148,470 1215,470" fill="none" stroke="#8a6d00" stroke-width="1.6" stroke-dasharray="6 4" marker-end="url(#top-a)"/>
+<text x="1181" y="462" text-anchor="middle" font-size="10" fill="#8a6d00">出网</text>
+<rect x="262" y="518" width="886" height="34" rx="10" fill="#f2f2f5" stroke="#8a8a99" stroke-width="1.6" stroke-dasharray="6 4"/>
+<text x="705" y="540" text-anchor="middle" font-size="10.5" fill="#4a4a4a">共享底座 rmsvc-core：路径(XDG) · 服务注册表 · HTTP 适配 · 流式 multipart · 事件总线(SSE) · xochitl 注入/找书 · fswatch</text>
+<text x="274" y="584" text-anchor="start" font-size="11" font-weight="bold" fill="#5a5a6a">被增强的设备原生部分</text>
+<polyline points="450,552 450,600" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#top-a)"/>
+<polyline points="715,552 715,600" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#top-a)"/>
+<polyline points="1003,552 1003,600" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#top-a)"/>
+<rect x="262" y="600" width="310" height="140" rx="10" fill="#fdf1ec" stroke="#c0602d" stroke-width="1.6"/>
+<text x="417.0" y="620" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">xochitl（官方阅读器/书库）</text>
+<text x="417.0" y="646" text-anchor="middle" font-size="10" fill="#4a4a4a">书库目录 ~/.local/share/remarkable/xochitl</text>
+<text x="417.0" y="659" text-anchor="middle" font-size="10" fill="#4a4a4a">网页 /upload（约 100MB 上限，</text>
+<text x="417.0" y="672" text-anchor="middle" font-size="10" fill="#4a4a4a">大文件走占位+磁盘替换绕开）</text>
+<text x="417.0" y="685" text-anchor="middle" font-size="10" fill="#4a4a4a">书库文件可被 book-serve 直接写</text>
+<rect x="590" y="600" width="250" height="140" rx="10" fill="#eaf6ec" stroke="#3f9a55" stroke-width="1.6"/>
+<text x="715.0" y="620" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">KOReader</text>
+<text x="715.0" y="646" text-anchor="middle" font-size="10" fill="#4a4a4a">经 appload 侧载</text>
+<text x="715.0" y="659" text-anchor="middle" font-size="10" fill="#4a4a4a">书目录/配置由</text>
+<text x="715.0" y="672" text-anchor="middle" font-size="10" fill="#4a4a4a">koreader-serve 管理</text>
+<text x="715.0" y="685" text-anchor="middle" font-size="10" fill="#4a4a4a">侧栏入口靠 qmd 注入</text>
+<rect x="858" y="600" width="290" height="140" rx="10" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.6"/>
+<text x="1003.0" y="620" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">xovi 扩展 + qmd 注入</text>
+<text x="1003.0" y="646" text-anchor="middle" font-size="10" fill="#4a4a4a">hl-snap 荧光笔 CJK 吸附</text>
+<text x="1003.0" y="659" text-anchor="middle" font-size="10" fill="#4a4a4a">handwriting-stroke 笔锋渲染</text>
+<text x="1003.0" y="672" text-anchor="middle" font-size="10" fill="#4a4a4a">回收站/建夹/侧栏入口代理</text>
+<text x="1003.0" y="685" text-anchor="middle" font-size="10" fill="#4a4a4a">（轮询 book-serve 的队列）</text>
+</svg>
