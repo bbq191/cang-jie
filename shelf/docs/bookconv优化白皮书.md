@@ -14,7 +14,7 @@
 > 侧" 这类说的是"在开发机/CI 上跑测试"（跟 `shelf/host/` 目录无关的另一个含义）的地方，那些依旧
 > 准确。`bin/epub_optimize.rs`（设备/开发机共用的 CLI 小工具，跟 `optimize_epub_with` 同一份
 > 代码）本身没有删，只是不再有 `shelf push`/`wash_epub.sh` 这样的自动化调用方了。完整决策记录
-> 见 `shelf/README.md`「host CLI（2026-09-18 已砍）」节。
+> 见 `shelf/docs/reMarkable书架白皮书.md` 附录 B（原 `shelf/README.md`「host CLI（2026-09-18 已砍）」节，2026-09-20 迁入）。
 
 ## 00｜定位与职责
 
