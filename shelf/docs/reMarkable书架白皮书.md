@@ -1866,6 +1866,26 @@ md5 校验通过、`systemctl restart` 后均 `active`/`NRestarts=0`。但停止
 **都还没有用户独立复核过**；闸门本身"两本大书是否真被网关串行化+VmHWM 不叠加"这条最核心的
 验证仍是老缺口，没有任何新进展。
 
+## 03bm｜耗电与日志全面核查：列表轮询、wifi-watch、孤儿记录（2026-09-20，真机通，✅已解决）
+
+**起因**：用户反馈"book-serve 耗电远超其他"，并要求核查全部日志。
+
+**方法**：battop 数据按小时拆（`enhance/battop` 的 `samples-*.tsv`，口径=各服务累计 CPU 毫秒）；设备 `/proc/<pid>/stat` 的 utime+stime 前后差量测稳态；`journalctl` 按单元/来源去数字聚合。
+
+**结论与修复**
+1. **book-serve 空闲不耗电**：夜间小时 0.2–0.5 s/h；9/19 全天 15211 s 是我反复跑优化测试。图片解码/缩放/编码的 CPU 是正当负载。
+2. **真问题一：列表判定每次开 zip**。`Staging::list()` 对每本 EPUB 开两次 zip 读中央目录，`optimized_version_file` 用裸 `File`（每条目十几次几字节 read 系统调用），批量优化时前端每 3 秒轮询。设备实测 10 本×60MB 单次列表 0.2 s CPU。修=套 `BufReader` + 按（大小,mtime）缓存 `probe_level` 结果 → 冷 <0.01 s、热 ~0.003 s（约 70 倍）。
+3. **真问题二：wifi-watch 每 15 秒 fork 一串命令**（rfkill/nmcli/grep/head/cut），开机一小时子进程累计 16 s CPU（≈0.46%），是 book-serve 空闲的 3 倍。修=链路正常时只读 `/sys/class/net/wlan0/carrier`（shell 内建 `read`，零 fork），只有 carrier≠1 才走原慢路径；固化频段/省电只在 carrier 0→1 跳变与每 10 分钟兜底时做。稳态 120 s 由约 37 ticks 降到 4 ticks（≈9 倍），主机用桩 `nmcli`/`rfkill` 覆盖常态/假死/接口 down/跳变四场景。脚本与单元放回 `packaging/wifi-watch/`（此前仓库里没有）。
+4. **顺带抓到的 bug：powersave 判据永不成立**。`nmcli -g 802-11-wireless.powersave` 回的是文字 `disable`，脚本拿它跟 `"2"` 比 → 永远不等 → 每次开机/服务启动都白改一遍并 `con up` 断线重连 WiFi（日志 9/17–9/20 每次都有）。修=接受 `2|disable|"2 (disable)"`，重启服务后不再重连。
+5. **孤儿边车**：`.<书名>.delivered` 在书被外部清掉后残留（设备上 28 个），且同名新书会**继承旧的"已加入/渲染"记录**。修=`stage_new`/`stage_from_path` 落地前清目标名的旧边车；book-serve 启动时 `gc_orphan_sidecars()` 清孤儿。
+6. **渲染自检噪声**：投完就删书时自检线程写结果失败，刷"母版库里没有这本书"日志。修=书已不在则静默跳过。
+
+**核查后确认无需处理**
+- 内核 warn（iw61x CMD_CANCEL、regulator of_node 等）是这颗 SoC 常见硬件噪声；OOM 只出现在 9/17（OOM 架构修复之前）。
+- xochitl 日志里 `rm.epub.fragment: Opening and ending tag mismatch`、`Images/cover.jpg` 找不到：《绝叫》每章 `<head>` 里有 `<img src="../Images/cover.jpg"/></div>*/` 残留，是**原书自带的损坏模板**（CSS 注释里的封面 SVG 片段；原书 `cover.jpg` 本就不存在，真封面是 `cover00224.jpeg`），不是优化器引入；xochitl 容错，页数/翻页正常，未处理。DuoKan 字体 `@font-face` 指向不存在的 ttf 同理（原书缺字体）。
+- `rm-sync: Local immutable file changed: <uuid>.epub`：直投/封面无损修补替换了磁盘上的 EPUB，xochitl 云同步察觉；设备未走云同步，不影响。
+- `cangjie-backups` 2.0 GB：170 份历次部署二进制备份，/home 剩 40 GB，不处理。
+
 ## 05｜真机待办（2026-09-06 刷新；2026-09-09 补记 §03ad 漫画超限分支复验、§03ae i18n 架子、§03af UI 人性化批量修复、§03aj 管理二级 tab+系统增强开关；2026-09-10 补记 §03an 正文全量 i18n、§03aq 网文留白排查；2026-09-16 补记 §03ar KOReader 高亮/生词只读端点、§03as notes_vault 配置项、§03at gateway/shelf-gateway 双单元问题（用户拍板后已删旧符号链接修复，真机验证过）、§03au 状态提示停留时间修复；2026-09-17 补记 §03av EPUB 线四原则功能层真机验证通过，发现 `trim_margins` 真机性能问题；2026-09-18 补记 §03aw 脚注撤回复核+异步优化全链路真机通+防双击，发现 Anchor 模式嵌套 `<p>` 潜在问题；2026-09-18 补记 §03ax 脚注返回浮标已有解（更正 §03aw 的不准确记录）、裁边真机核实无误、超限漫画按卷拆分投原生真机通、用户拍照发现拆分卷原生留白+已修复待复验；2026-09-19 补记 §03ay 落库改异步+《疯探》"目录被误删"根因修复、§03az dtb:uid 根因修复+《雪人》分部目录重建真机通、§03ba 真机内存 OOM 危机→流式优化架构真机通+DOCTYPE 第二根因、§03bb《疯探》目录入口深度排查暂停在"确认是 content.opf 但未锁定触发点"；2026-09-19 补记 §03bc 反编译 xochitl 二进制坐实真正根因——硬编码死查 manifest `id="ncx"`，真机验证通过，问题✅已解决（`OPTIMIZE_VERSION` 14）；2026-09-19 补记 §03bd font-serve 字体菜单"换字体不生效/删除后仍显示存在"（用户自诊同根因）真机验证通过，问题✅已解决；2026-09-19 补记《镖人》投原生无反应排查——comic_split.rs 多层嵌套 NCX 边界计算 panic（book-serve 进程被摔炸）+ 落库拆分路径 OOM 风险+xochitl `/upload` 真实硬上限 100MB（原配置 150MB 是从未验证过的猜测值）+ 单卷仍超限的按页再拆兜底，四层独立问题全部修完，11 卷真机全部投递成功，完整方法论见 `bookconv优化白皮书.md` §15；2026-09-19 补记 §03be 落库进度条不推 SSE 事件已修+「加入 xochitl → 文件夹」填名不建文件夹真机端到端已解决（`git show` 从 2026-09-15 死代码删除提交里原样捞回 `mkdir.rs`+`shelf-mkdir-agent.qmd`，真机核对 `.metadata` 坐实文件夹真的建出来了，反编译当年"没有真机点过对话框"这条缺口这次补上）；2026-09-19 补记 §03bf「加入 KOReader」进度条不刷新（koreader-serve 同步调用没接入忙态系统，补前端本地忙态）已修+《乱马1/2》带斜杠文件夹名建不出来（`MkdirQueue::add` 误伤性拒绝含 `/` 的合法书名/文件夹名，整条删除）已修，均真机端到端复现+验证通过，问题✅已解决；2026-09-19 补记 §03bg 优化操作补真实分步进度（`OptimizeCheck.progress`，跟漫画/流式与否无关，之前压根没有这个字段）+确认加进度回调不能实质省内存（图片瓶颈已经是逐张处理，§03ba 解决过了），真机拿《飘·上册》端到端观察到进度数字推进，问题✅已解决；2026-09-19 补记 §03bh OOM 排查坐实
 `Staging::deliver()` 落库不拆分路径是唯一未修的真实内存风险（三份数据叠加峰值 ~180-270MB）→
 改流式上传+流式自检，真机 `VmHWM` 观测 80MB 测试书投递全程 3.2-3.5KB 数量级，问题✅已解决；

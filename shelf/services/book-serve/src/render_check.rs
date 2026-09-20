@@ -25,6 +25,10 @@ pub const WARN_RATIO: f64 = 0.5;
 
 pub fn run(staging: &Staging, bus: &EventBus, lib_dir: &Path, plan: &RenderPlan) {
     let write = |uuid: &str, pages: u64, status: &str| {
+        // 用户在自检期间把书从母版库删了（投完就删很常见）：结果没处可记，静默跳过，不当成失败刷日志。
+        if !staging.has(&plan.name) {
+            return;
+        }
         let rc = RenderCheck { uuid: uuid.to_string(), pages, expected: plan.expected, status: status.to_string(), at: now() };
         if let Err(e) = staging.set_render(&plan.name, rc) {
             println!("[book-serve] 渲染自检记录《{}》失败: {e}", plan.name);
