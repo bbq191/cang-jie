@@ -8,6 +8,7 @@
 use rmsvc_core::http::{ApiError, ApiResult, Reply, Request};
 use rmsvc_core::paths::Paths;
 use rmsvc_core::registry;
+use std::time::{Duration, Instant};
 
 /// 一个可管理的领域模块（网关自身不在此列）。
 pub struct Module {
@@ -43,13 +44,49 @@ pub fn service_of(seg: &str) -> Option<&'static str> {
     by_seg(seg).map(|m| m.service)
 }
 
+/// 外部命令默认超时。`systemctl start/stop` 正常几十毫秒到几秒；给 30 秒是为了容纳慢启动服务，
+/// 又不至于在 systemd 卡死（2026-08-29 cgroup/RCU 事故那类）时让请求线程无限堆积。
+const RUN_TIMEOUT: Duration = Duration::from_secs(30);
+/// 卸载脚本要 stop 单元、删二进制/qmd，宽一些。
+const UNINSTALL_TIMEOUT: Duration = Duration::from_secs(180);
+
 /// `pub(crate)`：`enhance::battop` 复用同一套 systemctl 调用（避免重新实现一遍 `Command` 样板）。
+/// 带 [`RUN_TIMEOUT`] 超时，超时会 kill 子进程并报错。
 pub(crate) fn run(cmd: &str, args: &[&str]) -> Result<String, String> {
-    let out = std::process::Command::new(cmd).args(args).output().map_err(|e| format!("{cmd}: {e}"))?;
-    if out.status.success() {
-        Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+    run_timeout(cmd, args, RUN_TIMEOUT)
+}
+
+/// 起子进程等它结束，最多等 `timeout`。stdout/stderr 各用一条线程排空（否则输出超过管道缓冲会把子进程写阻塞，
+/// 被误判成超时）；超时 kill 并返回错误，不 join 读线程（孙进程可能还握着管道，别被它拖住）。
+pub(crate) fn run_timeout(cmd: &str, args: &[&str], timeout: Duration) -> Result<String, String> {
+    use std::io::Read;
+    use std::process::Stdio;
+    let mut child = std::process::Command::new(cmd).args(args).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped()).spawn().map_err(|e| format!("{cmd}: {e}"))?;
+    let drain = |mut r: Box<dyn Read + Send>| std::thread::spawn(move || {
+        let mut v = Vec::new();
+        let _ = r.read_to_end(&mut v);
+        v
+    });
+    let out_t = child.stdout.take().map(|s| drain(Box::new(s)));
+    let err_t = child.stderr.take().map(|s| drain(Box::new(s)));
+    let deadline = Instant::now() + timeout;
+    let status = loop {
+        match child.try_wait().map_err(|e| format!("{cmd}: {e}"))? {
+            Some(st) => break st,
+            None if Instant::now() >= deadline => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(format!("{cmd} 超过 {} 秒未结束，已终止", timeout.as_secs()));
+            }
+            None => std::thread::sleep(Duration::from_millis(20)),
+        }
+    };
+    let text = |t: Option<std::thread::JoinHandle<Vec<u8>>>| t.and_then(|h| h.join().ok()).map(|v| String::from_utf8_lossy(&v).trim().to_string()).unwrap_or_default();
+    let (out, err) = (text(out_t), text(err_t));
+    if status.success() {
+        Ok(out)
     } else {
-        Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
+        Err(err)
     }
 }
 
@@ -121,13 +158,25 @@ pub fn uninstall(paths: &Paths, seg: &str, req: &mut Request<'_>) -> ApiResult {
     if !script.is_file() {
         return Err(ApiError::bad("设备上没有 shelf-uninstall（重装一次 shelf 会装上它），网页卸载不可用；可 SSH 跑 uninstall.sh --only"));
     }
-    let out = run("sh", &[&script.to_string_lossy(), "--only", m.only]).map_err(ApiError::internal)?;
+    let out = run_timeout("sh", &[&script.to_string_lossy(), "--only", m.only], UNINSTALL_TIMEOUT).map_err(ApiError::internal)?;
     Ok(Reply::ok(&serde_json::json!({"ok": true, "service": m.service, "log": out})))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn run_timeout_captures_output_kills_hung_child_and_survives_big_output() {
+        assert_eq!(run_timeout("sh", &["-c", "echo hi"], Duration::from_secs(5)).unwrap(), "hi");
+        assert_eq!(run_timeout("sh", &["-c", "echo bad >&2; exit 3"], Duration::from_secs(5)).unwrap_err(), "bad");
+        let t = Instant::now();
+        let e = run_timeout("sh", &["-c", "sleep 30"], Duration::from_millis(200)).unwrap_err();
+        assert!(e.contains("未结束") && t.elapsed() < Duration::from_secs(5), "{e}");
+        // 输出远超管道缓冲（64KB）也不能因为没人读而被误判超时
+        let big = run_timeout("sh", &["-c", "head -c 300000 /dev/zero | tr '\\0' 'x'"], Duration::from_secs(10)).unwrap();
+        assert_eq!(big.len(), 300000);
+    }
+
     #[test]
     fn service_of_from_catalog() {
         assert_eq!(service_of("books"), Some("book-serve"));
