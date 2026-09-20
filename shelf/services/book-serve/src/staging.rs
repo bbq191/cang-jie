@@ -227,7 +227,8 @@ impl Staging {
         // 相对物理页面有个消不掉的固定内边距（UI 只给 28/56/112 三档、改 `.content` 文件也没用，
         // xochitl 渲染时会用自己的逻辑覆盖回去），CSS 层面也测过绕不开；PDF 是完全独立的直接光栅化
         // 路径，真机测左右留白能到 0.00%。详见 `bookconv::comic_pdf` 模块文档注释。
-        if bookconv::comic_detect::is_comic_epub_file(&p) {
+        // 只有"漫画且整本零可见文字"才转 PDF；含正文的漫画（版权页/章节标题/台词）转 PDF 会丢字，留在 EPUB 流程。
+        if bookconv::comic_detect::is_text_free_comic_epub_file(&p) {
             return self.optimize_comic_to_pdf(name, &p, on_progress);
         }
         // 点前缀隐藏名——真机 552MB《镖人》全集坐实优化能跑到分钟级（流式虽然不再吃内存，但大书

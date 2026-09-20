@@ -27,7 +27,7 @@
 //! 边界不完全重合。要根治需要按字符级别（不是行级别）精确圈公式区域，这次没做，记在这里避免
 //! 以后误以为是新 bug。
 
-use crate::convert::pdfwrite::{self, PdfImage, PdfPieceWriter};
+use crate::convert::pdfwrite::{self, PdfPieceWriter};
 use crate::epub::{Book, BookMeta, Chapter, Resource};
 use std::path::Path;
 
@@ -454,11 +454,19 @@ pub struct PdfTrimReport {
     pub pages: usize,
 }
 
-/// 无文字层/漫画 PDF：逐页取主图片字节→ `imgopt::trim_margins` 裁边→喂给 `PdfPieceWriter`
-/// 写出新 PDF（复用漫画 EPUB→PDF 那条产线的写手）。裁不出白边（`trim_margins` 返回 `None`）
-/// 的页原图直接写入，不是错误。**每页只取该页第一张图片**（跟 `classify_pdf` 的"整页大图"
-/// 假设一致——这条路径本来就是给"一页一图"的扫描件/漫画 PDF 设计的，多图页只保留第一张，
-/// 不是遗漏，是这条路径的既定范围）。
+/// 无文字层/漫画 PDF：逐页取主图片字节→ `imgopt::prepare_comic_page_for_pdf`（裁边+按需缩放，单趟）
+/// →喂给 `PdfPieceWriter` 写出新 PDF（复用漫画 EPUB→PDF 那条产线的写手）。
+///
+/// **不允许变动书籍内容**（用户 2026-09-20 明确要求），所以这条路径**只处理"零文字、每页恰好一张
+/// 整页图"的 PDF**——重写页面等于丢掉图片以外的一切，其它形状一律拒绝并保持原文件不动：
+/// - 有任何可提取文字（含扫描件的 OCR 隐形文字层）：重写会丢文字层；
+/// - 某页不是"单张整页图"（矢量图形、多图拼版、纯文字页）：重写会丢掉这一页的其余内容；
+/// - 无法确认没有文字层（提取失败）：宁可不动。
+/// 此前没有这些闸门，且 `encode_pdf_image` 名义上"给 trim_margins 用"却**从未调用 trim_margins**
+/// （实测根本没裁边）、`finish(&[])` 还把原 PDF 的书签全部丢掉。
+///
+/// **目录**：保留原 PDF 书签（页码映射到输出页，层级压平）；原文件没有书签则按页分段兜底
+/// （[`crate::comic_pdf::page_chunk_titles`]），保证输出一定有目录。
 pub fn optimize_pdf_trim_only(src: &Path, dst_tmp: &Path, mut on_progress: impl FnMut(usize, usize)) -> Result<PdfTrimReport, String> {
     let bytes = std::fs::read(src).map_err(|e| format!("读源文件失败: {e}"))?;
     let doc = lopdf::Document::load_mem(&bytes).map_err(|e| format!("PDF 结构解析失败: {e}"))?;
@@ -467,26 +475,34 @@ pub fn optimize_pdf_trim_only(src: &Path, dst_tmp: &Path, mut on_progress: impl 
     if page_count == 0 {
         return Err("PDF 没有可用页面".into());
     }
-    let mut writer = PdfPieceWriter::begin(page_count, false);
+    let text_pages = extract_positioned_text(&bytes).map_err(|e| format!("无法确认这个 PDF 没有文字层，为保住书籍内容不做改动：{e}"))?;
+    let text_chars: usize = text_pages.iter().map(|p| p.iter().filter(|c| c.ch != '\u{0}' && !c.ch.is_whitespace()).count()).sum();
+    if text_chars > 0 {
+        return Err(format!("这个 PDF 含 {text_chars} 个可提取文字（文字层），改写页面会丢掉文字，保持原样"));
+    }
+    for (i, (_, page_id)) in pages.iter().enumerate() {
+        let n_images = doc.get_page_images(*page_id).map(|v| v.len()).unwrap_or(0);
+        if n_images != 1 || !page_covered_by_big_image(&doc, *page_id) {
+            return Err(format!("第 {} 页不是\"单张整页图片\"（图片 {n_images} 张），改写页面会丢掉这一页的其余内容，保持原样", i + 1));
+        }
+    }
+    let mut titles: Vec<(usize, String)> = doc
+        .get_toc()
+        .map(|t| t.toc.iter().map(|e| (e.page.saturating_sub(1).min(page_count - 1), e.title.clone())).collect())
+        .unwrap_or_default();
+    if titles.is_empty() {
+        titles = crate::comic_pdf::page_chunk_titles(page_count);
+    }
+    let mut writer = PdfPieceWriter::begin(page_count, true);
     for (i, (_, page_id)) in pages.iter().enumerate() {
         on_progress(i, page_count);
         let images = doc.get_page_images(*page_id).map_err(|e| format!("读第 {} 页图片失败: {e}", i + 1))?;
-        let Some(src_img) = images.first() else {
-            return Err(format!("第 {} 页没有可裁边的图片", i + 1));
-        };
-        let raw = decode_pdf_image_to_bytes(&doc, src_img)?;
-        let trimmed = pdfwrite::image_from_bytes(&raw)
-            .ok()
-            .and_then(|img| encode_pdf_image(&img))
-            .and_then(|bytes| pdfwrite::image_from_bytes(&bytes).ok());
-        let piece = match &trimmed {
-            Some(t) => t,
-            None => &pdfwrite::image_from_bytes(&raw)?,
-        };
-        writer.write_page(piece)?;
+        let raw = decode_pdf_image_to_bytes(&doc, &images[0])?;
+        let sized = crate::imgopt::prepare_comic_page_for_pdf(&raw, pdfwrite::PDF_PAGE_W, pdfwrite::PDF_PAGE_H).unwrap_or(raw);
+        writer.write_page(&pdfwrite::image_from_bytes(&sized)?)?;
     }
     on_progress(page_count, page_count);
-    let out = writer.finish(&[])?;
+    let out = writer.finish(&titles)?;
     std::fs::write(dst_tmp, &out).map_err(|e| format!("写出临时文件失败: {e}"))?;
     Ok(PdfTrimReport { pages: page_count })
 }
@@ -528,19 +544,6 @@ fn encode_raw_pixels_png(pixels: &[u8], w: u32, h: u32, gray: bool) -> Result<Ve
         writer.write_image_data(pixels).map_err(|e| format!("PNG 编码数据失败: {e}"))?;
     }
     Ok(out)
-}
-
-fn encode_pdf_image(img: &PdfImage) -> Option<Vec<u8>> {
-    // trim_margins 输入输出都是"通用图片字节"（JPEG/PNG），`image_from_bytes` 产出的
-    // `PdfImage` 是 PDF 内嵌格式（可能是裸压缩像素），这里转一道给 `trim_margins` 用。
-    match img.filter {
-        pdfwrite::Filter::Dct => Some(img.data.clone()),
-        pdfwrite::Filter::Flate => {
-            let raw = miniz_oxide::inflate::decompress_to_vec_zlib(&img.data).ok()?;
-            let gray = img.color == pdfwrite::ColorSpace::Gray;
-            encode_raw_pixels_png(&raw, img.width, img.height, gray).ok()
-        }
-    }
 }
 
 // ============================================================================
@@ -594,24 +597,57 @@ pub fn optimize_pdf_to_epub(src: &Path, mut on_progress: impl FnMut(usize, usize
     for (idx, chars) in text_pages.iter().enumerate() {
         on_progress(page_count + idx, page_count * 2);
         let regions = &formula_regions[idx];
+        // 公式块先渲染成图片（同页多块共用一次整页渲染）。图片只是**补充**：文字流里不删任何字符。
+        let mut region_imgs: Vec<Option<String>> = vec![None; regions.len()];
+        if !regions.is_empty() {
+            if let Some(pdf) = &hayro_pdf {
+                if let Some(page) = pdf.pages().get(idx) {
+                    let cache = hayro::RenderCache::new();
+                    let pixmap = hayro::render(page, &cache, &hayro::hayro_interpret::InterpreterSettings::default(), &render_settings);
+                    for (bi, region) in regions.iter().enumerate() {
+                        if let Some(png) = crop_pixmap_to_png(&pixmap, region, page) {
+                            let path = format!("images/pdf_p{}_f{}.png", idx + 1, bi + 1);
+                            region_imgs[bi] = Some(format!("<p><img src=\"../{path}\" alt=\"formula\"/></p>"));
+                            resources.push(Resource { path, media_type: "image/png".to_string(), bytes: png });
+                        }
+                    }
+                }
+            }
+        }
         // 换行不等于换段——PDF 里一段话正常会自动折成好几个视觉行，只有行间垂直间距明显
         // 大于普通行高（约 1.5 倍字号，同一段落内的换行通常间距≈1 倍字号）才算真的换段。
         // 只按 `line` 变化就切 `<p>` 会把每一行拆成单独一段，读起来像分行诗不是正常段落
         // （2026-09-19 真机样本核对时发现）。
+        //
+        // **不允许变动书籍内容**（用户 2026-09-20 明确要求）：文字层里的每个字符都进文字流，包括公式
+        // 外接框内的——此前把框内字符整体丢掉，实测会把紧贴公式的正文单词一并吞掉（"the identity iπ
+        // e+1=0" 丢了 identity，"A final short section … symbol," 整半句消失）。公式图片在其所属段落
+        // 结束处补一张（`pending` 记录本段落里出现过的公式块，段落收尾时统一输出）。
         let mut html = String::new();
         html.push_str("<p>");
         let mut in_para = false;
         let mut last_line: Option<usize> = None;
         let mut last_y: Option<f64> = None;
-        for c in chars {
-            if regions.iter().any(|b| point_in_bbox(c.x, c.y, b)) {
-                continue; // 公式区域内的字符不进普通段落文字，改成后面统一插入的图片
+        let mut pending: Vec<usize> = Vec::new();
+        let mut flushed = vec![false; regions.len()];
+        let flush_pending = |html: &mut String, pending: &mut Vec<usize>, flushed: &mut Vec<bool>| {
+            for bi in pending.drain(..) {
+                if !flushed[bi] {
+                    flushed[bi] = true;
+                    if let Some(img) = &region_imgs[bi] {
+                        html.push_str(img);
+                    }
+                }
             }
+        };
+        for c in chars {
             if let Some(ll) = last_line {
                 if c.line != ll {
                     let gap = last_y.map(|ly| (ly - c.y).abs()).unwrap_or(0.0);
                     if gap > c.font_size.max(1.0) * 1.5 {
-                        html.push_str("</p><p>");
+                        html.push_str("</p>");
+                        flush_pending(&mut html, &mut pending, &mut flushed);
+                        html.push_str("<p>");
                         in_para = false;
                     } else {
                         html.push(' ');
@@ -620,6 +656,11 @@ pub fn optimize_pdf_to_epub(src: &Path, mut on_progress: impl FnMut(usize, usize
             }
             if c.ch == '\u{0}' {
                 continue;
+            }
+            if let Some(bi) = regions.iter().position(|b| point_in_bbox(c.x, c.y, b)) {
+                if !flushed[bi] && !pending.contains(&bi) {
+                    pending.push(bi);
+                }
             }
             html.push_str(&crate::util::xml_escape(&c.ch.to_string()));
             in_para = true;
@@ -631,19 +672,12 @@ pub fn optimize_pdf_to_epub(src: &Path, mut on_progress: impl FnMut(usize, usize
         } else {
             html.push_str("</p>");
         }
-        // 公式块渲染成图片，追加在段落之后（不做精确的行内位置插值——已知简化，见模块文档）。
-        if !regions.is_empty() {
-            if let Some(pdf) = &hayro_pdf {
-                if let Some(page) = pdf.pages().get(idx) {
-                    let cache = hayro::RenderCache::new();
-                    let pixmap = hayro::render(page, &cache, &hayro::hayro_interpret::InterpreterSettings::default(), &render_settings);
-                    for (bi, region) in regions.iter().enumerate() {
-                        if let Some(png) = crop_pixmap_to_png(&pixmap, region, page) {
-                            let path = format!("images/pdf_p{}_f{}.png", idx + 1, bi + 1);
-                            html.push_str(&format!("<p><img src=\"../{path}\" alt=\"formula\"/></p>"));
-                            resources.push(Resource { path, media_type: "image/png".to_string(), bytes: png });
-                        }
-                    }
+        flush_pending(&mut html, &mut pending, &mut flushed);
+        // 兜底：没有任何字符落进去的公式块（理论上不会）也别丢图。
+        for (bi, img) in region_imgs.iter().enumerate() {
+            if !flushed[bi] {
+                if let Some(img) = img {
+                    html.push_str(img);
                 }
             }
         }
@@ -666,7 +700,7 @@ pub fn optimize_pdf_to_epub(src: &Path, mut on_progress: impl FnMut(usize, usize
     // 章节正文前补一个 `<h2>` 标题元素——书签/字号识别出的标题这时候只是 nav.xhtml 的 TOC
     // 条目文字，正文本身原样含着那行字但没有任何视觉强调（等同于普通段落），读起来不像真实
     // 书籍章节。真实书籍章节页顶部同时有 TOC 条目和正文内可见的标题是标准约定，不是重复。
-    let with_heading = |title: &str, body: String| -> String { format!("<h2>{}</h2>{}", crate::util::xml_escape(title), body) };
+    let with_heading = |title: &str, body: String| -> String { promote_heading(title, body) };
 
     match toc {
         Some(toc) if !toc.toc.is_empty() => {
@@ -716,6 +750,30 @@ pub fn optimize_pdf_to_epub(src: &Path, mut on_progress: impl FnMut(usize, usize
     let report = PdfToEpubReport { pages: page_count, chapters: book.chapters.len(), images: total_images, formula_blocks: total_formula_blocks };
     mark_pdf_source(&mut book);
     Ok((book, report))
+}
+
+/// 把章节正文里**原有**的标题段落升级成 `<h2>`，不额外添加文字（此前 `<h2>标题</h2>` + 正文里原有的
+/// 标题段落，同一个标题在章内出现两次，属于改动书籍内容）。匹配 `<p>标题</p>`（整段就是标题）或
+/// `<p>标题 …`（标题与后文同段，拆成 `<h2>` + 剩余 `<p>`）；章内找不到就**不加**——宁可标题只留在
+/// 目录里也不往正文里塞原书没有的字。
+fn promote_heading(title: &str, body: String) -> String {
+    let t = crate::util::xml_escape(title.trim());
+    if t.is_empty() {
+        return body;
+    }
+    let whole = format!("<p>{t}</p>");
+    if let Some(i) = body.find(&whole) {
+        let mut out = body.clone();
+        out.replace_range(i..i + whole.len(), &format!("<h2>{t}</h2>"));
+        return out;
+    }
+    let prefix = format!("<p>{t} ");
+    if let Some(i) = body.find(&prefix) {
+        let mut out = body.clone();
+        out.replace_range(i..i + prefix.len(), &format!("<h2>{t}</h2><p>"));
+        return out;
+    }
+    body
 }
 
 fn point_in_bbox(x: f64, y: f64, b: &BBox) -> bool {
@@ -934,6 +992,45 @@ mod tests {
         assert!(!bytes.is_empty());
     }
 
+    /// 章节 HTML 的可见文字（去标签、去空白、还原 `&amp;` 等）。
+    fn visible(html: &str) -> String {
+        let no_tags = regex::Regex::new(r"(?s)<[^>]*>").unwrap().replace_all(html, "");
+        let t = no_tags.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">").replace("&quot;", "\"");
+        t.chars().filter(|c| !c.is_whitespace()).collect()
+    }
+
+    /// **不允许变动书籍内容**的核心不变量：PDF 文字层提取出的每个字符，按顺序原样出现在 EPUB 文字流里，
+    /// 不多不少（此前公式外接框内字符被整体丢弃，吞掉了 identity / 整半句正文；标题还被重复输出一遍）。
+    #[test]
+    fn epub_text_flow_equals_pdf_text_layer_exactly() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("sample.pdf");
+        std::fs::write(&src, SAMPLE_PDF).unwrap();
+        let expected: String = extract_positioned_text(SAMPLE_PDF)
+            .unwrap()
+            .iter()
+            .flatten()
+            .filter(|c| c.ch != '\u{0}')
+            .map(|c| c.ch)
+            .filter(|c| !c.is_whitespace())
+            .collect();
+        let (book, _) = optimize_pdf_to_epub(&src, |_, _| {}).unwrap();
+        let got: String = book.chapters.iter().map(|c| visible(&c.html_body)).collect();
+        assert_eq!(got, expected, "EPUB 文字流必须与 PDF 文字层逐字一致");
+        // 具体回归点：紧贴公式的正文单词与整半句不能丢；标题只出现一次。
+        assert!(got.contains("identity") && got.contains("quadraticformula"), "行内公式旁的单词被吞了");
+        assert!(got.contains("Afinalshortsection") && got.contains("onemoreinlinesymbol"), "整半句正文被吞了");
+        assert_eq!(got.matches("1Introduction").count(), 1, "章节标题不该重复输出");
+    }
+
+    #[test]
+    fn promote_heading_upgrades_existing_paragraph_without_adding_text() {
+        assert_eq!(promote_heading("1 Intro", "<p>1 Intro</p><p>body</p>".into()), "<h2>1 Intro</h2><p>body</p>");
+        assert_eq!(promote_heading("1 Intro", "<p>1 Intro Some text</p>".into()), "<h2>1 Intro</h2><p>Some text</p>");
+        // 章内找不到标题段落：不往正文里塞原书没有的字。
+        assert_eq!(promote_heading("Missing", "<p>body</p>".into()), "<p>body</p>");
+    }
+
     #[test]
     fn looks_like_pdf_derived_epub_detects_marker() {
         let dir = tempfile::tempdir().unwrap();
@@ -982,5 +1079,42 @@ mod tests {
         let report = optimize_pdf_trim_only(&src, &dst, |_, _| {}).unwrap();
         assert_eq!(report.pages, 3);
         assert!(pdfwrite::looks_like_own_bookconv_pdf(&dst), "裁边输出应该能被识别成自产 PDF");
+        // 要有目录：源 PDF 没有书签 → 按页分段兜底，不是空的。
+        let titles = pdfwrite::PdfFileReader::open(&dst).unwrap().outline_titles().unwrap();
+        assert_eq!(titles, vec![(0, "第 1–3 页".to_string())]);
+    }
+
+    fn red_png_pdf(pages: usize, titles: &[(usize, String)]) -> Vec<u8> {
+        // 与设备页面(954×1696)同宽高比的整页图，才满足"单张整页图"判据。
+        let mut png = Vec::new();
+        image::DynamicImage::ImageRgb8(image::RgbImage::from_pixel(95, 169, image::Rgb([200, 30, 30])))
+            .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+            .unwrap();
+        let img = pdfwrite::image_from_bytes(&png).unwrap();
+        let imgs: Vec<_> = (0..pages).map(|_| img.clone()).collect();
+        pdfwrite::images_to_pdf_with_toc(&imgs, titles).unwrap()
+    }
+
+    #[test]
+    fn trim_only_preserves_original_bookmarks() {
+        // 原书签必须保留（不许变动书籍内容 + 要有目录），页码原样。
+        let titles = vec![(0, "第一卷".to_string()), (2, "第二卷".to_string())];
+        let pdf = red_png_pdf(4, &titles);
+        let dir = tempfile::tempdir().unwrap();
+        let (src, dst) = (dir.path().join("a.pdf"), dir.path().join("o.pdf"));
+        std::fs::write(&src, &pdf).unwrap();
+        optimize_pdf_trim_only(&src, &dst, |_, _| {}).unwrap();
+        assert_eq!(pdfwrite::PdfFileReader::open(&dst).unwrap().outline_titles().unwrap(), titles);
+    }
+
+    #[test]
+    fn trim_only_refuses_pdf_with_text_layer_and_leaves_it_untouched() {
+        // 文字样本含大量文字：重写页面会丢文字层——必须拒绝，且不产出任何文件。
+        let dir = tempfile::tempdir().unwrap();
+        let (src, dst) = (dir.path().join("t.pdf"), dir.path().join("o.pdf"));
+        std::fs::write(&src, SAMPLE_PDF).unwrap();
+        let err = optimize_pdf_trim_only(&src, &dst, |_, _| {}).unwrap_err();
+        assert!(err.contains("文字"), "应说明是因为文字层: {err}");
+        assert!(!dst.exists());
     }
 }
