@@ -737,6 +737,39 @@ impl Staging {
     fn try_deliver_split(&self, name: &str, p: &Path, folder: &str, bus: &rmsvc_core::events::EventBus) -> Result<Option<DeliverOutcome>, String> {
         let stem = name.strip_suffix(".epub").unwrap_or(name).to_string();
         let native_limit = self.native_limit;
+        self.deliver_pieces(name, &stem, "application/epub+zip", folder, bus, |upload| bookconv::comic_split::deliver_split_streaming(p, native_limit, upload))
+    }
+
+    /// 超预算漫画 PDF 的拆分投递——[`Self::try_deliver_split`] 的 PDF 版本。不是"我们自己产出的
+    /// 漫画 PDF"（没有书签目录，比如用户自己上传的原生大部头 PDF）/ 整本已在预算内 →
+    /// `Ok(None)`，调用方退回改动前的整本拒绝。
+    ///
+    /// 2026-09-19 改走流式 `comic_pdf::deliver_split_pdf_streaming`——真机 245MB/600页 样本坐实
+    /// 过前身版本（一次性 `extract_pages` 把全书图片攒成 `Vec<PdfImage>`）`VmHWM` 峰值到过
+    /// 525MB；现在逐份读逐份传逐份丢，峰值只有"一份的体积"，跟 EPUB 那条 [`Self::try_deliver_
+    /// split`] 是同一套纪律。单页体积本身超预算这种边界情况这里没有单独处理——上游 `imgopt::
+    /// downscale_for_epub_comic` 已经把每张图钳制在 954×1696 像素以内，JPEG 质量 95 下单页实际
+    /// 不可能逼近 90MB 量级的预算，这个假设不成立时（比如以后画质/尺寸上限调高很多）需要回来
+    /// 重新评估。
+    fn try_deliver_split_pdf(&self, name: &str, p: &Path, folder: &str, bus: &rmsvc_core::events::EventBus) -> Result<Option<DeliverOutcome>, String> {
+        let stem = name.strip_suffix(".pdf").unwrap_or(name).to_string();
+        let native_limit = self.native_limit;
+        self.deliver_pieces(name, &stem, "application/pdf", folder, bus, |upload| bookconv::comic_pdf::deliver_split_pdf_streaming(p, native_limit, upload))
+    }
+
+    /// EPUB / PDF 两条拆分投递（[`Self::try_deliver_split`] / [`Self::try_deliver_split_pdf`]）共用的"逐份上传"外壳
+    /// （2026-09-20 代码质量审计：两处约 40 行逐字重复，只差"谁来切"和 mime）。`split` 拿到一个"上传一份"的回调，
+    /// 调 `bookconv` 里对应的流式拆分函数把它传进去；这里负责取消检查 → 上传 → 等 xochitl 渲染确认 → 写进度 → 汇总回执。
+    /// 返回 `Ok(None)` ＝不适用拆分（调用方退回整本拒绝）。
+    fn deliver_pieces(
+        &self,
+        name: &str,
+        stem: &str,
+        mime: &str,
+        folder: &str,
+        bus: &rmsvc_core::events::EventBus,
+        split: impl FnOnce(&mut dyn FnMut(&str, &[u8], usize, usize) -> Result<(), String>) -> Result<Option<bookconv::comic_split::StreamSplitOutcome>, String>,
+    ) -> Result<Option<DeliverOutcome>, String> {
         let lib_dir = self.xochitl.library_dir().to_path_buf();
         // 逐份上传/等渲染都可能耗时到分钟级（真机《镖人》11 卷坐实）——每完成一份就把进度写进
         // sidecar 的 `deliver` 字段（status 仍是 "pending"，`progress.{done,total}` 是结构化
@@ -748,12 +781,12 @@ impl Staging {
         // 新值（2026-09-19 用户反馈"进度条不会动，要自己刷新"，根因是这个函数当时没拿到 `bus`）。
         let mut done_titles: Vec<String> = Vec::new();
         self.mark_cancellable(name);
-        let outcome = bookconv::comic_split::deliver_split_streaming(p, native_limit, |piece_name, bytes, idx, total| {
+        let outcome = split(&mut |piece_name, bytes, idx, total| {
             if self.is_cancelled(name) {
                 return Err(optimize::CANCELLED_MSG.to_string()); // 份与份之间是安全的中断点
             }
             let since_ms = rmsvc_core::clock::now_ms();
-            self.xochitl.upload(bytes, piece_name, "application/epub+zip", folder).map(|_| ())?;
+            self.xochitl.upload(bytes, piece_name, mime, folder).map(|_| ())?;
             let plan = RenderPlan { name: piece_name.to_string(), title: None, expected: 0, since_ms };
             if render_check::probe(&lib_dir, &plan).is_none() {
                 rmsvc_core::fswatch::watch_until(&lib_dir, render_check::DEBOUNCE, PIECE_RENDER_TIMEOUT, |_| render_check::probe(&lib_dir, &plan).is_some());
@@ -771,56 +804,7 @@ impl Staging {
             bus.publish("books", "staging");
             Ok(())
         })?;
-        let Some(outcome) = outcome else { return Ok(None) }; // 不是漫画，或没超预算——退回原来的整本流程
-        if outcome.delivered.is_empty() {
-            return Err(format!("《{name}》按卷拆分后一份都没能投上：{}", outcome.failed.join("；")));
-        }
-        let mut message = format!("《{stem}》超限，已按卷拆分加入 xochitl：{}", outcome.delivered.join("、"));
-        if !outcome.failed.is_empty() {
-            message.push_str(&format!("（{} 未投：{}）", outcome.failed.len(), outcome.failed.join("；")));
-        }
-        let _ = self.mark_delivered(name, Reader::Native);
-        Ok(Some(DeliverOutcome { message, render: None }))
-    }
-
-    /// 超预算漫画 PDF 的拆分投递——[`Self::try_deliver_split`] 的 PDF 版本。不是"我们自己产出的
-    /// 漫画 PDF"（没有书签目录，比如用户自己上传的原生大部头 PDF）/ 整本已在预算内 →
-    /// `Ok(None)`，调用方退回改动前的整本拒绝。
-    ///
-    /// 2026-09-19 改走流式 `comic_pdf::deliver_split_pdf_streaming`——真机 245MB/600页 样本坐实
-    /// 过前身版本（一次性 `extract_pages` 把全书图片攒成 `Vec<PdfImage>`）`VmHWM` 峰值到过
-    /// 525MB；现在逐份读逐份传逐份丢，峰值只有"一份的体积"，跟 EPUB 那条 [`Self::try_deliver_
-    /// split`] 是同一套纪律。单页体积本身超预算这种边界情况这里没有单独处理——上游 `imgopt::
-    /// downscale_for_epub_comic` 已经把每张图钳制在 954×1696 像素以内，JPEG 质量 95 下单页实际
-    /// 不可能逼近 90MB 量级的预算，这个假设不成立时（比如以后画质/尺寸上限调高很多）需要回来
-    /// 重新评估。
-    fn try_deliver_split_pdf(&self, name: &str, p: &Path, folder: &str, bus: &rmsvc_core::events::EventBus) -> Result<Option<DeliverOutcome>, String> {
-        let stem = name.strip_suffix(".pdf").unwrap_or(name).to_string();
-        let lib_dir = self.xochitl.library_dir().to_path_buf();
-        let mut done_titles: Vec<String> = Vec::new();
-        self.mark_cancellable(name);
-        let outcome = bookconv::comic_pdf::deliver_split_pdf_streaming(p, self.native_limit, |piece_name, bytes, idx, total| {
-            if self.is_cancelled(name) {
-                return Err(optimize::CANCELLED_MSG.to_string()); // 份与份之间是安全的中断点
-            }
-            let since_ms = rmsvc_core::clock::now_ms();
-            self.xochitl.upload(bytes, piece_name, "application/pdf", folder).map(|_| ())?;
-            let plan = RenderPlan { name: piece_name.to_string(), title: None, expected: 0, since_ms };
-            if render_check::probe(&lib_dir, &plan).is_none() {
-                rmsvc_core::fswatch::watch_until(&lib_dir, render_check::DEBOUNCE, PIECE_RENDER_TIMEOUT, |_| render_check::probe(&lib_dir, &plan).is_some());
-            }
-            done_titles.push(piece_name.to_string());
-            let progress = sidecar::DeliverCheck {
-                status: "pending".into(),
-                message: format!("已加入：{}", done_titles.join("、")),
-                at: rmsvc_core::clock::now_secs(),
-                progress: Some(sidecar::StepProgress { done: idx as u32, total: total as u32 }),
-            };
-            let _ = self.set_deliver_check(name, progress);
-            bus.publish("books", "staging");
-            Ok(())
-        })?;
-        let Some(outcome) = outcome else { return Ok(None) };
+        let Some(outcome) = outcome else { return Ok(None) }; // 不是漫画/没超预算——退回原来的整本流程
         if outcome.delivered.is_empty() {
             return Err(format!("《{name}》按卷拆分后一份都没能投上：{}", outcome.failed.join("；")));
         }
@@ -1795,6 +1779,62 @@ mod tests {
         let err = s.deliver("bad.epub", "", &empty_mkdir(&t), &rmsvc_core::events::EventBus::new()).unwrap_err();
         assert!(err.contains("超过 xochitl 上传上限"), "{err}");
         assert_eq!(std::fs::read_dir(&lib).unwrap().count(), 0, "没造出占位就不该上传任何东西");
+    }
+
+    /// 书库目录不存在（大文件通道不可用）+ 假 xochitl 收上传的分卷投递夹具；返回 (staging, 假 xochitl 收件目录)。
+    fn splitting_staging(t: &tempfile::TempDir, budget: u64) -> (Staging, std::path::PathBuf) {
+        let inbox = t.path().join("fake-xochitl-docs");
+        std::fs::create_dir_all(&inbox).unwrap();
+        let x = Arc::new(Xochitl::new(&fake_xochitl(inbox.clone()), Path::new("/nonexistent-lib"), 10));
+        let s = Staging::new(t.path().join("staging"), x, budget);
+        s.ensure().unwrap();
+        (s, inbox)
+    }
+
+    fn uploaded_names(inbox: &Path, ext: &str) -> Vec<String> {
+        let mut v: Vec<String> = std::fs::read_dir(inbox)
+            .unwrap()
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().ends_with(".metadata"))
+            .filter_map(|e| serde_json::from_slice::<serde_json::Value>(&std::fs::read(e.path()).unwrap()).ok())
+            .filter_map(|m| m["visibleName"].as_str().map(str::to_string))
+            .filter(|n| n.ends_with(ext))
+            .collect();
+        v.sort();
+        v
+    }
+
+    #[test]
+    fn deliver_oversized_comic_epub_splits_by_volume_and_uploads_each_piece() {
+        // `deliver_pieces` 的成功路径（EPUB 版）：整本超预算、大文件通道不可用 → 按 NCX 卷逐份上传，进度/回执/落库记录齐全。
+        let t = tempfile::tempdir().unwrap();
+        let (s, inbox) = splitting_staging(&t, 1200);
+        let epub = comic_epub_with_real_images(&[12, 13]);
+        assert!(epub.len() > 1200, "夹具本身要超预算才会拆: {}", epub.len());
+        s.stage_new("manga.epub", &epub).unwrap();
+        let out = s.deliver("manga.epub", "", &empty_mkdir(&t), &rmsvc_core::events::EventBus::new()).unwrap();
+        assert!(out.message.contains("已按卷拆分加入 xochitl") && out.message.contains("卷0") && out.message.contains("卷1"), "{}", out.message);
+        assert!(out.render.is_none());
+        assert_eq!(uploaded_names(&inbox, ".epub").len(), 2, "两卷各上传一份: {:?}", uploaded_names(&inbox, ".epub"));
+        assert!(sidecar::read(&s.dir().join("manga.epub")).unwrap().native.is_some(), "落库记录已写");
+    }
+
+    #[test]
+    fn deliver_oversized_comic_pdf_splits_and_uploads_pdf_pieces() {
+        // `deliver_pieces` 的成功路径（PDF 版，mime 走 application/pdf、stem 去 .pdf）。
+        let t = tempfile::tempdir().unwrap();
+        let (s, inbox) = splitting_staging(&t, 1 << 30);
+        let epub = comic_epub_with_real_images(&[12, 13]);
+        s.stage_new("manga.epub", &epub).unwrap();
+        let dir = s.dir().to_path_buf();
+        bookconv::comic_pdf::optimize_comic_epub_to_pdf_streaming(&dir.join("manga.epub"), &dir.join("manga.pdf"), |_, _| {}).unwrap();
+        std::fs::remove_file(dir.join("manga.epub")).unwrap();
+        let pdf_len = std::fs::metadata(dir.join("manga.pdf")).unwrap().len();
+        // 预算取整本的 60%：整本超限、每卷（约一半）能放进去
+        let s = Staging::new(dir.clone(), s.xochitl.clone(), pdf_len * 6 / 10);
+        let out = s.deliver("manga.pdf", "", &empty_mkdir(&t), &rmsvc_core::events::EventBus::new()).unwrap();
+        assert!(out.message.contains("已按卷拆分加入 xochitl"), "{}", out.message);
+        assert_eq!(uploaded_names(&inbox, ".pdf").len(), 2, "{:?}", uploaded_names(&inbox, ".pdf"));
     }
 
     #[test]
