@@ -623,6 +623,101 @@ pub(crate) fn parse_opf(entries: &[Entry]) -> Option<Opf> {
     Some(Opf { index, dir, items, spine, nav_doc, ncx })
 }
 
+// ───────────────────────── 封面声明 ─────────────────────────
+
+fn is_image_path(p: &str) -> bool {
+    let l = p.to_ascii_lowercase();
+    l.ends_with(".jpg") || l.ends_with(".jpeg") || l.ends_with(".png") || l.ends_with(".gif") || l.ends_with(".webp")
+}
+
+/// 保证 OPF 声明了一个**有效的封面图**（xochitl 靠它生成书库里的封面缩略图）。2026-09-20 用户要求核查日志时发现：
+/// 设备日志 `rm.epub.container Asked for unknown item ""` + `rm.docworker failed extracting cover: got null cover
+/// image`——9 本已投的书里 7 本没有封面。原因有两类：①OPF 根本没有 `<meta name="cover">`（如火影）；②声明了但**指向的不是
+/// 图片条目**（如 Calibre 产物 `<meta name="cover" content="cover.txt"/>`，指向一个 txt）。
+///
+/// 已有有效声明（`<meta name="cover">` 指向图片条目，或某图片条目带 `properties="cover-image"`）→ 不动，返回 `false`；
+/// 否则取第一个 spine 页里的第一张图（漫画/画册的第一页就是封面），在 manifest 里找到对应条目：删掉旧的（无效）`cover`
+/// meta，写入 `<meta name="cover" content="该条目 id"/>`，并给该条目补 `properties="cover-image"`（EPUB3），返回 `true`。
+/// **必须在清洗（`wash_entries`）之前调用**：清洗会把只含 SVG 封面的 titlepage 当空页删掉（2026-09-20《镖人(卷四)》真机核对）。
+/// 找不到候选也不动。只读 html/OPF 文本，不碰图片字节（流式优化阶段一时图片条目是空占位）。
+pub fn ensure_cover_declared(entries: &mut [Entry]) -> bool {
+    let Some(opf) = parse_opf(entries) else { return false };
+    let text = String::from_utf8_lossy(&entries[opf.index].data).into_owned();
+    static ITEM: OnceLock<Regex> = OnceLock::new();
+    static ATTR: OnceLock<Regex> = OnceLock::new();
+    let item_re = ITEM.get_or_init(|| Regex::new(r#"(?s)<item\b[^>]*?/?>"#).unwrap());
+    let attr_re = ATTR.get_or_init(|| Regex::new(r#"([a-zA-Z:-]+)\s*=\s*"([^"]*)""#).unwrap());
+    struct It {
+        tag: String,
+        id: String,
+        path: String,
+        props: String,
+        image: bool,
+    }
+    let items: Vec<It> = item_re
+        .find_iter(&text)
+        .filter_map(|m| {
+            let attrs: HashMap<String, String> = attr_re.captures_iter(m.as_str()).map(|a| (a[1].to_ascii_lowercase(), a[2].to_string())).collect();
+            let (id, href) = (attrs.get("id")?, attrs.get("href")?);
+            let path = resolve(&opf.dir, &percent_decode(href));
+            let image = attrs.get("media-type").map(|t| t.starts_with("image/")).unwrap_or(false) || is_image_path(&path);
+            Some(It { tag: m.as_str().to_string(), id: id.clone(), path, props: attrs.get("properties").cloned().unwrap_or_default(), image })
+        })
+        .collect();
+    static META: OnceLock<Regex> = OnceLock::new();
+    let meta_re = META.get_or_init(|| Regex::new(r#"(?s)<meta\b[^>]*\bname\s*=\s*"cover"[^>]*?/?>"#).unwrap());
+    let has_prop = |i: &It| i.props.split_whitespace().any(|p| p == "cover-image");
+    // meta 声明指向的图片条目（若有效）
+    let meta_target = meta_re
+        .find_iter(&text)
+        .filter_map(|m| attr_re.captures_iter(m.as_str()).find(|a| a[1].eq_ignore_ascii_case("content")).map(|a| a[2].to_string()))
+        .find_map(|id| items.iter().find(|i| i.id == id && i.image));
+    // 目标封面条目：meta 指向的有效图片 → 已带 cover-image 属性的图片 → 前几页的第一张真实图片（下面找）。
+    let existing = meta_target.or_else(|| items.iter().find(|i| i.image && has_prop(i)));
+    // **meta 和 `properties="cover-image"` 必须同时有**（2026-09-20 真机对照实验：xochitl 对封面条目 id 带点的仅 meta 声明
+    // ——如 Calibre/Sigil 产物的 `x00000001.jpg`——取不到封面，日志 `null cover image`；加上 `cover-image` 属性就取得到；
+    // id 简单如 `cover` 时仅 meta 也行）。所以已有 meta 但条目缺属性也要补。
+    if let Some(t) = existing {
+        let meta_ok = meta_target.map(|m| m.id == t.id).unwrap_or(false);
+        if meta_ok && has_prop(t) {
+            return false;
+        }
+    }
+    // 候选：前 12 个 spine 页（跳过导航页）里第一张能对上 manifest 图片条目的图。多看几页是因为封面页常常是只含一张
+    // SVG `<image>` 的 titlepage；有的书（《镖人(卷四)》）连封面图本身都坏了——titlepage 和 cover.xhtml 引用的都是一个 239 字节的
+    // `cover.txt` 文本残片，书里没有真封面——此时兜底用书里第一张真实图片（漫画的第一页）。
+    static IMG: OnceLock<Regex> = OnceLock::new();
+    let img_re = IMG.get_or_init(|| Regex::new(r##"(?is)<(?:img|image)\b[^>]*?(?:src|xlink:href|href)\s*=\s*"([^"#]+)""##).unwrap());
+    let cand = existing.or_else(|| {
+        opf.spine
+            .iter()
+            .filter(|p| Some(*p) != opf.nav_doc.as_ref())
+            .take(12)
+            .find_map(|page| {
+                let e = entries.iter().find(|e| &e.name == page)?;
+                let html = std::str::from_utf8(&e.data).ok()?;
+                img_re.captures_iter(html).find_map(|c| {
+                    let path = resolve(dir_of(page), &percent_decode(&c[1]));
+                    items.iter().find(|i| i.image && i.path == path)
+                })
+            })
+    });
+    let Some(cover) = cand else { return false };
+    let mut out = meta_re.replace_all(&text, "").into_owned();
+    let new_tag = if has_prop(cover) {
+        cover.tag.clone()
+    } else if cover.props.is_empty() {
+        cover.tag.replacen(&format!(r#"id="{}""#, cover.id), &format!(r#"id="{}" properties="cover-image""#, cover.id), 1)
+    } else {
+        cover.tag.replacen(&format!(r#"properties="{}""#, cover.props), &format!(r#"properties="{} cover-image""#, cover.props), 1)
+    };
+    out = out.replacen(&cover.tag, &new_tag, 1);
+    let Some(pos) = out.find("</metadata>") else { return false };
+    out.insert_str(pos, &format!(r#"<meta name="cover" content="{}"/>"#, cover.id));
+    entries[opf.index].data = out.into_bytes();
+    true
+}
+
 // ───────────────────────── 5. 空页清理 ─────────────────────────
 
 fn is_empty_page(html: &str) -> bool {
@@ -908,6 +1003,15 @@ fn fallback_spine_toc(entries: &[Entry], spine: &[String], nav_doc: Option<&Stri
     }).collect()
 }
 
+/// 按 spine 页分段的兜底目录：每 `FALLBACK_TOC_PAGES` 页一条，标题"第 N–M 页"，指向该段第一页。
+fn page_chunk_toc(spine: &[String], nav_doc: Option<&String>) -> Vec<(u8, String, String, String)> {
+    let pages: Vec<&String> = spine.iter().filter(|p| Some(*p) != nav_doc).collect();
+    crate::comic_pdf::page_chunk_titles(pages.len())
+        .into_iter()
+        .map(|(start, title)| (1u8, title, pages[start].clone(), String::new()))
+        .collect()
+}
+
 /// OPF 的 `unique-identifier` 实际取值（`<package unique-identifier="X">` 指向的那个
 /// `<dc:identifier id="X">` 元素的文本内容）。EPUB2 规范要求 `toc.ncx` 的 `dtb:uid` 跟这个值
 /// 完全一致——真机《疯探》坐实：这本"番茄小说 EPUB Generator"产物的 `toc.ncx` navMap 结构完全
@@ -1100,6 +1204,10 @@ fn auto_toc(entries: &mut Vec<Entry>, mode: AutoToc, rep: &mut WashReport) {
     let Some(opf) = parse_opf(entries) else { return };
     let headings = collect_headings(entries, &opf.spine, opf.nav_doc.as_ref());
     let headings = if headings.is_empty() { fallback_spine_toc(entries, &opf.spine, opf.nav_doc.as_ref()) } else { split_numbered_titles(headings) };
+    // 纯图片书（漫画/画册）：没有标题也没有可提取文字，`fallback_spine_toc` 故意不生成"正文 N"。但用户要求
+    // **所有书都要有目录**（2026-09-20，乱马源书 NCX 是空的，转出来没目录），所以按页分段生成"第 N–M 页"
+    // ——如实标注不是章节，只为能按段跳转（同 `comic_pdf::page_chunk_titles`，PDF 路径也是这套）。
+    let headings = if headings.is_empty() { page_chunk_toc(&opf.spine, opf.nav_doc.as_ref()) } else { headings };
     if headings.is_empty() {
         return;
     }
@@ -1354,6 +1462,111 @@ mod tests {
         assert!(s(&v, "toc.ncx").contains(r#"src="c2.xhtml""#), "指向空页的目录改指下一篇: {}", s(&v, "toc.ncx"));
         // 有图的页不算空
         assert!(!is_empty_page(r#"<html><body><img src="a.png"/></body></html>"#));
+    }
+
+    fn cover_book(meta: &str) -> Vec<Entry> {
+        let opf = format!(r#"<package version="2.0"><metadata><dc:title>书</dc:title>{meta}</metadata><manifest><item id="p1" href="Text/p1.xhtml" media-type="application/xhtml+xml"/><item id="img1" href="Images/001.jpg" media-type="image/jpeg"/><item id="cover.txt" href="cover.txt" media-type="text/plain"/></manifest><spine><itemref idref="p1"/></spine></package>"#);
+        vec![
+            e("content.opf", &opf),
+            e("Text/p1.xhtml", r#"<html><body><img src="../Images/001.jpg"/></body></html>"#),
+            Entry { name: "Images/001.jpg".into(), data: Vec::new() },
+            e("cover.txt", "not an image"),
+        ]
+    }
+
+    #[test]
+    fn ensure_cover_adds_declaration_from_first_spine_page_image() {
+        let mut v = cover_book("");
+        assert!(ensure_cover_declared(&mut v));
+        let opf = s(&v, "content.opf");
+        assert!(opf.contains(r#"<meta name="cover" content="img1"/>"#), "{opf}");
+        assert!(opf.contains(r#"id="img1" href="Images/001.jpg" media-type="image/jpeg" properties="cover-image""#) || opf.contains("cover-image"), "{opf}");
+        assert!(!ensure_cover_declared(&mut v), "已有有效声明，第二次不该再动（幂等）");
+    }
+
+    #[test]
+    fn ensure_cover_repairs_declaration_pointing_to_non_image() {
+        // Calibre 产物：<meta name="cover" content="cover.txt"/> 指向 txt——xochitl 取不到封面（真机日志 null cover image）
+        let mut v = cover_book(r#"<meta name="cover" content="cover.txt"/>"#);
+        assert!(ensure_cover_declared(&mut v));
+        let opf = s(&v, "content.opf");
+        assert!(opf.contains(r#"<meta name="cover" content="img1"/>"#) && !opf.contains(r#"content="cover.txt""#), "{opf}");
+    }
+
+    #[test]
+    fn ensure_cover_finds_svg_titlepage_image_before_page_referencing_bad_file() {
+        // 《镖人(卷四)》：spine 首页是只含 SVG <image> 的 titlepage（真封面），第二页 cover.xhtml 的 <img> 指向坏文件 cover.txt。
+        let opf = r#"<package version="2.0"><metadata><meta name="cover" content="cover.txt"/></metadata><manifest><item id="titlepage" href="titlepage.xhtml" media-type="application/xhtml+xml"/><item id="cover.xhtml" href="EPUB/xhtml/cover.xhtml" media-type="application/xhtml+xml"/><item id="cover.txt" href="EPUB/images/cover.txt" media-type="application/xhtml+xml"/><item id="image_000.jpg" href="EPUB/images/image_000.jpg" media-type="image/jpeg"/></manifest><spine><itemref idref="titlepage"/><itemref idref="cover.xhtml"/></spine></package>"#;
+        let mut v = vec![
+            e("content.opf", opf),
+            e("titlepage.xhtml", r#"<html><body><svg xmlns:xlink="x"><image width="600" xlink:href="EPUB/images/image_000.jpg"/></svg></body></html>"#),
+            e("EPUB/xhtml/cover.xhtml", r#"<html><body><img src="../images/cover.txt"/></body></html>"#),
+            e("EPUB/images/cover.txt", "<?xml not an image"),
+            Entry { name: "EPUB/images/image_000.jpg".into(), data: Vec::new() },
+        ];
+        assert!(ensure_cover_declared(&mut v));
+        let o = s(&v, "content.opf");
+        assert!(o.contains(r#"<meta name="cover" content="image_000.jpg"/>"#) && !o.contains(r#"content="cover.txt""#), "{o}");
+    }
+
+    #[test]
+    fn ensure_cover_falls_back_to_first_real_image_when_cover_file_itself_is_broken() {
+        // 封面页引用的图片文件本身是坏的（txt 残片）：跳过，兜底用后面页面里第一张真实图片。
+        let opf = r#"<package version="2.0"><metadata><meta name="cover" content="cover.txt"/></metadata><manifest><item id="titlepage" href="titlepage.xhtml" media-type="application/xhtml+xml"/><item id="p2" href="p2.xhtml" media-type="application/xhtml+xml"/><item id="cover.txt" href="images/cover.txt" media-type="application/xhtml+xml"/><item id="image_000.jpg" href="images/image_000.jpg" media-type="image/jpeg"/></manifest><spine><itemref idref="titlepage"/><itemref idref="p2"/></spine></package>"#;
+        let mut v = vec![
+            e("content.opf", opf),
+            e("titlepage.xhtml", r#"<html><body><svg><image xlink:href="images/cover.txt"/></svg></body></html>"#),
+            e("p2.xhtml", r#"<html><body><img src="images/image_000.jpg"/></body></html>"#),
+            e("images/cover.txt", "<?xml"),
+            Entry { name: "images/image_000.jpg".into(), data: Vec::new() },
+        ];
+        assert!(ensure_cover_declared(&mut v));
+        assert!(s(&v, "content.opf").contains(r#"<meta name="cover" content="image_000.jpg"/>"#));
+    }
+
+    #[test]
+    fn ensure_cover_adds_property_when_meta_is_valid_but_item_lacks_cover_image() {
+        // 火影 09：meta 有效、条目 id 带点（x00000001.jpg），但没有 properties="cover-image"——真机对照实验证明 xochitl 因此取不到封面。
+        let mut v = cover_book(r#"<meta name="cover" content="img1"/>"#);
+        assert!(ensure_cover_declared(&mut v), "meta 有效但缺属性也要补");
+        assert!(s(&v, "content.opf").contains(r#"properties="cover-image""#));
+        assert!(!ensure_cover_declared(&mut v), "补完幂等");
+    }
+
+    #[test]
+    fn ensure_cover_leaves_fully_valid_declaration_and_unfindable_alone() {
+        let mut ok = cover_book(r#"<meta name="cover" content="img1"/>"#);
+        ok[0] = e("content.opf", &s(&ok, "content.opf").replace(r#"<item id="img1" href="Images/001.jpg" media-type="image/jpeg"/>"#, r#"<item id="img1" href="Images/001.jpg" media-type="image/jpeg" properties="cover-image"/>"#));
+        let before = s(&ok, "content.opf");
+        assert!(!ensure_cover_declared(&mut ok));
+        assert_eq!(s(&ok, "content.opf"), before);
+        // 第一页没有图：没有候选，不乱猜
+        let mut none = cover_book("");
+        none[1] = e("Text/p1.xhtml", "<html><body><p>纯文字</p></body></html>");
+        assert!(!ensure_cover_declared(&mut none));
+    }
+
+    #[test]
+    fn image_only_book_with_empty_ncx_gets_page_range_toc() {
+        // 乱马/火影同款：25 个纯图片页、NCX 存在但 navMap 为空 → 生成"第 N–M 页"分段目录，且指向真实页面。
+        let items: String = (1..=25).map(|i| format!(r#"<item id="p{i}" href="Text/p{i}.xhtml" media-type="application/xhtml+xml"/>"#)).collect();
+        let spine: String = (1..=25).map(|i| format!(r#"<itemref idref="p{i}"/>"#)).collect();
+        let opf = format!(r#"<package version="2.0" unique-identifier="id"><metadata><dc:title>漫画</dc:title><dc:identifier id="id">urn:x</dc:identifier></metadata><manifest><item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/>{items}</manifest><spine toc="ncx">{spine}</spine></package>"#);
+        let mut es = vec![
+            e("content.opf", &opf),
+            e("toc.ncx", r#"<ncx><head/><docTitle><text>Unknown</text></docTitle><navMap></navMap></ncx>"#),
+        ];
+        for i in 1..=25 {
+            es.push(e(&format!("Text/p{i}.xhtml"), r#"<html><body><img src="../Images/x.jpg"/></body></html>"#));
+        }
+        assert_eq!(toc_entry_count(&es), 0);
+        let mut rep = WashReport::default();
+        auto_toc(&mut es, AutoToc::IfMissing, &mut rep);
+        assert_eq!(rep.toc_generated, 2, "25 页 → 20+5 两段");
+        let ncx = String::from_utf8_lossy(&es.iter().find(|x| x.name == "toc.ncx").unwrap().data).to_string();
+        assert!(ncx.contains("第 1–20 页") && ncx.contains("第 21–25 页"), "{ncx}");
+        assert!(ncx.contains("Text/p1.xhtml") && ncx.contains("Text/p21.xhtml"), "目录必须指向段首页: {ncx}");
+        assert_eq!(toc_entry_count(&es) > 0, true);
     }
 
     #[test]
@@ -1688,8 +1901,9 @@ mod tests {
     }
 
     #[test]
-    fn auto_toc_fallback_skipped_when_mostly_imageonly_pages() {
-        // 多数页是纯图片(无可提取文本)——疑似漫画/画册，不该被兜底目录灌一堆"正文 N"
+    fn auto_toc_fallback_for_mostly_imageonly_pages_is_page_ranges_not_body_n() {
+        // 多数页是纯图片(无可提取文本)——疑似漫画/画册，不该灌一堆"正文 N"；但所有书都要有目录（2026-09-20 用户要求），
+        // 所以改为按页分段的"第 N–M 页"（3 页 → 1 段）。
         let mut v = vec![
             e("content.opf", r#"<package version="3.0"><metadata><dc:title>书</dc:title></metadata><manifest><item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/><item id="c2" href="c2.xhtml" media-type="application/xhtml+xml"/><item id="c3" href="c3.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="c1"/><itemref idref="c2"/><itemref idref="c3"/></spine></package>"#),
             e("c1.xhtml", r#"<html><body><img src="p1.jpg"/></body></html>"#),
@@ -1697,7 +1911,8 @@ mod tests {
             e("c3.xhtml", "<html><body><p>唯一一页有字。</p></body></html>"),
         ];
         let rep = wash_entries(&mut v, &WashOpts::default()).unwrap();
-        assert_eq!(rep.toc_generated, 0, "多数纯图片页不生成兜底目录");
-        assert!(!v.iter().any(|x| x.name == "nav.xhtml"));
+        assert_eq!(rep.toc_generated, 1, "多数纯图片页 → 按页分段目录");
+        let nav = s(&v, "nav.xhtml");
+        assert!(nav.contains("第 1–3 页") && !nav.contains("正文 "), "{nav}");
     }
 }

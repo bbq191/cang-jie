@@ -8,8 +8,7 @@
 //!
 //! 这个模块是"漫画类 EPUB 优化时改产出 PDF（带书签）"的实现，跟 `comic_split.rs`（EPUB→EPUB
 //! 按卷拆分）平行独立、互不影响；复用它的 NCX 标题解析（`ncx_titles_in_range`）和 `imgs_
-//! referenced`，图片处理复用 `imgopt::trim_margins`/`downscale_for_epub_comic`（跟 EPUB 漫画线
-//! 完全相同的两步，不再额外调用 `pad_to_device_aspect`——PDF 不需要靠补白像素控制留白分布，
+//! referenced`，图片处理用 `imgopt::prepare_comic_page_for_pdf`（裁边+缩放合成单趟，不再额外调用 `pad_to_device_aspect`——PDF 不需要靠补白像素控制留白分布，
 //! 直接在页面里摆位置即可，摆位算法见 `convert::pdfwrite::place_image`）。也不碰 `convert::
 //! pdfwrite::images_to_pdf`/`convert::cbz`（CBZ→PDF 现状路径），只用新增的 `images_to_pdf_
 //! with_toc`/`extract_pages`/`page_count`。
@@ -65,6 +64,11 @@ pub fn optimize_comic_epub_to_pdf_streaming(
     if !crate::comic_detect::is_comic(&entries) {
         return Err("不是漫画书，漫画→PDF 这条路径不适用".into());
     }
+    let (_, text_chars) = crate::comic_detect::epub_image_stats(&entries);
+    if text_chars > 0 {
+        // PDF 一图一页，文字页/图片页里夹的文字没有对应物、会被丢掉——不允许变动书籍内容，拒绝而不是静默丢字。
+        return Err(format!("这本书含 {text_chars} 字正文文字（版权页/章节标题/台词等），转 PDF 会丢掉文字，保持 EPUB"));
+    }
     let opf = parse_opf(&entries).ok_or("解不出 OPF/spine")?;
     let titles_by_spine_idx =
         crate::comic_split::ncx_titles_in_range(&entries, &opf, 0, opf.spine.len());
@@ -115,8 +119,9 @@ pub fn optimize_comic_epub_to_pdf_streaming(
                 .map_err(|e| format!("读图片 {img_path} 失败: {e}"))?;
             let mut raw = Vec::with_capacity(f.size() as usize);
             f.read_to_end(&mut raw).map_err(|e| e.to_string())?;
-            let trimmed = crate::imgopt::trim_margins(&raw).unwrap_or(raw);
-            let sized = crate::imgopt::downscale_for_epub_comic(&trimmed).unwrap_or(trimmed);
+            // 单趟：裁边+一次缩到 PDF 实际绘制的整数像素尺寸+一次编码（见该函数文档：此前两道串联
+            // 造成重采样两遍/JPEG 两代/灰度转 RGB）。返回 None = 无需处理，直接嵌原图字节零损失。
+            let sized = crate::imgopt::prepare_comic_page_for_pdf(&raw, pdfwrite::PDF_PAGE_W, pdfwrite::PDF_PAGE_H).unwrap_or(raw);
             let pdf_img = pdfwrite::image_from_bytes(&sized)
                 .map_err(|e| format!("图片 {img_path} 编不进 PDF: {e}"))?;
             writer.write_page(&pdf_img)?;
@@ -126,9 +131,9 @@ pub fn optimize_comic_epub_to_pdf_streaming(
         }
     }
     if titles.is_empty() {
-        // 一条 NCX 标题都没对上（畸形/没有目录结构）——至少给整本留一条书名书签，别彻底没目录。
-        let name = input_path.file_stem().and_then(|s| s.to_str()).unwrap_or("漫画");
-        titles.push((0, name.to_string()));
+        // 源书自己就没有目录（NCX 空/畸形；乱马、火影实测就是空 NCX）——按页分段给书签，至少能按段跳转，
+        // 不是只有一条书名。如实标"第 N–M 页"，不假装是章节。
+        titles = page_chunk_titles(written);
     }
 
     let pdf_bytes = writer.finish(&titles)?;
@@ -136,6 +141,15 @@ pub fn optimize_comic_epub_to_pdf_streaming(
     let pages = written;
     std::fs::write(output_path, &pdf_bytes).map_err(|e| format!("写出 PDF 失败: {e}"))?;
     Ok(PdfReport { pages, bytes_before, bytes_after })
+}
+
+/// 没有源目录时的兜底书签：每 [`FALLBACK_TOC_PAGES`] 页一条，标题"第 N–M 页"（页码 1 起）。
+const FALLBACK_TOC_PAGES: usize = 20;
+pub(crate) fn page_chunk_titles(total_pages: usize) -> Vec<(usize, String)> {
+    (0..total_pages)
+        .step_by(FALLBACK_TOC_PAGES)
+        .map(|start| (start, format!("第 {}–{} 页", start + 1, (start + FALLBACK_TOC_PAGES).min(total_pages))))
+        .collect()
 }
 
 /// 超预算时按卷拆分——**只处理"自己产出的漫画 PDF"**（没有书签目录，视为普通用户上传的原生 PDF，
@@ -261,6 +275,11 @@ mod tests {
     }
 
     fn build_test_epub(chapters: &[(&str, &[&str])]) -> Vec<u8> {
+        build_test_epub_opts(chapters, "", true)
+    }
+
+    /// `text` 非空时塞进第一章 body（模拟版权页/台词）；`with_ncx=false` 时 NCX 为空 navMap（模拟乱马/火影）。
+    fn build_test_epub_opts(chapters: &[(&str, &[&str])], text: &str, with_ncx: bool) -> Vec<u8> {
         // chapters: (spine 文件名, 引用的图片文件名列表)；每个 chapter 一个最小 xhtml。
         let mut buf = Vec::new();
         {
@@ -278,17 +297,20 @@ mod tests {
             let jpeg = one_px_jpeg();
             let mut img_names: Vec<String> = Vec::new();
             for (i, (chap, imgs)) in chapters.iter().enumerate() {
-                let body: String = imgs
+                let mut body: String = imgs
                     .iter()
                     .map(|img| format!(r#"<img src="{img}"/>"#))
                     .collect();
+                if i == 0 && !text.is_empty() {
+                    body.push_str(&format!("<p>{text}</p>"));
+                }
                 z.start_file(format!("OEBPS/{chap}"), opt).unwrap();
                 z.write_all(format!("<html><body>{body}</body></html>").as_bytes()).unwrap();
                 manifest_items.push_str(&format!(r#"<item id="c{i}" href="{chap}" media-type="application/xhtml+xml"/>"#));
                 spine_items.push_str(&format!(r#"<itemref idref="c{i}"/>"#));
-                nav_points.push_str(&format!(
+                if with_ncx { nav_points.push_str(&format!(
                     r#"<navPoint><navLabel><text>第{i}章</text></navLabel><content src="{chap}"/></navPoint>"#
-                ));
+                )); }
                 for img in imgs.iter() {
                     if !img_names.contains(&img.to_string()) {
                         img_names.push(img.to_string());
@@ -334,6 +356,51 @@ mod tests {
         assert_eq!(reader.page_count().unwrap(), 21);
         let titles = reader.outline_titles().unwrap();
         assert_eq!(titles, vec![(0, "第0章".to_string()), (10, "第1章".to_string())], "标题应落在各章第一张图对应的页码上");
+    }
+
+    fn write_comic(dir: &std::path::Path, text: &str, with_ncx: bool) -> (std::path::PathBuf, std::path::PathBuf) {
+        let c1_imgs: Vec<String> = (1..=30).map(|i| format!("i{i}.jpg")).collect();
+        let c2_imgs: Vec<String> = (31..=45).map(|i| format!("i{i}.jpg")).collect();
+        let c1: Vec<&str> = c1_imgs.iter().map(|s| s.as_str()).collect();
+        let c2: Vec<&str> = c2_imgs.iter().map(|s| s.as_str()).collect();
+        let input = dir.join("t.epub");
+        std::fs::write(&input, build_test_epub_opts(&[("c1.xhtml", &c1), ("c2.xhtml", &c2)], text, with_ncx)).unwrap();
+        (input, dir.join("t.pdf"))
+    }
+
+    #[test]
+    fn refuses_to_convert_comic_containing_any_body_text() {
+        // 不允许变动书籍内容：PDF 一图一页，夹带的文字（版权/台词）会被丢掉——必须拒绝，不静默丢字。
+        let dir = tempfile::tempdir().unwrap();
+        let (input, output) = write_comic(dir.path(), "版权信息", true);
+        let err = optimize_comic_epub_to_pdf_streaming(&input, &output, |_, _| {}).unwrap_err();
+        assert!(err.contains("正文文字"), "错误应说明原因: {err}");
+        assert!(!output.exists(), "拒绝时不该产出任何文件");
+        assert!(!crate::comic_detect::is_text_free_comic_epub_file(&input));
+        assert!(crate::comic_detect::is_comic_epub_file(&input), "它仍是漫画，只是不能转 PDF");
+    }
+
+    #[test]
+    fn text_free_comic_is_convertible() {
+        let dir = tempfile::tempdir().unwrap();
+        let (input, _) = write_comic(dir.path(), "", true);
+        assert!(crate::comic_detect::is_text_free_comic_epub_file(&input));
+    }
+
+    #[test]
+    fn comic_without_source_toc_gets_page_range_bookmarks_not_a_single_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let (input, output) = write_comic(dir.path(), "", false);
+        optimize_comic_epub_to_pdf_streaming(&input, &output, |_, _| {}).unwrap();
+        let titles = pdfwrite::PdfFileReader::open(&output).unwrap().outline_titles().unwrap();
+        assert_eq!(titles, vec![(0, "第 1–20 页".to_string()), (20, "第 21–40 页".to_string()), (40, "第 41–45 页".to_string())]);
+    }
+
+    #[test]
+    fn page_chunk_titles_boundaries() {
+        assert_eq!(page_chunk_titles(1), vec![(0, "第 1–1 页".to_string())]);
+        assert_eq!(page_chunk_titles(20).len(), 1);
+        assert_eq!(page_chunk_titles(21).last(), Some(&(20, "第 21–21 页".to_string())));
     }
 
     #[test]

@@ -50,13 +50,33 @@ pub fn is_comic(entries: &[Entry]) -> bool {
     images >= MIN_IMAGES && (text as f64) < TEXT_PER_IMAGE * images as f64
 }
 
+/// **能转 PDF 的漫画**：漫画且整本可见文字为 0。转 PDF 是"一图一页"，纯文字页（版权页、前情提要、
+/// 章节标题页）和图片页里夹的文字（台词、旁白）**都没有对应物、会被丢掉**——用户明确要求"不允许变动
+/// 书籍内容"，所以只要有一个可见字就不转，留在 EPUB 流程里（文字和目录原样保留）。2026-09-20 审计 33 卷
+/// 只有《镖人(卷二)》简体版命中（14 个文字页 477 字 + 图片页内 26 字，12 条目录项指向文字页），其余
+/// 32 卷文字量为 0。
+pub fn is_text_free_comic(entries: &[Entry]) -> bool {
+    let (images, text) = epub_image_stats(entries);
+    images >= MIN_IMAGES && text == 0
+}
+
 /// 只读 html/opf 真实字节判断是不是漫画，图片条目留空占位（`is_comic`/`epub_image_stats` 从不读
 /// 图片字节，只数 html 里 `<img>` 标签出现次数），不解码任何图片——给 `book-serve::Staging::
 /// optimize()` 在决定"这本 EPUB 优化后走 PDF 还是 EPUB"之前用的轻量预判。打不开/解不了 zip 一律
 /// 当"不是漫画"（安全默认——判不准就走现状 EPUB 老路径，不是新引入的失败模式）。
 pub fn is_comic_epub_file(path: &std::path::Path) -> bool {
-    let Ok(file) = std::fs::File::open(path) else { return false };
-    let Ok(mut zip) = zip::ZipArchive::new(std::io::BufReader::new(file)) else { return false };
+    read_entries_without_images(path).map(|e| is_comic(&e)).unwrap_or(false)
+}
+
+/// [`is_text_free_comic`] 的文件版：给 `book-serve::Staging::optimize()` 决定"走 PDF 还是走 EPUB 优化"。
+/// 打不开/解不了 zip 一律 `false`（走现状 EPUB 路径，保内容优先）。
+pub fn is_text_free_comic_epub_file(path: &std::path::Path) -> bool {
+    read_entries_without_images(path).map(|e| is_text_free_comic(&e)).unwrap_or(false)
+}
+
+fn read_entries_without_images(path: &std::path::Path) -> Option<Vec<Entry>> {
+    let file = std::fs::File::open(path).ok()?;
+    let mut zip = zip::ZipArchive::new(std::io::BufReader::new(file)).ok()?;
     let mut entries = Vec::with_capacity(zip.len());
     for i in 0..zip.len() {
         let Ok(mut f) = zip.by_index(i) else { continue };
@@ -75,7 +95,7 @@ pub fn is_comic_epub_file(path: &std::path::Path) -> bool {
         };
         entries.push(Entry { name, data });
     }
-    is_comic(&entries)
+    Some(entries)
 }
 
 #[cfg(test)]

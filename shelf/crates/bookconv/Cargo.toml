@@ -17,6 +17,7 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 miniz_oxide = "0.8"
 # 图片降采样/抖动：只启 jpeg+png 控体积
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+fast_image_resize = "6.1.0"
 # FB2→EPUB；quick-xml 版本须与 fb2 一致(0.30)
 fb2 = "0.4"
 quick-xml = { version = "0.30", features = ["serialize", "encoding"] }
@@ -49,6 +50,10 @@ path = "src/bin/epub_optimize.rs"
 
 # host CLI：漫画 CBZ→PDF（`shelf push` 判断体积够小时顺带出一份投原生用的 PDF；2026-09-08 复活，
 # `convert::cbz::cbz_to_pdf` 本体 2026-09-05 §03t 就没删过，只是删了 shelf 侧的调用方，见白皮书）。
+[[bin]]
+name = "cover-fix"
+path = "src/bin/cover_fix.rs"
+
 [[bin]]
 name = "cbz2pdf"
 path = "src/bin/cbz2pdf.rs"

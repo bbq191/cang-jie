@@ -7,6 +7,7 @@
 //! 登录后必改；CLI 用 Basic）+ **mDNS `shelf.local`** 伪域名（用户 2026-09-03 要求）。策略见 `auth.rs`。
 //! 子命令：`serve [--bind]` · `passwd <新密码>` · `reset-password`（回默认并强制改）· `regen-tls`（重签叶证书）。
 mod auth;
+mod batch;
 mod budget;
 mod config;
 mod enhance;
@@ -107,6 +108,7 @@ fn main() {
         println!("[gateway] mDNS 名 {}.local（iOS/macOS/Windows/Linux 可直接访问；安卓走热点 dnsmasq 别名）", cfg.mdns_name.trim());
     }
     let paths = Arc::new(paths);
+    batch::resume(&paths); // 读回上次没跑完的批量队列继续跑（网关重启/部署新版本不丢）
     let hub = Arc::new(events::Hub::spawn(paths.clone()));
     let mut router = Router::new()
         .get("/", |_| Ok(Reply::html(ui::page())))
@@ -166,6 +168,22 @@ fn main() {
                 .ok_or_else(|| ApiError::bad("缺 name"))?;
             Ok(Reply::ok(&serde_json::json!({"cancelled": budget::global().cancel(&name)})))
         })
+        // 服务端批量队列（见 batch.rs）：提交 `{action, names?, all?, folder?}`；`names` 缺省且 `all:true` 表示"所有适用的"。
+        // 状态任何会话都能看（关掉浏览器重开、换设备都在）。同样必须在 /api/{svc} 代理通配之前注册。
+        .post("/api/batch", bind(&paths, |p, r| {
+            let buf = r.read_small_body().map_err(ApiError::bad)?;
+            let v: serde_json::Value = serde_json::from_slice(&buf).map_err(|e| ApiError::bad(format!("请求不是 JSON: {e}")))?;
+            let action = v.get("action").and_then(|a| a.as_str()).and_then(batch::Action::parse).ok_or_else(|| ApiError::bad("action 只能是 optimize/deliver/koreader"))?;
+            let names = v.get("names").and_then(|n| n.as_array()).map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect::<Vec<_>>());
+            if names.is_none() && v.get("all").and_then(|a| a.as_bool()) != Some(true) {
+                return Err(ApiError::bad("要么给 names，要么 all:true"));
+            }
+            let folder = v.get("folder").and_then(|f| f.as_str()).unwrap_or("");
+            let e = batch::enqueue(p, action, names, folder).map_err(ApiError::bad)?;
+            Ok(Reply::ok(&serde_json::json!({"queued": e.queued, "skipped": e.skipped})))
+        }))
+        .get("/api/batch/status", |_| Ok(Reply::ok(&batch::status())))
+        .post("/api/batch/stop", bind(&paths, |p, _| Ok(Reply::ok(&serde_json::json!({"cleared": batch::stop(p)})))))
         .route(Method::Other, "/api/*", |_| Err(ApiError::bad("unsupported method")))
         .any(PROXIED, "/api/{svc}/*", bind(&paths, proxy::forward))
         .any(PROXIED, "/api/{svc}", bind(&paths, proxy::forward));

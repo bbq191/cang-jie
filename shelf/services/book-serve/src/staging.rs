@@ -121,11 +121,23 @@ pub struct Staging {
     /// 结果展示"，不参与这个忙锁判断——两者职责分开。加锁是全局唯一入口（`try_start_busy`），
     /// 同一条目「优化」跟「落库」互斥——不允许同时跑（两个都要读/写同一份母版库文件）。
     busy: Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
+    /// 用户请求取消的条目名 / 当前这步操作支持中途取消的条目名（2026-09-20 用户反馈"不能停止某个执行中的优化/投入"）。
+    /// 支持取消的步骤（EPUB 优化每处理完一个条目、按卷拆分投递每份之间）会检查 `cancel`；其它步骤（单文件上传、
+    /// PDF 优化）没有安全的中断点，不登记进 `cancellable`，取消请求会如实回"这一步无法中途停止"。
+    cancel: Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
+    cancellable: Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
 }
 
 impl Staging {
     pub fn new(dir: PathBuf, xochitl: Arc<Xochitl>, native_limit: u64) -> Staging {
-        Staging { dir, xochitl, native_limit, busy: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())) }
+        Staging {
+            dir,
+            xochitl,
+            native_limit,
+            busy: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
+            cancel: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
+            cancellable: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
+        }
     }
     /// 这条目当前是否有异步操作在跑。
     pub fn is_busy(&self, name: &str) -> bool {
@@ -133,10 +145,37 @@ impl Staging {
     }
     /// 尝试给条目加忙锁；已经忙着 → false（调用方据此拒绝这次操作，不排队不覆盖）。
     fn try_start_busy(&self, name: &str) -> bool {
-        self.busy.lock().unwrap().insert(name.to_string())
+        let started = self.busy.lock().unwrap().insert(name.to_string());
+        if started {
+            self.cancel.lock().unwrap().remove(name); // 上一轮遗留的取消标记不能带进新操作
+        }
+        started
     }
     fn end_busy(&self, name: &str) {
         self.busy.lock().unwrap().remove(name);
+        self.cancel.lock().unwrap().remove(name);
+        self.cancellable.lock().unwrap().remove(name);
+    }
+    /// 当前这步操作声明"我会检查取消标记"（只对正在跑异步操作的条目生效，同步调用方不登记，免得残留）。
+    fn mark_cancellable(&self, name: &str) {
+        if self.busy.lock().unwrap().contains(name) {
+            self.cancellable.lock().unwrap().insert(name.to_string());
+        }
+    }
+    fn is_cancelled(&self, name: &str) -> bool {
+        self.cancel.lock().unwrap().contains(name)
+    }
+    /// 请求取消这本书正在跑的优化/投递。`Ok(true)`＝已登记，会在下一个检查点停下；`Ok(false)`＝这一步无法中途停止
+    /// （如单文件上传）；`Err`＝这本书当前没有在处理。
+    pub fn request_cancel(&self, name: &str) -> Result<bool, String> {
+        if !self.busy.lock().unwrap().contains(name) {
+            return Err("这本书当前没有在处理".into());
+        }
+        if !self.cancellable.lock().unwrap().contains(name) {
+            return Ok(false);
+        }
+        self.cancel.lock().unwrap().insert(name.to_string());
+        Ok(true)
     }
     pub fn dir(&self) -> &Path {
         &self.dir
@@ -161,14 +200,14 @@ impl Staging {
 
     /// 新入库（字节）：原子写，同名加数字前缀不覆盖。返回落地文件名。
     pub fn stage_new(&self, name: &str, bytes: &[u8]) -> Result<String, String> {
-        let target = unique_path(&self.dir, plain_name(name)?);
+        let target = unique_path(&self.dir, &canonical_staged_name(plain_name(name)?));
         write_atomic(&target, bytes).map_err(|e| format!("写母版库失败: {e}"))?;
         Ok(landed_name(&target))
     }
 
     /// 新入库（已落盘的暂存文件）：同分区 rename 不拷贝（上传 / inbox 追平的大书走这里）。返回落地文件名。
     pub fn stage_from_path(&self, name: &str, src: &Path) -> Result<String, String> {
-        let target = unique_path(&self.dir, plain_name(name)?);
+        let target = unique_path(&self.dir, &canonical_staged_name(plain_name(name)?));
         if std::fs::rename(src, &target).is_err() {
             std::fs::copy(src, &target).map_err(|e| format!("写母版库失败: {e}"))?;
             let _ = std::fs::remove_file(src);
@@ -223,19 +262,19 @@ impl Staging {
         if ext == "pdf" {
             return self.optimize_pdf(name, &p, on_progress);
         }
-        // 漫画类 EPUB 改产出 PDF——真机反复实测坐实 xochitl 的 EPUB 渲染走文字排版盒模型，内容区
-        // 相对物理页面有个消不掉的固定内边距（UI 只给 28/56/112 三档、改 `.content` 文件也没用，
-        // xochitl 渲染时会用自己的逻辑覆盖回去），CSS 层面也测过绕不开；PDF 是完全独立的直接光栅化
-        // 路径，真机测左右留白能到 0.00%。详见 `bookconv::comic_pdf` 模块文档注释。
-        if bookconv::comic_detect::is_comic_epub_file(&p) {
-            return self.optimize_comic_to_pdf(name, &p, on_progress);
-        }
+        // 漫画 EPUB **保持 EPUB**（2026-09-20 用户拍板：统一"优化不改格式"，文字/目录/内容原样保留）。
+        // 此前一度改产出 PDF 以拿到 0% 左右留白，但 PDF 一图一页会丢掉漫画里夹带的文字页；EPUB 的固定内边距
+        // 是 xochitl 渲染引擎硬限制，接受它，换取"不变动书籍内容"。图片走 `imgopt::prepare_comic_page_for_epub` 单趟处理。
         // 点前缀隐藏名——真机 552MB《镖人》全集坐实优化能跑到分钟级（流式虽然不再吃内存，但大书
         // 图片多、逐张处理仍要时间），这份临时产物会在目录里存在相当一段时间；`list()` 本来就按
         // `.` 前缀跳过 sidecar，不带点前缀的话这份半成品会被当成一条离谱的"母版库条目"混进列表
         // （2026-09-19 真机复现：真显示过一条 `format:"other"` 的 `....epub.optimizing.tmp`）。
         let tmp = p.with_file_name(format!(".{}.optimizing.tmp", name));
-        let result = optimize::optimize_epub_file_streaming(&p, &tmp, &OptimizeOpts { wash: Some(WashOpts::default()), footnote: FootnoteMode::Anchor }, &mut on_progress);
+        // 有卷标记的书：把 EPUB 自己的 dc:title 也改成规范名（设备显示名取 dc:title）。
+        let stem = name.strip_suffix(".epub").unwrap_or(name);
+        let canon_title = bookconv::naming::has_volume_marker(stem).then(|| bookconv::naming::canonical_book_name(stem));
+        self.mark_cancellable(name);
+        let result = optimize::optimize_epub_file_streaming_ctl(&p, &tmp, &OptimizeOpts { wash: Some(WashOpts::default()), footnote: FootnoteMode::Anchor }, canon_title.as_deref(), &|| self.is_cancelled(name), &mut on_progress);
         let rep = match result {
             Ok(r) => r,
             Err(e) => {
@@ -244,35 +283,23 @@ impl Staging {
             }
         };
         std::fs::rename(&tmp, &p).map_err(|e| format!("回写母版库失败: {e}"))?;
-        Ok(format!("已优化《{name}》{}", optimize_note(&rep)))
-    }
-
-    /// 漫画 EPUB → PDF 分支：产出 `<去掉.epub前缀>.pdf`，成功后删掉原 `.epub`（同一个母版库条目，
-    /// 格式变了，不是新增一条）。跟文字书分支一样先写点前缀临时文件，成功才落地，失败原样清掉，
-    /// 不留半成品。
-    fn optimize_comic_to_pdf(&self, name: &str, p: &Path, mut on_progress: impl FnMut(usize, usize)) -> Result<String, String> {
-        let stem = name.strip_suffix(".epub").unwrap_or(name);
-        let pdf_path = p.with_file_name(format!("{stem}.pdf"));
-        let tmp = p.with_file_name(format!(".{stem}.pdf.optimizing.tmp"));
-        let result = bookconv::comic_pdf::optimize_comic_epub_to_pdf_streaming(p, &tmp, &mut on_progress);
-        let rep = match result {
-            Ok(r) => r,
-            Err(e) => {
-                let _ = std::fs::remove_file(&tmp);
-                return Err(e);
+        // 已有的长下载名在这里一并规范成 `书名 - N卷`；目标已存在（重复的同一卷）就保持原名，不覆盖。
+        let canon = canonical_staged_name(name);
+        let shown = if canon != name && !self.dir.join(&canon).exists() && std::fs::rename(&p, self.dir.join(&canon)).is_ok() {
+            let (old_car, new_car) = (sidecar::path_for(&p), sidecar::path_for(&self.dir.join(&canon)));
+            if old_car.exists() {
+                let _ = std::fs::rename(old_car, new_car);
             }
+            canon
+        } else {
+            name.to_string()
         };
-        std::fs::rename(&tmp, &pdf_path).map_err(|e| format!("回写母版库失败: {e}"))?;
-        std::fs::remove_file(p).map_err(|e| format!("删除原 EPUB 失败: {e}"))?;
-        Ok(format!(
-            "已优化《{stem}》（漫画→PDF，{} 页，{}→{} 字节）",
-            rep.pages, rep.bytes_before, rep.bytes_after
-        ))
+        Ok(format!("已优化《{shown}》{}", optimize_note(&rep)))
     }
 
     /// 入库 PDF 的「优化」分支：`bookconv::pdf_ingest::classify_pdf` 先判漫画/无文字层/有文字层——
     /// 漫画或无文字层只裁边（格式不变，原地覆盖，对齐文字 EPUB 优化那条"原地覆盖"路径）；有文字层
-    /// 转 EPUB（产出 `<stem>.epub`，成功后删掉原 `.pdf`，完整照抄 [`Self::optimize_comic_to_pdf`]
+    /// 转 EPUB（产出 `<stem>.epub`，成功后删掉原 `.pdf`，照抄"先写点前缀临时文件、成功才落地"的结构
     /// 的"改名删原文件"结构，只是方向相反）。详见 `bookconv::pdf_ingest` 模块文档（分类阈值、
     /// 三个新依赖的分工、已知的公式区域边界粗粒度限制）。
     fn optimize_pdf(&self, name: &str, p: &Path, mut on_progress: impl FnMut(usize, usize)) -> Result<String, String> {
@@ -352,6 +379,7 @@ impl Staging {
             let at = rmsvc_core::clock::now_secs();
             let oc = match &result {
                 Ok(msg) => sidecar::OptimizeCheck { status: "ok".into(), message: msg.clone(), at, progress: None },
+                Err(e) if e.contains(optimize::CANCELLED_MSG) => sidecar::OptimizeCheck { status: "cancelled".into(), message: e.clone(), at, progress: None },
                 Err(e) => sidecar::OptimizeCheck { status: "failed".into(), message: e.clone(), at, progress: None },
             };
             // 漫画→PDF 分支成功后，原 `.epub` 已经被删、条目改名成 `.pdf`——sidecar 是按条目名找
@@ -368,8 +396,12 @@ impl Staging {
     /// 参数是异步操作发起时的原名，这本书如果发生过这次改名，原名此时已经找不到文件，返回改名后的
     /// 新名字给 sidecar 写终态用；其余情况（普通文字书优化、失败）原样返回 `name`。
     fn resolved_optimize_target(&self, name: &str) -> String {
-        // 双向：漫画 EPUB→PDF（既有）、入库 PDF 有文字层→EPUB（新增，方向相反但同一个
-        // "格式变了、条目改名"场景，`existing(name)` 都找不到原名时才去找改名后的候选）。
+        // 优化时把长下载名规范成 `书名 - N卷`（同格式改名）；PDF 有文字层→EPUB（格式变了、条目改名）。
+        // `existing(name)` 找不到原名时才去找改名后的候选。
+        let canon = canonical_staged_name(name);
+        if canon != name && self.existing(name).is_err() && self.existing(&canon).is_ok() {
+            return canon;
+        }
         if let Some(stem) = name.strip_suffix(".epub") {
             let candidate = format!("{stem}.pdf");
             if self.existing(name).is_err() && self.existing(&candidate).is_ok() {
@@ -429,6 +461,13 @@ impl Staging {
             // 超限：EPUB 格式的漫画按 NCX 结构递归拆分成若干份分别投递，不再是全有全无
             // （2026-09-18 用户真机反馈驱动，见 bookconv::comic_split 与书架白皮书 §03aw）。
             // 非 EPUB、非漫画、或拆不出方案（没有可用 toc.ncx）的原样保留改动前的整本拒绝行为。
+            //
+            // **优先走大文件通道**（2026-09-20 用户要求突破上传限制，真机验证 PDF 154MB/EPUB 153MB 可行）：
+            // 占位文档 + 磁盘上替换成真文件，不分卷、不限漫画。只有本机没有 xochitl 书库目录（非设备环境）
+            // 或造占位失败才退回下面的分卷/拒绝。
+            if let Some(outcome) = self.try_deliver_direct(name, &p, size, folder)? {
+                return Ok(outcome);
+            }
             if formats::ext_of(name) == "epub" {
                 if let Some(outcome) = self.try_deliver_split(name, &p, folder, bus)? {
                     return Ok(outcome);
@@ -461,6 +500,89 @@ impl Staging {
         };
         let _ = self.mark_delivered(name, Reader::Native);
         Ok(DeliverOutcome { message, render })
+    }
+
+    /// 给"已加入 xochitl 但没有渲染记录"的书补记（2026-09-20：大文件通道上线前直接投入的书没有渲染徽章，列表里不统一）。
+    /// 按书名（规范名或文件名 stem）+ 文件大小在 xochitl 书库里认领对应文档；没渲染缓存（`.pdf`）＝没打开过 → `onopen`（记当前
+    /// 占位页数，之后 `list()` 看到页数变了就升级）；有缓存＝已渲染过 → 直接 `ok` 记真页数。返回补记了几本。幂等、只补缺的。
+    pub fn backfill_render_records(&self) -> usize {
+        let lib = self.xochitl.library_dir().to_path_buf();
+        if !lib.is_dir() {
+            return 0;
+        }
+        let docs = rmsvc_core::xochitl::find_documents_since(&lib, 0);
+        let mut n = 0;
+        for e in self.list() {
+            let has_native = e.delivered.as_ref().map(|d| d.native.is_some() && d.render.is_none()).unwrap_or(false);
+            let ext = formats::ext_of(&e.name);
+            if !has_native || (ext != "epub" && ext != "pdf") {
+                continue;
+            }
+            let stem = e.name.strip_suffix(&format!(".{ext}")).unwrap_or(&e.name).to_string();
+            let canon = bookconv::naming::canonical_book_name(&stem);
+            let eq = |a: &str, b: &str| a.trim().eq_ignore_ascii_case(b.trim());
+            let doc = docs.iter().find(|d| {
+                (eq(&d.visible_name, &canon) || eq(&d.visible_name, &stem) || eq(&d.visible_name, &e.name))
+                    && std::fs::metadata(lib.join(format!("{}.{ext}", d.uuid))).map(|m| m.len() == e.bytes).unwrap_or(false)
+            });
+            let Some(doc) = doc else { continue };
+            let pages = rmsvc_core::xochitl::page_count(&lib, &doc.uuid).unwrap_or(0);
+            let opened = ext == "pdf" || lib.join(format!("{}.pdf", doc.uuid)).exists();
+            let rc = sidecar::RenderCheck { uuid: doc.uuid.clone(), pages, expected: 0, status: if opened { "ok".into() } else { "onopen".into() }, at: rmsvc_core::clock::now_secs() };
+            if self.set_render(&e.name, rc).is_ok() {
+                n += 1;
+            }
+        }
+        n
+    }
+
+    /// 大文件通道（见 [`rmsvc_core::xochitl::Xochitl::upload_large_file`]）：成功 `Ok(Some)`；条件不满足（非
+    /// EPUB/PDF、超过安全上限、本机没有 xochitl 书库目录、造占位失败）→ `Ok(None)` 让调用方退回旧路径；
+    /// 占位已上传之后才出的错 → `Err`（不再退回分卷，否则会在书库里留下重复内容）。
+    fn try_deliver_direct(&self, name: &str, p: &Path, size: u64, folder: &str) -> Result<Option<DeliverOutcome>, String> {
+        let ext = formats::ext_of(name);
+        if (ext != "epub" && ext != "pdf") || size > MAX_DIRECT_BYTES || !self.xochitl.library_dir().is_dir() {
+            return Ok(None);
+        }
+        let stem = name.strip_suffix(&format!(".{ext}")).unwrap_or(name);
+        let (placeholder, content_type, pages) = if ext == "epub" {
+            // 显示名：有卷标记用规范名（与文件名一致），否则沿用书自己的 dc:title。
+            let title = bookconv::naming::has_volume_marker(stem).then(|| bookconv::naming::canonical_book_name(stem));
+            match bookconv::placeholder::epub_placeholder(p, title.as_deref()) {
+                Ok(b) => (b, "application/epub+zip", None),
+                Err(_) => return Ok(None),
+            }
+        } else {
+            let pages = match bookconv::convert::pdfwrite::PdfFileReader::open(p).and_then(|mut r| r.page_count()) {
+                Ok(n) => n,
+                Err(_) => return Ok(None),
+            };
+            match bookconv::placeholder::pdf_placeholder() {
+                Ok(b) => (b, "application/pdf", Some(pages)),
+                Err(_) => return Ok(None),
+            }
+        };
+        let uuid = self.xochitl.upload_large_file(p, name, content_type, folder, &placeholder, pages)?;
+        let _ = self.mark_delivered(name, Reader::Native);
+        // 渲染记录也写上，让"加入 xochitl"的书在列表里都有统一的渲染徽章（此前直接投入的书没有）：
+        // - PDF：页数就是我们写进 `.content` 的真页数 → 直接 ok；
+        // - EPUB：xochitl 要**首次打开**才渲染，此刻 `.content` 里是占位的页数。记 `onopen` + 占位页数，`list()` 之后每次
+        //   读该文档 `.content` 的 pageCount，一变（用户打开过、xochitl 渲染完）就自动显示成真页数。
+        let rc = match pages {
+            Some(n) => sidecar::RenderCheck { uuid: uuid.clone(), pages: n as u64, expected: 0, status: "ok".into(), at: rmsvc_core::clock::now_secs() },
+            None => sidecar::RenderCheck {
+                uuid: uuid.clone(),
+                pages: rmsvc_core::xochitl::page_count(self.xochitl.library_dir(), &uuid).unwrap_or(0),
+                expected: 0,
+                status: "onopen".into(),
+                at: rmsvc_core::clock::now_secs(),
+            },
+        };
+        let _ = self.set_render(name, rc);
+        Ok(Some(DeliverOutcome {
+            message: format!("《{stem}》{} MB 超过网页上传上限，已直接写入 xochitl 书库（未分卷）；首次打开需重新渲染，请稍候", size >> 20),
+            render: None,
+        }))
     }
 
     /// 落库前确保目标文件夹真的存在（2026-09-19，用户反馈"文件夹里写了名字依然不会创建文件夹"）：
@@ -503,6 +625,7 @@ impl Staging {
                 // 成功/失败落定后进度条意义不大（`status` 本身就是终态），不保留最后一次的
                 // `progress`——避免网页刷新时短暂显示一条"3/8"却又同时是 ok/failed 的矛盾态。
                 Ok(outcome) => sidecar::DeliverCheck { status: "ok".into(), message: outcome.message.clone(), at, progress: None },
+                Err(e) if e.contains(optimize::CANCELLED_MSG) => sidecar::DeliverCheck { status: "cancelled".into(), message: e.clone(), at, progress: None },
                 Err(e) => sidecar::DeliverCheck { status: "failed".into(), message: e.clone(), at, progress: None },
             };
             let _ = this.set_deliver_check(name, dc);
@@ -556,7 +679,11 @@ impl Staging {
         // 列表"的零轮询机制根本不知道这条记录变了，进度条数字冻结在第一份，要手动刷新页面才看得到
         // 新值（2026-09-19 用户反馈"进度条不会动，要自己刷新"，根因是这个函数当时没拿到 `bus`）。
         let mut done_titles: Vec<String> = Vec::new();
+        self.mark_cancellable(name);
         let outcome = bookconv::comic_split::deliver_split_streaming(p, native_limit, |piece_name, bytes, idx, total| {
+            if self.is_cancelled(name) {
+                return Err(optimize::CANCELLED_MSG.to_string()); // 份与份之间是安全的中断点
+            }
             let since_ms = rmsvc_core::clock::now_ms();
             self.xochitl.upload(bytes, piece_name, "application/epub+zip", folder).map(|_| ())?;
             let plan = RenderPlan { name: piece_name.to_string(), title: None, expected: 0, since_ms };
@@ -603,7 +730,11 @@ impl Staging {
         let stem = name.strip_suffix(".pdf").unwrap_or(name).to_string();
         let lib_dir = self.xochitl.library_dir().to_path_buf();
         let mut done_titles: Vec<String> = Vec::new();
+        self.mark_cancellable(name);
         let outcome = bookconv::comic_pdf::deliver_split_pdf_streaming(p, self.native_limit, |piece_name, bytes, idx, total| {
+            if self.is_cancelled(name) {
+                return Err(optimize::CANCELLED_MSG.to_string()); // 份与份之间是安全的中断点
+            }
             let since_ms = rmsvc_core::clock::now_ms();
             self.xochitl.upload(bytes, piece_name, "application/pdf", folder).map(|_| ())?;
             let plan = RenderPlan { name: piece_name.to_string(), title: None, expected: 0, since_ms };
@@ -731,7 +862,20 @@ impl Staging {
             };
             let mtime = md.modified().ok().map(rmsvc_core::clock::secs_of).unwrap_or(0);
             let busy = self.is_busy(&name);
-            out.push(StagingEntry { name, bytes: md.len(), format, optimized: level == "full", level, mtime, delivered: sidecar::read(&e.path()), busy, pdf_source });
+            let mut delivered = sidecar::read(&e.path());
+            if let Some(rc) = delivered.as_mut().and_then(|d| d.render.as_mut()) {
+                // 直接投入的 EPUB 首次打开才渲染：xochitl 渲染完会把 `.content` 的 pageCount 改成真页数，跟记录里的占位页数不同
+                // 就说明已经渲染过 → 升级成 ok。没打开过 → 保持 onopen。
+                if rc.status == "onopen" {
+                    if let Some(n) = rmsvc_core::xochitl::page_count(self.xochitl.library_dir(), &rc.uuid) {
+                        if n != rc.pages {
+                            rc.status = "ok".into();
+                            rc.pages = n;
+                        }
+                    }
+                }
+            }
+            out.push(StagingEntry { name, bytes: md.len(), format, optimized: level == "full", level, mtime, delivered, busy, pdf_source });
         }
         out.sort_by(|a, b| b.mtime.cmp(&a.mtime).then_with(|| a.name.cmp(&b.name)));
         out
@@ -767,7 +911,13 @@ impl AssetStore for StagingStore<'_> {
         if item.name == requested {
             "已入母版库".into()
         } else {
-            format!("已入母版库（已有同名，存为 {}）", item.name)
+            // 落地名与请求名不同有两种原因：EPUB 按 `书名 - N卷` 规范命名，或母版库里已有同名（加数字前缀）。
+            // 规范命名是常态，不该说成"已有同名"；只有落地名不是规范名的改动才是撞名。
+            if item.name == canonical_staged_name(requested) {
+                format!("已入母版库（按规范命名存为 {}）", item.name)
+            } else {
+                format!("已入母版库（已有同名，存为 {}）", item.name)
+            }
         }
     }
 }
@@ -805,6 +955,18 @@ fn optimize_note(rep: &optimize::Report) -> String {
     }
     note.push('）');
     note
+}
+
+/// EPUB 入库/优化统一按 `书名 - 卷/部/上/下`（数字在前）命名，见 `bookconv::naming`；其它格式原名不动。
+/// 大文件通道的安全上限（1GiB）：再大 xochitl 首次渲染的内存/时间没有验证过。
+const MAX_DIRECT_BYTES: u64 = 1 << 30;
+
+fn canonical_staged_name(name: &str) -> String {
+    if formats::ext_of(name) == "epub" {
+        bookconv::naming::canonical_file_name(name)
+    } else {
+        name.to_string()
+    }
 }
 
 fn landed_name(p: &Path) -> String {
@@ -1115,23 +1277,157 @@ mod tests {
     }
 
     #[test]
-    fn optimize_comic_epub_produces_pdf_output() {
+    fn stage_new_names_epub_as_title_dash_volume_number_first() {
+        let t = tempfile::tempdir().unwrap();
+        let s = staging(&t);
+        let epub = comic_epub_with_real_images(&[12, 13]);
+        let landed = s.stage_new("鏢人 - 卷02 -- 許先哲 -- 鏢人 - 卷02, 2022 -- Mox_moe -- df4a0842 -- Anna’s Archive.epub", &epub).unwrap();
+        assert_eq!(landed, "鏢人 - 02卷.epub");
+        // 非 EPUB 不动名字。
+        assert_eq!(s.stage_new("x -- y.pdf", b"%PDF-1.4").unwrap(), "x -- y.pdf");
+    }
+
+    #[test]
+    fn optimize_renames_existing_long_epub_and_keeps_sidecar() {
+        let t = tempfile::tempdir().unwrap();
+        let s = staging(&t);
+        let long = "亂馬1⁄2 典藏版 - 19卷 -- 高橋留美子 -- 19, 2019 -- 尖端 -- 03220cf1 -- Anna’s Archive.epub";
+        std::fs::write(t.path().join("staging").join(long), comic_epub_with_real_images(&[12, 13])).unwrap();
+        s.mark_delivered(long, Reader::Koreader).unwrap();
+        let msg = s.optimize(long, |_, _| {}).unwrap();
+        assert!(msg.contains("亂馬1⁄2 典藏版 - 19卷"), "{msg}");
+        let list = s.list();
+        assert_eq!(list.len(), 1, "只该有一条: {:?}", list.iter().map(|e| &e.name).collect::<Vec<_>>());
+        assert_eq!(list[0].name, "亂馬1⁄2 典藏版 - 19卷.epub");
+        assert!(list[0].delivered.is_some(), "落库记录（边车）必须跟着改名，不能丢");
+        assert!(list[0].optimized);
+    }
+
+    #[test]
+    fn optimize_sets_dc_title_to_canonical_name_for_volume_books() {
+        // 设备显示名取 EPUB 的 dc:title：有卷标记的书，优化后 dc:title 必须是规范名，跟文件名一致。
+        let t = tempfile::tempdir().unwrap();
+        let s = staging(&t);
+        let long = "鏢人 - 卷02 -- 許先哲 -- Anna’s Archive.epub";
+        std::fs::write(t.path().join("staging").join(long), comic_epub_with_real_images(&[12, 13])).unwrap();
+        s.optimize(long, |_, _| {}).unwrap();
+        let bytes = std::fs::read(t.path().join("staging").join("鏢人 - 02卷.epub")).unwrap();
+        let entries = bookconv::check::read_entries(&bytes).unwrap();
+        let opf = entries.iter().find(|e| e.name.ends_with(".opf")).unwrap();
+        assert!(String::from_utf8_lossy(&opf.data).contains("<dc:title>鏢人 - 02卷</dc:title>"), "dc:title 应为规范名");
+    }
+
+    #[test]
+    fn optimize_keeps_original_name_when_canonical_target_exists() {
+        let t = tempfile::tempdir().unwrap();
+        let s = staging(&t);
+        let dir = t.path().join("staging");
+        let long = "书 - 01卷 -- 作者 -- Anna’s Archive.epub";
+        std::fs::write(dir.join(long), comic_epub_with_real_images(&[12, 13])).unwrap();
+        std::fs::write(dir.join("书 - 01卷.epub"), comic_epub_with_real_images(&[12, 13])).unwrap();
+        s.optimize(long, |_, _| {}).unwrap();
+        let names: Vec<String> = s.list().into_iter().map(|e| e.name).collect();
+        assert!(names.contains(&long.to_string()) && names.contains(&"书 - 01卷.epub".to_string()), "重复的同一卷不能互相覆盖: {names:?}");
+    }
+
+    #[test]
+    fn onopen_render_record_upgrades_to_ok_once_xochitl_rewrites_page_count() {
+        // 直接投入的 EPUB：记 onopen + 占位页数(2)；用户打开后 xochitl 把 .content 的 pageCount 改成 351 → 列表自动显示 ok/351。
+        let t = tempfile::tempdir().unwrap();
+        let lib = t.path().join("lib");
+        std::fs::create_dir_all(&lib).unwrap();
+        let x = Arc::new(Xochitl::new("127.0.0.1:1", &lib, 1));
+        let s = Staging::new(t.path().join("staging"), x, 1024 * 1024);
+        s.ensure().unwrap();
+        s.stage_new("big.epub", &comic_epub_with_real_images(&[12, 13])).unwrap();
+        std::fs::write(lib.join("u1.content"), r#"{"pageCount":2}"#).unwrap();
+        s.set_render("big.epub", sidecar::RenderCheck { uuid: "u1".into(), pages: 2, expected: 0, status: "onopen".into(), at: 1 }).unwrap();
+        let rc = |s: &Staging| s.list()[0].delivered.clone().unwrap().render.unwrap();
+        assert_eq!((rc(&s).status.as_str(), rc(&s).pages), ("onopen", 2), "没打开过：保持 onopen");
+        std::fs::write(lib.join("u1.content"), r#"{"pageCount":351}"#).unwrap();
+        assert_eq!((rc(&s).status.as_str(), rc(&s).pages), ("ok", 351), "打开过（页数变了）：升级成真页数");
+    }
+
+    #[test]
+    fn backfill_claims_delivered_books_without_render_record_by_name_and_size() {
+        let t = tempfile::tempdir().unwrap();
+        let lib = t.path().join("lib");
+        std::fs::create_dir_all(&lib).unwrap();
+        let x = Arc::new(Xochitl::new("127.0.0.1:1", &lib, 1));
+        let s = Staging::new(t.path().join("staging"), x, 1024 * 1024);
+        s.ensure().unwrap();
+        let epub = comic_epub_with_real_images(&[12, 13]);
+        for n in ["镖人 - 二卷.epub", "镖人 - 三卷.epub"] {
+            s.stage_new(n, &epub).unwrap();
+            s.mark_delivered(n, Reader::Native).unwrap();
+        }
+        let mk = |uuid: &str, name: &str, opened: bool| {
+            std::fs::write(lib.join(format!("{uuid}.metadata")), format!(r#"{{"type":"DocumentType","visibleName":"{name}","parent":"","createdTime":"{}"}}"#, rmsvc_core::clock::now_ms())).unwrap();
+            std::fs::write(lib.join(format!("{uuid}.epub")), &epub).unwrap();
+            std::fs::write(lib.join(format!("{uuid}.content")), if opened { r#"{"pageCount":264}"# } else { r#"{"pageCount":2}"# }).unwrap();
+            if opened {
+                std::fs::write(lib.join(format!("{uuid}.pdf")), b"render").unwrap();
+            }
+        };
+        mk("u-unopened", "镖人 - 二卷", false);
+        mk("u-opened", "镖人 - 三卷", true);
+        assert_eq!(s.backfill_render_records(), 2);
+        let get = |name: &str| s.list().into_iter().find(|e| e.name == name).unwrap().delivered.unwrap().render.unwrap();
+        assert_eq!((get("镖人 - 二卷.epub").status.as_str(), get("镖人 - 二卷.epub").pages), ("onopen", 2));
+        assert_eq!((get("镖人 - 三卷.epub").status.as_str(), get("镖人 - 三卷.epub").pages), ("ok", 264));
+        assert_eq!(s.backfill_render_records(), 0, "幂等：已有记录的不再补");
+    }
+
+    #[test]
+    fn request_cancel_requires_busy_and_cancellable_step() {
+        let t = tempfile::tempdir().unwrap();
+        let s = staging(&t);
+        assert!(s.request_cancel("x.epub").unwrap_err().contains("没有在处理"), "没在处理的书不能取消");
+        assert!(s.try_start_busy("x.epub"));
+        assert_eq!(s.request_cancel("x.epub"), Ok(false), "没声明可中断的步骤（如单文件上传）如实回 false");
+        assert!(!s.is_cancelled("x.epub"));
+        s.mark_cancellable("x.epub");
+        assert_eq!(s.request_cancel("x.epub"), Ok(true));
+        assert!(s.is_cancelled("x.epub"));
+        s.end_busy("x.epub");
+        assert!(!s.is_cancelled("x.epub"), "操作结束后取消标记必须清掉，不能带进下一次");
+        assert!(s.try_start_busy("x.epub"));
+        assert!(!s.is_cancelled("x.epub"));
+    }
+
+    #[test]
+    fn optimize_cancelled_midway_leaves_book_and_no_temp_file() {
+        // 取消标记已设：优化一开始就停，母版原样保留，不留 .optimizing.tmp 半成品，状态是 cancelled 而不是 failed。
+        let t = tempfile::tempdir().unwrap();
+        let s = staging(&t);
+        let epub = comic_epub_with_real_images(&[12, 13]);
+        s.stage_new("manga.epub", &epub).unwrap();
+        assert!(s.try_start_busy("manga.epub"));
+        s.mark_cancellable("manga.epub");
+        s.request_cancel("manga.epub").unwrap();
+        let err = s.optimize("manga.epub", |_, _| {}).unwrap_err();
+        assert!(err.contains("已取消"), "{err}");
+        let dir = t.path().join("staging");
+        assert_eq!(std::fs::read(dir.join("manga.epub")).unwrap(), epub, "母版原样保留");
+        assert!(!std::fs::read_dir(&dir).unwrap().any(|e| e.unwrap().file_name().to_string_lossy().contains("optimizing.tmp")), "不留半成品");
+    }
+
+    #[test]
+    fn optimize_comic_epub_stays_epub() {
+        // 统一规则（2026-09-20 用户拍板）：漫画「优化」也不改格式，产物仍是同名 EPUB，内容/目录原样保留。
         let t = tempfile::tempdir().unwrap();
         let s = staging(&t);
         let epub = comic_epub_with_real_images(&[12, 13]); // 25 张图，够 is_comic 阈值
         s.stage_new("manga.epub", &epub).unwrap();
 
         let msg = s.optimize("manga.epub", |_, _| {}).unwrap();
-        assert!(msg.contains("漫画→PDF") && msg.contains("25 页"), "{msg}");
+        assert!(!msg.contains("PDF"), "漫画不该再转 PDF: {msg}");
 
         let list = s.list();
-        assert!(list.iter().all(|e| e.name != "manga.epub"), "原 EPUB 条目应该被替换掉");
-        let pdf_entry = list.iter().find(|e| e.name == "manga.pdf").expect("应该产出 manga.pdf");
-        assert_eq!(pdf_entry.format, "pdf");
-        assert!(pdf_entry.optimized && pdf_entry.level == "full", "漫画 PDF 应该报已优化: {pdf_entry:?}");
-
-        let pdf_bytes = std::fs::read(t.path().join("staging").join("manga.pdf")).unwrap();
-        assert_eq!(bookconv::convert::pdfwrite::page_count(&pdf_bytes).unwrap(), 25);
+        assert!(list.iter().all(|e| e.name != "manga.pdf"), "不该产出 PDF");
+        let e = list.iter().find(|e| e.name == "manga.epub").expect("仍是 manga.epub");
+        assert_eq!(e.format, "epub");
+        assert!(e.optimized && e.level == "full", "应报已优化: {e:?}");
     }
 
     /// 拿真实 pdflatex 编译的样本（bookconv 那条线的测试夹具，两个 crate 同一个仓库共享一份
@@ -1187,7 +1483,7 @@ mod tests {
         let epub = mini_epub(&[("content.opf", opf), ("c1.xhtml", "<html><body><p>正文</p></body></html>")]);
         s.stage_new("plain.epub", &epub).unwrap();
         let msg = s.optimize("plain.epub", |_, _| {}).unwrap();
-        assert!(!msg.contains("漫画→PDF"), "没有图片不该走漫画→PDF 分支: {msg}");
+        assert!(!msg.contains("PDF"), "没有图片不该走漫画→PDF 分支: {msg}");
     }
 
     #[test]
@@ -1198,7 +1494,11 @@ mod tests {
         s.ensure().unwrap();
         let epub = comic_epub_with_real_images(&[12, 13]);
         s.stage_new("manga.epub", &epub).unwrap();
-        s.optimize("manga.epub", |_, _| {}).unwrap(); // 产出 manga.pdf
+        // 造一份"自己产出的漫画 PDF"（带书签）：用户上传的原生 PDF 没有书签、不走分卷；漫画 EPUB 的「优化」
+        // 已不再转 PDF，这里直接调转换函数造夹具。
+        let dir = t.path().join("staging");
+        bookconv::comic_pdf::optimize_comic_epub_to_pdf_streaming(&dir.join("manga.epub"), &dir.join("manga.pdf"), |_, _| {}).unwrap();
+        std::fs::remove_file(dir.join("manga.epub")).unwrap();
 
         let err = s.deliver("manga.pdf", "", &empty_mkdir(&t), &rmsvc_core::events::EventBus::new()).unwrap_err();
         assert!(err.contains("按卷拆分") || err.contains("上传失败"), "应该走 PDF 拆分路径而不是整本拒绝: {err}");

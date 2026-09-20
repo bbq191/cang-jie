@@ -185,178 +185,77 @@ const GUIDE=()=>`<details class="cmp"><summary>${T('transfer.guide.summary')}</s
 <dt>${T('transfer.guide.unsure.dt')}</dt><dd>${T('transfer.guide.unsure.dd')}</dd>
 </dl></details>`;
 
-/* 母版库列表。按格式门控按钮：EPUB→优化(未优化时)/加入 xochitl/加入 KO；PDF→加入 xochitl/加入 KO；其它→只能加入 KO。
-   CBZ 漫画只能加入 KOReader（不加入 xochitl）；超体积门（nativeLimit 字节）的书灰掉「加入 xochitl」。「加入 KOReader」按 koInstalled 门控。
-   2026-09-19 用户明确要求去掉两样东西：① 优化分档位（不再有 mode 选择，永远跑完整清洗+优化）；
-   ② 投完自动从母版库删除（母版永远保留，用户自己删）——opts 里原来的 `mode()`/`clear()` 两个
-   参数已删，跟着一起删的还有 xFolder 那个"书库/批注/自定义"三选一预设（见 renderTransfer）。
-   opts: {items,q,fmt,st,xFolder(),kFolder(),koInstalled,nativeLimit,refresh()} */
-function stagingList(ul,opts){
-  ul.innerHTML='';
-  const q=(opts.q||'').toLowerCase();
-  const fmtOf=it=>it.format==='cbz'?'other':it.format;   // 筛选里 CBZ 归「其它」
-  let items=(opts.items||[]).filter(it=>(!q||it.name.toLowerCase().includes(q))&&(!opts.fmt||fmtOf(it)===opts.fmt)&&(!opts.st||(opts.st==='1')===!!it.optimized));
-  if(opts.hideDone)items=items.filter(it=>!isBookDone(it));
-  if(!items.length){ul.innerHTML='<li class="small">'+(opts.items&&opts.items.length?T('transfer.staging.emptyFiltered'):T('transfer.staging.emptyAll'))+'</li>';return}
-  // 分页（2026-09-19 用户反馈母版库列表太长）：一次只渲染前 visibleCount 条，超出的用一个
-  // "显示更多"行触发 opts.showMore 追加一页，不做真正的虚拟滚动——书的规模量级（几十到几百本）
-  // 不值得为此引入额外复杂度，简单的"按需追加"足够把首屏渲染量压下来。
-  const cap=opts.visibleCount||items.length;
-  const shown=items.slice(0,cap);
-  shown.forEach(it=>{const li=document.createElement('li');li.style.flexWrap='wrap';
-    const fmt=it.format==='epub'?'EPUB':it.format==='pdf'?'PDF':(it.name.includes('.')?it.name.split('.').pop().toUpperCase():T('transfer.staging.fmtOther'));
-    // PDF 原样是"原样"徽章——除了一种例外：漫画 EPUB 优化管线自己产出的 PDF（书签目录+左右留白
-    // 已根治），服务端靠有没有自己写的书签目录廉价识别（looks_like_own_comic_pdf），体现在
-    // it.level==='full'/it.optimized===true；用户自己上传的原生 PDF 这俩字段维持 none/false，
-    // 徽章不受影响，还是原样（2026-09-19 用户反馈"优化后的漫画 PDF 跟直接上传的 PDF 分不清"）。
-    const st=it.format==='pdf'?(it.optimized?`<span class="badge on" title="${T('transfer.staging.badge.comicPdfTitle')}">${T('transfer.staging.badge.comicPdf')}</span>`:`<span class="badge">${T('transfer.staging.badge.asIs')}</span>`)
-      :it.format!=='epub'?`<span class="badge">${T('transfer.staging.badge.asIs')}</span>`
-      :it.level==='full'?`<span class="badge on">${T('transfer.staging.badge.optimized')}</span>`
-      :it.level==='core'?`<span class="badge" title="${T('transfer.staging.badge.optimizedUncleanTitle')}">${T('transfer.staging.badge.optimizedUnclean')}</span>`
-      :it.level==='old'?`<span class="badge" title="${T('transfer.staging.badge.oldOptimizedTitle')}">${T('transfer.staging.badge.oldOptimized')}</span>`
-      :`<span class="badge">${T('transfer.staging.badge.notOptimized')}</span>`;
-    // 入库 PDF「优化」有文字层会转成 EPUB（后端 book-serve::staging.rs::optimize_pdf 的
-    // TextLayer 分支），这类 EPUB 跟原生上传的 EPUB 在列表里视觉上分不出来——服务端已经在
-    // list() 里用 looks_like_pdf_derived_epub 正确算出 it.pdfSource，这里补一条徽章分支，
-    // 跟上面 st 的 full/core/old/none 那条链并列展示，不是互斥替换（PDF 转出的 EPUB 已经
-    // 是 level:"full" 了，st 本身会显示"已优化"，这里再叠一个来源说明）。
-    const ps=(it.format==='epub'&&it.pdfSource)?` <span class="badge on" title="${T('transfer.staging.badge.pdfSourceTitle')}">${T('transfer.staging.badge.pdfSource')}</span>`:'';
-    const hint=it.format==='pdf'?' · '+T('transfer.staging.hint.pdf'):it.format==='cbz'?' · '+T('transfer.staging.hint.comic'):it.format==='other'?' · '+T('transfer.staging.hint.other'):'';
-    // 落库记录徽章；落库时间早于母版 mtime（之后又优化过）→ 标「旧」，提示可重投
-    const dv=it.delivered||{},stale=t=>t&&it.mtime&&t<it.mtime;
-    const dl=(dv.native?` <span class="badge on" title="${stale(dv.native)?T('transfer.staging.delivered.native.staleTitle'):T('transfer.staging.delivered.native.title')}">${T('transfer.staging.delivered.native.badge')}${stale(dv.native)?T('transfer.staging.staleSuffix'):''}</span>`:'')+(dv.koreader?` <span class="badge on" title="${stale(dv.koreader)?T('transfer.staging.delivered.koreader.staleTitle'):T('transfer.staging.delivered.koreader.title')}">${T('transfer.staging.delivered.koreader.badge')}${stale(dv.koreader)?T('transfer.staging.staleSuffix'):''}</span>`:'');
-    // 渲染自检徽章（投原生后 book-serve 等 xochitl 渲染完核对页数；warn＝整章渲染失败的典型症状）
-    const rc=dv.render,rb=!rc?'':rc.status==='ok'?` <span class="badge on" title="${T('transfer.staging.render.okTitle',{pages:rc.pages,expected:rc.expected})}">${T('transfer.staging.render.okBadge',{pages:rc.pages})}</span>`:rc.status==='warn'?` <span class="badge off" title="${T('transfer.staging.render.warnTitle',{pages:rc.pages,expected:rc.expected})}">${T('transfer.staging.render.warnBadge',{pages:rc.pages,expected:rc.expected})}</span>`:rc.status==='pending'?` <span class="badge" title="${T('transfer.staging.render.pendingTitle')}">${T('transfer.staging.render.pendingBadge')}</span>`:` <span class="badge" title="${T('transfer.staging.render.noneTitle')}">${T('transfer.staging.render.noneBadge')}</span>`;
-    // 异步优化/落库状态：进行中（忙锁，服务端权威——不是这次点击本地临时禁用那种，跨刷新/跨设备都准，
-    // 优化跟落库共用同一把忙锁所以徽章文案不分是哪个在跑）；完成后短暂展示一次失败（不常驻，避免列表
-    // 被历史结果占满；失败保留到下次点同一操作前，方便看清原因；成功不额外提示——优化有「已优化」徽章、
-    // 落库有「已投原生」徽章，各自已经是"成功了"的证明，2026-09-19 把落库也接进同一套异步管线时补）。
-    const oc=dv.optimize,dc=dv.deliver;
-    // "卡在 pending 但 busy 已经变 false"＝上次处理被服务/设备重启打断，状态没能写成
-    // ok/failed（2026-09-19 真机撞过：进程被摔炸后忙锁在内存里、重启即清零，但 sidecar
-    // 里的 pending 记录留在磁盘上）——不是"还在跑"，之前这种状态界面上什么都不显示，跟"点了
-    // 没反应"没区别；现在单独标出来，别再跟"真的在跑"混在一起看。
-    const stalePending=k=>k&&k.status==='pending'&&!it.busy;
-    // 「加入 KOReader」是 koreader-serve 一次同步阻塞调用（本地文件复制，不走 book-serve 忙锁——
-    // 两个服务各自独立进程，book-serve 的 `it.busy` 天然管不到它），server 端没有等价的忙态可查。
-    // 2026-09-19 用户反馈"加入 KOReader 进度条也不刷新"：根因是这个操作从没接进过忙态系统，之前
-    // 按钮点击只有本地"文字+省略号"，跟其余按钮的进度条待遇完全脱节。这里补一个纯前端的本地忙态
-    // （`opts.localBusy`，按钮点击时加入、操作完成后移除，见下面按钮定义），跟服务端 `it.busy`
-    // 合并成同一个 `busy` 判据，统一走下面的禁用/进度条逻辑——不假装有真实进度（本地复制没有
-    // 天然的分步骤可报），但至少不再是"点了没反应"。
-    const localBusy=!!(opts.localBusy&&opts.localBusy.has(it.name));
-    const busy=it.busy||localBusy;
-    // 批量运行期间的两种前端本地态：queued=已经提交进本轮批量、正在等网关并发闸门放行（服务端
-    // busy 还没变 true，不加这个的话用户点了批量看着跟没点一样，2026-09-19 用户反馈）；locked=
-    // 批量运行期间整个列表锁住，不止本轮选中的那些书——用户反馈"点了批量优化还能点单本操作/
-    // 另外几个批量按钮"会互相打架，运行期间干脆禁掉所有单条按钮+复选框。
-    // gatedPending/gatedActive 是网关 `/api/budget/status` 的服务端真相（2026-09-19 用户
-    // 反馈驱动：关掉浏览器标签页后 batchActive/batchQueued 这类纯客户端状态全部清零，但网关
-    // 那边真正排队等并发名额的书完全不受影响、还在傻等——新打开的页面对此一无所知，队列里的书
-    // 既看不出"正在排队"也点不了停止，还能被当成"闲置条目"删除/再次提交）。不管是不是这个
-    // 浏览器标签页提交的批量任务，只要网关认为这本书正在排队/正在跑，就该锁住+能取消，
-    // 这两个集合天然跨会话/跨设备/跨标签页关闭都读得到，不依赖 batchActive/batchQueued。
-    const gatedPending=!!(opts.gatedPending&&opts.gatedPending.has(it.name));
-    const gatedActive=!!(opts.gatedActive&&opts.gatedActive.has(it.name));
-    const queued=!!(opts.batchQueued&&opts.batchQueued.has(it.name))||gatedPending;
-    const locked=busy||!!opts.batchActive||gatedPending||gatedActive;
-    const ob=busy?` <span class="badge" title="${T('transfer.staging.processing.title')}">${T('transfer.staging.processing.badge')}</span>`
-      :(stalePending(oc)||stalePending(dc)?` <span class="badge off" title="${T('transfer.staging.stalePending.title')}">${T('transfer.staging.stalePending.badge')}</span>`:'')
-      +(oc&&oc.status==='failed'?` <span class="badge off" title="${oc.message}">${T('transfer.staging.optimizeFailed.badge')}</span>`:'')
-      +(dc&&dc.status==='failed'?` <span class="badge off" title="${dc.message}">${T('transfer.staging.deliverFailed.badge')}</span>`:'');
-    li.innerHTML=`<span><b>${it.name}</b> <span class="badge">${fmt}</span> ${st}${ps}${dl}${rb}${ob} <span class="small">${fmtB(it.bytes)}${hint}</span></span>`;
-    // 批量勾选（2026-09-19）：跟三个单条按钮并存，不是替代——价值点是"选中的书受网关并发闸门
-    // 保护"，单条按钮做不到这个（见 budget.rs/proxy.rs），不是历史上笔记模块那种纯重复入口。
-    if(opts.picked){
-      const cb=el('input',{type:'checkbox'});cb.checked=opts.picked.has(it.name);
-      cb.onchange=()=>{if(cb.checked)opts.picked.add(it.name);else opts.picked.delete(it.name);if(opts.syncPickbar)opts.syncPickbar()};
-      li.querySelector('span').prepend(cb,' ');
-    }
-    // 报错/进度原因以前只写进徽章的 title（hover 才看得到，触屏设备摸不到）——补一行可见小字，跟
-    // 下面"禁用态按钮原因"同一套做法（2026-09-19 用户反馈"报错最下方显示错误原因"）。
-    // 优先级：投递失败 ＞ 优化失败 ＞ 处理被打断（真在跑走下面单独的进度条分支，不进这条文字级联）。
-    const statusMsg=dc&&dc.status==='failed'?T('transfer.staging.deliverFailedPrefix')+dc.message
-      :oc&&oc.status==='failed'?T('transfer.staging.optimizeFailedPrefix')+oc.message
-      :(stalePending(oc)||stalePending(dc))?T('transfer.staging.stalePending.title'):'';
-    if(statusMsg){const line=document.createElement('div');line.className='small';line.style.cssText='flex-basis:100%;margin-top:.2em;color:var(--bad)';line.textContent=statusMsg;li.appendChild(line)}
-    // 真在跑：进度条取代"正在处理中，请稍候"这句静态文案（2026-09-19 用户反馈——干等的文字没意义，
-    // 能看见走到哪一步/大概多久才有用）。漫画拆分卷落库、普通 EPUB 优化都有结构化步数
-    // （`dc.progress`/`oc.progress`，形状同为 `{done,total}`，见 book-serve `try_deliver_split`/
-    // `spawn_optimize`）→ 真百分比进度条；普通整本落库（没有拆分）后端没法给出精确进度（耗时来自
-    // 单次上传，没有天然的"第几步"）→ 不确定时长的滚动进度条，至少比一句不会变化的静态文字更能
-    // 传达"真的在动、不是卡死了"（`renderStepProgress` 定义见文件顶部，跟笔记「推送本章」共用）。
-    if(busy){
-      const dcPending=dc&&dc.status==='pending',ocPending=oc&&oc.status==='pending';
-      const label=localBusy?T('transfer.staging.progress.addingKoreader'):dcPending?T('transfer.staging.progress.delivering'):ocPending?T('transfer.staging.progress.optimizing'):T('transfer.staging.progress.working');
-      const prog=(dcPending&&dc.progress)||(ocPending&&oc.progress)||null;
-      const msg=dcPending?dc.message:ocPending?oc.message:'';
-      renderStepProgress(li,{label,prog,msg});
-    }else if(queued){
-      renderStepProgress(li,{label:T('transfer.staging.progress.queued')});
-    }
-    const right=document.createElement('span');right.style.cssText='display:flex;gap:.4em;flex-wrap:wrap;align-items:center';
-    // 禁用态按钮的原因（超限/未安装）以前只写进 title——触屏设备摸不到 hover，等于完全看不到为什么点
-    // 不了、该去哪解决（2026-09-09 审计发现）。现在禁用时额外补一行可见小字，跟 title 内容一样，
-    // `flex-basis:100%` 让它在 `right`（flex-wrap 容器）里独占一行，不挤在按钮同一行。busy 引起的
-    // 禁用不再重复这行小字——上面已经有整行的进度条，三个按钮各自重复一遍"正在处理中"没有信息量。
-    // trackLocal=true：这个按钮的操作没有服务端忙态可查（目前只有「加入 KOReader」），点击时先把
-    // 这条目名记进 `opts.localBusy` 并立即用 `opts.render`（不重新拉数据、只重画）把进度条画出来，
-    // 操作结束（无论成不成功）都要清掉，再走一次真正的 `opts.refresh` 落地最终状态。禁用/复位本身
-    // 委托给全局 `guardClick`（2026-09-19 代码质量审计——这里以前自己又手写了一遍同一件事）；
-    // 这层只叠列表特有的文案/记账/收尾。
-    const btn=(t,pri,fn,dis,title,cls,trackLocal)=>{const b=document.createElement('button');b.className='btn'+(pri?' pri':'')+(cls?' '+cls:'');b.textContent=t;if(dis){b.disabled=true;b.title=title||''}else guardClick(b,async()=>{b.textContent=t+'…';
-      if(trackLocal&&opts.localBusy){opts.localBusy.add(it.name);if(opts.render)opts.render()}
-      try{await fn()}finally{if(trackLocal&&opts.localBusy)opts.localBusy.delete(it.name)}
-      if(opts.refresh)opts.refresh()});right.appendChild(b);
-      if(dis&&title){const hint=document.createElement('span');hint.className='small';hint.style.cssText='flex-basis:100%';hint.textContent=title;right.appendChild(hint)}};
-    // busy（it.busy 服务端忙锁 或 localBusy 本地忙态）：这条目正有一个异步操作在跑（优化/落库真机
-    // 实测都能到分钟级，KOReader 加入虽快但也不该看着像没反应）——删除/落库/加入 KOReader/再次优化
-    // 全部先禁掉，防止并发冲突（2026-09-18 真机反馈：点了优化又点删除）；服务端忙锁完成后 SSE 推
-    // 事件、列表自动刷新解禁，本地忙态在 `fn()` resolve 后立即清。
-    // 2026-09-19 用户反馈这两句锁定原因太啰嗦——批量/跨会话排队本身已经有进度条/顶部小结/
-    // 「取消排队」按钮把状态交代清楚了，单条按钮下面再重复一遍解释文字是多余的，去掉。
-    const lockTitle='';
-    // PDF 2026-09-19 起也能点「优化」——按下去到底是转 EPUB（有文字层）还是原地裁边（漫画/
-    // 无文字层）由后端 book-serve::staging.rs::optimize_pdf 透明决定，前端不用关心；PDF 转
-    // 出的 EPUB 一落地就是 optimized:true（见 list() 的 pdf_source 处理），`!it.optimized`
-    // 这个既有条件天然把它们挡在外面，不需要额外判断排除。
-    if((it.format==='epub'||it.format==='pdf')&&!it.optimized)btn(T('transfer.staging.btn.optimize'),false,()=>postJ('/api/books/staging/optimize',{name:it.name}),locked,lockTitle);
-    // 体积门：超过 xochitl /upload 上限的书灰掉按钮（服务端同样拦），提示走电脑分卷。EPUB/PDF 都
-    // 例外——超限的 EPUB 漫画服务端按 NCX 拆分投递，超限的漫画 PDF（optimize 阶段自己产出、带
-    // 书签的那种）服务端也一样按卷拆分投递（2026-09-19 并入 feat/comic-pdf-optimize，见
-    // book-serve::Staging::try_deliver_split/try_deliver_split_pdf）；按钮不能提前灰掉，得让
-    // 服务端判过是不是能拆才知道能不能救——不是漫画/拆不出方案的普通大 PDF，deliver 会返回清楚的
-    // 拒绝原因（"PDF 请自行分割成多份后重新上传"），走既有失败徽章/状态行展示，不是静默失败。
-    const tooBig=opts.nativeLimit&&it.bytes>opts.nativeLimit&&it.format!=='epub'&&it.format!=='pdf';
-    // 落库改异步同 optimize（2026-09-19：超限漫画按卷拆分要挨个建包+上传，真机能到分钟级，之前同步
-    // 阻塞的体验跟优化改异步前一样像卡死）；点了立即回"已开始"，不再 alert 最终结果——完成状态跟优化
-    // 一样靠徽章看（成功＝「已加入 xochitl」时间戳徽章出现，失败＝「上次加入失败」徽章，见上面 ob 那段）。
-    // 2026-09-19 去掉「投完自动删除」：母版永远保留，不再传 keep（服务端也已删这个参数）。
-    if(it.format==='epub'||it.format==='pdf')btn(T('transfer.staging.btn.deliverNative'),true,()=>postJ('/api/books/staging/deliver',{name:it.name,folder:opts.xFolder()}),locked||tooBig,busy?'':(tooBig?T('transfer.staging.btn.tooBigTitle',{limit:fmtB(opts.nativeLimit)}):lockTitle));
-    // KOReader 未安装这条原因以前每行都重复一遍小字（2026-09-19 用户反馈列表太长时发现的纯冗余：
-    // 没装 KOReader 时这行文字在每一本书下面重复出现），改成只在列表顶部提示一次（见 renderTransfer），
-    // 这里禁用态不再重复挂 title 文案。
-    btn(T('transfer.staging.btn.addKoreader'),true,async()=>{const r=await postJ('/api/koreader/books/adopt',{name:it.name,folder:opts.kFolder()});if(r.ok!==false)await postJ('/api/books/staging/mark',{name:it.name,target:'koreader'})},locked||!opts.koInstalled,opts.koInstalled?lockTitle:'',undefined,true);
-    // 单行最多 5 徽章+4 按钮时，"删除"（销毁）跟"优化"（编辑）视觉权重完全一样，只靠文案区分
-    // （2026-09-09 审计发现）；`.btn-bad` 早就存在但只用在转写失败按钮上，这里补上，破坏性操作至少
-    // 颜色上跟常规操作分开。
-    btn(T('action.delete'),false,async()=>{if(await confirmDialog(T('transfer.staging.confirmDeleteOne',{name:it.name})))await postJ('/api/books/staging/delete',{name:it.name})},locked,lockTitle,'btn-bad');
-    // 取消排队：只在这本书真的还卡在网关排队（`gatedPending`，服务端真相）时出现，永远不受
-    // `locked` 影响——这是用户唯一能拿到的、不依赖"提交那次请求的浏览器标签页还活着"的停止
-    // 手段（对应 budget::Budget::cancel：已经拿到名额真正在跑的救不回来，只能取消还在排队的）。
-    // 点了给个明确的结果反馈，不是静默刷新完事——`cancelled:false` 是真实可能发生的（点的
-    // 一瞬间它可能刚好轮到名额、已经开始处理了），不说清楚的话用户会以为"点了没反应"。
-    if(gatedPending&&!busy)btn(T('transfer.staging.btn.cancelQueued'),false,async()=>{
-      const r=await postJ('/api/budget/cancel',{name:it.name});
-      if(r.ok!==false)toast(r.cancelled?T('transfer.staging.cancelQueuedOk',{name:it.name}):T('transfer.staging.cancelQueuedTooLate',{name:it.name}),r.cancelled?'ok':'warn');
-    },false,'','btn-bad');
-    li.appendChild(right);ul.appendChild(li)});
-  if(items.length>cap){
-    const li=document.createElement('li');li.style.justifyContent='center';
-    const more=el('button',{class:'btn',text:T('transfer.staging.showMore',{count:Math.min(30,items.length-cap)})});
-    more.onclick=()=>{if(opts.showMore)opts.showMore()};
-    li.appendChild(more);ul.appendChild(li);
+/* 母版库列表（2026-09-20 重设计，兼顾手机和 PC）。此前的问题：一整张卡片里堆了文件夹输入框、说明、搜索、两个
+   下拉、开关、三条状态提示，每行最多 5 个徽章 + 4 个按钮，下载站的长文件名在手机上折成好几行；批量要逐行勾选、
+   由浏览器逐个提交。现在：每行 = 勾选框 + 清爽书名（去掉 `-- 作者 -- hash` 尾巴，完整名在「更多」里）+ 一行徽章 +
+   **一个主按钮**（随状态变：待优化→优化；已优化→加入 xochitl；cbz/其它→加入 KOReader）+ `⋯` 菜单（其余操作）。
+   批量走服务端队列（网关 `/api/batch`），全选/一键"优化全部待优化"，关掉页面照跑。 */
+const stgClean=n=>{const s=n.replace(/\.(epub|pdf|cbz)$/i,'');return (s.split(' -- ')[0]||s).trim()};
+/* 搜索框的下拉建议：**书名 = 第一个 "-" 之前的内容**（用户 2026-09-20 指定）。"亂馬1⁄2 典藏版 - 07卷" → "亂馬1⁄2 典藏版"，
+   同一本书的多卷合成一条；选中后按名字包含匹配，正好筛出这本书的所有卷。 */
+const stgTitle=n=>stgClean(n).split('-')[0].trim();
+const stgNameOptions=items=>[...new Set(items.map(it=>stgTitle(it.name)).filter(Boolean))].map(n=>`<option value="${n.replace(/"/g,'&quot;')}">`).join('');
+const stgIsTodo=it=>(it.format==='epub'||it.format==='pdf')&&!it.optimized;
+/* 一本书的徽章 HTML + 一条可见的状态文字（失败原因等）。逻辑沿用旧列表：优化档位/PDF 来源/落库记录/渲染自检/忙态。 */
+function stgBadges(it,busy){
+  const fmt=it.format==='epub'?'EPUB':it.format==='pdf'?'PDF':(it.name.includes('.')?it.name.split('.').pop().toUpperCase():T('transfer.staging.fmtOther'));
+  const st=it.format==='pdf'?(it.optimized?`<span class="badge on" title="${T('transfer.staging.badge.comicPdfTitle')}">${T('transfer.staging.badge.comicPdf')}</span>`:`<span class="badge">${T('transfer.staging.badge.asIs')}</span>`)
+    :it.format!=='epub'?`<span class="badge">${T('transfer.staging.badge.asIs')}</span>`
+    :it.level==='full'?`<span class="badge on">${T('transfer.staging.badge.optimized')}</span>`
+    :it.level==='core'?`<span class="badge" title="${T('transfer.staging.badge.optimizedUncleanTitle')}">${T('transfer.staging.badge.optimizedUnclean')}</span>`
+    :it.level==='old'?`<span class="badge" title="${T('transfer.staging.badge.oldOptimizedTitle')}">${T('transfer.staging.badge.oldOptimized')}</span>`
+    :`<span class="badge">${T('transfer.staging.badge.notOptimized')}</span>`;
+  const ps=(it.format==='epub'&&it.pdfSource)?`<span class="badge on" title="${T('transfer.staging.badge.pdfSourceTitle')}">${T('transfer.staging.badge.pdfSource')}</span>`:'';
+  const dv=it.delivered||{},stale=t=>t&&it.mtime&&t<it.mtime;
+  const dl=(dv.native?`<span class="badge on" title="${stale(dv.native)?T('transfer.staging.delivered.native.staleTitle'):T('transfer.staging.delivered.native.title')}">${T('transfer.staging.delivered.native.badge')}${stale(dv.native)?T('transfer.staging.staleSuffix'):''}</span>`:'')+(dv.koreader?`<span class="badge on" title="${stale(dv.koreader)?T('transfer.staging.delivered.koreader.staleTitle'):T('transfer.staging.delivered.koreader.title')}">${T('transfer.staging.delivered.koreader.badge')}${stale(dv.koreader)?T('transfer.staging.staleSuffix'):''}</span>`:'');
+  const rc=dv.render,rb=!rc?'':rc.status==='onopen'?`<span class="badge" title="${T('stg.render.onopenTitle')}">${T('stg.render.onopenBadge')}</span>`:rc.status==='ok'?`<span class="badge on" title="${rc.expected>=20?T('transfer.staging.render.okTitle',{pages:rc.pages,expected:rc.expected}):T('stg.render.okTitle',{pages:rc.pages})}">${T('transfer.staging.render.okBadge',{pages:rc.pages})}</span>`:rc.status==='warn'?`<span class="badge off" title="${T('transfer.staging.render.warnTitle',{pages:rc.pages,expected:rc.expected})}">${T('transfer.staging.render.warnBadge',{pages:rc.pages,expected:rc.expected})}</span>`:rc.status==='pending'?`<span class="badge" title="${T('transfer.staging.render.pendingTitle')}">${T('transfer.staging.render.pendingBadge')}</span>`:`<span class="badge" title="${T('transfer.staging.render.noneTitle')}">${T('transfer.staging.render.noneBadge')}</span>`;
+  const oc=dv.optimize,dc=dv.deliver;
+  // 卡在 pending 但 busy=false＝上次处理被服务/设备重启打断（2026-09-19 真机撞过），不是"还在跑"。
+  const stalePending=k=>k&&k.status==='pending'&&!it.busy;
+  const fails=(stalePending(oc)||stalePending(dc)?`<span class="badge off" title="${T('transfer.staging.stalePending.title')}">${T('transfer.staging.stalePending.badge')}</span>`:'')
+    +(oc&&oc.status==='failed'?`<span class="badge off" title="${oc.message}">${T('transfer.staging.optimizeFailed.badge')}</span>`:'')
+    +(dc&&dc.status==='failed'?`<span class="badge off" title="${dc.message}">${T('transfer.staging.deliverFailed.badge')}</span>`:'');
+  const msg=dc&&dc.status==='failed'?T('transfer.staging.deliverFailedPrefix')+dc.message
+    :oc&&oc.status==='failed'?T('transfer.staging.optimizeFailedPrefix')+oc.message
+    :(oc&&oc.status==='cancelled')||(dc&&dc.status==='cancelled')?T('stg.row.cancelled'):(stalePending(oc)||stalePending(dc))?T('transfer.staging.stalePending.title'):'';
+  return {html:`<span class="badge fmt">${fmt}</span><span class="stg-size">${fmtB(it.bytes)}</span>${st}${ps}${dl}${rb}${busy?'':fails}`,msg};
+}
+/* 一行。ctx: {picked,localBusy,gatedPending,gatedActive,batchQueued,bs,koInstalled,xFolder(),kFolder(),syncSel(),render(),refresh()} */
+function stgRow(it,ctx){
+  const dv=it.delivered||{},oc=dv.optimize,dc=dv.deliver;
+  const localBusy=ctx.localBusy.has(it.name),busy=!!it.busy||localBusy;
+  const gatedPending=ctx.gatedPending.has(it.name),gatedActive=ctx.gatedActive.has(it.name);
+  const queued=gatedPending||ctx.batchQueued.has(it.name)||(ctx.bs.running&&ctx.bs.current===it.name&&!busy);
+  const locked=busy||ctx.bs.running||gatedPending||gatedActive;
+  const b=stgBadges(it,busy);
+  const cb=el('input',{type:'checkbox','aria-label':it.name});cb.checked=ctx.picked.has(it.name);
+  cb.onchange=()=>{if(cb.checked)ctx.picked.add(it.name);else ctx.picked.delete(it.name);li.classList.toggle('sel',cb.checked);ctx.syncSel()};
+  const title=el('div',{class:'stg-name',title:it.name,text:stgClean(it.name)});
+  const meta=el('div',{class:'stg-meta',html:b.html});
+  const main=el('div',{class:'stg-main'},[title,meta]);
+  if(b.msg)main.appendChild(el('div',{class:'small stg-err'+(/^(上次已取消|Cancelled)/.test(b.msg)?' stg-muted':''),text:b.msg}));
+  if(busy){
+    const dcP=dc&&dc.status==='pending',ocP=oc&&oc.status==='pending';
+    const label=localBusy?T('transfer.staging.progress.addingKoreader'):dcP?T('transfer.staging.progress.delivering'):ocP?T('transfer.staging.progress.optimizing'):T('transfer.staging.progress.working');
+    renderStepProgress(main,{label,prog:(dcP&&dc.progress)||(ocP&&oc.progress)||null,msg:dcP?dc.message:ocP?oc.message:''});
+  }else if(queued){
+    renderStepProgress(main,{label:ctx.batchQueued.has(it.name)?T('stg.batch.queuedHere'):T('transfer.staging.progress.queued')});
   }
+  // 按钮：guardClick 防双击；trackLocal＝没有服务端忙态的操作（加入 KOReader）点击时本地记忙态、先画出进度条。
+  const act=(t,pri,fn,{dis,cls,track}={})=>{const x=el('button',{class:'btn'+(pri?' pri':'')+(cls?' '+cls:''),text:t});
+    if(dis){x.disabled=true;x.title=ctx.bs.running?T('stg.batch.runningLock'):''}
+    else guardClick(x,async()=>{x.textContent=t+'…';if(track){ctx.localBusy.add(it.name);ctx.render()}try{await fn()}finally{if(track)ctx.localBusy.delete(it.name)}ctx.refresh()});return x};
+  // 列表只显示书名/类型/大小/状态/进度；**所有操作**（优化/加入 xochitl/加入 KOReader/删除/全部中止）由勾选后的底部操作栏统一控制
+  // （用户 2026-09-20 明确要求）。行内唯一的按钮：这本书正在处理/排队时的「停止」。
+  const doStop=async()=>{const r=await postJ('/api/books/staging/cancel',{name:it.name});if(r.ok!==false)toast(r.message,r.cancelled?'ok':'warn',5000)};
+  const actions=el('div',{class:'stg-actions'});
+  if(gatedPending&&!busy){
+    actions.appendChild(act(T('transfer.staging.btn.cancelQueued'),false,async()=>{const r=await postJ('/api/budget/cancel',{name:it.name});if(r.ok!==false)toast(r.cancelled?T('transfer.staging.cancelQueuedOk',{name:it.name}):T('transfer.staging.cancelQueuedTooLate',{name:it.name}),r.cancelled?'ok':'warn')},{cls:'btn-bad'}));
+  }else if(busy&&!localBusy||gatedActive){
+    actions.appendChild(act(T('stg.row.stop'),false,doStop,{cls:'btn-bad'}));
+  }
+  const li=el('li',{class:'stg-row'+(cb.checked?' sel':'')},actions.children.length?[el('label',{class:'stg-check'},[cb]),main,actions]:[el('label',{class:'stg-check'},[cb]),main]);
+  return li;
 }
 
 /* 「传书」固定 tab = 三层架构入口：入库（所有内容源汇入）｜母版库（可选优化 → 选去向落库）。放第一位。
@@ -386,129 +285,156 @@ function renderTransfer(sec){sec.innerHTML=`
       <p class="small">${T('transfer.fetchArticle.optimizeHint')}</p>
     </div>
   </div>
-  <div class="subpanel">
-    <div class="card"><h3 style="margin-top:0">${T('transfer.staging.title')} <span class="small" id="stgcap"></span></h3>
-      <div class="row"><label class="small" for="folder">${T('transfer.staging.folder.label')}</label><input type="text" id="folder" list="xodirs" placeholder="${T('transfer.staging.folder.placeholder')}" style="max-width:10em"><datalist id="xodirs"></datalist>
-        <label class="small" for="kfolder">${T('transfer.staging.kfolder.label')}</label><input type="text" id="kfolder" list="kodirs" placeholder="${T('transfer.staging.kfolder.placeholder')}" style="max-width:9em"><datalist id="kodirs"></datalist></div>
-      <details class="cmp"><summary>${T('transfer.staging.optDetailsSummary')}</summary><p class="small">${T('transfer.staging.optNote')}</p></details>
-      <div class="row"><input type="text" id="stgq" placeholder="${T('transfer.staging.searchPlaceholder')}" aria-label="${T('transfer.staging.searchAria')}" style="flex:1;min-width:8em"><select id="stgfmt" aria-label="${T('transfer.staging.fmtFilterAria')}" style="max-width:8em"><option value="">${T('transfer.staging.fmtAll')}</option><option value="epub">EPUB</option><option value="pdf">PDF</option><option value="other">${T('transfer.staging.fmtOther')}</option></select><select id="stgst" aria-label="${T('transfer.staging.stFilterAria')}" style="max-width:8em"><option value="">${T('transfer.staging.stAll')}</option><option value="0">${T('transfer.staging.stRaw')}</option><option value="1">${T('transfer.staging.stDone')}</option></select><button class="btn" id="stgpurge" title="${T('transfer.staging.purgeTitle')}">${T('transfer.staging.purgeBtn')}</button></div>
-      <div class="row"><label class="toggle"><input type="checkbox" id="stghidedone"> ${T('transfer.staging.hideDone')}</label></div>
-      <div class="small" id="stgfree" style="margin:-.3em 0 .4em"></div>
-      <div class="small" id="stggated" style="margin:-.3em 0 .4em"></div>
-      <div class="small" id="stgkonotice" style="margin:-.3em 0 .4em"></div>
-      <div class="card" id="stgpickbar" hidden style="margin:0 0 .5em">
-        <span class="small" id="stgpickcount"></span>
-        <button class="btn" id="stgpickoptimize">${T('transfer.staging.pick.batchOptimize')}</button>
-        <button class="btn" id="stgpickdeliver">${T('transfer.staging.pick.batchDeliver')}</button>
-        <button class="btn" id="stgpickkoreader">${T('transfer.staging.pick.batchKoreader')}</button>
-        <button class="btn" id="stgpickclear">${T('transfer.staging.pick.cancel')}</button>
-        <div class="small" id="stgpickmsg" style="margin-top:.3em"></div>
+  <div class="subpanel" id="stgroot">
+    <div class="card stg-head">
+      <div class="stg-headrow"><h3 style="margin:0">${T('transfer.staging.title')}</h3><span class="small" id="stgcap"></span></div>
+      <div class="stg-dest">
+        <div class="stg-destpair">
+          <div class="stg-destcol"><label class="small" for="folder">${T('stg.dest.xochitl')}</label><select id="folder"></select></div>
+          <div class="stg-destcol"><label class="small" for="kfolder">${T('stg.dest.koreader')}</label><select id="kfolder"></select></div>
+        </div>
+        <span class="stg-newrow" id="xnew" hidden><input type="text" id="xnewname" placeholder="${T('stg.dest.newPlaceholder')}"><button class="btn pri" id="xnewgo">${T('stg.dest.create')}</button><button class="btn" id="xnewx">${T('stg.dest.cancel')}</button></span>
+        <span class="stg-newrow" id="knew" hidden><input type="text" id="knewname" placeholder="${T('stg.dest.newPlaceholder')}"><button class="btn pri" id="knewgo">${T('stg.dest.create')}</button><button class="btn" id="knewx">${T('stg.dest.cancel')}</button></span>
+        <details class="cmp"><summary>${T('transfer.staging.optDetailsSummary')}</summary><p class="small">${T('transfer.staging.optNote')}</p></details>
       </div>
-      <ul class="list" id="stglist"></ul>
+      <div class="small" id="stgfree"></div>
+      <div class="small" id="stgnotice"></div>
     </div>
+    <div class="stg-tools"><input type="text" id="stgq" list="stgnames" autocomplete="off" placeholder="${T('transfer.staging.searchPlaceholder')}" aria-label="${T('transfer.staging.searchAria')}"><datalist id="stgnames"></datalist><select id="stgfmt" aria-label="${T('transfer.staging.fmtFilterAria')}"><option value="">${T('transfer.staging.fmtAll')}</option><option value="epub">EPUB</option><option value="pdf">PDF</option><option value="other">${T('transfer.staging.fmtOther')}</option></select></div>
+    <div class="stg-chips" id="stgchips"></div>
+    <div class="stg-selrow"><label class="toggle"><input type="checkbox" id="stgall"> <span id="stgalltxt"></span></label><span class="stg-spacer"></span><label class="toggle"><input type="checkbox" id="stghide"> ${T('stg.hideDone')}</label></div>
+    <ul class="stg-list" id="stglist"></ul>
+    <div class="stg-pager" id="stgpager"></div>
+    <div class="stgbar" id="stgbar" hidden></div>
   </div>`;
-  let koInstalled=false,items=[],nativeLimit=0;
-  // 「加入 KOReader」没有服务端忙态可查（见 stagingList 内注释）——本地忙态集合，per-render 存活，
-  // 不落 LS（纯瞬时 UI 态，刷新页面/切 tab 就该清空，不是需要记住的用户设置）。
+  let koInstalled=false,items=[];
+  // 「加入 KOReader」没有服务端忙态可查——本地忙态集合，per-render 存活（纯瞬时 UI 态）。
   const localBusy=new Set();
-  // 批量勾选状态（同样 per-render 存活、不落 LS）——选中的书名集合，三个批量按钮各自按单条按钮
-  // 同样的资格条件过滤后批量提交，真正的节流/排队交给网关的并发闸门（budget.rs），这层不重新
-  // 实现节流逻辑。
-  const picked=new Set();
-  // 批量运行态（同样 per-render 存活、不落 LS）：batchActive 运行期间锁住整个列表（单条按钮+
-  // 复选框+另外三个批量按钮，见 stagingList/下面 setPickBtnsDisabled）；batchQueued 是本轮已提交、
-  // 还没等到网关并发闸门放行的书名集合，驱动每行的"排队中"提示（2026-09-19 用户反馈：点了批量
-  // 优化后单本操作/其它批量按钮还能点，而且看不出在优化哪本、无反馈像没在跑）。
-  let batchActive=false,batchAbort=false;
-  const batchQueued=new Set();
-  // 网关并发闸门的服务端真相（2026-09-19，见 stagingList 内 gatedPending/gatedActive 用法的
-  // 注释）：每次 refresh() 顺带拉一次 `/api/budget/status`，不依赖这个标签页自己提交过什么。
+  const picked=new Set();                                  // 勾选的书名（跨页保留）
+  // 服务端批量队列状态（网关 /api/batch/status）：关掉页面重开、换设备都读得到，不再依赖本标签页提交过什么。
+  let bs={running:false,total:0,done:0,failed:[],queued:[],current:null,action:null};
+  let batchQueued=new Set(),dismissedSig='';
+  // 网关并发闸门的服务端真相（排队/处理中），见 budget.rs。
   let gatedPending=new Set(),gatedActive=new Set();
   const g=id=>$('#'+id,sec);
-  const syncPickbar=()=>{const bar=g('stgpickbar');bar.hidden=picked.size===0;g('stgpickcount').textContent=T('transfer.staging.pick.count',{count:picked.size})};
-  // 落库设置记在本机（per-viewer 便利态）。2026-09-19：原来的「书库/批注/自定义」三选一预设
-  // （`folderPreset`）删掉，改跟 KOReader 目录同一个模式——自由输入框 + datalist 真实候选
-  // （见下面 refresh() 里的 xodirs 填充），留空＝落配置缺省的书库文件夹。
-  [['folder','folder',''],['kfolder','kfolder','']].forEach(([id,k,d])=>{g(id).value=LS.get(k,d);['input','change'].forEach(ev=>g(id).addEventListener(ev,()=>LS.set(k,g(id).value)))});
-  // 母版库列表太长（2026-09-19 用户反馈）：默认隐藏"已经不用管了"的书（isBookDone），配合分页
-  // 一次只渲染一部分——两者都改变了"这次该显示哪些/多少条"，任何一个变了都要把分页重置回第一页，
-  // 不然容易出现"筛选变了但翻页位置没变、显示的不是预期的那批"的错觉。
-  const hd=g('stghidedone');hd.checked=LS.get('stgHideDone','1')==='1';
-  let hideDone=hd.checked,visibleCount=30;
-  const resetPage=()=>{visibleCount=30};
-  hd.addEventListener('change',()=>{hideDone=hd.checked;LS.set('stgHideDone',hideDone?'1':'0');resetPage();render()});
-  const render=()=>stagingList(g('stglist'),{items,q:g('stgq').value,fmt:g('stgfmt').value,st:g('stgst').value,hideDone,visibleCount,showMore:()=>{visibleCount+=30;render()},xFolder:()=>g('folder').value.trim(),kFolder:()=>g('kfolder').value.trim(),koInstalled,nativeLimit,localBusy,picked,syncPickbar,batchActive,batchQueued,gatedPending,gatedActive,render:()=>render(),refresh:()=>refresh()});
-  ['stgq','stgfmt','stgst'].forEach(id=>['input','change'].forEach(ev=>g(id).addEventListener(ev,()=>{resetPage();render()})));
-  // 三个批量按钮：各自按单条按钮同样的资格条件过滤 picked，不满足的跳过+汇总提示；满足的**逐个
-  // 顺序提交**（2026-09-19 改，原来是 Promise.all 一次性并发提交，用户反馈"看不出来哪本在优化"——
-  // 网关并发闸门本来就会把排不到号的大书卡在 fetch() 本身没返回，并发提交时好几个请求同时卡着，
-  // 分不清谁是谁；改成一个接一个提交，`batchQueued` 任意时刻最多一个名字，行内进度条天然变成
-  // "当前正在处理哪一本"的准确指示，不用额外发明"当前项"这个概念）。
-  const pickBtnIds=['stgpickoptimize','stgpickdeliver','stgpickkoreader'];   // 不含 stgpickclear：那个按钮运行期间要变身"停止"，必须一直能点
-  const setPickBtnsDisabled=v=>pickBtnIds.forEach(id=>g(id).disabled=v);
-  const syncClearBtnLabel=()=>{g('stgpickclear').textContent=batchActive?T('transfer.staging.pick.stop'):T('transfer.staging.pick.cancel')};
-  // ① batchActive 锁住列表里的单条按钮+另外两个批量按钮，一次只能跑一个批量任务，不分是不是
-  // 本轮选中的那些书（2026-09-19 用户反馈"点了批量优化还能点单本操作/另外几个批量按钮"会互相
-  // 打架）。② "取消选择"运行期间变身"停止"——用户反馈"选错了没法停"：批量开跑前锁死取消键等于
-  // 选错了只能干等全部跑完，现在改成随时能点，点了置 batchAbort，循环里每轮检查，还没发出去的
-  // 请求直接跳过（已经发出去、正在服务端跑的这一项救不回来，是诚实的边界，不是没做全）。复选框
-  // 同理不再锁——运行中取消勾选某本，轮到它时会被跳过，这是用户能拿到的最直接的"改主意"手段。
-  const batchRun=async(eligible,run,doneMsgKey)=>{
-    const chosen=items.filter(it=>picked.has(it.name));
-    const ok=chosen.filter(eligible),skip=chosen.length-ok.length;
-    if(!ok.length){toast(T('transfer.staging.pick.none'),'warn');return}
-    batchActive=true;batchAbort=false;setPickBtnsDisabled(true);syncClearBtnLabel();
-    let done=0,aborted=0;const total=ok.length;
-    const updateMsg=cur=>{g('stgpickmsg').textContent=T('transfer.staging.pick.progress',{done,total})+(cur?T('transfer.staging.pick.current',{current:cur}):'')};
-    updateMsg();render();
-    for(const it of ok){
-      if(batchAbort||!picked.has(it.name)){aborted++;continue}
-      batchQueued.add(it.name);updateMsg(it.name);render();
-      try{await run(it)}catch{}
-      batchQueued.delete(it.name);done++;updateMsg();render();
-    }
-    batchActive=false;setPickBtnsDisabled(false);syncClearBtnLabel();
-    g('stgpickmsg').textContent=T(doneMsgKey,{count:done})+(skip?' · '+T('transfer.staging.pick.skipped',{count:skip}):'')+(aborted?' · '+T('transfer.staging.pick.aborted',{count:aborted}):'');
-    render();refresh();
-  };
-  guardClick(g('stgpickoptimize'),()=>batchRun(it=>it.format==='epub'&&!it.optimized,it=>postJ('/api/books/staging/optimize',{name:it.name}),'transfer.staging.pick.submittedDone'));
-  guardClick(g('stgpickdeliver'),()=>batchRun(it=>(it.format==='epub'||it.format==='pdf')&&!(nativeLimit&&it.bytes>nativeLimit&&it.format!=='epub'&&it.format!=='pdf'),it=>postJ('/api/books/staging/deliver',{name:it.name,folder:g('folder').value.trim()}),'transfer.staging.pick.submittedDone'));
-  guardClick(g('stgpickkoreader'),()=>batchRun(it=>koInstalled,async it=>{const r=await postJ('/api/koreader/books/adopt',{name:it.name,folder:g('kfolder').value.trim()});if(r.ok!==false)await postJ('/api/books/staging/mark',{name:it.name,target:'koreader'})},'transfer.staging.pick.done'));
-  guardClick(g('stgpickclear'),async()=>{if(batchActive){batchAbort=true;
-    // 停止不只是"别再提交剩下的"——这一轮顺序循环任意时刻最多一本书在 batchQueued 里（正在
-    // 提交/可能卡在网关排队），既然现在有了真正的取消排队能力，顺手也帮这本书取消掉，"停止"
-    // 才是真的把能停的都停了，不是只挡住还没发生的那部分。取消失败（碰巧已经开始处理）静默
-    // 跳过——batchRun 自己的收尾文案已经会报"已停止"，不需要这里再单独弹一次。
-    for(const name of batchQueued)await postJ('/api/budget/cancel',{name});
-    return}
-    picked.clear();syncPickbar();render()});
-  const refresh=async()=>{const [d,s,k,kb,bg]=await Promise.all([j('/api/books/staging'),j('/api/books/status'),j('/api/koreader/status'),j('/api/koreader/books'),j('/api/budget/status')]);
-    nativeLimit=(s.ok&&s.nativeUploadLimitBytes)||0;koInstalled=!!(k.ok&&k.installed);
+  // 加入位置：下拉（现有文件夹）+「＋新建文件夹」。选中值记在本机；xochitl 新建走 book-serve 的 mkdir 队列（xochitl 里 QML
+  // 代理每 8 秒轮询建出来），KOReader 直接建目录。"根目录"= 空串。
+  const NEW='__new__';
+  const val=id=>{const v=g(id).value;return v===NEW?'':v};
+  const xFolder=()=>val('folder'),kFolder=()=>val('kfolder');
+  const fillSel=(id,names,lsKey)=>{const sel=g(id),want=LS.get(lsKey,'');const list=[...new Set(names.filter(Boolean))];if(want&&!list.includes(want))list.push(want);
+    sel.innerHTML='';sel.appendChild(el('option',{value:'',text:T('stg.dest.root')}));
+    list.forEach(n=>sel.appendChild(el('option',{value:n,text:n})));sel.appendChild(el('option',{value:NEW,text:T('stg.dest.new')}));sel.value=want};
+  const bindDest=(id,lsKey,newBox,nameInp,goBtn,cancelBtn,create)=>{
+    g(id).addEventListener('change',()=>{if(g(id).value===NEW){g(newBox).hidden=false;g(nameInp).focus()}else{g(newBox).hidden=true;LS.set(lsKey,g(id).value)}});
+    g(cancelBtn).onclick=()=>{g(newBox).hidden=true;g(nameInp).value='';g(id).value=LS.get(lsKey,'')};
+    guardClick(g(goBtn),async()=>{const name=g(nameInp).value.trim();if(!name){toast(T('stg.dest.needName'),'warn');return}
+      if(await create(name)){LS.set(lsKey,name);g(newBox).hidden=true;g(nameInp).value='';await refresh()}})};
+  bindDest('folder','folder','xnew','xnewname','xnewgo','xnewx',async name=>{
+    const r=await postJ('/api/books/mkdir/add',{name});if(r.ok===false)return false;
+    toast(T('stg.dest.created',{name}),'info',6000);
+    // xochitl 侧由 QML 代理轮询建文件夹（约 8 秒一次），等它真出现再选中，最多 ~24 秒。
+    for(let i=0;i<12;i++){await wait(2000);const s=await j('/api/books/status');if((s.xochitlFolders||[]).includes(name))break}
+    return true});
+  bindDest('kfolder','kfolder','knew','knewname','knewgo','knewx',async name=>{
+    const r=await postJ('/api/koreader/books/mkdir',{folder:name});if(r.ok===false)return false;toast(T('stg.dest.createdKo',{name}),'ok');return true});
+  // 筛选/分页状态。"隐藏已完成"只在「全部」筛选下生效（选了「已优化」就是想看它们）。
+  let st=LS.get('stgSt','all'),hideDone=LS.get('stgHideDone','1')==='1',page=1,pageSize=+LS.get('stgPageSize','25')||25;
+  g('stghide').checked=hideDone;g('stghide').onchange=()=>{hideDone=g('stghide').checked;LS.set('stgHideDone',hideDone?'1':'0');page=1;render()};
+  const fmtOf=it=>it.format==='cbz'?'other':it.format;
+  const filtered=()=>{const q=g('stgq').value.toLowerCase(),f=g('stgfmt').value;
+    return items.filter(it=>(!q||it.name.toLowerCase().includes(q))&&(!f||fmtOf(it)===f)&&(st==='todo'?stgIsTodo(it):st==='done'?!!it.optimized:st==='finished'?isBookDone(it):(!hideDone||!isBookDone(it))))};
+  const batchTitle=a=>T('stg.batch.'+a);
+  const enqueue=async(action,body)=>{const r=await postJ('/api/batch',{action,folder:action==='koreader'?kFolder():xFolder(),...body});
+    if(r.ok===false)return;
+    toast(r.queued?T('stg.batch.queuedToast',{queued:r.queued,skip:r.skipped?T('stg.batch.skipped',{n:r.skipped}):''}):T('stg.batch.none'),r.queued?'ok':'warn');
+    if(r.queued)picked.clear();await refresh()};
+  const ctx=()=>({picked,localBusy,gatedPending,gatedActive,batchQueued,bs,koInstalled,xFolder,kFolder,syncSel:()=>{syncSelUi();renderBar()},render:()=>render(),refresh:()=>refresh()});
+  const syncSelUi=()=>{const list=filtered();const n=list.length,all=n>0&&list.every(it=>picked.has(it.name));
+    g('stgall').checked=all;g('stgall').indeterminate=!all&&list.some(it=>picked.has(it.name));g('stgalltxt').textContent=T('stg.selectAll',{n})};
+  g('stgall').onchange=()=>{const list=filtered();if(g('stgall').checked)list.forEach(it=>picked.add(it.name));else list.forEach(it=>picked.delete(it.name));render()};
+  const renderChips=()=>{const chips=g('stgchips');chips.innerHTML='';
+    // 四个筛选统一都带数量（数量 = 该筛选下的书本数，与"隐藏已完成"开关无关）。
+    const cnt={all:items.length,todo:items.filter(stgIsTodo).length,done:items.filter(it=>!!it.optimized).length,finished:items.filter(isBookDone).length};
+    [['all','stg.chip.all'],['todo','stg.chip.todo'],['done','stg.chip.done'],['finished','stg.chip.finished']].forEach(([k,key])=>{
+      const b=el('button',{class:'chip'+(st===k?' on':''),type:'button',text:T(key,{n:cnt[k]})});b.onclick=()=>{st=k;LS.set('stgSt',k);page=1;render()};chips.appendChild(b)})};
+  const renderPager=(total)=>{const box=g('stgpager');box.innerHTML='';if(total<=0)return;
+    const pages=Math.max(1,Math.ceil(total/pageSize));const from=(page-1)*pageSize+1,to=Math.min(total,page*pageSize);
+    const go=p=>{page=Math.min(pages,Math.max(1,p));render();g('stglist').scrollIntoView({block:'start'})};
+    const prev=el('button',{class:'btn',type:'button',text:'‹ '+T('stg.pager.prev')});prev.disabled=page<=1;prev.onclick=()=>go(page-1);
+    const next=el('button',{class:'btn',type:'button',text:T('stg.pager.next')+' ›'});next.disabled=page>=pages;next.onclick=()=>go(page+1);
+    box.appendChild(el('div',{class:'small stg-range',text:T('stg.pager.range',{from,to,total})}));
+    const nav=el('div',{class:'stg-pgnav'},[prev]);
+    // 页码：首页、当前页±1、末页，中间省略——宽屏显示数字，窄屏只留"第 x/y 页"
+    const nums=[...new Set([1,page-1,page,page+1,pages].filter(p=>p>=1&&p<=pages))].sort((a,b)=>a-b);
+    let last=0;const numbox=el('span',{class:'stg-pgnums'});
+    nums.forEach(p=>{if(last&&p-last>1)numbox.appendChild(el('span',{class:'small',text:'…'}));const b=el('button',{class:'btn'+(p===page?' pri':''),type:'button',text:String(p)});b.onclick=()=>go(p);numbox.appendChild(b);last=p});
+    nav.appendChild(numbox);nav.appendChild(el('span',{class:'small stg-pgtxt',text:T('stg.pager.page',{cur:page,total:pages})}));nav.appendChild(next);box.appendChild(nav);
+    const sz=el('select',{'aria-label':T('stg.pager.size',{n:pageSize})});[25,50,100].forEach(n=>{const o=el('option',{value:String(n),text:T('stg.pager.size',{n})});if(n===pageSize)o.selected=true;sz.appendChild(o)});
+    sz.onchange=()=>{pageSize=+sz.value;LS.set('stgPageSize',String(pageSize));page=1;render()};box.appendChild(sz)};
+  // 底部操作栏：批量运行中＝进度+停止；有勾选＝批量按钮；跑完＝一条结果小结（可收起，失败原因可展开）。
+  const renderBar=()=>{const bar=g('stgbar');bar.innerHTML='';
+    const sig=`${bs.action}|${bs.total}|${bs.done}|${bs.failed.length}`;
+    if(bs.running){
+      bar.hidden=false;bar.className='stgbar run';
+      const t=batchTitle(bs.action||'optimize');
+      bar.appendChild(el('div',{class:'stgbar-main'},[el('b',{text:T('stg.batch.progress',{title:t,done:bs.done,total:bs.total})}),el('span',{class:'small',text:(bs.current?' · '+T('stg.batch.current',{name:stgClean(bs.current)}):'')+(bs.failed.length?' · '+T('stg.batch.failedN',{n:bs.failed.length}):'')})]));
+      const p=el('progress');p.max=Math.max(1,bs.total);p.value=bs.done;bar.appendChild(p);
+      const stop=el('button',{class:'btn btn-bad',type:'button',text:T('stg.batch.stopAll')});
+      stop.onclick=async()=>{const r=await postJ('/api/batch/stop',{});if(r.ok!==false)toast(T('stg.batch.stopped',{n:r.cleared||0}),'info');refresh()};bar.appendChild(stop);
+    }else if(picked.size){
+      bar.hidden=false;bar.className='stgbar sel';
+      // 第一行：已选数 + 清除；第二行：批量按钮等宽。按钮上直接标"可处理数"（已优化的再优化、非 EPUB/PDF 加入 xochitl 等会被跳过），
+      // 0 本可处理就置灰——不再等点完才提示"跳过了 N 本"。
+      const chosen=items.filter(it=>picked.has(it.name));
+      const isBook=it=>it.format==='epub'||it.format==='pdf';
+      const cnt={optimize:chosen.filter(stgIsTodo).length,deliver:chosen.filter(isBook).length,koreader:koInstalled?chosen.length:0};
+      const clr=el('button',{class:'btn',type:'button',text:T('stg.batch.clear')});clr.onclick=()=>{picked.clear();render()};
+      bar.appendChild(el('div',{class:'stgbar-top'},[el('b',{text:T('stg.selected',{n:picked.size})}),clr]));
+      const mk=(a,pri)=>{const b=el('button',{class:'btn'+(pri?' pri':''),type:'button',text:T('stg.bar.'+a)+'（'+cnt[a]+'）'});
+        if(!cnt[a]){b.disabled=true;b.title=T('stg.bar.noneApplicable')}else b.onclick=()=>enqueue(a,{names:[...picked]});return b};
+      const btns=el('div',{class:'stgbar-btns'},[mk('optimize',true),mk('deliver')]);
+      if(koInstalled)btns.appendChild(mk('koreader'));
+      const del=el('button',{class:'btn btn-bad',type:'button',text:T('action.delete')+'（'+chosen.filter(it=>!it.busy).length+'）'});
+      guardClick(del,async()=>{
+        const names=chosen.filter(it=>!it.busy).map(it=>it.name),busyN=chosen.length-names.length;
+        if(!names.length){toast(T('stg.bar.noneApplicable'),'warn');return}
+        if(!await confirmDialog(T('stg.batch.deleteConfirm',{n:names.length})))return;
+        let ok=0;for(const n of names){const r=await j('/api/books/staging/delete',{method:'POST',body:JSON.stringify({name:n})});if(r.ok!==false)ok++}
+        toast(T('stg.batch.deleted',{n:ok})+(busyN?T('stg.batch.deleteSkipped',{n:busyN}):''),ok?'ok':'warn');picked.clear();refresh()});
+      btns.appendChild(del);bar.appendChild(btns);
+    }else if(bs.total&&sig!==dismissedSig){
+      bar.hidden=false;bar.className='stgbar done';
+      const fail=bs.failed.length;
+      bar.appendChild(el('div',{class:'stgbar-main'},[el('span',{text:T('stg.batch.finished',{title:batchTitle(bs.action||'optimize'),ok:bs.done-fail,fail})})]));
+      if(fail)bar.appendChild(el('details',{class:'small stgbar-fails'},[el('summary',{text:T('stg.batch.failedN',{n:fail})}),el('div',{html:bs.failed.map(f=>`<div>${stgClean(f.name)}：${f.message}</div>`).join('')})]));
+      const x=el('button',{class:'btn',type:'button',text:T('stg.batch.dismiss')});x.onclick=()=>{dismissedSig=sig;renderBar()};bar.appendChild(x);
+    }else{bar.hidden=true}};
+  const render=()=>{
+    const list=filtered();const pages=Math.max(1,Math.ceil(list.length/pageSize));if(page>pages)page=pages;
+    const ul=g('stglist');ul.innerHTML='';
+    if(!list.length)ul.appendChild(el('li',{class:'small stg-empty',text:items.length?T('transfer.staging.emptyFiltered'):T('transfer.staging.emptyAll')}));
+    else{const c=ctx();list.slice((page-1)*pageSize,page*pageSize).forEach(it=>ul.appendChild(stgRow(it,c)))}
+    renderChips();renderPager(list.length);syncSelUi();renderBar()};
+  ['stgq','stgfmt'].forEach(id=>['input','change'].forEach(ev=>g(id).addEventListener(ev,()=>{page=1;render()})));
+  let pollTimer=null;
+  const refresh=async()=>{const [d,s,k,kb,bg,bt]=await Promise.all([j('/api/books/staging'),j('/api/books/status'),j('/api/koreader/status'),j('/api/koreader/books'),j('/api/budget/status'),j('/api/batch/status')]);
+    koInstalled=!!(k.ok&&k.installed);
     gatedPending=new Set(bg.ok!==false?bg.pending||[]:[]);gatedActive=new Set(bg.ok!==false?bg.active||[]:[]);
-    // 网关排队/处理状态一眼可见的小结（2026-09-19 用户反馈驱动）：以前要把整个列表翻一遍才能
-    // 发现"哦原来还有几本在排队"，尤其是别人（或自己关掉重开的标签页）提交的批量任务——这条
-    // 小结直接把 gatedPending/gatedActive 的数量摆在列表最上面，不用逐行找。两个都是空的时候
-    // 不占地方（跟 stgfree/stgkonotice 同一个"没事就不占视线"的规矩）。
-    g('stggated').textContent=(gatedPending.size||gatedActive.size)?T('transfer.staging.gatedSummary',{pending:gatedPending.size,active:gatedActive.size}):'';
-    // xochitl/KOReader 现有目录 → 下拉候选（免手打错，跟真实文件夹保持一致，不是写死的预设）
-    g('xodirs').innerHTML=(s.ok?s.xochitlFolders||[]:[]).map(n=>`<option value="${n}">`).join('');
-    g('kodirs').innerHTML=(kb.items||[]).filter(x=>x.kind==='dir').map(x=>`<option value="${x.name}">`).join('');
+    if(bt.ok!==false){bs={running:!!bt.running,action:bt.action,total:bt.total||0,done:bt.done||0,current:bt.current,queued:bt.queued||[],failed:bt.failed||[]};batchQueued=new Set(bs.queued)}
+    // 批量在跑时轮询（进度要走），不跑了就停；页面被换掉（切 tab 重渲染）也停。
+    if(bs.running&&!pollTimer)pollTimer=setInterval(()=>{if(!document.body.contains(sec)){clearInterval(pollTimer);pollTimer=null;return}refresh()},3000);
+    if(!bs.running&&pollTimer){clearInterval(pollTimer);pollTimer=null}
+    fillSel('folder',s.ok?s.xochitlFolders||[]:[],'folder');
+    fillSel('kfolder',(kb.items||[]).filter(x=>x.kind==='dir').map(x=>x.name),'kfolder');
     if(d.ok===false){g('stglist').innerHTML=`<li class="small" style="color:var(--bad)">${T('transfer.staging.unavailable',{msg:d.message||T('transfer.staging.notOpen')})}</li>`;g('stgcap').textContent='';return}
     items=d.items||[];const tot=items.reduce((a,b)=>a+b.bytes,0);g('stgcap').textContent=items.length?T('transfer.staging.capSummary',{count:items.length,size:fmtB(tot)}):'';
-    // 清掉选中集合里的"幽灵条目"：漫画 optimize 会把 EPUB 改名成 PDF（同一本书换了名字），旧名字
-    // 从此不会再出现在任何一行里，留在 picked 里既选不中也取不掉，只会让「N 本已选」的计数跟
-    // 肉眼看到的勾选状态对不上（2026-09-19 用户反馈"已经转成 PDF 了为何还可以选"，根因是这个）。
-    const names=new Set(items.map(it=>it.name));
-    for(const n of [...picked])if(!names.has(n))picked.delete(n);
-    syncPickbar();
+    // 清掉选中集合里的幽灵条目（书被改名/删除后旧名字再也选不中也取消不掉）
+    const names=new Set(items.map(it=>it.name));for(const n of [...picked])if(!names.has(n))picked.delete(n);
     const fr=d.freeBytes;const low=fr!=null&&fr<300*1048576;g('stgfree').style.color=low?'var(--bad)':'';g('stgfree').textContent=fr!=null?T('transfer.staging.freeSpace',{free:fmtB(fr),lowWarn:low?T('transfer.staging.lowWarn'):''}):'';
-    // "KOReader 未安装"以前每行按钮下面都重复一遍（2026-09-19 用户反馈列表太长时发现的冗余），
-    // 改成这里只提示一次。
-    g('stgkonotice').textContent=koInstalled?'':T('transfer.staging.btn.koNotInstalled');
-    render()};
-  guardClick(g('stgpurge'),async()=>{const done=items.filter(it=>it.delivered&&(it.delivered.native||it.delivered.koreader));if(!done.length){toast(T('transfer.staging.noneToPurge'),'warn');return}
-    if(!await confirmDialog(T('transfer.staging.confirmPurge',{count:done.length})))return;
-    for(const it of done)await postJ('/api/books/staging/delete',{name:it.name});refresh()});
+    const gated=(gatedPending.size||gatedActive.size)?T('transfer.staging.gatedSummary',{pending:gatedPending.size,active:gatedActive.size}):'';
+    g('stgnotice').textContent=[koInstalled?'':T('transfer.staging.btn.koNotInstalled'),gated].filter(Boolean).join(' · ');
+    g('stgnames').innerHTML=stgNameOptions(items);render()};
   uploader($('.up',sec),()=>'/api/books/staging',()=>({}),BOOK_EXT,()=>refresh(),'/api/books/staging');   // 书籍格式原样入库；选中即按 BOOK_EXT 拦；传 dedupeApi 防重传出重复
   const am=g('artmsg'),au=g('arturl'),ag=g('artgo'),ao=g('artopt');
   // 「同步优化」记在本机（per-viewer 便利态，跟 folder/kfolder 那几个一个规矩）；缺省开——网文正文
