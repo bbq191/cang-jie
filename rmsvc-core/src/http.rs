@@ -348,11 +348,46 @@ pub fn parse_query(q: &str) -> HashMap<String, String> {
         .collect()
 }
 
+/// 同时在处理的请求数缺省上限（含一直挂着的 SSE 流，每个请求占一条线程）。
+/// 取值依据：设备 2 核、约 2GB 内存；合法并发上限 ≈ 浏览器每源 6 条连接 × 几个标签页 + 网关到各服务的
+/// 8 条 loopback SSE 订阅 ≈ 30 上下；每条线程栈虚拟 2MB、常驻只有几十 KB，64 条最坏也就几 MB 常驻，
+/// 既给合法用法留一倍以上余量，又让局域网内恶意/失控的大量连接（每个请求一条线程、登录还要做 60 万轮
+/// PBKDF2）吃不掉整台设备。超限的请求直接 503 + `Retry-After`，不再 spawn 线程。
+pub const DEFAULT_MAX_CONCURRENT: usize = 64;
+
 /// 服务选项：TLS（PEM）与请求守卫（登录/密码策略由服务自己定义，HTTP 层只负责"先问守卫再分发"）。
-#[derive(Default)]
 pub struct ServeOpts {
     pub tls: Option<crate::tls::TlsPem>,
     pub guard: Option<Guard>,
+    /// 并发请求上限；`None`=不限。缺省 [`DEFAULT_MAX_CONCURRENT`]。
+    pub max_concurrent: Option<usize>,
+}
+
+impl Default for ServeOpts {
+    fn default() -> Self {
+        ServeOpts { tls: None, guard: None, max_concurrent: Some(DEFAULT_MAX_CONCURRENT) }
+    }
+}
+
+/// 并发名额：`try_acquire` 成功后随请求线程存活，Drop 归还（线程 panic 展开时同样归还）。
+struct Permit(Arc<std::sync::atomic::AtomicUsize>);
+
+impl Permit {
+    fn try_acquire(counter: &Arc<std::sync::atomic::AtomicUsize>, max: Option<usize>) -> Option<Permit> {
+        use std::sync::atomic::Ordering;
+        let prev = counter.fetch_add(1, Ordering::AcqRel);
+        if max.is_some_and(|m| prev >= m) {
+            counter.fetch_sub(1, Ordering::AcqRel);
+            return None;
+        }
+        Some(Permit(counter.clone()))
+    }
+}
+
+impl Drop for Permit {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
+    }
 }
 
 /// 守卫：看到请求（方法/路径/头）后返回 `None`=放行，`Some(reply)`=拦下并直接回这个应答。
@@ -426,10 +461,16 @@ pub fn serve_with(bind: &str, router: Router, opts: ServeOpts) -> Result<(), Str
     };
     let router = Arc::new(router);
     let guard = opts.guard.map(Arc::new);
+    let inflight = Arc::new(std::sync::atomic::AtomicUsize::new(0));
     for mut req in server.incoming_requests() {
+        let Some(permit) = Permit::try_acquire(&inflight, opts.max_concurrent) else {
+            let _ = req.respond(reply_to_tiny(Reply::error(503, "服务繁忙（并发请求过多），请稍后重试").with_header("Retry-After", "2")));
+            continue;
+        };
         let router = router.clone();
         let guard = guard.clone();
         std::thread::spawn(move || {
+            let _permit = permit;
             let url = req.url().to_string();
             let (path, query) = url.split_once('?').unwrap_or((&url, ""));
             let method = Method::from_tiny(req.method());
@@ -505,6 +546,20 @@ mod tests {
         assert_eq!(call(&router, Method::Get, "/api/v", "").1, r#"{"exact":"v"}"#, "同字面段数时精确匹配胜过尾部通配");
         assert_eq!(call(&router, Method::Get, "/api/v/w", "").1, r#"{"prefix":true}"#);
         assert_eq!(call(&router, Method::Post, "/events", "").0, 405);
+    }
+
+    #[test]
+    fn permit_caps_concurrency_and_releases_on_drop() {
+        let c = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let a = Permit::try_acquire(&c, Some(2)).unwrap();
+        let b = Permit::try_acquire(&c, Some(2)).unwrap();
+        assert!(Permit::try_acquire(&c, Some(2)).is_none(), "满额后拒绝，且失败的尝试不占名额");
+        assert_eq!(c.load(std::sync::atomic::Ordering::SeqCst), 2);
+        drop(a);
+        let c3 = Permit::try_acquire(&c, Some(2)).expect("释放后可再取");
+        drop((b, c3));
+        assert_eq!(c.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert!(Permit::try_acquire(&c, None).is_some(), "None=不限");
     }
 
     #[test]
