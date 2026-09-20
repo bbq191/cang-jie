@@ -1,0 +1,169 @@
+#!/bin/sh
+# shellcheck shell=sh
+# ═══════════════════════════════════════════════════════════════════════════
+# lib.sh —— packaging/ 下所有 host 侧脚本共用的函数库（2026-09-20 脚本审计后抽出）。
+#
+# 用法：调用方先 `cd "$(dirname "$0")"`（进 packaging/），再 `. ./lib.sh`，设好全局 HOST。
+# 设备侧对应的库是 devlib.sh（本库的 dev_script 会把它拼在 heredoc 脚本前面经 ssh 送上设备）。
+#
+# 提供：
+#   ssh 封装（M11）  rssh（stdin=/dev/null）· rssh_in（透传 stdin）· rscp —— 统一
+#                    BatchMode + ConnectTimeout，休眠/断线时快速失败而不是卡死
+#   shquote          把任意字符串安全地拼进远端命令行（M9/M10）
+#   dev_script       `dev_script ARG… <<'EOF' … EOF`：devlib.sh + 脚本体经 `ssh sh -s` 在设备上执行
+#   push_verified    scp 到"暂存路径"→ 逐个 md5 对拍；不对就删暂存并失败，绝不落到最终位置（H3）
+#   push_devlib      把 devlib.sh 推到设备某目录（供设备端 install.sh source）
+#   步骤表           STEP_ORDER / step_script / STEP_DEFER / STEP_CONFIG_ONLY（install-all 与 uninstall-all 共用，
+#                    保证两边清单对称）
+#   parse_step_args  install-all / uninstall-all 共用的 [host] --force --purge --skip 解析
+#   run_step / skip_has
+# ═══════════════════════════════════════════════════════════════════════════
+
+CJ_PKG_DIR="$(pwd)"
+CJ_SSH_TIMEOUT="${CJ_SSH_TIMEOUT:-8}"
+CJ_STAGE_REMOTE="${CJ_STAGE_REMOTE:-/home/root/.cangjie-stage}"   # 设备上的暂存目录（与 devlib.sh 的 CJ_STAGE_DIR 同址）
+
+# shellcheck disable=SC2086  # CJ_SSH_OPTS 有意按词展开成多个选项
+rssh()    { ssh -n $CJ_SSH_OPTS "root@$HOST" "$@"; }
+# shellcheck disable=SC2086
+rssh_in() { ssh $CJ_SSH_OPTS "root@$HOST" "$@"; }
+# shellcheck disable=SC2086
+rscp()    { scp -q $CJ_SSH_OPTS "$@"; }
+CJ_SSH_OPTS="-o BatchMode=yes -o ConnectTimeout=$CJ_SSH_TIMEOUT"
+
+# 单引号转义，可安全拼进远端 shell 命令行
+shquote() {
+    printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
+}
+
+# dev_script [ARG…]  ← stdin 是脚本体。devlib.sh + 脚本体经 ssh 在设备上 `sh -s -- ARG…` 执行。
+dev_script() {
+    ds_args=""
+    for ds_a in "$@"; do ds_args="$ds_args $(shquote "$ds_a")"; done
+    { cat "$CJ_PKG_DIR/devlib.sh"; cat; } | rssh_in "sh -s --$ds_args"
+}
+
+md5_local() { md5sum "$1" | awk '{print $1}'; }
+md5_remote() { rssh "md5sum $(shquote "$1")" | awk '{print $1}'; }
+
+# push_verified LOCAL REMOTE_STAGE_PATH：scp 到暂存路径（调用方保证它不在 extensions.d 之类的自动加载目录里）
+# 并核对 md5。不一致：删掉暂存文件、返回 1，最终位置从未被碰过。
+push_verified() {
+    pv_local=$1; pv_remote=$2
+    rssh "mkdir -p $(shquote "$(dirname "$pv_remote")")" || return 1
+    rscp "$pv_local" "root@$HOST:$pv_remote" || { echo "!! scp $pv_local 失败"; return 1; }
+    pv_l="$(md5_local "$pv_local")"
+    pv_r="$(md5_remote "$pv_remote")"
+    if [ -z "$pv_r" ] || [ "$pv_l" != "$pv_r" ]; then
+        echo "!! md5 对不上（本地 $pv_l vs 设备 ${pv_r:-空}），传输可能损坏，不继续（已删设备上的暂存文件 $pv_remote，最终位置未动）"
+        rssh "rm -f $(shquote "$pv_remote")" || true
+        return 1
+    fi
+    echo "-- md5 一致：$(basename "$pv_local")"
+}
+
+# push_devlib REMOTE_DIR：devlib.sh → REMOTE_DIR/devlib.sh（带 md5 校验）
+push_devlib() {
+    push_verified "$CJ_PKG_DIR/devlib.sh" "$1/devlib.sh"
+}
+
+# ── 固件安全门（install-all 用）──────────────────────────────────────────
+# 白名单 = 仓库里的 firmware-allowlist.txt + 本机 firmware-allowlist.local.txt（--force 追加到后者，已 gitignore，
+# 不再改动被 git 跟踪的文件，避免"未验证的哈希"被误提交；可用 CJ_ALLOWLIST_LOCAL 改路径）。
+CJ_ALLOWLIST="${CJ_ALLOWLIST:-$CJ_PKG_DIR/firmware-allowlist.txt}"
+CJ_ALLOWLIST_LOCAL="${CJ_ALLOWLIST_LOCAL:-$CJ_PKG_DIR/firmware-allowlist.local.txt}"
+fw_gate() { # $1=FORCE(0/1)
+    echo "═══ 固件安全门（root@$HOST）═══"
+    fw_hash="$(rssh 'sha256sum /usr/bin/xochitl' | awk '{print $1}')"
+    if [ -z "$fw_hash" ]; then
+        echo "!! 没拿到 /usr/bin/xochitl 的 sha256（ssh 连不上，或设备上没有这个文件？）"
+        return 1
+    fi
+    fw_line=""
+    for fw_f in "$CJ_ALLOWLIST" "$CJ_ALLOWLIST_LOCAL"; do
+        [ -f "$fw_f" ] || continue
+        fw_line="$(grep "^${fw_hash}[[:space:]]" "$fw_f" | head -n 1)" && [ -n "$fw_line" ] && break
+        fw_line=""
+    done
+    if [ -n "$fw_line" ]; then
+        echo "-- 固件命中白名单：$(echo "$fw_line" | awk '{$1=""; print}')"
+    elif [ "$1" = "1" ]; then
+        echo "⚠️  固件不在白名单（sha256=$fw_hash），--force 强装——追加进 $CJ_ALLOWLIST_LOCAL（本机文件，不入 git）"
+        echo "$fw_hash  (--force 追加，未验证，$(date +%Y-%m-%d))" >> "$CJ_ALLOWLIST_LOCAL"
+    else
+        echo "!! 固件不在白名单（sha256=$fw_hash）。"
+        echo "   这台设备的 xochitl 没有在这套安装脚本上验证过注入定位，qmd/hook 偏移可能对不上。"
+        echo "   确认这台设备的固件确实跟已验证过的版本一致，要强装就加 --force（会记录这个哈希到本机文件）。"
+        return 1
+    fi
+}
+
+# ── 步骤表（install-all / uninstall-all 共用；两边清单靠它对称）──────────────
+# 顺序：先与 xovi/vellum 无关的独立项，再 battop/wifi-watch，再依赖 xovi 的，shelf 最重，xovi-apply 放最后统一重启一次。
+STEP_ORDER="chrony-cn chrony-boot-wakelock timezone-cn battop wifi-watch xovi-persist hl-snap handwriting-stroke sidebar-entry shelf xovi-apply"
+# 只落盘、不各自重启 xochitl 的步骤（install-all 给它们传 DEFER_XOVI_START=1，最后由 xovi-apply 统一重启）
+# shellcheck disable=SC2034  # 由 install-all.sh 使用
+STEP_DEFER="hl-snap handwriting-stroke sidebar-entry"
+# 没有"卸载"语义的步骤：配置覆写（chrony-cn/timezone-cn），以及纯动作（xovi-apply）
+# shellcheck disable=SC2034  # 由 uninstall-all.sh 使用
+STEP_CONFIG_ONLY="chrony-cn timezone-cn xovi-apply"
+
+step_script() {
+    case "$1" in
+        chrony-cn) echo ./deploy-chrony-cn.sh ;;
+        chrony-boot-wakelock) echo ./deploy-chrony-boot-wakelock.sh ;;
+        timezone-cn) echo ./deploy-timezone-cn.sh ;;
+        battop) echo ./deploy-battop.sh ;;
+        wifi-watch) echo ./deploy-wifi-watch.sh ;;
+        xovi-persist) echo ./deploy-xovi-persist.sh ;;
+        hl-snap) echo ./deploy-hl-snap.sh ;;
+        handwriting-stroke) echo ./deploy-handwriting-stroke.sh ;;
+        sidebar-entry) echo ./deploy-sidebar-entry.sh ;;
+        shelf) echo ./deploy.sh ;;
+        xovi-apply) echo ./deploy-xovi-apply.sh ;;
+        *) return 1 ;;
+    esac
+}
+word_in() { case " $2 " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
+
+# ── 参数解析 / 步骤运行 ────────────────────────────────────────────────────
+# parse_step_args "$@"  →  设 HOST FORCE PURGE SKIP；未知参数 exit 2。
+# 用法与旧版一致：[host] [--force] [--purge] [--skip a,b | --skip=a,b]
+# shellcheck disable=SC2034  # FORCE/PURGE 由调用方（install-all/uninstall-all）使用
+parse_step_args() {
+    HOST="10.11.99.1"; FORCE=0; PURGE=0; SKIP=""
+    case "${1:-}" in ""|-*) ;; *) HOST="$1"; shift ;; esac
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --force) FORCE=1 ;;
+            --purge) PURGE=1 ;;
+            --skip=*) SKIP="${1#--skip=}" ;;
+            --skip) [ $# -ge 2 ] || { echo "!! --skip 需要参数"; exit 2; }; SKIP="$2"; shift ;;
+            *) echo "!! 未知参数：$1"; exit 2 ;;
+        esac
+        shift
+    done
+    for ps_s in $(echo "$SKIP" | tr ',' ' '); do
+        word_in "$ps_s" "$STEP_ORDER" || echo "⚠ --skip 里的 '$ps_s' 不是已知步骤名（已知：$STEP_ORDER）"
+    done
+}
+
+skip_has() { case ",$SKIP," in *",$1,"*) return 0 ;; *) return 1 ;; esac; }
+
+DONE=""
+FAILED=""
+# run_step NAME CMD [ARGS…]：跳过判定 + 执行 + 记账
+run_step() {
+    rs_name="$1"; shift
+    if skip_has "$rs_name"; then
+        echo; echo "-- 跳过 $rs_name（--skip）"
+        return 0
+    fi
+    echo; echo "═══ $rs_name ═══"
+    if "$@"; then
+        DONE="$DONE $rs_name"
+    else
+        echo "!! $rs_name 失败（见上面这一步的原始报错）"
+        FAILED="$FAILED $rs_name"
+    fi
+}

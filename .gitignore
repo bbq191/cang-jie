@@ -105,3 +105,6 @@ misc/wallpaper/pool/
 
 # 全项目安装包产物（大 tarball，不入库）
 /dist/
+
+# packaging/install-all.sh --force 追加的"未验证固件哈希"（本机文件，不入 git）
+packaging/firmware-allowlist.local.txt

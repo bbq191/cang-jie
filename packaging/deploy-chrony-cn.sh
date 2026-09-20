@@ -6,6 +6,9 @@
 # 用法：./deploy-chrony-cn.sh [host]      host 默认 10.11.99.1
 set -eu
 cd "$(dirname "$0")"
+# shellcheck disable=SC1091
+. ./lib.sh
+# shellcheck disable=SC2034  # HOST 由 lib.sh 的 rssh_in 使用
 HOST="${1:-10.11.99.1}"
 
-ssh "root@$HOST" sh -s < chrony-cn.sh
+rssh_in sh -s < chrony-cn.sh
