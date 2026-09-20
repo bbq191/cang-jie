@@ -7,12 +7,12 @@
 
   <rect x="0" y="0" width="1040" height="560" fill="#fbfbfa"/>
   <text x="520" y="30" text-anchor="middle" font-size="18" font-weight="bold" fill="#1a1a1a">超限漫画按卷拆分投递（comic_split::deliver_split_streaming）</text>
-  <text x="520" y="50" text-anchor="middle" font-size="12.5" fill="#6a6a6a">2026-09-19 改流式：峰值≈单份体积（≤ native_limit 90MB），不是整本 785MB 一次性读进内存</text>
+  <text x="520" y="50" text-anchor="middle" font-size="12.5" fill="#6a6a6a">回退路径：&gt;90MB 优先走“占位+磁盘替换”（不分卷）；占位通道不可用时才走这里。流式，峰值≈单份体积</text>
 
   <!-- entry -->
   <rect x="30" y="76" width="220" height="60" rx="8" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.5"/>
   <text x="140" y="98" text-anchor="middle" font-size="12" font-weight="bold" fill="#1a1a1a">落库触发</text>
-  <text x="140" y="116" text-anchor="middle" font-size="10" fill="#3a3a3a">体积 &gt; native_limit（90MB）</text>
+  <text x="140" y="116" text-anchor="middle" font-size="10" fill="#3a3a3a">体积 &gt; 90MB 且占位通道不可用</text>
 
   <line x1="250" y1="106" x2="300" y2="106" stroke="#555" stroke-width="1.5" marker-end="url(#csd-arrow)"/>
 

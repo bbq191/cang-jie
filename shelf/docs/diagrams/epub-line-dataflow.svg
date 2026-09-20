@@ -1,11 +1,11 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1040 500" font-family="sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1040 520" font-family="sans-serif">
   <defs>
     <marker id="eld-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
       <path d="M0,0 L10,5 L0,10 z" fill="#555"/>
     </marker>
   </defs>
 
-  <rect x="0" y="0" width="1040" height="500" fill="#fbfbfa"/>
+  <rect x="0" y="0" width="1040" height="520" fill="#fbfbfa"/>
   <text x="520" y="30" text-anchor="middle" font-size="18" font-weight="bold" fill="#1a1a1a">传书 EPUB 线：三层 · 三动作正交</text>
   <text x="520" y="50" text-anchor="middle" font-size="12.5" fill="#6a6a6a">统一规则：所有书只落母版库——网页没有直投读器的路径；母版永久保留，落库不删</text>
 
@@ -26,13 +26,13 @@
   <text x="490" y="108" text-anchor="middle" font-size="10.5" fill="#4a4a4a">~/.local/state/shelf/books/staging/</text>
 
   <rect x="345" y="122" width="290" height="56" rx="7" fill="#ffffff" stroke="#c9971f" stroke-width="1.2"/>
-  <text x="490" y="142" text-anchor="middle" font-size="11.5" font-weight="bold" fill="#1a1a1a">优化（可选，仅 EPUB）</text>
-  <text x="490" y="158" text-anchor="middle" font-size="10" fill="#4a4a4a">wash+htmlproc+TOC → 逐图片流式处理</text>
+  <text x="490" y="142" text-anchor="middle" font-size="11.5" font-weight="bold" fill="#1a1a1a">优化（可选；PDF 另有转 EPUB / 裁边）</text>
+  <text x="490" y="158" text-anchor="middle" font-size="10" fill="#4a4a4a">wash+目录+封面保证 → 逐图片流式（并行，限内存）</text>
   <text x="490" y="172" text-anchor="middle" font-size="10" fill="#4a4a4a">spawn_optimize 异步，progress 推 SSE</text>
 
   <rect x="345" y="186" width="290" height="50" rx="7" fill="#ffffff" stroke="#c9971f" stroke-width="1.2"/>
   <text x="490" y="204" text-anchor="middle" font-size="11" font-weight="bold" fill="#1a1a1a">忙锁 busy（内存，进程重启即清零）</text>
-  <text x="490" y="220" text-anchor="middle" font-size="10" fill="#4a4a4a">同一条目「优化」「落库」互斥，防并发撞车</text>
+  <text x="490" y="220" text-anchor="middle" font-size="10" fill="#4a4a4a">同一条目「优化」「落库」互斥，可中途取消</text>
 
   <rect x="345" y="244" width="290" height="66" rx="7" fill="#ffffff" stroke="#c9971f" stroke-width="1.2"/>
   <text x="490" y="264" text-anchor="middle" font-size="11" font-weight="bold" fill="#1a1a1a">sidecar .&lt;name&gt;.delivered（磁盘）</text>
@@ -41,7 +41,7 @@
 
   <rect x="345" y="322" width="290" height="58" rx="7" fill="#ffffff" stroke="#c9971f" stroke-width="1.2"/>
   <text x="490" y="342" text-anchor="middle" font-size="11" font-weight="bold" fill="#1a1a1a">落库（原样复制字节，不再优化）</text>
-  <text x="490" y="358" text-anchor="middle" font-size="10" fill="#4a4a4a">folder 留空 = 书库根；超限漫画按卷拆分</text>
+  <text x="490" y="358" text-anchor="middle" font-size="10" fill="#4a4a4a">留空 = 书库根；&gt;90MB 走占位+替换，不分卷</text>
   <text x="490" y="372" text-anchor="middle" font-size="10" fill="#4a4a4a">spawn_deliver 异步，渲染自检另起线程</text>
 
   <line x1="655" y1="180" x2="720" y2="140" stroke="#555" stroke-width="1.6" marker-end="url(#eld-arrow)"/>
@@ -50,7 +50,7 @@
   <!-- 读器 -->
   <rect x="725" y="90" width="270" height="90" rx="10" fill="#fdf3f0" stroke="#b5541f" stroke-width="1.6"/>
   <text x="860" y="114" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">xochitl（原生，学术/批注）</text>
-  <text x="860" y="132" text-anchor="middle" font-size="10.5" fill="#5a3a2a">upload_file 流式；folder 找不到落根</text>
+  <text x="860" y="132" text-anchor="middle" font-size="10.5" fill="#5a3a2a">≤90MB 流式 upload；&gt;90MB 占位+磁盘替换</text>
   <text x="860" y="148" text-anchor="middle" font-size="10.5" fill="#5a3a2a">投完 render_check 页数自检</text>
   <text x="860" y="164" text-anchor="middle" font-size="10.5" fill="#5a3a2a">只读 EPUB / PDF</text>
 
@@ -65,4 +65,5 @@
   <text x="310" y="462" text-anchor="middle" font-size="11" fill="#6a6a6a">EventBus → SSE /api/events → 浏览器零轮询自动刷新列表</text>
 
   <text x="520" y="486" text-anchor="middle" font-size="11" fill="#8a8a8a">优化/落库都异步（HTTP 立即回"已开始"），进度靠 sidecar+SSE 呈现，不是轮询查出来的</text>
+  <text x="520" y="508" text-anchor="middle" font-size="11" fill="#8a8a8a">批量队列与并发/内存闸门在网关，不在 book-serve，见 docs/OVERVIEW.md</text>
 </svg>

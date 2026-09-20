@@ -1,0 +1,78 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1240 700" font-family="sans-serif">
+<defs><marker id="ub-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#555"/></marker><marker id="ub-r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#b0451f"/></marker><marker id="ub-g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2f7d45"/></marker></defs>
+<rect x="0" y="0" width="1240" height="700" fill="#fbfbfa"/>
+<text x="620.0" y="30" text-anchor="middle" font-size="18" font-weight="bold" fill="#1a1a1a">绕开 xochitl 上传体积上限：占位 + 磁盘替换</text>
+<text x="620.0" y="52" text-anchor="middle" font-size="12.5" fill="#6a6a6a">book-serve 跑在设备上，能直接写 xochitl 的书库目录；只让网页接口传“几 KB 的替身”</text>
+<rect x="30" y="68" width="1180" height="62" rx="10" fill="#fdf1ec" stroke="#c0602d" stroke-width="1.6"/>
+<text x="620.0" y="87.5" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">问题：xochitl 的网页 /upload 约 100MB 硬限，超了直接断连（2026-09-19 真机实测）</text>
+<text x="620.0" y="113.5" text-anchor="middle" font-size="10.5" fill="#4a4a4a">以前只能把大书按卷拆开；现在优先用下面的通道，不分卷、不限漫画（安全上限 1 GiB）</text>
+<rect x="30.0" y="150" width="184" height="140" rx="9" fill="#fff3d6" stroke="#c9971f" stroke-width="1.4"/>
+<text x="122.0" y="169.5" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">① 造占位</text>
+<text x="122.0" y="195.0" text-anchor="middle" font-size="10" fill="#4a4a4a">EPUB：几 KB 的最小 EPUB，</text>
+<text x="122.0" y="208.0" text-anchor="middle" font-size="10" fill="#4a4a4a">带真书名(dc:title)+真封面</text>
+<text x="122.0" y="221.0" text-anchor="middle" font-size="10" fill="#4a4a4a">PDF：约 99KB 空白 PDF</text>
+<text x="122.0" y="234.0" text-anchor="middle" font-size="10" fill="#4a4a4a">显示名取上传文件名</text>
+<polyline points="214.0,220 229.2,220" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#ub-a)"/>
+<rect x="229.2" y="150" width="184" height="140" rx="9" fill="#ffffff" stroke="#c9971f" stroke-width="1.4"/>
+<text x="321.2" y="169.5" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">② 上传占位</text>
+<text x="321.2" y="195.0" text-anchor="middle" font-size="10" fill="#4a4a4a">走普通 /upload，</text>
+<text x="321.2" y="208.0" text-anchor="middle" font-size="10" fill="#4a4a4a">xochitl 建好书库条目</text>
+<text x="321.2" y="221.0" text-anchor="middle" font-size="10" fill="#4a4a4a">（对它来说这就是</text>
+<text x="321.2" y="234.0" text-anchor="middle" font-size="10" fill="#4a4a4a">一本普通的小书）</text>
+<text x="321.2" y="247.0" text-anchor="middle" font-size="10" fill="#4a4a4a"></text>
+<polyline points="413.2,220 428.4,220" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#ub-a)"/>
+<rect x="428.4" y="150" width="184" height="140" rx="9" fill="#ffffff" stroke="#c9971f" stroke-width="1.4"/>
+<text x="520.4" y="169.5" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">③ 认新文档</text>
+<text x="520.4" y="195.0" text-anchor="middle" font-size="10" fill="#4a4a4a">按占位字节数在书库里</text>
+<text x="520.4" y="208.0" text-anchor="middle" font-size="10" fill="#4a4a4a">找到刚出现的那份</text>
+<text x="520.4" y="221.0" text-anchor="middle" font-size="10" fill="#4a4a4a">（不靠 /upload 回执，</text>
+<text x="520.4" y="234.0" text-anchor="middle" font-size="10" fill="#4a4a4a">它不返回 uuid）</text>
+<polyline points="612.4,220 627.6,220" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#ub-a)"/>
+<rect x="627.5999999999999" y="150" width="184" height="140" rx="9" fill="#ffffff" stroke="#c9971f" stroke-width="1.4"/>
+<text x="719.5999999999999" y="169.5" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">④ 复制真文件</text>
+<text x="719.5999999999999" y="195.0" text-anchor="middle" font-size="10" fill="#4a4a4a">把母版复制成 .new</text>
+<text x="719.5999999999999" y="208.0" text-anchor="middle" font-size="10" fill="#4a4a4a">校验大小一致</text>
+<text x="719.5999999999999" y="221.0" text-anchor="middle" font-size="10" fill="#4a4a4a">（本机磁盘上复制）</text>
+<text x="719.5999999999999" y="234.0" text-anchor="middle" font-size="10" fill="#4a4a4a"></text>
+<polyline points="811.5999999999999,220 826.8,220" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#ub-a)"/>
+<rect x="826.8" y="150" width="184" height="140" rx="9" fill="#fff3d6" stroke="#c9971f" stroke-width="1.4"/>
+<text x="918.8" y="169.5" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">⑤ 改元数据</text>
+<text x="918.8" y="195.0" text-anchor="middle" font-size="10" fill="#4a4a4a">EPUB：删渲染缓存</text>
+<text x="918.8" y="208.0" text-anchor="middle" font-size="10" fill="#4a4a4a">（.pdf / .epubindex）</text>
+<text x="918.8" y="221.0" text-anchor="middle" font-size="10" fill="#4a4a4a">PDF：改写 .content 的</text>
+<text x="918.8" y="234.0" text-anchor="middle" font-size="10" fill="#4a4a4a">页数/页表/大小</text>
+<polyline points="1010.8,220 1026.0,220" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#ub-a)"/>
+<rect x="1026.0" y="150" width="184" height="140" rx="9" fill="#ffffff" stroke="#c9971f" stroke-width="1.4"/>
+<text x="1118.0" y="169.5" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">⑥ 原子 rename</text>
+<text x="1118.0" y="195.0" text-anchor="middle" font-size="10" fill="#4a4a4a">.new 覆盖占位文件</text>
+<text x="1118.0" y="208.0" text-anchor="middle" font-size="10" fill="#4a4a4a">不需要重启 xochitl</text>
+<text x="1118.0" y="221.0" text-anchor="middle" font-size="10" fill="#4a4a4a">之后记“已加入”</text>
+<text x="1118.0" y="234.0" text-anchor="middle" font-size="10" fill="#4a4a4a">和渲染徽章</text>
+<text x="30" y="322" text-anchor="start" font-size="12.5" font-weight="bold" fill="#1a1a1a">两种格式的差别（真机验证过）</text>
+<rect x="30" y="336" width="575" height="132" rx="10" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.6"/>
+<text x="317.5" y="356" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">EPUB（153MB 实测可开）</text>
+<text x="317.5" y="382" text-anchor="middle" font-size="10" fill="#4a4a4a">占位时的渲染缓存必须删掉，否则页数还是占位的</text>
+<text x="317.5" y="395" text-anchor="middle" font-size="10" fill="#4a4a4a">首次打开 xochitl 自己重新渲染（146MB 约 25 秒），之后走缓存</text>
+<text x="317.5" y="408" text-anchor="middle" font-size="10" fill="#4a4a4a">此前没打开过的书重启后也能渲染（pageCount 2 → 268 等）</text>
+<text x="317.5" y="421" text-anchor="middle" font-size="10" fill="#4a4a4a">列表里徽章先记“打开后显示”，打开后页数一变自动显示真页数</text>
+<rect x="635" y="336" width="575" height="132" rx="10" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.6"/>
+<text x="922.5" y="356" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">PDF（154MB / 349 页实测可开）</text>
+<text x="922.5" y="382" text-anchor="middle" font-size="10" fill="#4a4a4a">.content 里有逐页 UUID 表、页数、大小，必须一并改写</text>
+<text x="922.5" y="395" text-anchor="middle" font-size="10" fill="#4a4a4a">否则界面仍显示占位的页数</text>
+<text x="922.5" y="408" text-anchor="middle" font-size="10" fill="#4a4a4a">列表里的页数/大小要用户点开后才刷新</text>
+<text x="922.5" y="421" text-anchor="middle" font-size="10" fill="#4a4a4a">缩略图打开时按页生成，占位不需要带内容</text>
+<text x="30" y="500" text-anchor="start" font-size="12.5" font-weight="bold" fill="#1a1a1a">踩过的坑</text>
+<rect x="30" y="514" width="575" height="150" rx="10" fill="#fdf1ec" stroke="#c0602d" stroke-width="1.6" stroke-dasharray="6 4"/>
+<text x="317.5" y="534" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">占位必须带真书名和真封面</text>
+<text x="317.5" y="560" text-anchor="middle" font-size="10" fill="#4a4a4a">xochitl 用占位 EPUB 的 dc:title 当显示名，</text>
+<text x="317.5" y="573" text-anchor="middle" font-size="10" fill="#4a4a4a">导入时按占位的封面生成 cover.png；</text>
+<text x="317.5" y="586" text-anchor="middle" font-size="10" fill="#4a4a4a">替换成大文件后它不会改名、也不会补生成封面</text>
+<text x="317.5" y="599" text-anchor="middle" font-size="10" fill="#4a4a4a">（真机踩过：显示成“上传限制实验-EPUB”且没有封面）</text>
+<text x="317.5" y="612" text-anchor="middle" font-size="10" fill="#4a4a4a">所以优化时把带卷标记的书 dc:title 改成规范名</text>
+<rect x="635" y="514" width="575" height="150" rx="10" fill="#f2f2f5" stroke="#8a8a99" stroke-width="1.6" stroke-dasharray="6 4"/>
+<text x="922.5" y="534" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">已知限制</text>
+<text x="922.5" y="560" text-anchor="middle" font-size="10" fill="#4a4a4a">占位上传后进程崩溃：书库里会残留占位文档，回执提示手动删除</text>
+<text x="922.5" y="573" text-anchor="middle" font-size="10" fill="#4a4a4a">（不做危险的“回滚删除”）</text>
+<text x="922.5" y="586" text-anchor="middle" font-size="10" fill="#4a4a4a">本机没有书库目录（非设备环境）或造占位失败 → 回退按卷拆分</text>
+<text x="922.5" y="599" text-anchor="middle" font-size="10" fill="#4a4a4a">超过 1 GiB 的首次渲染内存/耗时没验证过，不走这条通道</text>
+</svg>

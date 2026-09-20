@@ -1,9 +1,9 @@
 # rmsvc-core —— reMarkable 设备端 Web 服务共享底座
 
-`shelf/`、`notes/`、`gateway/` 三条线共用的基座 crate。2026-09-11 从 `shelf/crates/shelf-core` 正名
-搬到顶层——它早就不是 shelf 私有物了（`notes/` 的四个服务从一开始就在依赖它），只是名分上（目录
-位置）之前还挂在 `shelf/` 底下，容易让人误以为是 shelf 私有 crate。搬迁只改了路径和 crate 名（`shelf-core`
-→ `rmsvc-core`，模块路径 `shelf_core::` → `rmsvc_core::`），不改任何逻辑。
+> **读者与用途**：要在 `shelf/`、`notes/`、`gateway/` 里写/改 Web 服务的开发者。这是它们共用的**基础库**（路径、服务注册、HTTP 适配、流式上传、事件总线、xochitl 注入等），不含任何“书/笔记”业务语义。
+> 整体位置见 [`../docs/OVERVIEW.md`](../docs/OVERVIEW.md)；决策与踩坑见 [`docs/reMarkable设备端Web服务基座白皮书.md`](docs/reMarkable设备端Web服务基座白皮书.md)。
+
+`shelf/`、`notes/`、`gateway/` 三条线共用的基座 crate（Rust）。
 
 ## 提供什么
 
@@ -15,7 +15,7 @@
 - `http` —— tiny_http 适配层：路由、JSON 回执、查询串（领域模块不碰 HTTP 类型，这是唯一适配层）。
 - `multipart` —— 流式 multipart/form-data 解析（多文件落盘不进内存）。
 - `asset` —— 资产仓库抽象（Repository）+ 上传流程模板（Template Method）。
-- `xochitl` / `xochitl_conf` —— 原生书库免重启注入、休眠屏 `SleepScreenPath` 键。
+- `xochitl` / `xochitl_conf` —— 原生书库免重启注入、流式上传（`upload_file`）、超过网页上传上限的大文件“占位 + 磁盘替换”（`upload_large_file`）、休眠屏 `SleepScreenPath` 键。
 - `fswatch` —— inotify 目录监听（常驻+限时两种）。
 - `events` —— 事件总线（EventBus + SSE）。
 - `config` / `fs` / `clock` / `formats` / `ttf` / `tls` / `auth` / `mdns` / `netinfo` —— 各类共用小工具。
@@ -41,3 +41,10 @@ XDG 路径本身仍然叫 `shelf`（`~/.config/shelf/`、`~/.local/share/shelf/`
 ## 文档
 
 决策记录/踩坑/正名搬迁的完整过程见 [`docs/reMarkable设备端Web服务基座白皮书.md`](docs/reMarkable设备端Web服务基座白皮书.md)。
+
+## 历史：为什么它在顶层
+
+2026-09-11 从 `shelf/crates/shelf-core` 正名
+搬到顶层——它早就不是 shelf 私有物了（`notes/` 的四个服务从一开始就在依赖它），只是名分上（目录
+位置）之前还挂在 `shelf/` 底下，容易让人误以为是 shelf 私有 crate。搬迁只改了路径和 crate 名（`shelf-core`
+→ `rmsvc-core`，模块路径 `shelf_core::` → `rmsvc_core::`），不改任何逻辑。

@@ -10,7 +10,7 @@
 
   <rect x="0" y="0" width="1180" height="440" fill="#fbfbfa"/>
   <text x="590" y="26" text-anchor="middle" font-size="17" font-weight="bold" fill="#1a1a1a">optimize_epub_with：两遍 + wash 前置</text>
-  <text x="590" y="44" text-anchor="middle" font-size="11" fill="#8a8a8a">母版库「优化」（book-serve）与 host CLI epub-optimize 同调这一份代码</text>
+  <text x="590" y="44" text-anchor="middle" font-size="11" fill="#8a8a8a">母版库「优化」（book-serve）与开发期小工具 epub-optimize 调同一份代码</text>
 
   <!-- bypass arc -->
   <path d="M 206 160 C 206 90, 402 90, 402 160" fill="none" stroke="#9a9a9a" stroke-width="1.3" stroke-dasharray="5 3" marker-end="url(#p2)"/>
@@ -40,7 +40,7 @@
   <text x="402" y="215" text-anchor="middle" font-size="9.5" fill="#6a5a2a">主语言探测 → CSS 锁剥离</text>
   <text x="402" y="230" text-anchor="middle" font-size="9.5" fill="#6a5a2a">边距段距 → 外链 wash.css</text>
   <text x="402" y="245" text-anchor="middle" font-size="9.5" fill="#6a5a2a">自动目录 → 双 id 折叠</text>
-  <text x="402" y="260" text-anchor="middle" font-size="9" fill="#8a7a4a">对标 host Calibre 六步</text>
+  <text x="402" y="260" text-anchor="middle" font-size="9" fill="#8a7a4a">对标 Calibre 洗书规则</text>
 
   <line x1="502" y1="215" x2="514" y2="215" stroke="#555" stroke-width="1.5" marker-end="url(#p1)"/>
 
@@ -69,7 +69,7 @@
   <rect x="1030" y="170" width="140" height="90" rx="8" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.5"/>
   <text x="1100" y="195" text-anchor="middle" font-size="11.5" font-weight="bold" fill="#1a1a1a">打包 + 输出</text>
   <text x="1100" y="212" text-anchor="middle" font-size="9.3" fill="#4a4a4a">写标记 com.cangjie</text>
-  <text x="1100" y="226" text-anchor="middle" font-size="9.3" fill="#4a4a4a">.optimized = v10</text>
+  <text x="1100" y="226" text-anchor="middle" font-size="9.3" fill="#4a4a4a">.optimized = v14</text>
   <text x="1100" y="242" text-anchor="middle" font-size="9.3" fill="#4a4a4a">→ 输出 EPUB</text>
 
   <text x="590" y="315" text-anchor="middle" font-size="11.5" fill="#6a6a6a">幂等：`optimized_version()` 读标记按版本判 full/core/old——旧版本重传按当前版本重新走一遍（不翻倍脚注）</text>

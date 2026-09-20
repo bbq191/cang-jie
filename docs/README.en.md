@@ -6,10 +6,13 @@ A device-enhancement suite for the reMarkable Paper Pro Move — built **without
 `xochitl`** (the device's stock reading app) itself. Everything runs as xovi extensions plus a
 set of standalone web services alongside the official system.
 
-> This is the **private** repository with the full development history. As of 2026-09-11 a
-> trimmed public release also exists at [`rm-tweak`](https://github.com/bbq191/rm-tweak) (no
-> dev history, just the current seven project lines' code plus these four top-level docs,
-> Apache-2.0-licensed) — share/star that one; this repository stays internal-only.
+> **Audience and purpose**: anyone landing on this repository for the first time. It answers "what is this,
+> what are the parts, how do I install it, where are the details". For a 10-minute tour read
+> [`OVERVIEW.md`](OVERVIEW.md) (Chinese); for what changed recently read [`CHANGELOG.md`](CHANGELOG.md) (Chinese).
+>
+> This is the **private** repository with the full development history. A trimmed public release also exists at
+> [`rm-tweak`](https://github.com/bbq191/rm-tweak) (no dev history, just the current seven project lines' code plus the
+> top-level docs, Apache-2.0-licensed) — share/star that one.
 
 ## What this is
 
@@ -30,29 +33,17 @@ Seven independent top-level project lines, each individually installable:
 
 | Project | What it is | Docs |
 |---|---|---|
-| [`shelf/`](../shelf/) — bookshelf | Import books → clean up / convert / optimize → deliver to the stock library or KOReader; a web UI plus a host-side CLI | [README](../shelf/README.md) |
+| [`shelf/`](../shelf/) — bookshelf | Import books (EPUB/PDF) → master library → optimize on demand → deliver to the stock library or KOReader; web-only, including a batch queue | [README](../shelf/README.md) |
 | [`notes/`](../notes/) — notes pipeline | Highlighted text + handwritten notes next to it, auto-ingested on closing the book → review/transcribe/ask-AI on your phone → project back into device notebooks or Obsidian | [README](../notes/README.md) |
 | [`enhance/`](../enhance/) — device enhancements | Precise CJK highlight-snap and handwritten-stroke rendering tuning (two standalone xovi extensions); a battery diagnostics sampler; upload-and-use font/wallpaper web services | [README](../enhance/README.md) |
-| [`gateway/`](../gateway/) — web gateway | The single shared web entry point for the three lines above: HTTPS (private CA) + login password + reverse proxy to each domain service | [README](../gateway/README.md) |
+| [`gateway/`](../gateway/) — web gateway | The single shared web entry point for the three lines above: HTTPS (private CA) + login password + reverse proxy to each domain service + batch queue and concurrency gate | [README](../gateway/README.md) |
 | [`rmsvc-core/`](../rmsvc-core/) — service foundation | Shared infrastructure crate for the web services above (paths / service registry / HTTP adapter / event bus, etc.) — no business logic | [README](../rmsvc-core/README.md) |
 | [`defw/`](../defw/) — firmware reverse engineering | Ghidra reverse-engineering artifacts for `xochitl` 3.28.0.172, backing the hook locations used by the extensions above | [README](../defw/README.md) |
 | [`packaging/`](../packaging/) — installer | One command to install everything above on a fresh device (with firmware-compatibility checking) | [README](../packaging/README.md) |
 
 ## Recent updates
 
-Only actual new features/capabilities, not a full commit log.
-
-| Date | Added |
-|---|---|
-| 2026-09-14 | Scanned comic PDFs (common from sources like Anna's Archive) are now correctly recognized as comics and routed through that pipeline, instead of failing outright on push |
-| 2026-09-14 | Re-running a batch push now actually skips the processing step for books that already succeeded, not just the upload — saves computer time, not just bandwidth |
-| 2026-09-14 | Fixed a "device time sync often shows as failed right after a reboot" issue: the root cause was autosuspend interrupting the very first time-sync attempt after boot; the actual time was already correct, only the status display was wrong |
-| 2026-09-13 | Batch book transfers are now duplicate-safe: both the web upload and the desktop command-line push check beforehand whether a file was already transferred, so a partial failure followed by an as-is rerun won't re-transfer a book that already succeeded into a duplicate |
-| 2026-09-13 | A Sidebar shortcut straight to "KOReader"; if the third-party WeRead app is installed it's auto-detected and a "WeRead" entry appears too — both are wired into `packaging/`, repeatable via `install-all.sh` |
-| 2026-09-13 | The gateway's "Setup · foundation" page now also probes whether WeRead is installed (read-only, same as the KOReader check) |
-| 2026-09-11 | `packaging/install-all.sh`: one command installs everything on a fresh device, including a firmware safety gate (sha256 match required, refuses otherwise) |
-| 2026-09-11 | Added xovi boot-persistence (auto re-runs `xovi/start` after a reboot), domestic NTP, and a default timezone — three system-level config steps |
-| 2026-09-11 | Top-level bilingual README/INSTALL docs and a donation channel went live |
+User-visible changes are logged by date in **[CHANGELOG.md](CHANGELOG.md)** (Chinese). The latest: comic optimization stays EPUB, unified book naming (`Title - 02卷`), the ~100MB xochitl upload limit bypassed (placeholder + on-disk replace), a server-side batch queue and a redone master-library page, faster optimization and lower battery draw.
 
 ## Quick start
 
@@ -67,6 +58,15 @@ sh install-all.sh 10.11.99.1
 
 For full prerequisites, a step-by-step breakdown, the firmware safety gate, and
 troubleshooting, see **[INSTALL.en.md](INSTALL.en.md)**.
+
+## Documentation map
+
+| To learn about | Read |
+|---|---|
+| A 10-minute tour (architecture diagram, a book's journey, glossary) | [OVERVIEW.md](OVERVIEW.md) (Chinese) |
+| How to install / recover after a firmware update | [INSTALL.en.md](INSTALL.en.md) |
+| What changed recently | [CHANGELOG.md](CHANGELOG.md) (Chinese) |
+| Details and decision records per line | each line's README and its `docs/` white paper (Chinese) |
 
 ## History and scope
 

@@ -1,13 +1,13 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1040 560" font-family="sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1040 580" font-family="sans-serif">
   <defs>
     <marker id="eop-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
       <path d="M0,0 L10,5 L0,10 z" fill="#555"/>
     </marker>
   </defs>
 
-  <rect x="0" y="0" width="1040" height="560" fill="#fbfbfa"/>
+  <rect x="0" y="0" width="1040" height="580" fill="#fbfbfa"/>
   <text x="520" y="30" text-anchor="middle" font-size="18" font-weight="bold" fill="#1a1a1a">EPUB 优化：两阶段流式管线（optimize_epub_file_streaming）</text>
-  <text x="520" y="50" text-anchor="middle" font-size="12.5" fill="#6a6a6a">2026-09-19 因 552MB 真书 VmRSS 冲 1.4GB+ 真机事故而生；峰值＝"一张图 + 全书文字部分"，不随书体积线性涨</text>
+  <text x="520" y="50" text-anchor="middle" font-size="12.5" fill="#6a6a6a">因 552MB 真书内存冲 1.4GB+ 而生；峰值＝“一张图 + 全书文字部分”，图片并行也有像素预算封顶</text>
 
   <!-- input -->
   <rect x="20" y="80" width="150" height="56" rx="8" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.5"/>
@@ -49,7 +49,7 @@
 
   <rect x="510" y="300" width="140" height="60" rx="6" fill="#ffffff" stroke="#3e8e51" stroke-width="1"/>
   <text x="580" y="317" text-anchor="middle" font-size="10.5" font-weight="bold" fill="#1a1a1a">trim+downscale</text>
-  <text x="580" y="333" text-anchor="middle" font-size="9.5" fill="#4a4a4a">漫画：裁边+95质量</text>
+  <text x="580" y="333" text-anchor="middle" font-size="9.5" fill="#4a4a4a">漫画：裁边+单趟缩放</text>
   <text x="580" y="347" text-anchor="middle" font-size="9.5" fill="#4a4a4a">普通：954×1696 框</text>
 
   <line x1="580" y1="360" x2="580" y2="384" stroke="#555" stroke-width="1.3" marker-end="url(#eop-arrow)"/>
@@ -61,7 +61,7 @@
   <text x="460" y="420" text-anchor="middle" font-size="9.5" fill="#4a4a4a">直接写进输出 zip，缓冲区立即释放</text>
 
   <line x1="405" y1="432" x2="405" y2="450" stroke="#3e8e51" stroke-width="1.3" stroke-dasharray="2 2"/>
-  <text x="405" y="446" text-anchor="middle" font-size="9.5" fill="#3e8e51">on_progress(done,total) 回调</text>
+  <text x="300" y="450" text-anchor="middle" font-size="9.5" fill="#3e8e51">on_progress(done,total) 回调</text>
 
   <line x1="660" y1="352" x2="700" y2="352" stroke="#555" stroke-width="1.5" marker-end="url(#eop-arrow)"/>
 
@@ -86,4 +86,5 @@
   <text x="520" y="490" text-anchor="middle" font-size="12" fill="#3a3a3a">内存版 optimize_epub_with（整本读入一次性产出）保留给测试/CLI 小书场景，业务逻辑函数共用，逐字节对拍一致</text>
   <text x="520" y="512" text-anchor="middle" font-size="11" fill="#8a8a8a">像素上限 900 万取值史：第一版按"3 字节/像素"理论估算给 2500 万，真机 VmHWM 撞到 230MB+ 几乎白修</text>
   <text x="520" y="530" text-anchor="middle" font-size="11" fill="#8a8a8a">改用真机实测数据（不同像素数下实测 VmHWM）重新校准，才真正把峰值压到 100MB 量级以下</text>
+  <text x="520" y="556" text-anchor="middle" font-size="11" fill="#3e8e51">图片并行：2 个 worker，同时在处理的像素总量 ≤600 万；产物与串行逐字节一致（设备实测 285s → 148s）</text>
 </svg>

@@ -13,7 +13,7 @@
 
   <rect x="0" y="0" width="1040" height="620" fill="#fbfbfa"/>
   <text x="520" y="28" text-anchor="middle" font-size="18" font-weight="bold" fill="#1a1a1a">notes 架构：条目库唯一写者 = ink-serve</text>
-  <text x="520" y="47" text-anchor="middle" font-size="11.5" fill="#8a8a8a">挂靠书架同一网关 shelf-gateway :8778（复用注册表/事件汇聚，不自建），见 shelf/docs/diagrams/architecture.svg</text>
+  <text x="520" y="47" text-anchor="middle" font-size="11.5" fill="#8a8a8a">挂靠同一网关 gateway :443（复用注册表/事件汇聚，不自建），见 shelf/docs/diagrams/architecture.svg</text>
 
   <!-- xochitl 书库 -->
   <rect x="50" y="150" width="230" height="96" rx="9" fill="#f1f1f6" stroke="#7a7a8c" stroke-width="1.5"/>
@@ -59,7 +59,7 @@
 
   <rect x="800" y="330" width="210" height="100" rx="9" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.5"/>
   <text x="905" y="356" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">手机网页「笔记」tab</text>
-  <text x="905" y="374" text-anchor="middle" font-size="10.5" fill="#4a4a4a">经 shelf-gateway</text>
+  <text x="905" y="374" text-anchor="middle" font-size="10.5" fill="#4a4a4a">经 gateway</text>
   <text x="905" y="392" text-anchor="middle" font-size="10.2" fill="#5a5a5a">改字/去处/问AI，改即存</text>
   <text x="905" y="408" text-anchor="middle" font-size="10.2" fill="#5a5a5a">e-ink 打字太痛苦，设备只读</text>
 

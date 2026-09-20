@@ -1,0 +1,93 @@
+# 全貌：10 分钟看懂这套系统
+
+> **读者与用途**：第一次接触这个仓库的人（使用者、贡献者、接手维护的人）。读完你应该能回答：
+> 这套东西解决什么问题、由哪几块组成、一本书怎么从手机走到 reMarkable 上、各服务跑在哪个端口、去哪里找细节。
+> 安装步骤不在这里，见 [`INSTALL.md`](INSTALL.md)；更新历史见 [`CHANGELOG.md`](CHANGELOG.md)。
+
+## 1. 它解决什么问题
+
+reMarkable Paper Pro Move 是一台彩色墨水屏平板，官方阅读/笔记应用叫 **xochitl**（读作"沙特尔"，设备上的官方主程序）。日常用起来有几处不顺手：
+
+- **书难弄进去、弄进去排版不好**：网页上传有约 100MB 上限；很多 EPUB 在墨水屏上边距、缩进、脚注、目录、封面都不理想；漫画体积大、留白多。
+- **中文与手写场景欠缺**：荧光笔划中文会"吸一整行"；手写笔画不像中文书写；没有把"勾画 + 旁边手写批注"变成可整理笔记的通道。
+- **系统层面的小痛点**：字体/壁纸不能自己上传、耗电难排查、时区与校时不合国内环境。
+
+这个项目**不修改 xochitl 本体**，而是用两种"旁路"手段增强它：一是 **xovi 扩展**（xovi 是第三方的扩展加载框架，能在 xochitl 启动时加载我们的小插件）；二是一组**跑在设备上的独立 Web 服务**，通过网页操作，需要时再借 xochitl 自己的上传接口、直接读写它的书库目录，或用 **qmd**（对 xochitl 界面 QML 描述文件的补丁）往界面里注入少量入口。
+
+## 2. 七条线一览
+
+| 目录 | 一句话 | 类型 |
+|---|---|---|
+| [`shelf/`](../shelf/README.md) 书架 | 书（EPUB/PDF）导入 → 母版库 → 按需优化 → 加入 xochitl 或 KOReader | Web 服务（book-serve、koreader-serve） |
+| [`notes/`](../notes/README.md) 笔记线 | 荧光笔勾画 + 旁边手写批注 → 手机整理/转写/问 AI → 投回设备笔记本或 Obsidian | 4 个 Web 服务 |
+| [`enhance/`](../enhance/README.md) 系统增强 | 荧光笔 CJK 精确吸附、手写笔锋渲染、电池诊断、字体/壁纸上传即用 | 2 个 xovi 扩展 + 1 个采样器 + 2 个 Web 服务 |
+| [`gateway/`](../gateway/README.md) 网关 | 上面三条线共用的唯一对外入口：HTTPS + 登录密码 + 反向代理 + 批量队列 + 并发闸门 | Web 服务（443） |
+| [`rmsvc-core/`](../rmsvc-core/README.md) 服务基座 | 各 Web 服务共用的基础库，不含业务逻辑 | Rust crate |
+| [`defw/`](../defw/README.md) 固件逆向 | xochitl 3.28.0.172 的 Ghidra 逆向产物，给扩展定位 hook 用 | 逆向资料 |
+| [`packaging/`](../packaging/README.md) 安装器 | 全新设备一条命令装完（含固件兼容性校验） | 脚本 |
+
+## 3. 整体架构与部署
+
+![整体架构与部署拓扑](diagrams/architecture-topology.svg)
+
+要点：
+
+- **所有服务都跑在设备上**，用浏览器访问 `https://10.11.99.1/`（USB 连接时）或 `https://shelf.local/`（同一 WiFi 下，安卓不解析 `.local`）。
+- **只有网关对外**（`0.0.0.0:443`，私有 CA 签发的 HTTPS + 登录密码，首次默认密码 `shelf`、登录后强制改）；领域服务只听 `127.0.0.1`，由网关按"服务注册表"反向代理。装/卸一个服务 = 一个二进制 + 一个 systemd 单元。
+- 端口：`book-serve` 8790、`koreader-serve` 8791、`font-serve` 8792、`wallpaper-serve` 8793、`ink-serve` 8795、`transcribe-serve` 8796、`mind-serve` 8797、`note-serve` 8798。
+- 只支持 **reMarkable Paper Pro Move、固件 3.28.0.172**；`/home` 数据在固件升级后保留，`/usr`、`/etc` 里的东西会被冲掉，要重新安装。
+
+## 4. 一本书的旅程（shelf）
+
+![传书主流程](diagrams/transfer-flow.svg)
+
+1. **入库**：网页上传、抓网文、或 scp 进设备的 `inbox/`。只收 EPUB/PDF；书名整理成 `书名 - 02卷`（数字在前）。书进入**母版库**（设备上的暂存池，永久保留原始字节，可反复落库）。
+2. **优化**（可选）：把 EPUB 清洗、统一排版规则（xochitl 只认外链 css，见 bookconv 白皮书 §09）、重建目录、保证封面有效；漫画自动识别、保画质、裁边；PDF 有文字层转 EPUB，无文字层只裁边。
+3. **加入 xochitl**：≤90MB 走 xochitl 自己的网页上传接口；>90MB 走**占位 + 磁盘替换**（见下）。投完自动检查 xochitl 渲染出的页数是否合理，给出徽章。
+4. **加入 KOReader**：本地文件拷贝。两个读器拿到的是同一份母版字节，可对照阅读。
+5. **批量**：在母版库勾选多本，底部批量栏一键排队；网关在后台顺序逐本执行，关掉浏览器也会接着跑。
+
+## 5. 三个值得知道的机制
+
+**占位 + 替换（绕开 xochitl 约 100MB 上传上限）**——先用网页接口传一个几 KB 的"替身"文档（带真书名和封面）让 xochitl 建好条目，再由设备上的 book-serve 把磁盘上那个文件原子替换成真文件。真机验证过 PDF 154MB、EPUB 153MB。
+
+![占位 + 替换](diagrams/upload-limit-bypass.svg)
+
+**批量队列**——批量由**网关**执行而不是浏览器：状态落盘 `state/batch.json`，网关重启后续跑；"全部中止"会取消排队、并让 book-serve 停下能中途停的步骤。
+
+![批量队列状态机](diagrams/batch-queue.svg)
+
+**并发/内存闸门**——设备只有约 2GB 内存，几本大书同时处理会内存叠加。每一本处理前先过网关的闸门：>90MB 的"大档"同一时刻最多 1 个，≤90MB 的"小档"最多 3 个，排队最长 30 分钟、可取消。
+
+![并发/内存预算闸门](diagrams/budget-gate.svg)
+
+## 6. 笔记线在做什么（一句话）
+
+你在书上用荧光笔划出内容、并在旁边手写批注；合上书后，`ink-serve` 把"勾画 + 手写"配成条目存进条目库；你在手机网页里校对转写（`transcribe-serve` 调视觉模型）、选去向、需要时单条问 AI（`mind-serve`）；`note-serve` 再把条目投影回设备笔记本或导出 Obsidian markdown。详见 [`notes/README.md`](../notes/README.md)。
+
+## 7. 术语表
+
+| 术语 | 一句话解释 |
+|---|---|
+| xochitl | reMarkable 官方主程序（阅读器 + 笔记 + UI）；本项目不改它 |
+| xovi / 扩展 | 第三方的扩展加载框架；我们的 `hl-snap`、`handwriting-stroke` 是它加载的 `.so` 插件 |
+| qmd / qmldiff | 对 xochitl 界面 QML 的补丁语言/文件；用来往界面里注入侧栏入口、字体菜单等 |
+| vellum | 设备上的包管理器，用来装 xovi、appload 等生态组件 |
+| appload | 第三方 App 加载器，KOReader 靠它侧载 |
+| 母版库 | shelf 里的暂存池：入库的书原样保存在这里，优化和落库都从它出发 |
+| 边车（sidecar） | 母版库里每本书旁边的 `.<书名>.delivered` 小文件，记录"已加入哪里、渲染自检结果、处理进度" |
+| 占位文档 | 为绕开上传上限先传的几 KB 替身，之后被替换成真文件 |
+| 注册表 | 服务启动时写的一份 JSON，网关据此出 tab 和转发 |
+| SSE | 服务器推送事件；网页靠它即时刷新，不用一直轮询 |
+
+## 8. 接下来读什么
+
+| 想了解 | 去读 |
+|---|---|
+| 怎么装 | [`INSTALL.md`](INSTALL.md) · [`../packaging/README.md`](../packaging/README.md) |
+| 书架细节 | [`../shelf/README.md`](../shelf/README.md) → [`传书EPUB线架构`](../shelf/docs/传书EPUB线架构.md)（现状）→ [书架白皮书](../shelf/docs/reMarkable书架白皮书.md)（决策与真机记录） |
+| 书怎么被优化 | [`bookconv 优化白皮书`](../shelf/docs/bookconv优化白皮书.md) |
+| 网关、批量队列、闸门 | [`../gateway/README.md`](../gateway/README.md) · [网关白皮书](../gateway/docs/reMarkable网关白皮书.md) |
+| 笔记线 | [`../notes/README.md`](../notes/README.md) |
+| 系统增强 | [`../enhance/README.md`](../enhance/README.md) |
+| 最近改了什么 | [`CHANGELOG.md`](CHANGELOG.md) |

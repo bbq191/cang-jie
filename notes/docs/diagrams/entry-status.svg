@@ -64,11 +64,13 @@
   <text x="870" y="376" text-anchor="middle" font-size="10" fill="#5a5a5a">已删除（「不要了」）</text>
   <text x="870" y="392" text-anchor="middle" font-size="9.5" fill="#8a8a8a">Pending/Draft/Reviewed 均可触发</text>
 
-  <text x="540" y="325" text-anchor="middle" font-size="11" font-weight="bold" fill="#6a6a6a">回收站三态（软删，靠 purge_terminal() 手动物理清，不自动清空）</text>
+  <text x="20" y="424" font-size="10.5" font-weight="bold" fill="#6a6a6a">回收站三态（软删）：</text>
+  <text x="20" y="438" font-size="10" fill="#6a6a6a">purge_terminal() 手动物理清，</text>
+  <text x="20" y="452" font-size="10" fill="#6a6a6a">不自动清空</text>
 
   <!-- Mined -> Skipped -->
   <path d="M 120 168 C 120 240, 210 260, 210 328" fill="none" stroke="#555" stroke-width="1.4" marker-end="url(#s1)"/>
-  <text x="145" y="250" text-anchor="middle" font-size="9.5" fill="#5a5a5a">「不需要」</text>
+  <text x="84" y="250" text-anchor="middle" font-size="9.5" fill="#5a5a5a">「不需要」</text>
 
   <!-- Pending/Draft/Reviewed -> Archived -->
   <path d="M 400 168 C 500 260, 700 300, 800 328" fill="none" stroke="#a03030" stroke-width="1.3" marker-end="url(#s3)"/>
@@ -79,11 +81,12 @@
   <!-- Pending/Draft/Reviewed -> Revoked -->
   <path d="M 390 168 C 420 230, 470 290, 510 328" fill="none" stroke="#8a8a8a" stroke-width="1.3" stroke-dasharray="3 2" marker-end="url(#s1)"/>
   <path d="M 640 168 C 620 230, 580 290, 555 328" fill="none" stroke="#8a8a8a" stroke-width="1.3" stroke-dasharray="3 2" marker-end="url(#s1)"/>
-  <text x="500" y="270" text-anchor="middle" font-size="9.5" fill="#7a7a7a">笔画被擦（自动，ink-serve 重扫检出）</text>
+  <text x="532" y="256" text-anchor="middle" font-size="9.5" fill="#7a7a7a">笔画被擦</text>
+  <text x="532" y="269" text-anchor="middle" font-size="9.5" fill="#7a7a7a">（自动重扫检出）</text>
 
   <!-- restore arrows -->
   <path d="M 240 328 C 200 260, 150 200, 120 168" fill="none" stroke="#2f6fa3" stroke-width="1.4" stroke-dasharray="6 3" marker-end="url(#s1)"/>
-  <text x="175" y="300" text-anchor="middle" font-size="9.5" fill="#2f6fa3">restore()：Skipped 永远回 Mined</text>
+  <text x="130" y="318" text-anchor="start" font-size="9.5" fill="#2f6fa3">restore()：Skipped 回 Mined</text>
 
   <!-- Revoked/Archived 各一条短箭头指向下方说明框，而不是直接连去某个具体的顶行状态——
        真实落点由说明框里的规则决定，画多条长箭头去顶行反而会暗示"固定映射到某一个状态"，
@@ -97,8 +100,6 @@
   <text x="620" y="496" text-anchor="middle" font-size="10.3" fill="#3a3a3a">有手写没转写（ink≠None）→ Pending ｜ 什么都没留下 → Mined（回浏览重新决定）</text>
 
 
-  <text x="270" y="500" text-anchor="middle" font-size="10" fill="#a03030">⚠ Revoked 的 restore() 找回的是条目库存档（裁图/草稿/校对文本），</text>
-  <text x="270" y="516" text-anchor="middle" font-size="10" fill="#a03030">不代表设备原页面的笔迹会重新出现——笔画是否还在由下次 ink-serve 重扫独立判定</text>
 
   <!-- purge -->
   <path d="M 210 406 L 210 560" fill="none" stroke="#5a5a5a" stroke-width="1.2" stroke-dasharray="2 2" marker-end="url(#s1)"/>
@@ -110,4 +111,9 @@
 
   <text x="960" y="580" text-anchor="middle" font-size="10" fill="#8a8a8a">is_terminal() = Skipped|Revoked|Archived</text>
   <text x="960" y="595" text-anchor="middle" font-size="9.5" fill="#8a8a8a">（三处写入口的终态守卫，2026-09-09 补）</text>
+  <text x="20" y="484" font-size="10" fill="#a03030">⚠ Revoked 的 restore() 找回的是</text>
+  <text x="20" y="499" font-size="10" fill="#a03030">条目库存档（裁图/草稿/校对文本），</text>
+  <text x="20" y="514" font-size="10" fill="#a03030">不代表设备原页面的笔迹会</text>
+  <text x="20" y="529" font-size="10" fill="#a03030">重新出现——笔画是否还在，</text>
+  <text x="20" y="544" font-size="10" fill="#a03030">由下次 ink-serve 重扫独立判定</text>
 </svg>

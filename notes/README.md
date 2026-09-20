@@ -1,5 +1,8 @@
 # notes —— reMarkable 笔记线
 
+> **读者与用途**：想弄清“荧光笔勾画 + 手写批注怎么变成可整理的笔记”的人：先看下面一段定位和服务表，再看数据流图；
+> 整体位置见 [`../docs/OVERVIEW.md`](../docs/OVERVIEW.md)；决策与真机记录在 [`docs/reMarkable笔记白皮书.md`](docs/reMarkable笔记白皮书.md)。
+
 书架（`shelf/`）补读书短板，笔记线做强 reMarkable 的强项：**荧光笔勾书 + 在勾出来的内容旁边直接手写**。合上书自动摄取成条目（浏览页里挑要转笔记的、不要的直接跳过），手机整理页里修正转写、勾选按条目问 AI；每条内容可以选去哪——设备笔记本、Obsidian、或者干脆不要了；设备笔记本与 md 都由条目库投影生成。**不引入任何旧 `knowledge/pkm` 代码**，只借鉴功能与踩坑。决策/真机/踩坑见 `docs/reMarkable笔记白皮书.md`（开头「现状总览」§00b）。
 
 ## 现状（2026-09-08 三期完成；2026-09-09 补：去掉建夹逻辑复用书本文件夹 §03ae、单篇 markdown 导入 §03af、三维审计修复 §03ag-§03aj；2026-09-10 补：书架侧「导入 md 文档」改文件上传+可见性开关、网页正文全量 i18n，均是书架侧改动、本仓库代码零变化，见书架白皮书 §03ak/§03an）
@@ -79,7 +82,7 @@
 ## 架构：挂书架网关的 loopback 服务
 
 ```
-浏览器 ──► gateway :443（2026-09-10 前是 :8778；2026-09-11 从 shelf/services/shelf-gateway 正名搬顶层 ../gateway）──/api/<seg>/*──┬── ink-serve 127.0.0.1:8795 ──fswatch──► ~/.local/share/remarkable/xochitl（只读）
+浏览器 ──► gateway :443（../gateway；2026-09-10 前是 :8778，2026-09-11 起在顶层，原名 shelf-gateway）──/api/<seg>/*──┬── ink-serve 127.0.0.1:8795 ──fswatch──► ~/.local/share/remarkable/xochitl（只读）
                  「笔记」tab（note-serve 注册）  ├── transcribe-serve :8796 ──订阅 ink /events──► DashScope（设备 WiFi 直连）
                  「管理」tab 模型管理卡片        ├── mind-serve :8797（纯被动，无订阅）──► DashScope（设备 WiFi 直连）
                  /api/events（area=notes）      ├── note-serve :8798 ──► xochitl /upload + vault/ 落盘
@@ -163,7 +166,7 @@ notes/
 
 ## 构建 · 部署
 
-**前置依赖**：跟书架共用同一套交叉编译环境（`rustup target add aarch64-unknown-linux-musl` + aarch64 交叉 gcc/ar），见 `../shelf/README.md`「构建」一节，不用单独装第二遍。改代码前先看工程纪律，日常提交分支是 `dev` 不是 `master`。
+**前置依赖**：跟书架共用同一套交叉编译环境（`rustup target add aarch64-unknown-linux-musl` + aarch64 交叉 gcc/ar），见 `../shelf/README.md`「构建」一节，不用单独装第二遍。改代码前先看工程纪律，分支：`dev` 已于 2026-09-16 删除，日常开发在 `master` 上开 feature 分支。
 
 ```sh
 cd notes && cargo build --workspace && cargo test --workspace     # host：195 个测试（rmv6 27 · epubmap 5 · notecore 62 · vendorcfg 14 · ink 14 · transcribe 22 · mind 21 · note 30，含 1 ignored；claim 重试相关两条测试真吃约 1.5-4.5s）

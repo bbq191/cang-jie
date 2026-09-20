@@ -1,5 +1,9 @@
 # bookconv 电子书优化白皮书
 
+> **读者与用途**：要改 EPUB/PDF 优化逻辑、排查“某本书在 xochitl 里排版/目录/封面不对”的人。它是 shelf 的**优化引擎**（`bookconv` 是被 `book-serve` 进程内调用的 Rust 库，不是独立服务）。
+> 想先看“它在整个系统里的位置”读 [`../../docs/OVERVIEW.md`](../../docs/OVERVIEW.md) 与 [`传书EPUB线架构.md`](传书EPUB线架构.md)；本文是深度细节，最有价值的是 §09「xochitl 渲染硬规则」和 §10 版本演进。
+> **看现状先看 §00b；章节 §16/§19 关于“漫画优化转 PDF”的内容已被 2026-09-20 决策取代（已在原位加横幅，保留作依据）。**
+>
 > `shelf/crates/bookconv` —— 通用电子书内容层：多格式转换 + EPUB 优化器 + 清洗层 + 质量门。记"为什么这么做、真机怎么验、踩了什么坑"，尤其 **xochitl（reMarkable EPUB 渲染器）的硬规则**（§09，本项目最贵的一批真机知识）。上层用法/服务见 `reMarkable书架白皮书.md`（book-serve 母版库「优化」、host `shelf push`；KOReader 只从母版库纯复制落书，不再单独优化）。
 >
 > **⚠️ 2026-09-18 现状更正**：本文下面正文里凡是提到 **host `shelf push`/`wash_epub.sh`/
@@ -10,7 +14,7 @@
 > 侧" 这类说的是"在开发机/CI 上跑测试"（跟 `shelf/host/` 目录无关的另一个含义）的地方，那些依旧
 > 准确。`bin/epub_optimize.rs`（设备/开发机共用的 CLI 小工具，跟 `optimize_epub_with` 同一份
 > 代码）本身没有删，只是不再有 `shelf push`/`wash_epub.sh` 这样的自动化调用方了。完整决策记录
-> 见 `shelf/README.md`「host CLI（2026-09-18 已砍）」节。
+> 见 `shelf/docs/reMarkable书架白皮书.md` 附录 B（原 `shelf/README.md`「host CLI（2026-09-18 已砍）」节，2026-09-20 迁入）。
 
 ## 00｜定位与职责
 
@@ -20,19 +24,19 @@
 3. **清洗层 `wash`**：对标 host Calibre `wash_epub.sh` 的规则（伪 DRM / CSS 锁 / 边距段距 / 自动目录 / 空页 / 外链排版 css），由优化器可选前置调用。
 4. **质量门 `check`**：只读体检（真 DRM / 目录命中率 / 双 id 非法），硬失败应拦下投递。
 
-**一份代码两处共用**：设备 `book-serve` 母版库「优化」（`Staging::optimize`）与 host CLI `epub-optimize` 都调 `optimize::optimize_epub_with`；host `wash_epub.sh` 末步也叠加同一个 `epub-optimize` 二进制——**端 / host 优化同源**（书架白皮书 §03i / §03q）。〔koreader-serve 自 §03s 起不再优化——落库＝纯复制母版字节；漫画不经优化器，`comic2cbz.py` 出 CBZ 直接给 KOReader。〕
+**一份代码两处共用**：设备 `book-serve` 母版库「优化」（`Staging::optimize`）与开发期小工具 `epub-optimize` 都调 `optimize` 模块（生产走流式入口 `optimize_epub_file_streaming`，小书/测试走 `optimize_epub_with`，业务函数共用、逐字节对拍一致）。〔原先 host `wash_epub.sh` 末步也叠加同一个 `epub-optimize`，host 已于 2026-09-18 砍除，见 §00b 顶部说明。〕（书架白皮书 §03i / §03q）〔koreader-serve 自 §03s 起不再优化——落库＝纯复制母版字节；漫画不经优化器，`comic2cbz.py` 出 CBZ 直接给 KOReader。〕
 
 **零 C 依赖原则**：EPUB 组装（`epub.rs`）全条目走 STORED（不压缩，免 zlib C 依赖，设备空间充足）；漫画 PDF 手搓（`pdfwrite`：JPEG 直嵌 `/DCTDecode`、PNG 走 `png` crate + miniz_oxide `/FlateDecode`）；MOBI/KF8 解析不依赖 `mobi` crate（它在真机词典样本上把 `extra_data_flags` 尾字节判错、解压乱码，见 `palm.rs`）。
 
 ## 00b｜现状总览（2026-09-10 补，读其余节前先看这里）
 
-**模块地图**（`shelf/crates/bookconv/src/`）：`convert/{palm,mobi,kf8,fb2,cbz,pdfwrite,common}.rs`（格式转换，纯 Rust 零 C）· `optimize.rs`（`optimize_epub_with` 两遍 + 幂等版本标记）· `wash.rs`（`wash_entries`，对标 Calibre 六步）· `check.rs`（质量门）· `imgopt.rs`（两个降采样盒 + `trim_margins` 裁边 + `header_dims` 只读头）· `htmlproc.rs`（脚注/字体锁等 HTML 处理原语）· `comic_detect.rs`（2026-09-17 新增，EPUB 漫画判定，移植自 host `comic.py`）· `netimg.rs`（远程图内联）· `article.rs`（网文抓取，2026-09-05 从 `reading/device-rs` 下沉）· `epub.rs`（最小合规 EPUB3 组装）· `stats.rs`；host CLI 见 `bin/epub_optimize.rs`。
+**模块地图**（`shelf/crates/bookconv/src/`）：`convert/{palm,mobi,kf8,fb2,cbz,pdfwrite,common}.rs`（格式转换，纯 Rust 零 C）· `optimize.rs`（`optimize_epub_with` 两遍 + 幂等版本标记）· `wash.rs`（`wash_entries`，对标 Calibre 洗书规则，十步清洗，另含封面保证 `ensure_cover_declared`、死引用清理 `drop_dead_refs`）· `check.rs`（质量门）· `imgopt.rs`（两个降采样盒 + `trim_margins` 裁边 + `header_dims` 只读头）· `htmlproc.rs`（脚注/字体锁等 HTML 处理原语）· `comic_detect.rs`（EPUB 漫画判定）· `comic_split.rs`（超限漫画按卷拆分）· `comic_pdf.rs`（漫画 PDF 生成/分卷，现仅服务超限 PDF 分卷，见 §16 横幅）· `pdf_ingest.rs`（入库 PDF：有文字层转 EPUB / 无文字层仅裁边，§18）· `naming.rs`（书名规范化，`书名 - 02卷`）· `placeholder.rs`（大文件占位文档，§19 末）· `imgpool.rs`（图片并行 + 像素预算）· `netimg.rs`（远程图内联）· `article.rs`（网文抓取，2026-09-05 从 `reading/device-rs` 下沉）· `epub.rs`（最小合规 EPUB3 组装）· `stats.rs`；开发期小工具见 `bin/`：`epub_optimize.rs`（清洗+优化 CLI）、`cover_fix.rs`（无损补封面）、`cbz2pdf.rs`、`comic_piece_extract.rs`。
 
-**当前版本** `OPTIMIZE_VERSION = "10"`（首行缩进改外链 css 根治，§09④/§10）。
+**当前版本** `OPTIMIZE_VERSION = "14"`（v10 起首行缩进改外链 css 根治，v11–v14 是目录相关修复，见 §10 版本表）。
 
-**谁在调用**：设备 `book-serve::Staging::optimize` + host CLI `epub-optimize` 都过 `optimize_epub_with`（同一份代码两处共用，§11）；`convert`（mobi/kf8/fb2/cbz 格式转换）现在只剩 `reading/device-rs` 在用——shelf 自己的杂格式转换统一走电脑 Calibre（书架白皮书 §03s），`epub.rs`/`article.rs`/`imgopt.rs`/`pdfwrite.rs` 这类共享底层各线仍在用。
+**谁在调用**：设备 `book-serve::Staging::optimize`（生产，流式入口）与开发期小工具 `epub-optimize`（同一份代码，§11）；`convert` 里的 mobi/kf8/fb2/cbz 格式转换在本仓库内已无调用方（原先只有已搬出仓库的 `reading/device-rs` 在用；shelf 的杂格式入库已于 2026-09-17/18 整体拒收，转换代码保留但不接入）；`convert::pdfwrite`（PDF 读写、自产 PDF 识别）与 `direct_content_type` 仍被 `book-serve` 使用，`epub.rs`/`article.rs`/`imgopt.rs` 等共享底层照常在用。
 
-**离线门槛**：`cargo test -p bookconv` 127 个零警告（2026-09-17：EPUB 线四原则 + `comic_detect` 新增后）。
+**离线门槛**：`cargo test -p bookconv` 零警告（代码里 `#[test]` 现有约 240 处；2026-09-17 时是 127 个，数字随代码增长，以实跑为准）。
 
 **未闭环**：无阻塞项；§13 待办都是"打磨精度"级（学术论文多列/公式、公式图放大阈值）。**一条已排查清楚、确认不是 `optimize`/`wash` 层能解决的边界**（2026-09-10，§12）：图片密集的内容（尤其网文抓取，一篇里连续出现几张大图/画廊）在小尺寸墨水屏上分页时，图片块在页尾放不下会被渲染引擎整体推到下一页，当前页剩余空间不回填，视觉上是大片留白——真机 A/B 验证过跟外链样式表无关（`wash_css` 加了 `figure`/`figcaption` 边距归零，修复前后渲染像素级一致），这是分页引擎自身行为，本 crate 没有能调整它的杠杆，以后再有人问"能不能优化掉图片留白"，先看这条，不用重新排查一遍。
 
@@ -199,7 +203,7 @@ xochitl 原生只开 EPUB/PDF：**文本类 → EPUB、漫画类 → PDF**，产
 - **`fb2`**：quick-xml serde 反序列化 → `epub::{Book,Chapter,Resource}`（EPUB 组装 + 优化全交给 epub.rs/optimize.rs，同一 assemble→optimize 路）。
 - **`cbz`**：解包 + 图片自然序排（`natural_cmp`）→ 每页 `downscale_for_device` → `pdfwrite` 手搓 PDF。
 - 各格式的 EPUB 字节组装统一交 `epub.rs`（最小合规 EPUB3，移植自 protocol/epub.py）。
-- **谁在用（2026-09-05）**：整个 `convert`（`cbz`/`mobi`/`kf8`/`fb2`、`is_ingestible`/`precheck`）现在只剩 `reading/device-rs`（ingest / 旧上传页）在用——shelf 里杂格式进原生统一走电脑 Calibre（书架白皮书 §03s），**漫画不投原生**（§03t 末：曾做 CBZ→PDF 投原生，用户否决后删，CBZ 只给 KOReader）。
+- **〔已过时，见 §00b“谁在调用”〕谁在用（2026-09-05）**：整个 `convert`（`cbz`/`mobi`/`kf8`/`fb2`、`is_ingestible`/`precheck`）现在只剩 `reading/device-rs`（ingest / 旧上传页）在用——shelf 里杂格式进原生统一走电脑 Calibre（书架白皮书 §03s），**漫画不投原生**（§03t 末：曾做 CBZ→PDF 投原生，用户否决后删，CBZ 只给 KOReader）。
 
 许可：clean-room 依格式规范实现，不抄 GPL 代码；GPL 数据（词典等）不编译进产物。
 
@@ -247,13 +251,15 @@ reMarkable 的 EPUB 渲染器闭源，行为多次跟 host / 常识不一致。�
 
 （幂等门修：`is_optimized` 曾只看标记存在不看版本 → 旧版本重传被整步跳过、拿不到新改进；改按 `optimized_version()` 与 `OPTIMIZE_VERSION` 直接比对判断是否当前版本。⚠ 2026-09-06 代码体检删了当时封装这个比对的 `optimize::is_current_version`——它本身没调用方，真正在用的比对早已内联在 `book-serve::staging.rs` 判 full/core/old 那处，此处曾把这层薄封装错记成"关键改动"，特此更正。）
 
-## 11｜host / 端一致 + CLI
+## 11｜设备端与开发期小工具同源 + CLI（原“host / 端一致”）
 
-**同源**：设备 `book-serve` 母版库「优化」与 host `epub-optimize` 二进制都调 `optimize_epub_with`；host `wash_epub.sh` 末步叠加同一 `epub-optimize`。host 只多一层 Calibre 级 CSS 拍平 + 非 EPUB/PDF 转码 + 质量门。
+> **2026-09-20 整理**：host（电脑端 `shelf` 命令行 + Calibre）已于 2026-09-18 砍除，“host / 端一致”不再是一个需要维护的性质——现在只有设备 `book-serve` 与开发期 `epub-optimize` 二进制两个调用方，共用同一份 `optimize` 代码。本节下面从“目标脚注”起的几段是 host 时代（2026-09-10/17）的决策记录，原样保留作依据，其中提到的 `shelf push`、`host_prepare()`、`--no-calibre` 均已不存在。
+
+**同源**：设备 `book-serve` 母版库「优化」与开发期 `epub-optimize` 二进制都调 `optimize` 模块（业务函数共用，逐字节对拍一致）。
 
 **CLI `epub-optimize`**（`cargo build --release -p bookconv --bin epub-optimize`）：`[--no-wash] [--keep-spacing] [--auto-toc] [--footnote-anchor] [--check] [--require-toc] 输入.epub 输出.epub`。缺省 = 清洗 + 优化 + 脚注 `Anchor`（2026-09-17 之前缺省是 `Inline`，同一天先改成 `ParagraphEnd` 又撤回改成 `Anchor`，见 §04 那段完整记录）；`--footnote-anchor` 现在是 no-op（缺省已经是它），继续留着只是不破坏已有脚本调用；`Inline` 目前没有 CLI 入口，只在测试里还在用。退出码 0 成功 / 1 用法 / 2 优化失败（输入不动）/ 3 质量门未过。
 
-**目标脚注**：母版库「优化」（`book-serve::Staging::optimize`）与 host CLI `epub-optimize` 缺省都是 `Anchor`——2026-09-17 这天经历了 `Inline`→`ParagraphEnd`→`Anchor` 两次切换（§04 记录了完整的真机验证驱动决策过程），最终定案跟 weread/pkm 线保持一致。**2026-09-06 用 Standard Ebooks《Gulliver's Travels》（7 处 noteref）两器对照过 `Inline` 观感正常**（书架白皮书 §05 Phase E ④），但那是旧缺省；`Anchor` 在两个读器上的观感目前没有专门对照过，注释跳章末后"没法点回来、要手动翻回去"是已知限制（reMarkable 会吞互指锚点对），不是这次改动引入的新问题。
+**目标脚注**：母版库「优化」（`book-serve::Staging::optimize`）与开发期 CLI `epub-optimize` 缺省都是 `Anchor`——2026-09-17 这天经历了 `Inline`→`ParagraphEnd`→`Anchor` 两次切换（§04 记录了完整的真机验证驱动决策过程），最终定案跟 weread/pkm 线保持一致。**2026-09-06 用 Standard Ebooks《Gulliver's Travels》（7 处 noteref）两器对照过 `Inline` 观感正常**（书架白皮书 §05 Phase E ④），但那是旧缺省；`Anchor` 在两个读器上的观感目前没有专门对照过，注释跳章末后"没法点回来、要手动翻回去"是已知限制（reMarkable 会吞互指锚点对），不是这次改动引入的新问题。
 
 **格式收窄（2026-09-17，书架白皮书 §03av）**：`shelf push` 不再用 Calibre 把 AZW3/MOBI/AZW/PRC/FB2/TXT 自动转 EPUB——那条转换代码在 `host_prepare()` 里整段删除，这几个格式现在原样透传给母版库，被 `rmsvc_core::formats::BOOK_EXTS`（已不含它们）拒收。跟 `optimize_epub_with`/`wash`/`epub-optimize` 本身无关，是上游路由层的改动，纯 EPUB 输入的洗+优化行为不受影响。
 
@@ -509,6 +515,8 @@ warn,info}`），底部居中堆叠、定时自动淡出，点一下可提前关
 
 ## 16｜漫画 EPUB → PDF：根治左右留白 + 四轮内存排查（2026-09-19）
 
+> **⚠ 已被取代（2026-09-20）**：本节的**决策**（漫画「优化」改产出 PDF）已被用户推翻，漫画优化现在保持 EPUB（见本文 §19 末「漫画换回 EPUB + 单趟图片管线 + 统一命名」）——转 PDF 会丢漫画里夹带的文字页，EPUB 的固定内边距是 xochitl 硬限制、接受它。`staging.optimize()` 里漫画→PDF 分发已删；`comic_pdf` 模块保留，只服务超限 PDF 分卷投递。本节的**实测结论**（EPUB 排版盒模型有消不掉的固定内边距、PDF 直接光栅化左右留白 0.00%、四轮内存排查数据）依然有效，正文原样保留。
+
 **背景**：真机反复排查 xochitl 渲染 EPUB 漫画的左右留白问题（§09⑧已记结论），CSS 层面
 （`width` 超 100%/负 `margin`）和直接改 `.content` 元数据的 `margins` 字段都测过绕不开——
 是渲染引擎本身的硬限制。同一批真机实测：把同一页图片改成 PDF 直传（页面物理尺寸精确等于设备
@@ -739,6 +747,8 @@ xochitl 打开后图片/公式/目录是否真的如预期显示，§18 正文�
 
 ## 19｜漫画 EPUB → PDF 画质：单趟处理 + 低分辨率源图预放大（2026-09-20，真机 A/B 已验证、未部署）
 
+> **⚠ 本节按时间顺序累积了 2026-09-20 一整天的多个小节**：开头的“漫画 EPUB→PDF 画质”部分随“漫画优化转 PDF”的决策被取代（见下面「漫画换回 EPUB」小节）；其后的「换回 EPUB + 单趟图片管线 + 统一命名」「占位 + 替换」「优化提速」「缺目录」「设备日志核查」「封面」是**现行有效**的内容。标题里的“未部署”仅指开头 A/B 实验当时的状态。
+
 **用户反馈**："EPUB 漫画优化成 PDF 会降画质。"没给具体症状，也没指明哪一本。用真机同款样本
 （乱马 1⁄2 第 1 卷、镖人第 8 卷，位于 `~/Documents/ereader/books/漫画/`）离线复现管线，找到
 三处**确凿**的处理缺陷：
@@ -830,7 +840,7 @@ xochitl 的 PDF 放大滤镜偏糊，我们预放大后设备只需 1:1 贴。
 
 **命名规则**（`bookconv::naming`）：EPUB 一律 `书名 - 卷/部/上/下`，**数字在前**：`卷02`→`02卷`、`第二卷`→`二卷`、`Vol.3`→`3卷`、`镖人(卷二)`→`镖人 - 二卷`；`上/中/下` 原样；去掉 Anna's Archive 的 ` -- 作者 -- … -- hash` 尾巴与 `[完]` 标记；无卷标记的原样保留（`疯探-空城`）；幂等。用用户母版库 37 个真实文件名验证，无重名冲突。入库（`stage_new`/`stage_from_path`）直接用规范名；已有的长名在「优化」完成时改名（边车 `.delivered` 一并移动，目标已存在则保持原名不覆盖）。
 
-### 突破 xochitl 上传体积上限：占位 + 替换（2026-09-20，真机已验证，新代码未部署）
+### 突破 xochitl 上传体积上限：占位 + 替换（2026-09-20，真机已验证；写本节时新代码尚未部署，之后已部署并被实际使用，见下面「设备日志核查」）
 
 **问题**：xochitl 网页上传接口约 100MB 硬限（超了直接断连），此前只能把大书按卷拆分。`book-serve` 跑在设备上、能直接写 xochitl 书库目录，所以绕开接口。
 

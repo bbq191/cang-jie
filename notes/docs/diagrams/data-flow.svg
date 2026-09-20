@@ -30,8 +30,7 @@
   <text x="150" y="310" text-anchor="middle" font-size="10.5" font-weight="bold" fill="#8a6d00">→ 条目库(Mined) + 裁片</text>
 
   <line x1="265" y1="200" x2="293" y2="200" stroke="#555" stroke-width="1.6" marker-end="url(#f1)"/>
-  <text x="279" y="188" text-anchor="middle" font-size="8.6" fill="#8a6d00">①.5 浏览页点</text>
-  <text x="279" y="217" text-anchor="middle" font-size="8.6" fill="#8a6d00">「转入笔记」</text>
+    <text x="430" y="364" text-anchor="middle" font-size="10" fill="#8a6d00">①→②：在浏览页点「转入笔记」的条目才往下走</text>
 
   <!-- box2 整理 -->
   <rect x="295" y="70" width="230" height="260" rx="10" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.8"/>

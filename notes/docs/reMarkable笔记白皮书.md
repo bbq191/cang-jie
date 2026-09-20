@@ -1,5 +1,7 @@
 # reMarkable 笔记线（notes）白皮书
 
+> **读者与用途**：维护笔记线、或想弄清“为什么这样设计、真机验证了什么、踩过什么坑”的人。笔记线是什么、服务与端口先看 [`../README.md`](../README.md)；整个系统的位置见 [`../../docs/OVERVIEW.md`](../../docs/OVERVIEW.md)。
+>
 > 记"怎么决定、真机怎么验、踩了什么坑"。读现状先看 §00b；待办/已闭环/明确不做看 §05；踩坑看 §04。总计划 未入库的计划文件。
 > 笔记线**挂在书架网关下**：网关 / 注册表 / 事件汇聚 / 部署链 / 原生回收站代理都是书架的（`shelf/docs/reMarkable书架白皮书.md`），本文只记笔记线自己的决策、服务、真机轮次。
 
@@ -18,8 +20,8 @@
 > §03al 记录的 **`shelf notes pull`**（拉设备端 md 导出到本机 Obsidian vault）**随之消失，没有
 > 替代**——`GET /books/{uuid}/vault.json` 接口本身还在（book-serve/note-serve 都没动），只是不再
 > 有任何自动化调用方了，以后要把笔记拉到本机只能手动 curl 这个端点。这条更正不影响本文其余
-> 关于笔记线自己四个服务/条目库/投影管线的记录，那些都还准确。详见 `shelf/README.md`「host CLI
-> （2026-09-18 已砍）」节。
+> 关于笔记线自己四个服务/条目库/投影管线的记录，那些都还准确。详见 `shelf/docs/reMarkable书架白皮书.md` 附录 B（原 `shelf/README.md`「host CLI
+> （2026-09-18 已砍）」节，2026-09-20 迁入）。
 
 **架构**：书架网关 `manage::MODULES` 加四行（`ink`/`transcribe`/`mind`/`notes`）；四个 loopback 服务全部上机——**ink-serve 矿 8795**（书库监听 → 条目库唯一写者；`POST /koreader/import` 另拉书架线 `koreader-serve` 的高亮/生词原始数据按同一套规则并入条目库，2026-09-16，§03al——除这一条手动触发的出口，其余仍是零网络）· **transcribe-serve 转写 8796**（订阅矿的事件 → 裁图喂视觉模型 → 草稿写回，出网）· **mind-serve 脑 8797**（按条目单发问 AI，**没有事件订阅/批量循环**，纯被动等 HTTP，出网，§03p）· **note-serve 本 8798**（注册「笔记」tab；写入/打包/上传三件套 + 条目→文档生成编排**全部真机验证通过**，含旧版本自动软删闭环，见 §03h/§03i/§03j/§03k；+ 单篇 markdown 独立导入，§03af）。网页只多一个「笔记」tab（前端组合 `/api/ink` `/api/transcribe` `/api/mind` `/api/notes`），事件区域 `notes`（矿发 `entries`，转写发 `transcribe`）经网关 `Hub` 汇聚到 `/api/events`，页面零轮询。**笔记线零 xovi 依赖**（无 qmd、无 .so——2026-09-09 起彻底：note-serve 不再新建/确保任何设备文件夹，笔记本直接复用书本自己已经在的文件夹，`shelf-mkdir-agent.qmd` 不再是这条线的依赖、也没有"将来还要用"的计划了，见 §03ae）。
 
