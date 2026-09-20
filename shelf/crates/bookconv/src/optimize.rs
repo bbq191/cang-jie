@@ -394,7 +394,14 @@ pub fn optimize_epub_with(epub: &[u8], opts: &OptimizeOpts) -> Result<(Vec<u8>, 
 /// 二逐张图片的重编码，回调粒度对齐"真正在做的工作"，跟 `comic_split::deliver_split_streaming` 的
 /// `upload_piece` 进度粒度同一个道理。**这个回调纯粹是可观测性，不改变内存峰值**——阶段二本来就是
 /// 逐条目处理+立刻写文件+立刻丢，回调只是在这个已有的循环里多做一次通知，不持有任何额外数据。
-pub fn optimize_epub_file_streaming(input_path: &std::path::Path, output_path: &std::path::Path, opts: &OptimizeOpts, mut on_progress: impl FnMut(usize, usize)) -> Result<Report, String> {
+pub fn optimize_epub_file_streaming(input_path: &std::path::Path, output_path: &std::path::Path, opts: &OptimizeOpts, on_progress: impl FnMut(usize, usize)) -> Result<Report, String> {
+    optimize_epub_file_streaming_titled(input_path, output_path, opts, None, on_progress)
+}
+
+/// 同 [`optimize_epub_file_streaming`]，`title=Some` 时把 OPF 的 `<dc:title>` 改成这个书名——设备上的显示名取
+/// EPUB 自己的 `dc:title`，母版库按 `书名 - N卷` 规范命名后，这里让设备显示名与文件名一致（乱马等下载书
+/// 的原 `dc:title` 甚至是 "Unknown"）。
+pub fn optimize_epub_file_streaming_titled(input_path: &std::path::Path, output_path: &std::path::Path, opts: &OptimizeOpts, title: Option<&str>, mut on_progress: impl FnMut(usize, usize)) -> Result<Report, String> {
     let in_file = std::fs::File::open(input_path).map_err(|e| format!("打开输入失败: {e}"))?;
     let bytes_before = in_file.metadata().map(|m| m.len() as usize).unwrap_or(0);
     let mut archive = ZipArchive::new(std::io::BufReader::new(in_file)).map_err(|e| format!("解 EPUB(非 zip?): {e}"))?;
@@ -431,6 +438,7 @@ pub fn optimize_epub_file_streaming(input_path: &std::path::Path, output_path: &
     }
     // 漫画识别只看 html 文字里的 <img> 计数 + 正文字数，图片占位（空字节）不影响判定。
     let is_comic_book = crate::comic_detect::is_comic(&ordered);
+    let opf_name: Option<String> = title.and_then(|_| crate::wash::parse_opf(&ordered).map(|o| ordered[o.index].name.clone()));
 
     let mut rep = Report { wash: wash_rep, total_files: 0, html_files: 0, bytes_before, bytes_after: 0 };
 
@@ -492,6 +500,11 @@ pub fn optimize_epub_file_streaming(input_path: &std::path::Path, output_path: &
         } else if name.to_lowercase().ends_with(".css") {
             match String::from_utf8(data.clone()) {
                 Ok(text) => crate::htmlproc::boost_contrast_css(&text).into_bytes(),
+                Err(_) => data.clone(),
+            }
+        } else if title.is_some() && opf_name.as_deref() == Some(name.as_str()) {
+            match String::from_utf8(data.clone()) {
+                Ok(text) => crate::placeholder::set_opf_title(&text, title.unwrap_or("")).into_bytes(),
                 Err(_) => data.clone(),
             }
         } else if crate::imgopt::is_downscalable(name) {

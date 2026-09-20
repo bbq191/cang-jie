@@ -231,7 +231,10 @@ impl Staging {
         // `.` 前缀跳过 sidecar，不带点前缀的话这份半成品会被当成一条离谱的"母版库条目"混进列表
         // （2026-09-19 真机复现：真显示过一条 `format:"other"` 的 `....epub.optimizing.tmp`）。
         let tmp = p.with_file_name(format!(".{}.optimizing.tmp", name));
-        let result = optimize::optimize_epub_file_streaming(&p, &tmp, &OptimizeOpts { wash: Some(WashOpts::default()), footnote: FootnoteMode::Anchor }, &mut on_progress);
+        // 有卷标记的书：把 EPUB 自己的 dc:title 也改成规范名（设备显示名取 dc:title）。
+        let stem = name.strip_suffix(".epub").unwrap_or(name);
+        let canon_title = bookconv::naming::has_volume_marker(stem).then(|| bookconv::naming::canonical_book_name(stem));
+        let result = optimize::optimize_epub_file_streaming_titled(&p, &tmp, &OptimizeOpts { wash: Some(WashOpts::default()), footnote: FootnoteMode::Anchor }, canon_title.as_deref(), &mut on_progress);
         let rep = match result {
             Ok(r) => r,
             Err(e) => {
@@ -417,6 +420,13 @@ impl Staging {
             // 超限：EPUB 格式的漫画按 NCX 结构递归拆分成若干份分别投递，不再是全有全无
             // （2026-09-18 用户真机反馈驱动，见 bookconv::comic_split 与书架白皮书 §03aw）。
             // 非 EPUB、非漫画、或拆不出方案（没有可用 toc.ncx）的原样保留改动前的整本拒绝行为。
+            //
+            // **优先走大文件通道**（2026-09-20 用户要求突破上传限制，真机验证 PDF 154MB/EPUB 153MB 可行）：
+            // 占位文档 + 磁盘上替换成真文件，不分卷、不限漫画。只有本机没有 xochitl 书库目录（非设备环境）
+            // 或造占位失败才退回下面的分卷/拒绝。
+            if let Some(outcome) = self.try_deliver_direct(name, &p, size, folder)? {
+                return Ok(outcome);
+            }
             if formats::ext_of(name) == "epub" {
                 if let Some(outcome) = self.try_deliver_split(name, &p, folder, bus)? {
                     return Ok(outcome);
@@ -449,6 +459,40 @@ impl Staging {
         };
         let _ = self.mark_delivered(name, Reader::Native);
         Ok(DeliverOutcome { message, render })
+    }
+
+    /// 大文件通道（见 [`rmsvc_core::xochitl::Xochitl::upload_large_file`]）：成功 `Ok(Some)`；条件不满足（非
+    /// EPUB/PDF、超过安全上限、本机没有 xochitl 书库目录、造占位失败）→ `Ok(None)` 让调用方退回旧路径；
+    /// 占位已上传之后才出的错 → `Err`（不再退回分卷，否则会在书库里留下重复内容）。
+    fn try_deliver_direct(&self, name: &str, p: &Path, size: u64, folder: &str) -> Result<Option<DeliverOutcome>, String> {
+        let ext = formats::ext_of(name);
+        if (ext != "epub" && ext != "pdf") || size > MAX_DIRECT_BYTES || !self.xochitl.library_dir().is_dir() {
+            return Ok(None);
+        }
+        let stem = name.strip_suffix(&format!(".{ext}")).unwrap_or(name);
+        let (placeholder, content_type, pages) = if ext == "epub" {
+            // 显示名：有卷标记用规范名（与文件名一致），否则沿用书自己的 dc:title。
+            let title = bookconv::naming::has_volume_marker(stem).then(|| bookconv::naming::canonical_book_name(stem));
+            match bookconv::placeholder::epub_placeholder(p, title.as_deref()) {
+                Ok(b) => (b, "application/epub+zip", None),
+                Err(_) => return Ok(None),
+            }
+        } else {
+            let pages = match bookconv::convert::pdfwrite::PdfFileReader::open(p).and_then(|mut r| r.page_count()) {
+                Ok(n) => n,
+                Err(_) => return Ok(None),
+            };
+            match bookconv::placeholder::pdf_placeholder() {
+                Ok(b) => (b, "application/pdf", Some(pages)),
+                Err(_) => return Ok(None),
+            }
+        };
+        self.xochitl.upload_large_file(p, name, content_type, folder, &placeholder, pages)?;
+        let _ = self.mark_delivered(name, Reader::Native);
+        Ok(Some(DeliverOutcome {
+            message: format!("《{stem}》{} MB 超过网页上传上限，已直接写入 xochitl 书库（未分卷）；首次打开需重新渲染，请稍候", size >> 20),
+            render: None,
+        }))
     }
 
     /// 落库前确保目标文件夹真的存在（2026-09-19，用户反馈"文件夹里写了名字依然不会创建文件夹"）：
@@ -796,6 +840,9 @@ fn optimize_note(rep: &optimize::Report) -> String {
 }
 
 /// EPUB 入库/优化统一按 `书名 - 卷/部/上/下`（数字在前）命名，见 `bookconv::naming`；其它格式原名不动。
+/// 大文件通道的安全上限（1GiB）：再大 xochitl 首次渲染的内存/时间没有验证过。
+const MAX_DIRECT_BYTES: u64 = 1 << 30;
+
 fn canonical_staged_name(name: &str) -> String {
     if formats::ext_of(name) == "epub" {
         bookconv::naming::canonical_file_name(name)
@@ -1136,6 +1183,20 @@ mod tests {
         assert_eq!(list[0].name, "亂馬1⁄2 典藏版 - 19卷.epub");
         assert!(list[0].delivered.is_some(), "落库记录（边车）必须跟着改名，不能丢");
         assert!(list[0].optimized);
+    }
+
+    #[test]
+    fn optimize_sets_dc_title_to_canonical_name_for_volume_books() {
+        // 设备显示名取 EPUB 的 dc:title：有卷标记的书，优化后 dc:title 必须是规范名，跟文件名一致。
+        let t = tempfile::tempdir().unwrap();
+        let s = staging(&t);
+        let long = "鏢人 - 卷02 -- 許先哲 -- Anna’s Archive.epub";
+        std::fs::write(t.path().join("staging").join(long), comic_epub_with_real_images(&[12, 13])).unwrap();
+        s.optimize(long, |_, _| {}).unwrap();
+        let bytes = std::fs::read(t.path().join("staging").join("鏢人 - 02卷.epub")).unwrap();
+        let entries = bookconv::check::read_entries(&bytes).unwrap();
+        let opf = entries.iter().find(|e| e.name.ends_with(".opf")).unwrap();
+        assert!(String::from_utf8_lossy(&opf.data).contains("<dc:title>鏢人 - 02卷</dc:title>"), "dc:title 应为规范名");
     }
 
     #[test]

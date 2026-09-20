@@ -76,6 +76,14 @@ pub fn canonical_book_name(stem: &str) -> String {
     first.to_string()
 }
 
+/// 这个名字（不含扩展名）里是否有可识别的卷标记。优化时只在有卷标记的书上把 EPUB 自己的 `dc:title` 改成
+/// 规范名（避免把 `abc123.epub` 这种无意义文件名覆盖掉书里本来正确的书名）。
+pub fn has_volume_marker(stem: &str) -> bool {
+    let first = stem.trim().split(" -- ").next().unwrap_or("").trim();
+    let first = tail_tag_re().replace(first, "");
+    marker_re().is_match(first.trim())
+}
+
 /// 带扩展名的文件名版本：`x -- y.epub` → `x.epub`。扩展名原样保留。
 pub fn canonical_file_name(name: &str) -> String {
     match name.rsplit_once('.') {
@@ -147,6 +155,14 @@ mod tests {
         assert_eq!(canonical_file_name("no_ext"), "no_ext");
         // 书名里带点（英文缩写）不是扩展名分隔时也不崩：末段超过 5 字符视为书名的一部分。
         assert_eq!(canonical_file_name("Dr. Who Long Title"), "Dr. Who Long Title");
+    }
+
+    #[test]
+    fn has_volume_marker_only_for_real_markers() {
+        assert!(has_volume_marker("鏢人 - 卷02 -- 許先哲"));
+        assert!(has_volume_marker("雪人 - 上册"));
+        assert!(!has_volume_marker("abc123"));
+        assert!(!has_volume_marker("疯探-空城"));
     }
 
     #[test]

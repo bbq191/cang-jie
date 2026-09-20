@@ -81,6 +81,65 @@ impl Xochitl {
         self.upload_body(std::io::BufReader::new(file), len, filename, content_type, folder_name)
     }
 
+    /// **突破网页上传的体积上限**（xochitl `/upload` 约 100MB 硬限，超了直接断连）：先上传 `placeholder`
+    /// （几 KB 的占位文档，EPUB 要带真书名和封面，见 `bookconv::placeholder`）让 xochitl 建好条目，再把磁盘上
+    /// 那个文件原子替换成 `path` 的真文件。2026-09-20 真机验证：PDF 154MB/349 页、EPUB 153MB 都能打开。
+    ///
+    /// - **EPUB**：删掉占位的渲染缓存 `.pdf`/`.epubindex`，用户第一次打开时 xochitl 重新渲染（146MB 实测约 25s，
+    ///   之后走缓存），页数、`sizeInBytes` 等届时自己更新。
+    /// - **PDF**：`.content` 里有逐页 UUID 表/页数/大小，必须一并改成真文件的（`pdf_pages` 由调用方给），
+    ///   否则只显示占位的页数。列表里的页数/大小要用户点开后才刷新（真机观察）。
+    ///
+    /// 只能在 xochitl 数据目录本机可写时用（book-serve 跑在设备上）。返回新文档 uuid。失败时占位文档可能
+    /// 已留在书库里（回执里说明），不做危险的"回滚删除"。
+    pub fn upload_large_file(&self, path: &Path, filename: &str, content_type: &str, folder_name: &str, placeholder: &[u8], pdf_pages: Option<usize>) -> Result<String, String> {
+        let ext = filename.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
+        if ext != "epub" && ext != "pdf" {
+            return Err("只有 EPUB/PDF 能走大文件通道".into());
+        }
+        let dir = self.library_dir.clone();
+        if !dir.is_dir() {
+            return Err(format!("xochitl 书库目录不可写（{}），大文件通道只能在设备上用", dir.display()));
+        }
+        let want_len = std::fs::metadata(path).map_err(|e| format!("读 {} 失败: {e}", path.display()))?.len();
+        let since = crate::clock::now_ms().saturating_sub(2_000);
+        self.upload(placeholder, filename, content_type, folder_name)?;
+        // 等 xochitl 建好条目（`.metadata` + 占位文件都落地），按占位字节数确认是"我们这一份"而不是别人同时传的。
+        let mut uuid = None;
+        for _ in 0..100 {
+            if let Some(d) = find_documents_since(&dir, since).into_iter().find(|d| std::fs::metadata(dir.join(format!("{}.{ext}", d.uuid))).map(|m| m.len() == placeholder.len() as u64).unwrap_or(false)) {
+                uuid = Some(d.uuid);
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(200));
+        }
+        let uuid = uuid.ok_or("占位文档已上传，但 20 秒内没在书库里找到它（未替换成真文件）")?;
+        let tmp = dir.join(format!("{uuid}.{ext}.new"));
+        let dest = dir.join(format!("{uuid}.{ext}"));
+        let fail = |e: String| {
+            let _ = std::fs::remove_file(&tmp);
+            format!("{e}（书库里可能留有占位文档「{filename}」，请手动删除）")
+        };
+        std::fs::copy(path, &tmp).map_err(|e| fail(format!("复制大文件失败: {e}")))?;
+        let got = std::fs::metadata(&tmp).map(|m| m.len()).unwrap_or(0);
+        if got != want_len {
+            return Err(fail(format!("复制后大小不符（{got} ≠ {want_len}）")));
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o600));
+        }
+        if ext == "epub" {
+            let _ = std::fs::remove_file(dir.join(format!("{uuid}.pdf")));
+            let _ = std::fs::remove_file(dir.join(format!("{uuid}.epubindex")));
+        } else if let Some(n) = pdf_pages {
+            rewrite_pdf_content(&dir, &uuid, n, want_len).map_err(|e| fail(e))?;
+        }
+        std::fs::rename(&tmp, &dest).map_err(|e| fail(format!("替换文件失败: {e}")))?;
+        Ok(uuid)
+    }
+
     fn upload_body(&self, body: impl Read, body_len: u64, filename: &str, content_type: &str, folder_name: &str) -> Result<Delivery, String> {
         let folder = if folder_name.is_empty() { String::new() } else { self.find_folder(folder_name).unwrap_or_default() };
         self.set_folder(&folder);
@@ -192,6 +251,21 @@ pub fn find_documents_since(dir: &Path, since_ms: u64) -> Vec<DocInfo> {
     out
 }
 
+/// 把占位 PDF 的 `.content` 改成真 PDF 的：页数、逐页 UUID 表、`redirectionPageMap`、`sizeInBytes`。
+fn rewrite_pdf_content(dir: &Path, uuid: &str, pages: usize, size: u64) -> Result<(), String> {
+    let path = dir.join(format!("{uuid}.content"));
+    let mut v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).map_err(|e| format!("读 .content 失败: {e}"))?).map_err(|e| format!(".content 不是合法 JSON: {e}"))?;
+    let obj = v.as_object_mut().ok_or(".content 不是对象")?;
+    obj.insert("pageCount".into(), pages.into());
+    obj.insert("originalPageCount".into(), pages.into());
+    obj.insert("pages".into(), (0..pages).map(|_| serde_json::Value::String(uuid::Uuid::new_v4().to_string())).collect::<Vec<_>>().into());
+    obj.insert("redirectionPageMap".into(), (0..pages).collect::<Vec<_>>().into());
+    obj.insert("sizeInBytes".into(), size.to_string().into());
+    let tmp = dir.join(format!("{uuid}.content.new"));
+    std::fs::write(&tmp, serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?).map_err(|e| format!("写 .content 失败: {e}"))?;
+    std::fs::rename(&tmp, &path).map_err(|e| format!("替换 .content 失败: {e}"))
+}
+
 /// `<uuid>.content` 的 `pageCount`：xochitl 渲染完（导入 / 打开）才写；缺或 0 → None。
 pub fn page_count(dir: &Path, uuid: &str) -> Option<u64> {
     let t = std::fs::read_to_string(dir.join(format!("{uuid}.content"))).ok()?;
@@ -232,6 +306,101 @@ pub fn upload_likely_delivered(err: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    /// 假 xochitl：`GET /documents/..` 回 200；`POST /upload` 解出 multipart 里的文件部分，落成
+    /// `<uuid>.{ext}` + `.metadata`（+ EPUB 的渲染缓存 `.pdf`/`.epubindex` 与 PDF 的 `.content`），回 201。
+    fn fake_xochitl(lib: std::path::PathBuf) -> String {
+        let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+        let addr = server.server_addr().to_ip().unwrap().to_string();
+        std::thread::spawn(move || {
+            for mut req in server.incoming_requests() {
+                if req.method() == &tiny_http::Method::Post {
+                    let mut body = Vec::new();
+                    std::io::Read::read_to_end(req.as_reader(), &mut body).unwrap();
+                    let start = body.windows(4).position(|w| w == b"\r\n\r\n").unwrap() + 4;
+                    let head = String::from_utf8_lossy(&body[..start]).to_string();
+                    let fname = head.split("filename=\"").nth(1).unwrap().split('"').next().unwrap().to_string();
+                    let end = body.windows(2).rposition(|w| w == b"\r\n").map(|_| body.len()).unwrap();
+                    let tail = body.windows(4).rposition(|w| w == b"\r\n--").unwrap_or(end);
+                    let file = &body[start..tail];
+                    let uuid = uuid::Uuid::new_v4().to_string();
+                    let ext = fname.rsplit('.').next().unwrap();
+                    std::fs::write(lib.join(format!("{uuid}.{ext}")), file).unwrap();
+                    std::fs::write(lib.join(format!("{uuid}.metadata")), format!(r#"{{"type":"DocumentType","visibleName":"{fname}","parent":"","createdTime":"{}"}}"#, crate::clock::now_ms())).unwrap();
+                    if ext == "epub" {
+                        std::fs::write(lib.join(format!("{uuid}.pdf")), b"render-cache").unwrap();
+                        std::fs::write(lib.join(format!("{uuid}.epubindex")), b"idx").unwrap();
+                    } else {
+                        std::fs::write(lib.join(format!("{uuid}.content")), r#"{"fileType":"pdf","pageCount":1,"pages":["x"],"redirectionPageMap":[0],"sizeInBytes":"5"}"#).unwrap();
+                    }
+                    let _ = req.respond(tiny_http::Response::from_string(r#"{"status":"Upload successful"}"#).with_status_code(201));
+                } else {
+                    let _ = req.respond(tiny_http::Response::from_string("[]"));
+                }
+            }
+        });
+        addr
+    }
+
+    #[test]
+    fn upload_large_file_swaps_epub_and_drops_render_cache() {
+        let lib = tempfile::tempdir().unwrap();
+        let addr = fake_xochitl(lib.path().to_path_buf());
+        let x = Xochitl::new(&addr, lib.path(), 10);
+        let big = lib.path().join("big-source.bin");
+        let big_bytes = vec![7u8; 300_000];
+        std::fs::write(&big, &big_bytes).unwrap();
+        let uuid = x.upload_large_file(&big, "书 - 02卷.epub", "application/epub+zip", "", b"PLACEHOLDER-EPUB", None).unwrap();
+        assert_eq!(std::fs::read(lib.path().join(format!("{uuid}.epub"))).unwrap(), big_bytes, "占位必须被真文件替换");
+        assert!(!lib.path().join(format!("{uuid}.pdf")).exists(), "占位的渲染缓存必须删掉，让 xochitl 重新渲染");
+        assert!(!lib.path().join(format!("{uuid}.epubindex")).exists());
+        assert!(!lib.path().join(format!("{uuid}.epub.new")).exists(), "不留临时文件");
+    }
+
+    #[test]
+    fn upload_large_file_pdf_rewrites_content_pages() {
+        let lib = tempfile::tempdir().unwrap();
+        let addr = fake_xochitl(lib.path().to_path_buf());
+        let x = Xochitl::new(&addr, lib.path(), 10);
+        let big = lib.path().join("big-source.bin");
+        std::fs::write(&big, vec![9u8; 123_456]).unwrap();
+        let uuid = x.upload_large_file(&big, "漫画.pdf", "application/pdf", "", b"%PDF-placeholder", Some(349)).unwrap();
+        assert_eq!(std::fs::metadata(lib.path().join(format!("{uuid}.pdf"))).unwrap().len(), 123_456);
+        let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(lib.path().join(format!("{uuid}.content"))).unwrap()).unwrap();
+        assert_eq!(v["pageCount"], 349);
+        assert_eq!(v["pages"].as_array().unwrap().len(), 349);
+        assert_eq!(v["sizeInBytes"], "123456");
+    }
+
+    #[test]
+    fn upload_large_file_rejects_other_formats_and_missing_library() {
+        let lib = tempfile::tempdir().unwrap();
+        let x = Xochitl::new("127.0.0.1:1", lib.path(), 1);
+        assert!(x.upload_large_file(Path::new("/x"), "a.cbz", "x", "", b"p", None).unwrap_err().contains("EPUB/PDF"));
+        let y = Xochitl::new("127.0.0.1:1", Path::new("/nonexistent-lib"), 1);
+        assert!(y.upload_large_file(Path::new("/x"), "a.epub", "x", "", b"p", None).unwrap_err().contains("只能在设备上用"));
+    }
+
+    #[test]
+    fn rewrite_pdf_content_updates_pages_map_and_size_keeping_other_fields() {
+        let d = tempfile::tempdir().unwrap();
+        std::fs::write(
+            d.path().join("u1.content"),
+            r#"{"fileType":"pdf","pageCount":3,"originalPageCount":3,"pages":["a","b","c"],"redirectionPageMap":[0,1,2],"sizeInBytes":"99","zoomMode":"bestFit"}"#,
+        )
+        .unwrap();
+        rewrite_pdf_content(d.path(), "u1", 349, 154_367_634).unwrap();
+        let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(d.path().join("u1.content")).unwrap()).unwrap();
+        assert_eq!(v["pageCount"], 349);
+        assert_eq!(v["originalPageCount"], 349);
+        assert_eq!(v["pages"].as_array().unwrap().len(), 349);
+        assert_eq!(v["redirectionPageMap"].as_array().unwrap().len(), 349);
+        assert_eq!(v["redirectionPageMap"][348], 348);
+        assert_eq!(v["sizeInBytes"], "154367634");
+        assert_eq!(v["zoomMode"], "bestFit", "其它字段必须原样保留");
+        let ids: std::collections::HashSet<_> = v["pages"].as_array().unwrap().iter().map(|x| x.as_str().unwrap().to_string()).collect();
+        assert_eq!(ids.len(), 349, "逐页 UUID 必须互不相同");
+    }
+
     use super::*;
 
     #[test]

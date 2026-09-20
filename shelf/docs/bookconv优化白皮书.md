@@ -829,3 +829,16 @@ xochitl 的 PDF 放大滤镜偏糊，我们预放大后设备只需 1:1 贴。
 **未验证**：EPUB 里预放大是否也比"阅读器自己放大"更清晰——已把旧/新两份镖人 02 EPUB 传到设备等用户对照；乱马那类"缩小"页面的 EPUB 观感没人在设备上看过；乱马 01 输出仍 >100MB，超限时走既有的按卷拆分。
 
 **命名规则**（`bookconv::naming`）：EPUB 一律 `书名 - 卷/部/上/下`，**数字在前**：`卷02`→`02卷`、`第二卷`→`二卷`、`Vol.3`→`3卷`、`镖人(卷二)`→`镖人 - 二卷`；`上/中/下` 原样；去掉 Anna's Archive 的 ` -- 作者 -- … -- hash` 尾巴与 `[完]` 标记；无卷标记的原样保留（`疯探-空城`）；幂等。用用户母版库 37 个真实文件名验证，无重名冲突。入库（`stage_new`/`stage_from_path`）直接用规范名；已有的长名在「优化」完成时改名（边车 `.delivered` 一并移动，目标已存在则保持原名不覆盖）。
+
+### 突破 xochitl 上传体积上限：占位 + 替换（2026-09-20，真机已验证，新代码未部署）
+
+**问题**：xochitl 网页上传接口约 100MB 硬限（超了直接断连），此前只能把大书按卷拆分。`book-serve` 跑在设备上、能直接写 xochitl 书库目录，所以绕开接口。
+
+**真机实验**（占位文档 → `scp` 换文件 → 用户在设备上打开验证）：
+- **PDF**：占位 99KB → 换成乱马 01 的 154MB/349 页 PDF，**同时改写 `.content`**（`pageCount`/`originalPageCount`/逐页 UUID 表/`redirectionPageMap`/`sizeInBytes`）。能打开、349 页、翻页正常；列表里的页数/大小要用户点开后才刷新。**不需要重启 xochitl**。
+- **EPUB**：占位 1.7KB → 换成 153MB EPUB，**删掉占位的渲染缓存 `.pdf`/`.epubindex`**。首次打开 xochitl 自己重新渲染（**约 25 秒**，生成 154MB 的 `.pdf`、页数 351），之后走缓存。
+- **踩坑**：①显示名取占位 EPUB 的 `dc:title`（PDF 取上传文件名），替换后不会改名 → 占位必须带真书名；②封面 `cover.png` 是导入时按占位 EPUB 的封面生成的，替换后不会补生成 → 占位必须带真封面；③导入后 xochitl 用 EPUB 自己的 `dc:title`（乱马的原值甚至是 "Unknown"），所以优化时对带卷标记的书把 `dc:title` 改成规范名，设备显示名才与文件名一致。
+
+**实现**：`bookconv::placeholder`（`epub_placeholder` 带真封面+书名+作者、`pdf_placeholder`、`set_opf_title`）；`rmsvc_core::xochitl::Xochitl::upload_large_file`（上传占位 → 按占位字节数在书库里定位新文档 → 复制到 `.new` 校验大小 → EPUB 删渲染缓存/PDF 改 `.content` → 原子 rename）；`Staging::deliver` 超限时**优先走大文件通道**（不再分卷、不限漫画），本机无书库目录/造占位失败才退回旧的分卷或拒绝；安全上限 1GiB（更大的首次渲染内存/时间没验证过）。
+**测试**：`upload_large_file` 用假 xochitl（tiny_http）验证 EPUB 替换+缓存清理、PDF 的 `.content` 改写、非 EPUB/PDF 与无书库目录的拒绝。
+**未验证**：新代码（含占位带封面/书名）还没在设备上端到端跑过；首次渲染 >153MB 更大文件的内存/耗时；占位上传后进程崩溃会在书库留下占位文档（回执会提示手动删除）。
