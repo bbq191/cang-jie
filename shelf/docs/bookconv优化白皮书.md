@@ -863,3 +863,10 @@ xochitl 的 PDF 放大滤镜偏糊，我们预放大后设备只需 1:1 贴。
 4. **良性噪音（不处理）**：`epubindex ... failed to open`（导入前本来就没有）、`documenttype telemetry reportActions failed`（xochitl 自身遥测）。
 5. **`navMap contains no navPoints`**（13:17）：当时那本没有目录，已由漫画 EPUB 自动分段目录修复。
 6. **未修、可讨论**：`native_limit` 取 90MB 而 xochitl 实际硬限约 100MB，90~100MB 的书本可以走普通上传（有即时渲染验证），现在走大文件通道；直接投入的 EPUB 首次打开要等 xochitl 渲染（146MB 实测约 25s）。
+
+### 封面：真机对照实验 + 无损补封面工具 + 一次事故（2026-09-20）
+
+**更正**：上一节说"9 本里 7 本没封面"不准确——重新数设备上的文件，**9 本里只有 3 本**（镖人四卷、火影 09、火影 10）；另 4 本是更早入库的老书（不在母版库）。
+**根因实验**（同一张真封面图造 3 个最小 EPUB 上传设备，只改封面声明写法）：A=封面条目 id 带点（`x00000001.jpg`）仅 `<meta name="cover">` → ❌ 日志 `null cover image`；B=同 id **加 `properties="cover-image"`** → ✅；C=id 简单（`cover`）仅 meta → ✅。结论：xochitl 对 id 带点的仅 meta 声明取不到封面，`cover-image` 属性能救。所以 `wash::ensure_cover_declared` 改成**meta 和 `properties="cover-image"` 必须同时有**（meta 有效但缺属性也补），并且在清洗之前调用（清洗会删只含 SVG 封面的 titlepage）；《镖人(卷四)》的封面文件本身就是 239 字节文本残片，兜底用书里第一张真实图。
+**无损补封面工具** `cover-fix in.epub out.epub [cover.png]`（`bookconv` bin）：只改 OPF，其余条目 zip raw copy（本地验证 404 个条目仅 `content.opf` 不同、顺序一致，图片零重编码），并按 xochitl 规格（552×981 RGB PNG 白底居中）生成封面缩略图。已对设备上 3 本已投的书**原地**修补（设备文档 `.epub` + `thumbnails/cover.png` + 母版库副本，旧文件备份在设备 `/home/root/cangjie-backups/cover-fix/`），不产生重复条目。
+**事故与教训**：为验证"直投未渲染的书重启后能否打开"，我在 xovi 已生效时跑了 `xovi/start`，运行中的 xochitl 2 秒内 SEGV，系统按设计整机自动重启。设备自恢复、服务全 active、无数据丢失，但打断了阅读。**副产物**：重启后之前从未打开的镖人二/三/四卷已渲染完成（pageCount 2→268/274/277），说明"长时间没打开+重启设备"后这类书可正常渲染打开；乱马 02/03 仍未打开（待用户打开验证）。

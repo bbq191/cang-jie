@@ -107,6 +107,17 @@ fn is_image_href(h: &str) -> bool {
     l.ends_with(".jpg") || l.ends_with(".jpeg") || l.ends_with(".png") || l.ends_with(".gif") || l.ends_with(".webp")
 }
 
+/// 读出一本 EPUB 的封面图（扩展名, 字节）：OPF 声明的有效封面，否则第一个 spine 页里的第一张图（同占位构造的规则）。
+/// 给"给已有文档补封面缩略图"的小工具用；找不到返回 `None`。
+pub fn cover_image_of(epub: &Path) -> Option<(String, Vec<u8>)> {
+    let file = std::fs::File::open(epub).ok()?;
+    let mut zip = zip::ZipArchive::new(std::io::BufReader::new(file)).ok()?;
+    let container = String::from_utf8_lossy(&read_entry(&mut zip, "META-INF/container.xml")?).to_string();
+    let opf_path = attr_of(&container, "full-path")?;
+    let opf = String::from_utf8_lossy(&read_entry(&mut zip, &opf_path)?).to_string();
+    find_cover(&mut zip, &opf_path, &opf)
+}
+
 fn media_type_of(ext: &str) -> &'static str {
     match ext {
         "png" => "image/png",
