@@ -90,8 +90,18 @@ pub fn list(paths: &Paths) -> Vec<ServiceInfo> {
     out
 }
 
+/// 按名找一个活着的服务。**O(1)**：直接读 `<name>.json`（注册文件名就是服务名，见 [`register`]），
+/// 不再 `list` 全目录解析全部条目再过滤——网关每个代理请求、8 条事件订阅线程的重试都走这里。
+/// 陈旧条目（pid 已死）同 `list` 一样顺手删除；名字不是单段文件名（含 `/`、`..`）一律当没有。
 pub fn find(paths: &Paths, name: &str) -> Option<ServiceInfo> {
-    list(paths).into_iter().find(|s| s.name == name)
+    crate::fs::plain_name(name).ok()?;
+    let p = file_of(paths, name);
+    let info = serde_json::from_str::<ServiceInfo>(&std::fs::read_to_string(&p).ok()?).ok()?;
+    if !pid_alive(info.pid) {
+        let _ = std::fs::remove_file(&p);
+        return None;
+    }
+    (info.name == name).then_some(info)
 }
 
 /// 按注册表地址访问**另一个**服务的最小 HTTP 客户端骨架：查地址 → 带标准超时的 `ureq::Agent` →
@@ -189,6 +199,21 @@ mod tests {
     #[test]
     fn enc_percent_encodes_path_segments() {
         assert_eq!(enc("a b"), crate::multipart::percent_encode("a b"), "就是 percent_encode 的薄封装，不重新发明编码规则");
+    }
+
+    #[test]
+    fn find_reads_single_file_and_purges_stale() {
+        let t = tempfile::tempdir().unwrap();
+        let p = paths(&t);
+        let me = std::process::id();
+        let _a = register(&p, &info("a-svc", 1, me)).unwrap();
+        assert_eq!(find(&p, "a-svc").unwrap().pid, me);
+        assert!(find(&p, "nope").is_none());
+        assert!(find(&p, "../a-svc").is_none(), "非单段名一律当没有");
+        let g = register(&p, &info("dead", 1, u32::MAX)).unwrap();
+        std::mem::forget(g);
+        assert!(find(&p, "dead").is_none());
+        assert!(!p.services_dir().join("dead.json").exists(), "陈旧条目被顺手删");
     }
 
     #[test]
