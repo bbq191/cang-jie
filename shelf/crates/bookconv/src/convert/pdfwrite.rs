@@ -254,17 +254,27 @@ pub const PDF_PAGE_H: u32 = crate::imgopt::MAX_EDGE;
 /// 判断，见该函数文档）。
 const PRODUCER_MARKER: &str = "cangjie-bookconv/1";
 
-/// 图片在统一设备页面里怎么摆：优先按宽度撑满、左右各留 1%（常见情况——漫画页比设备"矮"，
+/// 图片在统一设备页面里怎么摆：优先按宽度撑满、左右各留约 1%（常见情况——漫画页比设备"矮"，
 /// 撑满宽度后自然在上下留出对称留白，居中摆）；如果这样会导致高度溢出页面（罕见的极端竖长图），
 /// 改成按高度撑满、不留任何上下空间，左右留白让步（避免内容溢出屏幕优先于"左右只留1%"这个目标，
 /// 两者冲突时选前者）。全程只是计算一个缩放+平移矩阵，不碰图片本身一个像素。
+///
+/// **绘制宽取整、且与页宽同奇偶**（954 页宽 → 934，而不是 934.92）：左右边距 `(页宽-绘制宽)/2` 因此
+/// 必为整数，纵向偏移也向下取整——调用方（`imgopt::prepare_comic_page_for_pdf`）预先把图片重采样成
+/// 恰好这个像素尺寸时，阅读器按 1pt=1px 光栅化就是**逐像素 1:1、整数偏移**，不会再被二次重采样。
+/// 之前绘制宽 934.92 + 非整数偏移，等于图片在阅读器里又被缩放+亚像素平移了一遍，网点漫画尤其明显
+/// 变糊/起摩尔纹。
 /// 返回 `(绘制宽, 绘制高, x偏移, y偏移)`，直接拼进 PDF Contents 流的 `cm` 矩阵。
 pub fn place_image(img_w: u32, img_h: u32, page_w: u32, page_h: u32) -> (f32, f32, f32, f32) {
+    let mut target_w_px = (page_w as f32 * 0.98).floor() as u32;
+    if (page_w - target_w_px) % 2 == 1 {
+        target_w_px -= 1;
+    }
     let (img_w, img_h, page_w, page_h) = (img_w as f32, img_h as f32, page_w as f32, page_h as f32);
-    let target_w = page_w * 0.98;
+    let target_w = target_w_px as f32;
     let scaled_h = img_h * (target_w / img_w);
     if scaled_h <= page_h {
-        (target_w, scaled_h, page_w * 0.01, (page_h - scaled_h) / 2.0)
+        (target_w, scaled_h, (page_w - target_w) / 2.0, ((page_h - scaled_h) / 2.0).floor())
     } else {
         let scale_h = page_h / img_h;
         let scaled_w = img_w * scale_h;
@@ -822,10 +832,12 @@ mod tests {
     fn place_image_wide_page_centers_top_bottom_with_one_percent_side_margin() {
         // 常见漫画页：比设备页面"矮"（宽/高比 0.7 > 设备 0.5625），按宽度撑满，上下自动留白对称。
         let (dw, dh, x, y) = place_image(700, 1000, 954, 1696);
-        assert!((x - 954.0 * 0.01).abs() < 0.01, "左边距应为页宽 1%: x={x}");
-        assert!((dw - 954.0 * 0.98).abs() < 0.01, "绘制宽应为页宽 98%: dw={dw}");
+        assert!((x - 954.0 * 0.01).abs() < 1.0, "左边距应约为页宽 1%: x={x}");
+        assert!((dw - 954.0 * 0.98).abs() < 1.0, "绘制宽应约为页宽 98%: dw={dw}");
+        assert_eq!(x.fract(), 0.0, "左边距必须是整数像素（避免阅读器亚像素重采样）: x={x}");
+        assert_eq!(dw.fract(), 0.0, "绘制宽必须是整数像素: dw={dw}");
         let bottom_gap = 1696.0 - dh - y;
-        assert!((y - bottom_gap).abs() < 0.01, "上下留白应对称: top={y} bottom={bottom_gap}");
+        assert!((y - bottom_gap).abs() <= 2.0, "上下留白应对称（允许取整 ≤2px：绘制高小数部分+向下取整）: top={y} bottom={bottom_gap}");
     }
 
     #[test]
