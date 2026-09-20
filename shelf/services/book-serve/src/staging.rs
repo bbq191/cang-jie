@@ -126,6 +126,38 @@ pub struct Staging {
     /// PDF 优化）没有安全的中断点，不登记进 `cancellable`，取消请求会如实回"这一步无法中途停止"。
     cancel: Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
     cancellable: Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
+    /// 列表里"优化等级 / 是否 PDF 转来"的判定缓存：判定要开 zip 读中央目录，书多时前端每 3 秒轮询一次
+    /// 列表会持续吃 CPU（电池）。文件内容只随「优化」改写——按（大小, 修改时间）失效，命中就不再碰文件。
+    probes: Arc<std::sync::Mutex<std::collections::HashMap<String, ProbeCache>>>,
+}
+
+/// 判定一本母版库文件的优化等级（`full`/`core`/`old`/`none`）与是否 PDF 转出的 EPUB——要开 zip / 读文件头尾，
+/// 结果由 `Staging::list` 按（大小, 修改时间）缓存。
+fn probe_level(path: &Path, format: &str) -> (&'static str, bool) {
+    let pdf_source = format == "epub" && bookconv::pdf_ingest::looks_like_pdf_derived_epub(path);
+    let level = if format == "pdf" {
+        if bookconv::convert::pdfwrite::looks_like_own_bookconv_pdf(path) { "full" } else { "none" }
+    } else if pdf_source {
+        "full"
+    } else if format != "epub" {
+        "none"
+    } else {
+        match path.to_str().and_then(optimize::optimized_version_file) {
+            Some(v) if v == optimize::OPTIMIZE_VERSION => "full",
+            Some(v) if v.ends_with("-core") => "core",
+            Some(_) => "old",
+            None => "none",
+        }
+    };
+    (level, pdf_source)
+}
+
+#[derive(Clone)]
+struct ProbeCache {
+    len: u64,
+    modified: Option<std::time::SystemTime>,
+    level: &'static str,
+    pdf_source: bool,
 }
 
 impl Staging {
@@ -137,6 +169,7 @@ impl Staging {
             busy: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
             cancel: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
             cancellable: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
+            probes: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
         }
     }
     /// 这条目当前是否有异步操作在跑。
@@ -825,6 +858,7 @@ impl Staging {
     pub fn list(&self) -> Vec<StagingEntry> {
         let mut out = Vec::new();
         let Ok(rd) = std::fs::read_dir(&self.dir) else { return out };
+        let mut seen = std::collections::HashSet::new();
         for e in rd.flatten() {
             let name = e.file_name().to_string_lossy().to_string();
             let Ok(md) = e.metadata() else { continue };
@@ -845,21 +879,23 @@ impl Staging {
             // 只会白白报 none（这类 EPUB 从没被 `optimize_epub_file_streaming` 处理过，没有那个
             // 内嵌版本标记），误导前端以为它"未优化"、显示可以点「优化」，见 `StagingEntry::
             // pdf_source` 文档。
-            let pdf_source = format == "epub" && bookconv::pdf_ingest::looks_like_pdf_derived_epub(&e.path());
-            let level = if format == "pdf" {
-                if bookconv::convert::pdfwrite::looks_like_own_bookconv_pdf(&e.path()) { "full" } else { "none" }
-            } else if pdf_source {
-                "full"
-            } else if format != "epub" {
-                "none"
-            } else {
-                match e.path().to_str().and_then(optimize::optimized_version_file) {
-                    Some(v) if v == optimize::OPTIMIZE_VERSION => "full",
-                    Some(v) if v.ends_with("-core") => "core",
-                    Some(_) => "old",
-                    None => "none",
+            let modified = md.modified().ok();
+            let cached = self
+                .probes
+                .lock()
+                .unwrap()
+                .get(&name)
+                .filter(|c| c.len == md.len() && c.modified == modified)
+                .cloned();
+            let (level, pdf_source) = match cached {
+                Some(c) => (c.level, c.pdf_source),
+                None => {
+                    let (level, pdf_source) = probe_level(&e.path(), format);
+                    self.probes.lock().unwrap().insert(name.clone(), ProbeCache { len: md.len(), modified, level, pdf_source });
+                    (level, pdf_source)
                 }
             };
+            seen.insert(name.clone());
             let mtime = md.modified().ok().map(rmsvc_core::clock::secs_of).unwrap_or(0);
             let busy = self.is_busy(&name);
             let mut delivered = sidecar::read(&e.path());
@@ -877,6 +913,8 @@ impl Staging {
             }
             out.push(StagingEntry { name, bytes: md.len(), format, optimized: level == "full", level, mtime, delivered, busy, pdf_source });
         }
+        // 已被删除/改名的条目从缓存清掉，避免缓存无限增长
+        self.probes.lock().unwrap().retain(|k, _| seen.contains(k));
         out.sort_by(|a, b| b.mtime.cmp(&a.mtime).then_with(|| a.name.cmp(&b.name)));
         out
     }
@@ -1346,6 +1384,29 @@ mod tests {
         assert_eq!((rc(&s).status.as_str(), rc(&s).pages), ("onopen", 2), "没打开过：保持 onopen");
         std::fs::write(lib.join("u1.content"), r#"{"pageCount":351}"#).unwrap();
         assert_eq!((rc(&s).status.as_str(), rc(&s).pages), ("ok", 351), "打开过（页数变了）：升级成真页数");
+    }
+
+    #[test]
+    fn list_caches_level_probe_and_invalidates_on_rewrite_or_delete() {
+        // 判定要开 zip（吃 CPU/电），按（大小,mtime）缓存；文件改写后必须重判，删除后清缓存。
+        let t = tempfile::tempdir().unwrap();
+        let s = staging(&t);
+        let plain = mini_epub(&[("OEBPS/a.xhtml", "<p>x</p>")]);
+        s.stage_new("b.epub", &plain).unwrap();
+        assert_eq!(s.list()[0].level, "none");
+        assert_eq!(s.probes.lock().unwrap().len(), 1, "首次列表写入缓存");
+        // 篡改缓存里的结论：若第二次列表仍用它，说明命中缓存没有重开文件
+        s.probes.lock().unwrap().get_mut("b.epub").unwrap().level = "full";
+        assert_eq!(s.list()[0].level, "full", "文件没变 → 命中缓存");
+        // 文件改写（内容长度变了）→ 缓存失效重判
+        let marked = mini_epub(&[("OEBPS/a.xhtml", "<p>x</p>"), (optimize::OPTIMIZE_MARKER, optimize::OPTIMIZE_VERSION)]);
+        std::fs::write(s.dir.join("b.epub"), &marked).unwrap();
+        assert_eq!(s.list()[0].level, "full");
+        std::fs::write(s.dir.join("b.epub"), &plain).unwrap();
+        assert_eq!(s.list()[0].level, "none", "改写回未优化 → 重判");
+        std::fs::remove_file(s.dir.join("b.epub")).unwrap();
+        assert!(s.list().is_empty());
+        assert!(s.probes.lock().unwrap().is_empty(), "条目消失 → 清缓存");
     }
 
     #[test]
