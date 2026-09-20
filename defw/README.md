@@ -1,4 +1,7 @@
-# defw —— xochitl 3.28.0.172 逆向工程（新开，不动旧的；原名 `ghidra-project-328`，2026-09-10 改名）
+# defw —— xochitl 3.28.0.172 逆向工程（原名 `ghidra-project-328`，2026-09-10 改名）
+
+> **读者与用途**：要给 xochitl 写新的 hook / qmd、或想复现“某个函数地址是怎么定位到的”的人。这里是**逆向工程的工作目录与方法说明**（Ghidra 项目 + headless 脚本），不是功能代码；用它支撑的成果在 `enhance/handwriting-stroke/` 等处。
+> 整体位置见 [`../docs/OVERVIEW.md`](../docs/OVERVIEW.md)。（下文“新开，不动旧的”指：本目录是 3.28 固件的新项目，与 .169 固件时代的旧 `ghidra-project/`（已搬出仓库）互不干扰。）
 
 **跟 `ghidra-project/` 是两个独立项目，别混**：`ghidra-project/` 是固件 **.169** 时代的分析成果（`xochitl_analysis.gpr`/`.rep` + 一堆 `Decompile*`/`FindXrefs*`/`DumpVtable*` 脚本），函数地址早就对不上现在的固件版本，本目录**不复用、不覆盖**它——新固件重新导入分析，产物落这个新目录，两边各自独立、互不干扰（跟 `shelf/`/`notes/` 各自独立成目录同一个道理）。
 
