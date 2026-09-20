@@ -40,12 +40,17 @@ rewrite() { # $1=源 $2=目标：第一条 server 行处换成 4 条国内，其
 }
 
 changed=0
+RW_OPEN=0
 if grep -q " /etc overlay " /proc/mounts; then
     # ── overlay：改 rootfs 底层 ──
     if dmsetup ls --target verity 2>/dev/null | grep -q .; then
         echo "✋ dm-verity 激活，rootfs 不可写：只改本次开机的 overlay 视图（重启会丢）"
     else
         mount -o remount,rw / || { echo "!! remount rw / 失败"; exit 1; }
+        # 2026-09-20：rw 窗口内被 kill/ssh 断开时也要恢复 ro（先卸 bind，否则 remount ro 会 busy）
+        RW_OPEN=1
+        trap 'if [ "$RW_OPEN" = "1" ]; then umount "$BIND" 2>/dev/null; mount -o remount,ro / 2>/dev/null; fi' EXIT
+        trap 'exit 143' INT TERM HUP
         mkdir -p "$BIND" && mount --bind / "$BIND" || { mount -o remount,ro / 2>/dev/null; echo "!! bind / 失败"; exit 1; }
         LOWER="$BIND/etc/chrony.conf"
         if is_cn "$LOWER"; then
@@ -64,6 +69,7 @@ if grep -q " /etc overlay " /proc/mounts; then
             i=$((i + 1)); [ "$i" -ge 5 ] && { echo "⚠ remount ro / 一直 busy，rootfs 暂留 rw（重启恢复 ro）"; break; }
             sleep 2
         done
+        [ "$i" -lt 5 ] && RW_OPEN=0
         # overlay 视图与底层不一致（overlay 缓存）→ 拷进 upper 让本次开机立即生效
         if ! cmp -s /tmp/chrony-cn.lower "$CONF"; then
             cp /tmp/chrony-cn.lower "$CONF" && echo "-- 已同步进 overlay（本次开机立即生效）" && changed=1
