@@ -42,6 +42,11 @@ const JPEG_QUALITY: u8 = 85;
 /// 漫画页专用重编码质量——EPUB 线原则④"漫画不允许压画质"：超限时仍必须缩到屏幕框内（否则设备渲染
 /// 异常），但不该像普通插图那样再吃一道 85 质量的有损重编码，95 更接近视觉无损。
 const JPEG_QUALITY_COMIC: u8 = 95;
+/// EPUB 漫画→PDF 里**预放大**后的页面所用 JPEG 质量：放大产生的像素本就平滑，q95 会体积暴涨
+/// （镖人卷02 实测 21MB→113MB），q85 约 71MB 且真机对照仍明显比阅读器自己放大清晰。
+const JPEG_QUALITY_UPSCALED: u8 = 85;
+/// 预放大的倍数上限：超过视为缩略图/装饰小图，不值得放大到整页宽。
+const MAX_PDF_UPSCALE: f32 = 3.0;
 
 /// 保比缩进 `max_w × max_h` 框（宽高比保持、保原格式），只在超框时动；返回新字节或 `None`
 /// （已达标 / 非 JPEG·PNG / 解码失败 / 重编码没变小 → 调用方原样保留）。
@@ -270,8 +275,11 @@ pub fn trim_margins(bytes: &[u8]) -> Option<Vec<u8>> {
 /// 3. **灰度图被 `to_rgb8()` 转成 RGB 再编码**：这里保持灰度（单分量 JPEG / 灰度 PNG），不引入
 ///    多余的色度通道噪声，体积也更小。
 ///
-/// **只缩不放**：图比绘制尺寸小时不放大（放大留给阅读器，避免我们平白涨体积——镖人 882px 宽源图
-/// 放大到 934 会多 27% 体积、清晰度并无提升）。
+/// **JPEG 低分辨率源图会由我们预放大**（2026-09-20 真机 A/B 坐实）：镖人卷02 源图仅 566×800，PDF 里
+/// 按 934 宽摆放要放大 1.65 倍。让 xochitl 放大 vs 我们先 Lanczos 放大到整数绘制宽、设备 1:1 显示，
+/// 用户对照后判定**后者明显更清晰**（xochitl 的 PDF 放大滤镜偏糊）。代价是体积：q95 会 21MB→113MB，
+/// 放大后内容本就平滑，改用 [`JPEG_QUALITY_UPSCALED`]=85 压到约 71MB。边界：放大倍数超过
+/// [`MAX_PDF_UPSCALE`]（缩略图/装饰小图，放大只是白涨体积）不放大；PNG 不放大（无损放大体积暴涨）。
 pub fn prepare_comic_page_for_pdf(bytes: &[u8], page_w: u32, page_h: u32) -> Option<Vec<u8>> {
     use image::DynamicImage;
     let (fmt, (w, h)) = header_dims(bytes)?;
@@ -300,14 +308,17 @@ pub fn prepare_comic_page_for_pdf(bytes: &[u8], page_w: u32, page_h: u32) -> Opt
     let dw = ((dw.round() as u32) & !1).max(2);
     let dh = (dh.round() as u32).max(1);
     let shrink = dw < cw && dh < ch;
-    if !trimmed && !shrink {
-        return None; // 既没裁又不缩：原图字节零损失直接嵌
+    let upscale = fmt == ImageFormat::Jpeg && dw > cw && dh > ch && (dw as f32 / cw as f32) <= MAX_PDF_UPSCALE;
+    if !trimmed && !shrink && !upscale {
+        return None; // 既没裁又不缩放：原图字节零损失直接嵌
     }
-    let img = if shrink { img.resize_exact(dw, dh, FilterType::Lanczos3) } else { img };
+    let img = if shrink || upscale { img.resize_exact(dw, dh, FilterType::Lanczos3) } else { img };
 
     let mut out = Vec::new();
     match fmt {
-        ImageFormat::Jpeg => encode_jpeg_keep_gray(&img, JPEG_QUALITY_COMIC, &mut out)?,
+        ImageFormat::Jpeg => {
+            encode_jpeg_keep_gray(&img, if upscale { JPEG_QUALITY_UPSCALED } else { JPEG_QUALITY_COMIC }, &mut out)?
+        }
         ImageFormat::Png => img.write_to(&mut Cursor::new(&mut out), ImageFormat::Png).ok()?,
         _ => return None,
     }
@@ -418,10 +429,25 @@ mod tests {
     }
 
     #[test]
-    fn prepare_pdf_page_returns_none_when_nothing_to_trim_or_shrink() {
-        // 已经比绘制尺寸小、也没有白边：原图字节零损失直接嵌，不该重编码。
-        let small = jpeg_of(700, 1000);
-        assert!(prepare_comic_page_for_pdf(&small, 954, 1696).is_none());
+    fn prepare_pdf_page_returns_none_when_no_work_needed() {
+        // PNG 不放大：700×1000 无白边、比绘制宽小 → 原字节零损失直接嵌。
+        let img = DynamicImage::ImageRgb8(RgbImage::from_fn(700, 1000, |x, y| image::Rgb([(x % 256) as u8, (y % 256) as u8, 128])));
+        let mut png = Vec::new();
+        img.write_to(&mut Cursor::new(&mut png), ImageFormat::Png).unwrap();
+        assert!(prepare_comic_page_for_pdf(&png, 954, 1696).is_none());
+        // 放大倍数超上限（缩略图）的 JPEG 同样不放大。
+        assert!(prepare_comic_page_for_pdf(&jpeg_of(200, 300), 954, 1696).is_none());
+    }
+
+    #[test]
+    fn prepare_pdf_page_upscales_low_res_jpeg_to_exact_draw_width() {
+        // 镖人同款：566×800 → 按 934 宽摆放；预放大到整数绘制宽，阅读器 1:1。
+        let out = prepare_comic_page_for_pdf(&jpeg_of(566, 800), 954, 1696).expect("低分辨率 JPEG 必须预放大");
+        let img = image::load_from_memory(&out).unwrap();
+        assert_eq!(img.width(), 934);
+        let (dw, dh, x, _) = crate::convert::pdfwrite::place_image(img.width(), img.height(), 954, 1696);
+        assert_eq!((dw, dh), (img.width() as f32, img.height() as f32));
+        assert_eq!(x.fract(), 0.0);
     }
 
     #[test]
@@ -446,13 +472,13 @@ mod tests {
     }
 
     #[test]
-    fn prepare_pdf_page_trims_border_without_upscaling_small_images() {
-        // 700×1000 带 40px 白边：裁掉边、但裁后（620×920）仍小于绘制宽，不放大。
+    fn prepare_pdf_page_trims_border_then_upscales_once() {
+        // 700×1000 带 40px 白边：先裁成 ~620×920，再一次放大到 934 宽（不是先裁编一代、再放大编一代）。
         let src = gray_jpeg_of(700, 1000, 40);
         let out = prepare_comic_page_for_pdf(&src, 954, 1696).expect("有白边必须裁");
-        let (w, h) = image::load_from_memory(&out).unwrap().dimensions();
-        assert!(w < 700 && h < 1000, "应该裁掉白边: {w}x{h}");
-        assert!(w <= 700 - 2 * 38, "裁后宽应接近 620: {w}");
+        let img = image::load_from_memory(&out).unwrap();
+        assert_eq!(img.width(), 934);
+        assert_eq!(img.color(), image::ColorType::L8);
     }
 
     #[test]
