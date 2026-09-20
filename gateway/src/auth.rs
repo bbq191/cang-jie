@@ -6,7 +6,7 @@
 //!   Basic 同理只放行 `POST /password`（CLI `shelf passwd`）。
 //! - 未登录：浏览器请求（Accept 含 text/html）303 → `/login?next=…`，其它 401 JSON。密码错延时 500ms。
 use crate::config::GatewayConfig;
-use rmsvc_core::auth::{parse_basic, parse_cookie, SessionStore};
+use rmsvc_core::auth::{parse_basic, parse_cookie, FailLimiter, SessionStore};
 use rmsvc_core::http::{ApiError, ApiResult, Guard, GuardRequest, Method, Reply, Request};
 use rmsvc_core::paths::Paths;
 use std::sync::{Arc, Mutex};
@@ -18,6 +18,27 @@ pub struct AuthState {
     pub sessions: SessionStore,
     pub paths: Paths,
     pub secure_cookie: bool,
+    /// 密码校验失败限速（[`LOGIN_MAX_FAILS`] 次 / [`LOGIN_FAIL_WINDOW`]）。
+    pub limiter: FailLimiter,
+}
+
+/// 60 秒内连续输错 5 次就锁 60 秒内的后续尝试：正常人手误几次远够用（登录页每次错还有 500ms 延时），
+/// 而暴力猜密码被压到 ≈ 5 次/分钟；锁定期内根本不做 60 万轮 PBKDF2，也就不会被并发猜测烧 CPU。
+pub const LOGIN_MAX_FAILS: usize = 5;
+pub const LOGIN_FAIL_WINDOW: std::time::Duration = std::time::Duration::from_secs(60);
+
+impl AuthState {
+    pub fn new(cfg: GatewayConfig, sessions: SessionStore, paths: Paths, secure_cookie: bool) -> AuthState {
+        AuthState { cfg: Mutex::new(cfg), sessions, paths, secure_cookie, limiter: FailLimiter::new(LOGIN_MAX_FAILS, LOGIN_FAIL_WINDOW) }
+    }
+
+    /// 被限速锁定时给的 429 应答（`json` 决定 JSON 还是登录页 HTML）。
+    fn locked_reply(&self, wait: std::time::Duration, json: bool, html: impl FnOnce(&str) -> String) -> Reply {
+        let secs = wait.as_secs().max(1);
+        let msg = format!("密码错误次数过多，请 {secs} 秒后再试");
+        let r = if json { Reply::error(429, &msg) } else { Reply::html(&html(&msg)).with_status(429) };
+        r.with_header("Retry-After", &secs.to_string())
+    }
 }
 
 pub type Shared = Arc<AuthState>;
@@ -45,9 +66,14 @@ impl AuthState {
             }
         }
         if let Some((_, pw)) = r.header("Authorization").and_then(parse_basic) {
+            if self.limiter.locked_for().is_some() {
+                return Who::Nobody; // 锁定期不做校验（见 LOGIN_MAX_FAILS）
+            }
             if self.cfg.lock().map(|c| c.verify(&pw)).unwrap_or(false) {
+                self.limiter.reset();
                 return Who::Basic;
             }
+            self.limiter.record_failure();
             std::thread::sleep(std::time::Duration::from_millis(500));
         }
         Who::Nobody
@@ -89,8 +115,14 @@ impl AuthState {
     /// `POST /login`（表单或 JSON `{password}`）。
     pub fn login(&self, req: &mut Request<'_>) -> ApiResult {
         let (pw, next, json) = read_password_body(req)?;
+        if let Some(wait) = self.limiter.locked_for() {
+            return Ok(self.locked_reply(wait, json, |m| crate::ui::login_page(m, &next)));
+        }
         let ok = self.cfg.lock().map(|c| c.verify(&pw)).unwrap_or(false);
-        if !ok {
+        if ok {
+            self.limiter.reset();
+        } else {
+            self.limiter.record_failure();
             std::thread::sleep(std::time::Duration::from_millis(500));
             return Ok(if json { Reply::error(401, "密码错误") } else { Reply::html(&crate::ui::login_page("密码错误", &next)).with_status(401) });
         }
@@ -120,6 +152,10 @@ impl AuthState {
             let g = |k: &str| f.get(k).cloned().unwrap_or_default();
             (g("current"), g("new"), g("confirm"))
         };
+        if let Some(wait) = self.limiter.locked_for() {
+            let forced = self.cfg.lock().map(|c| c.must_change_password).unwrap_or(false);
+            return Ok(self.locked_reply(wait, json, |m| crate::ui::password_page(m, forced)));
+        }
         let mut cfg = self.cfg.lock().map_err(|_| ApiError::internal("锁"))?;
         let forced = cfg.must_change_password;
         // 注意：持 cfg 锁期间不能再调 must_change()（std Mutex 不可重入，曾卡死测试）。
@@ -128,6 +164,7 @@ impl AuthState {
         let via_basic = req.header("Authorization").and_then(parse_basic).map(|(_, p)| cfg.verify(&p)).unwrap_or(false);
         if !via_basic && !cfg.verify(&current) {
             drop(cfg);
+            self.limiter.record_failure();
             std::thread::sleep(std::time::Duration::from_millis(500));
             return fail("当前密码错误", 401);
         }
@@ -176,7 +213,7 @@ mod tests {
             cfg.set_password(&paths, "secret1").unwrap();
         }
         std::mem::forget(t);
-        Arc::new(AuthState { cfg: Mutex::new(cfg), sessions: SessionStore::new(std::time::Duration::from_secs(3600), 16), paths, secure_cookie: true })
+        Arc::new(AuthState::new(cfg, SessionStore::new(std::time::Duration::from_secs(3600), 16), paths, true))
     }
     fn gr(method: Method, path: &str, headers: &[(&str, &str)]) -> GuardRequest {
         GuardRequest { method, path: path.into(), headers: headers.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect() }
@@ -238,6 +275,28 @@ mod tests {
         let rep = st.logout(&mut req(Method::Post, "/logout", "", &[("Cookie", &tok)], &mut (&b""[..]))).unwrap();
         assert_eq!(rep.status, 303);
         assert_eq!((g.check)(&gr(Method::Get, "/api/services", &[("Cookie", &tok)])).unwrap().status, 401);
+    }
+
+    #[test]
+    fn repeated_wrong_passwords_lock_out_without_verifying() {
+        let st = state(false);
+        for _ in 0..LOGIN_MAX_FAILS {
+            let mut b: &[u8] = br#"{"password":"nope"}"#;
+            assert_eq!(st.login(&mut req(Method::Post, "/login", "application/json", &[], &mut b)).unwrap().status, 401);
+        }
+        // 已锁定：即使给对密码也直接 429（不做校验），带 Retry-After
+        let mut b: &[u8] = br#"{"password":"secret1"}"#;
+        let rep = st.login(&mut req(Method::Post, "/login", "application/json", &[], &mut b)).unwrap();
+        assert_eq!(rep.status, 429);
+        assert!(rep.headers.iter().any(|(k, _)| k == "Retry-After"));
+        // Basic 同样被挡
+        let g = st.guard();
+        let ok = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, "x:secret1");
+        assert_eq!((g.check)(&gr(Method::Get, "/api/services", &[("Authorization", &format!("Basic {ok}"))])).unwrap().status, 401);
+        // 解锁（模拟窗口过去）后成功登录会清零
+        st.limiter.reset();
+        let mut b: &[u8] = br#"{"password":"secret1"}"#;
+        assert_eq!(st.login(&mut req(Method::Post, "/login", "application/json", &[], &mut b)).unwrap().status, 200);
     }
 
     #[test]

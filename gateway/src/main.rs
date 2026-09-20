@@ -20,7 +20,7 @@ use rmsvc_core::http::{bind, ApiError, Method, Reply, Router, ServeOpts};
 use rmsvc_core::paths::Paths;
 use rmsvc_core::registry;
 use rmsvc_core::service::{self, ServiceSpec};
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 const SPEC: ServiceSpec = ServiceSpec {
     name: "gateway",
@@ -95,7 +95,7 @@ fn main() {
             None
         } else {
             let ttl = std::time::Duration::from_secs(u64::from(cfg.session_days.max(1)) * 86400);
-            Some(Arc::new(auth::AuthState { cfg: Mutex::new(cfg.clone()), sessions: rmsvc_core::auth::SessionStore::new(ttl, 64), paths: paths.clone(), secure_cookie }))
+            Some(Arc::new(auth::AuthState::new(cfg.clone(), rmsvc_core::auth::SessionStore::new(ttl, 64), paths.clone(), secure_cookie)))
         }
     } else {
         None
