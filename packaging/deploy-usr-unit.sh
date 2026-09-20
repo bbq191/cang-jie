@@ -1,0 +1,80 @@
+#!/bin/sh
+# host 侧统一的"把一个 systemd 单元装进设备 /usr（rootfs，普通重启不丢，OTA 冲掉后重跑）"部署器。
+# 2026-09-20 起 chrony-boot-wakelock / xovi-persist / wifi-watch 共用这一份（原先前两个各写一遍
+# "dm-verity 门 + remount rw + cp + wants 链接 + reload"，且中途失败会把 rootfs 留在 rw）。
+# 入口仍是 deploy-chrony-boot-wakelock.sh / deploy-xovi-persist.sh / deploy-wifi-watch.sh（薄包装）。
+#
+# 设备端全部走 devlib.sh：dm-verity 激活 → 跳过写 /usr（非失败，exit 0）；rw 窗口带 trap，失败也恢复 ro；
+# 单元已是最新则完全不 remount；旧单元先备份进 cangjie-backups（保留最近几份）。
+#
+# 用法：./deploy-usr-unit.sh <chrony-boot-wakelock|xovi-persist|wifi-watch> [host]      host 默认 10.11.99.1
+set -eu
+cd "$(dirname "$0")"
+# shellcheck disable=SC1091
+. ./lib.sh
+NAME="${1:?用法：deploy-usr-unit.sh <chrony-boot-wakelock|xovi-persist|wifi-watch> [host]}"
+# shellcheck disable=SC2034  # HOST 由 lib.sh 的 rssh/rscp/dev_script 使用
+HOST="${2:-10.11.99.1}"
+EXTRA_SRC=""; EXTRA_DST="-"; NEEDS="-"; START=0
+case "$NAME" in
+    chrony-boot-wakelock)
+        UNIT=chrony-boot-wakelock.service; SRC=chrony-boot-wakelock.service
+        VERITY_NOTE="功能不受影响，只是重启后 chrony 首次同步仍可能被自动休眠打断，慢几分钟报 synced。"
+        DONE_NOTE="真正验证需要重启一次设备，确认 chronyd 在这把锁保护的窗口内完成首次同步、timedatectl 不再需要等自动休眠反复打断+退避那十几分钟才显示 synchronized: yes。" ;;
+    xovi-persist)
+        UNIT=xovi-reenable.service; SRC=xovi-reenable.service
+        NEEDS='$CJ_XOVI/start'   # 设备上展开；没装 xovi 本体就没东西可恢复
+        VERITY_NOTE="功能不受影响，只是重启后仍需手动 /home/root/xovi/start。"
+        DONE_NOTE="真正验证需要重启一次设备，确认 xovi 扩展/qmd 不再需要手动 xovi/start 就自动恢复。" ;;
+    wifi-watch)
+        UNIT=wifi-watch.service; SRC=wifi-watch/wifi-watch.service
+        EXTRA_SRC=wifi-watch/wifi-watch.sh; EXTRA_DST='$CJ_HOME/.local/bin/wifi-watch.sh'; START=1
+        VERITY_NOTE="脚本已就位，但单元没装进 /usr——重启后 wifi-watch 不会自启（可手动 sh ~/.local/bin/wifi-watch.sh &）。"
+        DONE_NOTE="验证：ssh 上设备 systemctl is-active wifi-watch；journalctl -u wifi-watch 看固化/重连日志。" ;;
+    *) echo "!! 未知单元 $NAME"; exit 2 ;;
+esac
+DEST="/home/root/pkg-$NAME"
+
+echo "== 推送 $UNIT 到 root@$HOST:$DEST（md5 校验）=="
+push_verified "$SRC" "$DEST/$(basename "$SRC")"
+if [ -n "$EXTRA_SRC" ]; then push_verified "$EXTRA_SRC" "$DEST/$(basename "$EXTRA_SRC")"; fi
+
+echo "== 设备端安装（dm-verity 门 + 带 trap 的 rw 窗口，devlib.sh）=="
+dev_script "$UNIT" "$DEST/$(basename "$SRC")" "${EXTRA_SRC:+$DEST/$(basename "$EXTRA_SRC")}" "$EXTRA_DST" "$NEEDS" "$START" "$VERITY_NOTE" <<'DEVICE_SCRIPT'
+set -eu
+UNIT="$1"; SRC="$2"; EXTRA_SRC="$3"; EXTRA_DST="$4"; NEEDS="$5"; START="$6"; VERITY_NOTE="$7"
+cj_require_root || exit 1
+# 先把能预先校验的全部校验完，再动任何东西（失败时不留半成品）
+[ -f "$SRC" ] || { echo "!! 缺 $SRC（推送失败？）"; exit 1; }
+if [ "$NEEDS" != "-" ]; then
+    NEEDS="$(eval echo "$NEEDS")"
+    [ -e "$NEEDS" ] || { echo "!! 没找到 $NEEDS —— 先在设备上跑：vellum add xovi"; exit 1; }
+fi
+if [ -n "$EXTRA_SRC" ]; then
+    [ -f "$EXTRA_SRC" ] || { echo "!! 缺 $EXTRA_SRC（推送失败？）"; exit 1; }
+    EXTRA_DST="$(eval echo "$EXTRA_DST")"
+    cj_backup_file "$EXTRA_DST"
+    cj_safe_replace "$EXTRA_SRC" "$EXTRA_DST" "$CJ_STAGE_DIR" 755 || { echo "!! 写 $EXTRA_DST 失败"; exit 1; }
+fi
+SCRIPT_CHANGED="$CJ_REPLACED"
+rc=0
+cj_install_usr_unit "$UNIT" "$SRC" multi-user.target.wants || rc=$?
+case "$rc" in
+    0) ;;
+    3) echo "   $VERITY_NOTE"; exit 0 ;;
+    *) exit 1 ;;
+esac
+if [ "$START" = "1" ]; then
+    # 只在"脚本或单元有变化，或服务没在跑"时才重启——重复部署不打扰正在跑的看护进程
+    if [ "$SCRIPT_CHANGED" = "1" ] || [ "$CJ_UNIT_CHANGED" = "1" ] || [ "$(systemctl is-active "$UNIT" 2>/dev/null || true)" != "active" ]; then
+        systemctl restart "$UNIT" || { echo "!! systemctl restart $UNIT 失败"; exit 1; }
+    else
+        echo "-- $UNIT 已是最新且在跑，不重启"
+    fi
+    echo "-- $UNIT 状态：$(systemctl is-active "$UNIT" 2>/dev/null || echo '?')"
+fi
+ls -l "$CJ_SYSD/multi-user.target.wants/$UNIT"
+DEVICE_SCRIPT
+
+echo "== 完成 =="
+echo "   ${DONE_NOTE}"
