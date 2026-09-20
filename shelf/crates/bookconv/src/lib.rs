@@ -16,6 +16,7 @@ pub mod epub;
 pub mod htmlproc;
 pub mod imgopt;
 pub mod netimg;
+pub mod imgpool;
 pub mod naming;
 pub mod placeholder;
 pub mod optimize;

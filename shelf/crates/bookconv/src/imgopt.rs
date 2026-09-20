@@ -87,6 +87,11 @@ pub fn downscale_for_device(bytes: &[u8]) -> Option<Vec<u8>> {
     downscale_into(bytes, max_w, max_h)
 }
 
+/// 图片头部声明的像素数（不解码）；读不出来按 100 万像素估，给并行内存预算用（[`crate::imgpool`]）。
+pub fn pixel_count(bytes: &[u8]) -> u64 {
+    header_dims(bytes).map(|(_, (w, h))| (w as u64) * (h as u64)).unwrap_or(1_000_000)
+}
+
 /// 只读文件头取 (格式, 宽, 高)，不解码像素。非 JPEG/PNG → None。
 fn header_dims(bytes: &[u8]) -> Option<(ImageFormat, (u32, u32))> {
     let fmt = image::guess_format(bytes).ok()?;

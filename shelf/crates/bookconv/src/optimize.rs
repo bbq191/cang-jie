@@ -482,45 +482,86 @@ pub fn optimize_epub_file_streaming_titled(input_path: &std::path::Path, output_
     let mut zw = ZipWriter::new(std::io::BufWriter::new(out_file));
     let stored = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
     let deflated = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
+    // 图片本身已是 JPEG/PNG：deflate 只能再榨一点（实测乱马 6%），用最快档（级别 1）拿大部分收益、少花 CPU。
+    let deflated_fast = deflated.compression_level(Some(1));
     let mut seen_ids: HashSet<String> = HashSet::new();
     let img_agent = crate::netimg::http_agent(15);
     let mut remote_counter = 0usize;
     let mut fetched_imgs: Vec<(String, Vec<u8>)> = Vec::new();
     let total_entries = entries.len();
-    for (i, (name, data, ish)) in entries.iter().enumerate() {
-        let final_data: Vec<u8> = if *ish {
-            match String::from_utf8(data.clone()) {
-                Ok(text) => {
-                    let (bytes, imgs) = transform_html_chapter(&text, name, &aside_index, opts.footnote, &mut remote_counter, &img_agent, &mut seen_ids);
-                    fetched_imgs.extend(imgs);
-                    bytes
+    // 图片并行处理（见 `imgpool`）：主线程按条目顺序读原图字节、提交给 worker、按原顺序取回结果写 zip；
+    // 提前提交 `lookahead` 张（读原图字节几乎不花时间，处理才慢），处理与写盘/读盘重叠。结果与逐张顺序处理逐字节相同。
+    let workers = crate::imgpool::worker_count();
+    let lookahead = workers + 2;
+    let image_positions: Vec<usize> = entries.iter().enumerate().filter(|(_, (n, _, ish))| !*ish && !n.to_lowercase().ends_with(".css") && crate::imgopt::is_downscalable(n)).map(|(i, _)| i).collect();
+    std::thread::scope(|scope| -> Result<(), String> {
+        struct ImgJob {
+            bytes: Vec<u8>,
+            reply: std::sync::mpsc::Sender<Vec<u8>>,
+        }
+        let (job_tx, job_rx) = std::sync::mpsc::sync_channel::<ImgJob>(lookahead);
+        let job_rx = std::sync::Arc::new(std::sync::Mutex::new(job_rx));
+        let budget = std::sync::Arc::new(crate::imgpool::PixelBudget::new(crate::imgpool::PIXEL_BUDGET));
+        for _ in 0..workers {
+            let (rx, budget) = (job_rx.clone(), budget.clone());
+            scope.spawn(move || loop {
+                let job = { rx.lock().unwrap_or_else(|e| e.into_inner()).recv() };
+                let Ok(job) = job else { break };
+                let _permit = budget.acquire(crate::imgopt::pixel_count(&job.bytes));
+                let _ = job.reply.send(transform_image_bytes(&job.bytes, is_comic_book));
+            });
+        }
+        let mut pending: std::collections::VecDeque<std::sync::mpsc::Receiver<Vec<u8>>> = std::collections::VecDeque::new();
+        let mut next_submit = 0usize;
+        let mut consumed = 0usize; // 已取回的图片数：第 consumed 张图片对应 image_positions[consumed]
+        for (i, (name, data, ish)) in entries.iter().enumerate() {
+            // 补满提前量：读原图字节（archive 支持随时按名字重新 seek 读，跟阶段一是同一个源文件）并提交。
+            while pending.len() < lookahead && next_submit < image_positions.len() {
+                let img_name = &entries[image_positions[next_submit]].0;
+                let mut f = archive.by_name(img_name).map_err(|e| format!("重读图片 {img_name} 失败: {e}"))?;
+                let mut real_bytes = Vec::with_capacity(f.size() as usize);
+                f.read_to_end(&mut real_bytes).map_err(|e| e.to_string())?;
+                let (tx, rx) = std::sync::mpsc::channel();
+                job_tx.send(ImgJob { bytes: real_bytes, reply: tx }).map_err(|_| "图片处理线程已退出".to_string())?;
+                pending.push_back(rx);
+                next_submit += 1;
+            }
+            let is_image = image_positions.get(consumed) == Some(&i);
+            let final_data: Vec<u8> = if *ish {
+                match String::from_utf8(data.clone()) {
+                    Ok(text) => {
+                        let (bytes, imgs) = transform_html_chapter(&text, name, &aside_index, opts.footnote, &mut remote_counter, &img_agent, &mut seen_ids);
+                        fetched_imgs.extend(imgs);
+                        bytes
+                    }
+                    Err(_) => data.clone(),
                 }
-                Err(_) => data.clone(),
-            }
-        } else if name.to_lowercase().ends_with(".css") {
-            match String::from_utf8(data.clone()) {
-                Ok(text) => crate::htmlproc::boost_contrast_css(&text).into_bytes(),
-                Err(_) => data.clone(),
-            }
-        } else if title.is_some() && opf_name.as_deref() == Some(name.as_str()) {
-            match String::from_utf8(data.clone()) {
-                Ok(text) => crate::placeholder::set_opf_title(&text, title.unwrap_or("")).into_bytes(),
-                Err(_) => data.clone(),
-            }
-        } else if crate::imgopt::is_downscalable(name) {
-            // 这一张的真实字节现在才读——archive 支持随时按名字重新 seek 读，跟阶段一是同一个源文件。
-            let mut f = archive.by_name(name).map_err(|e| format!("重读图片 {name} 失败: {e}"))?;
-            let mut real_bytes = Vec::new();
-            f.read_to_end(&mut real_bytes).map_err(|e| e.to_string())?;
-            transform_image_bytes(&real_bytes, is_comic_book)
-        } else {
-            data.clone()
-        };
-        let file_opts = if name == "mimetype" { stored } else { deflated };
-        zw.start_file(name.as_str(), file_opts).map_err(|e| e.to_string())?;
-        zw.write_all(&final_data).map_err(|e| e.to_string())?;
-        on_progress(i + 1, total_entries);
-    }
+            } else if name.to_lowercase().ends_with(".css") {
+                match String::from_utf8(data.clone()) {
+                    Ok(text) => crate::htmlproc::boost_contrast_css(&text).into_bytes(),
+                    Err(_) => data.clone(),
+                }
+            } else if title.is_some() && opf_name.as_deref() == Some(name.as_str()) {
+                match String::from_utf8(data.clone()) {
+                    Ok(text) => crate::placeholder::set_opf_title(&text, title.unwrap_or("")).into_bytes(),
+                    Err(_) => data.clone(),
+                }
+            } else if is_image {
+                let rx = pending.pop_front().ok_or("图片队列意外为空")?;
+                consumed += 1;
+                rx.recv().map_err(|_| format!("图片处理线程异常退出（{name}）"))?
+            } else {
+                data.clone()
+            };
+            // mimetype 与图片（JPEG/PNG 本身已压缩，再 deflate 几乎没收益、白花 CPU）用 Stored；其余 deflate。
+            let file_opts = if name == "mimetype" { stored } else if is_image { deflated_fast } else { deflated };
+            zw.start_file(name.as_str(), file_opts).map_err(|e| e.to_string())?;
+            zw.write_all(&final_data).map_err(|e| e.to_string())?;
+            on_progress(i + 1, total_entries);
+        }
+        drop(job_tx); // 关闭队列，worker 退出，scope 才能 join
+        Ok(())
+    })?;
     for (path, bytes) in &fetched_imgs {
         zw.start_file(path.as_str(), deflated).map_err(|e| e.to_string())?;
         zw.write_all(bytes).map_err(|e| e.to_string())?;
@@ -746,6 +787,57 @@ mod tests {
         ZipArchive::new(Cursor::new(&stream_out)).unwrap().by_name("p1.jpg").unwrap().read_to_end(&mut stream_img).unwrap();
         assert_eq!(mem_img, stream_img, "同一张图内存版跟流式版处理结果应逐字节一致");
         assert!(image::load_from_memory(&stream_img).unwrap().dimensions().0 <= 954, "流式版也该按漫画框约束缩放");
+    }
+
+    #[test]
+    fn streaming_parallel_many_images_match_sequential_in_memory_and_keep_order() {
+        // 并行（worker + 提前量）不许乱序、不许改任何一张图的处理结果：20 张互不相同的图（尺寸/内容都不同，
+        // 顺序错位或串图必然被发现），流式并行版逐张、逐字节对照内存顺序版；条目顺序也必须一致。
+        use image::{codecs::jpeg::JpegEncoder, DynamicImage, RgbImage};
+        let n = 20usize; // ≥20 张才判漫画，走漫画单趟管线
+        let mut comic_buf = Vec::new();
+        {
+            let mut zw = ZipWriter::new(Cursor::new(&mut comic_buf));
+            let stored = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
+            zw.start_file("mimetype", stored).unwrap();
+            zw.write_all(b"application/epub+zip").unwrap();
+            let items: String = (1..=n).map(|i| format!(r#"<item id="c{i}" href="c{i}.xhtml" media-type="application/xhtml+xml"/>"#)).collect();
+            let spine: String = (1..=n).map(|i| format!(r#"<itemref idref="c{i}"/>"#)).collect();
+            zw.start_file("content.opf", stored).unwrap();
+            zw.write_all(format!(r#"<package version="3.0"><metadata><dc:title>漫画</dc:title></metadata><manifest>{items}</manifest><spine>{spine}</spine></package>"#).as_bytes()).unwrap();
+            for i in 1..=n {
+                zw.start_file(format!("c{i}.xhtml"), stored).unwrap();
+                zw.write_all(format!(r#"<html><body><img src="p{i}.png"/></body></html>"#).as_bytes()).unwrap();
+                let (w, h) = (320 + (i as u32 * 37) % 30, 480 + (i as u32 * 91) % 40); // 短边≥318 才走补白路径；debug 构建下 SIMD 缩放很慢，图要小
+                let img = DynamicImage::ImageRgb8(RgbImage::from_fn(w, h, |x, y| image::Rgb([((x + i as u32 * 13) % 256) as u8, ((y * 3) % 256) as u8, (i * 8 % 256) as u8])));
+                // PNG：不预放大（无损放大体积暴涨），只补白到设备长宽比——路径真实、debug 构建下也够快。
+                let mut jpg = Vec::new();
+                img.write_to(&mut Cursor::new(&mut jpg), image::ImageFormat::Png).unwrap();
+                zw.start_file(format!("p{i}.png"), stored).unwrap();
+                zw.write_all(&jpg).unwrap();
+            }
+            zw.finish().unwrap();
+        }
+        let (mem_out, _) = optimize_epub(&comic_buf).unwrap();
+        let t = tempfile::tempdir().unwrap();
+        let (input_path, output_path) = (t.path().join("c.epub"), t.path().join("o.epub"));
+        std::fs::write(&input_path, &comic_buf).unwrap();
+        optimize_epub_file_streaming(&input_path, &output_path, &OptimizeOpts::default(), |_, _| {}).unwrap();
+        let stream_out = std::fs::read(&output_path).unwrap();
+        let (mut a, mut b) = (ZipArchive::new(Cursor::new(&mem_out)).unwrap(), ZipArchive::new(Cursor::new(&stream_out)).unwrap());
+        for i in 1..=n {
+            let name = format!("p{i}.png");
+            let (mut x, mut y) = (Vec::new(), Vec::new());
+            a.by_name(&name).unwrap().read_to_end(&mut x).unwrap();
+            b.by_name(&name).unwrap().read_to_end(&mut y).unwrap();
+            assert_eq!(x, y, "第 {i} 张图并行结果与顺序结果不一致（乱序或串图）");
+        }
+        let mut y1 = Vec::new();
+        b.by_name("p1.png").unwrap().read_to_end(&mut y1).unwrap();
+        let (w1, h1) = image::ImageReader::new(Cursor::new(&y1)).with_guessed_format().unwrap().into_dimensions().unwrap();
+        assert!(h1 > 491 && w1 == 327, "应真的补白到设备长宽比（管线确实跑过）: {w1}x{h1}");
+        let order = |z: &mut ZipArchive<Cursor<&Vec<u8>>>| -> Vec<String> { (0..z.len()).map(|i| z.by_index(i).unwrap().name().to_string()).filter(|n| n != OPTIMIZE_MARKER).collect() };
+        assert_eq!(order(&mut a), order(&mut b), "条目顺序必须一致");
     }
 
     #[test]
