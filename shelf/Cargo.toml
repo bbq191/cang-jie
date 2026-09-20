@@ -26,5 +26,8 @@ license = "MIT"
 opt-level = "z"
 lto = true
 strip = true
-panic = "abort"
+# unwind（不是 abort）：book-serve 的优化/落库在后台线程里用 catch_unwind 兜住 panic（损坏书触发的越界等），
+# 失败只影响这一本；abort 下 catch_unwind 完全无效，一次 panic 会摔掉整个进程、卡住所有在途操作（2026-09-19《镖人》真机踩过）。
+# 代价只是二进制略大，设备 /home 有几十 GB，可忽略。
+panic = "unwind"
 codegen-units = 1

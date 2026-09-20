@@ -47,6 +47,10 @@ impl State {
     pub fn ensure_dirs(&self) -> std::io::Result<()> {
         self.spool.ensure()?;
         self.staging.ensure()?;
+        let (fixed, tmps) = self.staging.recover_interrupted();
+        if fixed > 0 || tmps > 0 {
+            println!("[book-serve] 修正 {fixed} 条上次被中断的处理记录，清掉 {tmps} 个优化半成品");
+        }
         let orphans = self.staging.gc_orphan_sidecars();
         if orphans > 0 {
             println!("[book-serve] 清掉 {orphans} 个没有对应书的落库记录");
