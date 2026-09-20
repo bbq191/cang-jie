@@ -20,10 +20,12 @@ pub fn router(st: Arc<State>) -> Router {
         .post("/inbox/retry", bind(&st, |s, r| {
             let name = r.json()?.str("name")?.to_string();
             s.spool.retry(&name).map_err(ApiError::bad)?;
+            s.invalidate_status();
             Ok(Reply::ok(&serde_json::json!({"ok": true, "items": s.process_inbox(Some(&name))})))
         }))
         .post("/inbox/delete", bind(&st, |s, r| {
             s.spool.delete_failed(r.json()?.str("name")?).map_err(ApiError::bad)?;
+            s.invalidate_status();
             s.bus.publish("books", "inbox");
             ok()
         }))
@@ -93,6 +95,7 @@ pub fn router(st: Arc<State>) -> Router {
         // ── 原生书库建文件夹队列（真正的建夹由 xochitl 自己的 Library.createCollection 执行，见 mkdir.rs / shelf-mkdir-agent.qmd）──
         .post("/mkdir/add", bind(&st, |s, r| {
             let n = s.mkdir.add(r.json()?.str("name")?).map_err(ApiError::bad)?;
+            s.invalidate_status(); // 文件夹候选可能变了
             if n > 0 {
                 s.bus.publish("books", "mkdir");
             }

@@ -28,7 +28,7 @@ pub fn router(st: Arc<State>) -> Router {
                 return Err(ApiError::bad("文件夹名不能为空"));
             }
             std::fs::create_dir_all(&dir).map_err(|e| ApiError::internal(format!("建目录失败: {e}")))?;
-            s.bus.publish("koreader", "books");
+            s.notify("books");
             Ok(Reply::ok(&serde_json::json!({"ok": true, "folder": folder.trim().trim_matches('/')})))
         }))
         // 从母版库（book-serve 的 staging/，共享目录）adopt 一本书到 KOReader——落库=纯复制母版字节，不优化
@@ -43,7 +43,7 @@ pub fn router(st: Arc<State>) -> Router {
             }
             let dest = s.ko.subdir(j.str_or("folder", "")).map_err(ApiError::bad)?;
             let item = KoStore::new(dest, "koreader-book", KO_ANY, "books/").install(&name, &src).map_err(ApiError::bad)?;
-            s.bus.publish("koreader", "books");
+            s.notify("books");
             Ok(Reply::ok(&serde_json::json!({"ok": true, "message": format!("已加入 KOReader《{}》（{} 字节）", name, item.bytes), "note": s.ko.running_note("KOReader 运行中：在其文件浏览器刷新可见")})))
         }))
         .get("/fonts", bind(&st, |s, _| {
@@ -55,10 +55,10 @@ pub fn router(st: Arc<State>) -> Router {
             }).collect();
             Ok(Reply::ok(&serde_json::json!({"items": items})))
         }))
-        .post("/fonts", bind(&st, |s, r| { let rep = s.upload(r, &s.font_store())?; s.bus.publish("koreader", "fonts"); Ok(rep) }))
+        .post("/fonts", bind(&st, |s, r| { let rep = s.upload(r, &s.font_store())?; s.notify("fonts"); Ok(rep) }))
         .delete("/fonts/{file}", bind(&st, |s, r| {
             s.font_store().remove(r.param("file")).map_err(|e| ApiError::not_found(format!("删除失败: {e}")))?;
-            s.bus.publish("koreader", "fonts");
+            s.notify("fonts");
             Ok(Reply::ok(&serde_json::json!({"ok": true, "note": s.ko.running_note("KOReader 运行中：重启它后字体列表才更新")})))
         }))
         .get("/annotations", bind(&st, |s, _| {
@@ -74,7 +74,7 @@ pub fn router(st: Arc<State>) -> Router {
             let name = r.q("name").unwrap_or("").trim().to_string();
             plain_name(&name).map_err(|_| ApiError::bad("需要 ?name=<词典目录名>（单层）"))?;
             let rep = s.upload(r, &KoStore::new(s.ko.dict_dir().join(&name), "koreader-dict", DICT_EXTS, format!("词典 {name}/")))?;
-            s.bus.publish("koreader", "dicts");
+            s.notify("dicts");
             Ok(rep)
         }))
         .get("/config/{file}", bind(&st, |s, r| {
@@ -87,7 +87,7 @@ pub fn router(st: Arc<State>) -> Router {
             let patch = String::from_utf8(r.read_small_body().map_err(ApiError::bad)?).map_err(|_| ApiError::bad("补丁不是 UTF-8"))?;
             let res = s.sync.apply(&file, &patch, dry).map_err(|e| ApiError { status: if e.contains("正在运行") { 409 } else { 400 }, message: e })?;
             if !dry {
-                s.bus.publish("koreader", "config");
+                s.notify("config");
             }
             Ok(Reply::ok(&res))
         }))

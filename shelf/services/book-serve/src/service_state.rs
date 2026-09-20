@@ -5,11 +5,13 @@ use crate::spool::Spool;
 use crate::staging::{self, Staging};
 use crate::trash::TrashQueue;
 use serde::Serialize;
+use rmsvc_core::cache::TtlCache;
 use rmsvc_core::events::EventBus;
 use rmsvc_core::formats::{self, BOOK_EXTS};
 use rmsvc_core::paths::Paths;
 use rmsvc_core::xochitl::Xochitl;
 use std::sync::Arc;
+use std::time::Duration;
 
 pub struct State {
     pub cfg: BookConfig,
@@ -23,7 +25,15 @@ pub struct State {
     /// 原生书库「建文件夹」队列（QML 代理 shelf-mkdir-agent.qmd 拉取执行，2026-09-19 复活，
     /// 见 mkdir.rs 模块文档）；`Arc` 是因为 `Staging::deliver` 的后台线程要跟 `bus` 一样带着走。
     pub mkdir: Arc<MkdirQueue>,
+    /// `GET /status` 的结果缓存（[`STATUS_TTL`]）。网页每次 refresh 都会打这个接口，而它里面有重活：
+    /// 对 xochitl 发 HTTP 探活（不可达时要等满 3 秒超时）、读全部 `.metadata` 列文件夹、扫 inbox。
+    /// 会被本服务自己的操作改变的部分（inbox 计数、文件夹候选）在操作路径里 [`State::invalidate_status`]
+    /// 主动失效；xochitl 是否可达、用户在设备上新建文件夹这类外部变化最多滞后一个 TTL。
+    status_cache: TtlCache<serde_json::Value>,
 }
+
+/// `/status` 缓存时长：够挡住"连续几次 refresh"，又短到外部变化（xochitl 上下线）几秒内就能看到。
+const STATUS_TTL: Duration = Duration::from_secs(3);
 
 /// inbox 追平一项的结果（日志 / `POST /inbox/retry` 回执）。
 #[derive(Serialize, Clone, Debug, PartialEq)]
@@ -41,7 +51,7 @@ impl State {
         let staging = Staging::new(paths.staging_dir(), xochitl.clone(), cfg.native_upload_limit_bytes());
         let trash = TrashQueue::new(&paths.state_dir().join("books"), &paths.xochitl_dir());
         let mkdir = Arc::new(MkdirQueue::new(&paths.state_dir().join("books"), &paths.xochitl_dir()));
-        State { cfg, spool, staging, xochitl, bus: Arc::new(EventBus::new()), trash, mkdir }
+        State { cfg, spool, staging, xochitl, bus: Arc::new(EventBus::new()), trash, mkdir, status_cache: TtlCache::new(STATUS_TTL) }
     }
 
     pub fn ensure_dirs(&self) -> std::io::Result<()> {
@@ -63,7 +73,16 @@ impl State {
         Ok(())
     }
 
+    /// 让下一次 `/status` 必定重算（改变了 inbox 计数 / 文件夹候选的操作完成后调）。
+    pub fn invalidate_status(&self) {
+        self.status_cache.invalidate();
+    }
+
     pub fn status(&self) -> serde_json::Value {
+        self.status_cache.get_or(|| self.compute_status())
+    }
+
+    fn compute_status(&self) -> serde_json::Value {
         let items = self.spool.list();
         serde_json::json!({
             "ok": true,
@@ -106,6 +125,7 @@ impl State {
             out.push(o);
         }
         if !out.is_empty() {
+            self.invalidate_status(); // inbox 计数变了，先失效再发事件（网页收到事件后马上来取 /status）
             self.bus.publish("books", "inbox");
             if out.iter().any(|o| o.ok) {
                 self.bus.publish("books", "staging");
@@ -135,6 +155,38 @@ mod tests {
         assert!(out.iter().any(|o| !o.ok && o.name == "p.jpg" && o.message.contains("不是书籍格式")));
         assert!(st.staging.dir().join("b.epub").is_file() && !st.spool.inbox().join("b.epub").exists());
         assert_eq!(st.spool.list().iter().filter(|e| e.state == "failed").count(), 1);
+    }
+
+    /// 造一个 xochitl 指向本机关闭端口（连接秒拒，不会真等 3 秒超时）的 State。
+    fn state_with_dead_xochitl(home: &std::path::Path) -> State {
+        let h = home.to_str().unwrap().to_string();
+        let paths = Paths::resolve(move |k| if k == "HOME" || k == "XDG_RUNTIME_DIR" { Some(h.clone()) } else { None });
+        let cfg = paths.service_config("book");
+        std::fs::create_dir_all(cfg.parent().unwrap()).unwrap();
+        std::fs::write(&cfg, r#"{"xochitlHost":"127.0.0.1:9"}"#).unwrap();
+        let st = State::new(&paths);
+        st.ensure_dirs().unwrap();
+        st
+    }
+
+    #[test]
+    fn status_is_cached_within_ttl_and_invalidated_by_inbox_operations() {
+        let t = tempfile::tempdir().unwrap();
+        let st = state_with_dead_xochitl(t.path());
+        assert_eq!(st.status()["spool"]["failed"], 0);
+        // 外部（scp）丢进 inbox 一个非书文件：TTL 内 status 仍是缓存的旧值（不重算重活）
+        std::fs::write(st.spool.inbox().join("p.jpg"), b"x").unwrap();
+        assert_eq!(st.status()["spool"]["pending"], 0, "TTL 内命中缓存");
+        // 本服务自己处理 inbox → 主动失效，马上看到 failed=1
+        st.process_inbox(None);
+        let s = st.status();
+        assert_eq!((s["spool"]["pending"].as_u64(), s["spool"]["failed"].as_u64()), (Some(0), Some(1)), "操作后立刻刷新");
+        assert_eq!(s["uploadReachable"], false);
+        // 删掉失败项走的是 api 层的 invalidate_status，这里直接验证失效钩子本身
+        st.spool.delete_failed("p.jpg").unwrap();
+        assert_eq!(st.status()["spool"]["failed"], 1, "没失效前仍是缓存值");
+        st.invalidate_status();
+        assert_eq!(st.status()["spool"]["failed"], 0);
     }
 
     #[test]
