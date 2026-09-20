@@ -106,6 +106,13 @@ pub fn router(st: Arc<State>) -> Router {
             Ok(Reply::ok(&serde_json::json!({"names": names})))
         }))
         .get("/mkdir", bind(&st, |s, _| Ok(Reply::ok(&serde_json::json!({"items": s.mkdir.list()})))))
+        // 停止正在跑的优化/投递（2026-09-20）：登记取消标记，在下一个安全检查点停下；无法中途停的步骤如实回 cancelled:false。
+        .post("/staging/cancel", bind(&st, |s, r| {
+            let name = r.json()?.str("name")?.to_string();
+            let supported = s.staging.request_cancel(&name).map_err(ApiError::bad)?;
+            let message = if supported { "已请求停止，会在当前这一小步结束后停下" } else { "这一步无法中途停止（单文件上传中），会自然跑完" };
+            Ok(Reply::ok(&serde_json::json!({"ok": true, "cancelled": supported, "message": message})))
+        }))
         .post("/staging/delete", bind(&st, |s, r| {
             s.staging.remove(r.json()?.str("name")?).map_err(ApiError::bad)?;
             s.bus.publish("books", "staging");

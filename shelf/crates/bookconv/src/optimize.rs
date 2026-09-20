@@ -401,7 +401,17 @@ pub fn optimize_epub_file_streaming(input_path: &std::path::Path, output_path: &
 /// 同 [`optimize_epub_file_streaming`]，`title=Some` 时把 OPF 的 `<dc:title>` 改成这个书名——设备上的显示名取
 /// EPUB 自己的 `dc:title`，母版库按 `书名 - N卷` 规范命名后，这里让设备显示名与文件名一致（乱马等下载书
 /// 的原 `dc:title` 甚至是 "Unknown"）。
-pub fn optimize_epub_file_streaming_titled(input_path: &std::path::Path, output_path: &std::path::Path, opts: &OptimizeOpts, title: Option<&str>, mut on_progress: impl FnMut(usize, usize)) -> Result<Report, String> {
+pub fn optimize_epub_file_streaming_titled(input_path: &std::path::Path, output_path: &std::path::Path, opts: &OptimizeOpts, title: Option<&str>, on_progress: impl FnMut(usize, usize)) -> Result<Report, String> {
+    optimize_epub_file_streaming_ctl(input_path, output_path, opts, title, &|| false, on_progress)
+}
+
+/// 用户主动取消时返回的错误文案（调用方按它区分"取消"和"失败"，见 `book-serve` 的 `CANCELLED`）。
+pub const CANCELLED_MSG: &str = "已取消";
+
+/// 同 [`optimize_epub_file_streaming_titled`]，多一个 `cancel` 回调：每处理完一个条目检查一次，返回 `true` 就
+/// 立刻停手、返回 `Err(`[`CANCELLED_MSG`]`)`（图片 worker 随之退出，调用方负责清掉半成品输出文件）。
+/// 用户 2026-09-20 反馈"不能停止某个执行中的优化"——优化在设备上要几分钟，必须能中途停。
+pub fn optimize_epub_file_streaming_ctl(input_path: &std::path::Path, output_path: &std::path::Path, opts: &OptimizeOpts, title: Option<&str>, cancel: &dyn Fn() -> bool, mut on_progress: impl FnMut(usize, usize)) -> Result<Report, String> {
     let in_file = std::fs::File::open(input_path).map_err(|e| format!("打开输入失败: {e}"))?;
     let bytes_before = in_file.metadata().map(|m| m.len() as usize).unwrap_or(0);
     let mut archive = ZipArchive::new(std::io::BufReader::new(in_file)).map_err(|e| format!("解 EPUB(非 zip?): {e}"))?;
@@ -515,6 +525,9 @@ pub fn optimize_epub_file_streaming_titled(input_path: &std::path::Path, output_
         let mut next_submit = 0usize;
         let mut consumed = 0usize; // 已取回的图片数：第 consumed 张图片对应 image_positions[consumed]
         for (i, (name, data, ish)) in entries.iter().enumerate() {
+            if cancel() {
+                return Err(CANCELLED_MSG.to_string()); // drop(job_tx) 随作用域结束，worker 退出
+            }
             // 补满提前量：读原图字节（archive 支持随时按名字重新 seek 读，跟阶段一是同一个源文件）并提交。
             while pending.len() < lookahead && next_submit < image_positions.len() {
                 let img_name = &entries[image_positions[next_submit]].0;
@@ -838,6 +851,29 @@ mod tests {
         assert!(h1 > 491 && w1 == 327, "应真的补白到设备长宽比（管线确实跑过）: {w1}x{h1}");
         let order = |z: &mut ZipArchive<Cursor<&Vec<u8>>>| -> Vec<String> { (0..z.len()).map(|i| z.by_index(i).unwrap().name().to_string()).filter(|n| n != OPTIMIZE_MARKER).collect() };
         assert_eq!(order(&mut a), order(&mut b), "条目顺序必须一致");
+    }
+
+    #[test]
+    fn streaming_cancel_stops_early_with_cancelled_error() {
+        // 取消回调返回 true：应立刻以 CANCELLED_MSG 失败，不产出完整文件；worker 线程要能干净退出（不死锁）。
+        let t = tempfile::tempdir().unwrap();
+        let mut buf = Vec::new();
+        {
+            let mut zw = ZipWriter::new(Cursor::new(&mut buf));
+            let stored = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
+            zw.start_file("mimetype", stored).unwrap();
+            zw.write_all(b"application/epub+zip").unwrap();
+            zw.start_file("content.opf", stored).unwrap();
+            zw.write_all(br#"<package version="3.0"><metadata><dc:title>t</dc:title></metadata><manifest><item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="c1"/></spine></package>"#).unwrap();
+            zw.start_file("c1.xhtml", stored).unwrap();
+            zw.write_all(b"<html><body><p>hi</p></body></html>").unwrap();
+            zw.finish().unwrap();
+        }
+        let (input, output) = (t.path().join("a.epub"), t.path().join("o.epub"));
+        std::fs::write(&input, &buf).unwrap();
+        let calls = std::cell::Cell::new(0);
+        let err = optimize_epub_file_streaming_ctl(&input, &output, &OptimizeOpts::default(), None, &|| { calls.set(calls.get() + 1); calls.get() >= 2 }, |_, _| {}).unwrap_err();
+        assert_eq!(err, CANCELLED_MSG);
     }
 
     #[test]

@@ -108,6 +108,7 @@ fn main() {
         println!("[gateway] mDNS 名 {}.local（iOS/macOS/Windows/Linux 可直接访问；安卓走热点 dnsmasq 别名）", cfg.mdns_name.trim());
     }
     let paths = Arc::new(paths);
+    batch::resume(&paths); // 读回上次没跑完的批量队列继续跑（网关重启/部署新版本不丢）
     let hub = Arc::new(events::Hub::spawn(paths.clone()));
     let mut router = Router::new()
         .get("/", |_| Ok(Reply::html(ui::page())))
@@ -182,7 +183,7 @@ fn main() {
             Ok(Reply::ok(&serde_json::json!({"queued": e.queued, "skipped": e.skipped})))
         }))
         .get("/api/batch/status", |_| Ok(Reply::ok(&batch::status())))
-        .post("/api/batch/stop", |_| Ok(Reply::ok(&serde_json::json!({"cleared": batch::stop()}))))
+        .post("/api/batch/stop", bind(&paths, |p, _| Ok(Reply::ok(&serde_json::json!({"cleared": batch::stop(p)})))))
         .route(Method::Other, "/api/*", |_| Err(ApiError::bad("unsupported method")))
         .any(PROXIED, "/api/{svc}/*", bind(&paths, proxy::forward))
         .any(PROXIED, "/api/{svc}", bind(&paths, proxy::forward));

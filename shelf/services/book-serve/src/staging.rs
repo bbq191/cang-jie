@@ -121,11 +121,23 @@ pub struct Staging {
     /// 结果展示"，不参与这个忙锁判断——两者职责分开。加锁是全局唯一入口（`try_start_busy`），
     /// 同一条目「优化」跟「落库」互斥——不允许同时跑（两个都要读/写同一份母版库文件）。
     busy: Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
+    /// 用户请求取消的条目名 / 当前这步操作支持中途取消的条目名（2026-09-20 用户反馈"不能停止某个执行中的优化/投入"）。
+    /// 支持取消的步骤（EPUB 优化每处理完一个条目、按卷拆分投递每份之间）会检查 `cancel`；其它步骤（单文件上传、
+    /// PDF 优化）没有安全的中断点，不登记进 `cancellable`，取消请求会如实回"这一步无法中途停止"。
+    cancel: Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
+    cancellable: Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
 }
 
 impl Staging {
     pub fn new(dir: PathBuf, xochitl: Arc<Xochitl>, native_limit: u64) -> Staging {
-        Staging { dir, xochitl, native_limit, busy: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())) }
+        Staging {
+            dir,
+            xochitl,
+            native_limit,
+            busy: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
+            cancel: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
+            cancellable: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
+        }
     }
     /// 这条目当前是否有异步操作在跑。
     pub fn is_busy(&self, name: &str) -> bool {
@@ -133,10 +145,37 @@ impl Staging {
     }
     /// 尝试给条目加忙锁；已经忙着 → false（调用方据此拒绝这次操作，不排队不覆盖）。
     fn try_start_busy(&self, name: &str) -> bool {
-        self.busy.lock().unwrap().insert(name.to_string())
+        let started = self.busy.lock().unwrap().insert(name.to_string());
+        if started {
+            self.cancel.lock().unwrap().remove(name); // 上一轮遗留的取消标记不能带进新操作
+        }
+        started
     }
     fn end_busy(&self, name: &str) {
         self.busy.lock().unwrap().remove(name);
+        self.cancel.lock().unwrap().remove(name);
+        self.cancellable.lock().unwrap().remove(name);
+    }
+    /// 当前这步操作声明"我会检查取消标记"（只对正在跑异步操作的条目生效，同步调用方不登记，免得残留）。
+    fn mark_cancellable(&self, name: &str) {
+        if self.busy.lock().unwrap().contains(name) {
+            self.cancellable.lock().unwrap().insert(name.to_string());
+        }
+    }
+    fn is_cancelled(&self, name: &str) -> bool {
+        self.cancel.lock().unwrap().contains(name)
+    }
+    /// 请求取消这本书正在跑的优化/投递。`Ok(true)`＝已登记，会在下一个检查点停下；`Ok(false)`＝这一步无法中途停止
+    /// （如单文件上传）；`Err`＝这本书当前没有在处理。
+    pub fn request_cancel(&self, name: &str) -> Result<bool, String> {
+        if !self.busy.lock().unwrap().contains(name) {
+            return Err("这本书当前没有在处理".into());
+        }
+        if !self.cancellable.lock().unwrap().contains(name) {
+            return Ok(false);
+        }
+        self.cancel.lock().unwrap().insert(name.to_string());
+        Ok(true)
     }
     pub fn dir(&self) -> &Path {
         &self.dir
@@ -234,7 +273,8 @@ impl Staging {
         // 有卷标记的书：把 EPUB 自己的 dc:title 也改成规范名（设备显示名取 dc:title）。
         let stem = name.strip_suffix(".epub").unwrap_or(name);
         let canon_title = bookconv::naming::has_volume_marker(stem).then(|| bookconv::naming::canonical_book_name(stem));
-        let result = optimize::optimize_epub_file_streaming_titled(&p, &tmp, &OptimizeOpts { wash: Some(WashOpts::default()), footnote: FootnoteMode::Anchor }, canon_title.as_deref(), &mut on_progress);
+        self.mark_cancellable(name);
+        let result = optimize::optimize_epub_file_streaming_ctl(&p, &tmp, &OptimizeOpts { wash: Some(WashOpts::default()), footnote: FootnoteMode::Anchor }, canon_title.as_deref(), &|| self.is_cancelled(name), &mut on_progress);
         let rep = match result {
             Ok(r) => r,
             Err(e) => {
@@ -339,6 +379,7 @@ impl Staging {
             let at = rmsvc_core::clock::now_secs();
             let oc = match &result {
                 Ok(msg) => sidecar::OptimizeCheck { status: "ok".into(), message: msg.clone(), at, progress: None },
+                Err(e) if e.contains(optimize::CANCELLED_MSG) => sidecar::OptimizeCheck { status: "cancelled".into(), message: e.clone(), at, progress: None },
                 Err(e) => sidecar::OptimizeCheck { status: "failed".into(), message: e.clone(), at, progress: None },
             };
             // 漫画→PDF 分支成功后，原 `.epub` 已经被删、条目改名成 `.pdf`——sidecar 是按条目名找
@@ -535,6 +576,7 @@ impl Staging {
                 // 成功/失败落定后进度条意义不大（`status` 本身就是终态），不保留最后一次的
                 // `progress`——避免网页刷新时短暂显示一条"3/8"却又同时是 ok/failed 的矛盾态。
                 Ok(outcome) => sidecar::DeliverCheck { status: "ok".into(), message: outcome.message.clone(), at, progress: None },
+                Err(e) if e.contains(optimize::CANCELLED_MSG) => sidecar::DeliverCheck { status: "cancelled".into(), message: e.clone(), at, progress: None },
                 Err(e) => sidecar::DeliverCheck { status: "failed".into(), message: e.clone(), at, progress: None },
             };
             let _ = this.set_deliver_check(name, dc);
@@ -588,7 +630,11 @@ impl Staging {
         // 列表"的零轮询机制根本不知道这条记录变了，进度条数字冻结在第一份，要手动刷新页面才看得到
         // 新值（2026-09-19 用户反馈"进度条不会动，要自己刷新"，根因是这个函数当时没拿到 `bus`）。
         let mut done_titles: Vec<String> = Vec::new();
+        self.mark_cancellable(name);
         let outcome = bookconv::comic_split::deliver_split_streaming(p, native_limit, |piece_name, bytes, idx, total| {
+            if self.is_cancelled(name) {
+                return Err(optimize::CANCELLED_MSG.to_string()); // 份与份之间是安全的中断点
+            }
             let since_ms = rmsvc_core::clock::now_ms();
             self.xochitl.upload(bytes, piece_name, "application/epub+zip", folder).map(|_| ())?;
             let plan = RenderPlan { name: piece_name.to_string(), title: None, expected: 0, since_ms };
@@ -635,7 +681,11 @@ impl Staging {
         let stem = name.strip_suffix(".pdf").unwrap_or(name).to_string();
         let lib_dir = self.xochitl.library_dir().to_path_buf();
         let mut done_titles: Vec<String> = Vec::new();
+        self.mark_cancellable(name);
         let outcome = bookconv::comic_pdf::deliver_split_pdf_streaming(p, self.native_limit, |piece_name, bytes, idx, total| {
+            if self.is_cancelled(name) {
+                return Err(optimize::CANCELLED_MSG.to_string()); // 份与份之间是安全的中断点
+            }
             let since_ms = rmsvc_core::clock::now_ms();
             self.xochitl.upload(bytes, piece_name, "application/pdf", folder).map(|_| ())?;
             let plan = RenderPlan { name: piece_name.to_string(), title: None, expected: 0, since_ms };
@@ -1216,6 +1266,40 @@ mod tests {
         s.optimize(long, |_, _| {}).unwrap();
         let names: Vec<String> = s.list().into_iter().map(|e| e.name).collect();
         assert!(names.contains(&long.to_string()) && names.contains(&"书 - 01卷.epub".to_string()), "重复的同一卷不能互相覆盖: {names:?}");
+    }
+
+    #[test]
+    fn request_cancel_requires_busy_and_cancellable_step() {
+        let t = tempfile::tempdir().unwrap();
+        let s = staging(&t);
+        assert!(s.request_cancel("x.epub").unwrap_err().contains("没有在处理"), "没在处理的书不能取消");
+        assert!(s.try_start_busy("x.epub"));
+        assert_eq!(s.request_cancel("x.epub"), Ok(false), "没声明可中断的步骤（如单文件上传）如实回 false");
+        assert!(!s.is_cancelled("x.epub"));
+        s.mark_cancellable("x.epub");
+        assert_eq!(s.request_cancel("x.epub"), Ok(true));
+        assert!(s.is_cancelled("x.epub"));
+        s.end_busy("x.epub");
+        assert!(!s.is_cancelled("x.epub"), "操作结束后取消标记必须清掉，不能带进下一次");
+        assert!(s.try_start_busy("x.epub"));
+        assert!(!s.is_cancelled("x.epub"));
+    }
+
+    #[test]
+    fn optimize_cancelled_midway_leaves_book_and_no_temp_file() {
+        // 取消标记已设：优化一开始就停，母版原样保留，不留 .optimizing.tmp 半成品，状态是 cancelled 而不是 failed。
+        let t = tempfile::tempdir().unwrap();
+        let s = staging(&t);
+        let epub = comic_epub_with_real_images(&[12, 13]);
+        s.stage_new("manga.epub", &epub).unwrap();
+        assert!(s.try_start_busy("manga.epub"));
+        s.mark_cancellable("manga.epub");
+        s.request_cancel("manga.epub").unwrap();
+        let err = s.optimize("manga.epub", |_, _| {}).unwrap_err();
+        assert!(err.contains("已取消"), "{err}");
+        let dir = t.path().join("staging");
+        assert_eq!(std::fs::read(dir.join("manga.epub")).unwrap(), epub, "母版原样保留");
+        assert!(!std::fs::read_dir(&dir).unwrap().any(|e| e.unwrap().file_name().to_string_lossy().contains("optimizing.tmp")), "不留半成品");
     }
 
     #[test]

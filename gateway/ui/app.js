@@ -191,10 +191,11 @@ const GUIDE=()=>`<details class="cmp"><summary>${T('transfer.guide.summary')}</s
    **一个主按钮**（随状态变：待优化→优化；已优化→加入 xochitl；cbz/其它→加入 KOReader）+ `⋯` 菜单（其余操作）。
    批量走服务端队列（网关 `/api/batch`），全选/一键"优化全部待优化"，关掉页面照跑。 */
 const stgClean=n=>{const s=n.replace(/\.(epub|pdf|cbz)$/i,'');return (s.split(' -- ')[0]||s).trim()};
+/* 搜索框的下拉建议：系列名（多卷合一条，如「亂馬1⁄2 典藏版」）+ 每本的清爽书名。 */
+const stgSeries=n=>n.replace(/\s+-\s+(?:[0-9一二三四五六七八九十百零〇两]+[卷部册集]|[上中下](?:[册部卷篇])?)$/,'');
+const stgNameOptions=items=>{const names=items.map(it=>stgClean(it.name)),count={};names.forEach(n=>{const k=stgSeries(n);count[k]=(count[k]||0)+1});
+  const series=Object.keys(count).filter(k=>count[k]>1);return [...new Set([...series,...names])].map(n=>`<option value="${n.replace(/"/g,'&quot;')}">`).join('')};
 const stgIsTodo=it=>(it.format==='epub'||it.format==='pdf')&&!it.optimized;
-// 点菜单以外的地方收起所有打开的 `⋯` 菜单（全局只挂一次）
-let stgMenuHooked=false;
-const stgHookMenus=()=>{if(stgMenuHooked)return;stgMenuHooked=true;document.addEventListener('click',e=>{document.querySelectorAll('details.stg-menu[open]').forEach(d=>{if(!d.contains(e.target))d.open=false})})};
 /* 一本书的徽章 HTML + 一条可见的状态文字（失败原因等）。逻辑沿用旧列表：优化档位/PDF 来源/落库记录/渲染自检/忙态。 */
 function stgBadges(it,busy){
   const fmt=it.format==='epub'?'EPUB':it.format==='pdf'?'PDF':(it.name.includes('.')?it.name.split('.').pop().toUpperCase():T('transfer.staging.fmtOther'));
@@ -216,7 +217,7 @@ function stgBadges(it,busy){
     +(dc&&dc.status==='failed'?`<span class="badge off" title="${dc.message}">${T('transfer.staging.deliverFailed.badge')}</span>`:'');
   const msg=dc&&dc.status==='failed'?T('transfer.staging.deliverFailedPrefix')+dc.message
     :oc&&oc.status==='failed'?T('transfer.staging.optimizeFailedPrefix')+oc.message
-    :(stalePending(oc)||stalePending(dc))?T('transfer.staging.stalePending.title'):'';
+    :(oc&&oc.status==='cancelled')||(dc&&dc.status==='cancelled')?T('stg.row.cancelled'):(stalePending(oc)||stalePending(dc))?T('transfer.staging.stalePending.title'):'';
   return {html:`<span class="badge fmt">${fmt}</span><span class="stg-size">${fmtB(it.bytes)}</span>${st}${ps}${dl}${rb}${busy?'':fails}`,msg};
 }
 /* 一行。ctx: {picked,localBusy,gatedPending,gatedActive,batchQueued,bs,koInstalled,xFolder(),kFolder(),syncSel(),render(),refresh()} */
@@ -232,7 +233,7 @@ function stgRow(it,ctx){
   const title=el('div',{class:'stg-name',title:it.name,text:stgClean(it.name)});
   const meta=el('div',{class:'stg-meta',html:b.html});
   const main=el('div',{class:'stg-main'},[title,meta]);
-  if(b.msg)main.appendChild(el('div',{class:'small stg-err',text:b.msg}));
+  if(b.msg)main.appendChild(el('div',{class:'small stg-err'+(/^(上次已取消|Cancelled)/.test(b.msg)?' stg-muted':''),text:b.msg}));
   if(busy){
     const dcP=dc&&dc.status==='pending',ocP=oc&&oc.status==='pending';
     const label=localBusy?T('transfer.staging.progress.addingKoreader'):dcP?T('transfer.staging.progress.delivering'):ocP?T('transfer.staging.progress.optimizing'):T('transfer.staging.progress.working');
@@ -244,28 +245,16 @@ function stgRow(it,ctx){
   const act=(t,pri,fn,{dis,cls,track}={})=>{const x=el('button',{class:'btn'+(pri?' pri':'')+(cls?' '+cls:''),text:t});
     if(dis){x.disabled=true;x.title=ctx.bs.running?T('stg.batch.runningLock'):''}
     else guardClick(x,async()=>{x.textContent=t+'…';if(track){ctx.localBusy.add(it.name);ctx.render()}try{await fn()}finally{if(track)ctx.localBusy.delete(it.name)}ctx.refresh()});return x};
-  const isBook=it.format==='epub'||it.format==='pdf';
-  const doOpt=()=>postJ('/api/books/staging/optimize',{name:it.name});
-  const doDeliver=()=>postJ('/api/books/staging/deliver',{name:it.name,folder:ctx.xFolder()});
-  const doKo=async()=>{const r=await postJ('/api/koreader/books/adopt',{name:it.name,folder:ctx.kFolder()});if(r.ok!==false)await postJ('/api/books/staging/mark',{name:it.name,target:'koreader'})};
-  const doDel=async()=>{if(await confirmDialog(T('transfer.staging.confirmDeleteOne',{name:it.name})))await postJ('/api/books/staging/delete',{name:it.name})};
+  // 列表只显示书名/类型/大小/状态/进度；**所有操作**（优化/加入 xochitl/加入 KOReader/删除/全部中止）由勾选后的底部操作栏统一控制
+  // （用户 2026-09-20 明确要求）。行内唯一的按钮：这本书正在处理/排队时的「停止」。
+  const doStop=async()=>{const r=await postJ('/api/books/staging/cancel',{name:it.name});if(r.ok!==false)toast(r.message,r.cancelled?'ok':'warn',5000)};
   const actions=el('div',{class:'stg-actions'});
-  const pop=el('div',{class:'stg-pop'});
   if(gatedPending&&!busy){
     actions.appendChild(act(T('transfer.staging.btn.cancelQueued'),false,async()=>{const r=await postJ('/api/budget/cancel',{name:it.name});if(r.ok!==false)toast(r.cancelled?T('transfer.staging.cancelQueuedOk',{name:it.name}):T('transfer.staging.cancelQueuedTooLate',{name:it.name}),r.cancelled?'ok':'warn')},{cls:'btn-bad'}));
-  }else{
-    // 主按钮：随状态变，一行只有一个最该做的动作；其余进「⋯」。
-    if(stgIsTodo(it)){actions.appendChild(act(T('transfer.staging.btn.optimize'),true,doOpt,{dis:locked}));pop.appendChild(act(T('transfer.staging.btn.deliverNative'),false,doDeliver,{dis:locked}))}
-    else if(isBook)actions.appendChild(act(T('transfer.staging.btn.deliverNative'),true,doDeliver,{dis:locked}));
-    if(isBook||ctx.koInstalled){
-      const ko=act(T('transfer.staging.btn.addKoreader'),!isBook,doKo,{dis:locked||!ctx.koInstalled,track:true});
-      (isBook?pop:actions).appendChild(ko);
-    }
-    const fn=el('button',{class:'btn',text:T('stg.menu.fullName'),type:'button'});fn.onclick=()=>toast(it.name,'info',9000);pop.appendChild(fn);
-    pop.appendChild(act(T('action.delete'),false,doDel,{dis:locked,cls:'btn-bad'}));
-    actions.appendChild(el('details',{class:'stg-menu'},[el('summary',{text:'⋯','aria-label':T('stg.more')}),pop]));
+  }else if(busy&&!localBusy||gatedActive){
+    actions.appendChild(act(T('stg.row.stop'),false,doStop,{cls:'btn-bad'}));
   }
-  const li=el('li',{class:'stg-row'+(cb.checked?' sel':'')},[el('label',{class:'stg-check'},[cb]),main,actions]);
+  const li=el('li',{class:'stg-row'+(cb.checked?' sel':'')},actions.children.length?[el('label',{class:'stg-check'},[cb]),main,actions]:[el('label',{class:'stg-check'},[cb]),main]);
   return li;
 }
 
@@ -299,17 +288,19 @@ function renderTransfer(sec){sec.innerHTML=`
   <div class="subpanel" id="stgroot">
     <div class="card stg-head">
       <div class="stg-headrow"><h3 style="margin:0">${T('transfer.staging.title')}</h3><span class="small" id="stgcap"></span></div>
-      <details class="stg-dest"><summary class="small" id="stgdestsum"></summary>
-        <div class="row"><label class="small" for="folder">${T('transfer.staging.folder.label')}</label><input type="text" id="folder" list="xodirs" placeholder="${T('transfer.staging.folder.placeholder')}" style="max-width:11em"><datalist id="xodirs"></datalist>
-          <label class="small" for="kfolder">${T('transfer.staging.kfolder.label')}</label><input type="text" id="kfolder" list="kodirs" placeholder="${T('transfer.staging.kfolder.placeholder')}" style="max-width:11em"><datalist id="kodirs"></datalist></div>
+      <div class="stg-dest">
+        <div class="stg-destrow"><label class="small" for="folder">${T('stg.dest.xochitl')}</label><select id="folder"></select>
+          <span class="stg-newrow" id="xnew" hidden><input type="text" id="xnewname" placeholder="${T('stg.dest.newPlaceholder')}"><button class="btn pri" id="xnewgo">${T('stg.dest.create')}</button><button class="btn" id="xnewx">${T('stg.dest.cancel')}</button></span></div>
+        <div class="stg-destrow"><label class="small" for="kfolder">${T('stg.dest.koreader')}</label><select id="kfolder"></select>
+          <span class="stg-newrow" id="knew" hidden><input type="text" id="knewname" placeholder="${T('stg.dest.newPlaceholder')}"><button class="btn pri" id="knewgo">${T('stg.dest.create')}</button><button class="btn" id="knewx">${T('stg.dest.cancel')}</button></span></div>
         <details class="cmp"><summary>${T('transfer.staging.optDetailsSummary')}</summary><p class="small">${T('transfer.staging.optNote')}</p></details>
-      </details>
+      </div>
       <div class="small" id="stgfree"></div>
       <div class="small" id="stgnotice"></div>
     </div>
-    <div class="stg-tools"><input type="text" id="stgq" placeholder="${T('transfer.staging.searchPlaceholder')}" aria-label="${T('transfer.staging.searchAria')}"><select id="stgfmt" aria-label="${T('transfer.staging.fmtFilterAria')}"><option value="">${T('transfer.staging.fmtAll')}</option><option value="epub">EPUB</option><option value="pdf">PDF</option><option value="other">${T('transfer.staging.fmtOther')}</option></select></div>
+    <div class="stg-tools"><input type="text" id="stgq" list="stgnames" autocomplete="off" placeholder="${T('transfer.staging.searchPlaceholder')}" aria-label="${T('transfer.staging.searchAria')}"><datalist id="stgnames"></datalist><select id="stgfmt" aria-label="${T('transfer.staging.fmtFilterAria')}"><option value="">${T('transfer.staging.fmtAll')}</option><option value="epub">EPUB</option><option value="pdf">PDF</option><option value="other">${T('transfer.staging.fmtOther')}</option></select></div>
     <div class="stg-chips" id="stgchips"></div>
-    <div class="stg-selrow"><label class="toggle"><input type="checkbox" id="stgall"> <span id="stgalltxt"></span></label><span class="stg-spacer"></span><button class="btn pri" id="stgoptall" hidden></button><button class="btn" id="stgpurge" title="${T('transfer.staging.purgeTitle')}">${T('transfer.staging.purgeBtn')}</button></div>
+    <div class="stg-selrow"><label class="toggle"><input type="checkbox" id="stgall"> <span id="stgalltxt"></span></label></div>
     <ul class="stg-list" id="stglist"></ul>
     <div class="stg-pager" id="stgpager"></div>
     <div class="stgbar" id="stgbar" hidden></div>
@@ -324,15 +315,32 @@ function renderTransfer(sec){sec.innerHTML=`
   // 网关并发闸门的服务端真相（排队/处理中），见 budget.rs。
   let gatedPending=new Set(),gatedActive=new Set();
   const g=id=>$('#'+id,sec);
-  [['folder','folder',''],['kfolder','kfolder','']].forEach(([id,k,d])=>{g(id).value=LS.get(k,d);['input','change'].forEach(ev=>g(id).addEventListener(ev,()=>{LS.set(k,g(id).value);syncDest()}))});
-  const xFolder=()=>g('folder').value.trim(),kFolder=()=>g('kfolder').value.trim();
-  const syncDest=()=>{g('stgdestsum').textContent=T('stg.dest.summary',{x:xFolder()||T('stg.dest.root'),k:kFolder()||T('stg.dest.root')})};
-  stgHookMenus();
+  // 加入位置：下拉（现有文件夹）+「＋新建文件夹」。选中值记在本机；xochitl 新建走 book-serve 的 mkdir 队列（xochitl 里 QML
+  // 代理每 8 秒轮询建出来），KOReader 直接建目录。"根目录"= 空串。
+  const NEW='__new__';
+  const val=id=>{const v=g(id).value;return v===NEW?'':v};
+  const xFolder=()=>val('folder'),kFolder=()=>val('kfolder');
+  const fillSel=(id,names,lsKey)=>{const sel=g(id),want=LS.get(lsKey,'');const list=[...new Set(names.filter(Boolean))];if(want&&!list.includes(want))list.push(want);
+    sel.innerHTML='';sel.appendChild(el('option',{value:'',text:T('stg.dest.root')}));
+    list.forEach(n=>sel.appendChild(el('option',{value:n,text:n})));sel.appendChild(el('option',{value:NEW,text:T('stg.dest.new')}));sel.value=want};
+  const bindDest=(id,lsKey,newBox,nameInp,goBtn,cancelBtn,create)=>{
+    g(id).addEventListener('change',()=>{if(g(id).value===NEW){g(newBox).hidden=false;g(nameInp).focus()}else{g(newBox).hidden=true;LS.set(lsKey,g(id).value)}});
+    g(cancelBtn).onclick=()=>{g(newBox).hidden=true;g(nameInp).value='';g(id).value=LS.get(lsKey,'')};
+    guardClick(g(goBtn),async()=>{const name=g(nameInp).value.trim();if(!name){toast(T('stg.dest.needName'),'warn');return}
+      if(await create(name)){LS.set(lsKey,name);g(newBox).hidden=true;g(nameInp).value='';await refresh()}})};
+  bindDest('folder','folder','xnew','xnewname','xnewgo','xnewx',async name=>{
+    const r=await postJ('/api/books/mkdir/add',{name});if(r.ok===false)return false;
+    toast(T('stg.dest.created',{name}),'info',6000);
+    // xochitl 侧由 QML 代理轮询建文件夹（约 8 秒一次），等它真出现再选中，最多 ~24 秒。
+    for(let i=0;i<12;i++){await wait(2000);const s=await j('/api/books/status');if((s.xochitlFolders||[]).includes(name))break}
+    return true});
+  bindDest('kfolder','kfolder','knew','knewname','knewgo','knewx',async name=>{
+    const r=await postJ('/api/koreader/books/mkdir',{folder:name});if(r.ok===false)return false;toast(T('stg.dest.createdKo',{name}),'ok');return true});
   // 筛选/分页状态。"隐藏已完成"只在「全部」筛选下生效（选了「已优化」就是想看它们）。
   let st=LS.get('stgSt','all'),hideDone=LS.get('stgHideDone','1')==='1',page=1,pageSize=+LS.get('stgPageSize','25')||25;
   const fmtOf=it=>it.format==='cbz'?'other':it.format;
   const filtered=()=>{const q=g('stgq').value.toLowerCase(),f=g('stgfmt').value;
-    return items.filter(it=>(!q||it.name.toLowerCase().includes(q))&&(!f||fmtOf(it)===f)&&(st==='todo'?stgIsTodo(it):st==='done'?!!it.optimized:(!hideDone||!isBookDone(it))))};
+    return items.filter(it=>(!q||it.name.toLowerCase().includes(q))&&(!f||fmtOf(it)===f)&&(st==='todo'?stgIsTodo(it):st==='done'?!!it.optimized:st==='finished'?isBookDone(it):(!hideDone||!isBookDone(it))))};
   const batchTitle=a=>T('stg.batch.'+a);
   const enqueue=async(action,body)=>{const r=await postJ('/api/batch',{action,folder:action==='koreader'?kFolder():xFolder(),...body});
     if(r.ok===false)return;
@@ -344,13 +352,12 @@ function renderTransfer(sec){sec.innerHTML=`
   g('stgall').onchange=()=>{const list=filtered();if(g('stgall').checked)list.forEach(it=>picked.add(it.name));else list.forEach(it=>picked.delete(it.name));render()};
   const renderChips=()=>{const todo=items.filter(stgIsTodo).length,hidden=items.filter(isBookDone).length;
     const chips=g('stgchips');chips.innerHTML='';
-    [['all',T('stg.chip.all')],['todo',T('stg.chip.todo',{n:todo})],['done',T('stg.chip.done')]].forEach(([k,t])=>{
+    [['all',T('stg.chip.all')],['todo',T('stg.chip.todo',{n:todo})],['done',T('stg.chip.done')],['finished',T('stg.chip.finished',{n:hidden})]].forEach(([k,t])=>{
       const b=el('button',{class:'chip'+(st===k?' on':''),type:'button',text:t});b.onclick=()=>{st=k;LS.set('stgSt',k);page=1;render()};chips.appendChild(b)});
     if(st==='all'&&hidden>0||hideDone===false&&hidden>0){
       const b=el('button',{class:'chip'+(hideDone?' on':''),type:'button',text:T('stg.hideDone',{n:hidden})});
       b.onclick=()=>{hideDone=!hideDone;LS.set('stgHideDone',hideDone?'1':'0');page=1;render()};chips.appendChild(b)}
-    const oa=g('stgoptall');oa.hidden=!(todo>0&&!bs.running);oa.textContent=T('stg.optimizeAll',{n:todo});
-    oa.onclick=async()=>{if(await confirmDialog(T('stg.optimizeAllConfirm',{n:todo})))enqueue('optimize',{all:true})}};
+  };
   const renderPager=(total)=>{const box=g('stgpager');box.innerHTML='';if(total<=0)return;
     const pages=Math.max(1,Math.ceil(total/pageSize));const from=(page-1)*pageSize+1,to=Math.min(total,page*pageSize);
     const go=p=>{page=Math.min(pages,Math.max(1,p));render();g('stglist').scrollIntoView({block:'start'})};
@@ -373,17 +380,29 @@ function renderTransfer(sec){sec.innerHTML=`
       const t=batchTitle(bs.action||'optimize');
       bar.appendChild(el('div',{class:'stgbar-main'},[el('b',{text:T('stg.batch.progress',{title:t,done:bs.done,total:bs.total})}),el('span',{class:'small',text:(bs.current?' · '+T('stg.batch.current',{name:stgClean(bs.current)}):'')+(bs.failed.length?' · '+T('stg.batch.failedN',{n:bs.failed.length}):'')})]));
       const p=el('progress');p.max=Math.max(1,bs.total);p.value=bs.done;bar.appendChild(p);
-      const stop=el('button',{class:'btn btn-bad',type:'button',text:T('stg.batch.stop')});
+      const stop=el('button',{class:'btn btn-bad',type:'button',text:T('stg.batch.stopAll')});
       stop.onclick=async()=>{const r=await postJ('/api/batch/stop',{});if(r.ok!==false)toast(T('stg.batch.stopped',{n:r.cleared||0}),'info');refresh()};bar.appendChild(stop);
     }else if(picked.size){
       bar.hidden=false;bar.className='stgbar sel';
-      // 第一行：已选数 + 清除；第二行：三个批量按钮等宽（手机上不占 4 行）。按钮文案用短标签，语境由"已选 N 本"给。
+      // 第一行：已选数 + 清除；第二行：批量按钮等宽。按钮上直接标"可处理数"（已优化的再优化、非 EPUB/PDF 加入 xochitl 等会被跳过），
+      // 0 本可处理就置灰——不再等点完才提示"跳过了 N 本"。
+      const chosen=items.filter(it=>picked.has(it.name));
+      const isBook=it=>it.format==='epub'||it.format==='pdf';
+      const cnt={optimize:chosen.filter(stgIsTodo).length,deliver:chosen.filter(isBook).length,koreader:koInstalled?chosen.length:0};
       const clr=el('button',{class:'btn',type:'button',text:T('stg.batch.clear')});clr.onclick=()=>{picked.clear();render()};
       bar.appendChild(el('div',{class:'stgbar-top'},[el('b',{text:T('stg.selected',{n:picked.size})}),clr]));
-      const mk=(a,pri)=>{const b=el('button',{class:'btn'+(pri?' pri':''),type:'button',text:T('stg.bar.'+a)});b.onclick=()=>enqueue(a,{names:[...picked]});return b};
+      const mk=(a,pri)=>{const b=el('button',{class:'btn'+(pri?' pri':''),type:'button',text:T('stg.bar.'+a)+'（'+cnt[a]+'）'});
+        if(!cnt[a]){b.disabled=true;b.title=T('stg.bar.noneApplicable')}else b.onclick=()=>enqueue(a,{names:[...picked]});return b};
       const btns=el('div',{class:'stgbar-btns'},[mk('optimize',true),mk('deliver')]);
       if(koInstalled)btns.appendChild(mk('koreader'));
-      bar.appendChild(btns);
+      const del=el('button',{class:'btn btn-bad',type:'button',text:T('action.delete')+'（'+chosen.filter(it=>!it.busy).length+'）'});
+      guardClick(del,async()=>{
+        const names=chosen.filter(it=>!it.busy).map(it=>it.name),busyN=chosen.length-names.length;
+        if(!names.length){toast(T('stg.bar.noneApplicable'),'warn');return}
+        if(!await confirmDialog(T('stg.batch.deleteConfirm',{n:names.length})))return;
+        let ok=0;for(const n of names){const r=await j('/api/books/staging/delete',{method:'POST',body:JSON.stringify({name:n})});if(r.ok!==false)ok++}
+        toast(T('stg.batch.deleted',{n:ok})+(busyN?T('stg.batch.deleteSkipped',{n:busyN}):''),ok?'ok':'warn');picked.clear();refresh()});
+      btns.appendChild(del);bar.appendChild(btns);
     }else if(bs.total&&sig!==dismissedSig){
       bar.hidden=false;bar.className='stgbar done';
       const fail=bs.failed.length;
@@ -406,8 +425,8 @@ function renderTransfer(sec){sec.innerHTML=`
     // 批量在跑时轮询（进度要走），不跑了就停；页面被换掉（切 tab 重渲染）也停。
     if(bs.running&&!pollTimer)pollTimer=setInterval(()=>{if(!document.body.contains(sec)){clearInterval(pollTimer);pollTimer=null;return}refresh()},3000);
     if(!bs.running&&pollTimer){clearInterval(pollTimer);pollTimer=null}
-    g('xodirs').innerHTML=(s.ok?s.xochitlFolders||[]:[]).map(n=>`<option value="${n}">`).join('');
-    g('kodirs').innerHTML=(kb.items||[]).filter(x=>x.kind==='dir').map(x=>`<option value="${x.name}">`).join('');
+    fillSel('folder',s.ok?s.xochitlFolders||[]:[],'folder');
+    fillSel('kfolder',(kb.items||[]).filter(x=>x.kind==='dir').map(x=>x.name),'kfolder');
     if(d.ok===false){g('stglist').innerHTML=`<li class="small" style="color:var(--bad)">${T('transfer.staging.unavailable',{msg:d.message||T('transfer.staging.notOpen')})}</li>`;g('stgcap').textContent='';return}
     items=d.items||[];const tot=items.reduce((a,b)=>a+b.bytes,0);g('stgcap').textContent=items.length?T('transfer.staging.capSummary',{count:items.length,size:fmtB(tot)}):'';
     // 清掉选中集合里的幽灵条目（书被改名/删除后旧名字再也选不中也取消不掉）
@@ -415,10 +434,7 @@ function renderTransfer(sec){sec.innerHTML=`
     const fr=d.freeBytes;const low=fr!=null&&fr<300*1048576;g('stgfree').style.color=low?'var(--bad)':'';g('stgfree').textContent=fr!=null?T('transfer.staging.freeSpace',{free:fmtB(fr),lowWarn:low?T('transfer.staging.lowWarn'):''}):'';
     const gated=(gatedPending.size||gatedActive.size)?T('transfer.staging.gatedSummary',{pending:gatedPending.size,active:gatedActive.size}):'';
     g('stgnotice').textContent=[koInstalled?'':T('transfer.staging.btn.koNotInstalled'),gated].filter(Boolean).join(' · ');
-    syncDest();render()};
-  guardClick(g('stgpurge'),async()=>{const done=items.filter(it=>it.delivered&&(it.delivered.native||it.delivered.koreader));if(!done.length){toast(T('transfer.staging.noneToPurge'),'warn');return}
-    if(!await confirmDialog(T('transfer.staging.confirmPurge',{count:done.length})))return;
-    for(const it of done)await postJ('/api/books/staging/delete',{name:it.name});refresh()});
+    g('stgnames').innerHTML=stgNameOptions(items);render()};
   uploader($('.up',sec),()=>'/api/books/staging',()=>({}),BOOK_EXT,()=>refresh(),'/api/books/staging');   // 书籍格式原样入库；选中即按 BOOK_EXT 拦；传 dedupeApi 防重传出重复
   const am=g('artmsg'),au=g('arturl'),ag=g('artgo'),ao=g('artopt');
   // 「同步优化」记在本机（per-viewer 便利态，跟 folder/kfolder 那几个一个规矩）；缺省开——网文正文

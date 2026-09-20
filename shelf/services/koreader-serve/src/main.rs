@@ -94,6 +94,18 @@ fn main() {
             let items = s.ko.list_books(&folder).map_err(ApiError::bad)?;
             Ok(Reply::ok(&serde_json::json!({"folder": folder, "items": items})))
         }))
+        // 新建 KOReader 书目录（相对 books/，可多级）：界面"加入 KOReader → 新建文件夹"用。已存在也算成功（幂等）。
+        .post("/books/mkdir", bind(&st, |s, r| {
+            s.require_installed()?;
+            let folder = r.json()?.str("folder")?.to_string();
+            let dir = s.ko.subdir(&folder).map_err(ApiError::bad)?;
+            if dir == s.ko.subdir("").map_err(ApiError::bad)? {
+                return Err(ApiError::bad("文件夹名不能为空"));
+            }
+            std::fs::create_dir_all(&dir).map_err(|e| ApiError::internal(format!("建目录失败: {e}")))?;
+            s.bus.publish("koreader", "books");
+            Ok(Reply::ok(&serde_json::json!({"ok": true, "folder": folder.trim().trim_matches('/')})))
+        }))
         // 从母版库（book-serve 的 staging/，共享目录）adopt 一本书到 KOReader——落库=纯复制母版字节，不优化
         // （优化是母版库的独立动作；两读器落同一字节才能对照）。前端从 /api/books/staging 列表选书后调这里。
         .post("/books/adopt", bind(&st, |s, r| {
