@@ -22,8 +22,11 @@ pub struct State {
     status_cache: TtlCache<serde_json::Value>,
     /// 字体汉字覆盖率缓存：文件名 → (大小, 修改时间, 覆盖率%)。算一次要把整份字体（中文字体常 10-20MB）读进内存
     /// 解 cmap，而 `GET /fonts` 每次 refresh 都要列——文件没变（大小+mtime 一致）就不再碰它。
-    font_cov: Mutex<HashMap<String, (u64, Option<SystemTime>, u8)>>,
+    font_cov: Mutex<FontCovCache>,
 }
+
+/// 字体覆盖率缓存表：文件名 → (大小, 修改时间, 覆盖率%)。
+type FontCovCache = HashMap<String, (u64, Option<SystemTime>, u8)>;
 
 /// `/status` 缓存时长：够挡住"连续几次 refresh"，又短到 KOReader 启停几秒内就能在页面上看到。
 const STATUS_TTL: Duration = Duration::from_secs(3);
@@ -76,7 +79,7 @@ impl State {
 
     /// `GET /fonts` 的条目：名字、字节数、中文基本区覆盖率（同原生字体一致的判据，低覆盖当正文会缺字）。
     pub fn fonts_json(&self) -> Vec<serde_json::Value> {
-        self.fonts_json_with(|b| rmsvc_core::ttf::han_coverage_pct(b))
+        self.fonts_json_with(rmsvc_core::ttf::han_coverage_pct)
     }
 
     /// 同 [`Self::fonts_json`]，覆盖率计算可注入（单测数调用次数用）。按（大小, mtime）缓存；已被删掉的字体从缓存里清掉。

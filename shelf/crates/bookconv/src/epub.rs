@@ -176,6 +176,53 @@ fn nav_xhtml(book: &Book) -> String {
     )
 }
 
+
+/// 把 Book 打包成 EPUB 字节。组装前对每章：先 fix_internal_links（脚注同文件锚点规整），
+/// 再 break_footnote_cycles（拆双向脚注互指对——reMarkable 索引器遇互指对会整对丢弃致点不动）。
+pub fn assemble(book: &mut Book) -> Result<Vec<u8>, String> {
+    if book.chapters.is_empty() {
+        return Err("EPUB 至少要有一章".into());
+    }
+    for ch in book.chapters.iter_mut() {
+        ch.html_body = fix_internal_links(&ch.html_body);
+        ch.html_body = crate::htmlproc::break_footnote_cycles(&ch.html_body);
+    }
+    let mut buf: Vec<u8> = Vec::new();
+    {
+        let cursor = std::io::Cursor::new(&mut buf);
+        let mut z = zip::ZipWriter::new(cursor);
+        let stored = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
+        // mimetype 必须首个、STORED
+        z.start_file("mimetype", stored).map_err(|e| e.to_string())?;
+        z.write_all(b"application/epub+zip").map_err(|e| e.to_string())?;
+        z.start_file("META-INF/container.xml", stored).map_err(|e| e.to_string())?;
+        z.write_all(container_xml().as_bytes()).map_err(|e| e.to_string())?;
+        z.start_file(OPF_PATH, stored).map_err(|e| e.to_string())?;
+        z.write_all(content_opf(book).as_bytes()).map_err(|e| e.to_string())?;
+        z.start_file("OEBPS/nav.xhtml", stored).map_err(|e| e.to_string())?;
+        z.write_all(nav_xhtml(book).as_bytes()).map_err(|e| e.to_string())?;
+        if let Some(cover) = &book.meta.cover {
+            z.start_file(format!("OEBPS/cover.{}", book.meta.cover_ext), stored)
+                .map_err(|e| e.to_string())?;
+            z.write_all(cover).map_err(|e| e.to_string())?;
+            z.start_file("OEBPS/cover.xhtml", stored).map_err(|e| e.to_string())?;
+            z.write_all(cover_xhtml(&book.meta).as_bytes()).map_err(|e| e.to_string())?;
+        }
+        for (i, ch) in book.chapters.iter().enumerate() {
+            z.start_file(format!("OEBPS/{}", chapter_filename(i)), stored)
+                .map_err(|e| e.to_string())?;
+            z.write_all(chapter_doc(ch).as_bytes()).map_err(|e| e.to_string())?;
+        }
+        for r in &book.resources {
+            z.start_file(format!("OEBPS/{}", r.path), stored)
+                .map_err(|e| e.to_string())?;
+            z.write_all(&r.bytes).map_err(|e| e.to_string())?;
+        }
+        z.finish().map_err(|e| e.to_string())?;
+    }
+    Ok(buf)
+}
+
 #[cfg(test)]
 mod nav_tests {
     use super::*;
@@ -235,50 +282,4 @@ mod nav_tests {
         let nav = nav_body(&book);
         assert!(!nav.contains("<ol>"), "全顶层不应有子 ol: {nav}");
     }
-}
-
-/// 把 Book 打包成 EPUB 字节。组装前对每章：先 fix_internal_links（脚注同文件锚点规整），
-/// 再 break_footnote_cycles（拆双向脚注互指对——reMarkable 索引器遇互指对会整对丢弃致点不动）。
-pub fn assemble(book: &mut Book) -> Result<Vec<u8>, String> {
-    if book.chapters.is_empty() {
-        return Err("EPUB 至少要有一章".into());
-    }
-    for ch in book.chapters.iter_mut() {
-        ch.html_body = fix_internal_links(&ch.html_body);
-        ch.html_body = crate::htmlproc::break_footnote_cycles(&ch.html_body);
-    }
-    let mut buf: Vec<u8> = Vec::new();
-    {
-        let cursor = std::io::Cursor::new(&mut buf);
-        let mut z = zip::ZipWriter::new(cursor);
-        let stored = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
-        // mimetype 必须首个、STORED
-        z.start_file("mimetype", stored).map_err(|e| e.to_string())?;
-        z.write_all(b"application/epub+zip").map_err(|e| e.to_string())?;
-        z.start_file("META-INF/container.xml", stored).map_err(|e| e.to_string())?;
-        z.write_all(container_xml().as_bytes()).map_err(|e| e.to_string())?;
-        z.start_file(OPF_PATH, stored).map_err(|e| e.to_string())?;
-        z.write_all(content_opf(book).as_bytes()).map_err(|e| e.to_string())?;
-        z.start_file("OEBPS/nav.xhtml", stored).map_err(|e| e.to_string())?;
-        z.write_all(nav_xhtml(book).as_bytes()).map_err(|e| e.to_string())?;
-        if let Some(cover) = &book.meta.cover {
-            z.start_file(format!("OEBPS/cover.{}", book.meta.cover_ext), stored)
-                .map_err(|e| e.to_string())?;
-            z.write_all(cover).map_err(|e| e.to_string())?;
-            z.start_file("OEBPS/cover.xhtml", stored).map_err(|e| e.to_string())?;
-            z.write_all(cover_xhtml(&book.meta).as_bytes()).map_err(|e| e.to_string())?;
-        }
-        for (i, ch) in book.chapters.iter().enumerate() {
-            z.start_file(format!("OEBPS/{}", chapter_filename(i)), stored)
-                .map_err(|e| e.to_string())?;
-            z.write_all(chapter_doc(ch).as_bytes()).map_err(|e| e.to_string())?;
-        }
-        for r in &book.resources {
-            z.start_file(format!("OEBPS/{}", r.path), stored)
-                .map_err(|e| e.to_string())?;
-            z.write_all(&r.bytes).map_err(|e| e.to_string())?;
-        }
-        z.finish().map_err(|e| e.to_string())?;
-    }
-    Ok(buf)
 }

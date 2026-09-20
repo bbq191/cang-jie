@@ -816,7 +816,7 @@ mod tests {
     fn streaming_parallel_many_images_match_sequential_in_memory_and_keep_order() {
         // 并行（worker + 提前量）不许乱序、不许改任何一张图的处理结果：20 张互不相同的图（尺寸/内容都不同，
         // 顺序错位或串图必然被发现），流式并行版逐张、逐字节对照内存顺序版；条目顺序也必须一致。
-        use image::{codecs::jpeg::JpegEncoder, DynamicImage, RgbImage};
+        use image::{DynamicImage, RgbImage};
         let n = 20usize; // ≥20 张才判漫画，走漫画单趟管线
         let mut comic_buf = Vec::new();
         {

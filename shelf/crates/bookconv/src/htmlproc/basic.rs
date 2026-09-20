@@ -123,27 +123,6 @@ pub fn split_blocks(html: &str, max_chars: usize, break_before: Option<&str>) ->
     }
 }
 
-#[cfg(test)]
-mod body_inner_tests {
-    use super::*;
-    #[test]
-    fn merges_title_doc_and_body_doc() {
-        // 微信读书章节 = 标题文档 + 正文文档 两个 <html> 拼接（长夜第一章的真实形态）
-        let doc = "<?xml version=\"1.0\"?>\n<html><head><title>第一章</title></head><body>\n  <h1 class=\"firstTitle2\">第一章</h1>\n</body></html>\n<?xml version=\"1.0\"?>\n<!DOCTYPE html>\n<html><body><p>正文第一段</p><p>正文第二段</p></body></html>";
-        let out = body_inner(doc);
-        assert!(out.contains("第一章"), "缺标题: {out}");
-        assert!(out.contains("正文第一段"), "缺正文: {out}");
-        assert!(out.contains("正文第二段"), "缺正文2: {out}");
-        assert!(!out.contains("</body>"), "残留 </body>: {out}");
-        assert!(!out.to_lowercase().contains("<html"), "残留 <html>: {out}");
-        assert!(!out.contains("DOCTYPE"), "残留 DOCTYPE: {out}");
-    }
-    #[test]
-    fn single_doc_body_unchanged() {
-        let doc = "<html><head><title>x</title></head><body><p>只有一段</p></body></html>";
-        assert_eq!(body_inner(doc).trim(), "<p>只有一段</p>");
-    }
-}
 
 /// 规整脚注类内链：目标锚点就在本章内 → href 规整成裸 `#锚点`（xochitl 唯一会跳的类别）。
 /// 跨文件/外链不动。对齐 epub._fix_internal_links。
@@ -268,4 +247,26 @@ pub fn dedup_ids_in_chapter(html: &str, seen: &mut std::collections::HashSet<Str
         out = href_pat.replace_all(&out, regex::NoExpand(&format!(r##"href="#{new}""##))).into_owned();
     }
     out
+}
+
+#[cfg(test)]
+mod body_inner_tests {
+    use super::*;
+    #[test]
+    fn merges_title_doc_and_body_doc() {
+        // 微信读书章节 = 标题文档 + 正文文档 两个 <html> 拼接（长夜第一章的真实形态）
+        let doc = "<?xml version=\"1.0\"?>\n<html><head><title>第一章</title></head><body>\n  <h1 class=\"firstTitle2\">第一章</h1>\n</body></html>\n<?xml version=\"1.0\"?>\n<!DOCTYPE html>\n<html><body><p>正文第一段</p><p>正文第二段</p></body></html>";
+        let out = body_inner(doc);
+        assert!(out.contains("第一章"), "缺标题: {out}");
+        assert!(out.contains("正文第一段"), "缺正文: {out}");
+        assert!(out.contains("正文第二段"), "缺正文2: {out}");
+        assert!(!out.contains("</body>"), "残留 </body>: {out}");
+        assert!(!out.to_lowercase().contains("<html"), "残留 <html>: {out}");
+        assert!(!out.contains("DOCTYPE"), "残留 DOCTYPE: {out}");
+    }
+    #[test]
+    fn single_doc_body_unchanged() {
+        let doc = "<html><head><title>x</title></head><body><p>只有一段</p></body></html>";
+        assert_eq!(body_inner(doc).trim(), "<p>只有一段</p>");
+    }
 }
