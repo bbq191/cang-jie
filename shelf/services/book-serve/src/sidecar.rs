@@ -104,7 +104,12 @@ pub fn read(book: &Path) -> Option<Delivered> {
 }
 
 /// 读—改—原子写。没有边车从空记录起。
+///
+/// 全局互斥：优化进度回调、渲染自检线程、HTTP 线程会并发改同一份边车，`write_atomic` 只保证文件不写一半、
+/// 不保证不丢更新（A 读→B 读→A 写→B 写，A 的字段没了）。边车都很小、写得不频繁，一把全局锁足够。
 pub fn update(book: &Path, f: impl FnOnce(&mut Delivered)) -> Result<(), String> {
+    static WRITE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+    let _guard = crate::ops::lock(&WRITE);
     let mut d = read(book).unwrap_or_default();
     f(&mut d);
     let s = serde_json::to_vec(&d).map_err(|e| e.to_string())?;

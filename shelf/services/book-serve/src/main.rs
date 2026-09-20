@@ -5,6 +5,7 @@
 mod api;
 mod config;
 mod mkdir;
+mod ops;
 mod pending_queue;
 mod render_check;
 mod service_state;

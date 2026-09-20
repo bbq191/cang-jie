@@ -371,9 +371,7 @@ pub fn wash_html(html: &str, opts: &WashOpts) -> (String, usize) {
             format!("<{}{} style=\"{}\"{}>", &c[1], &c[2], cleaned, &c[4])
         }
     }).into_owned();
-    static BLOCK: OnceLock<Regex> = OnceLock::new();
-    let block = BLOCK.get_or_init(|| Regex::new(r#"(?is)(<style\b[^>]*>)(.*?)(</style>)"#).unwrap());
-    let s = block.replace_all(&s, |c: &regex::Captures| {
+    let s = style_block_re().replace_all(&s, |c: &regex::Captures| {
         if c[1].contains(WASH_MARK) {
             // 旧版（v9 及以前）注入的内联 <style class="cj-wash"> 块：xochitl 本就无视它，重洗时清掉（已改外链 css）。
             String::new()
@@ -394,6 +392,18 @@ pub fn wash_html(html: &str, opts: &WashOpts) -> (String, usize) {
 ///    U+3000 折叠掉 → 零缩进；KOReader 把 U+3000 按字体宽度画出来 → "换字体缩进跟着变"。→ 按 `<br>` 切成 `<p>`。
 /// ② 段首烘死的全角空格 / nbsp（有 `<p>` 的书也常见）→ 剥掉，缩进统一走外链 css（字体无关的精确 2em）。
 /// 只在文件里 `<br` 数 ≥ 4 且 `<p` 为 0 时做 ①；② 对所有 `<p>` 做。块级标签（h1–h6/div/section 的开闭、img、table）原样保留。
+/// 结尾的块级闭合标签（`</div>` 等），`cjk_paragraphize` 剥尾随闭合标签用。
+fn block_close_re() -> &'static Regex {
+    static R: OnceLock<Regex> = OnceLock::new();
+    R.get_or_init(|| Regex::new(r#"(?i)^</(?:div|section|article|blockquote|ul|ol|li|table|tr|td|th|figure)>$"#).unwrap())
+}
+
+/// `<style>…</style>` 块（三段捕获：开标签 / 内容 / 闭标签）。
+fn style_block_re() -> &'static Regex {
+    static R: OnceLock<Regex> = OnceLock::new();
+    R.get_or_init(|| Regex::new(r#"(?is)(<style\b[^>]*>)(.*?)(</style>)"#).unwrap())
+}
+
 fn cjk_paragraphize(html: &str) -> String {
     static LEAD: OnceLock<Regex> = OnceLock::new();
     static BR: OnceLock<Regex> = OnceLock::new();
@@ -401,7 +411,8 @@ fn cjk_paragraphize(html: &str) -> String {
     let lead = LEAD.get_or_init(|| Regex::new(r#"(?i)(<p\b[^>]*>)(?:\s|\u{3000}|&#12288;|&#x3000;|&nbsp;|&#160;|&#xa0;)+"#).unwrap());
     let out = lead.replace_all(html, "$1").into_owned();
     let n_br = out.matches("<br").count();
-    let n_p = Regex::new(r#"(?i)<p\b"#).unwrap().find_iter(&out).count();
+    static P_OPEN: OnceLock<Regex> = OnceLock::new();
+    let n_p = P_OPEN.get_or_init(|| Regex::new(r#"(?i)<p\b"#).unwrap()).find_iter(&out).count();
     if n_br < 4 || n_p > 0 {
         return out;
     }
@@ -431,7 +442,7 @@ fn cjk_paragraphize(html: &str) -> String {
             let t = rest.trim_end();
             if let Some(i) = t.rfind('<') {
                 let tag = &t[i..];
-                if Regex::new(r#"(?i)^</(?:div|section|article|blockquote|ul|ol|li|table|tr|td|th|figure)>$"#).unwrap().is_match(tag) {
+                if block_close_re().is_match(tag) {
                     trailing.insert_str(0, tag);
                     rest = &t[..i];
                     continue;
@@ -899,10 +910,8 @@ fn drop_dead_refs(entries: &mut [Entry], rep: &mut WashReport) {
             drop_dead_font_faces(text, &base, &exact, &lower)
         } else {
             let (t, a) = drop_dead_imgs(text, &base, &exact, &lower);
-            static STYLE: OnceLock<Regex> = OnceLock::new();
-            let style = STYLE.get_or_init(|| Regex::new(r#"(?is)(<style\b[^>]*>)(.*?)(</style>)"#).unwrap());
             let mut b = 0;
-            let t = style.replace_all(&t, |c: &regex::Captures| {
+            let t = style_block_re().replace_all(&t, |c: &regex::Captures| {
                 let (css, k) = drop_dead_font_faces(&c[2], &base, &exact, &lower);
                 b += k;
                 format!("{}{}{}", &c[1], css, &c[3])

@@ -6,6 +6,7 @@
 //! 落库记录是同目录隐藏 sidecar `.<name>.delivered`（`sidecar` 模块管读写；本模块只在落库/删书时调它）。
 use bookconv::optimize::{self, FootnoteMode, OptimizeOpts};
 use crate::mkdir::MkdirQueue;
+use crate::ops::OpRegistry;
 use crate::render_check;
 use crate::sidecar::{self, Delivered, RenderCheck};
 use bookconv::wash::WashOpts;
@@ -115,17 +116,8 @@ pub struct Staging {
     xochitl: Arc<Xochitl>,
     /// 投原生体积门（字节，0=不拦）：xochitl `/upload` 超限会直接断连，先拦下来给指引。
     native_limit: u64,
-    /// 正在跑异步操作（「优化」/「落库」）的条目名集合——进程内存态，**不落盘**：进程重启＝没有任何
-    /// 操作还在跑，"忙"状态天然清零是正确语义（不是遗留 bug），比落盘更简单也更不会出现"重启后
-    /// 永久卡忙、谁都清不掉"的死锁。sidecar 里的 `OptimizeCheck`/`DeliverCheck`.status 只管"上次
-    /// 结果展示"，不参与这个忙锁判断——两者职责分开。加锁是全局唯一入口（`try_start_busy`），
-    /// 同一条目「优化」跟「落库」互斥——不允许同时跑（两个都要读/写同一份母版库文件）。
-    busy: Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
-    /// 用户请求取消的条目名 / 当前这步操作支持中途取消的条目名（2026-09-20 用户反馈"不能停止某个执行中的优化/投入"）。
-    /// 支持取消的步骤（EPUB 优化每处理完一个条目、按卷拆分投递每份之间）会检查 `cancel`；其它步骤（单文件上传、
-    /// PDF 优化）没有安全的中断点，不登记进 `cancellable`，取消请求会如实回"这一步无法中途停止"。
-    cancel: Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
-    cancellable: Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
+    /// 正在跑异步操作（「优化」/「落库」）的登记簿：忙锁 + 取消协作，见 [`crate::ops`]。
+    ops: OpRegistry,
     /// 列表里"优化等级 / 是否 PDF 转来"的判定缓存：判定要开 zip 读中央目录，书多时前端每 3 秒轮询一次
     /// 列表会持续吃 CPU（电池）。文件内容只随「优化」改写——按（大小, 修改时间）失效，命中就不再碰文件。
     probes: Arc<std::sync::Mutex<std::collections::HashMap<String, ProbeCache>>>,
@@ -166,49 +158,32 @@ impl Staging {
             dir,
             xochitl,
             native_limit,
-            busy: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
-            cancel: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
-            cancellable: Arc::new(std::sync::Mutex::new(std::collections::HashSet::new())),
+            ops: OpRegistry::default(),
             probes: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
         }
     }
     /// 这条目当前是否有异步操作在跑。
     pub fn is_busy(&self, name: &str) -> bool {
-        self.busy.lock().unwrap().contains(name)
+        self.ops.is_busy(name)
     }
     /// 尝试给条目加忙锁；已经忙着 → false（调用方据此拒绝这次操作，不排队不覆盖）。
     fn try_start_busy(&self, name: &str) -> bool {
-        let started = self.busy.lock().unwrap().insert(name.to_string());
-        if started {
-            self.cancel.lock().unwrap().remove(name); // 上一轮遗留的取消标记不能带进新操作
-        }
-        started
+        self.ops.try_start(name)
     }
     fn end_busy(&self, name: &str) {
-        self.busy.lock().unwrap().remove(name);
-        self.cancel.lock().unwrap().remove(name);
-        self.cancellable.lock().unwrap().remove(name);
+        self.ops.end(name);
     }
-    /// 当前这步操作声明"我会检查取消标记"（只对正在跑异步操作的条目生效，同步调用方不登记，免得残留）。
+    /// 当前这步操作声明"我会检查取消标记"。
     fn mark_cancellable(&self, name: &str) {
-        if self.busy.lock().unwrap().contains(name) {
-            self.cancellable.lock().unwrap().insert(name.to_string());
-        }
+        self.ops.mark_cancellable(name);
     }
     fn is_cancelled(&self, name: &str) -> bool {
-        self.cancel.lock().unwrap().contains(name)
+        self.ops.is_cancelled(name)
     }
     /// 请求取消这本书正在跑的优化/投递。`Ok(true)`＝已登记，会在下一个检查点停下；`Ok(false)`＝这一步无法中途停止
     /// （如单文件上传）；`Err`＝这本书当前没有在处理。
     pub fn request_cancel(&self, name: &str) -> Result<bool, String> {
-        if !self.busy.lock().unwrap().contains(name) {
-            return Err("这本书当前没有在处理".into());
-        }
-        if !self.cancellable.lock().unwrap().contains(name) {
-            return Ok(false);
-        }
-        self.cancel.lock().unwrap().insert(name.to_string());
-        Ok(true)
+        self.ops.request_cancel(name)
     }
     pub fn dir(&self) -> &Path {
         &self.dir
@@ -238,6 +213,52 @@ impl Staging {
             }
         }
         n
+    }
+    /// 启动时修正上一个进程被打断留下的状态（崩溃 / OOM / 被 systemd 杀 / 断电）：
+    /// - 边车里停在 `pending` 的优化 / 落库记录 → 改成 `failed`（否则界面永远显示"处理中"，而实际早没有线程在跑）；
+    /// - 渲染自检停在 `pending` → `timeout`（自检线程随进程没了；xochitl 可能延后渲染，打开一次就有页数）；
+    /// - `.<书名>.optimizing.tmp` 半成品（点前缀，列表看不见，可达数百 MB）→ 删除。
+    /// 只在启动时调用（此时不可能有操作在跑）。返回 (修正的记录数, 清掉的半成品数)。
+    pub fn recover_interrupted(&self) -> (usize, usize) {
+        let Ok(rd) = std::fs::read_dir(&self.dir) else { return (0, 0) };
+        let now = rmsvc_core::clock::now_secs();
+        let (mut fixed, mut tmps) = (0, 0);
+        for e in rd.flatten() {
+            let name = e.file_name().to_string_lossy().to_string();
+            if name.starts_with('.') && name.ends_with(".optimizing.tmp") {
+                if std::fs::remove_file(e.path()).is_ok() {
+                    tmps += 1;
+                }
+                continue;
+            }
+            let Some(book) = name.strip_prefix('.').and_then(|s| s.strip_suffix(".delivered")) else { continue };
+            let book_path = self.dir.join(book);
+            let stale = |st: &str| st == "pending";
+            let Some(d) = sidecar::read(&book_path) else { continue };
+            let needs = d.optimize.as_ref().is_some_and(|o| stale(&o.status))
+                || d.deliver.as_ref().is_some_and(|o| stale(&o.status))
+                || d.render.as_ref().is_some_and(|o| stale(&o.status));
+            if !needs {
+                continue;
+            }
+            let ok = sidecar::update(&book_path, |d| {
+                if let Some(o) = d.optimize.as_mut().filter(|o| stale(&o.status)) {
+                    *o = sidecar::OptimizeCheck { status: "failed".into(), message: "服务重启，上次优化被中断，可重新点「优化」".into(), at: now, progress: None };
+                }
+                if let Some(o) = d.deliver.as_mut().filter(|o| stale(&o.status)) {
+                    *o = sidecar::DeliverCheck { status: "failed".into(), message: "服务重启，上次加入被中断，可重新加入".into(), at: now, progress: None };
+                }
+                if let Some(r) = d.render.as_mut().filter(|r| stale(&r.status)) {
+                    r.status = "timeout".into();
+                    r.at = now;
+                }
+            })
+            .is_ok();
+            if ok {
+                fixed += 1;
+            }
+        }
+        (fixed, tmps)
     }
     fn existing(&self, name: &str) -> Result<PathBuf, String> {
         let p = self.path_of(name)?;
@@ -911,7 +932,7 @@ impl Staging {
                 Some(c) => (c.level, c.pdf_source),
                 None => {
                     let (level, pdf_source) = probe_level(&e.path(), format);
-                    self.probes.lock().unwrap().insert(name.clone(), ProbeCache { len: md.len(), modified, level, pdf_source });
+                    crate::ops::lock(&self.probes).insert(name.clone(), ProbeCache { len: md.len(), modified, level, pdf_source });
                     (level, pdf_source)
                 }
             };
@@ -934,7 +955,7 @@ impl Staging {
             out.push(StagingEntry { name, bytes: md.len(), format, optimized: level == "full", level, mtime, delivered, busy, pdf_source });
         }
         // 已被删除/改名的条目从缓存清掉，避免缓存无限增长
-        self.probes.lock().unwrap().retain(|k, _| seen.contains(k));
+        crate::ops::lock(&self.probes).retain(|k, _| seen.contains(k));
         out.sort_by(|a, b| b.mtime.cmp(&a.mtime).then_with(|| a.name.cmp(&b.name)));
         out
     }
@@ -1428,6 +1449,27 @@ mod tests {
     }
 
     #[test]
+    fn recover_interrupted_fixes_stale_pending_and_removes_tmp() {
+        let t = tempfile::tempdir().unwrap();
+        let s = staging(&t);
+        let name = s.stage_new("a.epub", &mini_epub(&[("OEBPS/a.xhtml", "<p>x</p>")])).unwrap();
+        s.set_optimize_check(&name, sidecar::OptimizeCheck { status: "pending".into(), ..Default::default() }).unwrap();
+        s.set_deliver_check(&name, sidecar::DeliverCheck { status: "pending".into(), ..Default::default() }).unwrap();
+        s.set_render(&name, sidecar::RenderCheck { status: "pending".into(), ..Default::default() }).unwrap();
+        let ok = s.stage_new("ok.epub", &mini_epub(&[("OEBPS/a.xhtml", "<p>y</p>")])).unwrap();
+        s.set_optimize_check(&ok, sidecar::OptimizeCheck { status: "ok".into(), message: "已优化".into(), ..Default::default() }).unwrap();
+        std::fs::write(s.dir.join(".a.epub.optimizing.tmp"), vec![0u8; 1000]).unwrap();
+        assert_eq!(s.recover_interrupted(), (1, 1), "只修 pending 的那本，清 1 个半成品");
+        let d = sidecar::read(&s.dir.join(&name)).unwrap();
+        assert_eq!(d.optimize.unwrap().status, "failed");
+        assert_eq!(d.deliver.unwrap().status, "failed");
+        assert_eq!(d.render.unwrap().status, "timeout");
+        assert_eq!(sidecar::read(&s.dir.join(&ok)).unwrap().optimize.unwrap().message, "已优化", "已完成的记录不动");
+        assert!(!s.dir.join(".a.epub.optimizing.tmp").exists());
+        assert_eq!(s.recover_interrupted(), (0, 0), "幂等");
+    }
+
+    #[test]
     fn list_caches_level_probe_and_invalidates_on_rewrite_or_delete() {
         // 判定要开 zip（吃 CPU/电），按（大小,mtime）缓存；文件改写后必须重判，删除后清缓存。
         let t = tempfile::tempdir().unwrap();
@@ -1435,9 +1477,9 @@ mod tests {
         let plain = mini_epub(&[("OEBPS/a.xhtml", "<p>x</p>")]);
         s.stage_new("b.epub", &plain).unwrap();
         assert_eq!(s.list()[0].level, "none");
-        assert_eq!(s.probes.lock().unwrap().len(), 1, "首次列表写入缓存");
+        assert_eq!(crate::ops::lock(&s.probes).len(), 1, "首次列表写入缓存");
         // 篡改缓存里的结论：若第二次列表仍用它，说明命中缓存没有重开文件
-        s.probes.lock().unwrap().get_mut("b.epub").unwrap().level = "full";
+        crate::ops::lock(&s.probes).get_mut("b.epub").unwrap().level = "full";
         assert_eq!(s.list()[0].level, "full", "文件没变 → 命中缓存");
         // 文件改写（内容长度变了）→ 缓存失效重判
         let marked = mini_epub(&[("OEBPS/a.xhtml", "<p>x</p>"), (optimize::OPTIMIZE_MARKER, optimize::OPTIMIZE_VERSION)]);
@@ -1447,7 +1489,7 @@ mod tests {
         assert_eq!(s.list()[0].level, "none", "改写回未优化 → 重判");
         std::fs::remove_file(s.dir.join("b.epub")).unwrap();
         assert!(s.list().is_empty());
-        assert!(s.probes.lock().unwrap().is_empty(), "条目消失 → 清缓存");
+        assert!(crate::ops::lock(&s.probes).is_empty(), "条目消失 → 清缓存");
     }
 
     #[test]
