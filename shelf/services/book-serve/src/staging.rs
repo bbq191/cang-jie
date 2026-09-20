@@ -167,17 +167,17 @@ impl Staging {
         self.ops.is_busy(name)
     }
     /// 尝试给条目加忙锁；已经忙着 → false（调用方据此拒绝这次操作，不排队不覆盖）。
-    fn try_start_busy(&self, name: &str) -> bool {
+    pub(crate) fn try_start_busy(&self, name: &str) -> bool {
         self.ops.try_start(name)
     }
-    fn end_busy(&self, name: &str) {
+    pub(crate) fn end_busy(&self, name: &str) {
         self.ops.end(name);
     }
     /// 当前这步操作声明"我会检查取消标记"。
-    fn mark_cancellable(&self, name: &str) {
+    pub(crate) fn mark_cancellable(&self, name: &str) {
         self.ops.mark_cancellable(name);
     }
-    fn is_cancelled(&self, name: &str) -> bool {
+    pub(crate) fn is_cancelled(&self, name: &str) -> bool {
         self.ops.is_cancelled(name)
     }
     /// 请求取消这本书正在跑的优化/投递。`Ok(true)`＝已登记，会在下一个检查点停下；`Ok(false)`＝这一步无法中途停止
@@ -1702,6 +1702,99 @@ mod tests {
         assert!(started.elapsed() < std::time::Duration::from_secs(15), "elapsed={:?}，看起来是等满了超时而不是检测到文件夹已建出来", started.elapsed());
         assert_eq!(mkdir.list().len(), 1, "ensure_folder 应该把这个文件夹名入队过");
         assert_eq!(mkdir.list()[0].name, "新文件夹");
+    }
+
+    /// 假 xochitl：`POST /upload` 把文件部分落成 `<uuid>.{ext}` + `.metadata`（+ EPUB 的渲染缓存 `.pdf`、PDF 的 `.content`）
+    /// 回 201，其余请求回 200——够 `Xochitl::upload_large_file` 走通"占位→替换成真文件"这条大文件通道。
+    fn fake_xochitl(lib: std::path::PathBuf) -> String {
+        let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+        let addr = server.server_addr().to_ip().unwrap().to_string();
+        std::thread::spawn(move || {
+            let mut n = 0u32;
+            for mut req in server.incoming_requests() {
+                if req.method() != &tiny_http::Method::Post {
+                    let _ = req.respond(tiny_http::Response::from_string("[]"));
+                    continue;
+                }
+                let mut body = Vec::new();
+                std::io::Read::read_to_end(req.as_reader(), &mut body).unwrap();
+                let start = body.windows(4).position(|w| w == b"\r\n\r\n").unwrap() + 4;
+                let head = String::from_utf8_lossy(&body[..start]).to_string();
+                let fname = head.split("filename=\"").nth(1).unwrap().split('"').next().unwrap().to_string();
+                let tail = body.windows(4).rposition(|w| w == b"\r\n--").unwrap_or(body.len());
+                n += 1;
+                let uuid = format!("0000000{n}-0000-4000-8000-000000000000");
+                let ext = fname.rsplit('.').next().unwrap();
+                std::fs::write(lib.join(format!("{uuid}.{ext}")), &body[start..tail]).unwrap();
+                std::fs::write(lib.join(format!("{uuid}.metadata")), format!(r#"{{"type":"DocumentType","visibleName":"{fname}","parent":"","createdTime":"{}"}}"#, rmsvc_core::clock::now_ms())).unwrap();
+                if ext == "epub" {
+                    std::fs::write(lib.join(format!("{uuid}.pdf")), b"render-cache").unwrap();
+                } else {
+                    std::fs::write(lib.join(format!("{uuid}.content")), r#"{"fileType":"pdf","pageCount":1,"pages":["x"],"redirectionPageMap":[0],"sizeInBytes":"5"}"#).unwrap();
+                }
+                let _ = req.respond(tiny_http::Response::from_string(r#"{"status":"Upload successful"}"#).with_status_code(201));
+            }
+        });
+        addr
+    }
+
+    /// 体积门压到 100 字节，逼所有书都走"超限"分支；书库目录是真目录 + 假 xochitl 服务。
+    fn oversized_staging(t: &tempfile::TempDir) -> (Staging, std::path::PathBuf) {
+        let lib = t.path().join("xochitl");
+        std::fs::create_dir_all(&lib).unwrap();
+        let x = Arc::new(Xochitl::new(&fake_xochitl(lib.clone()), &lib, 10));
+        let s = Staging::new(t.path().join("staging"), x, 100);
+        s.ensure().unwrap();
+        (s, lib)
+    }
+
+    #[test]
+    fn deliver_oversized_epub_uses_direct_channel_placeholder_then_real_file() {
+        // 大文件通道（`try_deliver_direct`）：超网页上传上限的 EPUB 不分卷，先传占位再把磁盘上的文件替换成真书。
+        let t = tempfile::tempdir().unwrap();
+        let (s, lib) = oversized_staging(&t);
+        let opf = r#"<package version="2.0"><metadata><dc:title>大书</dc:title></metadata><manifest><item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="c1"/></spine></package>"#;
+        let container = r#"<container><rootfiles><rootfile full-path="content.opf"/></rootfiles></container>"#;
+        let epub = mini_epub(&[("META-INF/container.xml", container), ("content.opf", opf), ("c1.xhtml", &format!("<html><body><p>{}</p></body></html>", "字".repeat(500)))]);
+        s.stage_new("big.epub", &epub).unwrap();
+        assert!(epub.len() > 100);
+
+        let out = s.deliver("big.epub", "", &empty_mkdir(&t), &rmsvc_core::events::EventBus::new()).unwrap();
+        assert!(out.message.contains("已直接写入 xochitl 书库") && out.message.contains("未分卷"), "{}", out.message);
+        assert!(out.render.is_none(), "大文件通道不走渲染自检线程，靠 onopen 记录升级");
+        let uuid_epub = std::fs::read_dir(&lib).unwrap().flatten().find(|e| e.file_name().to_string_lossy().ends_with(".epub")).expect("书库里应有文档").path();
+        assert_eq!(std::fs::read(&uuid_epub).unwrap(), epub, "占位必须被真书替换");
+        let d = sidecar::read(&s.dir().join("big.epub")).unwrap();
+        assert!(d.native.is_some(), "应记一笔已加入原生");
+        let rc = d.render.unwrap();
+        assert_eq!(rc.status, "onopen", "EPUB 首次打开才渲染，先记 onopen");
+        assert!(uuid_epub.file_name().unwrap().to_string_lossy().starts_with(&rc.uuid));
+    }
+
+    #[test]
+    fn deliver_oversized_pdf_uses_direct_channel_and_records_ok_pages() {
+        let t = tempfile::tempdir().unwrap();
+        let (s, lib) = oversized_staging(&t);
+        let img = bookconv::convert::pdfwrite::image_from_bytes(&fake_jpeg()).unwrap();
+        let pdf = bookconv::convert::pdfwrite::images_to_pdf(&[img.clone(), img.clone(), img]).unwrap();
+        s.stage_new("big.pdf", &pdf).unwrap();
+        let out = s.deliver("big.pdf", "", &empty_mkdir(&t), &rmsvc_core::events::EventBus::new()).unwrap();
+        assert!(out.message.contains("已直接写入 xochitl 书库"), "{}", out.message);
+        let rc = sidecar::read(&s.dir().join("big.pdf")).unwrap().render.unwrap();
+        assert_eq!((rc.status.as_str(), rc.pages), ("ok", 3), "PDF 页数就是真页数，直接 ok");
+        let uuid_pdf = std::fs::read_dir(&lib).unwrap().flatten().find(|e| e.file_name().to_string_lossy().ends_with(".pdf")).unwrap().path();
+        assert_eq!(std::fs::read(uuid_pdf).unwrap(), pdf);
+    }
+
+    #[test]
+    fn deliver_direct_channel_falls_back_when_placeholder_cannot_be_built() {
+        // 是 zip 但没有 container.xml/OPF（造不出占位）→ 不走大文件通道，落到分卷/整本拒绝老路径，且没有往 xochitl 传任何东西。
+        let t = tempfile::tempdir().unwrap();
+        let (s, lib) = oversized_staging(&t);
+        s.stage_new("bad.epub", &mini_epub(&[("c1.xhtml", &format!("<html><body>{}</body></html>", "x".repeat(500)))])).unwrap();
+        let err = s.deliver("bad.epub", "", &empty_mkdir(&t), &rmsvc_core::events::EventBus::new()).unwrap_err();
+        assert!(err.contains("超过 xochitl 上传上限"), "{err}");
+        assert_eq!(std::fs::read_dir(&lib).unwrap().count(), 0, "没造出占位就不该上传任何东西");
     }
 
     #[test]
