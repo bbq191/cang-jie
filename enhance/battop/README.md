@@ -13,12 +13,14 @@ cargo build --release --target aarch64-unknown-linux-musl
 ## 部署
 
 ```sh
-sudo sh install.sh
+sudo sh install.sh [--start | --no-start]
 ```
 
 装的是常驻服务（`Type=simple`，进程内 `loop{sample_once; sleep(10min)}`），**不是**早期那版靠 `battop.timer` 反复拉起 oneshot 的架构（那版触发过整机冻死，见 `FINDINGS.md`）。固定装在 `/home/root/battop`，不走 shelf 的 XDG/`bin_dir` 那套。
 
-**host 侧一键构建+推送+安装**：`packaging/deploy-battop.sh <host>`（2026-09-11 新增，做的就是上面"先 scp 二进制再跑 install.sh"这两步的自动化，不改任何逻辑），也是 `packaging/install-all.sh` 全新设备统一安装器调用的其中一步，见 `../../packaging/README.md`。
+**有意不开机自启**（2026-09-20）：只 `start`、不 `enable`、不在 `/usr` 建 wants 链接——2026-08-29 采样触发过内核 cgroup/RCU 死锁冻死整机，根因未彻底排除。要用就在网页「管理→电池刺客」开（`POST /api/enhance/battop/start`）或 `systemctl start battop`；想恢复自启是需要自己评估的决定。启动策略：单元首次安装 → start；已在跑且二进制/单元有变化 → restart；已在跑且无变化 → 不动；已装但当前停着（用户在网页关了）→ 保持停着；`--start` 强制启动，`--no-start` 不启动。
+
+**依赖与文件**：`install.sh` 需要同目录的 `devlib.sh`，以及 `battop.new`（新二进制，优先）或已在的 `battop`；这些由 host 侧脚本一起推送。**host 侧一键构建+推送+安装**：`cd packaging && sh deploy-battop.sh <host>`——二进制先以 `battop.new` 推到 `/home/root/battop/`、md5 校验通过后由设备端 `install.sh` 原子 rename 覆盖（不再"先 stop 服务再 scp 覆盖"）；旧二进制备份进 `~/cangjie-backups/`（保留最近 5 份）。`CJ_BATTOP_BIN=<已编好的二进制>` 可跳过交叉编译。它也是 `packaging/install-all.sh` 的一步，见 `../../packaging/README.md`。
 
 ## 开关 · 网页数据展示
 

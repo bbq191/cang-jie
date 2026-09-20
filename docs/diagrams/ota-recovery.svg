@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1240 620" font-family="sans-serif">
+<defs><marker id="ota-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#555"/></marker><marker id="ota-r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#b0451f"/></marker><marker id="ota-g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2f7d45"/></marker></defs>
+<rect x="0" y="0" width="1240" height="620" fill="#fbfbfa"/>
+<text x="620.0" y="30" text-anchor="middle" font-size="18" font-weight="bold" fill="#1a1a1a">固件 OTA 升级之后：哪些丢了、怎么恢复</text>
+<text x="620.0" y="52" text-anchor="middle" font-size="12.5" fill="#6a6a6a">设计上不在启动路径留任何东西：新固件永远以纯原厂起来，/home 原样；恢复 = 手动一步 + 重跑一条幂等命令</text>
+<rect x="30" y="72" width="1180" height="62" rx="10" fill="#fdf1ec" stroke="#c0602d" stroke-width="1.6"/>
+<text x="620.0" y="92" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">固件 OTA（系统分区整体替换）</text>
+<text x="620.0" y="118.5" text-anchor="middle" font-size="10.5" fill="#4a4a4a">只冲系统分区 /usr 与 /etc；不动 /home。若设备经历“裸机恢复”，/home 也可能丢——先确认 /home 下的 payload 还在</text>
+<rect x="30" y="156" width="570" height="150" rx="10" fill="#fdf1ec" stroke="#c0602d" stroke-width="1.6" stroke-dasharray="6 4"/>
+<text x="315.0" y="175.5" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">被冲掉（需要重新安装）</text>
+<text x="315.0" y="201.5" text-anchor="middle" font-size="10.5" fill="#4a4a4a">/usr 里的 systemd 单元：</text>
+<text x="315.0" y="215.0" text-anchor="middle" font-size="10.5" fill="#4a4a4a">  shelf.target 与各服务单元（网关、book/koreader/font/wallpaper、笔记线四服务）</text>
+<text x="315.0" y="228.5" text-anchor="middle" font-size="10.5" fill="#4a4a4a">  xovi-reenable · chrony-boot-wakelock · wifi-watch · battop</text>
+<text x="315.0" y="242.0" text-anchor="middle" font-size="10.5" fill="#4a4a4a">/etc（tmpfs 叠加层）：</text>
+<text x="315.0" y="255.5" text-anchor="middle" font-size="10.5" fill="#4a4a4a">  国内 NTP 的 chrony 配置 · 默认时区 · xovi 启动 drop-in</text>
+<text x="315.0" y="269.0" text-anchor="middle" font-size="10.5" fill="#4a4a4a">固件版本变了：xovi 需要重建 hashtab，qmd 才能重新注入</text>
+<rect x="640" y="156" width="570" height="150" rx="10" fill="#eaf6ec" stroke="#3f9a55" stroke-width="1.6" stroke-dasharray="6 4"/>
+<text x="925.0" y="175.5" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">保留（/home，OTA 不动）</text>
+<text x="925.0" y="201.5" text-anchor="middle" font-size="10.5" fill="#4a4a4a">母版库、配置、证书、字体/壁纸池、休眠屏 conf 键</text>
+<text x="925.0" y="215.0" text-anchor="middle" font-size="10.5" fill="#4a4a4a">~/.local/bin 里的服务二进制 · battop 数据</text>
+<text x="925.0" y="228.5" text-anchor="middle" font-size="10.5" fill="#4a4a4a">xovi/extensions.d 里的 .so · exthome 里的 qmd/rcc</text>
+<text x="925.0" y="242.0" text-anchor="middle" font-size="10.5" fill="#4a4a4a">cangjie-backups/ 历史备份</text>
+<text x="925.0" y="255.5" text-anchor="middle" font-size="10.5" fill="#4a4a4a">注意：qmd 文件在，但 hashtab 过期，未注入，直到重建 hashtable</text>
+<rect x="30" y="330" width="280" height="150" rx="10" fill="#fff3d6" stroke="#c9971f" stroke-width="1.6"/>
+<text x="170.0" y="349" text-anchor="middle" font-size="12" font-weight="bold" fill="#1a1a1a">0  升级前（可选）</text>
+<text x="170.0" y="374.5" text-anchor="middle" font-size="10.5" fill="#4a4a4a">把与新固件不兼容的</text>
+<text x="170.0" y="388.0" text-anchor="middle" font-size="10.5" fill="#4a4a4a">xovi 扩展（如 appload）</text>
+<text x="170.0" y="401.5" text-anchor="middle" font-size="10.5" fill="#4a4a4a">挪出 extensions.d</text>
+<text x="170.0" y="415.0" text-anchor="middle" font-size="10.5" fill="#4a4a4a">放到 /home/root/xovi-disabled/</text>
+<text x="170.0" y="428.5" text-anchor="middle" font-size="10.5" fill="#4a4a4a">绝不留在 extensions.d 里</text>
+<rect x="340" y="330" width="280" height="150" rx="10" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.6"/>
+<text x="480.0" y="349" text-anchor="middle" font-size="12" font-weight="bold" fill="#1a1a1a">1  设备旁手动</text>
+<text x="480.0" y="374.5" text-anchor="middle" font-size="10.5" fill="#4a4a4a">xovi/rebuild_hashtable</text>
+<text x="480.0" y="388.0" text-anchor="middle" font-size="10.5" fill="#4a4a4a">（要 root 密码、交互输入）</text>
+<text x="480.0" y="401.5" text-anchor="middle" font-size="10.5" fill="#4a4a4a">install-all 不代做</text>
+<text x="480.0" y="415.0" text-anchor="middle" font-size="10.5" fill="#4a4a4a">是后面 qmd 注入的前提</text>
+<rect x="650" y="330" width="300" height="150" rx="10" fill="#eaf6ec" stroke="#3f9a55" stroke-width="1.6"/>
+<text x="800.0" y="349" text-anchor="middle" font-size="12" font-weight="bold" fill="#1a1a1a">2  电脑上一条命令</text>
+<text x="800.0" y="374.5" text-anchor="middle" font-size="10.5" fill="#4a4a4a">cd packaging</text>
+<text x="800.0" y="388.0" text-anchor="middle" font-size="10.5" fill="#4a4a4a">sh install-all.sh &lt;host&gt;</text>
+<text x="800.0" y="401.5" text-anchor="middle" font-size="10.5" fill="#4a4a4a">固件安全门 → 逐步幂等重装</text>
+<text x="800.0" y="415.0" text-anchor="middle" font-size="10.5" fill="#4a4a4a">→ 最后 xovi-apply 统一生效</text>
+<text x="800.0" y="428.5" text-anchor="middle" font-size="10.5" fill="#4a4a4a">新固件哈希不在白名单要 --force</text>
+<rect x="980" y="330" width="230" height="150" rx="10" fill="#f2f2f5" stroke="#8a8a99" stroke-width="1.6"/>
+<text x="1095.0" y="349" text-anchor="middle" font-size="12" font-weight="bold" fill="#1a1a1a">3  验证</text>
+<text x="1095.0" y="374.5" text-anchor="middle" font-size="10.5" fill="#4a4a4a">看收尾汇总的“已安装/失败”</text>
+<text x="1095.0" y="388.0" text-anchor="middle" font-size="10.5" fill="#4a4a4a">浏览器开 https://&lt;设备&gt;/</text>
+<text x="1095.0" y="401.5" text-anchor="middle" font-size="10.5" fill="#4a4a4a">appload 3.28 补丁是</text>
+<text x="1095.0" y="415.0" text-anchor="middle" font-size="10.5" fill="#4a4a4a">独立手动步骤（deploy-</text>
+<text x="1095.0" y="428.5" text-anchor="middle" font-size="10.5" fill="#4a4a4a">appload-patch.sh）</text>
+<polyline points="310,405 340,405" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#ota-a)"/>
+<polyline points="620,405 650,405" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#ota-a)"/>
+<polyline points="950,405 980,405" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#ota-a)"/>
+<rect x="30" y="506" width="1180" height="100" rx="10" fill="#fff3d6" stroke="#c9971f" stroke-width="1.6" stroke-dasharray="6 4"/>
+<text x="620.0" y="525" text-anchor="middle" font-size="12" font-weight="bold" fill="#1a1a1a">最后一步 xovi-apply 怎么“重启”（事故教训，2026-09-20）</text>
+<text x="620.0" y="550.5" text-anchor="middle" font-size="10.5" fill="#4a4a4a">先打印“将打断阅读”并留 5 秒宽限（不想被打断就 --skip xovi-apply，稍后自己重启）</text>
+<text x="620.0" y="564.0" text-anchor="middle" font-size="10.5" fill="#4a4a4a">xovi 已在运行的 xochitl 里生效 → systemctl restart xochitl；没生效（刚开机/OTA 后）→ xovi/start</text>
+<text x="620.0" y="577.5" text-anchor="middle" font-size="10.5" fill="#4a4a4a">绝不在 xovi 已生效时跑 xovi/start：会让运行中的 xochitl SEGV，系统自动整机重启</text>
+</svg>

@@ -2,8 +2,7 @@
 
 `appload-qmd-v0.5.3.orig.qmd`、`appload-qmd-3.28.qmd`、`appload_patch_328.py` 三个文件
 2026-09-16 从"本机 `oldbak/xovi-extensions/reading-qol/tools/` 里有、但没回到 git 版本
-控制"这条已知缺口里正式回收——`oldbak/` 在写这份文档的这台机器上已经不存在了（见项目记忆
-`appload-smoketest-and-device-runtime`），这次不是照抄那份旧文件，是重新从上游 GitHub
+控制"这条已知缺口里正式回收——`oldbak/`（2026-09-11 大整理时移出仓库的旧源码目录，不随 git 走）当时不能再当来源用，这次不是照抄那份旧文件，是重新从上游 GitHub
 按 commit 精确取源、重新写的工具（逻辑/思路与旧版一致：等长字节回填一个编译好的 `.so` 里
 内嵌的 NUL 结尾 C 字符串，不重新编译整个 `appload.so`）。
 

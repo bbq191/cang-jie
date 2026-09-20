@@ -17,7 +17,7 @@
 | D | 网关与网页 UI | §03g · §03h · §03j · §03m · §03n · §03z · §03ac · §03ae · §03af · §03ah · §03aj · §03ak · §03al · §03am · §03an · §03au · §03bj · §03bl · §03bp |
 | E | 稳定性、内存与耗电 | §03p · §03ab · §03ag · §03ai · §03ba · §03bh · §03bi · §03bm · §03bq |
 | F | 设备、字体壁纸与固件 | §03c · §03f · §03k · §03o · §03v · §03w · §03x · §03at · §03bd |
-| 附录 | 踩坑合集 · 旧版现状总览 · 真机待办 · 演进记录表 · 已移除的能力 | §04 · §00b · §05 · 附录 A · 附录 B · 附录 C |
+| 附录 | 踩坑合集 · 旧版现状总览 · 真机待办 · 演进记录表 · 已移除的能力 | §04 · §00b · §05 · 附录 A · 附录 B · 附录 C · 附录 D |
 
 ## 现状总览（2026-09-20 刷新）
 
@@ -45,7 +45,7 @@
 
 **未闭环 / 未验证（如实）**：网页 UI i18n 与触屏交互只做过数据链路和无头浏览器验证，没有真实浏览器人眼确认；图片密集网文的大片留白是分页引擎行为，无 CSS 层杠杆（§03aq）；批量"加入 xochitl / 加入 KOReader"两条在设备上没有端到端实测（§03bp）；>153MB 文件走占位通道的首次渲染内存/耗时没验证；入库 PDF 转 EPUB 合并部署后功能本身未经真机验证（§03br）。
 
-**OTA（固件升级）后怎么恢复**：见 §05 与 `shelf/README.md`「固件升级（OTA）与恢复」，安装/恢复流程的权威说明在 [`docs/INSTALL.md`](../../docs/INSTALL.md)。
+**OTA（固件升级）后怎么恢复**：权威说明（恢复流程、逐项对照表、流程图）在 [`docs/INSTALL.md`](../../docs/INSTALL.md)「固件升级（OTA）之后」；旧版 OTA 表见附录 D，§05 里的“OTA 后固定五步”是 2026-09-06 的旧说法。
 
 ## 第 0 章 定位、原则与基础
 
@@ -1697,7 +1697,7 @@ staging/optimize`：**修复前的代码逻辑下这张图会被完整解码**�
 > **现状结论**
 > - 只支持 reMarkable Paper Pro Move、固件 **3.28.0.172**；换固件后功能需要重新安装一遍（`/home` 数据保留，`/usr` 与 `/etc` 会被冲掉）——安装/恢复流程见 `docs/INSTALL.md`。
 > - 字体（`font-serve`）与壁纸（`wallpaper-serve`）"上传即可用"；壁纸写 xochitl 的 `SleepScreenPath` 隐藏键，bind-mount 方案已退役；字体菜单靠 qmd 注入，改字体/删字体后菜单是否刷新曾是坑（§03bd）。
-> - WiFi 连上恰好 60 秒必掉的真凶是 cfg80211 regdomain 宽限（精简 regdb 的 CN 无 5150–5350，路由 5G 信道 36 被判非法）→ 连接锁 2.4G；`wifi-watch` 常驻看护脚本与单元在 `packaging/wifi-watch/`（2026-09-20 起零 fork 快路径）。
+> - WiFi 连上恰好 60 秒必掉的真凶是 cfg80211 regdomain 宽限（精简 regdb 的 CN 无 5150–5350，路由 5G 信道 36 被判非法）→ 连接锁 2.4G；`wifi-watch` 常驻看护脚本与单元在 `packaging/wifi-watch/`（2026-09-20 起零 fork 快路径，并已作为一个步骤接入 `install-all.sh`）。
 > - `systemctl restart xochitl` 会丢 xovi；xovi 已生效时不要跑 `xovi/start`（会让运行中的 xochitl SEGV 并整机自动重启）。
 
 ### 03c｜Phase 2 字体/壁纸上传即可用（2026-09-03，离线完成）
@@ -2075,7 +2075,7 @@ qmd 确认夹具形状兼容、输出符合预期，再跑改动后的版本确�
 
 ### 05｜真机待办（2026-09-06 刷新；2026-09-09 补记 §03ad 漫画超限分支复验、§03ae i18n 架子、§03af UI 人性化批量修复、§03aj 管理二级 tab+系统增强开关；2026-09-10 补记 §03an 正文全量 i18n、§03aq 网文留白排查；2026-09-16 补记 §03ar KOReader 高亮/生词只读端点、§03as notes_vault 配置项、§03at gateway/shelf-gateway 双单元问题（用户拍板后已删旧符号链接修复，真机验证过）、§03au 状态提示停留时间修复；2026-09-17 补记 §03av EPUB 线四原则功能层真机验证通过，发现 `trim_margins` 真机性能问题；2026-09-18 补记 §03aw 脚注撤回复核+异步优化全链路真机通+防双击，发现 Anchor 模式嵌套 `<p>` 潜在问题；2026-09-18 补记 §03ax 脚注返回浮标已有解（更正 §03aw 的不准确记录）、裁边真机核实无误、超限漫画按卷拆分投原生真机通、用户拍照发现拆分卷原生留白+已修复待复验；2026-09-19 补记 §03ay 落库改异步+《疯探》"目录被误删"根因修复、§03az dtb:uid 根因修复+《雪人》分部目录重建真机通、§03ba 真机内存 OOM 危机→流式优化架构真机通+DOCTYPE 第二根因、§03bb《疯探》目录入口深度排查暂停在"确认是 content.opf 但未锁定触发点"；2026-09-19 补记 §03bc 反编译 xochitl 二进制坐实真正根因——硬编码死查 manifest `id="ncx"`，真机验证通过，问题✅已解决（`OPTIMIZE_VERSION` 14）；2026-09-19 补记 §03bd font-serve 字体菜单"换字体不生效/删除后仍显示存在"（用户自诊同根因）真机验证通过，问题✅已解决；2026-09-19 补记《镖人》投原生无反应排查——comic_split.rs 多层嵌套 NCX 边界计算 panic（book-serve 进程被摔炸）+ 落库拆分路径 OOM 风险+xochitl `/upload` 真实硬上限 100MB（原配置 150MB 是从未验证过的猜测值）+ 单卷仍超限的按页再拆兜底，四层独立问题全部修完，11 卷真机全部投递成功，完整方法论见 `bookconv优化白皮书.md` §15；2026-09-19 补记 §03be 落库进度条不推 SSE 事件已修+「加入 xochitl → 文件夹」填名不建文件夹真机端到端已解决（`git show` 从 2026-09-15 死代码删除提交里原样捞回 `mkdir.rs`+`shelf-mkdir-agent.qmd`，真机核对 `.metadata` 坐实文件夹真的建出来了，反编译当年"没有真机点过对话框"这条缺口这次补上）；2026-09-19 补记 §03bf「加入 KOReader」进度条不刷新（koreader-serve 同步调用没接入忙态系统，补前端本地忙态）已修+《乱马1/2》带斜杠文件夹名建不出来（`MkdirQueue::add` 误伤性拒绝含 `/` 的合法书名/文件夹名，整条删除）已修，均真机端到端复现+验证通过，问题✅已解决；2026-09-19 补记 §03bg 优化操作补真实分步进度（`OptimizeCheck.progress`，跟漫画/流式与否无关，之前压根没有这个字段）+确认加进度回调不能实质省内存（图片瓶颈已经是逐张处理，§03ba 解决过了），真机拿《飘·上册》端到端观察到进度数字推进，问题✅已解决；2026-09-19 补记 §03bh OOM 排查坐实
 
-> **⚠ 本节停在 2026-09-06～09-10，其中“OTA 后固定五步”里的 `packaging/wifi-watch/install.sh` 并不存在、`shelf doctor --render` 已砍除**；OTA 后的恢复流程以 `docs/INSTALL.md` 与 `shelf/README.md`「固件升级（OTA）与恢复」为准（安装类文档在第二阶段统一整理）。
+> **⚠ 本节停在 2026-09-06～09-10，其中“OTA 后固定五步”里的 `packaging/wifi-watch/install.sh` 并不存在、`shelf doctor --render` 已砍除**；OTA 后的恢复流程以 `docs/INSTALL.md`「固件升级（OTA）之后」为准（三份 OTA 表已合并成那一份；`wifi-watch` 现在是 `install-all.sh` 的一个步骤）。
 `Staging::deliver()` 落库不拆分路径是唯一未修的真实内存风险（三份数据叠加峰值 ~180-270MB）→
 改流式上传+流式自检，真机 `VmHWM` 观测 80MB 测试书投递全程 3.2-3.5KB 数量级，问题✅已解决；
 顺带 Rust 后端（`spawn_bg`/`busy_err` 去重）+ 前端（`el`/`renderStepProgress`/`guardClick` 合并
@@ -2187,7 +2187,7 @@ TOC"、"优化没把大量留白裁切完"，两条根因排查+修复+真机复
 
 镖人/阿拉蕾①的"漫画体积超原生上传上限、只出 CBZ 不分卷"分支已于 2026-09-09 真机复验通过（§03ad，两本各自 `shelf push --wait` 成功、母版库确认只落 `.gray.cbz` 无伴生 PDF、无分卷痕迹）。2026-09-06 当天测试书已全部清掉（五本用户手删、最后两本由回收站代理软删）；`push --wait` "睡着→点亮→续传"的时序在日常使用里顺手验过。
 
-**OTA 后固定五步**（§03v）：`xovi/rebuild_hashtable` → `xovi/start` → `SHELF_NO_BUILD=1 sh deploy.sh 10.11.99.1` → `ssh root@10.11.99.1 sh -s < packaging/chrony-cn.sh` → `packaging/wifi-watch/install.sh`。升完顺手 `shelf doctor --render` 看 CSS 引擎有没有变。/home 里的（母版库、KOReader、WiFi 钩子与 `powersave 2`、休眠屏 conf 键、qmd 文件）不用动。
+**OTA 后固定五步**〔2026-09-06 旧说法，已被 `docs/INSTALL.md` 的合并版取代〕（§03v）：`xovi/rebuild_hashtable` → `xovi/start` → `SHELF_NO_BUILD=1 sh deploy.sh 10.11.99.1` → `ssh root@10.11.99.1 sh -s < packaging/chrony-cn.sh` → `packaging/wifi-watch/install.sh`。升完顺手 `shelf doctor --render` 看 CSS 引擎有没有变。/home 里的（母版库、KOReader、WiFi 钩子与 `powersave 2`、休眠屏 conf 键、qmd 文件）不用动。
 
 **已闭环（真机）**：§03ac 可插拔机制接住独立仓库线（2026-09-06 晚，WiFi 部署书架+笔记线共八服务 active）· §03f 首轮五服务 · §03g/§03h 字体分开装/子目录/HTTPS · §03j 登录/CA/mDNS · §03k 字体两 bug · §03l 传书卡＝云同步 · §03m/§03n/§03o 网页改版/细节/管理台 · §03p 质量一轮 · §03q 优化做精 + 首行缩进 v10 · §03r 母版库 Phase A/B/C + 财新重排 · §03s 质量二轮 + 格式三档 · §03t 漫画通道（host 真书探针 → CBZ；漫画不投原生）+ 分卷静默失效修 + 投原生体积门 · §03v 固件 3.28 升级 + 3.28 字体菜单 qmd（首版整份不应用：qmldiff 解析不了 `({})` 与裸 `if (` handler，改 `[]`+`{ }` 后 `appended=4 count=8`，判官＝本机 asivery/qmldiff CLI）+ appload 3.28 复活（PR #59 qmd 等长回填进 .so，系统增强白皮书 §12.1；用户点侧栏 KOReader 正常起）· §03w 原生休眠屏 `SleepScreenPath` + WiFi regdomain 真凶 + wifi-watch + chrony 国内 NTP 脚本 · §03x 退役 bind-mount 壁纸整套（`xochitl_conf` + `native.rs`）· §03y xochitl CSS 引擎七条实测规则 + 英文首段顶格 v6 + 中文 br 书段落化 · §03z 事件推送（网页 + CLI 用户确认）· §03aa 阅读线六项（渲染自检 / `doctor --render` 用户 CLI PASS / `push --wait` / TXT 切章 / Phase E ④ Gulliver 两器脚注观感 / 漫画 16 灰默认开）· §03ab 代码体检四支 · PDF 结构化重排 v4（《财新》33 期：署名/图注/链接分类、节题 h3、标题分档，非句末段 15.1%→2.7%，`test_reflow.py` 锁纯函数）· §03ad 漫画跨页拆分+白边裁切放大（火影忍者卷1真机通）+ 小体积漫画可选投原生（火影忍者卷1真机通投原生 · 阿拉蕾①/镖人真机通超限只出 CBZ 不分卷，2026-09-09）· §03aj「管理」拆二级 tab + 系统增强开关（`hlSnapCjk`/battop 真开关：部署健康检查+`PUT /api/enhance/qol` 保留其余键+battop 未装时干净报错，用户确认命令块字体清楚了，2026-09-09）· §03ak「实验室」二级 tab + 独立「电池刺客」标签页 + 「导入 md 文档」文件上传改造（curl 功能测试：四开关读写+全量防覆盖+`import-md` 真实生成 `.rmdoc`；用户真机写字确认 `[hw-stroke:f4c8d0]` journal 日志跟 `hwStrokeEnabled` 开关状态一致；用户测试顺手逮到 battop"未装"提示路径过时〔仍写着搬家前的 `misc/battery-audit/`〕，修复重部署确认，2026-09-10）· §03al 首层标签重排（传书/笔记/其他/管理）+「入库」拆三卡 + battop 真机实装闭环（`install/start/stop` 循环+`lastSampleAt` 刷新确认）+ 电池审计时间窗数据表接入（`GET /api/enhance/battop/summary` 真机返回真实聚合数据）+ 电池刺客独立顶层标签页撤销回「实验室」卡片（2026-09-10）· §03am 电池刺客再拆分为「管理→电池刺客」二级 tab（耗电情况/唤醒源两个三级 tab，耗电情况补齐按进程）+ 总标题「书架」改「秘密花园」（含图标/登录页/改密码页/服务标签同步）+ 网关端口 8778 改绑标准 443（真机确认旧端口连接拒绝、新端口 curl 正常返回，2026-09-10）· §03ao `shelf push --no-calibre`（EPUB 跳过 Calibre 纯跑 `epub-optimize`，8 个新单测 + 非 mock 真调用验证）· §03ap 抓网文「同步优化」复选框（真机 curl 分带/不带 `optimize` 各抓一次同一篇文章，`level` full/core 落地正确）。**§03aq 不放进这个列表**——那条排查修的是一个真实存在的代码缺口（`figure`/`figcaption` 边距归零），但没有解决它本来要排查的问题（网文留白），后者仍在上面「未闭环」段落里。
 
@@ -2344,3 +2344,28 @@ shelf/
 
 依赖方向（单向无环）：`services/* → ../rmsvc-core`；`book-serve → bookconv`；`reading/device-rs → bookconv`（re-export 保路径，reading/ 现已归档）。
 **shelf 不依赖 device-core / weread-device**；koreader-serve 不依赖 bookconv（落库纯复制）；`../enhance/wallpaper-serve` 也不再依赖 bookconv（两个屏幕尺寸常量已复制成本地值）。
+
+### 附录 D｜原 `shelf/README.md`「固件升级（OTA）与恢复」（2026-09-20 前的旧版，已被 `docs/INSTALL.md` 的合并版取代）
+
+> 权威版本现在在 [`docs/INSTALL.md`](../../docs/INSTALL.md)「固件升级（OTA）之后」。下面是原文，其中的步骤编号 ①–⑦、"书架五服务"、"wifi-watch 目前只在 oldbak"等是当时的说法，保留作依据。
+
+**升级零风险、数据零丢失，随时可升；升完要手工装一遍功能才回来**——不是"升了就能用"。设计上我们不在启动路径留任何东西
+（xovi 预载在 `/etc` tmpfs、单元在 `/usr`），新固件永远以纯原厂起来；`/home` 原样。3.27.3.0 → 3.28.0.172 实录见白皮书 §03v。
+
+| 项目 | 位置 | OTA 后 | 恢复 |
+|---|---|---|---|
+| 母版库 / KOReader / 字体 / 壁纸池 / 配置 / 证书 / 休眠屏 conf 键 `SleepScreenPath` | `/home` | 保留 | 无 |
+| WiFi 看护钩子 `xovi/scripts/post-start/` · NM `powersave 2` | `/home` | 保留 | 无 |
+| 字体菜单 qmd · 回收站代理 qmd | `/home`（hashtab 过期） | 文件在、未注入 | ① `xovi/rebuild_hashtable`（设备旁输密码）② `xovi/start` |
+| 书架服务（gateway / book / koreader / font / wallpaper + 笔记线四服务） | `/usr` | **冲掉** | ③ `cd packaging && SHELF_NO_BUILD=1 sh deploy.sh 10.11.99.1`（或整体用 `sh install-all.sh 10.11.99.1`，见下） |
+| xovi 开机持久化恢复链（`xovi-reenable.service`，重启自动重跑 `xovi/start`，2026-09-11 补，`../packaging/README.md`） | `/usr` | **冲掉** | ⑥ `cd packaging && sh deploy-xovi-persist.sh 10.11.99.1` |
+| chrony 国内 NTP | rootfs `/etc` | **冲掉** | ④ `cd packaging && sh deploy-chrony-cn.sh 10.11.99.1`（2026-09-11 补，脚本已经从 `oldbak/` 重写回 `packaging/chrony-cn.sh`，不再需要手动从本机备份找） |
+| 默认时区 Asia/Shanghai（`timezone-cn.sh`，2026-09-11 新增，`../packaging/README.md`） | rootfs `/etc` | **冲掉** | ⑦ `cd packaging && sh deploy-timezone-cn.sh 10.11.99.1` |
+| wifi-watch 常驻看护（wlan0 假死自动 `nmcli con up`；固化所有 WiFi 连接 2.4G + 省电关——路由 5G 信道 36 不在设备精简 regdb 的 CN 允许段，白皮书 §03w） | `/usr` 单元 + `~/.local/bin` 脚本 | 单元**冲掉** | ⑤ ⚠️ `packaging/wifi-watch/` 目前仍只在 `oldbak/packaging/wifi-watch/`，未随 `install-all.sh` 恢复（这一条是真实缺口，跟上面几条不同——那几条已经补回仓库了） |
+
+④⑥⑦ 三步（连同 ③ 书架五服务）现在也可以一条命令全做：`cd packaging && sh install-all.sh 10.11.99.1`（见该目录 `README.md`）。①②（`rebuild_hashtable`/`xovi/start`）仍然只能手动——前者要交互输密码，后者是它们的共同前提，`install-all.sh` 不代做。
+
+升级前把与新固件不兼容的 xovi 扩展（如 appload）挪出 `extensions.d/`（放 `/home/root/xovi-disabled/`，绝不留在目录里）；appload 的 3.28 补丁见系统增强白皮书 §12.1。
+**风险分层**（不要合成一个百分比）：书架这一层只用 xochitl 的 `/upload` 网页接口和系统标准组件，换固件重装即回（本次 100%）；
+字体菜单这类 qmldiff 注入依赖 xochitl 内部 QML，大版本常要重适配（3.27→3.28 已是两版 qmd）；KOReader 本体独立无碍，
+但侧栏入口靠第三方 appload，每个大版本可能要重打补丁（3.28 靠 PR #59 qmd 回填，系统增强白皮书 §12.1）。
