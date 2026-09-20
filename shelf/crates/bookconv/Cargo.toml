@@ -17,6 +17,7 @@ zip = { version = "2", default-features = false, features = ["deflate"] }
 miniz_oxide = "0.8"
 # 图片降采样/抖动：只启 jpeg+png 控体积
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+fast_image_resize = "6.1.0"
 # FB2→EPUB；quick-xml 版本须与 fb2 一致(0.30)
 fb2 = "0.4"
 quick-xml = { version = "0.30", features = ["serialize", "encoding"] }

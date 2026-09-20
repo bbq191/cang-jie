@@ -312,7 +312,7 @@ pub fn prepare_comic_page_for_pdf(bytes: &[u8], page_w: u32, page_h: u32) -> Opt
     if !trimmed && !shrink && !upscale {
         return None; // 既没裁又不缩放：原图字节零损失直接嵌
     }
-    let img = if shrink || upscale { img.resize_exact(dw, dh, FilterType::Lanczos3) } else { img };
+    let img = if shrink || upscale { resize_lanczos3(&img, dw, dh) } else { img };
 
     let mut out = Vec::new();
     match fmt {
@@ -323,6 +323,40 @@ pub fn prepare_comic_page_for_pdf(bytes: &[u8], page_w: u32, page_h: u32) -> Opt
         _ => return None,
     }
     Some(out)
+}
+
+/// Lanczos3 重采样，SIMD 实现（`fast_image_resize`，x86 SSE4/AVX2、aarch64 NEON 运行期自动选）。
+///
+/// 替换 `DynamicImage::resize_exact(.., Lanczos3)` 的原因：2026-09-20 分阶段计时（乱马/镖人，
+/// release、每页 ~1000×1500）显示**缩放占整页处理时间的 74–79%**（145–218ms/页），编码 15–22%，
+/// 解码/裁边探测可忽略；`fast_image_resize` 同一算法（Lanczos3 卷积）快约 **20 倍**（7–11ms/页）。
+/// **不是逐位一致**：与 `image` 库实现的像素差均值 0.1–0.2 灰阶、最大 ~30（仅高对比边缘），二者对
+/// 浮点参照（PIL）都是 53–55dB——远低于随后 JPEG q95 编码本身的误差（约 45dB），没有可见差别。
+/// 仅处理 `Luma8`/`Rgb8`（调用方已归一到这两种）；其它类型或库报错时退回 `image` 自带实现。
+fn resize_lanczos3(img: &image::DynamicImage, dw: u32, dh: u32) -> image::DynamicImage {
+    use fast_image_resize::images::{Image, ImageRef};
+    use fast_image_resize::{FilterType as FirFilter, PixelType, ResizeAlg, ResizeOptions, Resizer};
+    use image::DynamicImage;
+    let opts = ResizeOptions::new().resize_alg(ResizeAlg::Convolution(FirFilter::Lanczos3));
+    let fast = || -> Option<DynamicImage> {
+        let mut resizer = Resizer::new();
+        match img {
+            DynamicImage::ImageLuma8(g) => {
+                let src = ImageRef::new(g.width(), g.height(), g.as_raw(), PixelType::U8).ok()?;
+                let mut dst = Image::new(dw, dh, PixelType::U8);
+                resizer.resize(&src, &mut dst, &opts).ok()?;
+                image::GrayImage::from_raw(dw, dh, dst.into_vec()).map(DynamicImage::ImageLuma8)
+            }
+            DynamicImage::ImageRgb8(c) => {
+                let src = ImageRef::new(c.width(), c.height(), c.as_raw(), PixelType::U8x3).ok()?;
+                let mut dst = Image::new(dw, dh, PixelType::U8x3);
+                resizer.resize(&src, &mut dst, &opts).ok()?;
+                image::RgbImage::from_raw(dw, dh, dst.into_vec()).map(DynamicImage::ImageRgb8)
+            }
+            _ => None,
+        }
+    };
+    fast().unwrap_or_else(|| img.resize_exact(dw, dh, FilterType::Lanczos3))
 }
 
 /// JPEG 编码并**保持灰度图为单分量**。`image` 0.25 的 `JpegEncoder::encode_image(&DynamicImage)` 对
@@ -461,6 +495,25 @@ mod tests {
         assert_eq!((dw, dh), (img.width() as f32, img.height() as f32), "阅读器里应 1:1 无二次缩放");
         assert_eq!(x.fract(), 0.0);
         assert_eq!(y.fract(), 0.0);
+    }
+
+    #[test]
+    fn resize_lanczos3_simd_matches_image_crate_closely() {
+        // 合成带高对比边缘+渐变的 RGB 与灰度图，SIMD 结果与 image 库实现的像素差必须很小（均值 <0.5 灰阶）。
+        let rgb = DynamicImage::ImageRgb8(RgbImage::from_fn(1091, 1592, |x, y| {
+            let edge = if (x / 37 + y / 41) % 2 == 0 { 20 } else { 235 };
+            image::Rgb([edge, ((x + y) % 256) as u8, (x % 256) as u8])
+        }));
+        let gray = DynamicImage::ImageLuma8(image::GrayImage::from_fn(700, 1000, |x, y| image::Luma([((x * 3 + y * 5) % 256) as u8])));
+        for (img, (dw, dh)) in [(rgb, (934u32, 1363u32)), (gray, (934, 1334))] {
+            let fast = resize_lanczos3(&img, dw, dh);
+            let slow = img.resize_exact(dw, dh, FilterType::Lanczos3);
+            assert_eq!(fast.color(), slow.color());
+            assert_eq!(fast.dimensions(), (dw, dh));
+            let (a, b) = (fast.as_bytes(), slow.as_bytes());
+            let mean = a.iter().zip(b).map(|(x, y)| x.abs_diff(*y) as f64).sum::<f64>() / a.len() as f64;
+            assert!(mean < 0.5, "SIMD 与 image 库 Lanczos3 差距过大: 均值 {mean}");
+        }
     }
 
     #[test]
