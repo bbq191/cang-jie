@@ -238,6 +238,9 @@ impl Pattern {
     }
 }
 
+/// 分发时的候选：(具体程度, 路由, 解出的路径参数)。
+type Candidate<'a> = ((usize, bool), &'a Arc<Route>, HashMap<String, String>);
+
 struct Route {
     method: Method,
     pattern: Pattern,
@@ -307,7 +310,7 @@ impl Router {
     /// `/events`、`/health` 抢走（真机 wallpaper-serve 踩过，靠"必须先注册字面路由"的口头纪律避免）。
     pub fn dispatch(&self, req: &mut Request<'_>) -> Reply {
         let mut path_exists = false;
-        let mut best: Option<((usize, bool), &Arc<Route>, HashMap<String, String>)> = None;
+        let mut best: Option<Candidate<'_>> = None;
         for r in &self.routes {
             let Some(params) = r.pattern.matches(&req.path) else { continue };
             if r.method != req.method {
