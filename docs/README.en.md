@@ -51,8 +51,8 @@ Only supports the **reMarkable Paper Pro Move on firmware 3.28.0.172** (the only
 verified so far).
 
 ```sh
-git clone git@github.com:bbq191/cang-jie.git
-cd cang-jie/packaging
+git clone https://github.com/bbq191/rm-tweak.git   # public release; the private dev repo cang-jie is maintainer-only
+cd rm-tweak/packaging
 sh install-all.sh 10.11.99.1
 ```
 

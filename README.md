@@ -42,8 +42,8 @@ xochitl 或 KOReader）；荧光笔勾画配合手写批注，自动转写成 AI
 只支持 **reMarkable Paper Pro Move，固件 3.28.0.172**（目前唯一验证过的版本）。
 
 ```sh
-git clone git@github.com:bbq191/cang-jie.git
-cd cang-jie/packaging
+git clone https://github.com/bbq191/rm-tweak.git   # 公开发行版；私有开发仓库 cang-jie 只有维护者能 clone
+cd rm-tweak/packaging
 sh install-all.sh 10.11.99.1
 ```
 
