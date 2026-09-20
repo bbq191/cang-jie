@@ -1,0 +1,6 @@
+#!/bin/sh
+# 假 python3：只服务 deploy-appload-patch.sh 的 appload_patch_328.py 调用
+case "$2" in
+    --check) echo "${CJ_SIM_APPLOAD_STATE:-unpatched}" ;;
+    *) case "$1" in appload_patch_328.py) cp "$2" "$3" && echo PATCHED >> "$3" ;; *) exec /usr/bin/python3 "$@" ;; esac ;;
+esac

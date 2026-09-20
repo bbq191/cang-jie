@@ -1,0 +1,13 @@
+#!/bin/sh
+echo "systemctl $*" >> "${CJ_SIM_LOG:-/dev/null}"
+case "$1" in
+    show)
+        case "$*" in
+            *MainPID*) echo 4242 ;;
+            *NRestarts*) echo 0 ;;
+        esac ;;
+    is-active)
+        if [ -n "${CJ_SIM_INACTIVE:-}" ]; then echo inactive; exit 3; fi
+        echo active ;;
+esac
+exit 0
