@@ -1,395 +1,22 @@
-//! HTML 规整：body_inner / split_blocks / fix_internal_links —— 移植自 download.py + epub.py。
-//! regex crate 不支持 lookahead，`&(?!#?\w+;)` 的转义手写实现。
+//! 脚注：识别 noteref/aside/duokan/QQ 阅读各形态，收集被引用的注释块，就地关联重排（`preserve_relink_footnotes`）或内联（`inline_footnotes`）。
+use super::*;
 
-use regex::Regex;
-use std::sync::OnceLock;
-
-fn body_re() -> &'static Regex {
-    static R: OnceLock<Regex> = OnceLock::new();
-    // 非贪婪：章节可能是多个 <html> 文档拼接（标题文档+正文文档），贪婪会跨文档吞并
-    R.get_or_init(|| Regex::new(r"(?si)<body[^>]*>(.*?)</body>").unwrap())
-}
-fn void_re() -> &'static Regex {
-    static R: OnceLock<Regex> = OnceLock::new();
-    R.get_or_init(|| {
-        Regex::new(r"(?i)<(area|base|br|col|embed|hr|img|input|link|meta|param|source|track|wbr)((?:\s[^>]*?)?)\s*/?>").unwrap()
-    })
-}
-fn calibre_pb_re() -> &'static Regex {
-    static R: OnceLock<Regex> = OnceLock::new();
-    R.get_or_init(|| Regex::new(r"(?i)<div\b[^>]*mbppagebreak[^>]*>(?:\s*</div>)?").unwrap())
-}
-fn br_run_re() -> &'static Regex {
-    static R: OnceLock<Regex> = OnceLock::new();
-    R.get_or_init(|| Regex::new(r"(?i)(?:<br\b[^>]*?/>\s*){3,}").unwrap())
-}
-fn block_end_re() -> &'static Regex {
-    static R: OnceLock<Regex> = OnceLock::new();
-    R.get_or_init(|| {
-        Regex::new(r"(?i)(?:</(?:p|div|h[1-6]|blockquote|section|article|ul|ol|table|pre)>|<hr\s*/?>)").unwrap()
-    })
-}
-fn a_href_re() -> &'static Regex {
-    static R: OnceLock<Regex> = OnceLock::new();
-    R.get_or_init(|| {
-        Regex::new(r##"(?si)(<a\b[^>]*?\bhref=")([^"#]*)(#[^"]*)?("[^>]*>)(.*?)(</a>)"##).unwrap()
-    })
-}
-fn id_re() -> &'static Regex {
-    static R: OnceLock<Regex> = OnceLock::new();
-    R.get_or_init(|| Regex::new(r#"(?i)\bid="([^"]+)""#).unwrap())
-}
-
-/// & 后不是 `#?\w+;` 实体的，转 &amp;（手写替 lookahead）。
-fn escape_bare_amp(s: &str) -> String {
-    let cs: Vec<char> = s.chars().collect();
-    let mut out = String::with_capacity(s.len());
-    let mut i = 0;
-    while i < cs.len() {
-        if cs[i] == '&' {
-            let mut j = i + 1;
-            if j < cs.len() && cs[j] == '#' {
-                j += 1;
-            }
-            let start = j;
-            while j < cs.len() && (cs[j].is_ascii_alphanumeric() || cs[j] == '_') {
-                j += 1;
-            }
-            let is_entity = j > start && j < cs.len() && cs[j] == ';';
-            if is_entity {
-                out.push('&');
-            } else {
-                out.push_str("&amp;");
-            }
-        } else {
-            out.push(cs[i]);
-        }
-        i += 1;
-    }
-    out
-}
-
-/// 把 codec 解码出的完整 XHTML 规整成 EPUB 章节能用的 <body> 内层片段。
-pub fn body_inner(html: &str) -> String {
-    // 提取所有 <body> 段并合并——章节可能是"标题文档 + 正文文档"多个 <html> 拼接，
-    // 每个文档一个 body，都要保留（否则只留第一个=标题空壳，正文丢失 → 空白页）。
-    let mut inner = String::new();
-    for cap in body_re().captures_iter(html) {
-        if let Some(m) = cap.get(1) {
-            if !inner.is_empty() {
-                inner.push('\n');
-            }
-            inner.push_str(m.as_str());
-        }
-    }
-    if inner.is_empty() {
-        inner = html.to_string();
-    }
-    let inner = void_re().replace_all(&inner, "<${1}${2}/>").into_owned();
-    let inner = calibre_pb_re().replace_all(&inner, "").into_owned();
-    let inner = br_run_re().replace_all(&inner, "<br/><br/>").into_owned();
-    escape_bare_amp(&inner)
-}
-
-/// 长章按块边界切成小片（每片约 max_chars 字符）。对齐 download.split_blocks。
-pub fn split_blocks(html: &str, max_chars: usize, break_before: Option<&str>) -> Vec<String> {
-    // 每个 block = 上个块尾到本块结束标签（含标签）
-    let mut blocks: Vec<&str> = Vec::new();
-    let mut last = 0usize;
-    for m in block_end_re().find_iter(html) {
-        blocks.push(&html[last..m.end()]);
-        last = m.end();
-    }
-    if last < html.len() {
-        blocks.push(&html[last..]);
-    }
-    let mut chunks: Vec<String> = Vec::new();
-    let mut cur = String::new();
-    for block in blocks {
-        if let Some(bb) = break_before {
-            if block.contains(bb) && !cur.trim().is_empty() {
-                chunks.push(std::mem::take(&mut cur));
-            }
-        }
-        cur.push_str(block);
-        if cur.chars().count() >= max_chars {
-            chunks.push(std::mem::take(&mut cur));
-        }
-    }
-    if !cur.trim().is_empty() {
-        chunks.push(cur);
-    }
-    if chunks.is_empty() {
-        vec![html.to_string()]
-    } else {
-        chunks
-    }
-}
-
-fn block_close_re() -> &'static Regex {
-    static R: OnceLock<Regex> = OnceLock::new();
-    R.get_or_init(|| Regex::new(r"(?i)</(p|div|h[1-6]|li|blockquote|section|article|ul|ol|table|pre)>").unwrap())
-}
-fn a_open_re() -> &'static Regex {
-    static R: OnceLock<Regex> = OnceLock::new();
-    R.get_or_init(|| Regex::new(r#"(?si)<a\b[^>]*>"#).unwrap())
-}
-fn href_attr_re() -> &'static Regex {
-    static R: OnceLock<Regex> = OnceLock::new();
-    R.get_or_init(|| Regex::new(r#"(?i)\s*\bhref="[^"]*""#).unwrap())
-}
-fn href_frag_re() -> &'static Regex {
-    static R: OnceLock<Regex> = OnceLock::new();
-    R.get_or_init(|| Regex::new(r#"(?i)\bhref="(#[^"]*)""#).unwrap())
-}
-
-/// reMarkable 导入 EPUB 时把章内锚点烘焙成静态索引；一旦某章存在"互指对"
-/// （marker 链到注释、注释又链回 marker——几乎所有电子书脚注的标准双向结构），
-/// 它的索引器会把这一对链接**整对丢弃**，导致脚注在设备上连可点热区都没有。
-/// 破环：定位每个 2-环，把"源元素较晚出现"那条（即注释里的回链）**去链化**
-/// ——`<a>`→`<span>`、删掉 href、保留 id——正向 `marker→注释` 即恢复可点，
-/// 返回交给 reMarkable 原生"返回第 X 页"条。真机 chap_0010 8 条脚注实测全通。
-pub fn break_footnote_cycles(html: &str) -> String {
-    // 1) 收集 id → 首次出现的字节位置
-    let mut id_pos: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
-    let mut ids_sorted: Vec<(usize, String)> = Vec::new();
-    for c in id_re().captures_iter(html) {
-        let m = c.get(0).unwrap();
-        let id = c.get(1).unwrap().as_str().to_string();
-        id_pos.entry(id.clone()).or_insert(m.start());
-        ids_sorted.push((m.start(), id));
-    }
-    ids_sorted.sort_by_key(|(p, _)| *p);
-    if id_pos.is_empty() {
-        return html.to_string();
-    }
-
-    // 最近前置 id（中间无块级闭合标签才算同元素范围内）
-    let nearest = |open_start: usize| -> Option<String> {
-        let mut best: Option<(usize, &str)> = None;
-        for (p, id) in &ids_sorted {
-            if *p < open_start {
-                best = Some((*p, id.as_str()));
-            } else {
-                break;
-            }
-        }
-        let (bp, id) = best?;
-        if block_close_re().is_match(&html[bp..open_start]) {
-            None
-        } else {
-            Some(id.to_string())
-        }
-    };
-
-    // 2) 收集同文件锚点 <a href="#frag">：source_id（自带 id 优先，否则最近前置 id）+ target
-    struct Anchor {
-        open_start: usize,
-        open_end: usize,
-        source: String,
-        target: String,
-    }
-    let mut anchors: Vec<Anchor> = Vec::new();
-    let mut edges: std::collections::HashSet<(String, String)> = std::collections::HashSet::new();
-    for m in a_open_re().find_iter(html) {
-        let tag = m.as_str();
-        // href 必须是同文件裸锚点 #frag
-        let href = match href_frag_re().captures(tag) {
-            Some(c) => c.get(1).unwrap().as_str().to_string(),
-            None => continue,
-        };
-        let target = href[1..].to_string();
-        if !id_pos.contains_key(&target) {
-            continue;
-        }
-        let self_id = id_re().captures(tag).map(|c| c.get(1).unwrap().as_str().to_string());
-        let source = match self_id.or_else(|| nearest(m.start())) {
-            Some(s) => s,
-            None => continue,
-        };
-        edges.insert((source.clone(), target.clone()));
-        anchors.push(Anchor { open_start: m.start(), open_end: m.end(), source, target });
-    }
-
-    // 3) 找 2-环 (A->B 且 B->A)，标记"源元素较晚"那条 <a> 去链化
-    let mut kill: Vec<(usize, usize)> = Vec::new(); // (open_start, open_end)
-    for a in &anchors {
-        if a.source == a.target {
-            continue;
-        }
-        if edges.contains(&(a.target.clone(), a.source.clone())) {
-            let ps = *id_pos.get(&a.source).unwrap();
-            let pt = *id_pos.get(&a.target).unwrap();
-            if ps > pt {
-                // 本锚点的源元素较晚 → 它是注释里的回链 → 去链
-                kill.push((a.open_start, a.open_end));
-            }
-        }
-    }
-    if kill.is_empty() {
-        return html.to_string();
-    }
-
-    // 4) 从后往前改写：<a ...(去href)...> → <span ...>，对应 </a> → </span>
-    kill.sort_by_key(|(s, _)| *s);
-    let mut out = html.to_string();
-    for (open_start, open_end) in kill.into_iter().rev() {
-        // 定位配对的 </a>
-        let close_rel = match out[open_end..].find("</a>") {
-            Some(i) => open_end + i,
-            None => continue,
-        };
-        // 先改 close，再改 open（open 在前，先动后面的不影响 open 位置）
-        out.replace_range(close_rel..close_rel + 4, "</span>");
-        let open_tag = &out[open_start..open_end];
-        let no_href = href_attr_re().replace(open_tag, "").into_owned();
-        let new_tag = format!("<span{}", &no_href[2..]); // 去掉 "<a"
-        out.replace_range(open_start..open_end, &new_tag);
-    }
-    out
-}
-
-#[cfg(test)]
-mod body_inner_tests {
-    use super::*;
-    #[test]
-    fn merges_title_doc_and_body_doc() {
-        // 微信读书章节 = 标题文档 + 正文文档 两个 <html> 拼接（长夜第一章的真实形态）
-        let doc = "<?xml version=\"1.0\"?>\n<html><head><title>第一章</title></head><body>\n  <h1 class=\"firstTitle2\">第一章</h1>\n</body></html>\n<?xml version=\"1.0\"?>\n<!DOCTYPE html>\n<html><body><p>正文第一段</p><p>正文第二段</p></body></html>";
-        let out = body_inner(doc);
-        assert!(out.contains("第一章"), "缺标题: {out}");
-        assert!(out.contains("正文第一段"), "缺正文: {out}");
-        assert!(out.contains("正文第二段"), "缺正文2: {out}");
-        assert!(!out.contains("</body>"), "残留 </body>: {out}");
-        assert!(!out.to_lowercase().contains("<html"), "残留 <html>: {out}");
-        assert!(!out.contains("DOCTYPE"), "残留 DOCTYPE: {out}");
-    }
-    #[test]
-    fn single_doc_body_unchanged() {
-        let doc = "<html><head><title>x</title></head><body><p>只有一段</p></body></html>";
-        assert_eq!(body_inner(doc).trim(), "<p>只有一段</p>");
-    }
-}
-
-#[cfg(test)]
-mod footnote_tests {
-    use super::*;
-    /// 真实微信读书脚注（marker/注释同章、href 带旧文件名前缀）应被规整成裸 `#锚点`
-    /// 且该章判定为含章内锚点（不切分）——这是 xochitl 唯一会原生跳转的形态。
-    #[test]
-    fn real_footnote_normalizes() {
-        // chap_0005 真实脚注：marker(id=zw1)→text00004.html#zhu1；注释(id=zhu1)→text00004.html#zw1，两者同章。
-        let html = r#"<p><a href="text00004.html#zhu1" id="zw1">[1]</a>正文</p><p><a href="text00004.html#zw1" id="zhu1">[1]</a>注释文字</p>"#;
-        let out = fix_internal_links(html);
-        eprintln!("IN : {html}");
-        eprintln!("OUT: {out}");
-        assert!(out.contains(r##"href="#zhu1""##), "marker 未规整成裸锚点");
-        assert!(out.contains(r##"href="#zw1""##), "注释回链未规整成裸锚点");
-    }
-
-    #[test]
-    fn kindle_backlink_broken_forward_kept() {
-        // Kindle 形态：marker 的 id 在 <small> 上、注释段的回链在独立 <a> 上。
-        let html = r##"<p>正文小鼠波波<sup class="c4"><small id="filepos16001"><a href="#filepos21550"><span>[1]</span></a></small></sup>后续</p>
-<p id="filepos21550" class="c12"><a href="#filepos16001"><span>[1]</span></a><span>注释文字</span></p>"##;
-        let out = break_footnote_cycles(html);
-        // 正向 marker→注释 保留
-        assert!(out.contains(r##"<a href="#filepos21550"><span>[1]</span></a>"##), "正向脚注链接被误删");
-        // 注释里的回链去链化：<a href="#filepos16001"> 不再是链接
-        assert!(!out.contains(r##"href="#filepos16001""##), "回链未去链");
-        // 注释段 id 保留（正向链接的落点）
-        assert!(out.contains(r##"<p id="filepos21550""##), "注释段 id 丢失");
-    }
-
-    #[test]
-    fn weread_backlink_broken_id_preserved() {
-        // weread 形态：id 与回链在同一个 <a> 上，去链后必须保留 id。
-        let html = r##"<p>正文<a href="#zhu1" id="zw1">[1]</a>后续</p>
-<p><a href="#zw1" id="zhu1">[1]</a>注释文字</p>"##;
-        let out = break_footnote_cycles(html);
-        assert!(out.contains(r##"<a href="#zhu1" id="zw1">[1]</a>"##), "正向 marker 被误删");
-        // 注释锚点去链但保留 id=zhu1（marker 的落点）
-        assert!(out.contains(r##"id="zhu1""##), "注释 id 丢失（正向落点会断）");
-        assert!(!out.contains(r##"href="#zw1""##), "注释回链未去链");
-        assert!(out.contains("<span"), "回链应变成 span");
-    }
-
-    #[test]
-    fn no_cycle_left_untouched() {
-        // 单向 TOC 链接（无回指）不应被动
-        let html = r##"<p><a href="#c1">章一</a></p><h2 id="c1">章一</h2>"##;
-        assert_eq!(break_footnote_cycles(html), html);
-    }
-}
-
-/// 规整脚注类内链：目标锚点就在本章内 → href 规整成裸 `#锚点`（xochitl 唯一会跳的类别）。
-/// 跨文件/外链不动。对齐 epub._fix_internal_links。
-pub fn fix_internal_links(html: &str) -> String {
-    if !html.contains("href=") {
-        return html.to_string();
-    }
-    let ids: std::collections::HashSet<String> =
-        id_re().captures_iter(html).filter_map(|c| c.get(1).map(|m| m.as_str().to_string())).collect();
-    a_href_re()
-        .replace_all(html, |c: &regex::Captures| {
-            let g0 = c.get(0).unwrap().as_str();
-            let href = c.get(2).map(|m| m.as_str()).unwrap_or("");
-            if href.starts_with("http://")
-                || href.starts_with("https://")
-                || href.starts_with("mailto:")
-                || href.starts_with("tel:")
-            {
-                return g0.to_string();
-            }
-            match c.get(3) {
-                Some(anchor) => {
-                    let aid = &anchor.as_str()[1..];
-                    if ids.contains(aid) {
-                        format!(
-                            "{}#{}{}{}{}",
-                            c.get(1).unwrap().as_str(),
-                            aid,
-                            c.get(4).unwrap().as_str(),
-                            c.get(5).unwrap().as_str(),
-                            c.get(6).unwrap().as_str()
-                        )
-                    } else {
-                        g0.to_string()
-                    }
-                }
-                None => g0.to_string(),
-            }
-        })
-        .into_owned()
-}
-
-// ===== 脚注内联 =====
-// 微信读书两套脚注机制，统一内联成**朴素同章锚点**：marker=<a href="#frag">，注释聚章末
-// 可见 <div class="footnotes"> 内每条 <p id="frag">。点 marker 跳章末注释、rM 原生「返回」跳回。
-// ⚠ 不用 EPUB3 epub:type="noteref"/aside="footnote"——真机实测 xochitl 会把 footnote 语义的
-// aside 隐藏、且不把 noteref 渲染成可点链接（点了无黑块、跳不动）。朴素同章锚点才是它唯一会跳的形态。
-//  - 导入版(如《13 67》)：marker=<a href="partXXXX.html#frag" type="noteref">，注释是独立
-//    <aside id="frag" type="footnote"> 汇总在某章末尾、跨文件 → 死链。先 collect 全书 aside 索引，
-//    再把注释按 frag 内联到引用它的 marker 所在章。
-//  - 数字版(如《赎罪》)：marker=<img class="qqreader-footnote" alt="注释全文">，内容就在 alt、
-//    不跨文件 → 按章内顺序编号，img 换 noteref，alt 生成章末 aside。
-
-fn aside_footnote_re() -> &'static Regex {
+pub(super) fn aside_footnote_re() -> &'static Regex {
     static R: OnceLock<Regex> = OnceLock::new();
     R.get_or_init(|| Regex::new(r#"(?si)<aside\b[^>]*\btype="footnote"[^>]*>(.*?)</aside>"#).unwrap())
 }
-fn noteref_a_re() -> &'static Regex {
+pub(super) fn noteref_a_re() -> &'static Regex {
     static R: OnceLock<Regex> = OnceLock::new();
     R.get_or_init(|| Regex::new(r#"(?si)<a\b([^>]*\btype="noteref"[^>]*)>(.*?)</a>"#).unwrap())
 }
-fn sup_noteref_re() -> &'static Regex {
+pub(super) fn sup_noteref_re() -> &'static Regex {
     static R: OnceLock<Regex> = OnceLock::new();
     // <sup> 整体包裹的 noteref（图标脚标常见形态）。group1=a 属性、group2=a 内容(图标)。
     R.get_or_init(|| {
         Regex::new(r#"(?si)<sup[^>]*>\s*<a\b([^>]*\btype="noteref"[^>]*)>(.*?)</a>\s*</sup>"#).unwrap()
     })
 }
-fn qqfootnote_img_re() -> &'static Regex {
+pub(super) fn qqfootnote_img_re() -> &'static Regex {
     static R: OnceLock<Regex> = OnceLock::new();
     R.get_or_init(|| Regex::new(r#"(?si)<img\b([^>]*\bclass="qqreader-footnote"[^>]*?)/?>"#).unwrap())
 }
@@ -398,7 +25,7 @@ fn qqfootnote_img_re() -> &'static Regex {
 /// **实体转义**成字面文本、又是微读 CDN 远程图 → 设备离线渲染成一坨死文本、点不动。故只需把标记
 /// 内容换成干净可点上标数字、保留 `href="#frag"`（注释块原地不动即可跳）。group1=`<a>` 属性、
 /// group2=转义 img 内层（含 class/alt）。
-fn duokan_footnote_re() -> &'static Regex {
+pub(super) fn duokan_footnote_re() -> &'static Regex {
     static R: OnceLock<Regex> = OnceLock::new();
     R.get_or_init(|| {
         Regex::new(r#"(?si)<sup\b[^>]*>\s*<a\b([^>]*)>\s*&lt;img\b(.*?)/?&gt;\s*</a>\s*</sup>"#).unwrap()
@@ -407,7 +34,7 @@ fn duokan_footnote_re() -> &'static Regex {
 /// Calibre 洗过的 duokan 形态（`ebook-convert` AZW3/EPUB→EPUB 后）：标记里的 `<img>` 是**真标签**（非实体
 /// 转义）、src 已是本地图（图片内容仅是"注释N"小图，点不动、设备上一坨小块），`<a>` 上带回链落点
 /// `id="c_X_Y"`。group1=`<a>` 属性、group2=img 属性。与转义版共用同一替换逻辑。
-fn duokan_footnote_img_re() -> &'static Regex {
+pub(super) fn duokan_footnote_img_re() -> &'static Regex {
     static R: OnceLock<Regex> = OnceLock::new();
     R.get_or_init(|| {
         Regex::new(r#"(?si)<sup\b[^>]*>\s*<a\b([^>]*)>\s*<img\b([^>]*?)/?>\s*</a>\s*</sup>"#).unwrap()
@@ -436,7 +63,7 @@ pub fn normalize_self_hrefs(html: &str, own_basename: &str) -> String {
         .into_owned()
 }
 /// 从（转义的）img 内层抽注释序号：`alt="注释12"` → `12`。取不到返回 None（调用方用章内计数兜底）。
-fn duokan_note_num(img_inner: &str) -> Option<String> {
+pub(super) fn duokan_note_num(img_inner: &str) -> Option<String> {
     static R: OnceLock<Regex> = OnceLock::new();
     R.get_or_init(|| Regex::new(r#"(?i)alt="[^"]*?(\d+)"#).unwrap())
         .captures(img_inner)
@@ -446,7 +73,7 @@ fn duokan_note_num(img_inner: &str) -> Option<String> {
 /// 但该 id 在书里根本不存在=悬空）。**必须去链成纯文本**：reMarkable 链接索引器遇到"注释块内含
 /// 出链"会把整个脚注对判为互指对而**整对丢弃 → 正向 marker 也点不动**（同 break_footnote_cycles
 /// 的病理，但那里只拆真 2-环、够不到这悬空回链）。去链后注释跟 qqreader 版一样纯文本、正向恢复可跳。
-fn duokan_backlink_re() -> &'static Regex {
+pub(super) fn duokan_backlink_re() -> &'static Regex {
     static R: OnceLock<Regex> = OnceLock::new();
     R.get_or_init(|| Regex::new(r##"(?si)<a\b[^>]*\bhref="#c_\d+_\d+"[^>]*>(.*?)</a>"##).unwrap())
 }
@@ -454,30 +81,30 @@ fn duokan_backlink_re() -> &'static Regex {
 /// 多条注释成簇相邻时，reMarkable 渲染无效嵌套 `<p>` 会自动闭合外层 + 杂散 `</p>` → **吞/合并其中一条**
 /// （"缺一条"根因）。拍平成合法单段 `<p id="a_X_Y">注释文字</p>`，锚点保留、每条独立可跳。
 /// group1=id（a_X_Y）、group2=内层 `<p>` 属性、group3=注释文字。
-fn duokan_note_block_re() -> &'static Regex {
+pub(super) fn duokan_note_block_re() -> &'static Regex {
     static R: OnceLock<Regex> = OnceLock::new();
     R.get_or_init(|| {
         Regex::new(r##"(?si)<p\b[^>]*\bid="(a_\d+_\d+)"[^>]*>\s*<p\b([^>]*)>(.*?)</p>\s*</p>"##).unwrap()
     })
 }
-fn href_fragment(attrs: &str) -> Option<String> {
+pub(super) fn href_fragment(attrs: &str) -> Option<String> {
     static R: OnceLock<Regex> = OnceLock::new();
     R.get_or_init(|| Regex::new(r#"(?i)href="[^"]*#([^"]+)""#).unwrap())
         .captures(attrs)
         .map(|c| c.get(1).unwrap().as_str().to_string())
 }
-fn alt_text(attrs: &str) -> Option<String> {
+pub(super) fn alt_text(attrs: &str) -> Option<String> {
     static R: OnceLock<Regex> = OnceLock::new();
     R.get_or_init(|| Regex::new(r#"(?i)alt="([^"]*)""#).unwrap())
         .captures(attrs)
         .map(|c| c.get(1).unwrap().as_str().to_string())
 }
-fn esc_text(s: &str) -> String {
+pub(super) fn esc_text(s: &str) -> String {
     s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
 }
 /// aside 注释内层的回链 `href="partXXXX.html#frag"` 去跨文件前缀成同章 `href="#frag"`
 /// （内联后 marker 与注释同章，回链落点也在该章 → 同章可返回）。无 fragment 的 href 不动。
-fn deprefix_footnote_hrefs(s: &str) -> String {
+pub(super) fn deprefix_footnote_hrefs(s: &str) -> String {
     static R: OnceLock<Regex> = OnceLock::new();
     R.get_or_init(|| Regex::new(r#"(?i)href="[^"]*(#[^"]*)""#).unwrap())
         .replace_all(s, r#"href="$1""#)
@@ -508,7 +135,7 @@ pub fn collect_footnote_asides(html: &str) -> (String, Vec<(String, String)>) {
 
 /// 元素开标签是否带"注释"语义：epub:type/type/class 含 footnote|endnote|rearnote|note。
 /// 只认语义确证的块 → 目录页/普通交叉引用的跨文件链接绝不会被误当尾注搬走。
-fn note_semantic(open_tag: &str) -> bool {
+pub(super) fn note_semantic(open_tag: &str) -> bool {
     static R: OnceLock<Regex> = OnceLock::new();
     R.get_or_init(|| {
         Regex::new(r#"(?i)\b(?:epub:type|type|class)="[^"]*(?:footnote|endnote|rearnote|note)[^"]*""#).unwrap()
@@ -516,30 +143,30 @@ fn note_semantic(open_tag: &str) -> bool {
     .is_match(open_tag)
 }
 /// href 里的**跨文件** fragment：`href="非空路径#frag"` → Some(frag)；同文件 `href="#frag"` → None。
-fn href_crossfile_fragment(attrs: &str) -> Option<String> {
+pub(super) fn href_crossfile_fragment(attrs: &str) -> Option<String> {
     static R: OnceLock<Regex> = OnceLock::new();
     R.get_or_init(|| Regex::new(r##"(?i)href="([^"#]+)#([^"]+)""##).unwrap())
         .captures(attrs)
         .map(|c| c.get(2).unwrap().as_str().to_string())
 }
-fn aside_any_re() -> &'static Regex {
+pub(super) fn aside_any_re() -> &'static Regex {
     static R: OnceLock<Regex> = OnceLock::new();
     R.get_or_init(|| Regex::new(r#"(?si)<aside\b[^>]*>(.*?)</aside>"#).unwrap())
 }
-fn p_any_re() -> &'static Regex {
+pub(super) fn p_any_re() -> &'static Regex {
     static R: OnceLock<Regex> = OnceLock::new();
     R.get_or_init(|| Regex::new(r#"(?si)<p\b[^>]*>(.*?)</p>"#).unwrap())
 }
-fn li_any_re() -> &'static Regex {
+pub(super) fn li_any_re() -> &'static Regex {
     static R: OnceLock<Regex> = OnceLock::new();
     R.get_or_init(|| Regex::new(r#"(?si)<li\b[^>]*>(.*?)</li>"#).unwrap())
 }
-fn div_any_re() -> &'static Regex {
+pub(super) fn div_any_re() -> &'static Regex {
     static R: OnceLock<Regex> = OnceLock::new();
     // 非贪婪到最近 </div>；嵌套 div 会欠匹配 → 收集处对含嵌套的跳过（见 collect_footnote_notes 守卫）。
     R.get_or_init(|| Regex::new(r#"(?si)<div\b[^>]*>(.*?)</div>"#).unwrap())
 }
-fn a_generic_re() -> &'static Regex {
+pub(super) fn a_generic_re() -> &'static Regex {
     static R: OnceLock<Regex> = OnceLock::new();
     R.get_or_init(|| Regex::new(r#"(?si)<a\b([^>]*)>(.*?)</a>"#).unwrap())
 }
@@ -602,79 +229,6 @@ pub fn collect_footnote_notes(
             .into_owned();
     }
     (cleaned, index)
-}
-
-/// 折叠单个开始标签上的**重复 `id=` 属性**：每标签只保留第一个 id、删除后续的。
-/// 同元素两个 `id` 属性是非法 XHTML——reMarkable 用严格 XML 解析，遇重复属性**整章渲染失败**（只出前
-/// 几页，真机《消失的爱人》只 7 页根因，2026-09-01）。转换器（kf8 aid→id / mobi 注入 fpN）把我们的锚点
-/// id 放在首位，故"保留首个"= 保住锚点、丢弃冗余的既存 id（calibre `filepos`/`calibre_pb` 等）；也兜底
-/// 第三方 EPUB 本就带的重复 id 属性。`\bid=` 不误伤 `aid=`。
-pub fn collapse_dup_id_attrs(html: &str) -> String {
-    static RE_TAG: OnceLock<Regex> = OnceLock::new();
-    let re_tag = RE_TAG.get_or_init(|| Regex::new(r#"(?s)<[a-zA-Z][^>]*>"#).unwrap());
-    re_tag
-        .replace_all(html, |c: &regex::Captures| {
-            let tag = &c[0];
-            let ids: Vec<_> = id_re().find_iter(tag).collect();
-            if ids.len() <= 1 {
-                return tag.to_string();
-            }
-            let mut out = String::with_capacity(tag.len());
-            let mut last = 0usize;
-            for m in ids.iter().skip(1) {
-                // 连同紧邻的一个前导空白一起删，避免留下双空格
-                let mut start = m.start();
-                if start > last && tag.as_bytes()[start - 1] == b' ' {
-                    start -= 1;
-                }
-                out.push_str(&tag[last..start]);
-                last = m.end();
-            }
-            out.push_str(&tag[last..]);
-            out
-        })
-        .into_owned()
-}
-
-/// 全书 id 去重：reMarkable 锚点是**全书命名空间**，多章重用同一 id（如每章都有 `id="fn1"`）会让
-/// 所有 `#fn1` 都跳到全书第一处。按章调用、跨章累积 `seen`：本章某 id 若已在别章出现过，就把它
-/// （及本章内指向它的**同文件** `href="#id"`）改成全书唯一名。跨文件 `href="f#id"` 不碰。
-/// **先折叠单元素重复 id 属性**（非法 XHTML 兜底，见 `collapse_dup_id_attrs`），再做跨章值去重。
-pub fn dedup_ids_in_chapter(html: &str, seen: &mut std::collections::HashSet<String>) -> String {
-    let html = &collapse_dup_id_attrs(html);
-    let mut rename: std::collections::HashMap<String, String> = std::collections::HashMap::new();
-    let mut local: std::collections::HashSet<String> = std::collections::HashSet::new();
-    for c in id_re().captures_iter(html) {
-        let id = c.get(1).unwrap().as_str().to_string();
-        if !local.insert(id.clone()) {
-            continue; // 本章内同 id 只决策一次
-        }
-        if seen.contains(&id) {
-            let mut n = 2usize;
-            let mut cand = format!("{id}-x{n}");
-            while seen.contains(&cand) || local.contains(&cand) {
-                n += 1;
-                cand = format!("{id}-x{n}");
-            }
-            seen.insert(cand.clone());
-            local.insert(cand.clone());
-            rename.insert(id, cand);
-        } else {
-            seen.insert(id);
-        }
-    }
-    if rename.is_empty() {
-        return html.to_string();
-    }
-    let mut out = html.to_string();
-    for (old, new) in &rename {
-        let e = regex::escape(old);
-        let id_pat = Regex::new(&format!(r#"(?i)\bid="{e}""#)).unwrap();
-        out = id_pat.replace_all(&out, regex::NoExpand(&format!(r#"id="{new}""#))).into_owned();
-        let href_pat = Regex::new(&format!(r##"(?i)href="#{e}""##)).unwrap();
-        out = href_pat.replace_all(&out, regex::NoExpand(&format!(r##"href="#{new}""##))).into_owned();
-    }
-    out
 }
 
 /// 内联本章脚注。`index`=全书 footnote-id→注释内层html（导入版跨章注释）。
@@ -801,157 +355,9 @@ pub fn fix_duokan_markers(html: &str) -> String {
         .into_owned()
 }
 
-// ===== 字体解锁 =====
-fn style_attr_re() -> &'static Regex {
-    static R: OnceLock<Regex> = OnceLock::new();
-    R.get_or_init(|| Regex::new(r#"(?i)\s*style="([^"]*)""#).unwrap())
-}
-fn font_decl_re() -> &'static Regex {
-    static R: OnceLock<Regex> = OnceLock::new();
-    // font-family / font-size / font 简写声明（连同其后分号一并吃掉）。
-    // 值里可能含 HTML 实体如 &#39;（内含分号），故值用 `实体 | 非分号字符` 序列匹配，
-    // 避免在实体的分号处提前截断。
-    R.get_or_init(|| Regex::new(r#"(?i)font(?:-family|-size)?\s*:(?:&#?\w+;|[^;"])*;?"#).unwrap())
-}
-
-/// 剥掉内联 style 里的 font-family/font-size(及 font 简写)声明——第三方 EPUB 常内联硬写死
-/// 字体/字号，覆盖掉 xochitl 的阅读设置致"改不动字体"。删这些声明后 xochitl 设置即生效。
-/// style 因此清空则连整个 style 属性一并删掉；其他声明(颜色/对齐/缩进等)原样保留。
-pub fn strip_font_locks(html: &str) -> String {
-    style_attr_re()
-        .replace_all(html, |c: &regex::Captures| {
-            let inner = c.get(1).unwrap().as_str();
-            let cleaned = font_decl_re().replace_all(inner, "");
-            let cleaned = cleaned.trim();
-            if cleaned.is_empty() {
-                String::new() // 整个 style 属性删掉(连前导空格)
-            } else {
-                format!(" style=\"{cleaned}\"")
-            }
-        })
-        .into_owned()
-}
-
-// ── ② 按 e-ink 特性提正文对比（设备优化）───────────────────────────────────────────────
-// reMarkable Move 是 Gallery 3 彩色墨水屏：灰字发虚、细字重笔画消失（白皮书 §9.2「正文必须纯黑」）。
-// 大量第三方 EPUB 的 CSS 把正文设成灰色(color:#333)或细体(font-weight:300)，在这块屏上糊成一片。
-// 优化器把**灰色文字**强制纯黑、**细字重**提到 400——只碰 `color`/`font-weight`，不碰彩色文字
-// （Gallery 3 有色能显）、不碰 background/border-color。作用域：style 属性 + <style> 块 + .css 文件。
-
-/// 解析 CSS 颜色值 → (r,g,b)。支持 #rgb/#rrggbb、rgb()/rgba()（含 % 则放弃）、常见灰系命名色。
-/// 其余（彩色命名/关键字/currentColor 等）返回 None（不动）。
-fn parse_css_color(value: &str) -> Option<(u8, u8, u8)> {
-    let v = value.trim().to_ascii_lowercase();
-    if let Some(hex) = v.strip_prefix('#') {
-        let h = hex.trim();
-        if h.len() == 3 && h.chars().all(|c| c.is_ascii_hexdigit()) {
-            let d = |c: char| u8::from_str_radix(&c.to_string(), 16).unwrap() * 17;
-            let mut it = h.chars();
-            return Some((d(it.next()?), d(it.next()?), d(it.next()?)));
-        }
-        if h.len() == 6 && h.chars().all(|c| c.is_ascii_hexdigit()) {
-            let p = |i: usize| u8::from_str_radix(&h[i..i + 2], 16).unwrap();
-            return Some((p(0), p(2), p(4)));
-        }
-        return None;
-    }
-    if let Some(inner) = v.strip_prefix("rgb(").or_else(|| v.strip_prefix("rgba(")) {
-        let inner = inner.trim_end_matches(')');
-        if inner.contains('%') {
-            return None; // 百分比形式少见，稳妥不碰
-        }
-        let nums: Vec<u8> =
-            inner.split(',').take(3).filter_map(|p| p.trim().parse::<u8>().ok()).collect();
-        if nums.len() == 3 {
-            return Some((nums[0], nums[1], nums[2]));
-        }
-        return None;
-    }
-    // 灰系命名色（映射到中值即可，只用于走 achromatic_dark 判据）
-    let g = |x: u8| Some((x, x, x));
-    match v.as_str() {
-        "gray" | "grey" => g(128),
-        "dimgray" | "dimgrey" => g(105),
-        "darkgray" | "darkgrey" => g(169),
-        "lightgray" | "lightgrey" => g(211),
-        "silver" => g(192),
-        "gainsboro" => g(220),
-        "slategray" | "slategrey" => g(112),
-        "darkslategray" | "darkslategrey" => g(47),
-        "lightslategray" | "lightslategrey" => g(119),
-        _ => None,
-    }
-}
-
-/// 是否是"暗到中"的无彩色（灰）——R≈G≈B 且不是纯黑、也不是近白。这类文字在 e-ink 上发虚，强制纯黑。
-/// 近白(≥240)排除：可能是浅色背景/有意的白底反白，压黑会毁掉白字设计。
-fn achromatic_dark(r: u8, g: u8, b: u8) -> bool {
-    let mx = r.max(g).max(b);
-    let mn = r.min(g).min(b);
-    mx.saturating_sub(mn) <= 24 && (1..=239).contains(&mx)
-}
-
-/// font-weight 值是否"细到该提"（<400 或 lighter）——e-ink 上细笔画消失，提到 400 常规体。
-fn is_thin_weight(value: &str) -> bool {
-    let v = value.trim().to_ascii_lowercase();
-    if v == "lighter" {
-        return true;
-    }
-    v.parse::<u32>().map(|n| n < 400).unwrap_or(false)
-}
-
-/// 对一段 CSS 声明文本：灰色 `color` → `#000000`、细 `font-weight` → `400`。只认属性名本身
-/// （`color` 前必须是 起始/空白/`;`/`{`/引号，从而排除 background-color/border-color 等 `-color`）。
-fn darken_css_decls(css: &str) -> String {
-    use std::sync::OnceLock;
-    static COLOR_RE: OnceLock<Regex> = OnceLock::new();
-    static WEIGHT_RE: OnceLock<Regex> = OnceLock::new();
-    let color_re = COLOR_RE
-        .get_or_init(|| Regex::new(r#"(?i)(^|[\s;{"'])color(\s*:\s*)([^;}"']+)"#).unwrap());
-    let weight_re = WEIGHT_RE
-        .get_or_init(|| Regex::new(r#"(?i)(^|[\s;{"'])font-weight(\s*:\s*)([^;}"']+)"#).unwrap());
-    let s = color_re.replace_all(css, |c: &regex::Captures| {
-        let (lead, colon, val) = (&c[1], &c[2], &c[3]);
-        match parse_css_color(val) {
-            Some((r, g, b)) if achromatic_dark(r, g, b) => format!("{lead}color{colon}#000000"),
-            _ => c[0].to_string(),
-        }
-    });
-    weight_re
-        .replace_all(&s, |c: &regex::Captures| {
-            let (lead, colon, val) = (&c[1], &c[2], &c[3]);
-            if is_thin_weight(val) {
-                format!("{lead}font-weight{colon}400")
-            } else {
-                c[0].to_string()
-            }
-        })
-        .into_owned()
-}
-
-/// 对 (x)html：把 `style="..."` 属性与 `<style>…</style>` 块里的灰字/细字重按 e-ink 提对比。
-pub fn boost_text_contrast(html: &str) -> String {
-    use std::sync::OnceLock;
-    static ATTR_RE: OnceLock<Regex> = OnceLock::new();
-    static BLOCK_RE: OnceLock<Regex> = OnceLock::new();
-    let attr_re = ATTR_RE.get_or_init(|| Regex::new(r#"(?i)style="([^"]*)""#).unwrap());
-    let block_re = BLOCK_RE.get_or_init(|| Regex::new(r#"(?is)(<style\b[^>]*>)(.*?)(</style>)"#).unwrap());
-    let s = attr_re.replace_all(html, |c: &regex::Captures| {
-        format!(r#"style="{}""#, darken_css_decls(&c[1]))
-    });
-    block_re
-        .replace_all(&s, |c: &regex::Captures| format!("{}{}{}", &c[1], darken_css_decls(&c[2]), &c[3]))
-        .into_owned()
-}
-
-/// 对独立 `.css` 文件：整文件按 e-ink 提对比（灰字→纯黑、细字重→400）。
-pub fn boost_contrast_css(css: &str) -> String {
-    darken_css_decls(css)
-}
-
 /// 注释正文去标签成纯内联文本（供 `FootnoteMode::Inline` 塞进 `<span>`，杜绝块级标签造成非法嵌套
 /// →xochitl 严格 XML 整章白屏）。折叠空白、还原常见空格实体。
-fn inline_note_text(html: &str) -> String {
+pub(super) fn inline_note_text(html: &str) -> String {
     static TAG: OnceLock<Regex> = OnceLock::new();
     let tag = TAG.get_or_init(|| Regex::new(r"(?s)<[^>]*>").unwrap());
     let t = tag.replace_all(html, "");
@@ -1040,29 +446,6 @@ pub fn preserve_relink_footnotes(html: &str, index: &std::collections::HashMap<S
     match out.rfind("</body>") {
         Some(pos) => format!("{}{}{}", &out[..pos], block, &out[pos..]),
         None => format!("{out}{block}"),
-    }
-}
-
-#[cfg(test)]
-mod font_lock_tests {
-    use super::strip_font_locks;
-    #[test]
-    fn strips_full_font_style() {
-        // 导入赎罪真实形态：整个 style 都是 font → 连 style 属性一起删
-        let html = r#"<p style="font-size:16px;font-family:&#39;PingFang SC&#39;;">正文</p>"#;
-        assert_eq!(strip_font_locks(html), "<p>正文</p>");
-    }
-    #[test]
-    fn keeps_non_font_decls() {
-        let html = r#"<p style="color:red;font-size:16px;text-align:center;">x</p>"#;
-        let out = strip_font_locks(html);
-        assert!(!out.contains("font-size"), "font-size 未删: {out}");
-        assert!(out.contains("color:red"), "color 被误删: {out}");
-        assert!(out.contains("text-align:center"), "text-align 被误删: {out}");
-    }
-    #[test]
-    fn no_style_untouched() {
-        assert_eq!(strip_font_locks("<p>纯文本</p>"), "<p>纯文本</p>");
     }
 }
 
@@ -1352,49 +735,5 @@ mod optimizer_footnote_tests {
         // 三个 id 也只留首个
         let three = r#"<div id="a" id="b" id="c"></div>"#;
         assert_eq!(collapse_dup_id_attrs(three), r#"<div id="a"></div>"#);
-    }
-}
-
-#[cfg(test)]
-mod contrast_tests {
-    use super::*;
-
-    #[test]
-    fn gray_hex_and_named_forced_black_color_only() {
-        // 灰字→黑；彩色字不动；background/border-color 不碰；纯黑/近白不动。
-        let css = "p{color:#333;background-color:#eee}a{color:red}h1{color:gray}\
-                   .x{color:#000;border-color:#888}.w{color:#f5f5f5}";
-        let out = darken_css_decls(css);
-        assert!(out.contains("p{color:#000000;background-color:#eee}"), "灰字→黑、bg不碰: {out}");
-        assert!(out.contains("a{color:red}"), "彩色字不动: {out}");
-        assert!(out.contains("h1{color:#000000}"), "命名灰→黑: {out}");
-        assert!(out.contains(".x{color:#000;border-color:#888}"), "纯黑不动、border-color不碰: {out}");
-        assert!(out.contains(".w{color:#f5f5f5}"), "近白不动: {out}");
-    }
-
-    #[test]
-    fn thin_weight_bumped_to_400_keep_bold() {
-        let css = "a{font-weight:300}b{font-weight:lighter}c{font-weight:700}d{font-weight:normal}";
-        let out = darken_css_decls(css);
-        assert!(out.contains("a{font-weight:400}"), "300→400: {out}");
-        assert!(out.contains("b{font-weight:400}"), "lighter→400: {out}");
-        assert!(out.contains("c{font-weight:700}"), "bold 保留: {out}");
-        assert!(out.contains("d{font-weight:normal}"), "normal 保留: {out}");
-    }
-
-    #[test]
-    fn boost_html_handles_style_attr_and_block() {
-        let html = r#"<style>.n{color:#444}</style><p style="color:#666;font-weight:200">文</p>"#;
-        let out = boost_text_contrast(html);
-        assert!(out.contains("<style>.n{color:#000000}</style>"), "<style>块: {out}");
-        assert!(out.contains(r#"style="color:#000000;font-weight:400""#), "style属性: {out}");
-    }
-
-    #[test]
-    fn rgb_gray_forced_colored_rgb_kept() {
-        let css = "p{color:rgb(80,80,80)}q{color:rgb(200,20,20)}";
-        let out = darken_css_decls(css);
-        assert!(out.contains("p{color:#000000}"), "rgb 灰→黑: {out}");
-        assert!(out.contains("q{color:rgb(200,20,20)}"), "rgb 彩色不动: {out}");
     }
 }
