@@ -9,7 +9,7 @@
 //! 这是 note-serve 自己的簿记，不是条目库（条目库的唯一写者仍是 ink-serve）——丢了任意一份文件最坏
 //! 后果只是"重新判一次要不要重生成/重写"，不丢数据。
 use serde::{de::DeserializeOwned, Serialize};
-use rmsvc_core::fs::write_atomic;
+use rmsvc_core::fs::{plain_name, write_atomic};
 use std::collections::BTreeMap;
 use std::marker::PhantomData;
 use std::path::{Path, PathBuf};
@@ -43,14 +43,16 @@ impl<T: Clone + Serialize + DeserializeOwned> ChapterStore<T> {
     pub fn dir(&self) -> &Path {
         &self.dir
     }
-    fn path(&self, book_uuid: &str) -> PathBuf {
-        self.dir.join(format!("{book_uuid}.json"))
+    /// `<dir>/<book_uuid>.json`。uuid 来自 URL 路径参数（网关 percent_decode 之后可以含 `/`、`..`），
+    /// 必须过 `plain_name` 单段校验，否则 `dir.join("../../x.json")` 能读写目录之外的 .json。
+    fn path(&self, book_uuid: &str) -> Result<PathBuf, String> {
+        Ok(self.dir.join(format!("{}.json", plain_name(book_uuid)?)))
     }
     fn load(&self, book_uuid: &str) -> BookRecord<T> {
-        std::fs::read(self.path(book_uuid)).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
+        self.path(book_uuid).ok().and_then(|p| std::fs::read(p).ok()).and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
     }
     fn save(&self, book_uuid: &str, b: &BookRecord<T>) -> Result<(), String> {
-        write_atomic(&self.path(book_uuid), &serde_json::to_vec_pretty(b).map_err(|e| e.to_string())?).map_err(|e| format!("写状态失败: {e}"))
+        write_atomic(&self.path(book_uuid)?, &serde_json::to_vec_pretty(b).map_err(|e| e.to_string())?).map_err(|e| format!("写状态失败: {e}"))
     }
 
     pub fn get(&self, book_uuid: &str, chapter_idx: usize) -> Option<T> {
@@ -125,6 +127,20 @@ mod tests {
         assert!(st2.get("b1", 0).is_none(), "清掉之后就是没有过记录");
         assert_eq!(st2.list("b1").len(), 1, "另一章不受影响");
         st2.clear("b1", 0).unwrap(); // 再清一次（本来就没有）不报错
+    }
+
+    /// 回归：uuid 里带路径分隔符/`..` 不能读写目录之外的文件（URL 参数解码后可能含 `/`）。
+    #[test]
+    fn rejects_path_traversal_keys() {
+        let t = tempfile::tempdir().unwrap();
+        let dir = t.path().join("recs");
+        let st: ChapterStore<Rec> = ChapterStore::new(dir);
+        st.ensure().unwrap();
+        for bad in ["../evil", "a/b", "..", ".hidden", ""] {
+            assert!(st.set(bad, 0, Rec { a: "x".into(), b: 1 }).is_err(), "{bad:?} 应拒绝写");
+            assert!(st.get(bad, 0).is_none(), "{bad:?} 读不到");
+        }
+        assert!(!t.path().join("evil.json").exists(), "目录之外不能被写出文件");
     }
 
     /// 真机上已经存在的 `notebooks/<uuid>.json`（`ChapterRecord`：`doc_uuid`/`visible_name`/
