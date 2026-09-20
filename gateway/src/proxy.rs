@@ -16,7 +16,7 @@
 use rmsvc_core::http::{ApiError, ApiResult, JsonBody, Method, Reply, Request};
 use rmsvc_core::multipart::percent_encode as enc;
 use rmsvc_core::paths::Paths;
-use rmsvc_core::registry;
+use rmsvc_core::registry::{self, SvcClient};
 use std::io::Read;
 use std::time::{Duration, Instant};
 
@@ -126,9 +126,9 @@ pub fn forward(paths: &Paths, req: &mut Request<'_>) -> ApiResult {
     if let Some(kind) = gated {
         if matches!(kind, GatedOp::Optimize | GatedOp::Deliver) {
             if let Some(slot) = slot.take() {
-                let base = info.base_url();
+                let client = SvcClient::new(paths.clone(), "book-serve", 10);
                 std::thread::spawn(move || {
-                    poll_until_settled(&base, &book_name);
+                    poll_until_settled(&client, &book_name);
                     drop(slot);
                 });
             }
@@ -138,21 +138,17 @@ pub fn forward(paths: &Paths, req: &mut Request<'_>) -> ApiResult {
     Ok(reply)
 }
 
-/// 轮询 `{base_url}/staging`（直连后端服务，不经网关自己这层转发，避免自己调自己）直到
+/// 轮询 book-serve 的 `/staging`（直连后端服务，不经网关自己这层转发，避免自己调自己）直到
 /// [`crate::budget::is_settled`] 判定这本书已经不再忙，或等到 [`SETTLE_POLL_TIMEOUT`] 放弃。
 /// 服务查不到/请求失败（可能重启中）也直接放弃轮询——宁可名额提前释放，不要因为侦测本身不可靠
 /// 就把并发档位永久卡住。
-pub(crate) fn poll_until_settled(base_url: &str, name: &str) {
-    let agent = ureq::AgentBuilder::new().timeout(Duration::from_secs(10)).build();
+pub(crate) fn poll_until_settled(client: &SvcClient, name: &str) {
     let deadline = Instant::now() + SETTLE_POLL_TIMEOUT;
     loop {
-        match agent.get(&format!("{base_url}/staging")).call() {
-            Ok(resp) => match serde_json::from_reader::<_, serde_json::Value>(resp.into_reader()) {
-                Ok(json) if crate::budget::is_settled(&json, name) => return,
-                Ok(_) => {}      // 还在忙，继续轮询
-                Err(_) => return, // 应答不是预期 JSON——不可靠，放弃而不是死等
-            },
-            Err(_) => return, // 服务不可达，同上
+        match client.get_json("/staging") {
+            Ok(json) if crate::budget::is_settled(&json, name) => return,
+            Ok(_) => {}      // 还在忙，继续轮询
+            Err(_) => return, // 服务不可达/应答不是预期 JSON——不可靠，放弃而不是死等
         }
         if Instant::now() >= deadline {
             return;

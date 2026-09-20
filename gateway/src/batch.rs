@@ -12,7 +12,7 @@
 //! 继续跑——"关闭浏览器再回来能保持上次的未完记录并继续操作"（用户 2026-09-20 要求）。恢复时按最新母版库状态重新
 //! 校验每一本（已经优化完的不会重做）。任务自带动作，一个队列里可以混合优化/加入 xochitl/加入 KOReader。
 use rmsvc_core::paths::Paths;
-use rmsvc_core::registry;
+use rmsvc_core::registry::{self, SvcClient};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::VecDeque;
@@ -120,14 +120,13 @@ pub struct Enqueued {
     pub skipped: usize,
 }
 
-fn agent(secs: u64) -> ureq::Agent {
-    ureq::AgentBuilder::new().timeout(Duration::from_secs(secs)).build()
+/// 到另一个服务的客户端（每次现建：`registry::find` 已是 O(1)，端口变了/服务重启后自然取到新地址）。
+fn client(paths: &Paths, svc: &'static str, secs: u64) -> SvcClient {
+    SvcClient::new(paths.clone(), svc, secs)
 }
 
 fn staging_items(paths: &Paths) -> Result<Vec<Value>, String> {
-    let base = registry::find(paths, "book-serve").ok_or("book-serve 未安装或未运行")?.base_url();
-    let list: Value = serde_json::from_reader(agent(10).get(&format!("{base}/staging")).call().map_err(|e| format!("查母版库失败: {e}"))?.into_reader())
-        .map_err(|e| format!("母版库应答不是 JSON: {e}"))?;
+    let list = client(paths, "book-serve", 10).get_json("/staging")?;
     Ok(list.get("items").and_then(|v| v.as_array()).cloned().unwrap_or_default())
 }
 
@@ -216,9 +215,7 @@ pub fn stop(paths: &Paths) -> usize {
     };
     if let Some(c) = current {
         if !crate::budget::global().cancel(&c.name) {
-            if let Some(info) = registry::find(paths, "book-serve") {
-                let _ = post_json(&info.base_url(), "staging/cancel", json!({"name": c.name}), 10); // 尽力而为：没在跑/不可中断都无所谓
-            }
+            let _ = post(paths, "book-serve", "/staging/cancel", json!({"name": c.name}), 10); // 尽力而为：没在跑/不可中断都无所谓
         }
     }
     persist(paths);
@@ -337,55 +334,48 @@ fn worker(paths: &Paths) {
     }
 }
 
-fn post_json(base: &str, path: &str, body: Value, secs: u64) -> Result<Value, String> {
-    let req = agent(secs).post(&format!("{base}/{path}")).set("Content-Type", "application/json");
-    match req.send_string(&body.to_string()) {
-        Ok(r) => serde_json::from_reader::<_, Value>(r.into_reader()).map_err(|e| e.to_string()),
-        Err(ureq::Error::Status(_, r)) => {
-            let v = serde_json::from_reader::<_, Value>(r.into_reader()).unwrap_or(Value::Null);
-            Err(v.get("error").or_else(|| v.get("message")).and_then(|m| m.as_str()).unwrap_or("请求被拒绝").to_string())
-        }
-        Err(e) => Err(format!("服务无响应: {e}")),
-    }
+/// POST 并只取给用户看的失败原因（服务端错误体里的 message，不带 "book-serve POST /x:" 这类前缀）。
+fn post(paths: &Paths, svc: &'static str, path: &str, body: Value, secs: u64) -> Result<Value, String> {
+    client(paths, svc, secs).try_post_json(path, &body).map_err(|e| e.message)
 }
 
 /// 这本书在母版库列表里的 `delivered.<kind>` 终态（`ok`/`failed`/`cancelled` + 文案）；条目没了（优化时改名）→ None。
-fn final_check(base: &str, name: &str, kind: &str) -> Option<(String, String)> {
-    let list: Value = serde_json::from_reader(agent(10).get(&format!("{base}/staging")).call().ok()?.into_reader()).ok()?;
+fn final_check(paths: &Paths, name: &str, kind: &str) -> Option<(String, String)> {
+    let list = client(paths, "book-serve", 10).get_json("/staging").ok()?;
     let it = list.get("items")?.as_array()?.iter().find(|it| it.get("name").and_then(|v| v.as_str()) == Some(name))?;
     let c = it.get("delivered")?.get(kind)?;
     Some((c.get("status")?.as_str()?.to_string(), c.get("message").and_then(|m| m.as_str()).unwrap_or("").to_string()))
 }
 
 fn run_one(paths: &Paths, job: &Job) -> Result<(), String> {
-    let book = registry::find(paths, "book-serve").ok_or("book-serve 未安装或未运行")?.base_url();
+    registry::find(paths, "book-serve").ok_or("book-serve 未安装或未运行")?;
     let bytes = paths.staging_dir().join(&job.name).metadata().map(|m| m.len()).unwrap_or(0);
     // 同单条操作一样过并发/内存预算闸门；批量顺序执行，所以通常立即放行，只在别处同时在跑大书时才排队。
     let slot = crate::budget::global().admit(crate::budget::tier_of(bytes), &job.name).map_err(|e| e.message())?;
     let settled = |kind: &str, slot: crate::budget::Slot<'static>| -> Result<(), String> {
-        crate::proxy::poll_until_settled(&book, &job.name);
+        crate::proxy::poll_until_settled(&client(paths, "book-serve", 10), &job.name);
         drop(slot);
-        match final_check(&book, &job.name, kind) {
+        match final_check(paths, &job.name, kind) {
             Some((s, m)) if s == "failed" || s == "cancelled" => Err(m),
             _ => Ok(()),
         }
     };
     match job.action {
         Action::Optimize => {
-            post_json(&book, "staging/optimize", json!({"name": job.name}), 60)?;
+            post(paths, "book-serve", "/staging/optimize", json!({"name": job.name}), 60)?;
             settled("optimize", slot)
         }
         Action::Deliver => {
-            post_json(&book, "staging/deliver", json!({"name": job.name, "folder": job.folder}), 60)?;
+            post(paths, "book-serve", "/staging/deliver", json!({"name": job.name, "folder": job.folder}), 60)?;
             settled("deliver", slot)
         }
         Action::Koreader => {
-            let ko = registry::find(paths, "koreader-serve").ok_or("koreader-serve 未安装或未运行")?.base_url();
-            let r = post_json(&ko, "books/adopt", json!({"name": job.name, "folder": job.folder}), 900);
+            registry::find(paths, "koreader-serve").ok_or("koreader-serve 未安装或未运行")?;
+            let r = post(paths, "koreader-serve", "/books/adopt", json!({"name": job.name, "folder": job.folder}), 900);
             drop(slot);
             r?;
             // 记一笔"已加入 KOReader"（各服务只写自己的目录，落库记录归 book-serve），失败不算这本书失败。
-            let _ = post_json(&book, "staging/mark", json!({"name": job.name, "target": "koreader"}), 30);
+            let _ = post(paths, "book-serve", "/staging/mark", json!({"name": job.name, "target": "koreader"}), 30);
             Ok(())
         }
     }
