@@ -1,10 +1,20 @@
 # reMarkable 设备端 Web 服务基座（rmsvc-core）白皮书
 
-> 记"怎么决定、为什么正名搬顶层、踩了什么坑"。读现状先看 §00b；待办看 §05；踩坑看 §04。
+> 记"怎么决定、为什么正名搬顶层、踩了什么坑"。读现状先看“3 分钟读懂”和 §00b；待办看 §05；踩坑看 §04。模块清单与 Rust API 入口见 [`../README.md`](../README.md)。
 > **本 crate 的架构决策大多是在还叫 `shelf-core`、还挂在 `shelf/crates/` 下时定的**——Repository/
 > Template Method/Registry/Facade 这些设计模式的取舍过程记在 `shelf/docs/reMarkable书架白皮书.md`
 > §01（"三种拆法"那节），本文不重复搬运那段历史，只记"正名搬顶层"这件事本身，以及正名之后
 > 独立存在时的现状、消费方、维护纪律。
+
+## 3 分钟读懂
+
+**它是什么**：设备上十来个小 Web 服务（书架、KOReader、字体、壁纸、笔记四件套、网关）共用的“地基库”——路径、服务注册、HTTP 适配、流式上传、事件总线、往 xochitl 塞书、登录/TLS 这些每个服务都要的杂活，只写一份。服务只写自己的业务。
+
+![模块地图与消费方](diagrams/module-map.svg)
+
+**术语**：*注册表*＝每个服务启动时在 `$XDG_RUNTIME_DIR/shelf/services/<名>.json` 写下端口，网关读目录即知谁活着；*Repository / Template Method*＝`asset` 里把“上传→暂存→扩展名门→校验→安装→回执”流程写一次，各仓库只实现差异；*剥离移植*＝需要旧项目的某项能力时不依赖旧 crate，而是把已验证的结论独立重写一份；*path 依赖*＝消费方在 `Cargo.toml` 里直接写相对路径依赖本 crate，不经 workspace。
+
+**三条要记住的事**：① 本 crate 不知道任何消费方（单向依赖）；② 改任何模块前先想清楚几条线谁在用；③ XDG 路径仍叫 `shelf`（已部署设备的真实路径，改名要迁移）。
 
 ## 00｜定位与原则
 
@@ -59,9 +69,13 @@ rmsvc-core/Cargo.toml`），各消费方各自的 Cargo workspace/独立项目�
 | `clock` | 时间戳唯一出处 |
 | `formats` | 文件扩展名白名单单一事实源（`IMAGE_EXTS`/`FONT_EXTS`…） |
 | `ttf` | TTF/OTF 解析：`name` 表家族名、魔数校验、CJK 覆盖率（cmap），`font-serve`/`koreader-serve` 共用 |
-| `tls`/`auth`/`mdns`/`netinfo` | 私有 CA 自签、密码策略/Basic 认证、mDNS 应答器、网络信息，`gateway`/各领域服务按需用 |
+| `service` | 服务启动模板（解析 `--bind` → 建目录 → 自注册 → 起服务器，自带 `GET /health`） |
+| `cache` | 单值 TTL 缓存（`/status` 这类重活接口降频，操作后可主动失效） |
+| `tls` | 私有 CA（10 年）+ 叶证书（800 天，过期前 30 天或 SAN 变化时自动换叶） |
+| `auth` | PBKDF2-HMAC-SHA256（60 万轮）密码哈希——旧版单轮加盐 SHA-256 仍可校验、改密后自动升级；Basic/Cookie 解析、内存会话表、失败限速器 `FailLimiter`（2026-09-09 审计加固） |
+| `mdns`/`netinfo` | 极简 mDNS 应答器（`shelf.local`）、本机 IPv4 表（读 `/proc/net`，不 fork 进程） |
 
-**测试**：51 个单测，`cargo test --manifest-path rmsvc-core/Cargo.toml` 独立跑，CI `rust` job
+**测试**：76 个单测（2026-09-22 数，随代码增长），`cargo test --manifest-path rmsvc-core/Cargo.toml` 独立跑，CI `rust` job
 单列一步（仿 `device-core` 先例）。
 
 ## 01｜架构决策：为什么正名，而不是继续留在 shelf 底下
@@ -137,7 +151,7 @@ services/`）、没有改默认密码字面量 `shelf`、没有改 mDNS 域名 `
   `font-serve` 原来的 `Cargo.toml` 用 `version.workspace = true`/`edition.workspace = true`/
   `license.workspace = true` 继承自 `shelf/Cargo.toml` 的 `[workspace.package]`；挪出
   workspace 后这些字段全部要改成字面量，`[profile.release]`（`opt-level="z"`/`lto`/
-  `strip`/`panic="abort"`/`codegen-units=1`）同理要各自复制一份，不再能从 workspace 继承。
+  `strip`/`codegen-units=1`）同理要各自复制一份，不再能从 workspace 继承。**panic 策略后来改了**：当时复制的是 `panic="abort"`；2026-09-19 真机（《镖人》）踩到 abort 下 `catch_unwind` 完全无效、一次 panic 摔掉整个进程，`gateway`/`shelf`/`notes` 的 release profile 已改为 `panic="unwind"`（见各自 `Cargo.toml` 注释），代价是二进制体积略增；`enhance/{font,wallpaper}-serve` 目前仍是 `abort`（没有依赖 `catch_unwind` 的后台线程）。
 
 ## 05｜命名遗留 + 待办
 
