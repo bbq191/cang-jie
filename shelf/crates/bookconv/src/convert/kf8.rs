@@ -201,8 +201,11 @@ fn remap_links(
     ch_ranges: &[(usize, usize)],
     live_ids: &HashSet<String>,
 ) -> String {
-    let re = Regex::new(r#"(?i)href="kindle:pos:fid:([0-9A-Fa-f]+):off:([0-9]+)""#).unwrap();
-    let re_other = Regex::new(r#"(?i)href="kindle:[^"]*""#).unwrap();
+    // 每章调用一次：正则只编译一次（此前每章各编译两个，几百章的书白白多几百次编译）。
+    static RE_POS: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+    static RE_OTHER: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+    let re = RE_POS.get_or_init(|| Regex::new(r#"(?i)href="kindle:pos:fid:([0-9A-Fa-f]+):off:([0-9]+)""#).unwrap());
+    let re_other = RE_OTHER.get_or_init(|| Regex::new(r#"(?i)href="kindle:[^"]*""#).unwrap());
     let s = re.replace_all(html, |cap: &regex::Captures| {
         let fid = usize::from_str_radix(&cap[1], 16).unwrap_or(usize::MAX);
         let off = cap[2].parse::<usize>().unwrap_or(0);

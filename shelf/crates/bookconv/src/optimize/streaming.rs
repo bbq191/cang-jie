@@ -119,7 +119,8 @@ impl<'a> StreamingOptimize<'a> {
                     let job = { rx.lock().unwrap_or_else(|e| e.into_inner()).recv() };
                     let Ok(job) = job else { break };
                     let _permit = budget.acquire(crate::imgopt::pixel_count(&job.bytes));
-                    let _ = job.reply.send(transform_image_bytes(&job.bytes, is_comic_book, comic_frame));
+                    let out = transform_image_bytes(&job.bytes, is_comic_book, comic_frame).unwrap_or(job.bytes);
+                    let _ = job.reply.send(out);
                 });
             }
             let mut pending: std::collections::VecDeque<std::sync::mpsc::Receiver<Vec<u8>>> = std::collections::VecDeque::new();

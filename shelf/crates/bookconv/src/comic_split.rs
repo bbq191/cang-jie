@@ -286,7 +286,8 @@ fn build_piece_with(
     let mut chapters = Vec::new();
     let mut resources = Vec::new();
     let mut remap: HashMap<String, String> = HashMap::new();
-    for (offset, p) in spine[start..end].iter().enumerate() {
+    // `get` 而不是直接切片：调用方边界一旦出错（start>end / 越界）只是当空范围（随后报"没有可用页面"），不让 book-serve 整个进程 panic。
+    for (offset, p) in spine.get(start..end).unwrap_or(&[]).iter().enumerate() {
         let idx = start + offset;
         let Some(e) = by_name.get(p.as_str()) else { continue };
         if !is_html(p) {
@@ -739,6 +740,24 @@ mod tests {
             br#"<container><rootfiles><rootfile full-path="content.opf"/></rootfiles></container>"#,
         ));
         entries
+    }
+
+    #[test]
+    fn build_piece_out_of_range_bounds_errors_instead_of_panicking() {
+        let entries = make_multivol(&[2, 2], 100);
+        assert!(build_piece(&entries, 3, 99, "越界", "x").is_err(), "end 越界");
+        assert!(build_piece(&entries, 3, 1, "反向", "x").is_err(), "start>end");
+    }
+
+    #[test]
+    fn streaming_fetch_error_fails_the_piece_instead_of_embedding_empty_image() {
+        // 图片读取报错（非"不存在"）要让这一份组包失败，而不是悄悄塞一张 0 字节图。
+        let entries = make_multivol(&[2], 100);
+        let err = build_piece_with(&entries, 0, 2, "卷0", "x", &mut |_| Err("读坏了".into())).unwrap_err();
+        assert!(err.contains("读坏了"), "{err}");
+        // 书里没有这张图（Ok(None)）→ 跳过该图，页仍在（沿用旧行为）。
+        let ok = build_piece_with(&entries, 0, 2, "卷0", "x", &mut |_| Ok(None));
+        assert!(ok.is_err(), "所有图都缺 → 没有任何可用页面: {ok:?}");
     }
 
     #[test]

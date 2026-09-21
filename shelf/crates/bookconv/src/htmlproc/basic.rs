@@ -238,15 +238,24 @@ pub fn dedup_ids_in_chapter(html: &str, seen: &mut std::collections::HashSet<Str
     if rename.is_empty() {
         return html.to_string();
     }
-    let mut out = html.to_string();
-    for (old, new) in &rename {
-        let e = regex::escape(old);
-        let id_pat = Regex::new(&format!(r#"(?i)\bid="{e}""#)).unwrap();
-        out = id_pat.replace_all(&out, regex::NoExpand(&format!(r#"id="{new}""#))).into_owned();
-        let href_pat = Regex::new(&format!(r##"(?i)href="#{e}""##)).unwrap();
-        out = href_pat.replace_all(&out, regex::NoExpand(&format!(r##"href="#{new}""##))).into_owned();
-    }
-    out
+    // **一遍**替换 `id="旧"` 与同文件 `href="#旧"`（此前每个重命名各编译两个正则、各扫全章两遍：每章 60 个重复 id 时
+    // 章均 120 次编译+240 次全章扫描，300 章的书 host 上 3.1s、设备上按 8 倍估算 25s，见 bench；现在每章 1 次扫描）。
+    // 属性名/值按原文精确匹配（旧实现的 `(?i)` 连值也忽略大小写，会把 `id="A"` 误当 `id="a"` 一起改名）。
+    static RE_ID_OR_HREF: OnceLock<Regex> = OnceLock::new();
+    let re = RE_ID_OR_HREF.get_or_init(|| Regex::new(r##"(?i)\bid="([^"]+)"|href="#([^"]+)""##).unwrap());
+    re.replace_all(html, |c: &regex::Captures| {
+        let (val, is_id) = match c.get(1) {
+            Some(v) => (v.as_str(), true),
+            None => (c.get(2).unwrap().as_str(), false),
+        };
+        match rename.get(val) {
+            // 与旧实现一致：属性名统一成小写 `id="…"` / `href="#…"`。
+            Some(new) if is_id => format!(r#"id="{new}""#),
+            Some(new) => format!(r##"href="#{new}""##),
+            None => c[0].to_string(),
+        }
+    })
+    .into_owned()
 }
 
 #[cfg(test)]
