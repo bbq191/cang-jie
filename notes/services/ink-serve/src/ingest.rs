@@ -113,10 +113,7 @@ pub fn ingest_doc(lib: &Path, crops_dir: &Path, db: &BookDb, cfg: &IngestConfig,
 /// 书不再活了（回收站/已删）：条目库里如果还有没撤销的条目，全标 `Revoked`（不物理删，历史留痕）。
 /// 没追平摄取过的书（条目库压根没有）是 no-op；已经全撤销过也是 no-op（幂等，事件重复触发不白做功）。
 fn revoke_stale(db: &BookDb, uuid: &str, now: u64) -> Result<Option<DocStats>, String> {
-    if db.load(uuid).is_none() {
-        return Ok(None);
-    }
-    let revoked = db.update(uuid, || Default::default(), |b| {
+    let Some(revoked) = db.update_existing(uuid, |b| {
         let mut n = 0usize;
         // 同一个"排除法"漏洞（见 notecore::ingest::merge_page 的注释）：`Skipped`/`Archived` 也是
         // 终态，书被删/进回收站不该把它们悄悄改判成 `Revoked`——那样以后 `restore()` 会走错分支。
@@ -128,7 +125,7 @@ fn revoke_stale(db: &BookDb, uuid: &str, now: u64) -> Result<Option<DocStats>, S
             n += 1;
         }
         n
-    })?;
+    })? else { return Ok(None) };
     Ok((revoked > 0).then(|| DocStats { pages: 0, merge: MergeStats { revoked, ..Default::default() } }))
 }
 

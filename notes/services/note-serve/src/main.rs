@@ -33,7 +33,7 @@ use ink::{EntryStore, InkHttp};
 use notebooks::NotebookState;
 use publish::{generate_book, generate_chapter, ChapterResult, Ctx, Uploader, XochitlUploader};
 use rmsvc_core::events::EventBus;
-use rmsvc_core::http::{bind, ApiError, ApiResult, Reply, Router};
+use rmsvc_core::http::{bind, ApiError, ApiResult, Reply, Request, Router};
 use rmsvc_core::paths::Paths;
 use rmsvc_core::service::{self, ServiceSpec};
 use std::sync::Arc;
@@ -58,6 +58,33 @@ impl State {
     fn ctx(&self, now_ms: u64) -> Ctx<'_> {
         Ctx { store: self.store.as_ref(), uploader: self.uploader.as_ref(), trash: self.trash.as_ref(), state: &self.notebooks, now_ms }
     }
+}
+
+/// 路径参数 `{idx}` → 章序号（非数字 400）。
+fn chapter_idx(r: &Request<'_>) -> Result<usize, ApiError> {
+    r.param("idx").parse().map_err(|_| ApiError::bad("章序号不对"))
+}
+
+/// 每章"设备笔记本 / Obsidian md 是否跟当前条目内容同步"（`GET /books/{uuid}/sync` 的本体，纯读）：当前活条目算出的
+/// 指纹 vs 上次成功生成/导出时记的指纹。`xxxNeeded`：这一章有没有条目要投这个去处——没有的话 `xxxSynced` 恒真
+/// （俩指纹都是 `None`），但网页得知道是"没什么要同步的"还是"已经同步过"，两种意思不一样，靠这个字段区分
+/// （前端据此决定要不要显示对应的 📓/🔗 徽章）。
+fn sync_status(book: &notecore::model::Book, notebooks: &NotebookState, exports: &ExportState) -> Vec<serde_json::Value> {
+    (0..book.chapters.len())
+        .map(|idx| {
+            let nb_fp = notecore::project::fingerprint_chapter(book, idx);
+            let nb_rec = notebooks.get(&book.uuid, idx);
+            let nb_synced = nb_fp.as_deref() == nb_rec.as_ref().map(|r| r.fingerprint.as_str());
+            let ob_fp = notecore::export::fingerprint_chapter(book, idx);
+            let ob_rec = exports.get(&book.uuid, idx);
+            let ob_synced = ob_fp.as_deref() == ob_rec.as_ref().map(|r| r.fingerprint.as_str());
+            serde_json::json!({
+                "chapter": idx,
+                "notebookNeeded": nb_fp.is_some(), "notebookSynced": nb_synced, "notebookGeneratedAt": nb_rec.map(|r| r.generated_at),
+                "obsidianNeeded": ob_fp.is_some(), "obsidianSynced": ob_synced, "obsidianExportedAt": ob_rec.map(|r| r.exported_at),
+            })
+        })
+        .collect()
 }
 
 fn results_reply(results: &[ChapterResult]) -> ApiResult {
@@ -116,7 +143,7 @@ fn main() {
         }))
         .post("/books/{uuid}/chapters/{idx}/generate", bind(&st, |s, r| {
             let uuid = r.param("uuid").to_string();
-            let idx: usize = r.param("idx").parse().map_err(|_| ApiError::bad("章序号不对"))?;
+            let idx = chapter_idx(r)?;
             let book = s.store.book(&uuid).map_err(ApiError::bad)?;
             let result = generate_chapter(&s.ctx(rmsvc_core::clock::now_ms()), &book, idx);
             s.bus.publish("notes", "notebooks");
@@ -139,7 +166,7 @@ fn main() {
             Ok(Reply::ok(&serde_json::json!({"ok": true, "files": files})))
         }))
         .post("/books/{uuid}/chapters/{idx}/export", bind(&st, |s, r| {
-            let idx: usize = r.param("idx").parse().map_err(|_| ApiError::bad("章序号不对"))?;
+            let idx = chapter_idx(r)?;
             let book = s.store.book(r.param("uuid")).map_err(ApiError::bad)?;
             if book.chapters.get(idx).is_none() {
                 return Err(ApiError::bad("没有这一章"));
@@ -156,35 +183,14 @@ fn main() {
         // 只读，不碰任何文件/网络（生成/导出本身该点对应按钮，这里只是查状态）。
         .get("/books/{uuid}/sync", bind(&st, |s, r| {
             let book = s.store.book(r.param("uuid")).map_err(ApiError::bad)?;
-            let chapters: Vec<serde_json::Value> = book
-                .chapters
-                .iter()
-                .enumerate()
-                .map(|(idx, _)| {
-                    let nb_fp = notecore::project::fingerprint_chapter(&book, idx);
-                    let nb_rec = s.notebooks.get(&book.uuid, idx);
-                    let nb_synced = nb_fp.as_deref() == nb_rec.as_ref().map(|r| r.fingerprint.as_str());
-                    let ob_fp = notecore::export::fingerprint_chapter(&book, idx);
-                    let ob_rec = s.exports.get(&book.uuid, idx);
-                    let ob_synced = ob_fp.as_deref() == ob_rec.as_ref().map(|r| r.fingerprint.as_str());
-                    // `xxxNeeded`：这一章有没有条目要投这个去处——没有的话 `xxxSynced` 恒真（俩指纹都是
-                    // `None`），但网页得知道是"没什么要同步的"还是"已经同步过"，两种意思不一样，靠这个
-                    // 字段区分（前端据此决定要不要显示对应的 📓/🔗 徽章）。
-                    serde_json::json!({
-                        "chapter": idx,
-                        "notebookNeeded": nb_fp.is_some(), "notebookSynced": nb_synced, "notebookGeneratedAt": nb_rec.map(|r| r.generated_at),
-                        "obsidianNeeded": ob_fp.is_some(), "obsidianSynced": ob_synced, "obsidianExportedAt": ob_rec.map(|r| r.exported_at),
-                    })
-                })
-                .collect();
-            Ok(Reply::ok(&serde_json::json!({"chapters": chapters})))
+            Ok(Reply::ok(&serde_json::json!({"chapters": sync_status(&book, &s.notebooks, &s.exports)})))
         }))
         // 光落设备盘用户够不着（得 SSH）——这个额外把同一份内容当浏览器下载直接吐回去，配合网关
         // 新转发的 Content-Disposition 头，点「导出 md」之后浏览器会像正常网页下载一样存到本地
         // （存到哪由浏览器自己的下载设置决定：没配置就是系统默认下载目录，配了"每次询问"就会弹框
         // 让用户选，网关/服务端管不到也不该管这一层）。
         .get("/books/{uuid}/chapters/{idx}/export.md", bind(&st, |s, r| {
-            let idx: usize = r.param("idx").parse().map_err(|_| ApiError::bad("章序号不对"))?;
+            let idx = chapter_idx(r)?;
             let book = s.store.book(r.param("uuid")).map_err(ApiError::bad)?;
             let title = book.chapters.get(idx).ok_or_else(|| ApiError::bad("没有这一章"))?.clone();
             let md = notecore::export::export_chapter_md(&book, idx).ok_or_else(|| ApiError::not_found("本章没有可导出的内容"))?;
@@ -202,5 +208,47 @@ fn main() {
     if let Err(e) = service::run(&SPEC, &bind_addr, &paths, router) {
         eprintln!("[note-serve] {e}");
         std::process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use notecore::model::{Book, Entry, Status, Style};
+    use std::collections::HashMap;
+
+    fn entry(id: &str, chapter: usize, dest: notecore::model::Destination) -> Entry {
+        Entry { id: id.into(), page: "p".into(), page_index: 0, chapter: Some(chapter), chapter_title: String::new(), subhead: None, quote: None, ink: None, drafts: vec![], text: Some("正文".into()), style: Style::Body, ask_ai: false, question: None, answer: None, status: Status::Reviewed, destination: dest, source: Default::default(), created: 0, updated: 0 }
+    }
+
+    #[test]
+    fn sync_status_distinguishes_needed_synced_and_never_pushed() {
+        use notecore::model::Destination;
+        let t = tempfile::tempdir().unwrap();
+        let (notebooks, exports) = (NotebookState::new(t.path().join("nb")), ExportState::new(t.path().join("ex")));
+        notebooks.ensure().unwrap();
+        exports.ensure().unwrap();
+        let book = Book { uuid: "b".into(), title: "书".into(), chapters: vec!["一".into(), "二".into()], entries: vec![entry("e1", 0, Destination::Both), entry("e2", 1, Destination::Obsidian)], ..Default::default() };
+        // 都没推送过：第 0 章两个去处都需要且未同步；第 1 章只要 Obsidian，笔记本"不需要"（fp=None 两边 None → 恒同步）
+        let v = sync_status(&book, &notebooks, &exports);
+        assert_eq!(v.len(), 2);
+        assert_eq!((v[0]["notebookNeeded"].as_bool(), v[0]["notebookSynced"].as_bool(), v[0]["obsidianSynced"].as_bool()), (Some(true), Some(false), Some(false)));
+        assert_eq!((v[1]["notebookNeeded"].as_bool(), v[1]["notebookSynced"].as_bool(), v[1]["obsidianNeeded"].as_bool()), (Some(false), Some(true), Some(true)));
+        assert!(v[0]["notebookGeneratedAt"].is_null() && v[0]["obsidianExportedAt"].is_null());
+        // 记下当前指纹后同步
+        let fp = notecore::export::fingerprint_chapter(&book, 0).unwrap();
+        exports.set("b", 0, export_state::ExportRecord { fingerprint: fp, exported_at: 7 }).unwrap();
+        let v = sync_status(&book, &notebooks, &exports);
+        assert_eq!((v[0]["obsidianSynced"].as_bool(), v[0]["obsidianExportedAt"].as_u64()), (Some(true), Some(7)));
+    }
+
+    #[test]
+    fn chapter_idx_parses_or_rejects() {
+        let mut empty: &[u8] = b"";
+        let mut req = Request { method: rmsvc_core::http::Method::Get, path: String::new(), query: HashMap::new(), params: HashMap::new(), content_type: String::new(), content_length: None, headers: vec![], body: &mut empty };
+        req.params.insert("idx".into(), "3".into());
+        assert_eq!(chapter_idx(&req).unwrap(), 3);
+        req.params.insert("idx".into(), "x".into());
+        assert!(chapter_idx(&req).is_err());
     }
 }

@@ -34,7 +34,7 @@ mod koreader;
 use bookdb::BookDb;
 use config::IngestConfig;
 use koreader::KoreaderHttp;
-use notecore::model::{Answer, Destination, Draft, Status, Style};
+use notecore::model::{Answer, Destination, Draft, Entry, Status, Style};
 use rmsvc_core::events::EventBus;
 use rmsvc_core::fs::plain_name;
 use rmsvc_core::http::{bind, ApiError, ApiResult, Reply, Request, Router};
@@ -72,21 +72,24 @@ impl State {
     }
 }
 
-/// 浏览态动作：`Mined→Pending`（转入笔记）/ `Mined→Skipped`（不需要），见 `notecore::model::Entry::set_triage`。
-fn triage(s: &State, r: &mut Request<'_>, target: Status) -> ApiResult {
-    let (uuid, id) = (r.param("uuid").to_string(), r.param("id").to_string());
-    if s.db.load(&uuid).is_none() {
-        return Err(ApiError::not_found("没有这本书的条目"));
-    }
-    let now = rmsvc_core::clock::now_secs();
-    let outcome = s.db.update(&uuid, || Default::default(), |b| b.entries.iter_mut().find(|e| e.id == id).map(|e| e.set_triage(target, now))).map_err(ApiError::internal)?;
-    match outcome {
-        None => return Err(ApiError::not_found("没有这条目")),
-        Some(Err(e)) => return Err(ApiError::bad(e)),
-        Some(Ok(())) => {}
+/// 对一本书里的一条条目做「读—改—写」，并统一映射结果：书/条目不存在 → 404；业务规则拒绝（`f` 返回 `Err`）→ 400；
+/// 成功 → 发 `entries` 事件。改字段（POST entries/{id}）、浏览态动作、回收站恢复共用（此前各写一遍逐行相同的
+/// "先 load 判存在 → update → 三分支 match → publish"）。
+fn edit_entry(s: &State, uuid: &str, id: &str, f: impl FnOnce(&mut Entry) -> Result<(), String>) -> ApiResult {
+    match s.db.update_existing(uuid, |b| b.entries.iter_mut().find(|e| e.id == id).map(f)).map_err(ApiError::internal)? {
+        None => return Err(ApiError::not_found("没有这本书的条目")),
+        Some(None) => return Err(ApiError::not_found("没有这条目")),
+        Some(Some(Err(e))) => return Err(ApiError::bad(e)),
+        Some(Some(Ok(()))) => {}
     }
     s.bus.publish("notes", "entries");
     Ok(Reply::ok(&serde_json::json!({"ok": true})))
+}
+
+/// 浏览态动作：`Mined→Pending`（转入笔记）/ `Mined→Skipped`（不需要），见 `notecore::model::Entry::set_triage`。
+fn triage(s: &State, r: &mut Request<'_>, target: Status) -> ApiResult {
+    let now = rmsvc_core::clock::now_secs();
+    edit_entry(s, r.param("uuid"), r.param("id"), |e| e.set_triage(target, now))
 }
 
 fn main() {
@@ -145,18 +148,14 @@ fn main() {
         .post("/books/{uuid}/entries/{id}", bind(&st, |s, r| {
             let (uuid, id) = (r.param("uuid").to_string(), r.param("id").to_string());
             let j = r.json()?;
-            if s.db.load(&uuid).is_none() {
-                return Err(ApiError::not_found("没有这本书的条目"));
-            }
             let now = rmsvc_core::clock::now_secs();
-            let outcome = s.db.update(&uuid, || Default::default(), |b| {
-                let subhead_hint = j.0.get("subheadHint").and_then(|v| v.as_str()).map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
-                let Some(e) = b.entries.iter_mut().find(|e| e.id == id) else { return None };
+            let subhead_hint = j.0.get("subheadHint").and_then(|v| v.as_str()).map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
+            edit_entry(s, &uuid, &id, |e| {
                 // 终态守卫（2026-09-09 审计补）：这条通用改字端点原来不检查状态，能把已"跳过/撤销/
                 // 删除"的条目通过 apply_marked_text/写草稿悄悄拉回 Draft，绕开 set_triage/restore
                 // 明文规定的业务规则——先恢复（`/restore`）才能再改。
                 if e.is_terminal() {
-                    return Some(Err("这条已跳过/撤销/删除，不能再改，请先在回收站里恢复".to_string()));
+                    return Err("这条已跳过/撤销/删除，不能再改，请先在回收站里恢复".to_string());
                 }
                 // 用户直接在网页文本框改字：跟转写草稿写回同一套行首标记规则（`notecore::model::Entry::
                 // apply_marked_text`）——`-`/`1.`/`口`/`##`/`### ` 都认，样式不再靠单独的下拉手动选
@@ -193,40 +192,18 @@ fn main() {
                     e.destination = v;
                 }
                 e.updated = now;
-                Some(Ok(()))
-            }).map_err(ApiError::internal)?;
-            match outcome {
-                None => return Err(ApiError::not_found("没有这条目")),
-                Some(Err(e)) => return Err(ApiError::bad(e)),
-                Some(Ok(())) => {}
-            }
-            s.bus.publish("notes", "entries");
-            Ok(Reply::ok(&serde_json::json!({"ok": true})))
+                Ok(())
+            })
         }))
         .post("/books/{uuid}/entries/{id}/request", bind(&st, |s, r| triage(s, r, Status::Pending)))
         .post("/books/{uuid}/entries/{id}/skip", bind(&st, |s, r| triage(s, r, Status::Skipped)))
         .post("/books/{uuid}/entries/{id}/archive", bind(&st, |s, r| triage(s, r, Status::Archived)))
         .post("/books/{uuid}/entries/{id}/restore", bind(&st, |s, r| {
-            let (uuid, id) = (r.param("uuid").to_string(), r.param("id").to_string());
-            if s.db.load(&uuid).is_none() {
-                return Err(ApiError::not_found("没有这本书的条目"));
-            }
             let now = rmsvc_core::clock::now_secs();
-            let outcome = s.db.update(&uuid, || Default::default(), |b| b.entries.iter_mut().find(|e| e.id == id).map(|e| e.restore(now))).map_err(ApiError::internal)?;
-            match outcome {
-                None => return Err(ApiError::not_found("没有这条目")),
-                Some(Err(e)) => return Err(ApiError::bad(e)),
-                Some(Ok(())) => {}
-            }
-            s.bus.publish("notes", "entries");
-            Ok(Reply::ok(&serde_json::json!({"ok": true})))
+            edit_entry(s, r.param("uuid"), r.param("id"), |e| e.restore(now))
         }))
         .post("/books/{uuid}/purge", bind(&st, |s, r| {
-            let uuid = r.param("uuid").to_string();
-            if s.db.load(&uuid).is_none() {
-                return Err(ApiError::not_found("没有这本书的条目"));
-            }
-            let removed = s.db.update(&uuid, || Default::default(), |b| b.purge_terminal()).map_err(ApiError::internal)?;
+            let removed = s.db.update_existing(r.param("uuid"), |b| b.purge_terminal()).map_err(ApiError::internal)?.ok_or_else(|| ApiError::not_found("没有这本书的条目"))?;
             if removed > 0 {
                 s.bus.publish("notes", "entries");
             }
@@ -235,7 +212,9 @@ fn main() {
         .post("/books/{uuid}/rescan", bind(&st, |s, r| {
             let uuid = plain_name(r.param("uuid")).map_err(ApiError::bad)?.to_string(); // ingest 会拼 xochitl 目录路径，同样要防穿越
             // 强制：清掉页 mtime 记录再摄取
-            let _ = s.db.update(&uuid, || Default::default(), |b| b.page_mtimes.clear());
+            // 只对条目库里已有的书清（`update_existing`）：此前用 `update(.., Default::default)` 会给一个从未摄取过的 uuid
+            // 建出一份 uuid/标题都是空串的空书，之后摄取沿用它、书就永远带着空 uuid。
+            let _ = s.db.update_existing(&uuid, |b| b.page_mtimes.clear());
             s.ingest(&uuid);
             Ok(Reply::ok(&serde_json::json!({"ok": true})))
         }))
