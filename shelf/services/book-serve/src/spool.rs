@@ -2,6 +2,7 @@
 //! - `inbox/`  待处理（scp 丢进来的）——fswatch 追平；
 //! - `.work/`  已认领、处理中（rename 原子独占，防并发重复处理）；上传流程的暂存也在这（与母版库同分区，入库 rename 零拷贝）；
 //! - `failed/` 失败源（封顶 50MB，可重试/删除，`<name>.reason` sidecar 记原因）。
+//!
 //! 处理成功的书进母版库（`staging/`，见 `staging.rs`），本队列不再另存一份。
 use serde::Serialize;
 use rmsvc_core::fs::{move_unique, plain_name, unique_path};

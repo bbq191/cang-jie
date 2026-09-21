@@ -33,7 +33,7 @@ pub(super) fn free_bytes_of(path: &Path) -> Option<u64> {
     }
     // SAFETY: statvfs 返回 0，结构体已被内核写入。
     let st = unsafe { st.assume_init() };
-    (st.f_bavail as u64).checked_mul(st.f_frsize as u64)
+    st.f_bavail.checked_mul(st.f_frsize)
 }
 
 #[derive(Clone)]
@@ -63,6 +63,7 @@ impl Staging {
     /// - 边车里停在 `pending` 的优化 / 落库记录 → 改成 `failed`（否则界面永远显示"处理中"，而实际早没有线程在跑）；
     /// - 渲染自检停在 `pending` → `timeout`（自检线程随进程没了；xochitl 可能延后渲染，打开一次就有页数）；
     /// - `.<书名>.optimizing.tmp` 半成品（点前缀，列表看不见，可达数百 MB）→ 删除。
+    ///
     /// 只在启动时调用（此时不可能有操作在跑）。返回 (修正的记录数, 清掉的半成品数)。
     pub fn recover_interrupted(&self) -> (usize, usize) {
         let Ok(rd) = std::fs::read_dir(&self.dir) else { return (0, 0) };

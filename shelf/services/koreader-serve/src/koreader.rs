@@ -150,7 +150,7 @@ impl KoReader {
                 }
             }
         }
-        v.sort_by(|a, b| (a.kind != "dir", a.name.to_lowercase()).cmp(&(b.kind != "dir", b.name.to_lowercase())));
+        v.sort_by_key(|e| (e.kind != "dir", e.name.to_lowercase()));
         Ok(v)
     }
 

@@ -137,7 +137,7 @@ fn busy_lock_blocks_second_start_and_conflicting_delete_deliver() {
     assert!(s.remove("x.epub").unwrap_err().contains("正在处理中"), "忙的时候不该能删");
     let bus = Arc::new(rmsvc_core::events::EventBus::new());
     assert!(s.spawn_deliver("x.epub", "", Arc::new(empty_mkdir(&t)), bus).unwrap_err().contains("正在处理中"), "忙的时候不该能起第二个落库");
-    assert_eq!(s.list().iter().find(|e| e.name == "x.epub").unwrap().busy, true, "GET /staging 列表应体现 busy");
+    assert!(s.list().iter().find(|e| e.name == "x.epub").unwrap().busy, "GET /staging 列表应体现 busy");
     s.end_busy("x.epub");
     assert!(!s.is_busy("x.epub"));
     assert!(s.remove("x.epub").is_ok(), "解锁后恢复正常");
@@ -147,7 +147,7 @@ fn busy_lock_blocks_second_start_and_conflicting_delete_deliver() {
 fn spawn_deliver_runs_in_background_records_result_then_clears_busy() {
     let t = tempfile::tempdir().unwrap();
     let s = staging(&t); // xochitl 指向不可达地址（见 staging() 测试 helper），deliver 必然失败——够测异步管线本身
-    s.stage_new("d.pdf", &vec![b'%'; 10]).unwrap();
+    s.stage_new("d.pdf", &[b'%'; 10]).unwrap();
     let bus = Arc::new(rmsvc_core::events::EventBus::new());
     s.spawn_deliver("d.pdf", "", Arc::new(empty_mkdir(&t)), bus).unwrap();
     assert!(s.is_busy("d.pdf"), "spawn 返回时忙锁应已生效");
