@@ -15,8 +15,13 @@
 #   push_devlib      把 devlib.sh 推到设备某目录（供设备端 install.sh source）
 #   步骤表           STEP_ORDER / step_script / STEP_DEFER / STEP_CONFIG_ONLY（install-all 与 uninstall-all 共用，
 #                    保证两边清单对称）
-#   parse_step_args  install-all / uninstall-all 共用的 [host] --force --purge --skip 解析
-#   run_step / skip_has
+#   parse_step_args  install-all / uninstall-all 共用的 [host] --force --purge --force-apply --dry-run --skip -h 解析
+#                    （调用方先定义 usage()）
+#   run_step / skip_has   （DRY=1 时 run_step 只打印将执行的命令，不连设备；SKIPPED/DONE/FAILED 记账）
+#   host_arg         薄 deploy-*.sh 共用的 [host] 参数解析（-h、多余/未知参数 exit 2）
+#   require_device   动手前确认 ssh 通；不通给下一步排查提示并 exit 1
+#   fw_gate          固件 sha256 白名单门（install-all）
+#   preflight_device 设备只读预检：root/ /home 可写与剩余空间/xovi·qrr·appload·verity 现状（install-all）
 # ═══════════════════════════════════════════════════════════════════════════
 
 CJ_PKG_DIR="$(pwd)"

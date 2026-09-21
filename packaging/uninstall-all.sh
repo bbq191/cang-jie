@@ -14,7 +14,7 @@
 #                                  wifi-watch 另删 ~/.local/bin/wifi-watch.sh（单元删不掉时保留它，否则服务反复起不来）
 #   battop                         停用 + 删 /usr 单元（--purge 才连 /home/root/battop 数据删）
 #   另：每一步清掉 deploy-* 推到设备上的载荷目录（/home/root/pkg-<名>/、hl-snap/、hw-stroke/、shelf-pkg/——只 rm 已知文件
-#   再 rmdir，目录里有别的东西就留着）；最后清 ~/.cangjie-stage 暂存目录与待生效标记。
+#   再 rmdir，目录里有别的东西就留着）；最后清 ~/.cangjie-stage 暂存目录（待生效标记不动：卸载摘掉的东西也要等 xochitl 重启才停止生效）。
 #
 # 明确不做的事（范围外，跟 install-all.sh「明确不做的事」对称）：
 #   · chrony-cn.sh / timezone-cn.sh 不卸——它们是配置覆写（改 /etc/chrony.conf、/etc/localtime 指向），
@@ -161,6 +161,11 @@ else
     echo "-- 设备上没找到 shelf-uninstall / shelf-pkg（shelf 从没部署过，或被手动清过），跳过"
 fi
 [ "$rc" = 0 ] || exit "$rc"
+# dm-verity 等原因让 shelf-uninstall 保留了二进制（网关还在）时，载荷里的 uninstall.sh 是"可写后再卸一次"的退路，不能删
+if [ -e "$CJ_HOME/.local/bin/gateway" ]; then
+    echo "-- 书架二进制仍在（卸载未彻底完成，见上）——保留 shelf-pkg 载荷，可写后重跑本脚本"
+    exit 0
+fi
 # shelf-pkg / shelf-pkg.new 是 deploy.sh 推来的载荷（固定路径、必须是真目录且含 shelf/ 载荷标记才删）
 for d in "$CJ_HOME/shelf-pkg" "$CJ_HOME/shelf-pkg.new"; do
     [ -d "$d" ] || continue
@@ -177,7 +182,6 @@ set -eu
 for f in "$CJ_STAGE_DIR"/.*.new.* "$CJ_STAGE_DIR"/koreader-sidebar-entry.qmd "$CJ_STAGE_DIR"/cangjie-icons.rcc; do
     [ -f "$f" ] && rm -f "$f"
 done
-cj_pending_clear
 cj_stage_cleanup
 DEVICE_SCRIPT
 }

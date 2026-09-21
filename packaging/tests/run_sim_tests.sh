@@ -516,7 +516,7 @@ POST_SIG="$(tree_sig | grep -v \
     -e 'home/root/\.config/shelf/' -e 'home/root/\.local/share/shelf/' -e 'home/root/\.local/state/shelf/' \
     -e 'home/root/battop/' -e 'home/root/\.local/share/cangjie-ime/')"
 sig_eq "uninstall-all：文件树回到安装前（含 deploy 推送的载荷 pkg-*/hl-snap/hw-stroke/shelf-pkg 与暂存目录全清；仅剩用户数据/battop 数据/配置）" "$PRE_SIG" "$POST_SIG"
-check "uninstall-all：待生效标记与暂存目录也清了" test ! -e "$CJ_PENDING_DIR" -a ! -e "$R/home/root/.cangjie-stage"
+check "uninstall-all：暂存目录也清了" test ! -e "$R/home/root/.cangjie-stage"
 check "uninstall-all：不重启 xochitl、不 xovi/start" test "$(count_log 'restart xochitl')" = 0 -a "$(count_log XOVI_START)" = 0
 check "uninstall-all：最后一次 mount 是 ro" test "$(last_mount)" = "mount -o remount,ro /"
 ( cd "$PKG" && run sh uninstall-all.sh 127.0.0.1 ) >"$R/uout2.txt" 2>&1; rc=$?
@@ -631,6 +631,12 @@ check "wifi-watch 设备上的脚本被改过 → 备份一份、恢复为仓库
 check "uninstall-all + dm-verity：退出 0；wifi-watch 单元删不掉 → 保留 wifi-watch.sh（否则服务每 10 秒起一次并失败）" test "$rc" -eq 0 -a -f "$CJ_SYSD/wifi-watch.service" -a -x "$R/home/root/.local/bin/wifi-watch.sh" -a "$(count_log remount)" = 0
 : > "$CJ_SIM_LOG"; ( cd "$PKG" && run sh uninstall-all.sh 127.0.0.1 ) >/dev/null 2>&1
 check "uninstall-all 可写后再跑：wifi-watch 单元与脚本都清掉" test ! -e "$CJ_SYSD/wifi-watch.service" -a ! -e "$R/home/root/.local/bin/wifi-watch.sh"
+new_sandbox
+( cd "$PKG" && SHELF_NO_BUILD=1 run sh deploy.sh 127.0.0.1 --only book ) >/dev/null 2>&1
+CJ_SIM_VERITY=1 bash -c "cd '$PKG' && PATH='$STUBS:'\$PATH sh uninstall-all.sh 127.0.0.1" >"$R/out.txt" 2>&1; rc=$?
+check "uninstall-all + dm-verity：shelf 二进制被保留 → shelf-pkg 载荷（可写后重卸的退路）也保留" test "$rc" -eq 0 -a -x "$R/home/root/.local/bin/gateway" -a -f "$R/home/root/shelf-pkg/shelf/uninstall.sh"
+( cd "$PKG" && run sh uninstall-all.sh 127.0.0.1 ) >/dev/null 2>&1; rc=$?
+check "uninstall-all 可写后再跑：shelf 卸干净，shelf-pkg 载荷随后删除" test "$rc" -eq 0 -a ! -e "$R/home/root/.local/bin/gateway" -a ! -e "$R/home/root/shelf-pkg"
 unset CJ_SKIP_BUILD CJ_BATTOP_BIN
 
 section "chrony-cn / timezone-cn（路径覆盖；只测非 overlay 与 verity 路径，overlay 底层改写只能真机验证）"
