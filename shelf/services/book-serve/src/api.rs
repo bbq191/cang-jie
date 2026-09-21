@@ -206,9 +206,18 @@ mod tests {
         std::fs::write(lib.join(format!("{U}.metadata")), "{}").unwrap();
         let path = format!("/margins/{U}");
         assert_eq!(call(&router, Method::Get, &path, "").0, 404, "没登记 → 404，QML 代理静默不动");
-        st.comic_margins.add(U, 0).unwrap();
+        let qol = Paths::resolve({
+            let h = t.path().to_str().unwrap().to_string();
+            move |k| if k == "HOME" || k == "XDG_RUNTIME_DIR" { Some(h.clone()) } else { None }
+        })
+        .home()
+        .join(".local/share/cangjie-ime/reading-qol.json");
+        std::fs::create_dir_all(qol.parent().unwrap()).unwrap();
+        st.comic_margins.add(U, 1).unwrap();
+        assert_eq!(call(&router, Method::Get, &path, "").0, 404, "实验室开关默认关：已登记也 404，QML 代理不动");
+        std::fs::write(&qol, r#"{"comicMinMargin":true}"#).unwrap();
         let (code, v) = call(&router, Method::Get, &path, "");
-        assert_eq!((code, v["margins"].as_u64()), (200, Some(0)));
+        assert_eq!((code, v["margins"].as_u64()), (200, Some(1)));
         assert_eq!(call(&router, Method::Post, "/margins/applied", &format!(r#"{{"uuid":"{U}"}}"#)).0, 200);
         assert_eq!(call(&router, Method::Get, &path, "").0, 404, "销账后不再返回");
         assert_eq!(call(&router, Method::Get, "/margins/not-a-uuid", "").0, 404, "非法 uuid 一律 404");

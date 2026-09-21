@@ -77,7 +77,7 @@ impl Staging {
         let stem = name.strip_suffix(".epub").unwrap_or(name);
         let canon_title = bookconv::naming::has_volume_marker(stem).then(|| bookconv::naming::canonical_book_name(stem));
         self.mark_cancellable(name);
-        let opts = OptimizeOpts { wash: Some(WashOpts::default()), footnote: FootnoteMode::Anchor };
+        let opts = OptimizeOpts { wash: Some(WashOpts::default()), footnote: FootnoteMode::Anchor, comic_frame: self.comic_frame() };
         let cancel = || self.is_cancelled(name);
         // 产出到点前缀临时文件、成功才改名覆盖；出错清掉半成品，不留垃圾在母版库目录。
         let rep = bookconv::util::produce_then_replace(&tmp, &p, |t| optimize::StreamingOptimize::new(&p, t, &opts).title(canon_title.as_deref()).cancel(&cancel).run(&mut on_progress))?;

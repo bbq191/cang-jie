@@ -124,7 +124,18 @@
         let (tw, th) = image::load_from_memory(&text_img).unwrap().dimensions();
         assert!(cw <= crate::imgopt::MAX_SHORT_EDGE && ch <= crate::imgopt::MAX_EDGE, "漫画路径应该缩进屏幕框: {cw}x{ch}");
         assert!(tw <= crate::imgopt::MAX_SHORT_EDGE && th <= crate::imgopt::MAX_EDGE, "文字书内嵌图也应该缩进屏幕框: {tw}x{th}");
-        assert_eq!((cw, ch), (crate::imgopt::MAX_SHORT_EDGE, crate::imgopt::EPUB_COMIC_PAGE_H), "漫画整页应该补白到 xochitl 图片框比例（954×1546）: {cw}x{ch}");
+        assert_eq!((cw, ch), (crate::imgopt::MAX_SHORT_EDGE, crate::imgopt::MAX_EDGE), "缺省（开关关）漫画整页补白到屏幕比例 954×1696: {cw}x{ch}");
+        // 开关开（MinMargin）：补白到 xochitl 图片框比例（配阅读器页边距 1）
+        let mm = OptimizeOpts { comic_frame: crate::imgopt::EpubComicFrame::MinMargin, ..Default::default() }; // 与缺省 optimize_epub 只差页框模式
+        let (mm_out, _) = optimize_epub_with(&comic_buf, &mm).unwrap();
+        let mut mm_img = Vec::new();
+        ZipArchive::new(Cursor::new(&mm_out)).unwrap().by_name("p1.jpg").unwrap().read_to_end(&mut mm_img).unwrap();
+        assert_eq!(image::load_from_memory(&mm_img).unwrap().dimensions(), (crate::imgopt::MAX_SHORT_EDGE, crate::imgopt::EPUB_COMIC_PAGE_H), "MinMargin 模式补白到图片框比例");
+        // 文字书不受开关影响（不是漫画）
+        let (tm_out, _) = optimize_epub_with(&text_buf, &mm).unwrap();
+        let mut tm_img = Vec::new();
+        ZipArchive::new(Cursor::new(&tm_out)).unwrap().by_name("p1.jpg").unwrap().read_to_end(&mut tm_img).unwrap();
+        assert_eq!(tm_img, text_img, "文字书内嵌图不受漫画页框开关影响");
         assert!(comic_img.len() > text_img.len(), "漫画书判定应触发更高质量重编码，体积应更大: comic={} text={}", comic_img.len(), text_img.len());
     }
 
@@ -467,7 +478,7 @@
     #[test]
     fn double_optimize_inline_footnote_no_dup() {
         // 版本升级会重优化已优化过的旧书——重优化不得把已内联的注释再翻倍。
-        let opts = OptimizeOpts { wash: Some(crate::wash::WashOpts::default()), footnote: FootnoteMode::Inline };
+        let opts = OptimizeOpts { wash: Some(crate::wash::WashOpts::default()), footnote: FootnoteMode::Inline, ..Default::default() };
         let (out, _) = optimize_epub_with(&make_crossfile_endnote_epub(), &opts).unwrap();
         let (out2, _) = optimize_epub_with(&out, &opts).unwrap();
         let mut ar = ZipArchive::new(Cursor::new(&out2)).unwrap();
@@ -491,7 +502,7 @@
             zw.write_all(r##"<html><body><p>正文<a href="#n1">1</a>结束</p><div class="footnotes"><p id="n1">第一章的注释</p></div></body></html>"##.as_bytes()).unwrap();
             zw.finish().unwrap();
         }
-        let opts = OptimizeOpts { wash: Some(crate::wash::WashOpts::default()), footnote: FootnoteMode::Inline };
+        let opts = OptimizeOpts { wash: Some(crate::wash::WashOpts::default()), footnote: FootnoteMode::Inline, ..Default::default() };
         let (out, _) = optimize_epub_with(&buf, &opts).unwrap();
         let mut ar = ZipArchive::new(Cursor::new(&out)).unwrap();
         let mut ch1 = String::new();
@@ -509,7 +520,7 @@
         assert_eq!(optimized_version(&out).as_deref(), Some(format!("{OPTIMIZE_VERSION}-core").as_str()), "无 wash 应标 -core");
         assert!(is_optimized(&out) && optimized_version(&out).as_deref() != Some(OPTIMIZE_VERSION), "有标记但不算当前完整优化");
         // 带清洗层 → 完整标记
-        let (full, _) = optimize_epub_with(&raw, &OptimizeOpts { wash: Some(crate::wash::WashOpts::default()), footnote: FootnoteMode::Anchor }).unwrap();
+        let (full, _) = optimize_epub_with(&raw, &OptimizeOpts { wash: Some(crate::wash::WashOpts::default()), footnote: FootnoteMode::Anchor, ..Default::default() }).unwrap();
         assert_eq!(optimized_version(&full).as_deref(), Some(OPTIMIZE_VERSION), "含 wash 应标完整版本");
         // 重优化幂等：标记只有一条(不残留旧标记)、版本仍正确
         let (out2, _) = optimize_epub(&out).unwrap();

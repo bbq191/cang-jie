@@ -194,12 +194,26 @@ impl Staging {
         self.comic_margins = Some(q);
         self
     }
-    /// 这本 EPUB 是否该在原生书库里设成漫画页边距：**纯图漫画 + 已用当前版本管线优化过**。补白比例按边距 0 计算，
-    /// 旧管线产物 / 没优化的原图在边距 0 下会贴左、右侧空一大块，反而更糟（见 `imgopt::EPUB_FRAME_ASPECT`）。
+    /// 「实验室→漫画页边距」开关是否打开（没接队列 = 关）。
+    pub(crate) fn comic_margin_switch_on(&self) -> bool {
+        self.comic_margins.as_ref().is_some_and(|q| q.enabled())
+    }
+    /// 优化时纯图漫画页补白到哪种页框：开关开 → 页边距最小的页框，关 → 屏幕比例（改动前的行为）。
+    pub(crate) fn comic_frame(&self) -> bookconv::imgopt::EpubComicFrame {
+        if self.comic_margin_switch_on() {
+            bookconv::imgopt::EpubComicFrame::MinMargin
+        } else {
+            bookconv::imgopt::EpubComicFrame::Screen
+        }
+    }
+    /// 这本 EPUB 是否该在原生书库里设成漫画页边距：**开关开 + 纯图漫画 + 已用当前版本管线优化过 + 页框是最小边距页框**。
+    /// 补白比例按最小边距算，旧页框产物（含开关关着时优化的）在最小边距下会贴左、右侧空一大块，反而更糟
+    /// （见 `imgopt::EPUB_FRAME_ASPECT`）；文字书 / PDF 不满足"纯图漫画"，完全不碰。
     pub(crate) fn comic_margin_eligible(&self, path: &Path) -> bool {
-        self.comic_margins.is_some()
+        self.comic_margin_switch_on()
             && path.to_str().and_then(optimize::optimized_version_file).as_deref() == Some(optimize::OPTIMIZE_VERSION)
             && bookconv::comic_detect::is_text_free_comic_epub_file(path)
+            && bookconv::comic_detect::is_min_margin_framed_file(path)
     }
     /// 登记"这本书首次打开时设页边距"。失败只记日志，不影响投书。
     pub(crate) fn register_comic_margins(&self, uuid: &str, name: &str) {

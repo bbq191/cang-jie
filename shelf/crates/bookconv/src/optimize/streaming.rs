@@ -88,6 +88,7 @@ impl<'a> StreamingOptimize<'a> {
         // 阶段一：非图片条目整份读；图片条目占位（真实字节留到阶段二按需流式读）；之后同内存版（`prepare_entries`）。
         let raw = crate::epubzip::read_skeleton(&mut archive)?.entries;
         let Prepared { entries, aside_index, is_comic_book, opf_name, mut rep } = prepare_entries(raw, opts, bytes_before, title)?;
+        let comic_frame = opts.comic_frame;
 
         // 阶段二：流式写出。非图片条目用阶段一已处理好的字节；图片条目现在才从源文件按需读回真实
         // 字节，处理完立刻写文件、立刻丢——峰值只有"当前这一张"，不会随全书图片数量线性涨。
@@ -118,7 +119,7 @@ impl<'a> StreamingOptimize<'a> {
                     let job = { rx.lock().unwrap_or_else(|e| e.into_inner()).recv() };
                     let Ok(job) = job else { break };
                     let _permit = budget.acquire(crate::imgopt::pixel_count(&job.bytes));
-                    let _ = job.reply.send(transform_image_bytes(&job.bytes, is_comic_book));
+                    let _ = job.reply.send(transform_image_bytes(&job.bytes, is_comic_book, comic_frame));
                 });
             }
             let mut pending: std::collections::VecDeque<std::sync::mpsc::Receiver<Vec<u8>>> = std::collections::VecDeque::new();

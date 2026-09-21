@@ -93,7 +93,7 @@ pub fn pixel_count(bytes: &[u8]) -> u64 {
 }
 
 /// 只读文件头取 (格式, 宽, 高)，不解码像素。非 JPEG/PNG → None。
-fn header_dims(bytes: &[u8]) -> Option<(ImageFormat, (u32, u32))> {
+pub(crate) fn header_dims(bytes: &[u8]) -> Option<(ImageFormat, (u32, u32))> {
     let fmt = image::guess_format(bytes).ok()?;
     if !matches!(fmt, ImageFormat::Jpeg | ImageFormat::Png) {
         return None;
@@ -124,31 +124,63 @@ const PAD_ASPECT_TOLERANCE: f32 = 0.02;
 /// **EPUB 漫画页在 xochitl 里的"图片框"长宽比**（2026-09-21 真机实测，见 `bookconv优化白皮书.md` §20）。
 ///
 /// xochitl 渲染 EPUB 图片：宽度撑满栏宽、高度按原图比例算，任何 `height` 声明都不生效；图片框由两个上限决定——
-/// - 栏宽 = 页宽 303pt − 2×页边距（`.content` 的 `margins`；界面预设 28/56/112，**`setMargins(0)` 也被接受**）；
+/// - 栏宽 = 页宽 303pt − 2×页边距（`.content` 的 `margins`，单位 px，1px = 303/954 ≈ 0.318pt；界面预设 28/56/112，
+///   **`setMargins` 接受任意数值**，0 也行）；
 /// - 垂直可用高度固定 **462.1pt**（上 35.5、下 40.3），与边距无关。
 /// 图片比栏窄时**贴左对齐**（不居中）：边距 0、图片 285.1pt 宽时实测左 0.0 / 右 17.9pt。
 ///
-/// 所以最优组合是：**页边距 0 + 补白到 303:462.1 = 0.6557**（画布 954×[`EPUB_COMIC_PAGE_H`]）——图片正好 303pt 宽，左右留白
-/// **0.0 / 0.0**，高 462.1pt。历史对照（同批原图，真机 A/B）：
-/// 旧补白 0.5625（屏幕比例）→ 图片永远先顶高度上限，只有 260pt 宽、左 20.0 / 右 22.9；
-/// 0.617（边距 28 档）→ 284.8×461.5、左右 8.9/9.3；**0.6557 + 边距 0 → 303×462.1、左右 0/0**。
+/// 最优组合是：**页边距 [`EPUB_COMIC_MARGINS`]（1）+ 补白到 302.4:462.1 ≈ 0.6543**（画布 954×[`EPUB_COMIC_PAGE_H`]）——
+/// 图片几乎铺满整页宽度（栏宽 302.4pt），左右各留 ≈0.3pt。选 1 不选 0：用户认为 0 不合适（贴边），1 是"几乎为 0 但不是 0"。
+/// 历史对照（同批原图，真机 A/B）：旧补白 0.5625（屏幕比例）→ 图片永远先顶高度上限，只有 260pt 宽、左 20.0 / 右 22.9；
+/// 0.617（边距 28）→ 284.8×461.5、左右 8.9/9.3；**0.6543 + 边距 1 → ≈302×461.5、左右 ≈0/0.4**。
 ///
-/// **前提是页边距 0**：由 book-serve 记录"该书应设边距 0"，xochitl 里的 qmd 代理（`shelf-comic-margins.qmd`）在用户首次打开
-/// 这本书时调用阅读器自己的 `EpubProperties.setMargins(0)`（与界面点"页边距"同一代码路径，不会被覆盖回去）。外部改 `.content`
-/// 文件行不通（5 次实验只成功 1 次，白皮书 §20）。代理没装/没生效时（边距仍是 56），图片按栏宽 267pt 显示、顶部对齐，
-/// 下留白偏大（约 55pt）——所以这个比例与代理必须一起装。
-pub const EPUB_FRAME_ASPECT: f32 = 303.0 / 462.1;
+/// **前提是页边距 [`EPUB_COMIC_MARGINS`]**：由 book-serve 记录"该书应设这个边距"，xochitl 里的 qmd 代理
+/// （`shelf-comic-margins.qmd`）在用户首次打开这本书时调用阅读器自己的 `EpubProperties.setMargins`（与界面点"页边距"同一代码
+/// 路径，不会被覆盖回去）。外部改 `.content` 文件行不通（5 次实验只成功 1 次，白皮书 §20）。代理没装/没生效/开关没开
+/// （边距仍是 56）时，图片按栏宽 267pt 显示、顶部对齐，下留白偏大（约 55pt）——所以这个模式由"实验室"开关控制，
+/// 关闭时用 [`EpubComicFrame::Screen`]（改动前的行为）。
+pub const EPUB_FRAME_ASPECT: f32 = 302.365 / 462.1;
 
 /// EPUB 漫画页画布高度（px）：宽固定 [`MAX_SHORT_EDGE`]（954，绝不超，见 [`downscale_for_epub`]），高 = 宽 / [`EPUB_FRAME_ASPECT`]。
-/// 屏幕上该框高约 1455 px，正好一屏可用高度，不会因此变糊。
-pub const EPUB_COMIC_PAGE_H: u32 = 1455;
+pub const EPUB_COMIC_PAGE_H: u32 = 1458;
 
 /// 漫画页与 [`EPUB_FRAME_ASPECT`] 的相对误差容差。要比通用的 [`PAD_ASPECT_TOLERANCE`]（2%）严得多：真机上一张偏差 1.6% 的页
 /// 没补白，图片就少 4.5pt 宽并出现左右不对称（8.9 / 13.4pt）。
 const EPUB_PAD_TOLERANCE: f32 = 0.003;
 
-/// 页边距目标值（xochitl `.content` 的 `margins`）。见 [`EPUB_FRAME_ASPECT`] 的前提说明。
-pub const EPUB_COMIC_MARGINS: u32 = 0;
+/// 页边距目标值（xochitl `.content` 的 `margins`，px）。见 [`EPUB_FRAME_ASPECT`] 的前提说明。
+pub const EPUB_COMIC_MARGINS: u32 = 1;
+
+/// 漫画页补白到哪种"页框"。**默认 `Screen` = 2026-09-21 之前的行为**（补白到屏幕比例 954:1696、容差 2%，配阅读器默认边距 56）；
+/// `MinMargin` = 补白到 [`EPUB_FRAME_ASPECT`]（954×[`EPUB_COMIC_PAGE_H`]、容差 0.3%），必须配页边距 [`EPUB_COMIC_MARGINS`] 才对
+/// （由网页"实验室→漫画页边距"开关控制，见 book-serve）。
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+pub enum EpubComicFrame {
+    #[default]
+    Screen,
+    MinMargin,
+}
+
+impl EpubComicFrame {
+    fn aspect(self) -> f32 {
+        match self {
+            EpubComicFrame::Screen => DEVICE_PAGE_ASPECT,
+            EpubComicFrame::MinMargin => EPUB_FRAME_ASPECT,
+        }
+    }
+    fn page_h(self) -> u32 {
+        match self {
+            EpubComicFrame::Screen => MAX_EDGE,
+            EpubComicFrame::MinMargin => EPUB_COMIC_PAGE_H,
+        }
+    }
+    fn tolerance(self) -> f32 {
+        match self {
+            EpubComicFrame::Screen => PAD_ASPECT_TOLERANCE,
+            EpubComicFrame::MinMargin => EPUB_PAD_TOLERANCE,
+        }
+    }
+}
 
 /// 漫画整页图片补白（2026-09-19 真机反馈"底部留白太多"排查到底：五种候选 CSS——`width:100%;
 /// height:auto`、`max-width/height:100%`、`vw`/`vh` 单位、`display:table/table-cell` 居中——
@@ -404,12 +436,12 @@ fn paste_on_white(img: &image::DynamicImage, cw: u32, ch: u32, off_x: u32, off_y
 /// **EPUB 漫画整页的单趟处理**（取代 `trim_margins` → `downscale_for_epub_comic` → `pad_to_device_aspect`
 /// 三道串联：每道各自解码+编码一遍，三代 JPEG 有损、灰度被转 RGB、三次整图缩放/合成）。
 ///
-/// 解码一次 → 裁边 → 等比放进 EPUB 页框（954×[`EPUB_COMIC_PAGE_H`]）**一次**缩放（缩小，或 JPEG 小图放大，见
+/// 解码一次 → 裁边 → 等比放进 EPUB 页框（954×`frame.page_h()`）**一次**缩放（缩小，或 JPEG 小图放大，见
 /// [`prepare_comic_page_for_pdf`] 的 A/B 结论：让 xochitl 自己放大偏糊，我们预放大更清晰）→ 白底补到
-/// [`EPUB_FRAME_ASPECT`]（`width:100%` 渲染正好填满 xochitl 的图片框，实测依据见该常量）→ 编码一次，
+/// `frame.aspect()`（`width:100%` 渲染正好填满 xochitl 的图片框，实测依据见 [`EPUB_FRAME_ASPECT`]）→ 编码一次，
 /// 灰度保持单分量。小于设备短边 1/3 的装饰小图只裁边，不缩放/补白（同 `pad_to_device_aspect`）。
 /// 什么都不需要做时返回 `None`（原字节零损失）。
-pub fn prepare_comic_page_for_epub(bytes: &[u8]) -> Option<Vec<u8>> {
+pub fn prepare_comic_page_for_epub(bytes: &[u8], frame: EpubComicFrame) -> Option<Vec<u8>> {
     let (img, fmt, trimmed) = decode_trim_comic(bytes)?;
     let (cw, ch) = (img.width(), img.height());
     let quality_default = JPEG_QUALITY_COMIC;
@@ -419,28 +451,29 @@ pub fn prepare_comic_page_for_epub(bytes: &[u8]) -> Option<Vec<u8>> {
         }
         (img, quality_default)
     } else {
-        let s = (MAX_SHORT_EDGE as f32 / cw as f32).min(EPUB_COMIC_PAGE_H as f32 / ch as f32);
+        let (page_h, frame_aspect) = (frame.page_h(), frame.aspect());
+        let s = (MAX_SHORT_EDGE as f32 / cw as f32).min(page_h as f32 / ch as f32);
         let shrink = s < 1.0;
         let upscale = fmt == ImageFormat::Jpeg && s > 1.0 && s <= MAX_PDF_UPSCALE;
         let (img, quality) = if shrink || upscale {
             let nw = ((cw as f32 * s).round() as u32).clamp(1, MAX_SHORT_EDGE);
-            let nh = ((ch as f32 * s).round() as u32).clamp(1, EPUB_COMIC_PAGE_H);
+            let nh = ((ch as f32 * s).round() as u32).clamp(1, page_h);
             (resize_lanczos3(&img, nw, nh), if upscale { JPEG_QUALITY_UPSCALED } else { quality_default })
         } else {
             (img, quality_default)
         };
         let (w, h) = (img.width(), img.height());
         let cur_aspect = w as f32 / h as f32;
-        if ((cur_aspect - EPUB_FRAME_ASPECT) / EPUB_FRAME_ASPECT).abs() <= EPUB_PAD_TOLERANCE {
+        if ((cur_aspect - frame_aspect) / frame_aspect).abs() <= frame.tolerance() {
             if !trimmed && !shrink && !upscale {
                 return None;
             }
             (img, quality)
-        } else if cur_aspect > EPUB_FRAME_ASPECT {
-            let new_h = (w as f32 / EPUB_FRAME_ASPECT).round() as u32;
+        } else if cur_aspect > frame_aspect {
+            let new_h = (w as f32 / frame_aspect).round() as u32;
             (paste_on_white(&img, w, new_h, 0, (new_h - h) / 2), quality)
         } else {
-            let new_w = (h as f32 * EPUB_FRAME_ASPECT).round() as u32;
+            let new_w = (h as f32 * frame_aspect).round() as u32;
             (paste_on_white(&img, new_w, h, (new_w - w) / 2, 0), quality)
         }
     };
@@ -593,7 +626,7 @@ mod tests {
     #[test]
     fn prepare_epub_page_upscales_low_res_and_pads_to_exact_frame() {
         // 镖人同款 566×800 灰度：等比放大到 954 宽（1348 高）→ 白底补到 EPUB 页框 954×1546，灰度保持。
-        let out = prepare_comic_page_for_epub(&gray_jpeg_of(566, 800, 0)).expect("低分辨率必须预放大");
+        let out = prepare_comic_page_for_epub(&gray_jpeg_of(566, 800, 0), EpubComicFrame::MinMargin).expect("低分辨率必须预放大");
         let img = image::load_from_memory(&out).unwrap();
         assert_eq!((img.width(), img.height()), (954, EPUB_COMIC_PAGE_H));
         assert_eq!(img.color(), image::ColorType::L8);
@@ -602,21 +635,21 @@ mod tests {
     #[test]
     fn prepare_epub_page_shrinks_large_page_once_and_pads() {
         // 乱马同款 1091×1592：缩到 954×1392，补白到 954×1546。
-        let out = prepare_comic_page_for_epub(&gray_jpeg_of(1091, 1592, 0)).expect("超框必须缩");
+        let out = prepare_comic_page_for_epub(&gray_jpeg_of(1091, 1592, 0), EpubComicFrame::MinMargin).expect("超框必须缩");
         assert_eq!(image::load_from_memory(&out).unwrap().dimensions(), (954, EPUB_COMIC_PAGE_H));
     }
 
     #[test]
     fn prepare_epub_page_trim_then_fit_in_one_pass() {
         // 带 60px 白边：先裁再适配，仍是 EPUB 页框尺寸，且只编码一次（尺寸即证明一趟到位）。
-        let out = prepare_comic_page_for_epub(&gray_jpeg_of(800, 1200, 60)).unwrap();
+        let out = prepare_comic_page_for_epub(&gray_jpeg_of(800, 1200, 60), EpubComicFrame::MinMargin).unwrap();
         assert_eq!(image::load_from_memory(&out).unwrap().dimensions(), (954, EPUB_COMIC_PAGE_H));
     }
 
     #[test]
     fn prepare_epub_page_pads_tall_narrow_page_left_right_without_exceeding_954() {
         // 比页框"窄"的高瘦页（如 700×1600）：高度顶到 1546，宽度 < 954，左右对称补白到 954——宽绝不超 954。
-        let out = prepare_comic_page_for_epub(&gray_jpeg_of(700, 1600, 0)).expect("高瘦页必须缩+补白");
+        let out = prepare_comic_page_for_epub(&gray_jpeg_of(700, 1600, 0), EpubComicFrame::MinMargin).expect("高瘦页必须缩+补白");
         assert_eq!(image::load_from_memory(&out).unwrap().dimensions(), (954, EPUB_COMIC_PAGE_H));
     }
 
@@ -624,8 +657,17 @@ mod tests {
     fn epub_pad_tolerance_catches_page_one_point_six_percent_off_frame() {
         // 真机 e2e：一张比框窄 1.6%（939×1546）的页被 2% 容差放过，图片少 4.5pt 宽且左右不对称——EPUB 补白容差必须更严。
         let w = (EPUB_COMIC_PAGE_H as f32 * EPUB_FRAME_ASPECT * 0.984).round() as u32; // 比框窄约 1.6%
-        let out = prepare_comic_page_for_epub(&gray_jpeg_of(w, EPUB_COMIC_PAGE_H, 0)).expect("偏差 1.6% 必须补白");
+        let out = prepare_comic_page_for_epub(&gray_jpeg_of(w, EPUB_COMIC_PAGE_H, 0), EpubComicFrame::MinMargin).expect("偏差 1.6% 必须补白");
         assert_eq!(image::load_from_memory(&out).unwrap().dimensions(), (954, EPUB_COMIC_PAGE_H));
+    }
+
+    #[test]
+    fn screen_frame_keeps_pre_switch_behaviour_954x1696() {
+        // 开关关闭时必须与 2026-09-21 之前完全一致：补白到屏幕比例 954×1696。
+        let out = prepare_comic_page_for_epub(&gray_jpeg_of(566, 800, 0), EpubComicFrame::Screen).expect("低分辨率必须预放大");
+        assert_eq!(image::load_from_memory(&out).unwrap().dimensions(), (954, 1696));
+        assert!(prepare_comic_page_for_epub(&gray_jpeg_of(954, 1696, 0), EpubComicFrame::Screen).is_none(), "已是屏幕页、无白边：原字节");
+        assert_eq!(EpubComicFrame::default(), EpubComicFrame::Screen, "缺省模式必须是 Screen（不改变任何现有调用方）");
     }
 
     #[test]
@@ -633,13 +675,16 @@ mod tests {
         // 画布高度必须等于 宽/框比例（四舍五入），否则补白后长宽比对不上图片框。
         let h = (MAX_SHORT_EDGE as f32 / EPUB_FRAME_ASPECT).round() as u32;
         assert_eq!(h, EPUB_COMIC_PAGE_H);
+        // 栏宽 = 303 − 2×边距×(303/954)：常量必须与边距目标值一致（否则补白比例对不上图片框）
+        let col = 303.0 - 2.0 * EPUB_COMIC_MARGINS as f32 * (303.0 / 954.0);
+        assert!((col / 462.1 - EPUB_FRAME_ASPECT).abs() < 0.0005, "比例 {EPUB_FRAME_ASPECT} 与边距 {EPUB_COMIC_MARGINS} 对不上（栏宽 {col}）");
         assert!(EPUB_FRAME_ASPECT > DEVICE_PAGE_ASPECT, "图片框比屏幕更宽（边距 0 时栏宽=整页、高度上限不变）");
     }
 
     #[test]
     fn prepare_epub_page_leaves_untouched_when_already_device_page_or_tiny_icon() {
-        assert!(prepare_comic_page_for_epub(&gray_jpeg_of(954, EPUB_COMIC_PAGE_H, 0)).is_none(), "已是页框尺寸、无白边：原字节零损失");
-        assert!(prepare_comic_page_for_epub(&gray_jpeg_of(200, 300, 0)).is_none(), "装饰小图且无白边：原样");
+        assert!(prepare_comic_page_for_epub(&gray_jpeg_of(954, EPUB_COMIC_PAGE_H, 0), EpubComicFrame::MinMargin).is_none(), "已是页框尺寸、无白边：原字节零损失");
+        assert!(prepare_comic_page_for_epub(&gray_jpeg_of(200, 300, 0), EpubComicFrame::MinMargin).is_none(), "装饰小图且无白边：原样");
     }
 
     #[test]
@@ -648,7 +693,7 @@ mod tests {
         let img = DynamicImage::ImageRgb8(RgbImage::from_fn(700, 1000, |x, y| image::Rgb([(x % 256) as u8, (y % 256) as u8, 9])));
         let mut png = Vec::new();
         img.write_to(&mut Cursor::new(&mut png), ImageFormat::Png).unwrap();
-        let out = prepare_comic_page_for_epub(&png).unwrap();
+        let out = prepare_comic_page_for_epub(&png, EpubComicFrame::MinMargin).unwrap();
         let (w, h) = image::load_from_memory(&out).unwrap().dimensions();
         assert_eq!(w, 700, "PNG 不放大");
         assert!(h > 1000, "补白后应更高: {h}");
