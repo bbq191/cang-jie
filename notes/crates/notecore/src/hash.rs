@@ -14,8 +14,13 @@ pub fn hex(h: u64) -> String {
     format!("{h:016x}")
 }
 
-/// 簇指纹输入：(笔画 id 字符串, 点数, 包围盒) 列表，顺序无关。
-pub fn cluster_hash(strokes: &[(&str, usize, (f32, f32, f32, f32))]) -> String {
+/// 包围盒 (x0, y0, x1, y1)。
+pub type Bbox4 = (f32, f32, f32, f32);
+/// 簇指纹输入的一笔：(笔画 id 字符串, 点数, 包围盒)。
+pub type StrokeSig<'a> = (&'a str, usize, Bbox4);
+
+/// 簇指纹输入：`StrokeSig` 列表，顺序无关。
+pub fn cluster_hash(strokes: &[StrokeSig<'_>]) -> String {
     let mut items: Vec<String> = strokes.iter().map(|(id, n, b)| format!("{id}|{n}|{:.0}|{:.0}|{:.0}|{:.0}", b.0, b.1, b.2, b.3)).collect();
     items.sort();
     hex(fnv1a(items.join(";").as_bytes()))

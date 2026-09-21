@@ -105,6 +105,12 @@ impl Budget {
         Budget { state: Mutex::new(State::default()), cv: Condvar::new() }
     }
 
+    /// 取状态锁；被毒化（持锁线程 panic）时照用内部数据——这里的状态只是计数和名字集合，
+    /// 每次修改都是自洽的单步操作，宁可继续服务，也不要让一次 panic 让所有后续的优化/加入请求都跟着 panic。
+    fn lock(&self) -> std::sync::MutexGuard<'_, State> {
+        self.state.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     /// 阻塞直到拿到这个档位的名额（或等到 [`ADMIT_WAIT_TIMEOUT`] 超时/被 [`Budget::cancel`]
     /// 取消），返回一个 RAII guard，`Drop` 时自动释放名额、唤醒其他等待者。`name` 只用于
     /// 展示/取消（[`Budget::snapshot`]/[`Budget::cancel`]），不参与准入判断。
@@ -116,7 +122,7 @@ impl Budget {
     /// 单测用毫秒级超时验证"占满后确实会超时报错"这条路径，不用真的空等 30 分钟。
     pub fn admit_within(&self, tier: Tier, name: &str, timeout: Duration) -> Result<Slot<'_>, AdmitError> {
         let deadline = Instant::now() + timeout;
-        let mut guard = self.state.lock().unwrap();
+        let mut guard = self.lock();
         if guard.pending.contains(name) || guard.active.contains(name) {
             return Err(AdmitError::Duplicate);
         }
@@ -151,13 +157,13 @@ impl Budget {
                 crate::events::notify_books("budget");
                 return Err(AdmitError::Timeout);
             }
-            let (g2, _) = self.cv.wait_timeout(guard, deadline - now).unwrap();
+            let (g2, _) = self.cv.wait_timeout(guard, deadline - now).unwrap_or_else(|e| e.into_inner());
             guard = g2; // 醒来（虚假唤醒/真超时/真释放/真取消都在这里）重新判一次条件，不额外分支处理
         }
     }
 
     fn release(&self, tier: Tier, name: &str) {
-        let mut guard = self.state.lock().unwrap();
+        let mut guard = self.lock();
         match tier {
             Tier::Large => guard.large = guard.large.saturating_sub(1),
             Tier::Small => guard.small = guard.small.saturating_sub(1),
@@ -171,7 +177,7 @@ impl Budget {
     /// 让任何会话（含关掉浏览器重开、换一台设备）都能看到网关真实的排队/处理状态，不用依赖
     /// 提交那次请求的浏览器标签页还活着。
     pub fn snapshot(&self) -> (Vec<String>, Vec<String>) {
-        let guard = self.state.lock().unwrap();
+        let guard = self.lock();
         (guard.pending.iter().cloned().collect(), guard.active.iter().cloned().collect())
     }
 
@@ -180,7 +186,7 @@ impl Budget {
     /// `cancel_requested`，命中就带着"已取消"提前放弃排队。给"关掉浏览器/换一台设备后想停掉
     /// 还卡在排队里的项目"这个场景用——不依赖发起那次排队的会话还活着，是这次要修的根本问题。
     pub fn cancel(&self, name: &str) -> bool {
-        let mut guard = self.state.lock().unwrap();
+        let mut guard = self.lock();
         if !guard.pending.contains(name) {
             return false;
         }

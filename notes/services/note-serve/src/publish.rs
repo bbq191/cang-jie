@@ -17,7 +17,7 @@ use crate::rmdoc::{self, Page};
 use crate::trash::TrashSink;
 use notecore::model::Book;
 use notecore::project::{fingerprint_chapter, project_chapter};
-use rmv6::write::build_page_rm;
+use rmv6::write::{build_page_rm, Paragraph};
 use serde::Serialize;
 
 /// 传书 + 认领 + 查文件夹/去重三件事的抽象；生产实现包一层 `rmsvc_core::xochitl::Xochitl`，测试用
@@ -97,9 +97,6 @@ pub fn generate_chapter(c: &Ctx, book: &Book, idx: usize) -> ChapterResult {
     }
 
     let outcome = (|| -> Result<String, String> {
-        let rm = build_page_rm(rmdoc::TEMPLATE, &paragraphs)?;
-        let doc_uuid = uuid::Uuid::new_v4().to_string();
-        let page = Page { uuid: uuid::Uuid::new_v4().to_string(), rm_bytes: rm };
         let folder = c.uploader.parent_folder(&book.uuid).unwrap_or_default();
         // 首次生成才去重；重新生成沿用当时定下来的名字——这时候旧文档还占着这个名字（要等上传成功
         // 才会入回收站队列），如果重新去重会把自己也判成"重名"，白白多加一次后缀。
@@ -107,9 +104,7 @@ pub fn generate_chapter(c: &Ctx, book: &Book, idx: usize) -> ChapterResult {
             Some(old) => old.visible_name.clone(),
             None => c.uploader.unique_name(&folder, &title),
         };
-        let bytes = rmdoc::pack(&doc_uuid, &visible_name, "", &page, rmdoc::TEMPLATE_AUTHOR, c.now_ms)?;
-        c.uploader.upload(&bytes, &format!("{doc_uuid}.rmdoc"), &folder)?;
-        let new_uuid = c.uploader.claim(&visible_name, c.now_ms)?;
+        let new_uuid = upload_page(c, &paragraphs, &folder, &visible_name)?;
         if let Some(old) = &existing {
             if old.doc_uuid != new_uuid {
                 if let Err(e) = c.trash.add(&old.doc_uuid, &old.visible_name) {
@@ -145,15 +140,21 @@ pub fn generate_book(c: &Ctx, book_uuid: &str) -> Result<Vec<ChapterResult>, Str
 pub fn import_markdown(c: &Ctx, book_uuid: &str, title: &str, markdown: &str) -> Result<(String, String), String> {
     c.store.book(book_uuid)?; // 只为确认这本书存在，错的 uuid 早点报错，比 best-effort 落根更清楚
     let paragraphs = notecore::mdimport::markdown_to_paragraphs(markdown);
-    let rm = build_page_rm(rmdoc::TEMPLATE, &paragraphs)?;
-    let doc_uuid = uuid::Uuid::new_v4().to_string();
-    let page = Page { uuid: uuid::Uuid::new_v4().to_string(), rm_bytes: rm };
     let folder = c.uploader.parent_folder(book_uuid).unwrap_or_default();
     let visible_name = c.uploader.unique_name(&folder, title);
-    let bytes = rmdoc::pack(&doc_uuid, &visible_name, "", &page, rmdoc::TEMPLATE_AUTHOR, c.now_ms)?;
-    c.uploader.upload(&bytes, &format!("{doc_uuid}.rmdoc"), &folder)?;
-    let new_uuid = c.uploader.claim(&visible_name, c.now_ms)?;
+    let new_uuid = upload_page(c, &paragraphs, &folder, &visible_name)?;
     Ok((visible_name, new_uuid))
+}
+
+/// 一页段落 → 单页 `.rmdoc` → 上传进 `folder` → 认领设备新分配的 uuid。章节生成与 markdown 导入共用
+/// （此前两处各写一遍逐行相同的"建页/打包/上传/认领"四步）。
+fn upload_page(c: &Ctx, paragraphs: &[Paragraph], folder: &str, visible_name: &str) -> Result<String, String> {
+    let rm = build_page_rm(rmdoc::TEMPLATE, paragraphs)?;
+    let doc_uuid = uuid::Uuid::new_v4().to_string();
+    let page = Page { uuid: uuid::Uuid::new_v4().to_string(), rm_bytes: rm };
+    let bytes = rmdoc::pack(&doc_uuid, visible_name, "", &page, rmdoc::TEMPLATE_AUTHOR, c.now_ms)?;
+    c.uploader.upload(&bytes, &format!("{doc_uuid}.rmdoc"), folder)?;
+    c.uploader.claim(visible_name, c.now_ms)
 }
 
 /// `claim()` 短暂重试的次数/间隔——总耗时上限约 (次数-1)×间隔，作为一次同步 HTTP 请求内的等待，

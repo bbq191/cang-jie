@@ -32,8 +32,11 @@ pub fn status(paths: &Paths) -> Reply {
 pub fn set_qol(paths: &Paths, req: &mut Request<'_>) -> ApiResult {
     let body = req.json()?;
     let mut changes = serde_json::Map::new();
-    if let Some(v) = body.0.get("hlSnapCjk").and_then(|v| v.as_bool()) {
-        changes.insert("hlSnapCjk".into(), serde_json::Value::Bool(v));
+    // 与 reading-qol.json 键同名的直通布尔开关。
+    for key in ["hlSnapCjk", "notesImportMdEnabled", "comicMinMargin"] {
+        if let Some(v) = body.0.get(key).and_then(|v| v.as_bool()) {
+            changes.insert(key.into(), serde_json::Value::Bool(v));
+        }
     }
     if let Some(v) = body.0.get("hwStrokeEnabled").and_then(|v| v.as_bool()) {
         // 两个 min_ratio 永远同步写——网页层只表达"开/关"这一个语义，角度/宽度/速度阈值这几个精调
@@ -41,12 +44,6 @@ pub fn set_qol(paths: &Paths, req: &mut Request<'_>) -> ApiResult {
         let ratio = if v { 0.6 } else { 1.0 };
         changes.insert("hwStrokeNibMinRatio".into(), serde_json::json!(ratio));
         changes.insert("hwStrokeSpeedMinRatio".into(), serde_json::json!(ratio));
-    }
-    if let Some(v) = body.0.get("notesImportMdEnabled").and_then(|v| v.as_bool()) {
-        changes.insert("notesImportMdEnabled".into(), serde_json::Value::Bool(v));
-    }
-    if let Some(v) = body.0.get("comicMinMargin").and_then(|v| v.as_bool()) {
-        changes.insert("comicMinMargin".into(), serde_json::Value::Bool(v));
     }
     if changes.is_empty() {
         return Err(ApiError::bad("body 需要 hlSnapCjk/hwStrokeEnabled/notesImportMdEnabled/comicMinMargin 其中一个布尔字段"));
@@ -71,5 +68,35 @@ pub fn battop_summary(_paths: &Paths, _req: &mut Request<'_>) -> ApiResult {
     match battop::summary() {
         Some(v) => Ok(Reply::ok(&serde_json::json!({"available": true, "summary": v}))),
         None => Ok(Reply::ok(&serde_json::json!({"available": false}))),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rmsvc_core::http::Method;
+    use std::collections::HashMap;
+
+    fn put(paths: &Paths, body: &[u8]) -> ApiResult {
+        let mut b: &[u8] = body;
+        let mut r = Request { method: Method::Put, path: "/api/enhance/qol".into(), query: HashMap::new(), params: HashMap::new(), content_type: "application/json".into(), content_length: None, headers: vec![], body: &mut b };
+        set_qol(paths, &mut r)
+    }
+
+    #[test]
+    fn set_qol_applies_only_present_boolean_keys_and_rejects_empty() {
+        let t = tempfile::tempdir().unwrap();
+        let h = t.path().to_str().unwrap().to_string();
+        let paths = Paths::resolve(move |k| if k == "HOME" { Some(h.clone()) } else { None });
+        let rep = put(&paths, br#"{"comicMinMargin":true,"hlSnapCjk":false,"junk":1}"#).unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&rep.body).unwrap();
+        assert_eq!((v["comicMinMargin"].as_bool(), v["hlSnapCjk"].as_bool()), (Some(true), Some(false)));
+        assert_eq!(v["notesImportMdEnabled"], false, "没传的键保持缺省");
+        // 只传 hwStrokeEnabled：两个 ratio 同步写，上一次的键不被冲掉
+        let rep = put(&paths, br#"{"hwStrokeEnabled":true}"#).unwrap();
+        assert_eq!(serde_json::from_slice::<serde_json::Value>(&rep.body).unwrap()["hwStrokeEnabled"], true);
+        assert!(qol::comic_min_margin(&paths));
+        // 没有任何可识别的布尔字段 → 拒绝
+        assert!(put(&paths, br#"{"hlSnapCjk":"yes"}"#).is_err());
     }
 }

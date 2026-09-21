@@ -11,6 +11,7 @@
 //! - `project` 条目库 → 设备笔记本投影（一章 → `rmv6::write::Paragraph` 列表 + 变更指纹），note-serve 专用。
 //! - `export`  条目库 → Markdown 导出（一章 → `.md` 文本 + 书索引页），跟 `project` 同一批 live 条目，
 //!   产物给 Obsidian 用（note-serve 落盘 + host `notes pull`）。
+//!
 //! 行首手写约定（`-` / `1.` / `口` / 下划线分区头）的几何判定放 `glyph`，阈值待真机样本标定后补。
 pub mod export;
 pub mod geom;

@@ -20,7 +20,9 @@ use rmsvc_core::registry::{self, SvcClient};
 use std::io::Read;
 use std::time::{Duration, Instant};
 
-const POLL_INTERVAL: Duration = Duration::from_secs(5);
+/// 等"book-serve 有新事件"的兜底超时：正常靠 [`crate::events::books_wake`] 事件唤醒（忙态结束 book-serve 会发 `books`
+/// 事件），这里只防事件丢了/订阅线程重连空窗——所以从原来的 5 秒轮询放宽到 30 秒（整个优化期间唤醒降到 1/6）。
+const POLL_FALLBACK: Duration = Duration::from_secs(30);
 /// 轮询等一个异步任务（优化/落库）真正跑完的上限——不是永久卡死，服务崩溃/重启导致侦测不到
 /// 结果时，超时后如实放弃、让名额自然释放，不为一个查不到结果的任务永久占着并发档位。
 const SETTLE_POLL_TIMEOUT: Duration = Duration::from_secs(60 * 60);
@@ -138,13 +140,17 @@ pub fn forward(paths: &Paths, req: &mut Request<'_>) -> ApiResult {
     Ok(reply)
 }
 
-/// 轮询 book-serve 的 `/staging`（直连后端服务，不经网关自己这层转发，避免自己调自己）直到
+/// 查 book-serve 的 `/staging`（直连后端服务，不经网关自己这层转发，避免自己调自己）直到
 /// [`crate::budget::is_settled`] 判定这本书已经不再忙，或等到 [`SETTLE_POLL_TIMEOUT`] 放弃。
+/// **事件驱动**：每次查完就阻塞等 [`crate::events::books_wake`]（book-serve 有事件才醒），至多 [`POLL_FALLBACK`] 兜底一次；
+/// 先取代数再查，查询期间到达的事件不会漏。
 /// 服务查不到/请求失败（可能重启中）也直接放弃轮询——宁可名额提前释放，不要因为侦测本身不可靠
 /// 就把并发档位永久卡住。
 pub(crate) fn poll_until_settled(client: &SvcClient, name: &str) {
     let deadline = Instant::now() + SETTLE_POLL_TIMEOUT;
+    let wake = crate::events::books_wake();
     loop {
+        let seen = wake.generation();
         match client.get_json("/staging") {
             Ok(json) if crate::budget::is_settled(&json, name) => return,
             Ok(_) => {}      // 还在忙，继续轮询
@@ -153,7 +159,7 @@ pub(crate) fn poll_until_settled(client: &SvcClient, name: &str) {
         if Instant::now() >= deadline {
             return;
         }
-        std::thread::sleep(POLL_INTERVAL);
+        wake.wait_change(seen, POLL_FALLBACK.min(deadline.saturating_duration_since(Instant::now())));
     }
 }
 
