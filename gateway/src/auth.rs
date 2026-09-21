@@ -69,7 +69,7 @@ impl AuthState {
             if self.limiter.locked_for().is_some() {
                 return Who::Nobody; // 锁定期不做校验（见 LOGIN_MAX_FAILS）
             }
-            if self.cfg.lock().map(|c| c.verify(&pw)).unwrap_or(false) {
+            if self.verify(&pw) {
                 self.limiter.reset();
                 return Who::Basic;
             }
@@ -77,6 +77,13 @@ impl AuthState {
             std::thread::sleep(std::time::Duration::from_millis(500));
         }
         Who::Nobody
+    }
+
+    /// 校验密码。**锁内只拷出哈希、PBKDF2（60 万轮，设备上数百毫秒）在锁外算**：`cfg` 锁是每个带会话的请求
+    /// （`must_change()`）都要拿的，持锁算哈希会让登录尝试/Basic 校验期间所有其它请求排队等它。
+    fn verify(&self, pw: &str) -> bool {
+        let hash = self.cfg.lock().map(|c| c.password_hash.clone()).unwrap_or_default();
+        !hash.is_empty() && rmsvc_core::auth::verify_password(pw, &hash)
     }
 
     pub fn must_change(&self) -> bool {
@@ -118,7 +125,7 @@ impl AuthState {
         if let Some(wait) = self.limiter.locked_for() {
             return Ok(self.locked_reply(wait, json, |m| crate::ui::login_page(m, &next)));
         }
-        let ok = self.cfg.lock().map(|c| c.verify(&pw)).unwrap_or(false);
+        let ok = self.verify(&pw);
         if ok {
             self.limiter.reset();
         } else {
@@ -275,6 +282,14 @@ mod tests {
         let rep = st.logout(&mut req(Method::Post, "/logout", "", &[("Cookie", &tok)], &mut (&b""[..]))).unwrap();
         assert_eq!(rep.status, 303);
         assert_eq!((g.check)(&gr(Method::Get, "/api/services", &[("Cookie", &tok)])).unwrap().status, 401);
+    }
+
+    #[test]
+    fn verify_accepts_only_the_current_password() {
+        let st = state(false);
+        assert!(st.verify("secret1") && !st.verify("nope") && !st.verify(""));
+        st.cfg.lock().unwrap().password_hash.clear();
+        assert!(!st.verify("secret1"), "没有密码哈希时一律不通过");
     }
 
     #[test]
