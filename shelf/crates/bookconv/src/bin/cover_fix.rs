@@ -7,7 +7,6 @@
 //!     供直接放进设备书库文档的 `<uuid>.thumbnails/cover.png`。
 //! 退出码: 0 成功（含"本来就有有效封面，无需改"）；1 用法错；2 失败。
 use bookconv::epubzip::Entry;
-use std::io::Read;
 
 fn main() {
     let a: Vec<String> = std::env::args().skip(1).collect();
@@ -24,23 +23,10 @@ fn main() {
 fn run(input: &str, output: &str, png: Option<&str>) -> Result<(), String> {
     let mut zin = zip::ZipArchive::new(std::io::BufReader::new(std::fs::File::open(input).map_err(|e| e.to_string())?)).map_err(|e| e.to_string())?;
     // 只读非图片条目（html/opf/…），图片留空占位——封面声明检查不需要图片字节。
-    let mut entries: Vec<Entry> = Vec::new();
-    for i in 0..zin.len() {
-        let mut f = zin.by_index(i).map_err(|e| e.to_string())?;
-        if f.is_dir() {
-            continue;
-        }
-        let name = f.name().to_string();
-        let data = if bookconv::imgopt::is_downscalable(&name) {
-            Vec::new()
-        } else {
-            let mut d = Vec::new();
-            f.read_to_end(&mut d).map_err(|e| e.to_string())?;
-            d
-        };
-        entries.push(Entry { name, data });
+    let mut entries: Vec<Entry> = bookconv::epubzip::read_skeleton(&mut zin)?.entries;
+    if !entries.iter().any(|e| e.name.ends_with(".opf")) {
+        return Err("找不到 OPF".into());
     }
-    let before: Vec<u8> = entries.iter().find(|e| e.name.ends_with(".opf")).map(|e| e.data.clone()).ok_or("找不到 OPF")?;
     let changed = bookconv::wash::ensure_cover_declared(&mut entries);
     let opf = entries.iter().find(|e| e.name.ends_with(".opf")).ok_or("找不到 OPF")?;
     let mut zout = zip::ZipWriter::new(std::io::BufWriter::new(std::fs::File::create(output).map_err(|e| e.to_string())?));
@@ -56,7 +42,6 @@ fn run(input: &str, output: &str, png: Option<&str>) -> Result<(), String> {
     }
     zout.finish().map_err(|e| e.to_string())?;
     println!("封面声明: {}", if changed { "已修复（OPF 已改）" } else { "本来就有效，无需改" });
-    let _ = before;
     if let Some(png_path) = png {
         let (_, bytes) = bookconv::placeholder::cover_image_of(std::path::Path::new(output)).ok_or("找不到封面图")?;
         let img = image::load_from_memory(&bytes).map_err(|e| format!("解码封面失败: {e}"))?.to_rgb8();

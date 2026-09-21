@@ -8,7 +8,7 @@
 //!
 //! 这个模块是"漫画类 EPUB 优化时改产出 PDF（带书签）"的实现，跟 `comic_split.rs`（EPUB→EPUB
 //! 按卷拆分）平行独立、互不影响；复用它的 NCX 标题解析（`ncx_titles_in_range`）和 `imgs_
-//! referenced`，图片处理用 `imgopt::prepare_comic_page_for_pdf`（裁边+缩放合成单趟，不再额外调用 `pad_to_device_aspect`——PDF 不需要靠补白像素控制留白分布，
+//! referenced`，图片处理用 `imgopt::prepare_comic_page_for_pdf`（裁边+缩放合成单趟，PDF 不需要靠补白像素控制留白分布，
 //! 直接在页面里摆位置即可，摆位算法见 `convert::pdfwrite::place_image`）。也不碰 `convert::
 //! pdfwrite::images_to_pdf`/`convert::cbz`（CBZ→PDF 现状路径），只用新增的 `images_to_pdf_
 //! with_toc`/`extract_pages`/`page_count`。
@@ -16,7 +16,6 @@
 use crate::convert::pdfwrite;
 use crate::epubzip::{dir_of, is_html, Entry};
 use crate::wash::parse_opf;
-use std::io::Read;
 use std::path::Path;
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -105,11 +104,7 @@ pub fn optimize_comic_epub_to_pdf_streaming(
             titles.push((written, title.clone()));
         }
         for img_path in imgs {
-            let mut f = zip2
-                .by_name(img_path)
-                .map_err(|e| format!("读图片 {img_path} 失败: {e}"))?;
-            let mut raw = Vec::with_capacity(f.size() as usize);
-            f.read_to_end(&mut raw).map_err(|e| e.to_string())?;
+            let raw = crate::epubzip::read_by_name(&mut zip2, img_path).map_err(|e| format!("读图片 {img_path} 失败: {e}"))?;
             // 单趟：裁边+一次缩到 PDF 实际绘制的整数像素尺寸+一次编码（见该函数文档：此前两道串联
             // 造成重采样两遍/JPEG 两代/灰度转 RGB）。返回 None = 无需处理，直接嵌原图字节零损失。
             let sized = crate::imgopt::prepare_comic_page_for_pdf(&raw, pdfwrite::PDF_PAGE_W, pdfwrite::PDF_PAGE_H).unwrap_or(raw);

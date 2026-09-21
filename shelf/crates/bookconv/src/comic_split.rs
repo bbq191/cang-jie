@@ -11,12 +11,11 @@
 //! 直接标 `fits=false` 放弃（不投原生，调用方据此提示用户"哪一卷没能投上"，原书完整字节仍在
 //! 母版库/KOReader，不会为了硬塞进预算而损内容）。
 
-use crate::epub::{assemble, Book, BookMeta, Chapter, Resource};
+use crate::epub::{assemble_with, AssembleOpts, Book, BookMeta, Chapter, Resource, SharedCss};
 use crate::epubzip::{dir_of, is_html, posix_norm, resolve, Entry};
 use crate::wash::parse_opf;
 use regex::Regex;
 use std::collections::HashMap;
-use std::io::{Read, Write};
 use std::sync::OnceLock;
 
 fn navpoint_event_re() -> &'static Regex {
@@ -264,15 +263,32 @@ fn body_inner(html: &str) -> Option<&str> {
 /// 段落又有配图）目前仍走纯图片分支（历史行为不变）——镖人这本书目前抽样到的都是"整页图"或
 /// "整页字"两种，没见过真正混排的页面，等真遇到再补。
 pub fn build_piece(entries: &[Entry], start: usize, end: usize, title: &str, book_id_suffix: &str) -> Result<Vec<u8>, String> {
+    let by_name: HashMap<&str, &Entry> = entries.iter().map(|e| (e.name.as_str(), e)).collect();
+    build_piece_with(entries, start, end, title, book_id_suffix, &mut |name| Ok(by_name.get(name).map(|e| e.data.clone())))
+}
+
+/// [`build_piece`] 的实现，"图片字节从哪来"抽成 `fetch_image(zip 内路径) -> Ok(Some(字节)) | Ok(None)=书里没有这张图`：
+/// 内存版从 `entries` 里克隆；流式版（[`deliver_split_streaming`]）**直接从源 zip 按需读**、字节一次性移进
+/// 资源表——此前流式版要先把这一份用到的图片全读进克隆出来的 `entries`、`build_piece` 再克隆一遍进资源表，
+/// 同一份图片同时驻留三四份（真机 OOM 审计的遗留点）。`entries` 只用于取 html 页面文本。
+fn build_piece_with(
+    entries: &[Entry],
+    start: usize,
+    end: usize,
+    title: &str,
+    book_id_suffix: &str,
+    fetch_image: &mut dyn FnMut(&str) -> Result<Option<Vec<u8>>, String>,
+) -> Result<Vec<u8>, String> {
     let opf = parse_opf(entries).ok_or("解不出 OPF/spine")?;
     let spine = &opf.spine;
     let ncx_titles = ncx_titles_in_range(entries, &opf, start, end);
+    let by_name: HashMap<&str, &Entry> = entries.iter().map(|e| (e.name.as_str(), e)).collect();
     let mut chapters = Vec::new();
     let mut resources = Vec::new();
     let mut remap: HashMap<String, String> = HashMap::new();
     for (offset, p) in spine[start..end].iter().enumerate() {
         let idx = start + offset;
-        let Some(e) = entries.iter().find(|e| &e.name == p) else { continue };
+        let Some(e) = by_name.get(p.as_str()) else { continue };
         if !is_html(p) {
             continue;
         }
@@ -286,11 +302,11 @@ pub fn build_piece(entries: &[Entry], start: usize, end: usize, title: &str, boo
                 let new_path = match remap.get(&img) {
                     Some(np) => np.clone(),
                     None => {
-                        let Some(ie) = entries.iter().find(|e| e.name == img) else { continue };
+                        let Some(bytes) = fetch_image(&img)? else { continue };
                         let ext = img.rsplit('.').next().unwrap_or("jpg").to_ascii_lowercase();
                         let media = crate::util::image_media_type_of_ext(&ext);
                         let np = format!("images/{:04}.{ext}", resources.len() + 1);
-                        resources.push(Resource { path: np.clone(), media_type: media.into(), bytes: ie.data.clone() });
+                        resources.push(Resource { path: np.clone(), media_type: media.into(), bytes });
                         remap.insert(img.clone(), np.clone());
                         np
                     }
@@ -321,8 +337,8 @@ pub fn build_piece(entries: &[Entry], start: usize, end: usize, title: &str, boo
         chapters,
         resources,
     };
-    let bytes = assemble(&mut book)?;
-    repack_with_comic_css(bytes)
+    // 外链 comic.css 组装时一次写成（见 `COMIC_CSS` 文档）；图片字节写完即释放。
+    assemble_with(&mut book, AssembleOpts { shared_css: Some(SharedCss { file: "comic.css", id: "comic-css", css: COMIC_CSS }), consume_resources: true })
 }
 
 /// `assemble()`吐出来的页面没有任何 CSS——真机拿真实拆出来的一卷在原生阅读器打开量过
@@ -339,53 +355,18 @@ pub fn build_piece(entries: &[Entry], start: usize, end: usize, title: &str, boo
 /// `table-cell` 居中）逐像素对比，**跟纯 `width:100%;height:auto` 渲染结果完全一样**：图片高度
 /// 永远是"宽度撑满后按原图长宽比算出来的"，任何 `height`/`max-height` 声明（无论 `%` 还是
 /// `vh`）xochitl 一律不认。CSS 这条路已经走到头，真正的修法挪到图片像素本身——见
-/// `imgopt::pad_to_device_aspect`（优化阶段把图片本身补白成设备页面长宽比，`width:100%` 撑满宽度
+/// `imgopt::prepare_comic_page_for_epub`（优化阶段把图片本身补白成页框长宽比，`width:100%` 撑满宽度
 /// 后高度自然也撑满，原来堆在底部的缺口现在摆在图片内容两侧，不是消掉、是摆得不突兀）。这里的
 /// CSS 保持最简单的"撑满宽度"就够，不用再猜其它花活。
 ///
 /// **只给真正含图的章节挂这份 CSS**——2026-09-19 同一轮修复顺带补的边界：纯文字页
 /// （`build_piece` 的 `body_inner` 分支，如"后记"）不该被这里的 `body{margin:0}` 清零默认页
 /// 边距（正文段落需要正常的阅读边距），所以按"这一章的 body 里有没有 `<img`"分流，只有含图的
-/// 才挂 `<link>`。
-fn repack_with_comic_css(bytes: Vec<u8>) -> Result<Vec<u8>, String> {
-    let mut entries = crate::check::read_entries(&bytes)?;
-    const CSS_PATH: &str = "OEBPS/comic.css";
-    const CSS: &str = "body{margin:0;padding:0;}\nimg{width:100%;height:auto;}\n";
-    entries.push(Entry { name: CSS_PATH.into(), data: CSS.as_bytes().to_vec() });
-    for e in entries.iter_mut() {
-        if e.name.starts_with("OEBPS/chap_") && e.name.ends_with(".xhtml") {
-            if let Ok(html) = std::str::from_utf8(&e.data) {
-                if html.to_ascii_lowercase().contains("<img") {
-                    let linked = html.replacen("</head>", "<link rel=\"stylesheet\" type=\"text/css\" href=\"comic.css\"/></head>", 1);
-                    e.data = linked.into_bytes();
-                }
-            }
-        } else if e.name == "OEBPS/content.opf" {
-            if let Ok(opf) = std::str::from_utf8(&e.data) {
-                let patched = opf.replacen("</manifest>", "<item id=\"comic-css\" href=\"comic.css\" media-type=\"text/css\"/></manifest>", 1);
-                e.data = patched.into_bytes();
-            }
-        }
-    }
-    let mut out = Vec::new();
-    {
-        let cursor = std::io::Cursor::new(&mut out);
-        let mut z = zip::ZipWriter::new(cursor);
-        let stored = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
-        // mimetype 必须首个、STORED（EPUB 规范）。
-        if let Some(i) = entries.iter().position(|e| e.name == "mimetype") {
-            let m = entries.remove(i);
-            z.start_file("mimetype", stored).map_err(|e| e.to_string())?;
-            z.write_all(&m.data).map_err(|e| e.to_string())?;
-        }
-        for e in &entries {
-            z.start_file(&e.name, stored).map_err(|e| e.to_string())?;
-            z.write_all(&e.data).map_err(|e| e.to_string())?;
-        }
-        z.finish().map_err(|e| e.to_string())?;
-    }
-    Ok(out)
-}
+/// 才挂 `<link>`（[`SharedCss`] 的语义）。
+///
+/// 此前这段 CSS 是 `assemble()` 出整卷 zip 后再整卷读回内存改条目重打包（`repack_with_comic_css`）；
+/// 现在由 `assemble_with` 一次写成，产物字节与旧路径逐字节一致（条目顺序：…章节、资源、comic.css）。
+const COMIC_CSS: &str = "body{margin:0;padding:0;}\nimg{width:100%;height:auto;}\n";
 
 /// 结果：成功投递的份 / 拆到底仍超限或组包失败没能投的份（标题+原因）。
 #[derive(Debug)]
@@ -450,28 +431,9 @@ pub fn deliver_split_streaming(
             continue;
         }
         idx += 1;
-        // 只克隆这一份用得到的骨架（entries 里 html/opf/ncx 已经是真实字节，图片仍是占位，克隆便宜）。
-        let mut piece_entries = entries.clone();
-        for p in &opf.spine[piece.start..piece.end] {
-            if !is_html(p) {
-                continue;
-            }
-            let Some(html_entry) = entries.iter().find(|e| &e.name == p) else { continue };
-            let Ok(html) = std::str::from_utf8(&html_entry.data) else { continue };
-            for img in imgs_referenced(html, dir_of(p)) {
-                let Some(pe) = piece_entries.iter_mut().find(|e| e.name == img) else { continue };
-                if !pe.data.is_empty() {
-                    continue; // 已经读过（同一张图被这一份里多页共用）
-                }
-                if let Ok(mut f) = zip2.by_name(&img) {
-                    let mut buf = Vec::with_capacity(f.size() as usize);
-                    if f.read_to_end(&mut buf).is_ok() {
-                        pe.data = buf;
-                    }
-                }
-            }
-        }
-        match build_piece(&piece_entries, piece.start, piece.end, &piece.title, &piece.title) {
+        // 图片字节直接从源 zip 按需读进资源表（不再克隆骨架、不再先读进 entries 再克隆一遍）。
+        let mut fetch = |img: &str| crate::epubzip::read_by_name_opt(&mut zip2, img);
+        match build_piece_with(&entries, piece.start, piece.end, &piece.title, &piece.title, &mut fetch) {
             Ok(bytes) => {
                 let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("book");
                 // 2026-09-19 真机撞过同一类问题（见 comic_pdf.rs 同款注释+`util::
@@ -485,7 +447,7 @@ pub fn deliver_split_streaming(
             }
             Err(e) => failed.push(format!("{}（组包失败：{e}）", piece.title)),
         }
-        // piece_entries/bytes 出循环体作用域即释放——下一份开始前，这一份占的内存已经收回。
+        // bytes 出循环体作用域即释放——下一份开始前，这一份占的内存已经收回。
     }
     Ok(Some(StreamSplitOutcome { delivered, failed }))
 }
@@ -493,6 +455,7 @@ pub fn deliver_split_streaming(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::{Read, Write};
 
     fn e(name: &str, data: &[u8]) -> Entry {
         Entry { name: name.into(), data: data.to_vec() }
