@@ -201,7 +201,7 @@ systemd/gateway.service` 打进同一个部署包）代管，跟它代管 `../no
   `bin/start-remarkable-weread.sh` 已经用 `ls`/`cat` 直接核对过在设备上确实存在，逻辑由
   `foundation_probes_weread_alongside_koreader` 单测覆盖。
   **追记（2026-09-13，同日）**：装完用户反馈"设备端 KOReader 下没有入口"——上面说的"不装
-  AppLoad 入口"是这份第三方发行包自己的保守判断（作者大概率不知道本项目已经用 PR#59 补丁把
+  AppLoad 入口"是这份第三方发行包自己的保守判断（作者大概率不知道本项目已经用 PR#59 补丁（2026-09-21 起已被 appload 0.6.0 官方版取代）把
   AppLoad 在 3.28 上救活了，见），它其实**随包带了**
   一份现成的 AppLoad 应用包（`~/.local/opt/remarkable-weread/appload/{external.manifest.json,
   appload-launch.sh,icon.png}`，`appload-launch.sh` 注释原文就写"AppLoad 和 3.28 及以后的

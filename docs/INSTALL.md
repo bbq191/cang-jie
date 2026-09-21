@@ -131,7 +131,7 @@ sh install-all.sh 10.11.99.1 --skip chrony-cn,timezone-cn,xovi-persist
   这些是手动前置条件。
 - **不装中文输入法**——这条功能线已经从本仓库归档（见顶层 [README](../README.md)「历史与范围」），
   当前不随本安装器分发。
-- **不打 appload 的 3.28 兼容补丁**：那是独立手动步骤 `packaging/deploy-appload-patch.sh <host>`，不在编排里（见风险①）。
+- **不升级 appload**：3.28 固件需要 appload ≥ 0.6.0（`vellum add/upgrade appload`），已装旧版要先手动升级并整机重启，不在编排里（见风险①）。
 
 ## 卸载
 
@@ -163,20 +163,27 @@ sh uninstall-all.sh 10.11.99.1 --purge            # 额外删 battop 的二进�
 
 下面这几项不是"随机小概率故障"，是已知的、有明确触发条件的坑——装之前心里有数，能少走弯路。
 
-① **AppLoad 官方发行版（v0.5.3）在 3.28 固件上有兼容问题，且失败是静默的——但不会装不上、
+① **AppLoad 必须 ≥ 0.6.0 才兼容 3.28 固件；旧版的失败是静默的——但不会装不上、
    不会导致 xochitl 起不来、更不会变砖**
-   AppLoad 自带的内部注入补丁钩的是 3.27 的旧界面锚点，3.28 已经改名——不打第三方兼容补丁的
-   话，AppLoad 自己往界面注入的启动器组件建不起来，`journalctl` 会报一条 qmldiff 层面的
+   AppLoad 0.5.3 及更早版本自带的内部注入补丁钩的是 3.27 的旧界面锚点，3.28 已经改名——
+   AppLoad 自己往界面注入的启动器组件建不起来，`journalctl` 会报一条 qmldiff 层面的
    "Couldn't resolve the hashed identifier"。**这条已经在这台设备的真实历史上发生过**
-   （2026-09-06，当时装的是没打补丁的原始 v0.5.3）：**`vellum add appload` 这一步本身照常
-   装成功**（纯文件级安装，不看固件版本），**xochitl 也照常正常启动、照常能用**——观察到的
-   唯一现象是 AppLoad 那个入口图标没出来、点不了，是"这一个功能没生效"，不是"重启失败"更
-   不是"设备变砖"。会导致真正开不了机/变砖的场景（改 xochitl 的 systemd 启动依赖导致依赖
-   死锁）是完全不同的另一类事故，跟这里说的 QML 锚点找不到不是一回事，机制上不会互相牵连。
-   **症状**：`sidebar-entry` 那步会自动探测到这个问题并跳过（不报错、不算安装失败），侧边栏
-   就是不会出现 KOReader/WeRead 入口，容易被误认为"这功能本来就没做"。**怎么确认踩没踩这个
-   坑**：跑完 `install-all.sh` 看汇总里 `sidebar-entry` 是"已安装"还是"跳过"；跳过了但你
-   确实需要这个入口，见 `packaging/README.md`「前置条件」第 3 条的修复指路。
+   （2026-09-06，当时装的是 v0.5.3）：**`vellum add appload` 这一步本身照常装成功**
+   （纯文件级安装，不看固件版本），**xochitl 也照常正常启动、照常能用**——观察到的唯一
+   现象是 AppLoad 那个入口图标没出来、点不了，是"这一个功能没生效"，不是"重启失败"更不是
+   "设备变砖"。会导致真正开不了机/变砖的场景（改 xochitl 的 systemd 启动依赖导致依赖
+   死锁）是完全不同的另一类事故，机制上不会互相牵连。
+   **现状**：上游已在 **v0.6.0（2026-09-19）** 并入 3.28 支持（另加 3.29），现在
+   `vellum add appload` / `vellum upgrade appload` 装到的就是它；2026-09-21 真机验证过
+   （日志出现 "Loaded external AppLoad hooks in main UI"，侧栏 KOReader/WeRead 入口点开正常）。
+   以前的"等长回填补丁"工具已经删除，不需要了。
+   **症状（装的是旧版时）**：`sidebar-entry` 那步会自动探测到这个问题并跳过（不报错、不算
+   安装失败），侧边栏就是不会出现 KOReader/WeRead 入口，容易被误认为"这功能本来就没做"。
+   **怎么确认踩没踩这个坑**：`vellum list --installed | grep appload` 看版本是不是 ≥ 0.6.0；
+   或跑完 `install-all.sh` 看汇总里 `sidebar-entry` 是"已安装"还是"跳过"。
+   **⚠ 升级 appload 之后不要 `systemctl restart xochitl`**：运行中的旧进程会在退出时崩溃，
+   触发 xochitl 单元的 `OnFailure=emergency.target`，整机自动重启一次（2026-09-21 踩到；
+   日志完整、没有数据损坏，但会打断使用）。换完文件直接整机重启，xovi 重启后自动生效。
 
 ② **`qt-resource-rebuilder` 缺失会让好几个功能同时静默不装，容易误判成"装坏了"**
    字体菜单增强、回收站/新建文件夹网页代理、Sidebar 一级入口——这三个互不相关的功能背后共享
@@ -230,7 +237,7 @@ sh uninstall-all.sh 10.11.99.1 --purge            # 额外删 battop 的二进�
 1. （升级前，可选）把与新固件不兼容的 xovi 扩展（如 appload）挪出 `extensions.d/`，放到 `/home/root/xovi-disabled/`——**绝不留在 `extensions.d/` 里**（xovi 会把目录下任意文件当扩展加载）。
 2. 升级完成后，**在设备旁手动**跑 `xovi/rebuild_hashtable`（要 root 密码、交互输入，`install-all.sh` 不代做）。它是后面 qmd 重新注入的前提。
 3. 在电脑上：`cd packaging && sh install-all.sh <设备IP>`。新固件的 sha256 通常不在白名单里，安全门会拒装——确认这台设备的固件就是你要装的那个版本后加 `--force`（追加进本机 `firmware-allowlist.local.txt`）。脚本全部幂等，缺什么补什么。
-4. 看收尾汇总、浏览器打开网关确认；appload 的 3.28 兼容补丁是独立手动步骤（`deploy-appload-patch.sh`）。
+4. 看收尾汇总、浏览器打开网关确认；appload 需要 ≥ 0.6.0（旧版要先 `vellum upgrade appload` 并整机重启），不在编排里。
 
 **逐项对照**（哪些还在、哪些要重装、用哪一步恢复）
 
@@ -245,9 +252,9 @@ sh uninstall-all.sh 10.11.99.1 --purge            # 额外删 battop 的二进�
 | 电池诊断单元 `battop.service` | `/usr`（数据在 `/home`） | 单元**冲掉** | `battop` 步（装完 start，不自启） |
 | WiFi 看护单元 `wifi-watch.service` | `/usr`（脚本 `~/.local/bin/wifi-watch.sh` 在 `/home`） | 单元**冲掉** | `wifi-watch` 步 |
 | 国内 NTP（chrony 配置）、默认时区 | `/etc` | **冲掉** | `chrony-cn` / `timezone-cn` 步 |
-| appload 的 3.28 兼容补丁 | `/home`（xovi） | 视 appload 是否被重装 | 独立：`deploy-appload-patch.sh <设备IP>` |
+| appload ≥ 0.6.0（3.28 兼容） | `/home`（xovi） | 视 appload 是否被重装 | 独立：设备上 `vellum upgrade appload`，然后整机重启 |
 
-**风险分层**（不要合成一个百分比）：书架这一层只用 xochitl 的 `/upload` 网页接口和系统标准组件，换固件重装即回；字体菜单这类 qmldiff 注入依赖 xochitl 内部 QML，大版本常要重适配（3.27→3.28 已是两版 qmd）；KOReader 本体独立无碍，但侧栏入口靠第三方 appload，每个大版本可能要重打补丁。
+**风险分层**（不要合成一个百分比）：书架这一层只用 xochitl 的 `/upload` 网页接口和系统标准组件，换固件重装即回；字体菜单这类 qmldiff 注入依赖 xochitl 内部 QML，大版本常要重适配（3.27→3.28 已是两版 qmd）；KOReader 本体独立无碍，但侧栏入口靠第三方 appload，每个固件大版本都要确认 appload 已支持（3.28 起需要 ≥ 0.6.0）。
 
 **"裸机恢复"要额外检查**：OTA 本身不会删 `/home`，但如果设备经历过更彻底的重置，`/home` 下的 payload（`extensions.d/` 里的 `.so`、各服务二进制）可能一起丢——2026-09-09 真机踩过。重跑 `install-all.sh` 前先确认这些文件还在。
 

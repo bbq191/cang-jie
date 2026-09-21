@@ -167,7 +167,7 @@ shelf is `deploy.sh`) can also be run on its own, independent of `install-all.sh
 - **Doesn't install the Chinese input method** — that line was archived out of this repository
   (see the top-level [README](README.en.md), "History and scope") and isn't distributed by this
   installer.
-- **Doesn't apply appload's 3.28 compatibility patch** — that is a separate manual step, `packaging/deploy-appload-patch.sh <host>`, not part of the orchestration (see risk ①).
+- **Doesn't upgrade appload** — 3.28 firmware needs appload ≥ 0.6.0 (`vellum add/upgrade appload`); an older install must be upgraded by hand and the device rebooted, outside the orchestration (see risk ①).
 
 ## Uninstalling
 
@@ -201,26 +201,33 @@ aimed at engineering detail; this one is meant as a quick-start guide for a firs
 These aren't "random low-probability glitches" — they're known issues with clear trigger
 conditions. Knowing about them ahead of time saves a lot of guessing later.
 
-① **The official AppLoad release (v0.5.3) has a compatibility issue on 3.28 firmware, and it
-   fails silently — but it won't fail to install, won't stop xochitl from starting, and won't
-   brick the device.** AppLoad's own built-in injection patch targets 3.27's old UI anchors,
-   which were renamed in 3.28 — without a third-party compatibility patch, the launcher
-   component AppLoad injects into the UI never gets built, and `journalctl` logs a qmldiff-level
-   "Couldn't resolve the hashed identifier". **This has actually happened on this exact
-   device's history** (2026-09-06, when the unpatched original v0.5.3 was installed):
+① **AppLoad must be ≥ 0.6.0 to work on 3.28 firmware; older versions fail silently — but they
+   won't fail to install, won't stop xochitl from starting, and won't brick the device.**
+   AppLoad 0.5.3 and earlier ship a built-in injection patch that targets 3.27's old UI anchors,
+   which were renamed in 3.28 — the launcher component AppLoad injects into the UI never gets
+   built, and `journalctl` logs a qmldiff-level "Couldn't resolve the hashed identifier".
+   **This has actually happened on this exact device's history** (2026-09-06, with v0.5.3):
    **`vellum add appload` itself installed successfully** (a plain file-level install that
    doesn't check firmware version), **and xochitl started and worked normally** — the only
    observable symptom was the AppLoad icon never showing up / not being clickable. That's "one
    feature didn't take effect", not "failed to restart" and definitely not "bricked the
-   device". The kind of issue that actually can brick a device or prevent it from booting
-   (breaking xochitl's systemd startup dependencies into a deadlock) is a completely different
-   category of accident from a missing QML anchor — the two mechanisms don't interact.
-   **Symptom**: the `sidebar-entry` step detects this automatically and skips (not an error, not
-   a failed install) — the sidebar simply won't show a KOReader/WeRead entry, which is easy to
-   mistake for "this feature was never built". **How to tell if you hit this**: check whether
-   `install-all.sh`'s summary lists `sidebar-entry` as "installed" or "skipped"; if skipped and
-   you actually need the shortcut, see the fix pointer under item 3 of "Before you install" in
-   `packaging/README.md`.
+   device". The kind of issue that actually can brick a device (breaking xochitl's systemd
+   startup dependencies into a deadlock) is a completely different category of accident.
+   **Current status**: upstream fixed this in **v0.6.0 (2026-09-19)** (3.28 support merged, 3.29
+   added). `vellum add appload` / `vellum upgrade appload` now installs it; verified on the real
+   device on 2026-09-21 (the log shows "Loaded external AppLoad hooks in main UI", and the
+   sidebar KOReader/WeRead entries open normally). The old "same-length backfill" patch tool
+   has been removed and is no longer needed.
+   **Symptom (with an old version)**: the `sidebar-entry` step detects this automatically and
+   skips (not an error, not a failed install) — the sidebar simply won't show a KOReader/WeRead
+   entry, which is easy to mistake for "this feature was never built". **How to tell**: run
+   `vellum list --installed | grep appload` and check the version is ≥ 0.6.0, or check whether
+   `install-all.sh`'s summary lists `sidebar-entry` as "installed" or "skipped".
+   **⚠ After upgrading appload, do not run `systemctl restart xochitl`**: the running old
+   process crashes on exit, which triggers xochitl's `OnFailure=emergency.target` and reboots
+   the whole device once (seen on 2026-09-21; logs intact, no data damaged, but it interrupts
+   use). Reboot the device instead — xovi takes effect automatically after boot.
+
 ② **Missing `qt-resource-rebuilder` silently disables several unrelated-looking features at
    once, easy to mistake for a broken install.** The font-menu enhancement, the trash/new-folder
    web proxy, and the Sidebar entry — three otherwise-unrelated features — all share the same
@@ -286,7 +293,7 @@ This is the **authoritative** OTA recovery description (`packaging/README.md`, `
 1. (Before updating, optional) move xovi extensions that are incompatible with the new firmware (e.g. appload) out of `extensions.d/` into `/home/root/xovi-disabled/` — **never leave them in `extensions.d/`** (xovi loads any file there as an extension).
 2. After the update, run `xovi/rebuild_hashtable` **by hand at the device** (it needs the root password interactively; `install-all.sh` will not do it for you). It is the prerequisite for qmds being injected again.
 3. On the computer: `cd packaging && sh install-all.sh <device IP>`. The new firmware's sha256 is usually not in the allowlist, so the gate refuses — after confirming the device really runs the firmware you intend, add `--force` (appended to the local `firmware-allowlist.local.txt`). Every script is idempotent and fills in whatever is missing.
-4. Read the closing summary and open the gateway in a browser; appload's 3.28 compatibility patch is a separate manual step (`deploy-appload-patch.sh`).
+4. Read the closing summary and open the gateway in a browser; appload needs to be ≥ 0.6.0 (upgrade an older one with `vellum upgrade appload` and reboot), outside the orchestration.
 
 **Item by item** (what survives, what must be reinstalled, which step restores it)
 
@@ -301,9 +308,9 @@ This is the **authoritative** OTA recovery description (`packaging/README.md`, `
 | battop unit `battop.service` | `/usr` (data in `/home`) | unit **wiped** | `battop` step (started after install, not enabled at boot) |
 | WiFi watchdog unit `wifi-watch.service` | `/usr` (script `~/.local/bin/wifi-watch.sh` in `/home`) | unit **wiped** | `wifi-watch` step |
 | Domestic NTP (chrony config), default timezone | `/etc` | **wiped** | `chrony-cn` / `timezone-cn` steps |
-| appload's 3.28 compatibility patch | `/home` (xovi) | depends on whether appload was reinstalled | separate: `deploy-appload-patch.sh <device IP>` |
+| appload ≥ 0.6.0 (3.28 support) | `/home` (xovi) | depends on whether appload was reinstalled | separate: `vellum upgrade appload` on the device, then reboot |
 
-**Risk layers** (don't collapse them into one percentage): the shelf layer only uses xochitl's `/upload` web endpoint and standard system components, so reinstalling restores it; qmldiff injections such as the font menu depend on xochitl's internal QML and often need re-adapting on a major version (3.27→3.28 already needed two qmd variants); KOReader itself is independent, but its sidebar entry relies on the third-party appload, which may need re-patching each major version.
+**Risk layers** (don't collapse them into one percentage): the shelf layer only uses xochitl's `/upload` web endpoint and standard system components, so reinstalling restores it; qmldiff injections such as the font menu depend on xochitl's internal QML and often need re-adapting on a major version (3.27→3.28 already needed two qmd variants); KOReader itself is independent, but its sidebar entry relies on the third-party appload, so confirm appload supports each new major firmware (3.28 onward needs ≥ 0.6.0).
 
 **After a "bare-metal restore" check extra**: an OTA itself never deletes `/home`, but if the device went through a more thorough reset, the payload under `/home` (the `.so` files in `extensions.d/`, the service binaries) can disappear with it — this really happened on 2026-09-09. Confirm those files are still there before re-running `install-all.sh`.
 

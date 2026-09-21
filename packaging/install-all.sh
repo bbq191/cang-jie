@@ -28,7 +28,8 @@
 #   · 不装 vellum/xovi/qt-resource-rebuilder/appload 本体、不侧载 KOReader——这些是全新设备
 #     共同的手动前置条件，本脚本只在缺失时把报错原样透出，不代为安装。
 #   · 不装中文化（输入法/候选栏/UI 汉化）——那条链路已不在本仓库（见顶层 README「历史与范围」）。
-#   · 不打 appload 3.28 兼容补丁（独立手动步骤：deploy-appload-patch.sh）。
+#   · 不升级 appload：3.28 固件需要 appload ≥ 0.6.0（`vellum add/upgrade appload`），已装旧版要先手动升级并整机重启
+#     （不要 restart xochitl，见 deploy-sidebar-entry.sh 头注）。
 # 对称卸载见 packaging/uninstall-all.sh。
 #
 # 用法：./install-all.sh [host] [--force] [--skip a,b,...]
@@ -74,6 +75,6 @@ echo "· KOReader：通过 appload 侧载，本脚本不代装"
 echo "· WeRead（可选第三方 app）：本脚本不代装，需要自己下载官方发行包 SSH 装；装了的话"
 echo "    sidebar-entry 这步会自动探测到、把 Sidebar 入口换成带 WeRead 的两项版本"
 echo "· 中文化（输入法/候选栏/UI 汉化）：不在本仓库，本脚本不装（见顶层 README「历史与范围」）"
-echo "· appload 3.28 兼容补丁：独立手动步骤 packaging/deploy-appload-patch.sh <host>"
+echo "· appload 版本：3.28 固件需要 ≥ 0.6.0（vellum upgrade appload，升完整机重启，别 restart xochitl）"
 echo "═══════════════════════════════════════════════════════════"
 [ -z "$FAILED" ]
