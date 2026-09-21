@@ -20,19 +20,18 @@
 # 是否已经通过 appload 侧载不在本脚本探测范围——沿用 2026-09-02 首版设计（未装 KOReader 时这个
 # 按钮点了也没反应，属已知取舍，见 sidebar-entry-koreader-only.qmd 头注）。
 #
-# 【appload 在 3.28 上要打过 PR #59 兼容补丁】appload v0.5.3 自带的内嵌 qmd 钩的是 3.27 的旧
-# Sidebar/MainView 锚点，3.28 已经改了名字——没打这个补丁时 qmldiff 会报 "Couldn't resolve
-# the hashed identifier"，appload 自己往 MainView 注入的常驻 Loader（CJAppLoad.AppLoadLauncher
-# 单例就活在这个 Loader 里）根本建不起来，这样即使本脚本把 Sidebar 按钮插上去了，点了也没反应
-# ——不是本脚本的 bug，是 appload 那份 .so 本身在这个固件版本上不兼容。检测靠读当前这次开机
-# 的 journalctl：appload 自己的 qmd 处理成功会打一行 "Loaded external AppLoad hooks in main
-# UI"；没这行说明大概率没打过这个补丁（或者压根还没重启过 xochitl 应用刚装好的 appload），本
-# 脚本探测不到就跳过、不硬装一个不会响应的按钮。真要修：`packaging/appload_patch_328.py`
-# 2026-09-16 已回收进版本控制（见同目录
-# appload-qmd-PROVENANCE.md），独立跑 `packaging/deploy-appload-patch.sh <host>`——**没有
-# 接入 install-all.sh 的自动编排**，字节替换逻辑还没有对真实 appload.so 做过真机验证，见该
-# 脚本头注。PR #59 本身已在 2026-09-07 合并进上游 master，但上游至今没有发布带这个修复的新
-# tag，`vellum add appload` 装的官方发行版（仍是 v0.5.3）因此依然没有这个修复。
+# 【appload 要 ≥ 0.6.0 才兼容 3.28】appload 0.5.3 自带的内嵌 qmd 钩的是 3.27 的旧 Sidebar/MainView
+# 锚点，3.28 已经改了名字——qmldiff 会报 "Couldn't resolve the hashed identifier"，appload 自己往
+# MainView 注入的常驻 Loader（CJAppLoad.AppLoadLauncher 单例就活在这个 Loader 里）建不起来，即使
+# 本脚本把 Sidebar 按钮插上去了点了也没反应。上游 PR #59（3.28 支持）已并入 v0.6.0（2026-09-19，
+# 同版还加了 3.29 支持），`vellum add/upgrade appload` 拿到的就是它；2026-09-21 真机验证（md5 与官方
+# 发布包一致、xochitl 日志有 "Loaded external AppLoad hooks in main UI"、侧栏入口点开 KOReader/
+# WeRead 正常）。此前用的"等长回填 qmd 进 .so"补丁工具已随之删除（git 历史可找回）。
+# 检测靠读当前这次开机的 journalctl：appload 自己的 qmd 处理成功会打一行 "Loaded external AppLoad
+# hooks in main UI"；没这行说明 appload 版本太旧（或刚装/升级完还没重启），本脚本探测不到就跳过、
+# 不硬装一个不会响应的按钮。⚠ 换 appload 文件后**不要 `systemctl restart xochitl`**：运行中的旧
+# 进程在退出时会 SIGSEGV，触发 xochitl 单元的 OnFailure=emergency.target 整机重启（2026-09-21
+# 真机踩到）——换完直接整机重启，xovi 会自动生效。
 #
 # 用法：./deploy-sidebar-entry.sh [host]      host 默认 10.11.99.1
 #   环境 DEFER_XOVI_START=1：只把 qmd/rcc 落盘，不在这一步重启 xochitl——install-all.sh 编排
@@ -70,17 +69,16 @@ fi
 
 echo "== 探测 appload 自己的 qmd 在这台固件上是否兼容 =="
 # 正面信号："Loaded external AppLoad hooks in main UI" 是 appload 自己那份内嵌 qmd 成功处理后
-# 打的日志——没这行不代表一定没打过 PR #59 补丁（也可能是装完 appload 后还没重启过 xochitl），
+# 打的日志——没这行不代表 appload 一定太旧（也可能是装完 appload 后还没重启过），
 # 但按钮多半点了没反应，所以一律当作"暂不满足"处理，不硬装。
 # ⚠ 这条只是"本次开机内某个时刻出现过"的一次性判据，不代表现在正在跑的 xochitl 就是那次成功
-# 挂载的同一个实例——如果这行日志之后设备上跑过 `vellum upgrade`（会用未打补丁的官方版本盖掉
-# appload，见 工程纪律 记录）却还没重启过 xochitl，这里还是会读到旧的成功信号（2026-09-15
-# 全量代码审查审出）。真正当次生效与否，靠下面本脚本自己触发的这次重启之后重新核对同一行信号
+# 挂载的同一个实例——如果这行日志之后设备上跑过 `vellum upgrade`/`vellum del appload`（换掉了
+# 磁盘上的 appload）却还没重启过设备，这里还是会读到旧的成功信号（2026-09-15 全量代码审查审出）。真正当次生效与否，靠下面本脚本自己触发的这次重启之后重新核对同一行信号
 # （`DEFER_XOVI_START=1` 模式不在这一步重启，没法当场复核，见该分支注释）。
 if ! rssh "journalctl -b 0 -u xochitl --no-pager 2>/dev/null | grep -q 'Loaded external AppLoad hooks in main UI'"; then
-    echo "-- 没在这次开机日志里看到 appload 成功挂载的信号（可能是 appload 在这个固件版本上没打"
-    echo "   过 PR #59 兼容补丁，也可能是刚装完 appload 还没重启过 xochitl）——跳过，非失败。"
-    echo "   见本脚本头注「appload 在 3.28 上要打过 PR #59 兼容补丁」一节。"
+    echo "-- 没在这次开机日志里看到 appload 成功挂载的信号（可能是 appload 版本 < 0.6.0、在 3.28"
+    echo "   上不兼容，也可能是刚装/升级完 appload 还没重启设备）——跳过，非失败。"
+    echo "   先 vellum upgrade appload 到 ≥ 0.6.0 并整机重启，见本脚本头注「appload 要 ≥ 0.6.0」一节。"
     exit 0
 fi
 
@@ -123,7 +121,7 @@ if [ "${DEFER_XOVI_START:-0}" = "1" ]; then
     echo "-- DEFER_XOVI_START=1：只落盘，不在这一步重启 xochitl（由后续统一步骤处理）"
     echo "   ⚠ appload 兼容信号只在上面探测的那一刻核对过，这一步不重启就没法当场复核；"
     echo "     后续统一步骤（deploy-xovi-apply.sh）真正重启后如果按钮点了没反应，先查"
-    echo "     一遍 appload 是不是重启前又被 vellum upgrade 覆盖过。"
+    echo "     一遍 appload 版本是否 ≥ 0.6.0、是不是重启前又被 vellum 换过。"
     exit 0
 fi
 
@@ -142,9 +140,9 @@ if journalctl -u xochitl --since "$SINCE" --no-pager 2>/dev/null | grep -q 'Load
     echo "✅ 部署完成（appload 兼容信号在这次重启之后重新出现，不是复用重启前的旧信号）"
 else
     echo "⚠️  部署已落盘、xochitl 重启健康，但这次重启之后没有重新看到 appload 兼容信号——"
-    echo "   探测阶段那次可能已经过期（比如中间跑过 vellum upgrade 把 appload 换回未打补丁的"
-    echo "   官方版本）。Sidebar 按钮大概率点了没反应，去 journalctl -u xochitl --since \"$SINCE\""
-    echo "   核实，必要时重新走一遍「appload 3.28 免SDK补丁法」。"
+    echo "   探测阶段那次可能已经过期（比如中间 appload 被换成了 < 0.6.0 的版本）。"
+    echo "   Sidebar 按钮大概率点了没反应，去 journalctl -u xochitl --since \"$SINCE\" 核实，"
+    echo "   必要时 vellum upgrade appload 到 ≥ 0.6.0 后整机重启。"
     exit 1
 fi
 DEVICE_SCRIPT

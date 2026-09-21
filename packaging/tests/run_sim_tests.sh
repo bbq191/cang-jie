@@ -10,7 +10,7 @@
 # 覆盖：devlib 各函数 · shelf install 幂等/缺载荷不留半成品/rw 窗口失败恢复 ro/只重启有变化的服务 ·
 #       shelf uninstall 与 install 清单对称（含 mkdir-agent qmd、lo-alias.sh、shelf-uninstall、旧命名遗留、--only、--purge）·
 #       deploy.sh（密码含特殊字符、shelf-pkg 换位）· hl-snap 部署（原子落位/备份不进 extensions.d/DEFER）·
-#       xovi-apply 与 sidebar-entry 的 H1 判定（xovi 已生效 → restart，绝不 xovi/start）· appload 补丁的暂存+md5 ·
+#       xovi-apply 与 sidebar-entry 的 H1 判定（xovi 已生效 → restart，绝不 xovi/start）·
 #       install-all → uninstall-all 整轮对称 · 静态守卫（remount,rw / xovi/start 只许出现在库里）。
 # 一键：sh packaging/tests/run_sim_tests.sh     （也由 pytest 的 test_install_scripts_sim.py 调用，CI 会跑）
 # ═══════════════════════════════════════════════════════════════════════════
@@ -368,15 +368,6 @@ check "xovi-apply：输出里有\"打断\"提示" grep -q '打断' "$R/out.txt"
 xovi_live off; : > "$CJ_SIM_LOG"
 ( cd "$PKG" && run sh deploy-xovi-apply.sh 127.0.0.1 ) >/dev/null 2>&1
 check "xovi-apply：xovi 未生效 → xovi/start" test "$(count_log XOVI_START)" = 1 -a "$(count_log 'restart xochitl')" = 0
-
-section "packaging/deploy-appload-patch.sh：H3 暂存 + md5 + 原子替换"
-new_sandbox; SO="$R/home/root/xovi/extensions.d/appload.so"; echo ORIGAPPLOAD > "$SO"
-( cd "$PKG" && run sh deploy-appload-patch.sh 127.0.0.1 ) >"$R/out.txt" 2>&1; rc=$?
-check "appload：补丁版落位，备份进 cangjie-backups，extensions.d 里没有多余文件" test "$rc" -eq 0 -a "$(tail -n 1 "$SO")" = PATCHED -a -n "$(ls "$R"/home/root/cangjie-backups/appload.so.bak.pre-* 2>/dev/null)" -a "$(ls -A "$R/home/root/xovi/extensions.d")" = "appload.so"
-check "appload：不自动重启 xochitl、不 xovi/start" test "$(count_log 'restart xochitl')" = 0 -a "$(count_log XOVI_START)" = 0
-new_sandbox; SO="$R/home/root/xovi/extensions.d/appload.so"; echo ORIGAPPLOAD > "$SO"
-( cd "$PKG" && CJ_SIM_SCP_CORRUPT=appload.so.new run sh deploy-appload-patch.sh 127.0.0.1 ) >"$R/out.txt" 2>&1; rc=$?
-check "appload 传输损坏：非 0，extensions.d 里 appload.so 原样（H3：坏文件不会落到自动加载目录）" test "$rc" -ne 0 -a "$(cat "$SO")" = ORIGAPPLOAD -a "$(ls -A "$R/home/root/xovi/extensions.d")" = "appload.so"
 
 section "packaging/deploy-usr-unit（wifi-watch / chrony-boot-wakelock / xovi-persist）"
 new_sandbox; : > "$CJ_SIM_LOG"

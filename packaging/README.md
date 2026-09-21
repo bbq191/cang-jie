@@ -27,7 +27,7 @@ sh uninstall-all.sh <host> --skip shelf                            # 跳过指�
 
 1. **`vellum add xovi`**——xovi 本体（`xovi-persist`/`hl-snap`/`handwriting-stroke`/`xovi-apply` 的硬前提）。
 2. **`vellum add qt-resource-rebuilder`**——`shelf` 里 `font`/`book` 的字体菜单、回收站/建夹代理，以及 `sidebar-entry` 这几个可选特性依赖它；缺了这些特性自动跳过，不阻塞其它安装。
-3. **`vellum add appload`**——第三方 App 加载器，KOReader 要通过它侧载；`sidebar-entry` 那步靠它暴露的 `AppLoadLauncher` 单例发起启动，缺了自动跳过。**⚠ 3.28 固件官方发行版 appload v0.5.3 有兼容问题**——它自己内嵌的 qmd 钩的是 3.27 的旧 Sidebar/MainView 锚点，3.28 已经改名，不打补丁会导致它自己的注入失败（症状：`AppLoadLauncher` 单例建不起来，`sidebar-entry` 装的按钮点了没反应）。补丁工具已在版本控制里：`appload_patch_328.py`（等长字节回填内嵌 qmd，来源/许可见 `appload-qmd-PROVENANCE.md`）+ `deploy-appload-patch.sh <host>`——**独立手动步骤，没有接入 `install-all.sh` 自动编排**（对真实 appload.so 还没有真机验证过，见该脚本头注）；`sidebar-entry` 那步本身仍然只探测开机日志、探测不到就跳过，不会自动去调用打补丁脚本。上游 PR #59 已在 2026-09-07 合并进 `master`，但至今没有发布带这个修复的新 tag，`vellum add appload` 装的官方发行版依然是没修复的 v0.5.3。
+3. **`vellum add appload`**——第三方 App 加载器，KOReader 要通过它侧载；`sidebar-entry` 那步靠它暴露的 `AppLoadLauncher` 单例发起启动，缺了自动跳过。**⚠ 3.28 固件需要 appload ≥ 0.6.0**——0.5.3 及更早版本自带的内嵌 qmd 钩的是 3.27 的旧 Sidebar/MainView 锚点，3.28 已经改名，注入失败（症状：`AppLoadLauncher` 单例建不起来，`sidebar-entry` 装的按钮点了没反应）。上游 PR #59（3.28 支持）已并入 **v0.6.0（2026-09-19）**，`vellum add/upgrade appload` 拿到的就是它，2026-09-21 真机验证过（md5 与官方发布包一致、日志有 "Loaded external AppLoad hooks in main UI"、KOReader/WeRead 入口正常）；此前的"等长回填 qmd"补丁工具已删除。已装旧版的先 `vellum upgrade appload`，**升完整机重启，别 `systemctl restart xochitl`**（旧进程退出时会崩溃、触发 `OnFailure=emergency.target` 整机重启，2026-09-21 踩到）。`sidebar-entry` 那步仍然只探测开机日志、探测不到就跳过。
 4. **KOReader**（经 appload 侧载）——`shelf` 的 `koreader-serve` 只是管理/配置这个已装好的 KOReader，不负责把 KOReader 本身装上去；`sidebar-entry` 那步的「KOReader」入口同理，点了没反应说明这一步没做。
 
 装好以上四样、再跑 `install-all.sh`，才是完整的"全新设备"安装顺序。**可选、不算前置条件**：**WeRead**（第三方 reMarkable 版微信读书 app）——要装得自己下载官方发行包 SSH 装；`sidebar-entry` 会自动探测装没装，装了就把 Sidebar 入口换成「KOReader + WeRead」两项版本，没装就只有「KOReader」一项，不会因为没装 WeRead 而报错或跳过整步。
@@ -70,7 +70,7 @@ xovi 没有"只重载一个扩展"的机制，让新扩展/qmd 生效的唯一�
 | `deploy-usr-unit.sh` | 把一个 systemd 单元装进设备 `/usr` 的统一部署器；`deploy-chrony-boot-wakelock.sh` / `deploy-xovi-persist.sh` / `deploy-wifi-watch.sh` 是它的薄包装 |
 | `deploy-xovi-ext.sh` + `xovi-ext-install.sh` | 装一个"独立最小 xovi 扩展"的统一部署器（host 侧构建+推送）与设备侧安装流程；`deploy-hl-snap.sh` / `deploy-handwriting-stroke.sh` 是薄包装，各扩展的 `deploy/install.sh` 只剩数据（名字、配置键）并 source `xovi-ext-install.sh` |
 | `deploy.sh` | shelf 整包部署：组载荷（`bin/ systemd/ lo-alias/ xovi/ install.sh uninstall.sh manifest.sh devlib.sh`）→ 本地打成 tar → 推到设备 `shelf-pkg.new`，校验有 `install.sh` 后才换掉 `shelf-pkg` → 设备端 `install.sh`；`--password` 经标准输入走 0600 临时文件，不上命令行 |
-| `deploy-battop.sh` / `deploy-sidebar-entry.sh` / `deploy-xovi-apply.sh` / `deploy-chrony-cn.sh` / `deploy-timezone-cn.sh` / `deploy-appload-patch.sh` | 各自的部署脚本；`deploy-appload-patch.sh` 不在编排里 |
+| `deploy-battop.sh` / `deploy-sidebar-entry.sh` / `deploy-xovi-apply.sh` / `deploy-chrony-cn.sh` / `deploy-timezone-cn.sh` | 各自的部署脚本 |
 | `firmware-allowlist.txt` / `firmware-allowlist.local.txt` | 固件白名单：仓库里被 git 跟踪的一份 + 本机一份（`--force` 追加到后者，已 gitignore） |
 | `wifi-watch/` | 看护脚本与单元；`xovi-reenable.service`、`chrony-boot-wakelock.service`、`sidebar-entry-*.qmd`/`.qrc`/`.png`、`chrony-cn.sh`、`timezone-cn.sh` 是其余步骤的载荷 |
 | `tests/` | 本机模拟测试，见下 |
@@ -128,7 +128,7 @@ bash packaging/tests/run_sim_tests.sh      # 也由 packaging/tests/test_install
 
 - **不装 vellum/xovi/qt-resource-rebuilder/appload 本体、不侧载 KOReader**——这是所有脚本共同的手动前置条件，见上面「前置条件」一节，本脚本不代为安装，缺失时子脚本会清楚报错，`install-all.sh` 收尾摘要会再提醒一次。
 - **不装中文化**（输入法/候选栏/词典/UI 汉化）——那条链路（`chinese-ime/langhook/`）随 2026-09-11 全仓库大归档挪出了 git 仓库，不随本安装器分发；设备上已部署的部分仍在运行。
-- **不打 appload 3.28 兼容补丁**——独立手动步骤 `deploy-appload-patch.sh`，不在编排里。
+- **不升级 appload**——3.28 需要 ≥ 0.6.0，已装旧版的自己 `vellum upgrade appload` 后整机重启，不在编排里。
 - **`chrony-cn` / `timezone-cn` 没有卸载语义**（配置覆写），见上面「卸载」。
 - **卸载的真机效果没有验证过**：`uninstall-all.sh` 只做过本机模拟测试（假 host 验证参数解析/`--skip`/摘除动作/与安装对称），需要用户在已装过 `install-all.sh` 的设备上跑一遍，确认各单元/扩展确实被摘掉、shelf 服务确实停用，且不影响没被点名要卸的其它功能。
 - 旧的 `packaging/package.sh`（打 `cangjie-full-*.tar.gz` 单体安装包那套）**没有**恢复——它已随归档挪出仓库且按旧目录结构找载荷，不是 `install-all.sh` 的设计参照；这次是纯编排现有独立脚本，不是复刻旧的单体打包架构。
@@ -189,9 +189,7 @@ WeRead`、`NRestarts=0`；② `DEFER_XOVI_START=1` 模式：同样的探测+推�
 测试前的原始状态。两次重启都健康（`is-active=active`、`NRestarts=0`、`MainPID` 有变化），
 间隔约一分钟，没有连续触发到 StartLimit。
 
-**仍然没有真机验证过的**：appload 补丁未生效这条——检查的是"这次开机 journal 里有没有
-那行日志"，这是既成历史事实，没法在不重装 appload 的情况下伪造"没有"，逻辑只是一行
-`grep -q`，复杂度低，靠代码审查，这次真机日志只确认了"正面信号确实存在"这一半。
+**仍然没有真机验证过的**：`sidebar-entry` 在 appload 版本过旧时"检测不到信号就跳过"这一分支——检查的是"这次开机 journal 里有没有那行日志"，逻辑只是一行 `grep -q`，复杂度低，靠代码审查；真机日志只确认了"正面信号确实存在"这一半（2026-09-21 appload 0.6.0 上）。
 
 **`xovi-persist` 核心承诺——已用真机重启证实**：`packaging/xovi-reenable.service` 装完后，
 那台设备真的经历过一次整机重启（见下面"真机第一轮实测暴露的真坑"那条 watchdog+StartLimit

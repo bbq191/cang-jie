@@ -13,7 +13,9 @@ shelf koreader sync --fonts --dicts # 另按 fonts.txt / dicts.txt 同步字体�
 ```
 profile 三文件的键来自《阅读白皮书》§11.1b；标注"待核对"的值需先 `pull` 看设备实况再定。
 
-**KOReader 入口现状（2026-09-05，固件 3.28.0.172）**：KOReader 本体（v2026.07.1，官方支持 Move）与本目录/koreader-serve 都正常；
-但**启动入口 appload 0.5.3 在 3.28 上不兼容**（其 qmd 钩 3.28 已删的 `SidebarFilterItem`，上游 PR #59 只改 qmd、编进 .so，重编需 rM Qt6 SDK），
-原件挪到 `/home/root/xovi-disabled/pre-3.28-*/`（extensions.d 外）；**2026-09-06 已用 PR #59 的 qmd 等长回填进 .so 复活**（免 SDK，`xovi-extensions/reading-qol/tools/appload_patch_328.py`，系统增强白皮书 §12.1），侧栏「KOReader」入口 qmd 同步换 3.28 锚点。上游发 3.28 版前别 `vellum upgrade appload`。KOReader 根目录仍是
-`~/xovi/exthome/appload/koreader/`（书/字体/词典照常同步进去）。书架白皮书 §03v。
+**KOReader 入口现状（2026-09-21，固件 3.28.0.172，appload 0.6.0）**：KOReader 本体（v2026.07.1，官方支持 Move）与本目录/koreader-serve 都正常。
+启动入口 appload：0.5.3 在 3.28 上不兼容（其 qmd 钩 3.28 已删的 `SidebarFilterItem`），2026-09-06 曾用 PR #59 的 qmd 等长回填进 .so 顶过；
+**上游 v0.6.0（2026-09-19）已并入 3.28 支持（另加 3.29），2026-09-21 官方升级并真机验证**（侧栏 KOReader/WeRead 入口点开正常），回填补丁工具已删除。
+升级注意：换 appload 文件后**别 `systemctl restart xochitl`**（旧进程退出时崩溃→整机重启一次），直接整机重启。
+已知变化：0.6.0 的实体键（左/主页/右）发 Qt 原始键码，KOReader 的 qtfb 输入层仍按 0/1/2 映射→实体键失效（Move 无实体翻页键，只影响外接键盘）。
+KOReader 根目录仍是 `~/xovi/exthome/appload/koreader/`（书/字体/词典照常同步进去）。书架白皮书 §03v。

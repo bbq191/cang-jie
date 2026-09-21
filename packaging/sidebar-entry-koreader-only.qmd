@@ -24,7 +24,7 @@
 ;   SidebarFilterItem → **ArkControls.SidebarItem**（属性 title→text、active→highlighted、无 navigationHandler）；
 ;   DeviceKeyboardNavigationHandler#integrationsHandler 已删，Import files 折叠区改为
 ;   **ArkControls.SidebarFoldout#integrationsFoldout**（appload PR #59 同一锚点）；Values → Common.Values。
-;   appload 0.5.3 自身的 qmd 也钩这两个旧锚点，3.28 上要用 PR #59 的 qmd 回填进 .so（系统增强白皮书）。
+;   appload 0.5.3 自身的 qmd 也钩这两个旧锚点；appload ≥ 0.6.0（并入 PR #59）已改用新锚点，3.28 上直接可用。
 ;   【qmldiff 纪律】INSERT{} 内注释只能 //；handler 一律 `{ … }` 块、不写 `({})`（书架白皮书 §04）。
 ; ─────────────────────────────────────────────────────────────────────────
 

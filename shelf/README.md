@@ -86,7 +86,7 @@ shelf/
 | 状态 | `~/.local/state/shelf/books/staging/`（**母版库**，不淘汰）· `books/{inbox,.work,failed}`（追平队列）· `wallpaper-state.json` · `koreader-backups/` |
 | 运行时 | `/tmp/shelf-0/shelf/{services,upload,koreader}`（`XDG_RUNTIME_DIR` 缺省回落；重启即清） |
 | 笔记线 | 自成一套 `notes` XDG 路径，与书架的 `shelf` 命名空间互不相干，详见 `../notes/README.md` |
-| 外部约定 | KOReader 根 `SHELF_KOREADER_ROOT`（缺省 `~/xovi/exthome/appload/koreader`；appload 0.5.3 经 PR #59 qmd 回填补丁在 3.28 复活，见 koreader/README）；xochitl 书库 `~/.local/share/remarkable/xochitl` |
+| 外部约定 | KOReader 根 `SHELF_KOREADER_ROOT`（缺省 `~/xovi/exthome/appload/koreader`；appload ≥ 0.6.0 起原生支持 3.28，见 koreader/README）；xochitl 书库 `~/.local/share/remarkable/xochitl` |
 
 ## 访问与密码
 
