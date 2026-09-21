@@ -5,8 +5,8 @@
 //! `GET /margins/<uuid>`，命中就调用阅读器的 `EpubProperties.setMargins(m)`（与界面点"页边距"同一条路径），成功后
 //! `POST /margins/applied` 销账。**每本书只设一次**：之后用户在界面上自己改回去，我们不再干预。
 //!
-//! 只登记**用新版页框处理过的纯图漫画 EPUB**（`Staging::comic_margin_eligible`）：补白比例是按"边距 1"算的，旧页框产物
-//! （补白到屏幕比例）在最小边距下会贴左、右侧空一大块，反而更糟。文字书、PDF 完全不碰。
+//! 只登记**用新版页框处理过的漫画 EPUB**（以图为主；文字页已补留边）（`Staging::comic_margin_eligible`）：补白比例是按"边距 1"算的，旧页框产物
+//! （补白到屏幕比例）在最小边距下会贴左、右侧空一大块，反而更糟。文字书、PDF 完全不碰。文字页留边见 `bookconv::comic_pad`。
 //!
 //! **用户开关**（网页「管理→实验室→漫画页边距」）：`reading-qol.json` 的 `comicMinMargin`（默认关，跟「导入 md」同一套实验室开关）。
 //! 关闭时：优化用旧页框（`EpubComicFrame::Screen`）、不登记、`GET /margins/<uuid>` 一律 404（已登记的也不再生效）。队列文件 `$XDG_STATE_HOME/shelf/books/comic-margins.json`，

@@ -14,7 +14,7 @@
 //!                      EPUB 是流式重排做不到真正的页底部定位，撤回改回 Anchor，段末块整个下线）
 //!   --check          产物过质量门，打印 JSON 报告；不过则退出码 3（产物仍写出）
 //!   --require-toc    质量门把"无目录"升为失败
-//!   --comic-min-margin 纯图漫画补白到"页边距最小"的页框（配阅读器页边距 1；缺省补白到屏幕比例）
+//!   --comic-min-margin 漫画补白到"页边距最小"的页框（配阅读器页边距 1；缺省补白到屏幕比例）
 //! 退出码: 0 成功；1 用法错；2 优化失败（输入原样不动）；3 质量门未过。
 
 use bookconv::optimize::{self, FootnoteMode, OptimizeOpts};

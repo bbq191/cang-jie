@@ -95,6 +95,11 @@ impl Default for WashOpts {
 /// （《缩进诊断5》带 `.big` 类规则时整表不生效，diag6 纯 `p{}` 生效）。
 const WASH_CSS_NAME: &str = "cangjie-wash.css";
 
+/// 条目名是不是本层写出的外链 wash css（任意目录下的 `cangjie-wash.css`）。
+pub(crate) fn is_wash_css_name(name: &str) -> bool {
+    name.rsplit('/').next() == Some(WASH_CSS_NAME)
+}
+
 // background / background-image：书常在 body/分卷页用 CSS 背景图（装饰纹样、分卷插画）。xochitl **无视
 // no-repeat / background-size** → 把背景图**平铺**满页盖住正文（真机《飘》body.fen 的 `background:url() no-repeat`
 // 被铺成多幅）。剥掉背景图声明即净页（章头 <img> 装饰不受影响，仍保留）。@font-face 的 src:url() 由 filter_css 豁免。

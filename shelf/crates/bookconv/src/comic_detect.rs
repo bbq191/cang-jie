@@ -14,7 +14,7 @@ pub const MIN_IMAGES: usize = 20;
 /// 判定漫画的"平均每张图配的文字数"上限。
 pub const TEXT_PER_IMAGE: f64 = 40.0;
 
-fn strip_noise_tags(html: &str) -> String {
+pub(crate) fn strip_noise_tags(html: &str) -> String {
     static RE: OnceLock<Regex> = OnceLock::new();
     // regex crate 不支持反向引用，三种标签各写一条 alternation。
     RE.get_or_init(|| Regex::new(r#"(?is)<script\b.*?</script>|<style\b.*?</style>|<head\b.*?</head>"#).unwrap()).replace_all(html, "").into_owned()
@@ -73,6 +73,13 @@ pub fn is_comic_epub_file(path: &std::path::Path) -> bool {
 /// 打不开/解不了 zip 一律 `false`（走现状 EPUB 路径，保内容优先）。
 pub fn is_text_free_comic_epub_file(path: &std::path::Path) -> bool {
     read_entries_without_images(path).map(|e| is_text_free_comic(&e)).unwrap_or(false)
+}
+
+/// **能设"页边距最小化"的漫画**：整本判漫画（图为主，文字可以有）且**所有纯文字页都已带留边类**
+/// （[`crate::comic_pad`]）——文字页没留边的旧优化产物页边距设成 1 后文字会贴屏幕边，不放行。
+/// 与 [`is_text_free_comic_epub_file`] 不同：后者是"能转 PDF"的判据（一个字都不能有），这里允许有文字页。
+pub fn is_min_margin_comic_file(path: &std::path::Path) -> bool {
+    read_entries_without_images(path).map(|e| is_comic(&e) && crate::comic_pad::all_text_pages_padded(&e)).unwrap_or(false)
 }
 
 /// 这本 EPUB 的漫画页是不是已按 [`crate::imgopt::EpubComicFrame::MinMargin`] 的页框（954×[`crate::imgopt::EPUB_COMIC_PAGE_H`]）补过白。
