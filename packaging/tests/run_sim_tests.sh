@@ -22,7 +22,7 @@ fi
 REAL_HOME="$HOME"
 # 所有 XDG_* 一律指进沙箱（脚本会读它们；不设的话 install/uninstall --purge 会碰到真实用户目录——
 # 2026-09-20 首版就踩过：--purge 测试清了开发机的 ~/.config/shelf 等，见 new_sandbox 里的导出与末尾的"真实 HOME 未被触碰"守卫）
-guard_paths() { echo "$REAL_HOME/.config/shelf $REAL_HOME/.local/share/shelf $REAL_HOME/.local/state/shelf $REAL_HOME/.local/lib/shelf $REAL_HOME/cangjie-backups $REAL_HOME/.local/bin/shelf-uninstall $REAL_HOME/.cangjie-stage"; }
+guard_paths() { echo "$REAL_HOME/.config/shelf $REAL_HOME/.local/share/shelf $REAL_HOME/.local/state/shelf $REAL_HOME/.local/lib/shelf $REAL_HOME/cangjie-backups $REAL_HOME/.local/bin/shelf-uninstall $REAL_HOME/.cangjie-stage $REAL_HOME/.cangjie-pending-apply /run/cangjie-pending-apply"; }
 GUARD_BEFORE=""
 for g in $(guard_paths); do [ -e "$g" ] && GUARD_BEFORE="$GUARD_BEFORE $g"; done
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -187,6 +187,53 @@ check "xochitl_apply：没有 xovi/start 也没 xovi → 失败而不是乱重�
 xovi_live on
 check "count_maps：只输出一个整数（grep -c 为 0 时不出 '0\\n0'）" test "$(cj_count_maps nonexistent-tag 4242)" = 0
 check "count_maps：有匹配" test "$(cj_count_maps hl-snap 4242)" -ge 1
+
+# 待生效标记（A1）
+rm -rf "$CJ_PENDING_DIR"
+check "pending：初始无标记" test -z "$(cj_pending_list)"
+cj_pending_mark hl-snap; cj_pending_mark shelf-qmd
+check "pending：mark 两次后 list 有两项" test "$(cj_pending_list | sort | tr '\n' ' ')" = "hl-snap shelf-qmd "
+cj_pending_clear
+check "pending：clear 后为空且标记目录已删" test -z "$(cj_pending_list)" -a ! -e "$CJ_PENDING_DIR"
+mkdir -p "$R/ro"; chmod 500 "$R/ro"; OLD_PD="$CJ_PENDING_DIR"; CJ_PENDING_DIR="$R/ro/x/y"
+cj_pending_mark fb-test >/dev/null
+check "pending：主目录写不了 → 落退路目录，list 仍能看到（宁可多重启也不能漏）" test "$(cj_pending_list)" = fb-test -a -f "$CJ_PENDING_FALLBACK/fb-test"
+cj_pending_clear; CJ_PENDING_DIR="$OLD_PD"; chmod 700 "$R/ro"
+check "pending：clear 也清退路目录" test ! -e "$CJ_PENDING_FALLBACK"
+
+# 内容没变不备份 / 载荷目录清理 / 暂存清理 / 卸载单元的 verity 宽松语义
+CJ_BACKUP_DIR="$R/bk2"; CJ_BACKUP_KEEP=5; CJ_BACKUP_MAXBYTES=67108864   # 上面的轮转测试 unset 过这几个变量
+echo a > "$R/s1"; echo a > "$R/d1"; cj_backup_if_differs "$R/s1" "$R/d1"
+check "backup_if_differs：内容相同 → 不备份" test -z "$(ls -A "$R/bk2" 2>/dev/null)"
+echo b > "$R/s1"; cj_backup_if_differs "$R/s1" "$R/d1" >/dev/null
+check "backup_if_differs：内容不同 → 备份了旧内容" test "$(cat "$R"/bk2/d1.bak.pre-* 2>/dev/null)" = a
+cj_backup_if_differs "$R/s1" "$R/not-exist"
+check "backup_if_differs：目标不存在 → 无事可做" test "$(ls "$R/bk2" | wc -l)" -eq 1
+CJ_BACKUP_DIR="$CJ_HOME/cangjie-backups"
+
+mkdir -p "$CJ_HOME/pkg-x/deploy"; echo 1 > "$CJ_HOME/pkg-x/a.so"; echo 1 > "$CJ_HOME/pkg-x/deploy/i.sh"; echo keep > "$CJ_HOME/pkg-x/mine.txt"
+cj_rm_payload "$CJ_HOME/pkg-x" a.so deploy/i.sh deploy
+check "rm_payload：只删已知文件；目录里有别的东西 → 目录与别的文件都保留" test ! -e "$CJ_HOME/pkg-x/a.so" -a ! -e "$CJ_HOME/pkg-x/deploy" -a -f "$CJ_HOME/pkg-x/mine.txt"
+rm "$CJ_HOME/pkg-x/mine.txt"; cj_rm_payload "$CJ_HOME/pkg-x" a.so
+check "rm_payload：全是已知文件 → 目录也删" test ! -e "$CJ_HOME/pkg-x"
+mkdir -p "$R/outside"; echo x > "$R/outside/f"
+cj_rm_payload "$R/outside" f >/dev/null; rc=$?
+check "rm_payload：$CJ_HOME 之外的路径 → 拒绝（返回 1），文件不动" test "$rc" -eq 1 -a -f "$R/outside/f"
+ln -s "$R/outside" "$CJ_HOME/lnk"; cj_rm_payload "$CJ_HOME/lnk" f >/dev/null; rc=$?
+check "rm_payload：目标是符号链接 → 拒绝，链接指向的内容不动" test "$rc" -eq 1 -a -f "$R/outside/f"
+rm -f "$CJ_HOME/lnk"
+
+mkdir -p "$CJ_STAGE_DIR"; cj_stage_cleanup
+check "stage_cleanup：空暂存目录被删" test ! -e "$CJ_STAGE_DIR"
+mkdir -p "$CJ_STAGE_DIR"; : > "$CJ_STAGE_DIR/x"; cj_stage_cleanup
+check "stage_cleanup：暂存目录非空 → 保留" test -f "$CJ_STAGE_DIR/x"
+rm -rf "$CJ_STAGE_DIR"
+
+cj_install_usr_unit v.service "$R/x.service.src" multi-user.target.wants >/dev/null
+CJ_SIM_VERITY=1 cj_uninstall_usr_unit v.service multi-user.target.wants >"$R/o.txt" 2>&1; rc=$?
+check "uninstall_usr_unit：dm-verity 激活 → 视为非失败(0)、单元仍在、如实说明重启后可能被拉起" test "$rc" -eq 0 -a -f "$CJ_SYSD/v.service" -a -n "$(grep '重启设备后' "$R/o.txt")"
+cj_uninstall_usr_unit v.service multi-user.target.wants >/dev/null; rc=$?
+check "uninstall_usr_unit：正常 → 0，单元与链接都删了" test "$rc" -eq 0 -a ! -e "$CJ_SYSD/v.service" -a ! -L "$CJ_SYSD/multi-user.target.wants/v.service"
 
 # ═══════════════════════════ 2. shelf install / uninstall ═══════════════════════════
 trap cleanup EXIT   # devlib 的 cj_with_rootfs_rw 会清掉 EXIT trap（被 source 进本 shell 时），这里重新挂上
@@ -455,6 +502,10 @@ SIG_INSTALLED="$(tree_sig)"
 check "install-all 第二遍（固件已在本机白名单）：退出 0" test "$rc" -eq 0
 sig_eq "install-all 第二遍：文件树不变（幂等）" "$SIG_INSTALLED" "$(tree_sig)"
 check "install-all 第二遍：不 remount rootfs（单元都已是最新）、仍无 xovi/start" test "$(count_log remount)" = 0 -a "$(count_log XOVI_START)" = 0
+check "install-all 第二遍：这轮没改任何 xovi 相关文件 → 不重启 xochitl（A1，重复跑不再闪屏）" test "$(count_log 'restart xochitl')" = 0
+: > "$CJ_SIM_LOG"
+( cd "$PKG" && run sh install-all.sh 127.0.0.1 --skip chrony-cn,timezone-cn --force-apply ) >"$R/out2b.txt" 2>&1; rc=$?
+check "install-all --force-apply：无改动也重启一次 xochitl（仍是 systemctl restart，不 xovi/start）" test "$rc" -eq 0 -a "$(count_log 'systemctl restart xochitl')" = 1 -a "$(count_log XOVI_START)" = 0
 ( cd "$PKG" && run sh install-all.sh 127.0.0.1 --skip chrony-cn,timezone-cn,bogus-step ) >"$R/out3.txt" 2>&1
 check "--skip 未知步骤名：给出警告而不是静默" grep -q '不是已知步骤名' "$R/out3.txt"
 
@@ -463,8 +514,9 @@ check "--skip 未知步骤名：给出警告而不是静默" grep -q '不是已�
 check "uninstall-all：整轮退出 0" test "$rc" -eq 0
 POST_SIG="$(tree_sig | grep -v \
     -e 'home/root/\.config/shelf/' -e 'home/root/\.local/share/shelf/' -e 'home/root/\.local/state/shelf/' \
-    -e 'home/root/battop/' -e 'home/root/hl-snap/' -e 'home/root/hw-stroke/' -e 'home/root/pkg-' -e 'home/root/shelf-pkg/' -e 'home/root/\.local/share/cangjie-ime/')"
-sig_eq "uninstall-all：文件树回到安装前（仅剩有意保留的暂存目录/用户数据/battop 数据/配置）" "$PRE_SIG" "$POST_SIG"
+    -e 'home/root/battop/' -e 'home/root/\.local/share/cangjie-ime/')"
+sig_eq "uninstall-all：文件树回到安装前（含 deploy 推送的载荷 pkg-*/hl-snap/hw-stroke/shelf-pkg 与暂存目录全清；仅剩用户数据/battop 数据/配置）" "$PRE_SIG" "$POST_SIG"
+check "uninstall-all：待生效标记与暂存目录也清了" test ! -e "$CJ_PENDING_DIR" -a ! -e "$R/home/root/.cangjie-stage"
 check "uninstall-all：不重启 xochitl、不 xovi/start" test "$(count_log 'restart xochitl')" = 0 -a "$(count_log XOVI_START)" = 0
 check "uninstall-all：最后一次 mount 是 ro" test "$(last_mount)" = "mount -o remount,ro /"
 ( cd "$PKG" && run sh uninstall-all.sh 127.0.0.1 ) >"$R/uout2.txt" 2>&1; rc=$?
@@ -473,6 +525,143 @@ check "uninstall-all 第二遍：仍退出 0（幂等）" test "$rc" -eq 0
 ( cd "$PKG" && run sh uninstall-all.sh 127.0.0.1 --purge --skip shelf ) >/dev/null 2>&1
 check "uninstall-all --purge：battop 目录才被清" test ! -e "$R/home/root/battop"
 unset CJ_BATTOP_BIN CJ_SKIP_BUILD SHELF_NO_BUILD CJ_ALLOWLIST_LOCAL
+
+# ═══════════════════════════ 6. 2026-09-22 审计新增 ═══════════════════════════
+section "参数解析 / --dry-run / -h / 设备不可达"
+new_sandbox; : > "$CJ_SIM_LOG"
+( cd "$PKG" && run sh install-all.sh --dry-run ) >"$R/out.txt" 2>&1; rc=$?
+check "install-all --dry-run：退出 0、不发起任何 ssh/scp" test "$rc" -eq 0 -a "$(count_log '^ssh')" = 0 -a "$(count_log '^scp')" = 0
+missing=""; for st in chrony-cn chrony-boot-wakelock timezone-cn battop wifi-watch xovi-persist hl-snap handwriting-stroke sidebar-entry shelf xovi-apply; do grep -q "═══ $st ═══" "$R/out.txt" || missing="$missing $st"; done
+check "install-all --dry-run：11 个步骤都在计划里" test -z "$missing"
+( cd "$PKG" && run sh install-all.sh -h ) >"$R/out.txt" 2>&1; rc=$?
+check "install-all -h：退出 0、打印用法、不连设备" test "$rc" -eq 0 -a -n "$(grep '用法' "$R/out.txt")" -a "$(count_log '^ssh')" = 0
+( cd "$PKG" && run sh install-all.sh 127.0.0.1 --purge ) >/dev/null 2>&1; rc1=$?
+( cd "$PKG" && run sh install-all.sh 127.0.0.1 --bogus ) >/dev/null 2>&1; rc2=$?
+( cd "$PKG" && run sh uninstall-all.sh 127.0.0.1 --force ) >/dev/null 2>&1; rc3=$?
+( cd "$PKG" && run sh uninstall-all.sh 127.0.0.1 --force-apply ) >/dev/null 2>&1; rc4=$?
+check "install-all --purge / 未知参数、uninstall-all --force/--force-apply：退出 2，且没连设备" test "$rc1" -eq 2 -a "$rc2" -eq 2 -a "$rc3" -eq 2 -a "$rc4" -eq 2 -a "$(count_log '^ssh')" = 0
+( cd "$PKG" && run sh uninstall-all.sh --dry-run --purge ) >"$R/out.txt" 2>&1; rc=$?
+check "uninstall-all --dry-run：退出 0、不连设备" test "$rc" -eq 0 -a "$(count_log '^ssh')" = 0
+order="$(for st in shelf sidebar-entry handwriting-stroke hl-snap xovi-persist wifi-watch battop chrony-boot-wakelock; do grep -n "═══ $st ═══" "$R/out.txt" | cut -d: -f1; done | tr '\n' ' ')"
+sorted="$(printf '%s\n' $order | sort -n | tr '\n' ' ')"
+check "uninstall-all：步骤按 install-all 的逆序执行（shelf 最先、chrony-boot-wakelock 最后）" test -n "$order" -a "$order" = "$sorted"
+check "uninstall-all：配置覆写/纯动作步骤（chrony-cn/timezone-cn/xovi-apply）不在卸载计划里" test -z "$(grep -e '═══ chrony-cn ═══' -e '═══ timezone-cn ═══' -e '═══ xovi-apply ═══' "$R/out.txt")"
+( cd "$PKG" && run sh deploy-wifi-watch.sh --bogus ) >/dev/null 2>&1; rc1=$?
+( cd "$PKG" && run sh deploy-wifi-watch.sh a b ) >/dev/null 2>&1; rc2=$?
+( cd "$PKG" && run sh deploy-hl-snap.sh -h ) >"$R/out.txt" 2>&1; rc3=$?
+check "薄 deploy 脚本：未知选项/多余参数 → 退出 2；-h → 退出 0 并打印用法；都没连设备" test "$rc1" -eq 2 -a "$rc2" -eq 2 -a "$rc3" -eq 0 -a -n "$(grep '用法' "$R/out.txt")" -a "$(count_log '^ssh')" = 0
+
+# 设备连不上：每个会连设备的入口都先给可读的报错并在动手前退出（不留半成品、不 scp）
+new_sandbox; export CJ_BATTOP_BIN="$R/battop.bin" CJ_SKIP_BUILD=1 SHELF_NO_BUILD=1; echo B > "$R/battop.bin"
+unreach_ok=1
+for sc in "install-all.sh 127.0.0.1 --force" "uninstall-all.sh 127.0.0.1" deploy-hl-snap.sh deploy-handwriting-stroke.sh deploy-wifi-watch.sh deploy-xovi-persist.sh deploy-chrony-boot-wakelock.sh deploy-battop.sh deploy-sidebar-entry.sh deploy-xovi-apply.sh deploy-chrony-cn.sh deploy-timezone-cn.sh deploy.sh; do
+    : > "$CJ_SIM_LOG"
+    case "$sc" in *" "*) cmd="$sc" ;; *) cmd="$sc 127.0.0.1" ;; esac
+    CJ_SIM_SSH_FAIL=1 bash -c "cd '$PKG' && PATH='$STUBS:'\$PATH sh $cmd" >"$R/out.txt" 2>&1; rc=$?
+    if [ "$rc" -eq 0 ] || ! grep -q '连不上' "$R/out.txt" || [ "$(count_log '^scp')" != 0 ]; then unreach_ok=0; echo "       未达预期：$sc rc=$rc"; fi
+done
+check "13 个入口在 ssh 不通时：退出非 0、打印\"连不上\"与下一步、没有 scp" test "$unreach_ok" = 1
+unset CJ_BATTOP_BIN CJ_SKIP_BUILD SHELF_NO_BUILD
+
+section "设备预检（磁盘空间）"
+new_sandbox; export CJ_ALLOWLIST_LOCAL="$R/allow.local.txt"; PRE_SIG="$(tree_sig)"
+CJ_MIN_FREE_KB=999999999999 bash -c "cd '$PKG' && PATH='$STUBS:'\$PATH sh install-all.sh 127.0.0.1 --force" >"$R/out.txt" 2>&1; rc=$?
+check "预检：/home 空间不足 → install-all 退出非 0、报剩余空间" test "$rc" -ne 0 -a -n "$(grep '装不下' "$R/out.txt")"
+sig_eq "预检：空间不足时一个文件都没装" "$PRE_SIG" "$(tree_sig)"
+unset CJ_ALLOWLIST_LOCAL
+
+section "deploy.sh：选项当首参 / 推送前核对二进制 / 密码兜底清理"
+new_sandbox
+( cd "$PKG" && SHELF_NO_BUILD=1 run sh deploy.sh --only book ) >"$R/out.txt" 2>&1; rc=$?
+[ "$rc" -eq 0 ] || sed 's/^/     | /' "$R/out.txt" | tail -8
+check "deploy.sh --only book（首参是选项 → host 用默认）：退出 0，只装 gateway+book" test "$rc" -eq 0 -a -x "$R/home/root/.local/bin/book-serve" -a -x "$R/home/root/.local/bin/gateway" -a ! -e "$R/home/root/.local/bin/font-serve"
+T=aarch64-unknown-linux-musl; HOLD="$TMPBASE/hold-note-serve"
+mv "$REPO/notes/target/$T/release/note-serve" "$HOLD"
+new_sandbox
+( cd "$PKG" && SHELF_NO_BUILD=1 run sh deploy.sh 127.0.0.1 ) >"$R/out.txt" 2>&1; rc=$?
+check "deploy.sh：缺 note-serve 产物 → 推送前退出非 0、指路 build.sh，设备上什么都没推" test "$rc" -ne 0 -a -n "$(grep 'build.sh' "$R/out.txt")" -a -n "$(grep 'note-serve' "$R/out.txt")" -a ! -e "$R/home/root/shelf-pkg" -a "$(count_log 'tar')" = 0
+( cd "$PKG" && SHELF_NO_BUILD=1 run sh deploy.sh 127.0.0.1 --only book,font ) >/dev/null 2>&1; rc=$?
+check "deploy.sh：缺的服务不在 --only 里 → 照常部署" test "$rc" -eq 0 -a -x "$R/home/root/.local/bin/font-serve"
+mv "$HOLD" "$REPO/notes/target/$T/release/note-serve"
+new_sandbox
+( cd "$PKG" && SHELF_NO_BUILD=1 run sh deploy.sh 127.0.0.1 --bogus-flag --password 'topsecret' ) >"$R/out.txt" 2>&1; rc=$?
+check "deploy.sh：设备端 install.sh 失败（未知参数）→ 退出非 0，密码临时文件不残留" test "$rc" -ne 0 -a ! -e "$R/home/root/shelf-pkg/.pw" -a -z "$(grep -rl topsecret "$R/home" 2>/dev/null)"
+( cd "$PKG" && SHELF_NO_BUILD=1 run sh deploy.sh 127.0.0.1 --only bogus ) >/dev/null 2>&1; rc=$?
+check "deploy.sh：--only 未知令牌 → 本机就拒绝（退出 2）" test "$rc" -eq 2
+
+section "shelf：verity 下已有单元照常重启 / 卸载保留二进制 / dry-run / 幂等不 remount"
+new_sandbox; PL="$R/payload"; mk_payload "$PL"; run sh "$PL/install.sh" >/dev/null 2>&1
+echo "# v2" >> "$PL/bin/font-serve"; echo "# v2" >> "$PL/bin/note-serve"
+rm -f "$CJ_SYSD/note-serve.service" "$CJ_SYSD/shelf.target.wants/note-serve.service"   # note 没有单元
+: > "$CJ_SIM_LOG"; CJ_SIM_VERITY=1 run sh "$PL/install.sh" >"$R/out.txt" 2>&1
+check "install + dm-verity + 已有单元：换了二进制的服务照常重启（载入新版），不 remount" test "$(count_log 'restart font-serve.service')" = 1 -a "$(count_log remount)" = 0
+check "install + dm-verity：没有单元的服务不去 systemctl restart（无意义）" test "$(count_log 'restart note-serve.service')" = 0
+check "install + dm-verity：服务没被拉起时报的是 verity 专属说明而不是笼统\"有服务未起\"" test -n "$(grep 'dm-verity' "$R/out.txt" | grep -v '✋')" -o -n "$(grep '手动跑' "$R/out.txt")"
+
+new_sandbox; PL="$R/payload"; mk_payload "$PL"; run sh "$PL/install.sh" >/dev/null 2>&1
+SIG_BEFORE="$(tree_sig)"; : > "$CJ_SIM_LOG"
+run sh "$R/home/root/.local/bin/shelf-uninstall" --dry-run --purge >"$R/out.txt" 2>&1; rc=$?
+check "uninstall --dry-run：退出 0、列出会删的路径、不改任何文件、不 remount、不停服务" test "$rc" -eq 0 -a -n "$(grep '会删：.*gateway' "$R/out.txt")" -a -n "$(grep -- '--purge 会删' "$R/out.txt")" -a "$(count_log remount)" = 0 -a "$(count_log 'systemctl disable')" = 0
+sig_eq "uninstall --dry-run：文件树不变" "$SIG_BEFORE" "$(tree_sig)"
+: > "$CJ_SIM_LOG"; CJ_SIM_VERITY=1 run sh "$R/home/root/.local/bin/shelf-uninstall" >"$R/out.txt" 2>&1; rc=$?
+check "uninstall + dm-verity：退出 0，/usr 单元还在 → **保留**二进制与 shelf-uninstall（否则重启后服务缺二进制反复失败重启）" test "$rc" -eq 0 -a -f "$CJ_SYSD/gateway.service" -a -x "$R/home/root/.local/bin/gateway" -a -x "$R/home/root/.local/bin/book-serve" -a -x "$R/home/root/.local/bin/shelf-uninstall"
+check "uninstall + dm-verity：qmd 照删、输出说明原因" test ! -e "$Q/shelf-mkdir-agent.qmd" -a -n "$(grep '保留二进制' "$R/out.txt")"
+: > "$CJ_SIM_LOG"; run sh "$R/home/root/.local/bin/shelf-uninstall" >/dev/null 2>&1; rc=$?
+check "可写后再跑一次卸载：收敛到干净（单元、二进制、shelf-uninstall 都清）" test "$rc" -eq 0 -a ! -e "$CJ_SYSD/gateway.service" -a ! -e "$R/home/root/.local/bin/gateway" -a ! -e "$R/home/root/.local/bin/shelf-uninstall"
+new_sandbox; PL="$R/payload"; mk_payload "$PL"; run sh "$PL/install.sh" >/dev/null 2>&1
+run sh "$R/home/root/.local/bin/shelf-uninstall" >/dev/null 2>&1
+: > "$CJ_SIM_LOG"; run sh "$PL/uninstall.sh" >"$R/out.txt" 2>&1; rc=$?
+check "uninstall 第二次（已无残留）：退出 0，且不 remount rootfs（幂等）" test "$rc" -eq 0 -a "$(count_log remount)" = 0
+
+section "uninstall-all：载荷清理保守 / wifi-watch 在 verity 下留脚本 / 备份不因重复部署被挤掉"
+new_sandbox; export CJ_SKIP_BUILD=1 CJ_BATTOP_BIN="$R/battop.bin"; echo B > "$R/battop.bin"
+( cd "$PKG" && DEFER_XOVI_START=1 run sh deploy-hl-snap.sh 127.0.0.1 ) >/dev/null 2>&1
+echo "user file" > "$R/home/root/hl-snap/mine.txt"
+( cd "$PKG" && run sh uninstall-all.sh 127.0.0.1 ) >"$R/out.txt" 2>&1; rc=$?
+check "uninstall-all：载荷目录里有不认识的文件 → 只删已知文件，目录与该文件保留" test "$rc" -eq 0 -a -f "$R/home/root/hl-snap/mine.txt" -a ! -e "$R/home/root/hl-snap/hl-snap.so" -a ! -e "$R/home/root/hl-snap/deploy"
+new_sandbox
+( cd "$PKG" && run sh deploy-wifi-watch.sh 127.0.0.1 ) >/dev/null 2>&1
+( cd "$PKG" && run sh deploy-wifi-watch.sh 127.0.0.1 ) >/dev/null 2>&1
+( cd "$PKG" && run sh deploy-wifi-watch.sh 127.0.0.1 ) >/dev/null 2>&1
+check "wifi-watch 重复部署 3 次：脚本内容没变 → 没有堆备份（旧版每次都备份，5 次就把真旧版挤出保留窗口）" test -z "$(ls "$R"/home/root/cangjie-backups/wifi-watch.sh.bak.pre-* 2>/dev/null)"
+echo "tampered" >> "$R/home/root/.local/bin/wifi-watch.sh"; : > "$CJ_SIM_LOG"
+( cd "$PKG" && run sh deploy-wifi-watch.sh 127.0.0.1 ) >/dev/null 2>&1
+check "wifi-watch 设备上的脚本被改过 → 备份一份、恢复为仓库版本并重启服务" test "$(ls "$R"/home/root/cangjie-backups/wifi-watch.sh.bak.pre-* 2>/dev/null | wc -l)" -eq 1 -a -z "$(grep tampered "$R/home/root/.local/bin/wifi-watch.sh")" -a "$(count_log 'restart wifi-watch.service')" = 1
+: > "$CJ_SIM_LOG"; CJ_SIM_VERITY=1 bash -c "cd '$PKG' && PATH='$STUBS:'\$PATH sh uninstall-all.sh 127.0.0.1" >"$R/out.txt" 2>&1; rc=$?
+check "uninstall-all + dm-verity：退出 0；wifi-watch 单元删不掉 → 保留 wifi-watch.sh（否则服务每 10 秒起一次并失败）" test "$rc" -eq 0 -a -f "$CJ_SYSD/wifi-watch.service" -a -x "$R/home/root/.local/bin/wifi-watch.sh" -a "$(count_log remount)" = 0
+: > "$CJ_SIM_LOG"; ( cd "$PKG" && run sh uninstall-all.sh 127.0.0.1 ) >/dev/null 2>&1
+check "uninstall-all 可写后再跑：wifi-watch 单元与脚本都清掉" test ! -e "$CJ_SYSD/wifi-watch.service" -a ! -e "$R/home/root/.local/bin/wifi-watch.sh"
+unset CJ_SKIP_BUILD CJ_BATTOP_BIN
+
+section "chrony-cn / timezone-cn（路径覆盖；只测非 overlay 与 verity 路径，overlay 底层改写只能真机验证）"
+new_sandbox; : > "$R/mounts"; CONF="$R/chrony.conf"
+printf 'driftfile /var/lib/chrony/drift\nserver time1.google.com iburst\nserver time2.google.com iburst\nmakestep 1.0 3\n' > "$CONF"
+RE_ETC_BEFORE="$(md5sum /etc/chrony.conf 2>/dev/null | cut -c1-32)$(readlink -f /etc/localtime 2>/dev/null)"
+: > "$CJ_SIM_LOG"
+( cd "$PKG" && CJ_CHRONY_CONF="$CONF" CJ_MOUNTS="$R/mounts" CJ_BACKUP_DIR="$R/cbk" CJ_TMPDIR="$R" run sh deploy-chrony-cn.sh 127.0.0.1 ) >"$R/out.txt" 2>&1; rc=$?
+check "chrony-cn：退出 0；google 服务器换成 4 个国内的，driftfile/makestep 等其它行保留" test "$rc" -eq 0 -a "$(grep -c '^server ' "$CONF")" -eq 4 -a -z "$(grep google "$CONF")" -a -n "$(grep '^driftfile' "$CONF")" -a -n "$(grep '^makestep' "$CONF")" -a -n "$(grep '^server ntp.aliyun.com' "$CONF")"
+check "chrony-cn：非 overlay 路径不 remount/bind；有改动 → 重启 chronyd" test "$(count_log '^mount')" = 0 -a "$(count_log 'restart chronyd')" = 1
+SUM1="$(md5sum < "$CONF")"; : > "$CJ_SIM_LOG"
+( cd "$PKG" && CJ_CHRONY_CONF="$CONF" CJ_MOUNTS="$R/mounts" CJ_BACKUP_DIR="$R/cbk" CJ_TMPDIR="$R" run sh deploy-chrony-cn.sh 127.0.0.1 ) >"$R/out.txt" 2>&1; rc=$?
+check "chrony-cn 第二次：幂等（文件不变、已同步 → 不重启 chronyd、退出 0）" test "$rc" -eq 0 -a "$SUM1" = "$(md5sum < "$CONF")" -a "$(count_log 'restart chronyd')" = 0
+printf 'driftfile /x\nmakestep 1 3\n' > "$CONF"
+( cd "$PKG" && CJ_CHRONY_CONF="$CONF" CJ_MOUNTS="$R/mounts" CJ_BACKUP_DIR="$R/cbk" CJ_TMPDIR="$R" run sh deploy-chrony-cn.sh 127.0.0.1 ) >/dev/null 2>&1
+check "chrony-cn：原配置里一条 server 都没有（用 pool）→ 追加 4 条，而不是每次都\"改不动\"" test "$(grep -c '^server ' "$CONF")" -eq 4
+( cd "$PKG" && CJ_SIM_UNSYNCED=1 CJ_CHRONY_CONF="$CONF" CJ_MOUNTS="$R/mounts" CJ_BACKUP_DIR="$R/cbk" CJ_TMPDIR="$R" bash -c "PATH='$STUBS:'\$PATH sh deploy-chrony-cn.sh 127.0.0.1" ) >"$R/out.txt" 2>&1; rc=$?
+check "chrony-cn：时钟没同步 → 退出 2 并提示看 journalctl" test "$rc" -eq 2 -a -n "$(grep journalctl "$R/out.txt")"
+printf 'overlay /etc overlay rw 0 0\n' > "$R/mounts-ov"; printf 'driftfile /x\nserver a.google.com iburst\n' > "$CONF"; : > "$CJ_SIM_LOG"
+( cd "$PKG" && CJ_SIM_VERITY=1 CJ_CHRONY_CONF="$CONF" CJ_MOUNTS="$R/mounts-ov" CJ_BACKUP_DIR="$R/cbk" CJ_TMPDIR="$R" bash -c "PATH='$STUBS:'\$PATH sh deploy-chrony-cn.sh 127.0.0.1" ) >"$R/out.txt" 2>&1; rc=$?
+check "chrony-cn：overlay + dm-verity → 只改 /etc 视图（重启会丢）、不 remount、退出 0" test "$rc" -eq 0 -a "$(count_log remount)" = 0 -a "$(grep -c '^server ntp' "$CONF")" -ge 1 -a -n "$(grep 'dm-verity' "$R/out.txt")"
+
+ZI="$R/Shanghai"; echo TZDATA > "$ZI"; LT="$R/localtime"; echo old > "$LT"
+( cd "$PKG" && CJ_ZONEINFO="$ZI" CJ_LOCALTIME="$LT" CJ_MOUNTS="$R/mounts" CJ_BACKUP_DIR="$R/cbk" CJ_TMPDIR="$R" run sh deploy-timezone-cn.sh 127.0.0.1 ) >"$R/out.txt" 2>&1; rc=$?
+check "timezone-cn：退出 0，/etc/localtime（沙箱里的）指向 Asia/Shanghai" test "$rc" -eq 0 -a "$(readlink "$LT")" = "$ZI"
+( cd "$PKG" && CJ_ZONEINFO="$ZI" CJ_LOCALTIME="$LT" CJ_MOUNTS="$R/mounts" CJ_BACKUP_DIR="$R/cbk" CJ_TMPDIR="$R" run sh deploy-timezone-cn.sh 127.0.0.1 ) >"$R/out.txt" 2>&1; rc=$?
+check "timezone-cn 第二次（已是目标时区）：仍退出 0（旧版曾因末尾 [ ] && echo 让幂等分支误判失败）" test "$rc" -eq 0
+rm -f "$LT"; ( cd "$PKG" && CJ_ZONEINFO="$R/no-such-zone" CJ_LOCALTIME="$LT" CJ_MOUNTS="$R/mounts" CJ_BACKUP_DIR="$R/cbk" CJ_TMPDIR="$R" run sh deploy-timezone-cn.sh 127.0.0.1 ) >"$R/out.txt" 2>&1; rc=$?
+check "timezone-cn：设备镜像没有 zoneinfo → 警告并跳过（退出 0，不拖垮整轮安装）、不建 localtime" test "$rc" -eq 0 -a ! -e "$LT" -a -n "$(grep '跳过' "$R/out.txt")"
+RE_ETC_AFTER="$(md5sum /etc/chrony.conf 2>/dev/null | cut -c1-32)$(readlink -f /etc/localtime 2>/dev/null)"
+check "chrony/timezone 测试没有碰开发机真实的 /etc/chrony.conf 与 /etc/localtime" test "$RE_ETC_BEFORE" = "$RE_ETC_AFTER"
 
 # ═══════════════════════════ 5. 静态守卫 / 清单对称 ═══════════════════════════
 section "静态守卫"
@@ -502,6 +691,19 @@ cat "$TMPBASE/sym.txt"
 check "shelf/uninstall.sh 不再硬编码 qmd 文件名（走 manifest）" test -z "$(grep -n 'shelf-trash-agent\|shelf-mkdir-agent\|font-menu-dynamic' shelf/uninstall.sh | grep -v '^[0-9]*:#')"
 # 5) 备份不进 extensions.d：脚本里不存在把 .bak 写进 extensions.d 的写法
 check "没有脚本往 extensions.d 里写 .bak/.new" test -z "$(grep -rn 'extensions.d/[^"]*\.\(bak\|new\)' packaging/*.sh enhance/*/deploy/*.sh 2>/dev/null | grep -v ':[0-9]*:[[:space:]]*#')"
+
+# 6) 不再有 eval（旧 deploy-usr-unit 曾对设备端路径记号做 eval echo 二次展开）
+check "packaging/ 与 shelf/ 的 .sh 里没有 eval（非注释行）" test -z "$(grep -n '\beval\b' packaging/*.sh shelf/*.sh 2>/dev/null | grep -v -e ':[0-9]*:[[:space:]]*#')"
+# 7) 每个会连设备的 deploy 入口动手前都先 require_device（不通给可读报错，不留半成品）
+viol=""
+for f in packaging/deploy*.sh; do
+    if grep -q -e 'rssh' -e 'dev_script' -e 'push_verified' "$f" && ! grep -q 'require_device' "$f"; then viol="$viol $f"; fi
+done
+check "每个连设备的 deploy-*.sh 都调用了 require_device" test -z "$viol"
+[ -z "$viol" ] || echo "       缺 require_device：$viol"
+# 8) 设备端会 rm 的脚本必须有目标核对：rm -rf 只允许出现在带守卫的位置（白名单式点名）
+viol="$(grep -n 'rm -rf' packaging/*.sh shelf/*.sh 2>/dev/null | grep -v -e ':[0-9]*:[[:space:]]*#' | grep -v -e 'packaging/tests/' -e 'STAGE' -e 'REMOTE' )"
+check "rm -rf 出现处已人工核对：仅 uninstall-all(battop purge / shelf-pkg 载荷)、shelf/uninstall(--purge 三个 XDG 目录，路径/符号链接守卫)" test "$(echo "$viol" | grep -v '^$' | grep -v -e 'packaging/uninstall-all.sh' -e 'shelf/uninstall.sh' | wc -l)" -eq 0
 
 # 守卫：真实 HOME 下不该出现任何测试产物
 GUARD_AFTER=""
