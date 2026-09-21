@@ -2,6 +2,7 @@
 //! `GET /`（按家族归组的清单）· `POST /`（multipart 多文件，装进 fontconfig 用户字体目录；**不碰 KOReader**）·
 //! `DELETE /{family}`（删整个家族的全部文件）· `GET /status`。所有字体一视同仁、无"内建"。
 //! 字体菜单 qmd 读 `~/.local/share/shelf/fonts.json`（`shelf/xovi/font-menu-dynamic.qmd`）。
+mod fontconfig;
 mod store;
 
 use rmsvc_core::asset::{self, AssetStore, AssetUploadFlow};
