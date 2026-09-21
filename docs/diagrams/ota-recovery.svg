@@ -45,9 +45,9 @@
 <text x="1095.0" y="349" text-anchor="middle" font-size="12" font-weight="bold" fill="#1a1a1a">3  验证</text>
 <text x="1095.0" y="374.5" text-anchor="middle" font-size="10.5" fill="#4a4a4a">看收尾汇总的“已安装/失败”</text>
 <text x="1095.0" y="388.0" text-anchor="middle" font-size="10.5" fill="#4a4a4a">浏览器开 https://&lt;设备&gt;/</text>
-<text x="1095.0" y="401.5" text-anchor="middle" font-size="10.5" fill="#4a4a4a">appload 3.28 补丁是</text>
-<text x="1095.0" y="415.0" text-anchor="middle" font-size="10.5" fill="#4a4a4a">独立手动步骤（deploy-</text>
-<text x="1095.0" y="428.5" text-anchor="middle" font-size="10.5" fill="#4a4a4a">appload-patch.sh）</text>
+<text x="1095.0" y="401.5" text-anchor="middle" font-size="10.5" fill="#4a4a4a">appload 需 ≥ 0.6.0：</text>
+<text x="1095.0" y="415.0" text-anchor="middle" font-size="10.5" fill="#4a4a4a">旧版先 vellum upgrade appload</text>
+<text x="1095.0" y="428.5" text-anchor="middle" font-size="10.5" fill="#4a4a4a">并整机重启（不在编排里）</text>
 <polyline points="310,405 340,405" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#ota-a)"/>
 <polyline points="620,405 650,405" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#ota-a)"/>
 <polyline points="950,405 980,405" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#ota-a)"/>

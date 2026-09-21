@@ -1,0 +1,65 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 700" font-family="sans-serif">
+<defs><marker id="eo-m" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#555"/></marker></defs>
+<rect x="0" y="0" width="1000" height="700" fill="#fbfbfa"/>
+<text x="500.0" y="32" text-anchor="middle" font-size="20" font-weight="bold" fill="#1a1a1a">enhance 系统增强线：五个工具怎么接到设备上</text>
+<text x="500.0" y="56" text-anchor="middle" font-size="13" fill="#666">两个 xovi 扩展改 xochitl 行为 · 一个采样器 · 两个 Web 服务；开关经网关网页控制</text>
+<rect x="30" y="84" width="200" height="70" rx="10" fill="#f2f2f4" stroke="#7a7a88" stroke-width="1.6"/>
+<text x="130.0" y="106" text-anchor="middle" font-size="14" font-weight="bold" fill="#1a1a1a">浏览器</text>
+<text x="130.0" y="128" text-anchor="middle" font-size="12" fill="#444">https://10.11.99.1/</text>
+<text x="130.0" y="145" text-anchor="middle" font-size="12" fill="#444">管理 → 系统增强/实验室</text>
+<polyline points="130,154 130,186" fill="none" stroke="#555" stroke-width="1.7" marker-end="url(#eo-m)"/>
+<rect x="30" y="186" width="200" height="96" rx="10" fill="#fdf3dc" stroke="#b8860b" stroke-width="1.6"/>
+<text x="130.0" y="208" text-anchor="middle" font-size="14" font-weight="bold" fill="#1a1a1a">gateway :443</text>
+<text x="130.0" y="230" text-anchor="middle" font-size="11.5" fill="#444">/api/enhance/qol</text>
+<text x="130.0" y="247" text-anchor="middle" font-size="11.5" fill="#444">/api/enhance/battop/*</text>
+<text x="130.0" y="264" text-anchor="middle" font-size="11.5" fill="#444">反代 /api/fonts、/api/wallpapers</text>
+<rect x="300" y="186" width="250" height="96" rx="10" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.6"/>
+<text x="425.0" y="208" text-anchor="middle" font-size="14" font-weight="bold" fill="#1a1a1a" font-family="monospace">reading-qol.json</text>
+<text x="425.0" y="230" text-anchor="middle" font-size="11.5" fill="#444">~/.local/share/cangjie-ime/</text>
+<text x="425.0" y="247" text-anchor="middle" font-size="11.5" fill="#444">hlSnapCjk · hwStroke*（全量写回）</text>
+<text x="425.0" y="264" text-anchor="middle" font-size="11.5" fill="#444">两个 .so 每次划线/落笔现读</text>
+<polyline points="230,234 300,234" fill="none" stroke="#555" stroke-width="1.7" marker-end="url(#eo-m)"/>
+<text x="265" y="224" text-anchor="middle" font-size="11.5" fill="#555">读/写</text>
+<rect x="620" y="84" width="350" height="262" rx="10" fill="#eef3fa" stroke="#4a72b0" stroke-width="1.6" stroke-dasharray="6 4"/>
+<text x="795" y="108" text-anchor="middle" font-size="13.5" font-weight="bold" fill="#1a1a1a">xochitl 进程（被 xovi 加载的扩展 hook）</text>
+<rect x="636" y="122" width="318" height="92" rx="10" fill="#eaf5ee" stroke="#2f7d45" stroke-width="1.6"/>
+<text x="795.0" y="144" text-anchor="middle" font-size="14" font-weight="bold" fill="#1a1a1a" font-family="monospace">hl-snap.so</text>
+<text x="795.0" y="166" text-anchor="middle" font-size="11.8" fill="#444">荧光笔 CJK 精确吸附（划哪吸哪）</text>
+<text x="795.0" y="183" text-anchor="middle" font-size="11.8" fill="#444">1 个 hook：荧光笔扩张函数 FUN_00f05ad0</text>
+<text x="795.0" y="200" text-anchor="middle" font-size="11.8" fill="#444">开关 hlSnapCjk（默认开）</text>
+<rect x="636" y="228" width="318" height="104" rx="10" fill="#eaf5ee" stroke="#2f7d45" stroke-width="1.6"/>
+<text x="795.0" y="250" text-anchor="middle" font-size="14" font-weight="bold" fill="#1a1a1a" font-family="monospace">hw-stroke.so</text>
+<text x="795.0" y="272" text-anchor="middle" font-size="11.8" fill="#444">CJK 手写笔锋：笔尖角度模型 + 运笔速度代理</text>
+<text x="795.0" y="289" text-anchor="middle" font-size="11.8" fill="#444">3 个 hook：两个变宽几何函数 + 1 个只读诊断</text>
+<text x="795.0" y="306" text-anchor="middle" font-size="11.8" fill="#444">默认全关（min_ratio=1.0），网页开关写 0.6</text>
+<polyline points="550,234 620,234" fill="none" stroke="#555" stroke-width="1.7" stroke-dasharray="5 4" marker-end="url(#eo-m)"/>
+<text x="585" y="224" text-anchor="middle" font-size="11.5" fill="#555">现读</text>
+<text x="210" y="392" text-anchor="start" font-size="14" font-weight="bold" fill="#1a1a1a">不经 xovi、独立运行的三个工具</text>
+<rect x="30" y="408" width="300" height="132" rx="10" fill="#f1edf9" stroke="#6d4ab0" stroke-width="1.6"/>
+<text x="180.0" y="430" text-anchor="middle" font-size="14" font-weight="bold" fill="#1a1a1a">battop（systemd 常驻）</text>
+<text x="180.0" y="452" text-anchor="middle" font-size="11.8" fill="#444">每 10 分钟采样一次电池/进程/唤醒源</text>
+<text x="180.0" y="469" text-anchor="middle" font-size="11.8" fill="#444">数据 /home/root/battop/data，预聚合 summary.json</text>
+<text x="180.0" y="486" text-anchor="middle" font-size="11.8" fill="#444">网页「电池刺客」展示 4 个时间窗</text>
+<text x="180.0" y="503" text-anchor="middle" font-size="11.8" fill="#444">⚠ 有意不随开机自启，手动 start</text>
+<rect x="350" y="408" width="300" height="132" rx="10" fill="#f1edf9" stroke="#6d4ab0" stroke-width="1.6"/>
+<text x="500.0" y="430" text-anchor="middle" font-size="14" font-weight="bold" fill="#1a1a1a">font-serve :8792</text>
+<text x="500.0" y="452" text-anchor="middle" font-size="11.8" fill="#444">上传字体 → ~/.local/share/fonts + fc-cache</text>
+<text x="500.0" y="469" text-anchor="middle" font-size="11.8" fill="#444">重建 fonts.json（字体菜单 qmd 读）</text>
+<text x="500.0" y="486" text-anchor="middle" font-size="11.8" fill="#444">维护界面 CJK 回退链（fontconfig）</text>
+<text x="500.0" y="503" text-anchor="middle" font-size="11.8" fill="#444">仅管原生阅读器，不碰 KOReader</text>
+<rect x="670" y="408" width="300" height="132" rx="10" fill="#f1edf9" stroke="#6d4ab0" stroke-width="1.6"/>
+<text x="820.0" y="430" text-anchor="middle" font-size="14" font-weight="bold" fill="#1a1a1a">wallpaper-serve :8793</text>
+<text x="820.0" y="452" text-anchor="middle" font-size="11.8" fill="#444">上传壁纸 → 缩放 954×1696、入池</text>
+<text x="820.0" y="469" text-anchor="middle" font-size="11.8" fill="#444">写 xochitl.conf 的 SleepScreenPath</text>
+<text x="820.0" y="486" text-anchor="middle" font-size="11.8" fill="#444">指向 current.png，每次休眠重读</text>
+<text x="820.0" y="503" text-anchor="middle" font-size="11.8" fill="#444">唤醒（日志 DeepSleep to Normal）时轮换</text>
+<polyline points="130,282 130,408" fill="none" stroke="#555" stroke-width="1.7" marker-end="url(#eo-m)"/>
+<polyline points="130,366 820,366" fill="none" stroke="#555" stroke-width="1.7"/>
+<polyline points="500,366 500,408" fill="none" stroke="#555" stroke-width="1.7" marker-end="url(#eo-m)"/>
+<polyline points="820,366 820,408" fill="none" stroke="#555" stroke-width="1.7" marker-end="url(#eo-m)"/>
+<rect x="30" y="566" width="940" height="96" rx="10" fill="#f2f2f4" stroke="#7a7a88" stroke-width="1.6" stroke-dasharray="6 4"/>
+<text x="46" y="588" text-anchor="start" font-size="13.5" font-weight="bold" fill="#1a1a1a">共用件</text>
+<text x="46" y="610" text-anchor="start" font-size="12.5" fill="#333">enhance/shared/  特征码扫描 + ARM64 trampoline 安装（C，两个 .so 共用，带 host 单测）</text>
+<text x="46" y="630" text-anchor="start" font-size="12.5" fill="#333">enhance/lo-alias/  让 10.11.99.1 在不插 USB 时也可达（网关 ExecStartPre 用）</text>
+<text x="46" y="650" text-anchor="start" font-size="12.5" fill="#333">../rmsvc-core  两个 Web 服务共用的路径/注册表/HTTP 基座；../packaging  三个工具的 host 侧部署编排</text>
+</svg>
