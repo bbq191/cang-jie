@@ -212,8 +212,8 @@ mod tests {
     #[test]
     fn merge_highlights_groups_by_chapter_title_into_distinct_indices() {
         let mut entries = vec![];
-        let items = vec![hl("h1", "第一章的话", 0), hl2("h2", "第二章的话", 0, "第二章")];
-        let chapters = vec!["第一章".to_string(), "第二章".to_string()];
+        let items = [hl("h1", "第一章的话", 0), hl2("h2", "第二章的话", 0, "第二章")];
+        let chapters = ["第一章".to_string(), "第二章".to_string()];
         let idx_of = |t: &str| chapters.iter().position(|c| c == t).unwrap_or(0);
         merge_highlights(&mut entries, &items, idx_of, 10);
         assert_eq!(entries.iter().find(|e| e.id == "h1").unwrap().chapter, Some(0));

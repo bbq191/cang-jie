@@ -87,7 +87,7 @@ impl Builder {
         if self.depth > 0 {
             self.depth -= 1;
         }
-        self.last_at.truncate(self.depth.saturating_sub(1).max(0) + 1);
+        self.last_at.truncate(self.depth.saturating_sub(1) + 1);
     }
     fn push(&mut self, href: &str, raw_title: &str) {
         let file = href.split('#').next().unwrap_or("").rsplit('/').next().unwrap_or("").to_string();

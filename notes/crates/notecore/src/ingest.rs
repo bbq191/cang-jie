@@ -5,7 +5,7 @@
 //! 3. 旧条目的笔画全没了 → `Revoked`（留痕不删）；
 //! 4. 全新簇 → 新条目，id 由 (书, 页, 最小笔画 id) 一次算定。
 use crate::geom::{cluster, pair, Thresholds};
-use crate::hash::{cluster_hash, entry_id};
+use crate::hash::{cluster_hash, entry_id, Bbox4, StrokeSig};
 use crate::model::{Entry, Ink, Quote, Status, Style};
 use rmv6::page::Page;
 use rmv6::v6::crdt::CrdtId;
@@ -41,8 +41,8 @@ pub fn drafts_of_page(page: &Page, th: &Thresholds) -> Vec<PageDraft> {
         .iter()
         .zip(pairs)
         .map(|(c, hl)| {
-            let items: Vec<(String, usize, (f32, f32, f32, f32))> = c.strokes.iter().map(|&i| { let s = &page.strokes[i]; (sid(&s.id), s.points.len(), (s.bbox.x0, s.bbox.y0, s.bbox.x1, s.bbox.y1)) }).collect();
-            let refs: Vec<(&str, usize, (f32, f32, f32, f32))> = items.iter().map(|(id, n, b)| (id.as_str(), *n, *b)).collect();
+            let items: Vec<(String, usize, Bbox4)> = c.strokes.iter().map(|&i| { let s = &page.strokes[i]; (sid(&s.id), s.points.len(), (s.bbox.x0, s.bbox.y0, s.bbox.x1, s.bbox.y1)) }).collect();
+            let refs: Vec<StrokeSig<'_>> = items.iter().map(|(id, n, b)| (id.as_str(), *n, *b)).collect();
             let mut strokes: Vec<String> = items.iter().map(|(id, _, _)| id.clone()).collect();
             strokes.sort();
             if let Some(i) = hl {
