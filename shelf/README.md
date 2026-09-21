@@ -120,13 +120,13 @@ cargo build --release -p bookconv --bin epub-optimize   # 手动跑一遍清洗+
 
 ## 固件升级（OTA）与恢复
 
-**权威说明（恢复流程、逐项对照表、流程图）统一在 [`../docs/INSTALL.md`](../docs/INSTALL.md)「固件升级（OTA）之后」**，这里不再另写一份表。一句话：升级不丢 `/home` 数据；升完先设备旁手动 `xovi/rebuild_hashtable`，再在电脑上重跑 `cd ../packaging && sh install-all.sh <host>`（幂等，缺什么补什么；也可只重装书架：`SHELF_NO_BUILD=1 sh deploy.sh <host>`）。3.27.3.0 → 3.28.0.172 的实录见白皮书 §03v；2026-09-20 前的旧版 OTA 表原文保留在白皮书附录 D。
+**权威说明（恢复流程、逐项对照表、流程图）统一在 [`../docs/INSTALL.md`](../docs/INSTALL.md)「固件升级（OTA）之后」**，这里不再另写一份表。一句话：升级不丢 `/home` 数据；升完先设备旁手动 `xovi/rebuild_hashtable`，再在电脑上重跑 `cd ../packaging && sh install-all.sh <host>`（幂等，缺什么补什么；也可只重装书架：`SHELF_NO_BUILD=1 sh deploy.sh <host>`）。3.27.3.0 → 3.28.0.172 的实录见白皮书 §03v；2026-09-20 前的旧版 OTA 表已压缩成附录 D 的差异要点。
 
 ## 文档索引
 
 | 文档 | 内容 |
 |---|---|
 | [`docs/传书EPUB线架构.md`](docs/传书EPUB线架构.md) | 传书线**当前状态**参考（非时间顺序）：架构、数据流、优化管线、内存安全、大文件通道、API |
-| [`docs/reMarkable书架白皮书.md`](docs/reMarkable书架白皮书.md) | 决策依据与真机记录，按主题分章；附录含踩坑合集、演进记录表、已移除能力 |
+| [`docs/reMarkable书架白皮书.md`](docs/reMarkable书架白皮书.md) | 文首「5 分钟读懂」+ 决策依据与真机记录，按主题分章（每章有大白话导语与坑位表）；附录含踩坑总表、演进记录表、已移除能力 |
 | [`docs/bookconv优化白皮书.md`](docs/bookconv优化白皮书.md) | 书籍优化引擎：清洗/优化遍/脚注/图片/★xochitl 渲染硬规则/版本演进 |
 | [`../docs/CHANGELOG.md`](../docs/CHANGELOG.md) | 用户可见的更新历史 |

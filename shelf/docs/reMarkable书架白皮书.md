@@ -1407,7 +1407,7 @@ notes 三服务各自的 `ink.rs`、`note-serve::trash.rs` 四处 HTTP 客户端
 | `bookconv/src/stats.rs` | 新增 `text_profile_file(path)`：按条目遍历，`wants_entry` 先看条目名，图片等非 OPF/HTML 条目连解压都不做；逐字符统计抽成私有 `accumulate()`，内存版与流式版共用，差分测试断言两入口结果相等 |
 | `staging/deliver.rs` | 非拆分路径删掉 `std::fs::read`，自检走 `text_profile_file(&p)`，上传走 `upload_file(&p,…)` |
 
-**真机验证（VmHWM，非估算）**：host 合成 80MB 测试 EPUB（20 张 4MB 随机字节图片，接近 90MB 上限但走不拆分路径），真机 `POST /staging/deliver` 成功，`render` 自检 `expected:46/pages:48` 吻合；`book-serve` 的 `VmHWM` **全程 3.2–3.5KB 量级**（自 3484 kB 起未变）——不是"峰值更低"，是这条路径对 80MB 文件几乎零内存开销。
+**真机验证（VmHWM，非估算）**：host 合成 80MB 测试 EPUB（20 张 4MB 随机字节图片，接近 90MB 上限但走不拆分路径），真机 `POST /staging/deliver` 成功，`render` 自检 `expected:46/pages:48` 吻合；`book-serve` 的 `VmHWM` **全程约 3.4MB**（3484 kB 起未变；早期记录误写成"KB 量级"，单位是 kB）——不是"峰值更低"，是这条路径对 80MB 文件几乎零内存开销。
 **已知验证缺口**：`note-serve` 共用了改动的 `xochitl.rs`，重启后基础接口正常，但设备上无真实笔记本数据，未复测完整推送链路。
 
 **顺带发现、当时判"暂不处理"**：`imgopt.rs` 单张图片解码没有像素上限（中置信度边缘风险，无真实样本）。**几小时后就撞上了，见 §03bi。**
@@ -1957,7 +1957,7 @@ notes 三服务各自的 `ink.rs`、`note-serve::trash.rs` 四处 HTTP 客户端
 | 母版库页三项 | ①「加入原生书库」文件夹下拉原是写死预设，改 `xochitl::list_folders` 扫真实 `CollectionType`（`/status` 加 `xochitlFolders`）；②动词统一「加入」；③去优化分档位（`OptimizeMode`）与投完自动删除（`keep`），母版永远保留。真机通（对照 `.metadata` 坐实旧"批注"选项是假的）；**未做真实投递端到端**，`deliver`/`keep` 移除仅单测覆盖 |
 | §03be | ① 拆分卷进度冻结：`try_deliver_split` 漏 `bus.publish`；② 填不存在的文件夹名不建夹：**反编译坐实 xochitl 网页接口无建夹**，唯一路径是 QML `Library.createCollection`，捞回 `mkdir.rs`+`shelf-mkdir-agent.qmd`，`Staging::deliver` 加 `ensure_folder`（最长等 20 秒，否则落书库根）。真机通：② 8 秒内 pending→ok；① **未用真实超限漫画重验逐份推送** |
 | §03bf | ① koreader-serve 独立进程未接入忙态，网页加纯前端 `localBusy`；② 《乱马1/2》带斜杠建不出：`MkdirQueue::add()` 的"不能带路径分隔符"校验无依据，整条删除。真机通：②；① **未做人眼确认**。教训：别把具体失败样本当"一次性时序问题" |
-| §03bh | OOM 审计：`book-serve` 是唯一有实质风险的服务，**不拆服务**（函数级问题）；唯一未修风险 `Staging::deliver()` 不拆分路径，≤90MB 书峰值约 180–270MB。修：流式上传、`text_profile_file` 跳过图片解压。真机通（后端）：合成 80MB EPUB `VmHWM` 全程 3.2–3.5KB 量级；前端**缺人眼确认** |
+| §03bh | OOM 审计：`book-serve` 是唯一有实质风险的服务，**不拆服务**（函数级问题）；唯一未修风险 `Staging::deliver()` 不拆分路径，≤90MB 书峰值约 180–270MB。修：流式上传、`text_profile_file` 跳过图片解压。真机通（后端）：合成 80MB EPUB `VmHWM` 全程约 3.4MB（3484 kB）；前端**缺人眼确认** |
 | §03bi | 《乱马1/2》8 卷 `VmHWM` 冲到 271MB（解码超高分辨率页）。第一版 `MAX_DECODE_PIXELS`=2500 万像素（理论估算）→《火影忍者》17–21 卷再撞 262MB→**真机实测约 9–16MB/百万像素，是理论 3–5 倍**，改 **900 万**（`imgopt.rs:35`），超限图原样保留。真机通。**教训：内存阈值要真机实测 `VmHWM`** |
 | §03bj | 删除确认原是原生 `confirm()`；新增 `confirmDialog`，全站 9 处替换。真机通；**弹窗点击交互未过人眼** |
 | — | 「加入 xochitl」文件夹留空原落 `libraryFolder`（缺省 "library"），改落根；`BookConfig::library_folder` 删除。真机通（`.metadata` `parent` 为空串） |
