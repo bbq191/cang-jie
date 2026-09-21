@@ -283,28 +283,6 @@ pub fn set_content_margins(dir: &Path, uuid: &str, margins: u32) -> Result<bool,
     set_content_margins_settled(dir, uuid, margins, CONTENT_SETTLE)
 }
 
-/// 文本里 `"margins": <数字>` 的数字所在的字节区间（顶层键；只认第一处）。不引入 regex 依赖。
-fn margins_number_span(text: &str) -> Option<(usize, usize)> {
-    let key = text.find("\"margins\"")?;
-    let b = text.as_bytes();
-    let mut i = key + "\"margins\"".len();
-    while i < b.len() && b[i].is_ascii_whitespace() {
-        i += 1;
-    }
-    if b.get(i) != Some(&b':') {
-        return None;
-    }
-    i += 1;
-    while i < b.len() && b[i].is_ascii_whitespace() {
-        i += 1;
-    }
-    let start = i;
-    while i < b.len() && b[i].is_ascii_digit() {
-        i += 1;
-    }
-    (i > start).then_some((start, i))
-}
-
 /// 写入前要与 xochitl 自己最后一次写 `.content` 至少隔开的时间。
 ///
 /// **同一秒内的外部改动 xochitl 看不见**（2026-09-21 真机：导入完成同一秒 0.7 毫秒后写 → 用户打开时 xochitl 用内存里的
@@ -314,25 +292,22 @@ const CONTENT_SETTLE: std::time::Duration = std::time::Duration::from_secs(2);
 
 fn set_content_margins_settled(dir: &Path, uuid: &str, margins: u32, settle: std::time::Duration) -> Result<bool, String> {
     let path = dir.join(format!("{uuid}.content"));
-    let text = std::fs::read_to_string(&path).map_err(|e| format!("读 .content 失败: {e}"))?;
-    let v: serde_json::Value = serde_json::from_str(&text).map_err(|e| format!(".content 不是合法 JSON: {e}"))?;
-    match v.get("margins").and_then(|m| m.as_u64()) {
+    let mut v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).map_err(|e| format!("读 .content 失败: {e}"))?).map_err(|e| format!(".content 不是合法 JSON: {e}"))?;
+    let obj = v.as_object_mut().ok_or(".content 不是对象")?;
+    match obj.get("margins").and_then(|m| m.as_u64()) {
         Some(cur) if cur == margins as u64 => return Ok(false),
         Some(_) => {}
         None => return Ok(false),
     }
-    // **原地文本替换，不重新序列化**：xochitl 对自己写出的格式（键顺序、4 空格缩进）之外的 `.content` 可能不认，
-    // 真机探针用 `sed` 只改这两个字符成功；整份重新序列化（键按字母重排、缩进变）则被改回 56。
-    let Some((start, end)) = margins_number_span(&text) else { return Ok(false) };
-    let new_text = format!("{}{}{}", &text[..start], margins, &text[end..]);
     // 等到 xochitl 最后一次写入之后 `settle` 才动手（见 CONTENT_SETTLE）
     if let Ok(modified) = std::fs::metadata(&path).and_then(|m| m.modified()) {
         if let Ok(wait) = (modified + settle).duration_since(std::time::SystemTime::now()) {
             std::thread::sleep(wait);
         }
     }
+    obj.insert("margins".into(), margins.into());
     let tmp = dir.join(format!("{uuid}.content.new"));
-    std::fs::write(&tmp, new_text).map_err(|e| format!("写 .content 失败: {e}"))?;
+    std::fs::write(&tmp, serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?).map_err(|e| format!("写 .content 失败: {e}"))?;
     std::fs::rename(&tmp, &path).map_err(|e| {
         let _ = std::fs::remove_file(&tmp);
         format!("替换 .content 失败: {e}")
@@ -478,10 +453,6 @@ mod tests {
         assert_eq!(set_content_margins_settled(t.path(), "u1", 28, std::time::Duration::ZERO), Ok(true));
         let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(t.path().join("u1.content")).unwrap()).unwrap();
         assert_eq!((v["margins"].as_u64(), v["pageCount"].as_u64(), v["fileType"].as_str(), v["textScale"].as_u64()), (Some(28), Some(13), Some("epub"), Some(1)));
-        // 原地替换：除了 56→28 两个字符，其余字节一模一样（含 xochitl 风格的缩进与键顺序）
-        std::fs::write(t.path().join("u3.content"), "{\n    \"margins\": 56,\n    \"fileType\": \"epub\",\n    \"pageCount\": 2\n}").unwrap();
-        assert_eq!(set_content_margins_settled(t.path(), "u3", 28, std::time::Duration::ZERO), Ok(true));
-        assert_eq!(std::fs::read_to_string(t.path().join("u3.content")).unwrap(), "{\n    \"margins\": 28,\n    \"fileType\": \"epub\",\n    \"pageCount\": 2\n}");
         assert_eq!(set_content_margins_settled(t.path(), "u1", 28, std::time::Duration::ZERO), Ok(false), "已是目标值：不写");
         assert!(!t.path().join("u1.content.new").exists(), "不留 tmp");
         // 没有 margins 字段（PDF 等）：不加、不报错
