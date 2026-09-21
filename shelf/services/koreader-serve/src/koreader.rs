@@ -144,7 +144,7 @@ impl KoReader {
                     if name.ends_with(".sdr") {
                         continue; // KOReader 每本书的元数据目录
                     }
-                    v.push(Entry { name, kind: "dir", bytes: 0, count: list_files(&e.path(), KO_ANY).len() });
+                    v.push(Entry { name, kind: "dir", bytes: 0, count: count_files(&e.path()) });
                 } else if md.is_file() {
                     v.push(Entry { name, kind: "file", bytes: md.len(), count: 0 });
                 }
@@ -152,6 +152,12 @@ impl KoReader {
         }
         v.sort_by_key(|e| (e.kind != "dir", e.name.to_lowercase()));
         Ok(v)
+    }
+
+    /// `books/` 根一层里的书文件数（不含目录/隐藏项），等价于 `list_books("")` 里 `kind=="file"` 的个数——
+    /// `/status` 只要个数：不为每个子目录数书（那要遍历整个书库树）、不为每个文件取 size。
+    pub fn count_root_books(&self) -> usize {
+        count_files(&self.books_dir())
     }
 
     /// data/dict/ 下每个子目录=一本词典（有 .ifo 才算）。
@@ -169,6 +175,14 @@ impl KoReader {
         }
         v
     }
+}
+
+/// 目录里普通文件的个数（隐藏项不算）。用目录项自带的类型（Linux 上来自 `d_type`，不必逐个 `stat`），
+/// 漫画目录动辄几百上千个文件——此前每次 `/status`、`/books` 都对它们逐个 `stat` 只为了数个数。
+/// 与 `list_files(dir, KO_ANY).len()` 语义一致（都不跟随符号链接）。
+pub fn count_files(dir: &Path) -> usize {
+    let Ok(rd) = std::fs::read_dir(dir) else { return 0 };
+    rd.flatten().filter(|e| e.file_type().is_ok_and(|t| t.is_file()) && !e.file_name().to_string_lossy().starts_with('.')).count()
 }
 
 /// 目录里的普通文件（隐藏项不列，`exts` 空＝任意），按名排序。
@@ -229,6 +243,11 @@ mod tests {
         let root = k.list_books("").unwrap();
         assert_eq!(root.iter().map(|e| (e.name.as_str(), e.kind)).collect::<Vec<_>>(), vec![("a", "dir"), ("中文 名.azw3", "file")]);
         assert_eq!(k.list_books("a/b").unwrap()[0].kind, "file");
+        // 数个数的轻量路径必须与"列出来再数"一致：根一层书文件数 / 子目录内文件数（隐藏项不算）
+        std::fs::write(k.books_dir().join(".hidden.epub"), b"x").unwrap();
+        assert_eq!(k.count_root_books(), root.iter().filter(|e| e.kind == "file").count());
+        assert_eq!(count_files(&k.books_dir().join("a/b")), list_files(&k.books_dir().join("a/b"), KO_ANY).len());
+        assert_eq!(count_files(&k.books_dir().join("nope")), 0);
         assert!(k.list_dicts().is_empty());
         std::fs::create_dir_all(k.dict_dir().join("cedict")).unwrap();
         std::fs::write(k.dict_dir().join("cedict/a.ifo"), b"x").unwrap();
