@@ -3,9 +3,10 @@
 //!   满屏 PreserveAspectFit、插画卡自动隐藏 → 换图零重启即时生效，不写 `/usr`、不 bind-mount；
 //! - 换图**原地覆盖 current.png**（truncate 写、保 inode，路径与 inode 都不变）；
 //! - 竖屏物理尺寸 954×1696，上传即缩放入池。
+//!
 //! 路径全走 XDG：池 `$XDG_DATA_HOME/shelf/wallpapers/pool/`、`current.png` 同级；状态 `$XDG_STATE_HOME/shelf/wallpaper-state.json`。
 use image::imageops::FilterType;
-use image::{GenericImageView, ImageFormat, RgbaImage};
+use image::{ImageFormat, RgbaImage};
 use serde::{Deserialize, Serialize};
 use rmsvc_core::asset::{AssetItem, AssetStore};
 use rmsvc_core::formats::IMAGE_EXTS;
@@ -20,6 +21,9 @@ use std::path::{Path, PathBuf};
 /// 跟 shelf 那边如果哪天屏幕规格变了，两处要分别改。
 pub const W: u32 = 954;
 pub const H: u32 = 1696;
+
+/// 源图与缩放后中间图各自的像素上限（见 [`fit_to_screen`] 的实测依据）。
+const MAX_PIXELS: u64 = 16_000_000;
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Default)]
 #[serde(rename_all = "lowercase")]
@@ -153,8 +157,17 @@ impl WallpaperStore {
 
 /// 任意尺寸 → 竖屏 954×1696 RGBA PNG 字节。cover=等比放大后居中裁；contain=等比缩进画布、黑边补齐。
 pub fn fit_to_screen(src: &[u8], fit: Fit) -> Result<Vec<u8>, String> {
-    let img = image::load_from_memory(src).map_err(|e| format!("解码失败: {e}"))?;
-    let (w, h) = img.dimensions();
+    // 先只读头拿尺寸再决定要不要解码：一个 15MB 以内的合法 PNG 可以声明成上亿像素（解码即 GB 级），
+    // 或极端长宽比（如 6000×10）让 Cover 放大出百万级宽度——都是外部输入能触发的 OOM。
+    // 上限 1600 万像素依据：host 实测 VmHWM 约 8.4 B/像素（9MP→126MB、16MP→180MB、36MP→311MB、64MP→473MB），
+    // 而 wallpaper-serve.service 的 MemoryMax=192M；12MP 手机直出照片（4032×3024）在限内。
+    let (w, h) = image::ImageReader::new(std::io::Cursor::new(src))
+        .with_guessed_format()
+        .and_then(|r| r.into_dimensions().map_err(std::io::Error::other))
+        .map_err(|e| format!("解码失败: {e}"))?;
+    if w == 0 || h == 0 || w as u64 * h as u64 > MAX_PIXELS {
+        return Err(format!("图片分辨率过大（{w}×{h}，上限约 {} 万像素），请先缩小", MAX_PIXELS / 10_000));
+    }
     let (sw, sh) = (W as f64, H as f64);
     let scale = match fit {
         Fit::Cover => (sw / w as f64).max(sh / h as f64),
@@ -162,6 +175,10 @@ pub fn fit_to_screen(src: &[u8], fit: Fit) -> Result<Vec<u8>, String> {
     };
     let nw = ((w as f64 * scale).round() as u32).max(1);
     let nh = ((h as f64 * scale).round() as u32).max(1);
+    if nw as u64 * nh as u64 > MAX_PIXELS {
+        return Err(format!("图片长宽比过于极端（{w}×{h}，铺满屏幕需放大到 {nw}×{nh}），请先裁剪"));
+    }
+    let img = image::load_from_memory(src).map_err(|e| format!("解码失败: {e}"))?;
     let resized = img.resize_exact(nw, nh, FilterType::Lanczos3).to_rgba8();
     let mut canvas = RgbaImage::from_pixel(W, H, image::Rgba([0, 0, 0, 255]));
     let ox = (nw as i64 - W as i64) / 2;
@@ -212,7 +229,8 @@ impl AssetStore for WallpaperStore {
         format!("已入池（缩放到 {W}×{H}）")
     }
     fn list(&self) -> Vec<AssetItem> {
-        self.names().into_iter().map(|n| AssetItem { name: n.clone(), bytes: std::fs::metadata(self.pool.join(&n)).map(|m| m.len()).unwrap_or(0), extra: serde_json::json!({"current": self.state().current.as_deref() == Some(n.as_str())}) }).collect()
+        let current = self.state().current; // 只读一次状态文件（旧实现每张图各读+解析一次）
+        self.names().into_iter().map(|n| AssetItem { name: n.clone(), bytes: std::fs::metadata(self.pool.join(&n)).map(|m| m.len()).unwrap_or(0), extra: serde_json::json!({"current": current.as_deref() == Some(n.as_str())}) }).collect()
     }
     fn remove(&self, name: &str) -> Result<(), String> {
         let n = plain_name(name)?;
@@ -227,6 +245,7 @@ impl AssetStore for WallpaperStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use image::GenericImageView;
 
     fn png(w: u32, h: u32) -> Vec<u8> {
         let img = RgbaImage::from_fn(w, h, |x, y| image::Rgba([(x % 256) as u8, (y % 256) as u8, 128, 255]));
@@ -254,6 +273,30 @@ mod tests {
             }
         }
         assert!(fit_to_screen(b"nope", Fit::Cover).is_err());
+    }
+
+    fn gray_png(w: u32, h: u32) -> Vec<u8> {
+        let img = image::GrayImage::from_pixel(w, h, image::Luma([7]));
+        let mut c = std::io::Cursor::new(Vec::new());
+        img.write_to(&mut c, ImageFormat::Png).unwrap();
+        c.into_inner()
+    }
+
+    #[test]
+    fn oversized_or_extreme_images_are_rejected_before_decoding() {
+        // 4100×4100 灰度 PNG 仅几十 KB，但声明 1680 万像素：超上限，头部尺寸即拒、不解码。
+        let e = fit_to_screen(&gray_png(4100, 4100), Fit::Cover).unwrap_err();
+        assert!(e.contains("分辨率过大"), "{e}");
+        // 6000×10：Cover 要放大到 ~100 万×1696，必须拒而不是去分配几百 GB。
+        let e = fit_to_screen(&gray_png(6000, 10), Fit::Cover).unwrap_err();
+        assert!(e.contains("长宽比过于极端"), "{e}");
+        // 同图 Contain 缩进画布，没有放大问题，照常成功。
+        let out = fit_to_screen(&gray_png(6000, 10), Fit::Contain).unwrap();
+        assert_eq!(image::load_from_memory(&out).unwrap().dimensions(), (W, H));
+        // 12MP 手机图仍在限内。
+        assert!(fit_to_screen(&gray_png(4032, 3024), Fit::Cover).is_ok());
+        // 垃圾字节 → 解码失败而非 panic
+        assert!(fit_to_screen(b"\x89PNG\r\n\x1a\nxxxx", Fit::Cover).unwrap_err().contains("解码失败"));
     }
 
     #[test]
