@@ -47,6 +47,7 @@ pub(super) fn drop_dead_imgs(html: &str, base_dir: &str, exact: &HashSet<String>
 /// `res:///sdcard/...`、`res:///opt/sony/...`，任何阅读器都读不到）。
 /// - 一条规则的 `url()` 全死且没有 `local()` 候选 → 整条删；
 /// - 有 `local()` 候选或还有活的 `url()` → 只剔除死 `url()`（连同后面的 `format()` 和一个逗号），其余保留。
+///
 /// 外部（http/data）来源视为活。返回 (新 css, 改动的规则数)。
 pub(super) fn drop_dead_font_faces(css: &str, base_dir: &str, exact: &HashSet<String>, lower: &HashSet<String>) -> (String, usize) {
     static FACE: OnceLock<Regex> = OnceLock::new();

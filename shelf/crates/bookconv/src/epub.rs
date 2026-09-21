@@ -150,7 +150,7 @@ fn nav_body(book: &Book) -> String {
                 out.push_str("        </ol>\n      </li>\n");
                 sub_open = false;
             }
-            let has_child = visible.get(idx + 1).map_or(false, |(_, n)| n.level >= 2);
+            let has_child = visible.get(idx + 1).is_some_and(|(_, n)| n.level >= 2);
             if has_child {
                 out.push_str(&format!("      <li>{link}\n        <ol>\n"));
                 sub_open = true;

@@ -365,7 +365,7 @@ fn indx_split_entry(entry: &[u8]) -> Option<(&[u8], &[u8])> {
 
 /// 解析 KF8 **NCX 目录** → `(rawML 偏移, 真章名, 层级)` 列表。KF8 章名不在正文 `<title>`（那常=书名），
 /// 而在独立索引：NCX 记录号存 MOBI 头 `+0xE4`；结构 = 头 INDX（含 `TAGX` 标签定义 + `+0x18` 数据块数）
-/// + N 个数据 INDX（每条目 = id 文本 + 按 TAGX 编码的 tag 值）+ CNCX（`ncx+1+ndata`，标签字串池）。
+/// 加 N 个数据 INDX（每条目 = id 文本 + 按 TAGX 编码的 tag 值）+ CNCX（`ncx+1+ndata`，标签字串池）。
 /// tag 1 = pos（**直接 rawML 偏移**）、tag 3 = CNCX 标签偏移、tag 4 = 层级。
 /// 5 本真机样本（俄/日/中，4–30 条，含层级）验证。解析失败/非预期结构 → 返回空（调用方退化，不崩不回归）。
 pub fn parse_ncx(records: &[&[u8]], h: &Header) -> Vec<NcxEntry> {

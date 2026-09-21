@@ -193,13 +193,13 @@ pub fn deliver_split_pdf_streaming(
         }
         // 这一卷本身还超预算：按页贪心再切一层。
         let (mut s, mut acc) = (start, 0u64);
-        for i in start..end {
-            if acc > 0 && acc + sizes[i] > budget {
+        for (i, &size) in sizes.iter().enumerate().take(end).skip(start) {
+            if acc > 0 && acc + size > budget {
                 ranges.push((s, i, format!("{vol_title}（第 {}-{} 页）", s + 1, i)));
                 s = i;
                 acc = 0;
             }
-            acc += sizes[i];
+            acc += size;
         }
         ranges.push((s, end, format!("{vol_title}（第 {}-{} 页）", s + 1, end)));
     }

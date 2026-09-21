@@ -413,7 +413,7 @@ pub fn preserve_relink_footnotes(html: &str, index: &std::collections::HashMap<S
                 .unwrap_or_else(|| c.get(0).unwrap().as_str().to_string())
         })
         .into_owned();
-    drop(make); // 释放对 appended/seen 的可变借用，pass 3 要用
+    // （`make` 到此不再使用，对 appended/seen 的可变借用随之结束，pass 3 才能用它们）
 
     // 3) 跨文件普通 <a href="其他文件#frag">：非 noteref，但 frag 已被 collect_footnote_notes 收进
     //    index（确证是注释）→ Inline 内联〔…〕/ Anchor 改同章锚点 + 注释搬章末。目标不在 index 的（目录/交叉引用）不动。

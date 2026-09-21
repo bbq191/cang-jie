@@ -119,6 +119,7 @@ const PAD_ASPECT_TOLERANCE: f32 = 0.02;
 /// - 栏宽 = 页宽 303pt − 2×页边距（`.content` 的 `margins`，单位 px，1px = 303/954 ≈ 0.318pt；界面预设 28/56/112，
 ///   **`setMargins` 接受任意数值**，0 也行）；
 /// - 垂直可用高度固定 **462.1pt**（上 35.5、下 40.3），与边距无关。
+///
 /// 图片比栏窄时**贴左对齐**（不居中）：边距 0、图片 285.1pt 宽时实测左 0.0 / 右 17.9pt。
 ///
 /// 最优组合是：**页边距 [`EPUB_COMIC_MARGINS`]（1）+ 补白到 302.4:462.1 ≈ 0.6543**（画布 954×[`EPUB_COMIC_PAGE_H`]）——
@@ -574,7 +575,7 @@ mod tests {
         // 栏宽 = 303 − 2×边距×(303/954)：常量必须与边距目标值一致（否则补白比例对不上图片框）
         let col = 303.0 - 2.0 * EPUB_COMIC_MARGINS as f32 * (303.0 / 954.0);
         assert!((col / 462.1 - EPUB_FRAME_ASPECT).abs() < 0.0005, "比例 {EPUB_FRAME_ASPECT} 与边距 {EPUB_COMIC_MARGINS} 对不上（栏宽 {col}）");
-        assert!(EPUB_FRAME_ASPECT > DEVICE_PAGE_ASPECT, "图片框比屏幕更宽（边距 0 时栏宽=整页、高度上限不变）");
+        const { assert!(EPUB_FRAME_ASPECT > DEVICE_PAGE_ASPECT, "图片框比屏幕更宽（边距 0 时栏宽=整页、高度上限不变）") };
     }
 
     #[test]

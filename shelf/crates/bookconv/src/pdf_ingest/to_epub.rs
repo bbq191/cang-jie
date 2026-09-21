@@ -301,7 +301,7 @@ pub(super) fn crop_pixmap_to_png(pixmap: &hayro::vello_cpu::Pixmap, region: &BBo
     }
     let data = pixmap.data_as_u8_slice();
     let (w, h) = (pixmap.width() as u32, pixmap.height() as u32);
-    let img = image::RgbaImage::from_raw(w as u32, h as u32, data.to_vec())?;
+    let img = image::RgbaImage::from_raw(w, h, data.to_vec())?;
     let cropped = image::imageops::crop_imm(&img, x0, y0, (x1 - x0).max(1), (y1 - y0).max(1)).to_image();
     let mut out = Vec::new();
     image::DynamicImage::ImageRgba8(cropped).write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png).ok()?;

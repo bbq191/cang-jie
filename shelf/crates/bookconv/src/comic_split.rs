@@ -267,6 +267,9 @@ pub fn build_piece(entries: &[Entry], start: usize, end: usize, title: &str, boo
     build_piece_with(entries, start, end, title, book_id_suffix, &mut |name| Ok(by_name.get(name).map(|e| e.data.clone())))
 }
 
+/// 图片字节来源：`fetch(zip 内路径) -> Ok(Some(字节)) | Ok(None)=书里没有这张图 | Err`。
+type ImageFetch<'a> = &'a mut dyn FnMut(&str) -> Result<Option<Vec<u8>>, String>;
+
 /// [`build_piece`] 的实现，"图片字节从哪来"抽成 `fetch_image(zip 内路径) -> Ok(Some(字节)) | Ok(None)=书里没有这张图`：
 /// 内存版从 `entries` 里克隆；流式版（[`deliver_split_streaming`]）**直接从源 zip 按需读**、字节一次性移进
 /// 资源表——此前流式版要先把这一份用到的图片全读进克隆出来的 `entries`、`build_piece` 再克隆一遍进资源表，
@@ -277,7 +280,7 @@ fn build_piece_with(
     end: usize,
     title: &str,
     book_id_suffix: &str,
-    fetch_image: &mut dyn FnMut(&str) -> Result<Option<Vec<u8>>, String>,
+    fetch_image: ImageFetch,
 ) -> Result<Vec<u8>, String> {
     let opf = parse_opf(entries).ok_or("解不出 OPF/spine")?;
     let spine = &opf.spine;

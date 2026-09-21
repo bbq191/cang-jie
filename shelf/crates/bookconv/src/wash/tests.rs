@@ -227,7 +227,7 @@
         let ncx = String::from_utf8_lossy(&es.iter().find(|x| x.name == "toc.ncx").unwrap().data).to_string();
         assert!(ncx.contains("第 1–20 页") && ncx.contains("第 21–25 页"), "{ncx}");
         assert!(ncx.contains("Text/p1.xhtml") && ncx.contains("Text/p21.xhtml"), "目录必须指向段首页: {ncx}");
-        assert_eq!(toc_entry_count(&es) > 0, true);
+        assert!(toc_entry_count(&es) > 0);
     }
 
     #[test]
@@ -579,7 +579,7 @@
 
     // ---- 无效引用清理 ----
 
-    fn dead_refs(entries: &mut Vec<Entry>) -> usize {
+    fn dead_refs(entries: &mut [Entry]) -> usize {
         let mut rep = WashReport::default();
         drop_dead_refs(entries, &mut rep);
         rep.dead_refs_removed

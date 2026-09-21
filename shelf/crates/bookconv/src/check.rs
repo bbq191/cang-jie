@@ -3,6 +3,7 @@
 //! 1. 真 DRM：`META-INF/encryption.xml` 加密了非字体项（仅字体混淆是合法的，告警不拦）。
 //! 2. 目录 href 文件命中率 < 80%（目录指向不存在的文件 = xochitl TOC 面板点不动）。
 //! 3. 单标签双 `id=` 属性（非法 XHTML，xochitl 严格 XML 解析整章白屏，《消失的爱人》7 页事故）。
+//!
 //! 告警（不拦）：无 nav/ncx 或零条目（`require_toc` 时升为失败）；目录锚点丢失（xochitl 退化到文件级跳转）。
 //! PDF 门（pymupdf）不移植：PDF 定稿只在 host 产出，门留 host。
 use crate::epubzip::{dir_of, is_html, percent_decode, resolve, Entry};

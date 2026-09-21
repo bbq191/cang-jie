@@ -161,8 +161,8 @@ fn png_to_image(data: &[u8]) -> Result<PdfImage, String> {
             let mut out = Vec::with_capacity((w * h * 3) as usize);
             for px in bytes.chunks_exact(4) {
                 let a = px[3] as u32;
-                for c in 0..3 {
-                    out.push(((px[c] as u32 * a + 255 * (255 - a)) / 255) as u8);
+                for &v in &px[..3] {
+                    out.push(((v as u32 * a + 255 * (255 - a)) / 255) as u8);
                 }
             }
             (ColorSpace::Rgb, out)
