@@ -272,6 +272,32 @@ fn rewrite_pdf_content(dir: &Path, uuid: &str, pages: usize, size: u64) -> Resul
     std::fs::rename(&tmp, &path).map_err(|e| format!("替换 .content 失败: {e}"))
 }
 
+/// 把某本 EPUB 的 `.content` 里 `margins` 改成 `margins`（xochitl 阅读器的"页边距"，界面只有 28/56/112 三档）。
+/// 返回 `Ok(true)`＝改了；`Ok(false)`＝本来就是这个值，或这份 `.content` 没有 `margins`（非 EPUB / xochitl 还没写全）。
+///
+/// **时机决定成败**（2026-09-21 真机探针）：xochitl 导入后**不重新读盘**，但用户**首次打开**时会重读 `.content`
+/// 并按新边距重新排版渲染。所以导入完成后、用户打开前写入即生效，**不用重启 xochitl**；写入后 xochitl 自己重写
+/// `.content` 时会保留这个值（探针实测 28 → 打开后仍是 28，图片框 284.8×461.5pt，与阅读器界面手动改一致）。
+/// 只改这一个字段，其余原样；tmp 文件写完 rename 覆盖，不留半成品。
+pub fn set_content_margins(dir: &Path, uuid: &str, margins: u32) -> Result<bool, String> {
+    let path = dir.join(format!("{uuid}.content"));
+    let mut v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).map_err(|e| format!("读 .content 失败: {e}"))?).map_err(|e| format!(".content 不是合法 JSON: {e}"))?;
+    let obj = v.as_object_mut().ok_or(".content 不是对象")?;
+    match obj.get("margins").and_then(|m| m.as_u64()) {
+        Some(cur) if cur == margins as u64 => return Ok(false),
+        Some(_) => {}
+        None => return Ok(false),
+    }
+    obj.insert("margins".into(), margins.into());
+    let tmp = dir.join(format!("{uuid}.content.new"));
+    std::fs::write(&tmp, serde_json::to_string_pretty(&v).map_err(|e| e.to_string())?).map_err(|e| format!("写 .content 失败: {e}"))?;
+    std::fs::rename(&tmp, &path).map_err(|e| {
+        let _ = std::fs::remove_file(&tmp);
+        format!("替换 .content 失败: {e}")
+    })?;
+    Ok(true)
+}
+
 /// `<uuid>.content` 的 `pageCount`：xochitl 渲染完（导入 / 打开）才写；缺或 0 → None。
 pub fn page_count(dir: &Path, uuid: &str) -> Option<u64> {
     let t = std::fs::read_to_string(dir.join(format!("{uuid}.content"))).ok()?;
@@ -392,6 +418,22 @@ mod tests {
         assert!(x.upload_large_file(Path::new("/x"), "a.cbz", "x", "", b"p", None).unwrap_err().contains("EPUB/PDF"));
         let y = Xochitl::new("127.0.0.1:1", Path::new("/nonexistent-lib"), 1);
         assert!(y.upload_large_file(Path::new("/x"), "a.epub", "x", "", b"p", None).unwrap_err().contains("只能在设备上用"));
+    }
+
+    #[test]
+    fn set_content_margins_changes_only_that_field_and_is_idempotent() {
+        let t = tempfile::tempdir().unwrap();
+        std::fs::write(t.path().join("u1.content"), r#"{"fileType":"epub","margins":56,"pageCount":13,"textScale":1}"#).unwrap();
+        assert_eq!(set_content_margins(t.path(), "u1", 28), Ok(true));
+        let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(t.path().join("u1.content")).unwrap()).unwrap();
+        assert_eq!((v["margins"].as_u64(), v["pageCount"].as_u64(), v["fileType"].as_str(), v["textScale"].as_u64()), (Some(28), Some(13), Some("epub"), Some(1)));
+        assert_eq!(set_content_margins(t.path(), "u1", 28), Ok(false), "已是目标值：不写");
+        assert!(!t.path().join("u1.content.new").exists(), "不留 tmp");
+        // 没有 margins 字段（PDF 等）：不加、不报错
+        std::fs::write(t.path().join("u2.content"), r#"{"fileType":"pdf","pageCount":3}"#).unwrap();
+        assert_eq!(set_content_margins(t.path(), "u2", 28), Ok(false));
+        assert!(!std::fs::read_to_string(t.path().join("u2.content")).unwrap().contains("margins"));
+        assert!(set_content_margins(t.path(), "nope", 28).is_err(), "文件不存在＝错误");
     }
 
     #[test]
