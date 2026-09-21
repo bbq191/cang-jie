@@ -51,6 +51,24 @@ fn put_list_read_remove() {
     }
 }
 
+/// `free_bytes` 走 statvfs 而不是 fork `df`：与 host 的 `df -k` 对拍（两次取样之间别的进程会写盘，给 64MB 容差）。
+#[test]
+fn free_bytes_matches_df_and_is_none_for_missing_dir() {
+    let t = tempfile::tempdir().unwrap();
+    let s = staging(&t);
+    let got = s.free_bytes().expect("临时目录所在分区应可查");
+    assert!(got > 0);
+    if let Ok(out) = std::process::Command::new("df").arg("-Pk").arg(s.dir()).output() {
+        let text = String::from_utf8_lossy(&out.stdout).to_string();
+        // POSIX 格式：表头后一行，第 4 列 = Available (KB)
+        if let Some(kb) = text.lines().nth(1).and_then(|l| l.split_whitespace().nth(3)).and_then(|v| v.parse::<u64>().ok()) {
+            assert!(got.abs_diff(kb * 1024) < 64 * 1024 * 1024, "statvfs {got} vs df {}", kb * 1024);
+        }
+    }
+    let gone = Staging::new(t.path().join("no/such/dir"), Arc::new(Xochitl::new("127.0.0.1:1", Path::new("/nonexistent"), 1)), 0);
+    assert_eq!(gone.free_bytes(), None);
+}
+
 #[test]
 fn delivered_record_roundtrip_and_reader_parse() {
     let t = tempfile::tempdir().unwrap();

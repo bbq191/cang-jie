@@ -22,6 +22,20 @@ pub(super) fn probe_level(path: &Path, format: &str) -> (&'static str, bool) {
     (level, pdf_source)
 }
 
+/// `path` 所在文件系统的可用字节数（`f_bavail × f_frsize`）。
+pub(super) fn free_bytes_of(path: &Path) -> Option<u64> {
+    use std::os::unix::ffi::OsStrExt;
+    let c = std::ffi::CString::new(path.as_os_str().as_bytes()).ok()?;
+    let mut st = std::mem::MaybeUninit::<libc::statvfs>::zeroed();
+    // SAFETY: `c` 是合法的 NUL 结尾 C 字符串；`st` 是足够大的零初始化 statvfs，成功返回后由内核填好。
+    if unsafe { libc::statvfs(c.as_ptr(), st.as_mut_ptr()) } != 0 {
+        return None;
+    }
+    // SAFETY: statvfs 返回 0，结构体已被内核写入。
+    let st = unsafe { st.assume_init() };
+    (st.f_bavail as u64).checked_mul(st.f_frsize as u64)
+}
+
 #[derive(Clone)]
 pub(super) struct ProbeCache {
     pub(super) len: u64,
@@ -108,13 +122,11 @@ impl Staging {
         std::fs::remove_file(&p).map_err(|e| format!("删除失败: {e}"))
     }
 
-    /// 所在分区剩余空间（字节）。`df -k` 解析：表头后的所有行拍平成 token（设备名太长时 busybox 会把数字
-    /// 换到下一行，真机 `/dev/mapper/home-encrypted-disk` 就这样），第 4 个 token = Available KB；解析不了 None。
+    /// 所在分区剩余空间（字节，非特权用户可用的那部分，与 `df` 的 Available 同义）；查不到 None。
+    /// 走 `statvfs(2)`：`GET /staging` 每次网页刷新都调，此前每次 fork+exec 一个 `df -k` 再解析文本
+    /// （busybox 设备名过长时还要拍平换行的输出），现在一次系统调用，无子进程。
     pub fn free_bytes(&self) -> Option<u64> {
-        let out = std::process::Command::new("df").arg("-k").arg(&self.dir).output().ok()?;
-        let s = String::from_utf8_lossy(&out.stdout);
-        let toks: Vec<&str> = s.lines().skip(1).flat_map(|l| l.split_whitespace()).collect();
-        toks.get(3)?.parse::<u64>().ok().map(|kb| kb * 1024)
+        free_bytes_of(&self.dir)
     }
 
     /// 列母版库，最新入库在前（同秒按名）。隐藏文件（sidecar / 半成品）不列。
@@ -143,10 +155,7 @@ impl Staging {
             // 内嵌版本标记），误导前端以为它"未优化"、显示可以点「优化」，见 `StagingEntry::
             // pdf_source` 文档。
             let modified = md.modified().ok();
-            let cached = self
-                .probes
-                .lock()
-                .unwrap()
+            let cached = crate::ops::lock(&self.probes)
                 .get(&name)
                 .filter(|c| c.len == md.len() && c.modified == modified)
                 .cloned();
