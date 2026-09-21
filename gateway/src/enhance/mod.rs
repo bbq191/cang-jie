@@ -1,6 +1,6 @@
 //! 系统增强工具开关（Track 3，2026-09-09）：网关自身固定能力（跟 `manage` 一样不经过服务注册表/反代），
-//! 给原来只能在设备原生「设置」App 里改的开关一个网页入口。现接了四个开关：CJK 荧光笔吸附/CJK 手写
-//! 笔迹优化/「导入 md 文档」可见性（都在 [`qol`]，同一份 `reading-qol.json`）+ 电池刺客 battop
+//! 给原来只能在设备原生「设置」App 里改的开关一个网页入口。现接了五个开关：CJK 荧光笔吸附/CJK 手写
+//! 笔迹优化/「导入 md 文档」可见性/漫画页边距最小化（都在 [`qol`]，同一份 `reading-qol.json`）+ 电池刺客 battop
 //! （[`battop`]，独立 systemd unit）。
 //!
 //! **「CJK 手写笔迹优化」这句注释曾经写"目前完全不存在、没有反编译地基"——那是 2026-09-09 刚开线时
@@ -22,11 +22,12 @@ pub fn status(paths: &Paths) -> Reply {
         "hlSnapCjk": qol::hl_snap_cjk(paths),
         "hwStrokeEnabled": qol::hw_stroke_enabled(paths),
         "notesImportMdEnabled": qol::notes_import_md_enabled(paths),
+        "comicMinMargin": qol::comic_min_margin(paths),
         "battop": {"installed": b.installed, "running": b.running, "lastSampleAt": b.last_sample_at},
     }))
 }
 
-/// `PUT /api/enhance/qol`：接 `{hlSnapCjk}`/`{hwStrokeEnabled}`/`{notesImportMdEnabled}`，body 里出现
+/// `PUT /api/enhance/qol`：接 `{hlSnapCjk}`/`{hwStrokeEnabled}`/`{notesImportMdEnabled}`/`{comicMinMargin}`，body 里出现
 /// 哪个就改哪个（`qol::patch` 本身是通用的 key-patch，将来加键直接扩这里）。
 pub fn set_qol(paths: &Paths, req: &mut Request<'_>) -> ApiResult {
     let body = req.json()?;
@@ -44,8 +45,11 @@ pub fn set_qol(paths: &Paths, req: &mut Request<'_>) -> ApiResult {
     if let Some(v) = body.0.get("notesImportMdEnabled").and_then(|v| v.as_bool()) {
         changes.insert("notesImportMdEnabled".into(), serde_json::Value::Bool(v));
     }
+    if let Some(v) = body.0.get("comicMinMargin").and_then(|v| v.as_bool()) {
+        changes.insert("comicMinMargin".into(), serde_json::Value::Bool(v));
+    }
     if changes.is_empty() {
-        return Err(ApiError::bad("body 需要 hlSnapCjk/hwStrokeEnabled/notesImportMdEnabled 其中一个布尔字段"));
+        return Err(ApiError::bad("body 需要 hlSnapCjk/hwStrokeEnabled/notesImportMdEnabled/comicMinMargin 其中一个布尔字段"));
     }
     qol::patch(paths, changes).map_err(ApiError::internal)?;
     Ok(status(paths))

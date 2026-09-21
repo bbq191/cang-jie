@@ -14,6 +14,7 @@
 //!                      EPUB 是流式重排做不到真正的页底部定位，撤回改回 Anchor，段末块整个下线）
 //!   --check          产物过质量门，打印 JSON 报告；不过则退出码 3（产物仍写出）
 //!   --require-toc    质量门把"无目录"升为失败
+//!   --comic-min-margin 纯图漫画补白到"页边距最小"的页框（配阅读器页边距 1；缺省补白到屏幕比例）
 //! 退出码: 0 成功；1 用法错；2 优化失败（输入原样不动）；3 质量门未过。
 
 use bookconv::optimize::{self, FootnoteMode, OptimizeOpts};
@@ -23,8 +24,8 @@ fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let flags: Vec<&str> = args.iter().filter(|a| a.starts_with("--")).map(|s| s.as_str()).collect();
     let files: Vec<&String> = args.iter().filter(|a| !a.starts_with("--")).collect();
-    if files.len() != 2 || flags.iter().any(|f| !["--no-wash", "--keep-spacing", "--auto-toc", "--footnote-anchor", "--check", "--require-toc"].contains(f)) {
-        eprintln!("用法: epub-optimize [--no-wash] [--keep-spacing] [--auto-toc] [--footnote-anchor] [--check] [--require-toc] 输入.epub 输出.epub");
+    if files.len() != 2 || flags.iter().any(|f| !["--no-wash", "--keep-spacing", "--auto-toc", "--footnote-anchor", "--check", "--require-toc", "--comic-min-margin"].contains(f)) {
+        eprintln!("用法: epub-optimize [--no-wash] [--keep-spacing] [--auto-toc] [--footnote-anchor] [--check] [--require-toc] [--comic-min-margin] 输入.epub 输出.epub");
         std::process::exit(1);
     }
     let wash = if flags.contains(&"--no-wash") {
@@ -47,7 +48,7 @@ fn main() {
     } else {
         std::path::PathBuf::from(files[1])
     };
-    let rep = match optimize::optimize_epub_file_streaming(std::path::Path::new(files[0]), &out_target, &OptimizeOpts { wash, footnote }, |_, _| {}) {
+    let rep = match optimize::optimize_epub_file_streaming(std::path::Path::new(files[0]), &out_target, &OptimizeOpts { wash, footnote, comic_frame: if flags.contains(&"--comic-min-margin") { bookconv::imgopt::EpubComicFrame::MinMargin } else { Default::default() } }, |_, _| {}) {
         Ok(r) => r,
         Err(e) => {
             let _ = std::fs::remove_file(&out_target);

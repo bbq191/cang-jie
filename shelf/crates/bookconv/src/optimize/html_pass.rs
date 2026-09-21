@@ -118,10 +118,10 @@ pub(super) fn transform_html_chapter(
 }
 
 /// 图片最终变换：按漫画/文字书分流（EPUB 线原则④：漫画只裁边/适配屏幕，不许压画质）。
-pub(super) fn transform_image_bytes(bytes: &[u8], is_comic_book: bool) -> Vec<u8> {
+pub(super) fn transform_image_bytes(bytes: &[u8], is_comic_book: bool, comic_frame: crate::imgopt::EpubComicFrame) -> Vec<u8> {
     if is_comic_book {
         // 单趟（解码/编码各一次、灰度保持、缩放走 SIMD）——此前三道串联的问题见 `prepare_comic_page_for_epub`。
-        crate::imgopt::prepare_comic_page_for_epub(bytes).unwrap_or_else(|| bytes.to_vec())
+        crate::imgopt::prepare_comic_page_for_epub(bytes, comic_frame).unwrap_or_else(|| bytes.to_vec())
     } else {
         crate::imgopt::downscale_for_epub(bytes).unwrap_or_else(|| bytes.to_vec())
     }

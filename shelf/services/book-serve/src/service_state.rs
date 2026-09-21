@@ -51,7 +51,8 @@ impl State {
         let cfg = BookConfig::load(paths);
         let xochitl = Arc::new(Xochitl::new(&cfg.xochitl_host, &paths.xochitl_dir(), cfg.upload_timeout_secs));
         let spool = Spool::new(paths.state_dir().join("books"));
-        let comic_margins = Arc::new(ComicMargins::new(&paths.state_dir().join("books"), &paths.xochitl_dir()));
+        let qol_file = paths.home().join(".local/share/cangjie-ime/reading-qol.json"); // 与网关共享的开关文件（gateway 写、这里读）
+        let comic_margins = Arc::new(ComicMargins::new(&paths.state_dir().join("books"), &paths.xochitl_dir(), &qol_file));
         let staging = Staging::new(paths.staging_dir(), xochitl.clone(), cfg.native_upload_limit_bytes()).with_comic_margins(comic_margins.clone());
         let trash = TrashQueue::new(&paths.state_dir().join("books"), &paths.xochitl_dir());
         let mkdir = Arc::new(MkdirQueue::new(&paths.state_dir().join("books"), &paths.xochitl_dir()));

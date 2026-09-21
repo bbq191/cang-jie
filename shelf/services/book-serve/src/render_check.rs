@@ -140,10 +140,11 @@ mod tests {
     fn run_registers_margins_only_for_comic_plans() {
         // 新版管线的纯图漫画：导入完成（找到 uuid）后登记"首次打开时设页边距"；文字书不登记。
         const U: &str = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
-        for (comic, expect) in [(true, Some(0u32)), (false, None)] {
+        for (comic, expect) in [(true, Some(bookconv::imgopt::EPUB_COMIC_MARGINS)), (false, None)] {
             let t = tempfile::tempdir().unwrap();
             let (s, lib) = setup(&t);
-            let q = std::sync::Arc::new(crate::comic_margins::ComicMargins::new(t.path(), &lib));
+            std::fs::write(t.path().join("qol.json"), r#"{"comicMinMargin":true}"#).unwrap();
+            let q = std::sync::Arc::new(crate::comic_margins::ComicMargins::new(t.path(), &lib, &t.path().join("qol.json")));
             let s = s.with_comic_margins(q.clone());
             render_doc(&lib, U, "a", 100);
             let mut p = plan(100);

@@ -75,6 +75,40 @@ pub fn is_text_free_comic_epub_file(path: &std::path::Path) -> bool {
     read_entries_without_images(path).map(|e| is_text_free_comic(&e)).unwrap_or(false)
 }
 
+/// 这本 EPUB 的漫画页是不是已按 [`crate::imgopt::EpubComicFrame::MinMargin`] 的页框（954×[`crate::imgopt::EPUB_COMIC_PAGE_H`]）补过白。
+/// 只读每张图开头至多 256KB 取宽高（不解码），最多抽前 24 张"整页大小"的图，**过半**尺寸吻合才算（封面/个别页可能不同）。
+/// 用来在登记"首次打开设页边距"前确认：页边距是按这个页框算的，旧页框（屏幕比例）的书在最小边距下会贴左、右侧空一块。
+/// 打不开/没有整页大小的图 → `false`。
+pub fn is_min_margin_framed_file(path: &std::path::Path) -> bool {
+    use std::io::Read;
+    let Ok(file) = std::fs::File::open(path) else { return false };
+    let Ok(mut zip) = zip::ZipArchive::new(std::io::BufReader::new(file)) else { return false };
+    let (want_w, want_h) = (crate::imgopt::MAX_SHORT_EDGE, crate::imgopt::EPUB_COMIC_PAGE_H);
+    let (mut sampled, mut matched) = (0usize, 0usize);
+    for i in 0..zip.len() {
+        if sampled >= 24 {
+            break;
+        }
+        let Ok(f) = zip.by_index(i) else { continue };
+        if !crate::imgopt::is_downscalable(f.name()) {
+            continue;
+        }
+        let mut head = Vec::new();
+        if f.take(256 * 1024).read_to_end(&mut head).is_err() {
+            continue;
+        }
+        let Some((_, (w, h))) = crate::imgopt::header_dims(&head) else { continue };
+        if w.min(h) < crate::imgopt::MAX_SHORT_EDGE / 3 {
+            continue; // 装饰小图不计
+        }
+        sampled += 1;
+        if (w, h) == (want_w, want_h) {
+            matched += 1;
+        }
+    }
+    sampled > 0 && matched * 2 > sampled
+}
+
 fn read_entries_without_images(path: &std::path::Path) -> Option<Vec<Entry>> {
     let file = std::fs::File::open(path).ok()?;
     let mut zip = zip::ZipArchive::new(std::io::BufReader::new(file)).ok()?;
@@ -86,6 +120,34 @@ fn read_entries_without_images(path: &std::path::Path) -> Option<Vec<Entry>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn min_margin_framed_detects_by_page_dimensions_majority() {
+        use std::io::Write;
+        let t = tempfile::tempdir().unwrap();
+        let jpeg = |w: u32, h: u32| {
+            let img = image::DynamicImage::ImageLuma8(image::GrayImage::from_pixel(w, h, image::Luma([200])));
+            let mut b = Vec::new();
+            image::codecs::jpeg::JpegEncoder::new_with_quality(&mut b, 80).encode_image(&img).unwrap();
+            b
+        };
+        let build = |name: &str, dims: &[(u32, u32)]| {
+            let p = t.path().join(name);
+            let mut zw = zip::ZipWriter::new(std::fs::File::create(&p).unwrap());
+            let o = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
+            for (i, (w, h)) in dims.iter().enumerate() {
+                zw.start_file(format!("OEBPS/Images/{i:03}.jpg"), o).unwrap();
+                zw.write_all(&jpeg(*w, *h)).unwrap();
+            }
+            zw.finish().unwrap();
+            p
+        };
+        let (w, h) = (crate::imgopt::MAX_SHORT_EDGE, crate::imgopt::EPUB_COMIC_PAGE_H);
+        assert!(is_min_margin_framed_file(&build("new.epub", &[(w, h), (w, h), (w, h), (w - 15, h)])), "过半吻合（个别页可能不同）");
+        assert!(!is_min_margin_framed_file(&build("old.epub", &[(954, 1696), (954, 1696), (954, 1696)])), "屏幕比例页框（旧管线/开关关）不算");
+        assert!(!is_min_margin_framed_file(&build("raw.epub", &[(1066, 1600), (1066, 1600)])), "未优化的原图不算");
+        assert!(!is_min_margin_framed_file(&t.path().join("missing.epub")));
+    }
 
     fn e(name: &str, data: &str) -> Entry {
         Entry { name: name.into(), data: data.as_bytes().to_vec() }
