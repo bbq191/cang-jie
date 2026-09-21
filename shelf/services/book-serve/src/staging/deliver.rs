@@ -5,8 +5,8 @@ use super::*;
 /// 余量；超时不算失败，只是没等到确认就接着投下一份，见 `Staging::try_deliver_split`）。
 pub(super) const PIECE_RENDER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(90);
 
-/// 落库前等待「建文件夹」代理真的建出来目标文件夹的上限——`shelf-mkdir-agent.qmd` 是 8 秒一次
-/// Timer 轮询，给够 2-3 个周期的余量；等不到不算错误，`ensure_folder` 会原样放行，交给
+/// 落库前等待「建文件夹」代理真的建出来目标文件夹的上限——`shelf-mkdir-agent.qmd` 现为长轮询
+/// （入队即刻响应，旧版是 8 秒一次 Timer 轮询），20 秒足够留出建夹 + 落盘的余量；等不到不算错误，`ensure_folder` 会原样放行，交给
 /// `Xochitl::upload` 现有的"找不到就落书库根"兜底（改动前就有的行为，不是新错误）。
 pub(super) const FOLDER_WAIT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
 
@@ -167,7 +167,7 @@ impl Staging {
 
     /// 落库前确保目标文件夹真的存在（2026-09-19，用户反馈"文件夹里写了名字依然不会创建文件夹"）：
     /// 已经存在（或本来就是空串＝书库根）直接放行；不存在就往 `mkdir` 队列扔一个"建文件夹"请求，
-    /// 同步等 `shelf-mkdir-agent.qmd`（MainView 注入，8 秒一次 Timer 轮询，唯一合法的建文件夹路径，
+    /// 同步等 `shelf-mkdir-agent.qmd`（MainView 注入，长轮询 `/mkdir/pending?wait=`，唯一合法的建文件夹路径，
     /// 外部进程不能直接写 xochitl 书库的 `.metadata`）真的建出来再放行。等不到就超时放弃——不是
     /// 新错误，[`rmsvc_core::xochitl::Xochitl::upload`] 本来就有"文件夹名找不到就落书库根"的
     /// best-effort 兜底，改动前就是这个行为，这里只是尽量把"真建出来"这条更好的结果多等一会。
@@ -349,13 +349,5 @@ impl Staging {
             Reader::Native => d.native = Some(now),
             Reader::Koreader => d.koreader = Some(now),
         })
-    }
-
-    /// xochitl 的渲染缓存 `<uuid>.pdf`（渲染自检读它量首行缩进；host 端 doctor 已砍）。只认 uuid 形状，只读。
-    pub fn render_pdf(&self, uuid: &str) -> Result<Vec<u8>, String> {
-        if !rmsvc_core::xochitl::is_uuid_shape(uuid) {
-            return Err("uuid 形状不对".into());
-        }
-        std::fs::read(self.xochitl.library_dir().join(format!("{uuid}.pdf"))).map_err(|_| "书库里没有这份渲染缓存（xochitl 还没渲染，或书已删）".to_string())
     }
 }

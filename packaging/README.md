@@ -206,7 +206,7 @@ bash packaging/tests/run_sim_tests.sh      # 现为 198 项断言；也由 packa
 ## 已知限制（2026-09-22，别当成已经解决）
 
 - **这一轮改动全部只在本机模拟验证（198 项），未在真机验证**：装前预检（`require_device`/`preflight_device`）、待生效标记与按需重启、`--force-apply`/`--force`、`--dry-run`、卸载逆序 + 载荷目录清理 + verity 保留分支、`cj_backup_if_differs`、`deploy.sh` 的推送前核对与密码文件兜底清理。
-- **`xovi-reenable.service` 在 xovi 已生效时被重跑仍会无条件 `xovi/start`**：单元只有 `ConditionPathExists=/home/root/xovi/start`，没有"xovi 已在 xochitl 里生效就跳过"的防护（`cj_xochitl_apply` 的判定不适用于它，它直接 `ExecStart=/home/root/xovi/start`）；这种情形没有真机验证过。开机时 xovi 本就没生效，设计上不踩到；手动 `systemctl restart xovi-reenable` 会踩。
+- **`xovi-reenable.service` 防护（2026-09-22 新增，未部署未真机验证）**：单元现有 `ExecCondition=/bin/sh -c '! grep -q "xovi[.]so" /proc/<xochitl MainPID>/maps'`——xochitl 已映射 `xovi.so` 就跳过（systemd 把 ExecCondition 非 0 视为"跳过"而非"失败"），不再对已生效的 xochitl 跑 `xovi/start`（那会让它 SEGV → 整机重启）。判定命令的三种情形（已生效/未生效/xochitl 不在跑）有本机模拟测试；`systemctl show -p MainPID` 与 `/proc/<pid>/maps` 的读法在设备上做过只读核对。**设备上现役的仍是旧版单元**（无防护），要部署新版走 `deploy-xovi-persist.sh`（改 `/usr`，含 dm-verity 检查）；旧版下手动 `systemctl restart xovi-reenable` 仍会踩。
 - **`/usr` 下单元的写入仍靠"dm-verity 门 + 带 trap 的 rw 窗口"**，不是彻底不碰 `/usr`；同样只在模拟里测过，历史上写 `/usr` 触发过 A/B 回滚变砖（2026-08-16）。
 - **`shelf/install.sh --password 明文` 直接在设备上跑时密码短暂出现在设备 `ps`**（`deploy.sh` 走 0600 临时文件 + `--password-file` 不受影响）。
 - **待生效标记只覆盖已接入的四处**（`hl-snap` / `handwriting-stroke` / `sidebar-entry` / `shelf` qmd）。手工替换 `.so`/qmd 不会留标记——用 `--force-apply`/`--force`。`/run` 与退路目录都写不了时只警告，此时 `xovi-apply` 可能误判"无需重启"，按提示手动 `systemctl restart xochitl`。

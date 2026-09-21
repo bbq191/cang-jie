@@ -711,6 +711,17 @@ check "每个连设备的 deploy-*.sh 都调用了 require_device" test -z "$vio
 viol="$(grep -n 'rm -rf' packaging/*.sh shelf/*.sh 2>/dev/null | grep -v -e ':[0-9]*:[[:space:]]*#' | grep -v -e 'packaging/tests/' -e 'STAGE' -e 'REMOTE' )"
 check "rm -rf 出现处已人工核对：仅 uninstall-all(battop purge / shelf-pkg 载荷)、shelf/uninstall(--purge 三个 XDG 目录，路径/符号链接守卫)" test "$(echo "$viol" | grep -v '^$' | grep -v -e 'packaging/uninstall-all.sh' -e 'shelf/uninstall.sh' | wc -l)" -eq 0
 
+# 9) xovi-reenable.service 不许在 xovi 已生效时重跑 xovi/start（会让运行中的 xochitl SEGV → 整机重启）：
+#    必须有 ExecCondition 检查 xochitl 进程是否已映射 xovi.so，且排在 ExecStart 之前
+U=packaging/xovi-reenable.service
+check "xovi-reenable.service：ExecStart 前有 ExecCondition 检查 xovi.so 是否已生效" test -n "$(grep -n '^ExecCondition=.*xovi\[\.\]so' $U)" -a "$(grep -n '^ExecCondition=' $U | cut -d: -f1 | head -n1)" -lt "$(grep -n '^ExecStart=' $U | cut -d: -f1 | head -n1)"
+# 守卫命令本身：xovi.so 已映射 → 条件返回非 0（跳过）；未映射 → 返回 0（执行）。用文件充当 /proc/<pid>/maps
+GUARD_CMD='! grep -q "xovi[.]so" MAPS 2>/dev/null'
+printf '7f00 r-xp /home/root/xovi/xovi.so\n' > "$R/maps-active"; printf '7f00 r-xp /usr/lib/libc.so\n' > "$R/maps-plain"
+check "xovi-reenable 守卫：已生效→跳过" bash -c "${GUARD_CMD//MAPS/$R/maps-active}; [ \$? -ne 0 ]"
+check "xovi-reenable 守卫：未生效→执行" bash -c "${GUARD_CMD//MAPS/$R/maps-plain}"
+check "xovi-reenable 守卫：xochitl 不在跑（maps 不存在）→执行" bash -c "${GUARD_CMD//MAPS/$R/nonexistent}"
+
 # 守卫：真实 HOME 下不该出现任何测试产物
 GUARD_AFTER=""
 for g in $(guard_paths); do [ -e "$g" ] && GUARD_AFTER="$GUARD_AFTER $g"; done

@@ -718,7 +718,7 @@
 4. `pages < expected × 50%`（`WARN_RATIO`）→ `warn`。标定：坏章在 xochitl 里各占 **1 页空白**，4 章坏 3 章的探针 10/29＝0.34，30% 抓不住，定 50%。
 5. 结果写边车 `.<name>.delivered` 的 `render`（事件有损、状态必须落盘）+ 推 `books/render {name,status,pages,expected}`；网页徽章「渲染 N 页」/「⚠ 只渲染 N 页」（红）/「渲染中…」/「未见渲染」，状态机 `pending → ok | warn | timeout`（大文件 EPUB 另有 `onopen`，§03bn）。
 
-**真机**：Probe Good ok 25/29；Probe Bad（h1 双 id ×3 章）warn 10/29。**保留接口**：`GET /staging/render/{uuid}` 返回渲染缓存 `<uuid>.pdf`（只认 uuid 形状、只读），用于"量排版"诊断。
+**真机**：Probe Good ok 25/29；Probe Bad（h1 双 id ×3 章）warn 10/29。（曾有接口 `GET /staging/render/{uuid}` 返回渲染缓存 `<uuid>.pdf` 用于"量排版"诊断；唯一使用者 host 端 doctor 已砍，2026-09-22 已删该接口。）
 
 #### 已砍的 host 侧附带能力（只留结论）
 
@@ -747,7 +747,7 @@
 
 - 「新建文件夹」对话框确认按钮调 `root.library.createCollection(parentFolderId, name)`；`root.library` 绑到**裸全局单例 `Library`**（`import xofm.libs.library`；**不是 `LibraryController`，只有 `Library` 有 `createCollection`**）。书库根 `parentFolderId`＝空字符串。
 - **锚点选 `MainView.qml`（同 `cardhw-notify.qmd`）而非 Sidebar**：Sidebar 没 import 该模块，要加 `IMPORT` 而 qmldiff 的 `IMPORT` 强制显式版本号、源文件是 Qt6 无版本 import，硬造版本号风险不可控。
-- **触发只能轮询**：建夹必先于 `/upload`，无 `rowsInserted` 那样的事件 → 8 s Timer 轮询 `GET 127.0.0.1:8790/mkdir/pending`（`{names:[…]}`）。
+- **触发只能轮询**：建夹必先于 `/upload`，无 `rowsInserted` 那样的事件 → 起初 8 s Timer 轮询 `GET 127.0.0.1:8790/mkdir/pending`（`{names:[…]}`）；**2026-09-22 改长轮询** `?wait=25`：book-serve 阻塞到入队或 25 s 到期才回，QML 单发 Timer 只在上一次回复后 `restart()`（空名单 0.5 s、有名字 3 s、出错退避 15 s、立即返回空名单则退回 8 s 兼容旧服务端）；同名 15 s 内不重复交出（createCollection 异步，避免重复建夹）。空闲往返 7.5 次/分钟 → 约 2.4 次/分钟，入队即刻响应。离线用 qmldiff `apply-diffs` 验证解析合法；**QML XHR 对 25 s 长请求的实际行为未在真机验证**（Qt6 缺省 30 s 传输超时，25 s 留了余量）。
 - **后端**：`MkdirQueue`（同 `trash.rs`，共用 `pending_queue::PendingQueue<T>`）：`POST /mkdir/add {name}`（已存在不入队）、`GET /mkdir/pending`（顺手剔除已建）、`GET /mkdir`；前端「＋新建文件夹」也调 `/api/books/mkdir/add`。
 
 **真机（2026-09-07）**：qmd 被 `qmldiff` 加载无解析错误；note-serve 生成新章节 → 队列出现《人骨拼圖》→ ~80 s 内 `SHELF-MKDIR: created 《人骨拼圖》`，书库真多一个 `CollectionType` 文件夹；再生成同书，新文档 `parent` 指向它；重复触发不产生重名；`NRestarts=0`。**当时没点开对话框交叉验证**，结论止于"反编译 + 静态调用链一致 + 业务场景间接验证"，直到 §03be 才首次直接真机验证。

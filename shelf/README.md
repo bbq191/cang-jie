@@ -44,7 +44,7 @@ reMarkable Paper Pro Move 的**读书与阅读质量层**：一个网页，把�
 ### 主要 API（经网关前缀 `/api/<seg>`）
 
 **books**（book-serve）
-- 母版库：`GET /status` · `GET /staging` → `{items, freeBytes}`（条目含 `delivered.render` 渲染自检、`busy`、处理进度）· `POST /staging`（multipart 原样入库）· `POST /staging/optimize {name}` · `POST /staging/deliver {name, folder?}`（folder 空＝书库根；不存在会先经 mkdir 队列建）· `POST /staging/cancel {name}`（中途停止，EPUB 优化与按卷拆分支持）· `POST /staging/mark {name, target}` · `POST /staging/fetch-article {url, optimize?}` · `POST /staging/delete {name}` · `GET /staging/render/{uuid}`（xochitl 渲染缓存 PDF）
+- 母版库：`GET /status` · `GET /staging` → `{items, freeBytes}`（条目含 `delivered.render` 渲染自检、`busy`、处理进度）· `POST /staging`（multipart 原样入库）· `POST /staging/optimize {name}` · `POST /staging/deliver {name, folder?}`（folder 空＝书库根；不存在会先经 mkdir 队列建）· `POST /staging/cancel {name}`（中途停止，EPUB 优化与按卷拆分支持）· `POST /staging/mark {name, target}` · `POST /staging/fetch-article {url, optimize?}` · `POST /staging/delete {name}`
 - 漫画页边距待办（给 qmd 代理用）：`GET /margins/{uuid}`（有待设的边距则返回，否则 404）· `POST /margins/applied {uuid}`（销账）；仅「实验室→漫画页边距」开关开着时生效，白皮书 §20（`bookconv优化白皮书.md`）
 - 设备端代理队列：原生回收站 `POST /trash/add` · `GET /trash/pending` · `GET /trash`；原生建文件夹 `POST /mkdir/add` · `GET /mkdir/pending` · `GET /mkdir`
 - 追平队列：`GET /inbox` · `POST /inbox/{retry,delete}`；事件 `GET /events`（SSE）

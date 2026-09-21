@@ -1,11 +1,11 @@
 //! inbox 追平队列（`$XDG_STATE_HOME/shelf/books/{inbox,.work,failed}`）——给 scp 直接丢文件的人一条"不经网页也进母版库"的路。
 //! - `inbox/`  待处理（scp 丢进来的）——fswatch 追平；
 //! - `.work/`  已认领、处理中（rename 原子独占，防并发重复处理）；上传流程的暂存也在这（与母版库同分区，入库 rename 零拷贝）；
-//! - `failed/` 失败源（封顶 50MB，可重试/删除，`<name>.reason` sidecar 记原因）。
+//! - `failed/` 失败源（封顶 50MB，`<name>.reason` sidecar 记原因；重试=人工拷回 `inbox/`，2026-09-22 起不再有 HTTP 重试/删除接口）。
 //!
 //! 处理成功的书进母版库（`staging/`，见 `staging.rs`），本队列不再另存一份。
 use serde::Serialize;
-use rmsvc_core::fs::{move_unique, plain_name, unique_path};
+use rmsvc_core::fs::{move_unique, unique_path};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
@@ -109,22 +109,6 @@ impl Spool {
         out.sort_by(|a, b| (a.state, &a.name).cmp(&(b.state, &b.name)));
         out
     }
-
-    /// failed/ → inbox/（重试）；连带清掉 `.reason` sidecar。
-    pub fn retry(&self, name: &str) -> Result<(), String> {
-        let src = self.failed().join(plain_name(name)?);
-        if !src.is_file() {
-            return Err("failed/ 里没有这个文件".into());
-        }
-        let _ = std::fs::remove_file(reason_path(&src));
-        move_unique(&src, &self.inbox());
-        Ok(())
-    }
-    pub fn delete_failed(&self, name: &str) -> Result<(), String> {
-        let src = self.failed().join(plain_name(name)?);
-        let _ = std::fs::remove_file(reason_path(&src));
-        std::fs::remove_file(&src).map_err(|e| format!("删除失败: {e}"))
-    }
 }
 
 /// `<文件>.reason` sidecar 路径。
@@ -166,7 +150,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn claim_archive_retry_roundtrip() {
+    fn claim_and_archive_failed_roundtrip() {
         let t = tempfile::tempdir().unwrap();
         let s = Spool::new(t.path().join("books"));
         s.ensure().unwrap();
@@ -177,12 +161,8 @@ mod tests {
         s.archive_failed(&w, "质量门未过：双 id");
         let listed = s.list();
         assert_eq!(listed, vec![SpoolEntry { name: "a.epub".into(), bytes: 1, state: "failed", reason: Some("质量门未过：双 id".into()) }]);
-        s.retry("a.epub").unwrap();
-        assert_eq!(s.list()[0].state, "pending");
-        assert!(s.list()[0].reason.is_none(), "重试后原因清掉");
-        assert!(!reason_path(&s.failed().join("a.epub")).exists(), "reason sidecar 已删");
-        assert!(s.retry("../x").is_err());
-        // 同名再入 failed 不覆盖，reason 跟着归档名走
+        // 同名再入 failed 不覆盖，reason 跟着归档名走（人工把 failed/ 里的文件拷回 inbox/ 即重试）
+        std::fs::write(s.inbox().join("a.epub"), b"x").unwrap();
         let w2 = s.claim("a.epub").unwrap();
         std::fs::write(s.failed().join("a.epub"), b"old").unwrap();
         s.archive_failed(&w2, "转换失败");

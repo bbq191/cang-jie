@@ -38,7 +38,7 @@ pub struct State {
 /// `/status` 缓存时长：够挡住"连续几次 refresh"，又短到外部变化（xochitl 上下线）几秒内就能看到。
 const STATUS_TTL: Duration = Duration::from_secs(3);
 
-/// inbox 追平一项的结果（日志 / `POST /inbox/retry` 回执）。
+/// inbox 追平一项的结果（日志）。
 #[derive(Serialize, Clone, Debug, PartialEq)]
 pub struct InboxOutcome {
     pub name: String,
@@ -192,8 +192,8 @@ mod tests {
         let s = st.status();
         assert_eq!((s["spool"]["pending"].as_u64(), s["spool"]["failed"].as_u64()), (Some(0), Some(1)), "操作后立刻刷新");
         assert_eq!(s["uploadReachable"], false);
-        // 删掉失败项走的是 api 层的 invalidate_status，这里直接验证失效钩子本身
-        st.spool.delete_failed("p.jpg").unwrap();
+        // 外部把失败项清掉后，失效钩子生效前仍是缓存值（api 层的 invalidate_status 就是这个钩子）
+        std::fs::remove_file(st.spool.failed().join("p.jpg")).unwrap();
         assert_eq!(st.status()["spool"]["failed"], 1, "没失效前仍是缓存值");
         st.invalidate_status();
         assert_eq!(st.status()["spool"]["failed"], 0);

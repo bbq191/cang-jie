@@ -19,7 +19,15 @@
 use crate::pending_queue::PendingQueue;
 use serde::{Deserialize, Serialize};
 use rmsvc_core::xochitl::find_folder_by_name;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::{Condvar, Mutex};
+use std::time::{Duration, Instant};
+
+/// 同一个文件夹名交给 QML 代理后，这段时间内不再重复交出。建夹是异步的：`Library.createCollection`
+/// 调用后 `.metadata` 稍晚才落盘，长轮询让代理几乎立刻再来拉，若这时仍把同名交出去就会建出两个重名文件夹。
+/// 超过这个时间还没建出来（createCollection 没生效）才再交一次，等于自带重试。
+const HANDOUT_QUIET: Duration = Duration::from_secs(15);
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Pending {
@@ -30,11 +38,31 @@ pub struct Pending {
 pub struct MkdirQueue {
     q: PendingQueue<Pending>,
     lib_dir: PathBuf,
+    /// 入队计数（代数）+ 条件变量：长轮询 [`Self::pending_wait`] 等它变化，入队即刻唤醒，空闲时零唤醒。
+    gen: Mutex<u64>,
+    wake: Condvar,
+    /// 名字 → 上次交给代理的时刻，见 [`HANDOUT_QUIET`]。
+    handed: Mutex<HashMap<String, Instant>>,
+    handout_quiet: Duration,
 }
 
 impl MkdirQueue {
     pub fn new(state_books_dir: &Path, lib_dir: &Path) -> MkdirQueue {
-        MkdirQueue { q: PendingQueue::new(state_books_dir.join("mkdir-pending.json")), lib_dir: lib_dir.to_path_buf() }
+        MkdirQueue {
+            q: PendingQueue::new(state_books_dir.join("mkdir-pending.json")),
+            lib_dir: lib_dir.to_path_buf(),
+            gen: Mutex::new(0),
+            wake: Condvar::new(),
+            handed: Mutex::new(HashMap::new()),
+            handout_quiet: HANDOUT_QUIET,
+        }
+    }
+
+    /// 单测用：缩短/取消"重复交出"的静默期。
+    #[cfg(test)]
+    fn with_handout_quiet(mut self, d: Duration) -> MkdirQueue {
+        self.handout_quiet = d;
+        self
     }
 
     /// 入队一个文件夹名；已经真实存在或已在队列里都不重复加。名字不能为空——`/`、`\` 曾经也被当
@@ -51,14 +79,48 @@ impl MkdirQueue {
         if find_folder_by_name(&self.lib_dir, name).is_some() {
             return Ok(0); // 已经存在，不用建
         }
-        self.q.add(|p| p.name == name, || Pending { name: name.to_string(), at: rmsvc_core::clock::now_secs() })
+        let n = self.q.add(|p| p.name == name, || Pending { name: name.to_string(), at: rmsvc_core::clock::now_secs() })?;
+        *self.gen.lock().unwrap_or_else(|e| e.into_inner()) += 1;
+        self.wake.notify_all();
+        Ok(n)
     }
 
     /// 待办文件夹名（QML 代理拉取）：顺手清掉已经真实建出来的（QML 端无需 ack）。
     /// 返回 (待办文件夹名列表, 本次清掉几条)。
+    /// 刚交出去不久（[`HANDOUT_QUIET`]）的名字不再重复返回；返回的名字同时记为"已交出"。
     pub fn pending(&self) -> Result<(Vec<String>, usize), String> {
         let (kept, pruned) = self.q.prune(|p| find_folder_by_name(&self.lib_dir, &p.name).is_none())?;
-        Ok((kept.into_iter().map(|p| p.name).collect(), pruned))
+        let now = Instant::now();
+        let mut handed = self.handed.lock().unwrap_or_else(|e| e.into_inner());
+        handed.retain(|n, at| now.duration_since(*at) < self.handout_quiet && kept.iter().any(|p| &p.name == n));
+        let mut out = Vec::new();
+        for p in kept {
+            if !handed.contains_key(&p.name) {
+                handed.insert(p.name.clone(), now);
+                out.push(p.name);
+            }
+        }
+        Ok((out, pruned))
+    }
+
+    /// 长轮询版 [`Self::pending`]：有待办立即返回；没有就阻塞到入队唤醒或 `wait` 到期（到期返回空列表）。
+    /// 这样 QML 代理不必每 8 秒定时拉一次——空闲时整条链路零唤醒，入队后也是即刻响应而不是平均等 4 秒。
+    /// `wait` 为零＝不等（旧的立即返回语义）。
+    pub fn pending_wait(&self, wait: Duration) -> Result<(Vec<String>, usize), String> {
+        let deadline = Instant::now() + wait;
+        let mut total_pruned = 0;
+        loop {
+            // 先取代数再查队列：查完到睡下之间若有入队，代数已变，wait_timeout_while 不会睡过头。
+            let seen = *self.gen.lock().unwrap_or_else(|e| e.into_inner());
+            let (names, pruned) = self.pending()?;
+            total_pruned += pruned;
+            let now = Instant::now();
+            if !names.is_empty() || now >= deadline {
+                return Ok((names, total_pruned));
+            }
+            let g = self.gen.lock().unwrap_or_else(|e| e.into_inner());
+            let _ = self.wake.wait_timeout_while(g, deadline - now, |cur| *cur == seen).unwrap_or_else(|e| e.into_inner());
+        }
     }
 
     pub fn list(&self) -> Vec<Pending> {
@@ -80,7 +142,7 @@ mod tests {
     fn add_rejects_bad_names_and_existing_folders_then_pending_prunes_created() {
         let t = tempfile::tempdir().unwrap();
         let lib_dir = lib(&t);
-        let q = MkdirQueue::new(&t.path().join("state"), &lib_dir);
+        let q = MkdirQueue::new(&t.path().join("state"), &lib_dir).with_handout_quiet(Duration::ZERO);
 
         assert!(q.add("").unwrap_err().contains("不能为空"));
 
@@ -115,5 +177,46 @@ mod tests {
         assert_eq!(q.add("乱马1/2").unwrap(), 1);
         assert_eq!(q.list()[0].name, "乱马1/2");
         assert_eq!(q.add(r"a\b").unwrap(), 2);
+    }
+
+    #[test]
+    fn handed_out_name_is_not_repeated_within_quiet_period() {
+        let t = tempfile::tempdir().unwrap();
+        let q = MkdirQueue::new(&t.path().join("state"), &lib(&t));
+        q.add("甲").unwrap();
+        assert_eq!(q.pending().unwrap().0, vec!["甲".to_string()]);
+        assert!(q.pending().unwrap().0.is_empty(), "静默期内不重复交出，免得代理立刻再拉时建出重名文件夹");
+        // 静默期过后仍没建出来 → 再交一次（自带重试）
+        let q2 = MkdirQueue::new(&t.path().join("state"), &lib(&t)).with_handout_quiet(Duration::ZERO);
+        assert_eq!(q2.pending().unwrap().0, vec!["甲".to_string()]);
+        assert_eq!(q2.pending().unwrap().0, vec!["甲".to_string()]);
+    }
+
+    #[test]
+    fn pending_wait_returns_promptly_on_add_and_times_out_when_idle() {
+        let t = tempfile::tempdir().unwrap();
+        let q = std::sync::Arc::new(MkdirQueue::new(&t.path().join("state"), &lib(&t)));
+
+        // 空闲：等满就返回空
+        let t0 = Instant::now();
+        assert!(q.pending_wait(Duration::from_millis(150)).unwrap().0.is_empty());
+        assert!(t0.elapsed() >= Duration::from_millis(140));
+
+        // 入队即刻唤醒，远早于 wait 上限
+        let q2 = q.clone();
+        let h = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(100));
+            q2.add("乙").unwrap();
+        });
+        let t0 = Instant::now();
+        let (names, _) = q.pending_wait(Duration::from_secs(10)).unwrap();
+        assert_eq!(names, vec!["乙".to_string()]);
+        assert!(t0.elapsed() < Duration::from_secs(3), "应被入队唤醒，实际等了 {:?}", t0.elapsed());
+        h.join().unwrap();
+
+        // wait=0 等价于旧的立即返回
+        let t0 = Instant::now();
+        assert!(q.pending_wait(Duration::ZERO).unwrap().0.is_empty());
+        assert!(t0.elapsed() < Duration::from_millis(100));
     }
 }

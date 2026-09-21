@@ -177,7 +177,7 @@ PDF 转出的 EPUB 有“来源”徽章（`looks_like_pdf_derived_epub`），�
 
 | 队列 | qmd（`shelf/xovi/`） | 触发 | 用途 |
 |---|---|---|---|
-| `mkdir-pending.json`：要建的文件夹名 | `shelf-mkdir-agent.qmd`（注入 MainView） | 8 秒 Timer 轮询 `GET /mkdir/pending` | 「加入 xochitl → 文件夹」填了不存在的名字；也可 `POST /mkdir/add` |
+| `mkdir-pending.json`：要建的文件夹名 | `shelf-mkdir-agent.qmd`（注入 MainView） | 长轮询 `GET /mkdir/pending?wait=25`（服务端阻塞到入队或 25 秒到期；2026-09-22 起，此前 8 秒 Timer 轮询） | 「加入 xochitl → 文件夹」填了不存在的名字；也可 `POST /mkdir/add` |
 | `trash-pending.json`：要删的文档 uuid+name | `shelf-trash-agent.qmd`（注入 Sidebar） | **事件驱动**（当前文件夹模型 `rowsInserted`/`modelReset`，4 秒防抖）后 `GET /trash/pending`；有勾选时跳过防误删 | 入队时按 visibleName 核对 uuid；现调用方是笔记线 `note-serve` 旧版本软删 |
 | `comic-margins.json`：待设页边距的 uuid | `shelf-comic-margins.qmd`（注入 DocumentView） | 开书 1.5 秒后 `GET /margins/<uuid>` | §3.5 |
 
@@ -285,13 +285,12 @@ POST /staging/deliver {name, folder?} 异步落库（原生）
 POST /staging/cancel {name}          中途停止（EPUB 优化 / 按卷拆分支持）
 POST /staging/mark {name, target}    标记已加入读器（native|koreader；批量 worker 补记）
 POST /staging/fetch-article {url, optimize?}  抓网文
-GET  /staging/render/{uuid}          xochitl 渲染缓存 PDF（现无调用方）
 POST /staging/delete {name}          删除条目（忙时 400）
 GET  /margins/{uuid} · POST /margins/applied {uuid}   漫画页边距待办（qmd 用；开关关时 GET 恒 404）
 GET  /events                         SSE 事件流
 POST /trash/add · GET /trash/pending · GET /trash      原生回收站代理队列
-POST /mkdir/add · GET /mkdir/pending · GET /mkdir      原生建文件夹代理队列
-GET  /inbox · POST /inbox/retry · POST /inbox/delete   追平队列（scp 入口的失败重试/删除）
+POST /mkdir/add · GET /mkdir/pending[?wait=秒] · GET /mkdir   原生建文件夹代理队列（pending 支持长轮询）
+（2026-09-22 已删：`GET /inbox`、`POST /inbox/retry|delete`、`GET /staging/render/{uuid}`——无调用方；inbox 失败项重试=人工把 `failed/` 里的文件拷回 `inbox/`）
 ```
 
 **`/api/koreader/*`**（koreader-serve:8791）：`GET /books`、`POST /books/adopt {name, folder?}`、`POST /books/mkdir {folder}`（幂等）；另有 `/fonts`、`/dicts`、`/config/{settings|defaults|gestures}[?dry_run=1]`、`/annotations`、`/vocabulary`，见 `shelf/README.md`。

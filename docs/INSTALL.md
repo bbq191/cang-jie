@@ -259,7 +259,7 @@ sh uninstall-all.sh 10.11.99.1 --purge            # 额外删 battop 的二进�
 ## 已知限制
 
 - **2026-09-22 这一轮脚本改动全部只在电脑上用假 ssh/systemctl/mount 模拟验证（198 项），没有在真机上验证过**：包括装前预检、待生效标记与"按需重启"、`--force-apply`、`--dry-run`、卸载逆序与载荷目录清理、verity 下保留二进制、内容没变不重复备份。上面写的行为是"代码这样写、模拟里这样跑"，不是"真机确认过"。上机时请按"一步一确认"来：先 `--dry-run`，再单步/`--skip` 试跑，观察设备。
-- **`xovi-reenable.service`（`xovi-persist` 装的开机单元）在 xovi 已生效的 xochitl 上被再次触发时，仍会无条件跑 `xovi/start`**——它没有加"xovi 已生效就不跑"的防护，也没有真机验证过这种情形。开机时 xovi 本就尚未生效，设计上不踩到这一点；但**别手动重跑这个单元**（如 `systemctl restart xovi-reenable`），那等同在已生效的 xochitl 上跑 `xovi/start`（见问题⑤）。
+- **`xovi-reenable.service`（`xovi-persist` 装的开机单元）现在带 `ExecCondition` 防护**（2026-09-22 起）：xochitl 进程已映射 `xovi.so`（xovi 已生效）时直接跳过，不再跑 `xovi/start`，避免旧版"重跑即崩溃并整机重启"的坑。防护的判定逻辑已有本机模拟测试，**新版单元尚未部署到设备、也没在真机验证**（部署它需要改 `/usr` 下的单元，走 `deploy-xovi-persist.sh`，含 dm-verity 检查）；在部署新版之前，设备上的旧版单元仍**没有**这层防护，**别手动重跑它**（如 `systemctl restart xovi-reenable`，见问题⑤）。
 - **写 `/usr` 的单元仍靠"dm-verity 检测 + 带 trap 的 rw 窗口"这两道防线**，不是彻底不碰 `/usr`。verity 激活就跳过；rw 窗口无论成败都会恢复 ro——但这套机制本身同样只在模拟里测过，历史上写 `/usr` 触发过 A/B 回滚变砖（2026-08-16）。
 - **`shelf/install.sh --password 明文` 直接在设备上跑时，密码会短暂出现在设备的 `ps` 里**；经 `deploy.sh --password` 走 0600 临时文件则不会。
 - 卸载对 `chrony-cn` / `timezone-cn` 有意不还原（见「卸载」），没有"一键回到装之前"。

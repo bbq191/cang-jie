@@ -20,6 +20,13 @@ ConditionPathExists=/home/root/xovi/start
 [Service]
 Type=oneshot
 RemainAfterExit=yes
+# ⚠️ xovi 已经在运行的 xochitl 里生效时**绝不能再跑 xovi/start**（会让运行中的 xochitl SEGV → OnFailure=emergency
+# → 整机重启，2026-09-20 真机踩过）。开机后 xochitl 是原厂状态起来的（/etc overlay 已清），不含 xovi.so；
+# 若本单元被手动重跑/被别的机制二次拉起时 xovi 早已生效，就跳过。判据=xochitl 主进程的内存映射里有没有
+# xovi.so（/proc/<pid>/maps 是纯文本、busybox 也能 grep）。ExecCondition 退出码 1–254 ＝ 单元被"跳过"
+# 而不是"失败"（systemd ≥ 243；设备是 255）；xochitl 没在跑（MainPID=0，路径不存在）时 grep 报错、
+# 取反后为真 → 照常执行 xovi/start。`$$` 是 systemd 里的字面 `$`。
+ExecCondition=/bin/sh -c '! grep -q "xovi[.]so" /proc/$$(systemctl show -p MainPID --value xochitl.service)/maps 2>/dev/null'
 ExecStart=/home/root/xovi/start
 
 [Install]

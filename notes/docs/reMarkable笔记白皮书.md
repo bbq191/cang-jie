@@ -477,9 +477,9 @@
 | DashScope | `qwen3-vl-plus` · `qwen-vl-max` · `qwen-vl-plus` | `qwen-plus` · `qwen-max` · `qwen-turbo` |
 | OpenAI | `gpt-5.6-terra` · `gpt-6-astra` | `gpt-5.6-luna` · `gpt-5.6-terra` |
 | Gemini | `gemini-3.8-flash` | `gemini-3.8-flash` |
-| DeepSeek | `deepseek-v4-flash-vision-exp`（实验性） | `deepseek-v4-flash` · `deepseek-v4-pro` |
+| DeepSeek | `deepseek-flash`（V4.1 Flash，原生多模态） | `deepseek-flash` · `deepseek-v4-pro` |
 
-  > ⚠ **2026-09-22 复核（WebSearch）**：OpenAI 的 GPT-5.6 三档（Sol/Terra/Luna）与 GPT-6 Astra（2026-09-03 发布，先向 Trusted Access 企业开放）确有其名；DeepSeek 官方现行模型名为 `deepseek-flash`（V4.1-Flash）与 `deepseek-v4-pro`，旧名 `deepseek-v4-flash`、`deepseek-v4-flash-vision-exp` 仍被接受但对应模型已下线、请求由 V4.1-Flash 承接并按 Flash 计价。**代码里的 DeepSeek 两个旧 id 目前可用但已是遗留名，是否改为现行名待用户决定（本次未改代码）**；`gpt-6-astra` 对普通 key 可能尚未开放。OpenAI/Gemini/DeepSeek 三家至今**只验证了配置层，没有真实 key 走过实际调用**。
+  > ⚠ **2026-09-22 复核（WebSearch + 官方 pricing 页）**：DeepSeek 官方现行模型名为 `deepseek-flash`（V4.1-Flash，原生多模态、1M 上下文）与 `deepseek-v4-pro`；旧名 `deepseek-v4-flash`、`deepseek-v4-flash-vision-exp` 仍被接受但对应模型已下线、请求由 V4.1-Flash 承接并按 Flash 计价；自 2026-09-14 起 `deepseek-v4-pro` 也暂由 V4.1-Flash 承接，直到 V4.1-Pro 上线。**已据此更新预置表**：文字表 `deepseek-flash` + `deepseek-v4-pro`（标签注明暂由 Flash 承接），视觉表 `deepseek-flash`；老配置里存的 `deepseek-v4-flash` / `deepseek-v4-flash-vision-exp` 启动时经 `vendorcfg::remap_retired_preset` 自动迁到 `deepseek-flash`（自填单价一并搬）。OpenAI 的 GPT-5.6 三档（Sol/Terra/Luna）与 GPT-6 Astra（2026-09-03 发布，先向 Trusted Access 企业开放）确有其名，`gpt-6-astra` 对普通 key 可能尚未开放（未改）。OpenAI/Gemini/DeepSeek 三家至今**只验证了配置层，没有真实 key 走过实际调用**；DeepSeek 视觉输入用新模型名是否沿用同一 `image_url` 请求形状，**未真调验证**。
 
 - **豆包（火山方舟）没收进预置表**：它的“模型”是账号自建的推理接入点 ID（`ep-xxxxxxxx`），不是通用固定字符串，硬填占位名等于给出“已知能用”的假承诺；要接豆包走“自定义”，baseUrl 填 `https://ark.cn-beijing.volces.com/api/v3`，model 填自己的 Endpoint ID。
 - **老配置迁移**：老的单一 `model`/`baseUrl`/`apiKey` 三件套作为只读迁移字段（`#[serde(skip_serializing)]`）接住，启动时 `migrate()` 按老 `model`+`baseUrl` 匹配预置（匹配上设 `preset`，否则 `custom` 并保留 `customModel`/`customBaseUrl`），老 key 存进匹配厂商的格；迁移后立即落盘一次。**真机验证（本轮最关键）**：设备上两份真实配置——transcribe 原 `qwen3-vl-plus`（在新视觉表里）正确匹配回预置；mind 原被手动改成 `qwen3-vl-plus`（**不在**文字表里，因为是视觉模型）正确落 `custom` 且 `customModel` 保留；两边 `keyMasked` 迁移前后一致，**已保存的 key 没有丢**。
@@ -796,7 +796,7 @@ CSS：章节标签条复用 `.subnav` 视觉（`subtabs()` 用 `$('.subnav',sec)
 |---|---|---|---|
 | 1 | **前端可视渲染的人眼确认** | 浏览页 / 模型管理面板 / 条目卡片 / 「整理」双层 tab / 「导入 md 文档」入口（含文件上传与可见性开关），后端数据链路都真机走通，但纯前端渲染与交互一直没人眼确认；`gateway/tools/screenshot-walkthrough/` 能自动起服务+灌 fixture+截图，但只覆盖顶层 nav + 一层子 tab，没针对这几处专门跑过一轮 | §03o/§03q/§03t/§03u/§03v/§03aa/§03af |
 | 2 | **转写质量** | 汉字数字“一/二/三”被认成阿拉伯数字（提示词 2026-09-07 已补规则，待真机重转复验）；原“裁图混进印刷行”已被自渲染裁图（§03p）从机制上解决，旧样本没专门复验；`###`/`##` 小节标记至今**没有一次“转写对了、标记真被认出”的真机正例**（卡在手写行草连笔的 OCR 准确率，非代码问题；找工整样本再试） | §03g/§03o/§03p |
-| 3 | **OpenAI / Gemini / DeepSeek 预置只验证了配置层**（预置表匹配、key 按厂商隔离、老配置迁移），没有真实 key 走过实际调用；只有 DashScope 真调过。**2026-09-22 复核**：DeepSeek 两个预置 id（`deepseek-v4-flash`、`deepseek-v4-flash-vision-exp`）已是官方遗留名（仍被接受但由 V4.1-Flash 承接），现行名为 `deepseek-flash`/`deepseek-v4-pro`；`gpt-6-astra`（2026-09-03 发布）先向 Trusted Access 企业开放，普通 key 可能用不了——是否更新预置表待定 | §03u |
+| 3 | **OpenAI / Gemini / DeepSeek 预置只验证了配置层**（预置表匹配、key 按厂商隔离、老配置迁移），没有真实 key 走过实际调用；只有 DashScope 真调过。**2026-09-22 复核并更新**：DeepSeek 预置已换成现行名 `deepseek-flash`/`deepseek-v4-pro`，老 id 自动迁移（见 §03u 复核框）；`gpt-6-astra`（2026-09-03 发布）先向 Trusted Access 企业开放，普通 key 可能用不了——未改 | §03u |
 | 4 | **`POST /koreader/import` 没有网页触发按钮**，只能 curl；PDF 类型 `pos0` 坐标形状、单本标注量很大触发溢出页等罕见场景只有离线合成数据验证 | §03al |
 | 5 | **`archive`/`purge` 两端点没对真实历史数据实测**（一次性不可逆，没事先问用户不该拿真实数据练手）；`restore` 是可逆反方向操作，已在真实历史数据上验证 | §03r/§03u |
 | 6 | **被动触发的修复没主动构造真机场景复验**：终态排除判据（`is_terminal()`，需真擦掉已跳过条目的笔迹或删带已跳过条目的书）、生成笔记本认领失败重试（低概率时序窗口）——判据/机制离线已覆盖 | §03ag/§03ah |

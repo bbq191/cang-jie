@@ -41,8 +41,8 @@
 <text x="180" y="416" text-anchor="start" font-size="11" fill="#1a1a1a">gemini-3.8-flash</text>
 <text x="700" y="416" text-anchor="start" font-size="11" fill="#1a1a1a">gemini-3.8-flash</text>
 <text x="44" y="436" text-anchor="start" font-size="11" fill="#1a1a1a">DeepSeek</text>
-<text x="180" y="436" text-anchor="start" font-size="11" fill="#1a1a1a">deepseek-v4-flash-vision-exp（遗留名）</text>
-<text x="700" y="436" text-anchor="start" font-size="11" fill="#1a1a1a">deepseek-v4-flash（遗留名）· deepseek-v4-pro</text>
+<text x="180" y="436" text-anchor="start" font-size="11" fill="#1a1a1a">deepseek-flash（V4.1 Flash）</text>
+<text x="700" y="436" text-anchor="start" font-size="11" fill="#1a1a1a">deepseek-flash · deepseek-v4-pro</text>
 <rect x="24" y="490" width="590" height="130" rx="10" fill="#f1f1ef" stroke="#8a8a8a" stroke-width="1.6"/>
 <text x="36" y="510" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">老配置迁移（升级不丢 key）</text>
 <text x="36" y="533" text-anchor="start" font-size="10" fill="#3a3a3a">老的单一 model / baseUrl / apiKey 三件套由 migrate() 接住：</text>

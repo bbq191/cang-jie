@@ -9,13 +9,13 @@
 
 ### 09-22
 
-- **全系统审计（第二轮）**——代码侧（以下全部只在开发机 host 上测过：各线 `cargo test` 全绿、`shellcheck` 零告警、安装脚本模拟测试 198 项；**未在真机验证**，部署后请按各项末尾的"部署后确认"抽查）：
+- **全系统审计（第二轮）**——代码侧（以下全部只在开发机 host 上测过：各线 `cargo test` 全绿、`shellcheck` 零告警、安装脚本模拟测试 202 项；**未在真机验证**，部署后请按各项末尾的"部署后确认"抽查）：
   - **更省电**：
     - 网关等待书架服务"忙完"时，原来每 5 秒查一次，现在等服务推送的事件唤醒（兜底 30 秒）；网页在后台超过 1 分钟就主动断开事件连接，切回来时自动重连并刷新，心跳从 20 秒放宽到 60 秒。
     - 网关里未安装的服务原来每分钟白醒一次，现在 5 分钟一次（安装后仍由文件监听立即发现）。
     - 电池刺客：每轮采样不再 fork `date`；40 天唤醒日志改增量读取，不再每 50 分钟重读一遍；汇总改为逐行累加，不再把几十万条样本读进内存。
     - 书架 `GET /staging` 不再每次 fork `df`（改 `statvfs`）；KOReader 标注按边车（大小、修改时间）缓存，不再每次为每本书起一个 luajit。
-    - 仍未处理的最大唤醒源：xochitl 里 `shelf-mkdir-agent.qmd` 每 8 秒轮询一次建文件夹队列（要改长轮询，需要真机验证 Qt 网络行为）。
+    - **建文件夹代理改长轮询**：xochitl 里 `shelf-mkdir-agent.qmd` 原来每 8 秒轮询一次（7.5 次/分钟），现在 book-serve 的 `GET /mkdir/pending?wait=25` 阻塞到有人入队或 25 秒到期才回，空闲时约 2.4 次/分钟，入队后即刻响应（原来平均等 4 秒）；同名文件夹 15 秒内不重复交出，避免异步建夹时重复建出同名文件夹；出错退避 15 秒，遇到不认 `wait` 的旧服务端自动退回 8 秒节奏。改动用 qmldiff 离线 `apply-diffs` 验证过解析合法，**QML XHR 对 25 秒长请求的实际行为未在真机验证**（部署后需重启 xochitl 才加载新 qmd）。
   - **更快、更省内存**：
     - 上传 200MB 文件的解析 1245ms → 46ms（rmsvc-core multipart，原来同一段字节被扫描约 8 遍）。
     - 漫画按卷拆分投递的峰值内存 233MB → 93MB、耗时 358ms → 183ms；灰度漫画优化峰值 31.5MB → 22.3MB；漫画转 PDF 峰值 395MB → 264MB。拆分卷与优化产物与改动前**逐字节一致**（合成数据实测）。
@@ -27,13 +27,15 @@
     - 损坏的字体/SQLite 文件不再有崩溃或无界递归风险；解码器 panic 的坏图按"失败原样保留"处理，不再让整本书优化失败；壁纸上传加像素上限（1600 万），极端长宽比图片不再可能申请几百 GB 内存；battop 的唤醒缓存在 journal 读取失败时不再被清空。
     - 修 bug：inbox 恢复不再留下永远占盘的上传半成品；全书 id 去重不再把仅大小写不同的 id 一起改名；分卷投递读图失败会如实报错，不再悄悄嵌入 0 字节图。
     - 壁纸服务的提示文案改为 `systemctl restart xochitl`（旧提示"跑 xovi/start"在 xovi 已生效时会让 xochitl 崩溃并整机重启）。
+  - **DeepSeek 预置更新**（据官方文档 2026-09-22 核实）：现行模型名为 `deepseek-flash`（V4.1 Flash，原生多模态）与 `deepseek-v4-pro`；旧名 `deepseek-v4-flash` / `deepseek-v4-flash-vision-exp` 官方仍接受但模型已下线，`deepseek-v4-pro` 自 9 月 14 日起也暂由 V4.1 Flash 承接（按 Flash 计价）。文字表改为 `deepseek-flash` + `deepseek-v4-pro`（标签注明暂由 Flash 承接），视觉表改为 `deepseek-flash`；老配置里存的旧预置 id 启动时自动迁到 `deepseek-flash`，key 与自填单价不丢。未用真实 key 调用验证（DeepSeek 视觉请求形状沿用原样）。
+  - **删除死路由**：book-serve 的 `GET /inbox`、`POST /inbox/retry`、`POST /inbox/delete`、`GET /staging/render/{uuid}`（及 `render_pdf`、`Spool::retry/delete_failed`）——网页和服务间都没有调用方。inbox 里失败的文件如需重试，人工把 `failed/` 里的文件拷回 `inbox/`；`/status` 里仍有失败计数。
   - **代码结构**：`rmsvc-core` 的 `http`、`xochitl` 拆成子模块（公开路径不变）；battop 拆 6 个模块（纯 std 零依赖不变）；font-serve 抽出 fontconfig 生成；bookconv 合并重复的漫画解码裁边/编码/按名读 zip 样板；笔记线的改字/分诊/恢复三处重复样板合一；前端合并重复的 fetch 与"显示结果停 3 秒"样板；各线 clippy 基本清零（`notes/crates/rmv6` 的 44 条存量未动）。删除 bookconv 三个无调用方的旧接口（`trim_margins`、`pad_to_device_aspect`、`downscale_for_epub_comic`）。
   - **安装/卸载脚本**：
     - 重复运行 `install-all.sh` 不再每次重启 xochitl：只有 qmd/扩展内容真的变了，或 xovi 还没生效，才重启；`--force-apply` 强制重启。
     - `install-all.sh`、`uninstall-all.sh` 新增 `--dry-run`（只看会做什么，不连设备）和 `-h`；装之前先检查 ssh 连通与设备状态（磁盘剩余 <50MB 拒装），不通时给出排查步骤。
     - 卸载改为安装的逆序，并清掉部署时推到设备上的载荷目录（含两份 20MB+ 二进制副本）；遇到系统分区只读校验（dm-verity）删不掉单元时，**保留二进制**并如实提示，不再出现"二进制没了、服务每 5 秒失败重启一次"。
     - 内容没变的文件不再重复备份（重复部署 5 次不会把有价值的旧备份挤出保留的 5 份）；`deploy.sh` 缺二进制时推送前就报错并指路 `sh shelf/build.sh`；去掉 `eval`。
-    - 已知遗留：`xovi-reenable.service` 在 xovi 已生效时被重跑仍会 `xovi/start`（没加防护，需真机评估）。
+    - `xovi-reenable.service` 新增 `ExecCondition` 防护：xochitl 已映射 `xovi.so` 时跳过，不再对已生效的 xochitl 跑 `xovi/start`（旧版重跑会让 xochitl SEGV 并整机重启）；判定逻辑有本机模拟测试（模拟测试增至 202 项），**新版单元未部署到设备、未真机验证**（设备上现役仍是旧版无防护单元，要部署走 `deploy-xovi-persist.sh`，含 dm-verity 检查）。
   - **部署后确认**：并发闸门是否在优化结束事件到达时立即释放名额；网页后台超过 1 分钟再切回是否自动刷新；battop 面板"今日"窗口的时区是否正确（`localtime_r` 替换了 `date`）、`wakes.tsv` 是否继续增长；壁纸/字体上传是否正常；`install-all.sh` 第二遍是否不再重启 xochitl。
 - **全系统审计（第二轮）**——文档侧：
   - **安装文档重排**：`INSTALL.md`（及英文版）改为「适用范围 → 装之前（4 样手动前置，表格列缺了会怎样）→ 安装流程图与步骤表 → 常用选项 → 卸载 → 固件升级（OTA）→ 常见问题表」；风险项由长段落改成"现象 / 原因 / 怎么办"表；开发者向内容（备份规则、脱离编排手动跑设备端脚本的文件依赖）收回 `packaging/README.md`，不再两处各写。

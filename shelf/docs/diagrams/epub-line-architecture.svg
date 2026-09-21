@@ -50,7 +50,7 @@
 <text x="870" y="334" text-anchor="middle" font-size="10" fill="#4a4a4a">&gt;90MB：占位 + 磁盘替换</text>
 <rect x="736" y="346" width="268" height="94" rx="6" fill="#ffffff" stroke="#c0602d" stroke-width="1"/>
 <text x="870" y="363" text-anchor="middle" font-size="10.5" font-weight="bold" fill="#1a1a1a">qmd 代理（xochitl 进程内执行）</text>
-<text x="870" y="381" text-anchor="middle" font-size="9.8" fill="#4a4a4a">mkdir：8 秒轮询拉队列</text>
+<text x="870" y="381" text-anchor="middle" font-size="9.8" fill="#4a4a4a">mkdir：长轮询拉队列</text>
 <text x="870" y="396" text-anchor="middle" font-size="9.8" fill="#4a4a4a">trash：事件驱动 + 4 秒防抖</text>
 <text x="870" y="411" text-anchor="middle" font-size="9.8" fill="#4a4a4a">comic-margins：开书 1.5 秒后查</text>
 <text x="870" y="426" text-anchor="middle" font-size="9.8" fill="#4a4a4a">→ 调 xochitl 自己的 QML 接口</text>

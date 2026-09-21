@@ -23,8 +23,11 @@ pub const PRESETS: &[Preset] = &[
     Preset { id: "gpt-5.6-terra", label: "GPT-5.6 Terra（OpenAI，性价比）", model: "gpt-5.6-terra", base_url: OPENAI, provider: "openai" },
     Preset { id: "gpt-6-astra", label: "GPT-6 Astra（OpenAI，旗舰更贵）", model: "gpt-6-astra", base_url: OPENAI, provider: "openai" },
     Preset { id: "gemini-3.8-flash", label: "Gemini 3.8 Flash（Google）", model: "gemini-3.8-flash", base_url: GEMINI, provider: "gemini" },
-    Preset { id: "deepseek-v4-flash-vision-exp", label: "DeepSeek V4 Flash Vision（实验性视觉）", model: "deepseek-v4-flash-vision-exp", base_url: DEEPSEEK, provider: "deepseek" },
+    Preset { id: "deepseek-flash", label: "DeepSeek V4.1 Flash（原生多模态）", model: "deepseek-flash", base_url: DEEPSEEK, provider: "deepseek" },
 ];
+
+/// 官方已下线的预置 id → 现行 id（老配置里存的选择自动迁过去）。
+const RETIRED_PRESETS: &[(&str, &str)] = &[("deepseek-v4-flash-vision-exp", "deepseek-flash")];
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase", default)]
@@ -114,6 +117,7 @@ impl TranscribeConfig {
     /// 老配置文件（重做预置表之前，2026-09-08 上午之前落盘的）搬进新形状——只在启动加载时调用一次。
     pub fn migrate(mut self) -> Self {
         vendorcfg::migrate_legacy(PRESETS, &mut self.preset, &mut self.custom_model, &mut self.custom_base_url, &mut self.keys, &self.model, &self.base_url, &self.api_key);
+        vendorcfg::remap_retired_preset(&mut self.preset, &mut self.prices, RETIRED_PRESETS);
         self
     }
     /// 套用 PUT /config 的 JSON：可改字段逐个覆盖；`apiKey` 非空才改（存到当前厂商名下）；
@@ -242,6 +246,15 @@ mod tests {
         // 已经是新形状（keys 非空）的文件，迁移是 no-op。
         let migrated_twice = c.clone().migrate();
         assert_eq!(migrated_twice, c);
+    }
+
+    #[test]
+    fn migrate_remaps_retired_deepseek_vision_preset() {
+        let c: TranscribeConfig = serde_json::from_value(serde_json::json!({"preset":"deepseek-v4-flash-vision-exp","keys":{"deepseek":"k"}})).unwrap();
+        let c = c.migrate();
+        assert_eq!(c.preset, "deepseek-flash");
+        assert_eq!(c.model(), "deepseek-flash");
+        assert_eq!(c.key().as_deref(), Some("k"));
     }
 
     #[test]
