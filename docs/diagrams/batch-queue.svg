@@ -78,8 +78,10 @@
 <text x="925.0" y="502" text-anchor="middle" font-size="10" fill="#4a4a4a">每次队列变化都写 state/batch.json（原子写）</text>
 <text x="925.0" y="515" text-anchor="middle" font-size="10" fill="#4a4a4a">网关重启（例如部署新版本）→ resume：</text>
 <text x="925.0" y="528" text-anchor="middle" font-size="10" fill="#4a4a4a">  · 上次进行中的那本放回队首</text>
-<text x="925.0" y="541" text-anchor="middle" font-size="10" fill="#4a4a4a">  · 后台等 book-serve 就绪（最多约 2 分钟）</text>
+<text x="925.0" y="541" text-anchor="middle" font-size="10" fill="#4a4a4a">  · 后台等 book-serve 就绪（最多 30 分钟：前 30 秒每 2 秒探测，之后每 30 秒）</text>
 <text x="925.0" y="554" text-anchor="middle" font-size="10" fill="#4a4a4a">  · 按最新母版库重新校验每一本，已优化的不重做</text>
-<text x="925.0" y="567" text-anchor="middle" font-size="10" fill="#4a4a4a">  · 等待期间用户提交了新批量则不覆盖</text>
-<text x="925.0" y="580" text-anchor="middle" font-size="10" fill="#4a4a4a">没有未完成任务时，只读回“上次结果”供界面展示</text>
+<text x="925.0" y="567" text-anchor="middle" font-size="10" fill="#4a4a4a">  · 等待期间用户提交了新批量则并入同一队列，不覆盖</text>
+<text x="925.0" y="580" text-anchor="middle" font-size="10" fill="#4a4a4a">  · 处理途中崩溃的那本只重放 1 次（attempts≥2 记为失败、跳过），防崩溃循环</text>
+<text x="925.0" y="593" text-anchor="middle" font-size="10" fill="#4a4a4a">没有未完成任务时，只读回“上次结果”供界面展示</text>
+<text x="925.0" y="606" text-anchor="middle" font-size="10" fill="#4a4a4a">等 book-serve 超时仍不在：队列保留在磁盘，待下次入队继续</text>
 </svg>
