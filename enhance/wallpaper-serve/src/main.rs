@@ -41,7 +41,7 @@ impl State {
             "screen": {"width": store::W, "height": store::H},
         })
     }
-    /// 激活一张并确保原生键就位（首次写键 → 需 `xovi/start` 一次才生效，状态里 `restartPending` 能看到）。
+    /// 激活一张并确保原生键就位（首次写键 → 需重启 xochitl 一次（`systemctl restart xochitl`）才生效，状态里 `restartPending` 能看到）。
     fn activate(&self, name: &str) -> Result<bool, String> {
         self.store.activate(name)?;
         self.native.enable()
@@ -50,7 +50,7 @@ impl State {
 
 fn enable_message(changed: bool) -> String {
     if changed {
-        "已写入 xochitl.conf SleepScreenPath（首次生效需重启 xochitl 一次：/home/root/xovi/start）".into()
+        "已写入 xochitl.conf SleepScreenPath（首次生效需重启 xochitl 一次：systemctl restart xochitl）".into()
     } else {
         "SleepScreenPath 已就位".into()
     }
@@ -105,7 +105,7 @@ fn main() {
                     activated = Some(first.name.clone());
                 }
             }
-            let note = if changed || s.native.restart_pending() { "首次启用：跑一次 /home/root/xovi/start 后，下次休眠即显示" } else { "下次休眠即显示" };
+            let note = if changed || s.native.restart_pending() { "首次启用：重启一次 xochitl（systemctl restart xochitl）后，下次休眠即显示" } else { "下次休眠即显示" };
             if items.iter().any(|i| i.ok) {
                 s.bus.publish("wallpapers", "pool");
             }

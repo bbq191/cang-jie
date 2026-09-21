@@ -1,7 +1,7 @@
 //! 原生休眠屏：xochitl.conf `[General] SleepScreenPath=<current.png>`（3.28 隐藏键，书架白皮书 §03w）。
 //! 2026-09-05 真机：xochitl 把该图满屏画成休眠屏、插画卡自动隐藏、**每次休眠重读文件**——所以键只写一次、
 //! 永远指向 `current.png`，换图仍是原地覆盖 current.png（wake.rs 唤醒轮换），零 `/usr` 写入、零 bind-mount。
-//! 键写进去后要 xochitl 重启一次（`xovi/start`）才生效；本模块记住"写键时的 xochitl PID"，PID 变了即视为已生效。
+//! 键写进去后要 xochitl 重启一次（`systemctl restart xochitl`）才生效；本模块记住"写键时的 xochitl PID"，PID 变了即视为已生效。
 use rmsvc_core::paths::Paths;
 use rmsvc_core::xochitl_conf::{self, SLEEP_SCREEN_KEY};
 use std::path::{Path, PathBuf};
