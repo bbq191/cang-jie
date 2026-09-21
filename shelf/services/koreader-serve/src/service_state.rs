@@ -71,7 +71,7 @@ impl State {
             "version": k.version(),
             "root": k.root(),
             "booksDir": k.books_dir(),
-            "books": k.list_books("").map(|v| v.iter().filter(|e| e.kind == "file").count()).unwrap_or(0),
+            "books": k.count_root_books(),
             "fonts": koreader::list_files(&k.fonts_dir(), FONT_EXTS).len(),
             "dicts": k.list_dicts().len(),
         })

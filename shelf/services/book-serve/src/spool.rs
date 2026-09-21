@@ -2,6 +2,7 @@
 //! - `inbox/`  待处理（scp 丢进来的）——fswatch 追平；
 //! - `.work/`  已认领、处理中（rename 原子独占，防并发重复处理）；上传流程的暂存也在这（与母版库同分区，入库 rename 零拷贝）；
 //! - `failed/` 失败源（封顶 50MB，可重试/删除，`<name>.reason` sidecar 记原因）。
+//!
 //! 处理成功的书进母版库（`staging/`，见 `staging.rs`），本队列不再另存一份。
 use serde::Serialize;
 use rmsvc_core::fs::{move_unique, plain_name, unique_path};
@@ -68,15 +69,24 @@ impl Spool {
         prune(&self.failed(), FAILED_CAP);
     }
 
-    /// 崩溃恢复：.work 残留移回 inbox（只在启动时调用）。
+    /// 崩溃恢复：.work 里已认领的残留移回 inbox（只在启动时调用），返回移回个数。
+    /// 点开头的是上传半成品（`.<uuid>.book.part`，进程中途被杀才会残留，可达数百 MB）：直接删。
+    /// 此前它们也被"移回 inbox"——但 inbox 追平按点开头名字跳过（半成品不动），于是这些垃圾永远躺在 inbox 里占盘、
+    /// 每次重启还被再"恢复"一遍。
     pub fn recover_orphans(&self) -> usize {
         let mut n = 0;
         if let Ok(rd) = std::fs::read_dir(self.work()) {
             for e in rd.flatten() {
-                if e.path().is_file() {
-                    move_unique(&e.path(), &self.inbox());
-                    n += 1;
+                let p = e.path();
+                if !p.is_file() {
+                    continue;
                 }
+                if e.file_name().to_string_lossy().starts_with('.') {
+                    let _ = std::fs::remove_file(&p);
+                    continue;
+                }
+                move_unique(&p, &self.inbox());
+                n += 1;
             }
         }
         n
@@ -189,8 +199,10 @@ mod tests {
         std::fs::write(s.work().join("half.azw3"), b"x").unwrap();
         std::fs::write(s.work().join(".abc.book.part"), b"x").unwrap();
         assert_eq!(s.list().iter().map(|e| e.name.as_str()).collect::<Vec<_>>(), vec!["half.azw3"], "上传半成品不列");
-        assert_eq!(s.recover_orphans(), 2);
+        assert_eq!(s.recover_orphans(), 1, "只有已认领的真文件移回，半成品不计");
         assert!(s.inbox().join("half.azw3").is_file());
+        assert!(!s.work().join(".abc.book.part").exists(), "上传半成品直接删");
+        assert!(!s.inbox().join(".abc.book.part").exists(), "半成品不该被搬进 inbox 成为永久垃圾");
     }
 
     #[test]

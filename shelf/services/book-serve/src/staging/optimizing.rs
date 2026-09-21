@@ -112,10 +112,7 @@ impl Staging {
                 let stem = name.strip_suffix(".pdf").unwrap_or(name);
                 let epub_path = p.with_file_name(format!("{stem}.epub"));
                 let tmp = p.with_file_name(format!(".{stem}.epub.optimizing.tmp"));
-                let (mut book, rep) = match pdf_ingest::optimize_pdf_to_epub(p, &mut on_progress) {
-                    Ok(ok) => ok,
-                    Err(e) => return Err(e),
-                };
+                let (mut book, rep) = pdf_ingest::optimize_pdf_to_epub(p, &mut on_progress)?;
                 let bytes = match bookconv::epub::assemble(&mut book) {
                     Ok(b) => b,
                     Err(e) => return Err(format!("组装 EPUB 失败: {e}")),

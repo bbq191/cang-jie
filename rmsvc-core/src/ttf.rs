@@ -137,6 +137,11 @@ pub fn han_bmp_coverage(b: &[u8]) -> Option<usize> {
                         count += 1;
                     }
                 }
+                // 恶意/损坏字体可堆几万个互相重叠、都盖满汉字区的段（每段最多 2 万次迭代 → 数亿次），也会数出 >100%。
+                // 覆盖数不可能超过区内总码位，够数了就停。
+                if count >= HAN_BMP_TOTAL {
+                    break;
+                }
             }
         }
         12 => {
@@ -151,11 +156,14 @@ pub fn han_bmp_coverage(b: &[u8]) -> Option<usize> {
                 let lo = sc.max(HAN_BMP_START);
                 let hi = ec.min(HAN_BMP_END);
                 count += (hi - lo + 1) as usize;
+                if count >= HAN_BMP_TOTAL {
+                    break;
+                }
             }
         }
         _ => return None,
     }
-    Some(count)
+    Some(count.min(HAN_BMP_TOTAL))
 }
 
 /// 覆盖率百分比（0..=100）。
@@ -200,8 +208,13 @@ mod tests {
 
     /// 手搓一个带 format-4 cmap 的最小字体：覆盖 U+4E00..=U+4E0F（16 个汉字）。
     fn font_with_cmap() -> Vec<u8> {
-        // format 4，两段：[0x4E00..0x4E0F] 用 idDelta 映射到非零，[0xFFFF] 结尾段
-        let seg_count = 2u16;
+        font_with_segments(&[(0x4E00, 0x4E0F)])
+    }
+
+    /// 同上，但段表可自定：`segs` 是 (start, end) 列表（idDelta 全取 1），末尾自动补 0xFFFF 结尾段。
+    fn font_with_segments(segs: &[(u16, u16)]) -> Vec<u8> {
+        // format 4：每段用 idDelta 映射到非零，[0xFFFF] 结尾段
+        let seg_count = segs.len() as u16 + 1;
         let mut sub: Vec<u8> = Vec::new();
         sub.extend_from_slice(&4u16.to_be_bytes()); // format
         let len_pos = sub.len();
@@ -211,10 +224,10 @@ mod tests {
         sub.extend_from_slice(&0u16.to_be_bytes()); // searchRange (不校验)
         sub.extend_from_slice(&0u16.to_be_bytes()); // entrySelector
         sub.extend_from_slice(&0u16.to_be_bytes()); // rangeShift
-        for e in [0x4E0Fu16, 0xFFFF] { sub.extend_from_slice(&e.to_be_bytes()); } // endCode
+        for e in segs.iter().map(|s| s.1).chain([0xFFFF]) { sub.extend_from_slice(&e.to_be_bytes()); } // endCode
         sub.extend_from_slice(&0u16.to_be_bytes()); // reservedPad
-        for st in [0x4E00u16, 0xFFFF] { sub.extend_from_slice(&st.to_be_bytes()); } // startCode
-        for d in [1u16, 1] { sub.extend_from_slice(&d.to_be_bytes()); } // idDelta（非零映射）
+        for st in segs.iter().map(|s| s.0).chain([0xFFFF]) { sub.extend_from_slice(&st.to_be_bytes()); } // startCode
+        for _ in 0..seg_count { sub.extend_from_slice(&1u16.to_be_bytes()); } // idDelta（非零映射）
         for _ in 0..seg_count { sub.extend_from_slice(&0u16.to_be_bytes()); } // idRangeOffset=0
         let l = sub.len() as u16;
         sub[len_pos..len_pos + 2].copy_from_slice(&l.to_be_bytes());
@@ -246,6 +259,17 @@ mod tests {
         assert_eq!(han_bmp_coverage(&f), Some(16), "U+4E00..=U+4E0F 共 16 字");
         assert_eq!(han_coverage_pct(&f), Some(0), "16/20992 向下取整=0%");
         assert_eq!(han_bmp_coverage(b"\x00\x01\x00\x00"), None);
+    }
+    /// 恶意字体：几千个互相重叠、都盖满汉字区的段——覆盖数不能超过区内总码位（否则百分比溢出 u8），
+    /// 也不能真去迭代 段数×2 万次。
+    #[test]
+    fn overlapping_segments_are_clamped_and_fast() {
+        let segs = vec![(0x4E00u16, 0x9FFFu16); 3000];
+        let f = font_with_segments(&segs);
+        let t0 = std::time::Instant::now();
+        assert_eq!(han_bmp_coverage(&f), Some(HAN_BMP_TOTAL));
+        assert_eq!(han_coverage_pct(&f), Some(100));
+        assert!(t0.elapsed() < std::time::Duration::from_secs(1), "够数即停，不做 3000×2 万次迭代");
     }
     #[test]
     fn parses_family_preferring_typographic_windows_name() {

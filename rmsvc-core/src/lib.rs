@@ -9,7 +9,7 @@
 //! - `multipart` 流式 multipart/form-data 解析（多文件、落盘不进内存，设备 MemoryMax 友好）。
 //! - `asset`    资产仓库抽象（Repository）+ 上传流程模板（Template Method），字体/壁纸共用。
 //! - `http`     tiny_http 适配：路由、JSON 回执、查询串。
-//! - `xochitl`  原生书库免重启注入（`/upload` GET-then-upload 归档、防复制风暴判据）。
+//! - `xochitl`  原生书库免重启注入（`/upload` GET-then-upload 归档、防复制风暴判据）；`xochitl::library` 是书库 `.metadata`/`.content` 的只读查询（找文件夹/去重命名/渲染页数），路径仍走 `xochitl::*`。
 //! - `xochitl_conf` xochitl.conf `[General]` 单键读写（休眠屏 `SleepScreenPath`；含凭证，绝不打印行内容）。
 //! - `fswatch`  inotify 防抖目录监听（spool 追平）。
 //! - `service`  服务启动模板：解析参数→建目录→注册→起服务器。

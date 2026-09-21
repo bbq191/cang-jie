@@ -138,7 +138,7 @@ pub fn serve(names: Vec<String>) -> Result<(), String> {
         };
         let SocketAddr::V4(from4) = from else { continue };
         for (qname, qtype) in parse_questions(&buf[..n]) {
-            if !(qtype == 1 || qtype == 255) || !wanted.iter().any(|w| *w == qname) {
+            if !(qtype == 1 || qtype == 255) || !wanted.contains(&qname) {
                 continue;
             }
             let Some(ip) = pick_ip(&ifaces, *from4.ip()) else { continue };
