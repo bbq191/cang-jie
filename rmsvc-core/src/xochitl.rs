@@ -280,6 +280,17 @@ fn rewrite_pdf_content(dir: &Path, uuid: &str, pages: usize, size: u64) -> Resul
 /// `.content` 时会保留这个值（探针实测 28 → 打开后仍是 28，图片框 284.8×461.5pt，与阅读器界面手动改一致）。
 /// 只改这一个字段，其余原样；tmp 文件写完 rename 覆盖，不留半成品。
 pub fn set_content_margins(dir: &Path, uuid: &str, margins: u32) -> Result<bool, String> {
+    set_content_margins_settled(dir, uuid, margins, CONTENT_SETTLE)
+}
+
+/// 写入前要与 xochitl 自己最后一次写 `.content` 至少隔开的时间。
+///
+/// **同一秒内的外部改动 xochitl 看不见**（2026-09-21 真机：导入完成同一秒 0.7 毫秒后写 → 用户打开时 xochitl 用内存里的
+/// 56 并写回；隔 16 秒写 → 打开时按 28 重新排版）。推断 xochitl 用秒级修改时间判断 `.content` 是否被外部改过，
+/// 所以写之前先等到 `.content` 的 mtime 之后至少 2 秒，保证我们的 mtime 与它记住的不同。
+const CONTENT_SETTLE: std::time::Duration = std::time::Duration::from_secs(2);
+
+fn set_content_margins_settled(dir: &Path, uuid: &str, margins: u32, settle: std::time::Duration) -> Result<bool, String> {
     let path = dir.join(format!("{uuid}.content"));
     let mut v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&path).map_err(|e| format!("读 .content 失败: {e}"))?).map_err(|e| format!(".content 不是合法 JSON: {e}"))?;
     let obj = v.as_object_mut().ok_or(".content 不是对象")?;
@@ -287,6 +298,12 @@ pub fn set_content_margins(dir: &Path, uuid: &str, margins: u32) -> Result<bool,
         Some(cur) if cur == margins as u64 => return Ok(false),
         Some(_) => {}
         None => return Ok(false),
+    }
+    // 等到 xochitl 最后一次写入之后 `settle` 才动手（见 CONTENT_SETTLE）
+    if let Ok(modified) = std::fs::metadata(&path).and_then(|m| m.modified()) {
+        if let Ok(wait) = (modified + settle).duration_since(std::time::SystemTime::now()) {
+            std::thread::sleep(wait);
+        }
     }
     obj.insert("margins".into(), margins.into());
     let tmp = dir.join(format!("{uuid}.content.new"));
@@ -421,13 +438,22 @@ mod tests {
     }
 
     #[test]
+    fn set_content_margins_waits_until_settle_after_last_write() {
+        let t = tempfile::tempdir().unwrap();
+        std::fs::write(t.path().join("u1.content"), r#"{"margins":56}"#).unwrap(); // 刚写完：mtime≈现在
+        let start = std::time::Instant::now();
+        assert_eq!(set_content_margins_settled(t.path(), "u1", 28, std::time::Duration::from_millis(600)), Ok(true));
+        assert!(start.elapsed() >= std::time::Duration::from_millis(500), "必须等到最后一次写入之后 settle 才写: {:?}", start.elapsed());
+    }
+
+    #[test]
     fn set_content_margins_changes_only_that_field_and_is_idempotent() {
         let t = tempfile::tempdir().unwrap();
         std::fs::write(t.path().join("u1.content"), r#"{"fileType":"epub","margins":56,"pageCount":13,"textScale":1}"#).unwrap();
-        assert_eq!(set_content_margins(t.path(), "u1", 28), Ok(true));
+        assert_eq!(set_content_margins_settled(t.path(), "u1", 28, std::time::Duration::ZERO), Ok(true));
         let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(t.path().join("u1.content")).unwrap()).unwrap();
         assert_eq!((v["margins"].as_u64(), v["pageCount"].as_u64(), v["fileType"].as_str(), v["textScale"].as_u64()), (Some(28), Some(13), Some("epub"), Some(1)));
-        assert_eq!(set_content_margins(t.path(), "u1", 28), Ok(false), "已是目标值：不写");
+        assert_eq!(set_content_margins_settled(t.path(), "u1", 28, std::time::Duration::ZERO), Ok(false), "已是目标值：不写");
         assert!(!t.path().join("u1.content.new").exists(), "不留 tmp");
         // 没有 margins 字段（PDF 等）：不加、不报错
         std::fs::write(t.path().join("u2.content"), r#"{"fileType":"pdf","pageCount":3}"#).unwrap();
