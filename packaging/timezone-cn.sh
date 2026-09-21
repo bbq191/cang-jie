@@ -20,10 +20,12 @@
 # ═══════════════════════════════════════════════════════════════════════════
 set -u
 
-TARGET=/usr/share/zoneinfo/Asia/Shanghai
-LOCALTIME=/etc/localtime
-BK_DIR=/home/root/cangjie-backups
-BIND=/tmp/timezone-cn.rootbind
+# 下面几个路径只为本机模拟测试（packaging/tests）可覆盖，设备上一律用默认值
+TARGET="${CJ_ZONEINFO:-/usr/share/zoneinfo/Asia/Shanghai}"
+LOCALTIME="${CJ_LOCALTIME:-/etc/localtime}"
+BK_DIR="${CJ_BACKUP_DIR:-/home/root/cangjie-backups}"
+MOUNTS="${CJ_MOUNTS:-/proc/mounts}"
+BIND="${CJ_TMPDIR:-/tmp}/timezone-cn.rootbind"
 
 [ "$(id -u)" = "0" ] || { echo "!! 需 root"; exit 1; }
 if [ ! -e "$TARGET" ]; then
@@ -46,7 +48,7 @@ prev_desc() { # $1=路径：人读的"改之前是什么"，写进备份记录
 
 changed=0
 RW_OPEN=0
-if grep -q " /etc overlay " /proc/mounts; then
+if grep -q " /etc overlay " "$MOUNTS"; then
     # ── overlay：改 rootfs 底层 ──
     if dmsetup ls --target verity 2>/dev/null | grep -q .; then
         echo "✋ dm-verity 激活，rootfs 不可写：只改本次开机的 overlay 视图（重启会丢）"

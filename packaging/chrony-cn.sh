@@ -21,9 +21,12 @@
 set -u
 
 SERVERS="ntp.aliyun.com ntp.tencent.com cn.pool.ntp.org time.cloudflare.com"
-CONF=/etc/chrony.conf
-BK_DIR=/home/root/cangjie-backups
-BIND=/tmp/chrony-cn.rootbind
+# 下面几个路径只为本机模拟测试（packaging/tests）可覆盖，设备上一律用默认值
+CONF="${CJ_CHRONY_CONF:-/etc/chrony.conf}"
+BK_DIR="${CJ_BACKUP_DIR:-/home/root/cangjie-backups}"
+MOUNTS="${CJ_MOUNTS:-/proc/mounts}"
+TMPD="${CJ_TMPDIR:-/tmp}"
+BIND="$TMPD/chrony-cn.rootbind"
 
 [ "$(id -u)" = "0" ] || { echo "!! 需 root"; exit 1; }
 [ -f "$CONF" ] || { echo "!! 没有 $CONF"; exit 1; }
@@ -32,16 +35,17 @@ is_cn() { # $1=文件：不含 google 且含全部 4 个国内服务器
     ! grep -q "^server .*google" "$1" && for s in $SERVERS; do grep -q "^server $s " "$1" || return 1; done
 }
 
-rewrite() { # $1=源 $2=目标：第一条 server 行处换成 4 条国内，其余 server 行删掉
+rewrite() { # $1=源 $2=目标：第一条 server 行处换成 4 条国内，其余 server 行删掉；源里一条 server 都没有就追加到末尾
     awk -v servers="$SERVERS" '
         BEGIN { n = split(servers, S, " ") }
         /^server / { if (!done) { for (i = 1; i <= n; i++) print "server " S[i] " iburst minpoll 7"; done = 1 }; next }
-        { print }' "$1" > "$2"
+        { print }
+        END { if (!done) for (i = 1; i <= n; i++) print "server " S[i] " iburst minpoll 7" }' "$1" > "$2"
 }
 
 changed=0
 RW_OPEN=0
-if grep -q " /etc overlay " /proc/mounts; then
+if grep -q " /etc overlay " "$MOUNTS"; then
     # ── overlay：改 rootfs 底层 ──
     if dmsetup ls --target verity 2>/dev/null | grep -q .; then
         echo "✋ dm-verity 激活，rootfs 不可写：只改本次开机的 overlay 视图（重启会丢）"
@@ -62,7 +66,7 @@ if grep -q " /etc overlay " /proc/mounts; then
             echo "-- rootfs 底层已改（备份在 $BK_DIR）"
             changed=1
         fi
-        cp "$LOWER" /tmp/chrony-cn.lower
+        cp "$LOWER" "$TMPD/chrony-cn.lower"
         umount "$BIND"; rmdir "$BIND" 2>/dev/null
         i=0
         while ! mount -o remount,ro / 2>/dev/null; do
@@ -71,10 +75,10 @@ if grep -q " /etc overlay " /proc/mounts; then
         done
         [ "$i" -lt 5 ] && RW_OPEN=0
         # overlay 视图与底层不一致（overlay 缓存）→ 拷进 upper 让本次开机立即生效
-        if ! cmp -s /tmp/chrony-cn.lower "$CONF"; then
-            cp /tmp/chrony-cn.lower "$CONF" && echo "-- 已同步进 overlay（本次开机立即生效）" && changed=1
+        if ! cmp -s "$TMPD/chrony-cn.lower" "$CONF"; then
+            cp "$TMPD/chrony-cn.lower" "$CONF" && echo "-- 已同步进 overlay（本次开机立即生效）" && changed=1
         fi
-        rm -f /tmp/chrony-cn.lower
+        rm -f "$TMPD/chrony-cn.lower"
     fi
 fi
 # 非 overlay 或 verity：直接改 /etc 视图（幂等）
