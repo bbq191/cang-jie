@@ -32,11 +32,13 @@ pub fn ingest_doc(lib: &Path, crops_dir: &Path, db: &BookDb, cfg: &IngestConfig,
         // `merge_page` 那条撤销路径管的是"页还在、笔画没了"，这里是另一条"书不见了"的路径）。
         return revoke_stale(db, uuid, now);
     };
-    let Some(content) = doc.content().filter(|c| c.file_type == "epub") else { return Ok(None) };
+    // 先看有没有 `.rm` 页（只 read_dir 一个目录），没有手写页就不必解析 `.content`（长书几百上千个页 id 的 JSON）：
+    // xochitl 翻页/读书会不停改写 `.content`/`.metadata`，每次都会触发一次摄取，绝大多数书根本没有手写页。
     let pages = doc.annotated_pages();
     if pages.is_empty() {
         return Ok(None);
     }
+    let Some(content) = doc.content().filter(|c| c.file_type == "epub") else { return Ok(None) };
     let prev = db.load(uuid);
     let changed: Vec<(String, u64)> = pages.into_iter().filter(|(id, mt)| prev.as_ref().and_then(|b| b.page_mtimes.get(id)).map(|&old| *mt > old).unwrap_or(true)).collect();
     if changed.is_empty() {
