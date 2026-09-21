@@ -3,6 +3,7 @@ use crate::config::BookConfig;
 use crate::mkdir::MkdirQueue;
 use crate::spool::Spool;
 use crate::staging::{self, Staging};
+use crate::comic_margins::ComicMargins;
 use crate::trash::TrashQueue;
 use serde::Serialize;
 use rmsvc_core::cache::TtlCache;
@@ -22,6 +23,8 @@ pub struct State {
     pub bus: Arc<EventBus>,
     /// 原生书库「移进回收站」队列（QML 代理 shelf-trash-agent.qmd 拉取执行）。
     pub trash: TrashQueue,
+    /// 漫画「页边距」待办（QML 代理 shelf-comic-margins.qmd 在书打开时查、设完销账，见 comic_margins.rs）。
+    pub comic_margins: Arc<ComicMargins>,
     /// 原生书库「建文件夹」队列（QML 代理 shelf-mkdir-agent.qmd 拉取执行，2026-09-19 复活，
     /// 见 mkdir.rs 模块文档）；`Arc` 是因为 `Staging::deliver` 的后台线程要跟 `bus` 一样带着走。
     pub mkdir: Arc<MkdirQueue>,
@@ -48,15 +51,20 @@ impl State {
         let cfg = BookConfig::load(paths);
         let xochitl = Arc::new(Xochitl::new(&cfg.xochitl_host, &paths.xochitl_dir(), cfg.upload_timeout_secs));
         let spool = Spool::new(paths.state_dir().join("books"));
-        let staging = Staging::new(paths.staging_dir(), xochitl.clone(), cfg.native_upload_limit_bytes());
+        let comic_margins = Arc::new(ComicMargins::new(&paths.state_dir().join("books"), &paths.xochitl_dir()));
+        let staging = Staging::new(paths.staging_dir(), xochitl.clone(), cfg.native_upload_limit_bytes()).with_comic_margins(comic_margins.clone());
         let trash = TrashQueue::new(&paths.state_dir().join("books"), &paths.xochitl_dir());
         let mkdir = Arc::new(MkdirQueue::new(&paths.state_dir().join("books"), &paths.xochitl_dir()));
-        State { cfg, spool, staging, xochitl, bus: Arc::new(EventBus::new()), trash, mkdir, status_cache: TtlCache::new(STATUS_TTL) }
+        State { cfg, spool, staging, xochitl, bus: Arc::new(EventBus::new()), trash, comic_margins, mkdir, status_cache: TtlCache::new(STATUS_TTL) }
     }
 
     pub fn ensure_dirs(&self) -> std::io::Result<()> {
         self.spool.ensure()?;
         self.staging.ensure()?;
+        let stale_margins = self.comic_margins.prune_missing();
+        if stale_margins > 0 {
+            println!("[book-serve] 清掉 {stale_margins} 条书已不在库里的页边距待办");
+        }
         let (fixed, tmps) = self.staging.recover_interrupted();
         if fixed > 0 || tmps > 0 {
             println!("[book-serve] 修正 {fixed} 条上次被中断的处理记录，清掉 {tmps} 个优化半成品");

@@ -880,3 +880,64 @@ xochitl 的 PDF 放大滤镜偏糊，我们预放大后设备只需 1:1 贴。
 **根因实验**（同一张真封面图造 3 个最小 EPUB 上传设备，只改封面声明写法）：A=封面条目 id 带点（`x00000001.jpg`）仅 `<meta name="cover">` → ❌ 日志 `null cover image`；B=同 id **加 `properties="cover-image"`** → ✅；C=id 简单（`cover`）仅 meta → ✅。结论：xochitl 对 id 带点的仅 meta 声明取不到封面，`cover-image` 属性能救。所以 `wash::ensure_cover_declared` 改成**meta 和 `properties="cover-image"` 必须同时有**（meta 有效但缺属性也补），并且在清洗之前调用（清洗会删只含 SVG 封面的 titlepage）；《镖人(卷四)》的封面文件本身就是 239 字节文本残片，兜底用书里第一张真实图。
 **无损补封面工具** `cover-fix in.epub out.epub [cover.png]`（`bookconv` bin）：只改 OPF，其余条目 zip raw copy（本地验证 404 个条目仅 `content.opf` 不同、顺序一致，图片零重编码），并按 xochitl 规格（552×981 RGB PNG 白底居中）生成封面缩略图。已对设备上 3 本已投的书**原地**修补（设备文档 `.epub` + `thumbnails/cover.png` + 母版库副本，旧文件备份在设备 `/home/root/cangjie-backups/cover-fix/`），不产生重复条目。
 **事故与教训**：为验证"直投未渲染的书重启后能否打开"，我在 xovi 已生效时跑了 `xovi/start`，运行中的 xochitl 2 秒内 SEGV，系统按设计整机自动重启。设备自恢复、服务全 active、无数据丢失，但打断了阅读。**副产物**：重启后之前从未打开的镖人二/三/四卷已渲染完成（pageCount 2→268/274/277），说明"长时间没打开+重启设备"后这类书可正常渲染打开；乱马 02/03 仍未打开（待用户打开验证）。
+
+## 20｜EPUB 漫画在 xochitl 里的真实图片框：页边距设 0 + 补白 303:462.1，左右留白 20/23pt → 0/0（2026-09-21，真机通）
+
+> **现状结论**：EPUB 漫画每页被 xochitl 画成一个固定"图片框"，图片被**栏宽**或**高度上限**中先到的那个卡住。旧方案（补白成屏幕比例 954:1696、边距默认 56）图片只有 **260pt 宽（页宽 303pt）、左 20.0 / 右 22.9pt**。现方案两件事配套：① 图片补白到 **303:462.1（画布 954×1455，`imgopt::EPUB_FRAME_ASPECT`，容差 0.3%，`OPTIMIZE_VERSION` 15）**；② 用户**首次打开**这本书时由 xochitl 里的 qmd 代理（`shelf/xovi/shelf-comic-margins.qmd`）调用阅读器自己的 `EpubProperties.setMargins(0)`。真机端到端：图片框 **302.6 × 461.5pt，左 0.0 / 右 0.4pt**，宽 +16%、面积约 +16%，全程无需用户改任何设置、无需 PDF。
+> **前提**：只对**新版管线处理过的纯图漫画**生效；已经投进设备的旧漫画（补白到屏幕比例）需**从原始文件重新优化**再投——旧产物在边距 0 下会贴左、右侧空一大块。
+
+**怎么量**：xochitl 会把渲染结果写成 `<uuid>.pdf` 缓存（页 303×538pt，与屏幕同比例）。取回后用 PyMuPDF 读 `page.get_image_info()[0]['bbox']` 就是图片实际位置，比量"非白像素"准——非白像素会混进画面自己的留白（首轮我就是这么量错的）。全书各页的最小留白恒等于同一个数，才说明是固定边框。
+
+**图片框的几何**（页 303×538pt）：
+
+| 量 | 值 | 说明 |
+|---|---|---|
+| 栏宽 | 303 − 2×边距（边距 pt = 档位 px × 303/954）：**56 档 267.4pt，28 档 285.2pt，0 档 303pt** | `setMargins` 接受任意数值，**0 可行** |
+| 垂直可用高度 | **462.1pt 固定**（上 35.5、下 40.3） | 与边距无关 |
+| 图片框 | 宽度撑满栏宽、高度按原图比例算；超高则按高度上限缩；**比栏窄时贴左对齐** | 任何 `height` 声明都不生效（另见 §09⑨） |
+
+**实测对照**（同批原图）：
+
+| 方案 | 边距 | 补白比例 | 图片显示 | 上 / 下 | 左 / 右 |
+|---|---|---|---|---|---|
+| 旧（火影 10 卷、乱马 05 卷真书） | 56 或 28 | 0.5625 | 260.1 × 462.1 | 35.5 / 40.3 | **20.0 / 22.9** |
+| 0.617 | 28 | 0.617 | 284.8 × 461.5 | 35.5 / 41.0 | 8.9 / 9.3 |
+| 0.617 | 0 | 0.617 | 285.1 × 462.1（**贴左**） | 35.5 / 40.3 | 0.0 / 17.9 |
+| **现方案** | **0** | **0.6557** | **302.6 × 461.5** | **35.5 / 41.0** | **0.0 / 0.4** |
+
+**结论**：
+1. 旧方案图片是**高度先到顶**，所以边距再小也没有效果（乱马 05 卷用户改成 28 后图片框纹丝不动）；且图片比栏窄时被摆偏（左 20.0 / 右 22.9）。
+2. 补白比例必须等于"栏宽:高度上限"，边距 0 时 = 303:462.1 = 0.6557。补白当初必须做（提交 0df070d）：不补白 xochitl 把图贴页顶、空当全堆底部（上 6.6% / 下 22.3%）。
+3. 补白容差要严：真机上一张比框窄 1.6% 的页被 2% 容差放过，图片少 4.5pt 宽并左右不对称（8.9 / 13.4），EPUB 路径容差收紧到 0.3%（`EPUB_PAD_TOLERANCE`）。
+4. CSS 无效：外链 `body/html/div/img{margin:0.01pt;padding:0.01pt}`、`@page{margin:0.01pt}` 对图片框几乎无影响（0.6pt）；这圈边框是阅读器"页边距"设置本身，不是 CSS 默认边距。
+
+### 怎么让边距变成 0：外部改文件不行，必须在 xochitl 里调用它自己的 API
+
+**外部写 `.content` 的 `margins`：不可靠，已放弃**（§09⑧ 的补测，5 次只成功 1 次）：
+
+| # | 写入方式 | 距导入 | 结果 |
+|---|---|---|---|
+| 探针 | `sed` 原地改 | +16 s | ✅ 打开后 28 |
+| e2e-1 | 整份重新序列化 | +0.7 ms | ❌ 打开时被写回 56 |
+| e2e-2 | 同上，等 2 s | +2 s | ❌ 56 |
+| X | 原地文本替换 | +2 s | ❌ 56 |
+| Y | `sed`（与探针完全相同） | +24 s | ❌ 56 |
+| X 复测 | 再 `sed` + 让回收站队列在 xochitl 里执行一遍 | — | ❌ 56 |
+
+失败表现一致：`.content` 在用户**打开**时被 xochitl 用**内存里的 56** 重写，渲染缓存不重生成。被否定的假设：写入格式、与 xochitl 写入同一秒、距导入时间、回收站队列触发重读。探针那一次成功没找到原因。
+
+**从固件里提取 QML 源码找到正路**（2026-09-21）：Qt 6 的 rcc 是 **zstd 压缩**，扫 xochitl 二进制里的 zstd 魔数（`28 b5 2f fd`）逐块解压，含 `import Qt` 的即 QML 源，共 **553 个文件**（旧的 `extract_qml.py` 随 `oldbak` 丢失，这里用 20 行 Python 重写）。要点：
+- 页边距界面是 `FormatMargins.qml`：三个选项 `epub.settings.marginPresets[0/1/2]`（=[28,56,112]），点击执行 `confirmLayoutChange(() => epub.setMargins(preset))`。右上角 **Save 只上报统计并关窗口，不写任何数据**——真正生效的是 `setMargins`。
+- `EpubProperties`（`xofm.libs.epub`，需要 `document`/`documentController: DocumentController`/`settings: epubSettings`）有 `margins` 属性与 `setMargins(qreal)` 方法，**接受任意数值，0 可行**（`margins` 立即变 0，`.content` 写入 0，渲染缓存立即重新生成）。
+- `DocumentView.qml`（2838 行）有 `document`（`document.id`）和 `epubSettings`，可在其中实例化 `EpubProperties`。
+
+**最终方案**（`shelf/xovi/shelf-comic-margins.qmd` + `book-serve/src/comic_margins.rs`）：
+1. book-serve 在"加入 xochitl"导入完成（拿到 uuid）后，若该书是**纯图漫画且已用当前版本管线优化过**（`Staging::comic_margin_eligible`），登记到 `comic-margins.json` 队列（通用 `PendingQueue`）。三条投递路径：普通上传（`render_check`）、大文件占位（`try_deliver_direct`）；分卷回退路径不登记。
+2. qmd 代理插在 `DocumentView.qml`：`Connections.onDocumentChanged` → 1.5 s 后 `GET http://127.0.0.1:8790/margins/<uuid>`：404 什么都不做；200 → `EpubProperties.createObject` → `setMargins(m)` → `POST /margins/applied` 销账。**每本书只设一次**，用户之后在界面改回去不干预。
+3. **真机踩的坑**：`document.id` 是**值类型**，拼接能显示但 `!==`/`===` 恒假，必须 `String(...)`；`EpubProperties` 只在命中时才 `createObject`（不在视图创建时实例化，避免 `document` 为空）；qmd 只在 xochitl 启动时加载，**部署/更新代理必须重启 xochitl**（用 `systemctl restart xochitl`）。
+4. 端到端验证（新测试漫画，全流程入库→优化→加入→打开）：日志 `CJ-COMIC-MARGIN: <uuid> margins -> 0`；图片框 302.6 × 461.5pt，左 0.0 / 右 0.4pt，25 页统一；待办销账。
+
+**代价与边界**：
+- 补白比例是按边距 0 算的：代理没装/没生效（边距仍 56）时，图片按栏宽 267pt 顶部对齐、下留白偏大（约 55pt）。所以 `shelf-comic-margins.qmd` 与新补白比例必须一起装（`shelf/manifest.sh` 的 `book` 服务已带上）。
+- 旧漫画（补白到屏幕比例）**不会**登记也不会被设 0，需从原始文件重新优化再投一次。
+- 垂直方向上 35.5 / 40.3pt 是阅读器固定的页面边（与边距无关），改不了；再要更大只有 PDF（§16），会推翻"优化不改格式"，未做。

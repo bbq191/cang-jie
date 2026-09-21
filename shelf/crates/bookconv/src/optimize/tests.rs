@@ -124,7 +124,7 @@
         let (tw, th) = image::load_from_memory(&text_img).unwrap().dimensions();
         assert!(cw <= crate::imgopt::MAX_SHORT_EDGE && ch <= crate::imgopt::MAX_EDGE, "漫画路径应该缩进屏幕框: {cw}x{ch}");
         assert!(tw <= crate::imgopt::MAX_SHORT_EDGE && th <= crate::imgopt::MAX_EDGE, "文字书内嵌图也应该缩进屏幕框: {tw}x{th}");
-        assert_eq!((cw, ch), (crate::imgopt::MAX_SHORT_EDGE, crate::imgopt::MAX_EDGE), "漫画整页应该补白到刚好等于设备页面长宽比: {cw}x{ch}");
+        assert_eq!((cw, ch), (crate::imgopt::MAX_SHORT_EDGE, crate::imgopt::EPUB_COMIC_PAGE_H), "漫画整页应该补白到 xochitl 图片框比例（954×1546）: {cw}x{ch}");
         assert!(comic_img.len() > text_img.len(), "漫画书判定应触发更高质量重编码，体积应更大: comic={} text={}", comic_img.len(), text_img.len());
     }
 

@@ -9,7 +9,7 @@
 #   · XDG 目录：~/.config/shelf  ~/.local/share/shelf  ~/.local/state/shelf
 #   · systemd：shelf.target + 各服务单元 → /usr/lib/systemd/system（rootfs，普通重启不丢；OTA 冲掉后重跑本脚本）
 #     写 /usr 前实检 dm-verity，激活即跳过（安全红线）；绝不给 xochitl 加依赖。
-#   · qt-resource-rebuilder qmd：font（字体菜单）/ book（回收站代理、建夹代理），qrr 目录在才装
+#   · qt-resource-rebuilder qmd：font（字体菜单）/ book（回收站代理、建夹代理、漫画页边距代理），qrr 目录在才装
 #
 # 用法：./install.sh [--only gateway,book,...] [--no-systemd] [--src DIR] [--password PW | --password-file FILE]
 #   --only          只装/更新列出的服务（网关总会装）；缺省全装

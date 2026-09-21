@@ -49,7 +49,10 @@ pub const OPTIMIZE_MARKER: &str = "META-INF/com.cangjie.optimized";
 /// `toc.ncx` 带外部 DTD 引用（`http://www.daisy.org/...dtd`），《雪人》没有。新增
 /// `wash::strip_ncx_doctype` 无条件剥掉这个声明（不改变 NCX 语义，纯粹去掉外部依赖，真机 USB/WiFi
 /// 隧道环境很可能因为解析器联网取 DTD 卡住/失败而让整份 NCX 被判不可用）；旧书需 `force:true`。
-pub const OPTIMIZE_VERSION: &str = "14";
+/// v15：EPUB 漫画页补白目标从屏幕比例 954:1696 改成 xochitl 图片框比例 303:462.1（`imgopt::EPUB_FRAME_ASPECT`，画布 954×1455，
+/// 补白容差收紧到 0.3%），配合阅读器页边距 0（由 book-serve + `shelf-comic-margins.qmd` 代理设置）：真机同图 A/B 图片宽 260→303pt、
+/// 左右留白 20.0/22.9pt → 0.0/0.0；旧漫画需重新优化才生效（从原始文件重跑，别对已优化产物二次优化——多一代 JPEG 有损）。
+pub const OPTIMIZE_VERSION: &str = "15";
 
 /// 脚注呈现方式。xochitl 无弹窗脚注（穷尽真机实测判死）；weread/pkm 线与第三方书历史行为、
 /// EPUB 线设备侧优化（母版库「优化」）2026-09-17 起统一用 `Anchor`（章末可见 + 同章锚点跳转 +

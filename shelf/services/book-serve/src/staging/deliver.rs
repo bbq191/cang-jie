@@ -66,7 +66,8 @@ impl Staging {
         // 体，见 rmsvc_core::xochitl 文档）。自检计划在上传前算好（投书时刻要早于 xochitl 给文档的
         // createdTime）；统计失败就不自检，不影响投书。
         let render = if formats::ext_of(name) == "epub" {
-            bookconv::stats::text_profile_file(&p).ok().map(|prof| RenderPlan { name: name.to_string(), title: prof.title.clone(), expected: prof.expected_pages(), since_ms: rmsvc_core::clock::now_ms() })
+            let comic = self.comic_margin_eligible(&p);
+            bookconv::stats::text_profile_file(&p).ok().map(|prof| RenderPlan { name: name.to_string(), title: prof.title.clone(), expected: prof.expected_pages(), since_ms: rmsvc_core::clock::now_ms(), comic })
         } else {
             None
         };
@@ -139,6 +140,9 @@ impl Staging {
             }
         };
         let uuid = self.xochitl.upload_large_file(p, name, content_type, folder, &placeholder, pages)?;
+        if ext == "epub" && self.comic_margin_eligible(p) {
+            self.register_comic_margins(&uuid, name);
+        }
         let _ = self.mark_delivered(name, Reader::Native);
         // 渲染记录也写上，让"加入 xochitl"的书在列表里都有统一的渲染徽章（此前直接投入的书没有）：
         // - PDF：页数就是我们写进 `.content` 的真页数 → 直接 ok；
@@ -295,7 +299,7 @@ impl Staging {
             }
             let since_ms = rmsvc_core::clock::now_ms();
             self.xochitl.upload(bytes, piece_name, mime, folder).map(|_| ())?;
-            let plan = RenderPlan { name: piece_name.to_string(), title: None, expected: 0, since_ms };
+            let plan = RenderPlan { name: piece_name.to_string(), title: None, expected: 0, since_ms, comic: false };
             if render_check::probe(&lib_dir, &plan).is_none() {
                 rmsvc_core::fswatch::watch_until(&lib_dir, render_check::DEBOUNCE, PIECE_RENDER_TIMEOUT, |_| render_check::probe(&lib_dir, &plan).is_some());
             }
