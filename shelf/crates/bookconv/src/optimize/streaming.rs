@@ -119,7 +119,8 @@ impl<'a> StreamingOptimize<'a> {
                     let job = { rx.lock().unwrap_or_else(|e| e.into_inner()).recv() };
                     let Ok(job) = job else { break };
                     let _permit = budget.acquire(crate::imgopt::pixel_count(&job.bytes));
-                    let _ = job.reply.send(transform_image_bytes(&job.bytes, is_comic_book, comic_frame));
+                    let out = transform_image_bytes(&job.bytes, is_comic_book, comic_frame).unwrap_or(job.bytes);
+                    let _ = job.reply.send(out);
                 });
             }
             let mut pending: std::collections::VecDeque<std::sync::mpsc::Receiver<Vec<u8>>> = std::collections::VecDeque::new();
@@ -132,9 +133,7 @@ impl<'a> StreamingOptimize<'a> {
                 // 补满提前量：读原图字节（archive 支持随时按名字重新 seek 读，跟阶段一是同一个源文件）并提交。
                 while pending.len() < lookahead && next_submit < image_positions.len() {
                     let img_name = &entries[image_positions[next_submit]].0;
-                    let mut f = archive.by_name(img_name).map_err(|e| format!("重读图片 {img_name} 失败: {e}"))?;
-                    let mut real_bytes = Vec::with_capacity(f.size() as usize);
-                    f.read_to_end(&mut real_bytes).map_err(|e| e.to_string())?;
+                    let real_bytes = crate::epubzip::read_by_name(&mut archive, img_name).map_err(|e| format!("重读图片 {img_name} 失败: {e}"))?;
                     let (tx, rx) = std::sync::mpsc::channel();
                     job_tx.send(ImgJob { bytes: real_bytes, reply: tx }).map_err(|_| "图片处理线程已退出".to_string())?;
                     pending.push_back(rx);

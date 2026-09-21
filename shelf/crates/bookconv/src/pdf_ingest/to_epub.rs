@@ -85,7 +85,9 @@ pub fn optimize_pdf_to_epub(src: &Path, mut on_progress: impl FnMut(usize, usize
     // 公式渲染缓存：同页多个公式块只渲染一次整页。
     let render_settings = hayro::RenderSettings { x_scale: 2.0, y_scale: 2.0, ..Default::default() };
 
-    let hayro_pdf = hayro::hayro_syntax::Pdf::new(std::sync::Arc::new(bytes.clone())).ok();
+    // 只有真有公式块才需要 hayro 再解析一遍；且原始字节到此不再他用，直接移交（此前 `bytes.clone()` 无谓多占一份整本 PDF，
+    // 上百 MB 的教材 PDF 就是上百 MB 的额外峰值）。没有公式时 `bytes` 在这里就释放。
+    let hayro_pdf = if total_formula_blocks > 0 { hayro::hayro_syntax::Pdf::new(std::sync::Arc::new(bytes)).ok() } else { None };
 
     let mut page_html: Vec<String> = Vec::with_capacity(page_count);
     for (idx, chars) in text_pages.iter().enumerate() {
@@ -299,7 +301,7 @@ pub(super) fn crop_pixmap_to_png(pixmap: &hayro::vello_cpu::Pixmap, region: &BBo
     }
     let data = pixmap.data_as_u8_slice();
     let (w, h) = (pixmap.width() as u32, pixmap.height() as u32);
-    let img = image::RgbaImage::from_raw(w as u32, h as u32, data.to_vec())?;
+    let img = image::RgbaImage::from_raw(w, h, data.to_vec())?;
     let cropped = image::imageops::crop_imm(&img, x0, y0, (x1 - x0).max(1), (y1 - y0).max(1)).to_image();
     let mut out = Vec::new();
     image::DynamicImage::ImageRgba8(cropped).write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png).ok()?;

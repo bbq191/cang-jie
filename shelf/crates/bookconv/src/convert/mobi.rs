@@ -8,6 +8,7 @@
 //!   1. **按书内目录（TOC）切章**——TOC 链文字即真章名（MOBI6 的 NCX 等价物），无 TOC 退化按 pagebreak 切。
 //!   2. **为每个被引用的 filepos 目标注入 `id="fpN"` 锚点**（属性注入进目标元素，保留原属性）。
 //!   3. **就地把 `filepos=N` 改写成 `href="chap_X.xhtml#fpN"`**（脚注/目录跳转可用）。
+//!
 //! 副产品：目录页链接改写后指向大量 chap 文件，读起来是一份正常可点的书内目录页，跟原生 EPUB
 //! 自带的 HTML 目录页同构（2026-09-19 前 `optimize::remove_toc_from_spine` 会把这种"指向一堆
 //! chap 文件"的页面从 spine 剥掉——当时的假设是"reMarkable 有自己的原生 TOC，书内目录页冗余"，
@@ -172,6 +173,7 @@ fn extract_toc(rawml: &str) -> Vec<Cut> {
 /// 切章 + 注入锚点 + 内链重映射。
 /// - 有 TOC：按 TOC 目标切（一章=一 spine+一 nav，章名=TOC 文字，层级=启发式）；首个 cut 前的壳/前置作无标题段。
 /// - 无 TOC：退化按 `<mbp:pagebreak>` 切，标题取段内 `<h1-6>`（多数 MOBI6 无标题元素→空，nav 跳过）。
+///
 /// 两路都：为被引用的 filepos 目标注入 `id="fpN"`（属性注入进目标元素）→ 就地把 `filepos=N` 改写为 `chap#fpN`。
 fn build_chapters(rawml: &str, used_img: &HashMap<usize, String>, re_img: &Regex) -> Vec<Chapter> {
     let targets = collect_targets(rawml);
@@ -213,7 +215,7 @@ fn build_chapters(rawml: &str, used_img: &HashMap<usize, String>, re_img: &Regex
             .filter(|&&n| n >= *s && n < *e)
             .map(|&n| (n - s, n))
             .collect();
-        local.sort_by(|a, b| b.0.cmp(&a.0)); // 降序注入，保后续局部偏移不移位
+        local.sort_by_key(|x| std::cmp::Reverse(x.0)); // 降序注入，保后续局部偏移不移位
         let injected = inject_anchors(&rawml[*s..*e], &local);
         // calibre 做的 MOBI 元素可能已带 id（filepos/calibre_pb）；注入 fpN 后同标签会出现两个 id 属性 =
         // 非法 XHTML → reMarkable 整章渲染失败。折叠成单 id（fpN 注入在标签名后=首位，保住锚点）。

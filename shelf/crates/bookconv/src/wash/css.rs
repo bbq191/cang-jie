@@ -41,7 +41,7 @@ pub(super) fn filter_decls_with(decls: &str, filter: &[String], spacing: Spacing
     for c in decl_re().captures_iter(decls) {
         let prop = c[1].to_ascii_lowercase();
         let val = c[2].trim();
-        if filter.iter().any(|f| *f == prop) {
+        if filter.contains(&prop) {
             continue;
         }
         if prop == "text-indent" {

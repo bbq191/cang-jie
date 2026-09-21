@@ -90,6 +90,21 @@
     }
 
     #[test]
+    fn drop_opf_refs_removes_only_listed_ids_in_one_pass() {
+        // 一遍扫描删多个页的 item/itemref：带空闭合标签/属性顺序不同/相邻空白都要处理干净，不误伤 id 相近的项（p1 vs p10、idref 别名）。
+        let opf = concat!(
+            "<manifest>\n<item id=\"p1\" href=\"p1.xhtml\"/>\n<item href=\"p10.xhtml\" id=\"p10\" media-type=\"x\"></item>\n",
+            "<item id=\"p2\" href=\"p2.xhtml\"/>\n<item id=\"img\" href=\"a.png\"/></manifest>\n",
+            "<spine>\n<itemref idref=\"p1\"/>\n<itemref linear=\"yes\" idref=\"p10\"></itemref>\n<itemref idref=\"p2\"/>\n</spine>"
+        );
+        let ids: HashSet<&str> = ["p1", "p10"].into_iter().collect();
+        let out = drop_opf_refs(opf, &ids);
+        assert!(!out.contains("p1.xhtml") && !out.contains("p10.xhtml") && !out.contains("idref=\"p1\"") && !out.contains("idref=\"p10\""), "{out}");
+        assert!(out.contains("<item id=\"p2\" href=\"p2.xhtml\"/>") && out.contains("<itemref idref=\"p2\"/>") && out.contains("a.png"), "无关项原样: {out}");
+        assert_eq!(drop_opf_refs(opf, &HashSet::new()), opf, "空集合 = 原样");
+    }
+
+    #[test]
     fn empty_page_removed_and_toc_retargeted() {
         let mut v = vec![
             e("content.opf", OPF),
@@ -212,7 +227,7 @@
         let ncx = String::from_utf8_lossy(&es.iter().find(|x| x.name == "toc.ncx").unwrap().data).to_string();
         assert!(ncx.contains("第 1–20 页") && ncx.contains("第 21–25 页"), "{ncx}");
         assert!(ncx.contains("Text/p1.xhtml") && ncx.contains("Text/p21.xhtml"), "目录必须指向段首页: {ncx}");
-        assert_eq!(toc_entry_count(&es) > 0, true);
+        assert!(toc_entry_count(&es) > 0);
     }
 
     #[test]
@@ -564,7 +579,7 @@
 
     // ---- 无效引用清理 ----
 
-    fn dead_refs(entries: &mut Vec<Entry>) -> usize {
+    fn dead_refs(entries: &mut [Entry]) -> usize {
         let mut rep = WashReport::default();
         drop_dead_refs(entries, &mut rep);
         rep.dead_refs_removed

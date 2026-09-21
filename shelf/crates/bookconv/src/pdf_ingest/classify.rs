@@ -38,7 +38,7 @@ pub(super) fn classify_pdf_bytes(bytes: &[u8]) -> PdfKind {
     }
     let total = pages.len();
     let mut comic_pages = 0usize;
-    for (_, page_id) in pages.iter() {
+    for page_id in pages.values() {
         if page_covered_by_big_image(&doc, *page_id) {
             comic_pages += 1;
         }

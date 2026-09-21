@@ -272,7 +272,7 @@ pub fn optimize_epub_with(epub: &[u8], opts: &OptimizeOpts) -> Result<(Vec<u8>, 
                 // ① 按 Move 屏竖向框（宽≤954）降采样超大图——EPUB 图可能行内，宽超 954 会溢出竖屏（缩不动/失败则原样）。
                 // 漫画书（EPUB 线原则④"不允许压画质，只能裁边/适配屏幕"）：先裁四边纯色留白，
                 // 超限时改用更高 JPEG 质量重编码。
-                None if crate::imgopt::is_downscalable(name) => std::borrow::Cow::Owned(transform_image_bytes(data, is_comic_book, opts.comic_frame)),
+                None if crate::imgopt::is_downscalable(name) => transform_image_bytes(data, is_comic_book, opts.comic_frame).map_or(std::borrow::Cow::Borrowed(data.as_slice()), std::borrow::Cow::Owned),
                 None => std::borrow::Cow::Borrowed(data.as_slice()),
             };
             let opts = if name == "mimetype" { stored } else { deflated };

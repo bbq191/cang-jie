@@ -17,13 +17,13 @@ pub const MAX_EDGE: u32 = 1696;
 pub const MAX_SHORT_EDGE: u32 = 954;
 /// 单张图片允许解码的像素数上限（w×h，跟格式/用途无关）——防极端高分辨率原图解码成未压缩位图
 /// 把内存顶爆。2026-09-19 真机坐实：用户真实投递一套漫画（《乱马1/2》8 卷）触发超限按卷拆分
-/// 落库，book-serve `VmHWM` 冲到 271MB——定位到 `downscale_into_q`/`trim_margins`/`dither_bilevel`
+/// 落库，book-serve `VmHWM` 冲到 271MB——定位到 `downscale_into`/`decode_trim_comic`/`dither_bilevel`
 /// 三处解码前只用 `header_dims` 读了宽高判断"要不要处理"，没有对"这张图本身大到不该整个解出来"
 /// 设硬上限。
 ///
 /// **阈值取值不是"3 字节/像素 RGB8"这种理论估算**——第一版按这个估算给了 2500 万像素（估算峰值
 /// ~75MB），结果真机又撞上一次《火影忍者》多卷投递，`VmHWM` 又冲到 262MB，跟没修之前几乎一个
-/// 量级。本地测量真实调用链（`trim_margins(bytes)` → `downscale_for_epub_comic(&trimmed)`，忠实
+/// 量级。本地测量当时的真实调用链（裁边 → 缩放两道串联，现已被 `prepare_comic_page_for_epub` 单趟取代，忠实
 /// 复刻 `optimize.rs` 的真实用法）在不同像素数下的实测 `VmHWM`（`/proc/<pid>/status`，release
 /// 编译）：400万像素→62MB、870万像素（A4 300dpi）→97-109MB、1600万像素→164MB、2500万像素→
 /// 230-236MB——**理论估算的单缓冲区大小完全没抓住真实开销**（`image` 库内部解码+`to_rgb8()`+
@@ -48,9 +48,20 @@ const JPEG_QUALITY_UPSCALED: u8 = 85;
 /// 预放大的倍数上限：超过视为缩略图/装饰小图，不值得放大到整页宽。
 const MAX_PDF_UPSCALE: f32 = 3.0;
 
-/// 保比缩进 `max_w × max_h` 框（宽高比保持、保原格式），只在超框时动；返回新字节或 `None`
+/// 按 `fmt` 编码回同一格式：JPEG 用 `quality`，PNG 无损；其余格式 `None`。各处理函数共用（此前每处各抄一份 match）。
+fn encode_as(fmt: ImageFormat, img: &image::DynamicImage, quality: u8) -> Option<Vec<u8>> {
+    let mut out = Vec::new();
+    match fmt {
+        ImageFormat::Jpeg => JpegEncoder::new_with_quality(&mut out, quality).encode_image(img).ok()?,
+        ImageFormat::Png => img.write_to(&mut Cursor::new(&mut out), ImageFormat::Png).ok()?,
+        _ => return None,
+    }
+    Some(out)
+}
+
+/// 保比缩进 `max_w × max_h` 框（宽高比保持、保原格式，JPEG 质量 [`JPEG_QUALITY`]），只在超框时动；返回新字节或 `None`
 /// （已达标 / 非 JPEG·PNG / 解码失败 / 重编码没变小 → 调用方原样保留）。
-fn downscale_into_q(bytes: &[u8], max_w: u32, max_h: u32, quality: u8) -> Option<Vec<u8>> {
+fn downscale_into(bytes: &[u8], max_w: u32, max_h: u32) -> Option<Vec<u8>> {
     let (fmt, (w, h)) = header_dims(bytes)?;
     if w <= max_w && h <= max_h {
         return None; // 已达标：不解码不重编码（避免无谓的二次有损压缩；2473 页漫画只读头是秒级、全解是分钟级）
@@ -60,23 +71,10 @@ fn downscale_into_q(bytes: &[u8], max_w: u32, max_h: u32, quality: u8) -> Option
     }
     let img = image::load_from_memory_with_format(bytes, fmt).ok()?;
     let resized = img.resize(max_w, max_h, FilterType::Lanczos3);
-    let mut out = Vec::new();
-    match fmt {
-        ImageFormat::Jpeg => {
-            let mut enc = JpegEncoder::new_with_quality(&mut out, quality);
-            enc.encode_image(&resized).ok()?;
-        }
-        ImageFormat::Png => {
-            resized.write_to(&mut Cursor::new(&mut out), ImageFormat::Png).ok()?;
-        }
-        _ => return None,
-    }
+    drop(img);
+    let out = encode_as(fmt, &resized, JPEG_QUALITY)?;
     // 只有确实变小才采用（极端下重编码可能变大 → 保留原图，不倒退体积）。
     (out.len() < bytes.len()).then_some(out)
-}
-
-fn downscale_into(bytes: &[u8], max_w: u32, max_h: u32) -> Option<Vec<u8>> {
-    downscale_into_q(bytes, max_w, max_h, JPEG_QUALITY)
 }
 
 /// **CBZ/漫画整页**降采样：按朝向选盒（竖 954×1696 / 横 1696×954），页整张填屏、横页横读可用 1696 宽。
@@ -109,12 +107,6 @@ pub fn downscale_for_epub(bytes: &[u8]) -> Option<Vec<u8>> {
     downscale_into(bytes, MAX_SHORT_EDGE, MAX_EDGE)
 }
 
-/// 同 [`downscale_for_epub`]，给已判定为漫画的 EPUB 用：超限时仍要缩进屏幕框（否则设备渲染异常），
-/// 但用 [`JPEG_QUALITY_COMIC`] 而非普通插图的 85，尽量不损画质（EPUB 线原则④）。
-pub fn downscale_for_epub_comic(bytes: &[u8]) -> Option<Vec<u8>> {
-    downscale_into_q(bytes, MAX_SHORT_EDGE, MAX_EDGE, JPEG_QUALITY_COMIC)
-}
-
 /// 设备页面长宽比（短边/长边），跟 [`MAX_SHORT_EDGE`]/[`MAX_EDGE`] 同一组数字。
 const DEVICE_PAGE_ASPECT: f32 = MAX_SHORT_EDGE as f32 / MAX_EDGE as f32;
 
@@ -127,6 +119,7 @@ const PAD_ASPECT_TOLERANCE: f32 = 0.02;
 /// - 栏宽 = 页宽 303pt − 2×页边距（`.content` 的 `margins`，单位 px，1px = 303/954 ≈ 0.318pt；界面预设 28/56/112，
 ///   **`setMargins` 接受任意数值**，0 也行）；
 /// - 垂直可用高度固定 **462.1pt**（上 35.5、下 40.3），与边距无关。
+///
 /// 图片比栏窄时**贴左对齐**（不居中）：边距 0、图片 285.1pt 宽时实测左 0.0 / 右 17.9pt。
 ///
 /// 最优组合是：**页边距 [`EPUB_COMIC_MARGINS`]（1）+ 补白到 302.4:462.1 ≈ 0.6543**（画布 954×[`EPUB_COMIC_PAGE_H`]）——
@@ -182,60 +175,6 @@ impl EpubComicFrame {
     }
 }
 
-/// 漫画整页图片补白（2026-09-19 真机反馈"底部留白太多"排查到底：五种候选 CSS——`width:100%;
-/// height:auto`、`max-width/height:100%`、`vw`/`vh` 单位、`display:table/table-cell` 居中——
-/// 真机逐像素对比，**只有 `width` 生效，任何跟 `height` 相关的声明 xochitl 一律不认，图片高度
-/// 永远是"宽度撑满后按原图长宽比算出来的"，没有例外**）。CSS 层面没法控制留白，只能靠图片像素
-/// 本身。**用户明确的目标：上下留白尽量等比、左右留白尽可能接近 0**——两条同时满足：
-///
-/// - 原图长宽比比页面"宽"（典型漫画整页约 0.7 vs 页面约 0.5625，`width:100%` 撑满宽度后高度
-///   天然小于页面高度）：**上下对称补白**到刚好等于设备页面长宽比，宽度全程没动——`width:100%`
-///   本来就已经贴到左右边缘，补白只加高度方向，左右留白全程是 0，不会变多。
-/// - 原图长宽比比页面"窄"（如竖版海报，`width:100%` 会让高度溢出页面，CSS 治不了溢出）：
-///   **左右对称补白**拉回设备长宽比，补完之后长宽比精确等于设备页面比例，`width:100%` 渲染出来
-///   刚好不多不少填满整页，上下左右四边留白全部是 0。
-///
-/// 两种情况补完，图片自身长宽比都精确等于设备页面长宽比——不是"消掉留白"（那是裁进画面才能做到，
-/// 用户明确要求不裁），是"让留白变得对称、可预期"。**只加白边不动内容**：原始像素一个都不裁、
-/// 不缩、不挪，只是外面套一圈新画布。
-///
-/// 只对**已经接近整页大小**的图片生效（短边 < 设备短边的 1/3 直接跳过）——漫画书里偶尔混的小
-/// 装饰图标不该被强行拉伸成竖直长条。已经在容差内（[`PAD_ASPECT_TOLERANCE`]）不重新编码，幂等。
-pub fn pad_to_device_aspect(bytes: &[u8]) -> Option<Vec<u8>> {
-    let (fmt, (w, h)) = header_dims(bytes)?;
-    if !within_decode_budget(w, h) {
-        return None; // 极端高分辨率原图：不整个解出来，原样保留
-    }
-    if w.min(h) < MAX_SHORT_EDGE / 3 {
-        return None; // 太小，大概率是装饰图标而不是整页扫描，别硬套页面比例
-    }
-    let cur_aspect = w as f32 / h as f32;
-    if ((cur_aspect - DEVICE_PAGE_ASPECT) / DEVICE_PAGE_ASPECT).abs() <= PAD_ASPECT_TOLERANCE {
-        return None; // 已经够接近，不用补
-    }
-    let img = image::load_from_memory_with_format(bytes, fmt).ok()?.to_rgb8();
-    let (w, h) = img.dimensions();
-    let (new_w, new_h, off_x, off_y) = if cur_aspect > DEVICE_PAGE_ASPECT {
-        // 图片比页面"宽"（常见：漫画整页扫描）——宽度已经贴边，只在高度方向对称补白。
-        let new_h = (w as f32 / DEVICE_PAGE_ASPECT).round() as u32;
-        (w, new_h, 0u32, (new_h - h) / 2)
-    } else {
-        // 图片比页面"窄"，width:100% 会溢出页面——左右对称补白拉回设备长宽比防止溢出。
-        let new_w = (h as f32 * DEVICE_PAGE_ASPECT).round() as u32;
-        (new_w, h, (new_w - w) / 2, 0u32)
-    };
-    let mut canvas = image::RgbImage::from_pixel(new_w, new_h, image::Rgb([255, 255, 255]));
-    image::imageops::overlay(&mut canvas, &img, off_x as i64, off_y as i64);
-    let dyn_img = image::DynamicImage::ImageRgb8(canvas);
-    let mut out = Vec::new();
-    match fmt {
-        ImageFormat::Jpeg => JpegEncoder::new_with_quality(&mut out, JPEG_QUALITY_COMIC).encode_image(&dyn_img).ok()?,
-        ImageFormat::Png => dyn_img.write_to(&mut Cursor::new(&mut out), ImageFormat::Png).ok()?,
-        _ => return None,
-    }
-    Some(out)
-}
-
 /// 裁边判定容差：一行/列里像素两两 RGB 通道极差都 ≤ 这个值才算"纯色留白"。留够松（8）容 JPEG 压缩
 /// 噪声，但不到能吃掉真实画面渐变的地步。
 const TRIM_TOLERANCE: u8 = 8;
@@ -246,26 +185,14 @@ const TRIM_TOLERANCE: u8 = 8;
 /// 累加最多到 0.7×边长，仍留 30% 给内容，不会把整页裁没。
 const TRIM_MAX_FRACTION: f32 = 0.35;
 
-fn row_is_uniform(img: &image::RgbImage, y: u32) -> bool {
-    let w = img.width();
-    if w <= 1 {
+/// 一行/一列像素是否"纯色"（每个像素与首像素的 RGB 通道极差都 ≤ [`TRIM_TOLERANCE`]）。`px(i)` 取该行/列第 i 个像素。
+fn line_is_uniform(len: u32, px: impl Fn(u32) -> [u8; 3]) -> bool {
+    if len <= 1 {
         return true;
     }
-    let first = *img.get_pixel(0, y);
-    (1..w).all(|x| {
-        let p = img.get_pixel(x, y);
-        (0..3).all(|c| (p[c] as i16 - first[c] as i16).unsigned_abs() as u8 <= TRIM_TOLERANCE)
-    })
-}
-
-fn col_is_uniform(img: &image::RgbImage, x: u32) -> bool {
-    let h = img.height();
-    if h <= 1 {
-        return true;
-    }
-    let first = *img.get_pixel(x, 0);
-    (1..h).all(|y| {
-        let p = img.get_pixel(x, y);
+    let first = px(0);
+    (1..len).all(|i| {
+        let p = px(i);
         (0..3).all(|c| (p[c] as i16 - first[c] as i16).unsigned_abs() as u8 <= TRIM_TOLERANCE)
     })
 }
@@ -273,27 +200,29 @@ fn col_is_uniform(img: &image::RgbImage, x: u32) -> bool {
 /// 四边纯色留白的检测：返回 `(left, top, 裁后宽, 裁后高)`；没有可裁的留白 / 图太小 / 会裁成空 → `None`。
 /// 只在"确实是留白"时裁——边缘整行/整列像素高度一致（[`TRIM_TOLERANCE`]）才算留白，一遇到不满足就停，
 /// 不会裁进真实画面。单边最多裁 [`TRIM_MAX_FRACTION`]，兜底极端误判。
-fn trim_bounds(img: &image::RgbImage) -> Option<(u32, u32, u32, u32)> {
-    let (w, h) = img.dimensions();
+/// `px(x, y)` 取像素 RGB——灰度图直接返回 `[v; 3]`，不必先造一份 3 倍大的 RGB 副本（此前灰度页为探测边缘整图 `to_rgb8()`）。
+fn trim_bounds_with(w: u32, h: u32, px: impl Fn(u32, u32) -> [u8; 3]) -> Option<(u32, u32, u32, u32)> {
     if w < 4 || h < 4 {
         return None;
     }
     let max_v = ((h as f32) * TRIM_MAX_FRACTION) as u32;
     let max_h = ((w as f32) * TRIM_MAX_FRACTION) as u32;
+    let row = |y: u32| line_is_uniform(w, |x| px(x, y));
+    let col = |x: u32| line_is_uniform(h, |y| px(x, y));
     let mut top = 0u32;
-    while top < max_v && top + 1 < h && row_is_uniform(img, top) {
+    while top < max_v && top + 1 < h && row(top) {
         top += 1;
     }
     let mut bottom = 0u32;
-    while bottom < max_v && bottom + 1 < h && row_is_uniform(img, h - 1 - bottom) {
+    while bottom < max_v && bottom + 1 < h && row(h - 1 - bottom) {
         bottom += 1;
     }
     let mut left = 0u32;
-    while left < max_h && left + 1 < w && col_is_uniform(img, left) {
+    while left < max_h && left + 1 < w && col(left) {
         left += 1;
     }
     let mut right = 0u32;
-    while right < max_h && right + 1 < w && col_is_uniform(img, w - 1 - right) {
+    while right < max_h && right + 1 < w && col(w - 1 - right) {
         right += 1;
     }
     if top == 0 && bottom == 0 && left == 0 && right == 0 {
@@ -306,25 +235,40 @@ fn trim_bounds(img: &image::RgbImage) -> Option<(u32, u32, u32, u32)> {
     Some((left, top, new_w, new_h))
 }
 
-/// 漫画页四边纯色/近纯色留白裁边（EPUB 线原则④"允许裁边、不允许压画质"）。检测规则见 [`trim_bounds`]。
-/// 没有可裁的留白 / 非 JPEG·PNG / 解码失败 → `None`（调用方原样保留）。重编码用漫画质量
-/// （[`JPEG_QUALITY_COMIC`]），裁边不等于允许压画质。
-pub fn trim_margins(bytes: &[u8]) -> Option<Vec<u8>> {
+/// [`trim_bounds_with`] 的 `DynamicImage` 入口：`Luma8`/`Rgb8` 直接读像素，其它类型（调用方已归一，实际不会到）退化成 RGB 副本。
+fn trim_bounds(img: &image::DynamicImage) -> Option<(u32, u32, u32, u32)> {
+    use image::DynamicImage;
+    let (w, h) = (img.width(), img.height());
+    match img {
+        DynamicImage::ImageLuma8(g) => trim_bounds_with(w, h, |x, y| {
+            let v = g.get_pixel(x, y)[0];
+            [v, v, v]
+        }),
+        DynamicImage::ImageRgb8(c) => trim_bounds_with(w, h, |x, y| c.get_pixel(x, y).0),
+        other => {
+            let c = other.to_rgb8();
+            trim_bounds_with(w, h, |x, y| c.get_pixel(x, y).0)
+        }
+    }
+}
+
+/// 解码并归一到 `Luma8`/`Rgb8`（灰度保持灰度），并做四边留白裁边。返回 `(图, 格式, 是否裁过)`。
+/// [`prepare_comic_page_for_pdf`] / [`prepare_comic_page_for_epub`] 共用的前半段（此前 PDF 版整段抄了一份）。
+/// 用 `into_luma8`/`into_rgb8`：解码结果本来就是 8 位对应类型（几乎所有漫画页）时**不再拷贝整图**，
+/// 且不再让"原始解码图 + 归一副本"同时占内存。
+fn decode_trim_comic(bytes: &[u8]) -> Option<(image::DynamicImage, ImageFormat, bool)> {
+    use image::DynamicImage;
     let (fmt, (w, h)) = header_dims(bytes)?;
     if !within_decode_budget(w, h) {
         return None; // 极端高分辨率原图：不整个解出来，原样保留（见 MAX_DECODE_PIXELS 文档）
     }
-    let img = image::load_from_memory_with_format(bytes, fmt).ok()?.to_rgb8();
-    let (left, top, new_w, new_h) = trim_bounds(&img)?;
-    let cropped = image::imageops::crop_imm(&img, left, top, new_w, new_h).to_image();
-    let dyn_img = image::DynamicImage::ImageRgb8(cropped);
-    let mut out = Vec::new();
-    match fmt {
-        ImageFormat::Jpeg => JpegEncoder::new_with_quality(&mut out, JPEG_QUALITY_COMIC).encode_image(&dyn_img).ok()?,
-        ImageFormat::Png => dyn_img.write_to(&mut Cursor::new(&mut out), ImageFormat::Png).ok()?,
-        _ => return None,
-    }
-    Some(out)
+    let decoded = image::load_from_memory_with_format(bytes, fmt).ok()?;
+    let gray = matches!(decoded.color(), image::ColorType::L8 | image::ColorType::L16 | image::ColorType::La8 | image::ColorType::La16);
+    let img = if gray { DynamicImage::ImageLuma8(decoded.into_luma8()) } else { DynamicImage::ImageRgb8(decoded.into_rgb8()) };
+    Some(match trim_bounds(&img) {
+        Some((l, t, cw, ch)) => (img.crop_imm(l, t, cw, ch), fmt, true),
+        None => (img, fmt, false),
+    })
 }
 
 /// **EPUB 漫画 → PDF 专用的单趟页面处理**：解码一次 → 裁边 → 按 PDF 里实际绘制的整数像素尺寸
@@ -347,28 +291,8 @@ pub fn trim_margins(bytes: &[u8]) -> Option<Vec<u8>> {
 /// 放大后内容本就平滑，改用 [`JPEG_QUALITY_UPSCALED`]=85 压到约 71MB。边界：放大倍数超过
 /// [`MAX_PDF_UPSCALE`]（缩略图/装饰小图，放大只是白涨体积）不放大；PNG 不放大（无损放大体积暴涨）。
 pub fn prepare_comic_page_for_pdf(bytes: &[u8], page_w: u32, page_h: u32) -> Option<Vec<u8>> {
-    use image::DynamicImage;
-    let (fmt, (w, h)) = header_dims(bytes)?;
-    if !within_decode_budget(w, h) {
-        return None; // 极端高分辨率原图：不整个解出来，原样保留（见 MAX_DECODE_PIXELS 文档）
-    }
-    let decoded = image::load_from_memory_with_format(bytes, fmt).ok()?;
-    let gray = matches!(
-        decoded.color(),
-        image::ColorType::L8 | image::ColorType::L16 | image::ColorType::La8 | image::ColorType::La16
-    );
-    let img = if gray { DynamicImage::ImageLuma8(decoded.to_luma8()) } else { DynamicImage::ImageRgb8(decoded.to_rgb8()) };
-    drop(decoded);
-
-    // 裁边探测只读，需要 RgbImage 视图；灰度图临时转一份，探测完立刻丢。
-    let bounds = match &img {
-        DynamicImage::ImageRgb8(rgb) => trim_bounds(rgb),
-        other => trim_bounds(&other.to_rgb8()),
-    };
-    let trimmed = bounds.is_some();
-    let (left, top, cw, ch) = bounds.unwrap_or((0, 0, img.width(), img.height()));
-    let img = if trimmed { img.crop_imm(left, top, cw, ch) } else { img };
-
+    let (img, fmt, trimmed) = decode_trim_comic(bytes)?;
+    let (cw, ch) = (img.width(), img.height());
     let (dw, dh, _, _) = crate::convert::pdfwrite::place_image(cw, ch, page_w, page_h);
     // 高度撑满分支的绘制宽可能是奇数——取偶保证左右边距整数（页宽偶数时）。
     let dw = ((dw.round() as u32) & !1).max(2);
@@ -379,44 +303,10 @@ pub fn prepare_comic_page_for_pdf(bytes: &[u8], page_w: u32, page_h: u32) -> Opt
         return None; // 既没裁又不缩放：原图字节零损失直接嵌
     }
     let img = if shrink || upscale { resize_lanczos3(&img, dw, dh) } else { img };
-
-    let mut out = Vec::new();
-    match fmt {
-        ImageFormat::Jpeg => {
-            encode_jpeg_keep_gray(&img, if upscale { JPEG_QUALITY_UPSCALED } else { JPEG_QUALITY_COMIC }, &mut out)?
-        }
-        ImageFormat::Png => img.write_to(&mut Cursor::new(&mut out), ImageFormat::Png).ok()?,
-        _ => return None,
-    }
-    Some(out)
+    encode_keep_gray(fmt, &img, if upscale { JPEG_QUALITY_UPSCALED } else { JPEG_QUALITY_COMIC })
 }
 
-/// 解码并归一到 `Luma8`/`Rgb8`（灰度保持灰度），并做四边留白裁边。返回 `(图, 格式, 是否裁过)`。
-/// [`prepare_comic_page_for_pdf`] / [`prepare_comic_page_for_epub`] 共用的前半段。
-fn decode_trim_comic(bytes: &[u8]) -> Option<(image::DynamicImage, ImageFormat, bool)> {
-    use image::DynamicImage;
-    let (fmt, (w, h)) = header_dims(bytes)?;
-    if !within_decode_budget(w, h) {
-        return None; // 极端高分辨率原图：不整个解出来，原样保留（见 MAX_DECODE_PIXELS 文档）
-    }
-    let decoded = image::load_from_memory_with_format(bytes, fmt).ok()?;
-    let gray = matches!(
-        decoded.color(),
-        image::ColorType::L8 | image::ColorType::L16 | image::ColorType::La8 | image::ColorType::La16
-    );
-    let img = if gray { DynamicImage::ImageLuma8(decoded.to_luma8()) } else { DynamicImage::ImageRgb8(decoded.to_rgb8()) };
-    drop(decoded);
-    let bounds = match &img {
-        DynamicImage::ImageRgb8(rgb) => trim_bounds(rgb),
-        other => trim_bounds(&other.to_rgb8()),
-    };
-    Some(match bounds {
-        Some((l, t, cw, ch)) => (img.crop_imm(l, t, cw, ch), fmt, true),
-        None => (img, fmt, false),
-    })
-}
-
-/// 白底画布上居中放置 `img`（保持 `Luma8`/`Rgb8` 类型）。
+/// 白底画布上放置 `img`（保持 `Luma8`/`Rgb8` 类型，偏移 `off_x/off_y`）。
 fn paste_on_white(img: &image::DynamicImage, cw: u32, ch: u32, off_x: u32, off_y: u32) -> image::DynamicImage {
     use image::DynamicImage;
     match img {
@@ -424,6 +314,11 @@ fn paste_on_white(img: &image::DynamicImage, cw: u32, ch: u32, off_x: u32, off_y
             let mut canvas = image::GrayImage::from_pixel(cw, ch, image::Luma([255]));
             image::imageops::overlay(&mut canvas, g, off_x as i64, off_y as i64);
             DynamicImage::ImageLuma8(canvas)
+        }
+        DynamicImage::ImageRgb8(c) => {
+            let mut canvas = image::RgbImage::from_pixel(cw, ch, image::Rgb([255, 255, 255]));
+            image::imageops::overlay(&mut canvas, c, off_x as i64, off_y as i64);
+            DynamicImage::ImageRgb8(canvas)
         }
         other => {
             let mut canvas = image::RgbImage::from_pixel(cw, ch, image::Rgb([255, 255, 255]));
@@ -477,13 +372,7 @@ pub fn prepare_comic_page_for_epub(bytes: &[u8], frame: EpubComicFrame) -> Optio
             (paste_on_white(&img, new_w, h, (new_w - w) / 2, 0), quality)
         }
     };
-    let mut out = Vec::new();
-    match fmt {
-        ImageFormat::Jpeg => encode_jpeg_keep_gray(&out_img, quality, &mut out)?,
-        ImageFormat::Png => out_img.write_to(&mut Cursor::new(&mut out), ImageFormat::Png).ok()?,
-        _ => return None,
-    }
-    Some(out)
+    encode_keep_gray(fmt, &out_img, quality)
 }
 
 /// Lanczos3 重采样，SIMD 实现（`fast_image_resize`，x86 SSE4/AVX2、aarch64 NEON 运行期自动选）。
@@ -520,18 +409,26 @@ fn resize_lanczos3(img: &image::DynamicImage, dw: u32, dh: u32) -> image::Dynami
     fast().unwrap_or_else(|| img.resize_exact(dw, dh, FilterType::Lanczos3))
 }
 
-/// JPEG 编码并**保持灰度图为单分量**。`image` 0.25 的 `JpegEncoder::encode_image(&DynamicImage)` 对
+/// 按 `fmt` 编码，JPEG **保持灰度图为单分量**。`image` 0.25 的 `JpegEncoder::encode_image(&DynamicImage)` 对
 /// `ImageLuma8` 也会转成 3 分量 RGB 输出（2026-09-20 实测 SOF 分量数=3、回读 `Rgb8`），必须走
 /// `ImageEncoder::write_image(.., ExtendedColorType::L8)` 才是真灰度 JPEG。仅接受 `Luma8`/`Rgb8`
-/// （调用方已归一到这两种），其它返回 `None`。
-fn encode_jpeg_keep_gray(img: &image::DynamicImage, quality: u8, out: &mut Vec<u8>) -> Option<()> {
+/// （调用方已归一到这两种），JPEG 遇其它类型返回 `None`；PNG 走 `image` 自带无损编码；其余格式 `None`。
+fn encode_keep_gray(fmt: ImageFormat, img: &image::DynamicImage, jpeg_quality: u8) -> Option<Vec<u8>> {
     use image::{DynamicImage, ExtendedColorType, ImageEncoder};
-    let enc = JpegEncoder::new_with_quality(out, quality);
-    match img {
-        DynamicImage::ImageLuma8(g) => enc.write_image(g.as_raw(), g.width(), g.height(), ExtendedColorType::L8).ok(),
-        DynamicImage::ImageRgb8(c) => enc.write_image(c.as_raw(), c.width(), c.height(), ExtendedColorType::Rgb8).ok(),
-        _ => None,
+    let mut out = Vec::new();
+    match fmt {
+        ImageFormat::Jpeg => {
+            let enc = JpegEncoder::new_with_quality(&mut out, jpeg_quality);
+            match img {
+                DynamicImage::ImageLuma8(g) => enc.write_image(g.as_raw(), g.width(), g.height(), ExtendedColorType::L8).ok()?,
+                DynamicImage::ImageRgb8(c) => enc.write_image(c.as_raw(), c.width(), c.height(), ExtendedColorType::Rgb8).ok()?,
+                _ => return None,
+            }
+        }
+        ImageFormat::Png => img.write_to(&mut Cursor::new(&mut out), ImageFormat::Png).ok()?,
+        _ => return None,
     }
+    Some(out)
 }
 
 /// 「漫画省刷新」色彩保留阈值：页面平均色度（RGB 通道极差 /255 的均值）低于此值视作**黑白/偏色扫描**、
@@ -678,7 +575,7 @@ mod tests {
         // 栏宽 = 303 − 2×边距×(303/954)：常量必须与边距目标值一致（否则补白比例对不上图片框）
         let col = 303.0 - 2.0 * EPUB_COMIC_MARGINS as f32 * (303.0 / 954.0);
         assert!((col / 462.1 - EPUB_FRAME_ASPECT).abs() < 0.0005, "比例 {EPUB_FRAME_ASPECT} 与边距 {EPUB_COMIC_MARGINS} 对不上（栏宽 {col}）");
-        assert!(EPUB_FRAME_ASPECT > DEVICE_PAGE_ASPECT, "图片框比屏幕更宽（边距 0 时栏宽=整页、高度上限不变）");
+        const { assert!(EPUB_FRAME_ASPECT > DEVICE_PAGE_ASPECT, "图片框比屏幕更宽（边距 0 时栏宽=整页、高度上限不变）") };
     }
 
     #[test]
@@ -823,38 +720,42 @@ mod tests {
         buf
     }
 
+    /// 走生产的解码+裁边探测（[`decode_trim_comic`]），返回裁后尺寸；没有可裁的留白 → `None`。
+    fn trim_dims(bytes: &[u8]) -> Option<(u32, u32)> {
+        let (img, _, trimmed) = decode_trim_comic(bytes)?;
+        trimmed.then(|| img.dimensions())
+    }
+
     #[test]
-    fn trim_margins_crops_uniform_white_border_only() {
+    fn trim_crops_uniform_white_border_only() {
         let framed = framed_jpeg(200, 300, 10);
-        let out = trim_margins(&framed).expect("四边留白应触发裁边");
-        let (w, h) = image::load_from_memory(&out).unwrap().dimensions();
+        let (w, h) = trim_dims(&framed).expect("四边留白应触发裁边");
         assert_eq!((w, h), (180, 280), "应精确裁掉 10px 留白: got {w}x{h}");
     }
 
     #[test]
-    fn trim_margins_none_when_no_uniform_border() {
+    fn trim_none_when_no_uniform_border() {
         let img = DynamicImage::ImageRgb8(RgbImage::from_fn(200, 300, |x, y| image::Rgb([(x % 256) as u8, (y % 256) as u8, 128])));
         let mut buf = Vec::new();
         JpegEncoder::new_with_quality(&mut buf, 95).encode_image(&img).unwrap();
-        assert!(trim_margins(&buf).is_none(), "画面一直到边缘、没有留白，不该裁");
+        assert!(trim_dims(&buf).is_none(), "画面一直到边缘、没有留白，不该裁");
     }
 
     #[test]
-    fn trim_margins_capped_by_max_fraction_for_near_solid_image() {
+    fn trim_capped_by_max_fraction_for_near_solid_image() {
         // 几乎整张纯色(只有中心一小块不同)——裁边不能把整张图裁没，单边应被 TRIM_MAX_FRACTION 卡住。
         let img = DynamicImage::ImageRgb8(RgbImage::from_fn(200, 200, |x, y| {
             if (90..110).contains(&x) && (90..110).contains(&y) { image::Rgb([0, 0, 0]) } else { image::Rgb([255, 255, 255]) }
         }));
         let mut buf = Vec::new();
         JpegEncoder::new_with_quality(&mut buf, 100).encode_image(&img).unwrap();
-        let out = trim_margins(&buf).expect("大片留白应触发裁边");
-        let (w, h) = image::load_from_memory(&out).unwrap().dimensions();
+        let (w, h) = trim_dims(&buf).expect("大片留白应触发裁边");
         let cap = (200.0 * TRIM_MAX_FRACTION) as u32;
         assert!(w >= 200 - 2 * cap && h >= 200 - 2 * cap, "单边最多裁 TRIM_MAX_FRACTION，不能把画面裁没: got {w}x{h}");
     }
 
     #[test]
-    fn trim_margins_handles_margin_beyond_old_cap() {
+    fn trim_handles_margin_beyond_old_cap() {
         // 真机回归（2026-09-19，《镖人》母版库反馈"优化没把大量留白裁切完"）：中文漫画常见的
         // 版权页（CIP 页）实测单边留白能到 22%-29%（抽样见会话记录），旧的 15% 上限在这里会
         // 强行停手、裁不干净。造一张留白比例超过旧上限、但仍在新上限内的图，确认新阈值下能
@@ -870,67 +771,10 @@ mod tests {
         }));
         let mut buf = Vec::new();
         JpegEncoder::new_with_quality(&mut buf, 100).encode_image(&img).unwrap();
-        let out = trim_margins(&buf).expect("留白应触发裁边");
-        let (got_w, got_h) = image::load_from_memory(&out).unwrap().dimensions();
+        let (got_w, got_h) = trim_dims(&buf).expect("留白应触发裁边");
         let old_cap = (w as f32 * 0.15) as u32;
         assert!(got_w < w - 2 * old_cap, "25% 留白不该被旧的 15% 上限卡住: got {got_w}");
         assert_eq!((got_w, got_h), (w - 2 * margin, h - 2 * margin), "留白在新上限内应该精确裁掉: got {got_w}x{got_h}");
-    }
-
-    #[test]
-    fn pad_to_device_aspect_adds_symmetric_top_bottom_bars_for_wide_image() {
-        // 用户明确的目标（2026-09-19）：上下留白尽量等比、左右留白尽可能接近 0。典型漫画整页
-        // 长宽比（约 0.7）比设备页面（约 0.5625）"宽"，应该在上下对称补白，左右（宽度）全程
-        // 不动——`width:100%` 本来就已经贴边，补白不该让左右留白变多。
-        let img = jpeg_of(700, 1000); // 0.7，明显偏离 0.5625
-        let out = pad_to_device_aspect(&img).expect("长宽比偏离容差应该触发补白");
-        let (w, h) = image::load_from_memory(&out).unwrap().dimensions();
-        assert_eq!(w, 700, "只加高度方向的白边，宽度（左右留白）不变");
-        assert!(h > 1000, "补白后应该更高: {h}");
-        let new_aspect = w as f32 / h as f32;
-        assert!((new_aspect - DEVICE_PAGE_ASPECT).abs() < 0.005, "补完应该正好等于设备页面比例: {new_aspect}");
-    }
-
-    #[test]
-    fn pad_to_device_aspect_adds_symmetric_left_right_bars_for_narrow_image_to_prevent_overflow() {
-        // 长宽比比设备页面更"窄/高"的图（如竖版海报）：width:100% 算出来的高度会超过页面高度、
-        // 溢出——CSS 治不了溢出，只能靠左右补白把长宽比拉回设备比例。
-        let img = jpeg_of(400, 1200); // 0.333，比 0.5625 更窄，会溢出
-        let out = pad_to_device_aspect(&img).expect("会溢出的长宽比应该触发补白");
-        let (w, h) = image::load_from_memory(&out).unwrap().dimensions();
-        assert_eq!(h, 1200, "只加宽度方向的白边，高度不变");
-        assert!(w > 400, "补白后应该更宽: {w}");
-        let new_aspect = w as f32 / h as f32;
-        assert!((new_aspect - DEVICE_PAGE_ASPECT).abs() < 0.005, "补完应该正好等于设备页面比例，不再溢出: {new_aspect}");
-    }
-
-    #[test]
-    fn pad_to_device_aspect_skips_when_already_close_enough() {
-        let (w, h) = (954u32, 1696u32); // 正好是设备屏幕比例
-        let img = jpeg_of(w, h);
-        assert!(pad_to_device_aspect(&img).is_none(), "已经贴合设备比例不该重新编码");
-    }
-
-    #[test]
-    fn pad_to_device_aspect_skips_small_decorative_icons() {
-        // 漫画书里偶尔混的小装饰图标（如章节分隔符）不该被强行拉伸成竖直长条。
-        let img = jpeg_of(100, 50); // 短边远小于 MAX_SHORT_EDGE/3
-        assert!(pad_to_device_aspect(&img).is_none(), "小图标不该被套页面比例");
-    }
-
-    #[test]
-    fn comic_variant_same_box_higher_quality_than_regular_epub_image() {
-        // 同样超框需要缩放，漫画路径(quality 95)重编码应该比普通插图路径(quality 85)体积更大
-        // （信息保留更多，符合 EPUB 线原则④"漫画不允许压画质"）；缩放后的尺寸应该一致，只是质量不同。
-        let big = jpeg_of(2000, 3000);
-        let regular = downscale_for_epub(&big).expect("超框应触发重编码");
-        let comic = downscale_for_epub_comic(&big).expect("超框应触发重编码");
-        assert_eq!(
-            image::load_from_memory(&regular).unwrap().dimensions(),
-            image::load_from_memory(&comic).unwrap().dimensions(),
-            "尺寸约束一致，只是质量不同"
-        );
-        assert!(comic.len() >= regular.len(), "漫画路径应该保留更多信息，体积不小于普通插图路径: comic={} regular={}", comic.len(), regular.len());
     }
 
     #[test]
@@ -960,7 +804,7 @@ mod tests {
         let huge = jpeg_of(5001, 5000);
         assert!(downscale_for_device(&huge).is_none(), "超限图应跳过降采样");
         assert!(downscale_for_epub(&huge).is_none(), "超限图应跳过降采样");
-        assert!(trim_margins(&huge).is_none(), "超限图应跳过裁边");
+        assert!(decode_trim_comic(&huge).is_none(), "超限图应跳过裁边");
         assert!(dither_bilevel(&huge).is_none(), "超限图应跳过省刷新转换");
     }
 

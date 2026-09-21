@@ -9,7 +9,7 @@
 //! PDF 的显示名取上传文件名，缩略图打开时才按页生成，占位不需要带内容。
 
 use regex::Regex;
-use std::io::{Read, Write};
+use std::io::Write;
 use std::path::Path;
 use std::sync::OnceLock;
 
@@ -30,11 +30,9 @@ fn attr_of(tag: &str, name: &str) -> Option<String> {
     r.captures(tag).map(|c| c[1].to_string())
 }
 
+/// 读条目全部字节；不存在或读失败都是 `None`（占位/封面都是尽力而为）。
 fn read_entry(zip: &mut zip::ZipArchive<std::io::BufReader<std::fs::File>>, name: &str) -> Option<Vec<u8>> {
-    let mut f = zip.by_name(name).ok()?;
-    let mut v = Vec::with_capacity(f.size() as usize);
-    f.read_to_end(&mut v).ok()?;
-    Some(v)
+    crate::epubzip::read_by_name_opt(zip, name).ok().flatten()
 }
 
 fn join(dir: &str, href: &str) -> String {
@@ -186,6 +184,7 @@ pub fn pdf_placeholder() -> Result<Vec<u8>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Read;
     use std::io::Write;
 
     fn real_epub(dir: &Path, cover_meta: bool) -> std::path::PathBuf {
