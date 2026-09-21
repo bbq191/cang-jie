@@ -5,7 +5,10 @@
 //! 只认默认的"文档旁 sidecar"存储位置（KOReader 的 `HISTORY_DIR`/hash 目录两种备用位置不认），
 //! 见白皮书 §03al 的范围说明。
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
+use std::time::SystemTime;
 
 pub const ANNOT_LUA: &str = include_str!("../../../koreader/annot.lua");
 
@@ -21,7 +24,7 @@ pub struct RawItem {
     pub pos1: Option<serde_json::Value>,
 }
 
-#[derive(Deserialize, Debug, Default)]
+#[derive(Deserialize, Debug, Default, Clone)]
 struct SidecarJson {
     title: Option<String>,
     annotations: Vec<RawItem>,
@@ -62,7 +65,7 @@ fn read_one(luajit: &Path, tmp_script: &Path, sidecar: &Path) -> Result<SidecarJ
 
 /// 递归列出 `books/` 下所有书文件（跳过隐藏项/`.sdr` 元数据目录，同 `koreader::KoReader::list_books`
 /// 的过滤规则，但这里要全树不只一层——标注可能在任意深度的子目录里）。
-fn walk_books(dir: &Path, base: &Path, out: &mut Vec<PathBuf>) {
+fn walk_books(dir: &Path, out: &mut Vec<PathBuf>) {
     let Ok(rd) = std::fs::read_dir(dir) else { return };
     for e in rd.flatten() {
         let name = e.file_name().to_string_lossy().into_owned();
@@ -75,46 +78,84 @@ fn walk_books(dir: &Path, base: &Path, out: &mut Vec<PathBuf>) {
             if name.ends_with(".sdr") {
                 continue;
             }
-            walk_books(&path, base, out);
+            walk_books(&path, out);
         } else if md.is_file() && path.extension().is_some() {
             out.push(path);
         }
     }
-    let _ = base;
 }
+
+/// 解析结果缓存：sidecar 路径 → (大小, mtime, 解析出的 JSON)。每本有标注的书原来每次 `GET /annotations`
+/// 都 fork 一个 luajit 起解释器读一遍（书多了就是几十次 fork）；sidecar 只有读书时才变，按（大小, mtime）命中就不再碰它。
+/// 只缓存成功的解析（失败的下次照旧重试）。
+type SidecarCache = HashMap<PathBuf, (u64, Option<SystemTime>, SidecarJson)>;
+
+/// 进程级缓存 + 扫描互斥：同一时刻只允许一次扫描（并发的 `/annotations` 请求不再各自重复 fork，
+/// 也不再互相删对方正在用的临时 `annot.lua`）。
+static SCAN: Mutex<Option<SidecarCache>> = Mutex::new(None);
 
 /// 扫全部书，返回有标注内容的那些（没有 sidecar、或 sidecar 里没有带 `text` 的条目都不出现在结果里）。
 /// 单本书 luajit 解析失败只跳过那一本（打印告警），不影响其它书——见 `annot.lua` 顶部注释同一条原则。
 pub fn scan(ko_root: &Path, books_dir: &Path, tmp_dir: &Path) -> Result<Vec<BookAnnotations>, String> {
-    std::fs::create_dir_all(tmp_dir).map_err(|e| e.to_string())?;
-    let script = tmp_dir.join("annot.lua");
-    std::fs::write(&script, ANNOT_LUA).map_err(|e| e.to_string())?;
     let luajit = luajit_bin(ko_root);
+    let script = tmp_dir.join("annot.lua");
+    let mut script_written = false;
+    let mut guard = SCAN.lock().unwrap_or_else(|e| e.into_inner());
+    let cache = guard.get_or_insert_with(HashMap::new);
+    let out = scan_with(cache, books_dir, &mut |sidecar| {
+        // 脚本只在真有缓存未命中、需要起 luajit 时才写（全命中的扫描零写盘零 fork）。
+        if !script_written {
+            std::fs::create_dir_all(tmp_dir).map_err(|e| e.to_string())?;
+            std::fs::write(&script, ANNOT_LUA).map_err(|e| e.to_string())?;
+            script_written = true;
+        }
+        read_one(&luajit, &script, sidecar)
+    });
+    if script_written {
+        let _ = std::fs::remove_file(&script);
+    }
+    Ok(out)
+}
 
+/// [`scan`] 的可注入版本（单测传假解析器数调用次数、不依赖 luajit）。
+fn scan_with(cache: &mut SidecarCache, books_dir: &Path, read: &mut dyn FnMut(&Path) -> Result<SidecarJson, String>) -> Vec<BookAnnotations> {
     let mut books = Vec::new();
-    walk_books(books_dir, books_dir, &mut books);
+    walk_books(books_dir, &mut books);
     books.sort();
 
     let mut out = Vec::new();
+    let mut seen = std::collections::HashSet::new();
     for book in books {
         let Some(sidecar) = sidecar_path(&book) else { continue };
-        if !sidecar.is_file() {
+        let Ok(md) = std::fs::metadata(&sidecar) else { continue };
+        if !md.is_file() {
             continue;
         }
-        let rel = book.strip_prefix(books_dir).unwrap_or(&book).to_string_lossy().replace('\\', "/");
-        match read_one(&luajit, &script, &sidecar) {
-            Ok(j) => {
-                let items: Vec<RawItem> = j.annotations.into_iter().filter(|a| a.text.as_deref().is_some_and(|t| !t.trim().is_empty())).collect();
-                if !items.is_empty() {
-                    let title = j.title.filter(|t| !t.trim().is_empty()).unwrap_or_else(|| book.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| rel.clone()));
-                    out.push(BookAnnotations { path: rel, title, items });
+        seen.insert(sidecar.clone());
+        let stamp = (md.len(), md.modified().ok());
+        let parsed = match cache.get(&sidecar).filter(|(len, mt, _)| (*len, *mt) == stamp) {
+            Some((_, _, j)) => Some(j.clone()),
+            None => match read(&sidecar) {
+                Ok(j) => {
+                    cache.insert(sidecar.clone(), (stamp.0, stamp.1, j.clone()));
+                    Some(j)
                 }
-            }
-            Err(e) => eprintln!("[koreader-serve] 标注读取失败 {}: {e}", sidecar.display()),
+                Err(e) => {
+                    eprintln!("[koreader-serve] 标注读取失败 {}: {e}", sidecar.display());
+                    None
+                }
+            },
+        };
+        let Some(j) = parsed else { continue };
+        let rel = book.strip_prefix(books_dir).unwrap_or(&book).to_string_lossy().replace('\\', "/");
+        let items: Vec<RawItem> = j.annotations.into_iter().filter(|a| a.text.as_deref().is_some_and(|t| !t.trim().is_empty())).collect();
+        if !items.is_empty() {
+            let title = j.title.filter(|t| !t.trim().is_empty()).unwrap_or_else(|| book.file_stem().map(|s| s.to_string_lossy().into_owned()).unwrap_or_else(|| rel.clone()));
+            out.push(BookAnnotations { path: rel, title, items });
         }
     }
-    let _ = std::fs::remove_file(&script);
-    Ok(out)
+    cache.retain(|k, _| seen.contains(k)); // 书/sidecar 被删了就别再留着
+    out
 }
 
 #[cfg(test)]
@@ -172,6 +213,44 @@ mod tests {
         write_sidecar(&books, "无标题书.epub", r#"return { annotations = { [1] = { text = "有内容" } } }"#);
         let out = scan(t.path(), &books, &t.path().join("tmp")).unwrap();
         assert_eq!(out[0].title, "无标题书");
+    }
+
+    /// 缓存：sidecar 没变就不再解析（不起 luajit）；变了（大小/mtime）才重解析；书删了缓存随之清掉。
+    #[test]
+    fn scan_with_cache_parses_each_changed_sidecar_once() {
+        let t = tempfile::tempdir().unwrap();
+        let books = t.path().join("books");
+        write_sidecar(&books, "a.epub", "v1");
+        write_sidecar(&books, "b.epub", "v1-b");
+        let mut cache = SidecarCache::new();
+        let calls = std::cell::RefCell::new(Vec::<String>::new());
+        let mut fake = |p: &Path| -> Result<SidecarJson, String> {
+            let body = std::fs::read_to_string(p).unwrap();
+            calls.borrow_mut().push(body.clone());
+            if body == "bad" {
+                return Err("解析失败".into());
+            }
+            Ok(SidecarJson { title: Some(body.clone()), annotations: vec![RawItem { text: Some(format!("高亮 {body}")), ..Default::default() }] })
+        };
+        let first = scan_with(&mut cache, &books, &mut fake);
+        assert_eq!(first.len(), 2);
+        assert_eq!(calls.borrow().len(), 2);
+        let again = scan_with(&mut cache, &books, &mut fake);
+        assert_eq!(again, first, "全命中时结果与首次一致");
+        assert_eq!(calls.borrow().len(), 2, "sidecar 没变：不再解析（省 luajit fork）");
+        // 改 a 的 sidecar（大小变）→ 只重解析 a
+        std::fs::write(sidecar_path(&books.join("a.epub")).unwrap(), "v2-longer").unwrap();
+        let third = scan_with(&mut cache, &books, &mut fake);
+        assert_eq!(calls.borrow().len(), 3);
+        assert_eq!(third[0].title, "v2-longer");
+        // 解析失败不缓存：下次重试；书删除后缓存清掉
+        std::fs::write(sidecar_path(&books.join("b.epub")).unwrap(), "bad").unwrap();
+        assert_eq!(scan_with(&mut cache, &books, &mut fake).len(), 1);
+        assert_eq!(scan_with(&mut cache, &books, &mut fake).len(), 1);
+        assert_eq!(calls.borrow().iter().filter(|c| *c == "bad").count(), 2, "失败项每次重试");
+        std::fs::remove_file(books.join("a.epub")).unwrap();
+        scan_with(&mut cache, &books, &mut fake);
+        assert!(!cache.contains_key(&sidecar_path(&books.join("a.epub")).unwrap()), "书没了缓存清掉");
     }
 
     #[test]

@@ -20,9 +20,13 @@ pub const PRESETS: &[Preset] = &[
     Preset { id: "gpt-5.6-luna", label: "GPT-5.6 Luna（OpenAI，便宜量大）", model: "gpt-5.6-luna", base_url: OPENAI, provider: "openai" },
     Preset { id: "gpt-5.6-terra", label: "GPT-5.6 Terra（OpenAI，性价比）", model: "gpt-5.6-terra", base_url: OPENAI, provider: "openai" },
     Preset { id: "gemini-3.8-flash", label: "Gemini 3.8 Flash（Google）", model: "gemini-3.8-flash", base_url: GEMINI, provider: "gemini" },
-    Preset { id: "deepseek-v4-flash", label: "DeepSeek V4 Flash（快省）", model: "deepseek-v4-flash", base_url: DEEPSEEK, provider: "deepseek" },
-    Preset { id: "deepseek-v4-pro", label: "DeepSeek V4 Pro（更强）", model: "deepseek-v4-pro", base_url: DEEPSEEK, provider: "deepseek" },
+    Preset { id: "deepseek-flash", label: "DeepSeek V4.1 Flash（快省）", model: "deepseek-flash", base_url: DEEPSEEK, provider: "deepseek" },
+    // 2026-09-14 起官方把 deepseek-v4-pro 请求暂由 V4.1 Flash 承接（按 Flash 计价），直到 V4.1-Pro 上线。
+    Preset { id: "deepseek-v4-pro", label: "DeepSeek V4 Pro（官方暂由 V4.1 Flash 承接）", model: "deepseek-v4-pro", base_url: DEEPSEEK, provider: "deepseek" },
 ];
+
+/// 官方已下线的预置 id → 现行 id（老配置里存的选择自动迁过去）。
+const RETIRED_PRESETS: &[(&str, &str)] = &[("deepseek-v4-flash", "deepseek-flash")];
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase", default)]
@@ -99,6 +103,7 @@ impl MindConfig {
     /// 老配置文件搬进新形状——只在启动加载时调用一次，见 `transcribe-serve::config::migrate` 的说明。
     pub fn migrate(mut self) -> Self {
         vendorcfg::migrate_legacy(PRESETS, &mut self.preset, &mut self.custom_model, &mut self.custom_base_url, &mut self.keys, &self.model, &self.base_url, &self.api_key);
+        vendorcfg::remap_retired_preset(&mut self.preset, &mut self.prices, RETIRED_PRESETS);
         self
     }
     /// 套用 PUT /config 的 JSON（同 `transcribe-serve::config::apply` 的规则，少了节流字段）。
@@ -236,5 +241,15 @@ mod tests {
         assert_eq!(c.model(), "qwen-plus", "preset 已经切到真实预置，model() 走预置表不走 customModel");
         assert_eq!(c.provider(), "dashscope");
         assert_eq!(c.key().as_deref(), Some("REDACTED-KEY"), "dashscope 格的 key 能正常解出来");
+    }
+
+    #[test]
+    fn migrate_remaps_retired_deepseek_flash_preset() {
+        let c: MindConfig = serde_json::from_value(serde_json::json!({"preset":"deepseek-v4-flash","keys":{"deepseek":"k"},"prices":{"deepseek-v4-flash":{"inputPer1k":0.1,"outputPer1k":0.2}}})).unwrap();
+        let c = c.migrate();
+        assert_eq!(c.preset, "deepseek-flash");
+        assert_eq!(c.model(), "deepseek-flash");
+        assert_eq!(c.key().as_deref(), Some("k"), "key 按厂商存，迁预置 id 不影响");
+        assert_eq!(c.prices["deepseek-flash"].input_per1k, 0.1, "自填单价跟着搬");
     }
 }

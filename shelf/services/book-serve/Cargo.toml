@@ -14,6 +14,8 @@ rmsvc-core = { path = "../../../rmsvc-core" }
 bookconv = { path = "../../crates/bookconv" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# statvfs 查母版库所在分区剩余空间（此前每次 GET /staging 都 fork 一个 `df`）；libc 本来就在依赖树里（inotify 拉进来的）
+libc = "0.2"
 
 [dev-dependencies]
 zip = { version = "2", default-features = false, features = ["deflate"] }

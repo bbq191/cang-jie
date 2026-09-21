@@ -163,6 +163,20 @@ pub fn migrate_legacy(
     true
 }
 
+/// 官方下线/改名的预置 id → 现行预置 id：老配置里存的选择自动迁过去（用户自填单价一并搬到新 id 名下，
+/// 新 id 下已有单价则不覆盖）。只在启动加载时调用；预置 id 不在 `renames` 里则原样不动。
+/// 返回是否真的迁移了。
+pub fn remap_retired_preset(preset: &mut String, prices: &mut BTreeMap<String, Price>, renames: &[(&str, &str)]) -> bool {
+    let Some(&(old, new)) = renames.iter().find(|(old, _)| preset.as_str() == *old) else {
+        return false;
+    };
+    *preset = new.to_string();
+    if let Some(p) = prices.remove(old) {
+        prices.entry(new.to_string()).or_insert(p);
+    }
+    true
+}
+
 /// PUT /config 的 PATCH 语义里"预置选择 + 自定义 model/baseUrl + key + 价格"这一段两个服务一字不差；
 /// 节流字段（`maxPerRun` 等，只有 transcribe-serve 有）和 `backend`/`prompt` 这类各服务自己按需处理的
 /// 单字段留给调用方在这个函数前后自己补，不塞进这里的签名——不然参数表会无限膨胀，得不偿失。
@@ -455,5 +469,26 @@ mod tests {
         assert_eq!(v["keyMasked"], "...cret");
         assert_eq!(v["maxPerRun"], 20, "调用方自己的字段原样透传");
         assert_eq!(v["presets"].as_array().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn remap_retired_preset_moves_selection_and_price_once() {
+        let renames = [("old-id", "new-id")];
+        let mut preset = "old-id".to_string();
+        let mut prices = BTreeMap::new();
+        prices.insert("old-id".to_string(), Price { input_per1k: 1.0, output_per1k: 2.0 });
+        assert!(remap_retired_preset(&mut preset, &mut prices, &renames));
+        assert_eq!(preset, "new-id");
+        assert!(!prices.contains_key("old-id"));
+        assert_eq!(prices["new-id"], Price { input_per1k: 1.0, output_per1k: 2.0 });
+        // 已是现行 id / 无关 id：不动
+        assert!(!remap_retired_preset(&mut preset, &mut prices, &renames));
+        // 新 id 下已有用户单价 → 不被旧单价覆盖
+        let mut preset = "old-id".to_string();
+        let mut prices = BTreeMap::new();
+        prices.insert("old-id".to_string(), Price { input_per1k: 9.0, output_per1k: 9.0 });
+        prices.insert("new-id".to_string(), Price { input_per1k: 1.0, output_per1k: 1.0 });
+        assert!(remap_retired_preset(&mut preset, &mut prices, &renames));
+        assert_eq!(prices["new-id"], Price { input_per1k: 1.0, output_per1k: 1.0 });
     }
 }

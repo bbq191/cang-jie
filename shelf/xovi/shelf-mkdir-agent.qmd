@@ -44,9 +44,15 @@
 ;   （顺手把已经真实存在的文件夹名从队列里剔除，不需要 QML 端 ack，跟 trash 队列的剔除方式对称）。
 ;
 ; 【触发】没有类似"打开书库文件夹视图"那种天然事件可等——建文件夹必须先于 /upload 发生，不能等
-;   上传后的 rowsInserted 才反应（因果顺序反了）。只能轮询：8s 一个 Timer（跟 cardhw-notify.qmd 的
-;   5s 文件轮询、shelf-trash-agent.qmd 的 4s 防抖是同一量级的"轮询成本可忽略"判断——loopback HTTP
-;   GET 一份几十字节的 JSON，多数时候 `names` 是空数组）。
+;   上传后的 rowsInserted 才反应（因果顺序反了）。2026-09-22 前是 8s 一个常驻 Timer 定时拉；现改为
+;   **长轮询**：`GET /mkdir/pending?wait=25` 由 book-serve 阻塞到有人入队或 25s 到期才回，QML 端收到
+;   回复后立即（名单为空 0.5s / 有名字 3s）再发下一次——空闲时每 25s 才一次往返（此前 7.5 次/分钟），
+;   入队后是即刻响应（此前平均等 4s）。实现上仍是一个 Timer，但 `repeat:false` 单发、只在上一次请求
+;   完成的回调里才 `restart()`，所以任何时刻最多一个未完成请求；出错（status≠200：book-serve 重启、
+;   连接被掐、Qt 传输超时）退避 15s；若回复是"立即返回的空名单"（旧版 book-serve 不认 wait 参数）则
+;   退回 8s 节奏，与旧行为一致。25s 取值须小于 Qt6 缺省 30s 传输超时（未在真机验证 QML XHR 的实际
+;   超时行为——这是部署后要确认的点：日志里不应出现周期性的 status 0 退避）。
+;   同一名字服务端在交出后 15s 内不重复交出（createCollection 异步，立刻再拉会重复建夹）。
 ;
 ; 【安全】`Library.createCollection` 不依赖任何"当前选中"状态（不像 trash 需要 `selection` 且必须
 ;   selection.size===0 才敢动），本身没有"误伤已有数据"的路径——最坏情况是名字冲突/重复调用，
@@ -68,23 +74,37 @@ AFFECT /qml/device/view/main/MainView.qml
                 objectName: "shelfMkdirAgent"
                 interval: 8000
                 running: true
-                repeat: true
+                repeat: false
                 onTriggered: {
+                    var t0 = Date.now();
                     var x = new XMLHttpRequest();
                     x.onreadystatechange = function() {
                         if (x.readyState !== XMLHttpRequest.DONE) { return; }
-                        if (x.status !== 200) { return; }
-                        try {
-                            var resp = JSON.parse(x.responseText);
-                            var names = resp.names || [];
-                            for (var i = 0; i < names.length; i++) {
-                                Library.createCollection("", names[i]);
-                                console.log("SHELF-MKDIR: created " + names[i]);
+                        var next = 15000;
+                        if (x.status === 200) {
+                            var count = 0;
+                            try {
+                                var resp = JSON.parse(x.responseText);
+                                var names = resp.names || [];
+                                count = names.length;
+                                for (var i = 0; i < names.length; i++) {
+                                    Library.createCollection("", names[i]);
+                                    console.log("SHELF-MKDIR: created " + names[i]);
+                                }
+                            } catch (e) {
                             }
-                        } catch (e) {
+                            if (count > 0) {
+                                next = 3000;
+                            } else if (Date.now() - t0 < 2000) {
+                                next = 8000;
+                            } else {
+                                next = 500;
+                            }
                         }
+                        shelfMkdirAgent.interval = next;
+                        shelfMkdirAgent.restart();
                     };
-                    x.open("GET", "http://127.0.0.1:8790/mkdir/pending");
+                    x.open("GET", "http://127.0.0.1:8790/mkdir/pending?wait=25");
                     x.send();
                 }
             }

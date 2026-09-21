@@ -45,6 +45,20 @@ impl BookDb {
         Ok(out)
     }
 
+    /// 读—改—写**已存在**的书（进程内串行化）：书不存在（或 uuid 非法）→ `Ok(None)`，不跑 `f`、不落盘、不建空书。
+    /// 取代此前"先 `load` 判存在、再 `update(.., || Default::default(), ..)`"的两步（多解析一遍整本 JSON，
+    /// 且两步之间不在同一把锁里）。
+    pub fn update_existing<T>(&self, uuid: &str, f: impl FnOnce(&mut Book) -> T) -> Result<Option<T>, String> {
+        if self.path(uuid).is_err() {
+            return Ok(None);
+        }
+        let _g = self.lock.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(mut book) = self.load(uuid) else { return Ok(None) };
+        let out = f(&mut book);
+        self.save(&book)?;
+        Ok(Some(out))
+    }
+
     /// 所有书（按标题排序）——含条目已全部撤销的书（内部/调试用；网页列表用 `list_active`）。
     pub fn list(&self) -> Vec<Book> {
         let mut out: Vec<Book> = std::fs::read_dir(&self.dir)
@@ -96,6 +110,21 @@ mod tests {
         db.update("u2", || Book { uuid: "u2".into(), title: "甲".into(), ..Default::default() }, |_| ()).unwrap();
         assert_eq!(db.load("u1").unwrap().chapters, vec!["一"]);
         assert_eq!(db.list().iter().map(|b| b.title.as_str()).collect::<Vec<_>>(), ["乙", "甲"], "按标题码位排序（乙 U+4E59 < 甲 U+7532）");
+    }
+
+    #[test]
+    fn update_existing_never_creates_a_book_and_handles_bad_uuid() {
+        let t = tempfile::tempdir().unwrap();
+        let db = BookDb::new(t.path().join("books"));
+        db.ensure().unwrap();
+        let mut ran = false;
+        assert_eq!(db.update_existing("ghost", |_| ran = true).unwrap(), None);
+        assert_eq!(db.update_existing("../evil", |_| ran = true).unwrap(), None, "非法 uuid 同样当作不存在");
+        assert!(!ran, "不存在的书不跑闭包");
+        assert!(db.list().is_empty() && !t.path().join("books/ghost.json").exists(), "不能悄悄建出空书");
+        db.update("u1", || Book { uuid: "u1".into(), title: "甲".into(), ..Default::default() }, |_| ()).unwrap();
+        assert_eq!(db.update_existing("u1", |b| { b.chapters.push("一".into()); b.chapters.len() }).unwrap(), Some(1));
+        assert_eq!(db.load("u1").unwrap().chapters, vec!["一"], "改动已落盘");
     }
 
     /// 回归：uuid 带 `/`、`..` 不能读写条目库目录之外的文件。

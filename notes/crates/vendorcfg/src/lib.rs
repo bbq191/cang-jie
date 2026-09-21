@@ -16,7 +16,7 @@
 //! **模型 id 是易变信息，不凭记忆写**：`DASHSCOPE`/`OPENAI`/`GEMINI`/`DEEPSEEK` 四个 baseUrl 常量、
 //! 以及两个服务各自预置表里的型号字符串，都是 2026-09-08 当天过 WebSearch/WebFetch 核实官方文档页
 //! 给出的（OpenAI `developers.openai.com/api/docs/models`、Gemini `ai.google.dev/gemini-api/docs/openai`、
-//! DeepSeek `api-docs.deepseek.com/quick_start/pricing`）——这类字符串官方随时会改名，写死进代码本身
+//! DeepSeek `api-docs.deepseek.com/quick_start/pricing`；DeepSeek 一栏 2026-09-22 复核过：现行 `deepseek-flash`＝V4.1 Flash（原生多模态）、`deepseek-v4-pro`，旧名 `deepseek-v4-flash`/`deepseek-v4-flash-vision-exp` 官方仍接受但模型已下线、由 V4.1 Flash 承接）——这类字符串官方随时会改名，写死进代码本身
 //! 就是权宜之计；真跑不通了首选去官方文档核对是不是又改了，而不是怀疑这段注释。豆包（火山方舟）
 //! **没有**收进预置表：它的"模型"实际是账号自建的推理接入点 ID（`ep-xxxxxxxx`），不是一个所有用户
 //! 通用的固定字符串，硬填一个占位模型名到预置表里反而是在提供一个保真不了的"已知能用"承诺——用户要
@@ -31,7 +31,7 @@ pub mod usage;
 
 pub use preset::{
     apply_common, key_masked, key_source, migrate_legacy, provider_for_base_url, public_json,
-    resolve_base_url, resolve_key, resolve_model, resolve_provider, usage_key, KeySource, Preset,
+    remap_retired_preset, resolve_base_url, resolve_key, resolve_model, resolve_provider, usage_key, KeySource, Preset,
     Price, VendorConfig, DASHSCOPE, DEEPSEEK, GEMINI, KEY_ENV, OPENAI,
 };
 pub use cell::ConfigCell;

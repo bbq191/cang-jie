@@ -37,7 +37,7 @@ pub fn is_handwriting(s: &Stroke) -> bool {
 pub fn cluster(strokes: &[Stroke], th: &Thresholds) -> Vec<Cluster> {
     let idx: Vec<usize> = (0..strokes.len()).filter(|&i| is_handwriting(&strokes[i])).collect();
     let mut parent: Vec<usize> = (0..idx.len()).collect();
-    fn find(p: &mut Vec<usize>, i: usize) -> usize {
+    fn find(p: &mut [usize], i: usize) -> usize {
         let mut r = i;
         while p[r] != r {
             r = p[r];
@@ -61,9 +61,9 @@ pub fn cluster(strokes: &[Stroke], th: &Thresholds) -> Vec<Cluster> {
         }
     }
     let mut groups: std::collections::BTreeMap<usize, Vec<usize>> = Default::default();
-    for a in 0..idx.len() {
+    for (a, &i) in idx.iter().enumerate() {
         let r = find(&mut parent, a);
-        groups.entry(r).or_default().push(idx[a]);
+        groups.entry(r).or_default().push(i);
     }
     let mut out: Vec<Cluster> = groups
         .into_values()

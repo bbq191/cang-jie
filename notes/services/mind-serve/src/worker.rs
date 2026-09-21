@@ -26,9 +26,10 @@ pub struct Answered {
     pub completion_tokens: u64,
 }
 
-/// 回答一条的问题并写回；返回回答文本 + token 消耗。要求条目勾了「问AI」且填了问题——两者都是网页写
+/// 回答一条的问题并写回；返回回答文本 + token 消耗。`book_title` 由调用方传入（它为了找条目已经取过整本书，
+/// 这里不再向 ink-serve 重复请求一遍——每次提问原来要白拉两次整本 JSON）。要求条目勾了「问AI」且填了问题——两者都是网页写
 /// 的字段，直接调这个端点绕过勾选框也会被拒（防止误触/脚本误调，语义上"问AI"这个开关就该管这件事）。
-pub fn ask_entry(c: &Ctx<'_>, uuid: &str, e: &Entry) -> Result<Answered, String> {
+pub fn ask_entry(c: &Ctx<'_>, uuid: &str, book_title: &str, e: &Entry) -> Result<Answered, String> {
     // 终态守卫（2026-09-09 审计补）：只检查 ask_ai/question 两个字段，不检查 status——一条已"跳过/
     // 撤销/删除"的条目只要 ask_ai 还留着 true 就能继续被问 AI、消耗 token，且对着一条用户认为已经
     // 处理完的条目回答没有意义。
@@ -39,8 +40,7 @@ pub fn ask_entry(c: &Ctx<'_>, uuid: &str, e: &Entry) -> Result<Answered, String>
         return Err("这条没勾「问AI」".into());
     }
     let question = e.question.as_deref().map(str::trim).filter(|q| !q.is_empty()).ok_or("没有问题内容")?;
-    let book = c.store.book(uuid)?;
-    let ctx = crate::prompt::Context { book: &book.title, chapter: &e.chapter_title, quote: e.quote.as_ref().map(|q| q.text.as_str()), text: e.display_text(), question };
+    let ctx = crate::prompt::Context { book: book_title, chapter: &e.chapter_title, quote: e.quote.as_ref().map(|q| q.text.as_str()), text: e.display_text(), question };
     let prompt = crate::prompt::build(&c.cfg.prompt, &ctx);
     let reply = match c.model.ask(&prompt) {
         Ok(r) => r,
@@ -112,7 +112,7 @@ mod tests {
         let model = Fixed("答案文本".into());
         let ledger = Ledger::open(&tempfile::tempdir().unwrap().path().join("mind.json"));
         let c = Ctx { store: &store, model: &model, cfg: &cfg(), ledger: &ledger, now: 42 };
-        let out = ask_entry(&c, "u", &entry(true, Some("这是谁"))).unwrap();
+        let out = ask_entry(&c, "u", "测试书", &entry(true, Some("这是谁"))).unwrap();
         assert_eq!((out.text.as_str(), out.prompt_tokens, out.completion_tokens), ("答案文本", 10, 2), "点「提问」弹出的消耗就是这次调用的实际数字（见 backend::Fixed）");
         let posted = store.posted.lock().unwrap();
         assert_eq!(posted.len(), 1);
@@ -127,9 +127,9 @@ mod tests {
         let model = Fixed("x".into());
         let ledger = Ledger::open(&tempfile::tempdir().unwrap().path().join("mind.json"));
         let c = Ctx { store: &store, model: &model, cfg: &cfg(), ledger: &ledger, now: 1 };
-        assert!(ask_entry(&c, "u", &entry(false, Some("问题"))).unwrap_err().contains("问AI"));
-        assert!(ask_entry(&c, "u", &entry(true, None)).unwrap_err().contains("问题"));
-        assert!(ask_entry(&c, "u", &entry(true, Some("  "))).unwrap_err().contains("问题"), "空白问题也算没有");
+        assert!(ask_entry(&c, "u", "测试书", &entry(false, Some("问题"))).unwrap_err().contains("问AI"));
+        assert!(ask_entry(&c, "u", "测试书", &entry(true, None)).unwrap_err().contains("问题"));
+        assert!(ask_entry(&c, "u", "测试书", &entry(true, Some("  "))).unwrap_err().contains("问题"), "空白问题也算没有");
         assert!(store.posted.lock().unwrap().is_empty(), "拒绝的不该有任何写回");
     }
 
@@ -144,7 +144,7 @@ mod tests {
         for s in [Status::Skipped, Status::Revoked, Status::Archived] {
             let mut e = entry(true, Some("问题"));
             e.status = s;
-            let err = ask_entry(&c, "u", &e).unwrap_err();
+            let err = ask_entry(&c, "u", "测试书", &e).unwrap_err();
             assert!(err.contains("跳过/撤销/删除"), "{s:?}: {err}");
         }
         assert!(store.posted.lock().unwrap().is_empty(), "终态条目一律不该有写回");
@@ -156,7 +156,7 @@ mod tests {
         let model = Fixed("!fail".into());
         let ledger = Ledger::open(&tempfile::tempdir().unwrap().path().join("mind.json"));
         let c = Ctx { store: &store, model: &model, cfg: &cfg(), ledger: &ledger, now: 5 };
-        let err = ask_entry(&c, "u", &entry(true, Some("问题"))).unwrap_err();
+        let err = ask_entry(&c, "u", "测试书", &entry(true, Some("问题"))).unwrap_err();
         assert_eq!(err, "模拟失败");
         assert!(store.posted.lock().unwrap().is_empty());
         let m = &ledger.snapshot().by_model[&cfg().usage_key()];

@@ -1,0 +1,96 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 700" font-family="sans-serif">
+  <defs>
+    <marker id="dd-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#555"/></marker>
+  </defs>
+  <rect x="0" y="0" width="1080" height="700" fill="#fbfbfa"/>
+  <text x="540" y="30" text-anchor="middle" font-size="18" font-weight="bold" fill="#1a1a1a">落库决策树：一本书怎样进 xochitl / KOReader</text>
+  <text x="540" y="50" text-anchor="middle" font-size="12.5" fill="#4a4a4a">入口 book-serve Staging::deliver（加入 xochitl）与 koreader-serve /books/adopt（加入 KOReader）；母版库里的原书字节永远保留</text>
+
+  <!-- 入口 -->
+  <rect x="340" y="68" width="400" height="40" rx="8" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.5"/>
+  <text x="540" y="93" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">点「加入 xochitl」 POST /staging/deliver {name, folder}</text>
+  <line x1="540" y1="108" x2="540" y2="128" stroke="#555" stroke-width="1.5" marker-end="url(#dd-a)"/>
+
+  <!-- 先决 -->
+  <rect x="270" y="130" width="540" height="62" rx="8" fill="#f0f0ee" stroke="#8a8a8a" stroke-width="1.5"/>
+  <text x="540" y="151" text-anchor="middle" font-size="12" fill="#1a1a1a">先决 1：格式只认 EPUB / PDF（其它格式拒绝，指引「加入 KOReader」）</text>
+  <text x="540" y="170" text-anchor="middle" font-size="12" fill="#1a1a1a">先决 2：文件夹名不存在 → 入 mkdir 队列，等 qmd 代理在设备上真建出来</text>
+  <text x="540" y="186" text-anchor="middle" font-size="11" fill="#4a4a4a">（最多等 20 秒；超时不算错，退回落书库根；留空 = 书库根）</text>
+  <line x1="540" y1="192" x2="540" y2="212" stroke="#555" stroke-width="1.5" marker-end="url(#dd-a)"/>
+
+  <!-- 判断 A -->
+  <polygon points="330,262 540,214 750,262 540,310" fill="#fff3d6" stroke="#c9971f" stroke-width="1.6"/>
+  <text x="540" y="258" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">体积 &gt; 90MB ?</text>
+  <text x="540" y="277" text-anchor="middle" font-size="11" fill="#3a3a3a">nativeUploadLimitMb；0 = 不拦</text>
+
+  <!-- 否：普通上传 -->
+  <line x1="330" y1="262" x2="292" y2="262" stroke="#555" stroke-width="1.5" marker-end="url(#dd-a)"/>
+  <text x="311" y="254" text-anchor="middle" font-size="12" font-weight="bold" fill="#2f7d45">否</text>
+  <rect x="30" y="214" width="262" height="100" rx="8" fill="#e8f5ec" stroke="#3f9a55" stroke-width="1.6"/>
+  <text x="161" y="236" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">① 流式 /upload</text>
+  <text x="161" y="256" text-anchor="middle" font-size="11" fill="#1a1a1a">upload_file 不把整本读进内存</text>
+  <text x="161" y="274" text-anchor="middle" font-size="11" fill="#1a1a1a">EPUB：另起线程做渲染自检</text>
+  <text x="161" y="292" text-anchor="middle" font-size="11" fill="#1a1a1a">漫画 EPUB：登记「首开设页边距」</text>
+  <text x="161" y="308" text-anchor="middle" font-size="10" fill="#4a4a4a">见 §03aa · §03be</text>
+
+  <line x1="540" y1="310" x2="540" y2="352" stroke="#555" stroke-width="1.5" marker-end="url(#dd-a)"/>
+  <text x="552" y="336" font-size="12" font-weight="bold" fill="#b0451f">是（超限）</text>
+
+  <!-- 判断 B -->
+  <polygon points="310,410 540,354 770,410 540,466" fill="#fff3d6" stroke="#c9971f" stroke-width="1.6"/>
+  <text x="540" y="404" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">≤ 1GiB，且本机有书库目录，</text>
+  <text x="540" y="424" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">且占位文档造得出 ?</text>
+
+  <!-- 是：占位 -->
+  <line x1="310" y1="410" x2="292" y2="410" stroke="#555" stroke-width="1.5" marker-end="url(#dd-a)"/>
+  <text x="301" y="402" text-anchor="middle" font-size="12" font-weight="bold" fill="#2f7d45">是</text>
+  <rect x="30" y="356" width="262" height="108" rx="8" fill="#e8f5ec" stroke="#3f9a55" stroke-width="1.6"/>
+  <text x="161" y="378" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">② 占位 + 磁盘替换（首选）</text>
+  <text x="161" y="398" text-anchor="middle" font-size="11" fill="#1a1a1a">先传几 KB 占位，再原子换成真文件</text>
+  <text x="161" y="416" text-anchor="middle" font-size="11" fill="#1a1a1a">不分卷、不限漫画、EPUB/PDF 都行</text>
+  <text x="161" y="434" text-anchor="middle" font-size="11" fill="#1a1a1a">EPUB 首开才渲染，徽章记 onopen</text>
+  <text x="161" y="452" text-anchor="middle" font-size="10" fill="#4a4a4a">见 §03bn · upload-limit-bypass.svg</text>
+
+  <line x1="540" y1="466" x2="540" y2="504" stroke="#555" stroke-width="1.5" marker-end="url(#dd-a)"/>
+  <text x="552" y="490" font-size="12" font-weight="bold" fill="#b0451f">否（任一条件不满足）</text>
+
+  <!-- 判断 C -->
+  <polygon points="310,552 540,506 770,552 540,598" fill="#fff3d6" stroke="#c9971f" stroke-width="1.6"/>
+  <text x="540" y="548" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">漫画 EPUB，或带书签的</text>
+  <text x="540" y="567" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">漫画 PDF ?</text>
+
+  <!-- 是：拆卷 -->
+  <line x1="310" y1="552" x2="292" y2="552" stroke="#555" stroke-width="1.5" marker-end="url(#dd-a)"/>
+  <text x="301" y="544" text-anchor="middle" font-size="12" font-weight="bold" fill="#2f7d45">是</text>
+  <rect x="30" y="496" width="262" height="112" rx="8" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.6"/>
+  <text x="161" y="517" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">③ 兜底：按卷拆分</text>
+  <text x="161" y="536" text-anchor="middle" font-size="11" fill="#1a1a1a">EPUB：NCX 第一层切，单卷仍超</text>
+  <text x="161" y="552" text-anchor="middle" font-size="11" fill="#1a1a1a">再按页贪心切；PDF：按书签分卷</text>
+  <text x="161" y="570" text-anchor="middle" font-size="11" fill="#1a1a1a">逐份 /upload，等 xochitl 渲染完</text>
+  <text x="161" y="586" text-anchor="middle" font-size="11" fill="#1a1a1a">再传下一份，回执聚合各份成败</text>
+  <text x="161" y="602" text-anchor="middle" font-size="10" fill="#4a4a4a">见 §03ax · comic-split-deliver.svg</text>
+
+  <!-- 否：拒绝 -->
+  <line x1="770" y1="552" x2="788" y2="552" stroke="#555" stroke-width="1.5" marker-end="url(#dd-a)"/>
+  <text x="779" y="544" text-anchor="middle" font-size="12" font-weight="bold" fill="#b0451f">否</text>
+  <rect x="790" y="496" width="262" height="112" rx="8" fill="#fbe9e4" stroke="#b0451f" stroke-width="1.6"/>
+  <text x="921" y="517" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">④ 拒绝（回执给出路）</text>
+  <text x="921" y="537" text-anchor="middle" font-size="11" fill="#1a1a1a">非漫画 EPUB、无书签 PDF、</text>
+  <text x="921" y="553" text-anchor="middle" font-size="11" fill="#1a1a1a">或拆到底单卷仍超限</text>
+  <text x="921" y="573" text-anchor="middle" font-size="11" fill="#1a1a1a">→ 改用「加入 KOReader」，</text>
+  <text x="921" y="589" text-anchor="middle" font-size="11" fill="#1a1a1a">或自行把 PDF 分成多份</text>
+
+  <!-- KOReader 旁路 -->
+  <rect x="790" y="68" width="262" height="124" rx="8" fill="#fff3d6" stroke="#c9971f" stroke-width="1.6"/>
+  <text x="921" y="90" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">另一条路：加入 KOReader</text>
+  <text x="921" y="110" text-anchor="middle" font-size="11" fill="#1a1a1a">koreader-serve POST /books/adopt</text>
+  <text x="921" y="128" text-anchor="middle" font-size="11" fill="#1a1a1a">本地复制到 .part 再 rename</text>
+  <text x="921" y="146" text-anchor="middle" font-size="11" fill="#1a1a1a">不经优化器、不限体积、不限格式</text>
+  <text x="921" y="164" text-anchor="middle" font-size="11" fill="#1a1a1a">与 xochitl 那份是同一份母版字节</text>
+  <text x="921" y="182" text-anchor="middle" font-size="10" fill="#4a4a4a">后由前端 POST /staging/mark 记一笔</text>
+
+  <!-- 底部说明 -->
+  <rect x="30" y="628" width="1022" height="54" rx="8" fill="#f0f0ee" stroke="#8a8a8a" stroke-width="1.2"/>
+  <text x="541" y="649" text-anchor="middle" font-size="11.5" fill="#1a1a1a">成功后统一：写边车 .&lt;书名&gt;.delivered（native 时间戳，EPUB 与大文件另写 render 记录）；每完成一步向 SSE 推 books/staging，网页零轮询刷新</text>
+  <text x="541" y="668" text-anchor="middle" font-size="11.5" fill="#4a4a4a">占位已上传之后才出的错直接报错、不再退回分卷（否则书库里会留重复内容）；占位残留由用户手动删除，不做回滚删除</text>
+</svg>

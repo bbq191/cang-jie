@@ -118,11 +118,18 @@ pub(super) fn transform_html_chapter(
 }
 
 /// 图片最终变换：按漫画/文字书分流（EPUB 线原则④：漫画只裁边/适配屏幕，不许压画质）。
-pub(super) fn transform_image_bytes(bytes: &[u8], is_comic_book: bool, comic_frame: crate::imgopt::EpubComicFrame) -> Vec<u8> {
-    if is_comic_book {
-        // 单趟（解码/编码各一次、灰度保持、缩放走 SIMD）——此前三道串联的问题见 `prepare_comic_page_for_epub`。
-        crate::imgopt::prepare_comic_page_for_epub(bytes, comic_frame).unwrap_or_else(|| bytes.to_vec())
-    } else {
-        crate::imgopt::downscale_for_epub(bytes).unwrap_or_else(|| bytes.to_vec())
-    }
+/// 返回 `None` = 无需改动、沿用原字节（调用方自己决定借用还是移走，不为"没变"整张图克隆一份）。
+///
+/// 解码器遇到畸形图片偶发 panic（第三方书的坏 JPEG/PNG 是外部输入）：这里兜住、按"失败原样保留"处理——此前 panic 会从
+/// 图片 worker 线程一路把整本书的优化搞砸（`thread::scope` 把子线程 panic 重新抛给调用方），只为一张坏图不值得。
+pub(super) fn transform_image_bytes(bytes: &[u8], is_comic_book: bool, comic_frame: crate::imgopt::EpubComicFrame) -> Option<Vec<u8>> {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        if is_comic_book {
+            // 单趟（解码/编码各一次、灰度保持、缩放走 SIMD）——此前三道串联的问题见 `prepare_comic_page_for_epub`。
+            crate::imgopt::prepare_comic_page_for_epub(bytes, comic_frame)
+        } else {
+            crate::imgopt::downscale_for_epub(bytes)
+        }
+    }))
+    .unwrap_or(None)
 }

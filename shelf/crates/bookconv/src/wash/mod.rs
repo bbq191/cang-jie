@@ -12,7 +12,7 @@
 //! 3. 边距归零（= `--margin-* 0`）：body/html/@page 的 margin/padding 删掉，并注入 `html,body{margin:0;padding:0}`。
 //! 4. 段距归零 + 首行缩进（= `--remove-paragraph-spacing --remove-paragraph-spacing-indent-size 2`）：p/div 的
 //!    上下 margin/padding 归零（左右保留：blockquote/列表缩进不伤），`p{text-indent:2em}`；`keep_para_spacing` 时
-//!    只注缩进（= `WASH_KEEP_PARA_SPACING=1`）。注入块带 `!important` 兜住类选择器（`.calibre1{margin:1em 0}`）。
+//!    只注缩进（= `WASH_KEEP_PARA_SPACING=1`）。类规则须带元素名才压得过书自带类规则（见书架白皮书 §03y 的七条规则；xochitl 不认 `!important`）。
 //! 5. 空页清理：正文无文字无图（Calibre MOBI 转出的 `mbppagebreak` 独占页）→ 从 spine/manifest/zip 删除，
 //!    目录里指向它的条目改指下一篇。
 //! 6. 自动目录（= `--use-auto-toc --level1-toc //h:h1 --level2-toc //h:h2`）：缺省**仅在书无目录时**从 h1/h2 生成

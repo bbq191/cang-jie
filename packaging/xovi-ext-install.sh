@@ -40,13 +40,15 @@ cj_require_root || exit 1
 
 # 备份进 cangjie-backups（绝不能留在 extensions.d：xovi 把该目录下任意文件当扩展加载，
 # 同名扩展重复注册是致命错误，见 工程纪律），并只保留最近几份。
-if [ -f "$EXTDIR/$EXT_SO" ] && ! cmp -s "$PAYLOAD/$EXT_SO" "$EXTDIR/$EXT_SO"; then cj_backup_file "$EXTDIR/$EXT_SO" || exit 1; fi   # 内容没变就不堆重复备份
+cj_backup_if_differs "$PAYLOAD/$EXT_SO" "$EXTDIR/$EXT_SO" || exit 1   # 内容没变就不堆重复备份
 
 # 原子替换：先写到 extensions.d 之外的暂存目录再 rename 进去——不在运行中 xochitl 已映射的 inode 上原地写，
 # 中途失败也不会在 extensions.d 里留下半个 .so。
 echo "-- 装 $EXT_SO -> $EXTDIR/"
 cj_safe_replace "$PAYLOAD/$EXT_SO" "$EXTDIR/$EXT_SO" "$CJ_STAGE_DIR" 755 || { echo "!! 写 $EXTDIR/$EXT_SO 失败"; exit 1; }
-rm -f "$EXTDIR/$EXT_SO.crashed"   # 清旧崩溃标记
+EXT_CHANGED="$CJ_REPLACED"
+if [ -e "$EXTDIR/$EXT_SO.crashed" ]; then EXT_CHANGED=1; rm -f "$EXTDIR/$EXT_SO.crashed"; fi   # 清旧崩溃标记（有过崩溃标记 = 需要重启重新载入一次）
+cj_stage_cleanup
 
 # reading-qol.json 首次装才建（不覆盖已有设置）；其它键留给别的功能各自维护，这里不动。
 RQOL="$DATADIR/reading-qol.json"
@@ -57,8 +59,14 @@ if [ ! -s "$RQOL" ]; then
 fi
 
 if [ "$NO_RESTART" = "1" ]; then
-    echo "-- --no-restart：$EXT_SO 已落盘，未重启 xochitl（由外部编排方稍后统一执行一次）"
-    echo "✅ 已就位，尚未生效——外部编排方跑完这轮 xochitl 重启后再确认"
+    if [ "$EXT_CHANGED" = "1" ]; then
+        cj_pending_mark "$EXT_NAME" || true
+        echo "-- --no-restart：$EXT_SO 已落盘（有变化），未重启 xochitl（由外部编排方稍后统一执行一次）"
+        echo "✅ 已就位，尚未生效——外部编排方跑完这轮 xochitl 重启后再确认"
+    else
+        echo "-- --no-restart：$EXT_SO 与设备上已装的逐字节相同，无需重启 xochitl"
+        echo "✅ 已是最新"
+    fi
     exit 0
 fi
 

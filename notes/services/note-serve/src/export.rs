@@ -88,7 +88,8 @@ pub fn export_chapter(dir: &Path, book: &Book, chapter_idx: usize, title: &str, 
     if existing.as_ref().map(|r| r.fingerprint.as_str()) == Some(fingerprint.as_str()) {
         return Ok(ExportOutcome::Unchanged);
     }
-    let md = notecore::export::export_chapter_md(book, chapter_idx).expect("指纹是 Some，md 也该有内容——两者算的是同一份 live_entries");
+    // 指纹是 Some，md 也该有内容（两者算的是同一份 live_entries）；万一不一致宁可报错也不 panic。
+    let md = notecore::export::export_chapter_md(book, chapter_idx).ok_or_else(|| format!("第 {} 章有指纹却没有可导出内容（内部不一致）", chapter_idx + 1))?;
     let path = dir.join(format!("{}.md", sanitize(&notecore::export::chapter_stem(chapter_idx, title))));
     rmsvc_core::fs::write_atomic(&path, md.as_bytes()).map_err(|e| format!("写 {} 失败: {e}", path.display()))?;
     state.set(&book.uuid, chapter_idx, ExportRecord { fingerprint, exported_at: rmsvc_core::clock::now_secs() })?;

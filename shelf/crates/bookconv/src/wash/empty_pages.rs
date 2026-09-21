@@ -18,6 +18,31 @@ pub(super) fn is_empty_page(html: &str) -> bool {
     text.trim().is_empty()
 }
 
+/// 一遍扫描删掉 OPF 里 `id`/`idref` 属于 `ids` 的 `<item>`/`<itemref>`（连同紧随的空白与空闭合标签）。
+/// 此前对每个被删页各编译两个正则、各整份扫描一遍 OPF：Calibre MOBI 转出的书常有上千个 `mbppagebreak` 独占页，
+/// 即上千次编译 + 上千次整份 OPF 扫描（`bench_tmp emptypages`：1500 页/750 空页，host 380ms → 见提交说明）。
+pub(super) fn drop_opf_refs(opf: &str, ids: &HashSet<&str>) -> String {
+    static ITEMREF: OnceLock<Regex> = OnceLock::new();
+    static ITEM: OnceLock<Regex> = OnceLock::new();
+    static IDREF_ATTR: OnceLock<Regex> = OnceLock::new();
+    static ID_ATTR: OnceLock<Regex> = OnceLock::new();
+    let itemref = ITEMREF.get_or_init(|| Regex::new(r#"<itemref\b[^>]*>(?:\s*</itemref>)?\s*"#).unwrap());
+    let item = ITEM.get_or_init(|| Regex::new(r#"<item\b[^>]*>(?:\s*</item>)?\s*"#).unwrap());
+    let idref_attr = IDREF_ATTR.get_or_init(|| Regex::new(r#"\bidref="([^"]*)""#).unwrap());
+    let id_attr = ID_ATTR.get_or_init(|| Regex::new(r#"\bid="([^"]*)""#).unwrap());
+    let drop_if = |c: &regex::Captures, attr: &Regex| -> String {
+        let whole = c.get(0).unwrap().as_str();
+        let tag_end = whole.find('>').map_or(whole.len(), |i| i + 1);
+        if attr.captures_iter(&whole[..tag_end]).any(|a| ids.contains(&a[1])) {
+            String::new()
+        } else {
+            whole.to_string()
+        }
+    };
+    let out = itemref.replace_all(opf, |c: &regex::Captures| drop_if(c, idref_attr));
+    item.replace_all(&out, |c: &regex::Captures| drop_if(c, id_attr)).into_owned()
+}
+
 pub(super) fn remove_empty_pages(entries: &mut Vec<Entry>, rep: &mut WashReport) {
     let Some(opf) = parse_opf(entries) else { return };
     let mut removed: Vec<String> = Vec::new();
@@ -42,14 +67,8 @@ pub(super) fn remove_empty_pages(entries: &mut Vec<Entry>, rep: &mut WashReport)
     };
     let repl: HashMap<String, String> = removed.iter().filter_map(|p| replacement(p).map(|r| (p.clone(), r))).collect();
     // OPF：删 itemref + item
-    let ids: Vec<String> = opf.items.iter().filter(|(_, v)| removed_set.contains(v)).map(|(k, _)| k.clone()).collect();
-    let mut text = String::from_utf8_lossy(&entries[opf.index].data).into_owned();
-    for id in &ids {
-        let re = Regex::new(&format!(r#"<itemref\b[^>]*\bidref="{}"[^>]*/?>(?:\s*</itemref>)?\s*"#, regex::escape(id))).unwrap();
-        text = re.replace_all(&text, "").into_owned();
-        let re = Regex::new(&format!(r#"<item\b[^>]*\bid="{}"[^>]*/?>(?:\s*</item>)?\s*"#, regex::escape(id))).unwrap();
-        text = re.replace_all(&text, "").into_owned();
-    }
+    let ids: HashSet<&str> = opf.items.iter().filter(|(_, v)| removed_set.contains(v)).map(|(k, _)| k.as_str()).collect();
+    let text = drop_opf_refs(&String::from_utf8_lossy(&entries[opf.index].data), &ids);
     entries[opf.index].data = text.into_bytes();
     // 目录（ncx/nav）里指向被删页的引用 → 改指替换页
     let toc_files: Vec<String> = entries.iter().filter(|e| is_toc_file(&e.name)).map(|e| e.name.clone()).collect();

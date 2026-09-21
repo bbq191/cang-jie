@@ -19,7 +19,8 @@ const zh = fs.readFileSync(UI + 'locales/zh-CN.json','utf8');
 const mock = `
 window.__hits = {}; window.__es = []; window.__hidden = false; window.__xss = 0;
 Object.defineProperty(document, 'hidden', {get: () => window.__hidden});
-class ES { constructor(u){ this.u=u; window.__es.push(this);} close(){} }
+class ES { constructor(u){ this.u=u; this.closed=false; window.__es.push(this); setTimeout(() => this.onopen && !this.closed && this.onopen(), 10);} close(){ this.closed=true; } }
+const __st = window.setTimeout.bind(window); window.setTimeout = (f, ms, ...a) => __st(f, ms === 60000 && window.__hiddenCloseMs ? window.__hiddenCloseMs : ms, ...a);
 window.EventSource = ES;
 const zh = ${JSON.stringify(zh)};
 const evil = '<img src=x onerror=window.__xss=1>.epub';
@@ -73,6 +74,21 @@ out.hiddenHits = (await hits()) - h0;
 await page.evaluate(() => { window.__hidden = false; document.dispatchEvent(new Event('visibilitychange')); });
 await new Promise(r => setTimeout(r, 300));
 out.afterVisible = (await hits()) - h0;
+// 搜索框防抖：连敲字不立即整表重画，停手 150ms 后才生效
+out.searchImmediate = await page.evaluate(() => { const q = document.querySelector('#stgq'); q.value = 'zzz-no-match'; q.dispatchEvent(new Event('input')); return document.querySelectorAll('#stglist .stg-row').length; });
+await new Promise(r => setTimeout(r, 400));
+out.searchAfter = await page.evaluate(() => { const q = document.querySelector('#stgq'); const n = document.querySelectorAll('#stglist .stg-row').length; q.value = ''; q.dispatchEvent(new Event('change')); return n; });
+// 隐藏超时后断开 SSE、重新可见时重连并补刷一次（把 60s 缩成 50ms）；心跳参数 ka=60
+out.esUrl = await page.evaluate(() => window.__es[0].u);
+await page.evaluate(() => { window.__hiddenCloseMs = 50; window.__hidden = true; document.dispatchEvent(new Event('visibilitychange')); });
+await new Promise(r => setTimeout(r, 300));
+out.esClosedWhileHidden = await page.evaluate(() => window.__es[window.__es.length - 1].closed);
+const h2 = await hits();
+await page.evaluate(() => { window.__hidden = false; document.dispatchEvent(new Event('visibilitychange')); });
+await new Promise(r => setTimeout(r, 400));
+out.esCount = await page.evaluate(() => window.__es.length);
+out.esReopenedOpen = await page.evaluate(() => !window.__es[window.__es.length - 1].closed);
+out.reopenRefresh = (await hits()) - h2;
 // 无轮询：等 4 秒无新请求
 const h1 = await hits();
 await new Promise(r => setTimeout(r, 4000));
@@ -85,6 +101,13 @@ assert.ok(out.listText.includes('<img src=x'), '文件名应作为文本显示')
 assert.ok(out.afterBurst <= 2, `事件突发应合并，实际 ${out.afterBurst} 次`);
 assert.equal(out.hiddenHits, 0, '页面隐藏时不该刷新');
 assert.equal(out.afterVisible, 1, '可见后应补刷一次');
+assert.equal(out.searchImmediate, 1, '敲字后同一时刻不该立即重画（防抖）');
+assert.equal(out.searchAfter, 0, '防抖到点后过滤应生效');
+assert.ok(out.esUrl.includes('ka=60'), 'SSE 应带 ?ka=60 拉长心跳');
+assert.equal(out.esClosedWhileHidden, true, '页面隐藏超时后应断开 SSE');
+assert.equal(out.esCount, 2, '重新可见应重连（新建一条 EventSource）');
+assert.equal(out.esReopenedOpen, true);
+assert.equal(out.reopenRefresh, 1, '重连成功应补刷当前 tab 一次');
 assert.equal(out.idleHits, 0, '空闲时不该有轮询');
 assert.deepEqual(errs, [], '不该有 JS 报错');
 console.log('smoke OK');

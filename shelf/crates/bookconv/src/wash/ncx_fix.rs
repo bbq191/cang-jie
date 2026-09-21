@@ -3,7 +3,7 @@ use super::*;
 
 /// 修 `toc.ncx` 的 `dtb:uid` 跟 OPF 实际标识符不一致的问题（见 `opf_unique_identifier` 注释）。
 /// 幂等、只在真的不一致时改；OPF 没有可解析的标识符（极少见）时不动。
-pub(super) fn fix_ncx_uid(entries: &mut Vec<Entry>, rep: &mut WashReport) {
+pub(super) fn fix_ncx_uid(entries: &mut [Entry], rep: &mut WashReport) {
     let Some(uid) = opf_unique_identifier(entries) else { return };
     static META: OnceLock<Regex> = OnceLock::new();
     let re = META.get_or_init(|| Regex::new(r#"(<meta\s+name="dtb:uid"\s+content=")[^"]*("\s*/?>)"#).unwrap());
@@ -35,7 +35,7 @@ pub(super) fn fix_ncx_uid(entries: &mut Vec<Entry>, rep: &mut WashReport) {
 /// id 从 "toc" 改成 "ncx"（`<spine toc="...">` 同步改，否则 idref 悬空），94 条章节标题全部
 /// 恢复（`.epubindex` 从 7188 字节涨到 15558 字节）。幂等；已经叫 "ncx"、或跟另一条目 id 冲突
 /// （改了会撞车，极罕见）时不动。
-pub(super) fn fix_ncx_manifest_id(entries: &mut Vec<Entry>, rep: &mut WashReport) {
+pub(super) fn fix_ncx_manifest_id(entries: &mut [Entry], rep: &mut WashReport) {
     let Some(opf) = parse_opf(entries) else { return };
     if opf.items.contains_key("ncx") {
         return; // 已经叫 ncx，或者已有另一条目占了这个 id——两种情况都不该动
@@ -59,7 +59,7 @@ pub(super) fn fix_ncx_manifest_id(entries: &mut Vec<Entry>, rep: &mut WashReport
     static SPINE_TOC: OnceLock<Regex> = OnceLock::new();
     let spine_re = SPINE_TOC.get_or_init(|| Regex::new(r#"(<spine\b[^>]*\btoc=")([^"]+)(")"#).unwrap());
     if let Some(c) = spine_re.captures(&new_text) {
-        if &c[2] == old_id {
+        if c[2] == old_id {
             let whole = c.get(0).unwrap();
             let replaced = format!("{}ncx{}", &c[1], &c[3]);
             let range = whole.range();
@@ -78,7 +78,7 @@ pub(super) fn fix_ncx_manifest_id(entries: &mut Vec<Entry>, rep: &mut WashReport
 /// 卡住/超时/直接判整份 NCX 不可用，原生目录入口因此消失，但书本身照常能读——不影响 spine 阅读，
 /// 只影响"目录"这个附加功能，症状完全吻合。剥掉不改变 NCX 的任何实际语义，纯粹去掉这个外部依赖，
 /// `build_ncx` 自己生成的 NCX 也从来不带 DOCTYPE，这里是让已有 NCX 向那个已经验证过没问题的形态看齐。
-pub(super) fn strip_ncx_doctype(entries: &mut Vec<Entry>, rep: &mut WashReport) {
+pub(super) fn strip_ncx_doctype(entries: &mut [Entry], rep: &mut WashReport) {
     static RE: OnceLock<Regex> = OnceLock::new();
     let re = RE.get_or_init(|| Regex::new(r#"(?is)<!DOCTYPE\s+ncx\b[^>]*>\s*"#).unwrap());
     for e in entries.iter_mut() {

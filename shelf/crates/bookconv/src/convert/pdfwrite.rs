@@ -161,8 +161,8 @@ fn png_to_image(data: &[u8]) -> Result<PdfImage, String> {
             let mut out = Vec::with_capacity((w * h * 3) as usize);
             for px in bytes.chunks_exact(4) {
                 let a = px[3] as u32;
-                for c in 0..3 {
-                    out.push(((px[c] as u32 * a + 255 * (255 - a)) / 255) as u8);
+                for &v in &px[..3] {
+                    out.push(((v as u32 * a + 255 * (255 - a)) / 255) as u8);
                 }
             }
             (ColorSpace::Rgb, out)
@@ -185,54 +185,62 @@ fn png_to_image(data: &[u8]) -> Result<PdfImage, String> {
 
 /// 把若干页图片组装成 PDF 字节。每页 MediaBox = 图片像素尺寸（1px=1pt）。
 /// 对象编号：1=Catalog，2=Pages，之后每页 3 个对象（Page/Image/Contents）。
+///
+/// 逐对象直接写进（按总量预留好容量的）输出缓冲区——此前先给每个对象各建一份 `Vec<u8>`（图片字节整份复制一遍）、
+/// 最后再拼成 `out`（又一遍），调用方持有的 `images` + `objects` + `out` 三份整本体积同时驻留；现在只剩 `images` + `out`。
+/// 产物字节与旧实现逐字节一致（`images_to_pdf_output_bytes_are_stable` 钉住）。
 pub fn images_to_pdf(images: &[PdfImage]) -> Result<Vec<u8>, String> {
     if images.is_empty() {
         return Err("PDF 至少要有一页".into());
     }
     let n = images.len();
-    let mut objects: Vec<Vec<u8>> = Vec::with_capacity(2 + n * 3);
-    objects.push(b"<< /Type /Catalog /Pages 2 0 R >>".to_vec());
+    let cap = images.iter().map(|i| i.data.len() + 640).sum::<usize>() + n * 8 + 512;
+    let mut out: Vec<u8> = Vec::with_capacity(cap);
+    out.extend_from_slice(b"%PDF-1.7\n%\xE2\xE3\xCF\xD3\n");
+    let mut offsets: Vec<usize> = Vec::with_capacity(2 + n * 3);
+    // 写一个对象：`{id} 0 obj\n` + body + `\nendobj\n`，并记下起始偏移。
+    fn obj(out: &mut Vec<u8>, offsets: &mut Vec<usize>, body: &[u8]) {
+        offsets.push(out.len());
+        out.extend_from_slice(format!("{} 0 obj\n", offsets.len()).as_bytes());
+        out.extend_from_slice(body);
+        out.extend_from_slice(b"\nendobj\n");
+    }
+    obj(&mut out, &mut offsets, b"<< /Type /Catalog /Pages 2 0 R >>");
     let mut kids = String::new();
     for i in 0..n {
         kids.push_str(&format!("{} 0 R ", 3 + i * 3));
     }
-    objects.push(
-        format!("<< /Type /Pages /Kids [{}] /Count {} >>", kids.trim_end(), n).into_bytes(),
-    );
+    obj(&mut out, &mut offsets, format!("<< /Type /Pages /Kids [{}] /Count {} >>", kids.trim_end(), n).as_bytes());
     for (i, img) in images.iter().enumerate() {
         let page_id = 3 + i * 3;
         let image_id = page_id + 1;
         let contents_id = page_id + 2;
-        objects.push(
+        obj(
+            &mut out,
+            &mut offsets,
             format!(
                 "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {w} {h}] /Resources << /XObject << /Im0 {im} 0 R >> >> /Contents {con} 0 R >>",
                 w = img.width, h = img.height, im = image_id, con = contents_id
             )
-            .into_bytes(),
+            .as_bytes(),
         );
-        let mut xobj = format!(
-            "<< /Type /XObject /Subtype /Image /Width {w} /Height {h} /ColorSpace {cs} /BitsPerComponent {bpc} /Filter {f} /Length {len} >>\nstream\n",
-            w = img.width, h = img.height, cs = img.color.pdf_name(), bpc = img.bits, f = img.filter.pdf_name(), len = img.data.len()
-        ).into_bytes();
-        xobj.extend_from_slice(&img.data);
-        xobj.extend_from_slice(b"\nendstream");
-        objects.push(xobj);
-        let content = format!("q\n{w} 0 0 {h} 0 0 cm\n/Im0 Do\nQ\n", w = img.width, h = img.height);
-        objects.push(
-            format!("<< /Length {} >>\nstream\n{}endstream", content.len(), content).into_bytes(),
-        );
-    }
-    let mut out: Vec<u8> = Vec::new();
-    out.extend_from_slice(b"%PDF-1.7\n%\xE2\xE3\xCF\xD3\n");
-    let mut offsets: Vec<usize> = Vec::with_capacity(objects.len());
-    for (i, obj) in objects.iter().enumerate() {
+        // 图片对象：头 + 流数据 + 尾，数据直接从 `img.data` 进 `out`（不经中间 Vec）。
         offsets.push(out.len());
-        out.extend_from_slice(format!("{} 0 obj\n", i + 1).as_bytes());
-        out.extend_from_slice(obj);
-        out.extend_from_slice(b"\nendobj\n");
+        out.extend_from_slice(format!("{} 0 obj\n", offsets.len()).as_bytes());
+        out.extend_from_slice(
+            format!(
+                "<< /Type /XObject /Subtype /Image /Width {w} /Height {h} /ColorSpace {cs} /BitsPerComponent {bpc} /Filter {f} /Length {len} >>\nstream\n",
+                w = img.width, h = img.height, cs = img.color.pdf_name(), bpc = img.bits, f = img.filter.pdf_name(), len = img.data.len()
+            )
+            .as_bytes(),
+        );
+        out.extend_from_slice(&img.data);
+        out.extend_from_slice(b"\nendstream\nendobj\n");
+        let content = format!("q\n{w} 0 0 {h} 0 0 cm\n/Im0 Do\nQ\n", w = img.width, h = img.height);
+        obj(&mut out, &mut offsets, format!("<< /Length {} >>\nstream\n{}endstream", content.len(), content).as_bytes());
     }
     let xref_off = out.len();
-    let count = objects.len() + 1; // 含空闲对象 0
+    let count = offsets.len() + 1; // 含空闲对象 0
     out.extend_from_slice(format!("xref\n0 {count}\n").as_bytes());
     out.extend_from_slice(b"0000000000 65535 f \n");
     for off in &offsets {
@@ -804,6 +812,79 @@ mod tests {
         assert_eq!(img.color, ColorSpace::Rgb);
         assert_eq!(img.filter, Filter::Dct);
         assert_eq!(img.data, jpeg); // 原字节直嵌
+    }
+
+    /// 改成"逐对象直接写 out"之前的旧实现（先建 `objects: Vec<Vec<u8>>` 再拼接）原样保留作参照。
+    fn images_to_pdf_reference(images: &[PdfImage]) -> Result<Vec<u8>, String> {
+        if images.is_empty() {
+            return Err("PDF 至少要有一页".into());
+        }
+        let n = images.len();
+        let mut objects: Vec<Vec<u8>> = Vec::with_capacity(2 + n * 3);
+        objects.push(b"<< /Type /Catalog /Pages 2 0 R >>".to_vec());
+        let mut kids = String::new();
+        for i in 0..n {
+            kids.push_str(&format!("{} 0 R ", 3 + i * 3));
+        }
+        objects.push(
+            format!("<< /Type /Pages /Kids [{}] /Count {} >>", kids.trim_end(), n).into_bytes(),
+        );
+        for (i, img) in images.iter().enumerate() {
+            let page_id = 3 + i * 3;
+            let image_id = page_id + 1;
+            let contents_id = page_id + 2;
+            objects.push(
+                format!(
+                    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {w} {h}] /Resources << /XObject << /Im0 {im} 0 R >> >> /Contents {con} 0 R >>",
+                    w = img.width, h = img.height, im = image_id, con = contents_id
+                )
+                .into_bytes(),
+            );
+            let mut xobj = format!(
+                "<< /Type /XObject /Subtype /Image /Width {w} /Height {h} /ColorSpace {cs} /BitsPerComponent {bpc} /Filter {f} /Length {len} >>\nstream\n",
+                w = img.width, h = img.height, cs = img.color.pdf_name(), bpc = img.bits, f = img.filter.pdf_name(), len = img.data.len()
+            ).into_bytes();
+            xobj.extend_from_slice(&img.data);
+            xobj.extend_from_slice(b"\nendstream");
+            objects.push(xobj);
+            let content = format!("q\n{w} 0 0 {h} 0 0 cm\n/Im0 Do\nQ\n", w = img.width, h = img.height);
+            objects.push(
+                format!("<< /Length {} >>\nstream\n{}endstream", content.len(), content).into_bytes(),
+            );
+        }
+        let mut out: Vec<u8> = Vec::new();
+        out.extend_from_slice(b"%PDF-1.7\n%\xE2\xE3\xCF\xD3\n");
+        let mut offsets: Vec<usize> = Vec::with_capacity(objects.len());
+        for (i, obj) in objects.iter().enumerate() {
+            offsets.push(out.len());
+            out.extend_from_slice(format!("{} 0 obj\n", i + 1).as_bytes());
+            out.extend_from_slice(obj);
+            out.extend_from_slice(b"\nendobj\n");
+        }
+        let xref_off = out.len();
+        let count = objects.len() + 1; // 含空闲对象 0
+        out.extend_from_slice(format!("xref\n0 {count}\n").as_bytes());
+        out.extend_from_slice(b"0000000000 65535 f \n");
+        for off in &offsets {
+            out.extend_from_slice(format!("{off:010} 00000 n \n").as_bytes());
+        }
+        out.extend_from_slice(
+            format!("trailer\n<< /Size {count} /Root 1 0 R >>\nstartxref\n{xref_off}\n%%EOF\n")
+                .as_bytes(),
+        );
+        Ok(out)
+    }
+
+    #[test]
+    fn images_to_pdf_output_bytes_are_stable() {
+        // 差分：新实现必须与旧实现逐字节一致（混合 PNG/JPEG、多页，覆盖 Flate/DCT 两种 filter 与多页对象编号）。
+        let jpeg = vec![
+            0xFF, 0xD8, 0xFF, 0xC0, 0x00, 0x11, 0x08, 0x00, 0x10, 0x00, 0x20, 0x03, 0x01, 0x11,
+            0x00, 0x02, 0x11, 0x01, 0x03, 0x11, 0x01, 0xFF, 0xD9,
+        ];
+        let imgs = vec![image_from_bytes(RED_PNG).unwrap(), image_from_bytes(&jpeg).unwrap(), image_from_bytes(RED_PNG).unwrap()];
+        assert_eq!(images_to_pdf(&imgs).unwrap(), images_to_pdf_reference(&imgs).unwrap());
+        assert!(images_to_pdf(&[]).is_err());
     }
 
     #[test]

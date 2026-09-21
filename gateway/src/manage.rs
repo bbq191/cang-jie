@@ -73,6 +73,9 @@ pub(crate) fn run_timeout(cmd: &str, args: &[&str], timeout: Duration) -> Result
     let out_t = child.stdout.take().map(|s| drain(Box::new(s)));
     let err_t = child.stderr.take().map(|s| drain(Box::new(s)));
     let deadline = Instant::now() + timeout;
+    // 轮询间隔 20ms 起、逐步翻倍到 200ms：短命令（systemctl is-active 几十毫秒）响应不变慢，
+    // 慢命令（卸载脚本最长 180 秒）不再以 50 次/秒的频率白白唤醒。
+    let mut poll = Duration::from_millis(20);
     let status = loop {
         match child.try_wait().map_err(|e| format!("{cmd}: {e}"))? {
             Some(st) => break st,
@@ -81,7 +84,10 @@ pub(crate) fn run_timeout(cmd: &str, args: &[&str], timeout: Duration) -> Result
                 let _ = child.wait();
                 return Err(format!("{cmd} 超过 {} 秒未结束，已终止", timeout.as_secs()));
             }
-            None => std::thread::sleep(Duration::from_millis(20)),
+            None => {
+                std::thread::sleep(poll);
+                poll = (poll * 2).min(Duration::from_millis(200));
+            }
         }
     };
     let text = |t: Option<std::thread::JoinHandle<Vec<u8>>>| t.and_then(|h| h.join().ok()).map(|v| String::from_utf8_lossy(&v).trim().to_string()).unwrap_or_default();

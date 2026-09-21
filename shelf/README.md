@@ -39,16 +39,17 @@ reMarkable Paper Pro Move 的**读书与阅读质量层**：一个网页，把�
 
 - **注册表**：服务启动写 `$XDG_RUNTIME_DIR/shelf/services/<name>.json`（含 pid、端口、UI tab），退出即删；网关按它出 tab、缺席回 404「未安装」。装/卸一个服务 = 一个二进制 + 一个 systemd 单元。
 - **URL 段 ↔ 服务**（`../gateway/src/manage.rs` 的 `MODULES` 单一事实源）：`books→book-serve`、`koreader→koreader-serve`、`fonts→font-serve`、`wallpapers→wallpaper-serve`。经网关 `GET /api/fonts/health` = 后端直连 `GET 127.0.0.1:8792/health`。
-- **systemd**：`shelf.target`（挂 multi-user）+ 各服务 `PartOf=shelf.target`；`systemctl disable --now font-serve` 即拔掉字体服务。所有单元都 `After=home.mount`，除 `ink-serve`、`note-serve` 外还带 `After`+`Wants=network-online.target`，`PartOf=shelf.target`、`WantedBy=shelf.target`；**绝不给 xochitl 加依赖**（改核心服务启动依赖曾导致变砖）。
+- **systemd**：`shelf.target`（挂 multi-user）+ 各服务 `PartOf=shelf.target`；`systemctl disable --now font-serve` 即拔掉字体服务。所有单元都 `After=home.mount`、`PartOf=shelf.target`、`WantedBy=shelf.target`；纯本地的 `ink-serve`、`note-serve` 之外，其余单元还带 `After`+`Wants=network-online.target`；**绝不给 xochitl 加依赖**（改核心服务启动依赖曾导致变砖）。
 
 ### 主要 API（经网关前缀 `/api/<seg>`）
 
 **books**（book-serve）
-- 母版库：`GET /status` · `GET /staging` → `{items, freeBytes}`（条目含 `delivered.render` 渲染自检、`busy`、处理进度）· `POST /staging`（multipart 原样入库）· `POST /staging/optimize {name}` · `POST /staging/deliver {name, folder?}`（folder 空＝书库根；不存在会先经 mkdir 队列建）· `POST /staging/cancel {name}`（中途停止，EPUB 优化与按卷拆分支持）· `POST /staging/mark {name, target}` · `POST /staging/fetch-article {url, optimize?}` · `POST /staging/delete {name}` · `GET /staging/render/{uuid}`（xochitl 渲染缓存 PDF）
+- 母版库：`GET /status` · `GET /staging` → `{items, freeBytes}`（条目含 `delivered.render` 渲染自检、`busy`、处理进度）· `POST /staging`（multipart 原样入库）· `POST /staging/optimize {name}` · `POST /staging/deliver {name, folder?}`（folder 空＝书库根；不存在会先经 mkdir 队列建）· `POST /staging/cancel {name}`（中途停止，EPUB 优化与按卷拆分支持）· `POST /staging/mark {name, target}` · `POST /staging/fetch-article {url, optimize?}` · `POST /staging/delete {name}`
+- 漫画页边距待办（给 qmd 代理用）：`GET /margins/{uuid}`（有待设的边距则返回，否则 404）· `POST /margins/applied {uuid}`（销账）；仅「实验室→漫画页边距」开关开着时生效，白皮书 §20（`bookconv优化白皮书.md`）
 - 设备端代理队列：原生回收站 `POST /trash/add` · `GET /trash/pending` · `GET /trash`；原生建文件夹 `POST /mkdir/add` · `GET /mkdir/pending` · `GET /mkdir`
 - 追平队列：`GET /inbox` · `POST /inbox/{retry,delete}`；事件 `GET /events`（SSE）
 
-**koreader**：`GET /status` · `GET /books[?folder=]` · `POST /books/adopt {name, folder}` · `POST /books/mkdir`（幂等建目录）· `GET|POST /fonts` · `DELETE /fonts/{file}` · `GET|POST /dicts[?name=]` · `GET|POST /config/{settings|defaults|gestures}[?dry_run=1]`
+**koreader**：`GET /status` · `GET /books[?folder=]` · `POST /books/adopt {name, folder}` · `POST /books/mkdir`（幂等建目录）· `GET|POST /fonts` · `DELETE /fonts/{file}` · `GET|POST /dicts[?name=]` · `GET|POST /config/{settings|defaults|gestures}[?dry_run=1]` · 只读原始数据 `GET /annotations`（每本书的高亮）· `GET /vocabulary`（生词本），供笔记线拉取
 
 **fonts**：`GET /` · `POST /` · `DELETE /{family}` · `PUT /config {emboldenCjkFallback}` · `GET /status`　**wallpapers**：`GET /` · `POST /[?activate=1]` · `PUT /current {name}` · `PUT /mode {mode}` · `DELETE /{name}` · `GET /{name}` · `GET /status`
 
@@ -61,12 +62,12 @@ reMarkable Paper Pro Move 的**读书与阅读质量层**：一个网页，把�
 ```
 shelf/
 ├── Cargo.toml · build.sh · .cargo/   内部 workspace（仓库根仍无 workspace）；musl 全静态交叉编译
-├── crates/bookconv/                  通用内容层：EPUB 优化器+清洗层+质量门、图片处理、PDF 入库、EPUB 组装、网文抽取、命名规则、占位文档
-├── services/book-serve/              母版库服务：staging.rs(领域) · sidecar.rs(落库记录边车) · ops.rs(忙锁/取消登记簿) · render_check.rs · pending_queue.rs · trash.rs / mkdir.rs(设备端代理队列) · spool.rs(inbox) · api.rs(纯 HTTP 适配)
+├── crates/bookconv/                  通用内容层：EPUB 优化器+清洗层+质量门、图片处理、漫画（识别/拆分/补白 `comic_*.rs`）、PDF 入库、EPUB 组装、网文抽取、命名规则、占位文档；`src/bin/` 是几个开发期/诊断小工具（`epub-optimize`、`cover-fix` 等）
+├── services/book-serve/              母版库服务：staging/(领域，含落库 `deliver.rs`) · sidecar.rs(落库记录边车) · ops.rs(忙锁/取消登记簿) · render_check.rs · pending_queue.rs · trash.rs / mkdir.rs / comic_margins.rs(设备端代理队列) · spool.rs(inbox) · config.rs · api.rs(纯 HTTP 适配)
 ├── services/koreader-serve/          KOReader 目录模型 · 配置同步 · 高亮/生词只读（纯 Rust 只读 SQLite 解析器）
 ├── systemd/                          shelf.target + book/koreader-serve 单元（font/wallpaper 的单元在 ../enhance/<name>/）
-├── xovi/                             qmd 注入：字体菜单动态项 · 回收站代理 · 建文件夹代理（改 qmd 先用 qmldiff CLI 离线实跑）
-├── koreader/                         配置即代码：profile 补丁 + fonts/dicts 清单 + merge.lua
+├── xovi/                             qmd 注入：字体菜单动态项（`font-menu-dynamic*.qmd`）· 回收站代理 · 建文件夹代理 · 漫画页边距代理 `shelf-comic-margins.qmd`（改 qmd 先用 qmldiff CLI 离线实跑）
+├── koreader/                         配置即代码：profile 补丁 + fonts/dicts 备忘清单 + merge.lua（经 koreader-serve `/config/*` 应用，见其 README）
 ├── install.sh · uninstall.sh · manifest.sh   设备端安装/卸载与两者共用的清单（--only 按服务，未知令牌退出 2；写 /usr 前实检 dm-verity）。install.sh 依赖同目录的 manifest.sh 与 packaging/devlib.sh（deploy.sh 打包时已带上）
 └── docs/                             白皮书 · 传书EPUB线架构 · bookconv优化白皮书 · diagrams/
 ```
@@ -81,9 +82,9 @@ shelf/
 | 二进制 | `~/.local/bin/{gateway,*-serve,shelf-uninstall,lo-alias.sh}` |
 | 库（供 `shelf-uninstall` source） | `~/.local/lib/shelf/{manifest.sh,devlib.sh}`（整包安装才装；`--only` 不动它们） |
 | 备份 | `~/cangjie-backups/shelf-<时间戳>/`（旧二进制/单元/qmd，保留最近 5 份） |
-| 配置 | `~/.config/shelf/<service>.json`（book：书库文件夹/xochitl 主机/超时/**`nativeUploadLimitMb` 加入原生体积门 90（超过则走占位+磁盘替换通道，§03bn）**，2026-09-19 真机精确测出 xochitl `/upload` 硬上限后从未验证过的 150 改成留够安全余量的 90，见 `config.rs`；font；gateway）· `~/.config/shelf/tls/`（CA+叶证书） |
+| 配置 | `~/.config/shelf/<service>.json`（book：书库文件夹/xochitl 主机/超时/**`nativeUploadLimitMb` 加入原生体积门，缺省 90（超过则走占位+磁盘替换通道，§03bn）**；90 是 2026-09-19 真机测出 xochitl `/upload` 硬上限约 100MB 后留的安全余量，见 `config.rs`；font；gateway）· `~/.config/shelf/tls/`（CA+叶证书） |
 | 数据 | `~/.local/share/shelf/`（fonts.json、壁纸池）· `~/.local/share/fonts/`（用户字体，fontconfig 标准位） |
-| 状态 | `~/.local/state/shelf/books/staging/`（**母版库**，不淘汰）· `books/{inbox,.work,failed}`（追平队列）· `wallpaper-state.json` · `koreader-backups/` |
+| 状态 | `~/.local/state/shelf/books/staging/`（**母版库**，不淘汰）· `books/{inbox,.work,failed}`（追平队列）· `books/comic-margins.json`（漫画页边距待办）· `wallpaper-state.json` · `koreader-backups/` |
 | 运行时 | `/tmp/shelf-0/shelf/{services,upload,koreader}`（`XDG_RUNTIME_DIR` 缺省回落；重启即清） |
 | 笔记线 | 自成一套 `notes` XDG 路径，与书架的 `shelf` 命名空间互不相干，详见 `../notes/README.md` |
 | 外部约定 | KOReader 根 `SHELF_KOREADER_ROOT`（缺省 `~/xovi/exthome/appload/koreader`；appload ≥ 0.6.0 起原生支持 3.28，见 koreader/README）；xochitl 书库 `~/.local/share/remarkable/xochitl` |
@@ -119,13 +120,13 @@ cargo build --release -p bookconv --bin epub-optimize   # 手动跑一遍清洗+
 
 ## 固件升级（OTA）与恢复
 
-**权威说明（恢复流程、逐项对照表、流程图）统一在 [`../docs/INSTALL.md`](../docs/INSTALL.md)「固件升级（OTA）之后」**，这里不再另写一份表。一句话：升级不丢 `/home` 数据；升完先设备旁手动 `xovi/rebuild_hashtable`，再在电脑上重跑 `cd ../packaging && sh install-all.sh <host>`（幂等，缺什么补什么；也可只重装书架：`SHELF_NO_BUILD=1 sh deploy.sh <host>`）。3.27.3.0 → 3.28.0.172 的实录见白皮书 §03v；2026-09-20 前的旧版 OTA 表原文保留在白皮书附录 D。
+**权威说明（恢复流程、逐项对照表、流程图）统一在 [`../docs/INSTALL.md`](../docs/INSTALL.md)「固件升级（OTA）之后」**，这里不再另写一份表。一句话：升级不丢 `/home` 数据；升完先设备旁手动 `xovi/rebuild_hashtable`，再在电脑上重跑 `cd ../packaging && sh install-all.sh <host>`（幂等，缺什么补什么；也可只重装书架：`SHELF_NO_BUILD=1 sh deploy.sh <host>`）。3.27.3.0 → 3.28.0.172 的实录见白皮书 §03v；2026-09-20 前的旧版 OTA 表已压缩成附录 D 的差异要点。
 
 ## 文档索引
 
 | 文档 | 内容 |
 |---|---|
 | [`docs/传书EPUB线架构.md`](docs/传书EPUB线架构.md) | 传书线**当前状态**参考（非时间顺序）：架构、数据流、优化管线、内存安全、大文件通道、API |
-| [`docs/reMarkable书架白皮书.md`](docs/reMarkable书架白皮书.md) | 决策依据与真机记录，按主题分章；附录含踩坑合集、演进记录表、已移除能力 |
+| [`docs/reMarkable书架白皮书.md`](docs/reMarkable书架白皮书.md) | 文首「5 分钟读懂」+ 决策依据与真机记录，按主题分章（每章有大白话导语与坑位表）；附录含踩坑总表、演进记录表、已移除能力 |
 | [`docs/bookconv优化白皮书.md`](docs/bookconv优化白皮书.md) | 书籍优化引擎：清洗/优化遍/脚注/图片/★xochitl 渲染硬规则/版本演进 |
 | [`../docs/CHANGELOG.md`](../docs/CHANGELOG.md) | 用户可见的更新历史 |

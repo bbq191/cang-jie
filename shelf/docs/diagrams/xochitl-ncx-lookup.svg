@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 540" font-family="sans-serif">
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#4a4a4a"/>
+    </marker>
+  </defs>
+  <rect width="1080" height="540" fill="#fbfbfa"/>
+  <text x="540" y="32" text-anchor="middle" font-size="18" font-weight="bold" fill="#1a1a1a">xochitl 怎样找到 toc.ncx（反编译坐实）与洗书层的对应修复</text>
+
+  <!-- 左：xochitl 流程 -->
+  <text x="270" y="66" text-anchor="middle" font-size="14" font-weight="bold" fill="#4a4a4a">xochitl 生成 .epubindex 的目录提取</text>
+  <rect x="120" y="80" width="300" height="46" rx="6" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.5"/>
+  <text x="270" y="108" text-anchor="middle" font-size="13" fill="#1a1a1a">解析 content.opf（manifest / spine）</text>
+
+  <rect x="90" y="160" width="360" height="56" rx="6" fill="#fff3d6" stroke="#c9971f" stroke-width="1.5"/>
+  <text x="270" y="184" text-anchor="middle" font-size="13" fill="#1a1a1a">哈希查找 manifest 中 id 等于字面量</text>
+  <text x="270" y="204" text-anchor="middle" font-size="13" fill="#1a1a1a">"ncx" 的 item（二进制里写死）</text>
+
+  <rect x="20" y="270" width="230" height="62" rx="6" fill="#e8f5ec" stroke="#3f9a55" stroke-width="1.5"/>
+  <text x="135" y="296" text-anchor="middle" font-size="13" fill="#1a1a1a">命中：读 toc.ncx 的 navMap</text>
+  <text x="135" y="316" text-anchor="middle" font-size="13" fill="#1a1a1a">逐条提取章节标题</text>
+
+  <rect x="290" y="270" width="230" height="62" rx="6" fill="#f0f0ee" stroke="#8a8a8a" stroke-width="1.5"/>
+  <text x="405" y="296" text-anchor="middle" font-size="13" fill="#1a1a1a">未命中：退回读</text>
+  <text x="405" y="316" text-anchor="middle" font-size="13" fill="#1a1a1a">spine 的 toc 属性（后备）</text>
+
+  <rect x="20" y="382" width="230" height="62" rx="6" fill="#e8f5ec" stroke="#3f9a55" stroke-width="1.5"/>
+  <text x="135" y="408" text-anchor="middle" font-size="13" fill="#1a1a1a">.epubindex 带标题</text>
+  <text x="135" y="428" text-anchor="middle" font-size="13" fill="#1a1a1a">原生目录入口出现</text>
+
+  <rect x="290" y="382" width="230" height="78" rx="6" fill="#fbe9e4" stroke="#b0451f" stroke-width="1.5"/>
+  <text x="405" y="408" text-anchor="middle" font-size="13" fill="#1a1a1a">《疯探》实测：后备没救回</text>
+  <text x="405" y="428" text-anchor="middle" font-size="13" fill="#1a1a1a">标题字段全空、目录入口消失</text>
+  <text x="405" y="448" text-anchor="middle" font-size="12" fill="#4a4a4a">（书本身照常翻页）</text>
+
+  <path d="M270,126 L270,160" stroke="#4a4a4a" stroke-width="1.5" fill="none" marker-end="url(#a)"/>
+  <path d="M220,216 L150,270" stroke="#4a4a4a" stroke-width="1.5" fill="none" marker-end="url(#a)"/>
+  <path d="M320,216 L390,270" stroke="#4a4a4a" stroke-width="1.5" fill="none" marker-end="url(#a)"/>
+  <path d="M135,332 L135,382" stroke="#4a4a4a" stroke-width="1.5" fill="none" marker-end="url(#a)"/>
+  <path d="M405,332 L405,382" stroke="#4a4a4a" stroke-width="1.5" fill="none" marker-end="url(#a)"/>
+
+  <!-- 右：洗书层 -->
+  <text x="800" y="66" text-anchor="middle" font-size="14" font-weight="bold" fill="#4a4a4a">wash_entries 里的 NCX 相关步骤（按执行顺序）</text>
+  <rect x="580" y="80" width="440" height="84" rx="6" fill="#e8f5ec" stroke="#3f9a55" stroke-width="1.5"/>
+  <text x="800" y="104" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">1. fix_ncx_manifest_id（真根因的修法）</text>
+  <text x="800" y="126" text-anchor="middle" font-size="12" fill="#1a1a1a">NCX 条目的 id 不叫 ncx 就改成 ncx，</text>
+  <text x="800" y="146" text-anchor="middle" font-size="12" fill="#1a1a1a">并同步 spine 的 toc 属性；已叫 ncx 或撞 id 则不动</text>
+
+  <rect x="580" y="184" width="440" height="66" rx="6" fill="#e8f5ec" stroke="#3f9a55" stroke-width="1.5"/>
+  <text x="800" y="208" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">2. auto_toc（书没有目录时才生成）</text>
+  <text x="800" y="230" text-anchor="middle" font-size="12" fill="#1a1a1a">自己插入的 manifest 条目 id 必须写 ncx（旧值 cj-ncx 是活 bug）</text>
+
+  <rect x="580" y="270" width="440" height="66" rx="6" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.5"/>
+  <text x="800" y="294" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">3. fix_ncx_uid（规范性修补，非《疯探》根因）</text>
+  <text x="800" y="316" text-anchor="middle" font-size="12" fill="#1a1a1a">dtb:uid 同步成 OPF 的 dc:identifier</text>
+
+  <rect x="580" y="356" width="440" height="66" rx="6" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.5"/>
+  <text x="800" y="380" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">4. strip_ncx_doctype（规范性修补，非《疯探》根因）</text>
+  <text x="800" y="402" text-anchor="middle" font-size="12" fill="#1a1a1a">剥掉 toc.ncx 里指向外部 DTD 的 DOCTYPE 声明</text>
+
+  <path d="M800,164 L800,184" stroke="#4a4a4a" stroke-width="1.5" fill="none" marker-end="url(#a)"/>
+  <path d="M800,250 L800,270" stroke="#4a4a4a" stroke-width="1.5" fill="none" marker-end="url(#a)"/>
+  <path d="M800,336 L800,356" stroke="#4a4a4a" stroke-width="1.5" fill="none" marker-end="url(#a)"/>
+  <text x="800" y="470" text-anchor="middle" font-size="12" fill="#4a4a4a">步骤 1、2 让 xochitl 的硬编码查找命中（当前 OPTIMIZE_VERSION=15，旧书需 force 重优化）</text>
+  <text x="800" y="490" text-anchor="middle" font-size="12" fill="#4a4a4a">代码：shelf/crates/bookconv/src/wash/{ncx_fix,toc,mod}.rs</text>
+</svg>

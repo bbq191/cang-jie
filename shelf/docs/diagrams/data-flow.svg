@@ -27,7 +27,7 @@
 <rect x="335" y="276" width="360" height="86" rx="8" fill="#ffffff" stroke="#c9971f" stroke-width="1.2"/>
 <text x="515.0" y="294.5" text-anchor="middle" font-size="11.5" font-weight="bold" fill="#1a1a1a">落库记录（边车）</text>
 <text x="515.0" y="319.0" text-anchor="middle" font-size="10" fill="#4a4a4a">已加入哪个读器 · 渲染自检徽章</text>
-<text x="515.0" y="332.0" text-anchor="middle" font-size="10" fill="#4a4a4a">清理已落库 · 剩余空间</text>
+<text x="515.0" y="332.0" text-anchor="middle" font-size="10" fill="#4a4a4a">设备剩余空间（快满时提醒）</text>
 <polyline points="715,190 770,150" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#sd-a)"/>
 <text x="738" y="158" text-anchor="middle" font-size="10.5" fill="#555">落库</text>
 <polyline points="715,270 770,310" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#sd-a)"/>

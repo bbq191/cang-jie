@@ -1,0 +1,84 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 760" font-family="sans-serif">
+  <defs>
+    <marker id="pif-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#555"/>
+    </marker>
+  </defs>
+  <rect x="0" y="0" width="1080" height="760" fill="#fbfbfa"/>
+  <text x="540" y="30" text-anchor="middle" font-size="18" font-weight="bold" fill="#1a1a1a">入库 PDF 的「优化」：先分类，再走两条出路</text>
+  <text x="540" y="50" text-anchor="middle" font-size="12" font-weight="bold" fill="#4a4a4a">口径：pdf_ingest/classify.rs 的 classify_pdf + book-serve Staging::optimize_pdf</text>
+
+  <rect x="340" y="66" width="400" height="44" rx="8" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.5"/>
+  <text x="540" y="86" text-anchor="middle" font-size="12" font-weight="bold" fill="#1a1a1a">母版库里的 .pdf，点「优化」</text>
+  <text x="540" y="102" text-anchor="middle" font-size="11.5" fill="#3a3a3a">Staging::optimize（ext=pdf）→ optimize_pdf</text>
+  <line x1="540" y1="110" x2="540" y2="128" stroke="#555" stroke-width="1.5" marker-end="url(#pif-arrow)"/>
+
+  <!-- classify -->
+  <rect x="120" y="130" width="840" height="186" rx="10" fill="#f0f0ee" stroke="#8a8a8a" stroke-width="1.4"/>
+  <text x="540" y="152" text-anchor="middle" font-size="14" font-weight="bold" fill="#1a1a1a">classify_pdf：三类判定，自上而下，命中即停</text>
+
+  <rect x="146" y="164" width="788" height="40" rx="6" fill="#fbfbfa" stroke="#8a8a8a" stroke-width="1"/>
+  <text x="160" y="182" font-size="12" font-weight="bold" fill="#1a1a1a">① 读不了 / lopdf 解析失败 / 0 页 → NoTextLayer</text>
+  <text x="160" y="197" font-size="11.5" fill="#4a4a4a">判不准一律选保守出路：只裁边（幂等低风险），绝不做转 EPUB 这种破坏性格式变更</text>
+
+  <rect x="146" y="212" width="788" height="40" rx="6" fill="#fbfbfa" stroke="#4a6fa5" stroke-width="1.2"/>
+  <text x="160" y="230" font-size="12" font-weight="bold" fill="#1a1a1a">② ≥ 90% 的页含“铺满整页”的图 → Comic（COMIC_PAGE_RATIO=0.9）</text>
+  <text x="160" y="245" font-size="11.5" fill="#4a4a4a">判据：图片宽高比与页面宽高比偏差 &lt; 15%（COMIC_IMAGE_AREA_RATIO=0.85 → 1−0.85）</text>
+
+  <rect x="146" y="260" width="788" height="44" rx="6" fill="#fbfbfa" stroke="#3f9a55" stroke-width="1.2"/>
+  <text x="160" y="278" font-size="12" font-weight="bold" fill="#1a1a1a">③ 否则用 pdf-extract 提取逐字符文字：失败 → NoTextLayer</text>
+  <text x="160" y="294" font-size="11.5" fill="#4a4a4a">每页平均非空白字符 ≥ 40（MIN_CHARS_PER_PAGE）→ TextLayer；否则 → NoTextLayer（扫描件等）</text>
+
+  <!-- three verdict chips -->
+  <line x1="300" y1="316" x2="300" y2="346" stroke="#555" stroke-width="1.5" marker-end="url(#pif-arrow)"/>
+  <line x1="540" y1="316" x2="540" y2="346" stroke="#555" stroke-width="1.5" marker-end="url(#pif-arrow)"/>
+  <line x1="820" y1="316" x2="820" y2="346" stroke="#555" stroke-width="1.5" marker-end="url(#pif-arrow)"/>
+  <rect x="220" y="348" width="160" height="30" rx="6" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.4"/>
+  <text x="300" y="368" text-anchor="middle" font-size="12" font-weight="bold" fill="#1a1a1a">PdfKind::Comic</text>
+  <rect x="460" y="348" width="160" height="30" rx="6" fill="#f0f0ee" stroke="#8a8a8a" stroke-width="1.4"/>
+  <text x="540" y="368" text-anchor="middle" font-size="12" font-weight="bold" fill="#1a1a1a">PdfKind::NoTextLayer</text>
+  <rect x="730" y="348" width="180" height="30" rx="6" fill="#e8f5ec" stroke="#3f9a55" stroke-width="1.4"/>
+  <text x="820" y="368" text-anchor="middle" font-size="12" font-weight="bold" fill="#1a1a1a">PdfKind::TextLayer</text>
+
+  <!-- arrows to exits -->
+  <path d="M300,378 L300,398 L270,398 L270,412" fill="none" stroke="#555" stroke-width="1.5" marker-end="url(#pif-arrow)"/>
+  <path d="M540,378 L540,398 L330,398 L330,412" fill="none" stroke="#555" stroke-width="1.5" marker-end="url(#pif-arrow)"/>
+  <line x1="820" y1="378" x2="820" y2="412" stroke="#555" stroke-width="1.5" marker-end="url(#pif-arrow)"/>
+
+  <!-- exit A -->
+  <rect x="24" y="414" width="500" height="256" rx="10" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.4"/>
+  <text x="274" y="436" text-anchor="middle" font-size="13.5" font-weight="bold" fill="#1a1a1a">出路 A：仅裁边，格式不变（optimize_pdf_trim_only）</text>
+  <text x="44" y="460" font-size="12" font-weight="bold" fill="#b0451f">先过三道闸门，任一不过 → 报错，原文件不动：</text>
+  <text x="54" y="479" font-size="11.5" fill="#3a3a3a">1. 含任何可提取文字（含扫描件 OCR 隐形文字层）：重写会丢文字层</text>
+  <text x="54" y="497" font-size="11.5" fill="#3a3a3a">2. 某页不是“恰好一张整页图”：重写会丢这页其余内容</text>
+  <text x="54" y="515" font-size="11.5" fill="#3a3a3a">3. 无法确认没有文字层（提取失败）：宁可不动</text>
+  <text x="44" y="541" font-size="12" font-weight="bold" fill="#2c7a41">全过才改写：</text>
+  <text x="54" y="560" font-size="11.5" fill="#3a3a3a">逐页取图 → prepare_comic_page_for_pdf（裁边 + 缩放，单趟）</text>
+  <text x="54" y="578" font-size="11.5" fill="#3a3a3a">→ PdfPieceWriter 单遍写（复用漫画 PDF 写手，页面 954×1696）</text>
+  <text x="54" y="596" font-size="11.5" fill="#3a3a3a">书签：保留原书签（层级压平）；没有则每 20 页一条兜底</text>
+  <text x="54" y="614" font-size="11.5" fill="#3a3a3a">produce_then_replace：临时文件 → 成功才原地覆盖同名 .pdf</text>
+  <text x="54" y="640" font-size="11.5" font-weight="bold" fill="#4a4a4a">代价：带水印文字/OCR 文字层的扫描 PDF 会被拒绝而非处理</text>
+  <text x="54" y="658" font-size="11.5" fill="#4a4a4a">回执：「已优化《…》（裁边，N 页）」</text>
+
+  <!-- exit B -->
+  <rect x="556" y="414" width="500" height="256" rx="10" fill="#e8f5ec" stroke="#3f9a55" stroke-width="1.4"/>
+  <text x="806" y="436" text-anchor="middle" font-size="13.5" font-weight="bold" fill="#1a1a1a">出路 B：转 EPUB（optimize_pdf_to_epub）</text>
+  <text x="576" y="460" font-size="11.5" fill="#3a3a3a">正文：文字层每个字符都进文字流（不变动书籍内容），</text>
+  <text x="576" y="477" font-size="11.5" fill="#3a3a3a">行间距 &gt; 1.5 倍字号才算换段</text>
+  <text x="576" y="499" font-size="11.5" fill="#3a3a3a">公式：Unicode 数学区块判公式行 → hayro 整页渲染 →</text>
+  <text x="576" y="516" font-size="11.5" fill="#3a3a3a">按外接框裁成图，作为补充放在所属段落后</text>
+  <text x="576" y="538" font-size="11.5" fill="#3a3a3a">插图：页内图片提取（JPEG 透传 / Flate 解预测器后转 PNG）</text>
+  <text x="576" y="560" font-size="11.5" font-weight="bold" fill="#1a1a1a">目录（必须有）三级兜底：</text>
+  <text x="586" y="578" font-size="11.5" fill="#3a3a3a">PDF 自带书签 → 按字号识别标题（≥ 1.2× 正文，最多 3 级）</text>
+  <text x="586" y="595" font-size="11.5" fill="#3a3a3a">→ 仍无则每 20 页分块（不假装有真实章节）</text>
+  <text x="576" y="619" font-size="11.5" fill="#3a3a3a">epub::assemble → 写 &lt;stem&gt;.epub，成功后删除原 .pdf</text>
+  <text x="576" y="641" font-size="11.5" fill="#3a3a3a">回执：「已优化《…》（PDF→EPUB，N 页，M 章，K 张图，F 处公式）」</text>
+  <text x="576" y="659" font-size="11.5" fill="#4a4a4a">一份 PDF 最多被解析三遍：lopdf 0.45 / pdf-extract / hayro</text>
+
+  <!-- recognition strip -->
+  <line x1="274" y1="670" x2="274" y2="694" stroke="#555" stroke-width="1.5" marker-end="url(#pif-arrow)"/>
+  <line x1="806" y1="670" x2="806" y2="694" stroke="#555" stroke-width="1.5" marker-end="url(#pif-arrow)"/>
+  <rect x="24" y="696" width="1032" height="50" rx="8" fill="#fff3d6" stroke="#c9971f" stroke-width="1.5"/>
+  <text x="540" y="716" text-anchor="middle" font-size="12" font-weight="bold" fill="#1a1a1a">母版库列表如何认出“已优化过”（Staging::list → probe_level，不再进 EPUB 的 full/core/old 阶梯）</text>
+  <text x="540" y="734" text-anchor="middle" font-size="11.5" fill="#3a3a3a">PDF：头部有 /Outlines 或尾部有 Producer 标记 → full；EPUB：dc:identifier 带 weread:pdf: 前缀 → full + “PDF转EPUB”徽章</text>
+</svg>

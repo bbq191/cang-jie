@@ -10,7 +10,7 @@
 <text x="122.0" y="169.5" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">① 造占位</text>
 <text x="122.0" y="195.0" text-anchor="middle" font-size="10" fill="#4a4a4a">EPUB：几 KB 的最小 EPUB，</text>
 <text x="122.0" y="208.0" text-anchor="middle" font-size="10" fill="#4a4a4a">带真书名(dc:title)+真封面</text>
-<text x="122.0" y="221.0" text-anchor="middle" font-size="10" fill="#4a4a4a">PDF：约 99KB 空白 PDF</text>
+<text x="122.0" y="221.0" text-anchor="middle" font-size="10" fill="#4a4a4a">PDF：几 KB 空白 PDF</text>
 <text x="122.0" y="234.0" text-anchor="middle" font-size="10" fill="#4a4a4a">显示名取上传文件名</text>
 <polyline points="214.0,220 229.2,220" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#ub-a)"/>
 <rect x="229.2" y="150" width="184" height="140" rx="9" fill="#ffffff" stroke="#c9971f" stroke-width="1.4"/>

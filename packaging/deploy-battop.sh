@@ -15,8 +15,7 @@ set -eu
 cd "$(dirname "$0")"
 # shellcheck disable=SC1091
 . ./lib.sh
-# shellcheck disable=SC2034  # HOST 由 lib.sh 的 rssh/rscp/dev_script 使用
-HOST="${1:-10.11.99.1}"
+host_arg "用法：./deploy-battop.sh [host]      host 默认 10.11.99.1；环境 CJ_BATTOP_BIN=<已编好的二进制> 跳过交叉编译" "$@"
 TARGET=aarch64-unknown-linux-musl
 DIR=../enhance/battop
 DEST=/home/root/battop
@@ -33,6 +32,7 @@ else
 fi
 [ -f "$BIN" ] || { echo "!! 缺 $BIN"; exit 1; }
 
+require_device
 echo "== 推送到 root@$HOST:$DEST（暂存名 battop.new，md5 校验）=="
 push_verified "$BIN" "$DEST/battop.new"
 push_verified "$DIR/install.sh" "$DEST/install.sh"

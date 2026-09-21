@@ -10,15 +10,16 @@ use rmsvc_core::formats::{self, FONT_EXTS};
 use rmsvc_core::fs::write_atomic;
 use rmsvc_core::paths::Paths;
 use rmsvc_core::ttf;
-use std::collections::BTreeMap;
+use crate::fontconfig;
+use std::collections::{BTreeMap, HashMap};
+use std::sync::Mutex;
+use std::time::SystemTime;
 use std::path::{Path, PathBuf};
 
 /// 覆盖率 ≥ 此值才算"中文字体"、才进回退链（滤掉纯拉丁字体，避免拉丁字体当中文兜底）。
 pub const CJK_MIN_PCT: u8 = 8;
 /// 覆盖率 < 此值 = 低覆盖美术/子集字体，上传时警告（正文会缺字）。
 pub const CJK_LOW_PCT: u8 = 80;
-/// shelf 生成的 fontconfig 首行标记（据此判断是否可安全重写）。
-const FC_MARK: &str = "shelf font-serve 自动生成";
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -79,13 +80,25 @@ pub struct FontStore {
     fonts_dir: PathBuf,
     json_path: PathBuf,
     fontconfig_conf: PathBuf,
+    /// 逐文件探测结果缓存（家族名 + 覆盖率），键=文件名，凭 (大小, mtime) 判失效：
+    /// 每次上传/删除都要重扫整个字体目录，没有缓存就是对每个字体重新 fork 一次 fc-scan + 整文件读入解析。
+    probes: Mutex<HashMap<String, Probe>>,
     /// 测试可关：不真跑 fc-cache/fc-scan。
     pub side_effects: bool,
 }
 
-/// 一个文件的家族信息：(首家族名 = key, 全部家族名列表)。
+/// fc-scan `%{family}` 输出（逗号分隔的本地化家族名）→ 家族名列表（首个 = key）。
 fn split_families(s: &str) -> Vec<String> {
     s.split(',').map(|x| x.trim().to_string()).filter(|x| !x.is_empty()).collect()
+}
+
+/// 一个字体文件的探测结果 + 让它失效的指纹。
+struct Probe {
+    len: u64,
+    mtime: Option<SystemTime>,
+    families: Vec<String>,
+    /// 中文基本区覆盖率
+    pct: u8,
 }
 
 impl FontStore {
@@ -96,6 +109,7 @@ impl FontStore {
             fonts_dir: paths.user_fonts_dir(),
             json_path: paths.data_dir().join("fonts.json"),
             fontconfig_conf: paths.config_root().join("fontconfig/fonts.conf"),
+            probes: Mutex::new(HashMap::new()),
             side_effects: true,
         }
     }
@@ -118,33 +132,41 @@ impl FontStore {
         &self.json_path
     }
 
-    /// 文件的家族名列表：fc-scan 优先（带本地化名，如 "LXGW WenKai,霞鹜文楷"），否则自解析 name 表。
-    fn families_of(&self, path: &Path) -> Vec<String> {
+    /// 探测一个字体文件：家族名（fc-scan 优先——带本地化名，如 "LXGW WenKai,霞鹜文楷"；否则自解析 name 表）+
+    /// 中文覆盖率。文件整读一次供两者共用（旧实现回落路径要读两遍）。
+    fn probe_file(&self, path: &Path) -> (Vec<String>, u8) {
+        let bytes = std::fs::read(path).ok();
+        let pct = bytes.as_deref().and_then(ttf::han_coverage_pct).unwrap_or(0);
         if self.side_effects {
             if let Ok(o) = std::process::Command::new("fc-scan").args(["--format", "%{family}"]).arg(path).output() {
                 let s = String::from_utf8_lossy(&o.stdout).trim().to_string();
                 if o.status.success() && !s.is_empty() {
-                    return split_families(&s);
+                    return (split_families(&s), pct);
                 }
             }
         }
-        std::fs::read(path).ok().and_then(|b| ttf::family_name(&b)).map(|f| vec![f]).unwrap_or_default()
+        (bytes.as_deref().and_then(ttf::family_name).map(|f| vec![f]).unwrap_or_default(), pct)
+    }
+
+    /// 带缓存的 [`Self::probe_file`]：文件 (大小, mtime) 没变就复用上次结果。
+    fn probe_cached(&self, name: &str, path: &Path) -> (Vec<String>, u8) {
+        let md = std::fs::metadata(path).ok();
+        let (len, mtime) = (md.as_ref().map(|m| m.len()).unwrap_or(0), md.and_then(|m| m.modified().ok()));
+        {
+            let cache = self.probes.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(p) = cache.get(name) {
+                if p.len == len && p.mtime == mtime && mtime.is_some() {
+                    return (p.families.clone(), p.pct);
+                }
+            }
+        }
+        let (families, pct) = self.probe_file(path); // 可能 fork+读大文件，不持锁
+        self.probes.lock().unwrap_or_else(|e| e.into_inner()).insert(name.to_string(), Probe { len, mtime, families: families.clone(), pct });
+        (families, pct)
     }
 
     fn fontconfig_families(&self) -> Vec<String> {
-        let Ok(t) = std::fs::read_to_string(&self.fontconfig_conf) else { return vec![] };
-        let mut v = Vec::new();
-        let mut rest = t.as_str();
-        while let Some(i) = rest.find("<family>") {
-            let after = &rest[i + 8..];
-            if let Some(j) = after.find("</family>") {
-                v.push(after[..j].trim().to_string());
-                rest = &after[j..];
-            } else {
-                break;
-            }
-        }
-        v
+        std::fs::read_to_string(&self.fontconfig_conf).map(|t| fontconfig::referenced_families(&t)).unwrap_or_default()
     }
 
     /// 扫目录 → 按首家族名归组 → 条目（key 排序）。
@@ -154,10 +176,11 @@ impl FontStore {
         let Ok(rd) = std::fs::read_dir(&self.fonts_dir) else { return vec![] };
         let mut files: Vec<String> = rd.flatten().filter_map(|e| e.file_name().to_str().map(|s| s.to_string())).filter(|n| !n.starts_with('.') && formats::has_ext(n, FONT_EXTS)).collect();
         files.sort();
+        // 缓存里去掉已不在目录的文件（删字体后不留脏项）
+        self.probes.lock().unwrap_or_else(|e| e.into_inner()).retain(|k, _| files.binary_search(k).is_ok());
         for f in files {
             let path = self.fonts_dir.join(&f);
-            let fams = self.families_of(&path);
-            let pct = std::fs::read(&path).ok().and_then(|b| ttf::han_coverage_pct(&b)).unwrap_or(0);
+            let (fams, pct) = self.probe_cached(&f, &path);
             let key = match fams.first() {
                 Some(k) => k.clone(),
                 None => f.rsplit_once('.').map(|(s, _)| s.to_string()).unwrap_or_else(|| f.clone()),
@@ -214,47 +237,16 @@ impl FontStore {
         let cjk = Self::cjk_fallback_order(fonts);
         // 备份既有的非 shelf 配置（只备份一次）
         if let Ok(existing) = std::fs::read_to_string(&self.fontconfig_conf) {
-            if !existing.contains(FC_MARK) {
+            if !existing.contains(fontconfig::FC_MARK) {
                 let bak = self.config_root_backup();
                 if !bak.exists() {
                     let _ = write_atomic(&bak, existing.as_bytes());
                 }
             }
         }
-        let esc = |s: &str| s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;");
-        let mut x = String::new();
-        x.push_str("<?xml version=\"1.0\"?>\n<!DOCTYPE fontconfig SYSTEM \"fonts.dtd\">\n");
-        x.push_str(&format!("<!-- {FC_MARK}：随已装中文字体自动更新，请勿手改（改动会被覆盖）。\n     原有配置已备份到 {}。全部 weak 绑定：阅读器里选的字体优先，缺字才回退。 -->\n", self.config_root_backup().display()));
-        x.push_str("<fontconfig>\n");
-        if cjk.is_empty() {
-            x.push_str("  <!-- 当前没有已装的中文字体（覆盖率≥8%）；无回退可设。装一个中文字体即自动生效。 -->\n");
-        } else {
-            let names: Vec<String> = cjk.iter().map(|e| esc(&e.key)).collect();
-            let prefer_block: String = names.iter().map(|n| format!("      <family>{n}</family>\n")).collect();
-            for generic in ["sans-serif", "serif", "monospace"] {
-                x.push_str(&format!("  <alias binding=\"weak\">\n    <family>{generic}</family>\n    <prefer>\n{prefer_block}    </prefer>\n  </alias>\n"));
-            }
-            // 中文文本 + 兜底：append weak（排在用户所选字体之后）
-            // prepend 是逐条插到最前，故按覆盖率**升序**写、最高覆盖率最后 prepend → 落在最前。
-            let rev: Vec<&String> = names.iter().rev().collect();
-            x.push_str("  <match target=\"pattern\">\n    <test name=\"lang\" compare=\"contains\"><string>zh</string></test>\n");
-            for n in &rev {
-                x.push_str(&format!("    <edit name=\"family\" mode=\"prepend\" binding=\"weak\"><string>{n}</string></edit>\n"));
-            }
-            x.push_str("  </match>\n  <match target=\"pattern\">\n");
-            for n in &rev {
-                x.push_str(&format!("    <edit name=\"family\" mode=\"prepend\" binding=\"weak\"><string>{n}</string></edit>\n"));
-            }
-            x.push_str("  </match>\n");
-            // 可选：对每个中文回退字体加 embolden（墨水屏细笔画补偿，对标旧中文化套件）。
-            if self.embolden() {
-                for n in &names {
-                    x.push_str(&format!("  <match target=\"font\">\n    <test name=\"family\" compare=\"eq\"><string>{n}</string></test>\n    <edit name=\"embolden\" mode=\"assign\"><bool>true</bool></edit>\n  </match>\n"));
-                }
-            }
-        }
-        x.push_str("</fontconfig>\n");
-        write_atomic(&self.fontconfig_conf, x.as_bytes()).map_err(|e| e.to_string())
+        let keys: Vec<&str> = cjk.iter().map(|e| e.key.as_str()).collect();
+        let xml = fontconfig::render(&keys, self.embolden(), &self.config_root_backup());
+        write_atomic(&self.fontconfig_conf, xml.as_bytes()).map_err(|e| e.to_string())
     }
 
     /// ~/.config/shelf/fontconfig-fonts.conf.pre-shelf.bak（首次接管前的原配置备份）。
@@ -404,7 +396,7 @@ mod tests {
         let fonts = vec![entry("Art Font", 35), entry("Big CJK", 99), entry("Latin Only", 0), entry("Mid CJK", 90)];
         store.write_fontconfig(&fonts).unwrap();
         let out = std::fs::read_to_string(&store.fontconfig_conf).unwrap();
-        assert!(out.contains(FC_MARK), "带 shelf 标记");
+        assert!(out.contains(fontconfig::FC_MARK), "带 shelf 标记");
         assert!(std::fs::read_to_string(store.config_root_backup()).unwrap().contains("chinese-ime"), "原配置已备份");
         // 全 weak，无 strong
         assert!(!out.contains("strong"), "不得有 strong 绑定（否则盖过用户选择）: {out}");
@@ -431,6 +423,29 @@ mod tests {
         let e = std::fs::read_to_string(&store.fontconfig_conf).unwrap();
         assert!(e.contains("<match target=\"font\">") && e.contains("<edit name=\"embolden\""), "开 embolden 应加 match: {e}");
     }
+    #[test]
+    fn probe_cache_hits_on_same_fingerprint_and_invalidates_on_change() {
+        let (_t, _paths, store) = setup();
+        std::fs::create_dir_all(store.fonts_dir()).unwrap();
+        let f = store.fonts_dir().join("X.ttf");
+        std::fs::write(&f, b"\x00\x01\x00\x00").unwrap();
+        // 无 name 表 → 家族=文件名去扩展名，探测结果进缓存
+        assert_eq!(store.scan()[0].key, "X");
+        assert_eq!(store.probes.lock().unwrap().len(), 1);
+        // 指纹（大小+mtime）不变 → 命中缓存：塞个假结果，scan 必须原样用它而不是重新探测
+        let md = std::fs::metadata(&f).unwrap();
+        store.probes.lock().unwrap().insert("X.ttf".into(), Probe { len: md.len(), mtime: md.modified().ok(), families: vec!["Cached".into()], pct: 50 });
+        let e = store.scan();
+        assert_eq!((e[0].key.as_str(), e[0].cjk_pct), ("Cached", 50));
+        // 文件变了（大小不同）→ 缓存失效重探
+        std::fs::write(&f, b"\x00\x01\x00\x00more").unwrap();
+        assert_eq!(store.scan()[0].key, "X");
+        // 文件被删 → 缓存项随下次扫描清掉
+        std::fs::remove_file(&f).unwrap();
+        assert!(store.scan().is_empty());
+        assert!(store.probes.lock().unwrap().is_empty());
+    }
+
     #[test]
     fn embolden_defaults_on() {
         assert!(FontConfig::default().embolden_cjk_fallback, "默认开");

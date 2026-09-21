@@ -121,7 +121,7 @@ mod tests {
     #[test]
     fn empty_id_match_or_degenerate_bbox_errors_cleanly() {
         let s = stroke(1, &[(0.0, 0.0), (10.0, 10.0)]);
-        assert!(render_ink(&[s.clone()], &["9:9".to_string()], (0.0, 0.0, 10.0, 10.0), 4.0).unwrap_err().contains("一笔都没找到"));
+        assert!(render_ink(std::slice::from_ref(&s), &["9:9".to_string()], (0.0, 0.0, 10.0, 10.0), 4.0).unwrap_err().contains("一笔都没找到"));
         // 单点笔画（bbox 退化）：留白够大时应该正常出图（画一个点），不是错误。
         let dot = stroke(1, &[(0.0, 0.0)]);
         let png = render_ink(&[dot], &["1:1".to_string()], (0.0, 0.0, 0.0, 0.0), 6.0).unwrap();

@@ -2,7 +2,7 @@
 //! xochitl 自己的 `selectionMoveToTrash()`——由注入 Sidebar 的 `shelf/xovi/shelf-trash-agent.qmd` 在书库视图有动静时
 //! `GET /trash/pending` 拉队列执行。本模块只管队列：入队时按 visibleName 核对 uuid（防错删），拉取时把已进回收站 /
 //! 已不存在的条目清掉（QML 端无需 ack）。队列文件 `$XDG_STATE_HOME/shelf/books/trash-pending.json`。
-//! 首个用途：`shelf doctor --render` 量完把探针书送进回收站，不在原生书库里累积（2026-09-06）。
+//! 首个用途：渲染自检探针书（现已无此调用方，能力保留）送进回收站，不在原生书库里累积（2026-09-06）。
 //!
 //! 持久化+入队去重+剔除这层通用外壳委托 `pending_queue::PendingQueue<T>`（2026-09-09 消重复，跟
 //! `mkdir.rs` 是同一份基础设施，见该模块文档）；这里只留领域校验（uuid 形状/名字核对/是否已在回收站）。

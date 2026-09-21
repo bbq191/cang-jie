@@ -1,0 +1,78 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1240 720" font-family="sans-serif">
+<defs><marker id="mk" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#555"/></marker><marker id="mr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#b0451f"/></marker><marker id="mg" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2f7d45"/></marker></defs>
+<rect x="0" y="0" width="1240" height="720" fill="#fbfbfa"/>
+<text x="620.0" y="30" text-anchor="middle" font-size="18" font-weight="bold" fill="#1a1a1a">rmsvc-core：三条产品线共用的“地基”</text>
+<text x="620.0" y="52" text-anchor="middle" font-size="12.5" fill="#6a6a6a">纯基础设施，不含任何“书 / 笔记 / 字体”业务语义；消费方单向依赖它（path 依赖，没有根 workspace）</text>
+<text x="30" y="84" text-anchor="start" font-size="12.5" font-weight="bold" fill="#1a1a1a">谁在用（都写 path = "…/rmsvc-core"）</text>
+<rect x="24" y="96" width="300" height="150" rx="10" fill="#eaf6ec" stroke="#3f9a55" stroke-width="1.6"/>
+<text x="174.0" y="116" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">shelf/ 书架线</text>
+<text x="174.0" y="139" text-anchor="middle" font-size="10.5" fill="#3a3a3a">book-serve（母版库 / 落原生）</text>
+<text x="174.0" y="154" text-anchor="middle" font-size="10.5" fill="#3a3a3a">koreader-serve</text>
+<text x="174.0" y="169" text-anchor="middle" font-size="10.5" fill="#3a3a3a"></text>
+<text x="174.0" y="184" text-anchor="middle" font-size="10.5" fill="#3a3a3a">常用：events · xochitl · clock · asset</text>
+<text x="174.0" y="199" text-anchor="middle" font-size="10.5" fill="#3a3a3a">fswatch · formats · cache · ttf(koreader)</text>
+<rect x="340" y="96" width="300" height="150" rx="10" fill="#f2eefa" stroke="#7a5cb0" stroke-width="1.6"/>
+<text x="490.0" y="116" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">notes/ 笔记线</text>
+<text x="490.0" y="139" text-anchor="middle" font-size="10.5" fill="#3a3a3a">ink-serve · transcribe-serve</text>
+<text x="490.0" y="154" text-anchor="middle" font-size="10.5" fill="#3a3a3a">mind-serve · note-serve</text>
+<text x="490.0" y="169" text-anchor="middle" font-size="10.5" fill="#3a3a3a">crates/vendorcfg</text>
+<text x="490.0" y="184" text-anchor="middle" font-size="10.5" fill="#3a3a3a"></text>
+<text x="490.0" y="199" text-anchor="middle" font-size="10.5" fill="#3a3a3a">常用：clock · xochitl · registry · paths</text>
+<text x="490.0" y="214" text-anchor="middle" font-size="10.5" fill="#3a3a3a">fs · service · events · config</text>
+<rect x="656" y="96" width="260" height="150" rx="10" fill="#fff3d6" stroke="#c9971f" stroke-width="1.6"/>
+<text x="786.0" y="116" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">enhance/ 系统增强</text>
+<text x="786.0" y="139" text-anchor="middle" font-size="10.5" fill="#3a3a3a">font-serve</text>
+<text x="786.0" y="154" text-anchor="middle" font-size="10.5" fill="#3a3a3a">wallpaper-serve</text>
+<text x="786.0" y="169" text-anchor="middle" font-size="10.5" fill="#3a3a3a"></text>
+<text x="786.0" y="184" text-anchor="middle" font-size="10.5" fill="#3a3a3a">常用：asset · paths · events · config</text>
+<text x="786.0" y="199" text-anchor="middle" font-size="10.5" fill="#3a3a3a">formats · ttf · xochitl_conf</text>
+<rect x="932" y="96" width="284" height="150" rx="10" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.6"/>
+<text x="1074.0" y="116" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">gateway/ 网关</text>
+<text x="1074.0" y="139" text-anchor="middle" font-size="10.5" fill="#3a3a3a">唯一对外入口</text>
+<text x="1074.0" y="154" text-anchor="middle" font-size="10.5" fill="#3a3a3a"></text>
+<text x="1074.0" y="169" text-anchor="middle" font-size="10.5" fill="#3a3a3a">常用：paths · http（含 Guard/TLS）</text>
+<text x="1074.0" y="184" text-anchor="middle" font-size="10.5" fill="#3a3a3a">registry · events · auth · tls</text>
+<text x="1074.0" y="199" text-anchor="middle" font-size="10.5" fill="#3a3a3a">mdns · netinfo · multipart</text>
+<polyline points="174,246 174,282" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#mk)"/>
+<polyline points="490,246 490,282" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#mk)"/>
+<polyline points="786,246 786,282" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#mk)"/>
+<polyline points="1074,246 1074,282" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#mk)"/>
+<rect x="24" y="282" width="1192" height="400" rx="10" fill="#f1f1ef" stroke="#8a8a8a" stroke-width="1.6"/>
+<text x="620" y="306" text-anchor="middle" font-size="14" font-weight="bold" fill="#1a1a1a">rmsvc-core（crate；20 个模块）</text>
+<rect x="44" y="322" width="372" height="170" rx="10" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.6"/>
+<text x="230.0" y="342" text-anchor="middle" font-size="12" font-weight="bold" fill="#1a1a1a">服务骨架</text>
+<text x="56" y="362" text-anchor="start" font-size="10" fill="#3a3a3a">service   启动模板：解析 --bind → 建目录 → 自注册 → 起服务器（自带 /health）</text>
+<text x="56" y="380" text-anchor="start" font-size="10" fill="#3a3a3a">registry  服务自注册/发现：$XDG_RUNTIME_DIR/shelf/services/&lt;名&gt;.json</text>
+<text x="56" y="398" text-anchor="start" font-size="10" fill="#3a3a3a">          （pid 已死的陈旧条目自动清理；SvcClient 是跨服务 HTTP 客户端）</text>
+<text x="56" y="416" text-anchor="start" font-size="10" fill="#3a3a3a">http      tiny_http 适配：Router / Request / Reply / Guard / SSE 流</text>
+<text x="56" y="434" text-anchor="start" font-size="10" fill="#3a3a3a">          （领域模块不碰 HTTP 类型，这里是唯一适配层）</text>
+<text x="56" y="452" text-anchor="start" font-size="10" fill="#3a3a3a">events    事件总线 EventBus + SSE + follow()（订阅别的服务）</text>
+<rect x="432" y="322" width="372" height="170" rx="10" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.6"/>
+<text x="618.0" y="342" text-anchor="middle" font-size="12" font-weight="bold" fill="#1a1a1a">文件与数据</text>
+<text x="444" y="362" text-anchor="start" font-size="10" fill="#3a3a3a">paths     XDG 基目录的单一路径表（三线共用一张）</text>
+<text x="444" y="380" text-anchor="start" font-size="10" fill="#3a3a3a">fs        原子写（tmp→rename）· plain_name · unique_path</text>
+<text x="444" y="398" text-anchor="start" font-size="10" fill="#3a3a3a">config    JSON 配置读写模板（load_or_default / load_or_seed / save）</text>
+<text x="444" y="416" text-anchor="start" font-size="10" fill="#3a3a3a">multipart 流式 multipart 解析（多文件落盘，不进内存）</text>
+<text x="444" y="434" text-anchor="start" font-size="10" fill="#3a3a3a">asset     资产仓库抽象 + 上传流程模板（字体/壁纸/词典/母版库共用）</text>
+<text x="444" y="452" text-anchor="start" font-size="10" fill="#3a3a3a">formats   文件格式白名单单一事实源 · ttf 字体解析 · cache TTL 缓存 · clock</text>
+<rect x="820" y="322" width="376" height="170" rx="10" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.6"/>
+<text x="1008.0" y="342" text-anchor="middle" font-size="12" font-weight="bold" fill="#1a1a1a">对外与安全（网关用得多）</text>
+<text x="832" y="362" text-anchor="start" font-size="10" fill="#3a3a3a">auth      PBKDF2 密码哈希 · Basic/Cookie 解析 · 会话表 · 失败限速</text>
+<text x="832" y="380" text-anchor="start" font-size="10" fill="#3a3a3a">tls       私有 CA + 叶证书（800 天，自动续签）</text>
+<text x="832" y="398" text-anchor="start" font-size="10" fill="#3a3a3a">mdns      极简 mDNS 应答器（shelf.local）</text>
+<text x="832" y="416" text-anchor="start" font-size="10" fill="#3a3a3a">netinfo   本机 IPv4 表（证书 SAN、mDNS 选址；不 fork 进程）</text>
+<rect x="44" y="508" width="560" height="150" rx="10" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.6"/>
+<text x="324.0" y="528" text-anchor="middle" font-size="12" font-weight="bold" fill="#1a1a1a">和设备上的 xochitl 打交道</text>
+<text x="56" y="548" text-anchor="start" font-size="10" fill="#3a3a3a">xochitl       原生书库免重启注入：POST /upload（GET-then-upload 归档）</text>
+<text x="56" y="566" text-anchor="start" font-size="10" fill="#3a3a3a">              · upload_file 流式上传 · upload_large_file：超过网页 100MB 上限时</text>
+<text x="56" y="584" text-anchor="start" font-size="10" fill="#3a3a3a">                “占位 + 磁盘替换” · 防复制风暴判据 · unique_document_name</text>
+<text x="56" y="602" text-anchor="start" font-size="10" fill="#3a3a3a">xochitl_conf  改 xochitl.conf [General] 单键（如休眠屏 SleepScreenPath）</text>
+<text x="56" y="620" text-anchor="start" font-size="10" fill="#3a3a3a">fswatch       inotify 防抖目录监听（常驻 / 限时两种）</text>
+<rect x="620" y="508" width="576" height="150" rx="10" fill="#fdf1ec" stroke="#c0602d" stroke-width="1.6"/>
+<text x="908.0" y="528" text-anchor="middle" font-size="12" font-weight="bold" fill="#1a1a1a">维护纪律</text>
+<text x="632" y="548" text-anchor="start" font-size="10" fill="#3a3a3a">· 这里出问题，理论上 5 个独立顶层项目一起受影响：改任何模块前</text>
+<text x="632" y="566" text-anchor="start" font-size="10" fill="#3a3a3a">  先想清楚三条线谁在用它</text>
+<text x="632" y="584" text-anchor="start" font-size="10" fill="#3a3a3a">· 不引用旧项目任何 crate（device-core / weread-device）；</text>
+<text x="632" y="602" text-anchor="start" font-size="10" fill="#3a3a3a">  xochitl、fswatch 两模块是“剥离移植”的独立实现</text>
+<text x="632" y="620" text-anchor="start" font-size="10" fill="#3a3a3a">· 独立顶层项目各自带一份 .cargo/config.toml（Cargo 没有“引用别处配置”）</text>
+</svg>

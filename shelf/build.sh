@@ -39,19 +39,11 @@ fi
 
 echo
 echo "aarch64 全静态产物："
-for b in $BINS; do
-    f="target/$TARGET/release/$b"
-    [ -f "$f" ] && echo "  $f  $(wc -c <"$f")B  $(file "$f" | grep -o 'statically linked' || echo dynamic)"
-done
-for b in $GATEWAY_BINS; do
-    f="../gateway/target/$TARGET/release/$b"
-    [ -f "$f" ] && echo "  $f  $(wc -c <"$f")B  $(file "$f" | grep -o 'statically linked' || echo dynamic)"
-done
-for b in $ENHANCE_BINS; do
-    f="../enhance/$b/target/$TARGET/release/$b"
-    [ -f "$f" ] && echo "  $f  $(wc -c <"$f")B  $(file "$f" | grep -o 'statically linked' || echo dynamic)"
-done
-for b in $NOTES_BINS; do
-    f="../notes/target/$TARGET/release/$b"
-    [ -f "$f" ] && echo "  $f  $(wc -c <"$f")B  $(file "$f" | grep -o 'statically linked' || echo dynamic)"
-done
+# 只列出存在的产物（if 而不是 `[ -f ] && echo`：后者在最后一项缺失时会让整个脚本以 1 退出）
+report() {
+    if [ -f "$1" ]; then echo "  $1  $(wc -c <"$1")B  $(file "$1" | grep -o 'statically linked' || echo dynamic)"; fi
+}
+for b in $BINS; do report "target/$TARGET/release/$b"; done
+for b in $GATEWAY_BINS; do report "../gateway/target/$TARGET/release/$b"; done
+for b in $ENHANCE_BINS; do report "../enhance/$b/target/$TARGET/release/$b"; done
+for b in $NOTES_BINS; do report "../notes/target/$TARGET/release/$b"; done

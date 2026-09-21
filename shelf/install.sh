@@ -29,12 +29,23 @@
 # ═══════════════════════════════════════════════════════════════════════════
 set -eu
 
+usage() {
+    cat <<'USAGE_EOF'
+用法：install.sh [--only gateway,book,...] [--no-systemd] [--src DIR] [--password PW | --password-file FILE]
+  --only          只装/更新列出的服务（网关总会装）；缺省全装
+  --no-systemd    只落二进制与目录，不碰 /usr
+  --src DIR       载荷目录，缺省 = 本脚本所在目录
+  --password / --password-file   设网关密码（file 读完即删，host 侧 deploy.sh 用它）
+USAGE_EOF
+}
+
 HERE="$(cd "$(dirname "$0")" && pwd)"
 SRC="$HERE"
 ONLY=""
 PASSWORD=""
 PASSWORD_FILE=""
 DO_SYSTEMD=1
+VERITY_SKIPPED=0
 _prev=""
 for a in "$@"; do
     case "$_prev" in
@@ -50,7 +61,8 @@ for a in "$@"; do
         --password-file=*) PASSWORD_FILE="${a#--password-file=}" ;;
         --only|--src|--password|--password-file) _prev="$a" ;;
         --no-systemd) DO_SYSTEMD=0 ;;
-        *) echo "!! 未知参数：$a"; exit 2 ;;
+        -h|--help) usage; exit 0 ;;
+        *) echo "!! 未知参数：$a（-h 看用法）"; exit 2 ;;
     esac
 done
 [ -z "$_prev" ] || { echo "!! $_prev 缺参数"; exit 2; }
@@ -176,7 +188,9 @@ write_units() {   # 在 rw 窗口里执行；显式 || return 1，不依赖 set 
 if [ "$DO_SYSTEMD" = "0" ]; then
     echo "-- --no-systemd：跳过单元。手动：$BIN_DIR/gateway serve"
 elif cj_verity_active; then
-    echo "✋ dm-verity 激活 —— 跳过写 /usr（不装开机持久，避免变砖）。"
+    echo "✋ dm-verity 激活 —— 跳过写 /usr（不装开机持久，避免变砖）。已有的单元（若之前装过）仍会重启以载入新二进制；"
+    echo "   没有单元的服务不会被 systemd 管理，需手动跑：$BIN_DIR/gateway serve（其余服务同理）。"
+    VERITY_SKIPPED=1
 elif [ ! -d "$SRC/systemd" ]; then
     echo "-- 载荷无 systemd/，跳过"
 else
@@ -207,15 +221,19 @@ else
     for lb in $SHELF_LEGACY_BINS; do
         if [ -f "$BIN_DIR/$lb" ]; then bk_keep "$BIN_DIR/$lb"; rm -f "$BIN_DIR/$lb"; echo "-- 已清旧命名遗留 $lb"; fi
     done
-    # 只重启"二进制或单元变了，或当前没在跑"的服务
+fi
+# 只重启"二进制或单元变了，或当前没在跑"的服务——且该服务的单元文件确实在 /usr 里（verity 跳过写单元时，
+# 之前装过的单元照样要重启才能载入新二进制；根本没有单元的服务 systemctl restart 也只会报错，不去碰）
+if [ "$DO_SYSTEMD" = "1" ] && [ -d "$SRC/systemd" ]; then
     for s in $SEL; do
         svc="$(shelf_svc_of "$s")"
+        [ -f "$SYSD/$svc.service" ] || continue
         st="$(systemctl is-active "$svc" 2>/dev/null || true)"
         if [ "$st" != "active" ] || case " $CHANGED $UNITS_CHANGED " in *" $s "*) true ;; *) false ;; esac; then
             systemctl restart "$svc.service" 2>/dev/null || true
         fi
     done
-    systemctl start shelf.target 2>/dev/null || true
+    if [ -f "$SYSD/shelf.target" ]; then systemctl start shelf.target 2>/dev/null || true; fi
 fi
 
 # ── 3b. 壁纸：建池 + 写原生 SleepScreenPath（选了 wallpaper 才做）──
@@ -231,7 +249,7 @@ if sel_has wallpaper; then
 fi
 
 # ── 3c. qt-resource-rebuilder qmd（qrr 目录在才装；被替换的旧文件备份进 $BK，不在 qrr 目录里留 .bak）──
-QMD_INSTALLED=0
+QMD_CHANGED=0   # qmd 真的被改动（新装/内容变化/清旧遗留）——只有这时才需要重启 xochitl 才生效
 if [ -d "$QRR" ] && [ -d "$SRC/xovi" ]; then
     if sel_has font; then
         # 固件按 os-release 的 IMG_VERSION 主次号挑 qmd（3.27 与 3.28 的 FormatFont.qml 结构不同）。
@@ -244,31 +262,34 @@ if [ -d "$QRR" ] && [ -d "$SRC/xovi" ]; then
         if [ -f "$SRC/xovi/$Q" ]; then
             bk_keep_if_differs "$SRC/xovi/$Q" "$QRR/font-menu-dynamic.qmd"
             cj_safe_replace "$SRC/xovi/$Q" "$QRR/font-menu-dynamic.qmd" "$CJ_STAGE_DIR" 644 || { echo "!! 写字体菜单 qmd 失败"; exit 1; }
-            QMD_INSTALLED=1
+            if [ "$CJ_REPLACED" = "1" ]; then QMD_CHANGED=1; fi
             echo "-- 字体菜单 qmd（$Q）已放 $QRR/"
         else
             echo "-- 载荷无 xovi/$Q，跳过字体菜单 qmd"
         fi
     fi
     if sel_has book; then
-        # 原生回收站代理（shelf doctor --render 探针 + note-serve 旧版本回收走 book-serve /trash/*，Sidebar 注入）
+        # 原生回收站代理（note-serve 旧版本回收走 book-serve /trash/*，Sidebar 注入）
         # 与原生建文件夹代理（网页母版库「加入 xochitl → 文件夹」不存在时靠 /mkdir/* 真建出来，MainView 注入；2026-09-19 复活）
         for q in $(shelf_svc_qmds book); do
             if [ -f "$SRC/xovi/$q" ]; then
                 bk_keep_if_differs "$SRC/xovi/$q" "$QRR/$q"
                 cj_safe_replace "$SRC/xovi/$q" "$QRR/$q" "$CJ_STAGE_DIR" 644 || { echo "!! 写 $q 失败"; exit 1; }
-                QMD_INSTALLED=1
-                echo "-- qmd $q 已放 $QRR/（3.28 锚点）"
+                if [ "$CJ_REPLACED" = "1" ]; then QMD_CHANGED=1; fi
+                    echo "-- qmd $q 已放 $QRR/（3.28 锚点）"
             fi
         done
     fi
     # 旧版本遗留的变体名
-    for lq in $SHELF_LEGACY_QMDS; do rm -f "$QRR/$lq"; done
-    [ -d "$CJ_STAGE_DIR" ] && rmdir "$CJ_STAGE_DIR" 2>/dev/null || true
+    for lq in $SHELF_LEGACY_QMDS; do
+        if [ -e "$QRR/$lq" ]; then rm -f "$QRR/$lq"; QMD_CHANGED=1; fi
+    done
+    cj_stage_cleanup
 else
     echo "-- （无 qt-resource-rebuilder 目录或载荷无 xovi/，跳过字体菜单/回收站/建夹 qmd；字体仍可用 fontconfig 装入）"
 fi
-if [ "$QMD_INSTALLED" = "1" ]; then
+if [ "$QMD_CHANGED" = "1" ]; then
+    cj_pending_mark shelf-qmd || true   # 让 packaging/deploy-xovi-apply.sh 知道有 qmd 待生效
     # ⚠ qmd 只落盘，要 xochitl 重启才注入。怎么重启取决于 xovi 是否已在运行的 xochitl 里生效：
     #   已生效 → systemctl restart xochitl（drop-in 保持）；没生效 → xovi/start。
     #   ⚠ 绝不在已生效时跑 xovi/start：它会让运行中的 xochitl SEGV → 整机自动重启（2026-09-20 真机事故）。
@@ -317,11 +338,15 @@ if [ "$ALL_OK" = "1" ] && [ -n "$REG" ]; then
     if [ "${MUST_CHANGE:-0}" != "0" ]; then
         echo "   登录：密码 shelf（首次默认），登录后必须改；忘记密码：gateway reset-password"
     else
-        echo "   登录：已设置的密码（改：网页右上「改密码」/ shelf passwd / 设备上 gateway passwd <新密码>）"
+        echo "   登录：已设置的密码（改：网页右上「改密码」/ 设备上 gateway passwd <新密码>）"
     fi
     echo "   ⚠ 自签证书：登录页「下载 CA 证书」装进手机/电脑信任库一次即不再提示，否则点「高级 → 继续访问」"
 else
-    echo "⚠️  有服务未起（journalctl -u gateway 等）。备份在 ${BK:-（本次无需备份）}。"
+    if [ "$VERITY_SKIPPED" = "1" ]; then
+        echo "⚠️  dm-verity 激活、没有装 /usr 单元，服务没被 systemd 拉起——二进制已就位，手动跑：$BIN_DIR/gateway serve（其余服务同理）。备份在 ${BK:-（本次无需备份）}。"
+    else
+        echo "⚠️  有服务未起（journalctl -u gateway 等）。备份在 ${BK:-（本次无需备份）}。"
+    fi
     [ "$DO_SYSTEMD" = "0" ] || exit 1
 fi
 echo "═══════════════════════════════════════════════════"

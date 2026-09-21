@@ -73,7 +73,7 @@ fn main() {
             let e = book.entries.iter().find(|e| e.id == id).ok_or_else(|| ApiError::not_found("没有这条目"))?;
             let now = rmsvc_core::clock::now_secs();
             let ctx = Ctx { store: &s.store, model: model.as_ref(), cfg: &cfg, ledger: &s.ledger, now };
-            match worker::ask_entry(&ctx, &uuid, e) {
+            match worker::ask_entry(&ctx, &uuid, &book.title, e) {
                 // 点「提问」弹出这次调用的消耗（token）——不是账本累计，是这一次调用的实际数字。
                 Ok(a) => Ok(Reply::ok(&serde_json::json!({"ok": true, "answer": a.text, "promptTokens": a.prompt_tokens, "completionTokens": a.completion_tokens}))),
                 Err(msg) => Err(ApiError::bad(msg)),

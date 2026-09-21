@@ -243,7 +243,7 @@ pub(super) fn ncx_navpoint_titles_and_targets(ncx_text: &str) -> Vec<(String, St
 /// 标题这条本身就是这部的开篇章节，能跳）；分部前缀后剩下的文本（如"01　雪人"）连同后续不带
 /// 前缀的条目一起降一级当子级。**一条"第X部"前缀都没匹配到＝原样不动**——不是所有书都用这种
 /// 排版惯例，没信号时贸然重建有误伤风险，见 §03az。
-pub(super) fn restructure_existing_toc_parts(entries: &mut Vec<Entry>, mode: AutoToc, rep: &mut WashReport) {
+pub(super) fn restructure_existing_toc_parts(entries: &mut [Entry], mode: AutoToc, rep: &mut WashReport) {
     if mode == AutoToc::Off {
         return;
     }

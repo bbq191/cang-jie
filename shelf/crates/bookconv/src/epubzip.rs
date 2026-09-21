@@ -55,6 +55,25 @@ pub fn read_skeleton<R: Read + Seek>(zip: &mut ZipArchive<R>) -> Result<Skeleton
     Ok(Skeleton { entries, sizes })
 }
 
+/// 按名字读一个 zip 条目的全部字节；条目不存在 → `Ok(None)`，其它（损坏/IO）错误 → `Err`。
+/// 流式路径"图片按需从源 zip 读回"的统一入口（此前 `by_name` + `with_capacity(size)` + `read_to_end` 在
+/// streaming/comic_split/comic_pdf/placeholder 各抄一份）。
+pub fn read_by_name_opt<R: Read + Seek>(zip: &mut ZipArchive<R>, name: &str) -> Result<Option<Vec<u8>>, String> {
+    let mut f = match zip.by_name(name) {
+        Ok(f) => f,
+        Err(zip::result::ZipError::FileNotFound) => return Ok(None),
+        Err(e) => return Err(e.to_string()),
+    };
+    let mut v = Vec::with_capacity(f.size() as usize);
+    f.read_to_end(&mut v).map_err(|e| e.to_string())?;
+    Ok(Some(v))
+}
+
+/// 同 [`read_by_name_opt`]，条目不存在也算错误。
+pub fn read_by_name<R: Read + Seek>(zip: &mut ZipArchive<R>, name: &str) -> Result<Vec<u8>, String> {
+    read_by_name_opt(zip, name)?.ok_or_else(|| format!("zip 里没有条目 {name}"))
+}
+
 /// 从 zip 字节读条目表（目录项剔除，图片也整份读）。优化器与质量门共用。
 pub fn read_entries(epub: &[u8]) -> Result<Vec<Entry>, String> {
     let mut archive = ZipArchive::new(std::io::Cursor::new(epub)).map_err(|e| format!("解 EPUB(非 zip?): {e}"))?;
@@ -173,6 +192,16 @@ mod tests {
         assert!(by["images/p1.JPG"].data.is_empty(), "可降采样图片留空占位");
         assert_eq!(by["images/p2.gif"].data.len(), 10, "gif 不在降采样范围，照常整份读");
         assert_eq!(sk.sizes["images/p1.JPG"], 300, "占位条目的真实体积从 zip 目录取");
+    }
+
+    #[test]
+    fn read_by_name_distinguishes_missing_from_present() {
+        let bytes = zip_of(&[("a.txt", b"hello")]);
+        let mut z = ZipArchive::new(std::io::Cursor::new(&bytes)).unwrap();
+        assert_eq!(read_by_name_opt(&mut z, "a.txt").unwrap(), Some(b"hello".to_vec()));
+        assert_eq!(read_by_name_opt(&mut z, "nope").unwrap(), None, "条目不存在不是错误");
+        assert!(read_by_name(&mut z, "nope").unwrap_err().contains("nope"));
+        assert_eq!(read_by_name(&mut z, "a.txt").unwrap(), b"hello");
     }
 
     #[test]

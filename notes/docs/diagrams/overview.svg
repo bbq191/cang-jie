@@ -1,0 +1,68 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1240 640" font-family="sans-serif">
+<defs><marker id="mk" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#555"/></marker><marker id="mr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#b0451f"/></marker><marker id="mg" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2f7d45"/></marker></defs>
+<rect x="0" y="0" width="1240" height="640" fill="#fbfbfa"/>
+<text x="620.0" y="30" text-anchor="middle" font-size="18" font-weight="bold" fill="#1a1a1a">笔记线一图读懂：从“勾一笔”到“推送成笔记”</text>
+<text x="620.0" y="52" text-anchor="middle" font-size="12.5" fill="#6a6a6a">设备只负责写；改在手机；条目库是唯一事实源，设备笔记本与 Obsidian md 都只是它的投影</text>
+<rect x="24" y="84" width="250" height="130" rx="10" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.6"/>
+<text x="149.0" y="104" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">① 你在设备上</text>
+<text x="149.0" y="127" text-anchor="middle" font-size="10.5" fill="#3a3a3a">用荧光笔勾书里的原文</text>
+<text x="149.0" y="142" text-anchor="middle" font-size="10.5" fill="#3a3a3a">在勾出来的内容旁边手写批注</text>
+<text x="149.0" y="157" text-anchor="middle" font-size="10.5" fill="#3a3a3a">合上书（xochitl 重写 .metadata）</text>
+<polyline points="274,149 316,149" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#mk)"/>
+<text x="295.0" y="139" text-anchor="middle" font-size="10" fill="#555">fswatch</text>
+<rect x="316" y="84" width="300" height="130" rx="10" fill="#eaf6ec" stroke="#3f9a55" stroke-width="1.6"/>
+<text x="466.0" y="104" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">② ink-serve 矿 :8795</text>
+<text x="466.0" y="127" text-anchor="middle" font-size="10.5" fill="#3a3a3a">解析 .rm：勾画 ↔ 旁边手写配对</text>
+<text x="466.0" y="142" text-anchor="middle" font-size="10.5" fill="#3a3a3a">自渲染裁图；增量合并（不覆盖你改的字）</text>
+<text x="466.0" y="157" text-anchor="middle" font-size="10.5" fill="#3a3a3a">写条目库（唯一写者），状态 Mined</text>
+<polyline points="616,149 658,149" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#mk)"/>
+<rect x="658" y="84" width="270" height="130" rx="10" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.6"/>
+<text x="793.0" y="104" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">③ 手机「浏览」页</text>
+<text x="793.0" y="127" text-anchor="middle" font-size="10.5" fill="#3a3a3a">按书按页看裁图与引用</text>
+<text x="793.0" y="142" text-anchor="middle" font-size="10.5" fill="#3a3a3a">「转入笔记」→ Pending</text>
+<text x="793.0" y="157" text-anchor="middle" font-size="10.5" fill="#3a3a3a">「不需要」→ Skipped（回收站）</text>
+<polyline points="928,149 970,149" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#mk)"/>
+<rect x="970" y="84" width="246" height="130" rx="10" fill="#fff3d6" stroke="#c9971f" stroke-width="1.6"/>
+<text x="1093.0" y="104" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">④ transcribe-serve :8796</text>
+<text x="1093.0" y="127" text-anchor="middle" font-size="10.5" fill="#3a3a3a">只处理 Pending</text>
+<text x="1093.0" y="142" text-anchor="middle" font-size="10.5" fill="#3a3a3a">裁图喂视觉模型 → 草稿 draft</text>
+<text x="1093.0" y="157" text-anchor="middle" font-size="10.5" fill="#3a3a3a">（纯勾画条目无需转写）</text>
+<polyline points="1093,214 1093,262" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#mk)"/>
+<rect x="970" y="262" width="246" height="118" rx="10" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.6"/>
+<text x="1093.0" y="282" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">⑤ 手机「整理」页</text>
+<text x="1093.0" y="305" text-anchor="middle" font-size="10.5" fill="#3a3a3a">核对/改字（行首标记自动定样式）</text>
+<text x="1093.0" y="320" text-anchor="middle" font-size="10.5" fill="#3a3a3a">选去处；勾「问AI」填问题</text>
+<text x="1093.0" y="335" text-anchor="middle" font-size="10.5" fill="#3a3a3a">不要了 → 回收站（可恢复）</text>
+<polyline points="970,321 928,321" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#mk)"/>
+<rect x="658" y="262" width="270" height="118" rx="10" fill="#fff3d6" stroke="#c9971f" stroke-width="1.6"/>
+<text x="793.0" y="282" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">⑥ mind-serve :8797</text>
+<text x="793.0" y="305" text-anchor="middle" font-size="10.5" fill="#3a3a3a">只在点“提问”时才跑（纯被动）</text>
+<text x="793.0" y="320" text-anchor="middle" font-size="10.5" fill="#3a3a3a">书名+章节+原文+文本+问题</text>
+<text x="793.0" y="335" text-anchor="middle" font-size="10.5" fill="#3a3a3a">→ 文字模型 → answer</text>
+<text x="949" y="258" text-anchor="start" font-size="10" fill="#1a1a1a"></text>
+<polyline points="1093,380 1093,424" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#mk)"/>
+<rect x="658" y="424" width="558" height="96" rx="10" fill="#eaf6ec" stroke="#3f9a55" stroke-width="1.6"/>
+<text x="937.0" y="444" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">⑦ note-serve :8798 · 「推送本章」</text>
+<text x="937.0" y="467" text-anchor="middle" font-size="10" fill="#3a3a3a">按每条的“去处”把一章条目投影出去（指纹没变就跳过）</text>
+<text x="937.0" y="482" text-anchor="middle" font-size="10" fill="#3a3a3a">设备笔记本：书本自己所在的文件夹，一章一本，7 种打字样式；旧版本走回收站软删</text>
+<text x="937.0" y="497" text-anchor="middle" font-size="10" fill="#3a3a3a">Obsidian：md 一章一文件（front-matter + 块锚 ^id + [[书名]] 反链），可直接下载</text>
+<rect x="24" y="262" width="300" height="118" rx="10" fill="#fdf1ec" stroke="#c0602d" stroke-width="1.6"/>
+<text x="174.0" y="282" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">条目库（唯一事实源）</text>
+<text x="174.0" y="305" text-anchor="middle" font-size="10" fill="#3a3a3a">~/.local/state/notes/books/&lt;uuid&gt;.json</text>
+<text x="174.0" y="320" text-anchor="middle" font-size="10" fill="#3a3a3a">一书一文件，原子写</text>
+<text x="174.0" y="335" text-anchor="middle" font-size="10" fill="#3a3a3a">状态：Mined→Pending→Draft→Reviewed</text>
+<text x="174.0" y="350" text-anchor="middle" font-size="10" fill="#3a3a3a">终态：Skipped / Revoked / Archived</text>
+<rect x="340" y="262" width="300" height="118" rx="10" fill="#f1f1ef" stroke="#8a8a8a" stroke-width="1.6"/>
+<text x="490.0" y="282" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">为什么设备只读</text>
+<text x="490.0" y="305" text-anchor="middle" font-size="10" fill="#3a3a3a">xochitl 不认外部对已有文档的原地修改</text>
+<text x="490.0" y="320" text-anchor="middle" font-size="10" fill="#3a3a3a">e-ink 上改字太痛苦</text>
+<text x="490.0" y="335" text-anchor="middle" font-size="10" fill="#3a3a3a">→ 改在手机，回写靠重建</text>
+<text x="490.0" y="350" text-anchor="middle" font-size="10" fill="#3a3a3a">一章一本让重建局部化</text>
+<rect x="24" y="424" width="610" height="96" rx="10" fill="#f1f1ef" stroke="#8a8a8a" stroke-width="1.6"/>
+<text x="36" y="444" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">出网与安全</text>
+<text x="36" y="467" text-anchor="start" font-size="10" fill="#3a3a3a">出网的只有 transcribe / mind 两个服务：设备自己 WiFi 直连模型厂商（DashScope / OpenAI / Gemini / DeepSeek）</text>
+<text x="36" y="482" text-anchor="start" font-size="10" fill="#3a3a3a">key 按厂商分开存、0600 权限、网页上脱敏显示；其余服务只听 127.0.0.1，经网关（HTTPS + 登录）对外</text>
+<rect x="24" y="540" width="1192" height="78" rx="10" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.6"/>
+<text x="36" y="560" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">图里没画的两条旁路</text>
+<text x="36" y="583" text-anchor="start" font-size="10.5" fill="#3a3a3a">· 单篇 markdown 直接导入成设备笔记本（不经条目库；网页入口默认隐藏，书架「实验室」开关）   · KOReader 的高亮/生词经 POST /ink/koreader/import 并入条目库（目前只能 curl，无网页按钮）</text>
+</svg>

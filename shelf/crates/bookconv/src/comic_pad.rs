@@ -77,6 +77,20 @@ pub fn has_text_page_class(html: &str) -> bool {
     class_attr().captures(&m[1]).is_some_and(|c| c.get(2).or(c.get(3)).is_some_and(|v| v.as_str().split_whitespace().any(|t| t == TEXT_PAGE_CLASS)))
 }
 
+/// 标签属性串 `attrs` 里追加类 `class`（保留原有 class 值与其它属性；原来没有 class 属性就新增一个）。
+/// [`add_text_page_class`]（body）与 [`add_block_class`]（文字块）共用。
+fn attrs_with_class(attrs: &str, class: &str) -> String {
+    match class_attr().captures(attrs) {
+        Some(c) => {
+            let v = c.get(2).or(c.get(3)).map(|v| v.as_str()).unwrap_or("").trim();
+            let joined = if v.is_empty() { class.to_string() } else { format!("{v} {class}") };
+            let all = c.get(0).unwrap();
+            format!("{}class=\"{joined}\"{}", &attrs[..all.start()], &attrs[all.end()..])
+        }
+        None => format!("{attrs} class=\"{class}\""),
+    }
+}
+
 /// 给 `<body>` 加上 [`TEXT_PAGE_CLASS`]（保留原有 class）。没有 `<body>` 或已带 → `None`。
 pub fn add_text_page_class(html: &str) -> Option<String> {
     let m = body_tag().captures(html)?;
@@ -84,16 +98,7 @@ pub fn add_text_page_class(html: &str) -> Option<String> {
         return None;
     }
     let whole = m.get(0)?;
-    let attrs = &m[1];
-    let new_attrs = match class_attr().captures(attrs) {
-        Some(c) => {
-            let v = c.get(2).or(c.get(3)).map(|v| v.as_str()).unwrap_or("");
-            let joined = if v.trim().is_empty() { TEXT_PAGE_CLASS.to_string() } else { format!("{} {TEXT_PAGE_CLASS}", v.trim()) };
-            let all = c.get(0)?;
-            format!("{}class=\"{joined}\"{}", &attrs[..all.start()], &attrs[all.end()..])
-        }
-        None => format!("{attrs} class=\"{TEXT_PAGE_CLASS}\""),
-    };
+    let new_attrs = attrs_with_class(&m[1], TEXT_PAGE_CLASS);
     Some(format!("{}<body{new_attrs}>{}", &html[..whole.start()], &html[whole.end()..]))
 }
 
@@ -145,16 +150,7 @@ pub fn add_block_class(html: &str) -> Option<String> {
         if !is_text_block(tag, attrs) || attrs_have_class(attrs, TEXT_BLOCK_CLASS) {
             return m[0].to_string();
         }
-        let new_attrs = match class_attr().captures(attrs) {
-            Some(c) => {
-                let v = c.get(2).or(c.get(3)).map(|v| v.as_str()).unwrap_or("");
-                let joined = if v.trim().is_empty() { TEXT_BLOCK_CLASS.to_string() } else { format!("{} {TEXT_BLOCK_CLASS}", v.trim()) };
-                let all = c.get(0).unwrap();
-                format!("{}class=\"{joined}\"{}", &attrs[..all.start()], &attrs[all.end()..])
-            }
-            None => format!("{attrs} class=\"{TEXT_BLOCK_CLASS}\""),
-        };
-        format!("<{tag}{new_attrs}>")
+        format!("<{tag}{}>", attrs_with_class(attrs, TEXT_BLOCK_CLASS))
     });
     Some(out.into_owned())
 }

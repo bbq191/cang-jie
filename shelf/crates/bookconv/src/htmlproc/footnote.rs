@@ -413,7 +413,7 @@ pub fn preserve_relink_footnotes(html: &str, index: &std::collections::HashMap<S
                 .unwrap_or_else(|| c.get(0).unwrap().as_str().to_string())
         })
         .into_owned();
-    drop(make); // 释放对 appended/seen 的可变借用，pass 3 要用
+    // （`make` 到此不再使用，对 appended/seen 的可变借用随之结束，pass 3 才能用它们）
 
     // 3) 跨文件普通 <a href="其他文件#frag">：非 noteref，但 frag 已被 collect_footnote_notes 收进
     //    index（确证是注释）→ Inline 内联〔…〕/ Anchor 改同章锚点 + 注释搬章末。目标不在 index 的（目录/交叉引用）不动。
@@ -706,7 +706,7 @@ mod optimizer_footnote_tests {
         assert!(!out2.contains(r##"id="fn1""##), "撞车 id 未改名: {out2}");
         // 改名后 marker 与目标仍配对（同一新 id）
         let new_id = Regex::new(r##"id="(fn1-x\d+)""##).unwrap().captures(&out2).map(|c| c.get(1).unwrap().as_str().to_string());
-        let new_id = new_id.expect(&format!("未生成唯一新 id: {out2}"));
+        let new_id = new_id.unwrap_or_else(|| panic!("未生成唯一新 id: {out2}"));
         assert!(out2.contains(&format!(r##"href="#{new_id}""##)), "本章 href 未随之改名: {out2}");
         assert!(out2.contains("注释乙"), "注释文本不应丢");
     }
@@ -720,6 +720,24 @@ mod optimizer_footnote_tests {
         let out = dedup_ids_in_chapter(ch, &mut seen);
         assert!(!out.contains(r##"<p id="fn1">"##), "本章 id 应改名");
         assert!(out.contains(r##"href="other.xhtml#fn1""##), "跨文件 href 不该被改: {out}");
+    }
+
+    #[test]
+    fn dedup_renames_many_ids_in_one_pass_and_matches_case_exactly() {
+        // 一章里多个 id 同时撞车：各自改成互不相同的新名，且各自的同文件 href 跟着改；
+        // 大小写不同的 id（HTML id 区分大小写）不能被误当同一个而一起改。
+        let mut seen: HashSet<String> = ["fn1", "fn2", "Fn1"].iter().map(|s| s.to_string()).collect();
+        let ch = r##"<p id="fn1">甲</p><a href="#fn1">1</a><p id="fn2">乙</p><a href="#fn2">2</a><p id="Fn1">丙</p><a href="#Fn1">3</a><a href="#keep">4</a>"##;
+        let out = dedup_ids_in_chapter(ch, &mut seen);
+        let ids: Vec<String> = Regex::new(r##"\bid="([^"]+)""##).unwrap().captures_iter(&out).map(|c| c[1].to_string()).collect();
+        assert_eq!(ids.len(), 3);
+        assert!(ids.iter().collect::<HashSet<_>>().len() == 3, "三个新 id 必须互不相同: {out}");
+        for id in &ids {
+            assert!(id.contains("-x"), "都应改名: {out}");
+            assert!(out.contains(&format!(r##"href="#{id}""##)), "href 未随 {id} 改名: {out}");
+        }
+        assert!(out.contains(r##"href="#keep""##), "无关 href 原样: {out}");
+        assert!(ids[2].starts_with("Fn1-x"), "大写 Fn1 改名后保留自己的大小写前缀: {out}");
     }
 
     // ---- collapse_dup_id_attrs：同元素双 id 属性（非法 XHTML → reMarkable 整章渲染失败）----

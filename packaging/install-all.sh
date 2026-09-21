@@ -13,7 +13,7 @@
 #   handwriting-stroke   CJK 手写笔迹渲染优化（需要 vellum add xovi；只落盘）
 #   sidebar-entry        Sidebar 一级直达 KOReader/WeRead 入口（需要 qt-resource-rebuilder；缺了自动跳过；只落盘）
 #   shelf                shelf 本体+网关+笔记线+两个领域服务（不需要 xovi；qmd 只落盘）
-#   xovi-apply           统一让上面落盘的 xovi 内容生效：重启 xochitl 一次
+#   xovi-apply           统一让上面落盘的 xovi 内容生效：有待生效改动（或 xovi 还没生效）才重启 xochitl，且只一次
 # 装前先过固件安全门（sha256(/usr/bin/xochitl) 比对 firmware-allowlist.txt），避免在没验证过注入定位的固件上装错。
 #
 # ⚠️ xochitl 只重启一次，放在最后（xovi-apply）：没有"只重载一个扩展"的机制。hl-snap/handwriting-stroke/
@@ -32,20 +32,42 @@
 #     （不要 restart xochitl，见 deploy-sidebar-entry.sh 头注）。
 # 对称卸载见 packaging/uninstall-all.sh。
 #
-# 用法：./install-all.sh [host] [--force] [--skip a,b,...]
-#   host    默认 10.11.99.1（USB）
-#   --force 固件不在白名单也强装（哈希追加进本机 firmware-allowlist.local.txt，不再改动被 git 跟踪的白名单）
-#   --skip  逗号分隔，跳过指定步骤（可选值见 lib.sh STEP_ORDER）
+# 用法：./install-all.sh [host] [--force] [--force-apply] [--dry-run] [--skip a,b,...]
+#   host          默认 10.11.99.1（USB）
+#   --force       固件不在白名单也强装（哈希追加进本机 firmware-allowlist.local.txt，不再改动被 git 跟踪的白名单）
+#   --force-apply 最后一步（xovi-apply）无论有没有"待生效"的落盘改动都重启 xochitl。缺省只在这轮真的改了 xovi 相关
+#                 文件（或 xovi 还没在 xochitl 里生效）时才重启——重复跑 install-all 不再每次闪屏
+#   --dry-run     只在本机打印将执行的步骤，不连设备、不执行任何东西
+#   --skip        逗号分隔，跳过指定步骤（可选值见 lib.sh STEP_ORDER）
+# 装前依次：固件安全门（sha256 白名单）→ 设备预检（root/磁盘空间/xovi·qrr·appload 现状，只读）。
 # ═══════════════════════════════════════════════════════════════════════════
 set -eu
 cd "$(dirname "$0")"
 # shellcheck disable=SC1091
 . ./lib.sh
 
+usage() {
+    cat <<'EOF'
+用法：./install-all.sh [host] [--force] [--force-apply] [--dry-run] [--skip a,b,...]
+  host          默认 10.11.99.1（USB）
+  --force       固件不在白名单也强装（哈希追加进本机 firmware-allowlist.local.txt）
+  --force-apply 无论有无待生效改动，最后都重启 xochitl（缺省：没改动且 xovi 已生效就不重启）
+  --dry-run     只在本机打印计划，不连设备
+  --skip        逗号分隔，跳过指定步骤（步骤名见 lib.sh 的 STEP_ORDER）
+对称卸载：./uninstall-all.sh
+EOF
+}
+
 parse_step_args "$@"
 [ "$PURGE" = "0" ] || { echo "!! 未知参数：--purge（那是 uninstall-all.sh 的）"; exit 2; }
 
-fw_gate "$FORCE" || exit 1
+if [ "$DRY" = "1" ]; then
+    echo "═══ dry-run：只打印计划，不连设备（目标 root@$HOST）═══"
+else
+    require_device
+    fw_gate "$FORCE" || exit 1
+    preflight_device || exit 1
+fi
 
 for step in $STEP_ORDER; do
     script="$(step_script "$step")"
@@ -53,18 +75,29 @@ for step in $STEP_ORDER; do
     if word_in "$step" "$STEP_DEFER"; then
         # hl-snap/handwriting-stroke/sidebar-entry 只落盘，不各自触发 xochitl 重启
         run_step "$step" env DEFER_XOVI_START=1 sh "$script" "$HOST"
-    else
-        if [ "$step" = "xovi-apply" ] && ! skip_has xovi-apply; then
+    elif [ "$step" = "xovi-apply" ]; then
+        if ! skip_has xovi-apply && [ "$DRY" = "0" ]; then
             echo
-            echo "⚠ 下一步会重启 xochitl（设备屏幕闪烁，打断阅读/书写）。不想现在重启：Ctrl-C，或重跑时加 --skip xovi-apply。"
+            echo "⚠ 下一步会检查是否需要重启 xochitl（有待生效改动才重启：屏幕闪烁、打断阅读/书写）。完全不想重启：Ctrl-C，或重跑时加 --skip xovi-apply。"
         fi
+        if [ "$FORCE_APPLY" = "1" ]; then
+            run_step "$step" sh "$script" "$HOST" --force
+        else
+            run_step "$step" sh "$script" "$HOST"
+        fi
+    else
         run_step "$step" sh "$script" "$HOST"
     fi
 done
 
 echo
 echo "═══════════════════════════════════════════════════════════"
-echo "已安装：${DONE:-（无）}"
+if [ "$DRY" = "1" ]; then
+    echo "dry-run 计划（未连接设备、未执行）：${DONE:-（无）}"
+else
+    echo "已安装：${DONE:-（无）}"
+fi
+[ -z "$SKIPPED" ] || echo "已跳过（--skip）：$SKIPPED"
 if [ -n "$FAILED" ]; then
     echo "❌ 失败：$FAILED —— 看对应步骤上面的原始报错，不会自动重试"
 fi

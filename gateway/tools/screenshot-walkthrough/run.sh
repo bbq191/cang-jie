@@ -15,6 +15,20 @@ OUT="${1:-$(pwd)/shots}"
 REPO_ROOT="$(cd ../../.. && pwd)"
 PW="screenshot-walkthrough-pw-9527"
 
+# 这几个服务都用固定默认端口。开发机上如果已经有真的 book-serve/gateway 等在跑，下面的 fixture 上传会打进
+# 它们（污染真实数据）、走查也会连到错的实例——先确认端口空闲，被占就退出并指路。
+if command -v ss >/dev/null 2>&1; then
+    for port in 8790 8795 8798 8778; do
+        if ss -ltn "sport = :$port" 2>/dev/null | grep -q LISTEN; then
+            echo "!! 本机 127.0.0.1:$port 已被占用（真实服务在跑？）——为免 fixture 打进真实数据，本脚本拒绝运行。" >&2
+            echo "   先停掉占用者（ss -ltnp 'sport = :$port' 看是谁），再重跑。" >&2
+            exit 1
+        fi
+    done
+else
+    echo "⚠ 本机没有 ss，无法确认 8790/8795/8798/8778 端口空闲——若有真实服务在跑，fixture 会打进去，请自行确认。" >&2
+fi
+
 WORK="$(mktemp -d)"
 export XDG_CONFIG_HOME="$WORK/config"
 export XDG_DATA_HOME="$WORK/data"
@@ -38,7 +52,9 @@ echo "== 起服务（隔离临时 XDG 目录 $WORK）=="
 "$REPO_ROOT/shelf/target/debug/book-serve" > "$WORK/book-serve.log" 2>&1 & PIDS="$PIDS $!"
 "$REPO_ROOT/notes/target/debug/ink-serve" > "$WORK/ink-serve.log" 2>&1 & PIDS="$PIDS $!"
 "$REPO_ROOT/notes/target/debug/note-serve" > "$WORK/note-serve.log" 2>&1 & PIDS="$PIDS $!"
-sleep 1
+# 等 book-serve 真的起来（固定 sleep 在慢机器上会让下面的上传偶发失败）
+i=0
+until [ "$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:8790/" 2>/dev/null)" != "000" ] || [ "$i" -ge 30 ]; do sleep 0.5; i=$((i + 1)); done
 
 echo "== 灌 fixture：两本占位 EPUB 走真实上传 API 入母版库 =="
 python3 fixtures/make_fixture_epub.py "$WORK/book1.epub" "人骨拼图占位书名一" "作者甲" 4
