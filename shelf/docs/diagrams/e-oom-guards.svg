@@ -1,0 +1,106 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 760" font-family="sans-serif">
+<defs><marker id="eo-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#555"/></marker></defs>
+<rect x="0" y="0" width="1080" height="760" fill="#fbfbfa"/>
+<text x="540" y="30" text-anchor="middle" font-size="18" font-weight="bold" fill="#1a1a1a">内存防线：一本书从上传到落库，每一段怎么把峰值压住</text>
+<text x="540" y="52" text-anchor="middle" font-size="12.5" fill="#6a6a6a">设备约 2GB 内存，systemd MemoryMax 实测不生效，所有防线都在代码里</text>
+
+<!-- 五段防线 -->
+<rect x="25" y="72" width="190" height="196" rx="10" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.6"/>
+<text x="120" y="94" text-anchor="middle" font-size="13.5" font-weight="bold" fill="#1a1a1a">① 网关闸门</text>
+<text x="120" y="112" text-anchor="middle" font-size="11" fill="#4a4a4a">gateway/src/budget.rs</text>
+<text x="120" y="140" text-anchor="middle" font-size="11.5" fill="#1a1a1a">大档（&gt;90MB）同时 1 个</text>
+<text x="120" y="160" text-anchor="middle" font-size="11.5" fill="#1a1a1a">小档同时最多 3 个</text>
+<text x="120" y="180" text-anchor="middle" font-size="11.5" fill="#1a1a1a">排队最长等 30 分钟</text>
+<text x="120" y="208" text-anchor="middle" font-size="10.5" fill="#4a4a4a">book-serve 的忙锁只按书名，</text>
+<text x="120" y="223" text-anchor="middle" font-size="10.5" fill="#4a4a4a">不同书会叠加峰值，故网关补一道</text>
+
+<rect x="235" y="72" width="190" height="196" rx="10" fill="#e8f5ec" stroke="#3f9a55" stroke-width="1.6"/>
+<text x="330" y="94" text-anchor="middle" font-size="13.5" font-weight="bold" fill="#1a1a1a">② 入库</text>
+<text x="330" y="112" text-anchor="middle" font-size="11" fill="#4a4a4a">multipart 流式落盘</text>
+<text x="330" y="140" text-anchor="middle" font-size="11.5" fill="#1a1a1a">上传边收边写 spool .work/</text>
+<text x="330" y="160" text-anchor="middle" font-size="11.5" fill="#1a1a1a">同分区 rename 入母版库</text>
+<text x="330" y="180" text-anchor="middle" font-size="11.5" fill="#1a1a1a">整本从不进内存</text>
+
+<rect x="445" y="72" width="190" height="196" rx="10" fill="#e8f5ec" stroke="#3f9a55" stroke-width="1.6"/>
+<text x="540" y="94" text-anchor="middle" font-size="13.5" font-weight="bold" fill="#1a1a1a">③ 优化（EPUB）</text>
+<text x="540" y="112" text-anchor="middle" font-size="11" fill="#4a4a4a">optimize/streaming.rs</text>
+<text x="540" y="138" text-anchor="middle" font-size="11" fill="#1a1a1a">阶段一：只读非图片条目</text>
+<text x="540" y="156" text-anchor="middle" font-size="11" fill="#1a1a1a">阶段二：逐张读图→处理→写盘</text>
+<text x="540" y="174" text-anchor="middle" font-size="11" fill="#1a1a1a">worker 至多 2 个，前瞻 workers+2</text>
+<text x="540" y="192" text-anchor="middle" font-size="11" fill="#1a1a1a">在处理像素总和 ≤ 600 万</text>
+<text x="540" y="210" text-anchor="middle" font-size="11" fill="#b0451f">单图 &gt; 900 万像素：不解码，原样保留</text>
+
+<rect x="655" y="72" width="190" height="196" rx="10" fill="#e8f5ec" stroke="#3f9a55" stroke-width="1.6"/>
+<text x="750" y="94" text-anchor="middle" font-size="13.5" font-weight="bold" fill="#1a1a1a">④ 落库</text>
+<text x="750" y="112" text-anchor="middle" font-size="11" fill="#4a4a4a">staging/deliver.rs</text>
+<text x="750" y="138" text-anchor="middle" font-size="11" fill="#1a1a1a">不拆分：upload_file 流式发送</text>
+<text x="750" y="158" text-anchor="middle" font-size="11" fill="#1a1a1a">自检 text_profile_file</text>
+<text x="750" y="174" text-anchor="middle" font-size="11" fill="#1a1a1a">（图片条目连解压都跳过）</text>
+<text x="750" y="198" text-anchor="middle" font-size="11" fill="#1a1a1a">拆分：只搬原始压缩字节</text>
+<text x="750" y="214" text-anchor="middle" font-size="11" fill="#1a1a1a">不调用任何图片解码</text>
+
+<rect x="865" y="72" width="190" height="196" rx="10" fill="#fff3d6" stroke="#c9971f" stroke-width="1.6"/>
+<text x="960" y="94" text-anchor="middle" font-size="13.5" font-weight="bold" fill="#1a1a1a">⑤ 进程兜底</text>
+<text x="960" y="112" text-anchor="middle" font-size="11" fill="#4a4a4a">book-serve 可靠性</text>
+<text x="960" y="138" text-anchor="middle" font-size="11" fill="#1a1a1a">panic=unwind + catch_unwind</text>
+<text x="960" y="158" text-anchor="middle" font-size="11" fill="#1a1a1a">OpRegistry：忙锁 + 取消</text>
+<text x="960" y="178" text-anchor="middle" font-size="11" fill="#1a1a1a">边车更新全局锁</text>
+<text x="960" y="198" text-anchor="middle" font-size="11" fill="#1a1a1a">启动 recover_interrupted：</text>
+<text x="960" y="214" text-anchor="middle" font-size="11" fill="#1a1a1a">pending→failed，删半成品</text>
+
+<polyline points="215,170 233,170" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#eo-a)"/>
+<polyline points="425,170 443,170" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#eo-a)"/>
+<polyline points="635,170 653,170" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#eo-a)"/>
+<polyline points="845,170 863,170" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#eo-a)"/>
+
+<rect x="25" y="284" width="1030" height="40" rx="8" fill="#fbe9e4" stroke="#b0451f" stroke-width="1.6"/>
+<text x="540" y="309" text-anchor="middle" font-size="12.5" fill="#1a1a1a">book-serve.service 里写着 MemoryMax=192M，但设备 systemd 没把 memory 控制器代理进 system.slice，这条软限从未生效——不能指望它兜底</text>
+
+<!-- 实测 -->
+<text x="540" y="358" text-anchor="middle" font-size="15" font-weight="bold" fill="#1a1a1a">阈值都来自实测，不是字节数乘法</text>
+
+<text x="30" y="392" font-size="12.5" font-weight="bold" fill="#1a1a1a">单张漫画页优化的峰值内存 VmHWM</text>
+<text x="30" y="410" font-size="11" fill="#4a4a4a">本地 release 编译，复刻 trim_margins → downscale_for_epub_comic</text>
+
+<line x1="60" y1="690" x2="580" y2="690" stroke="#8a8a8a" stroke-width="1.2"/>
+<!-- 刻度：1MB = 0.9px，基线 y=690 -->
+<rect x="90" y="634" width="70" height="56" rx="3" fill="#e8f5ec" stroke="#3f9a55" stroke-width="1.4"/>
+<text x="125" y="627" text-anchor="middle" font-size="12" fill="#1a1a1a">62MB</text>
+<rect x="190" y="596" width="70" height="94" rx="3" fill="#e8f5ec" stroke="#3f9a55" stroke-width="1.4"/>
+<text x="225" y="589" text-anchor="middle" font-size="12" fill="#1a1a1a">97–109MB</text>
+<rect x="300" y="542" width="70" height="148" rx="3" fill="#fff3d6" stroke="#c9971f" stroke-width="1.4"/>
+<text x="335" y="535" text-anchor="middle" font-size="12" fill="#1a1a1a">164MB</text>
+<rect x="410" y="478" width="70" height="212" rx="3" fill="#fbe9e4" stroke="#b0451f" stroke-width="1.4"/>
+<text x="445" y="471" text-anchor="middle" font-size="12" fill="#1a1a1a">230–236MB</text>
+
+<text x="125" y="708" text-anchor="middle" font-size="11.5" fill="#1a1a1a">400 万像素</text>
+<text x="225" y="708" text-anchor="middle" font-size="11.5" fill="#1a1a1a">870 万像素</text>
+<text x="225" y="723" text-anchor="middle" font-size="10.5" fill="#4a4a4a">（A4 300dpi）</text>
+<text x="335" y="708" text-anchor="middle" font-size="11.5" fill="#1a1a1a">1600 万像素</text>
+<text x="445" y="708" text-anchor="middle" font-size="11.5" fill="#1a1a1a">2500 万像素</text>
+<text x="445" y="723" text-anchor="middle" font-size="10.5" fill="#b0451f">第一版阈值</text>
+
+<line x1="275" y1="440" x2="275" y2="690" stroke="#3f9a55" stroke-width="1.6" stroke-dasharray="5,4"/>
+<text x="280" y="452" font-size="11.5" font-weight="bold" fill="#2f7d45">现阈值 900 万像素</text>
+<text x="280" y="467" font-size="10.5" fill="#4a4a4a">MAX_DECODE_PIXELS</text>
+
+<text x="30" y="745" font-size="10.5" fill="#4a4a4a">实测约 9–16MB/百万像素，是"3 字节/像素"估算的 3–5 倍；第一版阈值挡不住，真机仍撞到 262MB</text>
+
+<!-- 右侧整本对比 -->
+<text x="620" y="392" font-size="12.5" font-weight="bold" fill="#1a1a1a">整本层面的真机实测</text>
+
+<rect x="620" y="408" width="435" height="86" rx="8" fill="#fbe9e4" stroke="#b0451f" stroke-width="1.6"/>
+<text x="636" y="430" font-size="12" font-weight="bold" fill="#1a1a1a">内存版优化 552MB《镖人》全集</text>
+<text x="636" y="452" font-size="11.5" fill="#1a1a1a">VmRSS 几十秒内冲到 1.4GB+</text>
+<text x="636" y="470" font-size="11.5" fill="#1a1a1a">系统可用内存探底 ~25MB，手动重启服务才止血</text>
+
+<rect x="620" y="508" width="435" height="86" rx="8" fill="#e8f5ec" stroke="#3f9a55" stroke-width="1.6"/>
+<text x="636" y="530" font-size="12" font-weight="bold" fill="#1a1a1a">流式优化同一本书</text>
+<text x="636" y="552" font-size="11.5" fill="#1a1a1a">VmRSS 全程 8–53MB，173 章处理完</text>
+<text x="636" y="570" font-size="11.5" fill="#1a1a1a">579MB → 785MB（漫画高质量重编码，体积涨属预期）</text>
+
+<rect x="620" y="608" width="435" height="86" rx="8" fill="#e8f5ec" stroke="#3f9a55" stroke-width="1.6"/>
+<text x="636" y="630" font-size="12" font-weight="bold" fill="#1a1a1a">80MB 测试 EPUB 走落库不拆分路径</text>
+<text x="636" y="652" font-size="11.5" fill="#1a1a1a">book-serve VmHWM 自 3484 kB 起全程未变</text>
+<text x="636" y="670" font-size="11.5" fill="#1a1a1a">（旧写法估算峰值约 180–270MB，三份同时在内存）</text>
+</svg>

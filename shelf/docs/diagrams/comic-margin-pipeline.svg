@@ -1,0 +1,108 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 740" font-family="sans-serif">
+<defs>
+<marker id="cm-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#555"/></marker>
+<marker id="cm-g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#8a8a8a"/></marker>
+</defs>
+<rect x="0" y="0" width="1080" height="740" fill="#fbfbfa"/>
+<text x="540" y="30" text-anchor="middle" font-size="18" font-weight="bold" fill="#1a1a1a">漫画页边距最小化：优化时补白 → 加入时登记 → 首次打开时 setMargins(1)</text>
+<text x="540" y="52" text-anchor="middle" font-size="12" fill="#4a4a4a">目标：xochitl 里漫画页的图片框从 260pt 宽（左 20.0 / 右 22.9）变成 302.0pt 宽（左 0.3 / 右 0.7）</text>
+
+<!-- 开关 -->
+<rect x="20" y="70" width="640" height="62" rx="8" fill="#fff3d6" stroke="#c9971f" stroke-width="1.5"/>
+<text x="340" y="93" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">网页「管理 → 实验室 → 漫画页边距最小化」（默认关）</text>
+<text x="340" y="113" text-anchor="middle" font-size="12" fill="#2a2a2a">网关写 reading-qol.json 的 comicMinMargin；book-serve 优化 / 登记 / 开书时每次现读</text>
+
+<rect x="690" y="70" width="370" height="62" rx="8" fill="#f0f0ee" stroke="#8a8a8a" stroke-width="1.5" stroke-dasharray="6 4"/>
+<text x="875" y="93" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">开关关闭时：一切如旧</text>
+<text x="875" y="113" text-anchor="middle" font-size="11.5" fill="#4a4a4a">页框 954×1696、不登记、GET /margins/&lt;uuid&gt; 一律 404</text>
+<line x1="660" y1="101" x2="690" y2="101" stroke="#8a8a8a" stroke-width="1.4" stroke-dasharray="5 4" marker-end="url(#cm-g)"/>
+<line x1="340" y1="132" x2="340" y2="158" stroke="#555" stroke-width="1.6" marker-end="url(#cm-a)"/>
+<text x="352" y="150" font-size="11" fill="#4a4a4a">开</text>
+
+<!-- 阶段 1 -->
+<rect x="20" y="160" width="340" height="330" rx="10" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.6"/>
+<text x="190" y="184" text-anchor="middle" font-size="14" font-weight="bold" fill="#1a1a1a">① 优化时（bookconv，母版库「优化」）</text>
+<text x="190" y="204" text-anchor="middle" font-size="11.5" fill="#4a4a4a">开 ⇒ comic_frame = MinMargin，整本判漫画才做</text>
+
+<rect x="34" y="216" width="312" height="66" rx="6" fill="#ffffff" stroke="#4a6fa5" stroke-width="1"/>
+<text x="190" y="236" text-anchor="middle" font-size="12" font-weight="bold" fill="#1a1a1a">图片（每张）</text>
+<text x="190" y="254" text-anchor="middle" font-size="11.5" fill="#2a2a2a">解码一次→裁边→缩放→白底补到 954×1458</text>
+<text x="190" y="272" text-anchor="middle" font-size="11.5" fill="#2a2a2a">（302.365 : 462.1，容差 0.3%）</text>
+
+<rect x="34" y="290" width="312" height="52" rx="6" fill="#ffffff" stroke="#4a6fa5" stroke-width="1"/>
+<text x="190" y="310" text-anchor="middle" font-size="12" font-weight="bold" fill="#1a1a1a">含图片的页</text>
+<text x="190" y="328" text-anchor="middle" font-size="11.5" fill="#2a2a2a">去掉 body 的 class（free_media_pages）</text>
+
+<rect x="34" y="350" width="312" height="52" rx="6" fill="#ffffff" stroke="#4a6fa5" stroke-width="1"/>
+<text x="190" y="370" text-anchor="middle" font-size="12" font-weight="bold" fill="#1a1a1a">纯文字页</text>
+<text x="190" y="388" text-anchor="middle" font-size="11.5" fill="#2a2a2a">body 加 cj-tp + .cj-tp 左右 margin 17.8pt</text>
+
+<rect x="34" y="410" width="312" height="66" rx="6" fill="#ffffff" stroke="#4a6fa5" stroke-width="1"/>
+<text x="190" y="430" text-anchor="middle" font-size="12" font-weight="bold" fill="#1a1a1a">图文混排页的文字块</text>
+<text x="190" y="448" text-anchor="middle" font-size="11.5" fill="#2a2a2a">p / h1-h6 / div.cj-flush 加 cj-tx</text>
+<text x="190" y="466" text-anchor="middle" font-size="11.5" fill="#2a2a2a">规则须带元素名：p.cj-tx 左右 17.8pt</text>
+
+<!-- 阶段 2 -->
+<rect x="370" y="160" width="340" height="330" rx="10" fill="#e8f5ec" stroke="#3f9a55" stroke-width="1.6"/>
+<text x="540" y="184" text-anchor="middle" font-size="14" font-weight="bold" fill="#1a1a1a">② 加入 xochitl 时（book-serve）</text>
+<text x="540" y="204" text-anchor="middle" font-size="11.5" fill="#4a4a4a">导入完成拿到 uuid 后判定 comic_margin_eligible</text>
+
+<rect x="384" y="216" width="312" height="132" rx="6" fill="#ffffff" stroke="#3f9a55" stroke-width="1"/>
+<text x="540" y="236" text-anchor="middle" font-size="12" font-weight="bold" fill="#1a1a1a">五个条件必须同时满足</text>
+<text x="400" y="258" font-size="11.5" fill="#2a2a2a">1  开关开着</text>
+<text x="400" y="276" font-size="11.5" fill="#2a2a2a">2  整本判漫画（图为主，可含文字页）</text>
+<text x="400" y="294" font-size="11.5" fill="#2a2a2a">3  优化版本 = 当前 OPTIMIZE_VERSION（15）</text>
+<text x="400" y="312" font-size="11.5" fill="#2a2a2a">4  文字页带 cj-tp、混排页文字块带 cj-tx</text>
+<text x="400" y="330" font-size="11.5" fill="#2a2a2a">5  页框是 954×1458（抽前 24 张整页图，过半吻合）</text>
+
+<line x1="540" y1="348" x2="540" y2="372" stroke="#555" stroke-width="1.6" marker-end="url(#cm-a)"/>
+<rect x="384" y="374" width="312" height="66" rx="6" fill="#ffffff" stroke="#3f9a55" stroke-width="1"/>
+<text x="540" y="394" text-anchor="middle" font-size="12" font-weight="bold" fill="#1a1a1a">登记 comic-margins.json</text>
+<text x="540" y="412" text-anchor="middle" font-size="11.5" fill="#2a2a2a">{ uuid, margins: 1, at }（PendingQueue）</text>
+<text x="540" y="430" text-anchor="middle" font-size="11.5" fill="#2a2a2a">普通上传、大文件占位两条路径会登记</text>
+<text x="540" y="462" text-anchor="middle" font-size="11.5" fill="#b0451f">分卷回退路径不登记；旧产物需重新优化</text>
+
+<!-- 阶段 3 -->
+<rect x="720" y="160" width="340" height="330" rx="10" fill="#fff3d6" stroke="#c9971f" stroke-width="1.6"/>
+<text x="890" y="184" text-anchor="middle" font-size="14" font-weight="bold" fill="#1a1a1a">③ 首次打开书时（xochitl 进程内）</text>
+<text x="890" y="204" text-anchor="middle" font-size="11.5" fill="#4a4a4a">shelf-comic-margins.qmd 插在 DocumentView.qml</text>
+
+<rect x="734" y="216" width="312" height="52" rx="6" fill="#ffffff" stroke="#c9971f" stroke-width="1"/>
+<text x="890" y="236" text-anchor="middle" font-size="12" font-weight="bold" fill="#1a1a1a">onDocumentChanged → 等 1.5 s</text>
+<text x="890" y="254" text-anchor="middle" font-size="11.5" fill="#2a2a2a">GET 127.0.0.1:8790/margins/&lt;uuid&gt;</text>
+
+<rect x="734" y="284" width="312" height="44" rx="6" fill="#f0f0ee" stroke="#8a8a8a" stroke-width="1"/>
+<text x="890" y="304" text-anchor="middle" font-size="12" font-weight="bold" fill="#1a1a1a">404（未登记 / 开关关）</text>
+<text x="890" y="320" text-anchor="middle" font-size="11.5" fill="#4a4a4a">什么都不做</text>
+
+<rect x="734" y="344" width="312" height="132" rx="6" fill="#ffffff" stroke="#c9971f" stroke-width="1"/>
+<text x="890" y="364" text-anchor="middle" font-size="12" font-weight="bold" fill="#1a1a1a">200 → 调阅读器自己的接口</text>
+<text x="890" y="386" text-anchor="middle" font-size="11.5" fill="#2a2a2a">EpubProperties.createObject</text>
+<text x="890" y="404" text-anchor="middle" font-size="11.5" fill="#2a2a2a">边距与目标不同 → setMargins(1)</text>
+<text x="890" y="422" text-anchor="middle" font-size="11.5" fill="#2a2a2a">POST /margins/applied 销账</text>
+<text x="890" y="446" text-anchor="middle" font-size="11.5" fill="#b0451f">每本书只设一次，之后用户改回去不干预</text>
+<text x="890" y="464" text-anchor="middle" font-size="11.5" fill="#b0451f">部署 / 更新 qmd 必须重启 xochitl</text>
+
+<line x1="360" y1="325" x2="368" y2="325" stroke="#555" stroke-width="1.6" marker-end="url(#cm-a)"/>
+<line x1="710" y1="325" x2="718" y2="325" stroke="#555" stroke-width="1.6" marker-end="url(#cm-a)"/>
+
+<!-- 结果 -->
+<line x1="540" y1="490" x2="540" y2="520" stroke="#555" stroke-width="1.6" marker-end="url(#cm-a)"/>
+<text x="552" y="510" font-size="11" fill="#4a4a4a">xochitl 渲染（页 303 × 538 pt）</text>
+
+<rect x="20" y="522" width="500" height="200" rx="10" fill="#fbe9e4" stroke="#b0451f" stroke-width="1.5"/>
+<text x="270" y="546" text-anchor="middle" font-size="13.5" font-weight="bold" fill="#1a1a1a">旧：边距 56 + 补白 954:1696</text>
+<text x="270" y="574" text-anchor="middle" font-size="12" fill="#2a2a2a">（边距 56）栏宽 267.4pt，但高度上限 462.1pt 先到顶</text>
+<text x="270" y="596" text-anchor="middle" font-size="12" fill="#2a2a2a">图片框 260.1 × 462.1pt，比栏窄、被摆偏</text>
+<text x="270" y="618" text-anchor="middle" font-size="12" fill="#b0451f">左 20.0 / 右 22.9pt</text>
+<text x="270" y="646" text-anchor="middle" font-size="11.5" fill="#4a4a4a">边距改成 28 也没用：图片框纹丝不动</text>
+<text x="270" y="668" text-anchor="middle" font-size="11.5" fill="#4a4a4a">（开关关着、代理没装 / 没生效时同理）</text>
+
+<rect x="560" y="522" width="500" height="200" rx="10" fill="#e8f5ec" stroke="#3f9a55" stroke-width="1.5"/>
+<text x="810" y="546" text-anchor="middle" font-size="13.5" font-weight="bold" fill="#1a1a1a">新：边距 1 + 补白 302.4:462.1</text>
+<text x="810" y="574" text-anchor="middle" font-size="12" fill="#2a2a2a">栏宽 302.4pt = 补白后的图宽，栏宽与高度同时到顶</text>
+<text x="810" y="596" text-anchor="middle" font-size="12" fill="#2a2a2a">图片框 302.0 × 461.5pt（宽 +16%）</text>
+<text x="810" y="618" text-anchor="middle" font-size="12" fill="#3f9a55">左 0.3 / 右 0.7pt</text>
+<text x="810" y="646" text-anchor="middle" font-size="11.5" fill="#4a4a4a">纯文字页与混排页的文字：左 18.4 / 右 18.8pt</text>
+<text x="810" y="668" text-anchor="middle" font-size="11.5" fill="#4a4a4a">含图页因去掉 body 类不再被吃掉 20pt</text>
+</svg>
