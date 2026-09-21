@@ -11,18 +11,43 @@
 #   旧版无条件 xovi/start：在已生效的 xochitl 上它会 umount 重挂 drop-in 目录，xochitl SEGV → 整机自动重启
 #   （2026-09-20 真机事故；重跑 install-all 必踩）。重启前会打印"打断阅读"提示并留 5 秒宽限。
 #
-# 用法：./deploy-xovi-apply.sh [host]      host 默认 10.11.99.1
+# 只在"有待生效的落盘改动"或"xovi 还没在 xochitl 里生效"时才重启（各落盘步骤真的改了文件时才记标记，见
+# devlib.sh 的 cj_pending_mark；标记在 /run，重启设备即清）——重复跑 install-all 不再每次闪屏。
+# 没标记但想强制重启（比如手工换过 .so）：--force。
+#
+# 用法：./deploy-xovi-apply.sh [host] [--force]      host 默认 10.11.99.1
 set -eu
 cd "$(dirname "$0")"
 # shellcheck disable=SC1091
 . ./lib.sh
-# shellcheck disable=SC2034  # HOST 由 lib.sh 的 rssh/rscp/dev_script 使用
-HOST="${1:-10.11.99.1}"
+USAGE="用法：./deploy-xovi-apply.sh [host] [--force]      host 默认 10.11.99.1；--force = 无论有无待生效改动都重启 xochitl"
+FORCE_RESTART=0
+# 把 --force 摘出去，其余位置参数（[host]）原样交给 host_arg（轮转一遍 "$@"）
+_n=$#
+while [ "$_n" -gt 0 ]; do
+    _a=$1; shift; _n=$((_n - 1))
+    case "$_a" in --force) FORCE_RESTART=1 ;; *) set -- "$@" "$_a" ;; esac
+done
+host_arg "$USAGE" "$@"
+require_device
 
-echo "== 设备端让 xovi 扩展 + qmd 生效（重启 xochitl 一次，会打断设备上正在做的事）+ 健康检查 =="
-dev_script <<'DEVICE_SCRIPT'
+echo "== 设备端让 xovi 扩展 + qmd 生效（有待生效改动才重启 xochitl 一次，会打断设备上正在做的事）+ 健康检查 =="
+dev_script "$FORCE_RESTART" <<'DEVICE_SCRIPT'
 set -eu
+FORCE_RESTART="$1"
 cj_require_root || exit 1
+PENDING="$(cj_pending_list | tr '\n' ' ')"
+if [ "$FORCE_RESTART" != "1" ]; then
+    if cj_xochitl_has_xovi && [ -z "$PENDING" ]; then
+        echo "-- 没有待生效的落盘改动，且 xovi 已在 xochitl 里生效——不重启 xochitl（要强制重启：--force）"
+        exit 0
+    fi
+    if [ -z "$PENDING" ] && ! cj_xochitl_has_xovi && [ ! -x "$CJ_XOVI/start" ]; then
+        echo "-- 设备没装 xovi（没有 $CJ_XOVI/start）也没有待生效改动，没有需要生效的东西，跳过"
+        exit 0
+    fi
+fi
+[ -z "$PENDING" ] || echo "-- 待生效：$PENDING"
 OLD_PID="$(cj_xochitl_pid)"
 cj_xochitl_apply || exit 1
 TAGS=""

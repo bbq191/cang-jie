@@ -15,8 +15,13 @@
 #   push_devlib      把 devlib.sh 推到设备某目录（供设备端 install.sh source）
 #   步骤表           STEP_ORDER / step_script / STEP_DEFER / STEP_CONFIG_ONLY（install-all 与 uninstall-all 共用，
 #                    保证两边清单对称）
-#   parse_step_args  install-all / uninstall-all 共用的 [host] --force --purge --skip 解析
-#   run_step / skip_has
+#   parse_step_args  install-all / uninstall-all 共用的 [host] --force --purge --force-apply --dry-run --skip -h 解析
+#                    （调用方先定义 usage()）
+#   run_step / skip_has   （DRY=1 时 run_step 只打印将执行的命令，不连设备；SKIPPED/DONE/FAILED 记账）
+#   host_arg         薄 deploy-*.sh 共用的 [host] 参数解析（-h、多余/未知参数 exit 2）
+#   require_device   动手前确认 ssh 通；不通给下一步排查提示并 exit 1
+#   fw_gate          固件 sha256 白名单门（install-all）
+#   preflight_device 设备只读预检：root/ /home 可写与剩余空间/xovi·qrr·appload·verity 现状（install-all）
 # ═══════════════════════════════════════════════════════════════════════════
 
 CJ_PKG_DIR="$(pwd)"
@@ -41,6 +46,26 @@ dev_script() {
     ds_args=""
     for ds_a in "$@"; do ds_args="$ds_args $(shquote "$ds_a")"; done
     { cat "$CJ_PKG_DIR/devlib.sh"; cat; } | rssh_in "sh -s --$ds_args"
+}
+
+# host_arg USAGE "$@"：薄 deploy-*.sh 共用的参数解析——`[host]`，-h/--help 打印用法，多余/未知参数 exit 2。设 HOST。
+host_arg() {
+    ha_usage="$1"; shift
+    case "${1:-}" in -h|--help) echo "$ha_usage"; exit 0 ;; esac
+    [ $# -le 1 ] || { echo "!! 参数太多：$*"; echo "$ha_usage"; exit 2; }
+    HOST="${1:-10.11.99.1}"
+    case "$HOST" in -*) echo "!! 未知参数：$HOST"; echo "$ha_usage"; exit 2 ;; esac
+}
+
+# require_device：动手前先确认 ssh 通（BatchMode，不会卡在密码提示上）；不通给出下一步该查什么，exit 1。
+require_device() {
+    rd_err="$(rssh true 2>&1)" || {
+        echo "!! 连不上 root@$HOST（${CJ_SSH_TIMEOUT}s 超时，BatchMode）。ssh 报错："
+        echo "$rd_err" | sed 's/^/     /'
+        echo "   下一步：① 设备是否休眠/没插 USB（接口消失=物理连接或休眠）；② 接口在但 IP 不对：sudo ip addr add 10.11.99.2/24 dev <网卡>；"
+        echo "           ③ 提示 host key 变了（OTA/重装后常见）：ssh-keygen -R $HOST；④ 提示 Permission denied：ssh-copy-id root@$HOST"
+        exit 1
+    }
 }
 
 md5_local() { md5sum "$1" | awk '{print $1}'; }
@@ -127,19 +152,23 @@ step_script() {
 word_in() { case " $2 " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
 
 # ── 参数解析 / 步骤运行 ────────────────────────────────────────────────────
-# parse_step_args "$@"  →  设 HOST FORCE PURGE SKIP；未知参数 exit 2。
-# 用法与旧版一致：[host] [--force] [--purge] [--skip a,b | --skip=a,b]
-# shellcheck disable=SC2034  # FORCE/PURGE 由调用方（install-all/uninstall-all）使用
+# parse_step_args "$@"  →  设 HOST FORCE PURGE SKIP DRY FORCE_APPLY；未知参数 exit 2。
+# 用法：[host] [--force] [--purge] [--force-apply] [--dry-run] [--skip a,b | --skip=a,b] [-h|--help]
+#   调用方需先定义 usage()（打印帮助）——-h/--help 调它后 exit 0。
+# shellcheck disable=SC2034  # FORCE/PURGE/DRY/FORCE_APPLY 由调用方（install-all/uninstall-all）使用
 parse_step_args() {
-    HOST="10.11.99.1"; FORCE=0; PURGE=0; SKIP=""
+    HOST="10.11.99.1"; FORCE=0; PURGE=0; SKIP=""; DRY=0; FORCE_APPLY=0
     case "${1:-}" in ""|-*) ;; *) HOST="$1"; shift ;; esac
     while [ $# -gt 0 ]; do
         case "$1" in
+            -h|--help) usage; exit 0 ;;
             --force) FORCE=1 ;;
             --purge) PURGE=1 ;;
+            --force-apply) FORCE_APPLY=1 ;;
+            --dry-run) DRY=1 ;;
             --skip=*) SKIP="${1#--skip=}" ;;
-            --skip) [ $# -ge 2 ] || { echo "!! --skip 需要参数"; exit 2; }; SKIP="$2"; shift ;;
-            *) echo "!! 未知参数：$1"; exit 2 ;;
+            --skip) [ $# -ge 2 ] || { echo "!! --skip 需要参数（逗号分隔的步骤名）"; exit 2; }; SKIP="$2"; shift ;;
+            *) echo "!! 未知参数：$1（-h 看用法）"; exit 2 ;;
         esac
         shift
     done
@@ -148,18 +177,54 @@ parse_step_args() {
     done
 }
 
+# 该步骤名是否要跑（--skip 没点名）
 skip_has() { case ",$SKIP," in *",$1,"*) return 0 ;; *) return 1 ;; esac; }
+
+# ── 设备预检（install-all 用）：只读检查，能提前拦住的全在这拦（磁盘满/非 root/写不了 /home），
+#   其余（xovi/qrr/appload 缺失）只报告——对应步骤自己会清楚报错或跳过。返回 1 = 不该继续装。──
+CJ_MIN_FREE_KB="${CJ_MIN_FREE_KB:-51200}"     # /home 可用空间低于此值拒装（≈50MB：连 shelf 二进制都放不下）
+CJ_WARN_FREE_KB="${CJ_WARN_FREE_KB:-204800}"  # 低于此值只警告（≈200MB：shelf 载荷+备份余量偏紧）
+preflight_device() {
+    echo "═══ 设备预检（root@$HOST，只读）═══"
+    dev_script "$CJ_MIN_FREE_KB" "$CJ_WARN_FREE_KB" <<'DEVICE_SCRIPT'
+set -eu
+MINF="$1"; WARNF="$2"
+cj_require_root || exit 1
+[ -d "$CJ_HOME" ] && [ -w "$CJ_HOME" ] || { echo "!! $CJ_HOME 不可写——/home 分区没挂载好？先在设备上 mount | grep home"; exit 1; }
+FREE="$(df -kP "$CJ_HOME" 2>/dev/null | awk 'END{print $4}')"
+case "$FREE" in ''|*[!0-9]*) echo "⚠ 读不到 $CJ_HOME 的可用空间，跳过空间检查" ;; *)
+    if [ "$FREE" -lt "$MINF" ]; then
+        echo "!! $CJ_HOME 只剩 $((FREE / 1024)) MB 可用，装不下（至少 $((MINF / 1024)) MB）。先清理：ls -la $CJ_HOME、$CJ_BACKUP_DIR"; exit 1
+    fi
+    if [ "$FREE" -lt "$WARNF" ]; then echo "⚠ $CJ_HOME 只剩 $((FREE / 1024)) MB 可用（建议 ≥ $((WARNF / 1024)) MB），继续但空间偏紧"
+    else echo "-- $CJ_HOME 可用 $((FREE / 1024)) MB"; fi ;;
+esac
+have() { [ -e "$1" ] && echo "有" || echo "无"; }
+echo "-- xovi 本体 : $(have "$CJ_XOVI/xovi.so")   （无 → xovi-persist/hl-snap/handwriting-stroke/xovi-apply 会失败：先 vellum add xovi）"
+echo "-- qt-resource-rebuilder : $(have "$CJ_XOVI/exthome/qt-resource-rebuilder")   （无 → sidebar-entry 与 shelf 的 qmd 自动跳过）"
+echo "-- appload   : $(have "$CJ_XOVI/exthome/appload")   （无 → sidebar-entry 自动跳过；3.28 固件需 ≥ 0.6.0）"
+if cj_verity_active; then echo "-- dm-verity : 激活 → 所有写 /usr 的单元（chrony-boot-wakelock/xovi-persist/wifi-watch/battop/shelf 开机链接）会被跳过"; else echo "-- dm-verity : 未激活"; fi
+if cj_xochitl_has_xovi; then echo "-- xochitl 里 xovi 已生效 → 落盘后只 systemctl restart xochitl（不跑 xovi/start）"; else echo "-- xochitl 里 xovi 尚未生效 → 最后一步会 xovi/start"; fi
+DEVICE_SCRIPT
+}
 
 DONE=""
 FAILED=""
-# run_step NAME CMD [ARGS…]：跳过判定 + 执行 + 记账
+SKIPPED=""
+# run_step NAME CMD [ARGS…]：跳过判定 + 执行 + 记账（DRY=1 时只打印将执行的命令，不执行、不连设备）
 run_step() {
     rs_name="$1"; shift
     if skip_has "$rs_name"; then
         echo; echo "-- 跳过 $rs_name（--skip）"
+        SKIPPED="$SKIPPED $rs_name"
         return 0
     fi
     echo; echo "═══ $rs_name ═══"
+    if [ "${DRY:-0}" = "1" ]; then
+        echo "-- [dry-run] 将执行：$*"
+        DONE="$DONE $rs_name"
+        return 0
+    fi
     if "$@"; then
         DONE="$DONE $rs_name"
     else
