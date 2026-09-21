@@ -134,7 +134,7 @@ impl Xochitl {
             let _ = std::fs::remove_file(dir.join(format!("{uuid}.pdf")));
             let _ = std::fs::remove_file(dir.join(format!("{uuid}.epubindex")));
         } else if let Some(n) = pdf_pages {
-            rewrite_pdf_content(&dir, &uuid, n, want_len).map_err(|e| fail(e))?;
+            rewrite_pdf_content(&dir, &uuid, n, want_len).map_err(fail)?;
         }
         std::fs::rename(&tmp, &dest).map_err(|e| fail(format!("替换文件失败: {e}")))?;
         Ok(uuid)
@@ -153,12 +153,24 @@ impl Xochitl {
 
 /// 书库目录里所有可解析的 `<uuid>.metadata` → (uuid, JSON)。只读；解析失败的跳过。
 fn metadata_entries(dir: &Path) -> Vec<(String, serde_json::Value)> {
+    metadata_entries_since(dir, None)
+}
+
+/// 同 [`metadata_entries`]，`min_mtime` 给定时**只打开 mtime 不早于它的**：先用目录项自带的 stat 挡掉旧文件，
+/// 不再对整个书库（几十上百份）逐个 open+读+解析 JSON——渲染自检/占位等待这类"找刚进库的那本"的调用会在
+/// 一个 3 秒防抖 / 200ms 轮询循环里反复扫描（2026-09-22 审计）。
+fn metadata_entries_since(dir: &Path, min_mtime: Option<std::time::SystemTime>) -> Vec<(String, serde_json::Value)> {
     let Ok(rd) = std::fs::read_dir(dir) else { return vec![] };
     rd.flatten()
         .filter_map(|e| {
             let p = e.path();
             if p.extension().and_then(|x| x.to_str()) != Some("metadata") {
                 return None;
+            }
+            if let Some(floor) = min_mtime {
+                if e.metadata().ok()?.modified().ok()? < floor {
+                    return None;
+                }
             }
             let uuid = p.file_stem()?.to_str()?.to_string();
             let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&p).ok()?).ok()?;
@@ -245,7 +257,10 @@ pub struct DocInfo {
 /// `createdTime >= since_ms` 的文档，新→旧。投原生后找"刚进库的那本"用（`/upload` 不回 uuid；visibleName
 /// 取自 EPUB 元数据不等于文件名，所以按时间圈候选、再按书名挑）。只读 `.metadata`，不写。
 pub fn find_documents_since(dir: &Path, since_ms: u64) -> Vec<DocInfo> {
-    let mut out: Vec<DocInfo> = metadata_entries(dir)
+    // `createdTime >= since` 的文档，其 `.metadata` 一定是创建时或之后写的，mtime 不会更早（留 5 秒余量给文件系统
+    // 时间戳粒度/时钟取整）；`since_ms == 0`（补记全库）不设下限。
+    let floor = (since_ms > 0).then(|| std::time::UNIX_EPOCH + std::time::Duration::from_millis(since_ms.saturating_sub(5_000)));
+    let mut out: Vec<DocInfo> = metadata_entries_since(dir, floor)
         .into_iter()
         .filter(|(_, v)| str_of(v, "type") == "DocumentType" && is_live(v))
         .filter_map(|(uuid, v)| {
@@ -253,7 +268,7 @@ pub fn find_documents_since(dir: &Path, since_ms: u64) -> Vec<DocInfo> {
             (created_ms >= since_ms).then(|| DocInfo { uuid, visible_name: str_of(&v, "visibleName").to_string(), created_ms })
         })
         .collect();
-    out.sort_by(|a, b| b.created_ms.cmp(&a.created_ms));
+    out.sort_by_key(|d| std::cmp::Reverse(d.created_ms));
     out
 }
 
@@ -494,6 +509,26 @@ mod tests {
         assert_eq!(page_count(t.path(), "new"), Some(352));
         assert_eq!(page_count(t.path(), "mid"), None, "0 页＝还没渲染");
         assert_eq!(page_count(t.path(), "old"), None, "没有 .content");
+    }
+
+    /// `find_documents_since` 用 mtime 下限先挡旧文件：结果语义不变（仍以 createdTime 为准），只是不再打开旧文件。
+    #[test]
+    fn find_documents_since_skips_stale_metadata_by_mtime_but_keeps_result_semantics() {
+        let t = tempfile::tempdir().unwrap();
+        let now = crate::clock::now_ms();
+        let w = |n: &str, created: u64, age_secs: u64| {
+            let p = t.path().join(n);
+            std::fs::write(&p, format!(r#"{{"type":"DocumentType","visibleName":"{n}","parent":"","createdTime":"{created}"}}"#)).unwrap();
+            let f = std::fs::File::options().write(true).open(&p).unwrap();
+            f.set_modified(std::time::SystemTime::now() - std::time::Duration::from_secs(age_secs)).unwrap();
+        };
+        w("fresh.metadata", now, 0);
+        w("shelved.metadata", now - 3_600_000, 3_600); // 一小时前进库、没再动过
+        w("touched.metadata", now - 3_600_000, 0); // 老书但刚被 xochitl 改写过 .metadata：过 mtime 门，被 createdTime 挡掉
+        let got: Vec<String> = find_documents_since(t.path(), now - 1_000).into_iter().map(|d| d.uuid).collect();
+        assert_eq!(got, ["fresh"]);
+        let all: Vec<String> = find_documents_since(t.path(), 0).into_iter().map(|d| d.uuid).collect();
+        assert_eq!(all.len(), 3, "since=0（补记全库）不设 mtime 下限");
     }
 }
 

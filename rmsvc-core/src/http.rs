@@ -214,8 +214,7 @@ impl Pattern {
         (self.segs.iter().filter(|s| !(s.starts_with('{') && s.ends_with('}'))).count(), !self.prefix)
     }
 
-    fn matches(&self, path: &str) -> Option<HashMap<String, String>> {
-        let segs: Vec<&str> = path.trim_matches('/').split('/').filter(|s| !s.is_empty()).collect();
+    fn matches(&self, segs: &[&str]) -> Option<HashMap<String, String>> {
         if self.prefix {
             if segs.len() < self.segs.len() {
                 return None;
@@ -311,8 +310,10 @@ impl Router {
     pub fn dispatch(&self, req: &mut Request<'_>) -> Reply {
         let mut path_exists = false;
         let mut best: Option<Candidate<'_>> = None;
+        // 路径只切一次：此前每条路由各自切分+分配一遍（网关几十条路由、每个请求都过一轮）。
+        let segs: Vec<&str> = req.path.trim_matches('/').split('/').filter(|s| !s.is_empty()).collect();
         for r in &self.routes {
-            let Some(params) = r.pattern.matches(&req.path) else { continue };
+            let Some(params) = r.pattern.matches(&segs) else { continue };
             if r.method != req.method {
                 path_exists = true;
                 continue;
@@ -395,9 +396,12 @@ impl Drop for Permit {
     }
 }
 
+/// 守卫检查函数：`None`=放行，`Some(reply)`=拦下并直接回这个应答。
+pub type GuardFn = Arc<dyn Fn(&GuardRequest) -> Option<Reply> + Send + Sync>;
+
 /// 守卫：看到请求（方法/路径/头）后返回 `None`=放行，`Some(reply)`=拦下并直接回这个应答。
 pub struct Guard {
-    pub check: Arc<dyn Fn(&GuardRequest) -> Option<Reply> + Send + Sync>,
+    pub check: GuardFn,
 }
 
 pub struct GuardRequest {
@@ -502,7 +506,9 @@ pub fn serve_with(bind: &str, router: Router, opts: ServeOpts) -> Result<(), Str
             let mut reply = {
                 let mut body = req.as_reader();
                 let mut r = Request { method, path, query, params: HashMap::new(), content_type, content_length, headers, body: &mut body };
-                router.dispatch(&mut r)
+                // 处理函数 panic（release 是 panic=unwind）：线程本来会带着 panic 消亡、tiny_http 回一个空 500，网页拿不到 JSON；
+                // 这里兜住回标准的 JSON 500（panic 信息已由默认 hook 打到 stderr/journal），并发名额由 `_permit` 的 Drop 照常归还。
+                std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| router.dispatch(&mut r))).unwrap_or_else(|_| Reply::error(500, "服务内部错误（已记录到日志）"))
             };
             if let Some(reader) = reply.stream.take() {
                 respond_stream(req, reply.status, &reply.content_type, reply.headers, reader);
@@ -593,6 +599,38 @@ mod tests {
         assert_eq!(call(&router, Method::Get, "/n", "").1, r#"{"n":1}"#);
         assert_eq!(call(&router, Method::Post, "/n", "").1, r#"{"n":2}"#);
         assert_eq!(call(&router, Method::Put, "/n", "").0, 405);
+    }
+
+    /// 起真服务：处理函数 panic 得到 JSON 500，且并发名额归还、后续请求照常服务。
+    #[test]
+    fn handler_panic_becomes_json_500_and_server_keeps_serving() {
+        let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+        let router = Router::new()
+            .get("/boom", |_| -> ApiResult { panic!("测试用 panic") })
+            .get("/ok", |_| Ok(Reply::ok(&serde_json::json!({"ok": true}))));
+        let opts = ServeOpts { max_concurrent: Some(2), ..ServeOpts::default() };
+        let addr = format!("127.0.0.1:{port}");
+        std::thread::spawn(move || {
+            let _ = serve_with(&addr, router, opts);
+        });
+        for _ in 0..100 {
+            if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        for _ in 0..3 {
+            // max_concurrent=2（串行客户端最多「上一请求收尾 + 当前」两条）：若 panic 后名额没归还，累计泄漏到第三轮会变 503
+            match ureq::get(&format!("http://127.0.0.1:{port}/boom")).call() {
+                Err(ureq::Error::Status(500, r)) => {
+                    let v: serde_json::Value = serde_json::from_str(&r.into_string().unwrap()).unwrap();
+                    assert_eq!(v["ok"], false);
+                    assert!(v["message"].as_str().unwrap().contains("内部错误"));
+                }
+                other => panic!("期望 500，得到 {other:?}"),
+            }
+            assert_eq!(ureq::get(&format!("http://127.0.0.1:{port}/ok")).call().unwrap().status(), 200);
+        }
     }
 
     #[test]

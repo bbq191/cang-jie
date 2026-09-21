@@ -187,7 +187,8 @@ pub struct FollowTiming {
     /// 对方服务没有 `/events`（404）时的等待：它不会凭空长出事件流，只有注册表变化（升级重启）才值得再试，
     /// 超时只是兜底。此前网关对 mind-serve 每 3 秒白打一个 404。
     pub no_events_wait: Duration,
-    /// 服务没注册时的兜底轮询（正常靠注册表 inotify 唤醒；inotify 不可用才靠它）。
+    /// 服务没注册时的兜底轮询。正常靠注册表 inotify 唤醒（测试 `follow_waits_for_registration…` 证明是 inotify 而非超时在
+    /// 起作用），只有 inotify 初始化失败才靠它；所以取 5 分钟——此前 60 秒，网关里每个"没装"的服务一条线程、每分钟白醒一次。
     pub not_registered_wait: Duration,
     /// 一条流撑过这么久才算"健康"，重置退避。
     pub healthy_after: Duration,
@@ -199,7 +200,7 @@ impl Default for FollowTiming {
             retry_min: Duration::from_secs(3),
             retry_max: Duration::from_secs(60),
             no_events_wait: Duration::from_secs(10 * 60),
-            not_registered_wait: Duration::from_secs(60),
+            not_registered_wait: Duration::from_secs(300),
             healthy_after: Duration::from_secs(10),
         }
     }
