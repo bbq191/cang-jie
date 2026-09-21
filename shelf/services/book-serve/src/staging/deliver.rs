@@ -351,7 +351,7 @@ impl Staging {
         })
     }
 
-    /// xochitl 的渲染缓存 `<uuid>.pdf`（`shelf doctor --render` 取回量首行缩进）。只认 uuid 形状，只读。
+    /// xochitl 的渲染缓存 `<uuid>.pdf`（渲染自检读它量首行缩进；host 端 doctor 已砍）。只认 uuid 形状，只读。
     pub fn render_pdf(&self, uuid: &str) -> Result<Vec<u8>, String> {
         if !rmsvc_core::xochitl::is_uuid_shape(uuid) {
             return Err("uuid 形状不对".into());

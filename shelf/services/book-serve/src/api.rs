@@ -3,7 +3,7 @@
 //! 母版库：`GET /staging` → `{items, freeBytes}` · `POST /staging`（multipart，原样入库）· `POST /staging/optimize {name}`
 //! （2026-09-19 起不再分档位，只有一种"清洗+优化"行为）
 //! · `POST /staging/deliver {name, folder?}`（2026-09-19 起投完永远保留母版，不再有 `keep` 参数）· `POST /staging/mark {name, target}` · `POST /staging/fetch-article {url, optimize?}`
-//! · `POST /staging/delete {name}` · `GET /staging/render/{uuid}`（xochitl 渲染缓存 PDF，doctor --render 用）· `GET /events`（SSE：母版库/inbox 变更即推，网页零轮询）。
+//! · `POST /staging/delete {name}` · `GET /staging/render/{uuid}`（xochitl 渲染缓存 PDF；唯一使用者 host 端 doctor 已砍，路由保留）· `GET /events`（SSE：母版库/inbox 变更即推，网页零轮询）。
 //! 原生回收站队列：`POST /trash/add {uuid, name}`（name 必须与书库 visibleName 相符）· `GET /trash/pending` → `{uuids}`（Sidebar 代理 qmd 拉取执行）· `GET /trash`。
 //! 原生建文件夹队列：`POST /mkdir/add {name}` · `GET /mkdir/pending` → `{names}`（MainView 代理 shelf-mkdir-agent.qmd 拉取执行）· `GET /mkdir`。
 //! 2026-09-05 起规则统一"所有书只落母版库"：旧 `POST /?target=` 直投路已删（`/staging*` 是唯一入口）。

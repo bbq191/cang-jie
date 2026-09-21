@@ -3,7 +3,7 @@
 //! - 会话 Cookie `shelf_session`（HttpOnly；HTTPS 时 Secure；SameSite=Strict）——网页登录后凭它。
 //! - `Authorization: Basic *:<密码>`（用户名任意）——CLI 用，免登录页。
 //! - **首登必改**：`mustChangePassword` 时会话只能访问 `/password`（网页 303 过去、API 回 403）；
-//!   Basic 同理只放行 `POST /password`（CLI `shelf passwd`）。
+//!   Basic 同理只放行 `POST /password`（设备上 `gateway passwd`）。
 //! - 未登录：浏览器请求（Accept 含 text/html）303 → `/login?next=…`，其它 401 JSON。密码错延时 500ms。
 use crate::config::GatewayConfig;
 use rmsvc_core::auth::{parse_basic, parse_cookie, FailLimiter, SessionStore};
@@ -107,7 +107,7 @@ impl AuthState {
                     Who::Session | Who::Basic if st.must_change() && !matches!((r.method, r.path.as_str()), (_, "/password") | (Method::Get, "/api/session")) => Some(if html {
                         Reply::redirect("/password")
                     } else {
-                        Reply::error(403, "首次登录必须先改密码：网页打开 /password，或 CLI `shelf passwd`")
+                        Reply::error(403, "首次登录必须先改密码：网页打开 /password，或在设备上运行 `gateway passwd <新密码>`")
                     }),
                     _ => None,
                 }

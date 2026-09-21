@@ -269,7 +269,7 @@ if [ -d "$QRR" ] && [ -d "$SRC/xovi" ]; then
         fi
     fi
     if sel_has book; then
-        # 原生回收站代理（shelf doctor --render 探针 + note-serve 旧版本回收走 book-serve /trash/*，Sidebar 注入）
+        # 原生回收站代理（note-serve 旧版本回收走 book-serve /trash/*，Sidebar 注入）
         # 与原生建文件夹代理（网页母版库「加入 xochitl → 文件夹」不存在时靠 /mkdir/* 真建出来，MainView 注入；2026-09-19 复活）
         for q in $(shelf_svc_qmds book); do
             if [ -f "$SRC/xovi/$q" ]; then
@@ -338,7 +338,7 @@ if [ "$ALL_OK" = "1" ] && [ -n "$REG" ]; then
     if [ "${MUST_CHANGE:-0}" != "0" ]; then
         echo "   登录：密码 shelf（首次默认），登录后必须改；忘记密码：gateway reset-password"
     else
-        echo "   登录：已设置的密码（改：网页右上「改密码」/ shelf passwd / 设备上 gateway passwd <新密码>）"
+        echo "   登录：已设置的密码（改：网页右上「改密码」/ 设备上 gateway passwd <新密码>）"
     fi
     echo "   ⚠ 自签证书：登录页「下载 CA 证书」装进手机/电脑信任库一次即不再提示，否则点「高级 → 继续访问」"
 else
