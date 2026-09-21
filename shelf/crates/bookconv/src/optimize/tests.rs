@@ -562,7 +562,7 @@ fn comic_min_margin_pads_only_pure_text_pages() {
             zw.write_all(&jpg).unwrap();
         }
         zw.start_file("m1.xhtml", stored).unwrap();
-        zw.write_all(r#"<html><head><title>m</title></head><body class="calibre2"><img src="p1.jpg"/><p>阿塔……</p></body></html>"#.as_bytes()).unwrap();
+        zw.write_all(r#"<html><head><title>m</title></head><body class="calibre2"><h2 class="calibre14">特别附录</h2><img src="p1.jpg"/><p class="calibre7">阿塔……</p></body></html>"#.as_bytes()).unwrap();
         zw.finish().unwrap();
     }
     let read = |bytes: &[u8], n: &str| {
@@ -578,6 +578,13 @@ fn comic_min_margin_pads_only_pure_text_pages() {
     // 含图页去掉 body class（Calibre 的 body 类会让图片在边距 1 下被吃掉约 20pt，真机诊断 zz-ip3）
     assert!(!read(&out, "c1.xhtml").contains("class=\"calibre2\""), "图片页 body 类应去掉: {}", read(&out, "c1.xhtml"));
     assert!(!read(&out, "m1.xhtml").contains("class=\"calibre2\""), "混排页 body 类也去掉");
+    // 混排页的文字元素追加 cj-tx（保留原类），css 有带元素名的规则
+    let m1 = read(&out, "m1.xhtml");
+    // 清洗层会把"标题后首段"的 <p> 改写成 <div class="cj-flush">，两种形态都要带上 cj-tx
+    assert!(m1.contains(r#"<h2 class="calibre14 cj-tx""#), "混排页 h2 应带 cj-tx: {m1}");
+    assert!(m1.contains(r#"<p class="calibre7 cj-tx">"#) || m1.contains(r#"<div class="cj-flush cj-tx">"#), "混排页说明段应带 cj-tx: {m1}");
+    assert!(!read(&out, "c1.xhtml").contains("cj-tx"), "纯图片页无 cj-tx");
+    assert!(read(&out, "cangjie-wash.css").contains("p.cj-tx{margin-left:17.8pt;margin-right:17.8pt;}"), "css 有带元素名的规则");
     let css = read(&out, "cangjie-wash.css");
     assert_eq!(css.matches(crate::comic_pad::TEXT_PAGE_CSS_RULE).count(), 1, "wash css 应含留边规则一次: {css}");
 
@@ -590,6 +597,7 @@ fn comic_min_margin_pads_only_pure_text_pages() {
     let screen = OptimizeOpts { wash: Some(crate::wash::WashOpts::default()), ..Default::default() };
     let (out_s, _) = optimize_epub_with(&buf, &screen).unwrap();
     assert!(!read(&out_s, "t1.xhtml").contains("cj-tp"), "缺省页框不加留边类");
+    assert!(!read(&out_s, "m1.xhtml").contains("cj-tx"), "缺省页框不给混排页加 cj-tx");
     assert!(read(&out_s, "c1.xhtml").contains("class=\"calibre2\""), "缺省页框不动图片页的 body 类");
     assert!(!read(&out_s, "cangjie-wash.css").contains(".cj-tp"), "缺省页框不写规则");
 

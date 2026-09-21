@@ -75,11 +75,11 @@ pub fn is_text_free_comic_epub_file(path: &std::path::Path) -> bool {
     read_entries_without_images(path).map(|e| is_text_free_comic(&e)).unwrap_or(false)
 }
 
-/// **能设"页边距最小化"的漫画**：整本判漫画（图为主，文字可以有）且**所有纯文字页都已带留边类**
-/// （[`crate::comic_pad`]）——文字页没留边的旧优化产物页边距设成 1 后文字会贴屏幕边，不放行。
+/// **能设"页边距最小化"的漫画**：整本判漫画（图为主，文字可以有）且**文字页/混排页的文字都已带留边类**
+/// （[`crate::comic_pad`]）——文字没留边的旧优化产物页边距设成 1 后文字会贴屏幕边，不放行。
 /// 与 [`is_text_free_comic_epub_file`] 不同：后者是"能转 PDF"的判据（一个字都不能有），这里允许有文字页。
 pub fn is_min_margin_comic_file(path: &std::path::Path) -> bool {
-    read_entries_without_images(path).map(|e| is_comic(&e) && crate::comic_pad::all_text_pages_padded(&e)).unwrap_or(false)
+    read_entries_without_images(path).map(|e| is_comic(&e) && crate::comic_pad::all_text_padded(&e)).unwrap_or(false)
 }
 
 /// 这本 EPUB 的漫画页是不是已按 [`crate::imgopt::EpubComicFrame::MinMargin`] 的页框（954×[`crate::imgopt::EPUB_COMIC_PAGE_H`]）补过白。

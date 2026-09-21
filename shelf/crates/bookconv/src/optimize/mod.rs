@@ -190,6 +190,7 @@ fn prepare_entries(mut raw: Vec<crate::epubzip::Entry>, opts: &OptimizeOpts, byt
     if is_comic_book && opts.comic_frame == crate::imgopt::EpubComicFrame::MinMargin {
         crate::comic_pad::pad_text_pages(&mut entries);
         crate::comic_pad::free_media_pages(&mut entries);
+        crate::comic_pad::pad_mixed_text_blocks(&mut entries);
     }
     Ok(Prepared { entries, aside_index, is_comic_book, opf_name, rep })
 }
