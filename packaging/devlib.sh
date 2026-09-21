@@ -17,10 +17,14 @@
 #   M4 原地 cp 覆盖 xochitl 已映射的 .so / 运行中的二进制 → cj_safe_replace：先写暂存再 rename。
 #   M6 备份散落 + 无限增长 → cj_backup_file / cj_bk_prune：统一进 cangjie-backups，
 #      只按"脚本自己生成的、严格时间戳命名"轮转，保留最近 N 份，绝不 rm -rf。
+#   A1 "内容没变也重启 xochitl"（重跑 install-all 每次都闪屏）→ cj_pending_mark / cj_pending_list / cj_pending_clear：
+#      各"只落盘"的步骤在**真的改了文件**时记一个待生效标记（/run tmpfs，重启设备即清——重启后一切都是新载入的），
+#      xovi-apply 只在有标记、或 xovi 还没在 xochitl 里生效时才重启 xochitl。
 #
 # 环境变量（测试与特殊部署可覆盖；设备上一般不用设）：
 #   CJ_HOME CJ_SYSD CJ_XOVI CJ_PROC CJ_BACKUP_DIR CJ_BACKUP_KEEP CJ_BACKUP_MAXBYTES CJ_STAGE_DIR
 #   CJ_APPLY_GRACE（重启 xochitl 前的宽限秒数，默认 5）  CJ_HEALTH_SLEEP（重启后等多久再查，默认 5）
+#   CJ_PENDING_DIR（待生效标记目录，默认 /run/cangjie-pending-apply）
 # ═══════════════════════════════════════════════════════════════════════════
 
 CJ_HOME="${CJ_HOME:-${HOME:-/home/root}}"
@@ -32,8 +36,42 @@ CJ_BACKUP_KEEP="${CJ_BACKUP_KEEP:-5}"
 CJ_BACKUP_MAXBYTES="${CJ_BACKUP_MAXBYTES:-67108864}"   # 单文件超过 64MB 的备份一律不自动删（可能是手工大备份）
 CJ_STAGE_DIR="${CJ_STAGE_DIR:-$CJ_HOME/.cangjie-stage}"  # 暂存目录：与 /home/root 同分区（rename 原子），且绝不是 extensions.d
 
+CJ_PENDING_DIR="${CJ_PENDING_DIR:-/run/cangjie-pending-apply}"
+CJ_PENDING_FALLBACK="${CJ_PENDING_FALLBACK:-$CJ_STAGE_DIR/pending-apply}"   # /run 写不了时的退路：宁可多重启也不能漏
+
 cj_require_root() {
-    [ "$(id -u)" = "0" ] || { echo "!! 需要 root 运行"; return 1; }
+    [ "$(id -u)" = "0" ] || { echo "!! 需要 root 运行（ssh root@设备；本脚本没有 sudo 通道）"; return 1; }
+}
+
+# ── 待生效标记（A1）────────────────────────────────────────────────────────
+# cj_pending_mark NAME：记"NAME 落盘了新内容，需要重启 xochitl 才生效"。失败时换退路目录，都失败才报警告（返回 1）。
+cj_pending_mark() {
+    for cj_pd in "$CJ_PENDING_DIR" "$CJ_PENDING_FALLBACK"; do
+        if mkdir -p "$cj_pd" 2>/dev/null && : > "$cj_pd/$1" 2>/dev/null; then return 0; fi
+    done
+    echo "⚠ 写不了待生效标记（$CJ_PENDING_DIR）——xovi-apply 可能误判\"无需重启\"；请手动 systemctl restart xochitl"
+    return 1
+}
+# cj_pending_list：列出待生效的标记名（一行一个；没有则无输出）
+cj_pending_list() {
+    for cj_pd in "$CJ_PENDING_DIR" "$CJ_PENDING_FALLBACK"; do
+        [ -d "$cj_pd" ] || continue
+        for cj_pf in "$cj_pd"/*; do
+            [ -f "$cj_pf" ] && basename "$cj_pf"
+        done
+    done
+    return 0
+}
+# cj_pending_clear：xochitl 重启成功后清空标记（只删目录里的常规文件，再 rmdir）
+cj_pending_clear() {
+    for cj_pd in "$CJ_PENDING_DIR" "$CJ_PENDING_FALLBACK"; do
+        [ -d "$cj_pd" ] || continue
+        for cj_pf in "$cj_pd"/*; do
+            [ -f "$cj_pf" ] && rm -f "$cj_pf"
+        done
+        rmdir "$cj_pd" 2>/dev/null || true
+    done
+    return 0
 }
 
 cj_verity_active() {
@@ -163,6 +201,37 @@ cj_backup_file() {
     cj_bk_prune "$cj_b.bak.pre-" f
 }
 
+# cj_backup_if_differs SRC DST：DST 存在且内容与 SRC 不同才备份 DST（内容没变就不堆重复备份——
+# 否则重复部署 5 次就会把真正有价值的旧版本从"保留最近 5 份"里挤掉）
+cj_backup_if_differs() {
+    [ -f "$2" ] || return 0
+    cmp -s "$1" "$2" && return 0
+    cj_backup_file "$2"
+}
+
+# cj_stage_cleanup：暂存目录空了就删（有内容——别的步骤的暂存/待生效退路标记——就留着）
+cj_stage_cleanup() {
+    [ -d "$CJ_STAGE_DIR" ] || return 0
+    rmdir "$CJ_STAGE_DIR" 2>/dev/null || true
+    return 0
+}
+
+# cj_rm_payload DIR FILE…：卸载时清"推送载荷目录"（deploy-* 推上来的 .so/脚本/单元源）：
+# 只 rm -f 列出的已知文件再 rmdir（目录里有别的东西就留着，不会误删）；DIR 必须在 $CJ_HOME 下、不是符号链接。
+cj_rm_payload() {
+    cj_pd=$1; shift
+    case "$cj_pd" in "$CJ_HOME"/?*) ;; *) echo "!! 拒绝清理 $CJ_HOME 之外的路径：$cj_pd"; return 1 ;; esac
+    [ -L "$cj_pd" ] && { echo "!! $cj_pd 是符号链接，拒绝清理"; return 1; }
+    [ -d "$cj_pd" ] || return 0
+    for cj_pn in "$@"; do
+        [ -L "$cj_pd/$cj_pn" ] && continue
+        [ -f "$cj_pd/$cj_pn" ] && rm -f "$cj_pd/$cj_pn"
+        [ -d "$cj_pd/$cj_pn" ] && rmdir "$cj_pd/$cj_pn" 2>/dev/null
+    done
+    rmdir "$cj_pd" 2>/dev/null || true
+    return 0
+}
+
 # cj_backup_dir_new PREFIX：新建目录备份 $CJ_BACKUP_DIR/PREFIX-<ts>，路径写入 CJ_BK（不做轮转，装完调 cj_bk_prune）
 cj_backup_dir_new() {
     CJ_BK="$CJ_BACKUP_DIR/$1-$(date +%Y%m%d-%H%M%S)"
@@ -226,13 +295,21 @@ cj_remove_usr_unit() {
         return 0
     fi
     if cj_verity_active; then
-        echo "✋ dm-verity 激活，rootfs 不可写——$cj_u 已 disable，/usr 里的文件删不掉（下次固件 OTA 冲掉 rootfs 后随之消失；在那之前它已 disabled，不会自动运行）。"
+        echo "✋ dm-verity 激活，rootfs 不可写——$cj_u 已 stop/disable，但 /usr 里的单元文件与 wants 开机链接删不掉，"
+        echo "   重启设备后它可能被 wants 链接重新拉起，直到下次固件 OTA 冲掉 rootfs；要彻底移除需先解除 dm-verity（不建议）。"
         return 3
     fi
     cj_with_rootfs_rw cj_usr_rm_body "$cj_u" "$@" || return 1
     systemctl daemon-reload
     echo "-- 已删 $CJ_SYSD/$cj_u 及其 wants 软链"
     return 0
+}
+
+# cj_uninstall_usr_unit UNIT [WANTS_DIR…]：卸载步骤用的宽松版——dm-verity 跳过（3）不算失败，其它失败才返回 1
+cj_uninstall_usr_unit() {
+    cj_rc=0
+    cj_remove_usr_unit "$@" || cj_rc=$?
+    [ "$cj_rc" = 0 ] || [ "$cj_rc" = 3 ]
 }
 
 # ── xochitl 重启与健康检查（H1）───────────────────────────────────────────
@@ -271,6 +348,7 @@ cj_xochitl_apply() {
         echo "-- xochitl 里还没有 xovi（刚开机/被清）→ $CJ_XOVI/start"
         "$CJ_XOVI/start" || return 1
     fi
+    cj_pending_clear   # 重启成功：此前所有"待生效"的落盘内容现在都已被新进程载入
     return 0
 }
 

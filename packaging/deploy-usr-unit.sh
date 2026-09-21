@@ -12,9 +12,11 @@ set -eu
 cd "$(dirname "$0")"
 # shellcheck disable=SC1091
 . ./lib.sh
-NAME="${1:?用法：deploy-usr-unit.sh <chrony-boot-wakelock|xovi-persist|wifi-watch> [host]}"
-# shellcheck disable=SC2034  # HOST 由 lib.sh 的 rssh/rscp/dev_script 使用
-HOST="${2:-10.11.99.1}"
+USAGE="用法：deploy-usr-unit.sh <chrony-boot-wakelock|xovi-persist|wifi-watch> [host]"
+case "${1:-}" in -h|--help) echo "$USAGE"; exit 0 ;; esac
+NAME="${1:?$USAGE}"; shift
+host_arg "$USAGE" "$@"
+# 设备端用两个语义记号（不再对路径做 shell 二次展开）：NEEDS=xovi-start 要求 $CJ_XOVI/start 存在；EXTRA_DST=local-bin 落 ~/.local/bin/
 EXTRA_SRC=""; EXTRA_DST="-"; NEEDS="-"; START=0
 case "$NAME" in
     chrony-boot-wakelock)
@@ -23,17 +25,18 @@ case "$NAME" in
         DONE_NOTE="真正验证需要重启一次设备，确认 chronyd 在这把锁保护的窗口内完成首次同步、timedatectl 不再需要等自动休眠反复打断+退避那十几分钟才显示 synchronized: yes。" ;;
     xovi-persist)
         UNIT=xovi-reenable.service; SRC=xovi-reenable.service
-        NEEDS='$CJ_XOVI/start'   # 设备上展开；没装 xovi 本体就没东西可恢复
+        NEEDS=xovi-start   # 没装 xovi 本体就没东西可恢复
         VERITY_NOTE="功能不受影响，只是重启后仍需手动 /home/root/xovi/start。"
         DONE_NOTE="真正验证需要重启一次设备，确认 xovi 扩展/qmd 不再需要手动 xovi/start 就自动恢复。" ;;
     wifi-watch)
         UNIT=wifi-watch.service; SRC=wifi-watch/wifi-watch.service
-        EXTRA_SRC=wifi-watch/wifi-watch.sh; EXTRA_DST='$CJ_HOME/.local/bin/wifi-watch.sh'; START=1
+        EXTRA_SRC=wifi-watch/wifi-watch.sh; EXTRA_DST=local-bin; START=1
         VERITY_NOTE="脚本已就位，但单元没装进 /usr——重启后 wifi-watch 不会自启（可手动 sh ~/.local/bin/wifi-watch.sh &）。"
         DONE_NOTE="验证：ssh 上设备 systemctl is-active wifi-watch；journalctl -u wifi-watch 看固化/重连日志。" ;;
     *) echo "!! 未知单元 $NAME"; exit 2 ;;
 esac
 DEST="/home/root/pkg-$NAME"
+require_device
 
 echo "== 推送 $UNIT 到 root@$HOST:$DEST（md5 校验）=="
 push_verified "$SRC" "$DEST/$(basename "$SRC")"
@@ -46,15 +49,18 @@ UNIT="$1"; SRC="$2"; EXTRA_SRC="$3"; EXTRA_DST="$4"; NEEDS="$5"; START="$6"; VER
 cj_require_root || exit 1
 # 先把能预先校验的全部校验完，再动任何东西（失败时不留半成品）
 [ -f "$SRC" ] || { echo "!! 缺 $SRC（推送失败？）"; exit 1; }
-if [ "$NEEDS" != "-" ]; then
-    NEEDS="$(eval echo "$NEEDS")"
-    [ -e "$NEEDS" ] || { echo "!! 没找到 $NEEDS —— 先在设备上跑：vellum add xovi"; exit 1; }
+if [ "$NEEDS" = "xovi-start" ]; then
+    [ -e "$CJ_XOVI/start" ] || { echo "!! 没找到 $CJ_XOVI/start —— 先在设备上跑：vellum add xovi"; exit 1; }
 fi
 if [ -n "$EXTRA_SRC" ]; then
     [ -f "$EXTRA_SRC" ] || { echo "!! 缺 $EXTRA_SRC（推送失败？）"; exit 1; }
-    EXTRA_DST="$(eval echo "$EXTRA_DST")"
-    cj_backup_file "$EXTRA_DST"
+    case "$EXTRA_DST" in
+        local-bin) EXTRA_DST="$CJ_HOME/.local/bin/$(basename "$EXTRA_SRC")" ;;
+        *) echo "!! 内部错误：未知 EXTRA_DST 记号 $EXTRA_DST"; exit 1 ;;
+    esac
+    cj_backup_if_differs "$EXTRA_SRC" "$EXTRA_DST" || exit 1   # 内容没变就不堆重复备份
     cj_safe_replace "$EXTRA_SRC" "$EXTRA_DST" "$CJ_STAGE_DIR" 755 || { echo "!! 写 $EXTRA_DST 失败"; exit 1; }
+    cj_stage_cleanup
 fi
 SCRIPT_CHANGED="$CJ_REPLACED"
 rc=0

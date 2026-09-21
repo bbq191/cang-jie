@@ -48,8 +48,8 @@ set -eu
 cd "$(dirname "$0")"
 # shellcheck disable=SC1091
 . ./lib.sh
-# shellcheck disable=SC2034  # HOST 由 lib.sh 的 rssh/rscp/dev_script 使用
-HOST="${1:-10.11.99.1}"
+host_arg "用法：./deploy-sidebar-entry.sh [host]      host 默认 10.11.99.1；环境 DEFER_XOVI_START=1 只落盘不重启 xochitl" "$@"
+require_device
 QRR_DIR=/home/root/xovi/exthome/qt-resource-rebuilder
 STAGE="$CJ_STAGE_REMOTE"
 RCC_LOCAL="$(mktemp -t sidebar-icons.XXXXXX.rcc)"
@@ -108,10 +108,13 @@ set -eu
 QRR="$1"; STG="$2"
 [ -f "$STG/koreader-sidebar-entry.qmd" ] && [ -f "$STG/cangjie-icons.rcc" ] || { echo "!! 暂存文件缺失"; exit 1; }
 for f in koreader-sidebar-entry.qmd cangjie-icons.rcc; do
-    if [ -f "$QRR/$f" ] && ! cmp -s "$STG/$f" "$QRR/$f"; then cj_backup_file "$QRR/$f"; fi   # 内容没变就不堆重复备份
+    cj_backup_if_differs "$STG/$f" "$QRR/$f"   # 内容没变就不堆重复备份
 done
 cj_safe_replace "$STG/koreader-sidebar-entry.qmd" "$QRR/koreader-sidebar-entry.qmd" "$STG" 644
+CH1="$CJ_REPLACED"
 cj_safe_replace "$STG/cangjie-icons.rcc" "$QRR/cangjie-icons.rcc" "$STG" 644
+CH2="$CJ_REPLACED"
+if [ "$CH1$CH2" != "00" ]; then cj_pending_mark sidebar-entry || true; fi   # 有变化才需要重启 xochitl 才生效
 rm -f "$STG/koreader-sidebar-entry.qmd" "$STG/cangjie-icons.rcc"
 rmdir "$STG" 2>/dev/null || true
 echo "-- 已落位 $QRR/{koreader-sidebar-entry.qmd,cangjie-icons.rcc}"

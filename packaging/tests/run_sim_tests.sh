@@ -68,7 +68,9 @@ new_sandbox() {
     xovi_live off
     export HOME="$R/home/root" XDG_CONFIG_HOME="$R/home/root/.config" XDG_DATA_HOME="$R/home/root/.local/share" XDG_STATE_HOME="$R/home/root/.local/state" SHELF_REG_DIR="$R/tmp/shelf-0/shelf/services" CJ_SYSD="$R/usr/lib/systemd/system" CJ_PROC="$R/proc"
     export CJ_APPLY_GRACE=0 CJ_HEALTH_SLEEP=0 CJ_RETRY_SLEEP=0
-    unset CJ_SIM_VERITY CJ_SIM_RW_FAIL CJ_SIM_INACTIVE CJ_SIM_SCP_CORRUPT CJ_HOME CJ_XOVI CJ_BACKUP_DIR CJ_BACKUP_KEEP CJ_STAGE_DIR
+    # 待生效标记目录进沙箱（默认 /run/cangjie-pending-apply 是真实系统路径）
+    export CJ_PENDING_DIR="$R/run/cangjie-pending"
+    unset CJ_SIM_VERITY CJ_SIM_RW_FAIL CJ_SIM_INACTIVE CJ_SIM_SCP_CORRUPT CJ_HOME CJ_XOVI CJ_BACKUP_DIR CJ_BACKUP_KEEP CJ_STAGE_DIR CJ_PENDING_FALLBACK
 }
 # xovi_live on|off：模拟 xochitl 进程里有/没有 LD_PRELOAD=xovi.so，及 maps 里有无扩展
 xovi_live() {
@@ -206,14 +208,18 @@ check "install：四个 qmd（字体/回收站/建夹/漫画页边距）都在 q
 check "install：rw 窗口只开一次、最后一次 mount 是 ro" test "$(count_log 'remount,rw')" = 1 -a "$(last_mount)" = "mount -o remount,ro /"
 check "install：不跑 xovi/start、不重启 xochitl（只打印提示）" test "$(count_log XOVI_START)" = 0 -a "$(count_log 'restart xochitl')" = 0
 check "install：提示里 xovi 未生效时指路 xovi/start（xovi 生效时指路 systemctl restart）" grep -q 'xovi/start' "$R/out1.txt"
+check "install：qmd 有变化 → 记了待生效标记 shelf-qmd（A1）" test -f "$CJ_PENDING_DIR/shelf-qmd"
 check "install：暂存目录已清" test ! -e "$R/home/root/.cangjie-stage"
 SIG1="$(tree_sig)"
 : > "$CJ_SIM_LOG"; run sh "$PL/install.sh" >"$R/out2.txt" 2>&1; rc=$?
 check "install 第二次：退出 0" test "$rc" -eq 0
 sig_eq "install 第二次：文件树逐字节不变（幂等）" "$SIG1" "$(tree_sig)"
 check "install 第二次：不 remount、不重启任何服务、不留空备份目录" test "$(count_log 'remount')" = 0 -a "$(count_log 'systemctl restart')" = 0 -a -z "$(ls -A "$R/home/root/cangjie-backups" 2>/dev/null)"
+check "install 第二次：qmd 没变 → 不再提示\"生效需重启 xochitl\"（A1）" test -z "$(grep '生效需重启' "$R/out2.txt")"
+rm -rf "$CJ_PENDING_DIR"; echo "qmd font v2" > "$PL/xovi/font-menu-dynamic.qmd"
 xovi_live on; run sh "$PL/install.sh" >"$R/out3.txt" 2>&1
-check "install：xovi 已生效时提示 systemctl restart xochitl，且不再教 xovi/start" grep -q 'systemctl restart xochitl' "$R/out3.txt"
+check "install：qmd 变了 + xovi 已生效 → 提示 systemctl restart xochitl，且不再教 xovi/start" grep -q 'systemctl restart xochitl' "$R/out3.txt"
+check "install：qmd 变了 → 重新记待生效标记" test -f "$CJ_PENDING_DIR/shelf-qmd"
 # 更新一个二进制：只重启它，且备份进 cangjie-backups
 echo '#!/bin/sh' > "$PL/bin/font-serve"; echo '# v2' >> "$PL/bin/font-serve"
 : > "$CJ_SIM_LOG"; run sh "$PL/install.sh" >/dev/null 2>&1
@@ -360,14 +366,28 @@ new_sandbox; EXT="$R/home/root/xovi/extensions.d"
 ( cd "$PKG" && CJ_SKIP_BUILD=1 DEFER_XOVI_START=1 run sh deploy-handwriting-stroke.sh 127.0.0.1 ) >"$R/out.txt" 2>&1; rc=$?
 check "hw-stroke DEFER：落位 hw-stroke.so，配置键是 hwStrokeWidthFactor" test "$rc" -eq 0 -a -f "$EXT/hw-stroke.so" -a -n "$(grep hwStrokeWidthFactor "$R/home/root/.local/share/cangjie-ime/reading-qol.json")"
 
-section "packaging/deploy-xovi-apply.sh：H1"
+section "packaging/deploy-xovi-apply.sh：H1 + A1（无待生效改动不重启）"
 new_sandbox; echo x > "$R/home/root/xovi/extensions.d/hl-snap.so"; xovi_live on; : > "$CJ_SIM_LOG"
+mkdir -p "$CJ_PENDING_DIR"; : > "$CJ_PENDING_DIR/hl-snap"
 ( cd "$PKG" && run sh deploy-xovi-apply.sh 127.0.0.1 ) >"$R/out.txt" 2>&1; rc=$?
-check "xovi-apply：xovi 已生效 → systemctl restart xochitl，绝不 xovi/start（2026-09-20 事故）" test "$rc" -eq 0 -a "$(count_log 'systemctl restart xochitl')" = 1 -a "$(count_log XOVI_START)" = 0
+check "xovi-apply：有待生效标记 + xovi 已生效 → systemctl restart xochitl，绝不 xovi/start（2026-09-20 事故）" test "$rc" -eq 0 -a "$(count_log 'systemctl restart xochitl')" = 1 -a "$(count_log XOVI_START)" = 0
 check "xovi-apply：输出里有\"打断\"提示" grep -q '打断' "$R/out.txt"
+check "xovi-apply：重启成功后待生效标记已清空" test -z "$(ls -A "$CJ_PENDING_DIR" 2>/dev/null)"
+: > "$CJ_SIM_LOG"
+( cd "$PKG" && run sh deploy-xovi-apply.sh 127.0.0.1 ) >"$R/out.txt" 2>&1; rc=$?
+check "xovi-apply：没有待生效标记且 xovi 已生效 → 不重启 xochitl、退出 0（A1）" test "$rc" -eq 0 -a "$(count_log 'restart xochitl')" = 0 -a "$(count_log XOVI_START)" = 0
+check "xovi-apply：无改动时说明原因并提示 --force" grep -q -e '不重启 xochitl' -e '--force' "$R/out.txt"
+: > "$CJ_SIM_LOG"
+( cd "$PKG" && run sh deploy-xovi-apply.sh 127.0.0.1 --force ) >"$R/out.txt" 2>&1; rc=$?
+check "xovi-apply --force：无标记也重启一次（仍走 systemctl restart，不 xovi/start）" test "$rc" -eq 0 -a "$(count_log 'systemctl restart xochitl')" = 1 -a "$(count_log XOVI_START)" = 0
 xovi_live off; : > "$CJ_SIM_LOG"
 ( cd "$PKG" && run sh deploy-xovi-apply.sh 127.0.0.1 ) >/dev/null 2>&1
-check "xovi-apply：xovi 未生效 → xovi/start" test "$(count_log XOVI_START)" = 1 -a "$(count_log 'restart xochitl')" = 0
+check "xovi-apply：xovi 未生效（哪怕没标记）→ 走 xovi/start" test "$(count_log XOVI_START)" = 1 -a "$(count_log 'restart xochitl')" = 0
+new_sandbox; rm "$R/home/root/xovi/start" "$R/home/root/xovi/xovi.so"; xovi_live off; : > "$CJ_SIM_LOG"
+( cd "$PKG" && run sh deploy-xovi-apply.sh 127.0.0.1 ) >"$R/out.txt" 2>&1; rc=$?
+check "xovi-apply：设备没装 xovi 且无待生效改动 → 跳过、退出 0，不重启" test "$rc" -eq 0 -a "$(count_log 'restart xochitl')" = 0 -a "$(count_log XOVI_START)" = 0
+( cd "$PKG" && run sh deploy-xovi-apply.sh 127.0.0.1 --bogus ) >"$R/out.txt" 2>&1; rc=$?
+check "xovi-apply：未知参数 → 退出 2" test "$rc" -eq 2
 
 section "packaging/deploy-usr-unit（wifi-watch / chrony-boot-wakelock / xovi-persist）"
 new_sandbox; : > "$CJ_SIM_LOG"

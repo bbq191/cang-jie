@@ -17,15 +17,17 @@ set -eu
 cd "$(dirname "$0")"
 # shellcheck disable=SC1091
 . ./lib.sh
-NAME="${1:?用法：deploy-xovi-ext.sh <hl-snap|hw-stroke> [host]}"
-# shellcheck disable=SC2034  # HOST 由 lib.sh 的 rssh/rscp/dev_script 使用
-HOST="${2:-10.11.99.1}"
+USAGE="用法：deploy-xovi-ext.sh <hl-snap|hw-stroke> [host]      环境：DEFER_XOVI_START=1（只落盘不重启）CJ_SKIP_BUILD=1 XOVI_DIR=<xovi clone>"
+case "${1:-}" in -h|--help) echo "$USAGE"; exit 0 ;; esac
+NAME="${1:?$USAGE}"; shift
+host_arg "$USAGE" "$@"
 case "$NAME" in
     hl-snap)   DIR=../enhance/hl-snap;            SO=hl-snap.so;   DEST=/home/root/hl-snap ;;
     hw-stroke) DIR=../enhance/handwriting-stroke; SO=hw-stroke.so; DEST=/home/root/hw-stroke ;;
     *) echo "!! 未知扩展 $NAME（hl-snap|hw-stroke）"; exit 2 ;;
 esac
 
+require_device
 echo "== 构建 $SO =="
 # ⚠️ 不跑 `make clean`——产物已提交进仓库，缺外部 xovi clone 时重编会失败；不清现有 .so/xovi_glue.{c,h}
 # 才能在那种情况下退回用仓库里已提交的版本（先删了才发现编不出新的，真机实测踩过）。
