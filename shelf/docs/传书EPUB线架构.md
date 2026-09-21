@@ -213,7 +213,7 @@ Delivered {
 xochitl 自己的 QML 代码（`Library.createCollection`/`selectionMoveToTrash`）。`book-serve` 因此
 维护两个代理队列（`mkdir.rs`/`trash.rs`，共用同一套 `pending_queue::PendingQueue<T>` 持久化+
 去重+剔除基础设施）：入队一个"要建的文件夹名"/"要删的文档 uuid+name"，设备端注入的
-`shelf-mkdir-agent.qmd`/`shelf-trash-agent.qmd`（8 秒一次 Timer 轮询）真正拉队列执行。
+`shelf-mkdir-agent.qmd`/`shelf-trash-agent.qmd`（8 秒一次 Timer 轮询）真正拉队列执行。漫画「页边距设 0」同理走 xochitl 内部：`shelf-comic-margins.qmd` 在书**首次打开**时向 book-serve 查 `GET /margins/<uuid>`，命中就调用阅读器自己的 `EpubProperties.setMargins(0)`（外部改 `.content` 会被内存状态盖回去，见 bookconv 白皮书 §20）。
 `ensure_folder`（`staging.rs`）落库前会同步等最多 20 秒让文件夹真的建出来，等不到不算错误，退回
 `Xochitl::upload_file` 自带的"找不到就落根"兜底。
 
