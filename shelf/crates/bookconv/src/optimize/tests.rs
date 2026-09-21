@@ -531,3 +531,69 @@
             .count();
         assert_eq!(marker_count, 1, "重优化不应残留重复标记条目");
     }
+
+/// 漫画 + 页边距最小化页框：纯文字页（版权/章节标题）补留边类与 css 规则，图片页/图文混排页不动；缺省页框不动；
+/// 登记判据 `is_min_margin_comic_file` 只放行"文字页已留边"的产物。
+#[test]
+fn comic_min_margin_pads_only_pure_text_pages() {
+    use image::{codecs::jpeg::JpegEncoder, DynamicImage, GrayImage};
+    let mut jpg = Vec::new();
+    JpegEncoder::new_with_quality(&mut jpg, 85)
+        .encode_image(&DynamicImage::ImageLuma8(GrayImage::from_fn(60, 90, |x, y| image::Luma([((x * 3 + y * 5) % 200) as u8 + 20])))).unwrap();
+    let mut buf = Vec::new();
+    {
+        let mut zw = ZipWriter::new(Cursor::new(&mut buf));
+        let stored = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
+        zw.start_file("mimetype", stored).unwrap();
+        zw.write_all(b"application/epub+zip").unwrap();
+        let mut ids: Vec<String> = vec!["t1".into()];
+        ids.extend((1..=22).map(|i| format!("c{i}")));
+        ids.push("m1".into());
+        let items: String = ids.iter().map(|id| format!(r#"<item id="{id}" href="{id}.xhtml" media-type="application/xhtml+xml"/>"#)).collect();
+        let spine: String = ids.iter().map(|id| format!(r#"<itemref idref="{id}"/>"#)).collect();
+        zw.start_file("content.opf", stored).unwrap();
+        zw.write_all(format!(r#"<package version="3.0"><metadata><dc:title>漫画</dc:title></metadata><manifest>{items}</manifest><spine>{spine}</spine></package>"#).as_bytes()).unwrap();
+        zw.start_file("t1.xhtml", stored).unwrap();
+        zw.write_all("<html><head><title>版权</title></head><body><p>版权信息 COPYRIGHT 书名：某漫画</p></body></html>".as_bytes()).unwrap();
+        for i in 1..=22 {
+            zw.start_file(format!("c{i}.xhtml"), stored).unwrap();
+            zw.write_all(format!(r#"<html><head><title>p</title></head><body><img src="p{i}.jpg"/></body></html>"#).as_bytes()).unwrap();
+            zw.start_file(format!("p{i}.jpg"), stored).unwrap();
+            zw.write_all(&jpg).unwrap();
+        }
+        zw.start_file("m1.xhtml", stored).unwrap();
+        zw.write_all(r#"<html><head><title>m</title></head><body><img src="p1.jpg"/><p>阿塔……</p></body></html>"#.as_bytes()).unwrap();
+        zw.finish().unwrap();
+    }
+    let read = |bytes: &[u8], n: &str| {
+        let mut s = String::new();
+        ZipArchive::new(Cursor::new(bytes)).unwrap().by_name(n).unwrap().read_to_string(&mut s).unwrap();
+        s
+    };
+    let mm = OptimizeOpts { wash: Some(crate::wash::WashOpts::default()), comic_frame: crate::imgopt::EpubComicFrame::MinMargin, ..Default::default() };
+    let (out, _) = optimize_epub_with(&buf, &mm).unwrap();
+    assert!(read(&out, "t1.xhtml").contains(r#"class="cj-tp""#), "纯文字页应带留边类: {}", read(&out, "t1.xhtml"));
+    assert!(!read(&out, "c1.xhtml").contains("cj-tp"), "图片页不加");
+    assert!(!read(&out, "m1.xhtml").contains("cj-tp"), "图文混排页不加");
+    let css = read(&out, "cangjie-wash.css");
+    assert_eq!(css.matches(crate::comic_pad::TEXT_PAGE_CSS_RULE).count(), 1, "wash css 应含留边规则一次: {css}");
+
+    // 幂等：对产物再优化一遍，类与规则不重复
+    let (out2, _) = optimize_epub_with(&out, &mm).unwrap();
+    assert_eq!(read(&out2, "t1.xhtml").matches("cj-tp").count(), 1, "重复优化不重复加类");
+    assert_eq!(read(&out2, "cangjie-wash.css").matches(crate::comic_pad::TEXT_PAGE_CSS_RULE).count(), 1, "重复优化不重复写规则");
+
+    // 缺省页框（开关关）：不动文字页
+    let screen = OptimizeOpts { wash: Some(crate::wash::WashOpts::default()), ..Default::default() };
+    let (out_s, _) = optimize_epub_with(&buf, &screen).unwrap();
+    assert!(!read(&out_s, "t1.xhtml").contains("cj-tp"), "缺省页框不加留边类");
+    assert!(!read(&out_s, "cangjie-wash.css").contains(".cj-tp"), "缺省页框不写规则");
+
+    // 登记判据：MinMargin 产物放行；缺省页框产物（有文字页却没留边）拒绝
+    let t = tempfile::tempdir().unwrap();
+    let (p_mm, p_s) = (t.path().join("mm.epub"), t.path().join("screen.epub"));
+    std::fs::write(&p_mm, &out).unwrap();
+    std::fs::write(&p_s, &out_s).unwrap();
+    assert!(crate::comic_detect::is_min_margin_comic_file(&p_mm), "文字页已留边的漫画应放行");
+    assert!(!crate::comic_detect::is_min_margin_comic_file(&p_s), "文字页没留边的旧产物不放行（页边距 1 下会贴边）");
+}

@@ -76,7 +76,7 @@ pub struct OptimizeOpts {
     pub wash: Option<crate::wash::WashOpts>,
     /// 脚注呈现方式（缺省 `Anchor` 保持历史行为；母版库「优化」传 `Inline`）。
     pub footnote: FootnoteMode,
-    /// 纯图漫画页补白到哪种页框（缺省 `Screen` = 历史行为）。由 book-serve 按"实验室→漫画页边距"开关传入。
+    /// 漫画页补白到哪种页框（缺省 `Screen` = 历史行为）。由 book-serve 按"实验室→漫画页边距"开关传入。
     pub comic_frame: crate::imgopt::EpubComicFrame,
 }
 
@@ -184,6 +184,11 @@ fn prepare_entries(mut raw: Vec<crate::epubzip::Entry>, opts: &OptimizeOpts, byt
             aside_index.extend(notes);
             *data = cleaned.into_bytes();
         }
+    }
+    // 漫画 + 页边距最小化页框：纯文字页（版权/前情提要/章节标题）补左右留白，否则边距 1 下文字贴屏幕边。
+    // 放在最后：此时 html 已过第一遍、注释块已搬出，判"纯文字页"看到的就是最终页面结构。
+    if is_comic_book && opts.comic_frame == crate::imgopt::EpubComicFrame::MinMargin {
+        crate::comic_pad::pad_text_pages(&mut entries);
     }
     Ok(Prepared { entries, aside_index, is_comic_book, opf_name, rep })
 }

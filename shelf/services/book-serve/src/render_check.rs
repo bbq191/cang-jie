@@ -138,7 +138,7 @@ mod tests {
 
     #[test]
     fn run_registers_margins_only_for_comic_plans() {
-        // 新版管线的纯图漫画：导入完成（找到 uuid）后登记"首次打开时设页边距"；文字书不登记。
+        // 新版管线的漫画：导入完成（找到 uuid）后登记"首次打开时设页边距"；文字书不登记。
         const U: &str = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
         for (comic, expect) in [(true, Some(bookconv::imgopt::EPUB_COMIC_MARGINS)), (false, None)] {
             let t = tempfile::tempdir().unwrap();

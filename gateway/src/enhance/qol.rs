@@ -121,7 +121,7 @@ mod tests {
     }
 }
 
-/// 「漫画页边距最小化」开关（`comicMinMargin`，2026-09-21）：**仅对纯图漫画 EPUB**，控制 book-serve 优化时漫画页补白到哪种页框、
+/// 「漫画页边距最小化」开关（`comicMinMargin`，2026-09-21）：**仅对漫画 EPUB**（以图为主，允许有文字页），控制 book-serve 优化时漫画页补白到哪种页框、
 /// 「加入 xochitl」后是否登记"首次打开时把阅读器页边距设为 1"（xochitl 里的 qmd 代理执行）。book-serve 只读这个键
 /// （`comic_margins.rs::enabled`），跟「导入 md」一样缺省关——新功能第一次上线，得手动去「管理→实验室」打开。
 pub fn comic_min_margin(paths: &Paths) -> bool {
