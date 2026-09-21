@@ -91,12 +91,17 @@ pub fn check_entries(entries: &[Entry], require_toc: bool) -> CheckReport {
     if !targets.is_empty() && (rep.href_file_hit as f64) / (targets.len() as f64) < 0.8 {
         rep.errors.push(format!("目录 href 文件命中率过低 {}/{}", rep.href_file_hit, targets.len()));
     }
-    let mut cache: HashMap<&str, String> = HashMap::new();
+    // 每个目标页只扫一遍收集全部 id/name 值，再按集合判命中（此前每个带锚点的目录项各编译一个正则、各扫一遍整页）。
+    static ANCHOR: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+    let anchor_re = ANCHOR.get_or_init(|| Regex::new(r#"(?:id|name)="([^"]*)""#).unwrap());
+    let mut cache: HashMap<&str, std::collections::HashSet<String>> = HashMap::new();
     for (t, frag) in targets.iter().filter(|(t, f)| !f.is_empty() && names.contains_key(t.as_str())) {
         rep.frag_total += 1;
-        let html = cache.entry(t.as_str()).or_insert_with(|| String::from_utf8_lossy(&names[t.as_str()].data).into_owned());
-        let re = Regex::new(&format!(r#"(?:id|name)="{}""#, regex::escape(frag))).unwrap();
-        if re.is_match(html) {
+        let anchors = cache.entry(t.as_str()).or_insert_with(|| {
+            let html = String::from_utf8_lossy(&names[t.as_str()].data);
+            anchor_re.captures_iter(&html).map(|c| c[1].to_string()).collect()
+        });
+        if anchors.contains(frag) {
             rep.frag_hit += 1;
         }
     }
