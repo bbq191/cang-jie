@@ -9,18 +9,24 @@
 
 ```sh
 cd packaging
+sh install-all.sh --dry-run                                     # 先预演：纯本机，只打印计划，不 ssh
 sh install-all.sh <host>                                        # 装全部
 sh install-all.sh <host> --force                                # 固件不在白名单也强装（哈希追加进本机 firmware-allowlist.local.txt）
 sh install-all.sh <host> --skip chrony-cn,timezone-cn,xovi-persist   # 跳过指定步骤（写错名字会警告，不会静默忽略）
+sh install-all.sh <host> --force-apply                          # 没有待生效改动也重启 xochitl（缺省不重启，见「待生效标记」）
 ```
 
 `<host>` 默认 `10.11.99.1`（USB 网段）。反悔想卸：
 
 ```sh
+sh uninstall-all.sh <host> --dry-run    # 先预演：只打印将执行的步骤，不 ssh
 sh uninstall-all.sh <host>              # 卸全部（chrony-cn / timezone-cn / xovi-apply 除外，见「卸载」）
 sh uninstall-all.sh <host> --purge      # 同时删 battop 的二进制与历史采样数据
 sh uninstall-all.sh <host> --skip shelf # 跳过指定步骤，用法同 --skip
 ```
+
+全部参数与环境变量见下文「参数与环境变量」；所有脚本 `-h` 可看用法，未知选项一律退出码 2 且不连设备。
+> ⚠ 2026-09-22 这一轮脚本改动（预检、待生效标记、`--dry-run`、卸载逆序清载荷等）**只做过本机模拟测试，未在真机验证**，见「已知限制」。
 
 ## 前置条件（需手动，本脚本不代装）
 
@@ -35,7 +41,7 @@ sh uninstall-all.sh <host> --skip shelf # 跳过指定步骤，用法同 --skip
 
 ![install-all.sh 流程](../docs/diagrams/install-flow.svg)
 
-`install-all.sh` 只编排、不重新实现任何构建/传输逻辑：先过固件安全门，再按 `lib.sh` 里的**步骤表 `STEP_ORDER`** 依次调用 11 个各自独立可用的部署脚本（`uninstall-all.sh` 共用同一张表，所以安装与卸载清单对称）：
+`install-all.sh` 只编排、不重新实现任何构建/传输逻辑：先做装前检查（`require_device` ssh 连通 → 固件安全门 → `preflight_device` 设备预检，见下节），再按 `lib.sh` 里的**步骤表 `STEP_ORDER`** 依次调用 11 个各自独立可用的部署脚本（`uninstall-all.sh` 共用同一张表，所以安装与卸载清单对称）：
 
 | 顺序 | 步骤名 | 脚本 | 装什么 | 前置 |
 |---|---|---|---|---|
@@ -49,13 +55,32 @@ sh uninstall-all.sh <host> --skip shelf # 跳过指定步骤，用法同 --skip
 | 8 | `handwriting-stroke` | `deploy-handwriting-stroke.sh` | CJK 手写笔迹渲染优化（独立最小 xovi 扩展），只落盘 | 同上 |
 | 9 | `sidebar-entry` | `deploy-sidebar-entry.sh` | 侧栏一级直达「KOReader」入口（装了 WeRead 自动带上「WeRead」项），只落盘 | 已装 qt-resource-rebuilder 与 appload（且 appload 探测健康）；任一不满足自动跳过 |
 | 10 | `shelf` | `deploy.sh` | 网关 + book/koreader/font/wallpaper 四个领域服务 + 笔记线（ink/transcribe/mind/note） | 无（qmd 依赖 qt-resource-rebuilder，缺了自动跳过，只落盘） |
-| 11 | `xovi-apply` | `deploy-xovi-apply.sh` | 统一让上面落盘的扩展/qmd 生效：重启 xochitl 一次 + 健康检查 | 同 6/7/8/9 |
+| 11 | `xovi-apply` | `deploy-xovi-apply.sh` | 统一让上面落盘的扩展/qmd 生效：**有待生效标记（或 xovi 未生效）才**重启 xochitl 一次 + 健康检查；`--force` 无条件重启 | 同 6/7/8/9 |
 
-11 个脚本都可以单独跑（`sh deploy-battop.sh <host>` 等），不依赖 `install-all.sh`——它只是把它们串起来 + 加一层固件门 + 汇总结果。任何一步失败：打印是哪一步、原始错误，**不自动重试、不静默跳过**，退出非零。
+11 个脚本都可以单独跑（`sh deploy-battop.sh <host>` 等），不依赖 `install-all.sh`——它只是把它们串起来 + 加装前检查 + 汇总结果。任何一步失败：打印是哪一步、原始错误，**不自动重试、不静默跳过**，退出非零。汇总分「已安装 / 已跳过（--skip）/ 失败」三栏。
+
+### 装前检查（非 `--dry-run` 时，任何一项不过就一个步骤都不执行）
+
+1. **`require_device`**：`ssh true` 通不通（`BatchMode`，`CJ_SSH_TIMEOUT` 秒超时）。不通 → 打印 ssh 原始报错 + 中文排查步骤（休眠/没插 USB、IP 不对、host key 变了、没配免密），退出 1。各 `deploy-*.sh` 单独跑时同样先过这一关。
+2. **`fw_gate`** 固件安全门：见下「固件安全门」。
+3. **`preflight_device`**（只读，设备端 `dev_script`）：必须 root；`$HOME`（`/home/root`）可写；`df` 剩余空间 **< `CJ_MIN_FREE_KB`（50MB）退出 1 拒装、< `CJ_WARN_FREE_KB`（200MB）警告**（读不到空间只警告）；然后**只报告**：xovi 本体 / qt-resource-rebuilder / appload 有无、dm-verity 是否激活、xochitl 里 xovi 是否已生效。这些"缺"不拦装，对应步骤自己会报错或跳过。
+
+`--dry-run` 不做以上任何一项——它只在本机走一遍步骤表，对每步打印 `[dry-run] 将执行：<命令>`，最后一行汇总列出计划步骤（`--skip` 的照常记为已跳过）。
 
 ### 为什么 hl-snap / handwriting-stroke / sidebar-entry 只落盘、最后统一重启
 
 xovi 没有"只重载一个扩展"的机制，让新扩展/qmd 生效的唯一办法是重启 xochitl。每步各自重启的话，短时间多次重启会撞 xochitl 自带的 watchdog + StartLimit——真机验证过连续两次就触发一次意外整机重启（2026-09-11）。所以 `install-all.sh` 给这三步传 `DEFER_XOVI_START=1`（设备端 `install.sh --no-restart`）让它们只落盘，`shelf` 的 qmd 本来就只落盘，全部落盘完由 `xovi-apply` 统一重启一次。单独跑这几个脚本（不设这个变量）行为不变：落盘后立即重启并做健康检查。
+
+### 待生效标记：重复运行不再每次重启 xochitl（2026-09-22）
+
+旧版 `xovi-apply` 每次都重启，重跑 `install-all.sh` 必闪屏。现在靠**待生效标记**：
+
+- **记**：`hl-snap` / `handwriting-stroke`（`xovi-ext-install.sh`，`--no-restart` 路径）、`sidebar-entry`（`deploy-sidebar-entry.sh`）、`shelf` 的 qmd（`shelf/install.sh`，标记名 `shelf-qmd`）在**真的写入了与设备上不同的内容**时调 `cj_pending_mark <名字>`，在 `/run/cangjie-pending-apply/<名字>` 建一个空文件。`/run` 是 tmpfs，设备重启即清（重启后一切本来就是新载入的）；`/run` 写不了时退到 `~/.cangjie-stage/pending-apply/`——宁可多重启也不漏。目录可用 `CJ_PENDING_DIR` 覆盖。
+- **判**：`deploy-xovi-apply.sh` 先 `cj_pending_list`。没有 `--force` 时——xovi 已生效 **且** 无标记 → 不重启直接结束；无标记、xovi 未生效、且没有 `xovi/start`（设备根本没装 xovi）→ 跳过；其余（有标记，或 xovi 未生效）→ 走下面的 `cj_xochitl_apply`。
+- **清**：`cj_xochitl_apply` 重启成功后 `cj_pending_clear`（只删目录里的常规文件再 `rmdir`）。
+- **`--force-apply`**（`install-all.sh`）/ **`--force`**（`deploy-xovi-apply.sh`）：无视标记强制重启。用 `--skip xovi-apply` 跳过时标记保留，之后单独 `sh deploy-xovi-apply.sh <host>` 即可补上。
+- `uninstall-all.sh` 摘掉扩展后**不清标记**（卸载的东西也要等 xochitl 重启才停止生效）。
+- **单独跑**（不带 `DEFER_XOVI_START`）的 `deploy-hl-snap.sh` 等仍是落盘后立即重启，不涉及标记。
 
 ### 怎么"重启"xochitl：`cj_xochitl_apply` 的判定（2026-09-20）
 
@@ -70,18 +95,54 @@ xovi 没有"只重载一个扩展"的机制，让新扩展/qmd 生效的唯一�
 
 | 文件 | 职责 |
 |---|---|
-| `install-all.sh` / `uninstall-all.sh` | 统一安装/卸载编排；步骤表来自 `lib.sh`，卸载对每个非"配置覆写/纯动作"步骤都必须有 `uninstall_<步骤名>` 函数（测试会核对） |
-| `lib.sh` | host 侧共用库：`rssh`/`rssh_in`/`rscp`（统一 `BatchMode` + `ConnectTimeout`，`CJ_SSH_TIMEOUT` 缺省 8 秒，设备休眠/断线时快速失败而不是卡死）、`shquote`（把任意字符串安全拼进远端命令行）、`dev_script`（把 `devlib.sh` + heredoc 脚本体经 `ssh sh -s` 送上设备执行）、`push_verified`（scp 到暂存路径后逐个 md5 对拍，不对就删暂存并失败，绝不落到最终位置）、步骤表 `STEP_ORDER`/`STEP_DEFER`/`STEP_CONFIG_ONLY`、参数解析、固件安全门 |
-| `devlib.sh` | **设备侧**共用库（POSIX sh，兼容 busybox）：rootfs 读写窗口（remount rw 后无论成败/被信号打断都恢复 ro）、`cj_safe_replace` 原子替换（先写暂存再 rename，不在运行中进程已映射的 inode 上原地写）、备份与轮转、`/usr` 下单元的安装/删除（先过 dm-verity 门）、`cj_xochitl_apply`/`cj_xochitl_health` |
+| `install-all.sh` / `uninstall-all.sh` | 统一安装/卸载编排；步骤表来自 `lib.sh`，卸载对每个非"配置覆写/纯动作"步骤都必须有 `uninstall_<步骤名>` 函数（测试会核对），并按步骤表**逆序**执行 |
+| `lib.sh` | host 侧共用库：`rssh`/`rssh_in`/`rscp`（统一 `BatchMode` + `ConnectTimeout`，`CJ_SSH_TIMEOUT` 缺省 8 秒，设备休眠/断线时快速失败而不是卡死）、`shquote`（把任意字符串安全拼进远端命令行）、`dev_script`（把 `devlib.sh` + heredoc 脚本体经 `ssh sh -s` 送上设备执行）、`push_verified`（scp 到暂存路径后逐个 md5 对拍，不对就删暂存并失败，绝不落到最终位置）、步骤表 `STEP_ORDER`/`STEP_DEFER`/`STEP_CONFIG_ONLY`、`parse_step_args`（install/uninstall 共用的 `[host] --force --purge --force-apply --dry-run --skip -h` 解析，未知参数退出 2）、`host_arg`（薄 `deploy-*.sh` 共用的 `[host]` 解析）、`require_device`（ssh 连通检查）、固件安全门 `fw_gate`、设备预检 `preflight_device`、`run_step`（含 `--dry-run` 与已安装/已跳过/失败记账） |
+| `devlib.sh` | **设备侧**共用库（POSIX sh，兼容 busybox）：rootfs 读写窗口（remount rw 后无论成败/被信号打断都恢复 ro）、`cj_safe_replace` 原子替换（先写暂存再 rename，不在运行中进程已映射的 inode 上原地写）、备份与轮转、`/usr` 下单元的安装/删除（先过 dm-verity 门）、`cj_backup_if_differs`（内容没变不重复备份）、待生效标记 `cj_pending_mark`/`_list`/`_clear`、`cj_xochitl_apply`/`cj_xochitl_health` |
 | `deploy-usr-unit.sh` | 把一个 systemd 单元装进设备 `/usr` 的统一部署器；`deploy-chrony-boot-wakelock.sh` / `deploy-xovi-persist.sh` / `deploy-wifi-watch.sh` 是它的薄包装 |
 | `deploy-xovi-ext.sh` + `xovi-ext-install.sh` | 装一个"独立最小 xovi 扩展"的统一部署器（host 侧构建+推送）与设备侧安装流程；`deploy-hl-snap.sh` / `deploy-handwriting-stroke.sh` 是薄包装，各扩展的 `deploy/install.sh` 只剩数据（名字、配置键）并 source `xovi-ext-install.sh` |
-| `deploy.sh` | shelf 整包部署：组载荷（`bin/ systemd/ lo-alias/ xovi/ install.sh uninstall.sh manifest.sh devlib.sh`）→ 本地打成 tar → 推到设备 `shelf-pkg.new`，校验有 `install.sh` 后才换掉 `shelf-pkg` → 设备端 `install.sh`；`--password` 经标准输入走 0600 临时文件，不上命令行 |
-| `deploy-battop.sh` / `deploy-sidebar-entry.sh` / `deploy-xovi-apply.sh` / `deploy-chrony-cn.sh` / `deploy-timezone-cn.sh` | 各自的部署脚本 |
+| `deploy.sh` | shelf 整包部署：组载荷（`bin/ systemd/ lo-alias/ xovi/ install.sh uninstall.sh manifest.sh devlib.sh`）→ 本地打成 tar → 推到设备 `shelf-pkg.new`，校验有 `install.sh` 后才换掉 `shelf-pkg` → 设备端 `install.sh`；`--password` 经标准输入走 0600 临时文件，不上命令行；第一个参数是选项（如 `--only`）时 host 用默认；推送前按 `shelf/manifest.sh` 核对要装的二进制都在（缺了指路 `sh shelf/build.sh`，不再传完才失败）；装完无论成败兜底清掉设备上的密码临时文件 |
+| `deploy-battop.sh` / `deploy-sidebar-entry.sh` / `deploy-xovi-apply.sh` / `deploy-chrony-cn.sh` / `deploy-timezone-cn.sh` | 各自的部署脚本（都支持 `-h`、未知/多余参数退出 2、ssh 不通中文报错退出 1；`deploy-xovi-apply.sh` 另有 `--force`） |
 | `firmware-allowlist.txt` / `firmware-allowlist.local.txt` | 固件白名单：仓库里被 git 跟踪的一份 + 本机一份（`--force` 追加到后者，已 gitignore） |
 | `wifi-watch/` | 看护脚本与单元；`xovi-reenable.service`、`chrony-boot-wakelock.service`、`sidebar-entry-*.qmd`/`.qrc`/`.png`、`chrony-cn.sh`、`timezone-cn.sh` 是其余步骤的载荷 |
 | `tests/` | 本机模拟测试，见「测试」 |
 
 **脱离编排手动跑设备端 `install.sh` 时的文件依赖**（只手拷单个 `install.sh` 不够，会清楚报错）：`shelf/install.sh` 要同目录的 `manifest.sh` 与 `devlib.sh`（`deploy.sh` 已一起打进载荷）；`hl-snap`/`handwriting-stroke` 的 `deploy/install.sh` 要同目录的 `xovi-ext-install.sh` 与 `devlib.sh`（`deploy-hl-snap.sh` 等会一起推送）；`battop/install.sh` 要同目录的 `devlib.sh`。shelf 载荷里的 `manifest.sh`（安装/卸载共用的清单）与 `devlib.sh` 会被装到设备的 `~/.local/lib/shelf/`，`shelf-uninstall` 运行时 source。
+
+## 参数与环境变量
+
+**命令行参数**（`-h` 看用法；未知参数退出码 2，且此时不会去连设备）：
+
+| 脚本 | 参数 | 说明 |
+|---|---|---|
+| `install-all.sh` | `[host]` | 默认 `10.11.99.1` |
+| | `--dry-run` | 纯本机，只打印计划；不 ssh、不做固件门/预检 |
+| | `--skip a,b`（或 `--skip=a,b`） | 跳过步骤；名字不在 `STEP_ORDER` 里只警告 |
+| | `--force` | 固件不在白名单也装，哈希追加进本机 `firmware-allowlist.local.txt` |
+| | `--force-apply` | 传给 `xovi-apply` 的 `--force`：无待生效改动也重启 xochitl |
+| | `-h`/`--help` | 用法；`--purge` 是 uninstall 的，这里会拒绝 |
+| `uninstall-all.sh` | `[host]` `--dry-run` `--skip` `-h` | 同上语义；`--force`/`--force-apply` 是 install 的，这里会拒绝 |
+| | `--purge` | 只额外删 battop 的 `/home/root/battop`（二进制+历史采样数据）；shelf 用户数据不受影响 |
+| `deploy-xovi-apply.sh` | `[host]` `--force` | 无待生效改动也重启 |
+| `deploy.sh` | `[host] [--only a,b] [--no-systemd] [--password PW]` | 后三项原样转给设备端 `shelf/install.sh`；`SHELF_NO_BUILD=1` 跳过交叉编译 |
+| 其余 `deploy-*.sh` | `[host]` `-h` | — |
+| `shelf/install.sh`（设备端） | `--only` `--no-systemd` `--src` `--password`/`--password-file` `-h` | `--password` 明文会让密码短暂出现在设备 `ps`；经 `deploy.sh` 走的是 `--password-file` |
+| `shelf/uninstall.sh`（设备端，装成 `shelf-uninstall`） | `--only` `--purge` `--dry-run` `-h` | `--dry-run` 只列出将删除的现存路径 |
+
+**环境变量**：
+
+| 变量 | 默认 | 作用域 | 说明 |
+|---|---|---|---|
+| `CJ_SSH_TIMEOUT` | 8 | host | ssh `ConnectTimeout` 秒数 |
+| `CJ_MIN_FREE_KB` | 51200 | host→设备预检 | `/home` 剩余空间低于此值（≈50MB）拒装 |
+| `CJ_WARN_FREE_KB` | 204800 | host→设备预检 | 低于此值（≈200MB）只警告 |
+| `CJ_ALLOWLIST` / `CJ_ALLOWLIST_LOCAL` | 仓库/本机白名单文件 | host | 改固件白名单路径 |
+| `CJ_PENDING_DIR` | `/run/cangjie-pending-apply` | 设备 | 待生效标记目录 |
+| `CJ_APPLY_GRACE` / `CJ_HEALTH_SLEEP` | 5 / 5 | 设备 | 重启前宽限秒数 / 重启后等多久再做健康检查 |
+| `CJ_BACKUP_KEEP` / `CJ_BACKUP_MAXBYTES` | 5 / 64MB | 设备 | 备份保留份数 / 单文件超此大小不自动删 |
+| `DEFER_XOVI_START=1` | — | host（`install-all` 自动设） | hl-snap/handwriting-stroke/sidebar-entry 只落盘不重启 |
+| `SHELF_NO_BUILD=1` · `CJ_SKIP_BUILD=1` · `CJ_BATTOP_BIN` · `XOVI_DIR` | — | host | 跳过/指定构建产物（见各脚本 `-h`） |
+| `CJ_HOME` `CJ_SYSD` `CJ_XOVI` `CJ_PROC` `CJ_BACKUP_DIR` `CJ_STAGE_DIR` | 设备真实路径 | 设备 | `devlib.sh` 的路径，仅供模拟测试重定向 |
+| `CJ_CHRONY_CONF` `CJ_LOCALTIME` `CJ_ZONEINFO` `CJ_MOUNTS` `CJ_TMPDIR` | `/etc/chrony.conf` 等 | 设备 | `chrony-cn.sh`/`timezone-cn.sh` 的目标路径，**仅供模拟测试，真机别设** |
 
 ## 固件安全门
 
@@ -93,7 +154,7 @@ xovi 没有"只重载一个扩展"的机制，让新扩展/qmd 生效的唯一�
 
 - 设备上被覆盖的旧文件统一备份进 `/home/root/cangjie-backups/`（**绝不留在 `extensions.d/` 里**——xovi 把该目录下任意文件当扩展加载，同名重复注册是致命错误，2026-08-15 踩过）；单文件 `<basename>.bak.pre-<时间戳>`，目录型（shelf）`shelf-<时间戳>/`。
 - 只保留最近 5 份（设备端环境变量 `CJ_BACKUP_KEEP`），只轮转脚本自己生成的严格时间戳命名备份；超过 `CJ_BACKUP_MAXBYTES`（64MB）的单文件备份不自动删；手工命名的备份与任何用户数据不碰；全程无 `rm -rf`。
-- 内容没变就不备份、不重启服务；写 `/usr` 前先过 dm-verity 门，激活则跳过。
+- 内容没变就不备份、不重启服务；写 `/usr` 前先过 dm-verity 门，激活则跳过。"内容没变不备份"由 `cj_backup_if_differs`（`cmp` 对拍）实现——否则重复部署 5 次就会把真正有价值的旧版本挤出"保留最近 5 份"（`shelf/install.sh`、`sidebar-entry`、`xovi-ext-install.sh` 都走它）。
 
 ## xovi-reenable.service 为什么放在 packaging/，不放 shelf/
 
@@ -101,28 +162,33 @@ xovi 持久化是**整个 xovi 层**通用的（重跑 `xovi/start` 会重注入
 
 ## 卸载（`uninstall-all.sh`）
 
-对称卸载，步骤表与安装共用。每一步：
+对称卸载，步骤表与安装共用，但**逆序**执行（`shelf → sidebar-entry → handwriting-stroke → hl-snap → xovi-persist → wifi-watch → battop → chrony-boot-wakelock`；配置覆写/纯动作步骤跳过）。`--dry-run` 只在本机打印这个计划。每一步：
 
-| 步骤 | 卸载动作 |
+| 步骤 | 卸载动作（另每步都清 deploy 推到设备的载荷目录，见下） |
 |---|---|
-| `chrony-boot-wakelock` / `xovi-persist` / `wifi-watch` | 停用并删 `/usr` 单元（同一套 dm-verity 门 + 带 trap 的 rw 窗口）；`wifi-watch` 另删 `~/.local/bin/wifi-watch.sh` |
-| `hl-snap` / `handwriting-stroke` | 从 `extensions.d` 摘除 `.so`（含 `.crashed` 标记）；不碰 `reading-qol.json`（多个扩展共用）、不碰 `cangjie-backups/` |
+| `shelf` | **优先**调设备上的 `~/.local/bin/shelf-uninstall`（`install.sh` 每次更新它，单一事实源），没有才退回 `shelf-pkg/shelf/uninstall.sh`；清单与安装共用 `manifest.sh`；默认保留用户数据，`--purge` 不作用于 shelf；成功且书架二进制已清掉后才删 `shelf-pkg`/`shelf-pkg.new`（必须是真目录且含 `shelf/` 标记） |
 | `sidebar-entry` | 从 qt-resource-rebuilder `exthome` 摘除 qmd/rcc |
+| `hl-snap` / `handwriting-stroke` | 从 `extensions.d` 摘除 `.so`（含 `.crashed` 标记）；不碰 `reading-qol.json`（多个扩展共用）、不碰 `cangjie-backups/` |
+| `xovi-persist` / `chrony-boot-wakelock` | 停用并删 `/usr` 单元（同一套 dm-verity 门 + 带 trap 的 rw 窗口） |
+| `wifi-watch` | 同上删单元；单元删掉后才删 `~/.local/bin/wifi-watch.sh` |
 | `battop` | 停用并删单元；`--purge` 才连 `/home/root/battop`（二进制 + 历史采样数据）一起删 |
-| `shelf` | **优先**调设备上的 `~/.local/bin/shelf-uninstall`（`install.sh` 每次更新它，单一事实源），没有才退回 `shelf-pkg/shelf/uninstall.sh`；清单与安装共用 `manifest.sh`；默认保留用户数据，`--purge` 不作用于 shelf |
-| `chrony-cn` / `timezone-cn` / `xovi-apply` | 配置覆写与纯动作，没有卸载语义，不动 |
+| `chrony-cn` / `timezone-cn` / `xovi-apply` | 配置覆写与纯动作，没有卸载语义，**有意不卸**（改前备份在 `cangjie-backups/`，要还原自己取） |
+
+**载荷目录与暂存**：每步清 `deploy-*` 推到设备上的载荷（`/home/root/pkg-<名>/`、`hl-snap/`、`hw-stroke/`、`shelf-pkg/`）——`cj_rm_payload` 只 `rm` 已知文件再 `rmdir`，目录里有别的东西就留着，全程无 `rm -rf`（`shelf-pkg` 例外，见上，且有符号链接/标记校验）；最后 `cleanup_staging` 清 `~/.cangjie-stage` 里本项目的中转文件。
+
+**dm-verity 激活时**：`/usr` 单元删不掉（`cj_remove_usr_unit` 返回 3，卸载视为"如实跳过"不算失败）。此时**保留**这些单元依赖的东西：`wifi-watch.sh`（单元 `Restart=always`，删了脚本它会每 10 秒起一次并失败）、shelf 二进制与 `shelf-pkg`（`shelf/uninstall.sh` 在单元残留时保留二进制与 `shelf-uninstall`，`uninstall-all` 见书架二进制还在就保留 `shelf-pkg` 这条"可写后再卸一次"的退路，并且不清待生效标记）。设备可写后**重跑一次 `uninstall-all.sh`** 即收敛。没有任何 `/usr` 单元残留时不再 remount rw（幂等）。
 
 摘掉 xovi 内容后当前运行中的 xochitl 仍是旧映射，要等下次重启才真正停止生效；卸载脚本不主动重启（要重启：`systemctl restart xochitl`，xovi 已生效时别用 `xovi/start`）。
 
 ## 测试：不碰真机验证脚本
 
 ```sh
-bash packaging/tests/run_sim_tests.sh      # 也由 packaging/tests/test_install_scripts_sim.py 的 pytest 调用，CI 会跑
+bash packaging/tests/run_sim_tests.sh      # 现为 198 项断言；也由 packaging/tests/test_install_scripts_sim.py 的 pytest 调用，CI 会跑
 ```
 
 做法：`tests/stubs/` 下放假的 `ssh`/`scp`/`systemctl`/`mount`/`dmsetup`/`id`/`sleep`/`curl`/`journalctl`/`rcc` 等塞进 `PATH`，用临时目录当"设备"；假 `ssh` 把远端命令直接在本机沙箱里执行，所以设备端脚本（`devlib.sh`、`shelf/install.sh`、各 heredoc 脚本）跑的是**真代码**，只是 rootfs/systemd/mount 被桩住并写日志，可断言"有没有 remount rw、最后一次 mount 是不是 ro、有没有跑 `xovi/start`"。
 
-覆盖：`devlib` 各函数；shelf 安装的幂等 / 缺载荷不留半成品 / rw 窗口失败恢复 ro / 只重启有变化的服务；shelf 卸载与安装清单对称；`deploy.sh`（密码含特殊字符、`shelf-pkg` 换位）；hl-snap 部署（原子落位、备份不进 `extensions.d`）；`xovi-apply` 与 `sidebar-entry` 的"xovi 已生效 → restart、绝不 `xovi/start`"判定；整轮 `install-all` → `uninstall-all` 对称；静态守卫（`remount,rw` / `xovi/start` 只许出现在库里）。**拒绝以 root 运行**（设 `CJ_SIM_ALLOW_ROOT=1` 才强行跑）。这些是本机模拟，**不能代替真机验证**。
+覆盖：`devlib` 各函数（含待生效标记、备份去重）；shelf 安装的幂等 / 缺载荷不留半成品 / rw 窗口失败恢复 ro / 只重启有变化的服务 / verity 下已有单元照常重启；shelf 卸载与安装清单对称、verity 下保留二进制、`--dry-run`；`deploy.sh`（密码含特殊字符、`shelf-pkg` 换位、选项当首参、推送前核对二进制、密码文件兜底清理）；hl-snap 部署（原子落位、备份不进 `extensions.d`）；`xovi-apply`"无待生效改动不重启"与 `sidebar-entry` 的"xovi 已生效 → restart、绝不 `xovi/start`"判定；整轮 `install-all` → `uninstall-all` 对称；参数解析 / `--dry-run` / `-h` / 设备不可达 / 设备预检（磁盘空间）；`uninstall-all` 的载荷清理保守性与 wifi-watch 在 verity 下留脚本；`chrony-cn`/`timezone-cn`（路径覆盖；只测非 overlay 与 verity 路径，overlay 底层改写只能真机验证）；静态守卫（`remount,rw` / `xovi/start` 只许出现在库里）。**拒绝以 root 运行**（设 `CJ_SIM_ALLOW_ROOT=1` 才强行跑）。这些是本机模拟，**不能代替真机验证**。
 
 ## 固件升级（OTA）之后
 
@@ -134,8 +200,16 @@ bash packaging/tests/run_sim_tests.sh      # 也由 packaging/tests/test_install
 - **不装中文化**（输入法/候选栏/词典/UI 汉化）——那条链路（`chinese-ime/langhook/`）随 2026-09-11 全仓库大归档挪出了 git 仓库，不随本安装器分发；设备上已部署的部分仍在运行。
 - **不升级 appload**——3.28 需要 ≥ 0.6.0，已装旧版的自己 `vellum upgrade appload` 后整机重启。
 - **`chrony-cn` / `timezone-cn` 没有卸载语义**（配置覆写）。
-- **卸载的真机效果没有验证过**：`uninstall-all.sh` 只做过本机模拟测试，需要在已装过 `install-all.sh` 的设备上跑一遍，确认各单元/扩展确实被摘掉、shelf 服务确实停用，且不影响没被点名要卸的其它功能。
+- **卸载的真机效果没有验证过**：`uninstall-all.sh` 只做过本机模拟测试，需要在已装过 `install-all.sh` 的设备上跑一遍，确认各单元/扩展确实被摘掉、shelf 服务确实停用，且不影响没被点名要卸的其它功能。逆序、载荷目录清理、verity 下保留二进制这几处 2026-09-22 的新行为同样只在模拟里跑过。
 - 旧的 `packaging/package.sh`（打 `cangjie-full-*.tar.gz` 单体安装包）**没有**恢复：它已随归档挪出仓库且按旧目录结构找载荷；本目录是纯编排现有独立脚本，不是复刻旧的单体打包架构。
+
+## 已知限制（2026-09-22，别当成已经解决）
+
+- **这一轮改动全部只在本机模拟验证（198 项），未在真机验证**：装前预检（`require_device`/`preflight_device`）、待生效标记与按需重启、`--force-apply`/`--force`、`--dry-run`、卸载逆序 + 载荷目录清理 + verity 保留分支、`cj_backup_if_differs`、`deploy.sh` 的推送前核对与密码文件兜底清理。
+- **`xovi-reenable.service` 在 xovi 已生效时被重跑仍会无条件 `xovi/start`**：单元只有 `ConditionPathExists=/home/root/xovi/start`，没有"xovi 已在 xochitl 里生效就跳过"的防护（`cj_xochitl_apply` 的判定不适用于它，它直接 `ExecStart=/home/root/xovi/start`）；这种情形没有真机验证过。开机时 xovi 本就没生效，设计上不踩到；手动 `systemctl restart xovi-reenable` 会踩。
+- **`/usr` 下单元的写入仍靠"dm-verity 门 + 带 trap 的 rw 窗口"**，不是彻底不碰 `/usr`；同样只在模拟里测过，历史上写 `/usr` 触发过 A/B 回滚变砖（2026-08-16）。
+- **`shelf/install.sh --password 明文` 直接在设备上跑时密码短暂出现在设备 `ps`**（`deploy.sh` 走 0600 临时文件 + `--password-file` 不受影响）。
+- **待生效标记只覆盖已接入的四处**（`hl-snap` / `handwriting-stroke` / `sidebar-entry` / `shelf` qmd）。手工替换 `.so`/qmd 不会留标记——用 `--force-apply`/`--force`。`/run` 与退路目录都写不了时只警告，此时 `xovi-apply` 可能误判"无需重启"，按提示手动 `systemctl restart xochitl`。
 
 ---
 
@@ -160,7 +234,8 @@ bash packaging/tests/run_sim_tests.sh      # 也由 packaging/tests/test_install
 
 ### 没有真机验证
 
-- **卸载脚本**（`uninstall-all.sh`）：只有本机模拟。
+- **卸载脚本**（`uninstall-all.sh`）：只有本机模拟；2026-09-22 起的逆序 / 载荷清理 / verity 保留分支同理。
+- **2026-09-22 的安装侧改动**：装前预检、待生效标记与按需重启（`xovi-apply` 在无改动时不重启）、`--force-apply`、`--dry-run`——只有本机模拟。
 - `sidebar-entry` 在 appload 版本过旧时"探测不到信号就跳过"这一分支：逻辑只是一行 `grep -q`，靠代码审查；真机只确认了"正面信号存在"这一半。
 - `deploy-xovi-apply.sh`：整体随 `install-all.sh` 整轮真机跑通，但没单独逐项核对它打印的 hl-snap/hw-stroke 段数、NRestarts 细节。
 - `deploy-battop.sh` 的 host 侧覆盖前备份分支（旧版）与 2026-09-20 之后的"`battop.new` 原子 rename"新流程：没有重跑验证。

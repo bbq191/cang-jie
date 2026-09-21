@@ -1,8 +1,8 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 780" font-family="sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 836" font-family="sans-serif">
 <defs><marker id="if-m" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#555"/></marker></defs>
-<rect x="0" y="0" width="1000" height="780" fill="#fbfbfa"/>
+<rect x="0" y="0" width="1000" height="836" fill="#fbfbfa"/>
 <text x="500.0" y="32" text-anchor="middle" font-size="20" font-weight="bold" fill="#1a1a1a">一条命令装完：install-all.sh 的流程</text>
-<text x="500.0" y="56" text-anchor="middle" font-size="13" fill="#666">电脑通过 USB 连设备（10.11.99.1）；每一步都幂等，失败不自动重试、不静默跳过</text>
+<text x="500.0" y="56" text-anchor="middle" font-size="13" fill="#666">电脑通过 USB 连设备（10.11.99.1）；可先 --dry-run 纯本机预演；每步幂等，失败不自动重试、不静默跳过</text>
 <rect x="30" y="76" width="940" height="132" rx="10" fill="#f2f2f4" stroke="#7a7a88" stroke-width="1.6" stroke-dasharray="6 4"/>
 <text x="46" y="98" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">① 手动前置：属于设备生态、不属于本项目，install-all.sh 不代装（缺了会在对应步骤清楚报错）</text>
 <rect x="46" y="110" width="217" height="84" rx="10" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.6"/>
@@ -22,53 +22,60 @@
 <text x="835.5" y="154" text-anchor="middle" font-size="12" fill="#444">第二个阅读器</text>
 <text x="835.5" y="171" text-anchor="middle" font-size="12" fill="#444">（可选）装 WeRead 多一个入口</text>
 <polyline points="500,208 500,232" fill="none" stroke="#555" stroke-width="1.7" marker-end="url(#if-m)"/>
-<rect x="30" y="232" width="940" height="60" rx="10" fill="#fdf3dc" stroke="#b8860b" stroke-width="1.6"/>
-<text x="500.0" y="254" text-anchor="middle" font-size="14" font-weight="bold" fill="#1a1a1a">固件安全门</text>
-<text x="500.0" y="276" text-anchor="middle" font-size="12.5" fill="#444">ssh 取 sha256(/usr/bin/xochitl)，对照 firmware-allowlist.txt；不在表内默认拒装，确认无误后 --force（哈希追加进本机文件）</text>
-<polyline points="500,292 500,316" fill="none" stroke="#555" stroke-width="1.7" marker-end="url(#if-m)"/>
-<rect x="30" y="316" width="940" height="300" rx="10" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.6" stroke-dasharray="6 4"/>
-<text x="46" y="338" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">② 按步骤表（lib.sh 的 STEP_ORDER）依次执行 —— 共 11 步，卸载用同一张表反着做</text>
-<rect x="46" y="352" width="217" height="232" rx="10" fill="#eaf5ee" stroke="#2f7d45" stroke-width="1.6"/>
-<text x="154" y="376" text-anchor="middle" font-size="14.5" font-weight="bold" fill="#1a1a1a">A · 系统小配置</text>
-<text x="154" y="395" text-anchor="middle" font-size="12" fill="#555">不依赖 xovi</text>
-<text x="58" y="424" text-anchor="start" font-size="12.2" fill="#222">1  chrony-cn</text>
-<text x="58" y="446" text-anchor="start" font-size="12.2" fill="#222">2  chrony-boot-wakelock</text>
-<text x="58" y="468" text-anchor="start" font-size="12.2" fill="#222">3  timezone-cn</text>
-<text x="58" y="490" text-anchor="start" font-size="12.2" fill="#222">4  battop（不随开机自启）</text>
-<text x="58" y="512" text-anchor="start" font-size="12.2" fill="#222">5  wifi-watch</text>
-<rect x="273" y="352" width="217" height="232" rx="10" fill="#eef3fa" stroke="#4a72b0" stroke-width="1.6"/>
-<text x="381" y="376" text-anchor="middle" font-size="14.5" font-weight="bold" fill="#1a1a1a">B · xovi 层</text>
-<text x="381" y="395" text-anchor="middle" font-size="12" fill="#555">需要 vellum add xovi</text>
-<text x="285" y="424" text-anchor="start" font-size="12.2" fill="#222">6  xovi-persist（开机补 xovi）</text>
-<text x="285" y="446" text-anchor="start" font-size="12.2" fill="#222">7  hl-snap *</text>
-<text x="285" y="468" text-anchor="start" font-size="12.2" fill="#222">8  handwriting-stroke *</text>
-<text x="285" y="490" text-anchor="start" font-size="12.2" fill="#222">9  sidebar-entry *</text>
-<rect x="500" y="352" width="217" height="232" rx="10" fill="#f1edf9" stroke="#6d4ab0" stroke-width="1.6"/>
-<text x="608" y="376" text-anchor="middle" font-size="14.5" font-weight="bold" fill="#1a1a1a">C · shelf</text>
-<text x="608" y="395" text-anchor="middle" font-size="12" fill="#555">网关 + 8 个领域服务</text>
-<text x="512" y="424" text-anchor="start" font-size="12.2" fill="#222">10  shelf</text>
-<text x="512" y="446" text-anchor="start" font-size="12.2" fill="#222">   gateway :443</text>
-<text x="512" y="468" text-anchor="start" font-size="12.2" fill="#222">   book · koreader · font · wallpaper</text>
-<text x="512" y="490" text-anchor="start" font-size="12.2" fill="#222">   ink · transcribe · mind · note</text>
-<rect x="727" y="352" width="217" height="232" rx="10" fill="#fdf0eb" stroke="#c0602d" stroke-width="1.6"/>
-<text x="835" y="376" text-anchor="middle" font-size="14.5" font-weight="bold" fill="#1a1a1a">D · 统一生效</text>
-<text x="835" y="395" text-anchor="middle" font-size="12" fill="#555">只在最后重启一次</text>
-<text x="739" y="424" text-anchor="start" font-size="12.2" fill="#222">11  xovi-apply</text>
-<text x="739" y="446" text-anchor="start" font-size="12.2" fill="#222">   先提示"将打断阅读"，等 5 秒</text>
-<text x="739" y="468" text-anchor="start" font-size="12.2" fill="#222">   xovi 已生效 → systemctl restart</text>
-<text x="739" y="490" text-anchor="start" font-size="12.2" fill="#222">   没生效 → xovi/start</text>
-<polyline points="263,468 273,468" fill="none" stroke="#555" stroke-width="1.7" marker-end="url(#if-m)"/>
-<polyline points="490,468 500,468" fill="none" stroke="#555" stroke-width="1.7" marker-end="url(#if-m)"/>
-<polyline points="717,468 727,468" fill="none" stroke="#555" stroke-width="1.7" marker-end="url(#if-m)"/>
-<text x="500" y="604" text-anchor="middle" font-size="11.8" fill="#555">* 只落盘（DEFER_XOVI_START=1）：xovi 没有"只重载一个扩展"的机制，全部落盘后由第 11 步统一重启，避免短时间多次重启撞 xochitl 的重启保护</text>
-<polyline points="500,616 500,640" fill="none" stroke="#555" stroke-width="1.7" marker-end="url(#if-m)"/>
-<rect x="30" y="640" width="460" height="96" rx="10" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.6"/>
-<text x="260.0" y="662" text-anchor="middle" font-size="14" font-weight="bold" fill="#1a1a1a">③ 收尾汇总</text>
-<text x="260.0" y="684" text-anchor="middle" font-size="12.5" fill="#444">已安装 / 失败 / 需手动处理 三栏</text>
-<text x="260.0" y="701" text-anchor="middle" font-size="12.5" fill="#444">失败项看该步骤的原始报错，修好后整条重跑即可</text>
-<rect x="510" y="640" width="460" height="96" rx="10" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.6"/>
-<text x="740.0" y="662" text-anchor="middle" font-size="14" font-weight="bold" fill="#1a1a1a">④ 浏览器验证</text>
-<text x="740.0" y="684" text-anchor="middle" font-size="12.5" fill="#444">https://10.11.99.1/  默认密码 shelf，首次登录强制改密</text>
-<text x="740.0" y="701" text-anchor="middle" font-size="12.5" fill="#444">再肉眼确认侧栏 KOReader 入口（脚本代替不了）</text>
-<text x="500" y="764" text-anchor="middle" font-size="12.5" fill="#555">反悔：sh uninstall-all.sh &lt;host&gt;（步骤表相同；chrony-cn / timezone-cn / xovi-apply 无卸载语义）</text>
+<rect x="30" y="232" width="940" height="92" rx="10" fill="#fdf3dc" stroke="#b8860b" stroke-width="1.6"/>
+<text x="500" y="254" text-anchor="middle" font-size="14" font-weight="bold" fill="#1a1a1a">装前检查（任一项不过：一步都不执行，设备上什么都没改）</text>
+<text x="46" y="276" text-anchor="start" font-size="12.3" fill="#444">① ssh 连通（require_device）：连不上 → 中文排查步骤，退出 1</text>
+<text x="46" y="296" text-anchor="start" font-size="12.3" fill="#444">② 固件安全门：sha256(/usr/bin/xochitl) 对照 firmware-allowlist.txt；不在表内默认拒装，确认无误后 --force</text>
+<text x="46" y="316" text-anchor="start" font-size="12.3" fill="#444">③ 设备预检（只读）：root、/home 可写、剩余空间 &lt;50MB 拒装 / &lt;200MB 警告；报告 xovi · QML 补丁加载器 · appload · verity 现状</text>
+<polyline points="500,324 500,348" fill="none" stroke="#555" stroke-width="1.7" marker-end="url(#if-m)"/>
+<rect x="30" y="348" width="940" height="324" rx="10" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.6" stroke-dasharray="6 4"/>
+<text x="46" y="370" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">② 按步骤表（lib.sh 的 STEP_ORDER）依次执行 —— 共 11 步，卸载用同一张表<tspan font-weight="bold">逆序</tspan>做</text>
+<rect x="46" y="384" width="217" height="240" rx="10" fill="#eaf5ee" stroke="#2f7d45" stroke-width="1.6"/>
+<text x="154" y="408" text-anchor="middle" font-size="14.5" font-weight="bold" fill="#1a1a1a">A · 系统小配置</text>
+<text x="154" y="427" text-anchor="middle" font-size="12" fill="#555">不依赖 xovi</text>
+<text x="58" y="456" text-anchor="start" font-size="12.2" fill="#222">1  chrony-cn</text>
+<text x="58" y="478" text-anchor="start" font-size="12.2" fill="#222">2  chrony-boot-wakelock</text>
+<text x="58" y="500" text-anchor="start" font-size="12.2" fill="#222">3  timezone-cn</text>
+<text x="58" y="522" text-anchor="start" font-size="12.2" fill="#222">4  battop（不随开机自启）</text>
+<text x="58" y="544" text-anchor="start" font-size="12.2" fill="#222">5  wifi-watch</text>
+<rect x="273" y="384" width="217" height="240" rx="10" fill="#eef3fa" stroke="#4a72b0" stroke-width="1.6"/>
+<text x="381" y="408" text-anchor="middle" font-size="14.5" font-weight="bold" fill="#1a1a1a">B · xovi 层</text>
+<text x="381" y="427" text-anchor="middle" font-size="12" fill="#555">需要 vellum add xovi</text>
+<text x="285" y="456" text-anchor="start" font-size="12.2" fill="#222">6  xovi-persist（开机补 xovi）</text>
+<text x="285" y="478" text-anchor="start" font-size="12.2" fill="#222">7  hl-snap *</text>
+<text x="285" y="500" text-anchor="start" font-size="12.2" fill="#222">8  handwriting-stroke *</text>
+<text x="285" y="522" text-anchor="start" font-size="12.2" fill="#222">9  sidebar-entry *</text>
+<rect x="500" y="384" width="217" height="240" rx="10" fill="#f1edf9" stroke="#6d4ab0" stroke-width="1.6"/>
+<text x="608" y="408" text-anchor="middle" font-size="14.5" font-weight="bold" fill="#1a1a1a">C · shelf</text>
+<text x="608" y="427" text-anchor="middle" font-size="12" fill="#555">网关 + 8 个领域服务</text>
+<text x="512" y="456" text-anchor="start" font-size="12.2" fill="#222">10  shelf *（仅其 qmd）</text>
+<text x="512" y="478" text-anchor="start" font-size="12.2" fill="#222">   gateway :443</text>
+<text x="512" y="500" text-anchor="start" font-size="12.2" fill="#222">   book · koreader · font · wallpaper</text>
+<text x="512" y="522" text-anchor="start" font-size="12.2" fill="#222">   ink · transcribe · mind · note</text>
+<rect x="727" y="384" width="217" height="240" rx="10" fill="#fdf0eb" stroke="#c0602d" stroke-width="1.6"/>
+<text x="835" y="408" text-anchor="middle" font-size="14.5" font-weight="bold" fill="#1a1a1a">D · 按需生效</text>
+<text x="835" y="427" text-anchor="middle" font-size="12" fill="#555">看"待生效标记"，最多重启一次</text>
+<text x="739" y="456" text-anchor="start" font-size="12.2" fill="#222">11  xovi-apply</text>
+<text x="739" y="478" text-anchor="start" font-size="12.2" fill="#222">   有标记 或 xovi 未生效 才动：</text>
+<text x="739" y="500" text-anchor="start" font-size="12.2" fill="#222">   先提示"将打断阅读"，等 5 秒</text>
+<text x="739" y="522" text-anchor="start" font-size="12.2" fill="#222">   已生效 → systemctl restart</text>
+<text x="739" y="544" text-anchor="start" font-size="12.2" fill="#222">   没生效 → xovi/start</text>
+<text x="739" y="566" text-anchor="start" font-size="12.2" fill="#222">   无标记且已生效 → 不重启</text>
+<text x="739" y="588" text-anchor="start" font-size="12.2" fill="#222">   （--force-apply 强制重启）</text>
+<polyline points="263,500 273,500" fill="none" stroke="#555" stroke-width="1.7" marker-end="url(#if-m)"/>
+<polyline points="490,500 500,500" fill="none" stroke="#555" stroke-width="1.7" marker-end="url(#if-m)"/>
+<polyline points="717,500 727,500" fill="none" stroke="#555" stroke-width="1.7" marker-end="url(#if-m)"/>
+<text x="500" y="644" text-anchor="middle" font-size="11.8" fill="#555">* 只落盘（DEFER_XOVI_START=1），且仅在文件内容真的变了时，在设备 /run/cangjie-pending-apply/ 记一个"待生效标记"（设备重启即清）。</text>
+<text x="500" y="662" text-anchor="middle" font-size="11.8" fill="#555">xovi 没有"只重载一个扩展"的机制：全部落盘后由第 11 步统一重启一次，避免短时间多次重启撞 xochitl 的重启保护；重复运行、无改动时不再闪屏。</text>
+<polyline points="500,672 500,696" fill="none" stroke="#555" stroke-width="1.7" marker-end="url(#if-m)"/>
+<rect x="30" y="696" width="460" height="96" rx="10" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.6"/>
+<text x="260" y="718" text-anchor="middle" font-size="14" font-weight="bold" fill="#1a1a1a">③ 收尾汇总</text>
+<text x="260" y="740" text-anchor="middle" font-size="12.5" fill="#444">已安装 / 已跳过（--skip）/ 失败 三栏</text>
+<text x="260" y="757" text-anchor="middle" font-size="12.5" fill="#444">失败项看该步骤的原始报错，修好后整条重跑即可</text>
+<rect x="510" y="696" width="460" height="96" rx="10" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.6"/>
+<text x="740" y="718" text-anchor="middle" font-size="14" font-weight="bold" fill="#1a1a1a">④ 浏览器验证</text>
+<text x="740" y="740" text-anchor="middle" font-size="12.5" fill="#444">https://10.11.99.1/  默认密码 shelf，首次登录强制改密</text>
+<text x="740" y="757" text-anchor="middle" font-size="12.5" fill="#444">再肉眼确认侧栏 KOReader 入口（脚本代替不了）</text>
+<text x="500" y="814" text-anchor="middle" font-size="12.5" fill="#555">反悔：sh uninstall-all.sh &lt;host&gt;（先 --dry-run；逆序；--purge 才删 battop 数据；chrony-cn / timezone-cn / xovi-apply 不卸）</text>
+<text x="500" y="830" text-anchor="middle" font-size="11.8" fill="#a33">⚠ 预检、待生效标记、--dry-run、逆序卸载均为 2026-09-22 新增，仅本机模拟验证，未在真机验证</text>
 </svg>
