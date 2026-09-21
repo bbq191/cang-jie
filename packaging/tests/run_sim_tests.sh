@@ -33,6 +33,10 @@ TMPBASE="$(mktemp -d)"
 CREATED_FILES="$TMPBASE/created-files.txt"; : > "$CREATED_FILES"
 cleanup() {
     while read -r f; do rm -f "$f"; rmdir -p "$(dirname "$f")" 2>/dev/null; done < "$CREATED_FILES"
+    # 还原被挪走的真交叉编译产物（见 mk_dummy_targets）
+    if [ -f "$TMPBASE/real-targets.txt" ]; then
+        while read -r f; do mkdir -p "$(dirname "$REPO/$f")"; mv "$TMPBASE/real-targets/$f" "$REPO/$f"; done < "$TMPBASE/real-targets.txt"
+    fi
     rm -rf "$TMPBASE"
 }
 trap cleanup EXIT
@@ -98,7 +102,7 @@ mk_payload() { # DIR
     done
     printf '[Unit]\nDescription=t\n[Install]\nWantedBy=multi-user.target\n' > "$P/systemd/shelf.target"
     echo '#!/bin/sh' > "$P/lo-alias/lo-alias.sh"
-    for q in font-menu-dynamic.qmd font-menu-dynamic-3.27.qmd shelf-trash-agent.qmd shelf-mkdir-agent.qmd; do echo "qmd $q v1" > "$P/xovi/$q"; done
+    for q in font-menu-dynamic.qmd font-menu-dynamic-3.27.qmd shelf-trash-agent.qmd shelf-mkdir-agent.qmd shelf-comic-margins.qmd; do echo "qmd $q v1" > "$P/xovi/$q"; done
     cp "$REPO/shelf/install.sh" "$REPO/shelf/uninstall.sh" "$REPO/shelf/manifest.sh" "$PKG/devlib.sh" "$P/"
 }
 
@@ -198,7 +202,7 @@ check "install 全量：退出 0" test "$rc" -eq 0
 check "install：9 个服务二进制都在" test -x "$B/gateway" -a -x "$B/book-serve" -a -x "$B/note-serve" -a -x "$B/wallpaper-serve"
 check "install：辅助脚本 lo-alias.sh / shelf-uninstall / 库 已装" test -x "$B/lo-alias.sh" -a -x "$B/shelf-uninstall" -a -f "$R/home/root/.local/lib/shelf/manifest.sh" -a -f "$R/home/root/.local/lib/shelf/devlib.sh"
 check "install：单元 + shelf.target + wants 链接" test -f "$CJ_SYSD/gateway.service" -a -L "$CJ_SYSD/shelf.target.wants/book-serve.service" -a -L "$CJ_SYSD/multi-user.target.wants/shelf.target"
-check "install：三个 qmd（字体/回收站/建夹）都在 qrr 目录" test -f "$Q/font-menu-dynamic.qmd" -a -f "$Q/shelf-trash-agent.qmd" -a -f "$Q/shelf-mkdir-agent.qmd"
+check "install：四个 qmd（字体/回收站/建夹/漫画页边距）都在 qrr 目录" test -f "$Q/font-menu-dynamic.qmd" -a -f "$Q/shelf-trash-agent.qmd" -a -f "$Q/shelf-mkdir-agent.qmd" -a -f "$Q/shelf-comic-margins.qmd"
 check "install：rw 窗口只开一次、最后一次 mount 是 ro" test "$(count_log 'remount,rw')" = 1 -a "$(last_mount)" = "mount -o remount,ro /"
 check "install：不跑 xovi/start、不重启 xochitl（只打印提示）" test "$(count_log XOVI_START)" = 0 -a "$(count_log 'restart xochitl')" = 0
 check "install：提示里 xovi 未生效时指路 xovi/start（xovi 生效时指路 systemctl restart）" grep -q 'xovi/start' "$R/out1.txt"
@@ -266,6 +270,7 @@ run sh "$R/home/root/.local/bin/shelf-uninstall" >"$R/out.txt" 2>&1; rc=$?
 check "uninstall 全量：退出 0" test "$rc" -eq 0
 POST_SIG="$(tree_sig | grep -v -e 'home/root/\.config/shelf/' -e 'home/root/\.local/share/shelf/' -e 'home/root/\.local/state/shelf/' -e 'home/root/\.local/state/notes/')"
 sig_eq "uninstall：装过的每个文件都被删（文件树回到安装前，仅剩用户数据）" "$PRE_SIG" "$POST_SIG"
+check "uninstall：comic-margins qmd 也删了" test ! -e "$Q/shelf-comic-margins.qmd"
 check "uninstall：mkdir-agent qmd / lo-alias.sh / shelf-uninstall / 库 / 旧命名遗留 全清" test ! -e "$Q/shelf-mkdir-agent.qmd" -a ! -e "$B/lo-alias.sh" -a ! -e "$B/shelf-uninstall" -a ! -e "$R/home/root/.local/lib/shelf" -a ! -e "$CJ_SYSD/shelf-gateway.service" -a ! -e "$B/shelf-gateway"
 check "uninstall：用户数据（含 share/shelf 里的用户文件、笔记线数据）保留" test -f "$R/home/root/.local/share/shelf/user-file.txt" -a -f "$R/home/root/.local/state/notes/entries.json"
 check "uninstall：壁纸还原调用了 wallpaper-serve disable" grep -q 'wallpaper-serve disable' "$CJ_SIM_LOG"
@@ -294,6 +299,13 @@ mk_dummy_targets() {
     for f in shelf/target/$T/release/book-serve shelf/target/$T/release/koreader-serve gateway/target/$T/release/gateway \
              enhance/wallpaper-serve/target/$T/release/wallpaper-serve enhance/font-serve/target/$T/release/font-serve \
              notes/target/$T/release/ink-serve notes/target/$T/release/transcribe-serve notes/target/$T/release/mind-serve notes/target/$T/release/note-serve; do
+        # 仓库里已有**真**交叉编译产物（开发机上构建过）时先挪走再造假的：否则 deploy.sh 会把真 aarch64 二进制装进
+        # 沙箱去执行（Exec format error）。结束时 cleanup 无条件还原。
+        if [ -e "$REPO/$f" ] && ! head -c 2 "$REPO/$f" 2>/dev/null | grep -q '^#!'; then
+            mkdir -p "$TMPBASE/real-targets/$(dirname "$f")"
+            mv "$REPO/$f" "$TMPBASE/real-targets/$f"
+            echo "$f" >> "$TMPBASE/real-targets.txt"
+        fi
         if [ ! -e "$REPO/$f" ]; then
             mkdir -p "$(dirname "$REPO/$f")"
             printf '#!/bin/sh\necho "%s $*" >> "%s"\n' "$(basename "$f")" '$CJ_SIM_LOG' > "$REPO/$f"
@@ -306,6 +318,7 @@ mk_dummy_targets() {
 mk_dummy_targets
 new_sandbox
 ( cd "$PKG" && SHELF_NO_BUILD=1 run sh deploy.sh 127.0.0.1 --only book,font --password 'p a"s;s$x' ) >"$R/out.txt" 2>&1; rc=$?
+[ "$rc" -eq 0 ] || sed 's/^/     | /' "$R/out.txt" | tail -12   # 失败时把 deploy.sh 的输出末尾带出来，便于定位
 check "deploy.sh：--only book,font + 含空格/引号/分号的密码 → 退出 0" test "$rc" -eq 0
 check "deploy.sh：密码原样到达 gateway passwd（没被远端 shell 解释）" grep -Fq 'gateway passwd p a"s;s$x' "$CJ_SIM_LOG"
 check "deploy.sh：密码不出现在任何 ssh 命令行里" test -z "$(grep '^ssh' "$CJ_SIM_LOG" | grep -F 's;s')"

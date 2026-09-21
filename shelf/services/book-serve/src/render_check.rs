@@ -42,7 +42,14 @@ pub fn run_with(staging: &Staging, bus: &EventBus, lib_dir: &Path, plan: &Render
         println!("[book-serve] 渲染自检《{}》: {status} pages={pages} expected={} uuid={uuid}", plan.name, plan.expected);
     };
     write("", 0, "pending");
-    let check = || probe(lib_dir, plan).map(|(uuid, pages)| write(&uuid, pages, verdict(pages, plan.expected)));
+    let check = || {
+        probe(lib_dir, plan).map(|(uuid, pages)| {
+            if plan.comic {
+                staging.register_comic_margins(&uuid, &plan.name);
+            }
+            write(&uuid, pages, verdict(pages, plan.expected))
+        })
+    };
     if check().is_some() {
         return;
     }
@@ -105,7 +112,7 @@ mod tests {
     }
 
     fn plan(expected: u64) -> RenderPlan {
-        RenderPlan { name: "a.epub".into(), title: None, expected, since_ms: 1000 }
+        RenderPlan { name: "a.epub".into(), title: None, expected, since_ms: 1000, comic: false }
     }
 
     const MS: fn(u64) -> Duration = Duration::from_millis;
@@ -127,6 +134,23 @@ mod tests {
         let mut buf = [0u8; 1024];
         let n = sub.read(&mut buf).unwrap();
         assert!(String::from_utf8_lossy(&buf[..n]).contains(r#""kind":"render""#), "应推 books/render 事件");
+    }
+
+    #[test]
+    fn run_registers_margins_only_for_comic_plans() {
+        // 新版管线的纯图漫画：导入完成（找到 uuid）后登记"首次打开时设页边距"；文字书不登记。
+        const U: &str = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
+        for (comic, expect) in [(true, Some(0u32)), (false, None)] {
+            let t = tempfile::tempdir().unwrap();
+            let (s, lib) = setup(&t);
+            let q = std::sync::Arc::new(crate::comic_margins::ComicMargins::new(t.path(), &lib));
+            let s = s.with_comic_margins(q.clone());
+            render_doc(&lib, U, "a", 100);
+            let mut p = plan(100);
+            p.comic = comic;
+            run_with(&s, &EventBus::new(), &lib, &p, MS(20), MS(200));
+            assert_eq!(q.get(U), expect, "comic={comic}");
+        }
     }
 
     #[test]

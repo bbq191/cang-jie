@@ -77,6 +77,15 @@ pub fn router(st: Arc<State>) -> Router {
             let pdf = s.staging.render_pdf(r.param("uuid")).map_err(ApiError::not_found)?;
             Ok(Reply::bytes("application/pdf", pdf))
         }))
+        // ── 漫画页边距待办（QML 代理 shelf-comic-margins.qmd 在书打开时查；见 comic_margins.rs）──
+        .get("/margins/{uuid}", bind(&st, |s, r| match s.comic_margins.get(r.param("uuid")) {
+            Some(m) => Ok(Reply::ok(&serde_json::json!({"margins": m}))),
+            None => Err(ApiError::not_found("没有待设的页边距")),
+        }))
+        .post("/margins/applied", bind(&st, |s, r| {
+            let n = s.comic_margins.applied(r.json()?.str("uuid")?).map_err(ApiError::bad)?;
+            Ok(Reply::ok(&serde_json::json!({"ok": true, "pending": n})))
+        }))
         // ── 原生书库回收站队列（真正的软删由 xochitl 自己的 selectionMoveToTrash 执行，见 trash.rs / shelf-trash-agent.qmd）──
         .post("/trash/add", bind(&st, |s, r| {
             let j = r.json()?;
@@ -180,6 +189,29 @@ mod tests {
 
     fn msg(v: &serde_json::Value) -> String {
         v["message"].as_str().unwrap_or("").to_string()
+    }
+
+    #[test]
+    fn margins_endpoint_returns_pending_then_404_after_applied() {
+        const U: &str = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb";
+        let t = tempfile::tempdir().unwrap();
+        let st = state(&t);
+        let router = router(st.clone());
+        let lib = Paths::resolve({
+            let h = t.path().to_str().unwrap().to_string();
+            move |k| if k == "HOME" || k == "XDG_RUNTIME_DIR" { Some(h.clone()) } else { None }
+        })
+        .xochitl_dir();
+        std::fs::create_dir_all(&lib).unwrap();
+        std::fs::write(lib.join(format!("{U}.metadata")), "{}").unwrap();
+        let path = format!("/margins/{U}");
+        assert_eq!(call(&router, Method::Get, &path, "").0, 404, "没登记 → 404，QML 代理静默不动");
+        st.comic_margins.add(U, 0).unwrap();
+        let (code, v) = call(&router, Method::Get, &path, "");
+        assert_eq!((code, v["margins"].as_u64()), (200, Some(0)));
+        assert_eq!(call(&router, Method::Post, "/margins/applied", &format!(r#"{{"uuid":"{U}"}}"#)).0, 200);
+        assert_eq!(call(&router, Method::Get, &path, "").0, 404, "销账后不再返回");
+        assert_eq!(call(&router, Method::Get, "/margins/not-a-uuid", "").0, 404, "非法 uuid 一律 404");
     }
 
     #[test]

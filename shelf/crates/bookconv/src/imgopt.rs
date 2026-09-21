@@ -123,24 +123,32 @@ const PAD_ASPECT_TOLERANCE: f32 = 0.02;
 
 /// **EPUB 漫画页在 xochitl 里的"图片框"长宽比**（2026-09-21 真机实测，见 `bookconv优化白皮书.md` §20）。
 ///
-/// xochitl 渲染 EPUB 图片：宽度撑满栏宽、高度按原图比例算，任何 `height` 声明都不生效。图片框由两个上限决定——
-/// - 栏宽 = 页宽 303pt − 2×边距：边距 56 档（默认）267.4pt，**28 档（最小）285.2pt**；
-/// - 垂直可用高度固定 **462.2pt**（上 35.5、下 40.3，与边距档位无关）。
+/// xochitl 渲染 EPUB 图片：宽度撑满栏宽、高度按原图比例算，任何 `height` 声明都不生效；图片框由两个上限决定——
+/// - 栏宽 = 页宽 303pt − 2×页边距（`.content` 的 `margins`；界面预设 28/56/112，**`setMargins(0)` 也被接受**）；
+/// - 垂直可用高度固定 **462.1pt**（上 35.5、下 40.3），与边距无关。
+/// 图片比栏窄时**贴左对齐**（不居中）：边距 0、图片 285.1pt 宽时实测左 0.0 / 右 17.9pt。
 ///
-/// 以前把每页补白成屏幕比例 954:1696（0.5625）——比"栏宽:462.2"窄，图片永远先顶到高度上限，宽度只有 260pt，
-/// 而且被摆在偏左 1.3pt 的位置（左 20.0 / 右 22.9pt，不对称约 1% 页宽）。改成"边距 28 档的栏宽:高度上限"
-/// = 285.2:462.2 后，图片**同时填满宽和高**：真机同图 A/B——旧 260.1×462.1pt，新 284.8×461.5pt，宽 +9.5%、
-/// 面积约 +20%，上下留白仍对称（35.5/41.0），左右 8.9/9.3pt（不对称由 2.9pt 降到 0.4pt）。
-/// 边距仍是 56 档时新比例同样成立（宽 267.1×高 433.0pt，比旧方案大、左右对称，只是下留白比上多约 29pt）。
+/// 所以最优组合是：**页边距 0 + 补白到 303:462.1 = 0.6557**（画布 954×[`EPUB_COMIC_PAGE_H`]）——图片正好 303pt 宽，左右留白
+/// **0.0 / 0.0**，高 462.1pt。历史对照（同批原图，真机 A/B）：
+/// 旧补白 0.5625（屏幕比例）→ 图片永远先顶高度上限，只有 260pt 宽、左 20.0 / 右 22.9；
+/// 0.617（边距 28 档）→ 284.8×461.5、左右 8.9/9.3；**0.6557 + 边距 0 → 303×462.1、左右 0/0**。
 ///
-/// **前提：用户在阅读器里把这本漫画的页边距手动选成最小档（28）**——文字设置里逐本设一次。我们试过在投书时自动把
-/// `.content` 的 `margins` 写成 28，真机 5 次只成功 1 次（其余被 xochitl 改回 56），不可靠，已回退，见白皮书 §20。
-/// 不设也没有坏处（按上面 56 档的数字，图片仍比旧方案大、左右对称）。
-pub const EPUB_FRAME_ASPECT: f32 = 285.2 / 462.2;
+/// **前提是页边距 0**：由 book-serve 记录"该书应设边距 0"，xochitl 里的 qmd 代理（`shelf-comic-margins.qmd`）在用户首次打开
+/// 这本书时调用阅读器自己的 `EpubProperties.setMargins(0)`（与界面点"页边距"同一代码路径，不会被覆盖回去）。外部改 `.content`
+/// 文件行不通（5 次实验只成功 1 次，白皮书 §20）。代理没装/没生效时（边距仍是 56），图片按栏宽 267pt 显示、顶部对齐，
+/// 下留白偏大（约 55pt）——所以这个比例与代理必须一起装。
+pub const EPUB_FRAME_ASPECT: f32 = 303.0 / 462.1;
 
 /// EPUB 漫画页画布高度（px）：宽固定 [`MAX_SHORT_EDGE`]（954，绝不超，见 [`downscale_for_epub`]），高 = 宽 / [`EPUB_FRAME_ASPECT`]。
-/// 屏幕上该框高约 1457 px，1546 px 已够，不会因此变糊。
-pub const EPUB_COMIC_PAGE_H: u32 = 1546;
+/// 屏幕上该框高约 1455 px，正好一屏可用高度，不会因此变糊。
+pub const EPUB_COMIC_PAGE_H: u32 = 1455;
+
+/// 漫画页与 [`EPUB_FRAME_ASPECT`] 的相对误差容差。要比通用的 [`PAD_ASPECT_TOLERANCE`]（2%）严得多：真机上一张偏差 1.6% 的页
+/// 没补白，图片就少 4.5pt 宽并出现左右不对称（8.9 / 13.4pt）。
+const EPUB_PAD_TOLERANCE: f32 = 0.003;
+
+/// 页边距目标值（xochitl `.content` 的 `margins`）。见 [`EPUB_FRAME_ASPECT`] 的前提说明。
+pub const EPUB_COMIC_MARGINS: u32 = 0;
 
 /// 漫画整页图片补白（2026-09-19 真机反馈"底部留白太多"排查到底：五种候选 CSS——`width:100%;
 /// height:auto`、`max-width/height:100%`、`vw`/`vh` 单位、`display:table/table-cell` 居中——
@@ -423,7 +431,7 @@ pub fn prepare_comic_page_for_epub(bytes: &[u8]) -> Option<Vec<u8>> {
         };
         let (w, h) = (img.width(), img.height());
         let cur_aspect = w as f32 / h as f32;
-        if ((cur_aspect - EPUB_FRAME_ASPECT) / EPUB_FRAME_ASPECT).abs() <= PAD_ASPECT_TOLERANCE {
+        if ((cur_aspect - EPUB_FRAME_ASPECT) / EPUB_FRAME_ASPECT).abs() <= EPUB_PAD_TOLERANCE {
             if !trimmed && !shrink && !upscale {
                 return None;
             }
@@ -613,11 +621,19 @@ mod tests {
     }
 
     #[test]
+    fn epub_pad_tolerance_catches_page_one_point_six_percent_off_frame() {
+        // 真机 e2e：一张比框窄 1.6%（939×1546）的页被 2% 容差放过，图片少 4.5pt 宽且左右不对称——EPUB 补白容差必须更严。
+        let w = (EPUB_COMIC_PAGE_H as f32 * EPUB_FRAME_ASPECT * 0.984).round() as u32; // 比框窄约 1.6%
+        let out = prepare_comic_page_for_epub(&gray_jpeg_of(w, EPUB_COMIC_PAGE_H, 0)).expect("偏差 1.6% 必须补白");
+        assert_eq!(image::load_from_memory(&out).unwrap().dimensions(), (954, EPUB_COMIC_PAGE_H));
+    }
+
+    #[test]
     fn epub_frame_constants_stay_consistent() {
         // 画布高度必须等于 宽/框比例（四舍五入），否则补白后长宽比对不上图片框。
         let h = (MAX_SHORT_EDGE as f32 / EPUB_FRAME_ASPECT).round() as u32;
         assert_eq!(h, EPUB_COMIC_PAGE_H);
-        assert!(EPUB_FRAME_ASPECT > DEVICE_PAGE_ASPECT, "图片框比屏幕更宽（栏宽随边距变小、高度上限不变）");
+        assert!(EPUB_FRAME_ASPECT > DEVICE_PAGE_ASPECT, "图片框比屏幕更宽（边距 0 时栏宽=整页、高度上限不变）");
     }
 
     #[test]

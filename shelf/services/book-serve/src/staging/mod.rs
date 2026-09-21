@@ -73,6 +73,8 @@ pub struct RenderPlan {
     pub title: Option<String>,
     pub expected: u64,
     pub since_ms: u64,
+    /// 新版管线处理过的纯图漫画：导入完成后登记"首次打开时设页边距"（见 `comic_margins.rs`）。
+    pub comic: bool,
 }
 
 /// `deliver` 的结果：回执文案 + （EPUB 才有）渲染自检计划。
@@ -119,6 +121,8 @@ pub struct Staging {
     /// 列表里"优化等级 / 是否 PDF 转来"的判定缓存：判定要开 zip 读中央目录，书多时前端每 3 秒轮询一次
     /// 列表会持续吃 CPU（电池）。文件内容只随「优化」改写——按（大小, 修改时间）失效，命中就不再碰文件。
     probes: Arc<std::sync::Mutex<std::collections::HashMap<String, ProbeCache>>>,
+    /// 漫画页边距待办（可选：测试里不装）。见 [`crate::comic_margins`]。
+    comic_margins: Option<Arc<crate::comic_margins::ComicMargins>>,
 }
 
 /// 上传模板适配：母版库作为 [`AssetStore`]——扩展名门＝书籍格式白名单，install＝同分区 rename 入库。
@@ -182,6 +186,27 @@ impl Staging {
             native_limit,
             ops: OpRegistry::default(),
             probes: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+            comic_margins: None,
+        }
+    }
+    /// 接上漫画页边距待办队列（`State::new` 用）。
+    pub fn with_comic_margins(mut self, q: Arc<crate::comic_margins::ComicMargins>) -> Staging {
+        self.comic_margins = Some(q);
+        self
+    }
+    /// 这本 EPUB 是否该在原生书库里设成漫画页边距：**纯图漫画 + 已用当前版本管线优化过**。补白比例按边距 0 计算，
+    /// 旧管线产物 / 没优化的原图在边距 0 下会贴左、右侧空一大块，反而更糟（见 `imgopt::EPUB_FRAME_ASPECT`）。
+    pub(crate) fn comic_margin_eligible(&self, path: &Path) -> bool {
+        self.comic_margins.is_some()
+            && path.to_str().and_then(optimize::optimized_version_file).as_deref() == Some(optimize::OPTIMIZE_VERSION)
+            && bookconv::comic_detect::is_text_free_comic_epub_file(path)
+    }
+    /// 登记"这本书首次打开时设页边距"。失败只记日志，不影响投书。
+    pub(crate) fn register_comic_margins(&self, uuid: &str, name: &str) {
+        let Some(q) = &self.comic_margins else { return };
+        match q.add(uuid, bookconv::imgopt::EPUB_COMIC_MARGINS) {
+            Ok(_) => println!("[book-serve] 《{name}》是新版管线的纯图漫画，已登记首次打开时设页边距 {}", bookconv::imgopt::EPUB_COMIC_MARGINS),
+            Err(e) => println!("[book-serve] 《{name}》登记页边距失败（不影响投书）: {e}"),
         }
     }
     /// 这条目当前是否有异步操作在跑。

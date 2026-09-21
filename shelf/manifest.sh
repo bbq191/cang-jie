@@ -19,7 +19,7 @@ shelf_svc_of() { case "$1" in gateway) echo gateway ;; *) echo "$1-serve" ;; esa
 shelf_svc_qmds() {
     case "$1" in
         font) echo "font-menu-dynamic.qmd" ;;
-        book) echo "shelf-trash-agent.qmd shelf-mkdir-agent.qmd" ;;
+        book) echo "shelf-trash-agent.qmd shelf-mkdir-agent.qmd shelf-comic-margins.qmd" ;;
         *) echo "" ;;
     esac
 }
