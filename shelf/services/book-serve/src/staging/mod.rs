@@ -73,8 +73,6 @@ pub struct RenderPlan {
     pub title: Option<String>,
     pub expected: u64,
     pub since_ms: u64,
-    /// 纯图漫画 EPUB：导入完成后把 `.content` 边距写成 [`bookconv::imgopt::EPUB_COMIC_MARGINS`]（见 `render_check`）。
-    pub comic: bool,
 }
 
 /// `deliver` 的结果：回执文案 + （EPUB 才有）渲染自检计划。

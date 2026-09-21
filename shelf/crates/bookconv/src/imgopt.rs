@@ -138,11 +138,6 @@ pub const EPUB_FRAME_ASPECT: f32 = 285.2 / 462.2;
 /// 屏幕上该框高约 1457 px，1546 px 已够，不会因此变糊。
 pub const EPUB_COMIC_PAGE_H: u32 = 1546;
 
-/// [`EPUB_FRAME_ASPECT`] 所假设的 xochitl 阅读器"页边距"档（`.content` 的 `margins`，界面 28/56/112 三档里最小的一档）。
-/// 投书时 book-serve 会把纯图漫画 EPUB 的 `.content` 边距写成这个值（见 `rmsvc_core::xochitl::set_content_margins`），
-/// 补白比例才与实际图片框一致；文字书不动（保持用户自己的阅读习惯）。
-pub const EPUB_COMIC_MARGINS: u32 = 28;
-
 /// 漫画整页图片补白（2026-09-19 真机反馈"底部留白太多"排查到底：五种候选 CSS——`width:100%;
 /// height:auto`、`max-width/height:100%`、`vw`/`vh` 单位、`display:table/table-cell` 居中——
 /// 真机逐像素对比，**只有 `width` 生效，任何跟 `height` 相关的声明 xochitl 一律不认，图片高度

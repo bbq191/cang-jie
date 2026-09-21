@@ -42,31 +42,13 @@ pub fn run_with(staging: &Staging, bus: &EventBus, lib_dir: &Path, plan: &Render
         println!("[book-serve] 渲染自检《{}》: {status} pages={pages} expected={} uuid={uuid}", plan.name, plan.expected);
     };
     write("", 0, "pending");
-    let check = || {
-        probe(lib_dir, plan).map(|(uuid, pages)| {
-            if plan.comic {
-                apply_comic_margins(lib_dir, &uuid, &plan.name);
-            }
-            write(&uuid, pages, verdict(pages, plan.expected))
-        })
-    };
+    let check = || probe(lib_dir, plan).map(|(uuid, pages)| write(&uuid, pages, verdict(pages, plan.expected)));
     if check().is_some() {
         return;
     }
     let found = watch_until(lib_dir, debounce, timeout, |_| check().is_some());
     if !found && check().is_none() {
         write("", 0, "timeout");
-    }
-}
-
-/// 纯图漫画 EPUB：把 xochitl 里这本书的页边距写成最小档，让图片框与 [`bookconv::imgopt::EPUB_FRAME_ASPECT`] 一致
-/// （宽 +9.5%、面积约 +20%）。必须在用户**首次打开前**做，见 [`rmsvc_core::xochitl::set_content_margins`]。
-/// 失败只记日志，不影响投书。
-pub fn apply_comic_margins(lib_dir: &Path, uuid: &str, name: &str) {
-    match rmsvc_core::xochitl::set_content_margins(lib_dir, uuid, bookconv::imgopt::EPUB_COMIC_MARGINS) {
-        Ok(true) => println!("[book-serve] 《{name}》是纯图漫画，页边距已设为 {}（最小档）", bookconv::imgopt::EPUB_COMIC_MARGINS),
-        Ok(false) => {}
-        Err(e) => println!("[book-serve] 《{name}》设页边距失败（不影响投书）: {e}"),
     }
 }
 
@@ -123,7 +105,7 @@ mod tests {
     }
 
     fn plan(expected: u64) -> RenderPlan {
-        RenderPlan { name: "a.epub".into(), title: None, expected, since_ms: 1000, comic: false }
+        RenderPlan { name: "a.epub".into(), title: None, expected, since_ms: 1000 }
     }
 
     const MS: fn(u64) -> Duration = Duration::from_millis;
@@ -145,23 +127,6 @@ mod tests {
         let mut buf = [0u8; 1024];
         let n = sub.read(&mut buf).unwrap();
         assert!(String::from_utf8_lossy(&buf[..n]).contains(r#""kind":"render""#), "应推 books/render 事件");
-    }
-
-    #[test]
-    fn run_sets_min_margins_only_for_comic_plans() {
-        // 纯图漫画：导入完成（pageCount 已写）后把 .content 边距写成最小档；文字书保持 xochitl 的默认 56。
-        for (comic, expect) in [(true, 28u64), (false, 56u64)] {
-            let t = tempfile::tempdir().unwrap();
-            let (s, lib) = setup(&t);
-            render_doc(&lib, "u1", "a", 100);
-            std::fs::write(lib.join("u1.content"), r#"{"fileType":"epub","margins":56,"pageCount":100}"#).unwrap();
-            let mut p = plan(100);
-            p.comic = comic;
-            run_with(&s, &EventBus::new(), &lib, &p, MS(20), MS(200));
-            let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(lib.join("u1.content")).unwrap()).unwrap();
-            assert_eq!(v["margins"].as_u64(), Some(expect), "comic={comic}");
-            assert_eq!(v["pageCount"].as_u64(), Some(100), "其它字段不动");
-        }
     }
 
     #[test]
