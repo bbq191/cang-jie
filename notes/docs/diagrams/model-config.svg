@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1240 640" font-family="sans-serif">
+<defs><marker id="mk" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#555"/></marker><marker id="mr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#b0451f"/></marker><marker id="mg" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2f7d45"/></marker></defs>
+<rect x="0" y="0" width="1240" height="640" fill="#fbfbfa"/>
+<text x="620.0" y="30" text-anchor="middle" font-size="18" font-weight="bold" fill="#1a1a1a">模型管理：预置表 · key 按厂商分存 · 用量分账（§03u–§03w）</text>
+<text x="620.0" y="52" text-anchor="middle" font-size="12.5" fill="#6a6a6a">入口在网关「管理」tab 的“模型管理”卡片（视觉 / 文字各一张，共用 mountModelPanel）；后端共享逻辑在 crates/vendorcfg</text>
+<rect x="24" y="84" width="380" height="200" rx="10" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.6"/>
+<text x="36" y="104" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">① 选预置（两级下拉）</text>
+<text x="36" y="127" text-anchor="start" font-size="10" fill="#3a3a3a">先选厂家：DashScope / OpenAI / Gemini / DeepSeek / 自定义</text>
+<text x="36" y="142" text-anchor="start" font-size="10" fill="#3a3a3a">再选该厂家的模型；选厂家立即原子切到它的第一个模型</text>
+<text x="36" y="157" text-anchor="start" font-size="10" fill="#3a3a3a">PUT /config {preset} 一步同时设 model + baseUrl</text>
+<text x="36" y="172" text-anchor="start" font-size="10" fill="#3a3a3a">未知预置名 → 400，配置不变</text>
+<text x="36" y="187" text-anchor="start" font-size="10" fill="#3a3a3a">“自定义”才露出手填 model / baseUrl（如豆包 ep-… 接入点）</text>
+<polyline points="404,184 446,184" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#mk)"/>
+<rect x="446" y="84" width="380" height="200" rx="10" fill="#fff3d6" stroke="#c9971f" stroke-width="1.6"/>
+<text x="458" y="104" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">② key 按厂商分格</text>
+<text x="458" y="127" text-anchor="start" font-size="10" fill="#3a3a3a">keys: 厂商 → key（transcribe.json / mind.json，0600）</text>
+<text x="458" y="142" text-anchor="start" font-size="10" fill="#3a3a3a">同厂商换模型不用重新粘贴 key</text>
+<text x="458" y="157" text-anchor="start" font-size="10" fill="#3a3a3a">切到没配 key 的厂商只显示“没配”，绝不借别家的</text>
+<text x="458" y="172" text-anchor="start" font-size="10" fill="#3a3a3a">baseUrl 能认出厂商时也归同一格（§03w，兜底）</text>
+<text x="458" y="187" text-anchor="start" font-size="10" fill="#3a3a3a">网页只显示脱敏“…yP5A”，已存 key 只能删除再填</text>
+<polyline points="826,184 868,184" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#mk)"/>
+<rect x="868" y="84" width="348" height="200" rx="10" fill="#eaf6ec" stroke="#3f9a55" stroke-width="1.6"/>
+<text x="880" y="104" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">③ 用量与花费</text>
+<text x="880" y="127" text-anchor="start" font-size="10" fill="#3a3a3a">usage.byModel: 预置 id（或 custom:&lt;model&gt;）→</text>
+<text x="880" y="142" text-anchor="start" font-size="10" fill="#3a3a3a">  调用/成功/失败/token 入出/最近错误</text>
+<text x="880" y="157" text-anchor="start" font-size="10" fill="#3a3a3a">单价由用户自填（每 1K token 输入/输出）</text>
+<text x="880" y="172" text-anchor="start" font-size="10" fill="#3a3a3a">  不做官方价格表：第三方定价太易变</text>
+<text x="880" y="187" text-anchor="start" font-size="10" fill="#3a3a3a">没填单价 → costEstimate = null（不是 0）</text>
+<rect x="24" y="312" width="1192" height="150" rx="10" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.6"/>
+<text x="620.0" y="332" text-anchor="middle" font-size="12" font-weight="bold" fill="#1a1a1a">现行预置表（services/*/src/config.rs 为准；2026-09-22 复核提示见 §03u）</text>
+<text x="44" y="356" text-anchor="start" font-size="11" font-weight="bold" fill="#1a1a1a">厂商</text>
+<text x="180" y="356" text-anchor="start" font-size="11" font-weight="bold" fill="#1a1a1a">视觉表（transcribe）</text>
+<text x="700" y="356" text-anchor="start" font-size="11" font-weight="bold" fill="#1a1a1a">文字表（mind）</text>
+<text x="44" y="376" text-anchor="start" font-size="11" fill="#1a1a1a">DashScope</text>
+<text x="180" y="376" text-anchor="start" font-size="11" fill="#1a1a1a">qwen3-vl-plus · qwen-vl-max · qwen-vl-plus</text>
+<text x="700" y="376" text-anchor="start" font-size="11" fill="#1a1a1a">qwen-plus · qwen-max · qwen-turbo</text>
+<text x="44" y="396" text-anchor="start" font-size="11" fill="#1a1a1a">OpenAI</text>
+<text x="180" y="396" text-anchor="start" font-size="11" fill="#1a1a1a">gpt-5.6-terra · gpt-6-astra</text>
+<text x="700" y="396" text-anchor="start" font-size="11" fill="#1a1a1a">gpt-5.6-luna · gpt-5.6-terra</text>
+<text x="44" y="416" text-anchor="start" font-size="11" fill="#1a1a1a">Gemini</text>
+<text x="180" y="416" text-anchor="start" font-size="11" fill="#1a1a1a">gemini-3.8-flash</text>
+<text x="700" y="416" text-anchor="start" font-size="11" fill="#1a1a1a">gemini-3.8-flash</text>
+<text x="44" y="436" text-anchor="start" font-size="11" fill="#1a1a1a">DeepSeek</text>
+<text x="180" y="436" text-anchor="start" font-size="11" fill="#1a1a1a">deepseek-v4-flash-vision-exp（遗留名）</text>
+<text x="700" y="436" text-anchor="start" font-size="11" fill="#1a1a1a">deepseek-v4-flash（遗留名）· deepseek-v4-pro</text>
+<rect x="24" y="490" width="590" height="130" rx="10" fill="#f1f1ef" stroke="#8a8a8a" stroke-width="1.6"/>
+<text x="36" y="510" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">老配置迁移（升级不丢 key）</text>
+<text x="36" y="533" text-anchor="start" font-size="10" fill="#3a3a3a">老的单一 model / baseUrl / apiKey 三件套由 migrate() 接住：</text>
+<text x="36" y="548" text-anchor="start" font-size="10" fill="#3a3a3a">按 model+baseUrl 匹配预置（匹配不上落 custom 并保留 customModel）</text>
+<text x="36" y="563" text-anchor="start" font-size="10" fill="#3a3a3a">key 存进匹配厂商的格；迁移后立即落盘一次</text>
+<text x="36" y="578" text-anchor="start" font-size="10" fill="#3a3a3a">真机已验证：两份真实配置升级前后 keyMasked 一致</text>
+<rect x="634" y="490" width="582" height="130" rx="10" fill="#f1f1ef" stroke="#8a8a8a" stroke-width="1.6"/>
+<text x="646" y="510" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">代码共享（只抽行为，不抽数据结构）</text>
+<text x="646" y="533" text-anchor="start" font-size="10" fill="#3a3a3a">vendorcfg::preset — 预置/key/迁移/PATCH/对外 JSON</text>
+<text x="646" y="548" text-anchor="start" font-size="10" fill="#3a3a3a">vendorcfg::usage — 泛型 UsageBook / Ledger</text>
+<text x="646" y="563" text-anchor="start" font-size="10" fill="#3a3a3a">vendorcfg::cell — ConfigCell 内存副本 + 落盘</text>
+<text x="646" y="578" text-anchor="start" font-size="10" fill="#3a3a3a">vendorcfg::chat — OpenAI 兼容传输与应答解析</text>
+<text x="646" y="593" text-anchor="start" font-size="10" fill="#3a3a3a">各服务自己的 Config/Usage 落盘形状逐字节不变</text>
+</svg>
