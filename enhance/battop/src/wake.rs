@@ -87,6 +87,13 @@ pub fn merge_events(cache: Vec<(u64, String)>, fresh: Vec<(u64, String)>, since:
     out
 }
 
+/// 增量读回来的是空、而缓存里明明有 `>= since` 的事件：`--since` 是闭区间，健康的 journalctl 至少会
+/// 把边界那条事件读回来，所以这多半是 journalctl 出错（run_bounded 不看退出码）或 journal 被清理——
+/// 此时合并会把缓存尾部替换成空，宁可保持旧缓存。
+fn looks_broken(cache: &[(u64, String)], fresh: &[(u64, String)], since: u64) -> bool {
+    fresh.is_empty() && cache.iter().any(|(e, _)| *e >= since)
+}
+
 /// wakes.tsv 是否需要刷新（不存在 / 超 STALE_SECS）。
 fn is_stale(dir: &Path, now: u64) -> bool {
     fs::metadata(dir.join("wakes.tsv"))
@@ -108,6 +115,9 @@ pub fn refresh_if_stale(dir: &Path, now: u64) {
     // 增量起点 = 缓存里最新事件（钳到 now：时钟曾跳到未来时不至于一直问不到新事件）；无缓存 = 全窗口。
     let since = cache.iter().map(|(e, _)| *e).max().map(|m| m.min(now)).unwrap_or(cutoff).max(cutoff);
     let Some(fresh) = read_wake_events(since) else { return };
+    if looks_broken(&cache, &fresh, since) {
+        return;
+    }
     write_cache(dir, &merge_events(cache, fresh, since, cutoff));
 }
 
@@ -169,6 +179,15 @@ mod tests {
         let cache = ev(&[(100, "a"), (200, "b")]);
         let m = merge_events(cache.clone(), ev(&[(200, "b")]), 200, 0);
         assert_eq!(m, cache);
+    }
+
+    #[test]
+    fn empty_readback_with_cached_tail_is_treated_as_journal_failure() {
+        let cache = ev(&[(100, "a"), (200, "b")]);
+        assert!(looks_broken(&cache, &[], 200), "边界事件 b 应被读回，空 = 出错");
+        assert!(!looks_broken(&cache, &ev(&[(200, "b")]), 200));
+        assert!(!looks_broken(&[], &[], 50), "首次且窗口内确实没事件：正常");
+        assert!(!looks_broken(&cache, &[], 300), "since 已越过缓存最新事件：空 = 没有新事件");
     }
 
     #[test]
