@@ -119,7 +119,7 @@ document.addEventListener('click',e=>{const b=e.target.closest('.badge[title]');
 async function j(url,opt){const r=await fetch(url,opt);if(r.status===401){location.href='/login?next='+encodeURIComponent(location.pathname);return {ok:false,message:T('common.needLogin')}}if(r.status===403){location.href='/password';return {ok:false,message:T('common.needChangePassword')}}
   const httpErr=T('common.httpErr',{status:r.status});
   let d;try{d=await r.json()}catch{d={ok:false,message:httpErr}}if(!r.ok&&d.ok!==false)d={ok:false,message:d.message||httpErr};return d}
-/* 开关复选框绑定 PUT：勾选即 PUT `{key:checked}`，期间禁用；失败弹 toast 并把勾选还原。三个「实验室」开关共用。 */
+/* 开关复选框绑定 PUT：勾选即 PUT `{key:checked}`，期间禁用；失败弹 toast 并把勾选还原。「系统增强」/「实验室」的开关共用。 */
 const bindToggle=(box,url,key)=>{box.onchange=async()=>{const want=box.checked;box.disabled=true;
   const r=await j(url,{method:'PUT',body:JSON.stringify({[key]:want})});
   box.disabled=false;if(r.ok===false){toast(r.message||T('common.saveFailed'));box.checked=!want}}};
@@ -1135,8 +1135,8 @@ function renderBattopDetail(sec){
 /* 「管理」二级 tab（2026-09-09 起三个，2026-09-10 加到五个）：① 基石与模块（原来就有的引导/开关/
    卸载）② 模型管理（原来挂在这页最下面，现在单独一屏，不用跟基石列表一起滚）③ 系统增强（只留真正
    "系统级"的开关，CJK 画线吸附）④ 电池刺客（`battop.running` 时才出现，放在「实验室」前面——用户
-   要求顺序）⑤ 实验室（还在打磨/覆盖面没到日常好用程度的功能：CJK 手写笔迹优化开关+电池刺客开关
-   本身+导入md文档可见性开关）。
+   要求顺序）⑤ 实验室（还在打磨/覆盖面没到日常好用程度的功能：CJK 手写笔迹优化开关+漫画页边距开关
+   +导入md文档可见性开关）。电池刺客开关 2026-09-21 起在③「系统增强」里（用户要求从实验室移出）。
    shelf push 命令那张卡片已经搬到「传书」页「入库」子页——那才是它真正归属的地方（用户反馈）。 */
 function renderManage(sec){sec.innerHTML=`
   <div class="subnav"><button class="on">${T('manage.subnav.foundation')}</button><button>${T('manage.subnav.models')}</button><button>${T('manage.subnav.enhance')}</button><button hidden>${T('manage.subnav.battop')}</button><button>${T('manage.subnav.lab')}</button></div>
@@ -1173,13 +1173,16 @@ function renderManage(sec){sec.innerHTML=`
     <div class="card"><h3 style="margin-top:0">${T('manage.enhance.hlSnap.title')}</h3>
       <p class="small">${T('manage.enhance.hlSnap.desc')}</p>
       <label class="toggle"><input type="checkbox" id="erHlSnap"> ${T('manage.enhance.hlSnap.toggle')}</label></div>
+    <div class="card" id="enhBattopCard"></div>
   </div>
   <div class="subpanel" id="battopDetail" hidden></div>
   <div class="subpanel">
     <div class="card"><h3 style="margin-top:0">${T('manage.lab.hwStroke.title')}</h3>
       <p class="small">${T('manage.lab.hwStroke.desc')}</p>
       <label class="toggle"><input type="checkbox" id="labHwStroke"> ${T('manage.lab.hwStroke.toggle')}</label></div>
-    <div class="card" id="labBattopCard"></div>
+    <div class="card"><h3 style="margin-top:0">${T('manage.lab.comicMargin.title')}</h3>
+      <p class="small">${T('manage.lab.comicMargin.desc')}</p>
+      <label class="toggle"><input type="checkbox" id="labComicMargin"> ${T('manage.lab.comicMargin.toggle')}</label></div>
     <div class="card"><h3 style="margin-top:0">${T('manage.lab.importMd.title')}</h3>
       <p class="small">${T('manage.lab.importMd.desc')}</p>
       <label class="toggle"><input type="checkbox" id="labImportMd"> ${T('manage.lab.importMd.toggle')}</label></div>
@@ -1205,12 +1208,12 @@ function renderManage(sec){sec.innerHTML=`
   guardClick($('#alloff',sec),async()=>{if(!await confirmDialog(T('manage.modules.confirmAllOff')))return;const d=await j('/api/manage');for(const m of (d.modules||[]))if(m.installable&&m.installed&&m.running)await j('/api/manage/'+m.seg+'/stop',{method:'POST'});refresh()});
   /* 系统增强/实验室（Track 3，2026-09-09；实验室 2026-09-10 加）：CJK 画线吸附/CJK 手写笔迹优化/
      导入md文档可见性都是真开关（写 reading-qol.json，走同一个 /api/enhance/qol）。battop 拆两处：
-     「实验室」卡片只留开关+说明（mountBattopToggleCard），详细数据挪到本函数下面新增的第 5 个
+     「系统增强」卡片只留开关+说明（mountBattopToggleCard），详细数据挪到本函数下面新增的第 5 个
      二级 tab「电池刺客」（renderBattopDetail）——这个 tab 本身「运行才出现」，规则/实现都照抄
      「笔记」tab「导入 md 文档」子标签那套 hidden 属性+点走再隐藏的写法（见 renderNotes 里
      syncImportVisible 的注释，这里不重复讲一遍）。 */
-  const hlBox=$('#erHlSnap',sec),hwBox=$('#labHwStroke',sec),importMdBox=$('#labImportMd',sec);
-  const battopToggleRefresh=mountBattopToggleCard($('#labBattopCard',sec));
+  const hlBox=$('#erHlSnap',sec),hwBox=$('#labHwStroke',sec),importMdBox=$('#labImportMd',sec),comicMarginBox=$('#labComicMargin',sec);
+  const battopToggleRefresh=mountBattopToggleCard($('#enhBattopCard',sec)); // 电池刺客开关在「系统增强」里（2026-09-21 从实验室移过来）
   const manageNav=sec.querySelector(':scope > .subnav');
   const battopNavBtn=manageNav.children[3],battopPanel=$('#battopDetail',sec);
   renderBattopDetail(battopPanel);
@@ -1218,12 +1221,13 @@ function renderManage(sec){sec.innerHTML=`
     hlBox.checked=!!r.hlSnapCjk;
     hwBox.checked=!!r.hwStrokeEnabled;
     importMdBox.checked=!!r.notesImportMdEnabled;
+    comicMarginBox.checked=!!r.comicMinMargin;
     await battopToggleRefresh();
     const running=!!(r.battop&&r.battop.running);
     if(!running&&battopNavBtn.classList.contains('on'))manageNav.children[0].click();
     battopNavBtn.hidden=!running;battopPanel.hidden=!running;
     if(running&&battopPanel.refresh)battopPanel.refresh()};
-  bindToggle(hlBox,'/api/enhance/qol','hlSnapCjk');bindToggle(hwBox,'/api/enhance/qol','hwStrokeEnabled');bindToggle(importMdBox,'/api/enhance/qol','notesImportMdEnabled');
+  bindToggle(hlBox,'/api/enhance/qol','hlSnapCjk');bindToggle(hwBox,'/api/enhance/qol','hwStrokeEnabled');bindToggle(importMdBox,'/api/enhance/qol','notesImportMdEnabled');bindToggle(comicMarginBox,'/api/enhance/qol','comicMinMargin');
   refresh();erRefresh();sec.refresh=()=>{refresh();mvRefresh();mtRefresh();erRefresh()};subtabs(sec);}
 
 (async()=>{

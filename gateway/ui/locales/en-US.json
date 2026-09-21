@@ -455,5 +455,8 @@
   "stg.batch.stopAll": "Stop all",
   "stg.render.onopenBadge": "Renders on first open",
   "stg.render.onopenTitle": "xochitl only renders this book the first time you open it; the page count shown on the device until then is a placeholder. After you open it, this turns into the real page count",
-  "stg.render.okTitle": "xochitl rendered {pages} pages"
+  "stg.render.okTitle": "xochitl rendered {pages} pages",
+  "manage.lab.comicMargin.title": "Comic page margin: minimal",
+  "manage.lab.comicMargin.desc": "<b>Only affects image-only comic EPUBs</b> (text books and PDFs are untouched). When on: (1) comic pages you optimize afterwards are padded to a wider page frame; (2) after a comic is added to xochitl, the reader sets its page margin to 1 (almost zero) the <b>first time you open</b> that book — images grow from about 260pt to about 302pt wide (page width 303pt) and the side whitespace drops from 20/23pt to about 0. It uses the reader's own page-margin setting rather than editing files, so changing it back in \"Text settings\" afterwards sticks. <b>Only applies to comics optimized and added after you turn it on</b>; comics already on the device must be re-optimized from the original file and added again. New feature, off by default. See bookconv whitepaper §20.",
+  "manage.lab.comicMargin.toggle": "Enable (off by default)"
 }

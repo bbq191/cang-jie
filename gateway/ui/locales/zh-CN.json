@@ -455,5 +455,8 @@
   "stg.batch.stopAll": "全部中止",
   "stg.render.onopenBadge": "首次打开时渲染",
   "stg.render.onopenTitle": "xochitl 要在你第一次打开这本书时才渲染，之前设备上显示的页数是占位的；打开过之后这里会自动变成真实页数",
-  "stg.render.okTitle": "xochitl 渲染 {pages} 页"
+  "stg.render.okTitle": "xochitl 渲染 {pages} 页",
+  "manage.lab.comicMargin.title": "漫画页边距最小化",
+  "manage.lab.comicMargin.desc": "<b>仅对纯图漫画 EPUB 生效</b>（文字书、PDF 完全不受影响）。开启后：① 之后「优化」的漫画页会补白成更宽的页框；② 漫画「加入 xochitl」后，你<b>首次打开</b>那本书时，阅读器会自动把页边距设为 1（几乎为 0），图片从约 260pt 宽变成约 302pt（页宽 303pt），左右留白由 20/23pt 降到约 0。用的是阅读器自己的页边距设置，不是改文件，你之后在「文字设置」里改回去也不会被再次覆盖。<b>只对开启之后新优化、新加入的漫画生效</b>；已经在设备里的旧漫画需要从原始文件重新优化再加入一次。第一次上线，默认关。详见 bookconv 白皮书 §20。",
+  "manage.lab.comicMargin.toggle": "开启（默认关）"
 }
