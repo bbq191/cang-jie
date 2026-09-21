@@ -10,6 +10,13 @@
 //! 只处理**没有任何图片/SVG 的纯文字页**（"图片 + 一行说明"的页加边距会把图缩小，代价是那行字贴边，接受）。
 //! 只在 [`crate::imgopt::EpubComicFrame::MinMargin`] 模式且整本判为漫画时做；缺省模式（开关关）页边距仍是 56，文字页本来就有留白。
 //! 幂等：重复优化不会重复加类/规则。
+//!
+//! **第二件事：含图页去掉 `<body>` 的 class（2026-09-21 真机结构隔离诊断）**。Calibre 转的书每页 `<body class="calibre2">`，
+//! 阅读器边距设成 1 后漫画页图片仍被吃掉约 20pt（只有 281.7~291.8pt 宽，理论 302.0）。诊断（`zz-ip3`，边距 1）：
+//! 嵌套 div / `.calibre17` 居中 / `.calibre20{width:796px}`（xochitl 直接无视）全都不影响（302.0）；**只要 body 带这个类就被吃**，
+//! 而且改类里的规则内容（去掉 `margin:0 5pt`、覆盖成 0/0.01pt/1pt/-5pt）**毫无影响**——所以 CSS 覆盖走不通，只能不带类。
+//! body 不带类 + 完整书样式表 → 302.0（0.3/0.7，与合成书一致）。故 [`free_media_pages`] 把**含图片/SVG 的页**的 body class 整个去掉
+//! （图片页没有依赖 body 类的排版；图文混排页的说明文字随之贴边，与"不给混排页加边距"的取舍一致）。
 
 use crate::epubzip::Entry;
 use crate::wash::parse_opf;
@@ -66,6 +73,38 @@ pub fn add_text_page_class(html: &str) -> Option<String> {
         None => format!("{attrs} class=\"{TEXT_PAGE_CLASS}\""),
     };
     Some(format!("{}<body{new_attrs}>{}", &html[..whole.start()], &html[whole.end()..]))
+}
+
+/// 去掉 `<body>` 的整个 class 属性（保留其它属性）。没有 `<body>` 或没有 class → `None`。
+pub fn strip_body_class(html: &str) -> Option<String> {
+    let m = body_tag().captures(html)?;
+    let attrs = &m[1];
+    let c = class_attr().captures(attrs)?;
+    let all = c.get(0)?;
+    let whole = m.get(0)?;
+    // 连同 class 属性前面的空白一起删，避免留下 `<body  id=..>` 这种难看的双空格。
+    let head = attrs[..all.start()].trim_end();
+    let new_attrs = format!("{head}{}", &attrs[all.end()..]);
+    Some(format!("{}<body{new_attrs}>{}", &html[..whole.start()], &html[whole.end()..]))
+}
+
+/// 含图片/SVG 的页去掉 body class（见模块文档"第二件事"）。返回处理的页数。幂等。
+pub fn free_media_pages(entries: &mut [(String, Vec<u8>, bool)]) -> usize {
+    let mut n = 0usize;
+    for (_, data, ish) in entries.iter_mut() {
+        if !*ish {
+            continue;
+        }
+        let Ok(text) = std::str::from_utf8(data) else { continue };
+        if !has_media(&crate::comic_detect::strip_noise_tags(text)) {
+            continue;
+        }
+        if let Some(new) = strip_body_class(text) {
+            *data = new.into_bytes();
+            n += 1;
+        }
+    }
+    n
 }
 
 /// 优化第一阶段的入口：给整本漫画的纯文字页加类，并把规则追加进 `cangjie-wash.css`。
@@ -136,6 +175,22 @@ mod tests {
         assert!(has_text_page_class(&c) && c.contains("k cj-tp"), "大小写/单引号: {c}");
         assert!(add_text_page_class("<p>没有 body</p>").is_none());
         assert!(!has_text_page_class(r#"<body class="cj-tpx">"#), "类名要整词匹配");
+    }
+
+    #[test]
+    fn strip_body_class_only_on_media_pages() {
+        assert_eq!(strip_body_class(r#"<html><body id="b" class="calibre2">x</body></html>"#).unwrap(), r#"<html><body id="b">x</body></html>"#);
+        assert_eq!(strip_body_class(r#"<html><body class='calibre2'>x</body></html>"#).unwrap(), "<html><body>x</body></html>");
+        assert!(strip_body_class("<html><body>x</body></html>").is_none(), "没有 class 不动");
+        let mut es = vec![
+            ("a.xhtml".to_string(), r#"<html><head><title>t</title></head><body class="calibre2"><div><img src="1.jpg"/></div></body></html>"#.as_bytes().to_vec(), true),
+            ("b.xhtml".to_string(), r#"<html><body class="calibre2"><p>版权页</p></body></html>"#.as_bytes().to_vec(), true),
+            ("c.xhtml".to_string(), r#"<html><body class="calibre2"><svg><image href="c.jpg"/></svg></body></html>"#.as_bytes().to_vec(), true),
+        ];
+        assert_eq!(free_media_pages(&mut es), 2, "图片页、SVG 页去类");
+        assert!(!std::str::from_utf8(&es[0].1).unwrap().contains("class=\"calibre2\""));
+        assert!(std::str::from_utf8(&es[1].1).unwrap().contains("calibre2"), "纯文字页不动（留给 cj-tp）");
+        assert_eq!(free_media_pages(&mut es), 0, "幂等");
     }
 
     fn entry(name: &str, s: &str, html: bool) -> (String, Vec<u8>, bool) {

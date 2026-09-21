@@ -554,15 +554,15 @@ fn comic_min_margin_pads_only_pure_text_pages() {
         zw.start_file("content.opf", stored).unwrap();
         zw.write_all(format!(r#"<package version="3.0"><metadata><dc:title>漫画</dc:title></metadata><manifest>{items}</manifest><spine>{spine}</spine></package>"#).as_bytes()).unwrap();
         zw.start_file("t1.xhtml", stored).unwrap();
-        zw.write_all("<html><head><title>版权</title></head><body><p>版权信息 COPYRIGHT 书名：某漫画</p></body></html>".as_bytes()).unwrap();
+        zw.write_all(r#"<html><head><title>版权</title></head><body class="calibre2"><p>版权信息 COPYRIGHT 书名：某漫画</p></body></html>"#.as_bytes()).unwrap();
         for i in 1..=22 {
             zw.start_file(format!("c{i}.xhtml"), stored).unwrap();
-            zw.write_all(format!(r#"<html><head><title>p</title></head><body><img src="p{i}.jpg"/></body></html>"#).as_bytes()).unwrap();
+            zw.write_all(format!(r#"<html><head><title>p</title></head><body class="calibre2"><img src="p{i}.jpg"/></body></html>"#).as_bytes()).unwrap();
             zw.start_file(format!("p{i}.jpg"), stored).unwrap();
             zw.write_all(&jpg).unwrap();
         }
         zw.start_file("m1.xhtml", stored).unwrap();
-        zw.write_all(r#"<html><head><title>m</title></head><body><img src="p1.jpg"/><p>阿塔……</p></body></html>"#.as_bytes()).unwrap();
+        zw.write_all(r#"<html><head><title>m</title></head><body class="calibre2"><img src="p1.jpg"/><p>阿塔……</p></body></html>"#.as_bytes()).unwrap();
         zw.finish().unwrap();
     }
     let read = |bytes: &[u8], n: &str| {
@@ -572,9 +572,12 @@ fn comic_min_margin_pads_only_pure_text_pages() {
     };
     let mm = OptimizeOpts { wash: Some(crate::wash::WashOpts::default()), comic_frame: crate::imgopt::EpubComicFrame::MinMargin, ..Default::default() };
     let (out, _) = optimize_epub_with(&buf, &mm).unwrap();
-    assert!(read(&out, "t1.xhtml").contains(r#"class="cj-tp""#), "纯文字页应带留边类: {}", read(&out, "t1.xhtml"));
-    assert!(!read(&out, "c1.xhtml").contains("cj-tp"), "图片页不加");
-    assert!(!read(&out, "m1.xhtml").contains("cj-tp"), "图文混排页不加");
+    assert!(read(&out, "t1.xhtml").contains(r#"class="calibre2 cj-tp""#), "纯文字页保留原类并追加留边类: {}", read(&out, "t1.xhtml"));
+    assert!(!read(&out, "c1.xhtml").contains("cj-tp"), "图片页不加留边类");
+    assert!(!read(&out, "m1.xhtml").contains("cj-tp"), "图文混排页不加留边类");
+    // 含图页去掉 body class（Calibre 的 body 类会让图片在边距 1 下被吃掉约 20pt，真机诊断 zz-ip3）
+    assert!(!read(&out, "c1.xhtml").contains("class=\"calibre2\""), "图片页 body 类应去掉: {}", read(&out, "c1.xhtml"));
+    assert!(!read(&out, "m1.xhtml").contains("class=\"calibre2\""), "混排页 body 类也去掉");
     let css = read(&out, "cangjie-wash.css");
     assert_eq!(css.matches(crate::comic_pad::TEXT_PAGE_CSS_RULE).count(), 1, "wash css 应含留边规则一次: {css}");
 
@@ -587,6 +590,7 @@ fn comic_min_margin_pads_only_pure_text_pages() {
     let screen = OptimizeOpts { wash: Some(crate::wash::WashOpts::default()), ..Default::default() };
     let (out_s, _) = optimize_epub_with(&buf, &screen).unwrap();
     assert!(!read(&out_s, "t1.xhtml").contains("cj-tp"), "缺省页框不加留边类");
+    assert!(read(&out_s, "c1.xhtml").contains("class=\"calibre2\""), "缺省页框不动图片页的 body 类");
     assert!(!read(&out_s, "cangjie-wash.css").contains(".cj-tp"), "缺省页框不写规则");
 
     // 登记判据：MinMargin 产物放行；缺省页框产物（有文字页却没留边）拒绝
