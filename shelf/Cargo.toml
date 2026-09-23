@@ -12,6 +12,7 @@
 resolver = "2"
 members = [
     "crates/bookconv",
+    "crates/pdf-extract-cj",
     "services/book-serve",
     "services/koreader-serve",
 ]

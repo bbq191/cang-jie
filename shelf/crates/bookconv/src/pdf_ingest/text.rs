@@ -1,7 +1,12 @@
-//! 带位置的文字抽取（`pdf-extract` 的 OutputDev）与公式区域检测。
+//! 带位置的文字抽取（`pdf-extract` 的 OutputDev）与公式区域检测。2026-09-23 起
+//! 依赖本地 fork `pdf-extract-cj`（见该 crate `src/lib.rs` 头注释）：颜色 + 图片位置随字符流一起拿，
+//! `seq` 是两类事件的公共顺序坐标，`to_epub.rs` 按 `seq` 把文字与图片按文档真实先后交织输出（不再是
+//! "图片统一放段末/页末"的近似）。字体/glyph 解码没有动，只是 fork 多传了两样东西出来。
 
-/// 一个提取出的字符 + 它在 PDF 用户空间（未缩放的 pt）里的基线位置 + 字号 + 行号（同一视觉行
-/// 内的字符共享同一个 `line`，靠 pdf-extract 的 `end_line()` 钩子分行，不是自己按 Y 坐标猜）。
+/// 一个提取出的字符 + 它在页面设备空间（pt）里的基线位置 + 设备空间字号 + 定位序号 `line`。
+/// ⚠ `line` 是 pdf-extract `end_line()` 的计数（每次 `Td`/`Tm`/`T*` 加一），**不等于视觉行**：
+/// 逐字定位的排版（calibre 导出的 PDF 每个字形各一次 `Td`）同一视觉行里每个字的 `line` 都不同。
+/// 判断"是不是换了一行"要看基线 `y` 有没有变。
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct PositionedChar {
     pub ch: char,
@@ -9,10 +14,38 @@ pub(crate) struct PositionedChar {
     pub y: f64,
     pub font_size: f64,
     pub line: usize,
+    /// 文字填充色（RGB）。`None` = fork 没能可靠解析（Pattern/Separation/DeviceN/Lab 这类，见
+    /// `pdf_extract_cj::resolve_fill_rgb` 头注释）——调用方遇到 `None` 应该当"不确定"处理，
+    /// 不要瞎填一个默认色顶上去。
+    pub color: Option<[u8; 3]>,
+    /// 全页单调递增的顺序坐标，跟 [`ImageEvent::seq`] 共用同一个计数器——不是字符在文字流里的
+    /// 第几个（那用 Vec 下标就够了），是"这个字符在 content stream 里排在第几个会被
+    /// `output_character`/`output_image` 报告的事件"，用来给图片在文字流里找回它真实的插入点。
+    pub seq: usize,
+}
+
+/// 一次 `Do` 算子命中图片 XObject 的记录（`pdf_extract_cj::OutputDev::output_image`）。`ctm` 是
+/// 单位正方形 (0,0)-(1,1) 到页面实际矩形的变换（行主序 6 元组，跟 PDF `cm` 算子操作数顺序一致），
+/// 用来算图片在页面上的视觉位置（上沿、左边，见 `to_epub::image_visual_pos`），不用来算显示宽高——
+/// xochitl 不认内联/精确尺寸，全局 `img{max-width:100%;height:auto}` 已经兜底缩放。
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct ImageEvent {
+    pub seq: usize,
+    pub ctm: [f64; 6],
+    /// 页面 `/Resources/XObject` 字典里的资源名（如 `Im1`），不是 PDF 对象 id——`to_epub.rs` 拿它
+    /// 反查对象 id 再解码像素，见 `page_image_ids`。
+    pub xobject_name: Vec<u8>,
+}
+
+/// 一页的抽取结果：字符流 + 图片事件，两者共用 `seq` 保证能按文档真实顺序合并。
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) struct PageContent {
+    pub chars: Vec<PositionedChar>,
+    pub images: Vec<ImageEvent>,
 }
 
 pub(super) struct TextCollector {
-    pages: Vec<Vec<PositionedChar>>,
+    pages: Vec<PageContent>,
     line: usize,
     /// 逐字符插空格用——逻辑照抄 pdf-extract 自带 `PlainTextOutput` 的做法（不是自己发明的）：
     /// `begin_word()` 只是标一个"下一个字符要检查有没有跳空"的标志位，真正判定空格靠比较
@@ -25,35 +58,66 @@ pub(super) struct TextCollector {
     first_char: bool,
     last_end: f64,
     last_y: f64,
+    /// 全页单调递增，字符事件和图片事件共用，见 [`PositionedChar::seq`]。
+    seq: usize,
+    /// 上一个字符是不是中日韩文字（见 `output_character` 里"中文字之间不补空格"）。
+    last_cjk: bool,
+}
+
+/// 中日韩统一表意文字、假名、谚文、中日韩标点与全角形式——这些字符之间不用空格分词。
+pub(crate) fn is_cjk(c: char) -> bool {
+    matches!(c as u32,
+        0x3000..=0x303F | 0x3040..=0x30FF | 0x3400..=0x4DBF | 0x4E00..=0x9FFF
+        | 0xAC00..=0xD7AF | 0xF900..=0xFAFF | 0xFF00..=0xFFEF | 0x20000..=0x2FA1F)
 }
 
 impl pdf_extract::OutputDev for TextCollector {
     fn begin_page(&mut self, _page_num: u32, _media_box: &pdf_extract::MediaBox, _art_box: Option<(f64, f64, f64, f64)>) -> Result<(), pdf_extract::OutputError> {
-        self.pages.push(Vec::new());
+        self.pages.push(PageContent::default());
         self.line = 0;
         self.first_char = false;
         self.last_end = f64::MAX / 2.0;
         self.last_y = 0.0;
+        self.seq = 0;
+        self.last_cjk = false;
         Ok(())
     }
     fn end_page(&mut self) -> Result<(), pdf_extract::OutputError> {
         Ok(())
     }
-    fn output_character(&mut self, trm: &pdf_extract::Transform, width: f64, _spacing: f64, font_size: f64, ch: &str) -> Result<(), pdf_extract::OutputError> {
+    fn output_character(&mut self, trm: &pdf_extract::Transform, width: f64, spacing: f64, font_size: f64, ch: &str, color: Option<[u8; 3]>) -> Result<(), pdf_extract::OutputError> {
         let (x, y) = (trm.m31, trm.m32);
+        // 换算到设备空间（跟 x/y 同一坐标系）：pdf-extract 给的 `font_size` 是 `Tf` 的文字空间字号、
+        // `width` 是千分之一字号单位的字宽，都没乘文本矩阵×CTM 的缩放。calibre 导出的 PDF 整页带
+        // `0.742` 缩放（2026-09-23《T.E.双语》），不换算的话字号/前进量全偏大三成，字间缝隙判定失真。
+        // 字间距 `Tc`（`spacing`）也是前进量的一部分（PDF 32000-1 §9.4.4）。
+        let sx = trm.m11.hypot(trm.m12);
+        let sy = trm.m21.hypot(trm.m22);
+        let text_fs = font_size;
+        let font_size = if sy > 0.0 { text_fs * sy } else { text_fs };
+        let advance = (width * text_fs + spacing) * if sx > 0.0 { sx } else { 1.0 };
+        let this_cjk = ch.chars().next().map(is_cjk).unwrap_or(false);
         if let Some(page) = self.pages.last_mut() {
-            if self.first_char && x > self.last_end + font_size * 0.1 {
+            // 中文字之间不因位置缝隙补空格：中文不用空格分词，原书真有的空格是显式字符、原样保留；
+            // 逐字定位的排版（calibre 每个字形各一次 Td）字距略松就会被误判成词间空格。
+            let both_cjk = this_cjk && self.last_cjk;
+            if self.first_char && !both_cjk && x > self.last_end + font_size * 0.1 {
                 let line = self.line;
-                page.push(PositionedChar { ch: ' ', x: self.last_end, y, font_size, line });
+                let seq = self.seq;
+                self.seq += 1;
+                page.chars.push(PositionedChar { ch: ' ', x: self.last_end, y, font_size, line, color, seq });
             }
             let line = self.line;
             for c in ch.chars() {
-                page.push(PositionedChar { ch: c, x, y, font_size, line });
+                let seq = self.seq;
+                self.seq += 1;
+                page.chars.push(PositionedChar { ch: c, x, y, font_size, line, color, seq });
             }
         }
         self.first_char = false;
         self.last_y = y;
-        self.last_end = x + width * font_size;
+        self.last_end = x + advance;
+        self.last_cjk = ch.chars().last().map(is_cjk).unwrap_or(false);
         Ok(())
     }
     fn begin_word(&mut self) -> Result<(), pdf_extract::OutputError> {
@@ -67,14 +131,22 @@ impl pdf_extract::OutputDev for TextCollector {
         self.line += 1;
         Ok(())
     }
+    fn output_image(&mut self, ctm: &pdf_extract::Transform, xobject_name: &[u8]) -> Result<(), pdf_extract::OutputError> {
+        if let Some(page) = self.pages.last_mut() {
+            let seq = self.seq;
+            self.seq += 1;
+            page.images.push(ImageEvent { seq, ctm: [ctm.m11, ctm.m12, ctm.m21, ctm.m22, ctm.m31, ctm.m32], xobject_name: xobject_name.to_vec() });
+        }
+        Ok(())
+    }
 }
 
-/// 驱动 pdf-extract 跑一遍 `OutputDev`，拿到每页的逐字符位置流。**永远喂原始字节**，不复用
-/// 本模块自己已经解析出的 `lopdf::Document`（0.45）——见模块文档，两边 lopdf 版本不同、类型
+/// 驱动 pdf-extract 跑一遍 `OutputDev`，拿到每页的逐字符位置流 + 图片事件流。**永远喂原始字节**，
+/// 不复用本模块自己已经解析出的 `lopdf::Document`（0.45）——见模块文档，两边 lopdf 版本不同、类型
 /// 不兼容，pdf-extract 内部会用它自己锁定的 lopdf 0.42 重新解析一遍。
-pub(crate) fn extract_positioned_text(bytes: &[u8]) -> Result<Vec<Vec<PositionedChar>>, String> {
+pub(crate) fn extract_positioned_text(bytes: &[u8]) -> Result<Vec<PageContent>, String> {
     let doc = pdf_extract::Document::load_mem(bytes).map_err(|e| format!("PDF 结构解析失败: {e}"))?;
-    let mut collector = TextCollector { pages: Vec::new(), line: 0, first_char: false, last_end: f64::MAX / 2.0, last_y: 0.0 };
+    let mut collector = TextCollector { pages: Vec::new(), line: 0, first_char: false, last_end: f64::MAX / 2.0, last_y: 0.0, seq: 0, last_cjk: false };
     pdf_extract::output_doc(&doc, &mut collector).map_err(|e| format!("PDF 文字提取失败: {e}"))?;
     Ok(collector.pages)
 }

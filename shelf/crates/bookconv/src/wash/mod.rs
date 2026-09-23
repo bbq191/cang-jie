@@ -22,7 +22,7 @@
 //! 全部规则幂等：注入块带 `class="cj-wash"` 标记，重复过不再叠加。
 use crate::htmlproc::collapse_dup_id_attrs;
 // zip 条目与 zip 内 posix 路径工具已迁到 `epubzip`；这里 re-export，保住 `crate::wash::Entry`/`wash::resolve` 等旧路径。
-pub use crate::epubzip::{dir_of, is_html, percent_decode, posix_norm, relative_to, resolve, Entry};
+pub use crate::epubzip::{dir_of, is_html, is_html_entry, percent_decode, posix_norm, relative_to, resolve, Entry};
 use crate::util::{is_image_ext, xml_escape};
 use regex::Regex;
 use std::collections::{HashMap, HashSet};
@@ -137,7 +137,7 @@ pub struct WashReport {
 /// 全书 CJK vs 拉丁字符占比 → 主语言（Han 字数 ≥ 拉丁字母数 = Cjk）。扫全部 html 正文，早停够量即定。
 fn detect_dominant_script(entries: &[Entry]) -> LangMode {
     let (mut han, mut latin) = (0u64, 0u64);
-    for e in entries.iter().filter(|e| is_html(&e.name) && !is_toc_file(&e.name)) {
+    for e in entries.iter().filter(|e| is_html_entry(&e.name, &e.data) && !is_toc_file(&e.name)) {
         let Ok(t) = std::str::from_utf8(&e.data) else { continue };
         for ch in plain_text(t).chars() {
             if matches!(ch, '\u{4E00}'..='\u{9FFF}' | '\u{3400}'..='\u{4DBF}' | '\u{F900}'..='\u{FAFF}') {
@@ -188,7 +188,7 @@ pub fn wash_entries(entries: &mut Vec<Entry>, opts: &WashOpts) -> Result<WashRep
                 e.data = filter_css(t, opts).into_bytes();
                 rep.css_files += 1;
             }
-        } else if is_html(&e.name) && !is_toc_file(&e.name) {
+        } else if is_html_entry(&e.name, &e.data) && !is_toc_file(&e.name) {
             if let Ok(t) = std::str::from_utf8(&e.data) {
                 let (out, dups) = wash_html(t, opts);
                 let href = relative_to(dir_of(&e.name), &css_path);

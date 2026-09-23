@@ -28,7 +28,7 @@
 //! 以后误以为是新 bug。
 
 use crate::convert::pdfwrite::{self, PdfPieceWriter};
-use crate::epub::{Book, BookMeta, Chapter, Resource};
+use crate::epub::{Book, BookMeta, Chapter, NavEntry, Resource};
 use std::path::Path;
 
 // 按职责拆成子模块（原 `pdf_ingest.rs` 一个文件 1100 行）：`classify` · `text` · `headings` · `trim` · `to_epub` · `source`；

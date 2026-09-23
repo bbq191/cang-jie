@@ -129,4 +129,5 @@ cargo build --release -p bookconv --bin epub-optimize   # 手动跑一遍清洗+
 | [`docs/传书EPUB线架构.md`](docs/传书EPUB线架构.md) | 传书线**当前状态**参考（非时间顺序）：架构、数据流、优化管线、内存安全、大文件通道、API |
 | [`docs/reMarkable书架白皮书.md`](docs/reMarkable书架白皮书.md) | 文首「5 分钟读懂」+ 决策依据与真机记录，按主题分章（每章有大白话导语与坑位表）；附录含踩坑总表、演进记录表、已移除能力 |
 | [`docs/bookconv优化白皮书.md`](docs/bookconv优化白皮书.md) | 书籍优化引擎：清洗/优化遍/脚注/图片/★xochitl 渲染硬规则/版本演进 |
+| [`docs/EPUB优化规范白皮书.md`](docs/EPUB优化规范白皮书.md) | **规范类**（非架构史/非踩坑流水账）：EPUB 优化线 + PDF→EPUB 转换线共用的当前生效规则 + 为什么这么定；结合 EPUB 官方规范与 xochitl 实测七条规则 |
 | [`../docs/CHANGELOG.md`](../docs/CHANGELOG.md) | 用户可见的更新历史 |

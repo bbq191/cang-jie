@@ -22,6 +22,27 @@ pub fn is_html(name: &str) -> bool {
     l.ends_with(".xhtml") || l.ends_with(".html") || l.ends_with(".htm")
 }
 
+/// `is_html` 纯按扩展名判断，漏掉一种真实存在的 EPUB 形态：章节文件**没有任何扩展名**，但 OPF
+/// manifest 正确声明了 `media-type="application/xhtml+xml"`（2026-09-23 真机《甲午：摇摆的战争》
+/// 坐实：`Chapter_2`/`Chapter_7_1`/`_2`/`_3` 四个真实章节文件是这个形态，跟同一本书里其它带
+/// `.xhtml` 后缀的章节混在一起）。这类文件被 `is_html` 判定"不是 html"后，清洗/优化管线从未碰过
+/// 它们——脚注图标没转换、内联 `font-size` 死值没清零，真机复现"这几章字体锁死改不了、脚注图标
+/// 巨大"。只在**完全没有扩展名**时才嗅探内容开头（有扩展名但不是 html 家族的——css/opf/ncx/图片/
+/// 字体等——一律信扩展名，不误判），避免把真正的非 html 资源当章节处理。
+pub fn is_html_entry(name: &str, data: &[u8]) -> bool {
+    if is_html(name) {
+        return true;
+    }
+    let base = name.rsplit('/').next().unwrap_or(name);
+    if base.contains('.') {
+        return false;
+    }
+    let head = String::from_utf8_lossy(&data[..data.len().min(200)]);
+    let head = head.trim_start_matches('\u{feff}').trim_start();
+    let head_lower = head.to_ascii_lowercase();
+    head.starts_with("<?xml") || head_lower.starts_with("<!doctype html") || head_lower.starts_with("<html")
+}
+
 /// [`read_skeleton`] 的结果。
 pub struct Skeleton {
     /// 条目表：图片条目（`imgopt::is_downscalable`）的 `data` 为空占位，其余是真实字节。
@@ -179,6 +200,23 @@ mod tests {
         assert_eq!(relative_to("OEBPS/text", "OEBPS/style.css"), "../style.css");
         assert_eq!(relative_to("", "a.xhtml"), "a.xhtml");
         assert_eq!(percent_decode("%E5%AD%97.xhtml"), "字.xhtml");
+    }
+
+    /// 真机《甲午：摇摆的战争》坐实的真实形态：`Chapter_2`/`Chapter_7_1` 这类没有扩展名的章节文件，
+    /// manifest 里正确声明 `application/xhtml+xml`，但纯扩展名判断的 `is_html` 会漏判、整个跳过清洗。
+    #[test]
+    fn is_html_entry_sniffs_extensionless_chapter_by_content() {
+        assert!(is_html_entry("Text/Chapter_2", b"<?xml version=\"1.0\"?><html><body><p>x</p></body></html>"));
+        assert!(is_html_entry("Text/Chapter_7_1", b"<!DOCTYPE html><html><body>x</body></html>"));
+        assert!(is_html_entry("Text/Chapter_7_1", b"<html><body>x</body></html>"), "没有 XML 声明、直接 <html> 开头也该认");
+        assert!(is_html_entry("a.xhtml", b"whatever"), "有正牌扩展名走老路径，不用嗅探内容");
+    }
+
+    #[test]
+    fn is_html_entry_does_not_misclassify_non_html_extensionless_or_extensioned_files() {
+        assert!(!is_html_entry("images/cover", b"\x89PNG\r\n\x1a\n"), "扩展名缺失但内容明显不是 html 的图片，不该被嗅探误判");
+        assert!(!is_html_entry("style.css", b"<?xml version=\"1.0\"?>"), "有 .css 扩展名，即便内容巧了像 xml 开头也不该被当 html（信扩展名）");
+        assert!(!is_html_entry("book.opf", b"<?xml version=\"1.0\"?><package></package>"), "opf 也是 xml 开头，但有扩展名就不该走嗅探");
     }
 
     #[test]

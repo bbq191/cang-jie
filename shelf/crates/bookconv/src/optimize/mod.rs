@@ -90,7 +90,7 @@ pub struct Report {
     pub bytes_after: usize,
 }
 
-use crate::epubzip::is_html;
+use crate::epubzip::is_html_entry;
 
 // 按职责拆成子模块（原 `optimize.rs` 一个文件 1100+ 行）：`html_pass`（逐条变换）· `streaming`（流式路径 + 构建器）· `marker`（幂等标记）；
 // `pub` 项在这里 glob re-export，`crate::optimize::xxx` 旧路径不变。
@@ -153,7 +153,7 @@ fn prepare_entries(mut raw: Vec<crate::epubzip::Entry>, opts: &OptimizeOpts, byt
     let mut referenced: HashSet<String> = HashSet::new(); // 被 marker 引用的注释 id（noteref + 跨文件普通<a>）
     for crate::epubzip::Entry { name, data } in ordered {
         rep.total_files += 1;
-        let ish = is_html(&name);
+        let ish = is_html_entry(&name, &data);
         // 非 UTF-8 的 html 原样保留（`from_utf8` 失败时把字节还回来，不克隆）。
         let data = if ish {
             match String::from_utf8(data) {

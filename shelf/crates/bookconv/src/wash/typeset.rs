@@ -195,7 +195,13 @@ pub fn wash_css(opts: &WashOpts) -> String {
     // 脆，只认裸元素选择器，逗号/复合选择器直接整条规则失效（`lang_aware_indent` 测试断言过
     // 这条红线，别在这里破例）。keep_para_spacing 档位同样清零：那档的意图是"保留正文段落之间
     // 的呼吸感"，不是"保留图片周围的默认边距"，两件事语义不同，不该被同一个开关连带控制。
-    format!("p{{{decl}}}\n{flush}\nfigure{{margin:0;padding:0;}}\nfigcaption{{margin:0;padding:0;}}\n")
+    // 注释容器统一比正文小一号（相对单位，随用户当前字号缩放）——书自带 CSS 里已有注释规则的由
+    // `filter_css` 就地改；这两条是给"书压根没给注释块写过 CSS"（纯靠我们自己生成的 `.footnotes`
+    // 章末块 / `.cj-fnote` Inline 内联注释）兜底，不然那些书的注释永远跟正文同号，不满足这条通用
+    // 要求。跟 `.cj-flush` 一样是单个裸类选择器，不逗号连写。
+    format!(
+        "p{{{decl}}}\n{flush}\nfigure{{margin:0;padding:0;}}\nfigcaption{{margin:0;padding:0;}}\n.footnotes{{font-size:{FOOTNOTE_FONT_SIZE};}}\n.cj-fnote{{font-size:{FOOTNOTE_FONT_SIZE};}}\n"
+    )
 }
 
 pub fn count_dup_id_tags(html: &str) -> usize {

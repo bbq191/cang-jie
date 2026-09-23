@@ -3,6 +3,9 @@
 
 /// XML/XHTML 文本与属性通用转义：`& < > "`（转义 `"` 对文本无害、对属性必需，故一个函数通吃）。
 /// epub 章节、fb2/mobi/kf8 组装、稍后读正文、来源脚注等全共用，替代原先散落的 `xesc`/`xml_escape`。
+/// 顺带丢弃 XML 1.0 不允许出现的字符（见 [`is_xml_char`]）——转义救不了它们，留着整份文档就不是合法
+/// XML：2026-09-23 真机《T.E.双语》PDF 标题是 UTF-16BE，被当 UTF-8 解出一串 `\0`，写进 OPF 的
+/// `dc:title` 后 xochitl 解析 OPF 失败、整本只渲染出 1 页。
 pub fn xml_escape(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
@@ -11,10 +14,31 @@ pub fn xml_escape(s: &str) -> String {
             '<' => out.push_str("&lt;"),
             '>' => out.push_str("&gt;"),
             '"' => out.push_str("&quot;"),
+            c if !is_xml_char(c) => {}
             _ => out.push(c),
         }
     }
     out
+}
+
+/// XML 1.0 §2.2 允许的字符：`#x9 | #xA | #xD | [#x20-#xD7FF] | [#xE000-#xFFFD] | [#x10000-#x10FFFF]`
+/// （Rust `char` 本来就不含代理区）。
+pub fn is_xml_char(c: char) -> bool {
+    matches!(c, '\t' | '\n' | '\r' | '\u{20}'..='\u{D7FF}' | '\u{E000}'..='\u{FFFD}' | '\u{10000}'..='\u{10FFFF}')
+}
+
+/// HTML 片段里最后一个可见字符（跳过末尾的标签与空白），用于判断一段话是否以句末标点收尾。
+pub fn strip_tags_tail_char(html: &str) -> Option<char> {
+    let mut in_tag = false;
+    for c in html.chars().rev() {
+        match c {
+            '>' => in_tag = true,
+            '<' => in_tag = false,
+            _ if in_tag || c.is_whitespace() => {}
+            _ => return Some(c),
+        }
+    }
+    None
 }
 
 /// 路径/文件名是不是常见位图（按扩展名，忽略大小写）：jpg/jpeg/png/gif/webp。封面声明、占位封面探测共用；
@@ -165,6 +189,7 @@ mod tests {
     fn xml_escape_covers_amp_lt_gt_quote() {
         assert_eq!(xml_escape(r#"a&b<c>d"e"#), "a&amp;b&lt;c&gt;d&quot;e");
         assert_eq!(xml_escape("纯文本"), "纯文本");
+        assert_eq!(xml_escape("a\u{0}b\u{1}c\td\u{FFFE}e"), "abc\tde", "XML 1.0 不允许的字符直接丢弃");
     }
 
     #[test]

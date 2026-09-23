@@ -340,6 +340,7 @@ fn build_piece_with(
         },
         chapters,
         resources,
+        nav: Vec::new(),
     };
     // 外链 comic.css 组装时一次写成（见 `COMIC_CSS` 文档）；图片字节写完即释放。
     assemble_with(&mut book, AssembleOpts { shared_css: Some(SharedCss { file: "comic.css", id: "comic-css", css: COMIC_CSS }), consume_resources: true })

@@ -79,8 +79,19 @@ impl Staging {
         self.mark_cancellable(name);
         let opts = OptimizeOpts { wash: Some(WashOpts::default()), footnote: FootnoteMode::Anchor, comic_frame: self.comic_frame() };
         let cancel = || self.is_cancelled(name);
-        // 产出到点前缀临时文件、成功才改名覆盖；出错清掉半成品，不留垃圾在母版库目录。
-        let rep = bookconv::util::produce_then_replace(&tmp, &p, |t| optimize::StreamingOptimize::new(&p, t, &opts).title(canon_title.as_deref()).cancel(&cancel).run(&mut on_progress))?;
+        // 产出到点前缀临时文件、成功才改名覆盖；出错清掉半成品，不留垃圾在母版库目录。质量门
+        // （`check_epub_file`）在改名覆盖**之前**、对着这份临时文件跑——2026-09-23 真机坐实的教训：
+        // 门校验不通过就该当成"优化失败"处理，原书留在母版库原样不动，不能让一份带断链引用的
+        // 半成品覆盖掉用户原来能正常读的书。`check_epub_file` 走 skeleton（图片留空），不会把
+        // 大漫画整本读回内存、不重蹈流式优化本来要避开的 OOM。
+        let rep = bookconv::util::produce_then_replace(&tmp, &p, |t| {
+            let rep = optimize::StreamingOptimize::new(&p, t, &opts).title(canon_title.as_deref()).cancel(&cancel).run(&mut on_progress)?;
+            let check = bookconv::check::check_epub_file(t).map_err(|e| format!("质量门校验失败: {e}"))?;
+            if !check.ok {
+                return Err(format!("优化产物未通过质量门，{}", check.errors.join("；")));
+            }
+            Ok(rep)
+        })?;
         // 已有的长下载名在这里一并规范成 `书名 - N卷`；目标已存在（重复的同一卷）就保持原名，不覆盖。
         let canon = canonical_staged_name(name);
         let shown = if canon != name && !self.dir.join(&canon).exists() && std::fs::rename(&p, self.dir.join(&canon)).is_ok() {
@@ -112,12 +123,21 @@ impl Staging {
                 let stem = name.strip_suffix(".pdf").unwrap_or(name);
                 let epub_path = p.with_file_name(format!("{stem}.epub"));
                 let tmp = p.with_file_name(format!(".{stem}.epub.optimizing.tmp"));
-                let (mut book, rep) = pdf_ingest::optimize_pdf_to_epub(p, &mut on_progress)?;
-                let bytes = match bookconv::epub::assemble(&mut book) {
+                let (mut book, rep, color_css) = pdf_ingest::optimize_pdf_to_epub(p, &mut on_progress)?;
+                let bytes = match bookconv::epub::assemble_pdf_derived(&mut book, &color_css) {
                     Ok(b) => b,
                     Err(e) => return Err(format!("组装 EPUB 失败: {e}")),
                 };
-                bookconv::util::produce_then_replace(&tmp, &epub_path, |t| std::fs::write(t, &bytes).map_err(|e| format!("写出临时文件失败: {e}")))?;
+                // 质量门在改名覆盖之前对临时文件跑——2026-09-23 真机《移动互联软件安装使用手册》
+                // 坐实的那个 bug（图片路径多写一层 `../`，图片一张都不显示）就是这条门要拦的形状。
+                bookconv::util::produce_then_replace(&tmp, &epub_path, |t| {
+                    std::fs::write(t, &bytes).map_err(|e| format!("写出临时文件失败: {e}"))?;
+                    let check = bookconv::check::check_epub_file(t).map_err(|e| format!("质量门校验失败: {e}"))?;
+                    if !check.ok {
+                        return Err(format!("优化产物未通过质量门，{}", check.errors.join("；")));
+                    }
+                    Ok(())
+                })?;
                 std::fs::remove_file(p).map_err(|e| format!("删除原 PDF 失败: {e}"))?;
                 Ok(format!(
                     "已优化《{stem}》（PDF→EPUB，{} 页，{} 章，{} 张图，{} 处公式）",

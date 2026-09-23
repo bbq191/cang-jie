@@ -102,7 +102,23 @@ pub(super) fn selector_spacing(selector: &str) -> Spacing {
     }
 }
 
+/// 选择器是不是"注释容器类"：书自带的 `duokan-footnote-item`/`duokan-footnote-content` 这类，以及我们
+/// 自己生成的 `.footnotes`（章末块）/`.cj-fnote`（Inline 内联注释）——判据是选择器文本含
+/// "footnote"/"fnote"（大小写不敏感），不追求穷举每本书的命名，覆盖到目前真机见过的形态。
+pub(super) fn is_footnote_container_selector(sel: &str) -> bool {
+    let l = sel.to_ascii_lowercase();
+    l.contains("footnote") || l.contains("fnote")
+}
+
+/// 注释容器专用的字号：比正文小一档，相对单位（随用户当前字号缩放，不是又一个"锁死"）。
+pub(super) const FOOTNOTE_FONT_SIZE: &str = "0.9em";
+
 /// 整段 CSS（文件或 <style> 内容）：逐规则剥锁 + 边距处理。`@media{}` 嵌套靠"从内向外"匹配最内层规则。
+/// 注释容器类是唯一的例外分支：§03av EPUB 线原则②"解锁字号但保留原书颜色/加粗"保护的是**正文语义
+/// 加粗**，注释容器类的 `font-weight:bold` 是原书模板写死的装饰样式，不是语义强调——2026-09-23 真机
+/// 《甲午：摇摆的战争》坐实（`duokan-footnote-item{font-weight:bold}` 导致全书注释永远加粗，用户反馈
+/// "跳转注释后字体不对"，追下去发现其实是加粗不是字体），用户拍板"只剥注释容器类的字重，不碰正文；
+/// 注释字号固定比正文小一档"。
 pub fn filter_css(css: &str, opts: &WashOpts) -> String {
     static RULE: OnceLock<Regex> = OnceLock::new();
     let rule = RULE.get_or_init(|| Regex::new(r#"(?s)([^{}]+)\{([^{}]*)\}"#).unwrap());
@@ -116,6 +132,15 @@ pub fn filter_css(css: &str, opts: &WashOpts) -> String {
             Spacing::Vertical if opts.keep_para_spacing => Spacing::Keep,
             s => s,
         };
+        if is_footnote_container_selector(sel) {
+            let mut filter = opts.filter_props.clone();
+            if !filter.iter().any(|p| p == "font-weight") {
+                filter.push("font-weight".to_string());
+            }
+            let mut decls = filter_decls_with(&c[2], &filter, spacing, Some(indent_for(opts)));
+            decls.push_str(&format!("font-size:{FOOTNOTE_FONT_SIZE};"));
+            return format!("{sel}{{{decls}}}");
+        }
         format!("{}{{{}}}", sel, filter_decls_with(&c[2], &opts.filter_props, spacing, Some(indent_for(opts))))
     }).into_owned()
 }

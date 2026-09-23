@@ -111,6 +111,14 @@ pub(super) fn deprefix_footnote_hrefs(s: &str) -> String {
         .into_owned()
 }
 
+/// 注释正文外层包一层带 `id` 落点的标签：用 `<div>` 不用 `<p>`。`collect_footnote_notes` 只搬
+/// aside/li/div 源块的**内层** html，源块自带 `<p>`（甚至嵌套块级标签）很常见——`<p id="frag">…</p>`
+/// 套出 `<p><p>…</p></p>` 是非法内容模型（`<p>` 不能合法含块级子元素），此前无防护代码也无样本验证过
+/// 真机渲染表现；`<div>` 天然兼容块级/内联两种子内容，同样能挂 `id` 当锚点落点，零风险替换。
+fn footnote_block(frag: &str, inner: &str) -> String {
+    format!("<div id=\"{frag}\">{inner}</div>")
+}
+
 /// 提取一章里所有 `<aside ... id="X" type="footnote">…</aside>`，从正文移除，
 /// 返回 (清理后正文, [(id, 注释内层html)])。内层含回链 `<a>` + 注释文本，原样保留。
 pub fn collect_footnote_asides(html: &str) -> (String, Vec<(String, String)>) {
@@ -255,7 +263,7 @@ pub fn inline_footnotes(
                 Some((frag, text)) => {
                     if seen.insert(frag.clone()) {
                         let inner = deprefix_footnote_hrefs(text);
-                        notes.push(format!("<p id=\"{frag}\">{inner}</p>"));
+                        notes.push(footnote_block(&frag, &inner));
                     }
                     format!("<a href=\"#{frag}\">{}</a>", esc_text(marker))
                 }
@@ -275,7 +283,7 @@ pub fn inline_footnotes(
             match href_crossfile_fragment(attrs).and_then(|f| index.get(&f).map(|t| (f, t))) {
                 Some((frag, text)) => {
                     if seen.insert(frag.clone()) {
-                        notes.push(format!("<p id=\"{frag}\">{}</p>", deprefix_footnote_hrefs(text)));
+                        notes.push(footnote_block(&frag, &deprefix_footnote_hrefs(text)));
                     }
                     format!("<a href=\"#{frag}\">{}</a>", esc_text(content))
                 }
@@ -311,7 +319,7 @@ pub fn inline_footnotes(
 /// `<sup><a href="#frag">&lt;img class="duokan-footnote.." alt="注释N"/&gt;</a></sup>`
 /// → `<a href="#frag"><sup>N</sup></a>`。duokan 的注释块**已在同文件** `<p id="frag">`（前向锚有效），
 /// 故只需把"实体转义 + 远程 CDN 图 = 离线不可点"的死图标记换成干净可点上标数字、保留 href；注释块不动。
-/// 非 duokan 脚注 img（`duokan-footnote` 类不在内层）或跨文件锚点原样放行。
+/// 非 duokan 脚注 img（`duokan-footnote` 类既不在 img 也不在外层 `<a>` 上）或跨文件锚点原样放行。
 /// **Calibre 洗后形态**（2026-09-02，`wash_epub.sh` 产物）：img 是真标签+本地图、`<a>` 带 `id="c_X_Y"`、
 /// 注释块是合法 `<li id="a_X_Y"><p>…<a href="#c_X_Y">`（真 2-环）——真 img 也换上标、**id 保留**，
 /// 环交给前置的 `break_footnote_cycles` 拆（回链去链、id 留作落点）；合法嵌套的 li 不动。
@@ -320,7 +328,12 @@ pub fn fix_duokan_markers(html: &str) -> String {
     // 标记替换（转义 img 版 / Calibre 真 img 版共用）：保留 href 与 `<a>` 自带 id（Calibre 形态的
     // 回链落点，丢了则注释里的回链悬空 → reMarkable 判互指整对丢弃）。
     let mut rewrite = |a_attrs: &str, img_inner: &str, whole: &str| -> String {
-        match (img_inner.contains("duokan-footnote"), href_fragment(a_attrs)) {
+        // "duokan-footnote" 类名有两种真实变体：常见形态在 img 自己的 class 上（`img_inner`）；
+        // 2026-09-23 真机《甲午：摇摆的战争》核实还有一种把这个类挂在外层 <a> 上、img 自己只是普通
+        // `class="exs"` 图标——两种都得认，只查 img_inner 会漏判、图标原样穿透到 xochitl 按固有
+        // 像素撑成巨大方块（真机坐实）。
+        let is_duokan = img_inner.contains("duokan-footnote") || a_attrs.contains("duokan-footnote");
+        match (is_duokan, href_fragment(a_attrs)) {
             (true, Some(frag)) => {
                 local += 1;
                 let num = duokan_note_num(img_inner).unwrap_or_else(|| local.to_string());
@@ -364,10 +377,11 @@ pub(super) fn inline_note_text(html: &str) -> String {
     t.replace("&nbsp;", " ").replace("&#160;", " ").split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// 优化器专用脚注处理：**完整保留 marker 原始内容/样式**(sup/上标/图标一律不动)，只把 `<a>`
+/// 优化器专用脚注处理：**尽量保留 marker 原始内容/样式**(sup/上标不动；图标例外，见下方 `make` 里
+/// 2026-09-23 的改动——无宽高约束的 `<img>` 图标真机会撑巨大，丢弃)，只把 `<a>`
 /// 上 xochitl 不认的 `epub:type` 去掉、href 规整成同章 `#frag`(xochitl 唯一会跳的形态)；
 /// 注释块(index 提供，跨文件也行)收集、移到本章末尾可见 `<div class="footnotes">`。
-/// 与 inline_footnotes 的区别：那个为微信读书**重造** marker，这个为第三方书**保留脚标原样**。
+/// 与 inline_footnotes 的区别：那个为微信读书**重造** marker，这个为第三方书**尽量保留脚标原样**。
 pub fn preserve_relink_footnotes(html: &str, index: &std::collections::HashMap<String, String>, mode: crate::optimize::FootnoteMode) -> String {
     use crate::optimize::FootnoteMode;
     let mut appended: Vec<String> = Vec::new();
@@ -388,12 +402,21 @@ pub fn preserve_relink_footnotes(html: &str, index: &std::collections::HashMap<S
         if seen.insert(frag.clone()) {
             // 注释放章末。不加可点回链——真机实测 reMarkable 会丢弃"marker↔注释"互指里较晚那条
             // (注释回链)，加了也点不了、反成死链迷惑人。返回靠 xochitl 原生。
-            appended.push(format!("<p id=\"{frag}\">{}</p>", deprefix_footnote_hrefs(text)));
+            appended.push(footnote_block(&frag, &deprefix_footnote_hrefs(text)));
         }
         counter += 1;
         Some(if sup_wrapped {
-            // 图标留在原 <sup> 内(纯视觉、去链)，[N] 独立跟在 sup 后(正常大小、可点)
-            format!("<sup>{content}</sup><a href=\"#{frag}\">[{counter}]</a>")
+            // 2026-09-23 真机改：图标 marker 曾经"留在原 <sup> 内、纯视觉不动"，但跟 Inline 分支同一个
+            // 病根——xochitl 对无宽高约束的 <img> 按固有像素渲染，DuoKan 常见的 80×80 图标在正文里
+            // 撑成一整块巨大黑方块（真机《甲午：摇摆的战争》坐实）。不能靠 CSS 兜底：本项目 CSS 只认
+            // 外链裸元素选择器，`sup img{}` 这种描述符选择器风险未知，而且这个图标本来就是纯装饰、
+            // 后面紧跟的 `[N]` 已经是可点的正常大小标记——直接丢图标，比硬凑一个像素尺寸更稳。
+            // 非图标的 sup 包裹内容（少见，比如纯数字）不动，只有真含 <img> 才丢。
+            if content.contains("<img") {
+                format!("<a href=\"#{frag}\">[{counter}]</a>")
+            } else {
+                format!("<sup>{content}</sup><a href=\"#{frag}\">[{counter}]</a>")
+            }
         } else {
             format!("<a href=\"#{frag}\">{content}</a> <a href=\"#{frag}\">[{counter}]</a>")
         })
@@ -428,7 +451,7 @@ pub fn preserve_relink_footnotes(html: &str, index: &std::collections::HashMap<S
                         return format!("<span class=\"cj-fnote\">〔{}〕</span>", inline_note_text(&index[&frag]));
                     }
                     if seen.insert(frag.clone()) {
-                        appended.push(format!("<p id=\"{frag}\">{}</p>", deprefix_footnote_hrefs(&index[&frag])));
+                        appended.push(footnote_block(&frag, &deprefix_footnote_hrefs(&index[&frag])));
                     }
                     format!("<a href=\"#{frag}\">{content}</a>")
                 }
@@ -471,7 +494,7 @@ mod footnote_inline_tests {
         let out = inline_footnotes(text_chapter, &map, &mut 0);
         assert!(out.contains(r##"<a href="#a4ZX">1</a>"##), "marker 未变朴素同章锚点: {out}");
         assert!(!out.contains("epub:type"), "不应残留 epub:type: {out}");
-        assert!(out.contains(r##"<p id="a4ZX">"##), "章末缺可见注释 <p id>: {out}");
+        assert!(out.contains(r##"<div id="a4ZX">"##), "章末缺可见注释 <div id>: {out}");
         assert!(out.contains(r##"<div class="footnotes">"##), "缺章末注释区: {out}");
         assert!(out.contains("警司注释文本"), "注释文本丢失: {out}");
         assert!(out.contains(r##"href="#a507""##), "回链未去跨文件前缀: {out}");
@@ -565,7 +588,7 @@ mod footnote_inline_tests {
         let out = inline_footnotes(text_chapter, &map, &mut 0);
         assert!(out.contains(r##"<a href="#a51T">3</a>"##), "纯跨文件 marker 未改同章锚点: {out}");
         assert!(!out.contains("part0040.html"), "跨文件 href 前缀未去掉: {out}");
-        assert!(out.contains(r##"<p id="a51T">"##), "注释未内联本章章末: {out}");
+        assert!(out.contains(r##"<div id="a51T">"##), "注释未内联本章章末: {out}");
         assert!(out.contains("高级督察俗称大帮"), "注释文本丢失: {out}");
         assert!(!out.contains("part0038.html"), "注释内回链未去跨文件前缀: {out}");
     }
@@ -665,13 +688,54 @@ mod optimizer_footnote_tests {
         let out = preserve_relink_footnotes(chapter, &index, crate::optimize::FootnoteMode::Anchor);
         assert!(out.contains(r##"<a href="#n12">12</a>"##), "跨文件 marker 未改成同章锚点: {out}");
         assert!(!out.contains("notes.xhtml"), "跨文件 href 前缀未去掉: {out}");
-        assert!(out.contains(r##"<p id="n12">第十二条注释文本</p>"##), "注释未搬进本章章末: {out}");
+        assert!(out.contains(r##"<div id="n12">第十二条注释文本</div>"##), "注释未搬进本章章末: {out}");
         // 注释区必须落在 </body> 之内
         let body_end = out.find("</body>").unwrap();
         assert!(out[..body_end].contains(r##"<div class="footnotes">"##), "注释区落到 </body> 外: {out}");
         // Inline 模式：注释就地内联〔…〕、不跳转、无章末 div
         let inl = preserve_relink_footnotes(chapter, &index, crate::optimize::FootnoteMode::Inline);
         assert!(inl.contains("〔第十二条注释文本〕") && !inl.contains(r##"<div class="footnotes">"##) && !inl.contains(r##"href="#n12""##), "Inline 应内联常显不跳转: {inl}");
+    }
+
+    // 注释源块自带块级标签（<aside>/<li>/<div> 包一层 <p>）是常见形态；collect_footnote_notes 只搬
+    // 内层 html，若外层落点仍用 <p> 包一遍就会产出 <p><p>…</p></p> 这种非法内容模型（<p> 不能合法
+    // 含块级子元素）。这条测试端到端跑 collect_footnote_notes → preserve_relink_footnotes 全链路，
+    // 断言输出永远是 <div id> 落点、不出现嵌套 <p>。
+    #[test]
+    fn note_source_block_with_nested_p_does_not_produce_illegal_nested_p() {
+        let notes_chapter = r##"<aside class="footnote" id="fn1"><p>注释正文，含<a href="#backref">回链</a></p></aside>"##;
+        let mut referenced = HashSet::new();
+        referenced.insert("fn1".to_string());
+        let (_, idx_vec) = collect_footnote_notes(notes_chapter, &referenced, true);
+        let index: HashMap<String, String> = idx_vec.into_iter().collect();
+        assert!(index.get("fn1").unwrap().contains("<p>"), "前提：源块内层确实带 <p>，测试才有意义");
+
+        let chapter = r#"<html><body><p>正文<a href="notes.xhtml#fn1">1</a>续</p></body></html>"#;
+        let out = preserve_relink_footnotes(chapter, &index, crate::optimize::FootnoteMode::Anchor);
+        assert!(!out.contains("<p><p>") && !out.contains("<p><a href=\"#backref\">"), "落点不该是 <p> 包 <p>: {out}");
+        assert!(out.contains(r#"<div id="fn1"><p>注释正文"#), "落点应是 <div id> 包住源块内层 html 原样: {out}");
+    }
+
+    /// Anchor 模式下 `<sup>` 包裹的**真** noteref 图标 marker 必须丢弃，只留 `[N]`（真实导入书较少见
+    /// 这种形态，多数走下面 `fix_duokan_markers` 那条——这条测的是防御性兜底，不依赖 duokan 特征）。
+    #[test]
+    fn anchor_drops_sup_wrapped_image_marker_keeps_bracket_number() {
+        let mut index: HashMap<String, String> = HashMap::new();
+        index.insert("fo14".to_string(), "注释文字".to_string());
+        let chapter = r##"<p>正文<sup><a type="noteref" href="#fo14"><img alt="" src="../Images/note.png"/></a></sup>续</p>"##;
+        let out = preserve_relink_footnotes(chapter, &index, crate::optimize::FootnoteMode::Anchor);
+        assert!(!out.contains("<img"), "图标 marker 应被丢弃: {out}");
+        assert!(out.contains(r##"<a href="#fo14">[1]</a>"##), "应保留可点的 [N] 标记: {out}");
+    }
+
+    /// 真机《甲午：摇摆的战争》坐实的真实结构：`duokan-footnote` 类挂在外层 `<a>` 上（不在 `<img>`
+    /// 自己的 class 里），此前 `fix_duokan_markers` 只查 `img_inner` 会漏判、80×80 图标原样穿透到
+    /// xochitl，按固有像素撑成巨大方块。
+    #[test]
+    fn fix_duokan_markers_detects_class_on_outer_a_not_just_img() {
+        let out = fix_duokan_markers(r##"<sup><a class="duokan-footnote" href="#fo14" id="foref14"><img alt="" class="exs" src="../Images/note.png"/></a></sup>"##);
+        assert!(!out.contains("<img"), "图标应被换成干净上标数字: {out}");
+        assert!(out.contains(r##"<a href="#fo14" id="foref14"><sup>1</sup></a>"##), "应换成可点上标: {out}");
     }
 
     #[test]

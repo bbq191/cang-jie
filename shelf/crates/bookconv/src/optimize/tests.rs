@@ -356,6 +356,30 @@
         assert!(x.contains("<p>正文</p>"), "正文结构被破坏: {x}");
     }
 
+    /// 真机《甲午：摇摆的战争》坐实的真实形态：章节文件**没有扩展名**（`Chapter_2`/`Chapter_7_1`
+    /// 这种命名），只按扩展名判断的 `is_html` 会把它整个漏过、字体锁/脚注图标全都没清洗——用户反馈
+    /// "字体锁死改不了"。这条端到端跑一遍优化器，断言无扩展名的章节也真的被处理了。
+    #[test]
+    fn strips_font_lock_on_extensionless_chapter_file() {
+        let mut buf = Vec::new();
+        {
+            let mut zw = ZipWriter::new(Cursor::new(&mut buf));
+            let stored = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
+            zw.start_file("mimetype", stored).unwrap();
+            zw.write_all(b"application/epub+zip").unwrap();
+            zw.start_file("EPUB/xhtml/Chapter_2", stored).unwrap();
+            zw.write_all(r#"<?xml version="1.0"?><html><body><p style="font-size:16px;font-family:'PingFang SC';">正文</p></body></html>"#.as_bytes()).unwrap();
+            zw.finish().unwrap();
+        }
+        let (out, rep) = optimize_epub(&buf).unwrap();
+        assert_eq!(rep.html_files, 1, "无扩展名的章节也该被数进 html_files: {:?}", rep);
+        let mut ar = ZipArchive::new(Cursor::new(&out)).unwrap();
+        let mut x = String::new();
+        ar.by_name("EPUB/xhtml/Chapter_2").unwrap().read_to_string(&mut x).unwrap();
+        assert!(!x.contains("font-family"), "无扩展名章节的字体锁未剥: {x}");
+        assert!(x.contains("<p>正文</p>"), "正文结构被破坏: {x}");
+    }
+
     /// Calibre `wash_epub.sh` 洗过的 duokan 脚注（《人骨拼图》AZW3→EPUB 真实形态）：同文件 href 带文件名、
     /// 标记是真 `<img>` + `<a id="c_2_1">`、注释块 `<li id="a_2_1">` 内回链 `href="part0004.html#c_2_1"`
     /// 构成真 2-环。优化后：href 归一裸锚、标记换上标且 id 保留、回链去链、注释留在原 li 里不被搬成

@@ -51,7 +51,7 @@ pub(super) fn remove_empty_pages(entries: &mut Vec<Entry>, rep: &mut WashReport)
             continue;
         }
         if let Some(e) = entries.iter().find(|e| &e.name == p) {
-            if is_html(&e.name) && is_empty_page(&String::from_utf8_lossy(&e.data)) {
+            if is_html_entry(&e.name, &e.data) && is_empty_page(&String::from_utf8_lossy(&e.data)) {
                 removed.push(p.clone());
             }
         }

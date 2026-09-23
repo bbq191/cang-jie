@@ -103,7 +103,7 @@ pub(super) fn drop_dead_refs(entries: &mut [Entry], rep: &mut WashReport) {
     let mut total = 0;
     for e in entries.iter_mut() {
         let is_css = e.name.to_ascii_lowercase().ends_with(".css");
-        if !is_css && !is_html(&e.name) {
+        if !is_css && !is_html_entry(&e.name, &e.data) {
             continue;
         }
         let Ok(text) = std::str::from_utf8(&e.data) else { continue };

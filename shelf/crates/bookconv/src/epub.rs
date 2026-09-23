@@ -37,6 +37,18 @@ pub struct Book {
     pub chapters: Vec<Chapter>,
     /// 章节引用的嵌入资源；默认空（墨香下书路径不用）。FB2/MOBI 转换填插图。
     pub resources: Vec<Resource>,
+    /// 显式目录。空＝沿用"每个有标题的章节文件一条目录"；非空＝按这里生成 nav，条目可以指向
+    /// 文件内锚点、也可以多条指向同一个文件（PDF→EPUB 单文件模式/分组标题，见
+    /// `pdf_ingest::to_epub`）。
+    pub nav: Vec<NavEntry>,
+}
+
+/// 一条目录：`href` 是相对 `OEBPS/` 的章节文件名，可带 `#锚点`。
+#[derive(Clone, Debug, PartialEq)]
+pub struct NavEntry {
+    pub title: String,
+    pub level: i64,
+    pub href: String,
 }
 
 /// 对齐 xml.sax.saxutils.escape：只转 & < >（不动引号）。
@@ -139,18 +151,26 @@ fn content_opf(book: &Book) -> String {
 /// 生成嵌套 nav：level<=1 为顶层 <li>，level>=2 收进上一个顶层项的子 <ol>。
 /// 只收非空标题章（整章一页后每章都带标题）。仅两层——微信读书目录最多部/章两级。
 fn nav_body(book: &Book) -> String {
-    let visible: Vec<(usize, &Chapter)> =
-        book.chapters.iter().enumerate().filter(|(_, c)| !c.title.is_empty()).collect();
+    let visible: Vec<NavEntry> = if book.nav.is_empty() {
+        book.chapters
+            .iter()
+            .enumerate()
+            .filter(|(_, c)| !c.title.is_empty())
+            .map(|(i, c)| NavEntry { title: c.title.clone(), level: c.level, href: chapter_filename(i) })
+            .collect()
+    } else {
+        book.nav.iter().filter(|n| !n.title.is_empty()).cloned().collect()
+    };
     let mut out = String::new();
     let mut sub_open = false; // 是否有未闭合的子 <ol>
-    for (idx, (i, ch)) in visible.iter().enumerate() {
-        let link = format!("<a href=\"{}\">{}</a>", chapter_filename(*i), xesc(&ch.title));
+    for (idx, ch) in visible.iter().enumerate() {
+        let link = format!("<a href=\"{}\">{}</a>", xesc(&ch.href), xesc(&ch.title));
         if ch.level <= 1 {
             if sub_open {
                 out.push_str("        </ol>\n      </li>\n");
                 sub_open = false;
             }
-            let has_child = visible.get(idx + 1).is_some_and(|(_, n)| n.level >= 2);
+            let has_child = visible.get(idx + 1).is_some_and(|n| n.level >= 2);
             if has_child {
                 out.push_str(&format!("      <li>{link}\n        <ol>\n"));
                 sub_open = true;
@@ -202,11 +222,34 @@ fn has_img_tag(html: &str) -> bool {
     html.as_bytes().windows(4).any(|w| w.eq_ignore_ascii_case(b"<img"))
 }
 
+/// PDF→EPUB 颜色 span 探测（`optimize_pdf_to_epub` 生成的 `class="cj-cN"`）——共享 CSS 现在除了
+/// `pdf-img.css` 的图片尺寸规则，还可能带颜色规则（见 `assemble_pdf_derived`），纯文字页也可能
+/// 用到颜色，不能再只按"有没有 `<img`"决定要不要挂 `<link>`（2026-09-23）。
+fn has_color_span(html: &str) -> bool {
+    html.contains("class=\"cj-c")
+}
+
 /// 把 Book 打包成 EPUB 字节。组装前对每章：先 fix_internal_links（脚注同文件锚点规整），
 /// 再 break_footnote_cycles（拆双向脚注互指对——reMarkable 索引器遇互指对会整对丢弃致点不动）。
 pub fn assemble(book: &mut Book) -> Result<Vec<u8>, String> {
     assemble_with(book, AssembleOpts::default())
 }
+
+/// PDF→EPUB 转出的书专用：`<img>` 没有 `width`/`height`（源自 PDF 页内嵌图，原始像素尺寸），也没有任何
+/// 外链 CSS 撑住布局——跟 `comic_split` 早年撞过的坑同一个根因（`repack_with_comic_css` 头注）：xochitl
+/// 原生阅读器走标准文档流，无 CSS 兜底的 `<img>` 不撑满、甚至整个不出现在渲染结果里（2026-09-23 真机
+/// 投一本真实 PDF 手册核实：内部生成的预览 PDF 里 `pdfimages -list` 空，24 张图一张没有）。跟漫画
+/// `COMIC_CSS`（`width:100%` 强撑满整页）不是一回事——PDF 里的图是跟正文混排的小插图/二维码，不该被
+/// 拉伸到整页宽；用 `max-width:100%` 只封顶超宽图，不撑大本来就小的图，也不清零正文页边距。
+/// `extra_css`：`optimize_pdf_to_epub` 返回的颜色 CSS（`.cj-cN{color:#rrggbb;}` 逐条，可能是空
+/// 串——全书没解析出任何非黑颜色时就是空）。拼进同一份共享样式表而不是另起一个文件：颜色规则
+/// 也得挂在"含 `<img` 或颜色 span 才 `<link>`"这同一条判定里，两份文件反而要维护两条判定逻辑。
+pub fn assemble_pdf_derived(book: &mut Book, extra_css: &str) -> Result<Vec<u8>, String> {
+    let css = format!("{PDF_IMG_CSS}{extra_css}");
+    assemble_with(book, AssembleOpts { shared_css: Some(SharedCss { file: "pdf-img.css", id: "pdf-img-css", css: &css }), consume_resources: false })
+}
+
+const PDF_IMG_CSS: &str = "img{max-width:100%;height:auto;}\n";
 
 pub(crate) fn assemble_with(book: &mut Book, opts: AssembleOpts) -> Result<Vec<u8>, String> {
     if book.chapters.is_empty() {
@@ -250,7 +293,7 @@ pub(crate) fn assemble_with(book: &mut Book, opts: AssembleOpts) -> Result<Vec<u
             z.start_file(format!("OEBPS/{}", chapter_filename(i)), stored)
                 .map_err(|e| e.to_string())?;
             let link = match &opts.shared_css {
-                Some(c) if has_img_tag(&ch.html_body) => format!("<link rel=\"stylesheet\" type=\"text/css\" href=\"{}\"/>", c.file),
+                Some(c) if has_img_tag(&ch.html_body) || has_color_span(&ch.html_body) => format!("<link rel=\"stylesheet\" type=\"text/css\" href=\"{}\"/>", c.file),
                 _ => String::new(),
             };
             z.write_all(chapter_doc(ch, &link).as_bytes()).map_err(|e| e.to_string())?;
@@ -292,6 +335,7 @@ mod nav_tests {
             },
             chapters: vec![ch("第一部", 1), ch("第一章", 2), ch("第二章", 2), ch("第二部", 1)],
             resources: vec![],
+            nav: Vec::new(),
         };
         let nav = nav_body(&book);
         // 第一部带子 ol 包住两章，第二部无子节平铺
@@ -311,6 +355,7 @@ mod nav_tests {
             },
             chapters: vec![Chapter { title: "章".into(), html_body: "<p><img src=\"images/a.png\"/></p>".into(), level: 1 }],
             resources: vec![Resource { path: "images/a.png".into(), media_type: "image/png".into(), bytes: vec![1, 2, 3, 4] }],
+            nav: Vec::new(),
         };
         let opf = content_opf(&book);
         assert!(opf.contains("id=\"res1\" href=\"images/a.png\" media-type=\"image/png\""), "manifest 缺资源项: {opf}");
@@ -332,6 +377,7 @@ mod nav_tests {
             },
             chapters: vec![ch("一", 1), ch("二", 1)],
             resources: vec![],
+            nav: Vec::new(),
         };
         let nav = nav_body(&book);
         assert!(!nav.contains("<ol>"), "全顶层不应有子 ol: {nav}");
@@ -347,6 +393,7 @@ mod nav_tests {
                 Chapter { title: "字页".into(), html_body: "<p>纯文字</p>".into(), level: 1 },
             ],
             resources: vec![Resource { path: "images/a.png".into(), media_type: "image/png".into(), bytes: vec![9; 64] }],
+            nav: Vec::new(),
         }
     }
 
@@ -376,4 +423,33 @@ mod nav_tests {
         assert!(!get("OEBPS/chap_0002.xhtml").contains("<link"), "纯文字章不挂");
         assert!(get("OEBPS/content.opf").contains("<item id=\"xcss\" href=\"x.css\" media-type=\"text/css\"/></manifest>"));
     }
+
+    /// `assemble_pdf_derived` 是 book-serve PDF→EPUB 路径实际调用的入口（2026-09-23 真机投一本真实 PDF
+    /// 手册发现：没有这条 CSS 时图片在 xochitl 原生阅读器里完全不出现，见函数头注）。这里只确认它正确
+    /// 接上了 `pdf-img.css`/`max-width`，不重复 `shared_css_goes_last...` 已经测过的通用机制。
+    #[test]
+    fn assemble_pdf_derived_links_max_width_css_to_image_chapters_only() {
+        let out = assemble_pdf_derived(&mut two_chapter_book(true), "").unwrap();
+        let entries = zip_names_and_text(out);
+        let get = |n: &str| String::from_utf8(entries.iter().find(|(k, _)| k == n).unwrap().1.clone()).unwrap();
+        assert_eq!(get("OEBPS/pdf-img.css"), "img{max-width:100%;height:auto;}\n");
+        assert!(get("OEBPS/chap_0001.xhtml").contains("href=\"pdf-img.css\""), "含图的章要挂 pdf-img.css");
+        assert!(!get("OEBPS/chap_0002.xhtml").contains("<link"), "纯文字章不挂");
+        assert!(get("OEBPS/content.opf").contains("<item id=\"pdf-img-css\" href=\"pdf-img.css\" media-type=\"text/css\"/>"));
+    }
+
+    #[test]
+    fn explicit_nav_entries_can_share_a_file_and_carry_fragments() {
+        let mut b = two_chapter_book(false);
+        b.nav = vec![
+            NavEntry { title: "栏目".into(), level: 1, href: "chap_0001.xhtml".into() },
+            NavEntry { title: "文章甲".into(), level: 2, href: "chap_0001.xhtml#a".into() },
+            NavEntry { title: "文章乙".into(), level: 2, href: "chap_0002.xhtml#b".into() },
+        ];
+        let nav = nav_body(&b);
+        assert!(nav.contains("<li><a href=\"chap_0001.xhtml\">栏目</a>\n        <ol>"), "{nav}");
+        assert!(nav.contains("<li><a href=\"chap_0001.xhtml#a\">文章甲</a></li>") && nav.contains("<li><a href=\"chap_0002.xhtml#b\">文章乙</a></li>"), "{nav}");
+        assert!(!nav.contains("图页") && !nav.contains("字页"), "有显式目录时不再按章节生成: {nav}");
+    }
+
 }

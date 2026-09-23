@@ -58,6 +58,7 @@ pub fn build_article_epub(url: &str) -> Result<(Vec<u8>, String), String> {
         },
         chapters: vec![Chapter { title: title.clone(), html_body: body, level: 1 }],
         resources,
+        nav: Vec::new(),
     };
     let epub = common::assemble_optimized(&mut book)?;
     Ok((epub, title))

@@ -81,6 +81,7 @@ pub fn fb2_to_epub(data: &[u8]) -> Result<(Vec<u8>, String), String> {
         },
         chapters,
         resources,
+        nav: Vec::new(),
     };
     let optimized = common::assemble_optimized(&mut book)?;
     Ok((optimized, title))

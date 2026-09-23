@@ -40,6 +40,28 @@
         assert!(filter_css("p{margin:1em 0}", &k).contains("p{margin:1em 0;}"));
     }
 
+    /// 真机《甲午：摇摆的战争》坐实：`.duokan-footnote-item{font-weight:bold}` 导致全书注释永远加粗，
+    /// 用户报的是"跳转注释后字体不对"、追下去其实是加粗。2026-09-23 拍板：只剥**注释容器类**的字重
+    /// （不碰正文语义加粗，§03av 原则②仍然有效），注释字号固定比正文小一档（相对单位）。
+    #[test]
+    fn footnote_container_selector_loses_bold_gains_smaller_relative_size() {
+        let o = WashOpts::default();
+        assert!(is_footnote_container_selector(".duokan-footnote-item"));
+        assert!(is_footnote_container_selector(".footnotes"));
+        assert!(is_footnote_container_selector(".cj-fnote"));
+        assert!(!is_footnote_container_selector("p"), "普通正文选择器不该被当成注释容器");
+
+        let css = ".duokan-footnote-item{margin:0 0.6em;font-weight:bold;text-align:justify}";
+        let out = filter_css(css, &o);
+        assert!(!out.contains("font-weight"), "注释容器类的字重必须剥: {out}");
+        assert!(out.contains(&format!("font-size:{FOOTNOTE_FONT_SIZE}")), "注释容器类要补字号: {out}");
+        assert!(out.contains("text-align:justify"), "其它声明不受影响: {out}");
+
+        // 正文语义加粗不受影响（§03av 原则②）。
+        let body = filter_css("p.emphasis{font-weight:bold;color:#333}", &o);
+        assert!(body.contains("font-weight:bold"), "正文加粗必须保留: {body}");
+    }
+
     #[test]
     fn strips_background_image_keeps_font_src() {
         let o = WashOpts::default();
@@ -406,6 +428,16 @@
         // keep_para_spacing 只管段落呼吸感，不该连带保留图片边距——不管这个档位开没开，figure/figcaption 都清零。
         let keep = wash_css(&WashOpts { keep_para_spacing: true, ..Default::default() });
         assert!(keep.contains("figure{margin:0;padding:0;}") && keep.contains("figcaption{margin:0;padding:0;}"), "{keep}");
+    }
+
+    /// 兜底：书压根没给注释块写过 CSS（纯靠我们自己生成的 `.footnotes`/`.cj-fnote`）时，"注释比正文
+    /// 小一号"这条要求也得满足，不能只靠 `filter_css` 改书自带规则那条路（那条路对这种书压根碰不到）。
+    #[test]
+    fn wash_css_gives_footnote_classes_smaller_relative_size_as_bare_selectors() {
+        let css = wash_css(&WashOpts::default());
+        assert!(css.contains(&format!(".footnotes{{font-size:{FOOTNOTE_FONT_SIZE};}}")), "{css}");
+        assert!(css.contains(&format!(".cj-fnote{{font-size:{FOOTNOTE_FONT_SIZE};}}")), "{css}");
+        assert!(!css.contains(".footnotes,.cj-fnote") && !css.contains(".cj-fnote,.footnotes"), "禁止逗号选择器: {css}");
     }
 
     #[test]

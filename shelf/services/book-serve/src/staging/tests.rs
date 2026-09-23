@@ -112,6 +112,23 @@ fn optimize_gates_and_runs_single_full_pass() {
     assert!(e.optimized && e.level == "full");
 }
 
+/// 2026-09-23 接入质量门：优化产物没过 `check_epub_file` 就该整体失败，母版库里的原书原样留着——
+/// 不能让一份带断链引用的半成品覆盖掉用户原来能正常读的书。带 `alt` 文字的死图 `drop_dead_refs`
+/// 不会删（"不冒丢内容风险"，见该函数文档），刚好是个真实存在、优化器管不到的断链场景。
+#[test]
+fn optimize_rejects_and_leaves_original_untouched_when_quality_gate_fails() {
+    let t = tempfile::tempdir().unwrap();
+    let s = staging(&t);
+    let opf = r#"<package version="2.0"><metadata><dc:title>t</dc:title></metadata><manifest><item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="c1"/></spine></package>"#;
+    let epub = mini_epub(&[("content.opf", opf), ("c1.xhtml", r#"<html><body><img src="missing.png" alt="重要插图说明"/></body></html>"#)]);
+    s.stage_new("x.epub", &epub).unwrap();
+    let err = s.optimize("x.epub", |_, _| {}).unwrap_err();
+    assert!(err.contains("质量门") && err.contains("正文资源引用命中率过低"), "{err}");
+    let dir = t.path().join("staging");
+    assert_eq!(std::fs::read(dir.join("x.epub")).unwrap(), epub, "母版原样保留，没被半成品覆盖");
+    assert!(!std::fs::read_dir(&dir).unwrap().any(|e| e.unwrap().file_name().to_string_lossy().contains("optimizing.tmp")), "不留半成品");
+}
+
 #[test]
 fn optimize_temp_file_dot_prefixed_so_list_does_not_surface_mid_flight_product() {
     // 真机回归（2026-09-19，《镖人》552MB 全集）：流式优化耗时到分钟级，临时产物在目录里存在

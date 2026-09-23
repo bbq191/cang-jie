@@ -33,7 +33,7 @@ pub(super) fn body_font_size(page: &[PositionedChar]) -> f64 {
 /// 连续（同页、行号相邻）的候选行合并成一个标题；不同字号分档映射 `level`（最大字号＝1，最多
 /// 3 档，超出封顶到 3）。**全书零候选**时不在这里兜底——那是调用方（`optimize_pdf_to_epub`）
 /// 的责任：识别不出结构就按 [`FALLBACK_CHUNK_PAGES`] 固定页数分块，不假装有真实章节。
-pub(crate) fn detect_headings_by_font_size(pages: &[Vec<PositionedChar>]) -> Vec<Heading> {
+pub(crate) fn detect_headings_by_font_size(pages: &[PageContent]) -> Vec<Heading> {
     let mut headings = Vec::new();
     // 全书统一的"字号→level"映射：先收集所有页面里出现过的、判定为标题候选的字号，降序去重，
     // 取前 3 档；不同页各自独立判"是不是标题候选"（相对各自页的正文基准），但档位映射是全书
@@ -41,11 +41,12 @@ pub(crate) fn detect_headings_by_font_size(pages: &[Vec<PositionedChar>]) -> Vec
     let mut candidate_sizes: Vec<i64> = Vec::new();
     let mut per_page_body: Vec<f64> = Vec::with_capacity(pages.len());
     for page in pages {
-        let body = body_font_size(page);
+        let chars = &page.chars;
+        let body = body_font_size(chars);
         per_page_body.push(body);
-        let max_line = page.iter().map(|c| c.line).max().unwrap_or(0);
+        let max_line = chars.iter().map(|c| c.line).max().unwrap_or(0);
         for line_no in 0..=max_line {
-            let line_chars: Vec<&PositionedChar> = page.iter().filter(|c| c.line == line_no && !c.ch.is_whitespace()).collect();
+            let line_chars: Vec<&PositionedChar> = chars.iter().filter(|c| c.line == line_no && !c.ch.is_whitespace()).collect();
             if line_chars.is_empty() {
                 continue;
             }
@@ -68,11 +69,12 @@ pub(crate) fn detect_headings_by_font_size(pages: &[Vec<PositionedChar>]) -> Vec
     };
 
     for (page_idx, page) in pages.iter().enumerate() {
+        let chars = &page.chars;
         let body = per_page_body[page_idx];
-        let max_line = page.iter().map(|c| c.line).max().unwrap_or(0);
+        let max_line = chars.iter().map(|c| c.line).max().unwrap_or(0);
         let mut i = 0usize;
         while i <= max_line {
-            let line_chars: Vec<&PositionedChar> = page.iter().filter(|c| c.line == i && !c.ch.is_whitespace()).collect();
+            let line_chars: Vec<&PositionedChar> = chars.iter().filter(|c| c.line == i && !c.ch.is_whitespace()).collect();
             if line_chars.is_empty() {
                 i += 1;
                 continue;
@@ -86,12 +88,12 @@ pub(crate) fn detect_headings_by_font_size(pages: &[Vec<PositionedChar>]) -> Vec
             // （行内原有的词间空格），只有判"是不是标题候选"用的字号统计才该滤掉空白字符——
             // 之前误用同一份过滤后的 line_chars 拼标题，"1 Introduction" 会被拼成
             // "1Introduction"，2026-09-19 真机样本核对时发现。
-            let title_line = |ln: usize| -> String { page.iter().filter(|c| c.line == ln).map(|c| c.ch).collect::<String>().trim().to_string() };
+            let title_line = |ln: usize| -> String { chars.iter().filter(|c| c.line == ln).map(|c| c.ch).collect::<String>().trim().to_string() };
             let mut title: String = title_line(i);
             let level = level_of(avg);
             let mut j = i + 1;
             while j <= max_line {
-                let next_chars: Vec<&PositionedChar> = page.iter().filter(|c| c.line == j && !c.ch.is_whitespace()).collect();
+                let next_chars: Vec<&PositionedChar> = chars.iter().filter(|c| c.line == j && !c.ch.is_whitespace()).collect();
                 if next_chars.is_empty() {
                     break;
                 }
