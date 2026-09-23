@@ -34,7 +34,7 @@
   <text x="662" y="236" font-size="12.5" fill="#555">　中文 2em / 西文 1.2em</text>
   <text x="662" y="262" font-size="13.5" fill="#222">· 灰字 → 纯黑，细字 → 常规</text>
   <text x="662" y="284" font-size="12.5" fill="#555">　墨水屏上浅灰细字几乎看不见；</text>
-  <text x="662" y="304" font-size="12.5" fill="#555">　彩色字不动（仅 EPUB 线，见 §8）</text>
+  <text x="662" y="304" font-size="12.5" fill="#555">　彩色字不动（两条线统一，见 §8 T2）</text>
 
   <rect x="30" y="378" width="899" height="46" rx="10" fill="#fafafa" stroke="#ccc"/>
   <text x="480" y="398" text-anchor="middle" font-size="13" fill="#333">所有保留/新增的规则都写进外链 cangjie-wash.css，用单个元素或单个 class 选择器、每条声明带分号——</text>

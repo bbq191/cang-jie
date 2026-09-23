@@ -85,7 +85,7 @@ pub(super) fn parse_css_color(value: &str) -> Option<(u8, u8, u8)> {
 
 /// 是否是"暗到中"的无彩色（灰）——R≈G≈B 且不是纯黑、也不是近白。这类文字在 e-ink 上发虚，强制纯黑。
 /// 近白(≥240)排除：可能是浅色背景/有意的白底反白，压黑会毁掉白字设计。
-pub(super) fn achromatic_dark(r: u8, g: u8, b: u8) -> bool {
+pub fn achromatic_dark(r: u8, g: u8, b: u8) -> bool {
     let mx = r.max(g).max(b);
     let mn = r.min(g).min(b);
     mx.saturating_sub(mn) <= 24 && (1..=239).contains(&mx)
