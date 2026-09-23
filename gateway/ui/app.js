@@ -579,7 +579,7 @@ const DEST_ORDER=['notebook','obsidian','both'];
 function renderNotes(sec){sec.innerHTML=`
   <div class="card"><h2>${T('notes.title')}</h2>
     <p class="lead">${T('notes.lead')}</p>
-    <div class="row"><span class="small">${T('notes.bookLabel')}</span><select id="nbook" style="flex:1;min-width:10em"></select><button class="btn" id="nrescan" title="${T('notes.rescanTitle')}">${T('notes.rescanBtn')}</button></div>
+    <div class="row"><span class="small">${T('notes.bookLabel')}</span><select id="nbook" style="flex:1;min-width:10em"></select><button class="btn" id="nrescan" title="${T('notes.rescanTitle')}">${T('notes.rescanBtn')}</button><button class="btn" id="nkoimport" title="${T('notes.koreaderImportTitle')}">${T('notes.koreaderImportBtn')}</button></div>
     <div class="row small" id="nsum"></div>
   </div>
   <div class="subnav" id="nsubnav"><button class="on">${T('notes.subnav.browse')}</button><button>${T('notes.subnav.organize')}</button><button>${T('notes.subnav.trash')}</button><button hidden>${T('notes.subnav.import')}</button></div>
@@ -731,6 +731,8 @@ function renderNotes(sec){sec.innerHTML=`
   // 重新摄取。实际数据风险不大（已校对文本/条目不会被覆盖，见 notecore::ingest 的增量规则），但操作
   // 本身不常用、容易误触，补一句说清楚"安全在哪"的确认。
   guardClick($('#nrescan',sec),async()=>{if(!book)return;if(!await confirmDialog(T('notes.confirmRescan')))return;await flushPendingText();await postJ(bookApi('ink',`/rescan`),{});refresh()});
+  // KOReader 回流跟当前选的书无关（拉全量高亮/生词、内部按增量规则合并），不用 bookApi/不用 book 判空。
+  guardClick($('#nkoimport',sec),async()=>{const r=await postJ('/api/ink/koreader/import',{});if(r.ok===false)return;toast(T('notes.koreaderImportDone',r),'ok');refresh()});
   guardClick($('#npurge',sec),async()=>{if(!book)return;
     const items=trashedEntries();
     if(!items.length){toast(T('notes.trash.noneToPurge'),'warn');return}
