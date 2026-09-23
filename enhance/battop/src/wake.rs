@@ -1,81 +1,76 @@
-//! 唤醒源事件(设备/子系统级)：从 journal 内核日志读 `PM: active wakeup source: <NAME>`，落 wakes.tsv 缓存。
-//! journalctl 是采样进程里唯一的 fork：读内核日志较贵，故 ①按小时级缓存（wakes.tsv 超 50 分钟才刷新），
-//! ②**增量读取**（只问上次缓存最新事件之后的部分，不再每次重读 31 天）。
-//! 格式："<epoch>.<us> host kernel: PM: active wakeup source: <NAME>"。
+//! 唤醒源事件（设备/子系统级）：直接读 `/dev/kmsg` 内核环形缓冲区里的 `PM: active wakeup source: <NAME>`，
+//! 落 wakes.tsv 缓存。①按小时级缓存（wakes.tsv 超 50 分钟才刷新）；②`/dev/kmsg` 本身是环形缓冲区，
+//! 只有"当前这次开机"的记录——不再有旧实现（fork `journalctl` 查 31 天内核日志）那种跨 boot 查询能力，
+//! 这是明知的退化。换来的是彻底消灭"采样进程里唯一的子进程创建"：2026-08-29 真机硬冻结的内核证据是
+//! `cgroup_procs_write → percpu_down_write(cgroup_threadgroup_rwsem) → synchronize_rcu` 卡死（见
+//! FINDINGS，那次是 systemd 反复拉起 oneshot 服务时的 cgroup 迁移，常驻化已经根治）；2026-09-23 又在
+//! 常驻模型下复现一次冻机，冻结前最后一条日志与 wakes.tsv 的刷新时间戳精确重合到秒——不是同一个
+//! `cgroup_procs_write` 机制（fork 子进程默认继承父进程 cgroup，不会走那条 syscall），但时间相关性足够
+//! 可疑：进程创建（fork/exec/wait）本身仍是这条常驻循环里唯一残留的"非纯内存操作"，干脆去掉，不再赌它
+//! 跟内核那条罕见路径有没有关系。
 use crate::util::san;
-use std::fs;
+use std::fs::{self, OpenOptions};
+use std::io::{ErrorKind, Read, Seek, SeekFrom};
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::Path;
-use std::process::{Command, Stdio};
-use std::sync::mpsc;
-use std::time::{Duration, UNIX_EPOCH};
+use std::time::UNIX_EPOCH;
 
-/// 缓存保留窗口（与面板最大的 30d 窗口对齐并留 1 天余量）。
+/// 缓存保留窗口（与面板最大的 30d 窗口对齐并留 1 天余量）。`/dev/kmsg` 实际只有当前这次开机的记录，
+/// 这个窗口现在的意义是"清理 wakes.tsv 里过老的行"，不再代表真能查到这么久——开机越久，这个窗口越接近
+/// 真实覆盖范围。
 const KEEP_SECS: u64 = 31 * 86400;
 /// wakes.tsv 多久没刷新算过期。
 const STALE_SECS: u64 = 3000;
+/// Linux 通用 ABI（x86/arm/aarch64 等，本设备 aarch64 在内）统一的 `O_NONBLOCK` 值。没有 libc crate
+/// （battop 保持零依赖），直接量入常量——非阻塞是为了读完环形缓冲区当前内容后立即返回，不等下一条
+/// 未来才会出现的新内核消息（否则会拖死整个采样循环，重蹈 `run_bounded` 当初要防的那类问题）。
+const O_NONBLOCK: i32 = 0o4000;
+/// 单条 kmsg 记录的读取缓冲；内核消息通常远小于此，超长记录会被内核截断，可接受（丢的是我们不关心
+/// 的字段，`active wakeup source: ` 这条消息很短，不会被截）。
+const KMSG_BUF: usize = 8192;
 
-/// 有界执行子进程：读满 stdout 或超 `secs` 秒即 SIGKILL，返回 stdout 字节；spawn 失败/超时返回 None。
-/// 纯 std：读线程排空管道（防子进程写满 pipe 阻塞成 D 态），主线程 recv_timeout 计时。常驻模型下
-/// 一个卡住的 journalctl 会拖死整个采样循环，故所有外部子进程必须有界。
-pub fn run_bounded(mut cmd: Command, secs: u64) -> Option<Vec<u8>> {
-    let mut child = cmd.stdout(Stdio::piped()).stderr(Stdio::null()).spawn().ok()?;
-    let Some(mut stdout) = child.stdout.take() else {
-        let _ = child.kill();
-        let _ = child.wait();
-        return None;
-    };
-    let (tx, rx) = mpsc::channel();
-    std::thread::spawn(move || {
-        let mut buf = Vec::new();
-        let _ = std::io::Read::read_to_end(&mut stdout, &mut buf);
-        let _ = tx.send(buf); // rx 可能已 drop（超时路径）→ 忽略
-    });
-    match rx.recv_timeout(Duration::from_secs(secs)) {
-        Ok(buf) => {
-            let _ = child.wait();
-            Some(buf)
-        }
-        Err(_) => {
-            let _ = child.kill(); // 超时 → 杀子进程，绝不让循环无限阻塞
-            let _ = child.wait();
-            None
-        }
-    }
-}
-
-/// 解析 journalctl `-o short-unix` 输出里的唤醒源行 → (epoch 秒, 原始源名)。
-pub fn parse_events(text: &str) -> Vec<(u64, String)> {
+/// 解析单条 `/dev/kmsg` 记录（格式 `<pri>,<seq>,<ts_us>,<flags>[,extra];<message>`，`message` 后可能还
+/// 跟着结构化字段续行，只看第一行），命中唤醒源就返回 (epoch 秒, 源名)。`boot_epoch` 把记录自带的
+/// "开机以来微秒数"换算成墙钟 epoch。
+fn parse_kmsg_record(raw: &[u8], boot_epoch: u64) -> Option<(u64, String)> {
     const KEY: &str = "active wakeup source: ";
-    let mut out = Vec::new();
-    for line in text.lines() {
-        let Some(idx) = line.find(KEY) else { continue };
-        let name = line[idx + KEY.len()..].trim();
-        if name.is_empty() {
-            continue;
-        }
-        // 行首是 epoch(可能带 .微秒)
-        let epoch: u64 = line
-            .split_whitespace()
-            .next()
-            .and_then(|t| t.split('.').next())
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(0);
-        if epoch == 0 {
-            continue;
-        }
-        out.push((epoch, name.to_string()));
+    let text = String::from_utf8_lossy(raw);
+    let first_line = text.lines().next()?;
+    let (header, msg) = first_line.split_once(';')?;
+    let ts_us: u64 = header.split(',').nth(2)?.parse().ok()?;
+    let idx = msg.find(KEY)?;
+    let name = msg[idx + KEY.len()..].trim();
+    if name.is_empty() {
+        return None;
     }
-    out
+    Some((boot_epoch + ts_us / 1_000_000, name.to_string()))
 }
 
-/// 读 journal 自 `since` 起的内核唤醒源事件。None = journalctl 起不来/超时（调用方保留旧缓存）。
+/// 读当前 `/dev/kmsg` 环形缓冲区里 epoch >= `since` 的唤醒源事件。None = 打开/读取失败（调用方保留旧
+/// 缓存）。非阻塞读到 `WouldBlock`（缓冲区当前内容已读完）即停，不等待未来的新消息。
 fn read_wake_events(since: u64) -> Option<Vec<(u64, String)>> {
-    // _TRANSPORT=kernel 跨 boot 取内核消息(不用 -k,那只当前 boot);--since 界定,输出有界
-    let mut cmd = Command::new("journalctl");
-    cmd.args(["-o", "short-unix", "--no-pager", "--since"]).arg(format!("@{since}")).arg("_TRANSPORT=kernel");
-    // 有界执行：journald 卡住最多等 20s 就 kill，本轮跳过刷缓存（用旧 wakes.tsv），绝不卡死循环。
-    let stdout = run_bounded(cmd, 20)?;
-    Some(parse_events(&String::from_utf8_lossy(&stdout)))
+    let boot_epoch = crate::util::now_secs().saturating_sub(crate::procs::read_uptime());
+    let mut f = OpenOptions::new().read(true).custom_flags(O_NONBLOCK).open("/dev/kmsg").ok()?;
+    // 显式定位到缓冲区最早的记录（内核对 /dev/kmsg 的 SEEK_SET 有专门语义），不依赖新 fd 的默认位置；
+    // 失败（比如内核不支持这个 seek）就照旧从当前位置读，尽力而为。
+    let _ = f.seek(SeekFrom::Start(0));
+    let mut out = Vec::new();
+    let mut buf = [0u8; KMSG_BUF];
+    loop {
+        match f.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => {
+                if let Some(ev) = parse_kmsg_record(&buf[..n], boot_epoch) {
+                    if ev.0 >= since {
+                        out.push(ev);
+                    }
+                }
+            }
+            Err(e) if e.kind() == ErrorKind::WouldBlock => break,
+            Err(_) => break,
+        }
+    }
+    Some(out)
 }
 
 /// 增量合并：`cache` 里 epoch >= `since` 的条目丢弃（由 `fresh` 整段重读替换，`--since` 是闭区间，同一秒的
@@ -87,9 +82,9 @@ pub fn merge_events(cache: Vec<(u64, String)>, fresh: Vec<(u64, String)>, since:
     out
 }
 
-/// 增量读回来的是空、而缓存里明明有 `>= since` 的事件：`--since` 是闭区间，健康的 journalctl 至少会
-/// 把边界那条事件读回来，所以这多半是 journalctl 出错（run_bounded 不看退出码）或 journal 被清理——
-/// 此时合并会把缓存尾部替换成空，宁可保持旧缓存。
+/// 增量读回来的是空、而缓存里明明有 `>= since` 的事件：健康情况下至少会把边界那条事件读回来，所以这
+/// 多半是 `/dev/kmsg` 打不开/读取出错（`read_wake_events` 已经在这些情况下提前返回 None，这个判据主要
+/// 兜底"打开成功但环形缓冲区被其它读者/日志轮转抢先翻过去了"这种边缘情况）。
 fn looks_broken(cache: &[(u64, String)], fresh: &[(u64, String)], since: u64) -> bool {
     fresh.is_empty() && cache.iter().any(|(e, _)| *e >= since)
 }
@@ -104,8 +99,8 @@ fn is_stale(dir: &Path, now: u64) -> bool {
         .unwrap_or(true)
 }
 
-/// 刷新唤醒缓存（仅在过期时）：增量读 journal → 合并 → 写 wakes.tsv（epoch \t 原始源名）。
-/// journalctl 失败/超时**不动旧缓存**（旧实现此处会把空结果写成空文件，丢光已缓存的唤醒历史）。
+/// 刷新唤醒缓存（仅在过期时）：增量读 `/dev/kmsg` → 合并 → 写 wakes.tsv（epoch \t 原始源名）。
+/// 读取失败/打不开**不动旧缓存**（旧实现此处会把空结果写成空文件，丢光已缓存的唤醒历史）。
 pub fn refresh_if_stale(dir: &Path, now: u64) {
     if !is_stale(dir, now) {
         return;
@@ -149,16 +144,40 @@ mod tests {
     use super::*;
 
     #[test]
-    fn parses_kernel_wake_lines() {
-        let text = "\
-1760000001.123456 rm kernel: PM: active wakeup source: mwlan
-1760000002.000000 rm kernel: unrelated
--- Journal begins at ... --
-1760000003.5 rm kernel: PM: active wakeup source:   spi1.0
-0.1 rm kernel: PM: active wakeup source: badepoch
-1760000004 rm kernel: PM: active wakeup source:
-";
-        assert_eq!(parse_events(text), vec![(1_760_000_001, "mwlan".to_string()), (1_760_000_003, "spi1.0".to_string())]);
+    fn parses_kmsg_record_wake_source() {
+        let boot_epoch = 1_760_000_000 - 100;
+        let raw = b"6,1234,100000000,-;PM: active wakeup source: mwlan";
+        assert_eq!(parse_kmsg_record(raw, boot_epoch), Some((1_760_000_000, "mwlan".to_string())));
+    }
+
+    #[test]
+    fn parse_kmsg_record_handles_continuation_lines() {
+        // dictionary 续行（SUBSYSTEM=/DEVICE=）只看第一行，不影响解析。
+        let raw = b"6,1234,100000000,-;PM: active wakeup source: spi1.0\n SUBSYSTEM=platform\n DEVICE=+platform:spi1.0";
+        assert_eq!(parse_kmsg_record(raw, 0), Some((100, "spi1.0".to_string())));
+    }
+
+    #[test]
+    fn parse_kmsg_record_trims_whitespace_in_name() {
+        let raw = b"6,1,0,-;PM: active wakeup source:   spi1.0  ";
+        assert_eq!(parse_kmsg_record(raw, 0), Some((0, "spi1.0".to_string())));
+    }
+
+    #[test]
+    fn parse_kmsg_record_ignores_unrelated_message() {
+        assert_eq!(parse_kmsg_record(b"6,1,0,-;unrelated kernel message", 0), None);
+    }
+
+    #[test]
+    fn parse_kmsg_record_rejects_empty_name() {
+        assert_eq!(parse_kmsg_record(b"6,1,0,-;PM: active wakeup source: ", 0), None);
+    }
+
+    #[test]
+    fn parse_kmsg_record_bad_header_is_none() {
+        assert_eq!(parse_kmsg_record(b"garbage no semicolon", 0), None);
+        assert_eq!(parse_kmsg_record(b"6,1;PM: active wakeup source: x", 0), None); // 缺 ts_us 字段
+        assert_eq!(parse_kmsg_record(b"6,1,notanumber,-;PM: active wakeup source: x", 0), None);
     }
 
     fn ev(v: &[(u64, &str)]) -> Vec<(u64, String)> {
@@ -193,7 +212,7 @@ mod tests {
     #[test]
     fn cache_roundtrip_skips_garbage() {
         let t = crate::util::testutil::tmp();
-        fs::write(t.path().join("wakes.tsv"), "100\ta\nbad line\nxx\tb\n200\tc d\n").unwrap();
+        std::fs::write(t.path().join("wakes.tsv"), "100\ta\nbad line\nxx\tb\n200\tc d\n").unwrap();
         assert_eq!(load_cache(t.path()), ev(&[(100, "a"), (200, "c d")]));
         write_cache(t.path(), &ev(&[(1, "x\ty")]));
         assert_eq!(load_cache(t.path()), ev(&[(1, "x y")]));
@@ -207,18 +226,5 @@ mod tests {
         let now = crate::util::now_secs();
         assert!(!is_stale(t.path(), now));
         assert!(is_stale(t.path(), now + STALE_SECS + 5));
-    }
-
-    #[test]
-    fn run_bounded_kills_hung_child_and_returns_output() {
-        let mut c = Command::new("sh");
-        c.args(["-c", "echo hi"]);
-        assert_eq!(run_bounded(c, 5).as_deref(), Some(&b"hi\n"[..]));
-        let mut c = Command::new("sh");
-        c.args(["-c", "sleep 30"]);
-        let t0 = std::time::Instant::now();
-        assert!(run_bounded(c, 1).is_none());
-        assert!(t0.elapsed() < Duration::from_secs(10), "超时必须杀掉而不是等 30s");
-        assert!(run_bounded(Command::new("/nonexistent/bin"), 1).is_none());
     }
 }

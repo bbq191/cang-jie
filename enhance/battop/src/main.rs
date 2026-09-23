@@ -1,5 +1,8 @@
 // battop 采集器(常驻服务,进程内每 ~10 分钟采一次;旧模型是 timer 反复拉起 oneshot,
 // 反复 service-start 的 cgroup 迁移撞内核 RCU stall 冻死整机 → 改常驻,cgroup 只迁一次)。
+// 2026-09-23 真机复现过一次类似冻机(常驻模型下,冻结时间与 wake 模块当时仅存的子进程创建——fork
+// journalctl——精确重合到秒;不是同一条 cgroup_procs_write 路径,但进程创建仍是这条循环里唯一残留的
+// "非纯内存操作",故 wake 模块改直读 /dev/kmsg,彻底消灭这个循环里的最后一次 fork,见 wake.rs 头注/FINDINGS)。
 // 间隔可用 BATTOP_INTERVAL_SECS 覆盖(缺省 600)。
 //
 // 每轮采样:载入上次 baseline → 采样 /proc 各进程 CPU 累计 + 电量 →
@@ -11,7 +14,7 @@
 // 设计见 history/APP-DESIGN.md。纯 std 零依赖。
 //
 // 模块分工：procs（/proc + sysfs 原始输入）· store（baseline/样本落盘与增量聚合）·
-// summary（面板用 summary.json 流式聚合）· wake（journal 唤醒源缓存，唯一的子进程）· util。
+// summary（面板用 summary.json 流式聚合）· wake（/dev/kmsg 唤醒源缓存，纯读不 fork 子进程）· util。
 mod procs;
 mod store;
 mod summary;
