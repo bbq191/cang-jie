@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="500" viewBox="0 0 960 500" font-family="Noto Sans CJK SC, sans-serif">
+  <rect width="960" height="500" fill="#fff"/>
+  <text x="480" y="32" text-anchor="middle" font-size="20" font-weight="bold" fill="#222">文字怎么拼回去：什么时候加空格、什么时候换段</text>
+
+  <!-- 左：空格 -->
+  <rect x="30" y="55" width="440" height="270" rx="10" fill="#f7f9fc" stroke="#7a8ca6"/>
+  <text x="250" y="80" text-anchor="middle" font-size="15" font-weight="bold" fill="#34495e">加不加空格</text>
+  <g font-size="12.5" fill="#333">
+    <text x="48" y="108" font-weight="bold">同一行（基线没变）</text>
+    <text x="48" y="128">只在两个字之间真有缝隙时补空格。</text>
+    <text x="48" y="148">缝隙按真实字宽算：字宽 × 页面缩放 + 字间距 Tc。</text>
+    <text x="48" y="168">中文接中文不补（中文不用空格分词）。</text>
+    <text x="48" y="198" font-weight="bold">折行（基线下移，行距以内）</text>
+    <text x="48" y="218">补一个空格，除非：中文接中文，</text>
+    <text x="48" y="238">或上一行以连字符“-”或斜杠“/”结尾（复合词、网址）。</text>
+    <text x="48" y="268" fill="#8e2a20">旧 bug：calibre 每个字单独定位，旧逻辑"定位变了</text>
+    <text x="48" y="288" fill="#8e2a20">就补空格" → "C a n  t h e""能 否 阻 止"，全书约 500 处。</text>
+    <text x="48" y="308" fill="#8e2a20">另：中文字宽解析 bug 让同一串字全叠在一个位置。</text>
+  </g>
+
+  <!-- 右：分段 -->
+  <rect x="490" y="55" width="440" height="270" rx="10" fill="#f7fcf8" stroke="#6aa983"/>
+  <text x="710" y="80" text-anchor="middle" font-size="15" font-weight="bold" fill="#1d5e3a">换不换段（三条线索，满足一条就换）</text>
+  <g font-size="12.5" fill="#333">
+    <text x="508" y="110">① 行距 &gt; 本页典型行距 × 1.3</text>
+    <text x="528" y="130" fill="#666">典型行距 = 相邻行基线差的中位数；本页太少取全书</text>
+    <text x="508" y="158">② 上一行离右边界还差 4 个字宽以上（短行 = 段末）</text>
+    <text x="508" y="186">③ 上下两行字号明显不同（居中大标题接正文）</text>
+    <text x="508" y="222" font-weight="bold">跨页</text>
+    <text x="508" y="242">上一页末段没以 。！？. 等结尾、下一页以正文开头</text>
+    <text x="508" y="262">→ 接成一段（跳转目标段落除外，否则 id 会丢）</text>
+    <text x="508" y="292" fill="#8e2a20">旧：只看"行距 &gt; 1.5 倍字号"，1.5 倍行距的 Word</text>
+    <text x="508" y="312" fill="#8e2a20">文档一行一段（"需要自行删 / 除。"）。</text>
+  </g>
+
+  <!-- 底：不变量 -->
+  <rect x="30" y="345" width="900" height="135" rx="10" fill="#fff8f0" stroke="#c8812e"/>
+  <text x="480" y="372" text-anchor="middle" font-size="15" font-weight="bold" fill="#6b4210">不变量：字一个都不能多、一个都不能少</text>
+  <g font-size="13" fill="#333">
+    <text x="50" y="400">· 文字层里每个字符按顺序进正文，公式框里的字也不删（公式截图只是补充）。</text>
+    <text x="50" y="424">· 只把正文里原有的标题段落升级为 &lt;h2&gt;，找不到就不加——不往正文里塞原书没有的字。</text>
+    <text x="50" y="448">· 验证：转换后正文去掉空白的字符数与 pdftotext 对比（手册 510 = 510；T.E. 503012 vs 502766，</text>
+    <text x="50" y="468">　差的全是行尾真实连字符——pdftotext 会把 artificial-⏎intelligence 的连字符删掉，我们保留）。</text>
+  </g>
+</svg>

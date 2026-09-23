@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="960" height="470" viewBox="0 0 960 470" font-family="Noto Sans CJK SC, sans-serif">
+  <defs>
+    <marker id="a" markerWidth="10" markerHeight="8" refX="9" refY="4" orient="auto"><path d="M0,0 L10,4 L0,8 z" fill="#555"/></marker>
+  </defs>
+  <rect width="960" height="470" fill="#fff"/>
+  <text x="480" y="32" text-anchor="middle" font-size="20" font-weight="bold" fill="#222">图片放哪、放多大：跟着原书版面走</text>
+
+  <!-- 左：PDF 页面 -->
+  <text x="190" y="62" text-anchor="middle" font-size="14" font-weight="bold" fill="#6b4210">原 PDF 的一页</text>
+  <rect x="40" y="72" width="300" height="370" fill="#fffdf8" stroke="#c8812e"/>
+  <line x1="70" y1="72" x2="70" y2="442" stroke="#e0c9a6" stroke-dasharray="3,3"/>
+  <line x1="310" y1="72" x2="310" y2="442" stroke="#e0c9a6" stroke-dasharray="3,3"/>
+  <text x="190" y="88" text-anchor="middle" font-size="10.5" fill="#a07a3c">← 正文栏宽 →</text>
+  <rect x="75" y="100" width="230" height="10" fill="#bbb"/>
+  <rect x="75" y="118" width="170" height="10" fill="#bbb"/>
+  <text x="250" y="127" font-size="11" fill="#555">A 行</text>
+  <rect x="80" y="145" width="100" height="100" fill="#cfe3f7" stroke="#4a7bb7"/>
+  <text x="130" y="200" text-anchor="middle" font-size="12" fill="#1f3f66">图 1</text>
+  <rect x="195" y="146" width="105" height="100" fill="#cfe3f7" stroke="#4a7bb7"/>
+  <text x="247" y="200" text-anchor="middle" font-size="12" fill="#1f3f66">图 2</text>
+  <rect x="75" y="265" width="230" height="10" fill="#bbb"/>
+  <rect x="75" y="283" width="120" height="10" fill="#bbb"/>
+  <text x="200" y="292" font-size="11" fill="#555">B 行</text>
+  <rect x="75" y="310" width="230" height="95" fill="#cfe3f7" stroke="#4a7bb7"/>
+  <text x="190" y="362" text-anchor="middle" font-size="12" fill="#1f3f66">图 3（整栏宽）</text>
+  <text x="190" y="432" text-anchor="middle" font-size="11" fill="#999">绘制顺序：Word 先画完所有文字，最后才画图</text>
+
+  <!-- 中：规则 -->
+  <g font-size="13" fill="#333">
+    <text x="365" y="120" font-weight="bold" fill="#222">位置规则</text>
+    <text x="365" y="143">图片插在"它上沿以上</text>
+    <text x="365" y="162">最近的那一行字"之后。</text>
+    <text x="365" y="185">图 1、2 上方最近 → A 行</text>
+    <text x="365" y="204">图 3 上方最近 → B 行</text>
+    <text x="365" y="227">上沿差 &lt; 8pt 的放同一段并排</text>
+    <text x="365" y="270" font-weight="bold" fill="#222">大小规则</text>
+    <text x="365" y="293">宽度 = 图宽 ÷ 正文栏宽</text>
+    <text x="365" y="312">四舍五入到 5% 一档</text>
+    <text x="365" y="331">→ .cj-w45{width:45%}</text>
+    <text x="365" y="354">栏宽 = 全书字符左右边缘</text>
+    <text x="365" y="373">的 2%–98% 分位（去页码等）</text>
+  </g>
+  <line x1="545" y1="250" x2="600" y2="250" stroke="#555" stroke-width="1.6" marker-end="url(#a)"/>
+
+  <!-- 右：EPUB -->
+  <text x="770" y="62" text-anchor="middle" font-size="14" font-weight="bold" fill="#1f3f66">重排后的 EPUB（阅读器一屏）</text>
+  <rect x="615" y="72" width="310" height="370" fill="#f8fbff" stroke="#4a7bb7"/>
+  <rect x="630" y="95" width="280" height="10" fill="#bbb"/>
+  <rect x="630" y="113" width="200" height="10" fill="#bbb"/>
+  <text x="838" y="122" font-size="11" fill="#555">A 行</text>
+  <rect x="632" y="140" width="126" height="120" fill="#cfe3f7" stroke="#4a7bb7"/>
+  <text x="695" y="205" text-anchor="middle" font-size="12" fill="#1f3f66">45%</text>
+  <rect x="766" y="140" width="140" height="120" fill="#cfe3f7" stroke="#4a7bb7"/>
+  <text x="836" y="205" text-anchor="middle" font-size="12" fill="#1f3f66">50%</text>
+  <rect x="630" y="278" width="280" height="10" fill="#bbb"/>
+  <rect x="630" y="296" width="150" height="10" fill="#bbb"/>
+  <text x="788" y="305" font-size="11" fill="#555">B 行</text>
+  <rect x="630" y="322" width="280" height="100" fill="#cfe3f7" stroke="#4a7bb7"/>
+  <text x="770" y="377" text-anchor="middle" font-size="12" fill="#1f3f66">100%</text>
+</svg>

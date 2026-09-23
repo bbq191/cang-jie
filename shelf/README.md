@@ -2,8 +2,9 @@
 
 > **读者与用途**：想弄清"书架是什么、怎么把一本书从手机弄到 reMarkable 上、代码/服务在哪"的人。
 > 先看下面「它是什么」和数据流图；要看全项目全貌读 [`../docs/OVERVIEW.md`](../docs/OVERVIEW.md)；
+> 改书的规则（EPUB 优化、PDF 转 EPUB、xochitl 实测规则）看 [`docs/EPUB优化规范白皮书.md`](docs/EPUB优化规范白皮书.md)；
 > 决策依据与真机记录在 [`docs/reMarkable书架白皮书.md`](docs/reMarkable书架白皮书.md)（按主题分章，每章开头有"现状结论"）；
-> 用户可见的更新历史在 [`../docs/CHANGELOG.md`](../docs/CHANGELOG.md)。
+> 用户可见的更新历史在 [`../docs/CHANGELOG.md`](../docs/CHANGELOG.md)。文档之间怎么分工见文末「文档索引」。
 
 ## 它是什么
 
@@ -17,12 +18,12 @@ reMarkable Paper Pro Move 的**读书与阅读质量层**：一个网页，把�
 
 - **入库**：只有三条来源——网页上传（多文件、进度；上传前核对"同名同大小=已落地"则跳过）、抓网文（Readability 抽正文组成 EPUB，可选同步优化）、scp 进设备 `inbox/`。**所有书只落母版库**，网页和 inbox 都没有直投读器的路径；母版永久保留。
 - **格式**：只收 **EPUB / PDF**（`rmsvc_core::formats` 单一事实源）。其它格式一律拒收——这是 2026-09-17/18 用户明确的策略收紧，不是技术判断；已在库里的旧格式条目仍可加入 KOReader。书名入库时规范成 `书名 - 02卷`（数字在前）。
-- **优化**（可选，手动点或批量）：只有「完整清洗 + 优化」一档；EPUB 走清洗/排版/目录/封面保证，漫画自动识别、保画质、裁边、优化不改格式（仍是 EPUB）；PDF 有文字层转 EPUB、无文字层/漫画只裁边。
+- **优化**（可选，手动点或批量）：只有「完整清洗 + 优化」一档，产物过质量门才替换母版（不过门原文件不动）；EPUB 走清洗/排版/目录/封面保证，漫画自动识别、保画质、裁边、优化不改格式（仍是 EPUB）；PDF 有文字层**按原格式**转 EPUB（颜色、图片位置与大小比例、链接、目录都照原书），无文字层/漫画只裁边。
 - **落库**：**加入 xochitl**（≤90MB 流式 `/upload`；>90MB 优先"占位+磁盘替换"不分卷，上限 1GiB；不可用才回退按卷拆分）／**加入 KOReader**（本地同分区拷贝）。落库记录、渲染自检徽章、剩余空间都在母版库页显示。
 - **批量与并发**：勾选后一次排队，由网关顺序逐本执行（落盘续跑、可全部中止）；每一本先过并发/内存闸门。详见 [`../gateway/README.md`](../gateway/README.md)。
 - **已移除**：电脑端 `shelf` 命令行（含 Calibre 深洗、`doctor --render`、`notes pull`）2026-09-18 整体砍除，没有网页等价物；格式转换请先在电脑上自行处理成 EPUB/PDF 再上传。清单见白皮书附录 B。
 
-**网页 tab**（固定四段）：「传书」（入库两卡：上传｜抓网文；母版库）· 「笔记」（笔记线 note-serve 注册）· 「其他」（xochitl 字体 / KOReader / 壁纸，只列真装了的）· 「管理」（基石与模块 / 模型管理 / 系统增强 / 电池刺客 / 实验室）。
+**网页 tab**（固定四段）：「传书」（入库两卡：上传｜抓网文；母版库）· 「笔记」（笔记线 note-serve 注册；可一键导入 KOReader 高亮/生词）· 「其他」（xochitl 字体 / KOReader / 壁纸，只列真装了的）· 「管理」（基石与模块 / 模型管理 / 系统增强 / 电池刺客 / 实验室）。
 
 ## 架构：网关 + 领域服务
 
@@ -47,7 +48,7 @@ reMarkable Paper Pro Move 的**读书与阅读质量层**：一个网页，把�
 - 母版库：`GET /status` · `GET /staging` → `{items, freeBytes}`（条目含 `delivered.render` 渲染自检、`busy`、处理进度）· `POST /staging`（multipart 原样入库）· `POST /staging/optimize {name}` · `POST /staging/deliver {name, folder?}`（folder 空＝书库根；不存在会先经 mkdir 队列建）· `POST /staging/cancel {name}`（中途停止，EPUB 优化与按卷拆分支持）· `POST /staging/mark {name, target}` · `POST /staging/fetch-article {url, optimize?}` · `POST /staging/delete {name}`
 - 漫画页边距待办（给 qmd 代理用）：`GET /margins/{uuid}`（有待设的边距则返回，否则 404）· `POST /margins/applied {uuid}`（销账）；仅「实验室→漫画页边距」开关开着时生效，白皮书 §20（`bookconv优化白皮书.md`）
 - 设备端代理队列：原生回收站 `POST /trash/add` · `GET /trash/pending` · `GET /trash`；原生建文件夹 `POST /mkdir/add` · `GET /mkdir/pending` · `GET /mkdir`
-- 追平队列：`GET /inbox` · `POST /inbox/{retry,delete}`；事件 `GET /events`（SSE）
+- 事件 `GET /events`（SSE）。inbox 追平队列没有 HTTP 接口（2026-09-22 删）：scp 进 `inbox/` 自动入库，失败项在 `failed/` 带 `.reason`，重试＝拷回 `inbox/`
 
 **koreader**：`GET /status` · `GET /books[?folder=]` · `POST /books/adopt {name, folder}` · `POST /books/mkdir`（幂等建目录）· `GET|POST /fonts` · `DELETE /fonts/{file}` · `GET|POST /dicts[?name=]` · `GET|POST /config/{settings|defaults|gestures}[?dry_run=1]` · 只读原始数据 `GET /annotations`（每本书的高亮）· `GET /vocabulary`（生词本），供笔记线拉取
 
@@ -62,7 +63,8 @@ reMarkable Paper Pro Move 的**读书与阅读质量层**：一个网页，把�
 ```
 shelf/
 ├── Cargo.toml · build.sh · .cargo/   内部 workspace（仓库根仍无 workspace）；musl 全静态交叉编译
-├── crates/bookconv/                  通用内容层：EPUB 优化器+清洗层+质量门、图片处理、漫画（识别/拆分/补白 `comic_*.rs`）、PDF 入库、EPUB 组装、网文抽取、命名规则、占位文档；`src/bin/` 是几个开发期/诊断小工具（`epub-optimize`、`cover-fix` 等）
+├── crates/bookconv/                  通用内容层：EPUB 优化器+清洗层+质量门、图片处理、漫画（识别/拆分/补白 `comic_*.rs`）、PDF 入库（`pdf_ingest/`）、EPUB 组装、网文抽取、命名规则、占位文档；`src/bin/` 是几个开发期/诊断小工具（`epub-optimize`、`cover-fix` 等）
+├── crates/pdf-extract-cj/            `pdf-extract` 0.12.1 的本地 fork（MIT，保留上游版权）：给 PDF 转 EPUB 提供文字颜色、图片位置、正确的中文字宽
 ├── services/book-serve/              母版库服务：staging/(领域，含落库 `deliver.rs`) · sidecar.rs(落库记录边车) · ops.rs(忙锁/取消登记簿) · render_check.rs · pending_queue.rs · trash.rs / mkdir.rs / comic_margins.rs(设备端代理队列) · spool.rs(inbox) · config.rs · api.rs(纯 HTTP 适配)
 ├── services/koreader-serve/          KOReader 目录模型 · 配置同步 · 高亮/生词只读（纯 Rust 只读 SQLite 解析器）
 ├── systemd/                          shelf.target + book/koreader-serve 单元（font/wallpaper 的单元在 ../enhance/<name>/）
@@ -73,7 +75,7 @@ shelf/
 ```
 
 共享基座 `../rmsvc-core`（三条线共用）；网关 `../gateway`；host 侧编排 `../packaging/deploy.sh`（构建→tar-over-ssh→设备 install.sh，自动备份）。每个文件的来历见白皮书附录 C。
-依赖方向（单向无环）：`services/* → ../rmsvc-core`；`book-serve → bookconv`；shelf 不依赖 device-core / weread-device；koreader-serve 不依赖 bookconv。
+依赖方向（单向无环）：`services/* → ../rmsvc-core`；`book-serve → bookconv → pdf-extract-cj`；shelf 不依赖 device-core / weread-device；koreader-serve 不依赖 bookconv。
 
 ## 路径（XDG，设备 HOME=/home/root）
 
@@ -82,7 +84,7 @@ shelf/
 | 二进制 | `~/.local/bin/{gateway,*-serve,shelf-uninstall,lo-alias.sh}` |
 | 库（供 `shelf-uninstall` source） | `~/.local/lib/shelf/{manifest.sh,devlib.sh}`（整包安装才装；`--only` 不动它们） |
 | 备份 | `~/cangjie-backups/shelf-<时间戳>/`（旧二进制/单元/qmd，保留最近 5 份） |
-| 配置 | `~/.config/shelf/<service>.json`（book：书库文件夹/xochitl 主机/超时/**`nativeUploadLimitMb` 加入原生体积门，缺省 90（超过则走占位+磁盘替换通道，§03bn）**；90 是 2026-09-19 真机测出 xochitl `/upload` 硬上限约 100MB 后留的安全余量，见 `config.rs`；font；gateway）· `~/.config/shelf/tls/`（CA+叶证书） |
+| 配置 | `~/.config/shelf/<service>.json`（book：`xochitlHost`/`uploadTimeoutSecs`/**`nativeUploadLimitMb` 加入原生体积门，缺省 90（超过则走占位+磁盘替换通道，白皮书 §03bn）**；90 是真机测出 xochitl `/upload` 硬上限 100,000,000 字节后留的余量；font；gateway）· `~/.config/shelf/tls/`（CA+叶证书） |
 | 数据 | `~/.local/share/shelf/`（fonts.json、壁纸池）· `~/.local/share/fonts/`（用户字体，fontconfig 标准位） |
 | 状态 | `~/.local/state/shelf/books/staging/`（**母版库**，不淘汰）· `books/{inbox,.work,failed}`（追平队列）· `books/comic-margins.json`（漫画页边距待办）· `wallpaper-state.json` · `koreader-backups/` |
 | 运行时 | `/tmp/shelf-0/shelf/{services,upload,koreader}`（`XDG_RUNTIME_DIR` 缺省回落；重启即清） |
@@ -124,10 +126,13 @@ cargo build --release -p bookconv --bin epub-optimize   # 手动跑一遍清洗+
 
 ## 文档索引
 
-| 文档 | 内容 |
+![书架文档地图：带着问题找文档](docs/diagrams/sh-doc-map.svg)
+
+| 文档 | 回答什么问题 |
 |---|---|
-| [`docs/传书EPUB线架构.md`](docs/传书EPUB线架构.md) | 传书线**当前状态**参考（非时间顺序）：架构、数据流、优化管线、内存安全、大文件通道、API |
-| [`docs/reMarkable书架白皮书.md`](docs/reMarkable书架白皮书.md) | 文首「5 分钟读懂」+ 决策依据与真机记录，按主题分章（每章有大白话导语与坑位表）；附录含踩坑总表、演进记录表、已移除能力 |
-| [`docs/bookconv优化白皮书.md`](docs/bookconv优化白皮书.md) | 书籍优化引擎：清洗/优化遍/脚注/图片/★xochitl 渲染硬规则/版本演进 |
-| [`docs/EPUB优化规范白皮书.md`](docs/EPUB优化规范白皮书.md) | **规范类**（非架构史/非踩坑流水账）：EPUB 优化线 + PDF→EPUB 转换线共用的当前生效规则 + 为什么这么定；结合 EPUB 官方规范与 xochitl 实测七条规则 |
+| 本文 `README.md` | 入门：是什么、怎么装、目录、端口、路径 |
+| [`docs/传书EPUB线架构.md`](docs/传书EPUB线架构.md) | 现在长什么样：传书线架构、数据流、优化管线、内存安全、大文件通道、API（当前状态参考，非时间顺序） |
+| [`docs/EPUB优化规范白皮书.md`](docs/EPUB优化规范白皮书.md) | 改书时能不能这样改：EPUB 优化线与 PDF 转 EPUB 线的现行规则、xochitl 实测规则（CSS、跳转、目录），**规则的权威出处** |
+| [`docs/bookconv优化白皮书.md`](docs/bookconv优化白皮书.md) | 优化引擎怎么实现：清洗/优化遍/脚注/图片/内存的逐模块细节、版本演进、踩坑时间线 |
+| [`docs/reMarkable书架白皮书.md`](docs/reMarkable书架白皮书.md) | 当初为什么这么定：决策依据与真机记录，按主题分章（每章有大白话导语与坑位表）；附录含踩坑合集、待办、演进记录、已移除能力 |
 | [`../docs/CHANGELOG.md`](../docs/CHANGELOG.md) | 用户可见的更新历史 |

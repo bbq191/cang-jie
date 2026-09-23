@@ -38,7 +38,7 @@
 <text x="358" y="269" font-size="11" fill="#4a4a4a">实验室开关「漫画页边距」：页边距设 1，左右留白≈0（§20）</text>
 <rect x="346" y="288" width="388" height="52" rx="7" fill="#fff" stroke="#c9971f"/>
 <text x="358" y="308" font-size="12" font-weight="bold" fill="#1a1a1a">PDF</text>
-<text x="358" y="326" font-size="11" fill="#4a4a4a">有文字层 → 转 EPUB；无文字层 / 漫画 → 只裁边，仍是 PDF（§03br）</text>
+<text x="358" y="326" font-size="11" fill="#4a4a4a">有文字层 → 按原格式转 EPUB；无文字层 → 只裁边，仍是 PDF（§03br）</text>
 
 <polyline points="762,150 800,150" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#bj-a)"/>
 <polyline points="762,290 800,290" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#bj-a)"/>

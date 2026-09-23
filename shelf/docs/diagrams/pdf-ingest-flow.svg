@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 760" font-family="sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 760" font-family="Noto Sans CJK SC, sans-serif">
   <defs>
     <marker id="pif-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
       <path d="M0,0 L10,5 L0,10 z" fill="#555"/>
@@ -63,17 +63,17 @@
   <!-- exit B -->
   <rect x="556" y="414" width="500" height="256" rx="10" fill="#e8f5ec" stroke="#3f9a55" stroke-width="1.4"/>
   <text x="806" y="436" text-anchor="middle" font-size="13.5" font-weight="bold" fill="#1a1a1a">出路 B：转 EPUB（optimize_pdf_to_epub）</text>
-  <text x="576" y="460" font-size="11.5" fill="#3a3a3a">正文：文字层每个字符都进文字流（不变动书籍内容），</text>
-  <text x="576" y="477" font-size="11.5" fill="#3a3a3a">行间距 &gt; 1.5 倍字号才算换段</text>
-  <text x="576" y="499" font-size="11.5" fill="#3a3a3a">公式：Unicode 数学区块判公式行 → hayro 整页渲染 →</text>
-  <text x="576" y="516" font-size="11.5" fill="#3a3a3a">按外接框裁成图，作为补充放在所属段落后</text>
-  <text x="576" y="538" font-size="11.5" fill="#3a3a3a">插图：页内图片提取（JPEG 透传 / Flate 解预测器后转 PNG）</text>
-  <text x="576" y="560" font-size="11.5" font-weight="bold" fill="#1a1a1a">目录（必须有）三级兜底：</text>
-  <text x="586" y="578" font-size="11.5" fill="#3a3a3a">PDF 自带书签 → 按字号识别标题（≥ 1.2× 正文，最多 3 级）</text>
-  <text x="586" y="595" font-size="11.5" fill="#3a3a3a">→ 仍无则每 20 页分块（不假装有真实章节）</text>
-  <text x="576" y="619" font-size="11.5" fill="#3a3a3a">epub::assemble → 写 &lt;stem&gt;.epub，成功后删除原 .pdf</text>
-  <text x="576" y="641" font-size="11.5" fill="#3a3a3a">回执：「已优化《…》（PDF→EPUB，N 页，M 章，K 张图，F 处公式）」</text>
-  <text x="576" y="659" font-size="11.5" fill="#4a4a4a">一份 PDF 最多被解析三遍：lopdf 0.45 / pdf-extract / hayro</text>
+  <text x="576" y="458" font-size="11.5" font-weight="bold" fill="#1a1a1a">提取：pdf-extract-cj（本地 fork）逐字拿坐标/字号/填充色 + 图片位置</text>
+  <text x="576" y="478" font-size="11.5" fill="#3a3a3a">正文：每个字都进文字流；换行看基线，分段看行距/短行/字号，跨页续段</text>
+  <text x="576" y="498" font-size="11.5" fill="#3a3a3a">颜色：外链 class .cj-cN（纯黑不包）；图片：插在上方最近一行字之后，</text>
+  <text x="576" y="514" font-size="11.5" fill="#3a3a3a">同一行的图并排，宽度＝原书占栏宽比例（.cj-wN，5% 一档）</text>
+  <text x="576" y="534" font-size="11.5" fill="#3a3a3a">链接：外链原样；书内跳转目标挂在页首非空段落 &lt;p id="pdf-pN"&gt;</text>
+  <text x="576" y="554" font-size="11.5" fill="#3a3a3a">公式：数学符号区块判定 → hayro 整页渲染 → 裁图放所属段落后</text>
+  <text x="576" y="574" font-size="11.5" font-weight="bold" fill="#1a1a1a">目录：书签 → 字号标题 → 每 20 页；每页只进一章（回指书签＝分组标题）</text>
+  <text x="576" y="594" font-size="11.5" fill="#3a3a3a">有跨章书内跳转 → 合成单文件 + 锚点目录（xochitl 只认同文件锚点）</text>
+  <text x="576" y="614" font-size="11.5" fill="#3a3a3a">assemble_pdf_derived → 质量门 check_epub_file → &lt;stem&gt;.epub，删原 .pdf</text>
+  <text x="576" y="636" font-size="11.5" fill="#3a3a3a">回执：「已优化《…》（PDF→EPUB，N 页，M 章，K 张图，F 处公式）」</text>
+  <text x="576" y="656" font-size="11.5" fill="#2e7d32">2026-09-23 两本真实 PDF（Word 手册 / calibre 杂志 540 页）真机验证</text>
 
   <!-- recognition strip -->
   <line x1="274" y1="670" x2="274" y2="694" stroke="#555" stroke-width="1.5" marker-end="url(#pif-arrow)"/>
