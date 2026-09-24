@@ -12,6 +12,13 @@ use std::sync::Arc;
 /// PBKDF2）吃不掉整台设备。超限的请求直接 503 + `Retry-After`，不再 spawn 线程。
 pub const DEFAULT_MAX_CONCURRENT: usize = 64;
 
+/// 连接读空闲超时：服务端等着读时，这么久没收到一个字节就断开这条连接。上游 tiny_http 0.12 不设任何
+/// 超时——慢客户端、只发半个请求头/半个 TLS 握手的 slowloris、手机休眠后留下的半开 keep-alive 连接，
+/// 都会永久占住一条连接线程（网关直面局域网，天天用会慢慢攒）。这是"空闲"超时不是"总时长"超时：
+/// 大文件上传只要一直有字节在流就不受影响；处理函数自己慢（长轮询、优化排队）不算——那时服务端没在读。
+/// 靠 `vendor/tiny_http` 的补丁对每条 accept 出来的连接设 `read_timeout`（2026-09-24 第三轮审计）。
+pub const READ_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
+
 /// 服务选项：TLS（PEM）与请求守卫（登录/密码策略由服务自己定义，HTTP 层只负责"先问守卫再分发"）。
 pub struct ServeOpts {
     pub tls: Option<crate::tls::TlsPem>,
@@ -124,10 +131,9 @@ pub fn serve(bind: &str, router: Router) -> Result<(), String> {
 }
 
 pub fn serve_with(bind: &str, router: Router, opts: ServeOpts) -> Result<(), String> {
-    let server = match opts.tls {
-        Some(pem) => tiny_http::Server::https(bind, tiny_http::SslConfig { certificate: pem.cert, private_key: pem.key }).map_err(|e| format!("绑定 {bind}（TLS）失败: {e}"))?,
-        None => tiny_http::Server::http(bind).map_err(|e| format!("绑定 {bind} 失败: {e}"))?,
-    };
+    let listener = std::net::TcpListener::bind(bind).map_err(|e| format!("绑定 {bind} 失败: {e}"))?;
+    let ssl = opts.tls.map(|pem| tiny_http::SslConfig { certificate: pem.cert, private_key: pem.key });
+    let server = tiny_http::Server::from_listener_with_read_timeout(listener, ssl, Some(READ_IDLE_TIMEOUT)).map_err(|e| format!("在 {bind} 起服务失败: {e}"))?;
     let router = Arc::new(router);
     let guard = opts.guard.map(Arc::new);
     let inflight = Arc::new(std::sync::atomic::AtomicUsize::new(0));
@@ -274,6 +280,35 @@ mod tests {
         let text = String::from_utf8_lossy(&out);
         assert!(text.starts_with("HTTP/1.1 200"), "{text}");
         assert!(text.contains(r#""ip":"127.0.0.1""#), "{text}");
+    }
+
+    /// 只发半个请求头就不动的连接：到读空闲超时就被断开（不再永久占线程）；监听本身不受影响，
+    /// 空闲超过超时时长之后新连接照常服务（曾试过把 SO_RCVTIMEO 设在监听 socket 上，accept 也跟着
+    /// 超时、上游 accept 循环遇错即退出，整个服务停摆——这条测试的后半段就是防它）。
+    #[test]
+    fn half_sent_request_is_dropped_after_idle_timeout_and_server_keeps_accepting() {
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = l.local_addr().unwrap().port();
+        let server = tiny_http::Server::from_listener_with_read_timeout(l, None, Some(std::time::Duration::from_millis(1500))).unwrap();
+        std::thread::spawn(move || {
+            for req in server.incoming_requests() {
+                let _ = req.respond(tiny_http::Response::from_string("ok"));
+            }
+        });
+        let mut slow = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+        slow.write_all(b"GET / HTTP/1.1\r\nHost: x\r\n").unwrap(); // 故意不发结束空行
+        slow.set_read_timeout(Some(std::time::Duration::from_secs(10))).unwrap();
+        let t0 = std::time::Instant::now();
+        let mut out = Vec::new();
+        let _ = slow.read_to_end(&mut out);
+        // Linux 上读超时报 EAGAIN（WouldBlock），上游只对 TimedOut 回 408，其余读错误直接关连接——两种都算断开。
+        let text = String::from_utf8_lossy(&out);
+        assert!(text.is_empty() || text.starts_with("HTTP/1.1 408"), "{text:?}");
+        let took = t0.elapsed();
+        assert!(took >= std::time::Duration::from_millis(1200) && took < std::time::Duration::from_secs(5), "{took:?}");
+        std::thread::sleep(std::time::Duration::from_millis(2000)); // 监听空闲超过超时时长
+        let body = ureq::get(&format!("http://127.0.0.1:{port}/")).call().unwrap().into_string().unwrap();
+        assert_eq!(body, "ok");
     }
 
     /// 起真服务：处理函数 panic 得到 JSON 500，且并发名额归还、后续请求照常服务。
