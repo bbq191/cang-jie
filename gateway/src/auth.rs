@@ -93,7 +93,7 @@ impl AuthState {
     /// （`must_change()`）都要拿的，持锁算哈希会让登录尝试/Basic 校验期间所有其它请求排队等它。
     fn verify(&self, pw: &str) -> bool {
         let hash = self.cfg.lock().map(|c| c.password_hash.clone()).unwrap_or_default();
-        !hash.is_empty() && rmsvc_core::auth::verify_password(pw, &hash)
+        GatewayConfig::verify_hash(&hash, pw)
     }
 
     pub fn must_change(&self) -> bool {
@@ -171,22 +171,20 @@ impl AuthState {
             (g("current"), g("new"), g("confirm"))
         };
         let ip = client_ip(req.remote_ip());
+        let forced = self.must_change();
+        let fail = |msg: &str, status: u16| -> ApiResult { Ok(if json { Reply::error(status, msg) } else { Reply::html(&crate::ui::password_page(msg, forced)).with_status(status) }) };
         if let Some(wait) = self.limiter.locked_for(ip) {
-            let forced = self.cfg.lock().map(|c| c.must_change_password).unwrap_or(false);
             return Ok(self.locked_reply(wait, json, |m| crate::ui::password_page(m, forced)));
         }
-        let mut cfg = self.cfg.lock().map_err(|_| ApiError::internal("锁"))?;
-        let forced = cfg.must_change_password;
-        // 注意：持 cfg 锁期间不能再调 must_change()（std Mutex 不可重入，曾卡死测试）。
-        let fail = |msg: &str, status: u16| -> ApiResult { Ok(if json { Reply::error(status, msg) } else { Reply::html(&crate::ui::password_page(msg, forced)).with_status(status) }) };
-        // Basic 已证明持有当前密码；会话则必须再输一次当前密码。
-        let via_basic = req.header("Authorization").and_then(parse_basic).map(|(_, p)| cfg.verify(&p)).unwrap_or(false);
-        if !via_basic && !cfg.verify(&current) {
-            drop(cfg);
+        // Basic 已证明持有当前密码；会话则必须再输一次当前密码。两次 PBKDF2 都在 cfg 锁外算（见 [`Self::verify`]）。
+        let via_basic = req.header("Authorization").and_then(parse_basic).is_some_and(|(_, p)| self.verify(&p));
+        if !via_basic && !self.verify(&current) {
             self.limiter.record_failure(ip);
             std::thread::sleep(std::time::Duration::from_millis(500));
             return fail("当前密码错误", 401);
         }
+        // 注意：持 cfg 锁期间不能再调 must_change()/verify()（std Mutex 不可重入，曾卡死测试）。
+        let mut cfg = self.cfg.lock().map_err(|_| ApiError::internal("锁"))?;
         if new != confirm {
             return fail("两次输入的新密码不一致", 400);
         }
