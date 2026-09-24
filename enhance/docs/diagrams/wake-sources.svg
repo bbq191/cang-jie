@@ -14,9 +14,9 @@
 <text x="368.0" y="198" text-anchor="start" font-size="11.5" fill="#1a1a1a" font-weight="bold">240 次/时</text>
 <text x="60" y="216" text-anchor="start" font-size="10.5" fill="#555">网关订阅 7 个服务 + transcribe 订阅 ink，loopback 心跳 120 秒</text>
 <text x="60" y="236" text-anchor="start" font-size="12" fill="#1a1a1a" font-weight="bold">shelf-mkdir-agent.qmd 长轮询</text>
-<rect x="60" y="242" width="180.0" height="14" rx="3" fill="#9db6d8" stroke="#4a6fa5" stroke-width="1.2"/>
-<text x="248.0" y="254" text-anchor="start" font-size="11.5" fill="#1a1a1a" font-weight="bold">≈144 次/时</text>
-<text x="60" y="272" text-anchor="start" font-size="10.5" fill="#555">GET /mkdir/pending?wait=25，空闲约 25 秒一次往返</text>
+<rect x="60" y="242" width="15.0" height="14" rx="3" fill="#9db6d8" stroke="#4a6fa5" stroke-width="1.2"/>
+<text x="83.0" y="254" text-anchor="start" font-size="11.5" fill="#1a1a1a" font-weight="bold">≈12 次/时（09-24 前 ≈144）</text>
+<text x="60" y="272" text-anchor="start" font-size="10.5" fill="#555">GET /mkdir/pending?wait=290，空闲约 290 秒一次往返（遇 30 秒客户端超时自动退回 25）</text>
 <text x="60" y="292" text-anchor="start" font-size="12" fill="#1a1a1a" font-weight="bold">网关 mDNS 接口重扫</text>
 <rect x="60" y="298" width="75.0" height="14" rx="3" fill="#9db6d8" stroke="#4a6fa5" stroke-width="1.2"/>
 <text x="143.0" y="310" text-anchor="start" font-size="11.5" fill="#1a1a1a" font-weight="bold">60 次/时</text>
@@ -38,11 +38,11 @@
 <text x="632" y="314" text-anchor="start" font-size="11.2" fill="#3a3a3a">  （8 秒 / 4 秒），没有文件变化不醒</text>
 <text x="632" y="338" text-anchor="start" font-size="11.2" fill="#3a3a3a">浏览器事件流 20 秒心跳：只在网页开着时</text>
 <text x="632" y="362" text-anchor="start" font-size="11.2" fill="#3a3a3a">transcribe 空跑轮次：不写文件、不发事件</text>
-<rect x="40" y="430" width="920" height="100" rx="10" fill="#fdf1ec" stroke="#c0602d" stroke-width="1.6"/>
-<text x="52" y="450" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">跟着 xochitl 日志醒：wallpaper-serve 的 journalctl -f -u xochitl</text>
-<text x="52" y="472" text-anchor="start" font-size="11.5" fill="#3a3a3a">它要从日志里看「DeepSleep to Normal」来轮换壁纸，所以 xochitl 每写一行 journal 它就醒一次（设备上的飞行记录仪同理，不在本仓库）。</text>
-<text x="52" y="492" text-anchor="start" font-size="11.5" fill="#3a3a3a">→ 这就是为什么要压 xochitl 的日志量：hw-stroke 逐点日志默认关（§03g）、reader-page-turn 去掉命中日志（§03i）。</text>
+<rect x="40" y="430" width="920" height="100" rx="10" fill="#eaf6ec" stroke="#3f9a55" stroke-width="1.6"/>
+<text x="52" y="450" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">wallpaper-serve：09-24 起不再跟 xochitl 日志，改为每次休眠醒一次</text>
+<text x="52" y="472" text-anchor="start" font-size="11.5" fill="#3a3a3a">xochitl 每次进休眠都读一遍 current.png（真机 inotify 观察）→ 监听 IN_CLOSE_NOWRITE，读完就轮换；空闲零唤醒，也不再常驻 journalctl。</text>
+<text x="52" y="492" text-anchor="start" font-size="11.5" fill="#3a3a3a">设备上的飞行记录仪（不在本仓库）仍跟 journal，所以继续压 xochitl 日志量：hw-stroke 逐点日志默认关（§03g）、翻页去命中日志（§03i）。</text>
 <text x="52" y="512" text-anchor="start" font-size="11.5" fill="#3a3a3a">单图池唤醒轮换不再重写同一张 current.png（09-24 审计），省的是闪存写入，不是唤醒次数。</text>
-<text x="500" y="558" text-anchor="middle" font-size="11" fill="#6a6a6a">仍待决：mkdir-agent 若真机确认 Qt6 QML XHR 没有 30 秒传输超时，可把长轮询放宽到几分钟（要同步改 book-serve 的 MKDIR_WAIT_MAX_SECS=28）；</text>
-<text x="500" y="578" text-anchor="middle" font-size="11" fill="#6a6a6a">wallpaper-serve 跟 journal 的方式本身没改。以上数字全部来自代码常量，未在真机上实测唤醒次数。</text>
+<text x="500" y="558" text-anchor="middle" font-size="11" fill="#6a6a6a">mkdir-agent 依据：设备 Qt 6.10.3 的 QML XHR 不设传输超时（源码核实），book-serve 上限 MKDIR_WAIT_MAX_SECS=300；</text>
+<text x="500" y="578" text-anchor="middle" font-size="11" fill="#6a6a6a">以上数字全部来自代码常量，未在真机上实测唤醒次数。</text>
 </svg>

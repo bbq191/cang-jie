@@ -807,7 +807,7 @@ sudo nmcli connection down Hotspot && sudo nmcli connection up Hotspot
 | 重启后 xovi 没了 / 反过来 SEGV | 见速查表 | `/etc` tmpfs 重启即清 | 按速查表先判状态 | §03f · §03bd |
 | 安装器选错固件 qmd | 3.27 机装了 3.28 锚点 | `/etc/version` 是 build 号 | 读 `/usr/lib/os-release` 的 `IMG_VERSION` | §03f |
 | qmd 整份不应用 | 一行 `Error while processing file tree` | qmldiff 不认 `({})` 与无花括号 `if (` | 改前离线 `apply-diffs` | §03v · §04 |
-| 休眠壁纸"不轮换" | journal 无 `PM: suspend entry` | 充电时只画休眠屏、内核不 suspend | 按 xochitl 日志 `DeepSleep to Normal` 触发 | §03f |
+| 休眠壁纸"不轮换" | journal 无 `PM: suspend entry` | 充电时只画休眠屏、内核不 suspend | 按 xochitl 日志 `DeepSleep to Normal` 触发（09-24 改为 inotify 监听 xochitl 休眠时读 `current.png`，见系统增强白皮书 §03j） | §03f |
 | 写了 `SleepScreenPath` 仍显示原图 | — | 只在启动时读 | 首次写键重启一次 | §03x |
 | WiFi 连上恰 60 秒掉线 | `disconnected (local request)` | 精简 regdb 的 CN 无 5150–5350 | 锁 2.4G 或路由改 149–165 | §03w |
 | "时不时连不上" | 不插 USB 空闲几秒就断 | 内核深度休眠 | 长时间可达就插 USB | §03w |
@@ -830,7 +830,7 @@ sudo nmcli connection down Hotspot && sudo nmcli connection up Hotspot
 ### 03f｜真机首轮（2026-09-03，固件 3.27.3.0 build 20260612，全程 WiFi 10.42.0.224）
 
 - **结论**：字体上传→菜单→渲染**全程免重启 xochitl**（只需 `fc-cache`），`restartNeeded=false` 定案；菜单差量追加成立。真机纠出 4 个 bug（`/health` 被通配路由抢先、按 `/etc/version` 选错 qmd、新旧字体菜单 qmd 并存、KOReader profile 臆测值）。
-- **壁纸唤醒轮换根因**：充电/USB 连着时内核不挂起、sleep 钩子永不跑 → 读 `journalctl -f -u xochitl` 的 `DeepSleep to Normal` 触发。
+- **壁纸唤醒轮换根因**：充电/USB 连着时内核不挂起、sleep 钩子永不跑 → 读 `journalctl -f -u xochitl` 的 `DeepSleep to Normal` 触发；09-24 改为 inotify 监听 xochitl 休眠时读完 `current.png`（不再常驻 journalctl）。
 - **事故教训**：`restart xochitl` 后 xovi 全没（`/etc` tmpfs 已清）→ 恢复用 `xovi/start`；重启前先核 `/proc/<pid>/maps`。
 
 ### 03k｜字体两 bug 根因与修复（2026-09-04 凌晨，用户报"第二次上传字体不生效 + 中文字体在书里是方框"）

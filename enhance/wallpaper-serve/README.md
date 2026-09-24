@@ -1,10 +1,10 @@
 # wallpaper-serve —— 休眠壁纸上传即用
 
-**一句话**：网页上传一张图，设备休眠时就满屏显示它；传多张会组成一个"池"，每次唤醒自动换下一张。
+**一句话**：网页上传一张图，设备休眠时就满屏显示它；传多张会组成一个"池"，每次休眠后自动换下一张（下次休眠显示）。
 
 - Web 服务，只听本机 `127.0.0.1:8793`，经网关 `/api/wallpapers` 访问；网页入口「其他 → 壁纸」。
 - 现状：真机通（3.28.0.172，2026-09-06 定稿）。
-- 代码：`src/main.rs` 路由，`store.rs` 壁纸池，`native.rs` 写 xochitl 配置键，`wake.rs` 唤醒轮换；服务单元 `wallpaper-serve.service`。子命令 `enable | disable | roll | activate` 也在这里。
+- 代码：`src/main.rs` 路由，`store.rs` 壁纸池，`native.rs` 写 xochitl 配置键，`wake.rs` 轮换触发；服务单元 `wallpaper-serve.service`。子命令 `enable | disable | roll | activate` 也在这里。
 
 ## 机制
 
@@ -14,11 +14,11 @@ xochitl 有一个隐藏配置键 `xochitl.conf` → `[General] SleepScreenPath=<
 |---|---|
 | 写配置键 | **只写一次**：激活第一张壁纸时 `native.rs` 自动写，或手动 `wallpaper-serve enable` |
 | 换图 | 永远是**原地覆盖 `current.png`**（保持同一个文件） |
-| 轮换 | 服务跟着 `journalctl -f -u xochitl` 看日志，出现 `DeepSleep to Normal`（唤醒）就换下一张；池里只有一张且 `current.png` 已是它时不重写文件（2026-09-24，省闪存写入，未上真机）。代价：xochitl 每写一行日志这个服务都会醒一次（白皮书 §03j）。不用 systemd-sleep 钩子：充电时按电源键内核不 suspend，钩子不可靠（2026-09-03 真机） |
+| 轮换 | inotify 监听壁纸目录的 `IN_CLOSE_NOWRITE`：xochitl 每次进休眠都读一遍 `current.png`（2026-09-24 真机观察：读完约 120 ms 后它才写 `Normal to DeepSleep`），读完就换下一张，10 秒内重复读只算一次。空闲时零唤醒，每次休眠醒一次。本服务自己写 `current.png` 是 `IN_CLOSE_WRITE`、池图在子目录，都不会触发。池里只有一张且 `current.png` 已是它时不重写文件。**以上 09-24 改动未上真机**。09-24 前是跟 `journalctl -f -u xochitl` 找 `DeepSleep to Normal`（唤醒时轮换），代价是 xochitl 每写一行日志都醒一次。不用 systemd-sleep 钩子：充电时按电源键内核不 suspend，钩子不可靠（2026-09-03 真机） |
 | 入池 | 缩放到 954×1696；源图先只读文件头，超过 1600 万像素或长宽比极端的直接拒收，避免解码吃光内存 |
 | 卸载 | `wallpaper-serve disable` 删掉配置键，恢复原生休眠屏 |
 
-不写 `/usr`、不做 bind-mount、没有开机单元和 sleep 钩子。`journalctl` 起不来时按 5 秒到 5 分钟指数退避重连。
+不写 `/usr`、不做 bind-mount、没有开机单元和 sleep 钩子，也不再起 `journalctl` 子进程。监听建不起来（如目录不在）时按 5 秒到 5 分钟指数退避重试。
 
 **首次写键后要重启一次 xochitl** 才会读进这个键；网页壁纸页和 `GET /status` 的 `native.restartPending` 会提示。重启用 `systemctl restart xochitl`（xovi 已生效时**别**跑 `xovi/start`，见 [`../../docs/INSTALL.md`](../../docs/INSTALL.md) 问题⑤）。
 

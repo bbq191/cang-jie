@@ -20,7 +20,7 @@
 |---|---|---|
 | 服务骨架 | `service` | 启动模板：解析 `--bind` → 建目录 → 自注册 → 起服务器，自带 `GET /health` |
 | | `registry` | 注册与发现（`$XDG_RUNTIME_DIR/shelf/services/<name>.json`，按 pid 清陈旧条目）；`SvcClient` 调另一个服务 |
-| | `http` | tiny_http 适配：路由（最具体优先）、回执、守卫、TLS、SSE 流与定长下载流；并发上限 64；对端 IP 经内部头传入 |
+| | `http` | tiny_http 适配：路由（最具体优先）、回执、守卫、TLS、SSE 流与定长下载流；并发上限 64；每条连接 60 秒读空闲超时（`vendor/tiny_http` 补丁）；对端 IP 经内部头传入 |
 | | `events` | 事件总线 `EventBus` + SSE；`follow()` 订阅另一个服务的 `/events` |
 | 文件与数据 | `paths` | XDG 路径的唯一路径表 |
 | | `fs` | 原子写（可带权限）、单段文件名校验 `plain_name`、同名不覆盖 `unique_path` |

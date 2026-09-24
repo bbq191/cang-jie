@@ -54,6 +54,7 @@
 |---|---|
 | 路由 | 路径模式：尾部 `/*` 前缀匹配、单段 `{param}`（参数用 `percent_decode_path` 解码，`+` 不当空格，09-24）。**最具体的优先**：字面段多的胜、精确匹配胜尾部通配（09-20 起）。此前靠“先注册先匹配”，通配路由曾抢走字面路由；现在跟注册顺序无关 |
 | 每请求一线程 + 并发上限 | 缺省同时 64 个请求（含 SSE 长连接），超了回 503 + `Retry-After: 2`，不再开线程。取值：合法并发约 30（浏览器每源 6 条 × 几个标签页 + 网关到各服务 8 条订阅），64 留一倍余量；每条线程常驻只有几十 KB。`ServeOpts.max_concurrent` 可改，`None` 不限 |
+| 连接读空闲超时 | 每条连接 60 秒（`READ_IDLE_TIMEOUT`）：服务端等着读、60 秒没收到一个字节就断开。防慢客户端/只发半个请求头或 TLS 握手、手机休眠留下的半开 keep-alive 连接永久占住连接线程（09-24 起；此前 tiny_http 不设任何超时）。是空闲超时不是总时长：上传只要有字节在流不受影响；处理函数自己慢（长轮询、排队）时服务端没在读，也不受影响。实现靠 `vendor/tiny_http` 的一处补丁（见 [`../vendor/README.md`](../vendor/README.md)）——**不能**把 `SO_RCVTIMEO` 设在监听 socket 上：accept 也会跟着超时，上游 accept 循环遇错就退出，服务停摆（先试过，测试抓到） |
 | 请求头白名单 | 处理函数只看得到 `Cookie`、`Authorization`、`Accept`、`Host`、`X-Forwarded-Proto`、`User-Agent`（外加 `Content-Type`/`Content-Length`） |
 | 对端 IP | 服务器取 TCP 对端地址（HTTPS 下同样取自底层 TcpStream），写进内部头 `X-Rmsvc-Remote-Ip`（常量 `REMOTE_IP_HEADER`），处理函数用 `Request::remote_ip()`、守卫用 `GuardRequest.remote` 读。客户端自带的同名头在白名单那步就被丢掉，伪造不了。没给 `Request` 加字段，是因为它被各服务直接构造 |
 | 守卫 | `Guard`：分发前先问一次，`None` 放行、`Some(reply)` 直接回。登录策略由服务自己定义（只有网关用） |

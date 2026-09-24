@@ -227,7 +227,7 @@ hook 目标 `FUN_00f47530`：两个 float（s0/s1）+ 一个指针（x0），标
 | 组件 | 是什么 | 详细记录 |
 |---|---|---|
 | `font-serve`（8792） | 上传字体装进 fontconfig 用户目录，重写 `fonts.json` 给字体菜单 qmd 读，动态维护中文回退链（全 `weak`，所选字体永远优先） | 书架白皮书第 F 章、§03k、§03bd |
-| `wallpaper-serve`（8793） | 写 xochitl 隐藏键 `SleepScreenPath` 指向 `current.png`，唤醒时轮换（池里只有一张时不再每次重写同一个文件，09-24）；旧 bind-mount 方案已退役 | [wallpaper-serve README](../wallpaper-serve/README.md)；书架白皮书 §03w / §03x / §03ab |
+| `wallpaper-serve`（8793） | 写 xochitl 隐藏键 `SleepScreenPath` 指向 `current.png`；xochitl 休眠时读完它就轮换（09-24 起 inotify，此前跟 journal 在唤醒时轮换；池里只有一张时不再每次重写同一个文件）；旧 bind-mount 方案已退役 | [wallpaper-serve README](../wallpaper-serve/README.md)；书架白皮书 §03w / §03x / §03ab |
 | `lo-alias.sh` | 给 `lo` 和 `usb1` 挂 `10.11.99.1`，让不插 USB 时 xochitl 的 :80 上传口仍可达；网关 `ExecStartPre` 调用 | [lo-alias README](../lo-alias/README.md) |
 
 两个服务都依赖 [`../../rmsvc-core`](../../rmsvc-core/README.md)，由网关反向代理，随 `install-all.sh` 的 shelf 步安装。
@@ -265,17 +265,17 @@ hook 目标 `FUN_00f47530`：两个 float（s0/s1）+ 一个指针（x0），标
 |---|---|---|---|
 | wifi-watch | packaging | 每 15 秒 `sleep` 一次看链路；链路好只读 sysfs、不 fork，每 40 轮（10 分钟）兜底复查一次频段/省电设置 | `packaging/wifi-watch/wifi-watch.sh` `INTERVAL`/`RECHECK` |
 | 服务间事件流心跳 | rmsvc-core | 网关订阅 7 个有 `/events` 的服务（book、font、koreader、wallpaper、ink、transcribe、note），transcribe 再订阅 ink，共 8 条 loopback 流，各 120 秒一次心跳 | `rmsvc-core/src/events.rs` `FOLLOW_KEEPALIVE_SECS` |
-| shelf-mkdir-agent.qmd | shelf | 长轮询 `GET /mkdir/pending?wait=25`：空闲约 25 秒一次往返（book-serve 上限 28 秒） | `shelf/xovi/shelf-mkdir-agent.qmd`；`book-serve` `MKDIR_WAIT_MAX_SECS` |
+| shelf-mkdir-agent.qmd | shelf | 长轮询 `GET /mkdir/pending?wait=290`：空闲约 290 秒一次往返（book-serve 上限 300 秒；09-24 前 25 秒）；若真遇到 30 秒客户端超时自动退回 25 秒 | `shelf/xovi/shelf-mkdir-agent.qmd`；`book-serve` `MKDIR_WAIT_MAX_SECS` |
 | 网关 mDNS | rmsvc-core | socket 读超时 = 接口重扫间隔 60 秒；局域网别的设备发 mDNS 查询另算 | `rmsvc-core/src/mdns.rs` `RESCAN_INTERVAL` |
-| wallpaper-serve | 本线 | 常驻 `journalctl -f -u xochitl`，xochitl 每写一行日志就醒一次 | `enhance/wallpaper-serve/src/wake.rs` |
+| wallpaper-serve | 本线 | inotify 等 xochitl 休眠时读完 `current.png`：空闲零唤醒，每次休眠醒一次（09-24 前常驻 `journalctl -f -u xochitl`，xochitl 每写一行日志就醒一次） | `enhance/wallpaper-serve/src/wake.rs` |
 | battop | 本线 | **默认不跑**；开着时醒着每 600 秒采样一次 | `enhance/battop/src/main.rs` `BATTOP_INTERVAL_SECS` |
 | hl-snap / hw-stroke | 本线 | 没有定时器，只在划线 / 写字时进 handler | `enhance/*/src/*.c` |
 | reader-page-turn.qmd | 本线（源码在 shelf） | 打开书时单发 300 ms 读一次开关，不轮询（08 月旧版每 1.5 秒轮询） | `shelf/xovi/reader-page-turn.qmd` |
 | 其余 qmd 与服务 | shelf / notes | comic-margins 换文档单发 1.5 秒；trash-agent 书库列表变化后 4 秒防抖；book-serve / ink-serve 用 inotify 防抖（8 秒 / 4 秒）；浏览器事件流 20 秒心跳只在网页开着时有 | 各自源码 |
 
-**结论**：空闲时的定时唤醒主要是 wifi-watch、8 条事件流心跳和 mkdir-agent 长轮询，每小时各一两百次量级；wallpaper-serve 的唤醒次数取决于 xochitl 写多少日志，这也是本线一再压低 xochitl 日志量（§03g 逐点日志默认关、§03i 去掉命中日志）的原因。
+**结论**：空闲时的定时唤醒主要是 wifi-watch 和 8 条事件流心跳，每小时各约 240 次；mkdir-agent 长轮询放宽后约 12 次/时（原约 144 次）；wallpaper-serve 09-24 起不再跟日志（改监听休眠读图），但设备上的飞行记录仪仍跟 journal，所以本线继续压低 xochitl 日志量（§03g 逐点日志默认关、§03i 去掉命中日志）。
 
-**仍待决**：mkdir-agent 若真机确认 Qt6 QML XHR 没有 30 秒传输超时，长轮询可放宽到几分钟（要同步改 `MKDIR_WAIT_MAX_SECS`）；wallpaper-serve 跟 journal 的方式本身没改（§05）。
+**mkdir-agent 放宽的依据**（09-24）：设备 Qt 6.10.3；qtdeclarative 6.10 的 `qqmlxmlhttprequest.cpp` 不设传输超时、XHR 也没有 timeout 属性；`QNetworkAccessManager` 缺省超时为 0（禁用）。xochitl 导入了 `setTransferTimeout`，但没有证据表明它作用在 QML 引擎的 NAM 上，所以 qmd 加了兜底：请求在 28–33 秒之间失败就当作客户端超时，退回 wait=25 并打一行 `SHELF-MKDIR: transfer timeout` 日志。**部署后看 journal 里有没有这行**：没有 = 长等待生效。
 
 ## 03k｜第三轮审计给本线的改动（2026-09-24，只在 host 验证）
 
@@ -334,7 +334,7 @@ hook 目标 `FUN_00f47530`：两个 float（s0/s1）+ 一个指针（x0），标
 | hw-stroke：真实压感 | 放弃 | 先搞清 `FUN_00f47530` / `FUN_00f4c8d0` 各有哪些调用路径 |
 | 多扩展共存依赖加载顺序（§04） | **已修、host 验证、待真机**：`shared/scan.c` 合并续段 + `_xovi_construct` 失败打日志 | 部署新 `.so` 后 journal 里两个扩展的"安装完成"都在；有条件时把两个 `.so` 改名调换加载顺序再验一次 |
 | 第三轮审计重编的两个 `.so` + 部署新流程 stop → 换 → start（§03g、§03k） | 仓库里的 `hl-snap.so` / `hw-stroke.so` 已按新源码重编（含上一行的修复和 memchr 提速），**还没部署**；stop → 换 → start 也还没在真有 `.so` 变化时跑过 | 下次部署这两个 `.so` 时一起验：走待换入区、不整机重启、两行"安装完成"都在 |
-| wallpaper-serve 跟 `journalctl -f -u xochitl`（§03j） | xochitl 每写一行日志它就醒一次，是剩下的"被动唤醒"大户之一；本轮只压了 xochitl 的日志量，没改跟日志的方式 | 若要再省，考虑只在屏幕状态变化相关的信号上醒（未设计） |
+| wallpaper-serve 改监听休眠读图（§03j） | 09-24 已改：真机 inotify 观察确认 xochitl 每次休眠读一遍 `current.png`，改为 `IN_CLOSE_NOWRITE` 触发轮换，去掉 `journalctl -f` 子进程；host 真 inotify 单测通过，**未上真机** | 部署后按两次休眠：第二次显示的是下一张；`ps` 里没有 wallpaper-serve 的 journalctl 子进程；充电状态下也试一次 |
 | lo-alias：不插 USB 冷启动 | 脚本现由网关 `ExecStartPre` 调用，不保证先于 xochitl；本次开机它比 xochitl 晚 3 秒 | 找机会做一次不插 USB 冷启动，确认 :80 能绑上 |
 | battop：两次冻机的内核根因 | 09-23 起采样循环无子进程；根因（RCU stall）未排除 | 继续观察；不开机自启保持不变 |
 

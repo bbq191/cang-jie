@@ -171,7 +171,7 @@
 
 | 队列 | qmd（`shelf/xovi/`） | 触发 | 用途 |
 |---|---|---|---|
-| `mkdir-pending.json`：要建的文件夹名 | `shelf-mkdir-agent.qmd`（注入 MainView） | 长轮询 `GET /mkdir/pending?wait=25`（服务端阻塞到入队或 25 秒到期；2026-09-22 起，此前 8 秒 Timer 轮询）；每次唤醒书库文件夹名只扫一遍、队列空就不扫（09-24，此前每条待办各扫一遍全库） | 「加入 xochitl → 文件夹」填了不存在的名字；也可 `POST /mkdir/add` |
+| `mkdir-pending.json`：要建的文件夹名 | `shelf-mkdir-agent.qmd`（注入 MainView） | 长轮询 `GET /mkdir/pending?wait=290`（服务端阻塞到入队或到期，上限 300 秒；09-22 起长轮询、09-24 从 25 秒放宽，此前 8 秒 Timer 轮询；遇 30 秒客户端超时自动退回 25 秒）；每次唤醒书库文件夹名只扫一遍、队列空就不扫（09-24，此前每条待办各扫一遍全库） | 「加入 xochitl → 文件夹」填了不存在的名字；也可 `POST /mkdir/add` |
 | `trash-pending.json`：要删的文档 uuid+name | `shelf-trash-agent.qmd`（注入 Sidebar） | **事件驱动**（当前文件夹模型 `rowsInserted`/`modelReset`，4 秒防抖）后 `GET /trash/pending`；有勾选时跳过防误删 | 入队时按 visibleName 核对 uuid；现调用方是笔记线 `note-serve` 旧版本软删 |
 | `comic-margins.json`：待设页边距的 uuid | `shelf-comic-margins.qmd`（注入 DocumentView） | 开书 1.5 秒后 `GET /margins/<uuid>` | §3.3 |
 | （无队列，只读查询） | `reader-page-turn.qmd`（注入 DocumentView / DeviceSceneView / SceneViewGestures） | 开书 300 ms 后，开了「日漫翻页规则」才 `GET /reading-direction/<uuid>`（book-serve 按（大小, mtime）缓存结果，解 zip 时不持缓存锁） | xochitl 阅读器单击翻页与日漫翻页方向，见系统增强线白皮书 §03i |
@@ -337,7 +337,7 @@ POST /mkdir/add · GET /mkdir/pending[?wait=秒] · GET /mkdir   原生建文件
 
 - 网关代理对 ≤256KB 且不是下载的应答、以及没有 `Content-Length` 的应答仍整体缓冲（§1）；它们都是小 JSON，不改。
 - 并发控制已知缺口（§7.3）：抓网文的「同步优化」不占忙锁、不过闸门。（PDF 转 EPUB 落地前复查同名书已于 09-24 补上。）
-- `shelf-mkdir-agent.qmd` 的长轮询约 25 秒一次，是书架剩余最大的周期唤醒源；放宽要先真机确认 Qt6 QML XHR 没有 30 秒传输超时，并同步改 book-serve 的 `MKDIR_WAIT_MAX_SECS`。
+- `shelf-mkdir-agent.qmd` 长轮询 09-24 放宽到 290 秒（依据：设备 Qt 6.10 的 QML XHR 不设传输超时，源码核实）；部署后确认 journal 里没有 `SHELF-MKDIR: transfer timeout`（有就说明退回了 25 秒）。
 - 渲染自检对漫画拆分份不生效（§6.2 第 5 点）。
 - 大文件占位通道：>153MB 首次渲染内存/耗时没验证；占位上传后崩溃会残留占位文档；批量“加入 xochitl / KOReader”无设备端到端实测。
 - 入库 PDF 转 EPUB：公式裁图没有真机样本；公式区域按整行字符包围盒算，公式文字碎片会同时留在正文里（不丢字，但观感不如只留图）；竖排/多栏 PDF 未验证。
