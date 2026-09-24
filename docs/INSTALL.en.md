@@ -24,7 +24,7 @@ manager) itself and how to sideload KOReader, follow vellum's and the community'
 | # | Run on the device | What it is | If missing |
 |---|---|---|---|
 | 1 | `vellum add xovi` | [xovi](https://github.com/asivery/xovi): the extension loader | All plugin-type features depend on it; those steps fail outright |
-| 2 | `vellum add qt-resource-rebuilder` | Loader for UI patches (qmd) | Font menu, trash/new-folder proxy, comic-margin proxy and the sidebar entry are **skipped** (not a failure); everything else is unaffected |
+| 2 | `vellum add qt-resource-rebuilder` | Loader for UI patches (qmd) | No UI patch is installed (not a failure): the sidebar entry, font menu, trash/new-folder proxies, comic-margin proxy, and reader tap-to-turn / manga page-turn rule. Everything else is unaffected (for how the summary shows this, see issue ②) |
 | 3 | `vellum add appload` (**≥ 0.6.0**) | Third-party app loader | The sidebar KOReader entry doesn't appear (the `sidebar-entry` step skips itself) |
 | 4 | Sideload KOReader through appload | The second reader | `koreader-serve` only manages an already-installed KOReader; it doesn't install it |
 
@@ -62,7 +62,7 @@ The scripts build the programs on your computer and install them on the device o
    sh install-all.sh 10.11.99.1
    ```
    The script first confirms ssh works, the firmware is on the allowlist and the device is in good shape (see "Automatic pre-install checks"), then runs the steps below. The first run compiles everything, so it takes a while.
-5. **Read the closing summary**: three lines — "installed", "skipped", "failed". "Skipped" is not "failed" and is easy to miss (see issues ①②). Fix any failure as its message says; everything else is already installed. Re-running the whole thing is safe (every script is idempotent, and unchanged content won't restart xochitl again).
+5. **Read the closing summary**: four lines — "installed", "skipped (--skip)", "skipped (prerequisite not met, not a failure)" and "failed". The third line gives the reason (for example appload isn't installed, or dm-verity is on so nothing can go into `/usr`). "Skipped" is not "failed" and is easy to miss (see issues ①②). Fix any failure as its message says; everything else is already installed. Re-running the whole thing is safe (every script is idempotent, and unchanged content won't restart xochitl again).
 6. **Log in, change the password, install the certificate**: see "After installing".
 7. **Check the sidebar entry by eye** (if that step wasn't skipped): on the device's home screen, see whether the KOReader entry is there and opens. No script can confirm this for you.
 
@@ -81,7 +81,7 @@ Every **step name** below can be used with `--skip`; the matching script `packag
 | `hl-snap` | The highlighter snaps precisely to Chinese text instead of "a short stroke grabs the whole line"; files only | xovi |
 | `handwriting-stroke` | Tunes handwriting stroke width by pen angle and speed (off by default; turn it on under "Manage → Lab" on the web page); files only | xovi |
 | `sidebar-entry` | A sidebar shortcut to KOReader, plus WeRead if installed; files only | qt-resource-rebuilder + appload (see issue ①) |
-| `shelf` | Nine web services: the gateway, books (book / koreader), fonts and wallpapers (font / wallpaper), and the four notes services (ink / transcribe / mind / note); related UI patches are files only | The patches need qt-resource-rebuilder and are skipped without it |
+| `shelf` | Nine web services: the gateway, books (book / koreader), fonts and wallpapers (font / wallpaper), and the four notes services (ink / transcribe / mind / note); its five UI patches (font menu, trash proxy, new-folder proxy, comic-margin proxy, reader page turn) are files only | The patches need qt-resource-rebuilder; without it only the patches are skipped, the services still install |
 | `xovi-apply` | Once all "files only" content is in place, **restarts xochitl once, only if something changed (or xovi isn't active yet)**, so it takes effect (the screen flashes and reading is interrupted; nothing changed means no restart) | — |
 
 "Files only" means the files are put in place but xochitl is not restarted yet; `xovi-apply` restarts it once at the end. This avoids several restarts in a short time.
@@ -139,7 +139,7 @@ Re-running `install-all.sh` is safe and doesn't flash the screen every time. Onl
 | Situation | What the last step `xovi-apply` does |
 |---|---|
 | Something changed this run (first install, updated plugin or UI patch) | Restarts xochitl once (prints "will interrupt reading" and waits 5 seconds first) |
-| A plugin `.so` was updated while xochitl is using the old one | The new one waits in a staging area, then "stop xochitl → swap the file → start xochitl" (since 2026-09-24, see the diagram below) |
+| A plugin `.so` was updated while xochitl is using the old one | The new one waits in a staging area, then "stop xochitl → swap the file → start xochitl" (since 2026-09-24, see the diagram below; if the computer disconnects or you press Ctrl-C in the middle, the device still finishes the start, so xochitl is not left stopped) |
 | Nothing changed, xovi is active | No restart |
 | Nothing changed, but the device just rebooted and xovi isn't active yet | Runs `xovi/start` to activate it |
 | Last run put a new plugin into the staging area, and the device rebooted before it was swapped in (markers cleared) | The staging area is not in memory, so it still counts as pending: stop xochitl → swap the file → start |
@@ -147,6 +147,8 @@ Re-running `install-all.sh` is safe and doesn't flash the screen every time. Onl
 | The previous run used `--skip xovi-apply` | The marker is still there; just run `sh deploy-xovi-apply.sh <host>` |
 
 ![Updating a plugin .so: stop, swap, start](diagrams/so-swap-order.svg)
+
+**The same applies when running a step on its own** (since 2026-09-24): when `deploy-hl-snap.sh`, `deploy-handwriting-stroke.sh` or `deploy-sidebar-entry.sh` is run alone and the files are byte-identical to what's installed, nothing else is pending and xovi is active, xochitl is **not** restarted (previously a standalone run always restarted it). It uses the same check as the final `xovi-apply` step.
 
 ### Installing only part of it
 
@@ -171,14 +173,14 @@ sh uninstall-all.sh 10.11.99.1 --skip shelf       # skip a step
 sh uninstall-all.sh 10.11.99.1 --purge            # also delete the battery sampler's program and history
 ```
 
-**What it does**: stops and removes the installed services, plugins and UI patches, plus the package directories pushed to the device during install (only known files are deleted; a directory with anything else in it is kept).
+**What it does**: stops and removes the installed services, plugins and UI patches, plus the package directories pushed to the device during install (only known files are deleted; a directory with anything else in it is kept). Removing a plugin also removes a newer version still waiting in the staging area (before 2026-09-24 it wasn't, so the next deploy put the removed plugin straight back).
 
 **Kept by default**: the master library, configuration, certificates, font/wallpaper pools, and the backups in `cangjie-backups/`. `--purge` only concerns the battery sampler and leaves book data alone; to remove book data too, first `--skip shelf`, then run `shelf-uninstall --purge` on the device.
 
 **What it doesn't do**:
 - `chrony-cn` and `timezone-cn` are configuration changes and `xovi-apply` is just an action; none of them is undone. Backups from before the change are in `cangjie-backups/` on the device if you want to restore them yourself.
 - vellum, xovi, qt-resource-rebuilder, appload and KOReader were not installed by this project and are not removed.
-- It does **not** restart xochitl. Plugins already loaded stop only on the next xochitl restart. To stop them now: if you only removed UI patches (`sidebar-entry`/`shelf`), run `systemctl restart xochitl` (see issue ⑤); if you removed a plugin `.so` xochitl is currently using (`hl-snap`/`handwriting-stroke`; the uninstaller tells you), **reboot the whole device** — deleting an in-use plugin file and then letting xochitl exit is the same kind of operation as "swap a plugin file, then restart", which crashes and reboots the device, and this uninstall path hasn't been verified on real hardware.
+- It does **not** restart xochitl. Plugins already loaded stop only on the next xochitl restart. To stop them now: if you only removed UI patches (`sidebar-entry`/`shelf`), run `systemctl restart xochitl` (see issue ⑤); if you removed a plugin `.so` xochitl is currently using (`hl-snap`/`handwriting-stroke`), the uninstaller prints "the running xochitl still has … loaded; to stop it now, reboot the whole device" — do that: **reboot the whole device**, don't restart xochitl — deleting an in-use plugin file and then letting xochitl exit is the same kind of operation as "swap a plugin file, then restart", which crashes and reboots the device, and this uninstall path hasn't been verified on real hardware.
 
 **When the system partition's read-only verification (dm-verity) is on**: service units under `/usr` cannot be removed (the scripts never write `/usr` under verity; writing `/usr` once caused a rollback that bricked the device). The uninstaller says so and **keeps** the programs those units need, so they don't fail over and over after a reboot. Once the device is writable, run `uninstall-all.sh` again to finish.
 
@@ -205,7 +207,7 @@ This is the **authoritative** OTA recovery guide; the other documents link here.
 |---|---|---|---|
 | Master library, KOReader configuration, font and wallpaper pools, certificates, gateway password, sleep-screen setting, `cangjie-backups/`, battery sampling history | `/home` | Kept | Nothing to do |
 | The web services' programs (`~/.local/bin`) | `/home` | Kept | Nothing to do |
-| `hl-snap` / `hw-stroke` plugins; UI patches for the sidebar entry, font menu, trash, new folder and comic margins | `/home` (`extensions.d/`, `exthome/`) | Files remain, but need a hashtable rebuild to take effect | Step 2, then run `install-all.sh` |
+| `hl-snap` / `hw-stroke` plugins; UI patches for the sidebar entry, font menu, trash, new folder, comic margins and reader page turn | `/home` (`extensions.d/`, `exthome/`) | Files remain, but need a hashtable rebuild to take effect | Step 2, then run `install-all.sh` |
 | Service units for the web services and `shelf.target` | `/usr` | **Wiped** | `shelf` step (or alone: `SHELF_NO_BUILD=1 sh deploy.sh <device IP>`) |
 | `xovi-reenable.service` (re-activates xovi at boot) | `/usr` | **Wiped** | `xovi-persist` step |
 | `chrony-boot-wakelock.service` | `/usr` | **Wiped** | `chrony-boot-wakelock` step |
@@ -224,9 +226,9 @@ These are known issues with specific triggers, not random faults. Numbers ①–
 
 | # | Symptom | Cause | What to do |
 |---|---|---|---|
-| ① | No KOReader/WeRead entry in the sidebar; `sidebar-entry` shows as "skipped" in the summary | appload ≤ 0.5.3 doesn't support the 3.28 UI, so its own launcher isn't built. This does **not** stop the install or break xochitl; only this one feature is missing | Check the version with `vellum list --installed \| grep appload`; if old, `vellum upgrade appload` (0.6.0 supports 3.28, verified on real hardware on 2026-09-21). **After upgrading appload, reboot the whole device instead of `systemctl restart xochitl`**: restarting after swapping a plugin file that is in use makes the old process crash on exit, which reboots the device automatically |
-| ② | Font menu, trash/new-folder, comic margins and the sidebar entry are **all** missing | They share one prerequisite, qt-resource-rebuilder; without it each shows as "skipped" in the summary | `vellum add qt-resource-rebuilder`, then re-run `install-all.sh` |
-| ③ | After several xochitl restarts in a short time, the whole device rebooted once | The xochitl service allows at most 4 restarts in 10 minutes, no matter who triggers them: standalone deploy scripts, `vellum add appload`, WeRead launches and exits. On 2026-09-11 two restarts in a row were enough to trigger a full reboot — **the device recovered on its own; it was not bricked** | `install-all.sh` already handles this (one restart at the end). **When running deploy scripts one by one, or fiddling with appload/WeRead**, wait a few minutes between each |
+| ① | No KOReader/WeRead entry in the sidebar; `sidebar-entry` is listed under "skipped (prerequisite not met)" in the summary | appload ≤ 0.5.3 doesn't support the 3.28 UI, so its own launcher isn't built. This does **not** stop the install or break xochitl; only this one feature is missing | Check the version with `vellum list --installed \| grep appload`; if old, `vellum upgrade appload` (0.6.0 supports 3.28, verified on real hardware on 2026-09-21). **After upgrading appload, reboot the whole device instead of `systemctl restart xochitl`**: restarting after swapping a plugin file that is in use makes the old process crash on exit, which reboots the device automatically |
+| ② | Font menu, trash/new-folder, comic margins, reader tap-to-turn and the sidebar entry are **all** missing | They share one prerequisite, qt-resource-rebuilder. Without it, `sidebar-entry` is listed under "skipped (prerequisite not met)"; the others are patches bundled in the `shelf` step and are **not listed separately** — `shelf` still counts as "installed", and only that step's output has a line saying the font-menu/trash/new-folder qmd were skipped because there is no qt-resource-rebuilder directory | `vellum add qt-resource-rebuilder`, then re-run `install-all.sh` |
+| ③ | After several xochitl restarts in a short time, the whole device rebooted once | The xochitl service allows at most 4 restarts in 10 minutes, no matter who triggers them: standalone deploy scripts (when something changed), `vellum add appload`, WeRead launches and exits. On 2026-09-11 two restarts in a row were enough to trigger a full reboot — **the device recovered on its own; it was not bricked** | `install-all.sh` already handles this (one restart at the end). **When running deploy scripts one by one, or fiddling with appload/WeRead**, wait a few minutes between each |
 | ④ | The firmware safety gate refuses | By design: the same version number doesn't guarantee the same internal layout | Confirm the device firmware is the one you verified, then use `--force` |
 | ⑤ | The screen flashes at the end of the install | `xovi-apply` is restarting xochitl, only when something actually changed or xovi isn't active yet | Normal; don't use the device during install. To avoid the interruption, `--skip xovi-apply` and run `sh deploy-xovi-apply.sh <host>` later. **When restarting by hand**: if xovi is active, use `systemctl restart xochitl`; **never** run `xovi/start` by hand — it crashes the running xochitl and the device reboots itself (real-hardware incident, 2026-09-20). Use `xovi/start` only right after boot or an OTA, when xovi isn't active |
 | ⑥ | After a reboot the battery sampler isn't running | **Deliberately not started at boot**: on 2026-08-29 its sampling triggered a kernel deadlock that froze the device, and the root cause hasn't been fully ruled out | Turn on the battery switch under "Manage → System enhance" on the web page (the "Battery Assassin" data page appears once it's on), or `systemctl start battop` |
@@ -244,7 +246,7 @@ Every install script can be re-run; before overwriting an existing file on the d
 
 ## Known limitations
 
-- **What has and hasn't run on real hardware**: after the 2026-09-22 merge, `install-all.sh` was run end to end on the device once (services healthy, no unexpected xochitl restarts), and the new `xovi-reenable.service` is on the device. **Only simulated locally, never on real hardware**: the full uninstall (reverse order, package-directory cleanup, keeping programs under verity), the "nothing changed, so no restart" path, and the 2026-09-24 "stop → swap `.so` → start". When trying them on a device, go one step at a time: `--dry-run` first, then single steps or `--skip`.
+- **What has and hasn't run on real hardware**: after the 2026-09-22 merge, `install-all.sh` was run end to end on the device once (services healthy, no unexpected xochitl restarts), and the new `xovi-reenable.service` is on the device. **Only simulated locally, never on real hardware**: the full uninstall (reverse order, package-directory cleanup, keeping programs under verity, clearing the staging area, the "still loaded" reboot hint), the "nothing changed, so no restart" path (including standalone deploys since 2026-09-24), the 2026-09-24 "stop → swap `.so` → start" (including ignoring disconnect signals in the critical section and still counting the staging area as pending after a reboot), and the summary's "prerequisite not met" line. When trying them on a device, go one step at a time: `--dry-run` first, then single steps or `--skip`.
 - **Writing `/usr` still relies on two safeguards, "check dm-verity first + a time-limited read-write window"**, rather than never touching `/usr`; writing `/usr` once triggered a rollback that bricked the device (2026-08-16).
 - **Running `shelf/install.sh --password <plaintext>` directly on the device briefly exposes the password in the device's process list**; passing it through `deploy.sh --password` on your computer doesn't.
 - Uninstalling doesn't revert `chrony-cn` / `timezone-cn`; there's no "one click back to before".

@@ -57,6 +57,6 @@
 <polyline points="466,411 506,411" fill="none" stroke="#2f7d45" stroke-width="1.6" marker-end="url(#ss-g)"/>
 <polyline points="696,411 736,411" fill="none" stroke="#2f7d45" stroke-width="1.6" marker-end="url(#ss-g)"/>
 
-<text x="500" y="478" text-anchor="middle" font-size="11.8" fill="#555">待换入区在 /home：设备中途重启也不丢，下次重启 xochitl 时照样换入；在那之前 xochitl 仍用旧版。</text>
+<text x="500" y="478" text-anchor="middle" font-size="11.8" fill="#555">待换入区在 /home：设备中途重启也不丢，下次重启 xochitl 时照样换入；在那之前 xochitl 仍用旧版。stop→start 之间电脑断线也会把 start 跑完。</text>
 <text x="500" y="498" text-anchor="middle" font-size="11.8" fill="#a33">⚠ 旧做法两次真机整机重启（09-21 appload、09-24 hw-stroke）；新做法只有本机模拟测试，真机还没用“有变化的 .so”走过</text>
 </svg>

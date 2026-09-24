@@ -22,7 +22,7 @@
 | # | 在设备上做什么 | 它是什么 | 缺了会怎样 |
 |---|---|---|---|
 | 1 | `vellum add xovi` | [xovi](https://github.com/asivery/xovi)：扩展加载框架 | 插件类功能都靠它，相关步骤直接失败 |
-| 2 | `vellum add qt-resource-rebuilder` | 界面补丁（qmd）加载器 | 字体菜单、回收站/新建文件夹代理、漫画页边距代理、侧栏入口**跳过**（不算失败），其余不受影响 |
+| 2 | `vellum add qt-resource-rebuilder` | 界面补丁（qmd）加载器 | 界面补丁全部不装（不算失败）：侧栏入口、字体菜单、回收站/新建文件夹代理、漫画页边距代理、阅读器单击翻页/日漫翻页规则。其余不受影响（汇总里怎么显示见问题②） |
 | 3 | `vellum add appload`（**≥ 0.6.0**） | 第三方 App 加载器 | 侧栏 KOReader 入口不出现（`sidebar-entry` 步自动跳过） |
 | 4 | 经 appload 侧载 KOReader | 第二个阅读器 | `koreader-serve` 只管理已装好的 KOReader，不负责装 |
 
@@ -60,7 +60,7 @@
    sh install-all.sh 10.11.99.1
    ```
    脚本先确认 ssh 能通、固件在白名单里、设备状态正常（见「装前自动检查」），再按下表逐步执行。第一次会先编译，要等一会儿。
-5. **看收尾汇总**：分「已安装」「已跳过」「失败」三栏。"跳过"不等于"失败"，容易漏看（见问题①②）。有失败项就照报错处理，其余已经装好；整条重跑也安全（脚本全部幂等，内容没变不会再重启 xochitl）。
+5. **看收尾汇总**：分四栏——「已安装」「已跳过（--skip）」「已跳过（前置条件不满足，非失败）」「失败」。第三栏会写明原因（例如设备没装 appload、dm-verity 开着装不进 `/usr`）；"跳过"不等于"失败"，容易漏看（见问题①②）。有失败项就照报错处理，其余已经装好；整条重跑也安全（脚本全部幂等，内容没变不会再重启 xochitl）。
 6. **登录网页、改密码、装证书**：见「装完之后」。
 7. **肉眼确认侧栏入口**（如果这步没被跳过）：回设备主界面，看侧栏 KOReader 入口在不在、能不能点开。这一步脚本替你确认不了。
 
@@ -79,7 +79,7 @@
 | `hl-snap` | 荧光笔划中文"划哪吸哪"，不再"划一小段吸整行"；只落盘 | xovi |
 | `handwriting-stroke` | 按笔尖角度和运笔速度优化手写笔画粗细（默认关，网页「管理 → 实验室」里开）；只落盘 | xovi |
 | `sidebar-entry` | 侧栏直达「KOReader」；装了 WeRead 自动多一项；只落盘 | qt-resource-rebuilder + appload（见问题①） |
-| `shelf` | 九个网页服务：网关、书（book / koreader）、字体与壁纸（font / wallpaper）、笔记四服务（ink / transcribe / mind / note）；相关界面补丁只落盘 | 补丁需要 qt-resource-rebuilder，缺了自动跳过 |
+| `shelf` | 九个网页服务：网关、书（book / koreader）、字体与壁纸（font / wallpaper）、笔记四服务（ink / transcribe / mind / note）；附带的五个界面补丁（字体菜单、回收站代理、建文件夹代理、漫画页边距代理、阅读器翻页）只落盘 | 补丁需要 qt-resource-rebuilder，缺了只跳过补丁、服务照装 |
 | `xovi-apply` | 上面"只落盘"的东西都就位后，**有改动（或 xovi 还没生效）才重启 xochitl 一次**让它们生效（会闪屏、打断阅读；没改动就不重启） | — |
 
 "只落盘"的意思是：文件先放到位，但先不重启 xochitl，最后由 `xovi-apply` 统一重启一次。这样避免短时间内反复重启。
@@ -137,7 +137,7 @@ sh install-all.sh 10.11.99.1 --force
 | 情形 | 最后一步 `xovi-apply` 怎么做 |
 |---|---|
 | 这轮有内容变了（首次安装、更新了插件或界面补丁） | 重启 xochitl 一次（先打印"将打断阅读"，等 5 秒） |
-| 更新了插件 `.so`，而 xochitl 正在用旧版 | 新版先放进待换入区，然后"停 xochitl → 换文件 → 启动 xochitl"（2026-09-24 起，见下图） |
+| 更新了插件 `.so`，而 xochitl 正在用旧版 | 新版先放进待换入区，然后"停 xochitl → 换文件 → 启动 xochitl"（2026-09-24 起，见下图；这几步中间电脑断线或按 Ctrl-C，设备也会把 start 跑完，不会让 xochitl 停在那里） |
 | 什么都没变，xovi 已生效 | 不重启 |
 | 什么都没变，但设备刚重启过、xovi 还没生效 | 执行 `xovi/start` 让它生效 |
 | 上一轮新版插件放进了待换入区，还没换进去设备就重启了（标记随之清空） | 待换入区不在内存盘，仍算"有待生效"：停 xochitl → 换文件 → 启动 |
@@ -145,6 +145,8 @@ sh install-all.sh 10.11.99.1 --force
 | 上一轮用 `--skip xovi-apply` 跳过了 | 标记还在，补一句 `sh deploy-xovi-apply.sh <host>` 即可 |
 
 ![更新插件 .so：先停、再换、再起](diagrams/so-swap-order.svg)
+
+**单独跑某一步也一样**（2026-09-24 起）：`deploy-hl-snap.sh`、`deploy-handwriting-stroke.sh`、`deploy-sidebar-entry.sh` 单独运行时，如果文件和设备上已装的逐字节相同、也没有别的待生效改动、xovi 已生效，就**不重启** xochitl（以前单独跑每次都重启）。判据与最后一步 `xovi-apply` 是同一个。
 
 ### 只装一部分
 
@@ -169,14 +171,14 @@ sh uninstall-all.sh 10.11.99.1 --skip shelf       # 跳过某步
 sh uninstall-all.sh 10.11.99.1 --purge            # 另外删掉电池刺客的程序和历史采样数据
 ```
 
-**会做什么**：停用并删掉装过的服务、插件、界面补丁，以及部署时推到设备上的安装包目录（只删认识的文件，目录里有别的东西就留着）。
+**会做什么**：停用并删掉装过的服务、插件、界面补丁，以及部署时推到设备上的安装包目录（只删认识的文件，目录里有别的东西就留着）。卸插件时连待换入区里还没换进去的新版也一并撤掉（2026-09-24 之前不撤，下一次部署会把刚卸掉的插件又装回来）。
 
 **默认保留**：母版库、配置、证书、字体/壁纸池、`cangjie-backups/` 里的备份。`--purge` 只管电池刺客，不碰书架数据；要连书架数据一起删，先 `--skip shelf` 卸别的，再在设备上跑 `shelf-uninstall --purge`。
 
 **不会做什么**：
 - `chrony-cn`、`timezone-cn` 是改配置、`xovi-apply` 只是个动作，都不卸。改之前的备份在设备 `cangjie-backups/` 里，要还原自己取。
 - vellum、xovi、qt-resource-rebuilder、appload 和 KOReader 不是本项目装的，也不卸。
-- 卸载**不重启** xochitl。已经加载的插件要等下次重启 xochitl 才真正停用。想马上停：只卸了界面补丁（`sidebar-entry`/`shelf`）就 `systemctl restart xochitl`（见问题⑤）；卸了 xochitl 正在用的插件 `.so`（`hl-snap`/`handwriting-stroke`，卸载时会提示）请**整机重启**——删掉正在用的插件文件再让 xochitl 退出，跟"换了插件文件再 restart 会崩溃、整机重启"是同一类操作，卸载这条路没在真机上验证过是否安全。
+- 卸载**不重启** xochitl。已经加载的插件要等下次重启 xochitl 才真正停用。想马上停：只卸了界面补丁（`sidebar-entry`/`shelf`）就 `systemctl restart xochitl`（见问题⑤）；卸了 xochitl 正在用的插件 `.so`（`hl-snap`/`handwriting-stroke`），卸载时会打印"运行中的 xochitl 仍加载着 …，要立刻停用请整机重启"，照做：**整机重启**，别 restart xochitl——删掉正在用的插件文件再让 xochitl 退出，跟"换了插件文件再 restart 会崩溃、整机重启"是同一类操作，卸载这条路没在真机上验证过是否安全。
 
 **系统分区只读校验（dm-verity）开着时**：`/usr` 下的服务单元删不掉（脚本遇到 verity 一律不写 `/usr`，写 `/usr` 曾经让设备回滚变砖）。这时卸载脚本会如实提示，并**保留**这些单元要用的程序，免得重启后单元找不到程序、反复失败。等设备可写后再跑一次 `uninstall-all.sh` 就能收尾。
 
@@ -203,7 +205,7 @@ sh uninstall-all.sh 10.11.99.1 --purge            # 另外删掉电池刺客的�
 |---|---|---|---|
 | 母版库、KOReader 配置、字体与壁纸池、证书、网关密码、休眠屏设置、`cangjie-backups/`、电池采样历史 | `/home` | 保留 | 不用管 |
 | 各网页服务的程序（`~/.local/bin`） | `/home` | 保留 | 不用管 |
-| `hl-snap` / `hw-stroke` 插件、侧栏入口与字体菜单/回收站/建夹/漫画边距的界面补丁 | `/home`（`extensions.d/`、`exthome/`） | 文件还在，但要重建 hashtable 才生效 | 第 2 步，再跑 `install-all.sh` |
+| `hl-snap` / `hw-stroke` 插件、侧栏入口与字体菜单/回收站/建夹/漫画边距/阅读器翻页的界面补丁 | `/home`（`extensions.d/`、`exthome/`） | 文件还在，但要重建 hashtable 才生效 | 第 2 步，再跑 `install-all.sh` |
 | 各网页服务与 `shelf.target` 的服务单元 | `/usr` | **被冲掉** | `shelf` 步（或单独：`SHELF_NO_BUILD=1 sh deploy.sh <设备IP>`） |
 | `xovi-reenable.service`（开机自动让 xovi 生效） | `/usr` | **被冲掉** | `xovi-persist` 步 |
 | `chrony-boot-wakelock.service` | `/usr` | **被冲掉** | `chrony-boot-wakelock` 步 |
@@ -222,9 +224,9 @@ sh uninstall-all.sh 10.11.99.1 --purge            # 另外删掉电池刺客的�
 
 | # | 现象 | 原因 | 怎么办 |
 |---|---|---|---|
-| ① | 侧栏没有 KOReader/WeRead 入口；汇总里 `sidebar-entry` 是"跳过" | appload ≤ 0.5.3 不支持 3.28 的界面，自己的启动器建不起来。**不会**导致装不上或 xochitl 起不来，只是这一个功能不生效 | `vellum list --installed \| grep appload` 看版本，旧版就 `vellum upgrade appload`（0.6.0 起支持 3.28，2026-09-21 真机验证过）。**升级 appload 后整机重启，不要 `systemctl restart xochitl`**：换了正在用的插件文件再 restart，旧进程退出时会崩溃，触发整机自动重启 |
-| ② | 字体菜单、回收站/新建文件夹、漫画页边距、侧栏入口这几个**同时**没有 | 它们共用同一个前置 qt-resource-rebuilder；没装时汇总里各自标"跳过" | `vellum add qt-resource-rebuilder` 后重跑 `install-all.sh` |
-| ③ | 短时间内 xochitl 反复重启后，设备整机重启了一次 | xochitl 服务设置了 10 分钟内最多重启 4 次，不管谁触发的都算：单独跑的部署脚本、`vellum add appload`、WeRead 每次进出。2026-09-11 真机上连续两次重启就触发过一次整机重启——**设备自己重启后恢复正常，不是变砖** | `install-all.sh` 已经处理（统一最后重启一次）。**手动逐个跑部署脚本、或来回折腾 appload/WeRead 时**，每次间隔几分钟 |
+| ① | 侧栏没有 KOReader/WeRead 入口；汇总里 `sidebar-entry` 列在"已跳过（前置条件不满足）" | appload ≤ 0.5.3 不支持 3.28 的界面，自己的启动器建不起来。**不会**导致装不上或 xochitl 起不来，只是这一个功能不生效 | `vellum list --installed \| grep appload` 看版本，旧版就 `vellum upgrade appload`（0.6.0 起支持 3.28，2026-09-21 真机验证过）。**升级 appload 后整机重启，不要 `systemctl restart xochitl`**：换了正在用的插件文件再 restart，旧进程退出时会崩溃，触发整机自动重启 |
+| ② | 字体菜单、回收站/新建文件夹、漫画页边距、阅读器单击翻页、侧栏入口这几个**同时**没有 | 它们共用同一个前置 qt-resource-rebuilder。没装时：`sidebar-entry` 在汇总里列进"已跳过（前置条件不满足）"；其余几个是 `shelf` 步里附带的补丁，**不单列**——`shelf` 仍算"已安装"，只在这一步的输出里有一行"无 qt-resource-rebuilder 目录…跳过字体菜单/回收站/建夹 qmd" | `vellum add qt-resource-rebuilder` 后重跑 `install-all.sh` |
+| ③ | 短时间内 xochitl 反复重启后，设备整机重启了一次 | xochitl 服务设置了 10 分钟内最多重启 4 次，不管谁触发的都算：单独跑的部署脚本（有改动时）、`vellum add appload`、WeRead 每次进出。2026-09-11 真机上连续两次重启就触发过一次整机重启——**设备自己重启后恢复正常，不是变砖** | `install-all.sh` 已经处理（统一最后重启一次）。**手动逐个跑部署脚本、或来回折腾 appload/WeRead 时**，每次间隔几分钟 |
 | ④ | 固件安全门拒装 | 设计如此：版本号相同不保证内部布局没变 | 先确认设备固件就是你验证过的那份，再 `--force` |
 | ⑤ | 装到最后屏幕闪一下 | `xovi-apply` 在重启 xochitl。只有这轮真的有改动、或 xovi 还没生效时才会重启 | 正常现象，装的时候别操作设备。不想被打断就 `--skip xovi-apply`，稍后再跑 `sh deploy-xovi-apply.sh <host>`。**自己手动重启时**：xovi 已生效就用 `systemctl restart xochitl`，**绝不**手动跑 `xovi/start`——它会让运行中的 xochitl 崩溃、整机自动重启（2026-09-20 真机事故）。只有刚开机或 OTA 后 xovi 没生效时才用 `xovi/start` |
 | ⑥ | 重启设备后电池刺客没在跑 | **有意不开机自启**：2026-08-29 它的采样曾触发内核死锁冻死整机，根因没彻底排除 | 网页「管理 → 系统增强」里打开电池刺客开关（开了才出现「电池刺客」数据页），或 `systemctl start battop` |
@@ -242,7 +244,7 @@ sh uninstall-all.sh 10.11.99.1 --purge            # 另外删掉电池刺客的�
 
 ## 已知限制
 
-- **哪些在真机上跑过、哪些没有**：2026-09-22 合并后用 `install-all.sh` 在真机整轮装过一次（服务健康、xochitl 没有异常重启），新版 `xovi-reenable.service` 也已在设备上。**只有本机模拟、没在真机走过的**：卸载全流程（逆序、清安装包目录、verity 下保留程序）、"什么都没变就不重启"这一支、2026-09-24 的"停 → 换 `.so` → 启动"。上机时一步一确认：先 `--dry-run`，再单步或 `--skip` 试跑。
+- **哪些在真机上跑过、哪些没有**：2026-09-22 合并后用 `install-all.sh` 在真机整轮装过一次（服务健康、xochitl 没有异常重启），新版 `xovi-reenable.service` 也已在设备上。**只有本机模拟、没在真机走过的**：卸载全流程（逆序、清安装包目录、verity 下保留程序、撤待换入区、"仍加载已删 .so"提示）、"什么都没变就不重启"这一支（含 2026-09-24 起单独部署也不重启）、2026-09-24 的"停 → 换 `.so` → 启动"（含关键区忽略断连信号、重启后待换入区仍算待生效）、汇总的"前置条件不满足"栏。上机时一步一确认：先 `--dry-run`，再单步或 `--skip` 试跑。
 - **写 `/usr` 仍靠"先查 dm-verity + 限时读写窗口"两道防线**，不是完全不碰 `/usr`；历史上写 `/usr` 触发过回滚变砖（2026-08-16）。
 - **在设备上直接跑 `shelf/install.sh --password 明文` 时，密码会短暂出现在设备的进程列表里**；经电脑上的 `deploy.sh --password` 传则不会。
 - 卸载不还原 `chrony-cn` / `timezone-cn`，没有"一键回到装之前"。
