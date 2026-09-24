@@ -417,12 +417,9 @@ pub(super) fn width_class(img_width_pt: f64, column: Option<f64>) -> Option<u32>
 /// 分块）→ `epub::assemble_pdf_derived`（颜色与图片宽度的 CSS 规则通过返回值第三项交给调用方拼进外链样式表——
 /// xochitl 不认内联 `style=`，见 `EPUB优化规范白皮书.md` §03）。
 pub fn optimize_pdf_to_epub(src: &Path, mut on_progress: impl FnMut(usize, usize)) -> Result<(Book, PdfToEpubReport, String), String> {
-    let bytes = std::fs::read(src).map_err(|e| format!("读源文件失败: {e}"))?;
-    let doc = lopdf::Document::load_mem(&bytes).map_err(|e| format!("PDF 结构解析失败: {e}"))?;
-    // 解析完原始字节就不再需要（`doc` 自己持有全部对象）：立刻释放，不让整本 PDF 的字节陪着逐字提取和图片解码
-    // 撑到函数结束。只有带公式的书才需要把字节交给 hayro 再解析，那时再从磁盘读一次（2026-09-24 审计：
-    // host 实测 139MB 扫描 PDF 转换峰值 557→431MB，连同组装时逐张释放资源）。
-    drop(bytes);
+    // 原始字节解析完即释放（见 `load_pdf`）；只有带公式的书才需要把字节交给 hayro 再解析，那时再从磁盘读一次
+    // （host 实测 139MB 扫描 PDF 转换峰值 557→431MB，连同组装时逐张释放资源）。
+    let doc = load_pdf(src)?;
     let pages_map = doc.get_pages();
     let page_count = pages_map.len();
     if page_count == 0 {

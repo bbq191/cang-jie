@@ -145,8 +145,7 @@ impl pdf_extract::OutputDev for TextCollector {
 /// 仅测试用；生产调用方手上都已有解析好的 `lopdf::Document`，用 [`extract_positioned_text_doc`]，别再解析第二遍）。
 #[cfg(test)]
 pub(crate) fn extract_positioned_text(bytes: &[u8]) -> Result<Vec<PageContent>, String> {
-    let doc = lopdf::Document::load_mem(bytes).map_err(|e| format!("PDF 结构解析失败: {e}"))?;
-    extract_positioned_text_doc(&doc)
+    extract_positioned_text_doc(&super::parse_pdf(bytes)?)
 }
 
 /// 同 [`extract_positioned_text`]，复用调用方已解析的文档。2026-09-24 起 `pdf-extract-cj` 与本 crate 用同一版

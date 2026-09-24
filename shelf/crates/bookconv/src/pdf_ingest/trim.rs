@@ -21,8 +21,7 @@ pub struct PdfTrimReport {
 /// **目录**：保留原 PDF 书签（页码映射到输出页，层级压平）；原文件没有书签则按页分段兜底
 /// （[`crate::comic_pdf::page_chunk_titles`]），保证输出一定有目录。
 pub fn optimize_pdf_trim_only(src: &Path, dst_tmp: &Path, mut on_progress: impl FnMut(usize, usize)) -> Result<PdfTrimReport, String> {
-    let bytes = std::fs::read(src).map_err(|e| format!("读源文件失败: {e}"))?;
-    let doc = lopdf::Document::load_mem(&bytes).map_err(|e| format!("PDF 结构解析失败: {e}"))?;
+    let doc = load_pdf(src)?;
     let pages = doc.get_pages();
     let page_count = pages.len();
     if page_count == 0 {

@@ -48,6 +48,22 @@ pub use self::trim::*;
 #[cfg(test)]
 mod tests;
 
+/// 单条对象流/交叉引用流解压后的上限（lopdf 载入时会立刻解开这两类流；默认不设限，几 KB 的压缩流可以解出几 GB）。
+/// 正常 PDF 的这类流远小于 1MB，64MB 只拦解压炸弹。页内容流的上限在 `pdf-extract-cj` 里。
+const MAX_LOAD_STREAM_BYTES: usize = 64 * 1024 * 1024;
+
+/// 按字节解析 PDF（带解压上限）。
+pub(super) fn parse_pdf(bytes: &[u8]) -> Result<lopdf::Document, String> {
+    lopdf::Document::load_mem_with_options(bytes, lopdf::LoadOptions::with_max_decompressed_size(MAX_LOAD_STREAM_BYTES)).map_err(|e| format!("PDF 结构解析失败: {e}"))
+}
+
+/// 读文件并解析：原始字节解析完即释放（`Document` 自己持有全部对象），不让整本 PDF 的字节陪着后续逐字提取、
+/// 图片解码撑到函数结束（2026-09-24 审计：分类/裁边/转 EPUB 三处此前都把字节留到函数末尾）。
+pub(super) fn load_pdf(src: &Path) -> Result<lopdf::Document, String> {
+    let bytes = std::fs::read(src).map_err(|e| format!("读源文件失败: {e}"))?;
+    parse_pdf(&bytes)
+}
+
 
 // ============================================================================
 // 分类

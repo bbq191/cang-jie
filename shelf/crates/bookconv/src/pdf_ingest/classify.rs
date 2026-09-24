@@ -26,12 +26,15 @@ pub const MIN_CHARS_PER_PAGE: f64 = 40.0;
 /// 跟 `comic_detect::is_comic_epub_file` "打不开当不是漫画、走现状老路径" 同一个"失败模式选
 /// 更保守那条"原则：裁边是幂等、低风险操作，转 EPUB 是破坏性格式变更，判不准时不能选后者。
 pub fn classify_pdf(path: &Path) -> PdfKind {
-    let Ok(bytes) = std::fs::read(path) else { return PdfKind::NoTextLayer };
-    classify_pdf_bytes(&bytes)
+    load_pdf(path).map_or(PdfKind::NoTextLayer, |doc| classify_doc(&doc))
 }
 
+#[cfg(test)]
 pub(super) fn classify_pdf_bytes(bytes: &[u8]) -> PdfKind {
-    let Ok(doc) = lopdf::Document::load_mem(bytes) else { return PdfKind::NoTextLayer };
+    parse_pdf(bytes).map_or(PdfKind::NoTextLayer, |doc| classify_doc(&doc))
+}
+
+fn classify_doc(doc: &lopdf::Document) -> PdfKind {
     let pages = doc.get_pages();
     if pages.is_empty() {
         return PdfKind::NoTextLayer;
@@ -39,14 +42,14 @@ pub(super) fn classify_pdf_bytes(bytes: &[u8]) -> PdfKind {
     let total = pages.len();
     let mut comic_pages = 0usize;
     for page_id in pages.values() {
-        if page_covered_by_big_image(&doc, *page_id) {
+        if page_covered_by_big_image(doc, *page_id) {
             comic_pages += 1;
         }
     }
     if comic_pages as f64 / total as f64 >= COMIC_PAGE_RATIO {
         return PdfKind::Comic;
     }
-    let Ok(text_pages) = extract_positioned_text_doc(&doc) else { return PdfKind::NoTextLayer };
+    let Ok(text_pages) = extract_positioned_text_doc(doc) else { return PdfKind::NoTextLayer };
     let total_chars: usize = text_pages.iter().map(|p| p.chars.iter().filter(|c| !c.ch.is_whitespace()).count()).sum();
     let avg = total_chars as f64 / total as f64;
     if avg >= MIN_CHARS_PER_PAGE {
