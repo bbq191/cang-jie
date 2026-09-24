@@ -1,0 +1,73 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1240 560" font-family="Noto Sans CJK SC, sans-serif">
+<defs><marker id="mk" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#555"/></marker><marker id="mr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#b0451f"/></marker><marker id="mg" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2f7d45"/></marker></defs>
+<rect x="0" y="0" width="1240" height="560" fill="#fbfbfa"/>
+<text x="620.0" y="30" text-anchor="middle" font-size="18" font-weight="bold" fill="#1a1a1a">网页什么时候向网关要数据（gateway/ui/app.js）</text>
+<text x="620.0" y="52" text-anchor="middle" font-size="12.5" fill="#6a6a6a">原则：不轮询；只在“第一次看到”“切回来”“收到事件”三种时刻取数，而且只取受影响的那一块</text>
+<rect x="40" y="80" width="360" height="125" rx="10" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.6"/>
+<text x="52" y="100" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">① 打开页面</text>
+<text x="52" y="122" text-anchor="start" font-size="10.5" fill="#3a3a3a">取语言包 → /api/services → /api/manage</text>
+<text x="52" y="137" text-anchor="start" font-size="10.5" fill="#3a3a3a">（seg↔服务名映射，与 MODULES 同源）</text>
+<text x="52" y="152" text-anchor="start" font-size="10.5" fill="#3a3a3a">只渲染第一个 tab「传书」，其余 tab 只建按钮</text>
+<text x="52" y="167" text-anchor="start" font-size="10.5" fill="#3a3a3a">打开页面共约 7 个请求（09-24 前 33 个：</text>
+<text x="52" y="182" text-anchor="start" font-size="10.5" fill="#3a3a3a">后台 tab 全部渲染取数，首个 tab 还重复取一遍）</text>
+<rect x="440" y="80" width="360" height="125" rx="10" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.6"/>
+<text x="452" y="100" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">② 点某个 tab</text>
+<text x="452" y="122" text-anchor="start" font-size="10.5" fill="#3a3a3a">第一次点：渲染它（渲染本身就取一次数据）</text>
+<text x="452" y="137" text-anchor="start" font-size="10.5" fill="#3a3a3a">以后再点：只刷新（refresh）</text>
+<text x="452" y="152" text-anchor="start" font-size="10.5" fill="#3a3a3a">刷新都经 coalesce 合并：同一 tab 同一时刻</text>
+<text x="452" y="167" text-anchor="start" font-size="10.5" fill="#3a3a3a">最多一个刷新在飞，突发事件不会叠请求</text>
+<text x="452" y="182" text-anchor="start" font-size="10.5" fill="#3a3a3a">逛完四个 tab 共约 35 个请求（原 69）</text>
+<rect x="840" y="80" width="360" height="125" rx="10" fill="#fff3d6" stroke="#c9971f" stroke-width="1.6"/>
+<text x="852" y="100" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">③ 事件到达（SSE /api/events?ka=60）</text>
+<text x="852" y="122" text-anchor="start" font-size="10.5" fill="#3a3a3a">一条长连接收所有服务的“该刷新了”信号</text>
+<text x="852" y="137" text-anchor="start" font-size="10.5" fill="#3a3a3a">页面隐藏：只记“当前 tab 待刷”，不取数</text>
+<text x="852" y="152" text-anchor="start" font-size="10.5" fill="#3a3a3a">隐藏超过 60 秒：主动断开 SSE</text>
+<text x="852" y="167" text-anchor="start" font-size="10.5" fill="#3a3a3a">重新可见：重连，连上后补刷当前 tab</text>
+<polyline points="400,142 440,142" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#mk)"/>
+<polyline points="800,142 840,142" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#mk)"/>
+<text x="625" y="250" text-anchor="middle" font-size="12" fill="#1a1a1a" font-weight="bold">事件怎么分派（按 area 找到对应 tab）</text>
+<rect x="40" y="270" width="270" height="112" rx="10" fill="#f3effa" stroke="#7a5cb0" stroke-width="1.6"/>
+<text x="52" y="290" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">area = manage</text>
+<text x="52" y="312" text-anchor="start" font-size="10.5" fill="#3a3a3a">服务启停/上下线</text>
+<text x="52" y="327" text-anchor="start" font-size="10.5" fill="#3a3a3a">重取 /api/services：</text>
+<text x="52" y="342" text-anchor="start" font-size="10.5" fill="#3a3a3a">tab 集合变了 → 整页重载</text>
+<text x="52" y="357" text-anchor="start" font-size="10.5" fill="#3a3a3a">没变 → 只刷管理台</text>
+<rect x="335" y="270" width="270" height="112" rx="10" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.6"/>
+<text x="347" y="290" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">目标 tab 不在前台</text>
+<text x="347" y="312" text-anchor="start" font-size="10.5" fill="#3a3a3a">只记“待刷”（dirty）</text>
+<text x="347" y="327" text-anchor="start" font-size="10.5" fill="#3a3a3a">切过去时再刷</text>
+<text x="347" y="342" text-anchor="start" font-size="10.5" fill="#3a3a3a">不在后台白白取数</text>
+<rect x="630" y="270" width="300" height="112" rx="10" fill="#eaf6ec" stroke="#3f9a55" stroke-width="1.6"/>
+<text x="642" y="290" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">母版库 · 网关自身的批量/闸门事件</text>
+<text x="642" y="312" text-anchor="start" font-size="10.5" fill="#3a3a3a">area=books、没有 svc、kind=batch/budget</text>
+<text x="642" y="327" text-anchor="start" font-size="10.5" fill="#3a3a3a">只重取两个状态接口：</text>
+<text x="642" y="342" text-anchor="start" font-size="10.5" fill="#3a3a3a">/api/batch/status · /api/budget/status</text>
+<text x="642" y="357" text-anchor="start" font-size="10.5" fill="#3a3a3a">（5 条事件：12 → 4 个请求，09-24）</text>
+<rect x="955" y="270" width="245" height="112" rx="10" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.6"/>
+<text x="967" y="290" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">其它事件</text>
+<text x="967" y="312" text-anchor="start" font-size="10.5" fill="#3a3a3a">如 book-serve 的 staging、</text>
+<text x="967" y="327" text-anchor="start" font-size="10.5" fill="#3a3a3a">笔记服务的条目变化</text>
+<text x="967" y="342" text-anchor="start" font-size="10.5" fill="#3a3a3a">→ 刷新整个 tab</text>
+<text x="967" y="357" text-anchor="start" font-size="10.5" fill="#3a3a3a">（仍经 coalesce 合并）</text>
+<polyline points="175,225 1077,225" fill="none" stroke="#555" stroke-width="1.6"/>
+<polyline points="1020,205 1020,225" fill="none" stroke="#555" stroke-width="1.6"/>
+<polyline points="175,225 175,270" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#mk)"/>
+<polyline points="470,225 470,270" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#mk)"/>
+<polyline points="780,225 780,270" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#mk)"/>
+<polyline points="1077,225 1077,270" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#mk)"/>
+<rect x="40" y="410" width="560" height="125" rx="10" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.6"/>
+<text x="52" y="430" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">管理页一次刷新取什么</text>
+<text x="52" y="452" text-anchor="start" font-size="10.5" fill="#3a3a3a">/api/foundation、/api/enhance/status、/api/manage 三个并行</text>
+<text x="52" y="467" text-anchor="start" font-size="10.5" fill="#3a3a3a">/api/enhance/status 只取一次，结果同时给「基石与模块」和</text>
+<text x="52" y="482" text-anchor="start" font-size="10.5" fill="#3a3a3a">「系统增强 / 实验室」的“已加载”徽章（原来两处各取一遍）</text>
+<text x="52" y="497" text-anchor="start" font-size="10.5" fill="#3a3a3a">「电池刺客」子标签平时隐藏，battop 在跑才显示，隐藏时不预取</text>
+<text x="52" y="512" text-anchor="start" font-size="10.5" fill="#3a3a3a">笔记页每次刷新也取一次 /api/enhance/status（决定「导入 md」显不显示）</text>
+<rect x="640" y="410" width="560" height="125" rx="10" fill="#fff3d6" stroke="#c9971f" stroke-width="1.6"/>
+<text x="652" y="430" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">网关侧：/api/enhance/status 为什么很便宜（09-24）</text>
+<text x="652" y="452" text-anchor="start" font-size="10.5" fill="#3a3a3a">reading-qol.json 一次请求只读一次（原来 6 个开关各读一遍）</text>
+<text x="652" y="467" text-anchor="start" font-size="10.5" fill="#3a3a3a">xochitl 扩展扫描按 (pid, starttime) 缓存：同一个进程只全量扫一次</text>
+<text x="652" y="482" text-anchor="start" font-size="10.5" fill="#3a3a3a">  /proc + maps，之后每次只读一次 /proc/&lt;pid&gt;/stat 核对（253→1.7µs，host）</text>
+<text x="652" y="497" text-anchor="start" font-size="10.5" fill="#3a3a3a">xochitl 启动不到 30 秒不缓存（xovi 还在逐个加载扩展）</text>
+<text x="652" y="512" text-anchor="start" font-size="10.5" fill="#3a3a3a">qmd 补丁状态照旧每次现算；battop is-active 缓存 30 秒（原 5 秒）</text>
+<polyline points="600,472 640,472" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#mk)"/>
+</svg>

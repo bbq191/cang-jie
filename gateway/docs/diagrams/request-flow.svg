@@ -16,7 +16,7 @@
 <text x="486" y="100" text-anchor="middle" font-size="14" font-weight="bold" fill="#1a1a1a">gateway 进程（0.0.0.0:443，crate: gateway）</text>
 <rect x="256" y="116" width="460" height="62" rx="10" fill="#fff3d6" stroke="#c9971f" stroke-width="1.6"/>
 <text x="486.0" y="136" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">① HTTPS 终结 + 登录守卫（auth.rs）</text>
-<text x="486.0" y="159" text-anchor="middle" font-size="10" fill="#3a3a3a">证书由带名称约束的私有 CA 签；并发超 64 个请求回 503；公开： /login /logout /ca.crt /health</text>
+<text x="486.0" y="159" text-anchor="middle" font-size="10" fill="#3a3a3a">私有 CA（带名称约束）签证书；并发超 64 个请求回 503；公开：/login /logout /ca.crt /health 等</text>
 <text x="486.0" y="174" text-anchor="middle" font-size="10" fill="#3a3a3a">未登录：浏览器 303→/login，其它 401；首登必改密码见下图</text>
 <rect x="256" y="196" width="460" height="118" rx="10" fill="#eaf6ec" stroke="#3f9a55" stroke-width="1.6"/>
 <text x="486.0" y="216" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">② 网关自己的路由（字面路径比 /api/{svc}/* 更具体，优先匹配）</text>
@@ -31,10 +31,11 @@
 <text x="268" y="390" text-anchor="start" font-size="10" fill="#3a3a3a">     例：books→book-serve  ink→ink-serve  notes→note-serve</text>
 <text x="268" y="405" text-anchor="start" font-size="10" fill="#3a3a3a">2  服务名 → 端口：查注册表 $XDG_RUNTIME_DIR/shelf/services/</text>
 <text x="268" y="420" text-anchor="start" font-size="10" fill="#3a3a3a">3  剥掉 &lt;seg&gt;，转发到 http://127.0.0.1:&lt;端口&gt;/&lt;其余路径&gt;</text>
-<text x="268" y="435" text-anchor="start" font-size="10" fill="#3a3a3a">     请求体流式转发；下载（200 + Content-Disposition）也边读边发，其余小应答读完再回</text>
-<text x="268" y="450" text-anchor="start" font-size="10" fill="#3a3a3a">     只回传 Content-Type / Content-Disposition 两个响应头</text>
-<text x="268" y="465" text-anchor="start" font-size="10" fill="#3a3a3a">4  seg 不在表里 → 404“未知服务”；服务没起 → 404“未安装或未运行”</text>
-<text x="268" y="480" text-anchor="start" font-size="10" fill="#3a3a3a">     后端连不上 → 502</text>
+<text x="268" y="435" text-anchor="start" font-size="10" fill="#3a3a3a">     请求体流式转发；应答是 200 且带长度、又是下载或 &gt;256KB → 按定长边读边发</text>
+<text x="268" y="450" text-anchor="start" font-size="10" fill="#3a3a3a">     其余（小 JSON、没有长度的）读完再回</text>
+<text x="268" y="465" text-anchor="start" font-size="10" fill="#3a3a3a">     只回传 Content-Type / Content-Disposition 两个响应头</text>
+<text x="268" y="480" text-anchor="start" font-size="10" fill="#3a3a3a">4  seg 不在表里 → 404“未知服务”；服务没起 → 404“未安装或未运行”</text>
+<text x="268" y="495" text-anchor="start" font-size="10" fill="#3a3a3a">     后端连不上 → 502</text>
 <rect x="256" y="540" width="460" height="122" rx="10" fill="#fdf1ec" stroke="#c0602d" stroke-width="1.6" stroke-dasharray="6 4"/>
 <text x="268" y="560" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">例外：三个“吃内存”的 POST 先过闸门</text>
 <text x="268" y="583" text-anchor="start" font-size="10" fill="#3a3a3a">book-serve  POST /staging/optimize</text>
