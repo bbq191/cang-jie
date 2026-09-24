@@ -16,8 +16,10 @@ use rmsvc_core::asset::{self, AssetUploadFlow};
 use rmsvc_core::http::{bind, ApiError, ApiResult, Reply, Request, Router};
 use std::sync::Arc;
 
-/// `GET /mkdir/pending?wait=` 长轮询等待时长上限（秒）。须小于 QML 端 XHR 的传输超时（Qt6 缺省 30s）。
-const MKDIR_WAIT_MAX_SECS: u64 = 28;
+/// `GET /mkdir/pending?wait=` 长轮询等待时长上限（秒）。QML 端（shelf-mkdir-agent.qmd）发 wait=290：设备 Qt 6.10
+/// 的 QML XHR 不设传输超时（2026-09-24 核实，见 qmd 头注；09-22 版按"缺省 30s 超时"的假设把这里定成 28）。
+/// 在等的这段时间服务端不读 socket，所以不受 rmsvc-core 的读空闲超时影响。
+const MKDIR_WAIT_MAX_SECS: u64 = 300;
 
 pub fn router(st: Arc<State>) -> Router {
     Router::new()
