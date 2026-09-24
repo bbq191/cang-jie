@@ -43,6 +43,19 @@ pub fn is_html_entry(name: &str, data: &[u8]) -> bool {
     head.starts_with("<?xml") || head_lower.starts_with("<!doctype html") || head_lower.starts_with("<html")
 }
 
+/// 按 zip 目录声明的解压大小预分配时的上限。声明大小来自文件本身：损坏或恶意的条目可以声称几 GB，照单
+/// `Vec::with_capacity` 在内存紧的设备上会直接分配失败、整个进程 abort（不是 `catch_unwind` 兜得住的 panic）。
+/// 真实条目超过这个值时 `read_to_end` 照常按需扩容，结果不变。
+const PREALLOC_CAP: u64 = 32 * 1024 * 1024;
+
+/// 读完一个 zip 条目的全部字节（`declared` = 目录里声明的解压大小，只用来预分配，封顶 [`PREALLOC_CAP`]）。
+/// 本模块各读取入口与 `stats` 共用。
+pub(crate) fn read_all(mut r: impl Read, declared: u64) -> Result<Vec<u8>, String> {
+    let mut v = Vec::with_capacity(declared.min(PREALLOC_CAP) as usize);
+    r.read_to_end(&mut v).map_err(|e| e.to_string())?;
+    Ok(v)
+}
+
 /// [`read_skeleton`] 的结果。
 pub struct Skeleton {
     /// 条目表：图片条目（`imgopt::is_downscalable`）的 `data` 为空占位，其余是真实字节。
@@ -67,9 +80,8 @@ pub fn read_skeleton<R: Read + Seek>(zip: &mut ZipArchive<R>) -> Result<Skeleton
         let data = if crate::imgopt::is_downscalable(&name) {
             Vec::new()
         } else {
-            let mut d = Vec::with_capacity(f.size() as usize);
-            f.read_to_end(&mut d).map_err(|e| e.to_string())?;
-            d
+            let size = f.size();
+            read_all(&mut f, size)?
         };
         entries.push(Entry { name, data });
     }
@@ -85,9 +97,8 @@ pub fn read_by_name_opt<R: Read + Seek>(zip: &mut ZipArchive<R>, name: &str) -> 
         Err(zip::result::ZipError::FileNotFound) => return Ok(None),
         Err(e) => return Err(e.to_string()),
     };
-    let mut v = Vec::with_capacity(f.size() as usize);
-    f.read_to_end(&mut v).map_err(|e| e.to_string())?;
-    Ok(Some(v))
+    let size = f.size();
+    read_all(&mut f, size).map(Some)
 }
 
 /// 同 [`read_by_name_opt`]，条目不存在也算错误。
@@ -104,9 +115,9 @@ pub fn read_entries(epub: &[u8]) -> Result<Vec<Entry>, String> {
         if f.is_dir() {
             continue;
         }
-        let mut data = Vec::new();
-        f.read_to_end(&mut data).map_err(|e| e.to_string())?;
-        out.push(Entry { name: f.name().to_string(), data });
+        let name = f.name().to_string();
+        let size = f.size();
+        out.push(Entry { name, data: read_all(&mut f, size)? });
     }
     Ok(out)
 }
@@ -149,18 +160,22 @@ pub fn relative_to(base_dir: &str, target: &str) -> String {
     out.join("/")
 }
 
+/// `%XX` 解码（XX 必须是两位十六进制，否则原样保留）。此前每个 `%` 现拼一个 `String` 再 `from_str_radix`，
+/// 后者还接受 `+` 号前缀，`%+1` 会被误解成字节 0x01。
 pub fn percent_decode(s: &str) -> String {
+    if !s.contains('%') {
+        return s.to_string();
+    }
+    let hex = |c: u8| (c as char).to_digit(16).map(|d| d as u8);
     let b = s.as_bytes();
     let mut out = Vec::with_capacity(b.len());
     let mut i = 0;
     while i < b.len() {
-        if b[i] == b'%' && i + 2 < b.len() {
-            if let (Some(h), Some(l)) = (b.get(i + 1), b.get(i + 2)) {
-                if let Ok(v) = u8::from_str_radix(&format!("{}{}", *h as char, *l as char), 16) {
-                    out.push(v);
-                    i += 3;
-                    continue;
-                }
+        if b[i] == b'%' {
+            if let (Some(h), Some(l)) = (b.get(i + 1).and_then(|&c| hex(c)), b.get(i + 2).and_then(|&c| hex(c))) {
+                out.push(h << 4 | l);
+                i += 3;
+                continue;
             }
         }
         out.push(b[i]);
@@ -200,6 +215,9 @@ mod tests {
         assert_eq!(relative_to("OEBPS/text", "OEBPS/style.css"), "../style.css");
         assert_eq!(relative_to("", "a.xhtml"), "a.xhtml");
         assert_eq!(percent_decode("%E5%AD%97.xhtml"), "字.xhtml");
+        assert_eq!(percent_decode("a%20b%2"), "a b%2", "末尾不完整的 % 原样保留");
+        assert_eq!(percent_decode("%+1x%zz"), "%+1x%zz", "非十六进制（含 + 号）不解码");
+        assert_eq!(percent_decode("%41"), "A");
     }
 
     /// 真机《甲午：摇摆的战争》坐实的真实形态：`Chapter_2`/`Chapter_7_1` 这类没有扩展名的章节文件，
@@ -230,6 +248,21 @@ mod tests {
         assert!(by["images/p1.JPG"].data.is_empty(), "可降采样图片留空占位");
         assert_eq!(by["images/p2.gif"].data.len(), 10, "gif 不在降采样范围，照常整份读");
         assert_eq!(sk.sizes["images/p1.JPG"], 300, "占位条目的真实体积从 zip 目录取");
+    }
+
+    /// 条目在 zip 目录里谎报解压大小（损坏/恶意文件）：不能照单预分配几 GB（设备上分配失败＝进程 abort）。
+    #[test]
+    fn lying_declared_size_does_not_drive_huge_preallocation() {
+        let mut bytes = zip_of(&[("a.xhtml", b"<p>hi</p>")]);
+        // 中央目录项 `PK\x01\x02` 偏移 24 是 4 字节 uncompressed size，改成 ~4GB。
+        let cd = bytes.windows(4).rposition(|w| w == b"PK\x01\x02").unwrap();
+        bytes[cd + 24..cd + 28].copy_from_slice(&0xFFFF_FFF0u32.to_le_bytes());
+        let mut z = ZipArchive::new(std::io::Cursor::new(&bytes)).unwrap();
+        // zip crate 不校验声明大小与实际解压量是否一致，照常读出真实内容——所以只能靠预分配封顶兜住。
+        let sk = read_skeleton(&mut z).unwrap();
+        assert_eq!(sk.entries[0].data, b"<p>hi</p>");
+        assert!(sk.entries[0].data.capacity() as u64 <= PREALLOC_CAP, "预分配必须封顶");
+        assert!(read_by_name_opt(&mut z, "a.xhtml").unwrap().unwrap().capacity() as u64 <= PREALLOC_CAP);
     }
 
     #[test]
