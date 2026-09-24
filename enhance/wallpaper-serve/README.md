@@ -14,7 +14,7 @@ xochitl 有一个隐藏配置键 `xochitl.conf` → `[General] SleepScreenPath=<
 |---|---|
 | 写配置键 | **只写一次**：激活第一张壁纸时 `native.rs` 自动写，或手动 `wallpaper-serve enable` |
 | 换图 | 永远是**原地覆盖 `current.png`**（保持同一个文件） |
-| 轮换 | 服务跟着 `journalctl -f -u xochitl` 看日志，出现 `DeepSleep to Normal`（唤醒）就换下一张。不用 systemd-sleep 钩子：充电时按电源键内核不 suspend，钩子不可靠（2026-09-03 真机） |
+| 轮换 | 服务跟着 `journalctl -f -u xochitl` 看日志，出现 `DeepSleep to Normal`（唤醒）就换下一张；池里只有一张且 `current.png` 已是它时不重写文件（2026-09-24，省闪存写入，未上真机）。代价：xochitl 每写一行日志这个服务都会醒一次（白皮书 §03j）。不用 systemd-sleep 钩子：充电时按电源键内核不 suspend，钩子不可靠（2026-09-03 真机） |
 | 入池 | 缩放到 954×1696；源图先只读文件头，超过 1600 万像素或长宽比极端的直接拒收，避免解码吃光内存 |
 | 卸载 | `wallpaper-serve disable` 删掉配置键，恢复原生休眠屏 |
 

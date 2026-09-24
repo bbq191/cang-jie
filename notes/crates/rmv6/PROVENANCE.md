@@ -15,6 +15,7 @@ https://github.com/Lyr-7D1h/remarkable-lines ，作者 `Lyr <lyr-7d1h@pm.me>`，
 - `ParagraphStyle` 补 **CHECKBOX(6) / CHECKBOX_CHECKED(7) / NUMBERED(10)**（后者 2026-09-07 真机样本坐实，rmscene 0.8.0 尚不认）。
 - 新增高层入口 `page` 模块：一页 = 笔画（Stroke）+ 勾画（Highlight = GlyphRange）+ 打字文本，供 ink-serve 几何配对与 note-serve 读回；
   墓碑（删除的项）自动剔除。
+- 2026-09-24：清掉全部 clippy 告警（去掉多余的 `return`、`format!` 嵌套之类的机械改写），解析语义不变、测试全过。
 
 ## 2026-09-07 新增：`write` 模块（不是 vendored 代码的一部分）
 

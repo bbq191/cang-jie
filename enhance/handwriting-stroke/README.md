@@ -57,12 +57,12 @@
 ## 构建与部署
 
 ```sh
-make aarch64 XOVI_DIR=<asivery/xovi clone 路径>                 # 产物 hw-stroke.so（已提交进仓库）
+make aarch64                                                   # 产物 hw-stroke.so（已提交进仓库）；改了 hw-stroke.xovi 才要 make glue XOVI_DIR=<xovi clone>
 cd ../../packaging && sh deploy-handwriting-stroke.sh <host>     # host 侧一键：构建 → 推送 → 设备端安装
 ```
 
 设备端 `deploy/install.sh [--no-restart]` 与 hl-snap 共用同一套流程（`packaging/xovi-ext-install.sh`），同目录需要 `xovi-ext-install.sh` 与 `devlib.sh`；备份、换文件（运行中正在用就 stop → 换 → start）、重启判定都和 [hl-snap README「部署」](../hl-snap/README.md#部署) 一样。装到 `extensions.d/hw-stroke.so`。公共扫描/trampoline 代码在 [`../shared/`](../shared/PROVENANCE.md)。
 
-**验证装上了**：`journalctl -u xochitl | grep hw-stroke` 应有 `变宽几何 hook 安装完成 @ 0xf47530` 与 `第二几何 hook 安装完成 @ 0xf4c8d0` 两行。
+**验证装上了**：`journalctl -u xochitl | grep hw-stroke` 应有 `变宽几何 hook 安装完成 @ 0xf47530` 与 `第二几何 hook 安装完成 @ 0xf4c8d0` 两行；若是 `_xovi_construct: … hook 未安装`，说明 `.so` 进了进程但 hook 没装上（2026-09-24 起才打这行）。
 
 **构建时注意 GLIBC 版本**：交叉工具链的 glibc 比设备新得多，用到 `atan2f`/`sqrtf` 这类函数会链上设备没有的符号版本，整个 `.so` 静默加载失败。改完用 `aarch64-linux-gnu-objdump -T hw-stroke.so | grep GLIBC_` 确认最高仍是 `GLIBC_2.17`（详见白皮书 §04）。

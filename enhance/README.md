@@ -12,7 +12,7 @@
 | 组件 | 是什么 | 状态 | 在网页哪里开关 |
 |---|---|---|---|
 | [`hl-snap/`](hl-snap/README.md) | xovi 扩展：荧光笔划中文时划哪吸哪，不再吸整行 | ✅ 真机通 | 管理 → 系统增强，默认开 |
-| [`shelf/xovi/reader-page-turn.qmd`](../shelf/xovi/reader-page-turn.qmd) | qmd 补丁：xochitl 阅读器单击翻页、日漫翻页规则 | 离线验证过，待真机 | 管理 → 系统增强，默认关 |
+| [`shelf/xovi/reader-page-turn.qmd`](../shelf/xovi/reader-page-turn.qmd) | qmd 补丁：xochitl 阅读器单击翻页、日漫翻页规则 | ✅ 真机通（09-24） | 管理 → 系统增强，默认关 |
 | [`handwriting-stroke/`](handwriting-stroke/README.md) | xovi 扩展：按笔尖角度 + 运笔速度调整手写笔画粗细 | ✅ 书法笔和钢笔/铅笔/马克笔等真机通；最常用的一档钢笔/铅笔还摸不到 | 管理 → 实验室，默认关 |
 | [`battop/`](battop/README.md) | 采样服务「电池刺客」：按进程/应用/唤醒源统计耗电 | ✅ 真机通；**有意不开机自启** | 管理 → 系统增强；开着时出现「电池刺客」数据页 |
 | [`wallpaper-serve/`](wallpaper-serve/README.md) | Web 服务（8793）：休眠壁纸上传即用、唤醒轮换 | ✅ 真机通 | 其他 → 壁纸 |
@@ -39,7 +39,9 @@ sh deploy-handwriting-stroke.sh <host>
 sh deploy-battop.sh <host>
 ```
 
-各工具的设备端 `install.sh` 也能脱离编排单独跑，但需要同目录的 `devlib.sh` 等文件，见各自 README。
+单独跑时，内容没变、也没有别的待生效改动就不重启 xochitl。各工具的设备端 `install.sh` 也能脱离编排单独跑，但需要同目录的 `devlib.sh` 等文件，见各自 README。
+
+两个 xovi 扩展的 `.so` 已提交进仓库；构建用的 xovi 胶水 `xovi_glue.{c,h}` 也已提交，平时 `make aarch64` 不需要 asivery/xovi clone，只有改了 `.xovi` 才要 `make glue XOVI_DIR=<clone>` 重新生成。
 
 ⚠ 更新 xovi 扩展时，如果运行中的 xochitl 正在用旧版 `.so`，必须 **stop xochitl → 换文件 → start**，不能换完再 `restart`（会整机重启）。部署脚本已经这样做，手动操作时要注意。
 
@@ -48,4 +50,4 @@ sh deploy-battop.sh <host>
 - [`../gateway/src/enhance/`](../gateway/src/enhance/) 是本线的**网页控制面**：只调 `systemctl`、读写 `~/.local/share/cangjie-ime/reading-qol.json`（两个 `.so` 读的是同一份文件）、读 xochitl 的 `/proc/<pid>/maps`，和本目录源码没有代码依赖。
 - `wallpaper-serve/`、`font-serve/` 依赖 [`../rmsvc-core`](../rmsvc-core/README.md)，由网关反向代理。
 - [`../defw/`](../defw/README.md)（xochitl 3.28.0.172 逆向产物）**不属于**本线，是共享的逆向基座；`handwriting-stroke/` 的研究用它。
-- 迁移、改名的历史见白皮书附录「迁移沿革」。
+- 迁移、改名的历史见白皮书附录「迁移沿革」；设备上谁在定时唤醒 CPU 见白皮书 §03j；2026-09-24 第三轮审计的改动（只在 host 验证）见白皮书 §03k。

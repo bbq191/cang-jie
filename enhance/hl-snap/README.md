@@ -21,10 +21,11 @@
 ## 构建
 
 ```sh
-make aarch64 XOVI_DIR=<asivery/xovi clone 路径>
+make aarch64                               # 产物 hl-snap.so（已提交进仓库）
+make glue XOVI_DIR=<asivery/xovi clone 路径>   # 只有改了 hl-snap.xovi 才需要：重新生成 xovi 胶水
 ```
 
-产物 `hl-snap.so` 已提交进仓库，部署时不用每次现建。构建需要 aarch64 交叉编译器和 asivery/xovi 的 `xovigen.py`；没有 xovi clone 时，部署脚本会退回用仓库里已提交的版本。扫描/trampoline 公共代码在 [`../shared/`](../shared/PROVENANCE.md)，`cd ../shared && make test` 跑 host 单测。
+构建只需要 aarch64 交叉编译器：xovi 胶水 `xovi_glue.{c,h}` 已提交进仓库，缺失时才会调 asivery/xovi 的 `xovigen.py` 生成（2026-09-24 前规则依赖 `.xovi` 的修改时间，checkout 后可能无端去跑 xovigen、没有 clone 就失败，部署脚本随即悄悄退回仓库里已提交的旧 `.so`）。部署脚本在构建失败时仍会退回已提交的 `.so`，并打出警告。扫描/trampoline 公共代码在 [`../shared/`](../shared/PROVENANCE.md)，`cd ../shared && make test` 跑 host 单测。
 
 ## 部署
 
@@ -49,7 +50,7 @@ sh deploy/install.sh [--no-restart]     # --no-restart：只落盘，不重启 x
    - 运行中的 xochitl 没在用旧版 → 先写暂存目录再 rename 进去（原子替换）；
    - 运行中的 xochitl **正映射着旧版** → 不当场换，先放进待换入区，重启时按 **stop xochitl → 换文件 → start** 的顺序换入。换完再 `restart` 会让旧进程退出时崩溃、整机重启（09-21、09-24 两次真机踩到）。
 3. `reading-qol.json` 只在首次建，不覆盖已有设置。
-4. 不带 `--no-restart` 时（此时无论内容变没变都会重启一次）：先提示并等 5 秒，xovi 已在 xochitl 里生效就用 `systemctl restart xochitl`（或上面的 stop/换/start），否则跑 `xovi/start`。xovi 已生效时绝不能跑 `xovi/start`，会让 xochitl SEGV、整机重启。之后做健康检查（`is-active`、`MainPID` 变化、`NRestarts` 不增、maps 里有 `hl-snap`）。
+4. 不带 `--no-restart` 时：`.so` 没变、已在 xochitl 里加载、也没有别的待生效改动（`cj_apply_needed` 为假）就**不重启**，直接报"已是最新"；否则先提示并等 5 秒，xovi 已在 xochitl 里生效就用 `systemctl restart xochitl`（或上面的 stop/换/start），否则跑 `xovi/start`。xovi 已生效时绝不能跑 `xovi/start`，会让 xochitl SEGV、整机重启。之后做健康检查（`is-active`、`MainPID` 变化、`NRestarts` 不增、maps 里有 `hl-snap`）。
 
 **验证装上了**：`journalctl -u xochitl | grep hl-snap` 应有两行：
 
@@ -57,6 +58,8 @@ sh deploy/install.sh [--no-restart]     # --no-restart：只落盘，不重启 x
 [hl-snap] _xovi_shouldLoad: 固件兼容(FUN_00f05ad0@0xf03670) → 加载
 [hl-snap] 荧光笔EXPAND hook 安装完成 @ 0xf03670（neuter=1）
 ```
+
+如果出现 `_xovi_construct: 找不到 xochitl 映射` 或 `特征码不再唯一命中（目标可能已被其它扩展改写），hook 未安装`，说明 `.so` 进了进程但 hook 没装上（2026-09-24 起才打这两行，以前静默），网页徽章仍会显示"已加载"。
 
 每次 xochitl 渲染 PDF 时 fork 出的子进程里也会打一行"找不到 xochitl 映射 → 拒绝加载"，这是正常的，不代表主进程没装上。
 
