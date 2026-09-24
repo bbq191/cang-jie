@@ -9,7 +9,7 @@
 #   · XDG 目录：~/.config/shelf  ~/.local/share/shelf  ~/.local/state/shelf
 #   · systemd：shelf.target + 各服务单元 → /usr/lib/systemd/system（rootfs，普通重启不丢；OTA 冲掉后重跑本脚本）
 #     写 /usr 前实检 dm-verity，激活即跳过（安全红线）；绝不给 xochitl 加依赖。
-#   · qt-resource-rebuilder qmd：font（字体菜单）/ book（回收站代理、建夹代理、漫画页边距代理），qrr 目录在才装
+#   · qt-resource-rebuilder qmd：font（字体菜单）/ book（回收站代理、建夹代理、漫画页边距代理、阅读器翻页），qrr 目录在才装
 #
 # 用法：./install.sh [--only gateway,book,...] [--no-systemd] [--src DIR] [--password PW | --password-file FILE]
 #   --only          只装/更新列出的服务（网关总会装）；缺省全装
@@ -279,7 +279,7 @@ if [ -d "$QRR" ] && [ -d "$SRC/xovi" ]; then
     done
     cj_stage_cleanup
 else
-    echo "-- （无 qt-resource-rebuilder 目录或载荷无 xovi/，跳过字体菜单/回收站/建夹 qmd；字体仍可用 fontconfig 装入）"
+    echo "-- （无 qt-resource-rebuilder 目录或载荷无 xovi/，跳过字体菜单/回收站/建夹/漫画页边距/阅读器翻页 qmd；字体仍可用 fontconfig 装入）"
 fi
 if [ "$QMD_CHANGED" = "1" ]; then
     cj_pending_mark shelf-qmd || true   # 让 packaging/deploy-xovi-apply.sh 知道有 qmd 待生效

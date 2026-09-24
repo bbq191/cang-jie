@@ -2,7 +2,7 @@
 # host 侧对设备统一"让已落盘的 xovi 扩展/qmd 生效"一次（重启 xochitl）+ 健康检查。
 #
 # 用在所有"只落盘、不自己重启 xochitl"的步骤跑完之后，最后调用一次——hl-snap/handwriting-stroke/
-# sidebar-entry 用 DEFER_XOVI_START=1 时只落盘不重启；shelf 的字体菜单/回收站/建夹 qmd 本来就只落盘。
+# sidebar-entry 用 DEFER_XOVI_START=1 时只落盘不重启；shelf 的字体菜单/回收站/建夹/漫画页边距/阅读器翻页 qmd 本来就只落盘。
 # 没有"只重载一个扩展"的机制，多个步骤各自重启等于短时间内重启 xochitl 多次，会撞 xochitl 的
 # watchdog+StartLimit（2026-09-11 install-all 连续装 hl-snap+handwriting-stroke，真机触发过意外整机重启）。
 #
