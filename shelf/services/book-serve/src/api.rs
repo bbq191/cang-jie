@@ -29,11 +29,7 @@ pub fn router(st: Arc<State>) -> Router {
         .get("/staging/file", bind(&st, |s, r| {
             let name = r.q("name").ok_or_else(|| ApiError::bad("缺少 name"))?.to_string();
             let (f, len) = s.staging.open_for_download(&name).map_err(ApiError::bad)?;
-            let ctype = match rmsvc_core::formats::ext_of(&name).as_str() {
-                "epub" => "application/epub+zip",
-                "pdf" => "application/pdf",
-                _ => "application/octet-stream",
-            };
+            let ctype = bookconv::convert::direct_content_type(&name).map(|c| c.mime()).unwrap_or("application/octet-stream");
             Ok(Reply::sized_stream(ctype, Box::new(std::io::BufReader::new(f)), len).with_header("Content-Disposition", &rmsvc_core::multipart::content_disposition(&name)))
         }))
         .post("/staging/rename", bind(&st, |s, r| {
@@ -45,13 +41,11 @@ pub fn router(st: Arc<State>) -> Router {
         // ── 原 PDF 备份（PDF→EPUB 后保留 7 天，见 Staging::backup_pdf_original）──
         .post("/staging/originals/restore", bind(&st, |s, r| {
             s.staging.restore_original(r.json()?.str("name")?).map_err(ApiError::bad)?;
-            s.bus.publish("books", "staging");
-            ok()
+            staging_changed(s)
         }))
         .post("/staging/originals/delete", bind(&st, |s, r| {
             s.staging.delete_original(r.json()?.str("name")?).map_err(ApiError::bad)?;
-            s.bus.publish("books", "staging");
-            ok()
+            staging_changed(s)
         }))
         .post("/staging", bind(&st, staging_upload))
         .post("/staging/optimize", bind(&st, |s, r| {
@@ -80,8 +74,7 @@ pub fn router(st: Arc<State>) -> Router {
             let j = r.json()?;
             let reader = Reader::parse(j.str("target")?).map_err(ApiError::bad)?;
             s.staging.mark_delivered(j.str("name")?, reader).map_err(ApiError::bad)?;
-            s.bus.publish("books", "staging");
-            ok()
+            staging_changed(s)
         }))
         .post("/staging/fetch-article", bind(&st, |s, r| {
             let j = r.json()?;
@@ -151,12 +144,13 @@ pub fn router(st: Arc<State>) -> Router {
         }))
         .post("/staging/delete", bind(&st, |s, r| {
             s.staging.remove(r.json()?.str("name")?).map_err(ApiError::bad)?;
-            s.bus.publish("books", "staging");
-            ok()
+            staging_changed(s)
         }))
 }
 
-fn ok() -> ApiResult {
+/// 母版库变更类操作的统一收尾：推一条 `books/staging`（网页据此重拉列表，零轮询）再回 `{ok:true}`。
+fn staging_changed(s: &State) -> ApiResult {
+    s.bus.publish("books", "staging");
     Ok(Reply::ok(&serde_json::json!({"ok": true})))
 }
 
@@ -374,6 +368,21 @@ mod tests {
         drop(tx);
         assert_eq!(up.join().unwrap(), 200);
         assert!(st.staging.has("up.epub") && st.staging.has("scp.epub"));
+    }
+
+    #[test]
+    fn download_route_streams_with_mime_length_and_disposition() {
+        let t = tempfile::tempdir().unwrap();
+        let st = state(&t);
+        let router = router(st.clone());
+        st.staging.stage_new("书.PDF", b"%PDF-1").unwrap();
+        let mut empty: &[u8] = b"";
+        let mut r = Request { method: Method::Get, path: "/staging/file".into(), query: parse_query("name=%E4%B9%A6.PDF"), params: HashMap::new(), content_type: String::new(), content_length: None, headers: vec![], body: &mut empty };
+        let rep = router.dispatch(&mut r);
+        assert_eq!((rep.status, rep.content_type.as_str()), (200, "application/pdf"), "扩展名大小写不敏感");
+        let h = |k: &str| rep.headers.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone()).unwrap_or_default();
+        assert_eq!(h("Content-Length"), "6");
+        assert!(h("Content-Disposition").contains("filename*=UTF-8''%E4%B9%A6.PDF"));
     }
 
     #[test]
