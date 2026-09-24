@@ -132,7 +132,7 @@ fn main() {
         }))
         .get("/{name}", bind(&st, |s, r| Ok(Reply::bytes("image/png", s.store.read(r.param("name")).map_err(ApiError::not_found)?))));
     wake::spawn(st.store.clone(), bus); // 与 API 共用同一个 store 实例（同一把状态锁）
-    println!("[wallpaper-serve] 池 {}，原生休眠屏键 {}；监听 xochitl 唤醒日志轮换", st.store.pool().display(), if st.native.enabled() { "已就位" } else { "未写（激活首张时自动写）" });
+    println!("[wallpaper-serve] 池 {}，原生休眠屏键 {}；xochitl 休眠读完休眠屏即轮换", st.store.pool().display(), if st.native.enabled() { "已就位" } else { "未写（激活首张时自动写）" });
     if let Err(e) = service::run(&SPEC, &bind_addr, &paths, router) {
         eprintln!("[wallpaper-serve] {e}");
         std::process::exit(1);

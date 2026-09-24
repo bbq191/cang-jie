@@ -14,6 +14,8 @@ rmsvc-core = { path = "../../rmsvc-core" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+# 轮换触发：监听 xochitl 休眠时读完 current.png（IN_CLOSE_NOWRITE）；与 rmsvc-core 同版本，不新增编译量
+inotify = { version = "0.11.5", default-features = false }
 
 [dev-dependencies]
 tempfile = "3"
