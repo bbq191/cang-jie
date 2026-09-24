@@ -38,12 +38,15 @@ pub fn ingest_doc(lib: &Path, crops_dir: &Path, db: &BookDb, cfg: &IngestConfig,
     if pages.is_empty() {
         return Ok(None);
     }
-    let Some(content) = doc.content().filter(|c| c.file_type == "epub") else { return Ok(None) };
+    // 同理先比页 mtime 再解析 `.content`：有手写页的书读书时也会被 xochitl 反复改写 `.content`，但页没变就没事可做
+    // （条目库这一读命中 `BookDb` 的解析缓存，几乎零成本）。只有条目库里已追平过的 EPUB 才可能走到"没变化"这条早退，
+    // 没追平过的书一律算变更、照旧在下面核对 fileType。
     let prev = db.read(uuid)?;
     let changed: Vec<(String, u64)> = pages.into_iter().filter(|(id, mt)| prev.as_ref().and_then(|b| b.page_mtimes.get(id)).map(|&old| *mt > old).unwrap_or(true)).collect();
     if changed.is_empty() {
         return Ok(Some(DocStats::default()));
     }
+    let Some(content) = doc.content().filter(|c| c.file_type == "epub") else { return Ok(None) };
     // 页→章：每次摄取现读（.epubindex 在 xochitl 重排后会变）
     let map = match (doc.epub_bytes(), doc.epubindex_bytes()) {
         (Some(e), Some(i)) => BookMap::from_epub(&e, &i),

@@ -112,7 +112,7 @@ fn main() {
         let st = st.clone();
         std::thread::spawn(move || {
             let mut catchup: std::collections::BTreeSet<String> = ingest::candidate_docs(&st.paths.xochitl_dir()).into_iter().collect();
-            catchup.extend(st.db.list().into_iter().map(|b| b.uuid));
+            catchup.extend(st.db.list().into_iter().map(|b| b.uuid.clone()));
             for u in catchup {
                 st.ingest(&u);
             }
@@ -141,11 +141,11 @@ fn main() {
         .get("/search", bind(&st, |s, r| {
             let q = r.q("q").unwrap_or_default();
             let limit = r.q("limit").and_then(|v| v.parse::<usize>().ok()).unwrap_or(50).clamp(1, 200);
-            Ok(Reply::ok(&serde_json::json!({"items": search::search(&s.db.list(), &q, limit)})))
+            Ok(Reply::ok(&serde_json::json!({"items": search::search(&s.db.list(), q, limit)})))
         }))
         .get("/books/{uuid}", bind(&st, |s, r| {
             let b = s.db.read(r.param("uuid")).map_err(ApiError::internal)?.ok_or_else(|| ApiError::not_found("没有这本书的条目"))?;
-            Ok(Reply::ok(&b))
+            Ok(Reply::ok(&*b))
         }))
         .get("/books/{uuid}/crops/{file}", bind(&st, |s, r| {
             let f = plain_name(r.param("file")).map_err(ApiError::bad)?;
