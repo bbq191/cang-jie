@@ -9,7 +9,6 @@
 //! PDF 的显示名取上传文件名，缩略图打开时才按页生成，占位不需要带内容。
 
 use regex::Regex;
-use std::io::Write;
 use std::path::Path;
 use std::sync::OnceLock;
 
@@ -140,12 +139,8 @@ pub fn epub_placeholder(real_epub: &Path, title: Option<&str>) -> Result<Vec<u8>
     let mut buf = Vec::new();
     {
         let mut z = zip::ZipWriter::new(std::io::Cursor::new(&mut buf));
-        let stored = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Stored);
-        let deflated = zip::write::SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
-        let mut put = |name: &str, data: &[u8], o| -> Result<(), String> {
-            z.start_file(name, o).map_err(|e| e.to_string())?;
-            z.write_all(data).map_err(|e| e.to_string())
-        };
+        let (stored, deflated) = (crate::epubzip::stored(), crate::epubzip::deflated());
+        let mut put = |name: &str, data: &[u8], o| crate::epubzip::put_entry(&mut z, name, o, data);
         put("mimetype", b"application/epub+zip", stored)?;
         put("META-INF/container.xml", br#"<?xml version="1.0"?><container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>"#, deflated)?;
         put("content.opf", opf_out.as_bytes(), deflated)?;

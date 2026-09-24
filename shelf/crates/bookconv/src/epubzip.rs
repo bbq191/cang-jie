@@ -7,8 +7,9 @@
 //!
 //! 原先散在 `wash.rs`（Entry+路径工具）与 `check.rs`（read_entries），`wash`/`check` 仍 re-export，旧路径不变。
 use std::collections::HashMap;
-use std::io::{Read, Seek};
-use zip::ZipArchive;
+use std::io::{Read, Seek, Write};
+use zip::write::SimpleFileOptions;
+use zip::{CompressionMethod, ZipArchive, ZipWriter};
 
 /// zip 条目（目录项已剔除）。
 #[derive(Clone, Debug, PartialEq)]
@@ -54,6 +55,23 @@ pub(crate) fn read_all(mut r: impl Read, declared: u64) -> Result<Vec<u8>, Strin
     let mut v = Vec::with_capacity(declared.min(PREALLOC_CAP) as usize);
     r.read_to_end(&mut v).map_err(|e| e.to_string())?;
     Ok(v)
+}
+
+/// 不压缩的条目选项（EPUB 的 `mimetype` 必须 STORED 且排第一；`epub::assemble` 全部条目也用它）。
+pub(crate) fn stored() -> SimpleFileOptions {
+    SimpleFileOptions::default().compression_method(CompressionMethod::Stored)
+}
+
+/// deflate 压缩的条目选项（缺省级别）。
+pub(crate) fn deflated() -> SimpleFileOptions {
+    SimpleFileOptions::default().compression_method(CompressionMethod::Deflated)
+}
+
+/// 往 zip 写一个完整条目（`start_file` + `write_all`，错误转成字符串）。优化器两条路径、`epub::assemble`、占位文档共用
+/// （此前每处都是一对 `.map_err(|e| e.to_string())?` 样板）。
+pub(crate) fn put_entry<W: Write + Seek>(zw: &mut ZipWriter<W>, name: &str, opts: SimpleFileOptions, data: &[u8]) -> Result<(), String> {
+    zw.start_file(name, opts).map_err(|e| e.to_string())?;
+    zw.write_all(data).map_err(|e| e.to_string())
 }
 
 /// [`read_skeleton`] 的结果。

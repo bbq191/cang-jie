@@ -7,8 +7,7 @@ use regex::Regex;
 use std::collections::HashSet;
 use std::io::{Cursor, Read, Write};
 use std::sync::OnceLock;
-use zip::write::SimpleFileOptions;
-use zip::{CompressionMethod, ZipArchive, ZipWriter};
+use zip::{ZipArchive, ZipWriter};
 
 /// 幂等标记：优化器把这个文件埋进产物 EPUB，内容=优化器版本号。
 /// 判"是否优化过"以它为权威——**跟书走**(云同步不丢、换设备仍在、对第三方书和墨香书一视同仁)，
@@ -246,6 +245,16 @@ impl<'a> EntryXform<'a> {
     }
 }
 
+/// 两条路径共同的收尾：写入抓取到的远程图资源（与引用它的章同目录、src 已改本地名），再在结尾埋幂等标记
+/// （内容=优化器版本号，供 optimized_version/is_optimized 判据）。
+fn write_tail<W: Write + std::io::Seek>(zw: &mut ZipWriter<W>, fetched_imgs: &[(String, Vec<u8>)], full: bool) -> Result<(), String> {
+    let deflated = crate::epubzip::deflated();
+    for (path, bytes) in fetched_imgs {
+        crate::epubzip::put_entry(zw, path, deflated, bytes)?;
+    }
+    crate::epubzip::put_entry(zw, OPTIMIZE_MARKER, deflated, marker_value(full).as_bytes())
+}
+
 /// 解包 → 每个 (x)html 走 strip_font_locks → 原样保留其余 → 重打包。返回 (新epub, 统计)。
 pub fn optimize_epub(epub: &[u8]) -> Result<(Vec<u8>, Report), String> {
     optimize_epub_with(epub, &OptimizeOpts::default())
@@ -264,8 +273,7 @@ pub fn optimize_epub_with(epub: &[u8], opts: &OptimizeOpts) -> Result<(Vec<u8>, 
     {
         let mut zw = ZipWriter::new(Cursor::new(&mut out_buf));
         // mimetype 必须首个且 STORED（EPUB 规范）；其余用 Deflated 压缩，否则文本不压缩体积翻倍。
-        let stored = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
-        let deflated = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
+        let (stored, deflated) = (crate::epubzip::stored(), crate::epubzip::deflated());
         for (name, data, ish) in &entries {
             let final_data: std::borrow::Cow<[u8]> = match xf.transform_text(name, data, *ish) {
                 Some(t) => t,
@@ -275,18 +283,9 @@ pub fn optimize_epub_with(epub: &[u8], opts: &OptimizeOpts) -> Result<(Vec<u8>, 
                 None if crate::imgopt::is_downscalable(name) => transform_image_bytes(data, is_comic_book, opts.comic_frame).map_or(std::borrow::Cow::Borrowed(data.as_slice()), std::borrow::Cow::Owned),
                 None => std::borrow::Cow::Borrowed(data.as_slice()),
             };
-            let opts = if name == "mimetype" { stored } else { deflated };
-            zw.start_file(name.as_str(), opts).map_err(|e| e.to_string())?;
-            zw.write_all(&final_data).map_err(|e| e.to_string())?;
+            crate::epubzip::put_entry(&mut zw, name, if name == "mimetype" { stored } else { deflated }, &final_data)?;
         }
-        // 写入抓取到的远程图资源（与引用它的章同目录、src 已改本地名）。
-        for (path, bytes) in &xf.fetched_imgs {
-            zw.start_file(path.as_str(), deflated).map_err(|e| e.to_string())?;
-            zw.write_all(bytes).map_err(|e| e.to_string())?;
-        }
-        // 埋幂等标记(结尾)：内容=优化器版本号，供 optimized_version/is_optimized 判据。
-        zw.start_file(OPTIMIZE_MARKER, deflated).map_err(|e| e.to_string())?;
-        zw.write_all(marker_value(opts.wash.is_some()).as_bytes()).map_err(|e| e.to_string())?;
+        write_tail(&mut zw, &xf.fetched_imgs, opts.wash.is_some())?;
         zw.finish().map_err(|e| e.to_string())?;
     }
     rep.bytes_after = out_buf.len();
