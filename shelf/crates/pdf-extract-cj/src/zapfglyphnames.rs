@@ -1,5 +1,6 @@
 pub fn zapfdigbats_names_to_unicode(name: &str) -> Option<u16> {
-    let names = [
+    // cj：上游是运行时局部数组（每次调用现建约 200 项），改成借用常量切片（编译期静态化）。
+    let names: &[(&str, u16)] = &[
         ("a1", 0x2701),
         ("a10", 0x2721),
         ("a100", 0x275e),

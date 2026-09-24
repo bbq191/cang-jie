@@ -46,7 +46,7 @@ pub(super) fn classify_pdf_bytes(bytes: &[u8]) -> PdfKind {
     if comic_pages as f64 / total as f64 >= COMIC_PAGE_RATIO {
         return PdfKind::Comic;
     }
-    let Ok(text_pages) = extract_positioned_text(bytes) else { return PdfKind::NoTextLayer };
+    let Ok(text_pages) = extract_positioned_text_doc(&doc) else { return PdfKind::NoTextLayer };
     let total_chars: usize = text_pages.iter().map(|p| p.chars.iter().filter(|c| !c.ch.is_whitespace()).count()).sum();
     let avg = total_chars as f64 / total as f64;
     if avg >= MIN_CHARS_PER_PAGE {

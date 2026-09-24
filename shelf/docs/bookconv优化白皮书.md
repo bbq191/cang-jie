@@ -490,7 +490,7 @@ EPUB 线原则④（09-17）：`comic_detect::is_comic`（`MIN_IMAGES=20`、`TEX
 
 ![有文字层 PDF → EPUB：五步管线](diagrams/bc-pdf2epub-pipeline.svg)
 
-**① 逐字提取：为什么要 fork pdf-extract**。上游 0.12.1 的 `OutputDev` 只给字符+坐标+字号，拿不到颜色和图片位置，而且有三个缺陷：`g/G/rg/RG/k/K` 六个最常用的颜色算子完全不处理（只打日志）；`Do` 对所有 XObject 一律当 Form 递归解析（图片字节被当内容流解析）；CID 字体 `/W` 数组的区间写法 `c_first c_last w` 三处都写错（结束 CID 和宽度都取成 `w[i]`、区间半开），calibre 导出的微软雅黑子集 `DW` 又显式为 0 → **中文字宽全为 0**。字体/glyph 解码是真正难、易错的部分，不重写，只在 `pdf-extract-cj` 里改：补颜色算子、`output_character` 多传填充色（`resolve_fill_rgb`，Pattern/Separation/DeviceN/Lab 拿不准返回 `None` 不瞎猜）、图片走新钩子 `output_image(ctm, 资源名)`、修 `/W` 区间解析。依赖关系：fork 内部锁 lopdf 0.42，bookconv 直接依赖 lopdf 0.45，两边类型不互传，fork 只喂原始字节。
+**① 逐字提取：为什么要 fork pdf-extract**。上游 0.12.1 的 `OutputDev` 只给字符+坐标+字号，拿不到颜色和图片位置，而且有三个缺陷：`g/G/rg/RG/k/K` 六个最常用的颜色算子完全不处理（只打日志）；`Do` 对所有 XObject 一律当 Form 递归解析（图片字节被当内容流解析）；CID 字体 `/W` 数组的区间写法 `c_first c_last w` 三处都写错（结束 CID 和宽度都取成 `w[i]`、区间半开），calibre 导出的微软雅黑子集 `DW` 又显式为 0 → **中文字宽全为 0**。字体/glyph 解码是真正难、易错的部分，不重写，只在 `pdf-extract-cj` 里改：补颜色算子、`output_character` 多传填充色（`resolve_fill_rgb`，Pattern/Separation/DeviceN/Lab 拿不准返回 `None` 不瞎猜）、图片走新钩子 `output_image(ctm, 资源名)`、修 `/W` 区间解析。依赖关系：fork 与 bookconv 同用 lopdf 0.45（2026-09-24 起；此前 fork 锁 0.42、类型不互传，每本 PDF 要解析两遍），逐字提取直接复用 bookconv 已解析的 `lopdf::Document`。
 
 **2026-09-24 补一处防护**：嵌套表单（Form XObject）展开时维护一个 `form_stack`，深度到 `MAX_FORM_DEPTH`=16 或遇到正在展开中的同一对象就跳过。此前自引用的表单能无限递归、把 book-serve 的栈打爆（SIGSEGV），`catch_unwind` 接不住、整个进程一起崩。回归测试 `pdf-extract-cj/tests/form_recursion.rs`；真机没有触发样本。
 

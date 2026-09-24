@@ -247,9 +247,11 @@ pub fn assemble(book: &mut Book) -> Result<Vec<u8>, String> {
 /// `extra_css`：`optimize_pdf_to_epub` 返回的颜色 CSS（`.cj-cN{color:#rrggbb;}` 逐条，可能是空
 /// 串——全书没解析出任何非黑颜色时就是空）。拼进同一份共享样式表而不是另起一个文件：颜色规则
 /// 也得挂在"含 `<img` 或颜色 span 才 `<link>`"这同一条判定里，两份文件反而要维护两条判定逻辑。
+/// **组装后 `book.resources` 被清空**（写一张释放一张）：PDF 转出的书图片可达上百 MB，不让"资源表 + zip 缓冲"
+/// 同时各占一整份（2026-09-24 审计；调用方 book-serve 组装后不再用 `book`）。
 pub fn assemble_pdf_derived(book: &mut Book, extra_css: &str) -> Result<Vec<u8>, String> {
     let css = format!("{PDF_IMG_CSS}{extra_css}");
-    assemble_with(book, AssembleOpts { shared_css: Some(SharedCss { file: "pdf-img.css", id: "pdf-img-css", css: &css }), consume_resources: false, rtl: false })
+    assemble_with(book, AssembleOpts { shared_css: Some(SharedCss { file: "pdf-img.css", id: "pdf-img-css", css: &css }), consume_resources: true, rtl: false })
 }
 
 const PDF_IMG_CSS: &str = "img{max-width:100%;height:auto;}\n";
