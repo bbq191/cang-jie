@@ -427,19 +427,27 @@ function renderTransfer(sec){sec.innerHTML=`
       const cnt={optimize:chosen.filter(stgIsTodo).length,deliver:chosen.filter(isBook).length,koreader:koInstalled?chosen.length:0};
       const clr=el('button',{class:'btn',type:'button',text:T('stg.batch.clear')});clr.onclick=()=>{picked.clear();render()};
       bar.appendChild(el('div',{class:'stgbar-top'},[el('b',{text:T('stg.selected',{n:picked.size})}),clr]));
-      const mk=(a,pri)=>{const b=el('button',{class:'btn'+(pri?' pri':''),type:'button',text:T('stg.bar.'+a)+'（'+cnt[a]+'）'});
+      // 按钮排布（2026-09-24 用户要求手机上不折行）：第二行 = 处理/加入（主操作，等分一行）；第三行 = 单本操作 + 删除。
+      // 文案 = 标签 + 数量角标；窄屏去掉"加入"前缀（.lbl-long），一行三个也放得下。
+      const lbl=(key,n)=>{const f=document.createDocumentFragment();const t=T(key);const m=t.match(/^(加入 |Add to )(.*)$/);
+        if(m){f.appendChild(el('span',{class:'lbl-long',text:m[1]}));f.appendChild(document.createTextNode(m[2]))}else f.appendChild(document.createTextNode(t));
+        if(n!=null)f.appendChild(el('span',{class:'cnt',text:String(n)}));return f};
+      const mk=(a,pri)=>{const b=el('button',{class:'btn'+(pri?' pri':''),type:'button',title:T('stg.bar.'+a)+'（'+cnt[a]+'）'},[lbl('stg.bar.'+a,cnt[a])]);
         if(!cnt[a]){b.disabled=true;b.title=T('stg.bar.noneApplicable')}else b.onclick=()=>enqueue(a,{names:[...picked]});return b};
       const btns=el('div',{class:'stgbar-btns'},[mk('optimize',true),mk('deliver')]);
       if(koInstalled)btns.appendChild(mk('koreader'));
-      const del=el('button',{class:'btn btn-bad',type:'button',text:T('action.delete')+'（'+chosen.filter(it=>!it.busy).length+'）'});
+      btns.style.setProperty('--cols',String(btns.children.length));
+      const delN=chosen.filter(it=>!it.busy).length;
+      const del=el('button',{class:'btn btn-bad',type:'button',title:T('action.delete')+'（'+delN+'）'},[lbl('action.delete',delN)]);
       guardClick(del,async()=>{
         const names=chosen.filter(it=>!it.busy).map(it=>it.name),busyN=chosen.length-names.length;
         if(!names.length){toast(T('stg.bar.noneApplicable'),'warn');return}
         if(!await confirmDialog(T('stg.batch.deleteConfirm',{n:names.length})))return;
         let ok=0;for(const n of names){const r=await jsend('/api/books/staging/delete','POST',{name:n});if(r.ok!==false)ok++}
         toast(T('stg.batch.deleted',{n:ok})+(busyN?T('stg.batch.deleteSkipped',{n:busyN}):''),ok?'ok':'warn');picked.clear();refresh()});
-      btns.appendChild(del);bar.appendChild(btns);
-      // 只选了一本：再给「下载原件」「改名」（都是针对单本的操作，多选时不出现）。
+      bar.appendChild(btns);
+      const row3=el('div',{class:'stgbar-btns stgbar-sub'});
+      // 只选了一本：再给「下载原件」「改名」（都是针对单本的操作，多选时不出现），删除排在同一行最右。
       if(chosen.length===1){const one=chosen[0];
         const dl=el('a',{class:'btn',href:'/api/books/staging/file?name='+encodeURIComponent(one.name),download:one.name,text:T('stg.bar.download')});
         const rn=el('button',{class:'btn',type:'button',text:T('stg.bar.rename')});
@@ -449,7 +457,8 @@ function renderTransfer(sec){sec.innerHTML=`
           if(v==null||!v.trim())return;
           const r=await postJ('/api/books/staging/rename',{name:one.name,newName:v.trim()});
           if(r.ok!==false){picked.clear();picked.add(r.name);toast(T('stg.rename.done',{name:r.name}),'ok')}refresh()});
-        bar.appendChild(el('div',{class:'stgbar-btns'},[dl,rn]))}
+        row3.append(dl,rn)}
+      row3.appendChild(del);row3.style.setProperty('--cols','3');bar.appendChild(row3);
     }else if(bs.total&&sig!==dismissedSig){
       bar.hidden=false;bar.className='stgbar done';
       const fail=bs.failed.length;

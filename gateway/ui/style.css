@@ -186,7 +186,15 @@ dl.help dd{margin:.2em 0 .2em;color:var(--mute);font-size:.9em;line-height:1.65}
 @media(min-width:35em){.stg-pgtxt{display:none}}
 .stgbar.sel{flex-direction:column;align-items:stretch;gap:.5em}
 .stgbar-top{display:flex;align-items:center;justify-content:space-between;gap:.6em}
-.stgbar-btns{display:flex;gap:.5em}.stgbar-btns .btn{flex:1 1 0;padding:.6em .4em;white-space:nowrap}
+/* 底部操作栏按钮：每行一排、按列数等分、绝不折行（2026-09-24 用户要求手机端不折行）。列数由 JS 设 --cols；
+   第三行（单本操作+删除）固定 3 列，多选时只有删除，占最右一格。文字过长时省略号兜底而不是换行。 */
+.stgbar-btns{display:grid;grid-template-columns:repeat(var(--cols,3),minmax(0,1fr));gap:.5em}
+.stgbar-btns .btn{min-width:0;height:2.7em;padding:0 .25em;line-height:1;white-space:nowrap;overflow:hidden;text-align:center;display:inline-flex;align-items:center;justify-content:center;gap:.25em;font-size:.95em}
+.stgbar-sub .btn-bad{grid-column:-2/-1}
+.stgbar-btns .cnt{font-size:.78em;line-height:1;padding:.18em .45em;border-radius:1em;background:color-mix(in srgb,currentColor 14%,transparent);font-weight:600;flex:0 0 auto}
+@media(max-width:34em){.stgbar-btns .lbl-long{display:none}.stgbar-btns .btn{font-size:.88em}.stgbar-btns .cnt{padding:.15em .35em}}
+@media(max-width:22.5em){.stgbar-btns .btn{font-size:.8em}}
+a.btn{text-decoration:none;box-sizing:border-box}
 /* 页头在手机窄屏上被挤成竖排（"秘密花园"一字一行）：logo 不换行、主机名/次要链接收起来 */
 header .logo{white-space:nowrap}
 header .links{white-space:nowrap}
@@ -201,9 +209,6 @@ header .links{white-space:nowrap}
 .stg-row{min-width:0}
 .stg-main{min-width:0;overflow-wrap:anywhere}
 .stg-meta{min-width:0}
-.stgbar-btns{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.5em}
-.stgbar-btns .btn{min-width:0;padding:.6em .3em;overflow-wrap:anywhere}
-@media(min-width:35em){.stgbar-btns{grid-template-columns:repeat(4,minmax(0,1fr))}}
 .stg-actions{flex-shrink:0}
 /* 加入位置：两个下拉同一行（各自上方一个小标签），手机上也并排 */
 .stg-destpair{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.6em}
