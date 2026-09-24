@@ -9,7 +9,7 @@ mod ledger;
 mod prompt;
 mod worker;
 
-use backend::{OpenAiCompat, Vision};
+use backend::Vision;
 use config::TranscribeConfig;
 use ink::{EntryStore, InkHttp};
 use ledger::Ledger;
@@ -46,8 +46,8 @@ impl State {
         self.cfg.get()
     }
     fn vision(&self, cfg: &TranscribeConfig) -> Result<Box<dyn Vision>, String> {
-        let key = cfg.key().ok_or("未配置 API key（网页「转写设置」里粘贴，或环境变量 DASHSCOPE_API_KEY）")?;
-        Ok(Box::new(OpenAiCompat::new(&cfg.backend, cfg.base_url(), cfg.model(), &key, Duration::from_secs(cfg.timeout_secs))))
+        let c = vendorcfg::ChatClient::from_config(cfg, &cfg.backend, Duration::from_secs(cfg.timeout_secs), "未配置 API key（网页「转写设置」里粘贴，或环境变量 DASHSCOPE_API_KEY）")?;
+        Ok(Box::new(c))
     }
     /// 跑一轮（阻塞拿锁）。没 key → 直接报告不出网。
     fn run(&self, only: Option<Target<'_>>) -> ledger::RunReport {
