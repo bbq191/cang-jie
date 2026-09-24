@@ -45,6 +45,17 @@ local function jval(v)
 end
 
 local changes = {}
+-- 补丁里的表整体落到目标（目标原先没有这张表，或原先不是表）时用：深拷贝并剔除 "__DELETE__" 标记——
+-- 否则删除标记会被当成普通字符串值写进配置（2026-09-24 回归测试查出：空配置上应用 plugins_disabled 补丁，
+-- 写进了 statistics = "__DELETE__"）。
+local function copy_without_deletes(v)
+  if type(v) ~= "table" then return v end
+  local out = {}
+  for k, x in pairs(v) do
+    if x ~= DELETE then out[k] = copy_without_deletes(x) end
+  end
+  return out
+end
 local function merge(dst, src, path)
   for k, v in pairs(src) do
     local p = (path == "" and tostring(k)) or (path .. "." .. tostring(k))
@@ -53,16 +64,11 @@ local function merge(dst, src, path)
     elseif type(v) == "table" and type(dst[k]) == "table" then
       merge(dst[k], v, p)
     else
-      local same = (dst[k] == v)
-      if type(v) == "table" and type(dst[k]) == "table" then same = false end
-      if not same then
-        if type(v) == "table" or type(dst[k]) == "table" then
-          -- 表 vs 非表：整体替换（深拷贝）
-          changes[#changes + 1] = { path = p, old = dst[k], new = v }
-        else
-          changes[#changes + 1] = { path = p, old = dst[k], new = v }
-        end
-        dst[k] = v
+      -- 走到这里时两边不同时是表（都是表的情况上面已递归）：标量比较；表 vs 非表整体替换。
+      local nv = copy_without_deletes(v)
+      if dst[k] ~= nv or type(nv) == "table" then
+        changes[#changes + 1] = { path = p, old = dst[k], new = nv }
+        dst[k] = nv
       end
     end
   end

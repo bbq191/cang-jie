@@ -1,7 +1,7 @@
 //! koreader-serve —— 书架·KOReader（loopback 8791）。
 //! 路由（经网关前缀 `/api/koreader`）：`GET /status` · `GET /books[?folder=]` · `POST /books/adopt {name, folder}`（从母版库落库）·
 //! `GET /fonts` · `POST /fonts` · `DELETE /fonts/{file}` · `GET /dicts` · `POST /dicts?name=` ·
-//! `GET /config/{settings|defaults|gestures}`（原文）· `POST /config/{file}?dry_run=1`（body=补丁 Lua；运行中拒写）·
+//! `GET /config/{settings|defaults|gestures|directory|profiles}`（原文）· `POST /config/{file}?dry_run=1`（body=补丁 Lua；运行中拒写）·
 //! `GET /annotations`（`books/` 下每本书的高亮标注，读 `<book>.sdr/metadata.*.lua`，见 `annot.rs`）·
 //! `GET /vocabulary`（生词本插件数据库 `settings/vocabulary_builder.sqlite3`，见 `vocab.rs`；2026-09-16
 //! 真机核对过路径——第一版想当然写成 `data/`，实际在 `settings/`，跟其它 sqlite 状态文件同目录）——两个都是

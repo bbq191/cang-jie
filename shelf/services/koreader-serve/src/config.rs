@@ -6,12 +6,17 @@ use std::path::{Path, PathBuf};
 
 pub const MERGE_LUA: &str = include_str!("../../../koreader/merge.lua");
 
-/// 可同步的三份文件（URL 名 → 相对 KOReader 根的路径）。
+/// 可同步的文件（URL 名 → 相对 KOReader 根的路径）。`directory`/`profiles` 是 2026-09-24 为"文字书 / 漫画两套方案"加的：
+/// 按文件夹给新书套单书设置（docsettingtweak 插件），和按书路径自动执行的配置档（profiles 插件）。
+pub const FILES: &str = "settings|defaults|gestures|directory|profiles";
+
 pub fn file_of(name: &str) -> Option<&'static str> {
     Some(match name {
         "settings" => "settings.reader.lua",
         "defaults" => "defaults.custom.lua",
         "gestures" => "settings/gestures.lua",
+        "directory" => "settings/directory_defaults.lua",
+        "profiles" => "settings/profiles.lua",
         _ => return None,
     })
 }
@@ -59,7 +64,7 @@ impl ConfigSync {
 
     /// 同 apply，运行态判定可注入（单测不碰真 /proc）。
     pub fn apply_with(&self, file: &str, patch_lua: &str, dry_run: bool, running: impl Fn() -> bool) -> Result<ApplyResult, String> {
-        let rel = file_of(file).ok_or("file ∈ settings|defaults|gestures")?;
+        let rel = file_of(file).ok_or(format!("file ∈ {FILES}"))?;
         if !dry_run && running() {
             return Err("KOReader 正在运行：退出后再同步（它退出时会回写覆盖）".into());
         }
@@ -99,7 +104,7 @@ impl ConfigSync {
     }
 
     pub fn read(&self, file: &str) -> Result<String, String> {
-        let rel = file_of(file).ok_or("file ∈ settings|defaults|gestures")?;
+        let rel = file_of(file).ok_or(format!("file ∈ {FILES}"))?;
         std::fs::read_to_string(self.ko.root().join(rel)).map_err(|e| format!("读 {rel} 失败: {e}"))
     }
 }
@@ -133,5 +138,35 @@ mod tests {
         // 不存在的文件也能建（gestures 在子目录）
         let g = cs.apply_with("gestures", "return { gesture_reader = { hold_top_left_corner = { exit = true } } }", false, || false).unwrap();
         assert!(g.written && t.path().join("settings/gestures.lua").is_file());
+    }
+
+    /// 仓库里真实的 5 份补丁（`shelf/koreader/profile/`）都能应用到各自的目标文件，且二次应用幂等（零改动）。
+    #[test]
+    fn repo_profile_patches_apply_and_are_idempotent() {
+        if !has_luajit() {
+            eprintln!("跳过：host 无 luajit");
+            return;
+        }
+        let t = tempfile::tempdir().unwrap();
+        let ko = std::sync::Arc::new(KoReader::new(t.path()));
+        let cs = ConfigSync { ko, backup_dir: t.path().join("bk"), tmp_dir: t.path().join("tmp") };
+        let patches = [
+            ("settings", include_str!("../../../koreader/profile/settings.reader.patch.lua")),
+            ("defaults", include_str!("../../../koreader/profile/defaults.custom.lua")),
+            ("gestures", include_str!("../../../koreader/profile/gestures.patch.lua")),
+            ("directory", include_str!("../../../koreader/profile/directory_defaults.patch.lua")),
+            ("profiles", include_str!("../../../koreader/profile/profiles.patch.lua")),
+        ];
+        for (file, patch) in patches {
+            let r = cs.apply_with(file, patch, false, || false).unwrap_or_else(|e| panic!("{file}: {e}"));
+            assert!(r.written, "{file} 首次应该写入");
+            let again = cs.apply_with(file, patch, true, || false).unwrap();
+            assert!(again.changes.as_array().unwrap().is_empty(), "{file} 二次应用应零改动: {}", again.changes);
+        }
+        // 抽查落盘结果：漫画目录默认从右往左、配置档引用的状态栏预设确实存在
+        let dd = std::fs::read_to_string(t.path().join("settings/directory_defaults.lua")).unwrap();
+        assert!(dd.contains("books/漫画") && dd.contains("inverse_reading_order"), "{dd}");
+        let st = std::fs::read_to_string(t.path().join("settings.reader.lua")).unwrap();
+        assert!(st.contains("footer_presets") && st.contains("profiles_autoexec"), "settings 缺预设/自动执行");
     }
 }

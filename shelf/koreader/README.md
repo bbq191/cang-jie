@@ -10,10 +10,35 @@
 | `profile/settings.reader.patch.lua` | 补丁：深合并进设备 `settings.reader.lua`（脚注、刷新波形、悬挂标点、状态栏等） |
 | `profile/defaults.custom.lua` | 补丁：深合并进设备 `defaults.custom.lua` |
 | `profile/gestures.patch.lua` | 补丁：深合并进设备 `settings/gestures.lua`（防误触、退出手势等） |
+| `profile/directory_defaults.patch.lua` | 补丁：深合并进 `settings/directory_defaults.lua`——漫画方案的单书设置（`books/漫画/` 下新书首次打开时套用） |
+| `profile/profiles.patch.lua` | 补丁：深合并进 `settings/profiles.lua`——「漫画」「文字」两个配置档（切状态栏预设） |
 | `profile/fonts.txt` · `profile/dicts.txt` | 字体 / StarDict 词典**清单**（每行一个本机路径；数据本身不入库）。⚠ 2026-09-18 host `shelf` 命令行砍除后，**没有工具再自动读这两份清单**，它们只作"该装哪些字体/词典"的备忘；实际安装走网页「其他 → KOReader」上传（`POST /fonts`、`POST /dicts?name=`） |
 | `merge.lua` | 合并器：被 `koreader-serve` 通过 `include_str!` 内嵌，设备端用 KOReader 自带 `luajit` 执行 |
 
-补丁语义：标量覆盖、表递归、值为字符串 `"__DELETE__"` 删键。
+补丁语义：标量覆盖、表递归、值为字符串 `"__DELETE__"` 删键。（2026-09-24 修：目标里原先没有的表整张落进去时，也会剔除其中的 `"__DELETE__"`，此前会被当普通值写进去。）
+
+## 文字书 / 漫画两套方案（2026-09-24）
+
+KOReader 没有"按书类型整套切换配置"的单一开关，靠三样自带机制拼出来，**键名全部按设备上 v2026.07.1 源码核过**
+（网上流传的 `status_bar`、`cre_engine_controls`、`taps_and_gestures.tap_zones`、`eink_refresh_every`、`k2pdfopt_mode`、
+`default_profile` 这类键在 KOReader 里并不存在，写进去会被忽略）：
+
+| 层 | 机制 | 文字书 | 漫画 |
+|---|---|---|---|
+| 全局设置 `settings.reader.lua` | 所有没有单书设置的书的缺省值 | 本身就是文字书方案：行距 115%、字重 +0.5、不用书内嵌字体、悬挂标点、无语言标注时按中文断行、每 16 页全刷 | — |
+| 按文件夹的单书设置 `directory_defaults.lua`（docsettingtweak 插件） | `books/漫画/` 下的书**第一次打开**时套用 | — | 从右往左翻页、四边页边距 0、图片缩放用「最佳」算法、关 crengine 标题栏 |
+| 配置档 `profiles.lua` + `profiles_autoexec`（profiles 插件） | 打开/关闭书时按路径自动执行 | 打开 `books/小说/` 或关闭漫画时载入「文字」状态栏预设 | 打开 `books/漫画/` 时载入「漫画」预设：隐藏状态栏和进度条，画面用满整屏高度 |
+
+**刷新**：带图片的页 KOReader 缺省就每页全刷（`refresh_on_pages_with_images` 缺省开），漫画不用另设；文字页每 16 页全刷。
+**已知限制**：单书设置只对第一次打开的书生效，已经打开过的书要在书的菜单里「重置设置」后重开；漫画目录一律按从右往左，
+从左往右的国漫/美漫放到 `漫画/` 之外，或打开后在菜单里关掉「反转翻页方向」；每次切换状态栏预设会弹一条"已载入预设"小提示。
+
+**插件取舍**：启用「统计」（状态栏的剩余阅读时间靠它，原先禁用时一直显示 N/A）和「生词本」（查词自动入库，
+`koreader-serve` 从它的数据库把生词导入笔记线）；新增禁用 hello、coverimage、keepalive、bookshortcuts、cloudstorage、
+opds、kosync、timesync、autostandby、batterystat、hotkeys、externalkeyboard、archiveviewer（与本机用法无关）。保留的关键插件：
+docsettingtweak、profiles、gestures、coverbrowser、autosuspend。
+
+**应用**：先退出 KOReader，再依次 `POST /config/{settings,directory,profiles}`（koreader-serve 2026-09-24 起支持后两个文件）。
 
 ## 怎么应用（当前现状）
 
@@ -23,14 +48,14 @@
 
 | 接口 | 作用 |
 |---|---|
-| `GET /config/{settings\|defaults\|gestures}` | 读设备上的当前原文 |
-| `POST /config/{settings\|defaults\|gestures}[?dry_run=1]` | body = 补丁 Lua 文本；`dry_run=1` 只返回将改的键（path/old/new），不写 |
+| `GET /config/{settings\|defaults\|gestures\|directory\|profiles}` | 读设备上的当前原文 |
+| `POST /config/{settings\|defaults\|gestures\|directory\|profiles}[?dry_run=1]` | body = 补丁 Lua 文本；`dry_run=1` 只返回将改的键（path/old/new），不写 |
 
 例（在 host 上，经网关；网关需登录，这里的 cookie 是登录后浏览器/`curl -c` 拿到的）：
 `curl -k -b cookie.txt --data-binary @shelf/koreader/profile/settings.reader.patch.lua 'https://shelf.local/api/koreader/config/settings?dry_run=1'`，看差异没问题再去掉 `dry_run=1` 重发。
 **没有一键脚本、没有网页按钮**——2026-09-18 之前的 `shelf koreader pull/diff/sync` 命令行已随 host CLI 整体砍除（清单见 `../docs/reMarkable书架白皮书.md` 附录 B），需要时手工调上述接口，或在设备上直接改。
 
-profile 三文件的键来自旧《阅读白皮书》§11.1b（该文档在 2026-09-11 整理时已挪出仓库）；补丁文件里标注"待核对"的值，应先 `GET /config/...` 看设备实况再定。
+profile 各文件的键来自旧《阅读白皮书》§11.1b 与 2026-09-24 按设备源码的核对（该文档在 2026-09-11 整理时已挪出仓库）；补丁文件里标注"待核对"的值，应先 `GET /config/...` 看设备实况再定。
 
 ## KOReader 入口现状（2026-09-21，固件 3.28.0.172，appload 0.6.0）
 
