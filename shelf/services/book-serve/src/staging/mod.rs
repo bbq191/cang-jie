@@ -37,6 +37,16 @@ fn busy_err(name: &str, extra: &str) -> String {
     format!("《{name}》正在处理中，请稍候{extra}")
 }
 
+/// 异步操作（优化 / 投递）结果 → 边车终态 `(status, message)`：成功 `ok`、用户取消 `cancelled`、其余 `failed`。
+/// 优化与投递两处原来各写一遍同样的三分支 match（2026-09-24 审计合并）。
+fn final_status(result: Result<&str, &str>) -> (String, String) {
+    match result {
+        Ok(msg) => ("ok".into(), msg.to_string()),
+        Err(e) if e.contains(optimize::CANCELLED_MSG) => ("cancelled".into(), e.to_string()),
+        Err(e) => ("failed".into(), e.to_string()),
+    }
+}
+
 /// 母版库一本书的展示条目。`format`（epub / pdf / cbz / other）从扩展名判、优化等级从内埋标记判（轻量只读中央目录）。
 /// `rename_all = "camelCase"`：既有字段全是单词、camelCase 变换不影响它们的 JSON key，这次
 /// 新增的 `pdf_source` 借这个转成前端习惯的 `pdfSource`，不用单独给这一个字段挂 `rename`。

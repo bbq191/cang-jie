@@ -224,11 +224,8 @@ impl Staging {
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| this.optimize(name, on_progress)))
                 .unwrap_or_else(|_| Err("优化过程内部异常（已捕获，不影响其他操作）".to_string()));
             let at = rmsvc_core::clock::now_secs();
-            let oc = match &result {
-                Ok(msg) => sidecar::OptimizeCheck { status: "ok".into(), message: msg.clone(), at, progress: None },
-                Err(e) if e.contains(optimize::CANCELLED_MSG) => sidecar::OptimizeCheck { status: "cancelled".into(), message: e.clone(), at, progress: None },
-                Err(e) => sidecar::OptimizeCheck { status: "failed".into(), message: e.clone(), at, progress: None },
-            };
+            let (status, message) = final_status(result.as_deref().map_err(String::as_str));
+            let oc = sidecar::OptimizeCheck { status, message, at, progress: None };
             // 优化成功后条目可能改了名（长下载名规范成 `书名 - N卷`；有文字层 PDF 转成同名 `.epub` 并把原 `.pdf` 挪进备份）——
             // sidecar 是按条目名找文件的（`existing()`），原名这时候已经找不到文件，终态写会静默失败。这里探测一下
             // 有没有发生改名，写去正确的新名字（`on_progress` 那些中途写的进度还是按旧名字写，那时候文件确实
