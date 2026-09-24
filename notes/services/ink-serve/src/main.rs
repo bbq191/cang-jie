@@ -30,6 +30,7 @@ mod crop;
 mod doc;
 mod ingest;
 mod koreader;
+mod search;
 
 use bookdb::BookDb;
 use config::IngestConfig;
@@ -135,6 +136,12 @@ fn main() {
         .get("/books", bind(&st, |s, _| {
             let items: Vec<serde_json::Value> = s.db.list_active().iter().map(|b| serde_json::json!({"uuid": b.uuid, "title": b.title, "chapters": b.chapters.len(), "entries": b.entries.iter().filter(|e| e.status != Status::Revoked).count(), "pending": b.entries.iter().filter(|e| e.needs_transcribe()).count()})).collect();
             Ok(Reply::ok(&serde_json::json!({"items": items})))
+        }))
+        // 全文搜索：跨书搜勾画原文/定稿/草稿/提问/AI 回答/书名，见 search.rs。`limit` 缺省 50、上限 200。
+        .get("/search", bind(&st, |s, r| {
+            let q = r.q("q").unwrap_or_default();
+            let limit = r.q("limit").and_then(|v| v.parse::<usize>().ok()).unwrap_or(50).clamp(1, 200);
+            Ok(Reply::ok(&serde_json::json!({"items": search::search(&s.db.list(), &q, limit)})))
         }))
         .get("/books/{uuid}", bind(&st, |s, r| {
             let b = s.db.read(r.param("uuid")).map_err(ApiError::internal)?.ok_or_else(|| ApiError::not_found("没有这本书的条目"))?;

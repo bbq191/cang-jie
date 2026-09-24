@@ -84,6 +84,21 @@ const confirmDialog=(msg)=>new Promise(resolve=>{
   document.body.appendChild(overlay);
   yesBtn.focus();
 });
+/* 输入框版的 confirmDialog：返回 `Promise<string|null>`（取消 = null）。给改名这类"要用户敲一个值"的操作用。 */
+const promptDialog=(msg,value='')=>new Promise(resolve=>{
+  const inp=el('input',{type:'text',class:'confirm-input'});inp.value=value;
+  const yesBtn=el('button',{class:'btn pri',text:T('common.ok')});
+  const noBtn=el('button',{class:'btn',text:T('common.cancel')});
+  const overlay=el('div',{class:'confirm-overlay'},[el('div',{class:'confirm-box'},[el('div',{class:'confirm-msg',text:msg}),inp,el('div',{class:'confirm-actions'},[noBtn,yesBtn])])]);
+  const close=v=>{document.removeEventListener('keydown',onKey);overlay.remove();resolve(v)};
+  const onKey=e=>{if(e.key==='Escape')close(null);else if(e.key==='Enter')close(inp.value)};
+  yesBtn.onclick=()=>close(inp.value);
+  noBtn.onclick=()=>close(null);
+  overlay.onclick=e=>{if(e.target===overlay)close(null)};
+  document.addEventListener('keydown',onKey);
+  document.body.appendChild(overlay);
+  inp.focus();inp.select();
+});
 /* 轻量记忆：per-viewer 便利态，隐私窗口/禁用 storage 时静默回默认 */
 const LS={get(k,d){try{const v=localStorage.getItem('shelf.'+k);return v==null?d:v}catch{return d}},set(k,v){try{localStorage.setItem('shelf.'+k,v)}catch{}}};
 const onUsb=/^10\.11\.99\./.test(location.hostname);
@@ -325,6 +340,7 @@ function renderTransfer(sec){sec.innerHTML=`
     <div class="stg-selrow"><label class="toggle"><input type="checkbox" id="stgall"> <span id="stgalltxt"></span></label><span class="stg-spacer"></span><label class="toggle"><input type="checkbox" id="stghide"> ${T('stg.hideDone')}</label></div>
     <ul class="stg-list" id="stglist"></ul>
     <div class="stg-pager" id="stgpager"></div>
+    <details class="card stg-orig" id="stgorig" hidden><summary id="stgorigsum"></summary><p class="small">${T('stg.orig.lead')}</p><ul class="stg-list" id="stgoriglist"></ul></details>
     <div class="stgbar" id="stgbar" hidden></div>
   </div>`;
   let koInstalled=false,items=[];
@@ -423,6 +439,17 @@ function renderTransfer(sec){sec.innerHTML=`
         let ok=0;for(const n of names){const r=await jsend('/api/books/staging/delete','POST',{name:n});if(r.ok!==false)ok++}
         toast(T('stg.batch.deleted',{n:ok})+(busyN?T('stg.batch.deleteSkipped',{n:busyN}):''),ok?'ok':'warn');picked.clear();refresh()});
       btns.appendChild(del);bar.appendChild(btns);
+      // 只选了一本：再给「下载原件」「改名」（都是针对单本的操作，多选时不出现）。
+      if(chosen.length===1){const one=chosen[0];
+        const dl=el('a',{class:'btn',href:'/api/books/staging/file?name='+encodeURIComponent(one.name),download:one.name,text:T('stg.bar.download')});
+        const rn=el('button',{class:'btn',type:'button',text:T('stg.bar.rename')});
+        if(one.busy){rn.disabled=true;rn.title=T('stg.bar.busy')}
+        else guardClick(rn,async()=>{const ext='.'+one.name.split('.').pop();
+          const v=await promptDialog(T('stg.rename.prompt',{ext}),one.name.slice(0,-ext.length));
+          if(v==null||!v.trim())return;
+          const r=await postJ('/api/books/staging/rename',{name:one.name,newName:v.trim()});
+          if(r.ok!==false){picked.clear();picked.add(r.name);toast(T('stg.rename.done',{name:r.name}),'ok')}refresh()});
+        bar.appendChild(el('div',{class:'stgbar-btns'},[dl,rn]))}
     }else if(bs.total&&sig!==dismissedSig){
       bar.hidden=false;bar.className='stgbar done';
       const fail=bs.failed.length;
@@ -455,7 +482,17 @@ function renderTransfer(sec){sec.innerHTML=`
     const fr=d.freeBytes;const low=fr!=null&&fr<300*1048576;g('stgfree').style.color=low?'var(--bad)':'';g('stgfree').textContent=fr!=null?T('transfer.staging.freeSpace',{free:fmtB(fr),lowWarn:low?T('transfer.staging.lowWarn'):''}):'';
     const gated=(gatedPending.size||gatedActive.size)?T('transfer.staging.gatedSummary',{pending:gatedPending.size,active:gatedActive.size}):'';
     g('stgnotice').textContent=[koInstalled?'':T('transfer.staging.btn.koNotInstalled'),gated].filter(Boolean).join(' · ');
+    renderOriginals(d.originals||[]);
     g('stgnames').innerHTML=stgNameOptions(items);render()});
+  // 原 PDF 备份（有文字层 PDF 转 EPUB 后保留 7 天）：恢复回母版库 / 提前删除。
+  const renderOriginals=list=>{const box=g('stgorig'),ul=g('stgoriglist');box.hidden=!list.length;if(!list.length)return;
+    g('stgorigsum').textContent=T('stg.orig.summary',{n:list.length});ul.innerHTML='';
+    list.forEach(o=>{const days=Math.max(0,Math.ceil((o.expiresAt-Date.now()/1000)/86400));
+      const restore=el('button',{class:'btn',type:'button',text:T('stg.orig.restore')});
+      guardClick(restore,async()=>{const r=await postJ('/api/books/staging/originals/restore',{name:o.name});if(r.ok!==false)toast(T('stg.orig.restored',{name:o.name}),'ok');refresh()});
+      const del=el('button',{class:'btn btn-bad',type:'button',text:T('action.delete')});
+      guardClick(del,async()=>{if(!await confirmDialog(T('stg.orig.deleteConfirm',{name:o.name})))return;const r=await postJ('/api/books/staging/originals/delete',{name:o.name});if(r.ok!==false)toast(T('stg.orig.deleted'),'ok');refresh()});
+      ul.appendChild(el('li',{class:'stg-row'},[el('div',{class:'stg-main'},[el('div',{class:'stg-name',title:o.name,text:o.name}),el('div',{class:'stg-meta small',text:fmtB(o.bytes)+' · '+T('stg.orig.left',{days})})]),el('div',{class:'stg-actions'},[restore,del])]))})};
   uploader($('.up',sec),()=>'/api/books/staging',()=>({}),BOOK_EXT,()=>refresh(),'/api/books/staging');   // 书籍格式原样入库；选中即按 BOOK_EXT 拦；传 dedupeApi 防重传出重复
   const am=g('artmsg'),au=g('arturl'),ag=g('artgo'),ao=g('artopt');
   // 「同步优化」记在本机（per-viewer 便利态，跟 folder/kfolder 那几个一个规矩）；缺省开——网文正文
@@ -583,6 +620,8 @@ function renderNotes(sec){sec.innerHTML=`
     <p class="lead">${T('notes.lead')}</p>
     <div class="row"><span class="small">${T('notes.bookLabel')}</span><select id="nbook" style="flex:1;min-width:10em"></select><button class="btn" id="nrescan" title="${T('notes.rescanTitle')}">${T('notes.rescanBtn')}</button><button class="btn" id="nkoimport" title="${T('notes.koreaderImportTitle')}">${T('notes.koreaderImportBtn')}</button></div>
     <div class="row small" id="nsum"></div>
+    <div class="row"><input type="search" id="nq" placeholder="${T('notes.search.placeholder')}" aria-label="${T('notes.search.placeholder')}" style="flex:1;min-width:10em"><button class="btn" id="nqgo">${T('notes.search.btn')}</button></div>
+    <div id="nqres"></div>
   </div>
   <div class="subnav" id="nsubnav"><button class="on">${T('notes.subnav.browse')}</button><button>${T('notes.subnav.organize')}</button><button>${T('notes.subnav.trash')}</button><button hidden>${T('notes.subnav.import')}</button></div>
   <div class="subpanel on" id="nbrowse"></div>
@@ -946,6 +985,23 @@ function renderNotes(sec){sec.innerHTML=`
   exportTabsEl.querySelectorAll('button').forEach(b=>b.onclick=()=>{if(exportTab===b.dataset.etab)return;exportTab=b.dataset.etab;selectedChapter=null;renderBook()});
   const loadBook=async()=>{await flushPendingText();selectedChapter=null;if(!sel.value){book=null;await refreshSync();renderBrowse();await renderBook();renderTrash();renderImport();return}book=await j(`/api/ink/books/${encodeURIComponent(sel.value)}`);await refreshSync();renderBrowse();await renderBook();renderTrash();renderImport()};
   sel.onchange=loadBook;
+  /* 全文搜索（跨所有书，ink-serve /search）：结果点一下就切到那本书的「浏览」。命中词加粗——片段先 esc 再替换，
+     替换用的也是 esc 过的查询词，不会引入未转义的 HTML。 */
+  const nq=$('#nq',sec),nqres=$('#nqres',sec);
+  const FIELD_KEYS={quote:'notes.search.field.quote',text:'notes.search.field.text',draft:'notes.search.field.draft',question:'notes.search.field.question',answer:'notes.search.field.answer',title:'notes.search.field.title'};
+  const mark=(snip,q)=>{const e=esc(snip),qe=esc(q);if(!qe)return e;const i=e.toLowerCase().indexOf(qe.toLowerCase());return i<0?e:e.slice(0,i)+'<b>'+e.slice(i,i+qe.length)+'</b>'+e.slice(i+qe.length)};
+  const doSearch=async()=>{const q=nq.value.trim();nqres.innerHTML='';if(!q)return;
+    const r=await j('/api/ink/search?q='+encodeURIComponent(q));
+    if(r.ok===false){nqres.innerHTML=`<p class="small">${esc(r.message||T('common.failed'))}</p>`;return}
+    const items=r.items||[];
+    if(!items.length){nqres.innerHTML=`<p class="small">${T('notes.search.none')}</p>`;return}
+    const ul=el('ul',{class:'nsearch'});
+    items.forEach(h=>{const li=el('li',{html:`<div class="small">${esc(h.title)} · p.${h.pageIndex+1}${h.chapterTitle?' · '+esc(h.chapterTitle):''} · ${T(FIELD_KEYS[h.field]||'notes.search.field.text')}</div><div>${mark(h.snippet,q)}</div>`});
+      li.onclick=async()=>{if(sel.value!==h.uuid){sel.value=h.uuid;await loadBook()}$('#nsubnav',sec).children[0].click();nqres.innerHTML=''};
+      ul.appendChild(li)});
+    nqres.appendChild(el('p',{class:'small',text:T('notes.search.count',{n:items.length})}));nqres.appendChild(ul)};
+  guardClick($('#nqgo',sec),doSearch);
+  nq.addEventListener('keydown',e=>{if(e.key==='Enter')doSearch()});
   /* 「导入 md 文档」子标签的显示/隐藏跟着「管理→实验室」的 notesImportMdEnabled 开关走——用
      hidden 属性而不是从 DOM 移除（subtabs() 是纯位置下标配对，移除会让后面的子标签全部错位）。
      没有 SSE 推送这个开关的变化，靠 sec.refresh（笔记 tab 每次从别的 tab 切回来都会调，见文件
@@ -1189,14 +1245,14 @@ function renderManage(sec){sec.innerHTML=`
   <div class="subpanel">
     <div class="card"><h3 style="margin-top:0">${T('manage.enhance.hlSnap.title')}</h3>
       <p class="small">${T('manage.enhance.hlSnap.desc')}</p>
-      <label class="toggle"><input type="checkbox" id="erHlSnap"> ${T('manage.enhance.hlSnap.toggle')}</label></div>
+      <label class="toggle"><input type="checkbox" id="erHlSnap"> ${T('manage.enhance.hlSnap.toggle')}</label> <span id="erHlSnapLoaded"></span></div>
     <div class="card" id="enhBattopCard"></div>
   </div>
   <div class="subpanel" id="battopDetail" hidden></div>
   <div class="subpanel">
     <div class="card"><h3 style="margin-top:0">${T('manage.lab.hwStroke.title')}</h3>
       <p class="small">${T('manage.lab.hwStroke.desc')}</p>
-      <label class="toggle"><input type="checkbox" id="labHwStroke"> ${T('manage.lab.hwStroke.toggle')}</label></div>
+      <label class="toggle"><input type="checkbox" id="labHwStroke"> ${T('manage.lab.hwStroke.toggle')}</label> <span id="labHwStrokeLoaded"></span></div>
     <div class="card"><h3 style="margin-top:0">${T('manage.lab.comicMargin.title')}</h3>
       <p class="small">${T('manage.lab.comicMargin.desc')}</p>
       <label class="toggle"><input type="checkbox" id="labComicMargin"> ${T('manage.lab.comicMargin.toggle')}</label></div>
@@ -1209,6 +1265,8 @@ function renderManage(sec){sec.innerHTML=`
   const refresh=async()=>{
     const f=await j('/api/foundation');$('#found',sec).innerHTML=f.ok===false?`<span>${esc(f.message)}</span>`:
       `<b>xovi</b><span>${badge(f.xovi?T('common.installed'):T('common.notInstalled'),f.xovi)}</span><b>appload</b><span>${badge(f.appload?T('common.installed'):T('common.notInstalled'),f.appload)}</span><b>qt-resource-rebuilder</b><span>${badge(f.qrr?T('common.installed'):T('common.notInstalled'),f.qrr)}</span><b>KOReader</b><span>${badge(f.koreader?T('common.installed'):T('common.notInstalled'),f.koreader)}</span><b>WeRead</b><span>${badge(f.weread?T('common.installed'):T('common.notInstalled'),f.weread)}</span>`;
+    const es=await j('/api/enhance/status');const ld=(es.ok!==false&&es.loaded)||{};
+    if(f.ok!==false)$('#found',sec).insertAdjacentHTML('beforeend',`<b>${T('manage.loaded.xoviLive')}</b><span>${badge(ld.xovi?T('manage.loaded.on'):T('manage.loaded.off'),!!ld.xovi)}${(ld.extensions||[]).length?' <span class="small">'+esc(ld.extensions.join(' · '))+'</span>':''}</span>`);
     const d=await j('/api/manage');const ul=$('#mods',sec);ul.innerHTML='';(d.modules||[]).forEach(m=>{const li=document.createElement('li');li.style.flexWrap='wrap';
       let state,cls;if(!m.installable){state=T('manage.modules.state.notLaunched');cls=''}else if(!m.installed){state=T('common.notInstalled');cls='off'}else if(m.running){state=T('manage.modules.state.on');cls='on'}else{state=T('manage.modules.state.installedOff');cls=''}
       const label=T('manage.modules.label.'+m.seg)||m.label; // seg 缺对应 key 时兜底用后端 Rust 侧的中文 label，不留空
@@ -1239,6 +1297,14 @@ function renderManage(sec){sec.innerHTML=`
     hwBox.checked=!!r.hwStrokeEnabled;
     importMdBox.checked=!!r.notesImportMdEnabled;
     comicMarginBox.checked=!!r.comicMinMargin;
+    // 开关旁边标"xochitl 里实际有没有加载这个扩展"（查主进程 maps，见 gateway enhance/loaded.rs）：开关只是配置，
+    // 扩展没加载时开了也不生效——历史上两次"看着装了、其实没生效"就是这种情况。
+    const ld=r.loaded||{},exts=ld.extensions||[];
+    const loadedBadge=so=>!ld.xochitl?`<span class="badge" title="${T('manage.loaded.noXochitlTitle')}">${T('manage.loaded.unknown')}</span>`
+      :exts.includes(so)?`<span class="badge on" title="${T('manage.loaded.onTitle')}">${T('manage.loaded.on')}</span>`
+      :`<span class="badge off" title="${T('manage.loaded.offTitle')}">${T('manage.loaded.off')}</span>`;
+    $('#erHlSnapLoaded',sec).innerHTML=loadedBadge('hl-snap.so');
+    $('#labHwStrokeLoaded',sec).innerHTML=loadedBadge('hw-stroke.so');
     await battopToggleRefresh(r);
     const running=!!(r.battop&&r.battop.running);
     if(!running&&battopNavBtn.classList.contains('on'))manageNav.children[0].click();

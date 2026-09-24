@@ -883,3 +883,69 @@ fn upload_flow_lands_books_and_rejects_non_books() {
     assert_eq!(std::fs::read(s.dir().join("中文 名.epub")).unwrap(), "内容".as_bytes());
     assert!(std::fs::read_dir(&work).unwrap().next().is_none(), "暂存 .work 应清空");
 }
+
+/// 改名：沿用扩展名、边车跟着走；格式不能改；目标已存在拒绝；忙时拒绝。
+#[test]
+fn rename_keeps_format_moves_sidecar_and_refuses_conflicts() {
+    let t = tempfile::tempdir().unwrap();
+    let s = staging(&t);
+    s.stage_new("a.epub", b"A").unwrap();
+    s.stage_new("b.epub", b"B").unwrap();
+    s.mark_delivered("a.epub", Reader::Koreader).unwrap();
+    let dir = t.path().join("staging");
+
+    assert_eq!(s.rename("a.epub", "  新名字 ").unwrap(), "新名字.epub", "不带扩展名沿用原格式、去首尾空白");
+    assert_eq!(std::fs::read(dir.join("新名字.epub")).unwrap(), b"A");
+    assert!(!dir.join("a.epub").exists());
+    assert!(crate::sidecar::read(&dir.join("新名字.epub")).is_some_and(|d| d.koreader.is_some()), "落库记录跟着改名");
+
+    assert!(s.rename("新名字.epub", "b").unwrap_err().contains("已有《b.epub》"));
+    assert_eq!(s.rename("新名字.epub", "x.pdf").unwrap(), "x.pdf.epub", "不能借改名改格式：别的扩展名只当名字的一部分");
+    assert!(s.rename("x.pdf.epub", "../evil").is_err(), "路径分隔符拒绝");
+    assert!(s.rename("x.pdf.epub", " ").unwrap_err().contains("不能为空"));
+
+    assert!(s.try_start_busy("b.epub"));
+    assert!(s.rename("b.epub", "c").unwrap_err().contains("正在处理中"));
+    s.end_busy("b.epub");
+}
+
+/// 原 PDF 备份：列出、恢复回母版库（同名已在则拒绝）、提前删除。
+#[test]
+fn pdf_originals_list_restore_delete() {
+    let t = tempfile::tempdir().unwrap();
+    let s = staging(&t);
+    let dir = t.path().join("staging");
+    let bak = dir.join(PDF_ORIGINALS_DIR);
+    std::fs::create_dir_all(&bak).unwrap();
+    std::fs::write(bak.join("p.pdf"), b"PDF1").unwrap();
+    std::fs::write(bak.join("q.pdf"), b"PDF2").unwrap();
+
+    let list = s.list_originals();
+    assert_eq!(list.len(), 2);
+    assert!(list.iter().all(|o| o.expires_at == o.backed_up_at + PDF_ORIGINALS_KEEP_SECS));
+
+    s.restore_original("p.pdf").unwrap();
+    assert_eq!(std::fs::read(dir.join("p.pdf")).unwrap(), b"PDF1");
+    assert!(s.list().iter().any(|e| e.name == "p.pdf"), "恢复后回到列表");
+
+    s.stage_new("q.pdf", b"OTHER").unwrap();
+    assert!(s.restore_original("q.pdf").unwrap_err().contains("已有《q.pdf》"));
+    assert_eq!(std::fs::read(dir.join("q.pdf")).unwrap(), b"OTHER", "不覆盖");
+    s.delete_original("q.pdf").unwrap();
+    assert!(s.list_originals().is_empty());
+    assert!(s.restore_original("q.pdf").unwrap_err().contains("没有这份"));
+    assert!(s.delete_original("../x").is_err());
+}
+
+#[test]
+fn open_for_download_returns_file_and_length() {
+    use std::io::Read;
+    let t = tempfile::tempdir().unwrap();
+    let s = staging(&t);
+    s.stage_new("d.epub", b"hello").unwrap();
+    let (mut f, n) = s.open_for_download("d.epub").unwrap();
+    let mut buf = Vec::new();
+    f.read_to_end(&mut buf).unwrap();
+    assert_eq!((buf.as_slice(), n), (&b"hello"[..], 5));
+    assert!(s.open_for_download("nope.epub").is_err());
+}

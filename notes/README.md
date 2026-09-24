@@ -17,7 +17,7 @@ reMarkable 的强项是**荧光笔勾书 + 在勾出来的内容旁边直接手�
 
 | 服务 | seg / 端口 | 职责 | 状态（详见白皮书 §00b、§05） |
 |---|---|---|---|
-| `ink-serve` 矿 | `ink` / 8795 | 监听书库 → 只扫变更页 → 勾画 ↔ 旁边手写配对（含无手写的纯勾画）→ **自渲染裁图** → **条目库（唯一写者）**；另有 `POST /koreader/import`（§03al）手动拉 `koreader-serve` 的高亮/生词并入条目库 | 真机 active；浏览态状态机、纯勾画、自渲染裁图、归档/回收站/恢复、KOReader 回流均真机验证；KOReader 回流**无网页按钮，只能 curl** |
+| `ink-serve` 矿 | `ink` / 8795 | 监听书库 → 只扫变更页 → 勾画 ↔ 旁边手写配对（含无手写的纯勾画）→ **自渲染裁图** → **条目库（唯一写者）**；另有 `POST /koreader/import`（§03al，网页「导入 KOReader 批注」按钮）拉 `koreader-serve` 的高亮/生词并入条目库；`GET /search`（§03an）全文搜索 | 真机 active；浏览态状态机、纯勾画、自渲染裁图、归档/回收站/恢复、KOReader 回流均真机验证 |
 | `transcribe-serve` 转写 | `transcribe` / 8796 | 订阅矿的事件 → 裁图喂视觉模型 → 草稿写回（行首标记自动定样式）；只处理 `Pending`；出网 | 真机 active，DashScope 真调过；OpenAI/Gemini/DeepSeek 预置只验证了配置层；转写准确率还在打磨 |
 | `mind-serve` 脑 | `mind` / 8797 | 按条目单发：勾「问AI」+ 输入问题 → 拼书名+章节+勾画原文+转写文本+问题 → 文字模型 → `answer`；**无批量循环、无事件订阅**，纯被动；出网 | 真机 active，端到端问答通过（DashScope） |
 | `note-serve` 本 | `notes` / 8798 | 注册「笔记」tab；打包 `.rmdoc`（全部 7 种打字样式）+ 上传 + 条目→文档生成（落书本自己所在的设备文件夹）；**md 导出**（落设备 vault + 直接触发浏览器下载）；**单篇 markdown 导入**（`POST /import-md`，独立于条目库，网页入口默认隐藏） | 真机验证：三件套 + 生成编排 + 导出；md 导入只验证了后端管线，前端入口未经人眼确认 |
@@ -100,7 +100,7 @@ notes/
 **前置依赖**：与书架共用同一套交叉编译环境（`rustup target add aarch64-unknown-linux-musl` + aarch64 交叉 gcc/ar），见 `../shelf/README.md`「构建」。改代码前先看工程纪律；日常在 master 上开 feature 分支（`dev` 已于 2026-09-16 删除）。
 
 ```sh
-cd notes && cargo build --workspace && cargo test --workspace     # host：约 200 个测试（rmv6 27 · epubmap 5 · notecore 62 · vendorcfg 18 · ink 15 · transcribe 22 · mind 21 · note 32，含 1 ignored；claim 重试两条测试真吃约 1.5–4.5 s）
+cd notes && cargo build --workspace && cargo test --workspace     # host：约 213 个测试（rmv6 27 · epubmap 5 · notecore 62 · vendorcfg 20 · ink 20 · transcribe 23 · mind 22 · note 34，含 1 ignored；claim 重试两条测试真吃约 1.5–4.5 s）
 cd ../shelf && ./build.sh && ./deploy.sh <设备IP>                  # 随书架一起交叉编译/打包/装机（NOTES_BINS；设备在 WiFi 上时给 WiFi IP）
 ssh root@<设备IP> sh /home/root/shelf-pkg/shelf/install.sh --only ink,transcribe,mind,note   # 只装/更新笔记线
 ```
@@ -114,7 +114,6 @@ ssh root@<设备IP> sh /home/root/shelf-pkg/shelf/install.sh --only ink,transcri
 - 前端可视渲染人眼确认（浏览页 / 模型管理 / 条目卡片 / 「整理」双层 tab / 「导入 md 文档」入口）；
 - 转写质量（汉字数字被认成阿拉伯数字；`##`/`###` 标记至今没有一次“转写对了、标记被认出”的真机正例）；
 - OpenAI / Gemini / DeepSeek 预置只验证了配置层，没真实调用过（并注意 DeepSeek 的两个预置 id 已是官方遗留名，见白皮书 §05）；
-- KOReader 回流没有网页触发按钮；
 - `archive` / `purge` 没对真实历史数据实测；被动触发的两处修复（终态判据、认领重试）没在真机复验。
 
 演进记录、每一步的真机验证细节、踩过的坑，见 [`docs/reMarkable笔记白皮书.md`](docs/reMarkable笔记白皮书.md)。

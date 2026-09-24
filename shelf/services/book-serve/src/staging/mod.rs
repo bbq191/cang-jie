@@ -66,6 +66,16 @@ pub struct StagingEntry {
     pub pdf_source: bool,
 }
 
+/// 原 PDF 备份一条（`GET /staging` 的 `originals`）。
+#[derive(Serialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub struct OriginalEntry {
+    pub name: String,
+    pub bytes: u64,
+    pub backed_up_at: u64,
+    pub expires_at: u64,
+}
+
 /// 投原生成功后交给自检线程的计划：投书时刻（毫秒，圈"之后进库"的候选）+ 书名 + 期望页数。
 #[derive(Clone, Debug, PartialEq)]
 pub struct RenderPlan {

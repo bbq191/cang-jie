@@ -3,7 +3,9 @@
 //! 母版库：`GET /staging` → `{items, freeBytes}` · `POST /staging`（multipart，原样入库）· `POST /staging/optimize {name}`
 //! （2026-09-19 起不再分档位，只有一种"清洗+优化"行为）
 //! · `POST /staging/deliver {name, folder?}`（2026-09-19 起投完永远保留母版，不再有 `keep` 参数）· `POST /staging/mark {name, target}` · `POST /staging/fetch-article {url, optimize?}`
-//! · `POST /staging/delete {name}` · `GET /events`（SSE：母版库/inbox 变更即推，网页零轮询）。
+//! · `POST /staging/delete {name}` · `POST /staging/rename {name, newName}` · `GET /staging/file?name=`（原件下载，流式）
+//! · 原 PDF 备份：`GET /staging` 的 `originals` · `POST /staging/originals/restore {name}` · `POST /staging/originals/delete {name}`
+//! · `GET /events`（SSE：母版库/inbox 变更即推，网页零轮询）。
 //! 原生回收站队列：`POST /trash/add {uuid, name}`（name 必须与书库 visibleName 相符）· `GET /trash/pending` → `{uuids}`（Sidebar 代理 qmd 拉取执行）· `GET /trash`。
 //! 原生建文件夹队列：`POST /mkdir/add {name}` · `GET /mkdir/pending` → `{names}`（MainView 代理 shelf-mkdir-agent.qmd 拉取执行）· `GET /mkdir`。
 //! 2026-09-05 起规则统一"所有书只落母版库"：旧 `POST /?target=` 直投路已删（`/staging*` 是唯一入口）。
@@ -21,7 +23,35 @@ pub fn router(st: Arc<State>) -> Router {
         .get("/status", bind(&st, |s, _| Ok(Reply::ok(&s.status()))))
         .get("/events", bind(&st, |s, _| Ok(s.bus.sse_reply())))
         // ── 母版库（中间层）：入库 / 优化 / 落库 / 删除各自正交 ──
-        .get("/staging", bind(&st, |s, _| Ok(Reply::ok(&serde_json::json!({"items": s.staging.list(), "freeBytes": s.staging.free_bytes()})))))
+        .get("/staging", bind(&st, |s, _| Ok(Reply::ok(&serde_json::json!({"items": s.staging.list(), "freeBytes": s.staging.free_bytes(), "originals": s.staging.list_originals()})))))
+        // 原件下载：边读边发（大书上百 MB，不整本读进内存）；网关见到 Content-Disposition 也原样流式转发。
+        .get("/staging/file", bind(&st, |s, r| {
+            let name = r.q("name").ok_or_else(|| ApiError::bad("缺少 name"))?.to_string();
+            let (f, _len) = s.staging.open_for_download(&name).map_err(ApiError::bad)?;
+            let ctype = match rmsvc_core::formats::ext_of(&name).as_str() {
+                "epub" => "application/epub+zip",
+                "pdf" => "application/pdf",
+                _ => "application/octet-stream",
+            };
+            Ok(Reply::stream(ctype, Box::new(std::io::BufReader::new(f))).with_header("Content-Disposition", &rmsvc_core::multipart::content_disposition(&name)))
+        }))
+        .post("/staging/rename", bind(&st, |s, r| {
+            let j = r.json()?;
+            let new_name = s.staging.rename(j.str("name")?, j.str("newName")?).map_err(ApiError::bad)?;
+            s.bus.publish("books", "staging");
+            Ok(Reply::ok(&serde_json::json!({"ok": true, "name": new_name})))
+        }))
+        // ── 原 PDF 备份（PDF→EPUB 后保留 7 天，见 Staging::backup_pdf_original）──
+        .post("/staging/originals/restore", bind(&st, |s, r| {
+            s.staging.restore_original(r.json()?.str("name")?).map_err(ApiError::bad)?;
+            s.bus.publish("books", "staging");
+            ok()
+        }))
+        .post("/staging/originals/delete", bind(&st, |s, r| {
+            s.staging.delete_original(r.json()?.str("name")?).map_err(ApiError::bad)?;
+            s.bus.publish("books", "staging");
+            ok()
+        }))
         .post("/staging", bind(&st, staging_upload))
         .post("/staging/optimize", bind(&st, |s, r| {
             // 异步：耗时的优化（真机实测大漫画能跑到分钟级，见书架白皮书 §05）挪到后台线程，这里立即

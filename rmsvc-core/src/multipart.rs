@@ -328,6 +328,13 @@ pub fn percent_decode(s: &str) -> String {
 }
 
 /// 百分号编码（RFC 3986 unreserved 之外全编）：查询串 / `?next=` 跳转共用，与 [`percent_decode`] 成对。
+/// 下载响应的 `Content-Disposition`：ASCII 兜底名（非 ASCII 与 `"` 换成 `_`）+ RFC 5987 的 UTF-8 真名。
+/// 笔记导出（note-serve）与母版库原件下载（book-serve）共用。
+pub fn content_disposition(filename: &str) -> String {
+    let ascii: String = filename.chars().map(|c| if c.is_ascii() && c != '"' && !c.is_ascii_control() { c } else { '_' }).collect();
+    format!("attachment; filename=\"{ascii}\"; filename*=UTF-8''{}", percent_encode(filename))
+}
+
 pub fn percent_encode(s: &str) -> String {
     let mut o = String::with_capacity(s.len());
     for b in s.bytes() {

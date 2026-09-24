@@ -78,15 +78,15 @@
 | `crates/epubmap` | `.epubindex` 起始页（两张表取首现）+ nav/ncx 目录 → 页号→章/小节 |
 | `crates/notecore` | 纯函数领域核心：`model`（条目/样式/状态/去处/来源）· `hash` · `geom`（聚簇/配对）· `ingest`（增量合并）· `koreader`（KOReader 摄取，§03al）· `marker`（行首标记）· `project`（条目库→段落投影+指纹）· `export`（→Markdown）· `mdimport`（markdown→段落） |
 | `crates/vendorcfg` | 两个 AI 服务共享：预置模型表/key 按厂商分存/迁移/PATCH（`preset`）· 泛型用量账本（`usage`）· `ConfigCell`（`cell`）· OpenAI 兼容传输（`chat`）· `truncate_chars` |
-| `services/ink-serve` | `doc`（书库只读视图）· `ingest`（变更页编排）· `crop`（自渲染裁图）· `bookdb`（Repository）· `config` · `koreader` · `main` |
+| `services/ink-serve` | `doc`（书库只读视图）· `ingest`（变更页编排）· `crop`（自渲染裁图）· `bookdb`（Repository）· `config` · `koreader` · `search`（全文搜索，§03an）· `main` |
 | `services/transcribe-serve` | `config`/`ledger`（`vendorcfg` 薄封装）· `backend`（`Vision` Strategy）· `prompt` · `ink`（`EntryStore` 客户端，包 `rmsvc_core::registry::SvcClient`）· `worker` · `main`（SSE 订阅 + 防抖） |
 | `services/mind-serve` | 同上但 `TextModel`、无后台线程 |
 | `services/note-serve` | `rmdoc`（打包）· `chapter_store`（泛型“每书每章一条记录”，`notebooks`/`export_state` 是类型别名）· `publish`（`Uploader` Strategy + 生成编排 + `import_markdown`）· `export`（vault 落盘 + `content_disposition()`）· `ink`/`trash`（跨服务客户端）· `config` · `main` |
 | 外部 | `shelf/{build,deploy,install,uninstall}.sh` 的 `NOTES_BINS`/令牌 · `gateway/src/manage.rs::MODULES` · `gateway/ui/app.js` 的 `renderNotes`（网页正文中英文切换，`notes.*` i18n 命名空间，见书架白皮书 §03an） |
 
-**离线门槛**：`cargo test --workspace`（notes）约 **202 个**（rmv6 27 · epubmap 5 · notecore 62 · vendorcfg 18 · ink 15 · transcribe 22 · mind 21 · note 32，按 `#[test]` 计数，含 1 个 `#[ignore]`）零警告；网关 `node --check ui/app.js`；shell 过 shellcheck。数字是滚动值，改测试数后回来同步（与 README 保持一致）。`koreader-serve` 的 annot/vocab/sqlite_min 测试算在书架线的离线门槛里。
+**离线门槛**：`cargo test --workspace`（notes）约 **213 个**（rmv6 27 · epubmap 5 · notecore 62 · vendorcfg 20 · ink 20 · transcribe 23 · mind 22 · note 34，按 `#[test]` 计数，含 1 个 `#[ignore]`；2026-09-24 复核）零警告；网关 `node --check ui/app.js`；shell 过 shellcheck。数字是滚动值，改测试数后回来同步（与 README 保持一致）。`koreader-serve` 的 annot/vocab/sqlite_min 测试算在书架线的离线门槛里。
 
-**未闭环**：见 §05 “未闭环”表（前端可视渲染人眼确认、转写质量、三家新厂商预置只验配置层、KOReader 回流无网页按钮、若干被动触发修复未真机复验）。
+**未闭环**：见 §05 “未闭环”表（前端可视渲染人眼确认、转写质量、三家新厂商预置只验配置层、若干被动触发修复未真机复验）。
 
 ## 01｜架构决策
 
@@ -713,7 +713,7 @@ CSS：章节标签条复用 `.subnav` 视觉（`subtabs()` 用 `$('.subnav',sec)
 
 验证：note-serve 3 个 `manifest_*` 单测（从没导出过→空、读回排序、只认 `.md`）；host 侧用本机真实 ink-serve+note-serve+gateway 三个二进制（临时 XDG 隔离）+ fixture 条目库 + `gateway passwd` 走真实 HTTPS Basic 端到端通；设备恢复可达后（2026-09-16）真机拉取真实条目库，本机落地文件与设备端 `vault.json` 字节一致（与 KOReader 回流同一轮，见 §03al）。
 
-## 03al｜KOReader 高亮/生词回流（2026-09-16，真机通；⚠ 无网页触发按钮，只能 curl）
+## 03al｜KOReader 高亮/生词回流（2026-09-16，真机通；网页按钮 2026-09-23 补上，见 §03an）
 
 > 白话：把用户在 KOReader 里划的线、查的生词，也收进笔记条目库，走同一套“浏览→转入笔记→整理→推送”流程。范围出处：书架白皮书“2026-09-06 用户定留给笔记线”与本文 §05 的一句 handoff，这次从零起草设计。
 
@@ -753,6 +753,16 @@ CSS：章节标签条复用 `.subnav` 视觉（`subtabs()` 用 `$('.subnav',sec)
 **验证**：notecore 新增 1 测（`chapter_has_live_entries_ignores_destination_and_terminal_status`）；note-serve 新增 2 测（`switching_destination_away_from_notebook_keeps_the_record_not_ghost_exported`/`…_obsidian_keeps_the_record_not_ghost_synced`，与已有“幽灵已导出”回归测试并排——一个测①该清、一个测②不该清）；195 个测试全绿。**真机端到端复现用户原话的完整两步序列**：把「雪人」那条高亮设 `Notebook` 推送（`notebookGeneratedAt` 记下时间戳）→ 切 `Obsidian` 再推送一次（`generate` 返回 `Empty`，模拟“推送本章”内部无条件触发那次）→ 查 `/sync`：**`notebookGeneratedAt` 仍是同一时间戳**（改之前会变 `null`）。
 
 **教训**：第一轮只信了“改个前端判据、真机 curl 核对过”，但只用**单次静态快照**核对，没走一遍用户描述的**两步操作序列**——若第一轮就走完整序列，会立刻看到后端把 `notebookGeneratedAt` 清了。以后“状态在某个操作后消失”的报告，验证方式应是**真按用户描述的步骤走一遍、看最终状态**，而不是“找到一个说得通的判据问题就当作证实了全部”。
+
+## 03an｜全系统审查两批修补：条目库防覆盖 + 配置防覆盖 + 全文搜索（2026-09-24）
+
+**条目库解析失败不再被当成空书覆盖**。`BookDb` 原来读失败、解析失败都返回 `None`，`update` 接着用 `seed()` 的空书整本写回——降级部署遇到不认识的状态值、文件被改坏，校对文本和 AI 回答就静默全丢。现在 `read()` 区分三种情况：不存在 → `Ok(None)`；读失败/解析失败 → `Err`，另存一份 `<uuid>.json.corrupt`（已有就不重复拷），原文件不动，之后的写入一律拒绝，等人处理。网页上打开这本书会看到 500 和错误原因。
+
+**AI 服务配置损坏时不再被缺省值覆盖**（`vendorcfg::ConfigCell::load`）：原来启动时"读 → 迁移 → 落盘一次"无条件写回，损坏的文件（含 API key）被换成缺省。现在损坏就跳过这次落盘、另存 `.corrupt` 副本，等用户在网页上主动保存才写新文件。另外含 key 的文件改为创建时就是 0600（`rmsvc_core::fs::write_atomic_mode`），不再先按默认权限落出来再 chmod。
+
+**全文搜索**（`GET /api/ink/search?q=&limit=`，`services/ink-serve/src/search.rs`）：跨所有书搜勾画原文、定稿文本、最新转写草稿、提问、AI 回答、书名，不区分大小写，已撤销的条目不搜；每条条目只报第一处命中，片段前后各留 30 字。个人笔记量级，每次现读条目库全扫，不建索引。网页在「笔记」页顶部加搜索框，点一条结果切到那本书的「浏览」。
+
+测试：条目库损坏 1 条、配置损坏 1 条、搜索 3 条。**真机**：部署后条目库与配置都未触发损坏路径（正常数据）；搜索的网页端尚未真机点过。
 
 ## 04｜踩坑
 
@@ -797,7 +807,7 @@ CSS：章节标签条复用 `.subnav` 视觉（`subtabs()` 用 `$('.subnav',sec)
 | 1 | **前端可视渲染的人眼确认** | 浏览页 / 模型管理面板 / 条目卡片 / 「整理」双层 tab / 「导入 md 文档」入口（含文件上传与可见性开关），后端数据链路都真机走通，但纯前端渲染与交互一直没人眼确认；`gateway/tools/screenshot-walkthrough/` 能自动起服务+灌 fixture+截图，但只覆盖顶层 nav + 一层子 tab，没针对这几处专门跑过一轮 | §03o/§03q/§03t/§03u/§03v/§03aa/§03af |
 | 2 | **转写质量** | 汉字数字“一/二/三”被认成阿拉伯数字（提示词 2026-09-07 已补规则，待真机重转复验）；原“裁图混进印刷行”已被自渲染裁图（§03p）从机制上解决，旧样本没专门复验；`###`/`##` 小节标记至今**没有一次“转写对了、标记真被认出”的真机正例**（卡在手写行草连笔的 OCR 准确率，非代码问题；找工整样本再试） | §03g/§03o/§03p |
 | 3 | **OpenAI / Gemini / DeepSeek 预置只验证了配置层**（预置表匹配、key 按厂商隔离、老配置迁移），没有真实 key 走过实际调用；只有 DashScope 真调过。**2026-09-22 复核并更新**：DeepSeek 预置已换成现行名 `deepseek-flash`/`deepseek-v4-pro`，老 id 自动迁移（见 §03u 复核框）；`gpt-6-astra`（2026-09-03 发布）先向 Trusted Access 企业开放，普通 key 可能用不了——未改 | §03u |
-| 4 | **`POST /koreader/import` 没有网页触发按钮**，只能 curl；PDF 类型 `pos0` 坐标形状、单本标注量很大触发溢出页等罕见场景只有离线合成数据验证 | §03al |
+| 4 | `POST /koreader/import` 的网页按钮（「笔记」页顶部「导入 KOReader 批注」）2026-09-23 已加；PDF 类型 `pos0` 坐标形状、单本标注量很大触发溢出页等罕见场景只有离线合成数据验证 | §03al |
 | 5 | **`archive`/`purge` 两端点没对真实历史数据实测**（一次性不可逆，没事先问用户不该拿真实数据练手）；`restore` 是可逆反方向操作，已在真实历史数据上验证 | §03r/§03u |
 | 6 | **被动触发的修复没主动构造真机场景复验**：终态排除判据（`is_terminal()`，需真擦掉已跳过条目的笔迹或删带已跳过条目的书）、生成笔记本认领失败重试（低概率时序窗口）——判据/机制离线已覆盖 | §03ag/§03ah |
 | 7 | “改条目 `destination` 后对应导出指纹立刻变”只有离线单测干净覆盖，真机因活跃测试书状态漂移没能单变量复现 | §03x |

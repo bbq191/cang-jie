@@ -132,6 +132,97 @@ impl Staging {
         }
         n
     }
+    /// 原 PDF 备份列表（新的在前）。`expiresAt` = 挪进来的时间（ctime）+ 保留期。
+    pub fn list_originals(&self) -> Vec<OriginalEntry> {
+        use std::os::unix::fs::MetadataExt;
+        let Ok(rd) = std::fs::read_dir(self.dir.join(PDF_ORIGINALS_DIR)) else { return vec![] };
+        let mut out: Vec<OriginalEntry> = rd
+            .flatten()
+            .filter_map(|e| {
+                let md = e.metadata().ok().filter(|m| m.is_file())?;
+                let name = e.file_name().to_str()?.to_string();
+                let at = u64::try_from(md.ctime()).unwrap_or(0);
+                Some(OriginalEntry { name, bytes: md.len(), backed_up_at: at, expires_at: at + PDF_ORIGINALS_KEEP_SECS })
+            })
+            .collect();
+        out.sort_by(|a, b| b.backed_up_at.cmp(&a.backed_up_at).then_with(|| a.name.cmp(&b.name)));
+        out
+    }
+
+    fn original_path(&self, name: &str) -> Result<PathBuf, String> {
+        let p = self.dir.join(PDF_ORIGINALS_DIR).join(plain_name(name)?);
+        if !p.is_file() {
+            return Err("备份里没有这份 PDF（可能已过期被清掉）".into());
+        }
+        Ok(p)
+    }
+
+    /// 把备份里的原 PDF 挪回母版库（同名条目已在 → 拒绝，不覆盖）。它转出来的 EPUB 不动，要不要删由用户决定。
+    pub fn restore_original(&self, name: &str) -> Result<(), String> {
+        let src = self.original_path(name)?;
+        let dst = self.path_of(name)?;
+        if !self.try_start_busy(name) {
+            return Err(busy_err(name, "再恢复"));
+        }
+        let r = if dst.exists() {
+            Err(format!("母版库里已有《{name}》，为免覆盖没有恢复；先删除或改名那一份"))
+        } else {
+            std::fs::rename(&src, &dst).map_err(|e| format!("恢复失败: {e}"))
+        };
+        self.end_busy(name);
+        r
+    }
+
+    /// 提前删掉一份原 PDF 备份（不等 7 天过期）。
+    pub fn delete_original(&self, name: &str) -> Result<(), String> {
+        std::fs::remove_file(self.original_path(name)?).map_err(|e| format!("删除失败: {e}"))
+    }
+
+    /// 母版库条目改名：只改文件名（不改书内的书名/作者），格式不能变——新名字不带扩展名就沿用原扩展名，
+    /// 带了别的扩展名则拒绝。新名已存在 / 任一名字正在处理中 → 拒绝。落库边车跟着改名。返回新名字。
+    pub fn rename(&self, name: &str, new_name: &str) -> Result<String, String> {
+        let src = self.existing(name)?;
+        let ext = formats::ext_of(name);
+        let new_name = new_name.trim();
+        let new_name = if formats::ext_of(new_name) == ext { new_name.to_string() } else { format!("{new_name}.{ext}") };
+        let stem_ok = new_name.strip_suffix(&format!(".{ext}")).is_some_and(|s| !s.trim().is_empty());
+        if !stem_ok {
+            return Err("新名字不能为空".into());
+        }
+        let dst = self.path_of(&new_name)?;
+        if new_name == name {
+            return Ok(new_name);
+        }
+        if !self.try_start_busy(name) {
+            return Err(busy_err(name, "再改名"));
+        }
+        if !self.try_start_busy(&new_name) {
+            self.end_busy(name);
+            return Err(busy_err(&new_name, "再改名"));
+        }
+        let r = (|| {
+            if dst.exists() {
+                return Err(format!("母版库里已有《{new_name}》"));
+            }
+            std::fs::rename(&src, &dst).map_err(|e| format!("改名失败: {e}"))?;
+            let (old_car, new_car) = (sidecar::path_for(&src), sidecar::path_for(&dst));
+            if old_car.exists() {
+                let _ = std::fs::rename(old_car, new_car);
+            }
+            Ok(new_name.clone())
+        })();
+        self.end_busy(&new_name);
+        self.end_busy(name);
+        r
+    }
+
+    /// 打开母版库条目供下载：`(文件, 字节数)`。
+    pub fn open_for_download(&self, name: &str) -> Result<(std::fs::File, u64), String> {
+        let p = self.existing(name)?;
+        let f = std::fs::File::open(&p).map_err(|e| format!("打开失败: {e}"))?;
+        let len = f.metadata().map(|m| m.len()).unwrap_or(0);
+        Ok((f, len))
+    }
     // ───────────── 查 / 删 ─────────────
 
     pub fn remove(&self, name: &str) -> Result<(), String> {

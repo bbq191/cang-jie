@@ -46,6 +46,10 @@ pub struct Request<'a> {
     pub body: &'a mut dyn Read,
 }
 
+/// 服务器写入的内部头：TCP 对端 IP。**只由服务器写**——客户端发来的同名头不在保留白名单里、进不来，
+/// 所以处理函数读到的一定是真实对端地址（不是 `X-Forwarded-For` 这类可伪造的值）。
+pub const REMOTE_IP_HEADER: &str = "X-Rmsvc-Remote-Ip";
+
 /// 按名取头（不区分大小写）——[`Request`] 与 [`GuardRequest`] 共用。
 fn header_of<'a>(headers: &'a [(String, String)], name: &str) -> Option<&'a str> {
     headers.iter().find(|(k, _)| k.eq_ignore_ascii_case(name)).map(|(_, v)| v.as_str())
@@ -73,6 +77,10 @@ impl Request<'_> {
     /// 按名取头（不区分大小写）。
     pub fn header(&self, name: &str) -> Option<&str> {
         header_of(&self.headers, name)
+    }
+    /// TCP 对端 IP（见 [`REMOTE_IP_HEADER`]）；测试里手工构造、没填这个头时为 `None`。
+    pub fn remote_ip(&self) -> Option<std::net::IpAddr> {
+        self.header(REMOTE_IP_HEADER).and_then(|v| v.parse().ok())
     }
     /// 查询参数是否为真（`1` / `true`）。
     pub fn q_flag(&self, k: &str) -> bool {

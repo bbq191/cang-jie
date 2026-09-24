@@ -13,15 +13,13 @@
 use crate::export_state::{ExportRecord, ExportState};
 use notecore::model::Book;
 use serde::Serialize;
-use rmsvc_core::multipart::percent_encode;
 use std::path::{Path, PathBuf};
 
 /// 浏览器"另存为"用的 `Content-Disposition` 值：非 ASCII 字符（书名/章名几乎总是中文）替换成 `_`
 /// 的兜底 `filename=` + percent-encode 的真实文件名 `filename*=UTF-8''...`（RFC 5987，现代浏览器
 /// 都认，老的至少能存成兜底那个不中文乱码的文件名）。
 pub fn content_disposition(filename: &str) -> String {
-    let ascii: String = filename.chars().map(|c| if c.is_ascii() && c != '"' { c } else { '_' }).collect();
-    format!("attachment; filename=\"{ascii}\"; filename*=UTF-8''{}", percent_encode(filename))
+    rmsvc_core::multipart::content_disposition(filename)
 }
 
 /// 文件名不能带路径分隔符（书名/章名理论上可能带用户手滑打进去的 `/`）——替换成 `_`，不做更复杂的

@@ -731,6 +731,7 @@ dependencies = [
  "tiny_http",
  "ureq",
  "uuid",
+ "x509-parser",
 ]
 
 [[package]]

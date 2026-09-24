@@ -144,6 +144,9 @@ dl.help dd{margin:.2em 0 .2em;color:var(--mute);font-size:.9em;line-height:1.65}
 .confirm-box{background:var(--surface);color:var(--fg);border:1px solid var(--line);border-radius:.9em;box-shadow:var(--shadow);max-width:26em;width:100%;padding:1.2em}
 .confirm-msg{font-size:.95em;line-height:1.6;white-space:pre-wrap;word-break:break-word}
 .confirm-actions{display:flex;justify-content:flex-end;gap:.5em;margin-top:1em}
+.confirm-input{width:100%;box-sizing:border-box;margin-top:.8em;font:inherit;padding:.45em .6em;border:1px solid var(--line);border-radius:.5em;background:var(--bg);color:var(--fg)}
+.stg-orig summary{cursor:pointer;font-weight:600}
+.stg-orig .stg-list{margin-top:.5em}
 
 /* 母版库（2026-09-20 重设计，手机+PC）。PC 上放宽 main（其它页保持 48em 阅读宽度）、列表两列；手机上每行动作换到
    书名下面、页码收成"上一页 第 x/y 页 下一页"、批量操作栏固定在屏幕底部。 */
@@ -206,3 +209,6 @@ header .links{white-space:nowrap}
 .stg-destpair{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.6em}
 .stg-destcol{display:flex;flex-direction:column;gap:.2em;min-width:0}
 .stg-destcol select{width:100%;min-width:0}
+.nsearch{list-style:none;margin:.3em 0 0;padding:0}
+.nsearch li{padding:.55em .2em;border-top:1px solid var(--line2);cursor:pointer;line-height:1.5;word-break:break-word}
+.nsearch li:hover{background:var(--surface2)}

@@ -132,6 +132,14 @@ services/`）、没有改默认密码字面量 `shelf`、没有改 mDNS 域名 `
 
 **独立顶层 Cargo 项目需要自己的 `.cargo/config.toml`**：这条是搬迁当天踩出来的坑，详见 §04。
 
+## 03b｜2026-09-24 新增的公共能力
+
+- `tls`：CA 带名称约束 + 旧 CA 自动迁移（细节与用户须知见网关白皮书 §03c）。新增依赖 `x509-parser`（本来就经 rcgen 在依赖树里）；测试用 `rustls-webpki` 做完整链校验，含"同一把 CA 私钥硬签 `evil.com` 会被拒"的反证。
+- `auth::IpFailLimiter`：按来源 IP 的登录失败限速，取代全局 `FailLimiter`（只有网关在用）。
+- `http`：`GuardRequest.remote`、`Request::remote_ip()`、常量 `REMOTE_IP_HEADER`——没给 `Request` 加字段，是因为各服务直接构造这个公开结构体，加字段会波及全部调用方。
+- `fs::write_atomic_mode`：临时文件创建时就带指定权限（含密钥的文件不再有先宽后紧的窗口）；`config::is_corrupt`：判断配置文件存在但解析不了，给"启动时落盘一次"的调用方决定要不要跳过。
+- `multipart::content_disposition`：下载用的 `Content-Disposition`（ASCII 兜底名 + RFC 5987 UTF-8 名），笔记导出与母版库原件下载共用。
+
 ## 04｜踩坑
 
 - **独立顶层 crate 不会自动继承调用方目录的 cargo 配置**（2026-09-11，搬迁当天实测）：

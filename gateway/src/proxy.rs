@@ -113,9 +113,15 @@ pub fn forward(paths: &Paths, req: &mut Request<'_>) -> ApiResult {
     // 只转发这一个头：后端服务想让浏览器"下载保存"而不是原地展示/跳转时设它（如 md/zip 导出、CA 证书下载，
     // 见 gateway::main 的证书下载同款用法）；别的头一律不转发，不给后端服务借这条通道夹带别的东西。
     let disposition = resp.header("Content-Disposition").map(str::to_string);
-    let mut body = Vec::new();
-    resp.into_reader().read_to_end(&mut body).map_err(|e| ApiError::internal(e.to_string()))?;
-    let mut reply = Reply { status, content_type: ctype, body, headers: vec![], stream: None };
+    // 带 Content-Disposition 的是下载（母版库原件可达上百 MB）：边读边发，不整个读进网关内存；
+    // 其余（JSON 等小应答）照旧读完再回。
+    let mut reply = if status == 200 && disposition.is_some() {
+        Reply { status, content_type: ctype, body: Vec::new(), headers: vec![], stream: Some(Box::new(resp.into_reader())) }
+    } else {
+        let mut body = Vec::new();
+        resp.into_reader().read_to_end(&mut body).map_err(|e| ApiError::internal(e.to_string()))?;
+        Reply { status, content_type: ctype, body, headers: vec![], stream: None }
+    };
     if let Some(v) = disposition {
         reply = reply.with_header("Content-Disposition", &v);
     }

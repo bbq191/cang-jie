@@ -1,6 +1,6 @@
 //! 服务器：tiny_http 适配（每请求一线程、并发名额、守卫、SSE 裸 socket 流式回执、TLS）。
 use super::router::{parse_query, Router};
-use super::{header_of, Method, Reply, Request};
+use super::{header_of, Method, Reply, Request, REMOTE_IP_HEADER};
 use std::collections::HashMap;
 use std::io::{Read, Write};
 use std::sync::Arc;
@@ -59,6 +59,9 @@ pub struct GuardRequest {
     pub method: Method,
     pub path: String,
     pub headers: Vec<(String, String)>,
+    /// TCP 对端 IP（tiny_http `remote_addr()`；HTTPS 下取自 rustls 底下的 TcpStream，同样可靠）。
+    /// 登录失败限速按它分桶；取不到时为 `None`（实际只在极端情况下发生，调用方自行归一个桶）。
+    pub remote: Option<std::net::IpAddr>,
 }
 impl GuardRequest {
     pub fn header(&self, name: &str) -> Option<&str> {
@@ -146,9 +149,15 @@ pub fn serve_with(bind: &str, router: Router, opts: ServeOpts) -> Result<(), Str
                     headers.push((k.to_string(), h.value.as_str().to_string()));
                 }
             }
+            // 对端 IP 以内部头传给处理函数（[`Request`] 是各服务直接构造的公开结构体，加字段会波及所有调用方）。
+            // 客户端自己发来的同名头在上面的 KEPT_HEADERS 白名单里就被丢掉了，这里写入的只可能是真实对端地址。
+            let remote = req.remote_addr().map(|a| a.ip().to_canonical());
+            if let Some(ip) = remote {
+                headers.push((REMOTE_IP_HEADER.to_string(), ip.to_string()));
+            }
             let path = path.to_string();
             if let Some(g) = &guard {
-                if let Some(reply) = (g.check)(&GuardRequest { method, path: path.clone(), headers: headers.clone() }) {
+                if let Some(reply) = (g.check)(&GuardRequest { method, path: path.clone(), headers: headers.clone(), remote }) {
                     let _ = req.respond(reply_to_tiny(reply));
                     return;
                 }
@@ -188,6 +197,63 @@ mod tests {
         drop((b, c3));
         assert_eq!(c.load(std::sync::atomic::Ordering::SeqCst), 0);
         assert!(Permit::try_acquire(&c, None).is_some(), "None=不限");
+    }
+
+    fn free_port_and_wait(start: impl FnOnce(String) + Send + 'static) -> u16 {
+        let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+        let addr = format!("127.0.0.1:{port}");
+        std::thread::spawn(move || start(addr));
+        for _ in 0..100 {
+            if std::net::TcpStream::connect(("127.0.0.1", port)).is_ok() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        port
+    }
+
+    /// 对端 IP 路由：守卫看到 `GuardRequest.remote`，处理函数经 `Request::remote_ip()` 读到；客户端伪造的同名头无效。
+    fn ip_router_and_guard() -> (Router, Guard) {
+        let router = Router::new().get("/ip", |r| Ok(Reply::ok(&serde_json::json!({"ip": r.remote_ip().map(|i| i.to_string())}))));
+        let guard = Guard {
+            check: Arc::new(|g: &GuardRequest| if g.remote == Some(std::net::Ipv4Addr::LOCALHOST.into()) { None } else { Some(Reply::error(403, "守卫没拿到对端 IP")) }),
+        };
+        (router, guard)
+    }
+
+    #[test]
+    fn remote_ip_reaches_guard_and_handler_and_cannot_be_spoofed() {
+        let (router, guard) = ip_router_and_guard();
+        let port = free_port_and_wait(move |a| {
+            let _ = serve_with(&a, router, ServeOpts { guard: Some(guard), ..ServeOpts::default() });
+        });
+        let body = ureq::get(&format!("http://127.0.0.1:{port}/ip")).set(REMOTE_IP_HEADER, "1.2.3.4").call().unwrap().into_string().unwrap();
+        let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+        assert_eq!(v["ip"], "127.0.0.1");
+    }
+
+    /// HTTPS（tiny_http + rustls）路径下同样拿得到对端 IP；顺带证明带名称约束的 CA 签出的叶能完成真实握手。
+    #[test]
+    fn remote_ip_works_over_tls() {
+        let dir = tempfile::tempdir().unwrap();
+        let pem = crate::tls::ensure_ca_signed(dir.path(), &[]).unwrap();
+        let ca = crate::tls::ca_pem(dir.path()).unwrap();
+        let (router, guard) = ip_router_and_guard();
+        let port = free_port_and_wait(move |a| {
+            let _ = serve_with(&a, router, ServeOpts { tls: Some(pem), guard: Some(guard), ..ServeOpts::default() });
+        });
+        let mut roots = rustls::RootCertStore::empty();
+        let ca_der = x509_parser::pem::parse_x509_pem(&ca).unwrap().1.contents;
+        roots.add(rustls_pki_types::CertificateDer::from(ca_der)).unwrap();
+        let cfg = rustls::ClientConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider())).with_safe_default_protocol_versions().unwrap().with_root_certificates(roots).with_no_client_auth();
+        let conn = rustls::ClientConnection::new(Arc::new(cfg), rustls_pki_types::ServerName::try_from("shelf.local").unwrap()).unwrap();
+        let mut tls = rustls::StreamOwned::new(conn, std::net::TcpStream::connect(("127.0.0.1", port)).unwrap());
+        tls.write_all(b"GET /ip HTTP/1.1\r\nHost: shelf.local\r\nX-Rmsvc-Remote-Ip: 1.2.3.4\r\nConnection: close\r\n\r\n").unwrap();
+        let mut out = Vec::new();
+        let _ = tls.read_to_end(&mut out); // 对端直接断开 TCP 时 rustls 报 UnexpectedEof，内容已读到
+        let text = String::from_utf8_lossy(&out);
+        assert!(text.starts_with("HTTP/1.1 200"), "{text}");
+        assert!(text.contains(r#""ip":"127.0.0.1""#), "{text}");
     }
 
     /// 起真服务：处理函数 panic 得到 JSON 500，且并发名额归还、后续请求照常服务。

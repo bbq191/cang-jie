@@ -9,6 +9,8 @@ license = "MIT"
 tiny_http = { version = "0.12", features = ["ssl-rustls"] }
 # 自签证书（首启生成，纯 Rust ring 后端）与密码哈希/Basic 认证
 rcgen = { version = "0.14", default-features = false, features = ["crypto", "pem", "ring"] }
+# 解析已有 CA 证书、判断是否带名称约束（迁移用）。依赖树里本来就有（rcgen/rustls 间接引入），不新增编译量。
+x509-parser = { version = "0.18", default-features = false }
 sha2 = "0.11"
 time = "0.3"
 # mDNS 应答器需要 SO_REUSEADDR + 多播接口选择，std UdpSocket 不暴露
@@ -23,3 +25,7 @@ pbkdf2 = { version = "0.13.0", default-features = false, features = ["hmac", "sh
 
 [dev-dependencies]
 tempfile = "3"
+# 测试里用真实的证书链校验器（与 rustls 同一套）证明名称约束生效，并走一次真 TLS 握手验证对端地址
+rustls-webpki = { version = "0.103", default-features = false, features = ["std", "ring"] }
+rustls-pki-types = "1"
+rustls = { version = "0.23", default-features = false, features = ["std", "ring", "tls12"] }

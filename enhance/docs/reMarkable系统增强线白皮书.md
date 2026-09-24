@@ -72,6 +72,8 @@
 | 电池刺客 | 「管理 → 系统增强」（2026-09-21 从「实验室」移来）；开了才出现「电池刺客」数据页 | `systemctl start/stop battop` |
 | CJK 手写笔迹优化 | 「管理 → 实验室」 | 纯网页层派生开关：`hwStrokeNibMinRatio < 1.0` 视为已开；开写 `0.6`、关写 `1.0`（两个 min_ratio 字段同步写） |
 
+**开关 ≠ 已生效**（2026-09-24 加）：两个扩展开关旁边各有一枚「已加载 / 未加载」徽章，「管理 → 基石」另列一行「xochitl 里生效的扩展」。数据来自 `gateway/src/enhance/loaded.rs`：找 `comm==xochitl` 且父进程为 1 的主进程（排除渲染 PDF 时 fork 出的同名 worker），读它的 `/proc/<pid>/maps`，映射了哪个 `extensions.d/*.so` 就是真加载了，`xovi.so` 在不在说明 xovi 有没有生效。起因是两次"开关看着开了、其实没生效"：09-09 langhook 整个从设备上消失（§03a），hw-stroke 因 GLIBC 版本不符静默加载失败（§04）。开关只写配置，扩展没加载时开了也没用，现在网页上直接看得见。
+
 写这个共享文件遵守**全量写回**铁律：`gateway/src/enhance/qol.rs` 把整份文件当不透明 JSON map 读进来、只覆盖要改的键，不知道的键原样写回，避免冲掉别处（旧原生设置页、C hook）写入的开关。
 
 ## 03a｜`hl-snap/` 诞生记（2026-09-09，真机通）
@@ -145,6 +147,14 @@ Ghidra 装法、`JAVA_HOME` 处理（Ghidra 12.x 要 JDK 21）、`xochitl` 二�
 - **`FUN_00f4f430`**（`bVar16==3`）：签名一样，但**前 20 字节第 3 条指令是条件分支**（`cbz`，PC 相对寻址），被 `memcpy` 进 call-through stub 后分支目标会算错 → 不能安全 patch，留作已知候选。
 
 部署 `FUN_00f4c8d0` hook（诊断优先，先保持效果关闭确认真机加载正常）后真机命中 **10033 次**（`FUN_00f47530` 仅 2117 次），`w` 范围 3~36，真实触及日常常用的多种笔，覆盖面近 5 倍。按真机数据重新校准阈值，两个效果开到中等强度（`min_ratio=0.6`），用户反馈"看上去还行"。
+
+## 03g｜`hw-stroke` 降负载：每笔读一次配置、日志默认关（2026-09-24，真机通）
+
+审查发现 hook 里每个点都 `fopen` 读一次 `reading-qol.json`、写一行 `[hw-stroke:…]` 到 stderr，效果关着也照样执行；§03f 一次采样就命中上万次。stderr 进 xochitl 的 journal，又被 `wallpaper-serve`（`journalctl -f -u xochitl`）和飞行记录仪逐行读，负载被放大。纯诊断的 `FUN_00f3f9d0` 分派 hook 对行为零贡献，却在生产环境多 patch 一个函数。
+
+改法：配置只在每一笔起点（`ctx+0x5a` 的 has_prev 为 0）读，另每 1024 个点兜底读一次，改了参数从下一笔生效；逐点日志和诊断 hook 由新键 `hwStrokeDebug`（默认 false）控制，诊断 hook 只在扩展加载时看这个键。交叉编译零警告，动态符号最高 GLIBC_2.17 不变。真机：用户手写后 journal 里 `[hw-stroke:` 与 `hw-stroke-dispatch` 都是 0 行，两个几何 hook 正常装上。
+
+部署时顺带第二次撞上"换了运行中 xochitl 已映射的 `.so` 再 restart → 旧进程退出 SEGV → 整机重启"（第一次是 09-21 appload）。部署脚本已改为先 stop 再换再 start，见 `packaging/README.md`；新流程的真机验证留到下次扩展有改动时。
 
 ## 04｜踩坑
 

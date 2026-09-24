@@ -6,7 +6,7 @@
 //!   Basic 同理只放行 `POST /password`（设备上 `gateway passwd`）。
 //! - 未登录：浏览器请求（Accept 含 text/html）303 → `/login?next=…`，其它 401 JSON。密码错延时 500ms。
 use crate::config::GatewayConfig;
-use rmsvc_core::auth::{parse_basic, parse_cookie, FailLimiter, SessionStore};
+use rmsvc_core::auth::{parse_basic, parse_cookie, IpFailLimiter, SessionStore};
 use rmsvc_core::http::{ApiError, ApiResult, Guard, GuardRequest, Method, Reply, Request};
 use rmsvc_core::paths::Paths;
 use std::sync::{Arc, Mutex};
@@ -18,18 +18,27 @@ pub struct AuthState {
     pub sessions: SessionStore,
     pub paths: Paths,
     pub secure_cookie: bool,
-    /// 密码校验失败限速（[`LOGIN_MAX_FAILS`] 次 / [`LOGIN_FAIL_WINDOW`]）。
-    pub limiter: FailLimiter,
+    /// 密码校验失败限速：按来源 IP 各自 [`LOGIN_MAX_FAILS`] 次 / [`LOGIN_FAIL_WINDOW`]，最多记 [`LOGIN_LIMITER_IPS`] 个 IP。
+    pub limiter: IpFailLimiter,
 }
 
 /// 60 秒内连续输错 5 次就锁 60 秒内的后续尝试：正常人手误几次远够用（登录页每次错还有 500ms 延时），
 /// 而暴力猜密码被压到 ≈ 5 次/分钟；锁定期内根本不做 60 万轮 PBKDF2，也就不会被并发猜测烧 CPU。
 pub const LOGIN_MAX_FAILS: usize = 5;
 pub const LOGIN_FAIL_WINDOW: std::time::Duration = std::time::Duration::from_secs(60);
+/// 限速表最多记多少个来源 IP（每项只是几个时间戳），超了淘汰最旧的（见 [`IpFailLimiter`]）。
+/// 按 IP 分桶后，局域网里别人输错只锁他自己的地址，不再连带锁住主人（2026-09-24 前是全局计数）。
+/// USB 网段 10.11.99.0/24 与 127.0.0.1 **不豁免**：设备的 lo 别名就是 10.11.99.1，豁免会放过一整类请求。
+pub const LOGIN_LIMITER_IPS: usize = 256;
+
+/// 取不到对端地址时（实际只在极端情况下发生）归到这一个桶里，照样限速。
+fn client_ip(ip: Option<std::net::IpAddr>) -> std::net::IpAddr {
+    ip.unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED))
+}
 
 impl AuthState {
     pub fn new(cfg: GatewayConfig, sessions: SessionStore, paths: Paths, secure_cookie: bool) -> AuthState {
-        AuthState { cfg: Mutex::new(cfg), sessions, paths, secure_cookie, limiter: FailLimiter::new(LOGIN_MAX_FAILS, LOGIN_FAIL_WINDOW) }
+        AuthState { cfg: Mutex::new(cfg), sessions, paths, secure_cookie, limiter: IpFailLimiter::new(LOGIN_MAX_FAILS, LOGIN_FAIL_WINDOW, LOGIN_LIMITER_IPS) }
     }
 
     /// 被限速锁定时给的 429 应答（`json` 决定 JSON 还是登录页 HTML）。
@@ -66,14 +75,15 @@ impl AuthState {
             }
         }
         if let Some((_, pw)) = r.header("Authorization").and_then(parse_basic) {
-            if self.limiter.locked_for().is_some() {
+            let ip = client_ip(r.remote);
+            if self.limiter.locked_for(ip).is_some() {
                 return Who::Nobody; // 锁定期不做校验（见 LOGIN_MAX_FAILS）
             }
             if self.verify(&pw) {
-                self.limiter.reset();
+                self.limiter.reset(ip);
                 return Who::Basic;
             }
-            self.limiter.record_failure();
+            self.limiter.record_failure(ip);
             std::thread::sleep(std::time::Duration::from_millis(500));
         }
         Who::Nobody
@@ -122,14 +132,15 @@ impl AuthState {
     /// `POST /login`（表单或 JSON `{password}`）。
     pub fn login(&self, req: &mut Request<'_>) -> ApiResult {
         let (pw, next, json) = read_password_body(req)?;
-        if let Some(wait) = self.limiter.locked_for() {
+        let ip = client_ip(req.remote_ip());
+        if let Some(wait) = self.limiter.locked_for(ip) {
             return Ok(self.locked_reply(wait, json, |m| crate::ui::login_page(m, &next)));
         }
         let ok = self.verify(&pw);
         if ok {
-            self.limiter.reset();
+            self.limiter.reset(ip);
         } else {
-            self.limiter.record_failure();
+            self.limiter.record_failure(ip);
             std::thread::sleep(std::time::Duration::from_millis(500));
             return Ok(if json { Reply::error(401, "密码错误") } else { Reply::html(&crate::ui::login_page("密码错误", &next)).with_status(401) });
         }
@@ -159,7 +170,8 @@ impl AuthState {
             let g = |k: &str| f.get(k).cloned().unwrap_or_default();
             (g("current"), g("new"), g("confirm"))
         };
-        if let Some(wait) = self.limiter.locked_for() {
+        let ip = client_ip(req.remote_ip());
+        if let Some(wait) = self.limiter.locked_for(ip) {
             let forced = self.cfg.lock().map(|c| c.must_change_password).unwrap_or(false);
             return Ok(self.locked_reply(wait, json, |m| crate::ui::password_page(m, forced)));
         }
@@ -171,7 +183,7 @@ impl AuthState {
         let via_basic = req.header("Authorization").and_then(parse_basic).map(|(_, p)| cfg.verify(&p)).unwrap_or(false);
         if !via_basic && !cfg.verify(&current) {
             drop(cfg);
-            self.limiter.record_failure();
+            self.limiter.record_failure(ip);
             std::thread::sleep(std::time::Duration::from_millis(500));
             return fail("当前密码错误", 401);
         }
@@ -228,11 +240,22 @@ mod tests {
         std::mem::forget(t);
         Arc::new(AuthState::new(cfg, SessionStore::new(std::time::Duration::from_secs(3600), 16), paths, true))
     }
+    const IP_A: &str = "192.168.1.10";
+    const IP_B: &str = "192.168.1.11";
     fn gr(method: Method, path: &str, headers: &[(&str, &str)]) -> GuardRequest {
-        GuardRequest { method, path: path.into(), headers: headers.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect() }
+        gr_from(IP_A, method, path, headers)
+    }
+    fn gr_from(ip: &str, method: Method, path: &str, headers: &[(&str, &str)]) -> GuardRequest {
+        GuardRequest { method, path: path.into(), headers: headers.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(), remote: Some(ip.parse().unwrap()) }
     }
     fn req<'a>(method: Method, path: &str, ct: &str, headers: &[(&str, &str)], body: &'a mut &[u8]) -> Request<'a> {
-        Request { method, path: path.into(), query: HashMap::new(), params: HashMap::new(), content_type: ct.into(), content_length: None, headers: headers.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(), body }
+        req_from(IP_A, method, path, ct, headers, body)
+    }
+    /// 模拟服务器：对端 IP 经内部头 `REMOTE_IP_HEADER` 传给处理函数。
+    fn req_from<'a>(ip: &str, method: Method, path: &str, ct: &str, headers: &[(&str, &str)], body: &'a mut &[u8]) -> Request<'a> {
+        let mut hs: Vec<(String, String)> = headers.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+        hs.push((rmsvc_core::http::REMOTE_IP_HEADER.to_string(), ip.to_string()));
+        Request { method, path: path.into(), query: HashMap::new(), params: HashMap::new(), content_type: ct.into(), content_length: None, headers: hs, body }
     }
 
     #[test]
@@ -315,9 +338,55 @@ mod tests {
         let ok = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, "x:secret1");
         assert_eq!((g.check)(&gr(Method::Get, "/api/services", &[("Authorization", &format!("Basic {ok}"))])).unwrap().status, 401);
         // 解锁（模拟窗口过去）后成功登录会清零
-        st.limiter.reset();
+        st.limiter.reset(IP_A.parse().unwrap());
         let mut b: &[u8] = br#"{"password":"secret1"}"#;
         assert_eq!(st.login(&mut req(Method::Post, "/login", "application/json", &[], &mut b)).unwrap().status, 200);
+    }
+
+    #[test]
+    fn lockout_is_per_source_ip() {
+        let st = state(false);
+        let g = st.guard();
+        for _ in 0..LOGIN_MAX_FAILS {
+            let mut b: &[u8] = br#"{"password":"nope"}"#;
+            assert_eq!(st.login(&mut req_from(IP_A, Method::Post, "/login", "application/json", &[], &mut b)).unwrap().status, 401);
+        }
+        let mut b: &[u8] = br#"{"password":"secret1"}"#;
+        assert_eq!(st.login(&mut req_from(IP_A, Method::Post, "/login", "application/json", &[], &mut b)).unwrap().status, 429, "A 已锁定");
+        // B 不受 A 连累：表单登录、JSON 登录、Basic 都照常
+        let mut b: &[u8] = br#"{"password":"secret1"}"#;
+        assert_eq!(st.login(&mut req_from(IP_B, Method::Post, "/login", "application/json", &[], &mut b)).unwrap().status, 200, "B 仍可登录");
+        let ok = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, "x:secret1");
+        let basic = format!("Basic {ok}");
+        assert!((g.check)(&gr_from(IP_B, Method::Get, "/api/services", &[("Authorization", &basic)])).is_none(), "B 的 Basic 照常");
+        assert_eq!((g.check)(&gr_from(IP_A, Method::Get, "/api/services", &[("Authorization", &basic)])).unwrap().status, 401, "A 的 Basic 仍被挡");
+        // B 登录成功只清 B 自己，A 仍锁着
+        let mut b: &[u8] = br#"{"password":"secret1"}"#;
+        assert_eq!(st.login(&mut req_from(IP_A, Method::Post, "/login", "application/json", &[], &mut b)).unwrap().status, 429);
+        // USB 网段 / 回环不豁免：同样会被锁
+        for ip in ["10.11.99.1", "127.0.0.1"] {
+            for _ in 0..LOGIN_MAX_FAILS {
+                let mut b: &[u8] = br#"{"password":"nope"}"#;
+                assert_eq!(st.login(&mut req_from(ip, Method::Post, "/login", "application/json", &[], &mut b)).unwrap().status, 401);
+            }
+            let mut b: &[u8] = br#"{"password":"secret1"}"#;
+            assert_eq!(st.login(&mut req_from(ip, Method::Post, "/login", "application/json", &[], &mut b)).unwrap().status, 429, "{ip} 不豁免");
+        }
+    }
+
+    #[test]
+    fn existing_session_unaffected_by_lockout() {
+        let st = state(false);
+        let g = st.guard();
+        let mut b: &[u8] = br#"{"password":"secret1"}"#;
+        let rep = st.login(&mut req_from(IP_A, Method::Post, "/login", "application/json", &[], &mut b)).unwrap();
+        let tok = rep.headers.iter().find(|(k, _)| k == "Set-Cookie").unwrap().1.split(';').next().unwrap().to_string();
+        for _ in 0..LOGIN_MAX_FAILS {
+            let mut b: &[u8] = br#"{"password":"nope"}"#;
+            st.login(&mut req_from(IP_A, Method::Post, "/login", "application/json", &[], &mut b)).unwrap();
+        }
+        assert!(st.limiter.locked_for(IP_A.parse().unwrap()).is_some());
+        assert!((g.check)(&gr_from(IP_A, Method::Get, "/api/services", &[("Cookie", &tok)])).is_none(), "已登录会话不受锁定影响");
     }
 
     #[test]

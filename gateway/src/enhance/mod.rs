@@ -11,6 +11,7 @@
 //! 以后再加系统增强能力，往这个目录加一个新文件（比照 `qol.rs`/`battop.rs`）+ 这里挂一个路由，
 //! 不需要单独起一个 service（这两个能力都是同机文件 I/O / systemctl 直调，没有独立进程边界的理由）。
 mod battop;
+mod loaded;
 mod qol;
 
 use rmsvc_core::http::{ApiError, ApiResult, Reply, Request};
@@ -24,6 +25,7 @@ pub fn status(paths: &Paths) -> Reply {
         "notesImportMdEnabled": qol::notes_import_md_enabled(paths),
         "comicMinMargin": qol::comic_min_margin(paths),
         "battop": {"installed": b.installed, "running": b.running, "lastSampleAt": b.last_sample_at},
+        "loaded": loaded::scan(std::path::Path::new("/proc")),
     }))
 }
 

@@ -139,53 +139,86 @@ impl SessionStore {
     }
 }
 
-/// 登录失败限速（全局滑动窗口）：`window` 内累计失败 `max` 次即锁定，锁到最早那次失败滑出窗口为止。
-/// 锁定期间调用方应**不做密码校验**直接拒绝（校验是 60 万轮 PBKDF2，被并发猜密码时既是暴力破解通道
-/// 又是 CPU 消耗通道；单靠"失败后 sleep 500ms"挡不住并行连接）。
-/// 用全局计数而不是按来源 IP：HTTP 层的 `Request` 不带对端地址；局域网单用户设备，代价是攻击者
-/// 能让主人最多被锁一个窗口——比暴力破解风险小得多，且到期自动解锁、重启网关也清零。
-pub struct FailLimiter {
+/// 登录失败限速（**按来源 IP 各自滑动窗口**）：同一 IP 在 `window` 内累计失败 `max` 次即锁定该 IP，
+/// 锁到它最早那次失败滑出窗口为止；别的 IP 不受影响。锁定期间调用方应**不做密码校验**直接拒绝
+/// （校验是 60 万轮 PBKDF2，被并发猜密码时既是暴力破解通道又是 CPU 消耗通道；单靠"失败后 sleep 500ms"
+/// 挡不住并行连接）。
+///
+/// 2026-09-24 前是全局计数（HTTP 层当时不带对端地址）：局域网里任何人连错 5 次就把主人一起锁住。
+/// 现在 IP 来自 TCP 对端地址（tiny_http `remote_addr()`，TLS 下同样取自底层 TcpStream，不信任
+/// `X-Forwarded-For` 之类可伪造的头）。
+///
+/// **不豁免任何网段**（含 USB 网段 10.11.99.0/24 与 127.0.0.1）：设备的 lo 别名本身就是 10.11.99.1，
+/// 本机进程/经本机转发进来的流量都可能以这些地址出现，豁免等于给一整类请求开了无限猜密码的口子。
+///
+/// 表最多记 `cap` 个 IP（防止大量来源地址把内存撑大）；满了先扔窗口已过期的，仍满则淘汰
+/// **未锁定的 IP 里最久没失败的**，全都锁定时才淘汰最旧的锁定项——免得攻击者换一批地址各错一次，
+/// 就把自己已被锁的 IP 挤出表外"洗白"。重启网关清零。
+pub struct IpFailLimiter {
     max: usize,
     window: std::time::Duration,
-    fails: std::sync::Mutex<std::collections::VecDeque<std::time::Instant>>,
+    cap: usize,
+    fails: std::sync::Mutex<std::collections::HashMap<std::net::IpAddr, std::collections::VecDeque<std::time::Instant>>>,
 }
 
-impl FailLimiter {
-    pub fn new(max: usize, window: std::time::Duration) -> FailLimiter {
-        FailLimiter { max, window, fails: std::sync::Mutex::new(std::collections::VecDeque::new()) }
+impl IpFailLimiter {
+    pub fn new(max: usize, window: std::time::Duration, cap: usize) -> IpFailLimiter {
+        IpFailLimiter { max, window, cap: cap.max(1), fails: std::sync::Mutex::new(std::collections::HashMap::new()) }
+    }
+    /// IPv4 映射的 IPv6（`::ffff:a.b.c.d`）与纯 IPv4 算同一个来源。
+    fn key(ip: std::net::IpAddr) -> std::net::IpAddr {
+        ip.to_canonical()
     }
     fn prune(&self, q: &mut std::collections::VecDeque<std::time::Instant>, now: std::time::Instant) {
         while q.front().is_some_and(|t| now.duration_since(*t) >= self.window) {
             q.pop_front();
         }
     }
-    /// 被锁定时返回还要等多久，否则 `None`。
-    pub fn locked_for(&self) -> Option<std::time::Duration> {
-        self.locked_for_at(std::time::Instant::now())
+    /// `ip` 被锁定时返回还要等多久，否则 `None`。
+    pub fn locked_for(&self, ip: std::net::IpAddr) -> Option<std::time::Duration> {
+        self.locked_for_at(ip, std::time::Instant::now())
     }
-    pub fn locked_for_at(&self, now: std::time::Instant) -> Option<std::time::Duration> {
-        let mut q = self.fails.lock().unwrap_or_else(|e| e.into_inner());
-        self.prune(&mut q, now);
+    pub fn locked_for_at(&self, ip: std::net::IpAddr, now: std::time::Instant) -> Option<std::time::Duration> {
+        let mut m = self.fails.lock().unwrap_or_else(|e| e.into_inner());
+        let q = m.get_mut(&Self::key(ip))?;
+        self.prune(q, now);
         if q.len() >= self.max {
             q.front().map(|t| self.window.saturating_sub(now.duration_since(*t)))
         } else {
             None
         }
     }
-    pub fn record_failure(&self) {
-        self.record_failure_at(std::time::Instant::now());
+    pub fn record_failure(&self, ip: std::net::IpAddr) {
+        self.record_failure_at(ip, std::time::Instant::now());
     }
-    pub fn record_failure_at(&self, now: std::time::Instant) {
-        let mut q = self.fails.lock().unwrap_or_else(|e| e.into_inner());
-        self.prune(&mut q, now);
+    pub fn record_failure_at(&self, ip: std::net::IpAddr, now: std::time::Instant) {
+        let ip = Self::key(ip);
+        let mut m = self.fails.lock().unwrap_or_else(|e| e.into_inner());
+        if !m.contains_key(&ip) && m.len() >= self.cap {
+            // 满了：先扔窗口已过期的
+            m.retain(|_, q| q.back().is_some_and(|t| now.duration_since(*t) < self.window));
+            if m.len() >= self.cap {
+                // 仍满：未锁定优先、其中最久没失败的先走
+                let victim = m.iter().min_by_key(|(_, q)| (q.len() >= self.max, q.back().copied())).map(|(k, _)| *k);
+                if let Some(v) = victim {
+                    m.remove(&v);
+                }
+            }
+        }
+        let q = m.entry(ip).or_default();
+        self.prune(q, now);
         if q.len() >= self.max {
             return; // 已锁定：不再累计，避免攻击者不停撞把锁定期无限续下去
         }
         q.push_back(now);
     }
-    /// 登录成功：清零。
-    pub fn reset(&self) {
-        self.fails.lock().unwrap_or_else(|e| e.into_inner()).clear();
+    /// 该 IP 登录成功：清零（只清它自己的）。
+    pub fn reset(&self, ip: std::net::IpAddr) {
+        self.fails.lock().unwrap_or_else(|e| e.into_inner()).remove(&Self::key(ip));
+    }
+    /// 当前表里记着几个 IP（测试/诊断用）。
+    pub fn tracked(&self) -> usize {
+        self.fails.lock().unwrap_or_else(|e| e.into_inner()).len()
     }
 }
 
@@ -195,20 +228,67 @@ mod tests {
     #[test]
     fn fail_limiter_locks_after_max_and_expires() {
         use std::time::{Duration, Instant};
-        let l = FailLimiter::new(3, Duration::from_secs(60));
+        let a: std::net::IpAddr = "192.168.1.5".parse().unwrap();
+        let l = IpFailLimiter::new(3, Duration::from_secs(60), 16);
         let t0 = Instant::now();
-        assert!(l.locked_for_at(t0).is_none());
-        l.record_failure_at(t0);
-        l.record_failure_at(t0 + Duration::from_secs(1));
-        assert!(l.locked_for_at(t0 + Duration::from_secs(2)).is_none(), "未满 3 次不锁");
-        l.record_failure_at(t0 + Duration::from_secs(2));
-        let w = l.locked_for_at(t0 + Duration::from_secs(10)).expect("满 3 次锁定");
+        assert!(l.locked_for_at(a, t0).is_none());
+        l.record_failure_at(a, t0);
+        l.record_failure_at(a, t0 + Duration::from_secs(1));
+        assert!(l.locked_for_at(a, t0 + Duration::from_secs(2)).is_none(), "未满 3 次不锁");
+        l.record_failure_at(a, t0 + Duration::from_secs(2));
+        let w = l.locked_for_at(a, t0 + Duration::from_secs(10)).expect("满 3 次锁定");
         assert_eq!(w, Duration::from_secs(50), "锁到最早那次失败滑出窗口");
-        l.record_failure_at(t0 + Duration::from_secs(11)); // 锁定期间再有失败不延长
-        assert_eq!(l.locked_for_at(t0 + Duration::from_secs(20)), Some(Duration::from_secs(40)));
-        assert!(l.locked_for_at(t0 + Duration::from_secs(61)).is_none(), "最早一次滑出窗口后解锁");
-        l.reset();
-        assert!(l.locked_for_at(t0).is_none());
+        l.record_failure_at(a, t0 + Duration::from_secs(11)); // 锁定期间再有失败不延长
+        assert_eq!(l.locked_for_at(a, t0 + Duration::from_secs(20)), Some(Duration::from_secs(40)));
+        assert!(l.locked_for_at(a, t0 + Duration::from_secs(61)).is_none(), "最早一次滑出窗口后解锁");
+        l.reset(a);
+        assert!(l.locked_for_at(a, t0).is_none());
+    }
+    #[test]
+    fn fail_limiter_is_per_ip() {
+        use std::time::{Duration, Instant};
+        let a: std::net::IpAddr = "10.11.99.1".parse().unwrap();
+        let b: std::net::IpAddr = "192.168.1.9".parse().unwrap();
+        let l = IpFailLimiter::new(2, Duration::from_secs(60), 16);
+        let t0 = Instant::now();
+        l.record_failure_at(a, t0);
+        l.record_failure_at(a, t0);
+        assert!(l.locked_for_at(a, t0).is_some(), "A 锁定（USB 网段不豁免）");
+        assert!(l.locked_for_at(b, t0).is_none(), "B 不受影响");
+        let mapped: std::net::IpAddr = "::ffff:10.11.99.1".parse().unwrap();
+        assert!(l.locked_for_at(mapped, t0).is_some(), "IPv4 映射地址与原地址同一来源");
+        l.reset(b);
+        assert!(l.locked_for_at(a, t0).is_some(), "B 登录成功不清 A");
+    }
+    #[test]
+    fn fail_limiter_caps_table_and_evicts_oldest() {
+        use std::time::{Duration, Instant};
+        let ip = |i: u8| -> std::net::IpAddr { std::net::Ipv4Addr::new(192, 168, 0, i).into() };
+        let l = IpFailLimiter::new(2, Duration::from_secs(60), 4);
+        let t0 = Instant::now();
+        // ip(1) 锁定；ip(2..=4) 各错一次，ip(2) 最早
+        l.record_failure_at(ip(1), t0);
+        l.record_failure_at(ip(1), t0);
+        for i in 2..=4 {
+            l.record_failure_at(ip(i), t0 + Duration::from_secs(i as u64));
+        }
+        assert_eq!(l.tracked(), 4);
+        l.record_failure_at(ip(5), t0 + Duration::from_secs(10));
+        assert_eq!(l.tracked(), 4, "不超过上限");
+        assert!(l.locked_for_at(ip(1), t0 + Duration::from_secs(10)).is_some(), "锁定项不被换地址挤出去");
+        l.record_failure_at(ip(2), t0 + Duration::from_secs(11));
+        assert!(l.locked_for_at(ip(2), t0 + Duration::from_secs(11)).is_none(), "ip(2) 是最旧的未锁定项，已被淘汰后重新计数");
+        // 全部锁定时淘汰最旧的锁定项
+        let l = IpFailLimiter::new(1, Duration::from_secs(60), 2);
+        l.record_failure_at(ip(1), t0);
+        l.record_failure_at(ip(2), t0 + Duration::from_secs(1));
+        l.record_failure_at(ip(3), t0 + Duration::from_secs(2));
+        assert_eq!(l.tracked(), 2);
+        let t = t0 + Duration::from_secs(3);
+        assert!(l.locked_for_at(ip(1), t).is_none() && l.locked_for_at(ip(2), t).is_some() && l.locked_for_at(ip(3), t).is_some());
+        // 窗口过期的先清
+        l.record_failure_at(ip(4), t0 + Duration::from_secs(100));
+        assert_eq!(l.tracked(), 1, "过期项一次清掉");
     }
     #[test]
     fn cookie_and_sessions() {
