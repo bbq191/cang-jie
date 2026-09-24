@@ -28,28 +28,37 @@ pub struct Loaded {
     pub qmds_pending: Vec<String>,
 }
 
-fn xochitl_main_pid(proc_root: &Path) -> Option<String> {
+/// `/proc/<pid>/stat` 里本模块要的三列：comm、ppid、starttime（开机后的时钟滴答）。
+/// 格式 "pid (comm) state ppid …"——comm 可能含空格，从最后一个 ')' 之后切。
+fn parse_stat(stat: &str) -> Option<(&str, &str, u64)> {
+    let (head, rest) = stat.rsplit_once(')')?;
+    let comm = head.split_once('(')?.1;
+    let mut f = rest.split_whitespace();
+    let ppid = f.nth(1)?;
+    let ticks = f.nth(17)?.parse().ok()?; // 第 22 列：ppid 是第 4 列，再往后 18 列
+    Some((comm, ppid, ticks))
+}
+
+/// 读 `pid` 的 stat，是 xochitl 主进程（comm 为 xochitl 且父进程是 1）就返回它的 starttime。
+fn main_xochitl_ticks(proc_root: &Path, pid: &str) -> Option<u64> {
+    let stat = std::fs::read_to_string(proc_root.join(pid).join("stat")).ok()?;
+    let (comm, ppid, ticks) = parse_stat(&stat)?;
+    (comm == "xochitl" && ppid == "1").then_some(ticks)
+}
+
+/// 全量找 xochitl 主进程：遍历 `/proc` 下的数字目录，每个只读一次 `stat`（comm 就在里面）。
+fn find_main_xochitl(proc_root: &Path) -> Option<(String, u64)> {
     std::fs::read_dir(proc_root).ok()?.flatten().find_map(|e| {
         let pid = e.file_name().to_str()?.to_string();
         if !pid.bytes().all(|b| b.is_ascii_digit()) {
             return None;
         }
-        let comm = std::fs::read_to_string(e.path().join("comm")).ok()?;
-        if comm.trim_end() != "xochitl" {
-            return None;
-        }
-        // stat: "pid (comm) state ppid ..."——comm 可能含空格，从最后一个 ')' 之后切。
-        let stat = std::fs::read_to_string(e.path().join("stat")).ok()?;
-        let ppid = stat.rsplit_once(')')?.1.split_whitespace().nth(1)?;
-        (ppid == "1").then_some(pid)
+        main_xochitl_ticks(proc_root, &pid).map(|t| (pid, t))
     })
 }
 
-/// 进程启动时刻（unix 秒）：`/proc/<pid>/stat` 第 22 列（开机后的时钟滴答，arm64/x86 的 USER_HZ 都是 100）
-/// + `/proc/stat` 的 `btime`。
-fn start_secs(proc_root: &Path, pid: &str) -> Option<u64> {
-    let stat = std::fs::read_to_string(proc_root.join(pid).join("stat")).ok()?;
-    let ticks: u64 = stat.rsplit_once(')')?.1.split_whitespace().nth(19)?.parse().ok()?;
+/// 进程启动时刻（unix 秒）：starttime 滴答（arm64/x86 的 USER_HZ 都是 100）+ `/proc/stat` 的 `btime`。
+fn start_secs(proc_root: &Path, ticks: u64) -> Option<u64> {
     let btime: u64 = std::fs::read_to_string(proc_root.join("stat")).ok()?.lines().find_map(|l| l.strip_prefix("btime ")?.trim().parse().ok())?;
     Some(btime + ticks / 100)
 }
@@ -67,21 +76,69 @@ fn qmd_states(qrr_dir: &Path, start: u64) -> (Vec<String>, Vec<String>) {
     (done, pending)
 }
 
+/// 一个 xochitl 主进程的映射结果（按 pid + starttime 认同一个进程）。
+struct Mapped {
+    pid: String,
+    ticks: u64,
+    start: Option<u64>,
+    xovi: bool,
+    extensions: Vec<String>,
+}
+
+/// 进程启动后多久才把映射结果缓存下来：xovi 在 xochitl 启动时逐个加载扩展，刚起的进程映射可能还不全。
+const SETTLE_SECS: u64 = 30;
+
+/// 扫描结果缓存。`/api/enhance/status`（管理页每次刷新、笔记页每次刷新都会调）原来每次都遍历整个 `/proc`、
+/// 逐个读 comm，再把 xochitl 上百 KB 的 `maps` 整个读一遍；而扩展只在 xochitl 启动时加载，同一个进程的映射结果
+/// 不会变。缓存命中时只读一次 `/proc/<pid>/stat` 核对还是同一个进程（pid + starttime），qmd 状态照旧现算
+/// （看的是文件修改时间，随时会变）。
+pub struct Scanner(std::sync::Mutex<Option<Mapped>>);
+
+impl Scanner {
+    pub const fn new() -> Scanner {
+        Scanner(std::sync::Mutex::new(None))
+    }
+
+    pub fn scan(&self, proc_root: &Path, qrr_dir: &Path) -> Loaded {
+        let mut cache = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        let hit = cache.as_ref().is_some_and(|m| main_xochitl_ticks(proc_root, &m.pid) == Some(m.ticks));
+        if !hit {
+            *cache = None;
+            let Some((pid, ticks)) = find_main_xochitl(proc_root) else { return Loaded::default() };
+            let maps = std::fs::read_to_string(proc_root.join(&pid).join("maps")).unwrap_or_default();
+            let mut extensions: Vec<String> = maps
+                .lines()
+                .filter_map(|l| l.split_whitespace().nth(5))
+                .filter_map(|p| p.split_once("/extensions.d/").map(|(_, f)| f.to_string()))
+                .collect();
+            extensions.sort();
+            extensions.dedup();
+            let m = Mapped { start: start_secs(proc_root, ticks), xovi: maps.lines().any(|l| l.ends_with("/xovi.so")), pid, ticks, extensions };
+            let settled = m.start.is_some_and(|s| rmsvc_core::clock::now_secs().saturating_sub(s) >= SETTLE_SECS);
+            let loaded = m.loaded(qrr_dir);
+            if settled {
+                *cache = Some(m);
+            }
+            return loaded;
+        }
+        cache.as_ref().map(|m| m.loaded(qrr_dir)).unwrap_or_default()
+    }
+}
+
+impl Mapped {
+    fn loaded(&self, qrr_dir: &Path) -> Loaded {
+        let (qmds, qmds_pending) = match (self.extensions.iter().any(|e| e == "qt-resource-rebuilder.so"), self.start) {
+            (true, Some(start)) => qmd_states(qrr_dir, start),
+            _ => (vec![], vec![]),
+        };
+        Loaded { xochitl: true, xovi: self.xovi, extensions: self.extensions.clone(), qmds, qmds_pending }
+    }
+}
+
+/// 不带缓存的一次扫描（测试用）。
+#[cfg(test)]
 pub fn scan(proc_root: &Path, qrr_dir: &Path) -> Loaded {
-    let Some(pid) = xochitl_main_pid(proc_root) else { return Loaded::default() };
-    let maps = std::fs::read_to_string(proc_root.join(&pid).join("maps")).unwrap_or_default();
-    let mut exts: Vec<String> = maps
-        .lines()
-        .filter_map(|l| l.split_whitespace().nth(5))
-        .filter_map(|p| p.split_once("/extensions.d/").map(|(_, f)| f.to_string()))
-        .collect();
-    exts.sort();
-    exts.dedup();
-    let (qmds, qmds_pending) = match (exts.iter().any(|e| e == "qt-resource-rebuilder.so"), start_secs(proc_root, &pid)) {
-        (true, Some(start)) => qmd_states(qrr_dir, start),
-        _ => (vec![], vec![]),
-    };
-    Loaded { xochitl: true, xovi: maps.lines().any(|l| l.ends_with("/xovi.so")), extensions: exts, qmds, qmds_pending }
+    Scanner::new().scan(proc_root, qrr_dir)
 }
 
 #[cfg(test)]
@@ -143,5 +200,37 @@ mod tests {
         proc_entry(t.path(), "5", "xochitl", "1", "7f00-7f01 r-xp 0 00:00 1 /usr/bin/xochitl\n");
         let l = scan(t.path(), t.path());
         assert!(l.xochitl && !l.xovi && l.extensions.is_empty());
+    }
+
+    /// 缓存：同一个进程（pid + starttime）第二次不再读 maps；进程换了（starttime 变）就重扫；刚起的进程不缓存。
+    #[test]
+    fn caches_mapping_per_process_and_rescans_on_restart() {
+        let t = tempfile::tempdir().unwrap();
+        let r = t.path();
+        let now = rmsvc_core::clock::now_secs();
+        std::fs::write(r.join("stat"), format!("cpu 0\nbtime {}\n", now - 3600)).unwrap(); // 进程已跑了约 1 小时
+        proc_entry(r, "613", "xochitl", "1", "7f00-7f01 r-xp 0 00:00 1 /home/root/xovi/extensions.d/hl-snap.so\n");
+        let sc = Scanner::new();
+        assert_eq!(sc.scan(r, r).extensions, ["hl-snap.so"]);
+        std::fs::write(r.join("613/maps"), "").unwrap(); // 缓存命中时不会再读 maps
+        assert_eq!(sc.scan(r, r).extensions, ["hl-snap.so"], "同一进程命中缓存");
+        // 同 pid 但 starttime 变了（xochitl 重启后恰好复用 pid）：重扫
+        std::fs::write(r.join("613/stat"), "613 (xochitl) S 1 1 1 0 -1 0 0 0 0 0 0 0 0 0 20 0 1 0 2000 0 0").unwrap();
+        assert!(sc.scan(r, r).extensions.is_empty(), "进程变了要重扫");
+        // 进程退出：不再报 xochitl
+        std::fs::remove_dir_all(r.join("613")).unwrap();
+        assert!(!sc.scan(r, r).xochitl);
+        // 刚启动的进程（不到 SETTLE_SECS）不缓存：之后映射变了能看到
+        std::fs::write(r.join("stat"), format!("cpu 0\nbtime {}\n", now - 12)).unwrap();
+        proc_entry(r, "700", "xochitl", "1", "");
+        assert!(sc.scan(r, r).extensions.is_empty());
+        std::fs::write(r.join("700/maps"), "7f00-7f01 r-xp 0 00:00 1 /home/root/xovi/extensions.d/hw-stroke.so\n").unwrap();
+        assert_eq!(sc.scan(r, r).extensions, ["hw-stroke.so"], "启动初期的结果不该被缓存住");
+    }
+
+    #[test]
+    fn parse_stat_handles_spaces_in_comm() {
+        assert_eq!(parse_stat("5 (a b) c) S 1 5 5 0 -1 0 0 0 0 0 0 0 0 0 20 0 1 0 777 0"), Some(("a b) c", "1", 777)));
+        assert_eq!(parse_stat("garbage"), None);
     }
 }

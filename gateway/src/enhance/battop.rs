@@ -25,8 +25,9 @@ pub struct Status {
 }
 
 /// `systemctl is-active` 结果缓存时长。`/api/enhance/status` 每次都 fork 一个 `systemctl` 进程（管理页每次刷新、
-/// 每个 manage 事件都会调），而 battop 是否在跑几乎不会在几秒内变化（开关走 [`toggle`]，会主动清缓存）。
-const ACTIVE_TTL: Duration = Duration::from_secs(5);
+/// 每个 manage 事件、笔记页每次刷新都会调），而 battop 是否在跑几乎不会自己变（开关走 [`toggle`]，会主动清缓存）；
+/// 只有它自己崩掉时网页会晚至多这么久才显示"已停"。
+const ACTIVE_TTL: Duration = Duration::from_secs(30);
 
 fn active_cache() -> &'static Mutex<Option<(Instant, bool)>> {
     static C: OnceLock<Mutex<Option<(Instant, bool)>>> = OnceLock::new();
