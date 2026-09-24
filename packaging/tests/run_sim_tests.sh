@@ -813,6 +813,21 @@ GUARD_CMD='! grep -q "xovi[.]so" MAPS 2>/dev/null'
 printf '7f00 r-xp /home/root/xovi/xovi.so\n' > "$R/maps-active"; printf '7f00 r-xp /usr/lib/libc.so\n' > "$R/maps-plain"
 check "xovi-reenable 守卫：已生效→跳过" bash -c "${GUARD_CMD//MAPS/$R/maps-active}; [ \$? -ne 0 ]"
 check "xovi-reenable 守卫：未生效→执行" bash -c "${GUARD_CMD//MAPS/$R/maps-plain}"
+
+# 10) 开机顺序（2026-09-24）：常驻服务不拉 network-online.target（否则开机专门为它们跑 NetworkManager-wait-online，
+#     没 WiFi 时等到超时）；都排在 xovi-reenable 之后（xochitl 先带 xovi 起来）；xovi-reenable 必须有启动超时上限
+#     （否则它卡住所有服务跟着永远等）；fc-cache 在 font-serve 不在网关。
+SVC_UNITS="gateway/systemd/gateway.service shelf/systemd/book-serve.service shelf/systemd/koreader-serve.service enhance/font-serve/font-serve.service enhance/wallpaper-serve/wallpaper-serve.service notes/systemd/ink-serve.service notes/systemd/mind-serve.service notes/systemd/note-serve.service notes/systemd/transcribe-serve.service"
+viol=""; for u in $SVC_UNITS; do grep -v '^#' "$u" | grep -q 'network-online' && viol="$viol $u"; done
+check "常驻服务单元不依赖 network-online.target" test -z "$viol"
+[ -z "$viol" ] || echo "       仍依赖：$viol"
+viol=""; for u in $SVC_UNITS; do grep -q '^After=.*xovi-reenable[.]service' "$u" || viol="$viol $u"; done
+check "常驻服务单元都 After=xovi-reenable.service" test -z "$viol"
+[ -z "$viol" ] || echo "       缺：$viol"
+viol=""; for u in $SVC_UNITS; do grep -qE '^(Requires|Wants|BindsTo|Requisite)=.*xochitl' "$u" && viol="$viol $u"; grep -q '^Before=.*xochitl' "$u" && viol="$viol $u"; done
+check "常驻服务单元不给 xochitl 加任何依赖/前置（红线）" test -z "$viol"
+check "xovi-reenable.service 有启动超时上限（TimeoutStartSec）" grep -q '^TimeoutStartSec=[0-9]' packaging/xovi-reenable.service
+check "fc-cache 在 font-serve、不在网关" bash -c "grep -q '^ExecStartPre=.*fc-cache' enhance/font-serve/font-serve.service && ! grep -q 'fc-cache' gateway/systemd/gateway.service"
 check "xovi-reenable 守卫：xochitl 不在跑（maps 不存在）→执行" bash -c "${GUARD_CMD//MAPS/$R/nonexistent}"
 
 # 守卫：真实 HOME 下不该出现任何测试产物

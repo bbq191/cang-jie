@@ -14,7 +14,7 @@ xochitl 有一个隐藏配置键 `xochitl.conf` → `[General] SleepScreenPath=<
 |---|---|
 | 写配置键 | **只写一次**：激活第一张壁纸时 `native.rs` 自动写，或手动 `wallpaper-serve enable` |
 | 换图 | 永远是**原地覆盖 `current.png`**（保持同一个文件） |
-| 轮换 | inotify 监听壁纸目录的 `IN_CLOSE_NOWRITE`：xochitl 每次进休眠都读一遍 `current.png`（2026-09-24 真机观察：读完约 120 ms 后它才写 `Normal to DeepSleep`），读完就换下一张，10 秒内重复读只算一次。空闲时零唤醒，每次休眠醒一次。本服务自己写 `current.png` 是 `IN_CLOSE_WRITE`、池图在子目录，都不会触发。池里只有一张且 `current.png` 已是它时不重写文件。**以上 09-24 改动未上真机**。09-24 前是跟 `journalctl -f -u xochitl` 找 `DeepSleep to Normal`（唤醒时轮换），代价是 xochitl 每写一行日志都醒一次。不用 systemd-sleep 钩子：充电时按电源键内核不 suspend，钩子不可靠（2026-09-03 真机） |
+| 轮换 | inotify 监听壁纸目录的 `IN_CLOSE_NOWRITE`：xochitl 每次进休眠都读一遍 `current.png`（2026-09-24 真机观察：读完约 120 ms 后它才写 `Normal to DeepSleep`），读完就换下一张，10 秒内重复读只算一次。空闲时零唤醒，每次休眠醒一次。本服务自己写 `current.png` 是 `IN_CLOSE_WRITE`、池图在子目录，都不会触发。池里只有一张且 `current.png` 已是它时不重写文件。09-24 真机验证：休眠那一刻即轮换、只轮换一次（充电状态下还没试）。09-24 前是跟 `journalctl -f -u xochitl` 找 `DeepSleep to Normal`（唤醒时轮换），代价是 xochitl 每写一行日志都醒一次。不用 systemd-sleep 钩子：充电时按电源键内核不 suspend，钩子不可靠（2026-09-03 真机） |
 | 入池 | 缩放到 954×1696；源图先只读文件头，超过 1600 万像素或长宽比极端的直接拒收，避免解码吃光内存 |
 | 卸载 | `wallpaper-serve disable` 删掉配置键，恢复原生休眠屏 |
 
