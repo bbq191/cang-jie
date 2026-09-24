@@ -80,7 +80,7 @@ impl MkdirQueue {
             return Ok(0); // 已经存在，不用建
         }
         let n = self.q.add(|p| p.name == name, || Pending { name: name.to_string(), at: rmsvc_core::clock::now_secs() })?;
-        *self.gen.lock().unwrap_or_else(|e| e.into_inner()) += 1;
+        *rmsvc_core::sync::lock(&self.gen) += 1;
         self.wake.notify_all();
         Ok(n)
     }
@@ -91,7 +91,7 @@ impl MkdirQueue {
     pub fn pending(&self) -> Result<(Vec<String>, usize), String> {
         let (kept, pruned) = self.q.prune(|p| find_folder_by_name(&self.lib_dir, &p.name).is_none())?;
         let now = Instant::now();
-        let mut handed = self.handed.lock().unwrap_or_else(|e| e.into_inner());
+        let mut handed = rmsvc_core::sync::lock(&self.handed);
         handed.retain(|n, at| now.duration_since(*at) < self.handout_quiet && kept.iter().any(|p| &p.name == n));
         let mut out = Vec::new();
         for p in kept {
@@ -111,14 +111,14 @@ impl MkdirQueue {
         let mut total_pruned = 0;
         loop {
             // 先取代数再查队列：查完到睡下之间若有入队，代数已变，wait_timeout_while 不会睡过头。
-            let seen = *self.gen.lock().unwrap_or_else(|e| e.into_inner());
+            let seen = *rmsvc_core::sync::lock(&self.gen);
             let (names, pruned) = self.pending()?;
             total_pruned += pruned;
             let now = Instant::now();
             if !names.is_empty() || now >= deadline {
                 return Ok((names, total_pruned));
             }
-            let g = self.gen.lock().unwrap_or_else(|e| e.into_inner());
+            let g = rmsvc_core::sync::lock(&self.gen);
             let _ = self.wake.wait_timeout_while(g, deadline - now, |cur| *cur == seen).unwrap_or_else(|e| e.into_inner());
         }
     }

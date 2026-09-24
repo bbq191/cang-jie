@@ -44,7 +44,7 @@ impl ReadingDirection {
         let path = self.lib.join(format!("{uuid}.epub"));
         let Ok(md) = std::fs::metadata(&path) else { return Ok(false) };
         let key = (md.len(), md.modified().ok());
-        let mut cache = self.cache.lock().unwrap_or_else(|e| e.into_inner());
+        let mut cache = rmsvc_core::sync::lock(&self.cache);
         if let Some(&(len, mtime, rtl)) = cache.get(uuid) {
             if (len, mtime) == key {
                 return Ok(rtl);

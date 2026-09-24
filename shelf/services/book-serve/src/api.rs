@@ -169,7 +169,8 @@ fn staging_upload(st: &State, r: &mut Request<'_>) -> ApiResult {
         (Some(name), Some(bytes)) => Some(crate::sidecar::SourceRef { name: name.to_string(), bytes }),
         _ => None,
     };
-    let _g = st.spool.guard();
+    // 不持 spool 锁：暂存名是随机的 `.<uuid>.book.part`，与 inbox 追平互不相干；真正会撞的"挑名 + 落地"
+    // 由 `Staging` 内部的落名临界区串行化（见 `staging::Staging` 的 `land` 字段）。
     let items = AssetUploadFlow::in_dir(st.spool.work()).run(&StagingStore(&st.staging), &mut *r.body, &boundary).map_err(ApiError::bad)?;
     if let Some(src) = &source {
         // 一次 staging_upload 请求实际上永远只有一个文件部分（CLI/网页都逐文件各发一个 POST），
@@ -331,6 +332,48 @@ mod tests {
         assert_eq!(call(&router, Method::Get, "/inbox", "").0, 404);
         assert_eq!(call(&router, Method::Get, "/staging/optimize", "").0, 405);
         assert_eq!(call(&router, Method::Get, "/nope", "").0, 404);
+    }
+
+    /// 回归：网页上传收请求体期间（WiFi 上传大书可达分钟级）不再攥着 spool 锁——inbox 追平照常进行，
+    /// 上传收完也照常入库。请求体用一个"等放行信号才吐数据"的 Reader 模拟慢客户端。
+    #[test]
+    fn slow_upload_does_not_block_inbox_processing() {
+        struct Gate(std::sync::mpsc::Receiver<Vec<u8>>, Vec<u8>);
+        impl std::io::Read for Gate {
+            fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+                if self.1.is_empty() {
+                    match self.0.recv() {
+                        Ok(b) => self.1 = b,
+                        Err(_) => return Ok(0),
+                    }
+                }
+                let n = self.1.len().min(out.len());
+                out[..n].copy_from_slice(&self.1[..n]);
+                self.1.drain(..n);
+                Ok(n)
+            }
+        }
+        let t = tempfile::tempdir().unwrap();
+        let st = state(&t);
+        let router = router(st.clone());
+        let (tx, rx) = std::sync::mpsc::channel::<Vec<u8>>();
+        let up = std::thread::spawn(move || {
+            let mut body = Gate(rx, Vec::new());
+            let mut r = Request { method: Method::Post, path: "/staging".into(), query: parse_query(""), params: HashMap::new(), content_type: "multipart/form-data; boundary=B".into(), content_length: None, headers: vec![], body: &mut body };
+            router.dispatch(&mut r).status
+        });
+        tx.send(b"--B\r\nContent-Disposition: form-data; name=\"file\"; filename=\"up.epub\"\r\n\r\nPK".to_vec()).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(100)); // 上传线程此刻卡在读请求体
+        std::fs::write(st.spool.inbox().join("scp.epub"), b"x").unwrap();
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let st2 = st.clone();
+        std::thread::spawn(move || done_tx.send(st2.process_inbox(None)).unwrap());
+        let out = done_rx.recv_timeout(std::time::Duration::from_secs(5)).expect("上传收体期间 inbox 追平不该被卡住");
+        assert!(out.iter().any(|o| o.ok && o.name == "scp.epub"));
+        tx.send(b"\r\n--B--\r\n".to_vec()).unwrap();
+        drop(tx);
+        assert_eq!(up.join().unwrap(), 200);
+        assert!(st.staging.has("up.epub") && st.staging.has("scp.epub"));
     }
 
     #[test]

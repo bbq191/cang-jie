@@ -133,6 +133,11 @@ pub struct Staging {
     probes: Arc<std::sync::Mutex<std::collections::HashMap<String, ProbeCache>>>,
     /// 漫画页边距待办（可选：测试里不装）。见 [`crate::comic_margins`]。
     comic_margins: Option<Arc<crate::comic_margins::ComicMargins>>,
+    /// 母版库"落名"临界区：挑一个不撞名的文件名（`unique_path` 先查存在）再 rename/写入，两步之间不能插进别的落名，
+    /// 否则两个同名书会挑到同一个名字、后到的把先到的覆盖掉。网页上传 / inbox 追平 / 抓网文 / 改名 / 恢复原 PDF
+    /// 都从这里过。只包"挑名 + 落地"这一小段本地文件操作——此前网页上传是把 spool 锁一直攥到整个 multipart
+    /// 请求体收完（WiFi 上传大书能到分钟级），期间别的上传和 inbox 追平全被卡住（2026-09-24 审计）。
+    land: Arc<std::sync::Mutex<()>>,
 }
 
 /// 上传模板适配：母版库作为 [`AssetStore`]——扩展名门＝书籍格式白名单，install＝同分区 rename 入库。
@@ -202,6 +207,7 @@ impl Staging {
             ops: OpRegistry::default(),
             probes: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
             comic_margins: None,
+            land: Arc::new(std::sync::Mutex::new(())),
         }
     }
     /// 接上漫画页边距待办队列（`State::new` 用）。
@@ -267,6 +273,11 @@ impl Staging {
     }
     pub fn ensure(&self) -> std::io::Result<()> {
         std::fs::create_dir_all(&self.dir)
+    }
+
+    /// 进入"落名"临界区（见 `land` 字段）。
+    pub(super) fn land_guard(&self) -> std::sync::MutexGuard<'_, ()> {
+        rmsvc_core::sync::lock(&self.land)
     }
 
     /// 母版库里某本书的路径（校验单段文件名）。

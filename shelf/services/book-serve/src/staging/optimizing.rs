@@ -94,6 +94,7 @@ impl Staging {
         })?;
         // 已有的长下载名在这里一并规范成 `书名 - N卷`；目标已存在（重复的同一卷）就保持原名，不覆盖。
         let canon = canonical_staged_name(name);
+        let land = self.land_guard();
         let shown = if canon != name && !self.dir.join(&canon).exists() && std::fs::rename(&p, self.dir.join(&canon)).is_ok() {
             let (old_car, new_car) = (sidecar::path_for(&p), sidecar::path_for(&self.dir.join(&canon)));
             if old_car.exists() {
@@ -103,6 +104,7 @@ impl Staging {
         } else {
             name.to_string()
         };
+        drop(land);
         Ok(format!("已优化《{shown}》{}", optimize_note(&rep)))
     }
 

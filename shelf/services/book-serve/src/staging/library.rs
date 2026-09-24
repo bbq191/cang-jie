@@ -164,11 +164,13 @@ impl Staging {
         if !self.try_start_busy(name) {
             return Err(busy_err(name, "再恢复"));
         }
+        let land = self.land_guard();
         let r = if dst.exists() {
             Err(format!("母版库里已有《{name}》，为免覆盖没有恢复；先删除或改名那一份"))
         } else {
             std::fs::rename(&src, &dst).map_err(|e| format!("恢复失败: {e}"))
         };
+        drop(land);
         self.end_busy(name);
         r
     }
@@ -201,6 +203,7 @@ impl Staging {
             return Err(busy_err(&new_name, "再改名"));
         }
         let r = (|| {
+            let _land = self.land_guard();
             if dst.exists() {
                 return Err(format!("母版库里已有《{new_name}》"));
             }
@@ -273,7 +276,7 @@ impl Staging {
             // 内嵌版本标记），误导前端以为它"未优化"、显示可以点「优化」，见 `StagingEntry::
             // pdf_source` 文档。
             let modified = md.modified().ok();
-            let cached = crate::ops::lock(&self.probes)
+            let cached = rmsvc_core::sync::lock(&self.probes)
                 .get(&name)
                 .filter(|c| c.len == md.len() && c.modified == modified)
                 .cloned();
@@ -281,7 +284,7 @@ impl Staging {
                 Some(c) => (c.level, c.pdf_source),
                 None => {
                     let (level, pdf_source) = probe_level(&e.path(), format);
-                    crate::ops::lock(&self.probes).insert(name.clone(), ProbeCache { len: md.len(), modified, level, pdf_source });
+                    rmsvc_core::sync::lock(&self.probes).insert(name.clone(), ProbeCache { len: md.len(), modified, level, pdf_source });
                     (level, pdf_source)
                 }
             };
@@ -304,7 +307,7 @@ impl Staging {
             out.push(StagingEntry { name, bytes: md.len(), format, optimized: level == "full", level, mtime, delivered, busy, pdf_source });
         }
         // 已被删除/改名的条目从缓存清掉，避免缓存无限增长
-        crate::ops::lock(&self.probes).retain(|k, _| seen.contains(k));
+        rmsvc_core::sync::lock(&self.probes).retain(|k, _| seen.contains(k));
         out.sort_by(|a, b| b.mtime.cmp(&a.mtime).then_with(|| a.name.cmp(&b.name)));
         out
     }

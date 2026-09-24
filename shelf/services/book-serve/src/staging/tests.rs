@@ -456,9 +456,9 @@ fn list_caches_level_probe_and_invalidates_on_rewrite_or_delete() {
     let plain = mini_epub(&[("OEBPS/a.xhtml", "<p>x</p>")]);
     s.stage_new("b.epub", &plain).unwrap();
     assert_eq!(s.list()[0].level, "none");
-    assert_eq!(crate::ops::lock(&s.probes).len(), 1, "首次列表写入缓存");
+    assert_eq!(rmsvc_core::sync::lock(&s.probes).len(), 1, "首次列表写入缓存");
     // 篡改缓存里的结论：若第二次列表仍用它，说明命中缓存没有重开文件
-    crate::ops::lock(&s.probes).get_mut("b.epub").unwrap().level = "full";
+    rmsvc_core::sync::lock(&s.probes).get_mut("b.epub").unwrap().level = "full";
     assert_eq!(s.list()[0].level, "full", "文件没变 → 命中缓存");
     // 文件改写（内容长度变了）→ 缓存失效重判
     let marked = mini_epub(&[("OEBPS/a.xhtml", "<p>x</p>"), (optimize::OPTIMIZE_MARKER, optimize::OPTIMIZE_VERSION)]);
@@ -468,7 +468,7 @@ fn list_caches_level_probe_and_invalidates_on_rewrite_or_delete() {
     assert_eq!(s.list()[0].level, "none", "改写回未优化 → 重判");
     std::fs::remove_file(s.dir.join("b.epub")).unwrap();
     assert!(s.list().is_empty());
-    assert!(crate::ops::lock(&s.probes).is_empty(), "条目消失 → 清缓存");
+    assert!(rmsvc_core::sync::lock(&s.probes).is_empty(), "条目消失 → 清缓存");
 }
 
 #[test]
@@ -948,4 +948,27 @@ fn open_for_download_returns_file_and_length() {
     f.read_to_end(&mut buf).unwrap();
     assert_eq!((buf.as_slice(), n), (&b"hello"[..], 5));
     assert!(s.open_for_download("nope.epub").is_err());
+}
+
+/// 回归：多条入库路径（网页上传 / inbox 追平 / 抓网文）同时落同名书，每一本都要落成独立文件、谁也不覆盖谁。
+/// 此前靠网页上传把 spool 锁攥到请求体收完来串行化（抓网文压根不拿锁）；现在"挑名 + 落地"由落名临界区保证。
+#[test]
+fn concurrent_landing_of_same_name_never_clobbers() {
+    let t = tempfile::tempdir().unwrap();
+    let s = Arc::new(staging(&t));
+    let src_dir = t.path().join("src");
+    std::fs::create_dir_all(&src_dir).unwrap();
+    let n = 16;
+    let hs: Vec<_> = (0..n)
+        .map(|i| {
+            let s = s.clone();
+            let src = src_dir.join(format!("{i}.part"));
+            std::fs::write(&src, format!("book-{i}")).unwrap();
+            std::thread::spawn(move || if i % 2 == 0 { s.stage_from_path("同名.pdf", &src).unwrap() } else { s.stage_new("同名.pdf", format!("book-{i}").as_bytes()).unwrap() })
+        })
+        .collect();
+    let names: std::collections::HashSet<String> = hs.into_iter().map(|h| h.join().unwrap()).collect();
+    assert_eq!(names.len(), n, "每次落地都拿到不同的名字");
+    let contents: std::collections::HashSet<Vec<u8>> = names.iter().map(|nm| std::fs::read(s.dir().join(nm)).unwrap()).collect();
+    assert_eq!(contents.len(), n, "没有任何一本被别的覆盖");
 }

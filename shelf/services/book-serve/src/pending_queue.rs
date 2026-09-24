@@ -41,7 +41,7 @@ impl<T: Clone + Serialize + DeserializeOwned> PendingQueue<T> {
     /// 保证"查重 + 写入"是一个原子操作，不会有两个并发请求都通过查重各插一条。返回入队后的队列长度
     /// （调用方常用它当"这是第几条"的粗略反馈，不代表新增了一条——已存在时也返回当前长度）。
     pub fn add(&self, exists: impl Fn(&T) -> bool, make: impl FnOnce() -> T) -> Result<usize, String> {
-        let _g = self.lock.lock().unwrap_or_else(|e| e.into_inner());
+        let _g = rmsvc_core::sync::lock(&self.lock);
         let mut items = self.load();
         if !items.iter().any(exists) {
             items.push(make());
@@ -53,7 +53,7 @@ impl<T: Clone + Serialize + DeserializeOwned> PendingQueue<T> {
     /// 剔除不再满足 `keep` 的记录（已经真实发生/消失，不用再等 QML 代理处理的那些），返回
     /// `(保留的记录, 剔除了几条)`。只有真剔除了才落盘，没变化不重写文件。
     pub fn prune(&self, keep: impl Fn(&T) -> bool) -> Result<(Vec<T>, usize), String> {
-        let _g = self.lock.lock().unwrap_or_else(|e| e.into_inner());
+        let _g = rmsvc_core::sync::lock(&self.lock);
         let items = self.load();
         let kept: Vec<T> = items.iter().filter(|p| keep(p)).cloned().collect();
         let pruned = items.len() - kept.len();
