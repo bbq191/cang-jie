@@ -236,7 +236,7 @@ These are known issues with specific triggers, not random faults. Numbers ①–
 
 - Start with the closing summary of `install-all.sh` to find the failing step; the header comment of the matching `packaging/deploy-*.sh` explains what the step does and common failures.
 - The web page's "Manage" section shows whether each plugin is actually loaded into xochitl ("loaded / not loaded"). A switch that is on but shows "not loaded" means the plugin isn't installed or xochitl hasn't been restarted yet.
-- To check the scripts without touching a device: `bash packaging/tests/run_sim_tests.sh` (local simulation, 208 checks). It is no substitute for testing on real hardware.
+- To check the scripts without touching a device: `bash packaging/tests/run_sim_tests.sh` (local simulation, 226 checks). It is no substitute for testing on real hardware.
 
 ### Backups and idempotence (short version)
 

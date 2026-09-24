@@ -187,12 +187,12 @@ xovi 持久化是**整个 xovi 层**通用的（重跑 `xovi/start` 会重注入
 ## 测试：不碰真机验证脚本
 
 ```sh
-bash packaging/tests/run_sim_tests.sh      # 现为 222 项断言（2026-09-24 审计后）；也由 packaging/tests/test_install_scripts_sim.py 的 pytest 调用
+bash packaging/tests/run_sim_tests.sh      # 现为 226 项断言（2026-09-24 审计后）；也由 packaging/tests/test_install_scripts_sim.py 的 pytest 调用
 ```
 
 做法：`tests/stubs/` 下放假的 `ssh`/`scp`/`systemctl`/`mount`/`dmsetup`/`id`/`sleep`/`curl`/`journalctl`/`rcc` 等塞进 `PATH`，用临时目录当"设备"；假 `ssh` 把远端命令直接在本机沙箱里执行，所以设备端脚本（`devlib.sh`、`shelf/install.sh`、各 heredoc 脚本）跑的是**真代码**，只是 rootfs/systemd/mount 被桩住并写日志，可断言"有没有 remount rw、最后一次 mount 是不是 ro、有没有跑 `xovi/start`"。
 
-覆盖：`devlib` 各函数（含待生效标记、备份去重）；shelf 安装的幂等 / 缺载荷不留半成品 / rw 窗口失败恢复 ro / 只重启有变化的服务 / verity 下已有单元照常重启；shelf 卸载与安装清单对称、verity 下保留二进制、`--dry-run`；`deploy.sh`（密码含特殊字符、`shelf-pkg` 换位、选项当首参、推送前核对二进制、密码文件兜底清理）；hl-snap 部署（原子落位、备份不进 `extensions.d`；xochitl 正映射旧版时放进待换入区、由 `cj_xochitl_apply` 在 stop 与 start 之间换入）；`xovi-apply`"无待生效改动不重启"与 `sidebar-entry` 的"xovi 已生效 → restart、绝不 `xovi/start`"判定；整轮 `install-all` → `uninstall-all` 对称；参数解析 / `--dry-run` / `-h` / 设备不可达 / 设备预检（磁盘空间）；`uninstall-all` 的载荷清理保守性与 wifi-watch 在 verity 下留脚本；`chrony-cn`/`timezone-cn`（路径覆盖；只测非 overlay 与 verity 路径，overlay 底层改写只能真机验证）；静态守卫（`remount,rw` / `xovi/start` 只许出现在库里）。**拒绝以 root 运行**（设 `CJ_SIM_ALLOW_ROOT=1` 才强行跑）。这些是本机模拟，**不能代替真机验证**。
+覆盖：`devlib` 各函数（含待生效标记、备份去重）；shelf 安装的幂等 / 缺载荷不留半成品 / rw 窗口失败恢复 ro / 只重启有变化的服务 / verity 下已有单元照常重启；shelf 卸载与安装清单对称、verity 下保留二进制、`--dry-run`；`deploy.sh`（密码含特殊字符、`shelf-pkg` 换位、选项当首参、推送前核对二进制、密码文件兜底清理）；hl-snap 部署（原子落位、备份不进 `extensions.d`；xochitl 正映射旧版时放进待换入区、由 `cj_xochitl_apply` 在 stop 与 start 之间换入）；`xovi-apply`"无待生效改动不重启"与 `sidebar-entry` 的"xovi 已生效 → restart、绝不 `xovi/start`"判定；整轮 `install-all` → `uninstall-all` 对称；参数解析 / `--dry-run` / `-h` / 设备不可达 / 设备预检（磁盘空间）；`uninstall-all` 的载荷清理保守性与 wifi-watch 在 verity 下留脚本；`chrony-cn`/`timezone-cn`（路径覆盖；只测非 overlay 与 verity 路径，overlay 底层改写只能真机验证）；静态守卫（`remount,rw` / `xovi/start` 只许出现在库里）；2026-09-24 审计新增：卸载连带撤掉待换入的 `.so`、设备重启后待换入区仍算待生效、单独部署无变化不重启、stop→换入→start 中途断连（SIGPIPE）仍会 start、前置条件不满足的跳过单列、`shelf_select`。**拒绝以 root 运行**（设 `CJ_SIM_ALLOW_ROOT=1` 才强行跑）。这些是本机模拟，**不能代替真机验证**。
 
 **CI 现状**：`.github/workflows/ci.yml` 会跑 shellcheck、上面这套模拟测试、各 Rust crate 的 `cargo test` 与交叉编译冒烟。但 GitHub Actions 从 2026-09-20 起因账户扣费失败，每次都在几秒内失败、**没有执行任何检查**（`gh run list` 可见）；这段时间的改动靠本地在干净 checkout 里跑同样的检查。CI 恢复前，别把"push 了没报错"当成"测过了"。
 
@@ -210,7 +210,7 @@ bash packaging/tests/run_sim_tests.sh      # 现为 222 项断言（2026-09-24 �
 
 ## 已知限制（别当成已经解决）
 
-- **只在本机模拟验证、没在真机走过的分支**：卸载全流程（逆序 + 载荷目录清理 + verity 保留分支）；`xovi-apply`"无待生效改动就不重启"；`--force-apply`/`--force`；`cj_backup_if_differs` 的"内容没变不备份"；`deploy.sh` 的推送前核对与密码文件兜底清理；2026-09-24 的 `.so` 待换入区（stop → 换入 → start）。首次安装这条主路径在真机跑过，见「验证现状」。
+- **只在本机模拟验证、没在真机走过的分支**：卸载全流程（逆序 + 载荷目录清理 + verity 保留分支 + 撤掉待换入 `.so`）；单独部署"没变化不重启"；stop→换入→start 关键区忽略 HUP/PIPE/INT/TERM（2026-09-24）；`xovi-apply`"无待生效改动就不重启"；`--force-apply`/`--force`；`cj_backup_if_differs` 的"内容没变不备份"；`deploy.sh` 的推送前核对与密码文件兜底清理；2026-09-24 的 `.so` 待换入区（stop → 换入 → start）。首次安装这条主路径在真机跑过，见「验证现状」。
 - **`xovi-reenable.service` 防护（2026-09-22）**：单元带 `ExecCondition=/bin/sh -c '! grep -q "xovi[.]so" /proc/<xochitl MainPID>/maps'`——xochitl 已映射 `xovi.so` 就跳过（systemd 把 ExecCondition 非 0 视为"跳过"而非"失败"），不再对已生效的 xochitl 跑 `xovi/start`（那会让它 SEGV → 整机重启）。三种情形（已生效/未生效/xochitl 不在跑）有本机模拟测试；新版单元已部署到设备（2026-09-24 只读核对：设备上的单元与仓库一致）。"xovi 已生效时手动重跑它会被跳过"这一行为本身没有在真机上专门触发过。
 - **`/usr` 下单元的写入仍靠"dm-verity 门 + 带 trap 的 rw 窗口"**，不是彻底不碰 `/usr`；同样只在模拟里测过，历史上写 `/usr` 触发过 A/B 回滚变砖（2026-08-16）。
 - **`shelf/install.sh --password 明文` 直接在设备上跑时密码短暂出现在设备 `ps`**（`deploy.sh` 走 0600 临时文件 + `--password-file` 不受影响）。

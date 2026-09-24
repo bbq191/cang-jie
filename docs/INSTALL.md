@@ -234,7 +234,7 @@ sh uninstall-all.sh 10.11.99.1 --purge            # 另外删掉电池刺客的�
 
 - 先看 `install-all.sh` 的收尾汇总，定位哪一步失败；对应 `packaging/deploy-*.sh` 的开头注释写了这一步做什么、常见失败原因。
 - 网页「管理」页能直接看到插件是否真的加载进了 xochitl（"已加载 / 未加载"）。开关开着但显示"未加载"，说明插件没装上或还没重启 xochitl。
-- 不碰真机就想确认脚本没被改坏：`bash packaging/tests/run_sim_tests.sh`（本机模拟，208 项）。它代替不了真机验证。
+- 不碰真机就想确认脚本没被改坏：`bash packaging/tests/run_sim_tests.sh`（本机模拟，226 项）。它代替不了真机验证。
 
 ### 备份与幂等（一句话版）
 
