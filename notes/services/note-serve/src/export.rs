@@ -24,8 +24,10 @@ pub fn content_disposition(filename: &str) -> String {
 
 /// 文件名不能带路径分隔符（书名/章名理论上可能带用户手滑打进去的 `/`）——替换成 `_`，不做更复杂的
 /// 转义（其余字符 xochitl 书名场景本来就不会出现更奇怪的控制字符）。
+/// 整段是空串/`.`/`..`（书名被改成这种样子）时换成 `_`：否则 `vault/..` 会把整本书写到 vault 目录之外。
 fn sanitize(name: &str) -> String {
-    name.chars().map(|c| if c == '/' || c == '\\' { '_' } else { c }).collect()
+    let s: String = name.chars().map(|c| if c == '/' || c == '\\' { '_' } else { c }).collect();
+    if s.is_empty() || s == "." || s == ".." { "_".to_string() } else { s }
 }
 
 pub fn vault_dir(data_dir: &Path, book_title: &str) -> PathBuf {
@@ -267,6 +269,9 @@ mod tests {
         export_book(tmp.path(), &b, &st).unwrap();
         assert!(vault_dir(tmp.path(), "带/斜杠的书名").is_dir());
         assert_eq!(vault_dir(tmp.path(), "带/斜杠的书名").file_name().unwrap(), "带_斜杠的书名");
+        for bad in ["..", ".", ""] {
+            assert_eq!(vault_dir(tmp.path(), bad), tmp.path().join("vault/_"), "{bad:?} 不能落到 vault 之外/vault 本身");
+        }
     }
 
     #[test]

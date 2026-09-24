@@ -52,9 +52,15 @@ struct State {
     notebooks: NotebookState,
     exports: ExportState,
     bus: Arc<EventBus>,
+    /// 生成/导入/导出串行化：同一章两次「推送本章」并发（双击、两个浏览器页）时，两边都看到指纹变了、各传一份，
+    /// 再按同一个 visibleName 认领到同一个 uuid——另一份成了追踪不到的孤儿笔记本；导入撞名去重同理（2026-09-24）。
+    publish_lock: std::sync::Mutex<()>,
 }
 
 impl State {
+    fn publishing(&self) -> std::sync::MutexGuard<'_, ()> {
+        self.publish_lock.lock().unwrap_or_else(|e| e.into_inner())
+    }
     fn ctx(&self, now_ms: u64) -> Ctx<'_> {
         Ctx { store: self.store.as_ref(), uploader: self.uploader.as_ref(), trash: self.trash.as_ref(), state: &self.notebooks, now_ms }
     }
@@ -70,13 +76,15 @@ fn chapter_idx(r: &Request<'_>) -> Result<usize, ApiError> {
 /// （俩指纹都是 `None`），但网页得知道是"没什么要同步的"还是"已经同步过"，两种意思不一样，靠这个字段区分
 /// （前端据此决定要不要显示对应的 📓/🔗 徽章）。
 fn sync_status(book: &notecore::model::Book, notebooks: &NotebookState, exports: &ExportState) -> Vec<serde_json::Value> {
+    // 两份记录各读一次整本（此前逐章 `get`，每章各读+解析一遍文件，40 章的书一次刷新就是 80 遍）。
+    let (nb_all, ob_all) = (notebooks.list(&book.uuid), exports.list(&book.uuid));
     (0..book.chapters.len())
         .map(|idx| {
             let nb_fp = notecore::project::fingerprint_chapter(book, idx);
-            let nb_rec = notebooks.get(&book.uuid, idx);
+            let nb_rec = nb_all.get(&idx);
             let nb_synced = nb_fp.as_deref() == nb_rec.as_ref().map(|r| r.fingerprint.as_str());
             let ob_fp = notecore::export::fingerprint_chapter(book, idx);
-            let ob_rec = exports.get(&book.uuid, idx);
+            let ob_rec = ob_all.get(&idx);
             let ob_synced = ob_fp.as_deref() == ob_rec.as_ref().map(|r| r.fingerprint.as_str());
             serde_json::json!({
                 "chapter": idx,
@@ -116,6 +124,7 @@ fn main() {
         cfg,
         paths: paths.clone(),
         bus: Arc::new(EventBus::new()),
+        publish_lock: std::sync::Mutex::new(()),
     });
     let router = Router::new()
         .get("/events", bind(&st, |s, _| Ok(s.bus.sse_reply())))
@@ -137,6 +146,7 @@ fn main() {
         }))
         .post("/books/{uuid}/generate", bind(&st, |s, r| {
             let uuid = r.param("uuid").to_string();
+            let _g = s.publishing();
             let results = generate_book(&s.ctx(rmsvc_core::clock::now_ms()), &uuid).map_err(ApiError::bad)?;
             s.bus.publish("notes", "notebooks");
             results_reply(&results)
@@ -144,6 +154,7 @@ fn main() {
         .post("/books/{uuid}/chapters/{idx}/generate", bind(&st, |s, r| {
             let uuid = r.param("uuid").to_string();
             let idx = chapter_idx(r)?;
+            let _g = s.publishing();
             let book = s.store.book(&uuid).map_err(ApiError::bad)?;
             let result = generate_chapter(&s.ctx(rmsvc_core::clock::now_ms()), &book, idx);
             s.bus.publish("notes", "notebooks");
@@ -156,10 +167,12 @@ fn main() {
             let j = r.json()?;
             let title = j.str("title")?.to_string();
             let markdown = j.str("markdown")?.to_string();
+            let _g = s.publishing();
             let (visible_name, doc_uuid) = publish::import_markdown(&s.ctx(rmsvc_core::clock::now_ms()), &uuid, &title, &markdown).map_err(ApiError::bad)?;
             Ok(Reply::ok(&serde_json::json!({"ok": true, "uuid": doc_uuid, "visibleName": visible_name})))
         }))
         .post("/books/{uuid}/export", bind(&st, |s, r| {
+            let _g = s.publishing();
             let book = s.store.book(r.param("uuid")).map_err(ApiError::bad)?;
             let outcomes = export::export_book(&s.paths.app_data_dir(APP), &book, &s.exports).map_err(ApiError::internal)?;
             let files = outcomes.iter().filter(|o| o.has_content()).count();
@@ -167,6 +180,7 @@ fn main() {
         }))
         .post("/books/{uuid}/chapters/{idx}/export", bind(&st, |s, r| {
             let idx = chapter_idx(r)?;
+            let _g = s.publishing();
             let book = s.store.book(r.param("uuid")).map_err(ApiError::bad)?;
             if book.chapters.get(idx).is_none() {
                 return Err(ApiError::bad("没有这一章"));
