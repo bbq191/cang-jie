@@ -86,12 +86,15 @@ fn watch_ink(st: Arc<State>) {
     });
 }
 
-/// 工作线程：收到踢 → 防抖 → 跑一轮。
+/// 工作线程：收到踢 → 防抖 → 跑一轮。一轮里 panic 兜住只丢这一轮：不兜的话工作线程就此退出，
+/// 之后自动转写再也不跑，而 HTTP 照常应答、看不出异常（`kick` 只会在下一次踢时打一句"工作线程没了"）。
 fn work_loop(st: Arc<State>, rx: Receiver<()>) {
     while rx.recv().is_ok() {
         std::thread::sleep(DEBOUNCE);
         while rx.try_recv().is_ok() {}
-        st.run(None);
+        if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| st.run(None))).is_err() {
+            eprintln!("[transcribe-serve] 一轮转写 panic（已兜住，下次再踢照常跑）");
+        }
     }
 }
 
