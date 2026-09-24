@@ -26,7 +26,7 @@ sh uninstall-all.sh <host> --skip shelf # 跳过指定步骤，用法同 --skip
 ```
 
 全部参数与环境变量见下文「参数与环境变量」；所有脚本 `-h` 可看用法，未知选项一律退出码 2 且不连设备。
-> ⚠ 真机验证范围见文末「验证现状」：2026-09-22 合并后整轮 `install-all.sh` 在真机跑过一次；卸载全流程、"无改动不重启"、2026-09-24 的 `.so` 换入顺序仍只有本机模拟。
+> ⚠ 真机验证范围见文末「验证现状」：2026-09-22 合并后整轮 `install-all.sh` 在真机跑过一次；卸载全流程、"无改动不重启"、2026-09-24 的 `.so` 换入顺序，以及 2026-09-24 审计的全部脚本改动（四栏汇总、单独部署不重启、关键区忽略信号等）仍只有本机模拟。
 
 ## 前置条件（需手动，本脚本不代装）
 
@@ -46,18 +46,29 @@ sh uninstall-all.sh <host> --skip shelf # 跳过指定步骤，用法同 --skip
 | 顺序 | 步骤名 | 脚本 | 装什么 | 前置 |
 |---|---|---|---|---|
 | 1 | `chrony-cn` | `deploy-chrony-cn.sh` | 国内 NTP（chrony 服务器换成阿里云/腾讯云等） | 无，跟 xovi/vellum 无关 |
-| 2 | `chrony-boot-wakelock` | `deploy-chrony-boot-wakelock.sh` | 开机头一小段持一把 wakelock，防自动休眠打断 chronyd 首次校时（根因见「验证现状」） | 无；设备缺 `/sys/power/wake_lock` 时优雅跳过 |
-| 3 | `timezone-cn` | `deploy-timezone-cn.sh` | 默认时区设为 Asia/Shanghai | 无；缺 `/usr/share/zoneinfo/Asia/Shanghai` 时优雅跳过 |
+| 2 | `chrony-boot-wakelock` | `deploy-chrony-boot-wakelock.sh` | 开机头一小段持一把 wakelock，防自动休眠打断 chronyd 首次校时（根因见「验证现状」） | 无；设备缺 `/sys/power/wake_lock` 时单元照装，开机时由 `ConditionPathExists` 跳过 |
+| 3 | `timezone-cn` | `deploy-timezone-cn.sh` | 默认时区设为 Asia/Shanghai | 无；缺 `/usr/share/zoneinfo/Asia/Shanghai` 时警告后退出 0（汇总里仍记"已安装"） |
 | 4 | `battop` | `deploy-battop.sh` | 电池刺客（纯 Rust systemd 常驻采样服务）；装完 start，**有意不开机自启** | 无 |
 | 5 | `wifi-watch` | `deploy-wifi-watch.sh` | WiFi 载波假死看护（`wifi-watch/`：脚本 → `~/.local/bin`，单元 → `/usr`）；链路正常时只读 sysfs carrier、零 fork | 无 |
 | 6 | `xovi-persist` | `deploy-xovi-persist.sh` | xovi 开机持久化恢复链（`xovi-reenable.service`） | 设备已 `vellum add xovi` |
 | 7 | `hl-snap` | `deploy-hl-snap.sh` | 荧光笔 CJK 精确吸附（独立最小 xovi 扩展），只落盘 | 同上 |
 | 8 | `handwriting-stroke` | `deploy-handwriting-stroke.sh` | CJK 手写笔迹渲染优化（独立最小 xovi 扩展），只落盘 | 同上 |
 | 9 | `sidebar-entry` | `deploy-sidebar-entry.sh` | 侧栏一级直达「KOReader」入口（装了 WeRead 自动带上「WeRead」项），只落盘 | 已装 qt-resource-rebuilder 与 appload（且 appload 探测健康）；任一不满足自动跳过 |
-| 10 | `shelf` | `deploy.sh` | 网关 + book/koreader/font/wallpaper 四个领域服务 + 笔记线（ink/transcribe/mind/note） | 无（qmd 依赖 qt-resource-rebuilder，缺了自动跳过，只落盘） |
-| 11 | `xovi-apply` | `deploy-xovi-apply.sh` | 统一让上面落盘的扩展/qmd 生效：**有待生效标记（或 xovi 未生效）才**重启 xochitl 一次 + 健康检查；`--force` 无条件重启 | 同 6/7/8/9 |
+| 10 | `shelf` | `deploy.sh` | 网关 + book/koreader/font/wallpaper 四个领域服务 + 笔记线（ink/transcribe/mind/note）；随 font/book 带的 qmd（字体菜单、回收站代理、建文件夹代理、漫画页边距、单击翻页）只落盘 | 无。qmd 需要 qt-resource-rebuilder：缺了只在这一步内部打印一行"跳过 qmd"，服务照装，汇总里这一步仍记"已安装" |
+| 11 | `xovi-apply` | `deploy-xovi-apply.sh` | 统一让上面落盘的扩展/qmd 生效：**有待生效标记（含待换入的 `.so`）或 xovi 未生效才**重启 xochitl 一次 + 健康检查；`--force` 无条件重启 | 同 6/7/8/9 |
 
-11 个脚本都可以单独跑（`sh deploy-battop.sh <host>` 等），不依赖 `install-all.sh`——它只是把它们串起来 + 加装前检查 + 汇总结果。任何一步失败：打印是哪一步、原始错误，**不自动重试、不静默跳过**，退出非零。汇总分「已安装 / 已跳过（--skip）/ 已跳过（前置条件不满足）/ 失败」四栏：步骤自己判定前置条件不满足时（如 `sidebar-entry` 没装 appload、dm-verity 下 `/usr` 单元从没装过）调 `lib.sh` 的 `step_skipped`，照常退出 0，但在 `run_step` 编排下记进第三栏并写明原因，不混进「已安装」（2026-09-24）。
+11 个脚本都可以单独跑（`sh deploy-battop.sh <host>` 等），不依赖 `install-all.sh`——它只是把它们串起来 + 加装前检查 + 汇总结果。任何一步失败：打印是哪一步、原始错误，**不自动重试、不静默跳过**，退出非零。
+
+**收尾汇总分四栏**（2026-09-24 起；此前三栏，"前置条件不满足"混在"已安装"里容易漏看）：
+
+| 栏 | 什么时候进这一栏 |
+|---|---|
+| 已安装 | 步骤脚本退出 0，且没调 `step_skipped` |
+| 已跳过（--skip） | 命令行 `--skip` 点名的步骤，根本没跑 |
+| 已跳过（前置条件不满足，非失败） | 步骤脚本调了 `lib.sh` 的 `step_skipped "<原因>"` 后退出 0；汇总里每步一行并写明原因。目前只有两处会调：`sidebar-entry`（没装 qt-resource-rebuilder / 没装 appload / 本次开机日志里没有 appload 挂载成功的信号）和 `deploy-usr-unit.sh`（dm-verity 激活且这个 `/usr` 单元**从没装过**，即 `chrony-boot-wakelock` / `xovi-persist` / `wifi-watch` 三步） |
+| 失败 | 步骤脚本退出非 0 |
+
+`step_skipped` 靠 `run_step` 导出的 `CJ_STEP_SKIP_FILE` 把原因写回编排方；单独跑某个脚本时它只打印一行"……——跳过，非失败"。**其余"步骤内部跳过一部分"的情况仍记"已安装"**：`shelf` 没装 qt-resource-rebuilder 时只跳过 qmd、`timezone-cn` 缺 zoneinfo、`xovi-apply` 设备没装 xovi 也没有待生效改动——看汇总之外，还要看这些步骤自己打印的那一行。
 
 ### 装前检查（非 `--dry-run` 时，任何一项不过就一个步骤都不执行）
 
@@ -69,14 +80,17 @@ sh uninstall-all.sh <host> --skip shelf # 跳过指定步骤，用法同 --skip
 
 ### 为什么 hl-snap / handwriting-stroke / sidebar-entry 只落盘、最后统一重启
 
-xovi 没有"只重载一个扩展"的机制，让新扩展/qmd 生效的唯一办法是重启 xochitl。每步各自重启的话，短时间多次重启会撞 xochitl 自带的 watchdog + StartLimit——真机验证过连续两次就触发一次意外整机重启（2026-09-11）。所以 `install-all.sh` 给这三步传 `DEFER_XOVI_START=1`（设备端 `install.sh --no-restart`）让它们只落盘，`shelf` 的 qmd 本来就只落盘，全部落盘完由 `xovi-apply` 统一重启一次。单独跑这几个脚本（不设这个变量）：落盘后立即重启并做健康检查；但本步内容没变、也没有别的待生效改动、xovi 已生效时不重启（2026-09-24，判据同下文 `cj_apply_needed`）。
+xovi 没有"只重载一个扩展"的机制，让新扩展/qmd 生效的唯一办法是重启 xochitl。每步各自重启的话，短时间多次重启会撞 xochitl 自带的 watchdog + StartLimit——真机验证过连续两次就触发一次意外整机重启（2026-09-11）。所以 `install-all.sh` 给这三步传 `DEFER_XOVI_START=1`（设备端 `install.sh --no-restart`）让它们只落盘，`shelf` 的 qmd 本来就只落盘，全部落盘完由 `xovi-apply` 统一重启一次。单独跑这几个脚本（不设这个变量）：落盘后立即重启并做健康检查；但**没东西要生效时不重启**（2026-09-24）——`sidebar-entry` 看 `cj_apply_needed`（见下节）；`hl-snap`/`handwriting-stroke` 在此之外还要求本扩展 `.so` 没变且已在运行中的 xochitl 里加载（`maps` 里找得到），否则照样重启。
 
 ### 待生效标记：重复运行不再每次重启 xochitl（2026-09-22）
 
 旧版 `xovi-apply` 每次都重启，重跑 `install-all.sh` 必闪屏。现在靠**待生效标记**：
 
-- **记**：`hl-snap` / `handwriting-stroke`（`xovi-ext-install.sh`，两种模式都记）、`sidebar-entry`（`deploy-sidebar-entry.sh`）、`shelf` 的 qmd（`shelf/install.sh`，标记名 `shelf-qmd`）在**真的写入了与设备上不同的内容**时调 `cj_pending_mark <名字>`，在 `/run/cangjie-pending-apply/<名字>` 建一个空文件。`/run` 是 tmpfs，设备重启即清（重启后一切本来就是新载入的）；`/run` 写不了时退到 `~/.cangjie-stage/pending-apply/`——宁可多重启也不漏。目录可用 `CJ_PENDING_DIR` 覆盖。
-- **判**：`deploy-xovi-apply.sh` 先 `cj_pending_list`（**待换入区里的 `.so` 也算**：标记在 `/run` 重启即清、待换入区在 `/home` 不清，2026-09-24 前"放进待换入区后设备重启过"会被误判无需重启，新版永远换不进去）。判据是 `devlib.sh` 的 `cj_apply_needed`，单独跑的 `hl-snap`/`handwriting-stroke`/`sidebar-entry` 也用它。没有 `--force` 时——xovi 已生效 **且** 无标记 → 不重启直接结束；无标记、xovi 未生效、且没有 `xovi/start`（设备根本没装 xovi）→ 跳过；其余（有标记，或 xovi 未生效）→ 走下面的 `cj_xochitl_apply`。
+- **记**：`hl-snap` / `handwriting-stroke`（`xovi-ext-install.sh`，`--no-restart` 与单独跑两种模式都记——单独跑时重启失败，标记留着，之后 `deploy-xovi-apply.sh` 还能补上）、`sidebar-entry`（`deploy-sidebar-entry.sh`）、`shelf` 的 qmd（`shelf/install.sh`，标记名 `shelf-qmd`）在**真的写入了与设备上不同的内容**时调 `cj_pending_mark <名字>`，在 `/run/cangjie-pending-apply/<名字>` 建一个空文件。`/run` 是 tmpfs，设备重启即清（重启后一切本来就是新载入的）；`/run` 写不了时退到 `~/.cangjie-stage/pending-apply/`——宁可多重启也不漏。目录可用 `CJ_PENDING_DIR` 覆盖。
+- **判**：`devlib.sh` 的 `cj_apply_needed` = "`cj_pending_list` 非空，或 xovi 还没在 xochitl 里生效"。`cj_pending_list` 除了标记，**还把待换入区 `~/.cangjie-stage/so-pending/` 里的每个 `.so` 列成 `so-pending:<文件名>`**——标记在 `/run` 重启即清、待换入区在 `/home` 不清，2026-09-24 之前"放进待换入区后设备重启过"会被误判无需重启，新版永远换不进去。`deploy-xovi-apply.sh` 与单独跑的 `hl-snap`/`handwriting-stroke`/`sidebar-entry` 共用这个判据。`deploy-xovi-apply.sh` 没有 `--force` 时：
+  - `cj_apply_needed` 为假（xovi 已生效且无标记）→ 不重启，直接结束；
+  - 无标记、xovi 未生效、且没有 `xovi/start`（设备根本没装 xovi）→ 跳过；
+  - 其余（有标记，或 xovi 未生效）→ 走下面的 `cj_xochitl_apply`。
 - **清**：`cj_xochitl_apply` 重启成功后 `cj_pending_clear`（只删目录里的常规文件再 `rmdir`）。
 - **`--force-apply`**（`install-all.sh`）/ **`--force`**（`deploy-xovi-apply.sh`）：无视标记强制重启。用 `--skip xovi-apply` 跳过时标记保留，之后单独 `sh deploy-xovi-apply.sh <host>` 即可补上。
 - `uninstall-all.sh` 摘掉扩展后**不清标记**（卸载的东西也要等 xochitl 重启才停止生效）。
@@ -91,7 +105,15 @@ xovi 没有"只重载一个扩展"的机制，让新扩展/qmd 生效的唯一�
 
 因为 xovi 已生效时跑 `xovi/start` 会 umount 再重挂 xochitl 的 drop-in 目录，运行中的 xochitl 读文件失败 SEGV，系统按设计整机自动重启（2026-09-20 真机事故；旧版无条件 `xovi/start`，重跑 `install-all.sh` 必踩）。重启前先打印"将打断阅读"并留 `CJ_APPLY_GRACE` 秒（默认 5）宽限，不想被打断就 `--skip xovi-apply`。重启后核对 `is-active` / `MainPID` 是否变化 / `NRestarts` 不增 / 各扩展在 `maps` 里的段数。
 
-**扩展 `.so` 有变化时不再 restart，改成 stop → 换文件 → start（2026-09-24）**：换掉运行中 xochitl 已映射的扩展 `.so` 再 `systemctl restart xochitl`，旧进程退出时会 SEGV → `OnFailure=emergency.target` → 整机重启。2026-09-21（appload）、09-24（hw-stroke）两次真机复现，第二次用的已经是"先写暂存再 rename 换新 inode"，照样崩。现在 `xovi-ext-install.sh` 发现 xochitl 正映射着旧版时，把新版放进 `~/.cangjie-stage/so-pending/`（不在 `extensions.d`），由 `cj_xochitl_apply` 在 `systemctl stop xochitl` 之后、`start` 之前换入；`install-all` 的延后重启走同一条路。待换入区在 `/home`，设备中途重启也不丢，下次重启 xochitl 时照样换入。本机模拟测试覆盖了这条顺序；**真机上还没用"有变化的 .so"走过一遍**。
+**扩展 `.so` 有变化时不再 restart，改成 stop → 换文件 → start（2026-09-24）**：换掉运行中 xochitl 已映射的扩展 `.so` 再 `systemctl restart xochitl`，旧进程退出时会 SEGV → `OnFailure=emergency.target` → 整机重启。2026-09-21（appload）、09-24（hw-stroke）两次真机复现，第二次用的已经是"先写暂存再 rename 换新 inode"，照样崩。现在：
+
+- `xovi-ext-install.sh` 发现 xochitl 正映射着旧版时，把新版放进**待换入区** `~/.cangjie-stage/so-pending/`（不在 `extensions.d`；可用 `CJ_SO_PENDING_DIR` 覆盖），由 `cj_xochitl_apply` 在 `systemctl stop xochitl` 之后、`start` 之前换入；`install-all` 的延后重启走同一条路。同一个新版已经在待换入区（上一轮 `--no-restart` 放进去、还没重启）时不再重复备份和重放。
+- **stop 到 start 是关键区**：这段忽略 HUP/PIPE/INT/TERM。脚本经 ssh 跑，host 侧 Ctrl-C 或拔线后下一次输出会收到 SIGPIPE，不接住的话 shell 被杀，xochitl 就停在那里、屏幕没有界面，直到整机重启。
+- 待换入区在 `/home`，设备中途重启也不丢，重启后仍算"待生效"（见上节），下次重启 xochitl 时照样换入。
+- 卸载 `hl-snap`/`handwriting-stroke` 时一并撤掉待换入区里的同名版本（否则下次重启 xochitl 会把刚卸的扩展装回来）。
+- xovi 未生效（走 `xovi/start`）时 xochitl 没映射扩展，待换入的 `.so` 直接换入——但先确认 `xovi/start` 存在，不存在就报错、什么都不换。
+
+本机模拟测试覆盖了这些分支；**真机上还没用"有变化的 .so"走过一遍**。
 
 ![更新扩展 .so：先停、再换、再起](../docs/diagrams/so-swap-order.svg)
 
@@ -100,11 +122,11 @@ xovi 没有"只重载一个扩展"的机制，让新扩展/qmd 生效的唯一�
 | 文件 | 职责 |
 |---|---|
 | `install-all.sh` / `uninstall-all.sh` | 统一安装/卸载编排；步骤表来自 `lib.sh`，卸载对每个非"配置覆写/纯动作"步骤都必须有 `uninstall_<步骤名>` 函数（测试会核对），并按步骤表**逆序**执行 |
-| `lib.sh` | host 侧共用库：`rssh`/`rssh_in`/`rscp`（统一 `BatchMode` + `ConnectTimeout`，`CJ_SSH_TIMEOUT` 缺省 8 秒，设备休眠/断线时快速失败而不是卡死）、`shquote`（把任意字符串安全拼进远端命令行）、`dev_script`（把 `devlib.sh` + heredoc 脚本体经 `ssh sh -s` 送上设备执行）、`push_verified`（scp 到暂存路径后逐个 md5 对拍，不对就删暂存并失败，绝不落到最终位置）、步骤表 `STEP_ORDER`/`STEP_DEFER`/`STEP_CONFIG_ONLY`、`parse_step_args`（install/uninstall 共用的 `[host] --force --purge --force-apply --dry-run --skip -h` 解析，未知参数退出 2）、`host_arg`（薄 `deploy-*.sh` 共用的 `[host]` 解析）、`require_device`（ssh 连通检查）、固件安全门 `fw_gate`、设备预检 `preflight_device`、`run_step`（含 `--dry-run` 与已安装/已跳过/失败记账） |
-| `devlib.sh` | **设备侧**共用库（POSIX sh，兼容 busybox）：rootfs 读写窗口（remount rw 后无论成败/被信号打断都恢复 ro）、`cj_safe_replace` 原子替换（先写暂存再 rename，不在运行中进程已映射的 inode 上原地写）、备份与轮转、`/usr` 下单元的安装/删除（先过 dm-verity 门）、`cj_backup_if_differs`（内容没变不重复备份）、待生效标记 `cj_pending_mark`/`_list`/`_clear`、`cj_xochitl_apply`/`cj_xochitl_health` |
-| `deploy-usr-unit.sh` | 把一个 systemd 单元装进设备 `/usr` 的统一部署器；`deploy-chrony-boot-wakelock.sh` / `deploy-xovi-persist.sh` / `deploy-wifi-watch.sh` 是它的薄包装 |
+| `lib.sh` | host 侧共用库：`rssh`/`rssh_in`/`rscp`（统一 `BatchMode` + `ConnectTimeout`，`CJ_SSH_TIMEOUT` 缺省 8 秒，设备休眠/断线时快速失败而不是卡死）、`shquote`（把任意字符串安全拼进远端命令行）、`dev_script`（把 `devlib.sh` + heredoc 脚本体经 `ssh sh -s` 送上设备执行）、`push_verified`（scp 到暂存路径后逐个 md5 对拍，不对就删暂存并失败，绝不落到最终位置）、步骤表 `STEP_ORDER`/`STEP_DEFER`/`STEP_CONFIG_ONLY`、`parse_step_args`（install/uninstall 共用的 `[host] --force --purge --force-apply --dry-run --skip -h` 解析，未知参数退出 2）、`host_arg`（薄 `deploy-*.sh` 共用的 `[host]` 解析）、`require_device`（ssh 连通检查）、固件安全门 `fw_gate`、设备预检 `preflight_device`、`run_step`（含 `--dry-run` 与四栏记账）、`step_skipped`（步骤报"前置条件不满足"） |
+| `devlib.sh` | **设备侧**共用库（POSIX sh，兼容 busybox）：rootfs 读写窗口（remount rw 后无论成败/被信号打断都恢复 ro；信号含 ssh 断连后的 SIGPIPE，2026-09-24 补，`chrony-cn.sh`/`timezone-cn.sh` 各自的窗口同样补了）、`cj_safe_replace` 原子替换（先写暂存再 rename，不在运行中进程已映射的 inode 上原地写）、备份与轮转、`/usr` 下单元的安装/删除（先过 dm-verity 门）、`cj_backup_if_differs`（内容没变不重复备份）、待生效标记 `cj_pending_mark`/`_list`/`_clear` 与判据 `cj_apply_needed`、待换入区 `cj_so_stage`/`_unstage`/`_commit`、`cj_xochitl_apply`/`cj_xochitl_health` |
+| `deploy-usr-unit.sh` | 把一个 systemd 单元装进设备 `/usr` 的统一部署器；`deploy-chrony-boot-wakelock.sh` / `deploy-xovi-persist.sh` / `deploy-wifi-watch.sh` 是它的薄包装。dm-verity 激活时见「备份与幂等」 |
 | `deploy-xovi-ext.sh` + `xovi-ext-install.sh` | 装一个"独立最小 xovi 扩展"的统一部署器（host 侧构建+推送）与设备侧安装流程；`deploy-hl-snap.sh` / `deploy-handwriting-stroke.sh` 是薄包装，各扩展的 `deploy/install.sh` 只剩数据（名字、配置键）并 source `xovi-ext-install.sh` |
-| `deploy.sh` | shelf 整包部署：组载荷（`bin/ systemd/ lo-alias/ xovi/ install.sh uninstall.sh manifest.sh devlib.sh`）→ 本地打成 tar → 推到设备 `shelf-pkg.new`，校验有 `install.sh` 后才换掉 `shelf-pkg` → 设备端 `install.sh`；`--password` 经标准输入走 0600 临时文件，不上命令行；第一个参数是选项（如 `--only`）时 host 用默认；推送前按 `shelf/manifest.sh` 核对要装的二进制都在（缺了指路 `sh shelf/build.sh`，不再传完才失败）；装完无论成败兜底清掉设备上的密码临时文件 |
+| `deploy.sh` | shelf 整包部署：组载荷（`bin/ systemd/ lo-alias/ xovi/ install.sh uninstall.sh manifest.sh devlib.sh`）→ 本地打成 tar → 推到设备 `shelf-pkg.new`，校验有 `install.sh` 后才换掉 `shelf-pkg` → 设备端 `install.sh`；`--password` 经标准输入走 0600 临时文件，不上命令行；第一个参数是选项（如 `--only`）时 host 用默认；`--only` 的选服务规则（给的 + 网关总会装、去重、未知令牌退出 2）与设备端 `install.sh` 共用 `shelf/manifest.sh` 的 `shelf_select`（2026-09-24 收成一处，两边算出的清单必然一致）；推送前按 `manifest.sh` 核对要装的二进制都在（缺了指路 `sh shelf/build.sh`，不再传完才失败）；装完无论成败兜底清掉设备上的密码临时文件 |
 | `deploy-battop.sh` / `deploy-sidebar-entry.sh` / `deploy-xovi-apply.sh` / `deploy-chrony-cn.sh` / `deploy-timezone-cn.sh` | 各自的部署脚本（都支持 `-h`、未知/多余参数退出 2、ssh 不通中文报错退出 1；`deploy-xovi-apply.sh` 另有 `--force`） |
 | `firmware-allowlist.txt` / `firmware-allowlist.local.txt` | 固件白名单：仓库里被 git 跟踪的一份 + 本机一份（`--force` 追加到后者，已 gitignore） |
 | `wifi-watch/` | 看护脚本与单元；`xovi-reenable.service`、`chrony-boot-wakelock.service`、`sidebar-entry-*.qmd`/`.qrc`/`.png`、`chrony-cn.sh`、`timezone-cn.sh` 是其余步骤的载荷 |
@@ -141,6 +163,8 @@ xovi 没有"只重载一个扩展"的机制，让新扩展/qmd 生效的唯一�
 | `CJ_WARN_FREE_KB` | 204800 | host→设备预检 | 低于此值（≈200MB）只警告 |
 | `CJ_ALLOWLIST` / `CJ_ALLOWLIST_LOCAL` | 仓库/本机白名单文件 | host | 改固件白名单路径 |
 | `CJ_PENDING_DIR` | `/run/cangjie-pending-apply` | 设备 | 待生效标记目录 |
+| `CJ_PENDING_FALLBACK` | `~/.cangjie-stage/pending-apply` | 设备 | `/run` 写不了时的标记退路 |
+| `CJ_SO_PENDING_DIR` | `~/.cangjie-stage/so-pending` | 设备 | 待换入的扩展 `.so`（与 `extensions.d` 同分区、绝不在其中） |
 | `CJ_APPLY_GRACE` / `CJ_HEALTH_SLEEP` | 5 / 5 | 设备 | 重启前宽限秒数 / 重启后等多久再做健康检查 |
 | `CJ_BACKUP_KEEP` / `CJ_BACKUP_MAXBYTES` | 5 / 64MB | 设备 | 备份保留份数 / 单文件超此大小不自动删 |
 | `DEFER_XOVI_START=1` | — | host（`install-all` 自动设） | hl-snap/handwriting-stroke/sidebar-entry 只落盘不重启 |
@@ -158,7 +182,10 @@ xovi 没有"只重载一个扩展"的机制，让新扩展/qmd 生效的唯一�
 
 - 设备上被覆盖的旧文件统一备份进 `/home/root/cangjie-backups/`（**绝不留在 `extensions.d/` 里**——xovi 把该目录下任意文件当扩展加载，同名重复注册是致命错误，2026-08-15 踩过）；单文件 `<basename>.bak.pre-<时间戳>`，目录型（shelf）`shelf-<时间戳>/`。
 - 只保留最近 5 份（设备端环境变量 `CJ_BACKUP_KEEP`），只轮转脚本自己生成的严格时间戳命名备份；超过 `CJ_BACKUP_MAXBYTES`（64MB）的单文件备份不自动删；手工命名的备份与任何用户数据不碰；全程无 `rm -rf`。
-- 内容没变就不备份、不重启服务；写 `/usr` 前先过 dm-verity 门，激活则跳过。"内容没变不备份"由 `cj_backup_if_differs`（`cmp` 对拍）实现——否则重复部署 5 次就会把真正有价值的旧版本挤出"保留最近 5 份"（`shelf/install.sh`、`sidebar-entry`、`xovi-ext-install.sh` 都走它）。
+- 内容没变就不备份、不重启服务。"内容没变不备份"由 `cj_backup_if_differs`（`cmp` 对拍）实现——否则重复部署 5 次就会把真正有价值的旧版本挤出"保留最近 5 份"（`shelf/install.sh`、`sidebar-entry`、`xovi-ext-install.sh`、`deploy-usr-unit.sh` 都走它）。扩展 `.so` 放进待换入区后再次 `--no-restart` 部署同一个新版，也不再备份（2026-09-24）。
+- 写 `/usr` 前先过 dm-verity 门（`deploy-usr-unit.sh`），激活时分两种（2026-09-24）：
+  - 这个单元**从没装过** → 什么都不写，汇总记"已跳过（前置条件不满足）"；
+  - **以前装过**（verity 是后来才开的）→ `/usr` 里的单元不动；`~/.local/bin` 下的脚本照常更新，且**脚本真有变化、该单元装完要启动（目前只有 `wifi-watch`）时 `systemctl restart` 它**，让在跑的服务用上新脚本。
 
 ## xovi-reenable.service 为什么放在 packaging/，不放 shelf/
 
@@ -172,7 +199,7 @@ xovi 持久化是**整个 xovi 层**通用的（重跑 `xovi/start` 会重注入
 |---|---|
 | `shelf` | **优先**调设备上的 `~/.local/bin/shelf-uninstall`（`install.sh` 每次更新它，单一事实源），没有才退回 `shelf-pkg/shelf/uninstall.sh`；清单与安装共用 `manifest.sh`；默认保留用户数据，`--purge` 不作用于 shelf；成功且书架二进制已清掉后才删 `shelf-pkg`/`shelf-pkg.new`（必须是真目录且含 `shelf/` 标记） |
 | `sidebar-entry` | 从 qt-resource-rebuilder `exthome` 摘除 qmd/rcc |
-| `hl-snap` / `handwriting-stroke` | 从 `extensions.d` 摘除 `.so`（含 `.crashed` 标记），并撤掉待换入区里的同名新版（否则下次重启 xochitl 会被换回来，2026-09-24 修）；不碰 `reading-qol.json`（多个扩展共用）、不碰 `cangjie-backups/` |
+| `hl-snap` / `handwriting-stroke` | 从 `extensions.d` 摘除 `.so`（含 `.crashed` 标记），并撤掉待换入区里的同名新版（否则下次重启 xochitl 会被换回来，2026-09-24 修）；运行中的 xochitl 还加载着它时提示"要立刻停用请整机重启"（见下）；不碰 `reading-qol.json`（多个扩展共用）、不碰 `cangjie-backups/` |
 | `xovi-persist` / `chrony-boot-wakelock` | 停用并删 `/usr` 单元（同一套 dm-verity 门 + 带 trap 的 rw 窗口） |
 | `wifi-watch` | 同上删单元；单元删掉后才删 `~/.local/bin/wifi-watch.sh` |
 | `battop` | 停用并删单元；`--purge` 才连 `/home/root/battop`（二进制 + 历史采样数据）一起删 |
@@ -241,7 +268,8 @@ bash packaging/tests/run_sim_tests.sh      # 现为 226 项断言（2026-09-24 �
 ### 没有真机验证
 
 - **卸载脚本**（`uninstall-all.sh`）：只有本机模拟；2026-09-22 起的逆序 / 载荷清理 / verity 保留分支同理。
-- **"无改动不重启"**：`xovi-apply` 在无待生效标记时跳过重启、`--force-apply`——只有本机模拟。
+- **"无改动不重启"**：`xovi-apply` 在无待生效标记时跳过重启、`--force-apply`、单独跑 `deploy-hl-snap/handwriting-stroke/sidebar-entry` 没变化不重启（2026-09-24）——只有本机模拟。
+- **2026-09-24 审计的其余脚本改动**：汇总第四栏"前置条件不满足"、stop→换入→start 关键区忽略信号、rw 窗口补 SIGPIPE、dm-verity 下已装单元的 `wifi-watch` 脚本更新后重启服务、卸载撤掉待换入 `.so` 与"仍加载着就提示整机重启"——只有本机模拟。
 - **`.so` 待换入区（2026-09-24）**：stop → 换入 → start 的顺序只有本机模拟（H3 五项）；真机上还没有用"有变化的 `.so`"走过。
 - `sidebar-entry` 在 appload 版本过旧时"探测不到信号就跳过"这一分支：逻辑只是一行 `grep -q`，靠代码审查；真机只确认了"正面信号存在"这一半。
 - `deploy-xovi-apply.sh`：整体随 `install-all.sh` 整轮真机跑通，但没单独逐项核对它打印的 hl-snap/hw-stroke 段数、NRestarts 细节。

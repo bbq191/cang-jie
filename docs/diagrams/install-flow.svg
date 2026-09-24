@@ -68,13 +68,14 @@
 <polyline points="263,500 273,500" fill="none" stroke="#555" stroke-width="1.7" marker-end="url(#if-m)"/>
 <polyline points="490,500 500,500" fill="none" stroke="#555" stroke-width="1.7" marker-end="url(#if-m)"/>
 <polyline points="717,500 727,500" fill="none" stroke="#555" stroke-width="1.7" marker-end="url(#if-m)"/>
-<text x="500" y="644" text-anchor="middle" font-size="11.8" fill="#555">* 只落盘（DEFER_XOVI_START=1），且仅在文件内容真的变了时，在设备 /run/cangjie-pending-apply/ 记一个"待生效标记"（设备重启即清）。</text>
+<text x="500" y="644" text-anchor="middle" font-size="11.8" fill="#555">* 只落盘（DEFER_XOVI_START=1），内容真的变了才在 /run/cangjie-pending-apply/ 记"待生效标记"（重启即清）；待换入的 .so 也算（它在 /home，重启后仍在）。</text>
 <text x="500" y="662" text-anchor="middle" font-size="11.8" fill="#555">xovi 没有"只重载一个扩展"的机制：全部落盘后由第 11 步统一重启一次，避免短时间多次重启撞 xochitl 的重启保护；重复运行、无改动时不再闪屏。</text>
 <polyline points="500,672 500,696" fill="none" stroke="#555" stroke-width="1.7" marker-end="url(#if-m)"/>
 <rect x="30" y="696" width="460" height="96" rx="10" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.6"/>
 <text x="260" y="718" text-anchor="middle" font-size="14" font-weight="bold" fill="#1a1a1a">③ 收尾汇总</text>
-<text x="260" y="740" text-anchor="middle" font-size="12.5" fill="#444">已安装 / 已跳过（--skip）/ 失败 三栏</text>
-<text x="260" y="757" text-anchor="middle" font-size="12.5" fill="#444">失败项看该步骤的原始报错，修好后整条重跑即可</text>
+<text x="260" y="740" text-anchor="middle" font-size="12.5" fill="#444">四栏：已安装 / 已跳过（--skip）/ 失败 /</text>
+<text x="260" y="758" text-anchor="middle" font-size="12.5" fill="#444">已跳过（前置条件不满足，如没装 appload；非失败）</text>
+<text x="260" y="776" text-anchor="middle" font-size="12.5" fill="#444">失败项看该步骤的原始报错，修好后整条重跑即可</text>
 <rect x="510" y="696" width="460" height="96" rx="10" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.6"/>
 <text x="740" y="718" text-anchor="middle" font-size="14" font-weight="bold" fill="#1a1a1a">④ 浏览器验证</text>
 <text x="740" y="740" text-anchor="middle" font-size="12.5" fill="#444">https://10.11.99.1/  默认密码 shelf，首次登录强制改密</text>

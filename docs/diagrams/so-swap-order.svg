@@ -1,10 +1,10 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 520" font-family="Noto Sans CJK SC, sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 660" font-family="Noto Sans CJK SC, sans-serif">
 <defs>
 <marker id="ss-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#555"/></marker>
 <marker id="ss-r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#b0451f"/></marker>
 <marker id="ss-g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2f7d45"/></marker>
 </defs>
-<rect x="0" y="0" width="1000" height="520" fill="#fbfbfa"/>
+<rect x="0" y="0" width="1000" height="660" fill="#fbfbfa"/>
 <text x="500" y="30" text-anchor="middle" font-size="18" font-weight="bold" fill="#1a1a1a">更新扩展 .so：先停、再换、再起</text>
 <text x="500" y="52" text-anchor="middle" font-size="12.5" fill="#6a6a6a">xovi-ext-install.sh + devlib.sh（2026-09-24）；hl-snap、handwriting-stroke 都走这条路</text>
 
@@ -42,6 +42,7 @@
 
 <rect x="30" y="352" width="940" height="100" rx="10" fill="#f3faf4" stroke="#3f9a55" stroke-width="1.4"/>
 <text x="46" y="374" font-size="12.5" font-weight="bold" fill="#2f6f40">现做法：stop → 换入 → start</text>
+<text x="276" y="374" font-size="11.5" fill="#2f6f40">stop 到 start 是关键区：忽略 HUP / PIPE / INT / TERM，host 侧 Ctrl-C 或拔线也一定走到 start</text>
 <rect x="46" y="386" width="190" height="50" rx="8" fill="#ffffff" stroke="#3f9a55" stroke-width="1.3"/>
 <text x="141" y="408" text-anchor="middle" font-size="11.5" fill="#333">提示“将打断阅读”</text>
 <text x="141" y="425" text-anchor="middle" font-size="11" fill="#666">等 5 秒</text>
@@ -57,6 +58,20 @@
 <polyline points="466,411 506,411" fill="none" stroke="#2f7d45" stroke-width="1.6" marker-end="url(#ss-g)"/>
 <polyline points="696,411 736,411" fill="none" stroke="#2f7d45" stroke-width="1.6" marker-end="url(#ss-g)"/>
 
-<text x="500" y="478" text-anchor="middle" font-size="11.8" fill="#555">待换入区在 /home：设备中途重启也不丢，下次重启 xochitl 时照样换入；在那之前 xochitl 仍用旧版。</text>
-<text x="500" y="498" text-anchor="middle" font-size="11.8" fill="#a33">⚠ 旧做法两次真机整机重启（09-21 appload、09-24 hw-stroke）；新做法只有本机模拟测试，真机还没用“有变化的 .so”走过</text>
+<text x="30" y="484" font-size="13" font-weight="bold" fill="#333">三、待换入区的收尾规则（2026-09-24 审计补）</text>
+<rect x="30" y="496" width="300" height="84" rx="10" fill="#ffffff" stroke="#8a8a99" stroke-width="1.4"/>
+<text x="180" y="520" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">设备重启后仍算“待生效”</text>
+<text x="180" y="544" text-anchor="middle" font-size="11.5" fill="#444">cj_apply_needed 把待换入的 .so 也当标记，</text>
+<text x="180" y="562" text-anchor="middle" font-size="11.5" fill="#444">不会因 /run 被清而永远换不进去</text>
+<rect x="350" y="496" width="300" height="84" rx="10" fill="#ffffff" stroke="#8a8a99" stroke-width="1.4"/>
+<text x="500" y="520" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">卸载时一并撤掉</text>
+<text x="500" y="544" text-anchor="middle" font-size="11.5" fill="#444">uninstall-all 删同名待换入版本，</text>
+<text x="500" y="562" text-anchor="middle" font-size="11.5" fill="#444">否则下次重启 xochitl 会被装回来</text>
+<rect x="670" y="496" width="300" height="84" rx="10" fill="#ffffff" stroke="#8a8a99" stroke-width="1.4"/>
+<text x="820" y="520" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">同一新版已在待换入区</text>
+<text x="820" y="544" text-anchor="middle" font-size="11.5" fill="#444">重复 --no-restart 部署：</text>
+<text x="820" y="562" text-anchor="middle" font-size="11.5" fill="#444">不再备份、不再重放</text>
+
+<text x="500" y="614" text-anchor="middle" font-size="11.8" fill="#555">待换入区在 /home：设备中途重启也不丢，下次重启 xochitl 时照样换入；在那之前 xochitl 仍用旧版。</text>
+<text x="500" y="636" text-anchor="middle" font-size="11.8" fill="#a33">⚠ 旧做法两次真机整机重启（09-21 appload、09-24 hw-stroke）；新做法与第三部分只有本机模拟测试，真机还没用“有变化的 .so”走过</text>
 </svg>
