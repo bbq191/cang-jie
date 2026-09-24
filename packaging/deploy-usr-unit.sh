@@ -67,7 +67,18 @@ rc=0
 cj_install_usr_unit "$UNIT" "$SRC" multi-user.target.wants || rc=$?
 case "$rc" in
     0) ;;
-    3) echo "   $VERITY_NOTE"; exit 0 ;;
+    3)
+        if [ -f "$CJ_SYSD/$UNIT" ]; then
+            # 单元是以前装的（verity 之后才激活）：/usr 动不了，但脚本已更新——在跑的服务要重启才会用上新脚本
+            echo "   /usr 里已有此前装的 $UNIT（本次没法更新它）。"
+            if [ "$START" = "1" ] && [ "$SCRIPT_CHANGED" = "1" ]; then
+                systemctl restart "$UNIT" || { echo "!! systemctl restart $UNIT 失败"; exit 1; }
+                echo "-- 脚本有更新，已重启 $UNIT：$(systemctl is-active "$UNIT" 2>/dev/null || echo '?')"
+            fi
+        else
+            echo "   $VERITY_NOTE"
+        fi
+        exit 0 ;;
     *) exit 1 ;;
 esac
 if [ "$START" = "1" ]; then
