@@ -85,7 +85,7 @@ impl State {
     /// 同 [`Self::fonts_json`]，覆盖率计算可注入（单测数调用次数用）。按（大小, mtime）缓存；已被删掉的字体从缓存里清掉。
     fn fonts_json_with(&self, coverage: impl Fn(&[u8]) -> Option<u8>) -> Vec<serde_json::Value> {
         let dir = self.ko.fonts_dir();
-        let mut cache = self.font_cov.lock().unwrap_or_else(|e| e.into_inner());
+        let mut cache = rmsvc_core::sync::lock(&self.font_cov);
         let mut seen = std::collections::HashSet::new();
         let items = koreader::list_files(&dir, FONT_EXTS)
             .into_iter()

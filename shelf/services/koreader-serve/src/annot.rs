@@ -100,7 +100,7 @@ pub fn scan(ko_root: &Path, books_dir: &Path, tmp_dir: &Path) -> Result<Vec<Book
     let luajit = luajit_bin(ko_root);
     let script = tmp_dir.join("annot.lua");
     let mut script_written = false;
-    let mut guard = SCAN.lock().unwrap_or_else(|e| e.into_inner());
+    let mut guard = rmsvc_core::sync::lock(&SCAN);
     let cache = guard.get_or_insert_with(HashMap::new);
     let out = scan_with(cache, books_dir, &mut |sidecar| {
         // 脚本只在真有缓存未命中、需要起 luajit 时才写（全命中的扫描零写盘零 fork）。
