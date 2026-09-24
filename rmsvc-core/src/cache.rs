@@ -25,7 +25,7 @@ impl<T: Clone> TtlCache<T> {
 
     /// 同 [`Self::get_or`]，"现在"由调用方给（单测用，不用真睡觉）。
     pub fn get_or_at(&self, now: Instant, compute: impl FnOnce() -> T) -> T {
-        let mut g = self.slot.lock().unwrap_or_else(|e| e.into_inner());
+        let mut g = crate::sync::lock(&self.slot);
         if let Some((at, v)) = g.as_ref() {
             if now.saturating_duration_since(*at) < self.ttl {
                 return v.clone();
@@ -38,7 +38,7 @@ impl<T: Clone> TtlCache<T> {
 
     /// 让下一次 `get_or` 必定重算（操作改变了缓存里的内容之后调）。
     pub fn invalidate(&self) {
-        *self.slot.lock().unwrap_or_else(|e| e.into_inner()) = None;
+        *crate::sync::lock(&self.slot) = None;
     }
 }
 

@@ -1,8 +1,8 @@
 //! Markdown 导出落盘：`notecore::export` 产出的纯文本写到 `$XDG_DATA_HOME/notes/vault/<书名>/`
 //! （一章一个 `.md` + 一个书索引页），`manifest()`（2026-09-16）把这份落盘内容读回 JSON 供
-//! `GET .../vault.json` 吐给 host `shelf notes pull`——目录名单独回一个 `dir` 字段（已经跑过
-//! `sanitize()`，跟磁盘上真实子目录同名），CLI 端直接拿来当本机子目录名用，不用在 Python 里再抄一遍
-//! 这份转义规则（唯一事实源在这边）。
+//! `GET .../vault.json` 吐出——目录名单独回一个 `dir` 字段（已经跑过 `sanitize()`，跟磁盘上真实子目录
+//! 同名），调用方不用再抄一遍转义规则（唯一事实源在这边）。原调用方 host `shelf notes pull` 已随 PC 端
+//! CLI 于 2026-09-18 砍掉，端点保留（只读、无副作用），目前网页不调用。
 //! **整理区第三轮反馈（2026-09-08）加了指纹比对**：`export_state.rs` 记"上次导出时的内容指纹"，
 //! 指纹没变就跳过重写（不再是无条件每次全量重写）——跟落设备笔记本那条投影路径（`publish.rs` +
 //! `notebooks.rs`）用同一套纪律；顺带给「整理」页提供"这一章 md 是不是已经跟当前内容同步"的判据，
@@ -24,8 +24,10 @@ pub fn content_disposition(filename: &str) -> String {
 
 /// 文件名不能带路径分隔符（书名/章名理论上可能带用户手滑打进去的 `/`）——替换成 `_`，不做更复杂的
 /// 转义（其余字符 xochitl 书名场景本来就不会出现更奇怪的控制字符）。
+/// 整段是空串/`.`/`..`（书名被改成这种样子）时换成 `_`：否则 `vault/..` 会把整本书写到 vault 目录之外。
 fn sanitize(name: &str) -> String {
-    name.chars().map(|c| if c == '/' || c == '\\' { '_' } else { c }).collect()
+    let s: String = name.chars().map(|c| if c == '/' || c == '\\' { '_' } else { c }).collect();
+    if s.is_empty() || s == "." || s == ".." { "_".to_string() } else { s }
 }
 
 pub fn vault_dir(data_dir: &Path, book_title: &str) -> PathBuf {
@@ -109,7 +111,7 @@ pub struct VaultManifest {
 
 /// 读回已落盘的 vault 目录内容（不触发导出，纯读——`POST .../export` 才负责写，`GET .../vault.json`
 /// 只读它写下的东西，两个端点各管各的，避免"GET 有副作用"这种反直觉行为）。目录不存在（从没导出过）
-/// 按空 `files` 处理，不是错误——host `notes pull` 对"这本书还没导出过"该跳过而不是报错中断。
+/// 按空 `files` 处理，不是错误——"这本书还没导出过"是正常状态，调用方该跳过而不是报错中断。
 pub fn manifest(data_dir: &Path, book_title: &str) -> Result<VaultManifest, String> {
     let dir = vault_dir(data_dir, book_title);
     let mut files = Vec::new();
@@ -267,6 +269,9 @@ mod tests {
         export_book(tmp.path(), &b, &st).unwrap();
         assert!(vault_dir(tmp.path(), "带/斜杠的书名").is_dir());
         assert_eq!(vault_dir(tmp.path(), "带/斜杠的书名").file_name().unwrap(), "带_斜杠的书名");
+        for bad in ["..", ".", ""] {
+            assert_eq!(vault_dir(tmp.path(), bad), tmp.path().join("vault/_"), "{bad:?} 不能落到 vault 之外/vault 本身");
+        }
     }
 
     #[test]

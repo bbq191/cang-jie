@@ -14,6 +14,9 @@
 //! ⑤ Form XObject 递归原本不设深度上限、不防环：自引用的 Form 会把栈打爆（SIGSEGV，`catch_unwind`
 //!   接不住，整个 book-serve 进程一起崩）。现在限深 [`MAX_FORM_DEPTH`] 并跳过正在展开中的同一对象
 //!   （2026-09-24 审查补）。
+//! ⑥ 2026-09-24 第三轮审计：lopdf 0.42 → 0.45（与 bookconv 同版本，调用方可直接传入已解析的 `Document`，
+//!   不必整份再解析一遍）；页内容改走带上限的解压（[`MAX_PAGE_CONTENT_BYTES`]，防解压炸弹）；损坏 PDF
+//!   常见的几处 panic（悬空引用、数组元素类型/个数不对、缺页对象、缺 MediaBox）改成返回 None/错误。
 //! 起因与设计见 `shelf/docs/EPUB优化规范白皮书.md` §05（PDF→EPUB 线"不改颜色/不挪图片位置"从
 //! "本来就没做"升级成"精确还原"，2026-09-23 用户拍板自研解释器）。
 //! 许可证：上游 MIT，见本 crate 目录 `LICENSE`。
@@ -22,6 +25,8 @@
 //! 不打算大改风格（改越多越难跟上游 diff），项目"交叉编译零警告"纪律靠这条 allow 满足，
 //! 不是靠改动一堆本来能跑的上游逻辑。
 #![allow(dead_code, unused_variables, non_upper_case_globals, mismatched_lifetime_syntaxes, ambiguous_glob_reexports, hidden_glob_reexports)]
+// clippy 同理：上游代码风格类告警（style/complexity，约 140 条）不在 fork 里逐条改，免得跟上游 diff 越拉越大。
+#![allow(clippy::style, clippy::complexity)]
 
 extern crate lopdf;
 
@@ -197,9 +202,12 @@ fn to_utf8(encoding: &[u16], s: &[u8]) -> String {
 }
 
 
+/// cj：悬空引用（损坏 PDF 常见）上游 `expect` panic；PDF 规范本身就规定"指向不存在对象的引用等同 null"，照此返回 Null。
+static NULL_OBJECT: Object = Object::Null;
+
 fn maybe_deref<'a>(doc: &'a Document, o: &'a Object) -> &'a Object {
     match o {
-        &Object::Reference(r) => doc.get_object(r).expect("missing object reference"),
+        &Object::Reference(r) => doc.get_object(r).unwrap_or(&NULL_OBJECT),
         _ => o
     }
 }
@@ -226,7 +234,7 @@ impl<'a, T: FromObj<'a>> FromOptObj<'a> for Option<T> {
 
 impl<'a, T: FromObj<'a>> FromOptObj<'a> for T {
     fn from_opt_obj(doc: &'a Document, obj: Option<&'a Object>, key: &[u8]) -> Self {
-        T::from_obj(doc, obj.expect(&String::from_utf8_lossy(key))).expect("wrong type")
+        T::from_obj(doc, obj.unwrap_or_else(|| panic!("{}", String::from_utf8_lossy(key)))).expect("wrong type")
     }
 }
 
@@ -234,31 +242,25 @@ impl<'a, T: FromObj<'a>> FromOptObj<'a> for T {
 // on arrays, streams and dicts
 impl<'a, T: FromObj<'a>> FromObj<'a> for Vec<T> {
     fn from_obj(doc: &'a Document, obj: &'a Object) -> Option<Self> {
-        maybe_deref(doc, obj).as_array().map(|x| x.iter()
-            .map(|x| T::from_obj(doc, x).expect("wrong type"))
-            .collect()).ok()
+        // cj：元素类型不对（损坏 PDF）上游 `expect` panic；改成整个数组当"取不到"（None）。
+        maybe_deref(doc, obj).as_array().ok()?.iter()
+            .map(|x| T::from_obj(doc, x))
+            .collect()
     }
 }
 
-// XXX: These will panic if we don't have the right number of items
-// we don't want to do that
+// cj：上游这两个在元素个数不够/类型不对时 panic（原注释 "XXX: These will panic"），改成返回 None。
 impl<'a, T: FromObj<'a>> FromObj<'a> for [T; 4] {
     fn from_obj(doc: &'a Document, obj: &'a Object) -> Option<Self> {
-        maybe_deref(doc, obj).as_array().map(|x| {
-            let mut all = x.iter()
-                .map(|x| T::from_obj(doc, x).expect("wrong type"));
-            [all.next().unwrap(), all.next().unwrap(), all.next().unwrap(), all.next().unwrap()]
-        }).ok()
+        let mut all = maybe_deref(doc, obj).as_array().ok()?.iter().map(|x| T::from_obj(doc, x));
+        Some([all.next()??, all.next()??, all.next()??, all.next()??])
     }
 }
 
 impl<'a, T: FromObj<'a>> FromObj<'a> for [T; 3] {
     fn from_obj(doc: &'a Document, obj: &'a Object) -> Option<Self> {
-        maybe_deref(doc, obj).as_array().map(|x| {
-            let mut all = x.iter()
-                .map(|x| T::from_obj(doc, x).expect("wrong type"));
-            [all.next().unwrap(), all.next().unwrap(), all.next().unwrap()]
-        }).ok()
+        let mut all = maybe_deref(doc, obj).as_array().ok()?.iter().map(|x| T::from_obj(doc, x));
+        Some([all.next()??, all.next()??, all.next()??])
     }
 }
 
@@ -1634,6 +1636,9 @@ pub fn resolve_fill_rgb(colorspace: &ColorSpace, color: &[f64]) -> Option<[u8; 3
 /// Form XObject 最多嵌套几层（真实文档一般 1–3 层；超过的整个跳过，不再往下展开）。
 const MAX_FORM_DEPTH: usize = 16;
 
+/// cj：单页 content stream 解压后的总字节上限（多条流合计）。正常书页远小于 1MB，64MB 只拦解压炸弹。
+const MAX_PAGE_CONTENT_BYTES: usize = 64 * 1024 * 1024;
+
 struct Processor<'a> {
     font_table: HashMap<Vec<u8>, Rc<dyn PdfFont + 'a>>,
     /// 当前正在展开的 Form XObject 链（对象 id）：长度即嵌套深度，含某 id 即成环。
@@ -1654,7 +1659,7 @@ impl<'a> Processor<'a> {
                 font_size: std::f64::NAN,
                 character_spacing: 0.,
                 word_spacing: 0.,
-                horizontal_scaling: 100. / 100.,
+                horizontal_scaling: 1.0, // cj：上游写 `100. / 100.`（Tz 默认 100%），clippy 的 deny 级 eq_op 让 `cargo clippy -p bookconv` 直接编不过
                 leading: 0.,
                 rise: 0.,
                 tm: Transform2D::identity(),
@@ -1952,9 +1957,10 @@ impl<'a> Processor<'a> {
                     mc_stack.pop();
                 }
                 "Do" => {
-                    let xobject: &Dictionary = get(&doc, resources, b"XObject");
-                    let name = operation.operands[0].as_name().unwrap();
-                    let xf: &Stream = get(&doc, xobject, name);
+                    // cj：资源里没有 XObject 字典/缺操作数/名字查不到或是悬空引用（损坏 PDF）时上游 panic，改成跳过这个 Do。
+                    let Some(xobject) = maybe_get::<&Dictionary>(&doc, resources, b"XObject") else { continue };
+                    let Some(name) = operation.operands.first().and_then(|o| o.as_name().ok()) else { continue };
+                    let Some(xf) = maybe_get::<&Stream>(&doc, xobject, name) else { continue };
                     let is_image = xf.dict.get(b"Subtype").ok().and_then(|o| o.as_name().ok())
                         .map(|s| pdf_to_utf8(s) == "Image").unwrap_or(false);
                     if is_image {
@@ -2411,7 +2417,6 @@ fn extract_text_by_page(doc: &Document, page_num: u32) -> Result<String, OutputE
 }
 
 /// Extract the text from a pdf at `path` and return a `Vec<String>` with the results separately by page
-
 pub fn extract_text_by_pages<P: std::convert::AsRef<std::path::Path>>(path: P) -> Result<Vec<String>, OutputError> {
     let mut v = Vec::new();
     {
@@ -2519,7 +2524,8 @@ pub fn output_doc_page(doc: &Document, output: &mut dyn OutputDev, page_num: u32
 }
 
 fn output_doc_inner<'a>(page_num: u32, object_id: ObjectId, doc: &'a Document, p: & mut Processor<'a>, output: &mut dyn OutputDev, empty_resources: &'a Dictionary) -> Result<(), OutputError> {
-    let page_dict = doc.get_object(object_id).unwrap().as_dict().unwrap();
+    // cj：页对象缺失/不是字典（损坏 PDF）上游直接 unwrap panic，改成返回错误。
+    let page_dict = doc.get_object(object_id)?.as_dict()?;
     dlog!("page {} {:?}", page_num, page_dict);
     // Font resource names (e.g. /F0) are only unique within a page's resource
     // dictionary; the same name can map to a different font on the next page.
@@ -2530,12 +2536,16 @@ fn output_doc_inner<'a>(page_num: u32, object_id: ObjectId, doc: &'a Document, p
     let resources = get_inherited(doc, page_dict, b"Resources").unwrap_or(empty_resources);
     dlog!("resources {:?}", resources);
     // pdfium searches up the page tree for MediaBoxes as needed
-    let media_box: Vec<f64> = get_inherited(doc, page_dict, b"MediaBox").expect("MediaBox");
+    // cj：缺 MediaBox 或不足 4 个数，上游 expect/下标越界 panic；改成返回错误（调用方按"转不了"保守处理）。
+    let media_box: Vec<f64> = get_inherited(doc, page_dict, b"MediaBox").filter(|b: &Vec<f64>| b.len() >= 4).ok_or_else(|| lopdf::Error::DictKey("MediaBox".into()))?;
     let media_box = MediaBox { llx: media_box[0], lly: media_box[1], urx: media_box[2], ury: media_box[3] };
     let art_box = get::<Option<Vec<f64>>>(&doc, page_dict, b"ArtBox")
+        .filter(|x| x.len() >= 4)
         .map(|x| (x[0], x[1], x[2], x[3]));
     output.begin_page(page_num, &media_box, art_box)?;
-    p.process_stream(&doc, doc.get_page_content(object_id).unwrap(), resources, &media_box, output, page_num)?;
+    // cj：lopdf 0.45 起用带上限的解压（防解压炸弹：几 KB 的压缩流解出几 GB 把设备内存吃光）。
+    let content = doc.get_page_content_with_limit(object_id, MAX_PAGE_CONTENT_BYTES)?;
+    p.process_stream(&doc, content, resources, &media_box, output, page_num)?;
     output.end_page()?;
     Ok(())
 }

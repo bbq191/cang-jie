@@ -1,5 +1,7 @@
 //! 优化器单测（原 `optimize.rs` 内联的 `mod tests`）。
     use super::*;
+    use zip::write::SimpleFileOptions;
+    use zip::CompressionMethod;
 
     #[test]
     fn inline_remote_images_fetches_removes_and_keeps_local() {

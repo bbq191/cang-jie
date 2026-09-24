@@ -45,13 +45,20 @@
 ;
 ; 【触发】没有类似"打开书库文件夹视图"那种天然事件可等——建文件夹必须先于 /upload 发生，不能等
 ;   上传后的 rowsInserted 才反应（因果顺序反了）。2026-09-22 前是 8s 一个常驻 Timer 定时拉；现改为
-;   **长轮询**：`GET /mkdir/pending?wait=25` 由 book-serve 阻塞到有人入队或 25s 到期才回，QML 端收到
-;   回复后立即（名单为空 0.5s / 有名字 3s）再发下一次——空闲时每 25s 才一次往返（此前 7.5 次/分钟），
-;   入队后是即刻响应（此前平均等 4s）。实现上仍是一个 Timer，但 `repeat:false` 单发、只在上一次请求
-;   完成的回调里才 `restart()`，所以任何时刻最多一个未完成请求；出错（status≠200：book-serve 重启、
-;   连接被掐、Qt 传输超时）退避 15s；若回复是"立即返回的空名单"（旧版 book-serve 不认 wait 参数）则
-;   退回 8s 节奏，与旧行为一致。25s 取值须小于 Qt6 缺省 30s 传输超时（未在真机验证 QML XHR 的实际
-;   超时行为——这是部署后要确认的点：日志里不应出现周期性的 status 0 退避）。
+;   **长轮询**：`GET /mkdir/pending?wait=<秒>` 由 book-serve 阻塞到有人入队或到期才回，QML 端收到
+;   回复后立即（名单为空 0.5s / 有名字 3s）再发下一次，入队后即刻响应。实现上仍是一个 Timer，但
+;   `repeat:false` 单发、只在上一次请求完成的回调里才 `restart()`，所以任何时刻最多一个未完成请求；
+;   出错（status≠200：book-serve 重启、连接被掐）退避 15s；若回复是"立即返回的空名单"（旧版 book-serve
+;   不认 wait 参数）则退回 8s 节奏，与旧行为一致。
+;   **等待时长（2026-09-24 第三轮审计）**：09-22 版用 wait=25，是按"Qt6 XHR 缺省 30s 传输超时"的假设定的，
+;   空闲时每分钟 2.4 次往返，是书架线最大的周期唤醒源。核实：设备 Qt 6.10.3，qtdeclarative 6.10 的
+;   qqmlxmlhttprequest.cpp 不设传输超时、也没有 XHR timeout 属性，QNetworkAccessManager 缺省超时为 0
+;   （禁用）；xochitl 虽导入了 setTransferTimeout，但没有证据表明它作用在 QML 引擎的 NAM 上。所以改为
+;   wait=290（book-serve 上限 300），空闲时约 12 次/小时。**自适应兜底**：万一真有 30s 左右的客户端
+;   超时，请求会在 28–33s 之间以 status≠200 结束——命中这个窗口就把 wait 永久降回 25（本次 xochitl
+;   进程内），并打一行 `SHELF-MKDIR: transfer timeout` 日志，行为退回 09-22 版。书架服务重启恰好落在
+;   这个窗口的概率很小，误判的代价也只是退回旧节奏。
+;   没交出成功的名字不会丢：队列项要等 xochitl 里真有这个文件夹才剔除，15s 后会再次交出。
 ;   同一名字服务端在交出后 15s 内不重复交出（createCollection 异步，立刻再拉会重复建夹）。
 ;
 ; 【安全】`Library.createCollection` 不依赖任何"当前选中"状态（不像 trash 需要 `selection` 且必须
@@ -75,12 +82,19 @@ AFFECT /qml/device/view/main/MainView.qml
                 interval: 8000
                 running: true
                 repeat: false
+                // 长轮询等待秒数；见文件头"等待时长"。命中 30s 客户端超时窗口时降为 25。
+                property int cjWait: 290
                 onTriggered: {
                     var t0 = Date.now();
                     var x = new XMLHttpRequest();
                     x.onreadystatechange = function() {
                         if (x.readyState !== XMLHttpRequest.DONE) { return; }
                         var next = 15000;
+                        var took = Date.now() - t0;
+                        if (x.status !== 200 && shelfMkdirAgent.cjWait > 25 && took >= 28000 && took <= 33000) {
+                            shelfMkdirAgent.cjWait = 25;
+                            console.warn("SHELF-MKDIR: transfer timeout after " + took + "ms, wait -> 25s");
+                        }
                         if (x.status === 200) {
                             var count = 0;
                             try {
@@ -95,7 +109,7 @@ AFFECT /qml/device/view/main/MainView.qml
                             }
                             if (count > 0) {
                                 next = 3000;
-                            } else if (Date.now() - t0 < 2000) {
+                            } else if (took < 2000) {
                                 next = 8000;
                             } else {
                                 next = 500;
@@ -104,7 +118,7 @@ AFFECT /qml/device/view/main/MainView.qml
                         shelfMkdirAgent.interval = next;
                         shelfMkdirAgent.restart();
                     };
-                    x.open("GET", "http://127.0.0.1:8790/mkdir/pending?wait=25");
+                    x.open("GET", "http://127.0.0.1:8790/mkdir/pending?wait=" + shelfMkdirAgent.cjWait);
                     x.send();
                 }
             }

@@ -3,19 +3,36 @@ use super::*;
 
 // ───────────────────────── 5. 空页清理 ─────────────────────────
 
+/// 页面 body 里既无媒体标签、去掉标签后也只剩空白（含 `&nbsp;`/`&#160;`/U+00A0）。
+/// 2026-09-24 审计：此前正文复制 → 小写复制 → 正则去标签 → 三次 replace 各出一份整章副本，是清洗层最大的一块耗时；
+/// 现在只在去标签时拼一份，其余按字节扫描，判定结果不变（`is_empty_page_matches_old_regex_impl` 对拍）。
 pub(super) fn is_empty_page(html: &str) -> bool {
-    static BODY: OnceLock<Regex> = OnceLock::new();
-    static TAG: OnceLock<Regex> = OnceLock::new();
-    let body = BODY.get_or_init(|| Regex::new(r#"(?is)<body\b[^>]*>(.*?)</body>"#).unwrap());
-    let tag = TAG.get_or_init(|| Regex::new(r#"(?s)<[^>]*>"#).unwrap());
-    let inner = body.captures(html).map(|c| c[1].to_string()).unwrap_or_default();
-    let low = inner.to_ascii_lowercase();
-    if low.contains("<img") || low.contains("<svg") || low.contains("<image") || low.contains("<video") || low.contains("<audio") {
+    let inner = crate::htmlproc::first_body_inner(html).unwrap_or("");
+    let has = |pat: &[u8]| inner.as_bytes().windows(pat.len()).any(|w| w.eq_ignore_ascii_case(pat));
+    if has(b"<img") || has(b"<svg") || has(b"<image") || has(b"<video") || has(b"<audio") {
         return false;
     }
-    let text = tag.replace_all(&inner, "");
-    let text = text.replace("&nbsp;", " ").replace("&#160;", " ").replace('\u{a0}', " ");
-    text.trim().is_empty()
+    // 去标签（同正则 `<[^>]*>`：`<` 到其后第一个 `>`；没有 `>` 的 `<` 留作普通字符）。
+    let mut text = String::with_capacity(inner.len());
+    let mut rest = inner;
+    while let Some(lt) = rest.find('<') {
+        let Some(gt) = rest[lt..].find('>') else { break };
+        text.push_str(&rest[..lt]);
+        rest = &rest[lt + gt + 1..];
+    }
+    text.push_str(rest);
+    // 其余只能是空白或不换行空格实体（去标签后才认实体：`&nb<i>sp;` 拼出来的也算，与原先先去标签再替换一致）。
+    let mut s = text.as_str();
+    while let Some(c) = s.chars().next() {
+        if let Some(r) = s.strip_prefix("&nbsp;").or_else(|| s.strip_prefix("&#160;")) {
+            s = r;
+        } else if c.is_whitespace() {
+            s = &s[c.len_utf8()..];
+        } else {
+            return false;
+        }
+    }
+    true
 }
 
 /// 一遍扫描删掉 OPF 里 `id`/`idref` 属于 `ids` 的 `<item>`/`<itemref>`（连同紧随的空白与空闭合标签）。

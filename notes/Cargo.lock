@@ -936,7 +936,7 @@ dependencies = [
  "sha2",
  "socket2",
  "time",
- "tiny_http",
+ "tiny_http 0.12.0",
  "ureq",
  "uuid",
  "x509-parser",
@@ -1245,8 +1245,6 @@ dependencies = [
 [[package]]
 name = "tiny_http"
 version = "0.12.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "389915df6413a2e74fb181895f933386023c71110878cd0825588928e64cdc82"
 dependencies = [
  "ascii",
  "chunked_transfer",
@@ -1255,6 +1253,18 @@ dependencies = [
  "rustls 0.20.9",
  "rustls-pemfile",
  "zeroize",
+]
+
+[[package]]
+name = "tiny_http"
+version = "0.12.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "389915df6413a2e74fb181895f933386023c71110878cd0825588928e64cdc82"
+dependencies = [
+ "ascii",
+ "chunked_transfer",
+ "httpdate",
+ "log",
 ]
 
 [[package]]
@@ -1358,7 +1368,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
- "tiny_http",
+ "tiny_http 0.12.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "ureq",
 ]
 

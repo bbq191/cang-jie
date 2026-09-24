@@ -36,7 +36,7 @@ impl Pattern {
         let mut params = HashMap::new();
         for (pat, seg) in self.segs.iter().zip(segs.iter()) {
             if pat.starts_with('{') && pat.ends_with('}') {
-                params.insert(pat[1..pat.len() - 1].to_string(), crate::multipart::percent_decode(seg));
+                params.insert(pat[1..pat.len() - 1].to_string(), crate::multipart::percent_decode_path(seg));
             } else if pat != seg {
                 return None;
             }
@@ -215,6 +215,7 @@ mod tests {
             .post("/api/x", |r| Err(ApiError::bad(format!("q={}", r.q("t").unwrap_or("")))));
         assert_eq!(call(&router, Method::Get, "/api/fonts", "").0, 200);
         assert_eq!(call(&router, Method::Delete, "/api/fonts/%E5%AD%97.ttf", "").1, r#"{"file":"字.ttf"}"#);
+        assert_eq!(call(&router, Method::Delete, "/api/fonts/C++.ttf", "").1, r#"{"file":"C++.ttf"}"#, "路径参数里的 + 不当空格");
         assert_eq!(call(&router, Method::Get, "/api/proxy/a/b/c", "").1, r#"{"rest":"a/b/c"}"#);
         assert_eq!(call(&router, Method::Post, "/api/x", "t=1%202"), (400, r#"{"message":"q=1 2","ok":false}"#.into()));
         assert_eq!(call(&router, Method::Post, "/api/fonts", "").0, 405);

@@ -19,6 +19,7 @@ host_arg "用法：./deploy-battop.sh [host]      host 默认 10.11.99.1；环�
 TARGET=aarch64-unknown-linux-musl
 DIR=../enhance/battop
 DEST=/home/root/battop
+require_device   # 先确认设备连得上，再做耗时的交叉编译（与 deploy.sh / deploy-xovi-ext.sh 一致）
 
 if [ -n "${CJ_BATTOP_BIN:-}" ]; then
     BIN="$CJ_BATTOP_BIN"
@@ -32,7 +33,6 @@ else
 fi
 [ -f "$BIN" ] || { echo "!! 缺 $BIN"; exit 1; }
 
-require_device
 echo "== 推送到 root@$HOST:$DEST（暂存名 battop.new，md5 校验）=="
 push_verified "$BIN" "$DEST/battop.new"
 push_verified "$DIR/install.sh" "$DEST/install.sh"

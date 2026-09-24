@@ -25,11 +25,15 @@ pub struct SceneTree {
     root_text: Option<Text>,
 }
 
+impl Default for SceneTree {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SceneTree {
     pub fn add_node(&mut self, id: CrdtId) {
-        let mut group = Group::default();
-        group.node_id = id.clone();
-        self.nodes.insert(id, group);
+        self.nodes.insert(id, Group { node_id: id, ..Default::default() });
     }
 
     pub fn get_node(&mut self, id: &CrdtId) -> Option<&Group> {
@@ -48,15 +52,13 @@ impl SceneTree {
                 "Could not find parent: {parent_id:?}"
             )))?;
         parent.children.push(item);
-        return Ok(());
+        Ok(())
     }
 
     pub fn new() -> SceneTree {
         let root_id = CrdtId { part1: 0, part2: 1 };
         let mut nodes = HashMap::new();
-        let mut root = Group::default();
-        root.node_id = root_id;
-        nodes.insert(root_id, root);
+        nodes.insert(root_id, Group { node_id: root_id, ..Default::default() });
         SceneTree {
             root_id,
             nodes,
@@ -64,9 +66,9 @@ impl SceneTree {
         }
     }
 
-    pub fn from_blocks(blocks: &Vec<Block>) -> Result<SceneTree, ParseError> {
+    pub fn from_blocks(blocks: &[Block]) -> Result<SceneTree, ParseError> {
         let mut tree = SceneTree::new();
-        for block in blocks.into_iter() {
+        for block in blocks.iter() {
             let block = block.clone();
             match block {
                 Block::SceneTree(b) => {
@@ -92,7 +94,7 @@ impl SceneTree {
                 Block::SceneGroupItem(b) => {
                     match &b.item.value {
                         Some(v) => {
-                            let node = tree.nodes.get(&v).ok_or(ParseError::invalid(format!(
+                            let node = tree.nodes.get(v).ok_or(ParseError::invalid(format!(
                                 "Node does not exist for ScneGroupItemBlock: {v:?}"
                             )))?;
                             let block_item = b.item;
@@ -106,7 +108,7 @@ impl SceneTree {
                             tree.add_item(item, b.parent_id)?;
                         }
                         None => {
-                            return Err(ParseError::invalid(format!("No node id found",)));
+                            return Err(ParseError::invalid("No node id found".to_string()));
                         }
                     };
                 }

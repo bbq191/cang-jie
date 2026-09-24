@@ -3,7 +3,7 @@
 //! - `POST http://<host>/upload`（multipart 字段 `file`）免重启进库；xochitl web 只绑 USB 网口，
 //!   设备端靠 lo/usb1 别名让 `10.11.99.1` 常驻可达。
 //! - **GET-then-upload 归档**：`GET /documents/<folder-uuid>` 设"当前文件夹"是全局服务端状态，
-//!   之后的 `/upload` 落进该文件夹（metadata.parent 会被忽略）。
+//!   之后的 `/upload` 落进该文件夹（metadata.parent 会被忽略）。因为是全局状态，进程内的"设文件夹 → 上传"用一把锁串成一对。
 //! - **防复制风暴**：大书 `/upload` 处理慢 → 408/读超时但文档已创建，此类错误**绝不重试**。
 use std::io::{Cursor, Read, Write};
 use std::path::Path;
@@ -146,6 +146,12 @@ impl Xochitl {
 
     fn upload_body(&self, body: impl Read, body_len: u64, filename: &str, content_type: &str, folder_name: &str) -> Result<Delivery, String> {
         let folder = if folder_name.is_empty() { String::new() } else { self.find_folder(folder_name).unwrap_or_default() };
+        // "设当前文件夹 → /upload" 必须成对、不被打断：当前文件夹是 xochitl 服务端的**全局**状态，两次投递并发时
+        // （网关允许 3 本小书同时处理）A 设完文件夹、B 又设了自己的，A 的书就落进 B 的文件夹。进程内所有
+        // `Xochitl` 实例共用一把锁（static），把这一对串起来；只锁上传本身，拆分投递等渲染的间隙不占锁。
+        // 跨进程（note-serve 也会投笔记本）仍可能交错，这把锁管不到（2026-09-24 审计）。
+        static UPLOAD: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _serial = crate::sync::lock(&UPLOAD);
         self.set_folder(&folder);
         match send_multipart(&self.agent, &self.host, body, body_len, filename, content_type) {
             Ok(resp) => Ok(Delivery::Delivered(resp)),
@@ -178,6 +184,7 @@ fn rewrite_pdf_content(dir: &Path, uuid: &str, pages: usize, size: u64) -> Resul
 fn send_multipart(agent: &ureq::Agent, host: &str, body: impl Read, body_len: u64, filename: &str, content_type: &str) -> Result<String, String> {
     let boundary = format!("----shelf{}", uuid::Uuid::new_v4().simple());
     let mut header = Vec::new();
+    let filename = header_safe_filename(filename);
     write!(header, "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{filename}\"\r\nContent-Type: {content_type}\r\n\r\n")
         .map_err(|e| e.to_string())?;
     let footer = format!("\r\n--{boundary}--\r\n").into_bytes();
@@ -193,6 +200,18 @@ fn send_multipart(agent: &ureq::Agent, host: &str, body: impl Read, body_len: u6
         Err(ureq::Error::Status(c, r)) => Err(format!("HTTP {c}: {}", r.into_string().unwrap_or_default())),
         Err(e) => Err(format!("上传失败: {e}")),
     }
+}
+
+/// multipart 头里的 `filename="…"` 不能含 `"` 与 CR/LF：母版库文件名只校验"单段"（`fs::plain_name`），
+/// 带引号的书名（`他说"好".pdf`）此前原样拼进头里，xochitl 解析到第一个 `"` 就截断，书库里显示成半截名；
+/// 带换行则直接把后面的内容当成新的头。`"` 换成 `'`、CR/LF 换成空格，其余字节原样（中文照旧直传，
+/// 与改动前一致——xochitl 按 UTF-8 读这个字段，真机一直这么传）。
+fn header_safe_filename(name: &str) -> String {
+    name.chars().map(|c| match c {
+        '"' => '\'',
+        '\r' | '\n' => ' ',
+        c => c,
+    }).collect()
 }
 
 /// 错误是否属于"很可能已送达"（408/读超时且非连接阶段）。
@@ -238,6 +257,57 @@ mod tests {
             }
         });
         addr
+    }
+
+    /// 回归：并发投递到不同文件夹，每本书都落进自己要的文件夹（"设当前文件夹 → /upload" 不被别的投递插队）。
+    /// 假 xochitl 记下每次 `GET /documents/<uuid>` 设的当前文件夹，`POST /upload` 时把"文件名 → 当前文件夹"记下来。
+    #[test]
+    fn concurrent_uploads_land_in_their_own_folders() {
+        let lib = tempfile::tempdir().unwrap();
+        for (uuid, name) in [("fa", "甲"), ("fb", "乙")] {
+            std::fs::write(lib.path().join(format!("{uuid}.metadata")), format!(r#"{{"type":"CollectionType","visibleName":"{name}","parent":""}}"#)).unwrap();
+        }
+        let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+        let addr = server.server_addr().to_ip().unwrap().to_string();
+        let landed = std::sync::Arc::new(std::sync::Mutex::new(Vec::<(String, String)>::new()));
+        let l2 = landed.clone();
+        std::thread::spawn(move || {
+            let mut current = String::new();
+            for mut req in server.incoming_requests() {
+                if req.method() == &tiny_http::Method::Post {
+                    let mut body = Vec::new();
+                    std::io::Read::read_to_end(req.as_reader(), &mut body).unwrap();
+                    let text = String::from_utf8_lossy(&body).to_string();
+                    let fname = text.split("filename=\"").nth(1).unwrap().split('"').next().unwrap().to_string();
+                    l2.lock().unwrap().push((fname, current.clone()));
+                } else {
+                    current = req.url().trim_start_matches("/documents/").trim_start_matches('/').to_string();
+                    std::thread::sleep(std::time::Duration::from_millis(2)); // 拉大"设完文件夹到上传"之间的窗口
+                }
+                let _ = req.respond(tiny_http::Response::from_string("{}"));
+            }
+        });
+        let x = std::sync::Arc::new(Xochitl::new(&addr, lib.path(), 10));
+        let hs: Vec<_> = [("甲", "fa"), ("乙", "fb")]
+            .into_iter()
+            .map(|(folder, _)| {
+                let x = x.clone();
+                std::thread::spawn(move || {
+                    for i in 0..10 {
+                        x.upload(b"data", &format!("{folder}-{i}.pdf"), "application/pdf", folder).unwrap();
+                    }
+                })
+            })
+            .collect();
+        for h in hs {
+            h.join().unwrap();
+        }
+        let got = landed.lock().unwrap().clone();
+        assert_eq!(got.len(), 20);
+        for (fname, folder) in got {
+            let want = if fname.starts_with('甲') { "fa" } else { "fb" };
+            assert_eq!(folder, want, "{fname} 落错了文件夹");
+        }
     }
 
     #[test]
@@ -298,6 +368,13 @@ mod tests {
         assert_eq!(v["zoomMode"], "bestFit", "其它字段必须原样保留");
         let ids: std::collections::HashSet<_> = v["pages"].as_array().unwrap().iter().map(|x| x.as_str().unwrap().to_string()).collect();
         assert_eq!(ids.len(), 349, "逐页 UUID 必须互不相同");
+    }
+
+    #[test]
+    fn header_filename_strips_quotes_and_newlines_only() {
+        assert_eq!(header_safe_filename("他说\"好\".pdf"), "他说'好'.pdf");
+        assert_eq!(header_safe_filename("a\r\nX-Evil: 1.epub"), "a  X-Evil: 1.epub");
+        assert_eq!(header_safe_filename("镖人 - 01卷.epub"), "镖人 - 01卷.epub", "普通名字原样");
     }
 
     #[test]

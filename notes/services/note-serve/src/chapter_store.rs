@@ -48,8 +48,20 @@ impl<T: Clone + Serialize + DeserializeOwned> ChapterStore<T> {
     fn path(&self, book_uuid: &str) -> Result<PathBuf, String> {
         Ok(self.dir.join(format!("{}.json", plain_name(book_uuid)?)))
     }
+    /// 读不到/不存在 → 空记录。解析失败也退回空记录（下一次 `set` 会覆盖它），但先另存一份 `.corrupt`
+    /// 副本（已有就不重复拷）：笔记本记录里的 `doc_uuid` 是把旧版本送进回收站的唯一线索，静默丢了会在设备上
+    /// 留下追踪不到的旧笔记本（2026-09-24 第三轮审计，跟条目库/配置同一纪律）。
     fn load(&self, book_uuid: &str) -> BookRecord<T> {
-        self.path(book_uuid).ok().and_then(|p| std::fs::read(p).ok()).and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
+        let Ok(p) = self.path(book_uuid) else { return BookRecord::default() };
+        let Ok(bytes) = std::fs::read(&p) else { return BookRecord::default() };
+        serde_json::from_slice(&bytes).unwrap_or_else(|e| {
+            let bak = p.with_extension("json.corrupt");
+            if !bak.exists() {
+                let _ = std::fs::copy(&p, &bak);
+                eprintln!("[note-serve] {} 解析失败，按空记录处理（原内容另存 {}）: {e}", p.display(), bak.display());
+            }
+            BookRecord::default()
+        })
     }
     fn save(&self, book_uuid: &str, b: &BookRecord<T>) -> Result<(), String> {
         write_atomic(&self.path(book_uuid)?, &serde_json::to_vec_pretty(b).map_err(|e| e.to_string())?).map_err(|e| format!("写状态失败: {e}"))
@@ -127,6 +139,19 @@ mod tests {
         assert!(st2.get("b1", 0).is_none(), "清掉之后就是没有过记录");
         assert_eq!(st2.list("b1").len(), 1, "另一章不受影响");
         st2.clear("b1", 0).unwrap(); // 再清一次（本来就没有）不报错
+    }
+
+    #[test]
+    fn corrupt_record_file_is_backed_up_before_overwrite() {
+        let t = tempfile::tempdir().unwrap();
+        let dir = t.path().join("recs");
+        let st: ChapterStore<Rec> = ChapterStore::new(dir.clone());
+        st.ensure().unwrap();
+        std::fs::write(dir.join("b1.json"), b"{ half").unwrap();
+        assert!(st.get("b1", 0).is_none(), "坏文件按空记录处理");
+        st.set("b1", 0, Rec { a: "x".into(), b: 1 }).unwrap();
+        assert_eq!(std::fs::read(dir.join("b1.json.corrupt")).unwrap(), b"{ half", "覆盖前留了副本");
+        assert_eq!(st.get("b1", 0).unwrap().b, 1);
     }
 
     /// 回归：uuid 里带路径分隔符/`..` 不能读写目录之外的文件（URL 参数解码后可能含 `/`）。

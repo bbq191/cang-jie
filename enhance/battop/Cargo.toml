@@ -2,7 +2,7 @@
 name = "battop"
 version = "0.1.0"
 edition = "2021"
-description = "非实时电池/后台占用采集器(oneshot,timer 触发)——cang-jie misc 设备工具"
+description = "非实时电池/后台占用采集器(常驻服务,进程内每 ~10 分钟采一次)——enhance 系统增强线"
 
 [[bin]]
 name = "battop"

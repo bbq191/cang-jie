@@ -204,12 +204,41 @@ pub fn referenced_note_frags(html: &str) -> Vec<String> {
 /// 防把普通跨文件交叉引用误当尾注搬走；下载管线传 **false**——微读注释块 class 是混淆名（如
 /// `class_s1r`）无语义，但 marker（noteref/纯跨文件`<a>`）就是脚注引用，故"**id 被 marker 引用**"
 /// 本身即注释的充分证据（referenced 已只含脚注 marker 的 frag），不再要 class 语义（13·67 的 `<p>` 注释即此）。
+/// `html` 里有没有某处 `id="X"`（不分大小写、不看词边界，逐个出现位置都查）的 X 在 `referenced` 里。
+/// 是 `id_re` 在任意子串（开标签）上可能匹配到的值的超集，所以返回 `false` 时可以断定没有块会被搬走。
+fn mentions_referenced_id(html: &str, referenced: &std::collections::HashSet<String>) -> bool {
+    if referenced.is_empty() {
+        return false;
+    }
+    let b = html.as_bytes();
+    let mut i = 0;
+    while i + 4 <= b.len() {
+        if b[i..i + 4].eq_ignore_ascii_case(b"id=\"") {
+            let start = i + 4;
+            if let Some(len) = b[start..].iter().position(|&c| c == b'"') {
+                // start/start+len 都落在 ASCII 字节（`"` 之后、`"` 处）上，必是字符边界。
+                if len > 0 && referenced.contains(&html[start..start + len]) {
+                    return true;
+                }
+            }
+        }
+        i += 1;
+    }
+    false
+}
+
 pub fn collect_footnote_notes(
     html: &str,
     referenced: &std::collections::HashSet<String>,
     require_semantic: bool,
 ) -> (String, Vec<(String, String)>) {
     let mut index: Vec<(String, String)> = Vec::new();
+    // 快速路径：块只有在开标签带 `id="X"` 且 X 被引用时才会被搬走。本章任何位置都找不到一个被引用的
+    // `id="…"` 值 → 结果必然与原文相同，不必跑下面四遍全文 replace_all（它们对每个 `<p>` 都要重建一遍字符串；
+    // 2026-09-24 审计实测这一步占章节变换耗时的大头，绝大多数章节其实没有注释块）。
+    if !mentions_referenced_id(html, referenced) {
+        return (html.to_string(), index);
+    }
     let mut cleaned = html.to_string();
     // p 不嵌 p、li 不嵌 li（扁平尾注表）、aside 不嵌 aside → 非贪婪匹配到最近闭合安全。
     // div 也收（v7：不少书注释块是 <div id=fn>），但**嵌套 div 正则不可靠** → 内含 <div 的跳过不搬（零丢失）。

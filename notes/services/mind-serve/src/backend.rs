@@ -1,9 +1,9 @@
 //! 文字后端（Strategy）：`TextModel` 一个方法——给拼好的提示词，回文本与用量。
-//! 生产实现 `OpenAiCompat`：`POST {base_url}/chat/completions`，纯文本消息，覆盖 DashScope（Qwen）与所有 OpenAI 兼容服务；
+//! 生产实现是 `vendorcfg::ChatClient`（2026-09-24 起取代本地 `OpenAiCompat` 壳）：`POST {base_url}/chat/completions`，纯文本消息，覆盖 DashScope（Qwen）与所有 OpenAI 兼容服务；
 //! 换厂只改配置 baseUrl/model/key。跟 transcribe-serve 的同名结构同一个模式，区别只是没有 `image_url`。
 //! **传输（POST + 错误截断）与应答解析已收进 `vendorcfg::chat`（2026-09-20，两边此前各抄一份）**——这里只留
-//! 请求体（纯文本消息、温度 0.3）与 `TextModel` 这个业务 trait；`OpenAiCompat` 是薄壳。
-use std::time::Duration;
+//! 请求体（纯文本消息、温度 0.3）与 `TextModel` 这个业务 trait。
+use vendorcfg::ChatClient;
 
 /// 一次问答的结果（文本 + token 用量）：与视觉转写同形，共用 `vendorcfg::ChatReply`。
 pub type Reply = vendorcfg::ChatReply;
@@ -11,21 +11,6 @@ pub type Reply = vendorcfg::ChatReply;
 pub trait TextModel: Send + Sync {
     fn name(&self) -> &str;
     fn ask(&self, prompt: &str) -> Result<Reply, String>;
-}
-
-pub struct OpenAiCompat {
-    pub backend: String,
-    pub base_url: String,
-    pub model: String,
-    pub key: String,
-    pub agent: ureq::Agent,
-}
-
-impl OpenAiCompat {
-    pub fn new(backend: &str, base_url: &str, model: &str, key: &str, timeout: Duration) -> OpenAiCompat {
-        let agent = vendorcfg::chat::agent(timeout);
-        OpenAiCompat { backend: backend.into(), base_url: base_url.trim_end_matches('/').into(), model: model.into(), key: key.into(), agent }
-    }
 }
 
 /// 请求体（纯函数，便于核对形状）。temperature 给点余地（0.3）——问答不是转写，允许组织语言，但别太发挥。
@@ -37,12 +22,12 @@ pub fn chat_request(model: &str, prompt: &str) -> serde_json::Value {
 #[cfg(test)]
 use vendorcfg::parse_chat_reply;
 
-impl TextModel for OpenAiCompat {
+impl TextModel for ChatClient {
     fn name(&self) -> &str {
-        &self.backend
+        self.backend()
     }
     fn ask(&self, prompt: &str) -> Result<Reply, String> {
-        vendorcfg::post_chat(&self.agent, &self.base_url, &self.key, &chat_request(&self.model, prompt))
+        self.post(&chat_request(self.model(), prompt))
     }
 }
 

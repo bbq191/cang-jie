@@ -46,14 +46,16 @@ fn main() {
         .and_then(|s| s.parse::<u64>().ok())
         .filter(|n| *n > 0)
         .unwrap_or(600);
+    // summary 的按文件聚合缓存跨轮保留（见 summary.rs 头注「按文件缓存」）。
+    let mut cache = summary::SummaryCache::default();
     loop {
-        sample_once(&dir);
+        sample_once(&dir, &mut cache);
         std::thread::sleep(Duration::from_secs(interval));
     }
 }
 
 /// 一轮采样：读电量+进程 → 算增量 → 追加样本 → 写 baseline/summary → 清理旧样本。
-fn sample_once(dir: &Path) {
+fn sample_once(dir: &Path, cache: &mut summary::SummaryCache) {
     let now = now_secs();
     let bat = procs::read_battery();
     let disc = if bat.status == "Discharging" { 1 } else { 0 };
@@ -90,7 +92,7 @@ fn sample_once(dir: &Path) {
     let wakes = wake::load_cache(dir);
 
     // 生成面板用预聚合(4 窗口 × 应用/进程 CPU + 唤醒源计数 + 放电%)
-    if let Err(e) = summary::write_summary(dir, now, local_offset(now), &wakes) {
+    if let Err(e) = summary::write_summary(dir, now, local_offset(now), &wakes, cache) {
         eprintln!("battop: 写 summary 失败: {e}");
     }
 

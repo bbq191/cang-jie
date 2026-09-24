@@ -456,9 +456,9 @@ fn list_caches_level_probe_and_invalidates_on_rewrite_or_delete() {
     let plain = mini_epub(&[("OEBPS/a.xhtml", "<p>x</p>")]);
     s.stage_new("b.epub", &plain).unwrap();
     assert_eq!(s.list()[0].level, "none");
-    assert_eq!(crate::ops::lock(&s.probes).len(), 1, "首次列表写入缓存");
+    assert_eq!(rmsvc_core::sync::lock(&s.probes).len(), 1, "首次列表写入缓存");
     // 篡改缓存里的结论：若第二次列表仍用它，说明命中缓存没有重开文件
-    crate::ops::lock(&s.probes).get_mut("b.epub").unwrap().level = "full";
+    rmsvc_core::sync::lock(&s.probes).get_mut("b.epub").unwrap().level = "full";
     assert_eq!(s.list()[0].level, "full", "文件没变 → 命中缓存");
     // 文件改写（内容长度变了）→ 缓存失效重判
     let marked = mini_epub(&[("OEBPS/a.xhtml", "<p>x</p>"), (optimize::OPTIMIZE_MARKER, optimize::OPTIMIZE_VERSION)]);
@@ -468,7 +468,7 @@ fn list_caches_level_probe_and_invalidates_on_rewrite_or_delete() {
     assert_eq!(s.list()[0].level, "none", "改写回未优化 → 重判");
     std::fs::remove_file(s.dir.join("b.epub")).unwrap();
     assert!(s.list().is_empty());
-    assert!(crate::ops::lock(&s.probes).is_empty(), "条目消失 → 清缓存");
+    assert!(rmsvc_core::sync::lock(&s.probes).is_empty(), "条目消失 → 清缓存");
 }
 
 #[test]
@@ -601,6 +601,29 @@ fn optimize_text_layer_pdf_refuses_to_overwrite_same_name_epub() {
     assert_eq!(std::fs::read(dir.join("paper.epub")).unwrap(), b"mine", "已有的 EPUB 不能被覆盖");
     assert_eq!(std::fs::read(dir.join("paper.pdf")).unwrap(), SAMPLE_PDF, "原 PDF 不能动");
     assert!(!dir.join(PDF_ORIGINALS_DIR).exists());
+}
+
+/// 开头检查时还没有同名 EPUB、转换进行中才有人落下同名书：落地前在落名临界区里复查，放弃这次转换，
+/// 不覆盖那本书（2026-09-24 第三轮审计补的窗口）。
+#[test]
+fn optimize_text_layer_pdf_does_not_clobber_epub_landed_mid_conversion() {
+    const SAMPLE_PDF: &[u8] = include_bytes!("../../../../crates/bookconv/tests/fixtures/sample.pdf");
+    let t = tempfile::tempdir().unwrap();
+    let s = staging(&t);
+    s.stage_new("paper.pdf", SAMPLE_PDF).unwrap();
+    let dir = t.path().join("staging");
+    let epub = dir.join("paper.epub");
+    let err = s
+        .optimize("paper.pdf", |_, _| {
+            if !epub.exists() {
+                std::fs::write(&epub, b"mine").unwrap();
+            }
+        })
+        .unwrap_err();
+    assert!(err.contains("转换期间"), "{err}");
+    assert_eq!(std::fs::read(&epub).unwrap(), b"mine", "转换期间落下的 EPUB 不能被覆盖");
+    assert_eq!(std::fs::read(dir.join("paper.pdf")).unwrap(), SAMPLE_PDF, "原 PDF 不能动");
+    assert!(std::fs::read_dir(&dir).unwrap().all(|e| !e.unwrap().file_name().to_string_lossy().ends_with(".optimizing.tmp")), "临时文件要清掉");
 }
 
 /// 漫画/无文字层 PDF 走裁边分支，格式不变仍是 PDF，且能被识别成"自己优化过的"。
@@ -948,4 +971,69 @@ fn open_for_download_returns_file_and_length() {
     f.read_to_end(&mut buf).unwrap();
     assert_eq!((buf.as_slice(), n), (&b"hello"[..], 5));
     assert!(s.open_for_download("nope.epub").is_err());
+}
+
+/// 「首次打开才渲染」的书被打开后，列表把 onopen 升级成 ok，并**写回边车**——之后的列表不再去读 xochitl 的 `.content`。
+#[test]
+fn list_persists_onopen_to_ok_upgrade() {
+    const U: &str = "cccccccc-cccc-cccc-cccc-cccccccccccc";
+    let t = tempfile::tempdir().unwrap();
+    let lib = t.path().join("xochitl");
+    std::fs::create_dir_all(&lib).unwrap();
+    let s = Staging::new(t.path().join("staging"), Arc::new(Xochitl::new("127.0.0.1:1", &lib, 1)), 0);
+    s.ensure().unwrap();
+    s.stage_new("big.epub", b"PK").unwrap();
+    s.set_render("big.epub", RenderCheck { uuid: U.into(), pages: 3, expected: 0, status: "onopen".into(), at: 1 }).unwrap();
+    std::fs::write(lib.join(format!("{U}.content")), r#"{"pageCount":3}"#).unwrap();
+    let rc = |s: &Staging| s.list()[0].delivered.clone().unwrap().render.unwrap();
+    assert_eq!(rc(&s).status, "onopen", "页数没变＝还没打开过");
+    std::fs::write(lib.join(format!("{U}.content")), r#"{"pageCount":412}"#).unwrap();
+    assert_eq!((rc(&s).status.as_str(), rc(&s).pages), ("ok", 412));
+    let stored = sidecar::read(&s.dir().join("big.epub")).unwrap().render.unwrap();
+    assert_eq!((stored.status.as_str(), stored.pages), ("ok", 412), "升级已落盘");
+    std::fs::remove_file(lib.join(format!("{U}.content"))).unwrap();
+    assert_eq!(rc(&s).pages, 412, "之后列表不再依赖 .content");
+}
+
+/// 进度节流：首尾必报；快书（300 条目、每条 10ms，共 3 秒）从只按条目数时的 61 次上报降到 4 次；
+/// 慢书（每条 500ms）仍按每 5 条报一次，进度条照样平滑。
+#[test]
+fn progress_throttle_limits_fast_books_by_time_and_keeps_slow_books_by_stride() {
+    use std::time::{Duration, Instant};
+    use super::optimizing::{ProgressThrottle, OPTIMIZE_PROGRESS_MIN_GAP, OPTIMIZE_PROGRESS_STRIDE};
+    let count = |total: usize, per_entry: Duration, gap: Duration| {
+        let t0 = Instant::now();
+        let mut th = ProgressThrottle::new(OPTIMIZE_PROGRESS_STRIDE, gap);
+        let reported: Vec<usize> = (1..=total).filter(|&d| th.should_report(d, total, t0 + per_entry * d as u32)).collect();
+        assert_eq!((reported.first(), reported.last()), (Some(&1), Some(&total)), "首尾必报");
+        reported.len()
+    };
+    let fast = Duration::from_millis(10);
+    assert_eq!(count(300, fast, Duration::ZERO), 61, "旧行为（只按条目数）");
+    assert_eq!(count(300, fast, OPTIMIZE_PROGRESS_MIN_GAP), 4, "3 秒跑完只报 4 次（第 1、101、201、300 条）");
+    assert_eq!(count(300, Duration::from_millis(500), OPTIMIZE_PROGRESS_MIN_GAP), 61, "慢书不受时间门影响");
+    assert_eq!(count(1, fast, OPTIMIZE_PROGRESS_MIN_GAP), 1);
+}
+
+/// 回归：多条入库路径（网页上传 / inbox 追平 / 抓网文）同时落同名书，每一本都要落成独立文件、谁也不覆盖谁。
+/// 此前靠网页上传把 spool 锁攥到请求体收完来串行化（抓网文压根不拿锁）；现在"挑名 + 落地"由落名临界区保证。
+#[test]
+fn concurrent_landing_of_same_name_never_clobbers() {
+    let t = tempfile::tempdir().unwrap();
+    let s = Arc::new(staging(&t));
+    let src_dir = t.path().join("src");
+    std::fs::create_dir_all(&src_dir).unwrap();
+    let n = 16;
+    let hs: Vec<_> = (0..n)
+        .map(|i| {
+            let s = s.clone();
+            let src = src_dir.join(format!("{i}.part"));
+            std::fs::write(&src, format!("book-{i}")).unwrap();
+            std::thread::spawn(move || if i % 2 == 0 { s.stage_from_path("同名.pdf", &src).unwrap() } else { s.stage_new("同名.pdf", format!("book-{i}").as_bytes()).unwrap() })
+        })
+        .collect();
+    let names: std::collections::HashSet<String> = hs.into_iter().map(|h| h.join().unwrap()).collect();
+    assert_eq!(names.len(), n, "每次落地都拿到不同的名字");
+    let contents: std::collections::HashSet<Vec<u8>> = names.iter().map(|nm| std::fs::read(s.dir().join(nm)).unwrap()).collect();
+    assert_eq!(contents.len(), n, "没有任何一本被别的覆盖");
 }

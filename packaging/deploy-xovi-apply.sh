@@ -2,7 +2,7 @@
 # host 侧对设备统一"让已落盘的 xovi 扩展/qmd 生效"一次（重启 xochitl）+ 健康检查。
 #
 # 用在所有"只落盘、不自己重启 xochitl"的步骤跑完之后，最后调用一次——hl-snap/handwriting-stroke/
-# sidebar-entry 用 DEFER_XOVI_START=1 时只落盘不重启；shelf 的字体菜单/回收站/建夹 qmd 本来就只落盘。
+# sidebar-entry 用 DEFER_XOVI_START=1 时只落盘不重启；shelf 的字体菜单/回收站/建夹/漫画页边距/阅读器翻页 qmd 本来就只落盘。
 # 没有"只重载一个扩展"的机制，多个步骤各自重启等于短时间内重启 xochitl 多次，会撞 xochitl 的
 # watchdog+StartLimit（2026-09-11 install-all 连续装 hl-snap+handwriting-stroke，真机触发过意外整机重启）。
 #
@@ -11,7 +11,8 @@
 #   旧版无条件 xovi/start：在已生效的 xochitl 上它会 umount 重挂 drop-in 目录，xochitl SEGV → 整机自动重启
 #   （2026-09-20 真机事故；重跑 install-all 必踩）。重启前会打印"打断阅读"提示并留 5 秒宽限。
 #
-# 只在"有待生效的落盘改动"或"xovi 还没在 xochitl 里生效"时才重启（各落盘步骤真的改了文件时才记标记，见
+# 只在"有待生效的落盘改动（含待换入的扩展 .so）"或"xovi 还没在 xochitl 里生效"时才重启（判据 devlib.sh 的
+# cj_apply_needed；各落盘步骤真的改了文件时才记标记，见
 # devlib.sh 的 cj_pending_mark；标记在 /run，重启设备即清）——重复跑 install-all 不再每次闪屏。
 # 没标记但想强制重启（比如手工换过 .so）：--force。
 #
@@ -38,7 +39,7 @@ FORCE_RESTART="$1"
 cj_require_root || exit 1
 PENDING="$(cj_pending_list | tr '\n' ' ')"
 if [ "$FORCE_RESTART" != "1" ]; then
-    if cj_xochitl_has_xovi && [ -z "$PENDING" ]; then
+    if ! cj_apply_needed; then
         echo "-- 没有待生效的落盘改动，且 xovi 已在 xochitl 里生效——不重启 xochitl（要强制重启：--force）"
         exit 0
     fi

@@ -6,7 +6,8 @@ description = "reMarkable 设备端 Web 服务共享底座：XDG 路径、服务
 license = "MIT"
 
 [dependencies]
-tiny_http = { version = "0.12", features = ["ssl-rustls"] }
+# tiny_http 0.12.0 的本地副本：只加了"每条连接读空闲超时"一处补丁（上游不设任何超时），见 vendor/README.md
+tiny_http = { path = "vendor/tiny_http", features = ["ssl-rustls"] }
 # 自签证书（首启生成，纯 Rust ring 后端）与密码哈希/Basic 认证
 rcgen = { version = "0.14", default-features = false, features = ["crypto", "pem", "ring"] }
 # 解析已有 CA 证书、判断是否带名称约束（迁移用）。依赖树里本来就有（rcgen/rustls 间接引入），不新增编译量。

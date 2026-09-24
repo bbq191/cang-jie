@@ -6,6 +6,38 @@ use super::*;
 /// 每 N 条目才落一次盘/推一次事件，首尾两条（第 1 条、最后一条）永远落，保证 UI 能看到"刚开始动"
 /// 和"到 100% 了"，中间稀疏一点不影响"看着在动"这个体验目标。
 pub(super) const OPTIMIZE_PROGRESS_STRIDE: usize = 5;
+/// 两次进度上报之间的最短间隔（与 [`OPTIMIZE_PROGRESS_STRIDE`] 同时满足才报，首尾不受限）。只按条目数节流时，
+/// 文字书的条目处理得飞快（几百个 xhtml 几秒跑完），一秒内能报十几次；而每次上报 = 一次边车原子写 + 一条 SSE 事件，
+/// 网页每收到一条事件就把母版库页的 6 个接口整套重拉一遍（经网关 TLS），整台设备被频繁唤醒。进度条一秒动一次
+/// 已经足够"看着在动"（2026-09-24 审计）。
+pub(super) const OPTIMIZE_PROGRESS_MIN_GAP: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// 进度上报节流器：首条、末条必报；中间要同时满足"距上次至少 `stride` 条"和"距上次至少 `min_gap`"。
+pub(super) struct ProgressThrottle {
+    stride: usize,
+    min_gap: std::time::Duration,
+    last_done: usize,
+    last_at: Option<std::time::Instant>,
+}
+
+impl ProgressThrottle {
+    pub(super) fn new(stride: usize, min_gap: std::time::Duration) -> ProgressThrottle {
+        ProgressThrottle { stride, min_gap, last_done: 0, last_at: None }
+    }
+
+    /// 这一步（`done`/`total`，`now` 为当前时刻）该不该上报；该报就同时记下这次。
+    pub(super) fn should_report(&mut self, done: usize, total: usize, now: std::time::Instant) -> bool {
+        let due = done == total
+            || done == 1
+            || self.last_at.is_none()
+            || (done.saturating_sub(self.last_done) >= self.stride && self.last_at.is_some_and(|t| now.saturating_duration_since(t) >= self.min_gap));
+        if due {
+            self.last_done = done;
+            self.last_at = Some(now);
+        }
+        due
+    }
+}
 
 /// 优化回执尾注：`（N 章，前→后 字节，剥伪 DRM…）`。
 pub(super) fn optimize_note(rep: &optimize::Report) -> String {
@@ -94,6 +126,7 @@ impl Staging {
         })?;
         // 已有的长下载名在这里一并规范成 `书名 - N卷`；目标已存在（重复的同一卷）就保持原名，不覆盖。
         let canon = canonical_staged_name(name);
+        let land = self.land_guard();
         let shown = if canon != name && !self.dir.join(&canon).exists() && std::fs::rename(&p, self.dir.join(&canon)).is_ok() {
             let (old_car, new_car) = (sidecar::path_for(&p), sidecar::path_for(&self.dir.join(&canon)));
             if old_car.exists() {
@@ -103,6 +136,7 @@ impl Staging {
         } else {
             name.to_string()
         };
+        drop(land);
         Ok(format!("已优化《{shown}》{}", optimize_note(&rep)))
     }
 
@@ -135,14 +169,25 @@ impl Staging {
                 };
                 // 质量门在改名覆盖之前对临时文件跑——2026-09-23 真机《移动互联软件安装使用手册》
                 // 坐实的那个 bug（图片路径多写一层 `../`，图片一张都不显示）就是这条门要拦的形状。
-                bookconv::util::produce_then_replace(&tmp, &epub_path, |t| {
-                    std::fs::write(t, &bytes).map_err(|e| format!("写出临时文件失败: {e}"))?;
-                    let check = bookconv::check::check_epub_file(t).map_err(|e| format!("质量门校验失败: {e}"))?;
+                // 落地前在落名临界区里再查一次同名 EPUB：转换可能要几分钟，开头那次检查之后别的入库路径
+                // （上传/抓网文/inbox）可能已经落下同名书——它们都在临界区里挑名落地，这里同样在临界区里
+                // 复查 + rename，就不会把那本覆盖掉（2026-09-24 第三轮审计补）。
+                let landed = (|| {
+                    std::fs::write(&tmp, &bytes).map_err(|e| format!("写出临时文件失败: {e}"))?;
+                    let check = bookconv::check::check_epub_file(&tmp).map_err(|e| format!("质量门校验失败: {e}"))?;
                     if !check.ok {
                         return Err(format!("优化产物未通过质量门，{}", check.errors.join("；")));
                     }
-                    Ok(())
-                })?;
+                    let _land = self.land_guard();
+                    if epub_path.exists() {
+                        return Err(format!("转换期间母版库里出现了同名《{stem}.epub》，为免覆盖已放弃这次转换；原 PDF 未动"));
+                    }
+                    std::fs::rename(&tmp, &epub_path).map_err(|e| format!("回写母版库失败: {e}"))
+                })();
+                if let Err(e) = landed {
+                    let _ = std::fs::remove_file(&tmp);
+                    return Err(e);
+                }
                 // 原 PDF 不直接删，挪进隐藏备份目录保留 [`PDF_ORIGINALS_KEEP_SECS`]——转坏了（多栏/表格类
                 // PDF 重排效果差）还能找回原件（2026-09-24 审查：此前 `remove_file` 删了就没了）。
                 self.backup_pdf_original(name, p)?;
@@ -175,10 +220,9 @@ impl Staging {
         let now = rmsvc_core::clock::now_secs();
         let _ = self.set_optimize_check(name, sidecar::OptimizeCheck { status: "pending".into(), message: String::new(), at: now, progress: None });
         self.spawn_bg(name, bus, |this, name, bus| {
-            let mut last_reported = 0usize;
+            let mut throttle = ProgressThrottle::new(OPTIMIZE_PROGRESS_STRIDE, OPTIMIZE_PROGRESS_MIN_GAP);
             let on_progress = |done: usize, total: usize| {
-                if done == total || done == 1 || done - last_reported >= OPTIMIZE_PROGRESS_STRIDE {
-                    last_reported = done;
+                if throttle.should_report(done, total, std::time::Instant::now()) {
                     let _ = this.set_optimize_check(name, sidecar::OptimizeCheck {
                         status: "pending".into(),
                         message: String::new(),
@@ -191,11 +235,8 @@ impl Staging {
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| this.optimize(name, on_progress)))
                 .unwrap_or_else(|_| Err("优化过程内部异常（已捕获，不影响其他操作）".to_string()));
             let at = rmsvc_core::clock::now_secs();
-            let oc = match &result {
-                Ok(msg) => sidecar::OptimizeCheck { status: "ok".into(), message: msg.clone(), at, progress: None },
-                Err(e) if e.contains(optimize::CANCELLED_MSG) => sidecar::OptimizeCheck { status: "cancelled".into(), message: e.clone(), at, progress: None },
-                Err(e) => sidecar::OptimizeCheck { status: "failed".into(), message: e.clone(), at, progress: None },
-            };
+            let (status, message) = final_status(result.as_deref().map_err(String::as_str));
+            let oc = sidecar::OptimizeCheck { status, message, at, progress: None };
             // 优化成功后条目可能改了名（长下载名规范成 `书名 - N卷`；有文字层 PDF 转成同名 `.epub` 并把原 `.pdf` 挪进备份）——
             // sidecar 是按条目名找文件的（`existing()`），原名这时候已经找不到文件，终态写会静默失败。这里探测一下
             // 有没有发生改名，写去正确的新名字（`on_progress` 那些中途写的进度还是按旧名字写，那时候文件确实

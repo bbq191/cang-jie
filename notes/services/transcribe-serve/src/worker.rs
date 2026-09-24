@@ -87,17 +87,20 @@ fn transcribe_entry(c: &Ctx<'_>, uuid: &str, e: &notecore::model::Entry) -> Resu
     }
     let png = c.store.crop(uuid, &ink.crop)?;
     let prompt = crate::prompt::build(&c.cfg.prompt, e.quote.as_ref().map(|q| q.text.as_str()));
-    let t = c.vision.transcribe(&png, &prompt)?;
+    // 用量账本只记模型调用本身：调用失败记一次失败；调用成功就记 token（钱已经花了），即使随后写回
+    // ink-serve 失败也照记——此前写回失败会被当成一次模型失败记账、把已花的 token 丢掉，取不到裁图这类
+    // 本地错误也会被算成模型调用失败（2026-09-24 第三轮审计）。
+    let t = c.vision.transcribe(&png, &prompt).inspect_err(|err| c.ledger.record_fail(&c.cfg.usage_key(), err, c.now))?;
+    c.ledger.record_ok(&c.cfg.usage_key(), t.prompt_tokens, t.completion_tokens, c.now);
     // 行首标记兜底：几何没认出来（仍是正文）时按转写结果认，并剥掉标记——可能认出内容样式（Style）
     // 也可能认出结构性标记（### 小节），见 `notecore::marker::Marker`。
     let (marker, text) = if e.style == Style::Body { split_leading_marker(&t.text) } else { (None, t.text.clone()) };
     let draft = Draft { text: text.clone(), backend: c.vision.name().to_string(), at: c.now, hash: ink.hash.clone() };
     c.store.post_draft(uuid, &e.id, &draft, marker)?;
-    c.ledger.record_ok(&c.cfg.usage_key(), t.prompt_tokens, t.completion_tokens, c.now);
     Ok(Transcribed { prompt_tokens: t.prompt_tokens, completion_tokens: t.completion_tokens })
 }
 
-/// 跑一轮。`only` 给定 → 只做那一条（强制）。
+/// 跑一轮。`only` 给定 → 只做那一条（强制）。一轮报告由调用方记账（`ledger::record_if_new`）。
 pub fn run_once(c: &Ctx<'_>, only: Option<Target<'_>>) -> RunReport {
     let mut r = RunReport { at: c.now, ..Default::default() };
     let books = match c.store.list_books() {
@@ -156,7 +159,6 @@ pub fn run_once(c: &Ctx<'_>, only: Option<Target<'_>>) -> RunReport {
                 }
                 Err(err) => {
                     r.failed += 1;
-                    c.ledger.record_fail(&c.cfg.usage_key(), &err, c.now);
                     c.failures.note(&b.uuid, &e.id, hash, &err, c.now);
                     if forced {
                         r.note = err;
@@ -173,7 +175,6 @@ pub fn run_once(c: &Ctx<'_>, only: Option<Target<'_>>) -> RunReport {
             }
         }
     }
-    c.ledger.record_run(r.clone());
     r
 }
 
@@ -188,6 +189,7 @@ mod tests {
     struct Mem {
         book: Mutex<Book>,
         posted: Mutex<Vec<(String, Draft, Option<Marker>)>>,
+        fail_post: std::sync::atomic::AtomicBool,
     }
     impl EntryStore for Mem {
         fn list_books(&self) -> Result<Vec<BookBrief>, String> {
@@ -201,6 +203,9 @@ mod tests {
             if file == "missing.png" { Err("没有这张裁图".into()) } else { Ok(b"\x89PNG".to_vec()) }
         }
         fn post_draft(&self, _uuid: &str, id: &str, draft: &Draft, marker: Option<Marker>) -> Result<(), String> {
+            if self.fail_post.load(std::sync::atomic::Ordering::Relaxed) {
+                return Err("ink-serve 连不上".into());
+            }
             self.posted.lock().unwrap().push((id.into(), draft.clone(), marker.clone()));
             let mut b = self.book.lock().unwrap();
             if let Some(e) = b.entries.iter_mut().find(|e| e.id == id) {
@@ -215,7 +220,7 @@ mod tests {
         Entry { id: id.into(), page: "p".into(), page_index: 0, chapter: None, chapter_title: String::new(), subhead: None, quote: quote.map(|q| Quote { id: "q".into(), text: q.into(), color: "y".into(), rects: vec![] }), ink: Some(Ink { strokes: vec![], bbox: (0.0, 0.0, 1.0, 1.0), hash: hash.into(), crop: crop.into() }), drafts: vec![], text: None, style: Style::Body, ask_ai: false, question: None, answer: None, status: Status::Pending, destination: Default::default(), source: Default::default(), created: 0, updated: 0 }
     }
     fn mem(entries: Vec<Entry>) -> Mem {
-        Mem { book: Mutex::new(Book { uuid: "u".into(), title: "t".into(), entries, ..Default::default() }), posted: Mutex::new(vec![]) }
+        Mem { book: Mutex::new(Book { uuid: "u".into(), title: "t".into(), entries, ..Default::default() }), posted: Mutex::new(vec![]), fail_post: Default::default() }
     }
     fn cfg() -> TranscribeConfig {
         TranscribeConfig { pause_ms: 0, max_per_run: 2, max_attempts: 2, ..Default::default() }
@@ -322,6 +327,23 @@ mod tests {
         assert_eq!(run_once(&c, None).failed, 1);
         f.clear();
         assert!(f.list().is_empty());
+    }
+
+    /// 账本只记模型调用：取不到裁图（没调模型）不记；模型成功但写回失败，token 照记为成功、不另记失败。
+    #[test]
+    fn ledger_counts_model_calls_only() {
+        let t = tempfile::tempdir().unwrap();
+        let ledger = Ledger::open(&t.path().join("l.json"));
+        let store = mem(vec![entry("a", "h1", "missing.png", None), entry("b", "h2", "b.png", None)]);
+        store.fail_post.store(true, std::sync::atomic::Ordering::Relaxed);
+        let vision = Fixed("x".into());
+        let f = Failures::default();
+        let c = Ctx { store: &store, vision: &vision, cfg: &cfg(), ledger: &ledger, failures: &f, now: 1 };
+        let r = run_once(&c, None);
+        assert_eq!((r.done, r.failed), (0, 2), "两条都没写成：一条缺裁图、一条写回失败");
+        let m = &ledger.snapshot().by_model[&cfg().usage_key()];
+        assert_eq!((m.calls, m.ok, m.failed, m.prompt_tokens), (1, 1, 0, 10), "只有 b 真调了模型，花的 token 记下");
+        assert_eq!(f.list().len(), 2, "两条都进失败清单，按上限重试");
     }
 
     #[test]

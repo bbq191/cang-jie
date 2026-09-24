@@ -62,10 +62,11 @@
 <text x="712" y="598" text-anchor="start" font-size="10.5" fill="#3a3a3a">502“book-serve 无响应”</text>
 <polyline points="640,587.0 700,587.0" fill="none" stroke="#b0451f" stroke-width="1.6" marker-end="url(#mr)"/>
 <polyline points="340.0,626 340.0,642" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#mk)"/>
-<rect x="40" y="642" width="600" height="78" rx="10" fill="#eaf6ec" stroke="#3f9a55" stroke-width="1.6"/>
+<rect x="40" y="642" width="600" height="86" rx="10" fill="#eaf6ec" stroke="#3f9a55" stroke-width="1.6"/>
 <text x="52" y="662" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">⑦ 回应浏览器</text>
-<text x="52" y="684" text-anchor="start" font-size="10.5" fill="#3a3a3a">200 且带 Content-Disposition（下载原件等）→ 边读边发；有长度就按定长发；</text>
-<text x="52" y="699" text-anchor="start" font-size="10.5" fill="#3a3a3a">其余（JSON 等小应答）读完再回；只带回 Content-Type / Content-Disposition</text>
+<text x="52" y="684" text-anchor="start" font-size="10.5" fill="#3a3a3a">200 且带长度，又是下载（原件、导出）或 &gt;256KB（壁纸原图等）→ 按定长边读边发；</text>
+<text x="52" y="699" text-anchor="start" font-size="10.5" fill="#3a3a3a">其余（JSON 等小应答、没有长度的）读完再回——不借 SSE“读到连接关闭”的通道；</text>
+<text x="52" y="714" text-anchor="start" font-size="10.5" fill="#3a3a3a">只带回 Content-Type / Content-Disposition 两个响应头</text>
 <text x="628" y="662" text-anchor="end" font-size="10" fill="#8a8a8a">proxy.rs + http/server.rs</text>
 <rect x="40" y="742" width="1160" height="112" rx="10" fill="#fff3d6" stroke="#c9971f" stroke-width="1.6"/>
 <text x="52" y="762" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">名额什么时候还？（proxy.rs poll_until_settled）</text>

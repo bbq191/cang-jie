@@ -48,6 +48,17 @@ pub fn is_image_ext(name: &str) -> bool {
     l.ends_with(".jpg") || l.ends_with(".jpeg") || l.ends_with(".png") || l.ends_with(".gif") || l.ends_with(".webp")
 }
 
+/// 图片路径的扩展名（小写、不带点）：取**文件名**最后一个 `.` 之后；文件名没有扩展名时当 `jpg`（EPUB 里绝大多数图是
+/// JPEG）。占位封面与漫画分卷重新落名图片共用——此前两处直接 `rsplit('.')`，无扩展名的路径会把整段路径连同 `/`
+/// 当扩展名，写出 `cover.images/x`、`images/0001.oebps/images/x` 这种条目名。
+pub(crate) fn image_ext_of(path: &str) -> String {
+    let base = path.rsplit('/').next().unwrap_or(path);
+    match base.rsplit_once('.') {
+        Some((_, e)) if !e.is_empty() => e.to_ascii_lowercase(),
+        _ => "jpg".into(),
+    }
+}
+
 /// 图片扩展名（不带点、小写）→ media-type；认不出的当 JPEG（EPUB 里绝大多数图是 JPEG）。
 pub fn image_media_type_of_ext(ext: &str) -> &'static str {
     match ext {
@@ -173,6 +184,14 @@ mod tests {
         let err = produce_then_replace(&tmp, &dir_target, |t| std::fs::write(t, b"z").map_err(|e| e.to_string())).unwrap_err();
         assert!(err.contains("回写母版库失败"), "{err}");
         assert!(!tmp.exists());
+    }
+
+    #[test]
+    fn image_ext_of_takes_file_extension_only() {
+        assert_eq!(image_ext_of("OEBPS/images/Cv.JPG"), "jpg");
+        assert_eq!(image_ext_of("a.b/images/cover"), "jpg", "文件名没扩展名时不能把目录里的点当扩展名");
+        assert_eq!(image_ext_of("cover."), "jpg");
+        assert_eq!(image_ext_of("x.png"), "png");
     }
 
     #[test]

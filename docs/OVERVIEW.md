@@ -22,7 +22,7 @@ reMarkable Paper Pro Move 是一台彩色墨水屏平板，官方阅读/笔记�
 |---|---|---|
 | [`shelf/`](../shelf/README.md) 书架 | 书（EPUB/PDF）导入 → 母版库 → 按需优化 → 加入 xochitl 或 KOReader | 2 个 Web 服务（book-serve、koreader-serve）+ 若干 qmd 界面补丁 |
 | [`notes/`](../notes/README.md) 笔记线 | 荧光笔勾画 + 旁边手写批注 → 手机整理/转写/问 AI → 投回设备笔记本或 Obsidian | 4 个 Web 服务（ink / transcribe / mind / note） |
-| [`enhance/`](../enhance/README.md) 系统增强 | 荧光笔 CJK 精确吸附、手写笔锋渲染、电池诊断、字体/壁纸上传即用 | 2 个 xovi 扩展 + 1 个采样器 + 2 个 Web 服务（font / wallpaper） |
+| [`enhance/`](../enhance/README.md) 系统增强 | 荧光笔 CJK 精确吸附、手写笔锋渲染、阅读器单击翻页 / 日漫翻页规则、电池诊断、字体/壁纸上传即用 | 2 个 xovi 扩展 + 1 个采样器 + 2 个 Web 服务（font / wallpaper）；翻页补丁是 qmd，随 shelf 一起装 |
 | [`gateway/`](../gateway/README.md) 网关 | 上面三条线共用的唯一对外入口：HTTPS + 登录密码 + 反向代理 + 批量队列 + 并发闸门 | Web 服务（`0.0.0.0:443`） |
 | [`rmsvc-core/`](../rmsvc-core/README.md) 服务基座 | 各 Web 服务共用的基础库，不含业务逻辑 | Rust 库（编进各服务，不单独运行） |
 | [`defw/`](../defw/README.md) 固件逆向 | xochitl 3.28.0.172 的 Ghidra 逆向产物，给扩展定位 hook 用 | 逆向资料（不上设备） |
@@ -37,6 +37,7 @@ reMarkable Paper Pro Move 是一台彩色墨水屏平板，官方阅读/笔记�
 - **所有服务都跑在设备上**，用浏览器访问 `https://10.11.99.1/`（USB 连接时）或 `https://shelf.local/`（同一 WiFi 下，安卓不解析 `.local`）。
 - **只有网关对外**（`0.0.0.0:443`）。它用设备自己生成的私有 CA 签 HTTPS 证书，再加登录密码（默认 `shelf`，首次登录强制改）。领域服务只听 `127.0.0.1`，由网关按"服务注册表"转发。装/卸一个服务 = 一个二进制 + 一个 systemd 单元。
 - **安全上的两条限制**（2026-09-24 起）：私有 CA 只能给局域网名字和内网 IP 签证书，即使设备上的 CA 私钥泄露，也伪造不了别的网站；登录输错按来源 IP 分别限速（每个 IP 60 秒内错 5 次就锁这个 IP），同一 WiFi 下别人乱试不会把你锁在外面。从旧版升级时网关会自动换一张新 CA，**手机和电脑要重装一次证书**，见 [`INSTALL.md`](INSTALL.md#装完之后)。
+- **xochitl 阅读器翻页**（2026-09-24，「管理 → 系统增强」两个开关，默认关，真机验证过）：「单击翻页」点屏幕左右边缘翻页；「日漫翻页规则」让标明从右往左的书（或在 `rtl-overrides.json` 手动清单里的书）从左往右滑、点左边缘是下一页。每次打开书读一次开关。
 - **开关开了不等于生效**：网页「管理」页在每个扩展开关旁显示"已加载 / 未加载"，漫画页边距开关显示界面补丁"已加载 / 待重启 / 未加载"。数据直接读运行中 xochitl 进程加载了哪些文件。
 - 端口：`book-serve` 8790、`koreader-serve` 8791、`font-serve` 8792、`wallpaper-serve` 8793、`ink-serve` 8795、`transcribe-serve` 8796、`mind-serve` 8797、`note-serve` 8798。
 - 只支持 **reMarkable Paper Pro Move、固件 3.28.0.172**；`/home` 数据在固件升级后保留，`/usr`、`/etc` 里的东西会被冲掉，要重新安装（见 [`INSTALL.md`](INSTALL.md#固件升级ota之后)）。
@@ -49,7 +50,7 @@ reMarkable Paper Pro Move 是一台彩色墨水屏平板，官方阅读/笔记�
 | 各服务的数据 / 配置 / 状态（母版库、证书、密码、字体壁纸池、PDF 转换后的原件备份…） | `~/.local/share/shelf`、`~/.config/shelf`、`~/.local/state/shelf`；笔记线同理放在 `~/.config/notes`、`~/.local/share/notes`、`~/.local/state/notes` | 保留 |
 | xovi 扩展 `.so`（`hl-snap`、`hw-stroke`） | `/home/root/xovi/extensions.d/`（**只放扩展，备份绝不能放这里**） | 文件保留，需重建 hashtab 后重新生效 |
 | 等着换入的新版扩展 `.so`（xochitl 正在用旧版时先放这里，下次重启 xochitl 时换入） | `/home/root/.cangjie-stage/so-pending/` | 保留 |
-| 界面补丁 qmd（字体菜单、回收站/建夹代理、侧栏入口、漫画边距代理） | `/home/root/xovi/exthome/qt-resource-rebuilder/` | 同上 |
+| 界面补丁 qmd（字体菜单、回收站/建夹代理、侧栏入口、漫画边距代理、阅读器翻页） | `/home/root/xovi/exthome/qt-resource-rebuilder/` | 同上 |
 | systemd 单元（`shelf.target`、各服务、`xovi-reenable`、`wifi-watch`、`battop`、`chrony-boot-wakelock`） | `/usr/lib/systemd/system/` | **被冲掉**，重跑安装 |
 | 国内 NTP、默认时区 | `/etc` | **被冲掉**，重跑安装 |
 | battop 二进制与采样数据 | `/home/root/battop/` | 保留 |

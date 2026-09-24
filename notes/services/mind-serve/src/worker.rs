@@ -50,8 +50,9 @@ pub fn ask_entry(c: &Ctx<'_>, uuid: &str, book_title: &str, e: &Entry) -> Result
         }
     };
     let answer = Answer { text: reply.text.clone(), backend: c.model.name().to_string(), at: c.now, brief: question.to_string() };
-    c.store.post_answer(uuid, &e.id, &answer)?;
+    // 先记账再写回：模型已经答了、token 已经花了，写回 ink-serve 失败也不该让这笔用量凭空消失。
     c.ledger.record_ok(&c.cfg.usage_key(), reply.prompt_tokens, reply.completion_tokens, c.now);
+    c.store.post_answer(uuid, &e.id, &answer)?;
     Ok(Answered { text: reply.text, prompt_tokens: reply.prompt_tokens, completion_tokens: reply.completion_tokens })
 }
 

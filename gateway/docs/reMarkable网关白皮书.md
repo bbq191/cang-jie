@@ -35,9 +35,10 @@
 | 登录限速 | 同一 IP 60 秒内输错 5 次锁这个 IP（最多 60 秒）；表最多记 256 个 IP | `auth.rs` |
 | 会话 | 30 天（`sessionDays`）、只存内存、最多 64 个 | `main.rs`、`config.rs` |
 | 代理超时 | 900 秒 | `proxy.rs` |
+| 代理应答流式转发 | 200 且带长度，又是下载（带 `Content-Disposition`）或 > 256KB → 边读边发；其余读完再回 | `proxy.rs::STREAM_MIN_BYTES` |
 | systemd | `CPUWeight=20`、`MemoryMax=192M`、`Nice=5` | `systemd/gateway.service` |
-| 测试 | Rust 51 个（`cargo test`）；前端 3 个测试文件（`ui/test/`） | 2026-09-24 实跑 |
-| 语言包 | `zh-CN.json` / `en-US.json` 各 500 个 key，单测钉住两份一致 | `ui.rs` |
+| 测试 | Rust 55 个（`cargo test`）；前端 2 个 node 测试文件共 6 项 + 1 个手动跑的浏览器冒烟（`ui/test/`） | 2026-09-24 实跑 |
+| 语言包 | `zh-CN.json` / `en-US.json` 各 504 个 key，单测钉住两份一致 | `ui.rs` |
 
 **真机验证状态**
 
@@ -49,7 +50,8 @@
 | 批量“加入 xochitl / 加入 KOReader” | **未在设备上跑**（代码路径与批量优化相同，只是端点不同） |
 | 闸门“两本大书真的串行、内存峰值不叠加” | **从未在真机验证**。09-24 修掉了“查询失败一次就提前放名额”，但那只有单元测试覆盖 |
 | 09-24 的按 IP 限速、`next` 校验、流式下载、断网兜底、扩展加载检测 | 单元测试通过；流式下载有真机修复记录（见 §02）；**其余未在真实手机/电脑浏览器上验证** |
-| 母版库新界面的真实触屏交互、暗色模式 | **未验证**（只有无头浏览器量过宽度） |
+| 母版库新界面的真实触屏交互、暗色模式 | **未在真机/真手机验证**（09-24 用 mock 后端在 390/1280 宽 × 亮暗 × 中英截图走查过） |
+| 09-24 第三轮审计：代理大应答流式、`/api/enhance/status` 缓存、改密码 PBKDF2 挪锁外、前端按 tab 懒加载与一批界面修复 | **只在 host 验证**（单元测试 + mock 后端截图走查），未部署到设备 |
 
 ## 01｜登录与安全
 
@@ -71,7 +73,7 @@
 - **公开路径**（不用登录）：`GET/POST /login`、`POST /logout`、`GET /ca.crt`、`GET /health`、`GET /favicon.ico`。其余请求没认出身份时：浏览器（`Accept` 含 `text/html`）303 到 `/login?next=<原路径>`，其它 401。
 - **会话**：令牌 32 字节随机、只存内存（重启网关全部要重新登录）、最多 64 个（满了淘汰最早到期的）、有效期 `sessionDays`（缺省 30 天）。改密码后踢掉其它设备的会话，本会话保留。
 - **首登必改**：首次启动写入默认密码 `shelf` 的哈希并置 `mustChangePassword`。改之前只放行 `/password` 和 `GET /api/session`：网页 303 到 `/password`，API 回 403。用 Basic 可以直接 `POST /password`（已证明持有当前密码，不用再填 `current`）。新密码至少 6 位（`config::MIN_PASSWORD_LEN`，登录页提示从这个常量插值）且不能是 `shelf`。
-- **哈希**：`pbkdf2$<轮数>$<盐>$<摘要>`，PBKDF2-HMAC-SHA256 60 万轮、16 字节随机盐。旧版单轮 SHA-256 哈希仍能校验，改密后自动升级。PBKDF2 在配置锁外面算，不会让登录尝试期间其它请求排队。
+- **哈希**：`pbkdf2$<轮数>$<盐>$<摘要>`，PBKDF2-HMAC-SHA256 60 万轮、16 字节随机盐。旧版单轮 SHA-256 哈希仍能校验，改密后自动升级。PBKDF2 一律在配置锁外面算（登录、Basic 校验、改密码时核对当前密码都是；改密码这一处 09-24 才挪出来），不会让一次慢校验卡住其它请求。校验只有一处实现（`GatewayConfig::verify_hash`）。
 - **登录后跳转**：`next` 只接受本站路径——必须以单个 `/` 开头，不能是 `//`，不能含 `\` 或控制字符（09-24 前 `/\evil.com` 能跳外站）。
 - **忘记密码**：在设备上跑 `gateway reset-password`（回到 `shelf` 并强制改）或 `gateway passwd <新密码>`，都要重启网关生效。
 
@@ -107,15 +109,15 @@
 
 ### 2.2 路由与代理行为
 
-- **路由优先级**：基座的 `Router` 按“最具体优先”分发（字面段多的胜、精确匹配胜尾部通配）。所以 `/api/batch`、`/api/enhance/...` 这些网关自有路由不会被 `/api/{svc}/*` 代理通配抢走，跟注册顺序无关（09-20 起；此前靠“先注册先匹配”的纪律，`main.rs` 里仍留着旧注释）。
+- **路由优先级**：基座的 `Router` 按“最具体优先”分发（字面段多的胜、精确匹配胜尾部通配）。所以 `/api/batch`、`/api/enhance/...` 这些网关自有路由不会被 `/api/{svc}/*` 代理通配抢走，跟注册顺序无关（09-20 起；此前靠“先注册先匹配”的纪律。`main.rs` 里的注释已同步更正）。
 - **转发**：`/api/<seg>/<rest>` → 剥掉 `<seg>` → `http://127.0.0.1:<端口>/<rest>`，查询串原样带上。后端直连（SSH 调试）和经网关走的是同一套路由。
 - **出错**：seg 不认识 → 404“未知服务”；服务没起 → 404“`<服务>` 未安装或未运行”（网页据 `/api/services` 隐藏对应 tab）；后端连不上 → 502。
 - **请求体**：边读边转发（上传大文件不占网关内存）。只有闸门拦的三个 POST 会先读一次小 JSON（上限 1MB）拿书名，再原样转发。
-- **响应体**：
-  - 状态 200 且带 `Content-Disposition`（母版库原件下载、导出等下载类应答，可达上百 MB）→ **边读边发**；后端给了 `Content-Length` 就按定长发（浏览器能显示下载进度）。
-  - 其余（JSON 等小应答）→ 读完再回。
+- **响应体**（规则只有一条：**有长度的大应答边读边发，其余读完再回**）：
+  - 状态 200、后端给了 `Content-Length`，并且是下载（带 `Content-Disposition`：母版库原件、导出等，可达上百 MB）或体积超过 256KB（壁纸原图、裁图等）→ **按定长边读边发**，浏览器能显示下载进度。host 实测代理一个 60MB 应答，网关峰值内存 62.4MB → 5.0MB，输出逐字节一致。
+  - 其余（JSON 等小应答、错误应答、**没有长度的应答**）→ 读完再回。
   - 只带回 `Content-Type`、`Content-Disposition` 两个响应头，其余一律丢弃，不给后端夹带 `Set-Cookie` 之类的口子。
-- **09-24 的流式下载修复**：第一版流式下载复用了 SSE 的“接管裸 socket、读到连接关闭为止”通道，结果 reader 读完连接并不关闭，真机上原件下载永远收不完。现在带长度的流走 tiny_http 的定长响应（并把 chunked 阈值调到最大，否则超过 32KB 会改 chunked、丢掉长度）。教训：SSE 通道和文件下载通道语义不同，不能混用。
+- **为什么没有长度的就不流式**：没有长度的流在基座里只有一条路——SSE 用的“接管裸 socket、读到连接关闭为止”。09-24 第一版流式下载就是借了这条路，结果后端读完并不关连接，真机上原件下载永远收不完；随后改成带长度的走 tiny_http 定长响应（并把 chunked 阈值调到最大，否则超过 32KB 会改 chunked、丢掉长度），这一步有真机修复记录。第三轮审计（09-24，只在 host 验证）又把“有长度的大图片”也纳入流式，并让“没有长度的下载”退回读完再回，不再走那条通道。教训：SSE 通道和文件下载通道语义不同，不能混用。
 
 ### 2.3 管理台与基石探测（`manage.rs`）
 
@@ -129,9 +131,9 @@
 
 - **原则**（用户 2026-09-06 定）：不轮询、不监听全盘、日志写入不触发。事件只来自服务代码里的变更点，加上注册表目录的 inotify。
 - **汇聚**：`Hub::spawn` 为 `MODULES` 里有 `/events` 的每个服务起一条线程，跑基座的 `events::follow`（服务没起就等注册表 inotify；连上用 `?ka=120`，两分钟一次心跳；断线 3 秒→60 秒指数退避；对方回 404 就长等 10 分钟）。收到的事件补上 `"svc":"<seg>"` 后发进网关总线。另一条线程监听注册表目录（防抖 500ms），服务上下线时发 `{"area":"manage"}`。
-- **网关自己也发**：`batch.rs` 每次落盘、`budget.rs` 每次排队状态变化，都经 `events::notify_books()` 发 `{"area":"books"}`，网页据此重拉 `/api/batch/status` 和 `/api/budget/status`（批量运行时不再每 3 秒轮询）。
+- **网关自己也发**：`batch.rs` 每次落盘、`budget.rs` 每次排队状态变化，都经 `events::notify_books()` 发 `{"area":"books","kind":"batch"|"budget"}`（不带 `svc`，以此和 book-serve 自己的事件区分）。网页收到这类事件**只重取** `/api/batch/status` 和 `/api/budget/status` 两个接口，不整页刷新母版库（09-24 起；此前每条都全量刷新，5 条事件 12 个请求，现在 4 个）。批量运行时也不再每 3 秒轮询。
 - **反过来驱动闸门**：book-serve 发来的 `books` 事件还会唤醒闸门里“等这本书处理完再还名额”的线程（见 §04）。
-- **浏览器侧**：`new EventSource('/api/events?ka=60')`，60 秒一次心跳。收到事件只刷新对应区域；不在前台的 tab 只记“待刷”。页面隐藏超过 60 秒就主动断开 SSE（锁屏的手机不再让设备为它保活），重新可见时重连，重连成功后补刷当前 tab，断开期间的事件不会漏掉效果。
+- **浏览器侧**：`new EventSource('/api/events?ka=60')`，60 秒一次心跳。收到事件只刷新对应区域；不在前台的 tab 只记“待刷”。页面隐藏超过 60 秒就主动断开 SSE（锁屏的手机不再让设备为它保活），重新可见时重连，重连成功后补刷当前 tab，断开期间的事件不会漏掉效果。前端完整的取数时机见 §5.1 的图。
 
 ## 04｜闸门与批量队列
 
@@ -170,19 +172,29 @@
 ### 5.1 怎么打包、怎么组织
 
 - `ui/index.html`、`style.css`、`app.js`、`auth.css` 在编译期 `include_str!` 进二进制，拼成**一个零外链的单文件页面**；格式白名单从 `rmsvc_core::formats` 注入（母版库现在只收 EPUB/PDF），网页 `accept` 和服务端上传门同源。
-- **顶层标签**：传书（入库 / 母版库）· 笔记（浏览 / 整理 / 回收站 / 导入 md〔实验室开关打开才显示〕）· 其他（xochitl 字体 / KOReader / 壁纸，按注册表里有哪些服务动态出现）· 管理（基石与模块 / 模型管理 / 系统增强 / 实验室）。
-- **i18n**：`ui/locales/{zh-CN,en-US}.json` 各 500 个 key，`GET /ui/locales/{lang}` 下发，不认识的语言落中文。后端直接吐给前端的字符串（如 `MODULES.label`）绕过了翻译管线，前端优先查 `manage.modules.label.<seg>`。
+- **顶层标签**：传书（入库 / 母版库）· 笔记（浏览 / 整理 / 回收站 / 导入 md〔实验室开关打开才显示〕）· 其他（xochitl 字体 / KOReader / 壁纸，按注册表里有哪些服务动态出现）· 管理（基石与模块 / 模型管理 / 系统增强 / 电池刺客〔battop 在跑才显示〕/ 实验室）。
+- **i18n**：`ui/locales/{zh-CN,en-US}.json` 各 504 个 key，`GET /ui/locales/{lang}` 下发，不认识的语言落中文。后端直接吐给前端的字符串（如 `MODULES.label`）绕过了翻译管线，前端优先查 `manage.modules.label.<seg>`，语言包里没有才用后端的中文（注意 `T()` 缺 key 时返回 key 本身，不能写成 `T(k)||兜底`，09-24 修过这个永远不生效的兜底）。
 - **安全**：外部数据（文件名、书名、转写、AI 回答、服务端错误）插入 `innerHTML` 前统一经 `esc()` 转义（09-20 修存储型 XSS）。
+- **什么时候取数**（09-24 第三轮审计，只在 host 验证）：各 tab **第一次切过去才渲染**（渲染本身取一次数据），之后切回来只刷新；打开页面的请求从 33 个降到 7 个，逛完四个 tab 从 69 降到 35。管理页一次刷新并行取三个接口，`/api/enhance/status` 只取一次。事件怎么分派到各 tab 见下图和 §03。
+
+  ![网页什么时候向网关要数据](diagrams/ui-refresh.svg)
+
+- **界面规则**（09-24 截图走查后定下，改样式时别破坏）：
+  - 触屏设备（`@media (pointer:coarse)`）上按钮、页头链接、语言下拉、开关的可点区域撑到约 40px（原来 29～32px，勾选框只有 17px）；只撑热区不放大字号，桌面鼠标不受影响。
+  - 标签栏吸顶位置跟着页头实际高度走：`app.js` 用 `ResizeObserver` 把页头高度写进 CSS 变量 `--hdr-h`（英文界面在手机上页头会折两行，原来写死的 2.9em 会让标签栏钻到页头底下）。只在尺寸变化时回调，不轮询。
+  - `search`/`number`/`password` 输入框也套站内输入框样式（原来显示成浏览器默认小框，暗色下尤其难看）。
+  - 列表行右侧按钮组放不下时整组换行靠右，不把名字挤成竖排；回收站条目的徽章单独一行。
+  - 新建 DOM 统一用 `el()` 帮手，不再手写 `createElement` 样板。
 - **断网兜底**（09-24）：`fetch` 在设备休眠、WiFi 断开、网关重启时会直接抛 `TypeError`，之前没接住，开关一直灰着、按钮没反应。现在统一的 `j()` 把它转成“网络连接失败”提示；401 跳登录、403 跳改密码。
-- **测试**：`ui/test/net.test.mjs`（断网兜底）、`xss.test.mjs`（转义）、`smoke.puppeteer.mjs`（冒烟：SSE 断开/重连、搜索防抖等）；CI 跑 `node --check` 和两个 `*.test.mjs`（node 内置测试，零 npm 依赖）；puppeteer 冒烟不进 CI，本地手跑。人眼走查工具见 [`../tools/screenshot-walkthrough/README.md`](../tools/screenshot-walkthrough/README.md)。
+- **测试**：`ui/test/net.test.mjs`（断网兜底）、`xss.test.mjs`（转义）、`smoke.puppeteer.mjs`（冒烟：SSE 断开/重连、搜索防抖等）；CI 跑 `node --check` 和两个 `*.test.mjs`（node 内置测试，零 npm 依赖，共 6 项）；浏览器冒烟不进 CI，本地手跑（puppeteer 或 playwright 都行，09-24 起覆盖“排队事件不触发全量刷新”）。人眼走查工具见 [`../tools/screenshot-walkthrough/README.md`](../tools/screenshot-walkthrough/README.md)。
 
 ### 5.2 母版库页（`app.js` 的 `renderTransfer`/`stgRow`，`style.css` 的 `.stg-*`）
 
 09-20 按用户汇总的要求重做（推翻了“每行一个主按钮 + ⋯ 菜单、PC 两列”的第一版），之后别加回单条按钮：
 
-1. **加入位置**：xochitl / KOReader 两个常驻下拉在同一行，带“＋ 新建文件夹…”。xochitl 新建走 book-serve 的建文件夹队列（xochitl 里的 QML 代理约 8 秒轮询建出来，界面等它出现再选中）；KOReader 走 `POST /books/mkdir`（幂等）。
+1. **加入位置**：xochitl / KOReader 两个常驻下拉在同一行，带“＋ 新建文件夹…”。xochitl 新建走 book-serve 的建文件夹队列（xochitl 里的 QML 代理 `shelf-mkdir-agent.qmd` 用长轮询 `GET /mkdir/pending?wait=290` 等着（09-24 前 25 秒），有人入队就立刻建；09-22 前是 8 秒一次定时拉。界面等文件夹出现再选中）；KOReader 走 `POST /books/mkdir`（幂等）。
 2. **搜书名**：输入框带建议（系列名 + 每本书名）。清爽书名去掉下载站 `-- 作者 -- hash` 尾巴，完整名在提示里。
-3. **行内只显示**书名、类型、大小、状态、进度；只有处理中/排队时才有一个“停止 / 取消排队”按钮。
+3. **行内只显示**书名、类型、大小、状态、进度；只有处理中/排队时才有一个“停止 / 取消排队”按钮（手机上放在书名下面一行，09-24）。
 4. **所有操作在勾选后的底部操作栏**，分三行（09-24 排布）：第一行“已选 N 本 / 清除选择”；第二行主操作“优化 / 加入 xochitl / 加入 KOReader”等分一行，按钮上的小角标是“可处理数”，0 就置灰；第三行“下载原件 / 改名 / 删除”（多选时只剩删除，靠右一格）。窄屏（≤34em）去掉“加入”前缀，≤22.5em 再缩字号；按钮不折行、等高。运行中底部栏变成进度 + 全部中止。
 5. **PC 和手机同一套单列布局**；真分页（每页 25/50/100，PC 页码，手机上一页/下一页）；“全选当前筛选”“优化全部待优化（N）”。
 6. **验证方式**：无头浏览器在 320/360/390/414/1024/1280 宽下逐状态量 `scrollWidth`，无横向溢出、无截字。真实触屏交互未验证。
@@ -195,20 +207,21 @@
 
 | 接口 | 作用 |
 |---|---|
-| `GET /api/enhance/status` | 返回下面四个开关、battop 状态，以及 `loaded`（扩展是否真的加载进 xochitl） |
-| `PUT /api/enhance/qol` | body 里出现哪个布尔键就改哪个：`hlSnapCjk`、`hwStrokeEnabled`、`notesImportMdEnabled`、`comicMinMargin` |
+| `GET /api/enhance/status` | 返回下面六个开关、battop 状态，以及 `loaded`（扩展是否真的加载进 xochitl） |
+| `PUT /api/enhance/qol` | body 里出现哪个布尔键就改哪个：`hlSnapCjk`、`hwStrokeEnabled`、`notesImportMdEnabled`、`comicMinMargin`、`tapPageTurn`、`rtlPageTurn`；一个都没有回 400 |
 | `POST /api/enhance/battop/{start\|stop}` | 启停电池刺客（`systemctl`） |
 | `GET /api/enhance/battop/summary` | 原样返回 battop 的 `summary.json`；还没数据时 `available:false` |
 
 - **开关存哪**：`~/.local/share/cangjie-ime/reading-qol.json`（与设备原生设置页、langhook C hook 共用）。写法是“整份读进来、只覆盖要改的键、其余原样写回”，进程内串行化，所以不认识的键不会丢。
-- **缺省值**：`hlSnapCjk` 缺省开（荧光笔汉字吸附）；`notesImportMdEnabled`、`comicMinMargin` 缺省关（新功能要手动去实验室打开）；`hwStrokeEnabled` 是派生开关——`hwStrokeNibMinRatio < 1.0` 就算开，网页写入时两个 ratio 同步写 `0.6`（开）或 `1.0`（关），精调字段留给手改文件。
-- **页面位置**：荧光笔吸附和电池刺客卡片在「管理 → 系统增强」；手写笔迹优化、漫画页边距最小化、导入 md 在「管理 → 实验室」。
-- **扩展加载检测**（09-24，`enhance/loaded.rs`）：开关只反映配置，看不出 `.so` 到底有没有进 xochitl——历史上两次“开关开着其实没生效”（09-09 langhook 整个从设备上消失；GLIBC 版本不符让 hw-stroke 静默加载失败）。现在直接读 xochitl 主进程（`comm==xochitl` 且父进程是 1，排除渲染用的同名子进程）的 `/proc/<pid>/maps`：映射了哪个 `extensions.d/*.so` 就是真加载了，网页显示“已加载 / 未加载 / xochitl 未运行”。qmd 补丁（如 `shelf-comic-margins.qmd`）不是 `.so`，按“qt-resource-rebuilder 在进程里 + 补丁文件早于 xochitl 启动”推断为已载入，文件比进程新则显示“待重启”——这是按加载机制推断，看不到 qmd 里的定位是否全部命中。导入 md 只标“网页功能”（不需要往 xochitl 里加载东西）。
-- **battop 的边界**：battop 已改成常驻进程，把“每次启动都做一次 cgroup 迁移”从每天 144 次降到“用户手点几次”；但每次 `systemctl start` 仍是同类操作，网页没做防连点，短时间反复启停理论上会复现旧事故的触发条件（事故见 `enhance/battop/FINDINGS.md`）。`systemctl is-active` 结果缓存 5 秒。
+- **缺省值**：`hlSnapCjk` 缺省开（荧光笔汉字吸附）；`notesImportMdEnabled`、`comicMinMargin` 缺省关（新功能要手动去实验室打开）；`tapPageTurn`（单击翻页）、`rtlPageTurn`（日漫翻页规则）缺省关 = xochitl 原生行为，由 `reader-page-turn.qmd` 每次打开书时读，切换后下次打开书生效（细节见系统增强线白皮书）；`hwStrokeEnabled` 是派生开关——`hwStrokeNibMinRatio < 1.0` 就算开，网页写入时两个 ratio 同步写 `0.6`（开）或 `1.0`（关），精调字段留给手改文件。
+- **页面位置**：荧光笔吸附、阅读器翻页（单击翻页 + 日漫翻页规则）和电池刺客开关卡片在「管理 → 系统增强」；battop 在跑时多出一个「电池刺客」子标签放详细数据；手写笔迹优化、漫画页边距最小化、导入 md 在「管理 → 实验室」。
+- **扩展加载检测**（09-24，`enhance/loaded.rs`）：开关只反映配置，看不出 `.so` 到底有没有进 xochitl——历史上两次“开关开着其实没生效”（09-09 langhook 整个从设备上消失；GLIBC 版本不符让 hw-stroke 静默加载失败）。现在直接读 xochitl 主进程（`comm==xochitl` 且父进程是 1，排除渲染用的同名子进程）的 `/proc/<pid>/maps`：映射了哪个 `extensions.d/*.so` 就是真加载了，网页显示“已加载 / 未加载 / xochitl 未运行”。qmd 补丁（如 `shelf-comic-margins.qmd`）不是 `.so`，按“qt-resource-rebuilder 在进程里 + 补丁文件早于 xochitl 启动”推断为已载入，文件比进程新则显示“待重启”——这是按加载机制推断，看不到 qmd 里的定位是否全部命中（阅读器翻页的 `reader-page-turn.qmd` 同理）。导入 md 只标“网页功能”（不需要往 xochitl 里加载东西）。
+- **这个接口很常被调**（管理页每次刷新、每个 manage 事件、笔记页每次刷新），所以 09-24 第三轮审计给它做了缓存（只在 host 验证）：`reading-qol.json` 一次请求只读一次（原来六个开关各读一遍）；xochitl 扩展扫描按 **(pid, 进程启动时刻)** 缓存——同一个 xochitl 进程只全量扫一次 `/proc` 和它的 `maps`，之后每次只读一次 `/proc/<pid>/stat` 核对还是不是同一个进程（host 合成数据 253µs → 1.7µs）。启动不到 30 秒的 xochitl 不缓存，因为 xovi 还在逐个加载扩展、映射可能不全；qmd 状态看的是文件修改时间，照旧每次现算。
+- **battop 的边界**：battop 已改成常驻进程，把“每次启动都做一次 cgroup 迁移”从每天 144 次降到“用户手点几次”；但每次 `systemctl start` 仍是同类操作，网页没做防连点，短时间反复启停理论上会复现旧事故的触发条件（事故见 `enhance/battop/FINDINGS.md`）。`systemctl is-active` 结果缓存 30 秒（09-24 前 5 秒；网页启停会主动清缓存，只有 battop 自己崩掉时网页最多晚 30 秒显示“已停”）。
 
 ## 07｜构建、部署与 systemd
 
-- **依赖**：只依赖顶层 `../rmsvc-core`；不依赖 `shelf/crates/bookconv`、`notes/` 的任何 crate；不在任何 workspace 里，是独立 Cargo 项目，自带一份 `.cargo/config.toml`（交叉编译的 CC/AR 覆盖，原因见基座白皮书 §05）。
+- **依赖**：只依赖顶层 `../rmsvc-core`；不依赖 `shelf/crates/bookconv`、`notes/` 的任何 crate；不在任何 workspace 里，是独立 Cargo 项目，自带一份 `.cargo/config.toml`（交叉编译的 CC/AR 覆盖，原因见基座白皮书 §06）。
 - **构建/部署由 shelf 代管**：没有自己的 `build.sh`/`deploy.sh`。`shelf/build.sh` 顺手 `cd ../gateway && cargo build`，`shelf/deploy.sh` 把二进制和 `systemd/gateway.service` 打进同一个部署包。单独重编：`cargo build --release --target aarch64-unknown-linux-musl`。
 - **release profile**：`panic="unwind"`（abort 下 `catch_unwind` 完全无效，一次 panic 就摔掉整个进程；代价是 aarch64 二进制大约 8%）。
 - **systemd 单元**：`PartOf=shelf.target`；`After=home.mount network-online.target`（这是网关自己的依赖，**不牵连 xochitl 本体**）；`ExecStartPre` 先跑 `lo-alias.sh`（让 `10.11.99.1` 常驻可达，xochitl 的 `/upload` 只绑 USB 网口；源在 `enhance/lo-alias/`）和 `fc-cache`（字体索引在 tmpfs，真重启后丢），两者失败都不阻断启动；`Restart=on-failure`；`CPUWeight=20`、`MemoryMax=192M`、`Nice=5`（只降权不硬顶，交互式重活需要突发）。
@@ -218,7 +231,8 @@
 | 坑 | 根因 | 教训 / 修法 |
 |---|---|---|
 | 闸门在大书时提前放行（09-24） | 等异步任务完成时，一次查询失败就放名额，而大书优化时最容易查询超时 | 连续 6 次失败才放；“侦测失败”和“任务结束”要分开对待 |
-| 原件下载永远收不完（09-24） | 文件下载复用了 SSE 的“读到连接关闭”通道 | 带长度的流走定长响应；两种流语义不同，不能混用 |
+| 原件下载永远收不完（09-24） | 文件下载复用了 SSE 的“读到连接关闭”通道 | 只有带长度的应答才流式、走定长响应；没长度的读完再回。两种流语义不同，不能混用 |
+| 后台 tab 全部渲染取数（09-24 前） | 页面一打开就渲染所有 tab，首个 tab 还被“点击刷新”再取一遍 | tab 第一次切到才渲染；网关自己的排队事件只重取两个状态接口 |
 | 排队/取消状态关页就丢（09-19） | 状态存在浏览器标签页的 JS 里，网关里排队的书照样等 | 状态放网关进程，任何会话都能看、能取消 |
 | 批量第一版三个 UI 缺陷（09-19） | 前端停在兄弟分支合并前的“PDF 不能拆”假设；运行中其它按钮仍可点 | 合并兄弟分支后要回头核对前端假设；后来整个被服务端批量队列取代 |
 | 开机时批量队列被覆盖（09-20） | `resume` 等不到 book-serve 就直接返回，随后一次入队把磁盘上的旧队列覆盖 | 先装进内存再等；超时也保留 |
@@ -239,7 +253,9 @@
 - 批量“加入 xochitl / 加入 KOReader”在设备上跑一遍。
 - 09-24 的安全改动在真实手机/电脑上走一遍：按 IP 限速、`next` 校验、断网提示；确认每台终端已装新 CA 并删掉旧 CA，之后删设备上的 `tls/*.bak-*`。
 - 母版库新界面的真实触屏、暗色模式。（xochitl“新建文件夹”：09-20 验证表记为未验证，另有 09-19 记录称已真机端到端通，两者冲突，以书架白皮书为准。）
-- `main.rs` 里“必须在 `/api/{svc}` 代理通配之前注册”的注释已过时（路由已按具体程度分发），下次改代码时顺手更正。
+- 09-24 第三轮审计的改动（代理大应答流式、`/api/enhance/status` 缓存、改密码锁外算、前端懒加载与界面修复）部署到设备后，核一次：下载大原件时网关 `VmHWM`、管理页“已加载”徽章在 xochitl 重启前后是否正确刷新、真实手机上的触屏热区与英文页头吸顶。
+- Basic 认证每个请求都跑一次 60 万轮 PBKDF2（PC CLI 已退役，影响小，没动）。
+- ~~网关直面局域网的 tiny_http 没有读超时~~：09-24 起 rmsvc-core 给每条连接设 60 秒读空闲超时（见基座白皮书 http 一节），半开/慢连接不再永久占线程。
 - 命名遗留要不要处理，没有排期。
 
 ## 附｜来历

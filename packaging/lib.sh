@@ -17,7 +17,8 @@
 #                    保证两边清单对称）
 #   parse_step_args  install-all / uninstall-all 共用的 [host] --force --purge --force-apply --dry-run --skip -h 解析
 #                    （调用方先定义 usage()）
-#   run_step / skip_has   （DRY=1 时 run_step 只打印将执行的命令，不连设备；SKIPPED/DONE/FAILED 记账）
+#   run_step / skip_has   （DRY=1 时 run_step 只打印将执行的命令，不连设备；SKIPPED/NOTAPPL/DONE/FAILED 记账）
+#   step_skipped     步骤因前置条件不满足而跳过（非失败）：打印原因；在 run_step 编排下另记入汇总的"前置条件不满足"栏
 #   host_arg         薄 deploy-*.sh 共用的 [host] 参数解析（-h、多余/未知参数 exit 2）
 #   require_device   动手前确认 ssh 通；不通给下一步排查提示并 exit 1
 #   fw_gate          固件 sha256 白名单门（install-all）
@@ -211,6 +212,16 @@ DEVICE_SCRIPT
 DONE=""
 FAILED=""
 SKIPPED=""
+NOTAPPL=""   # 步骤自己判定前置条件不满足、跳过（退出 0，但不该算进"已安装"）
+
+# step_skipped REASON：步骤因前置条件不满足/不适用而跳过（非失败）时调用，调用后照常 exit 0。
+# 单独跑时只打印原因；在 run_step 编排下（它导出 CJ_STEP_SKIP_FILE）另把原因写进该文件，
+# 汇总时这一步列进"已跳过（前置条件不满足）"而不是"已安装"——不然"跳过"混在"已安装"里，容易漏看。
+step_skipped() {
+    echo "-- $1——跳过，非失败"
+    if [ -n "${CJ_STEP_SKIP_FILE:-}" ]; then printf '%s\n' "$1" > "$CJ_STEP_SKIP_FILE"; fi
+}
+
 # run_step NAME CMD [ARGS…]：跳过判定 + 执行 + 记账（DRY=1 时只打印将执行的命令，不执行、不连设备）
 run_step() {
     rs_name="$1"; shift
@@ -225,10 +236,19 @@ run_step() {
         DONE="$DONE $rs_name"
         return 0
     fi
+    rs_skipf="$(mktemp)"
+    export CJ_STEP_SKIP_FILE="$rs_skipf"
     if "$@"; then
-        DONE="$DONE $rs_name"
+        if [ -s "$rs_skipf" ]; then
+            NOTAPPL="$NOTAPPL
+   $rs_name：$(head -n 1 "$rs_skipf")"
+        else
+            DONE="$DONE $rs_name"
+        fi
     else
         echo "!! $rs_name 失败（见上面这一步的原始报错）"
         FAILED="$FAILED $rs_name"
     fi
+    unset CJ_STEP_SKIP_FILE
+    rm -f "$rs_skipf"
 }

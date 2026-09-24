@@ -16,8 +16,10 @@ use rmsvc_core::asset::{self, AssetUploadFlow};
 use rmsvc_core::http::{bind, ApiError, ApiResult, Reply, Request, Router};
 use std::sync::Arc;
 
-/// `GET /mkdir/pending?wait=` 长轮询等待时长上限（秒）。须小于 QML 端 XHR 的传输超时（Qt6 缺省 30s）。
-const MKDIR_WAIT_MAX_SECS: u64 = 28;
+/// `GET /mkdir/pending?wait=` 长轮询等待时长上限（秒）。QML 端（shelf-mkdir-agent.qmd）发 wait=290：设备 Qt 6.10
+/// 的 QML XHR 不设传输超时（2026-09-24 核实，见 qmd 头注；09-22 版按"缺省 30s 超时"的假设把这里定成 28）。
+/// 在等的这段时间服务端不读 socket，所以不受 rmsvc-core 的读空闲超时影响。
+const MKDIR_WAIT_MAX_SECS: u64 = 300;
 
 pub fn router(st: Arc<State>) -> Router {
     Router::new()
@@ -29,11 +31,7 @@ pub fn router(st: Arc<State>) -> Router {
         .get("/staging/file", bind(&st, |s, r| {
             let name = r.q("name").ok_or_else(|| ApiError::bad("缺少 name"))?.to_string();
             let (f, len) = s.staging.open_for_download(&name).map_err(ApiError::bad)?;
-            let ctype = match rmsvc_core::formats::ext_of(&name).as_str() {
-                "epub" => "application/epub+zip",
-                "pdf" => "application/pdf",
-                _ => "application/octet-stream",
-            };
+            let ctype = bookconv::convert::direct_content_type(&name).map(|c| c.mime()).unwrap_or("application/octet-stream");
             Ok(Reply::sized_stream(ctype, Box::new(std::io::BufReader::new(f)), len).with_header("Content-Disposition", &rmsvc_core::multipart::content_disposition(&name)))
         }))
         .post("/staging/rename", bind(&st, |s, r| {
@@ -45,13 +43,11 @@ pub fn router(st: Arc<State>) -> Router {
         // ── 原 PDF 备份（PDF→EPUB 后保留 7 天，见 Staging::backup_pdf_original）──
         .post("/staging/originals/restore", bind(&st, |s, r| {
             s.staging.restore_original(r.json()?.str("name")?).map_err(ApiError::bad)?;
-            s.bus.publish("books", "staging");
-            ok()
+            staging_changed(s)
         }))
         .post("/staging/originals/delete", bind(&st, |s, r| {
             s.staging.delete_original(r.json()?.str("name")?).map_err(ApiError::bad)?;
-            s.bus.publish("books", "staging");
-            ok()
+            staging_changed(s)
         }))
         .post("/staging", bind(&st, staging_upload))
         .post("/staging/optimize", bind(&st, |s, r| {
@@ -80,8 +76,7 @@ pub fn router(st: Arc<State>) -> Router {
             let j = r.json()?;
             let reader = Reader::parse(j.str("target")?).map_err(ApiError::bad)?;
             s.staging.mark_delivered(j.str("name")?, reader).map_err(ApiError::bad)?;
-            s.bus.publish("books", "staging");
-            ok()
+            staging_changed(s)
         }))
         .post("/staging/fetch-article", bind(&st, |s, r| {
             let j = r.json()?;
@@ -151,12 +146,13 @@ pub fn router(st: Arc<State>) -> Router {
         }))
         .post("/staging/delete", bind(&st, |s, r| {
             s.staging.remove(r.json()?.str("name")?).map_err(ApiError::bad)?;
-            s.bus.publish("books", "staging");
-            ok()
+            staging_changed(s)
         }))
 }
 
-fn ok() -> ApiResult {
+/// 母版库变更类操作的统一收尾：推一条 `books/staging`（网页据此重拉列表，零轮询）再回 `{ok:true}`。
+fn staging_changed(s: &State) -> ApiResult {
+    s.bus.publish("books", "staging");
     Ok(Reply::ok(&serde_json::json!({"ok": true})))
 }
 
@@ -169,7 +165,8 @@ fn staging_upload(st: &State, r: &mut Request<'_>) -> ApiResult {
         (Some(name), Some(bytes)) => Some(crate::sidecar::SourceRef { name: name.to_string(), bytes }),
         _ => None,
     };
-    let _g = st.spool.guard();
+    // 不持 spool 锁：暂存名是随机的 `.<uuid>.book.part`，与 inbox 追平互不相干；真正会撞的"挑名 + 落地"
+    // 由 `Staging` 内部的落名临界区串行化（见 `staging::Staging` 的 `land` 字段）。
     let items = AssetUploadFlow::in_dir(st.spool.work()).run(&StagingStore(&st.staging), &mut *r.body, &boundary).map_err(ApiError::bad)?;
     if let Some(src) = &source {
         // 一次 staging_upload 请求实际上永远只有一个文件部分（CLI/网页都逐文件各发一个 POST），
@@ -331,6 +328,63 @@ mod tests {
         assert_eq!(call(&router, Method::Get, "/inbox", "").0, 404);
         assert_eq!(call(&router, Method::Get, "/staging/optimize", "").0, 405);
         assert_eq!(call(&router, Method::Get, "/nope", "").0, 404);
+    }
+
+    /// 回归：网页上传收请求体期间（WiFi 上传大书可达分钟级）不再攥着 spool 锁——inbox 追平照常进行，
+    /// 上传收完也照常入库。请求体用一个"等放行信号才吐数据"的 Reader 模拟慢客户端。
+    #[test]
+    fn slow_upload_does_not_block_inbox_processing() {
+        struct Gate(std::sync::mpsc::Receiver<Vec<u8>>, Vec<u8>);
+        impl std::io::Read for Gate {
+            fn read(&mut self, out: &mut [u8]) -> std::io::Result<usize> {
+                if self.1.is_empty() {
+                    match self.0.recv() {
+                        Ok(b) => self.1 = b,
+                        Err(_) => return Ok(0),
+                    }
+                }
+                let n = self.1.len().min(out.len());
+                out[..n].copy_from_slice(&self.1[..n]);
+                self.1.drain(..n);
+                Ok(n)
+            }
+        }
+        let t = tempfile::tempdir().unwrap();
+        let st = state(&t);
+        let router = router(st.clone());
+        let (tx, rx) = std::sync::mpsc::channel::<Vec<u8>>();
+        let up = std::thread::spawn(move || {
+            let mut body = Gate(rx, Vec::new());
+            let mut r = Request { method: Method::Post, path: "/staging".into(), query: parse_query(""), params: HashMap::new(), content_type: "multipart/form-data; boundary=B".into(), content_length: None, headers: vec![], body: &mut body };
+            router.dispatch(&mut r).status
+        });
+        tx.send(b"--B\r\nContent-Disposition: form-data; name=\"file\"; filename=\"up.epub\"\r\n\r\nPK".to_vec()).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(100)); // 上传线程此刻卡在读请求体
+        std::fs::write(st.spool.inbox().join("scp.epub"), b"x").unwrap();
+        let (done_tx, done_rx) = std::sync::mpsc::channel();
+        let st2 = st.clone();
+        std::thread::spawn(move || done_tx.send(st2.process_inbox(None)).unwrap());
+        let out = done_rx.recv_timeout(std::time::Duration::from_secs(5)).expect("上传收体期间 inbox 追平不该被卡住");
+        assert!(out.iter().any(|o| o.ok && o.name == "scp.epub"));
+        tx.send(b"\r\n--B--\r\n".to_vec()).unwrap();
+        drop(tx);
+        assert_eq!(up.join().unwrap(), 200);
+        assert!(st.staging.has("up.epub") && st.staging.has("scp.epub"));
+    }
+
+    #[test]
+    fn download_route_streams_with_mime_length_and_disposition() {
+        let t = tempfile::tempdir().unwrap();
+        let st = state(&t);
+        let router = router(st.clone());
+        st.staging.stage_new("书.PDF", b"%PDF-1").unwrap();
+        let mut empty: &[u8] = b"";
+        let mut r = Request { method: Method::Get, path: "/staging/file".into(), query: parse_query("name=%E4%B9%A6.PDF"), params: HashMap::new(), content_type: String::new(), content_length: None, headers: vec![], body: &mut empty };
+        let rep = router.dispatch(&mut r);
+        assert_eq!((rep.status, rep.content_type.as_str()), (200, "application/pdf"), "扩展名大小写不敏感");
+        let h = |k: &str| rep.headers.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone()).unwrap_or_default();
+        assert_eq!(h("Content-Length"), "6");
+        assert!(h("Content-Disposition").contains("filename*=UTF-8''%E4%B9%A6.PDF"));
     }
 
     #[test]

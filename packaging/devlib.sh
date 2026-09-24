@@ -58,7 +58,9 @@ cj_pending_mark() {
     echo "⚠ 写不了待生效标记（$CJ_PENDING_DIR）——xovi-apply 可能误判\"无需重启\"；请手动 systemctl restart xochitl"
     return 1
 }
-# cj_pending_list：列出待生效的标记名（一行一个；没有则无输出）
+# cj_pending_list：列出待生效的标记名（一行一个；没有则无输出）。待换入区里的 .so 也算（记成 so-pending:<文件名>）：
+# 标记在 /run、设备重启即清，而待换入区在 /home 不清——只看标记的话，"重启过设备、.so 还没换入"时 xovi-apply
+# 会误判"无需重启"，新版永远换不进去（2026-09-24 审计发现）。
 cj_pending_list() {
     for cj_pd in "$CJ_PENDING_DIR" "$CJ_PENDING_FALLBACK"; do
         [ -d "$cj_pd" ] || continue
@@ -66,7 +68,13 @@ cj_pending_list() {
             [ -f "$cj_pf" ] && basename "$cj_pf"
         done
     done
+    for cj_pf in $(cj_so_pending_list); do echo "so-pending:$cj_pf"; done
     return 0
+}
+# cj_apply_needed：要不要重启 xochitl 才能让落盘内容生效——有待生效标记/待换入 .so，或 xovi 还没在 xochitl 里生效。
+# deploy-xovi-apply 与各"单独跑"的落盘步骤共用这一个判据（没东西要生效就不重启，重复跑不闪屏）。
+cj_apply_needed() {
+    [ -n "$(cj_pending_list)" ] || ! cj_xochitl_has_xovi
 }
 # cj_pending_clear：xochitl 重启成功后清空标记（只删目录里的常规文件，再 rmdir）
 cj_pending_clear() {
@@ -109,12 +117,13 @@ cj_with_rootfs_rw() {
     mount -o remount,rw / || { echo "!! remount rw / 失败"; return 1; }
     CJ_RW_ACTIVE=1
     trap 'cj_rootfs_restore' EXIT
-    trap 'cj_rootfs_restore; exit 143' INT TERM HUP
+    # PIPE 也要接住：经 ssh 跑时连接断了，下一次输出就是 SIGPIPE，默认处置直接杀 shell、EXIT trap 不会执行
+    trap 'cj_rootfs_restore; exit 143' INT TERM HUP PIPE
     ( set -e; "$@" )
     cj_rc=$?
     sync
     cj_rootfs_restore
-    trap - EXIT INT TERM HUP
+    trap - EXIT INT TERM HUP PIPE
     return "$cj_rc"
 }
 
@@ -390,16 +399,26 @@ cj_xochitl_apply() {
     if cj_xochitl_has_xovi; then
         if [ -n "$(cj_so_pending_list)" ]; then
             echo "-- 有待换入的扩展 .so → 先 stop xochitl、换文件、再 start（不在运行中换 .so 后 restart，见 devlib.sh 头注 H3）"
-            systemctl stop xochitl || return 1
-            cj_so_commit || { systemctl start xochitl; return 1; }
-            systemctl start xochitl || return 1
+            # 关键区：stop 之后必须走到 start。本脚本经 ssh 跑，host 侧 Ctrl-C / 拔 USB 断开连接后，下一次 echo 写
+            # 已关闭的管道会收到 SIGPIPE 把 shell 杀掉——xochitl 就停在那里、屏幕没有界面，直到整机重启。
+            # 这一段忽略 HUP/PIPE/INT/TERM（写失败只是 echo 返回非 0），跑完 start 再恢复。
+            trap '' HUP PIPE INT TERM
+            if systemctl stop xochitl; then
+                cj_ap_rc=0
+                cj_so_commit || cj_ap_rc=1
+                systemctl start xochitl || cj_ap_rc=1
+            else
+                cj_ap_rc=1
+            fi
+            trap - HUP PIPE INT TERM
+            [ "$cj_ap_rc" = 0 ] || return 1
         else
             echo "-- xovi 已在 xochitl 里生效 → systemctl restart xochitl（不跑 xovi/start，见 devlib.sh 头注）"
             systemctl restart xochitl || return 1
         fi
     else
-        cj_so_commit || return 1   # 运行中的 xochitl 没带 xovi，没映射扩展，可以直接换
         [ -x "$CJ_XOVI/start" ] || { echo "!! 没找到 $CJ_XOVI/start —— 先在设备上跑：vellum add xovi"; return 1; }
+        cj_so_commit || return 1   # 运行中的 xochitl 没带 xovi，没映射扩展，可以直接换
         echo "-- xochitl 里还没有 xovi（刚开机/被清）→ $CJ_XOVI/start"
         "$CJ_XOVI/start" || return 1
     fi

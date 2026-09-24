@@ -15,12 +15,12 @@
 |---|---|---|
 | 托管单页 UI | `ui/`、`ui.rs` | 页面文件编译期打进二进制，零外链；中英文语言包在 `ui/locales/` |
 | HTTPS 与登录 | `auth.rs`、`config.rs` | 私有 CA 签的证书 + 只要密码的登录页；命令行用 Basic；输错按来源 IP 限速 |
-| 服务发现 + 反向代理 | `manage.rs`、`proxy.rs` | `/api/<seg>/*` 剥掉 `<seg>` 转给对应服务；服务没起 → 404，网页隐藏对应标签 |
+| 服务发现 + 反向代理 | `manage.rs`、`proxy.rs` | `/api/<seg>/*` 剥掉 `<seg>` 转给对应服务；上传边读边转，有长度的下载/大应答（>256KB）边读边发；服务没起 → 404，网页隐藏对应标签 |
 | 事件汇聚 | `events.rs` | 各服务的 `GET /events` 汇成一条 SSE `/api/events`，网页不轮询 |
 | 并发/内存闸门 | `budget.rs` | 设备约 2GB 内存：>90MB 的书同时只处理 1 本，其余同时 3 本，排队最长 30 分钟 |
 | 批量队列 | `batch.rs` | 勾选多本后由网关后台一次一本地处理，状态落盘、重启续跑、可全部中止 |
 | 管理台 | `manage.rs` | 各服务“未装 / 已装未开 / 已开”三态、启停、卸载；探测 xovi/appload/KOReader/WeRead |
-| 系统增强开关 | `enhance/` | 荧光笔汉字吸附、手写笔迹优化、导入 md、漫画页边距、电池刺客；并显示扩展是否真的加载进 xochitl |
+| 系统增强开关 | `enhance/` | 荧光笔汉字吸附、阅读器单击翻页 / 日漫翻页规则、手写笔迹优化、导入 md、漫画页边距、电池刺客；并显示扩展是否真的加载进 xochitl |
 
 ## 对外接口
 
@@ -33,7 +33,7 @@
 | 页面 | `GET /` · `GET /ui/locales/{lang}` · `GET/POST /password` · `GET /api/session` |
 | 服务发现 / 管理 | `GET /api/services` · `GET /api/manage` · `GET /api/foundation` · `POST /api/manage/{seg}/{start\|stop\|uninstall}` |
 | 事件 | `GET /api/events`（SSE） |
-| 系统增强 | `GET /api/enhance/status` · `PUT /api/enhance/qol`（`hlSnapCjk` / `hwStrokeEnabled` / `notesImportMdEnabled` / `comicMinMargin`）· `POST /api/enhance/battop/{start\|stop}` · `GET /api/enhance/battop/summary` |
+| 系统增强 | `GET /api/enhance/status` · `PUT /api/enhance/qol`（`hlSnapCjk` / `hwStrokeEnabled` / `notesImportMdEnabled` / `comicMinMargin` / `tapPageTurn` / `rtlPageTurn`）· `POST /api/enhance/battop/{start\|stop}` · `GET /api/enhance/battop/summary` |
 | 批量队列 | `POST /api/batch {action: optimize\|deliver\|koreader, names? \| all:true, folder?}` → `{queued, skipped}` · `GET /api/batch/status` · `POST /api/batch/stop` |
 | 闸门 | `GET /api/budget/status` → `{pending, active}` · `POST /api/budget/cancel {name}`（只对还在排队的生效） |
 | 反向代理 | `GET/POST/PUT/DELETE /api/<seg>/*`，`<seg>` ∈ `books` `koreader` `fonts` `wallpapers` `ink` `transcribe` `mind` `notes` |
@@ -53,7 +53,7 @@
 
 - **依赖**：只依赖 [`../rmsvc-core`](../rmsvc-core/README.md)；独立 Cargo 项目，不在任何 workspace 里。
 - **构建/部署**：没有自己的脚本，由 `shelf/build.sh`（顺手编译本目录）和 `shelf/deploy.sh`（打包二进制 + `systemd/gateway.service`）代管。单独交叉编译：`cargo build --release --target aarch64-unknown-linux-musl`（用本目录 `.cargo/config.toml` 的 CC/AR 覆盖）。
-- **测试**：`cargo test --manifest-path gateway/Cargo.toml`（51 个）；前端 `node --check ui/app.js` 与 `node --test ui/test/*.test.mjs`；可视走查见 [`tools/screenshot-walkthrough/`](tools/screenshot-walkthrough/README.md)。
+- **测试**：`cargo test --manifest-path gateway/Cargo.toml`（55 个）；前端 `node --check ui/app.js` 与 `node --test ui/test/*.test.mjs`（6 项）；浏览器冒烟 `ui/test/smoke.puppeteer.mjs` 手动跑；可视走查见 [`tools/screenshot-walkthrough/`](tools/screenshot-walkthrough/README.md)。
 - **设备上的文件**：二进制 `~/.local/bin/gateway`；配置 `~/.config/shelf/gateway.json`；证书 `~/.config/shelf/tls/`；批量队列 `~/.local/state/shelf/batch.json`。
 
 ## 目录
@@ -70,7 +70,7 @@ src/
   batch.rs     批量队列
   ui.rs        拼装单页 UI、登录页、改密页
   enhance/     系统增强开关（qol / battop / loaded）
-ui/            index.html、style.css、app.js、auth.css、locales/、test/
+ui/            index.html、style.css、app.js、auth.css、locales/、test/（前端取数时机与界面规则见白皮书 §05）
 systemd/gateway.service
 tools/screenshot-walkthrough/   前端截图走查工具
 ```

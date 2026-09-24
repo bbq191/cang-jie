@@ -10,7 +10,7 @@
 <text x="174.0" y="154" text-anchor="middle" font-size="10.5" fill="#3a3a3a">koreader-serve</text>
 <text x="174.0" y="169" text-anchor="middle" font-size="10.5" fill="#3a3a3a"></text>
 <text x="174.0" y="184" text-anchor="middle" font-size="10.5" fill="#3a3a3a">常用：events · xochitl · clock · asset</text>
-<text x="174.0" y="199" text-anchor="middle" font-size="10.5" fill="#3a3a3a">fswatch · formats · cache · ttf(koreader)</text>
+<text x="174.0" y="199" text-anchor="middle" font-size="10.5" fill="#3a3a3a">fswatch · formats · cache · sync · ttf(koreader)</text>
 <rect x="340" y="96" width="300" height="150" rx="10" fill="#f2eefa" stroke="#7a5cb0" stroke-width="1.6"/>
 <text x="490.0" y="116" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">notes/ 笔记线</text>
 <text x="490.0" y="139" text-anchor="middle" font-size="10.5" fill="#3a3a3a">ink-serve · transcribe-serve</text>
@@ -38,7 +38,7 @@
 <polyline points="786,246 786,282" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#mk)"/>
 <polyline points="1074,246 1074,282" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#mk)"/>
 <rect x="24" y="282" width="1192" height="400" rx="10" fill="#f1f1ef" stroke="#8a8a8a" stroke-width="1.6"/>
-<text x="620" y="306" text-anchor="middle" font-size="14" font-weight="bold" fill="#1a1a1a">rmsvc-core（crate；20 个模块）</text>
+<text x="620" y="306" text-anchor="middle" font-size="14" font-weight="bold" fill="#1a1a1a">rmsvc-core（crate；21 个模块）</text>
 <rect x="44" y="322" width="372" height="170" rx="10" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.6"/>
 <text x="230.0" y="342" text-anchor="middle" font-size="12" font-weight="bold" fill="#1a1a1a">服务骨架</text>
 <text x="56" y="362" text-anchor="start" font-size="10" fill="#3a3a3a">service   启动模板：解析 --bind → 建目录 → 自注册 → 起服务器（自带 /health）</text>
@@ -55,6 +55,7 @@
 <text x="444" y="416" text-anchor="start" font-size="10" fill="#3a3a3a">multipart 流式 multipart 解析（多文件落盘，不进内存）</text>
 <text x="444" y="434" text-anchor="start" font-size="10" fill="#3a3a3a">asset     资产仓库抽象 + 上传流程模板（字体/壁纸/词典/母版库共用）</text>
 <text x="444" y="452" text-anchor="start" font-size="10" fill="#3a3a3a">formats   文件格式白名单单一事实源 · ttf 字体解析 · cache TTL 缓存 · clock</text>
+<text x="444" y="470" text-anchor="start" font-size="10" fill="#3a3a3a">sync      容忍 poison 的取锁 sync::lock（09-24 收编各处样板）</text>
 <rect x="820" y="322" width="376" height="170" rx="10" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.6"/>
 <text x="1008.0" y="342" text-anchor="middle" font-size="12" font-weight="bold" fill="#1a1a1a">对外与安全（网关用得多）</text>
 <text x="832" y="362" text-anchor="start" font-size="10" fill="#3a3a3a">auth      PBKDF2 密码哈希 · Basic/Cookie · 会话表 · 按 IP 失败限速</text>
@@ -66,8 +67,9 @@
 <text x="56" y="548" text-anchor="start" font-size="10" fill="#3a3a3a">xochitl       原生书库免重启注入：POST /upload（GET-then-upload 归档）</text>
 <text x="56" y="566" text-anchor="start" font-size="10" fill="#3a3a3a">              · upload_file 流式上传 · upload_large_file：超过网页 100MB 上限时</text>
 <text x="56" y="584" text-anchor="start" font-size="10" fill="#3a3a3a">                “占位 + 磁盘替换” · 防复制风暴判据 · unique_document_name</text>
-<text x="56" y="602" text-anchor="start" font-size="10" fill="#3a3a3a">xochitl_conf  改 xochitl.conf [General] 单键（如休眠屏 SleepScreenPath）</text>
-<text x="56" y="620" text-anchor="start" font-size="10" fill="#3a3a3a">fswatch       inotify 防抖目录监听（常驻 / 限时两种）</text>
+<text x="56" y="602" text-anchor="start" font-size="10" fill="#3a3a3a">                “设当前文件夹 → /upload”进程内一把锁串成一对（并发投递不落错，09-24）</text>
+<text x="56" y="620" text-anchor="start" font-size="10" fill="#3a3a3a">xochitl_conf  改 xochitl.conf [General] 单键（如休眠屏 SleepScreenPath）</text>
+<text x="56" y="638" text-anchor="start" font-size="10" fill="#3a3a3a">fswatch       inotify 防抖目录监听（常驻 / 限时两种）</text>
 <rect x="620" y="508" width="576" height="150" rx="10" fill="#fdf1ec" stroke="#c0602d" stroke-width="1.6"/>
 <text x="908.0" y="528" text-anchor="middle" font-size="12" font-weight="bold" fill="#1a1a1a">维护纪律</text>
 <text x="632" y="548" text-anchor="start" font-size="10" fill="#3a3a3a">· 这里出问题，理论上 5 个独立顶层项目一起受影响：改任何模块前</text>

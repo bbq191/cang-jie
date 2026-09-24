@@ -77,7 +77,7 @@ impl EventBus {
     /// 同 [`subscribe`]，显式指定心跳间隔。
     pub fn subscribe_with(&self, keepalive: Duration) -> SseStream {
         let (tx, rx) = sync_channel::<String>(QUEUE);
-        self.subs.lock().unwrap_or_else(|e| e.into_inner()).push(tx);
+        crate::sync::lock(&self.subs).push(tx);
         SseStream { rx, pending: Vec::new(), keepalive }
     }
 
@@ -90,7 +90,7 @@ impl EventBus {
     /// 转发已成型的 JSON 行（网关汇聚用）。
     pub fn publish_raw(&self, json_line: &str) {
         let frame = format!("data: {json_line}\n\n");
-        let mut subs = self.subs.lock().unwrap_or_else(|e| e.into_inner());
+        let mut subs = crate::sync::lock(&self.subs);
         subs.retain(|tx| match tx.try_send(frame.clone()) {
             Ok(()) | Err(TrySendError::Full(_)) => true,
             Err(TrySendError::Disconnected(_)) => false,
@@ -99,7 +99,7 @@ impl EventBus {
 
     #[cfg(test)]
     pub fn subscribers(&self) -> usize {
-        self.subs.lock().unwrap_or_else(|e| e.into_inner()).len()
+        crate::sync::lock(&self.subs).len()
     }
 
     /// `GET /events` 的回执：`text/event-stream` 流式响应。
@@ -147,11 +147,11 @@ struct RegWake {
 
 impl RegWake {
     fn generation(&self) -> u64 {
-        *self.generation.lock().unwrap_or_else(|e| e.into_inner())
+        *crate::sync::lock(&self.generation)
     }
     /// 等到代数不再是 `seen`（注册表变过了）或 `timeout` 到，返回当前代数。
     fn wait_change(&self, seen: u64, timeout: Duration) -> u64 {
-        let g = self.generation.lock().unwrap_or_else(|e| e.into_inner());
+        let g = crate::sync::lock(&self.generation);
         let (g, _) = self.cv.wait_timeout_while(g, timeout, |g| *g == seen).unwrap_or_else(|e| e.into_inner());
         *g
     }
@@ -160,7 +160,7 @@ impl RegWake {
 fn reg_wake(paths: &Paths) -> Arc<RegWake> {
     static M: OnceLock<Mutex<HashMap<PathBuf, Arc<RegWake>>>> = OnceLock::new();
     let dir = paths.services_dir();
-    let mut m = M.get_or_init(|| Mutex::new(HashMap::new())).lock().unwrap_or_else(|e| e.into_inner());
+    let mut m = crate::sync::lock(M.get_or_init(|| Mutex::new(HashMap::new())));
     if let Some(w) = m.get(&dir) {
         return w.clone();
     }
@@ -170,7 +170,7 @@ fn reg_wake(paths: &Paths) -> Arc<RegWake> {
     // 监听线程阻塞在 inotify 上（空闲零唤醒）。inotify 初始化失败时该线程直接返回，等待者只剩超时兜底。
     let _ = std::thread::Builder::new().name("reg-watch".into()).spawn(move || {
         crate::fswatch::watch_debounced(&d2, Duration::from_millis(300), |_| {
-            *w2.generation.lock().unwrap_or_else(|e| e.into_inner()) += 1;
+            *crate::sync::lock(&w2.generation) += 1;
             w2.cv.notify_all();
         });
     });

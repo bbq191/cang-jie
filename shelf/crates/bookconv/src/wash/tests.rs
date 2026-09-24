@@ -684,3 +684,54 @@
         let out = s(&v, "OEBPS/Text/a.xhtml");
         assert!(out.contains(text) && !out.contains("gone.jpg"), "{out}");
     }
+
+    /// `is_empty_page` 去正则重写后与原实现（正则取 body → 小写查媒体标签 → 正则去标签 → 替换实体 → trim）逐例对拍。
+    #[test]
+    fn is_empty_page_matches_old_regex_impl() {
+        fn old(html: &str) -> bool {
+            let body = Regex::new(r#"(?is)<body\b[^>]*>(.*?)</body>"#).unwrap();
+            let tag = Regex::new(r#"(?s)<[^>]*>"#).unwrap();
+            let inner = body.captures(html).map(|c| c[1].to_string()).unwrap_or_default();
+            let low = inner.to_ascii_lowercase();
+            if low.contains("<img") || low.contains("<svg") || low.contains("<image") || low.contains("<video") || low.contains("<audio") {
+                return false;
+            }
+            let text = tag.replace_all(&inner, "");
+            let text = text.replace("&nbsp;", " ").replace("&#160;", " ").replace('\u{a0}', " ");
+            text.trim().is_empty()
+        }
+        let bodies = [
+            "", " ", "\n\t", "<p></p>", "<p> &nbsp; </p>", "&#160;\u{a0}", "<div class=\"mbppagebreak\"></div>", "x", "<p>字</p>",
+            "&nb<i>sp;", "&nbsp", "&amp;", "<IMG src=a>", "<p><Svg/></p>", "<image/>", "<video>", "<audio>", "a < b", "<p", "<!-- c -->",
+            "<br/>\u{3000}", "&#160;x", "< >", "<<>>", "&&nbsp;",
+        ];
+        let wraps = [
+            |b: &str| format!("<html><body>{b}</body></html>"),
+            |b: &str| format!("<HTML><BODY class=\"x\">{b}</BODY></HTML>"),
+            |b: &str| format!("<html><body>{b}</body><body><p>第二段</p></body></html>"),
+            |b: &str| format!("<html><bodyx><body>{b}</body></html>"),
+            |b: &str| format!("<html><body>{b}"),
+            |b: &str| b.to_string(),
+        ];
+        for b in bodies {
+            for w in wraps {
+                let html = w(b);
+                assert_eq!(is_empty_page(&html), old(&html), "{html:?}");
+            }
+        }
+    }
+
+    /// manifest 项/属性解析（`parse_opf`、封面声明、占位封面探测共用）：属性顺序任意、`=` 两边带空格、
+    /// 缺 id 的项不算、`data-id` 这类后缀同名的属性不能串。
+    #[test]
+    fn manifest_items_and_tag_attr() {
+        let opf = r#"<manifest><item data-id="no" href="a%20b.xhtml" id="c1" media-type="application/xhtml+xml"/>
+<item id = "img" properties="cover-image" href="i.jpg" media-type="image/jpeg"></item><item href="noid.css"/><itemref idref="c1"/></manifest>"#;
+        let items = manifest_items(opf);
+        assert_eq!(items.len(), 2, "缺 id 的项和 itemref 都不算");
+        assert_eq!((items[0].id, items[0].href, items[0].media_type, items[0].properties), ("c1", "a%20b.xhtml", "application/xhtml+xml", ""));
+        assert_eq!((items[1].id, items[1].properties), ("img", "cover-image"));
+        assert!(items[1].tag.starts_with("<item id = ") && items[1].tag.ends_with('>'));
+        assert_eq!(tag_attr(r#"<rootfile full-path="OEBPS/x.opf" media-type="y"/>"#, "FULL-PATH"), Some("OEBPS/x.opf"));
+        assert_eq!(tag_attr(r#"<a data-id="1"/>"#, "id"), None);
+    }

@@ -53,8 +53,14 @@ impl GatewayConfig {
         Ok(true)
     }
 
+    #[cfg(test)]
     pub fn verify(&self, pw: &str) -> bool {
-        !self.password_hash.is_empty() && auth::verify_password(pw, &self.password_hash)
+        Self::verify_hash(&self.password_hash, pw)
+    }
+
+    /// 没有哈希一律不通过。拆成关联函数：`AuthState::verify` 只在锁内拷出哈希，PBKDF2 在锁外算。
+    pub fn verify_hash(hash: &str, pw: &str) -> bool {
+        !hash.is_empty() && auth::verify_password(pw, hash)
     }
 
     /// 新密码规则：≥6 位、不能是默认密码。

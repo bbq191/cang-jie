@@ -67,7 +67,7 @@
 
 ## 现状总览（2026-09-24 刷新）
 
-**服务与端口**：对外只有网关 `gateway` `0.0.0.0:443`（HTTPS 私有 CA + 登录密码 + mDNS `shelf.local`）；领域服务只听本机：`book-serve` 8790、`koreader-serve` 8791、`font-serve` 8792、`wallpaper-serve` 8793；笔记线 `ink` 8795 / `transcribe` 8796 / `mind` 8797 / `note` 8798 挂同一网关。
+**服务与端口**：见上面「5 分钟读懂」与 [`../README.md`](../README.md)「服务与端口」（笔记线 8795–8798 挂同一网关）。
 
 **读书线 = 三层 · 三个正交动作**：内容源 →（入库，原样）→ **母版库** →（可选「优化」）→（落库：加入 xochitl / 加入 KOReader）。全项目传书全貌图见 [`docs/diagrams/transfer-flow.svg`](../../docs/diagrams/transfer-flow.svg)。
 
@@ -85,13 +85,16 @@
 | 书内跳转 | xochitl 只认**同一文件内**、指向**非空元素**的 `#锚点`；跨文件链接一律当外链 | 规范白皮书 §03 规则 8–10 |
 | 批量与并发 | 批量队列在网关（顺序逐本、落盘续跑、可全部中止）；重活过并发/内存闸门（>90MB 大档 1 个、小档 3 个） | §03bp |
 | 稳定性 | `panic="unwind"`+`catch_unwind`、`OpRegistry`、启动时修正被中断的 `pending` | §03bq |
+| 进程内并发 | 忙锁（按书名）、落名临界区（同名书不互相覆盖）、spool 锁（只管 inbox 追平）、边车写锁、xochitl 上传锁（“设文件夹 → 上传”成对）、KOReader 配置同步锁；两处已知缺口 | 传书线架构 §7.3 |
 | KOReader 入口 | appload ≥ 0.6.0；配置补丁经 koreader-serve `/config/*`；高亮/生词可在网页笔记页一键导入 | §03v、§03ar |
 | KOReader 阅读方案 | 全局 = 文字书；`books/漫画/` 新书自动从右往左、去边距、图片最佳缩放、隐藏状态栏；统计与生词本插件已启用 | §03bt |
-| 测试 | `cd shelf && cargo test --workspace`：392 个通过、1 个忽略（2026-09-24：bookconv 293 · book-serve 78 · koreader-serve 20 · pdf-extract-cj 1） | — |
+| 测试 | `cd shelf && cargo test --workspace`：409 个通过、1 个忽略（2026-09-24 第三轮审计后实跑：bookconv 299 · book-serve 85 · koreader-serve 21 · pdf-extract-cj 4） | — |
 
 **已砍/已被取代（别再找）**：电脑端 `shelf` 命令行（09-18，附录 B）；母版库"优化档位"与"投完自动删除"（09-19）；漫画"优化转 PDF"（09-19 做、09-20 换回 EPUB）；三档格式（09-17/18 收成一档）；微信读书内容源（09-05）；appload 补丁工具链（09-21）；bind-mount 壁纸（§03x）；`/inbox*` 与 `/staging/render/*` HTTP 接口（09-22 删，scp 进 `inbox/` 仍可用）。
 
 **未闭环 / 未验证（如实）**：网页 i18n 与触屏交互没有真实浏览器人眼确认；图片密集网文的大片留白是分页引擎行为，CSS 层无杠杆（§03aq）；批量"加入 xochitl / 加入 KOReader"没有设备端到端实测；KOReader 运行中拒写配置（409）没有真机专门验证；原件下载的内存峰值没量；>153MB 占位通道的首次渲染内存/耗时未测；PDF 转 EPUB 的公式裁图未验证（两本样本都没有公式）；calibre 书常用空 `<a id>` 当注释目标，在 xochitl 上可能跳不动，**书库 36 本实扫未发现受影响的同文件链接**，但 7 本书的书内目录页是跨文件链接、在 xochitl 上点不动（xochitl 自己的目录菜单正常，暂不改）。
+
+**2026-09-24 第三轮审计（只在 host 验证，未上真机）**：并发锁四处修正（传书线架构 §7.3）；优化进度上报加 1 秒最短间隔（快书 61→4 次事件）；建文件夹队列每次只扫一遍书库；`onopen` 升 `ok` 写回边车；PDF 只解析一遍、原始字节及早释放、解压限 64MB（bookconv §18）；小请求体超 1MB 报 400、路径参数 `+` 不当空格（rmsvc-core 白皮书 §01–§03）。
 
 **OTA（固件升级）后怎么恢复**：权威说明在 [`docs/INSTALL.md`](../../docs/INSTALL.md)「固件升级（OTA）之后」。
 
@@ -116,7 +119,7 @@
 **选 B：网关 + loopback 服务 + 注册表**（弃 A 每服务独立对外端口、C 单二进制编译期插拔）。
 - 注册表放 `$XDG_RUNTIME_DIR`（重启即清）+ 读时按 `/proc/<pid>` 清陈旧条目。
 - 代理**剥掉服务段**（`/api/fonts/x` → 后端 `/x`），后端直连与经网关同一套路由。
-- 每请求一线程；**请求体流式透传；下载应答（带 `Content-Disposition`）流式、其余小应答整体缓冲**（§03ah；下载流式 09-24 加）。
+- 每请求一线程；**请求体流式透传；带长度的下载或 >256KB 应答流式、其余小应答整体缓冲**（§03ah；09-24 加）。
 - `bookconv` 从旧 weread-device `git mv` 成独立 crate（当时新旧 `epub-optimize` 输出 md5 一致）；现只被 book-serve 链接。
 
 ### 02｜XDG 路径表
@@ -483,7 +486,7 @@
 
 核实过的事实：带图片的页 KOReader 缺省就每页全刷（`refresh_on_pages_with_images`），模板里的"漫画每页全刷"不用另设；KOReader 不读 OPF 的 `page-progression-direction`，从右往左必须设 `inverse_reading_order`；状态栏是全局设置，所以只能靠配置档随书切换。
 
-**插件取舍**：启用「统计」——状态栏的剩余阅读时间靠它算，此前被禁用，一直显示 N/A；启用「生词本」——笔记线从它的数据库导入生词（§03ar），此前也被禁用。新增禁用 13 个与本机用法无关的：hello、coverimage、keepalive、bookshortcuts、cloudstorage、opds、kosync、timesync、autostandby、batterystat、hotkeys、externalkeyboard、archiveviewer。第三方插件查过一轮，没有称得上必装的；书库界面插件 Project: Title（v3.8.3 支持 2026.07.x）用户选择暂不装。
+**插件取舍**：启用「统计」（状态栏剩余阅读时间靠它，此前禁用时一直显示 N/A）和「生词本」（笔记线从它导入生词，§03ar）；另禁用 13 个与本机用法无关的插件，清单见 [`../koreader/README.md`](../koreader/README.md)。第三方插件查过一轮，没有称得上必装的；书库界面插件 Project: Title（v3.8.3 支持 2026.07.x）用户选择暂不装。
 
 **落地**：koreader-serve 的 `/config/*` 新增 `directory`、`profiles` 两个目标文件（原来只有 settings/defaults/gestures）；三份补丁先 `dry_run` 看差异（24/1/2 项），再正式写入，写前自动备份、写后回读校验。新增回归测试：仓库 5 份补丁逐个应用到空 KOReader 目录，全部能写入且二次应用零改动——这条测试顺带查出 `merge.lua` 的真 bug：目标里原先没有的表整张落进去时，里面的 `"__DELETE__"` 删除标记会被当普通字符串写进配置（设备上那张表本来就存在，这次没触发），已修。
 
@@ -534,7 +537,7 @@
 > - 首层四个固定 tab：**传书 / 笔记 / 其他 / 管理**；语言包中英文各 **500** 个 key（2026-09-24 数；登录/改密页仍只有中文）。
 > - **网页零轮询**：服务变更 → 网关汇聚 `GET /api/events` → 只刷对应 tab。
 > - 母版库页 09-20 重做（底部批量栏、常驻"加入位置"下拉、真分页）；09-24 底部栏改成三行不折行，只勾一本时多出「下载原件」「改名」，页底加「原 PDF 备份」面板。批量队列与并发闸门在网关（§03bp）。
-> - 网关转发：请求体流式；**下载应答（带 `Content-Disposition`）也流式**（09-24），其余应答整体缓冲（§03ah）。「管理→系统增强」每项带加载徽章（已加载 / 待重启 / 未加载 / 网页功能），读 xochitl 主进程的内存映射判断扩展是否真的生效（09-24）。
+> - 网关转发：请求体流式；**带 `Content-Length` 的下载或 >256KB 应答也流式**（09-24），其余小应答整体缓冲（§03ah）。「管理→系统增强」每项带加载徽章（已加载 / 待重启 / 未加载 / 网页功能），读 xochitl 主进程的内存映射判断扩展是否真的生效（09-24）。
 > - 笔记页有「导入 KOReader 批注」按钮（09-23）。电池刺客（battop）常驻采集循环已不再 fork 任何子进程（09-23，唤醒源改读 `/dev/kmsg`，见系统增强线白皮书）。
 
 **历史节旧名对照**：`shelf-gateway` → 顶层 `gateway/`；`shelf-core::*` → 顶层 `rmsvc-core`；`ui.rs` 大字符串 → `gateway/ui/{index.html,style.css,app.js}`；`shelf/deploy.sh` → `packaging/deploy.sh`；`shelf/services/{font,wallpaper}-serve` → `enhance/`。
@@ -624,7 +627,7 @@ sudo nmcli connection down Hotspot && sudo nmcli connection up Hotspot
 ### 03ah｜`shelf-gateway::proxy` 模块文档修正："body 流式透传"跟实现不符（2026-09-09，离线）
 
 - **结论**：只有请求方向流式、响应方向整体缓冲；**只改注释不改行为**（改真流式要先厘清 Content-Length/chunked 语义，收益不值）。
-- **后续（2026-09-24）**：原件下载要传上百 MB，才真正需要流式应答——网关只对带 `Content-Disposition` 的应答边读边发，并原样带上后端的 `Content-Length`。第一版走 SSE 的裸 socket 通道、读完不关连接，浏览器下载一直不结束；改成 tiny_http 定长应答后正常（`b1856b3`）。**教训**：流式通道有两种语义（无限长的事件流 vs 已知长度的文件），不能共用一条路。
+- **后续（2026-09-24）**：原件下载要传上百 MB，才真正需要流式应答——网关对带 `Content-Length` 的 200 应答，凡是下载（带 `Content-Disposition`）或超过 256KB（壁纸原图等）就按定长边读边发（第三轮审计把 256KB 这档也纳入：60MB 下载网关峰值 RSS 62.4→5.0MB，未上真机）；没有长度的应答仍读完再回。第一版走 SSE 的裸 socket 通道、读完不关连接，浏览器下载一直不结束；改成 tiny_http 定长应答后正常（`b1856b3`）。**教训**：流式通道有两种语义（无限长的事件流 vs 已知长度的文件），不能共用一条路。
 - **教训**：注释与实现不符时，先确认实现是不是"应该那样"，再决定改哪边。
 
 ### 03aj｜「管理」拆二级 tab + 系统增强开关上网页（2026-09-09，真机通）
@@ -692,7 +695,8 @@ sudo nmcli connection down Hotspot && sudo nmcli connection up Hotspot
 
 > **现状结论**
 > - `systemd` 的 `MemoryMax` 在设备上实测不生效，内存全靠代码约束：**流式优化**、**流式落库**、**单图像素上限 900 万**、**图片并行像素预算 600 万**、**网关并发闸门**。
-> - 可靠性：`panic="unwind"` + `catch_unwind`、`OpRegistry`、启动恢复；耗电：列表按（大小, mtime）缓存、wifi-watch 链路正常时零 fork。
+> - 可靠性：`panic="unwind"` + `catch_unwind`、`OpRegistry`、启动恢复；耗电：列表按（大小, mtime）缓存、wifi-watch 链路正常时零 fork、优化进度上报至少隔 1 秒（09-24）。
+> - 并发：锁只包住会撞的那一小段，哪条路径进哪把锁见传书线架构 §7.3（09-24 第三轮审计修了“上传攥 spool 锁”“同名书覆盖”“并发投递落错文件夹”“KOReader 配置并发互相覆盖”四处，只在 host 验证）。
 > - 定阈值铁律：**先实测 VmHWM，不靠"字节数乘法"估算**。
 
 ![内存防线：从上传到落库每一段怎么压住峰值，以及单图像素阈值的实测依据](diagrams/e-oom-guards.svg)
@@ -712,6 +716,9 @@ sudo nmcli connection down Hotspot && sudo nmcli connection up Hotspot
 | `panic="abort"` 下 `catch_unwind` 无效 | 一次 panic 摔掉整个进程 | `panic="unwind"` | §03bq |
 | 重启后永远"处理中" | 边车停在 `pending` | 启动 `recover_interrupted` | §03bq |
 | `cargo fmt --all` | 64 个文件被重排进提交 | 本仓库不跑 fmt | §03ab |
+| 网页慢上传卡住所有入库（09-24 审计） | 上传把 spool 锁攥到请求体收完 | 锁只包“挑名 + 改名”（落名临界区） | 传书线 §7.3 |
+| 并发投递落错文件夹（09-24 审计） | xochitl“当前文件夹”是全局状态 | “设文件夹 → /upload”进程内成对加锁 | 传书线 §7.3 |
+| 快书进度事件风暴（09-24 审计） | 只按条目数节流，一秒推十几条、网页每条都整页重拉 | 再加 1 秒最短间隔 | 传书线 §7 |
 | 兜底静默把失败变成继续 | 旧分卷缺依赖时原样返回整本 | 失败必须显式报错 | §03p |
 
 ### 03p｜代码质量核查一轮：去重 / 复用 / 解耦（2026-09-04，用户"合理用设计式避免重复、复用、解耦"）
@@ -800,7 +807,7 @@ sudo nmcli connection down Hotspot && sudo nmcli connection up Hotspot
 | 重启后 xovi 没了 / 反过来 SEGV | 见速查表 | `/etc` tmpfs 重启即清 | 按速查表先判状态 | §03f · §03bd |
 | 安装器选错固件 qmd | 3.27 机装了 3.28 锚点 | `/etc/version` 是 build 号 | 读 `/usr/lib/os-release` 的 `IMG_VERSION` | §03f |
 | qmd 整份不应用 | 一行 `Error while processing file tree` | qmldiff 不认 `({})` 与无花括号 `if (` | 改前离线 `apply-diffs` | §03v · §04 |
-| 休眠壁纸"不轮换" | journal 无 `PM: suspend entry` | 充电时只画休眠屏、内核不 suspend | 按 xochitl 日志 `DeepSleep to Normal` 触发 | §03f |
+| 休眠壁纸"不轮换" | journal 无 `PM: suspend entry` | 充电时只画休眠屏、内核不 suspend | 按 xochitl 日志 `DeepSleep to Normal` 触发（09-24 改为 inotify 监听 xochitl 休眠时读 `current.png`，见系统增强白皮书 §03j） | §03f |
 | 写了 `SleepScreenPath` 仍显示原图 | — | 只在启动时读 | 首次写键重启一次 | §03x |
 | WiFi 连上恰 60 秒掉线 | `disconnected (local request)` | 精简 regdb 的 CN 无 5150–5350 | 锁 2.4G 或路由改 149–165 | §03w |
 | "时不时连不上" | 不插 USB 空闲几秒就断 | 内核深度休眠 | 长时间可达就插 USB | §03w |
@@ -823,7 +830,7 @@ sudo nmcli connection down Hotspot && sudo nmcli connection up Hotspot
 ### 03f｜真机首轮（2026-09-03，固件 3.27.3.0 build 20260612，全程 WiFi 10.42.0.224）
 
 - **结论**：字体上传→菜单→渲染**全程免重启 xochitl**（只需 `fc-cache`），`restartNeeded=false` 定案；菜单差量追加成立。真机纠出 4 个 bug（`/health` 被通配路由抢先、按 `/etc/version` 选错 qmd、新旧字体菜单 qmd 并存、KOReader profile 臆测值）。
-- **壁纸唤醒轮换根因**：充电/USB 连着时内核不挂起、sleep 钩子永不跑 → 读 `journalctl -f -u xochitl` 的 `DeepSleep to Normal` 触发。
+- **壁纸唤醒轮换根因**：充电/USB 连着时内核不挂起、sleep 钩子永不跑 → 读 `journalctl -f -u xochitl` 的 `DeepSleep to Normal` 触发；09-24 改为 inotify 监听 xochitl 休眠时读完 `current.png`（不再常驻 journalctl）。
 - **事故教训**：`restart xochitl` 后 xovi 全没（`/etc` tmpfs 已清）→ 恢复用 `xovi/start`；重启前先核 `/proc/<pid>/maps`。
 
 ### 03k｜字体两 bug 根因与修复（2026-09-04 凌晨，用户报"第二次上传字体不生效 + 中文字体在书里是方框"）
@@ -836,7 +843,7 @@ sudo nmcli connection down Hotspot && sudo nmcli connection up Hotspot
 
 - **撤回耦合**：书架安装器不再装外层 `xovi-reenable`——xovi 是进程级全量加载、没有"只重载单个扩展"的机制，那是 xovi 层通用持久化，不是书架专属。
 - **reenable 归位基石层**：`packaging/xovi-reenable.service`（开机跑一次 `xovi/start`，独立 oneshot 单元；**绝不给 xochitl.service 加依赖**），现为 `install-all.sh` 的 `xovi-persist` 步。
-- **可插拔两层**：`install.sh --only` 决定放不放 qmd/起不起服务；注册表驱动网页 tab 显隐。书架共装 4 个 qmd（字体菜单 + 回收站/建文件夹/漫画页边距代理），清单见 `shelf/manifest.sh`。
+- **可插拔两层**：`install.sh --only` 决定放不放 qmd/起不起服务；注册表驱动网页 tab 显隐。书架共装 5 个 qmd（字体菜单 + 回收站/建文件夹/漫画页边距代理 + 阅读器翻页 `reader-page-turn.qmd`），清单见 `shelf/manifest.sh`。
 - **中文回退字体加粗默认开**（用户目测更清楚）；实测常开服务不卡不费电（开机 23.4 小时累计约 1.8 CPU 秒）。
 - **管理台**：`MODULES` 单一目录表；开关＝`systemctl`，卸载＝设备上 `shelf-uninstall --only`；**安装不走网页**（不让网页 remount /usr）。
 
@@ -914,7 +921,7 @@ sudo nmcli connection down Hotspot && sudo nmcli connection up Hotspot
 ### 00b｜现状总览（2026-09-10 刷新，读本文其余历史节前先看这里）
 
 - **结论**：09-10 时的架构与读书线要点（网关 + 四服务 + 注册表 + 事件总线；三层三动作）至今成立。
-- **被取代**：以文首「现状总览（2026-09-23 刷新）」为准；09-18 砍电脑端 CLI、格式收成一档；体积门 150→90MB；漫画不再转 CBZ；appload 补丁被 0.6.0 取代。
+- **被取代**：以文首「现状总览（2026-09-24 刷新）」为准；09-18 砍电脑端 CLI、格式收成一档；体积门 150→90MB；漫画不再转 CBZ；appload 补丁被 0.6.0 取代。
 - **教训**：现状总览只留一份，旧版压成指针，避免两份"现状"互相矛盾。
 
 ### 05｜真机待办（滚动更新，2026-09-24）
@@ -932,6 +939,9 @@ sudo nmcli connection down Hotspot && sudo nmcli connection up Hotspot
 | 9 | KOReader 运行中拒写配置（409） | 只有代码与单测，没专门上机验证 | §03d |
 | 10 | 原件下载的内存峰值 | 两端都改成流式，没量 `VmHWM` | §03ah |
 | 11 | `pdf-extract-cj` 嵌套表单防护 | 只有合成测试，没有真机触发样本 | §03br |
+| 12 | 09-24 第三轮审计的书架/rmsvc-core/bookconv 改动 | 全部只在 host 单测与本机实测验证，未部署上真机 | 现状总览 |
+| 13 | 并发控制缺口 | 抓网文「同步优化」不占忙锁、不过闸门，代码未改。（PDF 转 EPUB 落地前复查同名书已于 09-24 补上） | 传书线架构 §7.3 |
+| 14 | 建文件夹代理的长轮询 | 约 25 秒一次，是书架剩余最大的周期唤醒源；放宽前要真机确认 Qt6 QML XHR 无 30 秒传输超时 | 传书线架构 §10 |
 
 **已闭环（摘要）**：《疯探》目录入口（§03bc）；Anchor 脚注嵌套 `<p>`（§03bs）；T.E. 只渲染 1 页与内容重复（§03br）；字体菜单只增不删（§03bd）；文件夹不建与带斜杠名（§03be、§03bf）；三次内存事故（§03ba、§03bh、§03bi）；网关闸门并发串行化（§03bp）。
 
@@ -952,7 +962,7 @@ sudo nmcli connection down Hotspot && sudo nmcli connection up Hotspot
 | 09-20 | §03bm–§03bq | 耗电核查；大文件占位替换与命名规则；封面声明规则；批量队列与闸门；可靠性 |
 | 09-21/22 | — | 漫画页边距实验室开关（bookconv §20）；appload 0.6.0；第二轮全系统审计 |
 | 09-23 | §03br、§03bs | **PDF 按原格式转 EPUB**（fork pdf-extract、颜色/图片/链接/切章）；T.E. 只渲染 1 页根因；EPUB 线无扩展名章节、注释样式、质量门接入 book-serve；规范白皮书成立 |
-| 09-24 | §03br、§03ah、§03bt | 全系统审查两批修补：PDF 转 EPUB 同名不覆盖 + 原 PDF 备份 7 天可恢复、`pdf-extract-cj` 嵌套表单限深防环；原件下载（流式）与改名；底部操作栏三行不折行；**KOReader 文字书/漫画两套方案**，插件取舍，merge.lua 删除标记泄漏修复；书架四份文档按"规则 / 实现 / 数据流 / 现状与历史"重新分工 |
+| 09-24 | §03br、§03ah、§03bt | 全系统审查两批修补：PDF 转 EPUB 同名不覆盖 + 原 PDF 备份 7 天可恢复、`pdf-extract-cj` 嵌套表单限深防环；原件下载（流式）与改名；底部操作栏三行不折行；**KOReader 文字书/漫画两套方案**，插件取舍，merge.lua 删除标记泄漏修复；书架四份文档按"规则 / 实现 / 数据流 / 现状与历史"重新分工；**第三轮全系统审计**（只在 host 验证）：并发锁四处修正、进度节流、PDF 只解析一遍并及早释放内存、小请求体超限报错 |
 
 ### 附录 B｜已移除的能力：电脑端 `shelf` 命令行（原 `shelf/README.md`，2026-09-18 砍除）
 
@@ -986,7 +996,7 @@ sudo nmcli connection down Hotspot && sudo nmcli connection up Hotspot
 | `services/book-serve/` | `staging/`（intake/optimizing/deliver/library）、`sidecar.rs`、`render_check.rs`、`pending_queue.rs`、`trash.rs`、`mkdir.rs`、`comic_margins.rs`、`spool.rs`（inbox 追平）、`ops.rs` |
 | `services/koreader-serve/` | `koreader.rs`、`config.rs`+`merge.lua`（5 个配置目标）、`annot.rs`、`vocab.rs`、`sqlite_min.rs`（§03ar） |
 | `install.sh`·`uninstall.sh`·`manifest.sh` | 设备端安装/卸载（`--only`；写 `/usr` 前实检 dm-verity；清旧命名遗留单元，§03at）；新增一个服务/qmd = 只改 `manifest.sh` |
-| `xovi/` | 5 个 qmd 文件：字体菜单（3.28 与 3.27 两版，设备上统一叫 `font-menu-dynamic.qmd`）、回收站代理、建文件夹代理、漫画页边距代理 |
+| `xovi/` | 6 个 qmd 文件：字体菜单（3.28 与 3.27 两版，设备上统一叫 `font-menu-dynamic.qmd`）、回收站代理、建文件夹代理、漫画页边距代理、阅读器单击翻页与日漫翻页规则 `reader-page-turn.qmd`（系统增强线白皮书 §03i） |
 | `koreader/` | `profile/` 五份补丁（settings.reader / defaults.custom / gestures / directory_defaults / profiles）+ 字体词典清单、`merge.lua`、`annot.lua`、`README.md` |
 
 **设备路径**（XDG，设备 HOME=/home/root；表的单一事实源是 `rmsvc_core::paths`）：

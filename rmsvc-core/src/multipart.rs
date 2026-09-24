@@ -287,7 +287,7 @@ fn parse_headers(head: &str) -> (String, Option<String>, Option<String>) {
             name = header_param(v, "name").unwrap_or_default();
             // RFC 5987 filename* 优先；否则 filename
             filename = header_param(v, "filename*")
-                .and_then(|s| s.rsplit_once("''").map(|(_, enc)| percent_decode(enc)))
+                .and_then(|s| s.rsplit_once("''").map(|(_, enc)| percent_decode_path(enc)))
                 .or_else(|| header_param(v, "filename"));
         } else if k == "content-type" {
             ctype = Some(v.trim().to_string());
@@ -305,14 +305,26 @@ fn hex_val(c: u8) -> Option<u8> {
     }
 }
 
-/// 百分号解码（filename*= 与查询串共用）。
+/// 百分号解码（查询串 / 表单：`+` 当空格，即 `application/x-www-form-urlencoded` 语义）。
 pub fn percent_decode(s: &str) -> String {
+    decode(s, true)
+}
+
+/// 百分号解码（URL 路径段 / RFC 5987 `filename*=`：`+` 就是 `+`）。`+` 当空格只是表单编码的约定，
+/// 此前路由参数也套用它，`/fonts/C++.ttf` 这类没被客户端转义的名字会被解成 `C  .ttf`（网页走
+/// `encodeURIComponent` 会把 `+` 编成 `%2B`，不受影响；curl/脚本手写路径会踩到）。
+pub fn percent_decode_path(s: &str) -> String {
+    decode(s, false)
+}
+
+fn decode(s: &str, plus_as_space: bool) -> String {
     let b = s.as_bytes();
     let mut out = Vec::with_capacity(b.len());
     let mut i = 0;
     while i < b.len() {
         // 按字节取两位 hex，不对 &str 按字节下标切片：`%` 后若跟多字节 UTF-8 字符，`&s[i+1..i+3]`
-        // 会切在字符中间直接 panic（release 是 panic=abort，一条恶意查询串就能摔掉整个进程）。
+        // 会切在字符中间直接 panic（当年 release 是 panic=abort，一条恶意查询串就能摔掉整个进程；现在是 unwind，
+        // 由 HTTP 层兜成 500，但照样不该 panic）。
         // 同时不再借 `from_str_radix`（它会把 `+1` 当合法输入）。
         if b[i] == b'%' && i + 2 < b.len() {
             if let (Some(h), Some(l)) = (hex_val(b[i + 1]), hex_val(b[i + 2])) {
@@ -321,7 +333,7 @@ pub fn percent_decode(s: &str) -> String {
                 continue;
             }
         }
-        out.push(if b[i] == b'+' { b' ' } else { b[i] });
+        out.push(if plus_as_space && b[i] == b'+' { b' ' } else { b[i] });
         i += 1;
     }
     String::from_utf8_lossy(&out).to_string()
@@ -471,6 +483,10 @@ mod tests {
     fn percent_roundtrip() {
         assert_eq!(percent_encode("a b/中"), "a%20b%2F%E4%B8%AD");
         assert_eq!(percent_decode(&percent_encode("x=1&y=中 文")), "x=1&y=中 文");
+        assert_eq!(percent_decode_path("C++%20a%2B.ttf"), "C++ a+.ttf", "路径段里 + 不是空格");
+        assert_eq!(percent_decode("C++%2B"), "C  +", "查询串仍按表单语义");
+        let (_, f, _) = parse_headers("Content-Disposition: form-data; name=\"file\"; filename*=UTF-8''C++.epub");
+        assert_eq!(f.as_deref(), Some("C++.epub"));
     }
 
     /// 回归：`%` 后跟多字节 UTF-8 字符曾在 `&s[i+1..i+3]` 处 panic（切到字符中间）。

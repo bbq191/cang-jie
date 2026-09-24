@@ -37,42 +37,56 @@ pub fn patch(paths: &Paths, changes: Map<String, Value>) -> Result<(), String> {
     rmsvc_core::fs::write_atomic(&p, &bytes).map_err(|e| e.to_string())
 }
 
-/// CJK 荧光笔精确吸附开关（`hlSnapCjk`，langhook C hook 消费）。缺省视为开——跟 QML 侧 `c.hlSnapCjk !== false`
-/// 同一条缺省规则（`xovi-extensions/reading-qol/settings-reading-enhance.qmd`）。
-pub fn hl_snap_cjk(paths: &Paths) -> bool {
-    load(paths).get("hlSnapCjk").and_then(Value::as_bool).unwrap_or(true)
-}
+/// `reading-qol.json` 的一次快照：`/api/enhance/status` 一次请求要读六七个开关，读一次文件、各开关从同一份
+/// 快照取（此前每个开关各自读一遍整份文件）。
+pub struct Qol(Map<String, Value>);
 
-/// CJK 手写笔迹优化——纯网页层派生开关，不是 `reading-qol.json` 里单独存在的字段：
-/// `hwStrokeNibMinRatio < 1.0` 视为已开（`enhance/handwriting-stroke/src/hw_stroke.c` 里 `1.0`
-/// 是两个效果〔笔尖角度模型+提按速度代理〕全部关闭的 fail-safe 默认值，真机验证过 `0.6` 是效果
-/// 不错的强度）。只读 `hwStrokeNibMinRatio` 一个键就够判断开关态——网页层写入时两个 min_ratio
-/// 字段永远同步写（见 [`super::set_qol`]），不会出现只改了一个的情况。
-pub fn hw_stroke_enabled(paths: &Paths) -> bool {
-    load(paths).get("hwStrokeNibMinRatio").and_then(Value::as_f64).map(|v| v < 1.0).unwrap_or(false)
-}
+impl Qol {
+    pub fn load(paths: &Paths) -> Qol {
+        Qol(load(paths))
+    }
 
-/// 「导入 md 文档」开关（`notesImportMdEnabled`），控制笔记 tab「导入」子标签是否显示。跟
-/// `hl_snap_cjk` 缺省开不同，这个缺省关——新功能第一次上线，不想让用户点开笔记 tab 就撞见一个
-/// 半成品，得手动去「管理→实验室」打开才看得到。
-pub fn notes_import_md_enabled(paths: &Paths) -> bool {
-    load(paths).get("notesImportMdEnabled").and_then(Value::as_bool).unwrap_or(false)
-}
+    fn flag(&self, key: &str, default: bool) -> bool {
+        self.0.get(key).and_then(Value::as_bool).unwrap_or(default)
+    }
 
-/// 「漫画页边距最小化」开关（`comicMinMargin`，2026-09-21）：**仅对漫画 EPUB**（以图为主，允许有文字页），控制 book-serve 优化时漫画页补白到哪种页框、
-/// 「加入 xochitl」后是否登记"首次打开时把阅读器页边距设为 1"（xochitl 里的 qmd 代理执行）。book-serve 只读这个键
-/// （`comic_margins.rs::enabled`），跟「导入 md」一样缺省关——新功能第一次上线，得手动去「管理→实验室」打开。
-pub fn comic_min_margin(paths: &Paths) -> bool {
-    load(paths).get("comicMinMargin").and_then(Value::as_bool).unwrap_or(false)
-}
+    /// CJK 荧光笔精确吸附开关（`hlSnapCjk`，langhook C hook 消费）。缺省视为开——跟 QML 侧 `c.hlSnapCjk !== false`
+    /// 同一条缺省规则（`xovi-extensions/reading-qol/settings-reading-enhance.qmd`）。
+    pub fn hl_snap_cjk(&self) -> bool {
+        self.flag("hlSnapCjk", true)
+    }
 
-/// 「单击翻页」（`tapPageTurn`）与「日漫从右往左翻页」（`rtlPageTurn`）两个开关（2026-09-24）：xochitl 阅读器里的
-/// `reader-page-turn.qmd` 每次打开书时读这两个键（不轮询），切换后下次打开书生效。缺省都关 = xochitl 原生行为。
-pub fn tap_page_turn(paths: &Paths) -> bool {
-    load(paths).get("tapPageTurn").and_then(Value::as_bool).unwrap_or(false)
-}
-pub fn rtl_page_turn(paths: &Paths) -> bool {
-    load(paths).get("rtlPageTurn").and_then(Value::as_bool).unwrap_or(false)
+    /// CJK 手写笔迹优化——纯网页层派生开关，不是 `reading-qol.json` 里单独存在的字段：
+    /// `hwStrokeNibMinRatio < 1.0` 视为已开（`enhance/handwriting-stroke/src/hw_stroke.c` 里 `1.0`
+    /// 是两个效果〔笔尖角度模型+提按速度代理〕全部关闭的 fail-safe 默认值，真机验证过 `0.6` 是效果
+    /// 不错的强度）。只读 `hwStrokeNibMinRatio` 一个键就够判断开关态——网页层写入时两个 min_ratio
+    /// 字段永远同步写（见 [`super::set_qol`]），不会出现只改了一个的情况。
+    pub fn hw_stroke_enabled(&self) -> bool {
+        self.0.get("hwStrokeNibMinRatio").and_then(Value::as_f64).map(|v| v < 1.0).unwrap_or(false)
+    }
+
+    /// 「导入 md 文档」开关（`notesImportMdEnabled`），控制笔记 tab「导入」子标签是否显示。跟
+    /// `hl_snap_cjk` 缺省开不同，这个缺省关——新功能第一次上线，不想让用户点开笔记 tab 就撞见一个
+    /// 半成品，得手动去「管理→实验室」打开才看得到。
+    pub fn notes_import_md_enabled(&self) -> bool {
+        self.flag("notesImportMdEnabled", false)
+    }
+
+    /// 「漫画页边距最小化」开关（`comicMinMargin`，2026-09-21）：**仅对漫画 EPUB**（以图为主，允许有文字页），控制 book-serve 优化时漫画页补白到哪种页框、
+    /// 「加入 xochitl」后是否登记"首次打开时把阅读器页边距设为 1"（xochitl 里的 qmd 代理执行）。book-serve 只读这个键
+    /// （`comic_margins.rs::enabled`），跟「导入 md」一样缺省关——新功能第一次上线，得手动去「管理→实验室」打开。
+    pub fn comic_min_margin(&self) -> bool {
+        self.flag("comicMinMargin", false)
+    }
+
+    /// 「单击翻页」（`tapPageTurn`）与「日漫翻页规则」（`rtlPageTurn`）两个开关（2026-09-24）：xochitl 阅读器里的
+    /// `reader-page-turn.qmd` 每次打开书时读这两个键（不轮询），切换后下次打开书生效。缺省都关 = xochitl 原生行为。
+    pub fn tap_page_turn(&self) -> bool {
+        self.flag("tapPageTurn", false)
+    }
+    pub fn rtl_page_turn(&self) -> bool {
+        self.flag("rtlPageTurn", false)
+    }
 }
 
 #[cfg(test)]
@@ -92,7 +106,7 @@ mod tests {
     #[test]
     fn hl_snap_cjk_defaults_true_when_missing() {
         let (_t, paths) = tmp_paths();
-        assert!(hl_snap_cjk(&paths), "文件不存在时缺省视为开，跟 QML 侧一致");
+        assert!(Qol::load(&paths).hl_snap_cjk(), "文件不存在时缺省视为开，跟 QML 侧一致");
     }
 
     #[test]
@@ -109,7 +123,7 @@ mod tests {
         change.insert("hlSnapCjk".into(), Value::Bool(false));
         patch(&paths, change).unwrap();
 
-        assert!(!hl_snap_cjk(&paths), "patch 的键要生效");
+        assert!(!Qol::load(&paths).hl_snap_cjk(), "patch 的键要生效");
         let full = load(&paths);
         assert_eq!(full["starTodoEnabled"], Value::Bool(true), "没碰过的键不能被冲掉");
         assert_eq!(full["cardhwEnabled"], Value::Bool(true), "没碰过的键不能被冲掉");
@@ -118,7 +132,7 @@ mod tests {
     #[test]
     fn hw_stroke_enabled_defaults_false_when_missing() {
         let (_t, paths) = tmp_paths();
-        assert!(!hw_stroke_enabled(&paths), "文件不存在/字段缺失时缺省视为关（C 侧同一条 fail-safe 规则）");
+        assert!(!Qol::load(&paths).hw_stroke_enabled(), "文件不存在/字段缺失时缺省视为关（C 侧同一条 fail-safe 规则）");
     }
 
     #[test]
@@ -127,22 +141,22 @@ mod tests {
         let mut seed = Map::new();
         seed.insert("hwStrokeNibMinRatio".into(), serde_json::json!(0.6));
         patch(&paths, seed).unwrap();
-        assert!(hw_stroke_enabled(&paths), "ratio < 1.0 视为已开");
+        assert!(Qol::load(&paths).hw_stroke_enabled(), "ratio < 1.0 视为已开");
     }
 
     #[test]
     fn notes_import_md_enabled_defaults_false() {
         let (_t, paths) = tmp_paths();
-        assert!(!notes_import_md_enabled(&paths), "新功能第一次上线，缺省关，不是缺省开");
+        assert!(!Qol::load(&paths).notes_import_md_enabled(), "新功能第一次上线，缺省关，不是缺省开");
     }
 
     #[test]
     fn comic_min_margin_defaults_false_and_follows_patch() {
         let (_t, paths) = tmp_paths();
-        assert!(!comic_min_margin(&paths), "缺省关");
+        assert!(!Qol::load(&paths).comic_min_margin(), "缺省关");
         let mut on = Map::new();
         on.insert("comicMinMargin".into(), Value::Bool(true));
         patch(&paths, on).unwrap();
-        assert!(comic_min_margin(&paths));
+        assert!(Qol::load(&paths).comic_min_margin());
     }
 }

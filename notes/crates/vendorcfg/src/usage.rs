@@ -43,7 +43,16 @@ pub struct Ledger<Extra = ()> {
 }
 
 impl<Extra: Clone + Serialize + DeserializeOwned> Ledger<Extra> {
+    /// 读账本；文件损坏时从零记起（下一次记账会覆盖它），但先另存一份 `.corrupt` 副本（已有就不重复拷）——
+    /// 累计用量是用户看花费的依据，不该被静默清零（2026-09-24 第三轮审计，跟 `ConfigCell`/条目库同一纪律）。
     pub fn open(path: &Path) -> Ledger<Extra> {
+        if rmsvc_core::config::is_corrupt::<UsageBook<Extra>>(path) {
+            let bak = path.with_extension("json.corrupt");
+            if !bak.exists() {
+                let _ = std::fs::copy(path, &bak);
+            }
+            eprintln!("[vendorcfg] 用量账本 {} 解析失败，从零记起（原内容另存 {}）", path.display(), bak.display());
+        }
         Ledger { path: path.to_path_buf(), usage: Mutex::new(rmsvc_core::config::load_or_default(path)) }
     }
     pub fn snapshot(&self) -> UsageBook<Extra> {
@@ -189,6 +198,18 @@ mod tests {
         let b = &back.by_model["model-b"];
         assert_eq!((b.calls, b.ok, b.prompt_tokens), (1, 1, 50), "不同模型各算各的，不会混到一起");
         assert_eq!(back.last_run.unwrap().done, 1);
+    }
+
+    #[test]
+    fn corrupt_ledger_is_backed_up_before_being_overwritten() {
+        let t = tempfile::tempdir().unwrap();
+        let p = t.path().join("mind.json");
+        std::fs::write(&p, b"{\"byModel\": {broken").unwrap();
+        let l: Ledger<()> = Ledger::open(&p);
+        assert!(l.snapshot().by_model.is_empty());
+        l.record_ok("m", 1, 1, 1);
+        assert_eq!(std::fs::read(p.with_extension("json.corrupt")).unwrap(), b"{\"byModel\": {broken", "原内容留了副本");
+        assert_eq!(Ledger::<()>::open(&p).snapshot().by_model["m"].calls, 1);
     }
 
     #[test]

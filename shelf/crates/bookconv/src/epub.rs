@@ -2,9 +2,6 @@
 //! 本设备版所有条目走 STORED（不压缩，免 C 依赖；设备空间充足）。
 
 use crate::htmlproc::fix_internal_links;
-use std::io::Write;
-use zip::write::SimpleFileOptions;
-use zip::CompressionMethod;
 
 pub struct Chapter {
     pub title: String,
@@ -247,9 +244,11 @@ pub fn assemble(book: &mut Book) -> Result<Vec<u8>, String> {
 /// `extra_css`：`optimize_pdf_to_epub` 返回的颜色 CSS（`.cj-cN{color:#rrggbb;}` 逐条，可能是空
 /// 串——全书没解析出任何非黑颜色时就是空）。拼进同一份共享样式表而不是另起一个文件：颜色规则
 /// 也得挂在"含 `<img` 或颜色 span 才 `<link>`"这同一条判定里，两份文件反而要维护两条判定逻辑。
+/// **组装后 `book.resources` 被清空**（写一张释放一张）：PDF 转出的书图片可达上百 MB，不让"资源表 + zip 缓冲"
+/// 同时各占一整份（2026-09-24 审计；调用方 book-serve 组装后不再用 `book`）。
 pub fn assemble_pdf_derived(book: &mut Book, extra_css: &str) -> Result<Vec<u8>, String> {
     let css = format!("{PDF_IMG_CSS}{extra_css}");
-    assemble_with(book, AssembleOpts { shared_css: Some(SharedCss { file: "pdf-img.css", id: "pdf-img-css", css: &css }), consume_resources: false, rtl: false })
+    assemble_with(book, AssembleOpts { shared_css: Some(SharedCss { file: "pdf-img.css", id: "pdf-img-css", css: &css }), consume_resources: true, rtl: false })
 }
 
 const PDF_IMG_CSS: &str = "img{max-width:100%;height:auto;}\n";
@@ -278,48 +277,35 @@ pub(crate) fn assemble_with(book: &mut Book, opts: AssembleOpts) -> Result<Vec<u
     {
         let cursor = std::io::Cursor::new(&mut buf);
         let mut z = zip::ZipWriter::new(cursor);
-        let stored = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
+        let stored = crate::epubzip::stored();
+        let put = crate::epubzip::put_entry;
         // mimetype 必须首个、STORED
-        z.start_file("mimetype", stored).map_err(|e| e.to_string())?;
-        z.write_all(b"application/epub+zip").map_err(|e| e.to_string())?;
-        z.start_file("META-INF/container.xml", stored).map_err(|e| e.to_string())?;
-        z.write_all(container_xml().as_bytes()).map_err(|e| e.to_string())?;
-        z.start_file(OPF_PATH, stored).map_err(|e| e.to_string())?;
-        z.write_all(opf.as_bytes()).map_err(|e| e.to_string())?;
-        z.start_file("OEBPS/nav.xhtml", stored).map_err(|e| e.to_string())?;
-        z.write_all(nav_xhtml(book).as_bytes()).map_err(|e| e.to_string())?;
+        put(&mut z, "mimetype", stored, b"application/epub+zip")?;
+        put(&mut z, "META-INF/container.xml", stored, container_xml().as_bytes())?;
+        put(&mut z, OPF_PATH, stored, opf.as_bytes())?;
+        put(&mut z, "OEBPS/nav.xhtml", stored, nav_xhtml(book).as_bytes())?;
         if let Some(cover) = &book.meta.cover {
-            z.start_file(format!("OEBPS/cover.{}", book.meta.cover_ext), stored)
-                .map_err(|e| e.to_string())?;
-            z.write_all(cover).map_err(|e| e.to_string())?;
-            z.start_file("OEBPS/cover.xhtml", stored).map_err(|e| e.to_string())?;
-            z.write_all(cover_xhtml(&book.meta).as_bytes()).map_err(|e| e.to_string())?;
+            put(&mut z, &format!("OEBPS/cover.{}", book.meta.cover_ext), stored, cover)?;
+            put(&mut z, "OEBPS/cover.xhtml", stored, cover_xhtml(&book.meta).as_bytes())?;
         }
         for (i, ch) in book.chapters.iter().enumerate() {
-            z.start_file(format!("OEBPS/{}", chapter_filename(i)), stored)
-                .map_err(|e| e.to_string())?;
             let link = match &opts.shared_css {
                 Some(c) if has_img_tag(&ch.html_body) || has_color_span(&ch.html_body) => format!("<link rel=\"stylesheet\" type=\"text/css\" href=\"{}\"/>", c.file),
                 _ => String::new(),
             };
-            z.write_all(chapter_doc(ch, &link).as_bytes()).map_err(|e| e.to_string())?;
+            put(&mut z, &format!("OEBPS/{}", chapter_filename(i)), stored, chapter_doc(ch, &link).as_bytes())?;
         }
-        let mut write_res = |r: &Resource| -> Result<(), String> {
-            z.start_file(format!("OEBPS/{}", r.path), stored).map_err(|e| e.to_string())?;
-            z.write_all(&r.bytes).map_err(|e| e.to_string())
-        };
         if opts.consume_resources {
             for r in std::mem::take(&mut book.resources) {
-                write_res(&r)?; // r 在本次迭代结束即释放
+                put(&mut z, &format!("OEBPS/{}", r.path), stored, &r.bytes)?; // r 在本次迭代结束即释放
             }
         } else {
             for r in &book.resources {
-                write_res(r)?;
+                put(&mut z, &format!("OEBPS/{}", r.path), stored, &r.bytes)?;
             }
         }
         if let Some(c) = &opts.shared_css {
-            z.start_file(format!("OEBPS/{}", c.file), stored).map_err(|e| e.to_string())?;
-            z.write_all(c.css.as_bytes()).map_err(|e| e.to_string())?;
+            put(&mut z, &format!("OEBPS/{}", c.file), stored, c.css.as_bytes())?;
         }
         z.finish().map_err(|e| e.to_string())?;
     }

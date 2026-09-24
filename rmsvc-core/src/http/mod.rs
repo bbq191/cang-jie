@@ -50,6 +50,9 @@ pub struct Request<'a> {
 /// 所以处理函数读到的一定是真实对端地址（不是 `X-Forwarded-For` 这类可伪造的值）。
 pub const REMOTE_IP_HEADER: &str = "X-Rmsvc-Remote-Ip";
 
+/// [`Request::read_small_body`] 的上限（1MB）：JSON 表单、KOReader 配置补丁这类小请求体。
+pub const SMALL_BODY_MAX: u64 = 1024 * 1024;
+
 /// 按名取头（不区分大小写）——[`Request`] 与 [`GuardRequest`] 共用。
 fn header_of<'a>(headers: &'a [(String, String)], name: &str) -> Option<&'a str> {
     headers.iter().find(|(k, _)| k.eq_ignore_ascii_case(name)).map(|(_, v)| v.as_str())
@@ -97,10 +100,19 @@ impl Request<'_> {
     pub fn param(&self, k: &str) -> &str {
         self.params.get(k).map(|s| s.as_str()).unwrap_or("")
     }
-    /// 小 body（JSON 表单）整体读入，上限 1MB。
+    /// 小 body（JSON 表单 / 配置补丁）整体读入，上限 [`SMALL_BODY_MAX`]。**超限报错**而不是截断：此前
+    /// `take(1MB)` 静默截断，超长的 KOReader 配置补丁会被切成半截再交给合并脚本、JSON 报一句莫名的解析错
+    /// （2026-09-24 审计）。多读 1 字节即可判定超限，不必读完整个超长 body。
     pub fn read_small_body(&mut self) -> Result<Vec<u8>, String> {
+        let too_big = || format!("请求体超过 {} KB 上限", SMALL_BODY_MAX / 1024);
+        if self.content_length.is_some_and(|n| n as u64 > SMALL_BODY_MAX) {
+            return Err(too_big());
+        }
         let mut v = Vec::new();
-        self.body.take(1024 * 1024).read_to_end(&mut v).map_err(|e| e.to_string())?;
+        self.body.take(SMALL_BODY_MAX + 1).read_to_end(&mut v).map_err(|e| e.to_string())?;
+        if v.len() as u64 > SMALL_BODY_MAX {
+            return Err(too_big());
+        }
         Ok(v)
     }
     pub fn json_body(&mut self) -> Result<serde_json::Value, String> {
@@ -220,5 +232,25 @@ mod tests {
         assert_eq!(b.str("nope").unwrap_err().message, "缺 nope");
         assert_eq!(b.str_or("folder", "lib"), "lib", "空白当缺省");
         assert!(!b.bool_or("keep", true) && b.bool_or("other", true));
+    }
+
+    fn req_with<'a>(body: &'a mut &[u8], content_length: Option<usize>) -> Request<'a> {
+        Request { method: Method::Post, path: "/".into(), query: HashMap::new(), params: HashMap::new(), content_type: String::new(), content_length, headers: vec![], body }
+    }
+
+    /// 回归：超过上限的小 body 报错，而不是静默截断成半截内容交给调用方。
+    #[test]
+    fn small_body_rejects_oversize_instead_of_truncating() {
+        let max = SMALL_BODY_MAX as usize;
+        let exact = vec![b'a'; max];
+        let mut r: &[u8] = &exact;
+        assert_eq!(req_with(&mut r, None).read_small_body().unwrap().len(), max, "恰好上限照收");
+        let over = vec![b'a'; max + 1];
+        let mut r: &[u8] = &over;
+        assert!(req_with(&mut r, None).read_small_body().unwrap_err().contains("上限"), "没有 Content-Length（chunked）也按实际字节判");
+        let mut r: &[u8] = b"{}";
+        assert!(req_with(&mut r, Some(max + 1)).read_small_body().is_err(), "声明长度超限直接拒，不读 body");
+        let mut r: &[u8] = b"{\"a\":1}";
+        assert_eq!(req_with(&mut r, Some(7)).json().unwrap().0["a"], 1, "正常小 body 不受影响");
     }
 }

@@ -37,7 +37,8 @@
 #   环境 DEFER_XOVI_START=1：只把 qmd/rcc 落盘，不在这一步重启 xochitl——install-all.sh 编排
 #   多个 xovi 扩展时用这个避免短时间内反复重启 xochitl（撞 watchdog+StartLimit 的风险，
 #   2026-09-11 真机踩过），改成全部落盘完最后统一重启一次（deploy-xovi-apply.sh）。单独跑本脚本
-#   不用管这个变量：装完立即重启 xochitl 生效 + 健康检查——怎么重启由设备端 devlib.sh 的
+#   不用管这个变量：装完立即重启 xochitl 生效 + 健康检查（qmd/rcc 没变、也没有别的待生效改动时不重启，
+#   2026-09-24）——怎么重启由设备端 devlib.sh 的
 #   cj_xochitl_apply 判定（xovi 已生效 → systemctl restart；没生效才 xovi/start，2026-09-20 修，
 #   见 deploy-xovi-apply.sh 头注），重启前会提示"打断阅读"并留 5 秒宽限。
 #
@@ -57,13 +58,13 @@ trap 'rm -f "$RCC_LOCAL"' EXIT
 
 echo "== 探测设备端 qt-resource-rebuilder =="
 if ! rssh "[ -d $QRR_DIR ]"; then
-    echo "-- 设备没装 qt-resource-rebuilder（vellum add qt-resource-rebuilder）——跳过，非失败"
+    step_skipped "设备没装 qt-resource-rebuilder（vellum add qt-resource-rebuilder）"
     exit 0
 fi
 
 echo "== 探测设备端 appload =="
 if ! rssh "[ -d /home/root/xovi/exthome/appload ]"; then
-    echo "-- 设备没装 appload（vellum add appload）——跳过，非失败"
+    step_skipped "设备没装 appload（vellum add appload）"
     exit 0
 fi
 
@@ -77,8 +78,9 @@ echo "== 探测 appload 自己的 qmd 在这台固件上是否兼容 =="
 # （`DEFER_XOVI_START=1` 模式不在这一步重启，没法当场复核，见该分支注释）。
 if ! rssh "journalctl -b 0 -u xochitl --no-pager 2>/dev/null | grep -q 'Loaded external AppLoad hooks in main UI'"; then
     echo "-- 没在这次开机日志里看到 appload 成功挂载的信号（可能是 appload 版本 < 0.6.0、在 3.28"
-    echo "   上不兼容，也可能是刚装/升级完 appload 还没重启设备）——跳过，非失败。"
+    echo "   上不兼容，也可能是刚装/升级完 appload 还没重启设备）。"
     echo "   先 vellum upgrade appload 到 ≥ 0.6.0 并整机重启，见本脚本头注「appload 要 ≥ 0.6.0」一节。"
+    step_skipped "没看到 appload 成功挂载的信号（appload < 0.6.0，或装/升级后还没重启设备）"
     exit 0
 fi
 
@@ -106,6 +108,7 @@ echo "== 设备端落位（备份进 cangjie-backups + 原子 rename）=="
 dev_script "$QRR_DIR" "$STAGE" <<'DEVICE_SCRIPT'
 set -eu
 QRR="$1"; STG="$2"
+cj_require_root || exit 1
 [ -f "$STG/koreader-sidebar-entry.qmd" ] && [ -f "$STG/cangjie-icons.rcc" ] || { echo "!! 暂存文件缺失"; exit 1; }
 for f in koreader-sidebar-entry.qmd cangjie-icons.rcc; do
     cj_backup_if_differs "$STG/$f" "$QRR/$f"   # 内容没变就不堆重复备份
@@ -136,6 +139,12 @@ dev_script "$SINCE" <<'DEVICE_SCRIPT'
 set -eu
 SINCE="$1"
 cj_require_root || exit 1
+# qmd/rcc 没变（上面落位时没记标记）、也没有别的待生效改动、xovi 已生效 → 不重启：重复跑不再每次闪屏
+if ! cj_apply_needed; then
+    echo "-- qmd/rcc 与设备上已装的逐字节相同，也没有别的待生效改动——不重启 xochitl"
+    echo "✅ 已是最新"
+    exit 0
+fi
 OLD_PID="$(cj_xochitl_pid)"
 cj_xochitl_apply || exit 1
 cj_xochitl_health "$OLD_PID" || { echo "⚠️  健康检查未达预期。查 journalctl -u xochitl"; exit 1; }

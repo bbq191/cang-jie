@@ -14,7 +14,7 @@ pub mod toc;
 pub use index::{parse_epubindex, Section};
 pub use toc::{Toc, TocEntry};
 
-use std::io::{Cursor, Read};
+use std::io::{Cursor, Read, Seek};
 
 /// 某页所属的章节标签。
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -40,7 +40,13 @@ impl BookMap {
 
     /// 从设备上的 `.epub` 字节 + `.epubindex` 字节直接建表（找不到目录 → toc 为空，只剩 section 粒度）。
     pub fn from_epub(epub: &[u8], epubindex: &[u8]) -> BookMap {
-        let (nav, ncx) = read_toc_texts(epub);
+        BookMap::from_epub_reader(Cursor::new(epub), epubindex)
+    }
+
+    /// 同 [`Self::from_epub`]，但直接吃可 seek 的读端（如打开的 `.epub` 文件）：zip 只读中央目录和目录那一两个条目，
+    /// 不必把整本书读进内存——大书（上传绕过 100MB 限制的那类）整本 `fs::read` 会顶破服务的 MemoryMax（2026-09-24）。
+    pub fn from_epub_reader<R: Read + Seek>(epub: R, epubindex: &[u8]) -> BookMap {
+        let (nav, ncx) = read_toc_texts_from(epub);
         BookMap::new(parse_epubindex(epubindex), Toc::parse(nav.as_deref(), ncx.as_deref()))
     }
 
@@ -66,7 +72,12 @@ impl BookMap {
 
 /// 在 EPUB zip 里找 (nav.xhtml, toc.ncx) 文本；缺的为 None。
 pub fn read_toc_texts(epub: &[u8]) -> (Option<String>, Option<String>) {
-    let Ok(mut ar) = zip::ZipArchive::new(Cursor::new(epub)) else { return (None, None) };
+    read_toc_texts_from(Cursor::new(epub))
+}
+
+/// 同 [`read_toc_texts`]，吃可 seek 的读端。
+pub fn read_toc_texts_from<R: Read + Seek>(epub: R) -> (Option<String>, Option<String>) {
+    let Ok(mut ar) = zip::ZipArchive::new(epub) else { return (None, None) };
     let (mut nav_name, mut ncx_name) = (None, None);
     for i in 0..ar.len() {
         let Ok(f) = ar.by_index(i) else { continue };
@@ -120,6 +131,36 @@ mod tests {
         assert_eq!(m.chapter_of(25), Some(Chapter { index: 1, title: "Book One", subhead: Some("Chapter Two") }));
         assert_eq!(m.chapter_of(99), Some(Chapter { index: 2, title: "Book Two", subhead: Some("Chapter Eleven") }));
         assert_eq!(m.chapters(), vec![(0, "Dedication"), (1, "Book One"), (2, "Book Two")]);
+    }
+
+    /// 从文件读端建表与整本字节建表结果一致（ingest 改走文件读端，不再整本读进内存）。
+    #[test]
+    fn reader_and_bytes_give_same_map() {
+        use std::io::Write;
+        let mut buf = Cursor::new(Vec::new());
+        {
+            let mut w = zip::ZipWriter::new(&mut buf);
+            let o = zip::write::SimpleFileOptions::default();
+            w.start_file("mimetype", o).unwrap();
+            w.write_all(b"application/epub+zip").unwrap();
+            w.start_file("OEBPS/big.bin", o).unwrap();
+            w.write_all(&vec![7u8; 1 << 20]).unwrap();
+            w.start_file("OEBPS/toc.ncx", o).unwrap();
+            w.write_all(include_bytes!("../../../testdata/renggu/toc.ncx")).unwrap();
+            w.finish().unwrap();
+        }
+        let bytes = buf.into_inner();
+        let idx = include_bytes!("../../../testdata/renggu/book.epubindex");
+        let dir = std::env::temp_dir().join(format!("epubmap-test-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let p = dir.join("b.epub");
+        std::fs::write(&p, &bytes).unwrap();
+        let a = BookMap::from_epub(&bytes, idx);
+        let b = BookMap::from_epub_reader(std::io::BufReader::new(std::fs::File::open(&p).unwrap()), idx);
+        let _ = std::fs::remove_dir_all(&dir);
+        assert_eq!(a.chapters().len(), 38);
+        assert_eq!(a.chapters(), b.chapters());
+        assert_eq!(a.chapter_of(100), b.chapter_of(100));
     }
 
     #[test]

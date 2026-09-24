@@ -94,8 +94,7 @@ impl<'a> StreamingOptimize<'a> {
         // 字节，处理完立刻写文件、立刻丢——峰值只有"当前这一张"，不会随全书图片数量线性涨。
         let out_file = std::fs::File::create(output_path).map_err(|e| format!("建输出文件失败: {e}"))?;
         let mut zw = ZipWriter::new(std::io::BufWriter::new(out_file));
-        let stored = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
-        let deflated = SimpleFileOptions::default().compression_method(CompressionMethod::Deflated);
+        let (stored, deflated) = (crate::epubzip::stored(), crate::epubzip::deflated());
         // 图片本身已是 JPEG/PNG：deflate 只能再榨一点（实测乱马 6%），用最快档（级别 1）拿大部分收益、少花 CPU。
         let deflated_fast = deflated.compression_level(Some(1));
         let mut xf = EntryXform::new(&aside_index, opts.footnote, title, opf_name.as_deref());
@@ -104,7 +103,7 @@ impl<'a> StreamingOptimize<'a> {
         // 提前提交 `lookahead` 张（读原图字节几乎不花时间，处理才慢），处理与写盘/读盘重叠。结果与逐张顺序处理逐字节相同。
         let workers = crate::imgpool::worker_count();
         let lookahead = workers + 2;
-        let image_positions: Vec<usize> = entries.iter().enumerate().filter(|(_, (n, _, ish))| !*ish && !n.to_lowercase().ends_with(".css") && crate::imgopt::is_downscalable(n)).map(|(i, _)| i).collect();
+        let image_positions: Vec<usize> = entries.iter().enumerate().filter(|(_, (n, _, ish))| !*ish && crate::imgopt::is_downscalable(n)).map(|(i, _)| i).collect();
         std::thread::scope(|scope| -> Result<(), String> {
             struct ImgJob {
                 bytes: Vec<u8>,
@@ -151,20 +150,13 @@ impl<'a> StreamingOptimize<'a> {
                 };
                 // mimetype 与图片（JPEG/PNG 本身已压缩，再 deflate 几乎没收益、白花 CPU）用 Stored；其余 deflate。
                 let file_opts = if name == "mimetype" { stored } else if is_image { deflated_fast } else { deflated };
-                zw.start_file(name.as_str(), file_opts).map_err(|e| e.to_string())?;
-                zw.write_all(&final_data).map_err(|e| e.to_string())?;
+                crate::epubzip::put_entry(&mut zw, name, file_opts, &final_data)?;
                 on_progress(i + 1, total_entries);
             }
             drop(job_tx); // 关闭队列，worker 退出，scope 才能 join
             Ok(())
         })?;
-        for (path, bytes) in &xf.fetched_imgs {
-            zw.start_file(path.as_str(), deflated).map_err(|e| e.to_string())?;
-            zw.write_all(bytes).map_err(|e| e.to_string())?;
-        }
-        zw.start_file(OPTIMIZE_MARKER, deflated).map_err(|e| e.to_string())?;
-        let marker = marker_value(opts.wash.is_some());
-        zw.write_all(marker.as_bytes()).map_err(|e| e.to_string())?;
+        write_tail(&mut zw, &xf.fetched_imgs, opts.wash.is_some())?;
         // `finish()` 只保证写完中央目录，底下 `BufWriter` 自己的缓冲区不一定落盘——显式 flush，
         // 不指望 Drop 的静默兜底（出错会被吞掉）。
         let mut out = zw.finish().map_err(|e| e.to_string())?;

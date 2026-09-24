@@ -127,7 +127,7 @@ impl WallpaperStore {
         self.save_state(&st)
     }
 
-    /// 按 mode 选下一张并激活；返回激活的名字（fixed/空池 → None）。
+    /// 按 mode 选下一张并激活；返回激活的名字（fixed / 空池 / 选中的就是已在 current.png 的那张 → None）。
     pub fn roll(&self) -> Result<Option<String>, String> {
         let _g = self.guard();
         let st = self.state();
@@ -150,8 +150,24 @@ impl WallpaperStore {
             }
             Mode::Fixed => unreachable!(),
         };
+        if st.current.as_deref() == Some(next.as_str()) && self.current_matches(&next) {
+            // 池里只有一张：选中的就是当前这张且 current.png 已是它 → 不重写。此前每次唤醒都把同一张
+            // 1–3MB 的图 truncate 重写 + fsync 一遍（池里只传了一张是常态），纯属白写闪存。
+            return Ok(None);
+        }
         self.activate_locked(&next)?;
         Ok(Some(next))
+    }
+
+    /// current.png 是否已经是池里 `name` 的内容：大小相同，且池文件不比 current.png 新（同名重传后
+    /// 池文件更新 → 仍要重写一次）。只 stat 不读内容。
+    fn current_matches(&self, name: &str) -> bool {
+        let Ok(n) = plain_name(name) else { return false };
+        let (Ok(src), Ok(cur)) = (std::fs::metadata(self.pool.join(n)), std::fs::metadata(&self.current)) else { return false };
+        match (src.modified(), cur.modified()) {
+            (Ok(ms), Ok(mc)) => src.len() == cur.len() && ms <= mc,
+            _ => false,
+        }
     }
 }
 
@@ -316,6 +332,29 @@ mod tests {
         s.set_mode(Mode::Random).unwrap();
         assert!(s.roll().unwrap().is_some());
         assert!(s.remove(&s.state().current.clone().unwrap()).is_err());
+    }
+
+    #[test]
+    fn single_image_pool_roll_does_not_rewrite_current() {
+        let (_t, s) = store();
+        std::fs::write(s.pool().join("a.png"), png(10, 10)).unwrap();
+        // 从没激活过：唤醒轮换要把它写进 current.png
+        assert_eq!(s.roll().unwrap().as_deref(), Some("a.png"));
+        let before = std::fs::metadata(s.current_path()).unwrap().modified().unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        // 之后的唤醒：还是这一张，不再重写
+        assert_eq!(s.roll().unwrap(), None);
+        s.set_mode(Mode::Random).unwrap();
+        assert_eq!(s.roll().unwrap(), None);
+        assert_eq!(std::fs::metadata(s.current_path()).unwrap().modified().unwrap(), before, "current.png 未被重写");
+        // 同名重传（池文件变新、内容不同）→ 下次唤醒仍要刷新 current.png
+        std::fs::write(s.pool().join("a.png"), png(12, 12)).unwrap();
+        assert_eq!(s.roll().unwrap().as_deref(), Some("a.png"));
+        assert_eq!(std::fs::read(s.current_path()).unwrap(), png(12, 12));
+        // current.png 被删了 → 也要重写
+        std::fs::remove_file(s.current_path()).unwrap();
+        assert_eq!(s.roll().unwrap().as_deref(), Some("a.png"));
+        assert!(s.current_path().is_file());
     }
 
     #[test]

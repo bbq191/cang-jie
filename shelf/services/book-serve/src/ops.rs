@@ -10,13 +10,9 @@
 //! 三个状态原来是三把互相独立的 `Mutex<HashSet>`，`try_start` 要先后锁两把、`request_cancel` 锁三把，非原子；
 //! 合成一张 `HashMap<条目, OpState>` 后每个操作都是一次持锁，且"结束＝整条移除"不会漏清某个标记。
 
+use rmsvc_core::sync::lock;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex, MutexGuard};
-
-/// 取锁并容忍 poison：别处 panic（`panic=unwind` 下被 `catch_unwind` 兜住）不该让所有后续请求跟着 panic。
-pub fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
-    m.lock().unwrap_or_else(|e| e.into_inner())
-}
+use std::sync::{Arc, Mutex};
 
 #[derive(Default)]
 struct OpState {

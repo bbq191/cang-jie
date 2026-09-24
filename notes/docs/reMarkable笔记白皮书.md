@@ -47,7 +47,7 @@
 
 **一条内容从头到尾怎么走**：
 
-1. **摄取**：合上书时 xochitl 会重写 `<uuid>.content/.metadata`。ink-serve 监听书库目录，4 秒防抖后只扫 `.rm` 修改时间变了的页，把勾画和旁边的手写配成条目，状态为 `Mined`，同时把手写画成裁图 PNG。KOReader 的高亮和生词由网页上的「KOReader 回流」按钮手动拉进来。
+1. **摄取**：合上书时 xochitl 会重写 `<uuid>.content/.metadata`。ink-serve 监听书库目录，4 秒防抖后先比各页 `.rm` 的修改时间，只扫变了的页（页都没变就连 `.content` 都不解析），把勾画和旁边的手写配成条目，状态为 `Mined`，同时把手写画成裁图 PNG。KOReader 的高亮和生词由网页上的「KOReader 回流」按钮手动拉进来。
 2. **浏览**：手机「浏览」页只列 `Mined`。点「转入笔记」→ `Pending`（没有手写的直接用原文定稿为 `Reviewed`）；点「不需要」→ `Skipped`，进回收站。
 3. **转写**：transcribe-serve 收到事件后，只处理 `Pending`，把裁图交给视觉模型，结果作为草稿写回，状态变 `Draft`。
 4. **整理**：手机「整理」页改字（改完即保存，状态变 `Reviewed`）、选去处、勾「问 AI」填问题再点「提问」（mind-serve 生成回答写回），不要的点「不要了」（`Archived`，进回收站）。
@@ -71,10 +71,11 @@
 | 回收站：看内容、恢复、全部恢复、清空 | 在用 | 恢复真机验证；「不要了」与「清空回收站」没对真实数据执行过 | 第 3、7 章 |
 | KOReader 高亮 / 生词回流 | 在用 | 后端 2026-09-16 真机端到端（curl）；网页按钮 09-23 上线，没有按钮本身的真机点验记录 | 第 9 章 |
 | 单篇 md 导入 | 默认隐藏 | 后端真机逐段核对；网页入口没人眼确认 | 第 8 章 |
-| 全文搜索 | 在用 | 离线 3 个测试；09-24 已部署到设备，但设备当时没有活条目，接口返回空列表，没能用真实数据核对；网页没真机点过 | 第 3 章 |
+| 全文搜索 | 在用 | 离线 4 个测试；09-24 已部署到设备，但设备当时没有活条目，接口返回空列表，没能用真实数据核对；网页没真机点过。同日修的两个问题（见下表）和第三轮审计的提速只在 host 验证 | 第 3 章 |
 | 条目库、AI 配置文件损坏时不被覆盖 | 在用 | 离线测试；真机没触发过损坏路径 | 第 3、6 章 |
+| 第三轮审计（09-24）：用量账本 / 章记录损坏留 `.corrupt`、条目库解析缓存、推送串行化、后台线程兜 panic、转写空跑不写盘、大书页→章不整本读入 | 在用（代码已合入） | 只在 host 验证（单测 + 合成数据），**未上真机** | 第 2 章「可靠性要点」 |
 
-**离线门槛**：`cd notes && cargo test --workspace` 共 **214 个测试**（rmv6 27 · epubmap 5 · notecore 62 · vendorcfg 20 · ink-serve 21 · transcribe-serve 23 · mind-serve 22 · note-serve 34，其中 1 个是 `#[ignore]`），2026-09-24 实跑全绿、编译零警告；网关另跑 `node --check ui/app.js`；脚本过 shellcheck。测试数会变，改了就同步这里和 README。note-serve 里有两条“认领重试”测试会真的等 1.5–4.5 秒。
+**离线门槛**：`cd notes && cargo test --workspace` 共 **221 个测试**（rmv6 27 · epubmap 6 · notecore 62 · vendorcfg 22 · ink-serve 22 · transcribe-serve 25 · mind-serve 22 · note-serve 35；其中 note-serve 有 1 个 `#[ignore]`，所以实跑是 220 个通过 + 1 个忽略），2026-09-24 第三轮审计后实跑全绿、编译零警告；网关另跑 `node --check ui/app.js`；脚本过 shellcheck。测试数会变，改了就同步这里和 README。note-serve 里有两条“认领重试”测试会真的等 1.5–4.5 秒。
 
 **本次复核新发现的问题**（前两条 2026-09-24 当天已修，其余只记录）：
 
@@ -110,6 +111,15 @@
 | **不依赖其他项目线的 crate** | 不依赖 `bookconv`、`device-core`、`knowledge/pkm`、`reading`。依赖方向单向：`services/* → rmsvc-core + crates/*`。 |
 | **零 xovi 依赖** | 没有 qmd 补丁，没有 `.so`。旧版本回收借用书架已有的回收站代理。 |
 
+**可靠性要点**（下图汇总；2026-09-24 第三轮审计补齐了后半部分，只在 host 验证、未上真机）：
+
+![笔记线的数据保护与后台韧性](diagrams/robustness.svg)
+
+- **读失败 ≠ 不存在**：条目库、两份 AI 配置、两份用量账本、两类“每章推送记录”解析失败时，都先另存一份同目录的 `*.json.corrupt`（已有就不重复拷），再按各自规则处理——条目库最严格，拒绝一切写入；配置按缺省运行但不落盘；账本从零记起；章记录按空记录处理（下次推送会当首次生成，旧笔记本不会自动进回收站）。`ink.json` / `note.json` 服务本来就只在文件不存在时写缺省值，坏了只是按缺省运行、不覆盖。
+- **串行化**：条目库的读—改—写在 ink-serve 进程内一把锁；note-serve 的生成、md 导入、md 导出共用一把锁（见 8.3）。
+- **后台线程兜 panic**：ink-serve 书库监听线程里每本书的摄取、transcribe-serve 工作线程的每一轮都套了 `catch_unwind`，一次 panic 只丢这一本 / 这一轮。此前线程会直接退出，HTTP 照常应答，从外面看不出后台已经停了。这依赖 `notes/Cargo.toml` 的 release profile 设 `panic = "unwind"`。
+- **没事做就不写盘、不发事件**：摄取先比页 mtime（3.1）；转写空跑不写账本、不发事件（第 4 章）——网页每收到一条 `notes` 事件都会整页重拉。
+
 **资源**：musl 全静态二进制，2026-09-24 设备上 ink 3.6 MB、transcribe 2.5 MB、mind 2.4 MB、note 2.6 MB；每个 systemd 单元 `MemoryMax=128M`、`CPUWeight=20`、`Nice=5`。
 
 ## 第 3 章 摄取与条目库（ink-serve）
@@ -120,13 +130,13 @@
 
 | 步骤 | 做什么 | 关键事实 |
 |---|---|---|
-| 触发 | inotify 监听书库目录（非递归），`debounceSecs` 默认 4 秒；启动时先把所有有手写页的 EPUB 和条目库里已知的书追平一遍 | 页 `.rm` 的写入不监听（文件多，而且是 xochitl 内部节奏），只靠合书时 `.content/.metadata` 被重写来触发 |
-| 选页 | 只扫 `.rm` 修改时间变了的页（记在条目库的 `page_mtimes`） | 只处理活的 EPUB：不在回收站、没标 deleted、`fileType=epub` |
+| 触发 | inotify 监听书库目录（非递归），`debounceSecs` 默认 4 秒；启动时先把所有有手写页的 EPUB 和条目库里已知的书追平一遍 | 页 `.rm` 的写入不监听（文件多，而且是 xochitl 内部节奏），只靠合书时 `.content/.metadata` 被重写来触发。每本书的摄取套 `catch_unwind`，解析器遇到畸形文件 panic 只跳过这本这一次 |
+| 选页 | 先列出有 `.rm` 的页，和条目库里记的 `page_mtimes` 比，只扫修改时间变了的页；一页都没变就直接返回，连 `.content` 都不解析（读书时 xochitl 会反复改写 `.content`，大多数触发其实没事可做） | 只处理活的 EPUB：不在回收站、没标 deleted、`fileType=epub`（`fileType` 在确认有页变了之后才看） |
 | 解析 | `rmv6::page::Page` 取出三样：手写笔画、勾画（GlyphRange：原文 + 每行矩形）、打字文本 | 勾画与手写在**同一坐标系**，配对不用换算。擦掉的项有两种写法（独立墓碑块，或 item 自身值为空），都已剔除 |
 | 聚簇 | `notecore::geom::cluster`：任意两笔包围盒间距 ≤ `clusterGap`（默认 40）就归一簇 | 不看笔序和时间，因为用户会回头补几笔。荧光笔自己也留一条笔画，按工具类型排除 |
 | 配对 | 每簇配最近的勾画，距离 ≤ `pairGap`（默认 120），否则算“本页批注” | 两个阈值 2026-09-07 用真机样本标定：批注簇到对应勾画距离为 0，到次近勾画 ≥148，余量充足 |
 | 纯勾画 | 没被任何手写簇配上的勾画，单独生成一条 `ink: None` 的条目 | 点「转入笔记」直接用原文定稿（见 3.3） |
-| 章节 | `epubmap`：`.epubindex` 给出每个章节文件的起始页，`nav.xhtml`（没有就用 `toc.ncx`）给出目录层级，得到“页号 → 章 / 小节” | `.content` 的 `pages` 数组下标就是页号 |
+| 章节 | `epubmap`：`.epubindex` 给出每个章节文件的起始页，`nav.xhtml`（没有就用 `toc.ncx`）给出目录层级，得到“页号 → 章 / 小节” | `.content` 的 `pages` 数组下标就是页号。`.epub` 以文件读端打开，只读 zip 中央目录和目录那一两个条目，不整本读进内存（见 3.6） |
 | 裁图 | `crop::render_ink` 按条目自己的笔画 id 挑出笔画，在包围盒加 `cropMargin`（24）范围内画白底黑线 PNG | 不再用 xochitl 缩略图（见 3.6）。宽或高小于 8 像素就拒绝，不把废图发给模型 |
 
 ### 3.2 增量规则：改好的字不会被覆盖
@@ -157,8 +167,8 @@
 
 ### 3.5 条目库存储与全文搜索
 
-- **存储**：一本书一个 JSON，原子写入。2026-09-24 起，读文件时区分三种情况：文件不存在 → 当新书；读不了或解析失败 → 报错，另存一份 `<uuid>.json.corrupt`（已存在就不重复拷），原文件不动，之后对这本书的写入一律拒绝，网页打开会看到 500 和原因。此前解析失败会被当成空书，随后的写入会把校对文字和 AI 回答整个冲掉。离线测试覆盖，真机没触发过。
-- **全文搜索**：`GET /api/ink/search?q=&limit=`（`limit` 默认 50，上限 200）。跨所有书，搜勾画原文、定稿文字、草稿、问题、AI 回答和书名，不区分大小写；排除 `Revoked`，但 `Skipped` / `Archived` 会被搜到；每条只报第一处命中，片段前后各留 30 个字。个人笔记量级，每次现读全部条目库，不建索引。网页在「笔记」页顶部放了搜索框。已知两个问题见「现状总览」的新发现表。
+- **存储**：一本书一个 JSON，原子写入。**解析缓存**（09-24 第三轮审计）：按文件的 (inode, 长度, mtime) 记住上次解析结果，文件没变就直接复用；本进程写完当场换入新值；外部改写、改坏或删除会让文件身份对不上，自动回到读盘。网页每收到一条事件都要刷新 `GET /books`，transcribe-serve 被踢醒也要读一遍，原来一次改字会连带三四遍“读全部 JSON 再解析”（host 合成 30 本 / 3.6 MB：`GET /books` 5.66 ms → 35 µs）。**损坏处理**（09-24 上午）：读文件时区分三种情况：文件不存在 → 当新书；读不了或解析失败 → 报错，另存一份 `<uuid>.json.corrupt`（已存在就不重复拷），原文件不动，之后对这本书的写入一律拒绝，网页打开会看到 500 和原因。此前解析失败会被当成空书，随后的写入会把校对文字和 AI 回答整个冲掉。`.corrupt` 已存在时不再重复打日志（列表刷新会反复路过坏文件）。离线测试覆盖，真机没触发过。
+- **全文搜索**：`GET /api/ink/search?q=&limit=`（`limit` 默认 50，上限 200）。跨所有书，搜勾画原文、定稿文字、草稿、问题、AI 回答和书名，不区分大小写；排除 `Revoked`，但 `Skipped` / `Archived` 会被搜到；每条只报第一处命中，片段前后各留 30 个字；草稿只搜最新一份。个人笔记量级，每次全扫条目库、不建索引（走上面的解析缓存）；查询词和每个字段各转一次小写再做子串查找（09-24 第三轮审计，3000 条全扫未命中 7.3 → 4.3 ms，结果逐字节不变）。网页在「笔记」页顶部放了搜索框，点结果按条目状态跳到浏览 / 整理 / 回收站。
 
 ### 3.6 被推翻的做法与教训
 
@@ -169,19 +179,22 @@
 | 新条目初始态直接是 `Pending`（写了就自动转写） | 2026-09-07 二期拆出 `Mined`：只是整理思路的笔迹不该自动转写、白花调用费 | — |
 | 用 `!= Revoked` 判断“该标撤销的条目” | `Skipped` / `Archived` 被误改成 `Revoked`，恢复时走错分支，用户否决过的内容又被拉回转写队列。改成 `!is_terminal()`。但 `merge_page` 里“是不是原地同一份内容”的匹配判据**有意保留** `!= Revoked`，否则会给已跳过的内容重复建条目 | 见第 12 章“排除法”一条；审计建议照单全收可能引入新问题 |
 | 用 `.rm` 文件是否存在判断书有没有批注 | 笔画擦光后文件不会被删，书一直赖在列表里 | 改成按条目状态判断 |
+| 页→章映射前 `fs::read` 整本 `.epub` | 2026-09-24 第三轮审计改成文件读端只读 zip 目录：绕过 100 MB 上传限制的大书（已有 150 MB 级样本）整本读入会顶破 `MemoryMax=128M`，OOM 时页 mtime 还没落盘，重启追平又撞同一本 → 崩溃循环。120 MB 合成书峰值 RSS 127 → 12.7 MB，章表一致（host 验证） | 只需要文件一小部分时别整本读；服务有内存上限时尤其如此 |
 | 几何判断“下划线 = 分区头”（`has_underline`） | 函数写了也在真机样本上验证过，但从来没被接进摄取流程；随“分区”一起删了 | 写完的函数要确认真的被调用 |
 
 ## 第 4 章 转写（transcribe-serve）
 
 **现状结论**：事件驱动自动转写 + 单条手动重新转写，在用。真机只跑过 DashScope 的 `qwen3-vl-plus`。识别准确率是现在最大的短板：工整字基本能认，连笔快写容易整段错；手写的 `##` 标记至今没有一次被正确认出来的真机例子。
 
-**触发**：订阅 ink 的 `/events`，收到 `entries` 事件且开着“自动转写”（`auto`，默认开）时，防抖 3 秒后跑一轮；启动时也跑一轮。网页卡片上的「重新转写」调 `POST /books/{uuid}/entries/{id}`，强制转写这一条，忽略指纹和失败次数上限。自动与手动互斥。
+**触发**：订阅 ink 的 `/events`，收到 `entries` 事件且开着“自动转写”（`auto`，默认开）时，防抖 3 秒后跑一轮；启动时也跑一轮。每轮套 `catch_unwind`，panic 只丢这一轮。**空跑不留痕**（09-24 第三轮审计）：这一轮没调模型、而且和上一轮除时间外完全一样（最常见是被 `entries` 事件踢醒却没有待转写条目，或没配 key 时每轮同一句提示），就不写 `transcribe.json` 账本、也不发 `transcribe` 事件——此前每轮都写一次闪存，还让网页整页重拉。网页卡片上的「重新转写」调 `POST /books/{uuid}/entries/{id}`，强制转写这一条，忽略指纹和失败次数上限。自动与手动互斥。
 
 **一轮做什么**（`worker::run_once`）：只看还有待转写条目的书 → 挑出 `needs_transcribe()` 的条目（状态是 `Pending`/`Draft`/`Reviewed`、有手写、且当前指纹还没有对应草稿）→ 取裁图 → 组提示词 → 调模型 → 把草稿写回 ink（带行首标记识别出的样式）→ 记账。
 
 **提示词要点**（`prompt.rs`）：只转写不发挥；保留换行和行首符号；手写的汉字数字必须照写成汉字（专门针对“一”被认成“1”加的规则，加了之后还没真机复验）；认不出的字用“？”；勾画原文截取 300 字作为参考语境，帮助认人名术语，但明确要求别抄原文；`temperature=0`。
 
-**节流**（用户关心费用和限流）：每轮最多 `maxPerRun` 20 条，每次请求间隔 `pauseMs` 300 ms；同一条同一指纹失败 `maxAttempts` 3 次后不再自动试（指纹变了清零）；**一轮里连续失败 3 次且一条都没成功就停**，避免 key 错或断网时一条条撞 60 秒超时。
+**节流**（用户关心费用和限流）：每轮最多 `maxPerRun` 20 条，每次请求间隔 `pauseMs` 300 ms；同一条同一指纹失败 `maxAttempts` 3 次后不再自动试（指纹变了清零）；**一轮里失败满 3 次且一条都没成功就停**，避免 key 错或断网时一条条撞 `timeoutSecs`（默认 60 秒）超时。
+
+**记账规则**（09-24 第三轮审计）：用量账本只记模型调用本身。模型调用失败记一次失败；调用成功就记 token（钱已经花了），即使随后写回 ink-serve 失败也照记成功、不另记失败；取不到裁图这类没调模型的本地错误不进账本（但仍进失败清单，按 `maxAttempts` 重试）。此前写回失败会被记成一次模型失败、把已花的 token 丢掉。
 
 **点完有反馈**：「重新转写」和「提问」会在原地显示“转写中… → ✓ 本次 token 入 X 出 Y”或失败原因，停留 3 秒再刷新；这 3 秒里 SSE 触发的自动刷新会被挡住（否则文案一闪就被冲掉，1.5 秒的旧版本真机反馈“看不清”）。失败的条目卡片标红，按钮文字变成“转写失败”。
 
@@ -208,6 +221,7 @@
 
 - **用法**：「整理」卡片勾「问 AI」、填问题、点「提问」。服务端要求条目已勾选且问题非空，否则返回 400，防止误触。
 - **提示词**：书名 + 章节 + 勾画原文 + 旁边批注（定稿或草稿）+ 问题，长度各有截断。回答写回为 `Answer{text, backend, at, brief}`，`brief` 存当时问的问题。
+- **记账**：模型报错记一次失败；模型答了就先记 token 再写回 ink，写回失败也不丢这笔用量（09-24 第三轮审计调换了顺序）。
 - **纯被动**：没有后台线程、不订阅事件、不批量跑，空闲时零 CPU。网关登记里它的 `events` 是 `false`。
 - **默认模型**：代码默认 `qwen-plus`。真机测试时那把 DashScope key 只开了视觉模型权限，文字模型返回 403，于是设备上手动改成了 `qwen3-vl-plus`（视觉模型也能处理纯文字）。没有为一把受限的测试 key 改全局默认值。
 
@@ -221,9 +235,10 @@
 
 - **选模型**：先选厂商（DashScope / OpenAI / Gemini / DeepSeek / 自定义），再选该厂商的模型；选厂商时立即切到它的第一个模型。`PUT /config {preset}` 一次同时改好模型名和接口地址，不会出现“换了模型忘了换地址”；不认识的预置名返回 400，配置不变。“自定义”才露出手填框。
 - **key**：`keys` 是“厂商 → key”的表，同厂商换模型不用重新粘贴；切到没配 key 的厂商就显示“没配”，不会借用别家的 key。当前预置在表里查不到时，按接口地址认厂商（`provider_for_base_url` 兜底）。网页只显示脱敏后四位，已存的 key 只能删除再填，不能直接改写。环境变量 `DASHSCOPE_API_KEY` 只对 DashScope 兜底。配置文件权限 0600，2026-09-24 起创建时就是 0600（不再先按默认权限写出再改）。
-- **用量与花费**：按预置 id（自定义模型为 `custom:<模型名>`）分账：调用次数、成功失败、输入输出 token、最近错误。不内置官方价格表（第三方定价比模型名还容易变），用户自己填每千 token 单价；没填时花费显示为空（`null`），和“填了 0 元”区分开。
+- **用量与花费**：按预置 id（自定义模型为 `custom:<模型名>`）分账：调用次数、成功失败、输入输出 token、最近错误。不内置官方价格表（第三方定价比模型名还容易变），用户自己填每千 token 单价；没填时花费显示为空（`null`），和“填了 0 元”区分开。记哪些调用见第 4 章“记账规则”。账本在 `~/.local/state/notes/{transcribe,mind}.json`，解析失败时先另存 `.corrupt` 再从零记起（09-24 第三轮审计；此前会被静默清零）。
 - **老配置迁移**：旧版单一 `model` / `baseUrl` / `apiKey` 启动时由 `migrate()` 搬进新结构，匹配不到预置就落到“自定义”并保留模型名。真机两份真实配置迁移前后脱敏 key 一致。DeepSeek 的两个旧 id 启动时经 `remap_retired_preset` 自动改成 `deepseek-flash`，自填单价一起搬。
 - **配置文件损坏**（2026-09-24）：启动时如果解析失败，按默认值运行但**不写回**，另存一份 `.corrupt`，等用户在网页上主动保存才写新文件。此前会无条件写回，把 key 冲掉。离线测试覆盖。
+- **调用端**：两个服务都用 `vendorcfg::ChatClient`（后端标识 + 接口地址 + 模型 + key + 带超时的 HTTP agent）发 `POST {baseUrl}/chat/completions`，各服务只拼自己的请求体（转写带 `image_url`、`temperature` 0；问 AI 纯文字、0.3）。`ChatClient` 故意不派生 `Debug`，避免 key 被 `{:?}` 打进日志。
 - **豆包**：它的“模型”是账号自建的接入点 id（`ep-xxxx`），没有通用名字，不进预置表；用“自定义”，接口地址填 `https://ark.cn-beijing.volces.com/api/v3`。
 
 **现行预置表**（以 `services/*/src/config.rs` 为准）
@@ -291,7 +306,7 @@
 ### 8.1 往设备写笔记本（rmv6 写入 + .rmdoc 上传）
 
 - **写 `.rm`**：只自己编码 `RootTextBlock`（正文文字块），其余块用一份真机产出的 `.rm` 当模板原样拼回（模板替换）。全新文档没有编辑历史，CRDT id 连续分配。
-- **打包上传**：`.metadata` + `.content`（`fileType: notebook`）+ 一页 `.rm`，STORED 不压缩，经 xochitl 的 `POST /upload` 上传（它也接受 `.rmdoc`）。xochitl 会**重新分配文档 uuid**，所以上传后按 `visibleName` + 创建时间窗回查认领新 uuid；找不到时原地重试 4 次、每次间隔 1.5 秒。重试用尽仍失败的话，设备上可能留下一份没人追踪的同名文档，错误文案会提示用户手动删掉多的那份。完整事务化判定为复杂度不值得。
+- **打包上传**：`.metadata` + `.content`（`fileType: notebook`）+ 一页 `.rm`，STORED 不压缩，经 xochitl 的 `POST /upload` 上传（它也接受 `.rmdoc`）。xochitl 会**重新分配文档 uuid**，所以上传后按 `visibleName` + 创建时间窗回查认领新 uuid；找不到时原地再查，最多查 4 次、间隔 1.5 秒（约 4.5 秒）。重试用尽仍失败的话，设备上可能留下一份没人追踪的同名文档，错误文案会提示用户手动删掉多的那份。完整事务化判定为复杂度不值得。
 - **七种打字样式都能写**（xochitl 3.28 格式菜单），真机渲染逐一核对过：
 
 | 样式 | `.rm` 码 | 投影里用在哪 |
@@ -314,20 +329,20 @@
 
 ### 8.3 生成编排
 
-`note-serve::publish::generate_chapter`，所有外部依赖（上传、回收站、读条目库）都是 trait，测试用内存桩：
+`note-serve::publish::generate_chapter`，所有外部依赖（上传、回收站、读条目库）都是 trait，测试用内存桩。**生成、md 导入、md 导出共用一把锁**（09-24 第三轮审计）：同一章被并发推送两次（双击、两个浏览器页）时，两边都会看到指纹变了、各传一份，再按同一个名字认领到同一个 uuid，另一份就成了没人追踪的孤儿笔记本；导入撞名去重同理。
 
 1. 算本章指纹（章名 + 各条目 id / 样式 / 文字 / 原文 / 回答），和上次记录一样 → 返回“没变化”，不联网。
 2. 变了 → 编码、打包、上传、认领新 uuid。
 3. **放在哪、叫什么**：放进**书本自己所在的设备文件夹**（读书本 `.metadata` 的 `parent`）；名字是章名，首次生成时在同一文件夹内查重、重名加数字后缀；**重新生成沿用上次记下的名字**（此时旧文档还占着这个名字，重新查重会把自己判成重名，“楔子”变“楔子 2”）。
 4. 这章以前生成过 → 旧文档交给书架 book-serve 的回收站队列（用生成时记下的旧名字，book-serve 按名字核对 uuid 防错删），由设备上的 `shelf-trash-agent.qmd` 几秒内移进回收站。直接改 `.metadata` 的 `parent` 会被运行中的 xochitl 覆盖，只能走这条路。
-5. 记下 `{doc_uuid, visible_name, fingerprint, generated_at}`（`~/.local/state/notes/notebooks/<uuid>.json`）。任何一步失败都不写记录，下次照常重试；旧版本入队失败不算本章失败。
+5. 记下 `{doc_uuid, visible_name, fingerprint, generated_at}`（`~/.local/state/notes/notebooks/<uuid>.json`）。任何一步失败都不写记录，下次照常重试；旧版本入队失败不算本章失败。记录文件解析失败时先另存 `.corrupt`、按空记录处理（09-24 第三轮审计）——`doc_uuid` 是把旧版本送进回收站的唯一线索，丢了会在设备上多出一份旧笔记本，要手动删。
 
 **章里没有要投影的条目时**：只有这章**一个活条目都没有了**才清掉历史记录；如果条目还在、只是去处改到了另一边，记录保留（`Book::chapter_has_live_entries`）。2026-09-17 真机 bug：用户把唯一一条从“设备”切到“Obsidian”再推送，笔记本的“已推送”状态凭空消失——后端把仍然有效的历史记录清掉了。第一轮只改了前端判据，用单次快照核对就以为修好了；按用户描述的两步操作走一遍才发现真根因在后端。
 
 ### 8.4 同步状态与 md 下载
 
-- `GET /books/{uuid}/sync`：每章给出 `notebookNeeded` / `notebookSynced` / `notebookGeneratedAt` 和对应的 `obsidian*` 三项。`*Needed` = 现在有没有条目要这个去处；`*Synced` = 当前内容指纹与上次推送一致；`*GeneratedAt` / `*ExportedAt` = 历史上推送过的时间。两条投影各算各的指纹。
-- md 导出（`POST …/export`，单章或整本）落到设备 `~/.local/share/notes/vault/<书名>/`，指纹没变跳过；「推送本章」写出后再打开 `GET …/chapters/{idx}/export.md` 让浏览器下载（当场生成，不读盘；文件名按 RFC 5987 编码）。为此网关代理额外转发 `Content-Disposition` 响应头（只放这一个）。
+- `GET /books/{uuid}/sync`：每章给出 `notebookNeeded` / `notebookSynced` / `notebookGeneratedAt` 和对应的 `obsidian*` 三项。`*Needed` = 现在有没有条目要这个去处；`*Synced` = 当前内容指纹与上次推送一致；`*GeneratedAt` / `*ExportedAt` = 历史上推送过的时间。两条投影各算各的指纹。每次请求每本书的两份记录各只读一次（09-24 第三轮审计；原来逐章读，40 章的书一次刷新要读 80 遍）。
+- md 导出（`POST …/export`，单章或整本）落到设备 `~/.local/share/notes/vault/<书名>/`（书名里的 `/`、`\` 换成 `_`；整个书名是空串、`.` 或 `..` 时目录名用 `_`，防止写到 vault 之外——09-24 第三轮审计），指纹没变跳过；「推送本章」写出后再打开 `GET …/chapters/{idx}/export.md` 让浏览器下载（当场生成，不读盘；文件名按 RFC 5987 编码）。为此网关代理额外转发 `Content-Disposition` 响应头（只放这一个）。
 - `GET /books/{uuid}/vault.json` 把已落盘的 md 原样读回，原本给 host 的 `shelf notes pull` 用；该命令 2026-09-18 已砍，接口还在，没有自动化调用方。
 
 ### 8.5 单篇 md 导入
@@ -339,7 +354,7 @@
 | 旧做法 | 结论 |
 |---|---|
 | 自动新建《书名》文件夹（book-serve 队列 + qmd 每 8 秒轮询建夹） | 2026-09-09 废弃：fire-and-forget，没有重名保护。改为复用书本所在文件夹；书架侧的建夹代码 09-15 确认无人使用后物理删除 |
-| 笔记本名“第N章 章名” | 09-09 起新生成的笔记本名是章名本身；md 文件名仍是“第N章 章名”（`export.rs` 注释说两者一致，已过时） |
+| 笔记本名“第N章 章名” | 09-09 起新生成的笔记本名是章名本身；md 文件名仍是“第N章 章名”（`crates/notecore/src/export.rs` 里 `chapter_stem` 的注释说两者“完全一致”，已过时） |
 | 投影按“分区”分组，每个分区一个 Subheading 1 | 三期砍分区，按页序平铺 |
 | 投影判据 `!= Revoked` | `Mined` / `Skipped` 一直混进两条投影，三期真机导 md 才看到一条“不需要”的条目。改成允许列表 |
 | 写入器对含中文的段落把 `is_ascii` 写 0 | 真机样本对中文也写 1，`rmscene` 有断言会炸，自己宽松的解析器测不出来 |
@@ -366,14 +381,14 @@
 | `crates/rmv6` | `.rm` v6 解析 + 写入。解析部分剥离移植自 `remarkable_lines` 0.1.3（MIT，见 `PROVENANCE.md`），写入 `write.rs` 是本项目原创。`CrdtId` 的 `"part1:part2"` 字符串形式是条目库里 id 的唯一定义处 |
 | `crates/epubmap` | `.epubindex` 起始页 + nav/ncx 目录 → 页号对应的章和小节 |
 | `crates/notecore` | 纯函数领域核心：`model`（条目、状态、样式、去处、来源）· `hash` · `geom`（聚簇、配对）· `ingest`（增量合并）· `koreader` · `marker`（行首标记）· `project`（→ 笔记本段落）· `export`（→ md）· `mdimport`（md → 段落） |
-| `crates/vendorcfg` | 两个 AI 服务共用：`preset`（预置、key 分格、迁移、PATCH、对外 JSON、`VendorConfig` trait）· `usage`（泛型用量账本）· `cell`（`ConfigCell`：配置的内存副本 + 落盘）· `chat`（OpenAI 兼容传输与应答解析）· `truncate_chars` |
+| `crates/vendorcfg` | 两个 AI 服务共用：`preset`（预置、key 分格、迁移、PATCH、对外 JSON、`VendorConfig` trait）· `usage`（泛型用量账本）· `cell`（`ConfigCell`：配置的内存副本 + 落盘）· `chat`（`ChatClient` 调用端、OpenAI 兼容传输与应答解析）· `truncate_chars` |
 | `services/ink-serve` | `doc`（书库只读视图）· `ingest` · `crop` · `bookdb` · `config` · `koreader` · `search` · `main` |
 | `services/transcribe-serve` | `config`/`ledger`（vendorcfg 薄封装）· `backend`（`Vision`）· `prompt` · `ink`（访问 ink 的客户端）· `worker` · `main` |
 | `services/mind-serve` | 同上，换成 `TextModel`，没有后台线程 |
 | `services/note-serve` | `rmdoc`（打包）· `chapter_store`（泛型“每书每章一条记录”，`notebooks`/`export_state` 是它的类型别名）· `publish`（上传 + 生成编排 + md 导入）· `export`（vault 落盘 + 下载文件名）· `ink`/`trash`（跨服务客户端）· `config` · `main` |
 | 仓库其他位置 | `shelf/{build,deploy,install,uninstall}.sh` 里的 `NOTES_BINS` 和安装令牌 · `gateway/src/manage.rs::MODULES` 四行 · `gateway/ui/app.js` 的 `renderNotes` 与 `mountModelPanel` |
 
-**去重记录**：`transcribe`/`mind` 的 `config.rs`（约 85% 重复）和 `ledger.rs`（约 90%）收进 `vendorcfg`，两边的配置结构和落盘形状保持各自定义；note-serve 两份“按章记录”收成泛型 `ChapterStore<T>`；四处访问其他服务的 HTTP 客户端样板收成 `rmsvc_core::registry::SvcClient`，各自的业务 trait 不合并；2026-09-20 两个服务的 OpenAI 兼容传输收进 `vendorcfg::chat`（之前判断“几十行胶水不值得抽”，后来翻案）。每次都用真机采样的真实配置文件形状写回归测试，并在真机上确认已存的 key 和累计用量原样读出、新用量能正确记账。
+**去重记录**：`transcribe`/`mind` 的 `config.rs`（约 85% 重复）和 `ledger.rs`（约 90%）收进 `vendorcfg`，两边的配置结构和落盘形状保持各自定义；note-serve 两份“按章记录”收成泛型 `ChapterStore<T>`；四处访问其他服务的 HTTP 客户端样板收成 `rmsvc_core::registry::SvcClient`，各自的业务 trait 不合并；2026-09-20 两个服务的 OpenAI 兼容传输收进 `vendorcfg::chat`（之前判断“几十行胶水不值得抽”，后来翻案）；09-24 第三轮审计把两边逐行相同的 `OpenAiCompat` 壳也合成 `vendorcfg::ChatClient`，并清掉 `rmv6` / `epubmap` 的 46 条 clippy 告警（纯机械，不改解析语义）。前几轮每次都用真机采样的真实配置文件形状写回归测试，并在真机上确认已存的 key 和累计用量原样读出、新用量能正确记账；09-24 第三轮审计的改动只跑了 host 测试。
 
 ## 第 11 章 路径、systemd 与部署
 
@@ -384,7 +399,7 @@
 | 二进制 | `~/.local/bin/{ink-serve,transcribe-serve,mind-serve,note-serve}` |
 | 配置 | `~/.config/notes/ink.json`（`clusterGap` 40 / `pairGap` 120 / `pageWidth` 960 / `pageHeight` 1280 / `xOriginCenter` true / `cropMargin` 24 / `debounceSecs` 4，首次启动写出默认值，新版本不会覆盖已有文件）· `transcribe.json` / `mind.json`（0600；`preset`、`keys`、`prices`、自定义模型与地址、`timeoutSecs`、`prompt`；transcribe 另有 `auto` / `maxPerRun` / `pauseMs` / `maxAttempts` 节流字段）· `note.json` |
 | 数据 | `~/.local/share/notes/crops/`（裁图 PNG）· `~/.local/share/notes/vault/`（md 导出） |
-| 状态 | `~/.local/state/notes/books/<uuid>.json`（**条目库**）· `notebooks/`、`exports/`（每章生成/导出记录）· `transcribe.json`、`mind.json`（用量账本，只记数不记内容） |
+| 状态 | `~/.local/state/notes/books/<uuid>.json`（**条目库**）· `notebooks/`、`exports/`（每章生成/导出记录）· `transcribe.json`、`mind.json`（用量账本，只记数不记内容）。以上任何 JSON 解析失败时的副本 `*.json.corrupt` 放在原文件旁边（见第 2 章「可靠性要点」） |
 | 运行时 | 与书架共用注册表 `$XDG_RUNTIME_DIR/shelf/services/` |
 | 只读外部 | xochitl 书库 `~/.local/share/remarkable/xochitl/`——**绝不写** |
 
@@ -392,7 +407,7 @@
 
 **构建部署**：与书架共用交叉编译环境。`cd shelf && ./build.sh && ./deploy.sh <设备IP>`，只更新笔记线用 `install.sh --only ink,transcribe,mind,note`。卸载走书架 `uninstall.sh`，条目库不在 `--purge` 范围内。
 
-**事件**：`{"area":"notes","kind":"entries"}`（ink）、`"transcribe"`（transcribe）、`"notebooks"`（note-serve 生成后），经网关汇聚到 `/api/events`，网页据此自动刷新。
+**事件**：`{"area":"notes","kind":"entries"}`（ink）、`"transcribe"`（transcribe，空跑且与上一轮相同的轮次不发）、`"notebooks"`（note-serve 生成后），经网关汇聚到 `/api/events`，网页据此自动刷新。
 
 ## 第 12 章 踩坑
 
@@ -411,7 +426,10 @@
 | 前端 `await` 后重画 | 会冲掉刚设的状态和没确认的编辑。用 `pendingText`、结果停留 3 秒并挡住 SSE 刷新、清空与重建紧挨着 | 第 7 章 |
 | `await` 之后连续 `window.open()` | 第二个起会被浏览器拦。每次只开一个，由用户点击触发 | — |
 | 一把厂商 key 的归属 | 不该绑在具体型号上，按接口地址兜底认厂商 | 第 6 章 |
-| 解析失败当成“没有” | 条目库和配置文件都曾因此被缺省值覆盖。读失败要和“不存在”区分，坏文件另存 `.corrupt`、拒写 | 3.5、第 6 章 |
+| 解析失败当成“没有” | 条目库和配置文件都曾因此被缺省值覆盖。读失败要和“不存在”区分，坏文件另存 `.corrupt`；09-24 第三轮审计把用量账本和章记录也补上 | 3.5、第 2 章、第 6 章 |
+| 后台线程里的 panic | 线程静默退出，HTTP 照常应答，看起来一切正常但再也不摄取 / 转写。后台循环的每一项套 `catch_unwind`，且 release profile 必须是 `panic = "unwind"` | 第 2 章 |
+| 只为读一小块就整本读入大文件 | 服务有 `MemoryMax=128M`，大书会 OOM；若失败时进度没落盘，重启追平会反复撞同一本 → 崩溃循环 | 3.6 |
+| 没事做也写盘 / 发事件 | 事件会触发网页整页重拉，写盘磨闪存。空跑轮次先和上一轮比，没变就什么都不做 | 第 4 章 |
 
 **环境与工具**
 
@@ -437,10 +455,11 @@
 | 1 | **网页渲染与交互没有人眼确认** | 浏览页、模型管理卡片、条目卡片、「整理」双层 tab、「导入 md 文档」、搜索框、「KOReader 回流」按钮。后端数据链路都真机走通了。`gateway/tools/screenshot-walkthrough/` 能自动截图，但只覆盖顶层导航和一层子 tab |
 | 2 | **转写质量** | 汉字数字被认成阿拉伯数字（提示词已加规则，待真机重转复验）；手写 `##`/`###` 没有一次被正确识别的真机例子（卡在连笔识别准确率，找工整样本再试） |
 | 3 | **OpenAI / Gemini / DeepSeek 没真调过** | 只验证了配置层；`gpt-6-astra` 普通 key 可能用不了 |
-| 4 | **全文搜索** | 真机上没用真实数据核对过；“草稿取最早一份”“点结果跳到浏览看不到非 Mined 条目”两个问题待修（见「现状总览」） |
+| 4 | **全文搜索** | 真机上没用真实数据核对过；“草稿取最早一份”“点结果一律跳到浏览”两个问题 09-24 已修，但修复只在 host 验证（见「现状总览」） |
 | 5 | **KOReader 回流** | 网页按钮本身的真机点验；PDF 位置坐标、大量标注触发的 SQLite 溢出页只有离线数据 |
 | 6 | **「不要了」和「清空回收站」没对真实数据执行过** | 不可逆操作，没事先问用户不该拿真实数据试；「恢复」已在真实数据上验证 |
 | 7 | **被动触发的修复没在真机上复现** | 终态不再被误判撤销（需要真擦掉已跳过条目的笔迹）、认领失败重试（低概率时序）、条目库与配置文件损坏保护 |
+| 7b | **09-24 第三轮审计改动整批未上真机** | 条目库解析缓存、摄取先比页 mtime、大书页→章流式读、转写空跑不写盘不发事件、记账规则、账本与章记录 `.corrupt`、推送串行化、后台线程兜 panic、`ChatClient`。上机后至少核对：合书后网页照常刷新、转写照常自动跑、用量数字照常增长、大书（>100 MB）有批注时 ink-serve 不再重启 |
 | 8 | “改去处后对应导出指纹立刻变”只有离线单测 | 当时测试书状态在漂移，真机没能单变量复现 |
 | 9 | 有序列表被原文/回答段打断后编号从 1 重来 | 设计限制，没解决 |
 | 10 | `Entry.subhead` 不进投影 | 需要决定是删掉 `##` 标记还是让投影输出小节名 |

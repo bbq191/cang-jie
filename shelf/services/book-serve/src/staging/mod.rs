@@ -37,6 +37,16 @@ fn busy_err(name: &str, extra: &str) -> String {
     format!("《{name}》正在处理中，请稍候{extra}")
 }
 
+/// 异步操作（优化 / 投递）结果 → 边车终态 `(status, message)`：成功 `ok`、用户取消 `cancelled`、其余 `failed`。
+/// 优化与投递两处原来各写一遍同样的三分支 match（2026-09-24 审计合并）。
+fn final_status(result: Result<&str, &str>) -> (String, String) {
+    match result {
+        Ok(msg) => ("ok".into(), msg.to_string()),
+        Err(e) if e.contains(optimize::CANCELLED_MSG) => ("cancelled".into(), e.to_string()),
+        Err(e) => ("failed".into(), e.to_string()),
+    }
+}
+
 /// 母版库一本书的展示条目。`format`（epub / pdf / cbz / other）从扩展名判、优化等级从内埋标记判（轻量只读中央目录）。
 /// `rename_all = "camelCase"`：既有字段全是单词、camelCase 变换不影响它们的 JSON key，这次
 /// 新增的 `pdf_source` 借这个转成前端习惯的 `pdfSource`，不用单独给这一个字段挂 `rename`。
@@ -133,6 +143,11 @@ pub struct Staging {
     probes: Arc<std::sync::Mutex<std::collections::HashMap<String, ProbeCache>>>,
     /// 漫画页边距待办（可选：测试里不装）。见 [`crate::comic_margins`]。
     comic_margins: Option<Arc<crate::comic_margins::ComicMargins>>,
+    /// 母版库"落名"临界区：挑一个不撞名的文件名（`unique_path` 先查存在）再 rename/写入，两步之间不能插进别的落名，
+    /// 否则两个同名书会挑到同一个名字、后到的把先到的覆盖掉。网页上传 / inbox 追平 / 抓网文 / 改名 / 恢复原 PDF
+    /// 都从这里过。只包"挑名 + 落地"这一小段本地文件操作——此前网页上传是把 spool 锁一直攥到整个 multipart
+    /// 请求体收完（WiFi 上传大书能到分钟级），期间别的上传和 inbox 追平全被卡住（2026-09-24 审计）。
+    land: Arc<std::sync::Mutex<()>>,
 }
 
 /// 上传模板适配：母版库作为 [`AssetStore`]——扩展名门＝书籍格式白名单，install＝同分区 rename 入库。
@@ -202,6 +217,7 @@ impl Staging {
             ops: OpRegistry::default(),
             probes: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
             comic_margins: None,
+            land: Arc::new(std::sync::Mutex::new(())),
         }
     }
     /// 接上漫画页边距待办队列（`State::new` 用）。
@@ -267,6 +283,11 @@ impl Staging {
     }
     pub fn ensure(&self) -> std::io::Result<()> {
         std::fs::create_dir_all(&self.dir)
+    }
+
+    /// 进入"落名"临界区（见 `land` 字段）。
+    pub(super) fn land_guard(&self) -> std::sync::MutexGuard<'_, ()> {
+        rmsvc_core::sync::lock(&self.land)
     }
 
     /// 母版库里某本书的路径（校验单段文件名）。

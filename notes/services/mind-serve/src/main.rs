@@ -14,7 +14,7 @@ mod ledger;
 mod prompt;
 mod worker;
 
-use backend::{OpenAiCompat, TextModel};
+use backend::TextModel;
 use config::MindConfig;
 use ink::{EntryStore, InkHttp};
 use ledger::Ledger;
@@ -41,8 +41,8 @@ impl State {
         self.cfg.get()
     }
     fn model(&self, cfg: &MindConfig) -> Result<Box<dyn TextModel>, String> {
-        let key = cfg.key().ok_or("未配置 API key（网页「模型」设置里粘贴，或环境变量 DASHSCOPE_API_KEY）")?;
-        Ok(Box::new(OpenAiCompat::new(&cfg.backend, cfg.base_url(), cfg.model(), &key, Duration::from_secs(cfg.timeout_secs))))
+        let c = vendorcfg::ChatClient::from_config(cfg, &cfg.backend, Duration::from_secs(cfg.timeout_secs), "未配置 API key（网页「模型」设置里粘贴，或环境变量 DASHSCOPE_API_KEY）")?;
+        Ok(Box::new(c))
     }
 }
 

@@ -60,7 +60,11 @@ impl State {
         self.paths.app_data_dir(APP).join("crops")
     }
     fn ingest(&self, uuid: &str) {
-        match ingest::ingest_doc(&self.paths.xochitl_dir(), &self.crops_dir(), &self.db, &self.cfg, uuid, rmsvc_core::clock::now_secs()) {
+        // 兜住解析 panic（`.rm`/`.epubindex` 是设备写的二进制，解析器难保对所有畸形输入都不 panic）：摄取跑在
+        // 书库监听线程里，一次 panic 会让监听线程整个退出、之后再也不摄取，而 HTTP 照常应答、看不出异常。
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| ingest::ingest_doc(&self.paths.xochitl_dir(), &self.crops_dir(), &self.db, &self.cfg, uuid, rmsvc_core::clock::now_secs())));
+        let r = r.unwrap_or_else(|_| Err("摄取时 panic（已兜住，本书这次跳过）".to_string()));
+        match r {
             // `s.merge.revoked > 0` 单独成立的情况＝书被移进回收站/删除、`revoke_stale` 撤了条目但没扫任何页（pages==0）；
             // 这时也要发事件，不然网页「笔记」列表要等到下一次不相干的事件才会把这本书摘掉。
             Ok(Some(s)) if s.pages > 0 || s.merge.revoked > 0 => {
@@ -112,7 +116,7 @@ fn main() {
         let st = st.clone();
         std::thread::spawn(move || {
             let mut catchup: std::collections::BTreeSet<String> = ingest::candidate_docs(&st.paths.xochitl_dir()).into_iter().collect();
-            catchup.extend(st.db.list().into_iter().map(|b| b.uuid));
+            catchup.extend(st.db.list().into_iter().map(|b| b.uuid.clone()));
             for u in catchup {
                 st.ingest(&u);
             }
@@ -141,11 +145,11 @@ fn main() {
         .get("/search", bind(&st, |s, r| {
             let q = r.q("q").unwrap_or_default();
             let limit = r.q("limit").and_then(|v| v.parse::<usize>().ok()).unwrap_or(50).clamp(1, 200);
-            Ok(Reply::ok(&serde_json::json!({"items": search::search(&s.db.list(), &q, limit)})))
+            Ok(Reply::ok(&serde_json::json!({"items": search::search(&s.db.list(), q, limit)})))
         }))
         .get("/books/{uuid}", bind(&st, |s, r| {
             let b = s.db.read(r.param("uuid")).map_err(ApiError::internal)?.ok_or_else(|| ApiError::not_found("没有这本书的条目"))?;
-            Ok(Reply::ok(&b))
+            Ok(Reply::ok(&*b))
         }))
         .get("/books/{uuid}/crops/{file}", bind(&st, |s, r| {
             let f = plain_name(r.param("file")).map_err(ApiError::bad)?;

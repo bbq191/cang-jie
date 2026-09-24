@@ -8,7 +8,7 @@ LANGHOOK_SRC_DIR = ../shared
 SHARED_SRC = $(LANGHOOK_SRC_DIR)/scan.c $(LANGHOOK_SRC_DIR)/pattern.c $(LANGHOOK_SRC_DIR)/trampoline_aarch64.c $(LANGHOOK_SRC_DIR)/trampoline_patch.c
 CFLAGS_COMMON = -std=gnu17 -Wall -Wextra -g -I$(LANGHOOK_SRC_DIR)
 
-.PHONY: aarch64 clean
+.PHONY: aarch64 glue clean
 
 # xovi 扩展胶水：xovigen 从 hl-snap.xovi 生成 xovi section 元数据（同 chinese-ime/
 # langhook 的 xovigen 用法，白皮书 2.4 记过流程）。需要 asivery/xovi 的
@@ -22,7 +22,14 @@ aarch64: xovi_glue.c
 		-o hl-snap.so
 	aarch64-linux-gnu-nm -D hl-snap.so | grep -iE "_xovi_construct|_xovi_shouldLoad" || true
 
-xovi_glue.c: hl-snap.xovi
+# 胶水 xovi_glue.{c,h} 已提交进仓库：这条规则不依赖 .xovi 的 mtime，只在胶水缺失时才生成——
+# 否则 checkout 后 .xovi 的 mtime 恰好更新就会去跑 xovigen，本机没有 xovi clone 时构建失败，
+# 部署脚本随即退回仓库里已提交的（可能是旧源码编出的）.so（2026-09-24 审查）。改了 .xovi 用
+# `make glue XOVI_DIR=<clone>` 显式重新生成。
+xovi_glue.c:
+	python3 $(XOVIGEN) -o xovi_glue.c -H xovi_glue.h -a aarch64 hl-snap.xovi
+
+glue:
 	python3 $(XOVIGEN) -o xovi_glue.c -H xovi_glue.h -a aarch64 hl-snap.xovi
 
 clean:

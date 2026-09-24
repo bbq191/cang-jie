@@ -5,7 +5,7 @@
 //!
 //! **「CJK 手写笔迹优化」这句注释曾经写"目前完全不存在、没有反编译地基"——那是 2026-09-09 刚开线时
 //! 的状态，早就过时了**：`enhance/handwriting-stroke/src/hw_stroke.c` 现在是真机验证过的 xovi 扩展
-//! （两个 hook 目标、笔尖角度+提按速度两个效果），这里的开关是纯网页层派生态（见 `qol::hw_stroke_enabled`
+//! （两个 hook 目标、笔尖角度+提按速度两个效果），这里的开关是纯网页层派生态（见 `qol::Qol::hw_stroke_enabled`
 //! 头注为什么不需要单独的布尔字段），不需要碰设备端 C 代码/重新编译部署 `.so`。
 //!
 //! 以后再加系统增强能力，往这个目录加一个新文件（比照 `qol.rs`/`battop.rs`）+ 这里挂一个路由，
@@ -17,17 +17,21 @@ mod qol;
 use rmsvc_core::http::{ApiError, ApiResult, Reply, Request};
 use rmsvc_core::paths::Paths;
 
+/// xochitl 扩展加载状态的扫描器（进程级缓存，见 [`loaded::Scanner`]）。
+static LOADED: loaded::Scanner = loaded::Scanner::new();
+
 pub fn status(paths: &Paths) -> Reply {
     let b = battop::status();
+    let q = qol::Qol::load(paths);
     Reply::ok(&serde_json::json!({
-        "hlSnapCjk": qol::hl_snap_cjk(paths),
-        "hwStrokeEnabled": qol::hw_stroke_enabled(paths),
-        "notesImportMdEnabled": qol::notes_import_md_enabled(paths),
-        "comicMinMargin": qol::comic_min_margin(paths),
-        "tapPageTurn": qol::tap_page_turn(paths),
-        "rtlPageTurn": qol::rtl_page_turn(paths),
+        "hlSnapCjk": q.hl_snap_cjk(),
+        "hwStrokeEnabled": q.hw_stroke_enabled(),
+        "notesImportMdEnabled": q.notes_import_md_enabled(),
+        "comicMinMargin": q.comic_min_margin(),
+        "tapPageTurn": q.tap_page_turn(),
+        "rtlPageTurn": q.rtl_page_turn(),
         "battop": {"installed": b.installed, "running": b.running, "lastSampleAt": b.last_sample_at},
-        "loaded": loaded::scan(std::path::Path::new("/proc"), &paths.home().join("xovi/exthome/qt-resource-rebuilder")),
+        "loaded": LOADED.scan(std::path::Path::new("/proc"), &paths.home().join("xovi/exthome/qt-resource-rebuilder")),
     }))
 }
 
@@ -99,7 +103,7 @@ mod tests {
         // 只传 hwStrokeEnabled：两个 ratio 同步写，上一次的键不被冲掉
         let rep = put(&paths, br#"{"hwStrokeEnabled":true}"#).unwrap();
         assert_eq!(serde_json::from_slice::<serde_json::Value>(&rep.body).unwrap()["hwStrokeEnabled"], true);
-        assert!(qol::comic_min_margin(&paths));
+        assert!(qol::Qol::load(&paths).comic_min_margin());
         // 没有任何可识别的布尔字段 → 拒绝
         assert!(put(&paths, br#"{"hlSnapCjk":"yes"}"#).is_err());
     }
@@ -110,11 +114,13 @@ mod tests {
         let t = tempfile::tempdir().unwrap();
         let h = t.path().to_str().unwrap().to_string();
         let paths = Paths::resolve(move |k| if k == "HOME" { Some(h.clone()) } else { None });
-        assert!(!qol::tap_page_turn(&paths) && !qol::rtl_page_turn(&paths));
+        let q = qol::Qol::load(&paths);
+        assert!(!q.tap_page_turn() && !q.rtl_page_turn());
         put(&paths, br#"{"comicMinMargin":true}"#).unwrap();
         let v: serde_json::Value = serde_json::from_slice(&put(&paths, br#"{"tapPageTurn":true}"#).unwrap().body).unwrap();
         assert_eq!((v["tapPageTurn"].as_bool(), v["rtlPageTurn"].as_bool()), (Some(true), Some(false)));
         put(&paths, br#"{"rtlPageTurn":true}"#).unwrap();
-        assert!(qol::tap_page_turn(&paths) && qol::rtl_page_turn(&paths) && qol::comic_min_margin(&paths));
+        let q = qol::Qol::load(&paths);
+        assert!(q.tap_page_turn() && q.rtl_page_turn() && q.comic_min_margin());
     }
 }

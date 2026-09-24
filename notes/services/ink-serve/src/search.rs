@@ -1,6 +1,7 @@
 //! 笔记全文搜索（`GET /search?q=`）：跨所有书，搜勾画原文、定稿文本、最新转写草稿、提问与 AI 回答、书名。
-//! 书少、条目少（个人笔记量级），每次现读条目库全扫，不建索引。已撤销（`Revoked`）的条目不搜。
+//! 书少、条目少（个人笔记量级），每次全扫条目库（`BookDb::list`，文件没变就用解析缓存），不建索引。已撤销（`Revoked`）的条目不搜。
 use notecore::model::{Book, Entry, Status};
+use std::borrow::Borrow;
 use serde::Serialize;
 
 #[derive(Serialize, Debug, PartialEq)]
@@ -22,13 +23,14 @@ pub struct Hit {
 const CONTEXT: usize = 30;
 
 /// 不区分大小写的子串查找，返回字符下标。
+/// 整段小写一次、`str::find` 找字节位置再折回字符下标（此前逐字段建两份 `Vec<char>` 再滑窗比较，
+/// 3000 条目全扫一次在 host 上要 7ms，2026-09-24 改）。查询词同样走 `str::to_lowercase`，两边规则一致。
 fn find_ci(hay: &str, needle_lower: &str) -> Option<usize> {
-    let hay_lower: Vec<char> = hay.chars().flat_map(char::to_lowercase).collect();
-    let n: Vec<char> = needle_lower.chars().collect();
+    let hay_lower = hay.to_lowercase();
+    let byte = hay_lower.find(needle_lower)?;
     // to_lowercase 可能一变多（极少见的字符）；那种情况下字符下标会错位，退回整段开头当片段，不影响"命中"本身。
-    let aligned = hay_lower.len() == hay.chars().count();
-    let pos = hay_lower.windows(n.len()).position(|w| w == n.as_slice())?;
-    Some(if aligned { pos } else { 0 })
+    let aligned = hay.is_ascii() || hay_lower.chars().count() == hay.chars().count();
+    Some(if aligned { hay_lower[..byte].chars().count() } else { 0 })
 }
 
 fn snippet(text: &str, at: usize, len: usize) -> String {
@@ -59,7 +61,7 @@ fn fields(e: &Entry) -> [(&'static str, Option<&str>); 5] {
 
 /// 在 `books` 里搜 `q`（去首尾空白；空串不搜），每条条目只报第一处命中，最多 `limit` 条。
 /// 书名命中时报该书第一条活条目（标 `title`），让用户能跳到这本书。
-pub fn search(books: &[Book], q: &str, limit: usize) -> Vec<Hit> {
+pub fn search<B: Borrow<Book>>(books: &[B], q: &str, limit: usize) -> Vec<Hit> {
     let q = q.trim().to_lowercase();
     if q.is_empty() {
         return vec![];
@@ -67,6 +69,7 @@ pub fn search(books: &[Book], q: &str, limit: usize) -> Vec<Hit> {
     let qlen = q.chars().count();
     let mut out = Vec::new();
     for b in books {
+        let b: &Book = b.borrow();
         let live: Vec<&Entry> = b.entries.iter().filter(|e| e.status != Status::Revoked).collect();
         let hit = |e: &Entry, field, snippet| Hit { uuid: b.uuid.clone(), title: b.title.clone(), id: e.id.clone(), page_index: e.page_index, chapter_title: e.chapter_title.clone(), status: e.status, field, snippet };
         let mut any = false;

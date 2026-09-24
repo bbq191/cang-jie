@@ -58,7 +58,7 @@
 <text x="835" y="408" text-anchor="middle" font-size="14.5" font-weight="bold" fill="#1a1a1a">D · 按需生效</text>
 <text x="835" y="427" text-anchor="middle" font-size="12" fill="#555">看"待生效标记"，最多重启一次</text>
 <text x="739" y="456" text-anchor="start" font-size="12.2" fill="#222">11  xovi-apply</text>
-<text x="739" y="476" text-anchor="start" font-size="12.2" fill="#222">   有标记 或 xovi 未生效 才动：</text>
+<text x="739" y="476" text-anchor="start" font-size="12.2" fill="#222">   有标记/待换入或 xovi 未生效才动：</text>
 <text x="739" y="496" text-anchor="start" font-size="12.2" fill="#222">   先提示"将打断阅读"，等 5 秒</text>
 <text x="739" y="516" text-anchor="start" font-size="12.2" fill="#222">   已生效 → systemctl restart</text>
 <text x="739" y="536" text-anchor="start" font-size="12.2" fill="#222">   换了 .so → stop→换入→start</text>
@@ -73,8 +73,9 @@
 <polyline points="500,672 500,696" fill="none" stroke="#555" stroke-width="1.7" marker-end="url(#if-m)"/>
 <rect x="30" y="696" width="460" height="96" rx="10" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.6"/>
 <text x="260" y="718" text-anchor="middle" font-size="14" font-weight="bold" fill="#1a1a1a">③ 收尾汇总</text>
-<text x="260" y="740" text-anchor="middle" font-size="12.5" fill="#444">已安装 / 已跳过（--skip）/ 失败 三栏</text>
-<text x="260" y="757" text-anchor="middle" font-size="12.5" fill="#444">失败项看该步骤的原始报错，修好后整条重跑即可</text>
+<text x="260" y="740" text-anchor="middle" font-size="12.5" fill="#444">已安装 / 已跳过（--skip）/ 已跳过（前置条件不满足）/ 失败</text>
+<text x="260" y="757" text-anchor="middle" font-size="12.5" fill="#444">"前置条件不满足"会写明原因（如没装 appload、verity 开着）</text>
+<text x="260" y="774" text-anchor="middle" font-size="12.5" fill="#444">失败项看该步骤的原始报错，修好后整条重跑即可</text>
 <rect x="510" y="696" width="460" height="96" rx="10" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.6"/>
 <text x="740" y="718" text-anchor="middle" font-size="14" font-weight="bold" fill="#1a1a1a">④ 浏览器验证</text>
 <text x="740" y="740" text-anchor="middle" font-size="12.5" fill="#444">https://10.11.99.1/  默认密码 shelf，首次登录强制改密</text>

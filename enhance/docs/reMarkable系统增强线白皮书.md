@@ -15,6 +15,8 @@
 | 电池刺客为什么不开机自启、两次冻机怎么回事 | §03b |
 | 手写笔锋：xochitl 怎么画笔画、hook 在哪、做过什么又撤回了什么 | §03c（逆向）→ §03e（第一版）→ §03f（速度代理 + 第二个 hook）→ §03g（降负载） |
 | 字体、壁纸服务和 lo-alias 在这条线里的位置 | §03h |
+| 设备空闲时谁在定时把 CPU 叫醒（整套设备，不只本线） | §03j |
+| 2026-09-24 第三轮审计给本线改了什么（只在 host 验证） | §03k |
 | 为什么单点工具要单独成线 | §00、§01 |
 | 踩过的坑 / 还没做完的事 | §04 / §05 |
 
@@ -34,7 +36,7 @@
 按进程/应用/唤醒源统计耗电的采样服务。**✅ 真机通，但有意不开机自启**：它和两次整机冻死有关（08-29 坐实，09-23 时间吻合），09-23 起采样循环里已不创建任何子进程。开关：网页「管理 → 系统增强」，`systemctl start/stop`；开着时出现「电池刺客」数据页。
 
 **reader-page-turn —— xochitl 阅读器翻页**（§03i）
-两个功能：**单击翻页**（点屏幕左右各 7% 边缘、纵向 45%–80% 的区域翻页）和**日漫翻页规则**（EPUB 标了从右往左的书，左右滑和点边缘都对调）。是 qmd 补丁 `reader-page-turn.qmd`（源码在 `shelf/xovi/`，随 book 服务安装，因为要问 book-serve 这本书的方向）。开关：网页「管理 → 系统增强」，写 `tapPageTurn` / `rtlPageTurn`，**默认都关**，打开书时读、下次打开书生效。**离线验证过（qmldiff 在 .172 真实 QML 上全部命中），待真机验证**。
+两个功能：**单击翻页**（点屏幕左右各 7% 边缘、纵向 45%–80% 的区域翻页）和**日漫翻页规则**（EPUB 标了从右往左的书，左右滑和点边缘都对调）。是 qmd 补丁 `reader-page-turn.qmd`（源码在 `shelf/xovi/`，随 book 服务安装，因为要问 book-serve 这本书的方向）。开关：网页「管理 → 系统增强」，写 `tapPageTurn` / `rtlPageTurn`，**默认都关**，打开书时读、下次打开书生效。**离线（qmldiff 在 .172 真实 QML 上全部命中）和真机都验证过**。
 
 **wallpaper-serve —— 休眠壁纸**（[README](../wallpaper-serve/README.md)）
 网页上传即用、唤醒自动轮换，靠 xochitl 的隐藏配置键 `SleepScreenPath`。**✅ 真机通**。入口「其他 → 壁纸」。
@@ -44,9 +46,9 @@
 
 **共用件**：[`shared/`](../shared/PROVENANCE.md) 是两个 xovi 扩展共用的特征码扫描 + trampoline 代码；[`lo-alias/`](../lo-alias/README.md) 是让 `10.11.99.1` 在不插 USB 时也可达的小脚本（网关启动前调用）。
 
-**当前设备状态**（2026-09-24 只读核对）：`extensions.d/` 里有 `appload.so`、`hl-snap.so`、`hw-stroke.so`、`qt-resource-rebuilder.so`，**没有** `cangjie-langhook.so`；两个本线 `.so` 与仓库版本 md5 一致，journal 里三个 hook 都"安装完成"；battop 已装、当前停着。
+**当前设备状态**（2026-09-24 只读核对）：`extensions.d/` 里有 `appload.so`、`hl-snap.so`、`hw-stroke.so`、`qt-resource-rebuilder.so`，**没有** `cangjie-langhook.so`；两个本线 `.so` 与当时仓库版本 md5 一致（第三轮审计之后仓库里的两个 `.so` 已重编，设备上仍是旧版，见 §03k），journal 里三个 hook 都"安装完成"；battop 已装、当前停着。
 
-**未闭环**（详见 §05）：`hw-stroke` 的 `bVar16<4` 分支；两个扩展能共存依赖加载顺序（§04「hook 安全性」最后一条，代码推断、未真机复现）；lo-alias 的 usb1 冷启动场景在现行接法下未重新验证。
+**未闭环**（详见 §05）：`hw-stroke` 的 `bVar16<4` 分支；两个扩展的加载顺序依赖（§04「hook 安全性」）**已修、host 验证、待真机**——按新源码重编的两个 `.so` 还没部署；lo-alias 的 usb1 冷启动场景在现行接法下未重新验证。
 
 ### 术语速查
 
@@ -143,6 +145,7 @@ battop 早于这条线存在，2026-09-09 从 `misc/battery-audit/battop/` 搬�
 | 09-20 | 安装器定案 | **只 start、不 enable**：原先 enable 链接在 `/etc` tmpfs、重启即清，"重启后不自启"一直是事实上的缓解，现在写成明确设计 |
 | 09-22 | 代码审计 | 拆成 procs / store / summary / wake / util 五个模块；summary 改流式聚合；时区改用 libc `localtime_r`，去掉每轮 fork 一次 `date` |
 | 09-23 | **第二次冻机**（常驻模型下） | 冻结前最后一条日志与 battop 刷新唤醒源缓存（当时每小时 fork 一次 `journalctl`）的时间精确重合到秒。不是 08-29 那条路径（fork 出的子进程直接继承父进程 cgroup），只有时间吻合、没有内核栈证据。**唤醒源改读 `/dev/kmsg`**，采样循环里最后一次创建子进程也去掉了；commit 记真机确认零子进程、唤醒源数据与 `dmesg` 一致、跨一次真实休眠后采样间隔正确 |
+| 09-24 | 第三轮审计 | summary 按文件缓存整文件聚合（凭大小 + mtime 失效，只重读被时间窗起点切开或变过的文件）：host 实测每轮 34.7 → 4.0 ms，输出逐字节不变（黄金文件 + 60 轮对拍）。**只在 host 验证** |
 
 **现状**：采样循环只读 `/proc`、sysfs 和 `/dev/kmsg`，不创建子进程；代价是唤醒源只能看到本次开机以来的记录（旧版能跨开机查 31 天）。两次冻机的内核根因（RCU stall）没有被排除，所以**仍不开机自启**，要用时在网页打开。09-23 的修改效果还需要更长时间观察（battop 平时关着，积累的运行时长有限）。
 
@@ -224,7 +227,7 @@ hook 目标 `FUN_00f47530`：两个 float（s0/s1）+ 一个指针（x0），标
 | 组件 | 是什么 | 详细记录 |
 |---|---|---|
 | `font-serve`（8792） | 上传字体装进 fontconfig 用户目录，重写 `fonts.json` 给字体菜单 qmd 读，动态维护中文回退链（全 `weak`，所选字体永远优先） | 书架白皮书第 F 章、§03k、§03bd |
-| `wallpaper-serve`（8793） | 写 xochitl 隐藏键 `SleepScreenPath` 指向 `current.png`，唤醒时轮换；旧 bind-mount 方案已退役 | [wallpaper-serve README](../wallpaper-serve/README.md)；书架白皮书 §03w / §03x / §03ab |
+| `wallpaper-serve`（8793） | 写 xochitl 隐藏键 `SleepScreenPath` 指向 `current.png`；xochitl 休眠时读完它就轮换（09-24 起 inotify，此前跟 journal 在唤醒时轮换；池里只有一张时不再每次重写同一个文件）；旧 bind-mount 方案已退役 | [wallpaper-serve README](../wallpaper-serve/README.md)；书架白皮书 §03w / §03x / §03ab |
 | `lo-alias.sh` | 给 `lo` 和 `usb1` 挂 `10.11.99.1`，让不插 USB 时 xochitl 的 :80 上传口仍可达；网关 `ExecStartPre` 调用 | [lo-alias README](../lo-alias/README.md) |
 
 两个服务都依赖 [`../../rmsvc-core`](../../rmsvc-core/README.md)，由网关反向代理，随 `install-all.sh` 的 shelf 步安装。
@@ -248,7 +251,46 @@ hook 目标 `FUN_00f47530`：两个 float（s0/s1）+ 一个指针（x0），标
 
 **手动指定清单**：calibre 转出的漫画大多不写这个标记。同日真机核对：《亂馬½ 典藏版》4–9 卷、《镖人》2–5 卷、東立版《火影》8–10 卷的 OPF 都只有 `<spine toc="ncx">`，而 Kmoe 版都写了。用户定"这次先手动指定，以后新传的书还是看书里自带的标记"，所以加了 `~/.local/state/shelf/books/rtl-overrides.json`（xochitl 文档 uuid 数组，每次查询现读），没有网页入口；当天把这 13 本写进去了。
 
-**已知限制**：没在 OPF 里标 rtl、也不在手动清单里的日漫不会反转；改开关要重新打开书；只影响 xochitl，KOReader 不受影响。**真机验证待做**（见 §05）。
+**已知限制**：没在 OPF 里标 rtl、也不在手动清单里的日漫不会反转；改开关要重新打开书；只影响 xochitl，KOReader 不受影响。
+
+**真机验证（09-24）**：部署后 journal 有 `CJ-PAGE-TURN: loaded`；打开书读到开关（`cfg tap=… rtl=…`）；《亂馬》《镖人》、Kmoe《火影》被识别为从右往左（`rtl book <uuid>`），普通书不识别；单击左右边缘翻页命中。之后（第三轮审计）去掉了单击/滑动命中时的日志——每写一行 journal 都会唤醒 wallpaper-serve 的 `journalctl -f` 和飞行记录仪；关书时不再读配置。
+
+## 03j｜设备常驻唤醒源一览（2026-09-24，按代码核对）
+
+![设备常驻唤醒源一览](diagrams/wake-sources.svg)
+
+用户关心整机耗电，所以把"设备空闲、不开网页时，谁会定时把 CPU 叫醒"集中列在这里。范围是**整套设备端组件**（不只本线），数字都取自代码常量，**没有在真机上实测唤醒次数**；用户态的 sleep/定时器用单调时钟，设备休眠时不走，所以下面都是"醒着时"的频率。
+
+| 来源 | 属于 | 空闲时怎么醒 | 代码出处 |
+|---|---|---|---|
+| wifi-watch | packaging | 每 15 秒 `sleep` 一次看链路；链路好只读 sysfs、不 fork，每 40 轮（10 分钟）兜底复查一次频段/省电设置 | `packaging/wifi-watch/wifi-watch.sh` `INTERVAL`/`RECHECK` |
+| 服务间事件流心跳 | rmsvc-core | 网关订阅 7 个有 `/events` 的服务（book、font、koreader、wallpaper、ink、transcribe、note），transcribe 再订阅 ink，共 8 条 loopback 流，各 120 秒一次心跳 | `rmsvc-core/src/events.rs` `FOLLOW_KEEPALIVE_SECS` |
+| shelf-mkdir-agent.qmd | shelf | 长轮询 `GET /mkdir/pending?wait=290`：空闲约 290 秒一次往返（book-serve 上限 300 秒；09-24 前 25 秒）；若真遇到 30 秒客户端超时自动退回 25 秒 | `shelf/xovi/shelf-mkdir-agent.qmd`；`book-serve` `MKDIR_WAIT_MAX_SECS` |
+| 网关 mDNS | rmsvc-core | socket 读超时 = 接口重扫间隔 60 秒；局域网别的设备发 mDNS 查询另算 | `rmsvc-core/src/mdns.rs` `RESCAN_INTERVAL` |
+| wallpaper-serve | 本线 | inotify 等 xochitl 休眠时读完 `current.png`：空闲零唤醒，每次休眠醒一次（09-24 前常驻 `journalctl -f -u xochitl`，xochitl 每写一行日志就醒一次） | `enhance/wallpaper-serve/src/wake.rs` |
+| battop | 本线 | **默认不跑**；开着时醒着每 600 秒采样一次 | `enhance/battop/src/main.rs` `BATTOP_INTERVAL_SECS` |
+| hl-snap / hw-stroke | 本线 | 没有定时器，只在划线 / 写字时进 handler | `enhance/*/src/*.c` |
+| reader-page-turn.qmd | 本线（源码在 shelf） | 打开书时单发 300 ms 读一次开关，不轮询（08 月旧版每 1.5 秒轮询） | `shelf/xovi/reader-page-turn.qmd` |
+| 其余 qmd 与服务 | shelf / notes | comic-margins 换文档单发 1.5 秒；trash-agent 书库列表变化后 4 秒防抖；book-serve / ink-serve 用 inotify 防抖（8 秒 / 4 秒）；浏览器事件流 20 秒心跳只在网页开着时有 | 各自源码 |
+
+**结论**：空闲时的定时唤醒主要是 wifi-watch 和 8 条事件流心跳，每小时各约 240 次；mkdir-agent 长轮询放宽后约 12 次/时（原约 144 次）；wallpaper-serve 09-24 起不再跟日志（改监听休眠读图），但设备上的飞行记录仪仍跟 journal，所以本线继续压低 xochitl 日志量（§03g 逐点日志默认关、§03i 去掉命中日志）。
+
+**mkdir-agent 放宽的依据**（09-24）：设备 Qt 6.10.3；qtdeclarative 6.10 的 `qqmlxmlhttprequest.cpp` 不设传输超时、XHR 也没有 timeout 属性；`QNetworkAccessManager` 缺省超时为 0（禁用）。xochitl 导入了 `setTransferTimeout`，但没有证据表明它作用在 QML 引擎的 NAM 上，所以 qmd 加了兜底：请求在 28–33 秒之间失败就当作客户端超时，退回 wait=25 并打一行 `SHELF-MKDIR: transfer timeout` 日志。**部署后看 journal 里有没有这行**：没有 = 长等待生效。
+
+## 03k｜第三轮审计给本线的改动（2026-09-24，只在 host 验证）
+
+都没上真机；两个 `.so` 已按新源码重编提交，还没部署（§05）。
+
+| 改动 | 为什么 | 验证 |
+|---|---|---|
+| `shared/scan.c` 合并被 `mprotect` 切开的代码段 | 消除两个扩展的加载顺序依赖（§04） | host 真内核单测复现切段 |
+| hl-snap / hw-stroke 的 `_xovi_construct` 找不到映射或特征码时打日志 | 以前静默返回，网页徽章显示"已加载"却没 hook | 交叉编译零警告 |
+| `shared/pattern.c` 精确匹配先 `memchr` 找首字节 | 扩展按 `-O0` 编译，加载时要扫整个代码段多遍（hl-snap 2 遍、hw-stroke 最多 5 遍）；16 MB 扫描 39.6 → 3.2 ms | 与逐字节循环 400 组差分对拍，ASan/UBSan 通过；`memchr` 是 `GLIBC_2.17` 符号，不抬高 glibc 需求 |
+| 两个扩展的 Makefile：胶水只在缺失时生成，`make glue` 显式重生成 | 没有 xovi clone 也能编，不再悄悄退回旧 `.so`（§04） | 重编两个 `.so`，动态符号最高仍 `GLIBC_2.17` |
+| battop summary 按文件缓存 | 每轮重读 40 天约 9 MB 样本，battop 自己挤进耗电排行 | 34.7 → 4.0 ms/轮，输出逐字节不变（§03b） |
+| wallpaper-serve 单图池唤醒不重写 `current.png` | 只传过一张是常态，每次唤醒白写 1–3 MB 闪存 | 新增单图池用例，8 个测试全过；`wallpaper-serve roll` 此时打印"不轮换" |
+| reader-page-turn.qmd 去掉单击/滑动命中日志、关书时不读配置 | 每行 journal 都唤醒 wallpaper-serve 和飞行记录仪（§03j） | 没有单独再做离线/真机验证（只删日志、加一处提前返回）；加载 / 开关 / rtl 三类日志保留 |
+| hw-stroke 安装器提示改为检查两行"hook 安装完成" | 逐点日志 09-24 起默认关，旧提示让人 grep 一个必然为空的结果 | — |
 
 ## 04｜踩坑
 
@@ -267,12 +309,13 @@ hook 目标 `FUN_00f47530`：两个 float（s0/s1）+ 一个指针（x0），标
 - **"A 调用 B"不等于"所有对 B 的调用都来自 A"**：`FUN_00f3f9d0` 有 6 个调用点，从它入口设全局变量再传给下游，真机证明下游绝大多数调用不经过这一份。除非引用或运行时数据证明 B 只有唯一入口。
 - **"前 20 字节可安全 patch"必须逐个候选验证**：`FUN_00f4f430` 签名和已验证的两个完全一样，但第 3 条指令是条件分支，搬进调用桩会跳错地方——靠 `CheckFuncSizes.java` 逐条反汇编提前拦下。签名相似不代表二进制布局相似。
 - **两个扩展抢同一个 hook 目标：先到先得，后到的静默放弃**。`hl-snap.so` 与 `cangjie-langhook.so` 都 patch `FUN_00f05ad0`（§03a）。凡是"从老项目拆出功能子集"，都要检查新旧产物会不会同时部署、目标有无重叠，并在部署文档里写清互斥关系。
-- **（代码推断，未真机复现）多扩展共存依赖加载顺序**：`shared/scan.c` 的 `cj_find_exec_module` 只返回 xochitl **第一个**可执行段。每装一个 hook，`mprotect` 都会把那一页切成独立的段，之后"第一段"只到最低的已 patch 页为止，后装的扩展找不到更高地址的目标。2026-09-24 真机 maps 里 xochitl 代码段确实被切成了 7 段（`0xf03000`、`0xf47000`、`0xf4c000` 三页各自独立），两个扩展能都装上，是因为这次顺序恰好是 hw-stroke（高地址目标）先、hl-snap（`0xf03670`）后。顺序反过来时 hw-stroke 会静默装不上 hook（这条路径不打日志），网页徽章却仍显示"已加载"。xovi 的加载顺序依据没有核实。修法见 §05。
+- **多扩展共存曾依赖加载顺序（已修、host 验证、待真机）**：`shared/scan.c` 的 `cj_find_exec_module` 原先只返回 xochitl **第一个**可执行段。每装一个 hook，`mprotect` 都会把那一页切成独立的段，之后"第一段"只到最低的已 patch 页为止，后装的扩展找不到更高地址的目标。2026-09-24 真机 maps 里 xochitl 代码段确实被切成了 7 段（`0xf03000`、`0xf47000`、`0xf4c000` 三页各自独立），两个扩展能都装上，是因为这次顺序恰好是 hw-stroke（高地址目标）先、hl-snap（`0xf03670`）后；反过来 hw-stroke 会静默装不上 hook，网页徽章却仍显示"已加载"。**修法**（09-24 第三轮审计）：把紧接其后的同文件、首尾相接、可读可执行的续段一并算进扫描范围；`_xovi_construct` 找不到映射或特征码时改为打日志。host 单测用真内核 `mprotect` 复现了切段（旧实现只返回第一段、新实现返回整段）。xovi 实际按什么顺序加载没有核实，反序加载的真机验证见 §05。
 - **换了运行中 xochitl 正映射着的 `.so` 再 restart → 整机重启**（09-21 appload、09-24 hw-stroke 两次）：必须 stop → 换 → start（§03g）。
 
 **构建与环境**
 
 - **交叉工具链的 glibc 比设备新，`.so` 会在符号解析这步静默加载失败**：`atan2f` / `sqrtf` 在本地链接时被打上 `GLIBC_2.43`，设备的 `libm` 没这么新，整个 `hw-stroke.so` 加载失败，还连累同一次扫描里的 `hl-snap.so`。用 `objdump -T` 检查，最高应是 `GLIBC_2.17`。规避：能内联的用 `__builtin_xxx` + `-fno-math-errno`，不能的用三角恒等式改写。多扩展场景下要确认**所有**扩展都正常，不能只看目标扩展的日志（现在网页徽章能直接看到）。
+- **提交进仓库的生成文件，Makefile 规则别依赖它的 mtime**：`xovi_glue.{c,h}` 已提交，但旧规则依赖 `.xovi` 的修改时间——checkout 后 `.xovi` 恰好较新就会去跑 xovigen，本机没有 asivery/xovi clone 时构建失败，部署脚本随即退回仓库里已提交的（可能是旧源码编出的）`.so`，悄悄部署了旧版。现在胶水只在缺失时生成，改了 `.xovi` 用 `make glue XOVI_DIR=<clone>` 显式重生成（09-24）。
 - **Java Swing 在 Wayland 平铺合成器下整窗口空白**：设 `_JAVA_AWT_WM_NONREPARENTING=1`；先查 `$XDG_SESSION_TYPE`，别怀疑程序或工程坏了。Ghidra headless 建的 `.gpr` 是 0 字节也正常（元数据在 `.rep/`）。
 - **过期文档可能指向"已经放弃的危险方案"**（§03a 的 `/usr` drop-in）：这类要立刻改，不能当一般文档债。
 - **诊断工具自己也会出事**（§03b）：常驻、周期性、在 cgroup/fork 这类内核敏感路径附近的操作要尽量去掉。
@@ -289,13 +332,13 @@ hook 目标 `FUN_00f47530`：两个 float（s0/s1）+ 一个指针（x0），标
 | hw-stroke：像素消费者（`vtable+0x10`）的真实目标、smoothstep 曲线的下游用途 | 静态分析到边界 | 需要动态分析 |
 | hw-stroke：参数调优 | 一轮真机校准的起点，"看上去还行" | 按用户反馈再调 |
 | hw-stroke：真实压感 | 放弃 | 先搞清 `FUN_00f47530` / `FUN_00f4c8d0` 各有哪些调用路径 |
-| 多扩展共存依赖加载顺序（§04） | 代码推断，未复现 | 改 `shared/scan.c` 扫所有匹配段（或 `_xovi_construct` 前重新定位），并在 hook 没装上时打日志；需真机验证 |
-| reader-page-turn（§03i）真机验证 | 离线 qmldiff 全部命中；未上真机 | 部署后看 `CJ-PAGE-TURN: loaded`；逐项试：开关全关行为不变、单击边缘翻页、日漫左→右滑下一页、小说方向不受影响 |
-| 部署新流程 stop → 换 → start（§03g） | 脚本已改，未在真有 `.so` 变化时真机跑过 | 下次扩展改动时验证 |
+| 多扩展共存依赖加载顺序（§04） | **已修、host 验证、待真机**：`shared/scan.c` 合并续段 + `_xovi_construct` 失败打日志 | 部署新 `.so` 后 journal 里两个扩展的"安装完成"都在；有条件时把两个 `.so` 改名调换加载顺序再验一次 |
+| 第三轮审计重编的两个 `.so` + 部署新流程 stop → 换 → start（§03g、§03k） | 仓库里的 `hl-snap.so` / `hw-stroke.so` 已按新源码重编（含上一行的修复和 memchr 提速），**还没部署**；stop → 换 → start 也还没在真有 `.so` 变化时跑过 | 下次部署这两个 `.so` 时一起验：走待换入区、不整机重启、两行"安装完成"都在 |
+| wallpaper-serve 改监听休眠读图（§03j） | 09-24 已改：真机 inotify 观察确认 xochitl 每次休眠读一遍 `current.png`，改为 `IN_CLOSE_NOWRITE` 触发轮换，去掉 `journalctl -f` 子进程；host 真 inotify 单测通过，**未上真机** | 部署后按两次休眠：第二次显示的是下一张；`ps` 里没有 wallpaper-serve 的 journalctl 子进程；充电状态下也试一次 |
 | lo-alias：不插 USB 冷启动 | 脚本现由网关 `ExecStartPre` 调用，不保证先于 xochitl；本次开机它比 xochitl 晚 3 秒 | 找机会做一次不插 USB 冷启动，确认 :80 能绑上 |
 | battop：两次冻机的内核根因 | 09-23 起采样循环无子进程；根因（RCU stall）未排除 | 继续观察；不开机自启保持不变 |
 
-**已闭环（真机）**：hl-snap 精确吸附（§03a）；battop 常驻化（§03b）与唤醒源改读 `/dev/kmsg`（§03b，commit 记真机确认）；hw-stroke 两个 hook 目标、笔尖角度 + 运笔速度（§03e / §03f）；hw-stroke 降负载（§03g）；网页"已加载"徽章（§02）。
+**已闭环（真机）**：hl-snap 精确吸附（§03a）；battop 常驻化（§03b）与唤醒源改读 `/dev/kmsg`（§03b，commit 记真机确认）；hw-stroke 两个 hook 目标、笔尖角度 + 运笔速度（§03e / §03f）；hw-stroke 降负载（§03g）；网页"已加载"徽章（§02）；xochitl 单击翻页 + 日漫翻页规则（§03i）。
 
 **已放弃**：按笔型标签精确排除钢笔（§03e，真机数据证伪了 `ctx` 同一性假设）；真实压感跨函数传值（§03f）。
 
@@ -314,4 +357,4 @@ hook 目标 `FUN_00f47530`：两个 float（s0/s1）+ 一个指针（x0），标
 | 2026-09-20 | 两个扩展的设备端安装流程收进 `packaging/xovi-ext-install.sh`（数据驱动）；battop 安装器改为不 enable |
 | 2026-09-22 | battop 拆模块、流式聚合；wallpaper-serve 加像素上限和重连退避；font-serve 探测缓存 |
 | 2026-09-23 | battop 唤醒源改读 `/dev/kmsg` |
-| 2026-09-24 | hw-stroke 降负载（§03g）；网页"已加载"徽章（§02）；扩展部署改 stop → 换 → start |
+| 2026-09-24 | hw-stroke 降负载（§03g）；网页"已加载"徽章（§02）；扩展部署改 stop → 换 → start；第三轮审计（§03k，只在 host 验证） |
