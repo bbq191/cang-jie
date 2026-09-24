@@ -59,7 +59,7 @@ impl State {
         let staging = Staging::new(paths.staging_dir(), xochitl.clone(), cfg.native_upload_limit_bytes()).with_comic_margins(comic_margins.clone());
         let trash = TrashQueue::new(&books_state, &paths.xochitl_dir());
         let mkdir = Arc::new(MkdirQueue::new(&books_state, &paths.xochitl_dir()));
-        let reading_direction = crate::reading_direction::ReadingDirection::new(&paths.xochitl_dir());
+        let reading_direction = crate::reading_direction::ReadingDirection::new(&paths.xochitl_dir(), &books_state.join("rtl-overrides.json"));
         State { cfg, spool, staging, xochitl, bus: Arc::new(EventBus::new()), trash, comic_margins, mkdir, reading_direction, status_cache: TtlCache::new(STATUS_TTL) }
     }
 

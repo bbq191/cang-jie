@@ -246,7 +246,9 @@ hook 目标 `FUN_00f47530`：两个 float（s0/s1）+ 一个指针（x0），标
 
 **离线验证**：本机重编 qmldiff（`asivery/qmldiff`），把解出的三份 .172 QML 放到 hashtab 里的真实资源路径下跑 `apply-diffs`：三个 AFFECT 都应用，四处插入位置核对正确；`qmllint` 补丁前后报错数一致（DocumentView 原版就有 9 条"找不到设备私有模块"类报错）。
 
-**已知限制**：没在 OPF 里标 rtl 的日漫不会反转；改开关要重新打开书；只影响 xochitl，KOReader 不受影响。**真机验证待做**（见 §05）。
+**手动指定清单**：calibre 转出的漫画大多不写这个标记。同日真机核对：《亂馬½ 典藏版》4–9 卷、《镖人》2–5 卷、東立版《火影》8–10 卷的 OPF 都只有 `<spine toc="ncx">`，而 Kmoe 版都写了。用户定"这次先手动指定，以后新传的书还是看书里自带的标记"，所以加了 `~/.local/state/shelf/books/rtl-overrides.json`（xochitl 文档 uuid 数组，每次查询现读），没有网页入口；当天把这 13 本写进去了。
+
+**已知限制**：没在 OPF 里标 rtl、也不在手动清单里的日漫不会反转；改开关要重新打开书；只影响 xochitl，KOReader 不受影响。**真机验证待做**（见 §05）。
 
 ## 04｜踩坑
 
