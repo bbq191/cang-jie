@@ -215,6 +215,9 @@ pub(crate) struct AssembleOpts<'a> {
     pub shared_css: Option<SharedCss<'a>>,
     /// 写完一份资源就释放它（组装后 `book.resources` 为空）：调用方不再用这批资源时，省掉"资源 + zip 缓冲"同时驻留的一整份体积。
     pub consume_resources: bool,
+    /// 书是"从右往左"翻页（日漫）：OPF `<spine>` 写上 `page-progression-direction="rtl"`。按卷拆分时从原书继承，
+    /// 否则分卷在 xochitl 里的"日漫从右往左翻页"认不出来（`reader-page-turn.qmd` 只看这个属性，2026-09-24）。
+    pub rtl: bool,
 }
 
 /// 不区分大小写的 `<img` 探测（不为此分配整章小写副本）。
@@ -246,7 +249,7 @@ pub fn assemble(book: &mut Book) -> Result<Vec<u8>, String> {
 /// 也得挂在"含 `<img` 或颜色 span 才 `<link>`"这同一条判定里，两份文件反而要维护两条判定逻辑。
 pub fn assemble_pdf_derived(book: &mut Book, extra_css: &str) -> Result<Vec<u8>, String> {
     let css = format!("{PDF_IMG_CSS}{extra_css}");
-    assemble_with(book, AssembleOpts { shared_css: Some(SharedCss { file: "pdf-img.css", id: "pdf-img-css", css: &css }), consume_resources: false })
+    assemble_with(book, AssembleOpts { shared_css: Some(SharedCss { file: "pdf-img.css", id: "pdf-img-css", css: &css }), consume_resources: false, rtl: false })
 }
 
 const PDF_IMG_CSS: &str = "img{max-width:100%;height:auto;}\n";
@@ -260,6 +263,9 @@ pub(crate) fn assemble_with(book: &mut Book, opts: AssembleOpts) -> Result<Vec<u
         ch.html_body = crate::htmlproc::break_footnote_cycles(&ch.html_body);
     }
     let mut opf = content_opf(book);
+    if opts.rtl {
+        opf = opf.replacen("<spine>", "<spine page-progression-direction=\"rtl\">", 1);
+    }
     if let Some(c) = &opts.shared_css {
         opf = opf.replacen("</manifest>", &format!("<item id=\"{}\" href=\"{}\" media-type=\"text/css\"/></manifest>", c.id, c.file), 1);
     }
@@ -407,14 +413,14 @@ mod nav_tests {
     fn assemble_with_consume_resources_is_byte_identical_and_empties_resources() {
         let plain = assemble(&mut two_chapter_book(true)).unwrap();
         let mut b = two_chapter_book(true);
-        let consumed = assemble_with(&mut b, AssembleOpts { shared_css: None, consume_resources: true }).unwrap();
+        let consumed = assemble_with(&mut b, AssembleOpts { shared_css: None, consume_resources: true, rtl: false }).unwrap();
         assert_eq!(plain, consumed, "consume_resources 只影响内存，不影响产物");
         assert!(b.resources.is_empty(), "资源写完即释放");
     }
 
     #[test]
     fn shared_css_goes_last_and_links_only_chapters_with_img_case_insensitively() {
-        let out = assemble_with(&mut two_chapter_book(true), AssembleOpts { shared_css: Some(SharedCss { file: "x.css", id: "xcss", css: "img{}" }), consume_resources: false }).unwrap();
+        let out = assemble_with(&mut two_chapter_book(true), AssembleOpts { shared_css: Some(SharedCss { file: "x.css", id: "xcss", css: "img{}" }), consume_resources: false, rtl: true }).unwrap();
         let entries = zip_names_and_text(out);
         assert_eq!(entries.last().unwrap().0, "OEBPS/x.css", "样式表条目排在资源之后");
         assert_eq!(entries.last().unwrap().1, b"img{}");
@@ -422,6 +428,7 @@ mod nav_tests {
         assert!(get("OEBPS/chap_0001.xhtml").contains("<link rel=\"stylesheet\" type=\"text/css\" href=\"x.css\"/></head>"), "含 <IMG（大小写不敏感）的章要挂 link");
         assert!(!get("OEBPS/chap_0002.xhtml").contains("<link"), "纯文字章不挂");
         assert!(get("OEBPS/content.opf").contains("<item id=\"xcss\" href=\"x.css\" media-type=\"text/css\"/></manifest>"));
+        assert!(get("OEBPS/content.opf").contains("<spine page-progression-direction=\"rtl\">"), "rtl 选项写进 spine");
     }
 
     /// `assemble_pdf_derived` 是 book-serve PDF→EPUB 路径实际调用的入口（2026-09-23 真机投一本真实 PDF

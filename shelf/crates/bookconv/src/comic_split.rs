@@ -262,6 +262,13 @@ fn body_inner(html: &str) -> Option<&str> {
 /// 按正常书页排版走。**已知简化**：只按"这一页有没有图"二选一分流，一页里图文混排（既有正文
 /// 段落又有配图）目前仍走纯图片分支（历史行为不变）——镖人这本书目前抽样到的都是"整页图"或
 /// "整页字"两种，没见过真正混排的页面，等真遇到再补。
+/// 原书 OPF 的 `<spine>` 是否声明了 `page-progression-direction="rtl"`。
+fn opf_is_rtl(entries: &[Entry], opf: &crate::wash::Opf) -> bool {
+    static SPINE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let re = SPINE.get_or_init(|| regex::Regex::new(r#"(?s)<spine\b[^>]*?\bpage-progression-direction\s*=\s*["']rtl["']"#).unwrap());
+    entries.get(opf.index).is_some_and(|e| re.is_match(&String::from_utf8_lossy(&e.data)))
+}
+
 pub fn build_piece(entries: &[Entry], start: usize, end: usize, title: &str, book_id_suffix: &str) -> Result<Vec<u8>, String> {
     let by_name: HashMap<&str, &Entry> = entries.iter().map(|e| (e.name.as_str(), e)).collect();
     build_piece_with(entries, start, end, title, book_id_suffix, &mut |name| Ok(by_name.get(name).map(|e| e.data.clone())))
@@ -343,7 +350,9 @@ fn build_piece_with(
         nav: Vec::new(),
     };
     // 外链 comic.css 组装时一次写成（见 `COMIC_CSS` 文档）；图片字节写完即释放。
-    assemble_with(&mut book, AssembleOpts { shared_css: Some(SharedCss { file: "comic.css", id: "comic-css", css: COMIC_CSS }), consume_resources: true })
+    // 原书是从右往左（日漫）就让分卷也带上，否则分卷在 xochitl 里认不出翻页方向。
+    let rtl = opf_is_rtl(entries, &opf);
+    assemble_with(&mut book, AssembleOpts { shared_css: Some(SharedCss { file: "comic.css", id: "comic-css", css: COMIC_CSS }), consume_resources: true, rtl })
 }
 
 /// `assemble()`吐出来的页面没有任何 CSS——真机拿真实拆出来的一卷在原生阅读器打开量过
@@ -744,6 +753,24 @@ mod tests {
             br#"<container><rootfiles><rootfile full-path="content.opf"/></rootfiles></container>"#,
         ));
         entries
+    }
+
+    /// 原书 spine 声明从右往左（日漫）→ 分卷也带上；没声明的不加。
+    #[test]
+    fn build_piece_inherits_rtl_spine_direction() {
+        use std::io::Read;
+        let opf_of = |bytes: Vec<u8>| {
+            let mut z = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+            let mut t = String::new();
+            z.by_name("OEBPS/content.opf").unwrap().read_to_string(&mut t).unwrap();
+            t
+        };
+        let ltr = make_book_with_trailing_text_page();
+        assert!(!opf_of(build_piece(&ltr, 0, 2, "卷", "x").unwrap()).contains("page-progression-direction"));
+        let mut rtl = make_book_with_trailing_text_page();
+        let opf = rtl.iter_mut().find(|e| e.name == "content.opf").unwrap();
+        opf.data = String::from_utf8_lossy(&opf.data).replace("<spine>", r#"<spine page-progression-direction="rtl">"#).into_bytes();
+        assert!(opf_of(build_piece(&rtl, 0, 2, "卷", "x").unwrap()).contains(r#"<spine page-progression-direction="rtl">"#));
     }
 
     #[test]

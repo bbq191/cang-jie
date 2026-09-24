@@ -6,6 +6,7 @@
 //! · `POST /staging/delete {name}` · `POST /staging/rename {name, newName}` · `GET /staging/file?name=`（原件下载，流式）
 //! · 原 PDF 备份：`GET /staging` 的 `originals` · `POST /staging/originals/restore {name}` · `POST /staging/originals/delete {name}`
 //! · `GET /events`（SSE：母版库/inbox 变更即推，网页零轮询）。
+//! 阅读方向：`GET /reading-direction/{uuid}` → `{rtl}`（xochitl 里 reader-page-turn.qmd 用）。
 //! 原生回收站队列：`POST /trash/add {uuid, name}`（name 必须与书库 visibleName 相符）· `GET /trash/pending` → `{uuids}`（Sidebar 代理 qmd 拉取执行）· `GET /trash`。
 //! 原生建文件夹队列：`POST /mkdir/add {name}` · `GET /mkdir/pending` → `{names}`（MainView 代理 shelf-mkdir-agent.qmd 拉取执行）· `GET /mkdir`。
 //! 2026-09-05 起规则统一"所有书只落母版库"：旧 `POST /?target=` 直投路已删（`/staging*` 是唯一入口）。
@@ -92,6 +93,11 @@ pub fn router(st: Arc<State>) -> Router {
                 None => format!("已抓取《{}》入母版库", out.title),
             };
             Ok(Reply::ok(&serde_json::json!({"ok": true, "name": out.name, "title": out.title, "message": message})))
+        }))
+        // ── 阅读方向（reader-page-turn.qmd 打开书时查；rtl=从右往左翻页的书，见 reading_direction.rs）──
+        .get("/reading-direction/{uuid}", bind(&st, |s, r| {
+            let rtl = s.reading_direction.is_rtl(r.param("uuid")).map_err(ApiError::bad)?;
+            Ok(Reply::ok(&serde_json::json!({"rtl": rtl})))
         }))
         // ── 漫画页边距待办（QML 代理 shelf-comic-margins.qmd 在书打开时查；见 comic_margins.rs）──
         .get("/margins/{uuid}", bind(&st, |s, r| match s.comic_margins.get(r.param("uuid")) {

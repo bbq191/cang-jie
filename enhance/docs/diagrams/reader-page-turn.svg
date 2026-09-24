@@ -1,0 +1,74 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="600" viewBox="0 0 1100 600" font-family="Noto Sans CJK SC, sans-serif">
+  <defs><marker id="rp-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#555"/></marker></defs>
+  <rect width="1100" height="600" fill="#ffffff"/>
+  <text x="550" y="32" text-anchor="middle" font-size="20" font-weight="bold" fill="#1f2937">xochitl 阅读器翻页：单击翻页 + 日漫从右往左（§03i）</text>
+  <text x="550" y="56" text-anchor="middle" font-size="13" fill="#6b7280">一个 qmd 补丁 reader-page-turn.qmd（随 book 服务安装）；两个网页开关都在「管理 → 系统增强」，默认关</text>
+
+  <!-- 左：屏幕示意 -->
+  <text x="190" y="92" text-anchor="middle" font-size="15" font-weight="bold" fill="#1f2937">点击区域（竖屏）</text>
+  <rect x="90" y="104" width="200" height="356" rx="8" fill="#f9fafb" stroke="#6b7280" stroke-width="2"/>
+  <!-- 45%..80% of 356 = 160..285 -->
+  <rect x="90" y="264" width="14" height="125" fill="#bfdbfe" stroke="#1d4ed8"/>
+  <rect x="276" y="264" width="14" height="125" fill="#bbf7d0" stroke="#15803d"/>
+  <line x1="90" y1="264" x2="290" y2="264" stroke="#9ca3af" stroke-dasharray="4 4"/>
+  <line x1="90" y1="389" x2="290" y2="389" stroke="#9ca3af" stroke-dasharray="4 4"/>
+  <text x="298" y="268" font-size="12" fill="#6b7280">45%</text>
+  <text x="298" y="393" font-size="12" fill="#6b7280">80%</text>
+  <text x="190" y="330" text-anchor="middle" font-size="12" fill="#6b7280">中间照常：</text>
+  <text x="190" y="348" text-anchor="middle" font-size="12" fill="#6b7280">双击进文本、点链接</text>
+  <text x="97" y="480" font-size="12" fill="#1d4ed8">左 7%</text>
+  <text x="252" y="480" font-size="12" fill="#15803d">右 7%</text>
+  <g font-size="13" fill="#1f2937">
+    <text x="40" y="512">普通书：右边缘 = 下一页，左边缘 = 上一页</text>
+    <text x="40" y="534">日漫（开「从右往左」且书标了 rtl）：左右对调</text>
+    <text x="40" y="556" fill="#6b7280">链接按下、文本编辑、缩放、笔记页：不接管</text>
+  </g>
+
+  <!-- 右：打开书的流程 -->
+  <g font-size="13" fill="#1f2937">
+    <rect x="420" y="84" width="300" height="64" rx="10" fill="#eef2ff" stroke="#4f46e5"/>
+    <text x="570" y="110" text-anchor="middle" font-weight="bold" fill="#312e81">打开一本书</text>
+    <text x="570" y="132" text-anchor="middle" fill="#4b5563">DocumentView.onDocumentChanged</text>
+
+    <rect x="420" y="176" width="300" height="84" rx="10" fill="#f0fdf4" stroke="#15803d"/>
+    <text x="436" y="200" font-weight="bold" fill="#14532d">① 读开关（同步，读一次）</text>
+    <text x="436" y="222">reading-qol.json：tapPageTurn / rtlPageTurn</text>
+    <text x="436" y="244" fill="#6b7280">不轮询：改开关后下次打开书生效</text>
+
+    <rect x="420" y="288" width="300" height="100" rx="10" fill="#fff7ed" stroke="#c2410c"/>
+    <text x="436" y="312" font-weight="bold" fill="#7c2d12">② 问这本书的方向（异步）</text>
+    <text x="436" y="334">GET 127.0.0.1:8790/reading-direction/&lt;uuid&gt;</text>
+    <text x="436" y="356">book-serve 读书库 &lt;uuid&gt;.epub 的 OPF</text>
+    <text x="436" y="378" fill="#6b7280">只解 2 个 zip 条目；按大小+mtime 缓存</text>
+
+    <rect x="420" y="416" width="300" height="84" rx="10" fill="#eff6ff" stroke="#1d4ed8"/>
+    <text x="436" y="440" font-weight="bold" fill="#1e3a8a">③ 写到阅读视图</text>
+    <text x="436" y="462">sceneView.cjTapPageTurn / cjRtl</text>
+    <text x="436" y="484" fill="#6b7280">结果回来时书已换 → 丢弃</text>
+  </g>
+  <g stroke="#555" stroke-width="2" fill="none">
+    <path d="M570 148 L570 174" marker-end="url(#rp-a)"/>
+    <path d="M570 260 L570 286" marker-end="url(#rp-a)"/>
+    <path d="M570 388 L570 414" marker-end="url(#rp-a)"/>
+    <path d="M720 458 L770 458" marker-end="url(#rp-a)"/>
+  </g>
+
+  <!-- 最右：手势 -->
+  <rect x="775" y="84" width="300" height="416" rx="10" fill="#f9fafb" stroke="#9ca3af"/>
+  <text x="791" y="110" font-size="15" font-weight="bold" fill="#1f2937">④ 手势（SceneViewGestures）</text>
+  <g font-size="13" fill="#1f2937">
+    <text x="791" y="140" font-weight="bold">单击 touchClick.onClick</text>
+    <text x="791" y="162">开头插一段：命中边缘就翻页、return</text>
+    <text x="791" y="184" fill="#6b7280">其余交回原生逻辑</text>
+    <text x="791" y="222" font-weight="bold">左滑 nextPageGesture</text>
+    <text x="791" y="244">原生 = 下一页；cjRtl 时改成上一页</text>
+    <text x="791" y="282" font-weight="bold">右滑 prevPageGesture</text>
+    <text x="791" y="304">原生 = 上一页；cjRtl 时改成下一页</text>
+    <text x="791" y="346" font-weight="bold">rtl 从哪来</text>
+    <text x="791" y="368">EPUB OPF &lt;spine</text>
+    <text x="791" y="390">  page-progression-direction="rtl"&gt;</text>
+    <text x="791" y="412" fill="#6b7280">书架优化保留；按卷拆分的分卷也继承</text>
+    <text x="791" y="450" fill="#b45309">没标 rtl 的日漫不会反转</text>
+    <text x="791" y="472" fill="#6b7280">日志关键字：CJ-PAGE-TURN</text>
+  </g>
+</svg>

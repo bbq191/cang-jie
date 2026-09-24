@@ -24,18 +24,20 @@ pub fn status(paths: &Paths) -> Reply {
         "hwStrokeEnabled": qol::hw_stroke_enabled(paths),
         "notesImportMdEnabled": qol::notes_import_md_enabled(paths),
         "comicMinMargin": qol::comic_min_margin(paths),
+        "tapPageTurn": qol::tap_page_turn(paths),
+        "rtlPageTurn": qol::rtl_page_turn(paths),
         "battop": {"installed": b.installed, "running": b.running, "lastSampleAt": b.last_sample_at},
         "loaded": loaded::scan(std::path::Path::new("/proc"), &paths.home().join("xovi/exthome/qt-resource-rebuilder")),
     }))
 }
 
-/// `PUT /api/enhance/qol`：接 `{hlSnapCjk}`/`{hwStrokeEnabled}`/`{notesImportMdEnabled}`/`{comicMinMargin}`，body 里出现
+/// `PUT /api/enhance/qol`：接 `{hlSnapCjk}`/`{hwStrokeEnabled}`/`{notesImportMdEnabled}`/`{comicMinMargin}`/`{tapPageTurn}`/`{rtlPageTurn}`，body 里出现
 /// 哪个就改哪个（`qol::patch` 本身是通用的 key-patch，将来加键直接扩这里）。
 pub fn set_qol(paths: &Paths, req: &mut Request<'_>) -> ApiResult {
     let body = req.json()?;
     let mut changes = serde_json::Map::new();
     // 与 reading-qol.json 键同名的直通布尔开关。
-    for key in ["hlSnapCjk", "notesImportMdEnabled", "comicMinMargin"] {
+    for key in ["hlSnapCjk", "notesImportMdEnabled", "comicMinMargin", "tapPageTurn", "rtlPageTurn"] {
         if let Some(v) = body.0.get(key).and_then(|v| v.as_bool()) {
             changes.insert(key.into(), serde_json::Value::Bool(v));
         }
@@ -48,7 +50,7 @@ pub fn set_qol(paths: &Paths, req: &mut Request<'_>) -> ApiResult {
         changes.insert("hwStrokeSpeedMinRatio".into(), serde_json::json!(ratio));
     }
     if changes.is_empty() {
-        return Err(ApiError::bad("body 需要 hlSnapCjk/hwStrokeEnabled/notesImportMdEnabled/comicMinMargin 其中一个布尔字段"));
+        return Err(ApiError::bad("body 需要 hlSnapCjk/hwStrokeEnabled/notesImportMdEnabled/comicMinMargin/tapPageTurn/rtlPageTurn 其中一个布尔字段"));
     }
     qol::patch(paths, changes).map_err(ApiError::internal)?;
     Ok(status(paths))
@@ -100,5 +102,19 @@ mod tests {
         assert!(qol::comic_min_margin(&paths));
         // 没有任何可识别的布尔字段 → 拒绝
         assert!(put(&paths, br#"{"hlSnapCjk":"yes"}"#).is_err());
+    }
+
+    /// 两个翻页开关：缺省关；各自独立写，互不冲掉，也不冲掉别的键。
+    #[test]
+    fn page_turn_switches_default_off_and_independent() {
+        let t = tempfile::tempdir().unwrap();
+        let h = t.path().to_str().unwrap().to_string();
+        let paths = Paths::resolve(move |k| if k == "HOME" { Some(h.clone()) } else { None });
+        assert!(!qol::tap_page_turn(&paths) && !qol::rtl_page_turn(&paths));
+        put(&paths, br#"{"comicMinMargin":true}"#).unwrap();
+        let v: serde_json::Value = serde_json::from_slice(&put(&paths, br#"{"tapPageTurn":true}"#).unwrap().body).unwrap();
+        assert_eq!((v["tapPageTurn"].as_bool(), v["rtlPageTurn"].as_bool()), (Some(true), Some(false)));
+        put(&paths, br#"{"rtlPageTurn":true}"#).unwrap();
+        assert!(qol::tap_page_turn(&paths) && qol::rtl_page_turn(&paths) && qol::comic_min_margin(&paths));
     }
 }

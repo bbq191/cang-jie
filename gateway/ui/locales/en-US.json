@@ -498,5 +498,11 @@
   "manage.loaded.webOnlyTitle": "Only shows or hides a sub-tab on the Notes page; nothing is loaded into xochitl, takes effect immediately",
   "manage.loaded.qmdOnTitle": "xochitl loaded this qmd patch at startup; the switch takes effect (inferred: qt-resource-rebuilder is in the process and the patch file predates xochitl's start)",
   "manage.loaded.qmdPendingTitle": "The patch file is newer than the running xochitl: changed but not active until xochitl restarts",
-  "manage.loaded.qmdOffTitle": "xochitl has not loaded this qmd patch, so the switch has no effect. The patch may be missing, or qt-resource-rebuilder / xovi is not active"
+  "manage.loaded.qmdOffTitle": "xochitl has not loaded this qmd patch, so the switch has no effect. The patch may be missing, or qt-resource-rebuilder / xovi is not active",
+  "manage.enhance.pageTurn.title": "xochitl reader page turns",
+  "manage.enhance.pageTurn.desc": "Both switches only affect xochitl's built-in reader and are off by default; they are read when a book is opened, so reopen the book after changing them.",
+  "manage.enhance.pageTurn.tapToggle": "Tap to turn pages",
+  "manage.enhance.pageTurn.tapHint": "Tap the left or right edge (about 7% wide, 45%–80% of the screen height) to turn pages: right edge = next, left edge = previous. Elsewhere taps work as usual (double-tap for text, links).",
+  "manage.enhance.pageTurn.rtlToggle": "Right-to-left manga",
+  "manage.enhance.pageTurn.rtlHint": "For books whose EPUB declares right-to-left reading (common for manga), swiping left-to-right and tapping the left edge go to the next page. Other books are unaffected."
 }

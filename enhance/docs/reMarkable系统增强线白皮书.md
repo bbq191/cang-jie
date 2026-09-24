@@ -33,6 +33,9 @@
 **battop —— 电池刺客**（[README](../battop/README.md)）
 按进程/应用/唤醒源统计耗电的采样服务。**✅ 真机通，但有意不开机自启**：它和两次整机冻死有关（08-29 坐实，09-23 时间吻合），09-23 起采样循环里已不创建任何子进程。开关：网页「管理 → 系统增强」，`systemctl start/stop`；开着时出现「电池刺客」数据页。
 
+**reader-page-turn —— xochitl 阅读器翻页**（§03i）
+两个功能：**单击翻页**（点屏幕左右各 7% 边缘、纵向 45%–80% 的区域翻页）和**日漫从右往左翻页**（EPUB 标了从右往左的书，左右滑和点边缘都对调）。是 qmd 补丁 `reader-page-turn.qmd`（源码在 `shelf/xovi/`，随 book 服务安装，因为要问 book-serve 这本书的方向）。开关：网页「管理 → 系统增强」，写 `tapPageTurn` / `rtlPageTurn`，**默认都关**，打开书时读、下次打开书生效。**离线验证过（qmldiff 在 .172 真实 QML 上全部命中），待真机验证**。
+
 **wallpaper-serve —— 休眠壁纸**（[README](../wallpaper-serve/README.md)）
 网页上传即用、唤醒自动轮换，靠 xochitl 的隐藏配置键 `SleepScreenPath`。**✅ 真机通**。入口「其他 → 壁纸」。
 
@@ -226,6 +229,25 @@ hook 目标 `FUN_00f47530`：两个 float（s0/s1）+ 一个指针（x0），标
 
 两个服务都依赖 [`../../rmsvc-core`](../../rmsvc-core/README.md)，由网关反向代理，随 `install-all.sh` 的 shelf 步安装。
 
+## 03i｜reader-page-turn：单击翻页 + 日漫从右往左翻页（2026-09-24）
+
+![xochitl 阅读器翻页](diagrams/reader-page-turn.svg)
+
+**需求**：用户要"单击翻页"回来（08-14 做过 `tap-page-turn.qmd` 并真机验证，09-11 随 `xovi-extensions/reading-qol/` 移出仓库，设备上的 qmd 也已不在，只剩 `reading-qol.json` 里一个 `tapPageTurn`）；另外问漫画能不能"从左往右滑是下一页"——指 **xochitl**（KOReader 的漫画方案已经是这样，见书架白皮书 §03bt）。
+
+**做法**：一个 qmd 改三个 QML，锚点全部从设备 .172 的 xochitl 二进制里解出真实 QML 核对过：
+- `DeviceSceneView.qml` 的 `FocusScope#root` 加 `cjTapPageTurn`、`cjRtl` 两个属性（这个对象就是手势文件里的 `view`，`view: root` 实例化）。
+- `DocumentView.qml`：书一换就先把 `cjRtl` 清掉，300 ms 后同步读 `reading-qol.json` 取两个开关；开了日漫就异步问 book-serve `GET /reading-direction/<uuid>`，结果回来时书没换才生效。**每次打开书只读一次**——08 月旧版每 1.5 秒轮询一次配置，费电，这次不再轮询，代价是改开关要重新打开书。
+- `SceneViewGestures.qml`：在单击 `touchClick.onClick` 函数体开头插入翻页分支（守卫沿用旧版：链接按下、文本编辑、缩放、笔记页不接管）；在左滑 `nextPageGesture` / 右滑 `prevPageGesture` 的 `onActiveChanged` 开头插入"`cjRtl` 时反向翻页并 return"。
+
+**区域**（用户定）：左右各 7% 宽，纵向只在屏幕高度 45%–80% 之间；比 08 月旧版（10%、25%–85%）更窄更低，进一步避开顶部工具栏、底部进度条和握持的四角。
+
+**怎么判断"从右往左"**：只看 EPUB OPF 的 `<spine page-progression-direction="rtl">`。book-serve 用 `bookconv::placeholder::epub_is_rtl` 读书库里 `<uuid>.epub` 的 container.xml 和 OPF 两个 zip 条目（一卷漫画数百 MB，不能整本读），按（大小, mtime）缓存。09-24 设备书库 58 本 EPUB 里 7 本带这个标记（6 卷《死亡筆記》、1 卷《火影》），说明书架优化会保留它；按卷拆分的分卷原先会丢掉这个属性，已改为从原书继承（`AssembleOpts.rtl`）。
+
+**离线验证**：本机重编 qmldiff（`asivery/qmldiff`），把解出的三份 .172 QML 放到 hashtab 里的真实资源路径下跑 `apply-diffs`：三个 AFFECT 都应用，四处插入位置核对正确；`qmllint` 补丁前后报错数一致（DocumentView 原版就有 9 条"找不到设备私有模块"类报错）。
+
+**已知限制**：没在 OPF 里标 rtl 的日漫不会反转；改开关要重新打开书；只影响 xochitl，KOReader 不受影响。**真机验证待做**（见 §05）。
+
 ## 04｜踩坑
 
 **逆向方法论**
@@ -266,6 +288,7 @@ hook 目标 `FUN_00f47530`：两个 float（s0/s1）+ 一个指针（x0），标
 | hw-stroke：参数调优 | 一轮真机校准的起点，"看上去还行" | 按用户反馈再调 |
 | hw-stroke：真实压感 | 放弃 | 先搞清 `FUN_00f47530` / `FUN_00f4c8d0` 各有哪些调用路径 |
 | 多扩展共存依赖加载顺序（§04） | 代码推断，未复现 | 改 `shared/scan.c` 扫所有匹配段（或 `_xovi_construct` 前重新定位），并在 hook 没装上时打日志；需真机验证 |
+| reader-page-turn（§03i）真机验证 | 离线 qmldiff 全部命中；未上真机 | 部署后看 `CJ-PAGE-TURN: loaded`；逐项试：开关全关行为不变、单击边缘翻页、日漫左→右滑下一页、小说方向不受影响 |
 | 部署新流程 stop → 换 → start（§03g） | 脚本已改，未在真有 `.so` 变化时真机跑过 | 下次扩展改动时验证 |
 | lo-alias：不插 USB 冷启动 | 脚本现由网关 `ExecStartPre` 调用，不保证先于 xochitl；本次开机它比 xochitl 晚 3 秒 | 找机会做一次不插 USB 冷启动，确认 :80 能绑上 |
 | battop：两次冻机的内核根因 | 09-23 起采样循环无子进程；根因（RCU stall）未排除 | 继续观察；不开机自启保持不变 |

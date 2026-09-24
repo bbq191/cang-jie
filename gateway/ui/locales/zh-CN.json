@@ -498,5 +498,11 @@
   "manage.loaded.webOnlyTitle": "只控制「笔记」页的子标签显示与否，不需要往 xochitl 里加载任何东西，开了即生效",
   "manage.loaded.qmdOnTitle": "xochitl 启动时已载入这个 qmd 补丁，开关会生效（按加载机制推断：qt-resource-rebuilder 在进程里、补丁文件早于 xochitl 启动）",
   "manage.loaded.qmdPendingTitle": "补丁文件比当前 xochitl 进程新：改过但还没生效，重启 xochitl 后才载入",
-  "manage.loaded.qmdOffTitle": "xochitl 里没有载入这个 qmd 补丁：开关开了也不会生效。可能补丁没装，或 qt-resource-rebuilder / xovi 没生效"
+  "manage.loaded.qmdOffTitle": "xochitl 里没有载入这个 qmd 补丁：开关开了也不会生效。可能补丁没装，或 qt-resource-rebuilder / xovi 没生效",
+  "manage.enhance.pageTurn.title": "xochitl 阅读器翻页",
+  "manage.enhance.pageTurn.desc": "两个开关都只影响 xochitl 自带的阅读器，默认都关；每次打开书时读取，改完后重新打开书生效。",
+  "manage.enhance.pageTurn.tapToggle": "单击翻页",
+  "manage.enhance.pageTurn.tapHint": "点屏幕左右边缘（各约 7% 宽、屏幕中下部 45%–80% 高度）翻页：右边缘下一页、左边缘上一页。其余位置照常：双击进文本、点链接不受影响。",
+  "manage.enhance.pageTurn.rtlToggle": "日漫从右往左翻页",
+  "manage.enhance.pageTurn.rtlHint": "书的 EPUB 标明从右往左时（日漫常见），改成从左往右滑是下一页、点左边缘是下一页；其他书不受影响。"
 }

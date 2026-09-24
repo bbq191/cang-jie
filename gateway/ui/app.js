@@ -1257,6 +1257,12 @@ function renderManage(sec){sec.innerHTML=`
     <div class="card"><h3 style="margin-top:0">${T('manage.enhance.hlSnap.title')}</h3>
       <p class="small">${T('manage.enhance.hlSnap.desc')}</p>
       <label class="toggle"><input type="checkbox" id="erHlSnap"> ${T('manage.enhance.hlSnap.toggle')}</label> <span id="erHlSnapLoaded"></span></div>
+    <div class="card"><h3 style="margin-top:0">${T('manage.enhance.pageTurn.title')} <span id="erPageTurnLoaded"></span></h3>
+      <p class="small">${T('manage.enhance.pageTurn.desc')}</p>
+      <label class="toggle"><input type="checkbox" id="erTapPageTurn"> ${T('manage.enhance.pageTurn.tapToggle')}</label>
+      <p class="small">${T('manage.enhance.pageTurn.tapHint')}</p>
+      <label class="toggle"><input type="checkbox" id="erRtlPageTurn"> ${T('manage.enhance.pageTurn.rtlToggle')}</label>
+      <p class="small">${T('manage.enhance.pageTurn.rtlHint')}</p></div>
     <div class="card" id="enhBattopCard"></div>
   </div>
   <div class="subpanel" id="battopDetail" hidden></div>
@@ -1298,6 +1304,7 @@ function renderManage(sec){sec.innerHTML=`
      二级 tab「电池刺客」（renderBattopDetail）——这个 tab 本身「运行才出现」，规则/实现都照抄
      「笔记」tab「导入 md 文档」子标签那套 hidden 属性+点走再隐藏的写法（见 renderNotes 里
      syncImportVisible 的注释，这里不重复讲一遍）。 */
+  const tapBox=$('#erTapPageTurn',sec),rtlBox=$('#erRtlPageTurn',sec);
   const hlBox=$('#erHlSnap',sec),hwBox=$('#labHwStroke',sec),importMdBox=$('#labImportMd',sec),comicMarginBox=$('#labComicMargin',sec);
   const battopToggleRefresh=mountBattopToggleCard($('#enhBattopCard',sec)); // 电池刺客开关在「系统增强」里（2026-09-21 从实验室移过来）
   const manageNav=sec.querySelector(':scope > .subnav');
@@ -1308,6 +1315,7 @@ function renderManage(sec){sec.innerHTML=`
     hwBox.checked=!!r.hwStrokeEnabled;
     importMdBox.checked=!!r.notesImportMdEnabled;
     comicMarginBox.checked=!!r.comicMinMargin;
+    tapBox.checked=!!r.tapPageTurn;rtlBox.checked=!!r.rtlPageTurn;
     // 开关旁边标"xochitl 里实际有没有加载这个扩展"（查主进程 maps，见 gateway enhance/loaded.rs）：开关只是配置，
     // 扩展没加载时开了也不生效——历史上两次"看着装了、其实没生效"就是这种情况。
     const ld=r.loaded||{},exts=ld.extensions||[];
@@ -1316,18 +1324,20 @@ function renderManage(sec){sec.innerHTML=`
       :`<span class="badge off" title="${T('manage.loaded.offTitle')}">${T('manage.loaded.off')}</span>`;
     $('#erHlSnapLoaded',sec).innerHTML=loadedBadge('hl-snap.so');
     $('#labHwStrokeLoaded',sec).innerHTML=loadedBadge('hw-stroke.so');
-    // 漫画页边距靠 qmd 补丁（xochitl 启动时由 qt-resource-rebuilder 读一次），不是 .so：看 loaded.qmds / qmdsPending。
-    const qmd='shelf-comic-margins.qmd';
-    $('#labComicMarginLoaded',sec).innerHTML=!ld.xochitl?loadedBadge(qmd)
+    // 漫画页边距、阅读器翻页靠 qmd 补丁（xochitl 启动时由 qt-resource-rebuilder 读一次），不是 .so：看 loaded.qmds / qmdsPending。
+    const qmdBadge=qmd=>!ld.xochitl?loadedBadge(qmd)
       :(ld.qmds||[]).includes(qmd)?`<span class="badge on" title="${T('manage.loaded.qmdOnTitle')}">${T('manage.loaded.on')}</span>`
       :(ld.qmdsPending||[]).includes(qmd)?`<span class="badge" title="${T('manage.loaded.qmdPendingTitle')}">${T('manage.loaded.pending')}</span>`
       :`<span class="badge off" title="${T('manage.loaded.qmdOffTitle')}">${T('manage.loaded.off')}</span>`;
+    $('#labComicMarginLoaded',sec).innerHTML=qmdBadge('shelf-comic-margins.qmd');
+    $('#erPageTurnLoaded',sec).innerHTML=qmdBadge('reader-page-turn.qmd');
     await battopToggleRefresh(r);
     const running=!!(r.battop&&r.battop.running);
     if(!running&&battopNavBtn.classList.contains('on'))manageNav.children[0].click();
     battopNavBtn.hidden=!running;battopPanel.hidden=!running;
     if(running&&battopPanel.refresh)battopPanel.refresh()};
   bindToggle(hlBox,'/api/enhance/qol','hlSnapCjk');bindToggle(hwBox,'/api/enhance/qol','hwStrokeEnabled');bindToggle(importMdBox,'/api/enhance/qol','notesImportMdEnabled');bindToggle(comicMarginBox,'/api/enhance/qol','comicMinMargin');
+  bindToggle(tapBox,'/api/enhance/qol','tapPageTurn');bindToggle(rtlBox,'/api/enhance/qol','rtlPageTurn');
   refresh();erRefresh();sec.refresh=()=>{refresh();mvRefresh();mtRefresh();erRefresh()};subtabs(sec);}
 
 (async()=>{

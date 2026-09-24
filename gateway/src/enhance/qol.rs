@@ -66,6 +66,15 @@ pub fn comic_min_margin(paths: &Paths) -> bool {
     load(paths).get("comicMinMargin").and_then(Value::as_bool).unwrap_or(false)
 }
 
+/// 「单击翻页」（`tapPageTurn`）与「日漫从右往左翻页」（`rtlPageTurn`）两个开关（2026-09-24）：xochitl 阅读器里的
+/// `reader-page-turn.qmd` 每次打开书时读这两个键（不轮询），切换后下次打开书生效。缺省都关 = xochitl 原生行为。
+pub fn tap_page_turn(paths: &Paths) -> bool {
+    load(paths).get("tapPageTurn").and_then(Value::as_bool).unwrap_or(false)
+}
+pub fn rtl_page_turn(paths: &Paths) -> bool {
+    load(paths).get("rtlPageTurn").and_then(Value::as_bool).unwrap_or(false)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
