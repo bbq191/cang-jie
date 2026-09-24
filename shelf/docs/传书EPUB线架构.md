@@ -234,7 +234,7 @@ xochitl `/upload` 约 100MB 硬限（超了断连）。超过体积门时 `Stagi
 
 `spawn_optimize`/`spawn_deliver` 模板：先做零耗时同步校验（格式/文件存在/忙锁），失败立即回 400 + 原因；通过才起后台线程、写初始 `pending`、返回"已开始"。
 
-**进度节流**：`OPTIMIZE_PROGRESS_STRIDE = 5`——优化阶段二每 5 条目才落盘/推事件（大漫画几百条目，逐条写有真实 I/O 开销），首尾必落。
+**进度节流**：`OPTIMIZE_PROGRESS_STRIDE = 5` + `OPTIMIZE_PROGRESS_MIN_GAP = 1s`——优化阶段二至少隔 5 条目且至少隔 1 秒才落盘/推事件（大漫画几百条目，逐条写有真实 I/O 开销；文字书条目处理极快，只按条目数时一秒能推十几条事件、网页每条都整页重拉），首尾必落。
 
 **改名时的终态写入**：优化成功后条目可能改名（长名规范化；PDF 转同名 `.epub` 并删 `.pdf`），sidecar 按条目名找文件，故终态写入前先 `resolved_optimize_target` 探测改名、写到新名下；中途进度仍写旧名。
 

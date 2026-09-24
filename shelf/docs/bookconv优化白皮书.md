@@ -366,7 +366,7 @@ EPUB 线原则④（09-17）：`comic_detect::is_comic`（`MIN_IMAGES=20`、`TEX
 
 结论：流式对**所有** EPUB 无条件生效，进度条原来不动只是没有"处理到第几个条目"的回调。加 `on_progress(done,total)` **不省内存**（图片本就读一张丢一张，两件正交的事）。理论上的下一个目标是阶段一整份读入的非图片条目，但它通常很小、从不是 OOM 触发点，不为未经真机验证的理论瓶颈搭更复杂的流水线。
 
-回调只加在阶段二，`total`＝`entries.len()`；`spawn_optimize` 里节流（`OPTIMIZE_PROGRESS_STRIDE=5`，首尾必落；每次落盘＝一次原子写+SSE 广播）。真机《飘·上册》（10.6MB/35 章）走 `/staging/optimize` 看到 `36/56→41/56→46/56` 真实推进。
+回调只加在阶段二，`total`＝`entries.len()`；`spawn_optimize` 里节流（`OPTIMIZE_PROGRESS_STRIDE=5` 且间隔 ≥ `OPTIMIZE_PROGRESS_MIN_GAP=1s`，首尾必落；每次落盘＝一次原子写+SSE 广播）。真机《飘·上册》（10.6MB/35 章）走 `/staging/optimize` 看到 `36/56→41/56→46/56` 真实推进。
 
 ### 追记②：落库自检不再解压图片（2026-09-19，OOM 审计）
 

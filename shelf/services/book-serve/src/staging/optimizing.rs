@@ -6,6 +6,38 @@ use super::*;
 /// 每 N 条目才落一次盘/推一次事件，首尾两条（第 1 条、最后一条）永远落，保证 UI 能看到"刚开始动"
 /// 和"到 100% 了"，中间稀疏一点不影响"看着在动"这个体验目标。
 pub(super) const OPTIMIZE_PROGRESS_STRIDE: usize = 5;
+/// 两次进度上报之间的最短间隔（与 [`OPTIMIZE_PROGRESS_STRIDE`] 同时满足才报，首尾不受限）。只按条目数节流时，
+/// 文字书的条目处理得飞快（几百个 xhtml 几秒跑完），一秒内能报十几次；而每次上报 = 一次边车原子写 + 一条 SSE 事件，
+/// 网页每收到一条事件就把母版库页的 6 个接口整套重拉一遍（经网关 TLS），整台设备被频繁唤醒。进度条一秒动一次
+/// 已经足够"看着在动"（2026-09-24 审计）。
+pub(super) const OPTIMIZE_PROGRESS_MIN_GAP: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// 进度上报节流器：首条、末条必报；中间要同时满足"距上次至少 `stride` 条"和"距上次至少 `min_gap`"。
+pub(super) struct ProgressThrottle {
+    stride: usize,
+    min_gap: std::time::Duration,
+    last_done: usize,
+    last_at: Option<std::time::Instant>,
+}
+
+impl ProgressThrottle {
+    pub(super) fn new(stride: usize, min_gap: std::time::Duration) -> ProgressThrottle {
+        ProgressThrottle { stride, min_gap, last_done: 0, last_at: None }
+    }
+
+    /// 这一步（`done`/`total`，`now` 为当前时刻）该不该上报；该报就同时记下这次。
+    pub(super) fn should_report(&mut self, done: usize, total: usize, now: std::time::Instant) -> bool {
+        let due = done == total
+            || done == 1
+            || self.last_at.is_none()
+            || (done.saturating_sub(self.last_done) >= self.stride && self.last_at.is_some_and(|t| now.saturating_duration_since(t) >= self.min_gap));
+        if due {
+            self.last_done = done;
+            self.last_at = Some(now);
+        }
+        due
+    }
+}
 
 /// 优化回执尾注：`（N 章，前→后 字节，剥伪 DRM…）`。
 pub(super) fn optimize_note(rep: &optimize::Report) -> String {
@@ -177,10 +209,9 @@ impl Staging {
         let now = rmsvc_core::clock::now_secs();
         let _ = self.set_optimize_check(name, sidecar::OptimizeCheck { status: "pending".into(), message: String::new(), at: now, progress: None });
         self.spawn_bg(name, bus, |this, name, bus| {
-            let mut last_reported = 0usize;
+            let mut throttle = ProgressThrottle::new(OPTIMIZE_PROGRESS_STRIDE, OPTIMIZE_PROGRESS_MIN_GAP);
             let on_progress = |done: usize, total: usize| {
-                if done == total || done == 1 || done - last_reported >= OPTIMIZE_PROGRESS_STRIDE {
-                    last_reported = done;
+                if throttle.should_report(done, total, std::time::Instant::now()) {
                     let _ = this.set_optimize_check(name, sidecar::OptimizeCheck {
                         status: "pending".into(),
                         message: String::new(),

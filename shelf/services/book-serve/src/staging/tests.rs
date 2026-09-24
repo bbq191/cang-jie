@@ -950,6 +950,26 @@ fn open_for_download_returns_file_and_length() {
     assert!(s.open_for_download("nope.epub").is_err());
 }
 
+/// 进度节流：首尾必报；快书（300 条目、每条 10ms，共 3 秒）从只按条目数时的 61 次上报降到 4 次；
+/// 慢书（每条 500ms）仍按每 5 条报一次，进度条照样平滑。
+#[test]
+fn progress_throttle_limits_fast_books_by_time_and_keeps_slow_books_by_stride() {
+    use std::time::{Duration, Instant};
+    use super::optimizing::{ProgressThrottle, OPTIMIZE_PROGRESS_MIN_GAP, OPTIMIZE_PROGRESS_STRIDE};
+    let count = |total: usize, per_entry: Duration, gap: Duration| {
+        let t0 = Instant::now();
+        let mut th = ProgressThrottle::new(OPTIMIZE_PROGRESS_STRIDE, gap);
+        let reported: Vec<usize> = (1..=total).filter(|&d| th.should_report(d, total, t0 + per_entry * d as u32)).collect();
+        assert_eq!((reported.first(), reported.last()), (Some(&1), Some(&total)), "首尾必报");
+        reported.len()
+    };
+    let fast = Duration::from_millis(10);
+    assert_eq!(count(300, fast, Duration::ZERO), 61, "旧行为（只按条目数）");
+    assert_eq!(count(300, fast, OPTIMIZE_PROGRESS_MIN_GAP), 4, "3 秒跑完只报 4 次（第 1、101、201、300 条）");
+    assert_eq!(count(300, Duration::from_millis(500), OPTIMIZE_PROGRESS_MIN_GAP), 61, "慢书不受时间门影响");
+    assert_eq!(count(1, fast, OPTIMIZE_PROGRESS_MIN_GAP), 1);
+}
+
 /// 回归：多条入库路径（网页上传 / inbox 追平 / 抓网文）同时落同名书，每一本都要落成独立文件、谁也不覆盖谁。
 /// 此前靠网页上传把 spool 锁攥到请求体收完来串行化（抓网文压根不拿锁）；现在"挑名 + 落地"由落名临界区保证。
 #[test]
