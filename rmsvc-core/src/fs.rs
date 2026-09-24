@@ -10,6 +10,12 @@ use std::sync::atomic::{AtomicU64, Ordering};
 /// 或者一个线程 rename 走了另一个线程正在写的文件。仍以 `.tmp` 结尾，按后缀忽略半成品的规则继续有效。
 /// 写/rename 失败时清掉自己的临时文件，不留垃圾。
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    write_atomic_mode(path, bytes, None)
+}
+
+/// 同 [`write_atomic`]，`mode` 给定时临时文件**创建时**就带这个权限（再受 umask 收窄）——含密钥的文件
+/// 不能先按默认 0644 落出来、改名后再 chmod，中间那段窗口任何本地用户都读得到（2026-09-24 审查）。
+pub fn write_atomic_mode(path: &Path, bytes: &[u8], mode: Option<u32>) -> std::io::Result<()> {
     static SEQ: AtomicU64 = AtomicU64::new(0);
     if let Some(p) = path.parent() {
         std::fs::create_dir_all(p)?;
@@ -17,7 +23,20 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     let mut tmp = path.as_os_str().to_owned();
     tmp.push(format!(".{}.{}.tmp", std::process::id(), SEQ.fetch_add(1, Ordering::Relaxed)));
     let tmp = PathBuf::from(tmp);
-    let r = std::fs::write(&tmp, bytes).and_then(|_| std::fs::rename(&tmp, path));
+    let write = || -> std::io::Result<()> {
+        use std::io::Write;
+        let mut o = std::fs::OpenOptions::new();
+        o.write(true).create_new(true);
+        #[cfg(unix)]
+        if let Some(m) = mode {
+            use std::os::unix::fs::OpenOptionsExt;
+            o.mode(m);
+        }
+        #[cfg(not(unix))]
+        let _ = mode;
+        o.open(&tmp)?.write_all(bytes)
+    };
+    let r = write().and_then(|_| std::fs::rename(&tmp, path));
     if r.is_err() {
         let _ = std::fs::remove_file(&tmp);
     }
@@ -130,5 +149,18 @@ mod tests {
         std::fs::create_dir_all(&dest).unwrap();
         assert_eq!(move_unique(&src, &dest).unwrap(), dest.join("src"));
         assert!(!src.exists());
+    }
+
+    /// 含密钥文件：临时文件创建时就是 0600，不存在"先宽后紧"的窗口。
+    #[cfg(unix)]
+    #[test]
+    fn write_atomic_mode_creates_with_mode() {
+        use std::os::unix::fs::PermissionsExt;
+        let t = tempfile::tempdir().unwrap();
+        let p = t.path().join("k.json");
+        write_atomic_mode(&p, b"{}", Some(0o600)).unwrap();
+        assert_eq!(std::fs::metadata(&p).unwrap().permissions().mode() & 0o777, 0o600);
+        write_atomic(&p, b"[]").unwrap();
+        assert_eq!(std::fs::read(&p).unwrap(), b"[]");
     }
 }

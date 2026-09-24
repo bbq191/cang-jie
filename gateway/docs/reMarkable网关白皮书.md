@@ -104,7 +104,7 @@
 
 **实现**：不做“连续字节预算求和”（没有足够数据给不同操作 / 书籍类型精确倍率，量化是假精确），直接两档：体积 **> 90MB（严格大于）** 为大档，同时最多 1 个；否则小档，同时最多 3 个。`LARGE_THRESHOLD_BYTES` 与 book-serve 的 `native_limit`（xochitl 上传硬限）恰好都是 90MB，语义不同，不做跨进程配置同步。`admit(档位, 书名)` 阻塞等名额，最长 30 分钟，三种结局：放行（拿到 RAII `Slot`，`Drop` 自动归还并 `notify_all`）/ 超时（503）/ 被取消（503）；同名书已在 pending/active → 409。`pending`/`active` 两个书名集合只做展示与取消用，不参与准入判断（`large`/`small` 计数才是判据）。`proxy::forward` 只拦截三个命中路由（`book-serve staging/optimize`、`staging/deliver`、`koreader-serve books/adopt`），读一次小 JSON 拿书名、`stat` 母版库文件体积、过闸再转发，其余请求（含大文件上传）仍是纯流式转发。
 
-**名额释放时机是最容易踩的点**：`优化`/`加入 xochitl` 在 book-serve 是**异步**的（HTTP 立即回“已开始”，真正处理在后台线程），不能靠响应返回释放——网关把 `Slot` 移进监控线程，每 5 秒轮询 `GET /staging` 直到该书 `busy==false`（或条目已不在列表里，如漫画→PDF 改名；解析失败也当完成，宁可提前放行也不把名额锁死），上限 60 分钟；`加入 KOReader` 在 koreader-serve 是**同步**（`fs::copy`+`rename`），响应返回即做完，名额随请求释放。
+**名额释放时机是最容易踩的点**：`优化`/`加入 xochitl` 在 book-serve 是**异步**的（HTTP 立即回“已开始”，真正处理在后台线程），不能靠响应返回释放——网关把 `Slot` 移进监控线程，查 `GET /staging` 直到该书 `busy==false`（或条目已不在列表里，如 PDF→EPUB 改名），上限 60 分钟。查询靠 book-serve 的事件唤醒，另有 30 秒兜底。查询失败要**连续 6 次**（每次至多隔 5 秒）才放名额；2026-09-24 前是一次失败就放，而大书优化时 book-serve 正忙、10 秒查询超时最容易撞上，第二本大书因此被提前放进来，闸门在最该起作用的时候失效；`加入 KOReader` 在 koreader-serve 是**同步**（`fs::copy`+`rename`），响应返回即做完，名额随请求释放。
 
 **跨会话状态（2026-09-19 用户反馈驱动）**：最初的“取消/锁定”是纯浏览器标签页 JS 内存状态，关掉标签页就没了，而网关里排队的书照样傻等，新页面对此一无所知（列表里的书既看不出在排队也点不了停止，还能被当闲置条目删除或重复提交）。修法是把“谁在排队 / 谁在跑”搬到网关进程：`GET /api/budget/status → {pending, active}`、`POST /api/budget/cancel {name}`（只对还在排队的生效，已在跑的救不回来——诚实边界，不是没做全）。`pending/active` 变化还会经 `events::notify_books()` 推给网页（此前记的“不推 SSE、多标签页不同步”的范围边界已过时）。
 

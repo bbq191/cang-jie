@@ -11,6 +11,9 @@
 //!   原递归行为不变。
 //! ④ CID 字体 `/W` 数组的区间写法 `c_first c_last w` 解析全错（见 `PdfCIDFont` 构造处注释），
 //!   中文字宽全为 0。
+//! ⑤ Form XObject 递归原本不设深度上限、不防环：自引用的 Form 会把栈打爆（SIGSEGV，`catch_unwind`
+//!   接不住，整个 book-serve 进程一起崩）。现在限深 [`MAX_FORM_DEPTH`] 并跳过正在展开中的同一对象
+//!   （2026-09-24 审查补）。
 //! 起因与设计见 `shelf/docs/EPUB优化规范白皮书.md` §05（PDF→EPUB 线"不改颜色/不挪图片位置"从
 //! "本来就没做"升级成"精确还原"，2026-09-23 用户拍板自研解释器）。
 //! 许可证：上游 MIT，见本 crate 目录 `LICENSE`。
@@ -1628,14 +1631,19 @@ pub fn resolve_fill_rgb(colorspace: &ColorSpace, color: &[f64]) -> Option<[u8; 3
     }
 }
 
+/// Form XObject 最多嵌套几层（真实文档一般 1–3 层；超过的整个跳过，不再往下展开）。
+const MAX_FORM_DEPTH: usize = 16;
+
 struct Processor<'a> {
     font_table: HashMap<Vec<u8>, Rc<dyn PdfFont + 'a>>,
+    /// 当前正在展开的 Form XObject 链（对象 id）：长度即嵌套深度，含某 id 即成环。
+    form_stack: Vec<ObjectId>,
     _none: PhantomData<&'a ()>,
 }
 
 impl<'a> Processor<'a> {
     fn new() -> Processor<'a> {
-        Processor { font_table: HashMap::new(), _none: PhantomData }
+        Processor { font_table: HashMap::new(), form_stack: Vec::new(), _none: PhantomData }
     }
 
     fn process_stream(&mut self, doc: &'a Document, content: Vec<u8>, resources: &'a Dictionary, media_box: &MediaBox, output: &mut dyn OutputDev, page_num: u32) -> Result<(), OutputError> {
@@ -1958,9 +1966,18 @@ impl<'a> Processor<'a> {
                     } else {
                         // `Do` process an entire subdocument, so we do a recursive call to `process_stream`
                         // with the subdocument content and resources
+                        let form_id = xobject.get(name).ok().and_then(|o| o.as_reference().ok());
+                        if self.form_stack.len() >= MAX_FORM_DEPTH || form_id.is_some_and(|id| self.form_stack.contains(&id)) {
+                            dlog!("skip Form XObject {:?}: nested too deep or cyclic", form_id);
+                            continue;
+                        }
                         let resources = maybe_get_obj(&doc, &xf.dict, b"Resources").and_then(|n| n.as_dict().ok()).unwrap_or(resources);
                         let contents = get_contents(xf);
-                        self.process_stream(&doc, contents, resources, &media_box, output, page_num)?;
+                        // 直接内嵌（非引用）的 Form 没有 id，只受深度上限约束；用占位 id 计深度。
+                        self.form_stack.push(form_id.unwrap_or((0, 0)));
+                        let r = self.process_stream(&doc, contents, resources, &media_box, output, page_num);
+                        self.form_stack.pop();
+                        r?;
                     }
                 }
                 _ => { dlog!("unknown operation {:?}", operation); }

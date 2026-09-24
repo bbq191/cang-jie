@@ -144,22 +144,46 @@ pub fn forward(paths: &Paths, req: &mut Request<'_>) -> ApiResult {
 /// [`crate::budget::is_settled`] 判定这本书已经不再忙，或等到 [`SETTLE_POLL_TIMEOUT`] 放弃。
 /// **事件驱动**：每次查完就阻塞等 [`crate::events::books_wake`]（book-serve 有事件才醒），至多 [`POLL_FALLBACK`] 兜底一次；
 /// 先取代数再查，查询期间到达的事件不会漏。
-/// 服务查不到/请求失败（可能重启中）也直接放弃轮询——宁可名额提前释放，不要因为侦测本身不可靠
-/// 就把并发档位永久卡住。
+/// 查询失败要**连续** [`MAX_POLL_FAILURES`] 次才放弃（每次隔 [`FAILURE_RETRY`]）：此前一次失败就放名额，
+/// 而大书优化时 book-serve 正忙、10 秒查询超时恰恰最容易撞上，于是第二本大书被放进来、内存照样叠加——
+/// 闸门在最该起作用的时候失效（2026-09-24 审查）。连续失败才说明服务真的挂了/重启了（任务随之没了），
+/// 这时再放名额，不让侦测本身不可靠把并发档位永久卡住。
 pub(crate) fn poll_until_settled(client: &SvcClient, name: &str) {
-    let deadline = Instant::now() + SETTLE_POLL_TIMEOUT;
     let wake = crate::events::books_wake();
+    wait_settled(|| client.get_json("/staging"), name, Instant::now() + SETTLE_POLL_TIMEOUT, || wake.generation(), |seen, d| { wake.wait_change(seen, d); });
+}
+
+/// 连续几次查询失败才认定"服务已不可达、任务没了"。
+const MAX_POLL_FAILURES: u32 = 6;
+/// 查询失败后至多隔多久重试（服务卡住时事件多半不来，不能只等事件）。
+const FAILURE_RETRY: Duration = Duration::from_secs(5);
+
+/// [`poll_until_settled`] 的循环本体，查询/代数/等待都由调用方注入，便于离线测试。
+fn wait_settled(
+    mut query: impl FnMut() -> Result<serde_json::Value, String>,
+    name: &str,
+    deadline: Instant,
+    generation: impl Fn() -> u64,
+    wait: impl Fn(u64, Duration),
+) {
+    let mut failures = 0u32;
     loop {
-        let seen = wake.generation();
-        match client.get_json("/staging") {
+        let seen = generation();
+        let failed = match query() {
             Ok(json) if crate::budget::is_settled(&json, name) => return,
-            Ok(_) => {}      // 还在忙，继续轮询
-            Err(_) => return, // 服务不可达/应答不是预期 JSON——不可靠，放弃而不是死等
-        }
-        if Instant::now() >= deadline {
+            Ok(_) => false, // 还在忙，继续轮询
+            Err(_) => true,
+        };
+        failures = if failed { failures + 1 } else { 0 };
+        if failures >= MAX_POLL_FAILURES || Instant::now() >= deadline {
             return;
         }
-        wake.wait_change(seen, POLL_FALLBACK.min(deadline.saturating_duration_since(Instant::now())));
+        let left = deadline.saturating_duration_since(Instant::now());
+        if failed {
+            wait(generation(), FAILURE_RETRY.min(left)); // 等下一次事件，至多 FAILURE_RETRY
+        } else {
+            wait(seen, POLL_FALLBACK.min(left));
+        }
     }
 }
 
@@ -181,5 +205,26 @@ mod tests {
         assert_eq!(gated_operation("book-serve", "staging/optimize", Method::Get), None, "方法不对不该命中");
         assert_eq!(gated_operation("koreader-serve", "books", Method::Get), None);
         assert_eq!(gated_operation("font-serve", "staging/optimize", Method::Post), None, "服务名对不上不该误命中");
+    }
+
+    /// 回归：一次查询失败（大书优化时 book-serve 忙、查询超时）不能提前放名额，要等它真的不忙。
+    #[test]
+    fn transient_query_failure_does_not_release_slot_early() {
+        use std::cell::Cell;
+        let busy = serde_json::json!({"items": [{"name": "big.epub", "busy": true}]});
+        let idle = serde_json::json!({"items": [{"name": "big.epub", "busy": false}]});
+        let script: Vec<Result<serde_json::Value, String>> = vec![Ok(busy.clone()), Err("timeout".into()), Err("timeout".into()), Ok(busy), Err("timeout".into()), Ok(idle)];
+        let calls = Cell::new(0usize);
+        wait_settled(|| { let i = calls.get(); calls.set(i + 1); script[i].clone() }, "big.epub", Instant::now() + Duration::from_secs(3600), || 0, |_, _| {});
+        assert_eq!(calls.get(), 6, "应一直等到真正不忙（第 6 次查询）才返回");
+    }
+
+    /// 连续失败到上限 → 放弃（服务真挂了，任务已随之消失）。
+    #[test]
+    fn persistent_failure_gives_up_after_limit() {
+        use std::cell::Cell;
+        let calls = Cell::new(0u32);
+        wait_settled(|| { calls.set(calls.get() + 1); Err("down".into()) }, "x", Instant::now() + Duration::from_secs(3600), || 0, |_, _| {});
+        assert_eq!(calls.get(), MAX_POLL_FAILURES);
     }
 }

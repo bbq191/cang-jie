@@ -39,7 +39,7 @@ pub fn ingest_doc(lib: &Path, crops_dir: &Path, db: &BookDb, cfg: &IngestConfig,
         return Ok(None);
     }
     let Some(content) = doc.content().filter(|c| c.file_type == "epub") else { return Ok(None) };
-    let prev = db.load(uuid);
+    let prev = db.read(uuid)?;
     let changed: Vec<(String, u64)> = pages.into_iter().filter(|(id, mt)| prev.as_ref().and_then(|b| b.page_mtimes.get(id)).map(|&old| *mt > old).unwrap_or(true)).collect();
     if changed.is_empty() {
         return Ok(Some(DocStats::default()));

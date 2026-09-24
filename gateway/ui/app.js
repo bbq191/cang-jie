@@ -33,7 +33,7 @@ const coalesce=fn=>{let running=null,again=false;
    列表 stagingList 的 btn() 助手（2026-09-19 起）也走这个——原来自己手写了一遍禁用/复位逻辑，
    跟这里是同一件事的第二份实现，改成在这层之外只叠列表特有的按钮文案/本地忙态记账。已经自己
    一开始就手动 disabled=true 的按钮（超限/未安装这类"根本点不了"，不是"点了在跑"）不需要套这层。*/
-const guardClick=(el,fn)=>{el.onclick=async()=>{if(el.disabled)return;el.disabled=true;try{await fn()}finally{el.disabled=false}}};
+const guardClick=(el,fn)=>{el.onclick=async()=>{if(el.disabled)return;el.disabled=true;try{await fn()}catch(e){console.error(e);toast(T('common.failed'))}finally{el.disabled=false}}};
 /* 轻量 DOM 构建 helper：`el('div',{class:'small',style:'...'},[child1,child2])`。`attrs` 里
    `class`/其余属性走 `setAttribute`，`style` 走 `style.cssText`，`text`/`html` 分别设
    `textContent`/`innerHTML`；`children` 接单个节点/字符串或数组。不是要把全站手写 DOM 都机械
@@ -116,15 +116,17 @@ document.addEventListener('click',e=>{const b=e.target.closest('.badge[title]');
 // 响应不是合法 JSON（网关自身 502/504、反代错误页…）时，以前直接把裸状态码当 message 弹给用户
 // （"HTTP 502"），技术术语没翻译成人话（2026-09-09 审计发现）。改成一句人话+状态码放在括号里，
 // 报障时还能带出这个号。
-async function j(url,opt){const r=await fetch(url,opt);if(r.status===401){location.href='/login?next='+encodeURIComponent(location.pathname);return {ok:false,message:T('common.needLogin')}}if(r.status===403){location.href='/password';return {ok:false,message:T('common.needChangePassword')}}
+// 网络层异常（设备休眠、WiFi 断开、网关重启中）fetch 直接抛 TypeError——此前没接住，开关一直灰着、按钮没反应、
+// 用户看不到任何提示（2026-09-24 审查）。统一在这里转成 {ok:false,message}，调用方照常按失败处理。
+async function j(url,opt){let r;try{r=await fetch(url,opt)}catch(e){console.error(e);return {ok:false,message:T('common.networkError')}}if(r.status===401){location.href='/login?next='+encodeURIComponent(location.pathname);return {ok:false,message:T('common.needLogin')}}if(r.status===403){location.href='/password';return {ok:false,message:T('common.needChangePassword')}}
   const httpErr=T('common.httpErr',{status:r.status});
   let d;try{d=await r.json()}catch{d={ok:false,message:httpErr}}if(!r.ok&&d.ok!==false)d={ok:false,message:d.message||httpErr};return d}
 /* 带 JSON body 的请求：`jsend(url,'PUT',{a:1})`——全站 POST/PUT 带 body 的调用共用，不再各处手写 `{method,body:JSON.stringify}`。 */
 const jsend=(url,method,body)=>j(url,{method,body:JSON.stringify(body)});
 /* 开关复选框绑定 PUT：勾选即 PUT `{key:checked}`，期间禁用；失败弹 toast 并把勾选还原。「系统增强」/「实验室」的开关共用。 */
 const bindToggle=(box,url,key)=>{box.onchange=async()=>{const want=box.checked;box.disabled=true;
-  const r=await jsend(url,'PUT',{[key]:want});
-  box.disabled=false;if(r.ok===false){toast(r.message||T('common.saveFailed'));box.checked=!want}}};
+  let r;try{r=await jsend(url,'PUT',{[key]:want})}catch(e){console.error(e);r={ok:false}}finally{box.disabled=false}
+  if(r.ok===false){toast(r.message||T('common.saveFailed'));box.checked=!want}}};
 const postJ=async(url,body)=>{const r=await jsend(url,'POST',body);if(r.ok===false)toast(r.message||T('common.failed'));return r};
 
 /* 上传区 HTML（拖放框 + 隐藏 input + 队列 + 按钮），一处生成、各页复用；uploader() 认这个 .up 容器 */

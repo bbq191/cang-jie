@@ -26,8 +26,32 @@ impl BookDb {
         Ok(self.dir.join(format!("{}.json", plain_name(uuid)?)))
     }
 
+    /// 读一本书：文件不存在 → `Ok(None)`；读失败或 JSON 解析失败 → `Err`。**绝不能把"坏了"当成"没有"**：
+    /// 此前两者都返回 `None`，`update` 随即用 `seed()` 的空书整本覆盖掉——降级部署遇到不认识的枚举值、
+    /// 文件被改坏，校对文本/AI 回答就静默全丢（2026-09-24 审查）。解析失败时另存一份 `<uuid>.json.corrupt`
+    /// 副本（已有就不重复拷），原文件原样不动，后续写入一律拒绝，直到人工处理。
+    /// 非法 uuid（含 `/`、`..`）同样当作不存在。
+    pub fn read(&self, uuid: &str) -> Result<Option<Book>, String> {
+        let Ok(p) = self.path(uuid) else { return Ok(None) };
+        let bytes = match std::fs::read(&p) {
+            Ok(b) => b,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(format!("读条目库 {uuid} 失败: {e}")),
+        };
+        serde_json::from_slice(&bytes).map(Some).map_err(|e| {
+            let bak = p.with_extension("json.corrupt");
+            if !bak.exists() {
+                let _ = std::fs::copy(&p, &bak);
+            }
+            let msg = format!("条目库 {uuid}.json 解析失败，已另存 .corrupt 副本、原文件未动、拒绝覆盖写入: {e}");
+            eprintln!("[ink-serve] {msg}");
+            msg
+        })
+    }
+
+    #[cfg(test)]
     pub fn load(&self, uuid: &str) -> Option<Book> {
-        serde_json::from_slice(&std::fs::read(self.path(uuid).ok()?).ok()?).ok()
+        self.read(uuid).ok().flatten()
     }
 
     pub fn save(&self, book: &Book) -> Result<(), String> {
@@ -39,7 +63,7 @@ impl BookDb {
     pub fn update<T>(&self, uuid: &str, seed: impl FnOnce() -> Book, f: impl FnOnce(&mut Book) -> T) -> Result<T, String> {
         self.path(uuid)?; // 先验 key：非法 uuid 不跑 f、不落盘
         let _g = self.lock.lock().unwrap_or_else(|e| e.into_inner());
-        let mut book = self.load(uuid).unwrap_or_else(seed);
+        let mut book = self.read(uuid)?.unwrap_or_else(seed);
         let out = f(&mut book);
         self.save(&book)?;
         Ok(out)
@@ -53,7 +77,7 @@ impl BookDb {
             return Ok(None);
         }
         let _g = self.lock.lock().unwrap_or_else(|e| e.into_inner());
-        let Some(mut book) = self.load(uuid) else { return Ok(None) };
+        let Some(mut book) = self.read(uuid)? else { return Ok(None) };
         let out = f(&mut book);
         self.save(&book)?;
         Ok(Some(out))
@@ -125,6 +149,26 @@ mod tests {
         db.update("u1", || Book { uuid: "u1".into(), title: "甲".into(), ..Default::default() }, |_| ()).unwrap();
         assert_eq!(db.update_existing("u1", |b| { b.chapters.push("一".into()); b.chapters.len() }).unwrap(), Some(1));
         assert_eq!(db.load("u1").unwrap().chapters, vec!["一"], "改动已落盘");
+    }
+
+    /// 回归：条目库 JSON 解析失败时不能被当成新书、用空书覆盖掉；原文件不动，另存 .corrupt 副本。
+    #[test]
+    fn corrupt_book_is_never_overwritten() {
+        let t = tempfile::tempdir().unwrap();
+        let db = BookDb::new(t.path().join("books"));
+        db.ensure().unwrap();
+        let f = t.path().join("books/u1.json");
+        let bad = br#"{"uuid":"u1","title":"x","entries":[{"status":"FutureStatus"}]}"#;
+        std::fs::write(&f, bad).unwrap();
+
+        assert!(db.read("u1").unwrap_err().contains("解析失败"));
+        let mut ran = false;
+        assert!(db.update("u1", || Book { uuid: "u1".into(), ..Default::default() }, |_| ran = true).is_err());
+        assert!(db.update_existing("u1", |_| ran = true).is_err());
+        assert!(!ran, "坏文件不跑闭包");
+        assert_eq!(std::fs::read(&f).unwrap(), bad, "原文件原样不动");
+        assert_eq!(std::fs::read(t.path().join("books/u1.json.corrupt")).unwrap(), bad, "另存了副本");
+        assert!(db.read("nope").unwrap().is_none(), "不存在仍是 Ok(None)");
     }
 
     /// 回归：uuid 带 `/`、`..` 不能读写条目库目录之外的文件。

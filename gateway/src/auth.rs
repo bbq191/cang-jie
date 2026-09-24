@@ -134,7 +134,7 @@ impl AuthState {
             return Ok(if json { Reply::error(401, "密码错误") } else { Reply::html(&crate::ui::login_page("密码错误", &next)).with_status(401) });
         }
         let tok = self.sessions.issue();
-        let dest = if self.must_change() { "/password".to_string() } else if next.starts_with('/') && !next.starts_with("//") { next } else { "/".into() };
+        let dest = if self.must_change() { "/password".to_string() } else if is_local_path(&next) { next } else { "/".into() };
         let cookie = self.cookie_header(&tok, self.sessions.ttl().as_secs());
         Ok(if json { Reply::ok(&serde_json::json!({"ok": true, "mustChange": self.must_change(), "next": dest})) } else { Reply::redirect(&dest) }.with_header("Set-Cookie", &cookie))
     }
@@ -203,6 +203,12 @@ fn read_password_body(req: &mut Request<'_>) -> Result<(String, String, bool), A
         let f = req.form_body().map_err(ApiError::bad)?;
         Ok((f.get("password").cloned().unwrap_or_default(), f.get("next").cloned().unwrap_or_default(), false))
     }
+}
+
+/// 登录后跳转的 `next` 只许是本站路径：以单个 `/` 开头，不能是 `//host`，也不能含 `\`（浏览器把
+/// `/\evil.com` 当成 `//evil.com` 跳外站，2026-09-24 审查）或控制字符（防响应头注入）。
+fn is_local_path(next: &str) -> bool {
+    next.starts_with('/') && !next.starts_with("//") && !next.contains('\\') && !next.chars().any(char::is_control)
 }
 
 #[cfg(test)]
@@ -322,5 +328,14 @@ mod tests {
         let rep = st.change_password(&mut req(Method::Post, "/password", "application/json", &[("Authorization", &format!("Basic {b}"))], &mut body)).unwrap();
         assert_eq!(rep.status, 200, "{}", String::from_utf8_lossy(&rep.body));
         assert!(!st.must_change());
+    }
+
+    #[test]
+    fn login_next_only_allows_local_paths() {
+        assert!(is_local_path("/"));
+        assert!(is_local_path("/books?x=1"));
+        for bad in ["", "books", "//evil.com", "/\\evil.com", "/\\/evil.com", "https://evil.com", "/x\r\nSet-Cookie: a=b"] {
+            assert!(!is_local_path(bad), "{bad:?}");
+        }
     }
 }

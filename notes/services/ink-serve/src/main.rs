@@ -137,7 +137,7 @@ fn main() {
             Ok(Reply::ok(&serde_json::json!({"items": items})))
         }))
         .get("/books/{uuid}", bind(&st, |s, r| {
-            let b = s.db.load(r.param("uuid")).ok_or_else(|| ApiError::not_found("没有这本书的条目"))?;
+            let b = s.db.read(r.param("uuid")).map_err(ApiError::internal)?.ok_or_else(|| ApiError::not_found("没有这本书的条目"))?;
             Ok(Reply::ok(&b))
         }))
         .get("/books/{uuid}/crops/{file}", bind(&st, |s, r| {

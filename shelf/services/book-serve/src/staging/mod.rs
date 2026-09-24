@@ -166,6 +166,11 @@ impl AssetStore for StagingStore<'_> {
 }
 
 /// 非书籍文件的拒收文案（上传门与 inbox 追平同一句）。
+/// PDF→EPUB 成功后原 PDF 的隐藏备份目录（母版库下，点前缀 → `list()` 看不见）。
+pub const PDF_ORIGINALS_DIR: &str = ".pdf-originals";
+/// 备份保留时长：7 天。启动时和每次新备份时清过期的。
+pub const PDF_ORIGINALS_KEEP_SECS: u64 = 7 * 86_400;
+
 pub fn reject_message() -> String {
     format!("不是书籍格式，母版库只收 {}", formats::dotted(BOOK_EXTS))
 }

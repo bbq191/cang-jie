@@ -106,6 +106,32 @@ impl Staging {
         }
         (fixed, tmps)
     }
+    /// 把转换完的原 PDF 挪进 [`PDF_ORIGINALS_DIR`]（同分区 rename，不拷贝），顺手清过期备份。
+    /// 同名旧备份直接被新的替换。它的落库边车留给 [`Self::gc_orphan_sidecars`] 按孤儿清。
+    pub(super) fn backup_pdf_original(&self, name: &str, p: &Path) -> Result<(), String> {
+        let dir = self.dir.join(PDF_ORIGINALS_DIR);
+        std::fs::create_dir_all(&dir).map_err(|e| format!("建原 PDF 备份目录失败: {e}"))?;
+        std::fs::rename(p, dir.join(name)).map_err(|e| format!("备份原 PDF 失败: {e}"))?;
+        self.gc_pdf_originals(PDF_ORIGINALS_KEEP_SECS);
+        Ok(())
+    }
+
+    /// 删掉挪进备份目录已超过 `keep_secs` 的原 PDF。按 ctime 算而不是 mtime：rename 不改 mtime
+    /// （那是 PDF 入库的时间，按它算会删得过早），但会刷新 inode 的 ctime。返回清掉的个数。
+    pub fn gc_pdf_originals(&self, keep_secs: u64) -> usize {
+        use std::os::unix::fs::MetadataExt;
+        let Ok(rd) = std::fs::read_dir(self.dir.join(PDF_ORIGINALS_DIR)) else { return 0 };
+        let now = rmsvc_core::clock::now_secs();
+        let mut n = 0;
+        for e in rd.flatten() {
+            let Ok(md) = e.metadata() else { continue };
+            let ctime = u64::try_from(md.ctime()).unwrap_or(0);
+            if md.is_file() && now.saturating_sub(ctime) >= keep_secs && std::fs::remove_file(e.path()).is_ok() {
+                n += 1;
+            }
+        }
+        n
+    }
     // ───────────── 查 / 删 ─────────────
 
     pub fn remove(&self, name: &str) -> Result<(), String> {

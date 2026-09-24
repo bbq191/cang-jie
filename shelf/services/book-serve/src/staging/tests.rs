@@ -555,7 +555,7 @@ fn optimize_comic_epub_stays_epub() {
 
 /// 拿真实 pdflatex 编译的样本（bookconv 那条线的测试夹具，两个 crate 同一个仓库共享一份
 /// 真实样本，不在 book-serve 这边另造一份假数据）核对：入库有文字层的 PDF「优化」真的会
-/// 转成 EPUB、原 PDF 被删、新 EPUB 在 `list()` 里报 `pdfSource: true` 且不再显示优化档位
+/// 转成 EPUB、原 PDF 挪进隐藏备份、新 EPUB 在 `list()` 里报 `pdfSource: true` 且不再显示优化档位
 /// 的 none（视为已完成）。
 #[test]
 fn optimize_text_layer_pdf_produces_epub_output() {
@@ -576,6 +576,31 @@ fn optimize_text_layer_pdf_produces_epub_output() {
 
     let epub_bytes = std::fs::read(t.path().join("staging").join("paper.epub")).unwrap();
     assert!(!epub_bytes.is_empty());
+
+    // 原 PDF 不删，挪进隐藏备份目录（字节不变）；备份目录不出现在列表里
+    let backup = t.path().join("staging").join(PDF_ORIGINALS_DIR).join("paper.pdf");
+    assert_eq!(std::fs::read(&backup).unwrap(), SAMPLE_PDF, "原 PDF 应原样留在备份里");
+    assert!(list.iter().all(|e| !e.name.starts_with('.')), "{list:?}");
+    assert_eq!(s.gc_pdf_originals(PDF_ORIGINALS_KEEP_SECS), 0, "刚挪进来的不该被清");
+    assert_eq!(s.gc_pdf_originals(0), 1, "过期的要清");
+    assert!(!backup.exists());
+}
+
+/// 母版库已有同名 EPUB 时，有文字层 PDF 的优化停下报错：那份 EPUB 和原 PDF 都原样不动。
+#[test]
+fn optimize_text_layer_pdf_refuses_to_overwrite_same_name_epub() {
+    const SAMPLE_PDF: &[u8] = include_bytes!("../../../../crates/bookconv/tests/fixtures/sample.pdf");
+    let t = tempfile::tempdir().unwrap();
+    let s = staging(&t);
+    s.stage_new("paper.pdf", SAMPLE_PDF).unwrap();
+    s.stage_new("paper.epub", b"mine").unwrap();
+
+    let err = s.optimize("paper.pdf", |_, _| {}).unwrap_err();
+    assert!(err.contains("已有《paper.epub》"), "{err}");
+    let dir = t.path().join("staging");
+    assert_eq!(std::fs::read(dir.join("paper.epub")).unwrap(), b"mine", "已有的 EPUB 不能被覆盖");
+    assert_eq!(std::fs::read(dir.join("paper.pdf")).unwrap(), SAMPLE_PDF, "原 PDF 不能动");
+    assert!(!dir.join(PDF_ORIGINALS_DIR).exists());
 }
 
 /// 漫画/无文字层 PDF 走裁边分支，格式不变仍是 PDF，且能被识别成"自己优化过的"。

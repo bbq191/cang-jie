@@ -147,6 +147,13 @@ static float g_speed_min_ratio = 1.0f; /* 默认关闭，fail-safe——跟 g_ni
 static float g_speed_len_low = 1.0f;
 static float g_speed_len_high = 8.0f;
 
+/* 调试开关 reading-qol.json `"hwStrokeDebug": true`：打开才逐点写日志、才装纯诊断的
+ * FUN_00f3f9d0 hook（后者只在扩展加载时看一次，改了要重启 xochitl）。默认关——
+ * 2026-09-24 审查：此前逐点日志无条件写 stderr（一次采样命中上万次），进 xochitl
+ * journal 后又被壁纸服务 / 飞行记录仪逐行读，负载被放大好几倍；诊断 hook 对行为零贡献，
+ * 却在生产环境多 patch 一个函数。 */
+static int g_debug = 0;
+
 /* ⚠️ 曾经试过按笔型标签（`*(byte*)(lVar7+0x70)`，FUN_00f3f9d0 里的 bVar16）
  * 精确排除钢笔，撤回了——那个字段是 FUN_00f3f9d0 自己 `lVar7` 对象上的，
  * 钢笔走的 `bVar16<4` 分支用 `plVar6`（另一个指针）做虚函数调用，从没验证过
@@ -173,10 +180,23 @@ static void cj_hw_read_float_key(const char *buf, const char *key, float *out) {
     *out = (float)v;
 }
 
+/* 布尔字段：`"key": true` 或非 0 数字为真；字段缺失 → 不改 *out。 */
+static void cj_hw_read_bool_key(const char *buf, const char *key, int *out) {
+    const char *p = strstr(buf, key);
+    if (!p) return;
+    p += strlen(key);
+    while (*p == ':' || *p == ' ' || *p == '\t') p++;
+    if (strncmp(p, "true", 4) == 0) *out = 1;
+    else if (strncmp(p, "false", 5) == 0) *out = 0;
+    else if (*p >= '0' && *p <= '9') *out = (*p != '0');
+}
+
 /* 运行时开关：从 reading-qol.json 读 hwStrokeWidthFactor/hwStrokeNibAngleDeg/
  * hwStrokeNibMinRatio。fail-safe：文件缺失/字段缺失/解析失败 → 不改，保持
  * 当前值（初始默认=不改变行为）；解出来的值超出合理范围也拒绝，不写入。
- * 划一笔才调，非热路径，每次读一次即可。 */
+ * 只在每一笔的起点读一次（见 cj_hw_apply_effects）——这个 hook 逐点调用，
+ * 一次采样命中过上万次，逐点 fopen 是实打实的系统调用风暴（2026-09-24 审查）。
+ * 代价：改了参数从下一笔开始生效，不影响正在画的这一笔。 */
 static void cj_hw_refresh_config(void) {
     FILE *f = fopen(CJ_READING_QOL_PATH, "rb");
     if (!f) return;
@@ -222,6 +242,8 @@ static void cj_hw_refresh_config(void) {
     float speed_len_high = g_speed_len_high;
     cj_hw_read_float_key(buf, "\"hwStrokeSpeedLenHigh\"", &speed_len_high);
     if (speed_len_high >= 0.0f) g_speed_len_high = speed_len_high;
+
+    cj_hw_read_bool_key(buf, "\"hwStrokeDebug\"", &g_debug);
 }
 
 /* ctx 里 FUN_00f47530 自己维护的状态字段（跟点结构/点结构的方向字节无关，
@@ -317,7 +339,10 @@ static float cj_hw_speed_ratio(float w, const cj_hw_delta_t *d) {
  * 完全一致，不是巧合，是同一族"变宽几何生成器"共用的调用约定。日志前缀区分
  * 是哪个目标调用的，方便真机排查哪个笔型分支实际在起作用。 */
 static void cj_hw_apply_effects(const char *tag, float x, float y, void *ctx) {
-    cj_hw_refresh_config();
+    /* 每笔起点读一次配置；另每 1024 个点兜底读一次，万一某条路径的 has_prev 从不归零，
+     * 网页上改的开关也不会要等重启才生效。计数器非原子无所谓：只是个节流，多读少读一次都无害。 */
+    static unsigned calls = 0;
+    if (*((uint8_t *)ctx + HW_CTX_HAS_PREV_OFF) == 0 || (++calls & 1023u) == 0) cj_hw_refresh_config();
 
     float *width_ptr = (float *)((uint8_t *)ctx + 4);
     float w = *width_ptr;
@@ -325,7 +350,7 @@ static void cj_hw_apply_effects(const char *tag, float x, float y, void *ctx) {
     float nib_ratio = cj_hw_nib_ratio(w, &delta);
     float speed_ratio = cj_hw_speed_ratio(w, &delta);
 
-    fprintf(stderr, "[hw-stroke:%s] x=%.1f y=%.1f w=%.4f factor=%.3f nib_ratio=%.3f speed_ratio=%.3f len=%.2f\n",
+    if (g_debug) fprintf(stderr, "[hw-stroke:%s] x=%.1f y=%.1f w=%.4f factor=%.3f nib_ratio=%.3f speed_ratio=%.3f len=%.2f\n",
             tag, (double)x, (double)y, (double)w, (double)g_width_factor, (double)nib_ratio,
             (double)speed_ratio, (double)delta.len);
 
@@ -494,7 +519,9 @@ void _xovi_construct(void) {
     }
 
     uintptr_t dispatch_addr = 0;
-    if (cj_find_unique_pattern((const uint8_t *)base, size, PROLOGUE_HW_DISPATCH,
+    if (!g_debug) {
+        /* 纯诊断 hook，非调试模式不装（见 g_debug 头注） */
+    } else if (cj_find_unique_pattern((const uint8_t *)base, size, PROLOGUE_HW_DISPATCH,
                                 sizeof(PROLOGUE_HW_DISPATCH), &dispatch_addr)) {
         cj_install_hw_dispatch_hook(dispatch_addr);
     } else {

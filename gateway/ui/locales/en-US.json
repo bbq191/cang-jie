@@ -99,7 +99,7 @@
   "common.rejectedExt": "Format not accepted: only {ext}",
   "common.uploading": "Uploading…",
   "common.done": "done",
-  "common.networkError": "network error",
+  "common.networkError": "Network error: the device may be asleep or WiFi disconnected",
   "common.alreadyStaged": "already staged (same name & size) — skipped",
   "common.cjkCoverageTitle": "CJK basic-block coverage",
   "common.cjkCoverage": "CJK {pct}%",

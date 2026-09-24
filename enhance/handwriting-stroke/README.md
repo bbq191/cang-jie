@@ -17,7 +17,7 @@ cd ../../packaging && sh deploy-handwriting-stroke.sh <host>   # host 侧一键�
 
 设备端 `deploy/install.sh [--no-restart]` 需要同目录的 `xovi-ext-install.sh` 与 `devlib.sh`（由部署脚本一起推送，只拷单个 `install.sh` 不够）；行为、备份与重启判定同 `hl-snap` README「部署」。装到 `extensions.d/hw-stroke.so`。通用 trampoline 安装代码（`cj_patch_target`）在 [`../shared/`](../shared/PROVENANCE.md)，两个 xovi 扩展共用。
 
-**开关**：网页「管理 → 实验室」的"CJK 手写笔迹优化"是一个纯网页层派生开关——开 = 把 `hwStrokeNibMinRatio` 与 `hwStrokeSpeedMinRatio` 都写 `0.6`，关 = 都写 `1.0`（见 `gateway/src/enhance/qol.rs`）。不用重新部署 `.so`：扩展每次落笔时现读配置。角度/宽度/速度阈值这几个精调字段留给手改 `reading-qol.json`。
+**开关**：网页「管理 → 实验室」的"CJK 手写笔迹优化"是一个纯网页层派生开关——开 = 把 `hwStrokeNibMinRatio` 与 `hwStrokeSpeedMinRatio` 都写 `0.6`，关 = 都写 `1.0`（见 `gateway/src/enhance/qol.rs`）。不用重新部署 `.so`：扩展在每一笔的起点读一次配置（另每 1024 个点兜底读一次），改了从下一笔生效。2026-09-24 前是逐点读、逐点写日志，一次采样上万次系统调用和日志行。角度/宽度/速度阈值这几个精调字段留给手改 `reading-qol.json`。
 
 **`~/.local/share/cangjie-ime/reading-qol.json` 里的键**（`cangjie-ime` 是历史目录名；缺失/解析失败/越界的值都保持当前值，fail-safe）：
 
@@ -29,6 +29,7 @@ cd ../../packaging && sh deploy-handwriting-stroke.sh <host>   # host 侧一键�
 | `hwStrokeNibWidthLow` / `hwStrokeNibWidthHigh` | 6 / 20 | 宽度渐变阈值（两个效果共用）：基础宽度低于 Low 效果趋近关闭，高于 High 满强度 |
 | `hwStrokeSpeedMinRatio` | 1.0 | 提按（运笔速度代理）效果强度；1.0=关闭 |
 | `hwStrokeSpeedLenLow` / `hwStrokeSpeedLenHigh` | 1 / 8 | 相邻两点距离阈值（像素/采样点）：短→粗（慢/顿笔），长→细（快/带过） |
+| `hwStrokeDebug` | false | 调试：打开才逐点写 `[hw-stroke:…]` 日志、才装纯诊断的 FUN_00f3f9d0 分派 hook（后者只在加载时看，改了要重启 xochitl）。默认关，免得日志进 journal 后被壁纸服务、飞行记录仪逐行读放大负载 |
 
 > 白皮书 §03f 记过一次真机校准值（宽度阈值 5/20、速度阈值 1~10、强度 0.6），那是当时写进配置文件的值；上表是**代码里的默认值**，以代码常量（`src/hw_stroke.c`）为准。
 

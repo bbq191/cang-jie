@@ -108,7 +108,7 @@ impl Staging {
 
     /// 入库 PDF 的「优化」分支：`bookconv::pdf_ingest::classify_pdf` 先判漫画/无文字层/有文字层——
     /// 漫画或无文字层只裁边（格式不变，原地覆盖，对齐文字 EPUB 优化那条"原地覆盖"路径）；有文字层
-    /// 转 EPUB（产出 `<stem>.epub`，成功后删掉原 `.pdf`，照抄"先写点前缀临时文件、成功才落地"的结构
+    /// 转 EPUB（产出 `<stem>.epub`，成功后原 `.pdf` 挪进隐藏备份 `.pdf-originals/` 保留 7 天，照抄"先写点前缀临时文件、成功才落地"的结构
     /// 的"改名删原文件"结构，只是方向相反）。详见 `bookconv::pdf_ingest` 模块文档（分类阈值、
     /// 三个新依赖的分工、已知的公式区域边界粗粒度限制）。
     pub(super) fn optimize_pdf(&self, name: &str, p: &Path, mut on_progress: impl FnMut(usize, usize)) -> Result<String, String> {
@@ -122,6 +122,11 @@ impl Staging {
             PdfKind::TextLayer => {
                 let stem = name.strip_suffix(".pdf").unwrap_or(name);
                 let epub_path = p.with_file_name(format!("{stem}.epub"));
+                // 同名 EPUB 已在母版库 → 停下不转（2026-09-24 审查：此前 rename 直接覆盖掉那份书，
+                // 忙锁也只锁着 `.pdf` 这个名字，覆盖掉的书找不回来）。
+                if epub_path.exists() {
+                    return Err(format!("母版库里已有《{stem}.epub》，为免覆盖已停止转换；请先删除或改名那一份再优化"));
+                }
                 let tmp = p.with_file_name(format!(".{stem}.epub.optimizing.tmp"));
                 let (mut book, rep, color_css) = pdf_ingest::optimize_pdf_to_epub(p, &mut on_progress)?;
                 let bytes = match bookconv::epub::assemble_pdf_derived(&mut book, &color_css) {
@@ -138,10 +143,16 @@ impl Staging {
                     }
                     Ok(())
                 })?;
-                std::fs::remove_file(p).map_err(|e| format!("删除原 PDF 失败: {e}"))?;
+                // 原 PDF 不直接删，挪进隐藏备份目录保留 [`PDF_ORIGINALS_KEEP_SECS`]——转坏了（多栏/表格类
+                // PDF 重排效果差）还能找回原件（2026-09-24 审查：此前 `remove_file` 删了就没了）。
+                self.backup_pdf_original(name, p)?;
                 Ok(format!(
-                    "已优化《{stem}》（PDF→EPUB，{} 页，{} 章，{} 张图，{} 处公式）",
-                    rep.pages, rep.chapters, rep.images, rep.formula_blocks
+                    "已优化《{stem}》（PDF→EPUB，{} 页，{} 章，{} 张图，{} 处公式；原 PDF 在备份里保留 {} 天）",
+                    rep.pages,
+                    rep.chapters,
+                    rep.images,
+                    rep.formula_blocks,
+                    PDF_ORIGINALS_KEEP_SECS / 86_400
                 ))
             }
         }
@@ -185,7 +196,7 @@ impl Staging {
                 Err(e) if e.contains(optimize::CANCELLED_MSG) => sidecar::OptimizeCheck { status: "cancelled".into(), message: e.clone(), at, progress: None },
                 Err(e) => sidecar::OptimizeCheck { status: "failed".into(), message: e.clone(), at, progress: None },
             };
-            // 优化成功后条目可能改了名（长下载名规范成 `书名 - N卷`；有文字层 PDF 转成同名 `.epub` 并删掉原 `.pdf`）——
+            // 优化成功后条目可能改了名（长下载名规范成 `书名 - N卷`；有文字层 PDF 转成同名 `.epub` 并把原 `.pdf` 挪进备份）——
             // sidecar 是按条目名找文件的（`existing()`），原名这时候已经找不到文件，终态写会静默失败。这里探测一下
             // 有没有发生改名，写去正确的新名字（`on_progress` 那些中途写的进度还是按旧名字写，那时候文件确实
             // 还在原名下，没问题；只有这最后一次终态写需要跟着改名走）。
@@ -196,7 +207,7 @@ impl Staging {
     }
 
     /// 优化过程中同一个母版库条目可能被改名（不是新增）：长下载名规范成 `书名 - N卷`（同格式），或有文字层
-    /// PDF 转成 `<stem>.epub`（格式变了、原 `.pdf` 已删）。`name` 是异步操作发起时的原名，改名后原名找不到
+    /// PDF 转成 `<stem>.epub`（格式变了、原 `.pdf` 已挪进备份）。`name` 是异步操作发起时的原名，改名后原名找不到
     /// 文件，返回改名后的新名字给 sidecar 写终态用；其余情况（没改名、失败）原样返回 `name`。
     /// （漫画 EPUB 优化保持 EPUB，不会再变成 `.pdf`——2026-09-20 起。）
     pub(super) fn resolved_optimize_target(&self, name: &str) -> String {

@@ -99,7 +99,7 @@
   "common.rejectedExt": "格式不收：只接受 {ext}",
   "common.uploading": "上传中…",
   "common.done": "完成",
-  "common.networkError": "网络错误",
+  "common.networkError": "网络连接失败：设备可能在休眠，或 WiFi 已断开",
   "common.alreadyStaged": "已在母版库（同名同大小），跳过重传",
   "common.cjkCoverageTitle": "中文基本区覆盖率",
   "common.cjkCoverage": "中文 {pct}%",
