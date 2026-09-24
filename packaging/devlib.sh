@@ -117,12 +117,13 @@ cj_with_rootfs_rw() {
     mount -o remount,rw / || { echo "!! remount rw / 失败"; return 1; }
     CJ_RW_ACTIVE=1
     trap 'cj_rootfs_restore' EXIT
-    trap 'cj_rootfs_restore; exit 143' INT TERM HUP
+    # PIPE 也要接住：经 ssh 跑时连接断了，下一次输出就是 SIGPIPE，默认处置直接杀 shell、EXIT trap 不会执行
+    trap 'cj_rootfs_restore; exit 143' INT TERM HUP PIPE
     ( set -e; "$@" )
     cj_rc=$?
     sync
     cj_rootfs_restore
-    trap - EXIT INT TERM HUP
+    trap - EXIT INT TERM HUP PIPE
     return "$cj_rc"
 }
 

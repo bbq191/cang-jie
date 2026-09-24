@@ -54,7 +54,7 @@ if grep -q " /etc overlay " "$MOUNTS"; then
         # 2026-09-20：rw 窗口内被 kill/ssh 断开时也要恢复 ro（先卸 bind，否则 remount ro 会 busy）
         RW_OPEN=1
         trap 'if [ "$RW_OPEN" = "1" ]; then umount "$BIND" 2>/dev/null; mount -o remount,ro / 2>/dev/null; fi' EXIT
-        trap 'exit 143' INT TERM HUP
+        trap 'exit 143' INT TERM HUP PIPE   # PIPE：ssh 断开后写输出会收到它，不接住就不走 EXIT trap、rootfs 留在 rw
         mkdir -p "$BIND" && mount --bind / "$BIND" || { mount -o remount,ro / 2>/dev/null; echo "!! bind / 失败"; exit 1; }
         LOWER="$BIND/etc/chrony.conf"
         if is_cn "$LOWER"; then

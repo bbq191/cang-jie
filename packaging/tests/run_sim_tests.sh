@@ -128,6 +128,10 @@ check "with_rootfs_rw：remount rw 失败 → 非 0、不跑 body、无 ro 恢�
 body_kill() { kill -KILL "$BASHPID"; }
 cj_with_rootfs_rw body_kill >/dev/null 2>&1; rc=$?
 check "with_rootfs_rw：body 被 SIGKILL → 非 0，且仍恢复 ro" test "$rc" -ne 0 -a "$(last_mount)" = "mount -o remount,ro /"
+# 调用方 shell 自己在 rw 窗口里收到 SIGPIPE（ssh 断开后写输出）：仍恢复 ro
+: > "$CJ_SIM_LOG"
+sh -c ". '$PKG/devlib.sh'; body_pipe() { kill -PIPE \$\$; }; cj_with_rootfs_rw body_pipe" >/dev/null 2>&1
+check "with_rootfs_rw：调用方 shell 收到 SIGPIPE → 仍恢复 ro" test "$(last_mount)" = "mount -o remount,ro /"
 
 # install_usr_unit：源缺失 → 不 remount；verity → 3 且不 remount；成功 → wants 链接；幂等
 : > "$CJ_SIM_LOG"; cj_install_usr_unit x.service "$R/nope" multi-user.target.wants; rc=$?
