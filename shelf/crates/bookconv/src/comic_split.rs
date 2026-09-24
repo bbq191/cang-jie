@@ -233,12 +233,6 @@ fn fixed_page_chunks_range_sized(entries: &[Entry], spine: &[String], range_star
 /// 一页 (x)html 的 `<body>...</body>` 内部原文（不含 body 标签本身）。用于纯文字页——没有一张
 /// 图、原样保留正文不当成漫画图片页处理。解不出 `<body>` 时返回 `None`（异常文件，调用方按空页
 /// 处理，不硬凑）。
-fn body_inner(html: &str) -> Option<&str> {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    let re = RE.get_or_init(|| Regex::new(r#"(?is)<body\b[^>]*>(.*?)</body>"#).unwrap());
-    re.captures(html).and_then(|c| c.get(1)).map(|m| m.as_str())
-}
-
 /// 按规划出的一段 spine range 组一份独立 EPUB：range 内每页各自的图片重新收进
 /// `images/NNNN.{ext}`（去重、路径全新分配，不依赖原书目录结构），漫画图片页简化成
 /// "一张图占一页"的最小 body（原页面的 CSS/装饰 wrapper 对纯图片漫画页没有实质意义，不带过去，
@@ -306,7 +300,7 @@ fn build_piece_with(
         let Ok(html) = std::str::from_utf8(&e.data) else { continue };
         let imgs = imgs_referenced(html, dir_of(p));
         let body = if imgs.is_empty() {
-            body_inner(html).unwrap_or_default().trim().to_string()
+            crate::htmlproc::first_body_inner(html).unwrap_or_default().trim().to_string()
         } else {
             let mut b = String::new();
             for img in imgs {
