@@ -4,8 +4,8 @@
 
 | 文件 | 做什么 |
 |---|---|
-| `scan.c/.h` | `cj_find_exec_module`：读 `/proc/self/maps`，找到 `/usr/bin/xochitl` 的可执行段 |
-| `pattern.c/.h` | `cj_find_unique_pattern`：在段里搜特征码（目标函数开头的一串原始机器码），**必须恰好命中 1 处** |
+| `scan.c/.h` | `cj_find_exec_module`：读 `/proc/self/maps`，找到 `/usr/bin/xochitl` 的可执行段（连同被 `mprotect` 切开的续段，见下节） |
+| `pattern.c/.h` | `cj_find_unique_pattern`：在段里搜特征码（目标函数开头 32~40 字节的原始机器码），**必须恰好命中 1 处**。精确匹配先用 `memchr` 跳到首字节候选再整段比较（2026-09-24，16 MB 扫描 39.6 → 3.2 ms，与逐字节循环差分对拍一致） |
 | `trampoline_aarch64.c/.h` | `cj_build_far_jump`：拼一条跳到任意 64 位地址的 ARM64 远跳转（20 字节） |
 | `trampoline_patch.c/.h` | `cj_patch_target`：mprotect 目标页 → 把开头 20 字节抄进新分配的"调用桩"并接上跳回原函数的远跳转 → 把目标开头改写成跳到 handler → 刷指令缓存。任一步失败返回 0、不改任何字节 |
 | `tests/` | host 单测：`make test` |
