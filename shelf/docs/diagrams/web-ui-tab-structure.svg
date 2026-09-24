@@ -1,8 +1,8 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 640" font-family="sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 680" font-family="Noto Sans CJK SC, sans-serif">
 <defs>
 <marker id="ak" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#555"/></marker>
 </defs>
-<rect x="0" y="0" width="1080" height="640" fill="#fbfbfa"/>
+<rect x="0" y="0" width="1080" height="680" fill="#fbfbfa"/>
 <text x="540" y="30" text-anchor="middle" font-size="18" font-weight="bold" fill="#1a1a1a">网页「秘密花园」：首层四个 tab 与二级 tab（当前结构）</text>
 <text x="540" y="52" text-anchor="middle" font-size="12.5" fill="#6a6a6a">https://shelf.local/（443）· 登录后进入 · 顶栏右侧小圆点 = 事件流（SSE）连接状态</text>
 
@@ -17,71 +17,75 @@
 <!-- 传书 -->
 <rect x="20" y="148" width="250" height="40" rx="10" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.6"/>
 <text x="145" y="174" text-anchor="middle" font-size="15" font-weight="bold" fill="#1a1a1a">传书</text>
-<rect x="20" y="204" width="250" height="150" rx="10" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.6"/>
+<rect x="20" y="204" width="250" height="190" rx="10" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.6"/>
 <text x="34" y="228" font-size="13" font-weight="bold" fill="#1a1a1a">入库</text>
-<text x="34" y="248" font-size="11.5" fill="#3a3a3a">上传（EPUB / PDF）</text>
-<text x="34" y="266" font-size="11.5" fill="#3a3a3a">抓网文（贴 URL）</text>
-<text x="34" y="296" font-size="13" font-weight="bold" fill="#1a1a1a">母版库</text>
-<text x="34" y="316" font-size="11.5" fill="#3a3a3a">勾选 + 底部批量栏、加入位置下拉</text>
-<text x="34" y="334" font-size="11.5" fill="#3a3a3a">搜索 / 分页 25·50·100 / 处理进度</text>
+<text x="34" y="248" font-size="11.5" fill="#3a3a3a">上传（EPUB / PDF）· 抓网文（贴 URL）</text>
+<text x="34" y="276" font-size="13" font-weight="bold" fill="#1a1a1a">母版库</text>
+<text x="34" y="296" font-size="11.5" fill="#3a3a3a">勾选 + 底部三行操作栏、加入位置下拉</text>
+<text x="34" y="314" font-size="11.5" fill="#3a3a3a">只选一本时：下载原件 / 改名</text>
+<text x="34" y="332" font-size="11.5" fill="#3a3a3a">搜索 / 筛选 / 分页 / 处理进度</text>
+<text x="34" y="358" font-size="11.5" font-weight="bold" fill="#1a1a1a">原 PDF 备份（转 EPUB 后留 7 天）</text>
+<text x="34" y="376" font-size="11.5" fill="#3a3a3a">恢复回母版库 / 提前删除</text>
 
-<!-- 笔记 -->
 <rect x="280" y="148" width="250" height="40" rx="10" fill="#e8f5ec" stroke="#3f9a55" stroke-width="1.6"/>
 <text x="405" y="174" text-anchor="middle" font-size="15" font-weight="bold" fill="#1a1a1a">笔记</text>
-<rect x="280" y="204" width="250" height="150" rx="10" fill="#e8f5ec" stroke="#3f9a55" stroke-width="1.6"/>
+<rect x="280" y="204" width="250" height="190" rx="10" fill="#e8f5ec" stroke="#3f9a55" stroke-width="1.6"/>
 <text x="294" y="228" font-size="12.5" fill="#1a1a1a">浏览 ｜ 整理 ｜ 回收站</text>
-<text x="294" y="256" font-size="12.5" fill="#1a1a1a">导入 md 文档</text>
-<text x="294" y="276" font-size="11.5" fill="#3a3a3a">默认隐藏；开关在「管理→实验室」</text>
-<text x="294" y="296" font-size="11.5" fill="#3a3a3a">（notesImportMdEnabled）</text>
-<text x="294" y="324" font-size="11.5" fill="#3a3a3a">由笔记线 note-serve 注册，</text>
-<text x="294" y="342" font-size="11.5" fill="#3a3a3a">详见笔记线白皮书</text>
+<text x="294" y="252" font-size="12.5" fill="#1a1a1a">全文搜索</text>
+<text x="294" y="270" font-size="11.5" fill="#3a3a3a">勾画 / 手写转写 / 提问 / AI 回答</text>
+<text x="294" y="294" font-size="12.5" fill="#1a1a1a">导入 KOReader 批注（高亮与生词）</text>
+<text x="294" y="318" font-size="12.5" fill="#1a1a1a">导入 md 文档</text>
+<text x="294" y="336" font-size="11.5" fill="#3a3a3a">默认隐藏；开关在「管理→实验室」</text>
+<text x="294" y="366" font-size="11.5" fill="#3a3a3a">由笔记线服务注册，</text>
+<text x="294" y="384" font-size="11.5" fill="#3a3a3a">详见 notes/README.md</text>
 
-<!-- 其他 -->
 <rect x="540" y="148" width="250" height="40" rx="10" fill="#fff3d6" stroke="#c9971f" stroke-width="1.6"/>
 <text x="665" y="174" text-anchor="middle" font-size="15" font-weight="bold" fill="#1a1a1a">其他</text>
-<rect x="540" y="204" width="250" height="150" rx="10" fill="#fff3d6" stroke="#c9971f" stroke-width="1.6"/>
+<rect x="540" y="204" width="250" height="190" rx="10" fill="#fff3d6" stroke="#c9971f" stroke-width="1.6"/>
 <text x="554" y="228" font-size="13" font-weight="bold" fill="#1a1a1a">xochitl</text>
 <text x="554" y="246" font-size="11.5" fill="#3a3a3a">字体上传 / 中文回退链 / 加粗开关</text>
-<text x="554" y="272" font-size="13" font-weight="bold" fill="#1a1a1a">KOReader</text>
-<text x="554" y="290" font-size="11.5" fill="#3a3a3a">内层再分：字体 / 词典（三级嵌套）</text>
-<text x="554" y="316" font-size="13" font-weight="bold" fill="#1a1a1a">壁纸</text>
-<text x="554" y="334" font-size="11.5" fill="#3a3a3a">壁纸池 / 模式（enhance 线服务）</text>
+<text x="554" y="276" font-size="13" font-weight="bold" fill="#1a1a1a">KOReader</text>
+<text x="554" y="294" font-size="11.5" fill="#3a3a3a">内层再分：字体 / 词典（三级嵌套）</text>
+<text x="554" y="324" font-size="13" font-weight="bold" fill="#1a1a1a">壁纸</text>
+<text x="554" y="342" font-size="11.5" fill="#3a3a3a">壁纸池 / 模式（enhance 线服务）</text>
+<text x="554" y="376" font-size="11.5" fill="#3a3a3a">只列已装且在跑的服务</text>
 
-<!-- 管理 -->
 <rect x="800" y="148" width="250" height="40" rx="10" fill="#fbe9e4" stroke="#b0451f" stroke-width="1.6"/>
 <text x="925" y="174" text-anchor="middle" font-size="15" font-weight="bold" fill="#1a1a1a">管理</text>
-<rect x="800" y="204" width="250" height="150" rx="10" fill="#fbe9e4" stroke="#b0451f" stroke-width="1.6"/>
+<rect x="800" y="204" width="250" height="190" rx="10" fill="#fbe9e4" stroke="#b0451f" stroke-width="1.6"/>
 <text x="814" y="226" font-size="12.5" fill="#1a1a1a">基石与模块（探测 / 启停 / 卸载）</text>
 <text x="814" y="248" font-size="12.5" fill="#1a1a1a">模型管理（转写 / 问 AI）</text>
 <text x="814" y="270" font-size="12.5" fill="#1a1a1a">系统增强：画线吸附、battop 开关</text>
-<text x="814" y="292" font-size="12.5" fill="#1a1a1a">电池刺客（battop 运行时才出现）</text>
-<text x="814" y="314" font-size="12.5" fill="#1a1a1a">实验室：手写笔迹、漫画页边距、</text>
-<text x="814" y="334" font-size="12.5" fill="#1a1a1a">导入 md 文档 三个开关</text>
+<text x="814" y="288" font-size="11.5" fill="#3a3a3a">每项带加载徽章：已加载/待重启/未加载</text>
+<text x="814" y="312" font-size="12.5" fill="#1a1a1a">电池刺客（battop 运行时才出现）</text>
+<text x="814" y="336" font-size="12.5" fill="#1a1a1a">实验室：手写笔迹、漫画页边距、</text>
+<text x="814" y="356" font-size="12.5" fill="#1a1a1a">导入 md 文档 三个开关</text>
+
 
 <!-- 底部：数据通路 -->
-<rect x="20" y="384" width="1030" height="236" rx="10" fill="#f0f0ee" stroke="#8a8a8a" stroke-width="1.6"/>
-<text x="535" y="410" text-anchor="middle" font-size="14" font-weight="bold" fill="#1a1a1a">页面怎么保持最新（无轮询）与怎么改设置</text>
+<rect x="20" y="424" width="1030" height="236" rx="10" fill="#f0f0ee" stroke="#8a8a8a" stroke-width="1.6"/>
+<text x="535" y="450" text-anchor="middle" font-size="14" font-weight="bold" fill="#1a1a1a">页面怎么保持最新（无轮询）与怎么改设置</text>
 
-<rect x="40" y="428" width="300" height="76" rx="8" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.6"/>
-<text x="190" y="452" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">各领域服务（loopback）</text>
-<text x="190" y="472" text-anchor="middle" font-size="11.5" fill="#3a3a3a">在变更发生处发事件</text>
-<text x="190" y="490" text-anchor="middle" font-size="11.5" fill="#3a3a3a">GET /events</text>
+<rect x="40" y="468" width="300" height="76" rx="8" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.6"/>
+<text x="190" y="492" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">各领域服务（loopback）</text>
+<text x="190" y="512" text-anchor="middle" font-size="11.5" fill="#3a3a3a">在变更发生处发事件</text>
+<text x="190" y="530" text-anchor="middle" font-size="11.5" fill="#3a3a3a">GET /events</text>
 
-<rect x="390" y="428" width="300" height="76" rx="8" fill="#fff3d6" stroke="#c9971f" stroke-width="1.6"/>
-<text x="540" y="452" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">网关 Hub 汇聚</text>
-<text x="540" y="472" text-anchor="middle" font-size="11.5" fill="#3a3a3a">补 svc 字段后转发</text>
-<text x="540" y="490" text-anchor="middle" font-size="11.5" fill="#3a3a3a">GET /api/events（SSE，需登录）</text>
+<rect x="390" y="468" width="300" height="76" rx="8" fill="#fff3d6" stroke="#c9971f" stroke-width="1.6"/>
+<text x="540" y="492" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">网关 Hub 汇聚</text>
+<text x="540" y="512" text-anchor="middle" font-size="11.5" fill="#3a3a3a">补 svc 字段后转发</text>
+<text x="540" y="530" text-anchor="middle" font-size="11.5" fill="#3a3a3a">GET /api/events（SSE，需登录）</text>
 
-<rect x="740" y="428" width="290" height="76" rx="8" fill="#e8f5ec" stroke="#3f9a55" stroke-width="1.6"/>
-<text x="885" y="452" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">浏览器 EventSource</text>
-<text x="885" y="472" text-anchor="middle" font-size="11.5" fill="#3a3a3a">只刷对应 tab；不在前台的</text>
-<text x="885" y="490" text-anchor="middle" font-size="11.5" fill="#3a3a3a">记脏，切过去再刷</text>
+<rect x="740" y="468" width="290" height="76" rx="8" fill="#e8f5ec" stroke="#3f9a55" stroke-width="1.6"/>
+<text x="885" y="492" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">浏览器 EventSource</text>
+<text x="885" y="512" text-anchor="middle" font-size="11.5" fill="#3a3a3a">只刷对应 tab；不在前台的</text>
+<text x="885" y="530" text-anchor="middle" font-size="11.5" fill="#3a3a3a">记脏，切过去再刷</text>
 
-<line x1="340" y1="466" x2="388" y2="466" stroke="#555" stroke-width="1.6" marker-end="url(#ak)"/>
-<line x1="690" y1="466" x2="738" y2="466" stroke="#555" stroke-width="1.6" marker-end="url(#ak)"/>
+<line x1="340" y1="506" x2="388" y2="506" stroke="#555" stroke-width="1.6" marker-end="url(#ak)"/>
+<line x1="690" y1="506" x2="738" y2="506" stroke="#555" stroke-width="1.6" marker-end="url(#ak)"/>
 
-<text x="40" y="540" font-size="12" fill="#1a1a1a">批量队列 / 并发闸门：网关自己也发事件（area=books），母版库进度走同一条流。</text>
-<text x="40" y="562" font-size="12" fill="#1a1a1a">注册表目录 inotify：服务启停 → manage 事件 → tab 集合变了就整页重载。</text>
-<text x="40" y="584" font-size="12" fill="#1a1a1a">系统增强 / 实验室开关：PUT /api/enhance/qol → 整份 reading-qol.json 读入、只改指定键、原样写回。</text>
-<text x="40" y="606" font-size="12" fill="#1a1a1a">语言：GET /ui/locales/{lang}（zh-CN / en-US），缺 key 显示 key 本身，不认识的语言落中文。</text>
+<text x="40" y="580" font-size="12" fill="#1a1a1a">批量队列 / 并发闸门：网关自己也发事件（area=books），母版库进度走同一条流。</text>
+<text x="40" y="602" font-size="12" fill="#1a1a1a">注册表目录 inotify：服务启停 → manage 事件 → tab 集合变了就整页重载。</text>
+<text x="40" y="624" font-size="12" fill="#1a1a1a">系统增强 / 实验室开关：PUT /api/enhance/qol → 整份 reading-qol.json 读入、只改指定键、原样写回。</text>
+<text x="40" y="646" font-size="12" fill="#1a1a1a">语言：GET /ui/locales/{lang}（zh-CN / en-US），缺 key 显示 key 本身，不认识的语言落中文。</text>
 </svg>

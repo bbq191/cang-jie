@@ -1,209 +1,292 @@
 # reMarkable 系统增强线（enhance）白皮书
 
-> 记"怎么决定、真机怎么验、踩了什么坑"。**§ 编号保持不变**（别处有交叉引用）；读现状先看 §00b，待办看 §05，踩坑看 §04。
+> 这篇讲**原理、决策、真机验证和踩坑**；每个工具怎么装、怎么用，看各自的 README。
+> **§ 编号固定不变**（代码注释和别的文档按编号引用），所以章节顺序和编号不完全一致：先读 §00b 现状，原理从 §02 起，踩坑 §04，待办 §05。
 
 ## 读这篇你能得到什么
 
 | 你想知道 | 读 |
 |---|---|
-| 这条线现在有什么、各自什么状态 | §00b（含总览图） |
-| 为什么单点增强要单独成线、不塞进老项目 | §00、§01 |
-| 网页开关怎么和这些工具对接 | §02 |
-| 荧光笔"划哪吸哪"是怎么修的、怎么排查出来的 | §03a |
-| 手写笔锋渲染：xochitl 怎么画笔画、我们 hook 在哪、做过什么又撤回了什么 | §03c（反解）→ §03e（第一版）→ §03f（速度代理 + 第二个 hook） |
-| Ghidra 怎么装 | §03d（指向 [`../../defw/README.md`](../../defw/README.md)） |
-| 逆向/hook 时踩过哪些坑 | §04 |
-| 还有什么没做 | §05 |
+| 这条线有哪些工具、各自现在什么状态、怎么开关 | §00b |
+| 几个术语（xovi、hook、特征码、trampoline…）是什么意思 | §00b 末尾「术语速查」 |
+| 网页开关写到哪里、怎么确认扩展真的生效了 | §02 |
+| xovi 扩展从加载到 hook 生效的完整流程 | §02 流程图 |
+| 荧光笔"划哪吸哪"怎么修的 | §03a |
+| 电池刺客为什么不开机自启、两次冻机怎么回事 | §03b |
+| 手写笔锋：xochitl 怎么画笔画、hook 在哪、做过什么又撤回了什么 | §03c（逆向）→ §03e（第一版）→ §03f（速度代理 + 第二个 hook）→ §03g（降负载） |
+| 字体、壁纸服务和 lo-alias 在这条线里的位置 | §03h |
+| 为什么单点工具要单独成线 | §00、§01 |
+| 踩过的坑 / 还没做完的事 | §04 / §05 |
 
-> 这本白皮书写的是"系统增强线"（`enhance/`，2026-09-09 起的顶层项目线）。旧 `xovi-extensions/` 里那套设备端 QML/UI 增强（reading-qol / font-menu）早已搬出仓库，跟这里没有从属关系，别混。
-
-## 00｜定位与原则
-
-**起因**：2026-09-09 用户反馈"划线没有按 CJK 精确吸附"，排查发现根因是完整中文化扩展 `cangjie-langhook.so` 整个从设备上消失了（见 §03a）。第一版修复直接在老项目 `chinese-ime/langhook` 里加了个运行期开关（`CANGJIE_IME_HOOKS=0`）。用户用三轮话把方向纠正清楚：
-
-1. "cjk 精确吸附，不动老项目，在新路径下工作，类似 shelf/"——第一版改动全部撤回，另起炉灶。
-2. 不要只是"挪个单功能目录"，要建一个能装下这一类"跨块单点增强工具"的顶层项目线（"不仅有精准吸附，还有笔锋和电池刺客等等"）。
-3. 定名 `enhance/`（系统增强线），跟 `shelf/`、`notes/` 并列。
-
-**三条硬原则**（在纠正过程中形成，不是事先定好的）：
-
-1. **单点增强工具不塞进已有大项目**——哪怕改动只有几十行，只要功能能独立部署、独立生命周期，就独立成目录。
-2. **复用不复制**（后来因老项目搬出仓库，改为"剥离移植成独立副本、不再对接旧路径"，见 `../shared/PROVENANCE.md`）。
-3. **一份产物两种用法，别搞两份构建**——需要功能子集时优先运行期开关，而不是编译期 `#ifdef`/构建变体（后者会让老项目里一批函数在特殊构建下变成死代码、还要记两份产物的差异）。最终体现为：`hl-snap/` 是**全新独立源码**（连 `_xovi_shouldLoad` 判据都不同：用自己的目标特征码，不借用 `setLanguageCode`）。
-
-## 00b｜现状总览
+## 00b｜现状总览（先读这个）
 
 ![enhance 的五个工具怎么接到设备上](diagrams/enhance-overview.svg)
 
-| 组件 | 类型 | 状态 |
-|---|---|---|
-| `hl-snap/` | xovi 扩展（C，ARM64） | ✅ 真机通。真机 journal 确认 hook 装上（`FUN_00f05ad0@0xf03670`），健康检查通过（`is-active` / `NRestarts` / `MainPID`，含延迟复查）（§03a） |
-| `handwriting-stroke/` | xovi 扩展（C，ARM64） | ✅ 两个 hook 目标真机通：`FUN_00f47530`（书法笔专属）+ `FUN_00f4c8d0`（钢笔/铅笔/马克笔等日常工具，真机命中 10033 次，覆盖面是前者近 5 倍）。两个效果：笔尖角度模型（方向敏感）+ 提按速度代理（方向无关）。用户反馈"看上去还行"。**`bVar16<4`（最常用钢笔/铅笔量级）仍摸不到**（§03c–§03f） |
-| `battop/` | Rust 二进制（采样诊断服务） | ✅ 真机通（历史更早，不是本线首创；2026-09-09 搬进本线）。**有意不随开机自启**，原因见其 `FINDINGS.md` 与 `battop/README.md` |
-| `wallpaper-serve/`、`font-serve/` | Web 服务（挂网关） | ✅ 真机通。2026-09-11 从 `shelf/services/` 挪进来——用户判断"壁纸"/"字体"概念上更像系统增强、而非"书架内容管理"；运行时行为零变化，只是编译产物来源目录变了 |
-| `shared/`、`lo-alias/` | 剥离移植的独立副本 | 2026-09-11 因 `chinese-ime/` 挪出仓库，原本路径引用它的三个工具文件（特征码扫描 + trampoline）和 `cangjie-lo-alias.sh` 都改成本目录下的独立副本（后者去掉了 `cangjie-` 前缀），来龙去脉见各自 `PROVENANCE.md` / `README.md` |
+这条线是一组**互相独立的单点增强工具**，都不修改 xochitl（reMarkable 自带的阅读/笔记程序）本身。设备固件 3.28.0.172。
 
-**未闭环**：集中在 `handwriting-stroke/`——`bVar16<4` 虚函数动态分发目标未确认、`FUN_00f4f430`（`bVar16==3`）因前 20 字节有条件分支不能安全 patch、当前参数只是初步校准起点。见 §05。
+**hl-snap —— 荧光笔 CJK 精确吸附**（[README](../hl-snap/README.md)）
+用荧光笔划中文时，划哪就高亮哪，不再整行吸附。是 xovi 扩展 `hl-snap.so`，hook 一个函数。**✅ 真机通，日常在用**。开关：网页「管理 → 系统增强」，写 `hlSnapCjk`，**默认开**，下一次划线即生效。
 
-> `chinese-ime/` 挪出仓库后，`cangjie-langhook.so` 是否仍在设备上，取决于设备当前状态（2026-09-09 曾发现它从设备上整个消失）。它与 `hl-snap.so` **不能同时部署**（都 patch `FUN_00f05ad0`），见 §04。
+**handwriting-stroke（hw-stroke）—— CJK 手写笔锋**（[README](../handwriting-stroke/README.md)）
+按笔尖角度和运笔速度调整笔画粗细。是 xovi 扩展 `hw-stroke.so`，hook 两个"变宽几何"函数。**✅ 书法笔和钢笔/铅笔/马克笔等日常工具真机通**；最常用的一档钢笔/铅笔（`bVar16<4`）还摸不到；真实压感已放弃。09-24 起每笔只读一次配置、逐点日志默认关。开关：网页「管理 → 实验室」，**默认关**，下一笔生效。
+
+**battop —— 电池刺客**（[README](../battop/README.md)）
+按进程/应用/唤醒源统计耗电的采样服务。**✅ 真机通，但有意不开机自启**：它和两次整机冻死有关（08-29 坐实，09-23 时间吻合），09-23 起采样循环里已不创建任何子进程。开关：网页「管理 → 系统增强」，`systemctl start/stop`；开着时出现「电池刺客」数据页。
+
+**wallpaper-serve —— 休眠壁纸**（[README](../wallpaper-serve/README.md)）
+网页上传即用、唤醒自动轮换，靠 xochitl 的隐藏配置键 `SleepScreenPath`。**✅ 真机通**。入口「其他 → 壁纸」。
+
+**font-serve —— xochitl 字体**（`../font-serve/src/main.rs` 头注；原理在书架白皮书）
+网页上传字体即装进 fontconfig，维护中文回退链。**✅ 真机通**。入口「其他 → xochitl」，重开字体菜单即可选。
+
+**共用件**：[`shared/`](../shared/PROVENANCE.md) 是两个 xovi 扩展共用的特征码扫描 + trampoline 代码；[`lo-alias/`](../lo-alias/README.md) 是让 `10.11.99.1` 在不插 USB 时也可达的小脚本（网关启动前调用）。
+
+**当前设备状态**（2026-09-24 只读核对）：`extensions.d/` 里有 `appload.so`、`hl-snap.so`、`hw-stroke.so`、`qt-resource-rebuilder.so`，**没有** `cangjie-langhook.so`；两个本线 `.so` 与仓库版本 md5 一致，journal 里三个 hook 都"安装完成"；battop 已装、当前停着。
+
+**未闭环**（详见 §05）：`hw-stroke` 的 `bVar16<4` 分支；两个扩展能共存依赖加载顺序（§04「hook 安全性」最后一条，代码推断、未真机复现）；lo-alias 的 usb1 冷启动场景在现行接法下未重新验证。
+
+### 术语速查
+
+| 术语 | 意思 |
+|---|---|
+| xovi | 第三方扩展加载框架。靠 systemd drop-in 用 `LD_PRELOAD` 把 `xovi.so` 带进 xochitl，再加载 `~/xovi/extensions.d/` 下的每个文件 |
+| xovi 扩展 | xovi 加载的 `.so`，导出 `_xovi_shouldLoad`（要不要加载）和 `_xovi_construct`（加载后做什么） |
+| hook | 把某个函数的入口改成先跳到我们自己的代码（handler），再决定调不调原函数 |
+| 特征码 | 目标函数开头的一串原始机器码。按"代码长什么样"找函数，而不是写死地址；换固件后找不到就自动不加载 |
+| trampoline / 调用桩 | 被覆盖的原函数开头字节 + 一条跳回原函数的指令，放在新分配的内存里，让 handler 还能调用原函数 |
+| `FUN_00xxxxxx` | Ghidra（逆向工具）给无符号函数起的名字，数字是地址 |
+| qmd | qt-resource-rebuilder 的 QML 补丁文件，xochitl 启动时读一次，用来改界面 |
+| `reading-qol.json` | `~/.local/share/cangjie-ime/reading-qol.json`，几个开关共用的配置文件（目录名是历史遗留） |
+
+## 00｜定位与原则
+
+**起因**：2026-09-09 用户反馈"划线没有按 CJK 精确吸附"，查下去是完整中文化扩展 `cangjie-langhook.so` 整个从设备上消失了（§03a）。第一版修复在老项目 `chinese-ime/langhook` 里加运行期开关；用户纠正了三轮：不动老项目、另起一个能装下"笔锋、电池刺客等等"这类工具的顶层项目线、定名 `enhance/`，和 `shelf/`、`notes/` 并列。
+
+**三条原则**（在纠正过程中形成）：
+
+1. **单点工具不塞进已有大项目**：哪怕只有几十行，只要能独立部署、有独立生命周期，就独立成目录。
+2. **不对接已移走的旧路径**：需要老项目的代码就拷贝一份独立维护（`shared/`、`lo-alias/` 都是这样来的）。
+3. **一份产物两种用法，别搞两份构建**：要功能子集优先用运行期开关，而不是编译期 `#ifdef` 或构建变体。
 
 ## 01｜架构决策
 
-**为什么不是"给 `chinese-ime/langhook` 加个开关"，而是整个独立出来？** 第一版运行期开关方案技术上可行、真机也验证通过——但它仍是"一份包含完整拼音输入法 + 荧光笔吸附的二进制，靠环境变量关掉不想要的部分"，源码层面两者还绑在一起，对老项目的任何改动都可能影响荧光笔吸附这个独立诉求的构建产物。用户要的是**源码层面的独立**：`hl-snap/` 现在是独立的 `.c` + `.xovi` 元数据 + `Makefile` + 部署脚本，产出跟 `cangjie-langhook.so` 不同名（`hl-snap.so`）、不同 `_xovi_shouldLoad` 判据的扩展。
+**为什么 hl-snap 整个独立，而不是给 langhook 加开关？** 加开关技术上可行、也真机验证过，但源码仍绑在一个 4800 多行、混着拼音输入法等一堆 hook 的文件里，改老项目随时可能波及吸附这个独立诉求。`hl-snap/` 现在是独立的 `.c` + 元数据 + `Makefile` + 部署脚本，产物名和加载判据都不同。
 
-**为什么 `_xovi_shouldLoad` 用自己的目标特征码，不借用 `setLanguageCode`？** 在老项目里 `setLanguageCode` 是"总闸"——所有 hook 能不能装，先看它的特征码在不在。这对完整输入法线合理（它本身也是要 hook 的目标），但对只关心荧光笔吸附的独立扩展不合理：`hl-snap.so` 装不装应只取决于它自己要 patch 的 `FUN_00f05ad0` 还在不在。
+**为什么 hl-snap 用自己的特征码当加载判据？** langhook 里所有 hook 能不能装，先看 `setLanguageCode` 的特征码在不在（"总闸"）。这对输入法合理，对只管吸附的扩展不合理：`hl-snap.so` 装不装只该取决于它要 patch 的 `FUN_00f05ad0` 还在不在。
 
-**为什么 `battop/` 搬进来？** 概念上它属于"跨块单点增强工具"，只是历史上先于这条线存在。搬家保留了 `FINDINGS.md`（那次事故调查是 battop 自己的历史）；早期诊断脚本 2026-09-11 也归档进 `battop/history/`。
+**为什么 battop、字体、壁纸服务也归这里？** 概念上都是"跨块的单点增强工具"，只是历史上先存在于别处（`misc/`、`shelf/services/`）。搬家不改运行时行为，见附录。
 
-**命名遗留**：`enhance/` 与旧 `xovi-extensions/`（设备端 QML/UI 增强）曾撞名，两者没有从属关系；后者已搬出仓库，撞车对象暂时物理上不存在，但这不算"已解决"——若它以后被捞回来，按"`xovi-extensions/` 管 QML/UI 层增强、`enhance/` 管更底层的单点工具"分工（这只是设想，非已拍板决定，要动这条边界得再问用户）。
+**命名遗留**：旧 `xovi-extensions/`（设备端 QML/UI 增强，reading-qol / font-menu）已移出仓库，和本线没有从属关系。若以后捞回来，设想按"它管 QML/UI 层、`enhance/` 管更底层的单点工具"分工——这只是设想，没拍板，动这条边界要先问用户。
 
-## 02｜跟网关网页面板的关系
+## 02｜网页开关、xovi 加载机制与"开关≠已生效"
 
-这条线的名字不是巧合——2026-09-09 更早些时候，网页「管理」页新增了「系统增强」二级 tab，把 `hlSnapCjk` 开关和 battop 启停做成网页可操作的面板（代码在 `gateway/src/enhance/{mod,qol,battop}.rs`，2026-09-11 前叫 `shelf/services/shelf-gateway/src/enhance/`）。分工：
+![网页开关 → 落到设备上的什么 → 什么时候生效](diagrams/enhance-switches.svg)
 
-- **`enhance/`（本白皮书）**管这些工具**本身怎么实现、怎么部署**；
-- **`gateway/src/enhance/`** 管**网页上怎么远程控制它们**——只走 `systemctl` 和读写 `~/.local/share/cangjie-ime/reading-qol.json`（`hl-snap.so` / `hw-stroke.so` 读的是同一份文件），与仓库源码目录无代码依赖，两边靠约定的文件路径/systemd 单元名对接。
+**分工**：`enhance/` 管工具本身怎么实现、怎么部署；[`gateway/src/enhance/`](../../gateway/src/enhance/) 管网页上怎么远程控制它们。两边没有代码依赖，只靠约定的文件路径和 systemd 单元名对接：
 
-**网页现状**（以 `gateway/ui/app.js` 为准；网页那边后续又演进过几轮，纯网页层变化，`enhance/` 代码零变化，细节见 `shelf/docs/reMarkable书架白皮书.md` §03aj–§03an）：
-
-| 开关 | 位置 | 写什么 |
+| 开关 | 网页位置 | 落到哪里 |
 |---|---|---|
-| CJK 荧光笔精确吸附 | 「管理 → 系统增强」 | `hlSnapCjk`（默认开） |
-| 电池刺客 | 「管理 → 系统增强」（2026-09-21 从「实验室」移来）；开了才出现「电池刺客」数据页 | `systemctl start/stop battop` |
-| CJK 手写笔迹优化 | 「管理 → 实验室」 | 纯网页层派生开关：`hwStrokeNibMinRatio < 1.0` 视为已开；开写 `0.6`、关写 `1.0`（两个 min_ratio 字段同步写） |
+| CJK 荧光笔精确吸附 | 管理 → 系统增强 | `reading-qol.json` 的 `hlSnapCjk`（默认开） |
+| 电池刺客 | 管理 → 系统增强（09-21 从实验室移来）；开着才出现「电池刺客」数据页 | `systemctl start/stop battop` |
+| CJK 手写笔迹优化 | 管理 → 实验室 | 网页层派生开关：开写 `hwStrokeNibMinRatio` = `hwStrokeSpeedMinRatio` = 0.6，关写 1.0；`NibMinRatio < 1.0` 显示为已开 |
 
-**开关 ≠ 已生效**（2026-09-24 加）：两个扩展开关旁边各有一枚「已加载 / 未加载」徽章，「管理 → 基石」另列一行「xochitl 里生效的扩展」。数据来自 `gateway/src/enhance/loaded.rs`：找 `comm==xochitl` 且父进程为 1 的主进程（排除渲染 PDF 时 fork 出的同名 worker），读它的 `/proc/<pid>/maps`，映射了哪个 `extensions.d/*.so` 就是真加载了，`xovi.so` 在不在说明 xovi 有没有生效。起因是两次"开关看着开了、其实没生效"：09-09 langhook 整个从设备上消失（§03a），hw-stroke 因 GLIBC 版本不符静默加载失败（§04）。开关只写配置，扩展没加载时开了也没用，现在网页上直接看得见。「漫画页边距最小化」靠的是 qmd 补丁 `shelf-comic-margins.qmd`，不是 `.so`，由 qt-resource-rebuilder 在 xochitl 启动时读一次：qt-resource-rebuilder.so 在主进程里、补丁文件在它的 exthome、且修改时间早于 xochitl 启动时间（`/proc/<pid>/stat` 第 22 列 + `/proc/stat` 的 btime），算已载入；文件比进程新报「待重启」。这是按加载机制推断，看不到补丁里的 LOCATE 是否全部命中。「导入 md 文档」只控制网页子标签，标「网页功能」，没有加载这回事。
+网页 UI 的演进细节见书架白皮书 §03aj–§03an（纯网页层变化）。
 
-写这个共享文件遵守**全量写回**铁律：`gateway/src/enhance/qol.rs` 把整份文件当不透明 JSON map 读进来、只覆盖要改的键，不知道的键原样写回，避免冲掉别处（旧原生设置页、C hook）写入的开关。
+**全量写回**：`reading-qol.json` 是多方共享的文件（网关、旧原生设置页、C 扩展都读写）。`gateway/src/enhance/qol.rs` 把整份文件当不透明 JSON 读进来、只改要改的键，不认识的键原样写回，并在进程内串行化，避免冲掉别处写的开关。
 
-## 03a｜`hl-snap/` 诞生记（2026-09-09，真机通）
+### xovi 扩展怎么生效
 
-**起因排查**：用户反馈划线没有精确吸附。`journalctl -u xochitl` 搜 `cangjie` **零命中**——正常加载会打一串 `[cangjie]` 初始化日志，一行都没有，说明扩展压根没被 xovi 尝试加载，不是"装了但某个 hook 没生效"。查文件确认：`find / -iname "cangjie-langhook.so*"` 全设备零命中，连同 `~/.local/share/cangjie-ime/` 下 5 个词典 blob 一起消失，只有 `reading-qol.json` 幸存（"裸机恢复"类重置的典型后果，见 [`../../docs/INSTALL.md`](../../docs/INSTALL.md) OTA 一节）。
+![xovi 扩展从加载到 hook 生效](diagrams/xovi-hook-lifecycle.svg)
 
-**顺带发现一处过期且危险的记录**：当时的项目说明里写的持久化机制是往 `/usr/lib/systemd/system/xochitl.service.d/` 放 drop-in，但那条路已在 2026-08-16 因**两次真机 dm-verity A/B 回滚变砖**而放弃；现行机制是持久源放 `~/xovi/services/xochitl.service/*.conf`（`/home`），`xovi/start` 遍历这些源目录拷进新挂载的 `/etc/.../xochitl.service.d/` tmpfs 再重启对应 unit，全程不碰 `/usr`。（文档指向"已因变砖而放弃的危险方案"，比普通的文档滞后风险级别高得多，发现要立刻改。）
+两个扩展都走这套流程，代码在 `shared/`：
 
-**方案演进两版**：
+1. xovi 在 xochitl 启动时加载 `extensions.d/` 下的每个文件——所以备份绝不能留在这个目录。
+2. `_xovi_shouldLoad` 在 xochitl 代码段里搜特征码，恰好命中 1 处才加载；换了固件、函数变了，就不加载，xochitl 按原生行为跑。这是主要的 fail-safe。
+3. `_xovi_construct` 再搜一次拿地址，用 trampoline 改写目标函数开头 20 字节。改写的前提是这 20 字节里没有分支和 PC 相对寻址（搬进调用桩后会算错），每个候选都要逐条反汇编核对（§04）。
+4. 运行时每次调用先进 handler，读开关决定改不改；配置缺失或越界就用默认值。
 
-1. 第一版（后来整个撤回）：在 `chinese-ime/langhook/hook_init.c` 加运行期开关 `CANGJIE_IME_HOOKS`，`=0` 时跳过拼音输入法/EF/KBS 那 8 个 hook、只留荧光笔扩张 hook。真机验证通过，但用户要求"不动老项目"，整段撤回。
-2. 第二版（最终形态）：独立最小扩展 `enhance/hl-snap/`，见 §01。
+### 开关≠已生效（2026-09-24 加）
 
-**真机验证**（第二版）：完整备份 → 移除设备上第一版残留的 `cangjie-langhook.so` + 配置（两者不能共存，会抢同一个 hook 目标）→ scp + md5 校验部署 `hl-snap.so` → `xovi/start` → journal：
+开关只写配置；扩展根本没加载时，开了也没用。历史上两次"开关看着开了、其实没生效"：09-09 langhook 整个从设备上消失（§03a），hw-stroke 因 GLIBC 版本不符静默加载失败（§04）。现在网页直接显示：
 
-```
-[hl-snap] _xovi_shouldLoad: 固件兼容(FUN_00f05ad0@0xf03670) → 加载
-[hl-snap] 荧光笔EXPAND hook 安装完成 @ 0xf03670（neuter=1）
-```
+- 两个扩展开关旁各有「已加载 / 未加载」徽章；「管理 → 基石」另列一行"xochitl 里生效的扩展"。
+- 数据来自 `gateway/src/enhance/loaded.rs`：找 `comm == xochitl` 且父进程是 1 的主进程（排除渲染 PDF 时 fork 出的同名子进程），读它的 `/proc/<pid>/maps`，映射了哪个 `extensions.d/*.so` 就算已加载；映射了 `xovi.so` 说明 xovi 生效。
+- **徽章的边界**：它只证明 `.so` 进了进程（走完了 `_xovi_shouldLoad`），不证明 hook 装上了；后者看 journal 里的"hook 安装完成"。§04 记了一种"已加载但 hook 没装上"的可能情形。
+- 「漫画页边距最小化」靠 qmd 补丁 `shelf-comic-margins.qmd`，不是 `.so`。判定：qt-resource-rebuilder.so 在主进程里、补丁文件在它的 exthome、且修改时间早于 xochitl 启动时间（`/proc/<pid>/stat` 第 22 列 + `/proc/stat` 的 btime）算已载入；文件比进程新报「待重启」。这是按加载机制推断，看不到补丁里的 LOCATE 是否全部命中。
+- 「导入 md 文档」只控制网页子标签，标「网页功能」，没有加载这回事。
 
-`/proc/<pid>/maps` 里 `hl-snap` 段数 0→4、`cangjie-langhook` 段数降回 0；`is-active` / `NRestarts` / `MainPID` 健康检查通过（含延迟复查排除慢速崩溃循环）。地址 `0xf03670` 与第一版真机验证时一致，确认特征码在 3.28.0.172 上仍唯一命中。
+## 03a｜hl-snap：荧光笔 CJK 精确吸附（2026-09-09，真机通）
 
-## 03b｜`battop/` 搬迁（2026-09-09，纯目录搬家）
+**病根**：xochitl 划线后调 `FUN_00f05ad0`（3.28.0.172 上在 `0xf03670`）把选区向两边扩张到整个"词"，分词靠空格；中文没有空格，于是一小段扩成整行。修法：hook 这个函数，选区第一个字是 CJK 时不调原函数。逻辑逐字节来自 langhook 里 2026-08-23 真机验证过的那段代码。
 
-把旧 `misc/battery-audit/battop/`（含 `.cargo/config.toml`、`Cargo.*`、`install.sh`、`src/`）与 `FINDINGS.md` 移进 `enhance/battop/`，同步更新了 4 处仓库文档引用和 `gateway` 里 `battop.rs` 的注释；设备端部署路径 `/home/root/battop` 不受影响。2026-09-11 清理旧顶层 `misc/` 时，剩下的诊断脚本历史也归档进了 `battop/history/`（当初没跟着搬是因为它属于"怎么发现该建 battop"的调查方法论历史，但 `misc/` 已无别的内容，跟唯一引用它的 battop 一起走更合适）。
+**怎么查出来的**：`journalctl -u xochitl` 搜 `cangjie` **零命中**——正常加载会打一串初始化日志，一行都没有说明扩展压根没被加载，而不是"装了但 hook 没生效"。`find` 全设备也找不到 `cangjie-langhook.so`，`~/.local/share/cangjie-ime/` 下 5 个词典也没了，只剩 `reading-qol.json`（"裸机恢复"类重置的典型后果，见 [`../../docs/INSTALL.md`](../../docs/INSTALL.md) OTA 一节）。
 
-## 03c｜`handwriting-stroke/` 研究：xochitl 怎么画笔画（2026-09-09，纯静态分析）
+**顺带发现一条危险的过期记录**：当时的项目说明还写着往 `/usr/lib/systemd/system/xochitl.service.d/` 放 drop-in 做持久化，而这条路早在 2026-08-16 因两次 dm-verity A/B 回滚变砖放弃了。现行机制：持久源放 `~/xovi/services/xochitl.service/*.conf`，`xovi/start` 把它们拷进 `/etc` 下的 tmpfs 再重启 unit，全程不碰 `/usr`。
 
-**目标**：CJK 手写笔迹渲染优化——笔锋按中文书写习惯（运笔粗细/顿挫）渲染。**与 AI 手写识别（笔迹→文字）完全无关**，用户第一轮就澄清过这个区分。全仓库关键词搜索确认这是全新功能：没有配置键、没有 hook、没有反编译记录。唯一沾边的先例——笔记页背景滤镜——是判死的（C++ `SceneView` tile 增量渲染够不到）。
+**方案两版**：第一版在 langhook 加 `CANGJIE_IME_HOOKS=0` 开关（真机通，但用户要求不动老项目，整段撤回）；第二版是现在的独立扩展（§01）。
 
-**排查五轮，一张表**：
+**真机验证**（第二版）：备份 → 移除设备上第一版残留的 langhook（两者抢同一个目标）→ scp + md5 → 重启 → journal 出现 `_xovi_shouldLoad: 固件兼容(FUN_00f05ad0@0xf03670)` 与 `荧光笔EXPAND hook 安装完成 @ 0xf03670`；`/proc/<pid>/maps` 里 `hl-snap` 出现、`cangjie-langhook` 消失；`is-active` / `NRestarts` / `MainPID` 健康检查（含延迟复查）通过。地址与第一版一致，说明特征码在 3.28.0.172 上唯一命中。2026-09-24 只读复核：仍是同一地址、hook 装上。
 
-| 轮 | 手段 | 结论 |
+**和 langhook 同时装会怎样**：旧文档写"行为未定义"，按代码看其实是"先到先得"：两个扩展在 `_xovi_shouldLoad` 阶段都看到原始机器码、都同意加载；先执行 `_xovi_construct` 的那个改写了函数开头，后一个再扫时特征码对不上，静默放弃这个 hook。langhook 一侧源码已不在仓库，这一半**未核对**；两者同时装也没有真机测过。结论不变：两者不要同时装（langhook 自带同样的修复）。
+
+## 03b｜battop：搬迁、两次冻机与现状
+
+battop 早于这条线存在，2026-09-09 从 `misc/battery-audit/battop/` 搬进来，设备路径 `/home/root/battop` 不变。它的故事主要是"一个诊断工具怎么差点变成故障源"：
+
+| 时间 | 事件 | 结论 / 改动 |
 |---|---|---|
-| 1 | `strings` 侦察（没装 Ghidra） | 真机 `xochitl` 里有整套 `Quill::strokev2` 命名空间的 RTTI：按笔型分光栅化策略类（`FillPencil` / `FillBallpoint[AA]` / `FillSolid_*_AA` / `FillMaskedEraser` / `FillAnts` / `FillShaderAA`），外包 `LerpRaster` / `MonoRaster`。判断（未证实）：这是"宽度/透明度沿路径插值渲染"的实现层，比背景滤镜那层更底层、更对口 |
-| 2 | 真上 Ghidra，脚本反查 vtable | 失败：反查到的"vtable"头几个槽位解出来是 ASCII 文本（`"N8stroke"`），不是函数指针。当时结论"这些类可能没有虚函数"——**后被第 3 轮推翻**（见 §04） |
-| 3 | Ghidra GUI 人工交互（用户操作截图回传，脚本驱动不了 GUI） | 完整定位：从 RTTI 字符串的真实 xref 追到 `saveStroke` / `ShapesOverlay`（继承 `QQuickPaintedItem`）→ `updateImage`（`FUN_008bbb80`，真正画像素的入口）→ `StrokeRenderer` 构造函数 `FUN_00f3dcf0`（把 `Fill*` / `CoverageBuffer` / `IVaryingsGenerator` 等**内联组合**进自己，vtable 指针构造时按值写入）。第 2 轮失败的原因就在这里：内联组合成员没有"指向其 typeinfo 的裸指针"，反查天生走不通 |
-| 4 | headless 脚本接力（已有具体地址后不必再靠 GUI 截图，前提是 GUI 关闭工程释放 `.lock`） | 定位逐点渲染分派函数 `FUN_00f3f9d0`：按笔型标签 `bVar16` 分支各自算宽度；最丰富的方向敏感分支有 smoothstep 三次缓动曲线 + 方向角 `sincosf`。再往下是变宽几何生成器 `FUN_00f47530`（上一点半宽 + 当前点半宽 + 垂直单位向量 → 梯形四角点，**变宽笔画的几何能力本来就存在**）。排除了一个岔路：`FUN_00f33180` 只是通用 `QVector` 插入函数 |
-| 5 | 继续挖到像素层 | 梯形交给四级 Sutherland-Hodgman 多边形裁剪（`FUN_00f37d30 → 00f378e0 → 00f376b0 → 00f374f0`，固定代码），最后一级改虚函数间接调用（`vtable+0x10`）交给多态像素消费者（`CoverageBuffer` / `Fill*`）。静态分析到此为边界 |
+| 08-27 | 电池审计（[`FINDINGS.md`](../battop/FINDINGS.md) 前半） | 无"电池刺客"：休眠健康、无自旋进程；最大非核心 CPU 是 `memfaultd`。由此建 battop 做长期追踪 |
+| 08-29 | **第一次冻机**：屏幕冻住、ping/SSH 全不通、USB 链路仍在，长按电源 25–30 秒才恢复 | 内核日志坐实：systemd 启动 battop 的 oneshot 服务时把进程写进 cgroup，`synchronize_rcu` 撞上内核 RCU stall，连 PID 1 一起卡死。不是 battop 逻辑 bug，但 timer 每 10 分钟拉起一次 = 每天 144 次 cgroup 迁移，把罕见 stall 的暴露面放大了 144 倍。**改成常驻服务**，每次开机只迁一次（内核证据见 FINDINGS 后半） |
+| 09-20 | 安装器定案 | **只 start、不 enable**：原先 enable 链接在 `/etc` tmpfs、重启即清，"重启后不自启"一直是事实上的缓解，现在写成明确设计 |
+| 09-22 | 代码审计 | 拆成 procs / store / summary / wake / util 五个模块；summary 改流式聚合；时区改用 libc `localtime_r`，去掉每轮 fork 一次 `date` |
+| 09-23 | **第二次冻机**（常驻模型下） | 冻结前最后一条日志与 battop 刷新唤醒源缓存（当时每小时 fork 一次 `journalctl`）的时间精确重合到秒。不是 08-29 那条路径（fork 出的子进程直接继承父进程 cgroup），只有时间吻合、没有内核栈证据。**唤醒源改读 `/dev/kmsg`**，采样循环里最后一次创建子进程也去掉了；commit 记真机确认零子进程、唤醒源数据与 `dmesg` 一致、跨一次真实休眠后采样间隔正确 |
 
-**完整链路**（五层）与 hook 位置见下图；点结构、各分支细节见 [`../handwriting-stroke/README.md`](../handwriting-stroke/README.md)。
+**现状**：采样循环只读 `/proc`、sysfs 和 `/dev/kmsg`，不创建子进程；代价是唤醒源只能看到本次开机以来的记录（旧版能跨开机查 31 天）。两次冻机的内核根因（RCU stall）没有被排除，所以**仍不开机自启**，要用时在网页打开。09-23 的修改效果还需要更长时间观察（battop 平时关着，积累的运行时长有限）。
+
+**教训**：诊断工具自己也要当成"可能出事的代码"看——常驻、周期性、在内核敏感路径附近（cgroup、fork）的操作要尽量去掉；"重启后自然关闭"这种安全态要写成明确设计，而不是依赖 tmpfs 碰巧被清。
+
+## 03c｜hw-stroke 逆向：xochitl 怎么画笔画（2026-09-09，纯静态分析）
+
+**目标**：让笔锋按中文书写习惯（粗细、顿挫）渲染。**和 AI 手写识别完全无关**，用户第一轮就澄清过。全仓库搜索确认是全新功能；唯一沾边的先例（笔记页背景滤镜）是判死的。
+
+**渲染链**（五层；真实类名来自 Qt 编译进二进制的调试字符串，与 Ghidra 反编译交叉验证）：
 
 ![笔画渲染链与 hook 位置](diagrams/handwriting-render-chain.svg)
 
-**架构结论**：整条"笔画变像素"链路是"固定几何算法（宽度插值 + 变宽四边形 + 多边形裁剪，全部非虚函数）+ 最后一步虚函数分发给可插拔的像素填充策略"。**对诉求的结论**：所有宽度公式都只跟"距离/压感/一条固定缓动曲线"相关，没有"笔画方向（横竖撇捺）相关的权重"——最贴近诉求但没有现成代码可抄，需要新写逻辑；改动点全在 `FUN_00f3f9d0` 这一层及其下游几何生成器，裁剪与像素分发两层是通用管线、不需要动。
+- 入口：`ShapesOverlay`（继承 `QQuickPaintedItem`，源码路径字符串 `.../src/xofm/libs/sceneview/src/shapesoverlay.cpp`）的 `updateImage`（`FUN_008bbb80`）才真正画像素；`paint()` 只是把内部 `QImage` 整张贴上屏。
+- `updateImage` 把手写笔迹用 `QPainterPath::toFillPolygon()` 重采样，每个点重新打包成 14 字节点结构，交给 `StrokeRenderer`（构造函数 `FUN_00f3dcf0`，把 `CoverageBuffer`、`IVaryingsGenerator`、`LerpRaster<Fill*>` 等十几个多态成员**内联组合**进自己）。
+- `FUN_00f3f9d0` 逐点分派：按笔型标签 `bVar16` 分支各算宽度；再交给变宽几何生成器（`FUN_00f47530` 等：上一点半宽 + 当前点半宽 + 连线的垂直单位向量 → 梯形四角点）；然后四级 Sutherland-Hodgman 多边形裁剪（`FUN_00f37d30 → 00f378e0 → 00f376b0 → 00f374f0`）；最后经虚函数 `vtable+0x10` 交给多态像素消费者（`CoverageBuffer` / `Fill*`）。
 
-**⚠️ 2026-09-09 晚间勘误**：第 3 轮曾把 `VaryingGenerator_WidthLength` 的业务方法 `FUN_00f401f0` 当作"最具体的候选改动点"（反编译显示 `return param_1 * *(float*)(param_2+8);`）。按项目"反编译要交叉核实原始汇编"纪律补查后发现真实签名是 **3 个 float 入参 + 1 个对象指针、产出一对 `{float,float}`**，用了 `[x0+8]` 与 `[x0+0xc]` 两个配置字段——反编译器把多寄存器传参/HFA 返回简化丢了信息；更关键的是 `getReferencesTo` 显示它**从没被真实调用点引用过**。这个函数是否真会被执行，静态分析从没坐实过，"最具体候选"断言收回，hook 目标改用确认在真实调用链上的 `FUN_00f47530`（§03e）。
+**14 字节点结构**（`FUN_00f36be0` 反解，独立验证过；和 `.rm` 文件里的点字段**没做过对拍**）：
 
-这轮排查全程没写过实现代码、没碰真机。
+| 偏移 | 类型 | 换算 | 字段 |
+|---|---|---|---|
+| `0x0` / `0x4` | float | 原样 | x / y |
+| `0x8` / `0xA` | u16 | ×0.25 | 两个同类宽度/速度定点字段 |
+| `0xC` | u8 | ×2π/255 | 方向角 |
+| `0xD` | u8 | ÷255 | 压感（0~1） |
 
-## 03d｜Ghidra 环境搭建（2026-09-09）
+**五轮排查**：
 
-Ghidra 装法、`JAVA_HOME` 处理（Ghidra 12.x 要 JDK 21）、`xochitl` 二进制怎么拉、headless 怎么调，都记在 [`../../defw/README.md`](../../defw/README.md)（该目录本身就是这套工具的工作目录），这里不重复。当时的取舍留一条：第一版手动装 zip，第二版改用发行版包（`paru -S ghidra --assume-installed java-environment=21` 跳过虚拟依赖，避免拉一份多余的系统 JDK），用 `JAVA_HOME` 环境变量每次调用时指定（pacman 装的 `/opt/ghidra` 是 root 拥有，没 sudo 改不了 `launch.properties`）。GUI 环境坑（Wayland 下 Swing 空白）见 §04。
+| 轮 | 手段 | 结论 |
+|---|---|---|
+| 1 | `strings` 侦察 | 真机 xochitl 有整套 `Quill::strokev2` 的 RTTI：按笔型分的光栅化策略类（`FillPencil` / `FillBallpoint[AA]` / `FillSolid_*_AA` / …），判断是"宽度沿路径插值"的实现层 |
+| 2 | Ghidra 脚本反查 vtable | 失败：反查到的"vtable"槽位解出来是 ASCII 文本。当时误判"没有虚函数"，被第 3 轮推翻（§04） |
+| 3 | Ghidra GUI 人工交互（用户截图回传） | 从 RTTI 字符串的真实引用追到 `saveStroke` / `ShapesOverlay` → `updateImage` → `StrokeRenderer` 构造函数。第 2 轮失败的原因：内联组合成员的 vtable 指针是构造时按值写入的，反查天生走不通 |
+| 4 | headless 脚本接力 | 定位逐点分派 `FUN_00f3f9d0` 和变宽几何生成器 `FUN_00f47530`——**变宽笔画的几何能力本来就存在**。排除岔路：`FUN_00f33180` 只是通用 `QVector` 插入 |
+| 5 | 挖到像素层 | 四级裁剪是固定代码，最后一级改虚函数调用交给像素消费者。静态分析到此为边界 |
 
-## 03e｜`handwriting-stroke/` 第一版实现：真机部署验证（2026-09-10）
+**结论**：整条链是"固定几何算法（宽度插值 + 变宽四边形 + 裁剪，全部非虚函数）+ 最后一步虚函数分发给可插拔的像素填充策略"。宽度公式只和距离、压感、一条固定缓动曲线有关，没有"笔画方向"权重，需要新写；改动点全在 `FUN_00f3f9d0` 这一层及其下游几何生成器。
 
-落地前先纠正了 §03c 里对 `FUN_00f401f0` 的分析，改用确认在真实调用链上、签名简单的 `FUN_00f47530`（变宽梯形几何生成器）当 hook 目标：两个 float（s0/s1）+ 一个指针（x0），标准调用约定，入口第一件事就是读"当前点宽度"（`(char*)ctx+4`）算半宽。
+**勘误（09-09 晚）**：第 3 轮曾把 `FUN_00f401f0`（`VaryingGenerator_WidthLength` 的业务方法）当"最具体候选"，反编译显示它只是一行线性缩放。按"反编译要交叉核实原始汇编"纪律补查：真实签名是 3 个 float 入参 + 1 个对象指针、产出一对 float；更关键的是它**在整个二进制里没有真实调用者**。断言收回，改用确认在调用链上的 `FUN_00f47530`（§03e）。
 
-- **Step 1/2 验证机制可行**：先部署纯诊断 hook（只读日志、call-through 不改值），真机手写时 `w` 数值合理且随笔压连续渐变；再加浮点开关 `hwStrokeWidthFactor`（默认 1.0），改成 2.5/0.5 后真机截图肉眼确认笔画明显变粗/变细——证实"改这条渲染路径能真实影响笔迹粗细"。
-- **笔尖角度模型**：用户反馈"CJK 顿挫不是单纯粗细问题"，调研西式书法笔工具的经典公式（Illustrator/Inkscape 的 Calligraphic Brush 同款）`宽度 ×= min_ratio + (1-min_ratio)×|sin(运笔方向角−笔尖固定角度)|`。运笔方向角不依赖点结构方向字节（真机诊断过：日常"中粗钢笔"走 `bVar16<4` 纯线性分支，不碰方向字段），改用 `FUN_00f47530` 自己维护的"上一点坐标"现算，所有笔型统一走到。踩了 GLIBC 符号版本坑（§04），用三角恒等式绕开 `atan2f`、`__builtin_sqrtf` + `-fno-math-errno` 绕开 `sqrtf`。
-- **效果强度按宽度自动挂钩**：真机反馈"钢笔效果不好、毛笔还行"，诊断发现两者走同一条分支同一套公式，纯粹是基础宽度差异导致同比例摆动观感不同——改成效果强度跟 `w` 挂钩，细笔画趋近关闭、粗笔画满强度。
-- **⚠️ 撤回一次**：尝试直接读点结构笔型标签字节（`bVar16`）强制排除钢笔，真机测大号 paintbrush 时数据自相矛盾（`w` 恒定但 `fillType` 在 0~255 随机跳，`x`/`y` 却是真实连续运笔坐标）而撤回，根因见 §04（跨路径身份假设）。退回纯宽度渐变方案。
+## 03d｜Ghidra 环境（2026-09-09）
 
-## 03f｜压感预研撤回 + 运笔速度代理 + 第二个 hook 目标（2026-09-10 下午）
+装法、`JAVA_HOME`（Ghidra 12.x 要 JDK 21）、怎么拉 xochitl 二进制、headless 怎么调，都在 [`../../defw/README.md`](../../defw/README.md)。取舍留一条：改用发行版包（`paru -S ghidra --assume-installed java-environment=21`，避免多装一份系统 JDK），每次调用用 `JAVA_HOME` 指定（`/opt/ghidra` 是 root 拥有，改不了 `launch.properties`）。Wayland 下 GUI 空白见 §04。
 
-**压感**：用户问"有力度吗"——headless 反编译 `FUN_00f3f9d0` 核实：点结构 offset `0xD` 硬件压感字节确实被读出转成 0~1 浮点，但存进 `plVar6+0x74`，不是我们 hook 收到的 `ctx`（`ctx=plVar6[1]`，另一个对象）。改用不依赖它们的独立算法（`当前点地址 = param_2[3] + (param_2[4]*0xe − 0xe)`）读压感，两轮真机证实**压感字节本身是真实数据**：第一次（轻触→使劲按）只在接触瞬间爬坡（12→255）、之后饱和；第二次专测才拿到宽分布（3~255）。但**跨函数传值到 `FUN_00f47530` 失败**：诊断样本里只有 2/3449 落在会调用它的分支，而它自己触发了 686 次——大部分调用根本不经过被锁定的那份 `FUN_00f3f9d0`（它有 6 个调用点，可能"实时预览"和"提交进笔记本"走不同路径）。放弃真实压感，改用完全在 hook 内部就能算的**运笔速度代理**（复用"上一点坐标"算距离：慢/顿笔→粗，快/带过→细，与笔尖角度模型共用"强度按基础宽度挂钩"逻辑）。
+## 03e｜hw-stroke 第一版：真机验证（2026-09-10）
 
-**第二个 hook 目标**：真机测试发现 `FUN_00f47530` **只有"书法笔"这一个工具会走到**，且书法笔原生就有方向敏感宽度（平头笔尖真实物理效果：竖线是横线 2~4 倍粗，两个效果全关也存在，不是 bug）——在书法笔上叠加效果是重复造轮子，而钢笔/铅笔/马克笔完全摸不到这个 hook（之前"钢笔效果不好"很可能是没生效）。用户拍板"另开调查，找钢笔/铅笔自己的写入点"。headless 反编译 `FUN_00f3f9d0` 里 `bVar16==3/5/6` 三个分支各自调用的绘制原语，核实真实签名：
+hook 目标 `FUN_00f47530`：两个 float（s0/s1）+ 一个指针（x0），标准调用约定，入口第一件事就读"当前点宽度"（`ctx+4`）算半宽，在这里改值最简单可靠。
 
-- **`FUN_00f4c8d0`**（`bVar16==6` 直接调、`5` 经 `FUN_00f4d190` 间接调）：`(x, y, ctx)`，宽度在 `ctx+4`（`undefined2*` 的 `param_3+2` 是 2 字节单位，换算正好 4），与 `FUN_00f47530` 同一调用约定；前 20 字节纯栈操作，patch 安全 → 采用。
-- **`FUN_00f4f430`**（`bVar16==3`）：签名一样，但**前 20 字节第 3 条指令是条件分支**（`cbz`，PC 相对寻址），被 `memcpy` 进 call-through stub 后分支目标会算错 → 不能安全 patch，留作已知候选。
+- **先证明机制可行**：先部署只读日志的诊断 hook，真机手写时宽度 `w` 合理且随笔压连续变化；再加 `hwStrokeWidthFactor`，改成 2.5 / 0.5 后截图确认笔画明显变粗/变细。
+- **笔尖角度模型**：用户反馈"CJK 顿挫不是单纯粗细问题"，采用 Illustrator/Inkscape 书法笔刷同款公式 `宽度 ×= min_ratio + (1-min_ratio)×|sin(运笔方向角−笔尖角度)|`。运笔方向不读点结构的方向字节（日常钢笔走的分支根本不碰它），改用 `FUN_00f47530` 自己维护的"上一点坐标"（`ctx+0x48/0x4c`）现算。GLIBC 符号版本坑见 §04。
+- **效果强度跟基础宽度挂钩**：真机反馈"钢笔效果不好、毛笔还行"，诊断发现两者走同一分支同一公式，只是基础宽度不同导致观感不同——改成细笔画趋近关闭、粗笔画满强度。
+- **撤回一次**：尝试读点结构的笔型标签（`ctx+0x70`）排除钢笔，真机测大号画笔时读出的"笔型"在 0~255 随机跳而坐标正常，说明这个偏移在这条路径上读的是无关内存（§04）。退回纯宽度渐变。
 
-部署 `FUN_00f4c8d0` hook（诊断优先，先保持效果关闭确认真机加载正常）后真机命中 **10033 次**（`FUN_00f47530` 仅 2117 次），`w` 范围 3~36，真实触及日常常用的多种笔，覆盖面近 5 倍。按真机数据重新校准阈值，两个效果开到中等强度（`min_ratio=0.6`），用户反馈"看上去还行"。
+## 03f｜压感撤回、运笔速度代理、第二个 hook（2026-09-10）
 
-## 03g｜`hw-stroke` 降负载：每笔读一次配置、日志默认关（2026-09-24，真机通）
+**压感**：点结构 `0xD` 的压感字节被读出转成 0~1 浮点，但存进的是另一个对象（`plVar6+0x74`），不是 hook 收到的 `ctx`。改用不依赖它们的算法（`当前点地址 = param_2[3] + (param_2[4]*0xe − 0xe)`）在 `FUN_00f3f9d0` 入口读，两轮真机证实压感字节是真数据（正常书写很快饱和到 255，专测轻重才有 3~255 的分布）。但**跨函数传给宽度 hook 失败**：诊断样本里只有 2/3449 落在会调用 `FUN_00f47530` 的分支，而它自己被调了 686 次——`FUN_00f3f9d0` 有 6 个调用点，"实时预览"和"提交进笔记本"很可能走不同路径。放弃真实压感，改用 hook 内部就能算的**运笔速度代理**：相邻两点距离短（慢、顿笔）→ 粗，长（快、带过）→ 细，与笔尖角度模型共用"强度随基础宽度挂钩"。
 
-审查发现 hook 里每个点都 `fopen` 读一次 `reading-qol.json`、写一行 `[hw-stroke:…]` 到 stderr，效果关着也照样执行；§03f 一次采样就命中上万次。stderr 进 xochitl 的 journal，又被 `wallpaper-serve`（`journalctl -f -u xochitl`）和飞行记录仪逐行读，负载被放大。纯诊断的 `FUN_00f3f9d0` 分派 hook 对行为零贡献，却在生产环境多 patch 一个函数。
+**第二个 hook**：真机发现 `FUN_00f47530` **只有书法笔会走到**，而书法笔原生就有方向粗细（平头笔尖，两个效果全关也存在），在它上面叠加是重复造轮子；钢笔、铅笔、马克笔完全摸不到（之前"钢笔效果不好"很可能是根本没生效）。用户拍板另找钢笔/铅笔的写入点。反编译 `bVar16==3/5/6` 三个分支各自调用的绘制原语：
 
-改法：配置只在每一笔起点（`ctx+0x5a` 的 has_prev 为 0）读，另每 1024 个点兜底读一次，改了参数从下一笔生效；逐点日志和诊断 hook 由新键 `hwStrokeDebug`（默认 false）控制，诊断 hook 只在扩展加载时看这个键。交叉编译零警告，动态符号最高 GLIBC_2.17 不变。真机：用户手写后 journal 里 `[hw-stroke:` 与 `hw-stroke-dispatch` 都是 0 行，两个几何 hook 正常装上。
+- **`FUN_00f4c8d0`**（`bVar16==6` 直接调、`5` 经 `FUN_00f4d190` 间接调）：`(x, y, ctx)`，宽度在 `ctx+4`，与主 hook 同一调用约定；前 20 字节纯栈操作 → **采用**。
+- **`FUN_00f4f430`**（`bVar16==3`）：签名一样，但前 20 字节第 3 条指令是条件分支 `cbz`（PC 相对寻址）→ **不能安全 patch**，留作候选。
 
-部署时顺带第二次撞上"换了运行中 xochitl 已映射的 `.so` 再 restart → 旧进程退出 SEGV → 整机重启"（第一次是 09-21 appload）。部署脚本已改为先 stop 再换再 start，见 `packaging/README.md`；新流程的真机验证留到下次扩展有改动时。
+部署后真机命中 **10033 次**（`FUN_00f47530` 仅 2117 次），宽度范围 3~36，覆盖面近 5 倍。按真机数据重新校准，两个效果开到中等强度（`min_ratio=0.6`），用户反馈"看上去还行"。当时写进配置的校准值是宽度阈值 5/20、速度阈值 1~10；代码默认值见 hw-stroke README。
+
+## 03g｜hw-stroke 降负载：每笔读一次配置、日志默认关（2026-09-24，真机通）
+
+**问题**：hook 每个点都 `fopen` 读一次 `reading-qol.json`、往 stderr 写一行日志，效果关着也照样执行；§03f 一次采样就上万次。stderr 进 xochitl 的 journal，又被 wallpaper-serve（`journalctl -f -u xochitl`）和飞行记录仪逐行读，负载被放大。纯诊断的 `FUN_00f3f9d0` hook 对行为零贡献，却在生产环境多 patch 一个函数。
+
+**改法**：配置只在每一笔起点（`ctx+0x5a` 的"已有上一点"标志为 0）读，另每 1024 个点兜底读一次，改参数从下一笔生效；逐点日志和诊断 hook 由新键 `hwStrokeDebug`（默认 false）控制，诊断 hook 只在加载时看这个键。交叉编译零警告，动态符号最高仍是 `GLIBC_2.17`。
+
+**真机**：用户手写后 journal 里 `[hw-stroke:` 和 `hw-stroke-dispatch` 都是 0 行，两个几何 hook 正常装上。
+
+**部署时第二次踩到"换 .so 后 restart → 整机重启"**（第一次是 09-21 appload）：运行中的 xochitl 映射着旧 `.so`，换完文件再 `restart`，旧进程退出时 SEGV，`OnFailure=emergency` 触发整机重启；先写暂存再 rename 换新 inode 也照样复现。部署脚本已改为：xochitl 正在用旧版就先放进待换入区，重启时 **stop → 换 → start**（`packaging/devlib.sh` 头注 H3）。新流程还没在"真有 `.so` 变化"的部署中真机跑过，留到下次扩展改动时验证。
+
+## 03h｜字体、壁纸服务与 lo-alias（概要）
+
+这三样 2026-09-11 才归入本线（概念归类，运行时行为不变），原理主要记在别处：
+
+| 组件 | 是什么 | 详细记录 |
+|---|---|---|
+| `font-serve`（8792） | 上传字体装进 fontconfig 用户目录，重写 `fonts.json` 给字体菜单 qmd 读，动态维护中文回退链（全 `weak`，所选字体永远优先） | 书架白皮书第 F 章、§03k、§03bd |
+| `wallpaper-serve`（8793） | 写 xochitl 隐藏键 `SleepScreenPath` 指向 `current.png`，唤醒时轮换；旧 bind-mount 方案已退役 | [wallpaper-serve README](../wallpaper-serve/README.md)；书架白皮书 §03w / §03x / §03ab |
+| `lo-alias.sh` | 给 `lo` 和 `usb1` 挂 `10.11.99.1`，让不插 USB 时 xochitl 的 :80 上传口仍可达；网关 `ExecStartPre` 调用 | [lo-alias README](../lo-alias/README.md) |
+
+两个服务都依赖 [`../../rmsvc-core`](../../rmsvc-core/README.md)，由网关反向代理，随 `install-all.sh` 的 shelf 步安装。
 
 ## 04｜踩坑
 
 **逆向方法论**
 
-- **RTTI typeinfo 存在 ≠ 有 vtable，"反查找不到 vtable" ≠ "没有 vtable"**：类被 `typeid()` 用到就会生成 RTTI，不代表多态；但反过来，反查谁指向 typeinfo 走不通，也不代表没有 vtable——**内联组合成员**的 vtable 指针是容器对象构造函数里按值直接写入的，没有任何地方存指向其 typeinfo 的裸指针。§03c 第 2 轮先后犯了两头的错。遇到反查走不通，先判断目标是"独立堆对象"（能反查）还是"别的对象的组合成员"（得从容器对象的构造函数正向找）。
-- **stripped 二进制里，指向字符串的指针字段不会自动有 xref**：Ghidra 的引用分析只认已被定型为指针的数据，`Show References To` 命中为空**不代表**真的没人引用；退回 `Search → Memory`（十六进制字节序列搜索，纯字节扫描）。但"扫到一个指针值"不等于"它在我期望的结构体字段里"——`.data.rel.ro` 里紧密排列的对象会让"反查上一层"命中无关邻居，**必须验证内容合理性**（这次靠"dump 出的槽位能不能解出人话"戳破了错误假设）。
-- **Qt 编译进二进制的调试/异常字符串是比符号表更可靠的类名/函数名来源**：符号表被剥得只剩 `FUN_xxxxx`，但沿任意已知函数反编译读下去，常能撞见字面写死的源码路径/方法名/日志文案（这次连续撞见 `shapesoverlay.cpp` / `saveStroke` / `updateImage` / `"New StrokeRenderer,"`），是最快的"确认这是哪个类"的手段，应优先找它们。
-- **反编译"干净利落"要留心眼、关键结论必须交叉核实原始汇编**：`FUN_00f401f0` 被反编译成"一行线性缩放"，真实是 3 float 入参 + 对象指针、产出一对 float；更严重的次生错误是信了简化结论就宣称"最具体候选"，没先确认它有没有被真实引用（`getReferencesTo` 零调用者早就是暂停信号）。产出多个值的接口方法简单到只有一行，往往是反编译器漏看了寄存器。
-- **反编译里的 `undefined2*` 指针，偏移数字是"2 字节单位"不是字节**：`FUN_00f4c8d0` 的 `param_3 + 2` 实际是字节偏移 4、`param_3 + 0x3c` 是 `0x78`。核对宽度字段这类关键偏移要先确认指针实际类型宽度。
+- **RTTI 存在 ≠ 有 vtable；"反查找不到 vtable" ≠ "没有 vtable"**。类被 `typeid()` 用到就会生成 RTTI，不代表多态；反过来，内联组合成员的 vtable 指针是容器对象构造函数里按值写入的，没有地方存指向它 typeinfo 的指针，反查天生走不通。§03c 第 2 轮两头都错过。反查走不通时，先判断目标是"独立堆对象"（能反查）还是"别的对象的组合成员"（从容器的构造函数正向找）。
+- **stripped 二进制里，指向字符串的指针不会自动有 xref**：Ghidra `Show References To` 为空不代表没人引用，退回 `Search → Memory` 按字节搜。但搜到一个指针值不等于它在你期望的结构体字段里，`.data.rel.ro` 里紧挨着的对象会命中无关邻居，**要验证内容合理**（这次靠"槽位能不能解出人话"戳破了错误假设）。
+- **Qt 编译进二进制的调试/异常字符串比符号表可靠**：沿已知函数读下去常能撞见写死的源码路径、方法名、日志文案（`shapesoverlay.cpp` / `saveStroke` / `updateImage` / `"New StrokeRenderer,"`），是确认"这是哪个类"最快的办法，应优先找。
+- **反编译结果"干净利落"要留心眼，关键结论交叉核实原始汇编**：`FUN_00f401f0` 被简化成一行线性缩放，实际多了两个入参和一个返回值；更严重的是信了简化结论就宣称"最具体候选"，没先查它有没有被调用（零调用者早该是暂停信号）。产出多个值的方法只有一行，往往是反编译器漏看了寄存器。
+- **反编译里 `undefined2*` 指针的偏移是"2 字节单位"**：`FUN_00f4c8d0` 的 `param_3 + 2` 实际是字节偏移 4。核对关键偏移先确认指针类型宽度。
+- 一旦有了具体地址，headless 脚本（[`../../defw/scripts/`](../../defw/README.md)）就能接手反编译、查引用、按字节搜内存，不必再靠 GUI 截图；前提是 GUI 已关闭工程，否则抢 `.lock`。
 
 **hook 安全性**
 
-- **多条调用路径汇聚到同一函数时，"某参数在路径 A 里等于什么"不能套到路径 B**：钢笔（`bVar16<4`）走的是 `plVar6` 虚函数调用，没验证过它传给 `FUN_00f47530` 的 `ctx` 就是 `FUN_00f3f9d0` 自己的 `lVar7`；直接照抄"参数就是 `lVar7`"得到的 `ctx+0x70` 读出来是随机数据。`ctx+4/+0x48/+0x4c/+0x5a`（hook 目标自己直接读写的字段）安全，借用上游解读的字段（`ctx+0x70`）不安全。
-- **同一函数有多个调用点，不代表某个 hook 实例能看到所有调用**：`FUN_00f3f9d0` 有 6 个调用点，从它入口设全局变量再传给下游的方案，在单个调用序列内逻辑无懈可击，但真机数据证明下游绝大多数调用不经过这一份。"A 调用 B"的静态事实不能默认成"所有 B 的调用都来自 A"，除非 xref 或运行时数据证明 B 只有唯一入口。
-- **"前 N 字节纯栈/寄存器操作、可安全 patch"必须对每个候选逐个验证**：`FUN_00f4f430` 签名/宽度约定与已验证的两个完全一致（同一族"变宽几何生成器"），但前 20 字节第 3 条指令是条件分支，PC 相对偏移搬进 stub 会指向错误目标——靠 `CheckFuncSizes.java` 逐条反汇编检查提前拦下，没有真机验证就发现了。签名相似不代表二进制布局相似。
-- **两个 xovi 扩展抢同一个 hook 目标会冲突**：`hl-snap.so` 与 `cangjie-langhook.so` 都会 patch `FUN_00f05ad0`，同时部署行为未定义。凡是"从老项目里独立拆出功能子集"，都要检查新旧产物是否可能同时部署、目标有无重叠，并在部署文档里把互斥关系写清楚（已写进 `hl-snap/README.md`）。
+- **多条调用路径汇到同一函数时，"参数在路径 A 里是什么"不能套到路径 B**：钢笔走虚函数调用，没验证过它传给 `FUN_00f47530` 的 `ctx` 就是 `FUN_00f3f9d0` 自己的对象，照抄得到的 `ctx+0x70` 是随机数据。hook 目标**自己**直接读写的字段（`ctx+4/+0x48/+0x4c/+0x5a`）安全，借用上游解读的字段不安全。
+- **"A 调用 B"不等于"所有对 B 的调用都来自 A"**：`FUN_00f3f9d0` 有 6 个调用点，从它入口设全局变量再传给下游，真机证明下游绝大多数调用不经过这一份。除非引用或运行时数据证明 B 只有唯一入口。
+- **"前 20 字节可安全 patch"必须逐个候选验证**：`FUN_00f4f430` 签名和已验证的两个完全一样，但第 3 条指令是条件分支，搬进调用桩会跳错地方——靠 `CheckFuncSizes.java` 逐条反汇编提前拦下。签名相似不代表二进制布局相似。
+- **两个扩展抢同一个 hook 目标：先到先得，后到的静默放弃**。`hl-snap.so` 与 `cangjie-langhook.so` 都 patch `FUN_00f05ad0`（§03a）。凡是"从老项目拆出功能子集"，都要检查新旧产物会不会同时部署、目标有无重叠，并在部署文档里写清互斥关系。
+- **（代码推断，未真机复现）多扩展共存依赖加载顺序**：`shared/scan.c` 的 `cj_find_exec_module` 只返回 xochitl **第一个**可执行段。每装一个 hook，`mprotect` 都会把那一页切成独立的段，之后"第一段"只到最低的已 patch 页为止，后装的扩展找不到更高地址的目标。2026-09-24 真机 maps 里 xochitl 代码段确实被切成了 7 段（`0xf03000`、`0xf47000`、`0xf4c000` 三页各自独立），两个扩展能都装上，是因为这次顺序恰好是 hw-stroke（高地址目标）先、hl-snap（`0xf03670`）后。顺序反过来时 hw-stroke 会静默装不上 hook（这条路径不打日志），网页徽章却仍显示"已加载"。xovi 的加载顺序依据没有核实。修法见 §05。
+- **换了运行中 xochitl 正映射着的 `.so` 再 restart → 整机重启**（09-21 appload、09-24 hw-stroke 两次）：必须 stop → 换 → start（§03g）。
 
 **构建与环境**
 
-- **交叉编译工具链的 glibc 可能远新于设备，`dlopen` 在符号解析这步静默失败**：`atan2f` / `sqrtf` 在本地 `aarch64-linux-gnu-gcc` 链接时被打上 `GLIBC_2.43`，设备 `libm.so.6` 没这么新，整个 `.so` `dlopen` 失败。`nm -D` / `objdump -T` 里 `GLIBC_2.17` 是常见符号的老基线，出现高很多的版本号都要警惕。规避：能避开的用 `__builtin_xxx` + `-fno-math-errno` 让编译器内联成硬件指令；避不开的用三角恒等式改写。**连带效应**：`hw-stroke.so` 加载失败还拖累同一次扫描里的 `hl-snap.so` 没加载成功——多扩展场景下要检查所有扩展是否都正常，不能只看目标扩展自己的日志。
-- **Java Swing 在 Wayland 平铺式合成器下整窗口空白、没菜单栏**：`_JAVA_AWT_WM_NONREPARENTING=1` 修复；先查 `$XDG_SESSION_TYPE`，不要怀疑程序或工程损坏。Ghidra headless 建的 `.gpr` 是 0 字节也是正常现象（元数据在 `.rep/` 里）。
-- **项目说明里记录的做法会过期，而且过期的可能是"已经放弃的危险方案"**（§03a 记的 `/usr` 持久化 drop-in）：这种"过期文档指向危险操作"要立刻改，不能当一般文档债务。
+- **交叉工具链的 glibc 比设备新，`.so` 会在符号解析这步静默加载失败**：`atan2f` / `sqrtf` 在本地链接时被打上 `GLIBC_2.43`，设备的 `libm` 没这么新，整个 `hw-stroke.so` 加载失败，还连累同一次扫描里的 `hl-snap.so`。用 `objdump -T` 检查，最高应是 `GLIBC_2.17`。规避：能内联的用 `__builtin_xxx` + `-fno-math-errno`，不能的用三角恒等式改写。多扩展场景下要确认**所有**扩展都正常，不能只看目标扩展的日志（现在网页徽章能直接看到）。
+- **Java Swing 在 Wayland 平铺合成器下整窗口空白**：设 `_JAVA_AWT_WM_NONREPARENTING=1`；先查 `$XDG_SESSION_TYPE`，别怀疑程序或工程坏了。Ghidra headless 建的 `.gpr` 是 0 字节也正常（元数据在 `.rep/`）。
+- **过期文档可能指向"已经放弃的危险方案"**（§03a 的 `/usr` drop-in）：这类要立刻改，不能当一般文档债。
+- **诊断工具自己也会出事**（§03b）：常驻、周期性、在 cgroup/fork 这类内核敏感路径附近的操作要尽量去掉。
+- **PDF 渲染子进程里的"拒绝加载"日志是正常的**：xochitl 渲染 PDF 时 fork 出的子进程（journal 里常带 `rm.worker.unix` 字样）也会走一遍 `_xovi_shouldLoad`，因为找不到 `/usr/bin/xochitl` 映射而打"拒绝加载"，不代表主进程没装上。
 
 ## 05｜真机待办
 
-**未闭环**（全在 `handwriting-stroke/`）：
+**未闭环**
 
-- `bVar16<4`（最常用的钢笔/铅笔量级工具）仍摸不到——虚函数动态分发，运行时多态目标未确认；
-- `FUN_00f4f430`（`bVar16==3`）因前 20 字节有条件分支不能安全 patch；
-- 像素消费者虚函数分发目标 / smoothstep 曲线下游用途，静态分析到边界，没深挖；
-- 当前参数是初步校准起点，未精细打磨；
-- 想换回真实压感，需先搞清 `FUN_00f47530` / `FUN_00f4c8d0` 各有哪些调用路径。
+| 项 | 现状 | 下一步思路 |
+|---|---|---|
+| hw-stroke：`bVar16<4`（最常用的钢笔/铅笔量级）摸不到 | 走虚函数动态分发 `(**(code**)(*plVar6+0x10))(x,y,width,plVar6,…)`，宽度直接当第 3 个参数传，运行时目标没确认 | 扩展诊断 hook 打印 `*(void**)(*plVar6+0x10)` 的函数地址，再拿地址反编译确认签名 |
+| hw-stroke：`FUN_00f4f430`（`bVar16==3`） | 前 20 字节含条件分支，不能安全 patch | 做指令级搬移/重定位，或找更靠后的安全 patch 点 |
+| hw-stroke：像素消费者（`vtable+0x10`）的真实目标、smoothstep 曲线的下游用途 | 静态分析到边界 | 需要动态分析 |
+| hw-stroke：参数调优 | 一轮真机校准的起点，"看上去还行" | 按用户反馈再调 |
+| hw-stroke：真实压感 | 放弃 | 先搞清 `FUN_00f47530` / `FUN_00f4c8d0` 各有哪些调用路径 |
+| 多扩展共存依赖加载顺序（§04） | 代码推断，未复现 | 改 `shared/scan.c` 扫所有匹配段（或 `_xovi_construct` 前重新定位），并在 hook 没装上时打日志；需真机验证 |
+| 部署新流程 stop → 换 → start（§03g） | 脚本已改，未在真有 `.so` 变化时真机跑过 | 下次扩展改动时验证 |
+| lo-alias：不插 USB 冷启动 | 脚本现由网关 `ExecStartPre` 调用，不保证先于 xochitl；本次开机它比 xochitl 晚 3 秒 | 找机会做一次不插 USB 冷启动，确认 :80 能绑上 |
+| battop：两次冻机的内核根因 | 09-23 起采样循环无子进程；根因（RCU stall）未排除 | 继续观察；不开机自启保持不变 |
 
-具体待办清单见 [`../handwriting-stroke/README.md`](../handwriting-stroke/README.md)「未完成」。
+**已闭环（真机）**：hl-snap 精确吸附（§03a）；battop 常驻化（§03b）与唤醒源改读 `/dev/kmsg`（§03b，commit 记真机确认）；hw-stroke 两个 hook 目标、笔尖角度 + 运笔速度（§03e / §03f）；hw-stroke 降负载（§03g）；网页"已加载"徽章（§02）。
 
-**已闭环（真机）**：`hl-snap/` 精确吸附 hook（§03a，journal 三行关键日志 + 健康检查 + 地址一致性交叉验证）；`battop/` 目录搬迁（§03b，纯文件系统操作，不涉及设备行为，`cargo build` 确认引用它的网关仍能编译）；`handwriting-stroke/` 笔尖角度模型 + 提按速度代理，两个 hook 目标均真机验证（§03e/§03f，journal 日志 + 真机截图 + 用户定性反馈，与 `hl-snap` 共存不冲突）。
+**已放弃**：按笔型标签精确排除钢笔（§03e，真机数据证伪了 `ctx` 同一性假设）；真实压感跨函数传值（§03f）。
 
-**已放弃**：按 `bVar16`（笔型标签）精确排除钢笔的方案（§03e / §04，真机数据证伪了"`FUN_00f47530` 的 `ctx` 在钢笔路径下等于 `FUN_00f3f9d0` 的 `lVar7`"）；真实硬件压感跨函数传值方案（§03f，压感数据本身是真的，但"入口设全局变量 → hook 内读"被真机数据证伪，改用运笔速度代理）。
-
-## 附录｜迁移沿革（原 `enhance/README.md`「跟其它目录的关系」，2026-09-20 迁入并压缩）
+## 附录｜迁移沿革
 
 | 时间 | 事件 |
 |---|---|
-| 2026-09-09 | `battop/` 本体从旧 `misc/battery-audit/battop/` 搬进本线 |
-| 2026-09-10 | `defw/`（3.28.0.172 固件逆向产物）由 `ghidra-project-328` 改名而来；**不属于**本线，是共享的逆向基座，`handwriting-stroke/` 的研究用它 |
-| 2026-09-11 | 旧 `chinese-ime/` 挪出仓库（其设备端产物是否仍在跑取决于设备现状）→ `shared/`（特征码扫描 + trampoline）、`lo-alias/` 由路径引用改成剥离移植的独立副本 |
-| 2026-09-11 | 旧 `misc/battery-audit/` 剩下的诊断脚本归档进 `battop/history/`，`misc/` 删空 |
-| 2026-09-11 | `wallpaper-serve/`、`font-serve/` 从 `shelf/services/` 挪进本线（概念归类，运行时行为不变，仍靠网关代理托管）；历史 bind-mount 壁纸方案脚本归档进 `wallpaper-serve/legacy-bind-mount/` |
-| 2026-09-11 | `packaging/` 成为 `hl-snap` / `handwriting-stroke` / `battop` 的 host 侧编排方（各有 `deploy-<name>.sh`），三个工具原有的设备端 `install.sh` 仍可脱离它单独跑 |
-| 2026-09-11 | 网关本体由 `shelf/services/shelf-gateway` 正名搬到顶层 `gateway/`，`gateway/src/enhance/` 是本线开关的网页控制面（消费方） |
-| 2026-09-15 | 全量代码审查：`hl-snap` / `handwriting-stroke` 各自约 50 行逐字节重复的 trampoline 安装代码收进 `shared/trampoline_patch.c` |
+| 2026-09-09 | `battop/` 从旧 `misc/battery-audit/battop/` 搬进本线；`hl-snap/` 新建 |
+| 2026-09-10 | `defw/`（3.28.0.172 固件逆向产物）由 `ghidra-project-328` 改名而来；**不属于**本线，是共享的逆向基座，hw-stroke 的研究用它 |
+| 2026-09-11 | 旧 `chinese-ime/` 移出仓库 → `shared/`（扫描 + trampoline）、`lo-alias/` 由路径引用改成独立副本 |
+| 2026-09-11 | `misc/battery-audit/` 剩下的诊断脚本归档进 `battop/history/`，`misc/` 删空 |
+| 2026-09-11 | `wallpaper-serve/`、`font-serve/` 从 `shelf/services/` 挪进本线（运行时行为不变）；bind-mount 壁纸脚本归档进 `wallpaper-serve/legacy-bind-mount/` |
+| 2026-09-11 | `packaging/` 成为三个工具的 host 侧编排方（`deploy-<name>.sh`），设备端 `install.sh` 仍可单独跑 |
+| 2026-09-11 | 网关由 `shelf/services/shelf-gateway` 搬到顶层 `gateway/`，`gateway/src/enhance/` 是本线的网页控制面 |
+| 2026-09-15 | 代码审查：两个扩展各约 50 行逐字节重复的 trampoline 安装代码收进 `shared/trampoline_patch.c` |
+| 2026-09-20 | 两个扩展的设备端安装流程收进 `packaging/xovi-ext-install.sh`（数据驱动）；battop 安装器改为不 enable |
+| 2026-09-22 | battop 拆模块、流式聚合；wallpaper-serve 加像素上限和重连退避；font-serve 探测缓存 |
+| 2026-09-23 | battop 唤醒源改读 `/dev/kmsg` |
+| 2026-09-24 | hw-stroke 降负载（§03g）；网页"已加载"徽章（§02）；扩展部署改 stop → 换 → start |

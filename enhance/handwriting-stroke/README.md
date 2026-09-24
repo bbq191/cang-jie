@@ -1,94 +1,68 @@
 # handwriting-stroke —— CJK 手写笔迹渲染优化
 
-独立最小 xovi 扩展（`hw-stroke.so`）：在 xochitl 画笔迹的"变宽几何"函数上 hook，按**笔尖角度**和**运笔速度**调整笔画宽度，让手写更接近中文书写的粗细顿挫。默认**全关**（不改变任何行为），网页「管理 → 实验室」打开。
+**一句话**：按**笔尖角度**和**运笔速度**调整手写笔画的粗细，让中文手写更有粗细顿挫。**默认关**，网页「管理 → 实验室」打开。
 
-> **跟 AI 手写识别无关**：这条线是"你写字这个动作画出来好不好看"，不是"认出你写的字"。
+> **和 AI 手写识别无关**：这里管的是"你写的字画出来好不好看"，不是"认出你写了什么字"。
 
-**状态**：两个 hook 目标已真机验证（2026-09-10）——`FUN_00f47530`（书法笔专属）与 `FUN_00f4c8d0`（钢笔/铅笔/马克笔等日常工具，覆盖面是前者近 5 倍）。用户定性反馈"看上去还行"，参数是按当时真机数据校准的起点，未精细打磨。**最常用的钢笔/铅笔量级工具（`bVar16<4` 分支）仍然摸不到**，是当前最大缺口，见「未完成」。推导过程与踩坑见 [`../docs/reMarkable系统增强线白皮书.md`](../docs/reMarkable系统增强线白皮书.md) §03c–§03f、§04；本文只放结论与速查。
+它是一个独立的 xovi 扩展（`hw-stroke.so`）：在 xochitl 画笔迹的"变宽几何"函数入口挂 hook，在宽度交给后续渲染之前按公式缩放一下。xovi 扩展怎么加载、hook 怎么装，见白皮书 §02 的流程图。
 
-## 怎么用
+## 现状
 
-**构建与部署**（仿 [`../hl-snap/`](../hl-snap/README.md)）：
+| 项 | 状态 |
+|---|---|
+| 书法笔 | ✅ 真机通（hook `FUN_00f47530`）。书法笔原生就有方向粗细（平头笔尖，竖线是横线 2~4 倍粗），不是本扩展加的 |
+| 钢笔 / 铅笔 / 马克笔等日常工具 | ✅ 真机通（hook `FUN_00f4c8d0`，一次实测命中 10033 次，是前者近 5 倍） |
+| 最常用的钢笔/铅笔量级（xochitl 内部笔型标签 `bVar16<4`） | ❌ 还摸不到：走虚函数动态分发，目标没确认 |
+| 真实压感 | ❌ 放弃，改用运笔速度代替（原因见白皮书 §03f） |
+| 参数 | 一轮真机数据校准的起点，用户反馈"看上去还行"，未精细打磨 |
+| 负载 | 2026-09-24 起每笔起点读一次配置，逐点日志默认关（白皮书 §03g） |
 
-```sh
-make aarch64 XOVI_DIR=<asivery/xovi clone 路径>       # 产物 hw-stroke.so（已提交进仓库）
-cd ../../packaging && sh deploy-handwriting-stroke.sh <host>   # host 侧一键：构建 → 推送 → 设备端安装
-```
+原理、逆向过程、渲染链、为什么这样设计：[白皮书 §03c–§03g](../docs/reMarkable系统增强线白皮书.md)；未完成项：白皮书 §05。本文只讲怎么用、怎么部署。
 
-设备端 `deploy/install.sh [--no-restart]` 需要同目录的 `xovi-ext-install.sh` 与 `devlib.sh`（由部署脚本一起推送，只拷单个 `install.sh` 不够）；行为、备份与重启判定同 `hl-snap` README「部署」。装到 `extensions.d/hw-stroke.so`。通用 trampoline 安装代码（`cj_patch_target`）在 [`../shared/`](../shared/PROVENANCE.md)，两个 xovi 扩展共用。
+## 开关与参数
 
-**开关**：网页「管理 → 实验室」的"CJK 手写笔迹优化"是一个纯网页层派生开关——开 = 把 `hwStrokeNibMinRatio` 与 `hwStrokeSpeedMinRatio` 都写 `0.6`，关 = 都写 `1.0`（见 `gateway/src/enhance/qol.rs`）。不用重新部署 `.so`：扩展在每一笔的起点读一次配置（另每 1024 个点兜底读一次），改了从下一笔生效。2026-09-24 前是逐点读、逐点写日志，一次采样上万次系统调用和日志行。角度/宽度/速度阈值这几个精调字段留给手改 `reading-qol.json`。
+**网页开关**：「管理 → 实验室」→「CJK 手写笔迹优化」。它没有单独的布尔字段：开 = 把 `hwStrokeNibMinRatio` 和 `hwStrokeSpeedMinRatio` 都写成 `0.6`，关 = 都写 `1.0`；网页把 `hwStrokeNibMinRatio < 1.0` 显示为"已开"（`gateway/src/enhance/qol.rs`）。不用重新部署 `.so`，**从下一笔生效**（扩展在每一笔起点读一次配置，另每 1024 个点兜底读一次）。
 
-**`~/.local/share/cangjie-ime/reading-qol.json` 里的键**（`cangjie-ime` 是历史目录名；缺失/解析失败/越界的值都保持当前值，fail-safe）：
+开关旁的「已加载 / 未加载」徽章表示 `hw-stroke.so` 是否真的在 xochitl 进程里。
+
+**精调参数**只能手改 `~/.local/share/cangjie-ime/reading-qol.json`（`cangjie-ime` 是历史目录名）。缺失、解析失败或越界的值都会被忽略、保持当前值：
 
 | 键 | 默认 | 含义 |
 |---|---|---|
-| `hwStrokeWidthFactor` | 1.0 | 整体宽度缩放（0~10；1.0=不变） |
+| `hwStrokeWidthFactor` | 1.0 | 整体宽度缩放（0~10；1.0 = 不变） |
 | `hwStrokeNibAngleDeg` | 45 | 笔尖角度（度） |
-| `hwStrokeNibMinRatio` | 1.0 | 笔尖角度效果强度；1.0=关闭，越小方向差越明显 |
-| `hwStrokeNibWidthLow` / `hwStrokeNibWidthHigh` | 6 / 20 | 宽度渐变阈值（两个效果共用）：基础宽度低于 Low 效果趋近关闭，高于 High 满强度 |
-| `hwStrokeSpeedMinRatio` | 1.0 | 提按（运笔速度代理）效果强度；1.0=关闭 |
-| `hwStrokeSpeedLenLow` / `hwStrokeSpeedLenHigh` | 1 / 8 | 相邻两点距离阈值（像素/采样点）：短→粗（慢/顿笔），长→细（快/带过） |
-| `hwStrokeDebug` | false | 调试：打开才逐点写 `[hw-stroke:…]` 日志、才装纯诊断的 FUN_00f3f9d0 分派 hook（后者只在加载时看，改了要重启 xochitl）。默认关，免得日志进 journal 后被壁纸服务、飞行记录仪逐行读放大负载 |
+| `hwStrokeNibMinRatio` | 1.0 | 笔尖角度效果强度：1.0 = 关，越小横竖粗细差越明显 |
+| `hwStrokeSpeedMinRatio` | 1.0 | 运笔速度（提按）效果强度：1.0 = 关 |
+| `hwStrokeNibWidthLow` / `High` | 6 / 20 | 两个效果共用：基础宽度低于 Low 时效果趋近关闭，高于 High 时满强度（细笔不抖、粗笔才有顿挫） |
+| `hwStrokeSpeedLenLow` / `High` | 1 / 8 | 相邻两点距离阈值（像素/采样点）：距离短（慢、顿笔）→ 粗，距离长（快、带过）→ 细 |
+| `hwStrokeDebug` | false | 调试：开了才逐点写 `[hw-stroke:…]` 日志、才装只读的分派诊断 hook（后者只在加载时看这个键，改了要重启 xochitl） |
 
-> 白皮书 §03f 记过一次真机校准值（宽度阈值 5/20、速度阈值 1~10、强度 0.6），那是当时写进配置文件的值；上表是**代码里的默认值**，以代码常量（`src/hw_stroke.c`）为准。
+两个效果的公式（`min_ratio = 1.0` 时恒等于 1，即关闭）：
 
-## 三个 hook
+```
+笔尖角度：宽度 ×= min_ratio + (1-min_ratio) × |sin(运笔方向角 − 笔尖角度)|
+运笔速度：宽度 ×= min_ratio + (1-min_ratio) × (1 − clamp((len−len_low)/(len_high−len_low), 0, 1))
+```
 
-`hw-stroke.so` 装三个 hook，各自独立 install，找不到目标只跳过自己、不拖累其它；`_xovi_shouldLoad` 只看主 hook 的特征码是否唯一命中，否则拒载（裸启原生）。
+> 白皮书 §03f 记过一次真机校准时写进配置文件的值（宽度阈值 5/20、速度阈值 1~10、强度 0.6）；上表是**代码默认值**，以 `src/hw_stroke.c` 为准。
 
-| 函数 | 作用 | 备注 |
+## 装了哪些 hook
+
+| 函数 | 作用 | 何时装 |
 |---|---|---|
-| `FUN_00f47530` | 变宽几何生成器（书法笔专属），改宽度 | 主 hook；书法笔原生就带方向粗细（平头笔尖的真实物理效果，竖线是横线 2~4 倍粗），不是本扩展引入的 |
-| `FUN_00f4c8d0` | 第二个几何生成器（`bVar16==5/6`：钢笔/铅笔/马克笔等） | 与主 hook 同一调用约定 `(float x, float y, ctx)`，宽度在 `ctx+4`；一次真机实测命中 10033 次（主 hook 2117 次） |
-| `FUN_00f3f9d0` | 逐点渲染分派 | **只读诊断**，留着排查用，不改任何值 |
+| `FUN_00f47530` | 变宽几何生成器（书法笔），改宽度 | 总是。它的特征码也是 `_xovi_shouldLoad` 的判据：找不到就整个扩展不加载 |
+| `FUN_00f4c8d0` | 第二个几何生成器（钢笔/铅笔/马克笔等），改宽度 | 总是；找不到只跳过它自己 |
+| `FUN_00f3f9d0` | 逐点渲染分派，**只读诊断**，不改任何值 | 仅 `hwStrokeDebug=true` 时 |
 
-## 两个效果
+## 构建与部署
 
+```sh
+make aarch64 XOVI_DIR=<asivery/xovi clone 路径>                 # 产物 hw-stroke.so（已提交进仓库）
+cd ../../packaging && sh deploy-handwriting-stroke.sh <host>     # host 侧一键：构建 → 推送 → 设备端安装
 ```
-笔尖角度：宽度 ×= min_ratio + (1-min_ratio) × |sin(运笔方向角 − 笔尖角度)|      （Illustrator/Inkscape 书法笔刷同款公式）
-提按速度：宽度 ×= min_ratio + (1-min_ratio) × (1 − clamp((len−len_low)/(len_high−len_low), 0, 1))
-```
 
-`min_ratio=1.0` 时两个公式恒等于 1，即关闭。两个效果的强度都随**基础宽度**自动挂钩（细笔画趋近关闭、粗笔画满强度），不按笔型分支——真机发现钢笔与毛笔走的是同一条分支同一套公式，只是基础宽度不同。运笔方向用 hook 内部维护的"上一点坐标"（`ctx+0x48/0x4c`）现算，不依赖点结构里的方向字节。
+设备端 `deploy/install.sh [--no-restart]` 与 hl-snap 共用同一套流程（`packaging/xovi-ext-install.sh`），同目录需要 `xovi-ext-install.sh` 与 `devlib.sh`；备份、换文件（运行中正在用就 stop → 换 → start）、重启判定都和 [hl-snap README「部署」](../hl-snap/README.md#部署) 一样。装到 `extensions.d/hw-stroke.so`。公共扫描/trampoline 代码在 [`../shared/`](../shared/PROVENANCE.md)。
 
-## 笔画怎么变成像素：渲染链
+**验证装上了**：`journalctl -u xochitl | grep hw-stroke` 应有 `变宽几何 hook 安装完成 @ 0xf47530` 与 `第二几何 hook 安装完成 @ 0xf4c8d0` 两行。
 
-![笔画渲染链与 hook 位置](../docs/diagrams/handwriting-render-chain.svg)
-
-调用链（真实类名/函数名来自 Qt 编译进二进制的调试字符串与 Ghidra 反编译交叉验证；xochitl 符号被剥干净，函数名都是 `FUN_` 加地址）：
-
-- `ShapesOverlay`（继承 `QQuickPaintedItem`，QML 类型在 `com.remarkable`，源码路径字符串 `.../src/xofm/libs/sceneview/src/shapesoverlay.cpp`）的 `updateImage`（`FUN_008bbb80`）才是真正画像素的入口；`paint()` 只是把内部 `QImage` 整张 blit 上屏。
-- `updateImage` 里自由手写笔迹走 `QPainterPath::toFillPolygon()` 重采样，每个点重新打包成 14 字节点结构，再经 `StrokeRenderer`（构造函数 `FUN_00f3dcf0`，把 `CoverageBuffer` / `IVaryingsGenerator` / `LerpRaster<Fill*>` 十几个多态成员**内联组合**进自己）渲染。
-
-**14 字节点结构**（`FUN_00f36be0` 反解，独立验证过）：
-
-| 偏移 | 类型 | 换算 | 字段 |
-|---|---|---|---|
-| `0x0` / `0x4` | float | 原样 | x / y 坐标 |
-| `0x8` / `0xA` | u16 | ×0.25 | 两个同类宽度/速度定点字段 |
-| `0xC` | u8 | ×2π/255 | 方向角 |
-| `0xD` | u8 | ÷255 | 压感（0~1） |
-
-`.rm` 文件里解析的点字段应与此对得上，但**没做过交叉对拍**。
-
-## 为什么没用真实压感
-
-点结构里的压感字节是真实数据（正常书写力度下很快饱和到 255，专测轻重才能拿到 3~255 的宽分布），但**跨函数传给宽度 hook 的方案被真机数据证伪**：`FUN_00f3f9d0` 有 6 个调用点，宽度 hook 的绝大多数调用（一次采样 686 次 vs 仅 2/3449 落在锁定分支）根本不经过被锁定的那份，很可能"实时预览"和"提交进笔记本"走不同路径。所以改用完全在 hook 内部就能算的**运笔速度代理**。
-
-## 未完成（没做，真要做需要更多真机验证/静态分析）
-
-1. **`bVar16<4` 分支（最常用的钢笔/铅笔量级工具）仍摸不到**：它是虚函数动态分发（`(**(code**)(*plVar6+0x10))(x,y,width,plVar6,...)`，宽度直接当第 3 个参数传），运行时多态目标没确认。下一步思路：扩展诊断 hook 读 `*(void**)(*plVar6+0x10)` 打印函数地址，再拿地址反编译确认签名。
-2. **`FUN_00f4f430`（`bVar16==3`）**：签名与宽度约定跟已验证的两个一致，但前 20 字节第 3 条指令是条件分支（`cbz`，PC 相对寻址），被 `memcpy` 进 call-through stub 后分支目标会算错，**不能安全 patch**；要用需要指令级搬移/重定位，或往后找更靠后的安全 patch 点。
-3. 像素消费者虚函数（`vtable+0x10`）的真实目标、smoothstep 缓动曲线（存进 `plVar6+0xe`）的下游用途：静态分析到边界，需要动态分析。
-4. 参数（角度 45°、宽度阈值、速度阈值、强度 0.6）只是一轮真机数据的校准起点，"看上去还行"到"效果好"之间还有调参空间。
-5. 想换回真实压感，得先搞清 `FUN_00f47530` / `FUN_00f4c8d0` 各有哪些调用路径、`FUN_00f3f9d0` 这份实例覆盖了哪些。
-
-## 排查方法论（下次直接抄）
-
-1. **调试/异常字符串是金矿**：stripped 二进制里能挂上名字的每一步（`ShapesOverlay` / `saveStroke` / `updateImage` / `"New StrokeRenderer,"` / 源码路径）都来自 Qt 编译进去的错误提示文案，比符号表可靠，先扫它们再决定深挖哪个函数。
-2. **找 vtable 走"构造函数正向安装"，别走"typeinfo 反向反查"**：内联组合成员的 vtable 指针是构造函数里按值写入的，没有任何地方存指向其 typeinfo 的裸指针，反查天生走不通（白皮书 §04 有这个教训的来龙去脉）。
-3. Ghidra `Show References To` 依赖分析器已识别的 xref；找不到时退回 `Search → Memory`（十六进制字节序列搜索）。
-4. **反编译要交叉核实原始汇编**：`FUN_00f401f0`（`VaryingGenerator_WidthLength` 的业务方法）曾被反编译显示成"1 个 float 入参、一行线性缩放"，原始汇编却是 3 个 float 入参 + 1 个对象指针、产出一对 float；而且它在整个二进制里**零真实调用者**——当初据此写的"最具体的候选改动点"结论已撤回，改用确认在真实调用链上的 `FUN_00f47530`。
-5. 一旦有了具体地址，headless 脚本（[`../../defw/scripts/`](../../defw/README.md)）能接手反编译/查 xref/按字节搜内存，不必再靠 GUI 截图；前提是 GUI 已关闭工程（否则抢 `.lock`）。
-6. Java Swing 在 Wayland 平铺式合成器下 Ghidra 窗口整片空白：设 `_JAVA_AWT_WM_NONREPARENTING=1`。
+**构建时注意 GLIBC 版本**：交叉工具链的 glibc 比设备新得多，用到 `atan2f`/`sqrtf` 这类函数会链上设备没有的符号版本，整个 `.so` 静默加载失败。改完用 `aarch64-linux-gnu-objdump -T hw-stroke.so | grep GLIBC_` 确认最高仍是 `GLIBC_2.17`（详见白皮书 §04）。

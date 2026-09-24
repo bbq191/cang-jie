@@ -9,7 +9,7 @@
 
 | 内容 | 说明 |
 |---|---|
-| `xochitl_328_analysis.gpr` | Ghidra 项目标记文件。`.rep`（二进制项目库）、`.lock`、`.log` 都 gitignore，**只有 `.gpr` 入库**（headless 建的 `.gpr` 是 0 字节也正常，元数据在 `.rep/` 里） |
+| `xochitl_328_analysis.gpr` | Ghidra 项目标记文件。`.rep`（二进制项目库）、`.lock`、`.log`（如本机的 `import.log`、`rtti_find*.log`）都 gitignore，**只有 `.gpr` 入库**（headless 建的 `.gpr` 是 0 字节也正常，元数据在 `.rep/` 里）。clone 下来只有 `.gpr` 和脚本，要自己重新导入分析 |
 | `scripts/` | headless 分析脚本（Java，Ghidra Script API），见下表 |
 
 `xochitl` 二进制本身**不进仓库**（体积大，也是 reMarkable 官方二进制，licensing 上不该入库）；用时 `scp root@10.11.99.1:/usr/bin/xochitl` 现拉。
@@ -39,7 +39,7 @@ paru -S ghidra --assume-installed java-environment=21
 JAVA_HOME=~/.local/share/sdkman/candidates/java/21.0.12-tem ghidra-analyzeHeadless <project_location> xochitl_328_analysis -import <xochitl路径>
 ```
 
-嫌每次都写，可以自己用 sudo 把 `JAVA_HOME_OVERRIDE` 写进 `launch.properties`（需要 host sudo，这边没有）。
+嫌每次都写，可以自己用 sudo 把 `JAVA_HOME_OVERRIDE` 写进 `launch.properties`（需要电脑上的 sudo 权限）。
 
 已有具体地址之后，对已导入的程序跑脚本（**GUI 必须先关闭工程**，headless 和 GUI 不能同时开同一个工程，会抢 `.lock`）：
 
@@ -54,7 +54,7 @@ GUI 环境坑：Java Swing 在 Wayland 平铺式合成器下会整窗口空白�
 ## 方法论（怎么从"零线索"走到"两个 hook 目标真机部署"）
 
 1. **字符串侦察**：`strings` / `c++filt` 在真机 `xochitl` 上找 RTTI 名字（这次是命名空间 `Quill::strokev2` 一整套笔画光栅化类）——只到字符串层面，不代表能 hook。
-2. **GUI 探索式排查**：完全不知道往哪查的阶段，在 Ghidra CodeBrowser 里人工点（没有屏幕/鼠标工具，只能"远程指导 + 用户操作截图回传"）。Qt 编译进二进制的调试字符串（源码路径、方法名）是把 `FUN_xxxx` 挂上名字的最可靠线索。
+2. **GUI 探索式排查**：完全不知道往哪查的阶段，在 Ghidra CodeBrowser 里人工点、看截图。Qt 编译进二进制的调试字符串（源码路径、方法名）是把 `FUN_xxxx` 挂上名字的最可靠线索。
 3. **headless 脚本接力**：一旦有了具体地址，反编译 / 查 xref / 按字节搜内存都能用 `scripts/` 批量做，不必再靠 GUI 截图。
 
 完整的反解发现、踩坑与勘误记在 [`../enhance/handwriting-stroke/README.md`](../enhance/handwriting-stroke/README.md) 和 [`../enhance/docs/reMarkable系统增强线白皮书.md`](../enhance/docs/reMarkable系统增强线白皮书.md) §03c–§03f、§04；**本目录只管"怎么用这套工具"，不重复记发现内容**。发现即写：探索有结论就更新对应文档，别只留在脚本输出里。

@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1240 700" font-family="sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1240 700" font-family="Noto Sans CJK SC, sans-serif">
 <defs><marker id="mk" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#555"/></marker><marker id="mr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#b0451f"/></marker><marker id="mg" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2f7d45"/></marker></defs>
 <rect x="0" y="0" width="1240" height="700" fill="#fbfbfa"/>
 <text x="620.0" y="30" text-anchor="middle" font-size="18" font-weight="bold" fill="#1a1a1a">网关：一个入口，怎么把请求送到各个服务</text>
@@ -16,10 +16,10 @@
 <text x="486" y="100" text-anchor="middle" font-size="14" font-weight="bold" fill="#1a1a1a">gateway 进程（0.0.0.0:443，crate: gateway）</text>
 <rect x="256" y="116" width="460" height="62" rx="10" fill="#fff3d6" stroke="#c9971f" stroke-width="1.6"/>
 <text x="486.0" y="136" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">① HTTPS 终结 + 登录守卫（auth.rs）</text>
-<text x="486.0" y="159" text-anchor="middle" font-size="10" fill="#3a3a3a">私有 CA 签发的叶证书；公开路径只有 /login /logout /ca.crt /health</text>
+<text x="486.0" y="159" text-anchor="middle" font-size="10" fill="#3a3a3a">证书由带名称约束的私有 CA 签；并发超 64 个请求回 503；公开： /login /logout /ca.crt /health</text>
 <text x="486.0" y="174" text-anchor="middle" font-size="10" fill="#3a3a3a">未登录：浏览器 303→/login，其它 401；首登必改密码见下图</text>
 <rect x="256" y="196" width="460" height="118" rx="10" fill="#eaf6ec" stroke="#3f9a55" stroke-width="1.6"/>
-<text x="486.0" y="216" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">② 网关自己的路由（先注册，先匹配）</text>
+<text x="486.0" y="216" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">② 网关自己的路由（字面路径比 /api/{svc}/* 更具体，优先匹配）</text>
 <text x="486.0" y="239" text-anchor="middle" font-size="10" fill="#3a3a3a">/  单页 UI · /ui/locales/{lang} · /ca.crt · /login /password /api/session</text>
 <text x="486.0" y="254" text-anchor="middle" font-size="10" fill="#3a3a3a">/api/services（注册表）· /api/manage · /api/foundation（基石探测）</text>
 <text x="486.0" y="269" text-anchor="middle" font-size="10" fill="#3a3a3a">/api/events（SSE 事件汇聚）</text>
@@ -31,7 +31,7 @@
 <text x="268" y="390" text-anchor="start" font-size="10" fill="#3a3a3a">     例：books→book-serve  ink→ink-serve  notes→note-serve</text>
 <text x="268" y="405" text-anchor="start" font-size="10" fill="#3a3a3a">2  服务名 → 端口：查注册表 $XDG_RUNTIME_DIR/shelf/services/</text>
 <text x="268" y="420" text-anchor="start" font-size="10" fill="#3a3a3a">3  剥掉 &lt;seg&gt;，转发到 http://127.0.0.1:&lt;端口&gt;/&lt;其余路径&gt;</text>
-<text x="268" y="435" text-anchor="start" font-size="10" fill="#3a3a3a">     请求体流式转发；响应整体缓冲后回给浏览器</text>
+<text x="268" y="435" text-anchor="start" font-size="10" fill="#3a3a3a">     请求体流式转发；下载（200 + Content-Disposition）也边读边发，其余小应答读完再回</text>
 <text x="268" y="450" text-anchor="start" font-size="10" fill="#3a3a3a">     只回传 Content-Type / Content-Disposition 两个响应头</text>
 <text x="268" y="465" text-anchor="start" font-size="10" fill="#3a3a3a">4  seg 不在表里 → 404“未知服务”；服务没起 → 404“未安装或未运行”</text>
 <text x="268" y="480" text-anchor="start" font-size="10" fill="#3a3a3a">     后端连不上 → 502</text>

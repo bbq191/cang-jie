@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 640" font-family="sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 640" font-family="Noto Sans CJK SC, sans-serif">
 <defs><marker id="bg-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#555"/></marker><marker id="bg-r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#b0451f"/></marker><marker id="bg-g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2f7d45"/></marker></defs>
 <rect x="0" y="0" width="1200" height="640" fill="#fbfbfa"/>
 <text x="600.0" y="30" text-anchor="middle" font-size="18" font-weight="bold" fill="#1a1a1a">并发 / 内存预算闸门（网关 budget.rs）</text>
@@ -50,8 +50,9 @@
 <rect x="800" y="386" width="370" height="110" rx="10" fill="#eaf6ec" stroke="#3f9a55" stroke-width="1.6" stroke-dasharray="6 4"/>
 <text x="985.0" y="406" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">放行与释放</text>
 <text x="985.0" y="432.5" text-anchor="middle" font-size="10.5" fill="#4a4a4a">拿到名额后才真正调 book-serve</text>
-<text x="985.0" y="446.0" text-anchor="middle" font-size="10.5" fill="#4a4a4a">结束时名额（Slot）析构自动归还</text>
-<text x="985.0" y="459.5" text-anchor="middle" font-size="10.5" fill="#4a4a4a">并唤醒所有排队者重新判断</text>
+<text x="985.0" y="446.0" text-anchor="middle" font-size="10.5" fill="#4a4a4a">异步任务：查到这本书 busy=false 才归还</text>
+<text x="985.0" y="459.5" text-anchor="middle" font-size="10.5" fill="#4a4a4a">查询连续失败 6 次才放名额（防提前放行）</text>
+<text x="985.0" y="473.0" text-anchor="middle" font-size="10.5" fill="#4a4a4a">归还时唤醒所有排队者重新判断</text>
 <rect x="30" y="520" width="1140" height="92" rx="10" fill="#f2f2f5" stroke="#8a8a99" stroke-width="1.6" stroke-dasharray="6 4"/>
 <text x="600.0" y="539" text-anchor="middle" font-size="12" font-weight="bold" fill="#1a1a1a">为什么放在网关</text>
 <text x="600.0" y="564.5" text-anchor="middle" font-size="10.5" fill="#4a4a4a">book-serve、koreader-serve、gateway 是三个独立进程，进程内的忙锁天然不跨进程；book-serve 的忙锁又只按“书名”加，点不同的书互不阻塞。</text>

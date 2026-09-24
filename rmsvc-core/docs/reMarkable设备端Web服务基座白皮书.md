@@ -1,182 +1,139 @@
 # reMarkable 设备端 Web 服务基座（rmsvc-core）白皮书
 
-> 记"怎么决定、为什么正名搬顶层、踩了什么坑"。读现状先看“3 分钟读懂”和 §00b；待办看 §05；踩坑看 §04。模块清单与 Rust API 入口见 [`../README.md`](../README.md)。
-> **本 crate 的架构决策大多是在还叫 `shelf-core`、还挂在 `shelf/crates/` 下时定的**——Repository/
-> Template Method/Registry/Facade 这些设计模式的取舍过程记在 `shelf/docs/reMarkable书架白皮书.md`
-> §01（"三种拆法"那节），本文不重复搬运那段历史，只记"正名搬顶层"这件事本身，以及正名之后
-> 独立存在时的现状、消费方、维护纪律。
+> **读者与用途**：要改 `rmsvc-core`，或在 `shelf/`、`notes/`、`enhance/`、`gateway/` 里写 Web 服务、想知道基座提供什么、有哪些约定的人。
+> 先读“现状”；后面按模块分组，每个模块写“谁在用”和“关键约定”。被推翻的做法只留结论和教训。
+> 入口文档（模块速查、Rust API 入口）见 [`../README.md`](../README.md)；网关怎么用这些模块（登录、代理、闸门）见 [网关白皮书](../../gateway/docs/reMarkable网关白皮书.md)。
+> 所有数字以 2026-09-24 的代码为准（`rmsvc-core/src`）。
 
-## 3 分钟读懂
+## 现状（2026-09-24）
 
-**它是什么**：设备上十来个小 Web 服务（书架、KOReader、字体、壁纸、笔记四件套、网关）共用的“地基库”——路径、服务注册、HTTP 适配、流式上传、事件总线、往 xochitl 塞书、登录/TLS 这些每个服务都要的杂活，只写一份。服务只写自己的业务。
+**一句话**：设备上 9 个小 Web 服务（书架 2 个、系统增强 2 个、笔记 4 个、网关）都要做同样的杂活——读 XDG 路径、向注册表登记、收 HTTP 请求回 JSON、接大文件上传、往 xochitl 塞书、广播“该刷新了”、登录和 TLS。这些杂活只写一份，就是 `rmsvc-core`。它是纯基础设施，不含任何“书 / 笔记 / 字体”业务语义。
 
 ![模块地图与消费方](diagrams/module-map.svg)
 
-**术语**：*注册表*＝每个服务启动时在 `$XDG_RUNTIME_DIR/shelf/services/<名>.json` 写下端口，网关读目录即知谁活着；*Repository / Template Method*＝`asset` 里把“上传→暂存→扩展名门→校验→安装→回执”流程写一次，各仓库只实现差异；*剥离移植*＝需要旧项目的某项能力时不依赖旧 crate，而是把已验证的结论独立重写一份；*path 依赖*＝消费方在 `Cargo.toml` 里直接写相对路径依赖本 crate，不经 workspace。
+**术语**
 
-**三条要记住的事**：① 本 crate 不知道任何消费方（单向依赖）；② 改任何模块前先想清楚几条线谁在用；③ XDG 路径仍叫 `shelf`（已部署设备的真实路径，改名要迁移）。
-
-## 00｜定位与原则
-
-`rmsvc-core` 是 reMarkable 设备端**三条 Web 服务项目线**（`shelf/`、`notes/`、`gateway/`，加上
-`enhance/wallpaper-serve`/`enhance/font-serve` 两个领域服务）共用的基座 crate：纯基础设施，
-不含任何"书"/"笔记"/"壁纸"这类业务语义——领域逻辑一律留在各自的 `services/*`/`enhance/*`里。
-
-**2026-09-11 正名搬顶层**：本 crate 原名 `shelf-core`，位置在 `shelf/crates/shelf-core`。
-名字和位置都在暗示"这是 shelf 私有的东西"，但事实上从 `notes/` 四个服务一开始就在依赖它
-起（见 `notes/docs/reMarkable笔记白皮书.md` 的既有记录），它就已经是跨线共享的基座，只是
-名分没有跟上事实。用户判断后拍板正名：crate 改名 `rmsvc-core`（reMarkable service core），
-目录挪到仓库顶层，跟 `shelf/`、`notes/`、`gateway/`、`enhance/`、`defw/` 并列——不建新的
-"基座"分类父目录，摊平放，跟 `device-core/`（块③阅读+块⑤PKM 共用底座，历史先例）同一个模式。
-
-四条延续自 shelf-core 时代、继续适用的工程原则：
-1. **端口/适配器分层**：领域模块不碰 HTTP 类型，`http` 是唯一适配层。
-2. **模板方法 + 仓库模式**：`asset::{AssetStore, AssetUploadFlow}` 让 font/wallpaper/koreader/
-   母版库四家共用同一套上传流程骨架，拒收/成功文案由各自仓库实现决定。
-3. **单一事实源**：`formats` 格式白名单、`fs::plain_name`/`unique_path`、`paths` 的 XDG 路径表——
-   一处定义，多处消费，不允许各消费方各写一份。
-4. **不引用旧项目 crate、不对接旧路径**：`xochitl`/`fswatch` 两个模块需要的能力都是"剥离移植"
-   独立实现，不路径依赖 `device-core`/`weread-device`。这条原则这次也用在了自己身上——
-   `enhance/hl-snap`/`enhance/handwriting-stroke` 需要的 `chinese-ime/langhook` 三个工具文件，
-   在 `chinese-ime/` 挪出仓库后同样改成了剥离移植的独立副本，不是巧合，是同一条纪律。
-
-## 00b｜现状总览（2026-09-11）
-
-**三方共用，单向依赖，无循环**：`shelf/services/{book,koreader}-serve`、`gateway/`、
-`notes/services/{ink,transcribe,mind,note}-serve` + `notes/crates/vendorcfg`、
-`enhance/{wallpaper,font}-serve`——全部通过 `path = "../rmsvc-core"`（或从更深子目录数够层数）
-路径依赖，没有反向依赖，本 crate 不知道、也不关心任何消费方的存在。
-
-**不建 workspace**：跟 `device-core/` 一样，本 crate 独立编译（`cargo build --manifest-path
-rmsvc-core/Cargo.toml`），各消费方各自的 Cargo workspace/独立项目各管各的 `target/`，没有
-根 workspace 把大家绑在一起。
-
-**模块一览**（详见各模块文档注释）：
-
-| 模块 | 职责 |
+| 词 | 意思 |
 |---|---|
-| `paths` | XDG 基目录规范的单一路径表，三方共用同一张表；`app_config_dir("notes")` 这类通用接口预留给非默认命名空间的消费方 |
-| `registry` | 服务自注册/发现（`$XDG_RUNTIME_DIR/shelf/services/<name>.json`），网关据此拔插；`SvcClient`/`enc`（2026-09-09 加，见下）是跨服务 HTTP 客户端骨架 |
-| `http` | tiny_http 适配层：`Router`/`bind`/`ApiError`/`Reply`/`JsonBody`——领域模块唯一允许碰 HTTP 类型的地方 |
-| `multipart` | 流式 multipart/form-data 解析，多文件落盘不进内存（设备 MemoryMax 友好） |
-| `asset` | 资产仓库抽象（Repository）+ 上传流程模板（Template Method）+ receipt |
-| `xochitl` | 原生书库免重启注入（`/upload` GET-then-upload 归档、防复制风暴判据、`unique_document_name`） |
-| `xochitl_conf` | 改 `xochitl.conf` 的原子写工具（休眠屏 `SleepScreenPath` 键；只动 `[General]` 单键、首次改前留 `.shelf-bak`，文件含凭证不打印行内容） |
-| `fswatch` | inotify 目录监听，常驻+限时两种模式 |
-| `events` | 事件总线（EventBus + SSE），供网关 `Hub` 汇聚 |
-| `config` | 配置读写模板（`load_or_default`/`load_or_seed`/`save`） |
-| `fs` | 原子写、`plain_name`、`unique_path` |
-| `clock` | 时间戳唯一出处 |
-| `formats` | 文件扩展名白名单单一事实源（`IMAGE_EXTS`/`FONT_EXTS`…） |
-| `ttf` | TTF/OTF 解析：`name` 表家族名、魔数校验、CJK 覆盖率（cmap），`font-serve`/`koreader-serve` 共用 |
-| `service` | 服务启动模板（解析 `--bind` → 建目录 → 自注册 → 起服务器，自带 `GET /health`） |
-| `cache` | 单值 TTL 缓存（`/status` 这类重活接口降频，操作后可主动失效） |
-| `tls` | 私有 CA（10 年）+ 叶证书（800 天，过期前 30 天或 SAN 变化时自动换叶） |
-| `auth` | PBKDF2-HMAC-SHA256（60 万轮）密码哈希——旧版单轮加盐 SHA-256 仍可校验、改密后自动升级；Basic/Cookie 解析、内存会话表、失败限速器 `FailLimiter`（2026-09-09 审计加固） |
-| `mdns`/`netinfo` | 极简 mDNS 应答器（`shelf.local`）、本机 IPv4 表（读 `/proc/net`，不 fork 进程） |
+| 注册表 | 每个服务启动时在 `$XDG_RUNTIME_DIR/shelf/services/<名>.json` 写下端口和 pid；网关读目录就知道谁活着 |
+| path 依赖 | 消费方在 `Cargo.toml` 里直接写相对路径 `rmsvc-core = { path = "…/rmsvc-core" }`，不经 workspace |
+| 剥离移植 | 需要旧项目某项能力时不依赖旧 crate，而是把验证过的结论独立重写一份 |
+| Repository / Template Method | `asset` 把“上传→暂存→查扩展名→校验→安装→回执”流程写一次，各仓库只实现差异 |
 
-**测试**：76 个单测（2026-09-22 数，随代码增长），`cargo test --manifest-path rmsvc-core/Cargo.toml` 独立跑，CI `rust` job
-单列一步（仿 `device-core` 先例）。
+**关键事实**
 
-## 01｜架构决策：为什么正名，而不是继续留在 shelf 底下
+| 项 | 值 |
+|---|---|
+| 模块数 | 20 个（`lib.rs`） |
+| 消费方 | `shelf/services/{book,koreader}-serve` · `enhance/{font,wallpaper}-serve` · `notes/services/{ink,transcribe,mind,note}-serve` + `notes/crates/vendorcfg` · `gateway/` |
+| 依赖方向 | 单向：消费方 → 本 crate；本 crate 不知道任何消费方，不引用旧项目 crate（`device-core` / `weread-device`） |
+| workspace | 不建根 workspace，各项目各管各的 `target/` |
+| 测试 | 91 个单测（`cargo test --manifest-path rmsvc-core/Cargo.toml`，2026-09-24 实跑），CI `rust` job 单列一步 |
+| 真机 | 所有消费方已部署在设备上并正常运行（2026-09-11 起 `install-all.sh` 真机跑通；2026-09-24 网关 `active`） |
 
-真正促成这次决定的是一次连锁判断，不是单一动机：
+**三条要记住**：① 这里出问题，理论上 5 个独立顶层项目一起受影响，改任何模块前先查谁在用（下面每节都列了）；② 公开结构体（如 `http::Request`）被各服务直接构造，加字段会波及全部调用方，宁可走内部头或新函数；③ XDG 路径仍叫 `shelf`（已部署设备的真实路径，改名要迁移）。
 
-1. 用户先问"wallpaper/font 这两个领域服务能不能挪进 `enhance/`"（概念上它们更像系统增强，
-   不是"书架内容管理"业务）。
-2. 排查发现 `wallpaper-serve`/`font-serve` 深度依赖 `shelf-core` 提供的整套 HTTP/服务注册/
-   资产上传框架——不是"引用了几个工具函数"那种浅依赖，是**建在这套框架之上**。真要挪走还
-   保持功能，要么复刻一份框架（分叉 shelf-core，往后两份要分别维护，违背基座只有一份的
-   初衷），要么让 `enhance/` 反向依赖 `shelf/crates/shelf-core`（依赖方向倒挂——网关到现在
-   都只是"消费" `enhance/` 的产出，比如读 `battop` 的 `summary.json`，不是反过来）。
-3. 追问"能不能先把 shelf 整体瘦身/拆分，分基座和业务"——这问题问到了根子上：shelf-core
-   本来就已经是事实上的共享基座（`notes/` 四个服务一直在依赖它），只是名分没跟上。把它
-   正名搬顶层，`wallpaper-serve`/`font-serve` 挪进 `enhance/` 后继续依赖顶层 `rmsvc-core`，
-   跟 `notes/` 现在的用法完全对称——不需要分叉框架，也不需要反向依赖，一次正名同时解决
-   两个问题。
+## 01｜服务骨架：service / registry / http / events
 
-**crate 名怎么选**：候选过 `rmsvc-core`（reMarkable service core）、`hub-core`、`panel-core`，
-用户选 `rmsvc-core`——延续仓库里 `device-core` 的命名风格（`<领域>-core`），且不像
-`hub-core`/`panel-core` 那样隐含"网关"的意味（本 crate 跟网关是平级消费关系，不是网关的
-附属物）。
+### service —— 启动模板（9 个服务都用）
 
-**目录位置怎么选**：候选过"建一个『基座』父目录把 `rmsvc-core`/`gateway` 都塞进去"，用户
-问过这个问题，最终选择摊平放顶层——理由见 §00 最后一段（`device-core` 先例 + "分块是心智
-地图不等于目录嵌套"的既有项目纪律）。
+`service::run(&SPEC, bind, &paths, router)`：解析 `--bind` → 建齐 XDG 目录 → 写注册表 → 起 HTTP 服务器，自动挂 `GET /health`（返回 `{ok, service, version}`）。`run_with` 多一个 `ServeOpts`（TLS、登录守卫、并发上限），只有网关用。`ServiceSpec.tab` 给出网页标签名和顺序（font-serve、koreader-serve、wallpaper-serve、note-serve 注册了；网关前端再把前三个收进“其他”标签）。
 
-**没有做的事**：没有改 XDG 运行时命名空间（`~/.config/shelf/`、`$XDG_RUNTIME_DIR/shelf/
-services/`）、没有改默认密码字面量 `shelf`、没有改 mDNS 域名 `shelf.local`——这几处都会
-牵连已部署设备的真实路径/配置，需要专门的迁移方案，这次范围明确排除在外，详见 §05。
+### registry —— 服务注册与发现（网关、笔记四服务用）
 
-## 02｜跨 workspace 路径依赖怎么算深度
+- 文件 `$XDG_RUNTIME_DIR/shelf/services/<name>.json`：`{name, port, label, version, pid, ui?}`，原子写；进程退出时 `Registration` 的 Drop 删掉它。运行时目录重启即清，再加上按 `/proc/<pid>` 清理陈旧条目，崩溃残留不会误报。
+- **同名且 pid 还活着的条目拒绝覆盖**：真机踩过——调试时起了个 `--bind 127.0.0.1:1` 的第二实例，把正在服务的 wallpaper-serve 的注册顶没了。
+- `find(name)` 直接读 `<name>.json`（O(1)，09-20 前是列举整个目录）。
+- `SvcClient`：服务之间互相调用的 HTTP 客户端，每次按注册表解析地址（对方重启换端口也能找到）；非 2xx 时保留对方错误体里的原因（`get_json` / `post_json` / `post_json_value` / `try_post_json`，后者返回结构化的 `SvcError`）。
 
-这条纯粹是操作上容易算错的地方，记一笔：`path = "../rmsvc-core"` 里 `..` 的个数取决于
-**消费方自己的目录深度**，不是固定值。搬迁前（`shelf/crates/shelf-core`）和搬迁后
-（顶层 `rmsvc-core/`）两种情况下，同一个消费方要填的相对路径段数常常不一样：
+### http —— tiny_http 适配层（所有服务都用）
 
-| 消费方位置 | 搬迁前（`shelf/crates/shelf-core`） | 搬迁后（顶层 `rmsvc-core/`） |
+领域模块不碰 HTTP 类型，这里是唯一适配层。
+
+| 约定 | 说明 |
+|---|---|
+| 路由 | 路径模式：尾部 `/*` 前缀匹配、单段 `{param}`。**最具体的优先**：字面段多的胜、精确匹配胜尾部通配（09-20 起）。此前靠“先注册先匹配”，通配路由曾抢走字面路由；现在跟注册顺序无关 |
+| 每请求一线程 + 并发上限 | 缺省同时 64 个请求（含 SSE 长连接），超了回 503 + `Retry-After: 2`，不再开线程。取值：合法并发约 30（浏览器每源 6 条 × 几个标签页 + 网关到各服务 8 条订阅），64 留一倍余量；每条线程常驻只有几十 KB。`ServeOpts.max_concurrent` 可改，`None` 不限 |
+| 请求头白名单 | 处理函数只看得到 `Cookie`、`Authorization`、`Accept`、`Host`、`X-Forwarded-Proto`、`User-Agent`（外加 `Content-Type`/`Content-Length`） |
+| 对端 IP | 服务器取 TCP 对端地址（HTTPS 下同样取自底层 TcpStream），写进内部头 `X-Rmsvc-Remote-Ip`（常量 `REMOTE_IP_HEADER`），处理函数用 `Request::remote_ip()`、守卫用 `GuardRequest.remote` 读。客户端自带的同名头在白名单那步就被丢掉，伪造不了。没给 `Request` 加字段，是因为它被各服务直接构造 |
+| 守卫 | `Guard`：分发前先问一次，`None` 放行、`Some(reply)` 直接回。登录策略由服务自己定义（只有网关用） |
+| panic | 处理函数 panic 兜成 JSON 500“服务内部错误”，并发名额照常归还（需要消费方 release 是 `panic="unwind"`，见 §05） |
+| 回执 | `Reply::ok/json/error/html/bytes/redirect`；两种流：`Reply::stream`（SSE 用：接管裸 socket、一帧一 flush、读到连接关闭为止，绕开 tiny_http 攒满 8KB 才发的 chunked 缓冲）和 `Reply::sized_stream`（文件下载用：已知长度，按定长响应边读边发，发完即结束，chunked 阈值调到最大以保留 `Content-Length`） |
+| 请求体 | `read_small_body`（1MB 上限）、`json()`/`JsonBody`、`form_body`、`multipart_boundary` |
+
+**09-24 教训**：文件下载第一版用了 `Reply::stream`，reader 读完连接却不关，真机上下载永远收不完。SSE 和定长下载是两种语义，各用各的。
+
+### events —— 事件总线（8 个服务 + 网关用）
+
+- **格式**：一行 JSON `{"area":"books","kind":"staging","at":<unix秒>}`，只是“该刷新了”的信号，不带状态。服务在**变更发生处**调 `EventBus::publish`，网关汇聚后推给网页（原则：不轮询、不监听全盘、日志写入不触发）。
+- **`EventBus`**：进程内广播，每个订阅者一条有界队列（64 条），满了丢事件。
+- **心跳**：`GET /events` 缺省 20 秒一次注释心跳；请求可带 `?ka=<秒>` 要求别的间隔（夹到 5～600 秒）。网关给浏览器用 `?ka=60`。
+- **`follow(paths, svc, on_json)`**：订阅另一个服务的 `/events`，阻塞不返回，放线程里跑。服务没注册就等注册表目录的 inotify 事件（兜底 5 分钟）；连上用 `?ka=120`；断线 3 秒→60 秒指数退避，一条流撑过 10 秒才重置；对方回 404（没有事件流）就长等 10 分钟或等它重新注册。网关的 `Hub` 和 transcribe-serve 订阅 ink-serve 都用它（以前各写一份，还有每 3 秒轮询的耗电问题）。
+
+## 02｜文件与数据
+
+| 模块 | 谁在用 | 关键约定 |
 |---|---|---|
-| `shelf/services/<name>/` | `../../crates/shelf-core` | `../../../rmsvc-core` |
-| `notes/services/<name>/`、`notes/crates/vendorcfg/` | `../../../shelf/crates/shelf-core` | `../../../rmsvc-core`（碰巧深度不变，只是尾段变短） |
-| `gateway/`（原 `shelf/services/shelf-gateway/`） | `../../crates/shelf-core` | `../rmsvc-core` |
-| `enhance/{wallpaper,font}-serve/`（原 `shelf/services/*`） | `../../crates/shelf-core` | `../../rmsvc-core` |
+| `paths` | 9 个服务 | XDG 基目录的**唯一路径表**，所有文件路径从这里取。设备 HOME 是 `/home/root`；配置 `~/.config/shelf/<服务>.json`，数据 `~/.local/share/shelf/`，状态 `~/.local/state/shelf/`，运行时 `$XDG_RUNTIME_DIR/shelf/`（注册表、上传分片，重启即清），二进制 `~/.local/bin`。外部约定可用 `SHELF_KOREADER_ROOT`、`SHELF_WEREAD_ROOT` 覆盖。`app_config_dir("notes")` 这类接口给非 `shelf` 命名空间的消费方 |
+| `fs` | 8 个 | `write_atomic`：先写同目录临时文件再 rename；临时名 `<path>.<pid>.<序号>.tmp`，多线程/多进程同时写同一目标不会互相截断（09-20 前固定用 `<path>.tmp`）。`write_atomic_mode`：临时文件**创建时**就带指定权限，含密钥的文件没有“先宽后紧”的窗口（09-24）。`plain_name` 校验单段文件名（不含 `/`、不是 `.`/`..`、不以 `.` 开头）；`unique_path` 同名不覆盖（`1_x`、`2_x`…）；`move_unique` 跨设备回退 copy+rm |
+| `config` | 7 个 | JSON 配置模板：`load_or_default`、`load_or_seed`（首启写出缺省）、`save`（原子写，可选 0600）。`is_corrupt` 判断“文件在但解析不了”，给启动时要落盘的调用方决定是否跳过，免得把损坏的配置覆盖成缺省（09-24） |
+| `multipart` | book-serve、note-serve、网关 | 流式 multipart/form-data 解析，每个 part 以 `Read` 交出、边读边落盘，多文件一次 POST 也不把请求体读进内存。分隔符扫描记进度、按首字节跳查（200MB 上传体解析 1245ms → 46ms，09-22）。`percent_decode` 遇多字节字符不再 panic；`content_disposition(filename)` 生成下载头（ASCII 兜底名 + RFC 5987 UTF-8 名，笔记导出与原件下载共用） |
+| `asset` | book-serve、koreader-serve、font-serve、wallpaper-serve | `AssetStore`（仓库：`validate`/`install`/`list`/`remove`）+ `AssetUploadFlow`（上传流程写一次）。拒收/成功文案由各仓库覆盖 |
+| `formats` | 5 个 + 网关 | 文件格式白名单的**单一事实源**：书籍只收 `epub`/`pdf`（09-18 起），字体 `ttf/otf/ttc`，词典 `ifo/idx/dict/dz/syn/oft`，图片 `jpg/jpeg/png`。网页 `accept`（网关注入）和服务端上传门同源 |
+| `ttf` | font-serve、koreader-serve | TTF/OTF 家族名（nameID 16 优先）、魔数校验、CJK 覆盖率；汉字覆盖数钳到区内总码位、够数即停（防恶意字体堆重叠段导致数亿次迭代，09-22） |
+| `cache` | book-serve、koreader-serve | 单值 TTL 缓存 `TtlCache`，给每次刷新都会打、但算一次很重的 `/status`（如 3 秒 TTL）；本服务操作完成时 `invalidate`。计算期间持锁，并发请求等同一份结果 |
+| `clock` | 8 个 | unix 时间戳唯一出处；取不到时间回 0 |
 
-搬迁那天真的因为算错深度导致过一次 `cargo build` 报"找不到 crate"，靠 `cargo build`
-本身的报错信息（Cargo 会直接说清楚它去哪找过、没找到）定位修正，不是靠人肉数 `../`。
+## 03｜和 xochitl 打交道：xochitl / xochitl_conf / fswatch
 
-## 03｜维护纪律
+- **`xochitl`**（book-serve、note-serve）：往设备原生书库免重启塞文件，剥离移植自旧项目的真机结论。
+  - `POST http://10.11.99.1/upload`（xochitl 的网页接口只绑 USB 网口，设备端靠 lo/usb1 别名让这个地址常驻可达）。
+  - **GET-then-upload 归档**：先 `GET /documents/<文件夹 uuid>` 把“当前文件夹”设好（这是 xochitl 的全局状态），再上传，文件就落进该文件夹；`.metadata` 里的 parent 会被忽略。
+  - **防复制风暴**：大书上传慢时会 408 或读超时，但文档其实已建好——这类错误**绝不重试**（`upload_likely_delivered`）。
+  - `upload_file` 流式上传磁盘文件，不整本读进内存（09-19 OOM 审计：旧路径峰值能到原文件 2 倍多）。
+  - `upload_large_file` 绕过网页上传约 100MB 的硬限：先传几 KB 的占位文档（EPUB 要带真书名和封面）让 xochitl 建好条目，再把磁盘上的文件原子替换成真文件。EPUB 删掉占位的渲染缓存，首次打开时重渲染；PDF 要一并改 `.content` 里的逐页表和页数。2026-09-20 真机验证：154MB PDF、153MB EPUB 都能打开。失败时占位可能留在书库里，不做危险的回滚删除。
+  - `xochitl::library`：书库 `.metadata`/`.content` 的只读查询（找文件夹、去重命名、按创建时间找“刚进库的那本”、渲染页数），纯文件读取，不碰 HTTP。
+- **`xochitl_conf`**（wallpaper-serve）：改 `~/.config/remarkable/xochitl.conf` 的 `[General]` 单键，目前只用于休眠屏 `SleepScreenPath`。文件里有 `DeveloperPassword` 等凭证，本模块**绝不返回、绝不打印任何行内容**；整文件读入、只动目标行、原子覆盖，首次改前留一份 `.shelf-bak`。新值要等 xochitl 下次启动才生效。
+- **`fswatch`**（book-serve、ink-serve、网关）：inotify 防抖目录监听（单层）。空闲时阻塞读、零唤醒。`watch_debounced` 常驻；`watch_until` 限时，回调说“完了”就撤，用于有头有尾的等待（投原生后等 xochitl 渲染完），不给书库目录留常驻监听。
 
-改这里的任何模块前，先想清楚三条线（`shelf`/`notes`/`gateway`）+ 两个 `enhance/` 服务谁在用
-它、会不会连累无关消费方——这是"基座"跟"业务 crate"最大的区别：`bookconv` 出问题只影响
-书处理相关的几个地方，`rmsvc-core` 出问题理论上五个独立顶层项目全灭。
+## 04｜对外与安全：auth / tls / mdns / netinfo（只有网关用）
 
-**独立顶层 Cargo 项目需要自己的 `.cargo/config.toml`**：这条是搬迁当天踩出来的坑，详见 §04。
+这四个模块只有网关在用；**用户可见的行为、流程图、真机状态都写在网关白皮书 §01**，这里只记模块层面的约定。
 
-## 03b｜2026-09-24 新增的公共能力
+- **`auth`**：`hash_password`/`verify_password`（`pbkdf2$<轮数>$<盐>$<摘要>`，PBKDF2-HMAC-SHA256 60 万轮、16 字节盐；旧版单轮 SHA-256 仍可校验）；`parse_basic`、`parse_cookie`；`SessionStore`（32 字节随机令牌、绝对过期、容量上限，满了淘汰最早到期的）；`IpFailLimiter`（按来源 IP 的滑动窗口失败计数，IPv4 映射的 IPv6 与纯 IPv4 算同一来源；有 `*_at(now)` 版本便于测试）。09-24 之前的全局计数器 `FailLimiter` 已删除。
+- **`tls`**：`ensure_ca_signed(dir, extra_sans)` 读取或生成私有 CA（10 年）+ 服务器证书（800 天；名字列表变化或签发满 700 天重签）；CA 带名称约束（`PERMITTED_DNS`、`PERMITTED_V4`，路径长度 0），约束外的 SAN 剔除并打日志；旧的无约束 CA 自动备份为 `.bak-<秒>` 后重建。依赖 `x509-parser` 解析已有 CA（本来就经 rcgen 在依赖树里）。测试用 `rustls-webpki` 做完整链校验，包括“用同一把 CA 私钥硬签 `evil.com` 会被拒”的反证。流程图见网关白皮书的 [`ca-migration.svg`](../../gateway/docs/diagrams/ca-migration.svg)。
+- **`mdns`**：极简 mDNS 应答器，只回答本机名的 A 查询，应答地址选和提问者同子网的本机 IPv4（USB 网段问就答 `10.11.99.1`）。接口重扫与读超时合并为 60 秒。绑不上 5353（别的 mDNS 服务在跑）只打日志，不影响网关。
+- **`netinfo`**：本机 IPv4 表（证书 SAN、mDNS 选址用），读 `/proc/net/fib_trie` + `/proc/net/route`，不 fork 进程（09-20 前每 30 秒 fork 一次 `ip`）；读不到才回落到 `ip -4 -o addr`。
 
-- `tls`：CA 带名称约束 + 旧 CA 自动迁移（细节与用户须知见网关白皮书 §03c）。新增依赖 `x509-parser`（本来就经 rcgen 在依赖树里）；测试用 `rustls-webpki` 做完整链校验，含"同一把 CA 私钥硬签 `evil.com` 会被拒"的反证。
-- `auth::IpFailLimiter`：按来源 IP 的登录失败限速，取代全局 `FailLimiter`（只有网关在用）。
-- `http`：`GuardRequest.remote`、`Request::remote_ip()`、常量 `REMOTE_IP_HEADER`——没给 `Request` 加字段，是因为各服务直接构造这个公开结构体，加字段会波及全部调用方。
-- `fs::write_atomic_mode`：临时文件创建时就带指定权限（含密钥的文件不再有先宽后紧的窗口）；`config::is_corrupt`：判断配置文件存在但解析不了，给"启动时落盘一次"的调用方决定要不要跳过。
-- `multipart::content_disposition`：下载用的 `Content-Disposition`（ASCII 兜底名 + RFC 5987 UTF-8 名），笔记导出与母版库原件下载共用。
+## 05｜维护纪律、构建与测试
 
-## 04｜踩坑
+- **改之前先查谁在用**：上面每节都列了消费方。`bookconv` 出问题只影响书处理；这里出问题理论上 5 个顶层项目全受影响。
+- **公开结构体不随便加字段**：`http::Request` 等被各服务直接构造（包括测试），加字段会波及全部调用方。09-24 的对端 IP 就是为此走了内部头。
+- **path 依赖的深度**：`..` 的个数取决于消费方自己的目录深度——`gateway/` 写 `../rmsvc-core`，`enhance/*-serve/` 写 `../../rmsvc-core`，`shelf/services/*/`、`notes/services/*/`、`notes/crates/vendorcfg/` 写 `../../../rmsvc-core`。写错时 `cargo build` 会直接说它去哪找过，照着改。
+- **每个独立顶层项目各带一份 `.cargo/config.toml`**（交叉编译的 CC/AR 覆盖），原因见 §06。
+- **release profile**：`gateway`、`shelf`、`notes` 是 `panic="unwind"`，基座的 panic 兜底和各服务的 `catch_unwind` 才真正生效；`enhance/{font,wallpaper}-serve` 仍是 `abort`（没有依赖 `catch_unwind` 的后台线程）。
+- **测试**：`cargo test --manifest-path rmsvc-core/Cargo.toml`，91 个；HTTP 服务器、TLS 握手取对端 IP、名称约束链校验都有真起服务器 / 真证书链的测试。
 
-- **独立顶层 crate 不会自动继承调用方目录的 cargo 配置**（2026-09-11，搬迁当天实测）：
-  `gateway/`、`enhance/{wallpaper,font}-serve/` 独立成顶层 Cargo 项目后，第一次交叉编译在
-  `ring`（rcgen 的传递依赖）这步直接报 `failed to find tool "aarch64-linux-musl-gcc"`——
-  原来 `shelf/.cargo/config.toml`（`CC_aarch64_unknown_linux_musl = "aarch64-linux-gnu-gcc"`
-  这条 env 覆盖）只在从 `shelf/` 目录发起 `cargo build` 时生效，`shelf/build.sh` 里
-  `(cd ../gateway && cargo build …)` 这种跨目录子 shell 调用，子目录自己没有 `.cargo/
-  config.toml` 就完全吃不到这条配置。`notes/` 之所以没踩这个坑，是因为它从一开始就是
-  独立项目、一直带着自己那份 `.cargo/config.toml`。**修法**：每个独立顶层 Rust 项目
-  （`gateway/`、`enhance/wallpaper-serve/`、`enhance/font-serve/`）各自一份 `.cargo/
-  config.toml`，内容跟 `shelf/`/`notes/` 完全一致——不是共享一份，是各自独立的物理副本
-  （Cargo 没有"引用别处配置"的机制）。这个坑不会在 `cargo test`（host 编译，不需要
-  CC/AR 覆盖）里暴露，只在 `--target aarch64-unknown-linux-musl` 交叉编译时才会炸，
-  容易被"host 测试全绿"误导为已经验证充分。
-- **`version.workspace = true` 这类字段离开 workspace 就报错**：`gateway`/`wallpaper-serve`/
-  `font-serve` 原来的 `Cargo.toml` 用 `version.workspace = true`/`edition.workspace = true`/
-  `license.workspace = true` 继承自 `shelf/Cargo.toml` 的 `[workspace.package]`；挪出
-  workspace 后这些字段全部要改成字面量，`[profile.release]`（`opt-level="z"`/`lto`/
-  `strip`/`codegen-units=1`）同理要各自复制一份，不再能从 workspace 继承。**panic 策略后来改了**：当时复制的是 `panic="abort"`；2026-09-19 真机（《镖人》）踩到 abort 下 `catch_unwind` 完全无效、一次 panic 摔掉整个进程，`gateway`/`shelf`/`notes` 的 release profile 已改为 `panic="unwind"`（见各自 `Cargo.toml` 注释），代价是二进制体积略增；`enhance/{font,wallpaper}-serve` 目前仍是 `abort`（没有依赖 `catch_unwind` 的后台线程）。
+## 06｜踩坑
 
-## 05｜命名遗留 + 待办
+- **独立顶层 crate 不继承调用方目录的 cargo 配置**（2026-09-11，搬迁当天）：`gateway/`、`enhance/{wallpaper,font}-serve/` 独立成顶层项目后，第一次交叉编译在 `ring` 这步报 `failed to find tool "aarch64-linux-musl-gcc"`。原因：`shelf/.cargo/config.toml` 的 CC 覆盖只在从 `shelf/` 发起 `cargo build` 时生效，`shelf/build.sh` 里 `(cd ../gateway && cargo build …)` 这种跨目录调用吃不到。修法：每个独立项目各带一份内容相同的物理副本（Cargo 没有“引用别处配置”的机制）。这个坑只在 `--target aarch64-unknown-linux-musl` 交叉编译时炸，host 上 `cargo test` 全绿会让人误以为验证充分。
+- **`version.workspace = true` 离开 workspace 就报错**：挪出 `shelf` workspace 的 crate 要把 `version`/`edition`/`license` 改成字面量，`[profile.release]` 也要各自复制一份。
+- **`panic="abort"` 让 `catch_unwind` 失效**（2026-09-19，真机《镖人》）：一次 panic 摔掉整个进程、卡住所有在途操作。`gateway`/`shelf`/`notes` 已改 `unwind`，二进制约大 8%。
+- **SSE 通道拿去发文件下载**（2026-09-24）：见 §01 http。
+- **通配路由抢字面路由**：旧的“先注册先匹配”下，`GET /{name}` 抢过 `/health`（wallpaper-serve 真机踩过）。现在按具体程度分发；`service.rs` 里“`/health` 必须先注册”的注释是那时留下的，已不再是必要条件。
 
-**命名遗留（有意不动，范围外）**：
-- XDG 运行时命名空间仍然是 `shelf`（`~/.config/shelf/`、`~/.local/share/shelf/`、
-  `$XDG_RUNTIME_DIR/shelf/services/`）——这是已部署设备上的真实文件路径，重命名它需要
-  给已有安装写迁移逻辑（旧路径读不到就去新路径找，或者提供一次性搬家脚本），这次没有
-  一并做。
-- `shelf.target`（systemd 目标）、默认密码字面量 `"shelf"`、mDNS 域名 `shelf.local`——
-  同样牵连已部署设备，理由同上。
+## 07｜命名遗留与待办
 
-**待办**：
-- 上面这几处命名遗留要不要处理、什么时候处理，还没有排期，等用户下次明确要动再展开
-  迁移方案设计（不是简单改字符串，要考虑已部署设备的兼容读取）。
-- ~~本次重构（正名 + wallpaper/font 迁移）全程只做了 host 侧验证（`cargo test`/交叉编译
-  产物检查），**没有推到真机验证**~~——**追记（2026-09-11）**：`packaging/install-all.sh`
-  真机跑通后这条已经不成立。`rmsvc-core` 是 `gateway`/`book-serve`/`koreader-serve`/
-  `font-serve`/`wallpaper-serve`/笔记线四服务共同的基座，这些服务在真实设备上全部部署+
-  启动成功（用户确认"已成功安装"，健康检查全部 `active`），"运行时行为不变"不再是推断，
-  是真机坐实的结论。
+**命名遗留（刻意不动）**：XDG 命名空间 `shelf`（`~/.config/shelf/`、`~/.local/share/shelf/`、`~/.local/state/shelf/`、`$XDG_RUNTIME_DIR/shelf/services/`）、`shelf.target`、默认密码 `shelf`、mDNS 名 `shelf.local`。这些是已部署设备的真实路径和配置，改名要给已有安装写兼容读取或一次性搬家脚本。
+
+**待办**
+
+- 命名遗留要不要处理，没有排期；要动时先设计迁移方案，不是简单改字符串。
+- `lib.rs` 模块注释里 `auth` 仍写“salted SHA-256”，已过时（实际是 PBKDF2），下次改代码时顺手更正。
+
+## 附｜来历
+
+- **2026-09-11 正名搬顶层**：原名 `shelf-core`，在 `shelf/crates/` 下。起因是一次连锁判断：用户问“wallpaper/font 能不能挪进 `enhance/`”→ 排查发现这两个服务**建在** shelf-core 的整套框架之上，要么复刻一份框架（两份分别维护），要么让 `enhance/` 反向依赖 `shelf/`（方向倒挂）→ 追问下去发现 shelf-core 早就是事实上的共享基座（`notes/` 四个服务一开始就依赖它），只是名分没跟上。正名搬顶层一次解决两个问题。
+- **命名**：选 `rmsvc-core`（reMarkable service core），延续 `device-core` 的 `<领域>-core` 风格；没选 `hub-core`/`panel-core`，因为它们暗示“网关附属物”，而本 crate 和网关是平级的消费关系。目录摊平放顶层，不建“基座”父目录。
+- **Repository / Template Method / Registry / Facade 这些设计取舍**是 shelf-core 时代定的，记在 `shelf/docs/reMarkable书架白皮书.md` §01（三种拆法）。
+- **旧章节号对照**：旧 §00b 模块一览 → §01～§04；旧 §02 路径深度 → §05；旧 §03 维护纪律 → §05；旧 §03b 09-24 新增能力 → 分散到 §01 http、§02 fs/config/multipart、§04 auth/tls；旧 §04 踩坑 → §06；旧 §05 待办 → §07。

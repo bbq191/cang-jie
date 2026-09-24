@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1240 700" font-family="sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1240 700" font-family="Noto Sans CJK SC, sans-serif">
 <defs><marker id="bq-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#555"/></marker><marker id="bq-r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#b0451f"/></marker><marker id="bq-g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2f7d45"/></marker></defs>
 <rect x="0" y="0" width="1240" height="700" fill="#fbfbfa"/>
 <text x="620.0" y="30" text-anchor="middle" font-size="18" font-weight="bold" fill="#1a1a1a">批量队列状态机（网关 batch.rs）</text>
@@ -46,7 +46,7 @@
 <rect x="340" y="282" width="290" height="124" rx="10" fill="#ffffff" stroke="#3f9a55" stroke-width="1.6"/>
 <text x="485.0" y="302" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">② 调对应服务</text>
 <text x="485.0" y="328" text-anchor="middle" font-size="10" fill="#4a4a4a">优化 / 加入 xochitl：POST book-serve</text>
-<text x="485.0" y="341" text-anchor="middle" font-size="10" fill="#4a4a4a">  异步，网关轮询到 busy=false</text>
+<text x="485.0" y="341" text-anchor="middle" font-size="10" fill="#4a4a4a">  异步，网关等到 busy=false（事件唤醒）</text>
 <text x="485.0" y="354" text-anchor="middle" font-size="10" fill="#4a4a4a">加入 KOReader：koreader-serve 同步</text>
 <text x="485.0" y="367" text-anchor="middle" font-size="10" fill="#4a4a4a">  成功后代记“已加入”</text>
 <rect x="670" y="282" width="250" height="124" rx="10" fill="#ffffff" stroke="#3f9a55" stroke-width="1.6"/>

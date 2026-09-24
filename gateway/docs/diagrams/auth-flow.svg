@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1240 640" font-family="sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1240 640" font-family="Noto Sans CJK SC, sans-serif">
 <defs><marker id="mk" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#555"/></marker><marker id="mr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#b0451f"/></marker><marker id="mg" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2f7d45"/></marker></defs>
 <rect x="0" y="0" width="1240" height="640" fill="#fbfbfa"/>
 <text x="620.0" y="30" text-anchor="middle" font-size="18" font-weight="bold" fill="#1a1a1a">网关登录与限速（auth.rs + rmsvc-core/auth.rs）</text>
@@ -13,7 +13,7 @@
 <text x="435.0" y="104" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">认身份（identify）</text>
 <text x="435.0" y="127" text-anchor="middle" font-size="10" fill="#3a3a3a">先看 Cookie shelf_session（内存会话表，命中即通过）</text>
 <text x="435.0" y="142" text-anchor="middle" font-size="10" fill="#3a3a3a">再看 Authorization: Basic *:&lt;密码&gt;</text>
-<text x="435.0" y="157" text-anchor="middle" font-size="10" fill="#3a3a3a">（Basic 校验前先看有没有被锁）</text>
+<text x="435.0" y="157" text-anchor="middle" font-size="10" fill="#3a3a3a">（Basic 校验前先看这个来源 IP 有没有被锁）</text>
 <polyline points="600,129 646,129" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#mk)"/>
 <rect x="646" y="84" width="280" height="90" rx="10" fill="#fff3d6" stroke="#c9971f" stroke-width="1.6"/>
 <text x="786.0" y="104" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">身份 OK 但“必须改密码”？</text>
@@ -42,20 +42,21 @@
 <polyline points="786,174 620,214" fill="none" stroke="#b0451f" stroke-width="1.6" marker-end="url(#mr)"/>
 <text x="836" y="200" text-anchor="middle" font-size="11" fill="#b0451f">是</text>
 <rect x="24" y="400" width="1192" height="214" rx="10" fill="#fff3d6" stroke="#c9971f" stroke-width="1.6"/>
-<text x="620.0" y="420" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">失败限速器 FailLimiter（全局计数，不分来源 IP）</text>
+<text x="620.0" y="420" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">失败限速器 IpFailLimiter（按来源 IP 各自计数；2026-09-24 前是全局计数）</text>
 <rect x="44" y="440" width="360" height="150" rx="10" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.6"/>
 <text x="56" y="460" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">规则</text>
-<text x="56" y="483" text-anchor="start" font-size="10.5" fill="#3a3a3a">滑动窗口 60 秒内累计输错 5 次 → 锁 60 秒</text>
-<text x="56" y="498" text-anchor="start" font-size="10.5" fill="#3a3a3a">每次输错还固定延时 500ms</text>
-<text x="56" y="513" text-anchor="start" font-size="10.5" fill="#3a3a3a">锁定期内不再做密码校验（省 60 万轮 PBKDF2）</text>
-<text x="56" y="528" text-anchor="start" font-size="10.5" fill="#3a3a3a">锁定期内不再累加，不会被无限续锁</text>
-<text x="56" y="543" text-anchor="start" font-size="10.5" fill="#3a3a3a">成功一次清零；重启网关也清零</text>
+<text x="56" y="483" text-anchor="start" font-size="10.5" fill="#3a3a3a">同一 IP 60 秒内输错 5 次 → 只锁这个 IP</text>
+<text x="56" y="498" text-anchor="start" font-size="10.5" fill="#3a3a3a">锁到最早那次失败满 60 秒为止（最多 60 秒）</text>
+<text x="56" y="513" text-anchor="start" font-size="10.5" fill="#3a3a3a">锁定期内不做校验（省 60 万轮 PBKDF2），也不累加</text>
+<text x="56" y="528" text-anchor="start" font-size="10.5" fill="#3a3a3a">别的 IP 照常登录；USB 网段与 127.0.0.1 不豁免</text>
+<text x="56" y="543" text-anchor="start" font-size="10.5" fill="#3a3a3a">每次输错另延时 500ms；成功清零该 IP；重启清零</text>
 <rect x="424" y="440" width="380" height="150" rx="10" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.6"/>
 <text x="436" y="460" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">锁定期间各入口的回应</text>
 <text x="436" y="483" text-anchor="start" font-size="10.5" fill="#3a3a3a">POST /login：429 + Retry-After（网页显示“请 N 秒后再试”）</text>
 <text x="436" y="498" text-anchor="start" font-size="10.5" fill="#3a3a3a">POST /password（输密码改密）：同为 429</text>
 <text x="436" y="513" text-anchor="start" font-size="10.5" fill="#3a3a3a">Basic 头的普通 API 请求：401（等同没认出身份）</text>
 <text x="436" y="528" text-anchor="start" font-size="10.5" fill="#3a3a3a">会话 Cookie 有效的请求不受影响</text>
+<text x="436" y="543" text-anchor="start" font-size="10.5" fill="#3a3a3a">表最多记 256 个 IP，满了先淘汰没被锁的</text>
 <rect x="824" y="440" width="372" height="150" rx="10" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.6"/>
 <text x="836" y="460" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">密码与会话</text>
 <text x="836" y="483" text-anchor="start" font-size="10" fill="#3a3a3a">哈希：PBKDF2-HMAC-SHA256，60 万轮，随机盐</text>
@@ -64,4 +65,5 @@
 <text x="836" y="528" text-anchor="start" font-size="10" fill="#3a3a3a">会话有效期 30 天（gateway.json 的 sessionDays）</text>
 <text x="836" y="543" text-anchor="start" font-size="10" fill="#3a3a3a">Cookie：HttpOnly · SameSite=Strict · HTTPS 时 Secure</text>
 <text x="836" y="558" text-anchor="start" font-size="10" fill="#3a3a3a">改密后踢掉其它设备的会话</text>
+<text x="836" y="573" text-anchor="start" font-size="10" fill="#3a3a3a">登录后跳转的 next 只接受本站路径（拒 // \ 控制字符）</text>
 </svg>

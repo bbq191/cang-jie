@@ -1,8 +1,12 @@
-# 电池 / 后台进程审计报告
+# 电池 / 后台进程审计报告（2026-08-27）+ 08-29 冻机调查
+
+> **这是历史调查记录**，数字和进程名反映 2026-08-27 的设备（当时还跑着 `wr-serve`、`cj-stars-daemon`、`wr-renew` 等已退役的服务）。
+> battop 之后的演进（09-20 改为不开机自启、09-23 再次冻机后唤醒源改读 `/dev/kmsg`、采样循环不再创建子进程）见
+> [`../docs/reMarkable系统增强线白皮书.md`](../docs/reMarkable系统增强线白皮书.md) §03b；battop 现在怎么用见 [`README.md`](README.md)。
 
 **设备**:reMarkable Paper Pro Move,固件 20260806,uptime 1 天。
 **日期**:2026-08-27。**方法**:功耗代理量(累计 CPU、生命期 CPU 占比、唤醒源、休眠健康、应用归属)。
-脚本见同目录 `battery-audit.sh`(入口)+ `bataudit{,2,3}.sh`。
+脚本见 [`history/`](history/) 下的 `battery-audit.sh`(入口)+ `bataudit{,2,3}.sh`。
 
 ## 结论:无电池刺客
 
@@ -72,7 +76,11 @@ blocked 94→124→157s；连 `systemd:1` 也被这把 cgroup 锁堵死；随后
 **修法（架构改常驻）**：battop 从「timer 反复拉起 oneshot」改为 **Type=simple 常驻服务，进程内 `loop { sample_once; sleep(10min) }`**——内核只在**开机迁一次 cgroup**，暴露窗口 144次/天 → 1次/开机。
 - `thread::sleep`(CLOCK_MONOTONIC) 休眠时不推进 → 天然"醒时每 N 分钟"，与旧 timer 的 awake-only 语义一致；休眠中进程随之冻结、不持 wakelock、不阻止休眠、CPU 零占用。
 - 间隔可 `BATTOP_INTERVAL_SECS` 覆盖（缺省 600）。
-- 附带：`journalctl`（读 31 天内核日志那步）改**有界执行**（`run_bounded`，超 20s 就 SIGKILL）——常驻模型下一个卡住的子进程会拖死整个采样循环，故所有外部子进程必须有界。
-- install.sh：停删 `battop.timer`、改 enable `battop.service`；去掉会永久阻塞 install 的前台"首次采样"（常驻服务启动即首采）。
+- 附带（当时）：`journalctl`（读 31 天内核日志那步）改**有界执行**（`run_bounded`，超 20s 就 SIGKILL）。**已过时**：2026-09-23 起唤醒源改读 `/dev/kmsg`，采样循环里不再有任何子进程，`run_bounded` 随之删除。
+- install.sh（当时）：停删 `battop.timer`、改 enable `battop.service`；去掉会永久阻塞 install 的前台"首次采样"（常驻服务启动即首采）。**已过时**：2026-09-20 起安装器只 start、不 enable。
 
-**注**：`systemctl enable` 的符号链接在 `/etc`（tmpfs），重启即清 → battop 重启后仍是 disabled，需重跑 install.sh 重新启用（与本仓库其它 unit 同一 OTA/重启持久化限制）。重启后 battop 天然处于关闭安全态。
+**注**：当时 `systemctl enable` 的符号链接落在 `/etc`（tmpfs），重启即清，所以 battop 重启后天然处于关闭状态。2026-09-20 把这个"碰巧"定为设计：安装器不再 enable，要用就在网页打开。
+
+## 后续：2026-09-23 常驻模型下又冻了一次
+
+冻结前最后一条日志与 battop 刷新唤醒源缓存（当时要 fork 一次 `journalctl`）的时间精确重合到秒。这不是 08-29 那条 `cgroup_procs_write` 路径（fork 出的子进程直接继承父进程 cgroup，不走那个 syscall），只是时间吻合、没有内核栈证据。处理：唤醒源改为直读 `/dev/kmsg`，采样循环里最后一次创建子进程也去掉了（`src/wake.rs` 头注；commit 说明记真机确认零子进程、唤醒源数据与 `dmesg` 一致）。详见白皮书 §03b。

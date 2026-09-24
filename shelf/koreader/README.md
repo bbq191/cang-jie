@@ -38,13 +38,16 @@ KOReader 没有"按书类型整套切换配置"的单一开关，靠三样自带
 opds、kosync、timesync、autostandby、batterystat、hotkeys、externalkeyboard、archiveviewer（与本机用法无关）。保留的关键插件：
 docsettingtweak、profiles、gestures、coverbrowser、autosuspend。
 
-**应用**：先退出 KOReader，再依次 `POST /config/{settings,directory,profiles}`（koreader-serve 2026-09-24 起支持后两个文件）。
+这套方案落在三份补丁里：`settings.reader.patch.lua`、`directory_defaults.patch.lua`、`profiles.patch.lua`，按下一节的接口依次写入
+`settings`、`directory`、`profiles` 三个目标（后两个是 koreader-serve 2026-09-24 新增的）。2026-09-24 真机写入、用户确认两套方案都生效；
+决策过程与真机反馈见 [`../docs/reMarkable书架白皮书.md`](../docs/reMarkable书架白皮书.md) §03bt。
 
-## 怎么应用（当前现状）
+## 怎么应用
 
 **所有 Lua 处理都在设备端**，由 `koreader-serve`（`127.0.0.1:8791`，经网关为 `/api/koreader/…`）执行：
-写前备份到 `~/.local/state/shelf/koreader-backups/<文件>.bak.pre-shelf-<时间戳>`，写后回读校验；
-**KOReader 运行中拒写**（返回 409；它退出时会回写配置覆盖你的改动，必须先退出 KOReader）。
+写前备份到 `~/.local/state/shelf/koreader-backups/<文件>.bak.pre-shelf-<时间戳>`，写后回读校验（读不回来自动还原）；
+仓库里 5 份补丁逐个应用到空 KOReader 目录、二次应用零改动，有回归测试守着；
+**KOReader 运行中拒写**（返回 409；它退出时会回写配置覆盖你的改动，必须先退出 KOReader；这条拒写真机尚未专门验证）。
 
 | 接口 | 作用 |
 |---|---|

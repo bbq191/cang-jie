@@ -1,90 +1,124 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 480" font-family="sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1180 600" font-family="Noto Sans CJK SC, sans-serif">
   <defs>
-    <marker id="f1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-      <path d="M0,0 L10,5 L0,10 z" fill="#555"/>
-    </marker>
-    <marker id="f2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
-      <path d="M0,0 L10,5 L0,10 z" fill="#8a6d00"/>
-    </marker>
+    <marker id="d1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#555"/></marker>
+    <marker id="d2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#8a6d00"/></marker>
+    <marker id="d3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2f6fa3"/></marker>
   </defs>
+  <rect x="0" y="0" width="1180" height="600" fill="#fbfbfa"/>
+  <text x="590" y="30" text-anchor="middle" font-size="18" font-weight="bold" fill="#1a1a1a">notes 数据流：两个来源 → 条目库 → 两个投影</text>
+  <text x="590" y="52" text-anchor="middle" font-size="12" fill="#6a6a6a">条目库是唯一事实源（只有 ink-serve 写）；设备笔记本与 Obsidian md 都由它重新生成；改动一律在手机上做</text>
 
-  <rect x="0" y="0" width="1080" height="480" fill="#fbfbfa"/>
-  <text x="540" y="26" text-anchor="middle" font-size="18" font-weight="bold" fill="#1a1a1a">notes 数据流：四步闭环（三期完成）</text>
-  <text x="540" y="44" text-anchor="middle" font-size="11.5" fill="#8a8a8a">条目库是唯一事实源；设备笔记本与 md 都只是投影——设备只负责写，改动都在手机</text>
+  <!-- 来源 -->
+  <text x="125" y="84" text-anchor="middle" font-size="12" font-weight="bold" fill="#6a6a6a">来源</text>
+  <rect x="20" y="96" width="210" height="104" rx="9" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.5"/>
+  <text x="125" y="120" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">xochitl 书页 .rm</text>
+  <text x="125" y="141" text-anchor="middle" font-size="10.5" fill="#3a3a3a">荧光笔勾画（原文 + 位置）</text>
+  <text x="125" y="157" text-anchor="middle" font-size="10.5" fill="#3a3a3a">+ 勾画旁边的手写笔迹</text>
+  <text x="125" y="181" text-anchor="middle" font-size="10" fill="#a03030">只读，绝不写回</text>
 
-  <!-- box1 摄取 -->
-  <rect x="35" y="70" width="230" height="260" rx="10" fill="#fff3d6" stroke="#c9971f" stroke-width="1.8"/>
-  <text x="150" y="94" text-anchor="middle" font-size="13.5" font-weight="bold" fill="#1a1a1a">① 摄取</text>
-  <text x="150" y="110" text-anchor="middle" font-size="10" fill="#8a6d00">ink-serve · 事件驱动</text>
-  <line x1="50" y1="118" x2="250" y2="118" stroke="#c9971f" stroke-width="1"/>
-  <text x="150" y="136" text-anchor="middle" font-size="10.3" fill="#3a3a3a">合上书 → xochitl 重写</text>
-  <text x="150" y="150" text-anchor="middle" font-size="10.3" fill="#3a3a3a">.content / .metadata</text>
-  <text x="150" y="170" text-anchor="middle" font-size="10.3" fill="#3a3a3a">fswatch 防抖 → 只扫</text>
-  <text x="150" y="184" text-anchor="middle" font-size="10.3" fill="#3a3a3a">变更页 .rm mtime</text>
-  <text x="150" y="204" text-anchor="middle" font-size="10.3" fill="#3a3a3a">rmv6：勾画 GlyphRange</text>
-  <text x="150" y="218" text-anchor="middle" font-size="10.3" fill="#3a3a3a">↔ 手写笔画，同坐标系</text>
-  <text x="150" y="238" text-anchor="middle" font-size="10.3" fill="#3a3a3a">notecore：聚簇 + 就近</text>
-  <text x="150" y="252" text-anchor="middle" font-size="10.3" fill="#3a3a3a">配对 + 增量合并</text>
-  <text x="150" y="272" text-anchor="middle" font-size="10.3" fill="#3a3a3a">自渲染裁图（吃笔画矢量</text>
-  <text x="150" y="286" text-anchor="middle" font-size="10.3" fill="#3a3a3a">数据画折线，不吃缩略图）</text>
-  <text x="150" y="310" text-anchor="middle" font-size="10.5" font-weight="bold" fill="#8a6d00">→ 条目库(Mined) + 裁片</text>
+  <rect x="20" y="250" width="210" height="104" rx="9" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.5"/>
+  <text x="125" y="274" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">KOReader</text>
+  <text x="125" y="295" text-anchor="middle" font-size="10.5" fill="#3a3a3a">高亮（含高亮上的笔记）</text>
+  <text x="125" y="311" text-anchor="middle" font-size="10.5" fill="#3a3a3a">+ 生词本</text>
+  <text x="125" y="335" text-anchor="middle" font-size="10" fill="#6a6a6a">经书架线 koreader-serve 只读端点</text>
 
-  <line x1="265" y1="200" x2="293" y2="200" stroke="#555" stroke-width="1.6" marker-end="url(#f1)"/>
-    <text x="430" y="364" text-anchor="middle" font-size="10" fill="#8a6d00">①→②：在浏览页点「转入笔记」的条目才往下走</text>
+  <!-- 触发箭头 -->
+  <polyline points="230,148 290,148" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#d1)"/>
+  <text x="260" y="136" text-anchor="middle" font-size="9.5" fill="#555">合上书</text>
+  <text x="260" y="166" text-anchor="middle" font-size="9.5" fill="#555">自动</text>
+  <polyline points="230,302 290,302" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#d1)"/>
+  <text x="260" y="290" text-anchor="middle" font-size="9.5" fill="#555">手动</text>
+  <text x="260" y="320" text-anchor="middle" font-size="9.5" fill="#555">按钮</text>
 
-  <!-- box2 整理 -->
-  <rect x="295" y="70" width="230" height="260" rx="10" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.8"/>
-  <text x="410" y="94" text-anchor="middle" font-size="13.5" font-weight="bold" fill="#1a1a1a">② 整理</text>
-  <text x="410" y="110" text-anchor="middle" font-size="10" fill="#2f5f9a">手机网页 · 人来判断</text>
-  <line x1="310" y1="118" x2="510" y2="118" stroke="#4a6fa5" stroke-width="1"/>
-  <text x="410" y="140" text-anchor="middle" font-size="10.3" fill="#3a3a3a">书架网关「笔记」tab</text>
-  <text x="410" y="160" text-anchor="middle" font-size="10.3" fill="#3a3a3a">左裁图、右文本框</text>
-  <text x="410" y="174" text-anchor="middle" font-size="10.3" fill="#3a3a3a">（缺省填 text ?? draft）</text>
-  <text x="410" y="194" text-anchor="middle" font-size="10.3" fill="#3a3a3a">核对转写、选去处（设备/</text>
-  <text x="410" y="208" text-anchor="middle" font-size="10.3" fill="#3a3a3a">Obsidian/都要）、样式自动判</text>
-  <text x="410" y="228" text-anchor="middle" font-size="10.3" fill="#3a3a3a">勾「问AI」填问题——改即存</text>
-  <text x="410" y="248" text-anchor="middle" font-size="10.3" fill="#3a3a3a">给 text 即"已校对"</text>
-  <text x="410" y="272" text-anchor="middle" font-size="10" fill="#8a3a3a">为什么在手机：e-ink 上</text>
-  <text x="410" y="286" text-anchor="middle" font-size="10" fill="#8a3a3a">打字太痛苦；设备只负责</text>
-  <text x="410" y="300" text-anchor="middle" font-size="10" fill="#8a3a3a">写，不负责改</text>
+  <!-- ink-serve + 条目库 -->
+  <rect x="290" y="96" width="250" height="384" rx="10" fill="#fff3d6" stroke="#c9971f" stroke-width="2"/>
+  <text x="415" y="122" text-anchor="middle" font-size="14" font-weight="bold" fill="#1a1a1a">ink-serve 矿 :8795</text>
+  <text x="415" y="145" text-anchor="middle" font-size="10.5" fill="#3a3a3a">只扫变过的页 → 解析 .rm</text>
+  <text x="415" y="161" text-anchor="middle" font-size="10.5" fill="#3a3a3a">手写聚成簇 → 配最近的勾画</text>
+  <text x="415" y="177" text-anchor="middle" font-size="10.5" fill="#3a3a3a">没配上手写的勾画也成一条</text>
+  <text x="415" y="193" text-anchor="middle" font-size="10.5" fill="#3a3a3a">从笔迹矢量自己画裁图 PNG</text>
+  <text x="415" y="209" text-anchor="middle" font-size="10.5" fill="#3a3a3a">增量合并：改好的字不被覆盖</text>
+  <rect x="310" y="226" width="210" height="96" rx="7" fill="#ffffff" stroke="#c9971f" stroke-width="1.2"/>
+  <text x="415" y="248" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">条目库</text>
+  <text x="415" y="267" text-anchor="middle" font-size="10" fill="#4a4a4a">books/&lt;uuid&gt;.json，一书一文件</text>
+  <text x="415" y="283" text-anchor="middle" font-size="10" fill="#4a4a4a">新条目状态 = Mined</text>
+  <text x="415" y="299" text-anchor="middle" font-size="10" fill="#4a4a4a">解析失败 → 另存 .corrupt、拒写</text>
+  <text x="415" y="314" text-anchor="middle" font-size="10" fill="#4a4a4a">（不会被空书覆盖）</text>
+  <text x="415" y="350" text-anchor="middle" font-size="10.5" fill="#3a3a3a">GET /search：跨书全文搜索</text>
+  <text x="415" y="372" text-anchor="middle" font-size="10.5" fill="#3a3a3a">其它服务只能经 HTTP</text>
+  <text x="415" y="388" text-anchor="middle" font-size="10.5" fill="#3a3a3a">POST entries/{id} 改字段</text>
+  <text x="415" y="420" text-anchor="middle" font-size="10" fill="#8a6d00">书被删/进回收站、笔迹被擦</text>
+  <text x="415" y="436" text-anchor="middle" font-size="10" fill="#8a6d00">→ 条目标 Revoked，不物理删</text>
 
-  <line x1="525" y1="200" x2="553" y2="200" stroke="#555" stroke-width="1.6" marker-end="url(#f1)"/>
+  <!-- 浏览 -->
+  <rect x="600" y="96" width="210" height="104" rx="9" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.5"/>
+  <text x="705" y="120" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">手机「浏览」</text>
+  <text x="705" y="141" text-anchor="middle" font-size="10.5" fill="#3a3a3a">只列 Mined，按页看裁图/原文</text>
+  <text x="705" y="159" text-anchor="middle" font-size="10.5" fill="#3a3a3a">「转入笔记」→ Pending</text>
+  <text x="705" y="175" text-anchor="middle" font-size="10.5" fill="#3a3a3a">（没手写的直接 Reviewed）</text>
+  <text x="705" y="191" text-anchor="middle" font-size="10.5" fill="#3a3a3a">「不需要」→ 回收站</text>
+  <polyline points="540,148 600,148" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#d1)"/>
 
-  <!-- box3 智能 -->
-  <rect x="555" y="70" width="230" height="260" rx="10" fill="#fdf3f0" stroke="#b5541f" stroke-width="1.8"/>
-  <text x="670" y="94" text-anchor="middle" font-size="13.5" font-weight="bold" fill="#1a1a1a">③ 智能</text>
-  <text x="670" y="110" text-anchor="middle" font-size="10" fill="#a04a1a">按条目单发，出网</text>
-  <line x1="570" y1="118" x2="770" y2="118" stroke="#b5541f" stroke-width="1"/>
-  <text x="670" y="138" text-anchor="middle" font-size="10.3" fill="#3a3a3a">transcribe-serve：只处理</text>
-  <text x="670" y="152" text-anchor="middle" font-size="10.3" fill="#3a3a3a">Pending，裁图喂视觉模型</text>
-  <text x="670" y="166" text-anchor="middle" font-size="10.3" fill="#3a3a3a">→ draft 写回 ink</text>
-  <text x="670" y="186" text-anchor="middle" font-size="10.3" fill="#3a3a3a">mind-serve：勾「问AI」+</text>
-  <text x="670" y="200" text-anchor="middle" font-size="10.3" fill="#3a3a3a">填问题才触发，纯被动、</text>
-  <text x="670" y="214" text-anchor="middle" font-size="10.3" fill="#3a3a3a">按条目单发（不再按分区）</text>
-  <text x="670" y="234" text-anchor="middle" font-size="10" fill="#8a3a3a">增量：指纹不变不重来；</text>
-  <text x="670" y="248" text-anchor="middle" font-size="10" fill="#8a3a3a">校对过的 text 永不被</text>
-  <text x="670" y="262" text-anchor="middle" font-size="10" fill="#8a3a3a">draft 覆盖</text>
+  <!-- 整理 -->
+  <rect x="600" y="240" width="210" height="104" rx="9" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.5"/>
+  <text x="705" y="264" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">手机「整理」</text>
+  <text x="705" y="285" text-anchor="middle" font-size="10.5" fill="#3a3a3a">Pending / Draft / Reviewed</text>
+  <text x="705" y="301" text-anchor="middle" font-size="10.5" fill="#3a3a3a">改字（行首标记定样式）</text>
+  <text x="705" y="317" text-anchor="middle" font-size="10.5" fill="#3a3a3a">选去处、问 AI、「不要了」</text>
+  <text x="705" y="333" text-anchor="middle" font-size="10.5" fill="#3a3a3a">每章一个「推送本章」</text>
+  <polyline points="705,200 705,238" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#d1)"/>
+  <polyline points="600,292 542,292" fill="none" stroke="#2f6fa3" stroke-width="1.5" marker-end="url(#d3)"/>
+  <text x="571" y="284" text-anchor="middle" font-size="9.5" fill="#2f6fa3">改即存</text>
 
-  <line x1="785" y1="200" x2="813" y2="200" stroke="#555" stroke-width="1.6" marker-end="url(#f1)"/>
+  <!-- transcribe / mind -->
+  <rect x="600" y="376" width="180" height="62" rx="9" fill="#fdf3f0" stroke="#b5541f" stroke-width="1.5"/>
+  <text x="690" y="398" text-anchor="middle" font-size="12" font-weight="bold" fill="#1a1a1a">transcribe-serve :8796</text>
+  <text x="690" y="416" text-anchor="middle" font-size="10" fill="#4a4a4a">事件触发，只转 Pending</text>
+  <text x="690" y="430" text-anchor="middle" font-size="10" fill="#4a4a4a">裁图 → 视觉模型 → 草稿</text>
+  <polyline points="600,407 542,407" fill="none" stroke="#8a6d00" stroke-width="1.5" marker-end="url(#d2)"/>
+  <text x="571" y="399" text-anchor="middle" font-size="9.5" fill="#8a6d00">draft</text>
 
-  <!-- box4 投影 -->
-  <rect x="815" y="70" width="230" height="260" rx="10" fill="#f2f2f2" stroke="#7a7a8c" stroke-width="1.8"/>
-  <text x="930" y="94" text-anchor="middle" font-size="13.5" font-weight="bold" fill="#3a3a3a">④ 投影</text>
-  <text x="930" y="110" text-anchor="middle" font-size="10" fill="#6a6a6a">note-serve · 可选</text>
-  <line x1="830" y1="118" x2="1030" y2="118" stroke="#9a9a9a" stroke-width="1"/>
-  <text x="930" y="138" text-anchor="middle" font-size="10.3" fill="#4a4a4a">条目库 → 设备笔记本</text>
-  <text x="930" y="152" text-anchor="middle" font-size="10.3" fill="#4a4a4a">复用书本设备文件夹</text>
-  <text x="930" y="166" text-anchor="middle" font-size="10.3" fill="#4a4a4a">（xochitl 7 种打字样式）</text>
-  <text x="930" y="186" text-anchor="middle" font-size="10.3" fill="#4a4a4a">GET-then-upload；旧本</text>
-  <text x="930" y="200" text-anchor="middle" font-size="10.3" fill="#4a4a4a">走书架回收站代理软删</text>
-  <text x="930" y="220" text-anchor="middle" font-size="10.3" fill="#4a4a4a">✅ 真机验证；按钮已</text>
-  <text x="930" y="234" text-anchor="middle" font-size="10.3" fill="#4a4a4a">接线，md 可直接下载</text>
-  <text x="930" y="254" text-anchor="middle" font-size="10" fill="#6a6a6a">设备笔记本只读——改动</text>
-  <text x="930" y="268" text-anchor="middle" font-size="10" fill="#6a6a6a">还是得回②手机上改</text>
+  <rect x="600" y="458" width="180" height="62" rx="9" fill="#f5eefc" stroke="#7a4fa3" stroke-width="1.5"/>
+  <text x="690" y="480" text-anchor="middle" font-size="12" font-weight="bold" fill="#1a1a1a">mind-serve :8797</text>
+  <text x="690" y="498" text-anchor="middle" font-size="10" fill="#4a4a4a">点「提问」才跑一次</text>
+  <text x="690" y="512" text-anchor="middle" font-size="10" fill="#4a4a4a">文字模型 → 回答</text>
+  <polyline points="600,489 570,489 570,462 542,462" fill="none" stroke="#8a6d00" stroke-width="1.5" marker-end="url(#d2)"/>
+  <text x="566" y="505" text-anchor="middle" font-size="9.5" fill="#8a6d00">answer</text>
+  <polyline points="800,344 800,489 782,489" fill="none" stroke="#555" stroke-width="1.4" stroke-dasharray="5 3" marker-end="url(#d1)"/>
+  <text x="808" y="420" text-anchor="start" font-size="9.5" fill="#555">提问</text>
 
-  <!-- loop back -->
-  <path d="M 930 330 C 930 400, 150 400, 150 330" fill="none" stroke="#8a6d00" stroke-width="1.5" stroke-dasharray="6 3" marker-end="url(#f2)"/>
-  <text x="540" y="412" text-anchor="middle" font-size="11" fill="#8a6d00">闭环：下次合书再触发 ①；条目 id 创建时一次算定，永不重算</text>
+  <!-- note-serve -->
+  <rect x="880" y="96" width="280" height="120" rx="10" fill="#eaf6ec" stroke="#3f9a55" stroke-width="1.8"/>
+  <text x="1020" y="120" text-anchor="middle" font-size="13.5" font-weight="bold" fill="#1a1a1a">note-serve 本 :8798</text>
+  <text x="1020" y="142" text-anchor="middle" font-size="10.5" fill="#3a3a3a">从条目库取这一章的活条目</text>
+  <text x="1020" y="158" text-anchor="middle" font-size="10.5" fill="#3a3a3a">按每条的「去处」分两路投影</text>
+  <text x="1020" y="174" text-anchor="middle" font-size="10.5" fill="#3a3a3a">内容指纹没变 → 跳过不重做</text>
+  <text x="1020" y="200" text-anchor="middle" font-size="10" fill="#6a6a6a">记每章推送时间，供「已导出」判定</text>
+  <polyline points="810,292 845,292 845,156 878,156" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#d1)"/>
+  <text x="850" y="232" text-anchor="start" font-size="9.5" fill="#555">推送</text>
+  <text x="850" y="246" text-anchor="start" font-size="9.5" fill="#555">本章</text>
 
-  <text x="540" y="450" text-anchor="middle" font-size="11" fill="#8a8a8a">详见 notes/README.md「四步闭环」；增量规则/裁图坐标见白皮书 01/03f/03g 节</text>
+  <rect x="880" y="262" width="135" height="140" rx="9" fill="#ffffff" stroke="#3f9a55" stroke-width="1.4"/>
+  <text x="947" y="284" text-anchor="middle" font-size="12" font-weight="bold" fill="#1a1a1a">设备笔记本</text>
+  <text x="947" y="304" text-anchor="middle" font-size="10" fill="#4a4a4a">一章一本，只读</text>
+  <text x="947" y="320" text-anchor="middle" font-size="10" fill="#4a4a4a">放在书本自己的</text>
+  <text x="947" y="334" text-anchor="middle" font-size="10" fill="#4a4a4a">设备文件夹里</text>
+  <text x="947" y="354" text-anchor="middle" font-size="10" fill="#4a4a4a">经 /upload 上传</text>
+  <text x="947" y="374" text-anchor="middle" font-size="10" fill="#6a6a6a">旧版本 → 书架</text>
+  <text x="947" y="388" text-anchor="middle" font-size="10" fill="#6a6a6a">回收站代理软删</text>
+
+  <rect x="1025" y="262" width="135" height="140" rx="9" fill="#ffffff" stroke="#7a4fa3" stroke-width="1.4"/>
+  <text x="1092" y="284" text-anchor="middle" font-size="12" font-weight="bold" fill="#1a1a1a">Obsidian md</text>
+  <text x="1092" y="304" text-anchor="middle" font-size="10" fill="#4a4a4a">一章一个 .md</text>
+  <text x="1092" y="320" text-anchor="middle" font-size="10" fill="#4a4a4a">+ 书索引页</text>
+  <text x="1092" y="336" text-anchor="middle" font-size="10" fill="#4a4a4a">块锚 ^id · [[书名]]</text>
+  <text x="1092" y="354" text-anchor="middle" font-size="10" fill="#4a4a4a">落设备 vault/</text>
+  <text x="1092" y="374" text-anchor="middle" font-size="10" fill="#6a6a6a">同时让浏览器</text>
+  <text x="1092" y="388" text-anchor="middle" font-size="10" fill="#6a6a6a">直接下载</text>
+  <polyline points="947,216 947,260" fill="none" stroke="#3f9a55" stroke-width="1.6" marker-end="url(#d1)"/>
+  <polyline points="1092,216 1092,260" fill="none" stroke="#7a4fa3" stroke-width="1.6" marker-end="url(#d1)"/>
+
+  <!-- 旁路 -->
+  <rect x="20" y="540" width="1140" height="44" rx="8" fill="#f3f3f3" stroke="#9a9a9a" stroke-width="1.2" stroke-dasharray="5 3"/>
+  <text x="36" y="567" text-anchor="start" font-size="11" fill="#3a3a3a"><tspan font-weight="bold">旁路（不经条目库）：</tspan>「导入 md 文档」选一个 .md 文件 → note-serve → 直接生成一份新的设备笔记本。入口默认隐藏，由书架「管理 → 实验室」开关控制。</text>
 </svg>

@@ -51,7 +51,7 @@
     <rect x="30" y="250" width="280" height="130" rx="10" fill="#fdf7ef" stroke="#c8812e"/>
     <text x="45" y="274" font-size="15" font-weight="bold" fill="#6b4210">⑥ 打包 + 质量门</text>
     <text x="45" y="298">颜色/图宽规则写进 pdf-img.css</text>
-    <text x="45" y="318">过质量门才替换，原 PDF 随后删除</text>
+    <text x="45" y="318">过质量门才落地，原 PDF 进备份留 7 天</text>
     <text x="45" y="338">不过门：报错，原 PDF 不动</text>
     <text x="45" y="358">书名、正文丢弃 XML 非法字符</text>
   </g>

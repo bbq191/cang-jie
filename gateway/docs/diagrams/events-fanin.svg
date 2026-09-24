@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1240 560" font-family="sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1240 560" font-family="Noto Sans CJK SC, sans-serif">
 <defs><marker id="mk" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#555"/></marker><marker id="mr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#b0451f"/></marker><marker id="mg" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2f7d45"/></marker></defs>
 <rect x="0" y="0" width="1240" height="560" fill="#fbfbfa"/>
 <text x="620.0" y="30" text-anchor="middle" font-size="18" font-weight="bold" fill="#1a1a1a">事件汇聚：网页为什么不用轮询（events.rs + rmsvc-core/events.rs）</text>
@@ -39,7 +39,7 @@
 <text x="841.0" y="299" text-anchor="middle" font-size="10" fill="#3a3a3a">→ {"area":"books"}</text>
 <rect x="1010" y="96" width="206" height="240" rx="10" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.6"/>
 <text x="1113.0" y="116" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">浏览器 EventSource</text>
-<text x="1113.0" y="139" text-anchor="middle" font-size="10" fill="#3a3a3a">GET /api/events</text>
+<text x="1113.0" y="139" text-anchor="middle" font-size="10" fill="#3a3a3a">GET /api/events?ka=60</text>
 <text x="1113.0" y="154" text-anchor="middle" font-size="10" fill="#3a3a3a">（受登录守卫保护）</text>
 <text x="1113.0" y="169" text-anchor="middle" font-size="10" fill="#3a3a3a"></text>
 <text x="1113.0" y="184" text-anchor="middle" font-size="10" fill="#3a3a3a">收到事件 → 只刷新对应</text>
@@ -47,8 +47,9 @@
 <text x="1113.0" y="214" text-anchor="middle" font-size="10" fill="#3a3a3a">管理台），不整页刷</text>
 <text x="1113.0" y="229" text-anchor="middle" font-size="10" fill="#3a3a3a"></text>
 <text x="1113.0" y="244" text-anchor="middle" font-size="10" fill="#3a3a3a">断线（WiFi 掉、休眠醒来）</text>
-<text x="1113.0" y="259" text-anchor="middle" font-size="10" fill="#3a3a3a">浏览器自动重连；</text>
-<text x="1113.0" y="274" text-anchor="middle" font-size="10" fill="#3a3a3a">20 秒无事件有注释心跳</text>
+<text x="1113.0" y="259" text-anchor="middle" font-size="10" fill="#3a3a3a">浏览器自动重连并补刷；</text>
+<text x="1113.0" y="274" text-anchor="middle" font-size="10" fill="#3a3a3a">60 秒一次心跳；页面隐藏</text>
+<text x="1113.0" y="289" text-anchor="middle" font-size="10" fill="#3a3a3a">超 60 秒主动断开</text>
 <polyline points="274,216 340,216" fill="none" stroke="#2f7d45" stroke-width="1.6" marker-end="url(#mg)"/>
 <text x="307.0" y="208" text-anchor="middle" font-size="10" fill="#555">SSE</text>
 <polyline points="670,150 736,150" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#mk)"/>
@@ -59,4 +60,5 @@
 <text x="36" y="450" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">和批量队列/闸门的关系</text>
 <text x="36" y="473" text-anchor="start" font-size="10.5" fill="#3a3a3a">网页在批量运行时不再每 3 秒轮询 /api/batch/status：batch.rs 每次落盘、budget.rs 每次排队状态变化都会调 events::notify_books()，</text>
 <text x="36" y="488" text-anchor="start" font-size="10.5" fill="#3a3a3a">网页收到 {"area":"books"} 再去拉一次 /api/batch/status 与 /api/budget/status。</text>
+<text x="36" y="510" text-anchor="start" font-size="10.5" fill="#3a3a3a">反方向也用得上：book-serve 发来的 books 事件会唤醒闸门里“等这本书处理完再还名额”的监控线程（没事件时 30 秒兜底查一次）。</text>
 </svg>

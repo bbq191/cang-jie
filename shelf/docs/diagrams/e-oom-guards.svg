@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 760" font-family="sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 760" font-family="Noto Sans CJK SC, sans-serif">
 <defs><marker id="eo-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#555"/></marker></defs>
 <rect x="0" y="0" width="1080" height="760" fill="#fbfbfa"/>
 <text x="540" y="30" text-anchor="middle" font-size="18" font-weight="bold" fill="#1a1a1a">内存防线：一本书从上传到落库，每一段怎么把峰值压住</text>

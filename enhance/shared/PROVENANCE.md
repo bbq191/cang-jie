@@ -1,33 +1,26 @@
-# shared —— 来源与维护约定
+# shared —— 两个 xovi 扩展共用的 C 代码
 
-`scan.c`/`scan.h`/`pattern.c`/`pattern.h`/`trampoline_aarch64.c`/`trampoline_aarch64.h`
-是特征码扫描 + ARM64 远跳转 trampoline 三个纯工具文件，2026-09-11 **剥离移植**
-（copy，不是路径依赖）自 `chinese-ime/langhook/src/`。
+`hl-snap` 和 `handwriting-stroke` 都靠"找到 xochitl 里的某个函数 → 改写它的开头跳到自己的代码"来工作，这套基础设施放在这里，两边的 `Makefile` 用 `LANGHOOK_SRC_DIR` 指向本目录。整个流程的图解见白皮书 §02（[`../docs/diagrams/xovi-hook-lifecycle.svg`](../docs/diagrams/xovi-hook-lifecycle.svg)）。
 
-`trampoline_patch.c`/`trampoline_patch.h`（通用 trampoline 安装：`cj_patch_target`，
-mmap+mprotect+调用 `cj_build_far_jump` 拼跳转指令+`__builtin___clear_cache`）不是从
-`chinese-ime/langhook/` 移植的——那边的 `hook_init.c` 从没拆出过这一层，是
-`enhance/hl-snap/src/hl_snap.c`/`enhance/handwriting-stroke/src/hw_stroke.c` 两边各自
-"逐字节抄自 hook_init.c"独立复制的产物，2026-09-15 全量代码审查发现两份代码逐字节相同后
-收进这里，来源是这两个文件各自当时的副本（内容一致，选哪份复制过来都一样）。
+| 文件 | 做什么 |
+|---|---|
+| `scan.c/.h` | `cj_find_exec_module`：读 `/proc/self/maps`，找到 `/usr/bin/xochitl` 的可执行段 |
+| `pattern.c/.h` | `cj_find_unique_pattern`：在段里搜特征码（目标函数开头的一串原始机器码），**必须恰好命中 1 处** |
+| `trampoline_aarch64.c/.h` | `cj_build_far_jump`：拼一条跳到任意 64 位地址的 ARM64 远跳转（20 字节） |
+| `trampoline_patch.c/.h` | `cj_patch_target`：mprotect 目标页 → 把开头 20 字节抄进新分配的"调用桩"并接上跳回原函数的远跳转 → 把目标开头改写成跳到 handler → 刷指令缓存。任一步失败返回 0、不改任何字节 |
+| `tests/` | host 单测：`make test` |
 
-## 为什么从路径引用改成拷贝
+## 已知限制：只扫第一个匹配的可执行段
 
-原先 `enhance/hl-snap/`、`enhance/handwriting-stroke/` 两个 xovi 扩展的 Makefile 用
-`LANGHOOK_SRC_DIR = ../../chinese-ime/langhook/src` **路径引用**（不复制）这三个文件——
-用意是单一事实源，改一处两边都同步。2026-09-11 全仓库大规模归档整理，`chinese-ime/` 挪出了
-仓库（本身仍是现役——`cangjie-langhook.so` 还在设备上跑，只是不再是仓库里"随时会改、需要
-联动"的活跃开发目标），继续路径引用会让 `enhance/` 这条线的构建绑死在一个仓库外的目录上，
-不符合本项目"新代码不对接旧路径、只许剥离移植"的工程原则（同 `notes/crates/rmv6` 的既有先例）。
-故改成本目录下的独立副本。
+`cj_find_exec_module` 找到**第一行**匹配 `/usr/bin/xochitl` 的可执行映射就返回。xochitl 刚启动时这是一整段，没问题；但每装一个 hook，`mprotect` 都会把目标所在的那一页从大段里切出来，之后"第一段"只到最低的那个已 patch 页之前为止。于是：**后装 hook 的扩展，只能找到地址低于已 patch 页的目标。**
 
-## 维护后果
+2026-09-24 真机上两个扩展都装上了，是因为加载顺序恰好是 hw-stroke（目标 `0xf47530`、`0xf4c8d0`）先、hl-snap（目标 `0xf03670`，更低）后。顺序反过来时，按代码推断 hw-stroke 会在 `_xovi_construct` 里静默找不到目标（这条路径不打日志），网页徽章仍显示"已加载"。这个推断**没有真机复现过**；xovi 按什么顺序加载扩展也没核实。修法（扫描所有匹配段而不是第一段）需要改代码并重新真机验证，记在白皮书 §05。
 
-`chinese-ime/langhook/src/` 那份原件如果再改，**不会自动同步到这里**——两边从此各自独立
-维护。目前两份逻辑均为特征码扫描/trampoline 这类稳定基础设施，预期变动很少；真要同步改动，
-两边手动对拍。
+## 来源
 
-## 使用方
+- `scan`、`pattern`、`trampoline_aarch64` 三组：2026-09-11 从 `chinese-ime/langhook/src/` **拷贝**过来。原先两个扩展的 `Makefile` 直接路径引用那边，`chinese-ime/` 移出仓库后改成本目录下的独立副本（本项目的原则：新代码不对接已移走的旧路径，只拷贝）。
+- `trampoline_patch`：不是从 langhook 拷的——那边从没拆出这一层。`hl_snap.c` 和 `hw_stroke.c` 曾各自从 langhook 的 `hook_init.c` 抄了一份，2026-09-15 代码审查发现两份逐字节相同，收进这里。
 
-`enhance/hl-snap/Makefile`、`enhance/handwriting-stroke/Makefile` 的 `LANGHOOK_SRC_DIR`
-指向这里。
+## 维护约定
+
+从此和 langhook 原件各自独立维护，不会自动同步。这些都是很少变动的基础设施；真要同步改动，手动对拍。

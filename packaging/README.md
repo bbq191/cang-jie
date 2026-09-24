@@ -26,12 +26,12 @@ sh uninstall-all.sh <host> --skip shelf # 跳过指定步骤，用法同 --skip
 ```
 
 全部参数与环境变量见下文「参数与环境变量」；所有脚本 `-h` 可看用法，未知选项一律退出码 2 且不连设备。
-> ⚠ 2026-09-22 这一轮脚本改动（预检、待生效标记、`--dry-run`、卸载逆序清载荷等）**只做过本机模拟测试，未在真机验证**，见「已知限制」。
+> ⚠ 真机验证范围见文末「验证现状」：2026-09-22 合并后整轮 `install-all.sh` 在真机跑过一次；卸载全流程、"无改动不重启"、2026-09-24 的 `.so` 换入顺序仍只有本机模拟。
 
 ## 前置条件（需手动，本脚本不代装）
 
 `vellum add xovi`、`vellum add qt-resource-rebuilder`、`vellum add appload`（**3.28 固件需要 ≥ 0.6.0**）、经 appload 侧载 KOReader。
-各自缺了会怎样、装的顺序与注意事项见 [`INSTALL.md`「装之前」](../docs/INSTALL.md#装之前4-样东西需要你手动装好)。这里只补两条实现层面的事：
+各自缺了会怎样、装的顺序与注意事项见 [`INSTALL.md`「装之前」](../docs/INSTALL.md#装之前)。这里只补两条实现层面的事：
 
 - `sidebar-entry` 靠 appload 暴露的 `AppLoadLauncher` 单例发起启动，并**只读当次开机的 journal 探测** appload 是否健康（找一行 `Loaded external AppLoad hooks in main UI`），探测不到就跳过、不硬装一个点了没反应的按钮。旧版（≤ 0.5.3）钩的是 3.27 的旧锚点，3.28 上注入失败；上游 PR #59 已并入 **v0.6.0（2026-09-19）**，2026-09-21 真机验证过（md5 与官方发布包一致）；此前的"等长回填 qmd"补丁工具已删除（git 历史可找回）。
 - 升级 appload 后**整机重启，别 `systemctl restart xochitl`**（旧进程退出时崩溃，触发 `OnFailure=emergency.target` 整机重启，2026-09-21 踩到）。
@@ -92,6 +92,8 @@ xovi 没有"只重载一个扩展"的机制，让新扩展/qmd 生效的唯一�
 因为 xovi 已生效时跑 `xovi/start` 会 umount 再重挂 xochitl 的 drop-in 目录，运行中的 xochitl 读文件失败 SEGV，系统按设计整机自动重启（2026-09-20 真机事故；旧版无条件 `xovi/start`，重跑 `install-all.sh` 必踩）。重启前先打印"将打断阅读"并留 `CJ_APPLY_GRACE` 秒（默认 5）宽限，不想被打断就 `--skip xovi-apply`。重启后核对 `is-active` / `MainPID` 是否变化 / `NRestarts` 不增 / 各扩展在 `maps` 里的段数。
 
 **扩展 `.so` 有变化时不再 restart，改成 stop → 换文件 → start（2026-09-24）**：换掉运行中 xochitl 已映射的扩展 `.so` 再 `systemctl restart xochitl`，旧进程退出时会 SEGV → `OnFailure=emergency.target` → 整机重启。2026-09-21（appload）、09-24（hw-stroke）两次真机复现，第二次用的已经是"先写暂存再 rename 换新 inode"，照样崩。现在 `xovi-ext-install.sh` 发现 xochitl 正映射着旧版时，把新版放进 `~/.cangjie-stage/so-pending/`（不在 `extensions.d`），由 `cj_xochitl_apply` 在 `systemctl stop xochitl` 之后、`start` 之前换入；`install-all` 的延后重启走同一条路。待换入区在 `/home`，设备中途重启也不丢，下次重启 xochitl 时照样换入。本机模拟测试覆盖了这条顺序；**真机上还没用"有变化的 .so"走过一遍**。
+
+![更新扩展 .so：先停、再换、再起](../docs/diagrams/so-swap-order.svg)
 
 ## 本目录文件导览
 
@@ -185,12 +187,14 @@ xovi 持久化是**整个 xovi 层**通用的（重跑 `xovi/start` 会重注入
 ## 测试：不碰真机验证脚本
 
 ```sh
-bash packaging/tests/run_sim_tests.sh      # 现为 198 项断言；也由 packaging/tests/test_install_scripts_sim.py 的 pytest 调用，CI 会跑
+bash packaging/tests/run_sim_tests.sh      # 现为 208 项断言（2026-09-24）；也由 packaging/tests/test_install_scripts_sim.py 的 pytest 调用
 ```
 
 做法：`tests/stubs/` 下放假的 `ssh`/`scp`/`systemctl`/`mount`/`dmsetup`/`id`/`sleep`/`curl`/`journalctl`/`rcc` 等塞进 `PATH`，用临时目录当"设备"；假 `ssh` 把远端命令直接在本机沙箱里执行，所以设备端脚本（`devlib.sh`、`shelf/install.sh`、各 heredoc 脚本）跑的是**真代码**，只是 rootfs/systemd/mount 被桩住并写日志，可断言"有没有 remount rw、最后一次 mount 是不是 ro、有没有跑 `xovi/start`"。
 
-覆盖：`devlib` 各函数（含待生效标记、备份去重）；shelf 安装的幂等 / 缺载荷不留半成品 / rw 窗口失败恢复 ro / 只重启有变化的服务 / verity 下已有单元照常重启；shelf 卸载与安装清单对称、verity 下保留二进制、`--dry-run`；`deploy.sh`（密码含特殊字符、`shelf-pkg` 换位、选项当首参、推送前核对二进制、密码文件兜底清理）；hl-snap 部署（原子落位、备份不进 `extensions.d`）；`xovi-apply`"无待生效改动不重启"与 `sidebar-entry` 的"xovi 已生效 → restart、绝不 `xovi/start`"判定；整轮 `install-all` → `uninstall-all` 对称；参数解析 / `--dry-run` / `-h` / 设备不可达 / 设备预检（磁盘空间）；`uninstall-all` 的载荷清理保守性与 wifi-watch 在 verity 下留脚本；`chrony-cn`/`timezone-cn`（路径覆盖；只测非 overlay 与 verity 路径，overlay 底层改写只能真机验证）；静态守卫（`remount,rw` / `xovi/start` 只许出现在库里）。**拒绝以 root 运行**（设 `CJ_SIM_ALLOW_ROOT=1` 才强行跑）。这些是本机模拟，**不能代替真机验证**。
+覆盖：`devlib` 各函数（含待生效标记、备份去重）；shelf 安装的幂等 / 缺载荷不留半成品 / rw 窗口失败恢复 ro / 只重启有变化的服务 / verity 下已有单元照常重启；shelf 卸载与安装清单对称、verity 下保留二进制、`--dry-run`；`deploy.sh`（密码含特殊字符、`shelf-pkg` 换位、选项当首参、推送前核对二进制、密码文件兜底清理）；hl-snap 部署（原子落位、备份不进 `extensions.d`；xochitl 正映射旧版时放进待换入区、由 `cj_xochitl_apply` 在 stop 与 start 之间换入）；`xovi-apply`"无待生效改动不重启"与 `sidebar-entry` 的"xovi 已生效 → restart、绝不 `xovi/start`"判定；整轮 `install-all` → `uninstall-all` 对称；参数解析 / `--dry-run` / `-h` / 设备不可达 / 设备预检（磁盘空间）；`uninstall-all` 的载荷清理保守性与 wifi-watch 在 verity 下留脚本；`chrony-cn`/`timezone-cn`（路径覆盖；只测非 overlay 与 verity 路径，overlay 底层改写只能真机验证）；静态守卫（`remount,rw` / `xovi/start` 只许出现在库里）。**拒绝以 root 运行**（设 `CJ_SIM_ALLOW_ROOT=1` 才强行跑）。这些是本机模拟，**不能代替真机验证**。
+
+**CI 现状**：`.github/workflows/ci.yml` 会跑 shellcheck、上面这套模拟测试、各 Rust crate 的 `cargo test` 与交叉编译冒烟。但 GitHub Actions 从 2026-09-20 起因账户扣费失败，每次都在几秒内失败、**没有执行任何检查**（`gh run list` 可见）；这段时间的改动靠本地在干净 checkout 里跑同样的检查。CI 恢复前，别把"push 了没报错"当成"测过了"。
 
 ## 固件升级（OTA）之后
 
@@ -199,16 +203,15 @@ bash packaging/tests/run_sim_tests.sh      # 现为 198 项断言；也由 packa
 ## 明确不做的事（已知缺口，别当成已经解决）
 
 - **不装 vellum/xovi/qt-resource-rebuilder/appload 本体、不侧载 KOReader**——手动前置条件，缺失时子脚本清楚报错，`install-all.sh` 收尾摘要再提醒一次。
-- **不装中文化**（输入法/候选栏/词典/UI 汉化）——那条链路（`chinese-ime/langhook/`）随 2026-09-11 全仓库大归档挪出了 git 仓库，不随本安装器分发；设备上已部署的部分仍在运行。
+- **不装中文化**（输入法/候选栏/词典/UI 汉化）——那条链路（`chinese-ime/langhook/`）随 2026-09-11 的仓库整理挪出了 git 仓库，不随本安装器分发。（2026-09-24 只读查看设备：`extensions.d/` 里没有 `cangjie-langhook.so`。）
 - **不升级 appload**——3.28 需要 ≥ 0.6.0，已装旧版的自己 `vellum upgrade appload` 后整机重启。
 - **`chrony-cn` / `timezone-cn` 没有卸载语义**（配置覆写）。
-- **卸载的真机效果没有验证过**：`uninstall-all.sh` 只做过本机模拟测试，需要在已装过 `install-all.sh` 的设备上跑一遍，确认各单元/扩展确实被摘掉、shelf 服务确实停用，且不影响没被点名要卸的其它功能。逆序、载荷目录清理、verity 下保留二进制这几处 2026-09-22 的新行为同样只在模拟里跑过。
 - 旧的 `packaging/package.sh`（打 `cangjie-full-*.tar.gz` 单体安装包）**没有**恢复：它已随归档挪出仓库且按旧目录结构找载荷；本目录是纯编排现有独立脚本，不是复刻旧的单体打包架构。
 
-## 已知限制（2026-09-22，别当成已经解决）
+## 已知限制（别当成已经解决）
 
-- **这一轮改动全部只在本机模拟验证（198 项），未在真机验证**：装前预检（`require_device`/`preflight_device`）、待生效标记与按需重启、`--force-apply`/`--force`、`--dry-run`、卸载逆序 + 载荷目录清理 + verity 保留分支、`cj_backup_if_differs`、`deploy.sh` 的推送前核对与密码文件兜底清理。
-- **`xovi-reenable.service` 防护（2026-09-22 新增，未部署未真机验证）**：单元现有 `ExecCondition=/bin/sh -c '! grep -q "xovi[.]so" /proc/<xochitl MainPID>/maps'`——xochitl 已映射 `xovi.so` 就跳过（systemd 把 ExecCondition 非 0 视为"跳过"而非"失败"），不再对已生效的 xochitl 跑 `xovi/start`（那会让它 SEGV → 整机重启）。判定命令的三种情形（已生效/未生效/xochitl 不在跑）有本机模拟测试；`systemctl show -p MainPID` 与 `/proc/<pid>/maps` 的读法在设备上做过只读核对。**设备上现役的仍是旧版单元**（无防护），要部署新版走 `deploy-xovi-persist.sh`（改 `/usr`，含 dm-verity 检查）；旧版下手动 `systemctl restart xovi-reenable` 仍会踩。
+- **只在本机模拟验证、没在真机走过的分支**：卸载全流程（逆序 + 载荷目录清理 + verity 保留分支）；`xovi-apply`"无待生效改动就不重启"；`--force-apply`/`--force`；`cj_backup_if_differs` 的"内容没变不备份"；`deploy.sh` 的推送前核对与密码文件兜底清理；2026-09-24 的 `.so` 待换入区（stop → 换入 → start）。首次安装这条主路径在真机跑过，见「验证现状」。
+- **`xovi-reenable.service` 防护（2026-09-22）**：单元带 `ExecCondition=/bin/sh -c '! grep -q "xovi[.]so" /proc/<xochitl MainPID>/maps'`——xochitl 已映射 `xovi.so` 就跳过（systemd 把 ExecCondition 非 0 视为"跳过"而非"失败"），不再对已生效的 xochitl 跑 `xovi/start`（那会让它 SEGV → 整机重启）。三种情形（已生效/未生效/xochitl 不在跑）有本机模拟测试；新版单元已部署到设备（2026-09-24 只读核对：设备上的单元与仓库一致）。"xovi 已生效时手动重跑它会被跳过"这一行为本身没有在真机上专门触发过。
 - **`/usr` 下单元的写入仍靠"dm-verity 门 + 带 trap 的 rw 窗口"**，不是彻底不碰 `/usr`；同样只在模拟里测过，历史上写 `/usr` 触发过 A/B 回滚变砖（2026-08-16）。
 - **`shelf/install.sh --password 明文` 直接在设备上跑时密码短暂出现在设备 `ps`**（`deploy.sh` 走 0600 临时文件 + `--password-file` 不受影响）。
 - **待生效标记只覆盖已接入的四处**（`hl-snap` / `handwriting-stroke` / `sidebar-entry` / `shelf` qmd）。手工替换 `.so`/qmd 不会留标记——用 `--force-apply`/`--force`。`/run` 与退路目录都写不了时只警告，此时 `xovi-apply` 可能误判"无需重启"，按提示手动 `systemctl restart xochitl`。
@@ -217,7 +220,7 @@ bash packaging/tests/run_sim_tests.sh      # 现为 198 项断言；也由 packa
 
 ## 验证现状（如实说明，不夸大）
 
-> 这是按时间累积的真机验证与踩坑整理（2026-09-11 起）。步骤号、"八步/十个脚本"等是当时的说法，**以上面的步骤表为准**；2026-09-20 脚本重构（共用 `lib.sh`/`devlib.sh`、原子替换、备份轮转、xovi 已生效走 `systemctl restart`）之后个别做法已被取代（如 battop 部署"先 stop 再 scp 覆盖"→ 现在推 `battop.new` 后原子 rename）。**本文档没有记录 2026-09-20 重构之后对整轮 `install-all.sh` 的真机复验**，重构后的脚本主要靠上面的本机模拟测试。
+> 这是按时间累积的真机验证与踩坑整理（2026-09-11 起）。步骤号、"八步/十个脚本"等是当时的说法，**以上面的步骤表为准**；2026-09-20 脚本重构（共用 `lib.sh`/`devlib.sh`、原子替换、备份轮转、xovi 已生效走 `systemctl restart`）之后个别做法已被取代（如 battop 部署"先 stop 再 scp 覆盖"→ 现在推 `battop.new` 后原子 rename）。
 
 ### 真机验证过
 
@@ -233,11 +236,13 @@ bash packaging/tests/run_sim_tests.sh      # 现为 198 项断言；也由 packa
 | 2026-09-15 | trampoline 通用安装代码收进 `enhance/shared/`（纯参数化提取）：`journalctl` 确认 hl-snap 与 hw-stroke 三个 hook 全部"安装完成"，日志逐字节一致，两次连续重启 `NRestarts` 全程 0，`reading-qol.json` 用户配置原样保留 | 通过 |
 | 2026-09-15 | `deploy-hl-snap/handwriting-stroke` 补齐"部署前备份 + md5 校验"：`cangjie-backups/` 下真的新增备份，且备份 md5 精确匹配部署前的旧版本 | 通过（battop 的备份分支当时没触发，待下次装 battop 顺带确认） |
 | 2026-09-21 | appload 0.6.0：md5 与官方发布包一致、日志有 "Loaded external AppLoad hooks in main UI"、KOReader/WeRead 入口正常 | 通过 |
+| 2026-09-22 | 审计分支合并后整轮 `install-all.sh`（9 个服务 + 扩展 + 一次 xochitl 重启），服务健康、`NRestarts` 为 0；新版 `xovi-reenable.service`（带 `ExecCondition`）随之部署，2026-09-24 只读核对设备上的单元与仓库一致 | 通过（走的是"有改动 → 重启"这一支） |
 
 ### 没有真机验证
 
 - **卸载脚本**（`uninstall-all.sh`）：只有本机模拟；2026-09-22 起的逆序 / 载荷清理 / verity 保留分支同理。
-- **2026-09-22 的安装侧改动**：装前预检、待生效标记与按需重启（`xovi-apply` 在无改动时不重启）、`--force-apply`、`--dry-run`——只有本机模拟。
+- **"无改动不重启"**：`xovi-apply` 在无待生效标记时跳过重启、`--force-apply`——只有本机模拟。
+- **`.so` 待换入区（2026-09-24）**：stop → 换入 → start 的顺序只有本机模拟（H3 五项）；真机上还没有用"有变化的 `.so`"走过。
 - `sidebar-entry` 在 appload 版本过旧时"探测不到信号就跳过"这一分支：逻辑只是一行 `grep -q`，靠代码审查；真机只确认了"正面信号存在"这一半。
 - `deploy-xovi-apply.sh`：整体随 `install-all.sh` 整轮真机跑通，但没单独逐项核对它打印的 hl-snap/hw-stroke 段数、NRestarts 细节。
 - `deploy-battop.sh` 的 host 侧覆盖前备份分支（旧版）与 2026-09-20 之后的"`battop.new` 原子 rename"新流程：没有重跑验证。
@@ -250,4 +255,5 @@ bash packaging/tests/run_sim_tests.sh      # 现为 198 项断言；也由 packa
 - **`deploy-battop.sh` 里 cargo 找不到 `.cargo/config.toml`**：Cargo 搜配置是按**当前工作目录**往上找，不看 `--manifest-path`，在 `packaging/` 下直接调用会吃不到 CC/AR 覆盖，链接 `crt1.o` 时报 `Relocations in generic ELF`。→ 先 `cd enhance/battop/` 再 `cargo build`。
 - **部署脚本构建前 `make clean` 会删掉仓库里已提交的产物**：`hl-snap.so`、`hw-stroke.so` 与 `xovi_glue.{c,h}` 都已提交（不用每次现建才能部署），但本机没有 `asivery/xovi` clone 时编不出新的，`make clean` 先删后编译失败，仓库里可用产物被脚本自己删了（当场发现、`git checkout` 救回）。→ 不清；构建失败时退回用已提交的版本并打印清楚的提示。
 - **shelf 健康检查太急**：原来固定 `sleep 1` 就查 `is-active`，而 `gateway` 首次启动要签发私有 CA/自签证书，1 秒不够被误判"没起来"。→ `shelf/install.sh` 的健康检查改成轮询（最多 10 秒）。
+- **换了运行中 xochitl 已映射的扩展 `.so` 再 restart → 整机重启**（2026-09-21 appload、2026-09-24 hw-stroke 两次真机）：旧进程退出时 SEGV，触发 `OnFailure=emergency.target`。第二次已经是"先写暂存再 rename 换新 inode"，照样崩。→ `.so` 待换入区 + stop → 换入 → start（见上文与图）。
 - **旧版 battop 重装 ETXTBSY**：`scp` 直接覆盖正在执行的二进制被内核拒绝。→ 曾改成"推送前先 stop"，2026-09-20 之后改为推 `battop.new` 再原子 rename（不必停服务）。

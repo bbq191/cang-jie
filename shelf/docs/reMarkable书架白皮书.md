@@ -1,10 +1,9 @@
 # reMarkable 书架（shelf）白皮书
 
-> **读者与用途**：写给要维护、扩展或排查 shelf（书架：把书弄进设备、优化、再选去哪个阅读器）的人。本文记**决策依据与真机记录**——"当初为什么这么定、真机怎么验、踩过什么坑"。
-> - 想 10 分钟看懂全项目：仓库根 [`docs/OVERVIEW.md`](../../docs/OVERVIEW.md)；想 5 分钟看懂书架：下面「5 分钟读懂」；想知道"现在长什么样"：「现状总览」与各章开头的「现状结论」。
-> - **改书的规则**（EPUB 优化、PDF 转 EPUB、xochitl 渲染与跳转的实测规则）以 [`EPUB优化规范白皮书.md`](EPUB优化规范白皮书.md) 为权威，本文只记决策与验证，不重复规则正文。
-> - 引擎逐模块实现见 [`bookconv优化白皮书.md`](bookconv优化白皮书.md)；传书线"当前结构"见 [`传书EPUB线架构.md`](传书EPUB线架构.md)。
-> - 每节标题里的 **§编号是稳定锚点**，别处写"见 §03bh"指的就是它，**编号不会变**；被后来决策取代的节已压缩成"结论 / 被取代 / 教训"三行，真机数据保留。
+> **读者与用途**：写给要维护、扩展或排查 shelf（书架：把书弄进设备、优化、再选去哪个阅读器）的人。本文管两件事：**现状总览**（开头一节 + 每章开头的「现状结论」）和**真机历史与坑**（当初为什么这么定、真机怎么验、踩过什么坑）。
+> - 想 10 分钟看懂全项目：仓库根 [`docs/OVERVIEW.md`](../../docs/OVERVIEW.md)；想 5 分钟看懂书架：下面「5 分钟读懂」。
+> - 同一主题只在一处写全，其余文档一句话 + 链接。四份文档怎么分工见下面「如何阅读本文」。
+> - 每节标题里的 **§编号是稳定锚点**，别处写"见 §03bh"指的就是它，**编号不会变**；被后来决策取代的节已压缩成"结论 / 被取代 / 教训"，真机数据保留。
 
 ![书架文档地图：带着问题找文档](diagrams/sh-doc-map.svg)
 
@@ -22,18 +21,7 @@
 | ② 优化（可选） | EPUB：清洗 + 排版 + 目录 + 封面 + 质量门；漫画自动识别；PDF：有文字层按原格式转 EPUB，无文字层只裁边 | 不强制；产物仍在母版库，可重优化 |
 | ③ 落库 | 复制母版字节进读器：xochitl（流式 / 占位替换 / 兜底拆卷）或 KOReader | 母版永久保留，可反复落库、两读器对照 |
 
-**模块地图**：
-
-| 模块 | 端口 / 位置 | 职责 | 详见 |
-|---|---|---|---|
-| `gateway` | `0.0.0.0:443`（`../gateway`） | HTTPS + 登录密码 + 单页 UI + 反向代理 + 批量队列 + 并发/内存闸门；**唯一对外** | 第 D 章、`gateway/docs/` |
-| `book-serve` | 127.0.0.1:8790（`shelf/services/book-serve`） | 母版库、优化调度与质量门、落库、回收站/建文件夹/漫画页边距的设备端代理队列 | 第 A/C/E 章 |
-| `bookconv`（crate） | 被 book-serve 链接 | 清洗 / 优化 / 质量门 / 图片 / 漫画 / PDF 入库 / 占位文档 | `bookconv优化白皮书.md` |
-| `pdf-extract-cj`（crate） | 被 bookconv 链接 | `pdf-extract` 0.12.1 的本地 fork（MIT）：补颜色算子、图片位置钩子、CID 字宽修正 | §03br |
-| `koreader-serve` | 127.0.0.1:8791 | 落书进 KOReader、字体/词典/配置同步、高亮/生词只读端点 | §03d、§03ar |
-| `font-serve` / `wallpaper-serve` | 8792 / 8793（源码在 `../enhance/`） | 字体上传即装 / 壁纸上传即用（写原生 `SleepScreenPath` 键） | 第 F 章 |
-| 笔记线四服务 | 8795–8798（`../notes`） | 与书架共用网关，书架文档不讲 | `notes/README.md` |
-| `shelf/xovi/*.qmd` | 注入 xochitl 的补丁 | 字体菜单动态项、回收站代理、建文件夹代理、漫画页边距代理 | 第 C/F 章 |
+**模块与端口**：网关 `gateway`（`0.0.0.0:443`，唯一对外）+ 两个书架领域服务 `book-serve`（8790，母版库）、`koreader-serve`（8791）+ 两个周边服务 `font-serve`（8792）、`wallpaper-serve`（8793，源码在 `../enhance/`）；优化引擎 `bookconv` 是被 book-serve 链接的库，不是服务；`pdf-extract-cj` 是它用来解析 PDF 的本地 fork。服务表与职责见 [`../README.md`](../README.md)「服务与端口」。
 
 ![shelf 架构：网关 + 领域服务](diagrams/architecture.svg)
 
@@ -52,18 +40,32 @@
 
 ## 如何阅读本文
 
+**四份文档的分工**（2026-09-24 定；同一主题只在一处写全）：
+
+| 主题 | 写全在哪 | 其它文档里 |
+|---|---|---|
+| 书该被改成什么样（EPUB 优化、PDF 转 EPUB、xochitl 渲染/跳转规则、质量门规则） | [`EPUB优化规范白皮书.md`](EPUB优化规范白皮书.md) | 一句话 + 链接 |
+| 代码怎么做到（函数、常量、`OPTIMIZE_VERSION`、实现层的坑） | [`bookconv优化白皮书.md`](bookconv优化白皮书.md) | 一句话 + 链接 |
+| 书在服务间怎么流动（母版库状态、落库通道、异步与进度、内存设计、**全部 API 与配置**） | [`传书EPUB线架构.md`](传书EPUB线架构.md) | 一句话 + 链接 |
+| 现状总览、真机历史、事故与坑、待办、已砍能力、路径表 | 本文 | — |
+| KOReader 配置方案与补丁接口 | [`../koreader/README.md`](../koreader/README.md) | 本文 §03bt 只记决策与真机反馈 |
+
+**本文的章**：
+
 | 章 | 主题 | 包含的 § 节 |
 |---|---|---|
 | 0 | 定位、原则与基础 | §00 · §01 · §02 · §03 |
 | A | 入库与母版库 | §03b · §03r · §03s · §03u · §03ao · §03ap · §03as · §03br |
 | B | 优化管线 | §03e · §03i · §03q · §03y · §03aq · §03av · §03aw · §03ay · §03az · §03bb · §03bc · §03bg · §03bo · §03bs |
-| C | 落库、大文件与漫画 | §03d · §03l · §03t · §03aa · §03ad · §03ar · §03ax · §03be · §03bf · §03bk · §03bn |
+| C | 落库、大文件、漫画与 KOReader | §03d · §03l · §03t · §03aa · §03ad · §03ar · §03bt · §03ax · §03be · §03bf · §03bk · §03bn |
 | D | 网关与网页 UI | §03g · §03h · §03j · §03m · §03n · §03z · §03ac · §03ae · §03af · §03ah · §03aj · §03ak · §03al · §03am · §03an · §03au · §03bj · §03bl · §03bp |
 | E | 稳定性、内存与耗电 | §03p · §03ab · §03ag · §03ai · §03ba · §03bh · §03bi · §03bm · §03bq |
 | F | 设备、字体壁纸与固件 | §03c · §03f · §03k · §03o · §03v · §03w · §03x · §03at · §03bd |
-| 附录 | 踩坑合集 · 旧版现状总览 · 待办 · 演进记录 · 已移除能力 · 目录注解 · 旧 OTA 说明 | §04 · §00b · §05 · 附录 A–D |
+| 附录 | 踩坑合集 · 旧版现状总览 · 待办 · 演进记录 · 已移除能力 · 目录与路径 · 旧 OTA 说明 | §04 · §00b · §05 · 附录 A–D |
 
-## 现状总览（2026-09-23 刷新）
+读法：先看「现状总览」，再按主题跳到某章，先读章首「现状结论」和「坑位表」，需要来龙去脉再读 § 节。
+
+## 现状总览（2026-09-24 刷新）
 
 **服务与端口**：对外只有网关 `gateway` `0.0.0.0:443`（HTTPS 私有 CA + 登录密码 + mDNS `shelf.local`）；领域服务只听本机：`book-serve` 8790、`koreader-serve` 8791、`font-serve` 8792、`wallpaper-serve` 8793；笔记线 `ink` 8795 / `transcribe` 8796 / `mind` 8797 / `note` 8798 挂同一网关。
 
@@ -76,7 +78,8 @@
 | 收什么格式 | 只收 EPUB / PDF（`rmsvc_core::formats`）；其余一律拒收——策略收紧，不是技术判断 | 第 A 章 |
 | 书名 | 入库/优化时规范成 `书名 - 02卷`（数字在前），无卷标记的原样保留 | §03bn |
 | EPUB 优化 | 只有一档「完整清洗 + 优化」；`OPTIMIZE_VERSION`=15；产物过**质量门**（5 条硬规则）才替换母版，不过门原文件不动 | 第 B 章、§03bs |
-| PDF 优化 | 有文字层→按原格式转 EPUB（颜色、图片位置与比例、链接、目录都按原书）；无文字层/漫画→只裁边仍是 PDF | §03br |
+| PDF 优化 | 有文字层→按原格式转 EPUB（颜色、图片位置与比例、链接、目录都按原书；灰字按黑字显示）；原 PDF 挪进 `.pdf-originals/` 留 7 天、网页可恢复；同名 EPUB 已在则不转。无文字层/漫画→只裁边仍是 PDF | §03br |
+| 改名 / 下载原件 | 只勾一本时出现；改名只改文件名（扩展名、书内书名不变）；下载全程流式 | 传书线架构 §2.5 |
 | 漫画 | 自动识别、保画质、裁边、仍是 EPUB；实验室开关 `comicMinMargin` 让左右留白≈0 | 第 C 章、bookconv §20 |
 | 加入 xochitl | ≤90MB 流式 `/upload`；>90MB 优先"占位+磁盘替换"（≤1GiB，不分卷）；不可用才按卷拆分 | §03bn |
 | 书内跳转 | xochitl 只认**同一文件内**、指向**非空元素**的 `#锚点`；跨文件链接一律当外链 | 规范白皮书 §03 规则 8–10 |
@@ -84,10 +87,11 @@
 | 稳定性 | `panic="unwind"`+`catch_unwind`、`OpRegistry`、启动时修正被中断的 `pending` | §03bq |
 | KOReader 入口 | appload ≥ 0.6.0；配置补丁经 koreader-serve `/config/*`；高亮/生词可在网页笔记页一键导入 | §03v、§03ar |
 | KOReader 阅读方案 | 全局 = 文字书；`books/漫画/` 新书自动从右往左、去边距、图片最佳缩放、隐藏状态栏；统计与生词本插件已启用 | §03bt |
+| 测试 | `cd shelf && cargo test --workspace`：392 个通过、1 个忽略（2026-09-24：bookconv 293 · book-serve 78 · koreader-serve 20 · pdf-extract-cj 1） | — |
 
 **已砍/已被取代（别再找）**：电脑端 `shelf` 命令行（09-18，附录 B）；母版库"优化档位"与"投完自动删除"（09-19）；漫画"优化转 PDF"（09-19 做、09-20 换回 EPUB）；三档格式（09-17/18 收成一档）；微信读书内容源（09-05）；appload 补丁工具链（09-21）；bind-mount 壁纸（§03x）；`/inbox*` 与 `/staging/render/*` HTTP 接口（09-22 删，scp 进 `inbox/` 仍可用）。
 
-**未闭环 / 未验证（如实）**：网页 i18n 与触屏交互没有真实浏览器人眼确认；图片密集网文的大片留白是分页引擎行为，CSS 层无杠杆（§03aq）；批量"加入 xochitl / 加入 KOReader"没有设备端到端实测；>153MB 占位通道的首次渲染内存/耗时未测；PDF 转 EPUB 的公式裁图未验证（两本样本都没有公式）；calibre 书常用空 `<a id>` 当注释目标，在 xochitl 上可能跳不动，**书库 36 本实扫未发现受影响的同文件链接**，但 7 本书的书内目录页是跨文件链接、在 xochitl 上点不动（xochitl 自己的目录菜单正常，暂不改）。
+**未闭环 / 未验证（如实）**：网页 i18n 与触屏交互没有真实浏览器人眼确认；图片密集网文的大片留白是分页引擎行为，CSS 层无杠杆（§03aq）；批量"加入 xochitl / 加入 KOReader"没有设备端到端实测；KOReader 运行中拒写配置（409）没有真机专门验证；原件下载的内存峰值没量；>153MB 占位通道的首次渲染内存/耗时未测；PDF 转 EPUB 的公式裁图未验证（两本样本都没有公式）；calibre 书常用空 `<a id>` 当注释目标，在 xochitl 上可能跳不动，**书库 36 本实扫未发现受影响的同文件链接**，但 7 本书的书内目录页是跨文件链接、在 xochitl 上点不动（xochitl 自己的目录菜单正常，暂不改）。
 
 **OTA（固件升级）后怎么恢复**：权威说明在 [`docs/INSTALL.md`](../../docs/INSTALL.md)「固件升级（OTA）之后」。
 
@@ -112,12 +116,12 @@
 **选 B：网关 + loopback 服务 + 注册表**（弃 A 每服务独立对外端口、C 单二进制编译期插拔）。
 - 注册表放 `$XDG_RUNTIME_DIR`（重启即清）+ 读时按 `/proc/<pid>` 清陈旧条目。
 - 代理**剥掉服务段**（`/api/fonts/x` → 后端 `/x`），后端直连与经网关同一套路由。
-- 每请求一线程；**请求体流式透传、响应整体缓冲**（§03ah 更正了早期"双向流式"的说法）。
+- 每请求一线程；**请求体流式透传；下载应答（带 `Content-Disposition`）流式、其余小应答整体缓冲**（§03ah；下载流式 09-24 加）。
 - `bookconv` 从旧 weread-device `git mv` 成独立 crate（当时新旧 `epub-optimize` 输出 md5 一致）；现只被 book-serve 链接。
 
 ### 02｜XDG 路径表
 
-见 `shelf/README.md`「路径」。qmd 的 XHR 只能写绝对路径（缺省值展开 `/home/root/.local/share/shelf/fonts.json`）。
+见附录 C「设备路径」。qmd 的 XHR 只能写绝对路径（缺省值展开 `/home/root/.local/share/shelf/fonts.json`）。
 
 ### 03｜systemd
 
@@ -133,9 +137,10 @@
 > - 格式只收 **EPUB / PDF**（`BOOK_EXTS` = `NATIVE_EXTS`）——策略收紧，不是技术判断；已在库的旧条目仍可加入 KOReader。
 > - EPUB 书名入库时规范成 `书名 - 02卷`；同名不覆盖、撞名各自入库（`unique_path` 加数字前缀）。
 > - 优化与落库都**异步**：HTTP 立即回"已开始"，进度靠边车 + SSE。
-> - PDF 也能「优化」：有文字层按原格式转 EPUB（原 PDF 挪进隐藏备份保留 7 天），无文字层/漫画只裁边（§03br）。
+> - PDF 也能「优化」：有文字层按原格式转 EPUB（原 PDF 挪进 `staging/.pdf-originals/` 保留 7 天，网页可恢复；同名 EPUB 已在则不转），无文字层/漫画只裁边（§03br）。
+> - 只勾一本时可**下载原件**（全程流式）和**改名**（只改文件名，扩展名与书内书名不变）——2026-09-24 加，机制见传书线架构 §2.5。
 
-![shelf 读书线数据流：三层·三动作正交](diagrams/data-flow.svg)
+![母版库里一本书的一生：入库 → 可选优化 → 落库 → 改名 / 下载 / 删除，以及原 PDF 备份](diagrams/sh-staging-item-life.svg)
 
 #### 本章坑位表
 
@@ -143,7 +148,7 @@
 |---|---|---|---|
 | "已优化"徽章说谎 | 无清洗的产物写了与完整优化同一标记 | 标记分层：`level`=full/core/old/none | §03r |
 | inbox 绕过母版库 | `process_inbox` 是直投路遗留 | 规则审到**所有入口**；验证前先读防抖参数 | §03r |
-| `df -k` 解析出错 | busybox 设备名过长把数字换行 | 拍平后取第 4 个 token | §03r |
+| 剩余空间读错 | 早期解析 busybox `df -k`，设备名过长把数字换行 | 现改 `statvfs(2)` 一次系统调用，无子进程、无文本解析 | §03r |
 | 网文正文大片留白 | 白名单不留 class/style；图片夹正文的留白另有成因 | 「同步优化」必要不充分 | §03ap、§03aq |
 | 同名同大小去重快照过期 | 一次拖两份同名文件，第二份仍成 `1_x` | 每成功一项补进快照 | 附录 §04 |
 | 上传超 100MB | xochitl `/upload` 硬上限 100,000,000 字节 | 缺省门 90MB + 占位替换通道 | §03bn |
@@ -198,19 +203,18 @@
 
 > 规则正文（不改内容与颜色、图片视觉落位与比例、链接与锚点、分段与切章）以 [`EPUB优化规范白皮书.md`](EPUB优化规范白皮书.md) §05 为准；引擎实现见 `bookconv优化白皮书.md` §18。本节只记决策、取舍与真机结果。
 
-**分类**（`bookconv::pdf_ingest::classify_pdf`）：
-- **有文字层**（每页平均可提取字符 ≥ 40）→ 转 EPUB，以 `<书名>.epub` 落地，原 PDF **挪进隐藏备份 `.pdf-originals/` 保留 7 天**（2026-09-24 前是直接删除，删了找不回）；母版库已有同名 EPUB 时停下报错、不覆盖；列表带来源徽章，视为一次性完成（不再显示「优化」钮）。
-- **漫画 / 无文字层扫描件** → **只裁边**、格式不变（安全闸：只处理"零文字、每页恰好一张整页图"的 PDF，保留书签）。判不准一律退到只裁边——转 EPUB 是破坏性格式变更，选保守那条。
+**现行做法一句话**：有文字层（每页平均可提取字符 ≥ 40）→ 转 EPUB；漫画 / 扫描件 → 只裁边、格式不变（只处理"零文字、每页恰好一张整页图"的 PDF）；判不准一律退到只裁边——转 EPUB 是破坏性格式变更，选保守那条。分类表与数据流见传书线架构 §2.4，规则见规范白皮书 §5，实现见 bookconv 白皮书 §18。
 
-**2026-09-23 用户拍板"按原格式生成"**（用户原话："移动互联软件安装使用手册，要按原格式（颜色，连接，图片位置）生成EPUB，TE也一样"；"图片可适当缩放，以保障显示效果与原 pdf 基本一致"）。
+**2026-09-23 用户拍板"按原格式生成"**（原话："移动互联软件安装使用手册，要按原格式（颜色，连接，图片位置）生成EPUB，TE也一样"；"图片可适当缩放，以保障显示效果与原 pdf 基本一致"）。关键取舍：
 
 | 决策 | 取舍 |
 |---|---|
-| 颜色、图片位置、链接一起换成"自研解释器" | 不重写字体/字形解码（最难、最易出中文边界问题），**fork** `pdf-extract` 0.12.1 成 `shelf/crates/pdf-extract-cj`（MIT），只在它的内容流解释器里补三样：颜色算子、图片绘制位置、CID 字宽解析。bookconv 用 Cargo `package =` 重命名透明接入 |
-| 颜色只用外链 class | xochitl 不认内联 `style=`；全书颜色去重成 `.cj-cN{color:…}` |
-| 图片按**视觉坐标**落位，按原书占栏宽比例定宽 | Word 导出的 PDF 先画文字后画图，按绘制顺序会错位；比例定成 5% 一档的 `.cj-wN` |
-| 书内跳转：有跨章跳转就**合成单文件** | xochitl 只认同文件锚点；目录改指文件内锚点（xochitl 目录支持，真机实验坐实） |
-| 章节切分"每页只进一章" | 杂志类 PDF 的栏目书签常指回目录页；分组标题只进目录，不生成空白章 |
+| fork `pdf-extract` 而不是重写 | 字体/字形解码最难、最易出中文边界问题，不碰；只在 fork 的内容流解释器里补颜色算子、图片位置、CID 字宽 |
+| 颜色只用外链 class | xochitl 不认内联 `style=` |
+| 图片按**视觉坐标**落位、按占栏宽比例定宽 | Word 导出的 PDF 先画文字后画图，按绘制顺序会错位 |
+| 有跨章跳转就**合成单文件** | xochitl 只认同文件锚点 |
+| 每页只进一章 | 杂志类 PDF 的栏目书签常指回目录页 |
+| 灰字按黑字显示（09-23 晚，规范白皮书 T2） | 用户选两线统一：墨水屏上浅灰难读，彩色才是强调 |
 
 **真机排查链**（两本真书：Word 导出的《移动互联软件安装使用手册》8 页、calibre 导出的《2026-09-19 T.E.双语》540 页）：
 
@@ -220,9 +224,8 @@
 **未验证**：公式裁图（样本无公式）、竖排/多栏 PDF。
 **教训**：① 核对跳转要分两套——目录看 `.epubindex`，正文链接看预览 PDF 的具名目标表；只看目录会误判"能跳"。② 先用真书量化（字符数、图片引用数、链接数）再改代码，"看起来对"在这条线上多次被数字推翻。
 
-**2026-09-24 审查补两条保护**（真机验证过）：① 母版库已有同名 `<书名>.epub` 时停下报错，不再 rename 覆盖掉那本书；② 原 PDF 不再直接删，挪进母版库隐藏目录 `.pdf-originals/` 保留 7 天（按挪入时的 ctime 算，启动时与每次新备份时清过期）。母版库页底部「原 PDF 备份」列出这些文件，可「恢复」回母版库（同名已在则拒绝）或提前删除；`GET /staging` 的 `originals` 字段给数据，`POST /staging/originals/{restore,delete}` 执行。另外 `pdf-extract-cj` 的 Form XObject 递归限深 16 并防环——自引用的 Form 以前能把 book-serve 栈打爆（SIGSEGV，`catch_unwind` 接不住）。
-
-**同日新增：原件下载与改名**。只勾选一本时，底部操作栏多出「下载原件」「改名」。下载走 `GET /staging/file?name=`，book-serve 边读边发，网关见到 `Content-Disposition` 也改为流式转发，不把上百 MB 的书读进内存（网关其余应答照旧整体读完）。改名 `POST /staging/rename {name,newName}` 只改文件名、格式不能变（不带扩展名就沿用原扩展名，带了别的扩展名只当名字的一部分），新名已存在或任一名字正在处理中则拒绝，落库边车跟着改名；**不改书里的书名/作者**，xochitl 显示的书名仍取书内元数据。
+**2026-09-24 审查补三条保护**（前两条真机验证过）：① 母版库已有同名 `<书名>.epub` 时停下报错，不再 rename 覆盖那本书；② 原 PDF 不再直接删，挪进 `.pdf-originals/` 保留 7 天，网页可恢复或提前删除；③ `pdf-extract-cj` 嵌套表单限深 16 并防环——自引用的表单以前能把 book-serve 栈打爆（SIGSEGV，`catch_unwind` 接不住）。同日还加了原件下载与改名。机制都在传书线架构 §2.5。
+**教训**：破坏性的格式转换，默认就该留一条回头路——"转成功才删原件"不够，转成功不等于转得让人满意（多栏、表格类 PDF 转出来可能能读但不好看）。
 
 ## 第 B 章 优化管线
 
@@ -398,7 +401,7 @@
 **质量门接入**：同日 PDF 转 EPUB 的 `../` 路径 bug（§03br）让"门只在命令行工具里跑"的缺口暴露。现在 `Staging::optimize()` 与 PDF 转换在 `produce_then_replace` 的临时文件阶段跑 `check_epub_file`（只读骨架、不读图片字节），不过门就返回错误、原文件完全不动。新增两条硬规则：正文资源引用命中率 <80%、OPF 不是合法 XML（后者对设备上 56 本真实 EPUB 扫过，零误伤）。
 **真机**：《甲午》重优化后 29 章全部处理、注释不加粗且小一号，用户确认"注释正常了"。
 
-## 第 C 章 落库、大文件与漫画
+## 第 C 章 落库、大文件、漫画与 KOReader
 
 > **大白话导语**：**落库**＝把母版库里的书放进某个阅读器：「加入 xochitl」走它的网页 `/upload` 接口，「加入 KOReader」直接把文件复制进 KOReader 书目录。本章回答：书怎么进 xochitl（含超 100MB 的大文件）、文件夹怎么建、落完怎么知道"渲染没坏"、漫画有哪些特殊处理。§03t、§03ad、§03bk 是被推翻的历史，只读结论。
 
@@ -476,15 +479,9 @@
 
 ![KOReader 文字书 / 漫画两套方案](diagrams/sh-koreader-schemes.svg)
 
-**怎么拼**：KOReader 没有"按书类型整套切换配置"的单一开关，用三样自带机制：
+**怎么拼**：KOReader 没有"按书类型整套切换配置"的单一开关，用三样自带机制——① 全局设置 = 文字书方案；② 按文件夹的单书设置（docsettingtweak 插件）让 `books/漫画/` 下的书第一次打开时套漫画设置；③ 配置档（profiles 插件）按书路径自动切状态栏预设。三层各设了什么见 [`../koreader/README.md`](../koreader/README.md)「文字书 / 漫画两套方案」。
 
-| 层 | 文件 / 插件 | 内容 |
-|---|---|---|
-| ① 全局设置 = 文字书方案 | `settings.reader.lua` | 行距 115%（缺省 100 对中文偏挤）、字重 +0.5、不用书内嵌字体、悬挂标点、书没标语言时按中文断行；文字页每 16 页全刷 |
-| ② 漫画的单书设置 | `settings/directory_defaults.lua`（docsettingtweak） | `books/漫画/` 下的书**第一次打开**时写成它自己的设置：从右往左、四边页边距 0、图片缩放「最佳」、关 crengine 标题栏 |
-| ③ 状态栏随书切换 | `settings/profiles.lua` + `profiles_autoexec`（profiles） | 打开 `/books/漫画/` 载入「漫画」预设（隐藏状态栏和进度条）；关闭漫画或打开 `/books/小说/` 载入「文字」预设 |
-
-几个核实过的事实：带图片的页 KOReader 缺省就每页全刷（`refresh_on_pages_with_images` 缺省开），模板里的"漫画每页全刷"不用另设；KOReader 不读 OPF 的 `page-progression-direction`，从右往左必须设 `inverse_reading_order`；状态栏是全局设置，所以只能靠配置档随书切换。
+核实过的事实：带图片的页 KOReader 缺省就每页全刷（`refresh_on_pages_with_images`），模板里的"漫画每页全刷"不用另设；KOReader 不读 OPF 的 `page-progression-direction`，从右往左必须设 `inverse_reading_order`；状态栏是全局设置，所以只能靠配置档随书切换。
 
 **插件取舍**：启用「统计」——状态栏的剩余阅读时间靠它算，此前被禁用，一直显示 N/A；启用「生词本」——笔记线从它的数据库导入生词（§03ar），此前也被禁用。新增禁用 13 个与本机用法无关的：hello、coverimage、keepalive、bookshortcuts、cloudstorage、opds、kosync、timesync、autostandby、batterystat、hotkeys、externalkeyboard、archiveviewer。第三方插件查过一轮，没有称得上必装的；书库界面插件 Project: Title（v3.8.3 支持 2026.07.x）用户选择暂不装。
 
@@ -520,18 +517,10 @@
 
 ### 03bn｜大文件"占位 + 替换"通道与统一命名规则（2026-09-20，真机验证过 PDF 154MB / EPUB 153MB）
 
-**做法**：`book-serve` 在设备上能直接写 xochitl 书库目录，所以只让网页接口传一个**占位文档**建好条目，再把磁盘文件原子替换成真书。图见 [`upload-limit-bypass.svg`](../../docs/diagrams/upload-limit-bypass.svg)。
+**做法**：`book-serve` 在设备上能直接写 xochitl 书库目录，所以只让网页接口传一个**占位文档**建好条目，再把磁盘文件原子替换成真书。六步流程与适用条件见传书线架构 §6.1，图见 [`upload-limit-bypass.svg`](../../docs/diagrams/upload-limit-bypass.svg)。
 
-| 步骤 | 做什么 |
-|---|---|
-| ① 造占位 | EPUB 必须带真书名与真封面；PDF 一页空白 |
-| ② 上传占位 | 普通 `/upload`（很小） |
-| ③ 认新文档 | 每 200ms 轮询、最多 20 秒，按创建时间 + 占位字节数认出 |
-| ④ 复制真文件 | 写成 `<uuid>.<ext>.new`，校验大小，权限 0600 |
-| ⑤ 改元数据 | EPUB：删占位的渲染缓存；PDF：改写 `.content` 的页数与逐页表 |
-| ⑥ 原子 rename | 覆盖占位文件，无需重启 xochitl |
-
-**决策顺序**：格式门 → `ensure_folder` → ≤90MB 流式上传 → 超限优先占位通道（≤1GiB）→ 不可用才按卷拆分或拒绝。**占位已上传后才出的错直接报错、不再退回分卷**（否则书库留重复）。EPUB 首次打开才渲染，徽章记 `onopen`，页数一变自动转正。
+**关键决策**：超限**优先**走占位通道（≤1GiB，不分卷），不可用才按卷拆分或拒绝；**占位已上传后才出的错直接报错、不再退回分卷**（否则书库留重复）；EPUB 首次打开才渲染，徽章记 `onopen`，页数一变自动转正。
+**真机坑**：xochitl 用占位的书名与封面、替换后不补生成 → 占位必须带真书名和真封面（真机数据见 bookconv 白皮书 §19）。
 **未验证**：>153MB 的首次渲染内存与耗时。
 
 **统一命名规则**（`bookconv::naming`，幂等）：`卷02`/`第二卷`/`Vol.3` → `02卷`/`二卷`/`3卷`；`镖人(卷二)` → `镖人 - 二卷`；上/中/下原样；下载站尾巴去掉；无卷标记原样保留。带卷标记的书优化时把 OPF `dc:title` 也改成规范名。
@@ -542,9 +531,10 @@
 
 > **现状结论**
 > - 网关对外 `0.0.0.0:443`：HTTPS（私有 CA，`/ca.crt` 可下载）+ 登录页密码（首次默认 `shelf`、登录后强制改；会话 30 天）+ mDNS `shelf.local`；标题"秘密花园"。
-> - 首层四个固定 tab：**传书 / 笔记 / 其他 / 管理**；正文中英文各 **463** 个 key（登录/改密页仍只有中文）。
+> - 首层四个固定 tab：**传书 / 笔记 / 其他 / 管理**；语言包中英文各 **500** 个 key（2026-09-24 数；登录/改密页仍只有中文）。
 > - **网页零轮询**：服务变更 → 网关汇聚 `GET /api/events` → 只刷对应 tab。
-> - 母版库页 09-20 重做（底部批量栏、常驻"加入位置"下拉、真分页）；批量队列与并发闸门在网关（§03bp）。
+> - 母版库页 09-20 重做（底部批量栏、常驻"加入位置"下拉、真分页）；09-24 底部栏改成三行不折行，只勾一本时多出「下载原件」「改名」，页底加「原 PDF 备份」面板。批量队列与并发闸门在网关（§03bp）。
+> - 网关转发：请求体流式；**下载应答（带 `Content-Disposition`）也流式**（09-24），其余应答整体缓冲（§03ah）。「管理→系统增强」每项带加载徽章（已加载 / 待重启 / 未加载 / 网页功能），读 xochitl 主进程的内存映射判断扩展是否真的生效（09-24）。
 > - 笔记页有「导入 KOReader 批注」按钮（09-23）。电池刺客（battop）常驻采集循环已不再 fork 任何子进程（09-23，唤醒源改读 `/dev/kmsg`，见系统增强线白皮书）。
 
 **历史节旧名对照**：`shelf-gateway` → 顶层 `gateway/`；`shelf-core::*` → 顶层 `rmsvc-core`；`ui.rs` 大字符串 → `gateway/ui/{index.html,style.css,app.js}`；`shelf/deploy.sh` → `packaging/deploy.sh`；`shelf/services/{font,wallpaper}-serve` → `enhance/`。
@@ -634,6 +624,7 @@ sudo nmcli connection down Hotspot && sudo nmcli connection up Hotspot
 ### 03ah｜`shelf-gateway::proxy` 模块文档修正："body 流式透传"跟实现不符（2026-09-09，离线）
 
 - **结论**：只有请求方向流式、响应方向整体缓冲；**只改注释不改行为**（改真流式要先厘清 Content-Length/chunked 语义，收益不值）。
+- **后续（2026-09-24）**：原件下载要传上百 MB，才真正需要流式应答——网关只对带 `Content-Disposition` 的应答边读边发，并原样带上后端的 `Content-Length`。第一版走 SSE 的裸 socket 通道、读完不关连接，浏览器下载一直不结束；改成 tiny_http 定长应答后正常（`b1856b3`）。**教训**：流式通道有两种语义（无限长的事件流 vs 已知长度的文件），不能共用一条路。
 - **教训**：注释与实现不符时，先确认实现是不是"应该那样"，再决定改哪边。
 
 ### 03aj｜「管理」拆二级 tab + 系统增强开关上网页（2026-09-09，真机通）
@@ -686,20 +677,13 @@ sudo nmcli connection down Hotspot && sudo nmcli connection up Hotspot
 
 ### 03bp｜批量队列、并发/内存闸门与母版库页重做（2026-09-20）
 
-> 完整实现与真机反馈见 `gateway/docs/reMarkable网关白皮书.md` §03b / §04。图：[`batch-queue.svg`](../../docs/diagrams/batch-queue.svg)、[`budget-gate.svg`](../../docs/diagrams/budget-gate.svg)。
+> 完整实现与真机反馈见 `gateway/docs/reMarkable网关白皮书.md` §04（闸门与批量队列）/ §08（踩坑）；各项数值（档位、名额、超时、落盘位置、重放上限）见传书线架构 §7.2。
 
-**为什么放网关**：`book-serve`、`koreader-serve`、`gateway` 是三个独立进程，`book-serve` 的忙锁只按书名；网关是所有跨服务请求唯一的转发关口，进程内锁即可。
-
-| 项 | 值 |
-|---|---|
-| 大/小档分界 | >90MB 为大档（与 `nativeUploadLimitMb` 缺省 90 只是数字巧合，语义不同） |
-| 并发名额 | 大档同时 1 个、小档 3 个 |
-| 排队上限 | 30 分钟，超时 503；重复书名 409；可取消 |
-| 队列落盘 | `~/.local/state/shelf/batch.json`，每次变化写一次 |
-| 单书重放上限 | 2 次（防某本书稳定触发崩溃的循环） |
-
-- **批量队列**：`POST /api/batch`（`optimize`/`deliver`/`koreader` 可混合），后台**顺序**逐本执行；入队时跳过不适用的；网关重启后续跑。**全部中止**：EPUB 优化与按卷拆分投递可在检查点停，单文件上传与 PDF 优化无安全中断点、如实回 `cancelled:false`。
-- **闸门**：真机测出优化峰值约等于文件体积本身、设备 `MemoryMax` 不生效，多本大书同时处理有真实 OOM 风险；刻意做成两档而不是"字节预算求和"（没有足够数据，强行量化是假精确）。09-20 真机验证：两本 300MB+ 书并发时只放行一本、内存峰值不叠加。
+- **为什么放网关**：`book-serve`、`koreader-serve`、`gateway` 是三个独立进程，`book-serve` 的忙锁只按书名；网关是所有跨服务请求唯一的转发关口，进程内锁即可，不用跨进程锁。
+- **为什么是两档而不是"字节预算求和"**：真机测出优化峰值约等于文件体积本身、设备 `MemoryMax` 不生效，多本大书同时处理有真实 OOM 风险；但没有足够数据去精算，强行量化是假精确。09-20 真机：两本 300MB+ 书并发时只放行一本、内存峰值不叠加。
+- **全部中止要如实**：EPUB 优化与按卷拆分可在检查点停；单文件上传与 PDF 优化没有安全中断点，如实回 `cancelled:false`，不假装停了。
+- **同一本最多重放一次**：防某本书稳定触发崩溃、网关一重启就再撞一次的循环。
+- **母版库页重做**（用户汇总要求）：行内只显示状态，操作统一在勾选后的底部栏；别再加回行内单条按钮。
 - **没验证**：批量"加入 xochitl / 加入 KOReader"两条端到端；新界面触屏与暗色模式。
 
 ## 第 E 章 稳定性、内存与耗电
@@ -781,16 +765,9 @@ sudo nmcli connection down Hotspot && sudo nmcli connection up Hotspot
 
 ### 03bq｜book-serve 可靠性：panic=unwind、OpRegistry、启动恢复（2026-09-20）
 
-| 机制 | 作用 |
-|---|---|
-| `panic = "unwind"` | 后台线程 `catch_unwind` 兜住损坏书触发的 panic，失败只影响这一本 |
-| `OpRegistry`（`ops.rs`） | 忙锁/可取消/已请求取消合成一张表；已忙则拒绝；取消三态如实回 |
-| 取消协作 | 只有 EPUB 优化（每条目后）与按卷拆分投递（每份之间）可中途停 |
-| 边车全局锁 | 防多线程"读-改-写"丢更新 |
-| 启动恢复 | `pending` 改 `failed`、渲染自检 `pending` 改 `timeout`、删 `.optimizing.tmp` 半成品 |
-| 渲染记录补记 | 给没有渲染记录的已投书按书名 + 大小补记 |
-
-忙锁是**进程内存态、不落盘**：重启＝没有操作还在跑。
+- **结论**：`panic = "unwind"` 让后台线程的 `catch_unwind` 真能兜住损坏书触发的 panic（此前 `abort` 下一次 panic 摔掉整个进程）；忙锁、可取消、已请求取消合成一张 `OpRegistry`；边车读-改-写加全局锁；启动时 `recover_interrupted` 把停在 `pending` 的记录改成失败/超时并清半成品。状态机图与字段见传书线架构 §2.2。
+- **设计取舍**：忙锁是**进程内存态、不落盘**——重启 ＝ 没有操作还在跑；落盘反而会"永久卡忙"。
+- **边界**：`catch_unwind` 接不住栈溢出（SIGSEGV），所以 09-24 给 `pdf-extract-cj` 的嵌套表单补了限深（§03br）。
 
 ## 第 F 章 设备、字体壁纸与固件
 
@@ -940,7 +917,7 @@ sudo nmcli connection down Hotspot && sudo nmcli connection up Hotspot
 - **被取代**：以文首「现状总览（2026-09-23 刷新）」为准；09-18 砍电脑端 CLI、格式收成一档；体积门 150→90MB；漫画不再转 CBZ；appload 补丁被 0.6.0 取代。
 - **教训**：现状总览只留一份，旧版压成指针，避免两份"现状"互相矛盾。
 
-### 05｜真机待办（滚动更新，2026-09-23）
+### 05｜真机待办（滚动更新，2026-09-24）
 
 | # | 事项 | 现状与缺口 | 见 |
 |---|---|---|---|
@@ -951,7 +928,10 @@ sudo nmcli connection down Hotspot && sudo nmcli connection up Hotspot
 | 5 | >153MB 占位通道首次渲染 | 未测 | §03bn |
 | 6 | PDF 转 EPUB 公式裁图、竖排/多栏 PDF | 未验证 | §03br |
 | 7 | 书内目录页跨文件链接（7 本书，335 个） | xochitl 点不动；目录菜单正常；合成单文件对普通 EPUB 是结构性改动，暂不改 | 规范白皮书 §03 规则 8 |
-| 8 | 设备上的旧版重复副本 | 14 份《火影忍者》旧拆分卷等，是否仍在未核实 | §03ax |
+| 8 | 设备上的旧版重复副本 | 14 份《火影忍者》旧拆分卷等，是否仍在未核实；另 `~/.local/state/shelf/books/done/` 是 09-03 早期直投流程的遗留目录（09-24 只读查看仍有 09-03/04 的几份旧 EPUB），代码已不读写，是否清理待用户定 | §03ax、§03b |
+| 9 | KOReader 运行中拒写配置（409） | 只有代码与单测，没专门上机验证 | §03d |
+| 10 | 原件下载的内存峰值 | 两端都改成流式，没量 `VmHWM` | §03ah |
+| 11 | `pdf-extract-cj` 嵌套表单防护 | 只有合成测试，没有真机触发样本 | §03br |
 
 **已闭环（摘要）**：《疯探》目录入口（§03bc）；Anchor 脚注嵌套 `<p>`（§03bs）；T.E. 只渲染 1 页与内容重复（§03br）；字体菜单只增不删（§03bd）；文件夹不建与带斜杠名（§03be、§03bf）；三次内存事故（§03ba、§03bh、§03bi）；网关闸门并发串行化（§03bp）。
 
@@ -972,7 +952,7 @@ sudo nmcli connection down Hotspot && sudo nmcli connection up Hotspot
 | 09-20 | §03bm–§03bq | 耗电核查；大文件占位替换与命名规则；封面声明规则；批量队列与闸门；可靠性 |
 | 09-21/22 | — | 漫画页边距实验室开关（bookconv §20）；appload 0.6.0；第二轮全系统审计 |
 | 09-23 | §03br、§03bs | **PDF 按原格式转 EPUB**（fork pdf-extract、颜色/图片/链接/切章）；T.E. 只渲染 1 页根因；EPUB 线无扩展名章节、注释样式、质量门接入 book-serve；规范白皮书成立 |
-| 09-24 | §03bt | 全系统审查两批修补（见各线白皮书）；**KOReader 文字书/漫画两套方案**，插件取舍，merge.lua 删除标记泄漏修复 |
+| 09-24 | §03br、§03ah、§03bt | 全系统审查两批修补：PDF 转 EPUB 同名不覆盖 + 原 PDF 备份 7 天可恢复、`pdf-extract-cj` 嵌套表单限深防环；原件下载（流式）与改名；底部操作栏三行不折行；**KOReader 文字书/漫画两套方案**，插件取舍，merge.lua 删除标记泄漏修复；书架四份文档按"规则 / 实现 / 数据流 / 现状与历史"重新分工 |
 
 ### 附录 B｜已移除的能力：电脑端 `shelf` 命令行（原 `shelf/README.md`，2026-09-18 砍除）
 
@@ -993,21 +973,35 @@ sudo nmcli connection down Hotspot && sudo nmcli connection up Hotspot
 | `shelf inbox` | scp 进 `inbox/` 仍自动入库；**HTTP 查看/重试接口 09-22 已删**，失败项看 `failed/*.reason`，重试＝拷回 `inbox/` |
 | `shelf events` / `passwd` | 网页本身消费 SSE；设备上 `gateway passwd` 或网页「改密码」 |
 
-### 附录 C｜原 `shelf/README.md`「目录」节的逐项注解（2026-09-20 前的版本，含大量日期与历史括注）
+### 附录 C｜目录注解与设备路径表
 
-> 结构与一句话职责以 `shelf/README.md`「目录」为准；本附录只留来历与易踩细节（2026-09-23 对照目录树核对）。
+> 目录的一句话职责以 `shelf/README.md`「目录」为准；本附录只留来历、易踩细节和完整路径表（2026-09-24 对照代码核对）。
 
 | 路径 | 来历与易踩细节 |
 |---|---|
 | `Cargo.toml`·`build.sh` | 内部 workspace，成员 `bookconv`、`pdf-extract-cj`、`book-serve`、`koreader-serve`；`panic=unwind`（§03bq） |
-| `crates/bookconv/` | `optimize/`、`wash/`、`check.rs`（质量门 5 条）、`imgopt`/`imgpool`、`pdf_ingest/`、`comic_*`、`naming.rs`、`placeholder.rs`；`convert/` 仍在但设备端不再可达 |
-| `bookconv/src/bin/` | 开发期工具：`epub_optimize`（与设备端同一优化代码）、`cbz2pdf`、`comic_piece_extract`、`cover_fix`（§03bo） |
+| `crates/bookconv/` | `optimize/`、`wash/`、`htmlproc/`、`check.rs`（质量门 5 条）、`imgopt`/`imgpool`、`pdf_ingest/`、`comic_*`、`naming.rs`、`placeholder.rs`、`article.rs`；`convert/` 里的杂格式转换仍在但设备端不再可达（只有 `pdfwrite` 与 `direct_content_type` 现役） |
+| `bookconv/src/bin/` | 开发期工具：`epub_optimize`（与设备端同一优化代码）、`cbz2pdf`、`comic_piece_extract`、`cover_fix`（§03bo）；都没有自动化调用方 |
 | `crates/pdf-extract-cj/` | `pdf-extract` 0.12.1 本地 fork（MIT，保留上游版权），改动见其 `src/lib.rs` 头注释（§03br） |
-| `services/book-serve/` | `staging/`（intake/optimizing/deliver/library）、`sidecar.rs`、`render_check.rs`、`pending_queue.rs`、`trash.rs`、`mkdir.rs`、`spool.rs`（inbox 追平）、`ops.rs`、`comic_margins.rs` |
-| `services/koreader-serve/` | `koreader.rs`、`config.rs`+`merge.lua`、`annot.rs`、`vocab.rs`、`sqlite_min.rs`（§03ar） |
-| `install.sh`·`uninstall.sh`·`manifest.sh` | 设备端安装/卸载（`--only`；写 `/usr` 前实检 dm-verity；清旧命名遗留单元） |
-| `xovi/` | 4 个 qmd：字体菜单（3.27/3.28 两版）、回收站代理、建文件夹代理、漫画页边距代理 |
-| `koreader/` | `profile/` 三份补丁、`merge.lua`、`annot.lua`、`README.md` |
+| `services/book-serve/` | `staging/`（intake/optimizing/deliver/library）、`sidecar.rs`、`render_check.rs`、`pending_queue.rs`、`trash.rs`、`mkdir.rs`、`comic_margins.rs`、`spool.rs`（inbox 追平）、`ops.rs` |
+| `services/koreader-serve/` | `koreader.rs`、`config.rs`+`merge.lua`（5 个配置目标）、`annot.rs`、`vocab.rs`、`sqlite_min.rs`（§03ar） |
+| `install.sh`·`uninstall.sh`·`manifest.sh` | 设备端安装/卸载（`--only`；写 `/usr` 前实检 dm-verity；清旧命名遗留单元，§03at）；新增一个服务/qmd = 只改 `manifest.sh` |
+| `xovi/` | 5 个 qmd 文件：字体菜单（3.28 与 3.27 两版，设备上统一叫 `font-menu-dynamic.qmd`）、回收站代理、建文件夹代理、漫画页边距代理 |
+| `koreader/` | `profile/` 五份补丁（settings.reader / defaults.custom / gestures / directory_defaults / profiles）+ 字体词典清单、`merge.lua`、`annot.lua`、`README.md` |
+
+**设备路径**（XDG，设备 HOME=/home/root；表的单一事实源是 `rmsvc_core::paths`）：
+
+| 用途 | 路径 |
+|---|---|
+| 二进制 | `~/.local/bin/{gateway,*-serve,shelf-uninstall,lo-alias.sh}` |
+| 卸载脚本用的库 | `~/.local/lib/shelf/{manifest.sh,devlib.sh}`（整包安装才装；`--only` 不动） |
+| 安装备份 | `~/cangjie-backups/shelf-<时间戳>/`（旧二进制/单元/qmd，保留最近 5 份） |
+| 配置 | `~/.config/shelf/<服务>.json`（book 的三个键见传书线架构 §9）· `~/.config/shelf/tls/`（CA + 叶证书） |
+| 数据 | `~/.local/share/shelf/`（fonts.json、壁纸池）· `~/.local/share/fonts/`（用户字体）· 跨进程开关 `~/.local/share/cangjie-ime/reading-qol.json` |
+| 状态 | `~/.local/state/shelf/books/staging/`（**母版库**，不淘汰；`.pdf-originals/` 原 PDF 备份 7 天）· `books/{inbox,.work,failed}`（追平队列）· `books/{mkdir,trash}-pending.json`、`books/comic-margins.json`（代理队列）· `batch.json`（网关批量队列）· `wallpaper-state.json` · `koreader-backups/` |
+| 运行时 | `$XDG_RUNTIME_DIR/shelf/`（缺省 `/tmp/shelf-0/shelf/{services,upload,koreader}`；重启即清） |
+| 外部约定 | KOReader 根 `SHELF_KOREADER_ROOT`（缺省 `~/xovi/exthome/appload/koreader`，appload ≥ 0.6.0）；xochitl 书库 `~/.local/share/remarkable/xochitl` |
+| 笔记线 | 自成一套 `notes` 命名空间，见 `../../notes/README.md` |
 
 **已搬走**：`font-serve`/`wallpaper-serve` → `enhance/`；`crates/shelf-core` → 顶层 `rmsvc-core/`；`services/shelf-gateway` → 顶层 `gateway/`；`shelf/deploy.sh` → `packaging/deploy.sh`；`wash_epub.sh` 随 host 砍除。
 **依赖方向**（单向无环）：`services/* → ../rmsvc-core`；`book-serve → bookconv → pdf-extract-cj`；koreader-serve 与 `enhance/wallpaper-serve` 不依赖 bookconv。
