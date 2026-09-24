@@ -24,12 +24,12 @@
 
 | 项 | 值 |
 |---|---|
-| 模块数 | 20 个（`lib.rs`） |
+| 模块数 | 21 个（`lib.rs`；09-24 新增 `sync`） |
 | 消费方 | `shelf/services/{book,koreader}-serve` · `enhance/{font,wallpaper}-serve` · `notes/services/{ink,transcribe,mind,note}-serve` + `notes/crates/vendorcfg` · `gateway/` |
 | 依赖方向 | 单向：消费方 → 本 crate；本 crate 不知道任何消费方，不引用旧项目 crate（`device-core` / `weread-device`） |
 | workspace | 不建根 workspace，各项目各管各的 `target/` |
-| 测试 | 91 个单测（`cargo test --manifest-path rmsvc-core/Cargo.toml`，2026-09-24 实跑），CI `rust` job 单列一步 |
-| 真机 | 所有消费方已部署在设备上并正常运行（2026-09-11 起 `install-all.sh` 真机跑通；2026-09-24 网关 `active`） |
+| 测试 | 95 个单测（`cargo test --manifest-path rmsvc-core/Cargo.toml`，2026-09-24 第三轮审计后实跑），CI `rust` job 单列一步 |
+| 真机 | 所有消费方已部署在设备上并正常运行（2026-09-11 起 `install-all.sh` 真机跑通；2026-09-24 网关 `active`）。**09-24 第三轮审计的改动**（`sync`、小请求体超限报错、`percent_decode_path`、上传串行锁、上传文件名清洗）只在 host 单测验证，**未上真机** |
 
 **三条要记住**：① 这里出问题，理论上 5 个独立顶层项目一起受影响，改任何模块前先查谁在用（下面每节都列了）；② 公开结构体（如 `http::Request`）被各服务直接构造，加字段会波及全部调用方，宁可走内部头或新函数；③ XDG 路径仍叫 `shelf`（已部署设备的真实路径，改名要迁移）。
 
@@ -83,13 +83,14 @@
 | `ttf` | font-serve、koreader-serve | TTF/OTF 家族名（nameID 16 优先）、魔数校验、CJK 覆盖率；汉字覆盖数钳到区内总码位、够数即停（防恶意字体堆重叠段导致数亿次迭代，09-22） |
 | `cache` | book-serve、koreader-serve | 单值 TTL 缓存 `TtlCache`，给每次刷新都会打、但算一次很重的 `/status`（如 3 秒 TTL）；本服务操作完成时 `invalidate`。计算期间持锁，并发请求等同一份结果 |
 | `clock` | 8 个 | unix 时间戳唯一出处；取不到时间回 0 |
-| `sync` | book-serve、koreader-serve（其余服务可逐步改用） | `sync::lock`：容忍 poison 的取锁（09-24 收编各处手写的 `.lock().unwrap_or_else(|e| e.into_inner())`） |
+| `sync` | book-serve、koreader-serve、本 crate 自身 | `sync::lock`：容忍 poison 的取锁。release 是 `panic="unwind"`，线程 panic 后它持有的锁被标 poison，别处再 `.lock().unwrap()` 就会让之后每个请求都跟着 panic；这里保护的都是缓存/队列/计数这类半途中断也自洽的状态，接着用即可。09-24 收编了 book-serve 私有的 `ops::lock` 和书架两服务、本 crate 里手写的 `.lock().unwrap_or_else(|e| e.into_inner())`；网关、笔记线、系统增强里还有约 35 处手写同款（行为相同，可逐步改用） |
 
 ## 03｜和 xochitl 打交道：xochitl / xochitl_conf / fswatch
 
 - **`xochitl`**（book-serve、note-serve）：往设备原生书库免重启塞文件，剥离移植自旧项目的真机结论。
   - `POST http://10.11.99.1/upload`（xochitl 的网页接口只绑 USB 网口，设备端靠 lo/usb1 别名让这个地址常驻可达）。
-  - **GET-then-upload 归档**：先 `GET /documents/<文件夹 uuid>` 把“当前文件夹”设好（这是 xochitl 的全局状态），再上传，文件就落进该文件夹；`.metadata` 里的 parent 会被忽略。因为是全局状态，进程内“设文件夹 → 上传”由一把 static 锁串成一对（09-24：此前两本书并发投到不同文件夹会落错）；跨进程（note-serve）不受这把锁约束。
+  - **GET-then-upload 归档**：先 `GET /documents/<文件夹 uuid>` 把“当前文件夹”设好（这是 xochitl 的全局状态），再上传，文件就落进该文件夹；`.metadata` 里的 parent 会被忽略。因为是全局状态，进程内“设文件夹 → 上传”由一把 static 锁串成一对（09-24：网关允许 3 本小书同时处理，此前两本书并发投到不同文件夹会落错）；只锁上传本身，按卷拆分等渲染的间隙不占锁；跨进程（note-serve 也会投笔记本）不受这把锁约束。
+  - **multipart 头里的文件名**：`"` 换成 `'`、CR/LF 换成空格，其余字节原样（中文照旧直传）。母版库文件名只校验“单段”，带引号的书名此前原样拼进 `filename="…"`，xochitl 读到第一个 `"` 就截断成半截名；带换行则会被当成新的头（09-24）。
   - **防复制风暴**：大书上传慢时会 408 或读超时，但文档其实已建好——这类错误**绝不重试**（`upload_likely_delivered`）。
   - `upload_file` 流式上传磁盘文件，不整本读进内存（09-19 OOM 审计：旧路径峰值能到原文件 2 倍多）。
   - `upload_large_file` 绕过网页上传约 100MB 的硬限：先传几 KB 的占位文档（EPUB 要带真书名和封面）让 xochitl 建好条目，再把磁盘上的文件原子替换成真文件。EPUB 删掉占位的渲染缓存，首次打开时重渲染；PDF 要一并改 `.content` 里的逐页表和页数。2026-09-20 真机验证：154MB PDF、153MB EPUB 都能打开。失败时占位可能留在书库里，不做危险的回滚删除。
@@ -113,7 +114,7 @@
 - **path 依赖的深度**：`..` 的个数取决于消费方自己的目录深度——`gateway/` 写 `../rmsvc-core`，`enhance/*-serve/` 写 `../../rmsvc-core`，`shelf/services/*/`、`notes/services/*/`、`notes/crates/vendorcfg/` 写 `../../../rmsvc-core`。写错时 `cargo build` 会直接说它去哪找过，照着改。
 - **每个独立顶层项目各带一份 `.cargo/config.toml`**（交叉编译的 CC/AR 覆盖），原因见 §06。
 - **release profile**：`gateway`、`shelf`、`notes` 是 `panic="unwind"`，基座的 panic 兜底和各服务的 `catch_unwind` 才真正生效；`enhance/{font,wallpaper}-serve` 仍是 `abort`（没有依赖 `catch_unwind` 的后台线程）。
-- **测试**：`cargo test --manifest-path rmsvc-core/Cargo.toml`，91 个；HTTP 服务器、TLS 握手取对端 IP、名称约束链校验都有真起服务器 / 真证书链的测试。
+- **测试**：`cargo test --manifest-path rmsvc-core/Cargo.toml`，95 个；HTTP 服务器、TLS 握手取对端 IP、名称约束链校验都有真起服务器 / 真证书链的测试。
 
 ## 06｜踩坑
 
@@ -130,7 +131,8 @@
 **待办**
 
 - 命名遗留要不要处理，没有排期；要动时先设计迁移方案，不是简单改字符串。
-- `lib.rs` 模块注释里 `auth` 仍写“salted SHA-256”，已过时（实际是 PBKDF2），下次改代码时顺手更正。
+- 网关、笔记线、系统增强里约 35 处手写的容忍 poison 取锁可逐步改用 `sync::lock`（纯样板，不改行为）。
+- （已办）`lib.rs` 模块注释里 `auth` 的过时说法“salted SHA-256”已更正为 PBKDF2（commit `8320ac5`）。
 
 ## 附｜来历
 

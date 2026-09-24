@@ -14,7 +14,7 @@
 - 谁在用：`shelf/services/{book,koreader}-serve` · `notes/services/{ink,transcribe,mind,note}-serve` + `notes/crates/vendorcfg` · `enhance/{font,wallpaper}-serve` · `gateway/`。
 - 一个服务的骨架三步：`service::run(&SPEC, bind, &paths, router)`（建目录、自注册、挂 `/health`）→ 用 `http::Router` 写处理函数 → 有变更就 `EventBus::publish` 通知网页。
 
-## 20 个模块
+## 21 个模块
 
 | 分组 | 模块 | 一句话 |
 |---|---|---|
@@ -29,8 +29,8 @@
 | | `asset` | 资产仓库 + 上传流程模板，字体/壁纸/KOReader/母版库共用 |
 | | `formats` | 文件格式白名单唯一事实源（书籍只收 EPUB/PDF） |
 | | `ttf` | TTF/OTF 家族名、魔数、CJK 覆盖率 |
-| | `cache` / `clock` | 单值 TTL 缓存 / unix 时间戳唯一出处 |
-| xochitl | `xochitl` | 免重启进原生书库（GET-then-upload 归档）、流式 `upload_file`、超过约 100MB 上传上限的“占位 + 磁盘替换” |
+| | `cache` / `clock` / `sync` | 单值 TTL 缓存 / unix 时间戳唯一出处 / 容忍 poison 的取锁 `sync::lock` |
+| xochitl | `xochitl` | 免重启进原生书库（GET-then-upload 归档，进程内“设文件夹→上传”串行）、流式 `upload_file`、超过约 100MB 上传上限的“占位 + 磁盘替换” |
 | | `xochitl_conf` | 改 `xochitl.conf [General]` 单键（休眠屏 `SleepScreenPath`；文件含凭证，绝不打印行内容） |
 | | `fswatch` | inotify 防抖目录监听（常驻 / 限时） |
 | 对外与安全（只有网关用） | `auth` | PBKDF2 密码哈希、Basic/Cookie 解析、会话表、按 IP 的失败限速 `IpFailLimiter` |
@@ -53,7 +53,7 @@
 ## 构建与测试
 
 - `cargo build --manifest-path rmsvc-core/Cargo.toml`；独立 crate，各消费方编译时一起编。
-- `cargo test --manifest-path rmsvc-core/Cargo.toml`（91 个单测；CI `rust` job 单列一步）。
+- `cargo test --manifest-path rmsvc-core/Cargo.toml`（2026-09-24 实跑 95 个单测；CI `rust` job 单列一步）。
 
 ## 注意
 
