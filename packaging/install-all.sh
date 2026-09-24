@@ -98,6 +98,7 @@ else
     echo "已安装：${DONE:-（无）}"
 fi
 [ -z "$SKIPPED" ] || echo "已跳过（--skip）：$SKIPPED"
+[ -z "$NOTAPPL" ] || echo "已跳过（前置条件不满足，非失败）：$NOTAPPL"
 if [ -n "$FAILED" ]; then
     echo "❌ 失败：$FAILED —— 看对应步骤上面的原始报错，不会自动重试"
 fi

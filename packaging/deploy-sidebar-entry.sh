@@ -58,13 +58,13 @@ trap 'rm -f "$RCC_LOCAL"' EXIT
 
 echo "== 探测设备端 qt-resource-rebuilder =="
 if ! rssh "[ -d $QRR_DIR ]"; then
-    echo "-- 设备没装 qt-resource-rebuilder（vellum add qt-resource-rebuilder）——跳过，非失败"
+    step_skipped "设备没装 qt-resource-rebuilder（vellum add qt-resource-rebuilder）"
     exit 0
 fi
 
 echo "== 探测设备端 appload =="
 if ! rssh "[ -d /home/root/xovi/exthome/appload ]"; then
-    echo "-- 设备没装 appload（vellum add appload）——跳过，非失败"
+    step_skipped "设备没装 appload（vellum add appload）"
     exit 0
 fi
 
@@ -78,8 +78,9 @@ echo "== 探测 appload 自己的 qmd 在这台固件上是否兼容 =="
 # （`DEFER_XOVI_START=1` 模式不在这一步重启，没法当场复核，见该分支注释）。
 if ! rssh "journalctl -b 0 -u xochitl --no-pager 2>/dev/null | grep -q 'Loaded external AppLoad hooks in main UI'"; then
     echo "-- 没在这次开机日志里看到 appload 成功挂载的信号（可能是 appload 版本 < 0.6.0、在 3.28"
-    echo "   上不兼容，也可能是刚装/升级完 appload 还没重启设备）——跳过，非失败。"
+    echo "   上不兼容，也可能是刚装/升级完 appload 还没重启设备）。"
     echo "   先 vellum upgrade appload 到 ≥ 0.6.0 并整机重启，见本脚本头注「appload 要 ≥ 0.6.0」一节。"
+    step_skipped "没看到 appload 成功挂载的信号（appload < 0.6.0，或装/升级后还没重启设备）"
     exit 0
 fi
 

@@ -744,6 +744,15 @@ check "shelf install --no-systemd（服务都没在跑）：不空等 10 轮健�
 # shellcheck disable=SC1091
 check "shelf_select：空 → 全部；去重且网关在最前；未知令牌 → 返回 2" bash -c ". '$REPO/shelf/manifest.sh'; [ \"\$(shelf_select '')\" = \"\$SHELF_ALL\" ] && [ \"\$(shelf_select 'book,font,book,gateway')\" = 'gateway book font' ] && { shelf_select 'book,nope' 2>/dev/null; [ \$? -eq 2 ]; }"
 
+section "2026-09-24：前置条件不满足的\"跳过\"在汇总里单列，不混进\"已安装\""
+new_sandbox; rm -rf "$R/home/root/xovi/exthome/appload"; export CJ_ALLOWLIST_LOCAL="$R/allow.local.txt"
+( cd "$PKG" && run sh install-all.sh 127.0.0.1 --force --skip chrony-cn,timezone-cn,battop,wifi-watch,xovi-persist,chrony-boot-wakelock,hl-snap,handwriting-stroke,shelf ) >"$R/out.txt" 2>&1; rc=$?
+check "install-all：没装 appload → sidebar-entry 记进\"前置条件不满足\"并写明原因，不在\"已安装\"里、整轮退出 0" test "$rc" -eq 0 -a -n "$(grep '前置条件不满足' "$R/out.txt" | head -n 1)" -a -n "$(grep 'sidebar-entry：设备没装 appload' "$R/out.txt")" -a -z "$(grep '^已安装：.*sidebar-entry' "$R/out.txt")"
+new_sandbox
+CJ_SIM_VERITY=1 bash -c "cd '$PKG' && PATH='$STUBS:'\$PATH && . ./lib.sh && HOST=127.0.0.1 && run_step chrony-boot-wakelock sh ./deploy-chrony-boot-wakelock.sh 127.0.0.1 >/dev/null 2>&1; echo \"D=\$DONE|N=\$NOTAPPL\"" >"$R/out.txt" 2>&1
+check "run_step：dm-verity 下单元从没装过 → 记为\"前置条件不满足\"而不是已安装" test -n "$(grep '^D=|N=' "$R/out.txt")" -a -n "$(grep '^   chrony-boot-wakelock：dm-verity' "$R/out.txt")"
+unset CJ_ALLOWLIST_LOCAL
+
 # ═══════════════════════════ 5. 静态守卫 / 清单对称 ═══════════════════════════
 section "静态守卫"
 cd "$REPO" || exit 1

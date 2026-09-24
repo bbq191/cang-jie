@@ -43,7 +43,9 @@ push_verified "$SRC" "$DEST/$(basename "$SRC")"
 if [ -n "$EXTRA_SRC" ]; then push_verified "$EXTRA_SRC" "$DEST/$(basename "$EXTRA_SRC")"; fi
 
 echo "== 设备端安装（dm-verity 门 + 带 trap 的 rw 窗口，devlib.sh）=="
-dev_script "$UNIT" "$DEST/$(basename "$SRC")" "${EXTRA_SRC:+$DEST/$(basename "$EXTRA_SRC")}" "$EXTRA_DST" "$NEEDS" "$START" "$VERITY_NOTE" <<'DEVICE_SCRIPT'
+# 设备端退出码 10 = dm-verity 激活、单元从没装过、这步实际没装上（非失败，汇总里记"前置条件不满足"）
+DEV_RC=0
+dev_script "$UNIT" "$DEST/$(basename "$SRC")" "${EXTRA_SRC:+$DEST/$(basename "$EXTRA_SRC")}" "$EXTRA_DST" "$NEEDS" "$START" "$VERITY_NOTE" <<'DEVICE_SCRIPT' || DEV_RC=$?
 set -eu
 UNIT="$1"; SRC="$2"; EXTRA_SRC="$3"; EXTRA_DST="$4"; NEEDS="$5"; START="$6"; VERITY_NOTE="$7"
 cj_require_root || exit 1
@@ -77,6 +79,7 @@ case "$rc" in
             fi
         else
             echo "   $VERITY_NOTE"
+            exit 10
         fi
         exit 0 ;;
     *) exit 1 ;;
@@ -92,6 +95,11 @@ if [ "$START" = "1" ]; then
 fi
 ls -l "$CJ_SYSD/multi-user.target.wants/$UNIT"
 DEVICE_SCRIPT
+[ "$DEV_RC" = 0 ] || [ "$DEV_RC" = 10 ] || exit "$DEV_RC"
+if [ "$DEV_RC" = 10 ]; then
+    step_skipped "dm-verity 激活，$UNIT 没法装进 /usr"
+    exit 0
+fi
 
 echo "== 完成 =="
 echo "   ${DONE_NOTE}"
