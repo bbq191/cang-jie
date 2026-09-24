@@ -91,6 +91,8 @@ xovi 没有"只重载一个扩展"的机制，让新扩展/qmd 生效的唯一�
 
 因为 xovi 已生效时跑 `xovi/start` 会 umount 再重挂 xochitl 的 drop-in 目录，运行中的 xochitl 读文件失败 SEGV，系统按设计整机自动重启（2026-09-20 真机事故；旧版无条件 `xovi/start`，重跑 `install-all.sh` 必踩）。重启前先打印"将打断阅读"并留 `CJ_APPLY_GRACE` 秒（默认 5）宽限，不想被打断就 `--skip xovi-apply`。重启后核对 `is-active` / `MainPID` 是否变化 / `NRestarts` 不增 / 各扩展在 `maps` 里的段数。
 
+**扩展 `.so` 有变化时不再 restart，改成 stop → 换文件 → start（2026-09-24）**：换掉运行中 xochitl 已映射的扩展 `.so` 再 `systemctl restart xochitl`，旧进程退出时会 SEGV → `OnFailure=emergency.target` → 整机重启。2026-09-21（appload）、09-24（hw-stroke）两次真机复现，第二次用的已经是"先写暂存再 rename 换新 inode"，照样崩。现在 `xovi-ext-install.sh` 发现 xochitl 正映射着旧版时，把新版放进 `~/.cangjie-stage/so-pending/`（不在 `extensions.d`），由 `cj_xochitl_apply` 在 `systemctl stop xochitl` 之后、`start` 之前换入；`install-all` 的延后重启走同一条路。待换入区在 `/home`，设备中途重启也不丢，下次重启 xochitl 时照样换入。本机模拟测试覆盖了这条顺序；**真机上还没用"有变化的 .so"走过一遍**。
+
 ## 本目录文件导览
 
 | 文件 | 职责 |

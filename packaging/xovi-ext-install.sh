@@ -42,11 +42,23 @@ cj_require_root || exit 1
 # 同名扩展重复注册是致命错误，见 工程纪律），并只保留最近几份。
 cj_backup_if_differs "$PAYLOAD/$EXT_SO" "$EXTDIR/$EXT_SO" || exit 1   # 内容没变就不堆重复备份
 
-# 原子替换：先写到 extensions.d 之外的暂存目录再 rename 进去——不在运行中 xochitl 已映射的 inode 上原地写，
-# 中途失败也不会在 extensions.d 里留下半个 .so。
-echo "-- 装 $EXT_SO -> $EXTDIR/"
-cj_safe_replace "$PAYLOAD/$EXT_SO" "$EXTDIR/$EXT_SO" "$CJ_STAGE_DIR" 755 || { echo "!! 写 $EXTDIR/$EXT_SO 失败"; exit 1; }
-EXT_CHANGED="$CJ_REPLACED"
+# 三种情况：
+#  · 与已装的逐字节相同 → 不动（顺手撤掉过时的待换入版本）；
+#  · 运行中的 xochitl 正映射着它 → 不当场换，放进待换入区，重启 xochitl 时由 cj_xochitl_apply 先 stop 再换再 start
+#    （换完再 restart 会让旧进程退出时崩溃、整机重启，2026-09-24 真机第二次复现，见 devlib.sh 头注 H3）；
+#  · 否则原子替换：先写到 extensions.d 之外的暂存目录再 rename 进去，中途失败不在 extensions.d 里留半个 .so。
+EXT_CHANGED=0
+if [ -f "$EXTDIR/$EXT_SO" ] && cmp -s "$PAYLOAD/$EXT_SO" "$EXTDIR/$EXT_SO"; then
+    cj_so_unstage "$EXT_SO"
+elif cj_xochitl_has_xovi && [ "$(cj_count_maps "$EXT_MAPTAG" "$(cj_xochitl_pid)")" -gt 0 ]; then
+    echo "-- 运行中的 xochitl 正在用旧版 $EXT_SO → 新版先放进待换入区（$CJ_SO_PENDING_DIR），重启 xochitl 时换入"
+    cj_so_stage "$PAYLOAD/$EXT_SO" || { echo "!! 放入待换入区失败"; exit 1; }
+    EXT_CHANGED=1
+else
+    echo "-- 装 $EXT_SO -> $EXTDIR/"
+    cj_safe_replace "$PAYLOAD/$EXT_SO" "$EXTDIR/$EXT_SO" "$CJ_STAGE_DIR" 755 || { echo "!! 写 $EXTDIR/$EXT_SO 失败"; exit 1; }
+    EXT_CHANGED="$CJ_REPLACED"
+fi
 if [ -e "$EXTDIR/$EXT_SO.crashed" ]; then EXT_CHANGED=1; rm -f "$EXTDIR/$EXT_SO.crashed"; fi   # 清旧崩溃标记（有过崩溃标记 = 需要重启重新载入一次）
 cj_stage_cleanup
 

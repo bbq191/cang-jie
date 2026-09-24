@@ -17,6 +17,10 @@
 #   M4 原地 cp 覆盖 xochitl 已映射的 .so / 运行中的二进制 → cj_safe_replace：先写暂存再 rename。
 #   M6 备份散落 + 无限增长 → cj_backup_file / cj_bk_prune：统一进 cangjie-backups，
 #      只按"脚本自己生成的、严格时间戳命名"轮转，保留最近 N 份，绝不 rm -rf。
+#   H3 换了运行中 xochitl 已映射的扩展 .so 再 restart xochitl → 旧进程退出时 SEGV → OnFailure=emergency →
+#      整机重启（2026-09-21 appload、2026-09-24 hw-stroke 两次真机；先写暂存再 rename 换新 inode 也照样复现）
+#      → cj_so_stage / cj_so_commit：xochitl 正映射着目标 .so 时不当场换，先放进待换入区，由 cj_xochitl_apply
+#        在 stop xochitl 之后、start 之前换入。
 #   A1 "内容没变也重启 xochitl"（重跑 install-all 每次都闪屏）→ cj_pending_mark / cj_pending_list / cj_pending_clear：
 #      各"只落盘"的步骤在**真的改了文件**时记一个待生效标记（/run tmpfs，重启设备即清——重启后一切都是新载入的），
 #      xovi-apply 只在有标记、或 xovi 还没在 xochitl 里生效时才重启 xochitl。
@@ -25,6 +29,7 @@
 #   CJ_HOME CJ_SYSD CJ_XOVI CJ_PROC CJ_BACKUP_DIR CJ_BACKUP_KEEP CJ_BACKUP_MAXBYTES CJ_STAGE_DIR
 #   CJ_APPLY_GRACE（重启 xochitl 前的宽限秒数，默认 5）  CJ_HEALTH_SLEEP（重启后等多久再查，默认 5）
 #   CJ_PENDING_DIR（待生效标记目录，默认 /run/cangjie-pending-apply）
+#   CJ_SO_PENDING_DIR（待换入的扩展 .so，默认 $CJ_STAGE_DIR/so-pending；与 extensions.d 同分区、绝不在其中）
 # ═══════════════════════════════════════════════════════════════════════════
 
 CJ_HOME="${CJ_HOME:-${HOME:-/home/root}}"
@@ -38,6 +43,7 @@ CJ_STAGE_DIR="${CJ_STAGE_DIR:-$CJ_HOME/.cangjie-stage}"  # 暂存目录：与 /h
 
 CJ_PENDING_DIR="${CJ_PENDING_DIR:-/run/cangjie-pending-apply}"
 CJ_PENDING_FALLBACK="${CJ_PENDING_FALLBACK:-$CJ_STAGE_DIR/pending-apply}"   # /run 写不了时的退路：宁可多重启也不能漏
+CJ_SO_PENDING_DIR="${CJ_SO_PENDING_DIR:-$CJ_STAGE_DIR/so-pending}"
 
 cj_require_root() {
     [ "$(id -u)" = "0" ] || { echo "!! 需要 root 运行（ssh root@设备；本脚本没有 sudo 通道）"; return 1; }
@@ -312,6 +318,47 @@ cj_uninstall_usr_unit() {
     [ "$cj_rc" = 0 ] || [ "$cj_rc" = 3 ]
 }
 
+# ── 扩展 .so 延后换入（H3）──────────────────────────────────────────────────
+# 待换入区里的文件一律换进 $CJ_XOVI/extensions.d/<同名>。放在 /home（持久）：设备中途重启也不丢，下一次
+# cj_xochitl_apply 照样换入；在那之前 xochitl 仍用旧版（安装脚本会如实提示"尚未生效"）。
+# cj_so_stage SRC：把 SRC 放进待换入区（同名覆盖旧的待换入版本）
+cj_so_stage() {
+    mkdir -p "$CJ_SO_PENDING_DIR" || return 1
+    cj_tmp="$CJ_SO_PENDING_DIR/.$(basename "$1").new.$$"
+    if cp "$1" "$cj_tmp" && mv -f "$cj_tmp" "$CJ_SO_PENDING_DIR/$(basename "$1")"; then return 0; fi
+    rm -f "$cj_tmp"
+    return 1
+}
+# cj_so_unstage NAME：撤掉 NAME 的待换入版本（新部署的与已装的相同时，旧的待换入版本已过时）
+cj_so_unstage() {
+    rm -f "$CJ_SO_PENDING_DIR/$1"
+    rmdir "$CJ_SO_PENDING_DIR" 2>/dev/null || true
+    return 0
+}
+# cj_so_pending_list：列出待换入的文件名（一行一个；没有则无输出）
+cj_so_pending_list() {
+    [ -d "$CJ_SO_PENDING_DIR" ] || return 0
+    for cj_sf in "$CJ_SO_PENDING_DIR"/*; do
+        [ -f "$cj_sf" ] && basename "$cj_sf"
+    done
+    return 0
+}
+# cj_so_commit：把待换入区全部换进 extensions.d（原子 rename）。只许在 xochitl 没映射这些 .so 时调用
+# （已 stop，或运行中的 xochitl 没带 xovi）。任何一个失败返回 1，已换好的不回滚。
+cj_so_commit() {
+    cj_rc=0
+    for cj_sn in $(cj_so_pending_list); do
+        if cj_safe_replace "$CJ_SO_PENDING_DIR/$cj_sn" "$CJ_XOVI/extensions.d/$cj_sn" "$CJ_STAGE_DIR" 755; then
+            rm -f "$CJ_SO_PENDING_DIR/$cj_sn"
+            echo "-- 换入 $cj_sn -> $CJ_XOVI/extensions.d/"
+        else
+            echo "!! 换入 $cj_sn 失败"; cj_rc=1
+        fi
+    done
+    rmdir "$CJ_SO_PENDING_DIR" 2>/dev/null || true
+    return "$cj_rc"
+}
+
 # ── xochitl 重启与健康检查（H1）───────────────────────────────────────────
 cj_xochitl_pid() {
     cj_p=$(systemctl show xochitl -p MainPID --value 2>/dev/null) || cj_p=0
@@ -341,9 +388,17 @@ cj_xochitl_apply() {
     echo "⚠ 即将重启 xochitl —— 屏幕会闪烁，并打断当前的阅读/书写（请勿操作设备）；${CJ_APPLY_GRACE:-5} 秒后开始。"
     sleep "${CJ_APPLY_GRACE:-5}"
     if cj_xochitl_has_xovi; then
-        echo "-- xovi 已在 xochitl 里生效 → systemctl restart xochitl（不跑 xovi/start，见 devlib.sh 头注）"
-        systemctl restart xochitl || return 1
+        if [ -n "$(cj_so_pending_list)" ]; then
+            echo "-- 有待换入的扩展 .so → 先 stop xochitl、换文件、再 start（不在运行中换 .so 后 restart，见 devlib.sh 头注 H3）"
+            systemctl stop xochitl || return 1
+            cj_so_commit || { systemctl start xochitl; return 1; }
+            systemctl start xochitl || return 1
+        else
+            echo "-- xovi 已在 xochitl 里生效 → systemctl restart xochitl（不跑 xovi/start，见 devlib.sh 头注）"
+            systemctl restart xochitl || return 1
+        fi
     else
+        cj_so_commit || return 1   # 运行中的 xochitl 没带 xovi，没映射扩展，可以直接换
         [ -x "$CJ_XOVI/start" ] || { echo "!! 没找到 $CJ_XOVI/start —— 先在设备上跑：vellum add xovi"; return 1; }
         echo "-- xochitl 里还没有 xovi（刚开机/被清）→ $CJ_XOVI/start"
         "$CJ_XOVI/start" || return 1

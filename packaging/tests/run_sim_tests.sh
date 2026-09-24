@@ -408,6 +408,25 @@ new_sandbox; EXT="$R/home/root/xovi/extensions.d"; echo OLDSO > "$EXT/hl-snap.so
 ( cd "$PKG" && CJ_SIM_SCP_CORRUPT=hl-snap.so CJ_SKIP_BUILD=1 DEFER_XOVI_START=1 run sh deploy-hl-snap.sh 127.0.0.1 ) >"$R/out.txt" 2>&1; rc=$?
 check "scp 传输损坏：md5 对不上 → 非 0，extensions.d 里旧 .so 原样、无残留" test "$rc" -ne 0 -a "$(cat "$EXT/hl-snap.so")" = OLDSO -a "$(ls -A "$EXT")" = "hl-snap.so"
 
+section "H3：运行中 xochitl 正映射着的扩展 .so 不当场换，stop → 换入 → start"
+new_sandbox; EXT="$R/home/root/xovi/extensions.d"; SOP="$R/home/root/.cangjie-stage/so-pending"
+echo OLDSO > "$EXT/hl-snap.so"; xovi_live on; : > "$CJ_SIM_LOG"
+( cd "$PKG" && CJ_SKIP_BUILD=1 DEFER_XOVI_START=1 run sh deploy-hl-snap.sh 127.0.0.1 ) >"$R/out.txt" 2>&1; rc=$?
+check "H3 DEFER：extensions.d 里仍是旧版，新版在待换入区（不在 extensions.d）" test "$rc" -eq 0 -a "$(cat "$EXT/hl-snap.so")" = OLDSO -a -f "$SOP/hl-snap.so" -a "$(ls -A "$EXT")" = "hl-snap.so"
+check "H3 DEFER：记了待生效标记、没动 xochitl" test -n "$(ls -A "$CJ_PENDING_DIR" 2>/dev/null)" -a "$(count_log 'stop xochitl')" = 0 -a "$(count_log 'restart xochitl')" = 0
+: > "$CJ_SIM_LOG"
+( cd "$PKG" && run sh deploy-xovi-apply.sh 127.0.0.1 ) >"$R/out.txt" 2>&1; rc=$?
+check "H3 apply：stop xochitl → 换入 → start，没有 restart、没有 xovi/start" test "$rc" -eq 0 -a "$(grep -e 'stop xochitl' -e 'start xochitl' -e 'restart xochitl' "$CJ_SIM_LOG" | sed 's/.*systemctl //' | tr '\n' '|')" = "stop xochitl|start xochitl|" -a "$(count_log XOVI_START)" = 0
+check "H3 apply：换入后 md5 与仓库产物一致，待换入区清空，extensions.d 无残留" test "$(md5sum < "$EXT/hl-snap.so")" = "$(md5sum < "$REPO/enhance/hl-snap/hl-snap.so")" -a ! -e "$SOP" -a "$(ls -A "$EXT")" = "hl-snap.so"
+# 非 DEFER 同理：一次部署内完成 stop → 换入 → start
+echo OLDSO > "$EXT/hl-snap.so"; : > "$CJ_SIM_LOG"
+( cd "$PKG" && CJ_SKIP_BUILD=1 run sh deploy-hl-snap.sh 127.0.0.1 ) >"$R/out.txt" 2>&1; rc=$?
+check "H3 非 DEFER：stop → start 且新版已就位" test "$rc" -eq 0 -a "$(count_log 'systemctl stop xochitl')" = 1 -a "$(count_log 'systemctl start xochitl')" = 1 -a "$(count_log 'restart xochitl')" = 0 -a "$(md5sum < "$EXT/hl-snap.so")" = "$(md5sum < "$REPO/enhance/hl-snap/hl-snap.so")"
+# 过时的待换入版本：新部署与已装的相同 → 撤掉
+mkdir -p "$SOP"; echo STALE > "$SOP/hl-snap.so"
+( cd "$PKG" && CJ_SKIP_BUILD=1 DEFER_XOVI_START=1 run sh deploy-hl-snap.sh 127.0.0.1 ) >/dev/null 2>&1
+check "H3：与已装相同的部署撤掉过时的待换入版本" test ! -e "$SOP/hl-snap.so"
+
 section "packaging/deploy-handwriting-stroke.sh（同一份数据驱动流程）"
 new_sandbox; EXT="$R/home/root/xovi/extensions.d"
 ( cd "$PKG" && CJ_SKIP_BUILD=1 DEFER_XOVI_START=1 run sh deploy-handwriting-stroke.sh 127.0.0.1 ) >"$R/out.txt" 2>&1; rc=$?
@@ -489,7 +508,9 @@ xovi_live on
 ( cd "$PKG" && run sh install-all.sh 127.0.0.1 --force --skip chrony-cn,timezone-cn ) >"$R/out.txt" 2>&1; rc=$?
 check "install-all --force：整轮退出 0" test "$rc" -eq 0
 check "install-all --force：未验证哈希写进本机 allowlist.local，被 git 跟踪的白名单文件不变（L5）" test -s "$R/allow.local.txt" -a "$ALLOW_MD5" = "$(md5sum < "$PKG/firmware-allowlist.txt")"
-check "install-all：整轮下来 xovi 已生效 → 只 systemctl restart xochitl 一次，全程没有 xovi/start（H1）" test "$(count_log 'systemctl restart xochitl')" = 1 -a "$(count_log XOVI_START)" = 0
+# 扩展 .so 有变化且 xochitl 正映射着 → 走 H3 的 stop → 换入 → start；否则 restart。两者合计恰好一轮。
+cycles=$(( $(count_log 'systemctl restart xochitl') + $(count_log 'systemctl stop xochitl') ))
+check "install-all：整轮下来 xovi 已生效 → xochitl 只重启一轮（restart 或 H3 的 stop+start），全程没有 xovi/start（H1）" test "$cycles" = 1 -a "$(count_log 'systemctl stop xochitl')" = "$(count_log 'systemctl start xochitl')" -a "$(count_log XOVI_START)" = 0
 check "install-all：hl-snap/hw-stroke 落进 extensions.d，且目录里只有它俩" test -f "$R/home/root/xovi/extensions.d/hl-snap.so" -a -f "$R/home/root/xovi/extensions.d/hw-stroke.so" -a "$(ls "$R/home/root/xovi/extensions.d" | wc -l)" -eq 2
 W="$CJ_SYSD/multi-user.target.wants"
 check "install-all：wifi-watch（M1）/ xovi-reenable / chrony-boot-wakelock 单元在 /usr 且有 wants 链接" test -L "$W/wifi-watch.service" -a -L "$W/xovi-reenable.service" -a -L "$W/chrony-boot-wakelock.service"
