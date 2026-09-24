@@ -115,8 +115,15 @@ pub fn forward(paths: &Paths, req: &mut Request<'_>) -> ApiResult {
     let disposition = resp.header("Content-Disposition").map(str::to_string);
     // 带 Content-Disposition 的是下载（母版库原件可达上百 MB）：边读边发，不整个读进网关内存；
     // 其余（JSON 等小应答）照旧读完再回。
+    // 后端给了 Content-Length 就原样带上，网关也按定长转发（没有长度就走 SSE 式的读到关闭）。
     let mut reply = if status == 200 && disposition.is_some() {
-        Reply { status, content_type: ctype, body: Vec::new(), headers: vec![], stream: Some(Box::new(resp.into_reader())) }
+        let len = resp.header("Content-Length").and_then(|v| v.parse::<u64>().ok());
+        let reader: Box<dyn std::io::Read + Send> = Box::new(resp.into_reader());
+        match len {
+            Some(n) => Reply::sized_stream(&ctype, reader, n),
+            None => Reply::stream(&ctype, reader),
+        }
+        .with_status(status)
     } else {
         let mut body = Vec::new();
         resp.into_reader().read_to_end(&mut body).map_err(|e| ApiError::internal(e.to_string()))?;

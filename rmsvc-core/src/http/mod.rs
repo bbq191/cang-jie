@@ -142,9 +142,13 @@ impl Reply {
     pub fn bytes(content_type: &str, body: Vec<u8>) -> Reply {
         Reply { status: 200, content_type: content_type.into(), body, headers: vec![], stream: None }
     }
-    /// 流式响应（SSE / 大文件边读边发）：不知长度，chunked。
+    /// 流式响应（SSE）：不知长度，读到 reader 结束或客户端断开为止。
     pub fn stream(content_type: &str, reader: Box<dyn Read + Send>) -> Reply {
         Reply { status: 200, content_type: content_type.into(), body: Vec::new(), headers: vec![], stream: Some(reader) }
+    }
+    /// 已知长度的流（文件下载）：带 `Content-Length`，服务器按定长响应边读边发，发完即结束（不走 SSE 那条路）。
+    pub fn sized_stream(content_type: &str, reader: Box<dyn Read + Send>, len: u64) -> Reply {
+        Reply::stream(content_type, reader).with_header("Content-Length", &len.to_string())
     }
     pub fn not_found() -> Reply {
         Reply::error(404, "not found")

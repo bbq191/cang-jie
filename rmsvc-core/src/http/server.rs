@@ -112,6 +112,12 @@ fn respond_stream(req: tiny_http::Request, status: u16, content_type: &str, extr
     }
 }
 
+/// 从回执头里取出（并移除）`Content-Length`：流式回执带了它 = 已知长度的文件下载。
+fn take_content_length(headers: &mut Vec<(String, String)>) -> Option<usize> {
+    let i = headers.iter().position(|(k, _)| k.eq_ignore_ascii_case("Content-Length"))?;
+    headers.remove(i).1.trim().parse().ok()
+}
+
 /// 起阻塞服务器：每请求一线程（上传大文件不阻塞其它请求）。永不返回（bind 失败返回 Err）。
 pub fn serve(bind: &str, router: Router) -> Result<(), String> {
     serve_with(bind, router, ServeOpts::default())
@@ -171,6 +177,20 @@ pub fn serve_with(bind: &str, router: Router, opts: ServeOpts) -> Result<(), Str
                 std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| router.dispatch(&mut r))).unwrap_or_else(|_| Reply::error(500, "服务内部错误（已记录到日志）"))
             };
             if let Some(reader) = reply.stream.take() {
+                // 带 Content-Length 的流（文件下载）：交给 tiny_http 按定长响应边读边发，发完这条响应就结束。
+                // 不能走 respond_stream：那是给 SSE 的"升级成裸 socket、读到连接关闭为止"，reader 读完后连接并不会
+                // 被关掉，客户端一直等（2026-09-24 真机：母版库原件下载头发出后永远收不完）。
+                if let Some(len) = take_content_length(&mut reply.headers) {
+                    let mut headers = Vec::new();
+                    for (k, v) in std::iter::once(("Content-Type".to_string(), reply.content_type.clone())).chain(reply.headers) {
+                        if let Ok(h) = tiny_http::Header::from_bytes(k.as_bytes(), v.as_bytes()) {
+                            headers.push(h);
+                        }
+                    }
+                    // 阈值调到最大：tiny_http 缺省超过 32 KB 就改 chunked、丢掉 Content-Length，浏览器便显示不了下载进度。
+                    let _ = req.respond(tiny_http::Response::new(tiny_http::StatusCode(reply.status), headers, reader, Some(len), None).with_chunked_threshold(usize::MAX));
+                    return;
+                }
                 respond_stream(req, reply.status, &reply.content_type, reply.headers, reader);
                 return;
             }
@@ -286,5 +306,28 @@ mod tests {
             }
             assert_eq!(ureq::get(&format!("http://127.0.0.1:{port}/ok")).call().unwrap().status(), 200);
         }
+    }
+
+    /// 回归：已知长度的流（文件下载）要能完整收完、响应正常结束——此前走 SSE 的"读到连接关闭"路径，
+    /// reader 读完连接却不关，客户端永远收不完（2026-09-24 真机）。
+    #[test]
+    fn sized_stream_completes_with_content_length() {
+        let data: Vec<u8> = (0..300_000u32).map(|i| (i % 251) as u8).collect();
+        let want = data.clone();
+        let router = Router::new().get("/f", move |_| {
+            let d = data.clone();
+            let n = d.len() as u64;
+            Ok(Reply::sized_stream("application/octet-stream", Box::new(std::io::Cursor::new(d)), n).with_header("Content-Disposition", "attachment; filename=\"f.bin\""))
+        });
+        let port = free_port_and_wait(move |a| {
+            let _ = serve(&a, router);
+        });
+        let agent = ureq::AgentBuilder::new().timeout(std::time::Duration::from_secs(10)).build();
+        let resp = agent.get(&format!("http://127.0.0.1:{port}/f")).call().unwrap();
+        assert_eq!(resp.header("Content-Length"), Some("300000"));
+        assert!(resp.header("Content-Disposition").is_some_and(|v| v.contains("f.bin")));
+        let mut got = Vec::new();
+        std::io::Read::read_to_end(&mut resp.into_reader(), &mut got).expect("10 秒内应读完，不能卡住");
+        assert_eq!(got, want);
     }
 }

@@ -27,13 +27,13 @@ pub fn router(st: Arc<State>) -> Router {
         // 原件下载：边读边发（大书上百 MB，不整本读进内存）；网关见到 Content-Disposition 也原样流式转发。
         .get("/staging/file", bind(&st, |s, r| {
             let name = r.q("name").ok_or_else(|| ApiError::bad("缺少 name"))?.to_string();
-            let (f, _len) = s.staging.open_for_download(&name).map_err(ApiError::bad)?;
+            let (f, len) = s.staging.open_for_download(&name).map_err(ApiError::bad)?;
             let ctype = match rmsvc_core::formats::ext_of(&name).as_str() {
                 "epub" => "application/epub+zip",
                 "pdf" => "application/pdf",
                 _ => "application/octet-stream",
             };
-            Ok(Reply::stream(ctype, Box::new(std::io::BufReader::new(f))).with_header("Content-Disposition", &rmsvc_core::multipart::content_disposition(&name)))
+            Ok(Reply::sized_stream(ctype, Box::new(std::io::BufReader::new(f)), len).with_header("Content-Disposition", &rmsvc_core::multipart::content_disposition(&name)))
         }))
         .post("/staging/rename", bind(&st, |s, r| {
             let j = r.json()?;
