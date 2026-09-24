@@ -42,6 +42,8 @@ reMarkable Paper Pro Move 是一台彩色墨水屏平板，官方阅读/笔记�
 - 端口：`book-serve` 8790、`koreader-serve` 8791、`font-serve` 8792、`wallpaper-serve` 8793、`ink-serve` 8795、`transcribe-serve` 8796、`mind-serve` 8797、`note-serve` 8798。
 - 只支持 **reMarkable Paper Pro Move、固件 3.28.0.172**；`/home` 数据在固件升级后保留，`/usr`、`/etc` 里的东西会被冲掉，要重新安装（见 [`INSTALL.md`](INSTALL.md#固件升级ota之后)）。
 
+开机时谁先谁后（xochitl 永远不等我们；常驻服务排在 xovi 恢复之后、不等网络）见 [`packaging/README.md`「开机启动顺序」](../packaging/README.md#开机启动顺序2026-09-24)。
+
 ### 东西装在设备的哪里
 
 | 内容 | 位置 | 固件 OTA 后 |

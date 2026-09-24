@@ -17,7 +17,7 @@ xochitl 自带的网页上传接口只绑 USB 网卡的 `10.11.99.1`。不插 US
 
 ## 谁调用、装在哪
 
-- 网关单元 `gateway.service` 的 `ExecStartPre=-/bin/sh /home/root/.local/bin/lo-alias.sh`（前面的 `-` 表示失败也不拦网关启动）。
+- 网关单元 `gateway.service` 的 `ExecStartPre=-/bin/sh /home/root/.local/bin/lo-alias.sh`（前面的 `-` 表示失败也不拦网关启动）。网关单元 `After=NetworkManager.service`（2026-09-24），保证挂 `usb1` 地址时网络管理器已经起来。
 - 安装随 `packaging/deploy.sh` 的 shelf 载荷一起走，落到 `~/.local/bin/lo-alias.sh`；旧名 `cangjie-lo-alias.sh` 在安装/卸载时自动清理（见 `shelf/manifest.sh`）。
 - 本目录不单独部署。
 

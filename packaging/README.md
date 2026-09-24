@@ -187,6 +187,30 @@ xovi 没有"只重载一个扩展"的机制，让新扩展/qmd 生效的唯一�
   - 这个单元**从没装过** → 什么都不写，汇总记"已跳过（前置条件不满足）"；
   - **以前装过**（verity 是后来才开的）→ `/usr` 里的单元不动；`~/.local/bin` 下的脚本照常更新，且**脚本真有变化、该单元装完要启动（目前只有 `wifi-watch`）时 `systemctl restart` 它**，让在跑的服务用上新脚本。
 
+## 开机启动顺序（2026-09-24）
+
+![设备开机时序](../docs/diagrams/boot-order.svg)
+
+真机重启实测（`journalctl -b -o short-monotonic`）：
+
+| 时刻 | 发生什么 |
+|---|---|
+| 4.04s | xochitl 以原厂状态启动——早于 `/home` 挂载，**不等 `/home` 上的任何东西**（红线，见 `xovi-reenable.service` 头注） |
+| 5.26s | `/home` 挂载 |
+| 5.46–7.49s | `xovi-reenable` 跑 `xovi/start`，xochitl 带着 xovi 重启（7.40s 起），三个 hook 装上 |
+| 7.53–9.04s | 书架/笔记/增强 9 个常驻服务依次起来（改前 ≈11.6s） |
+| 37.4s | `multi-user.target`：被 `chrony-boot-wakelock` 持锁等 NTP 校时拖住，**有意如此**（防开机头几十秒自动休眠打断校时） |
+
+09-24 调整了什么（都只改我们自己单元的排序，不给 xochitl 加任何依赖；模拟测试有 5 项守着）：
+
+- **9 个常驻服务 `After=xovi-reenable.service`**：先让 xochitl 带 xovi 重启完再起，不跟它抢 CPU（服务都 `Nice=5`、`CPUWeight=20`，但 9 个进程同时初始化仍会拖慢 xochitl 起界面）。没装 `xovi-reenable` 时这条自动失效。
+- **不再 `Wants/After=network-online.target`**：它们只监听回环或 `0.0.0.0`，调云端是按需发、失败重试。原来全系统只有它们拉这个 target，开机要专门等 `NetworkManager-wait-online`（真机 3.4s，没有 WiFi 时要等到超时）。重启后 wait-online 仍在跑（7.9–12.1s，依赖查询里看不出谁拉的），但已不在我们的关键路径上。
+- **`xovi-reenable` 加 `TimeoutStartSec=120`**：oneshot 缺省启动超时是 infinity，上面那条排序让它一卡住所有服务都跟着等。平时 2 秒左右跑完。
+- **网关 `After=NetworkManager.service`**：启动前 `lo-alias.sh` 要给 `usb1` 挂地址、mDNS 要枚举接口。
+- **`fc-cache` 从网关挪到 `font-serve`**：字体归字体服务管；原来网关每次启动都要同步等它（约 1.5s），拖慢网页入口。
+
+安装顺序（上面的步骤表）不变：配置类 → 独立服务 → xovi 持久化 → 只落盘的扩展/补丁 → 书架 → 最后统一重启 xochitl 一次。
+
 ## xovi-reenable.service 为什么放在 packaging/，不放 shelf/
 
 xovi 持久化是**整个 xovi 层**通用的（重跑 `xovi/start` 会重注入全部扩展，不分 shelf / enhance / 其它），`shelf` 耦合它会破坏"网关+领域服务独立可插拔"的原则。2026-09-03 曾有一版把它装进 `shelf/install.sh`，被撤回（见 `shelf/docs/reMarkable书架白皮书.md` §03o，历史文档不改写）；`shelf/install.sh` 头注也写着这层该由"整包"装。`packaging/` 正是这层的归属。
@@ -264,13 +288,15 @@ bash packaging/tests/run_sim_tests.sh      # 现为 226 项断言（2026-09-24 �
 | 2026-09-15 | `deploy-hl-snap/handwriting-stroke` 补齐"部署前备份 + md5 校验"：`cangjie-backups/` 下真的新增备份，且备份 md5 精确匹配部署前的旧版本 | 通过（battop 的备份分支当时没触发，待下次装 battop 顺带确认） |
 | 2026-09-21 | appload 0.6.0：md5 与官方发布包一致、日志有 "Loaded external AppLoad hooks in main UI"、KOReader/WeRead 入口正常 | 通过 |
 | 2026-09-22 | 审计分支合并后整轮 `install-all.sh`（9 个服务 + 扩展 + 一次 xochitl 重启），服务健康、`NRestarts` 为 0；新版 `xovi-reenable.service`（带 `ExecCondition`）随之部署，2026-09-24 只读核对设备上的单元与仓库一致 | 通过（走的是"有改动 → 重启"这一支） |
+| 2026-09-24 | 第三轮审计合并后整轮 `install-all.sh`：两个扩展 `.so` 有变化 → 先进待换入区，`xovi-apply` 列出 `so-pending:hl-snap.so so-pending:hw-stroke.so` → **stop → 换入 → start**，MainPID 30840→37709、`NRestarts` 0、设备未整机重启（uptime 连续）、待换入区清空、三个 hook "安装完成" | **通过**（stop→换→start 第一次在真机走有变化的 `.so`） |
+| 2026-09-24 | 开机顺序调整后真机重启：xochitl 4.04s 原厂启动（未被拖慢）、`xovi-reenable` 5.46–7.49s 自动恢复 xovi、9 个服务 7.53–9.04s 起来且全部 active、三个 hook 装上、网页 401 正常 | 通过 |
 
 ### 没有真机验证
 
 - **卸载脚本**（`uninstall-all.sh`）：只有本机模拟；2026-09-22 起的逆序 / 载荷清理 / verity 保留分支同理。
 - **"无改动不重启"**：`xovi-apply` 在无待生效标记时跳过重启、`--force-apply`、单独跑 `deploy-hl-snap/handwriting-stroke/sidebar-entry` 没变化不重启（2026-09-24）——只有本机模拟。
 - **2026-09-24 审计的其余脚本改动**：汇总第四栏"前置条件不满足"、stop→换入→start 关键区忽略信号、rw 窗口补 SIGPIPE、dm-verity 下已装单元的 `wifi-watch` 脚本更新后重启服务、卸载撤掉待换入 `.so` 与"仍加载着就提示整机重启"——只有本机模拟。
-- **`.so` 待换入区（2026-09-24）**：stop → 换入 → start 的顺序只有本机模拟（H3 五项）；真机上还没有用"有变化的 `.so`"走过。
+- **`.so` 待换入区（2026-09-24）**：stop → 换入 → start 已在真机走通（见上表）；"设备重启后待换入区里的 `.so` 仍算待生效"这一支没真机走过。
 - `sidebar-entry` 在 appload 版本过旧时"探测不到信号就跳过"这一分支：逻辑只是一行 `grep -q`，靠代码审查；真机只确认了"正面信号存在"这一半。
 - `deploy-xovi-apply.sh`：整体随 `install-all.sh` 整轮真机跑通，但没单独逐项核对它打印的 hl-snap/hw-stroke 段数、NRestarts 细节。
 - `deploy-battop.sh` 的 host 侧覆盖前备份分支（旧版）与 2026-09-20 之后的"`battop.new` 原子 rename"新流程：没有重跑验证。

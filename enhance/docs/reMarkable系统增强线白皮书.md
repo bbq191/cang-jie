@@ -48,7 +48,7 @@
 
 **当前设备状态**（2026-09-24 只读核对）：`extensions.d/` 里有 `appload.so`、`hl-snap.so`、`hw-stroke.so`、`qt-resource-rebuilder.so`，**没有** `cangjie-langhook.so`；两个本线 `.so` 与当时仓库版本 md5 一致（第三轮审计之后仓库里的两个 `.so` 已重编，设备上仍是旧版，见 §03k），journal 里三个 hook 都"安装完成"；battop 已装、当前停着。
 
-**未闭环**（详见 §05）：`hw-stroke` 的 `bVar16<4` 分支；两个扩展的加载顺序依赖（§04「hook 安全性」）**已修、host 验证、待真机**——按新源码重编的两个 `.so` 还没部署；lo-alias 的 usb1 冷启动场景在现行接法下未重新验证。
+**未闭环**（详见 §05）：`hw-stroke` 的 `bVar16<4` 分支；两个扩展的加载顺序依赖（§04「hook 安全性」）已修并部署（09-24 真机三个 hook 均装上，但反序加载没专门验）；lo-alias 的 usb1 冷启动场景在现行接法下未重新验证。
 
 ### 术语速查
 
@@ -275,11 +275,11 @@ hook 目标 `FUN_00f47530`：两个 float（s0/s1）+ 一个指针（x0），标
 
 **结论**：空闲时的定时唤醒主要是 wifi-watch 和 8 条事件流心跳，每小时各约 240 次；mkdir-agent 长轮询放宽后约 12 次/时（原约 144 次）；wallpaper-serve 09-24 起不再跟日志（改监听休眠读图），但设备上的飞行记录仪仍跟 journal，所以本线继续压低 xochitl 日志量（§03g 逐点日志默认关、§03i 去掉命中日志）。
 
-**mkdir-agent 放宽的依据**（09-24）：设备 Qt 6.10.3；qtdeclarative 6.10 的 `qqmlxmlhttprequest.cpp` 不设传输超时、XHR 也没有 timeout 属性；`QNetworkAccessManager` 缺省超时为 0（禁用）。xochitl 导入了 `setTransferTimeout`，但没有证据表明它作用在 QML 引擎的 NAM 上，所以 qmd 加了兜底：请求在 28–33 秒之间失败就当作客户端超时，退回 wait=25 并打一行 `SHELF-MKDIR: transfer timeout` 日志。**部署后看 journal 里有没有这行**：没有 = 长等待生效。
+**mkdir-agent 放宽的依据**（09-24）：设备 Qt 6.10.3；qtdeclarative 6.10 的 `qqmlxmlhttprequest.cpp` 不设传输超时、XHR 也没有 timeout 属性；`QNetworkAccessManager` 缺省超时为 0（禁用）。xochitl 导入了 `setTransferTimeout`，但没有证据表明它作用在 QML 引擎的 NAM 上，所以 qmd 加了兜底：请求在 28–33 秒之间失败就当作客户端超时，退回 wait=25 并打一行 `SHELF-MKDIR: transfer timeout` 日志。**09-24 真机**：部署后与整机重启后各跑了数分钟，journal 里都没有这行，即不存在 30 秒客户端超时，290 秒长等待生效。
 
 ## 03k｜第三轮审计给本线的改动（2026-09-24，只在 host 验证）
 
-都没上真机；两个 `.so` 已按新源码重编提交，还没部署（§05）。
+同日已部署并真机验证：两个 `.so` 走 stop → 换 → start 换入成功（未整机重启、三个 hook 装上）；壁纸改监听休眠读图后，休眠那一刻即轮换（下表各行的"验证"列是 host 侧；真机结果见 §05）。
 
 | 改动 | 为什么 | 验证 |
 |---|---|---|
@@ -309,7 +309,7 @@ hook 目标 `FUN_00f47530`：两个 float（s0/s1）+ 一个指针（x0），标
 - **"A 调用 B"不等于"所有对 B 的调用都来自 A"**：`FUN_00f3f9d0` 有 6 个调用点，从它入口设全局变量再传给下游，真机证明下游绝大多数调用不经过这一份。除非引用或运行时数据证明 B 只有唯一入口。
 - **"前 20 字节可安全 patch"必须逐个候选验证**：`FUN_00f4f430` 签名和已验证的两个完全一样，但第 3 条指令是条件分支，搬进调用桩会跳错地方——靠 `CheckFuncSizes.java` 逐条反汇编提前拦下。签名相似不代表二进制布局相似。
 - **两个扩展抢同一个 hook 目标：先到先得，后到的静默放弃**。`hl-snap.so` 与 `cangjie-langhook.so` 都 patch `FUN_00f05ad0`（§03a）。凡是"从老项目拆出功能子集"，都要检查新旧产物会不会同时部署、目标有无重叠，并在部署文档里写清互斥关系。
-- **多扩展共存曾依赖加载顺序（已修、host 验证、待真机）**：`shared/scan.c` 的 `cj_find_exec_module` 原先只返回 xochitl **第一个**可执行段。每装一个 hook，`mprotect` 都会把那一页切成独立的段，之后"第一段"只到最低的已 patch 页为止，后装的扩展找不到更高地址的目标。2026-09-24 真机 maps 里 xochitl 代码段确实被切成了 7 段（`0xf03000`、`0xf47000`、`0xf4c000` 三页各自独立），两个扩展能都装上，是因为这次顺序恰好是 hw-stroke（高地址目标）先、hl-snap（`0xf03670`）后；反过来 hw-stroke 会静默装不上 hook，网页徽章却仍显示"已加载"。**修法**（09-24 第三轮审计）：把紧接其后的同文件、首尾相接、可读可执行的续段一并算进扫描范围；`_xovi_construct` 找不到映射或特征码时改为打日志。host 单测用真内核 `mprotect` 复现了切段（旧实现只返回第一段、新实现返回整段）。xovi 实际按什么顺序加载没有核实，反序加载的真机验证见 §05。
+- **多扩展共存曾依赖加载顺序（已修、已部署；反序加载未专门验证）**：`shared/scan.c` 的 `cj_find_exec_module` 原先只返回 xochitl **第一个**可执行段。每装一个 hook，`mprotect` 都会把那一页切成独立的段，之后"第一段"只到最低的已 patch 页为止，后装的扩展找不到更高地址的目标。2026-09-24 真机 maps 里 xochitl 代码段确实被切成了 7 段（`0xf03000`、`0xf47000`、`0xf4c000` 三页各自独立），两个扩展能都装上，是因为这次顺序恰好是 hw-stroke（高地址目标）先、hl-snap（`0xf03670`）后；反过来 hw-stroke 会静默装不上 hook，网页徽章却仍显示"已加载"。**修法**（09-24 第三轮审计）：把紧接其后的同文件、首尾相接、可读可执行的续段一并算进扫描范围；`_xovi_construct` 找不到映射或特征码时改为打日志。host 单测用真内核 `mprotect` 复现了切段（旧实现只返回第一段、新实现返回整段）。xovi 实际按什么顺序加载没有核实，反序加载的真机验证见 §05。
 - **换了运行中 xochitl 正映射着的 `.so` 再 restart → 整机重启**（09-21 appload、09-24 hw-stroke 两次）：必须 stop → 换 → start（§03g）。
 
 **构建与环境**
@@ -332,13 +332,12 @@ hook 目标 `FUN_00f47530`：两个 float（s0/s1）+ 一个指针（x0），标
 | hw-stroke：像素消费者（`vtable+0x10`）的真实目标、smoothstep 曲线的下游用途 | 静态分析到边界 | 需要动态分析 |
 | hw-stroke：参数调优 | 一轮真机校准的起点，"看上去还行" | 按用户反馈再调 |
 | hw-stroke：真实压感 | 放弃 | 先搞清 `FUN_00f47530` / `FUN_00f4c8d0` 各有哪些调用路径 |
-| 多扩展共存依赖加载顺序（§04） | **已修、host 验证、待真机**：`shared/scan.c` 合并续段 + `_xovi_construct` 失败打日志 | 部署新 `.so` 后 journal 里两个扩展的"安装完成"都在；有条件时把两个 `.so` 改名调换加载顺序再验一次 |
-| 第三轮审计重编的两个 `.so` + 部署新流程 stop → 换 → start（§03g、§03k） | 仓库里的 `hl-snap.so` / `hw-stroke.so` 已按新源码重编（含上一行的修复和 memchr 提速），**还没部署**；stop → 换 → start 也还没在真有 `.so` 变化时跑过 | 下次部署这两个 `.so` 时一起验：走待换入区、不整机重启、两行"安装完成"都在 |
-| wallpaper-serve 改监听休眠读图（§03j） | 09-24 已改：真机 inotify 观察确认 xochitl 每次休眠读一遍 `current.png`，改为 `IN_CLOSE_NOWRITE` 触发轮换，去掉 `journalctl -f` 子进程；host 真 inotify 单测通过，**未上真机** | 部署后按两次休眠：第二次显示的是下一张；`ps` 里没有 wallpaper-serve 的 journalctl 子进程；充电状态下也试一次 |
+| 多扩展共存依赖加载顺序（§04） | 已修并部署：09-24 部署后与整机重启后三个 hook 都"安装完成"、没有"hook 未安装" | 有条件时把两个 `.so` 改名调换加载顺序再验一次（反序场景没真机验过） |
+| wallpaper-serve 改监听休眠读图（§03j） | 09-24 已改并真机验证：临时放第二张图后休眠一次，`Normal to DeepSleep` 同一刻（115.79s）轮换到下一张、只轮换一次；进程列表里没有 journalctl | 充电状态（内核不挂起）下还没试 |
 | lo-alias：不插 USB 冷启动 | 脚本现由网关 `ExecStartPre` 调用，不保证先于 xochitl；本次开机它比 xochitl 晚 3 秒 | 找机会做一次不插 USB 冷启动，确认 :80 能绑上 |
 | battop：两次冻机的内核根因 | 09-23 起采样循环无子进程；根因（RCU stall）未排除 | 继续观察；不开机自启保持不变 |
 
-**已闭环（真机）**：hl-snap 精确吸附（§03a）；battop 常驻化（§03b）与唤醒源改读 `/dev/kmsg`（§03b，commit 记真机确认）；hw-stroke 两个 hook 目标、笔尖角度 + 运笔速度（§03e / §03f）；hw-stroke 降负载（§03g）；网页"已加载"徽章（§02）；xochitl 单击翻页 + 日漫翻页规则（§03i）。
+**已闭环（真机）**：hl-snap 精确吸附（§03a）；battop 常驻化（§03b）与唤醒源改读 `/dev/kmsg`（§03b，commit 记真机确认）；hw-stroke 两个 hook 目标、笔尖角度 + 运笔速度（§03e / §03f）；hw-stroke 降负载（§03g）；网页"已加载"徽章（§02）；xochitl 单击翻页 + 日漫翻页规则（§03i）；扩展 `.so` 的 stop → 换 → start 部署流程（§03g，09-24 第一次真机走有变化的 `.so`）；wallpaper-serve 监听休眠读图轮换（§03j）；mkdir-agent 290 秒长轮询（§03j）。
 
 **已放弃**：按笔型标签精确排除钢笔（§03e，真机数据证伪了 `ctx` 同一性假设）；真实压感跨函数传值（§03f）。
 
