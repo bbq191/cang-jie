@@ -17,7 +17,9 @@ header .links{margin-left:auto;display:flex;gap:.6em;font-size:.85em}
    不明显改变视觉间距（2026-09-09 审计发现，退出跟改密码/CA证书视觉权重一样但后果完全不同，
    这里只解决"点不准"，误触仍靠各自的确认/无副作用兜底，不在这里额外加区分）。 */
 header .links a{color:var(--mute);text-decoration:none;padding:.3em .25em;display:inline-block}header .links a:hover{color:var(--accent)}
-nav{display:flex;gap:.4em;padding:.7em 1.1em;overflow-x:auto;background:var(--bg);position:sticky;top:3.1em;z-index:4;-webkit-overflow-scrolling:touch}
+/* top 跟着页头实际高度走（app.js 用 ResizeObserver 写 --hdr-h）：英文界面在手机上页头会折成两行，写死的
+   3.1em/2.9em 会让标签栏滚动时钻到页头底下被盖住（2026-09-24 截图走查发现）。 */
+nav{display:flex;gap:.4em;padding:.7em 1.1em;overflow-x:auto;background:var(--bg);position:sticky;top:var(--hdr-h,3.1em);z-index:4;-webkit-overflow-scrolling:touch}
 nav button{border:1px solid transparent;background:var(--surface2);color:var(--mute);padding:.45em 1.05em;border-radius:2em;cursor:pointer;font-size:.95em;white-space:nowrap;transition:.15s}
 nav button:hover{color:var(--fg)}
 nav button.on{background:var(--accent);color:var(--accent-fg);font-weight:600;box-shadow:var(--shadow)}
@@ -28,7 +30,9 @@ section{display:none;animation:fade .2s ease}section.on{display:block}
 h2{font-size:1.05em;margin:0 0 .1em}h3{font-size:.98em;margin:1.2em 0 .3em}
 .lead{color:var(--mute);font-size:.9em;margin:.1em 0 0}
 label.field{display:block;margin:.9em 0 .2em;font-size:.85em;color:var(--mute);font-weight:500}
-select,input[type=text]{font-size:1em;padding:.55em .6em;border:1px solid var(--line);border-radius:.5em;background:var(--surface);color:var(--fg);width:100%;max-width:100%}
+/* 所有文本类输入框同一套外观：search/number/password 原来没覆盖到，笔记搜索框、模型单价、API key 输入框
+   显示成浏览器默认的小框（暗色模式下尤其扎眼，2026-09-24 截图走查发现）。 */
+select,input[type=text],input[type=search],input[type=number],input[type=password],input[type=url]{font-size:1em;padding:.55em .6em;border:1px solid var(--line);border-radius:.5em;background:var(--surface);color:var(--fg);width:100%;max-width:100%}
 .row{display:flex;gap:.7em;align-items:center;flex-wrap:wrap;margin:.6em 0}
 /* 目标选择卡 */
 .seg{display:grid;grid-template-columns:repeat(3,1fr);gap:.6em;margin:.4em 0 .2em}
@@ -60,6 +64,8 @@ progress::-webkit-progress-bar{background:var(--surface2)}progress::-webkit-prog
 .kv{display:grid;grid-template-columns:auto 1fr;gap:.35em .9em;font-size:.92em;align-items:baseline}.kv b{color:var(--mute);font-weight:500}
 .list{list-style:none;padding:0;margin:.3em 0}
 .list li{display:flex;justify-content:space-between;gap:1em;align-items:center;padding:.5em .1em;border-bottom:1px solid var(--line2)}
+/* 名字太长放不下时，右侧的大小/徽章/按钮整组换到下一行靠右，不再被挤成一条竖排；超长不断词的文件名就地折行 */
+.list li{flex-wrap:wrap}.list li>span:first-child{min-width:0;overflow-wrap:anywhere}.list li>span:last-child{margin-left:auto}
 /* 母版库列表书多时很长（2026-09-19 用户反馈）——单独收紧行内边距，不动全站共用的 .list（笔记/
    其它列表沿用原样，只有这里书多到需要专门收紧）。 */
 .small{font-size:.83em;color:var(--mute)}
@@ -120,9 +126,11 @@ dl.help dd{margin:.2em 0 .2em;color:var(--mute);font-size:.9em;line-height:1.65}
 .btn-bad{border-color:var(--bad);color:var(--bad)}
 .btn-bad:hover{background:color-mix(in srgb,var(--bad) 10%,var(--surface))}
 /* 回收站列表：紧凑一行，不需要完整卡片那么重 */
-.trash-item{display:flex;gap:.6em;align-items:flex-start;padding:.55em 0;border-bottom:1px solid var(--line2)}
+.trash-item{display:flex;flex-wrap:wrap;gap:.4em .6em;align-items:flex-start;padding:.55em 0;border-bottom:1px solid var(--line2)}
 .trash-item:last-child{border-bottom:none}
-.trash-item .txt{flex:1;min-width:0;font-size:.9em}
+/* 徽章单独一行、下面正文+恢复按钮：原来四样挤一行，手机上正文被挤成一列两三个字（2026-09-24 截图走查） */
+.trash-badges{flex:1 1 100%;display:flex;flex-wrap:wrap;gap:.3em}
+.trash-item .txt{flex:1;min-width:0;font-size:.9em;overflow-wrap:anywhere}
 .trash-item .txt .q{color:var(--mute);font-size:.9em}
 /* 各模型用量表（管理台模型面板，点 2「彻底重做」）：字号收紧一点，避免这张卡片被表格撑得太宽 */
 [data-usagewrap] table.cmp{font-size:.82em;min-width:0}
@@ -182,7 +190,9 @@ dl.help dd{margin:.2em 0 .2em;color:var(--mute);font-size:.9em;line-height:1.65}
 .stgbar-count{margin-right:.3em}
 .stgbar.done{border-color:var(--line)}
 .stgbar-fails{flex:1 1 100%}
-@media(max-width:34em){.stg-pgnums{display:none}}
+@media(max-width:34em){.stg-pgnums{display:none}
+ /* 行内的停止/取消排队按钮换到书名下面：原来占右侧一整列，把徽章和进度挤成窄条（英文文案更明显） */
+ .stg-actions{grid-column:2}}
 @media(min-width:35em){.stg-pgtxt{display:none}}
 .stgbar.sel{flex-direction:column;align-items:stretch;gap:.5em}
 .stgbar-top{display:flex;align-items:center;justify-content:space-between;gap:.6em}
@@ -198,7 +208,7 @@ a.btn{text-decoration:none;box-sizing:border-box}
 /* 页头在手机窄屏上被挤成竖排（"秘密花园"一字一行）：logo 不换行、主机名/次要链接收起来 */
 header .logo{white-space:nowrap}
 header .links{white-space:nowrap}
-@media(max-width:34em){header{flex-wrap:wrap;gap:.3em .6em;padding:.55em .8em}header small#hdr{display:none}header .links{margin-left:auto;gap:.45em}header .links a{padding:.3em .1em}nav{top:2.9em;padding:.55em .8em}main{padding:.8em}}
+@media(max-width:34em){header{flex-wrap:wrap;gap:.3em .6em;padding:.55em .8em}header small#hdr{display:none}header .links{margin-left:auto;gap:.45em}header .links a{padding:.3em .1em}nav{top:var(--hdr-h,2.9em);padding:.55em .8em}main{padding:.8em}}
 .stgbar-top .btn{flex:0 0 auto}
 .stg-dest{display:flex;flex-direction:column;gap:.4em;margin:.5em 0}
 .stg-newrow{display:flex;gap:.4em;flex:1 1 100%;align-items:center}
@@ -217,3 +227,12 @@ header .links{white-space:nowrap}
 .nsearch{list-style:none;margin:.3em 0 0;padding:0}
 .nsearch li{padding:.55em .2em;border-top:1px solid var(--line2);cursor:pointer;line-height:1.5;word-break:break-word}
 .nsearch li:hover{background:var(--surface2)}
+/* 触屏上的可点区域（2026-09-24 截图走查量出来按钮 32px、页头链接 29px、开关复选框 13px）：粗指针设备统一撑到
+   40px 左右；只撑热区不放大字号，桌面鼠标不受影响。 */
+@media (pointer:coarse){
+ .btn,.chip,nav button{min-height:40px}
+ header .links a{min-height:40px;min-width:40px;display:inline-flex;align-items:center;justify-content:center}
+ #langsel{min-height:40px}
+ .toggle{min-height:40px}
+ .stg-check{padding:.6em;margin:-.6em}
+}

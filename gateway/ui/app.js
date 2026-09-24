@@ -122,6 +122,8 @@ const BOOK_EXT=dot(EXT.book), FONT_EXT=dot(EXT.font), DICT_EXT=dot(EXT.dict), IM
 const up=l=>l.map(e=>e.toUpperCase()).join(' / ');
 // 2026-09-18 起母版库只收 EPUB/PDF（BOOK_EXT===EXT.native，见 rmsvc_core::formats 头注）——原来
 // 这里有个 FMT_TIERS() 分两档（原生/仅 KOReader）拼文案，两档收成一档后不再需要，删掉。
+/* 标签栏吸顶位置跟着页头实际高度（手机英文界面页头会折两行），见 style.css nav 的 --hdr-h。只在尺寸变化时回调，不轮询。 */
+if(window.ResizeObserver)new ResizeObserver(([e])=>document.documentElement.style.setProperty('--hdr-h',Math.ceil(e.target.getBoundingClientRect().height)+'px')).observe($('header'));
 $('#logout').onclick=e=>{e.preventDefault();fetch('/logout',{method:'POST'}).then(()=>location.href='/login')};
 // 徽章的完整解释（渲染自检失败原因、优化档位差异…）以前只写进 title——触屏摸不到 hover，只看得见
 // 图标+数字，看不见"为什么/该怎么办"（2026-09-09 审计发现）。这里全局委托一个点击处理：任何带
@@ -255,13 +257,12 @@ function stgBadges(it,busy){
   const muted=!(dc&&dc.status==='failed')&&!(oc&&oc.status==='failed')&&((oc&&oc.status==='cancelled')||(dc&&dc.status==='cancelled')); // 仅"上次已取消"这类淡色提示，不再靠正则匹配文案
   return {html:`<span class="badge fmt">${esc(fmt)}</span><span class="stg-size">${fmtB(it.bytes)}</span>${st}${ps}${dl}${rb}${busy?'':fails}`,msg,muted};
 }
-/* 一行。ctx: {picked,localBusy,gatedPending,gatedActive,batchQueued,bs,koInstalled,xFolder(),kFolder(),syncSel(),render(),refresh()} */
+/* 一行。ctx: {picked,gatedPending,gatedActive,batchQueued,bs,syncSel(),refresh()} */
 function stgRow(it,ctx){
   const dv=it.delivered||{},oc=dv.optimize,dc=dv.deliver;
-  const localBusy=ctx.localBusy.has(it.name),busy=!!it.busy||localBusy;
+  const busy=!!it.busy;
   const gatedPending=ctx.gatedPending.has(it.name),gatedActive=ctx.gatedActive.has(it.name);
   const queued=gatedPending||ctx.batchQueued.has(it.name)||(ctx.bs.running&&ctx.bs.current===it.name&&!busy);
-  const locked=busy||ctx.bs.running||gatedPending||gatedActive;
   const b=stgBadges(it,busy);
   const cb=el('input',{type:'checkbox','aria-label':it.name});cb.checked=ctx.picked.has(it.name);
   cb.onchange=()=>{if(cb.checked)ctx.picked.add(it.name);else ctx.picked.delete(it.name);li.classList.toggle('sel',cb.checked);ctx.syncSel()};
@@ -271,23 +272,22 @@ function stgRow(it,ctx){
   if(b.msg)main.appendChild(el('div',{class:'small stg-err'+(b.muted?' stg-muted':''),text:b.msg}));
   if(busy){
     const dcP=dc&&dc.status==='pending',ocP=oc&&oc.status==='pending';
-    const label=localBusy?T('transfer.staging.progress.addingKoreader'):dcP?T('transfer.staging.progress.delivering'):ocP?T('transfer.staging.progress.optimizing'):T('transfer.staging.progress.working');
+    const label=dcP?T('transfer.staging.progress.delivering'):ocP?T('transfer.staging.progress.optimizing'):T('transfer.staging.progress.working');
     renderStepProgress(main,{label,prog:(dcP&&dc.progress)||(ocP&&oc.progress)||null,msg:dcP?dc.message:ocP?oc.message:''});
   }else if(queued){
     renderStepProgress(main,{label:ctx.batchQueued.has(it.name)?T('stg.batch.queuedHere'):T('transfer.staging.progress.queued')});
   }
-  // 按钮：guardClick 防双击；trackLocal＝没有服务端忙态的操作（加入 KOReader）点击时本地记忙态、先画出进度条。
-  const act=(t,pri,fn,{dis,cls,track}={})=>{const x=el('button',{class:'btn'+(pri?' pri':'')+(cls?' '+cls:''),text:t});
-    if(dis){x.disabled=true;x.title=ctx.bs.running?T('stg.batch.runningLock'):''}
-    else guardClick(x,async()=>{x.textContent=t+'…';if(track){ctx.localBusy.add(it.name);ctx.render()}try{await fn()}finally{if(track)ctx.localBusy.delete(it.name)}ctx.refresh()});return x};
+  // 行内按钮（只有停止/取消排队两种）：guardClick 防双击，点完刷新。
+  const act=(t,fn)=>{const x=el('button',{class:'btn btn-bad',text:t});
+    guardClick(x,async()=>{x.textContent=t+'…';await fn();ctx.refresh()});return x};
   // 列表只显示书名/类型/大小/状态/进度；**所有操作**（优化/加入 xochitl/加入 KOReader/删除/全部中止）由勾选后的底部操作栏统一控制
   // （用户 2026-09-20 明确要求）。行内唯一的按钮：这本书正在处理/排队时的「停止」。
   const doStop=async()=>{const r=await postJ('/api/books/staging/cancel',{name:it.name});if(r.ok!==false)toast(r.message,r.cancelled?'ok':'warn',5000)};
   const actions=el('div',{class:'stg-actions'});
   if(gatedPending&&!busy){
-    actions.appendChild(act(T('transfer.staging.btn.cancelQueued'),false,async()=>{const r=await postJ('/api/budget/cancel',{name:it.name});if(r.ok!==false)toast(r.cancelled?T('transfer.staging.cancelQueuedOk',{name:it.name}):T('transfer.staging.cancelQueuedTooLate',{name:it.name}),r.cancelled?'ok':'warn')},{cls:'btn-bad'}));
-  }else if(busy&&!localBusy||gatedActive){
-    actions.appendChild(act(T('stg.row.stop'),false,doStop,{cls:'btn-bad'}));
+    actions.appendChild(act(T('transfer.staging.btn.cancelQueued'),async()=>{const r=await postJ('/api/budget/cancel',{name:it.name});if(r.ok!==false)toast(r.cancelled?T('transfer.staging.cancelQueuedOk',{name:it.name}):T('transfer.staging.cancelQueuedTooLate',{name:it.name}),r.cancelled?'ok':'warn')}));
+  }else if(busy||gatedActive){
+    actions.appendChild(act(T('stg.row.stop'),doStop));
   }
   const li=el('li',{class:'stg-row'+(cb.checked?' sel':'')},actions.children.length?[el('label',{class:'stg-check'},[cb]),main,actions]:[el('label',{class:'stg-check'},[cb]),main]);
   return li;
@@ -344,8 +344,6 @@ function renderTransfer(sec){sec.innerHTML=`
     <div class="stgbar" id="stgbar" hidden></div>
   </div>`;
   let koInstalled=false,items=[];
-  // 「加入 KOReader」没有服务端忙态可查——本地忙态集合，per-render 存活（纯瞬时 UI 态）。
-  const localBusy=new Set();
   const picked=new Set();                                  // 勾选的书名（跨页保留）
   // 服务端批量队列状态（网关 /api/batch/status）：关掉页面重开、换设备都读得到，不再依赖本标签页提交过什么。
   let bs={running:false,total:0,done:0,failed:[],queued:[],current:null,action:null};
@@ -385,7 +383,7 @@ function renderTransfer(sec){sec.innerHTML=`
     if(r.ok===false)return;
     toast(r.queued?T('stg.batch.queuedToast',{queued:r.queued,skip:r.skipped?T('stg.batch.skipped',{n:r.skipped}):''}):T('stg.batch.none'),r.queued?'ok':'warn');
     if(r.queued)picked.clear();await refresh()};
-  const ctx=()=>({picked,localBusy,gatedPending,gatedActive,batchQueued,bs,koInstalled,xFolder,kFolder,syncSel:()=>{syncSelUi();renderBar()},render:()=>render(),refresh:()=>refresh()});
+  const ctx=()=>({picked,gatedPending,gatedActive,batchQueued,bs,syncSel:()=>{syncSelUi();renderBar()},refresh:()=>refresh()});
   const syncSelUi=()=>{const list=filtered();const n=list.length,all=n>0&&list.every(it=>picked.has(it.name));
     g('stgall').checked=all;g('stgall').indeterminate=!all&&list.some(it=>picked.has(it.name));g('stgalltxt').textContent=T('stg.selectAll',{n})};
   g('stgall').onchange=()=>{const list=filtered();if(g('stgall').checked)list.forEach(it=>picked.add(it.name));else list.forEach(it=>picked.delete(it.name));render()};
@@ -477,20 +475,30 @@ function renderTransfer(sec){sec.innerHTML=`
   g('stgq').addEventListener('input',()=>{clearTimeout(qTimer);qTimer=setTimeout(rerender,150)});
   g('stgq').addEventListener('change',rerender);
   g('stgfmt').addEventListener('change',rerender);
-  const refresh=coalesce(async()=>{const [d,s,k,kb,bg,bt]=await Promise.all([j('/api/books/staging'),j('/api/books/status'),j('/api/koreader/status'),j('/api/koreader/books'),j('/api/budget/status'),j('/api/batch/status')]);
-    koInstalled=!!(k.ok&&k.installed);
+  const refresh=()=>{needFull=true;return run()};
+  // 网关自身的批量队列 / 并发闸门状态（见 batch.rs、budget.rs）。
+  const applyQueue=(bg,bt)=>{
     gatedPending=new Set(bg.ok!==false?bg.pending||[]:[]);gatedActive=new Set(bg.ok!==false?bg.active||[]:[]);
     if(bt.ok!==false){bs={running:!!bt.running,action:bt.action,total:bt.total||0,done:bt.done||0,current:bt.current,queued:bt.queued||[],failed:bt.failed||[]};batchQueued=new Set(bs.queued)}
-    // 批量/闸门进度不再轮询：网关在批量队列与并发闸门状态变化时发 SSE（area=books），和别的书库事件走同一条推送。
+    const gated=(gatedPending.size||gatedActive.size)?T('transfer.staging.gatedSummary',{pending:gatedPending.size,active:gatedActive.size}):'';
+    g('stgnotice').textContent=[koInstalled?'':T('transfer.staging.btn.koNotInstalled'),gated].filter(Boolean).join(' · ')};
+  /* 批量/闸门进度不轮询：网关在批量队列与并发闸门状态变化时发 SSE（area=books，不带 svc）。这类事件只改排队/进度，
+     **只重取这两个状态**（2 个请求）再重画；其余（book-serve 的书库变化、切 tab、重连）才全量取 6 个接口。
+     一轮批量里每本书网关自己要发 4～5 条这类事件，原来每条都触发全量重取（含 KOReader 目录列表）。
+     两种刷新走同一个 coalesce 串行执行（needFull 记"下一轮要不要全量"），不会出现旧的全量结果盖掉新的排队状态。 */
+  let needFull=false;
+  const run=coalesce(async()=>{const full=needFull;needFull=false;
+    if(!full){const [bg,bt]=await Promise.all([j('/api/budget/status'),j('/api/batch/status')]);applyQueue(bg,bt);render();return}
+    const [d,s,k,kb,bg,bt]=await Promise.all([j('/api/books/staging'),j('/api/books/status'),j('/api/koreader/status'),j('/api/koreader/books'),j('/api/budget/status'),j('/api/batch/status')]);
+    koInstalled=!!(k.ok&&k.installed);
+    applyQueue(bg,bt);
     fillSel('folder',s.ok?s.xochitlFolders||[]:[],'folder');
     fillSel('kfolder',(kb.items||[]).filter(x=>x.kind==='dir').map(x=>x.name),'kfolder');
-    if(d.ok===false){g('stglist').innerHTML=`<li class="small" style="color:var(--bad)">${esc(T('transfer.staging.unavailable',{msg:d.message||T('transfer.staging.notOpen')}))}</li>`;g('stgcap').textContent='';return}
+    if(d.ok===false){items=[];render();g('stgcap').textContent='';g('stgfree').textContent='';g('stglist').innerHTML=`<li class="small stg-empty" style="color:var(--bad)">${esc(T('transfer.staging.unavailable',{msg:d.message||T('transfer.staging.notOpen')}))}</li>`;return}
     items=d.items||[];const tot=items.reduce((a,b)=>a+b.bytes,0);g('stgcap').textContent=items.length?T('transfer.staging.capSummary',{count:items.length,size:fmtB(tot)}):'';
     // 清掉选中集合里的幽灵条目（书被改名/删除后旧名字再也选不中也取消不掉）
     const names=new Set(items.map(it=>it.name));for(const n of [...picked])if(!names.has(n))picked.delete(n);
     const fr=d.freeBytes;const low=fr!=null&&fr<300*1048576;g('stgfree').style.color=low?'var(--bad)':'';g('stgfree').textContent=fr!=null?T('transfer.staging.freeSpace',{free:fmtB(fr),lowWarn:low?T('transfer.staging.lowWarn'):''}):'';
-    const gated=(gatedPending.size||gatedActive.size)?T('transfer.staging.gatedSummary',{pending:gatedPending.size,active:gatedActive.size}):'';
-    g('stgnotice').textContent=[koInstalled?'':T('transfer.staging.btn.koNotInstalled'),gated].filter(Boolean).join(' · ');
     renderOriginals(d.originals||[]);
     g('stgnames').innerHTML=stgNameOptions(items);render()});
   // 原 PDF 备份（有文字层 PDF 转 EPUB 后保留 7 天）：恢复回母版库 / 提前删除。
@@ -511,7 +519,7 @@ function renderTransfer(sec){sec.innerHTML=`
   ag.onclick=async()=>{const url=au.value.trim();if(!url){am.textContent=T('transfer.fetchArticle.needUrl');return}ag.disabled=true;am.style.color='';am.textContent=T('transfer.fetchArticle.fetching');
     const r=await jsend('/api/books/staging/fetch-article','POST',{url,optimize:ao.checked});ag.disabled=false;
     am.style.color=r.ok===false?'var(--bad)':'var(--ok)';am.textContent=r.ok===false?('✗ '+(r.message||T('transfer.fetchArticle.failed'))):('✓ '+r.message);if(r.ok!==false){au.value='';refresh()}};
-  refresh();sec.refresh=refresh;subtabs(sec);}
+  refresh();sec.refresh=refresh;sec.onEvent=ev=>ev.area==='books'&&!ev.svc&&(ev.kind==='batch'||ev.kind==='budget')?run():refresh();subtabs(sec);}
 
 /* 服务 tab（按注册表出现）。key = 注册的服务名。service→seg（AREA）不再在这里手搓一份——
    那正是 gateway/src/manage.rs::MODULES 表已声明的唯一事实源，这里改成初始化时从
@@ -573,7 +581,8 @@ const TABS={
    row:(it,left,right,refresh)=>{const cur=(it.extra||{}).current;
      // alt="" 原来把这张图当装饰性处理，但壁纸缩略图本身就是内容（"这张壁纸长什么样"），屏幕阅读器
      // 会整个跳过（2026-09-09 审计发现）；文件名本身当描述最直接，跟右边视觉上显示的文字一致。
-     left.innerHTML=`<img src="/api/wallpapers/${encodeURIComponent(it.name)}" alt="${esc(T('wallpaper.thumbAlt',{name:it.name}))}" style="height:3.4em;border-radius:.3em;border:1px solid var(--line);margin-right:.6em;vertical-align:middle">${esc(it.name)}`;
+     left.style.cssText='display:flex;align-items:center;gap:.6em'; // 缩略图固定在左、长文件名在右侧自己折行，不绕着图片流
+     left.innerHTML=`<img src="/api/wallpapers/${encodeURIComponent(it.name)}" alt="${esc(T('wallpaper.thumbAlt',{name:it.name}))}" loading="lazy" style="height:3.4em;flex:none;border-radius:.3em;border:1px solid var(--line)"><span style="min-width:0">${esc(it.name)}</span>`;
      right.insertAdjacentHTML('beforeend',`<span>${fmtB(it.bytes)}</span>`+(cur?`<span class="badge on">${T('wallpaper.current')}</span>`:''));
      if(!cur){const b=document.createElement('button');b.className='btn';b.textContent=T('wallpaper.use');guardClick(b,async()=>{const r=await jsend('/api/wallpapers/current','PUT',{name:it.name});if(r.ok===false){toast(r.message||T('wallpaper.setFailed'));return}refresh()});right.appendChild(b);
        right.appendChild(delBtn(T('wallpaper.deleteConfirm',{name:it.name}),'/api/wallpapers/'+encodeURIComponent(it.name),refresh))}}})}}
@@ -732,7 +741,7 @@ function renderNotes(sec){sec.innerHTML=`
       // 这条本身去哪（配置的目的地）+ 它所在章节目前的生成/导出状态（章节维度，不是这条自己确认被
       // 收进去了没——归档/撤销后这条已经不在活条目集合里，没法再逆推"当初有没有被打进那次生成"，
       // 只能诚实地给"这一章大致是什么状态"这个参考信息，用户反馈"回收站该显示导出到哪里"）。
-      row.innerHTML=`<span class="badge">${T(STATUS_NAMES[e.status])||e.status}</span><span class="badge">${DEST_ICON[dv]()}</span>${syncBadges(chSync,dv)}
+      row.innerHTML=`<div class="trash-badges"><span class="badge">${T(STATUS_NAMES[e.status])||e.status}</span><span class="badge">${DEST_ICON[dv]()}</span>${syncBadges(chSync,dv)}</div>
         <div class="txt">p.${e.page_index+1}${e.chapter_title?' · '+esc(e.chapter_title):''}<br><span class="q">${esc(text)}</span>${e.status==='revoked'?`<br><span class="small">${T('notes.trash.revokedHint')}</span>`:''}</div>
         <button class="btn" data-restore>${T('notes.trash.restoreBtn')}</button>`;
       guardClick(row.querySelector('[data-restore]'),async()=>{if(!(await restoreOne(e.id)))return;await reloadBook(renderTrash,renderBrowse,renderBook)});
@@ -1060,8 +1069,8 @@ function mountModelPanel(root,seg,title,icon,showAuto){
     ${showAuto?`<div class="row"><label class="toggle"><input type="checkbox" data-auto> ${T('models.autoTranscribeToggle')}</label></div>`:''}
     <label class="field">${T('models.priceLabel')}</label>
     <div class="row" data-pricerow>
-      <input type="number" step="0.001" min="0" data-pricein placeholder="${T('models.priceInPlaceholder')}" style="max-width:7em">
-      <input type="number" step="0.001" min="0" data-priceout placeholder="${T('models.priceOutPlaceholder')}" style="max-width:7em">
+      <input type="number" step="0.001" min="0" data-pricein placeholder="${T('models.priceInPlaceholder')}" style="max-width:6em">
+      <input type="number" step="0.001" min="0" data-priceout placeholder="${T('models.priceOutPlaceholder')}" style="max-width:6em">
       <button class="btn" data-pricesave>${T('models.savePriceBtn')}</button>
     </div>
     <label class="field">${T('models.usageLabel')}</label>
@@ -1090,7 +1099,7 @@ function mountModelPanel(root,seg,title,icon,showAuto){
     if(isCustom){modelInp.value=c.model||'';urlInp.value=c.baseUrl||''}
     else{presetSel.innerHTML=modelsOf(activeVendor).map(p=>`<option value="${esc(p.id)}">${esc(p.label)}</option>`).join('');presetSel.value=c.activePreset}
     keyRow.innerHTML=c.hasKey
-      ?`<span class="small">${esc(T('models.keySaved',{key:c.keyMasked||'••••'}))}</span><button class="btn" data-delkey>${T('action.delete')}</button>`
+      ?`<span class="small">${T('models.keySaved',{key:esc(c.keyMasked||'••••')})}</span><button class="btn" data-delkey>${T('action.delete')}</button>`
       :`<input type="password" placeholder="${T('models.keyInputPlaceholder')}" data-keyinput style="flex:1;min-width:11em" autocomplete="off"><button class="btn pri" data-savekey>${T('models.saveKeyBtn')}</button>`;
     if(autoBox){autoBox.checked=!!c.auto;autoBox.onchange=async()=>{const r=await put({auto:autoBox.checked});if(r.ok===false){toast(r.message||T('common.failed'));autoBox.checked=!autoBox.checked}}}
     const price=c.price||{inputPer1k:0,outputPer1k:0};
@@ -1209,7 +1218,8 @@ function renderBattopDetail(sec){
       <h4 style="margin:.6em 0 .2em">${T('battop.wake.rankHeading')}</h4>${battopTopList(d.wake)}`,
       battopActiveWindowIdx(wakeEl.querySelector('[data-wakewin]')));
   };
-  refresh();sec.refresh=refresh;subtabs(sec);
+  // 不在这里先取一次：这个面板只在 battop 运行时显示，由「管理」页的 erApply 在确认运行后调 sec.refresh。
+  sec.refresh=refresh;subtabs(sec);
 }
 
 
@@ -1279,23 +1289,29 @@ function renderManage(sec){sec.innerHTML=`
   </div>`;
   const mvRefresh=mountModelPanel($('#modelcards',sec),'transcribe',T('manage.models.visionTitle'),'👁',true);
   const mtRefresh=mountModelPanel($('#modelcards',sec),'mind',T('manage.models.textTitle'),'✎');
+  /* 基石 + 模块三态 + 系统增强开关：三个接口并行取，/api/enhance/status 只取一次（扩展加载状态在「基石」与
+     「系统增强/实验室」两处都要用，原来各取一遍，每次都让网关扫一遍 /proc）。 */
   const refresh=async()=>{
-    const f=await j('/api/foundation');$('#found',sec).innerHTML=f.ok===false?`<span>${esc(f.message)}</span>`:
-      `<b>xovi</b><span>${badge(f.xovi?T('common.installed'):T('common.notInstalled'),f.xovi)}</span><b>appload</b><span>${badge(f.appload?T('common.installed'):T('common.notInstalled'),f.appload)}</span><b>qt-resource-rebuilder</b><span>${badge(f.qrr?T('common.installed'):T('common.notInstalled'),f.qrr)}</span><b>KOReader</b><span>${badge(f.koreader?T('common.installed'):T('common.notInstalled'),f.koreader)}</span><b>WeRead</b><span>${badge(f.weread?T('common.installed'):T('common.notInstalled'),f.weread)}</span>`;
-    const es=await j('/api/enhance/status');const ld=(es.ok!==false&&es.loaded)||{};
-    if(f.ok!==false)$('#found',sec).insertAdjacentHTML('beforeend',`<b>${T('manage.loaded.xoviLive')}</b><span>${badge(ld.xovi?T('manage.loaded.on'):T('manage.loaded.off'),!!ld.xovi)}${[...(ld.extensions||[]),...(ld.qmds||[])].length?' <span class="small">'+esc([...(ld.extensions||[]),...(ld.qmds||[])].join(' · '))+'</span>':''}</span>`);
-    const d=await j('/api/manage');const ul=$('#mods',sec);ul.innerHTML='';(d.modules||[]).forEach(m=>{const li=document.createElement('li');li.style.flexWrap='wrap';
-      let state,cls;if(!m.installable){state=T('manage.modules.state.notLaunched');cls=''}else if(!m.installed){state=T('common.notInstalled');cls='off'}else if(m.running){state=T('manage.modules.state.on');cls='on'}else{state=T('manage.modules.state.installedOff');cls=''}
-      const label=T('manage.modules.label.'+m.seg)||m.label; // seg 缺对应 key 时兜底用后端 Rust 侧的中文 label，不留空
-      const left=document.createElement('span');left.innerHTML=`${esc(label)} <span class="small">${esc(m.service)}</span> <span class="badge ${cls}">${state}</span>`;
-      const right=document.createElement('span');right.style.cssText='display:flex;gap:.4em;align-items:center';
+    const [f,es,d]=await Promise.all([j('/api/foundation'),j('/api/enhance/status'),j('/api/manage')]);
+    const inst=v=>badge(v?T('common.installed'):T('common.notInstalled'),v);
+    const ld=(es.ok!==false&&es.loaded)||{},live=[...(ld.extensions||[]),...(ld.qmds||[])];
+    $('#found',sec).innerHTML=f.ok===false?`<span>${esc(f.message)}</span>`:
+      `<b>xovi</b><span>${inst(f.xovi)}</span><b>appload</b><span>${inst(f.appload)}</span><b>qt-resource-rebuilder</b><span>${inst(f.qrr)}</span><b>KOReader</b><span>${inst(f.koreader)}</span><b>WeRead</b><span>${inst(f.weread)}</span>`
+      +`<b>${T('manage.loaded.xoviLive')}</b><span>${badge(ld.xovi?T('manage.loaded.on'):T('manage.loaded.off'),!!ld.xovi)}${live.length?' <span class="small">'+esc(live.join(' · '))+'</span>':''}</span>`;
+    const ul=$('#mods',sec);ul.innerHTML='';(d.modules||[]).forEach(m=>{
+      const [state,cls]=!m.installable?[T('manage.modules.state.notLaunched'),'']:!m.installed?[T('common.notInstalled'),'off']:m.running?[T('manage.modules.state.on'),'on']:[T('manage.modules.state.installedOff'),''];
+      const lk='manage.modules.label.'+m.seg,label=I18N[lk]?T(lk):m.label; // 语言包缺这个 seg 时兜底用后端 Rust 侧的中文 label（T() 缺 key 返回 key 本身，不能靠 ||）
+      const left=el('span',{html:`${esc(label)} <span class="small">${esc(m.service)}</span> <span class="badge ${cls}">${state}</span>`});
+      const right=el('span',{style:'display:flex;gap:.4em;align-items:center'});
       if(m.installable&&m.installed){
-        const t=document.createElement('button');t.className='btn';t.textContent=m.running?T('manage.modules.turnOff'):T('manage.modules.turnOn');
-        guardClick(t,async()=>{const r=await modAct(m.seg,m.running?'stop':'start');if(r.ok===false)toast(r.message);setTimeout(refresh,600)});right.appendChild(t);
-        const u=document.createElement('button');u.className='btn';u.textContent=T('manage.modules.uninstallBtn');
-        guardClick(u,async()=>{if(await confirmDialog(T('manage.modules.confirmUninstall',{label}))){const r=await modAct(m.seg,'uninstall');if(r.ok===false)toast(r.message);else toast(T('manage.modules.uninstalled',{label}),'ok');setTimeout(()=>location.reload(),800)}});right.appendChild(u);
-      }else if(m.installable){const g=document.createElement('span');g.className='small';g.innerHTML=T('manage.modules.installCmd',{only:m.only});right.appendChild(g)}
-      li.append(left,right);ul.appendChild(li)});};
+        const t=el('button',{class:'btn',text:m.running?T('manage.modules.turnOff'):T('manage.modules.turnOn')});
+        guardClick(t,async()=>{const r=await modAct(m.seg,m.running?'stop':'start');if(r.ok===false)toast(r.message);setTimeout(refresh,600)});
+        const u=el('button',{class:'btn',text:T('manage.modules.uninstallBtn')});
+        guardClick(u,async()=>{if(await confirmDialog(T('manage.modules.confirmUninstall',{label}))){const r=await modAct(m.seg,'uninstall');if(r.ok===false)toast(r.message);else toast(T('manage.modules.uninstalled',{label}),'ok');setTimeout(()=>location.reload(),800)}});
+        right.append(t,u);
+      }else if(m.installable)right.appendChild(el('span',{class:'small',html:T('manage.modules.installCmd',{only:esc(m.only)})}));
+      ul.appendChild(el('li',{style:'flex-wrap:wrap'},[left,right]))});
+    if(es.ok!==false)await erApply(es)};
   guardClick($('#allon',sec),async()=>{const d=await j('/api/manage');for(const m of (d.modules||[]))if(m.installable&&m.installed&&!m.running)await modAct(m.seg,'start');refresh()});
   guardClick($('#alloff',sec),async()=>{if(!await confirmDialog(T('manage.modules.confirmAllOff')))return;const d=await j('/api/manage');for(const m of (d.modules||[]))if(m.installable&&m.installed&&m.running)await modAct(m.seg,'stop');refresh()});
   /* 系统增强/实验室（Track 3，2026-09-09；实验室 2026-09-10 加）：CJK 画线吸附/CJK 手写笔迹优化/
@@ -1310,7 +1326,7 @@ function renderManage(sec){sec.innerHTML=`
   const manageNav=sec.querySelector(':scope > .subnav');
   const battopNavBtn=manageNav.children[3],battopPanel=$('#battopDetail',sec);
   renderBattopDetail(battopPanel);
-  const erRefresh=async()=>{const r=await j('/api/enhance/status');if(r.ok===false)return;
+  const erApply=async r=>{
     hlBox.checked=!!r.hlSnapCjk;
     hwBox.checked=!!r.hwStrokeEnabled;
     importMdBox.checked=!!r.notesImportMdEnabled;
@@ -1338,7 +1354,7 @@ function renderManage(sec){sec.innerHTML=`
     if(running&&battopPanel.refresh)battopPanel.refresh()};
   bindToggle(hlBox,'/api/enhance/qol','hlSnapCjk');bindToggle(hwBox,'/api/enhance/qol','hwStrokeEnabled');bindToggle(importMdBox,'/api/enhance/qol','notesImportMdEnabled');bindToggle(comicMarginBox,'/api/enhance/qol','comicMinMargin');
   bindToggle(tapBox,'/api/enhance/qol','tapPageTurn');bindToggle(rtlBox,'/api/enhance/qol','rtlPageTurn');
-  refresh();erRefresh();sec.refresh=()=>{refresh();mvRefresh();mtRefresh();erRefresh()};subtabs(sec);}
+  refresh();sec.refresh=()=>Promise.all([refresh(),mvRefresh(),mtRefresh()]);subtabs(sec);}
 
 (async()=>{
   // 语言包先拿到手：下面 addTab 用得到 T()，晚拿会让顶层导航先短暂显示 key 本身再跳成文字。
@@ -1348,7 +1364,7 @@ function renderManage(sec){sec.innerHTML=`
   document.title=T('app.title');$('#applogo').textContent=T('app.title');
   $('#navpw').textContent=T('nav.changePassword');$('#navca').textContent=T('nav.caCert');$('#logout').textContent=T('nav.signOut');
   $('#mainloading').textContent=T('main.loading');
-  const langsel=$('#langsel');langsel.value=lang;
+  const langsel=$('#langsel');langsel.value=lang;langsel.setAttribute('aria-label',T('nav.lang'));
   langsel.onchange=()=>{LS.set('lang',langsel.value);location.reload()};
 
   const d=await j('/api/services');
@@ -1367,9 +1383,14 @@ function renderManage(sec){sec.innerHTML=`
   const secByArea={};const dirty=new Set();
   /* 各 tab 的刷新统一走它（切 tab、SSE、可见性恢复）：coalesce 合并并发触发。 */
   const refreshSec=sec=>{if(!sec.refresh)return;(sec._rf||(sec._rf=coalesce(async()=>{await sec.refresh()})))()};
+  /* 各 tab **第一次切过去时才渲染**（渲染本身就会取一次数据）：此前页面一打开就把笔记/其他/管理全部渲染、各自取一遍数据
+     （二十来个请求，还让网关扫 /proc、问模型服务），而且首个 tab 渲染完紧接着又被点击刷新一次，同样的 6 个请求发两遍。
+     之后再切回来才走 refreshSec 刷新。 */
   const addTab=(title,render,first,area)=>{const b=document.createElement('button');b.textContent=title;const sec=document.createElement('section');sec.area=area;secByArea[area]=sec;
-    b.onclick=()=>{[...nav.children].forEach(x=>x.classList.remove('on'));[...main.children].forEach(x=>x.classList.remove('on'));b.classList.add('on');sec.classList.add('on');dirty.delete(area);if(sec.refresh)refreshSec(sec)};
-    nav.appendChild(b);main.appendChild(sec);render(sec);if(first)b.onclick();return sec};
+    let rendered=false;
+    b.onclick=()=>{[...nav.children].forEach(x=>x.classList.remove('on'));[...main.children].forEach(x=>x.classList.remove('on'));b.classList.add('on');sec.classList.add('on');dirty.delete(area);
+      if(!rendered){rendered=true;render(sec)}else if(sec.refresh)refreshSec(sec)};
+    nav.appendChild(b);main.appendChild(sec);if(first)b.onclick();return sec};
   addTab(T('tab.transfer'),renderTransfer,true,'books');          // 总入口（入库｜母版库），固定第一位（book-serve 不在时列表里提示去管理页开）
   noteSvc.forEach((s)=>addTab(TABS[s.name].titleKey?T(TABS[s.name].titleKey):TABS[s.name].title,TABS[s.name].render,false,AREA[s.name]||s.name));
   if(otherSvcs.length){
@@ -1403,6 +1424,7 @@ function renderManage(sec){sec.innerHTML=`
       const sec=secByArea[ev.area];if(!sec)return;
       if(!sec.classList.contains('on'))dirty.add(ev.area);
       else if(document.hidden)activeStale=true;
+      else if(sec.onEvent)sec.onEvent(ev); // tab 自己按事件决定刷多少（母版库：网关排队/进度事件只重取两个状态）
       else refreshSec(sec)}};
   const closeEs=()=>{if(!es)return;es.close();es=null;liveDot.style.color='var(--bad)';liveDot.title=T('common.eventStreamReconnecting')};
   document.addEventListener('visibilitychange',()=>{
