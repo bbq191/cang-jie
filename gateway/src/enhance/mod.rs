@@ -25,7 +25,7 @@ pub fn status(paths: &Paths) -> Reply {
         "notesImportMdEnabled": qol::notes_import_md_enabled(paths),
         "comicMinMargin": qol::comic_min_margin(paths),
         "battop": {"installed": b.installed, "running": b.running, "lastSampleAt": b.last_sample_at},
-        "loaded": loaded::scan(std::path::Path::new("/proc")),
+        "loaded": loaded::scan(std::path::Path::new("/proc"), &paths.home().join("xovi/exthome/qt-resource-rebuilder")),
     }))
 }
 

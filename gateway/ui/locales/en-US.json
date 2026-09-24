@@ -492,5 +492,11 @@
   "manage.loaded.onTitle": "The extension is mapped into the xochitl process; the switch takes effect",
   "manage.loaded.offTitle": "The extension is not in the xochitl process, so the switch has no effect. It may not be installed, may have been rejected as incompatible with this firmware, or xovi is not active (run xovi/start after a reboot)",
   "manage.loaded.noXochitlTitle": "xochitl main process not found; cannot tell",
-  "manage.loaded.xoviLive": "Extensions live in xochitl"
+  "manage.loaded.xoviLive": "Extensions live in xochitl",
+  "manage.loaded.pending": "Restart needed",
+  "manage.loaded.webOnly": "Web only",
+  "manage.loaded.webOnlyTitle": "Only shows or hides a sub-tab on the Notes page; nothing is loaded into xochitl, takes effect immediately",
+  "manage.loaded.qmdOnTitle": "xochitl loaded this qmd patch at startup; the switch takes effect (inferred: qt-resource-rebuilder is in the process and the patch file predates xochitl's start)",
+  "manage.loaded.qmdPendingTitle": "The patch file is newer than the running xochitl: changed but not active until xochitl restarts",
+  "manage.loaded.qmdOffTitle": "xochitl has not loaded this qmd patch, so the switch has no effect. The patch may be missing, or qt-resource-rebuilder / xovi is not active"
 }

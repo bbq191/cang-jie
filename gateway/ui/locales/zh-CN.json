@@ -492,5 +492,11 @@
   "manage.loaded.onTitle": "xochitl 进程里已经映射了这个扩展，开关会生效",
   "manage.loaded.offTitle": "xochitl 进程里没有这个扩展：开关开了也不会生效。可能没装、固件不兼容被拒绝加载，或者 xovi 没生效（设备重启后要跑 xovi/start）",
   "manage.loaded.noXochitlTitle": "没找到 xochitl 主进程，无法判断",
-  "manage.loaded.xoviLive": "xochitl 里生效的扩展"
+  "manage.loaded.xoviLive": "xochitl 里生效的扩展",
+  "manage.loaded.pending": "待重启",
+  "manage.loaded.webOnly": "网页功能",
+  "manage.loaded.webOnlyTitle": "只控制「笔记」页的子标签显示与否，不需要往 xochitl 里加载任何东西，开了即生效",
+  "manage.loaded.qmdOnTitle": "xochitl 启动时已载入这个 qmd 补丁，开关会生效（按加载机制推断：qt-resource-rebuilder 在进程里、补丁文件早于 xochitl 启动）",
+  "manage.loaded.qmdPendingTitle": "补丁文件比当前 xochitl 进程新：改过但还没生效，重启 xochitl 后才载入",
+  "manage.loaded.qmdOffTitle": "xochitl 里没有载入这个 qmd 补丁：开关开了也不会生效。可能补丁没装，或 qt-resource-rebuilder / xovi 没生效"
 }

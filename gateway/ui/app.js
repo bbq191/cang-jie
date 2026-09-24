@@ -1255,10 +1255,10 @@ function renderManage(sec){sec.innerHTML=`
       <label class="toggle"><input type="checkbox" id="labHwStroke"> ${T('manage.lab.hwStroke.toggle')}</label> <span id="labHwStrokeLoaded"></span></div>
     <div class="card"><h3 style="margin-top:0">${T('manage.lab.comicMargin.title')}</h3>
       <p class="small">${T('manage.lab.comicMargin.desc')}</p>
-      <label class="toggle"><input type="checkbox" id="labComicMargin"> ${T('manage.lab.comicMargin.toggle')}</label></div>
+      <label class="toggle"><input type="checkbox" id="labComicMargin"> ${T('manage.lab.comicMargin.toggle')}</label> <span id="labComicMarginLoaded"></span></div>
     <div class="card"><h3 style="margin-top:0">${T('manage.lab.importMd.title')}</h3>
       <p class="small">${T('manage.lab.importMd.desc')}</p>
-      <label class="toggle"><input type="checkbox" id="labImportMd"> ${T('manage.lab.importMd.toggle')}</label></div>
+      <label class="toggle"><input type="checkbox" id="labImportMd"> ${T('manage.lab.importMd.toggle')}</label> <span class="badge" title="${T('manage.loaded.webOnlyTitle')}">${T('manage.loaded.webOnly')}</span></div>
   </div>`;
   const mvRefresh=mountModelPanel($('#modelcards',sec),'transcribe',T('manage.models.visionTitle'),'👁',true);
   const mtRefresh=mountModelPanel($('#modelcards',sec),'mind',T('manage.models.textTitle'),'✎');
@@ -1266,7 +1266,7 @@ function renderManage(sec){sec.innerHTML=`
     const f=await j('/api/foundation');$('#found',sec).innerHTML=f.ok===false?`<span>${esc(f.message)}</span>`:
       `<b>xovi</b><span>${badge(f.xovi?T('common.installed'):T('common.notInstalled'),f.xovi)}</span><b>appload</b><span>${badge(f.appload?T('common.installed'):T('common.notInstalled'),f.appload)}</span><b>qt-resource-rebuilder</b><span>${badge(f.qrr?T('common.installed'):T('common.notInstalled'),f.qrr)}</span><b>KOReader</b><span>${badge(f.koreader?T('common.installed'):T('common.notInstalled'),f.koreader)}</span><b>WeRead</b><span>${badge(f.weread?T('common.installed'):T('common.notInstalled'),f.weread)}</span>`;
     const es=await j('/api/enhance/status');const ld=(es.ok!==false&&es.loaded)||{};
-    if(f.ok!==false)$('#found',sec).insertAdjacentHTML('beforeend',`<b>${T('manage.loaded.xoviLive')}</b><span>${badge(ld.xovi?T('manage.loaded.on'):T('manage.loaded.off'),!!ld.xovi)}${(ld.extensions||[]).length?' <span class="small">'+esc(ld.extensions.join(' · '))+'</span>':''}</span>`);
+    if(f.ok!==false)$('#found',sec).insertAdjacentHTML('beforeend',`<b>${T('manage.loaded.xoviLive')}</b><span>${badge(ld.xovi?T('manage.loaded.on'):T('manage.loaded.off'),!!ld.xovi)}${[...(ld.extensions||[]),...(ld.qmds||[])].length?' <span class="small">'+esc([...(ld.extensions||[]),...(ld.qmds||[])].join(' · '))+'</span>':''}</span>`);
     const d=await j('/api/manage');const ul=$('#mods',sec);ul.innerHTML='';(d.modules||[]).forEach(m=>{const li=document.createElement('li');li.style.flexWrap='wrap';
       let state,cls;if(!m.installable){state=T('manage.modules.state.notLaunched');cls=''}else if(!m.installed){state=T('common.notInstalled');cls='off'}else if(m.running){state=T('manage.modules.state.on');cls='on'}else{state=T('manage.modules.state.installedOff');cls=''}
       const label=T('manage.modules.label.'+m.seg)||m.label; // seg 缺对应 key 时兜底用后端 Rust 侧的中文 label，不留空
@@ -1305,6 +1305,12 @@ function renderManage(sec){sec.innerHTML=`
       :`<span class="badge off" title="${T('manage.loaded.offTitle')}">${T('manage.loaded.off')}</span>`;
     $('#erHlSnapLoaded',sec).innerHTML=loadedBadge('hl-snap.so');
     $('#labHwStrokeLoaded',sec).innerHTML=loadedBadge('hw-stroke.so');
+    // 漫画页边距靠 qmd 补丁（xochitl 启动时由 qt-resource-rebuilder 读一次），不是 .so：看 loaded.qmds / qmdsPending。
+    const qmd='shelf-comic-margins.qmd';
+    $('#labComicMarginLoaded',sec).innerHTML=!ld.xochitl?loadedBadge(qmd)
+      :(ld.qmds||[]).includes(qmd)?`<span class="badge on" title="${T('manage.loaded.qmdOnTitle')}">${T('manage.loaded.on')}</span>`
+      :(ld.qmdsPending||[]).includes(qmd)?`<span class="badge" title="${T('manage.loaded.qmdPendingTitle')}">${T('manage.loaded.pending')}</span>`
+      :`<span class="badge off" title="${T('manage.loaded.qmdOffTitle')}">${T('manage.loaded.off')}</span>`;
     await battopToggleRefresh(r);
     const running=!!(r.battop&&r.battop.running);
     if(!running&&battopNavBtn.classList.contains('on'))manageNav.children[0].click();

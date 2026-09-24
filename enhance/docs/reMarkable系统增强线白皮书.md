@@ -72,7 +72,7 @@
 | 电池刺客 | 「管理 → 系统增强」（2026-09-21 从「实验室」移来）；开了才出现「电池刺客」数据页 | `systemctl start/stop battop` |
 | CJK 手写笔迹优化 | 「管理 → 实验室」 | 纯网页层派生开关：`hwStrokeNibMinRatio < 1.0` 视为已开；开写 `0.6`、关写 `1.0`（两个 min_ratio 字段同步写） |
 
-**开关 ≠ 已生效**（2026-09-24 加）：两个扩展开关旁边各有一枚「已加载 / 未加载」徽章，「管理 → 基石」另列一行「xochitl 里生效的扩展」。数据来自 `gateway/src/enhance/loaded.rs`：找 `comm==xochitl` 且父进程为 1 的主进程（排除渲染 PDF 时 fork 出的同名 worker），读它的 `/proc/<pid>/maps`，映射了哪个 `extensions.d/*.so` 就是真加载了，`xovi.so` 在不在说明 xovi 有没有生效。起因是两次"开关看着开了、其实没生效"：09-09 langhook 整个从设备上消失（§03a），hw-stroke 因 GLIBC 版本不符静默加载失败（§04）。开关只写配置，扩展没加载时开了也没用，现在网页上直接看得见。
+**开关 ≠ 已生效**（2026-09-24 加）：两个扩展开关旁边各有一枚「已加载 / 未加载」徽章，「管理 → 基石」另列一行「xochitl 里生效的扩展」。数据来自 `gateway/src/enhance/loaded.rs`：找 `comm==xochitl` 且父进程为 1 的主进程（排除渲染 PDF 时 fork 出的同名 worker），读它的 `/proc/<pid>/maps`，映射了哪个 `extensions.d/*.so` 就是真加载了，`xovi.so` 在不在说明 xovi 有没有生效。起因是两次"开关看着开了、其实没生效"：09-09 langhook 整个从设备上消失（§03a），hw-stroke 因 GLIBC 版本不符静默加载失败（§04）。开关只写配置，扩展没加载时开了也没用，现在网页上直接看得见。「漫画页边距最小化」靠的是 qmd 补丁 `shelf-comic-margins.qmd`，不是 `.so`，由 qt-resource-rebuilder 在 xochitl 启动时读一次：qt-resource-rebuilder.so 在主进程里、补丁文件在它的 exthome、且修改时间早于 xochitl 启动时间（`/proc/<pid>/stat` 第 22 列 + `/proc/stat` 的 btime），算已载入；文件比进程新报「待重启」。这是按加载机制推断，看不到补丁里的 LOCATE 是否全部命中。「导入 md 文档」只控制网页子标签，标「网页功能」，没有加载这回事。
 
 写这个共享文件遵守**全量写回**铁律：`gateway/src/enhance/qol.rs` 把整份文件当不透明 JSON map 读进来、只覆盖要改的键，不知道的键原样写回，避免冲掉别处（旧原生设置页、C hook）写入的开关。
 
