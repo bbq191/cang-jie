@@ -1,10 +1,9 @@
 //! 反向代理（Facade）：把 `/api/<seg>[/<rest>]` 转给注册表里的服务（剥掉 `<seg>`），状态码/JSON 原样回。
-//! **只有请求方向真的流式**（`send(&mut *req.body)` 直接转发原始请求体读取器，上传大文件不额外占内存）；
-//! **响应方向整体缓冲进内存**（`into_reader().read_to_end(...)`，2026-09-09 审计发现文档写的"body 流式
-//! 透传"跟实现不符，这里改成如实描述）——`rmsvc_core::http::Reply::stream` 现有的流式响应通道是给 SSE
-//! 用的，底层走 `tiny_http` 的 `upgrade()` 直接接管裸 socket（不走常规的 Content-Length/chunked 头协商），
-//! 拿来复用给任意大小的代理下载响应需要先确认这套机制对非 SSE 场景是否语义正确，评估下来风险和这条
-//! 低优先级审计项本身的收益不成比例，这次只改注释，没有改行为。
+//! **请求方向流式**（`send(&mut *req.body)` 直接转发原始请求体读取器，上传大文件不额外占内存）。
+//! **响应方向**：后端给了 `Content-Length` 的 200 应答，若是下载（带 `Content-Disposition`）或体积超过
+//! [`STREAM_MIN_BYTES`]（壁纸原图等），走 `Reply::sized_stream` 按定长边读边发，不整个读进网关内存；
+//! 其余（JSON 等小应答、没有长度的应答）读完再回——没有长度的流只能走 SSE 那条"读到连接关闭"的通道，
+//! 不适合普通下载（见 [`stream_len`]）。
 //!
 //! **并发/内存预算闸门**（2026-09-19）：`优化`/`加入xochitl`/`加入KOReader` 这三个操作在这里统一
 //! 拦一道——真机测出漫画 optimize/超限分卷投递内存峰值 ≈ 处理的文件体积本身，`book-serve`/
@@ -49,6 +48,17 @@ fn gated_operation(service_name: &str, rest: &str, method: Method) -> Option<Gat
         ("koreader-serve", "books/adopt") => Some(GatedOp::KoreaderAdopt),
         _ => None,
     }
+}
+
+/// 不带 `Content-Disposition` 的应答超过这个体积也流式转发（壁纸原图、裁图等图片；JSON 列表远小于它）。
+const STREAM_MIN_BYTES: u64 = 256 * 1024;
+
+/// 这条后端应答该不该流式转发；该 → 返回定长。**只流式转发有 `Content-Length` 的 200**：定长流由 tiny_http
+/// 按长度发完即结束；没有长度的流只能走 `Reply::stream`（SSE 用的"升级成裸 socket、读到连接关闭"），拿来做
+/// 普通下载会让客户端等不到结束（2026-09-24 真机下载卡住就是这一类），所以宁可读完再回。
+fn stream_len(status: u16, download: bool, len: Option<u64>) -> Option<u64> {
+    let n = len?;
+    (status == 200 && (download || n > STREAM_MIN_BYTES)).then_some(n)
 }
 
 /// `/api/{svc}/*` → 按 URL 段查目录表找服务名再转发（段不在表里 404）。
@@ -113,17 +123,10 @@ pub fn forward(paths: &Paths, req: &mut Request<'_>) -> ApiResult {
     // 只转发这一个头：后端服务想让浏览器"下载保存"而不是原地展示/跳转时设它（如 md/zip 导出、CA 证书下载，
     // 见 gateway::main 的证书下载同款用法）；别的头一律不转发，不给后端服务借这条通道夹带别的东西。
     let disposition = resp.header("Content-Disposition").map(str::to_string);
-    // 带 Content-Disposition 的是下载（母版库原件可达上百 MB）：边读边发，不整个读进网关内存；
-    // 其余（JSON 等小应答）照旧读完再回。
-    // 后端给了 Content-Length 就原样带上，网关也按定长转发（没有长度就走 SSE 式的读到关闭）。
-    let mut reply = if status == 200 && disposition.is_some() {
-        let len = resp.header("Content-Length").and_then(|v| v.parse::<u64>().ok());
-        let reader: Box<dyn std::io::Read + Send> = Box::new(resp.into_reader());
-        match len {
-            Some(n) => Reply::sized_stream(&ctype, reader, n),
-            None => Reply::stream(&ctype, reader),
-        }
-        .with_status(status)
+    // 下载（母版库原件可达上百 MB）与大应答：按定长边读边发，不整个读进网关内存；其余照旧读完再回。
+    let len = resp.header("Content-Length").and_then(|v| v.parse::<u64>().ok());
+    let mut reply = if let Some(n) = stream_len(status, disposition.is_some(), len) {
+        Reply::sized_stream(&ctype, Box::new(resp.into_reader()), n).with_status(status)
     } else {
         let mut body = Vec::new();
         resp.into_reader().read_to_end(&mut body).map_err(|e| ApiError::internal(e.to_string()))?;
@@ -218,6 +221,15 @@ mod tests {
         assert_eq!(gated_operation("book-serve", "staging/optimize", Method::Get), None, "方法不对不该命中");
         assert_eq!(gated_operation("koreader-serve", "books", Method::Get), None);
         assert_eq!(gated_operation("font-serve", "staging/optimize", Method::Post), None, "服务名对不上不该误命中");
+    }
+
+    #[test]
+    fn streams_only_sized_downloads_or_big_bodies() {
+        assert_eq!(stream_len(200, true, Some(10)), Some(10), "带长度的下载：流式");
+        assert_eq!(stream_len(200, false, Some(STREAM_MIN_BYTES + 1)), Some(STREAM_MIN_BYTES + 1), "大图片：流式");
+        assert_eq!(stream_len(200, false, Some(1000)), None, "小 JSON：读完再回");
+        assert_eq!(stream_len(200, true, None), None, "没有长度的下载不能走读到关闭的流");
+        assert_eq!(stream_len(404, true, Some(10)), None, "错误应答读完再回");
     }
 
     /// 回归：一次查询失败（大书优化时 book-serve 忙、查询超时）不能提前放名额，要等它真的不忙。
