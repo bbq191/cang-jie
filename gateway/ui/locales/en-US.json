@@ -503,6 +503,6 @@
   "manage.enhance.pageTurn.desc": "Both switches only affect xochitl's built-in reader and are off by default; they are read when a book is opened, so reopen the book after changing them.",
   "manage.enhance.pageTurn.tapToggle": "Tap to turn pages",
   "manage.enhance.pageTurn.tapHint": "Tap the left or right edge (about 7% wide, 45%–80% of the screen height) to turn pages: right edge = next, left edge = previous. Elsewhere taps work as usual (double-tap for text, links).",
-  "manage.enhance.pageTurn.rtlToggle": "Right-to-left manga",
+  "manage.enhance.pageTurn.rtlToggle": "Manga page-turn rule",
   "manage.enhance.pageTurn.rtlHint": "For books whose EPUB declares right-to-left reading (common for manga), swiping left-to-right and tapping the left edge go to the next page. Other books are unaffected."
 }

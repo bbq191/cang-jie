@@ -34,7 +34,7 @@
 按进程/应用/唤醒源统计耗电的采样服务。**✅ 真机通，但有意不开机自启**：它和两次整机冻死有关（08-29 坐实，09-23 时间吻合），09-23 起采样循环里已不创建任何子进程。开关：网页「管理 → 系统增强」，`systemctl start/stop`；开着时出现「电池刺客」数据页。
 
 **reader-page-turn —— xochitl 阅读器翻页**（§03i）
-两个功能：**单击翻页**（点屏幕左右各 7% 边缘、纵向 45%–80% 的区域翻页）和**日漫从右往左翻页**（EPUB 标了从右往左的书，左右滑和点边缘都对调）。是 qmd 补丁 `reader-page-turn.qmd`（源码在 `shelf/xovi/`，随 book 服务安装，因为要问 book-serve 这本书的方向）。开关：网页「管理 → 系统增强」，写 `tapPageTurn` / `rtlPageTurn`，**默认都关**，打开书时读、下次打开书生效。**离线验证过（qmldiff 在 .172 真实 QML 上全部命中），待真机验证**。
+两个功能：**单击翻页**（点屏幕左右各 7% 边缘、纵向 45%–80% 的区域翻页）和**日漫翻页规则**（EPUB 标了从右往左的书，左右滑和点边缘都对调）。是 qmd 补丁 `reader-page-turn.qmd`（源码在 `shelf/xovi/`，随 book 服务安装，因为要问 book-serve 这本书的方向）。开关：网页「管理 → 系统增强」，写 `tapPageTurn` / `rtlPageTurn`，**默认都关**，打开书时读、下次打开书生效。**离线验证过（qmldiff 在 .172 真实 QML 上全部命中），待真机验证**。
 
 **wallpaper-serve —— 休眠壁纸**（[README](../wallpaper-serve/README.md)）
 网页上传即用、唤醒自动轮换，靠 xochitl 的隐藏配置键 `SleepScreenPath`。**✅ 真机通**。入口「其他 → 壁纸」。
@@ -229,7 +229,7 @@ hook 目标 `FUN_00f47530`：两个 float（s0/s1）+ 一个指针（x0），标
 
 两个服务都依赖 [`../../rmsvc-core`](../../rmsvc-core/README.md)，由网关反向代理，随 `install-all.sh` 的 shelf 步安装。
 
-## 03i｜reader-page-turn：单击翻页 + 日漫从右往左翻页（2026-09-24）
+## 03i｜reader-page-turn：单击翻页 + 日漫翻页规则（2026-09-24）
 
 ![xochitl 阅读器翻页](diagrams/reader-page-turn.svg)
 

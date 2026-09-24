@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1100" height="600" viewBox="0 0 1100 600" font-family="Noto Sans CJK SC, sans-serif">
   <defs><marker id="rp-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#555"/></marker></defs>
   <rect width="1100" height="600" fill="#ffffff"/>
-  <text x="550" y="32" text-anchor="middle" font-size="20" font-weight="bold" fill="#1f2937">xochitl 阅读器翻页：单击翻页 + 日漫从右往左（§03i）</text>
+  <text x="550" y="32" text-anchor="middle" font-size="20" font-weight="bold" fill="#1f2937">xochitl 阅读器翻页：单击翻页 + 日漫翻页规则（§03i）</text>
   <text x="550" y="56" text-anchor="middle" font-size="13" fill="#6b7280">一个 qmd 补丁 reader-page-turn.qmd（随 book 服务安装）；两个网页开关都在「管理 → 系统增强」，默认关</text>
 
   <!-- 左：屏幕示意 -->
@@ -20,7 +20,7 @@
   <text x="252" y="480" font-size="12" fill="#15803d">右 7%</text>
   <g font-size="13" fill="#1f2937">
     <text x="40" y="512">普通书：右边缘 = 下一页，左边缘 = 上一页</text>
-    <text x="40" y="534">日漫（开「从右往左」且书标了 rtl）：左右对调</text>
+    <text x="40" y="534">日漫（开「日漫翻页规则」且书是从右往左）：左右对调</text>
     <text x="40" y="556" fill="#6b7280">链接按下、文本编辑、缩放、笔记页：不接管</text>
   </g>
 
@@ -68,7 +68,7 @@
     <text x="791" y="368">EPUB OPF &lt;spine</text>
     <text x="791" y="390">  page-progression-direction="rtl"&gt;</text>
     <text x="791" y="412" fill="#6b7280">书架优化保留；按卷拆分的分卷也继承</text>
-    <text x="791" y="450" fill="#b45309">没标 rtl 的日漫不会反转</text>
+    <text x="791" y="450" fill="#b45309">没标 rtl 的：写进 rtl-overrides.json</text>
     <text x="791" y="472" fill="#6b7280">日志关键字：CJ-PAGE-TURN</text>
   </g>
 </svg>
