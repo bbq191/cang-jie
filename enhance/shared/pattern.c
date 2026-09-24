@@ -5,7 +5,8 @@
  * 同时在宿主机（跑单元测试）和交叉编译目标（aarch64 目标系统的 libc）上编译，
  * 少一个功能测试宏依赖就少一处环境差异。特征码只有 48 字节、目标内存区最大也
  * 就是 xochitl 的 .text 段（十几 MB），O(n*m) 的朴素搜索在这个规模下够用，不需要
- * KMP/Boyer-Moore 这类更复杂的算法。
+ * KMP/Boyer-Moore 这类更复杂的算法；精确匹配只加了一层 memchr 找首字节（C 标准函数，
+ * 不需要功能测试宏），见 cj_count_pattern_masked。
  */
 /* 单点匹配：mask==NULL 走 memcmp 快路径；否则逐字节按掩码比较（mask[j]==0 跳过）。 */
 static int match_at(const uint8_t *hp, const uint8_t *pattern,
@@ -26,6 +27,26 @@ size_t cj_count_pattern_masked(const uint8_t *haystack, size_t haystack_len,
     if (pattern_len == 0 || haystack_len < pattern_len) return 0;
 
     size_t last_start = haystack_len - pattern_len;
+    if (mask == NULL) {
+        /* 精确匹配快路径：先用 memchr 跳到首字节相同的位置再整段比较——结果与下面的逐字节
+         * 循环完全一致（同样统计所有重叠命中、first_addr 同样是最低地址），只是不再对每个
+         * 字节都调一次 memcmp。两个扩展加载时各要扫整个 xochitl 代码段若干遍（hl-snap 2 遍、
+         * hw-stroke 最多 5 遍），扩展按 -O0 编译，逐字节循环在 host 上约 40ms/16MB。 */
+        const uint8_t *p = haystack;
+        const uint8_t *last = haystack + last_start;
+        while (p <= last) {
+            const uint8_t *hit = memchr(p, pattern[0], (size_t)(last - p) + 1);
+            if (hit == NULL) break;
+            if (memcmp(hit, pattern, pattern_len) == 0) {
+                if (count == 0 && first_addr != NULL) {
+                    *first_addr = (uintptr_t)hit;
+                }
+                count++;
+            }
+            p = hit + 1;
+        }
+        return count;
+    }
     for (size_t i = 0; i <= last_start; i++) {
         if (match_at(haystack + i, pattern, mask, pattern_len)) {
             if (count == 0 && first_addr != NULL) {
