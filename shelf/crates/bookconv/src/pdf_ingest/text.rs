@@ -141,13 +141,18 @@ impl pdf_extract::OutputDev for TextCollector {
     }
 }
 
-/// 驱动 pdf-extract 跑一遍 `OutputDev`，拿到每页的逐字符位置流 + 图片事件流。**永远喂原始字节**，
-/// 不复用本模块自己已经解析出的 `lopdf::Document`（0.45）——见模块文档，两边 lopdf 版本不同、类型
-/// 不兼容，pdf-extract 内部会用它自己锁定的 lopdf 0.42 重新解析一遍。
+/// 驱动 pdf-extract 跑一遍 `OutputDev`，拿到每页的逐字符位置流 + 图片事件流（从字节自己解析一遍；
+/// 仅测试用；生产调用方手上都已有解析好的 `lopdf::Document`，用 [`extract_positioned_text_doc`]，别再解析第二遍）。
+#[cfg(test)]
 pub(crate) fn extract_positioned_text(bytes: &[u8]) -> Result<Vec<PageContent>, String> {
-    let doc = pdf_extract::Document::load_mem(bytes).map_err(|e| format!("PDF 结构解析失败: {e}"))?;
+    extract_positioned_text_doc(&super::parse_pdf(bytes)?)
+}
+
+/// 同 [`extract_positioned_text`]，复用调用方已解析的文档。2026-09-24 起 `pdf-extract-cj` 与本 crate 用同一版
+/// lopdf（0.45），类型相同可以直接传；此前两边版本不同，每本 PDF 要整份解析两遍、二进制里也编进两份 lopdf。
+pub(crate) fn extract_positioned_text_doc(doc: &lopdf::Document) -> Result<Vec<PageContent>, String> {
     let mut collector = TextCollector { pages: Vec::new(), line: 0, first_char: false, last_end: f64::MAX / 2.0, last_y: 0.0, seq: 0, last_cjk: false };
-    pdf_extract::output_doc(&doc, &mut collector).map_err(|e| format!("PDF 文字提取失败: {e}"))?;
+    pdf_extract::output_doc(doc, &mut collector).map_err(|e| format!("PDF 文字提取失败: {e}"))?;
     Ok(collector.pages)
 }
 

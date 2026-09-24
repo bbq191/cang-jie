@@ -6,6 +6,20 @@ pub(super) fn body_re() -> &'static Regex {
     // 非贪婪：章节可能是多个 <html> 文档拼接（标题文档+正文文档），贪婪会跨文档吞并
     R.get_or_init(|| Regex::new(r"(?si)<body[^>]*>(.*?)</body>").unwrap())
 }
+
+/// 第一个 `<body …>` 与其后第一个 `</body>` 之间的原文（不分大小写）；没有成对的 body → `None`。
+/// 与正则 `(?is)<body\b[^>]*>(.*?)</body>` 的首个匹配逐字节等价，但只用无捕获组的 DFA 找开标签、
+/// 闭标签用字节搜索——带捕获组的惰性 `(.*?)` 走的是慢速引擎，整章扫下来是清洗层最大的一块耗时
+/// （2026-09-24 审计：空页判断、兜底目录、漫画分卷三处各编一份这条正则）。
+pub(crate) fn first_body_inner(html: &str) -> Option<&str> {
+    static OPEN: OnceLock<Regex> = OnceLock::new();
+    let open = OPEN.get_or_init(|| Regex::new(r"(?i)<body\b[^>]*>").unwrap());
+    let rest = &html[open.find(html)?.end()..];
+    // 找到的是 ASCII 的 `<`，切在字符边界上。
+    let end = rest.as_bytes().windows(7).position(|w| w.eq_ignore_ascii_case(b"</body>"))?;
+    Some(&rest[..end])
+}
+
 pub(super) fn void_re() -> &'static Regex {
     static R: OnceLock<Regex> = OnceLock::new();
     R.get_or_init(|| {
@@ -184,6 +198,10 @@ pub fn fix_internal_links(html: &str) -> String {
 pub fn collapse_dup_id_attrs(html: &str) -> String {
     static RE_TAG: OnceLock<Regex> = OnceLock::new();
     let re_tag = RE_TAG.get_or_init(|| Regex::new(r#"(?s)<[a-zA-Z][^>]*>"#).unwrap());
+    // 绝大多数章节没有双 id 标签：先只读扫一遍，没有就直接返回，免得 replace_all 为每个标签各复制一份字符串重建全文。
+    if !re_tag.find_iter(html).any(|m| id_re().find_iter(m.as_str()).nth(1).is_some()) {
+        return html.to_string();
+    }
     re_tag
         .replace_all(html, |c: &regex::Captures| {
             let tag = &c[0];

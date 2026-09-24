@@ -193,10 +193,7 @@ pub(super) fn fallback_spine_toc(entries: &[Entry], spine: &[String], nav_doc: O
         .map(|p| {
             let e = entries.iter().find(|e| &&e.name == p)?;
             let html = std::str::from_utf8(&e.data).ok()?;
-            static BODY: OnceLock<Regex> = OnceLock::new();
-            let body_re = BODY.get_or_init(|| Regex::new(r#"(?is)<body\b[^>]*>(.*?)</body>"#).unwrap());
-            let inner = body_re.captures(html).map(|c| c[1].to_string()).unwrap_or_default();
-            let t = plain_text(&inner);
+            let t = plain_text(crate::htmlproc::first_body_inner(html).unwrap_or(""));
             if t.is_empty() { None } else { Some(t) }
         })
         .collect();

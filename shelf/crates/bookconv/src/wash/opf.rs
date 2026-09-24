@@ -32,30 +32,76 @@ pub(crate) struct Opf {
     pub(crate) ncx: Option<String>,
 }
 
+/// 标签里的 `name="value"` 属性对（只认双引号，属性名原样返回、由调用方决定大小写比较）。
+/// OPF manifest 项、`<meta name="cover">`、container.xml 的 `<rootfile>` 等共用这一条正则（此前 `parse_opf`、
+/// `ensure_cover_declared` 各编一份，`placeholder` 更是每取一个属性现编一个正则）。
+pub(crate) fn tag_attrs(tag: &str) -> impl Iterator<Item = (&str, &str)> {
+    static ATTR: OnceLock<Regex> = OnceLock::new();
+    let attr = ATTR.get_or_init(|| Regex::new(r#"([a-zA-Z:-]+)\s*=\s*"([^"]*)""#).unwrap());
+    attr.captures_iter(tag).map(|a| (a.get(1).map_or("", |m| m.as_str()), a.get(2).map_or("", |m| m.as_str())))
+}
+
+/// 标签里第一个名为 `name`（不分大小写）的属性值。
+pub(crate) fn tag_attr<'a>(tag: &'a str, name: &str) -> Option<&'a str> {
+    tag_attrs(tag).find(|(k, _)| k.eq_ignore_ascii_case(name)).map(|(_, v)| v)
+}
+
+/// OPF manifest 的一项（`href` 未解码、未解析成 zip 路径；属性重复时后者为准，与此前 HashMap 收集的行为一致）。
+pub(crate) struct ManifestItem<'a> {
+    /// 整个 `<item …>` 标签原文（改写 OPF 时按原文定位）。
+    pub(crate) tag: &'a str,
+    pub(crate) id: &'a str,
+    pub(crate) href: &'a str,
+    pub(crate) media_type: &'a str,
+    pub(crate) properties: &'a str,
+}
+
+/// OPF 文本里全部带 `id` 与 `href` 的 manifest 项（文档序）。`parse_opf`、`ensure_cover_declared`、占位封面探测共用。
+pub(crate) fn manifest_items(opf_text: &str) -> Vec<ManifestItem<'_>> {
+    static ITEM: OnceLock<Regex> = OnceLock::new();
+    let item = ITEM.get_or_init(|| Regex::new(r#"(?s)<item\b[^>]*?/?>"#).unwrap());
+    item.find_iter(opf_text)
+        .filter_map(|m| {
+            let tag = m.as_str();
+            let (mut id, mut href, mut media_type, mut properties) = (None, None, "", "");
+            for (k, v) in tag_attrs(tag) {
+                match k.to_ascii_lowercase().as_str() {
+                    "id" => id = Some(v),
+                    "href" => href = Some(v),
+                    "media-type" => media_type = v,
+                    "properties" => properties = v,
+                    _ => {}
+                }
+            }
+            Some(ManifestItem { tag, id: id?, href: href?, media_type, properties })
+        })
+        .collect()
+}
+
+/// `<meta name="cover" …>` 标签（`ensure_cover_declared` 与占位封面探测共用）。
+pub(crate) fn cover_meta_re() -> &'static Regex {
+    static META: OnceLock<Regex> = OnceLock::new();
+    META.get_or_init(|| Regex::new(r#"(?s)<meta\b[^>]*\bname\s*=\s*"cover"[^>]*?/?>"#).unwrap())
+}
+
 pub(crate) fn parse_opf(entries: &[Entry]) -> Option<Opf> {
     let index = find_opf(entries)?;
     let dir = dir_of(&entries[index].name).to_string();
     let text = String::from_utf8_lossy(&entries[index].data);
-    static ITEM: OnceLock<Regex> = OnceLock::new();
-    static ATTR: OnceLock<Regex> = OnceLock::new();
     static REF: OnceLock<Regex> = OnceLock::new();
-    let item = ITEM.get_or_init(|| Regex::new(r#"(?s)<item\b([^>]*)/?>"#).unwrap());
-    let attr = ATTR.get_or_init(|| Regex::new(r#"([a-zA-Z:-]+)\s*=\s*"([^"]*)""#).unwrap());
     let iref = REF.get_or_init(|| Regex::new(r#"<itemref\b[^>]*\bidref="([^"]+)""#).unwrap());
     let mut items = HashMap::new();
     let mut nav_doc = None;
     let mut ncx = None;
-    for c in item.captures_iter(&text) {
-        let attrs: HashMap<String, String> = attr.captures_iter(&c[1]).map(|a| (a[1].to_ascii_lowercase(), a[2].to_string())).collect();
-        let (Some(id), Some(href)) = (attrs.get("id"), attrs.get("href")) else { continue };
-        let path = resolve(&dir, &percent_decode(href));
-        if attrs.get("properties").map(|p| p.split_whitespace().any(|x| x == "nav")).unwrap_or(false) {
+    for it in manifest_items(&text) {
+        let path = resolve(&dir, &percent_decode(it.href));
+        if it.properties.split_whitespace().any(|x| x == "nav") {
             nav_doc = Some(path.clone());
         }
-        if attrs.get("media-type").map(|m| m.contains("dtbncx")).unwrap_or(false) {
+        if it.media_type.contains("dtbncx") {
             ncx = Some(path.clone());
         }
-        items.insert(id.clone(), path);
+        items.insert(it.id.to_string(), path);
     }
     let spine: Vec<String> = iref.captures_iter(&text).filter_map(|c| items.get(&c[1]).cloned()).collect();
     Some(Opf { index, dir, items, spine, nav_doc, ncx })

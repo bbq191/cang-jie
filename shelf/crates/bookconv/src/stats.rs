@@ -5,11 +5,10 @@
 //! 《人骨拼圖》241 444 字 → 523 页 ≈ 462 字/页；《Tell Me Your Dreams》339 052 字符 → 352 页 ≈ 963 字符/页。
 //! 自检在导入当下跑，xochitl 用缺省字号/边距渲染，页数只随文字密度浮动（真书 0.99、随机词探针 0.86）；阈值见
 //! book-serve `render_check::WARN_RATIO`（50%）。
-use crate::check::read_entries;
 use crate::epubzip::is_html;
 use crate::wash::{is_toc_file, plain_text, LangMode};
 use regex::Regex;
-use std::io::Read;
+use std::io::{Read, Seek};
 use std::path::Path;
 use std::sync::OnceLock;
 use zip::ZipArchive;
@@ -46,15 +45,12 @@ impl TextProfile {
     }
 }
 
-/// OPF/HTML 正文条目名判据——决定一个 zip 条目值不值得解压/累加统计，[`text_profile`]（内存版，
-/// 已经整本解压过）跟 [`text_profile_file`]（流式版，靠这个判据在解压前就跳过图片等无关条目）
-/// 共用同一份判断，不能各写一套走偏。
+/// OPF/HTML 正文条目名判据——在解压前就跳过图片等无关条目（内存版与文件版共用 [`text_profile_zip`]）。
 fn wants_entry(name: &str) -> bool {
     name.to_ascii_lowercase().ends_with(".opf") || (is_html(name) && !is_toc_file(name))
 }
 
-/// 单个条目（OPF 或正文 HTML）累加进统计——[`text_profile`]/[`text_profile_file`] 共用，
-/// 避免修 OOM 的同时长出第二份逐字符统计逻辑。
+/// 单个条目（OPF 或正文 HTML）累加进统计。
 fn accumulate(p: &mut TextProfile, name: &str, data: &[u8]) {
     static BLOCK: OnceLock<Regex> = OnceLock::new();
     static TITLE: OnceLock<Regex> = OnceLock::new();
@@ -83,23 +79,19 @@ fn accumulate(p: &mut TextProfile, name: &str, data: &[u8]) {
 /// 解 EPUB 统计正文。非 zip / 无正文都按 Err 报，调用方决定要不要自检。整本已经在内存里时用这个；
 /// 只有磁盘路径、不想先把整本读进 `Vec<u8>` 用 [`text_profile_file`]。
 pub fn text_profile(epub: &[u8]) -> Result<TextProfile, String> {
-    let entries = read_entries(epub)?;
-    let mut p = TextProfile::default();
-    for e in &entries {
-        if wants_entry(&e.name) {
-            accumulate(&mut p, &e.name, &e.data);
-        }
-    }
-    Ok(p)
+    text_profile_zip(std::io::Cursor::new(epub))
 }
 
-/// [`text_profile`] 的流式版：直接开文件当 zip 按条目遍历，**图片等非 OPF/HTML 条目连解压都不做**
-/// （`ZipArchive::by_index` 先看条目名，值得要的条目才 `read_to_end`）——2026-09-19 OOM 审计：
-/// 落库自检之前是 `read_entries` 把 zip 全部条目（含图片）解压进 `Vec<Entry>`，自检只用得上 OPF/
-/// 文本，图片解压出来即弃，纯浪费；这里连这份浪费都省掉，而且从不要求整本先进内存。
+/// [`text_profile`] 的文件版：直接开文件当 zip 按条目遍历，从不要求整本先进内存（落库自检用，2026-09-19 OOM 审计）。
 pub fn text_profile_file(path: &Path) -> Result<TextProfile, String> {
     let file = std::fs::File::open(path).map_err(|e| e.to_string())?;
-    let mut archive = ZipArchive::new(std::io::BufReader::new(file)).map_err(|e| format!("解 EPUB(非 zip?): {e}"))?;
+    text_profile_zip(std::io::BufReader::new(file))
+}
+
+/// 两个入口的共同实现：按条目遍历，**图片等非 OPF/HTML 条目连解压都不做**（`by_index` 先看条目名，值得要的条目
+/// 才 `read_to_end`）。此前内存版走 `read_entries` 把全部条目（含图片）解压一遍再筛，两版各写一套循环。
+fn text_profile_zip<R: Read + Seek>(reader: R) -> Result<TextProfile, String> {
+    let mut archive = ZipArchive::new(reader).map_err(|e| format!("解 EPUB(非 zip?): {e}"))?;
     let mut p = TextProfile::default();
     for i in 0..archive.len() {
         let mut f = archive.by_index(i).map_err(|e| format!("读 EPUB 条目 {i}: {e}"))?;
@@ -107,8 +99,8 @@ pub fn text_profile_file(path: &Path) -> Result<TextProfile, String> {
             continue;
         }
         let name = f.name().to_string();
-        let mut data = Vec::new();
-        f.read_to_end(&mut data).map_err(|e| e.to_string())?;
+        let size = f.size();
+        let data = crate::epubzip::read_all(&mut f, size)?;
         accumulate(&mut p, &name, &data);
     }
     Ok(p)
@@ -170,8 +162,7 @@ mod tests {
             ("c1.xhtml", &format!("<html><body><p>{han}</p></body></html>")),
             ("c2.xhtml", "<html><body><p>Hello world, second chapter</p></body></html>"),
             ("nav.xhtml", "<html><body><nav><p>目录目录目录</p></nav></body></html>"),
-            // 非文本条目：流式版应该跳过解压，内存版的 read_entries 会照样解出来（不影响统计结果，
-            // 只影响要不要浪费内存去解），两边结果必须仍然一致。
+            // 非文本条目：两个入口都应该跳过、不计入统计。
             ("images/cover.jpg", "假装是二进制图片数据，反正不是 HTML/OPF 就不该被计入统计"),
         ]);
         let t = tempfile::tempdir().unwrap();

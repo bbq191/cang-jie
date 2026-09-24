@@ -69,8 +69,7 @@ pub struct PdfToEpubReport {
 
 /// 页面 `/Resources/XObject` 资源名（`Do` 算子里写的名字，如 `Im1`）→ 对象 id 的映射——图片事件
 /// （`ImageEvent::xobject_name`）只带资源名，不带对象 id，要靠这个反查到 `doc.get_page_images`
-/// 返回的 `PdfImage.id`（fork 内部锁定 lopdf 0.42 单独解析一遍，跟这里的 lopdf 0.45 是两份互不
-/// 共享状态的解析结果，但页面结构本身当然一致，能对上）。不处理继承自父页面节点的 `/Resources`
+/// 返回的 `PdfImage.id`（逐字提取与这里用的是同一份 `lopdf::Document`，对象 id 天然一致）。不处理继承自父页面节点的 `/Resources`
 /// （少见；页面自身没有 XObject 资源字典时这张图直接查不到，跳过不崩——图片渲染缺一张比整本
 /// 转换失败更可接受，判不准选保守分支）。
 pub(super) fn page_image_ids(doc: &lopdf::Document, page_id: lopdf::ObjectId) -> std::collections::HashMap<Vec<u8>, lopdf::ObjectId> {
@@ -404,7 +403,7 @@ pub(super) fn text_column_width(pages: &[PageContent]) -> Option<f64> {
 /// `style`，只能外链 class；取档是为了全书 class 数量有限。比栏宽还宽的（跨栏大图）封顶 100%。
 pub(super) fn width_class(img_width_pt: f64, column: Option<f64>) -> Option<u32> {
     let col = column?;
-    if !(img_width_pt > 0.0) {
+    if img_width_pt.is_nan() || img_width_pt <= 0.0 {
         return None;
     }
     let pct = (img_width_pt / col * 100.0 / 5.0).round() as u32 * 5;
@@ -418,8 +417,9 @@ pub(super) fn width_class(img_width_pt: f64, column: Option<f64>) -> Option<u32>
 /// 分块）→ `epub::assemble_pdf_derived`（颜色与图片宽度的 CSS 规则通过返回值第三项交给调用方拼进外链样式表——
 /// xochitl 不认内联 `style=`，见 `EPUB优化规范白皮书.md` §03）。
 pub fn optimize_pdf_to_epub(src: &Path, mut on_progress: impl FnMut(usize, usize)) -> Result<(Book, PdfToEpubReport, String), String> {
-    let bytes = std::fs::read(src).map_err(|e| format!("读源文件失败: {e}"))?;
-    let doc = lopdf::Document::load_mem(&bytes).map_err(|e| format!("PDF 结构解析失败: {e}"))?;
+    // 原始字节解析完即释放（见 `load_pdf`）；只有带公式的书才需要把字节交给 hayro 再解析，那时再从磁盘读一次
+    // （host 实测 139MB 扫描 PDF 转换峰值 557→431MB，连同组装时逐张释放资源）。
+    let doc = load_pdf(src)?;
     let pages_map = doc.get_pages();
     let page_count = pages_map.len();
     if page_count == 0 {
@@ -428,7 +428,7 @@ pub fn optimize_pdf_to_epub(src: &Path, mut on_progress: impl FnMut(usize, usize
     let page_ids: Vec<lopdf::ObjectId> = pages_map.values().copied().collect();
 
     on_progress(0, page_count.max(1) * 2);
-    let text_pages = extract_positioned_text(&bytes)?;
+    let text_pages = extract_positioned_text_doc(&doc)?;
     if text_pages.len() != page_count {
         return Err(format!("文字提取页数 {} 跟结构解析页数 {} 对不上", text_pages.len(), page_count));
     }
@@ -501,9 +501,9 @@ pub fn optimize_pdf_to_epub(src: &Path, mut on_progress: impl FnMut(usize, usize
     // 公式渲染缓存：同页多个公式块只渲染一次整页。
     let render_settings = hayro::RenderSettings { x_scale: 2.0, y_scale: 2.0, ..Default::default() };
 
-    // 只有真有公式块才需要 hayro 再解析一遍；且原始字节到此不再他用，直接移交（此前 `bytes.clone()` 无谓多占一份整本 PDF，
-    // 上百 MB 的教材 PDF 就是上百 MB 的额外峰值）。没有公式时 `bytes` 在这里就释放。
-    let hayro_pdf = if total_formula_blocks > 0 { hayro::hayro_syntax::Pdf::new(std::sync::Arc::new(bytes)).ok() } else { None };
+    // 只有真有公式块才需要 hayro 再解析一遍（原始字节上面已释放，这里重读；读失败就当渲染不了公式——公式图片只是
+    // 文字之外的补充，缺了不丢内容）。
+    let hayro_pdf = if total_formula_blocks > 0 { std::fs::read(src).ok().and_then(|b| hayro::hayro_syntax::Pdf::new(std::sync::Arc::new(b)).ok()) } else { None };
 
     let mut page_html: Vec<String> = Vec::with_capacity(page_count);
     for (idx, page) in text_pages.iter().enumerate() {

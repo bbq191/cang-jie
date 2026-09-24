@@ -4,7 +4,8 @@
      https://github.com/apache/pdfbox/blob/trunk/pdfbox/src/main/resources/org/apache/pdfbox/resources/glyphlist/additional.txt
  */
 pub fn name_to_unicode(name: &str) -> Option<u16> {
-    const names: [(&'static str, u16); 4700] = [
+    // cj：上游是函数内 `const`（4700 项），按值用时每次调用可能在栈上物化一份 ~110KB 的数组；改 `static`。
+    static names: [(&str, u16); 4700] = [
 ("A", 0x0041),
 ("AE", 0x00c6),
 ("AEacute", 0x01fc),
