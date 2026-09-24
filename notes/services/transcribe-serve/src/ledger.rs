@@ -27,6 +27,17 @@ pub struct RunReport {
 
 pub type Ledger = vendorcfg::Ledger<RunReport>;
 
+/// 记下一轮报告；本轮没调用模型（`done`/`failed` 都是 0）且跟上一轮除时间外完全相同（最常见：自动模式被 `entries` 事件踢醒、却没有待转写的条目；
+/// 或没配 key 时每次都是同一句提示）就不落盘，返回 `false`，调用方据此也不发 `transcribe` 事件——
+/// 网页每收到一条 `notes` 事件都会整页重拉，空跑一轮不该再写一次闪存、再惹一轮刷新（2026-09-24 第三轮审计）。
+pub fn record_if_new(ledger: &Ledger, r: &RunReport) -> bool {
+    let same = r.done == 0 && r.failed == 0 && ledger.snapshot().last_run.is_some_and(|last| RunReport { at: r.at, ..last } == *r);
+    if !same {
+        ledger.record_run(r.clone());
+    }
+    !same
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -46,6 +57,23 @@ mod tests {
         let gpt = &back.by_model["gpt-5.6-terra"];
         assert_eq!((gpt.calls, gpt.ok, gpt.prompt_tokens), (1, 1, 50), "不同模型各算各的，不会混到一起");
         assert_eq!(back.last_run.unwrap().done, 1);
+    }
+
+    #[test]
+    fn record_if_new_skips_identical_idle_rounds() {
+        let t = tempfile::tempdir().unwrap();
+        let p = t.path().join("transcribe.json");
+        let l = Ledger::open(&p);
+        let idle = |at| RunReport { at, ..Default::default() };
+        assert!(record_if_new(&l, &idle(1)), "头一轮总要记");
+        assert!(!record_if_new(&l, &idle(2)), "空跑且跟上轮一样：不落盘");
+        assert_eq!(l.snapshot().last_run.unwrap().at, 1);
+        let note = RunReport { at: 3, note: "未配置 API key".into(), ..Default::default() };
+        assert!(record_if_new(&l, &note), "内容变了要记");
+        assert!(!record_if_new(&l, &RunReport { at: 4, ..note.clone() }));
+        let failed = RunReport { at: 5, scanned: 1, failed: 1, ..Default::default() };
+        assert!(record_if_new(&l, &failed));
+        assert!(record_if_new(&l, &RunReport { at: 6, ..failed }), "真调过模型的轮次一律记（失败清单/用量变了，网页要刷新）");
     }
 
     /// 真机 2026-09-08 实测采样的 transcribe.json 用量账本形状（数值原样，非敏感）：`byModel` +

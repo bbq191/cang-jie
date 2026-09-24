@@ -56,16 +56,15 @@ impl State {
         let now = rmsvc_core::clock::now_secs();
         let report = match self.vision(&cfg) {
             Ok(v) => worker::run_once(&Ctx { store: &self.store, vision: v.as_ref(), cfg: &cfg, ledger: &self.ledger, failures: &self.failures, now }, only),
-            Err(e) => {
-                let r = ledger::RunReport { at: now, note: e, ..Default::default() };
-                self.ledger.record_run(r.clone());
-                r
-            }
+            Err(e) => ledger::RunReport { at: now, note: e, ..Default::default() },
         };
+        let changed = ledger::record_if_new(&self.ledger, &report);
         if report.done > 0 || report.failed > 0 {
             println!("[transcribe-serve] 一轮：扫 {} 成 {} 败 {} 跳 {} 余 {} {}", report.scanned, report.done, report.failed, report.skipped, report.left, report.note);
         }
-        self.bus.publish("notes", "transcribe");
+        if changed {
+            self.bus.publish("notes", "transcribe");
+        }
         report
     }
     fn kick(&self) {
