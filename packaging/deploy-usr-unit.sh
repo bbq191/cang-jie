@@ -43,7 +43,9 @@ push_verified "$SRC" "$DEST/$(basename "$SRC")"
 if [ -n "$EXTRA_SRC" ]; then push_verified "$EXTRA_SRC" "$DEST/$(basename "$EXTRA_SRC")"; fi
 
 echo "== 设备端安装（dm-verity 门 + 带 trap 的 rw 窗口，devlib.sh）=="
-dev_script "$UNIT" "$DEST/$(basename "$SRC")" "${EXTRA_SRC:+$DEST/$(basename "$EXTRA_SRC")}" "$EXTRA_DST" "$NEEDS" "$START" "$VERITY_NOTE" <<'DEVICE_SCRIPT'
+# 设备端退出码 10 = dm-verity 激活、单元从没装过、这步实际没装上（非失败，汇总里记"前置条件不满足"）
+DEV_RC=0
+dev_script "$UNIT" "$DEST/$(basename "$SRC")" "${EXTRA_SRC:+$DEST/$(basename "$EXTRA_SRC")}" "$EXTRA_DST" "$NEEDS" "$START" "$VERITY_NOTE" <<'DEVICE_SCRIPT' || DEV_RC=$?
 set -eu
 UNIT="$1"; SRC="$2"; EXTRA_SRC="$3"; EXTRA_DST="$4"; NEEDS="$5"; START="$6"; VERITY_NOTE="$7"
 cj_require_root || exit 1
@@ -67,7 +69,19 @@ rc=0
 cj_install_usr_unit "$UNIT" "$SRC" multi-user.target.wants || rc=$?
 case "$rc" in
     0) ;;
-    3) echo "   $VERITY_NOTE"; exit 0 ;;
+    3)
+        if [ -f "$CJ_SYSD/$UNIT" ]; then
+            # 单元是以前装的（verity 之后才激活）：/usr 动不了，但脚本已更新——在跑的服务要重启才会用上新脚本
+            echo "   /usr 里已有此前装的 $UNIT（本次没法更新它）。"
+            if [ "$START" = "1" ] && [ "$SCRIPT_CHANGED" = "1" ]; then
+                systemctl restart "$UNIT" || { echo "!! systemctl restart $UNIT 失败"; exit 1; }
+                echo "-- 脚本有更新，已重启 $UNIT：$(systemctl is-active "$UNIT" 2>/dev/null || echo '?')"
+            fi
+        else
+            echo "   $VERITY_NOTE"
+            exit 10
+        fi
+        exit 0 ;;
     *) exit 1 ;;
 esac
 if [ "$START" = "1" ]; then
@@ -81,6 +95,11 @@ if [ "$START" = "1" ]; then
 fi
 ls -l "$CJ_SYSD/multi-user.target.wants/$UNIT"
 DEVICE_SCRIPT
+[ "$DEV_RC" = 0 ] || [ "$DEV_RC" = 10 ] || exit "$DEV_RC"
+if [ "$DEV_RC" = 10 ]; then
+    step_skipped "dm-verity 激活，$UNIT 没法装进 /usr"
+    exit 0
+fi
 
 echo "== 完成 =="
 echo "   ${DONE_NOTE}"

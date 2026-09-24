@@ -24,7 +24,9 @@
 #
 # ⚠️ 摘掉 extensions.d/qt-resource-rebuilder 里的文件后，当前正在跑的 xochitl 进程内存里还留着旧的映射——
 # 真正"生效"要等下一次 xochitl 重启。本脚本不主动重启 xochitl（卸载没有"装完立刻验证"的必要，强制重启
-# 只会多一次触发 watchdog/StartLimit 的机会）；要重启用 systemctl restart xochitl（xovi 已生效时**不要** xovi/start）。
+# 只会多一次触发 watchdog/StartLimit 的机会）。只摘了 qmd：systemctl restart xochitl（xovi 已生效时**不要** xovi/start）；
+# 摘了 xochitl 正加载着的扩展 .so：建议整机重启——"删掉/换掉运行中已映射的 .so 再让 xochitl 退出"与 devlib.sh 头注 H3
+# 是同一类操作（2026-09-21/24 两次真机 SEGV → 整机重启），卸载时这条路径没有真机验证过是否安全。
 #
 # 用法：./uninstall-all.sh [host] [--purge] [--dry-run] [--skip a,b,...]
 #   host      默认 10.11.99.1（USB）
@@ -95,12 +97,21 @@ remove_xovi_extension() {
     dev_script "$1" "$2" <<'DEVICE_SCRIPT'
 set -eu
 SO="$1"; PKG="$2"
+cj_require_root || exit 1
 EXT="$CJ_XOVI/extensions.d"
+# 待换入区里的新版也要撤掉：否则下一次 cj_xochitl_apply（xovi-apply / 任何单独部署）会把刚卸掉的扩展又换进 extensions.d
+cj_so_unstage "$SO"
+MAPPED=0
+if cj_xochitl_has_xovi && [ "$(cj_count_maps "$SO" "$(cj_xochitl_pid)")" -gt 0 ]; then MAPPED=1; fi
 if [ -f "$EXT/$SO" ] || [ -e "$EXT/$SO.crashed" ]; then
     rm -f "$EXT/$SO" "$EXT/$SO.crashed"
     echo "-- 已从 extensions.d 摘除 $SO（reading-qol.json 配置、cangjie-backups/ 下的历史备份不动）"
 else
     echo "-- $EXT/$SO 本来就不存在"
+fi
+if [ "$MAPPED" = "1" ]; then
+    # 与 devlib.sh 头注 H3 同类：运行中的 xochitl 还映射着刚删掉的 .so，此时让它退出（restart/stop）有崩溃→整机重启的风险
+    echo "   ⚠ 运行中的 xochitl 仍加载着 $SO（已删的旧文件）。要立刻停用请**整机重启**（reboot），别 systemctl restart xochitl。"
 fi
 cj_rm_payload "$CJ_HOME/$PKG" "$SO" deploy/install.sh deploy/xovi-ext-install.sh deploy/devlib.sh deploy
 DEVICE_SCRIPT
@@ -111,6 +122,7 @@ uninstall_handwriting_stroke() { remove_xovi_extension hw-stroke.so hw-stroke; }
 uninstall_sidebar_entry() {
     dev_script <<'DEVICE_SCRIPT'
 set -eu
+cj_require_root || exit 1
 QRR_DIR="$CJ_XOVI/exthome/qt-resource-rebuilder"
 if [ ! -d "$QRR_DIR" ]; then
     echo "-- 设备没装 qt-resource-rebuilder，本来就没有这两个文件，跳过"
@@ -213,6 +225,7 @@ echo "· vellum/xovi/qt-resource-rebuilder/appload 本体、KOReader 侧载：�
 echo "· ~/.local/share/cangjie-ime/reading-qol.json（各扩展共用的设置）与 cangjie-backups/（回滚备份）：保留，确认无用后可手动删"
 echo "· 中文化（输入法/候选栏/UI 汉化）：不在本仓库，本脚本管不到"
 echo "· 以上改动多数要等下次 xochitl 重启才会在当前运行中的进程里真正停止生效——本脚本不主动触发重启；"
-echo "    要重启：设备上 systemctl restart xochitl（xovi 已生效时别用 xovi/start，会让 xochitl SEGV 整机重启）"
+echo "    摘了 xovi 扩展 .so（hl-snap/handwriting-stroke）而 xochitl 还加载着它：要立刻停用请整机重启（reboot，见上面该步的提示）；"
+echo "    只摘了 qmd（sidebar-entry/shelf）：设备上 systemctl restart xochitl 即可（xovi 已生效时别用 xovi/start，会让 xochitl SEGV 整机重启）"
 echo "═══════════════════════════════════════════════════════════"
 [ -z "$FAILED" ]

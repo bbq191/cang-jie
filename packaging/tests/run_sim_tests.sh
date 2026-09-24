@@ -66,7 +66,7 @@ new_sandbox() {
     echo "fake xochitl $$" > "$R/usr/bin/xochitl"
     echo '{}' > "$R/tmp/shelf-0/shelf/services/book.json"
     xovi_live off
-    export HOME="$R/home/root" XDG_CONFIG_HOME="$R/home/root/.config" XDG_DATA_HOME="$R/home/root/.local/share" XDG_STATE_HOME="$R/home/root/.local/state" SHELF_REG_DIR="$R/tmp/shelf-0/shelf/services" CJ_SYSD="$R/usr/lib/systemd/system" CJ_PROC="$R/proc"
+    export HOME="$R/home/root" XDG_CONFIG_HOME="$R/home/root/.config" XDG_DATA_HOME="$R/home/root/.local/share" XDG_STATE_HOME="$R/home/root/.local/state" XDG_CACHE_HOME="$R/home/root/.cache" SHELF_REG_DIR="$R/tmp/shelf-0/shelf/services" CJ_SYSD="$R/usr/lib/systemd/system" CJ_PROC="$R/proc"
     export CJ_APPLY_GRACE=0 CJ_HEALTH_SLEEP=0 CJ_RETRY_SLEEP=0
     # 待生效标记目录进沙箱（默认 /run/cangjie-pending-apply 是真实系统路径）
     export CJ_PENDING_DIR="$R/run/cangjie-pending"
@@ -128,6 +128,10 @@ check "with_rootfs_rw：remount rw 失败 → 非 0、不跑 body、无 ro 恢�
 body_kill() { kill -KILL "$BASHPID"; }
 cj_with_rootfs_rw body_kill >/dev/null 2>&1; rc=$?
 check "with_rootfs_rw：body 被 SIGKILL → 非 0，且仍恢复 ro" test "$rc" -ne 0 -a "$(last_mount)" = "mount -o remount,ro /"
+# 调用方 shell 自己在 rw 窗口里收到 SIGPIPE（ssh 断开后写输出）：仍恢复 ro
+: > "$CJ_SIM_LOG"
+sh -c ". '$PKG/devlib.sh'; body_pipe() { kill -PIPE \$\$; }; cj_with_rootfs_rw body_pipe" >/dev/null 2>&1
+check "with_rootfs_rw：调用方 shell 收到 SIGPIPE → 仍恢复 ro" test "$(last_mount)" = "mount -o remount,ro /"
 
 # install_usr_unit：源缺失 → 不 remount；verity → 3 且不 remount；成功 → wants 链接；幂等
 : > "$CJ_SIM_LOG"; cj_install_usr_unit x.service "$R/nope" multi-user.target.wants; rc=$?
@@ -690,6 +694,73 @@ rm -f "$LT"; ( cd "$PKG" && CJ_ZONEINFO="$R/no-such-zone" CJ_LOCALTIME="$LT" CJ_
 check "timezone-cn：设备镜像没有 zoneinfo → 警告并跳过（退出 0，不拖垮整轮安装）、不建 localtime" test "$rc" -eq 0 -a ! -e "$LT" -a -n "$(grep '跳过' "$R/out.txt")"
 RE_ETC_AFTER="$(md5sum /etc/chrony.conf 2>/dev/null | cut -c1-32)$(readlink -f /etc/localtime 2>/dev/null)"
 check "chrony/timezone 测试没有碰开发机真实的 /etc/chrony.conf 与 /etc/localtime" test "$RE_ETC_BEFORE" = "$RE_ETC_AFTER"
+
+# ═══════════════════════════ 7. 2026-09-24 审计新增 ═══════════════════════════
+section "2026-09-24：待换入 .so 与卸载 / 重启设备后 / 重复部署不重复备份"
+HLSO="$REPO/enhance/hl-snap/hl-snap.so"
+new_sandbox; EXT="$R/home/root/xovi/extensions.d"; SOP="$R/home/root/.cangjie-stage/so-pending"
+echo OLDSO > "$EXT/hl-snap.so"; xovi_live on
+( cd "$PKG" && CJ_SKIP_BUILD=1 DEFER_XOVI_START=1 run sh deploy-hl-snap.sh 127.0.0.1 ) >"$R/out1.txt" 2>&1
+( cd "$PKG" && CJ_SKIP_BUILD=1 DEFER_XOVI_START=1 run sh deploy-hl-snap.sh 127.0.0.1 ) >"$R/out2.txt" 2>&1; rc=$?
+check "同一新版重复 DEFER 部署（还没重启）：第二次不再备份、说明已在待换入区、仍记待生效" test "$rc" -eq 0 -a -z "$(grep '已备份' "$R/out2.txt")" -a -n "$(grep '已在待换入区' "$R/out2.txt")" -a -f "$SOP/hl-snap.so" -a -f "$CJ_PENDING_DIR/hl-snap"
+# 模拟"放进待换入区后设备重启过"：/run 里的标记没了，待换入区（/home）还在
+rm -rf "$CJ_PENDING_DIR"; : > "$CJ_SIM_LOG"
+( cd "$PKG" && run sh deploy-xovi-apply.sh 127.0.0.1 ) >"$R/out.txt" 2>&1; rc=$?
+check "设备重启后（标记已清、待换入区还在）：xovi-apply 仍判定需要生效 → stop → 换入 → start（旧版会说\"不重启\"，新版永远换不进去）" test "$rc" -eq 0 -a "$(count_log 'systemctl stop xochitl')" = 1 -a "$(count_log 'systemctl start xochitl')" = 1 -a "$(md5sum < "$EXT/hl-snap.so")" = "$(md5sum < "$HLSO")" -a ! -e "$SOP"
+# 卸载时待换入区里还有新版：必须一起撤掉，否则下一次重启 xochitl 又把它装回 extensions.d
+new_sandbox; EXT="$R/home/root/xovi/extensions.d"; SOP="$R/home/root/.cangjie-stage/so-pending"
+echo OLDSO > "$EXT/hl-snap.so"; xovi_live on
+( cd "$PKG" && CJ_SKIP_BUILD=1 DEFER_XOVI_START=1 run sh deploy-hl-snap.sh 127.0.0.1 ) >/dev/null 2>&1
+( cd "$PKG" && run sh uninstall-all.sh 127.0.0.1 --skip shelf ) >"$R/uout.txt" 2>&1; rc=$?
+check "uninstall-all：待换入区里的 hl-snap.so 一并撤掉、暂存目录清空" test "$rc" -eq 0 -a ! -e "$EXT/hl-snap.so" -a ! -e "$SOP" -a ! -e "$R/home/root/.cangjie-stage"
+check "uninstall-all：xochitl 还加载着被删的 .so → 提示整机重启、别 systemctl restart" grep -q 'reboot' "$R/uout.txt"
+: > "$CJ_SIM_LOG"; ( cd "$PKG" && run sh deploy-xovi-apply.sh 127.0.0.1 --force ) >/dev/null 2>&1
+check "uninstall-all 之后再重启 xochitl：卸掉的扩展没有被换回 extensions.d" test ! -e "$EXT/hl-snap.so"
+
+# stop → 换入 → start 的关键区里 ssh 断开（SIGPIPE）：不能把 xochitl 停在那里
+new_sandbox; SOP="$R/home/root/.cangjie-stage/so-pending"; mkdir -p "$SOP"; echo NEWSO > "$SOP/hl-snap.so"; xovi_live on; : > "$CJ_SIM_LOG"
+CJ_SIM_PIPE_ON_STOP=1 PATH="$STUBS:$PATH" sh -c ". '$PKG/devlib.sh'; cj_xochitl_apply" >/dev/null 2>&1
+check "stop xochitl 之后连接断了（SIGPIPE）：仍然换入并 start xochitl（旧版 shell 被杀，xochitl 停着直到整机重启）" test "$(count_log 'systemctl start xochitl')" = 1 -a "$(cat "$R/home/root/xovi/extensions.d/hl-snap.so" 2>/dev/null)" = NEWSO
+
+section "2026-09-24：单独跑的部署没有变化就不重启 xochitl"
+new_sandbox; EXT="$R/home/root/xovi/extensions.d"; cp "$HLSO" "$EXT/hl-snap.so"; xovi_live on; : > "$CJ_SIM_LOG"
+( cd "$PKG" && CJ_SKIP_BUILD=1 run sh deploy-hl-snap.sh 127.0.0.1 ) >"$R/out.txt" 2>&1; rc=$?
+check "hl-snap 单独跑：与已装相同 + 已加载 + 无待生效 → 不重启 xochitl、退出 0" test "$rc" -eq 0 -a "$(grep -c -e 'restart xochitl' -e 'stop xochitl' -e XOVI_START "$CJ_SIM_LOG")" = 0 -a -n "$(grep '已是最新' "$R/out.txt")"
+mkdir -p "$CJ_PENDING_DIR"; : > "$CJ_PENDING_DIR/shelf-qmd"; : > "$CJ_SIM_LOG"
+( cd "$PKG" && CJ_SKIP_BUILD=1 run sh deploy-hl-snap.sh 127.0.0.1 ) >/dev/null 2>&1; rc=$?
+check "hl-snap 单独跑：自己没变但有别的待生效改动（shelf-qmd）→ 照常重启一次并清标记" test "$rc" -eq 0 -a "$(count_log 'systemctl restart xochitl')" = 1 -a -z "$(ls -A "$CJ_PENDING_DIR" 2>/dev/null)"
+xovi_live off; : > "$CJ_SIM_LOG"
+( cd "$PKG" && CJ_SKIP_BUILD=1 run sh deploy-hl-snap.sh 127.0.0.1 ) >/dev/null 2>&1
+check "hl-snap 单独跑：没变但 xovi 还没生效 → 照常 xovi/start" test "$(count_log XOVI_START)" = 1
+new_sandbox; xovi_live on
+( cd "$PKG" && DEFER_XOVI_START=1 PATH="$STUBS:$PATH" sh deploy-sidebar-entry.sh 127.0.0.1 ) >/dev/null 2>&1
+( cd "$PKG" && run sh deploy-xovi-apply.sh 127.0.0.1 ) >/dev/null 2>&1
+: > "$CJ_SIM_LOG"
+( cd "$PKG" && PATH="$STUBS:$PATH" sh deploy-sidebar-entry.sh 127.0.0.1 ) >"$R/out.txt" 2>&1; rc=$?
+check "sidebar-entry 单独跑：qmd/rcc 没变且无待生效 → 不重启 xochitl、退出 0" test "$rc" -eq 0 -a "$(grep -c -e 'restart xochitl' -e 'stop xochitl' -e XOVI_START "$CJ_SIM_LOG")" = 0 -a -n "$(grep '已是最新' "$R/out.txt")"
+
+section "2026-09-24：wifi-watch 在 verity 下更新脚本 / shelf --no-systemd 不空等 / shelf_select"
+new_sandbox
+( cd "$PKG" && run sh deploy-wifi-watch.sh 127.0.0.1 ) >/dev/null 2>&1
+echo "# old" >> "$R/home/root/.local/bin/wifi-watch.sh"; : > "$CJ_SIM_LOG"
+CJ_SIM_VERITY=1 bash -c "cd '$PKG' && PATH='$STUBS:'\$PATH sh deploy-wifi-watch.sh 127.0.0.1" >"$R/out.txt" 2>&1; rc=$?
+check "wifi-watch + dm-verity + 单元是以前装的：脚本更新后重启服务用上新脚本，不 remount、退出 0" test "$rc" -eq 0 -a "$(count_log 'restart wifi-watch.service')" = 1 -a "$(count_log remount)" = 0 -a -z "$(grep '# old' "$R/home/root/.local/bin/wifi-watch.sh")"
+: > "$CJ_SIM_LOG"; CJ_SIM_VERITY=1 bash -c "cd '$PKG' && PATH='$STUBS:'\$PATH sh deploy-wifi-watch.sh 127.0.0.1" >/dev/null 2>&1
+check "wifi-watch + dm-verity：脚本没变 → 不重启" test "$(count_log 'restart wifi-watch.service')" = 0
+new_sandbox; PL="$R/payload"; mk_payload "$PL"; : > "$CJ_SIM_LOG"
+CJ_SIM_INACTIVE=1 run sh "$PL/install.sh" --no-systemd >/dev/null 2>&1; rc=$?
+check "shelf install --no-systemd（服务都没在跑）：不空等 10 轮健康检查（is-active 只查一轮 + 汇总一轮）、退出 0" test "$rc" -eq 0 -a "$(count_log 'systemctl is-active')" -le 18
+# shellcheck disable=SC1091
+check "shelf_select：空 → 全部；去重且网关在最前；未知令牌 → 返回 2" bash -c ". '$REPO/shelf/manifest.sh'; [ \"\$(shelf_select '')\" = \"\$SHELF_ALL\" ] && [ \"\$(shelf_select 'book,font,book,gateway')\" = 'gateway book font' ] && { shelf_select 'book,nope' 2>/dev/null; [ \$? -eq 2 ]; }"
+
+section "2026-09-24：前置条件不满足的\"跳过\"在汇总里单列，不混进\"已安装\""
+new_sandbox; rm -rf "$R/home/root/xovi/exthome/appload"; export CJ_ALLOWLIST_LOCAL="$R/allow.local.txt"
+( cd "$PKG" && run sh install-all.sh 127.0.0.1 --force --skip chrony-cn,timezone-cn,battop,wifi-watch,xovi-persist,chrony-boot-wakelock,hl-snap,handwriting-stroke,shelf ) >"$R/out.txt" 2>&1; rc=$?
+check "install-all：没装 appload → sidebar-entry 记进\"前置条件不满足\"并写明原因，不在\"已安装\"里、整轮退出 0" test "$rc" -eq 0 -a -n "$(grep '前置条件不满足' "$R/out.txt" | head -n 1)" -a -n "$(grep 'sidebar-entry：设备没装 appload' "$R/out.txt")" -a -z "$(grep '^已安装：.*sidebar-entry' "$R/out.txt")"
+new_sandbox
+CJ_SIM_VERITY=1 bash -c "cd '$PKG' && PATH='$STUBS:'\$PATH && . ./lib.sh && HOST=127.0.0.1 && run_step chrony-boot-wakelock sh ./deploy-chrony-boot-wakelock.sh 127.0.0.1 >/dev/null 2>&1; echo \"D=\$DONE|N=\$NOTAPPL\"" >"$R/out.txt" 2>&1
+check "run_step：dm-verity 下单元从没装过 → 记为\"前置条件不满足\"而不是已安装" test -n "$(grep '^D=|N=' "$R/out.txt")" -a -n "$(grep '^   chrony-boot-wakelock：dm-verity' "$R/out.txt")"
+unset CJ_ALLOWLIST_LOCAL
 
 # ═══════════════════════════ 5. 静态守卫 / 清单对称 ═══════════════════════════
 section "静态守卫"

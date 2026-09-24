@@ -12,7 +12,8 @@
 # 用法：./deploy-xovi-ext.sh <hl-snap|hw-stroke> [host]      host 默认 10.11.99.1
 #   环境 DEFER_XOVI_START=1：只把 .so 落盘（设备端 install.sh --no-restart），不重启 xochitl——install-all 编排多个
 #   扩展时用，最后统一重启一次（多次重启撞 watchdog+StartLimit，2026-09-11 真机踩过整机重启）。
-#   单独跑不用管：装完自动重启 xochitl 生效（xovi 已生效 → systemctl restart，否则 xovi/start，见 devlib.sh）。
+#   单独跑不用管：装完自动重启 xochitl 生效（xovi 已生效 → systemctl restart，否则 xovi/start，见 devlib.sh）；
+#   .so 没变、已加载、也没有别的待生效改动时不重启（2026-09-24）。
 set -eu
 cd "$(dirname "$0")"
 # shellcheck disable=SC1091

@@ -25,7 +25,7 @@ cd "$(dirname "$0")"
 # shellcheck disable=SC1091
 . ./lib.sh
 # shellcheck disable=SC1091
-. ../shelf/manifest.sh   # SHELF_ALL / shelf_svc_of：与设备端 install.sh 同一份服务清单
+. ../shelf/manifest.sh   # SHELF_ALL / shelf_svc_of / shelf_select：与设备端 install.sh 同一份服务清单与选择规则
 TARGET=aarch64-unknown-linux-musl
 
 usage() {
@@ -66,15 +66,8 @@ for a in "$@"; do
 done
 [ -z "$_prev" ] || { echo "!! $_prev 缺参数"; exit 2; }
 
-# 要装的服务：与设备端 install.sh 同规则——--only 给的 + 网关（总会装）；缺省全装
-SEL="$SHELF_ALL"
-if [ -n "$ONLY" ]; then
-    SEL="gateway"
-    for s in $(echo "$ONLY" | tr ',' ' '); do
-        case " $SHELF_ALL " in *" $s "*) ;; *) echo "!! 未知服务令牌：$s（可选：$SHELF_ALL）"; exit 2 ;; esac
-        case " $SEL " in *" $s "*) ;; *) SEL="$SEL $s" ;; esac
-    done
-fi
+# 要装的服务：与设备端 install.sh 同一个函数（manifest.sh 的 shelf_select）——--only 给的 + 网关（总会装）；缺省全装
+SEL="$(shelf_select "$ONLY")" || exit 2
 
 require_device
 [ "${SHELF_NO_BUILD:-0}" = "1" ] || sh ../shelf/build.sh

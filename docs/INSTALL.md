@@ -140,6 +140,7 @@ sh install-all.sh 10.11.99.1 --force
 | 更新了插件 `.so`，而 xochitl 正在用旧版 | 新版先放进待换入区，然后"停 xochitl → 换文件 → 启动 xochitl"（2026-09-24 起，见下图） |
 | 什么都没变，xovi 已生效 | 不重启 |
 | 什么都没变，但设备刚重启过、xovi 还没生效 | 执行 `xovi/start` 让它生效 |
+| 上一轮新版插件放进了待换入区，还没换进去设备就重启了（标记随之清空） | 待换入区不在内存盘，仍算"有待生效"：停 xochitl → 换文件 → 启动 |
 | 加了 `--force-apply` | 无论如何都重启 |
 | 上一轮用 `--skip xovi-apply` 跳过了 | 标记还在，补一句 `sh deploy-xovi-apply.sh <host>` 即可 |
 
@@ -175,7 +176,7 @@ sh uninstall-all.sh 10.11.99.1 --purge            # 另外删掉电池刺客的�
 **不会做什么**：
 - `chrony-cn`、`timezone-cn` 是改配置、`xovi-apply` 只是个动作，都不卸。改之前的备份在设备 `cangjie-backups/` 里，要还原自己取。
 - vellum、xovi、qt-resource-rebuilder、appload 和 KOReader 不是本项目装的，也不卸。
-- 卸载**不重启** xochitl。已经加载的插件要等下次重启 xochitl 才真正停用；想马上停就 `systemctl restart xochitl`（见问题⑤）。
+- 卸载**不重启** xochitl。已经加载的插件要等下次重启 xochitl 才真正停用。想马上停：只卸了界面补丁（`sidebar-entry`/`shelf`）就 `systemctl restart xochitl`（见问题⑤）；卸了 xochitl 正在用的插件 `.so`（`hl-snap`/`handwriting-stroke`，卸载时会提示）请**整机重启**——删掉正在用的插件文件再让 xochitl 退出，跟"换了插件文件再 restart 会崩溃、整机重启"是同一类操作，卸载这条路没在真机上验证过是否安全。
 
 **系统分区只读校验（dm-verity）开着时**：`/usr` 下的服务单元删不掉（脚本遇到 verity 一律不写 `/usr`，写 `/usr` 曾经让设备回滚变砖）。这时卸载脚本会如实提示，并**保留**这些单元要用的程序，免得重启后单元找不到程序、反复失败。等设备可写后再跑一次 `uninstall-all.sh` 就能收尾。
 
@@ -233,7 +234,7 @@ sh uninstall-all.sh 10.11.99.1 --purge            # 另外删掉电池刺客的�
 
 - 先看 `install-all.sh` 的收尾汇总，定位哪一步失败；对应 `packaging/deploy-*.sh` 的开头注释写了这一步做什么、常见失败原因。
 - 网页「管理」页能直接看到插件是否真的加载进了 xochitl（"已加载 / 未加载"）。开关开着但显示"未加载"，说明插件没装上或还没重启 xochitl。
-- 不碰真机就想确认脚本没被改坏：`bash packaging/tests/run_sim_tests.sh`（本机模拟，208 项）。它代替不了真机验证。
+- 不碰真机就想确认脚本没被改坏：`bash packaging/tests/run_sim_tests.sh`（本机模拟，226 项）。它代替不了真机验证。
 
 ### 备份与幂等（一句话版）
 

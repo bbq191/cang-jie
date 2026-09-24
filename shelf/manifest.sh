@@ -14,6 +14,18 @@
 SHELF_ALL="gateway book koreader font wallpaper ink transcribe mind note"
 shelf_svc_of() { case "$1" in gateway) echo gateway ;; *) echo "$1-serve" ;; esac; }
 
+# shelf_select ONLY：安装时 --only 的值（逗号分隔的服务令牌）→ 要装的服务清单（去重；网关总会装、排最前）；
+# 空 = 全部。未知令牌：报错到 stderr、返回 2。host 侧 deploy.sh 与设备端 install.sh 共用（两边算出的清单必须一致）。
+shelf_select() {
+    [ -n "$1" ] || { echo "$SHELF_ALL"; return 0; }
+    ss_sel="gateway"
+    for ss_s in $(echo "$1" | tr ',' ' '); do
+        case " $SHELF_ALL " in *" $ss_s "*) ;; *) echo "!! 未知服务令牌：$ss_s（可选：$SHELF_ALL）" >&2; return 2 ;; esac
+        case " $ss_sel " in *" $ss_s "*) ;; *) ss_sel="$ss_sel $ss_s" ;; esac
+    done
+    echo "$ss_sel"
+}
+
 # 服务→随它装的 qt-resource-rebuilder qmd（放 $HOME/xovi/exthome/qt-resource-rebuilder/）
 #   font 的 qmd 载荷里按固件版本二选一（font-menu-dynamic.qmd / -3.27.qmd），设备上统一叫 font-menu-dynamic.qmd
 shelf_svc_qmds() {

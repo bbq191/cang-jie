@@ -38,23 +38,27 @@ cj_require_root || exit 1
 [ -f "$CJ_XOVI/xovi.so" ] || { echo "!! 没找到 $CJ_XOVI/xovi.so —— 先跑：vellum add xovi"; exit 1; }
 [ -f "$PAYLOAD/$EXT_SO" ] || { echo "!! 没找到 $PAYLOAD/$EXT_SO，先在 host 侧构建（make aarch64）再部署"; exit 1; }
 
-# 备份进 cangjie-backups（绝不能留在 extensions.d：xovi 把该目录下任意文件当扩展加载，
-# 同名扩展重复注册是致命错误，见 工程纪律），并只保留最近几份。
-cj_backup_if_differs "$PAYLOAD/$EXT_SO" "$EXTDIR/$EXT_SO" || exit 1   # 内容没变就不堆重复备份
-
-# 三种情况：
+# 三种情况（旧版备份进 cangjie-backups——绝不能留在 extensions.d：xovi 把该目录下任意文件当扩展加载，
+# 同名扩展重复注册是致命错误，见 工程纪律；内容没变就不备份，只保留最近几份）：
 #  · 与已装的逐字节相同 → 不动（顺手撤掉过时的待换入版本）；
 #  · 运行中的 xochitl 正映射着它 → 不当场换，放进待换入区，重启 xochitl 时由 cj_xochitl_apply 先 stop 再换再 start
 #    （换完再 restart 会让旧进程退出时崩溃、整机重启，2026-09-24 真机第二次复现，见 devlib.sh 头注 H3）；
+#    同一个新版已经在待换入区（上一轮 --no-restart 放进去、还没重启）→ 不再重复备份/重放；
 #  · 否则原子替换：先写到 extensions.d 之外的暂存目录再 rename 进去，中途失败不在 extensions.d 里留半个 .so。
 EXT_CHANGED=0
 if [ -f "$EXTDIR/$EXT_SO" ] && cmp -s "$PAYLOAD/$EXT_SO" "$EXTDIR/$EXT_SO"; then
     cj_so_unstage "$EXT_SO"
 elif cj_xochitl_has_xovi && [ "$(cj_count_maps "$EXT_MAPTAG" "$(cj_xochitl_pid)")" -gt 0 ]; then
-    echo "-- 运行中的 xochitl 正在用旧版 $EXT_SO → 新版先放进待换入区（$CJ_SO_PENDING_DIR），重启 xochitl 时换入"
-    cj_so_stage "$PAYLOAD/$EXT_SO" || { echo "!! 放入待换入区失败"; exit 1; }
+    if [ -f "$CJ_SO_PENDING_DIR/$EXT_SO" ] && cmp -s "$PAYLOAD/$EXT_SO" "$CJ_SO_PENDING_DIR/$EXT_SO"; then
+        echo "-- 同一个新版 $EXT_SO 已在待换入区（$CJ_SO_PENDING_DIR），等重启 xochitl 时换入"
+    else
+        cj_backup_if_differs "$PAYLOAD/$EXT_SO" "$EXTDIR/$EXT_SO" || exit 1
+        echo "-- 运行中的 xochitl 正在用旧版 $EXT_SO → 新版先放进待换入区（$CJ_SO_PENDING_DIR），重启 xochitl 时换入"
+        cj_so_stage "$PAYLOAD/$EXT_SO" || { echo "!! 放入待换入区失败"; exit 1; }
+    fi
     EXT_CHANGED=1
 else
+    cj_backup_if_differs "$PAYLOAD/$EXT_SO" "$EXTDIR/$EXT_SO" || exit 1
     echo "-- 装 $EXT_SO -> $EXTDIR/"
     cj_safe_replace "$PAYLOAD/$EXT_SO" "$EXTDIR/$EXT_SO" "$CJ_STAGE_DIR" 755 || { echo "!! 写 $EXTDIR/$EXT_SO 失败"; exit 1; }
     EXT_CHANGED="$CJ_REPLACED"
@@ -70,15 +74,25 @@ if [ ! -s "$RQOL" ]; then
     printf '%s' "$RQOL_INIT" > "$RQOL"
 fi
 
+# 有变化就记待生效标记（两种模式都记：单独跑时重启失败，标记留着，之后 deploy-xovi-apply.sh 还能补上）
+if [ "$EXT_CHANGED" = "1" ]; then cj_pending_mark "$EXT_NAME" || true; fi
+
 if [ "$NO_RESTART" = "1" ]; then
     if [ "$EXT_CHANGED" = "1" ]; then
-        cj_pending_mark "$EXT_NAME" || true
         echo "-- --no-restart：$EXT_SO 已落盘（有变化），未重启 xochitl（由外部编排方稍后统一执行一次）"
         echo "✅ 已就位，尚未生效——外部编排方跑完这轮 xochitl 重启后再确认"
     else
         echo "-- --no-restart：$EXT_SO 与设备上已装的逐字节相同，无需重启 xochitl"
         echo "✅ 已是最新"
     fi
+    exit 0
+fi
+
+# 单独跑：没有任何东西要生效（本扩展没变且已在运行中的 xochitl 里加载、没有别的待生效改动、xovi 已生效）就不重启——
+# 重复跑不再每次闪屏、不白白消耗 xochitl 的 StartLimit 名额
+if [ "$EXT_CHANGED" = "0" ] && ! cj_apply_needed && [ "$(cj_count_maps "$EXT_MAPTAG" "$(cj_xochitl_pid)")" -gt 0 ]; then
+    echo "-- $EXT_SO 与已装的逐字节相同且已加载，也没有别的待生效改动——不重启 xochitl"
+    echo "✅ 已是最新"
     exit 0
 fi
 

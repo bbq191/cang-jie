@@ -142,6 +142,7 @@ Re-running `install-all.sh` is safe and doesn't flash the screen every time. Onl
 | A plugin `.so` was updated while xochitl is using the old one | The new one waits in a staging area, then "stop xochitl → swap the file → start xochitl" (since 2026-09-24, see the diagram below) |
 | Nothing changed, xovi is active | No restart |
 | Nothing changed, but the device just rebooted and xovi isn't active yet | Runs `xovi/start` to activate it |
+| Last run put a new plugin into the staging area, and the device rebooted before it was swapped in (markers cleared) | The staging area is not in memory, so it still counts as pending: stop xochitl → swap the file → start |
 | `--force-apply` given | Always restarts |
 | The previous run used `--skip xovi-apply` | The marker is still there; just run `sh deploy-xovi-apply.sh <host>` |
 
@@ -177,7 +178,7 @@ sh uninstall-all.sh 10.11.99.1 --purge            # also delete the battery samp
 **What it doesn't do**:
 - `chrony-cn` and `timezone-cn` are configuration changes and `xovi-apply` is just an action; none of them is undone. Backups from before the change are in `cangjie-backups/` on the device if you want to restore them yourself.
 - vellum, xovi, qt-resource-rebuilder, appload and KOReader were not installed by this project and are not removed.
-- It does **not** restart xochitl. Plugins already loaded stop only on the next xochitl restart; to stop them now, run `systemctl restart xochitl` (see issue ⑤).
+- It does **not** restart xochitl. Plugins already loaded stop only on the next xochitl restart. To stop them now: if you only removed UI patches (`sidebar-entry`/`shelf`), run `systemctl restart xochitl` (see issue ⑤); if you removed a plugin `.so` xochitl is currently using (`hl-snap`/`handwriting-stroke`; the uninstaller tells you), **reboot the whole device** — deleting an in-use plugin file and then letting xochitl exit is the same kind of operation as "swap a plugin file, then restart", which crashes and reboots the device, and this uninstall path hasn't been verified on real hardware.
 
 **When the system partition's read-only verification (dm-verity) is on**: service units under `/usr` cannot be removed (the scripts never write `/usr` under verity; writing `/usr` once caused a rollback that bricked the device). The uninstaller says so and **keeps** the programs those units need, so they don't fail over and over after a reboot. Once the device is writable, run `uninstall-all.sh` again to finish.
 
@@ -235,7 +236,7 @@ These are known issues with specific triggers, not random faults. Numbers ①–
 
 - Start with the closing summary of `install-all.sh` to find the failing step; the header comment of the matching `packaging/deploy-*.sh` explains what the step does and common failures.
 - The web page's "Manage" section shows whether each plugin is actually loaded into xochitl ("loaded / not loaded"). A switch that is on but shows "not loaded" means the plugin isn't installed or xochitl hasn't been restarted yet.
-- To check the scripts without touching a device: `bash packaging/tests/run_sim_tests.sh` (local simulation, 208 checks). It is no substitute for testing on real hardware.
+- To check the scripts without touching a device: `bash packaging/tests/run_sim_tests.sh` (local simulation, 226 checks). It is no substitute for testing on real hardware.
 
 ### Backups and idempotence (short version)
 
