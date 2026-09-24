@@ -6,12 +6,20 @@
 //! 40 天全部行读进 `Vec<(epoch,bool,String,u64)>`（几十万条各带一个 String）再对 4 个窗口各扫一遍，
 //! 每 ~10 分钟白白分配/拷贝几十 MB。输出格式与旧实现逐字节一致（tie 时按名字升序，旧实现 tie 顺序取决于
 //! HashMap 随机迭代序）。
+//!
+//! 按文件缓存（[`SummaryCache`]，2026-09-24）：常驻进程每轮都把 40 天全部样本（约 9MB、29 万行）重新读一遍
+//! 解析一遍，host 实测 35ms/轮，设备上是几倍——battop 自己成了排行榜上的耗电项。样本文件按 UTC 日滚动，除了
+//! 当天在追加的那个，其余内容不再变；而 4 个窗口里只有 today/7d/30d 三个起点会落在某个文件中间。所以每个
+//! 文件缓存一份"整文件聚合"（+ CPU 行 epoch 的最小/最大值、全部 _sys 行），凭 (大小, mtime) 判失效：整个落在
+//! 窗口内的直接加整份聚合、整个在窗口外的跳过，只有被窗口起点切开的文件和变过的文件才逐行重读。求和与合并
+//! 顺序不影响结果（_sys 行按文件遍历顺序、文件内行序拼接，与逐行喂完全相同），输出逐字节不变。
 use crate::store::is_sample_file;
 use crate::util::json_esc;
 use std::collections::HashMap;
 use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::Path;
+use std::time::SystemTime;
 
 const WINDOWS: [&str; 4] = ["today", "7d", "30d", "all"];
 
@@ -47,36 +55,47 @@ impl Summarizer {
         }
     }
 
-    /// 喂一行样本（畸形行静默忽略）。
+    /// 喂一行样本（畸形行静默忽略）。生产路径在 [`write_summary`] 里解析一次、同时喂 Summarizer 与文件缓存。
+    #[cfg(test)]
     pub fn feed(&mut self, line: &str) {
-        let mut f = [""; 7];
-        let mut n = 0;
-        for part in line.split('\t').take(7) {
-            f[n] = part;
-            n += 1;
+        if let Some(r) = parse_row(line) {
+            self.add_row(&r);
         }
-        if n < 3 {
-            return;
-        }
-        let Ok(epoch) = f[0].parse::<u64>() else { return };
-        match f[1] {
-            kind @ ("proc" | "app") if n >= 4 => {
-                let ms: u64 = f[3].parse().unwrap_or(0);
-                let is_app = kind == "app";
-                let key = if is_app { friendly(f[2]) } else { f[2] };
+    }
+
+    fn add_row(&mut self, r: &Row) {
+        match *r {
+            Row::Cpu { epoch, is_app, key, ms } => {
                 for (i, start) in self.starts.iter().enumerate() {
                     if epoch >= *start {
                         add(if is_app { &mut self.app[i] } else { &mut self.proc[i] }, key, ms);
                     }
                 }
             }
-            "_sys" if n >= 5 => {
-                let cap: i64 = f[4].parse().unwrap_or(-1);
-                let charge: i64 = if n >= 7 { f[6].parse().unwrap_or(-1) } else { -1 };
-                self.sys.push((epoch, cap, charge));
-            }
-            _ => {}
+            Row::Sys(t) => self.sys.push(t),
         }
+    }
+
+    /// 某个窗口起点落在文件的 CPU 行时间范围中间（`min < start <= max`）→ 必须逐行喂。
+    fn splits(&self, agg: &FileAgg) -> bool {
+        agg.cpu_range.is_some_and(|(min, max)| self.starts.iter().any(|&s| min < s && s <= max))
+    }
+
+    /// 并入一份没被任何窗口起点切开的整文件聚合：整个落在窗口内的窗口加整份，其余跳过。
+    fn merge(&mut self, agg: &FileAgg) {
+        if let Some((min, _)) = agg.cpu_range {
+            for (i, start) in self.starts.iter().enumerate() {
+                if min >= *start {
+                    for (k, v) in &agg.app {
+                        add(&mut self.app[i], k, *v);
+                    }
+                    for (k, v) in &agg.proc {
+                        add(&mut self.proc[i], k, *v);
+                    }
+                }
+            }
+        }
+        self.sys.extend_from_slice(&agg.sys);
     }
 
     /// 汇总成 summary.json 文本。`wakes`：(epoch, 原始唤醒源名)。
@@ -124,24 +143,119 @@ impl Summarizer {
     }
 }
 
-/// 读目录下全部样本 → 聚合 → 原子写 summary.json。
-pub fn write_summary(dir: &Path, now: u64, local_off: i64, wakes: &[(u64, String)]) -> std::io::Result<()> {
+/// 一行样本解析结果（畸形行 → `parse_row` 返回 None）。
+enum Row<'a> {
+    /// `epoch \t proc|app \t key \t cpu_ms …`；app 行的 key 已换成友好名。
+    Cpu { epoch: u64, is_app: bool, key: &'a str, ms: u64 },
+    /// `epoch \t _sys \t status \t awake \t cap \t disc [\t charge \t current]` → (epoch, cap%, charge_uah)
+    Sys((u64, i64, i64)),
+}
+
+fn parse_row(line: &str) -> Option<Row<'_>> {
+    let mut f = [""; 7];
+    let mut n = 0;
+    for part in line.split('\t').take(7) {
+        f[n] = part;
+        n += 1;
+    }
+    if n < 3 {
+        return None;
+    }
+    let epoch = f[0].parse::<u64>().ok()?;
+    match f[1] {
+        kind @ ("proc" | "app") if n >= 4 => {
+            let ms: u64 = f[3].parse().unwrap_or(0);
+            let is_app = kind == "app";
+            let key = if is_app { friendly(f[2]) } else { f[2] };
+            Some(Row::Cpu { epoch, is_app, key, ms })
+        }
+        "_sys" if n >= 5 => {
+            let cap: i64 = f[4].parse().unwrap_or(-1);
+            let charge: i64 = if n >= 7 { f[6].parse().unwrap_or(-1) } else { -1 };
+            Some(Row::Sys((epoch, cap, charge)))
+        }
+        _ => None,
+    }
+}
+
+/// 一个样本文件的整文件聚合 + 让它失效的指纹（见模块头注「按文件缓存」）。
+#[derive(Default)]
+struct FileAgg {
+    len: u64,
+    mtime: Option<SystemTime>,
+    /// CPU 行 epoch 的 (最小, 最大)；没有 CPU 行 = None。
+    cpu_range: Option<(u64, u64)>,
+    app: HashMap<String, u64>,
+    proc: HashMap<String, u64>,
+    /// 全部 _sys 行，按文件内行序。
+    sys: Vec<(u64, i64, i64)>,
+}
+
+impl FileAgg {
+    fn add_row(&mut self, r: &Row) {
+        match *r {
+            Row::Cpu { epoch, is_app, key, ms } => {
+                self.cpu_range = Some(match self.cpu_range {
+                    Some((lo, hi)) => (lo.min(epoch), hi.max(epoch)),
+                    None => (epoch, epoch),
+                });
+                add(if is_app { &mut self.app } else { &mut self.proc }, key, ms);
+            }
+            Row::Sys(t) => self.sys.push(t),
+        }
+    }
+}
+
+/// 跨轮保留的样本文件缓存（常驻进程持有；键 = 文件名）。
+#[derive(Default)]
+pub struct SummaryCache {
+    files: HashMap<String, FileAgg>,
+}
+
+/// 读目录下全部样本 → 聚合 → 原子写 summary.json。`cache` 由常驻循环跨轮持有（见模块头注）。
+pub fn write_summary(dir: &Path, now: u64, local_off: i64, wakes: &[(u64, String)], cache: &mut SummaryCache) -> std::io::Result<()> {
     let mut sm = Summarizer::new(now, local_off);
     let mut line = String::new();
+    let mut seen: Vec<String> = Vec::new();
     for e in fs::read_dir(dir)?.flatten() {
-        if !is_sample_file(&e.file_name().to_string_lossy()) {
+        let name = e.file_name().to_string_lossy().into_owned();
+        if !is_sample_file(&name) {
             continue;
         }
+        let md = e.metadata().ok();
+        let (len, mtime) = (md.as_ref().map(|m| m.len()).unwrap_or(0), md.and_then(|m| m.modified().ok()));
+        let fresh = cache.files.get(&name).filter(|a| mtime.is_some() && a.len == len && a.mtime == mtime);
+        if let Some(agg) = fresh {
+            if !sm.splits(agg) {
+                sm.merge(agg);
+                seen.push(name);
+                continue;
+            }
+        }
+        // 逐行读：文件变过/没缓存时顺手重建它的整文件聚合；缓存有效、只是被窗口起点切开时不重建。
+        let mut rebuilt = if fresh.is_none() { Some(FileAgg { len, mtime, ..Default::default() }) } else { None };
         let Ok(f) = fs::File::open(e.path()) else { continue };
         let mut r = BufReader::new(f);
         loop {
             line.clear();
             match r.read_line(&mut line) {
                 Ok(0) | Err(_) => break, // EOF / 非 UTF-8 坏文件：跳过其余（旧实现整文件丢弃）
-                Ok(_) => sm.feed(line.trim_end_matches(['\n', '\r'])),
+                Ok(_) => {
+                    if let Some(row) = parse_row(line.trim_end_matches(['\n', '\r'])) {
+                        sm.add_row(&row);
+                        if let Some(a) = rebuilt.as_mut() {
+                            a.add_row(&row);
+                        }
+                    }
+                }
             }
         }
+        if let (Some(a), Some(_)) = (rebuilt, mtime) {
+            cache.files.insert(name.clone(), a);
+        }
+        seen.push(name);
     }
+    cache.files.retain(|k, _| seen.contains(k)); // 被 prune 掉的文件不留脏项
     let json = sm.finish(wakes);
     let tmp = dir.join("summary.json.tmp");
     fs::write(&tmp, json)?;
@@ -260,9 +374,97 @@ mod tests {
             fs::write(t.path().join(format!("samples-{k}.tsv")), v).unwrap();
         }
         fs::write(t.path().join("baseline.tsv"), "not a sample").unwrap();
-        write_summary(t.path(), now, 8 * 3600, &gen_wakes(now)).unwrap();
+        let mut cache = SummaryCache::default();
+        write_summary(t.path(), now, 8 * 3600, &gen_wakes(now), &mut cache).unwrap();
         assert_eq!(fs::read_to_string(t.path().join("summary.json")).unwrap(), GOLDEN);
         assert!(!t.path().join("summary.json.tmp").exists());
+        // 第二轮全走缓存（文件都没变）：输出仍与黄金文件逐字节一致
+        write_summary(t.path(), now, 8 * 3600, &gen_wakes(now), &mut cache).unwrap();
+        assert_eq!(fs::read_to_string(t.path().join("summary.json")).unwrap(), GOLDEN);
+    }
+
+    /// 带缓存跨轮运行 vs 每轮新缓存（= 旧的全量逐行读）：窗口起点逐轮前移（跨本地/UTC 零点、跨文件边界）、
+    /// 当天文件被追加、旧文件被删、某文件被改成坏行，每一轮输出都必须逐字节相同，且缓存确实被用上。
+    #[test]
+    fn cached_rounds_match_full_rescan() {
+        let t = crate::util::testutil::tmp();
+        let base_now = 1_760_000_000;
+        for (k, v) in gen_days(base_now) {
+            fs::write(t.path().join(format!("samples-{k}.tsv")), v).unwrap();
+        }
+        let wakes = gen_wakes(base_now);
+        let mut cache = SummaryCache::default();
+        let mut now = base_now;
+        for round in 0..60u64 {
+            now += 1_800 + round * 97; // 不规则步长，逐步跨过各窗口起点与文件边界
+            let today = t.path().join(format!("samples-{}.tsv", ymd(now)));
+            store_append(&today, &format!("{now}\tproc\tround{}\t{}\t1\n{now}\tapp\txochitl\t7\t1\n{now}\t_sys\tDischarging\t1\t{}\t1\t{}\t0\n", round % 4, round * 3, 90 - round as i64 % 7, 2_000_000 - round as i64 * 900));
+            if round == 20 {
+                // 删掉最老的一个文件（模拟 prune）
+                let mut names: Vec<_> = fs::read_dir(t.path()).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).filter(|n| is_sample_file(n)).collect();
+                names.sort();
+                fs::remove_file(t.path().join(&names[0])).unwrap();
+            }
+            if round == 35 {
+                // 某个历史文件被改写（长度变了）→ 缓存必须失效
+                let mut names: Vec<_> = fs::read_dir(t.path()).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).filter(|n| is_sample_file(n)).collect();
+                names.sort();
+                store_append(&t.path().join(&names[3]), "garbage\n1\tproc\tlate\t5\t1\n");
+            }
+            write_summary(t.path(), now, 8 * 3600, &wakes, &mut cache).unwrap();
+            let cached = fs::read_to_string(t.path().join("summary.json")).unwrap();
+            write_summary(t.path(), now, 8 * 3600, &wakes, &mut SummaryCache::default()).unwrap();
+            let full = fs::read_to_string(t.path().join("summary.json")).unwrap();
+            assert_eq!(cached, full, "round {round} now {now}");
+        }
+        let files = fs::read_dir(t.path()).unwrap().flatten().filter(|e| is_sample_file(&e.file_name().to_string_lossy())).count();
+        assert_eq!(cache.files.len(), files, "缓存只留现存文件");
+    }
+
+    fn store_append(p: &Path, s: &str) {
+        crate::store::append(p, s).unwrap();
+    }
+
+    /// 性能对照（`cargo test --release -- --ignored --nocapture`）：40 天、每轮 30 个进程键 + 20 个应用键。
+    #[test]
+    #[ignore]
+    fn bench_write_summary_40d() {
+        let now = 1_760_000_000u64;
+        let t = crate::util::testutil::tmp();
+        let mut days: HashMap<String, String> = HashMap::new();
+        let mut ep = now - 40 * 86400;
+        let mut i = 0u64;
+        while ep <= now {
+            let s = days.entry(ymd(ep)).or_default();
+            for k in 0..30 {
+                s.push_str(&format!("{ep}\tproc\tcomm-{k}\t{}\t1\n", 10 + (i * 7 + k) % 900));
+            }
+            for k in 0..20 {
+                s.push_str(&format!("{ep}\tapp\tunit-{k}\t{}\t1\n", 10 + (i * 3 + k) % 900));
+            }
+            s.push_str(&format!("{ep}\t_sys\tDischarging\t{}\t80\t1\t2000000\t-100000\n", i * 600));
+            ep += 600;
+            i += 1;
+        }
+        let bytes: usize = days.values().map(|v| v.len()).sum();
+        for (k, v) in &days {
+            fs::write(t.path().join(format!("samples-{k}.tsv")), v).unwrap();
+        }
+        let n = 5u32;
+        let st = std::time::Instant::now();
+        for _ in 0..n {
+            write_summary(t.path(), now, 8 * 3600, &[], &mut SummaryCache::default()).unwrap();
+        }
+        let cold = st.elapsed() / n;
+        let mut cache = SummaryCache::default();
+        write_summary(t.path(), now, 8 * 3600, &[], &mut cache).unwrap();
+        let st = std::time::Instant::now();
+        for r in 0..n {
+            let later = now + 600 * (r as u64 + 1);
+            store_append(&t.path().join(format!("samples-{}.tsv", ymd(later))), &format!("{later}\tproc\tcomm-0\t5\t1\n"));
+            write_summary(t.path(), later, 8 * 3600, &[], &mut cache).unwrap();
+        }
+        eprintln!("BENCH files={} bytes={bytes} full_rescan={cold:?} cached_round={:?}", days.len(), st.elapsed() / n);
     }
 
     #[test]
@@ -310,3 +512,4 @@ mod tests {
         assert_eq!(friendly_wake("é-1"), "é-1", "非 ASCII 首字节不切片也不 panic");
     }
 }
+

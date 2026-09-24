@@ -499,10 +499,17 @@ char _xovi_shouldLoad(void) {
 void _xovi_construct(void) {
     uintptr_t base = 0, addr = 0;
     size_t size = 0;
-    if (!cj_find_exec_module(TARGET_MODULE_SUFFIX, NULL, &base, &size)) return;
+    if (!cj_find_exec_module(TARGET_MODULE_SUFFIX, NULL, &base, &size)) {
+        fprintf(stderr, "[hw-stroke] _xovi_construct: 找不到 xochitl 映射，hook 未安装\n");
+        return;
+    }
     if (!cj_find_unique_pattern((const uint8_t *)base, size, PROLOGUE_HW_QUAD,
                                  sizeof(PROLOGUE_HW_QUAD), &addr)) {
-        return; /* _xovi_shouldLoad 已经打过日志，这里不重复 */
+        /* _xovi_shouldLoad 时还命中、这里却没命中：以前静默返回（网页徽章仍显示"已加载"）。
+         * 2026-09-24 起 cj_find_exec_module 会合并被别的扩展 mprotect 切开的代码段，
+         * "后装的扩展找不到高地址目标"这条已修；再出现就是目标开头真被改写了。 */
+        fprintf(stderr, "[hw-stroke] _xovi_construct: 特征码不再唯一命中（目标可能已被其它扩展改写），hook 未安装\n");
+        return;
     }
     cj_hw_refresh_config();
     cj_install_hw_quad_hook(addr);

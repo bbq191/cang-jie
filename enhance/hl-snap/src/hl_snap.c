@@ -143,10 +143,17 @@ char _xovi_shouldLoad(void) {
 void _xovi_construct(void) {
     uintptr_t base = 0, addr = 0;
     size_t size = 0;
-    if (!cj_find_exec_module(TARGET_MODULE_SUFFIX, NULL, &base, &size)) return;
+    if (!cj_find_exec_module(TARGET_MODULE_SUFFIX, NULL, &base, &size)) {
+        fprintf(stderr, "[hl-snap] _xovi_construct: 找不到 xochitl 映射，hook 未安装\n");
+        return;
+    }
     if (!cj_find_unique_pattern((const uint8_t *)base, size, PROLOGUE_HL_EXPAND,
                                  sizeof(PROLOGUE_HL_EXPAND), &addr)) {
-        return; /* _xovi_shouldLoad 已经打过日志，这里不重复 */
+        /* _xovi_shouldLoad 时还命中、这里却没命中 = 两步之间目标开头被改写了（多半是另一个
+         * 扩展先 patch 了同一个函数，如同时装了 cangjie-langhook，白皮书 §03a）。以前这里
+         * 静默返回，网页徽章显示"已加载"却没有 hook，只能靠 journal 缺一行"安装完成"推断。 */
+        fprintf(stderr, "[hl-snap] _xovi_construct: 特征码不再唯一命中（目标可能已被其它扩展改写），hook 未安装\n");
+        return;
     }
     cj_hl_refresh_config();
     cj_install_hl_expand_hook(addr);

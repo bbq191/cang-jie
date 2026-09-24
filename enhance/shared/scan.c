@@ -47,10 +47,13 @@ static int str_ends_with(const char *s, const char *suffix) {
 
 /* 解析单行 /proc/self/maps，格式例：
  *   55d2f1a00000-55d2f1a21000 r-xp 00000000 08:01 123456   /usr/bin/xochitl
- * 成功且是可执行映射、路径匹配后缀，返回 1 并填出 base/size；否则返回 0。
+ * 成功且是可执行映射、路径匹配后缀，返回 1 并填出 base/end 与完整路径（out_path，
+ * 容量 PATH_CAP）；否则返回 0。
  */
+#define PATH_CAP 512
 static int parse_maps_line(const char *line, const char *module_path_suffix,
-                            uintptr_t *out_base, size_t *out_size) {
+                            uintptr_t *out_base, uintptr_t *out_end,
+                            char *out_perms /* 容量 8 */, char *out_path /* 容量 PATH_CAP */) {
     unsigned long long start = 0, end = 0;
     char perms[8] = {0};
     int consumed = 0;
@@ -74,19 +77,20 @@ static int parse_maps_line(const char *line, const char *module_path_suffix,
     }
     if (!path_start) return 0; /* 匿名映射，没有路径字段 */
 
-    /* path_start 到行尾（去掉换行）就是路径；用一个栈上缓冲区拷出来做后缀比较 */
-    char pathbuf[512];
+    /* path_start 到行尾（去掉换行）就是路径；拷进调用方缓冲区做后缀比较 */
     size_t i = 0;
-    while (path_start[i] && path_start[i] != '\n' && i < sizeof(pathbuf) - 1) {
-        pathbuf[i] = path_start[i];
+    while (path_start[i] && path_start[i] != '\n' && i < PATH_CAP - 1) {
+        out_path[i] = path_start[i];
         i++;
     }
-    pathbuf[i] = '\0';
+    out_path[i] = '\0';
 
-    if (!str_ends_with(pathbuf, module_path_suffix)) return 0;
+    if (!str_ends_with(out_path, module_path_suffix)) return 0;
+    if (end <= start) return 0;
 
+    memcpy(out_perms, perms, sizeof(perms));
     *out_base = (uintptr_t)start;
-    *out_size = (size_t)(end - start);
+    *out_end = (uintptr_t)end;
     return 1;
 }
 
@@ -101,25 +105,46 @@ int cj_find_exec_module(const char *module_path_suffix,
         content = owned;
     }
 
+    /* found=0：还在找第一段；found=1：已找到第一段，往后只看紧邻的续段。 */
     int found = 0;
+    uintptr_t base = 0, end = 0;
+    char first_path[PATH_CAP];
     const char *line_start = content;
     while (*line_start) {
         const char *line_end = strchr(line_start, '\n');
         size_t line_len = line_end ? (size_t)(line_end - line_start) : strlen(line_start);
 
         char linebuf[1024];
+        int parsed = 0;
+        uintptr_t seg_start = 0, seg_end = 0;
+        char perms[8] = {0};
+        char path[PATH_CAP];
         if (line_len < sizeof(linebuf)) {
             memcpy(linebuf, line_start, line_len);
             linebuf[line_len] = '\0';
-            if (parse_maps_line(linebuf, module_path_suffix, out_base, out_size)) {
+            parsed = parse_maps_line(linebuf, module_path_suffix, &seg_start, &seg_end, perms, path);
+        }
+        if (!found) {
+            if (parsed) {
                 found = 1;
-                break;
+                base = seg_start;
+                end = seg_end;
+                memcpy(first_path, path, sizeof(first_path));
             }
+        } else {
+            /* 续段：必须同一文件、地址紧接、可读可执行（hook 把某页 mprotect 成 rwxp 后，
+             * 内核把原来的一整段 r-xp 切成 r-xp / rwxp / r-xp 三段——见 scan.h 头注）。
+             * 任何一条不满足就停，范围始终是一段连续、可读的内存。 */
+            if (!parsed || seg_start != end || perms[0] != 'r' || strcmp(path, first_path) != 0) break;
+            end = seg_end;
         }
         if (!line_end) break;
         line_start = line_end + 1;
     }
 
     if (owned) free(owned);
-    return found;
+    if (!found) return 0;
+    *out_base = base;
+    *out_size = (size_t)(end - base);
+    return 1;
 }
