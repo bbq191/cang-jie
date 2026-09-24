@@ -83,6 +83,7 @@
 | 批量与并发 | 批量队列在网关（顺序逐本、落盘续跑、可全部中止）；重活过并发/内存闸门（>90MB 大档 1 个、小档 3 个） | §03bp |
 | 稳定性 | `panic="unwind"`+`catch_unwind`、`OpRegistry`、启动时修正被中断的 `pending` | §03bq |
 | KOReader 入口 | appload ≥ 0.6.0；配置补丁经 koreader-serve `/config/*`；高亮/生词可在网页笔记页一键导入 | §03v、§03ar |
+| KOReader 阅读方案 | 全局 = 文字书；`books/漫画/` 新书自动从右往左、去边距、图片最佳缩放、隐藏状态栏；统计与生词本插件已启用 | §03bt |
 
 **已砍/已被取代（别再找）**：电脑端 `shelf` 命令行（09-18，附录 B）；母版库"优化档位"与"投完自动删除"（09-19）；漫画"优化转 PDF"（09-19 做、09-20 换回 EPUB）；三档格式（09-17/18 收成一档）；微信读书内容源（09-05）；appload 补丁工具链（09-21）；bind-mount 壁纸（§03x）；`/inbox*` 与 `/staging/render/*` HTTP 接口（09-22 删，scp 进 `inbox/` 仍可用）。
 
@@ -405,7 +406,7 @@
 > - **加入 xochitl**：≤ `nativeUploadLimitMb`（缺省 90MB）走流式 `/upload` + 渲染自检；超限**优先"占位 + 磁盘替换"**（≤1GiB，不分卷，§03bn）；只有本机无书库目录、超 1GiB 或造不出占位时才回退按卷拆分（漫画 EPUB / 带书签漫画 PDF）或拒绝。
 > - **为什么是 90**：真机二分测出 xochitl `/upload` 硬上限是 **100,000,000 字节**；此前的 150MB 是没验证过的猜测。
 > - 文件夹留空＝书库根；填了不存在的名字，经 `MkdirQueue` 由 qmd 代理调 xochitl 的 `Library.createCollection` 真建（最多等 20 秒）；名字带 `/` 合法。
-> - **加入 KOReader**：`POST /books/adopt` 复制进书目录（先写 `.part` 再 rename），不经优化器、不限体积。
+> - **加入 KOReader**：`POST /books/adopt` 复制进书目录（先写 `.part` 再 rename），不经优化器、不限体积。放进 `books/漫画/` 的书按漫画方案打开（从右往左、去边距、隐藏状态栏），其余按文字书方案（§03bt）。
 > - 漫画：09-19 一度改产 PDF（§03bk），09-20 换回 EPUB；PDF 代码只服务"超限 PDF 分卷"。
 
 ![落库决策树：≤90MB 流式上传 / >90MB 占位替换 / 兜底按卷拆分 / KOReader 本地复制](diagrams/deliver-decision.svg)
@@ -424,12 +425,15 @@
 | 占位替换后名字/封面不对 | xochitl 用占位的书名与封面，替换后不补生成 | 占位必须带真书名和真封面 | §03bn |
 | 漫画降灰阶后体积反涨 | 抖动位图高熵，压不动 | 降灰阶省的是刷新闪烁，不是体积 | §03t · §03ad |
 | 用渲染缓存验目录 | 缓存 `<uuid>.pdf` 从不带书签 | 目录从 EPUB 的 ncx/nav 或 `.epubindex` 验 | §03aa |
+| 照网上模板改 KOReader 配置不生效 | 模板里的 `status_bar`、`eink_refresh_every` 等键 KOReader 根本没有 | 先在设备上的 KOReader 源码里核键名 | §03bt |
+| KOReader 漫画设置对旧书无效 | 文件夹默认设置只在书第一次打开时写入 | 打开过的书在菜单里「重置设置」后重开 | §03bt |
+| KOReader 状态栏剩余时间显示 N/A | 「统计」插件被禁用 | 启用统计插件 | §03bt |
 
 ### 03d｜Phase 3 KOReader 配置即代码（2026-09-03，离线完成）
 
 **设计（现役）**：`shelf/koreader/merge.lua` 由 KOReader 自带 `luajit` 跑（标量覆盖、表递归、`"__DELETE__"` 删键、`--dry-run` 只出差异）。`ConfigSync::apply`：KOReader 在跑则 409（它退出时会回写配置）→ 备份 → 合并 → `dofile` 回读、失败自动还原。
-**端点**：`GET|POST /config/{settings|defaults|gestures}[?dry_run=1]`、`/dicts`、`/fonts`。profile 三份补丁见 `shelf/koreader/profile/`。
-**被取代**：`shelf koreader pull/diff/sync` 随 CLI 砍除。**真机待验**：运行中拒绝、二次同步零差异。
+**端点**：`GET|POST /config/{settings|defaults|gestures|directory|profiles}[?dry_run=1]`（后两个 09-24 加，§03bt）、`/dicts`、`/fonts`。补丁见 `shelf/koreader/profile/`。
+**被取代**：`shelf koreader pull/diff/sync` 随 CLI 砍除。**已验**：09-24 真机经 `/config/*` 写入三份补丁（写前备份、回读校验）；二次应用零差异由回归测试覆盖。**真机待验**：KOReader 运行中拒写。
 
 ### 03l｜"传书就卡、传字体不卡"根因＝reMarkable 云同步（2026-09-04，用户报 + 真机复现坐实）
 
@@ -463,6 +467,32 @@
 - **判死**：`rusqlite` 交叉编译到 musl 链接失败（`sqlite3.c` 调 glibc LFS64 符号），用户选手写；`rusqlite` 降为仅测试依赖做差分。
 - **真 bug**：生词本路径想当然写 `data/`，真机在 `settings/`。
 - **消费方**：笔记线 `ink-serve` 的 `/koreader/import`；**2026-09-23 网页笔记页加「导入 KOReader 批注」按钮**，不再只能 curl 触发。
+
+### 03bt｜KOReader 文字书 / 漫画两套阅读方案（2026-09-24，真机通）
+
+**起因**：用户给了两份网上流传的 `settings.reader.lua` 模板（文字书一份、漫画一份），要求结合设备实际生成两套加载方案，并装必要插件、关掉非必要插件。
+
+**先核键名，再动手**：设备上 KOReader（v2026.07.1）的 Lua 源码是现成的，整份拉回本机逐个核对。两份模板里的 `status_bar`、`cre_engine_controls`、`taps_and_gestures.tap_zones`、`eink_refresh_every`、`k2pdfopt_mode`、`default_profile`、`screen_dpi` 用法等**在 KOReader 里都不存在**，写进去会被忽略；能用的只是其中的思路（字重、行距、不用内嵌字体、漫画 RTL、去边距、隐藏状态栏）。最终方案全部换成真实键名。
+
+![KOReader 文字书 / 漫画两套方案](diagrams/sh-koreader-schemes.svg)
+
+**怎么拼**：KOReader 没有"按书类型整套切换配置"的单一开关，用三样自带机制：
+
+| 层 | 文件 / 插件 | 内容 |
+|---|---|---|
+| ① 全局设置 = 文字书方案 | `settings.reader.lua` | 行距 115%（缺省 100 对中文偏挤）、字重 +0.5、不用书内嵌字体、悬挂标点、书没标语言时按中文断行；文字页每 16 页全刷 |
+| ② 漫画的单书设置 | `settings/directory_defaults.lua`（docsettingtweak） | `books/漫画/` 下的书**第一次打开**时写成它自己的设置：从右往左、四边页边距 0、图片缩放「最佳」、关 crengine 标题栏 |
+| ③ 状态栏随书切换 | `settings/profiles.lua` + `profiles_autoexec`（profiles） | 打开 `/books/漫画/` 载入「漫画」预设（隐藏状态栏和进度条）；关闭漫画或打开 `/books/小说/` 载入「文字」预设 |
+
+几个核实过的事实：带图片的页 KOReader 缺省就每页全刷（`refresh_on_pages_with_images` 缺省开），模板里的"漫画每页全刷"不用另设；KOReader 不读 OPF 的 `page-progression-direction`，从右往左必须设 `inverse_reading_order`；状态栏是全局设置，所以只能靠配置档随书切换。
+
+**插件取舍**：启用「统计」——状态栏的剩余阅读时间靠它算，此前被禁用，一直显示 N/A；启用「生词本」——笔记线从它的数据库导入生词（§03ar），此前也被禁用。新增禁用 13 个与本机用法无关的：hello、coverimage、keepalive、bookshortcuts、cloudstorage、opds、kosync、timesync、autostandby、batterystat、hotkeys、externalkeyboard、archiveviewer。第三方插件查过一轮，没有称得上必装的；书库界面插件 Project: Title（v3.8.3 支持 2026.07.x）用户选择暂不装。
+
+**落地**：koreader-serve 的 `/config/*` 新增 `directory`、`profiles` 两个目标文件（原来只有 settings/defaults/gestures）；三份补丁先 `dry_run` 看差异（24/1/2 项），再正式写入，写前自动备份、写后回读校验。新增回归测试：仓库 5 份补丁逐个应用到空 KOReader 目录，全部能写入且二次应用零改动——这条测试顺带查出 `merge.lua` 的真 bug：目标里原先没有的表整张落进去时，里面的 `"__DELETE__"` 删除标记会被当普通字符串写进配置（设备上那张表本来就存在，这次没触发），已修。
+
+**真机**：用户在设备上确认两套方案都生效（漫画从右往左、四边铺满、状态栏隐藏；小说状态栏恢复）。唯一反馈是漫画"底部没铺满、有的长有的短"：量截图与原图，渲染比例与原图逐页一致（没有拉伸），是《死亡筆記》这版原图每页单独裁切、宽高比 0.61–0.78 不一，而屏幕是 0.56，按宽铺满后底部留白 100–470px 不等。原图四周也没有白边可裁。填满只能裁左右或拉伸，用户选择保持现状。
+**已知限制**：② 只对第一次打开的书生效，打开过的书要在菜单里「重置设置」后重开；`漫画/` 一律从右往左，从左往右的国漫 / 美漫要放在别处；每次切状态栏预设会弹一条"已载入预设"。
+**教训**：改 KOReader 配置先在设备源码里核键名——网上的模板看着专业，键名却可能是编的；源码就在设备上，`tar` 拉回来 grep 比凭印象可靠。
 
 ### 03ax｜第三轮真机反馈：脚注返回浮标已有解、裁边真机核实无误、超限漫画按卷拆分投原生（2026-09-18，真机通）
 
@@ -942,6 +972,7 @@ sudo nmcli connection down Hotspot && sudo nmcli connection up Hotspot
 | 09-20 | §03bm–§03bq | 耗电核查；大文件占位替换与命名规则；封面声明规则；批量队列与闸门；可靠性 |
 | 09-21/22 | — | 漫画页边距实验室开关（bookconv §20）；appload 0.6.0；第二轮全系统审计 |
 | 09-23 | §03br、§03bs | **PDF 按原格式转 EPUB**（fork pdf-extract、颜色/图片/链接/切章）；T.E. 只渲染 1 页根因；EPUB 线无扩展名章节、注释样式、质量门接入 book-serve；规范白皮书成立 |
+| 09-24 | §03bt | 全系统审查两批修补（见各线白皮书）；**KOReader 文字书/漫画两套方案**，插件取舍，merge.lua 删除标记泄漏修复 |
 
 ### 附录 B｜已移除的能力：电脑端 `shelf` 命令行（原 `shelf/README.md`，2026-09-18 砍除）
 

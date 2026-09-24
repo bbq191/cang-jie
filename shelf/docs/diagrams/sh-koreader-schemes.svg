@@ -1,0 +1,71 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1120" height="640" viewBox="0 0 1120 640" font-family="Noto Sans CJK SC, sans-serif">
+  <rect width="1120" height="640" fill="#ffffff"/>
+  <text x="560" y="34" text-anchor="middle" font-size="20" font-weight="bold" fill="#1f2937">KOReader 文字书 / 漫画两套方案：三样自带机制怎么拼（§03bt）</text>
+  <text x="560" y="58" text-anchor="middle" font-size="13" fill="#6b7280">KOReader v2026.07.1；补丁在 shelf/koreader/profile/，经 koreader-serve POST /config/{settings,directory,profiles} 写入（KOReader 须先退出）</text>
+
+  <!-- 左：打开一本书 -->
+  <rect x="20" y="90" width="200" height="70" rx="10" fill="#eef2ff" stroke="#4f46e5"/>
+  <text x="120" y="120" text-anchor="middle" font-size="15" font-weight="bold" fill="#312e81">打开一本书</text>
+  <text x="120" y="142" text-anchor="middle" font-size="12" fill="#4b5563">看它在哪个文件夹</text>
+
+  <!-- 三层 -->
+  <g font-size="13" fill="#1f2937">
+    <!-- 层 1 全局 -->
+    <rect x="270" y="80" width="400" height="140" rx="10" fill="#f0fdf4" stroke="#15803d"/>
+    <text x="286" y="106" font-size="15" font-weight="bold" fill="#14532d">① 全局设置 settings.reader.lua</text>
+    <text x="286" y="128" fill="#4b5563">所有没有单书设置的书的缺省值 = 文字书方案</text>
+    <text x="286" y="152">行距 115% · 字重 +0.5 · 不用书内嵌字体</text>
+    <text x="286" y="174">悬挂标点 · 无语言标注按中文断行</text>
+    <text x="286" y="196">文字页每 16 页全刷；带图页缺省每页全刷</text>
+
+    <!-- 层 2 目录默认 -->
+    <rect x="270" y="240" width="400" height="160" rx="10" fill="#fff7ed" stroke="#c2410c"/>
+    <text x="286" y="266" font-size="15" font-weight="bold" fill="#7c2d12">② 按文件夹的单书设置 directory_defaults.lua</text>
+    <text x="286" y="288" fill="#4b5563">docsettingtweak 插件：books/漫画/ 下的书</text>
+    <text x="286" y="308" fill="#b45309" font-weight="bold">只在第一次打开时套用（写成这本书自己的设置）</text>
+    <text x="286" y="332">从右往左翻（inverse_reading_order）</text>
+    <text x="286" y="354">四边页边距 0 · 图片缩放「最佳」</text>
+    <text x="286" y="376">关 crengine 标题栏 · 翻页模式</text>
+
+    <!-- 层 3 配置档 -->
+    <rect x="270" y="420" width="400" height="150" rx="10" fill="#eff6ff" stroke="#1d4ed8"/>
+    <text x="286" y="446" font-size="15" font-weight="bold" fill="#1e3a8a">③ 配置档 profiles.lua + profiles_autoexec</text>
+    <text x="286" y="468" fill="#4b5563">profiles 插件：打开/关闭书时按路径自动执行</text>
+    <text x="286" y="492">打开 /books/漫画/ → 载入「漫画」状态栏预设（隐藏）</text>
+    <text x="286" y="514">关闭漫画、或打开 /books/小说/ → 载入「文字」预设</text>
+    <text x="286" y="536">（状态栏是全局设置，只能这样随书切换）</text>
+    <text x="286" y="558" fill="#6b7280">每次切换弹一条"已载入预设"小提示</text>
+  </g>
+
+  <!-- 箭头 -->
+  <g stroke="#6b7280" stroke-width="2" fill="none">
+    <path d="M220 125 L268 150"/>
+    <path d="M220 130 L268 320"/>
+    <path d="M220 135 L268 495"/>
+  </g>
+
+  <!-- 右：结果 -->
+  <rect x="720" y="80" width="380" height="165" rx="10" fill="#f9fafb" stroke="#9ca3af"/>
+  <text x="736" y="106" font-size="15" font-weight="bold" fill="#1f2937">小说（books/小说/ 等）</text>
+  <g font-size="13" fill="#1f2937">
+    <text x="736" y="132">= ① 全局设置</text>
+    <text x="736" y="156">状态栏：页码进度、剩余页数、剩余阅读时间</text>
+    <text x="736" y="180">（剩余时间要「统计」插件，已启用）</text>
+    <text x="736" y="204">查词自动进生词本（「生词本」插件，已启用；</text>
+    <text x="736" y="226">笔记线从它的数据库导入生词）</text>
+  </g>
+
+  <rect x="720" y="300" width="380" height="270" rx="10" fill="#f9fafb" stroke="#9ca3af"/>
+  <text x="736" y="326" font-size="15" font-weight="bold" fill="#1f2937">漫画（books/漫画/）</text>
+  <g font-size="13" fill="#1f2937">
+    <text x="736" y="352">= ② 覆盖的几项 + 其余照 ① + ③ 隐藏状态栏</text>
+    <text x="736" y="376">点左侧 = 下一页；画面左右顶满</text>
+    <text x="736" y="400">底部留白随每页原图宽度变化（100–470px）：</text>
+    <text x="736" y="422">原图宽高比 0.61–0.78，屏幕 0.56，</text>
+    <text x="736" y="444">按原比例缩放，不裁不拉（用户选择保持）</text>
+    <text x="736" y="476" fill="#b45309">从左往右的国漫 / 美漫别放进 漫画/</text>
+    <text x="736" y="498" fill="#b45309">已打开过的书要「重置设置」后才套用 ②</text>
+  </g>
+
+  <text x="560" y="612" text-anchor="middle" font-size="12" fill="#6b7280">网传模板里的 status_bar、cre_engine_controls、taps_and_gestures.tap_zones、eink_refresh_every、k2pdfopt_mode、default_profile 在 KOReader 里都不存在，写了也被忽略</text>
+</svg>
