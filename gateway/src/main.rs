@@ -136,10 +136,11 @@ fn main() {
     } else {
         router = router.get("/api/session", |_| Ok(Reply::ok(&serde_json::json!({"ok": true, "mustChange": false, "auth": false}))));
     }
-    // 管理台/引导路由——**必须在 /api/{svc} 代理通配之前**注册（否则 manage/foundation 被当服务段代理成 404）。
+    // 管理台/引导等网关自身路由。路由器按"最具体优先"分发（字面段多者胜，见 rmsvc_core::http::router），
+    // 与注册先后无关——/api/manage 这类不会被 /api/{svc}/* 代理通配抢走；旧注释"必须先注册"已不成立（09-20 起）。
     const PROXIED: &[Method] = &[Method::Get, Method::Post, Method::Put, Method::Delete];
     let router = router
-        // 事件流（SSE）：必须在 /api/{svc} 代理通配之前；受登录守卫（cookie/Basic）保护
+        // 事件流（SSE）：受登录守卫（cookie/Basic）保护
         .get("/api/events", bind(&hub, |h, _| Ok(h.bus.sse_reply())))
         .get("/api/manage", bind(&paths, |p, _| Ok(manage::status(p))))
         .get("/api/foundation", bind(&paths, |p, _| Ok(manage::foundation(p))))
@@ -147,14 +148,13 @@ fn main() {
             let (seg, action) = (r.param("seg").to_string(), r.param("action").to_string());
             if action == "uninstall" { manage::uninstall(p, &seg, r) } else { manage::toggle(p, &seg, &action) }
         }))
-        // 系统增强开关（Track 3）：网关自身固定能力，同样必须在 /api/{svc} 代理通配之前注册。
+        // 系统增强开关（Track 3）：网关自身固定能力。
         .get("/api/enhance/status", bind(&paths, |p, _| Ok(enhance::status(p))))
         .put("/api/enhance/qol", bind(&paths, enhance::set_qol))
         .get("/api/enhance/battop/summary", bind(&paths, enhance::battop_summary))
         .post("/api/enhance/battop/{action}", bind(&paths, |p, r| { let action = r.param("action").to_string(); enhance::battop_toggle(p, &action) }))
         // 并发/内存预算闸门的排队/处理状态（2026-09-19 用户反馈驱动，见 budget.rs::State 文档
-        // 注释）：跟 /api/manage、/api/enhance/* 一样是网关自身固定能力，必须在 /api/{svc}
-        // 代理通配之前注册。GET 给任何会话（含关掉浏览器重开）看真实排队/处理状态；POST cancel
+        // 注释）：跟 /api/manage、/api/enhance/* 一样是网关自身固定能力。GET 给任何会话（含关掉浏览器重开）看真实排队/处理状态；POST cancel
         // 只对还在排队（没真正拿到名额开始跑）的书名生效，见 budget::Budget::cancel 文档。
         .get("/api/budget/status", |_| {
             let (pending, active) = budget::global().snapshot();
@@ -165,7 +165,7 @@ fn main() {
             Ok(Reply::ok(&serde_json::json!({"cancelled": budget::global().cancel(&name)})))
         })
         // 服务端批量队列（见 batch.rs）：提交 `{action, names?, all?, folder?}`；`names` 缺省且 `all:true` 表示"所有适用的"。
-        // 状态任何会话都能看（关掉浏览器重开、换设备都在）。同样必须在 /api/{svc} 代理通配之前注册。
+        // 状态任何会话都能看（关掉浏览器重开、换设备都在）。
         .post("/api/batch", bind(&paths, |p, r| {
             let j = r.json()?;
             let action = j.0.get("action").and_then(|a| a.as_str()).and_then(batch::Action::parse).ok_or_else(|| ApiError::bad("action 只能是 optimize/deliver/koreader"))?;

@@ -50,7 +50,8 @@ fn fields(e: &Entry) -> [(&'static str, Option<&str>); 5] {
     [
         ("quote", e.quote.as_ref().map(|q| q.text.as_str())),
         ("text", e.text.as_deref()),
-        ("draft", if e.text.is_none() { e.drafts.last().map(|d| d.text.as_str()) } else { None }),
+        // 草稿是新的在前（转写与手动写回都 insert(0, …)），搜最新那份，与 Entry::display_text 一致。
+        ("draft", if e.text.is_none() { e.drafts.first().map(|d| d.text.as_str()) } else { None }),
         ("question", e.question.as_deref()),
         ("answer", e.answer.as_ref().map(|a| a.text.as_str())),
     ]
@@ -128,6 +129,20 @@ mod tests {
         assert_eq!((h.len(), h[0].field, h[0].id.as_str()), (1, "title", "a"));
         let h = search(&books, "o", 1);
         assert_eq!(h.len(), 1);
+    }
+
+    /// 回归：草稿新的在前，只搜最新那份（此前误用 last() 搜到最早的草稿）。
+    #[test]
+    fn searches_newest_draft_only() {
+        use notecore::model::Draft;
+        let mut e = entry("d", Status::Draft);
+        e.drafts = vec![
+            Draft { text: "新草稿 甲".into(), backend: "x".into(), at: 2, hash: "h2".into() },
+            Draft { text: "旧草稿 乙".into(), backend: "x".into(), at: 1, hash: "h1".into() },
+        ];
+        let books = [Book { uuid: "u".into(), title: "书".into(), entries: vec![e], ..Default::default() }];
+        assert_eq!(search(&books, "甲", 10).len(), 1);
+        assert!(search(&books, "乙", 10).is_empty(), "过时的旧草稿不该被搜到");
     }
 
     #[test]

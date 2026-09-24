@@ -18,7 +18,7 @@
 //! - `fs`       原子写（tmp→rename）+ unix 权限 + 单段文件名校验 / 同名不覆盖，config/registry/母版库/壁纸池共用。
 //! - `formats`  文件格式白名单单一事实源（书籍/字体/词典/图片），UI accept 与服务端上传门同源。
 //! - `tls`      私有 CA + 叶证书生成/加载（网关 HTTPS；装一次 CA 免提示）。
-//! - `auth`     密码哈希（salted SHA-256）、Basic/Cookie 解析、内存会话表。
+//! - `auth`     密码哈希（PBKDF2-HMAC-SHA256，60 万轮）、Basic/Cookie 解析、内存会话表。
 //! - `netinfo`  本机 IPv4 表（证书 SAN、mDNS 选址）。
 //! - `cache`    单值 TTL 缓存（`/status` 这类重活接口降频，操作后可主动失效）。
 //! - `clock`    unix 时间戳唯一出处（秒/毫秒/纳秒、文件 mtime 换算）。

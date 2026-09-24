@@ -1006,7 +1006,9 @@ function renderNotes(sec){sec.innerHTML=`
     if(!items.length){nqres.innerHTML=`<p class="small">${T('notes.search.none')}</p>`;return}
     const ul=el('ul',{class:'nsearch'});
     items.forEach(h=>{const li=el('li',{html:`<div class="small">${esc(h.title)} · p.${h.pageIndex+1}${h.chapterTitle?' · '+esc(h.chapterTitle):''} · ${T(FIELD_KEYS[h.field]||'notes.search.field.text')}</div><div>${mark(h.snippet,q)}</div>`});
-      li.onclick=async()=>{if(sel.value!==h.uuid){sel.value=h.uuid;await loadBook()}$('#nsubnav',sec).children[0].click();nqres.innerHTML=''};
+      // 跳到这条目实际所在的子页：未处理（mined）在「浏览」，跳过/归档在「回收站」，其余（待转写/草稿/定稿）在「整理」。
+      const tab=h.status==='mined'?0:(h.status==='skipped'||h.status==='archived')?2:1;
+      li.onclick=async()=>{if(sel.value!==h.uuid){sel.value=h.uuid;await loadBook()}$('#nsubnav',sec).children[tab].click();nqres.innerHTML=''};
       ul.appendChild(li)});
     nqres.appendChild(el('p',{class:'small',text:T('notes.search.count',{n:items.length})}));nqres.appendChild(ul)};
   guardClick($('#nqgo',sec),doSearch);

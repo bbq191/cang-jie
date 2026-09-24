@@ -1,7 +1,7 @@
 name: CI
 
 # cang-jie 最小回归网：离线可跑的四类检查（不含真机——设备行为靠工程纪律人工真机验证）。
-# 命令与本地 README/PROTOTYPES 一致：uv sync + pytest / pinyin C 差分对拍 / cargo test / 交叉编译冒烟。
+# 四类检查：shell 静态检查 / host 侧 pytest + 前端 JS + enhance/shared C 单测 / 各 Rust crate cargo test / aarch64 交叉编译冒烟。
 
 on:
   push:
@@ -24,7 +24,7 @@ jobs:
         # 与本地(0.11)对 info/style(SC2015/SC2002…)判定的版本漂移。真问题都是 warning+。
         run: git ls-files '*.sh' | xargs -r shellcheck --severity=warning
 
-  # ── host 侧 Python 测试 + 拼音引擎 C↔Python 逐字节差分对拍 ──
+  # ── host 侧测试：安装脚本沙箱模拟（pytest）+ 网关前端 JS + enhance/shared C 单测 ──
   tests:
     runs-on: ubuntu-latest
     steps:
@@ -35,10 +35,7 @@ jobs:
           enable-cache: true
       - name: uv sync（统一 .venv，各线依赖）
         run: uv sync
-      # 只跑「自足」测试（fixtures 都进 git）。拼音引擎（pytest + C 差分对拍）**不进 CI**：
-      # 它 import/构建时需 ~70MB 有意 gitignore 的 rime-ice 词典源（base/iorest/luna_pinyin.dict.yaml
-      # 等），全新 checkout 没有 → 只能在本地 `uv run pytest chinese-ime/pinyin-engine/tests` +
-      # `make -C chinese-ime/pinyin-engine/c test diff-check`（有本地词典）跑，见 README。
+      # 只跑「自足」测试（fixtures 都进 git）。拼音引擎等早期代码已于 2026-09-11 移出本仓库，不再有对应步骤。
       # 2026-09-18：`shelf/host/`（Python CLI + Calibre 转换管线）整个已砍——用户明确表态以后
       # 不再使用 PC 端，只留网页/设备端交互；源码留档在本机 oldbak/（不随仓库走），CI 这步跟着删。
       - name: pytest（packaging/tests：安装/卸载脚本的沙箱模拟，不需要真机）
