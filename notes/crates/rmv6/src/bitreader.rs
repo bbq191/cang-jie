@@ -31,7 +31,7 @@ impl<N: Readable> Bitreader<N> {
                     self.set_position(pos);
                     return Ok(true);
                 }
-                return Err(e);
+                Err(e)
             }
         }
     }
@@ -49,18 +49,18 @@ impl<N: Readable> Bitreader<N> {
     fn read_exact(&mut self, buffer: &mut [u8]) -> Result<(), ParseError> {
         self.cursor.read_exact(buffer)?;
 
-        return Ok(());
+        Ok(())
     }
 
     pub fn read_bytes(&mut self, amount: usize) -> Result<Vec<u8>, ParseError> {
         let mut buffer = vec![0; amount];
         self.read_exact(&mut buffer)?;
-        return Ok(buffer);
+        Ok(buffer)
     }
 
     pub fn read_string(&mut self, length: usize) -> Result<String, ParseError> {
-        return Ok(String::from_utf8(self.read_bytes(length)?)
-            .map_err(|_| ParseError::invalid("String contains invalid utf-8"))?);
+        String::from_utf8(self.read_bytes(length)?)
+            .map_err(|_| ParseError::invalid("String contains invalid utf-8"))
     }
 
     // https://en.wikipedia.org/wiki/Variable-length_quantity
@@ -81,41 +81,41 @@ impl<N: Readable> Bitreader<N> {
                 break;
             }
         }
-        return Ok(result);
+        Ok(result)
     }
 
     pub fn read_bool(&mut self) -> Result<bool, ParseError> {
-        return Ok(self.read_u8()? > 0);
+        Ok(self.read_u8()? > 0)
     }
 
     pub fn read_f32(&mut self) -> Result<f32, ParseError> {
         let mut buffer = [0; 4];
         self.read_exact(&mut buffer)?;
-        return Ok(f32::from_le_bytes(buffer));
+        Ok(f32::from_le_bytes(buffer))
     }
 
     pub fn read_f64(&mut self) -> Result<f64, ParseError> {
         let mut buffer = [0; 8];
         self.read_exact(&mut buffer)?;
-        return Ok(f64::from_le_bytes(buffer));
+        Ok(f64::from_le_bytes(buffer))
     }
 
     pub fn read_u8(&mut self) -> Result<u8, ParseError> {
         let mut buffer = [0];
         self.read_exact(&mut buffer)?;
-        return Ok(u8::from_le_bytes(buffer));
+        Ok(u8::from_le_bytes(buffer))
     }
 
     pub fn read_u16(&mut self) -> Result<u16, ParseError> {
         let mut buffer = [0; 2];
         self.read_exact(&mut buffer)?;
-        return Ok(u16::from_le_bytes(buffer));
+        Ok(u16::from_le_bytes(buffer))
     }
 
     pub fn read_u32(&mut self) -> Result<u32, ParseError> {
         let mut buffer = [0; 4];
         self.read_exact(&mut buffer)?;
-        return Ok(u32::from_le_bytes(buffer));
+        Ok(u32::from_le_bytes(buffer))
     }
 
     /// Parse uuid from data in little endian format

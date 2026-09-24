@@ -24,27 +24,27 @@ impl BlockParse for Point {
             let direction = (255.0 * reader.bit_reader.read_f32()?) / (PI * 2.0);
             let width = reader.bit_reader.read_f32()? * 4.0;
             let pressure = reader.bit_reader.read_f32()? * 255.0;
-            return Ok(Point {
+            Ok(Point {
                 x,
                 y,
                 speed,
                 direction,
                 width,
                 pressure,
-            });
+            })
         } else {
             let speed = f32::from(reader.bit_reader.read_u16()?);
             let width = f32::from(reader.bit_reader.read_u16()?);
             let direction = f32::from(reader.bit_reader.read_u8()?);
             let pressure = f32::from(reader.bit_reader.read_u8()?);
-            return Ok(Point {
+            Ok(Point {
                 x,
                 y,
                 speed,
                 direction,
                 width,
                 pressure,
-            });
+            })
         }
     }
 }

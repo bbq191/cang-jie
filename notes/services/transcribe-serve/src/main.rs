@@ -9,7 +9,7 @@ mod ledger;
 mod prompt;
 mod worker;
 
-use backend::{OpenAiCompat, Vision};
+use backend::Vision;
 use config::TranscribeConfig;
 use ink::{EntryStore, InkHttp};
 use ledger::Ledger;
@@ -46,8 +46,8 @@ impl State {
         self.cfg.get()
     }
     fn vision(&self, cfg: &TranscribeConfig) -> Result<Box<dyn Vision>, String> {
-        let key = cfg.key().ok_or("未配置 API key（网页「转写设置」里粘贴，或环境变量 DASHSCOPE_API_KEY）")?;
-        Ok(Box::new(OpenAiCompat::new(&cfg.backend, cfg.base_url(), cfg.model(), &key, Duration::from_secs(cfg.timeout_secs))))
+        let c = vendorcfg::ChatClient::from_config(cfg, &cfg.backend, Duration::from_secs(cfg.timeout_secs), "未配置 API key（网页「转写设置」里粘贴，或环境变量 DASHSCOPE_API_KEY）")?;
+        Ok(Box::new(c))
     }
     /// 跑一轮（阻塞拿锁）。没 key → 直接报告不出网。
     fn run(&self, only: Option<Target<'_>>) -> ledger::RunReport {
@@ -56,16 +56,15 @@ impl State {
         let now = rmsvc_core::clock::now_secs();
         let report = match self.vision(&cfg) {
             Ok(v) => worker::run_once(&Ctx { store: &self.store, vision: v.as_ref(), cfg: &cfg, ledger: &self.ledger, failures: &self.failures, now }, only),
-            Err(e) => {
-                let r = ledger::RunReport { at: now, note: e, ..Default::default() };
-                self.ledger.record_run(r.clone());
-                r
-            }
+            Err(e) => ledger::RunReport { at: now, note: e, ..Default::default() },
         };
+        let changed = ledger::record_if_new(&self.ledger, &report);
         if report.done > 0 || report.failed > 0 {
             println!("[transcribe-serve] 一轮：扫 {} 成 {} 败 {} 跳 {} 余 {} {}", report.scanned, report.done, report.failed, report.skipped, report.left, report.note);
         }
-        self.bus.publish("notes", "transcribe");
+        if changed {
+            self.bus.publish("notes", "transcribe");
+        }
         report
     }
     fn kick(&self) {
@@ -87,12 +86,15 @@ fn watch_ink(st: Arc<State>) {
     });
 }
 
-/// 工作线程：收到踢 → 防抖 → 跑一轮。
+/// 工作线程：收到踢 → 防抖 → 跑一轮。一轮里 panic 兜住只丢这一轮：不兜的话工作线程就此退出，
+/// 之后自动转写再也不跑，而 HTTP 照常应答、看不出异常（`kick` 只会在下一次踢时打一句"工作线程没了"）。
 fn work_loop(st: Arc<State>, rx: Receiver<()>) {
     while rx.recv().is_ok() {
         std::thread::sleep(DEBOUNCE);
         while rx.try_recv().is_ok() {}
-        st.run(None);
+        if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| st.run(None))).is_err() {
+            eprintln!("[transcribe-serve] 一轮转写 panic（已兜住，下次再踢照常跑）");
+        }
     }
 }
 

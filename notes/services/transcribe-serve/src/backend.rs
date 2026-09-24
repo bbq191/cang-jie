@@ -1,9 +1,9 @@
 //! 视觉后端（Strategy）：`Vision` 一个方法——给裁片 PNG 与提示词，回文本与用量。
-//! 生产实现 `OpenAiCompat`：`POST {base_url}/chat/completions` + `image_url` data URI，覆盖 DashScope（Qwen）与所有 OpenAI 兼容服务；
+//! 生产实现是 `vendorcfg::ChatClient`（2026-09-24 起取代本地 `OpenAiCompat` 壳）：`POST {base_url}/chat/completions` + `image_url` data URI，覆盖 DashScope（Qwen）与所有 OpenAI 兼容服务；
 //! 换厂只改配置 baseUrl/model/key。测试用 `Fixed`。传输与应答解析（`post_chat`/`parse_chat_reply`）已收进
 //! `vendorcfg::chat`（2026-09-20，跟 mind-serve 此前各抄一份）；这里只留带 `image_url` 的请求体与 `Vision` trait。
 use base64::Engine;
-use std::time::Duration;
+use vendorcfg::ChatClient;
 
 /// 一次转写的结果（文本 + token 用量）：与文字问答同形，共用 `vendorcfg::ChatReply`。
 pub type Transcript = vendorcfg::ChatReply;
@@ -11,21 +11,6 @@ pub type Transcript = vendorcfg::ChatReply;
 pub trait Vision: Send + Sync {
     fn name(&self) -> &str;
     fn transcribe(&self, png: &[u8], prompt: &str) -> Result<Transcript, String>;
-}
-
-pub struct OpenAiCompat {
-    pub backend: String,
-    pub base_url: String,
-    pub model: String,
-    pub key: String,
-    pub agent: ureq::Agent,
-}
-
-impl OpenAiCompat {
-    pub fn new(backend: &str, base_url: &str, model: &str, key: &str, timeout: Duration) -> OpenAiCompat {
-        let agent = vendorcfg::chat::agent(timeout);
-        OpenAiCompat { backend: backend.into(), base_url: base_url.trim_end_matches('/').into(), model: model.into(), key: key.into(), agent }
-    }
 }
 
 /// 请求体（纯函数，便于核对形状）。temperature 0：转写要稳定，不要发挥。
@@ -45,12 +30,12 @@ pub fn chat_request(model: &str, png: &[u8], prompt: &str) -> serde_json::Value 
 #[cfg(test)]
 use vendorcfg::parse_chat_reply;
 
-impl Vision for OpenAiCompat {
+impl Vision for ChatClient {
     fn name(&self) -> &str {
-        &self.backend
+        self.backend()
     }
     fn transcribe(&self, png: &[u8], prompt: &str) -> Result<Transcript, String> {
-        vendorcfg::post_chat(&self.agent, &self.base_url, &self.key, &chat_request(&self.model, png, prompt))
+        self.post(&chat_request(self.model(), png, prompt))
     }
 }
 

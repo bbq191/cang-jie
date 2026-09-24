@@ -43,7 +43,7 @@ reMarkable 的强项是**荧光笔勾书，再在勾出来的地方旁边手写*
 | mind | `GET /status` · `GET /config` · `PUT /config`（同上，没有节流字段）· `POST /books/{uuid}/entries/{id}/ask`（要求已勾「问 AI」且问题非空）|
 | notes | `GET /status` · `GET /books` · `GET /books/{uuid}/notebooks` · `GET /books/{uuid}/exports` · `GET /books/{uuid}/sync`（每章两个去处的同步状态）· `POST /books/{uuid}/generate` · `POST /books/{uuid}/chapters/{idx}/generate` · `POST /books/{uuid}/export` · `POST /books/{uuid}/chapters/{idx}/export` · `GET /books/{uuid}/chapters/{idx}/export.md`（浏览器下载）· `GET /books/{uuid}/vault.json`（读回已导出的 md）· `POST /books/{uuid}/import-md {title, markdown}` · `GET /events` |
 
-事件区域都是 `notes`：ink 发 `entries`，transcribe 发 `transcribe`，note-serve 发 `notebooks`；网页据此自动刷新。
+事件区域都是 `notes`：ink 发 `entries`，transcribe 发 `transcribe`（空跑且与上一轮相同的轮次不发），note-serve 发 `notebooks`；网页据此自动刷新。
 
 ## 目录
 
@@ -76,7 +76,7 @@ notes/
 与书架共用交叉编译环境（`rustup target add aarch64-unknown-linux-musl` + aarch64 交叉 gcc），见 [`../shelf/README.md`](../shelf/README.md)「构建」。改代码前先看工程纪律；在 master 上开 feature 分支开发。
 
 ```sh
-cd notes && cargo build --workspace && cargo test --workspace     # host：214 个测试（rmv6 27 · epubmap 5 · notecore 62 · vendorcfg 20 · ink 21 · transcribe 23 · mind 22 · note 34，含 1 个 ignored）
+cd notes && cargo build --workspace && cargo test --workspace     # host：221 个测试（rmv6 27 · epubmap 6 · notecore 62 · vendorcfg 22 · ink 22 · transcribe 25 · mind 22 · note 35，含 1 个 ignored）
 cd ../shelf && ./build.sh && ./deploy.sh <设备IP>                  # 随书架一起交叉编译、打包、装机
 ssh root@<设备IP> sh /home/root/shelf-pkg/shelf/install.sh --only ink,transcribe,mind,note   # 只装/更新笔记线
 ```

@@ -18,10 +18,10 @@ pub struct Line {
 
 pub fn point_serialize_size(version: u8) -> Result<u32, ParseError> {
     match version {
-        1 => return Ok(0x18),
-        2 => return Ok(0x0E),
+        1 => Ok(0x18),
+        2 => Ok(0x0E),
         _ => {
-            return Err(ParseError::unsupported(format!(
+            Err(ParseError::unsupported(format!(
                 "Block unsupported version: {version}"
             )))
         }
@@ -55,12 +55,12 @@ impl BlockParse for Line {
         // XXX unused
         let _timestamp = reader.read_id(6);
 
-        return Ok(Line {
+        Ok(Line {
             tool,
             color,
             thickness_scale,
             starting_length,
             points,
-        });
+        })
     }
 }

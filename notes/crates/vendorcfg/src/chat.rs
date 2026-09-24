@@ -13,6 +13,39 @@ pub struct ChatReply {
     pub completion_tokens: u64,
 }
 
+/// 一个已配置好的调用端：后端标识 + baseUrl（去尾 `/`）+ 模型 + key + 带超时的 agent。两个服务此前各有一个字段、
+/// 构造逐行相同的 `OpenAiCompat`（2026-09-24 第三轮审计收进来）；各服务的业务 trait（`Vision`/`TextModel`）直接
+/// 实现在它身上，只管拼自己的请求体。`Debug` 故意不派生：结构里有 key，别让它有机会被 `{:?}` 打进日志。
+pub struct ChatClient {
+    backend: String,
+    base_url: String,
+    model: String,
+    key: String,
+    agent: ureq::Agent,
+}
+
+impl ChatClient {
+    pub fn new(backend: &str, base_url: &str, model: &str, key: &str, timeout: Duration) -> ChatClient {
+        ChatClient { backend: backend.into(), base_url: base_url.trim_end_matches('/').into(), model: model.into(), key: key.into(), agent: agent(timeout) }
+    }
+    /// 按当前配置建调用端；没 key 返回 `Err(missing_key)`（各服务的提示文案不同，调用方给）。
+    pub fn from_config<C: crate::VendorConfig>(cfg: &C, backend: &str, timeout: Duration, missing_key: &str) -> Result<ChatClient, String> {
+        let key = cfg.key().ok_or_else(|| missing_key.to_string())?;
+        Ok(ChatClient::new(backend, cfg.base_url(), cfg.model(), &key, timeout))
+    }
+    /// 写进草稿/回答 `backend` 字段的后端标识。
+    pub fn backend(&self) -> &str {
+        &self.backend
+    }
+    pub fn model(&self) -> &str {
+        &self.model
+    }
+    /// 发一次 `chat/completions`（请求体由调用方拼，见 [`post_chat`]）。
+    pub fn post(&self, body: &serde_json::Value) -> Result<ChatReply, String> {
+        post_chat(&self.agent, &self.base_url, &self.key, body)
+    }
+}
+
 /// 建调用用的 agent：连接 10 秒超时 + 整个请求 `timeout`。
 pub fn agent(timeout: Duration) -> ureq::Agent {
     ureq::AgentBuilder::new().timeout_connect(Duration::from_secs(10)).timeout(timeout).build()
@@ -56,6 +89,25 @@ mod tests {
         assert_eq!((r.text.as_str(), r.prompt_tokens), ("甲乙", 0), "usage 缺省 0");
         assert!(parse_chat_reply(&serde_json::json!({"error":"x"})).unwrap_err().contains("choices"));
         assert!(parse_chat_reply(&serde_json::json!({"choices":[{"message":{"content":5}}]})).is_err());
+    }
+
+    #[test]
+    fn chat_client_trims_base_url_and_sends_bearer_key() {
+        let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+        let port = server.server_addr().to_ip().unwrap().port();
+        let h = std::thread::spawn(move || {
+            let req = server.recv().unwrap();
+            let seen = (req.url().to_string(), req.headers().iter().find(|h| h.field.equiv("Authorization")).map(|h| h.value.to_string()));
+            let _ = req.respond(tiny_http::Response::from_string(r#"{"choices":[{"message":{"content":"好"}}],"usage":{"prompt_tokens":3,"completion_tokens":1}}"#));
+            seen
+        });
+        let c = ChatClient::new("qwen", &format!("http://127.0.0.1:{port}/v1/"), "m", "sk-1", Duration::from_secs(5));
+        assert_eq!((c.backend(), c.model()), ("qwen", "m"));
+        let r = c.post(&serde_json::json!({})).unwrap();
+        assert_eq!((r.text.as_str(), r.prompt_tokens), ("好", 3));
+        let (url, auth) = h.join().unwrap();
+        assert_eq!(url, "/v1/chat/completions", "baseUrl 末尾的 / 去掉，不出现 //");
+        assert_eq!(auth.as_deref(), Some("Bearer sk-1"));
     }
 
     #[test]

@@ -35,7 +35,7 @@ pub use preset::{
     Price, VendorConfig, DASHSCOPE, DEEPSEEK, GEMINI, KEY_ENV, OPENAI,
 };
 pub use cell::ConfigCell;
-pub use chat::{parse_chat_reply, post_chat, ChatReply};
+pub use chat::{parse_chat_reply, post_chat, ChatClient, ChatReply};
 pub use usage::{Ledger, ModelUsage, UsageBook};
 
 /// 按字符数截断，超长加省略号；不 trim（调用方如果需要先 trim 自己处理，跟原样保留空白的场景区分
