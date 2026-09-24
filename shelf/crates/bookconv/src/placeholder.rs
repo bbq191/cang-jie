@@ -25,89 +25,73 @@ pub fn set_opf_title(opf: &str, title: &str) -> String {
     r.replace(opf, |c: &regex::Captures| format!("{}{}{}", &c[1], esc, &c[2])).into_owned()
 }
 
-fn attr_of(tag: &str, name: &str) -> Option<String> {
-    let r = Regex::new(&format!(r#"\b{name}\s*=\s*"([^"]*)""#)).ok()?;
-    r.captures(tag).map(|c| c[1].to_string())
-}
+type Zip = zip::ZipArchive<std::io::BufReader<std::fs::File>>;
 
 /// 读条目全部字节；不存在或读失败都是 `None`（占位/封面都是尽力而为）。
-fn read_entry(zip: &mut zip::ZipArchive<std::io::BufReader<std::fs::File>>, name: &str) -> Option<Vec<u8>> {
+fn read_entry(zip: &mut Zip, name: &str) -> Option<Vec<u8>> {
     crate::epubzip::read_by_name_opt(zip, name).ok().flatten()
 }
 
-fn join(dir: &str, href: &str) -> String {
-    let href = crate::epubzip::percent_decode(href);
-    let mut parts: Vec<&str> = if dir.is_empty() { vec![] } else { dir.split('/').collect() };
-    for seg in href.split('/') {
-        match seg {
-            "" | "." => {}
-            ".." => {
-                parts.pop();
-            }
-            s => parts.push(s),
-        }
+/// 条目按文本读（非 UTF-8 字节按 lossy 替换）。
+fn read_text(zip: &mut Zip, name: &str) -> Option<String> {
+    read_entry(zip, name).map(|b| String::from_utf8(b).unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned()))
+}
+
+/// 打开 EPUB 并读出 OPF：`(zip, OPF 在 zip 里的路径, OPF 文本)`。只读 container.xml 和 OPF 两个条目，不解压整本
+/// （`cover_image_of`/`epub_is_rtl`/`epub_placeholder` 三处共用，此前各抄一份）。
+fn open_opf(epub: &Path) -> Result<(Zip, String, String), String> {
+    let file = std::fs::File::open(epub).map_err(|e| format!("打开 {} 失败: {e}", epub.display()))?;
+    let mut zip = zip::ZipArchive::new(std::io::BufReader::new(file)).map_err(|e| format!("解 EPUB 失败: {e}"))?;
+    let container = read_text(&mut zip, "META-INF/container.xml").ok_or("缺 META-INF/container.xml")?;
+    let opf_path = crate::wash::tag_attr(&container, "full-path").ok_or("container.xml 里没有 full-path")?.to_string();
+    let opf = read_text(&mut zip, &opf_path).ok_or("读不到 OPF")?;
+    Ok((zip, opf_path, opf))
+}
+
+/// 图片路径 → 占位里 `cover.{ext}` 的扩展名：取文件名最后一个 `.` 之后、小写；文件名没有扩展名时当 jpg
+/// （此前直接 `rsplit('.')`，无扩展名的路径会把整段路径连同 `/` 当扩展名，写出 `cover.images/x` 这种条目名）。
+fn ext_of(path: &str) -> String {
+    let base = path.rsplit('/').next().unwrap_or(path);
+    match base.rsplit_once('.') {
+        Some((_, e)) if !e.is_empty() => e.to_ascii_lowercase(),
+        _ => "jpg".into(),
     }
-    parts.join("/")
 }
 
 /// 从真 EPUB 里找封面图：OPF `<meta name="cover">` → manifest；`properties="cover-image"`；都没有就取
 /// 第一个 spine 页里的第一张 `<img>`。只读需要的几个条目，不解压整本。
-fn find_cover(zip: &mut zip::ZipArchive<std::io::BufReader<std::fs::File>>, opf_path: &str, opf: &str) -> Option<(String, Vec<u8>)> {
-    let dir = opf_path.rsplit_once('/').map(|(d, _)| d).unwrap_or("");
-    static ITEM: OnceLock<Regex> = OnceLock::new();
-    let items: Vec<(String, String, String)> = re(&ITEM, r#"(?s)<item\b[^>]*>"#)
-        .find_iter(opf)
-        .filter_map(|m| {
-            let t = m.as_str();
-            Some((attr_of(t, "id")?, attr_of(t, "href")?, format!("{} {}", attr_of(t, "properties").unwrap_or_default(), attr_of(t, "media-type").unwrap_or_default())))
-        })
-        .collect();
-    let mut candidate: Option<String> = None;
-    static META: OnceLock<Regex> = OnceLock::new();
-    if let Some(id) = re(&META, r#"(?s)<meta\b[^>]*\bname\s*=\s*"cover"[^>]*>"#).find(opf).and_then(|m| attr_of(m.as_str(), "content")) {
-        candidate = items.iter().find(|(i, _, _)| *i == id).map(|(_, h, _)| h.clone());
+fn find_cover(zip: &mut Zip, opf_path: &str, opf: &str) -> Option<(String, Vec<u8>)> {
+    let dir = crate::epubzip::dir_of(opf_path);
+    let items = crate::wash::manifest_items(opf);
+    let mut candidate: Option<&str> = None;
+    if let Some(id) = crate::wash::cover_meta_re().find(opf).and_then(|m| crate::wash::tag_attr(m.as_str(), "content")) {
+        candidate = items.iter().find(|i| i.id == id).map(|i| i.href);
     }
     if candidate.is_none() {
-        candidate = items.iter().find(|(_, _, p)| p.contains("cover-image")).map(|(_, h, _)| h.clone());
+        candidate = items.iter().find(|i| i.properties.contains("cover-image") || i.media_type.contains("cover-image")).map(|i| i.href);
     }
     // 声明必须真指向图片：Calibre 产物常见 `<meta name="cover" content="cover.txt"/>` 指向 txt，直接拿来当封面
     // 会得到一个不是图片的"封面"，xochitl 取不到封面缩略图（2026-09-20 真机日志 `null cover image`）。
-    let candidate = candidate.filter(|h| crate::util::is_image_ext(h));
-    if candidate.is_none() {
-        // 第一个 spine 页里的第一张图。
-        static SPINE: OnceLock<Regex> = OnceLock::new();
-        let first_ref = re(&SPINE, r#"<itemref\b[^>]*\bidref="([^"]+)""#).captures(opf).map(|c| c[1].to_string());
-        if let Some(rid) = first_ref {
-            if let Some((_, h, _)) = items.iter().find(|(i, _, _)| *i == rid) {
-                let page = join(dir, h);
-                if let Some(bytes) = read_entry(zip, &page) {
-                    let html = String::from_utf8_lossy(&bytes).to_string();
-                    static IMG: OnceLock<Regex> = OnceLock::new();
-                    if let Some(c) = re(&IMG, r#"(?is)<(?:img|image)\b[^>]*?(?:src|xlink:href|href)\s*=\s*"([^"]+)""#).captures(&html) {
-                        let pdir = page.rsplit_once('/').map(|(d, _)| d).unwrap_or("").to_string();
-                        let path = join(&pdir, &c[1]);
-                        let ext = path.rsplit('.').next().unwrap_or("jpg").to_lowercase();
-                        let data = read_entry(zip, &path)?;
-                        return Some((ext, data));
-                    }
-                }
-            }
-        }
-        return None;
+    if let Some(href) = candidate.filter(|h| crate::util::is_image_ext(h)) {
+        let path = crate::epubzip::resolve(dir, &crate::epubzip::percent_decode(href));
+        return Some((ext_of(&path), read_entry(zip, &path)?));
     }
-    let path = join(dir, &candidate?);
-    let ext = path.rsplit('.').next().unwrap_or("jpg").to_lowercase();
-    Some((ext, read_entry(zip, &path)?))
+    // 第一个 spine 页里的第一张图。
+    static SPINE: OnceLock<Regex> = OnceLock::new();
+    let first_ref = re(&SPINE, r#"<itemref\b[^>]*\bidref="([^"]+)""#).captures(opf)?;
+    let first = items.iter().find(|i| i.id == &first_ref[1])?;
+    let page = crate::epubzip::resolve(dir, &crate::epubzip::percent_decode(first.href));
+    let html = read_text(zip, &page)?;
+    static IMG: OnceLock<Regex> = OnceLock::new();
+    let c = re(&IMG, r#"(?is)<(?:img|image)\b[^>]*?(?:src|xlink:href|href)\s*=\s*"([^"]+)""#).captures(&html)?;
+    let path = crate::epubzip::resolve(crate::epubzip::dir_of(&page), &crate::epubzip::percent_decode(&c[1]));
+    Some((ext_of(&path), read_entry(zip, &path)?))
 }
 
 /// 读出一本 EPUB 的封面图（扩展名, 字节）：OPF 声明的有效封面，否则第一个 spine 页里的第一张图（同占位构造的规则）。
 /// 给"给已有文档补封面缩略图"的小工具用；找不到返回 `None`。
 pub fn cover_image_of(epub: &Path) -> Option<(String, Vec<u8>)> {
-    let file = std::fs::File::open(epub).ok()?;
-    let mut zip = zip::ZipArchive::new(std::io::BufReader::new(file)).ok()?;
-    let container = String::from_utf8_lossy(&read_entry(&mut zip, "META-INF/container.xml")?).to_string();
-    let opf_path = attr_of(&container, "full-path")?;
-    let opf = String::from_utf8_lossy(&read_entry(&mut zip, &opf_path)?).to_string();
+    let (mut zip, opf_path, opf) = open_opf(epub).ok()?;
     find_cover(&mut zip, &opf_path, &opf)
 }
 
@@ -115,24 +99,15 @@ pub fn cover_image_of(epub: &Path) -> Option<(String, Vec<u8>)> {
 /// container.xml 和 OPF 两个条目，不解压整本（漫画一卷可达数百 MB）。读不到/不是 EPUB 一律 `false`。
 /// 给 xochitl 阅读器的"日漫从右往左翻页"用（book-serve `GET /reading-direction/{uuid}`，2026-09-24）。
 pub fn epub_is_rtl(epub: &Path) -> bool {
-    let Ok(file) = std::fs::File::open(epub) else { return false };
-    let Ok(mut zip) = zip::ZipArchive::new(std::io::BufReader::new(file)) else { return false };
-    let Some(container) = read_entry(&mut zip, "META-INF/container.xml") else { return false };
-    let Some(opf_path) = attr_of(&String::from_utf8_lossy(&container), "full-path") else { return false };
-    let Some(opf) = read_entry(&mut zip, &opf_path) else { return false };
+    let Ok((_, _, opf)) = open_opf(epub) else { return false };
     static SPINE: OnceLock<Regex> = OnceLock::new();
-    re(&SPINE, r#"(?s)<spine\b[^>]*?\bpage-progression-direction\s*=\s*["']rtl["']"#).is_match(&String::from_utf8_lossy(&opf))
+    re(&SPINE, r#"(?s)<spine\b[^>]*?\bpage-progression-direction\s*=\s*["']rtl["']"#).is_match(&opf)
 }
 
 /// 造占位 EPUB：显示名 = `title`（`None` 取真书自己的 `dc:title`），封面 = 真书的封面（找不到就没有封面页，
 /// 只有标题）。体积通常几十到几百 KB。
 pub fn epub_placeholder(real_epub: &Path, title: Option<&str>) -> Result<Vec<u8>, String> {
-    let file = std::fs::File::open(real_epub).map_err(|e| format!("打开 {} 失败: {e}", real_epub.display()))?;
-    let mut zip = zip::ZipArchive::new(std::io::BufReader::new(file)).map_err(|e| format!("解 EPUB 失败: {e}"))?;
-    let container = read_entry(&mut zip, "META-INF/container.xml").ok_or("缺 META-INF/container.xml")?;
-    let container = String::from_utf8_lossy(&container).to_string();
-    let opf_path = attr_of(&container, "full-path").ok_or("container.xml 里没有 full-path")?;
-    let opf = String::from_utf8_lossy(&read_entry(&mut zip, &opf_path).ok_or("读不到 OPF")?).to_string();
+    let (mut zip, opf_path, opf) = open_opf(real_epub)?;
     let cover = find_cover(&mut zip, &opf_path, &opf);
     static TITLE: OnceLock<Regex> = OnceLock::new();
     let real_title = re(&TITLE, r#"(?s)<dc:title\b[^>]*>(.*?)</dc:title>"#).captures(&opf).map(|c| crate::wash::plain_text(&c[1]).trim().to_string()).filter(|t| !t.is_empty());
@@ -312,5 +287,13 @@ mod tests {
         assert!(!epub_is_rtl(&d.path().join("missing.epub")));
         std::fs::write(d.path().join("bad.epub"), b"not a zip").unwrap();
         assert!(!epub_is_rtl(&d.path().join("bad.epub")));
+    }
+
+    #[test]
+    fn ext_of_takes_file_extension_only() {
+        assert_eq!(ext_of("OEBPS/images/Cv.JPG"), "jpg");
+        assert_eq!(ext_of("a.b/images/cover"), "jpg", "文件名没扩展名时不能把目录里的点当扩展名");
+        assert_eq!(ext_of("cover."), "jpg");
+        assert_eq!(ext_of("x.png"), "png");
     }
 }

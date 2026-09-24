@@ -16,34 +16,27 @@ use super::*;
 pub fn ensure_cover_declared(entries: &mut [Entry]) -> bool {
     let Some(opf) = parse_opf(entries) else { return false };
     let text = String::from_utf8_lossy(&entries[opf.index].data).into_owned();
-    static ITEM: OnceLock<Regex> = OnceLock::new();
-    static ATTR: OnceLock<Regex> = OnceLock::new();
-    let item_re = ITEM.get_or_init(|| Regex::new(r#"(?s)<item\b[^>]*?/?>"#).unwrap());
-    let attr_re = ATTR.get_or_init(|| Regex::new(r#"([a-zA-Z:-]+)\s*=\s*"([^"]*)""#).unwrap());
-    struct It {
-        tag: String,
-        id: String,
+    struct It<'t> {
+        tag: &'t str,
+        id: &'t str,
         path: String,
-        props: String,
+        props: &'t str,
         image: bool,
     }
-    let items: Vec<It> = item_re
-        .find_iter(&text)
-        .filter_map(|m| {
-            let attrs: HashMap<String, String> = attr_re.captures_iter(m.as_str()).map(|a| (a[1].to_ascii_lowercase(), a[2].to_string())).collect();
-            let (id, href) = (attrs.get("id")?, attrs.get("href")?);
-            let path = resolve(&opf.dir, &percent_decode(href));
-            let image = attrs.get("media-type").map(|t| t.starts_with("image/")).unwrap_or(false) || is_image_ext(&path);
-            Some(It { tag: m.as_str().to_string(), id: id.clone(), path, props: attrs.get("properties").cloned().unwrap_or_default(), image })
+    let items: Vec<It> = manifest_items(&text)
+        .into_iter()
+        .map(|m| {
+            let path = resolve(&opf.dir, &percent_decode(m.href));
+            let image = m.media_type.starts_with("image/") || is_image_ext(&path);
+            It { tag: m.tag, id: m.id, path, props: m.properties, image }
         })
         .collect();
-    static META: OnceLock<Regex> = OnceLock::new();
-    let meta_re = META.get_or_init(|| Regex::new(r#"(?s)<meta\b[^>]*\bname\s*=\s*"cover"[^>]*?/?>"#).unwrap());
+    let meta_re = cover_meta_re();
     let has_prop = |i: &It| i.props.split_whitespace().any(|p| p == "cover-image");
     // meta 声明指向的图片条目（若有效）
     let meta_target = meta_re
         .find_iter(&text)
-        .filter_map(|m| attr_re.captures_iter(m.as_str()).find(|a| a[1].eq_ignore_ascii_case("content")).map(|a| a[2].to_string()))
+        .filter_map(|m| tag_attr(m.as_str(), "content"))
         .find_map(|id| items.iter().find(|i| i.id == id && i.image));
     // 目标封面条目：meta 指向的有效图片 → 已带 cover-image 属性的图片 → 前几页的第一张真实图片（下面找）。
     let existing = meta_target.or_else(|| items.iter().find(|i| i.image && has_prop(i)));
@@ -78,13 +71,13 @@ pub fn ensure_cover_declared(entries: &mut [Entry]) -> bool {
     let Some(cover) = cand else { return false };
     let mut out = meta_re.replace_all(&text, "").into_owned();
     let new_tag = if has_prop(cover) {
-        cover.tag.clone()
+        cover.tag.to_string()
     } else if cover.props.is_empty() {
         cover.tag.replacen(&format!(r#"id="{}""#, cover.id), &format!(r#"id="{}" properties="cover-image""#, cover.id), 1)
     } else {
         cover.tag.replacen(&format!(r#"properties="{}""#, cover.props), &format!(r#"properties="{} cover-image""#, cover.props), 1)
     };
-    out = out.replacen(&cover.tag, &new_tag, 1);
+    out = out.replacen(cover.tag, &new_tag, 1);
     let Some(pos) = out.find("</metadata>") else { return false };
     out.insert_str(pos, &format!(r#"<meta name="cover" content="{}"/>"#, cover.id));
     entries[opf.index].data = out.into_bytes();

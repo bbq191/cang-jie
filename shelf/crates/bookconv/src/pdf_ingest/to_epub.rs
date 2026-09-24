@@ -421,7 +421,7 @@ pub fn optimize_pdf_to_epub(src: &Path, mut on_progress: impl FnMut(usize, usize
     let doc = lopdf::Document::load_mem(&bytes).map_err(|e| format!("PDF 结构解析失败: {e}"))?;
     // 解析完原始字节就不再需要（`doc` 自己持有全部对象）：立刻释放，不让整本 PDF 的字节陪着逐字提取和图片解码
     // 撑到函数结束。只有带公式的书才需要把字节交给 hayro 再解析，那时再从磁盘读一次（2026-09-24 审计：
-    // 139MB 扫描 PDF 实测峰值 557MB → 见白皮书 §18）。
+    // host 实测 139MB 扫描 PDF 转换峰值 557→431MB，连同组装时逐张释放资源）。
     drop(bytes);
     let pages_map = doc.get_pages();
     let page_count = pages_map.len();
