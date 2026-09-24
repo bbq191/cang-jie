@@ -58,7 +58,7 @@ shelf/
 ├── services/book-serve/              母版库服务
 ├── services/koreader-serve/          KOReader 服务（含纯 Rust 只读 SQLite 解析器）
 ├── systemd/                          shelf.target + 两个领域服务单元
-├── xovi/                             注入 xochitl 的 qmd：字体菜单、回收站代理、建文件夹代理、漫画页边距代理
+├── xovi/                             注入 xochitl 的 qmd：字体菜单、回收站/建文件夹/漫画页边距代理、阅读器单击翻页与日漫翻页规则
 ├── koreader/                         KOReader 配置补丁 + merge.lua（见 koreader/README.md）
 ├── install.sh · uninstall.sh · manifest.sh   设备端安装/卸载与共用清单
 └── docs/                             四份文档 + diagrams/
@@ -74,7 +74,7 @@ shelf/
 
 ```sh
 cd shelf && sh build.sh                        # host 测试 + aarch64 构建（gateway / enhance / notes 在的话一起编）
-cargo test --workspace                         # 只跑测试：2026-09-24 共 392 个通过、1 个忽略
+cargo test --workspace                         # 只跑测试：2026-09-24 共 409 个通过、1 个忽略
 cd ../packaging && sh deploy.sh 10.11.99.1     # 打包 → 传到设备 → install.sh（先备份旧文件）；只有 WiFi 时给 WiFi IP
 sh deploy.sh 10.11.99.1 --only font,wallpaper  # 只装部分服务；SHELF_NO_BUILD=1 跳过编译
 sh deploy.sh 10.11.99.1 --password '新密码'     # 顺便设网关密码（经 ssh 标准输入传，不上命令行）
@@ -94,7 +94,7 @@ ssh root@10.11.99.1 '~/.local/bin/shelf-uninstall' [--only font] [--purge]
 
 | 文档 | 管什么 |
 |---|---|
-| [`docs/传书EPUB线架构.md`](docs/传书EPUB线架构.md) | **数据流与服务分工**：书在各服务间怎么流动、母版库状态、落库通道、内存设计、全部 API 与配置 |
+| [`docs/传书EPUB线架构.md`](docs/传书EPUB线架构.md) | **数据流与服务分工**：书在各服务间怎么流动、母版库状态、落库通道、内存设计、并发与锁、全部 API 与配置 |
 | [`docs/EPUB优化规范白皮书.md`](docs/EPUB优化规范白皮书.md) | **规则**：书该被改成什么样、为什么；xochitl 实测渲染与跳转规则；质量门 |
 | [`docs/bookconv优化白皮书.md`](docs/bookconv优化白皮书.md) | **实现**：优化引擎各模块的函数、常量、版本号与实现层的坑 |
 | [`docs/reMarkable书架白皮书.md`](docs/reMarkable书架白皮书.md) | **现状总览 + 真机历史与坑**：各章"现状结论"、决策来由、事故与教训、待办、已砍能力 |

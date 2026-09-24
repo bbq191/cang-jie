@@ -1,0 +1,69 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="640" viewBox="0 0 1100 640" font-family="Noto Sans CJK SC, sans-serif">
+<defs><marker id="pm-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#555"/></marker></defs>
+<rect width="1100" height="640" fill="#ffffff"/>
+<text x="550.0" y="32" font-size="20" fill="#1f2937" text-anchor="middle" font-weight="bold">PDF 处理管线的内存释放点（2026-09-24 第三轮审计）</text>
+<text x="550.0" y="56" font-size="12.5" fill="#6b7280" text-anchor="middle">分类 / 仅裁边 / 转 EPUB 三条路共用 load_pdf：读文件 → 带上限解析 → 原始字节立即释放；数字均为 host release 实测，未上真机</text>
+<rect x="40" y="78" width="300" height="56" rx="10" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.5"/>
+<text x="190" y="101" font-size="13" fill="#1f3b66" text-anchor="middle" font-weight="bold">classify_pdf</text>
+<text x="190" y="121" font-size="11.5" fill="#374151" text-anchor="middle">判断走哪条路</text>
+<line x1="190" y1="134" x2="550" y2="176" stroke="#555" stroke-width="1.5" marker-end="url(#pm-a)"/>
+<rect x="390" y="78" width="300" height="56" rx="10" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.5"/>
+<text x="540" y="101" font-size="13" fill="#1f3b66" text-anchor="middle" font-weight="bold">optimize_pdf_trim_only</text>
+<text x="540" y="121" font-size="11.5" fill="#374151" text-anchor="middle">扫描件/漫画：只裁边</text>
+<line x1="540" y1="134" x2="550" y2="176" stroke="#555" stroke-width="1.5" marker-end="url(#pm-a)"/>
+<rect x="740" y="78" width="300" height="56" rx="10" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.5"/>
+<text x="890" y="101" font-size="13" fill="#1f3b66" text-anchor="middle" font-weight="bold">optimize_pdf_to_epub</text>
+<text x="890" y="121" font-size="11.5" fill="#374151" text-anchor="middle">有文字层：转 EPUB</text>
+<line x1="890" y1="134" x2="550" y2="176" stroke="#555" stroke-width="1.5" marker-end="url(#pm-a)"/>
+<rect x="150" y="178" width="800" height="110" rx="10" fill="#e8f5ec" stroke="#2f7d45" stroke-width="1.5"/>
+<text x="550" y="200" font-size="14" fill="#14532d" text-anchor="middle" font-weight="bold">load_pdf（pdf_ingest/mod.rs）</text>
+<rect x="170" y="212" width="240" height="62" rx="10" fill="#ffffff" stroke="#9bbfa5" stroke-width="1.5"/>
+<text x="290" y="236" font-size="12.5" fill="#1f2937" text-anchor="middle" font-weight="bold">① std::fs::read</text>
+<text x="290" y="256" font-size="11" fill="#374151" text-anchor="middle">整本原始字节进内存</text>
+<line x1="410" y1="243" x2="430" y2="243" stroke="#555" stroke-width="1.5" marker-end="url(#pm-a)"/>
+<rect x="430" y="212" width="240" height="62" rx="10" fill="#ffffff" stroke="#9bbfa5" stroke-width="1.5"/>
+<text x="550" y="236" font-size="12.5" fill="#1f2937" text-anchor="middle" font-weight="bold">② parse_pdf</text>
+<text x="550" y="256" font-size="11" fill="#374151" text-anchor="middle">lopdf 0.45 解析；对象流/xref 流解压 ≤ 64MB</text>
+<line x1="670" y1="243" x2="690" y2="243" stroke="#555" stroke-width="1.5" marker-end="url(#pm-a)"/>
+<rect x="690" y="212" width="240" height="62" rx="10" fill="#ffffff" stroke="#9bbfa5" stroke-width="1.5"/>
+<text x="810" y="236" font-size="12.5" fill="#1f2937" text-anchor="middle" font-weight="bold">③ 返回 Document</text>
+<text x="810" y="256" font-size="11" fill="#374151" text-anchor="middle">原始字节在此释放</text>
+<text x="550" y="306" font-size="11.5" fill="#b0451f" text-anchor="middle">改动前：三处各写 read + load_mem，字节一直活到函数结束；pdf-extract-cj 还锁着 lopdf 0.42，同一本 PDF 要再解析一遍</text>
+<rect x="40" y="326" width="1020" height="150" rx="10" fill="#f7f4fb" stroke="#6b4fa0" stroke-width="1.5"/>
+<text x="56" y="348" font-size="13" fill="#4c2f80" text-anchor="start" font-weight="bold">转 EPUB 这条路之后的每一步</text>
+<rect x="56" y="360" width="225" height="104" rx="10" fill="#ffffff" stroke="#b9a6dc" stroke-width="1.5"/>
+<text x="168" y="382" font-size="12.5" fill="#1f2937" text-anchor="middle" font-weight="bold">逐字提取</text>
+<text x="168" y="402" font-size="11" fill="#374151" text-anchor="middle">pdf-extract-cj 复用同一个</text>
+<text x="168" y="420" font-size="11" fill="#374151" text-anchor="middle">Document；页内容流解压</text>
+<text x="168" y="438" font-size="11" fill="#374151" text-anchor="middle">≤ 64MB（MAX_PAGE_CONTENT_BYTES）</text>
+<line x1="281" y1="412" x2="306" y2="412" stroke="#555" stroke-width="1.5" marker-end="url(#pm-a)"/>
+<rect x="306" y="360" width="225" height="104" rx="10" fill="#ffffff" stroke="#b9a6dc" stroke-width="1.5"/>
+<text x="418" y="382" font-size="12.5" fill="#1f2937" text-anchor="middle" font-weight="bold">公式页</text>
+<text x="418" y="402" font-size="11" fill="#374151" text-anchor="middle">只有检测到公式才从磁盘</text>
+<text x="418" y="420" font-size="11" fill="#374151" text-anchor="middle">再读一次原 PDF 交给 hayro</text>
+<text x="418" y="438" font-size="11" fill="#374151" text-anchor="middle">（没有公式就不读）</text>
+<line x1="531" y1="412" x2="556" y2="412" stroke="#555" stroke-width="1.5" marker-end="url(#pm-a)"/>
+<rect x="556" y="360" width="225" height="104" rx="10" fill="#ffffff" stroke="#b9a6dc" stroke-width="1.5"/>
+<text x="668" y="382" font-size="12.5" fill="#1f2937" text-anchor="middle" font-weight="bold">组装 EPUB</text>
+<text x="668" y="402" font-size="11" fill="#374151" text-anchor="middle">assemble_pdf_derived</text>
+<text x="668" y="420" font-size="11" fill="#374151" text-anchor="middle">写一张资源、释放一张</text>
+<text x="668" y="438" font-size="11" fill="#374151" text-anchor="middle">book.resources 随后清空</text>
+<line x1="781" y1="412" x2="806" y2="412" stroke="#555" stroke-width="1.5" marker-end="url(#pm-a)"/>
+<rect x="806" y="360" width="225" height="104" rx="10" fill="#ffffff" stroke="#b9a6dc" stroke-width="1.5"/>
+<text x="918" y="382" font-size="12.5" fill="#1f2937" text-anchor="middle" font-weight="bold">质量门 + 落地</text>
+<text x="918" y="402" font-size="11" fill="#374151" text-anchor="middle">check_epub_file 只读骨架</text>
+<text x="918" y="420" font-size="11" fill="#374151" text-anchor="middle">不读图片字节</text>
+<text x="918" y="438" font-size="11" fill="#374151" text-anchor="middle">过门才改名，原 PDF 进备份</text>
+<rect x="40" y="494" width="500" height="124" rx="10" fill="#fdf2ee" stroke="#b0451f" stroke-width="1.5"/>
+<text x="56" y="516" font-size="13" fill="#7a2d10" text-anchor="start" font-weight="bold">峰值内存（VmHWM，host release）</text>
+<text x="64" y="540" font-size="11.5" fill="#374151" text-anchor="start">· 139MB 扫描 PDF 转 EPUB：557 → 431MB</text>
+<text x="64" y="560" font-size="11.5" fill="#374151" text-anchor="start">· 11MB 双语书转 EPUB：149 → 121MB</text>
+<text x="64" y="580" font-size="11.5" fill="#374151" text-anchor="start">· 139MB 扫描 PDF 仅裁边判定：416 → 279MB；另一份 104 → 82MB</text>
+<text x="64" y="600" font-size="11.5" fill="#374151" text-anchor="start">· 5 份真实 PDF 输出与改动前逐字节一致</text>
+<rect x="560" y="494" width="500" height="124" rx="10" fill="#f5f5f5" stroke="#555" stroke-width="1.5"/>
+<text x="576" y="516" font-size="13" fill="#1f2937" text-anchor="start" font-weight="bold">另两道闸（防“小文件解出巨量数据”）</text>
+<text x="584" y="540" font-size="11.5" fill="#374151" text-anchor="start">zip 条目按目录声明大小预分配时封顶 32MB（谎报 4GB 的条目</text>
+<text x="584" y="560" font-size="11.5" fill="#374151" text-anchor="start">  此前会照单分配，设备上分配失败＝进程 abort，catch_unwind 接不住）</text>
+<text x="584" y="580" font-size="11.5" fill="#374151" text-anchor="start">损坏 PDF 常见 panic（悬空引用、缺 MediaBox、缺 XObject 等）</text>
+<text x="584" y="600" font-size="11.5" fill="#374151" text-anchor="start">  改成返回错误；解压超限同样报错，原书不动</text>
+</svg>

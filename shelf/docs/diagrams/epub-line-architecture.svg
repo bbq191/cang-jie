@@ -10,7 +10,7 @@
 
 <rect x="180" y="134" width="720" height="98" rx="10" fill="#fff3d6" stroke="#c9971f" stroke-width="1.6"/>
 <text x="540" y="156" text-anchor="middle" font-size="14" font-weight="bold" fill="#1a1a1a">gateway 0.0.0.0:443（唯一 Web 前端）</text>
-<text x="540" y="180" text-anchor="middle" font-size="11" fill="#4a4a4a">/api/books/* 反向代理到 book-serve：请求体流式；下载应答流式、其余整体缓冲；SSE 汇聚事件</text>
+<text x="540" y="180" text-anchor="middle" font-size="11" fill="#4a4a4a">/api/books/* 反向代理到 book-serve：请求体流式；下载或 &gt;256KB 应答流式、小应答整体缓冲；SSE 汇聚</text>
 <text x="540" y="198" text-anchor="middle" font-size="11" fill="#4a4a4a">批量队列 batch.rs（状态落盘、重启续跑）· 并发/内存预算闸门 budget.rs</text>
 <text x="540" y="216" text-anchor="middle" font-size="11" fill="#4a4a4a">每一本的“优化 / 加入”都先过闸门，再调下游服务</text>
 <polyline points="400,232 400,262" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#ela-a)"/>
