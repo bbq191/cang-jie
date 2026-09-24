@@ -398,9 +398,19 @@ cj_xochitl_apply() {
     if cj_xochitl_has_xovi; then
         if [ -n "$(cj_so_pending_list)" ]; then
             echo "-- 有待换入的扩展 .so → 先 stop xochitl、换文件、再 start（不在运行中换 .so 后 restart，见 devlib.sh 头注 H3）"
-            systemctl stop xochitl || return 1
-            cj_so_commit || { systemctl start xochitl; return 1; }
-            systemctl start xochitl || return 1
+            # 关键区：stop 之后必须走到 start。本脚本经 ssh 跑，host 侧 Ctrl-C / 拔 USB 断开连接后，下一次 echo 写
+            # 已关闭的管道会收到 SIGPIPE 把 shell 杀掉——xochitl 就停在那里、屏幕没有界面，直到整机重启。
+            # 这一段忽略 HUP/PIPE/INT/TERM（写失败只是 echo 返回非 0），跑完 start 再恢复。
+            trap '' HUP PIPE INT TERM
+            if systemctl stop xochitl; then
+                cj_ap_rc=0
+                cj_so_commit || cj_ap_rc=1
+                systemctl start xochitl || cj_ap_rc=1
+            else
+                cj_ap_rc=1
+            fi
+            trap - HUP PIPE INT TERM
+            [ "$cj_ap_rc" = 0 ] || return 1
         else
             echo "-- xovi 已在 xochitl 里生效 → systemctl restart xochitl（不跑 xovi/start，见 devlib.sh 头注）"
             systemctl restart xochitl || return 1

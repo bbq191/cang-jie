@@ -713,6 +713,11 @@ check "uninstall-all：xochitl 还加载着被删的 .so → 提示整机重启�
 : > "$CJ_SIM_LOG"; ( cd "$PKG" && run sh deploy-xovi-apply.sh 127.0.0.1 --force ) >/dev/null 2>&1
 check "uninstall-all 之后再重启 xochitl：卸掉的扩展没有被换回 extensions.d" test ! -e "$EXT/hl-snap.so"
 
+# stop → 换入 → start 的关键区里 ssh 断开（SIGPIPE）：不能把 xochitl 停在那里
+new_sandbox; SOP="$R/home/root/.cangjie-stage/so-pending"; mkdir -p "$SOP"; echo NEWSO > "$SOP/hl-snap.so"; xovi_live on; : > "$CJ_SIM_LOG"
+CJ_SIM_PIPE_ON_STOP=1 PATH="$STUBS:$PATH" sh -c ". '$PKG/devlib.sh'; cj_xochitl_apply" >/dev/null 2>&1
+check "stop xochitl 之后连接断了（SIGPIPE）：仍然换入并 start xochitl（旧版 shell 被杀，xochitl 停着直到整机重启）" test "$(count_log 'systemctl start xochitl')" = 1 -a "$(cat "$R/home/root/xovi/extensions.d/hl-snap.so" 2>/dev/null)" = NEWSO
+
 section "2026-09-24：单独跑的部署没有变化就不重启 xochitl"
 new_sandbox; EXT="$R/home/root/xovi/extensions.d"; cp "$HLSO" "$EXT/hl-snap.so"; xovi_live on; : > "$CJ_SIM_LOG"
 ( cd "$PKG" && CJ_SKIP_BUILD=1 run sh deploy-hl-snap.sh 127.0.0.1 ) >"$R/out.txt" 2>&1; rc=$?
