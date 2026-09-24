@@ -60,7 +60,7 @@ const renderStepProgress=(container,{label,prog,msg})=>{
    同一套 --ok/--bad/--warn 变量，见 style.css），缺省 'bad'——历史上这堆 alert() 十有八九是报错。
    点一下提前关掉；到时自动淡出+移除。 */
 const toastHost=(()=>{let el=document.getElementById('toasthost');if(!el){el=document.createElement('div');el.id='toasthost';document.body.appendChild(el)}return el})();
-const toast=(msg,kind='bad',ms=4200)=>{if(!msg)return;const t=document.createElement('div');t.className='toast '+kind;t.textContent=msg;toastHost.appendChild(t);
+const toast=(msg,kind='bad',ms=4200)=>{if(!msg)return;const t=el('div',{class:'toast '+kind,text:msg});toastHost.appendChild(t);
   requestAnimationFrame(()=>t.classList.add('show'));
   const kill=()=>{t.classList.remove('show');setTimeout(()=>t.remove(),200)};
   t.onclick=kill;setTimeout(kill,ms)};
@@ -153,8 +153,8 @@ const upHtml=(icon,label,ext,btn)=>`<div class="up"><div class="drop"><span clas
 function uploader(box,urlOf,queryOf,okExt,onFinish,dedupeApi){
   const list=$('ul.q',box), input=$('input[type=file]',box), drop=$('.drop',box), go=$('.go',box);
   let files=[], sum=null;
-  const clr=document.createElement('button');clr.type='button';clr.className='btn';clr.textContent=T('common.clear');clr.onclick=()=>{files=[];render()};go.after(clr);
-  const summary=()=>{if(!sum){sum=document.createElement('div');sum.className='small';sum.style.margin='.3em 0';list.parentNode.insertBefore(sum,list)}
+  const clr=el('button',{type:'button',class:'btn',text:T('common.clear')});clr.onclick=()=>{files=[];render()};go.after(clr);
+  const summary=()=>{if(!sum){sum=el('div',{class:'small',style:'margin:.3em 0'});list.parentNode.insertBefore(sum,list)}
     const ok=files.filter(f=>f.st==='ok').length,bad=files.filter(f=>f.st==='bad').length;
     sum.innerHTML=files.length?T('common.uploadSummary',{ok,total:files.length,badPart:bad?T('common.uploadBadPart',{bad}):''}):'';};
   const render=()=>{list.innerHTML='';files.forEach(f=>{const li=document.createElement('li');li.dataset.k=f.k;li.className=f.st||'';
@@ -204,10 +204,10 @@ function subtabs(sec){const nav=sec.querySelector(':scope > .subnav');if(!nav)re
 // 这里字体/词典/壁纸列表原来共用的"（空）"完全没有引导，跟其它页面不一致（2026-09-09 审计发现）——
 // 各调用点按自己的场景传一句"去哪里做什么"。
 function fillList(ul,items,row,emptyMsg){ul.innerHTML='';if(!items.length){ul.innerHTML=`<li class="small">${emptyMsg||T('list.empty')}</li>`;return}
-  items.forEach(it=>{const li=document.createElement('li');const left=document.createElement('span'),right=document.createElement('span');
-    right.className='small';right.style.cssText='display:flex;align-items:center;gap:.4em;flex-wrap:wrap';row(it,left,right,li);li.append(left,right);ul.appendChild(li)})}
+  items.forEach(it=>{const li=el('li'),left=el('span'),right=el('span',{class:'small',style:'display:flex;align-items:center;gap:.4em;flex-wrap:wrap'});
+    row(it,left,right,li);li.append(left,right);ul.appendChild(li)})}
 /* 删除按钮：confirmDialog → DELETE → 刷新 */
-function delBtn(msg,url,refresh){const d=document.createElement('button');d.className='btn';d.textContent=T('action.delete');
+function delBtn(msg,url,refresh){const d=el('button',{class:'btn',text:T('action.delete')});
   guardClick(d,async()=>{if(await confirmDialog(msg)){const r=await j(url,{method:'DELETE'});if(r.ok===false)toast(r.message);refresh()}});return d}
 const cjkBadge=p=>p==null?'':`<span class="badge ${p>=80?'on':(p>=8?'':'off')}" title="${T('common.cjkCoverageTitle')}">${T('common.cjkCoverage',{pct:p})}</span>`;
 
@@ -584,7 +584,7 @@ const TABS={
      left.style.cssText='display:flex;align-items:center;gap:.6em'; // 缩略图固定在左、长文件名在右侧自己折行，不绕着图片流
      left.innerHTML=`<img src="/api/wallpapers/${encodeURIComponent(it.name)}" alt="${esc(T('wallpaper.thumbAlt',{name:it.name}))}" loading="lazy" style="height:3.4em;flex:none;border-radius:.3em;border:1px solid var(--line)"><span style="min-width:0">${esc(it.name)}</span>`;
      right.insertAdjacentHTML('beforeend',`<span>${fmtB(it.bytes)}</span>`+(cur?`<span class="badge on">${T('wallpaper.current')}</span>`:''));
-     if(!cur){const b=document.createElement('button');b.className='btn';b.textContent=T('wallpaper.use');guardClick(b,async()=>{const r=await jsend('/api/wallpapers/current','PUT',{name:it.name});if(r.ok===false){toast(r.message||T('wallpaper.setFailed'));return}refresh()});right.appendChild(b);
+     if(!cur){const b=el('button',{class:'btn',text:T('wallpaper.use')});guardClick(b,async()=>{const r=await jsend('/api/wallpapers/current','PUT',{name:it.name});if(r.ok===false){toast(r.message||T('wallpaper.setFailed'));return}refresh()});right.appendChild(b);
        right.appendChild(delBtn(T('wallpaper.deleteConfirm',{name:it.name}),'/api/wallpapers/'+encodeURIComponent(it.name),refresh))}}})}}
 };
 
@@ -734,7 +734,7 @@ function renderNotes(sec){sec.innerHTML=`
     const items=trashedEntries().sort((a,b)=>b.updated-a.updated);
     trashSum.textContent=items.length?T('notes.trash.count',{count:items.length}):T('notes.trash.empty');
     if(!items.length){trashList.innerHTML=`<p class="small">${T('notes.trash.noneHint')}</p>`;return}
-    items.forEach(e=>{const row=document.createElement('div');row.className='trash-item';
+    items.forEach(e=>{const row=el('div',{class:'trash-item'});
       const text=e.text||(e.drafts&&e.drafts[0]&&e.drafts[0].text)||(e.quote&&e.quote.text)||T('notes.noTextContent');
       const dv=e.destination||'both';
       const chSync=e.chapter!=null?syncMap.get(e.chapter):null;
@@ -811,8 +811,8 @@ function renderNotes(sec){sec.innerHTML=`
     const groups=new Map();mined.forEach(e=>{const k=e.page_index;if(!groups.has(k))groups.set(k,[]);groups.get(k).push(e)});
     const recency=k=>Math.max(...groups.get(k).map(e=>e.updated));
     [...groups.keys()].sort((a,b)=>recency(b)-recency(a)).forEach(k=>{const es=groups.get(k).sort((a,b)=>(a.ink?a.ink.bbox[1]:0)-(b.ink?b.ink.bbox[1]:0));
-      const card=document.createElement('div');card.className='card';card.innerHTML=`<h3 style="margin-top:0">${T('notes.pageHeading',{page:k+1})}${es[0].chapter_title?' · '+esc(es[0].chapter_title):''} <span class="small">${T('notes.entryCount',{count:es.length})}</span></h3>`;
-      es.forEach(e=>{const row=document.createElement('div');row.className='entry';
+      const card=el('div',{class:'card'});card.innerHTML=`<h3 style="margin-top:0">${T('notes.pageHeading',{page:k+1})}${es[0].chapter_title?' · '+esc(es[0].chapter_title):''} <span class="small">${T('notes.entryCount',{count:es.length})}</span></h3>`;
+      es.forEach(e=>{const row=el('div',{class:'entry'});
         row.innerHTML=`<div class="entry-body">
           <div class="entry-crop">${cropHtml(e)}</div>
           <div class="entry-main">
@@ -895,8 +895,7 @@ function renderNotes(sec){sec.innerHTML=`
     exportTabsEl.querySelectorAll('button').forEach(b=>b.classList.toggle('on',b.dataset.etab===exportTab));
     const visibleKeys=exportTab==='pending'?pendingKeys:syncedKeys;
     chaptertabs.innerHTML='';
-    visibleKeys.forEach(k=>{const b=document.createElement('button');b.className=k===selectedChapter?'on':'';
-      b.textContent=k<0?T('notes.unfiledChapter'):T('notes.chapterHeading',{n:k+1});b.onclick=()=>{selectedChapter=k;renderBook()};chaptertabs.appendChild(b)});
+    visibleKeys.forEach(k=>{const b=el('button',{class:k===selectedChapter?'on':'',text:k<0?T('notes.unfiledChapter'):T('notes.chapterHeading',{n:k+1})});b.onclick=()=>{selectedChapter=k;renderBook()};chaptertabs.appendChild(b)});
     chapterbody.innerHTML='';
     if(selectedChapter==null){
       // 2026-09-09 审计修：pendingKeys 为空有两种完全不同的原因——"这本书压根没有条目被转入笔记过"
@@ -909,7 +908,7 @@ function renderNotes(sec){sec.innerHTML=`
       return}
     const k=selectedChapter,es=groups.get(k).sort((a,b)=>a.page_index-b.page_index||(a.ink?a.ink.bbox[1]:0)-(b.ink?b.ink.bbox[1]:0));
     const s=k>=0?syncMap.get(k):null;
-    const card=document.createElement('div');card.className='card';
+    const card=el('div',{class:'card'});
     card.innerHTML=`<h3 style="margin-top:0">${k<0?T('notes.unfiledChapterParen'):esc(T('notes.chapterHeadingTitled',{n:k+1,title:es[0].chapter_title||''}))} <span class="small">${T('notes.entryCount',{count:es.length})}</span></h3>${k>=0?`<div class="row"><button class="btn pri" data-sync title="${T('notes.pushChapterTitle')}">${T('notes.pushChapterBtn')}</button>${syncBadges(s)}<span class="small" data-genmsg></span></div>`:''}<div data-body></div>`;
     const body=card.querySelector('[data-body]');
     if(k>=0){
@@ -942,7 +941,7 @@ function renderNotes(sec){sec.innerHTML=`
         // 结果文案刚显示出来，从这一刻起再保 3s，不管上面两次请求实际花了多久
         await lingerThen(async()=>{await refreshSync();renderBook({advance:true})})};
     }
-    es.forEach(e=>{const failed=failedIds.has(e.id);const row=document.createElement('div');row.className='entry'+(failed?' entry-failed':'');
+    es.forEach(e=>{const failed=failedIds.has(e.id);const row=el('div',{class:'entry'+(failed?' entry-failed':'')});
       const draft=(e.drafts&&e.drafts[0])?e.drafts[0].text:'';
       const dv=e.destination||'both';
       row.innerHTML=`
@@ -1053,7 +1052,7 @@ const PROVIDER_NAMES={dashscope:'models.provider.dashscope',openai:'models.provi
    给 transcribe 用，多一个"合书自动转写"开关（模型服务级别的设置，原来在「整理」页的折叠层已经去掉，
    见 renderNotes）。返回一个 refresh 函数，挂到 tab 的 sec.refresh 上，切回这个 tab 时数据不过期。 */
 function mountModelPanel(root,seg,title,icon,showAuto){
-  const card=document.createElement('div');card.className='card';card.style.cssText='width:100%;margin:0';
+  const card=el('div',{class:'card',style:'width:100%;margin:0'});
   card.innerHTML=`<h3 style="margin-top:0">${icon} ${title}</h3>
     <div class="row">
       <div style="flex:1;min-width:11em"><label class="field">${T('models.vendorLabel')}</label><select data-vendor style="width:100%"></select></div>
@@ -1407,7 +1406,7 @@ function renderManage(sec){sec.innerHTML=`
      省电/省流量：页面被隐藏（切标签页、手机锁屏）时**不刷新**，只记"当前 tab 待刷"，`visibilitychange` 变可见时补刷一次；
      每个 tab 的刷新用 coalesce 合并（事件突发/多来源叠加时同一时刻最多一个在飞）。 */
   const svcKey=svcs.map(s=>s.name).join(',');
-  const liveDot=document.createElement('span');liveDot.id='live';liveDot.title=T('common.eventStream');liveDot.textContent='●';liveDot.style.cssText='margin-left:.5em;font-size:.8em;color:var(--bad)';$('#hdr').appendChild(liveDot);
+  const liveDot=el('span',{id:'live',title:T('common.eventStream'),text:'●'});liveDot.style.cssText='margin-left:.5em;font-size:.8em;color:var(--bad)';$('#hdr').appendChild(liveDot);
   const activeSec=()=>[...main.children].find(x=>x.classList.contains('on'));
   let activeStale=false,opened=false,es=null,hiddenTimer=0;
   /* 心跳 ?ka=60：默认 20 秒一帧空注释，只是为了让中间代理不掐空闲连接；网关直连浏览器用不着这么勤（设备上每帧都是一次唤醒+TLS 写）。
