@@ -23,6 +23,7 @@
 
 #include <assert.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 #include <sys/mman.h>
 #include <unistd.h>
@@ -93,6 +94,27 @@ static void test_pattern_masked_wildcard(void) {
     CHECK(addr == (uintptr_t)hay);
 }
 
+static void test_pattern_fast_path_matches_bytewise_loop(void) {
+    /* 精确匹配走 memchr 快路径，全 0xFF 掩码走逐字节循环——两者语义相同，差分对拍：
+     * 小字母表随机数据（大量重叠/相邻命中）、各种长度，含命中落在首尾两端的情况。 */
+    static uint8_t hay[4096];
+    uint32_t x = 7;
+    for (int round = 0; round < 400; round++) {
+        size_t hlen = 1 + (size_t)(round * 37) % sizeof hay;
+        size_t plen = 1 + (size_t)round % 6;
+        for (size_t i = 0; i < hlen; i++) { x = x * 1103515245u + 12345u; hay[i] = (uint8_t)((x >> 16) % 3); }
+        uint8_t pat[6], full[6];
+        for (size_t i = 0; i < plen; i++) { x = x * 1103515245u + 12345u; pat[i] = (uint8_t)((x >> 16) % 3); full[i] = 0xFF; }
+        if (round % 5 == 0 && hlen >= plen) memcpy(hay + hlen - plen, pat, plen); /* 命中贴尾 */
+        if (round % 7 == 0 && hlen >= plen) memcpy(hay, pat, plen);               /* 命中贴头 */
+        uintptr_t fa = 0, fb = 0;
+        size_t a = cj_count_pattern(hay, hlen, pat, plen, &fa);
+        size_t b = cj_count_pattern_masked(hay, hlen, pat, full, plen, &fb);
+        CHECK(a == b);
+        if (a > 0) CHECK(fa == fb);
+    }
+}
+
 /* ── scan.c ────────────────────────────────────────────────────────────── */
 
 static void test_scan_finds_matching_exec_mapping(void) {
@@ -142,6 +164,109 @@ static void test_scan_returns_first_match(void) {
     size_t size = 0;
     CHECK(cj_find_exec_module("xochitl", maps, &base, &size) == 1);
     CHECK(base == 0x10000ULL);
+    CHECK(size == 0x10000); /* 不相接的第二处不合并 */
+}
+
+static void test_scan_merges_segments_split_by_hooks(void) {
+    /* 2026-09-24 真机形状：先装的扩展把 0xf03000、0xf47000 两页 mprotect 成 rwxp，
+     * xochitl 代码段被切成 5 段。后装的扩展必须仍能扫到整段（含高地址目标）。 */
+    const char *maps =
+        "aaaa00000000-aaaa00400000 r--p 00000000 b3:02 77  /usr/bin/xochitl\n"
+        "aaaa00400000-aaaa00f03000 r-xp 00400000 b3:02 77  /usr/bin/xochitl\n"
+        "aaaa00f03000-aaaa00f04000 rwxp 00f03000 b3:02 77  /usr/bin/xochitl\n"
+        "aaaa00f04000-aaaa00f47000 r-xp 00f04000 b3:02 77  /usr/bin/xochitl\n"
+        "aaaa00f47000-aaaa00f48000 rwxp 00f47000 b3:02 77  /usr/bin/xochitl\n"
+        "aaaa00f48000-aaaa01200000 r-xp 00f48000 b3:02 77  /usr/bin/xochitl\n"
+        "aaaa01200000-aaaa01300000 r--p 01200000 b3:02 77  /usr/bin/xochitl\n"
+        "aaaa01300000-aaaa01310000 rw-p 01300000 b3:02 77  /usr/bin/xochitl\n";
+    uintptr_t base = 0;
+    size_t size = 0;
+    CHECK(cj_find_exec_module("/usr/bin/xochitl", maps, &base, &size) == 1);
+    CHECK(base == 0xaaaa00400000ULL);
+    CHECK(size == 0xaaaa01200000ULL - 0xaaaa00400000ULL); /* 到 r--p 为止，不含只读数据段 */
+}
+
+static void test_scan_merge_stops_on_gap_other_file_or_unreadable(void) {
+    uintptr_t base = 0;
+    size_t size = 0;
+    /* 中间有空洞：只取到空洞前 */
+    const char *gap =
+        "10000-20000 r-xp 0 08:01 1  /usr/bin/xochitl\n"
+        "21000-30000 r-xp 0 08:01 1  /usr/bin/xochitl\n";
+    CHECK(cj_find_exec_module("xochitl", gap, &base, &size) == 1);
+    CHECK(base == 0x10000ULL && size == 0x10000);
+    /* 紧接的是别的文件（后缀也匹配）：不合并 */
+    const char *other =
+        "10000-20000 r-xp 0 08:01 1  /usr/bin/xochitl\n"
+        "20000-30000 r-xp 0 08:01 2  /opt/xochitl\n";
+    CHECK(cj_find_exec_module("xochitl", other, &base, &size) == 1);
+    CHECK(base == 0x10000ULL && size == 0x10000);
+    /* 紧接段不可读（--xp）：不合并，扫描范围始终可读 */
+    const char *xonly =
+        "10000-20000 r-xp 0 08:01 1  /usr/bin/xochitl\n"
+        "20000-30000 --xp 0 08:01 1  /usr/bin/xochitl\n"
+        "30000-40000 r-xp 0 08:01 1  /usr/bin/xochitl\n";
+    CHECK(cj_find_exec_module("xochitl", xonly, &base, &size) == 1);
+    CHECK(base == 0x10000ULL && size == 0x10000);
+    /* 紧接的是匿名映射：不合并 */
+    const char *anon =
+        "10000-20000 r-xp 0 08:01 1  /usr/bin/xochitl\n"
+        "20000-30000 rwxp 0 00:00 0 \n";
+    CHECK(cj_find_exec_module("xochitl", anon, &base, &size) == 1);
+    CHECK(base == 0x10000ULL && size == 0x10000);
+    /* 最后一行没有换行符的续段也能合并 */
+    const char *noeol =
+        "10000-20000 r-xp 0 08:01 1  /usr/bin/xochitl\n"
+        "20000-30000 rwxp 0 08:01 1  /usr/bin/xochitl";
+    CHECK(cj_find_exec_module("xochitl", noeol, &base, &size) == 1);
+    CHECK(base == 0x10000ULL && size == 0x20000);
+}
+
+static void test_scan_real_proc_self_maps(void) {
+    /* maps_content=NULL 走真读 /proc/self/maps：找测试程序自己的代码段，范围应包含 main。 */
+    char exe[512];
+    ssize_t n = readlink("/proc/self/exe", exe, sizeof exe - 1);
+    CHECK(n > 0);
+    if (n <= 0) return;
+    exe[n] = '\0';
+    uintptr_t base = 0;
+    size_t size = 0;
+    CHECK(cj_find_exec_module(exe, NULL, &base, &size) == 1);
+    uintptr_t fn = (uintptr_t)&test_scan_real_proc_self_maps;
+    CHECK(fn >= base && fn < base + size);
+}
+
+static void test_scan_real_kernel_split_by_mprotect(void) {
+    /* 用真内核复现"hook 把代码段切成三段"：把一个 4 页的临时文件以 r-x 私有映射，再把第 2 页
+     * mprotect 成 rwx（跟 cj_patch_target 同一个调用），/proc/self/maps 里就会出现
+     * r-xp / rwxp / r-xp 三行。合并后的范围必须覆盖全部 4 页。 */
+    long page = sysconf(_SC_PAGESIZE);
+    char path[] = "/tmp/cj-scan-split-XXXXXX";
+    int fd = mkstemp(path);
+    CHECK(fd >= 0);
+    if (fd < 0) return;
+    CHECK(ftruncate(fd, page * 4) == 0);
+    uint8_t *m = mmap(NULL, (size_t)page * 4, PROT_READ | PROT_EXEC, MAP_PRIVATE, fd, 0);
+    close(fd);
+    CHECK(m != MAP_FAILED);
+    if (m != MAP_FAILED) {
+        CHECK(mprotect(m + page, (size_t)page, PROT_READ | PROT_WRITE | PROT_EXEC) == 0);
+        uintptr_t base = 0;
+        size_t size = 0;
+        CHECK(cj_find_exec_module(path, NULL, &base, &size) == 1);
+        CHECK(base == (uintptr_t)m);
+        CHECK(size == (size_t)page * 4);
+        munmap(m, (size_t)page * 4);
+    }
+    unlink(path);
+}
+
+static void test_scan_degenerate_range_rejected(void) {
+    /* end <= start 的畸形行不当命中（否则 size 下溢成天文数字，扫描越界）。 */
+    const char *maps = "20000-10000 r-xp 0 08:01 1  /usr/bin/xochitl\n";
+    uintptr_t base = 0;
+    size_t size = 0;
+    CHECK(cj_find_exec_module("xochitl", maps, &base, &size) == 0);
 }
 
 /* ── trampoline_aarch64.c ──────────────────────────────────────────────── */
@@ -229,12 +354,18 @@ int main(void) {
     test_pattern_multi_hits_fails();
     test_pattern_degenerate_inputs();
     test_pattern_masked_wildcard();
+    test_pattern_fast_path_matches_bytewise_loop();
 
     test_scan_finds_matching_exec_mapping();
     test_scan_suffix_mismatch_not_found();
     test_scan_non_exec_mapping_skipped();
     test_scan_anonymous_mapping_skipped();
     test_scan_returns_first_match();
+    test_scan_merges_segments_split_by_hooks();
+    test_scan_merge_stops_on_gap_other_file_or_unreadable();
+    test_scan_degenerate_range_rejected();
+    test_scan_real_proc_self_maps();
+    test_scan_real_kernel_split_by_mprotect();
 
     test_far_jump_roundtrips_addresses();
 
