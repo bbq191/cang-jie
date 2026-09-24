@@ -47,16 +47,6 @@ fn open_opf(epub: &Path) -> Result<(Zip, String, String), String> {
     Ok((zip, opf_path, opf))
 }
 
-/// 图片路径 → 占位里 `cover.{ext}` 的扩展名：取文件名最后一个 `.` 之后、小写；文件名没有扩展名时当 jpg
-/// （此前直接 `rsplit('.')`，无扩展名的路径会把整段路径连同 `/` 当扩展名，写出 `cover.images/x` 这种条目名）。
-fn ext_of(path: &str) -> String {
-    let base = path.rsplit('/').next().unwrap_or(path);
-    match base.rsplit_once('.') {
-        Some((_, e)) if !e.is_empty() => e.to_ascii_lowercase(),
-        _ => "jpg".into(),
-    }
-}
-
 /// 从真 EPUB 里找封面图：OPF `<meta name="cover">` → manifest；`properties="cover-image"`；都没有就取
 /// 第一个 spine 页里的第一张 `<img>`。只读需要的几个条目，不解压整本。
 fn find_cover(zip: &mut Zip, opf_path: &str, opf: &str) -> Option<(String, Vec<u8>)> {
@@ -73,7 +63,7 @@ fn find_cover(zip: &mut Zip, opf_path: &str, opf: &str) -> Option<(String, Vec<u
     // 会得到一个不是图片的"封面"，xochitl 取不到封面缩略图（2026-09-20 真机日志 `null cover image`）。
     if let Some(href) = candidate.filter(|h| crate::util::is_image_ext(h)) {
         let path = crate::epubzip::resolve(dir, &crate::epubzip::percent_decode(href));
-        return Some((ext_of(&path), read_entry(zip, &path)?));
+        return Some((crate::util::image_ext_of(&path), read_entry(zip, &path)?));
     }
     // 第一个 spine 页里的第一张图。
     static SPINE: OnceLock<Regex> = OnceLock::new();
@@ -84,7 +74,7 @@ fn find_cover(zip: &mut Zip, opf_path: &str, opf: &str) -> Option<(String, Vec<u
     static IMG: OnceLock<Regex> = OnceLock::new();
     let c = re(&IMG, r#"(?is)<(?:img|image)\b[^>]*?(?:src|xlink:href|href)\s*=\s*"([^"]+)""#).captures(&html)?;
     let path = crate::epubzip::resolve(crate::epubzip::dir_of(&page), &crate::epubzip::percent_decode(&c[1]));
-    Some((ext_of(&path), read_entry(zip, &path)?))
+    Some((crate::util::image_ext_of(&path), read_entry(zip, &path)?))
 }
 
 /// 读出一本 EPUB 的封面图（扩展名, 字节）：OPF 声明的有效封面，否则第一个 spine 页里的第一张图（同占位构造的规则）。
@@ -282,13 +272,5 @@ mod tests {
         assert!(!epub_is_rtl(&d.path().join("missing.epub")));
         std::fs::write(d.path().join("bad.epub"), b"not a zip").unwrap();
         assert!(!epub_is_rtl(&d.path().join("bad.epub")));
-    }
-
-    #[test]
-    fn ext_of_takes_file_extension_only() {
-        assert_eq!(ext_of("OEBPS/images/Cv.JPG"), "jpg");
-        assert_eq!(ext_of("a.b/images/cover"), "jpg", "文件名没扩展名时不能把目录里的点当扩展名");
-        assert_eq!(ext_of("cover."), "jpg");
-        assert_eq!(ext_of("x.png"), "png");
     }
 }

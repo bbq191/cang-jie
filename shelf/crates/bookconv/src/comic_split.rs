@@ -308,7 +308,7 @@ fn build_piece_with(
                     Some(np) => np.clone(),
                     None => {
                         let Some(bytes) = fetch_image(&img)? else { continue };
-                        let ext = img.rsplit('.').next().unwrap_or("jpg").to_ascii_lowercase();
+                        let ext = crate::util::image_ext_of(&img);
                         let media = crate::util::image_media_type_of_ext(&ext);
                         let np = format!("images/{:04}.{ext}", resources.len() + 1);
                         resources.push(Resource { path: np.clone(), media_type: media.into(), bytes });
