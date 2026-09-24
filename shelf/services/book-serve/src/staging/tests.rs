@@ -950,6 +950,28 @@ fn open_for_download_returns_file_and_length() {
     assert!(s.open_for_download("nope.epub").is_err());
 }
 
+/// 「首次打开才渲染」的书被打开后，列表把 onopen 升级成 ok，并**写回边车**——之后的列表不再去读 xochitl 的 `.content`。
+#[test]
+fn list_persists_onopen_to_ok_upgrade() {
+    const U: &str = "cccccccc-cccc-cccc-cccc-cccccccccccc";
+    let t = tempfile::tempdir().unwrap();
+    let lib = t.path().join("xochitl");
+    std::fs::create_dir_all(&lib).unwrap();
+    let s = Staging::new(t.path().join("staging"), Arc::new(Xochitl::new("127.0.0.1:1", &lib, 1)), 0);
+    s.ensure().unwrap();
+    s.stage_new("big.epub", b"PK").unwrap();
+    s.set_render("big.epub", RenderCheck { uuid: U.into(), pages: 3, expected: 0, status: "onopen".into(), at: 1 }).unwrap();
+    std::fs::write(lib.join(format!("{U}.content")), r#"{"pageCount":3}"#).unwrap();
+    let rc = |s: &Staging| s.list()[0].delivered.clone().unwrap().render.unwrap();
+    assert_eq!(rc(&s).status, "onopen", "页数没变＝还没打开过");
+    std::fs::write(lib.join(format!("{U}.content")), r#"{"pageCount":412}"#).unwrap();
+    assert_eq!((rc(&s).status.as_str(), rc(&s).pages), ("ok", 412));
+    let stored = sidecar::read(&s.dir().join("big.epub")).unwrap().render.unwrap();
+    assert_eq!((stored.status.as_str(), stored.pages), ("ok", 412), "升级已落盘");
+    std::fs::remove_file(lib.join(format!("{U}.content"))).unwrap();
+    assert_eq!(rc(&s).pages, 412, "之后列表不再依赖 .content");
+}
+
 /// 进度节流：首尾必报；快书（300 条目、每条 10ms，共 3 秒）从只按条目数时的 61 次上报降到 4 次；
 /// 慢书（每条 500ms）仍按每 5 条报一次，进度条照样平滑。
 #[test]

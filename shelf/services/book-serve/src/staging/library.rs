@@ -300,6 +300,15 @@ impl Staging {
                         if n != rc.pages {
                             rc.status = "ok".into();
                             rc.pages = n;
+                            // 升级结果写回边车：此前只改返回给网页的这份拷贝，边车里永远是 onopen，于是之后每次列表
+                            // （网页每收一条事件就拉一次）都要再去 xochitl 书库读一遍这本的 `.content`，读到天荒地老。
+                            let uuid = rc.uuid.clone();
+                            let _ = sidecar::update(&e.path(), |d| {
+                                if let Some(r) = d.render.as_mut().filter(|r| r.status == "onopen" && r.uuid == uuid) {
+                                    r.status = "ok".into();
+                                    r.pages = n;
+                                }
+                            });
                         }
                     }
                 }

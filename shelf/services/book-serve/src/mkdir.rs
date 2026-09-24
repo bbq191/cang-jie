@@ -18,7 +18,7 @@
 //! `trash.rs` 是同一份基础设施，见该模块文档）；这里只留领域校验（名字合法性/文件夹是否已存在）。
 use crate::pending_queue::PendingQueue;
 use serde::{Deserialize, Serialize};
-use rmsvc_core::xochitl::find_folder_by_name;
+use rmsvc_core::xochitl::{find_folder_by_name, list_folders};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Condvar, Mutex};
@@ -89,7 +89,11 @@ impl MkdirQueue {
     /// 返回 (待办文件夹名列表, 本次清掉几条)。
     /// 刚交出去不久（[`HANDOUT_QUIET`]）的名字不再重复返回；返回的名字同时记为"已交出"。
     pub fn pending(&self) -> Result<(Vec<String>, usize), String> {
-        let (kept, pruned) = self.q.prune(|p| find_folder_by_name(&self.lib_dir, &p.name).is_none())?;
+        // 书库文件夹名只扫一遍、且只在队列非空时扫（`prune` 对空队列不调谓词）：此前每条待办各调一次
+        // `find_folder_by_name`，每次都把书库里全部 `.metadata` 读一遍解析一遍，k 条待办＝k 遍全库扫描，
+        // 长轮询每次唤醒都来一轮（2026-09-24 审计）。判据与 `find_folder_by_name` 相同（活的 CollectionType 同名）。
+        let folders = std::cell::OnceCell::new();
+        let (kept, pruned) = self.q.prune(|p| folders.get_or_init(|| list_folders(&self.lib_dir)).binary_search(&p.name).is_err())?;
         let now = Instant::now();
         let mut handed = rmsvc_core::sync::lock(&self.handed);
         handed.retain(|n, at| now.duration_since(*at) < self.handout_quiet && kept.iter().any(|p| &p.name == n));
