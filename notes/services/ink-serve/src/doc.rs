@@ -49,8 +49,9 @@ impl Doc {
     pub fn content(&self) -> Option<Content> {
         serde_json::from_str(&std::fs::read_to_string(self.side("content")).ok()?).ok()
     }
-    pub fn epub_bytes(&self) -> Option<Vec<u8>> {
-        std::fs::read(self.side("epub")).ok()
+    /// 打开 `.epub`（带缓冲、可 seek）：页→章只要目录那一两个 zip 条目，不整本读进内存。
+    pub fn epub_file(&self) -> Option<std::io::BufReader<std::fs::File>> {
+        std::fs::File::open(self.side("epub")).ok().map(std::io::BufReader::new)
     }
     pub fn epubindex_bytes(&self) -> Option<Vec<u8>> {
         std::fs::read(self.side("epubindex")).ok()

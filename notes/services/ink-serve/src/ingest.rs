@@ -48,8 +48,8 @@ pub fn ingest_doc(lib: &Path, crops_dir: &Path, db: &BookDb, cfg: &IngestConfig,
     }
     let Some(content) = doc.content().filter(|c| c.file_type == "epub") else { return Ok(None) };
     // 页→章：每次摄取现读（.epubindex 在 xochitl 重排后会变）
-    let map = match (doc.epub_bytes(), doc.epubindex_bytes()) {
-        (Some(e), Some(i)) => BookMap::from_epub(&e, &i),
+    let map = match (doc.epub_file(), doc.epubindex_bytes()) {
+        (Some(e), Some(i)) => BookMap::from_epub_reader(e, &i),
         _ => BookMap::default(),
     };
     let th = cfg.thresholds();
