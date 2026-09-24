@@ -52,14 +52,14 @@
 
 | 约定 | 说明 |
 |---|---|
-| 路由 | 路径模式：尾部 `/*` 前缀匹配、单段 `{param}`。**最具体的优先**：字面段多的胜、精确匹配胜尾部通配（09-20 起）。此前靠“先注册先匹配”，通配路由曾抢走字面路由；现在跟注册顺序无关 |
+| 路由 | 路径模式：尾部 `/*` 前缀匹配、单段 `{param}`（参数用 `percent_decode_path` 解码，`+` 不当空格，09-24）。**最具体的优先**：字面段多的胜、精确匹配胜尾部通配（09-20 起）。此前靠“先注册先匹配”，通配路由曾抢走字面路由；现在跟注册顺序无关 |
 | 每请求一线程 + 并发上限 | 缺省同时 64 个请求（含 SSE 长连接），超了回 503 + `Retry-After: 2`，不再开线程。取值：合法并发约 30（浏览器每源 6 条 × 几个标签页 + 网关到各服务 8 条订阅），64 留一倍余量；每条线程常驻只有几十 KB。`ServeOpts.max_concurrent` 可改，`None` 不限 |
 | 请求头白名单 | 处理函数只看得到 `Cookie`、`Authorization`、`Accept`、`Host`、`X-Forwarded-Proto`、`User-Agent`（外加 `Content-Type`/`Content-Length`） |
 | 对端 IP | 服务器取 TCP 对端地址（HTTPS 下同样取自底层 TcpStream），写进内部头 `X-Rmsvc-Remote-Ip`（常量 `REMOTE_IP_HEADER`），处理函数用 `Request::remote_ip()`、守卫用 `GuardRequest.remote` 读。客户端自带的同名头在白名单那步就被丢掉，伪造不了。没给 `Request` 加字段，是因为它被各服务直接构造 |
 | 守卫 | `Guard`：分发前先问一次，`None` 放行、`Some(reply)` 直接回。登录策略由服务自己定义（只有网关用） |
 | panic | 处理函数 panic 兜成 JSON 500“服务内部错误”，并发名额照常归还（需要消费方 release 是 `panic="unwind"`，见 §05） |
 | 回执 | `Reply::ok/json/error/html/bytes/redirect`；两种流：`Reply::stream`（SSE 用：接管裸 socket、一帧一 flush、读到连接关闭为止，绕开 tiny_http 攒满 8KB 才发的 chunked 缓冲）和 `Reply::sized_stream`（文件下载用：已知长度，按定长响应边读边发，发完即结束，chunked 阈值调到最大以保留 `Content-Length`） |
-| 请求体 | `read_small_body`（1MB 上限）、`json()`/`JsonBody`、`form_body`、`multipart_boundary` |
+| 请求体 | `read_small_body`（1MB 上限，`SMALL_BODY_MAX`；超限**报错**，09-24 前是静默截断）、`json()`/`JsonBody`、`form_body`、`multipart_boundary` |
 
 **09-24 教训**：文件下载第一版用了 `Reply::stream`，reader 读完连接却不关，真机上下载永远收不完。SSE 和定长下载是两种语义，各用各的。
 
@@ -77,18 +77,19 @@
 | `paths` | 9 个服务 | XDG 基目录的**唯一路径表**，所有文件路径从这里取。设备 HOME 是 `/home/root`；配置 `~/.config/shelf/<服务>.json`，数据 `~/.local/share/shelf/`，状态 `~/.local/state/shelf/`，运行时 `$XDG_RUNTIME_DIR/shelf/`（注册表、上传分片，重启即清），二进制 `~/.local/bin`。外部约定可用 `SHELF_KOREADER_ROOT`、`SHELF_WEREAD_ROOT` 覆盖。`app_config_dir("notes")` 这类接口给非 `shelf` 命名空间的消费方 |
 | `fs` | 8 个 | `write_atomic`：先写同目录临时文件再 rename；临时名 `<path>.<pid>.<序号>.tmp`，多线程/多进程同时写同一目标不会互相截断（09-20 前固定用 `<path>.tmp`）。`write_atomic_mode`：临时文件**创建时**就带指定权限，含密钥的文件没有“先宽后紧”的窗口（09-24）。`plain_name` 校验单段文件名（不含 `/`、不是 `.`/`..`、不以 `.` 开头）；`unique_path` 同名不覆盖（`1_x`、`2_x`…）；`move_unique` 跨设备回退 copy+rm |
 | `config` | 7 个 | JSON 配置模板：`load_or_default`、`load_or_seed`（首启写出缺省）、`save`（原子写，可选 0600）。`is_corrupt` 判断“文件在但解析不了”，给启动时要落盘的调用方决定是否跳过，免得把损坏的配置覆盖成缺省（09-24） |
-| `multipart` | book-serve、note-serve、网关 | 流式 multipart/form-data 解析，每个 part 以 `Read` 交出、边读边落盘，多文件一次 POST 也不把请求体读进内存。分隔符扫描记进度、按首字节跳查（200MB 上传体解析 1245ms → 46ms，09-22）。`percent_decode` 遇多字节字符不再 panic；`content_disposition(filename)` 生成下载头（ASCII 兜底名 + RFC 5987 UTF-8 名，笔记导出与原件下载共用） |
+| `multipart` | book-serve、note-serve、网关 | 流式 multipart/form-data 解析，每个 part 以 `Read` 交出、边读边落盘，多文件一次 POST 也不把请求体读进内存。分隔符扫描记进度、按首字节跳查（200MB 上传体解析 1245ms → 46ms，09-22）。`percent_decode` 遇多字节字符不再 panic（查询串/表单语义，`+`=空格；路径段与 `filename*=` 用 `percent_decode_path`，`+` 原样）；`content_disposition(filename)` 生成下载头（ASCII 兜底名 + RFC 5987 UTF-8 名，笔记导出与原件下载共用） |
 | `asset` | book-serve、koreader-serve、font-serve、wallpaper-serve | `AssetStore`（仓库：`validate`/`install`/`list`/`remove`）+ `AssetUploadFlow`（上传流程写一次）。拒收/成功文案由各仓库覆盖 |
 | `formats` | 5 个 + 网关 | 文件格式白名单的**单一事实源**：书籍只收 `epub`/`pdf`（09-18 起），字体 `ttf/otf/ttc`，词典 `ifo/idx/dict/dz/syn/oft`，图片 `jpg/jpeg/png`。网页 `accept`（网关注入）和服务端上传门同源 |
 | `ttf` | font-serve、koreader-serve | TTF/OTF 家族名（nameID 16 优先）、魔数校验、CJK 覆盖率；汉字覆盖数钳到区内总码位、够数即停（防恶意字体堆重叠段导致数亿次迭代，09-22） |
 | `cache` | book-serve、koreader-serve | 单值 TTL 缓存 `TtlCache`，给每次刷新都会打、但算一次很重的 `/status`（如 3 秒 TTL）；本服务操作完成时 `invalidate`。计算期间持锁，并发请求等同一份结果 |
 | `clock` | 8 个 | unix 时间戳唯一出处；取不到时间回 0 |
+| `sync` | book-serve、koreader-serve（其余服务可逐步改用） | `sync::lock`：容忍 poison 的取锁（09-24 收编各处手写的 `.lock().unwrap_or_else(|e| e.into_inner())`） |
 
 ## 03｜和 xochitl 打交道：xochitl / xochitl_conf / fswatch
 
 - **`xochitl`**（book-serve、note-serve）：往设备原生书库免重启塞文件，剥离移植自旧项目的真机结论。
   - `POST http://10.11.99.1/upload`（xochitl 的网页接口只绑 USB 网口，设备端靠 lo/usb1 别名让这个地址常驻可达）。
-  - **GET-then-upload 归档**：先 `GET /documents/<文件夹 uuid>` 把“当前文件夹”设好（这是 xochitl 的全局状态），再上传，文件就落进该文件夹；`.metadata` 里的 parent 会被忽略。
+  - **GET-then-upload 归档**：先 `GET /documents/<文件夹 uuid>` 把“当前文件夹”设好（这是 xochitl 的全局状态），再上传，文件就落进该文件夹；`.metadata` 里的 parent 会被忽略。因为是全局状态，进程内“设文件夹 → 上传”由一把 static 锁串成一对（09-24：此前两本书并发投到不同文件夹会落错）；跨进程（note-serve）不受这把锁约束。
   - **防复制风暴**：大书上传慢时会 408 或读超时，但文档其实已建好——这类错误**绝不重试**（`upload_likely_delivered`）。
   - `upload_file` 流式上传磁盘文件，不整本读进内存（09-19 OOM 审计：旧路径峰值能到原文件 2 倍多）。
   - `upload_large_file` 绕过网页上传约 100MB 的硬限：先传几 KB 的占位文档（EPUB 要带真书名和封面）让 xochitl 建好条目，再把磁盘上的文件原子替换成真文件。EPUB 删掉占位的渲染缓存，首次打开时重渲染；PDF 要一并改 `.content` 里的逐页表和页数。2026-09-20 真机验证：154MB PDF、153MB EPUB 都能打开。失败时占位可能留在书库里，不做危险的回滚删除。

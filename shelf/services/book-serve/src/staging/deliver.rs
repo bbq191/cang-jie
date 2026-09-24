@@ -201,14 +201,10 @@ impl Staging {
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| this.deliver(name, &folder, &mkdir, bus)))
                 .unwrap_or_else(|_| Err("落库过程内部异常（已捕获，不影响其他操作）".to_string()));
             let at = rmsvc_core::clock::now_secs();
-            let dc = match &result {
-                // 成功/失败落定后进度条意义不大（`status` 本身就是终态），不保留最后一次的
-                // `progress`——避免网页刷新时短暂显示一条"3/8"却又同时是 ok/failed 的矛盾态。
-                Ok(outcome) => sidecar::DeliverCheck { status: "ok".into(), message: outcome.message.clone(), at, progress: None },
-                Err(e) if e.contains(optimize::CANCELLED_MSG) => sidecar::DeliverCheck { status: "cancelled".into(), message: e.clone(), at, progress: None },
-                Err(e) => sidecar::DeliverCheck { status: "failed".into(), message: e.clone(), at, progress: None },
-            };
-            let _ = this.set_deliver_check(name, dc);
+            // 成功/失败落定后进度条意义不大（`status` 本身就是终态），不保留最后一次的
+            // `progress`——避免网页刷新时短暂显示一条"3/8"却又同时是 ok/failed 的矛盾态。
+            let (status, message) = final_status(result.as_ref().map(|o| o.message.as_str()).map_err(String::as_str));
+            let _ = this.set_deliver_check(name, sidecar::DeliverCheck { status, message, at, progress: None });
             if let Ok(outcome) = &result {
                 if let Some(plan) = outcome.render.clone() {
                     let (staging2, bus2, lib2) = (this.clone(), bus.clone(), this.xochitl.library_dir().to_path_buf());

@@ -16,10 +16,13 @@ use std::time::SystemTime;
 /// 缓存条目上限：书库几十到几百本，超了整表清空重来即可（查询本身很便宜）。
 const CACHE_MAX: usize = 1024;
 
+/// uuid → (文件大小, mtime, 是否从右往左)。
+type RtlCache = HashMap<String, (u64, Option<SystemTime>, bool)>;
+
 pub struct ReadingDirection {
     lib: PathBuf,
     overrides: PathBuf,
-    cache: Mutex<HashMap<String, (u64, Option<SystemTime>, bool)>>,
+    cache: Mutex<RtlCache>,
 }
 
 impl ReadingDirection {
@@ -44,13 +47,14 @@ impl ReadingDirection {
         let path = self.lib.join(format!("{uuid}.epub"));
         let Ok(md) = std::fs::metadata(&path) else { return Ok(false) };
         let key = (md.len(), md.modified().ok());
-        let mut cache = self.cache.lock().unwrap_or_else(|e| e.into_inner());
-        if let Some(&(len, mtime, rtl)) = cache.get(uuid) {
+        if let Some(&(len, mtime, rtl)) = rmsvc_core::sync::lock(&self.cache).get(uuid) {
             if (len, mtime) == key {
                 return Ok(rtl);
             }
         }
+        // 解 zip 不持锁：别的书同时打开时不必排在这一本后面（查询结果幂等，偶尔重复算一次无妨）。
         let rtl = bookconv::placeholder::epub_is_rtl(&path);
+        let mut cache = rmsvc_core::sync::lock(&self.cache);
         if cache.len() >= CACHE_MAX {
             cache.clear();
         }

@@ -48,9 +48,10 @@ impl Spool {
         Ok(())
     }
 
-    /// 处理临界区（上传/fswatch/重试三条触发串行化）。
+    /// inbox 追平临界区（同一时刻只有一轮 `process_inbox`）。网页上传不再持这把锁——它曾被攥到整个请求体收完，
+    /// 母版库落名的串行化改由 `Staging` 自己的落名临界区负责。
     pub fn guard(&self) -> std::sync::MutexGuard<'_, ()> {
-        self.lock.lock().unwrap_or_else(|e| e.into_inner())
+        rmsvc_core::sync::lock(&self.lock)
     }
 
     /// 认领 inbox 里的文件：rename 进 .work（原子独占）。另一线程已搬走 → None。

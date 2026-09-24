@@ -10,6 +10,7 @@ impl Staging {
 
     /// 新入库（字节）：原子写，同名加数字前缀不覆盖。返回落地文件名。
     pub fn stage_new(&self, name: &str, bytes: &[u8]) -> Result<String, String> {
+        let _land = self.land_guard();
         let target = unique_path(&self.dir, &canonical_staged_name(plain_name(name)?));
         sidecar::remove(&target); // 目标名是全新的，遗留的同名边车一定是旧书的，别让新书继承
         write_atomic(&target, bytes).map_err(|e| format!("写母版库失败: {e}"))?;
@@ -18,6 +19,7 @@ impl Staging {
 
     /// 新入库（已落盘的暂存文件）：同分区 rename 不拷贝（上传 / inbox 追平的大书走这里）。返回落地文件名。
     pub fn stage_from_path(&self, name: &str, src: &Path) -> Result<String, String> {
+        let _land = self.land_guard();
         let target = unique_path(&self.dir, &canonical_staged_name(plain_name(name)?));
         sidecar::remove(&target);
         if std::fs::rename(src, &target).is_err() {

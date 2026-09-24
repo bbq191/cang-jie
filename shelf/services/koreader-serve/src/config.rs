@@ -63,7 +63,13 @@ impl ConfigSync {
     }
 
     /// 同 apply，运行态判定可注入（单测不碰真 /proc）。
+    ///
+    /// 整个过程串行化（进程内一把锁）：`merge.lua` 与 `<file>.patch.lua` 落在同一个临时目录、名字固定，两个并发请求
+    /// 会互相截断/覆盖对方刚写的脚本和补丁（luajit 读到半截脚本，或者 A 的 dry-run 算的是 B 的补丁），真写时还会
+    /// 交错"备份 → 合并 → 回读校验"。配置同步是人手点的低频操作，排队没有代价（2026-09-24 审计）。
     pub fn apply_with(&self, file: &str, patch_lua: &str, dry_run: bool, running: impl Fn() -> bool) -> Result<ApplyResult, String> {
+        static APPLY: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _serial = rmsvc_core::sync::lock(&APPLY);
         let rel = file_of(file).ok_or(format!("file ∈ {FILES}"))?;
         if !dry_run && running() {
             return Err("KOReader 正在运行：退出后再同步（它退出时会回写覆盖）".into());
@@ -138,6 +144,34 @@ mod tests {
         // 不存在的文件也能建（gestures 在子目录）
         let g = cs.apply_with("gestures", "return { gesture_reader = { hold_top_left_corner = { exit = true } } }", false, || false).unwrap();
         assert!(g.written && t.path().join("settings/gestures.lua").is_file());
+    }
+
+    /// 回归：并发的配置同步各算各的补丁（固定名的临时补丁文件不再被别的请求覆盖）。
+    #[test]
+    fn concurrent_applies_do_not_mix_patches() {
+        if !has_luajit() {
+            eprintln!("跳过：host 无 luajit");
+            return;
+        }
+        let t = tempfile::tempdir().unwrap();
+        let ko = std::sync::Arc::new(KoReader::new(t.path()));
+        std::fs::write(t.path().join("settings.reader.lua"), "return { wf_level = 3 }\n").unwrap();
+        let cs = std::sync::Arc::new(ConfigSync { ko, backup_dir: t.path().join("bk"), tmp_dir: t.path().join("tmp") });
+        let hs: Vec<_> = (0..8)
+            .map(|i| {
+                let cs = cs.clone();
+                std::thread::spawn(move || {
+                    let want = 1000 + i;
+                    for _ in 0..5 {
+                        let d = cs.apply_with("settings", &format!("return {{ wf_level = {want} }}"), true, || false).unwrap();
+                        assert!(d.changes.to_string().contains(&want.to_string()), "线程 {i} 拿到了别人的补丁: {}", d.changes);
+                    }
+                })
+            })
+            .collect();
+        for h in hs {
+            h.join().unwrap();
+        }
     }
 
     /// 仓库里真实的 5 份补丁（`shelf/koreader/profile/`）都能应用到各自的目标文件，且二次应用幂等（零改动）。

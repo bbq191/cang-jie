@@ -112,7 +112,7 @@ impl SessionStore {
     /// 签发新令牌；满了先清过期，仍满则淘汰最早到期的。
     pub fn issue(&self) -> String {
         let token = hex(&random_bytes(32));
-        let mut m = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let mut m = crate::sync::lock(&self.inner);
         let now = std::time::Instant::now();
         m.retain(|_, exp| *exp > now);
         if m.len() >= self.max {
@@ -124,15 +124,15 @@ impl SessionStore {
         token
     }
     pub fn check(&self, token: &str) -> bool {
-        let m = self.inner.lock().unwrap_or_else(|e| e.into_inner());
+        let m = crate::sync::lock(&self.inner);
         m.get(token).map(|exp| *exp > std::time::Instant::now()).unwrap_or(false)
     }
     pub fn revoke(&self, token: &str) {
-        self.inner.lock().unwrap_or_else(|e| e.into_inner()).remove(token);
+        crate::sync::lock(&self.inner).remove(token);
     }
     /// 吊销除 `keep` 外的全部（改密码后踢掉其它设备）。
     pub fn revoke_others(&self, keep: &str) {
-        self.inner.lock().unwrap_or_else(|e| e.into_inner()).retain(|k, _| k == keep);
+        crate::sync::lock(&self.inner).retain(|k, _| k == keep);
     }
     pub fn ttl(&self) -> std::time::Duration {
         self.ttl
@@ -179,7 +179,7 @@ impl IpFailLimiter {
         self.locked_for_at(ip, std::time::Instant::now())
     }
     pub fn locked_for_at(&self, ip: std::net::IpAddr, now: std::time::Instant) -> Option<std::time::Duration> {
-        let mut m = self.fails.lock().unwrap_or_else(|e| e.into_inner());
+        let mut m = crate::sync::lock(&self.fails);
         let q = m.get_mut(&Self::key(ip))?;
         self.prune(q, now);
         if q.len() >= self.max {
@@ -193,7 +193,7 @@ impl IpFailLimiter {
     }
     pub fn record_failure_at(&self, ip: std::net::IpAddr, now: std::time::Instant) {
         let ip = Self::key(ip);
-        let mut m = self.fails.lock().unwrap_or_else(|e| e.into_inner());
+        let mut m = crate::sync::lock(&self.fails);
         if !m.contains_key(&ip) && m.len() >= self.cap {
             // 满了：先扔窗口已过期的
             m.retain(|_, q| q.back().is_some_and(|t| now.duration_since(*t) < self.window));
@@ -214,11 +214,11 @@ impl IpFailLimiter {
     }
     /// 该 IP 登录成功：清零（只清它自己的）。
     pub fn reset(&self, ip: std::net::IpAddr) {
-        self.fails.lock().unwrap_or_else(|e| e.into_inner()).remove(&Self::key(ip));
+        crate::sync::lock(&self.fails).remove(&Self::key(ip));
     }
     /// 当前表里记着几个 IP（测试/诊断用）。
     pub fn tracked(&self) -> usize {
-        self.fails.lock().unwrap_or_else(|e| e.into_inner()).len()
+        crate::sync::lock(&self.fails).len()
     }
 }
 
