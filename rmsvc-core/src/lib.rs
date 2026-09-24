@@ -23,6 +23,7 @@
 //! - `cache`    单值 TTL 缓存（`/status` 这类重活接口降频，操作后可主动失效）。
 //! - `clock`    unix 时间戳唯一出处（秒/毫秒/纳秒、文件 mtime 换算）。
 //! - `mdns`     极简 mDNS 应答器（`shelf.local` 伪域名）。
+//! - `sync`     容忍 poison 的取锁（`sync::lock`），各服务共用。
 pub mod asset;
 pub mod auth;
 pub mod cache;
@@ -39,6 +40,7 @@ pub mod multipart;
 pub mod paths;
 pub mod registry;
 pub mod service;
+pub mod sync;
 pub mod tls;
 pub mod ttf;
 pub mod xochitl;

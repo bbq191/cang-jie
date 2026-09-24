@@ -178,6 +178,7 @@ fn rewrite_pdf_content(dir: &Path, uuid: &str, pages: usize, size: u64) -> Resul
 fn send_multipart(agent: &ureq::Agent, host: &str, body: impl Read, body_len: u64, filename: &str, content_type: &str) -> Result<String, String> {
     let boundary = format!("----shelf{}", uuid::Uuid::new_v4().simple());
     let mut header = Vec::new();
+    let filename = header_safe_filename(filename);
     write!(header, "--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{filename}\"\r\nContent-Type: {content_type}\r\n\r\n")
         .map_err(|e| e.to_string())?;
     let footer = format!("\r\n--{boundary}--\r\n").into_bytes();
@@ -193,6 +194,18 @@ fn send_multipart(agent: &ureq::Agent, host: &str, body: impl Read, body_len: u6
         Err(ureq::Error::Status(c, r)) => Err(format!("HTTP {c}: {}", r.into_string().unwrap_or_default())),
         Err(e) => Err(format!("上传失败: {e}")),
     }
+}
+
+/// multipart 头里的 `filename="…"` 不能含 `"` 与 CR/LF：母版库文件名只校验"单段"（`fs::plain_name`），
+/// 带引号的书名（`他说"好".pdf`）此前原样拼进头里，xochitl 解析到第一个 `"` 就截断，书库里显示成半截名；
+/// 带换行则直接把后面的内容当成新的头。`"` 换成 `'`、CR/LF 换成空格，其余字节原样（中文照旧直传，
+/// 与改动前一致——xochitl 按 UTF-8 读这个字段，真机一直这么传）。
+fn header_safe_filename(name: &str) -> String {
+    name.chars().map(|c| match c {
+        '"' => '\'',
+        '\r' | '\n' => ' ',
+        c => c,
+    }).collect()
 }
 
 /// 错误是否属于"很可能已送达"（408/读超时且非连接阶段）。
@@ -298,6 +311,13 @@ mod tests {
         assert_eq!(v["zoomMode"], "bestFit", "其它字段必须原样保留");
         let ids: std::collections::HashSet<_> = v["pages"].as_array().unwrap().iter().map(|x| x.as_str().unwrap().to_string()).collect();
         assert_eq!(ids.len(), 349, "逐页 UUID 必须互不相同");
+    }
+
+    #[test]
+    fn header_filename_strips_quotes_and_newlines_only() {
+        assert_eq!(header_safe_filename("他说\"好\".pdf"), "他说'好'.pdf");
+        assert_eq!(header_safe_filename("a\r\nX-Evil: 1.epub"), "a  X-Evil: 1.epub");
+        assert_eq!(header_safe_filename("镖人 - 01卷.epub"), "镖人 - 01卷.epub", "普通名字原样");
     }
 
     #[test]

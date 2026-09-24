@@ -312,7 +312,8 @@ pub fn percent_decode(s: &str) -> String {
     let mut i = 0;
     while i < b.len() {
         // 按字节取两位 hex，不对 &str 按字节下标切片：`%` 后若跟多字节 UTF-8 字符，`&s[i+1..i+3]`
-        // 会切在字符中间直接 panic（release 是 panic=abort，一条恶意查询串就能摔掉整个进程）。
+        // 会切在字符中间直接 panic（当年 release 是 panic=abort，一条恶意查询串就能摔掉整个进程；现在是 unwind，
+        // 由 HTTP 层兜成 500，但照样不该 panic）。
         // 同时不再借 `from_str_radix`（它会把 `+1` 当合法输入）。
         if b[i] == b'%' && i + 2 < b.len() {
             if let (Some(h), Some(l)) = (hex_val(b[i + 1]), hex_val(b[i + 2])) {
