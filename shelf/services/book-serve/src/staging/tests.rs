@@ -603,6 +603,29 @@ fn optimize_text_layer_pdf_refuses_to_overwrite_same_name_epub() {
     assert!(!dir.join(PDF_ORIGINALS_DIR).exists());
 }
 
+/// 开头检查时还没有同名 EPUB、转换进行中才有人落下同名书：落地前在落名临界区里复查，放弃这次转换，
+/// 不覆盖那本书（2026-09-24 第三轮审计补的窗口）。
+#[test]
+fn optimize_text_layer_pdf_does_not_clobber_epub_landed_mid_conversion() {
+    const SAMPLE_PDF: &[u8] = include_bytes!("../../../../crates/bookconv/tests/fixtures/sample.pdf");
+    let t = tempfile::tempdir().unwrap();
+    let s = staging(&t);
+    s.stage_new("paper.pdf", SAMPLE_PDF).unwrap();
+    let dir = t.path().join("staging");
+    let epub = dir.join("paper.epub");
+    let err = s
+        .optimize("paper.pdf", |_, _| {
+            if !epub.exists() {
+                std::fs::write(&epub, b"mine").unwrap();
+            }
+        })
+        .unwrap_err();
+    assert!(err.contains("转换期间"), "{err}");
+    assert_eq!(std::fs::read(&epub).unwrap(), b"mine", "转换期间落下的 EPUB 不能被覆盖");
+    assert_eq!(std::fs::read(dir.join("paper.pdf")).unwrap(), SAMPLE_PDF, "原 PDF 不能动");
+    assert!(std::fs::read_dir(&dir).unwrap().all(|e| !e.unwrap().file_name().to_string_lossy().ends_with(".optimizing.tmp")), "临时文件要清掉");
+}
+
 /// 漫画/无文字层 PDF 走裁边分支，格式不变仍是 PDF，且能被识别成"自己优化过的"。
 #[test]
 fn optimize_comic_shaped_pdf_stays_pdf_and_gets_trimmed() {

@@ -274,7 +274,7 @@ xochitl `/upload` 约 100MB 硬限（超了断连）。超过体积门时 `Stagi
 
 **09-24 前的两个真 bug**：网页上传把 spool 锁攥到整个请求体收完（WiFi 传大书可达分钟级），期间 inbox 追平与其他上传全卡住，而抓网文压根不拿锁——同名书仍可能互相覆盖；xochitl 的“当前文件夹”是它的全局状态，3 本小书并发投递会落错文件夹。两者都有 host 回归测试（`slow_upload_does_not_block_inbox_processing`、`concurrent_landing_of_same_name_never_clobbers`、`concurrent_uploads_land_in_their_own_folders`），**未上真机**。
 
-**已知缺口（代码未改）**：PDF 转 EPUB 在转换前查“同名 `.epub` 已存在”、转换完才改名落地，中间可达分钟级却没进落名临界区；抓网文的「同步优化」直接调 `optimize()`，不占忙锁也不过网关闸门（网文通常几十 KB）。note-serve 是另一个进程，和 book-serve 同时投 xochitl 时上传锁管不到。
+PDF 转 EPUB 转换前查一次“同名 `.epub` 已存在”，转换完（可达分钟级）落地前在落名临界区里**再查一次**，转换期间有人落下同名书就放弃这次转换、原 PDF 不动（第三轮审计当天补上，host 单测覆盖）。**已知缺口（代码未改）**：抓网文的「同步优化」直接调 `optimize()`，不占忙锁也不过网关闸门（网文通常几十 KB）。note-serve 是另一个进程，和 book-serve 同时投 xochitl 时上传锁管不到。
 
 ## 8｜前端 UI 层（`gateway/ui/app.js`）
 
@@ -336,7 +336,7 @@ POST /mkdir/add · GET /mkdir/pending[?wait=秒] · GET /mkdir   原生建文件
 ## 10｜已知限制（如实记录，不是遗漏）
 
 - 网关代理对 ≤256KB 且不是下载的应答、以及没有 `Content-Length` 的应答仍整体缓冲（§1）；它们都是小 JSON，不改。
-- 并发控制两处已知缺口（§7.3）：PDF 转 EPUB 的“同名 `.epub` 已存在”检查与落地之间没进落名临界区；抓网文的「同步优化」不占忙锁、不过闸门。
+- 并发控制已知缺口（§7.3）：抓网文的「同步优化」不占忙锁、不过闸门。（PDF 转 EPUB 落地前复查同名书已于 09-24 补上。）
 - `shelf-mkdir-agent.qmd` 的长轮询约 25 秒一次，是书架剩余最大的周期唤醒源；放宽要先真机确认 Qt6 QML XHR 没有 30 秒传输超时，并同步改 book-serve 的 `MKDIR_WAIT_MAX_SECS`。
 - 渲染自检对漫画拆分份不生效（§6.2 第 5 点）。
 - 大文件占位通道：>153MB 首次渲染内存/耗时没验证；占位上传后崩溃会残留占位文档；批量“加入 xochitl / KOReader”无设备端到端实测。

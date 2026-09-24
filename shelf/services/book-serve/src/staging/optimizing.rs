@@ -169,14 +169,25 @@ impl Staging {
                 };
                 // 质量门在改名覆盖之前对临时文件跑——2026-09-23 真机《移动互联软件安装使用手册》
                 // 坐实的那个 bug（图片路径多写一层 `../`，图片一张都不显示）就是这条门要拦的形状。
-                bookconv::util::produce_then_replace(&tmp, &epub_path, |t| {
-                    std::fs::write(t, &bytes).map_err(|e| format!("写出临时文件失败: {e}"))?;
-                    let check = bookconv::check::check_epub_file(t).map_err(|e| format!("质量门校验失败: {e}"))?;
+                // 落地前在落名临界区里再查一次同名 EPUB：转换可能要几分钟，开头那次检查之后别的入库路径
+                // （上传/抓网文/inbox）可能已经落下同名书——它们都在临界区里挑名落地，这里同样在临界区里
+                // 复查 + rename，就不会把那本覆盖掉（2026-09-24 第三轮审计补）。
+                let landed = (|| {
+                    std::fs::write(&tmp, &bytes).map_err(|e| format!("写出临时文件失败: {e}"))?;
+                    let check = bookconv::check::check_epub_file(&tmp).map_err(|e| format!("质量门校验失败: {e}"))?;
                     if !check.ok {
                         return Err(format!("优化产物未通过质量门，{}", check.errors.join("；")));
                     }
-                    Ok(())
-                })?;
+                    let _land = self.land_guard();
+                    if epub_path.exists() {
+                        return Err(format!("转换期间母版库里出现了同名《{stem}.epub》，为免覆盖已放弃这次转换；原 PDF 未动"));
+                    }
+                    std::fs::rename(&tmp, &epub_path).map_err(|e| format!("回写母版库失败: {e}"))
+                })();
+                if let Err(e) = landed {
+                    let _ = std::fs::remove_file(&tmp);
+                    return Err(e);
+                }
                 // 原 PDF 不直接删，挪进隐藏备份目录保留 [`PDF_ORIGINALS_KEEP_SECS`]——转坏了（多栏/表格类
                 // PDF 重排效果差）还能找回原件（2026-09-24 审查：此前 `remove_file` 删了就没了）。
                 self.backup_pdf_original(name, p)?;

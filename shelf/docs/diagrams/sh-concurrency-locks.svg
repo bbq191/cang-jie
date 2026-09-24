@@ -61,8 +61,8 @@
 <text x="28" y="419" font-size="12.5" fill="#1f2937">优化 PDF → 转 EPUB</text>
 <circle cx="333.5" cy="414.0" r="7" fill="#4a6fa5"/>
 <circle cx="460.5" cy="414.0" r="7" fill="#b0451f"/>
-<circle cx="587.5" cy="414.0" r="7" fill="#ffffff" stroke="#d33" stroke-width="2" stroke-dasharray="3 2"/>
-<text x="599.5" y="418.0" font-size="11" fill="#d33">缺口</text>
+<circle cx="587.5" cy="414.0" r="7" fill="#2f7d45"/>
+<text x="599.5" y="418.0" font-size="11" fill="#2f7d45">落地时复查</text>
 <circle cx="841.5" cy="414.0" r="7" fill="#6b4fa0"/>
 <rect x="20" y="430" width="1139" height="32" fill="#f7f7f5"/>
 <text x="28" y="451" font-size="12.5" fill="#1f2937">加入 xochitl（含按卷拆分）</text>
@@ -121,6 +121,6 @@
 <text x="20" y="702" font-size="12" fill="#374151" xml:space="preserve">              现在上传只在“挑名 + 改名”那一瞬进落名临界区。</text>
 <text x="20" y="722" font-size="12" fill="#374151" xml:space="preserve">09-24 改动②：xochitl 的“当前文件夹”是它自己的全局状态，并发投递时 A 设完文件夹、B 又设了自己的，A 就落进 B 的文件夹；</text>
 <text x="20" y="742" font-size="12" fill="#374151" xml:space="preserve">              现在进程内把“设文件夹 → /upload”串成一对（note-serve 是另一个进程，仍不受这把锁约束）。</text>
-<text x="20" y="762" font-size="12" fill="#374151" xml:space="preserve">缺口①：PDF 转 EPUB 在转换前查“同名 .epub 已存在”，转换完（可达分钟级）才改名落地，两步之间没进落名临界区。</text>
-<text x="20" y="782" font-size="12" fill="#374151" xml:space="preserve">缺口②：抓网文的「同步优化」直接调优化，不占忙锁、也不过网关闸门（网文通常只有几十 KB）。</text>
+<text x="20" y="762" font-size="12" fill="#374151" xml:space="preserve">09-24 改动③：PDF 转 EPUB 转换完（可达分钟级）落地前，在落名临界区里再查一次同名 .epub，转换期间有人落下同名书就放弃、不覆盖。</text>
+<text x="20" y="782" font-size="12" fill="#374151" xml:space="preserve">缺口：抓网文的「同步优化」直接调优化，不占忙锁、也不过网关闸门（网文通常只有几十 KB）。</text>
 </svg>
