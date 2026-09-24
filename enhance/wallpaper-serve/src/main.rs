@@ -74,7 +74,7 @@ fn main() {
             exit_with(native.enable().map(enable_message))
         }
         Some("disable") => exit_with(native.disable().map(|c| if c { "已删 SleepScreenPath，xochitl 重启后回原生休眠屏".to_string() } else { "本就没有 SleepScreenPath".to_string() })),
-        Some("roll") => exit_with(store.roll().map(|n| n.map(|n| format!("轮换到 {n}")).unwrap_or_else(|| "不轮换（fixed 或空池）".into()))),
+        Some("roll") => exit_with(store.roll().map(|n| n.map(|n| format!("轮换到 {n}")).unwrap_or_else(|| "不轮换（fixed、空池，或池里只有当前这一张）".into()))),
         Some("activate") => exit_with(args.get(1).ok_or("用法: activate <name>".to_string()).and_then(|n| store.activate(n).and_then(|_| native.enable()).map(|c| format!("已激活 {n}；{}", enable_message(c))))),
         Some("serve") | None => {}
         Some(x) => {
