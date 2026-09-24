@@ -101,32 +101,32 @@ impl<'n, N: Readable> TaggedBitreader<'n, N> {
 
     pub fn read_id(&mut self, index: u32) -> Result<CrdtId, ParseError> {
         self.read_tag(index, TagType::ID)?;
-        return CrdtId::parse(self);
+        CrdtId::parse(self)
     }
 
     pub fn read_bool(&mut self, index: u32) -> Result<bool, ParseError> {
         self.read_tag(index, TagType::Byte1)?;
-        return self.bit_reader.read_bool();
+        self.bit_reader.read_bool()
     }
 
     pub fn read_u8(&mut self, index: u32) -> Result<u8, ParseError> {
         self.read_tag(index, TagType::Byte1)?;
-        return self.bit_reader.read_u8();
+        self.bit_reader.read_u8()
     }
 
     pub fn read_u32(&mut self, index: u32) -> Result<u32, ParseError> {
         self.read_tag(index, TagType::Byte4)?;
-        return self.bit_reader.read_u32();
+        self.bit_reader.read_u32()
     }
 
     pub fn read_f32(&mut self, index: u32) -> Result<f32, ParseError> {
         self.read_tag(index, TagType::Byte4)?;
-        return self.bit_reader.read_f32();
+        self.bit_reader.read_f32()
     }
 
     pub fn read_f64(&mut self, index: u32) -> Result<f64, ParseError> {
         self.read_tag(index, TagType::Byte8)?;
-        return self.bit_reader.read_f64();
+        self.bit_reader.read_f64()
     }
 
     pub fn read_string(&mut self, index: u32) -> Result<String, ParseError> {
@@ -135,7 +135,7 @@ impl<'n, N: Readable> TaggedBitreader<'n, N> {
         let _is_ascii = self.bit_reader.read_bool()?;
         let string = self.bit_reader.read_string(string_length as usize)?;
         subblock.validate_size(self)?;
-        return Ok(string);
+        Ok(string)
     }
 
     pub fn read_tag(&mut self, index: u32, tag_type: TagType) -> Result<Tag, ParseError> {
@@ -154,7 +154,7 @@ impl<'n, N: Readable> TaggedBitreader<'n, N> {
         let pos = self.bit_reader.position();
         let has_tag = self.read_tag(index, tag_type).is_ok();
         self.bit_reader.set_position(pos);
-        return Ok(has_tag);
+        Ok(has_tag)
     }
 
     pub fn read_subblock(&mut self, index: u32) -> Result<SubBlock, crate::ParseError>
@@ -173,7 +173,7 @@ impl<'n, N: Readable> TaggedBitreader<'n, N> {
     }
 
     pub fn has_subblock(&mut self, index: u32) -> Result<bool, ParseError> {
-        return self.has_tag(index, TagType::Length4);
+        self.has_tag(index, TagType::Length4)
     }
 
     pub fn read_lww_u8(&mut self, index: u32) -> Result<LwwValue<u8>, ParseError> {

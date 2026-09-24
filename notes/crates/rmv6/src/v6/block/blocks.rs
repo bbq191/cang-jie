@@ -81,7 +81,7 @@ impl BlockParse for PageInfoBlock {
         let text_chars_count = reader.read_u32(3)?;
         let text_lines_count = reader.read_u32(4)?;
 
-        if info.has_bytes_remaining(&mut reader.bit_reader) {
+        if info.has_bytes_remaining(reader.bit_reader) {
             reader.read_u32(5)?;
         }
 
@@ -103,12 +103,15 @@ impl BlockParse for TreeNodeBlock {
         info: &BlockInfo,
         reader: &mut TaggedBitreader<impl Readable>,
     ) -> Result<Self, ParseError> {
-        let mut group = Group::default();
-        group.node_id = reader.read_id(1)?;
-        group.label = reader.read_lww_string(2)?;
-        group.visible = reader.read_lww_bool(3)?;
+        // 结构体字面量按书写顺序求值，读取顺序（1→2→3）不变。
+        let mut group = Group {
+            node_id: reader.read_id(1)?,
+            label: reader.read_lww_string(2)?,
+            visible: reader.read_lww_bool(3)?,
+            ..Default::default()
+        };
 
-        if info.has_bytes_remaining(&reader.bit_reader) {
+        if info.has_bytes_remaining(reader.bit_reader) {
             group.anchor_id = Some(reader.read_lww_id(7)?);
             group.anchor_type = Some(reader.read_lww_u8(8)?);
             group.anchor_threshold = Some(reader.read_lww_f32(9)?);

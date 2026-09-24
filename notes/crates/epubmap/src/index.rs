@@ -16,7 +16,7 @@ fn be32(b: &[u8], p: usize) -> u32 {
 
 /// 定长 UTF-16BE 的 ASCII 串；含非可打印 ASCII → None。
 fn utf16be_ascii(b: &[u8]) -> Option<String> {
-    if b.len() % 2 != 0 {
+    if !b.len().is_multiple_of(2) {
         return None;
     }
     b.chunks(2).map(|c| (c[0] == 0 && (0x20..0x7f).contains(&c[1])).then_some(c[1] as char)).collect()
@@ -34,7 +34,7 @@ pub fn parse_epubindex(bytes: &[u8]) -> Vec<Section> {
     let mut p = 0usize;
     while p + 4 <= n {
         let len = be32(bytes, p) as usize;
-        if (8..=512).contains(&len) && len % 2 == 0 && p + 4 + len + 12 <= n {
+        if (8..=512).contains(&len) && len.is_multiple_of(2) && p + 4 + len + 12 <= n {
             if let Some(path) = utf16be_ascii(&bytes[p + 4..p + 4 + len]).filter(|s| is_html(s)) {
                 let q = p + 4 + len;
                 let file = path.rsplit('/').next().unwrap_or(&path).to_string();

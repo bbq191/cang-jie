@@ -112,13 +112,13 @@ impl TypeParse for Text {
                 };
                 subblock.validate_size(reader)?;
 
-                return Ok(CrdtSequenceItem {
+                Ok(CrdtSequenceItem {
                     item_id,
                     left_id,
                     right_id,
                     deleted_length,
                     value,
-                });
+                })
             })
             .collect::<Result<CrdtSequence<TextItem>, ParseError>>()?;
 

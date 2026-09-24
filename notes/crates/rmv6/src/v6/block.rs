@@ -133,7 +133,7 @@ impl TypeParse for Block {
             )));
         }
 
-        return Ok(block);
+        Ok(block)
     }
 }
 
