@@ -8,7 +8,7 @@
 //! · 原 PDF 备份：`GET /staging` 的 `originals` · `POST /staging/originals/restore {name}` · `POST /staging/originals/delete {name}`
 //! · `GET /events`（SSE：母版库/inbox 变更即推，网页零轮询）。
 //! 阅读方向：`GET /reading-direction/{uuid}` → `{rtl}`（xochitl 里 reader-page-turn.qmd 用）。
-//! 原生回收站队列：`POST /trash/add {uuid, name}`（name 必须与书库 visibleName 相符）· `GET /trash/pending` → `{uuids}`（Sidebar 代理 qmd 拉取执行）· `GET /trash`。
+//! 原生回收站队列：`POST /trash/add {uuid, name}`（name 必须与书库 visibleName 相符）· `GET /trash/pending?wait=` → `{uuids}`（MainView 代理 qmd 长轮询拉取执行）· `GET /trash`。
 //! 原生建文件夹队列：`POST /mkdir/add {name}` · `GET /mkdir/pending` → `{names}`（MainView 代理 shelf-mkdir-agent.qmd 拉取执行）· `GET /mkdir`。
 //! 2026-09-05 起规则统一"所有书只落母版库"：旧 `POST /?target=` 直投路已删（`/staging*` 是唯一入口）。
 use crate::service_state::State;
@@ -17,10 +17,10 @@ use rmsvc_core::asset::{self, AssetUploadFlow};
 use rmsvc_core::http::{bind, ApiError, ApiResult, Reply, Request, Router};
 use std::sync::Arc;
 
-/// `GET /mkdir/pending?wait=` 长轮询等待时长上限（秒）。QML 端（shelf-mkdir-agent.qmd）发 wait=290：设备 Qt 6.10
+/// `GET /mkdir/pending?wait=`、`GET /trash/pending?wait=` 长轮询等待时长上限（秒）。QML 端（shelf-mkdir-agent.qmd）发 wait=290：设备 Qt 6.10
 /// 的 QML XHR 不设传输超时（2026-09-24 核实，见 qmd 头注；09-22 版按"缺省 30s 超时"的假设把这里定成 28）。
 /// 在等的这段时间服务端不读 socket，所以不受 rmsvc-core 的读空闲超时影响。
-const MKDIR_WAIT_MAX_SECS: u64 = 300;
+const AGENT_WAIT_MAX_SECS: u64 = 300;
 
 pub fn router(st: Arc<State>) -> Router {
     Router::new()
@@ -112,8 +112,9 @@ pub fn router(st: Arc<State>) -> Router {
             s.bus.publish("books", "trash");
             Ok(Reply::ok(&serde_json::json!({"ok": true, "pending": n, "message": "已排队：书库视图下次有动静时移进回收站"})))
         }))
-        .get("/trash/pending", bind(&st, |s, _| {
-            let (uuids, pruned) = s.trash.pending().map_err(ApiError::internal)?;
+        .get("/trash/pending", bind(&st, |s, r| {
+            let wait = r.q("wait").and_then(|v| v.parse::<u64>().ok()).unwrap_or(0).min(AGENT_WAIT_MAX_SECS);
+            let (uuids, pruned) = s.trash.pending_wait(std::time::Duration::from_secs(wait)).map_err(ApiError::internal)?;
             if pruned > 0 {
                 s.bus.publish("books", "trash");
             }
@@ -129,9 +130,9 @@ pub fn router(st: Arc<State>) -> Router {
             }
             Ok(Reply::ok(&serde_json::json!({"ok": true, "pending": n})))
         }))
-        // `?wait=<秒>` 长轮询（上限 [`MKDIR_WAIT_MAX_SECS`]）：有待办立即回，否则阻塞到入队或到期回空；缺省 0＝立即返回。
+        // `?wait=<秒>` 长轮询（上限 [`AGENT_WAIT_MAX_SECS`]）：有待办立即回，否则阻塞到入队或到期回空；缺省 0＝立即返回。
         .get("/mkdir/pending", bind(&st, |s, r| {
-            let wait = r.q("wait").and_then(|v| v.parse::<u64>().ok()).unwrap_or(0).min(MKDIR_WAIT_MAX_SECS);
+            let wait = r.q("wait").and_then(|v| v.parse::<u64>().ok()).unwrap_or(0).min(AGENT_WAIT_MAX_SECS);
             let (names, pruned) = s.mkdir.pending_wait(std::time::Duration::from_secs(wait)).map_err(ApiError::internal)?;
             if pruned > 0 {
                 s.bus.publish("books", "mkdir");

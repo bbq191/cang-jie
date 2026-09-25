@@ -7,9 +7,11 @@
 use serde::de::DeserializeOwned;
 use serde::Serialize;
 use rmsvc_core::fs::write_atomic;
+use std::collections::HashMap;
 use std::marker::PhantomData;
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Condvar, Mutex};
+use std::time::{Duration, Instant};
 
 pub struct PendingQueue<T> {
     file: PathBuf,
@@ -61,6 +63,64 @@ impl<T: Clone + Serialize + DeserializeOwned> PendingQueue<T> {
             self.save(&kept)?;
         }
         Ok((kept, pruned))
+    }
+}
+
+/// 两个队列共用的"交给 QML 代理"那一半（2026-09-25 从 `mkdir.rs` 抽出，`trash.rs` 同时改成长轮询）：
+/// - **长轮询**：入队计数（代数）+ 条件变量，[`Handout::wait`] 有待办立即返回、没有就睡到入队唤醒或到期——
+///   代理空闲时整条链路零唤醒；
+/// - **不重复交出**：两件事在 xochitl 里都是异步的（`createCollection` / `moveEntriesToTrash` 调完 `.metadata`
+///   稍晚才落盘），长轮询让代理几乎立刻再来拉，这时仍把同一项交出去就会重复执行。同一个键交出后 `quiet` 内
+///   不再交；过了还没真实发生才再交一次，等于自带重试。
+pub struct Handout {
+    gen: Mutex<u64>,
+    wake: Condvar,
+    handed: Mutex<HashMap<String, Instant>>,
+    quiet: Duration,
+}
+
+impl Handout {
+    pub fn new(quiet: Duration) -> Handout {
+        Handout { gen: Mutex::new(0), wake: Condvar::new(), handed: Mutex::new(HashMap::new()), quiet }
+    }
+
+    /// 入队后调用：唤醒正在长轮询的代理。
+    pub fn notify(&self) {
+        *rmsvc_core::sync::lock(&self.gen) += 1;
+        self.wake.notify_all();
+    }
+
+    /// 从"仍待办的键"里挑出这次该交出的（去掉静默期内交过的），并把它们记为"已交出"。
+    pub fn take(&self, keys: Vec<String>) -> Vec<String> {
+        let now = Instant::now();
+        let mut handed = rmsvc_core::sync::lock(&self.handed);
+        handed.retain(|k, at| now.duration_since(*at) < self.quiet && keys.contains(k));
+        let mut out = Vec::new();
+        for k in keys {
+            if !handed.contains_key(&k) {
+                handed.insert(k.clone(), now);
+                out.push(k);
+            }
+        }
+        out
+    }
+
+    /// 长轮询：反复调 `fetch`（返回 (本次该交出的键, 剔除条数)），有结果或 `wait` 到期就返回；`wait` 为零＝不等。
+    pub fn wait(&self, wait: Duration, mut fetch: impl FnMut() -> Result<(Vec<String>, usize), String>) -> Result<(Vec<String>, usize), String> {
+        let deadline = Instant::now() + wait;
+        let mut total_pruned = 0;
+        loop {
+            // 先取代数再查队列：查完到睡下之间若有入队，代数已变，wait_timeout_while 不会睡过头。
+            let seen = *rmsvc_core::sync::lock(&self.gen);
+            let (keys, pruned) = fetch()?;
+            total_pruned += pruned;
+            let now = Instant::now();
+            if !keys.is_empty() || now >= deadline {
+                return Ok((keys, total_pruned));
+            }
+            let g = rmsvc_core::sync::lock(&self.gen);
+            let _ = self.wake.wait_timeout_while(g, deadline - now, |cur| *cur == seen).unwrap_or_else(|e| e.into_inner());
+        }
     }
 }
 

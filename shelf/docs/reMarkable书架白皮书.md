@@ -457,7 +457,7 @@
 **依据**：xochitl 导入 EPUB 时**同步渲染**，`<uuid>.content` 里有 `pageCount`，旁边有渲染缓存 `<uuid>.pdf`。
 **做法**（`render_check.rs`）：投书前流式算正文字符数，期望页数＝字符数 ÷ 每页字符数（中文 460、英文 960，两本真书 0.99 吻合）；按创建时间 + 书名认新文档；限时监听书库目录（3 秒防抖、10 分钟超时，结束即撤）；`pages < expected × 50%` → `warn`。结果写边车 + 推 SSE，网页徽章「渲染 N 页」/「⚠ 只渲染 N 页」。
 **真机**：好探针 25/29 ok，坏探针（3 章双 id）10/29 warn。09-23 这套自检**第一次抓到真问题**：T.E. 只渲染 1 页（§03br）。
-**原生回收站代理**（`shelf-trash-agent.qmd` + `trash.rs`）：唯一可靠软删是 xochitl 自己的 `selectionMoveToTrash()`；入队按书名核对 uuid（错 uuid＝错删别的书）。现被批量清理测试副本使用。
+**原生回收站代理**（`shelf-trash-agent.qmd` + `trash.rs`）：软删只能走 xochitl 自己的代码路；入队按书名核对 uuid（错 uuid＝错删别的书）。调用方：笔记线旧版笔记本、网页「设备健康 → 清理」。**2026-09-25 重写**：旧版注入 Sidebar、等书库视图变化才拉队列、用当前文件夹的选择集执行——网页入队后不翻书库就不执行，书不在当前文件夹也加不进去（真机：《告白》《白夜行》在「好读精校」里一直没动）。现改为注入 MainView、长轮询 `GET /trash/pending?wait=290`、按 id 调 `LibraryController.moveEntriesToTrash(ids)`，与建文件夹代理同构。
 **原生建文件夹代理**（`shelf-mkdir-agent.qmd` + `mkdir.rs`）：反编译得出建夹走裸全局单例 `Library.createCollection(parentId, name)`（不是 `LibraryController`）；锚点选 `MainView.qml`（Sidebar 没 import 该模块）；触发只能轮询，09-22 改长轮询（空闲往返约 2.4 次/分钟）。
 **已砍 host 能力的结论**：`doctor --render` 实测缺省字号 12.05pt 下续段缩进 14.27pt＝1.184em；漫画 16 灰省刷新档让翻页明显少闪（171→108MB）。
 

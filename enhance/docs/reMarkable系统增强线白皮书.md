@@ -273,7 +273,7 @@ hook 目标 `FUN_00f47530`：两个 float（s0/s1）+ 一个指针（x0），标
 | battop | 本线 | **默认不跑**；开着时醒着每 600 秒采样一次 | `enhance/battop/src/main.rs` `BATTOP_INTERVAL_SECS` |
 | hl-snap / hw-stroke | 本线 | 没有定时器，只在划线 / 写字时进 handler | `enhance/*/src/*.c` |
 | reader-page-turn.qmd | 本线（源码在 shelf） | 打开书时单发 300 ms 读一次开关，不轮询（08 月旧版每 1.5 秒轮询） | `shelf/xovi/reader-page-turn.qmd` |
-| 其余 qmd 与服务 | shelf / notes | comic-margins 换文档单发 1.5 秒；trash-agent 书库列表变化后 4 秒防抖；book-serve / ink-serve 用 inotify 防抖（8 秒 / 4 秒）；浏览器事件流 20 秒心跳只在网页开着时有 | 各自源码 |
+| 其余 qmd 与服务 | shelf / notes | comic-margins 换文档单发 1.5 秒；trash-agent 与 mkdir-agent 同为 290 秒长轮询（09-25 起，各约 12 次/小时）；book-serve / ink-serve 用 inotify 防抖（8 秒 / 4 秒）；浏览器事件流 20 秒心跳只在网页开着时有 | 各自源码 |
 
 **结论**：空闲时的定时唤醒主要是 wifi-watch 和 8 条事件流心跳，每小时各约 240 次；mkdir-agent 长轮询放宽后约 12 次/时（原约 144 次）；wallpaper-serve 09-24 起不再跟日志（改监听休眠读图），但设备上的飞行记录仪仍跟 journal，所以本线继续压低 xochitl 日志量（§03g 逐点日志默认关、§03i 去掉命中日志）。
 
