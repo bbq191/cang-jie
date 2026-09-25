@@ -2,11 +2,10 @@
 //! 勾画（GlyphRange）+ 旁边手写（笔画簇）→ 条目 → 裁图 → 条目库（**唯一写者**，其它服务经这里改字段）。
 //! 路由（经网关前缀 `/api/ink`）：`GET /books` · `GET /books/{uuid}` · `GET /books/{uuid}/crops/{file}` ·
 //! `POST /books/{uuid}/entries/{id}`（text/style/draft/answer/askAi/question/destination 字段更新，
-//! 缺省底座无 PATCH；`text` 现在走 `notecore::model::Entry::apply_marked_text`——行首 `-`/`1.`/`口`/`##`/
-//! `### ` 标记自动定样式/覆盖 subhead 并从正文剥掉，不再需要网页手动选样式的下拉（整理区第二轮反馈点 1，
+//! 缺省底座无 PATCH；`text` 现在走 `notecore::model::Entry::apply_marked_text`——行首 `-`/`1.`/`- [ ]`/`口`/`##`/
+//! `### ` 标记自动定样式（与设备内置打字样式一一对应，2026-09-25）并从正文剥掉，不再需要网页手动选样式的下拉（整理区第二轮反馈点 1，
 //! 2026-09-08，见白皮书 §03u）；`style` 字段仍保留，给 `transcribe-serve::worker` 写草稿时的内部路径用
-//! （它走行首标记兜底出的是 `Marker::Style`，不经过 `text` 这条路）；`subheadHint` 是同一套兜底出的
-//! `Marker::Subhead`——三期（2026-09-08）砍掉了"分区"这个概念，`## 文字`/`section`/`sectionHint`/
+//! （它走行首标记兜底出的是 `Marker::Style`，不经过 `text` 这条路；09-25 前另有 `subheadHint` 覆盖小节名，已删）——三期（2026-09-08）砍掉了"分区"这个概念，`## 文字`/`section`/`sectionHint`/
 //! `PUT .../sections` 整个都没了，AI 触发早就是 `askAi`+`question` 的事，笔记本排版分组也不要了，见白皮书
 //! §03s；`askAi`+`question` 是"问AI"勾选框+问题输入框，`mind-serve` 读这两个字段触发按条目单发问答；
 //! `GET /books` 只列条目库里还有活条目的书）·
@@ -160,7 +159,6 @@ fn main() {
             let (uuid, id) = (r.param("uuid").to_string(), r.param("id").to_string());
             let j = r.json()?;
             let now = rmsvc_core::clock::now_secs();
-            let subhead_hint = j.0.get("subheadHint").and_then(|v| v.as_str()).map(str::trim).filter(|s| !s.is_empty()).map(str::to_string);
             edit_entry(s, &uuid, &id, |e| {
                 // 终态守卫（2026-09-09 审计补）：这条通用改字端点原来不检查状态，能把已"跳过/撤销/
                 // 删除"的条目通过 apply_marked_text/写草稿悄悄拉回 Draft，绕开 set_triage/restore
@@ -173,11 +171,6 @@ fn main() {
                 // （整理区第二轮反馈点 1，2026-09-08，见白皮书 §03u）。
                 if let Some(t) = j.0.get("text").and_then(|v| v.as_str()) {
                     e.apply_marked_text(t, now);
-                }
-                // `### 文字` 手写标记（转写侧兜底认出来的，见 notecore::marker::Marker）：小节标题
-                // 覆盖 subhead（平时由 epubmap 自动填）。三期砍掉了 `## 文字`（分区）那半，见白皮书 §03s。
-                if let Some(name) = subhead_hint {
-                    e.subhead = Some(name);
                 }
                 if let Some(v) = j.0.get("style").and_then(|v| serde_json::from_value::<Style>(v.clone()).ok()) {
                     e.style = v;

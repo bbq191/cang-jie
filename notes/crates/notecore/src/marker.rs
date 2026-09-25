@@ -8,20 +8,19 @@
 //! "纯手写笔记扫描"（会议/上课，没有 EPUB 章节可依附）那条还没做的线，不要为了这条书摘注释线
 //! 硬造一个用不上的字段。真要接的时候再回来加。
 //!
-//! **2026-09-08 三期**：`## 文字`（分区头）连同"分区"整个概念一起被砍掉了（用户拍板——AI 触发早就
-//! 是 `Entry.ask_ai`/`question` 的事，笔记本排版分组也不要了，条目按页序平铺）——`Marker::Section`
-//! 这个变体删了，但 `## 文字` 这个**手写标记本身**不废：用户明确要求继续识别，跟 `### 文字` 合并
-//! 成同一件事——两个/三个（及以上）`#` 都覆盖 `Entry.subhead`，不分层级。单 `#` 仍然不接（见上一段）。
+//! **2026-09-08 三期**：`## 文字`（分区头）连同"分区"整个概念一起被砍掉；`##`/`###` 曾合并成"覆盖 `Entry.subhead`"。
+//!
+//! **2026-09-25 用户定案：行首标记与设备内置打字样式一一对应**（跟 md 导入 `mdimport.rs` 同一套）：
+//! `## 文字`＝Subheading 1、`### 文字`（三个及以上 `#`）＝Subheading 2、`1.`＝编号列表、`-`＝圆点列表、
+//! `- [ ]`/`- []`/`[ ]`/`- [x]`/`口`/`□`＝复选框（勾选态写不出，一律未勾选）。标题从此是条目自己的样式，
+//! 不再改 `Entry.subhead`——`subhead` 只装书的小节名（epubmap 按目录自动填），由投影在小节变化时输出。
+//! 单 `#`（Title）仍然不接：Title 是整章级别的（章名），条目级不落。
 use crate::model::Style;
 
-/// 行首标记认出来的结果：内容样式（`Style`）或结构性标记（小节）。
+/// 行首标记认出来的结果：这条内容该用的样式。
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Marker {
-    /// `-`/`1.`/`口` 等：这条内容本身该用什么样式。
     Style(Style),
-    /// `## 文字`/`### 文字`：这条的小节标题覆盖成这个（`Entry.subhead`，平时由 epubmap 自动填）——
-    /// 两个/三个及以上 `#` 不分层级，都是同一件事（三期合并，见模块文档）。
-    Subhead(String),
 }
 
 /// 拆出行首标记：返回（认出的标记, 去掉标记符号后的文本）。认不出 → `(None, 原文)`。
@@ -34,16 +33,19 @@ pub fn split_leading_marker(text: &str) -> (Option<Marker>, String) {
     let f = first.trim_start();
     let strip = |body: &str| format!("{}{}", body.trim_start(), rest);
 
-    // `#` 计数一次性数完：两个及以上就认（`##`/`### 文字`＝小节标题，三期合并不分层级），单 `#`
-    // 仍然不接（Title 是整章级别的，见模块文档）。
+    // `#` 计数一次性数完：`##`＝Subheading 1，`###` 及以上＝Subheading 2；单 `#` 不接（Title 是章名，见模块文档）。
     let hashes = f.chars().take_while(|&c| c == '#').count();
     if hashes >= 2 {
         let name = f[hashes..].trim();
         if !name.is_empty() {
-            return (Some(Marker::Subhead(name.to_string())), strip(&f[hashes..]));
+            let style = if hashes == 2 { Style::Heading1 } else { Style::Heading2 };
+            return (Some(Marker::Style(style)), strip(&f[hashes..]));
         }
     }
-    // 待办：空心方框（真方框或手写成的「口」字）
+    // 待办：Markdown 复选框（`- [ ]`、`- []`、`[ ]`、`- [x]`…，必须在"无序 `- `"之前判），或空心方框（真方框/手写成的「口」字）
+    if let Some(b) = checkbox_body(f) {
+        return (Some(Marker::Style(Style::Checkbox)), strip(b));
+    }
     for m in ["□", "☐", "口"] {
         if let Some(b) = f.strip_prefix(m) {
             if m != "口" || b.starts_with([' ', '\u{3000}']) || b.is_empty() {
@@ -70,6 +72,16 @@ pub fn split_leading_marker(text: &str) -> (Option<Marker>, String) {
     (None, text.to_string())
 }
 
+/// Markdown 复选框前缀：可选的 `-`/`*` + 可选空格 + `[` + 空 / 空格 / x/X + `]` + 空格或行尾；返回其后的正文。
+/// 手写转写常见 `-[ ]`、`- []`、`[]` 这类不规范写法，一并认；方括号里是别的字（`[注]`）不算。
+fn checkbox_body(f: &str) -> Option<&str> {
+    let t = f.strip_prefix(['-', '*']).map(str::trim_start).unwrap_or(f);
+    let t = t.strip_prefix(['[', '［'])?;
+    let t = t.strip_prefix([' ', 'x', 'X', '\u{3000}']).unwrap_or(t);
+    let t = t.strip_prefix([']', '］'])?;
+    (t.is_empty() || t.starts_with([' ', '\u{3000}'])).then_some(t)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -85,16 +97,23 @@ mod tests {
     }
 
     #[test]
-    fn recognizes_subhead_marker_two_or_more_hashes_no_level_distinction() {
-        assert_eq!(split_leading_marker("### 人物关系"), (Some(Marker::Subhead("人物关系".into())), "人物关系".into()));
-        assert_eq!(split_leading_marker("###人物关系\n第二行"), (Some(Marker::Subhead("人物关系".into())), "人物关系\n第二行".into()), "没空格也认");
-        assert_eq!(split_leading_marker("###"), (None, "###".into()), "光标记没文字，不算数");
-        assert_eq!(split_leading_marker("#### 更深一层"), (Some(Marker::Subhead("更深一层".into())), "更深一层".into()), "四个及以上 # 也按小节处理，不单独开第三级");
-        // 三期：`## 文字`（两个 #）跟 `### 文字` 合并成同一件事，都覆盖 subhead，不分层级（用户明确要求
-        // 继续识别 `##`，只是不再驱动"分区"那套已删除的数据结构）。
-        assert_eq!(split_leading_marker("## 查询相关"), (Some(Marker::Subhead("查询相关".into())), "查询相关".into()), "双 # 跟三个 # 是同一件事");
-        assert_eq!(split_leading_marker("##查询相关"), (Some(Marker::Subhead("查询相关".into())), "查询相关".into()), "没空格也认");
+    fn hashes_map_to_device_subheadings() {
+        assert_eq!(split_leading_marker("## 查询相关"), (Some(Marker::Style(Style::Heading1)), "查询相关".into()), "## ＝ Subheading 1");
+        assert_eq!(split_leading_marker("##查询相关"), (Some(Marker::Style(Style::Heading1)), "查询相关".into()), "没空格也认");
+        assert_eq!(split_leading_marker("### 人物关系"), (Some(Marker::Style(Style::Heading2)), "人物关系".into()), "### ＝ Subheading 2");
+        assert_eq!(split_leading_marker("###人物关系\n第二行"), (Some(Marker::Style(Style::Heading2)), "人物关系\n第二行".into()));
+        assert_eq!(split_leading_marker("#### 更深一层"), (Some(Marker::Style(Style::Heading2)), "更深一层".into()), "四个及以上 # 也是 Subheading 2（设备只有两级小标题）");
         assert_eq!(split_leading_marker("##"), (None, "##".into()), "光标记没文字，不算数");
+        assert_eq!(split_leading_marker("###"), (None, "###".into()));
+    }
+
+    #[test]
+    fn markdown_checkboxes_map_to_device_checkbox_before_bullet() {
+        for (raw, body) in [("- [ ] 找原文", "找原文"), ("- [] 找原文", "找原文"), ("-[ ] 找原文", "找原文"), ("[ ] 找原文", "找原文"), ("[] 找原文", "找原文"), ("- [x] 已做", "已做"), ("* [X] 已做", "已做"), ("［ ］ 全角", "全角")] {
+            assert_eq!(split_leading_marker(raw), (Some(Marker::Style(Style::Checkbox)), body.into()), "{raw}");
+        }
+        assert_eq!(split_leading_marker("- [注] 不是复选框"), (Some(Marker::Style(Style::Bullet)), "[注] 不是复选框".into()), "方括号里是别的字：按无序处理");
+        assert_eq!(split_leading_marker("[1] 参考文献"), (None, "[1] 参考文献".into()));
     }
 
     #[test]

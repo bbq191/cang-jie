@@ -65,6 +65,11 @@ impl Paragraph {
     pub fn subheading1(text: impl Into<String>) -> Self {
         Paragraph { style: ParagraphStyle::BOLD, text: text.into(), extra: SUBHEADING1_MARKER.to_vec() }
     }
+
+    /// 是不是大字号 Subheading 1（带那 7 字节标记）；Subheading 2 与裸 BOLD 为 false。
+    pub fn is_subheading1(&self) -> bool {
+        self.style == ParagraphStyle::BOLD && self.extra == SUBHEADING1_MARKER
+    }
 }
 
 /// 生成 RootTextBlock 用的 author 索引；必须与模板文件 `AuthorIdsBlock` 里声明的索引一致

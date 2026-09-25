@@ -1,7 +1,9 @@
 //! 数据模型。所有字段可序列化（条目库落 JSON，网页/CLI 直接吃同一形状）。
 use serde::{Deserialize, Serialize};
 
-/// 笔记本里一行的段落样式（对应 xochitl 3.28 打字格式；Title/Subheading 由投影自动给，条目只在这四种里）。
+/// 笔记本里一行的段落样式（对应 xochitl 3.28 打字格式）。Title 由投影给章名用，条目不用。
+/// **2026-09-25 起行首标记与设备内置样式一一对应**（用户定案，同 md 导入 `mdimport.rs`）：`##`＝Subheading 1、
+/// `###` 及以上＝Subheading 2、`1.`＝编号列表、`-`＝圆点列表、`- [ ]`/`口`＝复选框；单 `#`（Title）仍不接。
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum Style {
@@ -10,6 +12,10 @@ pub enum Style {
     Bullet,
     Numbered,
     Checkbox,
+    /// `## 文字`：Subheading 1（大字号小标题；`.rm` 码 3 + 格式子块末尾 7 字节，见 `rmv6::write::Paragraph::subheading1`）。
+    Heading1,
+    /// `### 文字`（三个及以上 `#`）：Subheading 2（小字号小标题，码 3、不带那 7 字节）。
+    Heading2,
 }
 
 impl Style {
@@ -23,6 +29,7 @@ impl Style {
             Style::Bullet => 0x04,   // BULLET
             Style::Numbered => 0x0a, // NUMBERED，真机验证过，见 rmv6::write
             Style::Checkbox => 0x06, // CHECKBOX（未勾选；勾上号 7 要点方框，打字给不出，写入器别用）
+            Style::Heading1 | Style::Heading2 => 0x03, // BOLD；两级靠 Subheading 1 的 7 字节标记区分
         }
     }
 }
@@ -269,11 +276,8 @@ impl Entry {
     /// 有草稿则 `Draft`、没有则 `Pending`。
     pub fn apply_marked_text(&mut self, raw: &str, now: u64) {
         let (marker, clean) = crate::marker::split_leading_marker(raw);
-        if let Some(m) = marker {
-            match m {
-                crate::marker::Marker::Style(s) => self.style = s,
-                crate::marker::Marker::Subhead(name) => self.subhead = Some(name),
-            }
+        if let Some(crate::marker::Marker::Style(s)) = marker {
+            self.style = s;
         }
         let clean = clean.trim();
         self.text = (!clean.is_empty()).then(|| clean.to_string());
@@ -500,11 +504,10 @@ mod tests {
         assert_eq!((e.style, e.text.as_deref(), e.status, e.updated), (Style::Bullet, Some("查作者"), Status::Reviewed, 5), "行首 - 自动判无序，标记剥掉");
 
         e.apply_marked_text("### 人物关系", 6);
-        assert_eq!((e.subhead.as_deref(), e.text.as_deref()), (Some("人物关系"), Some("人物关系")), "分区标记覆盖 subhead，正文也剥了标记");
+        assert_eq!((e.style, e.text.as_deref(), e.subhead.as_deref()), (Style::Heading2, Some("人物关系"), None), "### ＝ Subheading 2 样式、正文剥了标记；书的小节名 subhead 不动（2026-09-25 起）");
 
         e.apply_marked_text("普通一句话", 7);
-        assert_eq!(e.text.as_deref(), Some("普通一句话"), "没有标记，样式/小节都不动（还是上一步设的）");
-        assert_eq!(e.subhead.as_deref(), Some("人物关系"), "没有新标记不清空旧 subhead");
+        assert_eq!((e.style, e.text.as_deref()), (Style::Heading2, Some("普通一句话")), "没有标记，样式不动（还是上一步设的）");
 
         e.apply_marked_text("", 8);
         assert_eq!((e.text.as_deref(), e.status), (None, Status::Pending), "清空文本、没有草稿时退回 Pending");
