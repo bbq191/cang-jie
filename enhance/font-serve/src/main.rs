@@ -2,6 +2,8 @@
 //! `GET /`（按家族归组的清单）· `POST /`（multipart 多文件，装进 fontconfig 用户字体目录；**不碰 KOReader**）·
 //! `DELETE /{family}`（删整个家族的全部文件）· `GET /status`。所有字体一视同仁、无"内建"。
 //! 字体菜单 qmd 读 `~/.local/share/shelf/fonts.json`（`shelf/xovi/font-menu-dynamic.qmd`）。
+//! 开机时 fonts.json 与字体目录一致（文件集合相同、mtime 不晚于索引）就直接复用，不再逐个 fc-scan；
+//! fonts.conf 内容没变不重写（2026-09-25）。上传暂存在 `$XDG_STATE_HOME/shelf/upload`，启动时清半成品。
 mod fontconfig;
 mod store;
 
