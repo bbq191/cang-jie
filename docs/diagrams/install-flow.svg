@@ -24,7 +24,7 @@
 <polyline points="500,208 500,232" fill="none" stroke="#555" stroke-width="1.7" marker-end="url(#if-m)"/>
 <rect x="30" y="232" width="940" height="92" rx="10" fill="#fdf3dc" stroke="#b8860b" stroke-width="1.6"/>
 <text x="500" y="254" text-anchor="middle" font-size="14" font-weight="bold" fill="#1a1a1a">装前检查（任一项不过：一步都不执行，设备上什么都没改）</text>
-<text x="46" y="276" text-anchor="start" font-size="12.3" fill="#444">① ssh 连通（require_device）：连不上 → 中文排查步骤，退出 1</text>
+<text x="46" y="276" text-anchor="start" font-size="12.3" fill="#444">① ssh 连通（require_device）：连不上 → 中文排查步骤，退出 1；整轮只查这一次，各步骤直接复用</text>
 <text x="46" y="296" text-anchor="start" font-size="12.3" fill="#444">② 固件安全门：sha256(/usr/bin/xochitl) 对照 firmware-allowlist.txt；不在表内默认拒装，确认无误后 --force</text>
 <text x="46" y="316" text-anchor="start" font-size="12.3" fill="#444">③ 设备预检（只读）：root、/home 可写、剩余空间 &lt;50MB 拒装 / &lt;200MB 警告；报告 xovi · QML 补丁加载器 · appload · verity 现状</text>
 <polyline points="500,324 500,348" fill="none" stroke="#555" stroke-width="1.7" marker-end="url(#if-m)"/>

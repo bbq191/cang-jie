@@ -75,7 +75,7 @@ Every **step name** below can be used with `--skip`; the matching script `packag
 | `chrony-cn` | Switches time servers to ones reachable from mainland China (Alibaba Cloud, Tencent Cloud, etc.) | — |
 | `chrony-boot-wakelock` | Keeps the device from auto-suspending for a short while after boot (released once synced, at most 120 s) so the first time sync isn't interrupted | — |
 | `timezone-cn` | Sets the default time zone to Asia/Shanghai | — |
-| `battop` | Battery-drain sampling service; started after install but **not started at boot** (on purpose, see issue ⑥) | — |
+| `battop` | Battery-drain sampling service; started after install but **not started at boot** (on purpose, see issue ⑥). With dm-verity on and no earlier install, the program is put in place but its unit can't go into `/usr`, so the summary lists it as "prerequisite not met" | — |
 | `wifi-watch` | WiFi stall watchdog: reconnects when the link dies, pins the 2.4 GHz band and turns off WiFi power saving | — |
 | `xovi-persist` | Re-activates xovi automatically after boot, so you don't have to after a restart | xovi |
 | `hl-snap` | The highlighter snaps precisely to Chinese text instead of "a short stroke grabs the whole line"; files only | xovi |
@@ -121,7 +121,7 @@ Run inside `packaging/`; `<host>` defaults to `10.11.99.1`. Every script support
 
 Before doing anything, `install-all.sh` (except with `--dry-run`) checks three things; if any fails, **no step runs** and nothing on the device changes:
 
-1. **Can it ssh in**: if not, it prints troubleshooting steps (device asleep or USB unplugged; wrong IP; the device's host key changed; no passwordless login).
+1. **Can it ssh in**: if not, it prints troubleshooting steps (device asleep or USB unplugged; wrong IP; the device's host key changed; no passwordless login). This is checked once per run; the steps after it don't repeat it.
 2. **Firmware safety gate**: see below.
 3. **Device preflight** (read-only): must be root and `/home` must be writable; **less than 50MB free on `/home` refuses, less than 200MB warns**; it also reports whether xovi, qt-resource-rebuilder and appload are installed and whether xovi is active in xochitl. Missing pieces are only reported early; the matching steps fail or skip on their own.
 
@@ -225,7 +225,7 @@ This is the **authoritative** OTA recovery guide; the other documents link here.
 
 ## Troubleshooting
 
-These are known issues with specific triggers, not random faults. Numbers ①–⑦ are referenced above.
+These are known issues with specific triggers, not random faults. Numbers ①–⑧ are referenced above.
 
 | # | Symptom | Cause | What to do |
 |---|---|---|---|
@@ -236,12 +236,13 @@ These are known issues with specific triggers, not random faults. Numbers ①–
 | ⑤ | The device rebooted at the end of the install | `xovi-apply` makes the changes take effect: since 2026-09-25 always by **rebooting the whole device** (back in about 20–60 seconds) rather than restarting xochitl alone, because xochitl may crash while exiting and the system then reboots anyway. It only reboots when something actually changed or xovi isn't active yet | Normal; don't use the device during install. The script waits for the device and runs `verify-on-device.sh` automatically. To avoid the interruption, `--skip xovi-apply` and run `sh deploy-xovi-apply.sh <host>` later. **To apply by hand**: just `reboot`; **never** run `xovi/start` by hand (when xovi is already active it crashes xochitl and the device reboots itself — real-hardware incident, 2026-09-20) |
 | ⑥ | After a reboot the battery sampler isn't running | **Deliberately not started at boot**: on 2026-08-29 its sampling triggered a kernel deadlock that froze the device, and the root cause hasn't been fully ruled out | Turn on the battery switch under "Manage → System enhance" on the web page (the "Battery Assassin" data page appears once it's on), or `systemctl start battop` |
 | ⑦ | It exits with an error before installing: `cannot connect to root@…` / `only N MB free` / `needs root` / `firmware not on the allowlist` | The automatic pre-install checks stopped it; nothing on the device changed | Can't connect: follow the steps in the message (asleep/USB → IP → host key → passwordless); not enough space: clean up `/home/root` and `cangjie-backups/` and retry; firmware: see ④ |
+| ⑧ | The last step reports that the device couldn't schedule the reboot and the changes aren't in effect yet; the step counts as failed | The `systemctl reboot` command on the device itself failed. The files are already swapped in, but xochitl is still running the old ones; the script has put the "pending apply" marker back (since 2026-09-25; before that it waited for a reboot that never came and then reported success). This path has only been simulated locally | Run `reboot` on the device, then `sh verify-on-device.sh <host>` once it's back; or re-run `sh deploy-xovi-apply.sh <host>` later, which tries again |
 
 ### Other troubleshooting
 
 - Start with the closing summary of `install-all.sh` to find the failing step; the header comment of the matching `packaging/deploy-*.sh` explains what the step does and common failures.
 - The web page's "Manage" section shows whether each plugin is actually loaded into xochitl ("loaded / not loaded"). A switch that is on but shows "not loaded" means the plugin isn't installed or the device hasn't been rebooted since. "Manage → Device health" shows a fuller picture (services, extensions, the previous boot's log).
-- To check the scripts without touching a device: `bash packaging/tests/run_sim_tests.sh` (local simulation, about 300 assertions). It is no substitute for testing on real hardware.
+- To check the scripts without touching a device: `bash packaging/tests/run_sim_tests.sh` (local simulation, 314 assertions). It is no substitute for testing on real hardware.
 
 ### Backups and idempotence (short version)
 
@@ -249,7 +250,7 @@ Every install script can be re-run; before overwriting an existing file on the d
 
 ## Known limitations
 
-- **What has and hasn't run on real hardware**: run end to end on real hardware: `install-all.sh` (once each on 2026-09-22, 09-24 and 09-25) and `uninstall-all.sh` (2026-09-25); "swap in the new `.so` → reboot → xovi restored at boot → automatic check" was re-verified on real hardware on 2026-09-25 (`verify-on-device.sh`: 43 ✓). **Only simulated locally, never on real hardware**: keeping programs under dm-verity during uninstall, clearing the staging area on uninstall, the "nothing changed, so no reboot" path (including standalone deploys), ignoring disconnect signals in the swap-in critical section, and the summary's "prerequisite not met" line. Full record: [`packaging/README.md` "验证现状"](../packaging/README.md#验证现状如实说明不夸大) (Chinese). When trying them on a device, go one step at a time: `--dry-run` first, then single steps or `--skip`.
+- **What has and hasn't run on real hardware**: run end to end on real hardware: `install-all.sh` (once each on 2026-09-22, 09-24 and 09-25) and `uninstall-all.sh` (2026-09-25); "swap in the new `.so` → reboot → xovi restored at boot → automatic check" was re-verified on real hardware on 2026-09-25 (`verify-on-device.sh`: 43 ✓). **Only simulated locally, never on real hardware**: keeping programs under dm-verity during uninstall, clearing the staging area on uninstall, the "nothing changed, so no reboot" path (including standalone deploys), ignoring disconnect signals in the swap-in critical section, the summary's "prerequisite not met" line, and every installer behaviour changed in the fourth audit on the afternoon of 2026-09-25 (handling a failed reboot, the battery sampler under dm-verity, fewer ssh round trips when deploying, and so on). Full record: [`packaging/README.md` "验证现状"](../packaging/README.md#验证现状如实说明不夸大) (Chinese). When trying them on a device, go one step at a time: `--dry-run` first, then single steps or `--skip`.
 - **Writing `/usr` still relies on two safeguards, "check dm-verity first + a time-limited read-write window"**, rather than never touching `/usr`; writing `/usr` once triggered a rollback that bricked the device (2026-08-16).
 - **Running `shelf/install.sh --password <plaintext>` directly on the device briefly exposes the password in the device's process list**; passing it through `deploy.sh --password` on your computer doesn't.
 - Uninstalling doesn't revert `chrony-cn` / `timezone-cn`; there's no "one click back to before".
