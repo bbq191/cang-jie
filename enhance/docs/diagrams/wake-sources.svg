@@ -16,7 +16,7 @@
 <text x="60" y="236" text-anchor="start" font-size="12" fill="#1a1a1a" font-weight="bold">mkdir-agent / trash-agent 两个 qmd 长轮询</text>
 <rect x="60" y="242" width="15.0" height="14" rx="3" fill="#9db6d8" stroke="#4a6fa5" stroke-width="1.2"/>
 <text x="83.0" y="254" text-anchor="start" font-size="11.5" fill="#1a1a1a" font-weight="bold">各 ≈12 次/时（mkdir-agent 09-24 前 ≈144）</text>
-<text x="60" y="272" text-anchor="start" font-size="10.5" fill="#555">GET /mkdir/pending、/trash/pending?wait=290，空闲约 290 秒一次往返（trash-agent 09-25 起）</text>
+<text x="60" y="272" text-anchor="start" font-size="10.5" fill="#555">wait=290 长等待，空闲约 290 秒一次往返；book-serve 不在时出错退避 15→120 秒（09-25）</text>
 <text x="60" y="292" text-anchor="start" font-size="12" fill="#1a1a1a" font-weight="bold">网关 mDNS 接口重扫</text>
 <text x="60" y="310" text-anchor="start" font-size="11.5" fill="#1a1a1a" font-weight="bold">0 次/时（09-25 前 60）</text>
 <text x="60" y="328" text-anchor="start" font-size="10.5" fill="#555">改听内核 netlink 地址变化，地址增删才重扫；netlink 打不开才退回每 60 秒；局域网别的设备查询另算</text>

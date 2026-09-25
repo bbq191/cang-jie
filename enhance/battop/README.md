@@ -24,9 +24,9 @@
 |---|---|---|
 | 各进程 CPU 增量 | `/proc/<pid>/stat` | 按进程名、按 systemd unit（"应用"）两种方式聚合 |
 | 电量、放电 mAh | 电量计 sysfs（`max77818_battery` 的 `capacity`、`charge_now`、`current_now`） | `charge_now` 是库仑计，放电 mAh 比按百分比估算准 |
-| 唤醒源 | `/dev/kmsg` 里的 `PM: active wakeup source: <名>` | 只含**本次开机以来**的记录（旧版 fork `journalctl` 能跨开机查 31 天，为去掉子进程接受了这个退化）；约每 50 分钟刷新一次缓存；按记录序号增量并入（`wakes.cursor`），时间按不含休眠的单调时钟换算（09-25 前按含休眠的 uptime 换算，事件被提前"开机以来累计休眠时长"，面板「今日」唤醒数不准） |
+| 唤醒源 | `/dev/kmsg` 里的 `PM: active wakeup source: <名>` | 只含**本次开机以来**的记录（旧版 fork `journalctl` 能跨开机查 31 天，为去掉子进程接受了这个退化）；约每 50 分钟刷新一次缓存，保留 31 天。kmsg 时间戳在休眠时不走，所以按"墙钟 − 单调时钟 + 时间戳"换算（单调时钟同样不含休眠）；09-25 前减的是含休眠的 uptime，每条事件被提前"它之前累计的休眠时长"，面板「今日 / 24 小时」唤醒数不准。去重靠 kmsg 序号：`wakes.cursor` 记开机 id 和已并入的最大序号，同一次开机只并新序号，换了开机就重建本次开机的记录。图解见 [白皮书 §03l](../docs/reMarkable系统增强线白皮书.md)（09-25 第四轮审计，只在 host 验证） |
 
-数据目录 `/home/root/battop/data`（`BATTOP_DIR` 可改）：按天的样本文件 + baseline + `wakes.tsv` 唤醒缓存 + `summary.json`，40 天前的样本自动清理。每轮重算 `summary.json` 时，历史样本文件按（大小, mtime）缓存整文件聚合，只重读被时间窗起点切开或变过的文件（2026-09-24，host 实测每轮 34.7 → 4.0 ms，输出逐字节不变；未上真机）。采样间隔 `BATTOP_INTERVAL_SECS`（默认 600 秒）。间隔用单调时钟计，设备休眠时不走，所以是"醒着每 10 分钟"。
+数据目录 `/home/root/battop/data`（`BATTOP_DIR` 可改）：按天的样本文件 + baseline + `wakes.tsv` 唤醒缓存 + `wakes.cursor` 增量游标 + `summary.json`，40 天前的样本自动清理。每轮重算 `summary.json` 时，历史样本文件按（大小, mtime）缓存整文件聚合，只重读被时间窗起点切开或变过的文件（2026-09-24，host 实测每轮 34.7 → 4.0 ms，输出逐字节不变；未上真机）。采样间隔 `BATTOP_INTERVAL_SECS`（默认 600 秒）。间隔用单调时钟计，设备休眠时不走，所以是"醒着每 10 分钟"。
 
 ## 构建
 
@@ -51,7 +51,12 @@ cd packaging && sh deploy-battop.sh <host>        # CJ_BATTOP_BIN=<已编好的�
 sh install.sh [--start | --no-start]
 ```
 
-需要同目录的 `devlib.sh`，以及 `battop.new`（优先）或已有的 `battop`。固定装在 `/home/root/battop`；单元文件 `battop.service` 装进 `/usr/lib/systemd/system/`（先过 dm-verity 检查，verity 开着就只放二进制、不装单元）。安装器**只 start、不 enable**，也清掉旧 `battop.timer` 的遗留。
+需要同目录的 `devlib.sh`，以及 `battop.new`（优先）或已有的 `battop`。固定装在 `/home/root/battop`；单元文件 `battop.service` 装进 `/usr/lib/systemd/system/`（先过 dm-verity 检查）。安装器**只 start、不 enable**，也清掉旧 `battop.timer` 的遗留（verity 开着时 rootfs 不可写，不去碰它）。
+
+dm-verity 开着时 `/usr` 改不了（2026-09-25 第四轮审计起，未在 verity 设备上实测）：
+
+- 单元以前装过（verity 是后来才开的）→ 沿用旧单元，二进制照常换，下面的启动策略照常执行（在跑且二进制变了就重启，用上新版）。此前这里直接退出，在跑的 battop 一直用旧二进制。
+- 单元从没装过 → 只放二进制，以退出码 10 结束，表示"前置条件不满足、这步实际没装上"（不算失败）；host 侧 `deploy-battop.sh` 把它记进汇总的"前置条件不满足"栏。
 
 启动策略：
 

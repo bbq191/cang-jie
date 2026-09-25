@@ -16,6 +16,7 @@ https://github.com/Lyr-7D1h/remarkable-lines ，作者 `Lyr <lyr-7d1h@pm.me>`，
 - 新增高层入口 `page` 模块：一页 = 笔画（Stroke）+ 勾画（Highlight = GlyphRange）+ 打字文本，供 ink-serve 几何配对与 note-serve 读回；
   墓碑（删除的项）自动剔除。
 - 2026-09-24：清掉全部 clippy 告警（去掉多余的 `return`、`format!` 嵌套之类的机械改写），解析语义不变、测试全过。
+- 2026-09-25：`Bitreader::read_bytes` 先比剩余字节再分配（新增 `remaining()`）：文件里声明的块大小 / 字符串长度超过剩余字节就报 `Io` 错误，不再按声明长度先分配内存（畸形或写到一半的 `.rm` 可声明上 GB）。合法文件的解析结果不变。
 
 ## 2026-09-07 新增：`write` 模块（不是 vendored 代码的一部分）
 

@@ -20,18 +20,18 @@
 |---|---|---|
 | 服务骨架 | `service` | 启动模板：解析 `--bind` → 建目录 → 自注册 → 起服务器，自带 `GET /health` |
 | | `registry` | 注册与发现（`$XDG_RUNTIME_DIR/shelf/services/<name>.json`，按 pid 清陈旧条目）；`SvcClient` 调另一个服务 |
-| | `http` | tiny_http 适配：路由（最具体优先）、回执、守卫、TLS、SSE 流与定长下载流；并发上限 64；每条连接 60 秒读空闲超时（靠 [`vendor/tiny_http`](vendor/README.md) 的一处补丁）；对端 IP 经内部头传入 |
+| | `http` | tiny_http 适配：路由（最具体优先）、回执、守卫、TLS、SSE 流与定长下载流；并发上限 64；每条连接 60 秒读空闲超时、accept 遇暂时性错误不停摆（靠 [`vendor/tiny_http`](vendor/README.md) 的两处补丁）；accept 线程真退出时服务非零退出，交给 systemd 拉起；对端 IP 经内部头传入 |
 | | `events` | 事件总线 `EventBus` + SSE；`follow()` 订阅另一个服务的 `/events` |
 | 文件与数据 | `paths` | XDG 路径的唯一路径表 |
 | | `fs` | 原子写（可带权限）、单段文件名校验 `plain_name`、同名不覆盖 `unique_path` |
 | | `config` | JSON 配置读写模板（`load_or_default` / `load_or_seed` / `save` / `is_corrupt`） |
-| | `multipart` | 流式 multipart 解析（边读边落盘）、`Content-Disposition` 下载头 |
-| | `asset` | 资产仓库 + 上传流程模板，字体/壁纸/KOReader/母版库共用 |
+| | `multipart` | 流式 multipart 解析（边读边落盘；文件名引号内的 `;` 不切）、`Content-Disposition` 下载头 |
+| | `asset` | 资产仓库 + 上传流程模板，字体/壁纸/KOReader/母版库共用；暂存在 /home（`~/.local/state/shelf/upload` 或调用方指定），服务启动时清半成品 |
 | | `formats` | 文件格式白名单唯一事实源（书籍只收 EPUB/PDF） |
-| | `ttf` | TTF/OTF 家族名、魔数、CJK 覆盖率 |
+| | `ttf` | TTF/OTF 家族名、魔数、CJK 覆盖率（跳过 format-12 损坏组） |
 | | `cache` / `clock` / `sync` | 单值 TTL 缓存 / unix 时间戳唯一出处 / 容忍 poison 的取锁 `sync::lock` |
-| xochitl | `xochitl` | 免重启进原生书库（GET-then-upload 归档，进程内“设文件夹→上传”串行）、流式 `upload_file`、超过约 100MB 上传上限的“占位 + 磁盘替换” |
-| | `xochitl_conf` | 改 `xochitl.conf [General]` 单键（休眠屏 `SleepScreenPath`；文件含凭证，绝不打印行内容） |
+| xochitl | `xochitl` | 免重启进原生书库（GET-then-upload 归档，进程内“设文件夹→上传”串行）、流式 `upload_file`、超过约 100MB 上传上限的“占位 + 磁盘替换”（整段串行，防两本大书认领到同一条目） |
+| | `xochitl_conf` | 改 `xochitl.conf [General]` 单键（休眠屏 `SleepScreenPath`；文件含凭证，绝不打印行内容，改写保留原权限） |
 | | `fswatch` | inotify 防抖目录监听（常驻 / 限时） |
 | 对外与安全（只有网关用） | `auth` | PBKDF2 密码哈希、Basic/Cookie 解析、会话表、按 IP 的失败限速 `IpFailLimiter` |
 | | `tls` / `mdns` / `netinfo` | 带名称约束的私有 CA + 服务器证书（旧 CA 自动迁移）/ mDNS 应答器（`shelf.local`；内核报告地址变化才重扫接口，空闲零唤醒）/ 本机 IPv4 表 |
@@ -53,11 +53,11 @@
 ## 构建与测试
 
 - `cargo build --manifest-path rmsvc-core/Cargo.toml`；独立 crate，各消费方编译时一起编。
-- `cargo test --manifest-path rmsvc-core/Cargo.toml`（2026-09-25 实跑：101 个单测，100 个通过、1 个需要网络命名空间的默认忽略）。CI `rust` job 单列一步，但 CI 自 2026-09-20 起因账户扣费没有实际执行，改动要本地跑。
+- `cargo test --manifest-path rmsvc-core/Cargo.toml`（2026-09-25 第四轮审计后实跑：105 个单测，104 个通过、1 个需要网络命名空间的默认忽略）。CI `rust` job 单列一步，但 CI 自 2026-09-20 起因账户扣费没有实际执行，改动要本地跑。
 
 ## 注意
 
 - 改任何模块前先想清楚几条线谁在用它（白皮书每节都列了），这里出问题理论上 5 个顶层项目一起受影响。
-- XDG 路径仍叫 `shelf`（`~/.config/shelf/`、`~/.local/share/shelf/`、`$XDG_RUNTIME_DIR/shelf/`）：这是已部署设备上的真实路径，改名要迁移。
+- XDG 路径仍叫 `shelf`（`~/.config/shelf/`、`~/.local/share/shelf/`、`~/.local/state/shelf/`、`$XDG_RUNTIME_DIR/shelf/`）：这是已部署设备上的真实路径，改名要迁移。
 - 不引用旧项目的 crate（`device-core` / `weread-device`）；`xochitl`、`fswatch` 是“剥离移植”的独立实现。
 - 2026-09-11 从 `shelf/crates/shelf-core` 正名搬到顶层（crate 名 `shelf-core` → `rmsvc-core`），来历见白皮书末尾。
