@@ -29,6 +29,11 @@ pub(super) fn body_font_size(page: &[PositionedChar]) -> f64 {
     counts.into_iter().max_by_key(|(_, n)| *n).map(|(b, _)| b as f64 / 2.0).unwrap_or(10.0)
 }
 
+/// 第 `ln` 行的非空白字符（行号没有字符 → 空）。
+fn visible_of<'a>(lines: &std::collections::BTreeMap<usize, Vec<&'a PositionedChar>>, ln: usize) -> Vec<&'a PositionedChar> {
+    lines.get(&ln).map(|v| v.iter().copied().filter(|c| !c.ch.is_whitespace()).collect()).unwrap_or_default()
+}
+
 /// 按字号识别标题：每页算正文基准字号，字号 ≥ 基准 × [`HEADING_SIZE_RATIO`] 的行判成标题候选；
 /// 连续（同页、行号相邻）的候选行合并成一个标题；不同字号分档映射 `level`（最大字号＝1，最多
 /// 3 档，超出封顶到 3）。**全书零候选**时不在这里兜底——那是调用方（`optimize_pdf_to_epub`）
@@ -40,13 +45,13 @@ pub(crate) fn detect_headings_by_font_size(pages: &[PageContent]) -> Vec<Heading
     // 统一的，不然同一本书不同页的"最大字号"却对应不同 level，nav.xhtml 嵌套会乱。
     let mut candidate_sizes: Vec<i64> = Vec::new();
     let mut per_page_body: Vec<f64> = Vec::with_capacity(pages.len());
-    for page in pages {
-        let chars = &page.chars;
-        let body = body_font_size(chars);
+    // 每页按行号分组一次（见 `group_by_line`：此前逐行号全页扫描，复杂度"行数 × 字符数"），两遍共用。
+    let grouped: Vec<std::collections::BTreeMap<usize, Vec<&PositionedChar>>> = pages.iter().map(|p| group_by_line(&p.chars)).collect();
+    for (page, lines) in pages.iter().zip(&grouped) {
+        let body = body_font_size(&page.chars);
         per_page_body.push(body);
-        let max_line = chars.iter().map(|c| c.line).max().unwrap_or(0);
-        for line_no in 0..=max_line {
-            let line_chars: Vec<&PositionedChar> = chars.iter().filter(|c| c.line == line_no && !c.ch.is_whitespace()).collect();
+        for &line_no in lines.keys() {
+            let line_chars = visible_of(lines, line_no);
             if line_chars.is_empty() {
                 continue;
             }
@@ -68,32 +73,32 @@ pub(crate) fn detect_headings_by_font_size(pages: &[PageContent]) -> Vec<Heading
         (rank as i64 + 1).min(3)
     };
 
-    for (page_idx, page) in pages.iter().enumerate() {
-        let chars = &page.chars;
+    for (page_idx, lines) in grouped.iter().enumerate() {
         let body = per_page_body[page_idx];
-        let max_line = chars.iter().map(|c| c.line).max().unwrap_or(0);
-        let mut i = 0usize;
-        while i <= max_line {
-            let line_chars: Vec<&PositionedChar> = chars.iter().filter(|c| c.line == i && !c.ch.is_whitespace()).collect();
+        // 已被上一个标题合并掉的行号（`i = j` 跳过），没有字符的行号本来就不在 `lines` 里。
+        let mut next_free = 0usize;
+        for &i in lines.keys() {
+            if i < next_free {
+                continue;
+            }
+            let line_chars = visible_of(lines, i);
             if line_chars.is_empty() {
-                i += 1;
                 continue;
             }
             let avg = avg_font_size(&line_chars);
             if avg < body * HEADING_SIZE_RATIO {
-                i += 1;
                 continue;
             }
             // 连续的标题候选行合并成一个标题（同一个标题换行显示的情况）。标题文字要保留空格
             // （行内原有的词间空格），只有判"是不是标题候选"用的字号统计才该滤掉空白字符——
             // 之前误用同一份过滤后的 line_chars 拼标题，"1 Introduction" 会被拼成
             // "1Introduction"，2026-09-19 真机样本核对时发现。
-            let title_line = |ln: usize| -> String { chars.iter().filter(|c| c.line == ln).map(|c| c.ch).collect::<String>().trim().to_string() };
+            let title_line = |ln: usize| -> String { lines.get(&ln).map(|v| v.iter().map(|c| c.ch).collect::<String>().trim().to_string()).unwrap_or_default() };
             let mut title: String = title_line(i);
             let level = level_of(avg);
             let mut j = i + 1;
-            while j <= max_line {
-                let next_chars: Vec<&PositionedChar> = chars.iter().filter(|c| c.line == j && !c.ch.is_whitespace()).collect();
+            loop {
+                let next_chars = visible_of(lines, j);
                 if next_chars.is_empty() {
                     break;
                 }
@@ -106,7 +111,7 @@ pub(crate) fn detect_headings_by_font_size(pages: &[PageContent]) -> Vec<Heading
                 j += 1;
             }
             headings.push(Heading { page: page_idx, line: i, level, title: title.trim().to_string() });
-            i = j;
+            next_free = j;
         }
     }
     headings

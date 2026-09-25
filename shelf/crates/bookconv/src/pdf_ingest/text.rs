@@ -189,6 +189,18 @@ pub(crate) fn is_formula_char(ch: char) -> bool {
     )
 }
 
+/// 按 `line` 分组：行号升序、行内保持字符原顺序（与"逐个行号 `filter(c.line == n)`"结果完全相同）。
+/// 此前公式探测/标题识别都是 `for n in 0..=max_line { chars.iter().filter(|c| c.line == n) }`，复杂度是
+/// "行数 × 字符数"——calibre 导出的 PDF 每个字形各一次 `Td`，`line` 几乎逐字递增，一页 2000 字就是 400 万次比较，
+/// 整本几百页要白跑几十亿次（2026-09-25 审计）。一遍分组后是线性的。
+pub(super) fn group_by_line(chars: &[PositionedChar]) -> std::collections::BTreeMap<usize, Vec<&PositionedChar>> {
+    let mut m: std::collections::BTreeMap<usize, Vec<&PositionedChar>> = std::collections::BTreeMap::new();
+    for c in chars {
+        m.entry(c.line).or_default().push(c);
+    }
+    m
+}
+
 /// 一行是否判定为"公式行"：至少一个字符命中 [`is_formula_char`]。
 pub(super) fn line_is_formula(chars: &[&PositionedChar]) -> bool {
     chars.iter().any(|c| is_formula_char(c.ch))
@@ -222,11 +234,9 @@ pub(crate) fn detect_formula_regions(chars: &[PositionedChar]) -> Vec<BBox> {
     if chars.is_empty() {
         return Vec::new();
     }
-    let max_line = chars.iter().map(|c| c.line).max().unwrap_or(0);
     let mut formula_lines: Vec<(usize, BBox, f64)> = Vec::new(); // (line_no, bbox, avg_font_size)
-    for line_no in 0..=max_line {
-        let line_chars: Vec<&PositionedChar> = chars.iter().filter(|c| c.line == line_no).collect();
-        if line_chars.is_empty() || !line_is_formula(&line_chars) {
+    for (line_no, line_chars) in group_by_line(chars) {
+        if !line_is_formula(&line_chars) {
             continue;
         }
         if let Some(bbox) = bbox_of(&line_chars) {
