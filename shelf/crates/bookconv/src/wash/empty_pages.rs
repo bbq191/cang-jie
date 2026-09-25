@@ -63,11 +63,16 @@ pub(super) fn drop_opf_refs(opf: &str, ids: &HashSet<&str>) -> String {
 pub(super) fn remove_empty_pages(entries: &mut Vec<Entry>, rep: &mut WashReport) {
     let Some(opf) = parse_opf(entries) else { return };
     let mut removed: Vec<String> = Vec::new();
+    // 条目名索引建一次（此前每个 spine 页线性找一遍全书条目，几千页漫画是"页数 × 条目数"次比较；同名取第一条）。
+    let mut by_name: HashMap<&str, &Entry> = HashMap::with_capacity(entries.len());
+    for e in entries.iter() {
+        by_name.entry(e.name.as_str()).or_insert(e);
+    }
     for p in &opf.spine {
         if Some(p) == opf.nav_doc.as_ref() {
             continue;
         }
-        if let Some(e) = entries.iter().find(|e| &e.name == p) {
+        if let Some(e) = by_name.get(p.as_str()) {
             if is_html_entry(&e.name, &e.data) && is_empty_page(&String::from_utf8_lossy(&e.data)) {
                 removed.push(p.clone());
             }

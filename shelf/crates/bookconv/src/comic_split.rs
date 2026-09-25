@@ -53,7 +53,9 @@ pub(crate) fn imgs_referenced(html: &str, page_dir: &str) -> Vec<String> {
     let re = RE.get_or_init(|| Regex::new(r#"(?i)<img\b[^>]*\bsrc="([^"]+)""#).unwrap());
     let mut seen = std::collections::HashSet::new();
     re.captures_iter(html)
-        .map(|c| posix_norm(&resolve(page_dir, &c[1])))
+        // src 按 URL 百分号编码解码（中文/空格文件名常写成 `%E5%9B%BE.jpg`），否则对不上 zip 条目名——拆分时这张图
+        // 取不到，整页因为"没有可用图片"被丢掉，体积估算也漏算。
+        .map(|c| posix_norm(&resolve(page_dir, &crate::epubzip::percent_decode(&c[1]))))
         .filter(|p| seen.insert(p.clone()))
         .collect()
 }
@@ -64,26 +66,50 @@ pub(crate) fn imgs_referenced(html: &str, page_dir: &str) -> Vec<String> {
 /// （`deliver_split_streaming`）图片条目是空占位（真实字节留到真正要组包那一刻才读），真实体积从
 /// zip 目录里查表拿，不用解压就知道；内存路径（`plan_splits`）直接传 `|e| e.data.len() as u64`
 /// 当 `size_of`，两条路径共用同一份体积计算逻辑。
-fn range_bytes_sized(entries: &[Entry], spine: &[String], start: usize, end: usize, size_of: &dyn Fn(&Entry) -> u64) -> u64 {
-    let mut total = 0u64;
-    let mut counted_imgs = std::collections::HashSet::new();
-    // `get` 而不是直接切片：调用方边界一旦出错（start>end / 越界）只是当空范围，不让 book-serve 整个进程 panic。
-    for p in spine.get(start..end).unwrap_or(&[]) {
-        let Some(e) = entries.iter().find(|e| &e.name == p) else { continue };
-        total += size_of(e);
-        if !is_html(p) {
-            continue;
+///
+/// 条目名 → 条目的索引建一次、整个规划过程共用（2026-09-25 审计：此前每查一页、每张图都 `entries.iter().find`
+/// 线性扫全书条目，按页贪心切分时是"页数 × 条目数"，两千页漫画要做上千万次字符串比较）。
+struct SpineSizer<'a> {
+    by_name: HashMap<&'a str, &'a Entry>,
+    spine: &'a [String],
+    size_of: &'a dyn Fn(&Entry) -> u64,
+}
+
+impl<'a> SpineSizer<'a> {
+    fn new(entries: &'a [Entry], spine: &'a [String], size_of: &'a dyn Fn(&Entry) -> u64) -> SpineSizer<'a> {
+        let mut by_name: HashMap<&str, &Entry> = HashMap::with_capacity(entries.len());
+        for e in entries {
+            by_name.entry(e.name.as_str()).or_insert(e); // 同名条目取第一条（同此前 `iter().find`）
         }
-        let Ok(html) = std::str::from_utf8(&e.data) else { continue };
-        for img in imgs_referenced(html, dir_of(p)) {
-            if counted_imgs.insert(img.clone()) {
-                if let Some(ie) = entries.iter().find(|e| e.name == img) {
-                    total += size_of(ie);
+        SpineSizer { by_name, spine, size_of }
+    }
+
+    fn range(&self, start: usize, end: usize) -> u64 {
+        let mut total = 0u64;
+        let mut counted_imgs = std::collections::HashSet::new();
+        // `get` 而不是直接切片：调用方边界一旦出错（start>end / 越界）只是当空范围，不让 book-serve 整个进程 panic。
+        for p in self.spine.get(start..end).unwrap_or(&[]) {
+            let Some(e) = self.by_name.get(p.as_str()) else { continue };
+            total += (self.size_of)(e);
+            if !is_html(p) {
+                continue;
+            }
+            let Ok(html) = std::str::from_utf8(&e.data) else { continue };
+            for img in imgs_referenced(html, dir_of(p)) {
+                if let Some(ie) = self.by_name.get(img.as_str()) {
+                    if counted_imgs.insert(img) {
+                        total += (self.size_of)(ie);
+                    }
                 }
             }
         }
+        total
     }
-    total
+}
+
+#[cfg(test)]
+fn range_bytes_sized(entries: &[Entry], spine: &[String], start: usize, end: usize, size_of: &dyn Fn(&Entry) -> u64) -> u64 {
+    SpineSizer::new(entries, spine, size_of).range(start, end)
 }
 
 /// 拆分方案的一条：能塞进预算的一份（`fits=true`，调用方据此打包投递）或拆到叶子仍超限被放弃的
@@ -118,16 +144,19 @@ pub fn plan_splits(entries: &[Entry], budget: u64) -> Result<Option<Vec<PlannedP
 /// `plan_splits` 的实现，"体积怎么算"抽成 `size_of` 参数——流式路径（`deliver_split_streaming`）
 /// 图片条目是空占位，真实体积从 zip 目录查表拿，不解压也能规划。
 fn plan_pieces_sized(entries: &[Entry], opf: &crate::wash::Opf, budget: u64, size_of: &dyn Fn(&Entry) -> u64) -> Result<Option<Vec<PlannedPiece>>, String> {
-    let total = range_bytes_sized(entries, &opf.spine, 0, opf.spine.len(), size_of);
+    let sizer = SpineSizer::new(entries, &opf.spine, size_of);
+    let total = sizer.range(0, opf.spine.len());
     if total <= budget {
         return Ok(None);
     }
     if let Some(top) = ncx_top_level(entries, opf) {
         let mut out = Vec::new();
         for (i, (title, start)) in top.iter().enumerate() {
-            let start = *start;
+            // 第一卷从 spine 开头算起：NCX 第一条常常不指向第 0 页（封面页、扉页、版权页不进目录），
+            // 此前从第一条目录项算起，这些页不属于任何一份、拆分投递后就从书里消失了。
+            let start = if i == 0 { 0 } else { *start };
             let end = top.get(i + 1).map(|(_, s)| *s).unwrap_or(opf.spine.len());
-            let size = range_bytes_sized(entries, &opf.spine, start, end, size_of);
+            let size = sizer.range(start, end);
             if size <= budget {
                 out.push(PlannedPiece { title: title.clone(), start, end, fits: true });
                 continue;
@@ -137,7 +166,7 @@ fn plan_pieces_sized(entries: &[Entry], opf: &crate::wash::Opf, budget: u64, siz
             // HTTP 413——不是猜出来的边界情况）：复用"没有 toc.ncx"那条退路的按页贪心切法，再切
             // 一层，不为这种情况另建一套树形递归（那正是旧写法真机 panic 的根源）。切出 1 份说明
             // 单页本身已经超预算，切不动，原样保留、如实标 `fits=false`。
-            let sub = fixed_page_chunks_range_sized(entries, &opf.spine, start, end, budget, size_of);
+            let sub = fixed_page_chunks_range_sized(&sizer, start, end, budget);
             if sub.len() <= 1 {
                 out.push(PlannedPiece { title: title.clone(), start, end, fits: false });
             } else {
@@ -152,7 +181,7 @@ fn plan_pieces_sized(entries: &[Entry], opf: &crate::wash::Opf, budget: u64, siz
     // 没有可用 toc.ncx（书压根没目录，或目录目标一个都对不上 spine）——退化成按页数切：贪心累加
     // 每页体积，快超预算就切一刀，不依赖任何书本身的结构信息，任何超限漫画都能切出方案，不再是
     // "没目录就整本拒绝"。
-    Ok(Some(fixed_page_chunks_range_sized(entries, &opf.spine, 0, opf.spine.len(), budget, size_of)))
+    Ok(Some(fixed_page_chunks_range_sized(&sizer, 0, opf.spine.len(), budget)))
 }
 
 /// NCX 展平并解析成 `(depth, 标题, spine 下标)` 的完整列表，不按深度过滤——`ncx_top_level`
@@ -211,13 +240,13 @@ pub(crate) fn ncx_titles_in_range(entries: &[Entry], opf: &crate::wash::Opf, sta
 
 /// 没有可用目录结构时的退路：贪心按页累加体积，快超预算（加上这一页会超）就切一刀开新的一份；
 /// 单页本身已经超预算（罕见，如一张巨图）没法再细分，该份单独成篇、`fits=false` 如实标出。
-fn fixed_page_chunks_range_sized(entries: &[Entry], spine: &[String], range_start: usize, range_end: usize, budget: u64, size_of: &dyn Fn(&Entry) -> u64) -> Vec<PlannedPiece> {
+fn fixed_page_chunks_range_sized(sizer: &SpineSizer, range_start: usize, range_end: usize, budget: u64) -> Vec<PlannedPiece> {
     let mut out = Vec::new();
     let (mut start, mut end, mut acc) = (range_start, range_start, 0u64);
     for i in range_start..range_end {
-        let page_size = range_bytes_sized(entries, spine, i, i + 1, size_of);
+        let page_size = sizer.range(i, i + 1);
         if acc > 0 && acc + page_size > budget {
-            let size = range_bytes_sized(entries, spine, start, end, size_of);
+            let size = sizer.range(start, end);
             out.push(PlannedPiece { title: format!("第 {}-{} 页", start + 1, end), start, end, fits: size <= budget });
             start = i;
             acc = 0;
@@ -225,7 +254,7 @@ fn fixed_page_chunks_range_sized(entries: &[Entry], spine: &[String], range_star
         acc += page_size;
         end = i + 1;
     }
-    let size = range_bytes_sized(entries, spine, start, end, size_of);
+    let size = sizer.range(start, end);
     out.push(PlannedPiece { title: format!("第 {}-{} 页", start + 1, end), start, end, fits: size <= budget });
     out
 }
@@ -625,6 +654,37 @@ mod tests {
         assert_eq!(pieces.len(), 3);
         assert_eq!(pieces[0].title, "卷0", "同起点保留先出现的标题");
         assert!(pieces.iter().all(|p| p.end > p.start), "不许有空份");
+    }
+
+    /// NCX 第一条不指向第 0 页（封面/扉页不进目录，Calibre 合集漫画常见）：这些页必须归进第一份，
+    /// 此前第一份从第一条目录项算起，封面页不属于任何一份、拆分投递后从书里消失。
+    #[test]
+    fn pages_before_first_ncx_entry_go_into_first_piece() {
+        let entries = with_top_level_ncx(make_multivol(&[3, 3, 3], 1000), &[("卷一", 1), ("卷二", 3), ("卷三", 6)]);
+        let pieces = plan_splits(&entries, 4000).unwrap().expect("应该要拆");
+        assert_eq!(pieces.iter().map(|p| (p.title.as_str(), p.start, p.end)).collect::<Vec<_>>(), [("卷一", 0, 3), ("卷二", 3, 6), ("卷三", 6, 9)]);
+        let piece = build_piece(&entries, pieces[0].start, pieces[0].end, &pieces[0].title, "x").unwrap();
+        let imgs = crate::epubzip::read_entries(&piece).unwrap().into_iter().filter(|e| e.name.starts_with("OEBPS/images/")).count();
+        assert_eq!(imgs, 3, "第 0 页（封面）的图也在第一份里");
+    }
+
+    /// `<img src>` 是百分号编码的文件名（中文/空格）：要解码后再对 zip 条目名，否则图取不到、整页被当"没有可用页面"丢掉。
+    #[test]
+    fn percent_encoded_img_src_resolves_to_zip_entry() {
+        assert_eq!(imgs_referenced(r#"<img src="../images/%E5%9B%BE%201.jpg"/>"#, "text"), ["images/图 1.jpg"]);
+        let mut entries = make_multivol(&[2], 1000);
+        for e in entries.iter_mut() {
+            if e.name == "images/0000.jpg" {
+                e.name = "images/封面 0.jpg".into();
+            } else if e.name == "text/p0000.html" {
+                e.data = br#"<html><body><img src="../images/%E5%B0%81%E9%9D%A2%200.jpg"/></body></html>"#.to_vec();
+            }
+        }
+        let opf = parse_opf(&entries).unwrap();
+        assert_eq!(range_bytes_sized(&entries, &opf.spine, 0, 1, &|e: &Entry| e.data.len() as u64), entries[0].data.len() as u64 + 1000, "图片体积要算进去");
+        let piece = build_piece(&entries, 0, 2, "卷", "x").unwrap();
+        let imgs = crate::epubzip::read_entries(&piece).unwrap().into_iter().filter(|e| e.name.starts_with("OEBPS/images/")).count();
+        assert_eq!(imgs, 2);
     }
 
     #[test]
