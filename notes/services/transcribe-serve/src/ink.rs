@@ -48,10 +48,8 @@ impl EntryStore for InkHttp {
     }
     fn post_draft(&self, uuid: &str, id: &str, draft: &Draft, marker: Option<Marker>) -> Result<(), String> {
         let mut body = serde_json::json!({"draft": draft});
-        match marker {
-            Some(Marker::Style(s)) => body["style"] = serde_json::to_value(s).unwrap_or_default(),
-            Some(Marker::Subhead(name)) => body["subheadHint"] = serde_json::Value::String(name),
-            None => {}
+        if let Some(Marker::Style(s)) = marker {
+            body["style"] = serde_json::to_value(s).unwrap_or_default();
         }
         self.0.post_json(&format!("/books/{}/entries/{}", enc(uuid), enc(id)), &body)
     }

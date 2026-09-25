@@ -10,6 +10,7 @@ mod auth;
 mod batch;
 mod budget;
 mod config;
+mod device;
 mod enhance;
 mod events;
 mod manage;
@@ -110,6 +111,7 @@ fn main() {
     let paths = Arc::new(paths);
     let hub = Arc::new(events::Hub::spawn(paths.clone())); // 先建总线：batch/budget 的进度事件要发到它
     batch::resume(&paths); // 读回上次没跑完的批量队列继续跑（网关重启/部署新版本不丢）
+    device::start(); // 后台只算一次 /usr/bin/xochitl 的 sha256（OTA 横幅的固件判据），不轮询
     let mut router = Router::new()
         .get("/", |_| Ok(Reply::html(ui::page())))
         .get("/ca.crt", { let d = tls_dir.clone(); move |_| Ok(match rmsvc_core::tls::ca_pem(&d) {
@@ -153,6 +155,11 @@ fn main() {
         .put("/api/enhance/qol", bind(&paths, enhance::set_qol))
         .get("/api/enhance/battop/summary", bind(&paths, enhance::battop_summary))
         .post("/api/enhance/battop/{action}", bind(&paths, |p, r| { let action = r.param("action").to_string(); enhance::battop_toggle(p, &action) }))
+        // 设备健康 / OTA 横幅 / 遗留清理（2026-09-25，见 device/mod.rs）：只读采集按需触发，不轮询。
+        .get("/api/device/health", bind(&paths, device::health))
+        .get("/api/device/ota", bind(&paths, device::ota_status))
+        .get("/api/device/cleanup", bind(&paths, device::cleanup_list))
+        .post("/api/device/cleanup/delete", bind(&paths, device::cleanup_delete))
         // 并发/内存预算闸门的排队/处理状态（2026-09-19 用户反馈驱动，见 budget.rs::State 文档
         // 注释）：跟 /api/manage、/api/enhance/* 一样是网关自身固定能力。GET 给任何会话（含关掉浏览器重开）看真实排队/处理状态；POST cancel
         // 只对还在排队（没真正拿到名额开始跑）的书名生效，见 budget::Budget::cancel 文档。

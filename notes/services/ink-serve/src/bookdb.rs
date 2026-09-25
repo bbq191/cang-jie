@@ -46,7 +46,7 @@ impl BookDb {
         BookDb { dir, lock: Mutex::new(()), cache: Mutex::new(HashMap::new()) }
     }
     fn cache(&self) -> MutexGuard<'_, Cache> {
-        self.cache.lock().unwrap_or_else(|e| e.into_inner())
+        rmsvc_core::sync::lock(&self.cache)
     }
     pub fn dir(&self) -> &Path {
         &self.dir
@@ -125,7 +125,7 @@ impl BookDb {
     /// 读—改—写（进程内串行化）。书不存在时以 `seed()` 起。
     pub fn update<T>(&self, uuid: &str, seed: impl FnOnce() -> Book, f: impl FnOnce(&mut Book) -> T) -> Result<T, String> {
         self.path(uuid)?; // 先验 key：非法 uuid 不跑 f、不落盘
-        let _g = self.lock.lock().unwrap_or_else(|e| e.into_inner());
+        let _g = rmsvc_core::sync::lock(&self.lock);
         let mut book = self.read(uuid)?.map(|b| (*b).clone()).unwrap_or_else(seed);
         let out = f(&mut book);
         self.save(book)?;
@@ -139,7 +139,7 @@ impl BookDb {
         if self.path(uuid).is_err() {
             return Ok(None);
         }
-        let _g = self.lock.lock().unwrap_or_else(|e| e.into_inner());
+        let _g = rmsvc_core::sync::lock(&self.lock);
         let Some(book) = self.read(uuid)? else { return Ok(None) };
         let mut book = (*book).clone();
         let out = f(&mut book);

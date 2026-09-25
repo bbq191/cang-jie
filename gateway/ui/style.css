@@ -66,6 +66,8 @@ progress::-webkit-progress-bar{background:var(--surface2)}progress::-webkit-prog
 .list li{display:flex;justify-content:space-between;gap:1em;align-items:center;padding:.5em .1em;border-bottom:1px solid var(--line2)}
 /* 名字太长放不下时，右侧的大小/徽章/按钮整组换到下一行靠右，不再被挤成一条竖排；超长不断词的文件名就地折行 */
 .list li{flex-wrap:wrap}.list li>span:first-child{min-width:0;overflow-wrap:anywhere}.list li>span:last-child{margin-left:auto}
+/* 上下排列的列表行（设备健康·服务）：说明另起一行左对齐；.nw 让"7.60 s"这类数字和单位不被拆开 */
+.list li.stack{display:block}.list li.stack>span{display:block;margin-left:0}.list li.stack>span+span{margin-top:.2em}.nw{white-space:nowrap}
 /* 母版库列表书多时很长（2026-09-19 用户反馈）——单独收紧行内边距，不动全站共用的 .list（笔记/
    其它列表沿用原样，只有这里书多到需要专门收紧）。 */
 .small{font-size:.83em;color:var(--mute)}
@@ -152,6 +154,8 @@ dl.help dd{margin:.2em 0 .2em;color:var(--mute);font-size:.9em;line-height:1.65}
 .confirm-box{background:var(--surface);color:var(--fg);border:1px solid var(--line);border-radius:.9em;box-shadow:var(--shadow);max-width:26em;width:100%;padding:1.2em}
 .confirm-msg{font-size:.95em;line-height:1.6;white-space:pre-wrap;word-break:break-word}
 .confirm-actions{display:flex;justify-content:flex-end;gap:.5em;margin-top:1em}
+.choice-opts{display:flex;flex-wrap:wrap;gap:.5em;margin-top:.9em}
+.choice-note{margin-top:.8em;line-height:1.5}
 .confirm-input{width:100%;box-sizing:border-box;margin-top:.8em;font:inherit;padding:.45em .6em;border:1px solid var(--line);border-radius:.5em;background:var(--bg);color:var(--fg)}
 .stg-orig summary{cursor:pointer;font-weight:600}
 .stg-orig .stg-list{margin-top:.5em}
@@ -203,7 +207,7 @@ dl.help dd{margin:.2em 0 .2em;color:var(--mute);font-size:.9em;line-height:1.65}
 .stgbar-sub .btn-bad{grid-column:-2/-1}
 .stgbar-btns .cnt{font-size:.78em;line-height:1;padding:.18em .45em;border-radius:1em;background:color-mix(in srgb,currentColor 14%,transparent);font-weight:600;flex:0 0 auto}
 @media(max-width:34em){.stgbar-btns .lbl-long{display:none}.stgbar-btns .btn{font-size:.88em}.stgbar-btns .cnt{padding:.15em .35em}}
-@media(max-width:22.5em){.stgbar-btns .btn{font-size:.8em}}
+@media(max-width:22.5em){.stgbar-btns .btn{font-size:.8em}.stgbar-btns.cols4 .btn{font-size:.74em;padding:0 .1em}}
 a.btn{text-decoration:none;box-sizing:border-box}
 /* 页头在手机窄屏上被挤成竖排（"秘密花园"一字一行）：logo 不换行、主机名/次要链接收起来 */
 header .logo{white-space:nowrap}
@@ -227,6 +231,12 @@ header .links{white-space:nowrap}
 .nsearch{list-style:none;margin:.3em 0 0;padding:0}
 .nsearch li{padding:.55em .2em;border-top:1px solid var(--line2);cursor:pointer;line-height:1.5;word-break:break-word}
 .nsearch li:hover{background:var(--surface2)}
+/* 「管理 → 设备健康」（2026-09-25）：上次开机日志 / 恢复命令的等宽块自己横向滚动、不撑宽页面；OTA 横幅在标签栏下面、跟 main 同宽。 */
+.hlog{max-height:24em;overflow-y:auto;font-size:.78em;line-height:1.45;background:var(--surface2);border-radius:.5em;padding:.6em .7em;margin:.4em 0;overflow-x:auto;white-space:pre-wrap;overflow-wrap:anywhere;max-width:100%}
+.otabanner{max-width:48em;margin:.8em auto 0;padding:.8em 1em;border:1px solid color-mix(in srgb,var(--warn) 60%,var(--line));background:color-mix(in srgb,var(--warn) 10%,var(--surface));border-radius:.9em;font-size:.9em;overflow-wrap:anywhere}
+.otabanner ul{margin:.4em 0;padding-left:1.2em}.otabanner p{margin:.4em 0}
+.otabanner .btn.x{float:right;margin:-.3em -.4em 0 .5em}
+@media(max-width:34em){.otabanner{margin:.6em .8em 0}}
 /* 触屏上的可点区域（2026-09-24 截图走查量出来按钮 32px、页头链接 29px、开关复选框 13px）：粗指针设备统一撑到
    40px 左右；只撑热区不放大字号，桌面鼠标不受影响。 */
 @media (pointer:coarse){

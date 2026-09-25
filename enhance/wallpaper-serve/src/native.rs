@@ -1,7 +1,7 @@
 //! 原生休眠屏：xochitl.conf `[General] SleepScreenPath=<current.png>`（3.28 隐藏键，书架白皮书 §03w）。
 //! 2026-09-05 真机：xochitl 把该图满屏画成休眠屏、插画卡自动隐藏、**每次休眠重读文件**——所以键只写一次、
 //! 永远指向 `current.png`，换图仍是原地覆盖 current.png（wake.rs：xochitl 休眠读完即轮换），零 `/usr` 写入、零 bind-mount。
-//! 键写进去后要 xochitl 重启一次（`systemctl restart xochitl`）才生效；本模块记住"写键时的 xochitl PID"，PID 变了即视为已生效。
+//! 键写进去后要 xochitl 重新启动一次才生效（2026-09-25 起统一靠整机重启）；本模块记住"写键时的 xochitl PID"，PID 变了即视为已生效。
 use rmsvc_core::paths::Paths;
 use rmsvc_core::xochitl_conf::{self, SLEEP_SCREEN_KEY};
 use std::path::{Path, PathBuf};
@@ -30,7 +30,7 @@ impl Native {
     pub fn enable(&self) -> Result<bool, String> {
         let changed = xochitl_conf::set(&self.conf, SLEEP_SCREEN_KEY, Some(&self.target_str()))?;
         if changed {
-            *self.written_under_pid.lock().unwrap_or_else(|e| e.into_inner()) = Some(xochitl_pid().unwrap_or(0));
+            *rmsvc_core::sync::lock(&self.written_under_pid) = Some(xochitl_pid().unwrap_or(0));
         }
         Ok(changed)
     }
@@ -38,13 +38,13 @@ impl Native {
     pub fn disable(&self) -> Result<bool, String> {
         let changed = xochitl_conf::set(&self.conf, SLEEP_SCREEN_KEY, None)?;
         if changed {
-            *self.written_under_pid.lock().unwrap_or_else(|e| e.into_inner()) = Some(xochitl_pid().unwrap_or(0));
+            *rmsvc_core::sync::lock(&self.written_under_pid) = Some(xochitl_pid().unwrap_or(0));
         }
         Ok(changed)
     }
     /// 本进程改过键、且 xochitl 自那以后没重启过 → 还没生效。
     pub fn restart_pending(&self) -> bool {
-        match *self.written_under_pid.lock().unwrap_or_else(|e| e.into_inner()) {
+        match *rmsvc_core::sync::lock(&self.written_under_pid) {
             None => false,
             Some(pid) => xochitl_pid().unwrap_or(0) == pid,
         }

@@ -51,7 +51,7 @@ impl State {
     }
     /// 跑一轮（阻塞拿锁）。没 key → 直接报告不出网。
     fn run(&self, only: Option<Target<'_>>) -> ledger::RunReport {
-        let _g = self.run_lock.lock().unwrap_or_else(|e| e.into_inner());
+        let _g = rmsvc_core::sync::lock(&self.run_lock);
         let cfg = self.cfg();
         let now = rmsvc_core::clock::now_secs();
         let report = match self.vision(&cfg) {

@@ -100,7 +100,7 @@ impl Scanner {
     }
 
     pub fn scan(&self, proc_root: &Path, qrr_dir: &Path) -> Loaded {
-        let mut cache = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        let mut cache = rmsvc_core::sync::lock(&self.0);
         let hit = cache.as_ref().is_some_and(|m| main_xochitl_ticks(proc_root, &m.pid) == Some(m.ticks));
         if !hit {
             *cache = None;

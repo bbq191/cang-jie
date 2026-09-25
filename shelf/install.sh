@@ -283,15 +283,11 @@ else
 fi
 if [ "$QMD_CHANGED" = "1" ]; then
     cj_pending_mark shelf-qmd || true   # 让 packaging/deploy-xovi-apply.sh 知道有 qmd 待生效
-    # ⚠ qmd 只落盘，要 xochitl 重启才注入。怎么重启取决于 xovi 是否已在运行的 xochitl 里生效：
-    #   已生效 → systemctl restart xochitl（drop-in 保持）；没生效 → xovi/start。
-    #   ⚠ 绝不在已生效时跑 xovi/start：它会让运行中的 xochitl SEGV → 整机自动重启（2026-09-20 真机事故）。
-    #   本脚本不自动重启（会打断阅读）；整包安装由 packaging/deploy-xovi-apply.sh 统一重启一次并先提示。
-    if cj_xochitl_has_xovi; then
-        echo "-- ⚠ qmd 生效需重启 xochitl（会打断阅读）：xovi 已生效 → 请 systemctl restart xochitl（不要 xovi/start）"
-    else
-        echo "-- ⚠ qmd 生效需重启 xochitl（会打断阅读）：xochitl 里还没有 xovi → 请 $HOME_DIR/xovi/start"
-    fi
+    # ⚠ qmd 只落盘，要 xochitl 重新启动才注入。2026-09-25 起统一靠整机重启生效（packaging/deploy-xovi-apply.sh，
+    #   内部 devlib.sh 的 cj_xochitl_apply）：单独 restart xochitl 有概率在它退出时崩溃并触发整机重启（见 devlib.sh 头注 H3）。
+    #   ⚠ 绝不在 xovi 已生效时跑 xovi/start：它会让运行中的 xochitl SEGV → 整机自动重启（2026-09-20 真机事故）。
+    #   本脚本不自动重启（会打断阅读）。
+    echo "-- ⚠ qmd 生效需整机重启（会打断阅读）：电脑上跑 packaging/deploy-xovi-apply.sh <设备>，或在设备上 reboot"
 fi
 
 # ── 3d. xovi 持久化诊断（不引用/不安装外层单元——那是 xovi 层的事）──

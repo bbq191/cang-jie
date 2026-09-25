@@ -38,7 +38,7 @@
 | 代理应答流式转发 | 200 且带长度，又是下载（带 `Content-Disposition`）或 > 256KB → 边读边发；其余读完再回 | `proxy.rs::STREAM_MIN_BYTES` |
 | systemd | `CPUWeight=20`、`MemoryMax=192M`、`Nice=5` | `systemd/gateway.service` |
 | 测试 | Rust 55 个（`cargo test`）；前端 2 个 node 测试文件共 6 项 + 1 个手动跑的浏览器冒烟（`ui/test/`） | 2026-09-24 实跑 |
-| 语言包 | `zh-CN.json` / `en-US.json` 各 504 个 key，单测钉住两份一致 | `ui.rs` |
+| 语言包 | `zh-CN.json` / `en-US.json` 各 570 个 key（09-25），单测钉住两份一致 | `ui.rs` |
 
 **真机验证状态**
 
@@ -112,7 +112,7 @@
 - **路由优先级**：基座的 `Router` 按“最具体优先”分发（字面段多的胜、精确匹配胜尾部通配）。所以 `/api/batch`、`/api/enhance/...` 这些网关自有路由不会被 `/api/{svc}/*` 代理通配抢走，跟注册顺序无关（09-20 起；此前靠“先注册先匹配”的纪律。`main.rs` 里的注释已同步更正）。
 - **转发**：`/api/<seg>/<rest>` → 剥掉 `<seg>` → `http://127.0.0.1:<端口>/<rest>`，查询串原样带上。后端直连（SSH 调试）和经网关走的是同一套路由。
 - **出错**：seg 不认识 → 404“未知服务”；服务没起 → 404“`<服务>` 未安装或未运行”（网页据 `/api/services` 隐藏对应 tab）；后端连不上 → 502。
-- **请求体**：边读边转发（上传大文件不占网关内存）。只有闸门拦的三个 POST 会先读一次小 JSON（上限 1MB）拿书名，再原样转发。
+- **请求体**：边读边转发（上传大文件不占网关内存）。只有闸门拦的四个 POST 会先读一次小 JSON（上限 1MB）拿书名，再原样转发。
 - **响应体**（规则只有一条：**有长度的大应答边读边发，其余读完再回**）：
   - 状态 200、后端给了 `Content-Length`，并且是下载（带 `Content-Disposition`：母版库原件、导出等，可达上百 MB）或体积超过 256KB（壁纸原图、裁图等）→ **按定长边读边发**，浏览器能显示下载进度。host 实测代理一个 60MB 应答，网关峰值内存 62.4MB → 5.0MB，输出逐字节一致。
   - 其余（JSON 等小应答、错误应答、**没有长度的应答**）→ 读完再回。
@@ -147,12 +147,12 @@
 
 ![并发/内存预算闸门](../../docs/diagrams/budget-gate.svg)
 
-- **拦哪些**：只拦三个 POST——`book-serve` 的 `staging/optimize`（优化）、`staging/deliver`（加入 xochitl）和 `koreader-serve` 的 `books/adopt`（加入 KOReader）。其余请求（包括大文件上传）照常纯流式转发。
+- **拦哪些**：只拦四个 POST——`book-serve` 的 `staging/optimize`（优化）、`staging/deliver`（加入 xochitl）、`staging/fetch-article`（抓网文，**只在 `optimize:true` 勾了同步优化时**，09-25 补）和 `koreader-serve` 的 `books/adopt`（加入 KOReader）。其余请求（包括大文件上传）照常纯流式转发。抓网文请求时还不知道书名（要抓完才有标题），排队键用 `抓网文 <url>`、固定小档（网文通常几十 KB）；网页的“排队/处理中”计数会把它算进去。
 - **怎么分档**：看母版库里这本书的文件体积。**大于 90MB** 是大档，同时最多 1 本；其余小档，同时最多 3 本。两档各自计数、互不占对方名额（所以最坏是 1 本大的 + 3 本小的同时跑）。90MB 和 book-serve 的 xochitl 上传硬限恰好相同，是巧合，语义不同，不做同步。不做“按字节精算”，因为没有足够数据给出各操作的内存倍率，量化是假精确。
 - **等名额的三种结局**：拿到名额放行；等满 30 分钟超时（503）；被取消（503）。同名书已在排队或处理中 → 直接 **409**（排队表以书名为键，同名并存会互相抹掉记录，第二个还取消不掉）。
 - **跨会话可见、可取消**：`GET /api/budget/status → {pending, active}`；`POST /api/budget/cancel {name}` 只对还在排队的生效，已经在跑的救不回来（如实返回 `cancelled:false`）。状态在网关进程里，关掉浏览器、换设备都看得到（09-19 前这些是标签页里的 JS 状态，关页就丢）。
 - **名额什么时候还**（最容易出错的地方）：
-  - 加入 KOReader 是同步的（复制完才回应），回应返回名额就还。
+  - 加入 KOReader、抓网文是同步的（复制 / 抓取 + 同步优化做完才回应），回应返回名额就还。抓网文的名额在联网抓取期间也占着，比只锁优化那一段略宽，换来不必把同步接口拆成“落地 + 再发一次异步优化”。
   - 优化 / 加入 xochitl 是异步的：book-serve 立刻回“已开始”，真活在后台。网关把名额交给一条监控线程，查 `GET /staging` 直到这本 `busy=false`（或条目已消失，比如 PDF 转 EPUB 改了名）才还，最长 60 分钟。平时靠 book-serve 的事件唤醒，没事件 30 秒兜底查一次。
   - **查询要连续失败 6 次**（每次至多隔 5 秒）才当服务真挂了、放掉名额。09-24 前一次失败就放，而大书优化时 book-serve 正忙、10 秒查询超时最容易撞上，于是第二本大书被提前放进来——闸门在最该起作用的时候失效。
 
@@ -172,8 +172,8 @@
 ### 5.1 怎么打包、怎么组织
 
 - `ui/index.html`、`style.css`、`app.js`、`auth.css` 在编译期 `include_str!` 进二进制，拼成**一个零外链的单文件页面**；格式白名单从 `rmsvc_core::formats` 注入（母版库现在只收 EPUB/PDF），网页 `accept` 和服务端上传门同源。
-- **顶层标签**：传书（入库 / 母版库）· 笔记（浏览 / 整理 / 回收站 / 导入 md〔实验室开关打开才显示〕）· 其他（xochitl 字体 / KOReader / 壁纸，按注册表里有哪些服务动态出现）· 管理（基石与模块 / 模型管理 / 系统增强 / 电池刺客〔battop 在跑才显示〕/ 实验室）。
-- **i18n**：`ui/locales/{zh-CN,en-US}.json` 各 504 个 key，`GET /ui/locales/{lang}` 下发，不认识的语言落中文。后端直接吐给前端的字符串（如 `MODULES.label`）绕过了翻译管线，前端优先查 `manage.modules.label.<seg>`，语言包里没有才用后端的中文（注意 `T()` 缺 key 时返回 key 本身，不能写成 `T(k)||兜底`，09-24 修过这个永远不生效的兜底）。
+- **顶层标签**：传书（入库 / 母版库）· 笔记（浏览 / 整理 / 回收站 / 导入 md〔实验室开关打开才显示〕）· 其他（xochitl 字体 / KOReader / 壁纸，按注册表里有哪些服务动态出现）· 管理（基石与模块 / 设备健康〔09-25〕/ 模型管理 / 系统增强 / 电池刺客〔battop 在跑才显示〕/ 实验室）。
+- **i18n**：`ui/locales/{zh-CN,en-US}.json` 各 570 个 key（09-25），`GET /ui/locales/{lang}` 下发，不认识的语言落中文。后端直接吐给前端的字符串（如 `MODULES.label`）绕过了翻译管线，前端优先查 `manage.modules.label.<seg>`，语言包里没有才用后端的中文（注意 `T()` 缺 key 时返回 key 本身，不能写成 `T(k)||兜底`，09-24 修过这个永远不生效的兜底）。
 - **安全**：外部数据（文件名、书名、转写、AI 回答、服务端错误）插入 `innerHTML` 前统一经 `esc()` 转义（09-20 修存储型 XSS）。
 - **什么时候取数**（09-24 第三轮审计，只在 host 验证）：各 tab **第一次切过去才渲染**（渲染本身取一次数据），之后切回来只刷新；打开页面的请求从 33 个降到 7 个，逛完四个 tab 从 69 降到 35。管理页一次刷新并行取三个接口，`/api/enhance/status` 只取一次。事件怎么分派到各 tab 见下图和 §03。
 
@@ -219,6 +219,50 @@
 - **这个接口很常被调**（管理页每次刷新、每个 manage 事件、笔记页每次刷新），所以 09-24 第三轮审计给它做了缓存（只在 host 验证）：`reading-qol.json` 一次请求只读一次（原来六个开关各读一遍）；xochitl 扩展扫描按 **(pid, 进程启动时刻)** 缓存——同一个 xochitl 进程只全量扫一次 `/proc` 和它的 `maps`，之后每次只读一次 `/proc/<pid>/stat` 核对还是不是同一个进程（host 合成数据 253µs → 1.7µs）。启动不到 30 秒的 xochitl 不缓存，因为 xovi 还在逐个加载扩展、映射可能不全；qmd 状态看的是文件修改时间，照旧每次现算。
 - **battop 的边界**：battop 已改成常驻进程，把“每次启动都做一次 cgroup 迁移”从每天 144 次降到“用户手点几次”；但每次 `systemctl start` 仍是同类操作，网页没做防连点，短时间反复启停理论上会复现旧事故的触发条件（事故见 `enhance/battop/FINDINGS.md`）。`systemctl is-active` 结果缓存 30 秒（09-24 前 5 秒；网页启停会主动清缓存，只有 battop 自己崩掉时网页最多晚 30 秒显示“已停”）。
 
+## 06b｜设备健康、OTA 横幅与遗留清理（`src/device/`，2026-09-25）
+
+跟 §06 一样是网关自身固定能力。**全部只在 host 上验证过（单元测试 + 无头浏览器截图），没有上真机。**
+
+**页面结构**：「管理 → 设备健康」顶部一张卡（标题、刷新按钮、采集时刻），下面分五个二级 tab（同日用户反馈整页太长后拆分，复用 `subtabs()`）：**概览**（开机时长、xochitl、xovi、`/home` 空间、固件、OTA 判定——与页头横幅同一接口，横幅关掉后这里仍可看）/ **服务**（各单元状态、重启次数、内存、启动耗时）/ **扩展**（映射的扩展、`(deleted)`、待换入区）/ **日志**（上次开机 journal 尾部，拿不到时说明原因）/ **清理**（遗留文件、书库同名副本）。进页或刷新时一次取 `health`+`ota` 分发给前四个 tab，切 tab 不重取；`cleanup` 是单独接口，只在清理 tab 在前台时取，否则等第一次切过去。上次停留的二级 tab 记在 `localStorage`（`shelf.healthSub`）。
+
+| 接口 | 作用 |
+|---|---|
+| `GET /api/device/health[?fresh=1]` | 「管理 → 设备健康」卡片的数据；结果缓存 15 秒，刷新按钮带 `fresh=1` 现采 |
+| `GET /api/device/ota[?fresh=1]` | 页头横幅：`{needsReinstall, reasons, missingUnits, recovery, firmware}`；缓存 30 秒 |
+| `GET /api/device/cleanup` | 可清理的遗留文件 + xochitl 书库里的 EPUB/PDF（只读） |
+| `POST /api/device/cleanup/delete {area, names}` | 逐个删除遗留文件，逐项回报成败 |
+
+**设备健康（`health.rs`）**：只在用户切到这个子标签、或点「刷新」时采集，不跟管理页的 SSE 刷新走，也没有任何定时器。一次采集只 fork **两个**子进程——一个 `systemctl show -p … <全部单元>`（xochitl、`xovi-reenable`、gateway 加 `MODULES` 里的 8 个服务），一个 `journalctl -b -1`——其余都是读 `/proc` 和 `stat`：
+
+- 开机时长（`/proc/uptime`）；各单元 `ActiveState`/`NRestarts`/`MainPID`，MainPID 的 `VmRSS`/`VmHWM`（`/proc/<pid>/status`）；
+- 最近一次启动的时刻与耗时：`ActiveEnterTimestampMonotonic`（开机后第几秒进入运行）减 `InactiveExitTimestampMonotonic`（含 `ExecStartPre`，oneshot 含整个 `ExecStart`）。服务开机后被重启过，显示的是重启那次；
+- xochitl 主进程（取 systemd 的 MainPID）的 `maps`：有没有 `xovi.so`、映射着哪些 `extensions.d/*.so`，以及行尾带 ` (deleted)` 的扩展——换了文件还没重启 xochitl。这里**每次现读 maps**，不用 §06 那份按进程缓存的扫描结果，因为 `(deleted)` 会在同一个进程的生命期里变化；
+- 待换入区 `~/.cangjie-stage/so-pending/` 里的文件（与 `packaging/devlib.sh` 的 `CJ_SO_PENDING_DIR` 缺省同一路径）；
+- 上次开机的最后 20 行 journal（`journalctl -b -1 -n 20 --no-pager`，超时 10 秒）：设备冻死或意外重启后，这是设备自己能拿到的线索；journal 没持久化时拿不到，整块不显示。飞行记录仪日志在宿主机上、不在设备上，网关读不到，所以不看它；
+- `/home` 剩余/总空间（`statvfs`，不 fork `df`）；固件哈希（见下）。
+
+**OTA 横幅（`ota.rs`）**：OTA 冲掉 `/usr/lib/systemd/system/` 下我们的单元和 `/etc` 里的 xovi 加载配置，`/home` 保留，所以"网关能打开"不代表装好了（二进制在 `/home`，可能是被手动拉起的）。
+
+![横幅判据](diagrams/ota-check.svg)
+
+| 判据 | 怎么查 | 触发横幅 |
+|---|---|---|
+| 单元文件缺失 | `gateway.service`、`shelf.target`，加上二进制已装的每个服务的单元，在 `/usr/lib/systemd/system/` 里不在 | 是 |
+| xovi 未生效 | xochitl 主进程在跑、`maps` 里没有 `xovi.so`（复用 §06 的扫描缓存）；xochitl 没在跑就不下结论 | 是 |
+| 固件不在白名单 | `/usr/bin/xochitl` 的 sha256 不在构建时 `include_str!` 进来的 `packaging/firmware-allowlist.txt` | 否，只在横幅已显示时附一条"安装要加 `--force`" |
+
+- **固件哈希单独不触发**：用 `install-all.sh --force` 装在新固件上之后，新哈希只追加进 host 的 `firmware-allowlist.local.txt`，网关构建时看不到；这时再弹横幅就是永久误报。
+- **什么时候算**：哈希由启动后的后台线程**只算一次**（先等 30 秒避开开机高峰，64KB 缓冲流式读）；OTA 一定伴随整机重启，网关随之重启，不用再算。另两条是几次 `stat` 加已缓存的扫描，打开页面时现查（缓存 30 秒）。任务原本要求"启动时算一次"，没照做的原因：OTA 后照横幅重装，`install-all.sh` 只重启有变化的服务，网关多半不重启，启动时定死的结果会让恢复完横幅还挂着。
+- **恢复命令**（按 `docs/INSTALL.md`「固件升级（OTA）之后」）：缺单元 → 设备旁 `xovi/rebuild_hashtable`，电脑上 `cd packaging && sh install-all.sh <设备>`（固件也不在白名单时带 `--force`）；只是 xovi 没生效 → `sh deploy-xovi-apply.sh <设备>`，由它判断该 `xovi/start` 还是 `systemctl restart xochitl`（xovi 已生效时跑 `xovi/start` 会让整机重启，所以横幅不直接给这条命令）。
+- 页面打开时取一次，可以点 × 在本次会话里关掉；不轮询。
+- **已知误报面**：dm-verity 激活、单元从没装进 `/usr` 的设备（`deploy-usr-unit.sh` 会跳过写入）会一直显示"缺单元"。在 host 上跑网关也会显示（没有这些单元）。
+
+**遗留清理（`cleanup.rs`）**：
+
+- **`~/.local/state/shelf/books/done/`**：09-03 早期直投流程的遗留目录。全仓 grep 过 `rs/sh/qmd/js/py/lua`，没有任何代码读写 `books/done`。网关列出里面的普通文件（不递归，符号链接和子目录不列），用户勾选、二次确认后逐个删除。
+- **删除的安全规则**（仓库出过清理时 `rm -rf` 掉用户漫画目录的事故）：前端只能传清理区代码（`books-done`）和文件名，不能传路径；名字必须是单段（拒绝空、`.`、`..`、含 `/` `\` NUL）；清理目录本身不能是符号链接；目标不能是符号链接、必须是普通文件；两边 `canonicalize` 后目标的父目录必须恰好是清理目录；只用 `remove_file`，从不整目录删。测试覆盖了 `..`、`../兄弟文件`、子目录里的文件、绝对路径、指向外面的符号链接、被换成符号链接的清理目录、未知清理区，全部拒绝且文件原样还在；删除类测试把 HOME 和全部 XDG 变量指到临时目录，并断言真实 HOME 下同名目录前后一致。
+- **xochitl 书库里的旧版重复副本**（书架白皮书真机待办第 8 条）：以前按卷拆分投进去的分卷，书名来自原书目录（如"第01卷"），跟新版整本的书名对不上，**没有精确的识别规则**，所以不自动挑、不预先勾。网关只读列出书库里活的 EPUB/PDF（手写笔记本不列），标出"同名 ×N"供人工核对；勾选后前端逐本调 book-serve 已有的 `POST /api/books/trash/add {uuid,name}`，走 `shelf-trash-agent.qmd` 里 xochitl 自己的 `selectionMoveToTrash`（进回收站、可恢复）。**网关不直接删、不改 xochitl 目录里的任何文件**。回收站代理没载入 xochitl 或 xochitl 没在跑时，页面会提示"排进队列要等它生效"。
+
 ## 07｜构建、部署与 systemd
 
 - **依赖**：只依赖顶层 `../rmsvc-core`；不依赖 `shelf/crates/bookconv`、`notes/` 的任何 crate；不在任何 workspace 里，是独立 Cargo 项目，自带一份 `.cargo/config.toml`（交叉编译的 CC/AR 覆盖，原因见基座白皮书 §06）。
@@ -252,11 +296,13 @@
 - **闸门核心仍未真机验证**：两本 >90MB 的书同时点优化，看是否真的串行、`VmHWM` 不叠加。09-24 修掉了“查询一失败就提前放行”，但只有单元测试覆盖。
 - 批量“加入 xochitl / 加入 KOReader”在设备上跑一遍。
 - 09-24 的安全改动在真实手机/电脑上走一遍：按 IP 限速、`next` 校验、断网提示；确认每台终端已装新 CA 并删掉旧 CA，之后删设备上的 `tls/*.bak-*`。
-- 母版库新界面的真实触屏、暗色模式。（xochitl“新建文件夹”：09-20 验证表记为未验证，另有 09-19 记录称已真机端到端通，两者冲突，以书架白皮书为准。）
+- 母版库新界面的真实触屏、暗色模式。（xochitl“新建文件夹”已真机端到端通过：书架白皮书 §03be 记 09-19 真机 8 秒内建出、测试文档 `parent` 指向它，09-24 又验证了 290 秒长轮询。）
 - 09-24 第三轮审计的改动（代理大应答流式、`/api/enhance/status` 缓存、改密码锁外算、前端懒加载与界面修复）部署到设备后，核一次：下载大原件时网关 `VmHWM`、管理页“已加载”徽章在 xochitl 重启前后是否正确刷新、真实手机上的触屏热区与英文页头吸顶。
 - Basic 认证每个请求都跑一次 60 万轮 PBKDF2（PC CLI 已退役，影响小，没动）。
 - ~~网关直面局域网的 tiny_http 没有读超时~~：09-24 起 rmsvc-core 给每条连接设 60 秒读空闲超时（见基座白皮书 http 一节），半开/慢连接不再永久占线程。
 - 命名遗留要不要处理，没有排期。
+- 09-25 新增的「设备健康」、OTA 横幅、清理遗留：已部署，页面没用真实登录看过、清理没真机点过。采集依赖的设备格式 09-25 只读核过（多单元 `systemctl show` 按空行分块、以 `Id` 为键；journal 持久化、`-b -1` 可读；`/usr/bin/xochitl` sha256 0.54 秒；书库 `createdTime` 是字符串毫秒）。
+- **09-25 真实登录走查**（无头 Chromium 登录真机 `https://192.168.1.22`，只点一级/二级/三级标签、不点其它按钮；中文亮/暗 390、中文 1280、英文 390 四组共 108 屏）：页面无横向溢出、无元素超出屏幕右缘、无控制台报错、无失败请求。按截图修了设备健康页四处显示：固件徽章只显示版本号（完整说明放悬停提示）、服务说明另起一行左对齐且数字与单位不拆行、没有意义的"耗时 0.00 s"不显示、两分钟以上的时长改用"12 分钟"读法；扩展/清理两组为空时收起说明与禁用按钮。**仍未覆盖**：真实触屏手势、会改数据的按钮（按规定只读）、四层以下的标签。
 
 ## 附｜来历
 

@@ -34,15 +34,15 @@ pub struct Wake {
 
 impl Wake {
     pub fn generation(&self) -> u64 {
-        *self.generation.lock().unwrap_or_else(|e| e.into_inner())
+        *rmsvc_core::sync::lock(&self.generation)
     }
     pub fn bump(&self) {
-        *self.generation.lock().unwrap_or_else(|e| e.into_inner()) += 1;
+        *rmsvc_core::sync::lock(&self.generation) += 1;
         self.cv.notify_all();
     }
     /// 等到代数不再是 `seen` 或 `timeout` 到；返回当前代数。
     pub fn wait_change(&self, seen: u64, timeout: Duration) -> u64 {
-        let g = self.generation.lock().unwrap_or_else(|e| e.into_inner());
+        let g = rmsvc_core::sync::lock(&self.generation);
         let (g, _) = self.cv.wait_timeout_while(g, timeout, |g| *g == seen).unwrap_or_else(|e| e.into_inner());
         *g
     }

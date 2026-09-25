@@ -153,7 +153,7 @@ impl FontStore {
         let md = std::fs::metadata(path).ok();
         let (len, mtime) = (md.as_ref().map(|m| m.len()).unwrap_or(0), md.and_then(|m| m.modified().ok()));
         {
-            let cache = self.probes.lock().unwrap_or_else(|e| e.into_inner());
+            let cache = rmsvc_core::sync::lock(&self.probes);
             if let Some(p) = cache.get(name) {
                 if p.len == len && p.mtime == mtime && mtime.is_some() {
                     return (p.families.clone(), p.pct);
@@ -161,7 +161,7 @@ impl FontStore {
             }
         }
         let (families, pct) = self.probe_file(path); // 可能 fork+读大文件，不持锁
-        self.probes.lock().unwrap_or_else(|e| e.into_inner()).insert(name.to_string(), Probe { len, mtime, families: families.clone(), pct });
+        rmsvc_core::sync::lock(&self.probes).insert(name.to_string(), Probe { len, mtime, families: families.clone(), pct });
         (families, pct)
     }
 
@@ -177,7 +177,7 @@ impl FontStore {
         let mut files: Vec<String> = rd.flatten().filter_map(|e| e.file_name().to_str().map(|s| s.to_string())).filter(|n| !n.starts_with('.') && formats::has_ext(n, FONT_EXTS)).collect();
         files.sort();
         // 缓存里去掉已不在目录的文件（删字体后不留脏项）
-        self.probes.lock().unwrap_or_else(|e| e.into_inner()).retain(|k, _| files.binary_search(k).is_ok());
+        rmsvc_core::sync::lock(&self.probes).retain(|k, _| files.binary_search(k).is_ok());
         for f in files {
             let path = self.fonts_dir.join(&f);
             let (fams, pct) = self.probe_cached(&f, &path);

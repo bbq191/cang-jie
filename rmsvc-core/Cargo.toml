@@ -16,6 +16,8 @@ sha2 = "0.11"
 time = "0.3"
 # mDNS 应答器需要 SO_REUSEADDR + 多播接口选择，std UdpSocket 不暴露
 socket2 = { version = "0.5", features = ["all"] }
+# mDNS 监听内核地址变化（netlink 套接字 + poll），socket2 不管 AF_NETLINK 的地址结构。依赖树里本来就有（socket2/inotify 间接引入）。
+libc = "0.2"
 base64 = "0.22"
 ureq = "2"
 serde = { version = "1", features = ["derive"] }

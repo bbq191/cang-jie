@@ -31,10 +31,10 @@ impl Failures {
     }
     /// 同指纹已达上限 → 不再自动试。
     pub fn exhausted(&self, uuid: &str, id: &str, hash: &str, max: u32) -> bool {
-        self.0.lock().unwrap_or_else(|e| e.into_inner()).get(&Self::key(uuid, id)).map(|f| f.hash == hash && f.attempts >= max).unwrap_or(false)
+        rmsvc_core::sync::lock(&self.0).get(&Self::key(uuid, id)).map(|f| f.hash == hash && f.attempts >= max).unwrap_or(false)
     }
     pub fn note(&self, uuid: &str, id: &str, hash: &str, err: &str, at: u64) {
-        let mut m = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        let mut m = rmsvc_core::sync::lock(&self.0);
         let f = m.entry(Self::key(uuid, id)).or_insert_with(|| Failure { book: uuid.into(), id: id.into(), hash: hash.into(), attempts: 0, error: String::new(), at });
         if f.hash != hash {
             f.hash = hash.into();
@@ -45,13 +45,13 @@ impl Failures {
         f.at = at;
     }
     pub fn clear_one(&self, uuid: &str, id: &str) {
-        self.0.lock().unwrap_or_else(|e| e.into_inner()).remove(&Self::key(uuid, id));
+        rmsvc_core::sync::lock(&self.0).remove(&Self::key(uuid, id));
     }
     pub fn clear(&self) {
-        self.0.lock().unwrap_or_else(|e| e.into_inner()).clear();
+        rmsvc_core::sync::lock(&self.0).clear();
     }
     pub fn list(&self) -> Vec<Failure> {
-        let mut v: Vec<Failure> = self.0.lock().unwrap_or_else(|e| e.into_inner()).values().cloned().collect();
+        let mut v: Vec<Failure> = rmsvc_core::sync::lock(&self.0).values().cloned().collect();
         v.sort_by_key(|f| std::cmp::Reverse(f.at));
         v
     }

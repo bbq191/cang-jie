@@ -297,9 +297,11 @@ name = "gateway"
 version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
+ "libc",
  "rmsvc-core",
  "serde",
  "serde_json",
+ "sha2",
  "tempfile",
  "ureq",
 ]
@@ -723,6 +725,7 @@ version = "0.1.0"
 dependencies = [
  "base64 0.22.1",
  "inotify",
+ "libc",
  "pbkdf2",
  "rcgen",
  "serde",

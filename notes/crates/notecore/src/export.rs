@@ -8,7 +8,6 @@
 //! ⚠️ 已知限制（跟 `project.rs` 记的是同一类问题，这次同样不解决）：CommonMark 严格实现下，有序列表
 //! （`Style::Numbered`）条目之间如果夹着摘录/回答的引用块，可能不被认作连续列表、编号从 1 重来——
 //! 真要连续编号，条目间不能有摘录/回答。多数 Markdown 渲染器（含 Obsidian）对这个更宽容，先不处理。
-use crate::hash::{fnv1a, hex};
 use crate::model::{Book, Entry, Status, Style};
 
 /// YAML 双引号字符串字面量（转义反斜杠与双引号；标题/书名可能含冒号、井号等 YAML 特殊字符，
@@ -43,21 +42,7 @@ pub fn chapter_stem(chapter_idx: usize, title: &str) -> String {
 /// 变化"，没变就不重写文件、也不用刷新"已同步"记录——同一套"指纹没变就跳过"的纪律搬到导出这边。
 pub fn fingerprint_chapter(book: &Book, chapter_idx: usize) -> Option<String> {
     let title = book.chapters.get(chapter_idx)?;
-    let entries = live_entries(book, chapter_idx);
-    if entries.is_empty() {
-        return None;
-    }
-    let mut buf = String::new();
-    buf.push_str(title);
-    buf.push('\u{2}');
-    for e in &entries {
-        let text = e.display_text().unwrap_or("");
-        let quote = e.quote.as_ref().map(|q| q.text.as_str()).unwrap_or("");
-        let answer = e.answer.as_ref().map(|a| a.text.as_str()).unwrap_or("");
-        buf.push_str(&format!("{}|{:?}|{}|{}|{}", e.id, e.style, text, quote, answer));
-        buf.push('\u{1}');
-    }
-    Some(hex(fnv1a(buf.as_bytes())))
+    crate::project::fingerprint_entries(title, &live_entries(book, chapter_idx))
 }
 
 fn push_entry_md(out: &mut String, e: &Entry) {
@@ -81,6 +66,15 @@ fn push_entry_md(out: &mut String, e: &Entry) {
         Style::Checkbox => {
             out.push_str(&format!("- [ ] {text}{anchor}\n"));
             "  "
+        }
+        // 标题行不带 `^id` 块锚：Obsidian 的块引用不作用在标题上，锚会被当成标题文字的一部分显示出来。
+        Style::Heading1 => {
+            out.push_str(&format!("## {text}\n"));
+            ""
+        }
+        Style::Heading2 => {
+            out.push_str(&format!("### {text}\n"));
+            ""
         }
     };
     if let Some(q) = &e.quote {
@@ -122,7 +116,15 @@ pub fn export_chapter_md(book: &Book, chapter_idx: usize) -> Option<String> {
     out.push_str("---\n\n");
     out.push_str(&format!("[[{}]]\n\n", book.title));
 
+    let mut cur: Option<&str> = None;
     for e in entries {
+        // 书的小节名变了先出一行 `## 小节名`（跟设备笔记本的 Subheading 1 对应，2026-09-25）
+        if let Some(sh) = crate::project::subhead_of(e) {
+            if cur != Some(sh) {
+                out.push_str(&format!("## {sh}\n\n"));
+                cur = Some(sh);
+            }
+        }
         push_entry_md(&mut out, e);
     }
     Some(out)
@@ -235,6 +237,23 @@ mod tests {
         assert!(md.contains("林肯·莱姆 ^e1\n"), "Body 样式无列表标记，块锚跟在文本后: {md}");
         assert!(md.contains("- 为什么是纽约 ^e2\n"), "Bullet 样式加 - 前缀");
         assert!(md.contains("没归类的一条 ^e3\n"));
+    }
+
+    /// 2026-09-25：小节名变化出 `## 小节名`；条目 ##/### 出对应标题（不带 `^id`）；复选框 `- [ ]`。
+    #[test]
+    fn subheads_and_heading_styles_render_as_markdown_headings() {
+        let mut b = book();
+        b.entries[1].subhead = Some("纽约".into());
+        b.entries[0].subhead = Some("纽约".into());
+        b.entries.push(entry("h1", 0, 3, Style::Heading1, "我的大标题"));
+        b.entries.push(entry("h2", 0, 4, Style::Heading2, "我的小标题"));
+        b.entries.push(entry("c1", 0, 6, Style::Checkbox, "查原文"));
+        let md = export_chapter_md(&b, 0).unwrap();
+        assert_eq!(md.matches("## 纽约\n").count(), 1, "同一小节只出一次：{md}");
+        assert!(md.contains("## 我的大标题\n") && !md.contains("我的大标题 ^h1"), "{md}");
+        assert!(md.contains("### 我的小标题\n"), "{md}");
+        assert!(md.contains("- [ ] 查原文 ^c1"), "{md}");
+        assert!(md.find("## 纽约").unwrap() < md.find("为什么是纽约").unwrap());
     }
 
     #[test]

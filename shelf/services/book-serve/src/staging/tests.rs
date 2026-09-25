@@ -219,6 +219,54 @@ fn spawn_optimize_runs_in_background_and_records_result_then_clears_busy() {
     assert!(oc.message.contains("已优化"), "{}", oc.message);
 }
 
+/// 回归（2026-09-25）：抓网文的「同步优化」占忙锁——优化进行中对这本书的删除/再优化/落库/改名都被拒，
+/// 列表显示忙；优化完忙锁清掉、书能正常删。不勾同步优化的抓取不加锁。
+#[test]
+fn fetch_article_sync_optimize_holds_busy_lock() {
+    let t = tempfile::tempdir().unwrap();
+    let s = staging(&t);
+    let opf = r#"<package version="2.0"><metadata><dc:title>t</dc:title></metadata><manifest><item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="c1"/></spine></package>"#;
+    let epub = mini_epub(&[("content.opf", opf), ("c1.xhtml", "<html><head></head><body><h1>网文</h1><p>正文</p></body></html>")]);
+    let (s2, mkdir) = (s.clone(), Arc::new(empty_mkdir(&t)));
+    let checked = std::cell::Cell::new(0u32);
+    let out = s
+        .land_article("网文.epub", &epub, "网文".into(), true, |_, _| {
+            checked.set(checked.get() + 1);
+            assert!(s2.is_busy("网文.epub"), "同步优化期间应占着忙锁");
+            assert!(s2.remove("网文.epub").unwrap_err().contains("正在处理中"), "优化中不能删");
+            let bus = Arc::new(rmsvc_core::events::EventBus::new());
+            assert!(s2.spawn_optimize("网文.epub", bus.clone()).unwrap_err().contains("正在处理中"), "优化中不能再起一个优化");
+            assert!(s2.spawn_deliver("网文.epub", "", mkdir.clone(), bus).unwrap_err().contains("正在处理中"), "优化中不能落库");
+            assert!(s2.rename("网文.epub", "别名.epub").unwrap_err().contains("正在处理中"), "优化中不能改名");
+            assert!(s2.list().iter().find(|e| e.name == "网文.epub").is_some_and(|e| e.busy), "列表应体现 busy");
+        })
+        .unwrap();
+    assert!(checked.get() > 0, "优化进度回调应被调到（否则上面的断言没跑）");
+    assert_eq!((out.name.as_str(), out.optimized, out.optimize_error.as_deref()), ("网文.epub", true, None));
+    assert!(!s.is_busy("网文.epub"), "同步优化结束后忙锁应清掉");
+    // 优化失败（不是合法 EPUB）也照样清锁、书照样入库
+    let bad = s.land_article("坏.epub", b"not-a-zip", "坏".into(), true, |_, _| {}).unwrap();
+    assert!(!bad.optimized && bad.optimize_error.is_some());
+    assert!(!s.is_busy("坏.epub") && s.has("坏.epub"), "优化失败不留忙锁、不丢已抓到的文章");
+    // 不勾同步优化：只落地，不加锁
+    let plain = s.land_article("网文.epub", &epub, "网文".into(), false, |_, _| unreachable!()).unwrap();
+    assert_eq!((plain.name.as_str(), plain.optimized), ("1_网文.epub", false), "同名不覆盖");
+    assert!(!s.is_busy(&plain.name));
+    s.remove("网文.epub").unwrap();
+}
+
+/// 落名临界区里挑中的名字恰好正被占着（如别的书正改名成它）→ 抓网文如实报忙、不落地，不抢别人的锁。
+#[test]
+fn fetch_article_refuses_when_landed_name_is_busy() {
+    let t = tempfile::tempdir().unwrap();
+    let s = staging(&t);
+    assert!(s.try_start_busy("网文.epub"));
+    let err = s.land_article("网文.epub", b"PK", "网文".into(), true, |_, _| {}).unwrap_err();
+    assert!(err.contains("正在处理中"), "{err}");
+    assert!(!s.has("网文.epub"), "没拿到锁就不落地");
+    assert!(s.is_busy("网文.epub"), "别人的忙锁不能被清掉");
+}
+
 #[test]
 fn spawn_optimize_rejects_non_epub_and_missing_file_synchronously() {
     let t = tempfile::tempdir().unwrap();
@@ -1036,4 +1084,142 @@ fn concurrent_landing_of_same_name_never_clobbers() {
     assert_eq!(names.len(), n, "每次落地都拿到不同的名字");
     let contents: std::collections::HashSet<Vec<u8>> = names.iter().map(|nm| std::fs::read(s.dir().join(nm)).unwrap()).collect();
     assert_eq!(contents.len(), n, "没有任何一本被别的覆盖");
+}
+
+/// 带 container.xml 的最小文字书（按文件读 OPF 的 `spine_direction_file` 要靠它找 OPF）。
+fn text_epub_with_container(spine_attrs: &str) -> Vec<u8> {
+    let opf = format!(r#"<package version="3.0"><metadata><dc:title>t</dc:title></metadata><manifest><item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/></manifest><spine{spine_attrs}><itemref idref="c1"/></spine></package>"#);
+    mini_epub(&[
+        ("META-INF/container.xml", r#"<container><rootfiles><rootfile full-path="content.opf"/></rootfiles></container>"#),
+        ("content.opf", &opf),
+        ("c1.xhtml", r#"<html><head></head><body><h1>第一章</h1><p>正文</p></body></html>"#),
+    ])
+}
+
+/// zip 里每个条目的 (名字, 解压后字节)。
+fn zip_entries(path: &Path) -> Vec<(String, Vec<u8>)> {
+    use std::io::Read;
+    let mut z = zip::ZipArchive::new(std::fs::File::open(path).unwrap()).unwrap();
+    (0..z.len())
+        .map(|i| {
+            let mut f = z.by_index(i).unwrap();
+            let mut v = Vec::new();
+            f.read_to_end(&mut v).unwrap();
+            (f.name().to_string(), v)
+        })
+        .collect()
+}
+
+/// 按书阅读方向（2026-09-25）：设置只存边车、列表报"待优化"；未优化的书「优化」时一并写进 OPF；
+/// 已优化的书再改方向只改 OPF（其余条目逐字节不变，不二次重编码）；改回自动不再报待优化。
+#[test]
+fn direction_setting_marks_stale_and_optimize_writes_spine() {
+    use bookconv::direction::{spine_direction_file, PageDirection};
+    let t = tempfile::tempdir().unwrap();
+    let s = staging(&t);
+    s.stage_new("x.epub", &text_epub_with_container("")).unwrap();
+    s.stage_new("p.pdf", b"%PDF").unwrap();
+    let entry = |s: &Staging| s.list().into_iter().find(|e| e.name == "x.epub").unwrap();
+    assert_eq!((entry(&s).direction, entry(&s).direction_stale), ("auto", false));
+    assert!(s.set_direction("p.pdf", Some(PageDirection::Rtl)).is_err(), "只有 EPUB 能设");
+    assert!(s.set_direction("none.epub", Some(PageDirection::Rtl)).is_err());
+
+    let o = s.set_direction("x.epub", Some(PageDirection::Rtl)).unwrap();
+    assert_eq!((o.stale, o.synced, o.sync_error), (true, None, None), "没加入过 xochitl：只存设置");
+    let e = entry(&s);
+    assert_eq!((e.direction, e.direction_stale, e.optimized), ("rtl", true, false));
+
+    // 未优化的书：完整优化，方向一并写进 OPF
+    s.optimize("x.epub", |_, _| {}).unwrap();
+    let p = s.dir().join("x.epub");
+    assert_eq!(spine_direction_file(&p), Some(PageDirection::Rtl));
+    let e = entry(&s);
+    assert_eq!((e.level, e.direction_stale, e.optimized), ("full", false, true), "改完不再待优化");
+
+    // 已完整优化的书改成从左往右：只改 OPF，其余条目逐字节不变
+    let before = zip_entries(&p);
+    s.set_direction("x.epub", Some(PageDirection::Ltr)).unwrap();
+    let e = entry(&s);
+    assert_eq!((e.direction, e.direction_stale, e.optimized, e.level), ("ltr", true, false, "full"));
+    let mut calls = Vec::new();
+    let msg = s.optimize("x.epub", |d, n| calls.push((d, n))).unwrap();
+    assert!(msg.contains("只改了 OPF"), "{msg}");
+    assert_eq!(calls.last(), Some(&(1, 1)), "轻量路径也报进度");
+    let after = zip_entries(&p);
+    assert_eq!(before.len(), after.len());
+    for ((na, da), (nb, db)) in before.iter().zip(&after) {
+        assert_eq!(na, nb, "条目顺序不变");
+        if na != "content.opf" {
+            assert_eq!(da, db, "{na} 不该被重写");
+        }
+    }
+    assert_eq!(spine_direction_file(&p), Some(PageDirection::Ltr));
+    assert!(!bookconv::placeholder::epub_is_rtl(&p));
+    assert!(!s.dir().join(".x.epub.optimizing.tmp").exists(), "不留半成品");
+    let e = entry(&s);
+    assert_eq!((e.direction_stale, e.optimized), (false, true));
+
+    // 改回自动：保留书里现在写的方向，不报待优化
+    assert!(!s.set_direction("x.epub", None).unwrap().stale);
+    assert_eq!((entry(&s).direction, entry(&s).direction_stale), ("auto", false));
+    assert_eq!(sidecar::read(&p).unwrap().direction, None, "自动＝边车里不存");
+}
+
+/// 设"从左往右"而书里没写方向：本来就是从左往右，不报待优化；书里写了 rtl 才报。
+#[test]
+fn direction_ltr_on_unmarked_book_is_not_stale() {
+    use bookconv::direction::PageDirection;
+    let t = tempfile::tempdir().unwrap();
+    let s = staging(&t);
+    s.stage_new("plain.epub", &text_epub_with_container("")).unwrap();
+    s.stage_new("manga.epub", &text_epub_with_container(r#" page-progression-direction="rtl""#)).unwrap();
+    assert!(!s.set_direction("plain.epub", Some(PageDirection::Ltr)).unwrap().stale);
+    assert!(s.set_direction("manga.epub", Some(PageDirection::Ltr)).unwrap().stale);
+    assert!(!s.set_direction("manga.epub", Some(PageDirection::Rtl)).unwrap().stale);
+}
+
+/// 已加入 xochitl 的书（边车有 render.uuid）：设方向时同步手动清单，免重投生效；之后渲染自检认到新 uuid 也按设置同步；
+/// 设成自动的书，渲染自检不碰清单（清单里可能是用户手加的）。
+#[test]
+fn direction_syncs_rtl_override_list_for_delivered_copies() {
+    use bookconv::direction::PageDirection;
+    const U1: &str = "11111111-1111-1111-1111-111111111111";
+    const U2: &str = "22222222-2222-2222-2222-222222222222";
+    const U3: &str = "33333333-3333-3333-3333-333333333333";
+    let t = tempfile::tempdir().unwrap();
+    let list = t.path().join("state/rtl-overrides.json");
+    let rd = Arc::new(crate::reading_direction::ReadingDirection::new(&t.path().join("xochitl"), &list));
+    let s = staging(&t).with_reading_direction(rd.clone());
+    let listed = || -> Vec<String> { std::fs::read(&list).ok().map(|b| serde_json::from_slice(&b).unwrap()).unwrap_or_default() };
+    s.stage_new("manga.epub", &text_epub_with_container("")).unwrap();
+    let rc = |u: &str| RenderCheck { uuid: u.into(), pages: 10, expected: 0, status: "ok".into(), at: 1 };
+    s.set_render("manga.epub", rc(U1)).unwrap();
+    assert!(listed().is_empty(), "自动的书认到 uuid 不碰清单");
+
+    let o = s.set_direction("manga.epub", Some(PageDirection::Rtl)).unwrap();
+    assert_eq!(o.synced.as_deref(), Some(U1));
+    assert_eq!(listed(), vec![U1.to_string()]);
+    assert_eq!(rd.is_rtl(U1), Ok(true), "xochitl 里那份不用重投就按从右往左翻");
+    assert_eq!(s.set_direction("manga.epub", Some(PageDirection::Rtl)).unwrap().synced, None, "已在清单里：没有改动");
+
+    // 重新投递、渲染自检认到新 uuid：按设置加进清单
+    s.set_render("manga.epub", rc(U2)).unwrap();
+    assert_eq!(listed(), vec![U1.to_string(), U2.to_string()]);
+    // 改成从左往右：移出当前这份
+    assert_eq!(s.set_direction("manga.epub", Some(PageDirection::Ltr)).unwrap().synced.as_deref(), Some(U2));
+    assert_eq!(listed(), vec![U1.to_string()]);
+    // 用户手加的 U3，书设成自动后认到它：不动
+    std::fs::write(&list, format!(r#"["{U1}","{U3}"]"#)).unwrap();
+    s.set_direction("manga.epub", None).unwrap();
+    s.set_render("manga.epub", rc(U3)).unwrap();
+    assert_eq!(listed(), vec![U1.to_string(), U3.to_string()]);
+    // 网页上主动点"自动"：移出当前这份
+    assert_eq!(s.set_direction("manga.epub", None).unwrap().synced.as_deref(), Some(U3));
+    assert_eq!(listed(), vec![U1.to_string()]);
+    // 清单坏了：设置照存，报同步失败，不覆盖
+    std::fs::write(&list, "坏").unwrap();
+    let o = s.set_direction("manga.epub", Some(PageDirection::Rtl)).unwrap();
+    assert!(o.sync_error.is_some() && o.synced.is_none());
+    assert_eq!(std::fs::read_to_string(&list).unwrap(), "坏");
+    assert_eq!(sidecar::read(&s.dir().join("manga.epub")).unwrap().direction.as_deref(), Some("rtl"));
 }

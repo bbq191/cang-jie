@@ -325,9 +325,17 @@ impl Staging {
     }
 
     /// 写渲染自检结果到边车（书已从母版库删除 → Err，调用方只记日志）。
+    /// 认到落库 uuid 时顺带按这本书的阅读方向设置同步手动清单（设了方向就不必等重新优化，见 `staging/direction.rs`）。
     pub fn set_render(&self, name: &str, rc: RenderCheck) -> Result<(), String> {
         let p = self.existing(name)?;
-        sidecar::update(&p, |d| d.render = Some(rc))
+        let uuid = rc.uuid.clone();
+        sidecar::update(&p, |d| d.render = Some(rc))?;
+        if !uuid.is_empty() {
+            if let Some(Err(e)) = self.sync_override(&uuid, self.direction_pref(&p), false) {
+                println!("[book-serve] 《{name}》同步阅读方向手动清单失败（不影响投书）: {e}");
+            }
+        }
+        Ok(())
     }
 
     /// 记这份母版库文件是由哪个原始输入处理出来的（CLI push 上传时带 `?srcName=&srcBytes=` 才有，见

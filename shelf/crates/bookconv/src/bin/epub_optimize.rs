@@ -48,7 +48,7 @@ fn main() {
     } else {
         std::path::PathBuf::from(files[1])
     };
-    let rep = match optimize::optimize_epub_file_streaming(std::path::Path::new(files[0]), &out_target, &OptimizeOpts { wash, footnote, comic_frame: if flags.contains(&"--comic-min-margin") { bookconv::imgopt::EpubComicFrame::MinMargin } else { Default::default() } }, |_, _| {}) {
+    let rep = match optimize::optimize_epub_file_streaming(std::path::Path::new(files[0]), &out_target, &OptimizeOpts { wash, footnote, comic_frame: if flags.contains(&"--comic-min-margin") { bookconv::imgopt::EpubComicFrame::MinMargin } else { Default::default() }, page_direction: None }, |_, _| {}) {
         Ok(r) => r,
         Err(e) => {
             let _ = std::fs::remove_file(&out_target);

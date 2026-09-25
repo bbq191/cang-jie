@@ -99,6 +99,21 @@ const promptDialog=(msg,value='')=>new Promise(resolve=>{
   document.body.appendChild(overlay);
   inp.focus();inp.select();
 });
+/* 单选版的 confirmDialog：一排选项按钮（当前值高亮），点一个就返回它的 value，取消/遮罩/Esc = null。
+   给"阅读方向"这类三选一的设置用（2026-09-25）。opts: [{value,label}]；note: 选项下方的一行小字说明。 */
+const choiceDialog=(msg,opts,current,note='')=>new Promise(resolve=>{
+  const noBtn=el('button',{class:'btn',text:T('common.cancel')});
+  const pick=el('div',{class:'choice-opts'},opts.map(o=>{const b=el('button',{class:'btn'+(o.value===current?' pri':''),type:'button',text:o.label});b.onclick=()=>close(o.value);return b}));
+  const box=[el('div',{class:'confirm-msg',text:msg}),pick];if(note)box.push(el('div',{class:'small choice-note',text:note}));box.push(el('div',{class:'confirm-actions'},[noBtn]));
+  const overlay=el('div',{class:'confirm-overlay'},[el('div',{class:'confirm-box'},box)]);
+  const close=v=>{document.removeEventListener('keydown',onKey);overlay.remove();resolve(v)};
+  const onKey=e=>{if(e.key==='Escape')close(null)};
+  noBtn.onclick=()=>close(null);
+  overlay.onclick=e=>{if(e.target===overlay)close(null)};
+  document.addEventListener('keydown',onKey);
+  document.body.appendChild(overlay);
+  (pick.querySelector('.pri')||pick.firstChild).focus();
+});
 /* 轻量记忆：per-viewer 便利态，隐私窗口/禁用 storage 时静默回默认 */
 const LS={get(k,d){try{const v=localStorage.getItem('shelf.'+k);return v==null?d:v}catch{return d}},set(k,v){try{localStorage.setItem('shelf.'+k,v)}catch{}}};
 const onUsb=/^10\.11\.99\./.test(location.hostname);
@@ -241,6 +256,8 @@ function stgBadges(it,busy){
     :it.level==='core'?`<span class="badge" title="${T('transfer.staging.badge.optimizedUncleanTitle')}">${T('transfer.staging.badge.optimizedUnclean')}</span>`
     :it.level==='old'?`<span class="badge" title="${T('transfer.staging.badge.oldOptimizedTitle')}">${T('transfer.staging.badge.oldOptimized')}</span>`
     :`<span class="badge">${T('transfer.staging.badge.notOptimized')}</span>`;
+  // 按书设置的阅读方向（2026-09-25）：自动不显示；设了就标出来，设置还没写进书里（要再点「优化」）另标一枚。
+  const dir=it.format==='epub'&&it.direction&&it.direction!=='auto'?`<span class="badge on" title="${T('stg.dir.badgeTitle')}">${T('stg.dir.'+it.direction)}</span>`+(it.directionStale?`<span class="badge off" title="${T('stg.dir.staleTitle')}">${T('stg.dir.staleBadge')}</span>`:''):'';
   const ps=(it.format==='epub'&&it.pdfSource)?`<span class="badge on" title="${T('transfer.staging.badge.pdfSourceTitle')}">${T('transfer.staging.badge.pdfSource')}</span>`:'';
   const dv=it.delivered||{},stale=t=>t&&it.mtime&&t<it.mtime;
   const dl=(dv.native?`<span class="badge on" title="${stale(dv.native)?T('transfer.staging.delivered.native.staleTitle'):T('transfer.staging.delivered.native.title')}">${T('transfer.staging.delivered.native.badge')}${stale(dv.native)?T('transfer.staging.staleSuffix'):''}</span>`:'')+(dv.koreader?`<span class="badge on" title="${stale(dv.koreader)?T('transfer.staging.delivered.koreader.staleTitle'):T('transfer.staging.delivered.koreader.title')}">${T('transfer.staging.delivered.koreader.badge')}${stale(dv.koreader)?T('transfer.staging.staleSuffix'):''}</span>`:'');
@@ -255,7 +272,7 @@ function stgBadges(it,busy){
     :oc&&oc.status==='failed'?T('transfer.staging.optimizeFailedPrefix')+oc.message
     :(oc&&oc.status==='cancelled')||(dc&&dc.status==='cancelled')?T('stg.row.cancelled'):(stalePending(oc)||stalePending(dc))?T('transfer.staging.stalePending.title'):'';
   const muted=!(dc&&dc.status==='failed')&&!(oc&&oc.status==='failed')&&((oc&&oc.status==='cancelled')||(dc&&dc.status==='cancelled')); // 仅"上次已取消"这类淡色提示，不再靠正则匹配文案
-  return {html:`<span class="badge fmt">${esc(fmt)}</span><span class="stg-size">${fmtB(it.bytes)}</span>${st}${ps}${dl}${rb}${busy?'':fails}`,msg,muted};
+  return {html:`<span class="badge fmt">${esc(fmt)}</span><span class="stg-size">${fmtB(it.bytes)}</span>${st}${dir}${ps}${dl}${rb}${busy?'':fails}`,msg,muted};
 }
 /* 一行。ctx: {picked,gatedPending,gatedActive,batchQueued,bs,syncSel(),refresh()} */
 function stgRow(it,ctx){
@@ -445,6 +462,22 @@ function renderTransfer(sec){sec.innerHTML=`
         toast(T('stg.batch.deleted',{n:ok})+(busyN?T('stg.batch.deleteSkipped',{n:busyN}):''),ok?'ok':'warn');picked.clear();refresh()});
       bar.appendChild(btns);
       const row3=el('div',{class:'stgbar-btns stgbar-sub'});
+      // 「阅读方向」（2026-09-25）：选中的 EPUB 可设 自动/从右往左/从左往右，多选批量设；只存设置，要再点「优化」才写进书里。
+      const epubs=chosen.filter(it=>it.format==='epub');
+      const dirBtn=el('button',{class:'btn',type:'button',title:T('stg.bar.direction')+'（'+epubs.length+'）'},[lbl('stg.bar.direction',chosen.length>1?epubs.length:null)]);
+      if(!epubs.length){dirBtn.disabled=true;dirBtn.title=T('stg.dir.epubOnly')}
+      else guardClick(dirBtn,async()=>{
+        const cur=epubs.every(it=>(it.direction||'auto')===(epubs[0].direction||'auto'))?(epubs[0].direction||'auto'):null;
+        const v=await choiceDialog(epubs.length===1?T('stg.dir.promptOne',{name:stgClean(epubs[0].name)}):T('stg.dir.promptMany',{n:epubs.length}),
+          ['auto','rtl','ltr'].map(value=>({value,label:T('stg.dir.'+value)})),cur,T('stg.dir.note'));
+        if(v==null)return;
+        const r=await postJ('/api/books/staging/direction',{names:epubs.map(it=>it.name),direction:v});
+        if(r.ok===false)return;
+        const parts=[T('stg.dir.done',{n:r.updated})];
+        if(r.stale)parts.push(T('stg.dir.doneStale',{n:r.stale}));
+        if(r.synced)parts.push(T('stg.dir.doneSynced',{n:r.synced}));
+        (r.failed||[]).forEach(f=>parts.push(stgClean(f.name)+'：'+f.message));
+        toast(parts.join('；'),(r.failed||[]).length?'warn':'ok',8000);refresh()});
       // 只选了一本：再给「下载原件」「改名」（都是针对单本的操作，多选时不出现），删除排在同一行最右。
       if(chosen.length===1){const one=chosen[0];
         const dl=el('a',{class:'btn',href:'/api/books/staging/file?name='+encodeURIComponent(one.name),download:one.name,text:T('stg.bar.download')});
@@ -456,7 +489,7 @@ function renderTransfer(sec){sec.innerHTML=`
           const r=await postJ('/api/books/staging/rename',{name:one.name,newName:v.trim()});
           if(r.ok!==false){picked.clear();picked.add(r.name);toast(T('stg.rename.done',{name:r.name}),'ok')}refresh()});
         row3.append(dl,rn)}
-      row3.appendChild(del);row3.style.setProperty('--cols','3');bar.appendChild(row3);
+      row3.append(dirBtn,del);row3.style.setProperty('--cols',chosen.length===1?'4':'3');row3.classList.toggle('cols4',chosen.length===1);bar.appendChild(row3);
     }else if(bs.total&&sig!==dismissedSig){
       bar.hidden=false;bar.className='stgbar done';
       const fail=bs.failed.length;
@@ -617,7 +650,7 @@ function renderOther(sec,svcs){
    AI 触发早就是按条目单发（勾「问AI」+ 填问题+点提问，调 mind-serve 拼"书名+章节+勾画原文+转写文本+问题"
    发模型，二期，白皮书 §03n），分区兼职的笔记本排版分组也不要了，条目一律按页序平铺，格式=Entry.style。 */
 // 顶层常量只放 i18n key 名，不放翻译好的文字——真正的 T() 查找挪到调用点（渲染时执行），见 T() 头注的硬性规则。
-const STYLE_NAMES={body:'notes.style.body',bullet:'notes.style.bullet',numbered:'notes.style.numbered',checkbox:'notes.style.checkbox'};
+const STYLE_NAMES={body:'notes.style.body',bullet:'notes.style.bullet',numbered:'notes.style.numbered',checkbox:'notes.style.checkbox',heading1:'notes.style.heading1',heading2:'notes.style.heading2'};
 /* archived 显示"已删除（可恢复）"而不是单纯"已删除"：这是软删终态，回收站里随时能点「恢复」，
    跟「清空回收站」那个真正不可逆的操作不该用同一个不加限定的"删除"措辞（2026-09-09 审计修：原文案
    会让用户误以为回收站里这条已经彻底没了）。 */
@@ -1221,6 +1254,151 @@ function renderBattopDetail(sec){
   sec.refresh=refresh;subtabs(sec);
 }
 
+/* 「管理 → 设备健康」（2026-09-25，gateway/src/device/）：只读体检 + 清理遗留数据。**只在这一屏被打开、或点刷新时
+   取数**，不跟管理页其它子标签一起刷、不订阅任何定时器（设备要省电）。网关侧结果缓存 15 秒，刷新按钮带 fresh=1 现采。
+   2026-09-25 同日用户反馈"太长"，拆成五个二级 tab（概览/服务/扩展/日志/清理，subtabs() 惯例，第三层嵌套靠它的
+   `:scope >` 限定）：一次 /api/device/health（+ /api/device/ota）的结果分发到前四个 tab，切 tab 只显隐、不重取；
+   清理是单独接口，进这一屏时它不在前台就只记"待取"，第一次切到它时才取。上次停在哪个二级 tab 记在 LS。 */
+const fmtUptime=s=>{const d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60);
+  return d?T('health.upDays',{d,h}):h?T('health.upHours',{h,m}):T('health.upMins',{m})};
+// 两分钟以内按秒（开机时序要看到 0.01 s 级），更长的（服务开机后被重启过）换成"12 分钟"这类读法，不写 761.5 s。
+const fmtSec=ms=>ms>=120000?fmtUptime(Math.floor(ms/1000)):(ms/1000).toFixed(ms<10000?2:1)+' s';
+const fmtTime=secs=>secs?new Date(secs*1000).toLocaleString():'';
+function mountHealth(box){
+  const card=k=>`<div class="subpanel" data-p="${k}"><div class="card" data-body><p class="small">${T('health.loading')}</p></div></div>`;
+  box.innerHTML=`<div class="card"><div class="row" style="justify-content:space-between;margin-top:0"><h2 style="margin:0">${T('health.title')}</h2><button class="btn" data-refresh>${T('health.refresh')}</button></div>
+    <p class="lead">${T('health.lead')}</p><p class="small" data-at></p></div>
+    <div class="subnav"><button>${T('health.tab.overview')}</button><button>${T('health.tab.services')}</button><button>${T('health.tab.extensions')}</button><button>${T('health.tab.log')}</button><button>${T('health.tab.cleanup')}</button></div>
+    ${card('overview')}${card('services')}${card('extensions')}${card('log')}
+    <div class="subpanel" data-p="cleanup"><div class="card" data-cleanup></div></div>`;
+  const q=s=>box.querySelector(s),body=k=>q(`[data-p="${k}"] [data-body]`),btn=q('[data-refresh]');
+  const cleanupLoad=mountCleanup(q('[data-cleanup]'));
+  const CLEANUP=4;let cleanupStale=true;
+  const cleanupIfShown=()=>{if(cleanupStale&&q('[data-p="cleanup"]').classList.contains('on')){cleanupStale=false;return cleanupLoad()}};
+  subtabs(box);
+  const btns=[...q('.subnav').children],saved=+LS.get('healthSub','0');
+  // 恢复上次的二级 tab：先调 subtabs 装的原始切换，再包记忆/取数那层——挂载管理页时不该去取清理数据。
+  btns[saved>=0&&saved<btns.length?saved:0].onclick();
+  btns.forEach((b,i)=>{const sw=b.onclick;b.onclick=()=>{sw();LS.set('healthSub',String(i));if(i===CLEANUP)cleanupIfShown()}});
+  const loadHealth=async fresh=>{
+    const [d,o]=await Promise.all([j('/api/device/health'+(fresh?'?fresh=1':'')),j('/api/device/ota'+(fresh?'?fresh=1':''))]);
+    if(d.ok===false){const m=`<p class="small">${esc(d.message)}</p>`;['overview','services','extensions','log'].forEach(k=>body(k).innerHTML=m);return}
+    const units=d.units||[],xu=units.find(u=>u.unit==='xochitl.service')||{},x=d.xochitl||{};
+    const none=`<span class="small">${T('health.none')}</span>`;
+    const names=l=>l&&l.length?esc(l.join(' · ')):none;
+    const fw=d.firmware||{};
+    const fwTxt=fw.state==='done'?(fw.known?`<span class="badge on" title="${esc(fw.label||'')}">${esc(T('health.fw.known',{label:(fw.label||'').split(/\s/)[0]}))}</span>`
+        :`<span class="badge off" title="${T('health.fw.unknownTitle')}">${T('health.fw.unknown')}</span>`)+` <code style="overflow-wrap:anywhere">${esc((fw.sha256||'').slice(0,16))}…</code>`
+      :fw.state==='error'?`<span class="small">${esc(T('health.fw.error',{msg:fw.message||''}))}</span>`:`<span class="small">${T('health.fw.pending')}</span>`;
+    // OTA 判定跟页头横幅同一个接口（device/ota.rs）；这里只是换个地方常驻显示，横幅被 × 掉之后也能在这看到。
+    const otaTxt=o.ok===false?'<span class="small">—</span>':o.needsReinstall
+      ?badge(o.recovery==='full'?T('ota.banner.title'):T('ota.banner.xoviTitle'),false)+`<br><span class="small">${(o.reasons||[]).map(r=>esc(T('ota.reason.'+r,{units:(o.missingUnits||[]).join(', ')}))).join('<br>')}</span>`
+      :badge(T('health.ota.ok'),true);
+    const home=d.home||{};
+    q('[data-at]').textContent=T('health.at',{time:fmtTime(d.at)});
+    body('overview').innerHTML=`<div class="kv small">
+      <b>${T('health.uptime')}</b><span>${d.uptimeSecs!=null?fmtUptime(d.uptimeSecs):'—'}</span>
+      <b>xochitl</b><span>${badge(esc(xu.active||'?'),xu.active==='active')} <span title="${T('health.restartsTitle')}">${T('health.unit.restarts',{n:xu.nRestarts??'?'})}</span>${xu.pid?' · PID '+xu.pid:''}</span>
+      <b>${T('health.xovi')}</b><span>${x.readable?badge(x.xovi?T('manage.loaded.on'):T('manage.loaded.off'),!!x.xovi):'<span class="small">—</span>'}</span>
+      <b>${T('health.home')}</b><span>${home.freeBytes!=null?T('health.homeVal',{free:fmtB(home.freeBytes),total:fmtB(home.totalBytes||0)}):'—'}</span>
+      <b>${T('health.firmware')}</b><span>${fwTxt}</span>
+      <b>${T('health.ota')}</b><span>${otaTxt}</span></div>`;
+    body('services').innerHTML=`<h3 style="margin-top:0">${T('health.services')}</h3><p class="small">${T('health.servicesHint')}</p>`
+      +(d.systemctlError?`<p class="small">${esc(T('health.systemctlError',{msg:d.systemctlError}))}</p>`:'')+'<ul class="list" data-units></ul>';
+    const ul=body('services').querySelector('[data-units]');
+    units.forEach(u=>{
+      const missing=u.load==='not-found';
+      const st=missing?`<span class="badge">${T('health.unit.notFound')}</span>`:badge(esc((u.active||'?')+(u.sub?' / '+u.sub:'')),u.active==='active');
+      const bits=[];
+      if(!missing&&u.nRestarts!=null)bits.push(`<span title="${T('health.restartsTitle')}">${T('health.unit.restarts',{n:u.nRestarts})}</span>`);
+      if(u.rssKb!=null)bits.push(esc(T('health.unit.mem',{rss:fmtB(u.rssKb*1024),hwm:fmtB((u.hwmKb||0)*1024)})));
+      if(u.startedAtMs!=null)bits.push(esc(u.startMs!=null&&u.startMs>=50?T('health.unit.started',{at:fmtSec(u.startedAtMs),dur:fmtSec(u.startMs)}):T('health.unit.startedAt',{at:fmtSec(u.startedAtMs)})));
+      ul.appendChild(el('li',{class:'stack'},[el('span',{html:`${esc(u.unit.replace(/\.service$/,''))} ${st}`}),el('span',{class:'small',html:bits.map(b=>`<span class="nw">${b}</span>`).join(' · ')})]))});
+    // 扩展：徽章 title 在触屏上看不到，所以把"换了文件未重启 / 待换入"的解释直接写成小字放在各自下面。
+    body('extensions').innerHTML=`<div class="kv small">
+      <b>${T('health.xovi')}</b><span>${x.readable?badge(x.xovi?T('manage.loaded.on'):T('manage.loaded.off'),!!x.xovi):'<span class="small">—</span>'}</span>
+      <b>${T('health.extensions')}</b><span>${names(x.extensions)}</span></div>
+      ${(x.deleted&&x.deleted.length)||(d.soPending&&d.soPending.length)?`
+      <h3>${T('health.deleted')}</h3><p class="small">${T('health.deletedTitle')}</p>
+      <p>${x.deleted&&x.deleted.length?`<span class="badge off">${esc(x.deleted.join(' · '))}</span>`:none}</p>
+      <h3>${T('health.soPending')}</h3><p class="small">${T('health.soPendingTitle')}</p>
+      <p>${d.soPending&&d.soPending.length?`<span class="badge">${esc(d.soPending.join(' · '))}</span>`:none}</p>`
+      :`<p class="small">${T('health.extClean')}</p>`}`;
+    // 上次开机最后几行 journal（设备冻死/意外重启的线索）；journal 没持久化时后端给 null。
+    body('log').innerHTML=`<h3 style="margin-top:0">${T('health.prevBoot')}</h3>`
+      +(d.prevBoot&&d.prevBoot.length?`<pre class="hlog">${esc(d.prevBoot.join('\n'))}</pre>`:`<p class="small">${T('health.prevBootNone')}</p>`);
+  };
+  /* 进这一屏（fresh=false）或点刷新（fresh=true）：健康数据现取；清理只在它正在前台时取，否则等第一次切过去。 */
+  const load=async fresh=>{cleanupStale=true;await Promise.all([loadHealth(fresh),cleanupIfShown()])};
+  guardClick(btn,()=>load(true));
+  return load;
+}
+function mountCleanup(box){
+  box.innerHTML=`<h2>${T('cleanup.title')}</h2><p class="lead">${T('cleanup.lead')}</p>
+    <h3>${T('cleanup.done.title')}</h3><p class="small" data-filesdesc>${T('cleanup.done.desc')}</p>
+    <ul class="list" data-files></ul><div class="row" data-filesrow><button class="btn btn-bad" data-delfiles disabled></button></div>
+    <h3>${T('cleanup.lib.title')}</h3><p class="small">${T('cleanup.lib.desc')}</p><p class="small" data-agent></p>
+    <div class="stg-tools"><input type="search" data-q placeholder="${T('cleanup.lib.search')}"><select data-filter><option value="dup">${T('cleanup.lib.filterDup')}</option><option value="all">${T('cleanup.lib.filterAll')}</option></select></div>
+    <ul class="list" data-lib></ul><div class="row" data-librow><button class="btn btn-bad" data-trash disabled></button></div>`;
+  const q=s=>box.querySelector(s);
+  const pickF=new Set(),pickL=new Map();let files=[],lib=[];
+  const syncBtns=()=>{const a=q('[data-delfiles]'),b=q('[data-trash]');
+    a.textContent=T('cleanup.deleteBtn',{n:pickF.size});a.disabled=!pickF.size;
+    b.textContent=T('cleanup.lib.trashBtn',{n:pickL.size});b.disabled=!pickL.size};
+  const check=(on,fn)=>{const c=el('input',{type:'checkbox'});c.checked=on;c.onchange=()=>{fn(c.checked);syncBtns()};return el('label',{class:'stg-check'},[c])};
+  const renderFiles=()=>{const ul=q('[data-files]');ul.innerHTML='';
+    q('[data-filesdesc]').hidden=q('[data-filesrow]').hidden=!files.length;
+    if(!files.length){ul.appendChild(el('li',{class:'small',text:T('cleanup.done.empty')}));return}
+    files.forEach(f=>ul.appendChild(el('li',{},[el('span',{style:'display:flex;gap:.5em;align-items:flex-start'},[check(pickF.has(f.name),v=>v?pickF.add(f.name):pickF.delete(f.name)),el('span',{text:f.name})]),
+      el('span',{class:'small',text:`${fmtB(f.bytes)} · ${fmtTime(f.mtime)}`})])))};
+  const renderLib=()=>{const ul=q('[data-lib]');ul.innerHTML='';
+    const kw=q('[data-q]').value.trim().toLowerCase(),dup=q('[data-filter]').value==='dup';
+    const list=lib.filter(b=>(!dup||b.sameName>1)&&(!kw||(b.name+' '+b.folder).toLowerCase().includes(kw)));
+    q('[data-librow]').hidden=!list.length&&!pickL.size;
+    if(!list.length){ul.appendChild(el('li',{class:'small',text:T('cleanup.lib.empty')}));return}
+    list.forEach(b=>{
+      const meta=[esc(b.folder||T('cleanup.lib.root')),b.kind.toUpperCase(),fmtB(b.bytes),esc(fmtTime(Math.floor(b.createdMs/1000)))].join(' · ');
+      const same=b.sameName>1?` <span class="badge" title="${esc(T('cleanup.lib.sameNameTitle',{n:b.sameName}))}">${T('cleanup.lib.sameName',{n:b.sameName})}</span>`:'';
+      ul.appendChild(el('li',{},[el('span',{style:'display:flex;gap:.5em;align-items:flex-start;flex:1;margin-left:0'},[check(pickL.has(b.uuid),v=>v?pickL.set(b.uuid,b.name):pickL.delete(b.uuid)),el('span',{html:`${esc(b.name)}${same}<br><span class="small">${meta}</span>`})])]))})};
+  q('[data-q]').oninput=renderLib;q('[data-filter]').onchange=renderLib;
+  const listOf=names=>names.slice(0,12).map(n=>'· '+n).join('\n')+(names.length>12?'\n…':'');
+  /* 不用 guardClick：它在 finally 里无条件解禁按钮，而这里"没勾选"时按钮应保持禁用——收尾交给 syncBtns。 */
+  const busyClick=(b,fn)=>{b.onclick=async()=>{if(b.disabled)return;b.disabled=true;try{await fn()}catch(e){console.error(e);toast(T('common.failed'))}finally{syncBtns()}}};
+  busyClick(q('[data-delfiles]'),async()=>{const names=[...pickF];
+    if(!names.length||!await confirmDialog(T('cleanup.confirmFiles',{n:names.length,list:listOf(names)})))return;
+    const r=await jsend('/api/device/cleanup/delete','POST',{area:'books-done',names});
+    if(r.failed&&r.failed.length)toast(T('cleanup.partial',{ok:(r.deleted||[]).length,bad:r.failed.length,msg:r.failed.map(f=>f.name+'：'+f.error).join('；')}));
+    else if(r.ok===false)toast(r.message||T('common.failed'));
+    else toast(T('cleanup.deleted',{n:(r.deleted||[]).length}),'ok');
+    pickF.clear();await load()});
+  busyClick(q('[data-trash]'),async()=>{const picks=[...pickL];
+    if(!picks.length||!await confirmDialog(T('cleanup.lib.confirm',{n:picks.length,list:listOf(picks.map(p=>p[1]))})))return;
+    let ok=0;const bad=[];
+    for(const [uuid,name] of picks){const r=await jsend('/api/books/trash/add','POST',{uuid,name});if(r.ok===false)bad.push(name+'：'+(r.message||''));else ok++}
+    if(bad.length)toast(T('cleanup.partial',{ok,bad:bad.length,msg:bad.join('；')}));else toast(T('cleanup.lib.queued',{n:ok}),'ok',6500);
+    pickL.clear();await load()});
+  const load=async()=>{const d=await j('/api/device/cleanup');
+    if(d.ok===false){q('[data-files]').innerHTML=`<li class="small">${esc(d.message)}</li>`;return}
+    files=d.files||[];lib=d.library||[];
+    for(const n of [...pickF])if(!files.some(f=>f.name===n))pickF.delete(n);
+    for(const u of [...pickL.keys()])if(!lib.some(b=>b.uuid===u))pickL.delete(u);
+    q('[data-agent]').textContent=!d.xochitl?T('cleanup.lib.noXochitl'):d.trashAgent?'':T('cleanup.lib.agentOff');
+    renderFiles();renderLib();syncBtns()};
+  syncBtns();
+  return load;
+}
+/* 页头"需要重新安装"横幅（2026-09-25）：页面打开时取一次 /api/device/ota（网关侧判定见 device/ota.rs：单元文件缺失 /
+   xovi 未生效；固件哈希不在白名单只作附加原因），不轮询。关掉只在本次页面会话内有效。 */
+async function showOtaBanner(){
+  const d=await j('/api/device/ota');if(d.ok===false||!d.needsReinstall)return;
+  const reasons=(d.reasons||[]).map(r=>`<li>${esc(T('ota.reason.'+r,{units:(d.missingUnits||[]).join(', ')}))}</li>`).join('');
+  const cmd=d.recovery==='full'?`<p>${T('ota.recovery.full',{cmd1:'<code>/home/root/xovi/rebuild_hashtable</code>'})}</p><pre class="hlog">cd packaging &amp;&amp; sh install-all.sh ${esc(location.hostname)}${(d.reasons||[]).includes('firmware-unknown')?' --force':''}</pre>`
+    :`<p>${T('ota.recovery.xovi')}</p><pre class="hlog">cd packaging &amp;&amp; sh deploy-xovi-apply.sh ${esc(location.hostname)}</pre>`;
+  const x=el('button',{class:'btn x',type:'button',title:T('ota.dismiss'),'aria-label':T('ota.dismiss'),text:'×'});
+  const ban=el('div',{class:'otabanner',role:'alert',html:`<b>${d.recovery==='full'?T('ota.banner.title'):T('ota.banner.xoviTitle')}</b><ul>${reasons}</ul>${cmd}<p class="small">${T('ota.recovery.doc')}</p>`});
+  ban.prepend(x);x.onclick=()=>ban.remove();
+  document.body.insertBefore(ban,$('#main'));
+}
 
 /* 管理台/引导（固定 tab，始终在——它是网关自身页面，不由服务注册表驱动） */
 /* 「管理」二级 tab（2026-09-09 起三个，2026-09-10 加到五个）：① 基石与模块（原来就有的引导/开关/
@@ -1232,7 +1410,7 @@ function renderBattopDetail(sec){
 /* 模块管理动作（start / stop / uninstall），「基石与模块」列表与「全部开启/关闭」共用。 */
 const modAct=(seg,act)=>j('/api/manage/'+seg+'/'+act,{method:'POST'});
 function renderManage(sec){sec.innerHTML=`
-  <div class="subnav"><button class="on">${T('manage.subnav.foundation')}</button><button>${T('manage.subnav.models')}</button><button>${T('manage.subnav.enhance')}</button><button hidden>${T('manage.subnav.battop')}</button><button>${T('manage.subnav.lab')}</button></div>
+  <div class="subnav"><button class="on">${T('manage.subnav.foundation')}</button><button data-sub="health">${T('manage.subnav.health')}</button><button>${T('manage.subnav.models')}</button><button>${T('manage.subnav.enhance')}</button><button hidden data-sub="battop">${T('manage.subnav.battop')}</button><button>${T('manage.subnav.lab')}</button></div>
   <div class="subpanel on">
     <div class="card"><h2>${T('manage.foundation.title')}</h2><p class="lead">${T('manage.foundation.lead')}</p>
       <div class="kv small" id="found">${T('manage.foundation.checking')}</div>
@@ -1255,6 +1433,7 @@ function renderManage(sec){sec.innerHTML=`
       <div class="row"><button class="btn" id="allon">${T('manage.modules.allOn')}</button><button class="btn" id="alloff">${T('manage.modules.allOff')}</button></div>
       <ul class="list" id="mods"></ul></div>
   </div>
+  <div class="subpanel" id="healthBox"></div>
   <!-- 意图卡（h2+lead）单独一张、跟下面的模型卡是兄弟不是父子（2026-09-10 用户要求跟「管理」页
        其它子标签统一风格——「传书·入库」「引导·基石」都是这个样子：一张说明卡起头，后面各功能
        各自一张卡平铺；改之前这里是说明卡把 #modelcards 包在里面，卡中卡，跟别处不一样）。 -->
@@ -1323,7 +1502,7 @@ function renderManage(sec){sec.innerHTML=`
   const hlBox=$('#erHlSnap',sec),hwBox=$('#labHwStroke',sec),importMdBox=$('#labImportMd',sec),comicMarginBox=$('#labComicMargin',sec);
   const battopToggleRefresh=mountBattopToggleCard($('#enhBattopCard',sec)); // 电池刺客开关在「系统增强」里（2026-09-21 从实验室移过来）
   const manageNav=sec.querySelector(':scope > .subnav');
-  const battopNavBtn=manageNav.children[3],battopPanel=$('#battopDetail',sec);
+  const battopNavBtn=manageNav.querySelector('[data-sub="battop"]'),battopPanel=$('#battopDetail',sec);
   renderBattopDetail(battopPanel);
   const erApply=async r=>{
     hlBox.checked=!!r.hlSnapCjk;
@@ -1353,7 +1532,12 @@ function renderManage(sec){sec.innerHTML=`
     if(running&&battopPanel.refresh)battopPanel.refresh()};
   bindToggle(hlBox,'/api/enhance/qol','hlSnapCjk');bindToggle(hwBox,'/api/enhance/qol','hwStrokeEnabled');bindToggle(importMdBox,'/api/enhance/qol','notesImportMdEnabled');bindToggle(comicMarginBox,'/api/enhance/qol','comicMinMargin');
   bindToggle(tapBox,'/api/enhance/qol','tapPageTurn');bindToggle(rtlBox,'/api/enhance/qol','rtlPageTurn');
-  refresh();sec.refresh=()=>Promise.all([refresh(),mvRefresh(),mtRefresh()]);subtabs(sec);}
+  /* 设备健康：切到这个子标签时才取数（每次切过去都取一次，网关侧有 15 秒缓存），不跟着管理页的 SSE 刷新走；
+     清理那组只在它是当前二级 tab 时一起取（见 mountHealth）。 */
+  const healthLoad=mountHealth($('#healthBox',sec));
+  const healthNavBtn=manageNav.querySelector('[data-sub="health"]');
+  refresh();sec.refresh=()=>Promise.all([refresh(),mvRefresh(),mtRefresh()]);subtabs(sec);
+  const tabClick=healthNavBtn.onclick;healthNavBtn.onclick=()=>{tabClick();healthLoad(false)};}
 
 (async()=>{
   // 语言包先拿到手：下面 addTab 用得到 T()，晚拿会让顶层导航先短暂显示 key 本身再跳成文字。
@@ -1363,6 +1547,7 @@ function renderManage(sec){sec.innerHTML=`
   document.title=T('app.title');$('#applogo').textContent=T('app.title');
   $('#navpw').textContent=T('nav.changePassword');$('#navca').textContent=T('nav.caCert');$('#logout').textContent=T('nav.signOut');
   $('#mainloading').textContent=T('main.loading');
+  showOtaBanner(); // 不 await：横幅晚一点出现无妨，不挡页面主体
   const langsel=$('#langsel');langsel.value=lang;langsel.setAttribute('aria-label',T('nav.lang'));
   langsel.onchange=()=>{LS.set('lang',langsel.value);location.reload()};
 

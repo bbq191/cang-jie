@@ -1,5 +1,5 @@
 #!/bin/sh
-# host 侧对设备统一"让已落盘的 xovi 扩展/qmd 生效"一次（重启 xochitl）+ 健康检查。
+# host 侧对设备统一"让已落盘的 xovi 扩展/qmd 生效"一次（2026-09-25 起＝主动整机重启，见 devlib.sh 的 cj_xochitl_apply）。
 #
 # 用在所有"只落盘、不自己重启 xochitl"的步骤跑完之后，最后调用一次——hl-snap/handwriting-stroke/
 # sidebar-entry 用 DEFER_XOVI_START=1 时只落盘不重启；shelf 的字体菜单/回收站/建夹/漫画页边距/阅读器翻页 qmd 本来就只落盘。
@@ -32,8 +32,8 @@ done
 host_arg "$USAGE" "$@"
 require_device
 
-echo "== 设备端让 xovi 扩展 + qmd 生效（有待生效改动才重启 xochitl 一次，会打断设备上正在做的事）+ 健康检查 =="
-dev_script "$FORCE_RESTART" <<'DEVICE_SCRIPT'
+echo "== 设备端让 xovi 扩展 + qmd 生效（有待生效改动才整机重启一次，约 1 分钟，会打断设备上正在做的事）=="
+run_apply dev_script "$FORCE_RESTART" <<'DEVICE_SCRIPT'
 set -eu
 FORCE_RESTART="$1"
 cj_require_root || exit 1
@@ -51,6 +51,9 @@ fi
 [ -z "$PENDING" ] || echo "-- 待生效：$PENDING"
 OLD_PID="$(cj_xochitl_pid)"
 cj_xochitl_apply || exit 1
+if [ "$CJ_APPLY_REBOOTED" = 1 ]; then
+    exit 0   # 已排上整机重启；健康检查留给设备回来后的 verify-on-device.sh
+fi
 TAGS=""
 [ -f "$CJ_XOVI/extensions.d/hl-snap.so" ] && TAGS="$TAGS hl-snap"
 [ -f "$CJ_XOVI/extensions.d/hw-stroke.so" ] && TAGS="$TAGS hw-stroke"

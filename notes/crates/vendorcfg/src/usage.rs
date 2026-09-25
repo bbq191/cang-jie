@@ -56,10 +56,10 @@ impl<Extra: Clone + Serialize + DeserializeOwned> Ledger<Extra> {
         Ledger { path: path.to_path_buf(), usage: Mutex::new(rmsvc_core::config::load_or_default(path)) }
     }
     pub fn snapshot(&self) -> UsageBook<Extra> {
-        self.usage.lock().unwrap_or_else(|e| e.into_inner()).clone()
+        rmsvc_core::sync::lock(&self.usage).clone()
     }
     fn edit(&self, f: impl FnOnce(&mut UsageBook<Extra>)) {
-        let mut u = self.usage.lock().unwrap_or_else(|e| e.into_inner());
+        let mut u = rmsvc_core::sync::lock(&self.usage);
         f(&mut u);
         let _ = rmsvc_core::config::save(&self.path, &*u, None);
     }

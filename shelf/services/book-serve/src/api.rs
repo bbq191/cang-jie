@@ -4,10 +4,11 @@
 //! （2026-09-19 起不再分档位，只有一种"清洗+优化"行为）
 //! · `POST /staging/deliver {name, folder?}`（2026-09-19 起投完永远保留母版，不再有 `keep` 参数）· `POST /staging/mark {name, target}` · `POST /staging/fetch-article {url, optimize?}`
 //! · `POST /staging/delete {name}` · `POST /staging/rename {name, newName}` · `GET /staging/file?name=`（原件下载，流式）
+//! · `POST /staging/direction {names|name, direction}`（按书阅读方向 auto/rtl/ltr，2026-09-25）
 //! · 原 PDF 备份：`GET /staging` 的 `originals` · `POST /staging/originals/restore {name}` · `POST /staging/originals/delete {name}`
 //! · `GET /events`（SSE：母版库/inbox 变更即推，网页零轮询）。
 //! 阅读方向：`GET /reading-direction/{uuid}` → `{rtl}`（xochitl 里 reader-page-turn.qmd 用）。
-//! 原生回收站队列：`POST /trash/add {uuid, name}`（name 必须与书库 visibleName 相符）· `GET /trash/pending` → `{uuids}`（Sidebar 代理 qmd 拉取执行）· `GET /trash`。
+//! 原生回收站队列：`POST /trash/add {uuid, name}`（name 必须与书库 visibleName 相符）· `GET /trash/pending?wait=` → `{uuids}`（MainView 代理 qmd 长轮询拉取执行）· `GET /trash`。
 //! 原生建文件夹队列：`POST /mkdir/add {name}` · `GET /mkdir/pending` → `{names}`（MainView 代理 shelf-mkdir-agent.qmd 拉取执行）· `GET /mkdir`。
 //! 2026-09-05 起规则统一"所有书只落母版库"：旧 `POST /?target=` 直投路已删（`/staging*` 是唯一入口）。
 use crate::service_state::State;
@@ -16,10 +17,10 @@ use rmsvc_core::asset::{self, AssetUploadFlow};
 use rmsvc_core::http::{bind, ApiError, ApiResult, Reply, Request, Router};
 use std::sync::Arc;
 
-/// `GET /mkdir/pending?wait=` 长轮询等待时长上限（秒）。QML 端（shelf-mkdir-agent.qmd）发 wait=290：设备 Qt 6.10
+/// `GET /mkdir/pending?wait=`、`GET /trash/pending?wait=` 长轮询等待时长上限（秒）。QML 端（shelf-mkdir-agent.qmd）发 wait=290：设备 Qt 6.10
 /// 的 QML XHR 不设传输超时（2026-09-24 核实，见 qmd 头注；09-22 版按"缺省 30s 超时"的假设把这里定成 28）。
 /// 在等的这段时间服务端不读 socket，所以不受 rmsvc-core 的读空闲超时影响。
-const MKDIR_WAIT_MAX_SECS: u64 = 300;
+const AGENT_WAIT_MAX_SECS: u64 = 300;
 
 pub fn router(st: Arc<State>) -> Router {
     Router::new()
@@ -40,6 +41,7 @@ pub fn router(st: Arc<State>) -> Router {
             s.bus.publish("books", "staging");
             Ok(Reply::ok(&serde_json::json!({"ok": true, "name": new_name})))
         }))
+        .post("/staging/direction", bind(&st, set_direction))
         // ── 原 PDF 备份（PDF→EPUB 后保留 7 天，见 Staging::backup_pdf_original）──
         .post("/staging/originals/restore", bind(&st, |s, r| {
             s.staging.restore_original(r.json()?.str("name")?).map_err(ApiError::bad)?;
@@ -110,8 +112,9 @@ pub fn router(st: Arc<State>) -> Router {
             s.bus.publish("books", "trash");
             Ok(Reply::ok(&serde_json::json!({"ok": true, "pending": n, "message": "已排队：书库视图下次有动静时移进回收站"})))
         }))
-        .get("/trash/pending", bind(&st, |s, _| {
-            let (uuids, pruned) = s.trash.pending().map_err(ApiError::internal)?;
+        .get("/trash/pending", bind(&st, |s, r| {
+            let wait = r.q("wait").and_then(|v| v.parse::<u64>().ok()).unwrap_or(0).min(AGENT_WAIT_MAX_SECS);
+            let (uuids, pruned) = s.trash.pending_wait(std::time::Duration::from_secs(wait)).map_err(ApiError::internal)?;
             if pruned > 0 {
                 s.bus.publish("books", "trash");
             }
@@ -127,9 +130,9 @@ pub fn router(st: Arc<State>) -> Router {
             }
             Ok(Reply::ok(&serde_json::json!({"ok": true, "pending": n})))
         }))
-        // `?wait=<秒>` 长轮询（上限 [`MKDIR_WAIT_MAX_SECS`]）：有待办立即回，否则阻塞到入队或到期回空；缺省 0＝立即返回。
+        // `?wait=<秒>` 长轮询（上限 [`AGENT_WAIT_MAX_SECS`]）：有待办立即回，否则阻塞到入队或到期回空；缺省 0＝立即返回。
         .get("/mkdir/pending", bind(&st, |s, r| {
-            let wait = r.q("wait").and_then(|v| v.parse::<u64>().ok()).unwrap_or(0).min(MKDIR_WAIT_MAX_SECS);
+            let wait = r.q("wait").and_then(|v| v.parse::<u64>().ok()).unwrap_or(0).min(AGENT_WAIT_MAX_SECS);
             let (names, pruned) = s.mkdir.pending_wait(std::time::Duration::from_secs(wait)).map_err(ApiError::internal)?;
             if pruned > 0 {
                 s.bus.publish("books", "mkdir");
@@ -148,6 +151,46 @@ pub fn router(st: Arc<State>) -> Router {
             s.staging.remove(r.json()?.str("name")?).map_err(ApiError::bad)?;
             staging_changed(s)
         }))
+}
+
+/// `POST /staging/direction {names: [...] | name, direction: "auto"|"rtl"|"ltr"}`：按书设阅读方向（可多本）。只存设置，
+/// 书本身等下次「优化」才改；已加入过 xochitl 的顺手同步手动清单。回 `{ok, updated, stale, synced, failed:[{name,message}], message}`，
+/// 全部失败才回 400。
+fn set_direction(st: &State, r: &mut Request<'_>) -> ApiResult {
+    let j = r.json()?;
+    let raw = j.str("direction")?;
+    let dir = match raw {
+        "auto" => None,
+        _ => Some(bookconv::direction::PageDirection::parse(raw).ok_or_else(|| ApiError::bad("direction 只能是 auto / rtl / ltr"))?),
+    };
+    let names: Vec<String> = match j.0.get("names").and_then(|v| v.as_array()) {
+        Some(a) => a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect(),
+        None => vec![j.str("name")?.to_string()],
+    };
+    if names.is_empty() {
+        return Err(ApiError::bad("缺 names"));
+    }
+    let (mut updated, mut stale, mut synced) = (0usize, 0usize, 0usize);
+    let mut failed = Vec::new();
+    for name in &names {
+        match st.staging.set_direction(name, dir) {
+            Ok(o) => {
+                updated += 1;
+                stale += usize::from(o.stale);
+                synced += usize::from(o.synced.is_some());
+                if let Some(e) = o.sync_error {
+                    failed.push(serde_json::json!({"name": name, "message": format!("设置已保存，但同步到已加入 xochitl 的那份失败：{e}")}));
+                }
+            }
+            Err(e) => failed.push(serde_json::json!({"name": name, "message": e})),
+        }
+    }
+    if updated == 0 {
+        let first = failed.first().and_then(|f| f["message"].as_str()).unwrap_or("没有可设置的书").to_string();
+        return Err(ApiError::bad(first));
+    }
+    st.bus.publish("books", "staging");
+    Ok(Reply::ok(&serde_json::json!({"ok": true, "updated": updated, "stale": stale, "synced": synced, "failed": failed})))
 }
 
 /// 母版库变更类操作的统一收尾：推一条 `books/staging`（网页据此重拉列表，零轮询）再回 `{ok:true}`。
@@ -328,6 +371,31 @@ mod tests {
         assert_eq!(call(&router, Method::Get, "/inbox", "").0, 404);
         assert_eq!(call(&router, Method::Get, "/staging/optimize", "").0, 405);
         assert_eq!(call(&router, Method::Get, "/nope", "").0, 404);
+    }
+
+    /// 按书阅读方向：参数校验、多本部分失败照样回 200（逐本原因在 failed）、全部失败 400、结果体现在列表里。
+    #[test]
+    fn direction_route_validates_and_reports_per_book() {
+        let t = tempfile::tempdir().unwrap();
+        let st = state(&t);
+        let router = router(st.clone());
+        st.staging.stage_new("a.epub", b"PK").unwrap();
+        st.staging.stage_new("b.pdf", b"%PDF").unwrap();
+        let (code, v) = call(&router, Method::Post, "/staging/direction", r#"{"name":"a.epub","direction":"up"}"#);
+        assert_eq!(code, 400);
+        assert!(msg(&v).contains("auto / rtl / ltr"), "{v}");
+        assert_eq!(call(&router, Method::Post, "/staging/direction", r#"{"names":[],"direction":"rtl"}"#).0, 400);
+        let (code, v) = call(&router, Method::Post, "/staging/direction", r#"{"names":["b.pdf"],"direction":"rtl"}"#);
+        assert_eq!(code, 400, "全部失败");
+        assert!(msg(&v).contains("不是 EPUB"), "{v}");
+        let (code, v) = call(&router, Method::Post, "/staging/direction", r#"{"names":["a.epub","b.pdf"],"direction":"rtl"}"#);
+        assert_eq!(code, 200, "{v}");
+        assert_eq!((v["updated"].as_u64(), v["stale"].as_u64(), v["synced"].as_u64()), (Some(1), Some(1), Some(0)));
+        assert_eq!(v["failed"][0]["name"], "b.pdf");
+        let a = st.staging.list().into_iter().find(|e| e.name == "a.epub").unwrap();
+        assert_eq!((a.direction, a.direction_stale), ("rtl", true));
+        assert_eq!(call(&router, Method::Post, "/staging/direction", r#"{"name":"a.epub","direction":"auto"}"#).0, 200, "单本也可用 name");
+        assert_eq!(st.staging.list().into_iter().find(|e| e.name == "a.epub").unwrap().direction, "auto");
     }
 
     /// 回归：网页上传收请求体期间（WiFi 上传大书可达分钟级）不再攥着 spool 锁——inbox 追平照常进行，

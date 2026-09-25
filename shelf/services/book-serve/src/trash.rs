@@ -1,14 +1,22 @@
-//! 原生书库「移进回收站」队列：外部进程不能直改 `.metadata`（运行中 xochitl 会覆写回来），真正的软删只有
-//! xochitl 自己的 `selectionMoveToTrash()`——由注入 Sidebar 的 `shelf/xovi/shelf-trash-agent.qmd` 在书库视图有动静时
-//! `GET /trash/pending` 拉队列执行。本模块只管队列：入队时按 visibleName 核对 uuid（防错删），拉取时把已进回收站 /
+//! 原生书库「移进回收站」队列：外部进程不能直改 `.metadata`（运行中 xochitl 会覆写回来），真正的软删只能走
+//! xochitl 自己的代码路——由注入 MainView 的 `shelf/xovi/shelf-trash-agent.qmd` 长轮询 `GET /trash/pending?wait=`
+//! 拉队列，调 `LibraryController.moveEntriesToTrash(ids)` 执行。
+//! **2026-09-25 改**：原先代理注入 Sidebar、只在书库视图有动静时拉、用"当前文件夹的选择集 + selectionMoveToTrash"
+//! 执行——网页「设备健康 → 清理」入队后设备上不翻书库就永远不执行，书不在当前文件夹也加不进选择集（真机：
+//! 《告白》《白夜行》在「好读精校」里，入队后一直没动）。现改为全局常驻 + 长轮询 + 按 id 调，跟建文件夹代理同构。本模块只管队列：入队时按 visibleName 核对 uuid（防错删），拉取时把已进回收站 /
 //! 已不存在的条目清掉（QML 端无需 ack）。队列文件 `$XDG_STATE_HOME/shelf/books/trash-pending.json`。
 //! 首个用途：渲染自检探针书（现已无此调用方，能力保留）送进回收站，不在原生书库里累积（2026-09-06）。
 //!
 //! 持久化+入队去重+剔除这层通用外壳委托 `pending_queue::PendingQueue<T>`（2026-09-09 消重复，跟
 //! `mkdir.rs` 是同一份基础设施，见该模块文档）；这里只留领域校验（uuid 形状/名字核对/是否已在回收站）。
-use crate::pending_queue::PendingQueue;
+use crate::pending_queue::{Handout, PendingQueue};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
+
+/// 同一 uuid 交给代理后这段时间内不再交（`moveEntriesToTrash` 是异步的，见 `pending_queue::Handout`）；过了仍没进
+/// 回收站就再交一次。
+const HANDOUT_QUIET: Duration = Duration::from_secs(30);
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Pending {
@@ -20,11 +28,12 @@ pub struct Pending {
 pub struct TrashQueue {
     q: PendingQueue<Pending>,
     lib_dir: PathBuf,
+    handout: Handout,
 }
 
 impl TrashQueue {
     pub fn new(state_books_dir: &Path, lib_dir: &Path) -> TrashQueue {
-        TrashQueue { q: PendingQueue::new(state_books_dir.join("trash-pending.json")), lib_dir: lib_dir.to_path_buf() }
+        TrashQueue { q: PendingQueue::new(state_books_dir.join("trash-pending.json")), lib_dir: lib_dir.to_path_buf(), handout: Handout::new(HANDOUT_QUIET) }
     }
 
     /// 文档 `.metadata` 的 (visibleName, parent)；文件不存在 → None。
@@ -49,13 +58,26 @@ impl TrashQueue {
         }
         // `uuid: &str` 是 Copy，两个闭包各自拿一份拷贝就够——不要先转成 String 再共享，
         // 那样第一个闭包借用、第二个闭包要移动，会被借用检查器拦下来。
-        self.q.add(|p| p.uuid == uuid, || Pending { uuid: uuid.to_string(), name: vis, at: rmsvc_core::clock::now_secs() })
+        let n = self.q.add(|p| p.uuid == uuid, || Pending { uuid: uuid.to_string(), name: vis, at: rmsvc_core::clock::now_secs() })?;
+        self.handout.notify();
+        Ok(n)
     }
 
     /// 待办 uuid（QML 代理拉取）：顺手清掉已进回收站 / 已不存在的。返回 (待办 uuid 列表, 本次清掉几条)。
     pub fn pending(&self) -> Result<(Vec<String>, usize), String> {
         let (kept, pruned) = self.q.prune(|p| matches!(self.meta(&p.uuid), Some((_, parent)) if parent != "trash"))?;
-        Ok((kept.into_iter().map(|p| p.uuid).collect(), pruned))
+        Ok((self.handout.take(kept.into_iter().map(|p| p.uuid).collect()), pruned))
+    }
+
+    /// 长轮询版 [`Self::pending`]：有待办立即返回，没有就睡到入队或 `wait` 到期；`wait` 为零＝立即返回。
+    pub fn pending_wait(&self, wait: Duration) -> Result<(Vec<String>, usize), String> {
+        self.handout.wait(wait, || self.pending())
+    }
+
+    #[cfg(test)]
+    fn with_handout_quiet(mut self, d: Duration) -> TrashQueue {
+        self.handout = Handout::new(d);
+        self
     }
 
     pub fn list(&self) -> Vec<Pending> {
@@ -80,7 +102,7 @@ mod tests {
     #[test]
     fn add_guards_name_and_shape_then_pending_prunes_trashed() {
         let t = tempfile::tempdir().unwrap();
-        let q = TrashQueue::new(&t.path().join("state"), &lib(&t));
+        let q = TrashQueue::new(&t.path().join("state"), &lib(&t)).with_handout_quiet(Duration::ZERO);
         assert!(q.add("bad", "x").unwrap_err().contains("形状"));
         assert!(q.add("44444444-4444-4444-4444-444444444444", "x").unwrap_err().contains("没有"));
         assert!(q.add("22222222-2222-2222-2222-222222222222", "书架自检探针 x").unwrap_err().contains("名字对不上"), "错 uuid 不许入队");
@@ -95,5 +117,28 @@ mod tests {
         let (ids, pruned) = q.pending().unwrap();
         assert_eq!((ids, pruned), (vec!["22222222-2222-2222-2222-222222222222".to_string()], 1));
         assert_eq!(q.list().len(), 1);
+    }
+
+    #[test]
+    fn handed_out_uuid_is_quiet_then_long_poll_wakes_on_add() {
+        let t = tempfile::tempdir().unwrap();
+        let q = std::sync::Arc::new(TrashQueue::new(&t.path().join("state"), &lib(&t)));
+        q.add("11111111-1111-1111-1111-111111111111", "书架自检探针 x").unwrap();
+        assert_eq!(q.pending().unwrap().0.len(), 1);
+        assert!(q.pending().unwrap().0.is_empty(), "静默期内不重复交出（moveEntriesToTrash 异步，免得重复执行）");
+        // 长轮询：空闲等满返回空；入队即刻唤醒
+        let t0 = std::time::Instant::now();
+        assert!(q.pending_wait(Duration::from_millis(120)).unwrap().0.is_empty());
+        assert!(t0.elapsed() >= Duration::from_millis(110));
+        let q2 = q.clone();
+        let h = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(80));
+            q2.add("22222222-2222-2222-2222-222222222222", "用户的书").unwrap();
+        });
+        let t0 = std::time::Instant::now();
+        let (ids, _) = q.pending_wait(Duration::from_secs(10)).unwrap();
+        assert_eq!(ids, vec!["22222222-2222-2222-2222-222222222222".to_string()]);
+        assert!(t0.elapsed() < Duration::from_secs(3));
+        h.join().unwrap();
     }
 }

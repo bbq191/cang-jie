@@ -86,7 +86,7 @@ impl WallpaperStore {
         rmsvc_core::config::save(&self.state_file, st, None)
     }
     fn guard(&self) -> std::sync::MutexGuard<'_, ()> {
-        self.lock.lock().unwrap_or_else(|e| e.into_inner())
+        rmsvc_core::sync::lock(&self.lock)
     }
 
     pub fn set_mode(&self, mode: Mode) -> Result<(), String> {

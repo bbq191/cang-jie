@@ -24,6 +24,8 @@
 | `CheckFuncSizes.java` | 核对候选 hook 目标的字节大小与前 N 条**原始反汇编**——`patch_target` 需要 ≥ 20 字节可安全 patch 的序言，且用来交叉核实反编译结果、防止反编译器简化过头（这条真救过一次，见增强线白皮书 §04） |
 | `FindQuillStrokeRTTI.java` | 在内存里搜"字面等于某地址的 8 字节指针值"，从 RTTI 名字字符串反查 typeinfo（对 stripped 二进制，自动 xref 是空的） |
 | `FindGenerateCallSite.java` | 找 `VaryingGenerator_WidthLength::generate`（`FUN_00f401f0`）的直接引用与 vtable 槽位引用；这次的结果是"零真实调用者"，见白皮书 §03c 勘误 |
+| `DecompileContaining.java` | 按**任意地址**（比如崩溃栈里的 PC）反编译**包含它的函数**，地址走脚本参数，不用改源码；打印入口、偏移、C 输出和调用者 |
+| `ListRefs.java` | 列出指向给定地址的全部引用（READ / WRITE / PARAM / CALL…）及所在函数——回答"谁写这个全局变量""谁注册了这个任务函数" |
 
 ## 环境搭建（一次性）
 
@@ -58,3 +60,13 @@ GUI 环境坑：Java Swing 在 Wayland 平铺式合成器下会整窗口空白�
 3. **headless 脚本接力**：一旦有了具体地址，反编译 / 查 xref / 按字节搜内存都能用 `scripts/` 批量做，不必再靠 GUI 截图。
 
 完整的反解发现、踩坑与勘误记在 [`../enhance/handwriting-stroke/README.md`](../enhance/handwriting-stroke/README.md) 和 [`../enhance/docs/reMarkable系统增强线白皮书.md`](../enhance/docs/reMarkable系统增强线白皮书.md) §03c–§03f、§04；**本目录只管"怎么用这套工具"，不重复记发现内容**。发现即写：探索有结论就更新对应文档，别只留在脚本输出里。
+
+## 调查记录：xochitl 退出时崩溃（2026-09-25）
+
+设备上 memfault 存的崩溃栈（`~/.memfault/mar/*/stacktrace.json.gz`，按其中 `symbols` 表把 PC 换成"模块+偏移"；xochitl 的运行时基址是 `0x400000`，Ghidra 里的地址＝`0x400000 + 偏移`）有 3 份崩在同一个线程池里，这里用上面两个脚本查清了机制：
+
+- 工作循环 `FUN_00a47fe0`：xochitl 自己的线程池，6 格环形任务队列，取出任务（可调用对象）就执行；由静态初始化里的 `FUN_0048bba0` 建出（`DAT_01aa0d00`、`DAT_01aa1eb0` 两个池）。
+- 崩溃点在任务函数 `FUN_00a46190`（+0x628）和 `FUN_00a49c90`（+0x338）里：后者 `ldr x3,[DAT_01aa1880]` 后 `ldr x7,[x3,#0x28]` 就崩；两者都读全局 `DAT_01aa1880`。任务由 `FUN_00c0dba0` 注册，那里引用 `/sys/bus/i2c/drivers/g2194-regulator/0-0048`（屏幕电源稳压器）与 `enable_nowait`——**墨水屏刷新管线**。
+- 静态初始化 `FUN_0048c010` 里 `__cxa_atexit` 的登记顺序：先两个线程池（析构 `FUN_00a45a50` / `FUN_00a45960`），后 `DAT_01aa1880`、`DAT_01aa18b8…1900` 这批数据（析构 `FUN_00a48330` / `FUN_00a41480`）。atexit 后登记先执行 → **退出时数据对象先析构、线程池后停**；那一刻池里恰有刷新任务在跑就读到已析构的对象 → SEGV。崩溃前 xochitl 日志正是 `shutdown: waiting for display to finish...`，对得上。
+- 结论（置信度中高）：xochitl 自身的静态析构顺序问题，概率取决于退出瞬间屏幕是否在刷新；崩溃栈里没有我们扩展的帧。另外 2 份崩在 `libQt6Gui+0x495098`，没查。
+- 我们这边的对策：部署生效一律主动整机重启（见 `packaging/README.md`「怎么让改动生效」）。理论上可以 hook `exit()` 改走 `_exit` 跳过析构，但 xochitl 可能在析构里落盘设置/文档状态，有丢数据风险，**不做**。

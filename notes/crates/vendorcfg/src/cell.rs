@@ -36,12 +36,12 @@ impl<C: Clone + Default + Serialize + DeserializeOwned> ConfigCell<C> {
 
     /// 当前配置的克隆。
     pub fn get(&self) -> C {
-        self.cur.lock().unwrap_or_else(|e| e.into_inner()).clone()
+        rmsvc_core::sync::lock(&self.cur).clone()
     }
 
     /// 在**副本**上跑 `f`（失败则原配置不变）→ 0600 存盘 → 换入，返回新配置。整个过程持锁，并发 PUT 串行。
     pub fn update(&self, f: impl FnOnce(&mut C) -> Result<(), String>) -> Result<C, String> {
-        let mut cur = self.cur.lock().unwrap_or_else(|e| e.into_inner());
+        let mut cur = rmsvc_core::sync::lock(&self.cur);
         let mut next = cur.clone();
         f(&mut next)?;
         rmsvc_core::config::save(&self.path, &next, Some(0o600))?;

@@ -67,7 +67,7 @@ new_sandbox() {
     echo '{}' > "$R/tmp/shelf-0/shelf/services/book.json"
     xovi_live off
     export HOME="$R/home/root" XDG_CONFIG_HOME="$R/home/root/.config" XDG_DATA_HOME="$R/home/root/.local/share" XDG_STATE_HOME="$R/home/root/.local/state" XDG_CACHE_HOME="$R/home/root/.cache" SHELF_REG_DIR="$R/tmp/shelf-0/shelf/services" CJ_SYSD="$R/usr/lib/systemd/system" CJ_PROC="$R/proc"
-    export CJ_APPLY_GRACE=0 CJ_HEALTH_SLEEP=0 CJ_RETRY_SLEEP=0
+    export CJ_APPLY_GRACE=0 CJ_HEALTH_SLEEP=0 CJ_RETRY_SLEEP=0 CJ_APPLY_VERIFY=0   # 部署后等重启+自动核对另有专门用例
     # 待生效标记目录进沙箱（默认 /run/cangjie-pending-apply 是真实系统路径）
     export CJ_PENDING_DIR="$R/run/cangjie-pending"
     unset CJ_SIM_VERITY CJ_SIM_RW_FAIL CJ_SIM_INACTIVE CJ_SIM_SCP_CORRUPT CJ_HOME CJ_XOVI CJ_BACKUP_DIR CJ_BACKUP_KEEP CJ_STAGE_DIR CJ_PENDING_FALLBACK
@@ -180,12 +180,18 @@ n="$(find "$R/bk" -maxdepth 1 -name 'shelf-????????-??????' | wc -l)"
 check "目录轮转：保留 KEEP 份 + 含子目录的那份不动" test "$n" -eq 4 -a -d "$R/bk/shelf-20260101-000000/sub"
 unset CJ_BACKUP_DIR CJ_BACKUP_KEEP CJ_BACKUP_MAXBYTES
 
-# xochitl_apply 的 H1 判定
+# xochitl_apply 的判定（H1 + 2026-09-25 一律整机重启）
 : > "$CJ_SIM_LOG"; xovi_live on; out="$(cj_xochitl_apply 2>&1)"
-check "xochitl_apply：xovi 已生效 → systemctl restart xochitl，且绝不跑 xovi/start" test "$(count_log 'systemctl restart xochitl')" = 1 -a "$(count_log XOVI_START)" = 0
-check "xochitl_apply：重启前打印\"打断阅读\"提示" test -n "$(printf '%s' "$out" | grep '打断')"
+check "xochitl_apply：xovi 已生效 → systemctl reboot，绝不停/重启 xochitl、绝不 xovi/start" test "$(count_log 'systemctl reboot')" = 1 -a -z "$(grep -E 'systemctl (stop|start|restart) xochitl' "$CJ_SIM_LOG")" -a "$(count_log XOVI_START)" = 0
+check "xochitl_apply：重启前打印\"打断阅读\"提示，并打印 CJ-APPLY-REBOOTING 给 host 侧认" test -n "$(printf '%s' "$out" | grep '打断')" -a -n "$(printf '%s' "$out" | grep -x 'CJ-APPLY-REBOOTING')"
+: > "$CJ_SIM_LOG"; xovi_live off; : > "$CJ_SYSD/xovi-reenable.service"; cj_xochitl_apply >/dev/null 2>&1
+check "xochitl_apply：xovi 没生效但装了 xovi-reenable → 也是整机重启（开机自动恢复 xovi），不 xovi/start" test "$(count_log 'systemctl reboot')" = 1 -a "$(count_log XOVI_START)" = 0
+rm -f "$CJ_SYSD/xovi-reenable.service"
 : > "$CJ_SIM_LOG"; xovi_live off; cj_xochitl_apply >/dev/null 2>&1
-check "xochitl_apply：xovi 没生效 → 才跑 xovi/start" test "$(count_log XOVI_START)" = 1 -a "$(count_log 'systemctl restart xochitl')" = 0
+check "xochitl_apply：xovi 没生效且没装 xovi-reenable → 才跑 xovi/start" test "$(count_log XOVI_START)" = 1 -a "$(count_log 'systemctl reboot')" = 0 -a "$(count_log 'systemctl restart xochitl')" = 0
+mkdir -p "$CJ_PENDING_FALLBACK"; : > "$CJ_PENDING_FALLBACK/hl-snap"   # 退路目录（/home，重启不清）里有标记
+: > "$CJ_SIM_LOG"; xovi_live on; cj_xochitl_apply >/dev/null 2>&1
+check "xochitl_apply：整机重启前清掉 /home 退路目录里的待生效标记（否则设备回来又判\"待生效\"→ 重启循环）" test -z "$(ls -A "$CJ_PENDING_FALLBACK" 2>/dev/null)"
 rm "$HOME/xovi/start"; xovi_live off; cj_xochitl_apply >/dev/null 2>&1; rc=$?
 check "xochitl_apply：没有 xovi/start 也没 xovi → 失败而不是乱重启" test "$rc" -ne 0
 xovi_live on
@@ -258,7 +264,7 @@ check "install：单元 + shelf.target + wants 链接" test -f "$CJ_SYSD/gateway
 check "install：五个 qmd（字体/回收站/建夹/漫画页边距/阅读器翻页）都在 qrr 目录" test -f "$Q/font-menu-dynamic.qmd" -a -f "$Q/shelf-trash-agent.qmd" -a -f "$Q/shelf-mkdir-agent.qmd" -a -f "$Q/shelf-comic-margins.qmd" -a -f "$Q/reader-page-turn.qmd"
 check "install：rw 窗口只开一次、最后一次 mount 是 ro" test "$(count_log 'remount,rw')" = 1 -a "$(last_mount)" = "mount -o remount,ro /"
 check "install：不跑 xovi/start、不重启 xochitl（只打印提示）" test "$(count_log XOVI_START)" = 0 -a "$(count_log 'restart xochitl')" = 0
-check "install：提示里 xovi 未生效时指路 xovi/start（xovi 生效时指路 systemctl restart）" grep -q 'xovi/start' "$R/out1.txt"
+check "install：qmd 生效提示指路整机重启（deploy-xovi-apply.sh / reboot），不教 systemctl restart xochitl" test -n "$(grep '生效需整机重启' "$R/out1.txt")" -a -z "$(grep 'systemctl restart xochitl' "$R/out1.txt")"
 check "install：qmd 有变化 → 记了待生效标记 shelf-qmd（A1）" test -f "$CJ_PENDING_DIR/shelf-qmd"
 check "install：暂存目录已清" test ! -e "$R/home/root/.cangjie-stage"
 SIG1="$(tree_sig)"
@@ -266,10 +272,10 @@ SIG1="$(tree_sig)"
 check "install 第二次：退出 0" test "$rc" -eq 0
 sig_eq "install 第二次：文件树逐字节不变（幂等）" "$SIG1" "$(tree_sig)"
 check "install 第二次：不 remount、不重启任何服务、不留空备份目录" test "$(count_log 'remount')" = 0 -a "$(count_log 'systemctl restart')" = 0 -a -z "$(ls -A "$R/home/root/cangjie-backups" 2>/dev/null)"
-check "install 第二次：qmd 没变 → 不再提示\"生效需重启 xochitl\"（A1）" test -z "$(grep '生效需重启' "$R/out2.txt")"
+check "install 第二次：qmd 没变 → 不再提示\"生效需整机重启\"（A1）" test -z "$(grep '生效需整机重启' "$R/out2.txt")"
 rm -rf "$CJ_PENDING_DIR"; echo "qmd font v2" > "$PL/xovi/font-menu-dynamic.qmd"
 xovi_live on; run sh "$PL/install.sh" >"$R/out3.txt" 2>&1
-check "install：qmd 变了 + xovi 已生效 → 提示 systemctl restart xochitl，且不再教 xovi/start" grep -q 'systemctl restart xochitl' "$R/out3.txt"
+check "install：qmd 变了 + xovi 已生效 → 提示整机重启，不教 xovi/start 也不教 restart xochitl" test -n "$(grep '生效需整机重启' "$R/out3.txt")" -a -z "$(grep -e 'xovi/start' -e 'restart xochitl' "$R/out3.txt")"
 check "install：qmd 变了 → 重新记待生效标记" test -f "$CJ_PENDING_DIR/shelf-qmd"
 # 更新一个二进制：只重启它，且备份进 cangjie-backups
 echo '#!/bin/sh' > "$PL/bin/font-serve"; echo '# v2' >> "$PL/bin/font-serve"
@@ -401,10 +407,10 @@ check "hl-snap：reading-qol.json 首次装才建" test -f "$R/home/root/.local/
 echo '{"user":"setting"}' > "$R/home/root/.local/share/cangjie-ime/reading-qol.json"
 ( cd "$PKG" && CJ_SKIP_BUILD=1 DEFER_XOVI_START=1 run sh deploy-hl-snap.sh 127.0.0.1 ) >/dev/null 2>&1
 check "hl-snap 重复部署：已有的 reading-qol.json 不被覆盖" grep -q '"user":"setting"' "$R/home/root/.local/share/cangjie-ime/reading-qol.json"
-# 非 DEFER：xovi 已生效 → restart（H1）
+# 非 DEFER：xovi 已生效 → 整机重启（2026-09-25 起；H1 仍是绝不 xovi/start）
 xovi_live on; : > "$CJ_SIM_LOG"
 ( cd "$PKG" && CJ_SKIP_BUILD=1 run sh deploy-hl-snap.sh 127.0.0.1 ) >"$R/out.txt" 2>&1; rc=$?
-check "hl-snap 非 DEFER + xovi 已生效：systemctl restart xochitl、绝不 xovi/start、健康检查通过" test "$rc" -eq 0 -a "$(count_log 'systemctl restart xochitl')" = 1 -a "$(count_log XOVI_START)" = 0
+check "hl-snap 非 DEFER + xovi 已生效：systemctl reboot（不停/不重启 xochitl）、绝不 xovi/start、退出 0 并提示回来后核对" test "$rc" -eq 0 -a "$(count_log 'systemctl reboot')" = 1 -a -z "$(grep -E 'systemctl (stop|start|restart) xochitl' "$CJ_SIM_LOG")" -a "$(count_log XOVI_START)" = 0 -a -n "$(grep 'verify-on-device.sh 127.0.0.1' "$R/out.txt")"
 xovi_live off; : > "$CJ_SIM_LOG"
 ( cd "$PKG" && CJ_SKIP_BUILD=1 run sh deploy-hl-snap.sh 127.0.0.1 ) >/dev/null 2>&1
 check "hl-snap 非 DEFER + xovi 未生效：走 xovi/start" test "$(count_log XOVI_START)" = 1
@@ -413,24 +419,33 @@ new_sandbox; EXT="$R/home/root/xovi/extensions.d"; echo OLDSO > "$EXT/hl-snap.so
 ( cd "$PKG" && CJ_SIM_SCP_CORRUPT=hl-snap.so CJ_SKIP_BUILD=1 DEFER_XOVI_START=1 run sh deploy-hl-snap.sh 127.0.0.1 ) >"$R/out.txt" 2>&1; rc=$?
 check "scp 传输损坏：md5 对不上 → 非 0，extensions.d 里旧 .so 原样、无残留" test "$rc" -ne 0 -a "$(cat "$EXT/hl-snap.so")" = OLDSO -a "$(ls -A "$EXT")" = "hl-snap.so"
 
-section "H3：运行中 xochitl 正映射着的扩展 .so 不当场换，stop → 换入 → start"
+section "H3：运行中 xochitl 正映射着的扩展 .so 不当场换 → 待换入区；生效＝换入后主动整机重启（2026-09-25 起）"
 new_sandbox; EXT="$R/home/root/xovi/extensions.d"; SOP="$R/home/root/.cangjie-stage/so-pending"
 echo OLDSO > "$EXT/hl-snap.so"; xovi_live on; : > "$CJ_SIM_LOG"
 ( cd "$PKG" && CJ_SKIP_BUILD=1 DEFER_XOVI_START=1 run sh deploy-hl-snap.sh 127.0.0.1 ) >"$R/out.txt" 2>&1; rc=$?
 check "H3 DEFER：extensions.d 里仍是旧版，新版在待换入区（不在 extensions.d）" test "$rc" -eq 0 -a "$(cat "$EXT/hl-snap.so")" = OLDSO -a -f "$SOP/hl-snap.so" -a "$(ls -A "$EXT")" = "hl-snap.so"
-check "H3 DEFER：记了待生效标记、没动 xochitl" test -n "$(ls -A "$CJ_PENDING_DIR" 2>/dev/null)" -a "$(count_log 'stop xochitl')" = 0 -a "$(count_log 'restart xochitl')" = 0
+check "H3 DEFER：记了待生效标记、没动 xochitl、没重启设备" test -n "$(ls -A "$CJ_PENDING_DIR" 2>/dev/null)" -a -z "$(grep -E 'systemctl (stop|start|restart) xochitl' "$CJ_SIM_LOG")" -a "$(count_log 'systemctl reboot')" = 0
 : > "$CJ_SIM_LOG"
 ( cd "$PKG" && run sh deploy-xovi-apply.sh 127.0.0.1 ) >"$R/out.txt" 2>&1; rc=$?
-check "H3 apply：stop xochitl → 换入 → start，没有 restart、没有 xovi/start" test "$rc" -eq 0 -a "$(grep -e 'stop xochitl' -e 'start xochitl' -e 'restart xochitl' "$CJ_SIM_LOG" | sed 's/.*systemctl //' | tr '\n' '|')" = "stop xochitl|start xochitl|" -a "$(count_log XOVI_START)" = 0
+check "H3 apply：换入 → systemctl reboot；不停/不重启 xochitl、没有 xovi/start、退出 0" test "$rc" -eq 0 -a "$(count_log 'systemctl reboot')" = 1 -a -z "$(grep -E 'systemctl (stop|start|restart) xochitl' "$CJ_SIM_LOG")" -a "$(count_log XOVI_START)" = 0
 check "H3 apply：换入后 md5 与仓库产物一致，待换入区清空，extensions.d 无残留" test "$(md5sum < "$EXT/hl-snap.so")" = "$(md5sum < "$REPO/enhance/hl-snap/hl-snap.so")" -a ! -e "$SOP" -a "$(ls -A "$EXT")" = "hl-snap.so"
-# 非 DEFER 同理：一次部署内完成 stop → 换入 → start
+check "H3 apply：提示设备在重启并给出核对命令，没跑重启后健康检查" test -n "$(grep '设备正在整机重启' "$R/out.txt")" -a -n "$(grep 'verify-on-device.sh 127.0.0.1' "$R/out.txt")" -a -z "$(grep 'is-active :' "$R/out.txt")"
+# 非 DEFER 同理：一次部署内换入 + 整机重启
 echo OLDSO > "$EXT/hl-snap.so"; : > "$CJ_SIM_LOG"
 ( cd "$PKG" && CJ_SKIP_BUILD=1 run sh deploy-hl-snap.sh 127.0.0.1 ) >"$R/out.txt" 2>&1; rc=$?
-check "H3 非 DEFER：stop → start 且新版已就位" test "$rc" -eq 0 -a "$(count_log 'systemctl stop xochitl')" = 1 -a "$(count_log 'systemctl start xochitl')" = 1 -a "$(count_log 'restart xochitl')" = 0 -a "$(md5sum < "$EXT/hl-snap.so")" = "$(md5sum < "$REPO/enhance/hl-snap/hl-snap.so")"
+check "H3 非 DEFER：整机重启一次且新版已就位" test "$rc" -eq 0 -a "$(count_log 'systemctl reboot')" = 1 -a -z "$(grep -E 'systemctl (stop|start|restart) xochitl' "$CJ_SIM_LOG")" -a "$(md5sum < "$EXT/hl-snap.so")" = "$(md5sum < "$REPO/enhance/hl-snap/hl-snap.so")"
 # 过时的待换入版本：新部署与已装的相同 → 撤掉
 mkdir -p "$SOP"; echo STALE > "$SOP/hl-snap.so"
 ( cd "$PKG" && CJ_SKIP_BUILD=1 DEFER_XOVI_START=1 run sh deploy-hl-snap.sh 127.0.0.1 ) >/dev/null 2>&1
 check "H3：与已装相同的部署撤掉过时的待换入版本" test ! -e "$SOP/hl-snap.so"
+# 部署后自动核对（2026-09-25）：等设备断开 → 回来 → 跑 verify-on-device.sh，退出码跟随核对结果
+: > "$CJ_SIM_LOG"; mkdir -p "$CJ_PENDING_DIR"; : > "$CJ_PENDING_DIR/shelf-qmd"
+( cd "$PKG" && CJ_APPLY_VERIFY=1 CJ_REBOOT_DOWN_WAIT=0 CJ_REBOOT_UP_WAIT=0 CJ_REBOOT_SETTLE=0 run sh deploy-xovi-apply.sh 127.0.0.1 ) >"$R/out.txt" 2>&1; rc=$?
+check "部署后自动核对：排上重启后等设备回来并跑 verify-on-device.sh，退出码跟随核对（沙箱固件哈希不在白名单 → 1）" test "$rc" -eq 1 -a -n "$(grep '设备已回来，核对' "$R/out.txt")" -a -n "$(grep '^VERIFY-SUMMARY' "$R/out.txt")"
+# 映射着已删文件（刚卸载过）也一样，--force 也一样
+xovi_live on; printf '7f03 r-xp %s (deleted)\n' "$EXT/hw-stroke.so" >> "$R/proc/4242/maps"; : > "$CJ_SIM_LOG"
+( cd "$PKG" && run sh deploy-xovi-apply.sh 127.0.0.1 --force ) >"$R/out.txt" 2>&1; rc=$?
+check "H3：刚卸载过（maps 带 (deleted)）+ --force → 同样只整机重启" test "$rc" -eq 0 -a "$(count_log 'systemctl reboot')" = 1 -a -z "$(grep -E 'systemctl (stop|start|restart) xochitl' "$CJ_SIM_LOG")"
 
 section "packaging/deploy-handwriting-stroke.sh（同一份数据驱动流程）"
 new_sandbox; EXT="$R/home/root/xovi/extensions.d"
@@ -441,7 +456,7 @@ section "packaging/deploy-xovi-apply.sh：H1 + A1（无待生效改动不重启�
 new_sandbox; echo x > "$R/home/root/xovi/extensions.d/hl-snap.so"; xovi_live on; : > "$CJ_SIM_LOG"
 mkdir -p "$CJ_PENDING_DIR"; : > "$CJ_PENDING_DIR/hl-snap"
 ( cd "$PKG" && run sh deploy-xovi-apply.sh 127.0.0.1 ) >"$R/out.txt" 2>&1; rc=$?
-check "xovi-apply：有待生效标记 + xovi 已生效 → systemctl restart xochitl，绝不 xovi/start（2026-09-20 事故）" test "$rc" -eq 0 -a "$(count_log 'systemctl restart xochitl')" = 1 -a "$(count_log XOVI_START)" = 0
+check "xovi-apply：有待生效标记 + xovi 已生效 → 整机重启（不停/不重启 xochitl），绝不 xovi/start（2026-09-20 事故）" test "$rc" -eq 0 -a "$(count_log 'systemctl reboot')" = 1 -a -z "$(grep -E 'systemctl (stop|start|restart) xochitl' "$CJ_SIM_LOG")" -a "$(count_log XOVI_START)" = 0
 check "xovi-apply：输出里有\"打断\"提示" grep -q '打断' "$R/out.txt"
 check "xovi-apply：重启成功后待生效标记已清空" test -z "$(ls -A "$CJ_PENDING_DIR" 2>/dev/null)"
 : > "$CJ_SIM_LOG"
@@ -450,7 +465,7 @@ check "xovi-apply：没有待生效标记且 xovi 已生效 → 不重启 xochit
 check "xovi-apply：无改动时说明原因并提示 --force" grep -q -e '不重启 xochitl' -e '--force' "$R/out.txt"
 : > "$CJ_SIM_LOG"
 ( cd "$PKG" && run sh deploy-xovi-apply.sh 127.0.0.1 --force ) >"$R/out.txt" 2>&1; rc=$?
-check "xovi-apply --force：无标记也重启一次（仍走 systemctl restart，不 xovi/start）" test "$rc" -eq 0 -a "$(count_log 'systemctl restart xochitl')" = 1 -a "$(count_log XOVI_START)" = 0
+check "xovi-apply --force：无标记也生效一次（整机重启，不 xovi/start）" test "$rc" -eq 0 -a "$(count_log 'systemctl reboot')" = 1 -a -z "$(grep -E 'systemctl (stop|start|restart) xochitl' "$CJ_SIM_LOG")" -a "$(count_log XOVI_START)" = 0
 xovi_live off; : > "$CJ_SIM_LOG"
 ( cd "$PKG" && run sh deploy-xovi-apply.sh 127.0.0.1 ) >/dev/null 2>&1
 check "xovi-apply：xovi 未生效（哪怕没标记）→ 走 xovi/start" test "$(count_log XOVI_START)" = 1 -a "$(count_log 'restart xochitl')" = 0
@@ -494,7 +509,7 @@ check "sidebar-entry DEFER：qmd/rcc 落位，旧 qmd 备份进 cangjie-backups�
 check "sidebar-entry DEFER：不重启 xochitl" test "$(count_log 'restart xochitl')" = 0 -a "$(count_log XOVI_START)" = 0
 xovi_live on; : > "$CJ_SIM_LOG"
 ( cd "$PKG" && PATH="$STUBS:$PATH" sh deploy-sidebar-entry.sh 127.0.0.1 ) >"$R/out.txt" 2>&1; rc=$?
-check "sidebar-entry 非 DEFER + xovi 已生效：systemctl restart xochitl，绝不 xovi/start" test "$rc" -eq 0 -a "$(count_log 'systemctl restart xochitl')" = 1 -a "$(count_log XOVI_START)" = 0
+check "sidebar-entry 非 DEFER + xovi 已生效：整机重启，绝不 xovi/start" test "$rc" -eq 0 -a "$(count_log 'systemctl reboot')" = 1 -a -z "$(grep -E 'systemctl (stop|start|restart) xochitl' "$CJ_SIM_LOG")" -a "$(count_log XOVI_START)" = 0
 new_sandbox; CJ_SIM_SCP_CORRUPT=cangjie-icons.rcc bash -c "cd '$PKG' && DEFER_XOVI_START=1 PATH='$STUBS:'\$PATH sh deploy-sidebar-entry.sh 127.0.0.1" >/dev/null 2>&1; rc=$?
 check "sidebar-entry rcc 传输损坏：非 0，qrr 目录里没有 rcc/qmd（H3 同类：坏文件不进自动加载路径）" test "$rc" -ne 0 -a ! -e "$R/home/root/xovi/exthome/qt-resource-rebuilder/cangjie-icons.rcc"
 
@@ -514,8 +529,8 @@ xovi_live on
 check "install-all --force：整轮退出 0" test "$rc" -eq 0
 check "install-all --force：未验证哈希写进本机 allowlist.local，被 git 跟踪的白名单文件不变（L5）" test -s "$R/allow.local.txt" -a "$ALLOW_MD5" = "$(md5sum < "$PKG/firmware-allowlist.txt")"
 # 扩展 .so 有变化且 xochitl 正映射着 → 走 H3 的 stop → 换入 → start；否则 restart。两者合计恰好一轮。
-cycles=$(( $(count_log 'systemctl restart xochitl') + $(count_log 'systemctl stop xochitl') ))
-check "install-all：整轮下来 xovi 已生效 → xochitl 只重启一轮（restart 或 H3 的 stop+start），全程没有 xovi/start（H1）" test "$cycles" = 1 -a "$(count_log 'systemctl stop xochitl')" = "$(count_log 'systemctl start xochitl')" -a "$(count_log XOVI_START)" = 0
+cycles="$(count_log 'systemctl reboot')"
+check "install-all：整轮下来 xovi 已生效 → 只在最后整机重启一次，全程不停/不重启 xochitl、没有 xovi/start（H1）" test "$cycles" = 1 -a -z "$(grep -E 'systemctl (stop|start|restart) xochitl' "$CJ_SIM_LOG")" -a "$(count_log XOVI_START)" = 0
 check "install-all：hl-snap/hw-stroke 落进 extensions.d，且目录里只有它俩" test -f "$R/home/root/xovi/extensions.d/hl-snap.so" -a -f "$R/home/root/xovi/extensions.d/hw-stroke.so" -a "$(ls "$R/home/root/xovi/extensions.d" | wc -l)" -eq 2
 W="$CJ_SYSD/multi-user.target.wants"
 check "install-all：wifi-watch（M1）/ xovi-reenable / chrony-boot-wakelock 单元在 /usr 且有 wants 链接" test -L "$W/wifi-watch.service" -a -L "$W/xovi-reenable.service" -a -L "$W/chrony-boot-wakelock.service"
@@ -531,7 +546,7 @@ check "install-all 第二遍：不 remount rootfs（单元都已是最新）、�
 check "install-all 第二遍：这轮没改任何 xovi 相关文件 → 不重启 xochitl（A1，重复跑不再闪屏）" test "$(count_log 'restart xochitl')" = 0
 : > "$CJ_SIM_LOG"
 ( cd "$PKG" && run sh install-all.sh 127.0.0.1 --skip chrony-cn,timezone-cn --force-apply ) >"$R/out2b.txt" 2>&1; rc=$?
-check "install-all --force-apply：无改动也重启一次 xochitl（仍是 systemctl restart，不 xovi/start）" test "$rc" -eq 0 -a "$(count_log 'systemctl restart xochitl')" = 1 -a "$(count_log XOVI_START)" = 0
+check "install-all --force-apply：无改动也生效一次（整机重启，不 xovi/start）" test "$rc" -eq 0 -a "$(count_log 'systemctl reboot')" = 1 -a -z "$(grep -E 'systemctl (stop|start|restart) xochitl' "$CJ_SIM_LOG")" -a "$(count_log XOVI_START)" = 0
 ( cd "$PKG" && run sh install-all.sh 127.0.0.1 --skip chrony-cn,timezone-cn,bogus-step ) >"$R/out3.txt" 2>&1
 check "--skip 未知步骤名：给出警告而不是静默" grep -q '不是已知步骤名' "$R/out3.txt"
 
@@ -706,7 +721,7 @@ check "同一新版重复 DEFER 部署（还没重启）：第二次不再备份
 # 模拟"放进待换入区后设备重启过"：/run 里的标记没了，待换入区（/home）还在
 rm -rf "$CJ_PENDING_DIR"; : > "$CJ_SIM_LOG"
 ( cd "$PKG" && run sh deploy-xovi-apply.sh 127.0.0.1 ) >"$R/out.txt" 2>&1; rc=$?
-check "设备重启后（标记已清、待换入区还在）：xovi-apply 仍判定需要生效 → stop → 换入 → start（旧版会说\"不重启\"，新版永远换不进去）" test "$rc" -eq 0 -a "$(count_log 'systemctl stop xochitl')" = 1 -a "$(count_log 'systemctl start xochitl')" = 1 -a "$(md5sum < "$EXT/hl-snap.so")" = "$(md5sum < "$HLSO")" -a ! -e "$SOP"
+check "设备重启后（标记已清、待换入区还在）：xovi-apply 仍判定需要生效 → 换入 → 整机重启（旧版会说\"不重启\"，新版永远换不进去）" test "$rc" -eq 0 -a "$(count_log 'systemctl reboot')" = 1 -a "$(md5sum < "$EXT/hl-snap.so")" = "$(md5sum < "$HLSO")" -a ! -e "$SOP"
 # 卸载时待换入区里还有新版：必须一起撤掉，否则下一次重启 xochitl 又把它装回 extensions.d
 new_sandbox; EXT="$R/home/root/xovi/extensions.d"; SOP="$R/home/root/.cangjie-stage/so-pending"
 echo OLDSO > "$EXT/hl-snap.so"; xovi_live on
@@ -717,10 +732,10 @@ check "uninstall-all：xochitl 还加载着被删的 .so → 提示整机重启�
 : > "$CJ_SIM_LOG"; ( cd "$PKG" && run sh deploy-xovi-apply.sh 127.0.0.1 --force ) >/dev/null 2>&1
 check "uninstall-all 之后再重启 xochitl：卸掉的扩展没有被换回 extensions.d" test ! -e "$EXT/hl-snap.so"
 
-# stop → 换入 → start 的关键区里 ssh 断开（SIGPIPE）：不能把 xochitl 停在那里
+# 关键区（换入 → 清标记 → 排重启）里 ssh 断开（SIGPIPE）：忽略信号、照样排上重启，不能换了一半就停
 new_sandbox; SOP="$R/home/root/.cangjie-stage/so-pending"; mkdir -p "$SOP"; echo NEWSO > "$SOP/hl-snap.so"; xovi_live on; : > "$CJ_SIM_LOG"
-CJ_SIM_PIPE_ON_STOP=1 PATH="$STUBS:$PATH" sh -c ". '$PKG/devlib.sh'; cj_xochitl_apply" >/dev/null 2>&1
-check "stop xochitl 之后连接断了（SIGPIPE）：仍然换入并 start xochitl（旧版 shell 被杀，xochitl 停着直到整机重启）" test "$(count_log 'systemctl start xochitl')" = 1 -a "$(cat "$R/home/root/xovi/extensions.d/hl-snap.so" 2>/dev/null)" = NEWSO
+CJ_SIM_PIPE_ON_REBOOT=1 PATH="$STUBS:$PATH" sh -c ". '$PKG/devlib.sh'; cj_xochitl_apply" >/dev/null 2>&1; rc=$?
+check "关键区里连接断了（SIGPIPE）：仍然换入、排上 reboot、退出 0" test "$rc" -eq 0 -a "$(count_log 'systemctl reboot')" = 1 -a "$(cat "$R/home/root/xovi/extensions.d/hl-snap.so" 2>/dev/null)" = NEWSO
 
 section "2026-09-24：单独跑的部署没有变化就不重启 xochitl"
 new_sandbox; EXT="$R/home/root/xovi/extensions.d"; cp "$HLSO" "$EXT/hl-snap.so"; xovi_live on; : > "$CJ_SIM_LOG"
@@ -728,7 +743,7 @@ new_sandbox; EXT="$R/home/root/xovi/extensions.d"; cp "$HLSO" "$EXT/hl-snap.so";
 check "hl-snap 单独跑：与已装相同 + 已加载 + 无待生效 → 不重启 xochitl、退出 0" test "$rc" -eq 0 -a "$(grep -c -e 'restart xochitl' -e 'stop xochitl' -e XOVI_START "$CJ_SIM_LOG")" = 0 -a -n "$(grep '已是最新' "$R/out.txt")"
 mkdir -p "$CJ_PENDING_DIR"; : > "$CJ_PENDING_DIR/shelf-qmd"; : > "$CJ_SIM_LOG"
 ( cd "$PKG" && CJ_SKIP_BUILD=1 run sh deploy-hl-snap.sh 127.0.0.1 ) >/dev/null 2>&1; rc=$?
-check "hl-snap 单独跑：自己没变但有别的待生效改动（shelf-qmd）→ 照常重启一次并清标记" test "$rc" -eq 0 -a "$(count_log 'systemctl restart xochitl')" = 1 -a -z "$(ls -A "$CJ_PENDING_DIR" 2>/dev/null)"
+check "hl-snap 单独跑：自己没变但有别的待生效改动（shelf-qmd）→ 照常整机重启一次并清标记" test "$rc" -eq 0 -a "$(count_log 'systemctl reboot')" = 1 -a -z "$(ls -A "$CJ_PENDING_DIR" 2>/dev/null)"
 xovi_live off; : > "$CJ_SIM_LOG"
 ( cd "$PKG" && CJ_SKIP_BUILD=1 run sh deploy-hl-snap.sh 127.0.0.1 ) >/dev/null 2>&1
 check "hl-snap 单独跑：没变但 xovi 还没生效 → 照常 xovi/start" test "$(count_log XOVI_START)" = 1
@@ -760,6 +775,169 @@ check "install-all：没装 appload → sidebar-entry 记进\"前置条件不满
 new_sandbox
 CJ_SIM_VERITY=1 bash -c "cd '$PKG' && PATH='$STUBS:'\$PATH && . ./lib.sh && HOST=127.0.0.1 && run_step chrony-boot-wakelock sh ./deploy-chrony-boot-wakelock.sh 127.0.0.1 >/dev/null 2>&1; echo \"D=\$DONE|N=\$NOTAPPL\"" >"$R/out.txt" 2>&1
 check "run_step：dm-verity 下单元从没装过 → 记为\"前置条件不满足\"而不是已安装" test -n "$(grep '^D=|N=' "$R/out.txt")" -a -n "$(grep '^   chrony-boot-wakelock：dm-verity' "$R/out.txt")"
+unset CJ_ALLOWLIST_LOCAL
+
+# ═══════════════════════════ 8. 2026-09-25：部署后健康核对 verify-on-device.sh ═══════════════════════════
+section "2026-09-25：verify-on-device.sh —— host 端判定（--from 离线喂构造的采集文本）"
+new_sandbox; export CJ_ALLOWLIST_LOCAL="$R/allow.local.txt"
+FW_OK="$(awk '!/^#/ && /3\.28\.0\.172/ { print $1; exit }' "$PKG/firmware-allowlist.txt")"
+VSVCS="gateway book-serve koreader-serve font-serve wallpaper-serve ink-serve transcribe-serve mind-serve note-serve"
+# 一台"健康设备"的采集文本（字段用 | 写，转成 TAB）：扩展都映射且无 (deleted)、qmd 都在且早于 xochitl 启动、
+# 9 个服务 active、端口都在听、单元都在、无告警、空间充足
+mk_dump() {
+    {
+        echo "VERSION|1"; echo "NOW|2000000000"; echo "UPTIME|100000.00"; echo "FW_SHA|$FW_OK"; echo "FW_VER|3.28.0.172"
+        echo "X_ACTIVE|active"; echo "X_PID|4242"; echo "X_NRESTARTS|0"; echo "X_START_MONO|7400000"; echo "X_XOVI|1"
+        echo "XMAP|/home/root/xovi/extensions.d/hl-snap.so|3|0"; echo "XMAP|/home/root/xovi/extensions.d/hw-stroke.so|3|0"
+        echo "HAS_XOVI|1"; echo "EXT_FILE|hl-snap.so|1999000000"; echo "EXT_FILE|hw-stroke.so|1999000000"
+        echo "HAS_QRR|1"
+        for q in font-menu-dynamic.qmd shelf-trash-agent.qmd shelf-mkdir-agent.qmd shelf-comic-margins.qmd reader-page-turn.qmd koreader-sidebar-entry.qmd cangjie-icons.rcc; do echo "QRR_FILE|$q|1999000000"; done
+        echo "HAS_APPLOAD|1"
+        for s in $VSVCS; do echo "UNIT|svc|$s.service|1|1|active|0|5000|10240|20480|7600000|-"; done
+        echo "UNIT|target|shelf.target|1|1|active|-|-|-|-|-|-"
+        echo "UNIT|svc|wifi-watch.service|1|1|active|0|5001|512|600|7000000|-"
+        echo "UNIT|opt|battop.service|1|1|inactive|0|0|-|-|0|-"
+        echo "UNIT|once|xovi-reenable.service|1|1|active|-|-|-|-|-|-"
+        echo "UNIT|once|chrony-boot-wakelock.service|1|-|inactive|-|-|-|-|-|-"
+        echo "PORTINFO|1"; echo "LISTEN|443|0.0.0.0"
+        for p in 8790 8791 8792 8793 8795 8796 8797 8798; do echo "LISTEN|$p|127.0.0.1"; done
+        echo "JOURNAL|1"; echo "XLOG|hookok:hl-snap|1"; echo "XLOG|hookok:hw-stroke|3"; echo "XLOG|hookfail:hl-snap|0"
+        echo "XLOG|mark:reader-page-turn.qmd|2"; echo "FLIGHT_ABSENT|1"; echo "DF_HOME|3000000"; echo "END|1"
+    } | tr '|' '\t'
+}
+# vr ARGS…：跑 verify-on-device.sh，输出进 $R/vout.txt，返回退出码；vsum KEY：从汇总行取 ok/warn/fail/result
+vr() { ( cd "$PKG" && run sh verify-on-device.sh "$@" ) >"$R/vout.txt" 2>&1; }
+vsum() { sed -n "s/^VERIFY-SUMMARY .*$1=\([A-Z0-9]*\).*/\1/p" "$R/vout.txt"; }
+vline() { grep -F -- "$1" "$R/vout.txt" | head -n 1; }
+mk_dump > "$R/ok.dump"
+: > "$CJ_SIM_LOG"; vr 127.0.0.1 --from "$R/ok.dump"; rc=$?
+check "健康采集：退出 0、result=PASS、无 ⚠/✗" test "$rc" -eq 0 -a "$(vsum result)" = PASS -a "$(vsum warn)" = 0 -a "$(vsum fail)" = 0
+check "--from：不连设备（没有任何 ssh/scp）" test "$(count_log '^ssh')" = 0 -a "$(count_log '^scp')" = 0
+check "健康采集：扩展行带 maps 段数与 hook「安装完成」次数" test -n "$(vline '✓ 扩展 hw-stroke.so：已映射 3 段，日志 hook「安装完成」×3')"
+check "健康采集：qmd 有日志佐证时注明（CJ-PAGE-TURN: loaded ×2）" test -n "$(vline 'CJ-PAGE-TURN: loaded」×2')"
+check "健康采集：battop inactive 不算问题（有意不开机自启）" test -n "$(vline '✓ battop.service：inactive')"
+check "健康采集：最后一行是机器可读汇总" test "$(tail -n 1 "$R/vout.txt" | cut -d' ' -f1)" = VERIFY-SUMMARY
+
+# 逐项坏掉：期望的级别与退出码
+vcase() { # 描述 期望退出码(0/1) 期望行里的子串 sed表达式…（作用在健康采集上）
+    vc_d="$1"; vc_rc="$2"; vc_s="$3"; shift 3
+    mk_dump > "$R/case.dump"
+    for vc_e in "$@"; do sed -i "$vc_e" "$R/case.dump"; done
+    vr 127.0.0.1 --from "$R/case.dump"; vc_got=$?
+    if [ "$vc_got" -eq "$vc_rc" ] && [ -n "$(vline "$vc_s")" ]; then ok "$vc_d"; else bad "$vc_d（rc=$vc_got）"; grep -e '✗' -e '⚠' "$R/vout.txt" | head -n 5 | sed 's/^/       /'; fi
+}
+T=$'\t'
+vcase "扩展 .so 在 maps 里是 (deleted) → ✗、退出 1" 1 "✗ 扩展 hw-stroke.so：maps 里是 (deleted)" "s#^XMAP${T}\(.*hw-stroke.so\)${T}3${T}0#XMAP${T}\1${T}3${T}1#"
+vcase "extensions.d 里有非 .so 文件（备份）→ ✗" 1 "✗ 扩展目录异物 hl-snap.so.bak" "\$a EXT_FILE${T}hl-snap.so.bak${T}1"
+vcase "extensions.d 里有 .crashed 标记 → 只 ⚠" 0 "⚠ 扩展 hl-snap.so.crashed" "\$a EXT_FILE${T}hl-snap.so.crashed${T}1"
+vcase "扩展在目录里但没被映射 → ⚠" 0 "⚠ 扩展 hl-snap.so：在 extensions.d 里但没被当前 xochitl 映射" "/^XMAP${T}.*hl-snap/d"
+vcase "当前 xochitl 日志有「hook 未安装」→ 该扩展 ✗" 1 "✗ 扩展 hl-snap.so：已映射 3 段，但当前 xochitl 日志有「hook 未安装」×2" "s/^XLOG${T}hookfail:hl-snap${T}0/XLOG${T}hookfail:hl-snap${T}2/"
+vcase "待换入区有 .so → ⚠、退出 0（result=WARN）" 0 "⚠ 待换入区 so-pending：有 hw-stroke.so" "\$a PENDING${T}so-pending:hw-stroke.so"
+check "  └ result=WARN" test "$(vsum result)" = WARN
+vcase "有待生效标记 → ⚠" 0 "⚠ 待生效标记：shelf-qmd" "\$a PENDING${T}shelf-qmd"
+vcase "xovi 没在 xochitl 里生效 → ✗" 1 "✗ xovi：xochitl 没带 xovi" "s/^X_XOVI${T}1/X_XOVI${T}0/"
+vcase "设备没装 xovi → 只 ⚠" 0 "⚠ xovi：设备上没有 xovi.so" "s/^X_XOVI${T}1/X_XOVI${T}0/" "s/^HAS_XOVI${T}1/HAS_XOVI${T}0/" "/^XMAP/d" "/^EXT_FILE/d"
+vcase "xochitl NRestarts>0 → ⚠" 0 "⚠ xochitl：active，MainPID=4242，NRestarts=2" "s/^X_NRESTARTS${T}0/X_NRESTARTS${T}2/"
+vcase "xochitl 不是 active → ✗" 1 "✗ xochitl：is-active=failed" "s/^X_ACTIVE${T}active/X_ACTIVE${T}failed/"
+vcase "固件哈希不在白名单 → ✗" 1 "✗ 固件：IMG_VERSION=3.28.0.172，sha256=deadbeef 不在白名单" "s/^FW_SHA${T}.*/FW_SHA${T}deadbeef/"
+echo "cafebabe  (--force 追加，未验证，2026-09-25)" > "$CJ_ALLOWLIST_LOCAL"
+vcase "固件哈希只在本机 --force 白名单 → ⚠" 0 "⚠ 固件：IMG_VERSION=3.28.0.172，sha256 只在本机" "s/^FW_SHA${T}.*/FW_SHA${T}cafebabe/"
+rm -f "$CJ_ALLOWLIST_LOCAL"
+vcase "开机不久 → ⚠（提示查意外整机重启）" 0 "⚠ 开机时长：1分40秒" "s/^UPTIME${T}.*/UPTIME${T}100.5/"
+vcase "qmd 缺失（所属服务已装）→ ✗" 1 "✗ reader-page-turn.qmd：缺失" "/^QRR_FILE${T}reader-page-turn.qmd/d"
+vcase "qmd 比 xochitl 进程新 → ⚠ 待重启" 0 "⚠ shelf-mkdir-agent.qmd：文件比当前 xochitl 进程新" "s/^QRR_FILE${T}shelf-mkdir-agent.qmd${T}.*/QRR_FILE${T}shelf-mkdir-agent.qmd${T}1999999999/"
+vcase "book-serve 没装 → 不期望它的 qmd/端口，单元缺失只 ⚠" 0 "⚠ book-serve.service：没装" "/^QRR_FILE${T}\(shelf-\|reader-page\)/d" "/^LISTEN${T}8790/d" "s/^UNIT${T}svc${T}book-serve.service${T}1${T}1/UNIT${T}svc${T}book-serve.service${T}0${T}0/"
+check "  └ 没有报它的 qmd 缺失" test -z "$(vline '✗ reader-page-turn.qmd')"
+vcase "没装 qt-resource-rebuilder → qmd 整节只一条 ⚠" 0 "⚠ qt-resource-rebuilder" "s/^HAS_QRR${T}1/HAS_QRR${T}0/" "/^QRR_FILE/d"
+vcase "旧命名遗留 qmd → ⚠" 0 "⚠ font-menu-dynamic-3.27.qmd：旧命名遗留" "\$a QRR_FILE${T}font-menu-dynamic-3.27.qmd${T}1"
+vcase "单元文件不在但载荷在（OTA 冲掉）→ ✗" 1 "✗ gateway.service：单元文件不在" "s/^UNIT${T}svc${T}gateway.service${T}1/UNIT${T}svc${T}gateway.service${T}0/"
+vcase "服务 inactive → ✗" 1 "✗ ink-serve.service：is-active=failed" "s/^UNIT${T}svc${T}ink-serve.service${T}1${T}1${T}active/UNIT${T}svc${T}ink-serve.service${T}1${T}1${T}failed/"
+vcase "服务 NRestarts>0 → ⚠" 0 "⚠ mind-serve.service：active，但 NRestarts=3" "s/^UNIT${T}svc${T}mind-serve.service${T}1${T}1${T}active${T}0/UNIT${T}svc${T}mind-serve.service${T}1${T}1${T}active${T}3/"
+vcase "服务峰值内存超阈值 → ⚠" 0 "⚠ book-serve.service：active，峰值内存偏高" "s/^\(UNIT${T}svc${T}book-serve.service${T}1${T}1${T}active${T}0${T}5000${T}10240${T}\)20480/\1900000/"
+vcase "服务很晚才启动 → 注明开机后被重启过" 0 "开机后 1小时0分 才启动（开机后被重启过）" "s/^\(UNIT${T}svc${T}note-serve.service${T}.*${T}\)7600000${T}-\$/\13600000000${T}-/"
+vcase "端口没人听 → ✗" 1 "✗ 8796（transcribe-serve）：没有进程在监听" "/^LISTEN${T}8796/d"
+vcase "领域服务监听 0.0.0.0 → ⚠" 0 "⚠ 8791（koreader-serve）：监听 0.0.0.0" "s/^LISTEN${T}8791${T}127.0.0.1/LISTEN${T}8791${T}0.0.0.0/"
+vcase "网关只听回环 → ⚠" 0 "⚠ 443（gateway）：只监听 127.0.0.1" "s/^LISTEN${T}443${T}0.0.0.0/LISTEN${T}443${T}127.0.0.1/"
+vcase "单元里 --bind 的端口优先于兜底表" 0 "✓ 8899（font-serve）" "s/^\(UNIT${T}svc${T}font-serve.service${T}.*${T}\)-\$/\18899/" "\$a LISTEN${T}8899${T}127.0.0.1"
+vcase "journal 有 panic → ✗" 1 "✗ panic：1 条相关日志；最近一条：thread 'main' panicked at src/x.rs" "\$a ALERT${T}J${T}panic${T}1${T}thread 'main' panicked at src/x.rs"
+vcase "dmesg 与 journal 同一次 OOM 各一份 → 取较大计数、样例用 journal" 1 "✗ OOM：3 条相关日志；最近一条：J-sample" "\$a ALERT${T}K${T}oom${T}3${T}K-sample" "\$a ALERT${T}J${T}oom${T}2${T}J-sample"
+vcase "SHELF-MKDIR 超时只 ⚠" 0 "⚠ SHELF-MKDIR 超时：4 条相关日志" "\$a ALERT${T}J${T}mkdir-timeout${T}4${T}SHELF-MKDIR: transfer timeout after 9000ms"
+vcase "/home 空间不足 → ✗" 1 "✗ /home：剩余 10.0MB" "s/^DF_HOME${T}.*/DF_HOME${T}10240/"
+vcase "/home 空间偏紧 → ⚠" 0 "⚠ /home：剩余 100.0MB" "s/^DF_HOME${T}.*/DF_HOME${T}102400/"
+vcase "飞行记录仪：打印最后几行" 0 "│ 2026-09-25 03:00 freeze?" "/^FLIGHT_ABSENT/d" "\$a FLIGHT_MTIME${T}1999999000" "\$a FLIGHT${T}2026-09-25 03:00 freeze?"
+vcase "采集不完整（缺 END）→ ✗" 1 "✗ 采集结果：不完整" "/^END/d"
+printf 'garbage\n' > "$R/bad.dump"; vr 127.0.0.1 --from "$R/bad.dump"; rc=$?
+check "不是采集文本 → ✗、退出 1" test "$rc" -eq 1 -a -n "$(vline '缺 VERSION 行')"
+# --json：合法 JSON，计数与文本模式一致
+mk_dump | sed "\$a PENDING${T}so-pending:x.so" > "$R/j.dump"
+vr 127.0.0.1 --from "$R/j.dump"; tw="$(vsum warn)"; tf="$(vsum fail)"
+vr 127.0.0.1 --from "$R/j.dump" --json; rc=$?
+if command -v python3 >/dev/null 2>&1; then
+    jsum="$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d["warn"], d["fail"], d["result"], all(set(i)=={"level","section","title","msg","detail"} for i in d["items"]))' "$R/vout.txt" 2>&1)"
+    check "--json：合法 JSON，warn/fail 计数与文本模式一致、result=WARN" test "$rc" -eq 0 -a "$jsum" = "$tw $tf WARN True"
+else
+    check "--json：输出以 { 开头（本机无 python3，不做完整解析）" test "$(cut -c1 "$R/vout.txt" | head -n 1)" = "{"
+fi
+# 参数解析：错参数退出 2 且不连设备
+: > "$CJ_SIM_LOG"
+vr --bogus; rc1=$?; vr a b; rc2=$?; vr --json --dump; rc3=$?; vr --from "$R/nope.dump"; rc4=$?; vr --flight-lines x; rc5=$?
+vr -h; rc6=$?
+check "verify：未知参数/两个 host/--json+--dump/--from 不存在/--flight-lines 非数字 → 退出 2；-h → 0；都没连设备" test "$rc1$rc2$rc3$rc4$rc5$rc6" = "222220" -a "$(count_log '^ssh')" = 0
+unset CJ_ALLOWLIST_LOCAL
+
+section "2026-09-25：verify-on-device.sh —— 设备端采集（假 ssh 跑真采集脚本）：只读、一次连接、内核命令行 panic=N 不误报"
+new_sandbox; export CJ_ALLOWLIST_LOCAL="$R/allow.local.txt"; xovi_live on
+mkdir -p "$R/proc/net"
+echo "100000.00 1.00" > "$R/proc/uptime"
+printf 'Name:\tx\nVmHWM:\t  20480 kB\nVmRSS:\t  10240 kB\n' > "$R/proc/4242/status"
+{ echo "  sl  local_address rem_address   st"
+  echo "   0: 00000000:01BB 00000000:0000 0A 0"; n=1
+  for p in 8790 8791 8792 8793 8795 8796 8797 8798; do printf '   %d: 0100007F:%04X 00000000:0000 0A 0\n' "$n" "$p"; n=$((n + 1)); done
+  echo "   9: 0100007F:1F90 0100007F:D431 01 0"; } > "$R/proc/net/tcp"   # 最后一行是已建立连接（st=01），不算监听
+printf '  sl  local_address                         remote_address                        st\n   0: 0000000000000000FFFF00000100007F:22B6 00000000000000000000000000000000:0000 0A 0\n' > "$R/proc/net/tcp6"
+: > "$R/home/root/xovi/extensions.d/hl-snap.so"; : > "$R/home/root/xovi/extensions.d/hw-stroke.so"
+for s in $VSVCS; do : > "$B/$s"; printf '[Service]\nExecStart=/home/root/.local/bin/%s\n' "$s" > "$R/usr/lib/systemd/system/$s.service"; done
+for u in shelf.target xovi-reenable.service wifi-watch.service battop.service chrony-boot-wakelock.service; do : > "$R/usr/lib/systemd/system/$u"; done
+: > "$B/wifi-watch.sh"; mkdir -p "$R/home/root/battop"; : > "$R/home/root/battop/battop"
+for q in font-menu-dynamic.qmd shelf-trash-agent.qmd shelf-mkdir-agent.qmd shelf-comic-margins.qmd reader-page-turn.qmd koreader-sidebar-entry.qmd cangjie-icons.rcc; do : > "$Q/$q"; done
+printf 'f1\nf2\nf3\nf4\tx\n' > "$R/host-flight.log"   # 飞行记录仪在宿主机上（09-25 更正）；末行带 TAB：要压成空格，不能错位
+export CJ_FLIGHT_LOG="$R/host-flight.log"
+cat > "$R/journal.txt" <<'EOF'
+Kernel command line: console=ttymxc0,115200 panic=2 rootwait
+[hl-snap] 荧光笔EXPAND hook 安装完成 @ 0x1（neuter=0）
+[hw-stroke] 变宽几何 hook 安装完成 @ 0x2（factor=1.000）
+CJ-PAGE-TURN: loaded
+EOF
+export CJ_SIM_JOURNAL="$R/journal.txt"
+PRE_SIG="$(tree_sig)"; : > "$CJ_SIM_LOG"
+vr 127.0.0.1 --flight-lines 2; rc=$?
+check "采集：内核命令行里的 panic=2 不算 panic（2026-09-25 真机误报）" test -n "$(vline '✓ panic：无 panic')"
+check "采集：全链路跑通、没有采集错误（有 END、单元/端口/qmd/扩展都读到）" test -z "$(vline '采集结果')" -a -n "$(vline '✓ 443（gateway）：监听 0.0.0.0')" -a -n "$(vline '✓ 8790（book-serve）：监听 127.0.0.1')" -a -n "$(vline '✓ 扩展 hl-snap.so：已映射 1 段，日志 hook「安装完成」×1')" -a -n "$(vline '✓ 单元：14/14 个在位')"
+check "采集：飞行记录仪只取 --flight-lines 条（最后 2 行）" test -n "$(vline '│ f4 x')" -a -n "$(vline '│ f3')" -a -z "$(vline '│ f2')"
+check "采集：/proc/net/tcp6 的 IPv4 映射地址解析成 127.0.0.1（8886 端口）" test -n "$( ( cd "$PKG" && run sh verify-on-device.sh 127.0.0.1 --dump ) 2>/dev/null | grep "^LISTEN${T}8886${T}127.0.0.1$")"
+( cd "$PKG" && run sh verify-on-device.sh 127.0.0.1 --dump ) > "$R/host.dump" 2>/dev/null; vr --from "$R/host.dump"
+check "--dump 记下真实主机，--from 不给 host 时页头用它（09-25：WiFi 地址被显示成缺省 10.11.99.1）" test -n "$(vline '127.0.0.1（离线：host.dump）')"
+unset CJ_FLIGHT_LOG
+: > "$CJ_SIM_LOG"; vr 127.0.0.1
+sig_eq "采集：设备文件树前后一字不差（只读）" "$PRE_SIG" "$(tree_sig)"
+check "采集：没有 start/stop/restart/enable/disable/daemon-reload、没有 mount、没有 scp" test -z "$(grep -E '^systemctl (start|stop|restart|reload|enable|disable|daemon-reload|kill|reset-failed)|^mount |^scp |XOVI_START' "$CJ_SIM_LOG")"
+check "采集：一次 ssh 连通检查 + 一次 ssh 采集（不逐项连）" test "$(count_log '^ssh')" = 2 -a "$(count_log '^ssh sh -s')" = 1
+check "采集：设备全健康时退出 0（固件桩哈希不在白名单除外，已单独断言）" test "$(vsum fail)" = 1 -a -n "$(vline '✗ 固件')"
+# 真 panic / hook 未安装 / dmesg OOM 能从采集里抓到
+printf "thread 'main' panicked at gateway/src/main.rs:10:5\n[hw-stroke] _xovi_construct: 找不到 xochitl 映射，hook 未安装\nxochitl: processed more than once!\n" >> "$R/journal.txt"
+printf '[  12.3] Out of memory: Killed process 777 (book-serve)\n[    0.0] Kernel command line: panic=2\n' > "$R/dmesg.txt"; export CJ_SIM_DMESG="$R/dmesg.txt"
+vr 127.0.0.1; rc=$?
+check "采集：真 panic / hook 未安装 / 扩展重复注册 / dmesg 里的 OOM 都判 ✗、退出 1" test "$rc" -eq 1 -a -n "$(vline "✗ panic：1 条相关日志；最近一条：thread 'main' panicked")" -a -n "$(vline '✗ hook 未安装：1 条')" -a -n "$(vline '✗ 扩展重复注册')" -a -n "$(vline '✗ OOM：1 条相关日志；最近一条：[  12.3] Out of memory')"
+unset CJ_SIM_JOURNAL CJ_SIM_DMESG
+# 服务 inactive / 设备连不上
+CJ_SIM_INACTIVE_UNITS="note-serve.service" vr 127.0.0.1
+check "采集：某个服务 inactive → 该服务 ✗" test -n "$(vline '✗ note-serve.service：is-active=inactive')"
+: > "$CJ_SIM_LOG"; CJ_SIM_SSH_FAIL=1 vr 127.0.0.1; rc=$?
+check "采集：设备连不上 → 退出 1、打印\"连不上\"与排查步骤" test "$rc" -eq 1 -a -n "$(vline '连不上')"
+# 静态守卫：采集脚本（heredoc）里不许出现任何改设备状态的命令
+awk '/<<.DEVICE_SCRIPT.$/ { on = 1; next } /^DEVICE_SCRIPT$/ { on = 0 } on' "$PKG/verify-on-device.sh" | grep -v '^[[:space:]]*#' > "$R/collector.sh"
+check "静态守卫：verify 采集脚本非空" test -s "$R/collector.sh"
+check "静态守卫：verify 采集脚本不含 systemctl 写操作 / mount / rm / mv / cp / 写文件重定向 / cj_xochitl_apply / 标记增删" test -z "$(grep -nE 'systemctl +(start|stop|restart|reload|enable|disable|daemon-reload|kill|mask|reset-failed)|\bmount\b|(^|[;&|[:space:]])(rm|mv|cp|mkdir|touch|ln|chmod|kill)[[:space:]]|>>|>[[:space:]]*"?\$|cj_xochitl_apply|cj_pending_(mark|clear)|cj_so_(stage|commit|unstage)|xovi/start' "$R/collector.sh")"
 unset CJ_ALLOWLIST_LOCAL
 
 # ═══════════════════════════ 5. 静态守卫 / 清单对称 ═══════════════════════════
@@ -813,6 +991,17 @@ GUARD_CMD='! grep -q "xovi[.]so" MAPS 2>/dev/null'
 printf '7f00 r-xp /home/root/xovi/xovi.so\n' > "$R/maps-active"; printf '7f00 r-xp /usr/lib/libc.so\n' > "$R/maps-plain"
 check "xovi-reenable 守卫：已生效→跳过" bash -c "${GUARD_CMD//MAPS/$R/maps-active}; [ \$? -ne 0 ]"
 check "xovi-reenable 守卫：未生效→执行" bash -c "${GUARD_CMD//MAPS/$R/maps-plain}"
+# 开机时换入待换入区（2026-09-25）：ExecStartPre 在 ExecCondition 之后、ExecStart 之前；把单元里的命令抽出来（$$→$、
+# /home/root→沙箱）真跑一遍：普通文件挪进 extensions.d 且 755、符号链接不动、目录空了就删、extensions.d 里没有临时文件
+check "xovi-reenable.service：换入待换入区的 ExecStartPre 排在 ExecCondition 之后、ExecStart 之前" test "$(grep -n '^ExecCondition=' $U | cut -d: -f1)" -lt "$(grep -n '^ExecStartPre=.*so-pending' $U | cut -d: -f1)" -a "$(grep -n '^ExecStartPre=.*so-pending' $U | cut -d: -f1)" -lt "$(grep -n '^ExecStart=' $U | cut -d: -f1)"
+PRE_CMD="$(sed -n "s/^ExecStartPre=-\/bin\/sh -c '\(.*\)'\$/\1/p" $U | sed -e 's/\$\$/$/g' -e "s#/home/root#$R/boot-home#g")"
+mkdir -p "$R/boot-home/.cangjie-stage/so-pending" "$R/boot-home/xovi/extensions.d"
+echo OLD > "$R/boot-home/xovi/extensions.d/hl-snap.so"; echo NEW > "$R/boot-home/.cangjie-stage/so-pending/hl-snap.so"
+ln -s /etc/passwd "$R/boot-home/.cangjie-stage/so-pending/evil.so"
+out="$(sh -c "$PRE_CMD" 2>&1)"; rc=$?
+check "xovi-reenable 开机换入：新版就位且可执行、符号链接没挪进 extensions.d、提示换入了哪个" test "$rc" -eq 0 -a "$(cat "$R/boot-home/xovi/extensions.d/hl-snap.so")" = NEW -a -x "$R/boot-home/xovi/extensions.d/hl-snap.so" -a ! -e "$R/boot-home/xovi/extensions.d/evil.so" -a "$(ls -A "$R/boot-home/xovi/extensions.d")" = hl-snap.so -a -n "$(printf '%s' "$out" | grep '换入 hl-snap.so')"
+rm -f "$R/boot-home/.cangjie-stage/so-pending/evil.so"; out="$(sh -c "$PRE_CMD" 2>&1)"
+check "xovi-reenable 开机换入：待换入区空了就删掉目录；没有待换入区时安静退出 0" test ! -e "$R/boot-home/.cangjie-stage/so-pending" -a -z "$out" && sh -c "$PRE_CMD"
 
 # 10) 开机顺序（2026-09-24）：常驻服务不拉 network-online.target（否则开机专门为它们跑 NetworkManager-wait-online，
 #     没 WiFi 时等到超时）；都排在 xovi-reenable 之后（xochitl 先带 xovi 起来）；xovi-reenable 必须有启动超时上限

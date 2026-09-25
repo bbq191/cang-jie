@@ -4,6 +4,8 @@
 //!
 //! 布局：Title=章名 → 条目按 `page_index` 平铺（样式=`Entry.style`，文本=`display_text()`，没转写
 //! 占位"（待转写）"）→ 条目下各跟一段 Body 摘录勾画原文（有的话）与 AI 回答（有的话）。
+//! **2026-09-25 起输出书的小节名**：条目的 `subhead`（epubmap 按目录二级标题自动填）跟上一条不同时，先插一段
+//! Subheading 1 写小节名；条目自己的 `Heading1`/`Heading2`（手写 `##`/`###`）也原样落成 Subheading 1/2。
 //! 已撤销（`Status::Revoked`）条目不投影；一章零条目 → `None`（调用方不该为空章生成文档）。
 //!
 //! **2026-09-08 三期：砍掉"分区"**（`Section`/`Entry.section`/`Book.sections` 整个概念都删了）——
@@ -16,17 +18,44 @@
 //! Body 段插在两条 NUMBERED 条目之间会打断连续、导致编号从 1 重来——真要连续编号的清单，条目之间
 //! 目前不能有摘录/回答。留给以后有真机样本再决定要不要为此改变编排。
 use crate::hash::{fnv1a, hex};
-use crate::model::{Book, Entry};
+use crate::model::{Book, Entry, Style};
 use rmv6::v6::scene_item::text::ParagraphStyle;
 use rmv6::write::Paragraph;
 
-fn style_to_wire(s: crate::model::Style) -> ParagraphStyle {
+/// 条目样式 → 设备段落（一一对应：见 `model::Style`）。
+fn paragraph(s: Style, text: String) -> Paragraph {
     match s {
-        crate::model::Style::Body => ParagraphStyle::PLAIN,
-        crate::model::Style::Bullet => ParagraphStyle::BULLET,
-        crate::model::Style::Numbered => ParagraphStyle::NUMBERED,
-        crate::model::Style::Checkbox => ParagraphStyle::CHECKBOX,
+        Style::Body => Paragraph::new(ParagraphStyle::PLAIN, text),
+        Style::Bullet => Paragraph::new(ParagraphStyle::BULLET, text),
+        Style::Numbered => Paragraph::new(ParagraphStyle::NUMBERED, text),
+        Style::Checkbox => Paragraph::new(ParagraphStyle::CHECKBOX, text),
+        Style::Heading1 => Paragraph::subheading1(text),
+        Style::Heading2 => Paragraph::new(ParagraphStyle::BOLD, text),
     }
+}
+
+/// 条目在书里所在的小节名（去空白后非空才算），投影/导出在它变化时插一行小节标题。
+pub(crate) fn subhead_of(e: &Entry) -> Option<&str> {
+    e.subhead.as_deref().map(str::trim).filter(|s| !s.is_empty())
+}
+
+/// 两条投影（设备笔记本 / Obsidian md）共用的指纹算法：章名 + 各条目 id/样式/小节名/文本/原文/回答。
+/// 只是各自的活条目集合不同（去处过滤方向相反），所以由调用方传进来。
+pub(crate) fn fingerprint_entries(title: &str, entries: &[&Entry]) -> Option<String> {
+    if entries.is_empty() {
+        return None;
+    }
+    let mut buf = String::new();
+    buf.push_str(title);
+    buf.push('\u{2}');
+    for e in entries {
+        let text = e.display_text().unwrap_or("");
+        let quote = e.quote.as_ref().map(|q| q.text.as_str()).unwrap_or("");
+        let answer = e.answer.as_ref().map(|a| a.text.as_str()).unwrap_or("");
+        buf.push_str(&format!("{}|{:?}|{}|{}|{}|{}", e.id, e.style, subhead_of(e).unwrap_or(""), text, quote, answer));
+        buf.push('\u{1}');
+    }
+    Some(hex(fnv1a(buf.as_bytes())))
 }
 
 /// 参与投影的条目：本章、真被要求转笔记的（`Pending`/`Draft`/`Reviewed`——**不是**"非撤销"这种
@@ -43,7 +72,7 @@ fn live_entries(book: &Book, chapter_idx: usize) -> Vec<&Entry> {
 
 fn push_entry(out: &mut Vec<Paragraph>, e: &Entry) {
     let text = e.display_text().map(str::to_string).unwrap_or_else(|| "（待转写）".to_string());
-    out.push(Paragraph::new(style_to_wire(e.style), text));
+    out.push(paragraph(e.style, text));
     if let Some(q) = &e.quote {
         if !q.text.trim().is_empty() {
             out.push(Paragraph::new(ParagraphStyle::PLAIN, format!("〔原文〕{}", q.text)));
@@ -64,7 +93,14 @@ pub fn project_chapter(book: &Book, chapter_idx: usize) -> Option<Vec<Paragraph>
         return None;
     }
     let mut out = vec![Paragraph::new(ParagraphStyle::HEADING, title.clone())];
+    let mut cur: Option<&str> = None;
     for e in entries {
+        if let Some(sh) = subhead_of(e) {
+            if cur != Some(sh) {
+                out.push(Paragraph::subheading1(sh.to_string()));
+                cur = Some(sh);
+            }
+        }
         push_entry(&mut out, e);
     }
     Some(out)
@@ -74,21 +110,7 @@ pub fn project_chapter(book: &Book, chapter_idx: usize) -> Option<Vec<Paragraph>
 /// 全部输入（章名、条目的样式/文本/原文/回答），任何一项变了指纹就变。
 pub fn fingerprint_chapter(book: &Book, chapter_idx: usize) -> Option<String> {
     let title = book.chapters.get(chapter_idx)?;
-    let entries = live_entries(book, chapter_idx);
-    if entries.is_empty() {
-        return None;
-    }
-    let mut buf = String::new();
-    buf.push_str(title);
-    buf.push('\u{2}');
-    for e in &entries {
-        let text = e.display_text().unwrap_or("");
-        let quote = e.quote.as_ref().map(|q| q.text.as_str()).unwrap_or("");
-        let answer = e.answer.as_ref().map(|a| a.text.as_str()).unwrap_or("");
-        buf.push_str(&format!("{}|{:?}|{}|{}|{}", e.id, e.style, text, quote, answer));
-        buf.push('\u{1}');
-    }
-    Some(hex(fnv1a(buf.as_bytes())))
+    fingerprint_entries(title, &live_entries(book, chapter_idx))
 }
 
 #[cfg(test)]
@@ -158,6 +180,27 @@ mod tests {
         let ps2 = project_chapter(&b, 1).expect("第二章有条目");
         assert_eq!(ps2.iter().map(|p| p.text.as_str()).collect::<Vec<_>>(), ["第二章", "第二章的条目"]);
         assert_eq!(ps2[1].style, ParagraphStyle::NUMBERED);
+    }
+
+    /// 2026-09-25：书的小节名（subhead）变化时插一段 Subheading 1；条目自己的 ##/### 落成 Subheading 1/2；
+    /// 小节名进指纹（改了要重新生成）。
+    #[test]
+    fn subheads_and_heading_styles_map_to_device_subheadings() {
+        let mut b = book();
+        b.entries[1].subhead = Some("纽约".into()); // e2 page 1
+        b.entries[0].subhead = Some("纽约".into()); // e1 page 2：同一小节，不重复插
+        b.entries[2].subhead = Some(" 莱姆 ".into()); // e3 page 5：换了小节
+        b.entries.push(entry("h1", 0, 3, Style::Heading1, "我的大标题"));
+        b.entries.push(entry("h2", 0, 4, Style::Heading2, "我的小标题"));
+        let fp0 = fingerprint_chapter(&b, 0).unwrap();
+        let ps = project_chapter(&b, 0).unwrap();
+        let got: Vec<(&str, bool)> = ps.iter().map(|p| (p.text.as_str(), p.style == ParagraphStyle::BOLD)).collect();
+        assert_eq!(got, [("第一章", false), ("纽约", true), ("为什么是纽约", false), ("林肯·莱姆", false), ("我的大标题", true), ("我的小标题", true), ("莱姆", true), ("没归类的一条", false)]);
+        assert!(ps[1].is_subheading1(), "书的小节名＝Subheading 1（带 7 字节标记）");
+        assert!(ps[4].is_subheading1(), "## ＝ Subheading 1");
+        assert!(!ps[5].is_subheading1() && ps[5].style == ParagraphStyle::BOLD, "### ＝ Subheading 2（不带那 7 字节）");
+        b.entries[2].subhead = Some("别的小节".into());
+        assert_ne!(fingerprint_chapter(&b, 0).unwrap(), fp0, "小节名变了指纹要变");
     }
 
     #[test]

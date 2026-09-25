@@ -98,6 +98,9 @@ fi
 
 OLD_PID="$(cj_xochitl_pid)"
 cj_xochitl_apply || exit 1
+if [ "$CJ_APPLY_REBOOTED" = 1 ]; then
+    exit 0   # 已排上整机重启；健康检查留给设备回来后的 verify-on-device.sh
+fi
 if cj_xochitl_health "$OLD_PID" "$EXT_MAPTAG" && [ "$(cj_count_maps "$EXT_MAPTAG" "$(cj_xochitl_pid)")" -gt 0 ]; then
     echo "✅ 安装完成。$OK_MSG"
     echo "$NEXT_MSG"

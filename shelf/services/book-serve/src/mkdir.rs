@@ -16,13 +16,11 @@
 //!
 //! 持久化+入队去重+剔除这层通用外壳委托 `pending_queue::PendingQueue<T>`（2026-09-09 消重复，跟
 //! `trash.rs` 是同一份基础设施，见该模块文档）；这里只留领域校验（名字合法性/文件夹是否已存在）。
-use crate::pending_queue::PendingQueue;
+use crate::pending_queue::{Handout, PendingQueue};
 use serde::{Deserialize, Serialize};
 use rmsvc_core::xochitl::{find_folder_by_name, list_folders};
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::{Condvar, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 /// 同一个文件夹名交给 QML 代理后，这段时间内不再重复交出。建夹是异步的：`Library.createCollection`
 /// 调用后 `.metadata` 稍晚才落盘，长轮询让代理几乎立刻再来拉，若这时仍把同名交出去就会建出两个重名文件夹。
@@ -38,12 +36,8 @@ pub struct Pending {
 pub struct MkdirQueue {
     q: PendingQueue<Pending>,
     lib_dir: PathBuf,
-    /// 入队计数（代数）+ 条件变量：长轮询 [`Self::pending_wait`] 等它变化，入队即刻唤醒，空闲时零唤醒。
-    gen: Mutex<u64>,
-    wake: Condvar,
-    /// 名字 → 上次交给代理的时刻，见 [`HANDOUT_QUIET`]。
-    handed: Mutex<HashMap<String, Instant>>,
-    handout_quiet: Duration,
+    /// 长轮询 + 交出后静默期（见 [`HANDOUT_QUIET`]），与 `trash.rs` 共用。
+    handout: Handout,
 }
 
 impl MkdirQueue {
@@ -51,17 +45,14 @@ impl MkdirQueue {
         MkdirQueue {
             q: PendingQueue::new(state_books_dir.join("mkdir-pending.json")),
             lib_dir: lib_dir.to_path_buf(),
-            gen: Mutex::new(0),
-            wake: Condvar::new(),
-            handed: Mutex::new(HashMap::new()),
-            handout_quiet: HANDOUT_QUIET,
+            handout: Handout::new(HANDOUT_QUIET),
         }
     }
 
     /// 单测用：缩短/取消"重复交出"的静默期。
     #[cfg(test)]
     fn with_handout_quiet(mut self, d: Duration) -> MkdirQueue {
-        self.handout_quiet = d;
+        self.handout = Handout::new(d);
         self
     }
 
@@ -80,8 +71,7 @@ impl MkdirQueue {
             return Ok(0); // 已经存在，不用建
         }
         let n = self.q.add(|p| p.name == name, || Pending { name: name.to_string(), at: rmsvc_core::clock::now_secs() })?;
-        *rmsvc_core::sync::lock(&self.gen) += 1;
-        self.wake.notify_all();
+        self.handout.notify();
         Ok(n)
     }
 
@@ -94,37 +84,14 @@ impl MkdirQueue {
         // 长轮询每次唤醒都来一轮（2026-09-24 审计）。判据与 `find_folder_by_name` 相同（活的 CollectionType 同名）。
         let folders = std::cell::OnceCell::new();
         let (kept, pruned) = self.q.prune(|p| folders.get_or_init(|| list_folders(&self.lib_dir)).binary_search(&p.name).is_err())?;
-        let now = Instant::now();
-        let mut handed = rmsvc_core::sync::lock(&self.handed);
-        handed.retain(|n, at| now.duration_since(*at) < self.handout_quiet && kept.iter().any(|p| &p.name == n));
-        let mut out = Vec::new();
-        for p in kept {
-            if !handed.contains_key(&p.name) {
-                handed.insert(p.name.clone(), now);
-                out.push(p.name);
-            }
-        }
-        Ok((out, pruned))
+        Ok((self.handout.take(kept.into_iter().map(|p| p.name).collect()), pruned))
     }
 
     /// 长轮询版 [`Self::pending`]：有待办立即返回；没有就阻塞到入队唤醒或 `wait` 到期（到期返回空列表）。
     /// 这样 QML 代理不必每 8 秒定时拉一次——空闲时整条链路零唤醒，入队后也是即刻响应而不是平均等 4 秒。
     /// `wait` 为零＝不等（旧的立即返回语义）。
     pub fn pending_wait(&self, wait: Duration) -> Result<(Vec<String>, usize), String> {
-        let deadline = Instant::now() + wait;
-        let mut total_pruned = 0;
-        loop {
-            // 先取代数再查队列：查完到睡下之间若有入队，代数已变，wait_timeout_while 不会睡过头。
-            let seen = *rmsvc_core::sync::lock(&self.gen);
-            let (names, pruned) = self.pending()?;
-            total_pruned += pruned;
-            let now = Instant::now();
-            if !names.is_empty() || now >= deadline {
-                return Ok((names, total_pruned));
-            }
-            let g = rmsvc_core::sync::lock(&self.gen);
-            let _ = self.wake.wait_timeout_while(g, deadline - now, |cur| *cur == seen).unwrap_or_else(|e| e.into_inner());
-        }
+        self.handout.wait(wait, || self.pending())
     }
 
     pub fn list(&self) -> Vec<Pending> {
@@ -135,6 +102,7 @@ impl MkdirQueue {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::time::Instant;
 
     fn lib(t: &tempfile::TempDir) -> PathBuf {
         let d = t.path().join("xochitl");

@@ -26,7 +26,7 @@ pub struct IngestConfig {
 
 impl Default for IngestConfig {
     fn default() -> Self {
-        IngestConfig { cluster_gap: 40.0, pair_gap: 120.0, page_width: 960.0, page_height: 1280.0, x_origin_center: true, crop_margin: 24.0, debounce_secs: 4 }
+        IngestConfig { cluster_gap: 40.0, pair_gap: 160.0, page_width: 960.0, page_height: 1280.0, x_origin_center: true, crop_margin: 24.0, debounce_secs: 4 }
     }
 }
 

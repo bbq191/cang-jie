@@ -13,16 +13,15 @@
 #   handwriting-stroke   CJK 手写笔迹渲染优化（需要 vellum add xovi；只落盘）
 #   sidebar-entry        Sidebar 一级直达 KOReader/WeRead 入口（需要 qt-resource-rebuilder；缺了自动跳过；只落盘）
 #   shelf                shelf 本体+网关+笔记线+两个领域服务（不需要 xovi；qmd 只落盘）
-#   xovi-apply           统一让上面落盘的 xovi 内容生效：有待生效改动（或 xovi 还没生效）才重启 xochitl，且只一次
+#   xovi-apply           统一让上面落盘的 xovi 内容生效：有待生效改动（或 xovi 还没生效）才整机重启，且只一次
 # 装前先过固件安全门（sha256(/usr/bin/xochitl) 比对 firmware-allowlist.txt），避免在没验证过注入定位的固件上装错。
 #
-# ⚠️ xochitl 只重启一次，放在最后（xovi-apply）：没有"只重载一个扩展"的机制。hl-snap/handwriting-stroke/
-# sidebar-entry 用 DEFER_XOVI_START=1 只落盘。短时间内多次重启 xochitl 会撞它的 watchdog+StartLimit，
-# 真机触发过意外整机重启（2026-09-11）。
-# ⚠️ 怎么重启由设备端 devlib.sh 的 cj_xochitl_apply 判定（2026-09-20）：xovi 已在运行的 xochitl 里生效 →
-# systemctl restart xochitl；没生效才 xovi/start——旧版无条件 xovi/start，在已生效的设备上重跑本脚本会让
-# xochitl SEGV → 整机自动重启（2026-09-20 真机事故）。最后一步会先打印"将打断阅读"并留 5 秒宽限；
-# 不想被打断就 `--skip xovi-apply`，稍后自己在合适时机重启 xochitl。
+# ⚠️ 生效只做一次，放在最后（xovi-apply）：没有"只重载一个扩展"的机制。hl-snap/handwriting-stroke/
+# sidebar-entry 用 DEFER_XOVI_START=1 只落盘。
+# ⚠️ 怎么生效由设备端 devlib.sh 的 cj_xochitl_apply 判定：2026-09-25 起一律**主动整机重启**（xovi 已生效或装了
+# xovi-reenable 时）——单独 restart xochitl 有概率在它退出时崩溃、再由系统整机重启（memfault 栈 5 份，见 devlib.sh
+# 头注 H3）；只有既没生效也没装 xovi-reenable 才走 xovi/start。最后一步会先打印"将打断阅读"并留 5 秒宽限；
+# 不想被打断就 `--skip xovi-apply`，稍后自己在合适时机跑 deploy-xovi-apply.sh 或在设备上 reboot。
 #
 # 明确不做的事（范围外，见 packaging/README.md「前置条件」「已知缺口」）：
 #   · 不装 vellum/xovi/qt-resource-rebuilder/appload 本体、不侧载 KOReader——这些是全新设备
@@ -78,7 +77,7 @@ for step in $STEP_ORDER; do
     elif [ "$step" = "xovi-apply" ]; then
         if ! skip_has xovi-apply && [ "$DRY" = "0" ]; then
             echo
-            echo "⚠ 下一步会检查是否需要重启 xochitl（有待生效改动才重启：屏幕闪烁、打断阅读/书写）。完全不想重启：Ctrl-C，或重跑时加 --skip xovi-apply。"
+            echo "⚠ 下一步会检查是否需要让改动生效（有待生效改动才整机重启，约 1 分钟：打断阅读/书写）。完全不想重启：Ctrl-C，或重跑时加 --skip xovi-apply。"
         fi
         if [ "$FORCE_APPLY" = "1" ]; then
             run_step "$step" sh "$script" "$HOST" --force

@@ -1,70 +1,79 @@
 ; ─────────────────────────────────────────────────────────────────────────
-; shelf-trash-agent.qmd —— 书架的「原生回收站」代理（固件 3.28 线；从 reading/device/trash-agent.qmd 剥离移植）。
+; shelf-trash-agent.qmd —— 书架的「原生回收站」代理（固件 3.28 线）。
 ;
 ; 【为什么要它】外部进程直接改 `<uuid>.metadata` 的 parent="trash" 会被运行中 xochitl 的内存文档模型覆写回 ""
-;   （阅读白皮书判死）。唯一可靠的软删是 xochitl 自己的代码路 EntitySelection.selectionMoveToTrash()——
-;   与用户手点 Delete 同一条，内存即时生效、进回收站可恢复。
-; 【用途】`shelf doctor --render` 量完把探针书排进 book-serve 队列，本代理在书库视图下次有动静时把它们移进回收站；
-;   将来网页母版库「从原生书库移除」也走这条队列。
-; 【触发】纯事件驱动，不轮询：挂当前文件夹文档模型 entityListModel 的 rowsInserted（/upload 新卡）与 modelReset
-;   （回书库），4s 防抖后 GET http://127.0.0.1:8790/trash/pending → {"uuids":[...]}，逐个 selection.add + selectionMoveToTrash。
-;   book-serve 看到 metadata parent=trash 即出队，QML 端无需 ack。
-; 【安全】不在文件视图（selection 不可用）或用户正手动选中（size>0）→ 跳过，绝不误删；队列里的 uuid 由 book-serve 在
-;   入队时按 visibleName 核对过。失败静默、不弹 UI。
-; 【3.28 锚点（extract_qml blob qml_00dcd9d7）】Sidebar.qml 仍是 BaseView#root > ColumnLayout#filterColumn；
-;   NavigationManager.activeContext.{explorer.entityListModel, selection} 与 selectionMoveToTrash 均在（qml_00dcfe48）。
+;   （阅读白皮书判死）。软删必须走 xochitl 自己的代码路，内存即时生效、进回收站可恢复。
+; 【用途】网页「管理 → 设备健康 → 清理」勾选书库里的重复副本 → `POST /api/books/trash/add {uuid,name}` 入队
+;   （book-serve 按 visibleName 核对 uuid 防错删）→ 本代理执行。
+;
+; 【2026-09-25 重写】旧版注入 Sidebar，挂当前文件夹文档模型的 rowsInserted/modelReset，4s 防抖后拉队列，用
+;   `selection.add(uuid)` + `selectionMoveToTrash()`。真机失效（用户反馈"移到 xochitl 回收站无效"）：
+;   ①网页入队后设备上不翻书库就永远不触发；②选择集只属于当前文件夹视图，书不在当前文件夹（真机：《告白》
+;   《白夜行》在「好读精校」里）加不进去，还静默失败。现改为跟 `shelf-mkdir-agent.qmd` 同构：
+;   - **注入 MainView**（全局常驻，与所在文件夹/视图无关；MainView 本来就 `import xofm.libs.library`，免加 IMPORT）；
+;   - **长轮询** `GET /trash/pending?wait=290`：book-serve 阻塞到有人入队或到期才回，空闲约 12 次/小时；
+;   - **按 id 调** `LibraryController.moveEntriesToTrash(ids)`：固件 3.28 的 moc 元数据里
+;     `xofm::libs::library::LibraryController` 暴露 `moveEntriesToTrash(QList<entry::Id> ids)`（与
+;     `restoreEntriesFromTrash`/`deleteEntries` 相邻）；QML 里 `LibraryController.setVisibleName(...)` 等
+;     20 余处裸调证明它是全局单例。**参数必须是真 `entry::Id`**：09-25 第一版直接传 uuid 字符串数组，
+;     真机 xochitl 日志是 `moving "" to trash` ×2——字符串没转成 entry::Id、变成空 id（空操作，没删错也没删成）。
+;     正确取法同原生 QML（如 `DocumentController.movePages(sourceDocument.id, …)`）：
+;     `Library.entryForId(uuid字符串)` 拿 QmlEntryWrapper，再取 `.id`；拿不到条目的 uuid 跳过。
+;   book-serve 看到 metadata parent=trash 即出队，QML 端无需 ack；同一 uuid 交出后 30s 内不重复交（异步）。
+; 【安全】队列里的 uuid 入队时已按 visibleName 核对；只进回收站（可在 xochitl 里恢复），不做永久删除。
 ; 【qmldiff 纪律】INSERT{} 内注释只能 //；handler 一律 `{ … }` 块、不写 `({})`；只 INSERT 不 REPLACE。
 ; ─────────────────────────────────────────────────────────────────────────
 
-AFFECT /qml/device/view/navigator/Sidebar.qml
+AFFECT /qml/device/view/main/MainView.qml
 
     TRAVERSE ?#root
-        LOCATE AFTER ColumnLayout#filterColumn
+        LOCATE AFTER FocusScope#rootItem
         INSERT {
-            Item {
+            Timer {
                 id: shelfTrashAgent
                 objectName: "shelfTrashAgent"
-                visible: false
-
-                // 当前文件夹的文档模型（/upload 新卡进来 → rowsInserted；回书库 → modelReset）
-                property var cjModel: (NavigationManager.activeContext && NavigationManager.activeContext.explorer)
-                                      ? NavigationManager.activeContext.explorer.entityListModel : null
-
-                Connections {
-                    target: shelfTrashAgent.cjModel
-                    function onRowsInserted() { shelfTrashDebounce.restart(); }
-                    function onModelReset() { shelfTrashDebounce.restart(); }
-                }
-
-                Timer {
-                    id: shelfTrashDebounce
-                    interval: 4000
-                    repeat: false
-                    onTriggered: {
-                        var ctx = NavigationManager.activeContext;
-                        if (!ctx || !ctx.selection) { return; }
-                        if (ctx.selection.size > 0) { return; }
-                        var x = new XMLHttpRequest();
-                        x.onreadystatechange = function() {
-                            if (x.readyState !== XMLHttpRequest.DONE) { return; }
-                            if (x.status !== 200) { return; }
+                interval: 9000
+                running: true
+                repeat: false
+                onTriggered: {
+                    var t0 = Date.now();
+                    var x = new XMLHttpRequest();
+                    x.onreadystatechange = function() {
+                        if (x.readyState !== XMLHttpRequest.DONE) { return; }
+                        var next = 15000;
+                        var took = Date.now() - t0;
+                        if (x.status === 200) {
+                            var count = 0;
                             try {
-                                var resp = JSON.parse(x.responseText);
-                                var uuids = resp.uuids || [];
-                                if (uuids.length === 0) { return; }
-                                var c2 = NavigationManager.activeContext;
-                                if (!c2 || !c2.selection || c2.selection.size > 0) { return; }
+                                var uuids = JSON.parse(x.responseText).uuids || [];
+                                count = uuids.length;
+                                var ids = [];
                                 for (var i = 0; i < uuids.length; i++) {
-                                    c2.selection.add(uuids[i]);
+                                    var e = Library.entryForId(uuids[i]);
+                                    if (e) { ids.push(e.id); }
                                 }
-                                c2.selection.selectionMoveToTrash();
-                                console.log("SHELF-TRASH: moved " + uuids.length + " to trash");
+                                if (ids.length > 0) {
+                                    LibraryController.moveEntriesToTrash(ids);
+                                }
+                                if (count > 0) {
+                                    console.warn("SHELF-TRASH: moveEntriesToTrash " + ids.length + "/" + count + " " + uuids.join(","));
+                                }
                             } catch (e) {
+                                console.warn("SHELF-TRASH: failed " + e);
                             }
-                        };
-                        x.open("GET", "http://127.0.0.1:8790/trash/pending");
-                        x.send();
-                    }
+                            if (count > 0) {
+                                next = 3000;
+                            } else if (took < 2000) {
+                                next = 8000;
+                            } else {
+                                next = 500;
+                            }
+                        }
+                        shelfTrashAgent.interval = next;
+                        shelfTrashAgent.restart();
+                    };
+                    x.open("GET", "http://127.0.0.1:8790/trash/pending?wait=290");
+                    x.send();
                 }
             }
         }
