@@ -475,6 +475,45 @@ fn new_book_does_not_inherit_orphan_sidecar_and_gc_removes_orphans() {
     assert!(!s.dir.join(".gone.epub.delivered").exists());
 }
 
+/// 跨分区入库（rename 失败走拷贝）：落地是完整文件、源删掉、目录里不留临时文件；源读不了时报错且母版库里不出现半截书。
+/// 需要一个与临时目录不同分区的可写目录（/dev/shm），没有就跳过。
+#[test]
+fn stage_from_path_across_filesystems_lands_atomically() {
+    use std::os::unix::fs::MetadataExt;
+    let t = tempfile::tempdir().unwrap();
+    let s = staging(&t);
+    let Ok(other) = tempfile::tempdir_in("/dev/shm") else {
+        eprintln!("跳过：没有 /dev/shm");
+        return;
+    };
+    if std::fs::metadata(other.path()).unwrap().dev() == std::fs::metadata(t.path()).unwrap().dev() {
+        eprintln!("跳过：/dev/shm 与临时目录同分区");
+        return;
+    }
+    let src = other.path().join("up.epub");
+    let bytes = vec![7u8; 300_000];
+    std::fs::write(&src, &bytes).unwrap();
+    assert_eq!(s.stage_from_path("书.epub", &src).unwrap(), "书.epub");
+    assert_eq!(std::fs::read(s.dir.join("书.epub")).unwrap(), bytes);
+    assert!(!src.exists(), "源已删");
+    let names: Vec<String> = std::fs::read_dir(&s.dir).unwrap().flatten().map(|e| e.file_name().to_string_lossy().to_string()).collect();
+    assert_eq!(names, vec!["书.epub".to_string()], "不留临时文件");
+    assert!(s.stage_from_path("缺.epub", &other.path().join("nope")).is_err());
+    assert!(!s.has("缺.epub"));
+}
+
+#[test]
+fn remove_holds_busy_lock_and_releases_it() {
+    let t = tempfile::tempdir().unwrap();
+    let s = staging(&t);
+    s.stage_new("r.epub", b"x").unwrap();
+    s.remove("r.epub").unwrap();
+    assert!(!s.is_busy("r.epub") && !s.has("r.epub"), "删完释放忙锁");
+    assert!(s.remove("r.epub").is_err(), "已删再删报错");
+    assert!(!s.is_busy("r.epub"), "失败也释放忙锁");
+    assert!(s.remove("../x").is_err() && !s.is_busy("../x"), "非法名不占锁");
+}
+
 #[test]
 fn recover_interrupted_fixes_stale_pending_and_removes_tmp() {
     let t = tempfile::tempdir().unwrap();
@@ -486,7 +525,8 @@ fn recover_interrupted_fixes_stale_pending_and_removes_tmp() {
     let ok = s.stage_new("ok.epub", &mini_epub(&[("OEBPS/a.xhtml", "<p>y</p>")])).unwrap();
     s.set_optimize_check(&ok, sidecar::OptimizeCheck { status: "ok".into(), message: "已优化".into(), ..Default::default() }).unwrap();
     std::fs::write(s.dir.join(".a.epub.optimizing.tmp"), vec![0u8; 1000]).unwrap();
-    assert_eq!(s.recover_interrupted(), (1, 1), "只修 pending 的那本，清 1 个半成品");
+    std::fs::write(s.dir.join(".123.0.landing.tmp"), vec![0u8; 1000]).unwrap();
+    assert_eq!(s.recover_interrupted(), (1, 2), "只修 pending 的那本，清 2 个半成品（优化 + 跨分区入库）");
     let d = sidecar::read(&s.dir.join(&name)).unwrap();
     assert_eq!(d.optimize.unwrap().status, "failed");
     assert_eq!(d.deliver.unwrap().status, "failed");

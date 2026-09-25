@@ -1,6 +1,9 @@
 //! 入库：新书落母版库（字节 / 已落盘暂存文件）与网文抓取。
 use super::*;
 
+/// 跨分区入库时的临时文件后缀（点前缀名，列表看不见；进程中途被杀留下的由 `recover_interrupted` 清掉）。
+pub(super) const LANDING_TMP_SUFFIX: &str = ".landing.tmp";
+
 pub(super) fn landed_name(p: &Path) -> String {
     p.file_name().and_then(|s| s.to_str()).unwrap_or("book").to_string()
 }
@@ -35,15 +38,42 @@ impl Staging {
     }
 
     /// 新入库（已落盘的暂存文件）：同分区 rename 不拷贝（上传 / inbox 追平的大书走这里）。返回落地文件名。
+    ///
+    /// 跨分区（rename 失败）时先在临界区**外**把字节拷进母版库目录下的点前缀临时文件，再回临界区挑名、同目录 rename 落地
+    /// （2026-09-25 第四轮审计）：此前直接往最终名上 `copy`——拷贝期间一本半截的书已经出现在列表里、可被优化/落库/下载，
+    /// 拷贝失败还留下这半截；而且整段拷贝（上百 MB）都攥着落名锁，别的入库全被卡住。
     pub fn stage_from_path(&self, name: &str, src: &Path) -> Result<String, String> {
-        let _land = self.land_guard();
-        let target = unique_path(&self.dir, &canonical_staged_name(plain_name(name)?));
-        sidecar::remove(&target);
-        if std::fs::rename(src, &target).is_err() {
-            std::fs::copy(src, &target).map_err(|e| format!("写母版库失败: {e}"))?;
-            let _ = std::fs::remove_file(src);
+        let canon = canonical_staged_name(plain_name(name)?);
+        {
+            let _land = self.land_guard();
+            let target = unique_path(&self.dir, &canon);
+            sidecar::remove(&target);
+            if std::fs::rename(src, &target).is_ok() {
+                return Ok(landed_name(&target));
+            }
         }
-        Ok(landed_name(&target))
+        static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let tmp = self.dir.join(format!(".{}.{}{LANDING_TMP_SUFFIX}", std::process::id(), SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)));
+        if let Err(e) = std::fs::copy(src, &tmp) {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(format!("写母版库失败: {e}"));
+        }
+        let landed = {
+            let _land = self.land_guard();
+            let target = unique_path(&self.dir, &canon);
+            sidecar::remove(&target);
+            std::fs::rename(&tmp, &target).map(|_| landed_name(&target))
+        };
+        match landed {
+            Ok(n) => {
+                let _ = std::fs::remove_file(src);
+                Ok(n)
+            }
+            Err(e) => {
+                let _ = std::fs::remove_file(&tmp);
+                Err(format!("写母版库失败: {e}"))
+            }
+        }
     }
 
     /// 网文抓取（Readability + 白名单）→ 组 EPUB 落母版库。`optimize`＝网页「同步优化」复选框：请求了就紧接着
