@@ -40,16 +40,11 @@ pub fn break_footnote_cycles(html: &str) -> String {
     }
 
     // 最近前置 id（中间无块级闭合标签才算同元素范围内）
+    // `ids_sorted` 按位置升序：二分找"位置 < open_start 的最后一个"（此前每个锚点从头线性扫，单文件大书
+    // 几千条脚注是"锚点数 × id 数"）。
     let nearest = |open_start: usize| -> Option<String> {
-        let mut best: Option<(usize, &str)> = None;
-        for (p, id) in &ids_sorted {
-            if *p < open_start {
-                best = Some((*p, id.as_str()));
-            } else {
-                break;
-            }
-        }
-        let (bp, id) = best?;
+        let k = ids_sorted.partition_point(|(p, _)| *p < open_start);
+        let (bp, id) = ids_sorted.get(k.checked_sub(1)?).map(|(p, id)| (*p, id.as_str()))?;
         if block_close_re().is_match(&html[bp..open_start]) {
             None
         } else {
