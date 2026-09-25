@@ -538,7 +538,9 @@
   "health.homeVal": "{free} (of {total})",
   "health.firmware": "Firmware",
   "health.fw.pending": "Computing (runs once, 30 s after the gateway starts)",
-  "health.fw.known": "On the allowlist: {label}",
+  "health.fw.known": "{label}, on the allowlist",
+  "health.unit.startedAt": "Up at {at} after boot",
+  "health.extClean": "No extension is waiting on a reboot, and nothing is staged to be swapped in.",
   "health.fw.unknown": "Not on the allowlist",
   "health.fw.unknownTitle": "The sha256 of /usr/bin/xochitl is not in packaging/firmware-allowlist.txt as built into the gateway: the firmware may have just been updated, or the suite was installed on new firmware with --force",
   "health.fw.error": "Unreadable: {msg}",
@@ -587,8 +589,8 @@
   "cleanup.lib.root": "Library root",
   "cleanup.lib.empty": "No matching books",
   "cleanup.lib.trashBtn": "Move to xochitl trash ({n})",
-  "cleanup.lib.confirm": "Move these {n} books to the xochitl trash?\n{list}\n\nThis runs the next time the xochitl library view changes; you can restore them from the xochitl trash.",
-  "cleanup.lib.queued": "Queued {n}: they move to the trash once you open the xochitl library on the device",
+  "cleanup.lib.confirm": "Move these {n} books to the xochitl trash?\n{list}\n\nThe device does it within seconds; you can restore them from the xochitl trash.",
+  "cleanup.lib.queued": "Queued {n}: they move to the xochitl trash within seconds",
   "cleanup.lib.agentOff": "The trash agent (shelf-trash-agent.qmd) is not loaded in xochitl, so queued books will only move once it takes effect.",
-  "cleanup.lib.noXochitl": "xochitl is not running; queued books will move once it runs and the library view is opened."
+  "cleanup.lib.noXochitl": "xochitl is not running; queued books will move once it runs."
 }

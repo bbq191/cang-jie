@@ -1261,7 +1261,8 @@ function renderBattopDetail(sec){
    清理是单独接口，进这一屏时它不在前台就只记"待取"，第一次切到它时才取。上次停在哪个二级 tab 记在 LS。 */
 const fmtUptime=s=>{const d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60);
   return d?T('health.upDays',{d,h}):h?T('health.upHours',{h,m}):T('health.upMins',{m})};
-const fmtSec=ms=>(ms/1000).toFixed(ms<10000?2:1)+' s';
+// 两分钟以内按秒（开机时序要看到 0.01 s 级），更长的（服务开机后被重启过）换成"12 分钟"这类读法，不写 761.5 s。
+const fmtSec=ms=>ms>=120000?fmtUptime(Math.floor(ms/1000)):(ms/1000).toFixed(ms<10000?2:1)+' s';
 const fmtTime=secs=>secs?new Date(secs*1000).toLocaleString():'';
 function mountHealth(box){
   const card=k=>`<div class="subpanel" data-p="${k}"><div class="card" data-body><p class="small">${T('health.loading')}</p></div></div>`;
@@ -1286,7 +1287,7 @@ function mountHealth(box){
     const none=`<span class="small">${T('health.none')}</span>`;
     const names=l=>l&&l.length?esc(l.join(' · ')):none;
     const fw=d.firmware||{};
-    const fwTxt=fw.state==='done'?(fw.known?badge(T('health.fw.known',{label:esc(fw.label)}),true)
+    const fwTxt=fw.state==='done'?(fw.known?`<span class="badge on" title="${esc(fw.label||'')}">${esc(T('health.fw.known',{label:(fw.label||'').split(/\s/)[0]}))}</span>`
         :`<span class="badge off" title="${T('health.fw.unknownTitle')}">${T('health.fw.unknown')}</span>`)+` <code style="overflow-wrap:anywhere">${esc((fw.sha256||'').slice(0,16))}…</code>`
       :fw.state==='error'?`<span class="small">${esc(T('health.fw.error',{msg:fw.message||''}))}</span>`:`<span class="small">${T('health.fw.pending')}</span>`;
     // OTA 判定跟页头横幅同一个接口（device/ota.rs）；这里只是换个地方常驻显示，横幅被 × 掉之后也能在这看到。
@@ -1311,16 +1312,18 @@ function mountHealth(box){
       const bits=[];
       if(!missing&&u.nRestarts!=null)bits.push(`<span title="${T('health.restartsTitle')}">${T('health.unit.restarts',{n:u.nRestarts})}</span>`);
       if(u.rssKb!=null)bits.push(esc(T('health.unit.mem',{rss:fmtB(u.rssKb*1024),hwm:fmtB((u.hwmKb||0)*1024)})));
-      if(u.startedAtMs!=null)bits.push(esc(T('health.unit.started',{at:fmtSec(u.startedAtMs),dur:u.startMs!=null?fmtSec(u.startMs):'—'})));
-      ul.appendChild(el('li',{},[el('span',{html:`${esc(u.unit.replace(/\.service$/,''))} ${st}`}),el('span',{class:'small',html:bits.join(' · ')})]))});
+      if(u.startedAtMs!=null)bits.push(esc(u.startMs!=null&&u.startMs>=50?T('health.unit.started',{at:fmtSec(u.startedAtMs),dur:fmtSec(u.startMs)}):T('health.unit.startedAt',{at:fmtSec(u.startedAtMs)})));
+      ul.appendChild(el('li',{class:'stack'},[el('span',{html:`${esc(u.unit.replace(/\.service$/,''))} ${st}`}),el('span',{class:'small',html:bits.map(b=>`<span class="nw">${b}</span>`).join(' · ')})]))});
     // 扩展：徽章 title 在触屏上看不到，所以把"换了文件未重启 / 待换入"的解释直接写成小字放在各自下面。
     body('extensions').innerHTML=`<div class="kv small">
       <b>${T('health.xovi')}</b><span>${x.readable?badge(x.xovi?T('manage.loaded.on'):T('manage.loaded.off'),!!x.xovi):'<span class="small">—</span>'}</span>
       <b>${T('health.extensions')}</b><span>${names(x.extensions)}</span></div>
+      ${(x.deleted&&x.deleted.length)||(d.soPending&&d.soPending.length)?`
       <h3>${T('health.deleted')}</h3><p class="small">${T('health.deletedTitle')}</p>
       <p>${x.deleted&&x.deleted.length?`<span class="badge off">${esc(x.deleted.join(' · '))}</span>`:none}</p>
       <h3>${T('health.soPending')}</h3><p class="small">${T('health.soPendingTitle')}</p>
-      <p>${d.soPending&&d.soPending.length?`<span class="badge">${esc(d.soPending.join(' · '))}</span>`:none}</p>`;
+      <p>${d.soPending&&d.soPending.length?`<span class="badge">${esc(d.soPending.join(' · '))}</span>`:none}</p>`
+      :`<p class="small">${T('health.extClean')}</p>`}`;
     // 上次开机最后几行 journal（设备冻死/意外重启的线索）；journal 没持久化时后端给 null。
     body('log').innerHTML=`<h3 style="margin-top:0">${T('health.prevBoot')}</h3>`
       +(d.prevBoot&&d.prevBoot.length?`<pre class="hlog">${esc(d.prevBoot.join('\n'))}</pre>`:`<p class="small">${T('health.prevBootNone')}</p>`);
@@ -1332,11 +1335,11 @@ function mountHealth(box){
 }
 function mountCleanup(box){
   box.innerHTML=`<h2>${T('cleanup.title')}</h2><p class="lead">${T('cleanup.lead')}</p>
-    <h3>${T('cleanup.done.title')}</h3><p class="small">${T('cleanup.done.desc')}</p>
-    <ul class="list" data-files></ul><div class="row"><button class="btn btn-bad" data-delfiles disabled></button></div>
+    <h3>${T('cleanup.done.title')}</h3><p class="small" data-filesdesc>${T('cleanup.done.desc')}</p>
+    <ul class="list" data-files></ul><div class="row" data-filesrow><button class="btn btn-bad" data-delfiles disabled></button></div>
     <h3>${T('cleanup.lib.title')}</h3><p class="small">${T('cleanup.lib.desc')}</p><p class="small" data-agent></p>
     <div class="stg-tools"><input type="search" data-q placeholder="${T('cleanup.lib.search')}"><select data-filter><option value="dup">${T('cleanup.lib.filterDup')}</option><option value="all">${T('cleanup.lib.filterAll')}</option></select></div>
-    <ul class="list" data-lib></ul><div class="row"><button class="btn btn-bad" data-trash disabled></button></div>`;
+    <ul class="list" data-lib></ul><div class="row" data-librow><button class="btn btn-bad" data-trash disabled></button></div>`;
   const q=s=>box.querySelector(s);
   const pickF=new Set(),pickL=new Map();let files=[],lib=[];
   const syncBtns=()=>{const a=q('[data-delfiles]'),b=q('[data-trash]');
@@ -1344,12 +1347,14 @@ function mountCleanup(box){
     b.textContent=T('cleanup.lib.trashBtn',{n:pickL.size});b.disabled=!pickL.size};
   const check=(on,fn)=>{const c=el('input',{type:'checkbox'});c.checked=on;c.onchange=()=>{fn(c.checked);syncBtns()};return el('label',{class:'stg-check'},[c])};
   const renderFiles=()=>{const ul=q('[data-files]');ul.innerHTML='';
+    q('[data-filesdesc]').hidden=q('[data-filesrow]').hidden=!files.length;
     if(!files.length){ul.appendChild(el('li',{class:'small',text:T('cleanup.done.empty')}));return}
     files.forEach(f=>ul.appendChild(el('li',{},[el('span',{style:'display:flex;gap:.5em;align-items:flex-start'},[check(pickF.has(f.name),v=>v?pickF.add(f.name):pickF.delete(f.name)),el('span',{text:f.name})]),
       el('span',{class:'small',text:`${fmtB(f.bytes)} · ${fmtTime(f.mtime)}`})])))};
   const renderLib=()=>{const ul=q('[data-lib]');ul.innerHTML='';
     const kw=q('[data-q]').value.trim().toLowerCase(),dup=q('[data-filter]').value==='dup';
     const list=lib.filter(b=>(!dup||b.sameName>1)&&(!kw||(b.name+' '+b.folder).toLowerCase().includes(kw)));
+    q('[data-librow]').hidden=!list.length&&!pickL.size;
     if(!list.length){ul.appendChild(el('li',{class:'small',text:T('cleanup.lib.empty')}));return}
     list.forEach(b=>{
       const meta=[esc(b.folder||T('cleanup.lib.root')),b.kind.toUpperCase(),fmtB(b.bytes),esc(fmtTime(Math.floor(b.createdMs/1000)))].join(' · ');

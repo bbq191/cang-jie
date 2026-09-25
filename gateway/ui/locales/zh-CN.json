@@ -538,7 +538,9 @@
   "health.homeVal": "{free}（共 {total}）",
   "health.firmware": "固件",
   "health.fw.pending": "计算中（网关启动 30 秒后算一次）",
-  "health.fw.known": "在白名单内：{label}",
+  "health.fw.known": "{label}，在白名单内",
+  "health.unit.startedAt": "开机后 {at} 起来",
+  "health.extClean": "没有换了文件还没生效的扩展，也没有待换入的扩展。",
   "health.fw.unknown": "不在白名单内",
   "health.fw.unknownTitle": "/usr/bin/xochitl 的 sha256 不在构建网关时的 packaging/firmware-allowlist.txt 里：可能刚升级过固件，或者是用 --force 装在新固件上的",
   "health.fw.error": "读不到：{msg}",
@@ -587,8 +589,8 @@
   "cleanup.lib.root": "书库根目录",
   "cleanup.lib.empty": "没有符合条件的书",
   "cleanup.lib.trashBtn": "移到 xochitl 回收站（{n}）",
-  "cleanup.lib.confirm": "把这 {n} 本书移到 xochitl 回收站？\n{list}\n\n在 xochitl 书库界面下次有动静时执行，之后可以在 xochitl 回收站里恢复。",
-  "cleanup.lib.queued": "已排队 {n} 本：在设备上打开 xochitl 书库界面后会移进回收站",
+  "cleanup.lib.confirm": "把这 {n} 本书移到 xochitl 回收站？\n{list}\n\n设备上几秒内执行，之后可以在 xochitl 回收站里恢复。",
+  "cleanup.lib.queued": "已排队 {n} 本：几秒内会移进 xochitl 回收站",
   "cleanup.lib.agentOff": "回收站代理（shelf-trash-agent.qmd）目前没有载入 xochitl：排进队列的书要等它生效后才会被移走。",
-  "cleanup.lib.noXochitl": "xochitl 没在运行：排进队列的书要等它运行、打开书库界面后才会被移走。"
+  "cleanup.lib.noXochitl": "xochitl 没在运行：排进队列的书要等它运行后才会被移走。"
 }

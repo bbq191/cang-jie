@@ -66,6 +66,8 @@ progress::-webkit-progress-bar{background:var(--surface2)}progress::-webkit-prog
 .list li{display:flex;justify-content:space-between;gap:1em;align-items:center;padding:.5em .1em;border-bottom:1px solid var(--line2)}
 /* 名字太长放不下时，右侧的大小/徽章/按钮整组换到下一行靠右，不再被挤成一条竖排；超长不断词的文件名就地折行 */
 .list li{flex-wrap:wrap}.list li>span:first-child{min-width:0;overflow-wrap:anywhere}.list li>span:last-child{margin-left:auto}
+/* 上下排列的列表行（设备健康·服务）：说明另起一行左对齐；.nw 让"7.60 s"这类数字和单位不被拆开 */
+.list li.stack{display:block}.list li.stack>span{display:block;margin-left:0}.list li.stack>span+span{margin-top:.2em}.nw{white-space:nowrap}
 /* 母版库列表书多时很长（2026-09-19 用户反馈）——单独收紧行内边距，不动全站共用的 .list（笔记/
    其它列表沿用原样，只有这里书多到需要专门收紧）。 */
 .small{font-size:.83em;color:var(--mute)}
