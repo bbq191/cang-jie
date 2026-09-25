@@ -44,7 +44,19 @@ impl Doc {
         self.lib.join(format!("{}.{ext}", self.uuid))
     }
     pub fn metadata(&self) -> Option<Metadata> {
-        serde_json::from_str(&std::fs::read_to_string(self.side("metadata")).ok()?).ok()
+        self.read_metadata().ok().flatten()
+    }
+    /// 区分"没有 `.metadata`"（`Ok(None)`：书被彻底删了）与"读不了/解析失败"（`Err`：可能正被 xochitl 改写、
+    /// 或格式不认识）。摄取拿前者当"书没了"去撤销条目；后者只能跳过这次，不能当成书没了——此前两者都是 `None`，
+    /// 一次读到半截的 `.metadata` 就会把整本书的活条目全标 `Revoked`（2026-09-25 第四轮审计）。
+    pub fn read_metadata(&self) -> Result<Option<Metadata>, String> {
+        let p = self.side("metadata");
+        let text = match std::fs::read_to_string(&p) {
+            Ok(t) => t,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(e) => return Err(format!("读 {} 失败: {e}", p.display())),
+        };
+        serde_json::from_str(&text).map(Some).map_err(|e| format!("{} 解析失败（先跳过，下次再试）: {e}", p.display()))
     }
     pub fn content(&self) -> Option<Content> {
         serde_json::from_str(&std::fs::read_to_string(self.side("content")).ok()?).ok()

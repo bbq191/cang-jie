@@ -25,7 +25,7 @@ pub fn ingest_doc(lib: &Path, crops_dir: &Path, db: &BookDb, cfg: &IngestConfig,
         return Ok(None);
     }
     let doc = Doc::new(lib, uuid);
-    let Some(meta) = doc.metadata().filter(|m| m.is_live_document()) else {
+    let Some(meta) = doc.read_metadata()?.filter(|m| m.is_live_document()) else {
         // 书被移进回收站，或彻底删除（连 .metadata 都没了）：撤销条目库里这本书还没撤销的条目。
         // 不这么做的话 `BookDb::list_active` 找不到理由把它从列表摘掉——它只看条目状态，
         // 从没在这条路径上被通知过"书本身没了"（真机验证时发现，2026-09-07；清空勾画走
@@ -226,6 +226,24 @@ mod tests {
         let u3 = "33333333-5e28-4969-8926-c8973d49020d";
         assert!(ingest_doc(&lib, &crops, &db, &cfg, u3, 13).unwrap().is_none());
         assert!(db.load(u3).is_none());
+    }
+
+    /// 回归：`.metadata` 读到半截/解析失败不能当成"书没了"——此前会把整本书的活条目全标 Revoked。
+    #[test]
+    fn unreadable_metadata_skips_instead_of_revoking() {
+        let t = tempfile::tempdir().unwrap();
+        let lib = t.path().join("xochitl");
+        let crops = t.path().join("crops");
+        std::fs::create_dir_all(&lib).unwrap();
+        std::fs::create_dir_all(&crops).unwrap();
+        let db = BookDb::new(t.path().join("books"));
+        db.ensure().unwrap();
+        let u = "55555555-5e28-4969-8926-c8973d49020d";
+        db.update(u, || Book { uuid: u.into(), title: "测试书五".into(), ..Default::default() }, |b| b.entries.push(seeded_entry("e1", Status::Reviewed))).unwrap();
+        std::fs::write(lib.join(format!("{u}.metadata")), r#"{"visibleName":"测试书"#).unwrap();
+        let err = ingest_doc(&lib, &crops, &db, &IngestConfig::default(), u, 10).unwrap_err();
+        assert!(err.contains("解析失败"), "{err}");
+        assert_eq!(db.load(u).unwrap().entries[0].status, Status::Reviewed, "条目不动");
     }
 
     /// 回归：书被删/进回收站时，`Skipped`/`Archived` 这两种终态不该被"排除法"漏判成 `Revoked`
