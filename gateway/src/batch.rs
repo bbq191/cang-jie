@@ -163,13 +163,7 @@ pub fn enqueue(paths: &Paths, action: Action, names: Option<Vec<String>>, folder
             queued += 1;
         }
         if queued > 0 {
-            // 一轮批量从空闲开始才重置计数；已经在跑的时候追加，累加进同一轮。
-            if !st.worker_alive {
-                st.done = 0;
-                st.failed.clear();
-                st.total = 0;
-            }
-            st.total += queued as u32;
+            start_round(&mut st, queued);
             st.action = Some(action);
             let spawn = !st.worker_alive;
             st.worker_alive = true;
@@ -186,6 +180,18 @@ pub fn enqueue(paths: &Paths, action: Action, names: Option<Vec<String>>, folder
         }
     }
     Ok(Enqueued { queued, skipped })
+}
+
+/// 记入这次新入队的 `queued` 本。一轮批量从空闲开始才重置计数（已经在跑的时候追加，累加进同一轮）；重置时**队列里
+/// 可能还留着上一轮没跑的**（[`resume`] 等不到 book-serve 放弃时队列保留在内存里、没有 worker），它们会跟这次一起跑，
+/// 所以总数按"重置后队列里实际有多少本"算——此前直接清零再加 `queued`，进度会显示成"5/2"。
+fn start_round(st: &mut State, queued: usize) {
+    if !st.worker_alive {
+        st.done = 0;
+        st.failed.clear();
+        st.total = (st.queue.len() - queued) as u32;
+    }
+    st.total += queued as u32;
 }
 
 /// 当前批量状态（任何会话都能看）。
@@ -462,6 +468,25 @@ mod tests {
         validate_queue(&mut st, &items, false);
         assert_eq!(st.queue.iter().map(|j| j.name.as_str()).collect::<Vec<_>>(), ["keep.epub"]);
         assert_eq!(st.total, 1);
+    }
+
+    /// 回归：resume 放弃等待后队列留在内存里（没有 worker），下一次入队开新一轮时总数要把这些遗留项算进去。
+    #[test]
+    fn new_round_counts_leftover_queue_in_total() {
+        let job = |n: &str| Job { action: Action::Optimize, name: n.into(), folder: String::new(), attempts: 0 };
+        let mut st = State { total: 9, done: 7, ..Default::default() };
+        st.failed.push(("old".into(), "x".into()));
+        st.queue.push_back(job("left1"));
+        st.queue.push_back(job("left2"));
+        st.queue.push_back(job("new")); // 这次入队的 1 本
+        start_round(&mut st, 1);
+        assert_eq!((st.total, st.done, st.failed.len()), (3, 0, 0), "遗留 2 本 + 新入队 1 本");
+        // 已经在跑时追加：只累加，不重置
+        st.worker_alive = true;
+        st.done = 1;
+        st.queue.push_back(job("more"));
+        start_round(&mut st, 1);
+        assert_eq!((st.total, st.done), (4, 1));
     }
 
     #[test]
