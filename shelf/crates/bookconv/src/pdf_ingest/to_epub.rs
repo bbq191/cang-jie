@@ -741,7 +741,7 @@ pub fn optimize_pdf_to_epub(src: &Path, mut on_progress: impl FnMut(usize, usize
                     open_color = Some(rgb);
                 }
             }
-            html.push_str(&crate::util::xml_escape(&c.ch.to_string()));
+            crate::util::push_xml_escaped(&mut html, c.ch); // 此前 `xml_escape(&c.ch.to_string())`，每个字符两次临时分配
             in_para = true;
             last_line = Some(c.line);
             last_y = Some(c.y);
@@ -869,10 +869,10 @@ pub(super) fn point_in_bbox(x: f64, y: f64, b: &BBox) -> bool {
 }
 
 pub(super) fn pdf_doc_title(doc: &lopdf::Document) -> Option<String> {
-    let info_ref = doc.trailer.get(b"Info").ok()?.as_reference().ok()?;
-    let info = doc.get_dictionary(info_ref).ok()?;
-    let title = info.get(b"Title").ok()?;
-    let bytes = title.as_str().ok()?;
+    // `/Info` 与 `/Title` 都可能是间接对象（也可能直接内嵌）：此前只认"Info 是引用、Title 是直接字符串"，
+    // 其它写法一律取不到书名、退回文件名（2026-09-25 审计）。
+    let info = deref(doc, doc.trailer.get(b"Info").ok()?).as_dict().ok()?;
+    let bytes = deref(doc, info.get(b"Title").ok()?).as_str().ok()?;
     Some(decode_pdf_text_string(bytes).trim().to_string()).filter(|s| !s.is_empty())
 }
 

@@ -842,3 +842,24 @@ fn crop_rgba_matches_image_crate_crop_including_clamped_edges() {
     }
     assert!(crop_rgba(&[0u8; 10], w, h, 0, 0, 1, 1).is_none(), "像素长度对不上 → None");
 }
+
+#[test]
+fn pdf_doc_title_follows_indirect_info_and_title() {
+    use lopdf::{dictionary, Document, Object, StringFormat};
+    let title = || Object::String(b"Indirect Title".to_vec(), StringFormat::Literal);
+    // Info 引用 + Title 引用
+    let mut doc = Document::with_version("1.5");
+    doc.objects.insert((1, 0), title());
+    doc.objects.insert((2, 0), Object::Dictionary(dictionary! { "Title" => Object::Reference((1, 0)) }));
+    doc.trailer.set("Info", Object::Reference((2, 0)));
+    assert_eq!(pdf_doc_title(&doc).as_deref(), Some("Indirect Title"));
+    // Info 直接内嵌
+    let mut doc = Document::with_version("1.5");
+    doc.trailer.set("Info", Object::Dictionary(dictionary! { "Title" => title() }));
+    assert_eq!(pdf_doc_title(&doc).as_deref(), Some("Indirect Title"));
+    // 原有写法照旧
+    let mut doc = Document::with_version("1.5");
+    doc.objects.insert((2, 0), Object::Dictionary(dictionary! { "Title" => title() }));
+    doc.trailer.set("Info", Object::Reference((2, 0)));
+    assert_eq!(pdf_doc_title(&doc).as_deref(), Some("Indirect Title"));
+}

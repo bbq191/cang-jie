@@ -9,16 +9,21 @@
 pub fn xml_escape(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
-        match c {
-            '&' => out.push_str("&amp;"),
-            '<' => out.push_str("&lt;"),
-            '>' => out.push_str("&gt;"),
-            '"' => out.push_str("&quot;"),
-            c if !is_xml_char(c) => {}
-            _ => out.push(c),
-        }
+        push_xml_escaped(&mut out, c);
     }
     out
+}
+
+/// 单个字符按 [`xml_escape`] 的规则追加进 `out`（逐字符生成正文的调用方用，免得每个字符分配临时 `String`）。
+pub fn push_xml_escaped(out: &mut String, c: char) {
+    match c {
+        '&' => out.push_str("&amp;"),
+        '<' => out.push_str("&lt;"),
+        '>' => out.push_str("&gt;"),
+        '"' => out.push_str("&quot;"),
+        c if !is_xml_char(c) => {}
+        _ => out.push(c),
+    }
 }
 
 /// [`xml_escape`] 的反向：把 XML 文本里的字符引用还原（`&amp; &lt; &gt; &quot; &apos;` 与 `&#N;`/`&#xH;`）；认不出的
