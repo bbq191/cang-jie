@@ -227,6 +227,12 @@ header .links{white-space:nowrap}
 .nsearch{list-style:none;margin:.3em 0 0;padding:0}
 .nsearch li{padding:.55em .2em;border-top:1px solid var(--line2);cursor:pointer;line-height:1.5;word-break:break-word}
 .nsearch li:hover{background:var(--surface2)}
+/* 「管理 → 设备健康」（2026-09-25）：上次开机日志 / 恢复命令的等宽块自己横向滚动、不撑宽页面；OTA 横幅在标签栏下面、跟 main 同宽。 */
+.hlog{max-height:24em;overflow-y:auto;font-size:.78em;line-height:1.45;background:var(--surface2);border-radius:.5em;padding:.6em .7em;margin:.4em 0;overflow-x:auto;white-space:pre-wrap;overflow-wrap:anywhere;max-width:100%}
+.otabanner{max-width:48em;margin:.8em auto 0;padding:.8em 1em;border:1px solid color-mix(in srgb,var(--warn) 60%,var(--line));background:color-mix(in srgb,var(--warn) 10%,var(--surface));border-radius:.9em;font-size:.9em;overflow-wrap:anywhere}
+.otabanner ul{margin:.4em 0;padding-left:1.2em}.otabanner p{margin:.4em 0}
+.otabanner .btn.x{float:right;margin:-.3em -.4em 0 .5em}
+@media(max-width:34em){.otabanner{margin:.6em .8em 0}}
 /* 触屏上的可点区域（2026-09-24 截图走查量出来按钮 32px、页头链接 29px、开关复选框 13px）：粗指针设备统一撑到
    40px 左右；只撑热区不放大字号，桌面鼠标不受影响。 */
 @media (pointer:coarse){

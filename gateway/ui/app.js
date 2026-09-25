@@ -1221,6 +1221,120 @@ function renderBattopDetail(sec){
   sec.refresh=refresh;subtabs(sec);
 }
 
+/* 「管理 → 设备健康」（2026-09-25，gateway/src/device/）：只读体检卡 + 清理遗留数据卡。**只在这一屏被打开、或点刷新时
+   取数**，不跟管理页其它子标签一起刷、不订阅任何定时器（设备要省电）。网关侧结果缓存 15 秒，刷新按钮带 fresh=1 现采。 */
+const fmtUptime=s=>{const d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60);
+  return d?T('health.upDays',{d,h}):h?T('health.upHours',{h,m}):T('health.upMins',{m})};
+const fmtSec=ms=>(ms/1000).toFixed(ms<10000?2:1)+' s';
+const fmtTime=secs=>secs?new Date(secs*1000).toLocaleString():'';
+function mountHealth(box){
+  box.innerHTML=`<div class="row" style="justify-content:space-between;margin-top:0"><h2 style="margin:0">${T('health.title')}</h2><button class="btn" data-refresh>${T('health.refresh')}</button></div>
+    <p class="lead">${T('health.lead')}</p><div data-body><p class="small">${T('health.loading')}</p></div>`;
+  const body=box.querySelector('[data-body]'),btn=box.querySelector('[data-refresh]');
+  const load=async fresh=>{
+    const d=await j('/api/device/health'+(fresh?'?fresh=1':''));
+    if(d.ok===false){body.innerHTML=`<p class="small">${esc(d.message)}</p>`;return}
+    const units=d.units||[],xu=units.find(u=>u.unit==='xochitl.service')||{},x=d.xochitl||{};
+    const none=`<span class="small">${T('health.none')}</span>`;
+    const names=l=>l&&l.length?esc(l.join(' · ')):none;
+    const fw=d.firmware||{};
+    const fwTxt=fw.state==='done'?(fw.known?badge(T('health.fw.known',{label:esc(fw.label)}),true)
+        :`<span class="badge off" title="${T('health.fw.unknownTitle')}">${T('health.fw.unknown')}</span>`)+` <code style="overflow-wrap:anywhere">${esc((fw.sha256||'').slice(0,16))}…</code>`
+      :fw.state==='error'?`<span class="small">${esc(T('health.fw.error',{msg:fw.message||''}))}</span>`:`<span class="small">${T('health.fw.pending')}</span>`;
+    const home=d.home||{};
+    let h=`<div class="kv small">
+      <b>${T('health.uptime')}</b><span>${d.uptimeSecs!=null?fmtUptime(d.uptimeSecs):'—'}</span>
+      <b>xochitl</b><span>${badge(esc(xu.active||'?'),xu.active==='active')} <span title="${T('health.restartsTitle')}">${T('health.unit.restarts',{n:xu.nRestarts??'?'})}</span>${xu.pid?' · PID '+xu.pid:''}</span>
+      <b>${T('health.xovi')}</b><span>${x.readable?badge(x.xovi?T('manage.loaded.on'):T('manage.loaded.off'),!!x.xovi):'<span class="small">—</span>'}</span>
+      <b>${T('health.extensions')}</b><span>${names(x.extensions)}</span>
+      <b title="${T('health.deletedTitle')}">${T('health.deleted')}</b><span>${x.deleted&&x.deleted.length?`<span class="badge off" title="${T('health.deletedTitle')}">${esc(x.deleted.join(' · '))}</span>`:none}</span>
+      <b title="${T('health.soPendingTitle')}">${T('health.soPending')}</b><span>${d.soPending&&d.soPending.length?`<span class="badge" title="${T('health.soPendingTitle')}">${esc(d.soPending.join(' · '))}</span>`:none}</span>
+      <b>${T('health.home')}</b><span>${home.freeBytes!=null?T('health.homeVal',{free:fmtB(home.freeBytes),total:fmtB(home.totalBytes||0)}):'—'}</span>
+      <b>${T('health.firmware')}</b><span>${fwTxt}</span></div>`;
+    if(d.systemctlError)h+=`<p class="small">${esc(T('health.systemctlError',{msg:d.systemctlError}))}</p>`;
+    h+=`<h3>${T('health.services')}</h3><p class="small">${T('health.servicesHint')}</p><ul class="list" data-units></ul>`;
+    // 上次开机最后几行 journal（设备冻死/意外重启的线索）；journal 没持久化时后端给 null，整块不显示。
+    if(d.prevBoot&&d.prevBoot.length)h+=`<details class="cmp"><summary>${T('health.prevBoot')}</summary><pre class="hlog">${esc(d.prevBoot.join('\n'))}</pre></details>`;
+    h+=`
+      <p class="small">${esc(T('health.at',{time:fmtTime(d.at)}))}</p>`;
+    body.innerHTML=h;
+    const ul=body.querySelector('[data-units]');
+    units.forEach(u=>{
+      const missing=u.load==='not-found';
+      const st=missing?`<span class="badge">${T('health.unit.notFound')}</span>`:badge(esc((u.active||'?')+(u.sub?' / '+u.sub:'')),u.active==='active');
+      const bits=[];
+      if(!missing&&u.nRestarts!=null)bits.push(`<span title="${T('health.restartsTitle')}">${T('health.unit.restarts',{n:u.nRestarts})}</span>`);
+      if(u.rssKb!=null)bits.push(esc(T('health.unit.mem',{rss:fmtB(u.rssKb*1024),hwm:fmtB((u.hwmKb||0)*1024)})));
+      if(u.startedAtMs!=null)bits.push(esc(T('health.unit.started',{at:fmtSec(u.startedAtMs),dur:u.startMs!=null?fmtSec(u.startMs):'—'})));
+      ul.appendChild(el('li',{},[el('span',{html:`${esc(u.unit.replace(/\.service$/,''))} ${st}`}),el('span',{class:'small',html:bits.join(' · ')})]))});
+  };
+  guardClick(btn,()=>load(true));
+  return load;
+}
+function mountCleanup(box){
+  box.innerHTML=`<h2>${T('cleanup.title')}</h2><p class="lead">${T('cleanup.lead')}</p>
+    <h3>${T('cleanup.done.title')}</h3><p class="small">${T('cleanup.done.desc')}</p>
+    <ul class="list" data-files></ul><div class="row"><button class="btn btn-bad" data-delfiles disabled></button></div>
+    <h3>${T('cleanup.lib.title')}</h3><p class="small">${T('cleanup.lib.desc')}</p><p class="small" data-agent></p>
+    <div class="stg-tools"><input type="search" data-q placeholder="${T('cleanup.lib.search')}"><select data-filter><option value="dup">${T('cleanup.lib.filterDup')}</option><option value="all">${T('cleanup.lib.filterAll')}</option></select></div>
+    <ul class="list" data-lib></ul><div class="row"><button class="btn btn-bad" data-trash disabled></button></div>`;
+  const q=s=>box.querySelector(s);
+  const pickF=new Set(),pickL=new Map();let files=[],lib=[];
+  const syncBtns=()=>{const a=q('[data-delfiles]'),b=q('[data-trash]');
+    a.textContent=T('cleanup.deleteBtn',{n:pickF.size});a.disabled=!pickF.size;
+    b.textContent=T('cleanup.lib.trashBtn',{n:pickL.size});b.disabled=!pickL.size};
+  const check=(on,fn)=>{const c=el('input',{type:'checkbox'});c.checked=on;c.onchange=()=>{fn(c.checked);syncBtns()};return el('label',{class:'stg-check'},[c])};
+  const renderFiles=()=>{const ul=q('[data-files]');ul.innerHTML='';
+    if(!files.length){ul.appendChild(el('li',{class:'small',text:T('cleanup.done.empty')}));return}
+    files.forEach(f=>ul.appendChild(el('li',{},[el('span',{style:'display:flex;gap:.5em;align-items:flex-start'},[check(pickF.has(f.name),v=>v?pickF.add(f.name):pickF.delete(f.name)),el('span',{text:f.name})]),
+      el('span',{class:'small',text:`${fmtB(f.bytes)} · ${fmtTime(f.mtime)}`})])))};
+  const renderLib=()=>{const ul=q('[data-lib]');ul.innerHTML='';
+    const kw=q('[data-q]').value.trim().toLowerCase(),dup=q('[data-filter]').value==='dup';
+    const list=lib.filter(b=>(!dup||b.sameName>1)&&(!kw||(b.name+' '+b.folder).toLowerCase().includes(kw)));
+    if(!list.length){ul.appendChild(el('li',{class:'small',text:T('cleanup.lib.empty')}));return}
+    list.forEach(b=>{
+      const meta=[esc(b.folder||T('cleanup.lib.root')),b.kind.toUpperCase(),fmtB(b.bytes),esc(fmtTime(Math.floor(b.createdMs/1000)))].join(' · ');
+      const same=b.sameName>1?` <span class="badge" title="${esc(T('cleanup.lib.sameNameTitle',{n:b.sameName}))}">${T('cleanup.lib.sameName',{n:b.sameName})}</span>`:'';
+      ul.appendChild(el('li',{},[el('span',{style:'display:flex;gap:.5em;align-items:flex-start;flex:1;margin-left:0'},[check(pickL.has(b.uuid),v=>v?pickL.set(b.uuid,b.name):pickL.delete(b.uuid)),el('span',{html:`${esc(b.name)}${same}<br><span class="small">${meta}</span>`})])]))})};
+  q('[data-q]').oninput=renderLib;q('[data-filter]').onchange=renderLib;
+  const listOf=names=>names.slice(0,12).map(n=>'· '+n).join('\n')+(names.length>12?'\n…':'');
+  /* 不用 guardClick：它在 finally 里无条件解禁按钮，而这里"没勾选"时按钮应保持禁用——收尾交给 syncBtns。 */
+  const busyClick=(b,fn)=>{b.onclick=async()=>{if(b.disabled)return;b.disabled=true;try{await fn()}catch(e){console.error(e);toast(T('common.failed'))}finally{syncBtns()}}};
+  busyClick(q('[data-delfiles]'),async()=>{const names=[...pickF];
+    if(!names.length||!await confirmDialog(T('cleanup.confirmFiles',{n:names.length,list:listOf(names)})))return;
+    const r=await jsend('/api/device/cleanup/delete','POST',{area:'books-done',names});
+    if(r.failed&&r.failed.length)toast(T('cleanup.partial',{ok:(r.deleted||[]).length,bad:r.failed.length,msg:r.failed.map(f=>f.name+'：'+f.error).join('；')}));
+    else if(r.ok===false)toast(r.message||T('common.failed'));
+    else toast(T('cleanup.deleted',{n:(r.deleted||[]).length}),'ok');
+    pickF.clear();await load()});
+  busyClick(q('[data-trash]'),async()=>{const picks=[...pickL];
+    if(!picks.length||!await confirmDialog(T('cleanup.lib.confirm',{n:picks.length,list:listOf(picks.map(p=>p[1]))})))return;
+    let ok=0;const bad=[];
+    for(const [uuid,name] of picks){const r=await jsend('/api/books/trash/add','POST',{uuid,name});if(r.ok===false)bad.push(name+'：'+(r.message||''));else ok++}
+    if(bad.length)toast(T('cleanup.partial',{ok,bad:bad.length,msg:bad.join('；')}));else toast(T('cleanup.lib.queued',{n:ok}),'ok',6500);
+    pickL.clear();await load()});
+  const load=async()=>{const d=await j('/api/device/cleanup');
+    if(d.ok===false){q('[data-files]').innerHTML=`<li class="small">${esc(d.message)}</li>`;return}
+    files=d.files||[];lib=d.library||[];
+    for(const n of [...pickF])if(!files.some(f=>f.name===n))pickF.delete(n);
+    for(const u of [...pickL.keys()])if(!lib.some(b=>b.uuid===u))pickL.delete(u);
+    q('[data-agent]').textContent=!d.xochitl?T('cleanup.lib.noXochitl'):d.trashAgent?'':T('cleanup.lib.agentOff');
+    renderFiles();renderLib();syncBtns()};
+  syncBtns();
+  return load;
+}
+/* 页头"需要重新安装"横幅（2026-09-25）：页面打开时取一次 /api/device/ota（网关侧判定见 device/ota.rs：单元文件缺失 /
+   xovi 未生效；固件哈希不在白名单只作附加原因），不轮询。关掉只在本次页面会话内有效。 */
+async function showOtaBanner(){
+  const d=await j('/api/device/ota');if(d.ok===false||!d.needsReinstall)return;
+  const reasons=(d.reasons||[]).map(r=>`<li>${esc(T('ota.reason.'+r,{units:(d.missingUnits||[]).join(', ')}))}</li>`).join('');
+  const cmd=d.recovery==='full'?`<p>${T('ota.recovery.full',{cmd1:'<code>/home/root/xovi/rebuild_hashtable</code>'})}</p><pre class="hlog">cd packaging &amp;&amp; sh install-all.sh ${esc(location.hostname)}${(d.reasons||[]).includes('firmware-unknown')?' --force':''}</pre>`
+    :`<p>${T('ota.recovery.xovi')}</p><pre class="hlog">cd packaging &amp;&amp; sh deploy-xovi-apply.sh ${esc(location.hostname)}</pre>`;
+  const x=el('button',{class:'btn x',type:'button',title:T('ota.dismiss'),'aria-label':T('ota.dismiss'),text:'×'});
+  const ban=el('div',{class:'otabanner',role:'alert',html:`<b>${d.recovery==='full'?T('ota.banner.title'):T('ota.banner.xoviTitle')}</b><ul>${reasons}</ul>${cmd}<p class="small">${T('ota.recovery.doc')}</p>`});
+  ban.prepend(x);x.onclick=()=>ban.remove();
+  document.body.insertBefore(ban,$('#main'));
+}
 
 /* 管理台/引导（固定 tab，始终在——它是网关自身页面，不由服务注册表驱动） */
 /* 「管理」二级 tab（2026-09-09 起三个，2026-09-10 加到五个）：① 基石与模块（原来就有的引导/开关/
@@ -1232,7 +1346,7 @@ function renderBattopDetail(sec){
 /* 模块管理动作（start / stop / uninstall），「基石与模块」列表与「全部开启/关闭」共用。 */
 const modAct=(seg,act)=>j('/api/manage/'+seg+'/'+act,{method:'POST'});
 function renderManage(sec){sec.innerHTML=`
-  <div class="subnav"><button class="on">${T('manage.subnav.foundation')}</button><button>${T('manage.subnav.models')}</button><button>${T('manage.subnav.enhance')}</button><button hidden>${T('manage.subnav.battop')}</button><button>${T('manage.subnav.lab')}</button></div>
+  <div class="subnav"><button class="on">${T('manage.subnav.foundation')}</button><button data-sub="health">${T('manage.subnav.health')}</button><button>${T('manage.subnav.models')}</button><button>${T('manage.subnav.enhance')}</button><button hidden data-sub="battop">${T('manage.subnav.battop')}</button><button>${T('manage.subnav.lab')}</button></div>
   <div class="subpanel on">
     <div class="card"><h2>${T('manage.foundation.title')}</h2><p class="lead">${T('manage.foundation.lead')}</p>
       <div class="kv small" id="found">${T('manage.foundation.checking')}</div>
@@ -1254,6 +1368,10 @@ function renderManage(sec){sec.innerHTML=`
         </dl></details>
       <div class="row"><button class="btn" id="allon">${T('manage.modules.allOn')}</button><button class="btn" id="alloff">${T('manage.modules.allOff')}</button></div>
       <ul class="list" id="mods"></ul></div>
+  </div>
+  <div class="subpanel">
+    <div class="card" id="healthCard"></div>
+    <div class="card" id="cleanupCard"></div>
   </div>
   <!-- 意图卡（h2+lead）单独一张、跟下面的模型卡是兄弟不是父子（2026-09-10 用户要求跟「管理」页
        其它子标签统一风格——「传书·入库」「引导·基石」都是这个样子：一张说明卡起头，后面各功能
@@ -1323,7 +1441,7 @@ function renderManage(sec){sec.innerHTML=`
   const hlBox=$('#erHlSnap',sec),hwBox=$('#labHwStroke',sec),importMdBox=$('#labImportMd',sec),comicMarginBox=$('#labComicMargin',sec);
   const battopToggleRefresh=mountBattopToggleCard($('#enhBattopCard',sec)); // 电池刺客开关在「系统增强」里（2026-09-21 从实验室移过来）
   const manageNav=sec.querySelector(':scope > .subnav');
-  const battopNavBtn=manageNav.children[3],battopPanel=$('#battopDetail',sec);
+  const battopNavBtn=manageNav.querySelector('[data-sub="battop"]'),battopPanel=$('#battopDetail',sec);
   renderBattopDetail(battopPanel);
   const erApply=async r=>{
     hlBox.checked=!!r.hlSnapCjk;
@@ -1353,7 +1471,11 @@ function renderManage(sec){sec.innerHTML=`
     if(running&&battopPanel.refresh)battopPanel.refresh()};
   bindToggle(hlBox,'/api/enhance/qol','hlSnapCjk');bindToggle(hwBox,'/api/enhance/qol','hwStrokeEnabled');bindToggle(importMdBox,'/api/enhance/qol','notesImportMdEnabled');bindToggle(comicMarginBox,'/api/enhance/qol','comicMinMargin');
   bindToggle(tapBox,'/api/enhance/qol','tapPageTurn');bindToggle(rtlBox,'/api/enhance/qol','rtlPageTurn');
-  refresh();sec.refresh=()=>Promise.all([refresh(),mvRefresh(),mtRefresh()]);subtabs(sec);}
+  /* 设备健康：切到这个子标签时才取数（每次切过去都取一次，网关侧有 15 秒缓存），不跟着管理页的 SSE 刷新走。 */
+  const healthLoad=mountHealth($('#healthCard',sec)),cleanupLoad=mountCleanup($('#cleanupCard',sec));
+  const healthNavBtn=manageNav.querySelector('[data-sub="health"]');
+  refresh();sec.refresh=()=>Promise.all([refresh(),mvRefresh(),mtRefresh()]);subtabs(sec);
+  const tabClick=healthNavBtn.onclick;healthNavBtn.onclick=()=>{tabClick();healthLoad(false);cleanupLoad()};}
 
 (async()=>{
   // 语言包先拿到手：下面 addTab 用得到 T()，晚拿会让顶层导航先短暂显示 key 本身再跳成文字。
@@ -1363,6 +1485,7 @@ function renderManage(sec){sec.innerHTML=`
   document.title=T('app.title');$('#applogo').textContent=T('app.title');
   $('#navpw').textContent=T('nav.changePassword');$('#navca').textContent=T('nav.caCert');$('#logout').textContent=T('nav.signOut');
   $('#mainloading').textContent=T('main.loading');
+  showOtaBanner(); // 不 await：横幅晚一点出现无妨，不挡页面主体
   const langsel=$('#langsel');langsel.value=lang;langsel.setAttribute('aria-label',T('nav.lang'));
   langsel.onchange=()=>{LS.set('lang',langsel.value);location.reload()};
 

@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 560" font-family="Noto Sans CJK SC, sans-serif">
+<defs><marker id="mk" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#555"/></marker></defs>
+<rect x="0" y="0" width="1000" height="560" fill="#fbfbfa"/>
+<text x="500" y="30" text-anchor="middle" font-size="18" font-weight="bold" fill="#1a1a1a">页头"需要重新安装"横幅：三条判据怎么组合</text>
+<text x="500" y="52" text-anchor="middle" font-size="12.5" fill="#6a6a6a">GET /api/device/ota（页面打开时取一次，不轮询）· gateway/src/device/ota.rs</text>
+
+<rect x="30" y="80" width="290" height="150" rx="10" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.6"/>
+<text x="175" y="104" text-anchor="middle" font-size="14" font-weight="bold" fill="#1a1a1a">① 单元文件缺失</text>
+<text x="175" y="128" text-anchor="middle" font-size="11" fill="#3a3a3a">/usr/lib/systemd/system/ 下查：</text>
+<text x="175" y="146" text-anchor="middle" font-size="11" fill="#3a3a3a">gateway.service、shelf.target、</text>
+<text x="175" y="164" text-anchor="middle" font-size="11" fill="#3a3a3a">二进制已装的每个 &lt;服务&gt;.service</text>
+<text x="175" y="190" text-anchor="middle" font-size="10.5" fill="#6a6a6a">几次 stat · 打开页面时现查</text>
+<text x="175" y="206" text-anchor="middle" font-size="10.5" fill="#6a6a6a">（结果缓存 30 秒）</text>
+
+<rect x="355" y="80" width="290" height="150" rx="10" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.6"/>
+<text x="500" y="104" text-anchor="middle" font-size="14" font-weight="bold" fill="#1a1a1a">② xovi 未生效</text>
+<text x="500" y="128" text-anchor="middle" font-size="11" fill="#3a3a3a">xochitl 主进程在跑，</text>
+<text x="500" y="146" text-anchor="middle" font-size="11" fill="#3a3a3a">但 /proc/&lt;pid&gt;/maps 里没有 xovi.so</text>
+<text x="500" y="164" text-anchor="middle" font-size="11" fill="#3a3a3a">（xochitl 没在跑：不下结论）</text>
+<text x="500" y="190" text-anchor="middle" font-size="10.5" fill="#6a6a6a">复用 enhance::loaded 的扫描缓存</text>
+<text x="500" y="206" text-anchor="middle" font-size="10.5" fill="#6a6a6a">（同一进程只读一次 maps）</text>
+
+<rect x="680" y="80" width="290" height="150" rx="10" fill="#fff3d6" stroke="#c9971f" stroke-width="1.6"/>
+<text x="825" y="104" text-anchor="middle" font-size="14" font-weight="bold" fill="#1a1a1a">③ 固件不在白名单</text>
+<text x="825" y="128" text-anchor="middle" font-size="11" fill="#3a3a3a">sha256(/usr/bin/xochitl) 不在</text>
+<text x="825" y="146" text-anchor="middle" font-size="11" fill="#3a3a3a">packaging/firmware-allowlist.txt</text>
+<text x="825" y="164" text-anchor="middle" font-size="11" fill="#3a3a3a">（构建时 include_str! 进网关）</text>
+<text x="825" y="190" text-anchor="middle" font-size="10.5" fill="#6a6a6a">启动 30 秒后后台线程只算一次</text>
+<text x="825" y="206" text-anchor="middle" font-size="10.5" fill="#6a6a6a">单独命中不触发横幅</text>
+
+<polyline points="175,230 175,248 460,248 460,262" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#mk)"/>
+<polyline points="530,230 530,262" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#mk)"/>
+<rect x="420" y="262" width="160" height="40" rx="8" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.6"/>
+<text x="500" y="287" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">① 或 ② 命中？</text>
+<polyline points="825,230 825,380 700,380" fill="none" stroke="#c9971f" stroke-width="1.6" stroke-dasharray="6 4" marker-end="url(#mk)"/>
+<text x="835" y="320" text-anchor="start" font-size="10.5" fill="#8a6a10">横幅已显示时</text>
+<text x="835" y="336" text-anchor="start" font-size="10.5" fill="#8a6a10">附加一条"安装要加 --force"</text>
+
+<polyline points="420,282 250,282 250,350" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#mk)"/>
+<text x="330" y="274" text-anchor="middle" font-size="11" fill="#3a3a3a">否</text>
+<rect x="120" y="350" width="260" height="60" rx="10" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.6"/>
+<text x="250" y="375" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">不显示横幅</text>
+<text x="250" y="396" text-anchor="middle" font-size="10.5" fill="#3a3a3a">固件信息只在「设备健康」卡片里显示</text>
+
+<polyline points="500,302 500,350" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#mk)"/>
+<text x="512" y="332" text-anchor="start" font-size="11" fill="#3a3a3a">是</text>
+<rect x="420" y="350" width="280" height="60" rx="10" fill="#fdecea" stroke="#b0451f" stroke-width="1.6"/>
+<text x="560" y="375" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">显示横幅：原因 + 恢复命令</text>
+<text x="560" y="396" text-anchor="middle" font-size="10.5" fill="#3a3a3a">按命中项选两种命令之一 ↓</text>
+
+<polyline points="500,410 300,450" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#mk)"/>
+<polyline points="620,410 720,450" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#mk)"/>
+<rect x="40" y="450" width="480" height="90" rx="10" fill="#eaf6ec" stroke="#3f9a55" stroke-width="1.6"/>
+<text x="280" y="474" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">含 ①（单元缺失）→ OTA 恢复全流程</text>
+<text x="280" y="496" text-anchor="middle" font-size="11" fill="#3a3a3a">设备旁：/home/root/xovi/rebuild_hashtable（要 root 密码）</text>
+<text x="280" y="514" text-anchor="middle" font-size="11" fill="#3a3a3a">电脑上：cd packaging &amp;&amp; sh install-all.sh &lt;设备&gt; [--force]</text>
+<text x="280" y="530" text-anchor="middle" font-size="10.5" fill="#6a6a6a">（--force 仅在 ③ 也命中时带上；见 docs/INSTALL.md）</text>
+<rect x="560" y="450" width="410" height="90" rx="10" fill="#eaf6ec" stroke="#3f9a55" stroke-width="1.6"/>
+<text x="765" y="474" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">只有 ② → 只让 xovi 生效</text>
+<text x="765" y="496" text-anchor="middle" font-size="11" fill="#3a3a3a">电脑上：cd packaging &amp;&amp; sh deploy-xovi-apply.sh &lt;设备&gt;</text>
+<text x="765" y="514" text-anchor="middle" font-size="10.5" fill="#6a6a6a">它自己判断跑 xovi/start 还是 restart xochitl</text>
+<text x="765" y="530" text-anchor="middle" font-size="10.5" fill="#6a6a6a">（xovi 已生效时跑 xovi/start 会让整机重启）</text>
+</svg>

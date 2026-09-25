@@ -23,7 +23,7 @@
 <text x="486.0" y="239" text-anchor="middle" font-size="10" fill="#3a3a3a">/  单页 UI · /ui/locales/{lang} · /ca.crt · /login /password /api/session</text>
 <text x="486.0" y="254" text-anchor="middle" font-size="10" fill="#3a3a3a">/api/services（注册表）· /api/manage · /api/foundation（基石探测）</text>
 <text x="486.0" y="269" text-anchor="middle" font-size="10" fill="#3a3a3a">/api/events（SSE 事件汇聚）</text>
-<text x="486.0" y="284" text-anchor="middle" font-size="10" fill="#3a3a3a">/api/enhance/*（系统增强开关）</text>
+<text x="486.0" y="284" text-anchor="middle" font-size="10" fill="#3a3a3a">/api/enhance/*（系统增强开关）· /api/device/*（健康 / OTA 横幅 / 清理）</text>
 <text x="486.0" y="299" text-anchor="middle" font-size="10" fill="#3a3a3a">/api/batch* 批量队列 · /api/budget/* 并发闸门</text>
 <rect x="256" y="332" width="460" height="190" rx="10" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.6"/>
 <text x="268" y="352" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">③ 兜底：/api/&lt;seg&gt;/* 反向代理（proxy.rs）</text>

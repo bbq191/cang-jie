@@ -38,7 +38,7 @@
 | 代理应答流式转发 | 200 且带长度，又是下载（带 `Content-Disposition`）或 > 256KB → 边读边发；其余读完再回 | `proxy.rs::STREAM_MIN_BYTES` |
 | systemd | `CPUWeight=20`、`MemoryMax=192M`、`Nice=5` | `systemd/gateway.service` |
 | 测试 | Rust 55 个（`cargo test`）；前端 2 个 node 测试文件共 6 项 + 1 个手动跑的浏览器冒烟（`ui/test/`） | 2026-09-24 实跑 |
-| 语言包 | `zh-CN.json` / `en-US.json` 各 504 个 key，单测钉住两份一致 | `ui.rs` |
+| 语言包 | `zh-CN.json` / `en-US.json` 各 570 个 key（09-25），单测钉住两份一致 | `ui.rs` |
 
 **真机验证状态**
 
@@ -172,8 +172,8 @@
 ### 5.1 怎么打包、怎么组织
 
 - `ui/index.html`、`style.css`、`app.js`、`auth.css` 在编译期 `include_str!` 进二进制，拼成**一个零外链的单文件页面**；格式白名单从 `rmsvc_core::formats` 注入（母版库现在只收 EPUB/PDF），网页 `accept` 和服务端上传门同源。
-- **顶层标签**：传书（入库 / 母版库）· 笔记（浏览 / 整理 / 回收站 / 导入 md〔实验室开关打开才显示〕）· 其他（xochitl 字体 / KOReader / 壁纸，按注册表里有哪些服务动态出现）· 管理（基石与模块 / 模型管理 / 系统增强 / 电池刺客〔battop 在跑才显示〕/ 实验室）。
-- **i18n**：`ui/locales/{zh-CN,en-US}.json` 各 504 个 key，`GET /ui/locales/{lang}` 下发，不认识的语言落中文。后端直接吐给前端的字符串（如 `MODULES.label`）绕过了翻译管线，前端优先查 `manage.modules.label.<seg>`，语言包里没有才用后端的中文（注意 `T()` 缺 key 时返回 key 本身，不能写成 `T(k)||兜底`，09-24 修过这个永远不生效的兜底）。
+- **顶层标签**：传书（入库 / 母版库）· 笔记（浏览 / 整理 / 回收站 / 导入 md〔实验室开关打开才显示〕）· 其他（xochitl 字体 / KOReader / 壁纸，按注册表里有哪些服务动态出现）· 管理（基石与模块 / 设备健康〔09-25〕/ 模型管理 / 系统增强 / 电池刺客〔battop 在跑才显示〕/ 实验室）。
+- **i18n**：`ui/locales/{zh-CN,en-US}.json` 各 570 个 key（09-25），`GET /ui/locales/{lang}` 下发，不认识的语言落中文。后端直接吐给前端的字符串（如 `MODULES.label`）绕过了翻译管线，前端优先查 `manage.modules.label.<seg>`，语言包里没有才用后端的中文（注意 `T()` 缺 key 时返回 key 本身，不能写成 `T(k)||兜底`，09-24 修过这个永远不生效的兜底）。
 - **安全**：外部数据（文件名、书名、转写、AI 回答、服务端错误）插入 `innerHTML` 前统一经 `esc()` 转义（09-20 修存储型 XSS）。
 - **什么时候取数**（09-24 第三轮审计，只在 host 验证）：各 tab **第一次切过去才渲染**（渲染本身取一次数据），之后切回来只刷新；打开页面的请求从 33 个降到 7 个，逛完四个 tab 从 69 降到 35。管理页一次刷新并行取三个接口，`/api/enhance/status` 只取一次。事件怎么分派到各 tab 见下图和 §03。
 
@@ -218,6 +218,48 @@
 - **扩展加载检测**（09-24，`enhance/loaded.rs`）：开关只反映配置，看不出 `.so` 到底有没有进 xochitl——历史上两次“开关开着其实没生效”（09-09 langhook 整个从设备上消失；GLIBC 版本不符让 hw-stroke 静默加载失败）。现在直接读 xochitl 主进程（`comm==xochitl` 且父进程是 1，排除渲染用的同名子进程）的 `/proc/<pid>/maps`：映射了哪个 `extensions.d/*.so` 就是真加载了，网页显示“已加载 / 未加载 / xochitl 未运行”。qmd 补丁（如 `shelf-comic-margins.qmd`）不是 `.so`，按“qt-resource-rebuilder 在进程里 + 补丁文件早于 xochitl 启动”推断为已载入，文件比进程新则显示“待重启”——这是按加载机制推断，看不到 qmd 里的定位是否全部命中（阅读器翻页的 `reader-page-turn.qmd` 同理）。导入 md 只标“网页功能”（不需要往 xochitl 里加载东西）。
 - **这个接口很常被调**（管理页每次刷新、每个 manage 事件、笔记页每次刷新），所以 09-24 第三轮审计给它做了缓存（只在 host 验证）：`reading-qol.json` 一次请求只读一次（原来六个开关各读一遍）；xochitl 扩展扫描按 **(pid, 进程启动时刻)** 缓存——同一个 xochitl 进程只全量扫一次 `/proc` 和它的 `maps`，之后每次只读一次 `/proc/<pid>/stat` 核对还是不是同一个进程（host 合成数据 253µs → 1.7µs）。启动不到 30 秒的 xochitl 不缓存，因为 xovi 还在逐个加载扩展、映射可能不全；qmd 状态看的是文件修改时间，照旧每次现算。
 - **battop 的边界**：battop 已改成常驻进程，把“每次启动都做一次 cgroup 迁移”从每天 144 次降到“用户手点几次”；但每次 `systemctl start` 仍是同类操作，网页没做防连点，短时间反复启停理论上会复现旧事故的触发条件（事故见 `enhance/battop/FINDINGS.md`）。`systemctl is-active` 结果缓存 30 秒（09-24 前 5 秒；网页启停会主动清缓存，只有 battop 自己崩掉时网页最多晚 30 秒显示“已停”）。
+
+## 06b｜设备健康、OTA 横幅与遗留清理（`src/device/`，2026-09-25）
+
+跟 §06 一样是网关自身固定能力。**全部只在 host 上验证过（单元测试 + 无头浏览器截图），没有上真机。**
+
+| 接口 | 作用 |
+|---|---|
+| `GET /api/device/health[?fresh=1]` | 「管理 → 设备健康」卡片的数据；结果缓存 15 秒，刷新按钮带 `fresh=1` 现采 |
+| `GET /api/device/ota[?fresh=1]` | 页头横幅：`{needsReinstall, reasons, missingUnits, recovery, firmware}`；缓存 30 秒 |
+| `GET /api/device/cleanup` | 可清理的遗留文件 + xochitl 书库里的 EPUB/PDF（只读） |
+| `POST /api/device/cleanup/delete {area, names}` | 逐个删除遗留文件，逐项回报成败 |
+
+**设备健康（`health.rs`）**：只在用户切到这个子标签、或点「刷新」时采集，不跟管理页的 SSE 刷新走，也没有任何定时器。一次采集只 fork **两个**子进程——一个 `systemctl show -p … <全部单元>`（xochitl、`xovi-reenable`、gateway 加 `MODULES` 里的 8 个服务），一个 `journalctl -b -1`——其余都是读 `/proc` 和 `stat`：
+
+- 开机时长（`/proc/uptime`）；各单元 `ActiveState`/`NRestarts`/`MainPID`，MainPID 的 `VmRSS`/`VmHWM`（`/proc/<pid>/status`）；
+- 最近一次启动的时刻与耗时：`ActiveEnterTimestampMonotonic`（开机后第几秒进入运行）减 `InactiveExitTimestampMonotonic`（含 `ExecStartPre`，oneshot 含整个 `ExecStart`）。服务开机后被重启过，显示的是重启那次；
+- xochitl 主进程（取 systemd 的 MainPID）的 `maps`：有没有 `xovi.so`、映射着哪些 `extensions.d/*.so`，以及行尾带 ` (deleted)` 的扩展——换了文件还没重启 xochitl。这里**每次现读 maps**，不用 §06 那份按进程缓存的扫描结果，因为 `(deleted)` 会在同一个进程的生命期里变化；
+- 待换入区 `~/.cangjie-stage/so-pending/` 里的文件（与 `packaging/devlib.sh` 的 `CJ_SO_PENDING_DIR` 缺省同一路径）；
+- 上次开机的最后 20 行 journal（`journalctl -b -1 -n 20 --no-pager`，超时 10 秒）：设备冻死或意外重启后，这是设备自己能拿到的线索；journal 没持久化时拿不到，整块不显示。飞行记录仪日志在宿主机上、不在设备上，网关读不到，所以不看它；
+- `/home` 剩余/总空间（`statvfs`，不 fork `df`）；固件哈希（见下）。
+
+**OTA 横幅（`ota.rs`）**：OTA 冲掉 `/usr/lib/systemd/system/` 下我们的单元和 `/etc` 里的 xovi 加载配置，`/home` 保留，所以"网关能打开"不代表装好了（二进制在 `/home`，可能是被手动拉起的）。
+
+![横幅判据](diagrams/ota-check.svg)
+
+| 判据 | 怎么查 | 触发横幅 |
+|---|---|---|
+| 单元文件缺失 | `gateway.service`、`shelf.target`，加上二进制已装的每个服务的单元，在 `/usr/lib/systemd/system/` 里不在 | 是 |
+| xovi 未生效 | xochitl 主进程在跑、`maps` 里没有 `xovi.so`（复用 §06 的扫描缓存）；xochitl 没在跑就不下结论 | 是 |
+| 固件不在白名单 | `/usr/bin/xochitl` 的 sha256 不在构建时 `include_str!` 进来的 `packaging/firmware-allowlist.txt` | 否，只在横幅已显示时附一条"安装要加 `--force`" |
+
+- **固件哈希单独不触发**：用 `install-all.sh --force` 装在新固件上之后，新哈希只追加进 host 的 `firmware-allowlist.local.txt`，网关构建时看不到；这时再弹横幅就是永久误报。
+- **什么时候算**：哈希由启动后的后台线程**只算一次**（先等 30 秒避开开机高峰，64KB 缓冲流式读）；OTA 一定伴随整机重启，网关随之重启，不用再算。另两条是几次 `stat` 加已缓存的扫描，打开页面时现查（缓存 30 秒）。任务原本要求"启动时算一次"，没照做的原因：OTA 后照横幅重装，`install-all.sh` 只重启有变化的服务，网关多半不重启，启动时定死的结果会让恢复完横幅还挂着。
+- **恢复命令**（按 `docs/INSTALL.md`「固件升级（OTA）之后」）：缺单元 → 设备旁 `xovi/rebuild_hashtable`，电脑上 `cd packaging && sh install-all.sh <设备>`（固件也不在白名单时带 `--force`）；只是 xovi 没生效 → `sh deploy-xovi-apply.sh <设备>`，由它判断该 `xovi/start` 还是 `systemctl restart xochitl`（xovi 已生效时跑 `xovi/start` 会让整机重启，所以横幅不直接给这条命令）。
+- 页面打开时取一次，可以点 × 在本次会话里关掉；不轮询。
+- **已知误报面**：dm-verity 激活、单元从没装进 `/usr` 的设备（`deploy-usr-unit.sh` 会跳过写入）会一直显示"缺单元"。在 host 上跑网关也会显示（没有这些单元）。
+
+**遗留清理（`cleanup.rs`）**：
+
+- **`~/.local/state/shelf/books/done/`**：09-03 早期直投流程的遗留目录。全仓 grep 过 `rs/sh/qmd/js/py/lua`，没有任何代码读写 `books/done`。网关列出里面的普通文件（不递归，符号链接和子目录不列），用户勾选、二次确认后逐个删除。
+- **删除的安全规则**（仓库出过清理时 `rm -rf` 掉用户漫画目录的事故）：前端只能传清理区代码（`books-done`）和文件名，不能传路径；名字必须是单段（拒绝空、`.`、`..`、含 `/` `\` NUL）；清理目录本身不能是符号链接；目标不能是符号链接、必须是普通文件；两边 `canonicalize` 后目标的父目录必须恰好是清理目录；只用 `remove_file`，从不整目录删。测试覆盖了 `..`、`../兄弟文件`、子目录里的文件、绝对路径、指向外面的符号链接、被换成符号链接的清理目录、未知清理区，全部拒绝且文件原样还在；删除类测试把 HOME 和全部 XDG 变量指到临时目录，并断言真实 HOME 下同名目录前后一致。
+- **xochitl 书库里的旧版重复副本**（书架白皮书真机待办第 8 条）：以前按卷拆分投进去的分卷，书名来自原书目录（如"第01卷"），跟新版整本的书名对不上，**没有精确的识别规则**，所以不自动挑、不预先勾。网关只读列出书库里活的 EPUB/PDF（手写笔记本不列），标出"同名 ×N"供人工核对；勾选后前端逐本调 book-serve 已有的 `POST /api/books/trash/add {uuid,name}`，走 `shelf-trash-agent.qmd` 里 xochitl 自己的 `selectionMoveToTrash`（进回收站、可恢复）。**网关不直接删、不改 xochitl 目录里的任何文件**。回收站代理没载入 xochitl 或 xochitl 没在跑时，页面会提示"排进队列要等它生效"。
 
 ## 07｜构建、部署与 systemd
 
