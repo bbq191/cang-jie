@@ -48,7 +48,7 @@
 ;   **长轮询**：`GET /mkdir/pending?wait=<秒>` 由 book-serve 阻塞到有人入队或到期才回，QML 端收到
 ;   回复后立即（名单为空 0.5s / 有名字 3s）再发下一次，入队后即刻响应。实现上仍是一个 Timer，但
 ;   `repeat:false` 单发、只在上一次请求完成的回调里才 `restart()`，所以任何时刻最多一个未完成请求；
-;   出错（status≠200：book-serve 重启、连接被掐）退避 15s；若回复是"立即返回的空名单"（旧版 book-serve
+;   出错（status≠200：book-serve 重启、连接被掐）退避 15s 起、连续出错逐次翻倍到 120s 封顶（09-25 第四轮审计），成功即复位；若回复是"立即返回的空名单"（旧版 book-serve
 ;   不认 wait 参数）则退回 8s 节奏，与旧行为一致。
 ;   **等待时长（2026-09-24 第三轮审计）**：09-22 版用 wait=25，是按"Qt6 XHR 缺省 30s 传输超时"的假设定的，
 ;   空闲时每分钟 2.4 次往返，是书架线最大的周期唤醒源。核实：设备 Qt 6.10.3，qtdeclarative 6.10 的
@@ -82,6 +82,8 @@ AFFECT /qml/device/view/main/MainView.qml
                 interval: 8000
                 running: true
                 repeat: false
+                // 连续出错次数（决定退避间隔，见 onreadystatechange）。
+                property int cjErrs: 0
                 // 长轮询等待秒数；见文件头"等待时长"。命中 30s 客户端超时窗口时降为 25。
                 property int cjWait: 290
                 onTriggered: {
@@ -89,13 +91,18 @@ AFFECT /qml/device/view/main/MainView.qml
                     var x = new XMLHttpRequest();
                     x.onreadystatechange = function() {
                         if (x.readyState !== XMLHttpRequest.DONE) { return; }
-                        var next = 15000;
+                        // 出错（书架服务停了/重启中）退避 15s→30s→60s→120s 封顶，成功一次即复位：
+                        // 此前固定 15s，book-serve 长时间不在时每小时白醒 240 次。
+                        var next = Math.min(15000 * Math.pow(2, shelfMkdirAgent.cjErrs), 120000);
                         var took = Date.now() - t0;
                         if (x.status !== 200 && shelfMkdirAgent.cjWait > 25 && took >= 28000 && took <= 33000) {
                             shelfMkdirAgent.cjWait = 25;
                             console.warn("SHELF-MKDIR: transfer timeout after " + took + "ms, wait -> 25s");
                         }
-                        if (x.status === 200) {
+                        if (x.status !== 200) {
+                            shelfMkdirAgent.cjErrs = Math.min(shelfMkdirAgent.cjErrs + 1, 3);
+                        } else {
+                            shelfMkdirAgent.cjErrs = 0;
                             var count = 0;
                             try {
                                 var resp = JSON.parse(x.responseText);

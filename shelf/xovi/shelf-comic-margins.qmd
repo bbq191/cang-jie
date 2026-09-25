@@ -51,6 +51,8 @@ AFFECT /qml/device/view/documentview/DocumentView.qml
                             if (!root.document || String(root.document.id).replace(/[{}]/g, "") !== did) { return; }
                             var ep = cjMarginEpComp.createObject(root);
                             if (!ep) { return; }
+                            // 先排好 5 秒后销毁：下面任何一步抛异常都不会让这个对象一直挂在 root 上。
+                            ep.destroy(5000);
                             if (ep.margins !== m) {
                                 ep.setMargins(m);
                                 console.warn("CJ-COMIC-MARGIN: " + did + " margins -> " + m);
@@ -59,8 +61,8 @@ AFFECT /qml/device/view/documentview/DocumentView.qml
                             a.open("POST", "http://127.0.0.1:8790/margins/applied");
                             a.setRequestHeader("Content-Type", "application/json");
                             a.send(JSON.stringify({ uuid: did }));
-                            ep.destroy(5000);
                         } catch (e) {
+                            console.warn("CJ-COMIC-MARGIN: failed " + e);
                         }
                     };
                     x.open("GET", "http://127.0.0.1:8790/margins/" + did);
