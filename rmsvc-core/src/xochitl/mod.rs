@@ -106,6 +106,11 @@ impl Xochitl {
             return Err(format!("xochitl 书库目录不可写（{}），大文件通道只能在设备上用", dir.display()));
         }
         let want_len = std::fs::metadata(path).map_err(|e| format!("读 {} 失败: {e}", path.display()))?.len();
+        // 整个"传占位 → 按占位字节数认领 → 换成真文件"串行：认领只凭"刚进库 + 大小等于占位"，PDF 占位是同一份固定字节，
+        // 两本大 PDF 同时走这条路时会认领到同一个 uuid——一本被覆盖进别人的条目、另一份占位永远留在书库里。锁要拿到
+        // 替换完成：替换前那份文件仍是占位大小，后来者照样会认错（2026-09-25 第四轮审计）。
+        static LARGE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        let _serial = crate::sync::lock(&LARGE);
         let since = crate::clock::now_ms().saturating_sub(2_000);
         self.upload(placeholder, filename, content_type, folder_name)?;
         // 等 xochitl 建好条目（`.metadata` + 占位文件都落地），按占位字节数确认是"我们这一份"而不是别人同时传的。
@@ -227,6 +232,11 @@ mod tests {
     /// 假 xochitl：`GET /documents/..` 回 200；`POST /upload` 解出 multipart 里的文件部分，落成
     /// `<uuid>.{ext}` + `.metadata`（+ EPUB 的渲染缓存 `.pdf`/`.epubindex` 与 PDF 的 `.content`），回 201。
     fn fake_xochitl(lib: std::path::PathBuf) -> String {
+        fake_xochitl_delayed(lib, std::time::Duration::ZERO)
+    }
+
+    /// 同 [`fake_xochitl`]，但条目在回应之后 `delay` 才落盘（真 xochitl 导入是异步的，回完 `/upload` 过一会才出现 `.metadata`）。
+    fn fake_xochitl_delayed(lib: std::path::PathBuf, delay: std::time::Duration) -> String {
         let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
         let addr = server.server_addr().to_ip().unwrap().to_string();
         std::thread::spawn(move || {
@@ -241,14 +251,25 @@ mod tests {
                     let tail = body.windows(4).rposition(|w| w == b"\r\n--").unwrap_or(end);
                     let file = &body[start..tail];
                     let uuid = uuid::Uuid::new_v4().to_string();
-                    let ext = fname.rsplit('.').next().unwrap();
-                    std::fs::write(lib.join(format!("{uuid}.{ext}")), file).unwrap();
-                    std::fs::write(lib.join(format!("{uuid}.metadata")), format!(r#"{{"type":"DocumentType","visibleName":"{fname}","parent":"","createdTime":"{}"}}"#, crate::clock::now_ms())).unwrap();
-                    if ext == "epub" {
-                        std::fs::write(lib.join(format!("{uuid}.pdf")), b"render-cache").unwrap();
-                        std::fs::write(lib.join(format!("{uuid}.epubindex")), b"idx").unwrap();
+                    let ext = fname.rsplit('.').next().unwrap().to_string();
+                    let (file, lib, created) = (file.to_vec(), lib.clone(), crate::clock::now_ms());
+                    let materialize = move || {
+                        std::fs::write(lib.join(format!("{uuid}.{ext}")), file).unwrap();
+                        std::fs::write(lib.join(format!("{uuid}.metadata")), format!(r#"{{"type":"DocumentType","visibleName":"{fname}","parent":"","createdTime":"{created}"}}"#)).unwrap();
+                        if ext == "epub" {
+                            std::fs::write(lib.join(format!("{uuid}.pdf")), b"render-cache").unwrap();
+                            std::fs::write(lib.join(format!("{uuid}.epubindex")), b"idx").unwrap();
+                        } else {
+                            std::fs::write(lib.join(format!("{uuid}.content")), r#"{"fileType":"pdf","pageCount":1,"pages":["x"],"redirectionPageMap":[0],"sizeInBytes":"5"}"#).unwrap();
+                        }
+                    };
+                    if delay.is_zero() {
+                        materialize();
                     } else {
-                        std::fs::write(lib.join(format!("{uuid}.content")), r#"{"fileType":"pdf","pageCount":1,"pages":["x"],"redirectionPageMap":[0],"sizeInBytes":"5"}"#).unwrap();
+                        std::thread::spawn(move || {
+                            std::thread::sleep(delay);
+                            materialize();
+                        });
                     }
                     let _ = req.respond(tiny_http::Response::from_string(r#"{"status":"Upload successful"}"#).with_status_code(201));
                 } else {
@@ -323,6 +344,32 @@ mod tests {
         assert!(!lib.path().join(format!("{uuid}.pdf")).exists(), "占位的渲染缓存必须删掉，让 xochitl 重新渲染");
         assert!(!lib.path().join(format!("{uuid}.epubindex")).exists());
         assert!(!lib.path().join(format!("{uuid}.epub.new")).exists(), "不留临时文件");
+    }
+
+    /// 回归：两本大 PDF 同时走大文件通道（占位字节相同），各自认领到自己的条目、内容不串。
+    #[test]
+    fn concurrent_large_pdf_uploads_claim_distinct_entries() {
+        let lib = tempfile::tempdir().unwrap();
+        let addr = fake_xochitl_delayed(lib.path().to_path_buf(), std::time::Duration::from_millis(300));
+        let x = std::sync::Arc::new(Xochitl::new(&addr, lib.path(), 10));
+        let hs: Vec<_> = (0..3u8)
+            .map(|i| {
+                let (x, dir) = (x.clone(), lib.path().to_path_buf());
+                std::thread::spawn(move || {
+                    let src = dir.join(format!("src-{i}.bin"));
+                    let bytes = vec![i + 1; 8_000_000 + i as usize * 1000];
+                    std::fs::write(&src, &bytes).unwrap();
+                    let uuid = x.upload_large_file(&src, &format!("大书{i}.pdf"), "application/pdf", "", b"%PDF-placeholder", Some(3)).unwrap();
+                    (uuid, bytes)
+                })
+            })
+            .collect();
+        let got: Vec<(String, Vec<u8>)> = hs.into_iter().map(|h| h.join().unwrap()).collect();
+        let uuids: std::collections::HashSet<_> = got.iter().map(|(u, _)| u.clone()).collect();
+        assert_eq!(uuids.len(), 3, "每本认领到不同条目");
+        for (uuid, bytes) in got {
+            assert_eq!(std::fs::read(lib.path().join(format!("{uuid}.pdf"))).unwrap(), bytes, "条目里是自己的内容");
+        }
     }
 
     #[test]
