@@ -12,7 +12,8 @@ pub struct KoReader {
 }
 
 /// KOReader 落盘目标（books/fonts/dicts 共用一个 [`AssetStore`] 实现）。`exts` 空＝接受任意格式（books「原样」）。
-/// install 走 `dest/.<name>.part` → rename：`.` 前缀半成品 KOReader 扫目录不见。
+/// 上传暂存与目标同分区时直接改名进去；否则（及母版库 adopt 的 [`KoStore::copy_in`]）拷到 `dest/.<name>.<pid>.<序号>.part`
+/// 再改名：`.` 前缀半成品 KOReader 扫目录不见。
 pub struct KoStore {
     dest: PathBuf,
     kind: &'static str,
@@ -42,9 +43,38 @@ impl AssetStore for KoStore {
     fn allowed_ext(&self) -> &'static [&'static str] {
         self.exts
     }
+    /// 上传流程的暂存文件：同分区直接改名进去（原子、不再拷一遍），跨分区才退回拷贝。
     fn install(&self, name: &str, staged: &Path) -> Result<AssetItem, String> {
+        self.place(name, staged, true)
+    }
+    fn list(&self) -> Vec<AssetItem> {
+        list_files(&self.dest, self.exts).into_iter().map(|f| AssetItem::plain(f.name, f.bytes)).collect()
+    }
+    fn remove(&self, name: &str) -> Result<(), String> {
+        std::fs::remove_file(self.dest.join(plain_name(name)?)).map_err(|e| e.to_string())
+    }
+    fn success_message(&self, _requested: &str, item: &AssetItem) -> String {
+        format!("已放入 KOReader {}（{} 字节）", self.into, item.bytes)
+    }
+}
+
+impl KoStore {
+    /// 从别处**拷贝**一份进来，源文件原样保留（母版库 adopt 用——母版永远留在母版库，不能被 [`AssetStore::install`] 挪走）。
+    pub fn copy_in(&self, name: &str, src: &Path) -> Result<AssetItem, String> {
+        self.place(name, src, false)
+    }
+
+    fn place(&self, name: &str, src: &Path, movable: bool) -> Result<AssetItem, String> {
         std::fs::create_dir_all(&self.dest).map_err(|e| format!("建目录失败: {e}"))?;
         let dest = self.dest.join(name);
+        if movable {
+            if let Ok(md) = std::fs::metadata(src) {
+                if std::fs::rename(src, &dest).is_ok() {
+                    return Ok(AssetItem::plain(name, md.len()));
+                }
+            }
+        }
+        let staged = src;
         // 半成品名带进程号 + 进程内序号：同名的两次落盘（网页连点两次「加入 KOReader」、批量队列与手动操作撞上）
         // 此前共用一个 `.<name>.part`，两个 copy 互相截断/交错写，改名出去的是一本坏书。
         static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -60,15 +90,6 @@ impl AssetStore for KoStore {
             format!("落盘失败: {e}")
         })?;
         Ok(AssetItem::plain(name, bytes))
-    }
-    fn list(&self) -> Vec<AssetItem> {
-        list_files(&self.dest, self.exts).into_iter().map(|f| AssetItem::plain(f.name, f.bytes)).collect()
-    }
-    fn remove(&self, name: &str) -> Result<(), String> {
-        std::fs::remove_file(self.dest.join(plain_name(name)?)).map_err(|e| e.to_string())
-    }
-    fn success_message(&self, _requested: &str, item: &AssetItem) -> String {
-        format!("已放入 KOReader {}（{} 字节）", self.into, item.bytes)
     }
 }
 
@@ -289,6 +310,22 @@ mod tests {
         assert!(store.remove("../x").is_err() && store.remove("中文 名.ttf").is_ok());
     }
 
+    /// adopt 是拷贝（母版必须留在母版库）；上传暂存是挪进去（同分区改名，不再多拷一遍）。
+    #[test]
+    fn copy_in_keeps_source_install_moves_staged() {
+        let t = tempfile::tempdir().unwrap();
+        let store = KoStore::new(t.path().join("books"), "koreader-book", KO_ANY, "books/");
+        let master = t.path().join("master.epub");
+        std::fs::write(&master, b"book").unwrap();
+        assert_eq!(store.copy_in("a.epub", &master).unwrap().bytes, 4);
+        assert!(master.is_file(), "母版原样保留");
+        let staged = t.path().join(".x.part");
+        std::fs::write(&staged, b"font!").unwrap();
+        assert_eq!(store.install("b.epub", &staged).unwrap().bytes, 5);
+        assert!(!staged.exists(), "暂存文件被挪走");
+        assert_eq!(std::fs::read(t.path().join("books/b.epub")).unwrap(), b"font!");
+    }
+
     /// 回归：同名的两次落盘同时进行，结果是其中一份的完整字节（不是两份交错/截断的坏文件），且不留半成品。
     #[test]
     fn concurrent_installs_of_same_name_never_mix() {
@@ -307,7 +344,7 @@ mod tests {
                 .iter()
                 .map(|(p, _)| {
                     let (p, dest) = (p.clone(), dest.clone());
-                    std::thread::spawn(move || KoStore::new(dest, "koreader-book", KO_ANY, "books/").install("同名.epub", &p).unwrap())
+                    std::thread::spawn(move || KoStore::new(dest, "koreader-book", KO_ANY, "books/").copy_in("同名.epub", &p).unwrap())
                 })
                 .collect();
             for h in hs {

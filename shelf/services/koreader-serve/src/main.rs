@@ -32,6 +32,10 @@ fn main() {
     let bind_addr = service::parse_bind(&args, SPEC.default_bind);
     let paths = Paths::from_env();
     let st = Arc::new(service_state::State::new(&paths));
+    let n = st.clean_upload_dir();
+    if n > 0 {
+        println!("[koreader-serve] 清掉 {n} 个上次未完成的上传暂存");
+    }
     let router = api::router(st.clone());
     println!("[koreader-serve] root={} installed={}", st.ko.root().display(), st.ko.installed());
     if let Err(e) = service::run(&SPEC, &bind_addr, &paths, router) {

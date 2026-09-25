@@ -112,8 +112,22 @@ impl State {
     pub fn upload(&self, r: &mut Request<'_>, store: &KoStore) -> ApiResult {
         self.require_installed()?;
         let boundary = r.multipart_boundary()?;
-        let items = AssetUploadFlow::new(&self.paths).run(store, &mut *r.body, &boundary).map_err(ApiError::bad)?;
+        let items = AssetUploadFlow::in_dir(self.upload_dir()).run(store, &mut *r.body, &boundary).map_err(ApiError::bad)?;
         Ok(Reply::ok(&asset::receipt(&items, serde_json::json!({"note": self.ko.running_note("KOReader 正在运行：重启它后才生效")}))))
+    }
+
+    /// 字体/词典上传的暂存目录：`$XDG_STATE_HOME/shelf/koreader-upload`（/home 分区，与 KOReader 目录同分区）。
+    /// 此前暂存在运行时目录——单元没设 `XDG_RUNTIME_DIR` 时是 `/tmp`（tmpfs，吃内存且计入本服务 cgroup 的
+    /// `MemoryMax=192M`），几十上百 MB 的词典整份先落进内存再拷一遍到 /home（2026-09-25 第四轮审计）。
+    /// 现在同分区暂存、安装时直接改名进去。半成品是点前缀的 `.<uuid>.<kind>.part`，启动时 [`Self::clean_upload_dir`] 清。
+    pub fn upload_dir(&self) -> std::path::PathBuf {
+        self.paths.state_dir().join("koreader-upload")
+    }
+
+    /// 清掉上次进程中途被杀留下的上传暂存（只在启动时调用，此时不可能有上传在进行）。返回清掉几个。
+    pub fn clean_upload_dir(&self) -> usize {
+        let Ok(rd) = std::fs::read_dir(self.upload_dir()) else { return 0 };
+        rd.flatten().filter(|e| e.file_name().to_string_lossy().ends_with(".part") && std::fs::remove_file(e.path()).is_ok()).count()
     }
 
     pub fn font_store(&self) -> KoStore {
@@ -146,6 +160,19 @@ mod tests {
         assert_eq!(st.status()["fonts"], 0, "TTL 内命中缓存，不重扫目录");
         st.notify("fonts");
         assert_eq!(st.status()["fonts"], 1, "操作完成路径 notify 后，马上刷新就看到变化");
+    }
+
+    /// 上传暂存在 /home 的状态目录（不是 tmpfs 运行时目录）；启动清理只删半成品。
+    #[test]
+    fn upload_staging_lives_in_state_dir_and_startup_cleans_parts() {
+        let t = tempfile::tempdir().unwrap();
+        let st = state_in(t.path());
+        assert!(st.upload_dir().starts_with(st.paths.state_dir()));
+        std::fs::create_dir_all(st.upload_dir()).unwrap();
+        std::fs::write(st.upload_dir().join(".abc.koreader-font.part"), b"x").unwrap();
+        std::fs::write(st.upload_dir().join("keep.txt"), b"x").unwrap();
+        assert_eq!(st.clean_upload_dir(), 1);
+        assert!(st.upload_dir().join("keep.txt").exists());
     }
 
     #[test]

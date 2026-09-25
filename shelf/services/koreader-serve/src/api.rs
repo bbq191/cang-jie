@@ -42,7 +42,7 @@ pub fn router(st: Arc<State>) -> Router {
                 return Err(ApiError::not_found("母版库里没有这本书"));
             }
             let dest = s.ko.subdir(j.str_or("folder", "")).map_err(ApiError::bad)?;
-            let item = KoStore::new(dest, "koreader-book", KO_ANY, "books/").install(&name, &src).map_err(ApiError::bad)?;
+            let item = KoStore::new(dest, "koreader-book", KO_ANY, "books/").copy_in(&name, &src).map_err(ApiError::bad)?;
             s.notify("books");
             Ok(Reply::ok(&serde_json::json!({"ok": true, "message": format!("已加入 KOReader《{}》（{} 字节）", name, item.bytes), "note": s.ko.running_note("KOReader 运行中：在其文件浏览器刷新可见")})))
         }))
