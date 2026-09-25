@@ -28,8 +28,10 @@
 | 消费方 | `shelf/services/{book,koreader}-serve` · `enhance/{font,wallpaper}-serve` · `notes/services/{ink,transcribe,mind,note}-serve` + `notes/crates/vendorcfg` · `gateway/` |
 | 依赖方向 | 单向：消费方 → 本 crate；本 crate 不知道任何消费方，不引用旧项目 crate（`device-core` / `weread-device`） |
 | workspace | 不建根 workspace，各项目各管各的 `target/` |
-| 测试 | 101 个单测，100 个默认跑、1 个默认忽略（需要网络命名空间的 mDNS 端到端测试）；`cargo test --manifest-path rmsvc-core/Cargo.toml`，2026-09-25 实跑全过。CI `rust` job 单列一步（CI 自 09-20 起因账户扣费没有实际执行） |
-| 真机 | 所有消费方已部署在设备上并正常运行（2026-09-11 起 `install-all.sh` 真机跑通；09-24、09-25 各整轮重装一次，9 个服务 active）。09-24 第三轮审计的改动（`sync`、小请求体超限报错、`percent_decode_path`、上传串行锁、上传文件名清洗、读空闲超时）已随部署上机、服务正常，但这些行为本身只在 host 测试里专门验证过；09-25 的 mDNS 地址变化驱动见 §04 |
+| 测试 | 105 个单测，104 个默认跑、1 个默认忽略（需要网络命名空间的 mDNS 端到端测试）；`cargo test --manifest-path rmsvc-core/Cargo.toml`，2026-09-25 第四轮审计后实跑全过。`vendor/tiny_http` 的补丁另有 1 个单测（在 vendored crate 里，不计入这 105 个）。CI `rust` job 单列一步（CI 自 09-20 起因账户扣费没有实际执行） |
+| 真机 | 所有消费方已部署在设备上并正常运行（2026-09-11 起 `install-all.sh` 真机跑通；09-24、09-25 各整轮重装一次，9 个服务 active）。09-24 第三轮审计的改动（`sync`、小请求体超限报错、`percent_decode_path`、上传串行锁、上传文件名清洗、读空闲超时）已随部署上机、服务正常，但这些行为本身只在 host 测试里专门验证过；09-25 的 mDNS 地址变化驱动见 §04。**09-25 第四轮审计**的六处改动（accept 暂时性错误不停摆、`xochitl_conf` 保留权限、multipart 引号内分号、大文件通道整段串行、上传暂存改到 /home 并启动清理、format-12 损坏组）都只在 host 测试里验证，**未上真机** |
+
+**09-25 第四轮审计改了什么**（一句话版，细节在各节）：accept 线程遇到暂时性错误不再退出、真退出时服务非零退出交给 systemd 拉起（§01 http）；上传暂存从运行时目录改到 `~/.local/state/shelf/upload`，启动清半成品（§02 paths / asset）；multipart 文件名里引号内的 `;` 不再截断（§02）；format-12 损坏组不再报满 100%（§02 ttf）；大文件通道“传占位 → 认领 → 替换”整段串行（§03）；改 `xochitl.conf` 保留原文件权限（§03）。
 
 **三条要记住**：① 这里出问题，理论上 5 个独立顶层项目一起受影响，改任何模块前先查谁在用（下面每节都列了）；② 公开结构体（如 `http::Request`）被各服务直接构造，加字段会波及全部调用方，宁可走内部头或新函数；③ XDG 路径仍叫 `shelf`（已部署设备的真实路径，改名要迁移）。
 
@@ -55,6 +57,7 @@
 | 路由 | 路径模式：尾部 `/*` 前缀匹配、单段 `{param}`（参数用 `percent_decode_path` 解码，`+` 不当空格，09-24）。**最具体的优先**：字面段多的胜、精确匹配胜尾部通配（09-20 起）。此前靠“先注册先匹配”，通配路由曾抢走字面路由；现在跟注册顺序无关 |
 | 每请求一线程 + 并发上限 | 缺省同时 64 个请求（含 SSE 长连接），超了回 503 + `Retry-After: 2`，不再开线程。取值：合法并发约 30（浏览器每源 6 条 × 几个标签页 + 网关到各服务 8 条订阅），64 留一倍余量；每条线程常驻只有几十 KB。`ServeOpts.max_concurrent` 可改，`None` 不限 |
 | 连接读空闲超时 | 每条连接 60 秒（`READ_IDLE_TIMEOUT`）：服务端等着读、60 秒没收到一个字节就断开。防慢客户端/只发半个请求头或 TLS 握手、手机休眠留下的半开 keep-alive 连接永久占住连接线程（09-24 起；此前 tiny_http 不设任何超时）。是空闲超时不是总时长：上传只要有字节在流不受影响；处理函数自己慢（长轮询、排队）时服务端没在读，也不受影响。实现靠 `vendor/tiny_http` 的一处补丁（见 [`../vendor/README.md`](../vendor/README.md)）——**不能**把 `SO_RCVTIMEO` 设在监听 socket 上：accept 也会跟着超时，上游 accept 循环遇错就退出，服务停摆（先试过，测试抓到） |
+| accept 出错 | tiny_http 上游遇到**任何** accept 错误都退出 accept 线程，之后服务再也收不到连接，进程却还活着。`vendor/tiny_http` 的第二处补丁（09-25）：连接排队时被对端中止（`ECONNABORTED`/`ECONNRESET`/`EINTR`）、fd 或内存暂时用尽（`EMFILE`/`ENFILE`/`ENOBUFS`/`ENOMEM`/`EPROTO`，这几种先歇 100 ms）跳过这一条接着 accept；其余错误照旧退出。配套：`serve_with` 在 accept 线程退出后返回 `Err`（此前返回 `Ok`，服务以退出码 0 结束，单元是 `Restart=on-failure`，systemd 不拉起，服务就此静默消失） |
 | 请求头白名单 | 处理函数只看得到 `Cookie`、`Authorization`、`Accept`、`Host`、`X-Forwarded-Proto`、`User-Agent`（外加 `Content-Type`/`Content-Length`） |
 | 对端 IP | 服务器取 TCP 对端地址（HTTPS 下同样取自底层 TcpStream），写进内部头 `X-Rmsvc-Remote-Ip`（常量 `REMOTE_IP_HEADER`），处理函数用 `Request::remote_ip()`、守卫用 `GuardRequest.remote` 读。客户端自带的同名头在白名单那步就被丢掉，伪造不了。没给 `Request` 加字段，是因为它被各服务直接构造 |
 | 守卫 | `Guard`：分发前先问一次，`None` 放行、`Some(reply)` 直接回。登录策略由服务自己定义（只有网关用） |
@@ -75,13 +78,13 @@
 
 | 模块 | 谁在用 | 关键约定 |
 |---|---|---|
-| `paths` | 9 个服务 | XDG 基目录的**唯一路径表**，所有文件路径从这里取。设备 HOME 是 `/home/root`；配置 `~/.config/shelf/<服务>.json`，数据 `~/.local/share/shelf/`，状态 `~/.local/state/shelf/`，运行时 `$XDG_RUNTIME_DIR/shelf/`（注册表、上传分片，重启即清），二进制 `~/.local/bin`。外部约定可用 `SHELF_KOREADER_ROOT`、`SHELF_WEREAD_ROOT` 覆盖。`app_config_dir("notes")` 这类接口给非 `shelf` 命名空间的消费方 |
+| `paths` | 9 个服务 | XDG 基目录的**唯一路径表**，所有文件路径从这里取。设备 HOME 是 `/home/root`；配置 `~/.config/shelf/<服务>.json`，数据 `~/.local/share/shelf/`，状态 `~/.local/state/shelf/`，运行时 `$XDG_RUNTIME_DIR/shelf/`（注册表，重启即清），二进制 `~/.local/bin`。**上传暂存** `upload_tmp_dir()` = `~/.local/state/shelf/upload`（09-25 起；此前在运行时目录——单元没设 `XDG_RUNTIME_DIR` 时落到 `/tmp`，是 tmpfs：几十 MB 的中文字体整份占内存、计入服务 cgroup 的 `MemoryMax`，安装时还得再拷一遍到 /home）。外部约定可用 `SHELF_KOREADER_ROOT`、`SHELF_WEREAD_ROOT` 覆盖。`app_config_dir("notes")` 这类接口给非 `shelf` 命名空间的消费方 |
 | `fs` | 8 个 | `write_atomic`：先写同目录临时文件再 rename；临时名 `<path>.<pid>.<序号>.tmp`，多线程/多进程同时写同一目标不会互相截断（09-20 前固定用 `<path>.tmp`）。`write_atomic_mode`：临时文件**创建时**就带指定权限，含密钥的文件没有“先宽后紧”的窗口（09-24）。`plain_name` 校验单段文件名（不含 `/`、不是 `.`/`..`、不以 `.` 开头）；`unique_path` 同名不覆盖（`1_x`、`2_x`…）；`move_unique` 跨设备回退 copy+rm |
 | `config` | 7 个 | JSON 配置模板：`load_or_default`、`load_or_seed`（首启写出缺省）、`save`（原子写，可选 0600）。`is_corrupt` 判断“文件在但解析不了”，给启动时要落盘的调用方决定是否跳过，免得把损坏的配置覆盖成缺省（09-24） |
-| `multipart` | book-serve、note-serve、网关 | 流式 multipart/form-data 解析，每个 part 以 `Read` 交出、边读边落盘，多文件一次 POST 也不把请求体读进内存。分隔符扫描记进度、按首字节跳查（200MB 上传体解析 1245ms → 46ms，09-22）。`percent_decode` 遇多字节字符不再 panic（查询串/表单语义，`+`=空格；路径段与 `filename*=` 用 `percent_decode_path`，`+` 原样）；`content_disposition(filename)` 生成下载头（ASCII 兜底名 + RFC 5987 UTF-8 名，笔记导出与原件下载共用） |
-| `asset` | book-serve、koreader-serve、font-serve、wallpaper-serve | `AssetStore`（仓库：`validate`/`install`/`list`/`remove`）+ `AssetUploadFlow`（上传流程写一次）。拒收/成功文案由各仓库覆盖 |
+| `multipart` | book-serve、note-serve、网关 | 头参数按 `;` 切分时**引号内的 `;` 不切**（09-25：此前 `filename="甲; 乙.epub"` 被截成 `甲`，扩展名丢失被当成不支持的格式拒收；浏览器把文件名里的 `"` 编成 `%22`，所以只认成对双引号）。流式 multipart/form-data 解析，每个 part 以 `Read` 交出、边读边落盘，多文件一次 POST 也不把请求体读进内存。分隔符扫描记进度、按首字节跳查（200MB 上传体解析 1245ms → 46ms，09-22）。`percent_decode` 遇多字节字符不再 panic（查询串/表单语义，`+`=空格；路径段与 `filename*=` 用 `percent_decode_path`，`+` 原样）；`content_disposition(filename)` 生成下载头（ASCII 兜底名 + RFC 5987 UTF-8 名，笔记导出与原件下载共用） |
+| `asset` | book-serve、koreader-serve、font-serve、wallpaper-serve | `AssetStore`（仓库：`validate`/`install`/`list`/`remove`）+ `AssetUploadFlow`（上传流程写一次）。拒收/成功文案由各仓库覆盖。暂存目录：`new(&paths)` 用上面的 `upload_tmp_dir()`（font-serve、wallpaper-serve），`in_dir(dir)` 由调用方指定（book-serve 用母版库同分区的 `.work/`，koreader-serve 用 `~/.local/state/shelf/koreader-upload`）。半成品名是 `.<uuid>.<kind>.part`，`clean_stale()` 在服务启动时清掉上次中途被杀留下的（font-serve、wallpaper-serve、koreader-serve 启动时调用，09-25）。暂存与目标同在 /home，font-serve 安装直接改名，跨分区才退回拷贝 |
 | `formats` | 5 个 + 网关 | 文件格式白名单的**单一事实源**：书籍只收 `epub`/`pdf`（09-18 起），字体 `ttf/otf/ttc`，词典 `ifo/idx/dict/dz/syn/oft`，图片 `jpg/jpeg/png`。网页 `accept`（网关注入）和服务端上传门同源 |
-| `ttf` | font-serve、koreader-serve | TTF/OTF 家族名（nameID 16 优先）、魔数校验、CJK 覆盖率；汉字覆盖数钳到区内总码位、够数即停（防恶意字体堆重叠段导致数亿次迭代，09-22） |
+| `ttf` | font-serve、koreader-serve | TTF/OTF 家族名（nameID 16 优先）、魔数校验、CJK 覆盖率；汉字覆盖数钳到区内总码位、够数即停（防恶意字体堆重叠段导致数亿次迭代，09-22）；format-12 里 `startCharCode > endCharCode` 的损坏组跳过（09-25：此前相减下溢，debug 版 panic、release 版回绕成天文数字直接报满 100%） |
 | `cache` | book-serve、koreader-serve、网关（设备健康页） | 单值 TTL 缓存 `TtlCache`，给每次刷新都会打、但算一次很重的 `/status`（如 3 秒 TTL）；本服务操作完成时 `invalidate`。计算期间持锁，并发请求等同一份结果 |
 | `clock` | 8 个 | unix 时间戳唯一出处；取不到时间回 0 |
 | `sync` | book-serve、koreader-serve、网关、笔记线四个服务与 vendorcfg、font-serve、wallpaper-serve、本 crate 自身 | `sync::lock`：容忍 poison 的取锁。release 是 `panic="unwind"`，线程 panic 后它持有的锁被标 poison，别处再 `.lock().unwrap()` 就会让之后每个请求都跟着 panic；这里保护的都是缓存/队列/计数这类半途中断也自洽的状态，接着用即可。09-24 收编了 book-serve 私有的 `ops::lock` 和书架两服务、本 crate 里手写的 `.lock().unwrap_or_else(|e| e.into_inner())`，09-25 又把网关、笔记线、系统增强的 33 处改用它（见 §07）。条件变量 `wait*` 的 poison 处理它管不到，仍是手写 |
@@ -95,8 +98,12 @@
   - **防复制风暴**：大书上传慢时会 408 或读超时，但文档其实已建好——这类错误**绝不重试**（`upload_likely_delivered`）。
   - `upload_file` 流式上传磁盘文件，不整本读进内存（09-19 OOM 审计：旧路径峰值能到原文件 2 倍多）。
   - `upload_large_file` 绕过网页上传约 100MB 的硬限：先传几 KB 的占位文档（EPUB 要带真书名和封面）让 xochitl 建好条目，再把磁盘上的文件原子替换成真文件。EPUB 删掉占位的渲染缓存，首次打开时重渲染；PDF 要一并改 `.content` 里的逐页表和页数。2026-09-20 真机验证：154MB PDF、153MB EPUB 都能打开。失败时占位可能留在书库里，不做危险的回滚删除。
+  - **大文件通道整段串行**（09-25）：认领只凭“刚进库 + 大小等于占位”，PDF 占位是同一份固定字节，两本大 PDF 同时走这条路会认领到同一个 uuid——一本被覆盖、另一份占位永远留在书库里。现在一把进程内 static 锁从“传占位”一直拿到“替换完成”（替换前那份文件仍是占位大小，只锁认领不够）。代价是第二本要等第一本复制完。host 单测 3 本并发各认领到自己的条目；未在真机并发投递过。
+
+    ![大文件通道为什么要整段加锁](diagrams/large-file-claim.svg)
+
   - `xochitl::library`：书库 `.metadata`/`.content` 的只读查询（找文件夹、去重命名、按创建时间找“刚进库的那本”、渲染页数），纯文件读取，不碰 HTTP。
-- **`xochitl_conf`**（wallpaper-serve）：改 `~/.config/remarkable/xochitl.conf` 的 `[General]` 单键，目前只用于休眠屏 `SleepScreenPath`。文件里有 `DeveloperPassword` 等凭证，本模块**绝不返回、绝不打印任何行内容**；整文件读入、只动目标行、原子覆盖，首次改前留一份 `.shelf-bak`。新值要等 xochitl 下次启动才生效。
+- **`xochitl_conf`**（wallpaper-serve）：改 `~/.config/remarkable/xochitl.conf` 的 `[General]` 单键，目前只用于休眠屏 `SleepScreenPath`。文件里有 `DeveloperPassword` 等凭证，本模块**绝不返回、绝不打印任何行内容**；整文件读入、只动目标行、原子覆盖，首次改前留一份 `.shelf-bak`。**保留原文件权限**（09-25）：原子覆盖是“写临时文件 → rename”，新 inode 按默认 umask 落成 0644，原件若是 0600，含凭证的文件就这样变成人人可读；现在临时文件创建时就带原权限，改名后再精确设一次（umask 会收窄）。新值要等 xochitl 下次启动才生效。
 - **`fswatch`**（book-serve、ink-serve、网关）：inotify 防抖目录监听（单层）。空闲时阻塞读、零唤醒。`watch_debounced` 常驻；`watch_until` 限时，回调说“完了”就撤，用于有头有尾的等待（投原生后等 xochitl 渲染完），不给书库目录留常驻监听。
 
 ## 04｜对外与安全：auth / tls / mdns / netinfo（只有网关用）
@@ -121,7 +128,7 @@
 - **path 依赖的深度**：`..` 的个数取决于消费方自己的目录深度——`gateway/` 写 `../rmsvc-core`，`enhance/*-serve/` 写 `../../rmsvc-core`，`shelf/services/*/`、`notes/services/*/`、`notes/crates/vendorcfg/` 写 `../../../rmsvc-core`。写错时 `cargo build` 会直接说它去哪找过，照着改。
 - **每个独立顶层项目各带一份 `.cargo/config.toml`**（交叉编译的 CC/AR 覆盖），原因见 §06。
 - **release profile**：`gateway`、`shelf`、`notes` 是 `panic="unwind"`，基座的 panic 兜底和各服务的 `catch_unwind` 才真正生效；`enhance/{font,wallpaper}-serve` 仍是 `abort`（没有依赖 `catch_unwind` 的后台线程）。
-- **测试**：`cargo test --manifest-path rmsvc-core/Cargo.toml`，101 个（1 个默认忽略）；HTTP 服务器、TLS 握手取对端 IP、名称约束链校验都有真起服务器 / 真证书链的测试。
+- **测试**：`cargo test --manifest-path rmsvc-core/Cargo.toml`，105 个（1 个默认忽略）；HTTP 服务器、TLS 握手取对端 IP、名称约束链校验都有真起服务器 / 真证书链的测试。
 
 ## 06｜踩坑
 
@@ -129,6 +136,9 @@
 - **`version.workspace = true` 离开 workspace 就报错**：挪出 `shelf` workspace 的 crate 要把 `version`/`edition`/`license` 改成字面量，`[profile.release]` 也要各自复制一份。
 - **`panic="abort"` 让 `catch_unwind` 失效**（2026-09-19，真机《镖人》）：一次 panic 摔掉整个进程、卡住所有在途操作。`gateway`/`shelf`/`notes` 已改 `unwind`，二进制约大 8%。
 - **SSE 通道拿去发文件下载**（2026-09-24）：见 §01 http。
+- **accept 线程悄悄退出**（2026-09-25 第四轮审计）：上游 tiny_http 遇到任何 accept 错误都退出 accept 线程，`serve_with` 又返回 `Ok`，服务以退出码 0 结束——`Restart=on-failure` 只拉起非零退出，于是服务“正常”消失。两层都要修：暂时性错误不退出（vendor 补丁），真退出时报错让 systemd 接手（见 §01 http）。
+- **原子写换了 inode，权限跟着丢**（2026-09-25）：tmp + rename 得到的是新文件，权限按 umask 来，不继承原文件。改别人家的配置文件（尤其含凭证的 `xochitl.conf`）要显式保留原权限（§03）。
+- **暂存放在 tmpfs 上会吃服务的内存配额**（2026-09-25）：`/tmp`、运行时目录都是内存；几十 MB 的上传暂存计入 cgroup `MemoryMax`，还要跨分区再拷一遍。暂存要和最终目标放在同一分区（§02 paths）。
 - **通配路由抢字面路由**：旧的“先注册先匹配”下，`GET /{name}` 抢过 `/health`（wallpaper-serve 真机踩过）。现在按具体程度分发；`service.rs` 里“`/health` 必须先注册”的注释是那时留下的，已不再是必要条件。
 
 ## 07｜命名遗留与待办
