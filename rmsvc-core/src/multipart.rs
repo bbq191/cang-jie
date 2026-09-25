@@ -265,8 +265,28 @@ impl<R: Read> Read for Part<'_, R> {
     }
 }
 
+/// 按 `;` 切分头参数，**引号内的 `;` 不切**：此前直接 `split(';')`，浏览器发来的 `filename="甲; 乙.epub"` 被切成
+/// `"甲`，书名截半、扩展名丢失被当成"不支持的格式"拒收（2026-09-25 第四轮审计）。浏览器对文件名里的 `"` 编成 `%22`、
+/// 不用反斜杠转义，所以这里只认成对的双引号。
+fn split_params(line: &str) -> impl Iterator<Item = &str> {
+    let mut parts = Vec::new();
+    let (mut start, mut quoted) = (0, false);
+    for (i, c) in line.char_indices() {
+        match c {
+            '"' => quoted = !quoted,
+            ';' if !quoted => {
+                parts.push(&line[start..i]);
+                start = i + 1;
+            }
+            _ => {}
+        }
+    }
+    parts.push(&line[start..]);
+    parts.into_iter()
+}
+
 fn header_param(line: &str, key: &str) -> Option<String> {
-    line.split(';').map(|s| s.trim()).find_map(|kv| {
+    split_params(line).map(|s| s.trim()).find_map(|kv| {
         let (k, v) = kv.split_once('=')?;
         if k.trim().eq_ignore_ascii_case(key) {
             Some(v.trim().trim_matches('"').to_string())
@@ -477,6 +497,17 @@ mod tests {
         assert_eq!(safe_basename("C:\\x\\y.epub", "d"), "y.epub");
         assert_eq!(safe_basename("..", "d"), "d");
         assert_eq!(safe_basename("", "d"), "d");
+    }
+
+    /// 回归：引号里的 `;` 不是参数分隔符（书名带分号的上传曾被截成半截、扩展名丢失被拒收）。
+    #[test]
+    fn filename_with_semicolon_inside_quotes() {
+        let (n, f, _) = parse_headers("Content-Disposition: form-data; name=\"file\"; filename=\"甲; 乙=丙.epub\"");
+        assert_eq!((n.as_str(), f.as_deref()), ("file", Some("甲; 乙=丙.epub")));
+        let (_, f, _) = parse_headers("Content-Disposition: form-data; filename=\"a;b.pdf\"; name=\"x\"");
+        assert_eq!(f.as_deref(), Some("a;b.pdf"));
+        let (n, f, _) = parse_headers("Content-Disposition: form-data; name=plain; filename=x.epub");
+        assert_eq!((n.as_str(), f.as_deref()), ("plain", Some("x.epub")), "不带引号的旧写法照旧");
     }
 
     #[test]
