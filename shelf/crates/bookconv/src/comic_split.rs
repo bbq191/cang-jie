@@ -39,7 +39,9 @@ fn parse_ncx_flat(ncx_text: &str) -> Vec<(usize, String, String)> {
         } else if c.get(2).is_some() {
             depth = depth.saturating_sub(1);
         } else if let Some(t) = c.get(3) {
-            cur_title = t.as_str().trim().to_string();
+            // NCX 里是转义过的 XML 文本；标题后面要当分卷书名/文件名/目录项（组包时会再转义），先还原字符引用，
+            // 否则 `卷一 &amp; 卷二` 会以字面 `&amp;` 出现在分卷名和目录里。
+            cur_title = crate::util::xml_unescape(t.as_str().trim()).into_owned();
         } else if let Some(s) = c.get(4) {
             out.push((depth, std::mem::take(&mut cur_title), s.as_str().to_string()));
         }
@@ -685,6 +687,17 @@ mod tests {
         let piece = build_piece(&entries, 0, 2, "卷", "x").unwrap();
         let imgs = crate::epubzip::read_entries(&piece).unwrap().into_iter().filter(|e| e.name.starts_with("OEBPS/images/")).count();
         assert_eq!(imgs, 2);
+    }
+
+    #[test]
+    fn ncx_titles_char_refs_are_decoded_once() {
+        let entries = with_top_level_ncx(make_multivol(&[3, 3], 1000), &[("猫 &amp; 鼠", 0), ("卷&#20108;", 3)]);
+        let pieces = plan_splits(&entries, 4000).unwrap().expect("应该要拆");
+        assert_eq!(pieces.iter().map(|p| p.title.as_str()).collect::<Vec<_>>(), ["猫 & 鼠", "卷二"]);
+        let piece = build_piece(&entries, pieces[0].start, pieces[0].end, &pieces[0].title, "x").unwrap();
+        let nav = crate::epubzip::read_entries(&piece).unwrap().into_iter().find(|e| e.name == "OEBPS/nav.xhtml").unwrap();
+        let nav = String::from_utf8(nav.data).unwrap();
+        assert!(nav.contains(">猫 &amp; 鼠</a>") && !nav.contains("&amp;amp;"), "{nav}");
     }
 
     #[test]

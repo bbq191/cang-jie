@@ -98,8 +98,8 @@ pub fn epub_placeholder(real_epub: &Path, title: Option<&str>) -> Result<Vec<u8>
     let (mut zip, opf_path, opf) = open_opf(real_epub)?;
     let cover = find_cover(&mut zip, &opf_path, &opf);
     static TITLE: OnceLock<Regex> = OnceLock::new();
-    // OPF 里读出的是转义过的 XML 文本：先还原再在下面统一转义，否则 `A &amp; B` 会被写成 `A &amp;amp; B`（设备显示名带字面 `&amp;`）。
-    let from_opf = |c: &regex::Captures| crate::util::xml_unescape(&crate::wash::plain_text(&c[1])).trim().to_string();
+    // OPF 里读出的是转义过的 XML 文本：`plain_text` 还原字符引用后下面统一转义，否则 `A &amp; B` 会被写成 `A &amp;amp; B`（设备显示名带字面 `&amp;`）。
+    let from_opf = |c: &regex::Captures| crate::wash::plain_text(&c[1]).trim().to_string();
     let real_title = re(&TITLE, r#"(?s)<dc:title\b[^>]*>(.*?)</dc:title>"#).captures(&opf).map(|c| from_opf(&c)).filter(|t| !t.is_empty());
     let title: String = title.map(str::to_string).or(real_title).unwrap_or_else(|| "未命名".into());
     let title = title.as_str();

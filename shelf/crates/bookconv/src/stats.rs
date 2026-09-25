@@ -59,8 +59,8 @@ fn accumulate(p: &mut TextProfile, name: &str, data: &[u8]) {
     let Ok(t) = std::str::from_utf8(data) else { return };
     if name.to_ascii_lowercase().ends_with(".opf") {
         if p.title.is_none() {
-            // 还原字符引用：这个书名要跟 xochitl 的 visibleName（已解码的 `A & B`）比对（book-serve `render_check::pick`）。
-            p.title = title_re.captures(t).map(|c| crate::util::xml_unescape(&plain_text(&c[1])).into_owned()).filter(|s| !s.is_empty());
+            // `plain_text` 已还原字符引用：这个书名要跟 xochitl 的 visibleName（已解码的 `A & B`）比对（book-serve `render_check::pick`）。
+            p.title = title_re.captures(t).map(|c| plain_text(&c[1])).filter(|s| !s.is_empty());
         }
         return;
     }

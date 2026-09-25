@@ -859,7 +859,7 @@ mod tests {
             let got = image::load_from_memory(&downscale_for_epub(&src).expect("超框要缩")).unwrap();
             assert_eq!(got.dimensions(), want.dimensions(), "{w}x{h}");
             let (a, b) = (got.to_rgb8(), want.to_rgb8());
-            let mean_diff = a.as_raw().iter().zip(b.as_raw()).map(|(x, y)| (*x as i32 - *y as i32).abs() as u64).sum::<u64>() as f64 / a.as_raw().len() as f64;
+            let mean_diff = a.as_raw().iter().zip(b.as_raw()).map(|(x, y)| x.abs_diff(*y) as u64).sum::<u64>() as f64 / a.as_raw().len() as f64;
             assert!(mean_diff < 2.0, "{w}x{h} 像素均差 {mean_diff}");
         }
         let gray = gray_jpeg_of(1800, 2400, 0);

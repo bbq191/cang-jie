@@ -766,7 +766,7 @@ impl PdfFileReader {
                 let dest_page_id = parse_uint_after(&item_body, "/Dest [").ok_or("书签缺 /Dest")? as usize;
                 // 自己写的页对象号恒为 3+3i；别的值说明不是我们的文件（或已损坏）——此前直接 `(id-3)/3`，
                 // id<3 时减法溢出（release 下回绕成天文数字页码，调用方切片越界 panic）。
-                if dest_page_id < 3 || (dest_page_id - 3) % 3 != 0 {
+                if dest_page_id < 3 || !(dest_page_id - 3).is_multiple_of(3) {
                     return Err(format!("书签指向的对象 {dest_page_id} 不是页对象"));
                 }
                 let page_idx = (dest_page_id - 3) / 3;
