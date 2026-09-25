@@ -64,7 +64,9 @@ pub fn split_leading_marker(text: &str) -> (Option<Marker>, String) {
     if !digits.is_empty() && digits.len() <= 3 {
         let after = &f[digits.len()..];
         for p in [".", "、", ")", "）", "．"] {
-            if let Some(b) = after.strip_prefix(p) {
+            // 紧跟数字的是小数/版本号（`3.14`、`1.5倍`），不是编号：此前会被剥成编号条目"14 是圆周率"，
+            // 网页里手打的正文也走这条规则，等于改了用户的字（2026-09-25 第四轮审计）。
+            if let Some(b) = after.strip_prefix(p).filter(|b| !b.starts_with(|c: char| c.is_ascii_digit())) {
                 return (Some(Marker::Style(Style::Numbered)), strip(b));
             }
         }
@@ -121,6 +123,9 @@ mod tests {
         assert_eq!(split_leading_marker("口渴了"), (None, "口渴了".into()), "「口」后面直接是字＝正常词");
         assert_eq!(split_leading_marker("-3 度"), (None, "-3 度".into()), "负数不是无序");
         assert_eq!(split_leading_marker("2024 年"), (None, "2024 年".into()));
+        assert_eq!(split_leading_marker("3.14 是圆周率"), (None, "3.14 是圆周率".into()), "小数不是编号");
+        assert_eq!(split_leading_marker("1.5倍速"), (None, "1.5倍速".into()));
+        assert_eq!(split_leading_marker("2.背诵"), (Some(Marker::Style(Style::Numbered)), "背诵".into()), "编号后没空格仍认");
         assert_eq!(split_leading_marker("没听懂"), (None, "没听懂".into()));
         assert_eq!(split_leading_marker("# 只是个标题符号，这条线暂不接"), (None, "# 只是个标题符号，这条线暂不接".into()), "单 # 明确不识别，见模块文档");
         assert_eq!(split_leading_marker(""), (None, String::new()));
