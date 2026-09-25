@@ -26,7 +26,7 @@ sh uninstall-all.sh <host> --skip shelf # 跳过指定步骤，用法同 --skip
 ```
 
 全部参数与环境变量见下文「参数与环境变量」；所有脚本 `-h` 可看用法，未知选项一律退出码 2 且不连设备。
-> ⚠ 真机验证范围见文末「验证现状」：2026-09-22 合并后整轮 `install-all.sh` 在真机跑过一次；2026-09-24 第三轮审计后又整轮跑过一次，`.so` 的 stop → 换入 → start 第一次在真机走通。卸载全流程、"无改动不重启"、关键区忽略信号仍只有本机模拟。
+> ⚠ 真机验证范围见文末「验证现状」：2026-09-22 合并后整轮 `install-all.sh` 在真机跑过一次；2026-09-24 第三轮审计后又整轮跑过一次，`.so` 的 stop → 换入 → start 第一次在真机走通；2026-09-25 卸载全流程第一次真机整轮通过（紧接重装踩到并修掉了"停止映射着已删扩展的 xochitl 会崩"）。"无改动不重启"、关键区忽略信号仍只有本机模拟。
 
 装完（或任何一次单独部署之后）跑一遍只读核对，见下文「部署后核对」：
 
@@ -300,7 +300,7 @@ bash packaging/tests/run_sim_tests.sh      # 现为 290 项断言（2026-09-25 �
 
 ## 已知限制（别当成已经解决）
 
-- **只在本机模拟验证、没在真机走过的分支**：卸载全流程（逆序 + 载荷目录清理 + verity 保留分支 + 撤掉待换入 `.so`）；单独部署"没变化不重启"；`xovi-apply`"无待生效改动就不重启"；`--force-apply`/`--force`；`cj_backup_if_differs` 的"内容没变不备份"；`deploy.sh` 的推送前核对与密码文件兜底清理。首次安装这条主路径在真机跑过；2026-09-24 的 `.so` 待换入区（stop → 换入 → start）已在真机走通（见「验证现状」09-24 行），但关键区忽略 HUP/PIPE/INT/TERM 这一支没有在真机上专门断连触发过，见「验证现状」。
+- **只在本机模拟验证、没在真机走过的分支**：卸载的 verity 保留分支与撤掉待换入 `.so`（卸载主流程 2026-09-25 已真机通过）；单独部署"没变化不重启"；`xovi-apply`"无待生效改动就不重启"；`--force-apply`/`--force`；`cj_backup_if_differs` 的"内容没变不备份"；`deploy.sh` 的推送前核对与密码文件兜底清理。首次安装这条主路径在真机跑过；2026-09-24 的 `.so` 待换入区（stop → 换入 → start）已在真机走通（见「验证现状」09-24 行），但关键区忽略 HUP/PIPE/INT/TERM 这一支没有在真机上专门断连触发过，见「验证现状」。
 - **`xovi-reenable.service` 防护（2026-09-22）**：单元带 `ExecCondition=/bin/sh -c '! grep -q "xovi[.]so" /proc/<xochitl MainPID>/maps'`——xochitl 已映射 `xovi.so` 就跳过（systemd 把 ExecCondition 非 0 视为"跳过"而非"失败"），不再对已生效的 xochitl 跑 `xovi/start`（那会让它 SEGV → 整机重启）。三种情形（已生效/未生效/xochitl 不在跑）有本机模拟测试；新版单元已部署到设备（2026-09-24 只读核对：设备上的单元与仓库一致）。"xovi 已生效时手动重跑它会被跳过"这一行为本身没有在真机上专门触发过。
 - **`/usr` 下单元的写入仍靠"dm-verity 门 + 带 trap 的 rw 窗口"**，不是彻底不碰 `/usr`；同样只在模拟里测过，历史上写 `/usr` 触发过 A/B 回滚变砖（2026-08-16）。
 - **`shelf/install.sh --password 明文` 直接在设备上跑时密码短暂出现在设备 `ps`**（`deploy.sh` 走 0600 临时文件 + `--password-file` 不受影响）。
@@ -329,10 +329,14 @@ bash packaging/tests/run_sim_tests.sh      # 现为 290 项断言（2026-09-25 �
 | 2026-09-22 | 审计分支合并后整轮 `install-all.sh`（9 个服务 + 扩展 + 一次 xochitl 重启），服务健康、`NRestarts` 为 0；新版 `xovi-reenable.service`（带 `ExecCondition`）随之部署，2026-09-24 只读核对设备上的单元与仓库一致 | 通过（走的是"有改动 → 重启"这一支） |
 | 2026-09-24 | 第三轮审计合并后整轮 `install-all.sh`：两个扩展 `.so` 有变化 → 先进待换入区，`xovi-apply` 列出 `so-pending:hl-snap.so so-pending:hw-stroke.so` → **stop → 换入 → start**，MainPID 30840→37709、`NRestarts` 0、设备未整机重启（uptime 连续）、待换入区清空、三个 hook "安装完成" | **通过**（stop→换→start 第一次在真机走有变化的 `.so`） |
 | 2026-09-24 | 开机顺序调整后真机重启：xochitl 4.04s 原厂启动（未被拖慢）、`xovi-reenable` 5.46–7.49s 自动恢复 xovi、9 个服务 7.53–9.04s 起来且全部 active、三个 hook 装上、网页 401 正常 | 通过 |
+| 2026-09-25 | **`uninstall-all.sh` 第一次真机整轮**（WiFi 连设备）：8 步逆序全部成功；`/usr` 下我们的单元、`~/.local/bin` 服务二进制、`extensions.d` 两个扩展、exthome 的 qmd 全部清掉，端口释放；书架/笔记数据与配置保留；卸载期间 xochitl 不重启（PID、`NRestarts` 不变），两个 `.so` 在 maps 里变成 `(deleted)`——**删掉正被映射的 `.so` 本身不崩** | **通过**。两处小尾巴：`~/.local/bin/` 与 exthome 里 09-20 之前的手工备份 `*.bak.pre-*`（15 + 7 个）卸载器不认识、没动；`SleepScreenPath` 删了又被运行中的 xochitl 写回（xochitl 运行期间改它的配置文件无效） |
+| 2026-09-25 | 卸载后紧接 `install-all.sh`：各步成功，`xovi-apply` 走 stop → 换入 → start 时 **xochitl 在停止途中 SEGV**（memfault 栈：崩在 xochitl 自己的线程池 `0xa49fc8`，此时新 `.so` 还没换）→ `rm-emergency` 整机重启；重启后 `xovi-reenable` 恢复 xovi、新 `.so` 载入、14 个单元与 9 个服务全部正常 | **踩坑 → 已修**：H3 的真规律是"运行中 xochitl 映射的扩展文件被删/换过，**停止**它就崩"（09-21、09-24、09-25 三次一致；文件没动过时 stop/restart 一直正常）。`cj_xochitl_apply` 遇到这种状态改为换入后**主动整机重启** |
+| 2026-09-25 | 修复后真机复核：只卸载 `hl-snap` → maps 出现 `(deleted)` → `deploy-hl-snap.sh` 检测到 4 段、换入、打印 `CJ-APPLY-REBOOTING`、`systemctl reboot`；约 20 秒回来，上次关机无 SEGV/core dump/应急服务（memfault 只有正常的指标报告），`hl-snap` 重新加载、hook "安装完成"，`verify-on-device.sh` 43✓ | **通过**。同一次重启顺带核了 lo-alias：没插 USB 冷启动，`10.11.99.1` 挂上 `lo` 与 `usb1`，xochitl :80 已绑定 |
+| 2026-09-25 | `verify-on-device.sh` 第一次真机（busybox）：44 项全部采集到、判定正确；内核命令行 `panic=2` 误报已排除 | **通过** |
 
 ### 没有真机验证
 
-- **卸载脚本**（`uninstall-all.sh`）：只有本机模拟；2026-09-22 起的逆序 / 载荷清理 / verity 保留分支同理。
+- **卸载脚本**（`uninstall-all.sh`）：整轮已于 2026-09-25 真机跑过（见上表）；dm-verity 保留分支、`--purge` 仍只有本机模拟。
 - **"无改动不重启"**：`xovi-apply` 在无待生效标记时跳过重启、`--force-apply`、单独跑 `deploy-hl-snap/handwriting-stroke/sidebar-entry` 没变化不重启（2026-09-24）——只有本机模拟。
 - **2026-09-24 审计的其余脚本改动**：汇总第四栏"前置条件不满足"、stop→换入→start 关键区忽略信号、rw 窗口补 SIGPIPE、dm-verity 下已装单元的 `wifi-watch` 脚本更新后重启服务、卸载撤掉待换入 `.so` 与"仍加载着就提示整机重启"——只有本机模拟。
 - **`.so` 待换入区（2026-09-24）**：stop → 换入 → start 已在真机走通（见上表）；"设备重启后待换入区里的 `.so` 仍算待生效"这一支没真机走过。
