@@ -12,7 +12,7 @@
 | `profile/gestures.patch.lua` | 补丁：深合并进设备 `settings/gestures.lua`（防误触、退出手势等） |
 | `profile/directory_defaults.patch.lua` | 补丁：深合并进 `settings/directory_defaults.lua`——漫画方案的单书设置（`books/漫画/` 下新书首次打开时套用） |
 | `profile/profiles.patch.lua` | 补丁：深合并进 `settings/profiles.lua`——「漫画」「文字」两个配置档（切状态栏预设） |
-| `profile/fonts.txt` · `profile/dicts.txt` | 字体 / StarDict 词典**清单**（每行一个本机路径；数据本身不入库）。⚠ 2026-09-18 host `shelf` 命令行砍除后，**没有工具再自动读这两份清单**，它们只作"该装哪些字体/词典"的备忘；实际安装走网页「其他 → KOReader」上传（`POST /fonts`、`POST /dicts?name=`） |
+| `profile/fonts.txt` · `profile/dicts.txt` | 字体 / StarDict 词典**清单**（每行一个本机路径；数据本身不入库）。⚠ 2026-09-18 host `shelf` 命令行砍除后，**没有工具再自动读这两份清单**，它们只作"该装哪些字体/词典"的备忘；实际安装走网页「其他 → KOReader」上传（`POST /fonts`、`POST /dicts?name=`；上传先暂存在 `~/.local/state/shelf/koreader-upload/`，与 KOReader 目录同在 /home 分区，收完直接改名装入，2026-09-25 起不再占内存） |
 | `merge.lua` | 合并器：被 `koreader-serve` 通过 `include_str!` 内嵌，设备端用 KOReader 自带 `luajit` 执行 |
 
 补丁语义：标量覆盖、表递归、值为字符串 `"__DELETE__"` 删键。（2026-09-24 修：目标里原先没有的表整张落进去时，也会剔除其中的 `"__DELETE__"`，此前会被当普通值写进去。）

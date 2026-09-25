@@ -1,8 +1,8 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 660" font-family="Noto Sans CJK SC, sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 710" font-family="Noto Sans CJK SC, sans-serif">
 <defs>
 <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#555"/></marker>
 </defs>
-<rect x="0" y="0" width="1100" height="660" fill="#fbfbfa"/>
+<rect x="0" y="0" width="1100" height="710" fill="#fbfbfa"/>
 <text x="550" y="30" text-anchor="middle" font-size="18" font-weight="bold" fill="#1a1a1a">书架怎么让 xochitl "自己动手"：四个 qmd 代理</text>
 <text x="550" y="54" text-anchor="middle" font-size="12.5" fill="#6a6a6a">外部进程改书库文件（.metadata / .content）会被运行中 xochitl 的内存状态盖回去 → 只能注入 qmd，在 xochitl 进程里调它自己的函数</text>
 
@@ -76,9 +76,11 @@
 <line x1="718" y1="461" x2="642" y2="461" stroke="#555" stroke-width="1.6" marker-end="url(#ar)"/>
 
 <!-- 底部说明 -->
-<rect x="20" y="526" width="1060" height="118" rx="10" fill="#f0f0ee" stroke="#8a8a8a" stroke-width="1.6"/>
+<rect x="20" y="526" width="1060" height="166" rx="10" fill="#f0f0ee" stroke="#8a8a8a" stroke-width="1.6"/>
 <text x="40" y="552" font-size="12.5" fill="#1a1a1a">• 箭头方向 = 谁找谁：代理（右）主动向 book-serve（中）要活，book-serve 从不主动调 xochitl。</text>
-<text x="40" y="576" font-size="12.5" fill="#1a1a1a">• 上两行是长轮询，共用 pending_queue::Handout：有待办立即返回，没有就睡到有人入队或 290 秒到期；交出后 15/30 秒内不重复交。空闲约每 5 分钟往返一次。</text>
-<text x="40" y="600" font-size="12.5" fill="#1a1a1a">• 下两行不轮询：只在打开一本书时问一次，费电为零。</text>
-<text x="40" y="624" font-size="12.5" fill="#1a1a1a">• qmd 只在 xochitl 启动时注入：装/改了 qmd 要整机重启才生效（2026-09-25 起，不再单独重启 xochitl）。</text>
+<text x="40" y="576" font-size="12.5" fill="#1a1a1a">• 上两行是长轮询，共用 pending_queue::Handout：有待办立即返回，没有就睡到有人入队、290 秒到期，或某项“交出后静默期”到期；空闲约每 5 分钟往返一次。</text>
+<text x="40" y="600" font-size="12.5" fill="#1a1a1a">• 交出后 15 秒（建文件夹）/ 30 秒（回收站）内不重复交；过了静默期还没做成就再交，同一项最多交 5 次，仍不成就放弃、移出队列、记一行日志（09-25）。</text>
+<text x="40" y="624" font-size="12.5" fill="#1a1a1a">• 代理请求出错（书架服务停了/重启中）时退避 15 → 30 → 60 → 120 秒封顶，成功一次复位（09-25；此前固定 15 秒，每小时白醒 240 次）。</text>
+<text x="40" y="648" font-size="12.5" fill="#1a1a1a">• 下两行不轮询：只在打开一本书时问一次，费电为零。</text>
+<text x="40" y="672" font-size="12.5" fill="#1a1a1a">• qmd 只在 xochitl 启动时注入：装/改了 qmd 要整机重启才生效（2026-09-25 起，不再单独重启 xochitl）。09-25 这批 qmd 改动未上真机。</text>
 </svg>

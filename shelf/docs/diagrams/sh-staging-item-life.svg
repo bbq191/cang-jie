@@ -63,8 +63,8 @@
 
 <rect x="616" y="398" width="444" height="66" rx="10" fill="#fbe9e4" stroke="#b0451f" stroke-width="1.6"/>
 <text x="632" y="420" font-size="13.5" font-weight="bold" fill="#1a1a1a">⑤ 删除</text>
-<text x="632" y="440" font-size="11.5" fill="#1a1a1a">正在优化 / 落库时拒绝；连边车一起删</text>
-<text x="632" y="456" font-size="11.5" fill="#1a1a1a">已放进 xochitl / KOReader 的副本不受影响</text>
+<text x="632" y="440" font-size="11.5" fill="#1a1a1a">正在优化 / 落库时拒绝；删的那一刻自己也占忙锁（09-25）</text>
+<text x="632" y="456" font-size="11.5" fill="#1a1a1a">连边车一起删；已放进 xochitl / KOReader 的副本不受影响</text>
 
 <!-- PDF 备份 -->
 <rect x="290" y="400" width="300" height="150" rx="10" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.6" stroke-dasharray="5 4"/>

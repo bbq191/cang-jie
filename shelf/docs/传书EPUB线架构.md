@@ -13,7 +13,7 @@
 >
 > **怎么读**：先看 §1 架构图、§2 数据流，再按需读 §3–§7；§8 前端、§9 API 与配置、§10 已知限制是查阅用的。第一次接触项目先读 [`../../docs/OVERVIEW.md`](../../docs/OVERVIEW.md)。
 >
-> **核对时点**：2026-09-19 首写，之后每轮按源码逐字段复核，最近一次 **2026-09-25**（基线 `OPTIMIZE_VERSION`＝`"15"`）。文中"真机验证"沿用当时的记录；只对照了源码、没连设备的地方会写明。09-25 新增：按书阅读方向（§2.6）、抓网文「同步优化」进忙锁与闸门（§7.3）、回收站代理改按 id 删（§4）；同日真机补验了 >153MB 占位通道首次渲染和批量加入（§6.1、§10）。
+> **核对时点**：2026-09-19 首写，之后每轮按源码逐字段复核，最近一次 **2026-09-25**（基线 `OPTIMIZE_VERSION`＝`"15"`）。文中"真机验证"沿用当时的记录；只对照了源码、没连设备的地方会写明。09-25 新增：按书阅读方向（§2.6）、抓网文「同步优化」进忙锁与闸门（§7.3）、回收站代理改按 id 删（§4）；同日真机补验了 >153MB 占位通道首次渲染和批量加入（§6.1、§10）。09-25 下午第四轮审计（**只在 host 测过，未部署真机**）改了：inbox 不收还在写的文件（§2.1）、跨分区入库先拷临时文件（§2.2）、删除占忙锁（§7.3）、代理队列重试有上限与出错退避（§4）、大文件通道串行（§6.1）、拆分不丢目录前的页（§6.2）、网页按事件来源决定重取多少（§7）。
 
 ## 0｜这是什么
 
@@ -63,7 +63,9 @@
 三条入口，都是**原样入库，不做格式转换**：
 - **网页上传**：`uploader()`（`gateway/ui/app.js`）逐文件 XHR 真实进度；传 `dedupeApi` 按 `name|bytes` 去重（免落成 `xxx_1.epub`）。服务端 `rmsvc_core::multipart` 流式解析边读边落盘（暂存 `.work/` 下随机名 `.<uuid>.book.part`，rename 入库；只在“挑名 + 改名”那一瞬进落名临界区，§7.3）。
 - **抓网文**：`Staging::fetch_article`，Readability 提取正文后用 `bookconv::epub` 组装最小合规 EPUB3；可选"同步优化"（缺省勾选；网文无 CSS，不优化会按默认段距留大片空白）。
-- **scp 进设备 `inbox/`**：`book-serve` 启动时扫一遍、之后 `fswatch` 监听（8 秒防抖）自动追平（§2.2）。
+- **scp 进设备 `inbox/`**：`fswatch` 监听（8 秒防抖）自动追平（§2.2）。**只收写完的文件**（2026-09-25）：scp 直接往最终文件名里写，追平时修改时间离现在不足 5 秒（`INBOX_SETTLE`）的文件先跳过，写完那次 `CLOSE_WRITE` 事件触发的下一轮再收；此前 WiFi 传大书超过 8 秒，还在写的文件会被改名进母版库，写入方的文件句柄跟着 inode 继续写，母版库里出现一本半截书。启动时先起监听、再扫一遍启动前就在的文件，扫描遇到"暂缓"的隔 5 秒重扫，最多 12 轮（约 1 分钟），之后交给事件。判据只看"还在不在写"，scp 中途断开留下的半截文件静止 5 秒后同样可能被收进。
+
+  ![scp 往 inbox 传大书：什么时候才入库](diagrams/sh-inbox-settle.svg)
 
 非 EPUB/PDF 回执"不是书籍格式，母版库只收 .epub .pdf"（电脑端命令行 2026-09-18 已整体砍除）。
 
@@ -83,7 +85,7 @@
 
 `Staging`（`book-serve/src/staging/mod.rs`；动作分在 `intake.rs`/`optimizing.rs`/`deliver.rs`/`library.rs` 各自的 `impl Staging`）核心字段：`dir`；`xochitl: Arc<Xochitl>`；`native_limit: u64`（体积门，字节，§5）；`ops: OpRegistry`（`ops.rs`，**进程内存态**登记簿，忙锁+取消标记合在一把锁的 `HashMap<条目, OpState{cancellable, cancel}>`，不落盘，容忍 poison）；`probes`（"优化等级/是否 PDF 转来"判定缓存，按（大小, mtime）失效，因判定要开 zip）；`comic_margins`（页边距待办队列，§3.3）。
 
-**忙锁 vs sidecar 是两套独立职责**：`ops` 答"现在有没有线程在跑"，重启即清零（有意，落盘会"永久卡忙"）；sidecar `status` 答"上次异步操作跑到哪/结果如何"。同一条目「优化」「落库」「删除」互斥（同一张 `OpRegistry`），冲突回 400 “《…》正在处理中，请稍候”。全部锁一览见 §7.3。**重启修正**：崩溃/OOM/断电可能留 `pending`，启动时 `recover_interrupted` 改为 `failed`（优化/落库）/`timeout`（渲染自检）并清 `.optimizing.tmp`；`gc_orphan_sidecars` 清孤儿边车，新书落地前也清目标名旧边车。
+**忙锁 vs sidecar 是两套独立职责**：`ops` 答"现在有没有线程在跑"，重启即清零（有意，落盘会"永久卡忙"）；sidecar `status` 答"上次异步操作跑到哪/结果如何"。同一条目「优化」「落库」「删除」互斥（同一张 `OpRegistry`；删除 09-25 起在删的那一刻也占着忙锁），冲突回 400 “《…》正在处理中，请稍候”。全部锁一览见 §7.3。**跨分区入库**（`stage_from_path` 的 rename 失败时，2026-09-25）：先在落名临界区**外**把字节拷进母版库目录下的点前缀临时文件 `.<pid>.<序号>.landing.tmp`，再回临界区挑名、同目录 rename；此前直接往最终名上拷，拷贝期间列表里就有一本半截书，拷贝失败还会留下它，而且整段拷贝都攥着落名锁。**重启修正**：崩溃/OOM/断电可能留 `pending`，启动时 `recover_interrupted` 改为 `failed`（优化/落库）/`timeout`（渲染自检）并清 `.optimizing.tmp` 与 `.landing.tmp`；`gc_orphan_sidecars` 清孤儿边车，新书落地前也清目标名旧边车。
 
 ![母版库一本书的生命周期：内存忙锁与 sidecar 状态](diagrams/book-item-lifecycle.svg)
 
@@ -196,6 +198,17 @@
 
 `ensure_folder`（`staging/deliver.rs`）落库前最多等 20 秒（`FOLDER_WAIT_TIMEOUT`）让文件夹建出来，等不到不算错，退回 `upload_file` 的"找不到就落根"兜底。
 
+**两条长轮询共用的交付规则**（`pending_queue::Handout`，2026-09-25 第四轮审计后，只在 host 测过）：
+
+| 规则 | 现状 | 为什么改 |
+|---|---|---|
+| 什么时候回应 | 有该交的项立即回；否则睡到有人入队、`wait` 到期，**或最早一个"交出后静默期"到期** | 此前只等入队或 `wait` 到期：交出后没做成的那一项要等满 290 秒才重交，而落库只等建文件夹 20 秒，"静默期过了自带重试"名存实亡 |
+| 静默期 | 同一项交出后，建文件夹 15 秒、回收站 30 秒内不重复交 | 代理执行需要时间，防止重复执行 |
+| 重试上限 | 同一项最多交 5 次（`HANDOUT_MAX_ATTEMPTS`，约 1–2.5 分钟）；交满、静默期过了还没真实发生就放弃：移出持久队列、book-serve 记一行日志、算进"清掉几条"让网页刷新；重新入队从零计 | 此前没有终止条件：xochitl 的 `entryForId` 拿不到条目但 `.metadata` 还在时，这一项每个静默期被交一次、代理每次失败写一行日志，永不停止 |
+| 代理出错退避 | 两个 qmd 请求出错（book-serve 停了、重启中）时 15 → 30 → 60 → 120 秒封顶，成功一次复位（`property int cjErrs`） | 此前固定 15 秒，book-serve 长时间不在时每个代理每小时白醒 240 次 |
+
+放弃只写 book-serve 日志，网页上没有单独的失败提示（队列里少了这一项）。`shelf-comic-margins.qmd` 同日也改了一处：`createObject` 出 `EpubProperties` 后立刻排好 5 秒后销毁，后面任何一步抛异常都不会让它一直挂着，出错时写一行 `CJ-COMIC-MARGIN: failed` 日志。三个 qmd 的改动只做了离线 `qmldiff apply-diffs` + `qmllint`（桩 QML，非真实 3.28 QML），未上真机。
+
 ## 5｜内存安全设计
 
 > **大白话**：设备只有约 2GB 内存，几百 MB 的漫画书一不小心就把整机拖死。原则是"同一时刻内存里只放一张图 + 全书文字"，所有阈值都在真机上量过。
@@ -232,6 +245,8 @@ xochitl `/upload` 约 100MB 硬限（超了断连）。超过体积门时 `Stagi
 
 `try_deliver_direct`（`Xochitl::upload_large_file`）：造带真书名（`dc:title`，带卷标记用规范名）和真封面的占位（EPUB 几十到几百 KB；PDF 一页极小，单测断言 <4000 字节，`bookconv::placeholder`）→ 上传 → 等最多 20 秒、按**占位字节数**在书库认出新文档 → 母版真文件复制为 `<uuid>.<ext>.new`（0600，校验大小）→ EPUB 删渲染缓存（`.pdf`/`.epubindex`，首次打开约 25 秒重渲，146MB 实测）/PDF 改写 `.content`（`pageCount`/`originalPageCount`/`pages`/`redirectionPageMap`/`sizeInBytes`）→ 原子 rename 覆盖占位（无需重启 xochitl）→ `mark_delivered`；渲染记录 PDF 直接 `ok`、EPUB 记 `onopen`（之后读 `.content` 的 `pageCount` 显示真页数）；漫画符合 §3.3 时登记页边距。机制与真机数据见书架白皮书 §03bn。**>153MB 首次渲染**（2026-09-25 真机）：《乱马》11 卷 156.5MB 走这条通道投入，第一次打开约 74 秒渲染完、`pageCount` 2→349、写出 `.epubindex`，日漫翻页与页边距 1 同时生效；xochitl 主进程 `VmHWM` 410MB、没有重启（渲染在 xochitl 另起的工作进程里做，那个进程的峰值没量到）。
 
+**整段串行**（2026-09-25，只在 host 测过）：认领只凭"刚进库 + 大小等于占位"，而 PDF 占位是同一份固定字节——两本大 PDF 同时投会认领到同一个 uuid，一本被写进别人的条目、另一份占位永远留在书库。现在 `upload_large_file` 在进程内用一把锁从"传占位"一直串到"替换完成"（替换前那份文件仍是占位大小，锁放早了后来者照样认错）；回归测试用"回应后才落盘"的假 xochitl 复现，去掉锁必挂。经网关走时闸门本来就只放 1 本 >90MB 的书（§7.2），这把锁是 book-serve 进程内的第二道保证（直连后端、闸门提前放行时仍然成立）。
+
 **适用条件**：EPUB/PDF、≤ 1GiB（`MAX_DIRECT_BYTES`）、本机有书库目录、造占位成功；否则返回 `None` 回退分卷。**占位已上传后才出的错直接报错、不再退回分卷**（否则书库留重复内容）。**占位必须带真书名和真封面**：xochitl 用占位 `dc:title` 当显示名、导入时生成 `cover.png`，替换后不改名不补封面（真机踩过）。
 ⚠ 已知限制见 §10（占位上传后崩溃会残留占位文档，回执提示手动删，不做危险的回滚删除）。
 
@@ -242,7 +257,7 @@ xochitl `/upload` 约 100MB 硬限（超了断连）。超过体积门时 `Stagi
 仅 6.1 不可用时走。EPUB 走 `bookconv::comic_split::deliver_split_streaming`，**带书签目录的自产漫画 PDF** 走 `comic_pdf::deliver_split_pdf_streaming`（用户自传无书签 PDF 不拆），共用 `Staging::deliver_pieces` 逐份上传外壳；设计与真机记录见书架白皮书 §03ax。要点：
 
 1. **判定**：`is_comic` 才拆，否则整本拒绝；解不出 OPF/spine 是硬错误；无可用 `toc.ncx` 改按页数贪心切（`fixed_page_chunks_range_sized`）。
-2. **规划**（`plan_pieces_sized`）：只按第一层 NCX 切（旧递归边界计算有过真机 panic）；某卷仍超预算按页贪心再切（标题 `卷名（j/n）`）；单页超预算切不动则放弃并计入“N 未投”。
+2. **规划**（`plan_pieces_sized`）：只按第一层 NCX 切（旧递归边界计算有过真机 panic）；**第一份从 spine 第 0 页算起**——NCX 第一条常常不指向封面、扉页、版权页，此前这些页不属于任何一份、拆分后从书里消失（2026-09-25）；某卷仍超预算按页贪心再切（标题 `卷名（j/n）`）；单页超预算切不动则放弃并计入“N 未投”。页里的 `<img src>` 先按百分号编码解码再对 zip 条目名（中文/空格文件名常写成 `%E5%9B%BE.jpg`，此前对不上，整页被当成"没有可用图片"丢掉）；NCX 标题里的 `&amp;`、`&#12288;` 这类字符引用先还原，分卷书名、文件名和目录里不再出现字面的 `&amp;`。带书签的漫画 PDF 走拆分时，指向不存在页的书签丢掉，书签对象号/`/Dest` 不像自产 PDF 的就整份判不可用、不拆（此前前者会让切片越界 panic、后者减法溢出）。
 3. **逐份循环**：查取消标记（份间是安全中断点，§7.1）→ `build_piece`（按需重收图片、一张图一页、补目录、补外链 `comic.css`）→ `Xochitl::upload` → `render_check::probe` 等 xochitl 渲染出页数才传下一份（上限 90 秒 `PIECE_RENDER_TIMEOUT`，超时继续；真机《镖人》11 卷坐实紧挨着连传会冲垮 xochitl）→ 写 sidecar `{done,total}` + `bus.publish`（漏推事件曾致进度条冻结）。
 4. 母版字节不动，拆分份只在内存、上传即弃，峰值≈一份；全未投上→报错，部分成功→回执“N 未投”。
 5. 渲染自检与页边距登记对拆分份**都不做**（`RenderPlan` 按母版库条目名找书，拆分份无对应条目，硬接会认错书）。
@@ -258,7 +273,7 @@ xochitl `/upload` 约 100MB 硬限（超了断连）。超过体积门时 `Stagi
 
 **改名时的终态写入**：优化成功后条目可能改名（长名规范化；PDF 转同名 `.epub` 并删 `.pdf`），sidecar 按条目名找文件，故终态写入前先 `resolved_optimize_target` 探测改名、写到新名下；中途进度仍写旧名。
 
-**刷新机制**：`rmsvc_core::events::EventBus`，`book-serve` 在状态变更点 `bus.publish("books", <kind>)`（`kind`：`staging`/`inbox`/`render`/`trash`/`mkdir`）；网关 `GET /api/events`（SSE，20s 心跳 `KEEPALIVE`）汇聚各服务事件并补 `svc` 字段，网关自己的批量/闸门变化也发 `books`（`batch`/`budget`）事件；浏览器按 `area` 找 tab，前台立即 `refresh()`（`coalesce` 合并突发），非前台记脏、切过去再刷，页面隐藏不刷、可见/重连后补刷。**前端没有任何定时轮询**（`app.js` 已无 `setInterval`）。
+**刷新机制**：`rmsvc_core::events::EventBus`，`book-serve` 在状态变更点 `bus.publish("books", <kind>)`（`kind`：`staging`/`inbox`/`render`/`trash`/`mkdir`）；网关 `GET /api/events`（SSE，20s 心跳 `KEEPALIVE`）汇聚各服务事件并补 `svc` 字段，网关自己的批量/闸门变化也发 `books`（`batch`/`budget`）事件；浏览器按 `area` 找 tab，非前台记脏、切过去再刷，页面隐藏不刷、可见/重连后补刷。前台的母版库按事件来源决定重取多少（2026-09-25，只在 host 验证）：网关自己的 `batch`/`budget` 事件只取两个状态接口；book-serve 的 `staging` 事件（入库、忙态、优化/落库进度，大书处理时约每秒一条）再加母版库列表共 3 个，不重取 xochitl/KOReader 文件夹列表和 KOReader 安装状态；其余事件、切 tab、重连、操作后才全量取 6 个（此前每条 `staging` 事件都全量取 6 个）。三档走同一个 `coalesce`，取档位最大值，不会出现旧的全量结果盖掉新的排队状态。全站取数时机见网关白皮书 §5.1 的图。**前端没有任何定时轮询**（`app.js` 已无 `setInterval`）。
 
 ### 7.1 中途取消
 
@@ -275,7 +290,7 @@ xochitl `/upload` 约 100MB 硬限（超了断连）。超过体积门时 `Stagi
 
 ![并发/内存预算闸门](../../docs/diagrams/budget-gate.svg)
 
-### 7.3 进程内的锁：谁和谁不能同时做（2026-09-24 第三轮审计后）
+### 7.3 进程内的锁：谁和谁不能同时做（2026-09-25 第四轮审计后）
 
 ![书架服务的并发控制：哪条路径进哪把锁](diagrams/sh-concurrency-locks.svg)
 
@@ -283,16 +298,21 @@ xochitl `/upload` 约 100MB 硬限（超了断连）。超过体积门时 `Stagi
 
 | 锁 | 代码 | 谁进 | 锁多久 | 防什么 |
 |---|---|---|---|---|
-| 忙锁 | `ops.rs::OpRegistry`（按书名） | 优化、落库、改名（新旧两名）、恢复原 PDF、抓网文的「同步优化」（落名临界区里一挑中名字就占上，09-25）；删除只查不占 | 整个操作 | 同一本同时被优化/删除/改名 |
-| 落名临界区 | `Staging::land`（`land_guard()`） | `stage_new`/`stage_from_path`（网页上传、inbox 追平、抓网文）、改名、恢复原 PDF、优化完成后改规范名 | 只包“`unique_path` 挑名 + rename/写入”，毫秒级 | 两本同名书挑到同一个名、后到的覆盖先到的 |
+| 忙锁 | `ops.rs::OpRegistry`（按书名） | 优化、落库、改名（新旧两名）、恢复原 PDF、抓网文的「同步优化」（落名临界区里一挑中名字就占上，09-25）、删除（09-25 起占，此前只查不占） | 整个操作 | 同一本同时被优化/删除/改名 |
+| 落名临界区 | `Staging::land`（`land_guard()`） | `stage_new`/`stage_from_path`（网页上传、inbox 追平、抓网文）、改名、恢复原 PDF、优化完成后改规范名 | 只包“`unique_path` 挑名 + rename/写入”，毫秒级；跨分区入库的拷贝在锁外做（09-25） | 两本同名书挑到同一个名、后到的覆盖先到的 |
 | spool 锁 | `Spool::guard` | 只有 `process_inbox` 一轮追平 | 一轮 | 两轮追平抢同一文件 |
 | 边车写锁 | `sidecar::update`（全局 static） | 所有边车读-改-写（进度、终态、渲染记录、落库标记） | 一次读改写 | 交错写丢字段 |
 | xochitl 上传锁 | `rmsvc_core::xochitl`（进程内 static） | 每次 `GET /documents/<文件夹>` + `POST /upload` | 一次上传；按卷拆分等渲染的间隙不占 | 并发投递落进别人的文件夹 |
+| 大文件通道锁 | `Xochitl::upload_large_file`（进程内 static，09-25） | 超体积门走"占位 + 磁盘替换"的投递 | 传占位 → 认领 → 换成真文件 | 两本大 PDF 认领到同一个条目（§6.1） |
 | 配置同步锁 | koreader-serve `ConfigSync::apply_with` | `/config/*` 读写 | 一次应用（含 luajit） | 固定名的临时补丁/合并脚本被别的请求覆盖 |
+
+koreader-serve 落盘（加入 KOReader、字体/词典上传）不加锁，靠**半成品名唯一**：拷贝写到 `.<名字>.<进程号>.<序号>.part` 再改名（09-25；此前两次同名落盘共用 `.<名字>.part`，两个拷贝互相截断，改名出去的是一本坏书），拷贝失败也清掉半成品。
 
 **09-24 前的两个真 bug**：网页上传把 spool 锁攥到整个请求体收完（WiFi 传大书可达分钟级），期间 inbox 追平与其他上传全卡住，而抓网文压根不拿锁——同名书仍可能互相覆盖；xochitl 的“当前文件夹”是它的全局状态，3 本小书并发投递会落错文件夹。两者都有 host 回归测试（`slow_upload_does_not_block_inbox_processing`、`concurrent_landing_of_same_name_never_clobbers`、`concurrent_uploads_land_in_their_own_folders`），已部署，并发场景没在真机专门触发过。
 
 PDF 转 EPUB 转换前查一次“同名 `.epub` 已存在”，转换完（可达分钟级）落地前在落名临界区里**再查一次**，转换期间有人落下同名书就放弃这次转换、原 PDF 不动（第三轮审计当天补上，host 单测覆盖）。**抓网文的「同步优化」（2026-09-25 补，此前是已知缺口）**：book-serve 侧在落名临界区里挑中名字的同时占上忙锁（`Staging::stage_bytes(.., hold_busy=true)`），优化完（含失败、panic）才释放——书一出现在母版库就处于忙态，优化期间删除/改名/再优化/落库一律回“正在处理中”；网关侧 `proxy.rs` 把 `POST staging/fetch-article` 列为第四个限流操作，**只在 `optimize:true` 时**过闸门，固定小档，键是 `抓网文 <url>`（书名要抓完才知道），同步请求返回即归还名额（同“加入 KOReader”）。名额在抓取（联网下载）期间也占着，比“只锁优化那一段”略宽，换来不必把同步接口拆成“落地 + 再发一次异步优化”。两侧都有 host 回归测试（`fetch_article_sync_optimize_holds_busy_lock`、`fetch_article_with_optimize_holds_and_returns_a_slot`），**未上真机**。note-serve 是另一个进程，和 book-serve 同时投 xochitl 时上传锁管不到。
+
+**09-25 第四轮审计补的三处**（host 回归测试覆盖，**未部署真机**）：删除占忙锁（`remove_holds_busy_lock_and_releases_it`）、大文件通道整段串行（`concurrent_large_pdf_uploads_claim_distinct_entries`）、跨分区入库锁外拷贝（`stage_from_path_across_filesystems_lands_atomically`，要 `/dev/shm` 与临时目录不在同一分区才真跑，否则跳过）。
 
 ## 8｜前端 UI 层（`gateway/ui/app.js`）
 
@@ -305,6 +325,7 @@ PDF 转 EPUB 转换前查一次“同名 `.epub` 已存在”，转换完（可�
 - **原 PDF 备份**：母版库页底部折叠面板列出 `.pdf-originals/` 里的文件与剩余天数，可「恢复」或删除（§2.5）。
 - **加入位置**：xochitl 文件夹、KOReader 目录两个**常驻下拉**（可“＋新建”：xochitl 走 §4 mkdir 队列，KOReader 走 `POST /books/mkdir`）；搜书名带下拉建议（多卷合一条）；筛选带数量 + 格式过滤/"隐藏已完成"；真分页（25/50/100）；PC 与手机同一套单列，不横向溢出（量 `scrollWidth` 验证过 390/1280px）。
 - **状态在服务器**：批量取自 `GET /api/batch/status`、闸门取自 `GET /api/budget/status`，前端不自己记"谁在忙"。进度由 `renderStepProgress()` 统一渲染：`{done,total}` 有数据画真百分比，没有画不确定态滚动条。
+- **上传卡**（09-25 修，没有自动化断言，未上真机）：上传进行中禁用删行按钮、新拖入的文件只追加一行、不整表重画——此前重画会把正在传的那一项换成新节点，进度条和状态文字挂在旧节点上不再更新；非 JSON 应答显示"HTTP 状态码 + 说明"（走语言包）；登录过期回登录页后回到原页面，首登未改密跳改密页。底部栏批量按钮与「全部中止」加了防连点。
 
 ## 9｜配置与 API 一览
 
@@ -342,16 +363,16 @@ POST /mkdir/add · GET /mkdir/pending[?wait=秒] · GET /mkdir   原生建文件
 （2026-09-22 已删：`GET /inbox`、`POST /inbox/retry|delete`、`GET /staging/render/{uuid}`——无调用方；inbox 失败项重试=人工把 `failed/` 里的文件拷回 `inbox/`）
 ```
 
-**`/api/koreader/*`**（koreader-serve:8791）：`GET /status` · `GET /events` · `GET /books[?folder=]` · `POST /books/adopt {name, folder?}` · `POST /books/mkdir {folder}`（幂等）· `GET|POST /fonts` · `DELETE /fonts/{file}` · `GET|POST /dicts[?name=]` · `GET|POST /config/{settings|defaults|gestures|directory|profiles}[?dry_run=1]`（后两个 2026-09-24 加，用法见 `../koreader/README.md`）· 只读导出 `GET /annotations`（每本书的高亮）· `GET /vocabulary`（生词本），供笔记线拉取。
+**`/api/koreader/*`**（koreader-serve:8791）：`GET /status` · `GET /events` · `GET /books[?folder=]` · `POST /books/adopt {name, folder?}`（从母版库**拷贝**，母版原地不动）· `POST /books/mkdir {folder}`（幂等）· `GET|POST /fonts` · `DELETE /fonts/{file}` · `GET|POST /dicts[?name=]`（上传暂存在 `$XDG_STATE_HOME/shelf/koreader-upload/`，与 KOReader 目录同在 /home 分区，装的时候直接改名进去；启动时清掉上次残留的 `.part`；09-25 前暂存在 tmpfs 的运行时目录，几十上百 MB 的词典先占一份内存、再拷一遍）· `GET|POST /config/{settings|defaults|gestures|directory|profiles}[?dry_run=1]`（后两个 2026-09-24 加，用法见 `../koreader/README.md`）· 只读导出 `GET /annotations`（每本书的高亮）· `GET /vocabulary`（生词本），供笔记线拉取。
 
 **`/api/fonts/*`**（font-serve:8792）：`GET /` · `POST /` · `DELETE /{family}` · `PUT /config {emboldenCjkFallback}` · `GET /status`。
 **`/api/wallpapers/*`**（wallpaper-serve:8793）：`GET /` · `POST /[?activate=1]` · `PUT /current {name}` · `PUT /mode {mode}` · `DELETE /{name}` · `GET /{name}` · `GET /status`。
 
 **网关自有端点**：`GET /api/services` · `GET /api/manage` · `GET /api/foundation` · `POST /api/manage/{seg}/{start|stop|uninstall}` · `GET /api/session` · `GET /api/events`（SSE 汇聚）· 批量 `POST /api/batch` · `GET /api/batch/status` · `POST /api/batch/stop` · 闸门 `GET /api/budget/status` · `POST /api/budget/cancel` · 系统增强 `GET /api/enhance/status`（2026-09-24 起每项带 `loaded`：扩展是否真的载入了 xochitl）· `PUT /api/enhance/qol` · `POST /api/enhance/battop/{start|stop}` · `GET /api/enhance/battop/summary` · `GET /ui/locales/{lang}` · `/login` `/logout` `/password` `/ca.crt`。笔记线 API 见 `../../notes/README.md`。
 
-上传回执统一 `{ok, items:[{name, ok, message, item?}], …}`（`rmsvc_core::asset::receipt`），成功项的 `name` 是落地名。
+上传回执统一 `{ok, items:[{name, ok, message, item?}], …}`（`rmsvc_core::asset::receipt`），成功项的 `name` 是落地名。上传暂存位置：书进 `books/.work/`（与母版库同分区）；xochitl 字体、壁纸进 `$XDG_STATE_HOME/shelf/upload/`（09-25 从 tmpfs 的 `$XDG_RUNTIME_DIR/shelf/upload` 挪来，同在 /home，字体安装直接改名；壁纸要转成 PNG，照旧写新文件）；KOReader 字体/词典见上。三处都在服务启动时清掉上次中途被杀留下的 `.part`。
 
-**请求约定**（`rmsvc-core`，2026-09-24 起）：JSON 请求体与 KOReader 配置补丁上限 1MB，超了回 400“请求体超过 1024 KB 上限”（此前静默截断成半截再解析，报一句莫名的 JSON 错）；路径参数（如 `/margins/{uuid}`、`DELETE /fonts/{file}`）与上传的 `filename*=` 解码时 `+` 就是 `+`，只有查询串按表单语义把 `+` 当空格；投 xochitl 时文件名里的 `"` 换成 `'`、换行换成空格。
+**请求约定**（`rmsvc-core`，2026-09-24 起）：JSON 请求体与 KOReader 配置补丁上限 1MB，超了回 400“请求体超过 1024 KB 上限”（此前静默截断成半截再解析，报一句莫名的 JSON 错）；路径参数（如 `/margins/{uuid}`、`DELETE /fonts/{file}`）与上传的 `filename*=` 解码时 `+` 就是 `+`，只有查询串按表单语义把 `+` 当空格；投 xochitl 时文件名里的 `"` 换成 `'`、换行换成空格。multipart 头参数按引号切分（09-25）：`filename="甲; 乙.epub"` 此前被 `split(';')` 切成 `甲`、丢了扩展名、被当成不支持的格式拒收。
 
 ## 10｜已知限制（如实记录，不是遗漏）
 
@@ -359,6 +380,8 @@ POST /mkdir/add · GET /mkdir/pending[?wait=秒] · GET /mkdir   原生建文件
 - 并发控制（§7.3）：抓网文的「同步优化」不占忙锁、不过闸门的缺口已于 09-25 补上（忙锁 + 网关小档名额，仅 host 单测）；剩下的已知边界是 note-serve 与 book-serve 同时投 xochitl 时上传锁管不到。（PDF 转 EPUB 落地前复查同名书已于 09-24 补上。）
 - `shelf-mkdir-agent.qmd` 长轮询 09-24 放宽到 290 秒（依据：设备 Qt 6.10 的 QML XHR 不设传输超时，源码核实）；部署后确认 journal 里没有 `SHELF-MKDIR: transfer timeout`（有就说明退回了 25 秒）。
 - 渲染自检对漫画拆分份不生效（§6.2 第 5 点）。
+- inbox 只判"还在不在写"（修改时间静止 5 秒），不校验内容完整：scp 中途断开留下的半截文件静止后仍可能被收进母版库（§2.1）。
+- 回收站/建文件夹代理交满 5 次仍没做成的项只在 book-serve 日志里留一行，网页没有失败提示（§4）。
 - 大文件占位通道：占位上传后进程崩溃会残留占位文档（回执提示手动删）。（>153MB 首次渲染与批量“加入 xochitl / KOReader”已于 2026-09-25 真机走通：两本 156.5/157.1MB 的《乱马》经网关队列 `done 2 / failed 0` 落进同一文件夹。）
 - 入库 PDF 转 EPUB：公式裁图没有真机样本；公式区域按整行字符包围盒算，公式文字碎片会同时留在正文里（不丢字，但观感不如只留图）；竖排/多栏 PDF 未验证。
 - `imgopt` 对 >900 万像素原图直接跳过（完全不处理，非压画质），这类图原样出现在优化后的书里，拿不到体积收益。

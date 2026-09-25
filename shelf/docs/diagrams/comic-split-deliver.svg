@@ -33,13 +33,15 @@
   <text x="425" y="217" text-anchor="middle" font-size="10.5" fill="#4a4a4a">退回整本拒绝（老行为不变，回执给出路）</text>
 
   <!-- 阶段一 -->
-  <rect x="620" y="78" width="430" height="112" rx="10" fill="#eaf6ec" stroke="#3f9a55" stroke-width="1.6"/>
+  <rect x="620" y="78" width="430" height="148" rx="10" fill="#eaf6ec" stroke="#3f9a55" stroke-width="1.6"/>
   <text x="835" y="100" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">阶段一 · 规划 plan_pieces_sized</text>
   <text x="835" y="122" text-anchor="middle" font-size="10.5" fill="#4a4a4a">按 NCX 第一层切卷；没有可用 NCX 则整本按页贪心切</text>
   <text x="835" y="140" text-anchor="middle" font-size="10.5" fill="#4a4a4a">某卷仍超预算 → 按页贪心再切一刀（标题 卷名（j/n））</text>
   <text x="835" y="158" text-anchor="middle" font-size="10.5" fill="#4a4a4a">单页本身超预算 → fits=false，如实计入“N 未投”</text>
   <text x="835" y="176" text-anchor="middle" font-size="10.5" fill="#4a4a4a">只读 html/opf/ncx，图片体积直接查 zip 目录</text>
-  <line x1="835" y1="190" x2="835" y2="250" stroke="#555" stroke-width="1.6" marker-end="url(#csd-arrow)"/>
+  <text x="835" y="194" text-anchor="middle" font-size="10.5" fill="#2f7d45">第一份从第 0 页算起：目录前的封面/扉页归入第一份（09-25）</text>
+  <text x="835" y="212" text-anchor="middle" font-size="10.5" fill="#2f7d45">PDF：指向不存在页的书签丢掉，书签整体不可用就不拆（09-25）</text>
+  <line x1="835" y1="226" x2="835" y2="250" stroke="#555" stroke-width="1.6" marker-end="url(#csd-arrow)"/>
 
   <!-- 阶段二 -->
   <rect x="30" y="250" width="1020" height="250" rx="10" fill="#fff3d6" stroke="#c9971f" stroke-width="1.8"/>
