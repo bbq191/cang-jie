@@ -104,6 +104,17 @@ fn find_match(entries: &[Entry], claimed: &[bool], page: &str, d: &PageDraft, re
     }
 }
 
+/// 同一条勾画"加了 / 去了旁边的手写"：草稿与活条目一个有手写、一个没有，但勾画是同一条（`Quote.id` 相同）。
+/// 只认非终态条目——用户已经「不需要」(`Skipped`) 或归档 (`Archived`) 的勾画，后来补的手写是新意图，另起一条。
+fn find_by_quote_across_ink(entries: &[Entry], claimed: &[bool], page: &str, d: &PageDraft) -> Option<usize> {
+    let dq_id = d.quote.as_ref()?.id.as_str();
+    entries
+        .iter()
+        .enumerate()
+        .find(|(i, e)| !claimed[*i] && e.page == page && !e.is_terminal() && e.ink.is_some() != d.ink.is_some() && e.quote.as_ref().is_some_and(|q| q.id == dq_id))
+        .map(|(i, _)| i)
+}
+
 /// 复活一条 `Revoked` 条目时落回的状态：按已有内容倒推，但**不**像回收站「恢复」那样把只有手写的条目推进
 /// `Pending`——自动复活不代表用户要求转写，回到 `Mined` 让用户在「浏览」里重新决定。
 fn revived_status(e: &Entry) -> Status {
@@ -125,13 +136,18 @@ fn revived_status(e: &Entry) -> Status {
 /// (书, 页, 首笔 id) 再建一条**同 id** 的新条目：网页按 id 改字永远改到旧的那条（已撤销、拒绝修改），校对文本也
 /// 留在旧条目里。现在直接复活原条目（状态见 [`revived_status`]），id 不变、校对文本/草稿/回答都在。
 ///
+/// **勾画加 / 去手写仍是同一条**（2026-09-25 用户要求）：纯勾画条目旁边后来补了手写，或者"勾画 + 手写"条目的手写
+/// 被擦掉只剩勾画，按勾画自己的 `Quote.id` 认领原条目（[`find_by_quote_across_ink`]），id、状态、校对文本、样式、
+/// 问答都保留，只换 `ink`。此前会另建一条新条目、原条目撤销，已定稿的状态和文字留在撤销的那条里。补了手写的已定稿
+/// 条目跟"补了几笔"同一待遇：新手写照常转写，草稿只作建议，`text` 不动（见 `Entry::needs_transcribe`）。
+///
 /// 认领到的条目顺带刷新页级上下文（页序号、章、小节）：`.epubindex` 在 xochitl 重排后会变，这一页正在用最新的
 /// 映射重新摄取，旧条目跟同页新条目保持一致。本次没算出章（目录读不到）时不清掉已有的章。
 pub fn merge_page(entries: &mut Vec<Entry>, ctx: &PageCtx, drafts: Vec<PageDraft>) -> MergeStats {
     let mut st = MergeStats::default();
     let mut claimed = vec![false; entries.len()];
     for d in drafts {
-        let live = find_match(entries, &claimed, ctx.page, &d, false);
+        let live = find_match(entries, &claimed, ctx.page, &d, false).or_else(|| find_by_quote_across_ink(entries, &claimed, ctx.page, &d));
         let revived = if live.is_none() { find_match(entries, &claimed, ctx.page, &d, true) } else { None };
         match live.or(revived) {
             Some(i) => {
@@ -160,7 +176,12 @@ pub fn merge_page(entries: &mut Vec<Entry>, ctx: &PageCtx, drafts: Vec<PageDraft
                         }
                     }
                     None => {
-                        if revived.is_none() {
+                        if e.ink.is_some() {
+                            // 手写被擦掉、只剩勾画：条目留下（定稿文字、状态不动），去掉手写
+                            e.ink = None;
+                            e.updated = ctx.now;
+                            st.changed += 1;
+                        } else if revived.is_none() {
                             st.unchanged += 1; // 纯勾画：内容随 quote id 走，认领到了就是没变（勾画画下不会再改）
                         }
                         e.quote = d.quote; // 保险起见仍然刷新一遍（颜色等字段理论上可能变）
@@ -285,6 +306,48 @@ mod tests {
         other[0].status = Status::Reviewed;
         let st = merge_page(&mut other, &ctx(50), vec![]);
         assert_eq!(st, MergeStats::default());
+    }
+
+    /// 用户要求（2026-09-25）：已定稿的纯勾画旁边补了手写 → 仍是原条目（id/状态/校对文字不变），新手写待转写作建议；
+    /// 反过来把手写擦掉只剩勾画 → 仍是原条目，去掉手写。不再另起新条目、把定稿的那条撤销。
+    #[test]
+    fn adding_or_erasing_handwriting_beside_a_highlight_keeps_the_same_entry() {
+        let th = Thresholds::default();
+        let quote_only = page(vec![], vec![hl(9, "勾画", 100.0, 320.0, 780.0, 30.0)]);
+        let mut entries = vec![];
+        merge_page(&mut entries, &ctx(10), drafts_of_page(&quote_only, &th));
+        let id = entries[0].id.clone();
+        entries[0].text = Some("我的定稿".into());
+        entries[0].status = Status::Reviewed;
+
+        let with_ink = page(vec![stroke(1, Tool::BallPoint, 900.0, 300.0, 1000.0, 340.0)], vec![hl(9, "勾画", 100.0, 320.0, 780.0, 30.0)]);
+        let st = merge_page(&mut entries, &ctx(20), drafts_of_page(&with_ink, &th));
+        assert_eq!(st, MergeStats { changed: 1, ..Default::default() });
+        assert_eq!(entries.len(), 1, "不另起新条目");
+        let e = &entries[0];
+        assert_eq!((e.id.as_str(), e.status, e.text.as_deref()), (id.as_str(), Status::Reviewed, Some("我的定稿")));
+        assert!(e.ink.is_some() && e.needs_transcribe(), "新手写照常转写，只作建议");
+
+        let st = merge_page(&mut entries, &ctx(30), drafts_of_page(&quote_only, &th));
+        assert_eq!(st, MergeStats { changed: 1, ..Default::default() });
+        assert_eq!(entries.len(), 1);
+        let e = &entries[0];
+        assert_eq!((e.id.as_str(), e.status, e.text.as_deref(), e.ink.is_none(), e.updated), (id.as_str(), Status::Reviewed, Some("我的定稿"), true, 30));
+        let st = merge_page(&mut entries, &ctx(40), drafts_of_page(&quote_only, &th));
+        assert_eq!(st, MergeStats { unchanged: 1, ..Default::default() }, "再扫一遍不再算变化");
+    }
+
+    /// 「不需要」过的勾画后来补了手写：那是新的意图，另起一条；原条目保持 `Skipped`（终态不被改判）。
+    #[test]
+    fn handwriting_added_beside_a_skipped_highlight_starts_a_new_entry() {
+        let th = Thresholds::default();
+        let mut entries = vec![];
+        merge_page(&mut entries, &ctx(10), drafts_of_page(&page(vec![], vec![hl(9, "勾画", 100.0, 320.0, 780.0, 30.0)]), &th));
+        entries[0].status = Status::Skipped;
+        let with_ink = page(vec![stroke(1, Tool::BallPoint, 900.0, 300.0, 1000.0, 340.0)], vec![hl(9, "勾画", 100.0, 320.0, 780.0, 30.0)]);
+        let st = merge_page(&mut entries, &ctx(20), drafts_of_page(&with_ink, &th));
+        assert_eq!(st, MergeStats { added: 1, ..Default::default() });
+        assert_eq!((entries.len(), entries[0].status, entries[1].status), (2, Status::Skipped, Status::Mined));
     }
 
     #[test]
