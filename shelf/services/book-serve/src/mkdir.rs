@@ -164,6 +164,24 @@ mod tests {
         assert_eq!(q2.pending().unwrap().0, vec!["甲".to_string()]);
     }
 
+    /// 回归：交出后没建成的名字，长轮询在静默期到期时就重交，而不是等满整个 `wait`（代理发 290 秒）。
+    #[test]
+    fn long_poll_rehands_unfinished_item_when_quiet_period_ends() {
+        let t = tempfile::tempdir().unwrap();
+        let q = MkdirQueue::new(&t.path().join("state"), &lib(&t)).with_handout_quiet(Duration::from_millis(200));
+        q.add("丙").unwrap();
+        assert_eq!(q.pending_wait(Duration::from_secs(10)).unwrap().0, vec!["丙".to_string()], "首次立即交出");
+        let t0 = Instant::now();
+        assert_eq!(q.pending_wait(Duration::from_secs(10)).unwrap().0, vec!["丙".to_string()], "静默期过后重交");
+        let took = t0.elapsed();
+        assert!(took >= Duration::from_millis(150) && took < Duration::from_secs(3), "应在静默期到期时醒来，实际等了 {took:?}");
+        // 建出来之后：静默期到期醒来也只是发现已完成，不再交出，等到 wait 到期
+        std::fs::write(lib(&t).join("f.metadata"), r#"{"type":"CollectionType","visibleName":"丙","parent":""}"#).unwrap();
+        let t0 = Instant::now();
+        assert!(q.pending_wait(Duration::from_millis(600)).unwrap().0.is_empty());
+        assert!(t0.elapsed() >= Duration::from_millis(550));
+    }
+
     #[test]
     fn pending_wait_returns_promptly_on_add_and_times_out_when_idle() {
         let t = tempfile::tempdir().unwrap();

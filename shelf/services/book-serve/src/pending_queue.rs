@@ -105,7 +105,15 @@ impl Handout {
         out
     }
 
+    /// 最早一个"已交出、静默期到了还在队列里就再交一次"的时刻（没有交出过的待办 → `None`）。
+    fn next_retry(&self) -> Option<Instant> {
+        rmsvc_core::sync::lock(&self.handed).values().map(|at| *at + self.quiet).min()
+    }
+
     /// 长轮询：反复调 `fetch`（返回 (本次该交出的键, 剔除条数)），有结果或 `wait` 到期就返回；`wait` 为零＝不等。
+    /// 睡眠还会在最早一个静默期到期时醒一次：此前只等入队或 `wait` 到期，代理用 290 秒长轮询时，交出后没执行成功的
+    /// 那一项要等满 290 秒才重交，"静默期过了自带重试"名存实亡——建文件夹落库只等 20 秒，重试永远赶不上
+    /// （2026-09-25 第四轮审计）。空闲（没有交出过的待办）时仍然只在入队或到期时醒。
     pub fn wait(&self, wait: Duration, mut fetch: impl FnMut() -> Result<(Vec<String>, usize), String>) -> Result<(Vec<String>, usize), String> {
         let deadline = Instant::now() + wait;
         let mut total_pruned = 0;
@@ -118,8 +126,9 @@ impl Handout {
             if !keys.is_empty() || now >= deadline {
                 return Ok((keys, total_pruned));
             }
+            let wake_at = self.next_retry().map_or(deadline, |r| r.min(deadline));
             let g = rmsvc_core::sync::lock(&self.gen);
-            let _ = self.wake.wait_timeout_while(g, deadline - now, |cur| *cur == seen).unwrap_or_else(|e| e.into_inner());
+            let _ = self.wake.wait_timeout_while(g, wake_at.saturating_duration_since(now), |cur| *cur == seen).unwrap_or_else(|e| e.into_inner());
         }
     }
 }
