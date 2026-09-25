@@ -116,13 +116,13 @@ xovi 没有"只重载一个扩展"的机制，让新扩展/qmd 生效的唯一�
 **扩展 `.so` 的待换入区**（2026-09-24 起，现在仍用）：
 
 - `xovi-ext-install.sh` 发现 xochitl 正映射着旧版时，把新版放进**待换入区** `~/.cangjie-stage/so-pending/`（不在 `extensions.d`；可用 `CJ_SO_PENDING_DIR` 覆盖），由 `cj_xochitl_apply` 在整机重启前换入；`install-all` 的延后生效走同一条路。同一个新版已经在待换入区时不再重复备份和重放。
-- 待换入区在 `/home`，设备中途重启也不丢，重启后仍算"待生效"（见上节），下次生效时照样换入。
+- 待换入区在 `/home`，设备中途重启也不丢，重启后仍算"待生效"（见上节）。**你自己 `reboot` 也会换入**（2026-09-25）：`xovi-reenable.service` 的 `ExecStartPre` 在 `xovi/start` 之前把待换入区的普通文件原子挪进 `extensions.d`（此刻 `ExecCondition` 已确认 xochitl 没带 xovi、没映射扩展）。
 - 卸载 `hl-snap`/`handwriting-stroke` 时一并撤掉待换入区里的同名版本（否则下次重启 xochitl 会把刚卸的扩展装回来）。
 - xovi 未生效（走 `xovi/start`）时 xochitl 没映射扩展，待换入的 `.so` 直接换入——但先确认 `xovi/start` 存在，不存在就报错、什么都不换。
 
 本机模拟测试覆盖了这些分支；**真机上还没用"有变化的 .so"走过一遍**。
 
-![更新扩展 .so：先停、再换、再起](../docs/diagrams/so-swap-order.svg)
+![让扩展/界面补丁生效：换入后整机重启](../docs/diagrams/so-swap-order.svg)
 
 ## 部署后核对：`verify-on-device.sh`（2026-09-25）
 

@@ -140,15 +140,15 @@ Re-running `install-all.sh` is safe and doesn't flash the screen every time. Onl
 
 | Situation | What the last step `xovi-apply` does |
 |---|---|
-| Something changed this run (first install, updated plugin or UI patch) | Restarts xochitl once (prints "will interrupt reading" and waits 5 seconds first) |
-| A plugin `.so` was updated while xochitl is using the old one | The new one waits in a staging area, then "stop xochitl → swap the file → start xochitl" (since 2026-09-24, see the diagram below; if the computer disconnects or you press Ctrl-C in the middle, the device still finishes the start, so xochitl is not left stopped) |
-| Nothing changed, xovi is active | No restart |
-| Nothing changed, but the device just rebooted and xovi isn't active yet | Runs `xovi/start` to activate it |
-| Last run put a new plugin into the staging area, and the device rebooted before it was swapped in (markers cleared) | The staging area is not in memory, so it still counts as pending: stop xochitl → swap the file → start |
-| `--force-apply` given | Always restarts |
+| Something changed this run (first install, updated plugin or UI patch) | **Reboots the device once** (prints "will interrupt reading" and waits 5 seconds first; back in about 20–60 seconds). Since 2026-09-25 it no longer restarts xochitl on its own: xochitl may crash while exiting and the system then reboots anyway, so a clean reboot is more predictable |
+| A plugin `.so` was updated while xochitl is using the old one | The new one waits in a staging area and is swapped in right before the reboot (see the diagram below; even if the computer disconnects or you press Ctrl-C in between, the swap and the reboot still happen) |
+| Nothing changed, xovi is active | No reboot |
+| Nothing changed, but the device just rebooted and xovi isn't active yet | With xovi persistence installed: reboot (it is restored at boot); without it: runs `xovi/start` |
+| A new plugin was waiting in the staging area and you rebooted the device yourself | At boot `xovi-reenable` swaps it in first; nothing else to run |
+| `--force-apply` given | Always reboots once |
 | The previous run used `--skip xovi-apply` | The marker is still there; just run `sh deploy-xovi-apply.sh <host>` |
 
-![Updating a plugin .so: stop, swap, start](diagrams/so-swap-order.svg)
+![Making plugins / UI patches take effect: swap in, then reboot](diagrams/so-swap-order.svg)
 
 **The same applies when running a step on its own** (since 2026-09-24): when `deploy-hl-snap.sh`, `deploy-handwriting-stroke.sh` or `deploy-sidebar-entry.sh` is run alone and the files are byte-identical to what's installed, nothing else is pending and xovi is active, xochitl is **not** restarted (previously a standalone run always restarted it). It uses the same check as the final `xovi-apply` step.
 

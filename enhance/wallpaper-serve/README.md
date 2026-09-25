@@ -20,7 +20,7 @@ xochitl 有一个隐藏配置键 `xochitl.conf` → `[General] SleepScreenPath=<
 
 不写 `/usr`、不做 bind-mount、没有开机单元和 sleep 钩子，也不再起 `journalctl` 子进程。监听建不起来（如目录不在）时按 5 秒到 5 分钟指数退避重试。
 
-**首次写键后要重启一次 xochitl** 才会读进这个键；网页壁纸页和 `GET /status` 的 `native.restartPending` 会提示。重启用 `systemctl restart xochitl`（xovi 已生效时**别**跑 `xovi/start`，见 [`../../docs/INSTALL.md`](../../docs/INSTALL.md) 问题⑤）。
+**首次写键后要整机重启一次** 才会读进这个键；网页壁纸页和 `GET /status` 的 `native.restartPending` 会提示。2026-09-25 起统一用整机重启（`reboot`）：单独 `systemctl restart xochitl` 有概率在它退出时崩溃，xovi 已生效时更**别**跑 `xovi/start`（见 [`../../docs/INSTALL.md`](../../docs/INSTALL.md) 问题⑤）。
 
 **改 `xochitl.conf` 的纪律**：`rmsvc_core::xochitl_conf` 只动 `[General]` 下这一个键，先写临时文件再 rename，首次改前留 `xochitl.conf.shelf-bak`。这个文件里有 DeveloperPassword 和 UserToken，**任何地方都不打印它的行内容**。
 

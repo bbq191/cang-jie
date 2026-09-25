@@ -987,6 +987,17 @@ GUARD_CMD='! grep -q "xovi[.]so" MAPS 2>/dev/null'
 printf '7f00 r-xp /home/root/xovi/xovi.so\n' > "$R/maps-active"; printf '7f00 r-xp /usr/lib/libc.so\n' > "$R/maps-plain"
 check "xovi-reenable 守卫：已生效→跳过" bash -c "${GUARD_CMD//MAPS/$R/maps-active}; [ \$? -ne 0 ]"
 check "xovi-reenable 守卫：未生效→执行" bash -c "${GUARD_CMD//MAPS/$R/maps-plain}"
+# 开机时换入待换入区（2026-09-25）：ExecStartPre 在 ExecCondition 之后、ExecStart 之前；把单元里的命令抽出来（$$→$、
+# /home/root→沙箱）真跑一遍：普通文件挪进 extensions.d 且 755、符号链接不动、目录空了就删、extensions.d 里没有临时文件
+check "xovi-reenable.service：换入待换入区的 ExecStartPre 排在 ExecCondition 之后、ExecStart 之前" test "$(grep -n '^ExecCondition=' $U | cut -d: -f1)" -lt "$(grep -n '^ExecStartPre=.*so-pending' $U | cut -d: -f1)" -a "$(grep -n '^ExecStartPre=.*so-pending' $U | cut -d: -f1)" -lt "$(grep -n '^ExecStart=' $U | cut -d: -f1)"
+PRE_CMD="$(sed -n "s/^ExecStartPre=-\/bin\/sh -c '\(.*\)'\$/\1/p" $U | sed -e 's/\$\$/$/g' -e "s#/home/root#$R/boot-home#g")"
+mkdir -p "$R/boot-home/.cangjie-stage/so-pending" "$R/boot-home/xovi/extensions.d"
+echo OLD > "$R/boot-home/xovi/extensions.d/hl-snap.so"; echo NEW > "$R/boot-home/.cangjie-stage/so-pending/hl-snap.so"
+ln -s /etc/passwd "$R/boot-home/.cangjie-stage/so-pending/evil.so"
+out="$(sh -c "$PRE_CMD" 2>&1)"; rc=$?
+check "xovi-reenable 开机换入：新版就位且可执行、符号链接没挪进 extensions.d、提示换入了哪个" test "$rc" -eq 0 -a "$(cat "$R/boot-home/xovi/extensions.d/hl-snap.so")" = NEW -a -x "$R/boot-home/xovi/extensions.d/hl-snap.so" -a ! -e "$R/boot-home/xovi/extensions.d/evil.so" -a "$(ls -A "$R/boot-home/xovi/extensions.d")" = hl-snap.so -a -n "$(printf '%s' "$out" | grep '换入 hl-snap.so')"
+rm -f "$R/boot-home/.cangjie-stage/so-pending/evil.so"; out="$(sh -c "$PRE_CMD" 2>&1)"
+check "xovi-reenable 开机换入：待换入区空了就删掉目录；没有待换入区时安静退出 0" test ! -e "$R/boot-home/.cangjie-stage/so-pending" -a -z "$out" && sh -c "$PRE_CMD"
 
 # 10) 开机顺序（2026-09-24）：常驻服务不拉 network-online.target（否则开机专门为它们跑 NetworkManager-wait-online，
 #     没 WiFi 时等到超时）；都排在 xovi-reenable 之后（xochitl 先带 xovi 起来）；xovi-reenable 必须有启动超时上限

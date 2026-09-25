@@ -1,12 +1,12 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 660" font-family="Noto Sans CJK SC, sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 700" font-family="Noto Sans CJK SC, sans-serif">
 <defs>
 <marker id="ss-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#555"/></marker>
 <marker id="ss-r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#b0451f"/></marker>
 <marker id="ss-g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2f7d45"/></marker>
 </defs>
-<rect x="0" y="0" width="1000" height="660" fill="#fbfbfa"/>
-<text x="500" y="30" text-anchor="middle" font-size="18" font-weight="bold" fill="#1a1a1a">更新扩展 .so：先停、再换、再起</text>
-<text x="500" y="52" text-anchor="middle" font-size="12.5" fill="#6a6a6a">xovi-ext-install.sh + devlib.sh（2026-09-24）；hl-snap、handwriting-stroke 都走这条路</text>
+<rect x="0" y="0" width="1000" height="700" fill="#fbfbfa"/>
+<text x="500" y="30" text-anchor="middle" font-size="18" font-weight="bold" fill="#1a1a1a">让扩展 / 界面补丁生效：换入后整机重启</text>
+<text x="500" y="52" text-anchor="middle" font-size="12.5" fill="#6a6a6a">devlib.sh 的 cj_xochitl_apply + xovi-reenable.service（2026-09-25 起）；hl-snap、handwriting-stroke、各 qmd 都走这条路</text>
 
 <text x="30" y="88" font-size="13" font-weight="bold" fill="#333">一、装新版 .so 时先看三种情况</text>
 <rect x="30" y="100" width="300" height="84" rx="10" fill="#f2f2f5" stroke="#8a8a99" stroke-width="1.5"/>
@@ -22,56 +22,56 @@
 <text x="820" y="148" text-anchor="middle" font-size="11.5" fill="#444">当场原子替换：先写暂存</text>
 <text x="820" y="166" text-anchor="middle" font-size="11.5" fill="#444">再 rename 进 extensions.d</text>
 
-<text x="30" y="224" font-size="13" font-weight="bold" fill="#333">二、重启 xochitl 让它生效（中间那种情况）</text>
+<text x="30" y="222" font-size="13" font-weight="bold" fill="#333">二、为什么不再单独重启 xochitl</text>
+<rect x="30" y="234" width="455" height="112" rx="10" fill="#fbecE6" stroke="#b0451f" stroke-width="1.5" stroke-dasharray="6 4"/>
+<text x="257" y="258" text-anchor="middle" font-size="13" font-weight="bold" fill="#8a3316">已废弃：restart / stop → 换 → start</text>
+<text x="257" y="282" text-anchor="middle" font-size="11.5" fill="#444">停止 xochitl 本身就有概率在退出途中崩溃（SEGV）</text>
+<text x="257" y="300" text-anchor="middle" font-size="11.5" fill="#444">→ OnFailure → rm-emergency → 整机重启（不在预期内）</text>
+<text x="257" y="318" text-anchor="middle" font-size="11.5" fill="#444">跟换没换 .so 无关：09-25 只换 qmd 的普通 restart 也崩</text>
+<text x="257" y="336" text-anchor="middle" font-size="11" fill="#6a6a6a">memfault 5 份栈：3 份在 xochitl 线程池，2 份在 libQt6Gui</text>
+<rect x="515" y="234" width="455" height="112" rx="10" fill="#eaf6ec" stroke="#3f9a55" stroke-width="1.5"/>
+<text x="742" y="258" text-anchor="middle" font-size="13" font-weight="bold" fill="#1f5c30">现做法：直接干净地整机重启</text>
+<text x="742" y="282" text-anchor="middle" font-size="11.5" fill="#444">结果确定：不走崩溃 + 应急路径、不留 core dump</text>
+<text x="742" y="300" text-anchor="middle" font-size="11.5" fill="#444">约 20–60 秒回来；开机后 xovi-reenable 恢复 xovi</text>
+<text x="742" y="318" text-anchor="middle" font-size="11.5" fill="#444">代价：比 restart 顺利时（几秒）打断更久</text>
+<text x="742" y="336" text-anchor="middle" font-size="11" fill="#6a6a6a">没装 xovi-reenable 且 xovi 未生效时才走 xovi/start</text>
 
-<rect x="30" y="236" width="940" height="100" rx="10" fill="#fdf1ec" stroke="#c0602d" stroke-width="1.4" stroke-dasharray="6 4"/>
-<text x="46" y="258" font-size="12.5" font-weight="bold" fill="#b0451f">旧做法（已废弃）：换完文件再 restart</text>
-<rect x="46" y="270" width="190" height="50" rx="8" fill="#ffffff" stroke="#c0602d" stroke-width="1.3"/>
-<text x="141" y="300" text-anchor="middle" font-size="11.5" fill="#333">换掉 extensions.d 里的 .so</text>
-<rect x="276" y="270" width="190" height="50" rx="8" fill="#ffffff" stroke="#c0602d" stroke-width="1.3"/>
-<text x="371" y="300" text-anchor="middle" font-size="11.5" fill="#333">systemctl restart xochitl</text>
-<rect x="506" y="270" width="190" height="50" rx="8" fill="#ffffff" stroke="#c0602d" stroke-width="1.3"/>
-<text x="601" y="292" text-anchor="middle" font-size="11.5" fill="#333">旧进程退出时崩溃</text>
-<text x="601" y="309" text-anchor="middle" font-size="11" fill="#666">（SEGV）</text>
-<rect x="736" y="270" width="220" height="50" rx="8" fill="#fbe3da" stroke="#b0451f" stroke-width="1.5"/>
-<text x="846" y="292" text-anchor="middle" font-size="11.5" font-weight="bold" fill="#b0451f">整机自动重启</text>
-<text x="846" y="309" text-anchor="middle" font-size="11" fill="#666">OnFailure=emergency.target</text>
-<polyline points="236,295 276,295" fill="none" stroke="#b0451f" stroke-width="1.6" marker-end="url(#ss-r)"/>
-<polyline points="466,295 506,295" fill="none" stroke="#b0451f" stroke-width="1.6" marker-end="url(#ss-r)"/>
-<polyline points="696,295 736,295" fill="none" stroke="#b0451f" stroke-width="1.6" marker-end="url(#ss-r)"/>
+<text x="30" y="384" font-size="13" font-weight="bold" fill="#333">三、生效流程（部署最后一步 xovi-apply，或单独部署一个扩展时）</text>
+<text x="30" y="402" font-size="11.5" fill="#6a6a6a">换入 → 清标记 → 排重启 是关键区：忽略 HUP / PIPE / INT / TERM，host 侧 Ctrl-C 或断线也一定把重启排上</text>
+<rect x="30" y="416" width="150" height="70" rx="10" fill="#f2f2f5" stroke="#8a8a99" stroke-width="1.5"/>
+<text x="105" y="444" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">提示将打断阅读</text>
+<text x="105" y="466" text-anchor="middle" font-size="11.5" fill="#444">等 5 秒可取消</text>
+<line x1="180" y1="451" x2="208" y2="451" stroke="#555" stroke-width="1.5" marker-end="url(#ss-a)"/>
+<rect x="210" y="416" width="170" height="70" rx="10" fill="#fff3d6" stroke="#c9971f" stroke-width="1.5"/>
+<text x="295" y="444" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">待换入区 → extensions.d</text>
+<text x="295" y="466" text-anchor="middle" font-size="11.5" fill="#444">（原子 rename）</text>
+<line x1="380" y1="451" x2="408" y2="451" stroke="#555" stroke-width="1.5" marker-end="url(#ss-a)"/>
+<rect x="410" y="416" width="170" height="70" rx="10" fill="#f2f2f5" stroke="#8a8a99" stroke-width="1.5"/>
+<text x="495" y="444" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">清掉待生效标记</text>
+<text x="495" y="466" text-anchor="middle" font-size="11" fill="#444">含 /home 退路目录，防重启循环</text>
+<line x1="580" y1="451" x2="608" y2="451" stroke="#555" stroke-width="1.5" marker-end="url(#ss-a)"/>
+<rect x="610" y="416" width="170" height="70" rx="10" fill="#eaf6ec" stroke="#3f9a55" stroke-width="1.5"/>
+<text x="695" y="444" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">systemctl reboot</text>
+<text x="695" y="466" text-anchor="middle" font-size="11" fill="#444">先打印 CJ-APPLY-REBOOTING</text>
+<line x1="780" y1="451" x2="808" y2="451" stroke="#2f7d45" stroke-width="1.5" marker-end="url(#ss-g)"/>
+<rect x="810" y="416" width="160" height="70" rx="10" fill="#eaf6ec" stroke="#3f9a55" stroke-width="1.5"/>
+<text x="890" y="444" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">开机：xovi-reenable</text>
+<text x="890" y="466" text-anchor="middle" font-size="11" fill="#444">xovi/start 载入新版</text>
+<text x="695" y="508" text-anchor="middle" font-size="11" fill="#6a6a6a">host 侧 run_apply 认出标记：ssh 随重启断开不算失败，</text>
+<text x="695" y="524" text-anchor="middle" font-size="11" fill="#6a6a6a">提示回来后跑 verify-on-device.sh</text>
 
-<rect x="30" y="352" width="940" height="100" rx="10" fill="#f3faf4" stroke="#3f9a55" stroke-width="1.4"/>
-<text x="46" y="374" font-size="12.5" font-weight="bold" fill="#2f6f40">现做法：stop → 换入 → start</text>
-<text x="276" y="374" font-size="11.5" fill="#2f6f40">stop 到 start 是关键区：忽略 HUP / PIPE / INT / TERM，host 侧 Ctrl-C 或拔线也一定走到 start</text>
-<rect x="46" y="386" width="190" height="50" rx="8" fill="#ffffff" stroke="#3f9a55" stroke-width="1.3"/>
-<text x="141" y="408" text-anchor="middle" font-size="11.5" fill="#333">提示“将打断阅读”</text>
-<text x="141" y="425" text-anchor="middle" font-size="11" fill="#666">等 5 秒</text>
-<rect x="276" y="386" width="190" height="50" rx="8" fill="#ffffff" stroke="#3f9a55" stroke-width="1.3"/>
-<text x="371" y="416" text-anchor="middle" font-size="11.5" fill="#333">systemctl stop xochitl</text>
-<rect x="506" y="386" width="190" height="50" rx="8" fill="#ffffff" stroke="#3f9a55" stroke-width="1.3"/>
-<text x="601" y="408" text-anchor="middle" font-size="11.5" fill="#333">待换入区 → extensions.d</text>
-<text x="601" y="425" text-anchor="middle" font-size="11" fill="#666">（原子 rename）</text>
-<rect x="736" y="386" width="220" height="50" rx="8" fill="#e3f2e6" stroke="#2f7d45" stroke-width="1.5"/>
-<text x="846" y="408" text-anchor="middle" font-size="11.5" font-weight="bold" fill="#2f6f40">systemctl start xochitl</text>
-<text x="846" y="425" text-anchor="middle" font-size="11" fill="#666">再做健康检查</text>
-<polyline points="236,411 276,411" fill="none" stroke="#2f7d45" stroke-width="1.6" marker-end="url(#ss-g)"/>
-<polyline points="466,411 506,411" fill="none" stroke="#2f7d45" stroke-width="1.6" marker-end="url(#ss-g)"/>
-<polyline points="696,411 736,411" fill="none" stroke="#2f7d45" stroke-width="1.6" marker-end="url(#ss-g)"/>
-
-<text x="30" y="484" font-size="13" font-weight="bold" fill="#333">三、待换入区的收尾规则（2026-09-24 审计补）</text>
-<rect x="30" y="496" width="300" height="84" rx="10" fill="#ffffff" stroke="#8a8a99" stroke-width="1.4"/>
-<text x="180" y="520" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">设备重启后仍算“待生效”</text>
-<text x="180" y="544" text-anchor="middle" font-size="11.5" fill="#444">cj_apply_needed 把待换入的 .so 也当标记，</text>
-<text x="180" y="562" text-anchor="middle" font-size="11.5" fill="#444">不会因 /run 被清而永远换不进去</text>
-<rect x="350" y="496" width="300" height="84" rx="10" fill="#ffffff" stroke="#8a8a99" stroke-width="1.4"/>
-<text x="500" y="520" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">卸载时一并撤掉</text>
-<text x="500" y="544" text-anchor="middle" font-size="11.5" fill="#444">uninstall-all 删同名待换入版本，</text>
-<text x="500" y="562" text-anchor="middle" font-size="11.5" fill="#444">否则下次重启 xochitl 会被装回来</text>
-<rect x="670" y="496" width="300" height="84" rx="10" fill="#ffffff" stroke="#8a8a99" stroke-width="1.4"/>
-<text x="820" y="520" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">同一新版已在待换入区</text>
-<text x="820" y="544" text-anchor="middle" font-size="11.5" fill="#444">重复 --no-restart 部署：</text>
-<text x="820" y="562" text-anchor="middle" font-size="11.5" fill="#444">不再备份、不再重放</text>
-
-<text x="500" y="614" text-anchor="middle" font-size="11.8" fill="#555">待换入区在 /home：设备中途重启也不丢，下次重启 xochitl 时照样换入；在那之前 xochitl 仍用旧版。</text>
-<text x="500" y="636" text-anchor="middle" font-size="11.8" fill="#a33">⚠ 旧做法两次真机整机重启（09-21 appload、09-24 hw-stroke）；新做法与第三部分只有本机模拟测试，真机还没用“有变化的 .so”走过</text>
+<text x="30" y="562" font-size="13" font-weight="bold" fill="#333">四、待换入区的收尾规则</text>
+<rect x="30" y="574" width="300" height="84" rx="10" fill="#f2f2f5" stroke="#8a8a99" stroke-width="1.5"/>
+<text x="180" y="598" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">自己 reboot 也会换入</text>
+<text x="180" y="620" text-anchor="middle" font-size="11.5" fill="#444">xovi-reenable 的 ExecStartPre 在 xovi/start 前</text>
+<text x="180" y="638" text-anchor="middle" font-size="11.5" fill="#444">把剩下的待换入 .so 挪进 extensions.d</text>
+<rect x="350" y="574" width="300" height="84" rx="10" fill="#f2f2f5" stroke="#8a8a99" stroke-width="1.5"/>
+<text x="500" y="598" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">卸载时一并撤掉</text>
+<text x="500" y="620" text-anchor="middle" font-size="11.5" fill="#444">uninstall-all 删同名待换入版本，</text>
+<text x="500" y="638" text-anchor="middle" font-size="11.5" fill="#444">否则下次开机会被装回来</text>
+<rect x="670" y="574" width="300" height="84" rx="10" fill="#f2f2f5" stroke="#8a8a99" stroke-width="1.5"/>
+<text x="820" y="598" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">同一新版已在待换入区</text>
+<text x="820" y="620" text-anchor="middle" font-size="11.5" fill="#444">重复 --no-restart 部署：</text>
+<text x="820" y="638" text-anchor="middle" font-size="11.5" fill="#444">不再备份、不再重放</text>
+<text x="500" y="686" text-anchor="middle" font-size="11.5" fill="#6a6a6a">待换入区在 /home：设备中途重启也不丢；在换入之前 xochitl 仍用旧版。</text>
 </svg>
