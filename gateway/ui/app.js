@@ -1254,19 +1254,34 @@ function renderBattopDetail(sec){
   sec.refresh=refresh;subtabs(sec);
 }
 
-/* 「管理 → 设备健康」（2026-09-25，gateway/src/device/）：只读体检卡 + 清理遗留数据卡。**只在这一屏被打开、或点刷新时
-   取数**，不跟管理页其它子标签一起刷、不订阅任何定时器（设备要省电）。网关侧结果缓存 15 秒，刷新按钮带 fresh=1 现采。 */
+/* 「管理 → 设备健康」（2026-09-25，gateway/src/device/）：只读体检 + 清理遗留数据。**只在这一屏被打开、或点刷新时
+   取数**，不跟管理页其它子标签一起刷、不订阅任何定时器（设备要省电）。网关侧结果缓存 15 秒，刷新按钮带 fresh=1 现采。
+   2026-09-25 同日用户反馈"太长"，拆成五个二级 tab（概览/服务/扩展/日志/清理，subtabs() 惯例，第三层嵌套靠它的
+   `:scope >` 限定）：一次 /api/device/health（+ /api/device/ota）的结果分发到前四个 tab，切 tab 只显隐、不重取；
+   清理是单独接口，进这一屏时它不在前台就只记"待取"，第一次切到它时才取。上次停在哪个二级 tab 记在 LS。 */
 const fmtUptime=s=>{const d=Math.floor(s/86400),h=Math.floor(s%86400/3600),m=Math.floor(s%3600/60);
   return d?T('health.upDays',{d,h}):h?T('health.upHours',{h,m}):T('health.upMins',{m})};
 const fmtSec=ms=>(ms/1000).toFixed(ms<10000?2:1)+' s';
 const fmtTime=secs=>secs?new Date(secs*1000).toLocaleString():'';
 function mountHealth(box){
-  box.innerHTML=`<div class="row" style="justify-content:space-between;margin-top:0"><h2 style="margin:0">${T('health.title')}</h2><button class="btn" data-refresh>${T('health.refresh')}</button></div>
-    <p class="lead">${T('health.lead')}</p><div data-body><p class="small">${T('health.loading')}</p></div>`;
-  const body=box.querySelector('[data-body]'),btn=box.querySelector('[data-refresh]');
-  const load=async fresh=>{
-    const d=await j('/api/device/health'+(fresh?'?fresh=1':''));
-    if(d.ok===false){body.innerHTML=`<p class="small">${esc(d.message)}</p>`;return}
+  const card=k=>`<div class="subpanel" data-p="${k}"><div class="card" data-body><p class="small">${T('health.loading')}</p></div></div>`;
+  box.innerHTML=`<div class="card"><div class="row" style="justify-content:space-between;margin-top:0"><h2 style="margin:0">${T('health.title')}</h2><button class="btn" data-refresh>${T('health.refresh')}</button></div>
+    <p class="lead">${T('health.lead')}</p><p class="small" data-at></p></div>
+    <div class="subnav"><button>${T('health.tab.overview')}</button><button>${T('health.tab.services')}</button><button>${T('health.tab.extensions')}</button><button>${T('health.tab.log')}</button><button>${T('health.tab.cleanup')}</button></div>
+    ${card('overview')}${card('services')}${card('extensions')}${card('log')}
+    <div class="subpanel" data-p="cleanup"><div class="card" data-cleanup></div></div>`;
+  const q=s=>box.querySelector(s),body=k=>q(`[data-p="${k}"] [data-body]`),btn=q('[data-refresh]');
+  const cleanupLoad=mountCleanup(q('[data-cleanup]'));
+  const CLEANUP=4;let cleanupStale=true;
+  const cleanupIfShown=()=>{if(cleanupStale&&q('[data-p="cleanup"]').classList.contains('on')){cleanupStale=false;return cleanupLoad()}};
+  subtabs(box);
+  const btns=[...q('.subnav').children],saved=+LS.get('healthSub','0');
+  // 恢复上次的二级 tab：先调 subtabs 装的原始切换，再包记忆/取数那层——挂载管理页时不该去取清理数据。
+  btns[saved>=0&&saved<btns.length?saved:0].onclick();
+  btns.forEach((b,i)=>{const sw=b.onclick;b.onclick=()=>{sw();LS.set('healthSub',String(i));if(i===CLEANUP)cleanupIfShown()}});
+  const loadHealth=async fresh=>{
+    const [d,o]=await Promise.all([j('/api/device/health'+(fresh?'?fresh=1':'')),j('/api/device/ota'+(fresh?'?fresh=1':''))]);
+    if(d.ok===false){const m=`<p class="small">${esc(d.message)}</p>`;['overview','services','extensions','log'].forEach(k=>body(k).innerHTML=m);return}
     const units=d.units||[],xu=units.find(u=>u.unit==='xochitl.service')||{},x=d.xochitl||{};
     const none=`<span class="small">${T('health.none')}</span>`;
     const names=l=>l&&l.length?esc(l.join(' · ')):none;
@@ -1274,24 +1289,22 @@ function mountHealth(box){
     const fwTxt=fw.state==='done'?(fw.known?badge(T('health.fw.known',{label:esc(fw.label)}),true)
         :`<span class="badge off" title="${T('health.fw.unknownTitle')}">${T('health.fw.unknown')}</span>`)+` <code style="overflow-wrap:anywhere">${esc((fw.sha256||'').slice(0,16))}…</code>`
       :fw.state==='error'?`<span class="small">${esc(T('health.fw.error',{msg:fw.message||''}))}</span>`:`<span class="small">${T('health.fw.pending')}</span>`;
+    // OTA 判定跟页头横幅同一个接口（device/ota.rs）；这里只是换个地方常驻显示，横幅被 × 掉之后也能在这看到。
+    const otaTxt=o.ok===false?'<span class="small">—</span>':o.needsReinstall
+      ?badge(o.recovery==='full'?T('ota.banner.title'):T('ota.banner.xoviTitle'),false)+`<br><span class="small">${(o.reasons||[]).map(r=>esc(T('ota.reason.'+r,{units:(o.missingUnits||[]).join(', ')}))).join('<br>')}</span>`
+      :badge(T('health.ota.ok'),true);
     const home=d.home||{};
-    let h=`<div class="kv small">
+    q('[data-at]').textContent=T('health.at',{time:fmtTime(d.at)});
+    body('overview').innerHTML=`<div class="kv small">
       <b>${T('health.uptime')}</b><span>${d.uptimeSecs!=null?fmtUptime(d.uptimeSecs):'—'}</span>
       <b>xochitl</b><span>${badge(esc(xu.active||'?'),xu.active==='active')} <span title="${T('health.restartsTitle')}">${T('health.unit.restarts',{n:xu.nRestarts??'?'})}</span>${xu.pid?' · PID '+xu.pid:''}</span>
       <b>${T('health.xovi')}</b><span>${x.readable?badge(x.xovi?T('manage.loaded.on'):T('manage.loaded.off'),!!x.xovi):'<span class="small">—</span>'}</span>
-      <b>${T('health.extensions')}</b><span>${names(x.extensions)}</span>
-      <b title="${T('health.deletedTitle')}">${T('health.deleted')}</b><span>${x.deleted&&x.deleted.length?`<span class="badge off" title="${T('health.deletedTitle')}">${esc(x.deleted.join(' · '))}</span>`:none}</span>
-      <b title="${T('health.soPendingTitle')}">${T('health.soPending')}</b><span>${d.soPending&&d.soPending.length?`<span class="badge" title="${T('health.soPendingTitle')}">${esc(d.soPending.join(' · '))}</span>`:none}</span>
       <b>${T('health.home')}</b><span>${home.freeBytes!=null?T('health.homeVal',{free:fmtB(home.freeBytes),total:fmtB(home.totalBytes||0)}):'—'}</span>
-      <b>${T('health.firmware')}</b><span>${fwTxt}</span></div>`;
-    if(d.systemctlError)h+=`<p class="small">${esc(T('health.systemctlError',{msg:d.systemctlError}))}</p>`;
-    h+=`<h3>${T('health.services')}</h3><p class="small">${T('health.servicesHint')}</p><ul class="list" data-units></ul>`;
-    // 上次开机最后几行 journal（设备冻死/意外重启的线索）；journal 没持久化时后端给 null，整块不显示。
-    if(d.prevBoot&&d.prevBoot.length)h+=`<details class="cmp"><summary>${T('health.prevBoot')}</summary><pre class="hlog">${esc(d.prevBoot.join('\n'))}</pre></details>`;
-    h+=`
-      <p class="small">${esc(T('health.at',{time:fmtTime(d.at)}))}</p>`;
-    body.innerHTML=h;
-    const ul=body.querySelector('[data-units]');
+      <b>${T('health.firmware')}</b><span>${fwTxt}</span>
+      <b>${T('health.ota')}</b><span>${otaTxt}</span></div>`;
+    body('services').innerHTML=`<h3 style="margin-top:0">${T('health.services')}</h3><p class="small">${T('health.servicesHint')}</p>`
+      +(d.systemctlError?`<p class="small">${esc(T('health.systemctlError',{msg:d.systemctlError}))}</p>`:'')+'<ul class="list" data-units></ul>';
+    const ul=body('services').querySelector('[data-units]');
     units.forEach(u=>{
       const missing=u.load==='not-found';
       const st=missing?`<span class="badge">${T('health.unit.notFound')}</span>`:badge(esc((u.active||'?')+(u.sub?' / '+u.sub:'')),u.active==='active');
@@ -1300,7 +1313,20 @@ function mountHealth(box){
       if(u.rssKb!=null)bits.push(esc(T('health.unit.mem',{rss:fmtB(u.rssKb*1024),hwm:fmtB((u.hwmKb||0)*1024)})));
       if(u.startedAtMs!=null)bits.push(esc(T('health.unit.started',{at:fmtSec(u.startedAtMs),dur:u.startMs!=null?fmtSec(u.startMs):'—'})));
       ul.appendChild(el('li',{},[el('span',{html:`${esc(u.unit.replace(/\.service$/,''))} ${st}`}),el('span',{class:'small',html:bits.join(' · ')})]))});
+    // 扩展：徽章 title 在触屏上看不到，所以把"换了文件未重启 / 待换入"的解释直接写成小字放在各自下面。
+    body('extensions').innerHTML=`<div class="kv small">
+      <b>${T('health.xovi')}</b><span>${x.readable?badge(x.xovi?T('manage.loaded.on'):T('manage.loaded.off'),!!x.xovi):'<span class="small">—</span>'}</span>
+      <b>${T('health.extensions')}</b><span>${names(x.extensions)}</span></div>
+      <h3>${T('health.deleted')}</h3><p class="small">${T('health.deletedTitle')}</p>
+      <p>${x.deleted&&x.deleted.length?`<span class="badge off">${esc(x.deleted.join(' · '))}</span>`:none}</p>
+      <h3>${T('health.soPending')}</h3><p class="small">${T('health.soPendingTitle')}</p>
+      <p>${d.soPending&&d.soPending.length?`<span class="badge">${esc(d.soPending.join(' · '))}</span>`:none}</p>`;
+    // 上次开机最后几行 journal（设备冻死/意外重启的线索）；journal 没持久化时后端给 null。
+    body('log').innerHTML=`<h3 style="margin-top:0">${T('health.prevBoot')}</h3>`
+      +(d.prevBoot&&d.prevBoot.length?`<pre class="hlog">${esc(d.prevBoot.join('\n'))}</pre>`:`<p class="small">${T('health.prevBootNone')}</p>`);
   };
+  /* 进这一屏（fresh=false）或点刷新（fresh=true）：健康数据现取；清理只在它正在前台时取，否则等第一次切过去。 */
+  const load=async fresh=>{cleanupStale=true;await Promise.all([loadHealth(fresh),cleanupIfShown()])};
   guardClick(btn,()=>load(true));
   return load;
 }
@@ -1402,10 +1428,7 @@ function renderManage(sec){sec.innerHTML=`
       <div class="row"><button class="btn" id="allon">${T('manage.modules.allOn')}</button><button class="btn" id="alloff">${T('manage.modules.allOff')}</button></div>
       <ul class="list" id="mods"></ul></div>
   </div>
-  <div class="subpanel">
-    <div class="card" id="healthCard"></div>
-    <div class="card" id="cleanupCard"></div>
-  </div>
+  <div class="subpanel" id="healthBox"></div>
   <!-- 意图卡（h2+lead）单独一张、跟下面的模型卡是兄弟不是父子（2026-09-10 用户要求跟「管理」页
        其它子标签统一风格——「传书·入库」「引导·基石」都是这个样子：一张说明卡起头，后面各功能
        各自一张卡平铺；改之前这里是说明卡把 #modelcards 包在里面，卡中卡，跟别处不一样）。 -->
@@ -1504,11 +1527,12 @@ function renderManage(sec){sec.innerHTML=`
     if(running&&battopPanel.refresh)battopPanel.refresh()};
   bindToggle(hlBox,'/api/enhance/qol','hlSnapCjk');bindToggle(hwBox,'/api/enhance/qol','hwStrokeEnabled');bindToggle(importMdBox,'/api/enhance/qol','notesImportMdEnabled');bindToggle(comicMarginBox,'/api/enhance/qol','comicMinMargin');
   bindToggle(tapBox,'/api/enhance/qol','tapPageTurn');bindToggle(rtlBox,'/api/enhance/qol','rtlPageTurn');
-  /* 设备健康：切到这个子标签时才取数（每次切过去都取一次，网关侧有 15 秒缓存），不跟着管理页的 SSE 刷新走。 */
-  const healthLoad=mountHealth($('#healthCard',sec)),cleanupLoad=mountCleanup($('#cleanupCard',sec));
+  /* 设备健康：切到这个子标签时才取数（每次切过去都取一次，网关侧有 15 秒缓存），不跟着管理页的 SSE 刷新走；
+     清理那组只在它是当前二级 tab 时一起取（见 mountHealth）。 */
+  const healthLoad=mountHealth($('#healthBox',sec));
   const healthNavBtn=manageNav.querySelector('[data-sub="health"]');
   refresh();sec.refresh=()=>Promise.all([refresh(),mvRefresh(),mtRefresh()]);subtabs(sec);
-  const tabClick=healthNavBtn.onclick;healthNavBtn.onclick=()=>{tabClick();healthLoad(false);cleanupLoad()};}
+  const tabClick=healthNavBtn.onclick;healthNavBtn.onclick=()=>{tabClick();healthLoad(false)};}
 
 (async()=>{
   // 语言包先拿到手：下面 addTab 用得到 T()，晚拿会让顶层导航先短暂显示 key 本身再跳成文字。
