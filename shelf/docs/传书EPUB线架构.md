@@ -3,7 +3,7 @@
 > **当前状态参考文档**，不是会话日志。本文只回答：**书在设备上怎么流动、每个服务管什么**——数据流、母版库状态、落库通道、内存设计、异步与进度、全部 API 与配置。
 > 分工：**规则**（书该被改成什么样）看 [`EPUB优化规范白皮书.md`](EPUB优化规范白皮书.md)；**引擎实现**（清洗、脚注、图片、PDF 解析的函数与常量）看 [`bookconv优化白皮书.md`](bookconv优化白皮书.md)；**真机历史与坑**看 [`reMarkable书架白皮书.md`](reMarkable书架白皮书.md)。本文碰到这些只写一句并指过去。
 >
-> **写作时点**：2026-09-19 首写；09-20 刷新；09-22 按代码逐字段复核（基线 `OPTIMIZE_VERSION`＝`"15"`）、补漫画页边距（§3.3）；09-23 按代码更新（PDF 转 EPUB、质量门接入）；**2026-09-24 按代码更新**：原件下载与改名、原 PDF 备份 `.pdf-originals/`（§2.5）、下载应答流式转发（§1），并把引擎细节（清洗步骤表、脚注、图片常量、PDF 五步）移交 bookconv 白皮书，本文只留数据流视角；同日第三轮审计后补并发控制（§7.3）、进度节流与建文件夹队列（§7、§4）、PDF 内存（§5）——这些改动只在 host 单测验证，未上真机。
+> **写作时点**：2026-09-19 首写；09-20 刷新；09-22 按代码逐字段复核（基线 `OPTIMIZE_VERSION`＝`"15"`）、补漫画页边距（§3.3）；09-23 按代码更新（PDF 转 EPUB、质量门接入）；**2026-09-24 按代码更新**：原件下载与改名、原 PDF 备份 `.pdf-originals/`（§2.5）、下载应答流式转发（§1），并把引擎细节（清洗步骤表、脚注、图片常量、PDF 五步）移交 bookconv 白皮书，本文只留数据流视角；同日第三轮审计后补并发控制（§7.3）、进度节流与建文件夹队列（§7、§4）、PDF 内存（§5）——这些改动只在 host 单测验证，未上真机；**2026-09-25** 补按书阅读方向（§2.6、§8、§9，host 单测验证，未上真机）。
 >
 > **规则去哪查**：「能不能这样改、为什么这么定」的规范（xochitl 十条实测渲染规则、两条优化线的现行规则）以 [`EPUB优化规范白皮书.md`](EPUB优化规范白皮书.md) 为准；本文只记"现在怎么运转"，规则只写一句并指过去。
 >
@@ -81,7 +81,7 @@
 
 ![母版库一本书的生命周期：内存忙锁与 sidecar 状态](diagrams/book-item-lifecycle.svg)
 
-**sidecar**（`sidecar.rs`，字段全可缺省，旧记录照读）＝`Delivered { optimize: Option<OptimizeCheck>, deliver: Option<DeliverCheck>, native: Option<u64>（最近投原生时间戳）, koreader: Option<u64>, render: Option<RenderCheck{uuid,pages,expected,status,at}>（§2.3）, source（历史遗留，网页不再写） }`；`OptimizeCheck`/`DeliverCheck` 均为 `{status, message, at, progress: Option<StepProgress{done,total}>}`。
+**sidecar**（`sidecar.rs`，字段全可缺省，旧记录照读）＝`Delivered { optimize: Option<OptimizeCheck>, deliver: Option<DeliverCheck>, native: Option<u64>（最近投原生时间戳）, koreader: Option<u64>, render: Option<RenderCheck{uuid,pages,expected,status,at}>（§2.3）, source（历史遗留，网页不再写）, direction: Option<String>（按书阅读方向 `rtl`/`ltr`，缺省＝自动；是用户设置不是结果记录，放边车为了跟书走，§2.6） }`；`OptimizeCheck`/`DeliverCheck` 均为 `{status, message, at, progress: Option<StepProgress{done,total}>}`。
 
 | 字段 | `status` 取值 |
 |---|---|
@@ -128,6 +128,17 @@
 - **下载原件** `GET /staging/file?name=`：book-serve 边读边发（`Reply::sized_stream`，带 `Content-Length`），网关见到 `Content-Disposition` 也流式转发，整条链不把书读进内存。早先一版走 SSE 的裸 socket 通道、读完不关连接，浏览器一直转圈（`b1856b3` 修）。
 - **改名** `POST /staging/rename {name,newName}`：只改文件名，扩展名不变（不带扩展名沿用原扩展名；带了别的扩展名只当名字的一部分）；新名已存在、或新旧任一名字正在处理中则拒绝；边车跟着改名。**不改书内书名/作者**，xochitl 显示的书名仍取书内元数据。
 - **原 PDF 备份**：PDF 转 EPUB 成功后原 PDF 同分区 rename 进 `staging/.pdf-originals/`（此前直接删除、删了找不回）。按挪入时的 ctime 算 7 天（`PDF_ORIGINALS_KEEP_SECS`），启动时与每次新备份时清过期。`GET /staging` 的 `originals` 字段列出它们（名字、大小、备份时间、到期时间）；`POST /staging/originals/restore` 挪回母版库（同名已在则拒绝），`POST /staging/originals/delete` 提前删除。网页在母版库页底部显示「原 PDF 备份」。
+
+### 2.6 按书阅读方向（2026-09-25）
+
+![按书阅读方向](diagrams/sh-reading-direction.svg)
+
+规则（写什么、为什么只手动、为什么不升版本）见规范白皮书 §4.6；这里只记数据流（代码 `staging/direction.rs`）：
+- **设置**：`POST /staging/direction` → `Staging::set_direction` 只写边车 `direction`，不动书。PDF 拒绝。
+- **判"待优化"**：`list()` 的探测缓存（同"优化等级"，按（大小, mtime）失效）多读一次 OPF 的 spine 方向，与设置不一致 → `directionStale=true` 且 `optimized=false`。网页「优化」按钮与网关批量队列的资格都只看 `optimized`，不用改。
+- **优化**：`Staging::optimize` 读设置传 `OptimizeOpts.page_direction`；若书已是当前版本完整优化（含 PDF 转来的 EPUB）且只差方向，走 `rewrite_direction_only`：`bookconv::direction::rewrite_direction_file` 只改 OPF、其余条目原样拷贝 → 质量门 → `produce_then_replace`，不跑完整优化（免 JPEG 多一代有损）。母版 mtime 变了，已加入记录照常标"旧"，提示重新加入。
+- **免重投同步**：边车有 `render.uuid`（加入过 xochitl）时，`set_direction` 顺手 `ReadingDirection::set_override` 写进/移出 `rtl-overrides.json`（从右往左＝加；从左往右 / 改回自动＝移出）；之后 `set_render` 认到新 uuid 也按设置同步（设"自动"的不碰，清单里可能有用户手加的）。清单解析不了就报错、不覆盖。`ReadingDirection` 由 `State` 与 `Staging` 共用一个 `Arc`。
+- **已知限制**：清单只能"加上从右往左"——xochitl 里那份书本身写着 `rtl` 时，改成"从左往右"必须重新加入；按卷拆分的分卷沿用母版 OPF 的方向（`comic_split::opf_is_rtl` → `AssembleOpts.rtl`），所以同样要先「优化」写进书里再投。
 
 ## 3｜EPUB 优化管线
 
@@ -283,6 +294,7 @@ PDF 转 EPUB 转换前查一次“同名 `.epub` 已存在”，转换完（可�
 **母版库页**（2026-09-20 重做，取舍见书架白皮书 §03bp）：
 - **行内只显示**书名、类型、大小、状态徽章、进度；**仅处理中/排队时有“停止/取消排队”按钮**。徽章：格式 / 优化等级 / 落库记录（晚于母版 mtime 标"旧"）/ 渲染自检 / PDF 来源 / 处理中、失败或"被重启打断"（卡 `pending` 但 `busy=false`）。
 - **操作统一在勾选后的底部操作栏**（2026-09-24 起按钮排成三行、每行一排绝不折行，按钮等高、带可处理数量角标，窄屏去掉"加入"前缀；无头 Chrome 量过 320–1024px）：优化 / 加入 xochitl / 加入 KOReader / 清除；第三行是**只勾一本时才有的「下载原件」「改名」**和删除（`confirmDialog()`）；按钮标"可处理数"，0 置灰；运行中变进度条 + 当前书 + 失败数 + **全部中止**；跑完显示小结。
+- **阅读方向**（2026-09-25，§2.6）：第三行在「删除」左边多一个「阅读方向」按钮，选了 EPUB 就可点（多选时角标＝选中的 EPUB 数；单选时第三行变四列、窄屏字号再小一档，无头 Chrome 量过 320/390/1024px 不溢出不截字），弹出三选一（自动 / 从右往左 / 从左往右，`choiceDialog()`），下面一行小字说明"要再点「优化」、已加入 xochitl 的要重新加入"。行内徽章：设了方向显示「从右往左」/「从左往右」，设置还没写进书里再加一枚「方向待优化」。
 - **原 PDF 备份**：母版库页底部折叠面板列出 `.pdf-originals/` 里的文件与剩余天数，可「恢复」或删除（§2.5）。
 - **加入位置**：xochitl 文件夹、KOReader 目录两个**常驻下拉**（可“＋新建”：xochitl 走 §4 mkdir 队列，KOReader 走 `POST /books/mkdir`）；搜书名带下拉建议（多卷合一条）；筛选带数量 + 格式过滤/"隐藏已完成"；真分页（25/50/100）；PC 与手机同一套单列，不横向溢出（量 `scrollWidth` 验证过 390/1280px）。
 - **状态在服务器**：批量取自 `GET /api/batch/status`、闸门取自 `GET /api/budget/status`；`localBusy` 是无调用方的遗留死代码。进度由 `renderStepProgress()` 统一渲染：`{done,total}` 有数据画真百分比，没有画不确定态滚动条。
@@ -307,6 +319,7 @@ GET  /staging                        母版库列表 {items, freeBytes, original
 POST /staging                        multipart 入库（逐文件；?srcName=&srcBytes= 历史遗留）
 GET  /staging/file?name=             下载原件（流式，带 Content-Disposition）
 POST /staging/rename {name, newName} 改名（扩展名不变、边车跟随；冲突或忙时 400）
+POST /staging/direction {names:[…]|name, direction:auto|rtl|ltr}  按书阅读方向（只存设置；回 {updated, stale, synced, failed[]}，全部失败才 400，§2.6）
 POST /staging/originals/restore {name} · POST /staging/originals/delete {name}   原 PDF 备份恢复 / 删除
 POST /staging/optimize {name}        异步优化（EPUB；PDF 转 EPUB / 仅裁边）
 POST /staging/deliver {name, folder?} 异步落库（原生）
@@ -315,7 +328,7 @@ POST /staging/mark {name, target}    标记已加入读器（native|koreader；�
 POST /staging/fetch-article {url, optimize?}  抓网文
 POST /staging/delete {name}          删除条目（忙时 400）
 GET  /margins/{uuid} · POST /margins/applied {uuid}   漫画页边距待办（qmd 用；开关关时 GET 恒 404）
-GET  /reading-direction/{uuid}                       → {rtl}：书库 <uuid>.epub 的 OPF spine 是否从右往左，或在手动清单 books/rtl-overrides.json 里（reader-page-turn.qmd 用）
+GET  /reading-direction/{uuid}                       → {rtl}：书库 <uuid>.epub 的 OPF spine 是否从右往左，或在手动清单 books/rtl-overrides.json 里（reader-page-turn.qmd 用；清单也由母版库按书方向同步写，§2.6）
 GET  /events                         SSE 事件流
 POST /trash/add · GET /trash/pending · GET /trash      原生回收站代理队列
 POST /mkdir/add · GET /mkdir/pending[?wait=秒] · GET /mkdir   原生建文件夹代理队列（pending 支持长轮询）
@@ -343,4 +356,5 @@ POST /mkdir/add · GET /mkdir/pending[?wait=秒] · GET /mkdir   原生建文件
 - 入库 PDF 转 EPUB：公式裁图没有真机样本；公式区域按整行字符包围盒算，公式文字碎片会同时留在正文里（不丢字，但观感不如只留图）；竖排/多栏 PDF 未验证。
 - `imgopt` 对 >900 万像素原图直接跳过（完全不处理，非压画质），这类图原样出现在优化后的书里，拿不到体积收益。
 - **漫画页边距最小化**：旧漫画（或开关关着时优化的）必须重新优化才生效；qmd 只在 xochitl 启动时加载；按卷拆分投递的漫画不登记（§3.3）。
+- **按书阅读方向**（§2.6）：书本身要「优化」后重新加入才换新；免重投的清单同步只对"加上从右往左"有效；未上真机。
 - **超限 PDF 只有带书签的自产漫画 PDF 能按卷拆分**；用户自传的原生大 PDF 在占位通道（≤1GiB）之外只能自行分割（§6.2）。

@@ -38,7 +38,7 @@ fn read_text(zip: &mut Zip, name: &str) -> Option<String> {
 
 /// 打开 EPUB 并读出 OPF：`(zip, OPF 在 zip 里的路径, OPF 文本)`。只读 container.xml 和 OPF 两个条目，不解压整本
 /// （`cover_image_of`/`epub_is_rtl`/`epub_placeholder` 三处共用，此前各抄一份）。
-fn open_opf(epub: &Path) -> Result<(Zip, String, String), String> {
+pub(crate) fn open_opf(epub: &Path) -> Result<(Zip, String, String), String> {
     let file = std::fs::File::open(epub).map_err(|e| format!("打开 {} 失败: {e}", epub.display()))?;
     let mut zip = zip::ZipArchive::new(std::io::BufReader::new(file)).map_err(|e| format!("解 EPUB 失败: {e}"))?;
     let container = read_text(&mut zip, "META-INF/container.xml").ok_or("缺 META-INF/container.xml")?;
@@ -87,10 +87,9 @@ pub fn cover_image_of(epub: &Path) -> Option<(String, Vec<u8>)> {
 /// 这本 EPUB 是不是"从右往左"翻页：OPF `<spine page-progression-direction="rtl">`（日漫常见）。只读
 /// container.xml 和 OPF 两个条目，不解压整本（漫画一卷可达数百 MB）。读不到/不是 EPUB 一律 `false`。
 /// 给 xochitl 阅读器的"日漫从右往左翻页"用（book-serve `GET /reading-direction/{uuid}`，2026-09-24）。
+/// 判据与写入共用 [`crate::direction`]（2026-09-25 母版库可按书指定方向后收拢到那里）。
 pub fn epub_is_rtl(epub: &Path) -> bool {
-    let Ok((_, _, opf)) = open_opf(epub) else { return false };
-    static SPINE: OnceLock<Regex> = OnceLock::new();
-    re(&SPINE, r#"(?s)<spine\b[^>]*?\bpage-progression-direction\s*=\s*["']rtl["']"#).is_match(&opf)
+    crate::direction::spine_direction_file(epub) == Some(crate::direction::PageDirection::Rtl)
 }
 
 /// 造占位 EPUB：显示名 = `title`（`None` 取真书自己的 `dc:title`），封面 = 真书的封面（找不到就没有封面页，

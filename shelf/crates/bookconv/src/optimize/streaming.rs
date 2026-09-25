@@ -97,7 +97,7 @@ impl<'a> StreamingOptimize<'a> {
         let (stored, deflated) = (crate::epubzip::stored(), crate::epubzip::deflated());
         // 图片本身已是 JPEG/PNG：deflate 只能再榨一点（实测乱马 6%），用最快档（级别 1）拿大部分收益、少花 CPU。
         let deflated_fast = deflated.compression_level(Some(1));
-        let mut xf = EntryXform::new(&aside_index, opts.footnote, title, opf_name.as_deref());
+        let mut xf = EntryXform::new(&aside_index, opts.footnote, title, opts.page_direction, opf_name.as_deref());
         let total_entries = entries.len();
         // 图片并行处理（见 `imgpool`）：主线程按条目顺序读原图字节、提交给 worker、按原顺序取回结果写 zip；
         // 提前提交 `lookahead` 张（读原图字节几乎不花时间，处理才慢），处理与写盘/读盘重叠。结果与逐张顺序处理逐字节相同。
