@@ -98,13 +98,18 @@ pub fn epub_placeholder(real_epub: &Path, title: Option<&str>) -> Result<Vec<u8>
     let (mut zip, opf_path, opf) = open_opf(real_epub)?;
     let cover = find_cover(&mut zip, &opf_path, &opf);
     static TITLE: OnceLock<Regex> = OnceLock::new();
-    let real_title = re(&TITLE, r#"(?s)<dc:title\b[^>]*>(.*?)</dc:title>"#).captures(&opf).map(|c| crate::wash::plain_text(&c[1]).trim().to_string()).filter(|t| !t.is_empty());
+    // OPF 里读出的是转义过的 XML 文本：先还原再在下面统一转义，否则 `A &amp; B` 会被写成 `A &amp;amp; B`（设备显示名带字面 `&amp;`）。
+    let from_opf = |c: &regex::Captures| crate::util::xml_unescape(&crate::wash::plain_text(&c[1])).trim().to_string();
+    let real_title = re(&TITLE, r#"(?s)<dc:title\b[^>]*>(.*?)</dc:title>"#).captures(&opf).map(|c| from_opf(&c)).filter(|t| !t.is_empty());
     let title: String = title.map(str::to_string).or(real_title).unwrap_or_else(|| "未命名".into());
     let title = title.as_str();
     static CREATOR: OnceLock<Regex> = OnceLock::new();
-    let creator = re(&CREATOR, r#"(?s)<dc:creator\b[^>]*>(.*?)</dc:creator>"#).captures(&opf).map(|c| c[1].trim().to_string()).unwrap_or_default();
+    // 作者/语言同样按"读出→还原→转义"处理：此前原样拼进占位 OPF，原书里若是 CDATA、嵌套标签或非法字符，占位 OPF 就不是
+    // 合法 XML（xochitl 严格解析，占位导入失败）。
+    let creator = re(&CREATOR, r#"(?s)<dc:creator\b[^>]*>(.*?)</dc:creator>"#).captures(&opf).map(|c| from_opf(&c)).unwrap_or_default();
     static LANG: OnceLock<Regex> = OnceLock::new();
-    let lang = re(&LANG, r#"(?s)<dc:language\b[^>]*>(.*?)</dc:language>"#).captures(&opf).map(|c| c[1].trim().to_string()).unwrap_or_else(|| "zh".into());
+    let lang = re(&LANG, r#"(?s)<dc:language\b[^>]*>(.*?)</dc:language>"#).captures(&opf).map(|c| from_opf(&c)).filter(|l| !l.is_empty()).unwrap_or_else(|| "zh".into());
+    let (creator, lang) = (crate::util::xml_escape(&creator), crate::util::xml_escape(&lang));
 
     let t = crate::util::xml_escape(title);
     let (cover_item, cover_meta, page_body) = match &cover {
@@ -234,6 +239,27 @@ mod tests {
         let e = entries_of(&out);
         assert_eq!(e["cover.jpg"], b"\xFF\xD8REALCOVER\xFF\xD9", "必须回退到第一页的真图片，而不是 txt");
         assert!(!e.contains_key("cover.txt"));
+    }
+
+    /// 书名/作者带 `&` 等：OPF 里是 `&amp;`，占位里必须还是 `&amp;`（此前书名被写成 `&amp;amp;`，设备显示名多出字面 `&amp;`）。
+    #[test]
+    fn placeholder_does_not_double_escape_title_or_creator() {
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("amp.epub");
+        let mut z = zip::ZipWriter::new(std::fs::File::create(&p).unwrap());
+        let o = zip::write::SimpleFileOptions::default();
+        z.start_file("META-INF/container.xml", o).unwrap();
+        z.write_all(br#"<container><rootfiles><rootfile full-path="content.opf"/></rootfiles></container>"#).unwrap();
+        z.start_file("content.opf", o).unwrap();
+        z.write_all(br#"<package><metadata><dc:title>Tom &amp; Jerry</dc:title><dc:creator>A &lt;B&gt; &amp; C</dc:creator></metadata><manifest><item id="c1" href="p1.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="c1"/></spine></package>"#).unwrap();
+        z.start_file("p1.xhtml", o).unwrap();
+        z.write_all(b"<html><body><p>x</p></body></html>").unwrap();
+        z.finish().unwrap();
+        let out = epub_placeholder(&p, None).unwrap();
+        let opf = String::from_utf8(entries_of(&out)["content.opf"].clone()).unwrap();
+        assert!(opf.contains("<dc:title>Tom &amp; Jerry</dc:title>"), "{opf}");
+        assert!(opf.contains("<dc:creator>A &lt;B&gt; &amp; C</dc:creator>"), "{opf}");
+        assert!(crate::check::check_epub(&out, true).unwrap().ok);
     }
 
     #[test]

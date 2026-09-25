@@ -21,6 +21,51 @@ pub fn xml_escape(s: &str) -> String {
     out
 }
 
+/// [`xml_escape`] 的反向：把 XML 文本里的字符引用还原（`&amp; &lt; &gt; &quot; &apos;` 与 `&#N;`/`&#xH;`）；认不出的
+/// `&…` 原样保留。从 OPF/正文**读出**文字再**写进**别处时用——不先还原就再转义一遍，`A &amp; B` 会变成
+/// `A &amp;amp; B`，设备上显示成字面的 "A &amp; B"。
+pub fn xml_unescape(s: &str) -> std::borrow::Cow<'_, str> {
+    if !s.contains('&') {
+        return std::borrow::Cow::Borrowed(s);
+    }
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(i) = rest.find('&') {
+        out.push_str(&rest[..i]);
+        rest = &rest[i..];
+        let decoded = rest.find(';').filter(|&j| j <= 12).and_then(|j| {
+            let ent = &rest[1..j];
+            let c = match ent {
+                "amp" => Some('&'),
+                "lt" => Some('<'),
+                "gt" => Some('>'),
+                "quot" => Some('"'),
+                "apos" => Some('\''),
+                _ => ent
+                    .strip_prefix("#x")
+                    .or_else(|| ent.strip_prefix("#X"))
+                    .map(|h| u32::from_str_radix(h, 16))
+                    .or_else(|| ent.strip_prefix('#').map(|d| d.parse::<u32>()))
+                    .and_then(|r| r.ok())
+                    .and_then(char::from_u32),
+            };
+            c.map(|c| (c, j + 1))
+        });
+        match decoded {
+            Some((c, len)) => {
+                out.push(c);
+                rest = &rest[len..];
+            }
+            None => {
+                out.push('&');
+                rest = &rest[1..];
+            }
+        }
+    }
+    out.push_str(rest);
+    std::borrow::Cow::Owned(out)
+}
+
 /// XML 1.0 §2.2 允许的字符：`#x9 | #xA | #xD | [#x20-#xD7FF] | [#xE000-#xFFFD] | [#x10000-#x10FFFF]`
 /// （Rust `char` 本来就不含代理区）。
 pub fn is_xml_char(c: char) -> bool {
@@ -209,6 +254,15 @@ mod tests {
         assert_eq!(xml_escape(r#"a&b<c>d"e"#), "a&amp;b&lt;c&gt;d&quot;e");
         assert_eq!(xml_escape("纯文本"), "纯文本");
         assert_eq!(xml_escape("a\u{0}b\u{1}c\td\u{FFFE}e"), "abc\tde", "XML 1.0 不允许的字符直接丢弃");
+    }
+
+    #[test]
+    fn xml_unescape_reverses_escape_and_char_refs() {
+        let raw = "A & B <c> \"d\" 中";
+        assert_eq!(xml_unescape(&xml_escape(raw)), raw);
+        assert_eq!(xml_unescape("&#20013;&#x6587;&apos;"), "中文'");
+        assert_eq!(xml_unescape("a & b &unknown; &#xZZ; &"), "a & b &unknown; &#xZZ; &", "认不出的原样保留");
+        assert!(matches!(xml_unescape("plain"), std::borrow::Cow::Borrowed(_)));
     }
 
     #[test]
