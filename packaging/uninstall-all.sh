@@ -71,11 +71,16 @@ cj_rm_payload "$CJ_HOME/$PKG" "$@"
 DEVICE_SCRIPT
 }
 
-uninstall_chrony_boot_wakelock() { uninstall_usr_step chrony-boot-wakelock.service pkg-chrony-boot-wakelock chrony-boot-wakelock.service; }
-uninstall_xovi_persist() { uninstall_usr_step xovi-reenable.service pkg-xovi-persist xovi-reenable.service; }
+# 载荷清单取 lib.sh 的 step_payload（与 deploy-* 推送同一份）；有意按词展开成 "目录 文件…"
+# shellcheck disable=SC2046
+uninstall_chrony_boot_wakelock() { uninstall_usr_step chrony-boot-wakelock.service $(step_payload chrony-boot-wakelock); }
+# shellcheck disable=SC2046
+uninstall_xovi_persist() { uninstall_usr_step xovi-reenable.service $(step_payload xovi-persist); }
 
-uninstall_wifi_watch() { dev_script <<'DEVICE_SCRIPT'
+# shellcheck disable=SC2046
+uninstall_wifi_watch() { dev_script $(step_payload wifi-watch) <<'DEVICE_SCRIPT'
 set -eu
+PKG="$1"; shift
 cj_require_root || exit 1
 rc=0; cj_remove_usr_unit wifi-watch.service multi-user.target.wants || rc=$?
 [ "$rc" = 0 ] || [ "$rc" = 3 ] || exit 1
@@ -85,17 +90,18 @@ if [ "$rc" = 3 ]; then
 else
     rm -f "$CJ_HOME/.local/bin/wifi-watch.sh"
     echo "-- 已删 ~/.local/bin/wifi-watch.sh（cangjie-backups/ 下的备份不动）"
-    cj_rm_payload "$CJ_HOME/pkg-wifi-watch" wifi-watch.service wifi-watch.sh
+    cj_rm_payload "$CJ_HOME/$PKG" "$@"
 fi
 DEVICE_SCRIPT
 }
 
 # 从 extensions.d 摘除一个 xovi 扩展本体（+ 清同名的 .crashed 崩溃标记 + 推送载荷目录）。不碰 reading-qol.json（多个扩展
-# 共用同一份配置，卸一个不该动别人的开关）、不碰 cangjie-backups/（那是回滚安全网）。$1=.so 文件名 $2=载荷目录名
+# 共用同一份配置，卸一个不该动别人的开关）、不碰 cangjie-backups/（那是回滚安全网）。$1=.so 文件名 $2=步骤名
 remove_xovi_extension() {
-    dev_script "$1" "$2" <<'DEVICE_SCRIPT'
+    # shellcheck disable=SC2046  # step_payload 有意按词展开成 "目录 文件…"
+    dev_script "$1" $(step_payload "$2") <<'DEVICE_SCRIPT'
 set -eu
-SO="$1"; PKG="$2"
+SO="$1"; PKG="$2"; shift 2
 cj_require_root || exit 1
 EXT="$CJ_XOVI/extensions.d"
 # 待换入区里的新版也要撤掉：否则下一次 cj_xochitl_apply（xovi-apply / 任何单独部署）会把刚卸掉的扩展又换进 extensions.d
@@ -112,11 +118,11 @@ if [ "$MAPPED" = "1" ]; then
     # 与 devlib.sh 头注 H3 同类：运行中的 xochitl 还映射着刚删掉的 .so，此时让它退出（restart/stop）有崩溃→整机重启的风险
     echo "   ⚠ 运行中的 xochitl 仍加载着 $SO（已删的旧文件）。要立刻停用请**整机重启**（reboot），别 systemctl restart xochitl。"
 fi
-cj_rm_payload "$CJ_HOME/$PKG" "$SO" deploy/install.sh deploy/xovi-ext-install.sh deploy/devlib.sh deploy
+cj_rm_payload "$CJ_HOME/$PKG" "$@"
 DEVICE_SCRIPT
 }
 uninstall_hl_snap() { remove_xovi_extension hl-snap.so hl-snap; }
-uninstall_handwriting_stroke() { remove_xovi_extension hw-stroke.so hw-stroke; }
+uninstall_handwriting_stroke() { remove_xovi_extension hw-stroke.so handwriting-stroke; }
 
 uninstall_sidebar_entry() {
     dev_script <<'DEVICE_SCRIPT'

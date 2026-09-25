@@ -35,7 +35,7 @@ case "$NAME" in
         DONE_NOTE="验证：ssh 上设备 systemctl is-active wifi-watch；journalctl -u wifi-watch 看固化/重连日志。" ;;
     *) echo "!! 未知单元 $NAME"; exit 2 ;;
 esac
-DEST="/home/root/pkg-$NAME"
+DEST="/home/root/$(step_payload_dir "$NAME")"   # 载荷目录与 uninstall-all 共用 lib.sh 的 step_payload
 require_device
 
 echo "== 推送 $UNIT 到 root@$HOST:$DEST（md5 校验）=="

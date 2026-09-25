@@ -24,10 +24,11 @@ case "${1:-}" in -h|--help) echo "$USAGE"; exit 0 ;; esac
 NAME="${1:?$USAGE}"; shift
 host_arg "$USAGE" "$@"
 case "$NAME" in
-    hl-snap)   DIR=../enhance/hl-snap;            SO=hl-snap.so;   DEST=/home/root/hl-snap ;;
-    hw-stroke) DIR=../enhance/handwriting-stroke; SO=hw-stroke.so; DEST=/home/root/hw-stroke ;;
+    hl-snap)   DIR=../enhance/hl-snap;            SO=hl-snap.so;   STEP=hl-snap ;;
+    hw-stroke) DIR=../enhance/handwriting-stroke; SO=hw-stroke.so; STEP=handwriting-stroke ;;
     *) echo "!! 未知扩展 $NAME（hl-snap|hw-stroke）"; exit 2 ;;
 esac
+DEST="/home/root/$(step_payload_dir "$STEP")"   # 载荷目录与 uninstall-all 共用 lib.sh 的 step_payload
 
 require_device
 echo "== 构建 $SO =="

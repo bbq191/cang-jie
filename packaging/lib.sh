@@ -228,6 +228,21 @@ step_script() {
 }
 word_in() { case " $2 " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
 
+# step_payload STEP：该步骤的 deploy-* 推到设备 $HOME 下的载荷——"目录名 文件…"（文件在前、子目录在后）。
+# deploy-usr-unit / deploy-xovi-ext 按它定推送目录，uninstall-all 按它清（cj_rm_payload），两边同一份清单
+#（2026-09-25 审计；原先两边各写一遍）。没有独立载荷目录的步骤返回 1。
+step_payload() {
+    case "$1" in
+        chrony-boot-wakelock) echo "pkg-chrony-boot-wakelock chrony-boot-wakelock.service" ;;
+        xovi-persist) echo "pkg-xovi-persist xovi-reenable.service" ;;
+        wifi-watch) echo "pkg-wifi-watch wifi-watch.service wifi-watch.sh" ;;
+        hl-snap) echo "hl-snap hl-snap.so deploy/install.sh deploy/xovi-ext-install.sh deploy/devlib.sh deploy" ;;
+        handwriting-stroke) echo "hw-stroke hw-stroke.so deploy/install.sh deploy/xovi-ext-install.sh deploy/devlib.sh deploy" ;;
+        *) return 1 ;;
+    esac
+}
+step_payload_dir() { sp_p="$(step_payload "$1")" || return 1; echo "${sp_p%% *}"; }
+
 # ── 参数解析 / 步骤运行 ────────────────────────────────────────────────────
 # parse_step_args "$@"  →  设 HOST FORCE PURGE SKIP DRY FORCE_APPLY；未知参数 exit 2。
 # 用法：[host] [--force] [--purge] [--force-apply] [--dry-run] [--skip a,b | --skip=a,b] [-h|--help]
