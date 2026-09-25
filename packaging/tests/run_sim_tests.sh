@@ -940,6 +940,83 @@ check "静态守卫：verify 采集脚本非空" test -s "$R/collector.sh"
 check "静态守卫：verify 采集脚本不含 systemctl 写操作 / mount / rm / mv / cp / 写文件重定向 / cj_xochitl_apply / 标记增删" test -z "$(grep -nE 'systemctl +(start|stop|restart|reload|enable|disable|daemon-reload|kill|mask|reset-failed)|\bmount\b|(^|[;&|[:space:]])(rm|mv|cp|mkdir|touch|ln|chmod|kill)[[:space:]]|>>|>[[:space:]]*"?\$|cj_xochitl_apply|cj_pending_(mark|clear)|cj_so_(stage|commit|unstage)|xovi/start' "$R/collector.sh")"
 unset CJ_ALLOWLIST_LOCAL
 
+# ═══════════════════════════ 9. 2026-09-25 第四轮审计新增 ═══════════════════════════
+section "2026-09-25 第四轮：待换入区过时版本 / 重启失败 / battop verity / 连接次数"
+HLSO="$REPO/enhance/hl-snap/hl-snap.so"
+# 待换入区里有更早一轮的旧版（xovi 暂未生效时直接原子替换）：必须撤掉，否则随后的生效步骤会把它盖回来
+new_sandbox; EXT="$R/home/root/xovi/extensions.d"; SOP="$R/home/root/.cangjie-stage/so-pending"
+echo OLDSO > "$EXT/hl-snap.so"; mkdir -p "$SOP"; echo STALE > "$SOP/hl-snap.so"; xovi_live off
+( cd "$PKG" && CJ_SKIP_BUILD=1 DEFER_XOVI_START=1 run sh deploy-hl-snap.sh 127.0.0.1 ) >"$R/out.txt" 2>&1; rc=$?
+check "xovi 未生效时直接装新版：待换入区里过时的旧版一并撤掉" test "$rc" -eq 0 -a ! -e "$SOP/hl-snap.so" -a "$(md5sum < "$EXT/hl-snap.so")" = "$(md5sum < "$HLSO")"
+( cd "$PKG" && run sh deploy-xovi-apply.sh 127.0.0.1 ) >/dev/null 2>&1
+check "  └ 随后生效（xovi/start）：extensions.d 里仍是新版，没被过时的待换入版本盖回" test "$(md5sum < "$EXT/hl-snap.so")" = "$(md5sum < "$HLSO")"
+
+# systemctl reboot 本身失败：不能让 host 空等设备重启并把核对结果当成本步结果；标记要补回去，下次还会再试
+new_sandbox; EXT="$R/home/root/xovi/extensions.d"; echo x > "$EXT/hl-snap.so"; xovi_live on
+mkdir -p "$CJ_PENDING_DIR"; : > "$CJ_PENDING_DIR/shelf-qmd"; : > "$CJ_SIM_LOG"
+( cd "$PKG" && CJ_SIM_REBOOT_FAIL=1 CJ_APPLY_VERIFY=1 CJ_REBOOT_DOWN_WAIT=0 CJ_REBOOT_UP_WAIT=0 CJ_REBOOT_SETTLE=0 run sh deploy-xovi-apply.sh 127.0.0.1 ) >"$R/out.txt" 2>&1; rc=$?
+check "reboot 失败：退出非 0、提示手动 reboot、不去等设备重启/不跑核对" test "$rc" -ne 0 -a -n "$(grep '手动 reboot' "$R/out.txt")" -a -z "$(grep -e '设备已回来' -e '^VERIFY-SUMMARY' "$R/out.txt")"
+check "reboot 失败：补回待生效标记（下次 xovi-apply 仍会判定需要生效）" test -n "$(ls -A "$CJ_PENDING_DIR" 2>/dev/null)"
+
+# battop + dm-verity：单元以前装过 → 换了二进制且在跑就重启用上新版（与 wifi-watch 09-24 同一类）；旧 timer 不碰 rootfs
+new_sandbox; echo BIN1 > "$R/battop.bin"
+( cd "$PKG" && CJ_BATTOP_BIN="$R/battop.bin" run sh deploy-battop.sh 127.0.0.1 ) >/dev/null 2>&1
+echo BIN2 > "$R/battop.bin"; : > "$CJ_SYSD/battop.timer"; : > "$CJ_SIM_LOG"
+CJ_SIM_VERITY=1 bash -c "cd '$PKG' && CJ_BATTOP_BIN='$R/battop.bin' PATH='$STUBS:'\$PATH sh deploy-battop.sh 127.0.0.1" >"$R/out.txt" 2>&1; rc=$?
+check "battop + dm-verity + 单元以前装过：二进制更新后重启服务载入新版，不 remount、退出 0" test "$rc" -eq 0 -a "$(cat "$R/home/root/battop/battop")" = BIN2 -a "$(count_log 'restart battop.service')" = 1 -a "$(count_log remount)" = 0
+check "battop + dm-verity：旧 battop.timer 不去删（rootfs 不可写）" test -f "$CJ_SYSD/battop.timer"
+new_sandbox; echo BIN1 > "$R/battop.bin"
+CJ_SIM_VERITY=1 bash -c "cd '$PKG' && PATH='$STUBS:'\$PATH && . ./lib.sh && HOST=127.0.0.1 && CJ_BATTOP_BIN='$R/battop.bin' run_step battop sh ./deploy-battop.sh 127.0.0.1 >/dev/null 2>&1; echo \"D=\$DONE|N=\$NOTAPPL\"" >"$R/out.txt" 2>&1
+check "run_step：battop 在 dm-verity 下单元从没装过 → 记为\"前置条件不满足\"而不是已安装" test -n "$(grep '^D=|N=' "$R/out.txt")" -a -n "$(grep '^   battop：dm-verity' "$R/out.txt")"
+
+# chrony-boot-wakelock：收到 TERM（关机/重启时 systemd 发）要放锁并**退出**，不能接着轮询到 120 秒
+WL="$R/wl"; mkdir -p "$WL/bin"; : > "$WL/lock"; : > "$WL/unlock"
+printf '#!/bin/sh\necho no\n' > "$WL/bin/timedatectl"; chmod +x "$WL/bin/timedatectl"
+WL_CMD="$(sed -n '/^ExecStart=/,/[^\\]$/p' "$PKG/chrony-boot-wakelock.service" | sed -e 's/^ExecStart=\/bin\/sh -c .//' -e 's/\\$//' | tr -d '\n' | sed -e "s/'\$//" -e "s#/sys/power/wake_lock#$WL/lock#g" -e "s#/sys/power/wake_unlock#$WL/unlock#g")"
+PATH="$WL/bin:$PATH" sh -c "$WL_CMD" & wl_pid=$!
+# 等它真的拿到锁（trap 已挂上）再发 TERM——固定 sleep 在机器繁忙时会抢在 trap 之前，测出假失败
+for _i in $(seq 1 50); do [ -s "$WL/lock" ] && break; sleep 0.1; done
+kill -TERM "$wl_pid" 2>/dev/null
+# sh 在前台 sleep 2 结束后才处理 trap（真机上 systemd 连 sleep 一起 TERM，立即退出）：最多等 6 秒
+wl_gone=0; for _i in $(seq 1 30); do kill -0 "$wl_pid" 2>/dev/null || { wl_gone=1; break; }; sleep 0.2; done
+kill -KILL "$wl_pid" 2>/dev/null; wait "$wl_pid" 2>/dev/null
+check "chrony-boot-wakelock：拿到锁；收到 TERM 后几秒内退出（不再轮询到超时）并放锁" test "$(cat "$WL/lock")" = cangjie-chrony-boot -a "$wl_gone" = 1 -a "$(cat "$WL/unlock")" = cangjie-chrony-boot
+
+# chrony-cn / timezone-cn 的 overlay 分支：写 rootfs 底层失败要报错退出（且恢复 ro），不能打印"已改"
+# （假 mount 不真的 bind，沙箱里预先放好 "bind 视图" 目录并设为只读，让写底层失败）
+new_sandbox; printf 'overlay /etc overlay rw 0 0\n' > "$R/mounts-ov"
+mkdir -p "$R/chrony-cn.rootbind/etc" "$R/timezone-cn.rootbind/etc"
+printf 'server a.google.com iburst\n' > "$R/chrony-cn.rootbind/etc/chrony.conf"; chmod 555 "$R/chrony-cn.rootbind/etc"
+printf 'server a.google.com iburst\n' > "$R/chrony.conf"; : > "$CJ_SIM_LOG"
+( cd "$PKG" && CJ_CHRONY_CONF="$R/chrony.conf" CJ_MOUNTS="$R/mounts-ov" CJ_BACKUP_DIR="$R/cbk" CJ_TMPDIR="$R" run sh deploy-chrony-cn.sh 127.0.0.1 ) >"$R/out.txt" 2>&1; rc=$?
+check "chrony-cn overlay：写底层失败 → 退出非 0、报错、不说\"已改\"、最后一次 mount 是 ro" test "$rc" -ne 0 -a -n "$(grep '失败（底层未动）' "$R/out.txt")" -a -z "$(grep '底层已改' "$R/out.txt")" -a "$(last_mount)" = "mount -o remount,ro /"
+chmod 755 "$R/chrony-cn.rootbind/etc"
+echo TZ > "$R/Shanghai"; chmod 555 "$R/timezone-cn.rootbind/etc"; : > "$CJ_SIM_LOG"
+( cd "$PKG" && CJ_ZONEINFO="$R/Shanghai" CJ_LOCALTIME="$R/localtime" CJ_MOUNTS="$R/mounts-ov" CJ_BACKUP_DIR="$R/cbk" CJ_TMPDIR="$R" run sh deploy-timezone-cn.sh 127.0.0.1 ) >"$R/out.txt" 2>&1; rc=$?
+check "timezone-cn overlay：写底层失败 → 退出非 0、报错、不说\"已改\"、最后一次 mount 是 ro" test "$rc" -ne 0 -a -n "$(grep '失败（底层未动）' "$R/out.txt")" -a -z "$(grep '底层已改' "$R/out.txt")" -a "$(last_mount)" = "mount -o remount,ro /"
+chmod 755 "$R/timezone-cn.rootbind/etc"
+
+# 连接次数（2026-09-25 合批）：推送一次 ssh 建目录 + 每文件一次 scp + 一次 ssh 取全部 md5；sidebar 探测/落位+生效各合一
+new_sandbox; : > "$CJ_SIM_LOG"
+( cd "$PKG" && CJ_SKIP_BUILD=1 DEFER_XOVI_START=1 run sh deploy-hl-snap.sh 127.0.0.1 ) >/dev/null 2>&1; rc=$?
+check "hl-snap 部署：4 次 ssh（连通检查/建目录/取 md5/安装）+ 4 次 scp（旧版 13 次 ssh）" test "$rc" -eq 0 -a "$(count_log '^ssh')" = 4 -a "$(count_log '^scp')" = 4
+: > "$CJ_SIM_LOG"
+( cd "$PKG" && DEFER_XOVI_START=1 run sh deploy-sidebar-entry.sh 127.0.0.1 ) >/dev/null 2>&1; rc=$?
+check "sidebar-entry 部署：5 次 ssh（连通/探测/建目录/取 md5/落位）+ 2 次 scp（旧版 10 次 ssh）" test "$rc" -eq 0 -a "$(count_log '^ssh')" = 5 -a "$(count_log '^scp')" = 2
+new_sandbox; SOP="$R/home/root/.cangjie-stage"; mkdir -p "$SOP"; echo keep > "$SOP/battop.new"; : > "$CJ_SIM_LOG"
+( cd "$PKG" && CJ_SIM_SCP_CORRUPT=hl-snap.so CJ_SKIP_BUILD=1 DEFER_XOVI_START=1 run sh deploy-hl-snap.sh 127.0.0.1 ) >"$R/out.txt" 2>&1; rc=$?
+check "合批推送：只有 md5 对不上的那个文件被删，其余已校验的暂存文件保留、没进入安装" test "$rc" -ne 0 -a ! -e "$R/home/root/hl-snap/hl-snap.so" -a -f "$R/home/root/hl-snap/deploy/install.sh" -a -n "$(grep 'md5 对不上：hl-snap.so' "$R/out.txt")" -a -z "$(grep "^ssh sh '.*/deploy/install.sh" "$CJ_SIM_LOG")"
+new_sandbox; export CJ_ALLOWLIST_LOCAL="$R/allow.local.txt" CJ_BATTOP_BIN="$R/battop.bin" CJ_SKIP_BUILD=1 SHELF_NO_BUILD=1; echo B > "$R/battop.bin"; : > "$CJ_SIM_LOG"
+( cd "$PKG" && run sh install-all.sh 127.0.0.1 --force --skip chrony-cn,timezone-cn ) >/dev/null 2>&1; rc=$?
+check "install-all：整轮只做一次连通检查（各步骤不再各自 ssh true）" test "$rc" -eq 0 -a "$(count_log '^ssh true')" = 1
+unset CJ_ALLOWLIST_LOCAL CJ_BATTOP_BIN CJ_SKIP_BUILD SHELF_NO_BUILD
+
+# 预检提示与 cj_xochitl_apply 的实际分支一致（xovi 未生效但会装 xovi-reenable → 整机重启，不是"一定 xovi/start"）
+new_sandbox; export CJ_ALLOWLIST_LOCAL="$R/allow.local.txt"; xovi_live off
+( cd "$PKG" && run sh install-all.sh 127.0.0.1 --force --skip chrony-cn,timezone-cn,battop,wifi-watch,chrony-boot-wakelock,hl-snap,handwriting-stroke,sidebar-entry,shelf,xovi-apply ) >"$R/out.txt" 2>&1
+check "预检：xovi 未生效时如实说明'装了 xovi-reenable 就整机重启，否则 xovi/start'" test -n "$(grep 'xovi 尚未生效.*整机重启.*否则 xovi/start' "$R/out.txt")"
+unset CJ_ALLOWLIST_LOCAL
+
 # ═══════════════════════════ 5. 静态守卫 / 清单对称 ═══════════════════════════
 section "静态守卫"
 cd "$REPO" || exit 1

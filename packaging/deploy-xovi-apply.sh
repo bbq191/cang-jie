@@ -6,8 +6,9 @@
 # 没有"只重载一个扩展"的机制，多个步骤各自重启等于短时间内重启 xochitl 多次，会撞 xochitl 的
 # watchdog+StartLimit（2026-09-11 install-all 连续装 hl-snap+handwriting-stroke，真机触发过意外整机重启）。
 #
-# ⚠ 怎么"重启"由设备端 devlib.sh 的 cj_xochitl_apply 判定（2026-09-20 修）：
-#   xovi 已在运行的 xochitl 里生效 → systemctl restart xochitl；没生效才 xovi/start。
+# ⚠ 怎么"重启"由设备端 devlib.sh 的 cj_xochitl_apply 判定：
+#   xovi 已在运行的 xochitl 里生效，或装了 xovi-reenable → 换入待换入区后主动整机重启（2026-09-25 起；单独
+#   restart xochitl 有概率在它退出途中崩溃）；都没有才 xovi/start。
 #   旧版无条件 xovi/start：在已生效的 xochitl 上它会 umount 重挂 drop-in 目录，xochitl SEGV → 整机自动重启
 #   （2026-09-20 真机事故；重跑 install-all 必踩）。重启前会打印"打断阅读"提示并留 5 秒宽限。
 #
@@ -21,7 +22,7 @@ set -eu
 cd "$(dirname "$0")"
 # shellcheck disable=SC1091
 . ./lib.sh
-USAGE="用法：./deploy-xovi-apply.sh [host] [--force]      host 默认 10.11.99.1；--force = 无论有无待生效改动都重启 xochitl"
+USAGE="用法：./deploy-xovi-apply.sh [host] [--force]      host 默认 10.11.99.1；--force = 无论有无待生效改动都让它生效一次（整机重启）"
 FORCE_RESTART=0
 # 把 --force 摘出去，其余位置参数（[host]）原样交给 host_arg（轮转一遍 "$@"）
 _n=$#

@@ -65,7 +65,8 @@ if grep -q " /etc overlay " "$MOUNTS"; then
         else
             mkdir -p "$BK_DIR"
             echo "$(date +%Y%m%d-%H%M%S) /etc/localtime 改前：$(prev_desc "$LOWER")" >> "$BK_DIR/timezone-cn.log"
-            ln -sfn "$TARGET" "$LOWER" && sync
+            # 失败要如实报错退出（EXIT trap 卸 bind、恢复 ro）——旧版不看返回值，写失败也打印"已改"（2026-09-25 审计）
+            ln -sfn "$TARGET" "$LOWER" && sync || { echo "!! 改 rootfs 底层 /etc/localtime 失败（底层未动）"; exit 1; }
             echo "-- rootfs 底层已改（记录见 $BK_DIR/timezone-cn.log）"
             changed=1
         fi

@@ -11,8 +11,8 @@
 #                    BatchMode + ConnectTimeout，休眠/断线时快速失败而不是卡死
 #   shquote          把任意字符串安全地拼进远端命令行（M9/M10）
 #   dev_script       `dev_script ARG… <<'EOF' … EOF`：devlib.sh + 脚本体经 `ssh sh -s` 在设备上执行
-#   push_verified    scp 到"暂存路径"→ 逐个 md5 对拍；不对就删暂存并失败，绝不落到最终位置（H3）
-#   push_devlib      把 devlib.sh 推到设备某目录（供设备端 install.sh source）
+#   push_verified    一批文件 scp 到"暂存路径"→ 逐个 md5 对拍；不对就删暂存并失败，绝不落到最终位置（H3）；
+#                    一次 ssh 建目录 + 每文件一次 scp + 一次 ssh 取全部 md5
 #   步骤表           STEP_ORDER / step_script / STEP_DEFER / STEP_CONFIG_ONLY（install-all 与 uninstall-all 共用，
 #                    保证两边清单对称）
 #   parse_step_args  install-all / uninstall-all 共用的 [host] --force --purge --force-apply --dry-run --skip -h 解析
@@ -51,11 +51,18 @@ dev_script() {
 
 # run_apply CMD…：跑一段可能让设备主动整机重启的设备端命令（内部调了 devlib.sh 的 cj_xochitl_apply）。输出照常
 # 打到终端并留一份；见到设备端打印的 CJ-APPLY-REBOOTING 就按成功处理——ssh 随重启断开（退出码 255）不算失败——
-# 并提示设备回来后跑 verify-on-device.sh。其余情况原样返回 CMD 的退出码。stdin 原样交给 CMD（可接 heredoc）。
+# 并提示设备回来后跑 verify-on-device.sh；见到 CJ-APPLY-REBOOT-FAILED（systemctl reboot 本身失败）则不空等、按失败返回。
+# 其余情况原样返回 CMD 的退出码。stdin 原样交给 CMD（可接 heredoc）。
 run_apply() {
     ra_log="$(mktemp)"; ra_rcf="$(mktemp)"
     { ra_c=0; "$@" || ra_c=$?; echo "$ra_c" > "$ra_rcf"; } | tee "$ra_log"
     ra_rc="$(cat "$ra_rcf")"
+    if grep -q '^CJ-APPLY-REBOOT-FAILED$' "$ra_log"; then
+        rm -f "$ra_log" "$ra_rcf"
+        echo "!! 设备没能排上整机重启（见上），改动尚未生效；设备上手动 reboot 后跑：sh verify-on-device.sh $HOST"
+        [ "$ra_rc" != 0 ] || ra_rc=1
+        return "$ra_rc"
+    fi
     if grep -q '^CJ-APPLY-REBOOTING$' "$ra_log"; then
         rm -f "$ra_log" "$ra_rcf"
         wait_reboot_and_verify
@@ -101,7 +108,10 @@ host_arg() {
 }
 
 # require_device：动手前先确认 ssh 通（BatchMode，不会卡在密码提示上）；不通给出下一步该查什么，exit 1。
+# install-all 自己确认过后导出 CJ_DEVICE_OK=<host>，它编排的各步骤就不再各连一次（整轮省 10 次连接）；
+# 之后设备真断了，该步骤的第一条 ssh 会原样报错、记为失败。
 require_device() {
+    [ "${CJ_DEVICE_OK:-}" != "$HOST" ] || return 0
     rd_err="$(rssh true 2>&1)" || {
         echo "!! 连不上 root@$HOST（${CJ_SSH_TIMEOUT}s 超时，BatchMode）。ssh 报错："
         echo "$rd_err" | sed 's/^/     /'
@@ -112,27 +122,51 @@ require_device() {
 }
 
 md5_local() { md5sum "$1" | awk '{print $1}'; }
-md5_remote() { rssh "md5sum $(shquote "$1")" | awk '{print $1}'; }
 
-# push_verified LOCAL REMOTE_STAGE_PATH：scp 到暂存路径（调用方保证它不在 extensions.d 之类的自动加载目录里）
-# 并核对 md5。不一致：删掉暂存文件、返回 1，最终位置从未被碰过。
+# push_verified LOCAL REMOTE [LOCAL REMOTE …]：把一批文件 scp 到各自的"暂存路径"（调用方保证不在 extensions.d
+# 之类的自动加载目录里）并核对 md5。md5 对不上的那个文件从设备上删掉、整体返回 1；最终位置从未被碰过。
+# 连接次数：一次 ssh 建好所有目标目录 → 每个文件一次 scp → 一次 ssh 取回全部 md5（2026-09-25 起合批；
+# 旧版每个文件 mkdir/scp/md5 各一次，deploy-xovi-ext 光推送就 12 次连接）。
 push_verified() {
-    pv_local=$1; pv_remote=$2
-    rssh "mkdir -p $(shquote "$(dirname "$pv_remote")")" || return 1
-    rscp "$pv_local" "root@$HOST:$pv_remote" || { echo "!! scp $pv_local 失败"; return 1; }
-    pv_l="$(md5_local "$pv_local")"
-    pv_r="$(md5_remote "$pv_remote")"
-    if [ -z "$pv_r" ] || [ "$pv_l" != "$pv_r" ]; then
-        echo "!! md5 对不上（本地 $pv_l vs 设备 ${pv_r:-空}），传输可能损坏，不继续（已删设备上的暂存文件 $pv_remote，最终位置未动）"
-        rssh "rm -f $(shquote "$pv_remote")" || true
-        return 1
-    fi
-    echo "-- md5 一致：$(basename "$pv_local")"
-}
-
-# push_devlib REMOTE_DIR：devlib.sh → REMOTE_DIR/devlib.sh（带 md5 校验）
-push_devlib() {
-    push_verified "$CJ_PKG_DIR/devlib.sh" "$1/devlib.sh"
+    { [ $# -ge 2 ] && [ $(($# % 2)) -eq 0 ]; } || { echo "!! push_verified：参数必须成对（LOCAL REMOTE …）"; return 1; }
+    pv_dirs=""; pv_rems=""; pv_odd=1
+    for pv_a in "$@"; do
+        if [ "$pv_odd" = 0 ]; then
+            pv_d="$(shquote "$(dirname "$pv_a")")"
+            case " $pv_dirs " in *" $pv_d "*) ;; *) pv_dirs="$pv_dirs $pv_d" ;; esac
+            pv_rems="$pv_rems $(shquote "$pv_a")"
+        fi
+        pv_odd=$((1 - pv_odd))
+    done
+    rssh "mkdir -p$pv_dirs" || return 1
+    pv_odd=1
+    for pv_a in "$@"; do
+        if [ "$pv_odd" = 1 ]; then pv_local=$pv_a
+        else rscp "$pv_local" "root@$HOST:$pv_a" || { echo "!! scp $pv_local 失败"; return 1; }
+        fi
+        pv_odd=$((1 - pv_odd))
+    done
+    # 每个文件一行 md5（缺失则空行），顺序与参数一致
+    pv_sums="$(rssh "for f in$pv_rems; do s=\$(md5sum \"\$f\" 2>/dev/null) || s=; echo \"\${s%% *}\"; done")" || pv_sums=""
+    pv_bad=""; pv_odd=1; pv_k=0
+    for pv_a in "$@"; do
+        if [ "$pv_odd" = 1 ]; then pv_local=$pv_a
+        else
+            pv_k=$((pv_k + 1))
+            pv_l="$(md5_local "$pv_local")"
+            pv_r="$(printf '%s\n' "$pv_sums" | sed -n "${pv_k}p")"
+            if [ -z "$pv_r" ] || [ "$pv_l" != "$pv_r" ]; then
+                echo "!! md5 对不上：$(basename "$pv_local")（本地 $pv_l vs 设备 ${pv_r:-空}），传输可能损坏，不继续（已删设备上的暂存文件 $pv_a，最终位置未动）"
+                pv_bad="$pv_bad $(shquote "$pv_a")"
+            else
+                echo "-- md5 一致：$(basename "$pv_local")"
+            fi
+        fi
+        pv_odd=$((1 - pv_odd))
+    done
+    [ -z "$pv_bad" ] && return 0
+    rssh "rm -f$pv_bad" || true
+    return 1
 }
 
 # ── 固件安全门（install-all 用）──────────────────────────────────────────
@@ -194,6 +228,21 @@ step_script() {
 }
 word_in() { case " $2 " in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
 
+# step_payload STEP：该步骤的 deploy-* 推到设备 $HOME 下的载荷——"目录名 文件…"（文件在前、子目录在后）。
+# deploy-usr-unit / deploy-xovi-ext 按它定推送目录，uninstall-all 按它清（cj_rm_payload），两边同一份清单
+#（2026-09-25 审计；原先两边各写一遍）。没有独立载荷目录的步骤返回 1。
+step_payload() {
+    case "$1" in
+        chrony-boot-wakelock) echo "pkg-chrony-boot-wakelock chrony-boot-wakelock.service" ;;
+        xovi-persist) echo "pkg-xovi-persist xovi-reenable.service" ;;
+        wifi-watch) echo "pkg-wifi-watch wifi-watch.service wifi-watch.sh" ;;
+        hl-snap) echo "hl-snap hl-snap.so deploy/install.sh deploy/xovi-ext-install.sh deploy/devlib.sh deploy" ;;
+        handwriting-stroke) echo "hw-stroke hw-stroke.so deploy/install.sh deploy/xovi-ext-install.sh deploy/devlib.sh deploy" ;;
+        *) return 1 ;;
+    esac
+}
+step_payload_dir() { sp_p="$(step_payload "$1")" || return 1; echo "${sp_p%% *}"; }
+
 # ── 参数解析 / 步骤运行 ────────────────────────────────────────────────────
 # parse_step_args "$@"  →  设 HOST FORCE PURGE SKIP DRY FORCE_APPLY；未知参数 exit 2。
 # 用法：[host] [--force] [--purge] [--force-apply] [--dry-run] [--skip a,b | --skip=a,b] [-h|--help]
@@ -247,7 +296,7 @@ echo "-- xovi 本体 : $(have "$CJ_XOVI/xovi.so")   （无 → xovi-persist/hl-s
 echo "-- qt-resource-rebuilder : $(have "$CJ_XOVI/exthome/qt-resource-rebuilder")   （无 → sidebar-entry 与 shelf 的 qmd 自动跳过）"
 echo "-- appload   : $(have "$CJ_XOVI/exthome/appload")   （无 → sidebar-entry 自动跳过；3.28 固件需 ≥ 0.6.0）"
 if cj_verity_active; then echo "-- dm-verity : 激活 → 所有写 /usr 的单元（chrony-boot-wakelock/xovi-persist/wifi-watch/battop/shelf 开机链接）会被跳过"; else echo "-- dm-verity : 未激活"; fi
-if cj_xochitl_has_xovi; then echo "-- xochitl 里 xovi 已生效 → 有改动时最后一步换入后整机重启（不跑 xovi/start、不 restart xochitl）"; else echo "-- xochitl 里 xovi 尚未生效 → 最后一步会 xovi/start"; fi
+if cj_xochitl_has_xovi; then echo "-- xochitl 里 xovi 已生效 → 有改动时最后一步换入后整机重启（不跑 xovi/start、不 restart xochitl）"; else echo "-- xochitl 里 xovi 尚未生效 → 最后一步让它生效：装了 xovi-reenable（本轮 xovi-persist 会装，dm-verity 下装不上）就整机重启，否则 xovi/start"; fi
 DEVICE_SCRIPT
 }
 

@@ -109,9 +109,9 @@ if [ "$HAVE_PW" = "1" ]; then
 fi
 # REMOTE_ARGS 每个词已 shquote，要在远端展开。install.sh 读完密码文件即删；它没跑起来（ssh 断了等）时这里兜底清，
 # 不让密码明文留在设备上
+# 兜底清理与安装同一次连接（设备端 install.sh 退出后无论成败都 rm；省一次 ssh）
 rc=0
-rssh "sh $REMOTE/shelf/install.sh$REMOTE_ARGS" || rc=$?
-if [ "$HAVE_PW" = "1" ]; then rssh "rm -f $REMOTE/.pw" 2>/dev/null || true; fi
+rssh "sh $REMOTE/shelf/install.sh$REMOTE_ARGS; rc=\$?; rm -f $REMOTE/.pw; exit \$rc" || rc=$?
 [ "$rc" -eq 0 ] || { echo "!! 设备端 install.sh 退出码 $rc（见上面的输出；载荷仍在 $REMOTE，可 ssh 上去重跑 sh $REMOTE/shelf/install.sh）"; exit "$rc"; }
 # host 侧 HTTPS 探测（设备 busybox wget 做不了自签）：无密码应 401
 if command -v curl >/dev/null 2>&1; then

@@ -12,8 +12,9 @@
 # 用法：./deploy-xovi-ext.sh <hl-snap|hw-stroke> [host]      host 默认 10.11.99.1
 #   环境 DEFER_XOVI_START=1：只把 .so 落盘（设备端 install.sh --no-restart），不重启 xochitl——install-all 编排多个
 #   扩展时用，最后统一重启一次（多次重启撞 watchdog+StartLimit，2026-09-11 真机踩过整机重启）。
-#   单独跑不用管：装完自动重启 xochitl 生效（xovi 已生效 → systemctl restart，否则 xovi/start，见 devlib.sh）；
-#   .so 没变、已加载、也没有别的待生效改动时不重启（2026-09-24）。
+#   单独跑不用管：装完自动生效（xovi 已生效或装了 xovi-reenable → 换入后主动整机重启、设备回来后自动跑
+#   verify-on-device.sh；都没有才 xovi/start，见 devlib.sh 的 cj_xochitl_apply）；
+#   .so 没变、已加载、也没有别的待生效改动时什么都不做（2026-09-24）。
 set -eu
 cd "$(dirname "$0")"
 # shellcheck disable=SC1091
@@ -23,10 +24,11 @@ case "${1:-}" in -h|--help) echo "$USAGE"; exit 0 ;; esac
 NAME="${1:?$USAGE}"; shift
 host_arg "$USAGE" "$@"
 case "$NAME" in
-    hl-snap)   DIR=../enhance/hl-snap;            SO=hl-snap.so;   DEST=/home/root/hl-snap ;;
-    hw-stroke) DIR=../enhance/handwriting-stroke; SO=hw-stroke.so; DEST=/home/root/hw-stroke ;;
+    hl-snap)   DIR=../enhance/hl-snap;            SO=hl-snap.so;   STEP=hl-snap ;;
+    hw-stroke) DIR=../enhance/handwriting-stroke; SO=hw-stroke.so; STEP=handwriting-stroke ;;
     *) echo "!! 未知扩展 $NAME（hl-snap|hw-stroke）"; exit 2 ;;
 esac
+DEST="/home/root/$(step_payload_dir "$STEP")"   # 载荷目录与 uninstall-all 共用 lib.sh 的 step_payload
 
 require_device
 echo "== 构建 $SO =="
@@ -46,10 +48,10 @@ elif ! make -C "$DIR" aarch64; then
 fi
 
 echo "== 推送到 root@$HOST:$DEST（暂存位置，不是 extensions.d；md5 逐个校验）=="
-push_verified "$DIR/$SO" "$DEST/$SO"
-push_verified "$DIR/deploy/install.sh" "$DEST/deploy/install.sh"
-push_verified ./xovi-ext-install.sh "$DEST/deploy/xovi-ext-install.sh"
-push_devlib "$DEST/deploy"
+push_verified "$DIR/$SO" "$DEST/$SO" \
+    "$DIR/deploy/install.sh" "$DEST/deploy/install.sh" \
+    ./xovi-ext-install.sh "$DEST/deploy/xovi-ext-install.sh" \
+    ./devlib.sh "$DEST/deploy/devlib.sh"
 
 echo "== 设备端安装 =="
 ARGS=""

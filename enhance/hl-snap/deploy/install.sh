@@ -10,8 +10,8 @@
 # 用法：./install.sh [--no-restart]
 #   --no-restart  只落盘 hl-snap.so，不重启 xochitl——多个扩展各自重启会在短时间内撞 xochitl 的
 #   watchdog+StartLimit（2026-09-11 真机踩过一次意外整机重启）；install-all 用它，最后统一重启一次。
-#   不带它时：xovi 已生效 → systemctl restart xochitl；否则 xovi/start（见 packaging/devlib.sh 头注，
-#   xovi 已生效时跑 xovi/start 会 SEGV 整机重启）。
+#   不带它时：xovi 已生效或装了 xovi-reenable → 换入后主动整机重启（2026-09-25 起，不单独重启 xochitl）；
+#   否则 xovi/start（见 packaging/devlib.sh 的 cj_xochitl_apply；xovi 已生效时跑 xovi/start 会 SEGV 整机重启）。
 # shellcheck disable=SC2034  # 下面这些变量由 source 进来的 xovi-ext-install.sh 使用
 set -eu
 HERE="$(cd "$(dirname "$0")" && pwd)"

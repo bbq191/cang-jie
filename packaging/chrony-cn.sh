@@ -61,8 +61,11 @@ if grep -q " /etc overlay " "$MOUNTS"; then
             echo "-- rootfs 底层已是国内 NTP，跳过"
         else
             mkdir -p "$BK_DIR"
-            cp "$LOWER" "$BK_DIR/chrony.conf.bak.$(date +%Y%m%d-%H%M%S)"
-            rewrite "$LOWER" "$LOWER.new" && mv "$LOWER.new" "$LOWER" && sync
+            cp "$LOWER" "$BK_DIR/chrony.conf.bak.$(date +%Y%m%d-%H%M%S)" || { echo "!! 备份 chrony.conf 失败，不改底层"; exit 1; }
+            # 失败要如实报错退出（EXIT trap 卸 bind、恢复 ro）——旧版不看返回值，写失败也打印"已改"（2026-09-25 审计）
+            if ! { rewrite "$LOWER" "$LOWER.new" && mv "$LOWER.new" "$LOWER" && sync; }; then
+                rm -f "$LOWER.new"; echo "!! 改 rootfs 底层 chrony.conf 失败（底层未动）"; exit 1
+            fi
             echo "-- rootfs 底层已改（备份在 $BK_DIR）"
             changed=1
         fi

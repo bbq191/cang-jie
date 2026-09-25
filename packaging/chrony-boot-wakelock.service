@@ -27,8 +27,9 @@ ConditionPathExists=/sys/power/wake_lock
 Type=oneshot
 # 轮询 timedatectl 的 NTPSynchronized，成功即提前放锁；120 秒（60×2s）还没同步也放锁退出——
 # 不管结果如何都不长期占着这把锁（trap 保证：就算被 systemd 中途 SIGTERM 也会先放锁再退出，
-# 绝不会把锁永久占着导致设备再也不自动休眠）。
-ExecStart=/bin/sh -c 'trap "echo cangjie-chrony-boot > /sys/power/wake_unlock 2>/dev/null" EXIT TERM INT; \
+# 绝不会把锁永久占着导致设备再也不自动休眠）。TERM/INT 只做 `exit`、放锁交给 EXIT trap——旧版把放锁命令直接挂在
+# TERM 上，处理完信号 shell 还接着轮询，没网时关机/重启要等到 systemd 的停止超时（缺省 90 秒）才 SIGKILL（2026-09-25 审计）。
+ExecStart=/bin/sh -c 'trap "echo cangjie-chrony-boot > /sys/power/wake_unlock 2>/dev/null" EXIT; trap "exit 143" TERM INT; \
     echo cangjie-chrony-boot > /sys/power/wake_lock; \
     i=0; while [ "$i" -lt 60 ]; do \
         [ "$(timedatectl show -p NTPSynchronized --value 2>/dev/null)" = "yes" ] && break; \
