@@ -417,6 +417,10 @@ impl PdfPieceWriter {
         if self.has_toc != !titles.is_empty() {
             return Err("PdfPieceWriter::begin 的 has_toc 跟 finish 传的 titles 对不上".into());
         }
+        // 书签指向不存在的页＝写出一个指向不存在对象的 `/Dest`，读回来（`PdfFileReader::outline_titles`）就是越界页码。
+        if let Some((p, t)) = titles.iter().find(|(p, _)| *p >= self.n) {
+            return Err(format!("书签《{t}》指向第 {} 页，但只有 {} 页", p + 1, self.n));
+        }
         if self.has_toc {
             let base = self.outline_root_id;
             let first_id = base + 1;
@@ -522,7 +526,7 @@ fn parse_obj_index(pdf: &[u8]) -> Result<Vec<usize>, String> {
         return Err("xref count 后缺换行".into());
     }
     p += 1;
-    if pdf.len() < p + count * 20 {
+    if count.checked_mul(20).and_then(|n| n.checked_add(p)).is_none_or(|end| end > pdf.len()) {
         return Err("xref 条目数据被截断".into());
     }
     let mut offsets = vec![0usize; count];
@@ -674,6 +678,13 @@ fn parse_obj_index_from_file(file: &mut std::fs::File) -> Result<(Vec<usize>, us
     }
     let count: usize =
         std::str::from_utf8(&count_digits).ok().and_then(|s| s.parse().ok()).ok_or("xref count 解析失败")?;
+    // count 来自文件本身：先核对"条目表真的装得进文件剩余部分"再分配——损坏/陌生 PDF 写个天文数字，照单
+    // `vec![0; count*20]` 在设备上是分配失败直接 abort（不是 catch_unwind 兜得住的 panic）。这个函数也会被
+    // 用户自己上传的第三方 PDF 走到（>90MB 占位通道读页数、超限拆分投递），不只是自己写的文件。
+    let pos = file.stream_position().map_err(|e| e.to_string())?;
+    if count.checked_mul(20).is_none_or(|n| n as u64 > file_len.saturating_sub(pos)) {
+        return Err("xref 条目数据被截断".into());
+    }
     let mut entries = vec![0u8; count * 20];
     file.read_exact(&mut entries).map_err(|e| e.to_string())?;
     let mut offsets = vec![0usize; count];
@@ -747,9 +758,17 @@ impl PdfFileReader {
             let root_body = self.read_object(outline_root as usize)?;
             let first = parse_uint_after(&root_body, "/First ").ok_or("Outlines 缺 /First")? as usize;
             let last = parse_uint_after(&root_body, "/Last ").ok_or("Outlines 缺 /Last")? as usize;
+            if last < first || last >= self.offsets.len() {
+                return Err(format!("书签对象号范围 {first}..={last} 不合法"));
+            }
             for item_id in first..=last {
                 let item_body = self.read_object(item_id)?;
                 let dest_page_id = parse_uint_after(&item_body, "/Dest [").ok_or("书签缺 /Dest")? as usize;
+                // 自己写的页对象号恒为 3+3i；别的值说明不是我们的文件（或已损坏）——此前直接 `(id-3)/3`，
+                // id<3 时减法溢出（release 下回绕成天文数字页码，调用方切片越界 panic）。
+                if dest_page_id < 3 || (dest_page_id - 3) % 3 != 0 {
+                    return Err(format!("书签指向的对象 {dest_page_id} 不是页对象"));
+                }
                 let page_idx = (dest_page_id - 3) / 3;
                 let title_bytes = parse_pdf_literal(&item_body, "/Title ").ok_or("书签缺 /Title")?;
                 titles.push((page_idx, utf16be_to_string(&title_bytes)));
@@ -955,6 +974,27 @@ mod tests {
         let pdf = images_to_pdf_with_toc(&[img], &[]).unwrap();
         let s = String::from_utf8_lossy(&pdf);
         assert!(!s.contains("/Outlines"), "空标题列表不该产出 Outlines 对象");
+    }
+
+    /// xref 头里的条目数来自文件本身：写个天文数字不能照单分配（设备上是分配失败 abort，不是可兜底的 panic）。
+    #[test]
+    fn pdf_file_reader_rejects_absurd_xref_count_without_allocating() {
+        let mut pdf = b"%PDF-1.7\n1 0 obj\n<< >>\nendobj\n".to_vec();
+        let xref_off = pdf.len();
+        pdf.extend_from_slice(b"xref\n0 99999999999999\n0000000000 65535 f \n");
+        pdf.extend_from_slice(format!("trailer\n<< >>\nstartxref\n{xref_off}\n%%EOF\n").as_bytes());
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("bad.pdf");
+        std::fs::write(&path, &pdf).unwrap();
+        assert!(PdfFileReader::open(&path).is_err());
+        assert!(page_count(&pdf).is_err(), "内存版同样不能溢出/越界");
+    }
+
+    #[test]
+    fn finish_rejects_bookmark_past_last_page() {
+        let img = image_from_bytes(RED_PNG).unwrap();
+        let err = images_to_pdf_with_toc(&[img.clone(), img], &[(0, "a".into()), (2, "b".into())]).unwrap_err();
+        assert!(err.contains("只有 2 页"), "{err}");
     }
 
     #[test]

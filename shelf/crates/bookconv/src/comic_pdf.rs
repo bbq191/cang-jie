@@ -163,7 +163,9 @@ pub fn deliver_split_pdf_streaming(
     let whole_file_size = std::fs::metadata(pdf_path).map(|m| m.len()).unwrap_or(0); // 跟调用方 `deliver()` 判超限用的同一个量
     let Ok(mut reader) = pdfwrite::PdfFileReader::open(pdf_path) else { return Ok(None) };
     let Ok(n) = reader.page_count() else { return Ok(None) };
-    let Ok(all_titles) = reader.outline_titles() else { return Ok(None) };
+    let Ok(mut all_titles) = reader.outline_titles() else { return Ok(None) };
+    // 指向不存在页的书签（损坏文件）丢掉——此前原样当切分边界，`sizes[start..end]` 在 start>end 时直接 panic。
+    all_titles.retain(|(idx, _)| *idx < n);
     if all_titles.is_empty() {
         return Ok(None); // 没有书签目录——不是我们自己产出的漫画 PDF，不拆。
     }
@@ -448,5 +450,34 @@ mod tests {
             assert!(name.contains("卷"));
             assert_eq!(pdfwrite::page_count(bytes).unwrap(), 3);
         }
+    }
+
+    /// 同长度改写书签的 `/Dest [页对象号` 字节（不动 xref 偏移），造"损坏/陌生"的书签。
+    fn write_pdf_with_patched_dest(dir: &std::path::Path, from: &[u8], to: &[u8]) -> std::path::PathBuf {
+        let images: Vec<PdfImage> = (0..4).map(|_| pdfwrite::image_from_bytes(&one_px_jpeg()).unwrap()).collect();
+        let mut pdf = pdfwrite::images_to_pdf_with_toc(&images, &[(0, "卷一".into()), (3, "卷二".into())]).unwrap();
+        let at = pdf.windows(from.len()).position(|w| w == from).expect("书签 /Dest 应在");
+        pdf[at..at + from.len()].copy_from_slice(to);
+        let path = dir.join("patched.pdf");
+        std::fs::write(&path, &pdf).unwrap();
+        path
+    }
+
+    /// 书签指向不存在的页（第 33 页，全书 4 页）：此前当切分边界，`sizes[32..4]` 直接 panic 摔掉投递线程。
+    #[test]
+    fn split_comic_pdf_ignores_bookmark_beyond_last_page_instead_of_panicking() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = write_pdf_with_patched_dest(dir.path(), b"/Dest [12 0 R", b"/Dest [99 0 R");
+        let outcome = deliver_split_pdf_streaming(&path, 1, |_, _, _, _| Ok(())).unwrap().expect("还有一条有效书签，照常拆");
+        assert!(outcome.delivered.iter().chain(&outcome.failed).all(|t| t.contains("卷一")), "越界书签不该成为一卷: {outcome:?}");
+    }
+
+    /// 书签指向对象号 <3（不是页对象）：此前 `(id-3)/3` 减法溢出。现在整份书签判不可用 → 不拆（`None`）。
+    #[test]
+    fn split_comic_pdf_with_non_page_bookmark_target_is_not_split() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = write_pdf_with_patched_dest(dir.path(), b"/Dest [12 0 R", b"/Dest [01 0 R");
+        assert!(pdfwrite::PdfFileReader::open(&path).unwrap().outline_titles().is_err());
+        assert!(deliver_split_pdf_streaming(&path, 1, |_, _, _, _| Ok(())).unwrap().is_none());
     }
 }
