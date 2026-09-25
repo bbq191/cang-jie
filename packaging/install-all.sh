@@ -64,6 +64,7 @@ if [ "$DRY" = "1" ]; then
     echo "═══ dry-run：只打印计划，不连设备（目标 root@$HOST）═══"
 else
     require_device
+    export CJ_DEVICE_OK="$HOST"   # 各步骤脚本不再各自重复做连通检查（见 lib.sh 的 require_device）
     fw_gate "$FORCE" || exit 1
     preflight_device || exit 1
 fi

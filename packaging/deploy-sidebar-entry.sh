@@ -37,14 +37,14 @@
 #   环境 DEFER_XOVI_START=1：只把 qmd/rcc 落盘，不在这一步重启 xochitl——install-all.sh 编排
 #   多个 xovi 扩展时用这个避免短时间内反复重启 xochitl（撞 watchdog+StartLimit 的风险，
 #   2026-09-11 真机踩过），改成全部落盘完最后统一重启一次（deploy-xovi-apply.sh）。单独跑本脚本
-#   不用管这个变量：装完立即重启 xochitl 生效 + 健康检查（qmd/rcc 没变、也没有别的待生效改动时不重启，
-#   2026-09-24）——怎么重启由设备端 devlib.sh 的
-#   cj_xochitl_apply 判定（xovi 已生效 → systemctl restart；没生效才 xovi/start，2026-09-20 修，
-#   见 deploy-xovi-apply.sh 头注），重启前会提示"打断阅读"并留 5 秒宽限。
+#   不用管这个变量：装完立即让它生效（qmd/rcc 没变、也没有别的待生效改动时什么都不做，2026-09-24）——
+#   怎么生效由设备端 devlib.sh 的 cj_xochitl_apply 判定（2026-09-25 起：xovi 已生效或装了 xovi-reenable →
+#   主动整机重启，设备回来后自动跑 verify-on-device.sh；都没有才 xovi/start），之前会提示"打断阅读"并留 5 秒宽限。
 #
 # 2026-09-20 改动（脚本审计）：qmd/rcc 先推到暂存目录并 md5 校验，通过后设备端才原子 rename 进 qrr 目录
 # （旧版直接 scp 覆盖，md5 不符时坏文件已在 qrr 里）；旧文件备份进 cangjie-backups（保留最近几份），
 # 不再在 qrr 目录里放 .bak.pre-*。
+# 2026-09-25 审计：四项探测合成一次 ssh、落位与生效合成一次 ssh、重启前的时间戳在设备端取（连接数 14 → 6）。
 set -eu
 cd "$(dirname "$0")"
 # shellcheck disable=SC1091
@@ -56,42 +56,33 @@ STAGE="$CJ_STAGE_REMOTE"
 RCC_LOCAL="$(mktemp -t sidebar-icons.XXXXXX.rcc)"
 trap 'rm -f "$RCC_LOCAL"' EXIT
 
-echo "== 探测设备端 qt-resource-rebuilder =="
-if ! rssh "[ -d $QRR_DIR ]"; then
-    step_skipped "设备没装 qt-resource-rebuilder（vellum add qt-resource-rebuilder）"
-    exit 0
-fi
-
-echo "== 探测设备端 appload =="
-if ! rssh "[ -d /home/root/xovi/exthome/appload ]"; then
-    step_skipped "设备没装 appload（vellum add appload）"
-    exit 0
-fi
-
-echo "== 探测 appload 自己的 qmd 在这台固件上是否兼容 =="
-# 正面信号："Loaded external AppLoad hooks in main UI" 是 appload 自己那份内嵌 qmd 成功处理后
-# 打的日志——没这行不代表 appload 一定太旧（也可能是装完 appload 后还没重启过），
-# 但按钮多半点了没反应，所以一律当作"暂不满足"处理，不硬装。
-# ⚠ 这条只是"本次开机内某个时刻出现过"的一次性判据，不代表现在正在跑的 xochitl 就是那次成功
-# 挂载的同一个实例——如果这行日志之后设备上跑过 `vellum upgrade`/`vellum del appload`（换掉了
-# 磁盘上的 appload）却还没重启过设备，这里还是会读到旧的成功信号（2026-09-15 全量代码审查审出）。真正当次生效与否，靠下面本脚本自己触发的这次重启之后重新核对同一行信号
+echo "== 探测设备端 qt-resource-rebuilder / appload / appload 兼容信号 / WeRead（一次连接）=="
+# appload 兼容信号："Loaded external AppLoad hooks in main UI" 是 appload 自己那份内嵌 qmd 成功处理后打的日志——
+# 没这行不代表 appload 一定太旧（也可能是装完 appload 后还没重启过），但按钮多半点了没反应，一律当"暂不满足"，不硬装。
+# ⚠ 这条只是"本次开机内某个时刻出现过"的一次性判据，不代表现在正在跑的 xochitl 就是那次成功挂载的同一个实例——
+# 这行日志之后设备上跑过 `vellum upgrade`/`vellum del appload` 却还没重启过，这里还是会读到旧的成功信号（2026-09-15
+# 全量代码审查审出）。真正当次生效与否，靠下面本脚本自己触发的这次重启之后重新核对同一行信号
 # （`DEFER_XOVI_START=1` 模式不在这一步重启，没法当场复核，见该分支注释）。
-if ! rssh "journalctl -b 0 -u xochitl --no-pager 2>/dev/null | grep -q 'Loaded external AppLoad hooks in main UI'"; then
-    echo "-- 没在这次开机日志里看到 appload 成功挂载的信号（可能是 appload 版本 < 0.6.0、在 3.28"
-    echo "   上不兼容，也可能是刚装/升级完 appload 还没重启设备）。"
-    echo "   先 vellum upgrade appload 到 ≥ 0.6.0 并整机重启，见本脚本头注「appload 要 ≥ 0.6.0」一节。"
-    step_skipped "没看到 appload 成功挂载的信号（appload < 0.6.0，或装/升级后还没重启设备）"
-    exit 0
-fi
-
-echo "== 探测设备是否已装第三方 WeRead app =="
-if rssh "[ -x /home/root/.local/opt/remarkable-weread/bin/start-remarkable-weread.sh ]"; then
-    QMD_SRC=sidebar-entry-koreader-weread.qmd
-    echo "-- 装了 WeRead，用 $QMD_SRC（KOReader + WeRead 两项）"
-else
-    QMD_SRC=sidebar-entry-koreader-only.qmd
-    echo "-- 没装 WeRead，用 $QMD_SRC（只有 KOReader 一项）"
-fi
+PROBE="$(dev_script "$QRR_DIR" <<'DEVICE_SCRIPT'
+if [ ! -d "$1" ]; then echo NOQRR; exit 0; fi
+if [ ! -d "$CJ_XOVI/exthome/appload" ]; then echo NOAPPLOAD; exit 0; fi
+if ! journalctl -b 0 -u xochitl --no-pager 2>/dev/null | grep -q 'Loaded external AppLoad hooks in main UI'; then echo NOSIGNAL; exit 0; fi
+if [ -x "$CJ_HOME/.local/opt/remarkable-weread/bin/start-remarkable-weread.sh" ]; then echo WEREAD; else echo KOREADER-ONLY; fi
+DEVICE_SCRIPT
+)" || { echo "!! 探测失败（ssh 中断？）"; exit 1; }
+case "$PROBE" in
+    NOQRR) step_skipped "设备没装 qt-resource-rebuilder（vellum add qt-resource-rebuilder）"; exit 0 ;;
+    NOAPPLOAD) step_skipped "设备没装 appload（vellum add appload）"; exit 0 ;;
+    NOSIGNAL)
+        echo "-- 没在这次开机日志里看到 appload 成功挂载的信号（可能是 appload 版本 < 0.6.0、在 3.28"
+        echo "   上不兼容，也可能是刚装/升级完 appload 还没重启设备）。"
+        echo "   先 vellum upgrade appload 到 ≥ 0.6.0 并整机重启，见本脚本头注「appload 要 ≥ 0.6.0」一节。"
+        step_skipped "没看到 appload 成功挂载的信号（appload < 0.6.0，或装/升级后还没重启设备）"
+        exit 0 ;;
+    WEREAD) QMD_SRC=sidebar-entry-koreader-weread.qmd; echo "-- 装了 WeRead，用 $QMD_SRC（KOReader + WeRead 两项）" ;;
+    KOREADER-ONLY) QMD_SRC=sidebar-entry-koreader-only.qmd; echo "-- 没装 WeRead，用 $QMD_SRC（只有 KOReader 一项）" ;;
+    *) echo "!! 探测结果看不懂：$PROBE"; exit 1 ;;
+esac
 
 echo "== 本地编译图标资源 =="
 if ! command -v rcc >/dev/null 2>&1; then
@@ -101,13 +92,18 @@ fi
 rcc --binary -o "$RCC_LOCAL" sidebar-icons.qrc
 
 echo "== 推送到设备暂存目录（md5 校验；通过前不碰 qrr 目录）=="
-push_verified "$QMD_SRC" "$STAGE/koreader-sidebar-entry.qmd"
-push_verified "$RCC_LOCAL" "$STAGE/cangjie-icons.rcc"
+push_verified "$QMD_SRC" "$STAGE/koreader-sidebar-entry.qmd" "$RCC_LOCAL" "$STAGE/cangjie-icons.rcc"
 
-echo "== 设备端落位（备份进 cangjie-backups + 原子 rename）=="
-dev_script "$QRR_DIR" "$STAGE" <<'DEVICE_SCRIPT'
+DEFER="${DEFER_XOVI_START:-0}"
+if [ "$DEFER" = "1" ]; then
+    echo "== 设备端落位（备份进 cangjie-backups + 原子 rename）=="
+else
+    echo "== 设备端落位 + 让新 qmd/rcc 生效（有变化才整机重启，会打断设备上的阅读/书写）=="
+fi
+# 落位与生效同一次 ssh。DEFER=1 时只落位（run_apply 看不到 CJ-APPLY-REBOOTING，原样返回退出码）
+run_apply dev_script "$QRR_DIR" "$STAGE" "$DEFER" <<'DEVICE_SCRIPT'
 set -eu
-QRR="$1"; STG="$2"
+QRR="$1"; STG="$2"; DEFER="$3"
 cj_require_root || exit 1
 [ -f "$STG/koreader-sidebar-entry.qmd" ] && [ -f "$STG/cangjie-icons.rcc" ] || { echo "!! 暂存文件缺失"; exit 1; }
 for f in koreader-sidebar-entry.qmd cangjie-icons.rcc; do
@@ -121,30 +117,23 @@ if [ "$CH1$CH2" != "00" ]; then cj_pending_mark sidebar-entry || true; fi   # �
 rm -f "$STG/koreader-sidebar-entry.qmd" "$STG/cangjie-icons.rcc"
 rmdir "$STG" 2>/dev/null || true
 echo "-- 已落位 $QRR/{koreader-sidebar-entry.qmd,cangjie-icons.rcc}"
-DEVICE_SCRIPT
 
-if [ "${DEFER_XOVI_START:-0}" = "1" ]; then
+if [ "$DEFER" = "1" ]; then
     echo "-- DEFER_XOVI_START=1：只落盘，不在这一步重启 xochitl（由后续统一步骤处理）"
     echo "   ⚠ appload 兼容信号只在上面探测的那一刻核对过，这一步不重启就没法当场复核；"
     echo "     后续统一步骤（deploy-xovi-apply.sh）真正重启后如果按钮点了没反应，先查"
     echo "     一遍 appload 版本是否 ≥ 0.6.0、是不是重启前又被 vellum 换过。"
     exit 0
 fi
-
-echo "== 设备端重启 xochitl 让新 qmd/rcc 生效 + 健康检查（会打断设备上的阅读/书写）=="
-# 重启前打个时间戳，重启后拿它重新核对 appload 兼容信号——只信"本次重启之后新出现的"这一条，
-# 不再相信上面探测阶段那次可能已经过期的"本次开机内某个时刻出现过"（见上面探测那步的头注）。
-SINCE="$(rssh "date '+%Y-%m-%d %H:%M:%S'")"
-run_apply dev_script "$SINCE" <<'DEVICE_SCRIPT'
-set -eu
-SINCE="$1"
-cj_require_root || exit 1
 # qmd/rcc 没变（上面落位时没记标记）、也没有别的待生效改动、xovi 已生效 → 不重启：重复跑不再每次闪屏
 if ! cj_apply_needed; then
     echo "-- qmd/rcc 与设备上已装的逐字节相同，也没有别的待生效改动——不重启 xochitl"
     echo "✅ 已是最新"
     exit 0
 fi
+# 重启前打个时间戳，重启后拿它重新核对 appload 兼容信号——只信"本次重启之后新出现的"这一条，
+# 不再相信探测阶段那次可能已经过期的"本次开机内某个时刻出现过"
+SINCE="$(date '+%Y-%m-%d %H:%M:%S')"
 OLD_PID="$(cj_xochitl_pid)"
 cj_xochitl_apply || exit 1
 if [ "$CJ_APPLY_REBOOTED" = 1 ]; then

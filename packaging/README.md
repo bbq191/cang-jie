@@ -46,7 +46,7 @@ sh uninstall-all.sh <host> --purge             # 同时删 battop 的二进制�
 | 1 | `chrony-cn` | `deploy-chrony-cn.sh` | 国内 NTP 服务器（阿里云/腾讯云等） | 无 |
 | 2 | `chrony-boot-wakelock` | `deploy-chrony-boot-wakelock.sh` | 开机头一小段持 wakelock，防自动休眠打断首次校时（根因见文末「踩过的坑」） | 无；设备缺 `/sys/power/wake_lock` 时开机自动跳过 |
 | 3 | `timezone-cn` | `deploy-timezone-cn.sh` | 默认时区 Asia/Shanghai | 无；缺 zoneinfo 时警告后退出 0 |
-| 4 | `battop` | `deploy-battop.sh` | 电池刺客（Rust 采样服务）；装完启动，**有意不开机自启** | 无 |
+| 4 | `battop` | `deploy-battop.sh` | 电池刺客（Rust 采样服务）；装完启动，**有意不开机自启**。dm-verity 下单元从没装过 → 记"前置条件不满足" | 无 |
 | 5 | `wifi-watch` | `deploy-wifi-watch.sh` | WiFi 载波假死看护；链路正常时只读 sysfs、零 fork | 无 |
 | 6 | `xovi-persist` | `deploy-xovi-persist.sh` | xovi 开机自动恢复（`xovi-reenable.service`） | 已 `vellum add xovi` |
 | 7 | `hl-snap` | `deploy-hl-snap.sh` | 荧光笔 CJK 精确吸附（xovi 扩展），**只落盘** | 同上 |
@@ -168,7 +168,7 @@ sh verify-on-device.sh --from d.txt        # 不连设备，离线重判存下�
 | 文件 | 职责 |
 |---|---|
 | `install-all.sh` / `uninstall-all.sh` | 统一安装/卸载编排；步骤表来自 `lib.sh`。卸载对每个非"配置覆写/纯动作"步骤都必须有 `uninstall_<步骤名>` 函数（测试会核对），按步骤表逆序执行 |
-| `lib.sh` | **host 侧**共用库：`rssh`/`rssh_in`/`rscp`（统一 `BatchMode` + `ConnectTimeout`，设备休眠时快速失败而不是卡死）、`shquote`（安全拼远端命令行）、`dev_script`（把 `devlib.sh` + 脚本体经 `ssh sh -s` 送上设备执行）、`push_verified`（scp 到暂存路径后逐个 md5 对拍，不对就删暂存并失败）、步骤表 `STEP_ORDER`/`STEP_DEFER`/`STEP_CONFIG_ONLY`、参数解析 `parse_step_args`/`host_arg`、`require_device`、`fw_gate`、`preflight_device`、`run_step`（含 `--dry-run` 与四栏记账）、`step_skipped`、`run_apply`/`wait_reboot_and_verify` |
+| `lib.sh` | **host 侧**共用库：`rssh`/`rssh_in`/`rscp`（统一 `BatchMode` + `ConnectTimeout`，设备休眠时快速失败而不是卡死）、`shquote`（安全拼远端命令行）、`dev_script`（把 `devlib.sh` + 脚本体经 `ssh sh -s` 送上设备执行）、`push_verified`（一批文件 scp 到暂存路径后逐个 md5 对拍，不对就删那个暂存文件并失败；一次 ssh 建目录、一次 ssh 取全部 md5）、步骤表 `STEP_ORDER`/`STEP_DEFER`/`STEP_CONFIG_ONLY`、参数解析 `parse_step_args`/`host_arg`、`require_device`、`fw_gate`、`preflight_device`、`run_step`（含 `--dry-run` 与四栏记账）、`step_skipped`、`run_apply`/`wait_reboot_and_verify` |
 | `devlib.sh` | **设备侧**共用库（POSIX sh，兼容 busybox）：rootfs 读写窗口（remount rw 后无论成败、被信号打断都恢复 ro，含 ssh 断连的 SIGPIPE）、`cj_safe_replace` 原子替换（不在运行中进程已映射的 inode 上原地写）、备份与轮转、`cj_backup_if_differs`、`/usr` 单元的安装/删除（先过 dm-verity 门）、待生效标记 `cj_pending_mark`/`_list`/`_clear` 与 `cj_apply_needed`、待换入区 `cj_so_stage`/`_unstage`/`_commit`、`cj_xochitl_apply`/`cj_xochitl_health` |
 | `deploy-usr-unit.sh` | 把一个 systemd 单元装进设备 `/usr` 的统一部署器；`deploy-chrony-boot-wakelock.sh` / `deploy-xovi-persist.sh` / `deploy-wifi-watch.sh` 是它的薄包装 |
 | `deploy-xovi-ext.sh` + `xovi-ext-install.sh` | 装一个独立 xovi 扩展：host 侧构建+推送 / 设备侧安装流程。`deploy-hl-snap.sh` / `deploy-handwriting-stroke.sh` 是薄包装；各扩展的 `deploy/install.sh` 只剩数据（名字、配置键）并 source `xovi-ext-install.sh` |

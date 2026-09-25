@@ -39,8 +39,11 @@ DEST="/home/root/pkg-$NAME"
 require_device
 
 echo "== 推送 $UNIT 到 root@$HOST:$DEST（md5 校验）=="
-push_verified "$SRC" "$DEST/$(basename "$SRC")"
-if [ -n "$EXTRA_SRC" ]; then push_verified "$EXTRA_SRC" "$DEST/$(basename "$EXTRA_SRC")"; fi
+if [ -n "$EXTRA_SRC" ]; then
+    push_verified "$SRC" "$DEST/$(basename "$SRC")" "$EXTRA_SRC" "$DEST/$(basename "$EXTRA_SRC")"
+else
+    push_verified "$SRC" "$DEST/$(basename "$SRC")"
+fi
 
 echo "== 设备端安装（dm-verity 门 + 带 trap 的 rw 窗口，devlib.sh）=="
 # 设备端退出码 10 = dm-verity 激活、单元从没装过、这步实际没装上（非失败，汇总里记"前置条件不满足"）

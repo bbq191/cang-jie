@@ -974,8 +974,11 @@ WL="$R/wl"; mkdir -p "$WL/bin"; : > "$WL/lock"; : > "$WL/unlock"
 printf '#!/bin/sh\necho no\n' > "$WL/bin/timedatectl"; chmod +x "$WL/bin/timedatectl"
 WL_CMD="$(sed -n '/^ExecStart=/,/[^\\]$/p' "$PKG/chrony-boot-wakelock.service" | sed -e 's/^ExecStart=\/bin\/sh -c .//' -e 's/\\$//' | tr -d '\n' | sed -e "s/'\$//" -e "s#/sys/power/wake_lock#$WL/lock#g" -e "s#/sys/power/wake_unlock#$WL/unlock#g")"
 PATH="$WL/bin:$PATH" sh -c "$WL_CMD" & wl_pid=$!
-sleep 0.5; kill -TERM "$wl_pid" 2>/dev/null
-wl_gone=0; for _i in 1 2 3 4 5 6 7 8; do kill -0 "$wl_pid" 2>/dev/null || { wl_gone=1; break; }; sleep 0.5; done
+# 等它真的拿到锁（trap 已挂上）再发 TERM——固定 sleep 在机器繁忙时会抢在 trap 之前，测出假失败
+for _i in $(seq 1 50); do [ -s "$WL/lock" ] && break; sleep 0.1; done
+kill -TERM "$wl_pid" 2>/dev/null
+# sh 在前台 sleep 2 结束后才处理 trap（真机上 systemd 连 sleep 一起 TERM，立即退出）：最多等 6 秒
+wl_gone=0; for _i in $(seq 1 30); do kill -0 "$wl_pid" 2>/dev/null || { wl_gone=1; break; }; sleep 0.2; done
 kill -KILL "$wl_pid" 2>/dev/null; wait "$wl_pid" 2>/dev/null
 check "chrony-boot-wakelock：拿到锁；收到 TERM 后几秒内退出（不再轮询到超时）并放锁" test "$(cat "$WL/lock")" = cangjie-chrony-boot -a "$wl_gone" = 1 -a "$(cat "$WL/unlock")" = cangjie-chrony-boot
 
@@ -992,6 +995,21 @@ echo TZ > "$R/Shanghai"; chmod 555 "$R/timezone-cn.rootbind/etc"; : > "$CJ_SIM_L
 ( cd "$PKG" && CJ_ZONEINFO="$R/Shanghai" CJ_LOCALTIME="$R/localtime" CJ_MOUNTS="$R/mounts-ov" CJ_BACKUP_DIR="$R/cbk" CJ_TMPDIR="$R" run sh deploy-timezone-cn.sh 127.0.0.1 ) >"$R/out.txt" 2>&1; rc=$?
 check "timezone-cn overlay：写底层失败 → 退出非 0、报错、不说\"已改\"、最后一次 mount 是 ro" test "$rc" -ne 0 -a -n "$(grep '失败（底层未动）' "$R/out.txt")" -a -z "$(grep '底层已改' "$R/out.txt")" -a "$(last_mount)" = "mount -o remount,ro /"
 chmod 755 "$R/timezone-cn.rootbind/etc"
+
+# 连接次数（2026-09-25 合批）：推送一次 ssh 建目录 + 每文件一次 scp + 一次 ssh 取全部 md5；sidebar 探测/落位+生效各合一
+new_sandbox; : > "$CJ_SIM_LOG"
+( cd "$PKG" && CJ_SKIP_BUILD=1 DEFER_XOVI_START=1 run sh deploy-hl-snap.sh 127.0.0.1 ) >/dev/null 2>&1; rc=$?
+check "hl-snap 部署：4 次 ssh（连通检查/建目录/取 md5/安装）+ 4 次 scp（旧版 13 次 ssh）" test "$rc" -eq 0 -a "$(count_log '^ssh')" = 4 -a "$(count_log '^scp')" = 4
+: > "$CJ_SIM_LOG"
+( cd "$PKG" && DEFER_XOVI_START=1 run sh deploy-sidebar-entry.sh 127.0.0.1 ) >/dev/null 2>&1; rc=$?
+check "sidebar-entry 部署：5 次 ssh（连通/探测/建目录/取 md5/落位）+ 2 次 scp（旧版 10 次 ssh）" test "$rc" -eq 0 -a "$(count_log '^ssh')" = 5 -a "$(count_log '^scp')" = 2
+new_sandbox; SOP="$R/home/root/.cangjie-stage"; mkdir -p "$SOP"; echo keep > "$SOP/battop.new"; : > "$CJ_SIM_LOG"
+( cd "$PKG" && CJ_SIM_SCP_CORRUPT=hl-snap.so CJ_SKIP_BUILD=1 DEFER_XOVI_START=1 run sh deploy-hl-snap.sh 127.0.0.1 ) >"$R/out.txt" 2>&1; rc=$?
+check "合批推送：只有 md5 对不上的那个文件被删，其余已校验的暂存文件保留、没进入安装" test "$rc" -ne 0 -a ! -e "$R/home/root/hl-snap/hl-snap.so" -a -f "$R/home/root/hl-snap/deploy/install.sh" -a -n "$(grep 'md5 对不上：hl-snap.so' "$R/out.txt")" -a -z "$(grep "^ssh sh '.*/deploy/install.sh" "$CJ_SIM_LOG")"
+new_sandbox; export CJ_ALLOWLIST_LOCAL="$R/allow.local.txt" CJ_BATTOP_BIN="$R/battop.bin" CJ_SKIP_BUILD=1 SHELF_NO_BUILD=1; echo B > "$R/battop.bin"; : > "$CJ_SIM_LOG"
+( cd "$PKG" && run sh install-all.sh 127.0.0.1 --force --skip chrony-cn,timezone-cn ) >/dev/null 2>&1; rc=$?
+check "install-all：整轮只做一次连通检查（各步骤不再各自 ssh true）" test "$rc" -eq 0 -a "$(count_log '^ssh true')" = 1
+unset CJ_ALLOWLIST_LOCAL CJ_BATTOP_BIN CJ_SKIP_BUILD SHELF_NO_BUILD
 
 # ═══════════════════════════ 5. 静态守卫 / 清单对称 ═══════════════════════════
 section "静态守卫"

@@ -46,10 +46,10 @@ elif ! make -C "$DIR" aarch64; then
 fi
 
 echo "== 推送到 root@$HOST:$DEST（暂存位置，不是 extensions.d；md5 逐个校验）=="
-push_verified "$DIR/$SO" "$DEST/$SO"
-push_verified "$DIR/deploy/install.sh" "$DEST/deploy/install.sh"
-push_verified ./xovi-ext-install.sh "$DEST/deploy/xovi-ext-install.sh"
-push_devlib "$DEST/deploy"
+push_verified "$DIR/$SO" "$DEST/$SO" \
+    "$DIR/deploy/install.sh" "$DEST/deploy/install.sh" \
+    ./xovi-ext-install.sh "$DEST/deploy/xovi-ext-install.sh" \
+    ./devlib.sh "$DEST/deploy/devlib.sh"
 
 echo "== 设备端安装 =="
 ARGS=""
