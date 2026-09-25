@@ -13,7 +13,7 @@
 #   handwriting-stroke   CJK 手写笔迹渲染优化（需要 vellum add xovi；只落盘）
 #   sidebar-entry        Sidebar 一级直达 KOReader/WeRead 入口（需要 qt-resource-rebuilder；缺了自动跳过；只落盘）
 #   shelf                shelf 本体+网关+笔记线+两个领域服务（不需要 xovi；qmd 只落盘）
-#   xovi-apply           统一让上面落盘的 xovi 内容生效：有待生效改动（或 xovi 还没生效）才重启 xochitl，且只一次
+#   xovi-apply           统一让上面落盘的 xovi 内容生效：有待生效改动（或 xovi 还没生效）才整机重启，且只一次
 # 装前先过固件安全门（sha256(/usr/bin/xochitl) 比对 firmware-allowlist.txt），避免在没验证过注入定位的固件上装错。
 #
 # ⚠️ 生效只做一次，放在最后（xovi-apply）：没有"只重载一个扩展"的机制。hl-snap/handwriting-stroke/
