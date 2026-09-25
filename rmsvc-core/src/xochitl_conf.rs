@@ -82,8 +82,28 @@ pub fn set(conf: &Path, key: &str, value: Option<&str>) -> Result<bool, String> 
     backup_once(conf)?;
     let mut out = lines.join("\n");
     out.push('\n');
-    crate::fs::write_atomic(conf, out.as_bytes()).map_err(|e| format!("写 xochitl.conf 失败: {e}"))?;
+    // 保留原文件权限：tmp+rename 换的是新 inode，按默认 umask（通常 0644）落出来——原件是 0600 的话，含凭证的
+    // 文件就这样变成人人可读（2026-09-25 第四轮审计）。临时文件创建时就带原权限，改名后再定成准确值（umask 会收窄）。
+    let mode = existing_mode(conf);
+    crate::fs::write_atomic_mode(conf, out.as_bytes(), mode).map_err(|e| format!("写 xochitl.conf 失败: {e}"))?;
+    if let Some(m) = mode {
+        crate::fs::set_mode(conf, m);
+    }
     Ok(true)
+}
+
+/// 原文件的权限位（不存在 / 非 unix → `None`，按缺省权限新建）。
+fn existing_mode(conf: &Path) -> Option<u32> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::metadata(conf).ok().map(|m| m.permissions().mode() & 0o7777)
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = conf;
+        None
+    }
 }
 
 /// 首次改动前留一份原件（`<conf>.shelf-bak`，已存在则不覆盖）。
@@ -126,6 +146,22 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&c).unwrap(), SAMPLE, "删键后与原件逐字节相同");
         let bak = std::fs::read_to_string(t.path().join("xochitl.conf.shelf-bak")).unwrap();
         assert_eq!(bak, SAMPLE, "首次改动前的原件");
+    }
+
+    /// 回归：原子改写不能把含凭证的 0600 文件变成 0644（新 inode 按默认 umask 创建）。
+    #[cfg(unix)]
+    #[test]
+    fn rewrite_keeps_original_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+        let t = tempfile::tempdir().unwrap();
+        let c = t.path().join("xochitl.conf");
+        std::fs::write(&c, SAMPLE).unwrap();
+        std::fs::set_permissions(&c, std::fs::Permissions::from_mode(0o600)).unwrap();
+        assert!(set(&c, SLEEP_SCREEN_KEY, Some("/x.png")).unwrap());
+        assert_eq!(std::fs::metadata(&c).unwrap().permissions().mode() & 0o777, 0o600);
+        std::fs::set_permissions(&c, std::fs::Permissions::from_mode(0o644)).unwrap();
+        assert!(set(&c, SLEEP_SCREEN_KEY, None).unwrap());
+        assert_eq!(std::fs::metadata(&c).unwrap().permissions().mode() & 0o777, 0o644, "原来是什么就保持什么");
     }
 
     #[test]
