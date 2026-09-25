@@ -87,6 +87,8 @@
 
 ## 装完之后
 
+先在 `packaging/` 下跑一次 `sh verify-on-device.sh <host>`：只读核对 xovi/扩展/界面补丁/各服务/端口/本次开机告警/磁盘等，逐项给 ✓/⚠/✗，有 ✗ 退出码非 0（每项含义见 [`packaging/README.md`「部署后核对」](../packaging/README.md#部署后核对verify-on-devicesh2026-09-25)）。以后每次单独部署某一步之后也可以跑。
+
 浏览器打开 `https://10.11.99.1/`（同一 WiFi 下也可以用 `https://shelf.local/`；安卓不认 `.local` 域名，要用设备的 IP）。
 
 - **改密码**：默认密码 `shelf`，第一次登录会强制跳到改密页。
