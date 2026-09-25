@@ -15,7 +15,7 @@ reMarkable Paper Pro Move 的**读书与阅读质量层**。它是跑在设备�
 
 | 动作 | 说明 |
 |---|---|
-| 入库 | 网页上传（多文件，有进度）、抓网文（贴网址，组成 EPUB）、scp 进设备 `inbox/` 目录。**只收 EPUB / PDF**，其它格式拒收；书名规范成 `书名 - 02卷` |
+| 入库 | 网页上传（多文件，有进度）、抓网文（贴网址，组成 EPUB）、scp 进设备 `inbox/` 目录（写完、文件静止 5 秒后才收）。**只收 EPUB / PDF**，其它格式拒收；书名规范成 `书名 - 02卷` |
 | 优化（可选） | EPUB：清洗、排版、补目录和封面、处理图片，产物过质量门才替换原书；漫画自动识别、保画质、裁白边。PDF：有文字层的按原版式转成 EPUB（原 PDF 留 7 天可恢复），扫描件和漫画 PDF 只裁白边 |
 | 落库 | 加入 xochitl（≤90MB 网页上传；更大的走"占位 + 磁盘替换"，上限 1GiB）或加入 KOReader（本地复制）。母版不会因此删除 |
 | 其它 | 按书设**阅读方向**（自动 / 从右往左 / 从左往右，日漫用）；只选一本时可**下载原件**、**改名**；批量操作由网关排队逐本执行、可全部中止 |
@@ -74,7 +74,7 @@ shelf/
 
 ```sh
 cd shelf && sh build.sh                        # host 测试 + aarch64 构建（gateway / enhance / notes 在的话一起编）
-cargo test --workspace                         # 只跑测试：2026-09-25 共 422 个通过、1 个忽略
+cargo test --workspace                         # 只跑测试：2026-09-25 共 450 个通过、1 个忽略
 cd ../packaging && sh deploy.sh 10.11.99.1     # 打包 → 传到设备 → install.sh（先备份旧文件）；只有 WiFi 时给 WiFi IP
 sh deploy.sh 10.11.99.1 --only font,wallpaper  # 只装部分服务；SHELF_NO_BUILD=1 跳过编译
 sh deploy.sh 10.11.99.1 --password '新密码'     # 顺便设网关密码（经 ssh 标准输入传，不上命令行）
