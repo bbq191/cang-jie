@@ -9,7 +9,7 @@ SHARED_SRC = $(LANGHOOK_SRC_DIR)/scan.c $(LANGHOOK_SRC_DIR)/pattern.c $(LANGHOOK
 # -fno-math-errno：让 GCC 把 sqrtf 内联成 ARM64 原生 FSQRT 指令而不是调 libm——
 # libm 的 sqrtf() 符号需要 GLIBC_2.43，设备上的 libm 版本没这么新，dlopen 会
 # 解析失败（真机实测撞到过，见 src/hw_stroke.c 注释）。
-CFLAGS_COMMON = -std=gnu17 -Wall -Wextra -g -fno-math-errno -I$(LANGHOOK_SRC_DIR)
+CFLAGS_COMMON = -std=gnu17 -Wall -Wextra -g -ffile-prefix-map=$(CURDIR)=. -fno-math-errno -I$(LANGHOOK_SRC_DIR)
 
 .PHONY: aarch64 glue clean
 

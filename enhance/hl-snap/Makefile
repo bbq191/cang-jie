@@ -6,7 +6,7 @@ AARCH64_CC ?= aarch64-linux-gnu-gcc
 # langhook/src——那边挪出仓库后不再适合当活跃路径依赖），见 ../shared/PROVENANCE.md。
 LANGHOOK_SRC_DIR = ../shared
 SHARED_SRC = $(LANGHOOK_SRC_DIR)/scan.c $(LANGHOOK_SRC_DIR)/pattern.c $(LANGHOOK_SRC_DIR)/trampoline_aarch64.c $(LANGHOOK_SRC_DIR)/trampoline_patch.c
-CFLAGS_COMMON = -std=gnu17 -Wall -Wextra -g -I$(LANGHOOK_SRC_DIR)
+CFLAGS_COMMON = -std=gnu17 -Wall -Wextra -g -ffile-prefix-map=$(CURDIR)=. -I$(LANGHOOK_SRC_DIR)
 
 .PHONY: aarch64 glue clean
 
