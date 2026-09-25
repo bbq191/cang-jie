@@ -67,7 +67,7 @@ impl State {
             // `s.merge.revoked > 0` 单独成立的情况＝书被移进回收站/删除、`revoke_stale` 撤了条目但没扫任何页（pages==0）；
             // 这时也要发事件，不然网页「笔记」列表要等到下一次不相干的事件才会把这本书摘掉。
             Ok(Some(s)) if s.pages > 0 || s.merge.revoked > 0 => {
-                println!("[ink-serve] {uuid}: 页 {} 新增 {} 变更 {} 不变 {} 撤销 {}", s.pages, s.merge.added, s.merge.changed, s.merge.unchanged, s.merge.revoked);
+                println!("[ink-serve] {uuid}: 页 {} 新增 {} 变更 {} 不变 {} 撤销 {} 复活 {}", s.pages, s.merge.added, s.merge.changed, s.merge.unchanged, s.merge.revoked, s.merge.revived);
                 self.bus.publish("notes", "entries");
             }
             Ok(_) => {}
