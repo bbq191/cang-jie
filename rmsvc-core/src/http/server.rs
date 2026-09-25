@@ -203,7 +203,10 @@ pub fn serve_with(bind: &str, router: Router, opts: ServeOpts) -> Result<(), Str
             let _ = req.respond(reply_to_tiny(reply));
         });
     }
-    Ok(())
+    // 走到这里＝tiny_http 的 accept 线程已退出（遇到非暂时性 accept 错误），服务再也收不到连接。此前返回 `Ok(())`，
+    // 各服务 main 于是以退出码 0 正常结束——单元是 `Restart=on-failure`，systemd 不会拉起，服务就此静默消失。
+    // 报错让进程非零退出，交给 systemd 重启（2026-09-25 第四轮审计）。
+    Err(format!("{bind} 停止接受连接（accept 线程退出），退出交给 systemd 重启"))
 }
 
 #[cfg(test)]
