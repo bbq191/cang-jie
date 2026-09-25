@@ -92,7 +92,7 @@ impl ConfigSync {
                 Some(((secs.parse().ok()?, seq.parse().ok()?), e.path()))
             })
             .collect();
-        found.sort_by(|a, b| b.0.cmp(&a.0));
+        found.sort_by_key(|f| std::cmp::Reverse(f.0));
         for (_, p) in found.into_iter().skip(BACKUPS_KEEP) {
             let _ = std::fs::remove_file(p);
         }
