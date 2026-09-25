@@ -50,4 +50,4 @@ sh deploy-battop.sh <host>
 - [`../gateway/src/enhance/`](../gateway/src/enhance/) 是本线的**网页控制面**：只调 `systemctl`、读写 `~/.local/share/cangjie-ime/reading-qol.json`（两个 `.so` 读的是同一份文件）、读 xochitl 的 `/proc/<pid>/maps`，和本目录源码没有代码依赖。
 - `wallpaper-serve/`、`font-serve/` 依赖 [`../rmsvc-core`](../rmsvc-core/README.md)，由网关反向代理。
 - [`../defw/`](../defw/README.md)（xochitl 3.28.0.172 逆向产物）**不属于**本线，是共享的逆向基座；`handwriting-stroke/` 的研究用它。
-- 迁移、改名的历史见白皮书附录「迁移沿革」；设备上谁在定时唤醒 CPU 见白皮书 §03j；2026-09-24 第三轮审计的改动（当天已部署）见白皮书 §03k。
+- 迁移、改名的历史见白皮书附录「迁移沿革」；设备上谁在定时唤醒 CPU 见白皮书 §03j；2026-09-24 第三轮审计的改动（当天已部署）见白皮书 §03k；2026-09-25 第四轮审计的改动（battop 唤醒时间换算、font-serve 开机复用索引、壁纸去重时钟、两个代理 qmd 出错退避；**尚未部署**）见白皮书 §03l。

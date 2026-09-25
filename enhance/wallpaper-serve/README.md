@@ -14,11 +14,13 @@ xochitl 有一个隐藏配置键 `xochitl.conf` → `[General] SleepScreenPath=<
 |---|---|
 | 写配置键 | **只写一次**：激活第一张壁纸时 `native.rs` 自动写，或手动 `wallpaper-serve enable` |
 | 换图 | 永远是**原地覆盖 `current.png`**（保持同一个文件） |
-| 轮换 | inotify 监听壁纸目录的 `IN_CLOSE_NOWRITE`：xochitl 每次进休眠都读一遍 `current.png`（2026-09-24 真机观察：读完约 120 ms 后它才写 `Normal to DeepSleep`），读完就换下一张，10 秒内重复读只算一次。空闲时零唤醒，每次休眠醒一次。本服务自己写 `current.png` 是 `IN_CLOSE_WRITE`、池图在子目录，都不会触发。池里只有一张且 `current.png` 已是它时不重写文件。09-24 真机验证：休眠那一刻即轮换、只轮换一次（充电状态下还没试）。09-24 前是跟 `journalctl -f -u xochitl` 找 `DeepSleep to Normal`（唤醒时轮换），代价是 xochitl 每写一行日志都醒一次。不用 systemd-sleep 钩子：充电时按电源键内核不 suspend，钩子不可靠（2026-09-03 真机） |
+| 轮换 | inotify 监听壁纸目录的 `IN_CLOSE_NOWRITE`：xochitl 每次进休眠都读一遍 `current.png`（2026-09-24 真机观察：读完约 120 ms 后它才写 `Normal to DeepSleep`），读完就换下一张，10 秒内重复读只算一次（按含休眠的开机时长 `/proc/uptime` 计；09-25 前按单调时钟计，休眠几小时后醒来、10 秒内又休眠时，单调时钟只走了几秒，这次读图会被误当成重复读跳过）。空闲时零唤醒，每次休眠醒一次。本服务自己写 `current.png` 是 `IN_CLOSE_WRITE`、池图在子目录，都不会触发。池里只有一张且 `current.png` 已是它时不重写文件。09-24 真机验证：休眠那一刻即轮换、只轮换一次（充电状态下还没试）。09-24 前是跟 `journalctl -f -u xochitl` 找 `DeepSleep to Normal`（唤醒时轮换），代价是 xochitl 每写一行日志都醒一次。不用 systemd-sleep 钩子：充电时按电源键内核不 suspend，钩子不可靠（2026-09-03 真机） |
 | 入池 | 缩放到 954×1696；源图先只读文件头，超过 1600 万像素或长宽比极端的直接拒收，避免解码吃光内存 |
 | 卸载 | `wallpaper-serve disable` 删掉配置键，恢复原生休眠屏 |
 
-不写 `/usr`、不做 bind-mount、没有开机单元和 sleep 钩子，也不再起 `journalctl` 子进程。监听建不起来（如目录不在）时按 5 秒到 5 分钟指数退避重试。
+不写 `/usr`、不做 bind-mount、没有开机单元和 sleep 钩子，也不再起 `journalctl` 子进程。监听建不起来（如目录不在）时按 5 秒到 5 分钟指数退避重试；一次监听正常跑满 5 分钟后才出错，退避从 5 秒重新算（09-25 起，此前只增不减）。
+
+上传的图先暂存在 `~/.local/state/shelf/upload/`（/home 分区；09-25 前在运行时目录，可能落到 tmpfs 占内存），服务启动时清掉上次中途被杀留下的 `.part` 半成品。本节标 09-25 的改动（去重时钟、退避复位、暂存目录）都只在 host 验证，未上真机。
 
 **首次写键后要整机重启一次** 才会读进这个键；网页壁纸页和 `GET /status` 的 `native.restartPending` 会提示。2026-09-25 起统一用整机重启（`reboot`）：单独 `systemctl restart xochitl` 有概率在它退出时崩溃，xovi 已生效时更**别**跑 `xovi/start`（见 [`../../docs/INSTALL.md`](../../docs/INSTALL.md)「常见问题」）。
 
@@ -31,6 +33,7 @@ xochitl 有一个隐藏配置键 `xochitl.conf` → `[General] SleepScreenPath=<
 | 壁纸池 | `~/.local/share/shelf/wallpapers/pool/*.png` |
 | 当前壁纸 | `~/.local/share/shelf/wallpapers/current.png` |
 | 状态 | `~/.local/state/shelf/wallpaper-state.json` |
+| 上传暂存 | `~/.local/state/shelf/upload/`（与 font-serve 共用，启动时清 `.part`） |
 
 ## 历史（已退役）
 

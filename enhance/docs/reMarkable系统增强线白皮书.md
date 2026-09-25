@@ -17,6 +17,7 @@
 | 字体、壁纸服务和 lo-alias 在这条线里的位置 | §03h |
 | 设备空闲时谁在定时把 CPU 叫醒（整套设备，不只本线） | §03j |
 | 2026-09-24 第三轮审计给本线改了什么（当天已部署） | §03k |
+| 2026-09-25 第四轮审计给本线改了什么（未部署）、battop 唤醒时间怎么换算 | §03l |
 | 改了扩展为什么要整机重启、不能只重启 xochitl | §04「hook 安全性」末条 |
 | 为什么单点工具要单独成线 | §00、§01 |
 | 踩过的坑 / 还没做完的事 | §04 / §05 |
@@ -150,6 +151,7 @@ battop 早于这条线存在，2026-09-09 从 `misc/battery-audit/battop/` 搬�
 | 09-22 | 代码审计 | 拆成 procs / store / summary / wake / util 五个模块；summary 改流式聚合；时区改用 libc `localtime_r`，去掉每轮 fork 一次 `date` |
 | 09-23 | **第二次冻机**（常驻模型下） | 冻结前最后一条日志与 battop 刷新唤醒源缓存（当时每小时 fork 一次 `journalctl`）的时间精确重合到秒。不是 08-29 那条路径（fork 出的子进程直接继承父进程 cgroup），只有时间吻合、没有内核栈证据。**唤醒源改读 `/dev/kmsg`**，采样循环里最后一次创建子进程也去掉了；commit 记真机确认零子进程、唤醒源数据与 `dmesg` 一致、跨一次真实休眠后采样间隔正确 |
 | 09-24 | 第三轮审计 | summary 按文件缓存整文件聚合（凭大小 + mtime 失效，只重读被时间窗起点切开或变过的文件）：host 实测每轮 34.7 → 4.0 ms，输出逐字节不变（黄金文件 + 60 轮对拍）。**只在 host 验证** |
+| 09-25 | 第四轮审计 | 唤醒源时间改按单调时钟换算、按 kmsg 序号增量去重（新文件 `wakes.cursor`），修掉「今日 / 24 小时」唤醒数被系统性算错的问题；安装器在 dm-verity 下也会重启在跑的旧进程（§03l）。**只在 host 验证** |
 
 **现状**：采样循环只读 `/proc`、sysfs 和 `/dev/kmsg`，不创建子进程；代价是唤醒源只能看到本次开机以来的记录（旧版能跨开机查 31 天）。两次冻机的内核根因（RCU stall）没有被排除，所以**仍不开机自启**，要用时在网页打开。09-23 的修改效果还需要更长时间观察（battop 平时关着，积累的运行时长有限）。
 
@@ -230,8 +232,8 @@ hook 目标 `FUN_00f47530`：两个 float（s0/s1）+ 一个指针（x0），标
 
 | 组件 | 是什么 | 详细记录 |
 |---|---|---|
-| `font-serve`（8792） | 上传字体装进 fontconfig 用户目录，重写 `fonts.json` 给字体菜单 qmd 读，动态维护中文回退链（全 `weak`，所选字体永远优先） | 书架白皮书第 F 章、§03k、§03bd |
-| `wallpaper-serve`（8793） | 写 xochitl 隐藏键 `SleepScreenPath` 指向 `current.png`；xochitl 休眠时读完它就轮换（09-24 起 inotify，此前跟 journal 在唤醒时轮换；池里只有一张时不再每次重写同一个文件）；旧 bind-mount 方案已退役 | [wallpaper-serve README](../wallpaper-serve/README.md)；书架白皮书 §03w / §03x / §03ab |
+| `font-serve`（8792） | 上传字体装进 fontconfig 用户目录，重写 `fonts.json` 给字体菜单 qmd 读，动态维护中文回退链（全 `weak`，所选字体永远优先）；09-25 起开机时索引与字体目录一致就直接复用、`fonts.conf` 内容不变不重写（§03l） | 书架白皮书第 F 章、§03k、§03bd |
+| `wallpaper-serve`（8793） | 写 xochitl 隐藏键 `SleepScreenPath` 指向 `current.png`；xochitl 休眠时读完它就轮换（09-24 起 inotify，此前跟 journal 在唤醒时轮换；池里只有一张时不再每次重写同一个文件；09-25 起“同一次休眠只轮换一次”的 10 秒去重按含休眠的开机时长计，§03l）；旧 bind-mount 方案已退役 | [wallpaper-serve README](../wallpaper-serve/README.md)；书架白皮书 §03w / §03x / §03ab |
 | `lo-alias.sh` | 给 `lo` 和 `usb1` 挂 `10.11.99.1`，让不插 USB 时 xochitl 的 :80 上传口仍可达；网关 `ExecStartPre` 调用 | [lo-alias README](../lo-alias/README.md) |
 
 两个服务都依赖 [`../../rmsvc-core`](../../rmsvc-core/README.md)，由网关反向代理，随 `install-all.sh` 的 shelf 步安装。
@@ -300,16 +302,20 @@ hook 目标 `FUN_00f47530`：两个 float（s0/s1）+ 一个指针（x0），标
 
 ## 03l｜第四轮审计给本线的改动（2026-09-25，未部署）
 
-全部只在 host 上测过（battop 32 项、font-serve 10 项、wallpaper-serve 10 项 `cargo test` 通过；`shared` `make test` 通过），**未在真机验证**。两个扩展 `.so` 的源码**没有改**：本机按 Makefile 同参数交叉编译零警告，产物 md5 与仓库里的 `.so` 一致（hl-snap `7ca1985b…`、hw-stroke `6e5b4a3d…`，构建可复现）。
+全部只在 host 上测过（battop 32 项 + 1 项默认忽略、font-serve 10 项、wallpaper-serve 10 项 `cargo test` 通过；`shared` `make test` 通过），**未在真机验证**。两个扩展 `.so` 的源码**没有改**：本机按 Makefile 同参数交叉编译零警告，产物 md5 与仓库里的 `.so` 一致（hl-snap `7ca1985b…`、hw-stroke `6e5b4a3d…`，构建可复现）；hl-snap 安装脚本只改了头注里过时的"restart xochitl"说法。
 
 | 改动 | 为什么 | 验证 |
 |---|---|---|
-| battop 唤醒源时间改用"墙钟 − 单调时钟 + kmsg 时间戳"换算，按 kmsg 序号增量并入（新文件 `wakes.cursor` 记开机 id 与序号） | kmsg 时间戳不含休眠，旧版用含休眠的 `/proc/uptime` 反推，每条唤醒被提前"开机以来累计休眠时长"，开机两天后的唤醒可能被记到两天前，面板「今日 / 24 小时」唤醒数不准；另外旧的"按时间整段替换"在换开机后会丢一条边界事件、且没有新唤醒时每轮都当成读取失败重读 | 新增换算 / 同开机只并新序号 / 换开机重建 / 游标读写 5 组测试；读 kmsg 遇 `EPIPE`（记录被覆盖）改为继续读 |
-| font-serve 开机时 `fonts.json` 与字体目录一致就直接用，不再全量重扫；`fonts.conf` 内容不变不重写 | 此前每次开机把每个字体整文件读一遍、各 fork 一次 `fc-scan`（中文字体十几到几十 MB），正赶上 xochitl 起界面；无条件重写 `fonts.conf` 还会让 fontconfig 使用方重载配置 | 新增用例：复用 / 目录多文件 / 删文件 / 索引损坏各走对分支，`fonts.conf` 不变时 mtime 不动 |
-| wallpaper-serve 同一次休眠去重改按含休眠的开机时长（`/proc/uptime`） | 原用单调时钟：休眠几小时后唤醒、10 秒内又休眠，这次读图被当成重复读跳过，下次休眠还是同一张 | 单测；监听出错退避在正常跑过 ≥5 分钟后复位 |
-| mkdir / trash 两个代理 qmd 出错指数退避；comic-margins 建出 `EpubProperties` 后立即排 5 秒销毁 | 见 §03j 表；后者防异常时对象常驻 | 最新 `asivery/qmldiff` 在带同名锚点的**桩 QML** 上 `apply-diffs` 全部应用、`qmllint` 无语法错误；**不是**真实 .172 QML，设备端 qmldiff 版本可能更旧（本机新版对 `({})` 已不报错，旧设备版会） |
+| battop 唤醒源时间改用"墙钟 − 单调时钟 + kmsg 时间戳"换算，按 kmsg 序号增量并入（新文件 `wakes.cursor` 记开机 id 与序号） | kmsg 时间戳不含休眠，旧版用含休眠的 `/proc/uptime` 反推，每条唤醒被提前"开机以来累计休眠时长"，开机两天后的唤醒可能被记到两天前，面板「今日 / 24 小时」唤醒数不准；另外旧的"按时间整段替换"在换开机后会丢一条边界事件、且没有新唤醒时每轮都当成读取失败重读。见下图 | 新增换算 / 同开机只并新序号 / 换开机重建 / 时间钳到当前 / 游标读写 5 组测试；读 kmsg 遇 `EPIPE`（记录被覆盖）改为继续读 |
+| battop 安装器在 dm-verity 激活时：以前装过单元 → 沿用它，二进制变了且在跑照常重启；从没装过 → 退出码 10（"前置条件不满足"，host 侧 `deploy-battop.sh` 记进汇总） | 旧版 verity 下直接 `exit 0`：二进制已换，在跑的 battop 却一直用旧 inode；从没装上也报成功 | shellcheck；未在 verity 激活的设备上跑过 |
+| font-serve 开机时 `fonts.json` 与字体目录一致（文件集合相同、目录与各文件都不比索引新）就直接用，不再全量重扫；`fonts.conf` 内容不变不重写 | 此前每次开机把每个字体整文件读一遍、各 fork 一次 `fc-scan`（中文字体十几到几十 MB），正赶上 xochitl 起界面；无条件重写 `fonts.conf` 还会让 fontconfig 使用方重载配置 | 新增用例：复用 / 目录多文件 / 删文件 / 索引损坏各走对分支，`fonts.conf` 不变时 mtime 不动 |
+| font-serve / wallpaper-serve 的上传暂存从运行时目录改到 `~/.local/state/shelf/upload`（/home），启动时清掉上次中途被杀留下的 `.part`；字体安装直接改名，不再拷贝 | 运行时目录在单元没设 `XDG_RUNTIME_DIR` 时落到 `/tmp`（tmpfs），几十 MB 的字体整份占内存、计入服务 cgroup 配额，装的时候还要再拷一遍（改动在 `rmsvc-core`，见基座白皮书 §02） | rmsvc-core 单测（暂存在 HOME 下、只清 `.part`） |
+| wallpaper-serve 同一次休眠去重改按含休眠的开机时长（`/proc/uptime`） | 原用单调时钟：休眠几小时后唤醒、10 秒内又休眠，单调时钟只走了几秒，这次读图被当成重复读跳过，下次休眠还是同一张 | 单测；监听出错的 5 秒→5 分钟退避在一次监听正常跑满 5 分钟后复位（此前只增不减） |
+| mkdir / trash 两个代理 qmd 出错指数退避（15→30→60→120 秒封顶，成功即复位）；comic-margins 建出 `EpubProperties` 后立即排 5 秒销毁 | book-serve 不在时此前固定 15 秒重试，每个代理每小时白醒 240 次（§03j）；后者防异常时对象常驻 | 最新 `asivery/qmldiff` 在带同名锚点的**桩 QML** 上 `apply-diffs` 全部应用、`qmllint` 无语法错误；**不是**真实 .172 QML，设备端 qmldiff 版本可能更旧（本机新版对 `({})` 已不报错，旧设备版会） |
 
-**部署后确认**：打开「管理 → 电池刺客」看唤醒源「今日」计数是否与当天实际休眠 / 唤醒次数量级相符（`data/wakes.cursor` 应出现）；`systemctl restart font-serve` 后 journal 里"索引 N 个家族"秒回、`~/.config/fontconfig/fonts.conf` 的 mtime 不变；xochitl 日志里 `SHELF-MKDIR` / `SHELF-TRASH` 行为照常（停掉 book-serve 时代理不再每 15 秒重试）。
+![battop 唤醒源时间换算与按序号去重](diagrams/battop-wake-time.svg)
+
+**部署后确认**：打开「管理 → 电池刺客」看唤醒源「今日」计数是否与当天实际休眠 / 唤醒次数量级相符（`data/wakes.cursor` 应出现）；`systemctl restart font-serve` 后 journal 里"索引 N 个家族"秒回、`~/.config/fontconfig/fonts.conf` 的 mtime 不变、`~/.local/state/shelf/upload/` 存在且上传字体后不留文件；xochitl 日志里 `SHELF-MKDIR` / `SHELF-TRASH` 行为照常（停掉 book-serve 时代理不再每 15 秒重试）。
 
 ## 04｜踩坑
 
@@ -356,6 +362,7 @@ hook 目标 `FUN_00f47530`：两个 float（s0/s1）+ 一个指针（x0），标
 | wallpaper-serve 改监听休眠读图（§03j） | 09-24 已改并真机验证：临时放第二张图后休眠一次，`Normal to DeepSleep` 同一刻（115.79s）轮换到下一张、只轮换一次；进程列表里没有 journalctl | 充电状态（内核不挂起）下还没试 |
 | ~~lo-alias：不插 USB 冷启动~~ | ✅ 09-25 两次无 USB 整机重启后核对：`10.11.99.1` 同时挂上 `lo` 与 `usb1`，xochitl :80 已绑定 | — |
 | battop：两次冻机的内核根因 | 09-23 起采样循环无子进程；根因（RCU stall）未排除 | 继续观察；不开机自启保持不变 |
+| 第四轮审计改动（§03l） | 代码已合入，未部署、未上真机 | 部署后按 §03l「部署后确认」逐项核对 |
 
 **已闭环（真机）**：hl-snap 精确吸附（§03a）；battop 常驻化（§03b）与唤醒源改读 `/dev/kmsg`（§03b，commit 记真机确认）；hw-stroke 两个 hook 目标、笔尖角度 + 运笔速度（§03e / §03f）；hw-stroke 降负载（§03g）；网页"已加载"徽章（§02）；xochitl 单击翻页 + 日漫翻页规则（§03i）；扩展 `.so` 的 stop → 换 → start 部署流程（§03g，09-24 真机走通；09-25 起被整机重启取代）；换入后整机重启的新流程（§04，09-25 13:10 带 `-ffile-prefix-map` 的新 `.so` 经 WiFi 部署，自动整机重启、开机从待换入区换入，第一次真机走通有变化的 `.so`）；wallpaper-serve 监听休眠读图轮换（§03j）；mkdir-agent 290 秒长轮询（§03j）。
 
@@ -377,4 +384,4 @@ hook 目标 `FUN_00f47530`：两个 float（s0/s1）+ 一个指针（x0），标
 | 2026-09-22 | battop 拆模块、流式聚合；wallpaper-serve 加像素上限和重连退避；font-serve 探测缓存 |
 | 2026-09-23 | battop 唤醒源改读 `/dev/kmsg` |
 | 2026-09-24 | hw-stroke 降负载（§03g）；网页"已加载"徽章（§02）；扩展部署改 stop → 换 → start；第三轮审计（§03k，当天部署） |
-| 2026-09-25 | 部署生效一律整机重启（§04）；两个 `Makefile` 加 `-ffile-prefix-map`，新 `.so` 当天部署并真机走通"待换入区 → 整机重启换入"；母版库按书设阅读方向（§03i）；lo-alias 无 USB 冷启动真机通过 |
+| 2026-09-25 | 部署生效一律整机重启（§04）；两个 `Makefile` 加 `-ffile-prefix-map`，新 `.so` 当天部署并真机走通"待换入区 → 整机重启换入"；母版库按书设阅读方向（§03i）；lo-alias 无 USB 冷启动真机通过；第四轮审计（§03l，未部署） |
