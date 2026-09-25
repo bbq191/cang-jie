@@ -762,6 +762,165 @@ CJ_SIM_VERITY=1 bash -c "cd '$PKG' && PATH='$STUBS:'\$PATH && . ./lib.sh && HOST
 check "run_step：dm-verity 下单元从没装过 → 记为\"前置条件不满足\"而不是已安装" test -n "$(grep '^D=|N=' "$R/out.txt")" -a -n "$(grep '^   chrony-boot-wakelock：dm-verity' "$R/out.txt")"
 unset CJ_ALLOWLIST_LOCAL
 
+# ═══════════════════════════ 8. 2026-09-25：部署后健康核对 verify-on-device.sh ═══════════════════════════
+section "2026-09-25：verify-on-device.sh —— host 端判定（--from 离线喂构造的采集文本）"
+new_sandbox; export CJ_ALLOWLIST_LOCAL="$R/allow.local.txt"
+FW_OK="$(awk '!/^#/ && /3\.28\.0\.172/ { print $1; exit }' "$PKG/firmware-allowlist.txt")"
+VSVCS="gateway book-serve koreader-serve font-serve wallpaper-serve ink-serve transcribe-serve mind-serve note-serve"
+# 一台"健康设备"的采集文本（字段用 | 写，转成 TAB）：扩展都映射且无 (deleted)、qmd 都在且早于 xochitl 启动、
+# 9 个服务 active、端口都在听、单元都在、无告警、空间充足
+mk_dump() {
+    {
+        echo "VERSION|1"; echo "NOW|2000000000"; echo "UPTIME|100000.00"; echo "FW_SHA|$FW_OK"; echo "FW_VER|3.28.0.172"
+        echo "X_ACTIVE|active"; echo "X_PID|4242"; echo "X_NRESTARTS|0"; echo "X_START_MONO|7400000"; echo "X_XOVI|1"
+        echo "XMAP|/home/root/xovi/extensions.d/hl-snap.so|3|0"; echo "XMAP|/home/root/xovi/extensions.d/hw-stroke.so|3|0"
+        echo "HAS_XOVI|1"; echo "EXT_FILE|hl-snap.so|1999000000"; echo "EXT_FILE|hw-stroke.so|1999000000"
+        echo "HAS_QRR|1"
+        for q in font-menu-dynamic.qmd shelf-trash-agent.qmd shelf-mkdir-agent.qmd shelf-comic-margins.qmd reader-page-turn.qmd koreader-sidebar-entry.qmd cangjie-icons.rcc; do echo "QRR_FILE|$q|1999000000"; done
+        echo "HAS_APPLOAD|1"
+        for s in $VSVCS; do echo "UNIT|svc|$s.service|1|1|active|0|5000|10240|20480|7600000|-"; done
+        echo "UNIT|target|shelf.target|1|1|active|-|-|-|-|-|-"
+        echo "UNIT|svc|wifi-watch.service|1|1|active|0|5001|512|600|7000000|-"
+        echo "UNIT|opt|battop.service|1|1|inactive|0|0|-|-|0|-"
+        echo "UNIT|once|xovi-reenable.service|1|1|active|-|-|-|-|-|-"
+        echo "UNIT|once|chrony-boot-wakelock.service|1|-|inactive|-|-|-|-|-|-"
+        echo "PORTINFO|1"; echo "LISTEN|443|0.0.0.0"
+        for p in 8790 8791 8792 8793 8795 8796 8797 8798; do echo "LISTEN|$p|127.0.0.1"; done
+        echo "JOURNAL|1"; echo "XLOG|hookok:hl-snap|1"; echo "XLOG|hookok:hw-stroke|3"; echo "XLOG|hookfail:hl-snap|0"
+        echo "XLOG|mark:reader-page-turn.qmd|2"; echo "FLIGHT_ABSENT|1"; echo "DF_HOME|3000000"; echo "END|1"
+    } | tr '|' '\t'
+}
+# vr ARGS…：跑 verify-on-device.sh，输出进 $R/vout.txt，返回退出码；vsum KEY：从汇总行取 ok/warn/fail/result
+vr() { ( cd "$PKG" && run sh verify-on-device.sh "$@" ) >"$R/vout.txt" 2>&1; }
+vsum() { sed -n "s/^VERIFY-SUMMARY .*$1=\([A-Z0-9]*\).*/\1/p" "$R/vout.txt"; }
+vline() { grep -F -- "$1" "$R/vout.txt" | head -n 1; }
+mk_dump > "$R/ok.dump"
+: > "$CJ_SIM_LOG"; vr 127.0.0.1 --from "$R/ok.dump"; rc=$?
+check "健康采集：退出 0、result=PASS、无 ⚠/✗" test "$rc" -eq 0 -a "$(vsum result)" = PASS -a "$(vsum warn)" = 0 -a "$(vsum fail)" = 0
+check "--from：不连设备（没有任何 ssh/scp）" test "$(count_log '^ssh')" = 0 -a "$(count_log '^scp')" = 0
+check "健康采集：扩展行带 maps 段数与 hook「安装完成」次数" test -n "$(vline '✓ 扩展 hw-stroke.so：已映射 3 段，日志 hook「安装完成」×3')"
+check "健康采集：qmd 有日志佐证时注明（CJ-PAGE-TURN: loaded ×2）" test -n "$(vline 'CJ-PAGE-TURN: loaded」×2')"
+check "健康采集：battop inactive 不算问题（有意不开机自启）" test -n "$(vline '✓ battop.service：inactive')"
+check "健康采集：最后一行是机器可读汇总" test "$(tail -n 1 "$R/vout.txt" | cut -d' ' -f1)" = VERIFY-SUMMARY
+
+# 逐项坏掉：期望的级别与退出码
+vcase() { # 描述 期望退出码(0/1) 期望行里的子串 sed表达式…（作用在健康采集上）
+    vc_d="$1"; vc_rc="$2"; vc_s="$3"; shift 3
+    mk_dump > "$R/case.dump"
+    for vc_e in "$@"; do sed -i "$vc_e" "$R/case.dump"; done
+    vr 127.0.0.1 --from "$R/case.dump"; vc_got=$?
+    if [ "$vc_got" -eq "$vc_rc" ] && [ -n "$(vline "$vc_s")" ]; then ok "$vc_d"; else bad "$vc_d（rc=$vc_got）"; grep -e '✗' -e '⚠' "$R/vout.txt" | head -n 5 | sed 's/^/       /'; fi
+}
+T=$'\t'
+vcase "扩展 .so 在 maps 里是 (deleted) → ✗、退出 1" 1 "✗ 扩展 hw-stroke.so：maps 里是 (deleted)" "s#^XMAP${T}\(.*hw-stroke.so\)${T}3${T}0#XMAP${T}\1${T}3${T}1#"
+vcase "extensions.d 里有非 .so 文件（备份）→ ✗" 1 "✗ 扩展目录异物 hl-snap.so.bak" "\$a EXT_FILE${T}hl-snap.so.bak${T}1"
+vcase "extensions.d 里有 .crashed 标记 → 只 ⚠" 0 "⚠ 扩展 hl-snap.so.crashed" "\$a EXT_FILE${T}hl-snap.so.crashed${T}1"
+vcase "扩展在目录里但没被映射 → ⚠" 0 "⚠ 扩展 hl-snap.so：在 extensions.d 里但没被当前 xochitl 映射" "/^XMAP${T}.*hl-snap/d"
+vcase "当前 xochitl 日志有「hook 未安装」→ 该扩展 ✗" 1 "✗ 扩展 hl-snap.so：已映射 3 段，但当前 xochitl 日志有「hook 未安装」×2" "s/^XLOG${T}hookfail:hl-snap${T}0/XLOG${T}hookfail:hl-snap${T}2/"
+vcase "待换入区有 .so → ⚠、退出 0（result=WARN）" 0 "⚠ 待换入区 so-pending：有 hw-stroke.so" "\$a PENDING${T}so-pending:hw-stroke.so"
+check "  └ result=WARN" test "$(vsum result)" = WARN
+vcase "有待生效标记 → ⚠" 0 "⚠ 待生效标记：shelf-qmd" "\$a PENDING${T}shelf-qmd"
+vcase "xovi 没在 xochitl 里生效 → ✗" 1 "✗ xovi：xochitl 没带 xovi" "s/^X_XOVI${T}1/X_XOVI${T}0/"
+vcase "设备没装 xovi → 只 ⚠" 0 "⚠ xovi：设备上没有 xovi.so" "s/^X_XOVI${T}1/X_XOVI${T}0/" "s/^HAS_XOVI${T}1/HAS_XOVI${T}0/" "/^XMAP/d" "/^EXT_FILE/d"
+vcase "xochitl NRestarts>0 → ⚠" 0 "⚠ xochitl：active，MainPID=4242，NRestarts=2" "s/^X_NRESTARTS${T}0/X_NRESTARTS${T}2/"
+vcase "xochitl 不是 active → ✗" 1 "✗ xochitl：is-active=failed" "s/^X_ACTIVE${T}active/X_ACTIVE${T}failed/"
+vcase "固件哈希不在白名单 → ✗" 1 "✗ 固件：IMG_VERSION=3.28.0.172，sha256=deadbeef 不在白名单" "s/^FW_SHA${T}.*/FW_SHA${T}deadbeef/"
+echo "cafebabe  (--force 追加，未验证，2026-09-25)" > "$CJ_ALLOWLIST_LOCAL"
+vcase "固件哈希只在本机 --force 白名单 → ⚠" 0 "⚠ 固件：IMG_VERSION=3.28.0.172，sha256 只在本机" "s/^FW_SHA${T}.*/FW_SHA${T}cafebabe/"
+rm -f "$CJ_ALLOWLIST_LOCAL"
+vcase "开机不久 → ⚠（提示查意外整机重启）" 0 "⚠ 开机时长：1分40秒" "s/^UPTIME${T}.*/UPTIME${T}100.5/"
+vcase "qmd 缺失（所属服务已装）→ ✗" 1 "✗ reader-page-turn.qmd：缺失" "/^QRR_FILE${T}reader-page-turn.qmd/d"
+vcase "qmd 比 xochitl 进程新 → ⚠ 待重启" 0 "⚠ shelf-mkdir-agent.qmd：文件比当前 xochitl 进程新" "s/^QRR_FILE${T}shelf-mkdir-agent.qmd${T}.*/QRR_FILE${T}shelf-mkdir-agent.qmd${T}1999999999/"
+vcase "book-serve 没装 → 不期望它的 qmd/端口，单元缺失只 ⚠" 0 "⚠ book-serve.service：没装" "/^QRR_FILE${T}\(shelf-\|reader-page\)/d" "/^LISTEN${T}8790/d" "s/^UNIT${T}svc${T}book-serve.service${T}1${T}1/UNIT${T}svc${T}book-serve.service${T}0${T}0/"
+check "  └ 没有报它的 qmd 缺失" test -z "$(vline '✗ reader-page-turn.qmd')"
+vcase "没装 qt-resource-rebuilder → qmd 整节只一条 ⚠" 0 "⚠ qt-resource-rebuilder" "s/^HAS_QRR${T}1/HAS_QRR${T}0/" "/^QRR_FILE/d"
+vcase "旧命名遗留 qmd → ⚠" 0 "⚠ font-menu-dynamic-3.27.qmd：旧命名遗留" "\$a QRR_FILE${T}font-menu-dynamic-3.27.qmd${T}1"
+vcase "单元文件不在但载荷在（OTA 冲掉）→ ✗" 1 "✗ gateway.service：单元文件不在" "s/^UNIT${T}svc${T}gateway.service${T}1/UNIT${T}svc${T}gateway.service${T}0/"
+vcase "服务 inactive → ✗" 1 "✗ ink-serve.service：is-active=failed" "s/^UNIT${T}svc${T}ink-serve.service${T}1${T}1${T}active/UNIT${T}svc${T}ink-serve.service${T}1${T}1${T}failed/"
+vcase "服务 NRestarts>0 → ⚠" 0 "⚠ mind-serve.service：active，但 NRestarts=3" "s/^UNIT${T}svc${T}mind-serve.service${T}1${T}1${T}active${T}0/UNIT${T}svc${T}mind-serve.service${T}1${T}1${T}active${T}3/"
+vcase "服务峰值内存超阈值 → ⚠" 0 "⚠ book-serve.service：active，峰值内存偏高" "s/^\(UNIT${T}svc${T}book-serve.service${T}1${T}1${T}active${T}0${T}5000${T}10240${T}\)20480/\1900000/"
+vcase "服务很晚才启动 → 注明开机后被重启过" 0 "开机后 1小时0分 才启动（开机后被重启过）" "s/^\(UNIT${T}svc${T}note-serve.service${T}.*${T}\)7600000${T}-\$/\13600000000${T}-/"
+vcase "端口没人听 → ✗" 1 "✗ 8796（transcribe-serve）：没有进程在监听" "/^LISTEN${T}8796/d"
+vcase "领域服务监听 0.0.0.0 → ⚠" 0 "⚠ 8791（koreader-serve）：监听 0.0.0.0" "s/^LISTEN${T}8791${T}127.0.0.1/LISTEN${T}8791${T}0.0.0.0/"
+vcase "网关只听回环 → ⚠" 0 "⚠ 443（gateway）：只监听 127.0.0.1" "s/^LISTEN${T}443${T}0.0.0.0/LISTEN${T}443${T}127.0.0.1/"
+vcase "单元里 --bind 的端口优先于兜底表" 0 "✓ 8899（font-serve）" "s/^\(UNIT${T}svc${T}font-serve.service${T}.*${T}\)-\$/\18899/" "\$a LISTEN${T}8899${T}127.0.0.1"
+vcase "journal 有 panic → ✗" 1 "✗ panic：1 条相关日志；最近一条：thread 'main' panicked at src/x.rs" "\$a ALERT${T}J${T}panic${T}1${T}thread 'main' panicked at src/x.rs"
+vcase "dmesg 与 journal 同一次 OOM 各一份 → 取较大计数、样例用 journal" 1 "✗ OOM：3 条相关日志；最近一条：J-sample" "\$a ALERT${T}K${T}oom${T}3${T}K-sample" "\$a ALERT${T}J${T}oom${T}2${T}J-sample"
+vcase "SHELF-MKDIR 超时只 ⚠" 0 "⚠ SHELF-MKDIR 超时：4 条相关日志" "\$a ALERT${T}J${T}mkdir-timeout${T}4${T}SHELF-MKDIR: transfer timeout after 9000ms"
+vcase "/home 空间不足 → ✗" 1 "✗ /home：剩余 10.0MB" "s/^DF_HOME${T}.*/DF_HOME${T}10240/"
+vcase "/home 空间偏紧 → ⚠" 0 "⚠ /home：剩余 100.0MB" "s/^DF_HOME${T}.*/DF_HOME${T}102400/"
+vcase "飞行记录仪：打印最后几行" 0 "│ 2026-09-25 03:00 freeze?" "/^FLIGHT_ABSENT/d" "\$a FLIGHT_MTIME${T}1999999000" "\$a FLIGHT${T}2026-09-25 03:00 freeze?"
+vcase "采集不完整（缺 END）→ ✗" 1 "✗ 采集结果：不完整" "/^END/d"
+printf 'garbage\n' > "$R/bad.dump"; vr 127.0.0.1 --from "$R/bad.dump"; rc=$?
+check "不是采集文本 → ✗、退出 1" test "$rc" -eq 1 -a -n "$(vline '缺 VERSION 行')"
+# --json：合法 JSON，计数与文本模式一致
+mk_dump | sed "\$a PENDING${T}so-pending:x.so" > "$R/j.dump"
+vr 127.0.0.1 --from "$R/j.dump"; tw="$(vsum warn)"; tf="$(vsum fail)"
+vr 127.0.0.1 --from "$R/j.dump" --json; rc=$?
+if command -v python3 >/dev/null 2>&1; then
+    jsum="$(python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); print(d["warn"], d["fail"], d["result"], all(set(i)=={"level","section","title","msg","detail"} for i in d["items"]))' "$R/vout.txt" 2>&1)"
+    check "--json：合法 JSON，warn/fail 计数与文本模式一致、result=WARN" test "$rc" -eq 0 -a "$jsum" = "$tw $tf WARN True"
+else
+    check "--json：输出以 { 开头（本机无 python3，不做完整解析）" test "$(cut -c1 "$R/vout.txt" | head -n 1)" = "{"
+fi
+# 参数解析：错参数退出 2 且不连设备
+: > "$CJ_SIM_LOG"
+vr --bogus; rc1=$?; vr a b; rc2=$?; vr --json --dump; rc3=$?; vr --from "$R/nope.dump"; rc4=$?; vr --flight-lines x; rc5=$?
+vr -h; rc6=$?
+check "verify：未知参数/两个 host/--json+--dump/--from 不存在/--flight-lines 非数字 → 退出 2；-h → 0；都没连设备" test "$rc1$rc2$rc3$rc4$rc5$rc6" = "222220" -a "$(count_log '^ssh')" = 0
+unset CJ_ALLOWLIST_LOCAL
+
+section "2026-09-25：verify-on-device.sh —— 设备端采集（假 ssh 跑真采集脚本）：只读、一次连接、内核命令行 panic=N 不误报"
+new_sandbox; export CJ_ALLOWLIST_LOCAL="$R/allow.local.txt"; xovi_live on
+mkdir -p "$R/proc/net" "$R/home/root/.local/state/cang-jie-flight"
+echo "100000.00 1.00" > "$R/proc/uptime"
+printf 'Name:\tx\nVmHWM:\t  20480 kB\nVmRSS:\t  10240 kB\n' > "$R/proc/4242/status"
+{ echo "  sl  local_address rem_address   st"
+  echo "   0: 00000000:01BB 00000000:0000 0A 0"; n=1
+  for p in 8790 8791 8792 8793 8795 8796 8797 8798; do printf '   %d: 0100007F:%04X 00000000:0000 0A 0\n' "$n" "$p"; n=$((n + 1)); done
+  echo "   9: 0100007F:1F90 0100007F:D431 01 0"; } > "$R/proc/net/tcp"   # 最后一行是已建立连接（st=01），不算监听
+printf '  sl  local_address                         remote_address                        st\n   0: 0000000000000000FFFF00000100007F:22B6 00000000000000000000000000000000:0000 0A 0\n' > "$R/proc/net/tcp6"
+: > "$R/home/root/xovi/extensions.d/hl-snap.so"; : > "$R/home/root/xovi/extensions.d/hw-stroke.so"
+for s in $VSVCS; do : > "$B/$s"; printf '[Service]\nExecStart=/home/root/.local/bin/%s\n' "$s" > "$R/usr/lib/systemd/system/$s.service"; done
+for u in shelf.target xovi-reenable.service wifi-watch.service battop.service chrony-boot-wakelock.service; do : > "$R/usr/lib/systemd/system/$u"; done
+: > "$B/wifi-watch.sh"; mkdir -p "$R/home/root/battop"; : > "$R/home/root/battop/battop"
+for q in font-menu-dynamic.qmd shelf-trash-agent.qmd shelf-mkdir-agent.qmd shelf-comic-margins.qmd reader-page-turn.qmd koreader-sidebar-entry.qmd cangjie-icons.rcc; do : > "$Q/$q"; done
+printf 'f1\nf2\nf3\nf4\tx\n' > "$R/home/root/.local/state/cang-jie-flight/flight.log"   # 末行带 TAB：采集要压成空格，不能错位
+cat > "$R/journal.txt" <<'EOF'
+Kernel command line: console=ttymxc0,115200 panic=2 rootwait
+[hl-snap] 荧光笔EXPAND hook 安装完成 @ 0x1（neuter=0）
+[hw-stroke] 变宽几何 hook 安装完成 @ 0x2（factor=1.000）
+CJ-PAGE-TURN: loaded
+EOF
+export CJ_SIM_JOURNAL="$R/journal.txt"
+PRE_SIG="$(tree_sig)"; : > "$CJ_SIM_LOG"
+vr 127.0.0.1 --flight-lines 2; rc=$?
+check "采集：内核命令行里的 panic=2 不算 panic（2026-09-25 真机误报）" test -n "$(vline '✓ panic：无 panic')"
+check "采集：全链路跑通、没有采集错误（有 END、单元/端口/qmd/扩展都读到）" test -z "$(vline '采集结果')" -a -n "$(vline '✓ 443（gateway）：监听 0.0.0.0')" -a -n "$(vline '✓ 8790（book-serve）：监听 127.0.0.1')" -a -n "$(vline '✓ 扩展 hl-snap.so：已映射 1 段，日志 hook「安装完成」×1')" -a -n "$(vline '✓ 单元：14/14 个在位')"
+check "采集：飞行记录仪只取 --flight-lines 条（最后 2 行）" test -n "$(vline '│ f4 x')" -a -n "$(vline '│ f3')" -a -z "$(vline '│ f2')"
+check "采集：/proc/net/tcp6 的 IPv4 映射地址解析成 127.0.0.1（8886 端口）" test -n "$( ( cd "$PKG" && run sh verify-on-device.sh 127.0.0.1 --dump ) 2>/dev/null | grep "^LISTEN${T}8886${T}127.0.0.1$")"
+: > "$CJ_SIM_LOG"; vr 127.0.0.1
+sig_eq "采集：设备文件树前后一字不差（只读）" "$PRE_SIG" "$(tree_sig)"
+check "采集：没有 start/stop/restart/enable/disable/daemon-reload、没有 mount、没有 scp" test -z "$(grep -E '^systemctl (start|stop|restart|reload|enable|disable|daemon-reload|kill|reset-failed)|^mount |^scp |XOVI_START' "$CJ_SIM_LOG")"
+check "采集：一次 ssh 连通检查 + 一次 ssh 采集（不逐项连）" test "$(count_log '^ssh')" = 2 -a "$(count_log '^ssh sh -s')" = 1
+check "采集：设备全健康时退出 0（固件桩哈希不在白名单除外，已单独断言）" test "$(vsum fail)" = 1 -a -n "$(vline '✗ 固件')"
+# 真 panic / hook 未安装 / dmesg OOM 能从采集里抓到
+printf "thread 'main' panicked at gateway/src/main.rs:10:5\n[hw-stroke] _xovi_construct: 找不到 xochitl 映射，hook 未安装\nxochitl: processed more than once!\n" >> "$R/journal.txt"
+printf '[  12.3] Out of memory: Killed process 777 (book-serve)\n[    0.0] Kernel command line: panic=2\n' > "$R/dmesg.txt"; export CJ_SIM_DMESG="$R/dmesg.txt"
+vr 127.0.0.1; rc=$?
+check "采集：真 panic / hook 未安装 / 扩展重复注册 / dmesg 里的 OOM 都判 ✗、退出 1" test "$rc" -eq 1 -a -n "$(vline "✗ panic：1 条相关日志；最近一条：thread 'main' panicked")" -a -n "$(vline '✗ hook 未安装：1 条')" -a -n "$(vline '✗ 扩展重复注册')" -a -n "$(vline '✗ OOM：1 条相关日志；最近一条：[  12.3] Out of memory')"
+unset CJ_SIM_JOURNAL CJ_SIM_DMESG
+# 服务 inactive / 设备连不上
+CJ_SIM_INACTIVE_UNITS="note-serve.service" vr 127.0.0.1
+check "采集：某个服务 inactive → 该服务 ✗" test -n "$(vline '✗ note-serve.service：is-active=inactive')"
+: > "$CJ_SIM_LOG"; CJ_SIM_SSH_FAIL=1 vr 127.0.0.1; rc=$?
+check "采集：设备连不上 → 退出 1、打印\"连不上\"与排查步骤" test "$rc" -eq 1 -a -n "$(vline '连不上')"
+# 静态守卫：采集脚本（heredoc）里不许出现任何改设备状态的命令
+awk '/<<.DEVICE_SCRIPT.$/ { on = 1; next } /^DEVICE_SCRIPT$/ { on = 0 } on' "$PKG/verify-on-device.sh" | grep -v '^[[:space:]]*#' > "$R/collector.sh"
+check "静态守卫：verify 采集脚本非空" test -s "$R/collector.sh"
+check "静态守卫：verify 采集脚本不含 systemctl 写操作 / mount / rm / mv / cp / 写文件重定向 / cj_xochitl_apply / 标记增删" test -z "$(grep -nE 'systemctl +(start|stop|restart|reload|enable|disable|daemon-reload|kill|mask|reset-failed)|\bmount\b|(^|[;&|[:space:]])(rm|mv|cp|mkdir|touch|ln|chmod|kill)[[:space:]]|>>|>[[:space:]]*"?\$|cj_xochitl_apply|cj_pending_(mark|clear)|cj_so_(stage|commit|unstage)|xovi/start' "$R/collector.sh")"
+unset CJ_ALLOWLIST_LOCAL
+
 # ═══════════════════════════ 5. 静态守卫 / 清单对称 ═══════════════════════════
 section "静态守卫"
 cd "$REPO" || exit 1
