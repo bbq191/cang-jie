@@ -979,6 +979,20 @@ wl_gone=0; for _i in 1 2 3 4 5 6 7 8; do kill -0 "$wl_pid" 2>/dev/null || { wl_g
 kill -KILL "$wl_pid" 2>/dev/null; wait "$wl_pid" 2>/dev/null
 check "chrony-boot-wakelock：拿到锁；收到 TERM 后几秒内退出（不再轮询到超时）并放锁" test "$(cat "$WL/lock")" = cangjie-chrony-boot -a "$wl_gone" = 1 -a "$(cat "$WL/unlock")" = cangjie-chrony-boot
 
+# chrony-cn / timezone-cn 的 overlay 分支：写 rootfs 底层失败要报错退出（且恢复 ro），不能打印"已改"
+# （假 mount 不真的 bind，沙箱里预先放好 "bind 视图" 目录并设为只读，让写底层失败）
+new_sandbox; printf 'overlay /etc overlay rw 0 0\n' > "$R/mounts-ov"
+mkdir -p "$R/chrony-cn.rootbind/etc" "$R/timezone-cn.rootbind/etc"
+printf 'server a.google.com iburst\n' > "$R/chrony-cn.rootbind/etc/chrony.conf"; chmod 555 "$R/chrony-cn.rootbind/etc"
+printf 'server a.google.com iburst\n' > "$R/chrony.conf"; : > "$CJ_SIM_LOG"
+( cd "$PKG" && CJ_CHRONY_CONF="$R/chrony.conf" CJ_MOUNTS="$R/mounts-ov" CJ_BACKUP_DIR="$R/cbk" CJ_TMPDIR="$R" run sh deploy-chrony-cn.sh 127.0.0.1 ) >"$R/out.txt" 2>&1; rc=$?
+check "chrony-cn overlay：写底层失败 → 退出非 0、报错、不说\"已改\"、最后一次 mount 是 ro" test "$rc" -ne 0 -a -n "$(grep '失败（底层未动）' "$R/out.txt")" -a -z "$(grep '底层已改' "$R/out.txt")" -a "$(last_mount)" = "mount -o remount,ro /"
+chmod 755 "$R/chrony-cn.rootbind/etc"
+echo TZ > "$R/Shanghai"; chmod 555 "$R/timezone-cn.rootbind/etc"; : > "$CJ_SIM_LOG"
+( cd "$PKG" && CJ_ZONEINFO="$R/Shanghai" CJ_LOCALTIME="$R/localtime" CJ_MOUNTS="$R/mounts-ov" CJ_BACKUP_DIR="$R/cbk" CJ_TMPDIR="$R" run sh deploy-timezone-cn.sh 127.0.0.1 ) >"$R/out.txt" 2>&1; rc=$?
+check "timezone-cn overlay：写底层失败 → 退出非 0、报错、不说\"已改\"、最后一次 mount 是 ro" test "$rc" -ne 0 -a -n "$(grep '失败（底层未动）' "$R/out.txt")" -a -z "$(grep '底层已改' "$R/out.txt")" -a "$(last_mount)" = "mount -o remount,ro /"
+chmod 755 "$R/timezone-cn.rootbind/etc"
+
 # ═══════════════════════════ 5. 静态守卫 / 清单对称 ═══════════════════════════
 section "静态守卫"
 cd "$REPO" || exit 1
