@@ -42,7 +42,7 @@
 
 **`bookconv` 不拆独立服务**（评估后否决）：库边界本已干净，拆服务唯一好处是进程隔离，代价是几百 MB 大文件跨进程序列化（峰值内存可能不降反升）；且设备 cgroup `MemoryMax` 从未真正生效（单元写了 `MemoryMax=192M`，但 systemd 没把 memory 控制器代理进 `system.slice` 子树），隔离想要的内存兜底本来就是假的。
 
-**网关代理**（`gateway/src/proxy.rs`）：`/api/{svc}/*` 按 URL 段（`books`→`book-serve`、`koreader`→`koreader-serve`，表在 `gateway/src/manage.rs`）转发到 loopback。**请求体真流式**（大文件上传不占网关内存）；**响应**：后端给了 `Content-Length` 的 200 应答，若是下载（带 `Content-Disposition`）或体积超过 256KB（`STREAM_MIN_BYTES`，壁纸原图等），网关按定长边读边发；其余小 JSON 与没有长度的应答读完再回（2026-09-24；没有长度的流只能走 SSE 那种“读到连接关闭”的通道，拿来做下载会让浏览器等不到结束）。"优化 / 加入 xochitl / 加入 KOReader"三个 POST 会额外读一次小 JSON 并过并发闸门（§7.2）。
+**网关代理**（`gateway/src/proxy.rs`）：`/api/{svc}/*` 按 URL 段（`books`→`book-serve`、`koreader`→`koreader-serve`，表在 `gateway/src/manage.rs`）转发到 loopback。**请求体真流式**（大文件上传不占网关内存）；**响应**：后端给了 `Content-Length` 的 200 应答，若是下载（带 `Content-Disposition`）或体积超过 256KB（`STREAM_MIN_BYTES`，壁纸原图等），网关按定长边读边发；其余小 JSON 与没有长度的应答读完再回（2026-09-24；没有长度的流只能走 SSE 那种“读到连接关闭”的通道，拿来做下载会让浏览器等不到结束）。"优化 / 加入 xochitl / 加入 KOReader"三个 POST 与勾了「同步优化」的抓网文（09-25 起）会额外读一次小 JSON 并过并发闸门（§7.2、§7.3）。
 
 **`book-serve` → `xochitl` 直连，不经网关**：`Staging::deliver()` 用 `rmsvc_core::xochitl::Xochitl` 连 `10.11.99.1:80`（USB 网口地址，配置键 `xochitlHost`）的 `/upload`，大文件通道还直接读写书库目录。与"浏览器 → 网关 → book-serve"是两条独立的边，别混成一条。
 
@@ -265,7 +265,7 @@ xochitl `/upload` 约 100MB 硬限（超了断连）。超过体积门时 `Stagi
 
 | 锁 | 代码 | 谁进 | 锁多久 | 防什么 |
 |---|---|---|---|---|
-| 忙锁 | `ops.rs::OpRegistry`（按书名） | 优化、落库、改名（新旧两名）、恢复原 PDF；删除只查不占 | 整个操作 | 同一本同时被优化/删除/改名 |
+| 忙锁 | `ops.rs::OpRegistry`（按书名） | 优化、落库、改名（新旧两名）、恢复原 PDF、抓网文的「同步优化」（落名临界区里一挑中名字就占上，09-25）；删除只查不占 | 整个操作 | 同一本同时被优化/删除/改名 |
 | 落名临界区 | `Staging::land`（`land_guard()`） | `stage_new`/`stage_from_path`（网页上传、inbox 追平、抓网文）、改名、恢复原 PDF、优化完成后改规范名 | 只包“`unique_path` 挑名 + rename/写入”，毫秒级 | 两本同名书挑到同一个名、后到的覆盖先到的 |
 | spool 锁 | `Spool::guard` | 只有 `process_inbox` 一轮追平 | 一轮 | 两轮追平抢同一文件 |
 | 边车写锁 | `sidecar::update`（全局 static） | 所有边车读-改-写（进度、终态、渲染记录、落库标记） | 一次读改写 | 交错写丢字段 |
@@ -274,7 +274,7 @@ xochitl `/upload` 约 100MB 硬限（超了断连）。超过体积门时 `Stagi
 
 **09-24 前的两个真 bug**：网页上传把 spool 锁攥到整个请求体收完（WiFi 传大书可达分钟级），期间 inbox 追平与其他上传全卡住，而抓网文压根不拿锁——同名书仍可能互相覆盖；xochitl 的“当前文件夹”是它的全局状态，3 本小书并发投递会落错文件夹。两者都有 host 回归测试（`slow_upload_does_not_block_inbox_processing`、`concurrent_landing_of_same_name_never_clobbers`、`concurrent_uploads_land_in_their_own_folders`），**未上真机**。
 
-PDF 转 EPUB 转换前查一次“同名 `.epub` 已存在”，转换完（可达分钟级）落地前在落名临界区里**再查一次**，转换期间有人落下同名书就放弃这次转换、原 PDF 不动（第三轮审计当天补上，host 单测覆盖）。**已知缺口（代码未改）**：抓网文的「同步优化」直接调 `optimize()`，不占忙锁也不过网关闸门（网文通常几十 KB）。note-serve 是另一个进程，和 book-serve 同时投 xochitl 时上传锁管不到。
+PDF 转 EPUB 转换前查一次“同名 `.epub` 已存在”，转换完（可达分钟级）落地前在落名临界区里**再查一次**，转换期间有人落下同名书就放弃这次转换、原 PDF 不动（第三轮审计当天补上，host 单测覆盖）。**抓网文的「同步优化」（2026-09-25 补，此前是已知缺口）**：book-serve 侧在落名临界区里挑中名字的同时占上忙锁（`Staging::stage_bytes(.., hold_busy=true)`），优化完（含失败、panic）才释放——书一出现在母版库就处于忙态，优化期间删除/改名/再优化/落库一律回“正在处理中”；网关侧 `proxy.rs` 把 `POST staging/fetch-article` 列为第四个限流操作，**只在 `optimize:true` 时**过闸门，固定小档，键是 `抓网文 <url>`（书名要抓完才知道），同步请求返回即归还名额（同“加入 KOReader”）。名额在抓取（联网下载）期间也占着，比“只锁优化那一段”略宽，换来不必把同步接口拆成“落地 + 再发一次异步优化”。两侧都有 host 回归测试（`fetch_article_sync_optimize_holds_busy_lock`、`fetch_article_with_optimize_holds_and_returns_a_slot`），**未上真机**。note-serve 是另一个进程，和 book-serve 同时投 xochitl 时上传锁管不到。
 
 ## 8｜前端 UI 层（`gateway/ui/app.js`）
 
@@ -336,7 +336,7 @@ POST /mkdir/add · GET /mkdir/pending[?wait=秒] · GET /mkdir   原生建文件
 ## 10｜已知限制（如实记录，不是遗漏）
 
 - 网关代理对 ≤256KB 且不是下载的应答、以及没有 `Content-Length` 的应答仍整体缓冲（§1）；它们都是小 JSON，不改。
-- 并发控制已知缺口（§7.3）：抓网文的「同步优化」不占忙锁、不过闸门。（PDF 转 EPUB 落地前复查同名书已于 09-24 补上。）
+- 并发控制（§7.3）：抓网文的「同步优化」不占忙锁、不过闸门的缺口已于 09-25 补上（忙锁 + 网关小档名额，仅 host 单测）；剩下的已知边界是 note-serve 与 book-serve 同时投 xochitl 时上传锁管不到。（PDF 转 EPUB 落地前复查同名书已于 09-24 补上。）
 - `shelf-mkdir-agent.qmd` 长轮询 09-24 放宽到 290 秒（依据：设备 Qt 6.10 的 QML XHR 不设传输超时，源码核实）；部署后确认 journal 里没有 `SHELF-MKDIR: transfer timeout`（有就说明退回了 25 秒）。
 - 渲染自检对漫画拆分份不生效（§6.2 第 5 点）。
 - 大文件占位通道：>153MB 首次渲染内存/耗时没验证；占位上传后崩溃会残留占位文档；批量“加入 xochitl / KOReader”无设备端到端实测。

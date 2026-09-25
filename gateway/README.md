@@ -63,7 +63,7 @@ src/
   main.rs      入口、子命令、路由注册
   auth.rs      登录守卫（Cookie/Basic）、首登必改、按 IP 限速
   config.rs    gateway.json：HTTPS 开关、密码哈希、mDNS 名、额外证书名、会话天数
-  proxy.rs     /api/<seg>/* 反向代理 + 三个吃内存操作的闸门拦截
+  proxy.rs     /api/<seg>/* 反向代理 + 四个吃内存操作的闸门拦截（优化/加入 xochitl/加入 KOReader/勾了同步优化的抓网文）
   manage.rs    MODULES 服务表（唯一事实源）、管理台、基石探测
   events.rs    事件汇聚 Hub
   budget.rs    并发/内存闸门
