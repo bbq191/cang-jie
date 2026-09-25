@@ -69,6 +69,28 @@ pub fn local_offset(now: u64) -> i64 {
     }
 }
 
+#[repr(C)]
+struct Timespec {
+    tv_sec: std::os::raw::c_long,
+    tv_nsec: std::os::raw::c_long,
+}
+
+extern "C" {
+    fn clock_gettime(clk: std::os::raw::c_int, tp: *mut Timespec) -> std::os::raw::c_int;
+}
+
+/// CLOCK_MONOTONIC 的秒数（开机以来、**不含休眠**；与内核 kmsg 时间戳同样不含休眠，wake.rs 用它换算墙钟）。
+/// `std::time::Instant` 不暴露绝对值，只好直接问 libc（同 [`local_offset`]）。失败回 0。
+pub fn monotonic_secs() -> u64 {
+    const CLOCK_MONOTONIC: std::os::raw::c_int = 1;
+    let mut ts = Timespec { tv_sec: 0, tv_nsec: 0 };
+    // SAFETY: ts 为本栈上有效对象，clock_gettime 只写它；glibc/musl 64 位 Linux 上 timespec 均为两个 long。
+    if unsafe { clock_gettime(CLOCK_MONOTONIC, &mut ts) } != 0 || ts.tv_sec < 0 {
+        return 0;
+    }
+    ts.tv_sec as u64
+}
+
 /// 测试用临时目录（纯 std，battop 保持零依赖；Drop 时清理）。
 #[cfg(test)]
 pub mod testutil {
@@ -117,6 +139,14 @@ mod tests {
     #[test]
     fn san_strips_tab_newline() {
         assert_eq!(san("a\tb\nc"), "a b c");
+    }
+
+    #[test]
+    fn monotonic_not_ahead_of_boottime_uptime() {
+        let m = monotonic_secs();
+        let up = crate::procs::read_uptime();
+        assert!(m > 0, "单调时钟应已走过 0");
+        assert!(m <= up + 1, "单调时钟不含休眠，不会超过含休眠的 uptime: mono={m} up={up}");
     }
 
     /// 与 `date +%z` 对拍（host 有 date；进程未改 TZ 时两者同源于 /etc/localtime 或 TZ）。

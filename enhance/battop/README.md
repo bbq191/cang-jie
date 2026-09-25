@@ -24,7 +24,7 @@
 |---|---|---|
 | 各进程 CPU 增量 | `/proc/<pid>/stat` | 按进程名、按 systemd unit（"应用"）两种方式聚合 |
 | 电量、放电 mAh | 电量计 sysfs（`max77818_battery` 的 `capacity`、`charge_now`、`current_now`） | `charge_now` 是库仑计，放电 mAh 比按百分比估算准 |
-| 唤醒源 | `/dev/kmsg` 里的 `PM: active wakeup source: <名>` | 只含**本次开机以来**的记录（旧版 fork `journalctl` 能跨开机查 31 天，为去掉子进程接受了这个退化）；约每 50 分钟刷新一次缓存 |
+| 唤醒源 | `/dev/kmsg` 里的 `PM: active wakeup source: <名>` | 只含**本次开机以来**的记录（旧版 fork `journalctl` 能跨开机查 31 天，为去掉子进程接受了这个退化）；约每 50 分钟刷新一次缓存；按记录序号增量并入（`wakes.cursor`），时间按不含休眠的单调时钟换算（09-25 前按含休眠的 uptime 换算，事件被提前"开机以来累计休眠时长"，面板「今日」唤醒数不准） |
 
 数据目录 `/home/root/battop/data`（`BATTOP_DIR` 可改）：按天的样本文件 + baseline + `wakes.tsv` 唤醒缓存 + `summary.json`，40 天前的样本自动清理。每轮重算 `summary.json` 时，历史样本文件按（大小, mtime）缓存整文件聚合，只重读被时间窗起点切开或变过的文件（2026-09-24，host 实测每轮 34.7 → 4.0 ms，输出逐字节不变；未上真机）。采样间隔 `BATTOP_INTERVAL_SECS`（默认 600 秒）。间隔用单调时钟计，设备休眠时不走，所以是"醒着每 10 分钟"。
 
