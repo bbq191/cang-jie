@@ -70,11 +70,22 @@ fn downscale_into(bytes: &[u8], max_w: u32, max_h: u32) -> Option<Vec<u8>> {
         return None; // 极端高分辨率原图：不整个解出来，原样保留（见 MAX_DECODE_PIXELS 文档）
     }
     let img = image::load_from_memory_with_format(bytes, fmt).ok()?;
-    let resized = img.resize(max_w, max_h, FilterType::Lanczos3);
+    // 缩放走 SIMD 版 Lanczos3（`resize_lanczos3`，同漫画页；尺寸算法与 `DynamicImage::resize` 相同），编码时灰度保持单分量。
+    // 此前 `img.resize` 是 `image` 自带的标量实现（实测慢约 20 倍，且中间缓冲是 f32，内存大），`encode_image` 还会把
+    // 灰度图写成 3 分量 JPEG（体积白涨）——文字书插图每张都走这里（2026-09-25 审计）。非 L8/RGB8 类型（带透明 PNG 等）照旧。
+    let (nw, nh) = fit_within(w, h, max_w, max_h);
+    let resized = resize_lanczos3(&img, nw, nh);
     drop(img);
-    let out = encode_as(fmt, &resized, JPEG_QUALITY)?;
+    let out = encode_keep_gray(fmt, &resized, JPEG_QUALITY).or_else(|| encode_as(fmt, &resized, JPEG_QUALITY))?;
     // 只有确实变小才采用（极端下重编码可能变大 → 保留原图，不倒退体积）。
     (out.len() < bytes.len()).then_some(out)
+}
+
+/// 保比放进 `max_w × max_h` 框后的尺寸（与 `image` 库 `DynamicImage::resize` 的 `resize_dimensions` 同一算法：取宽高两个比例的
+/// 较小者、四舍五入、至少 1）。只用于缩小，结果不会超过原尺寸。
+fn fit_within(w: u32, h: u32, max_w: u32, max_h: u32) -> (u32, u32) {
+    let ratio = f64::min(max_w as f64 / w as f64, max_h as f64 / h as f64);
+    (((w as f64 * ratio).round() as u32).max(1), ((h as f64 * ratio).round() as u32).max(1))
 }
 
 /// **CBZ/漫画整页**降采样：按朝向选盒（竖 954×1696 / 横 1696×954），页整张填屏、横页横读可用 1696 宽。
@@ -437,18 +448,28 @@ fn encode_keep_gray(fmt: ImageFormat, img: &image::DynamicImage, jpeg_quality: u
 const COLOR_KEEP_CHROMA: f32 = 0.06;
 
 /// 采样估计页面平均色度（避免逐像素遍历大图）：每隔若干像素取样，取 RGB 极差均值 /255。
-/// 灰度图（r=g=b）色度恒 0。
+/// 灰度图（r=g=b）色度恒 0，直接返回——此前不分类型一律 `to_rgb8()`，灰度漫画页（最常见）白白复制出一份
+/// 3 倍大的 RGB 副本（900 万像素上限的图就是 27MB）只为算出 0；RGB 图直接读原像素，也不再先克隆一份（2026-09-25 审计）。
 fn mean_chroma(img: &image::DynamicImage) -> f32 {
-    let rgb = img.to_rgb8();
-    let (w, h) = rgb.dimensions();
+    use image::DynamicImage;
+    match img {
+        DynamicImage::ImageLuma8(_) | DynamicImage::ImageLumaA8(_) | DynamicImage::ImageLuma16(_) | DynamicImage::ImageLumaA16(_) => 0.0,
+        DynamicImage::ImageRgb8(c) => mean_chroma_of(c.width(), c.height(), c.pixels().map(|p| p.0)),
+        other => {
+            let rgb = other.to_rgb8();
+            mean_chroma_of(rgb.width(), rgb.height(), rgb.pixels().map(|p| p.0))
+        }
+    }
+}
+
+fn mean_chroma_of(w: u32, h: u32, pixels: impl Iterator<Item = [u8; 3]>) -> f32 {
     let total = (w as u64) * (h as u64);
     if total == 0 {
         return 0.0;
     }
     let step = ((total / 40_000).max(1)) as usize; // 约取 ~4 万样本封顶
     let (mut sum, mut n) = (0f32, 0u32);
-    for px in rgb.pixels().step_by(step) {
-        let (r, g, b) = (px[0], px[1], px[2]);
+    for [r, g, b] in pixels.step_by(step) {
         let spread = r.max(g).max(b) - r.min(g).min(b);
         sum += spread as f32;
         n += 1;
@@ -472,7 +493,7 @@ pub fn dither_bilevel(bytes: &[u8]) -> Option<image::GrayImage> {
     if mean_chroma(&img) >= COLOR_KEEP_CHROMA {
         return None; // 真彩页：保留彩色（Move 是彩屏，别无脑丢色）
     }
-    let mut luma = img.to_luma8();
+    let mut luma = img.into_luma8(); // 本来就是 8 位灰度时不再复制
     image::imageops::colorops::dither(&mut luma, &image::imageops::colorops::BiLevel);
     Some(luma)
 }
@@ -806,6 +827,44 @@ mod tests {
         assert!(downscale_for_epub(&huge).is_none(), "超限图应跳过降采样");
         assert!(decode_trim_comic(&huge).is_none(), "超限图应跳过裁边");
         assert!(dither_bilevel(&huge).is_none(), "超限图应跳过省刷新转换");
+    }
+
+    /// 省内存改写前后色度数值一致：灰度恒 0、RGB 直接读、其它类型（RGBA）照旧转 RGB 算。
+    #[test]
+    fn mean_chroma_matches_rgb_conversion_for_every_color_type() {
+        let reference = |img: &DynamicImage| {
+            let rgb = img.to_rgb8();
+            mean_chroma_of(rgb.width(), rgb.height(), rgb.pixels().map(|p| p.0))
+        };
+        let rgb = RgbImage::from_fn(300, 200, |x, y| image::Rgb([(x % 256) as u8, (y % 256) as u8, ((x + y) % 256) as u8]));
+        let cases = [
+            DynamicImage::ImageRgb8(rgb.clone()),
+            DynamicImage::ImageRgba8(DynamicImage::ImageRgb8(rgb.clone()).to_rgba8()),
+            DynamicImage::ImageLuma8(DynamicImage::ImageRgb8(rgb.clone()).to_luma8()),
+            DynamicImage::ImageLumaA8(DynamicImage::ImageRgb8(rgb).to_luma_alpha8()),
+        ];
+        for img in &cases {
+            assert_eq!(mean_chroma(img), reference(img), "{:?}", img.color());
+        }
+        assert!(mean_chroma(&cases[0]) > COLOR_KEEP_CHROMA, "彩图样本要真有色度");
+        assert_eq!(mean_chroma(&cases[2]), 0.0);
+    }
+
+    /// 文字书插图缩放改走 SIMD 后：尺寸与 `DynamicImage::resize` 完全相同、像素差很小；灰度 JPEG 仍是单分量。
+    #[test]
+    fn downscale_for_epub_keeps_resize_dimensions_and_gray_jpeg() {
+        for &(w, h) in &[(2000u32, 1500u32), (1200, 3000), (955, 10), (3001, 2999)] {
+            let src = jpeg_of(w, h);
+            let want = image::load_from_memory(&src).unwrap().resize(MAX_SHORT_EDGE, MAX_EDGE, FilterType::Lanczos3);
+            let got = image::load_from_memory(&downscale_for_epub(&src).expect("超框要缩")).unwrap();
+            assert_eq!(got.dimensions(), want.dimensions(), "{w}x{h}");
+            let (a, b) = (got.to_rgb8(), want.to_rgb8());
+            let mean_diff = a.as_raw().iter().zip(b.as_raw()).map(|(x, y)| (*x as i32 - *y as i32).abs() as u64).sum::<u64>() as f64 / a.as_raw().len() as f64;
+            assert!(mean_diff < 2.0, "{w}x{h} 像素均差 {mean_diff}");
+        }
+        let gray = gray_jpeg_of(1800, 2400, 0);
+        let out = downscale_for_epub(&gray).unwrap();
+        assert!(matches!(image::load_from_memory(&out).unwrap(), DynamicImage::ImageLuma8(_)), "灰度 JPEG 不该被写成 3 分量");
     }
 
     #[test]
