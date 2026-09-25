@@ -29,7 +29,7 @@ pub struct State {
     /// 见 mkdir.rs 模块文档）；`Arc` 是因为 `Staging::deliver` 的后台线程要跟 `bus` 一样带着走。
     pub mkdir: Arc<MkdirQueue>,
     /// 阅读方向查询（xochitl 阅读器里的 reader-page-turn.qmd 打开书时问，见 reading_direction.rs）。
-    pub reading_direction: crate::reading_direction::ReadingDirection,
+    pub reading_direction: Arc<crate::reading_direction::ReadingDirection>,
     /// `GET /status` 的结果缓存（[`STATUS_TTL`]）。网页每次 refresh 都会打这个接口，而它里面有重活：
     /// 对 xochitl 发 HTTP 探活（不可达时要等满 3 秒超时）、读全部 `.metadata` 列文件夹、扫 inbox。
     /// 会被本服务自己的操作改变的部分（inbox 计数、文件夹候选）在操作路径里 [`State::invalidate_status`]
@@ -56,10 +56,13 @@ impl State {
         let spool = Spool::new(books_state.clone());
         let qol_file = paths.home().join(".local/share/cangjie-ime/reading-qol.json"); // 与网关共享的开关文件（gateway 写、这里读）
         let comic_margins = Arc::new(ComicMargins::new(&books_state, &paths.xochitl_dir(), &qol_file));
-        let staging = Staging::new(paths.staging_dir(), xochitl.clone(), cfg.native_upload_limit_bytes()).with_comic_margins(comic_margins.clone());
+        // 阅读方向手动清单：xochitl 阅读器查询（只读），母版库按书设方向时同步写（见 staging/direction.rs）。
+        let reading_direction = Arc::new(crate::reading_direction::ReadingDirection::new(&paths.xochitl_dir(), &books_state.join("rtl-overrides.json")));
+        let staging = Staging::new(paths.staging_dir(), xochitl.clone(), cfg.native_upload_limit_bytes())
+            .with_comic_margins(comic_margins.clone())
+            .with_reading_direction(reading_direction.clone());
         let trash = TrashQueue::new(&books_state, &paths.xochitl_dir());
         let mkdir = Arc::new(MkdirQueue::new(&books_state, &paths.xochitl_dir()));
-        let reading_direction = crate::reading_direction::ReadingDirection::new(&paths.xochitl_dir(), &books_state.join("rtl-overrides.json"));
         State { cfg, spool, staging, xochitl, bus: Arc::new(EventBus::new()), trash, comic_margins, mkdir, reading_direction, status_cache: TtlCache::new(STATUS_TTL) }
     }
 

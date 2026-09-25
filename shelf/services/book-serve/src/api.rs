@@ -4,6 +4,7 @@
 //! （2026-09-19 起不再分档位，只有一种"清洗+优化"行为）
 //! · `POST /staging/deliver {name, folder?}`（2026-09-19 起投完永远保留母版，不再有 `keep` 参数）· `POST /staging/mark {name, target}` · `POST /staging/fetch-article {url, optimize?}`
 //! · `POST /staging/delete {name}` · `POST /staging/rename {name, newName}` · `GET /staging/file?name=`（原件下载，流式）
+//! · `POST /staging/direction {names|name, direction}`（按书阅读方向 auto/rtl/ltr，2026-09-25）
 //! · 原 PDF 备份：`GET /staging` 的 `originals` · `POST /staging/originals/restore {name}` · `POST /staging/originals/delete {name}`
 //! · `GET /events`（SSE：母版库/inbox 变更即推，网页零轮询）。
 //! 阅读方向：`GET /reading-direction/{uuid}` → `{rtl}`（xochitl 里 reader-page-turn.qmd 用）。
@@ -40,6 +41,7 @@ pub fn router(st: Arc<State>) -> Router {
             s.bus.publish("books", "staging");
             Ok(Reply::ok(&serde_json::json!({"ok": true, "name": new_name})))
         }))
+        .post("/staging/direction", bind(&st, set_direction))
         // ── 原 PDF 备份（PDF→EPUB 后保留 7 天，见 Staging::backup_pdf_original）──
         .post("/staging/originals/restore", bind(&st, |s, r| {
             s.staging.restore_original(r.json()?.str("name")?).map_err(ApiError::bad)?;
@@ -148,6 +150,46 @@ pub fn router(st: Arc<State>) -> Router {
             s.staging.remove(r.json()?.str("name")?).map_err(ApiError::bad)?;
             staging_changed(s)
         }))
+}
+
+/// `POST /staging/direction {names: [...] | name, direction: "auto"|"rtl"|"ltr"}`：按书设阅读方向（可多本）。只存设置，
+/// 书本身等下次「优化」才改；已加入过 xochitl 的顺手同步手动清单。回 `{ok, updated, stale, synced, failed:[{name,message}], message}`，
+/// 全部失败才回 400。
+fn set_direction(st: &State, r: &mut Request<'_>) -> ApiResult {
+    let j = r.json()?;
+    let raw = j.str("direction")?;
+    let dir = match raw {
+        "auto" => None,
+        _ => Some(bookconv::direction::PageDirection::parse(raw).ok_or_else(|| ApiError::bad("direction 只能是 auto / rtl / ltr"))?),
+    };
+    let names: Vec<String> = match j.0.get("names").and_then(|v| v.as_array()) {
+        Some(a) => a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect(),
+        None => vec![j.str("name")?.to_string()],
+    };
+    if names.is_empty() {
+        return Err(ApiError::bad("缺 names"));
+    }
+    let (mut updated, mut stale, mut synced) = (0usize, 0usize, 0usize);
+    let mut failed = Vec::new();
+    for name in &names {
+        match st.staging.set_direction(name, dir) {
+            Ok(o) => {
+                updated += 1;
+                stale += usize::from(o.stale);
+                synced += usize::from(o.synced.is_some());
+                if let Some(e) = o.sync_error {
+                    failed.push(serde_json::json!({"name": name, "message": format!("设置已保存，但同步到已加入 xochitl 的那份失败：{e}")}));
+                }
+            }
+            Err(e) => failed.push(serde_json::json!({"name": name, "message": e})),
+        }
+    }
+    if updated == 0 {
+        let first = failed.first().and_then(|f| f["message"].as_str()).unwrap_or("没有可设置的书").to_string();
+        return Err(ApiError::bad(first));
+    }
+    st.bus.publish("books", "staging");
+    Ok(Reply::ok(&serde_json::json!({"ok": true, "updated": updated, "stale": stale, "synced": synced, "failed": failed})))
 }
 
 /// 母版库变更类操作的统一收尾：推一条 `books/staging`（网页据此重拉列表，零轮询）再回 `{ok:true}`。
@@ -328,6 +370,31 @@ mod tests {
         assert_eq!(call(&router, Method::Get, "/inbox", "").0, 404);
         assert_eq!(call(&router, Method::Get, "/staging/optimize", "").0, 405);
         assert_eq!(call(&router, Method::Get, "/nope", "").0, 404);
+    }
+
+    /// 按书阅读方向：参数校验、多本部分失败照样回 200（逐本原因在 failed）、全部失败 400、结果体现在列表里。
+    #[test]
+    fn direction_route_validates_and_reports_per_book() {
+        let t = tempfile::tempdir().unwrap();
+        let st = state(&t);
+        let router = router(st.clone());
+        st.staging.stage_new("a.epub", b"PK").unwrap();
+        st.staging.stage_new("b.pdf", b"%PDF").unwrap();
+        let (code, v) = call(&router, Method::Post, "/staging/direction", r#"{"name":"a.epub","direction":"up"}"#);
+        assert_eq!(code, 400);
+        assert!(msg(&v).contains("auto / rtl / ltr"), "{v}");
+        assert_eq!(call(&router, Method::Post, "/staging/direction", r#"{"names":[],"direction":"rtl"}"#).0, 400);
+        let (code, v) = call(&router, Method::Post, "/staging/direction", r#"{"names":["b.pdf"],"direction":"rtl"}"#);
+        assert_eq!(code, 400, "全部失败");
+        assert!(msg(&v).contains("不是 EPUB"), "{v}");
+        let (code, v) = call(&router, Method::Post, "/staging/direction", r#"{"names":["a.epub","b.pdf"],"direction":"rtl"}"#);
+        assert_eq!(code, 200, "{v}");
+        assert_eq!((v["updated"].as_u64(), v["stale"].as_u64(), v["synced"].as_u64()), (Some(1), Some(1), Some(0)));
+        assert_eq!(v["failed"][0]["name"], "b.pdf");
+        let a = st.staging.list().into_iter().find(|e| e.name == "a.epub").unwrap();
+        assert_eq!((a.direction, a.direction_stale), ("rtl", true));
+        assert_eq!(call(&router, Method::Post, "/staging/direction", r#"{"name":"a.epub","direction":"auto"}"#).0, 200, "单本也可用 name");
+        assert_eq!(st.staging.list().into_iter().find(|e| e.name == "a.epub").unwrap().direction, "auto");
     }
 
     /// 回归：网页上传收请求体期间（WiFi 上传大书可达分钟级）不再攥着 spool 锁——inbox 追平照常进行，

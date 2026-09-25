@@ -77,6 +77,9 @@ pub struct OptimizeOpts {
     pub footnote: FootnoteMode,
     /// 漫画页补白到哪种页框（缺省 `Screen` = 历史行为）。由 book-serve 按"实验室→漫画页边距"开关传入。
     pub comic_frame: crate::imgopt::EpubComicFrame,
+    /// 翻页方向（2026-09-25，母版库按书手动指定）：`Some` 时把 OPF `<spine page-progression-direction>` 写成这个值，
+    /// `None`（缺省）＝保留原书，产物与加这个字段之前逐字节相同。见 [`crate::direction`]。
+    pub page_direction: Option<crate::direction::PageDirection>,
 }
 
 /// 优化统计，供回执。
@@ -112,7 +115,7 @@ struct Prepared {
     /// 全书"被引用的注释块"索引（id → 块 html），第二遍 `preserve_relink_footnotes` 搬进引用它的那一章。
     aside_index: std::collections::HashMap<String, String>,
     is_comic_book: bool,
-    /// `title=Some` 时 OPF 条目名（第二遍改 `dc:title` 用）。
+    /// 要改 OPF 时（`title=Some` 或指定了翻页方向）的 OPF 条目名，第二遍据此改 `dc:title` / spine 方向。
     opf_name: Option<String>,
     rep: Report,
 }
@@ -142,7 +145,7 @@ fn prepare_entries(mut raw: Vec<crate::epubzip::Entry>, opts: &OptimizeOpts, byt
     // 是否保原画（不跳过必要的屏幕适配缩放，但避免不必要的有损重编码）。用 wash 之后的 `ordered` 判——
     // wash 层已把空页清理、目录归一，判定更准，漫画书也不该被这些文字书专属步骤打扰。
     let is_comic_book = crate::comic_detect::is_comic(&ordered);
-    let opf_name: Option<String> = title.and_then(|_| crate::wash::parse_opf(&ordered).map(|o| ordered[o.index].name.clone()));
+    let opf_name: Option<String> = (title.is_some() || opts.page_direction.is_some()).then(|| crate::wash::parse_opf(&ordered).map(|o| ordered[o.index].name.clone())).flatten();
 
     let mut rep = Report { wash: wash_rep, total_files: 0, html_files: 0, bytes_before, bytes_after: 0 };
 
@@ -201,6 +204,7 @@ struct EntryXform<'a> {
     aside_index: &'a std::collections::HashMap<String, String>,
     footnote: FootnoteMode,
     title: Option<&'a str>,
+    page_direction: Option<crate::direction::PageDirection>,
     opf_name: Option<&'a str>,
     seen_ids: HashSet<String>, // 跨章累积，dedup_ids_in_chapter 用
     img_agent: ureq::Agent,    // 远程图抓取（仅当章内有远程 img 才发请求；离线→抓不到→删 img）
@@ -209,8 +213,8 @@ struct EntryXform<'a> {
 }
 
 impl<'a> EntryXform<'a> {
-    fn new(prep_aside: &'a std::collections::HashMap<String, String>, footnote: FootnoteMode, title: Option<&'a str>, opf_name: Option<&'a str>) -> EntryXform<'a> {
-        EntryXform { aside_index: prep_aside, footnote, title, opf_name, seen_ids: HashSet::new(), img_agent: crate::netimg::http_agent(15), remote_counter: 0, fetched_imgs: Vec::new() }
+    fn new(prep_aside: &'a std::collections::HashMap<String, String>, footnote: FootnoteMode, title: Option<&'a str>, page_direction: Option<crate::direction::PageDirection>, opf_name: Option<&'a str>) -> EntryXform<'a> {
+        EntryXform { aside_index: prep_aside, footnote, title, page_direction, opf_name, seen_ids: HashSet::new(), img_agent: crate::netimg::http_agent(15), remote_counter: 0, fetched_imgs: Vec::new() }
     }
 
     /// 文本类条目 → `Some(最终字节)`（无法按 UTF-8 解读的原样借回）；不是文本类（图片/其它）→ `None`，调用方自己处理。
@@ -233,13 +237,21 @@ impl<'a> EntryXform<'a> {
                 Err(_) => Cow::Borrowed(data),
             });
         }
-        if let (Some(title), Some(opf)) = (self.title, self.opf_name) {
-            if opf == name {
-                return Some(match std::str::from_utf8(data) {
-                    Ok(text) => Cow::Owned(crate::placeholder::set_opf_title(text, title).into_bytes()),
-                    Err(_) => Cow::Borrowed(data),
-                });
-            }
+        if self.opf_name == Some(name) && (self.title.is_some() || self.page_direction.is_some()) {
+            return Some(match std::str::from_utf8(data) {
+                Ok(text) => {
+                    let text = match self.title {
+                        Some(title) => crate::placeholder::set_opf_title(text, title),
+                        None => text.to_string(),
+                    };
+                    let text = match self.page_direction {
+                        Some(dir) => crate::direction::set_spine_direction(&text, dir),
+                        None => text,
+                    };
+                    Cow::Owned(text.into_bytes())
+                }
+                Err(_) => Cow::Borrowed(data),
+            });
         }
         None
     }
@@ -264,12 +276,12 @@ pub fn optimize_epub(epub: &[u8]) -> Result<(Vec<u8>, Report), String> {
 pub fn optimize_epub_with(epub: &[u8], opts: &OptimizeOpts) -> Result<(Vec<u8>, Report), String> {
     // 读失败必须整体报错——绝不能静默跳过条目产出残缺 EPUB（会破坏原书）。
     let raw = crate::check::read_entries(epub)?;
-    let Prepared { entries, aside_index, is_comic_book, opf_name: _, mut rep } = prepare_entries(raw, opts, epub.len(), None)?;
+    let Prepared { entries, aside_index, is_comic_book, opf_name, mut rep } = prepare_entries(raw, opts, epub.len(), None)?;
 
     // 第二遍：xhtml → preserve_relink_footnotes(marker 保留原样、去 epub:type、注释移章末) →
     //   dedup_ids_in_chapter(全书 id 去重，防跨章 id 撞车)。打包。
     let mut out_buf: Vec<u8> = Vec::new();
-    let mut xf = EntryXform::new(&aside_index, opts.footnote, None, None);
+    let mut xf = EntryXform::new(&aside_index, opts.footnote, None, opts.page_direction, opf_name.as_deref());
     {
         let mut zw = ZipWriter::new(Cursor::new(&mut out_buf));
         // mimetype 必须首个且 STORED（EPUB 规范）；其余用 Deflated 压缩，否则文本不压缩体积翻倍。

@@ -257,10 +257,9 @@ fn fixed_page_chunks_range_sized(entries: &[Entry], spine: &[String], range_star
 /// 段落又有配图）目前仍走纯图片分支（历史行为不变）——镖人这本书目前抽样到的都是"整页图"或
 /// "整页字"两种，没见过真正混排的页面，等真遇到再补。
 /// 原书 OPF 的 `<spine>` 是否声明了 `page-progression-direction="rtl"`。
+/// 判据与母版库按书设方向共用 [`crate::direction`]（2026-09-25）。
 fn opf_is_rtl(entries: &[Entry], opf: &crate::wash::Opf) -> bool {
-    static SPINE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    let re = SPINE.get_or_init(|| regex::Regex::new(r#"(?s)<spine\b[^>]*?\bpage-progression-direction\s*=\s*["']rtl["']"#).unwrap());
-    entries.get(opf.index).is_some_and(|e| re.is_match(&String::from_utf8_lossy(&e.data)))
+    entries.get(opf.index).is_some_and(|e| crate::direction::spine_direction(&String::from_utf8_lossy(&e.data)) == Some(crate::direction::PageDirection::Rtl))
 }
 
 pub fn build_piece(entries: &[Entry], start: usize, end: usize, title: &str, book_id_suffix: &str) -> Result<Vec<u8>, String> {

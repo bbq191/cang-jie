@@ -1,0 +1,73 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="560" viewBox="0 0 1080 560" font-family="Noto Sans CJK SC, sans-serif">
+<defs>
+<marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#555"/></marker>
+</defs>
+<rect width="1080" height="560" fill="#fbfbfa"/>
+<text x="540" y="30" text-anchor="middle" font-size="18" font-weight="bold" fill="#1a1a1a">按书阅读方向：网页设置 → 写进书里 / 同步手动清单 → xochitl 翻页</text>
+<text x="540" y="52" text-anchor="middle" font-size="12.5" fill="#6a6a6a">只做手动：漫画识别看得出"是漫画"，看不出"是日漫"（国漫、美漫从左往右），不自动设（2026-09-25）</text>
+
+<!-- ① 网页 -->
+<rect x="20" y="80" width="220" height="200" rx="10" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.6"/>
+<text x="130" y="104" text-anchor="middle" font-size="14" font-weight="bold" fill="#1a1a1a">① 母版库页「阅读方向」</text>
+<text x="36" y="132" font-size="12" fill="#1a1a1a">勾选 EPUB → 底部操作栏</text>
+<text x="36" y="152" font-size="12" fill="#1a1a1a">自动 / 从右往左 / 从左往右</text>
+<text x="36" y="172" font-size="11" fill="#555">单本、多本批量都行</text>
+<text x="36" y="200" font-size="11.5" fill="#1a1a1a">POST /staging/direction</text>
+<text x="36" y="218" font-size="11" fill="#555">{names, direction}</text>
+<text x="36" y="246" font-size="11" fill="#555">「自动」＝保留书里自带的标记</text>
+<text x="36" y="264" font-size="11" fill="#555">PDF 不可设</text>
+<line x1="242" y1="180" x2="286" y2="180" stroke="#555" stroke-width="1.6" marker-end="url(#a)"/>
+
+<!-- ② 边车 -->
+<rect x="290" y="80" width="250" height="200" rx="10" fill="#fff3d6" stroke="#c9971f" stroke-width="1.8"/>
+<text x="415" y="104" text-anchor="middle" font-size="14" font-weight="bold" fill="#1a1a1a">② 只存设置（边车 direction）</text>
+<text x="306" y="132" font-size="12" fill="#1a1a1a">.&lt;书名&gt;.delivered 的 direction</text>
+<text x="306" y="150" font-size="11" fill="#555">跟书走：改名一起挪、删书一起删</text>
+<text x="306" y="178" font-size="12" fill="#1a1a1a">列表比对 OPF 实际方向：</text>
+<text x="306" y="198" font-size="11.5" fill="#b0451f">不一致 → directionStale=true</text>
+<text x="306" y="216" font-size="11.5" fill="#b0451f">optimized=false，徽章「方向待优化」</text>
+<text x="306" y="240" font-size="11" fill="#555">「优化」按钮、批量队列的资格</text>
+<text x="306" y="256" font-size="11" fill="#555">都看 optimized，不必各自懂方向</text>
+<line x1="542" y1="150" x2="590" y2="130" stroke="#555" stroke-width="1.6" marker-end="url(#a)"/>
+<line x1="542" y1="240" x2="590" y2="370" stroke="#555" stroke-width="1.6" marker-end="url(#a)"/>
+
+<!-- ③A 优化 -->
+<rect x="594" y="70" width="250" height="210" rx="10" fill="#e9f4ea" stroke="#3f8a4a" stroke-width="1.6"/>
+<text x="719" y="94" text-anchor="middle" font-size="14" font-weight="bold" fill="#1a1a1a">③ 点「优化」写进书里</text>
+<text x="610" y="120" font-size="12" fill="#1a1a1a">没完整优化过：</text>
+<text x="610" y="138" font-size="11" fill="#555">完整优化，同时把 spine 的</text>
+<text x="610" y="154" font-size="11" fill="#555">page-progression-direction 写成设定值</text>
+<text x="610" y="180" font-size="12" fill="#1a1a1a">已完整优化、只差方向：</text>
+<text x="610" y="198" font-size="11" fill="#555">只改 OPF，其余条目压缩数据原样拷贝</text>
+<text x="610" y="214" font-size="11" fill="#555">（图片不重编码、不多一代有损，几秒完成）</text>
+<text x="610" y="240" font-size="11.5" fill="#1a1a1a">都过质量门才替换母版</text>
+<text x="610" y="262" font-size="11" fill="#b0451f">xochitl 里的旧副本要重新加入才换新</text>
+
+<!-- ③B 清单同步 -->
+<rect x="594" y="300" width="250" height="200" rx="10" fill="#f3eef8" stroke="#7a5aa6" stroke-width="1.6"/>
+<text x="719" y="324" text-anchor="middle" font-size="14" font-weight="bold" fill="#1a1a1a">③' 已加入过 xochitl 的那份</text>
+<text x="610" y="350" font-size="12" fill="#1a1a1a">边车 render.uuid 有值时：</text>
+<text x="610" y="370" font-size="11" fill="#555">从右往左 → 写进 rtl-overrides.json</text>
+<text x="610" y="386" font-size="11" fill="#555">从左往右 / 改回自动 → 移出</text>
+<text x="610" y="412" font-size="12" fill="#1a1a1a">之后再投、自检认到新 uuid：</text>
+<text x="610" y="430" font-size="11" fill="#555">按设置同步（设"自动"的书不碰清单，</text>
+<text x="610" y="446" font-size="11" fill="#555">清单里可能是用户手加的）</text>
+<text x="610" y="472" font-size="11" fill="#555">清单坏了：报错、不覆盖</text>
+<text x="610" y="488" font-size="11" fill="#b0451f">书里写着 rtl 的副本，移出清单也不会变回</text>
+
+<line x1="846" y1="175" x2="886" y2="250" stroke="#555" stroke-width="1.6" marker-end="url(#a)"/>
+<line x1="846" y1="400" x2="886" y2="320" stroke="#555" stroke-width="1.6" marker-end="url(#a)"/>
+
+<!-- ④ 阅读器 -->
+<rect x="890" y="190" width="170" height="190" rx="10" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.6"/>
+<text x="975" y="214" text-anchor="middle" font-size="14" font-weight="bold" fill="#1a1a1a">④ xochitl 开书</text>
+<text x="904" y="240" font-size="11" fill="#555">reader-page-turn.qmd</text>
+<text x="904" y="258" font-size="11" fill="#555">GET /reading-direction/</text>
+<text x="904" y="274" font-size="11" fill="#555">&lt;uuid&gt;</text>
+<text x="904" y="300" font-size="11.5" fill="#1a1a1a">OPF 写了 rtl</text>
+<text x="904" y="318" font-size="11.5" fill="#1a1a1a">或在清单里</text>
+<text x="904" y="344" font-size="11.5" fill="#3f8a4a">→ 左右翻页对调</text>
+<text x="904" y="366" font-size="10.5" fill="#555">需开「日漫翻页规则」</text>
+
+<text x="20" y="535" font-size="11.5" fill="#6a6a6a">不升 OPTIMIZE_VERSION：不设方向时产物与此前逐字节相同；方向是否已写进书里，直接读 OPF 判断，不靠版本号。</text>
+</svg>

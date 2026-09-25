@@ -51,6 +51,7 @@
 | `pdf_ingest/*` | 入库 PDF：有文字层转 EPUB / 无文字层仅裁边（§18） | 现役 |
 | `../pdf-extract-cj`（独立 crate） | 上游 pdf-extract 0.12.1 的本地 fork（MIT）：逐字给坐标/字号/**填充色**、报告图片位置；bookconv 用 Cargo `package =` 改名接入，代码里仍写 `pdf_extract::`（§18） | 现役 |
 | `naming.rs` / `placeholder.rs` / `imgpool.rs` / `netimg.rs` / `epubzip.rs` / `epub.rs` / `stats.rs` / `util.rs` | 书名规范化 `书名 - 02卷` / 大文件占位文档（§19 末）/ 图片并行+像素预算 / 远程图抓取 / zip 条目读写（09-24 起写条目统一走 `put_entry`，读条目预分配封顶 32MB）/ 最小 EPUB3 组装 / 正文统计 / 杂项 | 现役 |
+| `direction.rs` | OPF spine `page-progression-direction` 读/写（`PageDirection`）；`OptimizeOpts.page_direction` 在优化第二遍改 OPF，`rewrite_direction_file` 给"已优化只差方向"的书只改 OPF、其余条目 `raw_copy_file` 原样拷贝（2026-09-25，规则见规范白皮书 §4.6）；`placeholder::epub_is_rtl` 改为调它 | 现役 |
 | `article.rs` | 网文抓取成 EPUB（09-05 从 `reading/device-rs` 下沉），`book-serve::fetch_article` 调用 | 现役 |
 | `check.rs` | 质量门（五条硬规则） | 现役：`book-serve` 优化流程 + `epub-optimize --check`（§08） |
 | `convert/{palm,mobi,kf8,fb2,cbz,common}.rs` | 杂格式 → EPUB/PDF | **保留、无调用方**（§07） |
@@ -275,10 +276,12 @@ EPUB 线原则④（09-17）：`comic_detect::is_comic`（`MIN_IMAGES=20`、`TEX
 | **v14** | `fix_ncx_manifest_id`：xochitl 硬编码死查 manifest `id="ncx"`；`auto_toc` 自建 NCX 的 `cj-ncx` 同源 bug 一并改（§06） |
 | **v15** | **EPUB 漫画补白比例改成 xochitl 图片框比例**（`imgopt::EPUB_FRAME_ASPECT` = 302.365:462.1，简称 303:462.1；画布 954×`EPUB_COMIC_PAGE_H`=1458；容差 0.3%），配合阅读器页边距 1（book-serve + `shelf-comic-margins.qmd` 首次打开时设置）。真机同图 A/B：图宽 260→303pt（端到端 302.0），左右留白 20.0/22.9pt → ≈0.3/0.7pt（§20）。旧漫画需**从原始文件**重优化，别二次优化（多一代 JPEG 有损） |
 
-**v15 三个易误解点**：
+**v15 起几个易误解点**：
 1. **分两步演进**：285.2:462.2（画布 954×1546）→ 303:462.1（954×1455、页边距 0）→ 最终 302.4:462.1（954×1458、页边距 1；用户认为 0 贴边不合适）。`optimize/mod.rs` 头注释里“1455”是中间版本，代码常量已是 1458。
 2. **新页框是“实验室”开关的可选项**：`OptimizeOpts.comic_frame` 缺省 `Screen`（954:1696）；仅网页「实验室→漫画页边距最小化」（`reading-qol.json` 的 `comicMinMargin`，默认关）开启才用 `MinMargin`。同一个“15”标记下的漫画可能是任一种页框——book-serve 靠读前 24 张整页图头部尺寸（`is_min_margin_framed_file`）判断，不看版本号。
 3. **v15 之后的漫画改动没升版本**（文字页/混排页留边 cj-tp/cj-tx、含图页去 body class，§20）：升版会让整库变“旧版”、让已有 v15 纯图漫画失去登记页边距的资格；代价是“文字页没留边的旧产物”靠 `comic_margin_eligible` 单独判定、需从原始文件重优化。
+
+4. **按书阅读方向（2026-09-25）也没升版本**：`OptimizeOpts.page_direction` 缺省 `None` 时产物逐字节不变（`page_direction_touches_only_opf_spine` 断言指定方向时也只有 OPF 不同）；方向写没写进书里，book-serve 直接读 OPF 判断（`directionStale`），不看版本号。规则与取舍见规范白皮书 §4.6、§8 T4。
 
 **幂等门修**：`is_optimized` 曾只看标记存在不看版本 → 旧版本重传被跳过；改按 `optimized_version()` 与 `OPTIMIZE_VERSION` 比对（已内联在 `book-serve::staging` 判 full/core/old 处；09-06 删了无调用方的薄封装 `optimize::is_current_version`）。
 

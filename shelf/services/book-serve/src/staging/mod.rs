@@ -21,6 +21,7 @@ use std::sync::Arc;
 // 按职责拆成子模块（原 `staging.rs` 一个文件 1800+ 行）：`Staging` 的方法按动作分散在各子模块的 `impl Staging` 里，
 // 对外路径（`crate::staging::Staging` 等）不变；子模块内的私有项以 `pub(super)` 提供给兄弟模块与测试。
 mod deliver;
+mod direction;
 mod intake;
 mod library;
 mod optimizing;
@@ -74,6 +75,11 @@ pub struct StagingEntry {
     /// 阶梯，也不再显示「优化」按钮，见 `looks_like_pdf_derived_epub` 文档）。
     #[serde(default)]
     pub pdf_source: bool,
+    /// 按书设置的翻页方向（`auto`/`rtl`/`ltr`，边车 `direction`，2026-09-25）；只对 EPUB 有意义，其它格式恒 `auto`。
+    pub direction: &'static str,
+    /// 设置的方向与母版文件 OPF 里实际写的不一致＝要再点一次「优化」才生效（此时 `optimized` 也报 `false`，
+    /// 网页的「优化」按钮、网关批量队列的资格判断都靠它，不必各自再懂方向）。`auto` 恒为 `false`。
+    pub direction_stale: bool,
 }
 
 /// 原 PDF 备份一条（`GET /staging` 的 `originals`）。
@@ -148,6 +154,8 @@ pub struct Staging {
     /// 都从这里过。只包"挑名 + 落地"这一小段本地文件操作——此前网页上传是把 spool 锁一直攥到整个 multipart
     /// 请求体收完（WiFi 上传大书能到分钟级），期间别的上传和 inbox 追平全被卡住（2026-09-24 审计）。
     land: Arc<std::sync::Mutex<()>>,
+    /// 阅读方向手动清单（可选：测试里不装）。按书设了方向、且知道落库 uuid 时同步写进/移出，见 [`Self::set_direction`]。
+    reading_direction: Option<Arc<crate::reading_direction::ReadingDirection>>,
 }
 
 /// 上传模板适配：母版库作为 [`AssetStore`]——扩展名门＝书籍格式白名单，install＝同分区 rename 入库。
@@ -218,7 +226,13 @@ impl Staging {
             probes: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
             comic_margins: None,
             land: Arc::new(std::sync::Mutex::new(())),
+            reading_direction: None,
         }
+    }
+    /// 接上阅读方向手动清单（`State::new` 用）。
+    pub fn with_reading_direction(mut self, rd: Arc<crate::reading_direction::ReadingDirection>) -> Staging {
+        self.reading_direction = Some(rd);
+        self
     }
     /// 接上漫画页边距待办队列（`State::new` 用）。
     pub fn with_comic_margins(mut self, q: Arc<crate::comic_margins::ComicMargins>) -> Staging {

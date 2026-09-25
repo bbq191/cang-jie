@@ -42,6 +42,8 @@ pub(super) struct ProbeCache {
     pub(super) modified: Option<std::time::SystemTime>,
     pub(super) level: &'static str,
     pub(super) pdf_source: bool,
+    /// EPUB OPF 里写明的翻页方向（判"方向设置待优化"用；非 EPUB 恒 `None`）。
+    pub(super) spine: Option<bookconv::direction::PageDirection>,
 }
 
 impl Staging {
@@ -280,12 +282,13 @@ impl Staging {
                 .get(&name)
                 .filter(|c| c.len == md.len() && c.modified == modified)
                 .cloned();
-            let (level, pdf_source) = match cached {
-                Some(c) => (c.level, c.pdf_source),
+            let (level, pdf_source, spine) = match cached {
+                Some(c) => (c.level, c.pdf_source, c.spine),
                 None => {
                     let (level, pdf_source) = probe_level(&e.path(), format);
-                    rmsvc_core::sync::lock(&self.probes).insert(name.clone(), ProbeCache { len: md.len(), modified, level, pdf_source });
-                    (level, pdf_source)
+                    let spine = if format == "epub" { bookconv::direction::spine_direction_file(&e.path()) } else { None };
+                    rmsvc_core::sync::lock(&self.probes).insert(name.clone(), ProbeCache { len: md.len(), modified, level, pdf_source, spine });
+                    (level, pdf_source, spine)
                 }
             };
             seen.insert(name.clone());
@@ -313,7 +316,21 @@ impl Staging {
                     }
                 }
             }
-            out.push(StagingEntry { name, bytes: md.len(), format, optimized: level == "full", level, mtime, delivered, busy, pdf_source });
+            let pref = if format == "epub" { super::direction::parse_pref(delivered.as_ref().and_then(|d| d.direction.as_deref())) } else { None };
+            let direction_stale = super::direction::is_stale(pref, spine);
+            out.push(StagingEntry {
+                name,
+                bytes: md.len(),
+                format,
+                optimized: level == "full" && !direction_stale,
+                level,
+                mtime,
+                delivered,
+                busy,
+                pdf_source,
+                direction: super::direction::pref_label(pref),
+                direction_stale,
+            });
         }
         // 已被删除/改名的条目从缓存清掉，避免缓存无限增长
         rmsvc_core::sync::lock(&self.probes).retain(|k, _| seen.contains(k));

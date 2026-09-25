@@ -469,6 +469,55 @@
         buf
     }
 
+    /// 母版库按书指定翻页方向（2026-09-25）：`page_direction=Some` 只改 OPF 的 spine 属性，其余条目与不指定时逐字节相同；
+    /// 不指定＝保留原书（原书没写就还是没写）。内存版与流式版一致。
+    #[test]
+    fn page_direction_touches_only_opf_spine() {
+        use crate::direction::{spine_direction, PageDirection};
+        let epub = make_epub_with_html_toc_page(3);
+        let entries = |bytes: &[u8]| {
+            let mut ar = ZipArchive::new(Cursor::new(bytes)).unwrap();
+            (0..ar.len())
+                .map(|i| {
+                    let mut f = ar.by_index(i).unwrap();
+                    let mut v = Vec::new();
+                    f.read_to_end(&mut v).unwrap();
+                    (f.name().to_string(), v)
+                })
+                .collect::<Vec<_>>()
+        };
+        let base = OptimizeOpts { wash: Some(crate::wash::WashOpts::default()), ..Default::default() };
+        let rtl = OptimizeOpts { page_direction: Some(PageDirection::Rtl), ..base.clone() };
+        let (plain, _) = optimize_epub_with(&epub, &base).unwrap();
+        let (flipped, _) = optimize_epub_with(&epub, &rtl).unwrap();
+        let (a, b) = (entries(&plain), entries(&flipped));
+        assert_eq!(a.len(), b.len());
+        for ((na, da), (nb, db)) in a.iter().zip(&b) {
+            assert_eq!(na, nb, "条目顺序不变");
+            let (sa, sb) = (String::from_utf8_lossy(da), String::from_utf8_lossy(db));
+            if na.ends_with(".opf") {
+                assert_eq!(spine_direction(&sa), None, "不指定＝保留原书（原书没写）: {sa}");
+                assert_eq!(spine_direction(&sb), Some(PageDirection::Rtl), "{sb}");
+                assert_eq!(sb.replacen(r#" page-progression-direction="rtl""#, "", 1), sa, "OPF 只多这一个属性");
+            } else {
+                assert_eq!(da, db, "{na} 不该受方向设置影响");
+            }
+        }
+        // 流式版产出同样的 OPF
+        let t = tempfile::tempdir().unwrap();
+        let (input, output) = (t.path().join("in.epub"), t.path().join("out.epub"));
+        std::fs::write(&input, &epub).unwrap();
+        StreamingOptimize::new(&input, &output, &rtl).run(|_, _| {}).unwrap();
+        assert_eq!(crate::direction::spine_direction_file(&output), None, "测试书没有 container.xml，按文件读不到 OPF");
+        let opf_of = |v: &[(String, Vec<u8>)]| v.iter().find(|(n, _)| n.ends_with(".opf")).map(|(_, d)| d.clone()).unwrap();
+        assert_eq!(opf_of(&entries(&std::fs::read(&output).unwrap())), opf_of(&b), "流式与内存版 OPF 一致");
+        // 从左往右：原书的 rtl 被改掉
+        let ltr = OptimizeOpts { page_direction: Some(PageDirection::Ltr), ..base.clone() };
+        let (back, _) = optimize_epub_with(&flipped, &ltr).unwrap();
+        let opf = String::from_utf8(opf_of(&entries(&back))).unwrap();
+        assert_eq!(spine_direction(&opf), Some(PageDirection::Ltr), "{opf}");
+    }
+
     #[test]
     fn html_toc_page_kept_in_spine_not_stripped_as_redundant() {
         // 真机回归（2026-09-19，《疯探》）：书自带的 HTML 目录页（链到几十个章节文件）曾被旧逻辑当
