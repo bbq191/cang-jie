@@ -1011,6 +1011,12 @@ new_sandbox; export CJ_ALLOWLIST_LOCAL="$R/allow.local.txt" CJ_BATTOP_BIN="$R/ba
 check "install-all：整轮只做一次连通检查（各步骤不再各自 ssh true）" test "$rc" -eq 0 -a "$(count_log '^ssh true')" = 1
 unset CJ_ALLOWLIST_LOCAL CJ_BATTOP_BIN CJ_SKIP_BUILD SHELF_NO_BUILD
 
+# 预检提示与 cj_xochitl_apply 的实际分支一致（xovi 未生效但会装 xovi-reenable → 整机重启，不是"一定 xovi/start"）
+new_sandbox; export CJ_ALLOWLIST_LOCAL="$R/allow.local.txt"; xovi_live off
+( cd "$PKG" && run sh install-all.sh 127.0.0.1 --force --skip chrony-cn,timezone-cn,battop,wifi-watch,chrony-boot-wakelock,hl-snap,handwriting-stroke,sidebar-entry,shelf,xovi-apply ) >"$R/out.txt" 2>&1
+check "预检：xovi 未生效时如实说明'装了 xovi-reenable 就整机重启，否则 xovi/start'" test -n "$(grep 'xovi 尚未生效.*整机重启.*否则 xovi/start' "$R/out.txt")"
+unset CJ_ALLOWLIST_LOCAL
+
 # ═══════════════════════════ 5. 静态守卫 / 清单对称 ═══════════════════════════
 section "静态守卫"
 cd "$REPO" || exit 1
