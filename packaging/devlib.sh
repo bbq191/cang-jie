@@ -11,8 +11,8 @@
 #
 # 集中解决的、原先在各脚本里各写一遍且各有缺陷的几件事（2026-09-20 脚本审计）：
 #   H1 xovi 已生效的 xochitl 上再跑 xovi/start 会 SEGV→整机自动重启（2026-09-20 真机事故）
-#      → cj_xochitl_apply：先判 LD_PRELOAD，已生效用 systemctl restart，没生效才用 xovi/start，
-#        且重启前先打印"会打断阅读"并留一段宽限。
+#      → cj_xochitl_apply：先判 LD_PRELOAD，已生效（或装了 xovi-reenable）就整机重启（2026-09-25 起，见 H3），
+#        没生效才用 xovi/start，且之前先打印"会打断阅读"并留一段宽限。
 #   H2 remount rw 之后脚本中途失败会把 rootfs 留在 rw → cj_with_rootfs_rw：失败/信号/正常都恢复 ro。
 #   M4 原地 cp 覆盖 xochitl 已映射的 .so / 运行中的二进制 → cj_safe_replace：先写暂存再 rename。
 #   M6 备份散落 + 无限增长 → cj_backup_file / cj_bk_prune：统一进 cangjie-backups，
@@ -25,11 +25,11 @@
 #        memfault 栈与 09-21 那次同一处）→ cj_xochitl_apply 改为一律"换入待换入区 → 主动整机重启"。
 #   A1 "内容没变也重启 xochitl"（重跑 install-all 每次都闪屏）→ cj_pending_mark / cj_pending_list / cj_pending_clear：
 #      各"只落盘"的步骤在**真的改了文件**时记一个待生效标记（/run tmpfs，重启设备即清——重启后一切都是新载入的），
-#      xovi-apply 只在有标记、或 xovi 还没在 xochitl 里生效时才重启 xochitl。
+#      xovi-apply 只在有标记（或待换入区有 .so）、或 xovi 还没在 xochitl 里生效时才让它生效（整机重启 / xovi/start）。
 #
 # 环境变量（测试与特殊部署可覆盖；设备上一般不用设）：
 #   CJ_HOME CJ_SYSD CJ_XOVI CJ_PROC CJ_BACKUP_DIR CJ_BACKUP_KEEP CJ_BACKUP_MAXBYTES CJ_STAGE_DIR
-#   CJ_APPLY_GRACE（重启 xochitl 前的宽限秒数，默认 5）  CJ_HEALTH_SLEEP（重启后等多久再查，默认 5）
+#   CJ_APPLY_GRACE（整机重启 / xovi/start 前的宽限秒数，默认 5）  CJ_HEALTH_SLEEP（xovi/start 后等多久再查，默认 5）
 #   CJ_PENDING_DIR（待生效标记目录，默认 /run/cangjie-pending-apply）
 #   CJ_SO_PENDING_DIR（待换入的扩展 .so，默认 $CJ_STAGE_DIR/so-pending；与 extensions.d 同分区、绝不在其中）
 # ═══════════════════════════════════════════════════════════════════════════

@@ -34,7 +34,7 @@
 # 用法：./install-all.sh [host] [--force] [--force-apply] [--dry-run] [--skip a,b,...]
 #   host          默认 10.11.99.1（USB）
 #   --force       固件不在白名单也强装（哈希追加进本机 firmware-allowlist.local.txt，不再改动被 git 跟踪的白名单）
-#   --force-apply 最后一步（xovi-apply）无论有没有"待生效"的落盘改动都重启 xochitl。缺省只在这轮真的改了 xovi 相关
+#   --force-apply 最后一步（xovi-apply）无论有没有"待生效"的落盘改动都整机重启一次。缺省只在这轮真的改了 xovi 相关
 #                 文件（或 xovi 还没在 xochitl 里生效）时才重启——重复跑 install-all 不再每次闪屏
 #   --dry-run     只在本机打印将执行的步骤，不连设备、不执行任何东西
 #   --skip        逗号分隔，跳过指定步骤（可选值见 lib.sh STEP_ORDER）
@@ -50,7 +50,7 @@ usage() {
 用法：./install-all.sh [host] [--force] [--force-apply] [--dry-run] [--skip a,b,...]
   host          默认 10.11.99.1（USB）
   --force       固件不在白名单也强装（哈希追加进本机 firmware-allowlist.local.txt）
-  --force-apply 无论有无待生效改动，最后都重启 xochitl（缺省：没改动且 xovi 已生效就不重启）
+  --force-apply 无论有无待生效改动，最后都让它生效一次（整机重启；缺省：没改动且 xovi 已生效就不重启）
   --dry-run     只在本机打印计划，不连设备
   --skip        逗号分隔，跳过指定步骤（步骤名见 lib.sh 的 STEP_ORDER）
 对称卸载：./uninstall-all.sh

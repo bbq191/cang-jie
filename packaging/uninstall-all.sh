@@ -23,10 +23,9 @@
 #   · 不碰中文化（不在本仓库）。
 #
 # ⚠️ 摘掉 extensions.d/qt-resource-rebuilder 里的文件后，当前正在跑的 xochitl 进程内存里还留着旧的映射——
-# 真正"生效"要等下一次 xochitl 重启。本脚本不主动重启 xochitl（卸载没有"装完立刻验证"的必要，强制重启
-# 只会多一次触发 watchdog/StartLimit 的机会）。只摘了 qmd：systemctl restart xochitl（xovi 已生效时**不要** xovi/start）；
-# 摘了 xochitl 正加载着的扩展 .so：建议整机重启——"删掉/换掉运行中已映射的 .so 再让 xochitl 退出"与 devlib.sh 头注 H3
-# 是同一类操作（2026-09-21/24 两次真机 SEGV → 整机重启），卸载时这条路径没有真机验证过是否安全。
+# 真正"生效"要等下一次 xochitl 启动。本脚本不主动重启（卸载没有"装完立刻验证"的必要）。要立刻停用一律
+# **整机重启**（reboot）：2026-09-25 起查明停止 xochitl 本身就有概率在退出途中崩溃（devlib.sh 头注 H3），
+# 跟摘没摘 .so 无关；xovi 已生效时也**不要** xovi/start。
 #
 # 用法：./uninstall-all.sh [host] [--purge] [--dry-run] [--skip a,b,...]
 #   host      默认 10.11.99.1（USB）
