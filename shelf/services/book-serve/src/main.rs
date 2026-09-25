@@ -41,15 +41,28 @@ fn main() {
     if n > 0 {
         println!("[book-serve] 恢复 {n} 个上次未完成的文件回 inbox");
     }
-    // 追平线程：启动先扫一遍，再 inotify 防抖等待。
+    // 追平：inotify 防抖监听（常驻线程）先起，再扫一遍启动前就在 inbox 里的——先监听后扫描，扫描期间落进来的文件
+    // 不会漏。启动扫描遇到"还在写"的文件（见 `State::process_inbox_counting_deferred`）隔一个静止时长再扫（有上限）；
+    // 它们写完时的事件若恰好落在监听起来之前，也不会因此永远躺在 inbox 里。
     {
         let st = st.clone();
         std::thread::spawn(move || {
-            st.process_inbox(None);
             let inbox = st.spool.inbox();
             rmsvc_core::fswatch::watch_debounced(&inbox, std::time::Duration::from_secs(8), |_| {
                 st.process_inbox(None);
             });
+        });
+    }
+    {
+        let st = st.clone();
+        std::thread::spawn(move || {
+            // 最多重扫 12 轮（约 1 分钟）：一直在写的大文件之后由它写完时的事件接手，这里不陪着空转。
+            for _ in 0..12 {
+                if st.process_inbox_counting_deferred(None).1 == 0 {
+                    break;
+                }
+                std::thread::sleep(st.inbox_settle);
+            }
         });
     }
     println!("[book-serve] 母版库 {}；xochitl {}", st.staging.dir().display(), st.cfg.xochitl_host);

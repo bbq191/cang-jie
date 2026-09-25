@@ -239,7 +239,8 @@ mod tests {
         let cfg = paths.service_config("book");
         std::fs::create_dir_all(cfg.parent().unwrap()).unwrap();
         std::fs::write(&cfg, r#"{"xochitlHost":"127.0.0.1:9"}"#).unwrap(); // 关闭端口：连接秒拒，不真等超时
-        let st = State::new(&paths);
+        let mut st = State::new(&paths);
+        st.inbox_settle = std::time::Duration::ZERO; // 测试里刚写的 inbox 文件也立即处理
         st.ensure_dirs().unwrap();
         Arc::new(st)
     }
