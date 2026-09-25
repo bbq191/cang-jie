@@ -27,6 +27,8 @@ const wait=ms=>new Promise(res=>setTimeout(res,ms));
 const coalesce=fn=>{let running=null,again=false;
   const loop=async()=>{do{again=false;try{await fn()}catch(e){console.error(e)}}while(again)};
   return()=>{if(running){again=true;return running}running=loop().finally(()=>{running=null});return running}};
+/* 一个区块（顶层 tab 或「其他」里的子面板）的刷新统一走它（切 tab、SSE、可见性恢复）：按区块各自 coalesce，合并并发触发。 */
+const refreshSec=sec=>{if(!sec.refresh)return;(sec._rf||(sec._rf=coalesce(async()=>{await sec.refresh()})))()};
 /* 防双击：按钮点击后立即禁用，异步操作完成（不管成功失败）再解禁。很多按钮的异步操作是删除/
    落库这类不该被同一次操作重复触发两遍的动作——不加这一层，手指点快了或者网络慢的时候网络请求
    还没回来就能再点一次，2026-09-18 真机反馈"优化过程中点击删除"这类并发操作会撞在一起。母版库
@@ -64,6 +66,18 @@ const toast=(msg,kind='bad',ms=4200)=>{if(!msg)return;const t=el('div',{class:'t
   requestAnimationFrame(()=>t.classList.add('show'));
   const kill=()=>{t.classList.remove('show');setTimeout(()=>t.remove(),200)};
   t.onclick=kill;setTimeout(kill,ms)};
+/* 三种对话框（确认 / 输入 / 单选）的公共骨架：遮罩 + 盒子 + 关闭收尾（摘掉键盘监听、移除节点、兑现 Promise）。
+   点遮罩 / Esc = 取消（cancelValue）；onKey 处理其余按键（Enter 等）。build(close) 返回盒子里的节点数组与要聚焦的元素。 */
+const modal=(cancelValue,build,onKey)=>new Promise(resolve=>{
+  const close=v=>{document.removeEventListener('keydown',key);overlay.remove();resolve(v)};
+  const {nodes,focus}=build(close);
+  const overlay=el('div',{class:'confirm-overlay'},[el('div',{class:'confirm-box'},nodes)]);
+  const key=e=>{if(e.key==='Escape')close(cancelValue);else if(onKey)onKey(e,close)};
+  overlay.onclick=e=>{if(e.target===overlay)close(cancelValue)};
+  document.addEventListener('keydown',key);
+  document.body.appendChild(overlay);
+  if(focus)focus();
+});
 /* 自定义确认框：浏览器原生 confirm() 跟已经禁掉的 alert() 是同一类问题——阻塞整个页面、样式跟
    站内其它地方完全脱节，全站原来散落的 9 处 confirm() 统一改走这个（2026-09-19 用户反馈"母版库
    删除确认还是 alert"——严格说原来用的是 confirm() 不是 alert()，但对用户来说是同一类"浏览器
@@ -71,48 +85,25 @@ const toast=(msg,kind='bad',ms=4200)=>{if(!msg)return;const t=el('div',{class:'t
    调用方需要 `await`（跟原来 `if(confirm(msg))` 同步调用不一样，全部改成
    `if(await confirmDialog(msg))`）；点"是"/`Enter`/取消按钮外没有对应处理，点遮罩/`Esc`/"否"
    都算取消，跟原生 confirm() 的"确定/取消"行为对齐。 */
-const confirmDialog=(msg)=>new Promise(resolve=>{
-  const yesBtn=el('button',{class:'btn pri',text:T('common.yes')});
-  const noBtn=el('button',{class:'btn',text:T('common.no')});
-  const overlay=el('div',{class:'confirm-overlay'},[el('div',{class:'confirm-box'},[el('div',{class:'confirm-msg',text:msg}),el('div',{class:'confirm-actions'},[noBtn,yesBtn])])]);
-  const close=v=>{document.removeEventListener('keydown',onKey);overlay.remove();resolve(v)};
-  const onKey=e=>{if(e.key==='Escape')close(false);else if(e.key==='Enter')close(true)};
-  yesBtn.onclick=()=>close(true);
-  noBtn.onclick=()=>close(false);
-  overlay.onclick=e=>{if(e.target===overlay)close(false)};
-  document.addEventListener('keydown',onKey);
-  document.body.appendChild(overlay);
-  yesBtn.focus();
-});
+const confirmDialog=msg=>modal(false,close=>{
+  const yesBtn=el('button',{class:'btn pri',text:T('common.yes')});yesBtn.onclick=()=>close(true);
+  const noBtn=el('button',{class:'btn',text:T('common.no')});noBtn.onclick=()=>close(false);
+  return {nodes:[el('div',{class:'confirm-msg',text:msg}),el('div',{class:'confirm-actions'},[noBtn,yesBtn])],focus:()=>yesBtn.focus()};
+},(e,close)=>{if(e.key==='Enter')close(true)});
 /* 输入框版的 confirmDialog：返回 `Promise<string|null>`（取消 = null）。给改名这类"要用户敲一个值"的操作用。 */
-const promptDialog=(msg,value='')=>new Promise(resolve=>{
-  const inp=el('input',{type:'text',class:'confirm-input'});inp.value=value;
-  const yesBtn=el('button',{class:'btn pri',text:T('common.ok')});
-  const noBtn=el('button',{class:'btn',text:T('common.cancel')});
-  const overlay=el('div',{class:'confirm-overlay'},[el('div',{class:'confirm-box'},[el('div',{class:'confirm-msg',text:msg}),inp,el('div',{class:'confirm-actions'},[noBtn,yesBtn])])]);
-  const close=v=>{document.removeEventListener('keydown',onKey);overlay.remove();resolve(v)};
-  const onKey=e=>{if(e.key==='Escape')close(null);else if(e.key==='Enter')close(inp.value)};
-  yesBtn.onclick=()=>close(inp.value);
-  noBtn.onclick=()=>close(null);
-  overlay.onclick=e=>{if(e.target===overlay)close(null)};
-  document.addEventListener('keydown',onKey);
-  document.body.appendChild(overlay);
-  inp.focus();inp.select();
-});
+const promptDialog=(msg,value='')=>{const inp=el('input',{type:'text',class:'confirm-input'});inp.value=value;
+  return modal(null,close=>{
+    const yesBtn=el('button',{class:'btn pri',text:T('common.ok')});yesBtn.onclick=()=>close(inp.value);
+    const noBtn=el('button',{class:'btn',text:T('common.cancel')});noBtn.onclick=()=>close(null);
+    return {nodes:[el('div',{class:'confirm-msg',text:msg}),inp,el('div',{class:'confirm-actions'},[noBtn,yesBtn])],focus:()=>{inp.focus();inp.select()}};
+  },(e,close)=>{if(e.key==='Enter')close(inp.value)})};
 /* 单选版的 confirmDialog：一排选项按钮（当前值高亮），点一个就返回它的 value，取消/遮罩/Esc = null。
    给"阅读方向"这类三选一的设置用（2026-09-25）。opts: [{value,label}]；note: 选项下方的一行小字说明。 */
-const choiceDialog=(msg,opts,current,note='')=>new Promise(resolve=>{
-  const noBtn=el('button',{class:'btn',text:T('common.cancel')});
+const choiceDialog=(msg,opts,current,note='')=>modal(null,close=>{
+  const noBtn=el('button',{class:'btn',text:T('common.cancel')});noBtn.onclick=()=>close(null);
   const pick=el('div',{class:'choice-opts'},opts.map(o=>{const b=el('button',{class:'btn'+(o.value===current?' pri':''),type:'button',text:o.label});b.onclick=()=>close(o.value);return b}));
-  const box=[el('div',{class:'confirm-msg',text:msg}),pick];if(note)box.push(el('div',{class:'small choice-note',text:note}));box.push(el('div',{class:'confirm-actions'},[noBtn]));
-  const overlay=el('div',{class:'confirm-overlay'},[el('div',{class:'confirm-box'},box)]);
-  const close=v=>{document.removeEventListener('keydown',onKey);overlay.remove();resolve(v)};
-  const onKey=e=>{if(e.key==='Escape')close(null)};
-  noBtn.onclick=()=>close(null);
-  overlay.onclick=e=>{if(e.target===overlay)close(null)};
-  document.addEventListener('keydown',onKey);
-  document.body.appendChild(overlay);
-  (pick.querySelector('.pri')||pick.firstChild).focus();
+  const nodes=[el('div',{class:'confirm-msg',text:msg}),pick];if(note)nodes.push(el('div',{class:'small choice-note',text:note}));nodes.push(el('div',{class:'confirm-actions'},[noBtn]));
+  return {nodes,focus:()=>(pick.querySelector('.pri')||pick.firstChild).focus()};
 });
 /* 轻量记忆：per-viewer 便利态，隐私窗口/禁用 storage 时静默回默认 */
 const LS={get(k,d){try{const v=localStorage.getItem('shelf.'+k);return v==null?d:v}catch{return d}},set(k,v){try{localStorage.setItem('shelf.'+k,v)}catch{}}};
@@ -167,21 +158,27 @@ const upHtml=(icon,label,ext,btn)=>`<div class="up"><div class="drop"><span clas
 /* 通用上传器：逐文件一请求，进度条，逐项回执；失败项可重传，队列可逐项删/清空，顶部总进度。box=.up 容器 */
 function uploader(box,urlOf,queryOf,okExt,onFinish,dedupeApi){
   const list=$('ul.q',box), input=$('input[type=file]',box), drop=$('.drop',box), go=$('.go',box);
-  let files=[], sum=null;
+  let files=[], sum=null, busy=false;
   const clr=el('button',{type:'button',class:'btn',text:T('common.clear')});clr.onclick=()=>{files=[];render()};go.after(clr);
   const summary=()=>{if(!sum){sum=el('div',{class:'small',style:'margin:.3em 0'});list.parentNode.insertBefore(sum,list)}
     const ok=files.filter(f=>f.st==='ok').length,bad=files.filter(f=>f.st==='bad').length;
     sum.innerHTML=files.length?T('common.uploadSummary',{ok,total:files.length,badPart:bad?T('common.uploadBadPart',{bad}):''}):'';};
-  const render=()=>{list.innerHTML='';files.forEach(f=>{const li=document.createElement('li');li.dataset.k=f.k;li.className=f.st||'';
+  const row=f=>{const li=document.createElement('li');li.dataset.k=f.k;li.className=f.st||'';
       li.innerHTML=`<div class="name">${esc(f.file.name)} <span class="small">${fmtB(f.file.size)}</span> <button class="btn x" type="button" title="${T('common.remove')}" aria-label="${T('common.remove')}">×</button></div><progress value="${f.st==='ok'?100:0}" max="100"></progress><div class="msg">${esc(f.msg||T('common.waitingUpload'))}</div>`;
-      li.querySelector('.x').onclick=()=>{files=files.filter(x=>x.k!==f.k);render()};list.appendChild(li)});summary()};
+      const x=li.querySelector('.x');x.disabled=busy;x.onclick=()=>{if(busy)return;files=files.filter(y=>y.k!==f.k);render()};return li};
+  const render=()=>{list.innerHTML='';files.forEach(f=>list.appendChild(row(f)));summary()};
+  /* 上传进行中不整表重画（删行按钮禁用、新加的文件只追加行）：重画会把正在传的那一项的进度条/状态文字换成新节点，
+     上传回调还挂在旧节点上，之后再也不更新。新追加的文件本轮循环会接着传（循环遍历的就是 files 这个数组）。 */
   const add=fl=>{for(const f of fl){const rej=okExt&&!okExt.some(e=>f.name.toLowerCase().endsWith(e));
-      files.push({file:f,k:Math.random().toString(36).slice(2),rej,st:rej?'bad':'',msg:rej?T('common.rejectedExt',{ext:okExt.join(' / ')}):''})}render()};
+      const it={file:f,k:Math.random().toString(36).slice(2),rej,st:rej?'bad':'',msg:rej?T('common.rejectedExt',{ext:okExt.join(' / ')}):''};
+      files.push(it);if(busy)list.appendChild(row(it))}
+    if(busy)summary();else render()};
   input.onchange=()=>{add(input.files);input.value=''};
   drop.ondragover=e=>{e.preventDefault();drop.classList.add('hi')};drop.ondragleave=()=>drop.classList.remove('hi');
   drop.ondrop=e=>{e.preventDefault();drop.classList.remove('hi');add(e.dataTransfer.files)};
   drop.onclick=()=>input.click();
-  go.onclick=async()=>{go.disabled=true;clr.disabled=true;
+  const lockRows=on=>{busy=on;list.querySelectorAll('.x').forEach(x=>x.disabled=on)};
+  go.onclick=async()=>{go.disabled=true;clr.disabled=true;lockRows(true);
     // 母版库上传口传 dedupeApi（`/api/books/staging`）：先查一次现有条目，同名同大小＝上一轮已经
     // 成功落地，跳过重传——不然 unique_path 同名不覆盖会把它再落一份 1_x（2026-09-13，跟 shelf
     // push CLI 那次同一个 gap，见书架白皮书 §04；只有母版库这个上传口传这个参数，字体/壁纸/词典
@@ -194,7 +191,9 @@ function uploader(box,urlOf,queryOf,okExt,onFinish,dedupeApi){
       f.st='';li.className='';pg.value=0;msg.textContent=T('common.uploading');
       await new Promise(res=>{const x=new XMLHttpRequest();const q=queryOf();x.open('POST',urlOf()+(q?'?'+new URLSearchParams(q):''));
         x.upload.onprogress=e=>{if(e.lengthComputable)pg.value=e.loaded/e.total*100};
-        x.onload=()=>{if(x.status===401){location.href='/login';return}let d;try{d=JSON.parse(x.responseText)}catch{d={ok:false,message:'HTTP '+x.status}}
+        // 401/403 与 j() 同一处理（登录过期 → 登录页；首登未改密 → 改密页）；非 JSON 应答给人话 + 状态码（原来是裸 "HTTP 502"，不走语言包）。
+        x.onload=()=>{if(x.status===401){location.href='/login?next='+encodeURIComponent(location.pathname);return}if(x.status===403){location.href='/password';return}
+          let d;try{d=JSON.parse(x.responseText)}catch{d={ok:false,message:T('common.httpErr',{status:x.status})}}
           const it=(d.items&&d.items[0])||d;f.st=it.ok?'ok':'bad';f.msg=(it.message||(it.ok?T('common.done'):T('common.failed')))+(d.note&&it.ok?' · '+d.note:'');li.className=f.st;msg.textContent=f.msg;pg.value=100;summary();
           // 同一批里排了两份同名同大小：这份传完了要马上补进快照，下一份循环到时才躲得开——只查一次
           // 快照、循环里不更新的话，两份会一起溜过去（都不在最初那份快照里），2026-09-13 真机踩到。
@@ -202,7 +201,7 @@ function uploader(box,urlOf,queryOf,okExt,onFinish,dedupeApi){
           res()};
         x.onerror=()=>{f.st='bad';f.msg=T('common.networkError');li.className='bad';msg.textContent=f.msg;summary();res()};
         const fd=new FormData();fd.append('file',f.file);x.send(fd)})}
-    go.disabled=false;clr.disabled=false;if(onFinish)onFinish()};
+    lockRows(false);go.disabled=false;clr.disabled=false;if(onFinish)onFinish()};
   return {clear(){files=[];render()}};
 }
 
@@ -432,7 +431,7 @@ function renderTransfer(sec){sec.innerHTML=`
       bar.appendChild(el('div',{class:'stgbar-main'},[el('b',{text:T('stg.batch.progress',{title:t,done:bs.done,total:bs.total})}),el('span',{class:'small',text:(bs.current?' · '+T('stg.batch.current',{name:stgClean(bs.current)}):'')+(bs.failed.length?' · '+T('stg.batch.failedN',{n:bs.failed.length}):'')})]));
       const p=el('progress');p.max=Math.max(1,bs.total);p.value=bs.done;bar.appendChild(p);
       const stop=el('button',{class:'btn btn-bad',type:'button',text:T('stg.batch.stopAll')});
-      stop.onclick=async()=>{const r=await postJ('/api/batch/stop',{});if(r.ok!==false)toast(T('stg.batch.stopped',{n:r.cleared||0}),'info');refresh()};bar.appendChild(stop);
+      guardClick(stop,async()=>{const r=await postJ('/api/batch/stop',{});if(r.ok!==false)toast(T('stg.batch.stopped',{n:r.cleared||0}),'info');await refresh()});bar.appendChild(stop);
     }else if(picked.size){
       bar.hidden=false;bar.className='stgbar sel';
       // 第一行：已选数 + 清除；第二行：批量按钮等宽。按钮上直接标"可处理数"（已优化的再优化、非 EPUB/PDF 加入 xochitl 等会被跳过），
@@ -448,7 +447,7 @@ function renderTransfer(sec){sec.innerHTML=`
         if(m){f.appendChild(el('span',{class:'lbl-long',text:m[1]}));f.appendChild(document.createTextNode(m[2]))}else f.appendChild(document.createTextNode(t));
         if(n!=null)f.appendChild(el('span',{class:'cnt',text:String(n)}));return f};
       const mk=(a,pri)=>{const b=el('button',{class:'btn'+(pri?' pri':''),type:'button',title:T('stg.bar.'+a)+'（'+cnt[a]+'）'},[lbl('stg.bar.'+a,cnt[a])]);
-        if(!cnt[a]){b.disabled=true;b.title=T('stg.bar.noneApplicable')}else b.onclick=()=>enqueue(a,{names:[...picked]});return b};
+        if(!cnt[a]){b.disabled=true;b.title=T('stg.bar.noneApplicable')}else guardClick(b,()=>enqueue(a,{names:[...picked]}));return b};
       const btns=el('div',{class:'stgbar-btns'},[mk('optimize',true),mk('deliver')]);
       if(koInstalled)btns.appendChild(mk('koreader'));
       btns.style.setProperty('--cols',String(btns.children.length));
@@ -508,25 +507,30 @@ function renderTransfer(sec){sec.innerHTML=`
   g('stgq').addEventListener('input',()=>{clearTimeout(qTimer);qTimer=setTimeout(rerender,150)});
   g('stgq').addEventListener('change',rerender);
   g('stgfmt').addEventListener('change',rerender);
-  const refresh=()=>{needFull=true;return run()};
+  const refresh=()=>refreshAt(3);
   // 网关自身的批量队列 / 并发闸门状态（见 batch.rs、budget.rs）。
   const applyQueue=(bg,bt)=>{
     gatedPending=new Set(bg.ok!==false?bg.pending||[]:[]);gatedActive=new Set(bg.ok!==false?bg.active||[]:[]);
     if(bt.ok!==false){bs={running:!!bt.running,action:bt.action,total:bt.total||0,done:bt.done||0,current:bt.current,queued:bt.queued||[],failed:bt.failed||[]};batchQueued=new Set(bs.queued)}
     const gated=(gatedPending.size||gatedActive.size)?T('transfer.staging.gatedSummary',{pending:gatedPending.size,active:gatedActive.size}):'';
     g('stgnotice').textContent=[koInstalled?'':T('transfer.staging.btn.koNotInstalled'),gated].filter(Boolean).join(' · ')};
-  /* 批量/闸门进度不轮询：网关在批量队列与并发闸门状态变化时发 SSE（area=books，不带 svc）。这类事件只改排队/进度，
-     **只重取这两个状态**（2 个请求）再重画；其余（book-serve 的书库变化、切 tab、重连）才全量取 6 个接口。
-     一轮批量里每本书网关自己要发 4～5 条这类事件，原来每条都触发全量重取（含 KOReader 目录列表）。
-     两种刷新走同一个 coalesce 串行执行（needFull 记"下一轮要不要全量"），不会出现旧的全量结果盖掉新的排队状态。 */
-  let needFull=false;
-  const run=coalesce(async()=>{const full=needFull;needFull=false;
-    if(!full){const [bg,bt]=await Promise.all([j('/api/budget/status'),j('/api/batch/status')]);applyQueue(bg,bt);render();return}
-    const [d,s,k,kb,bg,bt]=await Promise.all([j('/api/books/staging'),j('/api/books/status'),j('/api/koreader/status'),j('/api/koreader/books'),j('/api/budget/status'),j('/api/batch/status')]);
-    koInstalled=!!(k.ok&&k.installed);
+  /* 按事件决定取多少（不轮询）。三档，数字越大取得越全：
+     1 = 网关自己的批量队列 / 并发闸门事件（area=books、不带 svc）：只重取这两个状态（2 个请求）。一轮批量里每本书网关要发 4～5 条。
+     2 = book-serve 的 `staging` 事件（入库、忙态开始/结束、优化/落库**进度**——大书处理期间约每秒一条）：只有母版库列表会变，
+         再加上面两个状态（3 个请求）；xochitl / KOReader 文件夹列表与 KOReader 安装状态不会因此变化，不重取。
+     3 = 其余（book-serve 的 mkdir/trash/inbox 事件、切 tab、重连、操作后主动刷新）：全量 6 个请求。
+     所有刷新走同一个 coalesce 串行执行（need 记"下一轮至少要取到哪一档"，取最大），不会出现旧的全量结果盖掉新的排队状态。 */
+  let need=0;
+  const run=coalesce(async()=>{const lvl=need;need=0;if(!lvl)return;
+    if(lvl===1){const [bg,bt]=await Promise.all([j('/api/budget/status'),j('/api/batch/status')]);applyQueue(bg,bt);render();return}
+    const full=lvl>=3;
+    const [d,bg,bt,s,k,kb]=await Promise.all([j('/api/books/staging'),j('/api/budget/status'),j('/api/batch/status')].concat(full?[j('/api/books/status'),j('/api/koreader/status'),j('/api/koreader/books')]:[]));
+    if(full){
+      koInstalled=!!(k.ok&&k.installed);
+      fillSel('folder',s.ok?s.xochitlFolders||[]:[],'folder');
+      fillSel('kfolder',(kb.items||[]).filter(x=>x.kind==='dir').map(x=>x.name),'kfolder');
+    }
     applyQueue(bg,bt);
-    fillSel('folder',s.ok?s.xochitlFolders||[]:[],'folder');
-    fillSel('kfolder',(kb.items||[]).filter(x=>x.kind==='dir').map(x=>x.name),'kfolder');
     if(d.ok===false){items=[];render();g('stgcap').textContent='';g('stgfree').textContent='';g('stglist').innerHTML=`<li class="small stg-empty" style="color:var(--bad)">${esc(T('transfer.staging.unavailable',{msg:d.message||T('transfer.staging.notOpen')}))}</li>`;return}
     items=d.items||[];const tot=items.reduce((a,b)=>a+b.bytes,0);g('stgcap').textContent=items.length?T('transfer.staging.capSummary',{count:items.length,size:fmtB(tot)}):'';
     // 清掉选中集合里的幽灵条目（书被改名/删除后旧名字再也选不中也取消不掉）
@@ -534,6 +538,7 @@ function renderTransfer(sec){sec.innerHTML=`
     const fr=d.freeBytes;const low=fr!=null&&fr<300*1048576;g('stgfree').style.color=low?'var(--bad)':'';g('stgfree').textContent=fr!=null?T('transfer.staging.freeSpace',{free:fmtB(fr),lowWarn:low?T('transfer.staging.lowWarn'):''}):'';
     renderOriginals(d.originals||[]);
     g('stgnames').innerHTML=stgNameOptions(items);render()});
+  const refreshAt=lvl=>{need=Math.max(need,lvl);return run()};
   // 原 PDF 备份（有文字层 PDF 转 EPUB 后保留 7 天）：恢复回母版库 / 提前删除。
   const renderOriginals=list=>{const box=g('stgorig'),ul=g('stgoriglist');box.hidden=!list.length;if(!list.length)return;
     g('stgorigsum').textContent=T('stg.orig.summary',{n:list.length});ul.innerHTML='';
@@ -552,7 +557,7 @@ function renderTransfer(sec){sec.innerHTML=`
   ag.onclick=async()=>{const url=au.value.trim();if(!url){am.textContent=T('transfer.fetchArticle.needUrl');return}ag.disabled=true;am.style.color='';am.textContent=T('transfer.fetchArticle.fetching');
     const r=await jsend('/api/books/staging/fetch-article','POST',{url,optimize:ao.checked});ag.disabled=false;
     am.style.color=r.ok===false?'var(--bad)':'var(--ok)';am.textContent=r.ok===false?('✗ '+(r.message||T('transfer.fetchArticle.failed'))):('✓ '+r.message);if(r.ok!==false){au.value='';refresh()}};
-  refresh();sec.refresh=refresh;sec.onEvent=ev=>ev.area==='books'&&!ev.svc&&(ev.kind==='batch'||ev.kind==='budget')?run():refresh();subtabs(sec);}
+  refresh();sec.refresh=refresh;sec.onEvent=ev=>refreshAt(ev.area!=='books'?3:!ev.svc&&(ev.kind==='batch'||ev.kind==='budget')?1:ev.kind==='staging'?2:3);subtabs(sec);}
 
 /* 服务 tab（按注册表出现）。key = 注册的服务名。service→seg（AREA）不再在这里手搓一份——
    那正是 gateway/src/manage.rs::MODULES 表已声明的唯一事实源，这里改成初始化时从
@@ -635,13 +640,17 @@ function assetTab(sec,api,o){sec.innerHTML=`<div class="card">${o.title?`<h2>${o
    内部还有一层字体/词典 subnav，三级嵌套，subtabs() 已经改成 `:scope >` 限定直接子元素，不会互相
    干扰，见 subtabs() 头注）。只装了其中一部分时，subnav 只列已装的那几个（笔记 tab 本身不在这
    里——note-serve 单独占「其他」前面那个固定位置，不受这条影响）。 */
-function renderOther(sec,svcs){
+function renderOther(sec,svcs,areaOf){
   const items=[{name:'font-serve',icon:'🔤',label:'xochitl'},{name:'koreader-serve',icon:'📖',label:'KOReader'},{name:'wallpaper-serve',icon:'🖼️',label:T('tab.wallpaper')}]
     .filter(it=>svcs.some(s=>s.name===it.name));
   sec.innerHTML=`<div class="subnav">${items.map((it,i)=>`<button${i===0?' class="on"':''}>${it.icon} ${it.label}</button>`).join('')}</div>
     ${items.map((it,i)=>`<div class="subpanel${i===0?' on':''}" id="other-${it.name}"></div>`).join('')}`;
   items.forEach(it=>TABS[it.name].render($('#other-'+it.name,sec)));
-  sec.refresh=()=>items.forEach(it=>{const c=$('#other-'+it.name,sec);if(c&&c.refresh)c.refresh()});
+  const pane=it=>$('#other-'+it.name,sec);
+  sec.refresh=()=>Promise.all(items.map(it=>{const c=pane(it);return c&&c.refresh&&c.refresh()}));
+  /* 事件只刷发事件的那个服务的子面板（字体/KOReader/壁纸各自 2～3 个请求），不再三块一起重取——壁纸每次休眠轮换、
+     KOReader 每次加书都会发事件。认不出来源（没有映射）时退回整块刷新。 */
+  sec.onEvent=ev=>{const it=items.find(x=>areaOf(x.name)===ev.area);const c=it&&pane(it);if(c&&c.refresh)refreshSec(c);else refreshSec(sec)};
   subtabs(sec);
 }
 
@@ -717,14 +726,18 @@ function renderNotes(sec){sec.innerHTML=`
   // cropHtml 误判成"纯勾画没有手写"（notes.noCrop），实际上这条明明有手写，只是裁图暂时没生成——
   // 两种情况分开提示，别让用户误以为手写没被识别到。
   const cropHtml=e=>e.ink&&e.ink.crop?`<img src="${cropUrl(book.uuid,e.ink.crop)}" alt="${T('notes.cropAlt')}">`:`<div class="empty">${T(e.ink?'notes.cropMissing':'notes.noCrop')}</div>`;
-  const patch=async(id,body)=>{const r=await postJ(bookApi('ink',`/entries/${encodeURIComponent(id)}`),body);if(r.ok===false)toast(r.message||T('notes.saveFailed'))};
+  // 在途的保存请求：重取数据前先等它们落地（失焦保存 `onchange` 不 await，紧跟着的重画可能先拿到旧文本）。
+  // 用 jsend 不用 postJ：postJ 失败时自己弹一次 toast，这里再弹"保存失败"就成了两条（此前如此）。
+  const inflight=new Set();
+  const patch=(id,body)=>{const p=jsend(bookApi('ink',`/entries/${encodeURIComponent(id)}`),'POST',body).then(r=>{if(r.ok===false)toast(r.message||T('notes.saveFailed'))}).finally(()=>inflight.delete(p));inflight.add(p);return p};
   /* 编辑区文本失焦才存（`onchange`），但点旁边的按钮（重转/去处/问AI…）会先让文本框失焦触发保存，
      两件事几乎同时各发一个 HTTP 请求，谁先到服务端不一定——按钮那次的收尾动作会拉新数据整页重画，
      如果保存请求还没落地，重画拿到的还是旧文本，编辑就跟着"消失"了（用户反馈"改了内容点重转不存"）。
      用一个 pendingText 记住"还没确认存上"的最新值，任何会拉新数据重画的动作之前先 flush 一遍，
      保证读到的一定是最新的。 */
   const pendingText=new Map();
-  const flushPendingText=async()=>{if(!book||!pendingText.size)return;const items=[...pendingText];pendingText.clear();for(const[id,val]of items)await patch(id,{text:val})};
+  const flushPendingText=async()=>{if(book&&pendingText.size){const items=[...pendingText];pendingText.clear();for(const[id,val]of items)await patch(id,{text:val})}
+    if(inflight.size)await Promise.all([...inflight])};
   /* 每章"设备笔记本/Obsidian md 是不是已经跟当前条目内容同步"（整理区第三轮反馈）：一次性取整本书
      的同步状态，章头徽章、「整理」列表默认收起已同步章节、回收站显示这条大概去哪了，三处共用同一份，
      不用各自发请求。`refreshSync()` 在 loadBook 里、以及每次生成/导出动作之后调用刷新。 */
@@ -1033,7 +1046,12 @@ function renderNotes(sec){sec.innerHTML=`
       body.appendChild(row)});
     chapterbody.appendChild(card)};
   exportTabsEl.querySelectorAll('button').forEach(b=>b.onclick=()=>{if(exportTab===b.dataset.etab)return;exportTab=b.dataset.etab;selectedChapter=null;renderBook()});
-  const loadBook=async()=>{await flushPendingText();selectedChapter=null;if(!sel.value){book=null;await refreshSync();renderBrowse();await renderBook();renderTrash();renderImport();return}book=await j(`/api/ink/books/${encodeURIComponent(sel.value)}`);await refreshSync();renderBrowse();await renderBook();renderTrash();renderImport()};
+  const loadBook=async()=>{await flushPendingText();selectedChapter=null;
+    book=null;
+    if(sel.value){const b=await j(`/api/ink/books/${encodeURIComponent(sel.value)}`);
+      // 取失败（ink-serve 重启中、书刚被删）按"没选书"画，别把 {ok:false} 当成书——此前后续请求会拼出 /books/undefined。
+      if(b.ok===false)toast(b.message||T('common.failed'));else book=b}
+    await refreshSync();renderBrowse();await renderBook();renderTrash();renderImport()};
   sel.onchange=loadBook;
   /* 全文搜索（跨所有书，ink-serve /search）：结果点一下就切到那本书的「浏览」。命中词加粗——片段先 esc 再替换，
      替换用的也是 esc 过的查询词，不会引入未转义的 HTML。 */
@@ -1066,9 +1084,18 @@ function renderNotes(sec){sec.innerHTML=`
     if(!show&&importNavBtn.classList.contains('on'))$('#nsubnav',sec).children[0].click(); // 正停在「导入」时先切回「浏览」，避免 hidden+on 类同时存在
     importNavBtn.hidden=!show;importPanel.hidden=!show;
   };
-  const refresh=async()=>{if(Date.now()<holdRefreshUntil)return; // 正显示着结果提示，别被 SSE 抢跑冲掉（见 holdRefreshUntil 声明处注释）
+  // checkImport=false：SSE 事件触发的刷新不重查「导入 md」开关（那个开关在「管理」页改，切回本 tab 的刷新会查）——
+  // 自动转写期间每转完一条都有事件，原来每次都连带让网关扫一遍 xochitl 扩展状态。
+  const refresh=async(checkImport=true)=>{if(Date.now()<holdRefreshUntil)return; // 正显示着结果提示，别被 SSE 抢跑冲掉（见 holdRefreshUntil 声明处注释）
     const d=await j('/api/ink/books');const cur=sel.value;sel.innerHTML=(d.items||[]).map(b=>`<option value="${esc(b.uuid)}">${esc(b.title)}（${b.entries}）</option>`).join('')||`<option value="">${T('notes.noBooks')}</option>`;
-    if(cur&&[...sel.options].some(o=>o.value===cur))sel.value=cur;await loadBook();await syncImportVisible()};
+    if(cur&&[...sel.options].some(o=>o.value===cur))sel.value=cur;await loadBook();if(checkImport)await syncImportVisible()};
+  /* 事件刷新会整段重画（含正在编辑的文本框）：用户正在本 tab 的输入框里打字时先不重画，只记一笔，焦点离开输入框再补一次。
+     此前自动转写/另一台设备的改动一来，光标连同输入框一起被重画掉（文字靠 pendingText 保住了，但得重新点进去）。 */
+  const editing=()=>{const a=document.activeElement;return !!a&&sec.contains(a)&&(a.tagName==='TEXTAREA'||(a.tagName==='INPUT'&&/^(text|search)$/.test(a.type)))};
+  let deferred=false;
+  const evRefresh=coalesce(()=>refresh(false));
+  sec.onEvent=()=>{if(editing()){deferred=true;return}evRefresh()};
+  sec.addEventListener('focusout',()=>setTimeout(()=>{if(deferred&&!editing()){deferred=false;evRefresh()}},0));
   refresh();sec.refresh=refresh;subtabs(sec)}
 
 // 只放 key 名，DashScope/OpenAI/Gemini/DeepSeek 本身是厂商专名不翻，括注里的中文说明才走 T()（同样是
@@ -1201,7 +1228,8 @@ function mountBattopToggleCard(container){
     const r=await j(`/api/enhance/battop/${want?'start':'stop'}`,{method:'POST'});
     if(r.ok===false){toast(r.message||T('common.failed'));box.checked=!want}
     box.disabled=false;await refresh()};
-  refresh();
+  // 挂载时不自己取：唯一调用方（「管理」页）挂载后紧接着就取 /api/enhance/status 并把结果传进来（erApply），
+  // 这里再取一次就是同一个接口连发两遍（每次都让网关查 systemctl + 扫 xochitl 进程映射）。
   return refresh;
 }
 
@@ -1565,8 +1593,6 @@ function renderManage(sec){sec.innerHTML=`
   $('#hdr').textContent=location.host;
   const nav=$('#tabs'),main=$('#main');main.innerHTML='';
   const secByArea={};const dirty=new Set();
-  /* 各 tab 的刷新统一走它（切 tab、SSE、可见性恢复）：coalesce 合并并发触发。 */
-  const refreshSec=sec=>{if(!sec.refresh)return;(sec._rf||(sec._rf=coalesce(async()=>{await sec.refresh()})))()};
   /* 各 tab **第一次切过去时才渲染**（渲染本身就会取一次数据）：此前页面一打开就把笔记/其他/管理全部渲染、各自取一遍数据
      （二十来个请求，还让网关扫 /proc、问模型服务），而且首个 tab 渲染完紧接着又被点击刷新一次，同样的 6 个请求发两遍。
      之后再切回来才走 refreshSec 刷新。 */
@@ -1578,7 +1604,7 @@ function renderManage(sec){sec.innerHTML=`
   addTab(T('tab.transfer'),renderTransfer,true,'books');          // 总入口（入库｜母版库），固定第一位（book-serve 不在时列表里提示去管理页开）
   noteSvc.forEach((s)=>addTab(TABS[s.name].titleKey?T(TABS[s.name].titleKey):TABS[s.name].title,TABS[s.name].render,false,AREA[s.name]||s.name));
   if(otherSvcs.length){
-    const otherSec=addTab(T('tab.other'),(sec)=>renderOther(sec,otherSvcs),false,'other');
+    const otherSec=addTab(T('tab.other'),(sec)=>renderOther(sec,otherSvcs,n=>AREA[n]||n),false,'other');
     // fonts/koreader/wallpapers 各自的 SSE 事件原来路由到各自独立顶层 section，现在都嵌进了同一个
     // 「其他」section——三个 area 名都指向同一个 otherSec，事件到了随便哪个都触发它的合并 refresh
     // （renderOther 里 sec.refresh 会把三块子面板一起刷一遍，不逐个精确匹配，简单可靠）。

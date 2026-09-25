@@ -4,7 +4,9 @@
 // 或 PLAYWRIGHT_NODE_MODULES=<含 playwright 的 node_modules 目录>（如 gateway/tools/screenshot-walkthrough/node_modules）。
 // 不起网关：拦截请求直接喂拼好的页面，并在页面里 mock 掉 fetch 与 EventSource，验证：
 //   ① 文件名/错误文案里的 HTML 不会注入 DOM（无 <img>、onerror 不触发）；
-//   ② 10 个 SSE 事件连发被 coalesce 成至多 2 次刷新；网关自身的批量/闸门事件只重取那两个状态，不全量刷新；③ 页面隐藏时不刷新、可见后补刷一次；④ 空闲无轮询。
+//   ② 10 个 SSE 事件连发被 coalesce 成至多 2 次刷新；网关自身的批量/闸门事件只重取那两个状态，book-serve 的 staging 事件不重取
+//      KOReader 目录；③ 页面隐藏时不刷新、可见后补刷一次；④ 空闲无轮询；⑤ 三种对话框的键盘/点击行为；⑥ 笔记 tab 正在输入时
+//      事件不重画、失焦补刷；⑦「其他」tab 的事件只刷发事件服务的子面板。
 import { createRequire } from 'node:module';
 import fs from 'node:fs';
 import assert from 'node:assert/strict';
@@ -27,8 +29,14 @@ const zh = ${JSON.stringify(zh)};
 const evil = '<img src=x onerror=window.__xss=1>.epub';
 const routes = {
   '/ui/locales/zh-CN.json': () => JSON.parse(zh),
-  '/api/services': () => ({services: []}),
-  '/api/manage': () => ({modules: []}),
+  '/api/services': () => ({services: [{name:'note-serve', ui:{order:1}}, {name:'font-serve', ui:{order:2}}, {name:'wallpaper-serve', ui:{order:3}}]}),
+  '/api/manage': () => ({modules: [{service:'note-serve', seg:'notes'}, {service:'font-serve', seg:'fonts'}, {service:'wallpaper-serve', seg:'wallpapers'}]}),
+  '/api/fonts': () => ({items:[]}), '/api/fonts/status': () => ({ok:true}),
+  '/api/wallpapers': () => ({items:[]}), '/api/wallpapers/status': () => ({ok:true, mode:'sequential'}),
+  '/api/ink/books': () => ({items:[{uuid:'u1', title:'书', entries:1}]}),
+  '/api/ink/books/u1': () => ({uuid:'u1', entries:[{id:'e1', status:'pending', chapter:0, page_index:0, destination:'both', style:'body', text:'hi', updated:1}]}),
+  '/api/notes/books/u1/sync': () => ({chapters:[]}),
+  '/api/transcribe/status': () => ({failures:[]}),
   '/api/books/staging': () => ({ok:true, items:[{name: evil, format:'epub', bytes:1000, mtime:1, optimized:false, delivered:{optimize:{status:'failed', message:'"><img src=x onerror=window.__xss=1>'}}}], freeBytes: 9e9}),
   '/api/books/status': () => ({ok:true, xochitlFolders:[]}),
   '/api/koreader/status': () => ({ok:true, installed:false}),
@@ -72,6 +80,7 @@ out.imgInjected = await page.evaluate(() => document.querySelectorAll('#stglist 
 await page.evaluate(() => { for (let i = 0; i < 10; i++) window.__es[0].onmessage({data: JSON.stringify({area:'books', kind:'staging', svc:'books'})}); });
 await new Promise(r => setTimeout(r, 500));
 out.afterBurst = (await hits()) - out.initialHits;
+out.burstKoBooks = (await hits('/api/koreader/books')) - 1; // 首次全量取过 1 次；staging 事件不该再取
 // 网关自身的批量/闸门事件（不带 svc）：只重取批量/闸门状态，不全量刷新
 const s0 = await hits(), b0 = await hits('/api/batch/status');
 await page.evaluate(() => { for (let i = 0; i < 5; i++) window.__es[0].onmessage({data: JSON.stringify({area:'books', kind: i % 2 ? 'budget' : 'batch'})}); });
@@ -102,6 +111,40 @@ await new Promise(r => setTimeout(r, 400));
 out.esCount = await page.evaluate(() => window.__es.length);
 out.esReopenedOpen = await page.evaluate(() => !window.__es[window.__es.length - 1].closed);
 out.reopenRefresh = (await hits()) - h2;
+// 对话框：Enter=确认、Esc=取消、点选项返回其值；关闭后遮罩移除、键盘监听摘掉
+out.dialogs = await page.evaluate(async () => {
+  const key = k => document.dispatchEvent(new KeyboardEvent('keydown', {key: k}));
+  const r = [];
+  let p = confirmDialog('x'); key('Enter'); r.push(await p);
+  p = confirmDialog('x'); key('Escape'); r.push(await p);
+  p = promptDialog('x', 'abc'); key('Enter'); r.push(await p);
+  p = promptDialog('x', 'abc'); document.querySelector('.confirm-overlay').click(); r.push(await p);
+  p = choiceDialog('x', [{value:'a', label:'A'}, {value:'b', label:'B'}], 'a'); document.querySelectorAll('.choice-opts button')[1].click(); r.push(await p);
+  key('Enter'); // 已关闭的对话框不该再响应
+  r.push(document.querySelectorAll('.confirm-overlay').length);
+  return r;
+});
+// 笔记 tab：正在输入框里打字时 SSE 事件不重画（光标不丢），失焦后补一次；事件刷新不重查「导入 md」开关
+await page.evaluate(() => document.querySelectorAll('#tabs button')[1].click()); // 传书 / 笔记 / 管理
+await new Promise(r => setTimeout(r, 600));
+const n0 = await hits('/api/ink/books'), e0 = await hits('/api/enhance/status');
+out.noteTa = await page.evaluate(() => { document.querySelector('#nsubnav').children[1].click(); const ta = document.querySelector('textarea.entry-text'); if (!ta) return false; ta.focus(); window.__ta = ta; return true; });
+await page.evaluate(() => window.__es[window.__es.length - 1].onmessage({data: JSON.stringify({area:'notes', kind:'entries', svc:'ink'})}));
+await new Promise(r => setTimeout(r, 400));
+out.noteWhileTyping = (await hits('/api/ink/books')) - n0;
+out.noteFocusKept = await page.evaluate(() => document.activeElement === window.__ta && document.contains(window.__ta));
+await page.evaluate(() => window.__ta.blur());
+await new Promise(r => setTimeout(r, 500));
+out.noteAfterBlur = (await hits('/api/ink/books')) - n0;
+out.noteEventEnhance = (await hits('/api/enhance/status')) - e0;
+// 「其他」tab：壁纸服务的事件只刷壁纸子面板，不连带重取字体
+await page.evaluate(() => document.querySelectorAll('#tabs button')[2].click()); // 传书 / 笔记 / 其他 / 管理
+await new Promise(r => setTimeout(r, 500));
+const f0 = await hits('/api/fonts'), w0 = await hits('/api/wallpapers');
+await page.evaluate(() => window.__es[window.__es.length - 1].onmessage({data: JSON.stringify({area:'wallpapers', kind:'pool', svc:'wallpapers'})}));
+await new Promise(r => setTimeout(r, 400));
+out.otherFonts = (await hits('/api/fonts')) - f0;
+out.otherWalls = (await hits('/api/wallpapers')) - w0;
 // 无轮询：等 4 秒无新请求
 const h1 = await hits();
 await new Promise(r => setTimeout(r, 4000));
@@ -112,6 +155,15 @@ assert.equal(out.xss, 0, '含 HTML 的文件名/错误文案不能执行脚本')
 assert.equal(out.imgInjected, 0, '不能注入 <img>');
 assert.ok(out.listText.includes('<img src=x'), '文件名应作为文本显示');
 assert.ok(out.afterBurst >= 1 && out.afterBurst <= 2, `事件突发应合并，实际 ${out.afterBurst} 次`);
+assert.equal(out.burstKoBooks, 0, 'book-serve 的 staging 事件只重取母版库列表与排队状态，不重取 KOReader 目录');
+assert.deepEqual(out.dialogs, [true, false, 'abc', null, 'b', 0], '对话框行为');
+assert.equal(out.noteTa, true, '笔记 tab 应渲染出条目文本框');
+assert.equal(out.noteWhileTyping, 0, '正在输入时事件不该触发重画');
+assert.equal(out.noteFocusKept, true, '输入框焦点不该被重画冲掉');
+assert.equal(out.noteAfterBlur, 1, '失焦后补刷一次');
+assert.equal(out.noteEventEnhance, 0, '事件刷新不重查 /api/enhance/status');
+assert.equal(out.otherFonts, 0, '壁纸事件不该重取字体列表');
+assert.equal(out.otherWalls, 1, '壁纸事件应刷壁纸子面板一次');
 assert.equal(out.queueEventStagingHits, 0, '网关排队/进度事件不该全量重取母版库列表');
 assert.ok(out.queueEventBatchHits >= 1 && out.queueEventBatchHits <= 2, `排队事件应重取批量状态且合并，实际 ${out.queueEventBatchHits} 次`);
 assert.equal(out.hiddenHits, 0, '页面隐藏时不该刷新');
