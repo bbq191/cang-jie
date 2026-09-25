@@ -27,6 +27,8 @@ const wait=ms=>new Promise(res=>setTimeout(res,ms));
 const coalesce=fn=>{let running=null,again=false;
   const loop=async()=>{do{again=false;try{await fn()}catch(e){console.error(e)}}while(again)};
   return()=>{if(running){again=true;return running}running=loop().finally(()=>{running=null});return running}};
+/* 一个区块（顶层 tab 或「其他」里的子面板）的刷新统一走它（切 tab、SSE、可见性恢复）：按区块各自 coalesce，合并并发触发。 */
+const refreshSec=sec=>{if(!sec.refresh)return;(sec._rf||(sec._rf=coalesce(async()=>{await sec.refresh()})))()};
 /* 防双击：按钮点击后立即禁用，异步操作完成（不管成功失败）再解禁。很多按钮的异步操作是删除/
    落库这类不该被同一次操作重复触发两遍的动作——不加这一层，手指点快了或者网络慢的时候网络请求
    还没回来就能再点一次，2026-09-18 真机反馈"优化过程中点击删除"这类并发操作会撞在一起。母版库
@@ -505,25 +507,30 @@ function renderTransfer(sec){sec.innerHTML=`
   g('stgq').addEventListener('input',()=>{clearTimeout(qTimer);qTimer=setTimeout(rerender,150)});
   g('stgq').addEventListener('change',rerender);
   g('stgfmt').addEventListener('change',rerender);
-  const refresh=()=>{needFull=true;return run()};
+  const refresh=()=>refreshAt(3);
   // 网关自身的批量队列 / 并发闸门状态（见 batch.rs、budget.rs）。
   const applyQueue=(bg,bt)=>{
     gatedPending=new Set(bg.ok!==false?bg.pending||[]:[]);gatedActive=new Set(bg.ok!==false?bg.active||[]:[]);
     if(bt.ok!==false){bs={running:!!bt.running,action:bt.action,total:bt.total||0,done:bt.done||0,current:bt.current,queued:bt.queued||[],failed:bt.failed||[]};batchQueued=new Set(bs.queued)}
     const gated=(gatedPending.size||gatedActive.size)?T('transfer.staging.gatedSummary',{pending:gatedPending.size,active:gatedActive.size}):'';
     g('stgnotice').textContent=[koInstalled?'':T('transfer.staging.btn.koNotInstalled'),gated].filter(Boolean).join(' · ')};
-  /* 批量/闸门进度不轮询：网关在批量队列与并发闸门状态变化时发 SSE（area=books，不带 svc）。这类事件只改排队/进度，
-     **只重取这两个状态**（2 个请求）再重画；其余（book-serve 的书库变化、切 tab、重连）才全量取 6 个接口。
-     一轮批量里每本书网关自己要发 4～5 条这类事件，原来每条都触发全量重取（含 KOReader 目录列表）。
-     两种刷新走同一个 coalesce 串行执行（needFull 记"下一轮要不要全量"），不会出现旧的全量结果盖掉新的排队状态。 */
-  let needFull=false;
-  const run=coalesce(async()=>{const full=needFull;needFull=false;
-    if(!full){const [bg,bt]=await Promise.all([j('/api/budget/status'),j('/api/batch/status')]);applyQueue(bg,bt);render();return}
-    const [d,s,k,kb,bg,bt]=await Promise.all([j('/api/books/staging'),j('/api/books/status'),j('/api/koreader/status'),j('/api/koreader/books'),j('/api/budget/status'),j('/api/batch/status')]);
-    koInstalled=!!(k.ok&&k.installed);
+  /* 按事件决定取多少（不轮询）。三档，数字越大取得越全：
+     1 = 网关自己的批量队列 / 并发闸门事件（area=books、不带 svc）：只重取这两个状态（2 个请求）。一轮批量里每本书网关要发 4～5 条。
+     2 = book-serve 的 `staging` 事件（入库、忙态开始/结束、优化/落库**进度**——大书处理期间约每秒一条）：只有母版库列表会变，
+         再加上面两个状态（3 个请求）；xochitl / KOReader 文件夹列表与 KOReader 安装状态不会因此变化，不重取。
+     3 = 其余（book-serve 的 mkdir/trash/inbox 事件、切 tab、重连、操作后主动刷新）：全量 6 个请求。
+     所有刷新走同一个 coalesce 串行执行（need 记"下一轮至少要取到哪一档"，取最大），不会出现旧的全量结果盖掉新的排队状态。 */
+  let need=0;
+  const run=coalesce(async()=>{const lvl=need;need=0;if(!lvl)return;
+    if(lvl===1){const [bg,bt]=await Promise.all([j('/api/budget/status'),j('/api/batch/status')]);applyQueue(bg,bt);render();return}
+    const full=lvl>=3;
+    const [d,bg,bt,s,k,kb]=await Promise.all([j('/api/books/staging'),j('/api/budget/status'),j('/api/batch/status')].concat(full?[j('/api/books/status'),j('/api/koreader/status'),j('/api/koreader/books')]:[]));
+    if(full){
+      koInstalled=!!(k.ok&&k.installed);
+      fillSel('folder',s.ok?s.xochitlFolders||[]:[],'folder');
+      fillSel('kfolder',(kb.items||[]).filter(x=>x.kind==='dir').map(x=>x.name),'kfolder');
+    }
     applyQueue(bg,bt);
-    fillSel('folder',s.ok?s.xochitlFolders||[]:[],'folder');
-    fillSel('kfolder',(kb.items||[]).filter(x=>x.kind==='dir').map(x=>x.name),'kfolder');
     if(d.ok===false){items=[];render();g('stgcap').textContent='';g('stgfree').textContent='';g('stglist').innerHTML=`<li class="small stg-empty" style="color:var(--bad)">${esc(T('transfer.staging.unavailable',{msg:d.message||T('transfer.staging.notOpen')}))}</li>`;return}
     items=d.items||[];const tot=items.reduce((a,b)=>a+b.bytes,0);g('stgcap').textContent=items.length?T('transfer.staging.capSummary',{count:items.length,size:fmtB(tot)}):'';
     // 清掉选中集合里的幽灵条目（书被改名/删除后旧名字再也选不中也取消不掉）
@@ -531,6 +538,7 @@ function renderTransfer(sec){sec.innerHTML=`
     const fr=d.freeBytes;const low=fr!=null&&fr<300*1048576;g('stgfree').style.color=low?'var(--bad)':'';g('stgfree').textContent=fr!=null?T('transfer.staging.freeSpace',{free:fmtB(fr),lowWarn:low?T('transfer.staging.lowWarn'):''}):'';
     renderOriginals(d.originals||[]);
     g('stgnames').innerHTML=stgNameOptions(items);render()});
+  const refreshAt=lvl=>{need=Math.max(need,lvl);return run()};
   // 原 PDF 备份（有文字层 PDF 转 EPUB 后保留 7 天）：恢复回母版库 / 提前删除。
   const renderOriginals=list=>{const box=g('stgorig'),ul=g('stgoriglist');box.hidden=!list.length;if(!list.length)return;
     g('stgorigsum').textContent=T('stg.orig.summary',{n:list.length});ul.innerHTML='';
@@ -549,7 +557,7 @@ function renderTransfer(sec){sec.innerHTML=`
   ag.onclick=async()=>{const url=au.value.trim();if(!url){am.textContent=T('transfer.fetchArticle.needUrl');return}ag.disabled=true;am.style.color='';am.textContent=T('transfer.fetchArticle.fetching');
     const r=await jsend('/api/books/staging/fetch-article','POST',{url,optimize:ao.checked});ag.disabled=false;
     am.style.color=r.ok===false?'var(--bad)':'var(--ok)';am.textContent=r.ok===false?('✗ '+(r.message||T('transfer.fetchArticle.failed'))):('✓ '+r.message);if(r.ok!==false){au.value='';refresh()}};
-  refresh();sec.refresh=refresh;sec.onEvent=ev=>ev.area==='books'&&!ev.svc&&(ev.kind==='batch'||ev.kind==='budget')?run():refresh();subtabs(sec);}
+  refresh();sec.refresh=refresh;sec.onEvent=ev=>refreshAt(ev.area!=='books'?3:!ev.svc&&(ev.kind==='batch'||ev.kind==='budget')?1:ev.kind==='staging'?2:3);subtabs(sec);}
 
 /* 服务 tab（按注册表出现）。key = 注册的服务名。service→seg（AREA）不再在这里手搓一份——
    那正是 gateway/src/manage.rs::MODULES 表已声明的唯一事实源，这里改成初始化时从
@@ -632,13 +640,17 @@ function assetTab(sec,api,o){sec.innerHTML=`<div class="card">${o.title?`<h2>${o
    内部还有一层字体/词典 subnav，三级嵌套，subtabs() 已经改成 `:scope >` 限定直接子元素，不会互相
    干扰，见 subtabs() 头注）。只装了其中一部分时，subnav 只列已装的那几个（笔记 tab 本身不在这
    里——note-serve 单独占「其他」前面那个固定位置，不受这条影响）。 */
-function renderOther(sec,svcs){
+function renderOther(sec,svcs,areaOf){
   const items=[{name:'font-serve',icon:'🔤',label:'xochitl'},{name:'koreader-serve',icon:'📖',label:'KOReader'},{name:'wallpaper-serve',icon:'🖼️',label:T('tab.wallpaper')}]
     .filter(it=>svcs.some(s=>s.name===it.name));
   sec.innerHTML=`<div class="subnav">${items.map((it,i)=>`<button${i===0?' class="on"':''}>${it.icon} ${it.label}</button>`).join('')}</div>
     ${items.map((it,i)=>`<div class="subpanel${i===0?' on':''}" id="other-${it.name}"></div>`).join('')}`;
   items.forEach(it=>TABS[it.name].render($('#other-'+it.name,sec)));
-  sec.refresh=()=>items.forEach(it=>{const c=$('#other-'+it.name,sec);if(c&&c.refresh)c.refresh()});
+  const pane=it=>$('#other-'+it.name,sec);
+  sec.refresh=()=>Promise.all(items.map(it=>{const c=pane(it);return c&&c.refresh&&c.refresh()}));
+  /* 事件只刷发事件的那个服务的子面板（字体/KOReader/壁纸各自 2～3 个请求），不再三块一起重取——壁纸每次休眠轮换、
+     KOReader 每次加书都会发事件。认不出来源（没有映射）时退回整块刷新。 */
+  sec.onEvent=ev=>{const it=items.find(x=>areaOf(x.name)===ev.area);const c=it&&pane(it);if(c&&c.refresh)refreshSec(c);else refreshSec(sec)};
   subtabs(sec);
 }
 
@@ -1072,9 +1084,18 @@ function renderNotes(sec){sec.innerHTML=`
     if(!show&&importNavBtn.classList.contains('on'))$('#nsubnav',sec).children[0].click(); // 正停在「导入」时先切回「浏览」，避免 hidden+on 类同时存在
     importNavBtn.hidden=!show;importPanel.hidden=!show;
   };
-  const refresh=async()=>{if(Date.now()<holdRefreshUntil)return; // 正显示着结果提示，别被 SSE 抢跑冲掉（见 holdRefreshUntil 声明处注释）
+  // checkImport=false：SSE 事件触发的刷新不重查「导入 md」开关（那个开关在「管理」页改，切回本 tab 的刷新会查）——
+  // 自动转写期间每转完一条都有事件，原来每次都连带让网关扫一遍 xochitl 扩展状态。
+  const refresh=async(checkImport=true)=>{if(Date.now()<holdRefreshUntil)return; // 正显示着结果提示，别被 SSE 抢跑冲掉（见 holdRefreshUntil 声明处注释）
     const d=await j('/api/ink/books');const cur=sel.value;sel.innerHTML=(d.items||[]).map(b=>`<option value="${esc(b.uuid)}">${esc(b.title)}（${b.entries}）</option>`).join('')||`<option value="">${T('notes.noBooks')}</option>`;
-    if(cur&&[...sel.options].some(o=>o.value===cur))sel.value=cur;await loadBook();await syncImportVisible()};
+    if(cur&&[...sel.options].some(o=>o.value===cur))sel.value=cur;await loadBook();if(checkImport)await syncImportVisible()};
+  /* 事件刷新会整段重画（含正在编辑的文本框）：用户正在本 tab 的输入框里打字时先不重画，只记一笔，焦点离开输入框再补一次。
+     此前自动转写/另一台设备的改动一来，光标连同输入框一起被重画掉（文字靠 pendingText 保住了，但得重新点进去）。 */
+  const editing=()=>{const a=document.activeElement;return !!a&&sec.contains(a)&&(a.tagName==='TEXTAREA'||(a.tagName==='INPUT'&&/^(text|search)$/.test(a.type)))};
+  let deferred=false;
+  const evRefresh=coalesce(()=>refresh(false));
+  sec.onEvent=()=>{if(editing()){deferred=true;return}evRefresh()};
+  sec.addEventListener('focusout',()=>setTimeout(()=>{if(deferred&&!editing()){deferred=false;evRefresh()}},0));
   refresh();sec.refresh=refresh;subtabs(sec)}
 
 // 只放 key 名，DashScope/OpenAI/Gemini/DeepSeek 本身是厂商专名不翻，括注里的中文说明才走 T()（同样是
@@ -1207,7 +1228,8 @@ function mountBattopToggleCard(container){
     const r=await j(`/api/enhance/battop/${want?'start':'stop'}`,{method:'POST'});
     if(r.ok===false){toast(r.message||T('common.failed'));box.checked=!want}
     box.disabled=false;await refresh()};
-  refresh();
+  // 挂载时不自己取：唯一调用方（「管理」页）挂载后紧接着就取 /api/enhance/status 并把结果传进来（erApply），
+  // 这里再取一次就是同一个接口连发两遍（每次都让网关查 systemctl + 扫 xochitl 进程映射）。
   return refresh;
 }
 
@@ -1571,8 +1593,6 @@ function renderManage(sec){sec.innerHTML=`
   $('#hdr').textContent=location.host;
   const nav=$('#tabs'),main=$('#main');main.innerHTML='';
   const secByArea={};const dirty=new Set();
-  /* 各 tab 的刷新统一走它（切 tab、SSE、可见性恢复）：coalesce 合并并发触发。 */
-  const refreshSec=sec=>{if(!sec.refresh)return;(sec._rf||(sec._rf=coalesce(async()=>{await sec.refresh()})))()};
   /* 各 tab **第一次切过去时才渲染**（渲染本身就会取一次数据）：此前页面一打开就把笔记/其他/管理全部渲染、各自取一遍数据
      （二十来个请求，还让网关扫 /proc、问模型服务），而且首个 tab 渲染完紧接着又被点击刷新一次，同样的 6 个请求发两遍。
      之后再切回来才走 refreshSec 刷新。 */
@@ -1584,7 +1604,7 @@ function renderManage(sec){sec.innerHTML=`
   addTab(T('tab.transfer'),renderTransfer,true,'books');          // 总入口（入库｜母版库），固定第一位（book-serve 不在时列表里提示去管理页开）
   noteSvc.forEach((s)=>addTab(TABS[s.name].titleKey?T(TABS[s.name].titleKey):TABS[s.name].title,TABS[s.name].render,false,AREA[s.name]||s.name));
   if(otherSvcs.length){
-    const otherSec=addTab(T('tab.other'),(sec)=>renderOther(sec,otherSvcs),false,'other');
+    const otherSec=addTab(T('tab.other'),(sec)=>renderOther(sec,otherSvcs,n=>AREA[n]||n),false,'other');
     // fonts/koreader/wallpapers 各自的 SSE 事件原来路由到各自独立顶层 section，现在都嵌进了同一个
     // 「其他」section——三个 area 名都指向同一个 otherSec，事件到了随便哪个都触发它的合并 refresh
     // （renderOther 里 sec.refresh 会把三块子面板一起刷一遍，不逐个精确匹配，简单可靠）。
