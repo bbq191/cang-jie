@@ -20,6 +20,12 @@ use rmsvc_core::paths::Paths;
 /// xochitl 扩展加载状态的扫描器（进程级缓存，见 [`loaded::Scanner`]）。
 static LOADED: loaded::Scanner = loaded::Scanner::new();
 
+/// xochitl 主进程映射扫描（同一个进程只扫一次 maps，见 [`loaded::Scanner`]）：「设备健康」的 OTA 判定与清理页复用，
+/// 不另起一套 `/proc` 遍历。
+pub fn xochitl_loaded(paths: &Paths) -> loaded::Loaded {
+    LOADED.scan(std::path::Path::new("/proc"), &paths.home().join("xovi/exthome/qt-resource-rebuilder"))
+}
+
 pub fn status(paths: &Paths) -> Reply {
     let b = battop::status();
     let q = qol::Qol::load(paths);
@@ -31,7 +37,7 @@ pub fn status(paths: &Paths) -> Reply {
         "tapPageTurn": q.tap_page_turn(),
         "rtlPageTurn": q.rtl_page_turn(),
         "battop": {"installed": b.installed, "running": b.running, "lastSampleAt": b.last_sample_at},
-        "loaded": LOADED.scan(std::path::Path::new("/proc"), &paths.home().join("xovi/exthome/qt-resource-rebuilder")),
+        "loaded": xochitl_loaded(paths),
     }))
 }
 
