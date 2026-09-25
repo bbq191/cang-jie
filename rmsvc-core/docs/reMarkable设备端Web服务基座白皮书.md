@@ -105,7 +105,7 @@
 
 - **`auth`**：`hash_password`/`verify_password`（`pbkdf2$<轮数>$<盐>$<摘要>`，PBKDF2-HMAC-SHA256 60 万轮、16 字节盐；旧版单轮 SHA-256 仍可校验）；`parse_basic`、`parse_cookie`；`SessionStore`（32 字节随机令牌、绝对过期、容量上限，满了淘汰最早到期的）；`IpFailLimiter`（按来源 IP 的滑动窗口失败计数，IPv4 映射的 IPv6 与纯 IPv4 算同一来源；有 `*_at(now)` 版本便于测试）。09-24 之前的全局计数器 `FailLimiter` 已删除。
 - **`tls`**：`ensure_ca_signed(dir, extra_sans)` 读取或生成私有 CA（10 年）+ 服务器证书（800 天；名字列表变化或签发满 700 天重签）；CA 带名称约束（`PERMITTED_DNS`、`PERMITTED_V4`，路径长度 0），约束外的 SAN 剔除并打日志；旧的无约束 CA 自动备份为 `.bak-<秒>` 后重建。依赖 `x509-parser` 解析已有 CA（本来就经 rcgen 在依赖树里）。测试用 `rustls-webpki` 做完整链校验，包括“用同一把 CA 私钥硬签 `evil.com` 会被拒”的反证。流程图见网关白皮书的 [`ca-migration.svg`](../../gateway/docs/diagrams/ca-migration.svg)。
-- **`mdns`**：极简 mDNS 应答器，只回答本机名的 A 查询，应答地址选和提问者同子网的本机 IPv4（USB 网段问就答 `10.11.99.1`）。接口重扫与读超时合并为 60 秒。绑不上 5353（别的 mDNS 服务在跑）只打日志，不影响网关。
+- **`mdns`**：极简 mDNS 应答器，只回答本机名的 A 查询，应答地址选和提问者同子网的本机 IPv4（USB 网段问就答 `10.11.99.1`）。**接口重扫由内核地址变化驱动**（09-25 起）：订阅 netlink `NETLINK_ROUTE` 的 `RTMGRP_IPV4_IFADDR` 组，和 5353 套接字一起 `poll`（无限期等），只有收到 `RTM_NEWADDR`/`RTM_DELADDR` 才重扫接口、加入新地址的多播组——空闲时零定时唤醒（此前读超时＝重扫间隔 60 秒，每小时 60 次），WiFi 后连/换网拿到地址立刻能被解析（此前最迟 60 秒）；地址删了再回来（断开重连拿到同一个 IP）会重新加入多播组。netlink 打不开时退回原来的 60 秒读超时顺带重扫（`RESCAN_INTERVAL`），并打一行日志。报文解析抽成纯函数 `addr_change_in` 有 host 单测；真实加/删地址的端到端测试（`real_netlink_reports_addr_add_and_del`，默认忽略）在 `unshare -rn` 的一次性网络命名空间里跑通，**未上真机**。绑不上 5353（别的 mDNS 服务在跑）只打日志，不影响网关。
 - **`netinfo`**：本机 IPv4 表（证书 SAN、mDNS 选址用），读 `/proc/net/fib_trie` + `/proc/net/route`，不 fork 进程（09-20 前每 30 秒 fork 一次 `ip`）；读不到才回落到 `ip -4 -o addr`。
 
 ## 05｜维护纪律、构建与测试

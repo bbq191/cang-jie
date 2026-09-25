@@ -219,6 +219,54 @@ fn spawn_optimize_runs_in_background_and_records_result_then_clears_busy() {
     assert!(oc.message.contains("已优化"), "{}", oc.message);
 }
 
+/// 回归（2026-09-25）：抓网文的「同步优化」占忙锁——优化进行中对这本书的删除/再优化/落库/改名都被拒，
+/// 列表显示忙；优化完忙锁清掉、书能正常删。不勾同步优化的抓取不加锁。
+#[test]
+fn fetch_article_sync_optimize_holds_busy_lock() {
+    let t = tempfile::tempdir().unwrap();
+    let s = staging(&t);
+    let opf = r#"<package version="2.0"><metadata><dc:title>t</dc:title></metadata><manifest><item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="c1"/></spine></package>"#;
+    let epub = mini_epub(&[("content.opf", opf), ("c1.xhtml", "<html><head></head><body><h1>网文</h1><p>正文</p></body></html>")]);
+    let (s2, mkdir) = (s.clone(), Arc::new(empty_mkdir(&t)));
+    let checked = std::cell::Cell::new(0u32);
+    let out = s
+        .land_article("网文.epub", &epub, "网文".into(), true, |_, _| {
+            checked.set(checked.get() + 1);
+            assert!(s2.is_busy("网文.epub"), "同步优化期间应占着忙锁");
+            assert!(s2.remove("网文.epub").unwrap_err().contains("正在处理中"), "优化中不能删");
+            let bus = Arc::new(rmsvc_core::events::EventBus::new());
+            assert!(s2.spawn_optimize("网文.epub", bus.clone()).unwrap_err().contains("正在处理中"), "优化中不能再起一个优化");
+            assert!(s2.spawn_deliver("网文.epub", "", mkdir.clone(), bus).unwrap_err().contains("正在处理中"), "优化中不能落库");
+            assert!(s2.rename("网文.epub", "别名.epub").unwrap_err().contains("正在处理中"), "优化中不能改名");
+            assert!(s2.list().iter().find(|e| e.name == "网文.epub").is_some_and(|e| e.busy), "列表应体现 busy");
+        })
+        .unwrap();
+    assert!(checked.get() > 0, "优化进度回调应被调到（否则上面的断言没跑）");
+    assert_eq!((out.name.as_str(), out.optimized, out.optimize_error.as_deref()), ("网文.epub", true, None));
+    assert!(!s.is_busy("网文.epub"), "同步优化结束后忙锁应清掉");
+    // 优化失败（不是合法 EPUB）也照样清锁、书照样入库
+    let bad = s.land_article("坏.epub", b"not-a-zip", "坏".into(), true, |_, _| {}).unwrap();
+    assert!(!bad.optimized && bad.optimize_error.is_some());
+    assert!(!s.is_busy("坏.epub") && s.has("坏.epub"), "优化失败不留忙锁、不丢已抓到的文章");
+    // 不勾同步优化：只落地，不加锁
+    let plain = s.land_article("网文.epub", &epub, "网文".into(), false, |_, _| unreachable!()).unwrap();
+    assert_eq!((plain.name.as_str(), plain.optimized), ("1_网文.epub", false), "同名不覆盖");
+    assert!(!s.is_busy(&plain.name));
+    s.remove("网文.epub").unwrap();
+}
+
+/// 落名临界区里挑中的名字恰好正被占着（如别的书正改名成它）→ 抓网文如实报忙、不落地，不抢别人的锁。
+#[test]
+fn fetch_article_refuses_when_landed_name_is_busy() {
+    let t = tempfile::tempdir().unwrap();
+    let s = staging(&t);
+    assert!(s.try_start_busy("网文.epub"));
+    let err = s.land_article("网文.epub", b"PK", "网文".into(), true, |_, _| {}).unwrap_err();
+    assert!(err.contains("正在处理中"), "{err}");
+    assert!(!s.has("网文.epub"), "没拿到锁就不落地");
+    assert!(s.is_busy("网文.epub"), "别人的忙锁不能被清掉");
+}
+
 #[test]
 fn spawn_optimize_rejects_non_epub_and_missing_file_synchronously() {
     let t = tempfile::tempdir().unwrap();

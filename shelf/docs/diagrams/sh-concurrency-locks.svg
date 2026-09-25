@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1180" height="800" viewBox="0 0 1180 800" font-family="Noto Sans CJK SC, sans-serif">
 <rect width="1180" height="800" fill="#ffffff"/>
 <text x="590.0" y="32" text-anchor="middle" font-size="20" font-weight="bold" fill="#1f2937">书架服务的并发控制：哪条路径进哪把锁</text>
-<text x="590.0" y="56" text-anchor="middle" font-size="13" fill="#6b7280">2026-09-24 第三轮审计后的代码现状（这些改动只在 host 单测验证，未上真机）。锁只包住真正会撞的那一小段</text>
+<text x="590.0" y="56" text-anchor="middle" font-size="13" fill="#6b7280">2026-09-24 第三轮审计后的代码现状，09-25 补上抓网文（这些改动只在 host 单测验证，未上真机）。锁只包住真正会撞的那一小段</text>
 <text x="590.0" y="76" text-anchor="middle" font-size="12.5" fill="#6b7280">除网关闸门外都是单个进程内的锁；book-serve、koreader-serve、网关是三个独立进程</text>
 <rect x="273" y="96" width="121" height="70" rx="8" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.5"/>
 <text x="333.5" y="118" text-anchor="middle" font-size="13" font-weight="bold" fill="#4a6fa5">网关闸门</text>
@@ -40,8 +40,10 @@
 <circle cx="714.5" cy="222.0" r="7" fill="#7a5a00"/>
 <rect x="20" y="238" width="1139" height="32" fill="#f7f7f5"/>
 <text x="28" y="259" font-size="12.5" fill="#1f2937">抓网文（含「同步优化」）</text>
-<circle cx="460.5" cy="254.0" r="7" fill="#ffffff" stroke="#d33" stroke-width="2" stroke-dasharray="3 2"/>
-<text x="472.5" y="258.0" font-size="11" fill="#d33">缺口</text>
+<circle cx="333.5" cy="254.0" r="7" fill="#4a6fa5"/>
+<text x="345.5" y="258.0" font-size="11" fill="#4a6fa5">勾选时</text>
+<circle cx="460.5" cy="254.0" r="7" fill="#b0451f"/>
+<text x="472.5" y="258.0" font-size="11" fill="#b0451f">勾选时</text>
 <circle cx="587.5" cy="254.0" r="7" fill="#2f7d45"/>
 <text x="28" y="291" font-size="12.5" fill="#1f2937">改名（新旧两个名字都占忙锁）</text>
 <circle cx="460.5" cy="286.0" r="7" fill="#b0451f"/>
@@ -116,11 +118,11 @@
 <text x="1095.5" y="617" text-anchor="middle" font-size="10.5" fill="#374151">被别的请求覆盖</text>
 <line x1="20" y1="630" x2="1159" y2="630" stroke="#9ca3af"/>
 <circle cx="34" cy="652" r="6" fill="#374151"/><text x="46" y="656" font-size="12" fill="#374151">进这把锁</text>
-<circle cx="134" cy="652" r="6" fill="#fff" stroke="#d33" stroke-width="2" stroke-dasharray="3 2"/><text x="146" y="656" font-size="12" fill="#d33">该进而没进（已知缺口，代码未改）</text>
+<text x="134" y="656" font-size="12" fill="#374151">“勾选时”＝只有勾了「同步优化」才进</text>
 <text x="20" y="682" font-size="12" fill="#374151" xml:space="preserve">09-24 改动①：网页上传原来把 spool 锁攥到整个请求体收完（WiFi 传大书可达分钟级），期间 inbox 追平和别的上传全被卡住；</text>
 <text x="20" y="702" font-size="12" fill="#374151" xml:space="preserve">              现在上传只在“挑名 + 改名”那一瞬进落名临界区。</text>
 <text x="20" y="722" font-size="12" fill="#374151" xml:space="preserve">09-24 改动②：xochitl 的“当前文件夹”是它自己的全局状态，并发投递时 A 设完文件夹、B 又设了自己的，A 就落进 B 的文件夹；</text>
 <text x="20" y="742" font-size="12" fill="#374151" xml:space="preserve">              现在进程内把“设文件夹 → /upload”串成一对（note-serve 是另一个进程，仍不受这把锁约束）。</text>
 <text x="20" y="762" font-size="12" fill="#374151" xml:space="preserve">09-24 改动③：PDF 转 EPUB 转换完（可达分钟级）落地前，在落名临界区里再查一次同名 .epub，转换期间有人落下同名书就放弃、不覆盖。</text>
-<text x="20" y="782" font-size="12" fill="#374151" xml:space="preserve">缺口：抓网文的「同步优化」直接调优化，不占忙锁、也不过网关闸门（网文通常只有几十 KB）。</text>
+<text x="20" y="782" font-size="12" fill="#374151" xml:space="preserve">09-25 改动④：抓网文勾了「同步优化」时，落名那一刻就占上忙锁（优化完才放），并过网关闸门（固定小档，键＝“抓网文 &lt;url&gt;”）。</text>
 </svg>
