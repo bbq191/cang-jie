@@ -1,14 +1,15 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 640" font-family="Noto Sans CJK SC, sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 710" font-family="Noto Sans CJK SC, sans-serif">
   <defs>
     <marker id="s1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#555"/></marker>
     <marker id="s2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#8a6d00"/></marker>
     <marker id="s3" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#a03030"/></marker>
+    <marker id="s5" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2f7d45"/></marker>
     <marker id="s4" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2f6fa3"/></marker>
   </defs>
 
-  <rect x="0" y="0" width="1080" height="640" fill="#fbfbfa"/>
-  <text x="540" y="28" text-anchor="middle" font-size="18" font-weight="bold" fill="#1a1a1a">条目状态机：7 个状态 + 回收站「恢复」</text>
-  <text x="540" y="48" text-anchor="middle" font-size="11.5" fill="#8a8a8a">代码：notecore::model::Status / Entry::set_triage / Entry::restore；上排是正常流程，下排三个是回收站里的终态</text>
+  <rect x="0" y="0" width="1080" height="710" fill="#fbfbfa"/>
+  <text x="540" y="28" text-anchor="middle" font-size="18" font-weight="bold" fill="#1a1a1a">条目状态机：7 个状态 + 回收站「恢复」+ 笔迹回来「复活」</text>
+  <text x="540" y="48" text-anchor="middle" font-size="11.5" fill="#8a8a8a">代码：notecore::model::Status / Entry::set_triage / Entry::restore / ingest::merge_page；上排是正常流程，下排三个是回收站里的终态</text>
 
   <!-- 上排 -->
   <rect x="30" y="90" width="180" height="76" rx="9" fill="#fff3d6" stroke="#c9971f" stroke-width="1.8"/>
@@ -107,4 +108,13 @@
   <text x="900" y="511" text-anchor="middle" font-size="9.5" fill="#8a8a8a">要先「恢复」</text>
   <text x="900" y="540" text-anchor="middle" font-size="10" fill="#6a6a6a">进投影的只有</text>
   <text x="900" y="555" text-anchor="middle" font-size="10" fill="#6a6a6a">Pending / Draft / Reviewed</text>
+  <!-- 复活（09-25） -->
+  <path d="M 615 370 L 615 170" fill="none" stroke="#2f7d45" stroke-width="1.8" stroke-dasharray="7 3" marker-end="url(#s5)"/>
+  <rect x="622" y="312" width="116" height="40" rx="5" fill="#fbfbfa"/>
+  <text x="627" y="328" font-size="10" font-weight="bold" fill="#2f7d45">笔迹回来 → 自动复活</text>
+  <text x="627" y="344" font-size="9.5" fill="#2f7d45">回哪一步见下方绿框</text>
+  <rect x="330" y="636" width="700" height="62" rx="8" fill="#eaf6ec" stroke="#2f7d45" stroke-width="1.3" stroke-dasharray="6 3"/>
+  <text x="680" y="656" text-anchor="middle" font-size="11.5" font-weight="bold" fill="#1a1a1a">Revoked「复活」（摄取时自动，09-25 起）：同一批笔画 / 同一条勾画又出现了</text>
+  <text x="680" y="674" text-anchor="middle" font-size="10.3" fill="#3a3a3a">（xochitl 里撤销了擦除、书从回收站恢复）原条目 id 不变 → 有定稿 Reviewed ｜ 有草稿 Draft ｜ 否则 Mined</text>
+  <text x="680" y="691" text-anchor="middle" font-size="10" fill="#5a5a5a">和手动「恢复」只差一档：只有手写的条目回 Mined（不自动转写）；Skipped / Archived 不会自动复活</text>
 </svg>
