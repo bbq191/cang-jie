@@ -135,7 +135,7 @@ echo "== 设备端重启 xochitl 让新 qmd/rcc 生效 + 健康检查（会打�
 # 重启前打个时间戳，重启后拿它重新核对 appload 兼容信号——只信"本次重启之后新出现的"这一条，
 # 不再相信上面探测阶段那次可能已经过期的"本次开机内某个时刻出现过"（见上面探测那步的头注）。
 SINCE="$(rssh "date '+%Y-%m-%d %H:%M:%S'")"
-dev_script "$SINCE" <<'DEVICE_SCRIPT'
+run_apply dev_script "$SINCE" <<'DEVICE_SCRIPT'
 set -eu
 SINCE="$1"
 cj_require_root || exit 1
@@ -147,6 +147,10 @@ if ! cj_apply_needed; then
 fi
 OLD_PID="$(cj_xochitl_pid)"
 cj_xochitl_apply || exit 1
+if [ "$CJ_APPLY_REBOOTED" = 1 ]; then
+    echo "   设备回来后核对 appload 兼容信号：journalctl -u xochitl -b | grep 'Loaded external AppLoad hooks in main UI'"
+    exit 0   # 已排上整机重启；健康检查与兼容信号核对留给设备回来后
+fi
 cj_xochitl_health "$OLD_PID" || { echo "⚠️  健康检查未达预期。查 journalctl -u xochitl"; exit 1; }
 if journalctl -u xochitl --since "$SINCE" --no-pager 2>/dev/null | grep -q 'Loaded external AppLoad hooks in main UI'; then
     echo "✅ 部署完成（appload 兼容信号在这次重启之后重新出现，不是复用重启前的旧信号）"

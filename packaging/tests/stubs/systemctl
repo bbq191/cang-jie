@@ -1,7 +1,7 @@
 #!/bin/sh
 echo "systemctl $*" >> "${CJ_SIM_LOG:-/dev/null}"
-# CJ_SIM_PIPE_ON_STOP=1：模拟 stop xochitl 时 ssh 连接断了——调用方 shell 收到 SIGPIPE
-if [ -n "${CJ_SIM_PIPE_ON_STOP:-}" ] && [ "$*" = "stop xochitl" ]; then kill -PIPE "$PPID"; fi
+# CJ_SIM_PIPE_ON_REBOOT=1：模拟排重启时 ssh 连接断了——调用方 shell 收到 SIGPIPE（它应在关键区里忽略）
+if [ -n "${CJ_SIM_PIPE_ON_REBOOT:-}" ] && [ "$*" = "reboot --no-block" ]; then kill -PIPE "$PPID"; fi
 case "$1" in
     show)
         case "$*" in

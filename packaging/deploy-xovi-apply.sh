@@ -33,11 +33,7 @@ host_arg "$USAGE" "$@"
 require_device
 
 echo "== 设备端让 xovi 扩展 + qmd 生效（有待生效改动才重启 xochitl 一次，会打断设备上正在做的事）+ 健康检查 =="
-# 设备端可能改走"主动整机重启"（xochitl 映射的扩展已被删/换，见 devlib.sh 的 cj_xochitl_reboot_apply）：
-# 它打印 CJ-APPLY-REBOOTING 后 ssh 连接会随重启断开（退出码 255）。所以输出落一份到临时文件，认出标记就按成功处理。
-DS_LOG="$(mktemp)"; DS_RC="$(mktemp)"
-trap 'rm -f "$DS_LOG" "$DS_RC"' EXIT
-{ ds_rc=0; dev_script "$FORCE_RESTART" <<'DEVICE_SCRIPT' || ds_rc=$?
+run_apply dev_script "$FORCE_RESTART" <<'DEVICE_SCRIPT'
 set -eu
 FORCE_RESTART="$1"
 cj_require_root || exit 1
@@ -56,7 +52,7 @@ fi
 OLD_PID="$(cj_xochitl_pid)"
 cj_xochitl_apply || exit 1
 if [ "$CJ_APPLY_REBOOTED" = 1 ]; then
-    exit 0   # 走了主动整机重启（已打印 CJ-APPLY-REBOOTING）；健康检查留给设备回来后的 verify-on-device.sh
+    exit 0   # 已排上整机重启；健康检查留给设备回来后的 verify-on-device.sh
 fi
 TAGS=""
 [ -f "$CJ_XOVI/extensions.d/hl-snap.so" ] && TAGS="$TAGS hl-snap"
@@ -69,9 +65,3 @@ else
     exit 1
 fi
 DEVICE_SCRIPT
-echo "$ds_rc" > "$DS_RC"; } | tee "$DS_LOG"
-if grep -q '^CJ-APPLY-REBOOTING$' "$DS_LOG"; then
-    echo "✅ 新版已换入，设备正在整机重启（约 1 分钟）。回来后核对：sh verify-on-device.sh $HOST"
-    exit 0
-fi
-exit "$(cat "$DS_RC")"

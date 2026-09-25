@@ -15,9 +15,10 @@
 ;   - **按 id 调** `LibraryController.moveEntriesToTrash(ids)`：固件 3.28 的 moc 元数据里
 ;     `xofm::libs::library::LibraryController` 暴露 `moveEntriesToTrash(QList<entry::Id> ids)`（与
 ;     `restoreEntriesFromTrash`/`deleteEntries` 相邻）；QML 里 `LibraryController.setVisibleName(...)` 等
-;     20 余处裸调证明它是全局单例。uuid 字符串数组 → `QList<entry::Id>` 的转换靠 Qt 已注册的转换器
-;     （`Library.entryForId(字符串)` 等同类调用都传字符串）——**这条转换第一次用，上机看日志行
-;     `SHELF-TRASH:` 核对**；转换失败会抛 JS 异常，被 catch 住打日志，不会误删。
+;     20 余处裸调证明它是全局单例。**参数必须是真 `entry::Id`**：09-25 第一版直接传 uuid 字符串数组，
+;     真机 xochitl 日志是 `moving "" to trash` ×2——字符串没转成 entry::Id、变成空 id（空操作，没删错也没删成）。
+;     正确取法同原生 QML（如 `DocumentController.movePages(sourceDocument.id, …)`）：
+;     `Library.entryForId(uuid字符串)` 拿 QmlEntryWrapper，再取 `.id`；拿不到条目的 uuid 跳过。
 ;   book-serve 看到 metadata parent=trash 即出队，QML 端无需 ack；同一 uuid 交出后 30s 内不重复交（异步）。
 ; 【安全】队列里的 uuid 入队时已按 visibleName 核对；只进回收站（可在 xochitl 里恢复），不做永久删除。
 ; 【qmldiff 纪律】INSERT{} 内注释只能 //；handler 一律 `{ … }` 块、不写 `({})`；只 INSERT 不 REPLACE。
@@ -46,9 +47,16 @@ AFFECT /qml/device/view/main/MainView.qml
                             try {
                                 var uuids = JSON.parse(x.responseText).uuids || [];
                                 count = uuids.length;
+                                var ids = [];
+                                for (var i = 0; i < uuids.length; i++) {
+                                    var e = Library.entryForId(uuids[i]);
+                                    if (e) { ids.push(e.id); }
+                                }
+                                if (ids.length > 0) {
+                                    LibraryController.moveEntriesToTrash(ids);
+                                }
                                 if (count > 0) {
-                                    LibraryController.moveEntriesToTrash(uuids);
-                                    console.warn("SHELF-TRASH: moveEntriesToTrash " + count + " " + uuids.join(","));
+                                    console.warn("SHELF-TRASH: moveEntriesToTrash " + ids.length + "/" + count + " " + uuids.join(","));
                                 }
                             } catch (e) {
                                 console.warn("SHELF-TRASH: failed " + e);

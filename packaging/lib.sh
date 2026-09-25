@@ -49,6 +49,21 @@ dev_script() {
     { cat "$CJ_PKG_DIR/devlib.sh"; cat; } | rssh_in "sh -s --$ds_args"
 }
 
+# run_apply CMD…：跑一段可能让设备主动整机重启的设备端命令（内部调了 devlib.sh 的 cj_xochitl_apply）。输出照常
+# 打到终端并留一份；见到设备端打印的 CJ-APPLY-REBOOTING 就按成功处理——ssh 随重启断开（退出码 255）不算失败——
+# 并提示设备回来后跑 verify-on-device.sh。其余情况原样返回 CMD 的退出码。stdin 原样交给 CMD（可接 heredoc）。
+run_apply() {
+    ra_log="$(mktemp)"; ra_rcf="$(mktemp)"
+    { ra_c=0; "$@" || ra_c=$?; echo "$ra_c" > "$ra_rcf"; } | tee "$ra_log"
+    ra_rc="$(cat "$ra_rcf")"
+    if grep -q '^CJ-APPLY-REBOOTING$' "$ra_log"; then
+        echo "✅ 改动已落盘，设备正在整机重启让它生效（约 1 分钟）。回来后核对：sh verify-on-device.sh $HOST"
+        ra_rc=0
+    fi
+    rm -f "$ra_log" "$ra_rcf"
+    return "$ra_rc"
+}
+
 # host_arg USAGE "$@"：薄 deploy-*.sh 共用的参数解析——`[host]`，-h/--help 打印用法，多余/未知参数 exit 2。设 HOST。
 host_arg() {
     ha_usage="$1"; shift

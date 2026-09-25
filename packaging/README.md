@@ -97,25 +97,26 @@ xovi 没有"只重载一个扩展"的机制，让新扩展/qmd 生效的唯一�
   - `cj_apply_needed` 为假（xovi 已生效且无标记）→ 不重启，直接结束；
   - 无标记、xovi 未生效、且没有 `xovi/start`（设备根本没装 xovi）→ 跳过；
   - 其余（有标记，或 xovi 未生效）→ 走下面的 `cj_xochitl_apply`。
-- **清**：`cj_xochitl_apply` 重启成功后 `cj_pending_clear`（只删目录里的常规文件再 `rmdir`）。
+- **清**：`cj_xochitl_apply` 排整机重启前（换入成功时）`cj_pending_clear`；走 `xovi/start` 时在它成功后清（只删目录里的常规文件再 `rmdir`）。
 - **`--force-apply`**（`install-all.sh`）/ **`--force`**（`deploy-xovi-apply.sh`）：无视标记强制重启。用 `--skip xovi-apply` 跳过时标记保留，之后单独 `sh deploy-xovi-apply.sh <host>` 即可补上。
 - `uninstall-all.sh` 摘掉扩展后**不清标记**（卸载的东西也要等 xochitl 重启才停止生效）。
 - **单独跑**（不带 `DEFER_XOVI_START`）的 `deploy-hl-snap.sh` 等落盘后立即重启并清标记；什么都不需要生效时不重启（见上）。
 
-### 怎么"重启"xochitl：`cj_xochitl_apply` 的判定（2026-09-20）
+### 怎么让改动生效：`cj_xochitl_apply` 的判定（2026-09-25 起一律整机重启）
 
-重启不是无条件 `xovi/start`。设备端 `devlib.sh` 的 `cj_xochitl_apply` 先看运行中 xochitl 进程的 `LD_PRELOAD` 里有没有 `xovi.so`：
+**现行**：设备端 `devlib.sh` 的 `cj_xochitl_apply` 不再停止或重启 xochitl——
 
-- **已生效 → `systemctl restart xochitl`**；
-- **没生效（刚开机/OTA 之后）→ `xovi/start`**。
+- **xovi 已在运行的 xochitl 里生效，或装了 `xovi-reenable.service`** → 把待换入区的 `.so` 换进 `extensions.d`、清掉待生效标记（含 `/home` 下的退路目录，否则设备回来又判"待生效"→ 重启循环）、`sync`，打印 `CJ-APPLY-REBOOTING`，`systemctl reboot --no-block`。开机后 `xovi-reenable` 恢复 xovi、载入新版（约 20–60 秒）。host 侧 `lib.sh` 的 `run_apply` 认出这个标记，把随重启断开的 ssh（退出码 255）当成功，并提示回来后跑 `verify-on-device.sh`；设备端脚本跳过重启后的健康检查（`CJ_APPLY_REBOOTED=1`）。
+- **都没有**（没装 xovi-persist，重启后 xovi 不会自己回来）→ 仍走 `xovi/start`（此时 xochitl 不带 xovi、没映射扩展，`.so` 直接换入）。
 
-因为 xovi 已生效时跑 `xovi/start` 会 umount 再重挂 xochitl 的 drop-in 目录，运行中的 xochitl 读文件失败 SEGV，系统按设计整机自动重启（2026-09-20 真机事故；旧版无条件 `xovi/start`，重跑 `install-all.sh` 必踩）。重启前先打印"将打断阅读"并留 `CJ_APPLY_GRACE` 秒（默认 5）宽限，不想被打断就 `--skip xovi-apply`。重启后核对 `is-active` / `MainPID` 是否变化 / `NRestarts` 不增 / 各扩展在 `maps` 里的段数。
+**为什么**（2026-09-25 用户拍板）：xochitl 自己退出时有竞态，停止它有相当概率 SEGV → `OnFailure` → `rm-emergency` → 整机重启。设备上 memfault 存的 5 份崩溃栈（`~/.memfault/mar/*/stacktrace.json.gz`，可按其中 symbols 表符号化）：3 份崩在 xochitl 自己的线程池（调用方 `xochitl+0x64809b`，崩点 `0x6467b8`/`0x649fc8`：09-21 换 appload 后、09-25 卸载后重装、09-25 只换了 qmd 的普通 restart），2 份崩在 `libQt6Gui+0x495098`（09-20 在已生效的 xochitl 上跑 `xovi/start`、09-24 rename 换 hw-stroke 后 restart）。跟扩展文件动没动过无关——09-24"换了 `.so` 才崩、改 stop → 换 → start 就好"和 09-25 上午"映射的扩展被删过才崩"两个归因都被后来的崩溃推翻。与其走一趟崩溃 + 应急路径，不如直接干净地重启。代价：每次生效打断约 20–60 秒（restart 顺利时只要几秒）。
 
-**扩展 `.so` 有变化时不再 restart，改成 stop → 换文件 → start（2026-09-24）**：换掉运行中 xochitl 已映射的扩展 `.so` 再 `systemctl restart xochitl`，旧进程退出时会 SEGV → `OnFailure=emergency.target` → 整机重启。2026-09-21（appload）、09-24（hw-stroke）两次真机复现，第二次用的已经是"先写暂存再 rename 换新 inode"，照样崩。现在：
+仍然成立的：**绝不在 xovi 已生效时跑 `xovi/start`**（它 umount 再重挂 drop-in 目录，2026-09-20 真机事故）；生效前先打印"将打断阅读"并留 `CJ_APPLY_GRACE` 秒（默认 5）宽限，不想被打断就 `--skip xovi-apply`；换入 → 清标记 → 排重启这一段忽略 HUP/PIPE/INT/TERM（ssh 断了也要把重启排上）。
 
-- `xovi-ext-install.sh` 发现 xochitl 正映射着旧版时，把新版放进**待换入区** `~/.cangjie-stage/so-pending/`（不在 `extensions.d`；可用 `CJ_SO_PENDING_DIR` 覆盖），由 `cj_xochitl_apply` 在 `systemctl stop xochitl` 之后、`start` 之前换入；`install-all` 的延后重启走同一条路。同一个新版已经在待换入区（上一轮 `--no-restart` 放进去、还没重启）时不再重复备份和重放。
-- **stop 到 start 是关键区**：这段忽略 HUP/PIPE/INT/TERM。脚本经 ssh 跑，host 侧 Ctrl-C 或拔线后下一次输出会收到 SIGPIPE，不接住的话 shell 被杀，xochitl 就停在那里、屏幕没有界面，直到整机重启。
-- 待换入区在 `/home`，设备中途重启也不丢，重启后仍算"待生效"（见上节），下次重启 xochitl 时照样换入。
+**扩展 `.so` 的待换入区**（2026-09-24 起，现在仍用）：
+
+- `xovi-ext-install.sh` 发现 xochitl 正映射着旧版时，把新版放进**待换入区** `~/.cangjie-stage/so-pending/`（不在 `extensions.d`；可用 `CJ_SO_PENDING_DIR` 覆盖），由 `cj_xochitl_apply` 在整机重启前换入；`install-all` 的延后生效走同一条路。同一个新版已经在待换入区时不再重复备份和重放。
+- 待换入区在 `/home`，设备中途重启也不丢，重启后仍算"待生效"（见上节），下次生效时照样换入。
 - 卸载 `hl-snap`/`handwriting-stroke` 时一并撤掉待换入区里的同名版本（否则下次重启 xochitl 会把刚卸的扩展装回来）。
 - xovi 未生效（走 `xovi/start`）时 xochitl 没映射扩展，待换入的 `.so` 直接换入——但先确认 `xovi/start` 存在，不存在就报错、什么都不换。
 
@@ -330,9 +331,10 @@ bash packaging/tests/run_sim_tests.sh      # 现为 290 项断言（2026-09-25 �
 | 2026-09-24 | 第三轮审计合并后整轮 `install-all.sh`：两个扩展 `.so` 有变化 → 先进待换入区，`xovi-apply` 列出 `so-pending:hl-snap.so so-pending:hw-stroke.so` → **stop → 换入 → start**，MainPID 30840→37709、`NRestarts` 0、设备未整机重启（uptime 连续）、待换入区清空、三个 hook "安装完成" | **通过**（stop→换→start 第一次在真机走有变化的 `.so`） |
 | 2026-09-24 | 开机顺序调整后真机重启：xochitl 4.04s 原厂启动（未被拖慢）、`xovi-reenable` 5.46–7.49s 自动恢复 xovi、9 个服务 7.53–9.04s 起来且全部 active、三个 hook 装上、网页 401 正常 | 通过 |
 | 2026-09-25 | **`uninstall-all.sh` 第一次真机整轮**（WiFi 连设备）：8 步逆序全部成功；`/usr` 下我们的单元、`~/.local/bin` 服务二进制、`extensions.d` 两个扩展、exthome 的 qmd 全部清掉，端口释放；书架/笔记数据与配置保留；卸载期间 xochitl 不重启（PID、`NRestarts` 不变），两个 `.so` 在 maps 里变成 `(deleted)`——**删掉正被映射的 `.so` 本身不崩** | **通过**。两处小尾巴：`~/.local/bin/` 与 exthome 里 09-20 之前的手工备份 `*.bak.pre-*`（15 + 7 个）卸载器不认识、没动；`SleepScreenPath` 删了又被运行中的 xochitl 写回（xochitl 运行期间改它的配置文件无效） |
-| 2026-09-25 | 卸载后紧接 `install-all.sh`：各步成功，`xovi-apply` 走 stop → 换入 → start 时 **xochitl 在停止途中 SEGV**（memfault 栈：崩在 xochitl 自己的线程池 `0xa49fc8`，此时新 `.so` 还没换）→ `rm-emergency` 整机重启；重启后 `xovi-reenable` 恢复 xovi、新 `.so` 载入、14 个单元与 9 个服务全部正常 | **踩坑 → 已修**：H3 的真规律是"运行中 xochitl 映射的扩展文件被删/换过，**停止**它就崩"（09-21、09-24、09-25 三次一致；文件没动过时 stop/restart 一直正常）。`cj_xochitl_apply` 遇到这种状态改为换入后**主动整机重启** |
+| 2026-09-25 | 卸载后紧接 `install-all.sh`：各步成功，`xovi-apply` 走 stop → 换入 → start 时 **xochitl 在停止途中 SEGV**（memfault 栈：崩在 xochitl 自己的线程池 `0xa49fc8`，此时新 `.so` 还没换）→ `rm-emergency` 整机重启；重启后 `xovi-reenable` 恢复 xovi、新 `.so` 载入、14 个单元与 9 个服务全部正常 | 踩坑。当时归因为"映射的扩展被删/换过，停止就崩"、只对这种状态改为主动整机重启——**同日 10:37 被推翻**（见下下行） |
 | 2026-09-25 | 修复后真机复核：只卸载 `hl-snap` → maps 出现 `(deleted)` → `deploy-hl-snap.sh` 检测到 4 段、换入、打印 `CJ-APPLY-REBOOTING`、`systemctl reboot`；约 20 秒回来，上次关机无 SEGV/core dump/应急服务（memfault 只有正常的指标报告），`hl-snap` 重新加载、hook "安装完成"，`verify-on-device.sh` 43✓ | **通过**。同一次重启顺带核了 lo-alias：没插 USB 冷启动，`10.11.99.1` 挂上 `lo` 与 `usb1`，xochitl :80 已绑定 |
 | 2026-09-25 | `verify-on-device.sh` 第一次真机（busybox）：44 项全部采集到、判定正确；内核命令行 `panic=2` 误报已排除 | **通过** |
+| 2026-09-25 | 部署回收站代理 qmd 后普通 `systemctl restart xochitl`（扩展 `.so` 自 10:11 重启后没动过）：xochitl **在停止途中 SEGV** → `rm-emergency` 整机重启；memfault 栈与 09-21 那次同一处（`xochitl+0x6467b8`）| 推翻"只有扩展被删/换才崩"。用户拍板：**生效一律主动整机重启**（`cj_xochitl_apply` 改写，模拟测试 295 项） |
 
 ### 没有真机验证
 
@@ -352,5 +354,5 @@ bash packaging/tests/run_sim_tests.sh      # 现为 290 项断言（2026-09-25 �
 - **`deploy-battop.sh` 里 cargo 找不到 `.cargo/config.toml`**：Cargo 搜配置是按**当前工作目录**往上找，不看 `--manifest-path`，在 `packaging/` 下直接调用会吃不到 CC/AR 覆盖，链接 `crt1.o` 时报 `Relocations in generic ELF`。→ 先 `cd enhance/battop/` 再 `cargo build`。
 - **部署脚本构建前 `make clean` 会删掉仓库里已提交的产物**：`hl-snap.so`、`hw-stroke.so` 与 `xovi_glue.{c,h}` 都已提交（不用每次现建才能部署），但本机没有 `asivery/xovi` clone 时编不出新的，`make clean` 先删后编译失败，仓库里可用产物被脚本自己删了（当场发现、`git checkout` 救回）。→ 不清；构建失败时退回用已提交的版本并打印清楚的提示。
 - **shelf 健康检查太急**：原来固定 `sleep 1` 就查 `is-active`，而 `gateway` 首次启动要签发私有 CA/自签证书，1 秒不够被误判"没起来"。→ `shelf/install.sh` 的健康检查改成轮询（最多 10 秒）。
-- **换了运行中 xochitl 已映射的扩展 `.so` 再 restart → 整机重启**（2026-09-21 appload、2026-09-24 hw-stroke 两次真机）：旧进程退出时 SEGV，触发 `OnFailure=emergency.target`。第二次已经是"先写暂存再 rename 换新 inode"，照样崩。→ `.so` 待换入区 + stop → 换入 → start（见上文与图）。
+- **停止 xochitl 会崩 → 整机重启**（2026-09-21、09-24、09-25 ×2 真机）：最初归因为"换了已映射的 `.so` 再 restart"（09-24 改 stop → 换入 → start），09-25 又归因为"映射的扩展被删过"，同日一次只换 qmd 的普通 restart 也崩了、memfault 栈与 09-21 同一处，两个归因都不成立。→ 2026-09-25 起生效一律主动整机重启（见上文）。
 - **旧版 battop 重装 ETXTBSY**：`scp` 直接覆盖正在执行的二进制被内核拒绝。→ 曾改成"推送前先 stop"，2026-09-20 之后改为推 `battop.new` 再原子 rename（不必停服务）。

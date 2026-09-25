@@ -57,4 +57,4 @@ ARGS=""
 if [ "${DEFER_XOVI_START:-0}" = "1" ]; then
     ARGS="--no-restart"
 fi
-rssh "sh $(shquote "$DEST/deploy/install.sh") $ARGS"
+run_apply rssh "sh $(shquote "$DEST/deploy/install.sh") $ARGS"

@@ -180,7 +180,7 @@ sh uninstall-all.sh 10.11.99.1 --purge            # 另外删掉电池刺客的�
 **不会做什么**：
 - `chrony-cn`、`timezone-cn` 是改配置、`xovi-apply` 只是个动作，都不卸。改之前的备份在设备 `cangjie-backups/` 里，要还原自己取。
 - vellum、xovi、qt-resource-rebuilder、appload 和 KOReader 不是本项目装的，也不卸。
-- 卸载**不重启** xochitl。已经加载的插件要等下次重启 xochitl 才真正停用。想马上停：只卸了界面补丁（`sidebar-entry`/`shelf`）就 `systemctl restart xochitl`（见问题⑤）；卸了 xochitl 正在用的插件 `.so`（`hl-snap`/`handwriting-stroke`），卸载时会打印"运行中的 xochitl 仍加载着 …，要立刻停用请整机重启"，照做：**整机重启**，别 restart xochitl——删掉正在用的插件文件再让 xochitl 退出，跟"换了插件文件再 restart 会崩溃、整机重启"是同一类操作，卸载这条路没在真机上验证过是否安全。
+- 卸载**不重启**设备。已经加载的插件和界面补丁要等下次重启才真正停用。想马上停：在设备上 `reboot`（整机重启）。**别** `systemctl restart xochitl`：xochitl 自己退出时有概率崩溃，崩了系统会走应急路径整机重启（2026-09-25 真机多次），不如直接干净地重启。
 
 **系统分区只读校验（dm-verity）开着时**：`/usr` 下的服务单元删不掉（脚本遇到 verity 一律不写 `/usr`，写 `/usr` 曾经让设备回滚变砖）。这时卸载脚本会如实提示，并**保留**这些单元要用的程序，免得重启后单元找不到程序、反复失败。等设备可写后再跑一次 `uninstall-all.sh` 就能收尾。
 
@@ -230,7 +230,7 @@ sh uninstall-all.sh 10.11.99.1 --purge            # 另外删掉电池刺客的�
 | ② | 字体菜单、回收站/新建文件夹、漫画页边距、阅读器单击翻页、侧栏入口这几个**同时**没有 | 它们共用同一个前置 qt-resource-rebuilder。没装时：`sidebar-entry` 在汇总里列进"已跳过（前置条件不满足）"；其余几个是 `shelf` 步里附带的补丁，**不单列**——`shelf` 仍算"已安装"，只在这一步的输出里有一行"无 qt-resource-rebuilder 目录…跳过字体菜单/回收站/建夹 qmd" | `vellum add qt-resource-rebuilder` 后重跑 `install-all.sh` |
 | ③ | 短时间内 xochitl 反复重启后，设备整机重启了一次 | xochitl 服务设置了 10 分钟内最多重启 4 次，不管谁触发的都算：单独跑的部署脚本（有改动时）、`vellum add appload`、WeRead 每次进出。2026-09-11 真机上连续两次重启就触发过一次整机重启——**设备自己重启后恢复正常，不是变砖** | `install-all.sh` 已经处理（统一最后重启一次）。**手动逐个跑部署脚本、或来回折腾 appload/WeRead 时**，每次间隔几分钟 |
 | ④ | 固件安全门拒装 | 设计如此：版本号相同不保证内部布局没变 | 先确认设备固件就是你验证过的那份，再 `--force` |
-| ⑤ | 装到最后屏幕闪一下 | `xovi-apply` 在重启 xochitl。只有这轮真的有改动、或 xovi 还没生效时才会重启 | 正常现象，装的时候别操作设备。不想被打断就 `--skip xovi-apply`，稍后再跑 `sh deploy-xovi-apply.sh <host>`。**自己手动重启时**：xovi 已生效就用 `systemctl restart xochitl`，**绝不**手动跑 `xovi/start`——它会让运行中的 xochitl 崩溃、整机自动重启（2026-09-20 真机事故）。只有刚开机或 OTA 后 xovi 没生效时才用 `xovi/start` |
+| ⑤ | 装到最后设备重启了一次 | `xovi-apply` 让改动生效：2026-09-25 起一律**整机重启**（约 20–60 秒回来），不再单独重启 xochitl——单独重启它有概率在退出时崩溃、再由系统整机重启。只有这轮真的有改动、或 xovi 还没生效时才会重启 | 正常现象，装的时候别操作设备；回来后跑 `sh verify-on-device.sh <host>` 核对。不想被打断就 `--skip xovi-apply`，稍后再跑 `sh deploy-xovi-apply.sh <host>`。**自己手动让它生效时**：直接 `reboot`；**绝不**手动跑 `xovi/start`（xovi 已生效时它会让 xochitl 崩溃、整机自动重启，2026-09-20 真机事故） |
 | ⑥ | 重启设备后电池刺客没在跑 | **有意不开机自启**：2026-08-29 它的采样曾触发内核死锁冻死整机，根因没彻底排除 | 网页「管理 → 系统增强」里打开电池刺客开关（开了才出现「电池刺客」数据页），或 `systemctl start battop` |
 | ⑦ | 装之前就报错退出：`连不上 root@…` / `只剩 N MB 可用` / `需要 root` / `固件不在白名单` | 装前自动检查在拦，设备上什么都没改 | 连不上：按报错里的步骤排查（休眠/没插 USB → IP → host key → 免密）；空间不足：清理 `/home/root` 和 `cangjie-backups/` 后重试；固件：见 ④ |
 
