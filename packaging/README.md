@@ -146,7 +146,7 @@ sh verify-on-device.sh --from d.txt        # 不连设备，离线重判存下�
 | 3 界面补丁 qmd | 期望清单 = `shelf/manifest.sh` 里**已装服务**的 qmd + 装了 appload 时的侧栏 `koreader-sidebar-entry.qmd`/`cangjie-icons.rcc`；文件修改时间对比当前 xochitl 启动时刻；能从当前进程日志找到加载标记（如 `CJ-PAGE-TURN: loaded`）就附注 | 期望的 qmd 缺失 | 没装 qt-resource-rebuilder（整节一条）；qmd 比 xochitl 进程新（待重启生效）；旧命名遗留。日志标记没见到**不算异常**——多数要打开相关界面才打印 |
 | 4 常驻服务 | `manifest.sh` 的 9 个服务 + `wifi-watch` + `battop`：`is-active`、`NRestarts`、`MainPID`、`VmRSS`/`VmHWM`、`ExecMainStartTimestampMonotonic`（开机后第几秒启动；>300 秒注明"开机后被重启过"） | 单元在但不是 active | `NRestarts>0`；峰值内存超 `CJ_VERIFY_HWM_WARN_KB`（默认 512MB，经验值、非实测）。`battop` 有意不开机自启，active/inactive 都记 ✓ |
 | 5 本次开机以来的关键告警 | `journalctl -b` 一遍扫完 + `dmesg`（同一事件两边各一份时取较大计数）：panic（`panicked`/`Kernel panic`，**排除 `Kernel command line` 行**——内核参数 `panic=2` 曾在真机误报）、OOM、「hook 未安装」、`processed more than once`、`SHELF-MKDIR: transfer timeout` | 前四类任一出现 | `SHELF-MKDIR` 超时（它会自动延长等待，只提示） |
-| 6 飞行记录仪 | `~/.local/state/cang-jie-flight/flight.log` 最后 `--flight-lines`（默认 8）行 + 最后写入时间 | — | —（不存在记 ✓：它不由本仓库安装） |
+| 6 飞行记录仪 | **本机（宿主机）**上的 `~/.local/state/cang-jie-flight/flight.log`（记录仪在宿主机循环 ssh 抓设备日志，不在设备上；可用 `CJ_FLIGHT_LOG` 指定路径）最后 `--flight-lines`（默认 8）行 + 最后写入时间；拼进采集文本，`--from` 离线重判也有 | — | —（不存在记 ✓：它不由本仓库安装） |
 | 7 端口监听 | 读 `/proc/net/tcp{,6}`（不依赖 busybox 的 `netstat`/`ss`）：网关 443、已装领域服务的端口（单元 `--bind` 优先，否则按 `docs/OVERVIEW.md` 端口表 8790–8798） | 已装服务的端口没人听 | 领域服务听在 `0.0.0.0`（应只听回环）；网关只听回环 |
 | 8 `/usr` 下的单元 | `shelf.target`、9 个服务单元、`xovi-reenable`、`wifi-watch`、`battop`、`chrony-boot-wakelock` 在不在 | 单元不在但它的载荷（二进制/脚本）还在 `/home`——OTA 冲掉了，重跑 `install-all.sh` | 单元与载荷都不在（装时 `--only`/`--skip` 过可忽略） |
 | 9 磁盘 | `/home` 剩余空间，阈值与装前预检同一套 `CJ_MIN_FREE_KB`/`CJ_WARN_FREE_KB` | < 50MB | < 200MB |

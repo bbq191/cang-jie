@@ -252,14 +252,6 @@ if command -v dmesg >/dev/null 2>&1; then
         END { for (k in c) print "ALERT" T P T k T c[k] T s[k] }'
 fi
 
-# ── 飞行记录仪 ──
-FL="$CJ_HOME/.local/state/cang-jie-flight/flight.log"
-if [ -f "$FL" ]; then
-    emit FLIGHT_MTIME "$(stat -c %Y "$FL" 2>/dev/null)"
-    tail -n "$FLN" "$FL" 2>/dev/null | while IFS= read -r l; do emit FLIGHT "$l"; done
-else
-    emit FLIGHT_ABSENT 1
-fi
 
 emit DF_HOME "$(df -kP "$CJ_HOME" 2>/dev/null | awk 'END { print $4 }')"
 emit END 1
@@ -467,7 +459,7 @@ judge_alerts() {
 judge_flight() {
     S="6. 飞行记录仪"
     if [ "$(dget FLIGHT_ABSENT)" = 1 ]; then
-        item ok "$S" "flight.log" "设备上没有 ~/.local/state/cang-jie-flight/flight.log（没装飞行记录仪；它不由本仓库安装）"
+        item ok "$S" "flight.log" "本机没有 ~/.local/state/cang-jie-flight/flight.log（飞行记录仪跑在宿主机上，不由本仓库安装；没开就没有）"
         return
     fi
     mt="$(dget FLIGHT_MTIME)"; now="$(dget NOW)"; age=""
@@ -562,15 +554,31 @@ render_json() { # $1=host
               printf "],\"ok\":%d,\"warn\":%d,\"fail\":%d,\"result\":\"%s\"}\n", c["ok"], c["warn"], c["fail"], r }' "$ITEMS"
 }
 
+# 飞行记录仪在**宿主机**上（`~/.local/state/cang-jie-flight/flight.log`：宿主机循环 ssh 设备流式抓 journal +
+# 每 2 秒一行负载/内存），不在设备上——所以在本机读，拼进同一份采集文本，--from 离线重判照样有。
+collect_host_flight() {
+    fl="${CJ_FLIGHT_LOG:-$HOME/.local/state/cang-jie-flight/flight.log}"
+    if [ -f "$fl" ]; then
+        printf 'FLIGHT_MTIME\t%s\n' "$(stat -c %Y "$fl" 2>/dev/null)"
+        tail -n "$FLN" "$fl" 2>/dev/null | tr '\t' ' ' | while IFS= read -r l; do printf 'FLIGHT\t%s\n' "$l"; done
+    else
+        printf 'FLIGHT_ABSENT\t1\n'
+    fi
+}
+
 # ═════════════════════════════ 主流程 ═════════════════════════════
 WORK="$(mktemp -d)"   # 本机临时目录，只放下面三个文件；收尾逐个删再 rmdir（不递归删目录）
 DUMP="$WORK/dump.txt"; ITEMS="$WORK/items.txt"; : > "$ITEMS"
 trap 'rm -f "$DUMP" "$ITEMS" "$WORK/err.txt"; rmdir "$WORK" 2>/dev/null || true' EXIT
 if [ -n "$FROM" ]; then
-    cp "$FROM" "$DUMP"; LABEL="$HOST（离线：$(basename "$FROM")）"
+    cp "$FROM" "$DUMP"
+    dh="$(awk -F'\t' '$1 == "HOST" { print $2; exit }' "$DUMP")"   # 采集时记下的真实主机；旧 dump 没有就用参数
+    LABEL="${dh:-$HOST}（离线：$(basename "$FROM")）"
 else
     require_device
     collect > "$DUMP" 2>"$WORK/err.txt" || true   # 采集脚本自身出错也继续判定（缺 END 行会被判 ✗）
+    collect_host_flight >> "$DUMP"
+    printf 'HOST\t%s\n' "$HOST" >> "$DUMP"
     LABEL="$HOST"
 fi
 if [ "$DUMP_ONLY" = 1 ]; then cat "$DUMP"; exit 0; fi

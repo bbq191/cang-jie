@@ -872,7 +872,7 @@ unset CJ_ALLOWLIST_LOCAL
 
 section "2026-09-25：verify-on-device.sh —— 设备端采集（假 ssh 跑真采集脚本）：只读、一次连接、内核命令行 panic=N 不误报"
 new_sandbox; export CJ_ALLOWLIST_LOCAL="$R/allow.local.txt"; xovi_live on
-mkdir -p "$R/proc/net" "$R/home/root/.local/state/cang-jie-flight"
+mkdir -p "$R/proc/net"
 echo "100000.00 1.00" > "$R/proc/uptime"
 printf 'Name:\tx\nVmHWM:\t  20480 kB\nVmRSS:\t  10240 kB\n' > "$R/proc/4242/status"
 { echo "  sl  local_address rem_address   st"
@@ -885,7 +885,8 @@ for s in $VSVCS; do : > "$B/$s"; printf '[Service]\nExecStart=/home/root/.local/
 for u in shelf.target xovi-reenable.service wifi-watch.service battop.service chrony-boot-wakelock.service; do : > "$R/usr/lib/systemd/system/$u"; done
 : > "$B/wifi-watch.sh"; mkdir -p "$R/home/root/battop"; : > "$R/home/root/battop/battop"
 for q in font-menu-dynamic.qmd shelf-trash-agent.qmd shelf-mkdir-agent.qmd shelf-comic-margins.qmd reader-page-turn.qmd koreader-sidebar-entry.qmd cangjie-icons.rcc; do : > "$Q/$q"; done
-printf 'f1\nf2\nf3\nf4\tx\n' > "$R/home/root/.local/state/cang-jie-flight/flight.log"   # 末行带 TAB：采集要压成空格，不能错位
+printf 'f1\nf2\nf3\nf4\tx\n' > "$R/host-flight.log"   # 飞行记录仪在宿主机上（09-25 更正）；末行带 TAB：要压成空格，不能错位
+export CJ_FLIGHT_LOG="$R/host-flight.log"
 cat > "$R/journal.txt" <<'EOF'
 Kernel command line: console=ttymxc0,115200 panic=2 rootwait
 [hl-snap] 荧光笔EXPAND hook 安装完成 @ 0x1（neuter=0）
@@ -899,6 +900,9 @@ check "采集：内核命令行里的 panic=2 不算 panic（2026-09-25 真机�
 check "采集：全链路跑通、没有采集错误（有 END、单元/端口/qmd/扩展都读到）" test -z "$(vline '采集结果')" -a -n "$(vline '✓ 443（gateway）：监听 0.0.0.0')" -a -n "$(vline '✓ 8790（book-serve）：监听 127.0.0.1')" -a -n "$(vline '✓ 扩展 hl-snap.so：已映射 1 段，日志 hook「安装完成」×1')" -a -n "$(vline '✓ 单元：14/14 个在位')"
 check "采集：飞行记录仪只取 --flight-lines 条（最后 2 行）" test -n "$(vline '│ f4 x')" -a -n "$(vline '│ f3')" -a -z "$(vline '│ f2')"
 check "采集：/proc/net/tcp6 的 IPv4 映射地址解析成 127.0.0.1（8886 端口）" test -n "$( ( cd "$PKG" && run sh verify-on-device.sh 127.0.0.1 --dump ) 2>/dev/null | grep "^LISTEN${T}8886${T}127.0.0.1$")"
+( cd "$PKG" && run sh verify-on-device.sh 127.0.0.1 --dump ) > "$R/host.dump" 2>/dev/null; vr --from "$R/host.dump"
+check "--dump 记下真实主机，--from 不给 host 时页头用它（09-25：WiFi 地址被显示成缺省 10.11.99.1）" test -n "$(vline '127.0.0.1（离线：host.dump）')"
+unset CJ_FLIGHT_LOG
 : > "$CJ_SIM_LOG"; vr 127.0.0.1
 sig_eq "采集：设备文件树前后一字不差（只读）" "$PRE_SIG" "$(tree_sig)"
 check "采集：没有 start/stop/restart/enable/disable/daemon-reload、没有 mount、没有 scp" test -z "$(grep -E '^systemctl (start|stop|restart|reload|enable|disable|daemon-reload|kill|reset-failed)|^mount |^scp |XOVI_START' "$CJ_SIM_LOG")"
