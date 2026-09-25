@@ -117,11 +117,16 @@ impl<'a> StreamingOptimize<'a> {
                 scope.spawn(move || loop {
                     let job = { rx.lock().unwrap_or_else(|e| e.into_inner()).recv() };
                     let Ok(job) = job else { break };
-                    let _permit = budget.acquire(crate::imgopt::pixel_count(&job.bytes));
+                    // 读图片头也是在解析外部输入：兜住 panic（按读不出尺寸算），不让一张坏图摔掉 worker——worker 全摔掉时
+                    // 主线程要么拿到"线程异常退出"，要么（队列已满时）`send` 永远等不到人收。
+                    let px = std::panic::catch_unwind(|| crate::imgopt::pixel_count(&job.bytes)).unwrap_or(1_000_000);
+                    let _permit = budget.acquire(px);
                     let out = transform_image_bytes(&job.bytes, is_comic_book, comic_frame).unwrap_or(job.bytes);
                     let _ = job.reply.send(out);
                 });
             }
+            // 接收端只由 worker 持有：万一 worker 全部退出，`job_tx.send` 立刻报错而不是在满队列上永远阻塞。
+            drop(job_rx);
             let mut pending: std::collections::VecDeque<std::sync::mpsc::Receiver<Vec<u8>>> = std::collections::VecDeque::new();
             let mut next_submit = 0usize;
             let mut consumed = 0usize; // 已取回的图片数：第 consumed 张图片对应 image_positions[consumed]

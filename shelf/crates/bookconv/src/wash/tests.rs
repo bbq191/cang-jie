@@ -278,6 +278,22 @@
         assert!(!w.iter().any(|x| x.name == "OEBPS/nav.xhtml"));
     }
 
+    /// 标题/书名里的字符引用（`&amp;`、`&#12288;` 全角空格）：自动目录只转义一次，不再出现 `&amp;amp;`、`&amp;#12288;`。
+    #[test]
+    fn auto_toc_titles_are_not_double_escaped() {
+        let mut v = vec![
+            e("OEBPS/content.opf", r#"<package version="3.0"><metadata><dc:title>Tom &amp; Jerry</dc:title></metadata><manifest><item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="c1"/></spine></package>"#),
+            e("OEBPS/c1.xhtml", "<html><body><h1>第一章&#12288;猫 &amp; 鼠 &lt;上&gt;</h1><p>a</p></body></html>"),
+        ];
+        wash_entries(&mut v, &WashOpts::default()).unwrap();
+        for f in ["OEBPS/toc.ncx", "OEBPS/nav.xhtml"] {
+            let t = s(&v, f);
+            assert!(t.contains("第一章 猫 &amp; 鼠 &lt;上&gt;"), "{f}: {t}");
+            assert!(!t.contains("&amp;amp;") && !t.contains("&amp;#") && !t.contains("&amp;lt;"), "{f}: {t}");
+        }
+        assert!(s(&v, "OEBPS/toc.ncx").contains("<docTitle><text>Tom &amp; Jerry</text></docTitle>"));
+    }
+
     #[test]
     fn existing_ncx_dtb_uid_synced_to_opf_identifier() {
         // 真机回归（2026-09-19，《疯探》）：navMap 结构完全正确，但 dtb:uid 是第三方生成器随手写的

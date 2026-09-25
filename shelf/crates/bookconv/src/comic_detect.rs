@@ -28,6 +28,11 @@ fn count_images(html: &str) -> usize {
 /// (spine 页里 `<img>`/`<image>` 总数, 可见文字总字数)。沿 OPF spine 遍历——跟 comic.py 同一套算法。
 pub fn epub_image_stats(entries: &[Entry]) -> (usize, usize) {
     let Some(opf) = parse_opf(entries) else { return (0, 0) };
+    // 条目名索引建一次（此前每个 spine 页 `entries.iter().find`，几千页漫画是"页数 × 条目数"次比较；同名取第一条）。
+    let mut by_name: std::collections::HashMap<&str, &Entry> = std::collections::HashMap::with_capacity(entries.len());
+    for e in entries {
+        by_name.entry(e.name.as_str()).or_insert(e);
+    }
     let mut images = 0usize;
     let mut text = 0usize;
     for p in &opf.spine {
@@ -36,7 +41,7 @@ pub fn epub_image_stats(entries: &[Entry]) -> (usize, usize) {
             images += 1; // 少数畸形 EPUB 把图片文件直接列进 spine
             continue;
         }
-        let Some(e) = entries.iter().find(|e| &e.name == p) else { continue };
+        let Some(e) = by_name.get(p.as_str()) else { continue };
         let Ok(html) = std::str::from_utf8(&e.data) else { continue };
         images += count_images(html);
         let body = strip_noise_tags(html);

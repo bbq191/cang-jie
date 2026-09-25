@@ -741,7 +741,7 @@ pub fn optimize_pdf_to_epub(src: &Path, mut on_progress: impl FnMut(usize, usize
                     open_color = Some(rgb);
                 }
             }
-            html.push_str(&crate::util::xml_escape(&c.ch.to_string()));
+            crate::util::push_xml_escaped(&mut html, c.ch); // 此前 `xml_escape(&c.ch.to_string())`，每个字符两次临时分配
             in_para = true;
             last_line = Some(c.line);
             last_y = Some(c.y);
@@ -869,10 +869,10 @@ pub(super) fn point_in_bbox(x: f64, y: f64, b: &BBox) -> bool {
 }
 
 pub(super) fn pdf_doc_title(doc: &lopdf::Document) -> Option<String> {
-    let info_ref = doc.trailer.get(b"Info").ok()?.as_reference().ok()?;
-    let info = doc.get_dictionary(info_ref).ok()?;
-    let title = info.get(b"Title").ok()?;
-    let bytes = title.as_str().ok()?;
+    // `/Info` 与 `/Title` 都可能是间接对象（也可能直接内嵌）：此前只认"Info 是引用、Title 是直接字符串"，
+    // 其它写法一律取不到书名、退回文件名（2026-09-25 审计）。
+    let info = deref(doc, doc.trailer.get(b"Info").ok()?).as_dict().ok()?;
+    let bytes = deref(doc, info.get(b"Title").ok()?).as_str().ok()?;
     Some(decode_pdf_text_string(bytes).trim().to_string()).filter(|s| !s.is_empty())
 }
 
@@ -917,11 +917,26 @@ pub(super) fn crop_pixmap_to_png(pixmap: &hayro::vello_cpu::Pixmap, region: &BBo
     if x1 <= x0 || y1 <= y0 {
         return None;
     }
-    let data = pixmap.data_as_u8_slice();
     let (w, h) = (pixmap.width() as u32, pixmap.height() as u32);
-    let img = image::RgbaImage::from_raw(w, h, data.to_vec())?;
-    let cropped = image::imageops::crop_imm(&img, x0, y0, (x1 - x0).max(1), (y1 - y0).max(1)).to_image();
+    let cropped = crop_rgba(pixmap.data_as_u8_slice(), w, h, x0, y0, (x1 - x0).max(1), (y1 - y0).max(1))?;
     let mut out = Vec::new();
     image::DynamicImage::ImageRgba8(cropped).write_to(&mut std::io::Cursor::new(&mut out), image::ImageFormat::Png).ok()?;
     Some(out)
+}
+
+/// 从整页 RGBA 像素（`w×h`，行优先）里只拷出 `(x, y, cw, ch)` 这一块（越界部分按 `crop_imm` 的规则收窄）。
+/// 此前先把整页 `to_vec()` 成 `RgbaImage` 再裁：每个公式块都复制一整页（2 倍渲染的 A4 约 8MB），同页几个块就复制几遍
+/// （2026-09-25 审计）。像素长度与宽高对不上 → `None`（同此前 `RgbaImage::from_raw` 的判据）。
+pub(super) fn crop_rgba(data: &[u8], w: u32, h: u32, x: u32, y: u32, cw: u32, ch: u32) -> Option<image::RgbaImage> {
+    if data.len() != (w as usize) * (h as usize) * 4 {
+        return None;
+    }
+    let (x, y) = (x.min(w), y.min(h));
+    let (cw, ch) = (cw.min(w - x), ch.min(h - y));
+    let mut buf = Vec::with_capacity(cw as usize * ch as usize * 4);
+    for row in y..y + ch {
+        let start = (row as usize * w as usize + x as usize) * 4;
+        buf.extend_from_slice(&data[start..start + cw as usize * 4]);
+    }
+    image::RgbaImage::from_raw(cw, ch, buf)
 }

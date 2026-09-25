@@ -42,7 +42,10 @@ pub(crate) fn plain_text(html: &str) -> String {
     static TAG: OnceLock<Regex> = OnceLock::new();
     let tag = TAG.get_or_init(|| Regex::new(r#"(?s)<[^>]*>"#).unwrap());
     let t = tag.replace_all(html, "");
-    t.replace("&nbsp;", " ").replace("&#160;", " ").split_whitespace().collect::<Vec<_>>().join(" ")
+    // 字符引用还原成字符（2026-09-25 审计）：结果是"纯文本"，调用方写进 NCX/nav/OPF 时会再 `xml_escape` 一次——此前不还原，
+    // 标题里的 `&amp;`/`&#12288;` 被转义成 `&amp;amp;`/`&amp;#12288;`，自动目录、重建目录、占位书名显示出字面的 `&amp;`。
+    let t = t.replace("&nbsp;", " ");
+    crate::util::xml_unescape(&t).split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// 从 spine 各章 h1/h2 生成目录；标题无 id 则补 `id="cj-toc-N"`。返回条目 (level, title, zip路径, frag)。

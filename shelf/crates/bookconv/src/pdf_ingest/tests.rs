@@ -106,6 +106,152 @@ fn heading_detection_ranks_levels_by_size() {
     assert_eq!(headings[1].level, 2);
 }
 
+// ---- 按行分组的等价性（2026-09-25 审计：公式/标题两处由"逐行号全页扫描"改为一遍分组） ----
+
+/// 改动前的公式探测（逐行号 `filter`），只作差分参照。
+fn formula_regions_reference(chars: &[PositionedChar]) -> Vec<BBox> {
+    if chars.is_empty() {
+        return Vec::new();
+    }
+    let max_line = chars.iter().map(|c| c.line).max().unwrap_or(0);
+    let mut formula_lines: Vec<(usize, BBox, f64)> = Vec::new();
+    for line_no in 0..=max_line {
+        let line_chars: Vec<&PositionedChar> = chars.iter().filter(|c| c.line == line_no).collect();
+        if line_chars.is_empty() || !line_is_formula(&line_chars) {
+            continue;
+        }
+        if let Some(bbox) = bbox_of(&line_chars) {
+            formula_lines.push((line_no, bbox, avg_font_size(&line_chars)));
+        }
+    }
+    if formula_lines.is_empty() {
+        return Vec::new();
+    }
+    let mut blocks: Vec<BBox> = Vec::new();
+    let (mut cur, mut cur_font, mut prev_line) = (formula_lines[0].1, formula_lines[0].2, formula_lines[0].0);
+    for (line_no, bbox, font) in formula_lines.into_iter().skip(1) {
+        let x_overlap = bbox.x0 <= cur.x1 + cur_font * 4.0 && bbox.x1 >= cur.x0 - cur_font * 4.0;
+        if line_no.saturating_sub(prev_line) <= 2 && x_overlap {
+            cur = BBox { x0: cur.x0.min(bbox.x0), y0: cur.y0.min(bbox.y0), x1: cur.x1.max(bbox.x1), y1: cur.y1.max(bbox.y1) };
+            cur_font = cur_font.max(font);
+        } else {
+            blocks.push(cur);
+            cur = bbox;
+            cur_font = font;
+        }
+        prev_line = line_no;
+    }
+    blocks.push(cur);
+    for b in blocks.iter_mut() {
+        let pad = cur_font.max(4.0) * 0.08;
+        *b = BBox { x0: b.x0 - pad, y0: b.y0 - pad, x1: b.x1 + pad, y1: b.y1 + pad };
+    }
+    blocks
+}
+
+/// 改动前的标题识别（逐行号 `filter`），只作差分参照。
+fn headings_reference(pages: &[PageContent]) -> Vec<Heading> {
+    let mut headings = Vec::new();
+    let mut candidate_sizes: Vec<i64> = Vec::new();
+    let mut per_page_body = Vec::new();
+    for page in pages {
+        let chars = &page.chars;
+        let body = body_font_size(chars);
+        per_page_body.push(body);
+        let max_line = chars.iter().map(|c| c.line).max().unwrap_or(0);
+        for line_no in 0..=max_line {
+            let lc: Vec<&PositionedChar> = chars.iter().filter(|c| c.line == line_no && !c.ch.is_whitespace()).collect();
+            if !lc.is_empty() && avg_font_size(&lc) >= body * HEADING_SIZE_RATIO {
+                candidate_sizes.push((avg_font_size(&lc) * 2.0).round() as i64);
+            }
+        }
+    }
+    if candidate_sizes.is_empty() {
+        return headings;
+    }
+    candidate_sizes.sort_unstable();
+    candidate_sizes.dedup();
+    candidate_sizes.reverse();
+    let level_of = |size: f64| -> i64 {
+        let bucket = (size * 2.0).round() as i64;
+        (candidate_sizes.iter().position(|&s| s == bucket).unwrap_or(candidate_sizes.len() - 1) as i64 + 1).min(3)
+    };
+    for (page_idx, page) in pages.iter().enumerate() {
+        let chars = &page.chars;
+        let body = per_page_body[page_idx];
+        let max_line = chars.iter().map(|c| c.line).max().unwrap_or(0);
+        let vis = |ln: usize| -> Vec<&PositionedChar> { chars.iter().filter(|c| c.line == ln && !c.ch.is_whitespace()).collect() };
+        let title_line = |ln: usize| -> String { chars.iter().filter(|c| c.line == ln).map(|c| c.ch).collect::<String>().trim().to_string() };
+        let mut i = 0usize;
+        while i <= max_line {
+            let lc = vis(i);
+            if lc.is_empty() || avg_font_size(&lc) < body * HEADING_SIZE_RATIO {
+                i += 1;
+                continue;
+            }
+            let level = level_of(avg_font_size(&lc));
+            let mut title = title_line(i);
+            let mut j = i + 1;
+            while j <= max_line {
+                let nc = vis(j);
+                if nc.is_empty() || avg_font_size(&nc) < body * HEADING_SIZE_RATIO || level_of(avg_font_size(&nc)) != level {
+                    break;
+                }
+                title.push(' ');
+                title.push_str(&title_line(j));
+                j += 1;
+            }
+            headings.push(Heading { page: page_idx, line: i, level, title: title.trim().to_string() });
+            i = j;
+        }
+    }
+    headings
+}
+
+/// 确定性伪随机页：行号有跳号、有乱序（`line` 不保证单调也要对）、有纯空白行、有多档字号与公式字符。
+fn pseudo_random_page(seed: u64, n: usize) -> Vec<PositionedChar> {
+    let mut x = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+    let mut next = move || {
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        x
+    };
+    let pool = ['a', 'b', ' ', '中', '∫', 'π', 'T', '1', '\u{0}'];
+    let sizes = [10.0, 10.0, 10.0, 12.5, 16.0, 20.0];
+    (0..n)
+        .map(|k| {
+            let r = next();
+            let line = if r % 11 == 0 { (r as usize >> 8) % 40 } else { k / 7 + (r as usize >> 20) % 2 };
+            let ch = pool[(r >> 32) as usize % pool.len()];
+            let fs = sizes[(r >> 40) as usize % sizes.len()];
+            char_at(ch, (r >> 16) as f64 % 400.0, 700.0 - line as f64 * 12.0, fs, line)
+        })
+        .collect()
+}
+
+#[test]
+fn grouped_line_scan_matches_old_per_line_scan_exactly() {
+    let (mut n_heads, mut n_blocks) = (0usize, 0usize);
+    for seed in 0..60u64 {
+        let pages: Vec<PageContent> = (0..3).map(|p| PageContent { chars: pseudo_random_page(seed * 7 + p, 30 + (seed as usize * 13) % 300), images: Vec::new() }).collect();
+        for p in &pages {
+            let got = detect_formula_regions(&p.chars);
+            n_blocks += got.len();
+            assert_eq!(got, formula_regions_reference(&p.chars), "seed {seed}");
+        }
+        let got = detect_headings_by_font_size(&pages);
+        n_heads += got.len();
+        assert_eq!(got, headings_reference(&pages), "seed {seed}");
+    }
+    assert!(n_heads > 20 && n_blocks > 20, "样本要真覆盖到标题与公式：{n_heads} / {n_blocks}");
+    let real = extract_positioned_text(SAMPLE_PDF).unwrap();
+    for p in &real {
+        assert_eq!(detect_formula_regions(&p.chars), formula_regions_reference(&p.chars));
+    }
+    assert_eq!(detect_headings_by_font_size(&real), headings_reference(&real));
+}
+
 // ---- 分类（拿真实 pdflatex 样本核对，不是拍脑袋） ----
 
 #[test]
@@ -684,4 +830,36 @@ fn gray_text_is_darkened_but_colored_text_kept() {
     assert!(!body.contains("\">GrayDate"), "灰字不包颜色 span: {body}");
     assert!(body.contains("\">RedHead"), "彩色字保留: {body}");
     assert!(!css.contains("#808080") && !css.contains("#7f7f7f"), "{css}");
+}
+
+#[test]
+fn crop_rgba_matches_image_crate_crop_including_clamped_edges() {
+    let (w, h) = (7u32, 5u32);
+    let full = image::RgbaImage::from_fn(w, h, |x, y| image::Rgba([x as u8, y as u8, (x * y) as u8, 255]));
+    for &(x, y, cw, ch) in &[(0, 0, 7, 5), (2, 1, 3, 2), (5, 3, 9, 9), (6, 4, 1, 1), (0, 4, 7, 1)] {
+        let want = image::imageops::crop_imm(&full, x, y, cw, ch).to_image();
+        assert_eq!(crop_rgba(full.as_raw(), w, h, x, y, cw, ch).unwrap(), want, "({x},{y},{cw},{ch})");
+    }
+    assert!(crop_rgba(&[0u8; 10], w, h, 0, 0, 1, 1).is_none(), "像素长度对不上 → None");
+}
+
+#[test]
+fn pdf_doc_title_follows_indirect_info_and_title() {
+    use lopdf::{dictionary, Document, Object, StringFormat};
+    let title = || Object::String(b"Indirect Title".to_vec(), StringFormat::Literal);
+    // Info 引用 + Title 引用
+    let mut doc = Document::with_version("1.5");
+    doc.objects.insert((1, 0), title());
+    doc.objects.insert((2, 0), Object::Dictionary(dictionary! { "Title" => Object::Reference((1, 0)) }));
+    doc.trailer.set("Info", Object::Reference((2, 0)));
+    assert_eq!(pdf_doc_title(&doc).as_deref(), Some("Indirect Title"));
+    // Info 直接内嵌
+    let mut doc = Document::with_version("1.5");
+    doc.trailer.set("Info", Object::Dictionary(dictionary! { "Title" => title() }));
+    assert_eq!(pdf_doc_title(&doc).as_deref(), Some("Indirect Title"));
+    // 原有写法照旧
+    let mut doc = Document::with_version("1.5");
+    doc.objects.insert((2, 0), Object::Dictionary(dictionary! { "Title" => title() }));
+    doc.trailer.set("Info", Object::Reference((2, 0)));
+    assert_eq!(pdf_doc_title(&doc).as_deref(), Some("Indirect Title"));
 }

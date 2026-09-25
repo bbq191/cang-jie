@@ -59,6 +59,7 @@ fn accumulate(p: &mut TextProfile, name: &str, data: &[u8]) {
     let Ok(t) = std::str::from_utf8(data) else { return };
     if name.to_ascii_lowercase().ends_with(".opf") {
         if p.title.is_none() {
+            // `plain_text` 已还原字符引用：这个书名要跟 xochitl 的 visibleName（已解码的 `A & B`）比对（book-serve `render_check::pick`）。
             p.title = title_re.captures(t).map(|c| plain_text(&c[1])).filter(|s| !s.is_empty());
         }
         return;
@@ -140,6 +141,12 @@ mod tests {
         assert_eq!(p.title.as_deref(), Some("人骨 拼圖"));
         assert_eq!(p.lang(), LangMode::Cjk);
         assert_eq!(p.expected_pages(), 3, "1000/460 向上取整");
+    }
+
+    #[test]
+    fn title_char_refs_are_decoded_to_match_visible_name() {
+        let b = epub(&[("content.opf", "<package><metadata><dc:title>Tom &amp; Jerry &#20013;</dc:title></metadata></package>")]);
+        assert_eq!(text_profile(&b).unwrap().title.as_deref(), Some("Tom & Jerry 中"));
     }
 
     #[test]

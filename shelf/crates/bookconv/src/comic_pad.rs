@@ -245,7 +245,11 @@ pub fn pad_text_pages(entries: &mut [(String, Vec<u8>, bool)]) -> usize {
 /// `comic_detect::is_min_margin_comic_file` 用它把"上一版优化的漫画（文字没留边）"挡在登记之外——否则页边距设成 1 后文字会贴边。
 pub fn all_text_padded(entries: &[Entry]) -> bool {
     let Some(opf) = parse_opf(entries) else { return false };
-    opf.spine.iter().filter_map(|p| entries.iter().find(|e| &e.name == p)).all(|e| match std::str::from_utf8(&e.data) {
+    let mut by_name: std::collections::HashMap<&str, &Entry> = std::collections::HashMap::with_capacity(entries.len());
+    for e in entries {
+        by_name.entry(e.name.as_str()).or_insert(e); // 同名取第一条（同此前 `iter().find`）
+    }
+    opf.spine.iter().filter_map(|p| by_name.get(p.as_str())).all(|e| match std::str::from_utf8(&e.data) {
         Ok(html) if crate::epubzip::is_html(&e.name) => {
             (!is_pure_text_page(html) || has_text_page_class(html)) && (!is_mixed_page(html) || !has_unpadded_block(html))
         }
