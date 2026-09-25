@@ -204,10 +204,10 @@
 |---|---|---|
 | 什么时候回应 | 有该交的项立即回；否则睡到有人入队、`wait` 到期，**或最早一个"交出后静默期"到期** | 此前只等入队或 `wait` 到期：交出后没做成的那一项要等满 290 秒才重交，而落库只等建文件夹 20 秒，"静默期过了自带重试"名存实亡 |
 | 静默期 | 同一项交出后，建文件夹 15 秒、回收站 30 秒内不重复交 | 代理执行需要时间，防止重复执行 |
-| 重试上限 | 同一项最多交 5 次（`HANDOUT_MAX_ATTEMPTS`，约 1–2.5 分钟）；交满、静默期过了还没真实发生就放弃：移出持久队列、book-serve 记一行日志、算进"清掉几条"让网页刷新；重新入队从零计 | 此前没有终止条件：xochitl 的 `entryForId` 拿不到条目但 `.metadata` 还在时，这一项每个静默期被交一次、代理每次失败写一行日志，永不停止 |
+| 重试上限 | 同一项最多交 5 次（`HANDOUT_MAX_ATTEMPTS`，约 1–2.5 分钟）；交满、静默期过了还没真实发生就放弃：移出持久队列、book-serve 记一行日志、记进 `agent-failures.json` 并发 `agent-failed` 事件（网页页头横幅），算进"清掉几条"让网页刷新；重新入队从零计 | 此前没有终止条件：xochitl 的 `entryForId` 拿不到条目但 `.metadata` 还在时，这一项每个静默期被交一次、代理每次失败写一行日志，永不停止 |
 | 代理出错退避 | 两个 qmd 请求出错（book-serve 停了、重启中）时 15 → 30 → 60 → 120 秒封顶，成功一次复位（`property int cjErrs`） | 此前固定 15 秒，book-serve 长时间不在时每个代理每小时白醒 240 次 |
 
-放弃只写 book-serve 日志，网页上没有单独的失败提示（队列里少了这一项）。`shelf-comic-margins.qmd` 同日也改了一处：`createObject` 出 `EpubProperties` 后立刻排好 5 秒后销毁，后面任何一步抛异常都不会让它一直挂着，出错时写一行 `CJ-COMIC-MARGIN: failed` 日志。三个 qmd 的改动只做了离线 `qmldiff apply-diffs` + `qmllint`（桩 QML，非真实 3.28 QML），未上真机。
+放弃时另记一条到 `$XDG_STATE_HOME/shelf/books/agent-failures.json`（只留最近 20 条，`GET /agent-failures`），发 `books` 事件 `agent-failed`；网页页头出一条横幅，列出哪本书没能进回收站、哪个文件夹没建出来，点「知道了」（`POST /agent-failures/clear`）清空（09-25 用户要求，host 与浏览器冒烟测过，未上真机）。`shelf-comic-margins.qmd` 同日也改了一处：`createObject` 出 `EpubProperties` 后立刻排好 5 秒后销毁，后面任何一步抛异常都不会让它一直挂着，出错时写一行 `CJ-COMIC-MARGIN: failed` 日志。三个 qmd 的改动只做了离线 `qmldiff apply-diffs` + `qmllint`（桩 QML，非真实 3.28 QML），未上真机。
 
 ## 5｜内存安全设计
 
@@ -360,6 +360,7 @@ GET  /reading-direction/{uuid}                       → {rtl}：书库 <uuid>.e
 GET  /events                         SSE 事件流
 POST /trash/add · GET /trash/pending · GET /trash      原生回收站代理队列
 POST /mkdir/add · GET /mkdir/pending[?wait=秒] · GET /mkdir   原生建文件夹代理队列（pending 支持长轮询）
+GET  /agent-failures · POST /agent-failures/clear      两个代理交满次数放弃的记录（网页页头横幅，§4）
 （2026-09-22 已删：`GET /inbox`、`POST /inbox/retry|delete`、`GET /staging/render/{uuid}`——无调用方；inbox 失败项重试=人工把 `failed/` 里的文件拷回 `inbox/`）
 ```
 
@@ -381,7 +382,6 @@ POST /mkdir/add · GET /mkdir/pending[?wait=秒] · GET /mkdir   原生建文件
 - `shelf-mkdir-agent.qmd` 长轮询 09-24 放宽到 290 秒（依据：设备 Qt 6.10 的 QML XHR 不设传输超时，源码核实）；部署后确认 journal 里没有 `SHELF-MKDIR: transfer timeout`（有就说明退回了 25 秒）。
 - 渲染自检对漫画拆分份不生效（§6.2 第 5 点）。
 - inbox 只判"还在不在写"（修改时间静止 5 秒），不校验内容完整：scp 中途断开留下的半截文件静止后仍可能被收进母版库（§2.1）。
-- 回收站/建文件夹代理交满 5 次仍没做成的项只在 book-serve 日志里留一行，网页没有失败提示（§4）。
 - 大文件占位通道：占位上传后进程崩溃会残留占位文档（回执提示手动删）。（>153MB 首次渲染与批量“加入 xochitl / KOReader”已于 2026-09-25 真机走通：两本 156.5/157.1MB 的《乱马》经网关队列 `done 2 / failed 0` 落进同一文件夹。）
 - 入库 PDF 转 EPUB：公式裁图没有真机样本；公式区域按整行字符包围盒算，公式文字碎片会同时留在正文里（不丢字，但观感不如只留图）；竖排/多栏 PDF 未验证。
 - `imgopt` 对 >900 万像素原图直接跳过（完全不处理，非压画质），这类图原样出现在优化后的书里，拿不到体积收益。
