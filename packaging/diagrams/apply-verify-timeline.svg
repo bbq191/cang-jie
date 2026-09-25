@@ -1,6 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 400" font-family="Noto Sans CJK SC, sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 520" font-family="Noto Sans CJK SC, sans-serif">
 <defs><marker id="av-m" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#555"/></marker></defs>
-<rect x="0" y="0" width="1000" height="400" fill="#fbfbfa"/>
+<rect x="0" y="0" width="1000" height="520" fill="#fbfbfa"/>
 <text x="500" y="30" text-anchor="middle" font-size="18" font-weight="bold" fill="#1a1a1a">部署生效：设备整机重启，电脑等它回来后自动核对</text>
 <text x="500" y="52" text-anchor="middle" font-size="12.5" fill="#6a6a6a">xovi-apply、单独部署 hl-snap / handwriting-stroke / sidebar-entry 都走这条（2026-09-25 起）</text>
 
@@ -34,7 +34,7 @@
 <text x="221" y="268" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">run_apply 经 ssh 跑设备端脚本</text>
 <text x="221" y="290" text-anchor="middle" font-size="11.5" fill="#3a3a3a">输出原样显示在终端，并留一份用来找标记行</text>
 <rect x="414" y="238" width="172" height="80" rx="10" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.6"/>
-<text x="500" y="266" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">认出标记行</text>
+<text x="500" y="266" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">认出 REBOOTING 行</text>
 <text x="500" y="288" text-anchor="middle" font-size="11.5" fill="#3a3a3a">ssh 随重启断开</text>
 <text x="500" y="304" text-anchor="middle" font-size="11.5" fill="#3a3a3a">（退出码 255）记成功</text>
 <rect x="600" y="238" width="172" height="80" rx="10" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.6"/>
@@ -52,6 +52,17 @@
 <polyline points="686,176 686,238" fill="none" stroke="#888" stroke-width="1.4" stroke-dasharray="4 3" marker-end="url(#av-m)"/>
 <polyline points="872,176 872,238" fill="none" stroke="#888" stroke-width="1.4" stroke-dasharray="4 3" marker-end="url(#av-m)"/>
 
-<text x="500" y="352" text-anchor="middle" font-size="11.8" fill="#555">CJ_APPLY_VERIFY=0：认出标记行后就结束，只打印核对命令。三个等待秒数：CJ_REBOOT_DOWN_WAIT / CJ_REBOOT_UP_WAIT / CJ_REBOOT_SETTLE。</text>
-<text x="500" y="374" text-anchor="middle" font-size="11.8" fill="#555">例外：没装 xovi-reenable 且 xovi 未生效时不重启设备，改跑 xovi/start（此时 xochitl 没映射任何扩展）。</text>
+<text x="42" y="358" font-size="13" font-weight="bold" fill="#a33">另一条路：systemctl reboot 本身失败（重启没排上）</text>
+<rect x="42" y="368" width="444" height="84" rx="10" fill="#fdf1ec" stroke="#c0602d" stroke-width="1.6" stroke-dasharray="6 4"/>
+<text x="264" y="396" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">设备端：补回待生效标记 apply-reboot-failed</text>
+<text x="264" y="418" text-anchor="middle" font-size="11.5" fill="#3a3a3a">打印 CJ-APPLY-REBOOT-FAILED，按失败返回</text>
+<text x="264" y="436" text-anchor="middle" font-size="11.5" fill="#3a3a3a">改动已落盘（.so 已换入），xochitl 仍是旧的；下次 xovi-apply 会再试</text>
+<rect x="514" y="368" width="444" height="84" rx="10" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.6" stroke-dasharray="6 4"/>
+<text x="736" y="396" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">电脑端：认出这一行，不等重启、不核对</text>
+<text x="736" y="418" text-anchor="middle" font-size="11.5" fill="#3a3a3a">提示“设备上手动 reboot，再跑 verify-on-device.sh”</text>
+<text x="736" y="436" text-anchor="middle" font-size="11.5" fill="#a33">这一步记失败（退出非 0）</text>
+<polyline points="486,410 514,410" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#av-m)"/>
+
+<text x="500" y="484" text-anchor="middle" font-size="11.8" fill="#555">CJ_APPLY_VERIFY=0：认出 CJ-APPLY-REBOOTING 后就结束，只打印核对命令。三个等待秒数：CJ_REBOOT_DOWN_WAIT / CJ_REBOOT_UP_WAIT / CJ_REBOOT_SETTLE。</text>
+<text x="500" y="506" text-anchor="middle" font-size="11.8" fill="#555">例外：没装 xovi-reenable 且 xovi 未生效时不重启设备，改跑 xovi/start（此时 xochitl 没映射任何扩展）。</text>
 </svg>
