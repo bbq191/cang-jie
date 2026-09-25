@@ -156,21 +156,27 @@ const upHtml=(icon,label,ext,btn)=>`<div class="up"><div class="drop"><span clas
 /* 通用上传器：逐文件一请求，进度条，逐项回执；失败项可重传，队列可逐项删/清空，顶部总进度。box=.up 容器 */
 function uploader(box,urlOf,queryOf,okExt,onFinish,dedupeApi){
   const list=$('ul.q',box), input=$('input[type=file]',box), drop=$('.drop',box), go=$('.go',box);
-  let files=[], sum=null;
+  let files=[], sum=null, busy=false;
   const clr=el('button',{type:'button',class:'btn',text:T('common.clear')});clr.onclick=()=>{files=[];render()};go.after(clr);
   const summary=()=>{if(!sum){sum=el('div',{class:'small',style:'margin:.3em 0'});list.parentNode.insertBefore(sum,list)}
     const ok=files.filter(f=>f.st==='ok').length,bad=files.filter(f=>f.st==='bad').length;
     sum.innerHTML=files.length?T('common.uploadSummary',{ok,total:files.length,badPart:bad?T('common.uploadBadPart',{bad}):''}):'';};
-  const render=()=>{list.innerHTML='';files.forEach(f=>{const li=document.createElement('li');li.dataset.k=f.k;li.className=f.st||'';
+  const row=f=>{const li=document.createElement('li');li.dataset.k=f.k;li.className=f.st||'';
       li.innerHTML=`<div class="name">${esc(f.file.name)} <span class="small">${fmtB(f.file.size)}</span> <button class="btn x" type="button" title="${T('common.remove')}" aria-label="${T('common.remove')}">×</button></div><progress value="${f.st==='ok'?100:0}" max="100"></progress><div class="msg">${esc(f.msg||T('common.waitingUpload'))}</div>`;
-      li.querySelector('.x').onclick=()=>{files=files.filter(x=>x.k!==f.k);render()};list.appendChild(li)});summary()};
+      const x=li.querySelector('.x');x.disabled=busy;x.onclick=()=>{if(busy)return;files=files.filter(y=>y.k!==f.k);render()};return li};
+  const render=()=>{list.innerHTML='';files.forEach(f=>list.appendChild(row(f)));summary()};
+  /* 上传进行中不整表重画（删行按钮禁用、新加的文件只追加行）：重画会把正在传的那一项的进度条/状态文字换成新节点，
+     上传回调还挂在旧节点上，之后再也不更新。新追加的文件本轮循环会接着传（循环遍历的就是 files 这个数组）。 */
   const add=fl=>{for(const f of fl){const rej=okExt&&!okExt.some(e=>f.name.toLowerCase().endsWith(e));
-      files.push({file:f,k:Math.random().toString(36).slice(2),rej,st:rej?'bad':'',msg:rej?T('common.rejectedExt',{ext:okExt.join(' / ')}):''})}render()};
+      const it={file:f,k:Math.random().toString(36).slice(2),rej,st:rej?'bad':'',msg:rej?T('common.rejectedExt',{ext:okExt.join(' / ')}):''};
+      files.push(it);if(busy)list.appendChild(row(it))}
+    if(busy)summary();else render()};
   input.onchange=()=>{add(input.files);input.value=''};
   drop.ondragover=e=>{e.preventDefault();drop.classList.add('hi')};drop.ondragleave=()=>drop.classList.remove('hi');
   drop.ondrop=e=>{e.preventDefault();drop.classList.remove('hi');add(e.dataTransfer.files)};
   drop.onclick=()=>input.click();
-  go.onclick=async()=>{go.disabled=true;clr.disabled=true;
+  const lockRows=on=>{busy=on;list.querySelectorAll('.x').forEach(x=>x.disabled=on)};
+  go.onclick=async()=>{go.disabled=true;clr.disabled=true;lockRows(true);
     // 母版库上传口传 dedupeApi（`/api/books/staging`）：先查一次现有条目，同名同大小＝上一轮已经
     // 成功落地，跳过重传——不然 unique_path 同名不覆盖会把它再落一份 1_x（2026-09-13，跟 shelf
     // push CLI 那次同一个 gap，见书架白皮书 §04；只有母版库这个上传口传这个参数，字体/壁纸/词典
@@ -183,7 +189,9 @@ function uploader(box,urlOf,queryOf,okExt,onFinish,dedupeApi){
       f.st='';li.className='';pg.value=0;msg.textContent=T('common.uploading');
       await new Promise(res=>{const x=new XMLHttpRequest();const q=queryOf();x.open('POST',urlOf()+(q?'?'+new URLSearchParams(q):''));
         x.upload.onprogress=e=>{if(e.lengthComputable)pg.value=e.loaded/e.total*100};
-        x.onload=()=>{if(x.status===401){location.href='/login';return}let d;try{d=JSON.parse(x.responseText)}catch{d={ok:false,message:'HTTP '+x.status}}
+        // 401/403 与 j() 同一处理（登录过期 → 登录页；首登未改密 → 改密页）；非 JSON 应答给人话 + 状态码（原来是裸 "HTTP 502"，不走语言包）。
+        x.onload=()=>{if(x.status===401){location.href='/login?next='+encodeURIComponent(location.pathname);return}if(x.status===403){location.href='/password';return}
+          let d;try{d=JSON.parse(x.responseText)}catch{d={ok:false,message:T('common.httpErr',{status:x.status})}}
           const it=(d.items&&d.items[0])||d;f.st=it.ok?'ok':'bad';f.msg=(it.message||(it.ok?T('common.done'):T('common.failed')))+(d.note&&it.ok?' · '+d.note:'');li.className=f.st;msg.textContent=f.msg;pg.value=100;summary();
           // 同一批里排了两份同名同大小：这份传完了要马上补进快照，下一份循环到时才躲得开——只查一次
           // 快照、循环里不更新的话，两份会一起溜过去（都不在最初那份快照里），2026-09-13 真机踩到。
@@ -191,7 +199,7 @@ function uploader(box,urlOf,queryOf,okExt,onFinish,dedupeApi){
           res()};
         x.onerror=()=>{f.st='bad';f.msg=T('common.networkError');li.className='bad';msg.textContent=f.msg;summary();res()};
         const fd=new FormData();fd.append('file',f.file);x.send(fd)})}
-    go.disabled=false;clr.disabled=false;if(onFinish)onFinish()};
+    lockRows(false);go.disabled=false;clr.disabled=false;if(onFinish)onFinish()};
   return {clear(){files=[];render()}};
 }
 
@@ -421,7 +429,7 @@ function renderTransfer(sec){sec.innerHTML=`
       bar.appendChild(el('div',{class:'stgbar-main'},[el('b',{text:T('stg.batch.progress',{title:t,done:bs.done,total:bs.total})}),el('span',{class:'small',text:(bs.current?' · '+T('stg.batch.current',{name:stgClean(bs.current)}):'')+(bs.failed.length?' · '+T('stg.batch.failedN',{n:bs.failed.length}):'')})]));
       const p=el('progress');p.max=Math.max(1,bs.total);p.value=bs.done;bar.appendChild(p);
       const stop=el('button',{class:'btn btn-bad',type:'button',text:T('stg.batch.stopAll')});
-      stop.onclick=async()=>{const r=await postJ('/api/batch/stop',{});if(r.ok!==false)toast(T('stg.batch.stopped',{n:r.cleared||0}),'info');refresh()};bar.appendChild(stop);
+      guardClick(stop,async()=>{const r=await postJ('/api/batch/stop',{});if(r.ok!==false)toast(T('stg.batch.stopped',{n:r.cleared||0}),'info');await refresh()});bar.appendChild(stop);
     }else if(picked.size){
       bar.hidden=false;bar.className='stgbar sel';
       // 第一行：已选数 + 清除；第二行：批量按钮等宽。按钮上直接标"可处理数"（已优化的再优化、非 EPUB/PDF 加入 xochitl 等会被跳过），
@@ -437,7 +445,7 @@ function renderTransfer(sec){sec.innerHTML=`
         if(m){f.appendChild(el('span',{class:'lbl-long',text:m[1]}));f.appendChild(document.createTextNode(m[2]))}else f.appendChild(document.createTextNode(t));
         if(n!=null)f.appendChild(el('span',{class:'cnt',text:String(n)}));return f};
       const mk=(a,pri)=>{const b=el('button',{class:'btn'+(pri?' pri':''),type:'button',title:T('stg.bar.'+a)+'（'+cnt[a]+'）'},[lbl('stg.bar.'+a,cnt[a])]);
-        if(!cnt[a]){b.disabled=true;b.title=T('stg.bar.noneApplicable')}else b.onclick=()=>enqueue(a,{names:[...picked]});return b};
+        if(!cnt[a]){b.disabled=true;b.title=T('stg.bar.noneApplicable')}else guardClick(b,()=>enqueue(a,{names:[...picked]}));return b};
       const btns=el('div',{class:'stgbar-btns'},[mk('optimize',true),mk('deliver')]);
       if(koInstalled)btns.appendChild(mk('koreader'));
       btns.style.setProperty('--cols',String(btns.children.length));
@@ -706,14 +714,18 @@ function renderNotes(sec){sec.innerHTML=`
   // cropHtml 误判成"纯勾画没有手写"（notes.noCrop），实际上这条明明有手写，只是裁图暂时没生成——
   // 两种情况分开提示，别让用户误以为手写没被识别到。
   const cropHtml=e=>e.ink&&e.ink.crop?`<img src="${cropUrl(book.uuid,e.ink.crop)}" alt="${T('notes.cropAlt')}">`:`<div class="empty">${T(e.ink?'notes.cropMissing':'notes.noCrop')}</div>`;
-  const patch=async(id,body)=>{const r=await postJ(bookApi('ink',`/entries/${encodeURIComponent(id)}`),body);if(r.ok===false)toast(r.message||T('notes.saveFailed'))};
+  // 在途的保存请求：重取数据前先等它们落地（失焦保存 `onchange` 不 await，紧跟着的重画可能先拿到旧文本）。
+  // 用 jsend 不用 postJ：postJ 失败时自己弹一次 toast，这里再弹"保存失败"就成了两条（此前如此）。
+  const inflight=new Set();
+  const patch=(id,body)=>{const p=jsend(bookApi('ink',`/entries/${encodeURIComponent(id)}`),'POST',body).then(r=>{if(r.ok===false)toast(r.message||T('notes.saveFailed'))}).finally(()=>inflight.delete(p));inflight.add(p);return p};
   /* 编辑区文本失焦才存（`onchange`），但点旁边的按钮（重转/去处/问AI…）会先让文本框失焦触发保存，
      两件事几乎同时各发一个 HTTP 请求，谁先到服务端不一定——按钮那次的收尾动作会拉新数据整页重画，
      如果保存请求还没落地，重画拿到的还是旧文本，编辑就跟着"消失"了（用户反馈"改了内容点重转不存"）。
      用一个 pendingText 记住"还没确认存上"的最新值，任何会拉新数据重画的动作之前先 flush 一遍，
      保证读到的一定是最新的。 */
   const pendingText=new Map();
-  const flushPendingText=async()=>{if(!book||!pendingText.size)return;const items=[...pendingText];pendingText.clear();for(const[id,val]of items)await patch(id,{text:val})};
+  const flushPendingText=async()=>{if(book&&pendingText.size){const items=[...pendingText];pendingText.clear();for(const[id,val]of items)await patch(id,{text:val})}
+    if(inflight.size)await Promise.all([...inflight])};
   /* 每章"设备笔记本/Obsidian md 是不是已经跟当前条目内容同步"（整理区第三轮反馈）：一次性取整本书
      的同步状态，章头徽章、「整理」列表默认收起已同步章节、回收站显示这条大概去哪了，三处共用同一份，
      不用各自发请求。`refreshSync()` 在 loadBook 里、以及每次生成/导出动作之后调用刷新。 */
@@ -1022,7 +1034,12 @@ function renderNotes(sec){sec.innerHTML=`
       body.appendChild(row)});
     chapterbody.appendChild(card)};
   exportTabsEl.querySelectorAll('button').forEach(b=>b.onclick=()=>{if(exportTab===b.dataset.etab)return;exportTab=b.dataset.etab;selectedChapter=null;renderBook()});
-  const loadBook=async()=>{await flushPendingText();selectedChapter=null;if(!sel.value){book=null;await refreshSync();renderBrowse();await renderBook();renderTrash();renderImport();return}book=await j(`/api/ink/books/${encodeURIComponent(sel.value)}`);await refreshSync();renderBrowse();await renderBook();renderTrash();renderImport()};
+  const loadBook=async()=>{await flushPendingText();selectedChapter=null;
+    book=null;
+    if(sel.value){const b=await j(`/api/ink/books/${encodeURIComponent(sel.value)}`);
+      // 取失败（ink-serve 重启中、书刚被删）按"没选书"画，别把 {ok:false} 当成书——此前后续请求会拼出 /books/undefined。
+      if(b.ok===false)toast(b.message||T('common.failed'));else book=b}
+    await refreshSync();renderBrowse();await renderBook();renderTrash();renderImport()};
   sel.onchange=loadBook;
   /* 全文搜索（跨所有书，ink-serve /search）：结果点一下就切到那本书的「浏览」。命中词加粗——片段先 esc 再替换，
      替换用的也是 esc 过的查询词，不会引入未转义的 HTML。 */
