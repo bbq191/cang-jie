@@ -3,7 +3,7 @@
 > **当前状态参考文档**，不是会话日志。本文只回答：**书在设备上怎么流动、每个服务管什么**——数据流、母版库状态、落库通道、内存设计、异步与进度、全部 API 与配置。
 > 分工：**规则**（书该被改成什么样）看 [`EPUB优化规范白皮书.md`](EPUB优化规范白皮书.md)；**引擎实现**（清洗、脚注、图片、PDF 解析的函数与常量）看 [`bookconv优化白皮书.md`](bookconv优化白皮书.md)；**真机历史与坑**看 [`reMarkable书架白皮书.md`](reMarkable书架白皮书.md)。本文碰到这些只写一句并指过去。
 >
-> **写作时点**：2026-09-19 首写；09-20 刷新；09-22 按代码逐字段复核（基线 `OPTIMIZE_VERSION`＝`"15"`）、补漫画页边距（§3.3）；09-23 按代码更新（PDF 转 EPUB、质量门接入）；**2026-09-24 按代码更新**：原件下载与改名、原 PDF 备份 `.pdf-originals/`（§2.5）、下载应答流式转发（§1），并把引擎细节（清洗步骤表、脚注、图片常量、PDF 五步）移交 bookconv 白皮书，本文只留数据流视角；同日第三轮审计后补并发控制（§7.3）、进度节流与建文件夹队列（§7、§4）、PDF 内存（§5）——这些改动只在 host 单测验证，未上真机。
+> **写作时点**：2026-09-19 首写；09-20 刷新；09-22 按代码逐字段复核（基线 `OPTIMIZE_VERSION`＝`"15"`）、补漫画页边距（§3.3）；09-23 按代码更新（PDF 转 EPUB、质量门接入）；**2026-09-24 按代码更新**：原件下载与改名、原 PDF 备份 `.pdf-originals/`（§2.5）、下载应答流式转发（§1），并把引擎细节（清洗步骤表、脚注、图片常量、PDF 五步）移交 bookconv 白皮书，本文只留数据流视角；同日第三轮审计后补并发控制（§7.3）、进度节流与建文件夹队列（§7、§4）、PDF 内存（§5）——这些改动 09-24 已随整轮安装部署上真机，但依赖的并发场景没在真机专门触发过。
 >
 > **规则去哪查**：「能不能这样改、为什么这么定」的规范（xochitl 十条实测渲染规则、两条优化线的现行规则）以 [`EPUB优化规范白皮书.md`](EPUB优化规范白皮书.md) 为准；本文只记"现在怎么运转"，规则只写一句并指过去。
 >
@@ -272,7 +272,7 @@ xochitl `/upload` 约 100MB 硬限（超了断连）。超过体积门时 `Stagi
 | xochitl 上传锁 | `rmsvc_core::xochitl`（进程内 static） | 每次 `GET /documents/<文件夹>` + `POST /upload` | 一次上传；按卷拆分等渲染的间隙不占 | 并发投递落进别人的文件夹 |
 | 配置同步锁 | koreader-serve `ConfigSync::apply_with` | `/config/*` 读写 | 一次应用（含 luajit） | 固定名的临时补丁/合并脚本被别的请求覆盖 |
 
-**09-24 前的两个真 bug**：网页上传把 spool 锁攥到整个请求体收完（WiFi 传大书可达分钟级），期间 inbox 追平与其他上传全卡住，而抓网文压根不拿锁——同名书仍可能互相覆盖；xochitl 的“当前文件夹”是它的全局状态，3 本小书并发投递会落错文件夹。两者都有 host 回归测试（`slow_upload_does_not_block_inbox_processing`、`concurrent_landing_of_same_name_never_clobbers`、`concurrent_uploads_land_in_their_own_folders`），**未上真机**。
+**09-24 前的两个真 bug**：网页上传把 spool 锁攥到整个请求体收完（WiFi 传大书可达分钟级），期间 inbox 追平与其他上传全卡住，而抓网文压根不拿锁——同名书仍可能互相覆盖；xochitl 的“当前文件夹”是它的全局状态，3 本小书并发投递会落错文件夹。两者都有 host 回归测试（`slow_upload_does_not_block_inbox_processing`、`concurrent_landing_of_same_name_never_clobbers`、`concurrent_uploads_land_in_their_own_folders`），已部署，并发场景没在真机专门触发过。
 
 PDF 转 EPUB 转换前查一次“同名 `.epub` 已存在”，转换完（可达分钟级）落地前在落名临界区里**再查一次**，转换期间有人落下同名书就放弃这次转换、原 PDF 不动（第三轮审计当天补上，host 单测覆盖）。**已知缺口（代码未改）**：抓网文的「同步优化」直接调 `optimize()`，不占忙锁也不过网关闸门（网文通常几十 KB）。note-serve 是另一个进程，和 book-serve 同时投 xochitl 时上传锁管不到。
 
