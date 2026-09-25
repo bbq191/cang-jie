@@ -17,6 +17,7 @@
 # 启动策略：单元首次安装 → start；已在跑且二进制/单元有变化 → restart（载入新版，仅一次 cgroup 迁移）；
 #           已在跑且无变化 → 不动；
 #           已装但当前停着（用户在网页关了）→ 保持停着。--start 强制启动，--no-start 不启动。
+#           dm-verity 激活：单元以前装过 → 照上面的规则（二进制变了且在跑才重启）；从没装过 → 退出码 10（跳过，非失败）。
 set -eu
 DIR="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck disable=SC1091
@@ -80,14 +81,24 @@ rc=0
 cj_install_usr_unit "$UNIT" "$UNIT_SRC" - || rc=$?
 rm -f "$UNIT_SRC"
 [ -d "$CJ_STAGE_DIR" ] && rmdir "$CJ_STAGE_DIR" 2>/dev/null || true
+VERITY=0
 case "$rc" in
     0) ;;
-    3) echo "✋ verity 激活：单元没装进 /usr，battop 不会被 systemd 管理。二进制已就位：$DIR/battop"; exit 0 ;;
+    3)
+        VERITY=1
+        if [ "$UNIT_EXISTED" = "0" ]; then
+            # 退出码 10 = 前置条件不满足、这步实际没装上（非失败）；host 侧 deploy-battop.sh 据此记进汇总的"前置条件不满足"栏
+            echo "✋ verity 激活：单元没装进 /usr，battop 不会被 systemd 管理。二进制已就位：$DIR/battop"; exit 10
+        fi
+        # 单元是以前装的（verity 之后才激活）：/usr 动不了，但二进制已换——在跑的服务照下面的规则重启才会用上新版
+        #（2026-09-25 审计：旧版这里直接 exit 0，在跑的 battop 一直用旧 inode）
+        echo "✋ verity 激活：/usr 里此前装的 $UNIT 没法更新，沿用它" ;;
     *) exit 1 ;;
 esac
 
-# 清掉旧 oneshot+timer 模型遗留（老设备上可能还有 battop.timer；它的 enable 链接在 /etc tmpfs，重启本就清）
-if [ -f "$CJ_SYSD/battop.timer" ]; then
+# 清掉旧 oneshot+timer 模型遗留（老设备上可能还有 battop.timer；它的 enable 链接在 /etc tmpfs，重启本就清）。
+# verity 激活时 rootfs 不可写，不去碰（它不会被启用，无碍）
+if [ "$VERITY" = "0" ] && [ -f "$CJ_SYSD/battop.timer" ]; then
     systemctl disable --now battop.timer >/dev/null 2>&1 || true
     rm_timer() { rm -f "$CJ_SYSD/battop.timer"; }
     cj_with_rootfs_rw rm_timer || echo "⚠ 删旧 battop.timer 失败（无碍，它不会被启用）"

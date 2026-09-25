@@ -958,6 +958,17 @@ mkdir -p "$CJ_PENDING_DIR"; : > "$CJ_PENDING_DIR/shelf-qmd"; : > "$CJ_SIM_LOG"
 check "reboot 失败：退出非 0、提示手动 reboot、不去等设备重启/不跑核对" test "$rc" -ne 0 -a -n "$(grep '手动 reboot' "$R/out.txt")" -a -z "$(grep -e '设备已回来' -e '^VERIFY-SUMMARY' "$R/out.txt")"
 check "reboot 失败：补回待生效标记（下次 xovi-apply 仍会判定需要生效）" test -n "$(ls -A "$CJ_PENDING_DIR" 2>/dev/null)"
 
+# battop + dm-verity：单元以前装过 → 换了二进制且在跑就重启用上新版（与 wifi-watch 09-24 同一类）；旧 timer 不碰 rootfs
+new_sandbox; echo BIN1 > "$R/battop.bin"
+( cd "$PKG" && CJ_BATTOP_BIN="$R/battop.bin" run sh deploy-battop.sh 127.0.0.1 ) >/dev/null 2>&1
+echo BIN2 > "$R/battop.bin"; : > "$CJ_SYSD/battop.timer"; : > "$CJ_SIM_LOG"
+CJ_SIM_VERITY=1 bash -c "cd '$PKG' && CJ_BATTOP_BIN='$R/battop.bin' PATH='$STUBS:'\$PATH sh deploy-battop.sh 127.0.0.1" >"$R/out.txt" 2>&1; rc=$?
+check "battop + dm-verity + 单元以前装过：二进制更新后重启服务载入新版，不 remount、退出 0" test "$rc" -eq 0 -a "$(cat "$R/home/root/battop/battop")" = BIN2 -a "$(count_log 'restart battop.service')" = 1 -a "$(count_log remount)" = 0
+check "battop + dm-verity：旧 battop.timer 不去删（rootfs 不可写）" test -f "$CJ_SYSD/battop.timer"
+new_sandbox; echo BIN1 > "$R/battop.bin"
+CJ_SIM_VERITY=1 bash -c "cd '$PKG' && PATH='$STUBS:'\$PATH && . ./lib.sh && HOST=127.0.0.1 && CJ_BATTOP_BIN='$R/battop.bin' run_step battop sh ./deploy-battop.sh 127.0.0.1 >/dev/null 2>&1; echo \"D=\$DONE|N=\$NOTAPPL\"" >"$R/out.txt" 2>&1
+check "run_step：battop 在 dm-verity 下单元从没装过 → 记为\"前置条件不满足\"而不是已安装" test -n "$(grep '^D=|N=' "$R/out.txt")" -a -n "$(grep '^   battop：dm-verity' "$R/out.txt")"
+
 # ═══════════════════════════ 5. 静态守卫 / 清单对称 ═══════════════════════════
 section "静态守卫"
 cd "$REPO" || exit 1

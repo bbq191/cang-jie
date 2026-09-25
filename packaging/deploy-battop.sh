@@ -39,4 +39,8 @@ push_verified "$DIR/install.sh" "$DEST/install.sh"
 push_devlib "$DEST"
 
 echo "== 设备端安装 =="
-rssh "sh $(shquote "$DEST/install.sh")"
+# 设备端退出码 10 = dm-verity 激活、单元从没装过、这步实际没装上（非失败，汇总里记"前置条件不满足"）
+DEV_RC=0
+rssh "sh $(shquote "$DEST/install.sh")" || DEV_RC=$?
+[ "$DEV_RC" = 0 ] || [ "$DEV_RC" = 10 ] || exit "$DEV_RC"
+if [ "$DEV_RC" = 10 ]; then step_skipped "dm-verity 激活，battop.service 没法装进 /usr"; fi
