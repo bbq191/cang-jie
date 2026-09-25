@@ -20,7 +20,9 @@ use inotify::{EventMask, Inotify, WatchMask};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-/// 两次轮换的最短间隔：同一次休眠里 xochitl 若重复读，只算一次。
+/// 两次轮换的最短间隔：同一次休眠里 xochitl 若重复读，只算一次。按**含休眠**的开机时长（`/proc/uptime`，
+/// CLOCK_BOOTTIME）计：09-25 前用 `Instant`（CLOCK_MONOTONIC，休眠时不走）——休眠几小时后唤醒、10 秒内又
+/// 按电源键休眠，单调时钟只走了几秒，这次读图被当成"同一次休眠的重复读"跳过，下次休眠又显示同一张。
 const MIN_ROLL_GAP: Duration = Duration::from_secs(10);
 /// 建监听失败（目录还没建好等）时的重试间隔上下限。
 const RETRY_MIN: Duration = Duration::from_secs(5);
@@ -31,9 +33,18 @@ pub fn is_sleep_read(mask: EventMask, name: Option<&std::ffi::OsStr>, current_na
     mask.contains(EventMask::CLOSE_NOWRITE) && !mask.contains(EventMask::ISDIR) && name == Some(current_name)
 }
 
-/// 距上次轮换够不够久（`last=None` 表示还没轮换过）。
-pub fn gap_ok(last: Option<Instant>, now: Instant) -> bool {
-    last.is_none_or(|t| now.duration_since(t) >= MIN_ROLL_GAP)
+/// 距上次轮换够不够久（`last=None` 表示还没轮换过）。时刻为含休眠的开机秒数（见 [`MIN_ROLL_GAP`]）。
+pub fn gap_ok(last: Option<f64>, now: f64) -> bool {
+    last.is_none_or(|t| now - t >= MIN_ROLL_GAP.as_secs_f64())
+}
+
+/// `/proc/uptime` 第一列（含休眠）；读不到（非 Linux 测试环境等）退回进程内单调时钟——只影响去重判定。
+fn boottime_secs() -> f64 {
+    static START: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+    std::fs::read_to_string("/proc/uptime")
+        .ok()
+        .and_then(|s| s.split_whitespace().next().and_then(|x| x.parse::<f64>().ok()))
+        .unwrap_or_else(|| START.get_or_init(Instant::now).elapsed().as_secs_f64())
 }
 
 /// 监听到出错为止（正常情况下永不返回）。
@@ -44,14 +55,18 @@ fn watch_once(store: &WallpaperStore, bus: &rmsvc_core::events::EventBus) -> Res
     let mut ino = Inotify::init().map_err(|e| format!("inotify 初始化失败: {e}"))?;
     ino.watches().add(dir, WatchMask::CLOSE_NOWRITE).map_err(|e| format!("监听 {} 失败: {e}", dir.display()))?;
     let mut buf = [0u8; 1024];
-    let mut last: Option<Instant> = None;
+    let mut last: Option<f64> = None;
     loop {
         let events = ino.read_events_blocking(&mut buf).map_err(|e| format!("读 inotify 事件失败: {e}"))?;
         let hit = events.into_iter().any(|ev| is_sleep_read(ev.mask, ev.name, &current_name));
-        if !hit || !gap_ok(last, Instant::now()) {
+        if !hit {
             continue;
         }
-        last = Some(Instant::now());
+        let now = boottime_secs();
+        if !gap_ok(last, now) {
+            continue;
+        }
+        last = Some(now);
         match store.roll() {
             Ok(Some(n)) => {
                 println!("[wallpaper-serve] 休眠屏已读 → 轮换到 {n}");
@@ -68,7 +83,12 @@ pub fn spawn(store: Arc<WallpaperStore>, bus: Arc<rmsvc_core::events::EventBus>)
         let mut wait = RETRY_MIN;
         loop {
             let _ = store.ensure(); // 目录不在就建上，免得监听一直失败
+            let started = Instant::now();
             if let Err(e) = watch_once(&store, &bus) {
+                // 监听正常跑过一阵才出错：是新的一次故障，退避从头算（此前退避只增不减）。
+                if started.elapsed() >= RETRY_MAX {
+                    wait = RETRY_MIN;
+                }
                 eprintln!("[wallpaper-serve] {e}，{}s 后重试", wait.as_secs());
             }
             std::thread::sleep(wait);
@@ -94,10 +114,17 @@ mod tests {
 
     #[test]
     fn repeated_reads_within_gap_roll_once() {
-        let t0 = Instant::now();
+        let t0 = 1_000.0;
         assert!(gap_ok(None, t0));
-        assert!(!gap_ok(Some(t0), t0 + Duration::from_secs(3)));
-        assert!(gap_ok(Some(t0), t0 + MIN_ROLL_GAP));
+        assert!(!gap_ok(Some(t0), t0 + 3.0));
+        assert!(gap_ok(Some(t0), t0 + MIN_ROLL_GAP.as_secs_f64()));
+    }
+
+    #[test]
+    fn boottime_is_positive_and_monotone() {
+        let a = boottime_secs();
+        let b = boottime_secs();
+        assert!(a > 0.0 && b >= a);
     }
 
     /// 真 inotify：别人读完 current.png → 轮换；本服务写 current.png、读池图 → 不触发；同一次休眠重复读只轮换一次。
