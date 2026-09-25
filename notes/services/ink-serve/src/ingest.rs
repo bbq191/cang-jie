@@ -110,7 +110,10 @@ pub fn ingest_doc(lib: &Path, crops_dir: &Path, db: &BookDb, cfg: &IngestConfig,
                         Err(err) => errors.push(format!("{page_id}: {err}")),
                     }
                 }
-                book.page_mtimes.insert(page_id.clone(), *mtime);
+                // mtime 只到秒：这一秒里读完之后 xochitl 又写了一次，mtime 还是同一个秒数，下次比较"没变"就漏了。
+                // 页的修改时间落在当前这一秒（或更晚）时少记一秒，下次事件再扫一遍（合并幂等），之后正常记下
+                // （2026-09-25 第四轮审计；条目库格式不变）。
+                book.page_mtimes.insert(page_id.clone(), if *mtime >= now { mtime.saturating_sub(1) } else { *mtime });
             }
         },
     )?;
@@ -183,17 +186,40 @@ mod tests {
         std::fs::write(lib.join(u).join("c65fa2ae-7070-4b33-b367-1810bd35632c.rm"), include_bytes!("../../../testdata/renggu/page.rm")).unwrap();
         let cfg = IngestConfig::default();
         assert_eq!(candidate_docs(&lib), vec![u.to_string()]);
-        let s = ingest_doc(&lib, &crops, &db, &cfg, u, 1).unwrap().unwrap();
+        let t0 = Doc::new(&lib, u).annotated_pages()[0].1 + 10; // "现在"晚于页修改时间（同一秒的情形见下一条测试）
+        let s = ingest_doc(&lib, &crops, &db, &cfg, u, t0).unwrap().unwrap();
         assert_eq!(s.pages, 1);
         let book = db.load(u).unwrap();
         assert_eq!((book.title.as_str(), book.chapters.len(), book.entries.len()), ("人骨拼圖", 0, 0), "没 .epub 文件 → 无目录；墓碑页零条目");
         assert_eq!(book.page_mtimes.len(), 1);
         // 再来一次：页没变 → 零页
-        let s2 = ingest_doc(&lib, &crops, &db, &cfg, u, 2).unwrap().unwrap();
+        let s2 = ingest_doc(&lib, &crops, &db, &cfg, u, t0 + 1).unwrap().unwrap();
         assert_eq!(s2, DocStats::default());
         // 非 EPUB / 回收站 → None（这本书条目库里本来就是 0 条，revoke_stale 无事可做）
         std::fs::write(lib.join(format!("{u}.metadata")), r#"{"visibleName":"人骨拼圖","type":"DocumentType","parent":"trash"}"#).unwrap();
         assert!(ingest_doc(&lib, &crops, &db, &cfg, u, 3).unwrap().is_none());
+    }
+
+    /// 页在当前这一秒刚改过：先少记一秒，下次事件再扫一遍（防同一秒内的第二次写入被漏掉），之后正常记下。
+    #[test]
+    fn page_modified_in_the_current_second_is_rescanned_once() {
+        let t = tempfile::tempdir().unwrap();
+        let lib = t.path().join("xochitl");
+        let crops = t.path().join("crops");
+        std::fs::create_dir_all(&crops).unwrap();
+        let db = BookDb::new(t.path().join("books"));
+        db.ensure().unwrap();
+        let u = "3eb5dece-5e28-4969-8926-c8973d49020d";
+        std::fs::create_dir_all(lib.join(u)).unwrap();
+        std::fs::write(lib.join(format!("{u}.metadata")), r#"{"visibleName":"x","type":"DocumentType","parent":""}"#).unwrap();
+        std::fs::write(lib.join(format!("{u}.content")), include_str!("../../../testdata/renggu/book.content")).unwrap();
+        std::fs::write(lib.join(u).join("c65fa2ae-7070-4b33-b367-1810bd35632c.rm"), include_bytes!("../../../testdata/renggu/page.rm")).unwrap();
+        let mt = Doc::new(&lib, u).annotated_pages()[0].1;
+        let cfg = IngestConfig::default();
+        assert_eq!(ingest_doc(&lib, &crops, &db, &cfg, u, mt).unwrap().unwrap().pages, 1);
+        assert_eq!(ingest_doc(&lib, &crops, &db, &cfg, u, mt + 5).unwrap().unwrap().pages, 1, "同一秒记的，下次再扫一遍");
+        assert_eq!(ingest_doc(&lib, &crops, &db, &cfg, u, mt + 6).unwrap().unwrap().pages, 0, "之后正常跳过");
+        assert_eq!(db.load(u).unwrap().page_mtimes.values().copied().collect::<Vec<_>>(), [mt]);
     }
 
     fn seeded_entry(id: &str, status: Status) -> notecore::model::Entry {
