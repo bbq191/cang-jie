@@ -45,8 +45,15 @@ impl AssetStore for KoStore {
     fn install(&self, name: &str, staged: &Path) -> Result<AssetItem, String> {
         std::fs::create_dir_all(&self.dest).map_err(|e| format!("建目录失败: {e}"))?;
         let dest = self.dest.join(name);
-        let part = self.dest.join(format!(".{name}.part"));
-        std::fs::copy(staged, &part).map_err(|e| format!("落盘失败: {e}"))?;
+        // 半成品名带进程号 + 进程内序号：同名的两次落盘（网页连点两次「加入 KOReader」、批量队列与手动操作撞上）
+        // 此前共用一个 `.<name>.part`，两个 copy 互相截断/交错写，改名出去的是一本坏书。
+        static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let part = self.dest.join(format!(".{name}.{}.{seq}.part", std::process::id()));
+        std::fs::copy(staged, &part).map_err(|e| {
+            let _ = std::fs::remove_file(&part);
+            format!("落盘失败: {e}")
+        })?;
         let bytes = std::fs::metadata(&part).map(|m| m.len()).unwrap_or(0);
         std::fs::rename(&part, &dest).map_err(|e| {
             let _ = std::fs::remove_file(&part);
@@ -277,9 +284,39 @@ mod tests {
         assert!(!out[1].ok && out[1].message == "空文件");
         assert!(!out[2].ok && out[2].message.contains("ttf"));
         assert_eq!(std::fs::read(dir.join("中文 名.ttf")).unwrap(), "字体内容".as_bytes());
-        assert!(!dir.join(".中文 名.ttf.part").exists(), "成功后 .part 应已 rename");
+        assert!(std::fs::read_dir(&dir).unwrap().flatten().all(|e| !e.file_name().to_string_lossy().ends_with(".part")), "成功后 .part 应已 rename");
         assert_eq!(store.list().len(), 1);
         assert!(store.remove("../x").is_err() && store.remove("中文 名.ttf").is_ok());
+    }
+
+    /// 回归：同名的两次落盘同时进行，结果是其中一份的完整字节（不是两份交错/截断的坏文件），且不留半成品。
+    #[test]
+    fn concurrent_installs_of_same_name_never_mix() {
+        let t = tempfile::tempdir().unwrap();
+        let dest = t.path().join("books");
+        let srcs: Vec<(std::path::PathBuf, Vec<u8>)> = (0..4u8)
+            .map(|i| {
+                let p = t.path().join(format!("src{i}"));
+                let bytes = vec![i + 1; 4_000_000 - i as usize * 100_000];
+                std::fs::write(&p, &bytes).unwrap();
+                (p, bytes)
+            })
+            .collect();
+        for _ in 0..5 {
+            let hs: Vec<_> = srcs
+                .iter()
+                .map(|(p, _)| {
+                    let (p, dest) = (p.clone(), dest.clone());
+                    std::thread::spawn(move || KoStore::new(dest, "koreader-book", KO_ANY, "books/").install("同名.epub", &p).unwrap())
+                })
+                .collect();
+            for h in hs {
+                h.join().unwrap();
+            }
+            let got = std::fs::read(dest.join("同名.epub")).unwrap();
+            assert!(srcs.iter().any(|(_, b)| *b == got), "落地文件必须是某一份完整的源（长度 {}）", got.len());
+            assert!(std::fs::read_dir(&dest).unwrap().flatten().all(|e| !e.file_name().to_string_lossy().ends_with(".part")));
+        }
     }
 
     #[test]
