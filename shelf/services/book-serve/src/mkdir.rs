@@ -16,7 +16,7 @@
 //!
 //! 持久化+入队去重+剔除这层通用外壳委托 `pending_queue::PendingQueue<T>`（2026-09-09 消重复，跟
 //! `trash.rs` 是同一份基础设施，见该模块文档）；这里只留领域校验（名字合法性/文件夹是否已存在）。
-use crate::pending_queue::{Handout, PendingQueue};
+use crate::pending_queue::{Handout, PendingQueue, HANDOUT_MAX_ATTEMPTS};
 use serde::{Deserialize, Serialize};
 use rmsvc_core::xochitl::{find_folder_by_name, list_folders};
 use std::path::{Path, PathBuf};
@@ -75,7 +75,7 @@ impl MkdirQueue {
         Ok(n)
     }
 
-    /// 待办文件夹名（QML 代理拉取）：顺手清掉已经真实建出来的（QML 端无需 ack）。
+    /// 待办文件夹名（QML 代理拉取）：顺手清掉已经真实建出来的（QML 端无需 ack），以及交满次数仍没建出来、放弃的。
     /// 返回 (待办文件夹名列表, 本次清掉几条)。
     /// 刚交出去不久（[`HANDOUT_QUIET`]）的名字不再重复返回；返回的名字同时记为"已交出"。
     pub fn pending(&self) -> Result<(Vec<String>, usize), String> {
@@ -84,7 +84,16 @@ impl MkdirQueue {
         // 长轮询每次唤醒都来一轮（2026-09-24 审计）。判据与 `find_folder_by_name` 相同（活的 CollectionType 同名）。
         let folders = std::cell::OnceCell::new();
         let (kept, pruned) = self.q.prune(|p| folders.get_or_init(|| list_folders(&self.lib_dir)).binary_search(&p.name).is_err())?;
-        Ok((self.handout.take(kept.into_iter().map(|p| p.name).collect()), pruned))
+        let taken = self.handout.take(kept.into_iter().map(|p| p.name).collect());
+        let mut dropped = pruned;
+        if !taken.give_up.is_empty() {
+            let (_, n) = self.q.prune(|p| !taken.give_up.contains(&p.name))?;
+            dropped += n;
+            for name in &taken.give_up {
+                println!("[book-serve] 建文件夹《{name}》已交给 xochitl {HANDOUT_MAX_ATTEMPTS} 次仍没建出来，放弃（移出队列）");
+            }
+        }
+        Ok((taken.hand, dropped))
     }
 
     /// 长轮询版 [`Self::pending`]：有待办立即返回；没有就阻塞到入队唤醒或 `wait` 到期（到期返回空列表）。
@@ -162,6 +171,20 @@ mod tests {
         let q2 = MkdirQueue::new(&t.path().join("state"), &lib(&t)).with_handout_quiet(Duration::ZERO);
         assert_eq!(q2.pending().unwrap().0, vec!["甲".to_string()]);
         assert_eq!(q2.pending().unwrap().0, vec!["甲".to_string()]);
+    }
+
+    /// 交满次数仍没建出来的名字放弃（移出队列、算进"清掉几条"让网页刷新），不再每个静默期重交一次。
+    #[test]
+    fn gives_up_after_max_attempts() {
+        let t = tempfile::tempdir().unwrap();
+        let q = MkdirQueue::new(&t.path().join("state"), &lib(&t)).with_handout_quiet(Duration::ZERO);
+        q.add("丁").unwrap();
+        for _ in 0..HANDOUT_MAX_ATTEMPTS {
+            assert_eq!(q.pending().unwrap(), (vec!["丁".to_string()], 0));
+        }
+        assert_eq!(q.pending().unwrap(), (vec![], 1), "交满放弃");
+        assert!(q.list().is_empty(), "移出队列");
+        assert_eq!(q.pending().unwrap(), (vec![], 0));
     }
 
     /// 回归：交出后没建成的名字，长轮询在静默期到期时就重交，而不是等满整个 `wait`（代理发 290 秒）。
