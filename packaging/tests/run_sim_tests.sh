@@ -969,6 +969,16 @@ new_sandbox; echo BIN1 > "$R/battop.bin"
 CJ_SIM_VERITY=1 bash -c "cd '$PKG' && PATH='$STUBS:'\$PATH && . ./lib.sh && HOST=127.0.0.1 && CJ_BATTOP_BIN='$R/battop.bin' run_step battop sh ./deploy-battop.sh 127.0.0.1 >/dev/null 2>&1; echo \"D=\$DONE|N=\$NOTAPPL\"" >"$R/out.txt" 2>&1
 check "run_step：battop 在 dm-verity 下单元从没装过 → 记为\"前置条件不满足\"而不是已安装" test -n "$(grep '^D=|N=' "$R/out.txt")" -a -n "$(grep '^   battop：dm-verity' "$R/out.txt")"
 
+# chrony-boot-wakelock：收到 TERM（关机/重启时 systemd 发）要放锁并**退出**，不能接着轮询到 120 秒
+WL="$R/wl"; mkdir -p "$WL/bin"; : > "$WL/lock"; : > "$WL/unlock"
+printf '#!/bin/sh\necho no\n' > "$WL/bin/timedatectl"; chmod +x "$WL/bin/timedatectl"
+WL_CMD="$(sed -n '/^ExecStart=/,/[^\\]$/p' "$PKG/chrony-boot-wakelock.service" | sed -e 's/^ExecStart=\/bin\/sh -c .//' -e 's/\\$//' | tr -d '\n' | sed -e "s/'\$//" -e "s#/sys/power/wake_lock#$WL/lock#g" -e "s#/sys/power/wake_unlock#$WL/unlock#g")"
+PATH="$WL/bin:$PATH" sh -c "$WL_CMD" & wl_pid=$!
+sleep 0.5; kill -TERM "$wl_pid" 2>/dev/null
+wl_gone=0; for _i in 1 2 3 4 5 6 7 8; do kill -0 "$wl_pid" 2>/dev/null || { wl_gone=1; break; }; sleep 0.5; done
+kill -KILL "$wl_pid" 2>/dev/null; wait "$wl_pid" 2>/dev/null
+check "chrony-boot-wakelock：拿到锁；收到 TERM 后几秒内退出（不再轮询到超时）并放锁" test "$(cat "$WL/lock")" = cangjie-chrony-boot -a "$wl_gone" = 1 -a "$(cat "$WL/unlock")" = cangjie-chrony-boot
+
 # ═══════════════════════════ 5. 静态守卫 / 清单对称 ═══════════════════════════
 section "静态守卫"
 cd "$REPO" || exit 1
