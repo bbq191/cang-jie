@@ -96,6 +96,58 @@ fn triage(s: &State, r: &mut Request<'_>, target: Status) -> ApiResult {
     edit_entry(s, r.param("uuid"), r.param("id"), |e| e.set_triage(target, now))
 }
 
+/// 每条条目保留的转写草稿份数（最新在前）。
+const MAX_DRAFTS: usize = 10;
+
+/// 通用改字端点（`POST /books/{uuid}/entries/{id}`）的字段规则：网页改字/问题/去处，transcribe-serve 写草稿（带样式建议），
+/// mind-serve 写回答。抽成函数便于单测。
+fn patch_entry(e: &mut Entry, j: &serde_json::Value, now: u64) -> Result<(), String> {
+    // 终态守卫（2026-09-09 审计补）：这条通用改字端点原来不检查状态，能把已"跳过/撤销/
+    // 删除"的条目通过 apply_marked_text/写草稿悄悄拉回 Draft，绕开 set_triage/restore
+    // 明文规定的业务规则——先恢复（`/restore`）才能再改。
+    if e.is_terminal() {
+        return Err("这条已跳过/撤销/删除，不能再改，请先在回收站里恢复".to_string());
+    }
+    // 用户直接在网页文本框改字：跟转写草稿写回同一套行首标记规则（`notecore::model::Entry::
+    // apply_marked_text`）——`-`/`1.`/`口`/`##`/`### ` 都认，样式不再靠单独的下拉手动选
+    // （整理区第二轮反馈点 1，2026-09-08，见白皮书 §03u）。
+    if let Some(t) = j.get("text").and_then(|v| v.as_str()) {
+        e.apply_marked_text(t, now);
+    }
+    let draft = j.get("draft").and_then(|v| serde_json::from_value::<Draft>(v.clone()).ok());
+    // 随草稿带来的样式（转写结果的行首标记）只是建议：条目已经有人校对过的文字时不动它的样式——
+    // 补了几笔触发的再转写不能把用户定稿那条的圆点/编号改掉（增量规则"校对文本永不被覆盖"，
+    // 样式是它的一部分；2026-09-25 第四轮审计）。
+    let style_is_suggestion = draft.is_some() && e.text.is_some();
+    if let Some(v) = j.get("style").and_then(|v| serde_json::from_value::<Style>(v.clone()).ok()).filter(|_| !style_is_suggestion) {
+        e.style = v;
+    }
+    if let Some(d) = draft {
+        e.drafts.insert(0, d);
+        // 草稿只留最近几份：每补几笔/每点一次「重新转写」都会加一份，不设上限条目库会一直长，每次写回都要重写整本。
+        e.drafts.truncate(MAX_DRAFTS);
+        if e.text.is_none() {
+            e.status = Status::Draft;
+        }
+    }
+    if let Some(a) = j.get("answer") {
+        e.answer = serde_json::from_value::<Answer>(a.clone()).ok();
+    }
+    // 「问AI」勾选框 + 问题输入框（二期按条目单发，mind-serve 触发的动作端点另开，见白皮书 §03n）。
+    if let Some(v) = j.get("askAi").and_then(|v| v.as_bool()) {
+        e.ask_ai = v;
+    }
+    if let Some(v) = j.get("question") {
+        e.question = v.as_str().filter(|s| !s.trim().is_empty()).map(str::to_string);
+    }
+    // 落设备笔记本 / 落 Obsidian / 两处都要（三期），见 notecore::model::Destination。
+    if let Some(v) = j.get("destination").and_then(|v| serde_json::from_value::<Destination>(v.clone()).ok()) {
+        e.destination = v;
+    }
+    e.updated = now;
+    Ok(())
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let bind_addr = service::parse_bind(&args, SPEC.default_bind);
@@ -159,45 +211,7 @@ fn main() {
             let (uuid, id) = (r.param("uuid").to_string(), r.param("id").to_string());
             let j = r.json()?;
             let now = rmsvc_core::clock::now_secs();
-            edit_entry(s, &uuid, &id, |e| {
-                // 终态守卫（2026-09-09 审计补）：这条通用改字端点原来不检查状态，能把已"跳过/撤销/
-                // 删除"的条目通过 apply_marked_text/写草稿悄悄拉回 Draft，绕开 set_triage/restore
-                // 明文规定的业务规则——先恢复（`/restore`）才能再改。
-                if e.is_terminal() {
-                    return Err("这条已跳过/撤销/删除，不能再改，请先在回收站里恢复".to_string());
-                }
-                // 用户直接在网页文本框改字：跟转写草稿写回同一套行首标记规则（`notecore::model::Entry::
-                // apply_marked_text`）——`-`/`1.`/`口`/`##`/`### ` 都认，样式不再靠单独的下拉手动选
-                // （整理区第二轮反馈点 1，2026-09-08，见白皮书 §03u）。
-                if let Some(t) = j.0.get("text").and_then(|v| v.as_str()) {
-                    e.apply_marked_text(t, now);
-                }
-                if let Some(v) = j.0.get("style").and_then(|v| serde_json::from_value::<Style>(v.clone()).ok()) {
-                    e.style = v;
-                }
-                if let Some(d) = j.0.get("draft").and_then(|v| serde_json::from_value::<Draft>(v.clone()).ok()) {
-                    e.drafts.insert(0, d);
-                    if e.text.is_none() {
-                        e.status = Status::Draft;
-                    }
-                }
-                if let Some(a) = j.0.get("answer") {
-                    e.answer = serde_json::from_value::<Answer>(a.clone()).ok();
-                }
-                // 「问AI」勾选框 + 问题输入框（二期按条目单发，mind-serve 触发的动作端点另开，见白皮书 §03n）。
-                if let Some(v) = j.0.get("askAi").and_then(|v| v.as_bool()) {
-                    e.ask_ai = v;
-                }
-                if let Some(v) = j.0.get("question") {
-                    e.question = v.as_str().filter(|s| !s.trim().is_empty()).map(str::to_string);
-                }
-                // 落设备笔记本 / 落 Obsidian / 两处都要（三期），见 notecore::model::Destination。
-                if let Some(v) = j.0.get("destination").and_then(|v| serde_json::from_value::<Destination>(v.clone()).ok()) {
-                    e.destination = v;
-                }
-                e.updated = now;
-                Ok(())
-            })
+            edit_entry(s, &uuid, &id, |e| patch_entry(e, &j.0, now))
         }))
         .post("/books/{uuid}/entries/{id}/request", bind(&st, |s, r| triage(s, r, Status::Pending)))
         .post("/books/{uuid}/entries/{id}/skip", bind(&st, |s, r| triage(s, r, Status::Skipped)))
@@ -233,5 +247,46 @@ fn main() {
     if let Err(e) = service::run(&SPEC, &bind_addr, &paths, router) {
         eprintln!("[ink-serve] {e}");
         std::process::exit(1);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn entry(text: Option<&str>, style: Style) -> Entry {
+        let mut e: Entry = serde_json::from_str(r#"{"id":"e","page":"p","page_index":0,"created":0,"updated":0,"status":"pending"}"#).unwrap();
+        e.text = text.map(str::to_string);
+        e.style = style;
+        e
+    }
+    fn draft_body(text: &str, style: &str) -> serde_json::Value {
+        serde_json::json!({"draft": {"text": text, "backend": "b", "at": 1, "hash": "h"}, "style": style})
+    }
+
+    /// 回归：补笔触发的再转写（带样式建议）不改已校对条目的样式；没校对过的照常采纳。
+    #[test]
+    fn draft_style_suggestion_never_overrides_reviewed_entry() {
+        let mut reviewed = entry(Some("我定稿的正文"), Style::Body);
+        reviewed.status = Status::Reviewed;
+        patch_entry(&mut reviewed, &draft_body("查作者", "bullet"), 5).unwrap();
+        assert_eq!((reviewed.style, reviewed.status, reviewed.text.as_deref()), (Style::Body, Status::Reviewed, Some("我定稿的正文")));
+        assert_eq!(reviewed.drafts.len(), 1, "草稿照收，作为建议");
+
+        let mut pending = entry(None, Style::Body);
+        patch_entry(&mut pending, &draft_body("查作者", "bullet"), 5).unwrap();
+        assert_eq!((pending.style, pending.status), (Style::Bullet, Status::Draft));
+    }
+
+    #[test]
+    fn drafts_are_capped_newest_first_and_terminal_is_refused() {
+        let mut e = entry(None, Style::Body);
+        for i in 0..MAX_DRAFTS + 5 {
+            patch_entry(&mut e, &draft_body(&format!("第{i}份"), "body"), i as u64).unwrap();
+        }
+        assert_eq!(e.drafts.len(), MAX_DRAFTS);
+        assert_eq!(e.drafts[0].text, format!("第{}份", MAX_DRAFTS + 4), "最新的在前");
+        e.status = Status::Archived;
+        assert!(patch_entry(&mut e, &serde_json::json!({"text": "x"}), 99).is_err());
     }
 }
