@@ -9,7 +9,7 @@
 //!
 //! 持久化+入队去重+剔除这层通用外壳委托 `pending_queue::PendingQueue<T>`（2026-09-09 消重复，跟
 //! `mkdir.rs` 是同一份基础设施，见该模块文档）；这里只留领域校验（uuid 形状/名字核对/是否已在回收站）。
-use crate::pending_queue::{Handout, PendingQueue};
+use crate::pending_queue::{Handout, PendingQueue, HANDOUT_MAX_ATTEMPTS};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -63,10 +63,20 @@ impl TrashQueue {
         Ok(n)
     }
 
-    /// 待办 uuid（QML 代理拉取）：顺手清掉已进回收站 / 已不存在的。返回 (待办 uuid 列表, 本次清掉几条)。
+    /// 待办 uuid（QML 代理拉取）：顺手清掉已进回收站 / 已不存在的，以及交满 [`HANDOUT_MAX_ATTEMPTS`] 次仍没进回收站、
+    /// 放弃的（xochitl 的 `entryForId` 拿不到条目但 `.metadata` 还在时，代理每次都执行失败）。返回 (待办 uuid 列表, 本次清掉几条)。
     pub fn pending(&self) -> Result<(Vec<String>, usize), String> {
         let (kept, pruned) = self.q.prune(|p| matches!(self.meta(&p.uuid), Some((_, parent)) if parent != "trash"))?;
-        Ok((self.handout.take(kept.into_iter().map(|p| p.uuid).collect()), pruned))
+        let taken = self.handout.take(kept.iter().map(|p| p.uuid.clone()).collect());
+        let mut dropped = pruned;
+        if !taken.give_up.is_empty() {
+            let (_, n) = self.q.prune(|p| !taken.give_up.contains(&p.uuid))?;
+            dropped += n;
+            for p in kept.iter().filter(|p| taken.give_up.contains(&p.uuid)) {
+                println!("[book-serve] 《{}》（{}）已交给 xochitl {HANDOUT_MAX_ATTEMPTS} 次仍没进回收站，放弃（移出队列）", p.name, p.uuid);
+            }
+        }
+        Ok((taken.hand, dropped))
     }
 
     /// 长轮询版 [`Self::pending`]：有待办立即返回，没有就睡到入队或 `wait` 到期；`wait` 为零＝立即返回。
@@ -117,6 +127,22 @@ mod tests {
         let (ids, pruned) = q.pending().unwrap();
         assert_eq!((ids, pruned), (vec!["22222222-2222-2222-2222-222222222222".to_string()], 1));
         assert_eq!(q.list().len(), 1);
+    }
+
+    /// xochitl 一直执行不成（.metadata 在、parent 不是 trash）：交满次数后放弃、移出队列，不再每 30 秒重交一次。
+    #[test]
+    fn gives_up_on_uuid_xochitl_never_trashes() {
+        let t = tempfile::tempdir().unwrap();
+        let q = TrashQueue::new(&t.path().join("state"), &lib(&t)).with_handout_quiet(Duration::ZERO);
+        q.add("22222222-2222-2222-2222-222222222222", "用户的书").unwrap();
+        for _ in 0..HANDOUT_MAX_ATTEMPTS {
+            assert_eq!(q.pending().unwrap().0.len(), 1);
+        }
+        assert_eq!(q.pending().unwrap(), (vec![], 1), "交满放弃，算一条清掉");
+        assert!(q.list().is_empty());
+        // 重新入队（用户再点一次）从零计数
+        q.add("22222222-2222-2222-2222-222222222222", "用户的书").unwrap();
+        assert_eq!(q.pending().unwrap().0.len(), 1);
     }
 
     #[test]

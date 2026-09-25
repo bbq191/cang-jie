@@ -155,6 +155,10 @@ pub fn han_bmp_coverage(b: &[u8]) -> Option<usize> {
                 }
                 let lo = sc.max(HAN_BMP_START);
                 let hi = ec.min(HAN_BMP_END);
+                // 损坏的组 startCharCode > endCharCode：`hi - lo` 会下溢（debug panic、release 回绕成天文数字直接报满 100%）。
+                if lo > hi {
+                    continue;
+                }
                 count += (hi - lo + 1) as usize;
                 if count >= HAN_BMP_TOTAL {
                     break;
@@ -231,6 +235,26 @@ mod tests {
         for _ in 0..seg_count { sub.extend_from_slice(&0u16.to_be_bytes()); } // idRangeOffset=0
         let l = sub.len() as u16;
         sub[len_pos..len_pos + 2].copy_from_slice(&l.to_be_bytes());
+        sfnt_with_cmap_sub(&sub)
+    }
+
+    /// format-12 cmap（`groups` = (startChar, endChar)），外面套同样的最小 sfnt。
+    fn font_with_groups(groups: &[(u32, u32)]) -> Vec<u8> {
+        let mut sub: Vec<u8> = Vec::new();
+        sub.extend_from_slice(&12u16.to_be_bytes());
+        sub.extend_from_slice(&0u16.to_be_bytes());
+        sub.extend_from_slice(&((16 + 12 * groups.len()) as u32).to_be_bytes());
+        sub.extend_from_slice(&0u32.to_be_bytes());
+        sub.extend_from_slice(&(groups.len() as u32).to_be_bytes());
+        for (st, en) in groups {
+            sub.extend_from_slice(&st.to_be_bytes());
+            sub.extend_from_slice(&en.to_be_bytes());
+            sub.extend_from_slice(&1u32.to_be_bytes());
+        }
+        sfnt_with_cmap_sub(&sub)
+    }
+
+    fn sfnt_with_cmap_sub(sub: &[u8]) -> Vec<u8> {
         // cmap 头：1 子表，platform 3 enc 1
         let mut cmap: Vec<u8> = Vec::new();
         cmap.extend_from_slice(&0u16.to_be_bytes());
@@ -238,7 +262,7 @@ mod tests {
         cmap.extend_from_slice(&3u16.to_be_bytes());
         cmap.extend_from_slice(&1u16.to_be_bytes());
         cmap.extend_from_slice(&12u32.to_be_bytes()); // 子表偏移=头后
-        cmap.extend_from_slice(&sub);
+        cmap.extend_from_slice(sub);
         // sfnt：1 张表 cmap
         let mut f = Vec::new();
         f.extend_from_slice(b"\x00\x01\x00\x00");
@@ -271,6 +295,13 @@ mod tests {
         assert_eq!(han_coverage_pct(&f), Some(100));
         assert!(t0.elapsed() < std::time::Duration::from_secs(1), "够数即停，不做 3000×2 万次迭代");
     }
+    /// 回归：format-12 里 start > end 的损坏组不再下溢（debug panic / release 报满 100%），跳过即可。
+    #[test]
+    fn format12_counts_groups_and_skips_inverted_ones() {
+        assert_eq!(han_bmp_coverage(&font_with_groups(&[(0x4E00, 0x4E09)])), Some(10));
+        assert_eq!(han_bmp_coverage(&font_with_groups(&[(0x5000, 0x4E10), (0x4E00, 0x4E00)])), Some(1));
+    }
+
     #[test]
     fn parses_family_preferring_typographic_windows_name() {
         let f = tiny_font();

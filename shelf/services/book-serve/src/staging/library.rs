@@ -64,7 +64,7 @@ impl Staging {
     /// 启动时修正上一个进程被打断留下的状态（崩溃 / OOM / 被 systemd 杀 / 断电）：
     /// - 边车里停在 `pending` 的优化 / 落库记录 → 改成 `failed`（否则界面永远显示"处理中"，而实际早没有线程在跑）；
     /// - 渲染自检停在 `pending` → `timeout`（自检线程随进程没了；xochitl 可能延后渲染，打开一次就有页数）；
-    /// - `.<书名>.optimizing.tmp` 半成品（点前缀，列表看不见，可达数百 MB）→ 删除。
+    /// - `.<书名>.optimizing.tmp` 半成品、跨分区入库的 `.<…>.landing.tmp`（点前缀，列表看不见，可达数百 MB）→ 删除。
     ///
     /// 只在启动时调用（此时不可能有操作在跑）。返回 (修正的记录数, 清掉的半成品数)。
     pub fn recover_interrupted(&self) -> (usize, usize) {
@@ -73,7 +73,7 @@ impl Staging {
         let (mut fixed, mut tmps) = (0, 0);
         for e in rd.flatten() {
             let name = e.file_name().to_string_lossy().to_string();
-            if name.starts_with('.') && name.ends_with(".optimizing.tmp") {
+            if name.starts_with('.') && (name.ends_with(".optimizing.tmp") || name.ends_with(super::intake::LANDING_TMP_SUFFIX)) {
                 if std::fs::remove_file(e.path()).is_ok() {
                     tmps += 1;
                 }
@@ -230,19 +230,17 @@ impl Staging {
     }
     // ───────────── 查 / 删 ─────────────
 
+    /// 删除一本书（连同落库边车）。删除期间**占着忙锁**：此前只是先查"忙不忙"再删，查完到删之间别的请求可能刚好
+    /// 开始优化/落库/改名，后台线程随即对着一个已删的文件跑（2026-09-25 第四轮审计）。
     pub fn remove(&self, name: &str) -> Result<(), String> {
-        if self.is_busy(name) {
+        let p = self.path_of(name)?;
+        if !self.try_start_busy(name) {
             return Err(busy_err(name, "再删除"));
         }
-        self.remove_unlocked(name)
-    }
-
-    /// 实际删除，不查忙锁——[`Self::remove`] 自己查完忙锁之后调这个真正干活；外部一律走
-    /// [`Self::remove`]，不要绕过忙锁检查直接调这个。
-    pub(super) fn remove_unlocked(&self, name: &str) -> Result<(), String> {
-        let p = self.path_of(name)?;
         sidecar::remove(&p);
-        std::fs::remove_file(&p).map_err(|e| format!("删除失败: {e}"))
+        let r = std::fs::remove_file(&p).map_err(|e| format!("删除失败: {e}"));
+        self.end_busy(name);
+        r
     }
 
     /// 所在分区剩余空间（字节，非特权用户可用的那部分，与 `df` 的 Available 同义）；查不到 None。

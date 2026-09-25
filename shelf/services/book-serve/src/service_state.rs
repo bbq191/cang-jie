@@ -35,7 +35,13 @@ pub struct State {
     /// 会被本服务自己的操作改变的部分（inbox 计数、文件夹候选）在操作路径里 [`State::invalidate_status`]
     /// 主动失效；xochitl 是否可达、用户在设备上新建文件夹这类外部变化最多滞后一个 TTL。
     status_cache: TtlCache<serde_json::Value>,
+    /// inbox 文件修改时间静止多久才算"写完了"（见 [`State::process_inbox_counting_deferred`]）。缺省 [`INBOX_SETTLE`]，
+    /// 须小于 inbox 监听的防抖时长（8 秒），写完那次事件触发的追平才不会再被暂缓。
+    pub inbox_settle: Duration,
 }
+
+/// 见 [`State::inbox_settle`]。
+pub const INBOX_SETTLE: Duration = Duration::from_secs(5);
 
 /// `/status` 缓存时长：够挡住"连续几次 refresh"，又短到外部变化（xochitl 上下线）几秒内就能看到。
 const STATUS_TTL: Duration = Duration::from_secs(3);
@@ -63,7 +69,7 @@ impl State {
             .with_reading_direction(reading_direction.clone());
         let trash = TrashQueue::new(&books_state, &paths.xochitl_dir());
         let mkdir = Arc::new(MkdirQueue::new(&books_state, &paths.xochitl_dir()));
-        State { cfg, spool, staging, xochitl, bus: Arc::new(EventBus::new()), trash, comic_margins, mkdir, reading_direction, status_cache: TtlCache::new(STATUS_TTL) }
+        State { cfg, spool, staging, xochitl, bus: Arc::new(EventBus::new()), trash, comic_margins, mkdir, reading_direction, status_cache: TtlCache::new(STATUS_TTL), inbox_settle: INBOX_SETTLE }
     }
 
     pub fn ensure_dirs(&self) -> std::io::Result<()> {
@@ -123,14 +129,31 @@ impl State {
     /// 处理 inbox（scp 丢进来的 / 重试的）：**原样落母版库**（与网页/CLI 同一规则：所有书只落母版库，去向在网页选）。
     /// 非书籍格式进 failed/ 带原因、不反复重试。`only`=只处理该文件。
     pub fn process_inbox(&self, only: Option<&str>) -> Vec<InboxOutcome> {
+        self.process_inbox_counting_deferred(only).0
+    }
+
+    /// 同 [`Self::process_inbox`]，另返回因"还在写"（修改时间离现在不足 [`State::inbox_settle`]）而暂缓的文件数。
+    ///
+    /// **正在写的文件不动**（2026-09-25 第四轮审计）：scp 直接往最终文件名里写，一建出文件就有 CREATE 事件，防抖 8 秒后
+    /// 追平——WiFi 传大书超过 8 秒时，这里会把还在写的文件认领、改名进母版库，写入者手里的 fd 跟着 inode 继续写，
+    /// 母版库里于是出现一本半截书（可被优化/落库，列表判定按半截内容缓存）。写完时的 CLOSE_WRITE 会再触发一轮追平，
+    /// 那时修改时间已经静止超过防抖时长，照常处理。
+    pub fn process_inbox_counting_deferred(&self, only: Option<&str>) -> (Vec<InboxOutcome>, usize) {
         let _g = self.spool.guard();
         let mut out = Vec::new();
-        let Ok(rd) = std::fs::read_dir(self.spool.inbox()) else { return out };
+        let mut deferred = 0;
+        let Ok(rd) = std::fs::read_dir(self.spool.inbox()) else { return (out, 0) };
+        let now = std::time::SystemTime::now();
         for e in rd.flatten() {
             let p = e.path();
             let Some(name) = p.file_name().and_then(|s| s.to_str()).map(|s| s.to_string()) else { continue };
             if !p.is_file() || only.map(|o| o != name).unwrap_or(false) || name.starts_with('.') {
                 continue; // 半成品不动
+            }
+            let fresh = e.metadata().ok().and_then(|m| m.modified().ok()).and_then(|m| now.duration_since(m).ok()).is_some_and(|age| age < self.inbox_settle);
+            if fresh {
+                deferred += 1;
+                continue;
             }
             let Some(work) = self.spool.claim(&name) else { continue };
             let res = if formats::has_ext(&name, BOOK_EXTS) { self.staging.stage_from_path(&name, &work) } else { Err(staging::reject_message()) };
@@ -151,7 +174,7 @@ impl State {
                 self.bus.publish("books", "staging");
             }
         }
-        out
+        (out, deferred)
     }
 }
 
@@ -164,7 +187,8 @@ mod tests {
         let t = tempfile::tempdir().unwrap();
         let h = t.path().to_str().unwrap().to_string();
         let paths = Paths::resolve(move |k| if k == "HOME" || k == "XDG_RUNTIME_DIR" { Some(h.clone()) } else { None });
-        let st = State::new(&paths);
+        let mut st = State::new(&paths);
+        st.inbox_settle = Duration::ZERO;
         st.ensure_dirs().unwrap();
         // 2026-09-18 起母版库只收 EPUB/PDF（cbz 已随"仅 KOReader"档退役），接受项夹具改用 .epub。
         std::fs::write(st.spool.inbox().join("b.epub"), b"x").unwrap();
@@ -184,7 +208,8 @@ mod tests {
         let cfg = paths.service_config("book");
         std::fs::create_dir_all(cfg.parent().unwrap()).unwrap();
         std::fs::write(&cfg, r#"{"xochitlHost":"127.0.0.1:9"}"#).unwrap();
-        let st = State::new(&paths);
+        let mut st = State::new(&paths);
+        st.inbox_settle = Duration::ZERO;
         st.ensure_dirs().unwrap();
         st
     }
@@ -209,13 +234,34 @@ mod tests {
         assert_eq!(st.status()["spool"]["failed"], 0);
     }
 
+    /// 回归：还在写的文件（修改时间离现在不足 settle）不认领，写完静止后照常入库。
+    #[test]
+    fn inbox_defers_files_still_being_written() {
+        let t = tempfile::tempdir().unwrap();
+        let h = t.path().to_str().unwrap().to_string();
+        let paths = Paths::resolve(move |k| if k == "HOME" || k == "XDG_RUNTIME_DIR" { Some(h.clone()) } else { None });
+        let st = State::new(&paths);
+        st.ensure_dirs().unwrap();
+        let f = st.spool.inbox().join("scp.epub");
+        std::fs::write(&f, b"half").unwrap();
+        let (out, deferred) = st.process_inbox_counting_deferred(None);
+        assert!(out.is_empty() && deferred == 1, "刚写的文件暂缓");
+        assert!(f.exists() && !st.staging.has("scp.epub"));
+        let old = std::time::SystemTime::now() - INBOX_SETTLE - Duration::from_secs(1);
+        std::fs::File::options().write(true).open(&f).unwrap().set_modified(old).unwrap();
+        let (out, deferred) = st.process_inbox_counting_deferred(None);
+        assert_eq!((out.len(), deferred), (1, 0));
+        assert!(st.staging.has("scp.epub"));
+    }
+
     #[test]
     fn inbox_rejects_retired_host_convertible_exts() {
         // 2026-09-17 EPUB 线架构调整：azw3/mobi/fb2/txt 不再自动转 EPUB，母版库直接拒收。
         let t = tempfile::tempdir().unwrap();
         let h = t.path().to_str().unwrap().to_string();
         let paths = Paths::resolve(move |k| if k == "HOME" || k == "XDG_RUNTIME_DIR" { Some(h.clone()) } else { None });
-        let st = State::new(&paths);
+        let mut st = State::new(&paths);
+        st.inbox_settle = Duration::ZERO;
         st.ensure_dirs().unwrap();
         for name in ["b.azw3", "b.mobi", "b.fb2", "b.txt"] {
             std::fs::write(st.spool.inbox().join(name), b"x").unwrap();

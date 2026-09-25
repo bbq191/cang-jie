@@ -188,6 +188,16 @@ pub struct SslConfig {
     pub private_key: Vec<u8>,
 }
 
+/// rmsvc-core 补丁（2026-09-25）：accept 返回的错误是否是"跳过这一条接着 accept"的暂时性错误。
+/// 不含 `WouldBlock`/`TimedOut`：监听 socket 被设成非阻塞或带读超时时，那是调用方配置问题，重试只会空转。
+pub(crate) fn accept_error_is_transient(e: &IoError) -> bool {
+    if matches!(e.kind(), IoErrorKind::ConnectionAborted | IoErrorKind::ConnectionReset | IoErrorKind::Interrupted) {
+        return true;
+    }
+    // Linux errno：ENOMEM 12、ENFILE 23、EMFILE 24、EPROTO 71、ENOBUFS 105（accept(2) 列出的暂时性错误）。
+    cfg!(target_os = "linux") && matches!(e.raw_os_error(), Some(12 | 23 | 24 | 71 | 105))
+}
+
 impl Server {
     /// Shortcut for a simple server on a specific address.
     #[inline]
@@ -352,6 +362,17 @@ impl Server {
                         }));
                     }
 
+                    // rmsvc-core 补丁（2026-09-25）：上游遇到任何 accept 错误都 `break`，accept 线程一退，这个 Server
+                    // 从此不再接受连接（进程还活着、systemd 不会拉起）。连接在排队时被对端中止（ECONNABORTED）、
+                    // fd/内存暂时用尽（EMFILE/ENFILE/ENOBUFS/ENOMEM）这类暂时性错误，跳过这一条接着 accept；
+                    // 资源类错误先歇 100ms，免得空转。其余错误照旧退出。
+                    Err(e) if accept_error_is_transient(&e) => {
+                        log::error!("Transient error accepting new client (retrying): {}", e);
+                        if !matches!(e.kind(), IoErrorKind::ConnectionAborted | IoErrorKind::ConnectionReset | IoErrorKind::Interrupted) {
+                            thread::sleep(Duration::from_millis(100));
+                        }
+                        continue;
+                    }
                     Err(e) => {
                         log::error!("Error accepting new client: {}", e);
                         inside_messages.push(e.into());
@@ -454,6 +475,24 @@ impl Drop for Server {
             if let Some(path) = addr.as_pathname() {
                 let _ = std::fs::remove_file(path);
             }
+        }
+    }
+}
+
+#[cfg(test)]
+mod rmsvc_patch_tests {
+    use super::*;
+
+    /// rmsvc-core 补丁：暂时性 accept 错误跳过继续，其余照旧让 accept 线程退出。
+    #[test]
+    fn transient_accept_errors_are_retried() {
+        assert!(accept_error_is_transient(&IoError::from(IoErrorKind::ConnectionAborted)));
+        assert!(accept_error_is_transient(&IoError::from(IoErrorKind::Interrupted)));
+        assert!(!accept_error_is_transient(&IoError::from(IoErrorKind::WouldBlock)), "非阻塞监听重试只会空转");
+        assert!(!accept_error_is_transient(&IoError::from(IoErrorKind::InvalidInput)));
+        if cfg!(target_os = "linux") {
+            assert!(accept_error_is_transient(&IoError::from_raw_os_error(24)), "EMFILE");
+            assert!(!accept_error_is_transient(&IoError::from_raw_os_error(9)), "EBADF 不是暂时性的");
         }
     }
 }

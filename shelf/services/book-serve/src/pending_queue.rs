@@ -72,16 +72,38 @@ impl<T: Clone + Serialize + DeserializeOwned> PendingQueue<T> {
 /// - **不重复交出**：两件事在 xochitl 里都是异步的（`createCollection` / `moveEntriesToTrash` 调完 `.metadata`
 ///   稍晚才落盘），长轮询让代理几乎立刻再来拉，这时仍把同一项交出去就会重复执行。同一个键交出后 `quiet` 内
 ///   不再交；过了还没真实发生才再交一次，等于自带重试。
+/// - **有限次重试**：同一个键最多交出 [`HANDOUT_MAX_ATTEMPTS`] 次；交满了、静默期过了还没真实发生（xochitl 那边一直
+///   执行不成，比如 `entryForId` 拿不到条目但 `.metadata` 还在），就放弃这一项——调用方把它移出队列并记一行日志。
+///   此前没有终止条件，这样的项每个静默期被交出一次、代理每次执行失败写一行日志，永远不停（2026-09-25 第四轮审计）。
 pub struct Handout {
     gen: Mutex<u64>,
     wake: Condvar,
-    handed: Mutex<HashMap<String, Instant>>,
+    /// 键 → (最近一次交出的时刻, 已交出次数)。只保留仍在待办里的键。
+    handed: Mutex<HashMap<String, (Instant, u32)>>,
     quiet: Duration,
+    max_attempts: u32,
+}
+
+/// 同一项最多交给代理几次（见 [`Handout`]）。静默期 15s/30s 下约 1–2.5 分钟后放弃。
+pub const HANDOUT_MAX_ATTEMPTS: u32 = 5;
+
+/// [`Handout::take`] 的结果：这次交出的键 + 交满次数仍没完成、该放弃的键。
+#[derive(Debug, Default, PartialEq)]
+pub struct Taken {
+    pub hand: Vec<String>,
+    pub give_up: Vec<String>,
 }
 
 impl Handout {
     pub fn new(quiet: Duration) -> Handout {
-        Handout { gen: Mutex::new(0), wake: Condvar::new(), handed: Mutex::new(HashMap::new()), quiet }
+        Handout { gen: Mutex::new(0), wake: Condvar::new(), handed: Mutex::new(HashMap::new()), quiet, max_attempts: HANDOUT_MAX_ATTEMPTS }
+    }
+
+    /// 单测用：改最多交出次数。
+    #[cfg(test)]
+    pub fn with_max_attempts(mut self, n: u32) -> Handout {
+        self.max_attempts = n;
+        self
     }
 
     /// 入队后调用：唤醒正在长轮询的代理。
@@ -90,22 +112,39 @@ impl Handout {
         self.wake.notify_all();
     }
 
-    /// 从"仍待办的键"里挑出这次该交出的（去掉静默期内交过的），并把它们记为"已交出"。
-    pub fn take(&self, keys: Vec<String>) -> Vec<String> {
+    /// 从"仍待办的键"里挑出这次该交出的（去掉静默期内交过的），并把它们记为"已交出"；静默期已过、却已经交满次数的
+    /// 放进 `give_up`（不再记录，调用方负责移出队列）。
+    pub fn take(&self, keys: Vec<String>) -> Taken {
         let now = Instant::now();
         let mut handed = rmsvc_core::sync::lock(&self.handed);
-        handed.retain(|k, at| now.duration_since(*at) < self.quiet && keys.contains(k));
-        let mut out = Vec::new();
+        handed.retain(|k, _| keys.contains(k));
+        let mut out = Taken::default();
         for k in keys {
-            if !handed.contains_key(&k) {
-                handed.insert(k.clone(), now);
-                out.push(k);
+            let attempts = match handed.get(&k) {
+                Some(&(at, _)) if now.duration_since(at) < self.quiet => continue,
+                Some(&(_, n)) => n,
+                None => 0,
+            };
+            if attempts >= self.max_attempts {
+                handed.remove(&k);
+                out.give_up.push(k);
+            } else {
+                handed.insert(k.clone(), (now, attempts + 1));
+                out.hand.push(k);
             }
         }
         out
     }
 
+    /// 最早一个"已交出、静默期到了还在队列里就再交一次"的时刻（没有交出过的待办 → `None`）。
+    fn next_retry(&self) -> Option<Instant> {
+        rmsvc_core::sync::lock(&self.handed).values().map(|(at, _)| *at + self.quiet).min()
+    }
+
     /// 长轮询：反复调 `fetch`（返回 (本次该交出的键, 剔除条数)），有结果或 `wait` 到期就返回；`wait` 为零＝不等。
+    /// 睡眠还会在最早一个静默期到期时醒一次：此前只等入队或 `wait` 到期，代理用 290 秒长轮询时，交出后没执行成功的
+    /// 那一项要等满 290 秒才重交，"静默期过了自带重试"名存实亡——建文件夹落库只等 20 秒，重试永远赶不上
+    /// （2026-09-25 第四轮审计）。空闲（没有交出过的待办）时仍然只在入队或到期时醒。
     pub fn wait(&self, wait: Duration, mut fetch: impl FnMut() -> Result<(Vec<String>, usize), String>) -> Result<(Vec<String>, usize), String> {
         let deadline = Instant::now() + wait;
         let mut total_pruned = 0;
@@ -118,8 +157,9 @@ impl Handout {
             if !keys.is_empty() || now >= deadline {
                 return Ok((keys, total_pruned));
             }
+            let wake_at = self.next_retry().map_or(deadline, |r| r.min(deadline));
             let g = rmsvc_core::sync::lock(&self.gen);
-            let _ = self.wake.wait_timeout_while(g, deadline - now, |cur| *cur == seen).unwrap_or_else(|e| e.into_inner());
+            let _ = self.wake.wait_timeout_while(g, wake_at.saturating_duration_since(now), |cur| *cur == seen).unwrap_or_else(|e| e.into_inner());
         }
     }
 }
@@ -147,6 +187,23 @@ mod tests {
         // 新实例指向同一份文件，读到的是磁盘上已经落的内容——证明真的原子写落了盘，不是只在内存里。
         let q2 = PendingQueue::<Item>::new(file);
         assert_eq!(q2.list().len(), 2);
+    }
+
+    /// 有限次重试：交满次数后（静默期已过）放弃，放弃后不再记录；完成（不在待办里）的项清掉计数。
+    #[test]
+    fn handout_gives_up_after_max_attempts() {
+        let h = Handout::new(Duration::ZERO).with_max_attempts(3);
+        let keys = || vec!["a".to_string(), "b".to_string()];
+        for _ in 0..3 {
+            assert_eq!(h.take(keys()), Taken { hand: keys(), give_up: vec![] });
+        }
+        assert_eq!(h.take(vec!["a".to_string()]), Taken { hand: vec![], give_up: vec!["a".to_string()] }, "b 已完成（不在待办里），a 交满放弃");
+        assert!(h.next_retry().is_none(), "放弃/完成的项不再占计时");
+        assert_eq!(h.take(vec!["a".to_string()]).hand, vec!["a".to_string()], "放弃后若又被重新入队，从零计");
+        // 静默期内不交也不算次数
+        let h = Handout::new(Duration::from_secs(60)).with_max_attempts(1);
+        assert_eq!(h.take(keys()).hand.len(), 2);
+        assert_eq!(h.take(keys()), Taken::default());
     }
 
     #[test]
