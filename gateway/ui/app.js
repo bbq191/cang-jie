@@ -64,6 +64,18 @@ const toast=(msg,kind='bad',ms=4200)=>{if(!msg)return;const t=el('div',{class:'t
   requestAnimationFrame(()=>t.classList.add('show'));
   const kill=()=>{t.classList.remove('show');setTimeout(()=>t.remove(),200)};
   t.onclick=kill;setTimeout(kill,ms)};
+/* 三种对话框（确认 / 输入 / 单选）的公共骨架：遮罩 + 盒子 + 关闭收尾（摘掉键盘监听、移除节点、兑现 Promise）。
+   点遮罩 / Esc = 取消（cancelValue）；onKey 处理其余按键（Enter 等）。build(close) 返回盒子里的节点数组与要聚焦的元素。 */
+const modal=(cancelValue,build,onKey)=>new Promise(resolve=>{
+  const close=v=>{document.removeEventListener('keydown',key);overlay.remove();resolve(v)};
+  const {nodes,focus}=build(close);
+  const overlay=el('div',{class:'confirm-overlay'},[el('div',{class:'confirm-box'},nodes)]);
+  const key=e=>{if(e.key==='Escape')close(cancelValue);else if(onKey)onKey(e,close)};
+  overlay.onclick=e=>{if(e.target===overlay)close(cancelValue)};
+  document.addEventListener('keydown',key);
+  document.body.appendChild(overlay);
+  if(focus)focus();
+});
 /* 自定义确认框：浏览器原生 confirm() 跟已经禁掉的 alert() 是同一类问题——阻塞整个页面、样式跟
    站内其它地方完全脱节，全站原来散落的 9 处 confirm() 统一改走这个（2026-09-19 用户反馈"母版库
    删除确认还是 alert"——严格说原来用的是 confirm() 不是 alert()，但对用户来说是同一类"浏览器
@@ -71,48 +83,25 @@ const toast=(msg,kind='bad',ms=4200)=>{if(!msg)return;const t=el('div',{class:'t
    调用方需要 `await`（跟原来 `if(confirm(msg))` 同步调用不一样，全部改成
    `if(await confirmDialog(msg))`）；点"是"/`Enter`/取消按钮外没有对应处理，点遮罩/`Esc`/"否"
    都算取消，跟原生 confirm() 的"确定/取消"行为对齐。 */
-const confirmDialog=(msg)=>new Promise(resolve=>{
-  const yesBtn=el('button',{class:'btn pri',text:T('common.yes')});
-  const noBtn=el('button',{class:'btn',text:T('common.no')});
-  const overlay=el('div',{class:'confirm-overlay'},[el('div',{class:'confirm-box'},[el('div',{class:'confirm-msg',text:msg}),el('div',{class:'confirm-actions'},[noBtn,yesBtn])])]);
-  const close=v=>{document.removeEventListener('keydown',onKey);overlay.remove();resolve(v)};
-  const onKey=e=>{if(e.key==='Escape')close(false);else if(e.key==='Enter')close(true)};
-  yesBtn.onclick=()=>close(true);
-  noBtn.onclick=()=>close(false);
-  overlay.onclick=e=>{if(e.target===overlay)close(false)};
-  document.addEventListener('keydown',onKey);
-  document.body.appendChild(overlay);
-  yesBtn.focus();
-});
+const confirmDialog=msg=>modal(false,close=>{
+  const yesBtn=el('button',{class:'btn pri',text:T('common.yes')});yesBtn.onclick=()=>close(true);
+  const noBtn=el('button',{class:'btn',text:T('common.no')});noBtn.onclick=()=>close(false);
+  return {nodes:[el('div',{class:'confirm-msg',text:msg}),el('div',{class:'confirm-actions'},[noBtn,yesBtn])],focus:()=>yesBtn.focus()};
+},(e,close)=>{if(e.key==='Enter')close(true)});
 /* 输入框版的 confirmDialog：返回 `Promise<string|null>`（取消 = null）。给改名这类"要用户敲一个值"的操作用。 */
-const promptDialog=(msg,value='')=>new Promise(resolve=>{
-  const inp=el('input',{type:'text',class:'confirm-input'});inp.value=value;
-  const yesBtn=el('button',{class:'btn pri',text:T('common.ok')});
-  const noBtn=el('button',{class:'btn',text:T('common.cancel')});
-  const overlay=el('div',{class:'confirm-overlay'},[el('div',{class:'confirm-box'},[el('div',{class:'confirm-msg',text:msg}),inp,el('div',{class:'confirm-actions'},[noBtn,yesBtn])])]);
-  const close=v=>{document.removeEventListener('keydown',onKey);overlay.remove();resolve(v)};
-  const onKey=e=>{if(e.key==='Escape')close(null);else if(e.key==='Enter')close(inp.value)};
-  yesBtn.onclick=()=>close(inp.value);
-  noBtn.onclick=()=>close(null);
-  overlay.onclick=e=>{if(e.target===overlay)close(null)};
-  document.addEventListener('keydown',onKey);
-  document.body.appendChild(overlay);
-  inp.focus();inp.select();
-});
+const promptDialog=(msg,value='')=>{const inp=el('input',{type:'text',class:'confirm-input'});inp.value=value;
+  return modal(null,close=>{
+    const yesBtn=el('button',{class:'btn pri',text:T('common.ok')});yesBtn.onclick=()=>close(inp.value);
+    const noBtn=el('button',{class:'btn',text:T('common.cancel')});noBtn.onclick=()=>close(null);
+    return {nodes:[el('div',{class:'confirm-msg',text:msg}),inp,el('div',{class:'confirm-actions'},[noBtn,yesBtn])],focus:()=>{inp.focus();inp.select()}};
+  },(e,close)=>{if(e.key==='Enter')close(inp.value)})};
 /* 单选版的 confirmDialog：一排选项按钮（当前值高亮），点一个就返回它的 value，取消/遮罩/Esc = null。
    给"阅读方向"这类三选一的设置用（2026-09-25）。opts: [{value,label}]；note: 选项下方的一行小字说明。 */
-const choiceDialog=(msg,opts,current,note='')=>new Promise(resolve=>{
-  const noBtn=el('button',{class:'btn',text:T('common.cancel')});
+const choiceDialog=(msg,opts,current,note='')=>modal(null,close=>{
+  const noBtn=el('button',{class:'btn',text:T('common.cancel')});noBtn.onclick=()=>close(null);
   const pick=el('div',{class:'choice-opts'},opts.map(o=>{const b=el('button',{class:'btn'+(o.value===current?' pri':''),type:'button',text:o.label});b.onclick=()=>close(o.value);return b}));
-  const box=[el('div',{class:'confirm-msg',text:msg}),pick];if(note)box.push(el('div',{class:'small choice-note',text:note}));box.push(el('div',{class:'confirm-actions'},[noBtn]));
-  const overlay=el('div',{class:'confirm-overlay'},[el('div',{class:'confirm-box'},box)]);
-  const close=v=>{document.removeEventListener('keydown',onKey);overlay.remove();resolve(v)};
-  const onKey=e=>{if(e.key==='Escape')close(null)};
-  noBtn.onclick=()=>close(null);
-  overlay.onclick=e=>{if(e.target===overlay)close(null)};
-  document.addEventListener('keydown',onKey);
-  document.body.appendChild(overlay);
-  (pick.querySelector('.pri')||pick.firstChild).focus();
+  const nodes=[el('div',{class:'confirm-msg',text:msg}),pick];if(note)nodes.push(el('div',{class:'small choice-note',text:note}));nodes.push(el('div',{class:'confirm-actions'},[noBtn]));
+  return {nodes,focus:()=>(pick.querySelector('.pri')||pick.firstChild).focus()};
 });
 /* 轻量记忆：per-viewer 便利态，隐私窗口/禁用 storage 时静默回默认 */
 const LS={get(k,d){try{const v=localStorage.getItem('shelf.'+k);return v==null?d:v}catch{return d}},set(k,v){try{localStorage.setItem('shelf.'+k,v)}catch{}}};
