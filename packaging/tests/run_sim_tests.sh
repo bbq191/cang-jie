@@ -432,6 +432,23 @@ mkdir -p "$SOP"; echo STALE > "$SOP/hl-snap.so"
 ( cd "$PKG" && CJ_SKIP_BUILD=1 DEFER_XOVI_START=1 run sh deploy-hl-snap.sh 127.0.0.1 ) >/dev/null 2>&1
 check "H3：与已装相同的部署撤掉过时的待换入版本" test ! -e "$SOP/hl-snap.so"
 
+section "H3 补（2026-09-25）：xochitl 映射的扩展已被删/换 → 不 stop/restart，换入后主动整机重启"
+new_sandbox; EXT="$R/home/root/xovi/extensions.d"; SOP="$R/home/root/.cangjie-stage/so-pending"
+xovi_live on; printf '7f03 r-xp %s (deleted)\n' "$EXT/hw-stroke.so" >> "$R/proc/4242/maps"   # 刚卸载过：文件已删、进程还映射着
+mkdir -p "$SOP"; echo NEWSO > "$SOP/hw-stroke.so"; : > "$CJ_SIM_LOG"
+( cd "$PKG" && run sh deploy-xovi-apply.sh 127.0.0.1 ) >"$R/out.txt" 2>&1; rc=$?
+check "H3 补：退出 0；只有 systemctl reboot，没有 stop/start/restart xochitl、没有 xovi/start" test "$rc" -eq 0 -a "$(count_log 'systemctl reboot')" = 1 -a -z "$(grep -E 'systemctl (stop|start|restart) xochitl' "$CJ_SIM_LOG")" -a "$(count_log XOVI_START)" = 0
+check "H3 补：新版已换入 extensions.d，待换入区清空" test "$(cat "$EXT/hw-stroke.so")" = NEWSO -a ! -e "$SOP"
+check "H3 补：输出说明原因、提示设备在重启并给出核对命令，且没跑重启后健康检查" test -n "$(grep '退出途中崩溃' "$R/out.txt")" -a -n "$(grep '设备正在整机重启' "$R/out.txt")" -a -n "$(grep 'verify-on-device.sh 127.0.0.1' "$R/out.txt")" -a -z "$(grep 'is-active :' "$R/out.txt")"
+# 没有待换入的 .so、只是手工删过（--force）也一样不碰 xochitl
+: > "$CJ_SIM_LOG"
+( cd "$PKG" && run sh deploy-xovi-apply.sh 127.0.0.1 --force ) >"$R/out.txt" 2>&1; rc=$?
+check "H3 补：--force 且映射着已删文件 → 仍走整机重启、不 restart xochitl" test "$rc" -eq 0 -a "$(count_log 'systemctl reboot')" = 1 -a "$(count_log 'restart xochitl')" = 0
+# 文件没被动过：照旧 stop → 换入 → start，不整机重启
+xovi_live on; mkdir -p "$SOP"; echo NEWSO2 > "$SOP/hw-stroke.so"; : > "$CJ_SIM_LOG"
+( cd "$PKG" && run sh deploy-xovi-apply.sh 127.0.0.1 ) >/dev/null 2>&1
+check "H3 补：maps 里没有 (deleted) → 仍是 stop → 换入 → start，不整机重启" test "$(count_log 'systemctl reboot')" = 0 -a "$(count_log 'systemctl stop xochitl')" = 1 -a "$(cat "$EXT/hw-stroke.so")" = NEWSO2
+
 section "packaging/deploy-handwriting-stroke.sh（同一份数据驱动流程）"
 new_sandbox; EXT="$R/home/root/xovi/extensions.d"
 ( cd "$PKG" && CJ_SKIP_BUILD=1 DEFER_XOVI_START=1 run sh deploy-handwriting-stroke.sh 127.0.0.1 ) >"$R/out.txt" 2>&1; rc=$?

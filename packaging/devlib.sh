@@ -21,6 +21,9 @@
 #      整机重启（2026-09-21 appload、2026-09-24 hw-stroke 两次真机；先写暂存再 rename 换新 inode 也照样复现）
 #      → cj_so_stage / cj_so_commit：xochitl 正映射着目标 .so 时不当场换，先放进待换入区，由 cj_xochitl_apply
 #        在 stop xochitl 之后、start 之前换入。
+#      2026-09-25 补：崩的是**停止**本身——只要运行中的 xochitl 映射的扩展文件已被删/换（maps 带 "(deleted)"，
+#        例如刚跑过卸载），stop 就会 SEGV → 整机重启（卸载后重装真机踩到）。这种状态下 cj_xochitl_apply 不再
+#        stop/restart，改为换入后主动整机重启（cj_xochitl_stale_so / cj_xochitl_reboot_apply）。
 #   A1 "内容没变也重启 xochitl"（重跑 install-all 每次都闪屏）→ cj_pending_mark / cj_pending_list / cj_pending_clear：
 #      各"只落盘"的步骤在**真的改了文件**时记一个待生效标记（/run tmpfs，重启设备即清——重启后一切都是新载入的），
 #      xovi-apply 只在有标记、或 xovi 还没在 xochitl 里生效时才重启 xochitl。
@@ -387,13 +390,51 @@ cj_count_maps() {
     echo "${cj_c:-0}"
 }
 
+# cj_xochitl_stale_so：运行中的 xochitl 映射着、但磁盘上已被删掉或换掉的 extensions.d 文件段数（maps 行尾
+# " (deleted)"；永远只输出一个整数）。H3 的真机规律（2026-09-21 换 appload、09-24 rename 换 hw-stroke、09-25
+# 卸载删了 hl-snap/hw-stroke 再装）：只要有这种段，**停止** xochitl 本身就会让它在退出途中 SEGV（09-25 memfault
+# 栈：崩在 xochitl 自己的线程池 0xa49fc8，不在扩展里）→ OnFailure → rm-emergency → 整机重启；文件没动过时
+# stop/restart 一直正常（09-24 stop→换→start 真机通）。
+cj_xochitl_stale_so() {
+    cj_p=$(cj_xochitl_pid)
+    [ "$cj_p" != "0" ] || { echo 0; return 0; }
+    cj_c=$(grep -c "$CJ_XOVI/extensions.d/.* (deleted)\$" "$CJ_PROC/$cj_p/maps" 2>/dev/null) || cj_c=0
+    echo "${cj_c:-0}"
+}
+
+# cj_xochitl_reboot_apply：xochitl 映射的扩展已被删/换（见 cj_xochitl_stale_so）时的生效方式——不停 xochitl
+# （停就崩、崩了照样整机重启，还多一次应急路径和 core dump），而是换入待换入区后**主动整机重启**：开机后
+# xovi-reenable 恢复 xovi、载入新版。xochitl 已经映射着"删掉的"旧文件，此刻再换路径上的文件不会更糟。
+# 打印 CJ-APPLY-REBOOTING 让 host 侧认出"连接断开是因为设备在重启"，然后 --no-block 排队重启、立即返回 0。
+cj_xochitl_reboot_apply() {
+    echo "⚠ 运行中的 xochitl 映射着已被删掉/换掉的扩展 .so（$(cj_xochitl_stale_so) 段，比如刚卸载过）——此时停止或重启"
+    echo "   xochitl 会在退出途中崩溃并触发整机重启（2026-09-25 真机），所以改为：换入新版 → 主动整机重启。"
+    echo "⚠ 设备将在 ${CJ_APPLY_GRACE:-5} 秒后整机重启（约 1 分钟回来），会打断当前的阅读/书写。"
+    sleep "${CJ_APPLY_GRACE:-5}"
+    trap '' HUP PIPE INT TERM   # 同 stop→换→start 的关键区：换到一半断线也要把重启排上
+    cj_rb_rc=0
+    cj_so_commit || cj_rb_rc=1
+    sync
+    CJ_APPLY_REBOOTED=1
+    echo "CJ-APPLY-REBOOTING"
+    systemctl reboot --no-block || cj_rb_rc=1
+    trap - HUP PIPE INT TERM
+    return "$cj_rb_rc"
+}
+
 # cj_xochitl_apply：让已落盘的 xovi 扩展/qmd 生效——即重启 xochitl。
 #   xovi 已在运行的 xochitl 里生效 → systemctl restart xochitl（drop-in 保持，不丢 xovi）；
 #   没生效（刚开机/被清）          → $CJ_XOVI/start。
 # ⚠ 绝不在 xovi 已生效时跑 xovi/start：它 umount 再重挂 xochitl.service.d 这个 drop-in 目录，运行中的
 #   xochitl 读文件失败 SEGV，系统按设计整机自动重启（2026-09-20 真机事故）。
 # 重启会闪屏、打断阅读/书写，所以先打印提示并留 CJ_APPLY_GRACE 秒宽限（ssh 断开/Ctrl-C 可在此期间取消）。
+# shellcheck disable=SC2034  # 由 deploy-xovi-apply.sh 的设备端脚本读
+CJ_APPLY_REBOOTED=0   # cj_xochitl_apply 走了主动整机重启时置 1（调用方据此跳过重启后的健康检查）
 cj_xochitl_apply() {
+    if cj_xochitl_has_xovi && [ "$(cj_xochitl_stale_so)" -gt 0 ]; then
+        cj_xochitl_reboot_apply
+        return $?
+    fi
     echo "⚠ 即将重启 xochitl —— 屏幕会闪烁，并打断当前的阅读/书写（请勿操作设备）；${CJ_APPLY_GRACE:-5} 秒后开始。"
     sleep "${CJ_APPLY_GRACE:-5}"
     if cj_xochitl_has_xovi; then
