@@ -32,6 +32,10 @@ fn main() {
     let bind_addr = service::parse_bind(&args, SPEC.default_bind);
     let paths = Paths::from_env();
     let _ = paths.ensure();
+    let n = AssetUploadFlow::new(&paths).clean_stale();
+    if n > 0 {
+        println!("[font-serve] 清掉 {n} 个上次未完成的上传暂存");
+    }
     let store = FontStore::new(&paths, FontConfig::load(&paths));
     match store.startup_index() {
         Ok(f) => println!("[font-serve] 索引 {} 个家族", f.len()),

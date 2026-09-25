@@ -114,9 +114,11 @@ impl Paths {
     pub fn services_dir(&self) -> PathBuf {
         self.runtime_dir().join("services")
     }
-    /// 上传分片暂存目录。
+    /// 上传分片暂存目录：`$XDG_STATE_HOME/shelf/upload`（/home 分区）。
+    /// 原先在运行时目录——单元没设 `XDG_RUNTIME_DIR` 时落到 `/tmp`（tmpfs），几十 MB 的中文字体整份占内存
+    /// 且计入服务 cgroup 的 `MemoryMax`，安装时还要再拷一遍到 /home；改到 /home 后安装可直接改名（2026-09-25）。
     pub fn upload_tmp_dir(&self) -> PathBuf {
-        self.runtime_dir().join("upload")
+        self.state_dir().join("upload")
     }
     /// 某服务的配置文件。
     pub fn service_config(&self, service: &str) -> PathBuf {

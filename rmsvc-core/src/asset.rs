@@ -85,13 +85,19 @@ pub struct AssetUploadFlow {
 }
 
 impl AssetUploadFlow {
-    /// 暂存在运行时目录 `$XDG_RUNTIME_DIR/shelf/upload`（字体 / 壁纸 / 词典这类小文件）。
+    /// 暂存在 [`Paths::upload_tmp_dir`]（/home 分区，与字体 / 壁纸目录同分区，install 可直接改名）。
     pub fn new(paths: &Paths) -> Self {
         AssetUploadFlow { tmp_dir: paths.upload_tmp_dir() }
     }
     /// 暂存在指定目录——大文件（书）应与最终目录同分区，install 才能 rename 而不是拷贝。
     pub fn in_dir(dir: PathBuf) -> Self {
         AssetUploadFlow { tmp_dir: dir }
+    }
+
+    /// 清掉上次进程中途被杀留下的暂存半成品（`.<uuid>.<kind>.part`）。只在服务启动时调用（此时不可能有上传在进行），返回清掉几个。
+    pub fn clean_stale(&self) -> usize {
+        let Ok(rd) = std::fs::read_dir(&self.tmp_dir) else { return 0 };
+        rd.flatten().filter(|e| e.file_name().to_string_lossy().ends_with(".part") && std::fs::remove_file(e.path()).is_ok()).count()
     }
 
     /// 处理一整个 multipart 请求体。
@@ -192,6 +198,11 @@ mod tests {
         assert_eq!(out[3].message, "不支持的扩展名（允许：txt）");
         assert_eq!(*store.installed.lock().unwrap(), vec!["ok.txt", "evil.txt"]);
         assert!(std::fs::read_dir(paths.upload_tmp_dir()).unwrap().next().is_none(), "暂存应清空");
+        assert!(paths.upload_tmp_dir().starts_with(t.path()), "暂存在 HOME 下（/home 分区），不在 tmpfs 运行时目录");
+        std::fs::write(paths.upload_tmp_dir().join(".x.font.part"), b"half").unwrap();
+        std::fs::write(paths.upload_tmp_dir().join("keep.txt"), b"k").unwrap();
+        assert_eq!(AssetUploadFlow::new(&paths).clean_stale(), 1, "只清 .part 半成品");
+        assert!(paths.upload_tmp_dir().join("keep.txt").exists());
         let r = receipt(&out, serde_json::json!({"note": "n"}));
         assert_eq!(r["ok"], false);
         assert_eq!(r["items"].as_array().unwrap().len(), 5);

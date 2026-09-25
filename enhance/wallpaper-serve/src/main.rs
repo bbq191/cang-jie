@@ -83,6 +83,10 @@ fn main() {
         }
     }
     let bind_addr = service::parse_bind(&args, SPEC.default_bind);
+    let n = AssetUploadFlow::new(&paths).clean_stale();
+    if n > 0 {
+        println!("[wallpaper-serve] 清掉 {n} 个上次未完成的上传暂存");
+    }
     let bus = Arc::new(rmsvc_core::events::EventBus::new());
     let st = Arc::new(State { store, native, paths: paths.clone(), bus: bus.clone() });
     let router = Router::new()

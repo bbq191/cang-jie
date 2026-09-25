@@ -126,8 +126,7 @@ impl State {
 
     /// 清掉上次进程中途被杀留下的上传暂存（只在启动时调用，此时不可能有上传在进行）。返回清掉几个。
     pub fn clean_upload_dir(&self) -> usize {
-        let Ok(rd) = std::fs::read_dir(self.upload_dir()) else { return 0 };
-        rd.flatten().filter(|e| e.file_name().to_string_lossy().ends_with(".part") && std::fs::remove_file(e.path()).is_ok()).count()
+        AssetUploadFlow::in_dir(self.upload_dir()).clean_stale()
     }
 
     pub fn font_store(&self) -> KoStore {

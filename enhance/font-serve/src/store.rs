@@ -329,7 +329,10 @@ impl AssetStore for FontStore {
     fn install(&self, name: &str, staged: &Path) -> Result<AssetItem, String> {
         std::fs::create_dir_all(&self.fonts_dir).map_err(|e| e.to_string())?;
         let dest = self.fonts_dir.join(name);
-        std::fs::copy(staged, &dest).map_err(|e| format!("写入字体目录失败: {e}"))?;
+        // 暂存与字体目录同在 /home：直接改名；跨分区（测试 / 非常规布局）才退回拷贝。
+        if std::fs::rename(staged, &dest).is_err() {
+            std::fs::copy(staged, &dest).map_err(|e| format!("写入字体目录失败: {e}"))?;
+        }
         let bytes = std::fs::metadata(&dest).map(|m| m.len()).unwrap_or(0);
         self.fc_cache();
         let fonts = self.write_index()?;
