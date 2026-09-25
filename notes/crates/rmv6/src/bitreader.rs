@@ -52,7 +52,18 @@ impl<N: Readable> Bitreader<N> {
         Ok(())
     }
 
+    /// 还没读的字节数（游标被 `set_position` 挪到末尾之后算 0）。
+    pub fn remaining(&self) -> u64 {
+        (self.cursor.get_ref().as_ref().len() as u64).saturating_sub(self.position())
+    }
+
     pub fn read_bytes(&mut self, amount: usize) -> Result<Vec<u8>, ParseError> {
+        // 先比剩余字节再分配（2026-09-25 第四轮审计）：长度来自文件里的 u32/varuint（块 size、字符串长度），
+        // 畸形或正被 xochitl 写到一半的 `.rm` 会给出上 GB 的"长度"，`vec![0; amount]` 先按它分配——超过物理内存
+        // 时分配失败是 abort（不是 panic，`catch_unwind` 兜不住），ink-serve 重启追平又撞同一页 → 崩溃循环。
+        if amount as u64 > self.remaining() {
+            return Err(ParseError::new(format!("要读 {amount} 字节，只剩 {} 字节", self.remaining()), ParseErrorKind::Io));
+        }
         let mut buffer = vec![0; amount];
         self.read_exact(&mut buffer)?;
         Ok(buffer)
@@ -205,6 +216,31 @@ mod tests {
         assert!(r.eof().unwrap());
         assert!(r.read_u8().is_err());
         assert!(r.read_bytes(1).is_err());
+    }
+
+    /// 回归：声明长度远超文件（畸形/写到一半的 `.rm`）时先报 Io 错误，不先按声明长度分配内存。
+    #[test]
+    fn huge_declared_length_errors_before_allocating() {
+        let data: &[u8] = &[1, 2, 3];
+        let mut r = Bitreader::new(data);
+        let e = r.read_bytes(usize::MAX / 2).unwrap_err();
+        assert_eq!(e.kind, ParseErrorKind::Io);
+        assert!(r.read_string(u32::MAX as usize).is_err());
+        assert_eq!(r.read_bytes(3).unwrap(), [1, 2, 3], "失败的读取不移动游标");
+        assert_eq!(r.remaining(), 0);
+        r.set_position(10);
+        assert_eq!(r.remaining(), 0, "游标越过末尾也不下溢");
+        assert!(r.read_bytes(1).is_err());
+    }
+
+    /// 回归：块头声明 4GB 大小的未知块不会先分配 4GB。
+    #[test]
+    fn unknown_block_with_absurd_size_is_rejected_cheaply() {
+        let mut bytes = b"reMarkable .lines file, version=6          ".to_vec();
+        bytes.extend(u32::MAX.to_le_bytes());
+        bytes.extend([0, 0, 0, 0xEE]);
+        bytes.extend([1, 2, 3]);
+        assert!(crate::RmFile::read(bytes.as_slice()).is_err());
     }
 
     #[test]

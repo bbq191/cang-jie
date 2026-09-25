@@ -81,32 +81,74 @@ pub struct MergeStats {
     pub changed: usize,
     pub unchanged: usize,
     pub revoked: usize,
+    /// 笔画/勾画又回来了（xochitl 撤销擦除、书从回收站恢复）的 `Revoked` 条目，原条目复活。
+    pub revived: usize,
+}
+
+/// 在本页未认领的条目里找这份草稿对应的条目。`revoked=false` 只看非 `Revoked`（原逻辑：同一份还在原地的内容，
+/// 含 `Skipped`/`Archived`）；`revoked=true` 只看 `Revoked`（见 `merge_page` 的复活规则）。有手写按指纹、再按共享笔画；
+/// 纯勾画按勾画自己的 `Quote.id`。
+fn find_match(entries: &[Entry], claimed: &[bool], page: &str, d: &PageDraft, revoked: bool) -> Option<usize> {
+    let cand = |i: usize, e: &Entry| !claimed[i] && e.page == page && (e.status == Status::Revoked) == revoked;
+    match &d.ink {
+        Some(dink) => entries
+            .iter()
+            .enumerate()
+            .find(|(i, e)| cand(*i, e) && e.ink.as_ref().is_some_and(|k| k.hash == dink.hash))
+            .or_else(|| entries.iter().enumerate().find(|(i, e)| cand(*i, e) && e.ink.as_ref().is_some_and(|k| k.strokes.iter().any(|s| dink.strokes.contains(s)))))
+            .map(|(i, _)| i),
+        None => {
+            let dq_id = d.quote.as_ref().map(|q| q.id.as_str());
+            entries.iter().enumerate().find(|(i, e)| cand(*i, e) && e.ink.is_none() && e.quote.as_ref().map(|q| q.id.as_str()) == dq_id).map(|(i, _)| i)
+        }
+    }
+}
+
+/// 复活一条 `Revoked` 条目时落回的状态：按已有内容倒推，但**不**像回收站「恢复」那样把只有手写的条目推进
+/// `Pending`——自动复活不代表用户要求转写，回到 `Mined` 让用户在「浏览」里重新决定。
+fn revived_status(e: &Entry) -> Status {
+    if e.text.is_some() {
+        Status::Reviewed
+    } else if !e.drafts.is_empty() {
+        Status::Draft
+    } else {
+        Status::Mined
+    }
 }
 
 /// 把本页新草稿并入 `entries`（只动本页的条目）。**两条认领路径**：有手写的草稿按笔画指纹/共享笔画
 /// 认领（原逻辑不变）；纯勾画草稿（`ink: None`）没有笔画可比，按勾画自己的 `Quote.id`（`GlyphRange`
 /// 的 CRDT id）认领——2026-09-07 二期真机验证时发现"只勾线不写字"整页被跳过，补的这条路径。
+///
+/// **复活**（2026-09-25 第四轮审计）：认领不到活条目时，再看本页的 `Revoked` 条目——笔画 id 是 CRDT id、不会被
+/// 新笔迹复用，能对上只可能是同一批笔画回来了（xochitl 里撤销了擦除、书从回收站恢复）。此前这种情况会按同样的
+/// (书, 页, 首笔 id) 再建一条**同 id** 的新条目：网页按 id 改字永远改到旧的那条（已撤销、拒绝修改），校对文本也
+/// 留在旧条目里。现在直接复活原条目（状态见 [`revived_status`]），id 不变、校对文本/草稿/回答都在。
+///
+/// 认领到的条目顺带刷新页级上下文（页序号、章、小节）：`.epubindex` 在 xochitl 重排后会变，这一页正在用最新的
+/// 映射重新摄取，旧条目跟同页新条目保持一致。本次没算出章（目录读不到）时不清掉已有的章。
 pub fn merge_page(entries: &mut Vec<Entry>, ctx: &PageCtx, drafts: Vec<PageDraft>) -> MergeStats {
     let mut st = MergeStats::default();
     let mut claimed = vec![false; entries.len()];
     for d in drafts {
-        let same_page = |e: &Entry| e.page == ctx.page && e.status != Status::Revoked;
-        let hit = match &d.ink {
-            Some(dink) => entries.iter().enumerate().find(|(i, e)| !claimed[*i] && same_page(e) && e.ink.as_ref().map(|k| k.hash == dink.hash).unwrap_or(false)).map(|(i, _)| i)
-                .or_else(|| entries.iter().enumerate().find(|(i, e)| !claimed[*i] && same_page(e) && e.ink.as_ref().map(|k| k.strokes.iter().any(|s| dink.strokes.contains(s))).unwrap_or(false)).map(|(i, _)| i)),
-            None => {
-                let dq_id = d.quote.as_ref().map(|q| q.id.as_str());
-                entries.iter().enumerate().find(|(i, e)| !claimed[*i] && same_page(e) && e.ink.is_none() && e.quote.as_ref().map(|q| q.id.as_str()) == dq_id).map(|(i, _)| i)
-            }
-        };
-        match hit {
+        let live = find_match(entries, &claimed, ctx.page, &d, false);
+        let revived = if live.is_none() { find_match(entries, &claimed, ctx.page, &d, true) } else { None };
+        match live.or(revived) {
             Some(i) => {
                 claimed[i] = true;
                 let e = &mut entries[i];
+                if revived.is_some() {
+                    e.status = revived_status(e);
+                    e.updated = ctx.now;
+                    st.revived += 1;
+                }
+                refresh_page_ctx(e, ctx);
                 match &d.ink {
                     Some(dink) => {
-                        if e.ink.as_ref().map(|k| k.hash == dink.hash).unwrap_or(false) {
-                            st.unchanged += 1;
+                        if e.ink.as_ref().is_some_and(|k| k.hash == dink.hash) {
+                            if revived.is_none() {
+                                st.unchanged += 1;
+                            }
                         } else {
                             let crop = e.ink.as_ref().map(|k| k.crop.clone()).unwrap_or_default();
                             e.ink = Some(Ink { crop, ..dink.clone() });
@@ -118,15 +160,25 @@ pub fn merge_page(entries: &mut Vec<Entry>, ctx: &PageCtx, drafts: Vec<PageDraft
                         }
                     }
                     None => {
-                        st.unchanged += 1; // 纯勾画：内容随 quote id 走，认领到了就是没变（勾画画下不会再改）
+                        if revived.is_none() {
+                            st.unchanged += 1; // 纯勾画：内容随 quote id 走，认领到了就是没变（勾画画下不会再改）
+                        }
                         e.quote = d.quote; // 保险起见仍然刷新一遍（颜色等字段理论上可能变）
                     }
                 }
             }
             None => {
                 let id_seed = d.ink.as_ref().map(|k| k.strokes.first().cloned().unwrap_or_default()).or_else(|| d.quote.as_ref().map(|q| q.id.clone())).unwrap_or_default();
+                // 兜底：id 撞上已有条目（旧版本已经造出过同 id 的重复条目等）就加序号，id 在一本书里必须唯一——
+                // 网页、转写、问 AI 都按 id 找条目。正常路径（上面的认领 + 复活）不会走到这里。
+                let mut id = entry_id(ctx.book, ctx.page, &id_seed);
+                let mut n = 1;
+                while entries.iter().any(|e| e.id == id) {
+                    id = entry_id(ctx.book, ctx.page, &format!("{id_seed}#{n}"));
+                    n += 1;
+                }
                 entries.push(Entry {
-                    id: entry_id(ctx.book, ctx.page, &id_seed),
+                    id,
                     page: ctx.page.to_string(),
                     page_index: ctx.page_index,
                     chapter: ctx.chapter,
@@ -169,6 +221,21 @@ pub fn merge_page(entries: &mut Vec<Entry>, ctx: &PageCtx, drafts: Vec<PageDraft
         }
     }
     st
+}
+
+/// 认领到的条目刷新页级上下文（见 `merge_page` 文档）。只在真变了时才动，不让没变化的重扫改写 `updated`。
+fn refresh_page_ctx(e: &mut Entry, ctx: &PageCtx) {
+    if ctx.chapter.is_none() {
+        return; // 这次没读到目录：保留已有的章/小节，不清空
+    }
+    let subhead = ctx.subhead.map(str::to_string);
+    if e.page_index != ctx.page_index || e.chapter != ctx.chapter || e.chapter_title != ctx.chapter_title || e.subhead != subhead {
+        e.page_index = ctx.page_index;
+        e.chapter = ctx.chapter;
+        e.chapter_title = ctx.chapter_title.to_string();
+        e.subhead = subhead;
+        e.updated = ctx.now;
+    }
 }
 
 #[cfg(test)]
@@ -262,6 +329,75 @@ mod tests {
         let st3 = merge_page(&mut entries, &ctx(30), drafts_of_page(&page(vec![], vec![]), &th));
         assert_eq!(st3, MergeStats { revoked: 1, ..Default::default() });
         assert_eq!(entries[0].status, Status::Revoked);
+    }
+
+    /// 回归（2026-09-25）：笔画被擦掉（→ Revoked）后又回来了（xochitl 撤销擦除 / 书从回收站恢复），原条目复活，
+    /// 不再按同样的 (书, 页, 首笔) 再建一条同 id 的新条目。
+    #[test]
+    fn revoked_entry_is_revived_when_same_strokes_return_without_duplicate_id() {
+        let th = Thresholds::default();
+        let p1 = page(vec![stroke(1, Tool::BallPoint, 900.0, 300.0, 1000.0, 340.0)], vec![hl(9, "勾画", 100.0, 320.0, 780.0, 30.0)]);
+        let mut entries = vec![];
+        merge_page(&mut entries, &ctx(10), drafts_of_page(&p1, &th));
+        entries[0].text = Some("您好".into());
+        entries[0].status = Status::Reviewed;
+        merge_page(&mut entries, &ctx(20), drafts_of_page(&page(vec![], vec![]), &th));
+        assert_eq!(entries[0].status, Status::Revoked);
+
+        let st = merge_page(&mut entries, &ctx(30), drafts_of_page(&p1, &th));
+        assert_eq!(st, MergeStats { revived: 1, ..Default::default() });
+        assert_eq!(entries.len(), 1, "不另建同 id 的新条目");
+        assert_eq!((entries[0].status, entries[0].text.as_deref(), entries[0].updated), (Status::Reviewed, Some("您好"), 30), "校对文本还在，回到 Reviewed");
+
+        // 只有手写、没转写过的条目复活后回 Mined（不自动进转写队列）；纯勾画条目按 quote id 复活。
+        let mut entries = vec![];
+        let p2 = page(vec![stroke(1, Tool::BallPoint, 900.0, 300.0, 1000.0, 340.0)], vec![]);
+        let p3 = page(vec![], vec![hl(7, "纯勾画", 100.0, 1500.0, 780.0, 30.0)]);
+        merge_page(&mut entries, &ctx(10), drafts_of_page(&p2, &th));
+        entries[0].status = Status::Pending;
+        merge_page(&mut entries, &ctx(20), vec![]);
+        assert_eq!(entries[0].status, Status::Revoked);
+        let st = merge_page(&mut entries, &ctx(30), drafts_of_page(&p2, &th));
+        assert_eq!((st.revived, entries.len(), entries[0].status), (1, 1, Status::Mined));
+
+        let mut entries = vec![];
+        merge_page(&mut entries, &ctx(10), drafts_of_page(&p3, &th));
+        merge_page(&mut entries, &ctx(20), vec![]);
+        let st = merge_page(&mut entries, &ctx(30), drafts_of_page(&p3, &th));
+        assert_eq!((st.revived, entries.len(), entries[0].status), (1, 1, Status::Mined));
+    }
+
+    /// 旧版本已经造出过同 id 的条目时，新条目加序号，一本书里 id 仍唯一。
+    #[test]
+    fn new_entry_id_never_collides_with_existing_one() {
+        let th = Thresholds::default();
+        let p1 = page(vec![stroke(1, Tool::BallPoint, 900.0, 300.0, 1000.0, 340.0)], vec![]);
+        let mut entries = vec![];
+        merge_page(&mut entries, &ctx(10), drafts_of_page(&p1, &th));
+        // 模拟一条同 id、但认领不上（笔画不同、已撤销）的旧条目。
+        let mut ghost = entries[0].clone();
+        ghost.ink.as_mut().unwrap().strokes = vec!["9:9".into()];
+        ghost.ink.as_mut().unwrap().hash = "other".into();
+        ghost.status = Status::Revoked;
+        let mut entries = vec![ghost];
+        merge_page(&mut entries, &ctx(20), drafts_of_page(&p1, &th));
+        assert_eq!(entries.len(), 2);
+        assert_ne!(entries[0].id, entries[1].id);
+    }
+
+    /// 重新摄取这一页时，认领到的旧条目跟着刷新章/小节/页序号；这次没读到目录（章为 None）时保留旧值。
+    #[test]
+    fn claimed_entries_follow_fresh_page_context_unless_toc_missing() {
+        let th = Thresholds::default();
+        let p1 = page(vec![stroke(1, Tool::BallPoint, 900.0, 300.0, 1000.0, 340.0)], vec![]);
+        let mut entries = vec![];
+        merge_page(&mut entries, &ctx(10), drafts_of_page(&p1, &th));
+        let moved = PageCtx { page_index: 9, chapter: Some(3), chapter_title: "四", subhead: Some("小节"), ..ctx(20) };
+        merge_page(&mut entries, &moved, drafts_of_page(&p1, &th));
+        assert_eq!((entries[0].page_index, entries[0].chapter, entries[0].chapter_title.as_str(), entries[0].subhead.as_deref(), entries[0].updated), (9, Some(3), "四", Some("小节"), 20));
+        let no_toc = PageCtx { chapter: None, chapter_title: "", subhead: None, ..ctx(30) };
+        merge_page(&mut entries, &no_toc, drafts_of_page(&p1, &th));
+        assert_eq!((entries[0].chapter, entries[0].updated), (Some(3), 20), "读不到目录不清空已有的章");
     }
 
     /// 回归：`Skipped`/`Archived` 是终态，笔迹被擦掉不该被"排除法"漏判改成 `Revoked`——

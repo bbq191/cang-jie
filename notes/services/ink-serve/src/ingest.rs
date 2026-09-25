@@ -25,7 +25,7 @@ pub fn ingest_doc(lib: &Path, crops_dir: &Path, db: &BookDb, cfg: &IngestConfig,
         return Ok(None);
     }
     let doc = Doc::new(lib, uuid);
-    let Some(meta) = doc.metadata().filter(|m| m.is_live_document()) else {
+    let Some(meta) = doc.read_metadata()?.filter(|m| m.is_live_document()) else {
         // 书被移进回收站，或彻底删除（连 .metadata 都没了）：撤销条目库里这本书还没撤销的条目。
         // 不这么做的话 `BookDb::list_active` 找不到理由把它从列表摘掉——它只看条目状态，
         // 从没在这条路径上被通知过"书本身没了"（真机验证时发现，2026-09-07；清空勾画走
@@ -62,7 +62,11 @@ pub fn ingest_doc(lib: &Path, crops_dir: &Path, db: &BookDb, cfg: &IngestConfig,
         || Book { uuid: uuid.to_string(), title: title.clone(), ..Default::default() },
         |book| {
             book.title = title.clone();
-            book.chapters = chapters.clone();
+            // 这次没读到目录（`.epub`/`.epubindex` 暂时读不了）就保留上次的章表，不把整本书的章清空——条目的
+            // `chapter` 下标指着它，清空后两处投影一章都找不到（`merge_page` 同理不清已有条目的章）。
+            if !chapters.is_empty() || book.chapters.is_empty() {
+                book.chapters = chapters.clone();
+            }
             for (page_id, mtime) in &changed {
                 let bytes = match std::fs::read(doc.page_rm(page_id)) {
                     Ok(b) => b,
@@ -87,6 +91,7 @@ pub fn ingest_doc(lib: &Path, crops_dir: &Path, db: &BookDb, cfg: &IngestConfig,
                 stats.merge.changed += m.changed;
                 stats.merge.unchanged += m.unchanged;
                 stats.merge.revoked += m.revoked;
+                stats.merge.revived += m.revived;
                 stats.pages += 1;
                 // 裁图：本页所有有手写、且裁图缺失或指纹变了的条目。自渲染（`render_ink`）直接吃这一页
                 // 已经解析好的 `page.strokes`，不依赖 xochitl 缩略图——写多靠下都画得出来，也不会混进印刷体
@@ -105,7 +110,10 @@ pub fn ingest_doc(lib: &Path, crops_dir: &Path, db: &BookDb, cfg: &IngestConfig,
                         Err(err) => errors.push(format!("{page_id}: {err}")),
                     }
                 }
-                book.page_mtimes.insert(page_id.clone(), *mtime);
+                // mtime 只到秒：这一秒里读完之后 xochitl 又写了一次，mtime 还是同一个秒数，下次比较"没变"就漏了。
+                // 页的修改时间落在当前这一秒（或更晚）时少记一秒，下次事件再扫一遍（合并幂等），之后正常记下
+                // （2026-09-25 第四轮审计；条目库格式不变）。
+                book.page_mtimes.insert(page_id.clone(), if *mtime >= now { mtime.saturating_sub(1) } else { *mtime });
             }
         },
     )?;
@@ -116,9 +124,12 @@ pub fn ingest_doc(lib: &Path, crops_dir: &Path, db: &BookDb, cfg: &IngestConfig,
 }
 
 /// 书不再活了（回收站/已删）：条目库里如果还有没撤销的条目，全标 `Revoked`（不物理删，历史留痕）。
-/// 没追平摄取过的书（条目库压根没有）是 no-op；已经全撤销过也是 no-op（幂等，事件重复触发不白做功）。
+/// 没追平摄取过的书（条目库压根没有）是 no-op；已经全撤销过也是 no-op（幂等，事件重复触发不白做功、不写盘）。
+/// 同时清掉页 mtime 记录：书从回收站恢复后页文件原样不动，不清的话"页没变"早退，条目永远停在 `Revoked`；
+/// 清了之后恢复时整本重扫一遍，`merge_page` 按笔画把原条目复活（2026-09-25 第四轮审计）。
 fn revoke_stale(db: &BookDb, uuid: &str, now: u64) -> Result<Option<DocStats>, String> {
     let Some(revoked) = db.update_existing(uuid, |b| {
+        b.page_mtimes.clear();
         let mut n = 0usize;
         // 同一个"排除法"漏洞（见 notecore::ingest::merge_page 的注释）：`Skipped`/`Archived` 也是
         // 终态，书被删/进回收站不该把它们悄悄改判成 `Revoked`——那样以后 `restore()` 会走错分支。
@@ -175,17 +186,40 @@ mod tests {
         std::fs::write(lib.join(u).join("c65fa2ae-7070-4b33-b367-1810bd35632c.rm"), include_bytes!("../../../testdata/renggu/page.rm")).unwrap();
         let cfg = IngestConfig::default();
         assert_eq!(candidate_docs(&lib), vec![u.to_string()]);
-        let s = ingest_doc(&lib, &crops, &db, &cfg, u, 1).unwrap().unwrap();
+        let t0 = Doc::new(&lib, u).annotated_pages()[0].1 + 10; // "现在"晚于页修改时间（同一秒的情形见下一条测试）
+        let s = ingest_doc(&lib, &crops, &db, &cfg, u, t0).unwrap().unwrap();
         assert_eq!(s.pages, 1);
         let book = db.load(u).unwrap();
         assert_eq!((book.title.as_str(), book.chapters.len(), book.entries.len()), ("人骨拼圖", 0, 0), "没 .epub 文件 → 无目录；墓碑页零条目");
         assert_eq!(book.page_mtimes.len(), 1);
         // 再来一次：页没变 → 零页
-        let s2 = ingest_doc(&lib, &crops, &db, &cfg, u, 2).unwrap().unwrap();
+        let s2 = ingest_doc(&lib, &crops, &db, &cfg, u, t0 + 1).unwrap().unwrap();
         assert_eq!(s2, DocStats::default());
         // 非 EPUB / 回收站 → None（这本书条目库里本来就是 0 条，revoke_stale 无事可做）
         std::fs::write(lib.join(format!("{u}.metadata")), r#"{"visibleName":"人骨拼圖","type":"DocumentType","parent":"trash"}"#).unwrap();
         assert!(ingest_doc(&lib, &crops, &db, &cfg, u, 3).unwrap().is_none());
+    }
+
+    /// 页在当前这一秒刚改过：先少记一秒，下次事件再扫一遍（防同一秒内的第二次写入被漏掉），之后正常记下。
+    #[test]
+    fn page_modified_in_the_current_second_is_rescanned_once() {
+        let t = tempfile::tempdir().unwrap();
+        let lib = t.path().join("xochitl");
+        let crops = t.path().join("crops");
+        std::fs::create_dir_all(&crops).unwrap();
+        let db = BookDb::new(t.path().join("books"));
+        db.ensure().unwrap();
+        let u = "3eb5dece-5e28-4969-8926-c8973d49020d";
+        std::fs::create_dir_all(lib.join(u)).unwrap();
+        std::fs::write(lib.join(format!("{u}.metadata")), r#"{"visibleName":"x","type":"DocumentType","parent":""}"#).unwrap();
+        std::fs::write(lib.join(format!("{u}.content")), include_str!("../../../testdata/renggu/book.content")).unwrap();
+        std::fs::write(lib.join(u).join("c65fa2ae-7070-4b33-b367-1810bd35632c.rm"), include_bytes!("../../../testdata/renggu/page.rm")).unwrap();
+        let mt = Doc::new(&lib, u).annotated_pages()[0].1;
+        let cfg = IngestConfig::default();
+        assert_eq!(ingest_doc(&lib, &crops, &db, &cfg, u, mt).unwrap().unwrap().pages, 1);
+        assert_eq!(ingest_doc(&lib, &crops, &db, &cfg, u, mt + 5).unwrap().unwrap().pages, 1, "同一秒记的，下次再扫一遍");
+        assert_eq!(ingest_doc(&lib, &crops, &db, &cfg, u, mt + 6).unwrap().unwrap().pages, 0, "之后正常跳过");
+        assert_eq!(db.load(u).unwrap().page_mtimes.values().copied().collect::<Vec<_>>(), [mt]);
     }
 
     fn seeded_entry(id: &str, status: Status) -> notecore::model::Entry {
@@ -226,6 +260,57 @@ mod tests {
         let u3 = "33333333-5e28-4969-8926-c8973d49020d";
         assert!(ingest_doc(&lib, &crops, &db, &cfg, u3, 13).unwrap().is_none());
         assert!(db.load(u3).is_none());
+    }
+
+    /// 回归（2026-09-25）：书进回收站 → 条目撤销；从回收站恢复（页文件原样没变）→ 整本重扫，原条目复活、不重复建。
+    #[test]
+    fn book_restored_from_trash_revives_its_entries() {
+        let t = tempfile::tempdir().unwrap();
+        let lib = t.path().join("xochitl");
+        let crops = t.path().join("crops");
+        std::fs::create_dir_all(&crops).unwrap();
+        let db = BookDb::new(t.path().join("books"));
+        db.ensure().unwrap();
+        let u = "3eb5dece-5e28-4969-8926-c8973d49020d";
+        std::fs::create_dir_all(lib.join(u)).unwrap();
+        let meta = |parent: &str| format!(r#"{{"visibleName":"人骨拼圖","type":"DocumentType","parent":"{parent}"}}"#);
+        std::fs::write(lib.join(format!("{u}.metadata")), meta("")).unwrap();
+        std::fs::write(lib.join(format!("{u}.content")), include_str!("../../../testdata/renggu/book.content")).unwrap();
+        std::fs::write(lib.join(u).join("c65fa2ae-7070-4b33-b367-1810bd35632c.rm"), include_bytes!("../../../testdata/renggu_marks/page.rm")).unwrap();
+        let cfg = IngestConfig::default();
+        ingest_doc(&lib, &crops, &db, &cfg, u, 1).unwrap().unwrap();
+        let before = db.load(u).unwrap().entries;
+        assert!(!before.is_empty());
+
+        std::fs::write(lib.join(format!("{u}.metadata")), meta("trash")).unwrap();
+        ingest_doc(&lib, &crops, &db, &cfg, u, 2).unwrap().unwrap();
+        let trashed = db.load(u).unwrap();
+        assert!(trashed.entries.iter().all(|e| e.status == Status::Revoked) && trashed.page_mtimes.is_empty());
+        assert!(ingest_doc(&lib, &crops, &db, &cfg, u, 3).unwrap().is_none(), "再来一次：无事可做");
+
+        std::fs::write(lib.join(format!("{u}.metadata")), meta("")).unwrap();
+        let s = ingest_doc(&lib, &crops, &db, &cfg, u, 4).unwrap().unwrap();
+        assert_eq!((s.merge.revived, s.merge.added), (before.len(), 0));
+        let after = db.load(u).unwrap().entries;
+        assert_eq!(after.iter().map(|e| (&e.id, e.status)).collect::<Vec<_>>(), before.iter().map(|e| (&e.id, Status::Mined)).collect::<Vec<_>>());
+    }
+
+    /// 回归：`.metadata` 读到半截/解析失败不能当成"书没了"——此前会把整本书的活条目全标 Revoked。
+    #[test]
+    fn unreadable_metadata_skips_instead_of_revoking() {
+        let t = tempfile::tempdir().unwrap();
+        let lib = t.path().join("xochitl");
+        let crops = t.path().join("crops");
+        std::fs::create_dir_all(&lib).unwrap();
+        std::fs::create_dir_all(&crops).unwrap();
+        let db = BookDb::new(t.path().join("books"));
+        db.ensure().unwrap();
+        let u = "55555555-5e28-4969-8926-c8973d49020d";
+        db.update(u, || Book { uuid: u.into(), title: "测试书五".into(), ..Default::default() }, |b| b.entries.push(seeded_entry("e1", Status::Reviewed))).unwrap();
+        std::fs::write(lib.join(format!("{u}.metadata")), r#"{"visibleName":"测试书"#).unwrap();
+        let err = ingest_doc(&lib, &crops, &db, &IngestConfig::default(), u, 10).unwrap_err();
+        assert!(err.contains("解析失败"), "{err}");
+        assert_eq!(db.load(u).unwrap().entries[0].status, Status::Reviewed, "条目不动");
     }
 
     /// 回归：书被删/进回收站时，`Skipped`/`Archived` 这两种终态不该被"排除法"漏判成 `Revoked`

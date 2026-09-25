@@ -109,26 +109,30 @@ impl BookDb {
         self.read(uuid).ok().flatten().map(|b| (*b).clone())
     }
 
-    /// 落盘，并把新值换进缓存（身份取 rename 之后的文件）。
-    fn save(&self, book: Book) -> Result<(), String> {
-        let p = self.path(&book.uuid)?;
+    /// 落盘，并把新值换进缓存（身份取 rename 之后的文件）。文件名用调用方的 `uuid`（读的那一份），不用书里的
+    /// `uuid` 字段：两者对不上（外部手改、seed 写错）时，写回去的必须还是原来那个文件，不能另写一份。
+    fn save(&self, uuid: &str, book: Book) -> Result<(), String> {
+        let p = self.path(uuid)?;
         let bytes = serde_json::to_vec_pretty(&book).map_err(|e| e.to_string())?;
         write_atomic(&p, &bytes).map_err(|e| format!("写条目库失败: {e}"))?;
         let mut cache = self.cache();
         match std::fs::metadata(&p) {
-            Ok(m) => cache.insert(book.uuid.clone(), (FileKey::of(&m), Arc::new(book))),
-            Err(_) => cache.remove(&book.uuid),
+            Ok(m) => cache.insert(uuid.to_string(), (FileKey::of(&m), Arc::new(book))),
+            Err(_) => cache.remove(uuid),
         };
         Ok(())
     }
 
-    /// 读—改—写（进程内串行化）。书不存在时以 `seed()` 起。
+    /// 读—改—写（进程内串行化）。书不存在时以 `seed()` 起。`f` 没改动任何东西就不写盘（见 [`Self::update_existing`]）。
     pub fn update<T>(&self, uuid: &str, seed: impl FnOnce() -> Book, f: impl FnOnce(&mut Book) -> T) -> Result<T, String> {
         self.path(uuid)?; // 先验 key：非法 uuid 不跑 f、不落盘
         let _g = rmsvc_core::sync::lock(&self.lock);
-        let mut book = self.read(uuid)?.map(|b| (*b).clone()).unwrap_or_else(seed);
+        let prev = self.read(uuid)?;
+        let mut book = prev.as_ref().map(|b| (**b).clone()).unwrap_or_else(seed);
         let out = f(&mut book);
-        self.save(book)?;
+        if prev.as_deref() != Some(&book) {
+            self.save(uuid, book)?;
+        }
         Ok(out)
     }
 
@@ -140,10 +144,14 @@ impl BookDb {
             return Ok(None);
         }
         let _g = rmsvc_core::sync::lock(&self.lock);
-        let Some(book) = self.read(uuid)? else { return Ok(None) };
-        let mut book = (*book).clone();
+        let Some(prev) = self.read(uuid)? else { return Ok(None) };
+        let mut book = (*prev).clone();
         let out = f(&mut book);
-        self.save(book)?;
+        // 没改动就不写盘：回收站里的书每次事件/启动追平都会路过 `revoke_stale`、清空回收站点了 0 条、`rescan`
+        // 清空本来就空的页记录——此前都会原样重写整本 JSON（磨闪存、换 inode 让解析缓存失效）。
+        if *prev != book {
+            self.save(uuid, book)?;
+        }
         Ok(Some(out))
     }
 
@@ -261,6 +269,28 @@ mod tests {
         assert!(db.list().is_empty(), "list 跳过坏文件");
         std::fs::remove_file(&f).unwrap();
         assert!(db.read("u1").unwrap().is_none(), "删掉了就是没有");
+    }
+
+    /// 没改动的读—改—写不落盘（文件身份不变）；书里 `uuid` 字段跟文件名对不上时仍写回原文件。
+    #[test]
+    fn noop_update_does_not_rewrite_and_save_uses_file_key() {
+        let t = tempfile::tempdir().unwrap();
+        let db = BookDb::new(t.path().join("books"));
+        db.ensure().unwrap();
+        db.update("u1", || Book { uuid: "u1".into(), title: "甲".into(), ..Default::default() }, |_| ()).unwrap();
+        assert!(t.path().join("books/u1.json").exists(), "新书即使没改也要落盘");
+        let ino = |p: &str| std::os::unix::fs::MetadataExt::ino(&std::fs::metadata(t.path().join(p)).unwrap());
+        let before = ino("books/u1.json");
+        db.update_existing("u1", |b| b.page_mtimes.clear()).unwrap();
+        db.update("u1", Book::default, |b| b.title = "甲".into()).unwrap();
+        assert_eq!(ino("books/u1.json"), before, "没变化 → 不重写");
+        db.update_existing("u1", |b| b.title = "乙".into()).unwrap();
+        assert_ne!(ino("books/u1.json"), before, "有变化 → 写");
+
+        std::fs::write(t.path().join("books/u2.json"), r#"{"uuid":"别的","title":"x"}"#).unwrap();
+        db.update_existing("u2", |b| b.title = "y".into()).unwrap();
+        assert_eq!(db.load("u2").unwrap().title, "y");
+        assert!(!t.path().join("books/别的.json").exists());
     }
 
     /// 回归：uuid 带 `/`、`..` 不能读写条目库目录之外的文件。

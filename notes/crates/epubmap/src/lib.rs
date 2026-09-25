@@ -55,18 +55,21 @@ impl BookMap {
         self.sections.iter().take_while(|s| (s.start_page as usize) <= page).last()
     }
 
+    /// **章 = 没有父条目的顶层条目**（通常就是 1 级）。此前 `chapters()` 只收 1 级、`chapter_of` 却取顶层祖先：目录里
+    /// 分组项是 `<span>`（没有链接）时，二级条目没有父条目，它的章号按"前面有几个 1 级"算、标题却是它自己——跟
+    /// `chapters()` 对不上（下标越界或撞上别的章），这些条目在两处投影里找不到自己的章，永远生成/导出不出来
+    /// （2026-09-25 第四轮审计）。两处现在用同一个判据；标准嵌套目录（每个二级都有 1 级父条目）结果不变。
     pub fn chapter_of(&self, page: usize) -> Option<Chapter<'_>> {
         let sec = self.section_of(page)?;
         let i = self.toc.entries.iter().position(|e| e.file == sec.file)?;
         let top = self.toc.top_ancestor(i);
-        let index = self.toc.entries.iter().take(top).filter(|e| e.level == 1).count();
-        let e = &self.toc.entries[i];
-        Some(Chapter { index, title: &self.toc.entries[top].title, subhead: (e.level >= 2).then_some(e.title.as_str()) })
+        let index = self.toc.entries.iter().take(top).filter(|e| e.parent.is_none()).count();
+        Some(Chapter { index, title: &self.toc.entries[top].title, subhead: (i != top).then_some(self.toc.entries[i].title.as_str()) })
     }
 
-    /// 全书 1 级章列表 [(index, title)]。
+    /// 全书章列表 [(index, title)]（顶层条目，见 [`Self::chapter_of`]）。
     pub fn chapters(&self) -> Vec<(usize, &str)> {
-        self.toc.entries.iter().filter(|e| e.level == 1).enumerate().map(|(i, e)| (i, e.title.as_str())).collect()
+        self.toc.entries.iter().filter(|e| e.parent.is_none()).enumerate().map(|(i, e)| (i, e.title.as_str())).collect()
     }
 }
 
@@ -89,9 +92,11 @@ pub fn read_toc_texts_from<R: Read + Seek>(epub: R) -> (Option<String>, Option<S
             nav_name.get_or_insert(n);
         }
     }
+    // 目录文件设读取上限：解压后的大小由 zip 自己声明，坏书/恶意书可以声称极大（笔记服务 MemoryMax=128M）。
+    const TOC_MAX: u64 = 16 << 20;
     let mut read = |name: Option<String>| -> Option<String> {
         let mut s = String::new();
-        ar.by_name(&name?).ok()?.read_to_string(&mut s).ok()?;
+        ar.by_name(&name?).ok()?.take(TOC_MAX).read_to_string(&mut s).ok()?;
         Some(s)
     };
     let nav = read(nav_name);
@@ -131,6 +136,20 @@ mod tests {
         assert_eq!(m.chapter_of(25), Some(Chapter { index: 1, title: "Book One", subhead: Some("Chapter Two") }));
         assert_eq!(m.chapter_of(99), Some(Chapter { index: 2, title: "Book Two", subhead: Some("Chapter Eleven") }));
         assert_eq!(m.chapters(), vec![(0, "Dedication"), (1, "Book One"), (2, "Book Two")]);
+    }
+
+    /// 回归：分组项是 `<span>` 的目录，章号与 `chapters()` 必须对得上（此前越界，条目永远投影不出去）。
+    #[test]
+    fn chapter_index_matches_chapters_when_groups_have_no_link() {
+        let nav = r#"<ol><li><a href="pre.xhtml">前言</a></li><li><span>第一部</span><ol><li><a href="c1.xhtml">第一章</a></li><li><a href="c2.xhtml">第二章</a></li></ol></li></ol>"#;
+        let secs = vec![Section { file: "pre.xhtml".into(), start_page: 1 }, Section { file: "c1.xhtml".into(), start_page: 3 }, Section { file: "c2.xhtml".into(), start_page: 9 }];
+        let m = BookMap::new(secs, Toc::parse(Some(nav), None));
+        assert_eq!(m.chapters(), vec![(0, "前言"), (1, "第一章"), (2, "第二章")]);
+        for page in [1, 4, 10] {
+            let c = m.chapter_of(page).unwrap();
+            assert_eq!(m.chapters()[c.index].1, c.title, "第 {page} 页：章号与章表一致");
+            assert_eq!(c.subhead, None);
+        }
     }
 
     /// 从文件读端建表与整本字节建表结果一致（ingest 改走文件读端，不再整本读进内存）。

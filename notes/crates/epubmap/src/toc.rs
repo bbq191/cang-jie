@@ -31,15 +31,17 @@ impl Toc {
     /// `nav.xhtml`：`<ol>` 深度即层级；条目 = `<a href>`。
     pub fn from_nav(text: &str) -> Toc {
         static RE: OnceLock<Regex> = OnceLock::new();
-        let re = RE.get_or_init(|| Regex::new(r#"(?is)(<ol\b)|(</ol\s*>)|<a[^>]*href="([^"]+)"[^>]*>(.*?)</a>"#).unwrap());
+        let re = RE.get_or_init(|| Regex::new(r#"(?is)(<ol\b)|(</ol\s*>)|(<li\b)|<a[^>]*href="([^"]+)"[^>]*>(.*?)</a>"#).unwrap());
         let mut b = Builder::default();
         for c in re.captures_iter(text) {
             if c.get(1).is_some() {
                 b.depth += 1;
             } else if c.get(2).is_some() {
                 b.leave();
+            } else if c.get(3).is_some() {
+                b.new_item();
             } else {
-                b.push(c.get(3).map_or("", |m| m.as_str()), c.get(4).map_or("", |m| m.as_str()));
+                b.push(c.get(4).map_or("", |m| m.as_str()), c.get(5).map_or("", |m| m.as_str()));
             }
         }
         b.finish()
@@ -54,6 +56,7 @@ impl Toc {
         for c in re.captures_iter(text) {
             if c.get(1).is_some() {
                 b.depth += 1;
+                b.new_item();
             } else if c.get(2).is_some() {
                 b.leave();
             } else if let Some(t) = c.get(3) {
@@ -65,7 +68,7 @@ impl Toc {
         b.finish()
     }
 
-    /// 条目 i 的 1 级祖先下标（自己是 1 级就是自己）。
+    /// 条目 i 的顶层祖先下标（没有父条目的就是自己）。
     pub fn top_ancestor(&self, mut i: usize) -> usize {
         while let Some(p) = self.entries[i].parent {
             i = p;
@@ -89,6 +92,19 @@ impl Builder {
         }
         self.last_at.truncate(self.depth.saturating_sub(1) + 1);
     }
+    /// 新的 `<li>`/`<navPoint>` 开始：这一层还没有条目。不清的话，标签是 `<span>`（没有链接）的分组项，其子条目会
+    /// 挂到上一个兄弟条目下面（《前言》下面冒出第一部的各章）。
+    fn new_item(&mut self) {
+        if let Some(slot) = self.depth.checked_sub(1).and_then(|d| self.last_at.get_mut(d)) {
+            *slot = None;
+        }
+    }
+    fn set_last(&mut self, level: usize, idx: usize) {
+        if self.last_at.len() < level {
+            self.last_at.resize(level, None);
+        }
+        self.last_at[level - 1] = Some(idx);
+    }
     fn push(&mut self, href: &str, raw_title: &str) {
         let file = href.split('#').next().unwrap_or("").rsplit('/').next().unwrap_or("").to_string();
         let title = strip_tags(raw_title);
@@ -97,14 +113,13 @@ impl Builder {
         }
         let level = self.depth.max(1);
         let parent = if level >= 2 { self.last_at.get(level - 2).copied().flatten() } else { None };
-        if self.entries.iter().any(|e| e.file == file) {
-            return; // 同文件多个锚点（#片段）只记首个，页粒度分不开
+        if let Some(existing) = self.entries.iter().position(|e| e.file == file) {
+            // 同文件多个锚点（#片段）只记首个，页粒度分不开；这一层的子条目挂到已记的那条下面。
+            self.set_last(level, existing);
+            return;
         }
         self.entries.push(TocEntry { file, title, level: level as u8, parent });
-        if self.last_at.len() < level {
-            self.last_at.resize(level, None);
-        }
-        self.last_at[level - 1] = Some(self.entries.len() - 1);
+        self.set_last(level, self.entries.len() - 1);
     }
     fn finish(self) -> Toc {
         Toc { entries: self.entries }
@@ -136,6 +151,18 @@ mod tests {
         let v: Vec<(&str, &str, u8, Option<usize>)> = t.entries.iter().map(|e| (e.file.as_str(), e.title.as_str(), e.level, e.parent)).collect();
         assert_eq!(v, vec![("a.xhtml", "A", 1, None), ("b.xhtml", "B 1", 2, Some(0)), ("c.xhtml", "C", 1, None)]);
         assert_eq!(t.top_ancestor(1), 0);
+    }
+
+    /// 分组项是 `<span>`（没有链接）时，其子条目不能挂到上一个兄弟下面；它们成为顶层条目。
+    #[test]
+    fn nav_span_group_children_do_not_attach_to_previous_sibling() {
+        let t = Toc::from_nav(r#"<ol><li><a href="pre.xhtml">前言</a></li><li><span>第一部</span><ol><li><a href="c1.xhtml">第一章</a></li><li><a href="c2.xhtml">第二章</a></li></ol></li></ol>"#);
+        let v: Vec<(&str, u8, Option<usize>)> = t.entries.iter().map(|e| (e.title.as_str(), e.level, e.parent)).collect();
+        assert_eq!(v, vec![("前言", 1, None), ("第一章", 2, None), ("第二章", 2, None)]);
+        // 同文件的重复锚点被合并时，子条目挂到已记的那条下面（不会因为父条目被跳过而变成顶层）。
+        let t = Toc::from_nav(r#"<ol><li><a href="p1.xhtml">第一部</a><ol><li><a href="p1.xhtml#c1">第一章</a><ol><li><a href="s1.xhtml">一节</a></li></ol></li></ol></li></ol>"#);
+        let v: Vec<(&str, Option<usize>)> = t.entries.iter().map(|e| (e.title.as_str(), e.parent)).collect();
+        assert_eq!(v, vec![("第一部", None), ("一节", Some(0))]);
     }
 
     #[test]
