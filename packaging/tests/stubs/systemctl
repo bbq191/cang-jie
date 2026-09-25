@@ -6,10 +6,13 @@ case "$1" in
     show)
         case "$*" in
             *MainPID*) echo 4242 ;;
-            *NRestarts*) echo 0 ;;
+            *NRestarts*) echo "${CJ_SIM_NRESTARTS:-0}" ;;
+            *ExecMainStartTimestampMonotonic*) echo "${CJ_SIM_START_MONO:-7530000}" ;;
         esac ;;
     is-active)
         if [ -n "${CJ_SIM_INACTIVE:-}" ]; then echo inactive; exit 3; fi
+        # CJ_SIM_INACTIVE_UNITS="a.service b.service"：只让点名的单元 inactive
+        case " ${CJ_SIM_INACTIVE_UNITS:-} " in *" $2 "*) echo inactive; exit 3 ;; esac
         echo active ;;
 esac
 exit 0

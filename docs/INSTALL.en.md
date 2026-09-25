@@ -89,6 +89,8 @@ Failed steps are not retried automatically and are never silently skipped.
 
 ## After installing
 
+First run `sh verify-on-device.sh <host>` from `packaging/`: a read-only health check of xovi, extensions, UI patches, services, ports, this boot's alerts and disk space, reported item by item as ✓/⚠/✗; it exits non-zero if anything is ✗ (details in [`packaging/README.md`](../packaging/README.md), Chinese). You can also run it after deploying any single step.
+
 Open `https://10.11.99.1/` in a browser (on the same WiFi you can also use `https://shelf.local/`; Android doesn't resolve `.local`, so use the device's IP there).
 
 - **Change the password**: the default is `shelf`, and the first login forces you to the change-password page.
