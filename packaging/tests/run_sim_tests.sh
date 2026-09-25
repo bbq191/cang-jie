@@ -67,7 +67,7 @@ new_sandbox() {
     echo '{}' > "$R/tmp/shelf-0/shelf/services/book.json"
     xovi_live off
     export HOME="$R/home/root" XDG_CONFIG_HOME="$R/home/root/.config" XDG_DATA_HOME="$R/home/root/.local/share" XDG_STATE_HOME="$R/home/root/.local/state" XDG_CACHE_HOME="$R/home/root/.cache" SHELF_REG_DIR="$R/tmp/shelf-0/shelf/services" CJ_SYSD="$R/usr/lib/systemd/system" CJ_PROC="$R/proc"
-    export CJ_APPLY_GRACE=0 CJ_HEALTH_SLEEP=0 CJ_RETRY_SLEEP=0
+    export CJ_APPLY_GRACE=0 CJ_HEALTH_SLEEP=0 CJ_RETRY_SLEEP=0 CJ_APPLY_VERIFY=0   # 部署后等重启+自动核对另有专门用例
     # 待生效标记目录进沙箱（默认 /run/cangjie-pending-apply 是真实系统路径）
     export CJ_PENDING_DIR="$R/run/cangjie-pending"
     unset CJ_SIM_VERITY CJ_SIM_RW_FAIL CJ_SIM_INACTIVE CJ_SIM_SCP_CORRUPT CJ_HOME CJ_XOVI CJ_BACKUP_DIR CJ_BACKUP_KEEP CJ_STAGE_DIR CJ_PENDING_FALLBACK
@@ -438,6 +438,10 @@ check "H3 非 DEFER：整机重启一次且新版已就位" test "$rc" -eq 0 -a 
 mkdir -p "$SOP"; echo STALE > "$SOP/hl-snap.so"
 ( cd "$PKG" && CJ_SKIP_BUILD=1 DEFER_XOVI_START=1 run sh deploy-hl-snap.sh 127.0.0.1 ) >/dev/null 2>&1
 check "H3：与已装相同的部署撤掉过时的待换入版本" test ! -e "$SOP/hl-snap.so"
+# 部署后自动核对（2026-09-25）：等设备断开 → 回来 → 跑 verify-on-device.sh，退出码跟随核对结果
+: > "$CJ_SIM_LOG"; mkdir -p "$CJ_PENDING_DIR"; : > "$CJ_PENDING_DIR/shelf-qmd"
+( cd "$PKG" && CJ_APPLY_VERIFY=1 CJ_REBOOT_DOWN_WAIT=0 CJ_REBOOT_UP_WAIT=0 CJ_REBOOT_SETTLE=0 run sh deploy-xovi-apply.sh 127.0.0.1 ) >"$R/out.txt" 2>&1; rc=$?
+check "部署后自动核对：排上重启后等设备回来并跑 verify-on-device.sh，退出码跟随核对（沙箱固件哈希不在白名单 → 1）" test "$rc" -eq 1 -a -n "$(grep '设备已回来，核对' "$R/out.txt")" -a -n "$(grep '^VERIFY-SUMMARY' "$R/out.txt")"
 # 映射着已删文件（刚卸载过）也一样，--force 也一样
 xovi_live on; printf '7f03 r-xp %s (deleted)\n' "$EXT/hw-stroke.so" >> "$R/proc/4242/maps"; : > "$CJ_SIM_LOG"
 ( cd "$PKG" && run sh deploy-xovi-apply.sh 127.0.0.1 --force ) >"$R/out.txt" 2>&1; rc=$?

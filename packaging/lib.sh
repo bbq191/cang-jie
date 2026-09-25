@@ -57,11 +57,38 @@ run_apply() {
     { ra_c=0; "$@" || ra_c=$?; echo "$ra_c" > "$ra_rcf"; } | tee "$ra_log"
     ra_rc="$(cat "$ra_rcf")"
     if grep -q '^CJ-APPLY-REBOOTING$' "$ra_log"; then
-        echo "✅ 改动已落盘，设备正在整机重启让它生效（约 1 分钟）。回来后核对：sh verify-on-device.sh $HOST"
-        ra_rc=0
+        rm -f "$ra_log" "$ra_rcf"
+        wait_reboot_and_verify
+        return $?
     fi
     rm -f "$ra_log" "$ra_rcf"
     return "$ra_rc"
+}
+
+# wait_reboot_and_verify：设备已排上整机重启——先等它断开（免得关机前就连上又判"回来了"），再等它回来，
+# 再给 xovi-reenable 与各服务一点时间起齐，然后跑 verify-on-device.sh，退出码即结果（有 ✗ 为 1）。
+# CJ_APPLY_VERIFY=0 只提示不等；CJ_REBOOT_DOWN_WAIT / CJ_REBOOT_UP_WAIT / CJ_REBOOT_SETTLE（秒，缺省 60/240/20）。
+wait_reboot_and_verify() {
+    if [ "${CJ_APPLY_VERIFY:-1}" = 0 ]; then
+        echo "✅ 改动已落盘，设备正在整机重启让它生效（约 1 分钟）。回来后核对：sh verify-on-device.sh $HOST"
+        return 0
+    fi
+    echo "-- 改动已落盘，设备正在整机重启；等它回来后自动核对（不想等：Ctrl-C，之后自己跑 sh verify-on-device.sh $HOST）"
+    wr_t=0
+    while [ "$wr_t" -lt "${CJ_REBOOT_DOWN_WAIT:-60}" ] && rssh true >/dev/null 2>&1; do
+        sleep 2; wr_t=$((wr_t + 2))
+    done
+    wr_t=0
+    until rssh true >/dev/null 2>&1; do
+        if [ "$wr_t" -ge "${CJ_REBOOT_UP_WAIT:-240}" ]; then
+            echo "!! 设备 ${CJ_REBOOT_UP_WAIT:-240} 秒内没回来。检查连接（WiFi/USB）后手动跑：sh verify-on-device.sh $HOST"
+            return 1
+        fi
+        sleep 5; wr_t=$((wr_t + 5))
+    done
+    sleep "${CJ_REBOOT_SETTLE:-20}"
+    echo "-- 设备已回来，核对："
+    sh "$CJ_PKG_DIR/verify-on-device.sh" "$HOST"
 }
 
 # host_arg USAGE "$@"：薄 deploy-*.sh 共用的参数解析——`[host]`，-h/--help 打印用法，多余/未知参数 exit 2。设 HOST。

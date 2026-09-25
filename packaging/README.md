@@ -111,6 +111,8 @@ xovi 没有"只重载一个扩展"的机制，让新扩展/qmd 生效的唯一�
 
 **为什么**（2026-09-25 用户拍板）：xochitl 自己退出时有竞态，停止它有相当概率 SEGV → `OnFailure` → `rm-emergency` → 整机重启。设备上 memfault 存的 5 份崩溃栈（`~/.memfault/mar/*/stacktrace.json.gz`，可按其中 symbols 表符号化）：3 份崩在 xochitl 自己的线程池（调用方 `xochitl+0x64809b`，崩点 `0x6467b8`/`0x649fc8`：09-21 换 appload 后、09-25 卸载后重装、09-25 只换了 qmd 的普通 restart），2 份崩在 `libQt6Gui+0x495098`（09-20 在已生效的 xochitl 上跑 `xovi/start`、09-24 rename 换 hw-stroke 后 restart）。跟扩展文件动没动过无关——09-24"换了 `.so` 才崩、改 stop → 换 → start 就好"和 09-25 上午"映射的扩展被删过才崩"两个归因都被后来的崩溃推翻。与其走一趟崩溃 + 应急路径，不如直接干净地重启。代价：每次生效打断约 20–60 秒（restart 顺利时只要几秒）。
 
+**部署后自动核对**（2026-09-25）：`run_apply` 见到 `CJ-APPLY-REBOOTING` 后，先等设备断开（最多 `CJ_REBOOT_DOWN_WAIT`=60 秒，免得关机前就连上）、再等它回来（最多 `CJ_REBOOT_UP_WAIT`=240 秒）、再等 `CJ_REBOOT_SETTLE`=20 秒让 `xovi-reenable` 与各服务起齐，然后跑 `verify-on-device.sh`，这一步的成败就是核对结果（有 ✗ 为失败）。不想等：`CJ_APPLY_VERIFY=0`（只打印核对命令），或 Ctrl-C。
+
 仍然成立的：**绝不在 xovi 已生效时跑 `xovi/start`**（它 umount 再重挂 drop-in 目录，2026-09-20 真机事故）；生效前先打印"将打断阅读"并留 `CJ_APPLY_GRACE` 秒（默认 5）宽限，不想被打断就 `--skip xovi-apply`；换入 → 清标记 → 排重启这一段忽略 HUP/PIPE/INT/TERM（ssh 断了也要把重启排上）。
 
 **扩展 `.so` 的待换入区**（2026-09-24 起，现在仍用）：
