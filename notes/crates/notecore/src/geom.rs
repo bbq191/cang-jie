@@ -2,7 +2,7 @@
 //! 只用包围盒间距，不看笔序、不看时间（用户会回头补笔）。阈值以 `.rm` 原始页坐标单位计（**不是像素**——
 //! EPUB 页的坐标系是排版引擎自己的虚拟画布，真机实测 960×1280，见 `ink-serve::crop` 与白皮书 §03g；
 //! 聚簇/配对只比坐标间的相对距离，不需要知道画布真实尺寸，不受这个换算影响）。
-//! 缺省 `cluster_gap=40`/`pair_gap=120`，2026-09-07 真机样本验证有效（§03f）。
+//! 缺省 `cluster_gap=40`/`pair_gap=160`：2026-09-07 真机样本标定为 120，2026-09-25 按用户"写在勾画旁边隔几个字"的真机样本（距离约 138）放宽到 160。
 use rmv6::page::{BBox, Highlight, Stroke};
 
 /// 聚簇/配对阈值。
@@ -16,7 +16,7 @@ pub struct Thresholds {
 
 impl Default for Thresholds {
     fn default() -> Self {
-        Thresholds { cluster_gap: 40.0, pair_gap: 120.0 }
+        Thresholds { cluster_gap: 40.0, pair_gap: 160.0 }
     }
 }
 
@@ -141,7 +141,7 @@ mod tests {
     #[test]
     fn real_device_sample_clusters_and_pairs_correctly() {
         // 真机 2026-09-07 步骤 0 样本：三段勾画 + 旁边手写（分别首字 -/1./口）+ 另一行字带下划线（本页批注，无勾画）。
-        // 用缺省阈值（cluster_gap=40, pair_gap=120）跑真实几何，坐实默认值不用改。
+        // 用缺省阈值跑真实几何：09-07 标定时 pair_gap=120，09-25 放宽到 160 后这份样本结果不变（第四簇 ~305pt）。
         use rmv6::page::Page;
         let bytes = include_bytes!("../../../testdata/renggu_marks/page.rm");
         let page = Page::parse(bytes).unwrap();
@@ -155,5 +155,16 @@ mod tests {
         assert_eq!(p[3], None, "第四簇（字+下划线）离最近勾画 ~305pt，超过 pair_gap → 本页批注");
         // 配对精确到"哪一条"：簇按 y 升序（同 cluster 排序），勾画顺序与页面从上到下一致。
         assert_eq!(p[..3], [Some(0), Some(1), Some(2)]);
+    }
+
+    #[test]
+    fn handwriting_a_few_chars_right_of_highlight_pairs_at_default_gap() {
+        // 真机 2026-09-25《13 級階梯》第 18 页：勾画「三上俊男」右缘 x≈-189，钢笔写的两个字在右上方行间，
+        // 包围盒左缘 x≈-50.7、下缘 y≈353.4 → 间距约 138。旧缺省 120 判成本页批注，160 配上。
+        let strokes = vec![stroke(1, Tool::BallPoint, -50.7, 283.1, 73.6, 353.4)];
+        let hls = vec![hl(1, "三上俊男", -350.98, 355.81, 161.99, 48.91)];
+        let cs = cluster(&strokes, &Thresholds::default());
+        assert_eq!(pair(&cs, &hls, &Thresholds::default()), vec![Some(0)]);
+        assert_eq!(pair(&cs, &hls, &Thresholds { cluster_gap: 40.0, pair_gap: 120.0 }), vec![None]);
     }
 }

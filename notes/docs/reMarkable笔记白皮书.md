@@ -134,7 +134,7 @@
 | 选页 | 先列出有 `.rm` 的页，和条目库里记的 `page_mtimes` 比，只扫修改时间变了的页；一页都没变就直接返回，连 `.content` 都不解析（读书时 xochitl 会反复改写 `.content`，大多数触发其实没事可做） | 只处理活的 EPUB：不在回收站、没标 deleted、`fileType=epub`（`fileType` 在确认有页变了之后才看） |
 | 解析 | `rmv6::page::Page` 取出三样：手写笔画、勾画（GlyphRange：原文 + 每行矩形）、打字文本 | 勾画与手写在**同一坐标系**，配对不用换算。擦掉的项有两种写法（独立墓碑块，或 item 自身值为空），都已剔除 |
 | 聚簇 | `notecore::geom::cluster`：任意两笔包围盒间距 ≤ `clusterGap`（默认 40）就归一簇 | 不看笔序和时间，因为用户会回头补几笔。荧光笔自己也留一条笔画，按工具类型排除 |
-| 配对 | 每簇配最近的勾画，距离 ≤ `pairGap`（默认 120），否则算“本页批注” | 两个阈值 2026-09-07 用真机样本标定：批注簇到对应勾画距离为 0，到次近勾画 ≥148，余量充足 |
+| 配对 | 每簇配最近的勾画，距离 ≤ `pairGap`（默认 160），否则算“本页批注” | 2026-09-07 用真机样本标定为 40 / 120：批注簇到对应勾画距离为 0，到次近勾画 ≥148。2026-09-25 真机样本：用户在勾画右上方隔几个字处写批注，距离约 138，被判成本页批注 → `pairGap` 放宽到 160（用户拍板）。配对取**最近**的勾画，所以旧样本结果不变；代价是两条勾画相距较近时，夹在中间的手写更可能挂到另一条上 |
 | 纯勾画 | 没被任何手写簇配上的勾画，单独生成一条 `ink: None` 的条目 | 点「转入笔记」直接用原文定稿（见 3.3） |
 | 章节 | `epubmap`：`.epubindex` 给出每个章节文件的起始页，`nav.xhtml`（没有就用 `toc.ncx`）给出目录层级，得到“页号 → 章 / 小节” | `.content` 的 `pages` 数组下标就是页号。`.epub` 以文件读端打开，只读 zip 中央目录和目录那一两个条目，不整本读进内存（见 3.6） |
 | 裁图 | `crop::render_ink` 按条目自己的笔画 id 挑出笔画，在包围盒加 `cropMargin`（24）范围内画白底黑线 PNG | 不再用 xochitl 缩略图（见 3.6）。宽或高小于 8 像素就拒绝，不把废图发给模型 |
@@ -397,7 +397,7 @@
 | 用途 | 路径 |
 |---|---|
 | 二进制 | `~/.local/bin/{ink-serve,transcribe-serve,mind-serve,note-serve}` |
-| 配置 | `~/.config/notes/ink.json`（`clusterGap` 40 / `pairGap` 120 / `pageWidth` 960 / `pageHeight` 1280 / `xOriginCenter` true / `cropMargin` 24 / `debounceSecs` 4，首次启动写出默认值，新版本不会覆盖已有文件）· `transcribe.json` / `mind.json`（0600；`preset`、`keys`、`prices`、自定义模型与地址、`timeoutSecs`、`prompt`；transcribe 另有 `auto` / `maxPerRun` / `pauseMs` / `maxAttempts` 节流字段）· `note.json` |
+| 配置 | `~/.config/notes/ink.json`（`clusterGap` 40 / `pairGap` 160（09-25 前 120）/ `pageWidth` 960 / `pageHeight` 1280 / `xOriginCenter` true / `cropMargin` 24 / `debounceSecs` 4，首次启动写出默认值，新版本不会覆盖已有文件）· `transcribe.json` / `mind.json`（0600；`preset`、`keys`、`prices`、自定义模型与地址、`timeoutSecs`、`prompt`；transcribe 另有 `auto` / `maxPerRun` / `pauseMs` / `maxAttempts` 节流字段）· `note.json` |
 | 数据 | `~/.local/share/notes/crops/`（裁图 PNG）· `~/.local/share/notes/vault/`（md 导出） |
 | 状态 | `~/.local/state/notes/books/<uuid>.json`（**条目库**）· `notebooks/`、`exports/`（每章生成/导出记录）· `transcribe.json`、`mind.json`（用量账本，只记数不记内容）。以上任何 JSON 解析失败时的副本 `*.json.corrupt` 放在原文件旁边（见第 2 章「可靠性要点」） |
 | 运行时 | 与书架共用注册表 `$XDG_RUNTIME_DIR/shelf/services/` |
@@ -468,7 +468,7 @@
 
 | 事项 | 在哪章 |
 |---|---|
-| 聚簇 / 配对阈值标定（40 / 120 不用改） | 3.1 |
+| 聚簇 / 配对阈值标定（40 / 120；09-25 配对放宽到 160） | 3.1 |
 | 裁图画布尺寸错误（960×1280），后改为自渲染裁图 | 3.6 |
 | `rmv6` 写入 + `.rmdoc` 打包上传；七种样式全部渲染 | 8.1 |
 | 生成编排：首次生成、增量重传、旧版本自动进回收站、没变化跳过 | 8.3 |
