@@ -51,11 +51,18 @@ dev_script() {
 
 # run_apply CMD…：跑一段可能让设备主动整机重启的设备端命令（内部调了 devlib.sh 的 cj_xochitl_apply）。输出照常
 # 打到终端并留一份；见到设备端打印的 CJ-APPLY-REBOOTING 就按成功处理——ssh 随重启断开（退出码 255）不算失败——
-# 并提示设备回来后跑 verify-on-device.sh。其余情况原样返回 CMD 的退出码。stdin 原样交给 CMD（可接 heredoc）。
+# 并提示设备回来后跑 verify-on-device.sh；见到 CJ-APPLY-REBOOT-FAILED（systemctl reboot 本身失败）则不空等、按失败返回。
+# 其余情况原样返回 CMD 的退出码。stdin 原样交给 CMD（可接 heredoc）。
 run_apply() {
     ra_log="$(mktemp)"; ra_rcf="$(mktemp)"
     { ra_c=0; "$@" || ra_c=$?; echo "$ra_c" > "$ra_rcf"; } | tee "$ra_log"
     ra_rc="$(cat "$ra_rcf")"
+    if grep -q '^CJ-APPLY-REBOOT-FAILED$' "$ra_log"; then
+        rm -f "$ra_log" "$ra_rcf"
+        echo "!! 设备没能排上整机重启（见上），改动尚未生效；设备上手动 reboot 后跑：sh verify-on-device.sh $HOST"
+        [ "$ra_rc" != 0 ] || ra_rc=1
+        return "$ra_rc"
+    fi
     if grep -q '^CJ-APPLY-REBOOTING$' "$ra_log"; then
         rm -f "$ra_log" "$ra_rcf"
         wait_reboot_and_verify

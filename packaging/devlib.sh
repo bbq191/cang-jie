@@ -418,7 +418,14 @@ cj_xochitl_apply() {
         # shellcheck disable=SC2034  # 调用方的设备端脚本读
         CJ_APPLY_REBOOTED=1
         echo "CJ-APPLY-REBOOTING"
-        systemctl reboot --no-block || cj_ap_rc=1
+        if ! systemctl reboot --no-block; then
+            # 重启没排上：待换入区已换入、标记已清，xochitl 却还在用旧的——把标记补回去，下次 xovi-apply 还会再试；
+            # 另打一行让 host 侧 run_apply 别去空等设备重启（2026-09-25 审计）
+            cj_ap_rc=1
+            cj_pending_mark apply-reboot-failed || true
+            echo "!! systemctl reboot 失败——改动已落盘但没生效；请在设备上手动 reboot"
+            echo "CJ-APPLY-REBOOT-FAILED"
+        fi
         trap - HUP PIPE INT TERM
         return "$cj_ap_rc"
     fi

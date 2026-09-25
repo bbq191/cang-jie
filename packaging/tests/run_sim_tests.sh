@@ -951,6 +951,13 @@ check "xovi 未生效时直接装新版：待换入区里过时的旧版一并�
 ( cd "$PKG" && run sh deploy-xovi-apply.sh 127.0.0.1 ) >/dev/null 2>&1
 check "  └ 随后生效（xovi/start）：extensions.d 里仍是新版，没被过时的待换入版本盖回" test "$(md5sum < "$EXT/hl-snap.so")" = "$(md5sum < "$HLSO")"
 
+# systemctl reboot 本身失败：不能让 host 空等设备重启并把核对结果当成本步结果；标记要补回去，下次还会再试
+new_sandbox; EXT="$R/home/root/xovi/extensions.d"; echo x > "$EXT/hl-snap.so"; xovi_live on
+mkdir -p "$CJ_PENDING_DIR"; : > "$CJ_PENDING_DIR/shelf-qmd"; : > "$CJ_SIM_LOG"
+( cd "$PKG" && CJ_SIM_REBOOT_FAIL=1 CJ_APPLY_VERIFY=1 CJ_REBOOT_DOWN_WAIT=0 CJ_REBOOT_UP_WAIT=0 CJ_REBOOT_SETTLE=0 run sh deploy-xovi-apply.sh 127.0.0.1 ) >"$R/out.txt" 2>&1; rc=$?
+check "reboot 失败：退出非 0、提示手动 reboot、不去等设备重启/不跑核对" test "$rc" -ne 0 -a -n "$(grep '手动 reboot' "$R/out.txt")" -a -z "$(grep -e '设备已回来' -e '^VERIFY-SUMMARY' "$R/out.txt")"
+check "reboot 失败：补回待生效标记（下次 xovi-apply 仍会判定需要生效）" test -n "$(ls -A "$CJ_PENDING_DIR" 2>/dev/null)"
+
 # ═══════════════════════════ 5. 静态守卫 / 清单对称 ═══════════════════════════
 section "静态守卫"
 cd "$REPO" || exit 1
