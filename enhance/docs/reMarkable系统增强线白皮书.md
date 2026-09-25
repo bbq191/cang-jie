@@ -277,7 +277,7 @@ hook 目标 `FUN_00f47530`：两个 float（s0/s1）+ 一个指针（x0），标
 | battop | 本线 | **默认不跑**；开着时醒着每 600 秒采样一次 | `enhance/battop/src/main.rs` `BATTOP_INTERVAL_SECS` |
 | hl-snap / hw-stroke | 本线 | 没有定时器，只在划线 / 写字时进 handler | `enhance/*/src/*.c` |
 | reader-page-turn.qmd | 本线（源码在 shelf） | 打开书时单发 300 ms 读一次开关，不轮询（08 月旧版每 1.5 秒轮询） | `shelf/xovi/reader-page-turn.qmd` |
-| 其余 qmd 与服务 | shelf / notes | comic-margins 换文档单发 1.5 秒；trash-agent 与 mkdir-agent 同为 290 秒长轮询（09-25 起，各约 12 次/小时）；book-serve / ink-serve 用 inotify 防抖（8 秒 / 4 秒）；浏览器事件流 20 秒心跳只在网页开着时有 | 各自源码 |
+| 其余 qmd 与服务 | shelf / notes | comic-margins 换文档单发 1.5 秒；trash-agent 与 mkdir-agent 同为 290 秒长轮询（09-25 起，各约 12 次/小时；book-serve 不在时出错重试 15→30→60→120 秒封顶，此前固定 15 秒 = 240 次/小时）；book-serve / ink-serve 用 inotify 防抖（8 秒 / 4 秒）；浏览器事件流 20 秒心跳只在网页开着时有 | 各自源码 |
 
 **结论**：空闲时的定时唤醒主要是 wifi-watch 和 8 条事件流心跳，每小时各约 240 次；mkdir-agent、trash-agent 两个长轮询各约 12 次/时（mkdir-agent 原约 144 次）；wallpaper-serve 09-24 起不再跟日志（改监听休眠读图）。飞行记录仪不在设备上：它跑在宿主机，循环经 ssh 抓设备日志（接着电脑时才有），所以本线仍尽量压低 xochitl 日志量（§03g 逐点日志默认关、§03i 去掉命中日志）。
 
@@ -297,6 +297,19 @@ hook 目标 `FUN_00f47530`：两个 float（s0/s1）+ 一个指针（x0），标
 | wallpaper-serve 单图池唤醒不重写 `current.png` | 只传过一张是常态，每次唤醒白写 1–3 MB 闪存 | 新增单图池用例，8 个测试全过；`wallpaper-serve roll` 此时打印"不轮换" |
 | reader-page-turn.qmd 去掉单击/滑动命中日志、关书时不读配置 | 每行 journal 都唤醒 wallpaper-serve 和飞行记录仪（§03j） | 没有单独再做离线/真机验证（只删日志、加一处提前返回）；加载 / 开关 / rtl 三类日志保留 |
 | hw-stroke 安装器提示改为检查两行"hook 安装完成" | 逐点日志 09-24 起默认关，旧提示让人 grep 一个必然为空的结果 | — |
+
+## 03l｜第四轮审计给本线的改动（2026-09-25，未部署）
+
+全部只在 host 上测过（battop 32 项、font-serve 10 项、wallpaper-serve 10 项 `cargo test` 通过；`shared` `make test` 通过），**未在真机验证**。两个扩展 `.so` 的源码**没有改**：本机按 Makefile 同参数交叉编译零警告，产物 md5 与仓库里的 `.so` 一致（hl-snap `7ca1985b…`、hw-stroke `6e5b4a3d…`，构建可复现）。
+
+| 改动 | 为什么 | 验证 |
+|---|---|---|
+| battop 唤醒源时间改用"墙钟 − 单调时钟 + kmsg 时间戳"换算，按 kmsg 序号增量并入（新文件 `wakes.cursor` 记开机 id 与序号） | kmsg 时间戳不含休眠，旧版用含休眠的 `/proc/uptime` 反推，每条唤醒被提前"开机以来累计休眠时长"，开机两天后的唤醒可能被记到两天前，面板「今日 / 24 小时」唤醒数不准；另外旧的"按时间整段替换"在换开机后会丢一条边界事件、且没有新唤醒时每轮都当成读取失败重读 | 新增换算 / 同开机只并新序号 / 换开机重建 / 游标读写 5 组测试；读 kmsg 遇 `EPIPE`（记录被覆盖）改为继续读 |
+| font-serve 开机时 `fonts.json` 与字体目录一致就直接用，不再全量重扫；`fonts.conf` 内容不变不重写 | 此前每次开机把每个字体整文件读一遍、各 fork 一次 `fc-scan`（中文字体十几到几十 MB），正赶上 xochitl 起界面；无条件重写 `fonts.conf` 还会让 fontconfig 使用方重载配置 | 新增用例：复用 / 目录多文件 / 删文件 / 索引损坏各走对分支，`fonts.conf` 不变时 mtime 不动 |
+| wallpaper-serve 同一次休眠去重改按含休眠的开机时长（`/proc/uptime`） | 原用单调时钟：休眠几小时后唤醒、10 秒内又休眠，这次读图被当成重复读跳过，下次休眠还是同一张 | 单测；监听出错退避在正常跑过 ≥5 分钟后复位 |
+| mkdir / trash 两个代理 qmd 出错指数退避；comic-margins 建出 `EpubProperties` 后立即排 5 秒销毁 | 见 §03j 表；后者防异常时对象常驻 | 最新 `asivery/qmldiff` 在带同名锚点的**桩 QML** 上 `apply-diffs` 全部应用、`qmllint` 无语法错误；**不是**真实 .172 QML，设备端 qmldiff 版本可能更旧（本机新版对 `({})` 已不报错，旧设备版会） |
+
+**部署后确认**：打开「管理 → 电池刺客」看唤醒源「今日」计数是否与当天实际休眠 / 唤醒次数量级相符（`data/wakes.cursor` 应出现）；`systemctl restart font-serve` 后 journal 里"索引 N 个家族"秒回、`~/.config/fontconfig/fonts.conf` 的 mtime 不变；xochitl 日志里 `SHELF-MKDIR` / `SHELF-TRASH` 行为照常（停掉 book-serve 时代理不再每 15 秒重试）。
 
 ## 04｜踩坑
 
