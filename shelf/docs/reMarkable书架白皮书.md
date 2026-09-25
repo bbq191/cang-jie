@@ -978,7 +978,7 @@ qmd 和 xovi 扩展只在 xochitl **启动时**注入，所以改了要让 xochi
 | 安装备份 | `~/cangjie-backups/shelf-<时间戳>/`（旧二进制/单元/qmd，保留最近 5 份） |
 | 配置 | `~/.config/shelf/<服务>.json`（book 的三个键见传书线架构 §9）· `~/.config/shelf/tls/`（CA + 叶证书） |
 | 数据 | `~/.local/share/shelf/`（fonts.json、壁纸池）· `~/.local/share/fonts/`（用户字体）· 跨进程开关 `~/.local/share/cangjie-ime/reading-qol.json` |
-| 状态 | `~/.local/state/shelf/books/staging/`（**母版库**，不淘汰；`.pdf-originals/` 原 PDF 备份 7 天）· `books/{inbox,.work,failed}`（追平队列）· `books/{mkdir,trash}-pending.json`、`books/comic-margins.json`（代理队列）· `books/rtl-overrides.json`（日漫翻页手动清单，uuid 数组）· `batch.json`（网关批量队列）· `wallpaper-state.json` · `koreader-backups/` |
+| 状态 | `~/.local/state/shelf/books/staging/`（**母版库**，不淘汰；`.pdf-originals/` 原 PDF 备份 7 天）· `books/{inbox,.work,failed}`（追平队列）· `books/{mkdir,trash}-pending.json`、`books/comic-margins.json`（代理队列）· `books/rtl-overrides.json`（日漫翻页手动清单，uuid 数组）· `batch.json`（网关批量队列）· `wallpaper-state.json` · `koreader-backups/`（每个配置文件最近 10 份）· `koreader-upload/`（KOReader 字体/词典上传暂存，2026-09-25 起从 tmpfs 挪来） |
 | 运行时 | `$XDG_RUNTIME_DIR/shelf/`（缺省 `/tmp/shelf-0/shelf/{services,upload,koreader}`；重启即清） |
 | 外部约定 | KOReader 根 `SHELF_KOREADER_ROOT`（缺省 `~/xovi/exthome/appload/koreader`，appload ≥ 0.6.0）；xochitl 书库 `~/.local/share/remarkable/xochitl` |
 | 笔记线 | 自成一套 `notes` 命名空间，见 `../../notes/README.md` |

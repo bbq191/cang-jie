@@ -47,7 +47,7 @@ docsettingtweak、profiles、gestures、coverbrowser、autosuspend。
 ## 怎么应用
 
 **所有 Lua 处理都在设备端**，由 `koreader-serve`（`127.0.0.1:8791`，经网关为 `/api/koreader/…`）执行：
-写前备份到 `~/.local/state/shelf/koreader-backups/<文件>.bak.pre-shelf-<时间戳>`，写后回读校验（读不回来自动还原）；
+写前备份到 `~/.local/state/shelf/koreader-backups/<文件>.bak.pre-shelf-<时间戳>[-序号]`（补丁没带来改动时不留备份，每个文件只留最近 10 份），写后回读校验（读不回来自动还原；原来没有这个文件则删掉写坏的新文件）；
 仓库里 5 份补丁逐个应用到空 KOReader 目录、二次应用零改动，有回归测试守着；
 **KOReader 运行中拒写**（返回 409；它退出时会回写配置覆盖你的改动，必须先退出 KOReader；这条拒写真机尚未专门验证）。
 
