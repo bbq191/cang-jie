@@ -940,6 +940,17 @@ check "静态守卫：verify 采集脚本非空" test -s "$R/collector.sh"
 check "静态守卫：verify 采集脚本不含 systemctl 写操作 / mount / rm / mv / cp / 写文件重定向 / cj_xochitl_apply / 标记增删" test -z "$(grep -nE 'systemctl +(start|stop|restart|reload|enable|disable|daemon-reload|kill|mask|reset-failed)|\bmount\b|(^|[;&|[:space:]])(rm|mv|cp|mkdir|touch|ln|chmod|kill)[[:space:]]|>>|>[[:space:]]*"?\$|cj_xochitl_apply|cj_pending_(mark|clear)|cj_so_(stage|commit|unstage)|xovi/start' "$R/collector.sh")"
 unset CJ_ALLOWLIST_LOCAL
 
+# ═══════════════════════════ 9. 2026-09-25 第四轮审计新增 ═══════════════════════════
+section "2026-09-25 第四轮：待换入区过时版本 / 重启失败 / battop verity / 连接次数"
+HLSO="$REPO/enhance/hl-snap/hl-snap.so"
+# 待换入区里有更早一轮的旧版（xovi 暂未生效时直接原子替换）：必须撤掉，否则随后的生效步骤会把它盖回来
+new_sandbox; EXT="$R/home/root/xovi/extensions.d"; SOP="$R/home/root/.cangjie-stage/so-pending"
+echo OLDSO > "$EXT/hl-snap.so"; mkdir -p "$SOP"; echo STALE > "$SOP/hl-snap.so"; xovi_live off
+( cd "$PKG" && CJ_SKIP_BUILD=1 DEFER_XOVI_START=1 run sh deploy-hl-snap.sh 127.0.0.1 ) >"$R/out.txt" 2>&1; rc=$?
+check "xovi 未生效时直接装新版：待换入区里过时的旧版一并撤掉" test "$rc" -eq 0 -a ! -e "$SOP/hl-snap.so" -a "$(md5sum < "$EXT/hl-snap.so")" = "$(md5sum < "$HLSO")"
+( cd "$PKG" && run sh deploy-xovi-apply.sh 127.0.0.1 ) >/dev/null 2>&1
+check "  └ 随后生效（xovi/start）：extensions.d 里仍是新版，没被过时的待换入版本盖回" test "$(md5sum < "$EXT/hl-snap.so")" = "$(md5sum < "$HLSO")"
+
 # ═══════════════════════════ 5. 静态守卫 / 清单对称 ═══════════════════════════
 section "静态守卫"
 cd "$REPO" || exit 1

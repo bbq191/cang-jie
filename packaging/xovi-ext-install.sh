@@ -44,7 +44,8 @@ cj_require_root || exit 1
 #  · 运行中的 xochitl 正映射着它 → 不当场换，放进待换入区，由 cj_xochitl_apply 换入后整机重启（或下次开机由 xovi-reenable 换入）
 #    （换完再 restart 会让旧进程退出时崩溃、整机重启，2026-09-24 真机第二次复现，见 devlib.sh 头注 H3）；
 #    同一个新版已经在待换入区（上一轮 --no-restart 放进去、还没重启）→ 不再重复备份/重放；
-#  · 否则原子替换：先写到 extensions.d 之外的暂存目录再 rename 进去，中途失败不在 extensions.d 里留半个 .so。
+#  · 否则原子替换：先写到 extensions.d 之外的暂存目录再 rename 进去，中途失败不在 extensions.d 里留半个 .so；
+#    同样撤掉过时的待换入版本（否则下一次生效时它会把新版盖回旧版）。
 EXT_CHANGED=0
 if [ -f "$EXTDIR/$EXT_SO" ] && cmp -s "$PAYLOAD/$EXT_SO" "$EXTDIR/$EXT_SO"; then
     cj_so_unstage "$EXT_SO"
@@ -62,6 +63,9 @@ else
     echo "-- 装 $EXT_SO -> $EXTDIR/"
     cj_safe_replace "$PAYLOAD/$EXT_SO" "$EXTDIR/$EXT_SO" "$CJ_STAGE_DIR" 755 || { echo "!! 写 $EXTDIR/$EXT_SO 失败"; exit 1; }
     EXT_CHANGED="$CJ_REPLACED"
+    # 待换入区里若还躺着更早一轮放进去的版本（放进去后设备没经 xovi-reenable 就重启过、xovi 暂未生效等），它已过时：
+    # 不撤掉的话，接下来的 cj_xochitl_apply / 开机 xovi-reenable 会拿它把刚装好的新版盖回去（2026-09-25 审计）
+    cj_so_unstage "$EXT_SO"
 fi
 if [ -e "$EXTDIR/$EXT_SO.crashed" ]; then EXT_CHANGED=1; rm -f "$EXTDIR/$EXT_SO.crashed"; fi   # 清旧崩溃标记（有过崩溃标记 = 需要重启重新载入一次）
 cj_stage_cleanup
