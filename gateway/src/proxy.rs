@@ -132,10 +132,13 @@ pub fn forward(paths: &Paths, req: &mut Request<'_>) -> ApiResult {
     if !req.content_type.is_empty() {
         r = r.set("Content-Type", &req.content_type);
     }
-    if let Some(n) = req.content_length {
+    // 只在真的转发请求体时带长度：GET/DELETE 走 `call()` 不发 body，若照抄客户端的 Content-Length（带 body 的 DELETE），
+    // 后端会一直等那几个永远不来的字节直到超时；闸门那条路重发的是读出来的字节，长度以它为准。
+    let has_body = !matches!(req.method, Method::Get | Method::Delete);
+    if let Some(n) = body_override.as_ref().map(Vec::len).or(req.content_length).filter(|_| has_body) {
         r = r.set("Content-Length", &n.to_string());
     }
-    let resp = if matches!(req.method, Method::Get | Method::Delete) {
+    let resp = if !has_body {
         r.call()
     } else if let Some(buf) = body_override {
         r.send(&mut std::io::Cursor::new(buf))
@@ -313,6 +316,44 @@ mod tests {
         assert_eq!(reply.status, 200);
         assert!(seen_active.load(Ordering::SeqCst), "后端处理期间闸门里应有这次抓网文的名额");
         assert!(!crate::budget::global().snapshot().1.contains(&key), "同步请求返回后名额应已归还");
+    }
+
+    /// 回归：客户端发了带 `Content-Length` 的 DELETE，网关用 `call()` 不转发 body，也就不能转发这个长度——否则后端会
+    /// 干等那几个字节。假后端只读请求头，记下有没有 `content-length`，然后立刻回 200。
+    #[test]
+    fn delete_forwards_no_content_length() {
+        use std::io::Write;
+        let t = tempfile::tempdir().unwrap();
+        let h = t.path().to_string_lossy().to_string();
+        let paths = Paths::resolve(move |k| if k == "HOME" || k.starts_with("XDG_") { Some(h.clone()) } else { None });
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let backend = std::thread::spawn(move || {
+            let (mut sock, _) = listener.accept().unwrap();
+            let mut buf = Vec::new();
+            let mut chunk = [0u8; 1024];
+            while !buf.windows(4).any(|w| w == b"\r\n\r\n") {
+                let n = sock.read(&mut chunk).unwrap();
+                if n == 0 {
+                    break;
+                }
+                buf.extend_from_slice(&chunk[..n]);
+            }
+            let body = b"{\"ok\":true}";
+            write!(sock, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len()).unwrap();
+            sock.write_all(body).unwrap();
+            String::from_utf8_lossy(&buf).to_ascii_lowercase()
+        });
+        let info = registry::ServiceInfo { name: "font-serve".into(), port, label: String::new(), version: String::new(), pid: std::process::id(), ui: None };
+        let _reg = registry::register(&paths, &info).unwrap();
+        let mut rd: &[u8] = b"12345";
+        let params = [("svc", "fonts"), ("*", "x.ttf")].iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
+        let mut req = Request { method: Method::Delete, path: "/api/fonts/x.ttf".into(), query: Default::default(), params, content_type: String::new(), content_length: Some(5), headers: vec![], body: &mut rd };
+        let reply = forward(&paths, &mut req).unwrap();
+        let head = backend.join().unwrap();
+        assert_eq!(reply.status, 200);
+        assert!(head.starts_with("delete /x.ttf"), "{head}");
+        assert!(!head.contains("content-length"), "DELETE 不转发 body，也不能带长度：{head}");
     }
 
     #[test]
