@@ -16,10 +16,12 @@
 //!
 //! 持久化+入队去重+剔除这层通用外壳委托 `pending_queue::PendingQueue<T>`（2026-09-09 消重复，跟
 //! `trash.rs` 是同一份基础设施，见该模块文档）；这里只留领域校验（名字合法性/文件夹是否已存在）。
+use crate::agent_failures::AgentFailures;
 use crate::pending_queue::{Handout, PendingQueue, HANDOUT_MAX_ATTEMPTS};
 use serde::{Deserialize, Serialize};
 use rmsvc_core::xochitl::{find_folder_by_name, list_folders};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
 
 /// 同一个文件夹名交给 QML 代理后，这段时间内不再重复交出。建夹是异步的：`Library.createCollection`
@@ -38,6 +40,8 @@ pub struct MkdirQueue {
     lib_dir: PathBuf,
     /// 长轮询 + 交出后静默期（见 [`HANDOUT_QUIET`]），与 `trash.rs` 共用。
     handout: Handout,
+    /// 放弃时记一条给网页看（见 `agent_failures.rs`）；单测不挂。
+    failures: Option<Arc<AgentFailures>>,
 }
 
 impl MkdirQueue {
@@ -46,7 +50,13 @@ impl MkdirQueue {
             q: PendingQueue::new(state_books_dir.join("mkdir-pending.json")),
             lib_dir: lib_dir.to_path_buf(),
             handout: Handout::new(HANDOUT_QUIET),
+            failures: None,
         }
+    }
+
+    pub fn with_failures(mut self, f: Arc<AgentFailures>) -> MkdirQueue {
+        self.failures = Some(f);
+        self
     }
 
     /// 单测用：缩短/取消"重复交出"的静默期。
@@ -91,6 +101,9 @@ impl MkdirQueue {
             dropped += n;
             for name in &taken.give_up {
                 println!("[book-serve] 建文件夹《{name}》已交给 xochitl {HANDOUT_MAX_ATTEMPTS} 次仍没建出来，放弃（移出队列）");
+                if let Some(f) = &self.failures {
+                    f.record("mkdir", name, "");
+                }
             }
         }
         Ok((taken.hand, dropped))
@@ -177,13 +190,15 @@ mod tests {
     #[test]
     fn gives_up_after_max_attempts() {
         let t = tempfile::tempdir().unwrap();
-        let q = MkdirQueue::new(&t.path().join("state"), &lib(&t)).with_handout_quiet(Duration::ZERO);
+        let fails = Arc::new(AgentFailures::new(&t.path().join("state"), None));
+        let q = MkdirQueue::new(&t.path().join("state"), &lib(&t)).with_handout_quiet(Duration::ZERO).with_failures(fails.clone());
         q.add("丁").unwrap();
         for _ in 0..HANDOUT_MAX_ATTEMPTS {
             assert_eq!(q.pending().unwrap(), (vec!["丁".to_string()], 0));
         }
         assert_eq!(q.pending().unwrap(), (vec![], 1), "交满放弃");
         assert!(q.list().is_empty(), "移出队列");
+        assert_eq!(fails.list().iter().map(|f| (f.kind.as_str(), f.name.as_str())).collect::<Vec<_>>(), [("mkdir", "丁")], "放弃记下来给网页看");
         assert_eq!(q.pending().unwrap(), (vec![], 0));
     }
 

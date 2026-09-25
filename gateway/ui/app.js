@@ -1427,6 +1427,20 @@ async function showOtaBanner(){
   ban.prepend(x);x.onclick=()=>ban.remove();
   document.body.insertBefore(ban,$('#main'));
 }
+/* 页头"设备上没做成"横幅（2026-09-25）：移进 xochitl 回收站、在 xochitl 书库建文件夹，这两件事由设备端代理执行，
+   交满 5 次仍没做成 book-serve 就放弃（见 book-serve agent_failures.rs）。页面打开时取一次，之后收到 `agent-failed`
+   事件再取，不轮询；「知道了」清空服务端记录（换台设备/刷新后也不再出现）。book-serve 没开时接口不通，不显示。 */
+async function showAgentFailBanner(){
+  const old=$('#agentfail');
+  const d=await j('/api/books/agent-failures');const items=d.ok===false?[]:(d.items||[]);
+  if(!items.length){if(old)old.remove();return}
+  const li=items.slice().reverse().map(f=>`<li>${esc(T('agentfail.'+(f.kind==='mkdir'?'mkdir':'trash'),{name:f.name}))} <span class="small">${esc(fmtTime(f.at))}</span></li>`).join('');
+  const ok=el('button',{class:'btn',type:'button',text:T('agentfail.ack')});
+  const ban=el('div',{class:'otabanner',id:'agentfail',role:'alert',html:`<b>${T('agentfail.title',{n:items.length})}</b><ul>${li}</ul><p class="small">${T('agentfail.hint')}</p>`});
+  ban.appendChild(ok);
+  ok.onclick=async()=>{ok.disabled=true;const r=await postJ('/api/books/agent-failures/clear',{});if(r.ok===false){ok.disabled=false;return}ban.remove()};
+  if(old)old.replaceWith(ban);else document.body.insertBefore(ban,$('#main'));
+}
 
 /* 管理台/引导（固定 tab，始终在——它是网关自身页面，不由服务注册表驱动） */
 /* 「管理」二级 tab（2026-09-09 起三个，2026-09-10 加到五个）：① 基石与模块（原来就有的引导/开关/
@@ -1576,6 +1590,7 @@ function renderManage(sec){sec.innerHTML=`
   $('#navpw').textContent=T('nav.changePassword');$('#navca').textContent=T('nav.caCert');$('#logout').textContent=T('nav.signOut');
   $('#mainloading').textContent=T('main.loading');
   showOtaBanner(); // 不 await：横幅晚一点出现无妨，不挡页面主体
+  showAgentFailBanner();
   const langsel=$('#langsel');langsel.value=lang;langsel.setAttribute('aria-label',T('nav.lang'));
   langsel.onchange=()=>{LS.set('lang',langsel.value);location.reload()};
 
@@ -1630,6 +1645,7 @@ function renderManage(sec){sec.innerHTML=`
       if(opened){if(document.hidden)activeStale=true;else{activeStale=false;const s=activeSec();if(s)refreshSec(s)}}opened=true};
     es.onerror=()=>{liveDot.style.color='var(--bad)';liveDot.title=T('common.eventStreamReconnecting')};
     es.onmessage=async(e)=>{let ev;try{ev=JSON.parse(e.data)}catch{return}
+      if(ev.kind==='agent-failed'){showAgentFailBanner();return} // 全站横幅，与哪个 tab 无关
       if(ev.area==='manage'){const d=await j('/api/services');const k=(d.services||[]).filter(s=>s.ui&&TABS[s.name]).map(s=>s.name).join(',');if(k!==svcKey){location.reload();return}}
       const sec=secByArea[ev.area];if(!sec)return;
       if(!sec.classList.contains('on'))dirty.add(ev.area);

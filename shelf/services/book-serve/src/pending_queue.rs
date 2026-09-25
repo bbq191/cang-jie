@@ -52,6 +52,16 @@ impl<T: Clone + Serialize + DeserializeOwned> PendingQueue<T> {
         Ok(items.len())
     }
 
+    /// 追加一条，超过 `cap` 条时丢掉最旧的（日志型用法，如 `agent_failures`）。
+    pub fn push_capped(&self, item: T, cap: usize) -> Result<(), String> {
+        let _g = rmsvc_core::sync::lock(&self.lock);
+        let mut items = self.load();
+        items.push(item);
+        let over = items.len().saturating_sub(cap);
+        items.drain(..over);
+        self.save(&items)
+    }
+
     /// 剔除不再满足 `keep` 的记录（已经真实发生/消失，不用再等 QML 代理处理的那些），返回
     /// `(保留的记录, 剔除了几条)`。只有真剔除了才落盘，没变化不重写文件。
     pub fn prune(&self, keep: impl Fn(&T) -> bool) -> Result<(Vec<T>, usize), String> {

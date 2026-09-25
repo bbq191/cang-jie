@@ -2,6 +2,7 @@
 //! 所有内容源（网页上传 / 抓网文 / scp 进 inbox）原样落**母版库**；优化与落库（投 xochitl）是母版库里
 //! 各自独立的动作（`staging.rs`）。自有 inbox 队列（XDG state）+ inotify 追平。不读写旧项目任何路径。
 //! 网页 tab 「传书」是网关固定页（不由本服务注册），本服务不挂 tab。
+mod agent_failures;
 mod api;
 mod comic_margins;
 mod config;

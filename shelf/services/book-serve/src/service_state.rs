@@ -1,4 +1,5 @@
 //! 服务组合根：配置、inbox 队列、母版库、xochitl 客户端；inbox 追平处理。
+use crate::agent_failures::AgentFailures;
 use crate::config::BookConfig;
 use crate::mkdir::MkdirQueue;
 use crate::spool::Spool;
@@ -30,6 +31,8 @@ pub struct State {
     pub mkdir: Arc<MkdirQueue>,
     /// 阅读方向查询（xochitl 阅读器里的 reader-page-turn.qmd 打开书时问，见 reading_direction.rs）。
     pub reading_direction: Arc<crate::reading_direction::ReadingDirection>,
+    /// 回收站 / 建文件夹代理执行不成、已放弃的记录（网页页头横幅，见 agent_failures.rs）。
+    pub agent_failures: Arc<AgentFailures>,
     /// `GET /status` 的结果缓存（[`STATUS_TTL`]）。网页每次 refresh 都会打这个接口，而它里面有重活：
     /// 对 xochitl 发 HTTP 探活（不可达时要等满 3 秒超时）、读全部 `.metadata` 列文件夹、扫 inbox。
     /// 会被本服务自己的操作改变的部分（inbox 计数、文件夹候选）在操作路径里 [`State::invalidate_status`]
@@ -67,9 +70,11 @@ impl State {
         let staging = Staging::new(paths.staging_dir(), xochitl.clone(), cfg.native_upload_limit_bytes())
             .with_comic_margins(comic_margins.clone())
             .with_reading_direction(reading_direction.clone());
-        let trash = TrashQueue::new(&books_state, &paths.xochitl_dir());
-        let mkdir = Arc::new(MkdirQueue::new(&books_state, &paths.xochitl_dir()));
-        State { cfg, spool, staging, xochitl, bus: Arc::new(EventBus::new()), trash, comic_margins, mkdir, reading_direction, status_cache: TtlCache::new(STATUS_TTL), inbox_settle: INBOX_SETTLE }
+        let bus = Arc::new(EventBus::new());
+        let agent_failures = Arc::new(AgentFailures::new(&books_state, Some(bus.clone())));
+        let trash = TrashQueue::new(&books_state, &paths.xochitl_dir()).with_failures(agent_failures.clone());
+        let mkdir = Arc::new(MkdirQueue::new(&books_state, &paths.xochitl_dir()).with_failures(agent_failures.clone()));
+        State { cfg, spool, staging, xochitl, bus, trash, comic_margins, mkdir, reading_direction, agent_failures, status_cache: TtlCache::new(STATUS_TTL), inbox_settle: INBOX_SETTLE }
     }
 
     pub fn ensure_dirs(&self) -> std::io::Result<()> {

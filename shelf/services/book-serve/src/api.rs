@@ -10,6 +10,7 @@
 //! 阅读方向：`GET /reading-direction/{uuid}` → `{rtl}`（xochitl 里 reader-page-turn.qmd 用）。
 //! 原生回收站队列：`POST /trash/add {uuid, name}`（name 必须与书库 visibleName 相符）· `GET /trash/pending?wait=` → `{uuids}`（MainView 代理 qmd 长轮询拉取执行）· `GET /trash`。
 //! 原生建文件夹队列：`POST /mkdir/add {name}` · `GET /mkdir/pending` → `{names}`（MainView 代理 shelf-mkdir-agent.qmd 拉取执行）· `GET /mkdir`。
+//! 代理放弃记录：`GET /agent-failures` → `{items:[{kind,name,uuid?,at}]}` · `POST /agent-failures/clear`（两个队列交满次数仍没做成的项）。
 //! 2026-09-05 起规则统一"所有书只落母版库"：旧 `POST /?target=` 直投路已删（`/staging*` 是唯一入口）。
 use crate::service_state::State;
 use crate::staging::{Reader, StagingStore};
@@ -140,6 +141,12 @@ pub fn router(st: Arc<State>) -> Router {
             Ok(Reply::ok(&serde_json::json!({"names": names})))
         }))
         .get("/mkdir", bind(&st, |s, _| Ok(Reply::ok(&serde_json::json!({"items": s.mkdir.list()})))))
+        // ── 代理执行不成、已放弃的记录（网页页头横幅；「知道了」→ clear），见 agent_failures.rs ──
+        .get("/agent-failures", bind(&st, |s, _| Ok(Reply::ok(&serde_json::json!({"items": s.agent_failures.list()})))))
+        .post("/agent-failures/clear", bind(&st, |s, _| {
+            let n = s.agent_failures.clear().map_err(ApiError::internal)?;
+            Ok(Reply::ok(&serde_json::json!({"ok": true, "cleared": n})))
+        }))
         // 停止正在跑的优化/投递（2026-09-20）：登记取消标记，在下一个安全检查点停下；无法中途停的步骤如实回 cancelled:false。
         .post("/staging/cancel", bind(&st, |s, r| {
             let name = r.json()?.str("name")?.to_string();

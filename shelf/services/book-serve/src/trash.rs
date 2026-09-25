@@ -9,9 +9,11 @@
 //!
 //! 持久化+入队去重+剔除这层通用外壳委托 `pending_queue::PendingQueue<T>`（2026-09-09 消重复，跟
 //! `mkdir.rs` 是同一份基础设施，见该模块文档）；这里只留领域校验（uuid 形状/名字核对/是否已在回收站）。
+use crate::agent_failures::AgentFailures;
 use crate::pending_queue::{Handout, PendingQueue, HANDOUT_MAX_ATTEMPTS};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::time::Duration;
 
 /// 同一 uuid 交给代理后这段时间内不再交（`moveEntriesToTrash` 是异步的，见 `pending_queue::Handout`）；过了仍没进
@@ -29,11 +31,18 @@ pub struct TrashQueue {
     q: PendingQueue<Pending>,
     lib_dir: PathBuf,
     handout: Handout,
+    /// 放弃时记一条给网页看（见 `agent_failures.rs`）；单测不挂。
+    failures: Option<Arc<AgentFailures>>,
 }
 
 impl TrashQueue {
     pub fn new(state_books_dir: &Path, lib_dir: &Path) -> TrashQueue {
-        TrashQueue { q: PendingQueue::new(state_books_dir.join("trash-pending.json")), lib_dir: lib_dir.to_path_buf(), handout: Handout::new(HANDOUT_QUIET) }
+        TrashQueue { q: PendingQueue::new(state_books_dir.join("trash-pending.json")), lib_dir: lib_dir.to_path_buf(), handout: Handout::new(HANDOUT_QUIET), failures: None }
+    }
+
+    pub fn with_failures(mut self, f: Arc<AgentFailures>) -> TrashQueue {
+        self.failures = Some(f);
+        self
     }
 
     /// 文档 `.metadata` 的 (visibleName, parent)；文件不存在 → None。
@@ -74,6 +83,9 @@ impl TrashQueue {
             dropped += n;
             for p in kept.iter().filter(|p| taken.give_up.contains(&p.uuid)) {
                 println!("[book-serve] 《{}》（{}）已交给 xochitl {HANDOUT_MAX_ATTEMPTS} 次仍没进回收站，放弃（移出队列）", p.name, p.uuid);
+                if let Some(f) = &self.failures {
+                    f.record("trash", &p.name, &p.uuid);
+                }
             }
         }
         Ok((taken.hand, dropped))
@@ -133,13 +145,16 @@ mod tests {
     #[test]
     fn gives_up_on_uuid_xochitl_never_trashes() {
         let t = tempfile::tempdir().unwrap();
-        let q = TrashQueue::new(&t.path().join("state"), &lib(&t)).with_handout_quiet(Duration::ZERO);
+        let fails = Arc::new(AgentFailures::new(&t.path().join("state"), None));
+        let q = TrashQueue::new(&t.path().join("state"), &lib(&t)).with_handout_quiet(Duration::ZERO).with_failures(fails.clone());
         q.add("22222222-2222-2222-2222-222222222222", "用户的书").unwrap();
         for _ in 0..HANDOUT_MAX_ATTEMPTS {
             assert_eq!(q.pending().unwrap().0.len(), 1);
         }
         assert_eq!(q.pending().unwrap(), (vec![], 1), "交满放弃，算一条清掉");
         assert!(q.list().is_empty());
+        let f = fails.list();
+        assert_eq!((f.len(), f[0].kind.as_str(), f[0].name.as_str(), f[0].uuid.as_str()), (1, "trash", "用户的书", "22222222-2222-2222-2222-222222222222"), "放弃记下来给网页看");
         // 重新入队（用户再点一次）从零计数
         q.add("22222222-2222-2222-2222-222222222222", "用户的书").unwrap();
         assert_eq!(q.pending().unwrap().0.len(), 1);

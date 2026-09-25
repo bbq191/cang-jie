@@ -6,7 +6,7 @@
 //   ① 文件名/错误文案里的 HTML 不会注入 DOM（无 <img>、onerror 不触发）；
 //   ② 10 个 SSE 事件连发被 coalesce 成至多 2 次刷新；网关自身的批量/闸门事件只重取那两个状态，book-serve 的 staging 事件不重取
 //      KOReader 目录；③ 页面隐藏时不刷新、可见后补刷一次；④ 空闲无轮询；⑤ 三种对话框的键盘/点击行为；⑥ 笔记 tab 正在输入时
-//      事件不重画、失焦补刷；⑦「其他」tab 的事件只刷发事件服务的子面板。
+//      事件不重画、失焦补刷；⑦「其他」tab 的事件只刷发事件服务的子面板；⑧ 代理放弃横幅（显示 / 事件重取 / 知道了）。
 import { createRequire } from 'node:module';
 import fs from 'node:fs';
 import assert from 'node:assert/strict';
@@ -29,6 +29,7 @@ const zh = ${JSON.stringify(zh)};
 const evil = '<img src=x onerror=window.__xss=1>.epub';
 const routes = {
   '/ui/locales/zh-CN.json': () => JSON.parse(zh),
+  '/ui/locales/en-US.json': () => JSON.parse(zh), // 无头浏览器缺省英文界面：同样喂中文包，文案断言不必分两套
   '/api/services': () => ({services: [{name:'note-serve', ui:{order:1}}, {name:'font-serve', ui:{order:2}}, {name:'wallpaper-serve', ui:{order:3}}]}),
   '/api/manage': () => ({modules: [{service:'note-serve', seg:'notes'}, {service:'font-serve', seg:'fonts'}, {service:'wallpaper-serve', seg:'wallpapers'}]}),
   '/api/fonts': () => ({items:[]}), '/api/fonts/status': () => ({ok:true}),
@@ -44,7 +45,10 @@ const routes = {
   '/api/budget/status': () => ({pending:[], active:[]}),
   '/api/batch/status': () => ({running:false,total:0,done:0,queued:[],failed:[]}),
   '/api/foundation': () => ({}), '/api/enhance/status': () => ({}),
+  '/api/books/agent-failures': () => ({items: window.__fails}),
+  '/api/books/agent-failures/clear': () => { const n = window.__fails.length; window.__fails = []; return {ok:true, cleared:n}; },
 };
+window.__fails = [{kind:'trash', name: evil, uuid:'11111111-1111-1111-1111-111111111111', at:1}, {kind:'mkdir', name:'新文件夹', at:2}];
 window.fetch = async (url, opt) => {
   const p = String(url).split('?')[0];
   window.__hits[p] = (window.__hits[p]||0) + 1;
@@ -76,6 +80,15 @@ out.initialHits = await hits();
 out.xss = await page.evaluate(() => window.__xss);
 out.listText = await page.evaluate(() => (document.querySelector('#stglist')||{}).textContent || '');
 out.imgInjected = await page.evaluate(() => document.querySelectorAll('#stglist img').length);
+// 代理放弃横幅：页面打开即显示，名字按文本显示；agent-failed 事件只重取这一个接口；「知道了」清空并移除横幅
+out.failBanner = await page.evaluate(() => { const b = document.querySelector('#agentfail'); return b ? {li: b.querySelectorAll('li').length, img: b.querySelectorAll('img').length, text: b.textContent} : null; });
+{ const a0 = await hits('/api/books/agent-failures'), st0 = await hits();
+  await page.evaluate(() => window.__es[0].onmessage({data: JSON.stringify({area:'books', kind:'agent-failed', svc:'books'})}));
+  await new Promise(r => setTimeout(r, 300));
+  out.failEventHits = [(await hits('/api/books/agent-failures')) - a0, (await hits()) - st0]; }
+await page.evaluate(() => document.querySelector('#agentfail .btn').click());
+await new Promise(r => setTimeout(r, 300));
+out.failAck = [await hits('/api/books/agent-failures/clear'), await page.evaluate(() => !!document.querySelector('#agentfail'))];
 // 事件突发：10 个 book-serve 事件连发 → 合并
 await page.evaluate(() => { for (let i = 0; i < 10; i++) window.__es[0].onmessage({data: JSON.stringify({area:'books', kind:'staging', svc:'books'})}); });
 await new Promise(r => setTimeout(r, 500));
@@ -153,6 +166,9 @@ await browser.close();
 console.log(JSON.stringify({ ...out, errs }, null, 1));
 assert.equal(out.xss, 0, '含 HTML 的文件名/错误文案不能执行脚本');
 assert.equal(out.imgInjected, 0, '不能注入 <img>');
+assert.ok(out.failBanner && out.failBanner.li === 2 && out.failBanner.img === 0 && out.failBanner.text.includes('<img src=x'), '代理放弃横幅：两条、名字按文本显示');
+assert.deepEqual(out.failEventHits, [1, 0], 'agent-failed 事件只重取放弃记录，不刷母版库');
+assert.deepEqual(out.failAck, [1, false], '「知道了」清空服务端记录并移除横幅');
 assert.ok(out.listText.includes('<img src=x'), '文件名应作为文本显示');
 assert.ok(out.afterBurst >= 1 && out.afterBurst <= 2, `事件突发应合并，实际 ${out.afterBurst} 次`);
 assert.equal(out.burstKoBooks, 0, 'book-serve 的 staging 事件只重取母版库列表与排队状态，不重取 KOReader 目录');
