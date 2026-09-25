@@ -33,7 +33,7 @@ fn main() {
     let paths = Paths::from_env();
     let _ = paths.ensure();
     let store = FontStore::new(&paths, FontConfig::load(&paths));
-    match store.write_index() {
+    match store.startup_index() {
         Ok(f) => println!("[font-serve] 索引 {} 个家族", f.len()),
         Err(e) => eprintln!("[font-serve] 写 fonts.json 失败: {e}"),
     }

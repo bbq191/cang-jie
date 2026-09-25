@@ -210,6 +210,42 @@ impl FontStore {
         Ok(fonts)
     }
 
+    /// 启动时用：fonts.json 仍与字体目录一致就直接用它，不再每次开机把每个字体整文件读一遍 + 每个 fork 一次
+    /// fc-scan（中文字体动辄十几到几十 MB，开机正是 xochitl 起界面、最不该抢 I/O 的时候）；不一致/缺失/损坏才全量重扫。
+    /// 一致 = 目录里的字体文件集合与索引里的完全相同，且目录与各文件的 mtime 都不晚于 fonts.json。fonts.conf 仍按
+    /// 当前条目重渲染一次（内容没变不落盘，见 [`Self::write_fontconfig`]），新版本改了回退配置格式也能在启动时带上。
+    pub fn startup_index(&self) -> Result<Vec<FontEntry>, String> {
+        if let Some(fonts) = self.fresh_index() {
+            if let Err(e) = self.write_fontconfig(&fonts) {
+                eprintln!("[font-serve] 写 fontconfig 回退失败: {e}");
+            }
+            return Ok(fonts);
+        }
+        self.write_index()
+    }
+
+    fn fresh_index(&self) -> Option<Vec<FontEntry>> {
+        let json_mtime = std::fs::metadata(&self.json_path).ok()?.modified().ok()?;
+        let fonts = serde_json::from_str::<FontsJson>(&std::fs::read_to_string(&self.json_path).ok()?).ok()?.fonts;
+        let newer = |p: &Path| std::fs::metadata(p).and_then(|m| m.modified()).map(|t| t > json_mtime).unwrap_or(true);
+        if newer(&self.fonts_dir) {
+            return None;
+        }
+        let mut on_disk: Vec<String> = std::fs::read_dir(&self.fonts_dir)
+            .ok()?
+            .flatten()
+            .filter_map(|e| e.file_name().to_str().map(|s| s.to_string()))
+            .filter(|n| !n.starts_with('.') && formats::has_ext(n, FONT_EXTS))
+            .collect();
+        let mut indexed: Vec<String> = fonts.iter().flat_map(|e| e.files.iter().cloned()).collect();
+        on_disk.sort();
+        indexed.sort();
+        if on_disk != indexed || on_disk.iter().any(|f| newer(&self.fonts_dir.join(f))) {
+            return None;
+        }
+        Some(fonts)
+    }
+
     /// 读缓存的 fonts.json（列表接口用，避免每次 fc-scan）。缺则重建。
     pub fn entries(&self) -> Vec<FontEntry> {
         std::fs::read_to_string(&self.json_path).ok().and_then(|t| serde_json::from_str::<FontsJson>(&t).ok()).map(|j| j.fonts).unwrap_or_else(|| self.write_index().unwrap_or_default())
@@ -246,6 +282,10 @@ impl FontStore {
         }
         let keys: Vec<&str> = cjk.iter().map(|e| e.key.as_str()).collect();
         let xml = fontconfig::render(&keys, self.embolden(), &self.config_root_backup());
+        // 内容没变不重写：fontconfig 按配置文件 mtime 判断要不要重载，白写一次会让正在用它的进程（xochitl）重读配置。
+        if std::fs::read(&self.fontconfig_conf).is_ok_and(|b| b == xml.as_bytes()) {
+            return Ok(());
+        }
         write_atomic(&self.fontconfig_conf, xml.as_bytes()).map_err(|e| e.to_string())
     }
 
@@ -444,6 +484,35 @@ mod tests {
         std::fs::remove_file(&f).unwrap();
         assert!(store.scan().is_empty());
         assert!(store.probes.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn startup_reuses_fresh_index_and_rescans_when_dir_changes() {
+        let (_t, _paths, store) = setup();
+        std::fs::create_dir_all(store.fonts_dir()).unwrap();
+        std::fs::write(store.fonts_dir().join("A.ttf"), b"\x00\x01\x00\x00").unwrap();
+        assert!(store.fresh_index().is_none(), "没有 fonts.json → 全量扫");
+        assert_eq!(store.startup_index().unwrap()[0].key, "A");
+        let conf_mtime = std::fs::metadata(&store.fontconfig_conf).unwrap().modified().unwrap();
+        // 索引与目录一致：直接复用（塞个假 key 进 fonts.json，复用时必须原样读回而不是重扫）
+        let mut j: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(store.json_path()).unwrap()).unwrap();
+        j["fonts"][0]["key"] = "FromIndex".into();
+        std::fs::write(store.json_path(), serde_json::to_vec(&j).unwrap()).unwrap();
+        assert_eq!(store.startup_index().unwrap()[0].key, "FromIndex");
+        store.write_fontconfig(&store.entries()).unwrap();
+        assert_eq!(std::fs::metadata(&store.fontconfig_conf).unwrap().modified().unwrap(), conf_mtime, "内容没变不重写 fonts.conf");
+        // 目录里多了一个文件（且比索引新）→ 重扫
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        std::fs::write(store.fonts_dir().join("B.ttf"), b"\x00\x01\x00\x00").unwrap();
+        assert!(store.fresh_index().is_none());
+        let keys: Vec<String> = store.startup_index().unwrap().into_iter().map(|e| e.key).collect();
+        assert_eq!(keys, vec!["A", "B"]);
+        // 文件被删（文件集合不一致）→ 重扫
+        std::fs::remove_file(store.fonts_dir().join("B.ttf")).unwrap();
+        assert!(store.fresh_index().is_none());
+        // fonts.json 损坏 → 重扫
+        std::fs::write(store.json_path(), "{broken").unwrap();
+        assert_eq!(store.startup_index().unwrap()[0].key, "A");
     }
 
     #[test]
