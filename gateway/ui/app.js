@@ -1607,7 +1607,7 @@ function renderManage(sec){sec.innerHTML=`
     const otherSec=addTab(T('tab.other'),(sec)=>renderOther(sec,otherSvcs,n=>AREA[n]||n),false,'other');
     // fonts/koreader/wallpapers 各自的 SSE 事件原来路由到各自独立顶层 section，现在都嵌进了同一个
     // 「其他」section——三个 area 名都指向同一个 otherSec，事件到了随便哪个都触发它的合并 refresh
-    // （renderOther 里 sec.refresh 会把三块子面板一起刷一遍，不逐个精确匹配，简单可靠）。
+    // （2026-09-25 起按事件的 svc 只刷发事件的那块子面板；切到「其他」tab、重连时才三块一起刷）。
     otherSvcs.forEach(s=>{secByArea[AREA[s.name]||s.name]=otherSec});
   }
   addTab(T('tab.manage'),renderManage,false,'manage');            // 固定管理台，始终可进

@@ -273,7 +273,7 @@ xochitl `/upload` 约 100MB 硬限（超了断连）。超过体积门时 `Stagi
 
 **改名时的终态写入**：优化成功后条目可能改名（长名规范化；PDF 转同名 `.epub` 并删 `.pdf`），sidecar 按条目名找文件，故终态写入前先 `resolved_optimize_target` 探测改名、写到新名下；中途进度仍写旧名。
 
-**刷新机制**：`rmsvc_core::events::EventBus`，`book-serve` 在状态变更点 `bus.publish("books", <kind>)`（`kind`：`staging`/`inbox`/`render`/`trash`/`mkdir`）；网关 `GET /api/events`（SSE，20s 心跳 `KEEPALIVE`）汇聚各服务事件并补 `svc` 字段，网关自己的批量/闸门变化也发 `books`（`batch`/`budget`）事件；浏览器按 `area` 找 tab，非前台记脏、切过去再刷，页面隐藏不刷、可见/重连后补刷。前台的母版库按事件来源决定重取多少（2026-09-25，只在 host 验证）：网关自己的 `batch`/`budget` 事件只取两个状态接口；book-serve 的 `staging` 事件（入库、忙态、优化/落库进度，大书处理时约每秒一条）再加母版库列表共 3 个，不重取 xochitl/KOReader 文件夹列表和 KOReader 安装状态；其余事件、切 tab、重连、操作后才全量取 6 个（此前每条 `staging` 事件都全量取 6 个）。三档走同一个 `coalesce`，取档位最大值，不会出现旧的全量结果盖掉新的排队状态。全站取数时机见网关白皮书 §5.1 的图。**前端没有任何定时轮询**（`app.js` 已无 `setInterval`）。
+**刷新机制**：`rmsvc_core::events::EventBus`，`book-serve` 在状态变更点 `bus.publish("books", <kind>)`（`kind`：`staging`/`inbox`/`render`/`trash`/`mkdir`）；网关 `GET /api/events`（SSE；缺省 20s 心跳 `KEEPALIVE`，网页带 `?ka=60` 改为 60s，少唤醒设备）汇聚各服务事件并补 `svc` 字段，网关自己的批量/闸门变化也发 `books`（`batch`/`budget`）事件；浏览器按 `area` 找 tab，非前台记脏、切过去再刷，页面隐藏不刷、可见/重连后补刷。前台的母版库按事件来源决定重取多少（2026-09-25，只在 host 验证）：网关自己的 `batch`/`budget` 事件只取两个状态接口；book-serve 的 `staging` 事件（入库、忙态、优化/落库进度，大书处理时约每秒一条）再加母版库列表共 3 个，不重取 xochitl/KOReader 文件夹列表和 KOReader 安装状态；其余事件、切 tab、重连、操作后才全量取 6 个（此前每条 `staging` 事件都全量取 6 个）。三档走同一个 `coalesce`，取档位最大值，不会出现旧的全量结果盖掉新的排队状态。全站取数时机见网关白皮书 §5.1 的图。**前端没有任何定时轮询**（`app.js` 已无 `setInterval`）。
 
 ### 7.1 中途取消
 
