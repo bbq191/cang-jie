@@ -26,7 +26,7 @@ pub fn patch(paths: &Paths, changes: Map<String, Value>) -> Result<(), String> {
     // 进程内串行化读-改-写：网页连点几个开关会并发进来多个 PUT，各自 load→改→写会互相覆盖对方刚改的键。
     // （跨进程——QML/C hook 也写这个文件——靠"全量写回"约定，锁不到，见头注。）
     static PATCH_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-    let _g = PATCH_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let _g = rmsvc_core::sync::lock(&PATCH_LOCK);
     let mut map = load(paths);
     map.extend(changes);
     let p = path(paths);

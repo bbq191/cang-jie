@@ -84,7 +84,7 @@
 | `ttf` | font-serve、koreader-serve | TTF/OTF 家族名（nameID 16 优先）、魔数校验、CJK 覆盖率；汉字覆盖数钳到区内总码位、够数即停（防恶意字体堆重叠段导致数亿次迭代，09-22） |
 | `cache` | book-serve、koreader-serve | 单值 TTL 缓存 `TtlCache`，给每次刷新都会打、但算一次很重的 `/status`（如 3 秒 TTL）；本服务操作完成时 `invalidate`。计算期间持锁，并发请求等同一份结果 |
 | `clock` | 8 个 | unix 时间戳唯一出处；取不到时间回 0 |
-| `sync` | book-serve、koreader-serve、本 crate 自身 | `sync::lock`：容忍 poison 的取锁。release 是 `panic="unwind"`，线程 panic 后它持有的锁被标 poison，别处再 `.lock().unwrap()` 就会让之后每个请求都跟着 panic；这里保护的都是缓存/队列/计数这类半途中断也自洽的状态，接着用即可。09-24 收编了 book-serve 私有的 `ops::lock` 和书架两服务、本 crate 里手写的 `.lock().unwrap_or_else(|e| e.into_inner())`；网关、笔记线、系统增强里还有约 35 处手写同款（行为相同，可逐步改用） |
+| `sync` | book-serve、koreader-serve、网关、笔记线四个服务与 vendorcfg、font-serve、wallpaper-serve、本 crate 自身 | `sync::lock`：容忍 poison 的取锁。release 是 `panic="unwind"`，线程 panic 后它持有的锁被标 poison，别处再 `.lock().unwrap()` 就会让之后每个请求都跟着 panic；这里保护的都是缓存/队列/计数这类半途中断也自洽的状态，接着用即可。09-24 收编了 book-serve 私有的 `ops::lock` 和书架两服务、本 crate 里手写的 `.lock().unwrap_or_else(|e| e.into_inner())`；网关、笔记线、系统增强里还有约 35 处手写同款（行为相同，可逐步改用） |
 
 ## 03｜和 xochitl 打交道：xochitl / xochitl_conf / fswatch
 
@@ -132,7 +132,7 @@
 **待办**
 
 - 命名遗留要不要处理，没有排期；要动时先设计迁移方案，不是简单改字符串。
-- 网关、笔记线、系统增强里约 35 处手写的容忍 poison 取锁可逐步改用 `sync::lock`（纯样板，不改行为）。
+- （已办，2026-09-25）网关、笔记线、系统增强里 33 处手写的容忍 poison 取锁已改用 `sync::lock`（纯样板，不改行为）。剩下的只有条件变量 `wait*` 的 poison 处理（`sync::lock` 管不到）和不依赖本 crate 的 bookconv。
 - （已办）`lib.rs` 模块注释里 `auth` 的过时说法“salted SHA-256”已更正为 PBKDF2（commit `8320ac5`）。
 
 ## 附｜来历

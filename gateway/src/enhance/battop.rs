@@ -35,7 +35,7 @@ fn active_cache() -> &'static Mutex<Option<(Instant, bool)>> {
 }
 
 fn is_active_cached() -> bool {
-    let mut c = active_cache().lock().unwrap_or_else(|e| e.into_inner());
+    let mut c = rmsvc_core::sync::lock(active_cache());
     if let Some((at, v)) = *c {
         if at.elapsed() < ACTIVE_TTL {
             return v;
@@ -69,7 +69,7 @@ pub fn toggle(action: &str) -> Result<(), String> {
     match action {
         "start" | "stop" => {
             let r = crate::manage::run("systemctl", &[action, "battop.service"]).map(|_| ());
-            *active_cache().lock().unwrap_or_else(|e| e.into_inner()) = None; // 状态变了，下次 status 重新问 systemd
+            *rmsvc_core::sync::lock(active_cache()) = None; // 状态变了，下次 status 重新问 systemd
             r
         }
         _ => Err("action 只能 start|stop".into()),

@@ -59,7 +59,7 @@ struct State {
 
 impl State {
     fn publishing(&self) -> std::sync::MutexGuard<'_, ()> {
-        self.publish_lock.lock().unwrap_or_else(|e| e.into_inner())
+        rmsvc_core::sync::lock(&self.publish_lock)
     }
     fn ctx(&self, now_ms: u64) -> Ctx<'_> {
         Ctx { store: self.store.as_ref(), uploader: self.uploader.as_ref(), trash: self.trash.as_ref(), state: &self.notebooks, now_ms }

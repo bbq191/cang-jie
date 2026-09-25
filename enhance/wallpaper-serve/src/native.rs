@@ -30,7 +30,7 @@ impl Native {
     pub fn enable(&self) -> Result<bool, String> {
         let changed = xochitl_conf::set(&self.conf, SLEEP_SCREEN_KEY, Some(&self.target_str()))?;
         if changed {
-            *self.written_under_pid.lock().unwrap_or_else(|e| e.into_inner()) = Some(xochitl_pid().unwrap_or(0));
+            *rmsvc_core::sync::lock(&self.written_under_pid) = Some(xochitl_pid().unwrap_or(0));
         }
         Ok(changed)
     }
@@ -38,13 +38,13 @@ impl Native {
     pub fn disable(&self) -> Result<bool, String> {
         let changed = xochitl_conf::set(&self.conf, SLEEP_SCREEN_KEY, None)?;
         if changed {
-            *self.written_under_pid.lock().unwrap_or_else(|e| e.into_inner()) = Some(xochitl_pid().unwrap_or(0));
+            *rmsvc_core::sync::lock(&self.written_under_pid) = Some(xochitl_pid().unwrap_or(0));
         }
         Ok(changed)
     }
     /// 本进程改过键、且 xochitl 自那以后没重启过 → 还没生效。
     pub fn restart_pending(&self) -> bool {
-        match *self.written_under_pid.lock().unwrap_or_else(|e| e.into_inner()) {
+        match *rmsvc_core::sync::lock(&self.written_under_pid) {
             None => false,
             Some(pid) => xochitl_pid().unwrap_or(0) == pid,
         }

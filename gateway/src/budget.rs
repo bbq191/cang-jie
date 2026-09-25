@@ -108,7 +108,7 @@ impl Budget {
     /// 取状态锁；被毒化（持锁线程 panic）时照用内部数据——这里的状态只是计数和名字集合，
     /// 每次修改都是自洽的单步操作，宁可继续服务，也不要让一次 panic 让所有后续的优化/加入请求都跟着 panic。
     fn lock(&self) -> std::sync::MutexGuard<'_, State> {
-        self.state.lock().unwrap_or_else(|e| e.into_inner())
+        rmsvc_core::sync::lock(&self.state)
     }
 
     /// 阻塞直到拿到这个档位的名额（或等到 [`ADMIT_WAIT_TIMEOUT`] 超时/被 [`Budget::cancel`]

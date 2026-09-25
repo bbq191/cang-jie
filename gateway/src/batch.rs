@@ -78,7 +78,7 @@ fn state() -> &'static Mutex<State> {
 }
 
 fn lock() -> std::sync::MutexGuard<'static, State> {
-    state().lock().unwrap_or_else(|e| e.into_inner())
+    rmsvc_core::sync::lock(state())
 }
 
 fn file_of(paths: &Paths) -> std::path::PathBuf {
@@ -95,7 +95,7 @@ fn persist_lock() -> &'static Mutex<()> {
 
 /// 落盘当前状态（每次变化调一次；失败只影响"重启后续跑"这一能力，不影响本次运行，静默）。
 fn persist(paths: &Paths) {
-    let _g = persist_lock().lock().unwrap_or_else(|e| e.into_inner());
+    let _g = rmsvc_core::sync::lock(persist_lock());
     let json = { serde_json::to_vec(&*lock()).ok() };
     if let Some(b) = json {
         let _ = std::fs::create_dir_all(paths.state_dir());

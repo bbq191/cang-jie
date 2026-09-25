@@ -72,7 +72,7 @@ impl<T: Clone + Serialize + DeserializeOwned> ChapterStore<T> {
     }
 
     pub fn set(&self, book_uuid: &str, chapter_idx: usize, rec: T) -> Result<(), String> {
-        let _g = self.lock.lock().unwrap_or_else(|e| e.into_inner());
+        let _g = rmsvc_core::sync::lock(&self.lock);
         let mut b = self.load(book_uuid);
         b.chapters.insert(chapter_idx.to_string(), rec);
         self.save(book_uuid, &b)
@@ -82,7 +82,7 @@ impl<T: Clone + Serialize + DeserializeOwned> ChapterStore<T> {
     /// 跟当前"这章根本没有对应文件"的事实对不上。原来只有 `ExportState` 有这个方法，`NotebookState`
     /// 没有；泛型后两边都能用（`notebooks.rs` 暂时不调用它，行为不变，只是能力对齐了）。
     pub fn clear(&self, book_uuid: &str, chapter_idx: usize) -> Result<(), String> {
-        let _g = self.lock.lock().unwrap_or_else(|e| e.into_inner());
+        let _g = rmsvc_core::sync::lock(&self.lock);
         let mut b = self.load(book_uuid);
         if b.chapters.remove(&chapter_idx.to_string()).is_some() {
             self.save(book_uuid, &b)?;
