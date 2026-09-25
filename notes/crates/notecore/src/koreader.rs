@@ -79,6 +79,21 @@ pub struct MergeStats {
     pub revoked: usize,
 }
 
+/// 章表只追加不重排：`existing` 原样保留，`fresh` 里没见过的标题按出现顺序接在后面。条目的 `chapter` 是章表
+/// 下标，note-serve 按"书 + 章下标"记着每章生成过的设备笔记本和导出指纹——此前每次导入按这次的高亮重新排章表，
+/// 新高亮落在更靠前的章（或某章高亮全删了）时下标整体移位：已有条目被改挂到别的章，note-serve 按旧下标的记录
+/// 把别的章的笔记本当"旧版本"送进回收站（2026-09-25 第四轮审计）。代价：后补的靠前章节排在章表末尾；
+/// 章里高亮全删了，这一章留在表里（没有活条目，投影/导出都跳过）。
+pub fn merge_titles(existing: &[String], fresh: impl IntoIterator<Item = String>) -> Vec<String> {
+    let mut out = existing.to_vec();
+    for t in fresh {
+        if !out.contains(&t) {
+            out.push(t);
+        }
+    }
+    out
+}
+
 /// 把这本书当前抓到的全部高亮并入 `entries`：按 `RawHighlight.id` 认领（新的加、已有的按内容刷新，
 /// KOReader 那边被删掉的——当前列表里认领不到的、且还没被用户手动处理过的——标 `Revoked`，不物理删）。
 /// 只动 `source == KoreaderHighlight` 的条目，不碰同一本书里可能存在的其它来源条目（这条书 uuid 命名空间
@@ -132,6 +147,7 @@ pub fn merge_vocab(entries: &mut Vec<Entry>, items: &[RawVocabWord], chapter_ind
     let mut st = MergeStats::default();
     for (order, v) in items.iter().enumerate() {
         let id = crate::hash::hex(crate::hash::fnv1a(format!("koreader-vocab/{}", v.word).as_bytes()));
+        let chapter = Some(chapter_index_of(v.book_title));
         match entries.iter_mut().find(|e| e.source == Source::KoreaderVocab && e.id == id) {
             Some(e) => {
                 let text = vocab_quote_text(v);
@@ -139,11 +155,18 @@ pub fn merge_vocab(entries: &mut Vec<Entry>, items: &[RawVocabWord], chapter_ind
                     e.quote = Some(Quote { id: id.clone(), text, color: String::new(), rects: vec![] });
                     e.updated = now;
                 }
+                // 同一个词换本书再查一次，KOReader 把它的来源书改成新书——分组跟着走（此前只在新建时算一次，
+                // 章表变了或来源书变了都不更新，词会挂在别的书名下）。
+                if e.chapter != chapter || e.chapter_title != v.book_title {
+                    e.chapter = chapter;
+                    e.chapter_title = v.book_title.to_string();
+                    e.updated = now;
+                }
                 st.unchanged += 1;
             }
             None => {
                 let mut e = new_entry(id, order, v.book_title.to_string(), Quote { id: String::new(), text: vocab_quote_text(v), color: String::new(), rects: vec![] }, Source::KoreaderVocab, now);
-                e.chapter = Some(chapter_index_of(v.book_title));
+                e.chapter = chapter;
                 e.quote.as_mut().unwrap().id = e.id.clone();
                 entries.push(e);
                 st.added += 1;
@@ -218,6 +241,25 @@ mod tests {
         merge_highlights(&mut entries, &items, idx_of, 10);
         assert_eq!(entries.iter().find(|e| e.id == "h1").unwrap().chapter, Some(0));
         assert_eq!(entries.iter().find(|e| e.id == "h2").unwrap().chapter, Some(1));
+    }
+
+    #[test]
+    fn merge_titles_only_appends() {
+        let old = vec!["第二章".to_string(), "第五章".to_string()];
+        assert_eq!(merge_titles(&old, ["第一章".to_string(), "第二章".to_string()]), ["第二章", "第五章", "第一章"], "已有下标不动，新章接在后面");
+        assert_eq!(merge_titles(&[], ["甲".to_string(), "乙".to_string(), "甲".to_string()]), ["甲", "乙"]);
+    }
+
+    #[test]
+    fn merge_vocab_moves_existing_word_when_its_group_changes() {
+        let mut entries = vec![];
+        let titles = ["书B".to_string()];
+        merge_vocab(&mut entries, &[RawVocabWord { word: "lucid", book_title: "书B", prev_context: None, next_context: None, highlight: None }], |t| titles.iter().position(|x| x == t).unwrap_or(0), 10);
+        assert_eq!(entries[0].chapter, Some(0));
+        // 同一个词后来在书A里又查了一次：来源书变成书A。
+        let titles = ["书B".to_string(), "书A".to_string()];
+        merge_vocab(&mut entries, &[RawVocabWord { word: "lucid", book_title: "书A", prev_context: None, next_context: None, highlight: None }], |t| titles.iter().position(|x| x == t).unwrap_or(0), 20);
+        assert_eq!((entries[0].chapter, entries[0].chapter_title.as_str(), entries[0].updated), (Some(1), "书A", 20));
     }
 
     #[test]

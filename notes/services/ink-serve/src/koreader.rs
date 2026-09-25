@@ -3,7 +3,7 @@
 //! 落同一个 `BookDb`（ink-serve 仍是条目库唯一写者，这条线也走同一个进程内互斥锁）。见笔记线白皮书 §03al。
 use crate::bookdb::BookDb;
 use notecore::hash::{fnv1a, hex};
-use notecore::koreader::{merge_highlights, merge_vocab, MergeStats, RawHighlight, RawVocabWord};
+use notecore::koreader::{merge_highlights, merge_titles, merge_vocab, MergeStats, RawHighlight, RawVocabWord};
 use notecore::model::Book;
 use rmsvc_core::paths::Paths;
 use rmsvc_core::registry::SvcClient;
@@ -124,7 +124,9 @@ pub fn import(db: &BookDb, src: &dyn KoreaderSource, now: u64) -> Result<ImportS
         }
         let stats = db.update(&uuid, || Book { uuid: uuid.clone(), title: b.title.clone(), ..Default::default() }, |book| {
             book.title = b.title.clone();
-            book.chapters = chapters.clone();
+            // 只追加不重排，已有条目的章下标保持有效（见 `merge_titles`）。
+            book.chapters = merge_titles(&book.chapters, chapters.iter().cloned());
+            let chapters = &book.chapters;
             merge_highlights(&mut book.entries, &items, |t| chapters.iter().position(|c| c == t).unwrap_or(0), now)
         })?;
         st.highlight_books += 1;
@@ -144,8 +146,9 @@ pub fn import(db: &BookDb, src: &dyn KoreaderSource, now: u64) -> Result<ImportS
             UUID,
             || Book { uuid: UUID.into(), title: "KOReader 生词本".into(), ..Default::default() },
             |book| {
-                book.chapters = titles.clone();
-                merge_vocab(&mut book.entries, &raw, |t| titles.iter().position(|x| x == t).unwrap_or(0), now)
+                book.chapters = merge_titles(&book.chapters, titles.iter().cloned());
+                let chapters = &book.chapters;
+                merge_vocab(&mut book.entries, &raw, |t| chapters.iter().position(|x| x == t).unwrap_or(0), now)
             },
         )?;
     }
@@ -197,6 +200,26 @@ mod tests {
         // 重扫：同样的输入，不重复新建。
         let stats2 = import(&db, &src, 20).unwrap();
         assert_eq!(stats2.highlights, MergeStats { unchanged: 2, ..Default::default() });
+    }
+
+    /// 回归（2026-09-25）：新高亮落在更靠前的章时，已有条目的章下标不能移位（note-serve 按下标记着每章的笔记本）。
+    #[test]
+    fn chapter_indices_stay_stable_when_an_earlier_chapter_appears_later() {
+        let t = tempfile::tempdir().unwrap();
+        let db = BookDb::new(t.path().join("books"));
+        db.ensure().unwrap();
+        let mut a2 = ann("第二章的话");
+        a2.chapter = Some("第二章".into());
+        let src = Fake { annotations: vec![WireBookAnnotations { path: "b.epub".into(), title: "书".into(), items: vec![a2.clone()] }], vocab: vec![] };
+        import(&db, &src, 10).unwrap();
+        let uuid = book_uuid("b.epub");
+        assert_eq!(db.load(&uuid).unwrap().entries[0].chapter, Some(0));
+        let src = Fake { annotations: vec![WireBookAnnotations { path: "b.epub".into(), title: "书".into(), items: vec![ann("第一章的话"), a2] }], vocab: vec![] };
+        import(&db, &src, 20).unwrap();
+        let book = db.load(&uuid).unwrap();
+        assert_eq!(book.chapters, ["第二章", "第一章"]);
+        let ch = |text: &str| book.entries.iter().find(|e| e.quote.as_ref().unwrap().text == text).unwrap().chapter;
+        assert_eq!((ch("第二章的话"), ch("第一章的话")), (Some(0), Some(1)), "旧条目下标不动");
     }
 
     #[test]
