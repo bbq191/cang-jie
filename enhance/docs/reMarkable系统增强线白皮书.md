@@ -266,7 +266,7 @@ hook 目标 `FUN_00f47530`：两个 float（s0/s1）+ 一个指针（x0），标
 | wifi-watch | packaging | 每 15 秒 `sleep` 一次看链路；链路好只读 sysfs、不 fork，每 40 轮（10 分钟）兜底复查一次频段/省电设置 | `packaging/wifi-watch/wifi-watch.sh` `INTERVAL`/`RECHECK` |
 | 服务间事件流心跳 | rmsvc-core | 网关订阅 7 个有 `/events` 的服务（book、font、koreader、wallpaper、ink、transcribe、note），transcribe 再订阅 ink，共 8 条 loopback 流，各 120 秒一次心跳 | `rmsvc-core/src/events.rs` `FOLLOW_KEEPALIVE_SECS` |
 | shelf-mkdir-agent.qmd | shelf | 长轮询 `GET /mkdir/pending?wait=290`：空闲约 290 秒一次往返（book-serve 上限 300 秒；09-24 前 25 秒）；若真遇到 30 秒客户端超时自动退回 25 秒 | `shelf/xovi/shelf-mkdir-agent.qmd`；`book-serve` `MKDIR_WAIT_MAX_SECS` |
-| 网关 mDNS | rmsvc-core | socket 读超时 = 接口重扫间隔 60 秒；局域网别的设备发 mDNS 查询另算 | `rmsvc-core/src/mdns.rs` `RESCAN_INTERVAL` |
+| 网关 mDNS | rmsvc-core | 09-25 起空闲零定时唤醒：改听内核 netlink 地址变化，地址增删才重扫（此前 socket 读超时 = 重扫间隔 60 秒）；netlink 打不开才退回 60 秒；局域网别的设备发 mDNS 查询另算 | `rmsvc-core/src/mdns.rs` `AddrWatch` / `RESCAN_INTERVAL` |
 | wallpaper-serve | 本线 | inotify 等 xochitl 休眠时读完 `current.png`：空闲零唤醒，每次休眠醒一次（09-24 前常驻 `journalctl -f -u xochitl`，xochitl 每写一行日志就醒一次） | `enhance/wallpaper-serve/src/wake.rs` |
 | battop | 本线 | **默认不跑**；开着时醒着每 600 秒采样一次 | `enhance/battop/src/main.rs` `BATTOP_INTERVAL_SECS` |
 | hl-snap / hw-stroke | 本线 | 没有定时器，只在划线 / 写字时进 handler | `enhance/*/src/*.c` |
