@@ -37,11 +37,12 @@
 <text x="268" y="480" text-anchor="start" font-size="10" fill="#3a3a3a">4  seg 不在表里 → 404“未知服务”；服务没起 → 404“未安装或未运行”</text>
 <text x="268" y="495" text-anchor="start" font-size="10" fill="#3a3a3a">     后端连不上 → 502</text>
 <rect x="256" y="540" width="460" height="122" rx="10" fill="#fdf1ec" stroke="#c0602d" stroke-width="1.6" stroke-dasharray="6 4"/>
-<text x="268" y="560" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">例外：三个“吃内存”的 POST 先过闸门</text>
+<text x="268" y="560" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">例外：四个“吃内存”的 POST 先过闸门</text>
 <text x="268" y="583" text-anchor="start" font-size="10" fill="#3a3a3a">book-serve  POST /staging/optimize</text>
 <text x="268" y="598" text-anchor="start" font-size="10" fill="#3a3a3a">book-serve  POST /staging/deliver</text>
-<text x="268" y="613" text-anchor="start" font-size="10" fill="#3a3a3a">koreader-serve  POST /books/adopt</text>
-<text x="268" y="628" text-anchor="start" font-size="10" fill="#3a3a3a">→ 读小 JSON 拿书名 → budget::admit()（按体积分档、排队）再转发</text>
+<text x="268" y="613" text-anchor="start" font-size="10" fill="#3a3a3a">book-serve  POST /staging/fetch-article（只在勾了同步优化 optimize:true 时）</text>
+<text x="268" y="628" text-anchor="start" font-size="10" fill="#3a3a3a">koreader-serve  POST /books/adopt</text>
+<text x="268" y="643" text-anchor="start" font-size="10" fill="#3a3a3a">→ 读小 JSON 拿书名 → budget::admit()（按体积分档、排队）再转发</text>
 <polyline points="486,178 486,196" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#mk)"/>
 <polyline points="486,314 486,332" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#mk)"/>
 <polyline points="486,522 486,540" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#mk)"/>

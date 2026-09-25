@@ -13,8 +13,8 @@ reMarkable 的强项是**荧光笔勾书，再在勾出来的地方旁边手写*
 - **摄取**：勾画与旁边手写自动配对；没写字的纯勾画也算一条；手写画成裁图。
 - **浏览**：逐条决定「转入笔记」还是「不需要」。
 - **转写**：转入笔记的手写自动交给视觉模型识别，结果作为草稿，你在手机上改定。
-- **整理**：改字（行首写 `-`、`1.`、`口` 自动变成列表或待办）、选去处、问 AI、「不要了」进回收站（可恢复）。
-- **推送**：每章一个「推送本章」，生成设备笔记本（放进书本自己所在的文件夹，一章一本）和 md（同时让浏览器下载）。内容没变就跳过。
+- **整理**：改字、选去处、问 AI、「不要了」进回收站（可恢复）。行首写 `##` / `###` / `1.` / `-` / `- [ ]`（或手写 `口`），推送后分别变成设备笔记本内置的大标题 / 加粗小标题 / 编号列表 / 圆点列表 / 复选框，导出 md 时是对应的 markdown（对照图见白皮书第 4 章）。
+- **推送**：每章一个「推送本章」，生成设备笔记本（放进书本自己所在的文件夹，一章一本；书的小节变化处自动插小标题）和 md（同时让浏览器下载）。内容没变就跳过；旧版笔记本几秒内自动进 xochitl 回收站。
 - **KOReader 回流**：把 KOReader 里的高亮和生词并入条目库，走同样的流程。
 - **全文搜索**：跨所有书搜原文、转写、AI 回答。
 - **导入 md 文档**（默认隐藏）：选一个 `.md` 文件直接生成一份设备笔记本，不经条目库。
@@ -38,7 +38,7 @@ reMarkable 的强项是**荧光笔勾书，再在勾出来的地方旁边手写*
 
 | 服务 | 路由 |
 |---|---|
-| ink | `GET /books`（只列还有活条目的书）· `GET /books/{uuid}` · `GET /books/{uuid}/crops/{file}` · `POST /books/{uuid}/entries/{id}`（改 `text` / `style` / `destination` / `draft` / `answer` / `askAi` / `question` / `subheadHint`；终态条目拒改）· `POST …/entries/{id}/request`（转入笔记）· `…/skip`（不需要）· `…/archive`（不要了）· `…/restore`（恢复）· `POST /books/{uuid}/purge`（清空回收站，不可恢复）· `POST /books/{uuid}/rescan` · `POST /koreader/import` · `GET /search?q=&limit=` · `GET /events` |
+| ink | `GET /books`（只列还有活条目的书）· `GET /books/{uuid}` · `GET /books/{uuid}/crops/{file}` · `POST /books/{uuid}/entries/{id}`（改 `text` / `style` / `destination` / `draft` / `answer` / `askAi` / `question`；终态条目拒改）· `POST …/entries/{id}/request`（转入笔记）· `…/skip`（不需要）· `…/archive`（不要了）· `…/restore`（恢复）· `POST /books/{uuid}/purge`（清空回收站，不可恢复）· `POST /books/{uuid}/rescan` · `POST /koreader/import` · `GET /search?q=&limit=` · `GET /events` |
 | transcribe | `GET /status` · `GET /config` · `PUT /config`（`preset` / `backend` / `apiKey`（只写）/ `clearKey` / `price` / 自定义 `model`+`baseUrl` / `auto` / `maxPerRun` / `pauseMs` / `timeoutSecs` / `maxAttempts` / `prompt`）· `POST /run` · `POST /books/{uuid}/entries/{id}`（强制转写一条，返回 token 用量）· `POST /retry` · `GET /events` |
 | mind | `GET /status` · `GET /config` · `PUT /config`（同上，只有 `timeoutSecs` / `prompt`，没有 `auto` / `maxPerRun` / `pauseMs` / `maxAttempts` 这些节流字段）· `POST /books/{uuid}/entries/{id}/ask`（要求已勾「问 AI」且问题非空）|
 | notes | `GET /status` · `GET /books` · `GET /books/{uuid}/notebooks` · `GET /books/{uuid}/exports` · `GET /books/{uuid}/sync`（每章两个去处的同步状态）· `POST /books/{uuid}/generate` · `POST /books/{uuid}/chapters/{idx}/generate` · `POST /books/{uuid}/export` · `POST /books/{uuid}/chapters/{idx}/export` · `GET /books/{uuid}/chapters/{idx}/export.md`（浏览器下载）· `GET /books/{uuid}/vault.json`（读回已导出的 md）· `POST /books/{uuid}/import-md {title, markdown}` · `GET /events` |
@@ -56,7 +56,7 @@ notes/
 ├── services/             ink-serve · transcribe-serve · mind-serve · note-serve
 ├── systemd/              四个 .service（PartOf=shelf.target）
 ├── testdata/             真机样本（renggu 墓碑页 / renggu_marks 勾画+手写 / seven_styles 七种打字样式）
-└── docs/                 白皮书 + diagrams/（overview · architecture · data-flow · entry-status · model-config · organize-page · robustness）
+└── docs/                 白皮书 + diagrams/（overview · architecture · data-flow · entry-status · marker-styles · model-config · organize-page · robustness）
 ```
 
 网页在网关里：[`../gateway/ui/app.js`](../gateway/ui/app.js) 的 `renderNotes`（浏览 / 整理 / 回收站 / 导入 md 文档四个子视图，顶部是选书、重扫、KOReader 回流和搜索框）与 `mountModelPanel`（模型管理卡片）。
@@ -73,12 +73,12 @@ notes/
 
 ## 构建与部署
 
-与书架共用交叉编译环境（`rustup target add aarch64-unknown-linux-musl` + aarch64 交叉 gcc），见 [`../shelf/README.md`](../shelf/README.md)「构建」。改代码前先看工程纪律；在 master 上开 feature 分支开发。
+与书架共用交叉编译环境（`rustup target add aarch64-unknown-linux-musl` + aarch64 交叉 gcc），见 [`../shelf/README.md`](../shelf/README.md)「构建 · 部署 · 卸载」。改代码前先看工程纪律。
 
 ```sh
-cd notes && cargo build --workspace && cargo test --workspace     # host：221 个测试（rmv6 27 · epubmap 6 · notecore 62 · vendorcfg 22 · ink 22 · transcribe 25 · mind 22 · note 35；note 里 1 个 ignored，实跑 220 过）
-cd ../shelf && ./build.sh && ./deploy.sh <设备IP>                  # 随书架一起交叉编译、打包、装机
-ssh root@<设备IP> sh /home/root/shelf-pkg/shelf/install.sh --only ink,transcribe,mind,note   # 只装/更新笔记线
+cd notes && cargo test --workspace      # host：225 个测试（rmv6 27 · epubmap 6 · notecore 66 · vendorcfg 22 · ink 22 · transcribe 25 · mind 22 · note 35；note 里 1 个 ignored，09-25 实跑 224 过）
+cd ../shelf && sh build.sh               # host 测试 + 交叉编译（notes/ 在就一起编）
+cd ../packaging && sh deploy.sh <设备IP> --only ink,transcribe,mind,note   # 只装/更新笔记线（网关总会一起装）；不加 --only 就全装
 ```
 
 卸载走书架 `uninstall.sh`；条目库不在 `--purge` 范围内。
@@ -90,6 +90,8 @@ ssh root@<设备IP> sh /home/root/shelf-pkg/shelf/install.sh --only ink,transcri
 - 网页渲染和交互没有人眼确认过（后端链路都真机走通了）；
 - 转写准确率：汉字数字常被认成阿拉伯数字，手写 `##` 标记还没有一次被正确识别的真机例子；
 - OpenAI / Gemini / DeepSeek 没用真实 key 调用过；
-- 全文搜索没用真实数据核对（09-24 修的“草稿取最早一份”“点结果一律跳浏览”只在 host 验证）；
-- 2026-09-24 第三轮审计的改动（条目库解析缓存、大书页→章不整本读入、转写空跑不写盘不发事件、用量记账规则、账本与章记录损坏留 `.corrupt`、推送串行化、后台线程兜 panic）只在 host 验证，**没上真机**，见白皮书第 2 章「可靠性要点」；
-- 「不要了」和「清空回收站」没对真实数据执行过；几处被动触发的修复没在真机复现。
+- 全文搜索没用真实数据核对；
+- 书的小节名插行只有单测（真机验证用的书目录是平铺的）；
+- 2026-09-24 第三轮审计的改动，摄取这半边 09-25 真机核过；转写记账、>100 MB 大书、推送串行化只在 host 验证，见白皮书第 2 章「可靠性要点」。
+
+用户已决定不改的：编号列表被〔原文〕/〔AI〕段打断会从 1 重来；没转写的条目写“（待转写）”占位。

@@ -39,8 +39,8 @@ lopdf = "0.45.0"
 # 引用，text.rs 等调用点不用改名。
 pdf-extract = { path = "../pdf-extract-cj", package = "pdf-extract-cj" }
 # hayro：纯 Rust PDF 光栅化引擎（Apache-2.0/MIT，1000+ PDF 回归测试套件），把整页渲染成
-# 位图供公式区域裁剪用（没有按区域渲染的精确 API，渲染整页后用已有 `imgopt::trim_margins`
-# 同款 `image::imageops::crop_imm` 裁出公式小块）。
+# 位图供公式区域裁剪用（没有按区域渲染的精确 API，渲染整页后用
+# `image::imageops::crop_imm` 裁出公式小块，见 `pdf_ingest::to_epub::crop_pixmap_to_png`）。
 hayro = "0.7.1"
 
 [dev-dependencies]

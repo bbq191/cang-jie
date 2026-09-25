@@ -57,7 +57,7 @@ cj_pending_mark() {
     for cj_pd in "$CJ_PENDING_DIR" "$CJ_PENDING_FALLBACK"; do
         if mkdir -p "$cj_pd" 2>/dev/null && : > "$cj_pd/$1" 2>/dev/null; then return 0; fi
     done
-    echo "⚠ 写不了待生效标记（$CJ_PENDING_DIR）——xovi-apply 可能误判\"无需重启\"；请手动 systemctl restart xochitl"
+    echo "⚠ 写不了待生效标记（$CJ_PENDING_DIR）——xovi-apply 可能误判\"无需重启\"；请手动整机重启（reboot）让改动生效"
     return 1
 }
 # cj_pending_list：列出待生效的标记名（一行一个；没有则无输出）。待换入区里的 .so 也算（记成 so-pending:<文件名>）：

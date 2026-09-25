@@ -55,12 +55,12 @@
 <text x="444" y="416" text-anchor="start" font-size="10" fill="#3a3a3a">multipart 流式 multipart 解析（多文件落盘，不进内存）</text>
 <text x="444" y="434" text-anchor="start" font-size="10" fill="#3a3a3a">asset     资产仓库抽象 + 上传流程模板（字体/壁纸/词典/母版库共用）</text>
 <text x="444" y="452" text-anchor="start" font-size="10" fill="#3a3a3a">formats   文件格式白名单单一事实源 · ttf 字体解析 · cache TTL 缓存 · clock</text>
-<text x="444" y="470" text-anchor="start" font-size="10" fill="#3a3a3a">sync      容忍 poison 的取锁 sync::lock（09-24 收编各处样板）</text>
+<text x="444" y="470" text-anchor="start" font-size="10" fill="#3a3a3a">sync      容忍 poison 的取锁 sync::lock（各线手写样板已收编）</text>
 <rect x="820" y="322" width="376" height="170" rx="10" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.6"/>
 <text x="1008.0" y="342" text-anchor="middle" font-size="12" font-weight="bold" fill="#1a1a1a">对外与安全（网关用得多）</text>
 <text x="832" y="362" text-anchor="start" font-size="10" fill="#3a3a3a">auth      PBKDF2 密码哈希 · Basic/Cookie · 会话表 · 按 IP 失败限速</text>
 <text x="832" y="380" text-anchor="start" font-size="10" fill="#3a3a3a">tls       带名称约束的私有 CA + 叶证书（800 天，自动续签）</text>
-<text x="832" y="398" text-anchor="start" font-size="10" fill="#3a3a3a">mdns      极简 mDNS 应答器（shelf.local）</text>
+<text x="832" y="398" text-anchor="start" font-size="10" fill="#3a3a3a">mdns      极简 mDNS 应答器（shelf.local；网络地址变了才重扫）</text>
 <text x="832" y="416" text-anchor="start" font-size="10" fill="#3a3a3a">netinfo   本机 IPv4 表（证书 SAN、mDNS 选址；不 fork 进程）</text>
 <rect x="44" y="508" width="560" height="150" rx="10" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.6"/>
 <text x="324.0" y="528" text-anchor="middle" font-size="12" font-weight="bold" fill="#1a1a1a">和设备上的 xochitl 打交道</text>

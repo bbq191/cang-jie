@@ -22,7 +22,7 @@
 <text x="34" y="248" font-size="11.5" fill="#3a3a3a">上传（EPUB / PDF）· 抓网文（贴 URL）</text>
 <text x="34" y="276" font-size="13" font-weight="bold" fill="#1a1a1a">母版库</text>
 <text x="34" y="296" font-size="11.5" fill="#3a3a3a">勾选 + 底部三行操作栏、加入位置下拉</text>
-<text x="34" y="314" font-size="11.5" fill="#3a3a3a">只选一本时：下载原件 / 改名</text>
+<text x="34" y="314" font-size="11.5" fill="#3a3a3a">阅读方向；只选一本时：下载原件 / 改名</text>
 <text x="34" y="332" font-size="11.5" fill="#3a3a3a">搜索 / 筛选 / 分页 / 处理进度</text>
 <text x="34" y="358" font-size="11.5" font-weight="bold" fill="#1a1a1a">原 PDF 备份（转 EPUB 后留 7 天）</text>
 <text x="34" y="376" font-size="11.5" fill="#3a3a3a">恢复回母版库 / 提前删除</text>
@@ -53,13 +53,15 @@
 <rect x="800" y="148" width="250" height="40" rx="10" fill="#fbe9e4" stroke="#b0451f" stroke-width="1.6"/>
 <text x="925" y="174" text-anchor="middle" font-size="15" font-weight="bold" fill="#1a1a1a">管理</text>
 <rect x="800" y="204" width="250" height="190" rx="10" fill="#fbe9e4" stroke="#b0451f" stroke-width="1.6"/>
-<text x="814" y="226" font-size="12.5" fill="#1a1a1a">基石与模块（探测 / 启停 / 卸载）</text>
-<text x="814" y="248" font-size="12.5" fill="#1a1a1a">模型管理（转写 / 问 AI）</text>
-<text x="814" y="270" font-size="12.5" fill="#1a1a1a">系统增强：画线吸附、battop 开关</text>
-<text x="814" y="288" font-size="11.5" fill="#3a3a3a">每项带加载徽章：已加载/待重启/未加载</text>
-<text x="814" y="312" font-size="12.5" fill="#1a1a1a">电池刺客（battop 运行时才出现）</text>
-<text x="814" y="336" font-size="12.5" fill="#1a1a1a">实验室：手写笔迹、漫画页边距、</text>
-<text x="814" y="356" font-size="12.5" fill="#1a1a1a">导入 md 文档 三个开关</text>
+<text x="814" y="224" font-size="12" fill="#1a1a1a">基石与模块（探测 / 启停 / 卸载）</text>
+<text x="814" y="244" font-size="12" fill="#1a1a1a">设备健康：概览/服务/扩展/日志/清理</text>
+<text x="814" y="264" font-size="12" fill="#1a1a1a">模型管理（转写 / 问 AI）</text>
+<text x="814" y="284" font-size="12" fill="#1a1a1a">系统增强：画线吸附、阅读器翻页、</text>
+<text x="814" y="302" font-size="12" fill="#1a1a1a">　　　　　电池刺客开关</text>
+<text x="814" y="320" font-size="11" fill="#3a3a3a">每项带加载徽章：已加载/待重启/未加载</text>
+<text x="814" y="342" font-size="12" fill="#1a1a1a">电池刺客（battop 运行时才出现）</text>
+<text x="814" y="362" font-size="12" fill="#1a1a1a">实验室：手写笔迹、漫画页边距、</text>
+<text x="814" y="380" font-size="12" fill="#1a1a1a">　　　　导入 md 文档</text>
 
 
 <!-- 底部：数据通路 -->

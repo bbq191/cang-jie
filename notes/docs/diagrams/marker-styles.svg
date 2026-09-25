@@ -1,0 +1,107 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1120 720" font-family="Noto Sans CJK SC, sans-serif">
+  <defs>
+    <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#777"/>
+    </marker>
+  </defs>
+  <rect width="1120" height="720" fill="#ffffff"/>
+  <text x="560" y="36" font-size="21" font-weight="bold" text-anchor="middle" fill="#222">行首标记 → 条目样式 → 设备笔记本 / Obsidian md（2026-09-25 起一一对应）</text>
+  <text x="560" y="62" font-size="13.5" text-anchor="middle" fill="#666">手写转写和网页打字用同一套规则（md 导入基本相同，另把单个 # 当章名 Title）；只看第一行行首，标记从正文剥掉</text>
+
+  <!-- 列头 -->
+  <g font-size="14.5" font-weight="bold" fill="#333">
+    <rect x="24" y="82" width="250" height="36" rx="6" fill="#eef3fa" stroke="#7a9cc6"/>
+    <text x="149" y="106" text-anchor="middle">① 行首写什么</text>
+    <rect x="306" y="82" width="160" height="36" rx="6" fill="#f1f1f1" stroke="#999"/>
+    <text x="386" y="106" text-anchor="middle">② Entry.style</text>
+    <rect x="498" y="82" width="300" height="36" rx="6" fill="#eaf5ea" stroke="#6aa86a"/>
+    <text x="648" y="106" text-anchor="middle">③ 设备笔记本（.rm 段落样式）</text>
+    <rect x="830" y="82" width="266" height="36" rx="6" fill="#fdf3e3" stroke="#d2a24c"/>
+    <text x="963" y="106" text-anchor="middle">④ Obsidian md</text>
+  </g>
+
+  <!-- 行 -->
+  <g font-size="13.5" fill="#222">
+    <!-- row 1 -->
+    <rect x="24" y="132" width="1072" height="56" rx="6" fill="#fafafa" stroke="#e2e2e2"/>
+    <text x="36" y="156" font-family="monospace" font-size="14">## 标题</text>
+    <text x="36" y="177" font-size="12" fill="#777">两个 #，有无空格都认</text>
+    <text x="386" y="165" text-anchor="middle" font-family="monospace">Heading1</text>
+    <text x="510" y="156" font-weight="bold">Subheading 1（大字号小标题）</text>
+    <text x="510" y="177" font-size="12" fill="#777">码 3 + 格式子块末尾 7 字节标记</text>
+    <text x="842" y="156" font-family="monospace">## 标题</text>
+    <text x="842" y="177" font-size="12" fill="#777">标题行不带 ^id 块锚</text>
+
+    <!-- row 2 -->
+    <rect x="24" y="196" width="1072" height="56" rx="6" fill="#fafafa" stroke="#e2e2e2"/>
+    <text x="36" y="220" font-family="monospace" font-size="14">### 标题</text>
+    <text x="36" y="241" font-size="12" fill="#777">三个及以上 #（设备只有两级）</text>
+    <text x="386" y="229" text-anchor="middle" font-family="monospace">Heading2</text>
+    <text x="510" y="220" font-weight="bold">Subheading 2（加粗小标题）</text>
+    <text x="510" y="241" font-size="12" fill="#777">码 3（BOLD），不带那 7 字节</text>
+    <text x="842" y="220" font-family="monospace">### 标题</text>
+    <text x="842" y="241" font-size="12" fill="#777">标题行不带 ^id 块锚</text>
+
+    <!-- row 3 -->
+    <rect x="24" y="260" width="1072" height="56" rx="6" fill="#fafafa" stroke="#e2e2e2"/>
+    <text x="36" y="284" font-family="monospace" font-size="14">1.  1、  1)  1）  1．</text>
+    <text x="36" y="305" font-size="12" fill="#777">最多 3 位数字</text>
+    <text x="386" y="293" text-anchor="middle" font-family="monospace">Numbered</text>
+    <text x="510" y="284" font-weight="bold">编号列表（NumberedList）</text>
+    <text x="510" y="305" font-size="12" fill="#777">码 10；编号由 xochitl 自己数</text>
+    <text x="842" y="284" font-family="monospace">1. 文字 ^id</text>
+
+    <!-- row 4 -->
+    <rect x="24" y="324" width="1072" height="56" rx="6" fill="#fafafa" stroke="#e2e2e2"/>
+    <text x="36" y="348" font-family="monospace" font-size="14">-  •  ·  *  —  －</text>
+    <text x="36" y="369" font-size="12" fill="#777">「-3 度」这类不会误判</text>
+    <text x="386" y="357" text-anchor="middle" font-family="monospace">Bullet</text>
+    <text x="510" y="348" font-weight="bold">圆点列表（Bulletpoint）</text>
+    <text x="510" y="369" font-size="12" fill="#777">码 4</text>
+    <text x="842" y="348" font-family="monospace">- 文字 ^id</text>
+
+    <!-- row 5 -->
+    <rect x="24" y="388" width="1072" height="56" rx="6" fill="#fafafa" stroke="#e2e2e2"/>
+    <text x="36" y="412" font-family="monospace" font-size="14">- [ ]  [ ]  []  - [x]  口  □</text>
+    <text x="36" y="433" font-size="12" fill="#777">「口渴了」「[注]」不算</text>
+    <text x="386" y="421" text-anchor="middle" font-family="monospace">Checkbox</text>
+    <text x="510" y="412" font-weight="bold">复选框（Checkbox）</text>
+    <text x="510" y="433" font-size="12" fill="#777">码 6；一律未勾选（勾选态写不出）</text>
+    <text x="842" y="412" font-family="monospace">- [ ] 文字 ^id</text>
+
+    <!-- row 6 -->
+    <rect x="24" y="452" width="1072" height="56" rx="6" fill="#fafafa" stroke="#e2e2e2"/>
+    <text x="36" y="476" font-size="14">没有标记（或单个 #）</text>
+    <text x="36" y="497" font-size="12" fill="#777">单 # 是章名级别，条目不接</text>
+    <text x="386" y="485" text-anchor="middle" font-family="monospace">Body</text>
+    <text x="510" y="476" font-weight="bold">正文（Body）</text>
+    <text x="510" y="497" font-size="12" fill="#777">码 1</text>
+    <text x="842" y="476" font-family="monospace">文字 ^id</text>
+  </g>
+
+  <!-- 箭头 -->
+  <g stroke="#999" stroke-width="1.4" marker-end="url(#ar)">
+    <line x1="276" y1="100" x2="302" y2="100"/>
+    <line x1="468" y1="100" x2="494" y2="100"/>
+    <line x1="800" y1="100" x2="826" y2="100"/>
+  </g>
+
+  <!-- 投影自己加的段落 -->
+  <rect x="24" y="528" width="1072" height="168" rx="8" fill="#f6f8fb" stroke="#b9c7da"/>
+  <text x="40" y="554" font-size="15" font-weight="bold" fill="#333">不由标记决定、由投影自动加的段落</text>
+  <g font-size="13.5" fill="#222">
+    <text x="40" y="584">章名（目录一级）</text>
+    <text x="330" y="584">→ 每本笔记本开头一段 Title（码 2）</text>
+    <text x="760" y="584">→ front-matter 的 chapter 与文件名</text>
+
+    <text x="40" y="614">书的小节名（目录二级及更深）</text>
+    <text x="330" y="614">→ 小节变了先插一段 Subheading 1</text>
+    <text x="760" y="614">→ 先出一行 ## 小节名</text>
+
+    <text x="40" y="644">勾画原文 / AI 回答（有才写）</text>
+    <text x="330" y="644">→ 紧跟条目的 Body：〔原文〕… 〔AI〕…</text>
+    <text x="760" y="644">→ 引用块 &gt; 「原文」 / &gt; **AI**：…</text>
+
+    <text x="40" y="676" font-size="12.5" fill="#8a5a00">已知限制（用户 09-25 决定不改）：两条编号条目之间夹了〔原文〕/〔AI〕段，设备上的编号会从 1 重来；还没转写的条目写“（待转写）”占位。</text>
+  </g>
+</svg>

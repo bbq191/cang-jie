@@ -37,9 +37,11 @@ reMarkable Paper Pro Move 是一台彩色墨水屏平板，官方阅读/笔记�
 - **所有服务都跑在设备上**，用浏览器访问 `https://10.11.99.1/`（USB 连接时）或 `https://shelf.local/`（同一 WiFi 下，安卓不解析 `.local`）。
 - **只有网关对外**（`0.0.0.0:443`）。它用设备自己生成的私有 CA 签 HTTPS 证书，再加登录密码（默认 `shelf`，首次登录强制改）。领域服务只听 `127.0.0.1`，由网关按"服务注册表"转发。装/卸一个服务 = 一个二进制 + 一个 systemd 单元。
 - **安全上的两条限制**（2026-09-24 起）：私有 CA 只能给局域网名字和内网 IP 签证书，即使设备上的 CA 私钥泄露，也伪造不了别的网站；登录输错按来源 IP 分别限速（每个 IP 60 秒内错 5 次就锁这个 IP），同一 WiFi 下别人乱试不会把你锁在外面。从旧版升级时网关会自动换一张新 CA，**手机和电脑要重装一次证书**，见 [`INSTALL.md`](INSTALL.md#装完之后)。
-- **xochitl 阅读器翻页**（2026-09-24，「管理 → 系统增强」两个开关，默认关，真机验证过）：「单击翻页」点屏幕左右边缘翻页；「日漫翻页规则」让标明从右往左的书（或在 `rtl-overrides.json` 手动清单里的书）从左往右滑、点左边缘是下一页。每次打开书读一次开关。
+- **xochitl 阅读器翻页**（2026-09-24，「管理 → 系统增强」两个开关，默认关，真机验证过）：「单击翻页」点屏幕左右边缘翻页；「日漫翻页规则」让从右往左的书从左往右滑、点左边缘是下一页。书的方向在母版库里按书设（自动 / 从右往左 / 从左往右，2026-09-25 起），不用再手改清单文件。每次打开书读一次开关。
+- **扩展和界面补丁怎么生效**：改动先落盘，再**整机重启一次**（约 20–60 秒）。不单独重启 xochitl：它退出时有概率崩溃（xochitl 自身的问题，2026-09-25 查清）。安装脚本会自动做这件事，重启回来后自动核对；细节见 [`INSTALL.md`「重复运行」](INSTALL.md#重复运行什么时候才重启)。
 - **开关开了不等于生效**：网页「管理」页在每个扩展开关旁显示"已加载 / 未加载"，漫画页边距开关显示界面补丁"已加载 / 待重启 / 未加载"。数据直接读运行中 xochitl 进程加载了哪些文件。
-- **设备健康与 OTA 提示**（2026-09-25，只在 host 验证）：「管理 → 设备健康」按需显示各服务状态、内存、启动耗时、xovi 是否生效、换了没重启的扩展和上次开机最后几行日志；固件升级冲掉服务单元或 xovi 没生效时，网页页头提示并给出恢复命令。同页可清理早期遗留文件，xochitl 书库里的重复副本只列出、勾选后走 xochitl 自己的回收站。
+- **设备健康与 OTA 提示**（2026-09-25，已部署并用真实登录看过页面；清理按钮还没在真机点过）：「管理 → 设备健康」分五个小标签（概览 / 服务 / 扩展 / 日志 / 清理），按需显示各服务状态、内存、启动耗时、xovi 是否生效、换了文件还没重启的扩展、上次开机最后 20 行日志。固件升级冲掉服务单元或 xovi 没生效时，网页顶部提示并给出恢复命令。「清理」可以删早期遗留文件；xochitl 书库里的重复副本勾选后移进 xochitl 自己的回收站。
+- **移进回收站、新建文件夹由 xochitl 里的小代理执行**：这两件事不直接改书库文件，而是由 book-serve 排进队列；xochitl 里常驻的界面补丁（`shelf-trash-agent.qmd`、`shelf-mkdir-agent.qmd`）长轮询取任务，调用 xochitl 自己的接口去做，几秒内生效，跟你正在看哪个文件夹无关。
 - 端口：`book-serve` 8790、`koreader-serve` 8791、`font-serve` 8792、`wallpaper-serve` 8793、`ink-serve` 8795、`transcribe-serve` 8796、`mind-serve` 8797、`note-serve` 8798。
 - 只支持 **reMarkable Paper Pro Move、固件 3.28.0.172**；`/home` 数据在固件升级后保留，`/usr`、`/etc` 里的东西会被冲掉，要重新安装（见 [`INSTALL.md`](INSTALL.md#固件升级ota之后)）。
 
@@ -51,9 +53,9 @@ reMarkable Paper Pro Move 是一台彩色墨水屏平板，官方阅读/笔记�
 |---|---|---|
 | 各服务的二进制（`gateway`、`book-serve` …） | `/home/root/.local/bin/` | 保留 |
 | 各服务的数据 / 配置 / 状态（母版库、证书、密码、字体壁纸池、PDF 转换后的原件备份…） | `~/.local/share/shelf`、`~/.config/shelf`、`~/.local/state/shelf`；笔记线同理放在 `~/.config/notes`、`~/.local/share/notes`、`~/.local/state/notes` | 保留 |
-| xovi 扩展 `.so`（`hl-snap`、`hw-stroke`） | `/home/root/xovi/extensions.d/`（**只放扩展，备份绝不能放这里**） | 文件保留，需重建 hashtab 后重新生效 |
-| 等着换入的新版扩展 `.so`（xochitl 正在用旧版时先放这里，下次重启 xochitl 时换入） | `/home/root/.cangjie-stage/so-pending/` | 保留 |
-| 界面补丁 qmd（字体菜单、回收站/建夹代理、侧栏入口、漫画边距代理、阅读器翻页） | `/home/root/xovi/exthome/qt-resource-rebuilder/` | 同上 |
+| xovi 扩展 `.so`（`hl-snap`、`hw-stroke`） | `/home/root/xovi/extensions.d/`（**只放扩展，备份绝不能放这里**：xovi 会把目录里每个文件都当扩展加载） | 文件保留，重跑安装后生效 |
+| 等着换入的新版扩展 `.so`（xochitl 正在用旧版时先放这里；整机重启前由部署脚本、或开机时由 `xovi-reenable` 换进 `extensions.d/`） | `/home/root/.cangjie-stage/so-pending/` | 保留 |
+| 界面补丁 qmd（字体菜单、回收站/建夹代理、侧栏入口、漫画边距代理、阅读器翻页） | `/home/root/xovi/exthome/qt-resource-rebuilder/` | 文件保留，要先在设备上重建 hashtable 再重跑安装 |
 | systemd 单元（`shelf.target`、各服务、`xovi-reenable`、`wifi-watch`、`battop`、`chrony-boot-wakelock`） | `/usr/lib/systemd/system/` | **被冲掉**，重跑安装 |
 | 国内 NTP、默认时区 | `/etc` | **被冲掉**，重跑安装 |
 | battop 二进制与采样数据 | `/home/root/battop/` | 保留 |
@@ -64,7 +66,7 @@ reMarkable Paper Pro Move 是一台彩色墨水屏平板，官方阅读/笔记�
 
 ![传书主流程](diagrams/transfer-flow.svg)
 
-1. **入库**：网页上传、抓网文、或 scp 进设备的 `inbox/`。只收 EPUB/PDF；书名整理成 `书名 - 02卷`（数字在前）。书进入**母版库**（设备上的暂存池，永久保留原始字节，可反复落库）。只勾选一本时可以"下载原件"或"改名"（只改文件名，不改书里的书名）。
+1. **入库**：网页上传、抓网文、或 scp 进设备的 `inbox/`。只收 EPUB/PDF；书名整理成 `书名 - 02卷`（数字在前）。书进入**母版库**（设备上的暂存池，永久保留原始字节，可反复落库）。只勾选一本时可以"下载原件"或"改名"（只改文件名，不改书里的书名）。也可以给勾选的书设阅读方向（日漫从右往左）。
 2. **优化**（可选）：
    - EPUB：清洗、统一排版规则（xochitl 只认外链 css，见 [EPUB 优化规范白皮书](../shelf/docs/EPUB优化规范白皮书.md)）、重建目录、保证封面有效。
    - 漫画：自动识别、保画质、裁白边。
@@ -89,7 +91,11 @@ reMarkable Paper Pro Move 是一台彩色墨水屏平板，官方阅读/笔记�
 
 ## 6. 笔记线在做什么（一句话）
 
-你在书上用荧光笔划出内容、并在旁边手写批注；合上书后，`ink-serve` 把"勾画 + 手写"配成条目存进条目库；你在手机网页里校对转写（`transcribe-serve` 调视觉模型）、选去向、需要时单条问 AI（`mind-serve`）；`note-serve` 再把条目投影回设备笔记本或导出 Obsidian markdown。
+![笔记线一图读懂](../notes/docs/diagrams/overview.svg)
+
+你在书上用荧光笔划出内容、并在旁边手写批注；合上书后，`ink-serve` 把"勾画 + 手写"按距离配成条目存进条目库（手写离勾画 160 以内算这条勾画的批注，更远算本页批注）；你在手机网页里校对转写（`transcribe-serve` 调视觉模型）、选去向、需要时单条问 AI（`mind-serve`）；`note-serve` 再把条目投影回设备笔记本或导出 Obsidian markdown。
+
+生成的设备笔记本沿用设备自带的文字样式：行首 `##` 是大标题、`###` 是小标题、`1.` 编号、`-` 圆点、`- [ ]` 复选框，还会按书的小节插入小节名；导出 Obsidian 时是对应的 Markdown。
 
 「笔记」页顶部有跨书全文搜索（勾画原文、转写、提问、AI 回答、书名），旁边有「导入 KOReader 批注」按钮。条目库文件损坏时不会被当成空书覆盖，会另存一份 `.corrupt` 副本并拒绝写入，等人处理。详见 [`notes/README.md`](../notes/README.md)。
 
@@ -117,7 +123,7 @@ reMarkable Paper Pro Move 是一台彩色墨水屏平板，官方阅读/笔记�
 |---|---|
 | 怎么装 / 卸 / 升级后恢复 | [`INSTALL.md`](INSTALL.md)（脚本内部结构见 [`../packaging/README.md`](../packaging/README.md)） |
 | 书架细节 | [`../shelf/README.md`](../shelf/README.md) → [`传书EPUB线架构`](../shelf/docs/传书EPUB线架构.md)（现状）→ [书架白皮书](../shelf/docs/reMarkable书架白皮书.md)（决策与真机记录） |
-| 书怎么被优化 | [`bookconv 优化白皮书`](../shelf/docs/bookconv优化白皮书.md) |
+| 书怎么被优化 | [`bookconv 优化白皮书`](../shelf/docs/bookconv优化白皮书.md)；现行规则与 xochitl 实测渲染规则见 [EPUB 优化规范白皮书](../shelf/docs/EPUB优化规范白皮书.md) |
 | 网关、批量队列、闸门 | [`../gateway/README.md`](../gateway/README.md) · [网关白皮书](../gateway/docs/reMarkable网关白皮书.md) |
 | 笔记线 | [`../notes/README.md`](../notes/README.md) |
 | 系统增强 | [`../enhance/README.md`](../enhance/README.md) |

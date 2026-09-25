@@ -41,7 +41,7 @@ cj_require_root || exit 1
 # 三种情况（旧版备份进 cangjie-backups——绝不能留在 extensions.d：xovi 把该目录下任意文件当扩展加载，
 # 同名扩展重复注册是致命错误，见 工程纪律；内容没变就不备份，只保留最近几份）：
 #  · 与已装的逐字节相同 → 不动（顺手撤掉过时的待换入版本）；
-#  · 运行中的 xochitl 正映射着它 → 不当场换，放进待换入区，重启 xochitl 时由 cj_xochitl_apply 先 stop 再换再 start
+#  · 运行中的 xochitl 正映射着它 → 不当场换，放进待换入区，由 cj_xochitl_apply 换入后整机重启（或下次开机由 xovi-reenable 换入）
 #    （换完再 restart 会让旧进程退出时崩溃、整机重启，2026-09-24 真机第二次复现，见 devlib.sh 头注 H3）；
 #    同一个新版已经在待换入区（上一轮 --no-restart 放进去、还没重启）→ 不再重复备份/重放；
 #  · 否则原子替换：先写到 extensions.d 之外的暂存目录再 rename 进去，中途失败不在 extensions.d 里留半个 .so。

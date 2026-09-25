@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1180" height="800" viewBox="0 0 1180 800" font-family="Noto Sans CJK SC, sans-serif">
 <rect width="1180" height="800" fill="#ffffff"/>
 <text x="590.0" y="32" text-anchor="middle" font-size="20" font-weight="bold" fill="#1f2937">书架服务的并发控制：哪条路径进哪把锁</text>
-<text x="590.0" y="56" text-anchor="middle" font-size="13" fill="#6b7280">2026-09-24 第三轮审计后的代码现状，09-25 补上抓网文（这些改动只在 host 单测验证，未上真机）。锁只包住真正会撞的那一小段</text>
+<text x="590.0" y="56" text-anchor="middle" font-size="13" fill="#6b7280">2026-09-24 第三轮审计后的代码现状，09-25 补上抓网文（已部署；并发场景只有 host 回归测试，没在真机专门触发）。锁只包住真正会撞的那一小段</text>
 <text x="590.0" y="76" text-anchor="middle" font-size="12.5" fill="#6b7280">除网关闸门外都是单个进程内的锁；book-serve、koreader-serve、网关是三个独立进程</text>
 <rect x="273" y="96" width="121" height="70" rx="8" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.5"/>
 <text x="333.5" y="118" text-anchor="middle" font-size="13" font-weight="bold" fill="#4a6fa5">网关闸门</text>

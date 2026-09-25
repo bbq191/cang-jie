@@ -394,7 +394,7 @@
   "manage.enhance.hlSnap.desc": "荧光笔划中文时精确吸附到词/行边界，不再\"划一小段吸整行\"。langhook 里的 C hook 进程内实时读这个开关，改了立即生效，不用重启任何东西；原生「设置」App「系统增强」页同一个开关，两边改哪边都算数。",
   "manage.enhance.hlSnap.toggle": "开启（默认开）",
   "manage.lab.hwStroke.title": "CJK 手写笔迹优化",
-  "manage.lab.hwStroke.desc": "设备手写笔锋按运笔方向/快慢调整粗细（笔尖角度模型+提按速度代理两个效果叠加）——跟\"划线摄取转写\"那条 AI 识别管线无关，这里说的是笔画本身怎么画出来。<b>目前只在部分笔型（书法笔、马克笔一类）上真机验证过生效</b>，日常最常用的钢笔/铅笔量级工具还摸不到（虚函数动态分发，运行时目标未确认，见 <code>enhance/handwriting-stroke/README.md</code>「下一步」）。这个开关直接改 <code>reading-qol.json</code> 里两个强度阈值，改了下一笔立即生效，不用重启 xochitl。",
+  "manage.lab.hwStroke.desc": "设备手写笔锋按运笔方向/快慢调整粗细（笔尖角度模型+提按速度代理两个效果叠加）——跟\"划线摄取转写\"那条 AI 识别管线无关，这里说的是笔画本身怎么画出来。<b>目前只在部分笔型（书法笔、马克笔一类）上真机验证过生效</b>，日常最常用的钢笔/铅笔量级工具还摸不到（虚函数动态分发，运行时目标未确认，见 <code>enhance/handwriting-stroke/README.md</code>「现状」）。这个开关直接改 <code>reading-qol.json</code> 里两个强度阈值，改了下一笔立即生效，不用重启 xochitl。",
   "manage.lab.hwStroke.toggle": "开启",
   "manage.lab.importMd.title": "导入 md 文档",
   "manage.lab.importMd.desc": "开启后「笔记」tab 才会出现「导入 md 文档」子标签（上传一个 .md 文件生成设备笔记本文档）。功能第一次上线，默认关——想用先在这里打开。",

@@ -3,9 +3,9 @@
 > **读者与用途**：要改 `rmsvc-core`，或在 `shelf/`、`notes/`、`enhance/`、`gateway/` 里写 Web 服务、想知道基座提供什么、有哪些约定的人。
 > 先读“现状”；后面按模块分组，每个模块写“谁在用”和“关键约定”。被推翻的做法只留结论和教训。
 > 入口文档（模块速查、Rust API 入口）见 [`../README.md`](../README.md)；网关怎么用这些模块（登录、代理、闸门）见 [网关白皮书](../../gateway/docs/reMarkable网关白皮书.md)。
-> 所有数字以 2026-09-24 的代码为准（`rmsvc-core/src`）。
+> 所有数字以 2026-09-25 的代码为准（`rmsvc-core/src`）。
 
-## 现状（2026-09-24）
+## 现状（2026-09-25）
 
 **一句话**：设备上 9 个小 Web 服务（书架 2 个、系统增强 2 个、笔记 4 个、网关）都要做同样的杂活——读 XDG 路径、向注册表登记、收 HTTP 请求回 JSON、接大文件上传、往 xochitl 塞书、广播“该刷新了”、登录和 TLS。这些杂活只写一份，就是 `rmsvc-core`。它是纯基础设施，不含任何“书 / 笔记 / 字体”业务语义。
 
@@ -24,12 +24,12 @@
 
 | 项 | 值 |
 |---|---|
-| 模块数 | 21 个（`lib.rs`；09-24 新增 `sync`） |
+| 模块数 | 21 个（`lib.rs`；最近新增的是 09-24 的 `sync`） |
 | 消费方 | `shelf/services/{book,koreader}-serve` · `enhance/{font,wallpaper}-serve` · `notes/services/{ink,transcribe,mind,note}-serve` + `notes/crates/vendorcfg` · `gateway/` |
 | 依赖方向 | 单向：消费方 → 本 crate；本 crate 不知道任何消费方，不引用旧项目 crate（`device-core` / `weread-device`） |
 | workspace | 不建根 workspace，各项目各管各的 `target/` |
-| 测试 | 95 个单测（`cargo test --manifest-path rmsvc-core/Cargo.toml`，2026-09-24 第三轮审计后实跑），CI `rust` job 单列一步 |
-| 真机 | 所有消费方已部署在设备上并正常运行（2026-09-11 起 `install-all.sh` 真机跑通；2026-09-24 网关 `active`）。**09-24 第三轮审计的改动**（`sync`、小请求体超限报错、`percent_decode_path`、上传串行锁、上传文件名清洗）只在 host 单测验证，**未上真机** |
+| 测试 | 101 个单测，100 个默认跑、1 个默认忽略（需要网络命名空间的 mDNS 端到端测试）；`cargo test --manifest-path rmsvc-core/Cargo.toml`，2026-09-25 实跑全过。CI `rust` job 单列一步（CI 自 09-20 起因账户扣费没有实际执行） |
+| 真机 | 所有消费方已部署在设备上并正常运行（2026-09-11 起 `install-all.sh` 真机跑通；09-24、09-25 各整轮重装一次，9 个服务 active）。09-24 第三轮审计的改动（`sync`、小请求体超限报错、`percent_decode_path`、上传串行锁、上传文件名清洗、读空闲超时）已随部署上机、服务正常，但这些行为本身只在 host 测试里专门验证过；09-25 的 mDNS 地址变化驱动见 §04 |
 
 **三条要记住**：① 这里出问题，理论上 5 个独立顶层项目一起受影响，改任何模块前先查谁在用（下面每节都列了）；② 公开结构体（如 `http::Request`）被各服务直接构造，加字段会波及全部调用方，宁可走内部头或新函数；③ XDG 路径仍叫 `shelf`（已部署设备的真实路径，改名要迁移）。
 
@@ -64,7 +64,7 @@
 
 **09-24 教训**：文件下载第一版用了 `Reply::stream`，reader 读完连接却不关，真机上下载永远收不完。SSE 和定长下载是两种语义，各用各的。
 
-### events —— 事件总线（8 个服务 + 网关用）
+### events —— 事件总线（除 mind-serve 外的 7 个服务 + 网关用）
 
 - **格式**：一行 JSON `{"area":"books","kind":"staging","at":<unix秒>}`，只是“该刷新了”的信号，不带状态。服务在**变更发生处**调 `EventBus::publish`，网关汇聚后推给网页（原则：不轮询、不监听全盘、日志写入不触发）。
 - **`EventBus`**：进程内广播，每个订阅者一条有界队列（64 条），满了丢事件。
@@ -82,13 +82,13 @@
 | `asset` | book-serve、koreader-serve、font-serve、wallpaper-serve | `AssetStore`（仓库：`validate`/`install`/`list`/`remove`）+ `AssetUploadFlow`（上传流程写一次）。拒收/成功文案由各仓库覆盖 |
 | `formats` | 5 个 + 网关 | 文件格式白名单的**单一事实源**：书籍只收 `epub`/`pdf`（09-18 起），字体 `ttf/otf/ttc`，词典 `ifo/idx/dict/dz/syn/oft`，图片 `jpg/jpeg/png`。网页 `accept`（网关注入）和服务端上传门同源 |
 | `ttf` | font-serve、koreader-serve | TTF/OTF 家族名（nameID 16 优先）、魔数校验、CJK 覆盖率；汉字覆盖数钳到区内总码位、够数即停（防恶意字体堆重叠段导致数亿次迭代，09-22） |
-| `cache` | book-serve、koreader-serve | 单值 TTL 缓存 `TtlCache`，给每次刷新都会打、但算一次很重的 `/status`（如 3 秒 TTL）；本服务操作完成时 `invalidate`。计算期间持锁，并发请求等同一份结果 |
+| `cache` | book-serve、koreader-serve、网关（设备健康页） | 单值 TTL 缓存 `TtlCache`，给每次刷新都会打、但算一次很重的 `/status`（如 3 秒 TTL）；本服务操作完成时 `invalidate`。计算期间持锁，并发请求等同一份结果 |
 | `clock` | 8 个 | unix 时间戳唯一出处；取不到时间回 0 |
-| `sync` | book-serve、koreader-serve、网关、笔记线四个服务与 vendorcfg、font-serve、wallpaper-serve、本 crate 自身 | `sync::lock`：容忍 poison 的取锁。release 是 `panic="unwind"`，线程 panic 后它持有的锁被标 poison，别处再 `.lock().unwrap()` 就会让之后每个请求都跟着 panic；这里保护的都是缓存/队列/计数这类半途中断也自洽的状态，接着用即可。09-24 收编了 book-serve 私有的 `ops::lock` 和书架两服务、本 crate 里手写的 `.lock().unwrap_or_else(|e| e.into_inner())`；网关、笔记线、系统增强里还有约 35 处手写同款（行为相同，可逐步改用） |
+| `sync` | book-serve、koreader-serve、网关、笔记线四个服务与 vendorcfg、font-serve、wallpaper-serve、本 crate 自身 | `sync::lock`：容忍 poison 的取锁。release 是 `panic="unwind"`，线程 panic 后它持有的锁被标 poison，别处再 `.lock().unwrap()` 就会让之后每个请求都跟着 panic；这里保护的都是缓存/队列/计数这类半途中断也自洽的状态，接着用即可。09-24 收编了 book-serve 私有的 `ops::lock` 和书架两服务、本 crate 里手写的 `.lock().unwrap_or_else(|e| e.into_inner())`，09-25 又把网关、笔记线、系统增强的 33 处改用它（见 §07）。条件变量 `wait*` 的 poison 处理它管不到，仍是手写 |
 
 ## 03｜和 xochitl 打交道：xochitl / xochitl_conf / fswatch
 
-- **`xochitl`**（book-serve、note-serve）：往设备原生书库免重启塞文件，剥离移植自旧项目的真机结论。
+- **`xochitl`**（book-serve、note-serve；网关只用 `is_uuid_shape` 校验书库 id）：往设备原生书库免重启塞文件，剥离移植自旧项目的真机结论。
   - `POST http://10.11.99.1/upload`（xochitl 的网页接口只绑 USB 网口，设备端靠 lo/usb1 别名让这个地址常驻可达）。
   - **GET-then-upload 归档**：先 `GET /documents/<文件夹 uuid>` 把“当前文件夹”设好（这是 xochitl 的全局状态），再上传，文件就落进该文件夹；`.metadata` 里的 parent 会被忽略。因为是全局状态，进程内“设文件夹 → 上传”由一把 static 锁串成一对（09-24：网关允许 3 本小书同时处理，此前两本书并发投到不同文件夹会落错）；只锁上传本身，按卷拆分等渲染的间隙不占锁；跨进程（note-serve 也会投笔记本）不受这把锁约束。
   - **multipart 头里的文件名**：`"` 换成 `'`、CR/LF 换成空格，其余字节原样（中文照旧直传）。母版库文件名只校验“单段”，带引号的书名此前原样拼进 `filename="…"`，xochitl 读到第一个 `"` 就截断成半截名；带换行则会被当成新的头（09-24）。
@@ -105,7 +105,13 @@
 
 - **`auth`**：`hash_password`/`verify_password`（`pbkdf2$<轮数>$<盐>$<摘要>`，PBKDF2-HMAC-SHA256 60 万轮、16 字节盐；旧版单轮 SHA-256 仍可校验）；`parse_basic`、`parse_cookie`；`SessionStore`（32 字节随机令牌、绝对过期、容量上限，满了淘汰最早到期的）；`IpFailLimiter`（按来源 IP 的滑动窗口失败计数，IPv4 映射的 IPv6 与纯 IPv4 算同一来源；有 `*_at(now)` 版本便于测试）。09-24 之前的全局计数器 `FailLimiter` 已删除。
 - **`tls`**：`ensure_ca_signed(dir, extra_sans)` 读取或生成私有 CA（10 年）+ 服务器证书（800 天；名字列表变化或签发满 700 天重签）；CA 带名称约束（`PERMITTED_DNS`、`PERMITTED_V4`，路径长度 0），约束外的 SAN 剔除并打日志；旧的无约束 CA 自动备份为 `.bak-<秒>` 后重建。依赖 `x509-parser` 解析已有 CA（本来就经 rcgen 在依赖树里）。测试用 `rustls-webpki` 做完整链校验，包括“用同一把 CA 私钥硬签 `evil.com` 会被拒”的反证。流程图见网关白皮书的 [`ca-migration.svg`](../../gateway/docs/diagrams/ca-migration.svg)。
-- **`mdns`**：极简 mDNS 应答器，只回答本机名的 A 查询，应答地址选和提问者同子网的本机 IPv4（USB 网段问就答 `10.11.99.1`）。**接口重扫由内核地址变化驱动**（09-25 起）：订阅 netlink `NETLINK_ROUTE` 的 `RTMGRP_IPV4_IFADDR` 组，和 5353 套接字一起 `poll`（无限期等），只有收到 `RTM_NEWADDR`/`RTM_DELADDR` 才重扫接口、加入新地址的多播组——空闲时零定时唤醒（此前读超时＝重扫间隔 60 秒，每小时 60 次），WiFi 后连/换网拿到地址立刻能被解析（此前最迟 60 秒）；地址删了再回来（断开重连拿到同一个 IP）会重新加入多播组。netlink 打不开时退回原来的 60 秒读超时顺带重扫（`RESCAN_INTERVAL`），并打一行日志。报文解析抽成纯函数 `addr_change_in` 有 host 单测；真实加/删地址的端到端测试（`real_netlink_reports_addr_add_and_del`，默认忽略）在 `unshare -rn` 的一次性网络命名空间里跑通，**未上真机**。绑不上 5353（别的 mDNS 服务在跑）只打日志，不影响网关。
+- **`mdns`**：极简 mDNS 应答器（让局域网里能用 `shelf.local` 找到设备），只回答本机名的 A 查询，应答地址选和提问者同子网的本机 IPv4（USB 网段问就答 `10.11.99.1`）。绑不上 5353（别的 mDNS 服务在跑）只打日志，不影响网关。
+  - **什么时候重扫接口：内核说地址变了才扫**（09-25 起）。它订阅 netlink（内核把网络变化通知给用户程序的通道）`NETLINK_ROUTE` 的 `RTMGRP_IPV4_IFADDR` 组，和 5353 套接字一起 `poll` 无限期等待；只有收到 `RTM_NEWADDR`/`RTM_DELADDR` 才重扫接口、加入新地址的多播组。
+  - **好处**：空闲时零定时唤醒（此前每 60 秒醒一次重扫，每小时 60 次）；WiFi 后连或换网拿到地址立刻能被解析（此前最迟 60 秒）；断开重连拿到同一个 IP 时也会重新加入多播组。
+  - **退路**：netlink 打不开时退回旧做法——60 秒读超时顺带重扫（`RESCAN_INTERVAL`），并打一行日志。
+  - **验证**：报文解析抽成纯函数 `addr_change_in`，有 host 单测；真实加/删地址的端到端测试（`real_netlink_reports_addr_add_and_del`，默认忽略）在 `unshare -rn` 的一次性网络命名空间里跑通。**真机上没有专门触发过**（换网后 `shelf.local` 立刻可解析、重连后重新入组）。
+
+  ![mDNS 接口重扫：从定时轮询到地址变化驱动](diagrams/mdns-rescan.svg)
 - **`netinfo`**：本机 IPv4 表（证书 SAN、mDNS 选址用），读 `/proc/net/fib_trie` + `/proc/net/route`，不 fork 进程（09-20 前每 30 秒 fork 一次 `ip`）；读不到才回落到 `ip -4 -o addr`。
 
 ## 05｜维护纪律、构建与测试
@@ -115,7 +121,7 @@
 - **path 依赖的深度**：`..` 的个数取决于消费方自己的目录深度——`gateway/` 写 `../rmsvc-core`，`enhance/*-serve/` 写 `../../rmsvc-core`，`shelf/services/*/`、`notes/services/*/`、`notes/crates/vendorcfg/` 写 `../../../rmsvc-core`。写错时 `cargo build` 会直接说它去哪找过，照着改。
 - **每个独立顶层项目各带一份 `.cargo/config.toml`**（交叉编译的 CC/AR 覆盖），原因见 §06。
 - **release profile**：`gateway`、`shelf`、`notes` 是 `panic="unwind"`，基座的 panic 兜底和各服务的 `catch_unwind` 才真正生效；`enhance/{font,wallpaper}-serve` 仍是 `abort`（没有依赖 `catch_unwind` 的后台线程）。
-- **测试**：`cargo test --manifest-path rmsvc-core/Cargo.toml`，95 个；HTTP 服务器、TLS 握手取对端 IP、名称约束链校验都有真起服务器 / 真证书链的测试。
+- **测试**：`cargo test --manifest-path rmsvc-core/Cargo.toml`，101 个（1 个默认忽略）；HTTP 服务器、TLS 握手取对端 IP、名称约束链校验都有真起服务器 / 真证书链的测试。
 
 ## 06｜踩坑
 

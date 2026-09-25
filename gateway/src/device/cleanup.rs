@@ -7,7 +7,7 @@
 //!    原书目录（如"第01卷"），跟新版整本的书名不一样，**没有精确的识别规则**，所以不做自动识别、不预先勾选：
 //!    网关只**只读**列出书库里的 EPUB/PDF 文档（同名出现不止一次的标"同名"，供人工核对），用户勾选后前端逐本调
 //!    book-serve 已有的 `POST /api/books/trash/add {uuid,name}`——走 xochitl 自己的软删除（`shelf-trash-agent.qmd`
-//!    里的 `selectionMoveToTrash`，进回收站可恢复）。**网关绝不直接删、也不改 xochitl 目录里的任何文件**（外部改
+//!    长轮询后调 `LibraryController.moveEntriesToTrash`，进回收站可恢复）。**网关绝不直接删、也不改 xochitl 目录里的任何文件**（外部改
 //!    `.metadata` 会被运行中的 xochitl 覆写回去，直接删文件更会让它的内存模型与磁盘不一致）。
 //!
 //! 安全纪律（2026-09 曾因清理 `rm -rf` 掉用户漫画目录出过事故）：只删请求里逐个列出的文件名；不整目录删、不递归、

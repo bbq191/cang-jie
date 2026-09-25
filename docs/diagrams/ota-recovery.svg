@@ -52,8 +52,8 @@
 <polyline points="620,405 650,405" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#ota-a)"/>
 <polyline points="950,405 980,405" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#ota-a)"/>
 <rect x="30" y="506" width="1180" height="100" rx="10" fill="#fff3d6" stroke="#c9971f" stroke-width="1.6" stroke-dasharray="6 4"/>
-<text x="620.0" y="525" text-anchor="middle" font-size="12" font-weight="bold" fill="#1a1a1a">最后一步 xovi-apply 怎么“重启”（事故教训，2026-09-20）</text>
-<text x="620.0" y="550.5" text-anchor="middle" font-size="10.5" fill="#4a4a4a">先打印“将打断阅读”并留 5 秒宽限（不想被打断就 --skip xovi-apply，稍后自己重启）</text>
-<text x="620.0" y="564.0" text-anchor="middle" font-size="10.5" fill="#4a4a4a">xovi 已在运行的 xochitl 里生效 → systemctl restart xochitl；没生效（刚开机/OTA 后）→ xovi/start</text>
-<text x="620.0" y="577.5" text-anchor="middle" font-size="10.5" fill="#4a4a4a">绝不在 xovi 已生效时跑 xovi/start：会让运行中的 xochitl SEGV，系统自动整机重启</text>
+<text x="620.0" y="525" text-anchor="middle" font-size="12" font-weight="bold" fill="#1a1a1a">最后一步 xovi-apply 怎么让改动生效（2026-09-25 起一律整机重启）</text>
+<text x="620.0" y="550.5" text-anchor="middle" font-size="10.5" fill="#4a4a4a">先打印“将打断阅读”并留 5 秒宽限（不想被打断就 --skip xovi-apply，稍后自己 reboot）</text>
+<text x="620.0" y="564.0" text-anchor="middle" font-size="10.5" fill="#4a4a4a">OTA 后 xovi-persist 刚把 xovi-reenable 装回 → systemctl reboot 整机重启，开机时 xovi-reenable 自动恢复 xovi；设备回来后自动跑 verify-on-device.sh</text>
+<text x="620.0" y="577.5" text-anchor="middle" font-size="10.5" fill="#4a4a4a">不再单独 restart xochitl（它退出时可能崩溃）；也绝不在 xovi 已生效时手动跑 xovi/start（会让 xochitl SEGV、整机重启）</text>
 </svg>

@@ -35,7 +35,7 @@
 | `hwStrokeSpeedMinRatio` | 1.0 | 运笔速度（提按）效果强度：1.0 = 关 |
 | `hwStrokeNibWidthLow` / `High` | 6 / 20 | 两个效果共用：基础宽度低于 Low 时效果趋近关闭，高于 High 时满强度（细笔不抖、粗笔才有顿挫） |
 | `hwStrokeSpeedLenLow` / `High` | 1 / 8 | 相邻两点距离阈值（像素/采样点）：距离短（慢、顿笔）→ 粗，距离长（快、带过）→ 细 |
-| `hwStrokeDebug` | false | 调试：开了才逐点写 `[hw-stroke:…]` 日志、才装只读的分派诊断 hook（后者只在加载时看这个键，改了要重启 xochitl） |
+| `hwStrokeDebug` | false | 调试：开了才逐点写 `[hw-stroke:…]` 日志、才装只读的分派诊断 hook（后者只在加载时看这个键，改了要整机重启） |
 
 两个效果的公式（`min_ratio = 1.0` 时恒等于 1，即关闭）：
 
@@ -58,10 +58,11 @@
 
 ```sh
 make aarch64                                                   # 产物 hw-stroke.so（已提交进仓库）；改了 hw-stroke.xovi 才要 make glue XOVI_DIR=<xovi clone>
+                                                               # 09-25 起带 -ffile-prefix-map，调试信息不含本机路径（09-25 已部署真机，三个 hook 装上）
 cd ../../packaging && sh deploy-handwriting-stroke.sh <host>     # host 侧一键：构建 → 推送 → 设备端安装
 ```
 
-设备端 `deploy/install.sh [--no-restart]` 与 hl-snap 共用同一套流程（`packaging/xovi-ext-install.sh`），同目录需要 `xovi-ext-install.sh` 与 `devlib.sh`；备份、换文件（运行中正在用就 stop → 换 → start）、重启判定都和 [hl-snap README「部署」](../hl-snap/README.md#部署) 一样。装到 `extensions.d/hw-stroke.so`。公共扫描/trampoline 代码在 [`../shared/`](../shared/PROVENANCE.md)。
+设备端 `deploy/install.sh [--no-restart]` 与 hl-snap 共用同一套流程（`packaging/xovi-ext-install.sh`），同目录需要 `xovi-ext-install.sh` 与 `devlib.sh`；备份、换文件（运行中正在用就放进待换入区）、生效方式（一律整机重启）都和 [hl-snap README「部署」](../hl-snap/README.md#部署) 一样。装到 `extensions.d/hw-stroke.so`。公共扫描/trampoline 代码在 [`../shared/`](../shared/PROVENANCE.md)。
 
 **验证装上了**：`journalctl -u xochitl | grep hw-stroke` 应有 `变宽几何 hook 安装完成 @ 0xf47530` 与 `第二几何 hook 安装完成 @ 0xf4c8d0` 两行；若是 `_xovi_construct: … hook 未安装`，说明 `.so` 进了进程但 hook 没装上（2026-09-24 起才打这行）。
 

@@ -25,7 +25,7 @@ make aarch64                               # 产物 hl-snap.so（已提交进仓
 make glue XOVI_DIR=<asivery/xovi clone 路径>   # 只有改了 hl-snap.xovi 才需要：重新生成 xovi 胶水
 ```
 
-构建只需要 aarch64 交叉编译器：xovi 胶水 `xovi_glue.{c,h}` 已提交进仓库，缺失时才会调 asivery/xovi 的 `xovigen.py` 生成（2026-09-24 前规则依赖 `.xovi` 的修改时间，checkout 后可能无端去跑 xovigen、没有 clone 就失败，部署脚本随即悄悄退回仓库里已提交的旧 `.so`）。部署脚本在构建失败时仍会退回已提交的 `.so`，并打出警告。扫描/trampoline 公共代码在 [`../shared/`](../shared/PROVENANCE.md)，`cd ../shared && make test` 跑 host 单测。
+构建只需要 aarch64 交叉编译器（2026-09-25 起加 `-ffile-prefix-map=$(CURDIR)=.`，调试信息里不带开发机路径；反汇编不变；09-25 已部署真机，hook 装上）：xovi 胶水 `xovi_glue.{c,h}` 已提交进仓库，缺失时才会调 asivery/xovi 的 `xovigen.py` 生成（2026-09-24 前规则依赖 `.xovi` 的修改时间，checkout 后可能无端去跑 xovigen、没有 clone 就失败，部署脚本随即悄悄退回仓库里已提交的旧 `.so`）。部署脚本在构建失败时仍会退回已提交的 `.so`，并打出警告。扫描/trampoline 公共代码在 [`../shared/`](../shared/PROVENANCE.md)，`cd ../shared && make test` 跑 host 单测。
 
 ## 部署
 
@@ -35,12 +35,12 @@ make glue XOVI_DIR=<asivery/xovi clone 路径>   # 只有改了 hl-snap.xovi 才
 cd packaging && sh deploy-hl-snap.sh <host>
 ```
 
-它也是 `packaging/install-all.sh` 的一步（那时带 `DEFER_XOVI_START=1`，只落盘，最后统一重启一次 xochitl），见 [`../../packaging/README.md`](../../packaging/README.md)。
+它也是 `packaging/install-all.sh` 的一步（那时带 `DEFER_XOVI_START=1`，只落盘，最后由 `xovi-apply` 统一整机重启一次），见 [`../../packaging/README.md`](../../packaging/README.md)。
 
 **手动在设备上跑**：`deploy/install.sh` 只放这个扩展的数据（名字、配置键），流程在 `packaging/xovi-ext-install.sh`，所以**同目录必须有 `xovi-ext-install.sh` 与 `devlib.sh`**，只拷一个 `install.sh` 会报错并提示改用 `deploy-hl-snap.sh`。
 
 ```sh
-sh deploy/install.sh [--no-restart]     # --no-restart：只落盘，不重启 xochitl
+sh deploy/install.sh [--no-restart]     # --no-restart：只落盘，不重启
 ```
 
 前置：设备上已 `vellum add xovi`。装到 `extensions.d/hl-snap.so`，和 `appload.so`、`qt-resource-rebuilder.so` 并列。安装器会：
@@ -48,9 +48,12 @@ sh deploy/install.sh [--no-restart]     # --no-restart：只落盘，不重启 x
 1. 旧 `.so` 先备份进 `~/cangjie-backups/`（**绝不留在 `extensions.d/`**：xovi 会把该目录下任何文件当扩展加载，重名会让 xochitl 起不来）；内容没变就不重复备份，`--no-restart` 模式下也不会标记"待重启"。
 2. 换文件：
    - 运行中的 xochitl 没在用旧版 → 先写暂存目录再 rename 进去（原子替换）；
-   - 运行中的 xochitl **正映射着旧版** → 不当场换，先放进待换入区，重启时按 **stop xochitl → 换文件 → start** 的顺序换入。换完再 `restart` 会让旧进程退出时崩溃、整机重启（09-21、09-24 两次真机踩到）。
+   - 运行中的 xochitl **正映射着旧版** → 不当场换，先放进待换入区 `~/.cangjie-stage/so-pending/`，整机重启前换入（你自己 `reboot`，开机时 `xovi-reenable` 也会换入）。
 3. `reading-qol.json` 只在首次建，不覆盖已有设置。
-4. 不带 `--no-restart` 时：`.so` 没变、已在 xochitl 里加载、也没有别的待生效改动（`cj_apply_needed` 为假）就**不重启**，直接报"已是最新"；否则先提示并等 5 秒，xovi 已在 xochitl 里生效就用 `systemctl restart xochitl`（或上面的 stop/换/start），否则跑 `xovi/start`。xovi 已生效时绝不能跑 `xovi/start`，会让 xochitl SEGV、整机重启。之后做健康检查（`is-active`、`MainPID` 变化、`NRestarts` 不增、maps 里有 `hl-snap`）。
+4. 不带 `--no-restart` 时：`.so` 没变、已在 xochitl 里加载、也没有别的待生效改动（`cj_apply_needed` 为假）就**不重启**，直接报"已是最新"；否则先提示并等 5 秒，然后：
+   - xovi 已在 xochitl 里生效，或装了 `xovi-reenable.service` → 换入待换入区、**整机重启**（约 20–60 秒回来）。2026-09-25 起不再 restart xochitl：停止 xochitl 本身有概率在退出时崩溃，见 [`../../packaging/README.md`](../../packaging/README.md)「怎么让改动生效」。回来后用 `packaging/verify-on-device.sh` 核对（host 侧一键脚本会自动等设备回来再跑）。
+   - 两者都没有 → 跑 `xovi/start`（此时 xochitl 没带 xovi，安全），之后做健康检查（`is-active`、`MainPID` 变化、`NRestarts` 不增、maps 里有 `hl-snap`）。
+   - xovi 已生效时**绝不能**跑 `xovi/start`，会让 xochitl SEGV、整机重启。
 
 **验证装上了**：`journalctl -u xochitl | grep hl-snap` 应有两行：
 
@@ -67,4 +70,4 @@ sh deploy/install.sh [--no-restart]     # --no-restart：只落盘，不重启 x
 
 两者都要 patch 同一个 `FUN_00f05ad0`，**不要同时装**。langhook 自带同样的吸附修复，设备上若装着它，就不需要 hl-snap。
 
-同时装了会怎样（按 hl-snap 代码推断，langhook 一侧源码已不在仓库，未核对、未真机测）：两边都在 `_xovi_shouldLoad` 阶段看到原始机器码、都同意加载；进入 `_xovi_construct` 后，先装 hook 的那个会改写函数开头，后装的那个再扫时特征码已经对不上，**静默放弃**这个 hook。所以不是"两个 patch 叠在一起"，而是"先到先得、后到的悄悄不生效"，网页徽章还会显示两个都"已加载"。要从 hl-snap 换成 langhook：先删 `extensions.d/hl-snap.so`，再 `systemctl restart xochitl`。
+同时装了会怎样（按 hl-snap 代码推断，langhook 一侧源码已不在仓库，未核对、未真机测）：两边都在 `_xovi_shouldLoad` 阶段看到原始机器码、都同意加载；进入 `_xovi_construct` 后，先装 hook 的那个会改写函数开头，后装的那个再扫时特征码已经对不上，**静默放弃**这个 hook。所以不是"两个 patch 叠在一起"，而是"先到先得、后到的悄悄不生效"，网页徽章还会显示两个都"已加载"。要从 hl-snap 换成 langhook：先把 `extensions.d/hl-snap.so` 移出该目录，再整机重启（`reboot`）。

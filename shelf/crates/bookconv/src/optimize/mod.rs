@@ -73,7 +73,7 @@ pub enum FootnoteMode {
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct OptimizeOpts {
     pub wash: Option<crate::wash::WashOpts>,
-    /// 脚注呈现方式（缺省 `Anchor` 保持历史行为；母版库「优化」传 `Inline`）。
+    /// 脚注呈现方式（缺省 `Anchor` 保持历史行为；母版库「优化」目前也传 `Anchor`，见 book-serve `staging/optimizing.rs`）。
     pub footnote: FootnoteMode,
     /// 漫画页补白到哪种页框（缺省 `Screen` = 历史行为）。由 book-serve 按"实验室→漫画页边距"开关传入。
     pub comic_frame: crate::imgopt::EpubComicFrame,

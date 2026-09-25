@@ -27,8 +27,8 @@ fn live_entries(book: &Book, chapter_idx: usize) -> Vec<&Entry> {
     v
 }
 
-/// 章文件名（不含扩展名）：`第N章 标题`，N 从 1 起——跟 `note-serve::publish` 给设备笔记本起的
-/// `visibleName` 完全一致，方便人对照"这本 md 对应设备上哪本笔记本"。
+/// 章文件名（不含扩展名）：`第N章 标题`，N 从 1 起。设备笔记本名（`note-serve::publish` 的 `visibleName`）是
+/// 章名本身（撞名加后缀），md 多一个「第N章」前缀好排序；对照"这本 md 对应设备上哪本笔记本"靠章名。
 pub fn chapter_stem(chapter_idx: usize, title: &str) -> String {
     format!("第{}章 {}", chapter_idx + 1, title)
 }

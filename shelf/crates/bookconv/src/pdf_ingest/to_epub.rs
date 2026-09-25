@@ -1,7 +1,7 @@
 //! 有文字层 PDF → EPUB（正文、标题、图片、公式区域截图）。
 use super::*;
 
-/// 把 lopdf 的 `PdfImage`（第三方 PDF 里的原始图片流）解成可以喂给 `imgopt::trim_margins`/
+/// 把 lopdf 的 `PdfImage`（第三方 PDF 里的原始图片流）解成可以喂给 `imgopt` 裁边缩放/
 /// `pdfwrite::image_from_bytes` 的通用 JPEG/PNG 字节。**这次只稳妥处理两种最常见的情况**：
 /// `/DCTDecode`（JPEG，原样透传，不解码不重编码）和 `/FlateDecode` 的 8-bit 灰度/RGB 原始像素
 /// （解压后重新编码成 PNG）。CCITTFax/JBIG2/JPX/索引色/非 8-bit 这些少见情况直接报错跳过这页

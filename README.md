@@ -10,18 +10,18 @@ reMarkable Paper Pro Move 的设备增强套件。**不修改 xochitl**（设备
 > 想 10 分钟看懂全貌，读 [`docs/OVERVIEW.md`](docs/OVERVIEW.md)；想知道最近改了什么，读 [`docs/CHANGELOG.md`](docs/CHANGELOG.md)。
 >
 > 这是带完整开发历史的**私有**仓库。对外分享的是精简的公开发行版 [`rm-tweak`](https://github.com/bbq191/rm-tweak)
-> （没有开发历史，Apache-2.0）。2026-09-24 核对过它的 GitHub 目录：有 shelf / notes / enhance / gateway / rmsvc-core / packaging，
-> 包括 `packaging/install-all.sh`，没有 `defw/`。
+> （没有开发历史，Apache-2.0）。2026-09-25 同步过一次：有 shelf / notes / enhance / gateway / rmsvc-core / packaging
+> （含 `install-all.sh` 和 `verify-on-device.sh`），没有 `defw/`。
 
 ## 能做什么
 
 | 你想要 | 对应的功能 | 在哪 |
 |---|---|---|
-| 把书弄进设备，而且在墨水屏上好读 | 网页上传或抓网文，书先进"母版库"。EPUB 可一键"优化"（排版、目录、封面、脚注）；有文字层的 PDF 按原格式转成 EPUB。然后加入原生阅读器或 KOReader（KOReader 预置文字书 / 漫画两套阅读方案）。超过 xochitl 约 100MB 上传上限的大书也能进，漫画有专门处理；母版库里的书可以下载原件、改名 | [`shelf/`](shelf/README.md) |
-| 把荧光笔勾画和旁边的手写批注变成能整理的笔记 | 合上书自动收进条目库。在手机网页上校对手写转写、全文搜索、选 AI 模型提问，再投回设备笔记本或导出 Obsidian markdown | [`notes/`](notes/README.md) |
+| 把书弄进设备，而且在墨水屏上好读 | 网页上传或抓网文，书先进"母版库"。EPUB 可一键"优化"（排版、目录、封面、脚注）；有文字层的 PDF 按原格式转成 EPUB。然后加入原生阅读器或 KOReader（KOReader 预置文字书 / 漫画两套阅读方案）。超过 xochitl 约 100MB 上传上限的大书也能进，漫画有专门处理；母版库里的书可以下载原件、改名、设阅读方向（日漫从右往左） | [`shelf/`](shelf/README.md) |
+| 把荧光笔勾画和旁边的手写批注变成能整理的笔记 | 合上书自动收进条目库。在手机网页上校对手写转写、全文搜索、选 AI 模型提问，再投回设备笔记本（标题、列表、复选框用设备自带样式）或导出 Obsidian markdown | [`notes/`](notes/README.md) |
 | 系统层面的小改进 | 荧光笔划中文"划哪吸哪"、手写笔画粗细优化、xochitl 阅读器单击翻页与日漫翻页规则、电池耗电诊断、字体和壁纸上传即用 | [`enhance/`](enhance/README.md) |
-| 在手机或电脑上统一操作以上功能 | 一个 HTTPS 网页入口，带登录密码，把请求转给各个服务 | [`gateway/`](gateway/README.md) |
-| 新设备一条命令装完 | 带固件兼容性校验，也能一条命令卸载 | [`packaging/`](packaging/README.md) |
+| 在手机或电脑上统一操作以上功能 | 一个 HTTPS 网页入口，带登录密码，把请求转给各个服务；另有「设备健康」页和固件升级后的重装提示 | [`gateway/`](gateway/README.md) |
+| 新设备一条命令装完 | 带固件兼容性校验，装完自动整机重启一次并只读核对设备；也能一条命令卸载 | [`packaging/`](packaging/README.md) |
 
 另有两个"幕后"目录：[`rmsvc-core/`](rmsvc-core/README.md)（各网页服务共用的基础库，不含业务逻辑）和
 [`defw/`](defw/README.md)（xochitl 3.28.0.172 的逆向分析资料，用来给 xovi 插件找挂接点）。
@@ -43,11 +43,14 @@ reMarkable Paper Pro Move 的设备增强套件。**不修改 xochitl**（设备
    sh install-all.sh --dry-run        # 先预演：只打印计划，不连设备
    sh install-all.sh 10.11.99.1
    ```
+   最后一步会整机重启设备一次（约 1 分钟），回来后脚本自动核对，逐项打 ✓/⚠/✗。
 3. 浏览器打开 `https://10.11.99.1/`，默认密码 `shelf`，第一次登录必须改密码。
 
 卸载：`sh uninstall-all.sh 10.11.99.1`。前置条件、风险、固件升级（OTA）后怎么恢复，全部在 **[docs/INSTALL.md](docs/INSTALL.md)**。
 
 ## 文档导航
+
+![文档地图](docs/diagrams/docs-map.svg)
 
 | 想了解 | 读 |
 |---|---|

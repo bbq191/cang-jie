@@ -1,8 +1,8 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 620" font-family="Noto Sans CJK SC, sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 706" font-family="Noto Sans CJK SC, sans-serif">
 <defs><marker id="sw-m" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#555"/></marker></defs>
-<rect x="0" y="0" width="1000" height="620" fill="#fbfbfa"/>
+<rect x="0" y="0" width="1000" height="706" fill="#fbfbfa"/>
 <text x="500" y="32" text-anchor="middle" font-size="20" font-weight="bold" fill="#1a1a1a">网页开关 → 落到设备上的什么 → 什么时候生效</text>
-<text x="500" y="56" text-anchor="middle" font-size="13" fill="#666">所有请求都进网关 gateway :443；前三行由网关自己处理（gateway/src/enhance/），后两行转发给独立服务</text>
+<text x="500" y="56" text-anchor="middle" font-size="13" fill="#666">所有请求都进网关 gateway :443；前四行由网关自己处理（gateway/src/enhance/），后两行转发给独立服务</text>
 
 <!-- column headers -->
 <text x="40" y="92" font-size="13" font-weight="bold" fill="#555">网页上的开关（位置）</text>
@@ -21,7 +21,7 @@
 <rect x="600" y="114" width="370" height="72" rx="9" fill="#eaf5ee" stroke="#2f7d45" stroke-width="1.4"/>
 <text x="614" y="138" font-size="12.5" font-weight="bold" fill="#1a1a1a">hl-snap.so（xochitl 进程内）</text>
 <text x="614" y="159" font-size="11.8" fill="#444">每次划线现读 → 下一次划线就生效</text>
-<text x="614" y="176" font-size="11.8" fill="#444">不用重启 xochitl</text>
+<text x="614" y="176" font-size="11.8" fill="#444">不用重启</text>
 <polyline points="270,150 290,150" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#sw-m)"/>
 <polyline points="580,150 600,150" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#sw-m)"/>
 
@@ -41,56 +41,72 @@
 <polyline points="270,236 290,236" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#sw-m)"/>
 <polyline points="580,236 600,236" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#sw-m)"/>
 
-<!-- row 3 -->
+<!-- row 2b -->
 <rect x="30" y="286" width="240" height="72" rx="9" fill="#fdf3dc" stroke="#b8860b" stroke-width="1.4"/>
-<text x="44" y="310" font-size="13.5" font-weight="bold" fill="#1a1a1a">电池刺客</text>
+<text x="44" y="310" font-size="13.5" font-weight="bold" fill="#1a1a1a">单击翻页 / 日漫翻页规则</text>
 <text x="44" y="331" font-size="11.8" fill="#444">管理 → 系统增强</text>
-<text x="44" y="348" font-size="11.8" fill="#444">开了才出现「电池刺客」数据页</text>
+<text x="44" y="348" font-size="11.8" fill="#444">默认都关 · 旁有「已加载」徽章</text>
 <rect x="290" y="286" width="290" height="72" rx="9" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.4"/>
-<text x="304" y="310" font-size="12" fill="#1a1a1a">systemctl start / stop</text>
-<text x="304" y="331" font-size="11.8" fill="#444">battop.service</text>
-<text x="304" y="348" font-size="11.8" fill="#444">（不写任何配置文件）</text>
-<rect x="600" y="286" width="370" height="72" rx="9" fill="#f1edf9" stroke="#6d4ab0" stroke-width="1.4"/>
-<text x="614" y="310" font-size="12.5" font-weight="bold" fill="#1a1a1a">battop 常驻进程</text>
-<text x="614" y="331" font-size="11.8" fill="#444">立即启停；设备真重启后回到「关」</text>
-<text x="614" y="348" font-size="11.8" fill="#444">（有意不开机自启，见白皮书 §03b）</text>
+<text x="304" y="310" font-size="12" fill="#1a1a1a">reading-qol.json</text>
+<text x="304" y="331" font-size="11.8" fill="#444">tapPageTurn / rtlPageTurn</text>
+<text x="304" y="348" font-size="11.8" fill="#444">（日漫另看书的方向，问 book-serve）</text>
+<rect x="600" y="286" width="370" height="72" rx="9" fill="#eaf5ee" stroke="#2f7d45" stroke-width="1.4"/>
+<text x="614" y="310" font-size="12.5" font-weight="bold" fill="#1a1a1a">reader-page-turn.qmd（xochitl 阅读器）</text>
+<text x="614" y="331" font-size="11.8" fill="#444">每次打开书读一次 → 重新打开书生效</text>
+<text x="614" y="348" font-size="11.8" fill="#444">qmd 本身改了要整机重启才载入</text>
 <polyline points="270,322 290,322" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#sw-m)"/>
 <polyline points="580,322 600,322" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#sw-m)"/>
 
-<line x1="30" y1="374" x2="970" y2="374" stroke="#bbb" stroke-width="1" stroke-dasharray="5 4"/>
-<text x="40" y="394" font-size="12" fill="#666">以下经网关反向代理到独立的 Web 服务（本机端口，不对外）</text>
+<!-- row 3 -->
+<rect x="30" y="372" width="240" height="72" rx="9" fill="#fdf3dc" stroke="#b8860b" stroke-width="1.4"/>
+<text x="44" y="396" font-size="13.5" font-weight="bold" fill="#1a1a1a">电池刺客</text>
+<text x="44" y="417" font-size="11.8" fill="#444">管理 → 系统增强</text>
+<text x="44" y="434" font-size="11.8" fill="#444">开了才出现「电池刺客」数据页</text>
+<rect x="290" y="372" width="290" height="72" rx="9" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.4"/>
+<text x="304" y="396" font-size="12" fill="#1a1a1a">systemctl start / stop</text>
+<text x="304" y="417" font-size="11.8" fill="#444">battop.service</text>
+<text x="304" y="434" font-size="11.8" fill="#444">（不写任何配置文件）</text>
+<rect x="600" y="372" width="370" height="72" rx="9" fill="#f1edf9" stroke="#6d4ab0" stroke-width="1.4"/>
+<text x="614" y="396" font-size="12.5" font-weight="bold" fill="#1a1a1a">battop 常驻进程</text>
+<text x="614" y="417" font-size="11.8" fill="#444">立即启停；设备真重启后回到「关」</text>
+<text x="614" y="434" font-size="11.8" fill="#444">（有意不开机自启，见白皮书 §03b）</text>
+<polyline points="270,408 290,408" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#sw-m)"/>
+<polyline points="580,408 600,408" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#sw-m)"/>
+
+<line x1="30" y1="460" x2="970" y2="460" stroke="#bbb" stroke-width="1" stroke-dasharray="5 4"/>
+<text x="40" y="480" font-size="12" fill="#666">以下经网关反向代理到独立的 Web 服务（本机端口，不对外）</text>
 
 <!-- row 4 -->
-<rect x="30" y="406" width="240" height="72" rx="9" fill="#fdf3dc" stroke="#b8860b" stroke-width="1.4"/>
-<text x="44" y="430" font-size="13.5" font-weight="bold" fill="#1a1a1a">休眠壁纸</text>
-<text x="44" y="451" font-size="11.8" fill="#444">其他 → 壁纸</text>
-<text x="44" y="468" font-size="11.8" fill="#444">/api/wallpapers → :8793</text>
-<rect x="290" y="406" width="290" height="72" rx="9" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.4"/>
-<text x="304" y="430" font-size="12" fill="#1a1a1a">首次：xochitl.conf 写 SleepScreenPath</text>
-<text x="304" y="451" font-size="11.8" fill="#444">之后：只原地覆盖 current.png</text>
-<text x="304" y="468" font-size="11.8" fill="#444">~/.local/share/shelf/wallpapers/</text>
-<rect x="600" y="406" width="370" height="72" rx="9" fill="#f1edf9" stroke="#6d4ab0" stroke-width="1.4"/>
-<text x="614" y="430" font-size="12.5" font-weight="bold" fill="#1a1a1a">xochitl 休眠屏</text>
-<text x="614" y="451" font-size="11.8" fill="#444">首次写键后要重启一次 xochitl</text>
-<text x="614" y="468" font-size="11.8" fill="#444">之后每次休眠都重读 current.png</text>
-<polyline points="270,442 290,442" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#sw-m)"/>
-<polyline points="580,442 600,442" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#sw-m)"/>
-
-<!-- row 5 -->
 <rect x="30" y="492" width="240" height="72" rx="9" fill="#fdf3dc" stroke="#b8860b" stroke-width="1.4"/>
-<text x="44" y="516" font-size="13.5" font-weight="bold" fill="#1a1a1a">xochitl 字体</text>
-<text x="44" y="537" font-size="11.8" fill="#444">其他 → xochitl</text>
-<text x="44" y="554" font-size="11.8" fill="#444">/api/fonts → :8792</text>
+<text x="44" y="516" font-size="13.5" font-weight="bold" fill="#1a1a1a">休眠壁纸</text>
+<text x="44" y="537" font-size="11.8" fill="#444">其他 → 壁纸</text>
+<text x="44" y="554" font-size="11.8" fill="#444">/api/wallpapers → :8793</text>
 <rect x="290" y="492" width="290" height="72" rx="9" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.4"/>
-<text x="304" y="516" font-size="12" fill="#1a1a1a">字体文件装进 fontconfig 用户目录</text>
-<text x="304" y="537" font-size="11.8" fill="#444">重写 fonts.json + 中文回退链</text>
-<text x="304" y="554" font-size="11.8" fill="#444">（不碰 KOReader）</text>
+<text x="304" y="516" font-size="12" fill="#1a1a1a">首次：xochitl.conf 写 SleepScreenPath</text>
+<text x="304" y="537" font-size="11.8" fill="#444">之后：只原地覆盖 current.png</text>
+<text x="304" y="554" font-size="11.8" fill="#444">~/.local/share/shelf/wallpapers/</text>
 <rect x="600" y="492" width="370" height="72" rx="9" fill="#f1edf9" stroke="#6d4ab0" stroke-width="1.4"/>
-<text x="614" y="516" font-size="12.5" font-weight="bold" fill="#1a1a1a">xochitl「文字与布局」字体菜单</text>
-<text x="614" y="537" font-size="11.8" fill="#444">重开菜单即可选，不用重启</text>
-<text x="614" y="554" font-size="11.8" fill="#444">（菜单由书架的 qmd 补丁读 fonts.json）</text>
+<text x="614" y="516" font-size="12.5" font-weight="bold" fill="#1a1a1a">xochitl 休眠屏</text>
+<text x="614" y="537" font-size="11.8" fill="#444">首次写键后要整机重启一次</text>
+<text x="614" y="554" font-size="11.8" fill="#444">之后每次休眠都重读 current.png</text>
 <polyline points="270,528 290,528" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#sw-m)"/>
 <polyline points="580,528 600,528" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#sw-m)"/>
 
-<text x="500" y="598" text-anchor="middle" font-size="12" fill="#555">reading-qol.json 在 ~/.local/share/cangjie-ime/（历史目录名）；网关只改自己要改的键，其余键原样写回</text>
+<!-- row 5 -->
+<rect x="30" y="578" width="240" height="72" rx="9" fill="#fdf3dc" stroke="#b8860b" stroke-width="1.4"/>
+<text x="44" y="602" font-size="13.5" font-weight="bold" fill="#1a1a1a">xochitl 字体</text>
+<text x="44" y="623" font-size="11.8" fill="#444">其他 → xochitl</text>
+<text x="44" y="640" font-size="11.8" fill="#444">/api/fonts → :8792</text>
+<rect x="290" y="578" width="290" height="72" rx="9" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.4"/>
+<text x="304" y="602" font-size="12" fill="#1a1a1a">字体文件装进 fontconfig 用户目录</text>
+<text x="304" y="623" font-size="11.8" fill="#444">重写 fonts.json + 中文回退链</text>
+<text x="304" y="640" font-size="11.8" fill="#444">（不碰 KOReader）</text>
+<rect x="600" y="578" width="370" height="72" rx="9" fill="#f1edf9" stroke="#6d4ab0" stroke-width="1.4"/>
+<text x="614" y="602" font-size="12.5" font-weight="bold" fill="#1a1a1a">xochitl「文字与布局」字体菜单</text>
+<text x="614" y="623" font-size="11.8" fill="#444">重开菜单即可选，不用重启</text>
+<text x="614" y="640" font-size="11.8" fill="#444">（菜单由书架的 qmd 补丁读 fonts.json）</text>
+<polyline points="270,614 290,614" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#sw-m)"/>
+<polyline points="580,614 600,614" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#sw-m)"/>
+
+<text x="500" y="684" text-anchor="middle" font-size="12" fill="#555">reading-qol.json 在 ~/.local/share/cangjie-ime/（历史目录名）；网关只改自己要改的键，其余键原样写回</text>
 </svg>

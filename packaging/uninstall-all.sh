@@ -228,6 +228,6 @@ echo "· 以上改动多数要等下次 xochitl 重启才会在当前运行中�
 echo "    摘了 xovi 扩展 .so（hl-snap/handwriting-stroke）而 xochitl 还加载着它：要立刻停用请整机重启（reboot，见上面该步的提示）；"
 echo "      这种状态下任何 stop/restart xochitl 都会让它退出途中崩溃、再由系统整机重启（2026-09-25 真机）——所以直接 reboot；"
 echo "      紧接着重装也没问题：install-all 最后一步认得这种状态，会换入新版后主动整机重启，不再停 xochitl；"
-echo "    只摘了 qmd（sidebar-entry/shelf）：设备上 systemctl restart xochitl 即可（xovi 已生效时别用 xovi/start，会让 xochitl SEGV 整机重启）"
+echo "    只摘了 qmd（sidebar-entry/shelf）：同样整机重启（reboot）——停 xochitl 本身也会概率性退出途中崩溃；xovi 已生效时别用 xovi/start"
 echo "═══════════════════════════════════════════════════════════"
 [ -z "$FAILED" ]

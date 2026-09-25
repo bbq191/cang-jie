@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1120" height="700" viewBox="0 0 1120 700" font-family="Noto Sans CJK SC, sans-serif">
   <rect width="1120" height="700" fill="#ffffff"/>
   <text x="560" y="34" text-anchor="middle" font-size="20" font-weight="bold" fill="#1f2937">2026-09-23 两本真实 PDF 转 EPUB 的真机排查链（§03br）</text>
-  <text x="560" y="58" text-anchor="middle" font-size="13" fill="#6b7280">《移动互联软件安装使用手册》（Word 导出，8 页）与《2026-09-19 T.E.双语》（calibre 导出，540 页）；规则细节见 EPUB优化规范白皮书 §03、§05</text>
+  <text x="560" y="58" text-anchor="middle" font-size="13" fill="#6b7280">《移动互联软件安装使用手册》（Word 导出，8 页）与《2026-09-19 T.E.双语》（calibre 导出，540 页）；规则细节见 EPUB优化规范白皮书 §3、§5</text>
 
   <!-- header -->
   <g font-size="14" font-weight="bold" fill="#ffffff">

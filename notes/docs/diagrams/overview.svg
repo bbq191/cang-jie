@@ -44,7 +44,7 @@
 <rect x="658" y="424" width="558" height="96" rx="10" fill="#eaf6ec" stroke="#3f9a55" stroke-width="1.6"/>
 <text x="937.0" y="444" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">⑦ note-serve :8798 · 「推送本章」</text>
 <text x="937.0" y="467" text-anchor="middle" font-size="10" fill="#3a3a3a">按每条的“去处”把一章条目投影出去（指纹没变就跳过）</text>
-<text x="937.0" y="482" text-anchor="middle" font-size="10" fill="#3a3a3a">设备笔记本：放进书本自己所在的文件夹，一章一本（章名作标题，条目按正文/列表/待办样式）；旧版本走回收站软删</text>
+<text x="937.0" y="482" text-anchor="middle" font-size="10" fill="#3a3a3a">设备笔记本：放进书所在文件夹，一章一本（章名作标题、条目用设备样式）；旧版进回收站</text>
 <text x="937.0" y="497" text-anchor="middle" font-size="10" fill="#3a3a3a">Obsidian：md 一章一文件（front-matter + 块锚 ^id + [[书名]] 反链），可直接下载</text>
 <rect x="24" y="262" width="300" height="118" rx="10" fill="#fdf1ec" stroke="#c0602d" stroke-width="1.6"/>
 <text x="174.0" y="282" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">条目库（唯一事实源）</text>

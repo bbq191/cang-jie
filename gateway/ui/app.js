@@ -1406,7 +1406,7 @@ async function showOtaBanner(){
    "系统级"的开关，CJK 画线吸附）④ 电池刺客（`battop.running` 时才出现，放在「实验室」前面——用户
    要求顺序）⑤ 实验室（还在打磨/覆盖面没到日常好用程度的功能：CJK 手写笔迹优化开关+漫画页边距开关
    +导入md文档可见性开关）。电池刺客开关 2026-09-21 起在③「系统增强」里（用户要求从实验室移出）。
-   shelf push 命令那张卡片已经搬到「传书」页「入库」子页——那才是它真正归属的地方（用户反馈）。 */
+   （曾在这页的 shelf push 命令卡片已随 2026-09-18 砍掉 host CLI 一并删除。）另有「设备健康」（2026-09-25）。 */
 /* 模块管理动作（start / stop / uninstall），「基石与模块」列表与「全部开启/关闭」共用。 */
 const modAct=(seg,act)=>j('/api/manage/'+seg+'/'+act,{method:'POST'});
 function renderManage(sec){sec.innerHTML=`

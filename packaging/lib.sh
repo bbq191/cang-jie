@@ -247,7 +247,7 @@ echo "-- xovi 本体 : $(have "$CJ_XOVI/xovi.so")   （无 → xovi-persist/hl-s
 echo "-- qt-resource-rebuilder : $(have "$CJ_XOVI/exthome/qt-resource-rebuilder")   （无 → sidebar-entry 与 shelf 的 qmd 自动跳过）"
 echo "-- appload   : $(have "$CJ_XOVI/exthome/appload")   （无 → sidebar-entry 自动跳过；3.28 固件需 ≥ 0.6.0）"
 if cj_verity_active; then echo "-- dm-verity : 激活 → 所有写 /usr 的单元（chrony-boot-wakelock/xovi-persist/wifi-watch/battop/shelf 开机链接）会被跳过"; else echo "-- dm-verity : 未激活"; fi
-if cj_xochitl_has_xovi; then echo "-- xochitl 里 xovi 已生效 → 落盘后只 systemctl restart xochitl（不跑 xovi/start）"; else echo "-- xochitl 里 xovi 尚未生效 → 最后一步会 xovi/start"; fi
+if cj_xochitl_has_xovi; then echo "-- xochitl 里 xovi 已生效 → 有改动时最后一步换入后整机重启（不跑 xovi/start、不 restart xochitl）"; else echo "-- xochitl 里 xovi 尚未生效 → 最后一步会 xovi/start"; fi
 DEVICE_SCRIPT
 }
 

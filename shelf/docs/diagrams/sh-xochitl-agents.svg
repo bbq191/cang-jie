@@ -1,0 +1,84 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 660" font-family="Noto Sans CJK SC, sans-serif">
+<defs>
+<marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#555"/></marker>
+</defs>
+<rect x="0" y="0" width="1100" height="660" fill="#fbfbfa"/>
+<text x="550" y="30" text-anchor="middle" font-size="18" font-weight="bold" fill="#1a1a1a">书架怎么让 xochitl "自己动手"：四个 qmd 代理</text>
+<text x="550" y="54" text-anchor="middle" font-size="12.5" fill="#6a6a6a">外部进程改书库文件（.metadata / .content）会被运行中 xochitl 的内存状态盖回去 → 只能注入 qmd，在 xochitl 进程里调它自己的函数</text>
+
+<!-- 列标题 -->
+<text x="140" y="92" text-anchor="middle" font-size="13.5" font-weight="bold" fill="#4a6fa5">谁发起</text>
+<text x="490" y="92" text-anchor="middle" font-size="13.5" font-weight="bold" fill="#c9971f">book-serve（127.0.0.1:8790）只管排队</text>
+<text x="880" y="92" text-anchor="middle" font-size="13.5" font-weight="bold" fill="#3f9a55">xochitl 进程里的 qmd 代理动手</text>
+
+<!-- 行 1 建文件夹 -->
+<rect x="20" y="106" width="240" height="86" rx="10" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.6"/>
+<text x="140" y="134" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">建文件夹</text>
+<text x="140" y="156" text-anchor="middle" font-size="11.5" fill="#3a3a3a">「加入 xochitl」填了一个</text>
+<text x="140" y="174" text-anchor="middle" font-size="11.5" fill="#3a3a3a">书库里还没有的文件夹名</text>
+<rect x="340" y="106" width="300" height="86" rx="10" fill="#fff3d6" stroke="#c9971f" stroke-width="1.6"/>
+<text x="490" y="132" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">MkdirQueue（mkdir-pending.json）</text>
+<text x="490" y="154" text-anchor="middle" font-size="11.5" fill="#3a3a3a">投递线程同步等文件夹出现（≤20 秒，</text>
+<text x="490" y="172" text-anchor="middle" font-size="11.5" fill="#3a3a3a">超时落书库根）；出现即出队</text>
+<rect x="720" y="106" width="360" height="86" rx="10" fill="#e8f5ec" stroke="#3f9a55" stroke-width="1.6"/>
+<text x="900" y="132" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">shelf-mkdir-agent.qmd（MainView）</text>
+<text x="900" y="154" text-anchor="middle" font-size="11.5" fill="#3a3a3a">长轮询 GET /mkdir/pending?wait=290</text>
+<text x="900" y="172" text-anchor="middle" font-size="11.5" fill="#3a3a3a">→ Library.createCollection("", 名字)</text>
+<line x1="260" y1="149" x2="338" y2="149" stroke="#555" stroke-width="1.6" marker-end="url(#ar)"/>
+<line x1="718" y1="149" x2="642" y2="149" stroke="#555" stroke-width="1.6" marker-end="url(#ar)"/>
+
+<!-- 行 2 回收站 -->
+<rect x="20" y="210" width="240" height="86" rx="10" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.6"/>
+<text x="140" y="238" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">移进原生回收站</text>
+<text x="140" y="260" text-anchor="middle" font-size="11.5" fill="#3a3a3a">「管理 → 设备健康 → 清理」、</text>
+<text x="140" y="278" text-anchor="middle" font-size="11.5" fill="#3a3a3a">笔记线旧版笔记本</text>
+<rect x="340" y="210" width="300" height="86" rx="10" fill="#fff3d6" stroke="#c9971f" stroke-width="1.6"/>
+<text x="490" y="236" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">TrashQueue（trash-pending.json）</text>
+<text x="490" y="258" text-anchor="middle" font-size="11.5" fill="#3a3a3a">POST /trash/add 入队时按书名核对 uuid</text>
+<text x="490" y="276" text-anchor="middle" font-size="11.5" fill="#3a3a3a">（防错删）；metadata 变 trash 即出队</text>
+<rect x="720" y="210" width="360" height="86" rx="10" fill="#e8f5ec" stroke="#3f9a55" stroke-width="1.6"/>
+<text x="900" y="236" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">shelf-trash-agent.qmd（MainView，09-25 重写）</text>
+<text x="900" y="258" text-anchor="middle" font-size="11.5" fill="#3a3a3a">长轮询 GET /trash/pending?wait=290</text>
+<text x="900" y="276" text-anchor="middle" font-size="11.5" fill="#3a3a3a">→ moveEntriesToTrash([Library.entryForId(uuid).id])</text>
+<line x1="260" y1="253" x2="338" y2="253" stroke="#555" stroke-width="1.6" marker-end="url(#ar)"/>
+<line x1="718" y1="253" x2="642" y2="253" stroke="#555" stroke-width="1.6" marker-end="url(#ar)"/>
+
+<!-- 行 3 漫画页边距 -->
+<rect x="20" y="314" width="240" height="86" rx="10" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.6"/>
+<text x="140" y="342" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">漫画页边距≈0</text>
+<text x="140" y="364" text-anchor="middle" font-size="11.5" fill="#3a3a3a">漫画 EPUB 加入 xochitl，且实验室</text>
+<text x="140" y="382" text-anchor="middle" font-size="11.5" fill="#3a3a3a">开关 comicMinMargin 开着</text>
+<rect x="340" y="314" width="300" height="86" rx="10" fill="#fff3d6" stroke="#c9971f" stroke-width="1.6"/>
+<text x="490" y="340" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">ComicMargins（comic-margins.json）</text>
+<text x="490" y="362" text-anchor="middle" font-size="11.5" fill="#3a3a3a">记下新书 uuid；设过一次</text>
+<text x="490" y="380" text-anchor="middle" font-size="11.5" fill="#3a3a3a">（POST /margins/applied）即出队</text>
+<rect x="720" y="314" width="360" height="86" rx="10" fill="#e8f5ec" stroke="#3f9a55" stroke-width="1.6"/>
+<text x="900" y="340" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">shelf-comic-margins.qmd（DocumentView）</text>
+<text x="900" y="362" text-anchor="middle" font-size="11.5" fill="#3a3a3a">首次打开书时 GET /margins/{uuid}</text>
+<text x="900" y="380" text-anchor="middle" font-size="11.5" fill="#3a3a3a">→ epub.setMargins(1)（用户之后改回不再覆盖）</text>
+<line x1="260" y1="357" x2="338" y2="357" stroke="#555" stroke-width="1.6" marker-end="url(#ar)"/>
+<line x1="718" y1="357" x2="642" y2="357" stroke="#555" stroke-width="1.6" marker-end="url(#ar)"/>
+
+<!-- 行 4 阅读方向 -->
+<rect x="20" y="418" width="240" height="86" rx="10" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.6"/>
+<text x="140" y="446" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">日漫从右往左翻</text>
+<text x="140" y="468" text-anchor="middle" font-size="11.5" fill="#3a3a3a">母版库按书设「阅读方向」，</text>
+<text x="140" y="486" text-anchor="middle" font-size="11.5" fill="#3a3a3a">或书的 OPF 自带 rtl 标记</text>
+<rect x="340" y="418" width="300" height="86" rx="10" fill="#fff3d6" stroke="#c9971f" stroke-width="1.6"/>
+<text x="490" y="444" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">OPF rtl + rtl-overrides.json</text>
+<text x="490" y="466" text-anchor="middle" font-size="11.5" fill="#3a3a3a">优化时写进 OPF；已加入 xochitl 的</text>
+<text x="490" y="484" text-anchor="middle" font-size="11.5" fill="#3a3a3a">书把 uuid 同步进手动清单</text>
+<rect x="720" y="418" width="360" height="86" rx="10" fill="#e8f5ec" stroke="#3f9a55" stroke-width="1.6"/>
+<text x="900" y="444" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">reader-page-turn.qmd（DocumentView 等）</text>
+<text x="900" y="466" text-anchor="middle" font-size="11.5" fill="#3a3a3a">打开书时 GET /reading-direction/{uuid}</text>
+<text x="900" y="484" text-anchor="middle" font-size="11.5" fill="#3a3a3a">→ 为真就对调左右翻页（系统增强开关，默认关）</text>
+<line x1="260" y1="461" x2="338" y2="461" stroke="#555" stroke-width="1.6" marker-end="url(#ar)"/>
+<line x1="718" y1="461" x2="642" y2="461" stroke="#555" stroke-width="1.6" marker-end="url(#ar)"/>
+
+<!-- 底部说明 -->
+<rect x="20" y="526" width="1060" height="118" rx="10" fill="#f0f0ee" stroke="#8a8a8a" stroke-width="1.6"/>
+<text x="40" y="552" font-size="12.5" fill="#1a1a1a">• 箭头方向 = 谁找谁：代理（右）主动向 book-serve（中）要活，book-serve 从不主动调 xochitl。</text>
+<text x="40" y="576" font-size="12.5" fill="#1a1a1a">• 上两行是长轮询，共用 pending_queue::Handout：有待办立即返回，没有就睡到有人入队或 290 秒到期；交出后 15/30 秒内不重复交。空闲约每 5 分钟往返一次。</text>
+<text x="40" y="600" font-size="12.5" fill="#1a1a1a">• 下两行不轮询：只在打开一本书时问一次，费电为零。</text>
+<text x="40" y="624" font-size="12.5" fill="#1a1a1a">• qmd 只在 xochitl 启动时注入：装/改了 qmd 要整机重启才生效（2026-09-25 起，不再单独重启 xochitl）。</text>
+</svg>

@@ -68,7 +68,8 @@
     <text x="791" y="368">EPUB OPF &lt;spine</text>
     <text x="791" y="390">  page-progression-direction="rtl"&gt;</text>
     <text x="791" y="412" fill="#6b7280">书架优化保留；按卷拆分的分卷也继承</text>
-    <text x="791" y="450" fill="#b45309">没标 rtl 的：写进 rtl-overrides.json</text>
-    <text x="791" y="472" fill="#6b7280">日志关键字：CJ-PAGE-TURN</text>
+    <text x="791" y="450" fill="#b45309">没标 rtl 的：母版库按书设方向</text>
+    <text x="791" y="470" fill="#b45309">（写 OPF + 同步 rtl-overrides.json）</text>
+    <text x="791" y="490" fill="#6b7280">日志关键字：CJ-PAGE-TURN</text>
   </g>
 </svg>

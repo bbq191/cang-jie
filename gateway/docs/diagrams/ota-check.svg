@@ -58,6 +58,6 @@
 <rect x="560" y="450" width="410" height="90" rx="10" fill="#eaf6ec" stroke="#3f9a55" stroke-width="1.6"/>
 <text x="765" y="474" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">只有 ② → 只让 xovi 生效</text>
 <text x="765" y="496" text-anchor="middle" font-size="11" fill="#3a3a3a">电脑上：cd packaging &amp;&amp; sh deploy-xovi-apply.sh &lt;设备&gt;</text>
-<text x="765" y="514" text-anchor="middle" font-size="10.5" fill="#6a6a6a">它自己判断跑 xovi/start 还是 restart xochitl</text>
-<text x="765" y="530" text-anchor="middle" font-size="10.5" fill="#6a6a6a">（xovi 已生效时跑 xovi/start 会让整机重启）</text>
+<text x="765" y="514" text-anchor="middle" font-size="10.5" fill="#6a6a6a">装了 xovi-reenable：换入待生效文件后整机重启；没装才跑 xovi/start</text>
+<text x="765" y="530" text-anchor="middle" font-size="10.5" fill="#6a6a6a">（横幅不给 xovi/start：xovi 已生效时跑它会让 xochitl 崩溃）</text>
 </svg>

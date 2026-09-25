@@ -63,4 +63,5 @@
   <path d="M800,336 L800,356" stroke="#4a4a4a" stroke-width="1.5" fill="none" marker-end="url(#a)"/>
   <text x="800" y="470" text-anchor="middle" font-size="12" fill="#4a4a4a">步骤 1、2 让 xochitl 的硬编码查找命中（当前 OPTIMIZE_VERSION=15，旧书需 force 重优化）</text>
   <text x="800" y="490" text-anchor="middle" font-size="12" fill="#4a4a4a">代码：shelf/crates/bookconv/src/wash/{ncx_fix,toc,mod}.rs</text>
+  <text x="800" y="510" text-anchor="middle" font-size="12" fill="#4a4a4a">（1、2 之间还有 restructure_existing_toc_parts：已有扁平目录拆两级，与找 NCX 无关，图中省略）</text>
 </svg>

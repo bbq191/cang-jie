@@ -1,0 +1,55 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 660" font-family="Noto Sans CJK SC, sans-serif">
+  <defs>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="#64748b"/>
+    </marker>
+  </defs>
+  <rect width="1000" height="660" fill="#ffffff"/>
+  <text x="500" y="34" text-anchor="middle" font-size="20" font-weight="bold" fill="#1e293b">EPUB 优化里一张图片怎么走（transform_image_bytes）</text>
+  <text x="500" y="58" text-anchor="middle" font-size="13" fill="#64748b">返回 None＝原字节原样保留，零损失；坏图解码 panic 也被兜住、按"原样保留"处理</text>
+
+  <!-- 入口 -->
+  <rect x="380" y="78" width="240" height="44" rx="8" fill="#eef2ff" stroke="#6366f1"/>
+  <text x="500" y="105" text-anchor="middle" font-size="15" fill="#312e81">一张图片条目（JPEG / PNG）</text>
+  <line x1="500" y1="122" x2="500" y2="148" stroke="#64748b" stroke-width="1.6" marker-end="url(#a)"/>
+
+  <!-- 判漫画 -->
+  <polygon points="500,150 690,192 500,234 310,192" fill="#fef9c3" stroke="#ca8a04"/>
+  <text x="500" y="188" text-anchor="middle" font-size="15" font-weight="bold" fill="#713f12">整本判为漫画？</text>
+  <text x="500" y="208" text-anchor="middle" font-size="12" fill="#713f12">图 ≥20 张且每图平均文字 &lt;40 字</text>
+
+  <line x1="310" y1="192" x2="232" y2="192" stroke="#64748b" stroke-width="1.6"/>
+  <line x1="232" y1="192" x2="232" y2="262" stroke="#64748b" stroke-width="1.6" marker-end="url(#a)"/>
+  <text x="270" y="182" text-anchor="middle" font-size="13" fill="#475569">否（文字书）</text>
+  <line x1="690" y1="192" x2="740" y2="192" stroke="#64748b" stroke-width="1.6"/>
+  <line x1="740" y1="192" x2="740" y2="262" stroke="#64748b" stroke-width="1.6" marker-end="url(#a)"/>
+  <text x="715" y="182" text-anchor="middle" font-size="13" fill="#475569">是</text>
+
+  <!-- 文字书分支 -->
+  <rect x="40" y="264" width="384" height="250" rx="10" fill="#f0fdf4" stroke="#16a34a"/>
+  <text x="232" y="292" text-anchor="middle" font-size="16" font-weight="bold" fill="#14532d">downscale_for_epub</text>
+  <text x="60" y="324" font-size="14" fill="#14532d">① 只读文件头取尺寸（header_dims）</text>
+  <text x="60" y="350" font-size="14" fill="#14532d">② 已在 954×1696 竖框内 → 原样（不解码）</text>
+  <text x="60" y="376" font-size="14" fill="#14532d">③ 超过 900 万像素 → 原样（防解码撑爆内存）</text>
+  <text x="60" y="402" font-size="14" fill="#14532d">④ 解码 → 缩进竖框 → 按原格式重编码（JPEG q85）</text>
+  <text x="60" y="428" font-size="14" fill="#14532d">⑤ 重编码没变小 → 仍用原图</text>
+  <text x="60" y="462" font-size="13" fill="#166534">竖框：宽绝不超过 954，行内横幅图不再溢出</text>
+  <text x="60" y="484" font-size="13" fill="#166534">竖屏（xochitl 行内图按原像素画，§09①）</text>
+
+  <!-- 漫画分支 -->
+  <rect x="470" y="264" width="490" height="250" rx="10" fill="#fff7ed" stroke="#ea580c"/>
+  <text x="715" y="292" text-anchor="middle" font-size="16" font-weight="bold" fill="#7c2d12">prepare_comic_page_for_epub（单趟）</text>
+  <text x="490" y="324" font-size="14" fill="#7c2d12">① 超过 900 万像素 → 原样</text>
+  <text x="490" y="350" font-size="14" fill="#7c2d12">② 解码一次（灰度页保持单通道）</text>
+  <text x="490" y="376" font-size="14" fill="#7c2d12">③ 裁白边：单边最多裁 35%</text>
+  <text x="490" y="402" font-size="14" fill="#7c2d12">④ 一次缩放进页框；JPEG 小图可先放大（≤3 倍）</text>
+  <text x="490" y="428" font-size="14" fill="#7c2d12">⑤ 白底补到页框比例 → 编码一次（q95，放大过的 q85）</text>
+  <text x="490" y="462" font-size="13" fill="#9a3412">页框：缺省 954×1696（屏幕比例）；实验室开关开时</text>
+  <text x="490" y="484" font-size="13" fill="#9a3412">954×1458（xochitl 图片框比例，§20）。短边 &lt;318 的小图只裁边</text>
+
+  <!-- 并行 -->
+  <rect x="40" y="540" width="920" height="96" rx="10" fill="#f8fafc" stroke="#94a3b8" stroke-dasharray="6 4"/>
+  <text x="500" y="568" text-anchor="middle" font-size="15" font-weight="bold" fill="#334155">两条分支外面共用的并行与内存约束（imgpool.rs，流式优化阶段二）</text>
+  <text x="500" y="596" text-anchor="middle" font-size="14" fill="#334155">最多 2 个 worker 并行；同时在处理的图片像素总和 ≤ 600 万（PixelBudget，超大图独占）</text>
+  <text x="500" y="620" text-anchor="middle" font-size="14" fill="#334155">按原顺序写回 zip，处理完一张立刻释放——峰值≈"全书文字 + 少量在途图片"</text>
+</svg>

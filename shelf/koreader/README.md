@@ -19,6 +19,8 @@
 
 ## 文字书 / 漫画两套方案（2026-09-24）
 
+![KOReader 文字书 / 漫画两套方案：三样自带机制怎么拼](../docs/diagrams/sh-koreader-schemes.svg)
+
 KOReader 没有"按书类型整套切换配置"的单一开关，靠三样自带机制拼出来，**键名全部按设备上 v2026.07.1 源码核过**
 （网上流传的 `status_bar`、`cre_engine_controls`、`taps_and_gestures.tap_zones`、`eink_refresh_every`、`k2pdfopt_mode`、
 `default_profile` 这类键在 KOReader 里并不存在，写进去会被忽略）：
@@ -66,6 +68,6 @@ KOReader 本体（v2026.07.1，官方支持 Move）与本目录 / koreader-serve
 
 - 启动入口是 appload（xochitl 侧栏里的外部应用启动器）。**appload ≥ 0.6.0 起原生支持 3.28**（上游 v0.6.0，2026-09-19 发布，另加 3.29 支持），2026-09-21 官方升级并真机验证（侧栏 KOReader/WeRead 入口点开正常）。
 - 历史：0.5.3 在 3.28 上不兼容（其 qmd 钩了 3.28 已删的 `SidebarFilterItem`），2026-09-06 曾用 PR #59 的 qmd 等长回填进 `.so` 顶过；该回填补丁工具已删除，不再需要。
-- 升级注意：换 appload 文件后**别 `systemctl restart xochitl`**（旧进程退出时崩溃 → 整机重启一次），直接整机重启。
+- 升级注意：`vellum upgrade appload` 后**直接整机重启**，别 `systemctl restart xochitl`——xochitl 退出时自身有概率崩溃（2026-09-25 查明与换不换文件无关），崩了会走应急路径整机重启。
 - 已知变化：0.6.0 的实体键（左 / 主页 / 右）发 Qt 原始键码，KOReader 的 qtfb 输入层仍按 0/1/2 映射 → 实体键失效（Move 没有实体翻页键，只影响外接键盘）；未在真机上专门验证键码。
 - KOReader 根目录仍是 `~/xovi/exthome/appload/koreader/`（可用环境变量 `SHELF_KOREADER_ROOT` 覆盖），书/字体/词典照常同步进去。详见书架白皮书 §03v。

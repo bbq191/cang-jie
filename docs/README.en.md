@@ -11,18 +11,18 @@ note organizing, and some small system-level improvements.
 > For a 10-minute tour read [`OVERVIEW.md`](OVERVIEW.md) (Chinese); for recent changes read [`CHANGELOG.md`](CHANGELOG.md) (Chinese).
 >
 > This is the **private** repository with the full development history. What is shared publicly is the trimmed release
-> [`rm-tweak`](https://github.com/bbq191/rm-tweak) (no dev history, Apache-2.0). Its GitHub directory was checked on 2026-09-24:
-> it has shelf / notes / enhance / gateway / rmsvc-core / packaging, including `packaging/install-all.sh`, and no `defw/`.
+> [`rm-tweak`](https://github.com/bbq191/rm-tweak) (no dev history, Apache-2.0). It was last synced on 2026-09-25:
+> it has shelf / notes / enhance / gateway / rmsvc-core / packaging (including `install-all.sh` and `verify-on-device.sh`), and no `defw/`.
 
 ## What it does
 
 | You want | What provides it | Where |
 |---|---|---|
-| Get books onto the device and make them read well on e-ink | Upload on the web page or fetch an article; books land in the "master library" first. EPUBs get one-click "optimize" (layout, table of contents, cover, footnotes); PDFs with a text layer are converted to EPUB keeping their original formatting. Then deliver to the stock reader or KOReader (KOReader comes with two reading presets, one for text books and one for comics). Books over xochitl's ~100MB upload limit work too; comics get dedicated handling; books in the master library can be downloaded as the original file or renamed | [`shelf/`](../shelf/README.md) |
-| Turn highlighter marks and handwritten notes beside them into organizable notes | Collected automatically when you close the book. On your phone: review the handwriting transcription, full-text search, ask an AI model; then send back into a device notebook or export as Obsidian markdown | [`notes/`](../notes/README.md) |
+| Get books onto the device and make them read well on e-ink | Upload on the web page or fetch an article; books land in the "master library" first. EPUBs get one-click "optimize" (layout, table of contents, cover, footnotes); PDFs with a text layer are converted to EPUB keeping their original formatting. Then deliver to the stock reader or KOReader (KOReader comes with two reading presets, one for text books and one for comics). Books over xochitl's ~100MB upload limit work too; comics get dedicated handling; books in the master library can be downloaded as the original file, renamed, or given a reading direction (right-to-left for manga) | [`shelf/`](../shelf/README.md) |
+| Turn highlighter marks and handwritten notes beside them into organizable notes | Collected automatically when you close the book. On your phone: review the handwriting transcription, full-text search, ask an AI model; then send back into a device notebook (headings, lists and checkboxes use the device's own styles) or export as Obsidian markdown | [`notes/`](../notes/README.md) |
 | Small system-level improvements | Precise CJK highlighter snapping, handwriting stroke-width tuning, tap-to-turn and a manga (right-to-left) page-turn rule in the xochitl reader, battery drain diagnostics, upload-and-use fonts and wallpapers | [`enhance/`](../enhance/README.md) |
-| One place on your phone/computer to operate all of the above | A single HTTPS web entry with a login password that forwards requests to each service | [`gateway/`](../gateway/README.md) |
-| Install everything on a new device with one command | With a firmware-compatibility check, and a one-command uninstall | [`packaging/`](../packaging/README.md) |
+| One place on your phone/computer to operate all of the above | A single HTTPS web entry with a login password that forwards requests to each service; plus a "Device health" page and a reinstall hint after firmware updates | [`gateway/`](../gateway/README.md) |
+| Install everything on a new device with one command | With a firmware-compatibility check; reboots the device once at the end and runs a read-only check; one-command uninstall too | [`packaging/`](../packaging/README.md) |
 
 Two "behind the scenes" directories: [`rmsvc-core/`](../rmsvc-core/README.md) (the shared base library of the web services, no business logic)
 and [`defw/`](../defw/README.md) (reverse-engineering material for `xochitl` 3.28.0.172, used to find hook points for the xovi plugins).
@@ -44,11 +44,14 @@ Only the **reMarkable Paper Pro Move on firmware 3.28.0.172** is supported. It i
    sh install-all.sh --dry-run        # rehearse first: prints the plan, never touches the device
    sh install-all.sh 10.11.99.1
    ```
+   The last step reboots the device once (about a minute); when it is back, the script checks it automatically and marks each item ✓/⚠/✗.
 3. Open `https://10.11.99.1/` in a browser. The default password is `shelf`, and you must change it on first login.
 
 To uninstall: `sh uninstall-all.sh 10.11.99.1`. Prerequisites, risks and how to recover after a firmware update (OTA) are all in **[INSTALL.en.md](INSTALL.en.md)**.
 
 ## Documentation map
+
+![Documentation map (labels in Chinese)](diagrams/docs-map.svg)
 
 | To learn about | Read |
 |---|---|

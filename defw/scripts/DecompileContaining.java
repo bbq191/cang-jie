@@ -1,7 +1,7 @@
 // Decompile the functions CONTAINING the given addresses (script args, hex without 0x), e.g. PCs from a
 // crash stack. Unlike DecompileTargets (which needs function entry points), any address inside a function
 // works. Prints the function's entry, name, signature, C output, and its callers.
-//   ghidra-analyzeHeadless <proj_dir> xochitl_328_analysis -process xochitl -noanalysis \
+//   ghidra-analyzeHeadless <proj_dir> xochitl_328_analysis -process xochitl-3.28.0.172 -noanalysis -readOnly \
 //     -scriptPath defw/scripts -postScript DecompileContaining.java 00a467b8 00a49fc8
 //@category CangJie
 
