@@ -158,6 +158,7 @@ fn main() {
         // 设备健康 / OTA 横幅 / 遗留清理（2026-09-25，见 device/mod.rs）：只读采集按需触发，不轮询。
         .get("/api/device/health", bind(&paths, device::health))
         .get("/api/device/ota", bind(&paths, device::ota_status))
+        .get("/api/device/wifi", bind(&paths, device::wifi))
         .get("/api/device/cleanup", bind(&paths, device::cleanup_list))
         .post("/api/device/cleanup/delete", bind(&paths, device::cleanup_delete))
         // 并发/内存预算闸门的排队/处理状态（2026-09-19 用户反馈驱动，见 budget.rs::State 文档

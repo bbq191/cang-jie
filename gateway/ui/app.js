@@ -1427,6 +1427,15 @@ async function showOtaBanner(){
   ban.prepend(x);x.onclick=()=>ban.remove();
   document.body.insertBefore(ban,$('#main'));
 }
+/* 页头"这个 WiFi 上不了外网"横幅（2026-09-28）：设备端 wifi-watch 连上新网络时探一次外网，结果经 /api/device/wifi 给这里。
+   酒店那种要网页登录的 WiFi 上 xochitl 会反复连云端、设备一直醒着很耗电，而 reMarkable 上没法完成网页登录。页面打开时取一次，不轮询；× 只在本次页面会话内关掉。 */
+async function showWifiBanner(){
+  const d=await j('/api/device/wifi');if(d.ok===false||(d.state!=='portal'&&d.state!=='none'))return;
+  const x=el('button',{class:'btn x',type:'button',title:T('ota.dismiss'),'aria-label':T('ota.dismiss'),text:'×'});
+  const ban=el('div',{class:'otabanner',id:'wifibanner',role:'alert',html:`<b>${esc(T('wifi.banner.'+d.state,{ssid:d.ssid||'?'}))}</b><p>${T('wifi.banner.why')}</p><p class="small">${T('wifi.banner.hint')}</p>`});
+  ban.prepend(x);x.onclick=()=>ban.remove();
+  document.body.insertBefore(ban,$('#main'));
+}
 /* 页头"设备上没做成"横幅（2026-09-25）：移进 xochitl 回收站、在 xochitl 书库建文件夹，这两件事由设备端代理执行，
    交满 5 次仍没做成 book-serve 就放弃（见 book-serve agent_failures.rs）。页面打开时取一次，之后收到 `agent-failed`
    事件再取，不轮询；「知道了」清空服务端记录（换台设备/刷新后也不再出现）。book-serve 没开时接口不通，不显示。 */
@@ -1591,6 +1600,7 @@ function renderManage(sec){sec.innerHTML=`
   $('#mainloading').textContent=T('main.loading');
   showOtaBanner(); // 不 await：横幅晚一点出现无妨，不挡页面主体
   showAgentFailBanner();
+  showWifiBanner();
   const langsel=$('#langsel');langsel.value=lang;langsel.setAttribute('aria-label',T('nav.lang'));
   langsel.onchange=()=>{LS.set('lang',langsel.value);location.reload()};
 

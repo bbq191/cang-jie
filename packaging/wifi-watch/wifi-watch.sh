@@ -11,6 +11,10 @@
 # 没有这段）时才锁**。旧版对每个连接都无条件锁 2.4G：手机热点「📱」在 5745 MHz（信道 149，CN 合法）被锁后重连报
 # ssid-not-found，09-27 两次把 WiFi 弄断、退回别的网络，而且该连接从此再也连不上。另外改完重新激活失败时，把这次改的
 # 设置**回滚**并再激活一次，日志记 nmcli 的真实错误行（旧版只记最后一行 "Hint: use journalctl …"，看不出原因）。
+# 上网探测（2026-09-28）：连上新网络后的下一个周期探一次 PROBE_URL（缺省小米 generate_204），结果写 STATE_FILE 给网关页头
+# 横幅用——酒店这类要网页登录的 WiFi 上，xochitl 每约 50 秒取一次云端令牌、每次卡满 30 秒超时，设备因此整段不睡（09-27
+# 真机：30 分钟 100% 醒着，约 17%/h），而 reMarkable 上没法完成网页登录。只在"新连上"和"上次不通时每 RECHECK 周期"探，
+# 链路正常且上次通了就不再探；关 WiFi 时删掉状态文件。PROBE_URL= 置空即不探。
 # 覆盖配置：/home/root/.config/wifi-watch.conf（shell 片段，可设 BAND / POWERSAVE / BAD_LO / BAD_HI / INTERVAL；路径可用 WIFI_WATCH_CONF 改）。
 #
 IFACE=${IFACE:-wlan0}
@@ -22,11 +26,15 @@ POWERSAVE=${POWERSAVE-2}
 BAD_LO=${BAD_LO:-5150}
 BAD_HI=${BAD_HI:-5350}
 SYSFS=${SYSFS:-/sys/class/net}
+PROBE_URL=${PROBE_URL-http://connect.rom.miui.com/generate_204}
+STATE_FILE=${STATE_FILE:-/home/root/.local/state/shelf/wifi-connectivity.json}
 TICKS=${TICKS:-0}        # 测试用：跑满这么多个周期就退出；0=永远
 WIFI_WATCH_CONF=${WIFI_WATCH_CONF:-/home/root/.config/wifi-watch.conf}
 # shellcheck disable=SC1090  # 用户自己的覆盖配置，路径运行时才知道
 [ -r "$WIFI_WATCH_CONF" ] && . "$WIFI_WATCH_CONF"
 strikes=0
+probe_due=""
+net_state=""
 enforced=""
 prev=""
 tick=0
@@ -84,6 +92,23 @@ enforce() {
     if reactivate "$con"; then echo "回滚 '$con' 后已重新激活"; else echo "回滚 '$con' 后仍未激活：${err:-nmcli 退出码 $rc}"; fi
 }
 
+# 探一次外网：204=通（ok）；拿到别的状态码=被拦去登录页（portal）；连不上/超时=没网（none）。写状态文件（原子改名）。
+probe() {
+    [ -n "$PROBE_URL" ] || return 0
+    code="$(wget -q -S -T 8 -O /dev/null "$PROBE_URL" 2>&1 | sed -n 's/^[[:space:]]*HTTP\/[0-9.]*[[:space:]]*\([0-9][0-9]*\).*/\1/p' | sed -n 1p)"
+    case "$code" in
+        204) st=ok ;;
+        "") st=none ;;
+        *) st=portal ;;
+    esac
+    [ "$st" = "$net_state" ] && [ -e "$STATE_FILE" ] && return 0
+    [ "$st" = ok ] || echo "'$1' 上不了外网：$st（探测 $PROBE_URL 得到 ${code:-无响应}）"
+    net_state="$st"
+    mkdir -p "$(dirname "$STATE_FILE")" 2>/dev/null
+    esc="$(printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g')"
+    printf '{"ssid":"%s","state":"%s","code":"%s","at":%s}\n' "$esc" "$st" "$code" "$(date +%s)" > "$STATE_FILE.tmp" && mv -f "$STATE_FILE.tmp" "$STATE_FILE"
+}
+
 tick_all=0
 while :; do
     if [ "$TICKS" -gt 0 ]; then tick_all=$((tick_all + 1)); [ "$tick_all" -le "$TICKS" ] || exit 0; fi
@@ -93,11 +118,22 @@ while :; do
     carrier=""
     { read -r carrier < "$SYSFS/$IFACE/carrier"; } 2>/dev/null
     # 接口 admin down（用户关了 WiFi）：不可能有 NO-CARRIER，无事可做，连 rfkill/nmcli 都不必问。
-    if [ -z "$carrier" ]; then strikes=0; prev=""; tick=0; continue; fi
+    if [ -z "$carrier" ]; then
+        strikes=0; prev=""; tick=0; probe_due=""; net_state=""
+        [ ! -e "$STATE_FILE" ] || rm -f "$STATE_FILE"
+        continue
+    fi
     if [ "$carrier" = 1 ]; then
         strikes=0
         tick=$((tick + 1))
+        # 新连上时 DHCP/DNS 可能还没好：本周期只记下"待探"，下个周期再探
+        if [ -n "$probe_due" ]; then
+            probe_due=""
+            con="$(active_con)"
+            [ -z "$con" ] || probe "$con"
+        fi
         if [ "$prev" != 1 ] || [ "$tick" -ge "$RECHECK" ]; then
+            [ "$prev" = 1 ] && [ "$net_state" = ok ] || probe_due=1
             tick=0
             if ! rfkill list wifi 2>/dev/null | grep -q "Soft blocked: yes"; then
                 con="$(active_con)"

@@ -1115,13 +1115,14 @@ esac
 STUB
 printf '#!/bin/sh\n[ -s "$WW_STATE/freq" ] && echo "Connected to aa:bb" && echo "	freq: $(cat "$WW_STATE/freq").0"\nexit 0\n' > "$WSTUB/iw"
 printf '#!/bin/sh\nexit 0\n' > "$WSTUB/rfkill"
+printf '#!/bin/sh\necho "wget $*" >> "$WW_STATE/calls"\n[ -s "$WW_STATE/http" ] || exit 1\necho "  HTTP/1.1 $(cat "$WW_STATE/http") X" >&2\n' > "$WSTUB/wget"
 chmod +x "$WSTUB"/*
 ww_run() { # 频点 旧band 旧省电 [up 失败] [覆盖配置内容]
     rm -f "$WW"/calls "$WW"/up_fail; echo 1 > "$WW/sys/wlan0/carrier"; echo "📱" > "$WW/active"
     printf '%s' "$1" > "$WW/freq"; printf '%s' "$2" > "$WW/band"; printf '%s' "$3" > "$WW/ps"
     [ "${4:-}" = fail ] && : > "$WW/up_fail"
-    printf '%s\n' "${5:-}" > "$WW/conf"
-    WW_STATE="$WW" PATH="$WSTUB:$PATH" SYSFS="$WW/sys" INTERVAL=0 TICKS=2 WIFI_WATCH_CONF="$WW/conf" \
+    printf '%s\n' "${5:-}" > "$WW/conf"; printf '%s' "${WW_HTTP-204}" > "$WW/http"
+    WW_STATE="$WW" PATH="$WSTUB:$PATH" SYSFS="$WW/sys" INTERVAL=0 TICKS="${WW_TICKS:-2}" WIFI_WATCH_CONF="$WW/conf" STATE_FILE="$WW/state.json" RECHECK=3 \
         sh "$PKG/wifi-watch/wifi-watch.sh" > "$WW/out" 2>&1
 }
 ww_run 5745 "" disable
@@ -1136,6 +1137,15 @@ ww_run 2437 bg disable "" "POWERSAVE=3"
 check "wifi-watch：覆盖配置 POWERSAVE=3 → 改成省电开并重连；频段不动" test "$(cat "$WW/ps")" = 3 -a "$(cat "$WW/band")" = bg -a "$(grep -c 'con up' "$WW/calls")" = 1
 ww_run 2437 bg default "" "POWERSAVE="
 check "wifi-watch：覆盖配置 POWERSAVE= 置空 → 不碰省电设置" test -z "$(grep -E 'modify|con up' "$WW/calls")"
+rm -f "$WW/state.json"; WW_HTTP=302 ww_run 2437 bg disable
+check "wifi-watch 上网探测：连上后下个周期探一次，被拦去登录页 → 状态文件记 portal、日志提示" bash -c "grep -q '\"state\":\"portal\"' '$WW/state.json' && grep -q '\"ssid\":\"📱\"' '$WW/state.json' && grep -q '上不了外网' '$WW/out' && test \$(grep -c wget '$WW/calls') = 1"
+rm -f "$WW/state.json"; WW_HTTP=204 WW_TICKS=8 ww_run 2437 bg disable
+check "wifi-watch 上网探测：通了记 ok，之后链路正常就不再探（8 个周期只探 1 次）" bash -c "grep -q '\"state\":\"ok\"' '$WW/state.json' && test \$(grep -c wget '$WW/calls') = 1 && ! grep -q '上不了外网' '$WW/out'"
+rm -f "$WW/state.json"; WW_HTTP= WW_TICKS=8 ww_run 2437 bg disable
+check "wifi-watch 上网探测：不通（无响应）记 none，且每 RECHECK 个周期复探" bash -c "grep -q '\"state\":\"none\"' '$WW/state.json' && test \$(grep -c wget '$WW/calls') -ge 2"
+echo '{"state":"portal"}' > "$WW/state.json"; rm -f "$WW/sys/wlan0/carrier"; : > "$WW/calls"
+WW_STATE="$WW" PATH="$WSTUB:$PATH" SYSFS="$WW/sys" INTERVAL=0 TICKS=2 WIFI_WATCH_CONF="$WW/conf" STATE_FILE="$WW/state.json" sh "$PKG/wifi-watch/wifi-watch.sh" >/dev/null 2>&1
+check "wifi-watch 上网探测：WiFi 关了（读不到 carrier）→ 删掉状态文件、不探" test ! -e "$WW/state.json" -a ! -s "$WW/calls"
 
 # 守卫：真实 HOME 下不该出现任何测试产物
 GUARD_AFTER=""

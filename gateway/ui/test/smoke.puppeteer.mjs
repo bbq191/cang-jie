@@ -46,6 +46,7 @@ const routes = {
   '/api/batch/status': () => ({running:false,total:0,done:0,queued:[],failed:[]}),
   '/api/foundation': () => ({}), '/api/enhance/status': () => ({}),
   '/api/books/agent-failures': () => ({items: window.__fails}),
+  '/api/device/wifi': () => ({ssid: evil, state:'portal', code:'302', at:1}),
   '/api/books/agent-failures/clear': () => { const n = window.__fails.length; window.__fails = []; return {ok:true, cleared:n}; },
 };
 window.__fails = [{kind:'trash', name: evil, uuid:'11111111-1111-1111-1111-111111111111', at:1}, {kind:'mkdir', name:'新文件夹', at:2}];
@@ -82,6 +83,10 @@ out.listText = await page.evaluate(() => (document.querySelector('#stglist')||{}
 out.imgInjected = await page.evaluate(() => document.querySelectorAll('#stglist img').length);
 // 代理放弃横幅：页面打开即显示，名字按文本显示；agent-failed 事件只重取这一个接口；「知道了」清空并移除横幅
 out.failBanner = await page.evaluate(() => { const b = document.querySelector('#agentfail'); return b ? {li: b.querySelectorAll('li').length, img: b.querySelectorAll('img').length, text: b.textContent} : null; });
+// WiFi 上不了外网横幅：打开即显示，SSID 按文本显示；× 关掉
+out.wifiBanner = await page.evaluate(() => { const b = document.querySelector('#wifibanner'); return b ? {img: b.querySelectorAll('img').length, text: b.textContent} : null; });
+await page.evaluate(() => document.querySelector('#wifibanner .btn.x').click());
+out.wifiClosed = await page.evaluate(() => !document.querySelector('#wifibanner'));
 { const a0 = await hits('/api/books/agent-failures'), st0 = await hits();
   await page.evaluate(() => window.__es[0].onmessage({data: JSON.stringify({area:'books', kind:'agent-failed', svc:'books'})}));
   await new Promise(r => setTimeout(r, 300));
@@ -169,6 +174,8 @@ assert.equal(out.imgInjected, 0, '不能注入 <img>');
 assert.ok(out.failBanner && out.failBanner.li === 2 && out.failBanner.img === 0 && out.failBanner.text.includes('<img src=x'), '代理放弃横幅：两条、名字按文本显示');
 assert.deepEqual(out.failEventHits, [1, 0], 'agent-failed 事件只重取放弃记录，不刷母版库');
 assert.deepEqual(out.failAck, [1, false], '「知道了」清空服务端记录并移除横幅');
+assert.ok(out.wifiBanner && out.wifiBanner.img === 0 && out.wifiBanner.text.includes('<img src=x') && out.wifiBanner.text.includes('网页上登录'), 'WiFi 横幅：portal 文案、SSID 按文本显示');
+assert.ok(out.wifiClosed, 'WiFi 横幅：× 关掉');
 assert.ok(out.listText.includes('<img src=x'), '文件名应作为文本显示');
 assert.ok(out.afterBurst >= 1 && out.afterBurst <= 2, `事件突发应合并，实际 ${out.afterBurst} 次`);
 assert.equal(out.burstKoBooks, 0, 'book-serve 的 staging 事件只重取母版库列表与排队状态，不重取 KOReader 目录');
