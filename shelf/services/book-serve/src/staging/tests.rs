@@ -51,6 +51,22 @@ fn put_list_read_remove() {
     }
 }
 
+/// 同一本书（内容逐字节相同）再传一次：认已有那本，不再多出 `1_书名`（2026-09-28 真机：白夜行被加进 KOReader 两份）。
+/// 字节入库和"已落盘暂存文件"入库两条路都一样；暂存文件被消费掉（删除），不留垃圾。同名不同内容仍加前缀。
+#[test]
+fn identical_reupload_reuses_existing_book() {
+    let t = tempfile::tempdir().unwrap();
+    let s = staging(&t);
+    assert_eq!(s.stage_new("白夜行.epub", b"same-bytes").unwrap(), "白夜行.epub");
+    assert_eq!(s.stage_new("白夜行.epub", b"same-bytes").unwrap(), "白夜行.epub", "字节入库：内容相同认已有");
+    let src = t.path().join("upload.part");
+    std::fs::write(&src, b"same-bytes").unwrap();
+    assert_eq!(s.stage_from_path("白夜行.epub", &src).unwrap(), "白夜行.epub", "文件入库：内容相同认已有");
+    assert!(!src.exists(), "暂存文件已消费");
+    assert_eq!(s.list().len(), 1);
+    assert_eq!(s.stage_new("白夜行.epub", b"other-bytes").unwrap(), "1_白夜行.epub", "同名不同内容仍不覆盖");
+}
+
 /// `free_bytes` 走 statvfs 而不是 fork `df`：与 host 的 `df -k` 对拍（两次取样之间别的进程会写盘，给 64MB 容差）。
 #[test]
 fn free_bytes_matches_df_and_is_none_for_missing_dir() {

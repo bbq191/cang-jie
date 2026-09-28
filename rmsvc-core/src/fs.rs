@@ -63,6 +63,52 @@ pub fn unique_path(dir: &Path, name: &str) -> PathBuf {
     t
 }
 
+/// 两份内容是否逐字节相同：先比大小（不同就立刻返回），再分块流式比较，不整份读进内存。任一方读不了 → false。
+/// `a` 是已有文件，`b` 是另一个文件（[`Content::File`]）或内存里的字节（[`Content::Bytes`]）。
+pub fn same_content(a: &Path, b: Content<'_>) -> bool {
+    use std::io::Read;
+    let Ok(ma) = std::fs::metadata(a) else { return false };
+    let len_b = match b {
+        Content::Bytes(x) => x.len() as u64,
+        Content::File(p) => match std::fs::metadata(p) {
+            Ok(m) => m.len(),
+            Err(_) => return false,
+        },
+    };
+    if !ma.is_file() || ma.len() != len_b {
+        return false;
+    }
+    let Ok(fa) = std::fs::File::open(a) else { return false };
+    let mut ra = std::io::BufReader::new(fa);
+    let mut rb: Box<dyn Read> = match b {
+        Content::Bytes(x) => Box::new(x),
+        Content::File(p) => match std::fs::File::open(p) {
+            Ok(f) => Box::new(std::io::BufReader::new(f)),
+            Err(_) => return false,
+        },
+    };
+    let (mut ba, mut bb) = (vec![0u8; 64 * 1024], vec![0u8; 64 * 1024]);
+    loop {
+        let n = match ra.read(&mut ba) {
+            Ok(n) => n,
+            Err(_) => return false,
+        };
+        if n == 0 {
+            return true; // 大小相同且 a 读完：b 也正好读完
+        }
+        if rb.read_exact(&mut bb[..n]).is_err() || ba[..n] != bb[..n] {
+            return false;
+        }
+    }
+}
+
+/// [`same_content`] 的比较对象。
+#[derive(Clone, Copy)]
+pub enum Content<'a> {
+    Bytes(&'a [u8]),
+    File(&'a Path),
+}
+
 /// 把文件挪到 `dest_dir` 下的唯一名：rename 优先，跨设备回退 copy+rm。返回落地路径（失败 None）。
 pub fn move_unique(src: &Path, dest_dir: &Path) -> Option<PathBuf> {
     let name = src.file_name().and_then(|s| s.to_str()).unwrap_or("file");
@@ -90,6 +136,24 @@ pub fn set_mode(path: &Path, mode: u32) {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn same_content_compares_size_then_bytes() {
+        use super::{same_content, Content};
+        let t = tempfile::tempdir().unwrap();
+        let (a, b, c) = (t.path().join("a"), t.path().join("b"), t.path().join("c"));
+        let big: Vec<u8> = (0..200_000u32).map(|i| (i % 251) as u8).collect();
+        std::fs::write(&a, &big).unwrap();
+        std::fs::write(&b, &big).unwrap();
+        let mut other = big.clone();
+        other[150_000] ^= 1;
+        std::fs::write(&c, &other).unwrap();
+        assert!(same_content(&a, Content::File(&b)), "跨多块、完全相同");
+        assert!(same_content(&a, Content::Bytes(&big)));
+        assert!(!same_content(&a, Content::File(&c)), "同大小、后面某块不同");
+        assert!(!same_content(&a, Content::Bytes(&big[..10])), "大小不同");
+        assert!(!same_content(&t.path().join("missing"), Content::Bytes(b"")), "文件不在");
+    }
+
     use super::*;
     #[test]
     fn atomic_write_creates_parent_and_leaves_no_tmp() {
