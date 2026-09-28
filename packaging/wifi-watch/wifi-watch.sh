@@ -5,19 +5,27 @@
 # （NetworkManager 仍标 connected、永不自愈）时 `nmcli con up`。⚠ `nmcli con up` 对已激活连接会先断再连，所以判据必须是真 NO-CARRIER。
 # 做法：每 INTERVAL 秒看一次；wlan0 存在、rfkill 未软锁、NM 有 wifi 连接、却连续 STRIKES 次 NO-CARRIER → `nmcli con up`。
 # 只在"NM 以为连着但链路死了"时动手；用户关 WiFi（rfkill/NM 断开）不干预。日志 journalctl -u wifi-watch。
-# 固化（用户 2026-09-06 拍板）：当前活动的 WiFi 连接缺 `802-11-wireless.band=$BAND`（缺省 bg=2.4G）或
-# `powersave=2` 就补上并重新激活一次——新 SSID / 在设置里重连后自动生效。BAND= 置空即不管频段。
+# 固化（用户 2026-09-06 拍板）：给当前活动的 WiFi 连接补 `powersave=$POWERSAVE`（缺省 2=关），必要时补
+# `802-11-wireless.band=$BAND`（缺省 bg=2.4G），并重新激活一次——新 SSID / 在设置里重连后自动生效。BAND= / POWERSAVE= 置空即不管。
+# ⚠ 2026-09-28 改：频段**只在 AP 真落在设备不许用的 5G 段（BAD_LO–BAD_HI MHz，缺省 5150–5350，精简 regulatory.db 的 CN
+# 没有这段）时才锁**。旧版对每个连接都无条件锁 2.4G：手机热点「📱」在 5745 MHz（信道 149，CN 合法）被锁后重连报
+# ssid-not-found，09-27 两次把 WiFi 弄断、退回别的网络，而且该连接从此再也连不上。另外改完重新激活失败时，把这次改的
+# 设置**回滚**并再激活一次，日志记 nmcli 的真实错误行（旧版只记最后一行 "Hint: use journalctl …"，看不出原因）。
+# 覆盖配置：/home/root/.config/wifi-watch.conf（shell 片段，可设 BAND / POWERSAVE / BAD_LO / BAD_HI / INTERVAL；路径可用 WIFI_WATCH_CONF 改）。
 #
-# 省电（2026-09-20，用户反馈整机耗电）：原版每 15 s 都 fork rfkill/nmcli/grep/head/cut，开机一小时子进程累计 16 s CPU
-# （≈0.46%，是 book-serve 空闲开销的 3 倍且不停唤醒 CPU）。而 99% 的时间链路是好的——链路好只需读一个 sysfs 文件
-# （shell 内建 read，零 fork）。所以：carrier=1 走快路径不 fork 任何外部命令；只有 carrier≠1（疑似假死）才走原来的
-# rfkill/nmcli 慢路径；"固化频段/省电"只在 carrier 0→1 跳变（新连接必然伴随）和每 RECHECK 个周期兜底复查时做。
 IFACE=${IFACE:-wlan0}
 INTERVAL=${INTERVAL:-15}
 STRIKES=${STRIKES:-2}
 RECHECK=${RECHECK:-40}   # 快路径下每 RECHECK 个周期兜底复查一次固化（40×15s=10 分钟）
 BAND=${BAND-bg}
+POWERSAVE=${POWERSAVE-2}
+BAD_LO=${BAD_LO:-5150}
+BAD_HI=${BAD_HI:-5350}
 SYSFS=${SYSFS:-/sys/class/net}
+TICKS=${TICKS:-0}        # 测试用：跑满这么多个周期就退出；0=永远
+WIFI_WATCH_CONF=${WIFI_WATCH_CONF:-/home/root/.config/wifi-watch.conf}
+# shellcheck disable=SC1090  # 用户自己的覆盖配置，路径运行时才知道
+[ -r "$WIFI_WATCH_CONF" ] && . "$WIFI_WATCH_CONF"
 strikes=0
 enforced=""
 prev=""
@@ -28,27 +36,57 @@ active_con() {
     nmcli -t -f DEVICE,NAME con show --active 2>/dev/null | grep "^$IFACE:" | head -n 1 | cut -d: -f2-
 }
 
+# 当前连着的 AP 频率（MHz 整数；没连上 / iw 读不到则空）
+cur_freq() {
+    iw dev "$IFACE" link 2>/dev/null | sed -n 's/^[[:space:]]*freq:[[:space:]]*\([0-9][0-9]*\).*/\1/p'
+}
+
+# 重新激活；失败返回非 0，并把 nmcli 的第一行真实错误放进 $err
+reactivate() {
+    out="$(nmcli -w 45 con up "$1" 2>&1)"; rc=$?
+    err="$(printf '%s\n' "$out" | grep -i -m 1 'error')"
+    [ "$rc" -eq 0 ] && [ -z "$err" ]
+}
+
 # 固化频段/省电（每个连接只查一次，避免反复打 nmcli）
 enforce() {
     con="$1"
     [ "$enforced" != "$con" ] || return 0
-    changed=""
-    if [ -n "$BAND" ] && [ "$(nmcli -g 802-11-wireless.band con show "$con" 2>/dev/null)" != "$BAND" ]; then
-        nmcli con modify "$con" 802-11-wireless.band "$BAND" 2>/dev/null && changed="band=$BAND"
-    fi
-    # ⚠ `nmcli -g` 回的是文字 "disable"（不是数字 2）；旧版拿它跟 "2" 比，永远不等 → 每次启动都白白改一遍并 con up 断线重连。
-    case "$(nmcli -g 802-11-wireless.powersave con show "$con" 2>/dev/null)" in
-        2|disable|"2 (disable)") ;;
-        *) nmcli con modify "$con" 802-11-wireless.powersave 2 2>/dev/null && changed="$changed powersave=2" ;;
-    esac
-    if [ -n "$changed" ]; then
-        out="$(nmcli con up "$con" 2>&1 | tail -n 1)"
-        echo "固化 '$con' $changed → 重新激活: $out"
-    fi
     enforced="$con"
+    changed=""; set_band=""; set_ps=""
+    if [ -n "$BAND" ]; then
+        freq="$(cur_freq)"
+        if [ -n "$freq" ] && [ "$freq" -ge "$BAD_LO" ] && [ "$freq" -le "$BAD_HI" ]; then
+            old_band="$(nmcli -g 802-11-wireless.band con show "$con" 2>/dev/null)"
+            if [ "$old_band" != "$BAND" ] && nmcli con modify "$con" 802-11-wireless.band "$BAND" 2>/dev/null; then
+                set_band=1; changed="band=$BAND(AP ${freq}MHz)"
+            fi
+        fi
+    fi
+    if [ -n "$POWERSAVE" ]; then
+        # ⚠ `nmcli -g` 回的是文字（default/ignore/disable/enable 对应 0–3），不是数字；两种写法都认，免得每次启动白改一遍并断线重连。
+        old_ps="$(nmcli -g 802-11-wireless.powersave con show "$con" 2>/dev/null)"
+        case "$POWERSAVE:$old_ps" in
+            "$POWERSAVE:$POWERSAVE"|"$POWERSAVE:$POWERSAVE "*|0:default|1:ignore|2:disable|3:enable) ;;
+            *) if nmcli con modify "$con" 802-11-wireless.powersave "$POWERSAVE" 2>/dev/null; then
+                   set_ps=1; changed="$changed powersave=$POWERSAVE"
+               fi ;;
+        esac
+    fi
+    [ -n "$changed" ] || return 0
+    if reactivate "$con"; then
+        echo "固化 '$con' $changed → 已重新激活"
+        return 0
+    fi
+    echo "固化 '$con' $changed → 重新激活失败：${err:-nmcli 退出码 $rc}；回滚"
+    [ -z "$set_band" ] || nmcli con modify "$con" 802-11-wireless.band "$old_band" 2>/dev/null
+    [ -z "$set_ps" ] || nmcli con modify "$con" 802-11-wireless.powersave "${old_ps:-default}" 2>/dev/null
+    if reactivate "$con"; then echo "回滚 '$con' 后已重新激活"; else echo "回滚 '$con' 后仍未激活：${err:-nmcli 退出码 $rc}"; fi
 }
 
+tick_all=0
 while :; do
+    if [ "$TICKS" -gt 0 ]; then tick_all=$((tick_all + 1)); [ "$tick_all" -le "$TICKS" ] || exit 0; fi
     sleep "$INTERVAL"
     [ -e "$SYSFS/$IFACE" ] || continue
     # carrier：1=有载波，0=NO-CARRIER，读失败（接口 admin down）=空。read 是 shell 内建，不 fork。

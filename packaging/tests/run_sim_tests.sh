@@ -1096,6 +1096,47 @@ check "xovi-reenable.service 有启动超时上限（TimeoutStartSec）" grep -q
 check "fc-cache 在 font-serve、不在网关" bash -c "grep -q '^ExecStartPre=.*fc-cache' enhance/font-serve/font-serve.service && ! grep -q 'fc-cache' gateway/systemd/gateway.service"
 check "xovi-reenable 守卫：xochitl 不在跑（maps 不存在）→执行" bash -c "${GUARD_CMD//MAPS/$R/nonexistent}"
 
+# 11) wifi-watch 行为（2026-09-28）：频段只在 AP 落在 5150–5350 MHz 时才锁 2.4G；重新激活失败就回滚并记真实错误；
+#     省电值可由覆盖配置改。nmcli / iw / rfkill 用本节自带的桩（状态放在 $WW 下的小文件里），脚本本身是真代码。
+section "wifi-watch：按 AP 频点锁频段 / 失败回滚 / 覆盖配置"
+WW="$TMPBASE/ww"; WSTUB="$WW/bin"; mkdir -p "$WSTUB" "$WW/sys/wlan0"
+cat > "$WSTUB/nmcli" <<'STUB'
+#!/bin/sh
+W="$WW_STATE"; echo "nmcli $*" >> "$W/calls"
+[ "$1" = -w ] && shift 2
+case "$1 $2" in
+  "-t -f") echo "wlan0:$(cat "$W/active")" ;;
+  "-g 802-11-wireless.band") cat "$W/band" 2>/dev/null ;;
+  "-g 802-11-wireless.powersave") cat "$W/ps" 2>/dev/null ;;
+  "con modify") case "$4" in *band) printf '%s' "$5" > "$W/band" ;; *powersave) printf '%s' "$5" > "$W/ps" ;; esac ;;
+  "con up") if [ -e "$W/up_fail" ]; then rm -f "$W/up_fail"; printf 'Error: Connection activation failed: No network with SSID found.\nHint: use journalctl -xe\n'; exit 4; fi
+            echo "Connection successfully activated" ;;
+esac
+STUB
+printf '#!/bin/sh\n[ -s "$WW_STATE/freq" ] && echo "Connected to aa:bb" && echo "	freq: $(cat "$WW_STATE/freq").0"\nexit 0\n' > "$WSTUB/iw"
+printf '#!/bin/sh\nexit 0\n' > "$WSTUB/rfkill"
+chmod +x "$WSTUB"/*
+ww_run() { # 频点 旧band 旧省电 [up 失败] [覆盖配置内容]
+    rm -f "$WW"/calls "$WW"/up_fail; echo 1 > "$WW/sys/wlan0/carrier"; echo "📱" > "$WW/active"
+    printf '%s' "$1" > "$WW/freq"; printf '%s' "$2" > "$WW/band"; printf '%s' "$3" > "$WW/ps"
+    [ "${4:-}" = fail ] && : > "$WW/up_fail"
+    printf '%s\n' "${5:-}" > "$WW/conf"
+    WW_STATE="$WW" PATH="$WSTUB:$PATH" SYSFS="$WW/sys" INTERVAL=0 TICKS=2 WIFI_WATCH_CONF="$WW/conf" \
+        sh "$PKG/wifi-watch/wifi-watch.sh" > "$WW/out" 2>&1
+}
+ww_run 5745 "" disable
+check "wifi-watch：AP 在 5745 MHz（信道 149，CN 合法）→ 不锁频段、不重连" test "$(cat "$WW/band")" = "" -a -z "$(grep 'con up' "$WW/calls")"
+ww_run 2437 bg disable
+check "wifi-watch：已是 bg 且省电已关 → 什么都不做" test -z "$(grep -E 'modify|con up' "$WW/calls")" -a ! -s "$WW/out"
+ww_run 5180 "" disable
+check "wifi-watch：AP 在 5180 MHz（设备不许用的段）→ 锁 bg 并重连一次" test "$(cat "$WW/band")" = bg -a "$(grep -c 'con up' "$WW/calls")" = 1 -a -n "$(grep '已重新激活' "$WW/out")"
+ww_run 5180 "" disable fail
+check "wifi-watch：锁频段后重连失败 → 回滚到原值、再连一次、日志记真实错误行" test "$(cat "$WW/band")" = "" -a "$(grep -c 'con up' "$WW/calls")" = 2 -a -n "$(grep 'No network with SSID found' "$WW/out")" -a -n "$(grep '回滚.*已重新激活' "$WW/out")"
+ww_run 2437 bg disable "" "POWERSAVE=3"
+check "wifi-watch：覆盖配置 POWERSAVE=3 → 改成省电开并重连；频段不动" test "$(cat "$WW/ps")" = 3 -a "$(cat "$WW/band")" = bg -a "$(grep -c 'con up' "$WW/calls")" = 1
+ww_run 2437 bg default "" "POWERSAVE="
+check "wifi-watch：覆盖配置 POWERSAVE= 置空 → 不碰省电设置" test -z "$(grep -E 'modify|con up' "$WW/calls")"
+
 # 守卫：真实 HOME 下不该出现任何测试产物
 GUARD_AFTER=""
 for g in $(guard_paths); do [ -e "$g" ] && GUARD_AFTER="$GUARD_AFTER $g"; done
