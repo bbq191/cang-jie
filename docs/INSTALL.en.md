@@ -76,7 +76,7 @@ Every **step name** below can be used with `--skip`; the matching script `packag
 | `chrony-boot-wakelock` | Keeps the device from auto-suspending for a short while after boot (released once synced, at most 120 s) so the first time sync isn't interrupted | — |
 | `timezone-cn` | Sets the default time zone to Asia/Shanghai | — |
 | `battop` | Battery-drain sampling service; started after install but **not started at boot** (on purpose, see issue ⑥). With dm-verity on and no earlier install, the program is put in place but its unit can't go into `/usr`, so the summary lists it as "prerequisite not met" | — |
-| `wifi-watch` | WiFi stall watchdog: reconnects when the link dies; pins the 2.4 GHz band only when the access point sits on a 5 GHz channel the device may not use (5150–5350 MHz); turns off WiFi power saving. Override in `~/.config/wifi-watch.conf` on the device (`BAND=`, `POWERSAVE=`) | — |
+| `wifi-watch` | WiFi stall watchdog: reconnects when the link dies; pins the 2.4 GHz band only when the access point sits on a 5 GHz channel the device may not use (5150–5350 MHz); turns WiFi power saving on (since 2026-09-28; measured about 37% lower idle current). Override in `~/.config/wifi-watch.conf` on the device (`BAND=`, `POWERSAVE=`) | — |
 | `xovi-persist` | Re-activates xovi automatically after boot, so you don't have to after a restart | xovi |
 | `hl-snap` | The highlighter snaps precisely to Chinese text instead of "a short stroke grabs the whole line"; files only | xovi |
 | `handwriting-stroke` | Tunes handwriting stroke width by pen angle and speed (off by default; turn it on under "Manage → Lab" on the web page); files only | xovi |

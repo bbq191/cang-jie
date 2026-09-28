@@ -5,7 +5,7 @@
 # （NetworkManager 仍标 connected、永不自愈）时 `nmcli con up`。⚠ `nmcli con up` 对已激活连接会先断再连，所以判据必须是真 NO-CARRIER。
 # 做法：每 INTERVAL 秒看一次；wlan0 存在、rfkill 未软锁、NM 有 wifi 连接、却连续 STRIKES 次 NO-CARRIER → `nmcli con up`。
 # 只在"NM 以为连着但链路死了"时动手；用户关 WiFi（rfkill/NM 断开）不干预。日志 journalctl -u wifi-watch。
-# 固化（用户 2026-09-06 拍板）：给当前活动的 WiFi 连接补 `powersave=$POWERSAVE`（缺省 2=关），必要时补
+# 固化（用户 2026-09-06 拍板）：给当前活动的 WiFi 连接补 `powersave=$POWERSAVE`（缺省 3=开，见下），必要时补
 # `802-11-wireless.band=$BAND`（缺省 bg=2.4G），并重新激活一次——新 SSID / 在设置里重连后自动生效。BAND= / POWERSAVE= 置空即不管。
 # ⚠ 2026-09-28 改：频段**只在 AP 真落在设备不许用的 5G 段（BAD_LO–BAD_HI MHz，缺省 5150–5350，精简 regulatory.db 的 CN
 # 没有这段）时才锁**。旧版对每个连接都无条件锁 2.4G：手机热点「📱」在 5745 MHz（信道 149，CN 合法）被锁后重连报
@@ -15,6 +15,9 @@
 # 横幅用——酒店这类要网页登录的 WiFi 上，xochitl 每约 50 秒取一次云端令牌、每次卡满 30 秒超时，设备因此整段不睡（09-27
 # 真机：30 分钟 100% 醒着，约 17%/h），而 reMarkable 上没法完成网页登录。只在"新连上"和"上次不通时每 RECHECK 周期"探，
 # 链路正常且上次通了就不再探；关 WiFi 时删掉状态文件。PROBE_URL= 置空即不探。
+# 省电缺省改开（2026-09-28 真机对照）：本机热点、2.4G、设备空闲各 20 分钟，关省电平均 168 mA、开省电 106 mA（−37%），
+# 醒着占比 48%→42%，两段都零掉线。当初关省电是按"连上 60 秒必掉是省电模式所致"的首轮判断，后查明真凶是 5G 信道 36
+# 被 regdomain 判非法（上面频段那条），关省电从来不是必要条件。单次对照、置信度中；某个网络上开了省电又掉线，就在覆盖配置里写 POWERSAVE=2。
 # 覆盖配置：/home/root/.config/wifi-watch.conf（shell 片段，可设 BAND / POWERSAVE / BAD_LO / BAD_HI / INTERVAL；路径可用 WIFI_WATCH_CONF 改）。
 #
 IFACE=${IFACE:-wlan0}
@@ -22,7 +25,7 @@ INTERVAL=${INTERVAL:-15}
 STRIKES=${STRIKES:-2}
 RECHECK=${RECHECK:-40}   # 快路径下每 RECHECK 个周期兜底复查一次固化（40×15s=10 分钟）
 BAND=${BAND-bg}
-POWERSAVE=${POWERSAVE-2}
+POWERSAVE=${POWERSAVE-3}
 BAD_LO=${BAD_LO:-5150}
 BAD_HI=${BAD_HI:-5350}
 SYSFS=${SYSFS:-/sys/class/net}
