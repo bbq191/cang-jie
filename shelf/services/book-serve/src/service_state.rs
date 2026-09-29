@@ -69,7 +69,8 @@ impl State {
         let reading_direction = Arc::new(crate::reading_direction::ReadingDirection::new(&paths.xochitl_dir(), &books_state.join("rtl-overrides.json")));
         let staging = Staging::new(paths.staging_dir(), xochitl.clone(), cfg.native_upload_limit_bytes())
             .with_comic_margins(comic_margins.clone())
-            .with_reading_direction(reading_direction.clone());
+            .with_reading_direction(reading_direction.clone())
+            .with_cover_fetch();
         let bus = Arc::new(EventBus::new());
         let agent_failures = Arc::new(AgentFailures::new(&books_state, Some(bus.clone())));
         let trash = TrashQueue::new(&books_state, &paths.xochitl_dir()).with_failures(agent_failures.clone());

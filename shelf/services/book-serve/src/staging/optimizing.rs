@@ -127,14 +127,21 @@ impl Staging {
         // 门校验不通过就该当成"优化失败"处理，原书留在母版库原样不动，不能让一份带断链引用的
         // 半成品覆盖掉用户原来能正常读的书。`check_epub_file` 走 skeleton（图片留空），不会把
         // 大漫画整本读回内存、不重蹈流式优化本来要避开的 OOM。
-        let rep = bookconv::util::produce_then_replace(&tmp, &p, |t| {
-            let rep = optimize::StreamingOptimize::new(&p, t, &opts).title(canon_title.as_deref()).cancel(&cancel).run(&mut on_progress)?;
+        // 书里没有封面：先联网补一张（`cover_fetch`，2026-09-29 移植自 sheng-ren），补好的临时副本当优化的输入。
+        let (with_cover, cover_note) = self.with_fetched_cover(name, &p);
+        let src = with_cover.as_deref().unwrap_or(&p);
+        let result = bookconv::util::produce_then_replace(&tmp, &p, |t| {
+            let rep = optimize::StreamingOptimize::new(src, t, &opts).title(canon_title.as_deref()).cancel(&cancel).run(&mut on_progress)?;
             let check = bookconv::check::check_epub_file(t).map_err(|e| format!("质量门校验失败: {e}"))?;
             if !check.ok {
                 return Err(format!("优化产物未通过质量门，{}", check.errors.join("；")));
             }
             Ok(rep)
-        })?;
+        });
+        if let Some(c) = &with_cover {
+            let _ = std::fs::remove_file(c);
+        }
+        let rep = result?;
         // 已有的长下载名在这里一并规范成 `书名 - N卷`；目标已存在（重复的同一卷）就保持原名，不覆盖。
         let canon = canonical_staged_name(name);
         let land = self.land_guard();
@@ -148,7 +155,35 @@ impl Staging {
             name.to_string()
         };
         drop(land);
-        Ok(format!("已优化《{shown}》{}", optimize_note(&rep)))
+        Ok(format!("已优化《{shown}》{}{cover_note}", optimize_note(&rep)))
+    }
+
+    /// 母版里的 EPUB 没有封面（没有有效的封面声明、前几页里也没有图）时联网找一张（见 [`crate::cover_fetch`]），
+    /// 写一份只在 OPF 里声明了封面的临时副本（`bookconv::opfmeta::edit_epub`：不加封面页、正文不变）。
+    /// 返回（副本路径, 回执尾注）；有封面、没找到、没查成都返回 `None`，照原书优化。
+    fn with_fetched_cover(&self, name: &str, p: &Path) -> (Option<PathBuf>, String) {
+        use bookconv::opfmeta::{self, DcField, Edits};
+        use crate::cover_fetch::Outcome;
+        if !self.fetch_covers || bookconv::epubzip::cover_image_of(p).is_some() {
+            return (None, String::new());
+        }
+        let fields = opfmeta::read_epub(p).unwrap_or_default();
+        let field = |f: DcField| fields.iter().find(|(x, _)| *x == f).map(|(_, v)| v.clone()).unwrap_or_default();
+        let title = field(DcField::Title).into_iter().next().unwrap_or_default();
+        let stem = name.strip_suffix(".epub").unwrap_or(name);
+        let (bytes, how) = match crate::cover_fetch::find_cover(&title, stem, &field(DcField::Creator)) {
+            Outcome::Found(bytes, how) => (bytes, format!("豆瓣/原作：{how}")),
+            Outcome::Generated(bytes, how) => (bytes, how),
+            Outcome::Skipped(why) => return (None, format!("；书里没有封面，{why}")),
+        };
+        let tmp = p.with_file_name(format!(".{name}.cover.tmp"));
+        match opfmeta::edit_epub(p, &tmp, &Edits { cover: Some(bytes), ..Default::default() }) {
+            Ok(_) => (Some(tmp), format!("；补了封面（{how}）")),
+            Err(e) => {
+                let _ = std::fs::remove_file(&tmp);
+                (None, format!("；补封面失败：{e}"))
+            }
+        }
     }
 
     /// 入库 PDF 的「优化」分支：`bookconv::pdf_ingest::classify_pdf` 先判漫画/无文字层/有文字层——

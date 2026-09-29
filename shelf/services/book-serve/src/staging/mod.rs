@@ -156,6 +156,8 @@ pub struct Staging {
     land: Arc<std::sync::Mutex<()>>,
     /// 阅读方向手动清单（可选：测试里不装）。按书设了方向、且知道落库 uuid 时同步写进/移出，见 [`Self::set_direction`]。
     reading_direction: Option<Arc<crate::reading_direction::ReadingDirection>>,
+    /// 优化 EPUB 前书里没有封面就联网补一张（[`crate::cover_fetch`]；测试里不开，免得单测联网）。
+    fetch_covers: bool,
 }
 
 /// 上传模板适配：母版库作为 [`AssetStore`]——扩展名门＝书籍格式白名单，install＝同分区 rename 入库。
@@ -227,7 +229,13 @@ impl Staging {
             comic_margins: None,
             land: Arc::new(std::sync::Mutex::new(())),
             reading_direction: None,
+            fetch_covers: false,
         }
+    }
+    /// 打开"没有封面就联网补"（`State::new` 用）。
+    pub fn with_cover_fetch(mut self) -> Staging {
+        self.fetch_covers = true;
+        self
     }
     /// 接上阅读方向手动清单（`State::new` 用）。
     pub fn with_reading_direction(mut self, rd: Arc<crate::reading_direction::ReadingDirection>) -> Staging {
