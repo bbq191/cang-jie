@@ -59,9 +59,13 @@ impl BookMap {
     /// 分组项是 `<span>`（没有链接）时，二级条目没有父条目，它的章号按"前面有几个 1 级"算、标题却是它自己——跟
     /// `chapters()` 对不上（下标越界或撞上别的章），这些条目在两处投影里找不到自己的章，永远生成/导出不出来
     /// （2026-09-25 第四轮审计）。两处现在用同一个判据；标准嵌套目录（每个二级都有 1 级父条目）结果不变。
+    ///
+    /// 本页所在的 spine 文件**不在目录里**时，往前找最近一个在目录里的 spine 文件，归到它那一章（2026-09-29）：书架优化的
+    /// 章节分页把一章拆成多个文件，章标题独占一份、正文另起一份，正文那份没有自己的目录条目；Calibre 按大小切出来的
+    /// `index_split_NNN` 同理。此前这些页一律没有章。封面等第一个目录条目之前的页仍是 `None`。
     pub fn chapter_of(&self, page: usize) -> Option<Chapter<'_>> {
-        let sec = self.section_of(page)?;
-        let i = self.toc.entries.iter().position(|e| e.file == sec.file)?;
+        let upto = self.sections.iter().take_while(|s| (s.start_page as usize) <= page).count();
+        let i = self.sections[..upto].iter().rev().find_map(|sec| self.toc.entries.iter().position(|e| e.file == sec.file))?;
         let top = self.toc.top_ancestor(i);
         let index = self.toc.entries.iter().take(top).filter(|e| e.parent.is_none()).count();
         Some(Chapter { index, title: &self.toc.entries[top].title, subhead: (i != top).then_some(self.toc.entries[i].title.as_str()) })
@@ -136,6 +140,28 @@ mod tests {
         assert_eq!(m.chapter_of(25), Some(Chapter { index: 1, title: "Book One", subhead: Some("Chapter Two") }));
         assert_eq!(m.chapter_of(99), Some(Chapter { index: 2, title: "Book Two", subhead: Some("Chapter Eleven") }));
         assert_eq!(m.chapters(), vec![(0, "Dedication"), (1, "Book One"), (2, "Book Two")]);
+    }
+
+    /// 不在目录里的 spine 文件（章节分页拆出来的正文份、Calibre 按大小切的份）归到前面最近一个在目录里的文件那一章。
+    #[test]
+    fn untocced_split_files_belong_to_preceding_chapter() {
+        let nav = r#"<ol><li><a href="c1.xhtml">第一章</a><ol><li><a href="c1_2.xhtml#s2">二</a></li></ol></li><li><a href="c2.xhtml">第二章</a></li></ol>"#;
+        let secs = vec![
+            Section { file: "cover.xhtml".into(), start_page: 0 },
+            Section { file: "c1.xhtml".into(), start_page: 1 },
+            Section { file: "c1_1.xhtml".into(), start_page: 2 },
+            Section { file: "c1_2.xhtml".into(), start_page: 6 },
+            Section { file: "c1_3.xhtml".into(), start_page: 9 },
+            Section { file: "c2.xhtml".into(), start_page: 12 },
+            Section { file: "c2_1.xhtml".into(), start_page: 13 },
+        ];
+        let m = BookMap::new(secs, Toc::parse(Some(nav), None));
+        assert_eq!(m.chapter_of(0), None, "第一个目录条目之前的页没有章");
+        assert_eq!(m.chapter_of(1), Some(Chapter { index: 0, title: "第一章", subhead: None }));
+        assert_eq!(m.chapter_of(3), Some(Chapter { index: 0, title: "第一章", subhead: None }), "章标题页后面的正文份");
+        assert_eq!(m.chapter_of(7), Some(Chapter { index: 0, title: "第一章", subhead: Some("二") }));
+        assert_eq!(m.chapter_of(10), Some(Chapter { index: 0, title: "第一章", subhead: Some("二") }), "节后面没进目录的份跟着这一节");
+        assert_eq!(m.chapter_of(14), Some(Chapter { index: 1, title: "第二章", subhead: None }));
     }
 
     /// 回归：分组项是 `<span>` 的目录，章号与 `chapters()` 必须对得上（此前越界，条目永远投影不出去）。
