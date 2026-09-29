@@ -13,7 +13,7 @@ use bookconv::wash::WashOpts;
 use serde::Serialize;
 use rmsvc_core::asset::{AssetItem, AssetStore};
 use rmsvc_core::formats::{self, BOOK_EXTS};
-use rmsvc_core::fs::{plain_name, unique_path, write_atomic};
+use rmsvc_core::fs::{plain_name, same_content, unique_path, write_atomic, Content};
 use rmsvc_core::xochitl::{Delivery, Xochitl};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

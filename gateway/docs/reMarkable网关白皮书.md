@@ -252,6 +252,7 @@
 |---|---|
 | `GET /api/device/health[?fresh=1]` | 「管理 → 设备健康」卡片的数据；结果缓存 15 秒，刷新按钮带 `fresh=1` 现采 |
 | `GET /api/device/ota[?fresh=1]` | 页头横幅：`{needsReinstall, reasons, missingUnits, recovery, firmware}`；缓存 30 秒 |
+| `GET /api/device/wifi` | 页头"WiFi 上不了外网"横幅（2026-09-28）：读 `wifi-watch` 连上新网络时探测写下的 `$XDG_STATE_HOME/shelf/wifi-connectivity.json`，`{ssid, state: ok\|portal\|none, code, at}`；文件不在（WiFi 关着 / 没探过）→ `{state:"unknown"}`。只读一个小文件，不缓存 |
 | `GET /api/device/cleanup` | 可清理的遗留文件 + xochitl 书库里的 EPUB/PDF（只读） |
 | `POST /api/device/cleanup/delete {area, names}` | 逐个删除遗留文件，逐项回报成败 |
 

@@ -74,7 +74,7 @@
 | `chrony-boot-wakelock` | 开机头一小段（同步成功就放，最多 120 秒）不让设备自动休眠，免得打断第一次校时 | — |
 | `timezone-cn` | 默认时区设为 Asia/Shanghai | — |
 | `battop` | 电池耗电诊断的采样服务；装完启动，但**不随开机自启**（有意的，见问题⑥）。dm-verity 开着且以前没装过时，程序放好了但服务单元进不了 `/usr`，汇总记"前置条件不满足" | — |
-| `wifi-watch` | WiFi 假死看护：检测到断链自动重连，并固定 2.4G 频段、关闭 WiFi 省电 | — |
+| `wifi-watch` | WiFi 假死看护：检测到断链自动重连；连上的 AP 在设备不许用的 5G 信道（5150–5350 MHz）时才锁 2.4G；打开 WiFi 省电（09-28 起，实测空闲电流约降 37%）。可在设备 `~/.config/wifi-watch.conf` 里改（`BAND=`、`POWERSAVE=`） | — |
 | `xovi-persist` | 开机后自动让 xovi 重新生效，重启设备后不用手动补 | xovi |
 | `hl-snap` | 荧光笔划中文"划哪吸哪"，不再"划一小段吸整行"；只落盘 | xovi |
 | `handwriting-stroke` | 按笔尖角度和运笔速度优化手写笔画粗细（默认关，网页「管理 → 实验室」里开）；只落盘 | xovi |

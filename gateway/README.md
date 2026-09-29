@@ -35,7 +35,7 @@
 | 服务发现 / 管理 | `GET /api/services` · `GET /api/manage` · `GET /api/foundation` · `POST /api/manage/{seg}/{start\|stop\|uninstall}` |
 | 事件 | `GET /api/events`（SSE） |
 | 系统增强 | `GET /api/enhance/status` · `PUT /api/enhance/qol`（`hlSnapCjk` / `hwStrokeEnabled` / `notesImportMdEnabled` / `comicMinMargin` / `tapPageTurn` / `rtlPageTurn`）· `POST /api/enhance/battop/{start\|stop}` · `GET /api/enhance/battop/summary` |
-| 设备健康 | `GET /api/device/health[?fresh=1]` · `GET /api/device/ota` · `GET /api/device/cleanup` · `POST /api/device/cleanup/delete {area, names}` |
+| 设备健康 | `GET /api/device/health[?fresh=1]` · `GET /api/device/ota` · `GET /api/device/wifi` · `GET /api/device/cleanup` · `POST /api/device/cleanup/delete {area, names}` |
 | 批量队列 | `POST /api/batch {action: optimize\|deliver\|koreader, names? \| all:true, folder?}` → `{queued, skipped}` · `GET /api/batch/status` · `POST /api/batch/stop` |
 | 闸门 | `GET /api/budget/status` → `{pending, active}` · `POST /api/budget/cancel {name}`（只对还在排队的生效） |
 | 反向代理 | `GET/POST/PUT/DELETE /api/<seg>/*`，`<seg>` ∈ `books` `koreader` `fonts` `wallpapers` `ink` `transcribe` `mind` `notes` |

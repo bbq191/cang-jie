@@ -838,7 +838,7 @@ qmd 和 xovi 扩展只在 xochitl **启动时**注入，所以改了要让 xochi
 
 - **原生休眠屏**：`xochitl.conf [General]` 的隐藏键 `SleepScreenPath=<png 绝对路径>`；自定义路径时图片铺满整屏、插画卡自动隐藏，**每次休眠按路径重读**。用户两次休眠对照确认轮换生效。
 - **WiFi 60 秒必掉**：首判省电（次要因素）被推翻；真凶是连上后设国家码 CN、**恰好 60 秒**后内核 cfg80211 宽限到期，主动断开落在"新规则不允许的信道"上的连接——设备精简版 `regulatory.db` 的 CN 没有 5150–5350，路由 5G 用信道 36 → 断开 → 回滚 → 重连 → 无限循环。锁 2.4G 后 40/40 ping 零掉线；`regulatory.db` 带签名换不了。
-- **常驻看护** `wifi-watch`：连着但连续两次 NO-CARRIER 才重连；补齐 `band=bg` 与 `powersave=2`；链路正常零 fork（§03bm）。
+- **常驻看护** `wifi-watch`：连着但连续两次 NO-CARRIER 才重连；补齐省电设置（09-28 起缺省 `powersave=3` 开：本机热点 2.4G 空闲各 20 分钟对照，关 168 mA → 开 106 mA，两段零掉线；此前的 `powersave=2` 关是按已被推翻的"省电致 60 秒掉线"判断加的）；链路正常零 fork（§03bm）。**2026-09-28 改**：`band=bg` 只在连上的 AP 落在 5150–5350 MHz（精简 regulatory.db 的 CN 没有这段）时才锁——旧版无条件锁，手机热点在 5745 MHz（信道 149，合法）被锁后 `ssid-not-found`，09-27 两次把 WiFi 弄断，且该连接从此连不上；重新激活失败时回滚本次改动并记 nmcli 真实错误行；`~/.config/wifi-watch.conf` 可覆盖 `BAND`/`POWERSAVE`。
 - **时钟**：chrony 默认 Google 服务器国内不通 → 改 rootfs 底层 `/etc/chrony.conf`（`chrony-cn.sh`；改底层 /etc 要先 `remount,rw` 再 bind，overlay 缓存要再 `cp` 一份）。
 - **"时不时连不上"另一半**：不插 USB 空闲几秒就进深度休眠，WiFi 随之断——插 USB 供电。
 

@@ -2,6 +2,8 @@
 //!
 //! - [`health`]：「管理 → 设备健康」卡片，`GET /api/device/health`（用户打开/点刷新才采集，结果缓存 [`HEALTH_TTL`]；`?fresh=1` 跳过缓存）。
 //! - [`ota`]：页头"需要重新安装"横幅，`GET /api/device/ota`（固件哈希启动后后台只算一次；其余判据现查、缓存 [`ota::CHECK_TTL`]）。
+//! - [`wifi`]：页头"这个 WiFi 上不了外网"横幅，`GET /api/device/wifi`（读 `packaging/wifi-watch` 连上新网络时探测写下的
+//!   状态文件，2026-09-28）。
 //! - [`cleanup`]：清理遗留数据，`GET /api/device/cleanup` 列出、`POST /api/device/cleanup/delete {area, names}` 逐个删除；
 //!   xochitl 书库里的重复副本只列出，删走 book-serve 的回收站队列（前端直接调 `/api/books/trash/add`）。
 //!
@@ -51,6 +53,23 @@ pub fn ota_status(paths: &Paths, req: &mut Request<'_>) -> ApiResult {
     Ok(Reply::ok(&v))
 }
 
+/// wifi-watch 写的上网探测结果（`$XDG_STATE_HOME/shelf/wifi-connectivity.json`，设备上即
+/// `/home/root/.local/state/shelf/`）：`{"ssid","state":"ok|portal|none","code","at"}`。文件不在（WiFi 关着、还没探过、
+/// 或 wifi-watch 是旧版）→ `{"state":"unknown"}`，前端不显示横幅。只读一个小文件，不缓存。
+pub fn wifi(paths: &Paths, _req: &mut Request<'_>) -> ApiResult {
+    Ok(Reply::ok(&wifi_status(&paths.state_dir().join(WIFI_STATE_FILE))))
+}
+
+const WIFI_STATE_FILE: &str = "wifi-connectivity.json";
+
+fn wifi_status(file: &Path) -> serde_json::Value {
+    std::fs::read_to_string(file)
+        .ok()
+        .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
+        .filter(|v| v.get("state").and_then(|s| s.as_str()).is_some())
+        .unwrap_or_else(|| serde_json::json!({"state": "unknown"}))
+}
+
 pub fn cleanup_list(paths: &Paths, _req: &mut Request<'_>) -> ApiResult {
     let loaded = crate::enhance::xochitl_loaded(paths);
     Ok(Reply::ok(&serde_json::json!({
@@ -88,6 +107,18 @@ mod tests {
         let mut b: &[u8] = body;
         let mut r = Request { method: Method::Post, path: "/api/device/cleanup/delete".into(), query: HashMap::new(), params: HashMap::new(), content_type: "application/json".into(), content_length: None, headers: vec![], body: &mut b };
         cleanup_delete(paths, &mut r)
+    }
+
+    #[test]
+    fn wifi_status_reads_file_or_reports_unknown() {
+        let t = tempfile::tempdir().unwrap();
+        let f = t.path().join(WIFI_STATE_FILE);
+        assert_eq!(wifi_status(&f)["state"], "unknown", "文件不在");
+        std::fs::write(&f, "{坏").unwrap();
+        assert_eq!(wifi_status(&f)["state"], "unknown", "写坏了也不报错");
+        std::fs::write(&f, r#"{"ssid":"IHG \"Free\"","state":"portal","code":"302","at":1}"#).unwrap();
+        let v = wifi_status(&f);
+        assert_eq!((v["state"].as_str(), v["ssid"].as_str()), (Some("portal"), Some("IHG \"Free\"")));
     }
 
     #[test]
