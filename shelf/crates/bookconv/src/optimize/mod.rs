@@ -317,6 +317,7 @@ impl<'a> EntryXform<'a> {
     fn transform_html_chapter(&mut self, text: &str, name: &str) -> Vec<u8> {
         let t = crate::htmlproc::break_footnote_cycles(text);
         let t = crate::htmlproc::fix_duokan_markers(&t);
+        let t = crate::htmlproc::number_icon_note_links(&t);
         let t = fix_cover_aspect(&t);
         let t = svg_cover_to_img(&t);
         let t = if self.skip_notes.contains(name) { t } else { crate::htmlproc::preserve_relink_footnotes(&t, name, self.aside_index, self.footnote) };

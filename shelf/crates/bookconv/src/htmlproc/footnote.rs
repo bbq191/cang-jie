@@ -145,27 +145,75 @@ fn footnote_block(frag: &str, inner: &str, popup: bool) -> String {
     }
 }
 
-/// 标号里的 `<img>`（多看等书用小图标当注释标号）加上 `cj-noteicon` 类：样式表把它限成一个字高
-/// （xochitl、KOReader 对没写宽高的 `<img>` 都按图片本身的像素画，80×80 的图标在正文里撑成一大块，真机《甲午：摇摆的战争》）。
-fn mark_note_icons(content: &str) -> String {
-    let mut edits = Vec::new();
-    for t in html::tags(content) {
-        if t.kind == html::TagKind::Close || !t.is("img") {
+/// 标号里**只有图**、没有文字（多看等书用小图标当注释标号）时，换成数字；其余标号原样返回。
+///
+/// 为什么不保留图标（2026-09-29 真机《注释探针》，用户定用上标数字）：xochitl 里**只有图、没有文字的链接点了没反应**
+/// （80/32/24/16 像素、带不带 `<sup>` 都一样；链接里有文字的才能跳），图标还按原图像素画、外链 CSS 的 `height:1em`
+/// 限不住（80×80 的图标撑成一大块，真机《甲午：摇摆的战争》）。数字按 [`note_number`] 取。
+fn icon_only_to_number(content: &str, note_html: &str, counter: &mut usize) -> String {
+    let has_img = html::tags(content).any(|t| t.kind != html::TagKind::Close && (t.is("img") || t.is("image")));
+    if !has_img || !html::plain_text(content).trim().is_empty() {
+        return content.to_string();
+    }
+    *counter += 1;
+    xml_escape(&note_number(note_html).unwrap_or_else(|| counter.to_string()))
+}
+
+/// 通用兜底：同文件链接 `<a href="#x">` 里**只有图、没有文字**，而且链接或图带注释类（`note`/`footnote`/`noteicon`），或目标元素
+/// 本身有注释语义（[`note_semantic`]）→ 图换成上标数字（编号见 [`note_number`]，按目标注释取，没有才按本章顺序数）。
+/// 给 [`fix_duokan_markers`] 认不出的形态用：别家书的图标注释、**本优化器上一版的产物**（v16 已剥掉 `duokan-footnote` 类、
+/// 图标上只剩 `cj-noteicon`，重优化时靠这里改）。`<sup>` 已包着链接时不再套一层。
+pub fn number_icon_note_links(html_text: &str) -> String {
+    let tags: Vec<html::Tag> = html::tags(html_text).collect();
+    let mut counter = 0usize;
+    let mut edits: Vec<(usize, usize, String)> = Vec::new();
+    for e in a_elems(&tags) {
+        let open = &html_text[e.start..e.open_end];
+        let Some(frag) = html::attr_value(open, "href").and_then(|h| h.strip_prefix('#')).filter(|f| !f.is_empty()) else { continue };
+        let content = &html_text[e.open_end..e.close_start];
+        let has_img = html::tags(content).any(|t| t.kind != html::TagKind::Close && (t.is("img") || t.is("image")));
+        if !has_img || !html::plain_text(content).trim().is_empty() {
             continue;
         }
-        let open = &content[t.start..t.end];
-        let new = match html::attrs(open).into_iter().find(|a| a.is("class")) {
-            Some(a) => html::set_attr(open, "class", &format!("{} cj-noteicon", a.value)),
-            None => format!("<img class=\"cj-noteicon\"{}", &open[4..]),
-        };
-        edits.push((t.start, t.end, new));
+        let noteish = |tag: &str| html::attr_value(tag, "class").is_some_and(|v| v.to_ascii_lowercase().contains("note"));
+        let img_noteish = html::tags(content).any(|t| t.kind != html::TagKind::Close && noteish(&content[t.start..t.end]));
+        let target_open = tags.iter().find(|t| t.is_start() && html::attr_value(&html_text[t.start..t.end], "id") == Some(frag)).map(|t| &html_text[t.start..t.end]);
+        if !(noteish(open) || img_noteish || target_open.is_some_and(note_semantic)) {
+            continue;
+        }
+        counter += 1;
+        let num = note_number(element_by_id(html_text, frag)).unwrap_or_else(|| counter.to_string());
+        let in_sup = e.open_ix.checked_sub(1).is_some_and(|k| tags[k].kind == html::TagKind::Open && tags[k].is("sup") && html_text[tags[k].end..e.start].trim().is_empty());
+        let label = if in_sup { xml_escape(&num) } else { format!("<sup>{}</sup>", xml_escape(&num)) };
+        edits.push((e.open_end, e.close_start, label));
     }
     if edits.is_empty() {
-        content.to_string()
+        html_text.to_string()
     } else {
-        html::apply_edits(content, edits)
+        html::apply_edits(html_text, edits)
     }
 }
+
+/// 注释正文开头写的编号：`[14]`、`［14］`、`【14】`、`(14)`、`14.`、`14、`、`14．`——作者给的编号，全书连续，比按章数出来的准。
+/// 必须带括号或编号后的标点，免得把"1886年……"的年份当编号。
+fn note_number(note_html: &str) -> Option<String> {
+    static R: OnceLock<Regex> = OnceLock::new();
+    let t = html::plain_text(note_html);
+    let c = R.get_or_init(|| Regex::new(r"^\s*(?:[\[［【(（]\s*(\d{1,4})\s*[\]］】)）]|(\d{1,4})\s*[.、．])").unwrap()).captures(&t)?;
+    c.get(1).or_else(|| c.get(2)).map(|m| m.as_str().to_string())
+}
+
+/// 同文件里 `id="frag"` 那个元素的内容（[`fix_duokan_markers`] 取注释编号用）；找不到返回空串。
+fn element_by_id<'a>(html_text: &'a str, frag: &str) -> &'a str {
+    let tags: Vec<html::Tag> = html::tags(html_text).collect();
+    let Some(i) = tags.iter().position(|t| t.is_start() && html::attr_value(&html_text[t.start..t.end], "id") == Some(frag)) else { return "" };
+    let open = &tags[i];
+    match html::find_close(html_text, open.end, open.name) {
+        Some(close) => &html_text[open.end..close.start],
+        None => "",
+    }
+}
+
 
 /// 根元素 `<html>` 上没声明 `epub` 命名空间就补上（用了 `epub:type` 的文件不声明就不是合法 XML）。
 pub(crate) fn ensure_epub_ns(doc: &str) -> String {
@@ -315,9 +363,11 @@ pub fn fix_duokan_markers(html: &str) -> String {
                     let num = duokan_note_num(img_inner).unwrap_or_else(|| local.to_string());
                     format!("<a href=\"#{frag}\"{id_attr}><sup>{}</sup></a>", xml_escape(&num))
                 } else {
-                    // 真图标：原样保留（不再换成上标数字——那是多出来的字，用户 2026-09-29 定），只加 `cj-noteicon` 类限成一个字高
-                    // （没写宽高的 80×80 图标在 xochitl 上撑成一大块，真机《甲午：摇摆的战争》）
-                    format!("<sup><a href=\"#{frag}\"{id_attr}>{}</a></sup>", mark_note_icons(&format!("<img{}/>", img_inner.trim_end().trim_end_matches('/'))))
+                    // 真图标：换成上标数字（xochitl 里纯图标链接点不了、图标还按原图像素画，见 [`icon_only_to_number`]）。
+                    // 编号取目标注释开头的 `[14]`，其次 alt 里的"注释N"，都没有才按本章顺序数。
+                    local += 1;
+                    let num = note_number(element_by_id(html, &frag)).or_else(|| duokan_note_num(img_inner)).unwrap_or_else(|| local.to_string());
+                    format!("<a href=\"#{frag}\"{id_attr}><sup>{}</sup></a>", xml_escape(&num))
                 }
             }
             _ => whole.to_string(),
@@ -358,7 +408,7 @@ pub(super) fn inline_note_text(html: &str) -> String {
 /// - `Inline`：注释文字就地内联〔…〕（只在测试里用）。
 ///
 /// marker 按元素认（[`a_elems`]，与 [`referenced_note_keys`] 同一口径）：`<sup>` 整个包住的 noteref、其余 noteref、跨文件普通 `<a>`。
-/// 2026-09-29 起不再在标号后追加 `[N]`（用户定：严格说多了字符）。
+/// 2026-09-29 起不再在标号后追加 `[N]`（用户定：严格说多了字符）；只有图、没有文字的标号换成上标数字（xochitl 点不了纯图链接）。
 pub fn preserve_relink_footnotes(html_text: &str, name: &str, index: &std::collections::HashMap<NoteKey, String>, mode: crate::optimize::FootnoteMode) -> String {
     use crate::optimize::FootnoteMode;
     if index.is_empty() {
@@ -368,6 +418,7 @@ pub fn preserve_relink_footnotes(html_text: &str, name: &str, index: &std::colle
     let noteref = if popup { " epub:type=\"noteref\"" } else { "" };
     let mut appended: Vec<String> = Vec::new();
     let mut seen: std::collections::HashSet<NoteKey> = std::collections::HashSet::new();
+    let mut icon_counter = 0usize;
 
     let mut make = |frag: &str, key: &NoteKey, text: &str, content: &str, sup_wrapped: bool| -> String {
         if mode == FootnoteMode::Inline {
@@ -380,8 +431,9 @@ pub fn preserve_relink_footnotes(html_text: &str, name: &str, index: &std::colle
             // (注释回链)，加了也点不了、反成死链迷惑人。返回靠阅读器原生。
             appended.push(footnote_block(&key.1, &deprefix_footnote_hrefs(text), popup));
         }
-        let link = format!("<a href=\"#{frag}\"{noteref}>{}</a>", mark_note_icons(content));
-        if sup_wrapped {
+        let label = icon_only_to_number(content, text, &mut icon_counter);
+        let link = format!("<a href=\"#{frag}\"{noteref}>{label}</a>");
+        if sup_wrapped || label != content {
             format!("<sup>{link}</sup>")
         } else {
             link
@@ -484,10 +536,10 @@ mod footnote_inline_tests {
 
     #[test]
     fn fix_duokan_markers_calibre_real_img_keeps_id() {
-        // Calibre 洗后：真 <img>（本地图）+ <a> 自带回链落点 id。图标保留（加限高的类）、id 必须保留，不换成数字。
+        // Calibre 洗后：真 <img>（本地图）+ <a> 自带回链落点 id。图标换成上标数字（xochitl 点不了纯图链接），id 必须保留。
         let html = r##"<sup class="calibre4"><a class="duokan-footnote" href="#a_2_1" id="c_2_1"><img alt="注释7" class="duokan-footnote1" src="../images/00003.png"/></a></sup>"##;
         let out = fix_duokan_markers(html);
-        assert_eq!(out, r##"<sup><a href="#a_2_1" id="c_2_1"><img alt="注释7" class="duokan-footnote1 cj-noteicon" src="../images/00003.png"/></a></sup>"##);
+        assert_eq!(out, r##"<a href="#a_2_1" id="c_2_1"><sup>7</sup></a>"##, "目标不在本段时编号取 alt 里的数字");
         // 转义成文字的那种（微读 CDN 图）：原书显示的是一串代码，换成它 alt 里的序号
         let esc = r##"<sup><a href="#fo3">&lt;img class="duokan-footnote" alt="注释3" src="https://cdn/x.png"/&gt;</a></sup>"##;
         assert_eq!(fix_duokan_markers(esc), r##"<a href="#fo3"><sup>3</sup></a>"##);
@@ -633,15 +685,40 @@ mod optimizer_footnote_tests {
         assert!(out.contains(r#"<div id="fn1" class="cj-note"><p>注释正文"#), "落点应是 <div id> 包住源块内层 html 原样: {out}");
     }
 
-    /// `<sup>` 包裹的图标 noteref：标号原样保留（不再换成 `[N]`，2026-09-29 用户定），图标加 `cj-noteicon` 类限成一个字高。
+    /// `<sup>` 包裹的图标 noteref：只有图没有字的标号换成上标数字（xochitl 点不了纯图链接，2026-09-29《注释探针》真机）；
+    /// 编号取注释开头作者写的 `[14]`，没有才按本章顺序数；有文字的标号原样、不加 `[N]`。
     #[test]
-    fn sup_wrapped_image_marker_kept_with_icon_class() {
+    fn sup_wrapped_image_marker_becomes_number() {
         let mut index: HashMap<NoteKey, String> = HashMap::new();
         index.insert(("c.xhtml".to_string(), "fo14".to_string()), "注释文字".to_string());
         let chapter = r##"<p>正文<sup><a type="noteref" href="#fo14"><img alt="" src="../Images/note.png"/></a></sup>续</p>"##;
         let out = preserve_relink_footnotes(chapter, "c.xhtml", &index, crate::optimize::FootnoteMode::Anchor);
-        assert!(out.contains(r##"<sup><a href="#fo14"><img class="cj-noteicon" alt="" src="../Images/note.png"/></a></sup>续"##), "{out}");
-        assert!(!out.contains("[1]"), "不加 [N]: {out}");
+        assert!(out.contains(r##"<sup><a href="#fo14">1</a></sup>续"##), "注释没写编号，按本章顺序: {out}");
+        assert!(!out.contains("<img") && !out.contains("[1]"), "{out}");
+        index.insert(("c.xhtml".to_string(), "fo14".to_string()), "<p><span>[14]</span>JACAR 档案。</p>".to_string());
+        let out = preserve_relink_footnotes(chapter, "c.xhtml", &index, crate::optimize::FootnoteMode::Anchor);
+        assert!(out.contains(r##"<sup><a href="#fo14">14</a></sup>续"##), "编号取注释开头的 [14]: {out}");
+        let texty = r##"<p>正文<sup><a type="noteref" href="#fo14">14</a></sup>续</p>"##;
+        assert!(preserve_relink_footnotes(texty, "c.xhtml", &index, crate::optimize::FootnoteMode::Anchor).contains(r##"<sup><a href="#fo14">14</a></sup>续"##));
+    }
+
+    /// v16 产物重优化：`duokan-footnote` 类已剥掉、图标上只剩 `cj-noteicon`，靠通用兜底换成数字；普通插图链接不动。
+    #[test]
+    fn number_icon_note_links_handles_previous_output_and_leaves_pictures() {
+        let v16 = r##"<p>文<sup><a href="#fo14" id="foref14"><img alt="" class="exs cj-noteicon" src="../Images/note.png"/></a></sup>续</p><ol><li class="duokan-footnote-item" id="fo14"><p><span>[14]</span>JACAR</p></li></ol>"##;
+        let out = number_icon_note_links(v16);
+        assert!(out.starts_with(r##"<p>文<sup><a href="#fo14" id="foref14">14</a></sup>续</p>"##), "{out}");
+        let plain = r##"<p><a href="#fig1"><img src="map.png"/></a></p><div id="fig1"><img src="map-big.png"/></div>"##;
+        assert_eq!(number_icon_note_links(plain), plain, "插图链接不是注释，不动");
+        let target_is_note = r##"<p>文<a href="#n3"><img src="i.png"/></a></p><aside epub:type="footnote" id="n3">注</aside>"##;
+        assert!(number_icon_note_links(target_is_note).contains(r##"<a href="#n3"><sup>1</sup></a>"##));
+    }
+
+    #[test]
+    fn note_number_needs_brackets_or_punctuation() {
+        for (t, want) in [("[14]JACAR", Some("14")), ("［3］某", Some("3")), ("【12】x", Some("12")), ("7. 见", Some("7")), ("8、见", Some("8")), ("1886年7月北洋", None), ("注释", None)] {
+            assert_eq!(note_number(&format!("<p>{t}</p>")).as_deref(), want, "{t}");
+        }
     }
 
     /// 弹窗模式（KOReader）：标号 `epub:type="noteref"`、注释块 `<aside epub:type="footnote">`，根元素补 epub 命名空间；
@@ -665,8 +742,9 @@ mod optimizer_footnote_tests {
     /// xochitl，按固有像素撑成巨大方块。
     #[test]
     fn fix_duokan_markers_detects_class_on_outer_a_not_just_img() {
-        let out = fix_duokan_markers(r##"<sup><a class="duokan-footnote" href="#fo14" id="foref14"><img alt="" class="exs" src="../Images/note.png"/></a></sup>"##);
-        assert_eq!(out, r##"<sup><a href="#fo14" id="foref14"><img alt="" class="exs cj-noteicon" src="../Images/note.png"/></a></sup>"##, "图标原样保留、加限高的类，不换成数字");
+        let html = r##"<p>文<sup><a class="duokan-footnote" href="#fo14" id="foref14"><img alt="" class="exs" src="../Images/note.png"/></a></sup></p><ol><li class="duokan-footnote-item" id="fo14"><p class="f"><span>[14]</span>JACAR</p></li></ol>"##;
+        let out = fix_duokan_markers(html);
+        assert!(out.starts_with(r##"<p>文<a href="#fo14" id="foref14"><sup>14</sup></a></p>"##), "图标换成上标数字，编号取同文件注释开头的 [14]: {out}");
     }
 
     #[test]

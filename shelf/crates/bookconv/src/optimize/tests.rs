@@ -411,7 +411,7 @@
         let mut x = String::new();
         ar.by_name("text/part0004.html").unwrap().read_to_string(&mut x).unwrap();
         assert!(!x.contains("part0004.html#"), "同文件 href 未归一裸锚: {x}");
-        assert!(x.contains(r##"<sup><a href="#a_2_1" id="c_2_1"><img alt="注释1" class="duokan-footnote1 cj-noteicon" src="../images/00003.png"/></a></sup>"##), "图标标号应原样保留（加限高的类）、id 不丢: {x}");
+        assert!(x.contains(r##"<a href="#a_2_1" id="c_2_1"><sup>1</sup></a>"##), "图标标号换成上标数字（xochitl 点不了纯图链接）、id 不丢: {x}");
         assert!(!x.contains(r##"href="#c_2_1""##), "回链未去链(互指对整对丢弃): {x}");
         assert!(x.contains("延税储蓄计划"), "注释文本丢失: {x}");
         assert!(x.contains(r##"<li class="duokan-footnote-item" id="a_2_1">"##), "注释块应原地留在 li 里: {x}");
