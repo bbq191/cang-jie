@@ -32,6 +32,10 @@ use self::library::ProbeCache;
 mod tests;
 
 
+/// 漫画"页边距最小化"页框从这一版优化器起才有（v15）；之后的版本页框没变（v16 只改了文字处理与图片编码），都算数。
+/// 带 `-core` 的（没清洗）解析不成数字，不算。
+const MIN_MARGIN_SINCE_VERSION: u32 = 15;
+
 /// 忙锁占用时的统一提示——优化/落库/删除三处几乎逐字重复过（2026-09-19 代码质量审计）。`extra`
 /// 是各自独有的后缀（删除那处要额外提示"再删除"），其余传空串。
 fn busy_err(name: &str, extra: &str) -> String {
@@ -259,13 +263,13 @@ impl Staging {
             bookconv::imgopt::EpubComicFrame::Screen
         }
     }
-    /// 这本 EPUB 是否该在原生书库里设成漫画页边距：**开关开 + 漫画（以图为主，允许有文字页）+ 已用当前版本管线优化过 +
+    /// 这本 EPUB 是否该在原生书库里设成漫画页边距：**开关开 + 漫画（以图为主，允许有文字页）+ 已用 v15 起的管线优化过（[`MIN_MARGIN_SINCE_VERSION`]）+
     /// 文字页都已补留边 + 页框是最小边距页框**。补白比例按最小边距算，旧页框产物（含开关关着时优化的）在最小边距下会贴左、
     /// 右侧空一大块；文字页没留边的旧产物（此前只放行"整本零文字"的漫画）在边距 1 下文字会贴屏幕边——都反而更糟
     /// （见 `imgopt::EPUB_FRAME_ASPECT`、`bookconv::comic_pad`）；文字书 / PDF 不是漫画，完全不碰。
     pub(crate) fn comic_margin_eligible(&self, path: &Path) -> bool {
         self.comic_margin_switch_on()
-            && path.to_str().and_then(optimize::optimized_version_file).as_deref() == Some(optimize::OPTIMIZE_VERSION)
+            && path.to_str().and_then(optimize::optimized_version_file).and_then(|v| v.parse::<u32>().ok()).is_some_and(|v| v >= MIN_MARGIN_SINCE_VERSION)
             && bookconv::comic_detect::is_min_margin_comic_file(path)
             && bookconv::comic_detect::is_min_margin_framed_file(path)
     }

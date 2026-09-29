@@ -5,36 +5,37 @@
   <!-- 三列 -->
   <rect x="30" y="60" width="285" height="300" rx="10" fill="#eef5fd" stroke="#4a7bb7"/>
   <text x="172" y="88" text-anchor="middle" font-size="16" font-weight="bold" fill="#1f3f66">拿掉（交还给阅读器）</text>
-  <text x="48" y="118" font-size="13.5" fill="#222">· 字号 font-size</text>
-  <text x="48" y="142" font-size="13.5" fill="#222">· 字体 font-family / font</text>
+  <text x="48" y="118" font-size="13.5" fill="#222">· 绝对字号（px、pt、medium…）</text>
+  <text x="48" y="142" font-size="13.5" fill="#222">· 字体 font-family、行高 line-height</text>
   <text x="48" y="166" font-size="13.5" fill="#222">· 背景图 background(-image)</text>
-  <text x="48" y="190" font-size="13.5" fill="#222">· 段落上下间距（左右保留）</text>
-  <text x="48" y="214" font-size="13.5" fill="#222">· body/html 的边距</text>
-  <text x="48" y="248" font-size="12.5" fill="#555">为什么：书写死了字号字体，</text>
-  <text x="48" y="268" font-size="12.5" fill="#555">设备上"改字体/字号"就不生效；</text>
-  <text x="48" y="288" font-size="12.5" fill="#555">背景图会平铺盖住正文（《飘》）。</text>
+  <text x="48" y="190" font-size="13.5" fill="#222">· 用 vh 写的高度</text>
+  <text x="48" y="214" font-size="13.5" fill="#222">· 段落上下间距、body/html 边距</text>
+  <text x="48" y="248" font-size="12.5" fill="#555">为什么：书写死了字号字体行距，</text>
+  <text x="48" y="268" font-size="12.5" fill="#555">设备上"改字体/字号/行距"就不生效；</text>
+  <text x="48" y="288" font-size="12.5" fill="#555">背景图会平铺盖住正文（《飘》）；</text>
+  <text x="48" y="308" font-size="12.5" fill="#555">占满一屏的 vh 高度会溢出成空白页。</text>
 
   <rect x="337" y="60" width="285" height="300" rx="10" fill="#eaf7ee" stroke="#2e8b57"/>
   <text x="480" y="88" text-anchor="middle" font-size="16" font-weight="bold" fill="#1d5e3a">保留（原书的意思）</text>
-  <text x="355" y="118" font-size="13.5" fill="#222">· 彩色文字 color</text>
-  <text x="355" y="142" font-size="13.5" fill="#222">· 正文加粗 font-weight</text>
-  <text x="355" y="166" font-size="13.5" fill="#222">· 对齐 text-align</text>
-  <text x="355" y="190" font-size="13.5" fill="#222">· 背景色 background-color</text>
-  <text x="355" y="248" font-size="12.5" fill="#555">为什么：加粗、红字通常是作者的</text>
-  <text x="355" y="268" font-size="12.5" fill="#555">强调（人名、关键词、警告），</text>
-  <text x="355" y="288" font-size="12.5" fill="#555">拿掉会丢信息（2026-09-17 定）。</text>
+  <text x="355" y="118" font-size="13.5" fill="#222">· 相对字号 em / % / smaller</text>
+  <text x="355" y="140" font-size="12.5" fill="#555">　（正文整体那一层的除外）</text>
+  <text x="355" y="166" font-size="13.5" fill="#222">· 颜色 color（灰字也不改）</text>
+  <text x="355" y="190" font-size="13.5" fill="#222">· 加粗、斜体、对齐、背景色</text>
+  <text x="355" y="248" font-size="12.5" fill="#555">为什么：标题、小字、上标的层次</text>
+  <text x="355" y="268" font-size="12.5" fill="#555">跟着设备字号一起缩放；加粗、红字</text>
+  <text x="355" y="288" font-size="12.5" fill="#555">是作者的强调，拿掉会丢信息。</text>
 
   <rect x="644" y="60" width="285" height="300" rx="10" fill="#fff7e8" stroke="#c8812e"/>
   <text x="786" y="88" text-anchor="middle" font-size="16" font-weight="bold" fill="#6b4210">例外（改了，有理由）</text>
   <text x="662" y="118" font-size="13.5" fill="#222">· 注释容器的加粗 → 去掉</text>
   <text x="662" y="140" font-size="12.5" fill="#555">　模板装饰不是强调（《甲午》）</text>
-  <text x="662" y="166" font-size="13.5" fill="#222">· 注释容器字号 → 0.9em</text>
-  <text x="662" y="188" font-size="12.5" fill="#555">　比正文小一档、跟着设置缩放</text>
+  <text x="662" y="166" font-size="13.5" fill="#222">· 注释 → 0.85em、一条不跨页</text>
+  <text x="662" y="188" font-size="12.5" fill="#555">　比正文小一号、跟着设置缩放</text>
   <text x="662" y="214" font-size="13.5" fill="#222">· 首行缩进 → 统一</text>
   <text x="662" y="236" font-size="12.5" fill="#555">　中文 2em / 西文 1.2em</text>
-  <text x="662" y="262" font-size="13.5" fill="#222">· 灰字 → 纯黑，细字 → 常规</text>
-  <text x="662" y="284" font-size="12.5" fill="#555">　墨水屏上浅灰细字几乎看不见；</text>
-  <text x="662" y="304" font-size="12.5" fill="#555">　彩色字不动（两条线统一，见 §8 T2）</text>
+  <text x="662" y="262" font-size="13.5" fill="#222">· 居中/居右 → 换成类</text>
+  <text x="662" y="284" font-size="12.5" fill="#555">　align= 与行内样式 xochitl 不认，</text>
+  <text x="662" y="304" font-size="12.5" fill="#555">　换成 cj-center / cj-right</text>
 
   <rect x="30" y="378" width="899" height="46" rx="10" fill="#fafafa" stroke="#ccc"/>
   <text x="480" y="398" text-anchor="middle" font-size="13" fill="#333">所有保留/新增的规则都写进外链 cangjie-wash.css，用单个元素或单个 class 选择器、每条声明带分号——</text>
