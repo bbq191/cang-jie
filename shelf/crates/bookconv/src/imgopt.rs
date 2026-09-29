@@ -48,11 +48,14 @@ const JPEG_QUALITY_UPSCALED: u8 = 85;
 /// 预放大的倍数上限：超过视为缩略图/装饰小图，不值得放大到整页宽。
 const MAX_PDF_UPSCALE: f32 = 3.0;
 
-/// 按 `fmt` 编码回同一格式：JPEG 用 `quality`，PNG 无损；其余格式 `None`。各处理函数共用（此前每处各抄一份 match）。
+/// 按 `fmt` 编码回同一格式：JPEG 用 `quality`（哈夫曼表按图重做，无损，见 `jpegopt`），PNG 无损；其余格式 `None`。各处理函数共用（此前每处各抄一份 match）。
 fn encode_as(fmt: ImageFormat, img: &image::DynamicImage, quality: u8) -> Option<Vec<u8>> {
     let mut out = Vec::new();
     match fmt {
-        ImageFormat::Jpeg => JpegEncoder::new_with_quality(&mut out, quality).encode_image(img).ok()?,
+        ImageFormat::Jpeg => {
+            JpegEncoder::new_with_quality(&mut out, quality).encode_image(img).ok()?;
+            return Some(crate::jpegopt::optimize_verified(out));
+        }
         ImageFormat::Png => img.write_to(&mut Cursor::new(&mut out), ImageFormat::Png).ok()?,
         _ => return None,
     }
@@ -96,15 +99,25 @@ pub fn downscale_for_device(bytes: &[u8]) -> Option<Vec<u8>> {
     downscale_into(bytes, max_w, max_h)
 }
 
-/// 图片头部声明的像素数（不解码）；读不出来按 100 万像素估，给并行内存预算用（[`crate::imgpool`]）。
+
+/// 图片头部声明的像素数（不解码，JPEG/PNG/GIF/WebP）；读不出来按 100 万像素估，给并行内存预算用（[`crate::imgpool`]）。
 pub fn pixel_count(bytes: &[u8]) -> u64 {
-    header_dims(bytes).map(|(_, (w, h))| (w as u64) * (h as u64)).unwrap_or(1_000_000)
+    comic_header_dims(bytes).map(|(_, (w, h))| (w as u64) * (h as u64)).unwrap_or(1_000_000)
 }
 
 /// 只读文件头取 (格式, 宽, 高)，不解码像素。非 JPEG/PNG → None。
 pub(crate) fn header_dims(bytes: &[u8]) -> Option<(ImageFormat, (u32, u32))> {
+    header_dims_if(bytes, |f| matches!(f, ImageFormat::Jpeg | ImageFormat::Png))
+}
+
+/// 漫画页能处理的格式（JPEG/PNG/GIF/WebP）的 (格式, 宽, 高)，只读文件头。
+fn comic_header_dims(bytes: &[u8]) -> Option<(ImageFormat, (u32, u32))> {
+    header_dims_if(bytes, |f| matches!(f, ImageFormat::Jpeg | ImageFormat::Png | ImageFormat::Gif | ImageFormat::WebP))
+}
+
+fn header_dims_if(bytes: &[u8], ok: impl Fn(ImageFormat) -> bool) -> Option<(ImageFormat, (u32, u32))> {
     let fmt = image::guess_format(bytes).ok()?;
-    if !matches!(fmt, ImageFormat::Jpeg | ImageFormat::Png) {
+    if !ok(fmt) {
         return None;
     }
     let dims = image::ImageReader::with_format(Cursor::new(bytes), fmt).into_dimensions().ok()?;
@@ -263,23 +276,93 @@ fn trim_bounds(img: &image::DynamicImage) -> Option<(u32, u32, u32, u32)> {
     }
 }
 
-/// 解码并归一到 `Luma8`/`Rgb8`（灰度保持灰度），并做四边留白裁边。返回 `(图, 格式, 是否裁过)`。
+/// 解码并归一到 `Luma8`/`Rgb8`（灰度保持灰度），并做四边留白裁边。返回 `(图, 输出格式, 是否裁过或换了格式)`。
 /// [`prepare_comic_page_for_pdf`] / [`prepare_comic_page_for_epub`] 共用的前半段（此前 PDF 版整段抄了一份）。
 /// 用 `into_luma8`/`into_rgb8`：解码结果本来就是 8 位对应类型（几乎所有漫画页）时**不再拷贝整图**，
 /// 且不再让"原始解码图 + 归一副本"同时占内存。
+///
+/// 静态 GIF/WebP 页也处理（2026-09-29 移植自 sheng-ren）：GIF 转 PNG，WebP 有损的转 JPEG、无损的转 PNG
+/// （[`comic_output_format`]）；动图原样保留。带透明通道的图先合成到白底（[`flatten_alpha_on_white`]）——直接丢掉
+/// alpha 会把透明区域变成它底下存的颜色，通常是纯黑。像素上限仍是设备实测的 [`MAX_DECODE_PIXELS`]。
 fn decode_trim_comic(bytes: &[u8]) -> Option<(image::DynamicImage, ImageFormat, bool)> {
     use image::DynamicImage;
-    let (fmt, (w, h)) = header_dims(bytes)?;
+    let (fmt, (w, h)) = comic_header_dims(bytes)?;
     if !within_decode_budget(w, h) {
         return None; // 极端高分辨率原图：不整个解出来，原样保留（见 MAX_DECODE_PIXELS 文档）
     }
+    let out_fmt = comic_output_format(fmt, bytes)?;
     let decoded = image::load_from_memory_with_format(bytes, fmt).ok()?;
     let gray = matches!(decoded.color(), image::ColorType::L8 | image::ColorType::L16 | image::ColorType::La8 | image::ColorType::La16);
+    let decoded = if decoded.color().has_alpha() { flatten_alpha_on_white(decoded) } else { decoded };
     let img = if gray { DynamicImage::ImageLuma8(decoded.into_luma8()) } else { DynamicImage::ImageRgb8(decoded.into_rgb8()) };
     Some(match trim_bounds(&img) {
-        Some((l, t, cw, ch)) => (img.crop_imm(l, t, cw, ch), fmt, true),
-        None => (img, fmt, false),
+        Some((l, t, cw, ch)) => (img.crop_imm(l, t, cw, ch), out_fmt, true),
+        None => (img, out_fmt, false),
     })
+}
+
+/// 漫画页产物的编码格式：JPEG、PNG 保持原格式；GIF 转 PNG（调色板图，无损）；WebP 看编码方式——有损的转 JPEG，无损的转 PNG。
+/// 动图（多帧 GIF、动画 WebP）返回 `None`：只取第一帧会丢内容，原样保留。
+fn comic_output_format(fmt: ImageFormat, bytes: &[u8]) -> Option<ImageFormat> {
+    use image::AnimationDecoder;
+    match fmt {
+        ImageFormat::Jpeg | ImageFormat::Png => Some(fmt),
+        ImageFormat::Gif => {
+            let frames = image::codecs::gif::GifDecoder::new(Cursor::new(bytes)).ok()?.into_frames().take(2).count();
+            (frames == 1).then_some(ImageFormat::Png)
+        }
+        ImageFormat::WebP => {
+            if image::codecs::webp::WebPDecoder::new(Cursor::new(bytes)).ok()?.has_animation() {
+                return None;
+            }
+            Some(if webp_is_lossless(bytes)? { ImageFormat::Png } else { ImageFormat::Jpeg })
+        }
+        _ => None,
+    }
+}
+
+/// WebP 的图像数据是不是无损编码（`VP8L` 块）；有损是 `VP8 ` 块。按 RIFF 块顺序找第一个图像块（扩展格式 `VP8X` 在它前面）。
+/// 认不出 → `None`。
+fn webp_is_lossless(bytes: &[u8]) -> Option<bool> {
+    if bytes.len() < 12 || &bytes[..4] != b"RIFF" || &bytes[8..12] != b"WEBP" {
+        return None;
+    }
+    let mut i = 12usize;
+    while i + 8 <= bytes.len() {
+        let size = u32::from_le_bytes(bytes[i + 4..i + 8].try_into().ok()?) as usize;
+        match &bytes[i..i + 4] {
+            b"VP8L" => return Some(true),
+            b"VP8 " => return Some(false),
+            _ => {}
+        }
+        i = i.checked_add(8)?.checked_add(size)?.checked_add(size & 1)?;
+    }
+    None
+}
+
+/// 带透明通道的图合成到白底：灰度+alpha → `Luma8`，其余 → `Rgb8`（按 8 位合成，16 位先降到 8 位）。
+/// 每个分量 `c·a/255 + 255·(1 − a/255)`，四舍五入。
+fn flatten_alpha_on_white(img: image::DynamicImage) -> image::DynamicImage {
+    use image::DynamicImage;
+    let blend = |c: u8, a: u8| -> u8 { ((c as u32 * a as u32 + 255 * (255 - a as u32) + 127) / 255) as u8 };
+    match img.color() {
+        image::ColorType::La8 | image::ColorType::La16 => {
+            let la = img.into_luma_alpha8();
+            let (w, h) = la.dimensions();
+            DynamicImage::ImageLuma8(image::GrayImage::from_fn(w, h, |x, y| {
+                let p = la.get_pixel(x, y).0;
+                image::Luma([blend(p[0], p[1])])
+            }))
+        }
+        _ => {
+            let rgba = img.into_rgba8();
+            let (w, h) = rgba.dimensions();
+            DynamicImage::ImageRgb8(image::RgbImage::from_fn(w, h, |x, y| {
+                let p = rgba.get_pixel(x, y).0;
+                image::Rgb([blend(p[0], p[3]), blend(p[1], p[3]), blend(p[2], p[3])])
+            }))
+        }
+    }
 }
 
 /// **EPUB 漫画 → PDF 专用的单趟页面处理**：解码一次 → 裁边 → 按 PDF 里实际绘制的整数像素尺寸
@@ -435,6 +518,8 @@ fn encode_keep_gray(fmt: ImageFormat, img: &image::DynamicImage, jpeg_quality: u
                 DynamicImage::ImageRgb8(c) => enc.write_image(c.as_raw(), c.width(), c.height(), ExtendedColorType::Rgb8).ok()?,
                 _ => return None,
             }
+            // 哈夫曼表按这张图重做（无损：解码逐像素相同，见 `jpegopt`），同样画质小 7%–16%
+            return Some(crate::jpegopt::optimize_verified(out));
         }
         ImageFormat::Png => img.write_to(&mut Cursor::new(&mut out), ImageFormat::Png).ok()?,
         _ => return None,
@@ -502,6 +587,23 @@ pub fn dither_bilevel(bytes: &[u8]) -> Option<image::GrayImage> {
 pub fn is_downscalable(name: &str) -> bool {
     let l = name.to_lowercase();
     l.ends_with(".jpg") || l.ends_with(".jpeg") || l.ends_with(".png")
+}
+
+/// 优化器交给图片处理的条目（按扩展名：jpg/jpeg/png/gif/webp）。GIF/WebP 只有漫画页会处理（[`prepare_comic_page_for_epub`]），
+/// 文字书里的原样保留（[`downscale_for_epub`] 只认 JPEG/PNG）。流式优化阶段一这些条目只占位、不读字节。
+pub fn is_page_image(name: &str) -> bool {
+    crate::util::is_image_ext(name)
+}
+
+/// 图片条目处理后换了格式（漫画里的 GIF/WebP 转成 PNG/JPEG，条目名不变）时，OPF manifest 该写的新 media-type；
+/// 没换格式 → `None`。按产物字节的魔数判断，不看处理过程。
+pub fn converted_media_type(name: &str, out: &[u8]) -> Option<&'static str> {
+    let mt = match image::guess_format(out).ok()? {
+        ImageFormat::Jpeg => "image/jpeg",
+        ImageFormat::Png => "image/png",
+        _ => return None,
+    };
+    (crate::util::image_media_type_of_ext(&crate::util::image_ext_of(name)) != mt).then_some(mt)
 }
 
 #[cfg(test)]

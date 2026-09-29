@@ -713,15 +713,14 @@ pub fn optimize_pdf_to_epub(src: &Path, mut on_progress: impl FnMut(usize, usize
                 }
             }
             // 链接/颜色只在真的变化时关/开，不是每个字符包一层。颜色：纯黑（含解析不出的 `None`）当
-            // 默认色处理，不包 span——见上面 `used_colors` 注释。无彩色的灰字也当黑字（墨水屏提对比，
-            // 与 EPUB 优化线的 `boost_text_contrast` 同一判据 `achromatic_dark`；彩色字照样保留）——
-            // 2026-09-23 用户拍板两条线统一（规范白皮书第 8 章 T2）。
+            // 默认色处理，不包 span——见上面 `used_colors` 注释。灰字按原色保留（2026-09-29 起两条线一起不再提黑，
+            // 规范白皮书第 8 章 T2）。
             // 空白字符不单独触发开合、沿用当前状态：链接矩形常把行尾空白也框进去，否则会冒出
             // 只包着空格的 `<a>`。
             let (want_link, want_color) = if c.ch.is_whitespace() {
                 (open_link, open_color)
             } else {
-                (links.iter().position(|l| char_in_rect(c, &l.rect)), c.color.filter(|&[r, g, b]| [r, g, b] != [0, 0, 0] && !crate::htmlproc::achromatic_dark(r, g, b)))
+                (links.iter().position(|l| char_in_rect(c, &l.rect)), c.color.filter(|&[r, g, b]| [r, g, b] != [0, 0, 0]))
             };
             if want_link != open_link {
                 close_inline(&mut html, &mut open_link, &mut open_color);

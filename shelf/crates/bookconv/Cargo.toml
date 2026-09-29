@@ -15,8 +15,8 @@ png = "0.17"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 # PNG 像素 /FlateDecode 压缩（pdfwrite），纯 Rust、musl 友好
 miniz_oxide = "0.8"
-# 图片降采样/抖动：只启 jpeg+png 控体积
-image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+# 图片降采样/抖动：jpeg、png；gif、webp 只解码（漫画里的静态 GIF/WebP 页转 PNG/JPEG，2026-09-29），都是纯 Rust 实现
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp"] }
 fast_image_resize = "6.1.0"
 # FB2→EPUB；quick-xml 版本须与 fb2 一致(0.30)
 fb2 = "0.4"

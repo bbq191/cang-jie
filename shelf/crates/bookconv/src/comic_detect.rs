@@ -129,6 +129,23 @@ fn read_entries_without_images(path: &std::path::Path) -> Option<Vec<Entry>> {
     Some(entries)
 }
 
+/// 漫画在 OPF 里打的标签（`<dc:subject>`）。阅读器按它认出漫画、套漫画的阅读设置：KOReader 把 `dc:subject` 读成
+/// 书的 keywords，可按"元数据包含 漫画"自动套漫画设置（2026-09-29 移植自 sheng-ren；设备上现行的漫画方案仍按目录套用）。
+pub const COMIC_SUBJECT: &str = "漫画";
+
+/// 给漫画的 OPF 加上 [`COMIC_SUBJECT`] 标签：已经有同名 `dc:subject` 的不动；插在 `</metadata>` 前面（`dc` 前缀，
+/// EPUB 的 OPF 都声明了）。没有 `</metadata>` 的不动。返回 `None` 表示没改。
+pub fn tag_opf_as_comic(opf: &str) -> Option<String> {
+    use crate::html::{self, TagKind};
+    let has = html::tags(opf).filter(|t| t.kind == TagKind::Open && t.name.eq_ignore_ascii_case("dc:subject")).any(|t| {
+        html::find_close(opf, t.end, t.name).is_some_and(|c| crate::util::xml_unescape(opf[t.end..c.start].trim()) == COMIC_SUBJECT)
+    });
+    if has {
+        return None;
+    }
+    crate::wash::opf::insert_metadata(opf, &format!("<dc:subject>{COMIC_SUBJECT}</dc:subject>"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -246,4 +263,14 @@ mod tests {
         std::fs::write(&not_epub, b"garbage").unwrap();
         assert!(!is_comic_epub_file(&not_epub), "解不了 zip 的文件应安全返回 false");
     }
+
+    #[test]
+    fn tag_opf_as_comic_adds_subject_once() {
+        let opf = r#"<package><metadata xmlns:dc="x"><dc:title>乱马</dc:title></metadata><manifest/></package>"#;
+        let t = tag_opf_as_comic(opf).unwrap();
+        assert!(t.contains("<dc:subject>漫画</dc:subject></metadata>"), "{t}");
+        assert_eq!(tag_opf_as_comic(&t), None, "已有标签不重复加");
+        assert_eq!(tag_opf_as_comic("<package><manifest/></package>"), None, "没有 metadata 不动");
+    }
+
 }

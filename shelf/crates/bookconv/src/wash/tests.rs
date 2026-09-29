@@ -16,7 +16,8 @@
         assert_eq!(filter_decls("margin:1em 2em;padding-top:3px;padding-left:4px", &f, Spacing::Vertical), "margin:0 2em;padding-left:4px;");
         assert_eq!(filter_decls("margin:1em 2em 3em 4em", &f, Spacing::Vertical), "margin:0 2em 0 4em;");
         assert_eq!(filter_decls("margin:5pt", &f, Spacing::Vertical), "margin:0 5pt;");
-        assert_eq!(filter_decls("margin:5pt;padding:2px;line-height:1.5", &f, Spacing::All), "line-height:1.5;");
+        assert_eq!(filter_decls("margin:5pt;padding:2px;text-align:left", &f, Spacing::All), "text-align:left;");
+        assert_eq!(filter_decls("line-height:1.5;height:100vh;min-height:90vh;height:2em", &f, Spacing::Keep), "height:2em;", "行高与 vh 高度剥掉");
         assert_eq!(filter_decls("font-family: &#39;A&#39;; text-indent:2em", &f, Spacing::Keep), "text-indent:2em;", "实体分号不截断");
         assert_eq!(selector_spacing("p.calibre1"), Spacing::Vertical);
         assert_eq!(selector_spacing("div > p"), Spacing::Vertical);
@@ -120,10 +121,10 @@
             "<spine>\n<itemref idref=\"p1\"/>\n<itemref linear=\"yes\" idref=\"p10\"></itemref>\n<itemref idref=\"p2\"/>\n</spine>"
         );
         let ids: HashSet<&str> = ["p1", "p10"].into_iter().collect();
-        let out = drop_opf_refs(opf, &ids);
+        let out = opf::remove_items(opf, |it| ids.contains(it.id)).unwrap();
         assert!(!out.contains("p1.xhtml") && !out.contains("p10.xhtml") && !out.contains("idref=\"p1\"") && !out.contains("idref=\"p10\""), "{out}");
         assert!(out.contains("<item id=\"p2\" href=\"p2.xhtml\"/>") && out.contains("<itemref idref=\"p2\"/>") && out.contains("a.png"), "无关项原样: {out}");
-        assert_eq!(drop_opf_refs(opf, &HashSet::new()), opf, "空集合 = 原样");
+        assert_eq!(opf::remove_items(opf, |_| false), None, "空集合 = 不改");
     }
 
     #[test]
@@ -244,7 +245,7 @@
         }
         assert_eq!(toc_entry_count(&es), 0);
         let mut rep = WashReport::default();
-        auto_toc(&mut es, AutoToc::IfMissing, &mut rep);
+        auto_toc(&mut es, AutoToc::IfMissing, "目录", &mut rep);
         assert_eq!(rep.toc_generated, 2, "25 页 → 20+5 两段");
         let ncx = String::from_utf8_lossy(&es.iter().find(|x| x.name == "toc.ncx").unwrap().data).to_string();
         assert!(ncx.contains("第 1–20 页") && ncx.contains("第 21–25 页"), "{ncx}");
@@ -260,7 +261,7 @@
             e("OEBPS/text/c2.xhtml", "<html><body><h1>第<i>二</i>章</h1><p>b</p></body></html>"),
         ];
         let mut v = mk();
-        let rep = wash_entries(&mut v, &WashOpts::default()).unwrap();
+        let rep = wash_entries(&mut v, &WashOpts { paginate: false, ..Default::default() }).unwrap();
         assert_eq!(rep.toc_generated, 3);
         let ncx = s(&v, "OEBPS/toc.ncx");
         assert!(ncx.contains(r#"src="text/c1.xhtml#cj-toc-1""#) && ncx.contains(r#"src="text/c1.xhtml#s1""#) && ncx.contains("第二章"), "{ncx}");
@@ -273,9 +274,12 @@
         // 已有目录 → IfMissing 不动
         let mut w = mk();
         w.push(e("OEBPS/toc.ncx", r#"<ncx><navMap><navPoint><content src="text/c1.xhtml"/></navPoint></navMap></ncx>"#));
-        let rep = wash_entries(&mut w, &WashOpts::default()).unwrap();
+        let rep = wash_entries(&mut w, &WashOpts { paginate: false, ..Default::default() }).unwrap();
         assert_eq!(rep.toc_generated, 0);
-        assert!(!w.iter().any(|x| x.name == "OEBPS/nav.xhtml"));
+        // 自动目录不动 NCX；规范整理补 EPUB 3 必需的 nav（NCX 条目没有标签，退回一条指向第一章、标题用书名）
+        assert_eq!(rep.nav_generated, 1);
+        assert!(s(&w, "OEBPS/nav.xhtml").contains(r#"<li><a href="text/c1.xhtml">书</a></li>"#));
+        assert!(s(&w, "OEBPS/toc.ncx").contains(r#"<content src="text/c1.xhtml"/>"#), "NCX 原样");
     }
 
     /// 标题/书名里的字符引用（`&amp;`、`&#12288;` 全角空格）：自动目录只转义一次，不再出现 `&amp;amp;`、`&amp;#12288;`。
@@ -428,7 +432,7 @@
         assert!(lat.contains("text-indent:1.2em") && !lat.contains("!important"));
         // keep_para_spacing 时不归零段距
         let keep = wash_css(&WashOpts { keep_para_spacing: true, ..Default::default() });
-        assert!(!keep.contains("margin-top:0") && keep.contains("p{text-indent:2em;}"), "keep-spacing 也要尾分号: {keep}");
+        assert!(!keep.contains("margin-top:0") && keep.contains("p{text-indent:2em;text-align:justify;}"), "keep-spacing 也要尾分号: {keep}");
     }
 
     #[test]
@@ -463,7 +467,7 @@
             e("OEBPS/content.opf", r#"<package version="3.0"><metadata><dc:title>B</dc:title></metadata><manifest><item id="c1" href="Text/c1.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="c1"/></spine></package>"#),
             e("OEBPS/Text/c1.xhtml", "<html><head></head><body><h2>Chapter One</h2><p>English prose flowing across the page with many words indeed here</p></body></html>"),
         ];
-        wash_entries(&mut v, &WashOpts::default()).unwrap();
+        wash_entries(&mut v, &WashOpts { paginate: false, ..Default::default() }).unwrap();
         // 外链 css 存在且带拉丁缩进（英文书探测为 Latin）
         let css = s(&v, "OEBPS/cangjie-wash.css");
         assert!(css.contains("text-indent:1.2em") && !css.contains("!important"), "外链 css 应含拉丁缩进、无 !important: {css}");
@@ -477,7 +481,7 @@
         let opf = s(&v, "OEBPS/content.opf");
         assert!(opf.contains(r#"href="cangjie-wash.css""#) && opf.contains("text/css"), "manifest 未补 item: {opf}");
         // 幂等：重洗不重复加 link / item
-        wash_entries(&mut v, &WashOpts::default()).unwrap();
+        wash_entries(&mut v, &WashOpts { paginate: false, ..Default::default() }).unwrap();
         assert_eq!(s(&v, "OEBPS/Text/c1.xhtml").matches("cangjie-wash.css").count(), 1, "link 重复");
         assert_eq!(s(&v, "OEBPS/content.opf").matches("cangjie-wash.css").count(), 1, "manifest item 重复");
     }
@@ -494,13 +498,30 @@
         assert!(filter_css(".calibre_ {text-indent:1.2em}", &cjk).contains("text-indent:2em"));
         let (h, _) = wash_html(r#"<html><body><h1 id="a">T</h1>
 <div class="x"><p class="c" style="color:red;text-indent:2em">first</p><p>second</p></div><h2>U</h2><p style="text-indent:0">already</p></body></html>"#, &lat);
-        assert!(h.contains(r#"<div class="cj-flush">first</div>"#), "只留 cj-flush、剥 class/style: {h}");
+        assert!(h.contains(r#"<div class="cj-flush c" style="color:red;">first</div>"#), "书的类与颜色保留，行内 text-indent 去掉: {h}");
         assert!(h.contains(r#"<p>second</p>"#), "第二段不动: {h}");
         assert_eq!(h.matches("cj-flush").count(), 2, "h1 后与 h2 后各一段: {h}");
         let (h2, _) = wash_html(&h, &lat);
         assert_eq!(h2.matches("cj-flush").count(), 2, "幂等: {h2}");
         let (c, _) = wash_html("<html><body><h1>T</h1><p>x</p></body></html>", &cjk);
         assert!(!c.contains("text-indent:0"), "中文不做首段不缩进: {c}");
+    }
+
+    /// M4（2026-09-28 审计）：英文首段换成 cj-flush 的 div 时，作者用类写的强调（斜体、小型大写）保留；
+    /// 写了 text-indent 的段落类不留在 div 上（xochitl 同为类规则先出现者胜，会压住 cj-flush）。
+    #[test]
+    fn latin_flush_keeps_emphasis_classes_drops_indent_classes() {
+        let lat = WashOpts { lang: LangMode::Latin, ..Default::default() };
+        let mut v = vec![
+            e("content.opf", r#"<package version="2.0"><metadata><dc:title>B</dc:title><dc:language>en</dc:language></metadata><manifest><item id="css" href="s.css" media-type="text/css"/><item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="c1"/></spine></package>"#),
+            e("s.css", ".body{display:block;text-indent:1.5em;margin:0} .ital{font-style:italic} .sc{font-variant:small-caps}"),
+            e("c1.xhtml", r#"<html><head><link href="s.css" rel="stylesheet" type="text/css"/></head><body><h1>One</h1><p class="body ital sc" id="p1">It was a dark night, and the rain fell in torrents except at occasional intervals.</p><p class="body">Next.</p></body></html>"#),
+        ];
+        wash_entries(&mut v, &WashOpts { paginate: false, ..lat }).unwrap();
+        let h = s(&v, "c1.xhtml");
+        assert!(h.contains(r#"<div class="cj-flush ital sc" id="p1">It was a dark night"#), "{h}");
+        assert!(h.contains(r#"<p class="body">Next.</p>"#), "{h}");
+        assert!(s(&v, "cangjie-wash.css").contains(".cj-flush{text-indent:0.01em;"), "首行不缩进的规则还在");
     }
 
     #[test]
@@ -526,7 +547,8 @@
         // 《Tell Me Your Dreams》形态：章名=加粗段落（非 <h>），场景切换=段末双 <br/>，无空段
         let lat = WashOpts { lang: LangMode::Latin, ..Default::default() };
         let src = r#"<html><body><div><p class="calibre_"><a href="x.html#1"><span class="bold"><span class="underline">Chapter Three</span></span></a></p><p class="calibre_"><span class="bold">I</span>N another place, at another time, Alette Peters could have been a successful artist.</p><p class="calibre_">Her father’s voice was blue.</p><p class="calibre_">The sound of running water was gray.<br class="calibre3"/><br class="calibre3"/></p><p class="calibre_">Alette Peters was twenty years old.</p><p class="calibre_">She could be plain-looking.</p><p class="calibre_">* * *</p><p class="calibre_">After the break.</p><p class="calibre_">Still after.</p></div></body></html>"#;
-        let (h, _) = wash_html(src, &lat);
+        // calibre_ 的规则写了 text-indent（真书里 `.calibre_ {display:block;text-indent:…}`）：不留在 cj-flush 上
+        let (h, _) = wash_html_with(src, &lat, &["calibre_".to_string()].into_iter().collect());
         assert_eq!(h.matches("cj-flush").count(), 3, "章首正文 + 双br 后 + * * * 后各一段: {h}");
         assert!(h.contains(r#"<div class="cj-flush"><span class="bold">I</span>N another"#), "章首正文顶格＝换成只带 cj-flush 的 div（章名段本身不算）: {h}");
         assert!(h.contains(r#"<div class="cj-flush">Alette Peters was twenty"#), "双 br 后顶格: {h}");
@@ -559,8 +581,8 @@
         ];
         assert_eq!(wash_entries(&mut v, &WashOpts::default()).unwrap().toc_generated, 2, "h3 也进目录");
         // 多级嵌套 h1>h2>h3>h1
-        let items = vec![(1u8, "A".into(), "c.xhtml".into(), "a".into()), (2, "B".into(), "c.xhtml".into(), "b".into()), (3, "C".into(), "c.xhtml".into(), "c".into()), (1, "D".into(), "c.xhtml".into(), "d".into())];
-        let nav = build_nav(&items, "");
+        let items = vec![TocItem::new(1, "A", "c.xhtml", "a"), TocItem::new(2, "B", "c.xhtml", "b"), TocItem::new(3, "C", "c.xhtml", "c"), TocItem::new(1, "D", "c.xhtml", "d")];
+        let nav = build_nav(&items, "", "目录");
         assert!(nav.contains(r#"<li><a href="c.xhtml#a">A</a><ol><li><a href="c.xhtml#b">B</a><ol><li><a href="c.xhtml#c">C</a></li></ol></li></ol></li><li><a href="c.xhtml#d">D</a></li></ol>"#), "{nav}");
         let ncx = build_ncx(&items, "", "T", "cj-wash");
         assert!(ncx.contains(r#"<navPoint id="np1" playOrder="1"><navLabel><text>A</text></navLabel><content src="c.xhtml#a"/><navPoint id="np2""#), "{ncx}");
@@ -584,7 +606,7 @@
             e("content.opf", r#"<package version="3.0"><metadata><dc:title>书</dc:title></metadata><manifest><item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="c1"/></spine></package>"#),
             e("c1.xhtml", "<html><body><h1>第一章 1</h1><p>a</p><h1>后记</h1></body></html>"),
         ];
-        wash_entries(&mut v, &WashOpts::default()).unwrap();
+        wash_entries(&mut v, &WashOpts { paginate: false, ..Default::default() }).unwrap();
         let nav = s(&v, "nav.xhtml");
         assert!(
             nav.contains(r#"<li><a href="c1.xhtml#cj-toc-1">第一章</a><ol><li><a href="c1.xhtml#cj-toc-1">1</a></li></ol></li><li><a href="c1.xhtml#cj-toc-2">后记</a></li>"#),
@@ -695,46 +717,35 @@
             e("OEBPS/content.opf", r#"<package xmlns="http://www.idpf.org/2007/opf" version="3.0"><metadata xmlns:dc="http://purl.org/dc/elements/1.1/"><dc:title>t</dc:title></metadata><manifest><item id="a" href="Text/a.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="a"/></spine></package>"#),
             e("OEBPS/Text/a.xhtml", &html),
         ];
-        let rep = wash_entries(&mut v, &WashOpts::default()).unwrap();
+        let rep = wash_entries(&mut v, &WashOpts { paginate: false, ..Default::default() }).unwrap();
         assert_eq!(rep.dead_refs_removed, 1);
         let out = s(&v, "OEBPS/Text/a.xhtml");
         assert!(out.contains(text) && !out.contains("gone.jpg"), "{out}");
     }
 
-    /// `is_empty_page` 去正则重写后与原实现（正则取 body → 小写查媒体标签 → 正则去标签 → 替换实体 → trim）逐例对拍。
+    /// 空页判定与章节分页共用 `html::has_visible`：只有分隔线/表格的页不算空页（此前这里只认图片/音视频，会被删掉）。
     #[test]
-    fn is_empty_page_matches_old_regex_impl() {
-        fn old(html: &str) -> bool {
-            let body = Regex::new(r#"(?is)<body\b[^>]*>(.*?)</body>"#).unwrap();
-            let tag = Regex::new(r#"(?s)<[^>]*>"#).unwrap();
-            let inner = body.captures(html).map(|c| c[1].to_string()).unwrap_or_default();
-            let low = inner.to_ascii_lowercase();
-            if low.contains("<img") || low.contains("<svg") || low.contains("<image") || low.contains("<video") || low.contains("<audio") {
-                return false;
-            }
-            let text = tag.replace_all(&inner, "");
-            let text = text.replace("&nbsp;", " ").replace("&#160;", " ").replace('\u{a0}', " ");
-            text.trim().is_empty()
+    fn is_empty_page_uses_shared_visibility() {
+        let page = |b: &str| format!("<html><body>{b}</body></html>");
+        for b in ["", " ", "<p></p>", "<p> &nbsp; </p>", "&#160;\u{a0}", "<div class=\"mbppagebreak\"></div>", "<!-- c -->", "<br/>\u{3000}", "<p>&#12288;</p>"] {
+            assert!(is_empty_page(&page(b)), "{b:?}");
         }
-        let bodies = [
-            "", " ", "\n\t", "<p></p>", "<p> &nbsp; </p>", "&#160;\u{a0}", "<div class=\"mbppagebreak\"></div>", "x", "<p>字</p>",
-            "&nb<i>sp;", "&nbsp", "&amp;", "<IMG src=a>", "<p><Svg/></p>", "<image/>", "<video>", "<audio>", "a < b", "<p", "<!-- c -->",
-            "<br/>\u{3000}", "&#160;x", "< >", "<<>>", "&&nbsp;",
-        ];
-        let wraps = [
-            |b: &str| format!("<html><body>{b}</body></html>"),
-            |b: &str| format!("<HTML><BODY class=\"x\">{b}</BODY></HTML>"),
-            |b: &str| format!("<html><body>{b}</body><body><p>第二段</p></body></html>"),
-            |b: &str| format!("<html><bodyx><body>{b}</body></html>"),
-            |b: &str| format!("<html><body>{b}"),
-            |b: &str| b.to_string(),
-        ];
-        for b in bodies {
-            for w in wraps {
-                let html = w(b);
-                assert_eq!(is_empty_page(&html), old(&html), "{html:?}");
-            }
+        for b in ["x", "<p>字</p>", "&amp;", "<IMG src=a>", "<p><Svg/></p>", "<image/>", "<video>", "<hr/>", "<table><tr><td></td></tr></table>", "a < b"] {
+            assert!(!is_empty_page(&page(b)), "{b:?}");
         }
+        assert!(is_empty_page("<p>没有 body 的片段按空页算（与旧实现一致）</p>"));
+    }
+
+    /// 全书没有 `<h>` 标题、目录里没有中文时，新建目录标题用"Contents"；重建已有 nav 时其它 `<nav>`（landmarks）与原标题保留。
+    #[test]
+    fn nav_rebuild_keeps_landmarks_and_title_language() {
+        let items = vec![TocItem::new(1, "One", "c1.xhtml", "")];
+        let old = r#"<html><head><title>x</title></head><body><nav epub:type="toc" id="toc"><h2>Table</h2><ol><li><a href="c0.xhtml">Zero</a></li></ol></nav><nav epub:type="landmarks"><ol><li><a epub:type="bodymatter" href="c1.xhtml">Start</a></li></ol></nav></body></html>"#;
+        let out = write_nav(Some(old), &items, "", "Contents");
+        assert_eq!(out, r#"<html><head><title>x</title></head><body><nav epub:type="toc" id="toc"><h2>Table</h2><ol><li><a href="c1.xhtml">One</a></li></ol></nav><nav epub:type="landmarks"><ol><li><a epub:type="bodymatter" href="c1.xhtml">Start</a></li></ol></nav></body></html>"#);
+        assert!(write_nav(None, &items, "", "Contents").contains("<h1>Contents</h1>"));
+        assert_eq!(toc_title(LangMode::Latin), "Contents");
+        assert_eq!(toc_title(LangMode::Cjk), "目录");
     }
 
     /// manifest 项/属性解析（`parse_opf`、封面声明、占位封面探测共用）：属性顺序任意、`=` 两边带空格、
@@ -750,4 +761,655 @@
         assert!(items[1].tag.starts_with("<item id = ") && items[1].tag.ends_with('>'));
         assert_eq!(tag_attr(r#"<rootfile full-path="OEBPS/x.opf" media-type="y"/>"#, "FULL-PATH"), Some("OEBPS/x.opf"));
         assert_eq!(tag_attr(r#"<a data-id="1"/>"#, "id"), None);
+    }
+
+    // ───────────────────────── 章节分页 ─────────────────────────
+
+    /// 标题后的正文要超过 `TITLE_TAIL_MIN_CHARS`（30 字）才会另起一页，测试正文统一加长。
+    fn paged_book(chapters: &[(&str, &str)]) -> Vec<Entry> {
+        let items: String = chapters.iter().enumerate().map(|(i, (n, _))| format!(r#"<item id="c{i}" href="Text/{n}" media-type="application/xhtml+xml"/>"#)).collect();
+        let refs: String = (0..chapters.len()).map(|i| format!(r#"<itemref idref="c{i}"/>"#)).collect();
+        let mut v = vec![e("OEBPS/content.opf", &format!(r#"<package version="3.0"><metadata><dc:title>书</dc:title></metadata><manifest>{items}</manifest><spine>{refs}</spine></package>"#))];
+        for (n, body) in chapters {
+            v.push(e(&format!("OEBPS/Text/{n}"), &format!(r#"<html><head><title>t</title></head><body id="b">{body}</body></html>"#)));
+        }
+        v
+    }
+    fn spine_files(v: &[Entry]) -> Vec<String> {
+        parse_opf(v).unwrap().spine
+    }
+    fn body_of(v: &[Entry], name: &str) -> String {
+        let h = s(v, name);
+        h[h.find("<body").unwrap()..].to_string()
+    }
+
+    #[test]
+    fn chapter_title_alone_sections_start_new_pages() {
+        let mut v = paged_book(&[
+            ("c1.xhtml", "<h1>第一章 风起</h1><p>引言段这是足够长的正文文字，确保标题页之后的内容超过三十个字这条门槛，不被当成书名页的作者行。</p><h2 id=\"s1\">第一节</h2><p>一节正文这是足够长的正文文字，确保标题页之后的内容超过三十个字这条门槛，不被当成书名页的作者行。</p><h2>第二节</h2><p>二节正文这是足够长的正文文字，确保标题页之后的内容超过三十个字这条门槛，不被当成书名页的作者行。</p>"),
+            ("c2.xhtml", "<h1>第二章</h1><p>二章正文这是足够长的正文文字，确保标题页之后的内容超过三十个字这条门槛，不被当成书名页的作者行。</p>"),
+        ]);
+        let rep = wash_entries(&mut v, &WashOpts::default()).unwrap();
+        let spine = spine_files(&v);
+        assert_eq!(spine, ["OEBPS/Text/c1.xhtml", "OEBPS/Text/c1-p2.xhtml", "OEBPS/Text/c1-p3.xhtml", "OEBPS/Text/c1-p4.xhtml", "OEBPS/Text/c2.xhtml", "OEBPS/Text/c2-p2.xhtml"]);
+        assert_eq!(rep.sections_paginated, 4);
+        let t = body_of(&v, "OEBPS/Text/c1.xhtml");
+        assert!(t.contains("第一章 风起") && !t.contains("引言段"), "章标题单独一页: {t}");
+        assert!(body_of(&v, "OEBPS/Text/c1-p2.xhtml").contains("引言段"));
+        let s1 = body_of(&v, "OEBPS/Text/c1-p3.xhtml");
+        assert!(s1.contains("第一节") && s1.contains("一节正文") && !s1.contains("第二节"), "节标题与正文同页、节与节分页: {s1}");
+        assert!(!s(&v, "OEBPS/Text/c1-p3.xhtml").contains("id=\"b\""), "body 的 id 只留在第一份");
+        // 自动目录的链接改指到标题所在的那一份
+        let nav = s(&v, "OEBPS/nav.xhtml");
+        assert!(nav.contains(r#"href="Text/c1-p3.xhtml#s1""#), "{nav}");
+        // 幂等：再跑一遍不再拆
+        let rep2 = wash_entries(&mut v, &WashOpts::default()).unwrap();
+        assert_eq!(rep2.sections_paginated, 0);
+        assert_eq!(spine_files(&v).len(), 6);
+    }
+
+    #[test]
+    fn part_level_and_subtitle_and_wrappers() {
+        let mut v = paged_book(&[
+            ("p1.xhtml", r#"<div class="part"><h1>第一部 远方</h1></div>"#),
+            ("c1.xhtml", r#"<section id="sec"><div class="t"><h2 id="h">第一章</h2><h3>风起</h3></div><p>正文一这是足够长的正文文字，确保标题页之后的内容超过三十个字这条门槛，不被当成书名页的作者行。</p><h4>小标题</h4><p>正文二。</p></section>"#),
+            ("c2.xhtml", r#"<h2>第二章</h2><h3>云涌</h3><p>正文三这是足够长的正文文字，确保标题页之后的内容超过三十个字这条门槛，不被当成书名页的作者行。</p>"#),
+        ]);
+        wash_entries(&mut v, &WashOpts::default()).unwrap();
+        assert_eq!(
+            spine_files(&v),
+            ["OEBPS/Text/p1.xhtml", "OEBPS/Text/c1.xhtml", "OEBPS/Text/c1-p2.xhtml", "OEBPS/Text/c1-p3.xhtml", "OEBPS/Text/c2.xhtml", "OEBPS/Text/c2-p2.xhtml"],
+            "部、章各占一页；副标题 h3 跟章标题同页；副标题之后的下一级 h4 是节，另起一页"
+        );
+        let t = body_of(&v, "OEBPS/Text/c1.xhtml");
+        assert!(t.contains("风起") && t.contains(r#"<div class="t">"#) && t.contains("</section>") && !t.contains("正文一"), "包裹 div 整体归标题页、section 补闭合: {t}");
+        let b = body_of(&v, "OEBPS/Text/c1-p2.xhtml");
+        assert!(b.starts_with(r#"<body><section>"#) || b.contains("<section>"), "section 在下一份重新打开且不带 id: {b}");
+        assert!(!b.contains(r#"id="sec""#) && b.contains("正文一") && !b.contains("小标题"));
+        let sec = body_of(&v, "OEBPS/Text/c1-p3.xhtml");
+        assert!(sec.contains("小标题") && sec.contains("正文二"), "{sec}");
+    }
+
+    #[test]
+    fn same_file_note_moves_with_its_section_and_cross_links_rewritten() {
+        let mut v = paged_book(&[
+            ("c1.xhtml", r##"<h1>第一章</h1><h2>第一节</h2><p>正文<a href="#n1"><sup>1</sup></a>。</p><h2 id="s2">第二节</h2><p>另一节<a href="#n2">[2]</a>。</p><p id="n1"><a href="#r1">1</a> 注一。</p><p id="n2">注二。</p>"##),
+            ("toc.xhtml", r#"<p><a href="c1.xhtml#s2">第二节</a></p>"#),
+        ]);
+        let rep = wash_entries(&mut v, &WashOpts { auto_toc: AutoToc::IfMissing, ..Default::default() }).unwrap();
+        assert_eq!(rep.paginate_notes_moved, 1, "注二本来就在第二节那一份，不用搬");
+        let s1 = body_of(&v, "OEBPS/Text/c1-p2.xhtml");
+        assert!(s1.contains(r##"href="#n1""##) && s1.contains("注一"), "注一搬到引用它的第一节，链接仍是同文件锚点: {s1}");
+        let s2 = body_of(&v, "OEBPS/Text/c1-p3.xhtml");
+        assert!(s2.contains(r##"href="#n2""##) && s2.contains("注二") && !s2.contains("注一"), "{s2}");
+        let toc = s(&v, "OEBPS/Text/toc.xhtml");
+        assert!(toc.contains(r#"href="c1-p3.xhtml#s2""#), "其它文件指向被拆文件的链接改到对应的份: {toc}");
+    }
+
+    #[test]
+    fn empty_anchor_before_heading_retargets_next_piece_and_toc_page_untouched() {
+        let mut v = paged_book(&[
+            ("c1.xhtml", r#"<h1>第一章</h1><p>正文这是足够长的正文文字，确保标题页之后的内容超过三十个字这条门槛，不被当成书名页的作者行。</p><a id="x"></a><h2>第一节</h2><p>节文。</p>"#),
+            ("list.xhtml", r#"<h1>目录</h1><p><a href="c1.xhtml#x">一</a></p><p><a href="c1.xhtml">二</a></p><p><a href="c1.xhtml">三</a></p>"#),
+        ]);
+        wash_entries(&mut v, &WashOpts::default()).unwrap();
+        let list = s(&v, "OEBPS/Text/list.xhtml");
+        assert!(list.contains(r#"href="c1-p3.xhtml""#), "空锚点指到下一份开头: {list}");
+        assert!(!spine_files(&v).iter().any(|p| p.contains("list-p")), "目录页不拆");
+    }
+
+    #[test]
+    fn comic_and_headingless_books_untouched() {
+        let mut v = paged_book(&[("c1.xhtml", "<p>只有正文，没有标题。</p><p>第二段。</p>")]);
+        let rep = wash_entries(&mut v, &WashOpts::default()).unwrap();
+        assert_eq!(rep.sections_paginated, 0);
+        assert_eq!(spine_files(&v).len(), 1);
+    }
+
+    #[test]
+    fn books_without_h_tags_use_toc_targets_as_titles() {
+        let mut v = paged_book(&[
+            ("c1.xhtml", r#"<p id="t1" class="block_7">緣起首回　開宗明義</p><p class="block_">正文第一段这是足够长的正文文字，确保标题页之后的内容超过三十个字这条门槛，不被当成书名页的作者行。</p><p>正文第二段。</p>"#),
+            ("c2.xhtml", r#"<p id="t2">第二回</p><p>正文这是足够长的正文文字，确保标题页之后的内容超过三十个字这条门槛，不被当成书名页的作者行。</p>"#),
+        ]);
+        v.push(e("OEBPS/toc.ncx", r#"<ncx><navMap><navPoint><navLabel><text>一</text></navLabel><content src="Text/c1.xhtml#t1"/></navPoint><navPoint><navLabel><text>二</text></navLabel><content src="Text/c2.xhtml#t2"/></navPoint></navMap></ncx>"#));
+        let opf = s(&v, "OEBPS/content.opf").replace("</manifest>", r#"<item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/></manifest>"#);
+        v[0].data = opf.into_bytes();
+        let rep = wash_entries(&mut v, &WashOpts::default()).unwrap();
+        assert_eq!(rep.sections_paginated, 2);
+        let t = body_of(&v, "OEBPS/Text/c1.xhtml");
+        assert!(t.contains("緣起首回") && !t.contains("正文第一段"), "{t}");
+        assert!(body_of(&v, "OEBPS/Text/c1-p2.xhtml").contains("正文第二段"));
+    }
+
+    #[test]
+    fn toc_without_fragment_uses_first_paragraph_as_title() {
+        let mut v = paged_book(&[("c1.xhtml", r#"<p class="block_7">第一回　楔子</p><p>正文一这是足够长的正文文字，确保标题页之后的内容超过三十个字这条门槛，不被当成书名页的作者行。</p>"#), ("c2.xhtml", r#"<div><p>第二回</p></div><p>正文二这是足够长的正文文字，确保标题页之后的内容超过三十个字这条门槛。</p>"#)]);
+        v.push(e("OEBPS/toc.ncx", r#"<ncx><navMap><navPoint><navLabel><text>一</text></navLabel><content src="Text/c1.xhtml"/></navPoint><navPoint><navLabel><text>二</text></navLabel><content src="Text/c2.xhtml"/></navPoint></navMap></ncx>"#));
+        let opf = s(&v, "OEBPS/content.opf").replace("</manifest>", r#"<item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/></manifest>"#);
+        v[0].data = opf.into_bytes();
+        let rep = wash_entries(&mut v, &WashOpts::default()).unwrap();
+        assert_eq!(rep.sections_paginated, 2);
+        assert!(!body_of(&v, "OEBPS/Text/c2.xhtml").contains("正文二"));
+    }
+
+    #[test]
+    fn sections_missing_from_own_toc_are_added_one_level_below_chapter() {
+        let long = "这是足够长的正文文字，确保标题页之后的内容超过三十个字这条门槛，不被当成书名页的作者行。";
+        let mut v = paged_book(&[
+            ("c1.xhtml", &format!(r#"<h1 id="c1">第一章</h1><p>{long}</p><h2>第一节</h2><p>一节。</p><h2 id="s2">第二节</h2><p>二节。</p>"#)),
+            ("c2.xhtml", &format!(r#"<h1 id="c2">第二章</h1><p>{long}</p>"#)),
+        ]);
+        v.push(e("OEBPS/toc.ncx", r#"<ncx><navMap><navPoint><navLabel><text>第一章</text></navLabel><content src="Text/c1.xhtml#c1"/></navPoint><navPoint><navLabel><text>第二章</text></navLabel><content src="Text/c2.xhtml#c2"/></navPoint></navMap></ncx>"#));
+        let opf = s(&v, "OEBPS/content.opf").replace("</manifest>", r#"<item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/></manifest>"#);
+        v[0].data = opf.into_bytes();
+        let rep = wash_entries(&mut v, &WashOpts::default()).unwrap();
+        assert_eq!(rep.toc_sections_added, 2);
+        let flat = crate::ncx::parse_ncx_flat(&s(&v, "OEBPS/toc.ncx"));
+        let got: Vec<(usize, &str, &str)> = flat.iter().map(|(d, l, t)| (*d, l.as_str(), t.as_str())).collect();
+        assert_eq!(
+            got,
+            [(1, "第一章", "Text/c1.xhtml#c1"), (2, "第一节", "Text/c1-p3.xhtml#cj-sec-1"), (2, "第二节", "Text/c1-p4.xhtml#s2"), (1, "第二章", "Text/c2.xhtml#c2")],
+            "节挂在章下面一级，指向节所在的那一份"
+        );
+        assert!(s(&v, "OEBPS/Text/c1-p3.xhtml").contains(r#"<h2 id="cj-sec-1">第一节</h2>"#));
+        // 幂等：再跑一遍不重复补
+        let rep2 = wash_entries(&mut v, &WashOpts::default()).unwrap();
+        assert_eq!(rep2.toc_sections_added, 0);
+        assert_eq!(crate::ncx::parse_ncx_flat(&s(&v, "OEBPS/toc.ncx")).len(), 4);
+    }
+
+    // ───────────────────────── 2026-09-27 审计回归 ─────────────────────────
+
+    /// A1/A5：`data-id` 不是 id；单引号的 id 也算已有，不再追加第二个 id。
+    #[test]
+    fn audit_ids_exact_name_and_single_quotes() {
+        assert_eq!(crate::htmlproc::collapse_dup_id_attrs(r#"<span id="x" data-id="y">t</span>"#), r#"<span id="x" data-id="y">t</span>"#);
+        assert_eq!(count_dup_id_tags(r#"<span id="x" data-id="y"/><p id='a' id="b"/>"#), 1);
+        let mut v = vec![
+            e("content.opf", r#"<package version="3.0"><metadata><dc:title>书</dc:title></metadata><manifest><item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="c1"/></spine></package>"#),
+            e("c1.xhtml", r#"<html><body><h1 id='c1'>第一章</h1><p>a</p><h2 data-id="z">一节</h2><p>b</p></body></html>"#),
+        ];
+        wash_entries(&mut v, &WashOpts { paginate: false, ..Default::default() }).unwrap();
+        let c = s(&v, "c1.xhtml");
+        assert!(c.contains(r#"<h1 id='c1'>"#) && c.contains(r#"<h2 data-id="z" id="cj-toc-1">"#), "{c}");
+        let ncx = s(&v, "toc.ncx");
+        assert!(ncx.contains(r#"src="c1.xhtml#c1""#) && ncx.contains(r#"src="c1.xhtml#cj-toc-1""#) && !ncx.contains("#z"), "{ncx}");
+    }
+
+    /// A2：`data-style`、SVG `font-style` 不是 style 属性。
+    #[test]
+    fn audit_style_attr_exact_name() {
+        let h = r#"<p data-style="font-size:2em">a</p><svg><text font-style="italic" style="font-size:3px;fill:red">x</text></svg>"#;
+        assert_eq!(crate::htmlproc::strip_font_locks(h), r#"<p data-style="font-size:2em">a</p><svg><text font-style="italic" style="fill:red">x</text></svg>"#);
+        let (w, _) = wash_html(&format!("<html><body>{h}</body></html>"), &WashOpts { lang: LangMode::Cjk, ..Default::default() });
+        assert!(w.contains(r#"data-style="font-size:2em""#) && w.contains(r#"font-style="italic" style="fill:red;""#), "{w}");
+    }
+
+    /// A3：`<br>` 在标题、列表项里（不只是块容器里）时整个文件不做假段落切分。
+    #[test]
+    fn audit_cjk_paragraphize_only_container_brs() {
+        let h = "<html><body><div><h2>第一章<br/>风起</h2><br/>甲<br/>乙<br/>丙<br/>丁</div></body></html>";
+        assert_eq!(cjk_paragraphize(h), h);
+        let li = "<html><body><div><ul><li>1981<br/></li></ul></div><div>《甲》<br/>《乙》<br/>《丙》<br/>《丁》</div></body></html>";
+        assert_eq!(cjk_paragraphize(li), li);
+        let span = "<html><body><div><span>甲<br/>乙</span><br/>丙<br/>丁<br/>戊</div></body></html>";
+        assert_eq!(cjk_paragraphize(span), span);
+        let ok = "<html><body><div>甲<br/>乙<br/>丙<br/>丁<br/>戊</div></body></html>";
+        assert_eq!(cjk_paragraphize(ok), "<html><body><div><p>甲</p><p>乙</p><p>丙</p><p>丁</p><p>戊</p></div></body></html>");
+    }
+
+    /// A4：自闭合 `<p/>` 是空段，不会把下一段吞进来。
+    #[test]
+    fn audit_flush_self_closing_p() {
+        let h = r#"<html><body><h1>T</h1><p class="a">One.</p><p class="a">1.</p><p class="a">2.</p><p/><p class="a">Two.</p><p class="a">Three.</p></body></html>"#;
+        let out = flush_first_para_after_heading(h, &["a".to_string()].into_iter().collect());
+        assert_eq!(out, r#"<html><body><h1>T</h1><div class="cj-flush">One.</div><p class="a">1.</p><p class="a">2.</p><p/><div class="cj-flush">Two.</div><p class="a">Three.</p></body></html>"#);
+    }
+
+    /// A6：值里带分号的 `url(data:…;base64,…)`、引号里的分号不截断声明。
+    #[test]
+    fn audit_css_decls_keep_data_urls() {
+        let f: Vec<String> = DEFAULT_FILTER_PROPS.iter().map(|s| s.to_string()).collect();
+        assert_eq!(filter_decls(r#"list-style-image:url(data:image/png;base64,AAAA);content:"a;b";font-size:20px"#, &f, Spacing::Keep), r#"list-style-image:url(data:image/png;base64,AAAA);content:"a;b";"#);
+    }
+
+    /// A7：分页后别的文件指向被拆文件的链接——单引号 id、NCX 里百分号编码的锚点、`<a name>` 注释落点——都改到对应的份。
+    #[test]
+    fn audit_paginate_sees_single_quoted_encoded_and_name_anchors() {
+        let long = "这是足够长的正文文字，确保标题页之后的内容超过三十个字这条门槛，不被当成书名页的作者行。";
+        let mut v = paged_book(&[
+            ("c1.xhtml", &format!(r##"<h1>第一章</h1><p>{long}</p><h2 id='s1'>第一节</h2><p>正文<a href="#n1"><sup>1</sup></a>。</p><h2 id="注二">第二节</h2><p>{long}</p><p><a name="n1"></a>注一。</p>"##)),
+            ("list.xhtml", r#"<p>见<a href='c1.xhtml#s1'>第一节</a>。</p>"#),
+        ]);
+        v.push(e("OEBPS/toc.ncx", r#"<ncx><navMap><navPoint><navLabel><text>第一章</text></navLabel><content src="Text/c1.xhtml"/><navPoint><navLabel><text>第二节</text></navLabel><content src="Text/c1.xhtml#%E6%B3%A8%E4%BA%8C"/></navPoint></navPoint></navMap></ncx>"#));
+        let opf = s(&v, "OEBPS/content.opf").replace("</manifest>", r#"<item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/></manifest>"#);
+        v[0].data = opf.into_bytes();
+        let rep = wash_entries(&mut v, &WashOpts::default()).unwrap();
+        assert_eq!(rep.paginate_notes_moved, 1, "`<a name>` 落点的注释块搬到引用它的第一节");
+        assert!(s(&v, "OEBPS/Text/list.xhtml").contains(r#"href='c1-p3.xhtml#s1'"#), "{}", s(&v, "OEBPS/Text/list.xhtml"));
+        assert!(s(&v, "OEBPS/toc.ncx").contains(r#"src="Text/c1-p4.xhtml#%E6%B3%A8%E4%BA%8C""#), "{}", s(&v, "OEBPS/toc.ncx"));
+        let s1 = body_of(&v, "OEBPS/Text/c1-p3.xhtml");
+        assert!(s1.contains("注一") && s1.contains(r##"href="#n1""##), "{s1}");
+    }
+
+    /// B：注释锚点落在包住整章的 div 上时不搬（块里有标题）。
+    #[test]
+    fn audit_relocate_refuses_chapter_wrapper() {
+        let long = "这是足够长的正文文字，确保标题页之后的内容超过三十个字这条门槛，不被当成书名页的作者行。";
+        let mut v = paged_book(&[(
+            "c1.xhtml",
+            &format!(r##"<h1>第一章</h1><p>{long}</p><h2>第一节</h2><p>正文<a href="#w"><sup>1</sup></a>。</p><div id="w"><h2>第二节</h2><p>{long}</p></div>"##),
+        )]);
+        let rep = wash_entries(&mut v, &WashOpts::default()).unwrap();
+        assert_eq!(rep.paginate_notes_moved, 0);
+    }
+
+    /// B：空页删掉后，正文里的目录页与 OPF `<guide>` 指向它的链接也改指下一篇。
+    #[test]
+    fn audit_empty_page_links_in_body_and_guide_retargeted() {
+        let opf = OPF.replace("</package>", r#"<guide><reference type="text" href="pb.xhtml"/></guide></package>"#);
+        let mut v = vec![
+            e("content.opf", &opf),
+            e("c1.xhtml", r#"<html><body><p><a href='pb.xhtml#x'>空页</a></p></body></html>"#),
+            e("pb.xhtml", r#"<html><body><div class="mbppagebreak"></div></body></html>"#),
+            e("c2.xhtml", "<html><body><p>c</p></body></html>"),
+        ];
+        wash_entries(&mut v, &WashOpts { auto_toc: AutoToc::Off, ..Default::default() }).unwrap();
+        assert!(s(&v, "c1.xhtml").contains(r#"href='c2.xhtml'"#), "{}", s(&v, "c1.xhtml"));
+        assert!(s(&v, "content.opf").contains(r#"<reference type="text" href="c2.xhtml"/>"#), "{}", s(&v, "content.opf"));
+    }
+
+    /// B：`<pageList>`、`<content id=… src=…>` 的 NCX 也能补节；重建后 nav 里的 landmarks 保留。
+    #[test]
+    fn audit_merge_sections_keeps_landmarks() {
+        let long = "这是足够长的正文文字，确保标题页之后的内容超过三十个字这条门槛，不被当成书名页的作者行。";
+        let mut v = paged_book(&[("c1.xhtml", &format!(r#"<h1 id="c1">第一章</h1><p>{long}</p><h2>第一节</h2><p>一节。</p><h2>第二节</h2><p>二节。</p>"#))]);
+        v.push(e("OEBPS/toc.ncx", r#"<ncx><navMap><navPoint id="a"><navLabel><text>第一章</text></navLabel><content id="x" src="Text/c1.xhtml#c1"/></navPoint></navMap></ncx>"#));
+        v.push(e("OEBPS/nav.xhtml", r#"<html><head><title>t</title></head><body><nav epub:type="toc"><h1>目录</h1><ol><li><a href="Text/c1.xhtml#c1">第一章</a></li></ol></nav><nav epub:type="landmarks"><ol><li><a href="Text/c1.xhtml">正文</a></li></ol></nav></body></html>"#));
+        let opf = s(&v, "OEBPS/content.opf").replace("</manifest>", r#"<item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/><item id="nav" href="nav.xhtml" properties="nav" media-type="application/xhtml+xml"/></manifest>"#);
+        v[0].data = opf.into_bytes();
+        let rep = wash_entries(&mut v, &WashOpts::default()).unwrap();
+        assert_eq!(rep.toc_sections_added, 2);
+        let nav = s(&v, "OEBPS/nav.xhtml");
+        assert!(nav.contains(r#"epub:type="landmarks""#) && nav.contains("第二节"), "{nav}");
+    }
+
+    // ───────────────────────── 好读式结构：段落章名、数字节号 ─────────────────────────
+
+    /// 好读的书：第一个正文文件的 `<h3>` 是书名、"第一章"只是一段字（目录标签就是它），节号是独占一段的 `１`、`２`。
+    fn haodoo_book(c1_body: &str, c2_body: &str) -> Vec<Entry> {
+        let mut v = paged_book(&[("1.xhtml", c1_body), ("2.xhtml", c2_body)]);
+        v.push(e("OEBPS/toc.ncx", r#"<ncx><navMap><navPoint><navLabel><text>第一章</text></navLabel><content src="Text/1.xhtml"/></navPoint><navPoint><navLabel><text>第二章</text></navLabel><content src="Text/2.xhtml"/></navPoint></navMap></ncx>"#));
+        let opf = s(&v, "OEBPS/content.opf").replace("</manifest>", r#"<item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/></manifest>"#);
+        v[0].data = opf.into_bytes();
+        v
+    }
+    const HAODOO_TEXT: &str = "出了近鐵布施站之後，沿著鐵路往西走。已經十月了，天氣仍然悶熱難當，地面卻是乾的。每當卡車疾馳而過，揚起的塵土極可能會飛進眼睛。";
+
+    #[test]
+    fn haodoo_paragraph_chapter_and_numbered_sections() {
+        let t = HAODOO_TEXT;
+        let mut v = haodoo_book(
+            &format!("<div><h3>《白夜行》東野圭吾</h3><p>《好讀書櫃》典藏版</p><p>第一章</p><p>　　１</p><p>{t}</p><p>　　２</p><p>{t}</p></div>"),
+            &format!("<div><h3>第二章</h3><p>１</p><p>{t}</p><p>２</p><p>{t}</p><p>３</p><p>{t}</p></div>"),
+        );
+        let rep = wash_entries(&mut v, &WashOpts::default()).unwrap();
+        assert_eq!(rep.toc_sections_added, 5);
+        let flat = crate::ncx::parse_ncx_flat(&s(&v, "OEBPS/toc.ncx"));
+        let got: Vec<(usize, &str, &str)> = flat.iter().map(|(d, l, t)| (*d, l.as_str(), t.as_str())).collect();
+        assert_eq!(
+            got,
+            [
+                (1, "第一章", "Text/1-p2.xhtml#cj-ch-1"),
+                (2, "１", "Text/1-p3.xhtml#cj-sec-1"),
+                (2, "２", "Text/1-p4.xhtml#cj-sec-2"),
+                (1, "第二章", "Text/2.xhtml"),
+                (2, "１", "Text/2-p2.xhtml#cj-sec-3"),
+                (2, "２", "Text/2-p3.xhtml#cj-sec-4"),
+                (2, "３", "Text/2-p4.xhtml#cj-sec-5"),
+            ],
+            "第一章指到章名那一份（不是书名页），节挂在章下面"
+        );
+        let first = body_of(&v, "OEBPS/Text/1.xhtml");
+        assert!(first.contains("白夜行") && first.contains("典藏版") && !first.contains("第一章"), "书名页单独一页：{first}");
+        assert!(!body_of(&v, "OEBPS/Text/1-p2.xhtml").contains("鐵路"), "章名独立一页");
+        // 幂等
+        let rep2 = wash_entries(&mut v, &WashOpts::default()).unwrap();
+        assert_eq!((rep2.sections_paginated, rep2.toc_sections_added), (0, 0));
+    }
+
+    #[test]
+    fn numbered_paragraphs_that_are_not_sections() {
+        let t = HAODOO_TEXT;
+        // 目录样的一串数字（中间没有正文）、不从 1 开始的楼层号、断号的、只有一个的，都不是节
+        for body in [
+            format!("<div><h3>第二章</h3><p>一</p><p>二</p><p>三</p><p>{t}</p></div>"),
+            format!("<div><h3>第二章</h3><p class=\"lc\">308</p><p>{t}</p><p class=\"lc\">309</p><p>{t}</p></div>"),
+            format!("<div><h3>第二章</h3><p>１</p><p>{t}</p><p>３</p><p>{t}</p></div>"),
+            format!("<div><h3>第二章</h3><p>１</p><p>{t}</p></div>"),
+        ] {
+            let mut v = haodoo_book(&format!("<div><h3>第一章</h3><p>{t}</p></div>"), &body);
+            let rep = wash_entries(&mut v, &WashOpts::default()).unwrap();
+            assert_eq!(rep.toc_sections_added, 0, "{body}");
+            assert_eq!(crate::ncx::parse_ncx_flat(&s(&v, "OEBPS/toc.ncx")).len(), 2, "{body}");
+        }
+    }
+
+    /// 书自带的 NCX（平的）：[(标签, 文件)]。
+    fn flat_ncx_book(files: &[(&str, &str)], toc: &[(&str, &str)]) -> Vec<Entry> {
+        let mut v = paged_book(files);
+        let points: String = toc.iter().map(|(l, f)| format!("<navPoint><navLabel><text>{l}</text></navLabel><content src=\"Text/{f}\"/></navPoint>")).collect();
+        v.push(e("OEBPS/toc.ncx", &format!("<ncx><navMap>{points}</navMap></ncx>")));
+        let opf = s(&v, "OEBPS/content.opf").replace("</manifest>", r#"<item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/></manifest>"#);
+        v[0].data = opf.into_bytes();
+        v
+    }
+
+    /// 《13級階梯》：节标题 `<h3>２</h3>` 跟章标题同级、单独成文件，第 1 节是章标题后面单独一段 `１`，
+    /// 书自带目录是平的（`第一章　出獄　　１`、`　　２`）。降成节：挂到章下面、跟正文同页，章标签去掉末尾的节号。
+    #[test]
+    fn numbered_headings_at_chapter_level_become_sections() {
+        let t = HAODOO_TEXT;
+        let (c1, c1b, c1c) = (format!("<div><h3>第一章　出獄</h3><p>１</p><p>{t}</p></div>"), format!("<div><h3>２</h3><p>{t}</p></div>"), format!("<div><h3>３</h3><p>{t}</p></div>"));
+        let (c2, c2b) = (format!("<div><h3>第二章　事件</h3><p>１</p><p>{t}</p></div>"), format!("<div><h3>２</h3><p>{t}</p></div>"));
+        let mut v = flat_ncx_book(
+            &[("c1.xhtml", &c1), ("c1b.xhtml", &c1b), ("c1c.xhtml", &c1c), ("c2.xhtml", &c2), ("c2b.xhtml", &c2b)],
+            &[("第一章　出獄　　１", "c1.xhtml"), ("　　２", "c1b.xhtml"), ("　　３", "c1c.xhtml"), ("第二章　事件　　１", "c2.xhtml"), ("　　２", "c2b.xhtml")],
+        );
+        let rep = wash_entries(&mut v, &WashOpts::default()).unwrap();
+        assert_eq!(rep.toc_sections_added, 2, "只补两章的第 1 节，其余书自带");
+        let flat = crate::ncx::parse_ncx_flat(&s(&v, "OEBPS/toc.ncx"));
+        let got: Vec<(usize, &str, &str)> = flat.iter().map(|(d, l, t)| (*d, l.as_str(), t.as_str())).collect();
+        assert_eq!(
+            got,
+            [
+                (1, "第一章　出獄", "Text/c1.xhtml"),
+                (2, "１", "Text/c1-p2.xhtml#cj-sec-1"),
+                (2, "２", "Text/c1b.xhtml"),
+                (2, "３", "Text/c1c.xhtml"),
+                (1, "第二章　事件", "Text/c2.xhtml"),
+                (2, "１", "Text/c2-p2.xhtml#cj-sec-4"),
+                (2, "２", "Text/c2b.xhtml"),
+            ]
+        );
+        assert!(!body_of(&v, "OEBPS/Text/c1.xhtml").contains("鐵路"), "章标题独立一页");
+        let sec2 = body_of(&v, "OEBPS/Text/c1b.xhtml");
+        assert!(sec2.contains("２") && sec2.contains("鐵路"), "节标题跟正文同页，不单独占一页：{sec2}");
+        assert!(!v.iter().any(|x| x.name == "OEBPS/Text/c1b-p2.xhtml"));
+        let rep2 = wash_entries(&mut v, &WashOpts::default()).unwrap();
+        assert_eq!((rep2.sections_paginated, rep2.toc_sections_added), (0, 0), "幂等");
+    }
+
+    /// 反例：全书只有一串同级数字标题（《月亮和六便士》`<h3>二</h3>`… 是章），不降成节。
+    #[test]
+    fn single_run_of_numbered_headings_stays_chapters() {
+        let t = HAODOO_TEXT;
+        let (c1, c2, c3) = (format!("<div><h3>《月亮和六便士》毛姆</h3><p>一</p><p>{t}</p></div>"), format!("<div><h3>二</h3><p>{t}</p></div>"), format!("<div><h3>三</h3><p>{t}</p></div>"));
+        let mut v = flat_ncx_book(&[("1.xhtml", &c1), ("2.xhtml", &c2), ("3.xhtml", &c3)], &[("一", "1.xhtml"), ("二", "2.xhtml"), ("三", "3.xhtml")]);
+        wash_entries(&mut v, &WashOpts::default()).unwrap();
+        let flat = crate::ncx::parse_ncx_flat(&s(&v, "OEBPS/toc.ncx"));
+        assert!(flat.iter().all(|(d, _, _)| *d == 1), "{flat:?}");
+        assert!(!body_of(&v, "OEBPS/Text/2.xhtml").contains("鐵路"), "二 仍是章：标题独立一页");
+    }
+
+    /// 章标签末尾的数字是章自己的编号（《鼠疫》"部　一"，节都是新补的）：不去掉。
+    #[test]
+    fn part_number_in_label_is_kept() {
+        let t = HAODOO_TEXT;
+        let (c1, c2) = (format!("<div><h3>部　一</h3><p>一</p><p>{t}</p><p>二</p><p>{t}</p></div>"), format!("<div><h3>部　二</h3><p>一</p><p>{t}</p><p>二</p><p>{t}</p></div>"));
+        let mut v = flat_ncx_book(&[("1.xhtml", &c1), ("2.xhtml", &c2)], &[("部　一", "1.xhtml"), ("部　二", "2.xhtml")]);
+        let rep = wash_entries(&mut v, &WashOpts::default()).unwrap();
+        assert_eq!(rep.toc_sections_added, 4);
+        let flat = crate::ncx::parse_ncx_flat(&s(&v, "OEBPS/toc.ncx"));
+        let labels: Vec<(usize, &str)> = flat.iter().map(|(d, l, _)| (*d, l.as_str())).collect();
+        assert_eq!(labels, [(1, "部　一"), (2, "一"), (2, "二"), (1, "部　二"), (2, "一"), (2, "二")]);
+    }
+
+    /// 《雪人》：`<h3>第二部</h3>` 后面紧跟一段章名"03 洋紅"——部、章各占一页（此前章名太短，被当成书名页的作者行并进部标题页）。
+    #[test]
+    fn part_title_and_following_chapter_title_get_separate_pages() {
+        let t = HAODOO_TEXT;
+        let (c1, c2, c3) = (
+            format!("<div><h3>第一部</h3><p>01 雪人</p><p>{t}</p></div>"),
+            format!("<div><h3>02 卵石眼</h3><p>{t}</p></div>"),
+            format!("<div><h3>第二部</h3><p>03 洋紅</p><p>{t}</p></div>"),
+        );
+        let mut v = flat_ncx_book(&[("1.xhtml", &c1), ("2.xhtml", &c2), ("3.xhtml", &c3)], &[("第一部　01　雪人", "1.xhtml"), ("02　卵石眼", "2.xhtml"), ("第二部　03　洋紅", "3.xhtml")]);
+        wash_entries(&mut v, &WashOpts::default()).unwrap();
+        let part = body_of(&v, "OEBPS/Text/3.xhtml");
+        assert!(part.contains("第二部") && !part.contains("洋紅"), "部标题单独一页：{part}");
+        let pieces: Vec<String> = v.iter().filter(|e| e.name.starts_with("OEBPS/Text/3-p")).map(|e| body_of(&v, &e.name)).collect();
+        assert!(pieces.iter().any(|b| b.contains("洋紅") && !b.contains("鐵路")), "章名单独一页：{pieces:?}");
+        assert!(pieces.iter().any(|b| b.contains("鐵路") && !b.contains("洋紅")), "正文另起一页：{pieces:?}");
+    }
+
+    /// MOBI 转来的书（《福尔摩斯探案全集》）：没有 `<hN>`，目录锚点是章名段落前面的空 `<span id>`——取紧跟着的段落当标题。
+    #[test]
+    fn toc_anchor_on_empty_span_before_title_paragraph() {
+        let t = HAODOO_TEXT;
+        let body = format!(
+            r#"<p>{t}</p><span id="a1"></span><p><b>第一章</b> <b>歇洛克</b></p><p>{t}</p><span id="a2"></span><p><b>第二章</b> <b>演绎法</b></p><p>{t}</p>"#
+        );
+        let mut v = paged_book(&[("p.xhtml", &body)]);
+        v.push(e("OEBPS/toc.ncx", r#"<ncx><navMap><navPoint><navLabel><text>第一章　歇洛克</text></navLabel><content src="Text/p.xhtml#a1"/></navPoint><navPoint><navLabel><text>第二章　演绎法</text></navLabel><content src="Text/p.xhtml#a2"/></navPoint></navMap></ncx>"#));
+        let opf = s(&v, "OEBPS/content.opf").replace("</manifest>", r#"<item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/></manifest>"#);
+        v[0].data = opf.into_bytes();
+        let rep = wash_entries(&mut v, &WashOpts::default()).unwrap();
+        assert!(rep.sections_paginated >= 3, "两章各自拆开：{}", rep.sections_paginated);
+        let with_ch2: Vec<&Entry> = v.iter().filter(|e| e.name.starts_with("OEBPS/Text/p") && body_of(&v, &e.name).contains("演绎法")).collect();
+        assert_eq!(with_ch2.len(), 1);
+        assert!(!body_of(&v, &with_ch2[0].name).contains("歇洛克"), "第二章不跟第一章同页");
+    }
+
+    /// 书自带目录指错位置：核实得上的改指（书里同名链接 / 全书唯一同名标题 / 锚点在文件末尾时下一个文件），核实不上、有歧义的不动。
+    #[test]
+    fn ncx_targets_repaired_only_when_verified() {
+        let t = HAODOO_TEXT;
+        let toc_page = r##"<p><a href="c1.xhtml#x1">第一章</a></p><p><a href="c2.xhtml#x2">第二章</a></p><p><a href="c3.xhtml">附录</a></p>"##;
+        let (c1, c2) = (format!(r#"<h3 id="x1">第一章</h3><p>{t}</p>"#), format!(r#"<h3 id="x2">第二章</h3><p>{t}</p><span id="end"></span>"#));
+        let c3 = format!(r#"<h3>附录</h3><p>{t}</p>"#);
+        let c4 = format!(r#"<h3>后记</h3><p>{t}</p>"#);
+        let mut v = paged_book(&[("toc.xhtml", toc_page), ("c1.xhtml", &c1), ("c2.xhtml", &c2), ("c3.xhtml", &c3), ("c4.xhtml", &c4)]);
+        // 第一章指到第二章、第二章指到登场人物（都错）；附录指在 c2 末尾；后记写成了"跋"（核实不了）
+        v.push(e(
+            "OEBPS/toc.ncx",
+            r#"<ncx><navMap><navPoint><navLabel><text>第一章</text></navLabel><content src="Text/c2.xhtml#x2"/></navPoint><navPoint><navLabel><text>第二章</text></navLabel><content src="Text/c1.xhtml"/></navPoint><navPoint><navLabel><text>附录</text></navLabel><content src="Text/c2.xhtml#end"/></navPoint><navPoint><navLabel><text>跋</text></navLabel><content src="Text/c3.xhtml"/></navPoint></navMap></ncx>"#,
+        ));
+        let opf = s(&v, "OEBPS/content.opf").replace("</manifest>", r#"<item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/></manifest>"#);
+        v[0].data = opf.into_bytes();
+        let mut rep = WashReport::default();
+        super::toc::repair_ncx_targets(&mut v, &mut rep);
+        let flat = crate::ncx::parse_ncx_flat(&s(&v, "OEBPS/toc.ncx"));
+        let got: Vec<(&str, &str)> = flat.iter().map(|(_, l, t)| (l.as_str(), t.as_str())).collect();
+        assert_eq!(got, [("第一章", "Text/c1.xhtml#x1"), ("第二章", "Text/c2.xhtml#x2"), ("附录", "Text/c3.xhtml"), ("跋", "Text/c3.xhtml")]);
+        assert_eq!(rep.ncx_targets_repaired, 3);
+
+        // 同一标题核实得上的地方不止一处：拿不准，不改
+        let (d1, d2) = (format!(r#"<h3 id="y">第一章</h3><p>{t}</p>"#), format!(r#"<h3 id="z">第一章</h3><p>{t}</p>"#));
+        let links = r##"<p><a href="d1.xhtml#y">第一章</a></p><p><a href="d2.xhtml#z">第一章</a></p><p><a href="d1.xhtml">第一章</a></p>"##;
+        let mut w = paged_book(&[("toc.xhtml", links), ("d1.xhtml", &d1), ("d2.xhtml", &d2)]);
+        w.push(e("OEBPS/toc.ncx", r#"<ncx><navMap><navPoint><navLabel><text>第一章</text></navLabel><content src="Text/toc.xhtml"/></navPoint></navMap></ncx>"#));
+        let opf = s(&w, "OEBPS/content.opf").replace("</manifest>", r#"<item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/></manifest>"#);
+        w[0].data = opf.into_bytes();
+        let mut rep = WashReport::default();
+        super::toc::repair_ncx_targets(&mut w, &mut rep);
+        assert_eq!(rep.ncx_targets_repaired, 0);
+    }
+
+    #[test]
+    fn section_number_values() {
+        use super::paginate::section_number;
+        for (t, n) in [("１", 1), ("　　12", 12), ("一", 1), ("十", 10), ("十二", 12), ("二十", 20), ("九十九", 99)] {
+            assert_eq!(section_number(t), Some(n), "{t}");
+        }
+        for t in ["", "一十", "十十", "1234", "第一", "１a", "百"] {
+            assert_eq!(section_number(t), None, "{t}");
+        }
+    }
+
+    // ───────────────────────── 2026-09-28 审计复现的问题 ─────────────────────────
+
+    const LONG: &str = "这是足够长的正文文字，确保标题页之后的内容超过三十个字这条门槛，不被当成书名页的作者行。";
+
+    /// XHTML 良构的粗查：每种元素开闭数目相等（自闭合不算）。
+    fn balanced(h: &str) -> bool {
+        let mut n: HashMap<String, i64> = HashMap::new();
+        for t in html::tags(h) {
+            match t.kind {
+                html::TagKind::Open => *n.entry(t.name.to_ascii_lowercase()).or_default() += 1,
+                html::TagKind::Close => *n.entry(t.name.to_ascii_lowercase()).or_default() -= 1,
+                _ => {}
+            }
+        }
+        n.values().all(|&v| v == 0)
+    }
+
+    /// H2：搬走注释后变空的一份并回前一份时，补闭合要换成被并那份的（此前产出 `</div></div></body>`）；
+    /// 注释都搬走后只剩 `<h1>注释</h1>` 的一份也并回前一份。
+    #[test]
+    fn audit_h2_merged_piece_takes_over_closing_tags() {
+        let mut v = paged_book(&[(
+            "c1.xhtml",
+            &format!(r##"<div class="w"><h1>第一章</h1><p>{LONG}<a href="#n1"><sup>1</sup></a></p><h1>注释</h1><p id="n1">注一：{LONG}</p></div>"##),
+        )]);
+        let rep = wash_entries(&mut v, &WashOpts::default()).unwrap();
+        assert_eq!(rep.paginate_notes_moved, 1);
+        let spine = spine_files(&v);
+        assert_eq!(spine, ["OEBPS/Text/c1.xhtml", "OEBPS/Text/c1-p2.xhtml"], "注释那一份搬空、标题那一份只剩标题，都并回正文那一份");
+        for f in &spine {
+            let h = s(&v, f);
+            assert!(balanced(&h) && !h.contains("</div></div>"), "{f}: {h}");
+        }
+        let p2 = body_of(&v, "OEBPS/Text/c1-p2.xhtml");
+        assert!(p2.contains("注一") && p2.contains("注释") && p2.contains(r##"href="#n1""##), "{p2}");
+    }
+
+    /// H3：单引号 OPF 里的空页也删得掉，manifest 的 href 不被改成邻页（此前 spine 重复一章）。
+    #[test]
+    fn audit_h3_empty_page_in_single_quoted_opf() {
+        let mut v = vec![
+            e("META-INF/container.xml", r#"<container><rootfiles><rootfile full-path="OEBPS/content.opf"/></rootfiles></container>"#),
+            e("OEBPS/content.opf", "<package version='3.0'><metadata><dc:title>B</dc:title></metadata><manifest><item id='c0' href='c0.xhtml' media-type='application/xhtml+xml'/><item id='c1' href='c1.xhtml' media-type='application/xhtml+xml'/></manifest><spine><itemref idref='c0'/><itemref idref='c1'/></spine><guide><reference type='text' href='c0.xhtml'/></guide></package>"),
+            e("OEBPS/c0.xhtml", "<html><body><p> </p></body></html>"),
+            e("OEBPS/c1.xhtml", &format!("<html><body><p>{LONG}</p></body></html>")),
+        ];
+        let rep = wash_entries(&mut v, &WashOpts { paginate: false, ..Default::default() }).unwrap();
+        assert_eq!(rep.empty_pages_removed, ["OEBPS/c0.xhtml"]);
+        let opf = s(&v, "OEBPS/content.opf");
+        assert!(!opf.contains("c0.xhtml") || opf.contains("<reference type='text' href='c1.xhtml'/>"), "{opf}");
+        assert!(opf.contains("<item id='c1' href='c1.xhtml'") && !opf.contains("id='c0'"), "{opf}");
+        assert_eq!(spine_files(&v), ["OEBPS/c1.xhtml"]);
+    }
+
+    /// H4：`Chapter 1`、`Part 2`、`卷 一` 是这一条自己的编号，自动目录里不拆成两级。
+    #[test]
+    fn audit_h4_chapter_number_not_split() {
+        for t in ["Chapter 1", "Part 2", "卷 一", "BOOK 3", "第 三"] {
+            assert_eq!(split_numbered_title(t), None, "{t}");
+        }
+        assert_eq!(split_numbered_title("第一章 出獄 1"), Some(("第一章 出獄".into(), "1".into())));
+        let mut v = paged_book(&[("c1.xhtml", &format!("<h2>Chapter 1</h2><p>{LONG}</p><h2>Chapter 2</h2><p>{LONG}</p>"))]);
+        wash_entries(&mut v, &WashOpts { paginate: false, ..Default::default() }).unwrap();
+        let nav = s(&v, "OEBPS/nav.xhtml");
+        assert!(nav.contains(">Chapter 1</a></li><li>") && !nav.contains("<ol><li><a href=\"Text/c1.xhtml#cj-toc-1\">1</a>"), "{nav}");
+    }
+
+    /// H5：已经分了层级的目录不压平；扁平目录重建时 navPoint 的 id 与 pageList 保留。
+    #[test]
+    fn audit_h5_nested_toc_untouched_flat_toc_keeps_ids_and_page_list() {
+        let opf = r#"<package version="2.0" unique-identifier="u"><metadata><dc:identifier id="u">x</dc:identifier><dc:title>B</dc:title></metadata><manifest><item id="ncx" href="toc.ncx" media-type="application/x-dtbncx+xml"/><item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/></manifest><spine toc="ncx"><itemref idref="c1"/></spine></package>"#;
+        let body = format!("<html><body><p id='a'>第一部</p><p id='b'>第一章</p><p id='c'>第一节</p><p>{LONG}</p></body></html>");
+        let nested = r#"<ncx><head><meta name="dtb:uid" content="x"/></head><navMap><navPoint id="p1" playOrder="1"><navLabel><text>第一部</text></navLabel><content src="c1.xhtml#a"/><navPoint id="p2" playOrder="2"><navLabel><text>第一章</text></navLabel><content src="c1.xhtml#b"/><navPoint id="p3" playOrder="3"><navLabel><text>第一节</text></navLabel><content src="c1.xhtml#c"/></navPoint></navPoint></navPoint></navMap></ncx>"#;
+        let mut v = vec![e("content.opf", opf), e("toc.ncx", nested), e("c1.xhtml", &body)];
+        let rep = wash_entries(&mut v, &WashOpts { paginate: false, ..Default::default() }).unwrap();
+        assert_eq!(rep.toc_parts_restructured, 0);
+        assert_eq!(s(&v, "toc.ncx"), nested, "已嵌套的目录原样");
+        let flat = r#"<ncx><head><meta name="dtb:uid" content="x"/><meta name="dtb:depth" content="1"/></head><docTitle><text>B</text></docTitle><navMap><navPoint id="n1" playOrder="1"><navLabel><text>第一部　第一章</text></navLabel><content src="c1.xhtml#a"/></navPoint><navPoint id="n2" playOrder="2"><navLabel><text>第一节</text></navLabel><content src="c1.xhtml#c"/></navPoint></navMap><pageList><pageTarget id="pg1" type="normal" value="1" playOrder="3"><navLabel><text>1</text></navLabel><content src="c1.xhtml#a"/></pageTarget></pageList></ncx>"#;
+        let mut w = vec![e("content.opf", opf), e("toc.ncx", flat), e("c1.xhtml", &body)];
+        let rep = wash_entries(&mut w, &WashOpts { paginate: false, ..Default::default() }).unwrap();
+        assert_eq!(rep.toc_parts_restructured, 3);
+        let out = s(&w, "toc.ncx");
+        assert!(out.contains(r#"<navPoint id="n1" playOrder="1"><navLabel><text>第一部</text></navLabel><content src="c1.xhtml#a"/><navPoint id="cj-np-1" playOrder="2"><navLabel><text>第一章</text>"#), "{out}");
+        assert!(out.contains(r#"<navPoint id="n2" playOrder="3"><navLabel><text>第一节</text>"#), "{out}");
+        assert!(out.contains(r#"<pageList><pageTarget id="pg1""#) && out.contains("<docTitle><text>B</text></docTitle>"), "NCX 其余部分原样: {out}");
+        assert!(out.contains(r#"<meta name="dtb:depth" content="2"/>"#), "{out}");
+    }
+
+    /// M3：样式表开头的 `@import` 不再让第一条规则整条跳过（字体锁照剥）。
+    #[test]
+    fn audit_m3_import_does_not_swallow_first_rule() {
+        let out = filter_css("@charset \"utf-8\";\n@import url(a.css);\np{font-size:12pt;color:red}\nh1{font-size:2em}", &WashOpts::default());
+        assert!(out.starts_with("@charset \"utf-8\";\n@import url(a.css);\np{"), "{out}");
+        assert!(!out.contains("font-size:12pt") && out.contains("color:red;"), "{out}");
+        assert_eq!(split_leading_statements("@import url('a;b.css');\n.x"), ("@import url('a;b.css');", "\n.x"));
+    }
+
+    /// M5：交叉引用"见第<a href=#a12>12</a>条"指向正文段落（没有注释语义、也不在文件末尾的注释区）时不搬。
+    #[test]
+    fn audit_m5_cross_reference_paragraph_not_moved() {
+        let mut v = paged_book(&[(
+            "c1.xhtml",
+            &format!(r##"<h1>第一章</h1><p>{LONG}</p><h2>第一节</h2><p>见第<a href="#a12">12</a>条。{LONG}</p><h2>第二节</h2><p id="a12">第十二条的正文。{LONG}</p><p>{LONG}</p>"##),
+        )]);
+        let rep = wash_entries(&mut v, &WashOpts::default()).unwrap();
+        assert_eq!(rep.paginate_notes_moved, 0);
+        let s2 = body_of(&v, "OEBPS/Text/c1-p4.xhtml");
+        assert!(s2.contains("第二节") && s2.contains("第十二条的正文"), "{s2}");
+        // 带注释语义的照搬（不在末尾也搬）
+        let mut w = paged_book(&[(
+            "c1.xhtml",
+            &format!(r##"<h1>第一章</h1><p>{LONG}</p><h2>第一节</h2><p>正文<a href="#n1">1</a>。{LONG}</p><h2>第二节</h2><aside epub:type="footnote" id="n1">注一。</aside><p>{LONG}</p>"##),
+        )]);
+        assert_eq!(wash_entries(&mut w, &WashOpts::default()).unwrap().paginate_notes_moved, 1);
+    }
+
+    /// L：`margin:inherit` 不再写成非法的 `margin:0 inherit`；`!important` 与括号里的空格都认。
+    #[test]
+    fn audit_box_shorthand_keywords_and_important() {
+        let f: Vec<String> = DEFAULT_FILTER_PROPS.iter().map(|s| s.to_string()).collect();
+        assert_eq!(filter_decls("margin:inherit", &f, Spacing::Vertical), "margin-right:inherit;margin-left:inherit;");
+        assert_eq!(filter_decls("margin:1em 2em !important", &f, Spacing::Vertical), "margin:0 2em !important;");
+        assert_eq!(filter_decls("padding:calc(1em + 2px) 3px", &f, Spacing::Vertical), "padding:0 3px;");
+        assert_eq!(box_sides("1px 2px 3px"), BoxSides::Sides(["1px", "2px", "3px", "2px"], ""));
+        assert_eq!(box_sides("1px 2px 3px 4px 5px"), BoxSides::Unknown);
+    }
+
+    /// L：nav 文档不叫 nav.xhtml（OPF 里 `properties="nav"` 的 toc.xhtml）、又没有 NCX 时，也算书有目录，不被自动目录覆盖。
+    #[test]
+    fn audit_nav_named_toc_xhtml_counts_as_existing_toc() {
+        let opf = r#"<package version="3.0"><metadata><dc:title>B</dc:title></metadata><manifest><item id="t" href="contents.xhtml" media-type="application/xhtml+xml" properties="nav"/><item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="c1"/></spine></package>"#;
+        let nav = r#"<html><body><nav epub:type="toc"><ol><li><a href="c1.xhtml">作者的目录</a></li></ol></nav></body></html>"#;
+        let mut v = vec![e("content.opf", opf), e("contents.xhtml", nav), e("c1.xhtml", &format!("<html><body><h1>一</h1><p>{LONG}</p></body></html>"))];
+        let rep = wash_entries(&mut v, &WashOpts { paginate: false, ..Default::default() }).unwrap();
+        assert_eq!(rep.toc_generated, 0);
+        assert!(s(&v, "contents.xhtml").contains("作者的目录"));
+    }
+
+    /// L：封面声明认单引号的 manifest 项（此前 `replacen` 按双引号找 `id="…"`，补不上 `properties`）。
+    #[test]
+    fn audit_cover_declared_in_single_quoted_opf() {
+        let mut v = vec![
+            e("content.opf", "<package version='3.0'><metadata><dc:title>B</dc:title></metadata><manifest><item id='img' href='i/c.jpg' media-type='image/jpeg'/><item id='p' href='p.xhtml' media-type='application/xhtml+xml'/></manifest><spine><itemref idref='p'/></spine></package>"),
+            e("p.xhtml", "<html><body><img src='i/c.jpg'/></body></html>"),
+        ];
+        assert!(ensure_cover_declared(&mut v));
+        let opf = s(&v, "content.opf");
+        assert!(opf.contains(r#"<item id='img' properties="cover-image" href='i/c.jpg'"#) && opf.contains(r#"<meta name="cover" content="img"/></metadata>"#), "{opf}");
+        assert!(!ensure_cover_declared(&mut v), "幂等");
+    }
+
+    /// 分页拆出来的后几份不再各带一个字节序标记（U+FEFF）：只有第一份（原文件）开头保留原来那个。
+    #[test]
+    fn paginated_pieces_do_not_repeat_bom() {
+        let long = "这是足够长的正文文字，确保标题页之后的内容超过三十个字这条门槛，不被当成书名页的作者行。";
+        let mut v = paged_book(&[("c1.xhtml", &format!("<h1>第一章</h1><p>{long}</p><h2>第一节</h2><p>{long}</p><h2>第二节</h2><p>{long}</p>"))]);
+        let c1 = v.iter_mut().find(|x| x.name == "OEBPS/Text/c1.xhtml").unwrap();
+        c1.data = [&[0xEF, 0xBB, 0xBF][..], &c1.data].concat();
+        let rep = wash_entries(&mut v, &WashOpts::default()).unwrap();
+        assert!(rep.sections_paginated >= 2, "{rep:?}");
+        assert!(s(&v, "OEBPS/Text/c1.xhtml").starts_with('\u{feff}'));
+        for f in spine_files(&v).iter().filter(|f| f.as_str() != "OEBPS/Text/c1.xhtml") {
+            assert!(!s(&v, f).contains('\u{feff}'), "{f}");
+        }
     }

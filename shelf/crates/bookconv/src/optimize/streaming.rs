@@ -85,25 +85,30 @@ impl<'a> StreamingOptimize<'a> {
         let bytes_before = in_file.metadata().map(|m| m.len() as usize).unwrap_or(0);
         let mut archive = ZipArchive::new(std::io::BufReader::new(in_file)).map_err(|e| format!("解 EPUB(非 zip?): {e}"))?;
 
-        // 阶段一：非图片条目整份读；图片条目占位（真实字节留到阶段二按需流式读）；之后同内存版（`prepare_entries`）。
+        // 阶段一：非图片条目整份读；图片条目占位（真实字节留到阶段二按需流式读）。
         let raw = crate::epubzip::read_skeleton(&mut archive)?.entries;
-        let Prepared { entries, aside_index, is_comic_book, opf_name, mut rep } = prepare_entries(raw, opts, bytes_before, title)?;
-        let comic_frame = opts.comic_frame;
+        let prep = prepare_entries(raw, opts, bytes_before, title)?;
+        let (comic_frame, is_comic_book) = (opts.comic_frame, prep.is_comic_book);
+        let entries = &prep.entries;
+        // 漫画里可能换格式的页（GIF/WebP）：处理后按实际格式改 manifest 的 media-type。
+        let may_retype = |name: &str| is_comic_book && matches!(crate::util::image_ext_of(name).as_str(), "gif" | "webp");
+        let has_retypable = entries.iter().any(|(n, _, ish)| !*ish && may_retype(n));
+        // 推迟写的 OPF 条目名（见函数文档）：有远程图、有可能换格式的页时；清洗过的书也推迟——manifest 的 `properties` 要按各章最终内容标。
+        let deferred_opf: Option<&str> = prep.opf_name.as_deref().filter(|_| prep.has_remote_imgs || has_retypable || opts.wash.is_some());
+        let mut retyped: Vec<(String, &'static str)> = Vec::new();
+        let mut deferred_opf_bytes: Option<Vec<u8>> = None;
 
-        // 阶段二：流式写出。非图片条目用阶段一已处理好的字节；图片条目现在才从源文件按需读回真实
-        // 字节，处理完立刻写文件、立刻丢——峰值只有"当前这一张"，不会随全书图片数量线性涨。
+        // 阶段二：流式写出。
         let out_file = std::fs::File::create(output_path).map_err(|e| format!("建输出文件失败: {e}"))?;
         let mut zw = ZipWriter::new(std::io::BufWriter::new(out_file));
         let (stored, deflated) = (crate::epubzip::stored(), crate::epubzip::deflated());
-        // 图片本身已是 JPEG/PNG：deflate 只能再榨一点（实测乱马 6%），用最快档（级别 1）拿大部分收益、少花 CPU。
-        let deflated_fast = deflated.compression_level(Some(1));
-        let mut xf = EntryXform::new(&aside_index, opts.footnote, title, opts.page_direction, opf_name.as_deref());
+        let mut xf = EntryXform::new(&prep, opts);
         let total_entries = entries.len();
         // 图片并行处理（见 `imgpool`）：主线程按条目顺序读原图字节、提交给 worker、按原顺序取回结果写 zip；
         // 提前提交 `lookahead` 张（读原图字节几乎不花时间，处理才慢），处理与写盘/读盘重叠。结果与逐张顺序处理逐字节相同。
         let workers = crate::imgpool::worker_count();
         let lookahead = workers + 2;
-        let image_positions: Vec<usize> = entries.iter().enumerate().filter(|(_, (n, _, ish))| !*ish && crate::imgopt::is_downscalable(n)).map(|(i, _)| i).collect();
+        let image_positions: Vec<usize> = entries.iter().enumerate().filter(|(_, (n, _, ish))| !*ish && crate::imgopt::is_page_image(n)).map(|(i, _)| i).collect();
         std::thread::scope(|scope| -> Result<(), String> {
             struct ImgJob {
                 bytes: Vec<u8>,
@@ -149,26 +154,62 @@ impl<'a> StreamingOptimize<'a> {
                     None if is_image => {
                         let rx = pending.pop_front().ok_or("图片队列意外为空")?;
                         consumed += 1;
-                        std::borrow::Cow::Owned(rx.recv().map_err(|_| format!("图片处理线程异常退出（{name}）"))?)
+                        let out = rx.recv().map_err(|_| format!("图片处理线程异常退出（{name}）"))?;
+                        if may_retype(name) {
+                            if let Some(mt) = crate::imgopt::converted_media_type(name, &out) {
+                                retyped.push((name.clone(), mt));
+                            }
+                        }
+                        std::borrow::Cow::Owned(out)
                     }
                     None => std::borrow::Cow::Borrowed(data.as_slice()),
                 };
-                // mimetype 与图片（JPEG/PNG 本身已压缩，再 deflate 几乎没收益、白花 CPU）用 Stored；其余 deflate。
-                let file_opts = if name == "mimetype" { stored } else if is_image { deflated_fast } else { deflated };
-                crate::epubzip::put_entry(&mut zw, name, file_opts, &final_data)?;
+                if deferred_opf == Some(name.as_str()) {
+                    deferred_opf_bytes = Some(final_data.into_owned());
+                } else {
+                    crate::epubzip::put_entry(&mut zw, name, entry_options(name, stored, deflated), &final_data)?;
+                }
                 on_progress(i + 1, total_entries);
             }
             drop(job_tx); // 关闭队列，worker 退出，scope 才能 join
             Ok(())
         })?;
-        write_tail(&mut zw, &xf.fetched_imgs, opts.wash.is_some())?;
+        // 收尾：抓到的远程图（与引用它的章同目录、src 已改本地名）→ 推迟的 OPF（补上这些图的 manifest 项）→ 幂等标记。
+        for (path, bytes) in &xf.fetched_imgs {
+            crate::epubzip::put_entry(&mut zw, path, entry_options(path, stored, deflated), bytes)?;
+        }
+        if let (Some(name), Some(bytes)) = (deferred_opf, deferred_opf_bytes) {
+            let bytes = match String::from_utf8(bytes) {
+                Ok(text) => {
+                    let text = if xf.fetched_imgs.is_empty() { text } else { add_manifest_items(&text, name, &xf.fetched_imgs) };
+                    let text = if retyped.is_empty() { text } else { set_manifest_media_types(&text, name, &retyped) };
+                    let props = xf.content_props.as_ref().and_then(|p| crate::wash::normalize::apply_content_properties(&text, crate::epubzip::dir_of(name), p));
+                    props.unwrap_or(text).into_bytes()
+                }
+                Err(e) => e.into_bytes(),
+            };
+            crate::epubzip::put_entry(&mut zw, name, deflated, &bytes)?;
+        }
+        crate::epubzip::put_entry(&mut zw, OPTIMIZE_MARKER, deflated, marker_value(opts.wash.is_some()).as_bytes())?;
         // `finish()` 只保证写完中央目录，底下 `BufWriter` 自己的缓冲区不一定落盘——显式 flush，
         // 不指望 Drop 的静默兜底（出错会被吞掉）。
         let mut out = zw.finish().map_err(|e| e.to_string())?;
         out.flush().map_err(|e| e.to_string())?;
-        // 产物文件大小（跟内存版 out_buf.len() 同语义——压缩后的 zip 体积），直接 stat 落盘文件，比
-        // 流式写的时候自己攒一份计数更简单也更准确。
+        let mut rep = prep.rep;
         rep.bytes_after = std::fs::metadata(output_path).map(|m| m.len() as usize).unwrap_or(0);
         Ok(rep)
+    }
+}
+
+
+/// 条目的压缩方式：`mimetype`（EPUB 规范）STORED；图片本身已压缩，deflate 只能再榨一点（实测乱马 6%），用最快档（级别 1）
+/// 拿大部分收益、少花 CPU；其余 deflate。
+fn entry_options(name: &str, stored: zip::write::SimpleFileOptions, deflated: zip::write::SimpleFileOptions) -> zip::write::SimpleFileOptions {
+    if name == "mimetype" {
+        stored
+    } else if crate::util::is_image_ext(name) {
+        deflated.compression_level(Some(1))
+    } else {
+        deflated
     }
 }

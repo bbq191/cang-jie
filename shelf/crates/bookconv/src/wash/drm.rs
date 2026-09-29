@@ -32,13 +32,11 @@ pub(super) fn strip_pseudo_drm(entries: &mut Vec<Entry>, rep: &mut WashReport) -
     let drop: HashSet<String> = targets.iter().cloned().chain(std::iter::once("META-INF/encryption.xml".to_string())).collect();
     if let Some(oi) = find_opf(entries) {
         let opf_dir = dir_of(&entries[oi].name).to_string();
-        let mut text = String::from_utf8_lossy(&entries[oi].data).into_owned();
-        for t in &targets {
-            let rel = relative_to(&opf_dir, t);
-            let re = Regex::new(&format!(r#"<item\b[^>]*\bhref="{}"[^>]*/>\s*"#, regex::escape(&rel))).unwrap();
-            text = re.replace_all(&text, "").into_owned();
+        let text = String::from_utf8_lossy(&entries[oi].data).into_owned();
+        // manifest 里指向被剥文件的 `<item>`（连同后面的空白）一趟删掉。
+        if let Some(t) = opf::remove_items(&text, |it| drop.contains(&resolve(&opf_dir, &percent_decode(it.href)))) {
+            entries[oi].data = t.into_bytes();
         }
-        entries[oi].data = text.into_bytes();
     }
     entries.retain(|e| !drop.contains(&e.name));
     rep.pseudo_drm_stripped = targets;

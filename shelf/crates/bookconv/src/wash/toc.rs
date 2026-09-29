@@ -1,4 +1,7 @@
-//! 目录：目录文件判定、自动生成目录（ncx+nav）、已有扁平目录按"第X部"重建为两级。
+//! 目录：目录文件判定、自动生成目录（ncx+nav）、已有扁平目录按"第X部"重建为两级、章节分页后补节。
+//!
+//! 重建已有目录时只换 nav 文档里的 `<nav epub:type="toc">`：landmarks、page-list 等其它 `<nav>` 和 head 原样保留，
+//! 原 toc 的标题（`<h1>目录</h1>`/`<h2>Contents</h2>`）沿用；新建时标题按书的语言（中文"目录"、其它"Contents"）。
 use super::*;
 
 pub fn is_toc_file(name: &str) -> bool {
@@ -7,101 +10,123 @@ pub fn is_toc_file(name: &str) -> bool {
     l.ends_with(".ncx") || (base.starts_with("nav") && (base.ends_with(".xhtml") || base.ends_with(".html")))
 }
 
+/// `src="路径#锚点"`/`href=…`（只认双引号；三段捕获：属性名 / 路径 / `#锚点`）。质量门 `check` 用；清洗层内部走 `html::link_values`。
 pub fn href_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
     RE.get_or_init(|| Regex::new(r##"(src|href)="([^"#]+)(#[^"]*)?""##).unwrap())
 }
 
+/// 一条目录：级别（h 级别或目录深度）、标题（纯文本）、目标文件的 zip 路径、锚点（原文，空 = 指文件本身）。
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct TocItem {
+    pub level: u8,
+    pub title: String,
+    pub path: String,
+    pub frag: String,
+    /// 来自书自带 NCX 的条目：原来的 `<navPoint …>` 开标签（重写目录时沿用它的 id 等属性）；新生成的为 `None`。
+    pub np: Option<String>,
+}
+
+impl TocItem {
+    pub(super) fn new(level: u8, title: impl Into<String>, path: impl Into<String>, frag: impl Into<String>) -> Self {
+        TocItem { level, title: title.into(), path: path.into(), frag: frag.into(), np: None }
+    }
+}
+
+/// 新建目录时的标题：中文书"目录"，其它"Contents"。
+pub(super) fn toc_title(lang: LangMode) -> &'static str {
+    if lang == LangMode::Latin { "Contents" } else { "目录" }
+}
+
 // ───────────────────────── 6. 自动目录 ─────────────────────────
 
-/// 目录条目数（ncx `src` + nav `href`，排除 toc 文件自指与非 html 目标）。
+/// 目录条目数（ncx `src` + nav `href`，排除 toc 文件自指与非 html 目标）。目录文件＝OPF 声明的 nav 文档（`properties="nav"`）
+/// 与 NCX，再加上文件名像目录的（[`is_toc_file`]）——nav 文档不一定叫 `nav.xhtml`（2026-09-28 审计：叫 `toc.xhtml`、又没有 NCX 的书
+/// 被当成"没有目录"，自带目录被自动目录覆盖）。
 pub fn toc_entry_count(entries: &[Entry]) -> usize {
+    let declared: Vec<String> = parse_opf(entries).map(|o| o.nav_doc.into_iter().chain(o.ncx).collect()).unwrap_or_default();
     let mut n = 0;
-    for e in entries.iter().filter(|e| is_toc_file(&e.name)) {
+    for e in entries.iter().filter(|e| is_toc_file(&e.name) || declared.contains(&e.name)) {
         let t = String::from_utf8_lossy(&e.data);
-        n += href_re().captures_iter(&t).filter(|c| { let l = c[2].to_ascii_lowercase(); !l.starts_with("http") && (l.ends_with(".xhtml") || l.ends_with(".html") || l.ends_with(".htm")) }).count();
+        n += html::link_values(&t)
+            .into_iter()
+            .filter(|v| {
+                let l = html::split_href(v).0.to_ascii_lowercase();
+                !l.starts_with("http") && (l.ends_with(".xhtml") || l.ends_with(".html") || l.ends_with(".htm"))
+            })
+            .count();
     }
     n
 }
 
-pub(super) fn heading_re() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    // h1–h6 都收（书只用 h3 当章标题也不漏目录）；多级由 build_ncx/build_nav 按 dense-rank 嵌套。
-    RE.get_or_init(|| Regex::new(r#"(?is)<h([1-6])\b([^>]*)>(.*?)</h[1-6]>"#).unwrap())
-}
-
 /// 把出现过的 h 级别稠密化为连续深度 1..N（如书用 {h1,h3} → 各条 rank 1/2），供嵌套用。
-pub(super) fn dense_ranks(items: &[(u8, String, String, String)]) -> Vec<u8> {
-    let mut levels: Vec<u8> = items.iter().map(|i| i.0).collect();
+pub(super) fn dense_ranks(items: &[TocItem]) -> Vec<u8> {
+    let mut levels: Vec<u8> = items.iter().map(|i| i.level).collect();
     levels.sort_unstable();
     levels.dedup();
-    items.iter().map(|i| (levels.iter().position(|&l| l == i.0).unwrap_or(0) as u8) + 1).collect()
+    items.iter().map(|i| (levels.iter().position(|&l| l == i.level).unwrap_or(0) as u8) + 1).collect()
 }
 
-pub(crate) fn plain_text(html: &str) -> String {
-    static TAG: OnceLock<Regex> = OnceLock::new();
-    let tag = TAG.get_or_init(|| Regex::new(r#"(?s)<[^>]*>"#).unwrap());
-    let t = tag.replace_all(html, "");
-    // 字符引用还原成字符（2026-09-25 审计）：结果是"纯文本"，调用方写进 NCX/nav/OPF 时会再 `xml_escape` 一次——此前不还原，
-    // 标题里的 `&amp;`/`&#12288;` 被转义成 `&amp;amp;`/`&amp;#12288;`，自动目录、重建目录、占位书名显示出字面的 `&amp;`。
-    let t = t.replace("&nbsp;", " ");
-    crate::util::xml_unescape(&t).split_whitespace().collect::<Vec<_>>().join(" ")
-}
-
-/// 从 spine 各章 h1/h2 生成目录；标题无 id 则补 `id="cj-toc-N"`。返回条目 (level, title, zip路径, frag)。
-pub(super) fn collect_headings(entries: &mut [Entry], spine: &[String], nav_doc: Option<&String>) -> Vec<(u8, String, String, String)> {
+/// 从 spine 各章 h1–h6 生成目录条目；标题没有 id 就补 `id="cj-toc-N"`（已有 `id`——单引号也算——沿用，不追加第二个）。
+/// 与分页的标题识别（`paginate::collect_headings`）不同：这里只要 `<hN>` 有文字就收，不判角色。
+pub(super) fn collect_toc_headings(entries: &mut [Entry], spine: &[String], nav_doc: Option<&String>) -> Vec<TocItem> {
     let mut out = Vec::new();
     let mut counter = 0usize;
-    static ID: OnceLock<Regex> = OnceLock::new();
-    let id_re = ID.get_or_init(|| Regex::new(r#"\bid="([^"]*)""#).unwrap());
-    for p in spine {
+    let pos: Vec<Option<usize>> = {
+        let index = name_index(entries);
+        spine.iter().map(|p| index.get(p.as_str()).copied()).collect()
+    };
+    for (p, i) in spine.iter().zip(pos) {
         if Some(p) == nav_doc {
             continue;
         }
-        let Some(e) = entries.iter_mut().find(|e| &e.name == p) else { continue };
+        let Some(i) = i else { continue };
+        let e = &mut entries[i];
         let html = String::from_utf8_lossy(&e.data).into_owned();
-        let mut changed = false;
-        let new = heading_re().replace_all(&html, |c: &regex::Captures| {
-            let level: u8 = c[1].parse().unwrap_or(1);
-            let title = plain_text(&c[3]);
+        let mut edits: Vec<(usize, usize, String)> = Vec::new();
+        let mut it = html::tags(&html);
+        while let Some(t) = it.next() {
+            let Some(level) = t.heading_level().filter(|_| t.kind == html::TagKind::Open) else { continue };
+            // 到下一个 h 闭合标签（任何级别，与旧正则 `<hN>.*?</h[1-6]>` 一致）
+            let Some(close) = it.by_ref().find(|u| u.kind == html::TagKind::Close && u.heading_level().is_some()) else { break };
+            let title = plain_text(&html[t.end..close.start]);
             if title.is_empty() {
-                return c[0].to_string();
+                continue;
             }
-            let attrs = c[2].to_string();
-            let (attrs, frag) = match id_re.captures(&attrs) {
-                Some(m) => (attrs.clone(), m[1].to_string()),
+            let open = &html[t.start..t.end];
+            let frag = match html::attr_value(open, "id").filter(|v| !v.is_empty()) {
+                Some(id) => id.to_string(),
                 None => {
                     counter += 1;
-                    changed = true;
                     let f = format!("cj-toc-{counter}");
-                    (format!("{attrs} id=\"{f}\""), f)
+                    edits.push((t.start, t.end, html::set_attr(open, "id", &f)));
+                    f
                 }
             };
-            out.push((level, title, p.clone(), frag));
-            format!("<h{}{}>{}</h{}>", &c[1], attrs, &c[3], &c[1])
-        }).into_owned();
-        if changed {
-            e.data = new.into_bytes();
+            out.push(TocItem::new(level, title, p.clone(), frag));
+        }
+        if !edits.is_empty() {
+            e.data = html::apply_edits(&html, edits).into_bytes();
         }
     }
     out
 }
 
-pub(super) fn build_ncx(items: &[(u8, String, String, String)], ncx_dir: &str, title: &str, uid: &str) -> String {
+pub(super) fn build_ncx(items: &[TocItem], ncx_dir: &str, title: &str, uid: &str) -> String {
     let ranks = dense_ranks(items);
     let depth_max = ranks.iter().copied().max().unwrap_or(1);
     let mut s = format!(r#"<?xml version="1.0" encoding="UTF-8"?>
 <ncx xmlns="http://www.daisy.org/z3986/2005/ncx/" version="2005-1"><head><meta name="dtb:uid" content="{}"/><meta name="dtb:depth" content="{depth_max}"/></head><docTitle><text>{}</text></docTitle><navMap>"#, xml_escape(uid), xml_escape(title));
     let mut depth = 0u8; // 当前打开的 navPoint 层数
-    for (i, (_, t, path, frag)) in items.iter().enumerate() {
+    for (i, it) in items.iter().enumerate() {
         let d = ranks[i].min(depth + 1); // 钳制：不跳跃深入 >1 层，保证良构
         if d <= depth {
             for _ in 0..(depth - d + 1) {
                 s.push_str("</navPoint>");
             }
         }
-        let href = toc_href(&relative_to(ncx_dir, path), frag);
-        s.push_str(&format!(r#"<navPoint id="np{}" playOrder="{}"><navLabel><text>{}</text></navLabel><content src="{}"/>"#, i + 1, i + 1, xml_escape(t), xml_escape(&href)));
+        let href = crate::epubzip::href_to(ncx_dir, &it.path, &it.frag);
+        s.push_str(&format!(r#"<navPoint id="np{}" playOrder="{}"><navLabel><text>{}</text></navLabel><content src="{}"/>"#, i + 1, i + 1, xml_escape(&it.title), xml_escape(&href)));
         depth = d;
     }
     for _ in 0..depth {
@@ -111,12 +136,12 @@ pub(super) fn build_ncx(items: &[(u8, String, String, String)], ncx_dir: &str, t
     s
 }
 
-pub(super) fn build_nav(items: &[(u8, String, String, String)], nav_dir: &str) -> String {
+/// nav 里目录的 `<ol>` 树。
+fn nav_ol(items: &[TocItem], nav_dir: &str) -> String {
     let ranks = dense_ranks(items);
-    let mut s = String::from(r#"<?xml version="1.0" encoding="UTF-8"?>
-<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><head><title>目录</title></head><body><nav epub:type="toc" id="toc"><h1>目录</h1>"#);
+    let mut s = String::new();
     let mut depth = 0u8; // 当前打开的 <ol> 层数
-    for (i, (_, t, path, frag)) in items.iter().enumerate() {
+    for (i, it) in items.iter().enumerate() {
         let d = ranks[i].min(depth + 1);
         if d > depth {
             for _ in depth..d {
@@ -129,20 +154,41 @@ pub(super) fn build_nav(items: &[(u8, String, String, String)], nav_dir: &str) -
             s.push_str("</li>");
         }
         depth = d;
-        let href = toc_href(&relative_to(nav_dir, path), frag);
-        s.push_str(&format!(r#"<li><a href="{}">{}</a>"#, xml_escape(&href), xml_escape(t)));
+        let href = crate::epubzip::href_to(nav_dir, &it.path, &it.frag);
+        s.push_str(&format!(r#"<li><a href="{}">{}</a>"#, xml_escape(&href), xml_escape(&it.title)));
     }
     for _ in 0..depth {
         s.push_str("</li></ol>");
     }
-    s.push_str("</nav></body></html>");
     s
 }
 
-/// 目录条目的 href：`frag` 为空（正文没有锚点可指，退化条目直接指文件本身）时不带 `#`。
-pub(super) fn toc_href(rel_path: &str, frag: &str) -> String {
-    if frag.is_empty() { rel_path.to_string() } else { format!("{rel_path}#{frag}") }
+/// 新建一份 nav 文档（`heading` = 目录标题）。
+pub(super) fn build_nav(items: &[TocItem], nav_dir: &str, heading: &str) -> String {
+    let h = xml_escape(heading);
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops"><head><title>{h}</title></head><body><nav epub:type="toc" id="toc"><h1>{h}</h1>{}</nav></body></html>"#,
+        nav_ol(items, nav_dir)
+    )
 }
+
+/// 写 nav：已有 nav 文档里找得到 `<nav epub:type="toc">` 就只换它的内容（开标签与原标题保留，其它 `<nav>` 不动）；
+/// 找不到（或没有 nav 文档）就新建一份。
+pub(super) fn write_nav(existing: Option<&str>, items: &[TocItem], nav_dir: &str, heading: &str) -> String {
+    let Some(doc) = existing else { return build_nav(items, nav_dir, heading) };
+    let spans = html::parse_spans(doc, 0, doc.len());
+    let toc = spans.iter().position(|s| {
+        s.name == "nav" && s.closed() && html::attr_value(&doc[s.open_start..s.open_end], "epub:type").is_some_and(|t| t.split_whitespace().any(|x| x == "toc"))
+    });
+    let Some(ti) = toc else { return build_nav(items, nav_dir, heading) };
+    let nav = &spans[ti];
+    // 原 toc 的标题：nav 的直接子元素里第一个 h1–h6。
+    let title = spans.iter().find(|s| s.parent == Some(ti) && s.closed() && s.name.len() == 2 && s.name.starts_with('h') && s.name.as_bytes()[1].is_ascii_digit());
+    let title = title.map_or(String::new(), |s| doc[s.open_start..s.close_end].to_string());
+    format!("{}{}{}{}{}", &doc[..nav.open_end], title, nav_ol(items, nav_dir), &doc[nav.close_start..nav.close_end], &doc[nav.close_end..])
+}
+
 
 /// 标题文本"标题+编号"拆分启发式（EPUB 线原则①：原书标题跟小节/章节编号拼在一行，如「第一章 1」，
 /// TOC 要显示成两级——父级标题 + 缩进子级编号）。只在编号看起来像"小节序号"而非"印刷页码残留"时拆：
@@ -155,7 +201,7 @@ pub(super) fn split_numbered_title(title: &str) -> Option<(String, String)> {
     let c = re.captures(title.trim())?;
     let head = c[1].trim();
     let num = &c[2];
-    if head.is_empty() {
+    if head.is_empty() || is_numbering_word(head) {
         return None;
     }
     if let Ok(n) = num.parse::<u32>() {
@@ -166,17 +212,24 @@ pub(super) fn split_numbered_title(title: &str) -> Option<(String, String)> {
     Some((head.to_string(), num.to_string()))
 }
 
+/// 标题前半只是"章/部/卷"这类编号用词（`Chapter 1`、`Part 2`、`卷 一`、`第 三`）：后面的数字是这一条自己的编号，不是小节，
+/// 不拆（2026-09-28 审计：此前拆成"Chapter"下挂一个"1"）。
+fn is_numbering_word(head: &str) -> bool {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| Regex::new(r#"(?i)^(chapter|chap\.?|part|book|volume|vol\.?|section|sect\.?|act|scene|canto|episode|letter|卷|部|篇|章|回|节|節|集|册|冊|辑|輯|第|其)$"#).unwrap()).is_match(head)
+}
+
 /// 对已收集的标题条目做"标题+编号"拆分：命中的条目拆成父级(标题) + 子级(编号)两条，子级 level = 父级+1、
 /// 指向同一锚点（不是两个可跳转目标，只是给 TOC 一个视觉分级，跟 `dense_ranks` 的嵌套机制天然兼容）。
-pub(super) fn split_numbered_titles(items: Vec<(u8, String, String, String)>) -> Vec<(u8, String, String, String)> {
+pub(super) fn split_numbered_titles(items: Vec<TocItem>) -> Vec<TocItem> {
     let mut out = Vec::with_capacity(items.len());
-    for (level, title, path, frag) in items {
-        match split_numbered_title(&title) {
+    for it in items {
+        match split_numbered_title(&it.title) {
             Some((head, num)) => {
-                out.push((level, head, path.clone(), frag.clone()));
-                out.push((level.saturating_add(1), num, path, frag));
+                out.push(TocItem::new(it.level, head, it.path.clone(), it.frag.clone()));
+                out.push(TocItem::new(it.level.saturating_add(1), num, it.path, it.frag));
             }
-            None => out.push((level, title, path, frag)),
+            None => out.push(it),
         }
     }
     out
@@ -186,7 +239,7 @@ pub(super) fn split_numbered_titles(items: Vec<(u8, String, String, String)>) ->
 /// 文本片段（截断），纯图片页/取不到文本则用"正文 N"占位——保证"没有目录的书优化后至少有可用目录"这个
 /// 底线，而不是无声放弃。只在**多数** spine 文件确实有可提取文本时才生成，避免给纯图片书（漫画/画册）
 /// 灌一堆没有信息量的"正文 N"占目录——那种书更适合交给漫画识别走专门路径，不该占用这条兜底。
-pub(super) fn fallback_spine_toc(entries: &[Entry], spine: &[String], nav_doc: Option<&String>) -> Vec<(u8, String, String, String)> {
+pub(super) fn fallback_spine_toc(entries: &[Entry], spine: &[String], nav_doc: Option<&String>) -> Vec<TocItem> {
     let pages: Vec<&String> = spine.iter().filter(|p| Some(*p) != nav_doc).collect();
     if pages.is_empty() {
         return Vec::new();
@@ -196,7 +249,7 @@ pub(super) fn fallback_spine_toc(entries: &[Entry], spine: &[String], nav_doc: O
         .map(|p| {
             let e = entries.iter().find(|e| &&e.name == p)?;
             let html = std::str::from_utf8(&e.data).ok()?;
-            let t = plain_text(crate::htmlproc::first_body_inner(html).unwrap_or(""));
+            let t = plain_text(html::first_body_inner(html).unwrap_or(""));
             if t.is_empty() { None } else { Some(t) }
         })
         .collect();
@@ -204,22 +257,24 @@ pub(super) fn fallback_spine_toc(entries: &[Entry], spine: &[String], nav_doc: O
     if with_text * 2 < pages.len() {
         return Vec::new(); // 多数页面没有可提取文本(疑似漫画/画册)，不生成兜底目录
     }
-    pages.iter().zip(texts.iter()).enumerate().map(|(i, (p, t))| {
-        let title = match t {
-            Some(s) => s.chars().take(24).collect::<String>(),
-            None => format!("正文 {}", i + 1),
-        };
-        (1u8, title, (*p).clone(), String::new())
-    }).collect()
+    pages
+        .iter()
+        .zip(texts.iter())
+        .enumerate()
+        .map(|(i, (p, t))| {
+            let title = match t {
+                Some(s) => s.chars().take(24).collect::<String>(),
+                None => format!("正文 {}", i + 1),
+            };
+            TocItem::new(1, title, (*p).clone(), "")
+        })
+        .collect()
 }
 
 /// 按 spine 页分段的兜底目录：每 `FALLBACK_TOC_PAGES` 页一条，标题"第 N–M 页"，指向该段第一页。
-pub(super) fn page_chunk_toc(spine: &[String], nav_doc: Option<&String>) -> Vec<(u8, String, String, String)> {
+pub(super) fn page_chunk_toc(spine: &[String], nav_doc: Option<&String>) -> Vec<TocItem> {
     let pages: Vec<&String> = spine.iter().filter(|p| Some(*p) != nav_doc).collect();
-    crate::comic_pdf::page_chunk_titles(pages.len())
-        .into_iter()
-        .map(|(start, title)| (1u8, title, pages[start].clone(), String::new()))
-        .collect()
+    crate::ncx::page_chunk_titles(pages.len()).into_iter().map(|(start, title)| TocItem::new(1, title, pages[start].clone(), "")).collect()
 }
 
 /// 分部标题前缀："第X部/卷/篇/辑"（X 为阿拉伯数字或中文数字），后面可能紧跟同一条目剩下的文本
@@ -229,12 +284,32 @@ pub(super) fn part_prefix_re() -> &'static Regex {
     RE.get_or_init(|| Regex::new(r#"^(第[0-9〇一二三四五六七八九十百千]+[部卷篇辑])[ \u{3000}\t]*(.*)$"#).unwrap())
 }
 
-/// 从已有 `toc.ncx` 的 navMap 里按文档顺序拍平抽取 (标题, content src) ——不管当前层级，只服务
-/// `restructure_existing_toc_parts` 这种"重新看一眼已有目录内容决定要不要升级结构"的场景。
-pub(super) fn ncx_navpoint_titles_and_targets(ncx_text: &str) -> Vec<(String, String)> {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    let re = RE.get_or_init(|| Regex::new(r#"(?s)<navLabel>\s*<text>(.*?)</text>\s*</navLabel>\s*<content\s+src="([^"]+)"\s*/?>"#).unwrap());
-    re.captures_iter(ncx_text).map(|c| (plain_text(&c[1]), c[2].to_string())).collect()
+/// 把 ncx/nav 按 `items` 重写。ncx 只换 navMap（`ncx::replace_nav_map`：`head`、`pageList` 等原样，原条目的 navPoint id 沿用；
+/// 2026-09-28 审计：此前整份重建，id 全换、页码表丢了）；没有 navMap 才整份重建。nav 只换 toc 部分，见 [`write_nav`]。
+fn rewrite_toc_files(entries: &mut [Entry], opf: &Opf, ncx_path: &str, items: &[TocItem], heading: &str) {
+    let ncx_dir = dir_of(ncx_path);
+    let old = entries.iter().find(|e| e.name == ncx_path).map(|e| String::from_utf8_lossy(&e.data).into_owned());
+    let ranks = dense_ranks(items);
+    let srcs: Vec<String> = items.iter().map(|it| crate::epubzip::href_to(ncx_dir, &it.path, &it.frag)).collect();
+    let points: Vec<crate::ncx::NewNavPoint> =
+        items.iter().zip(&ranks).zip(&srcs).map(|((it, &depth), src)| crate::ncx::NewNavPoint { depth, label: &it.title, src, open_tag: it.np.as_deref() }).collect();
+    let ncx = match old.as_deref().and_then(|t| crate::ncx::replace_nav_map(t, &points)) {
+        Some(t) => t.into_bytes(),
+        None => {
+            let title = opf_book_title(entries, opf.index);
+            let uid = opf_unique_identifier(entries).unwrap_or_else(|| WASH_MARK.to_string());
+            build_ncx(items, ncx_dir, &title, &uid).into_bytes()
+        }
+    };
+    if let Some(e) = entries.iter_mut().find(|e| e.name == ncx_path) {
+        e.data = ncx;
+    }
+    if let Some(nav_path) = opf.nav_doc.as_deref() {
+        if let Some(e) = entries.iter_mut().find(|e| e.name == nav_path) {
+            let old = String::from_utf8_lossy(&e.data).into_owned();
+            e.data = write_nav(Some(&old), items, dir_of(nav_path), heading).into_bytes();
+        }
+    }
 }
 
 /// 书自带的扁平目录如果符合"第X部　编号　章名"这种排版惯例（分部标题只在每部第一条出现、其余
@@ -242,8 +317,9 @@ pub(super) fn ncx_navpoint_titles_and_targets(ncx_text: &str) -> Vec<(String, St
 /// 没有嵌在"第一部"下面），重建成两级：分部标题单独成一条父级（沿用该条目自己的跳转目标——分部
 /// 标题这条本身就是这部的开篇章节，能跳）；分部前缀后剩下的文本（如"01　雪人"）连同后续不带
 /// 前缀的条目一起降一级当子级。**一条"第X部"前缀都没匹配到＝原样不动**——不是所有书都用这种
-/// 排版惯例，没信号时贸然重建有误伤风险，见 §03az。
-pub(super) fn restructure_existing_toc_parts(entries: &mut [Entry], mode: AutoToc, rep: &mut WashReport) {
+/// 排版惯例，没信号时贸然重建有误伤风险，见 §03az。**只重建完全扁平的目录**：已经分了层级的（部下面已经挂着章）
+/// 原样不动（2026-09-28 审计：此前把已嵌套的目录压平重排）。重建时沿用原条目的 navPoint id，NCX 其余部分不动。
+pub(super) fn restructure_existing_toc_parts(entries: &mut [Entry], mode: AutoToc, heading: &str, rep: &mut WashReport) {
     if mode == AutoToc::Off {
         return;
     }
@@ -251,56 +327,48 @@ pub(super) fn restructure_existing_toc_parts(entries: &mut [Entry], mode: AutoTo
     let Some(ncx_path) = opf.ncx.clone() else { return };
     let Some(e) = entries.iter().find(|e| e.name == ncx_path) else { return };
     let Ok(ncx_text) = std::str::from_utf8(&e.data) else { return };
-    let flat = ncx_navpoint_titles_and_targets(ncx_text);
+    let points = crate::ncx::parse_nav_points(ncx_text);
+    if points.iter().any(|p| p.depth != 1) {
+        return;
+    }
+    // 标题里的空白折叠成单个空格（全角空格分隔的"第一部　01　雪人"→"第一部 01 雪人"，跟标题里其它空白一视同仁）。
+    let flat: Vec<(String, &crate::ncx::NavPoint)> = points.iter().map(|p| (p.label.split_whitespace().collect::<Vec<_>>().join(" "), p)).collect();
     let re = part_prefix_re();
     if flat.len() < 2 || !flat.iter().any(|(t, _)| re.is_match(t)) {
         return;
     }
     let ncx_dir = dir_of(&ncx_path).to_string();
-    let mut items: Vec<(u8, String, String, String)> = Vec::with_capacity(flat.len());
+    let mut items: Vec<TocItem> = Vec::with_capacity(flat.len());
     let mut in_part = false;
-    for (title, src) in &flat {
-        let (raw_path, frag) = match src.split_once('#') {
-            Some((p, f)) => (p, f.to_string()),
-            None => (src.as_str(), String::new()),
-        };
-        let path = resolve(&ncx_dir, &percent_decode(raw_path));
+    for (title, p) in &flat {
+        let (raw_path, frag) = html::split_href(&p.src);
+        let (path, frag) = (resolve(&ncx_dir, &percent_decode(raw_path)), frag.unwrap_or("").to_string());
+        let np = Some(p.open_tag.clone()).filter(|t| !t.is_empty());
         if let Some(c) = re.captures(title) {
-            items.push((1, c[1].to_string(), path.clone(), frag.clone()));
+            items.push(TocItem { np, ..TocItem::new(1, &c[1], path.clone(), frag.clone()) });
             let rest = c[2].trim();
             if !rest.is_empty() {
-                items.push((2, rest.to_string(), path, frag));
+                items.push(TocItem::new(2, rest, path, frag));
             }
             in_part = true;
         } else {
-            items.push((if in_part { 2 } else { 1 }, title.clone(), path, frag));
+            items.push(TocItem { np, ..TocItem::new(if in_part { 2 } else { 1 }, title.clone(), path, frag) });
         }
     }
-    let title = opf_book_title(entries, opf.index);
-    let uid = opf_unique_identifier(entries).unwrap_or_else(|| WASH_MARK.to_string());
-    let ncx = build_ncx(&items, &ncx_dir, &title, &uid).into_bytes();
-    if let Some(idx) = entries.iter().position(|e| e.name == ncx_path) {
-        entries[idx].data = ncx;
-    }
-    if let Some(nav_path) = opf.nav_doc.clone() {
-        let nav = build_nav(&items, dir_of(&nav_path)).into_bytes();
-        if let Some(idx) = entries.iter().position(|e| e.name == nav_path) {
-            entries[idx].data = nav;
-        }
-    }
+    rewrite_toc_files(entries, &opf, &ncx_path, &items, heading);
     rep.toc_parts_restructured = items.len();
 }
 
-pub(super) fn auto_toc(entries: &mut Vec<Entry>, mode: AutoToc, rep: &mut WashReport) {
+pub(super) fn auto_toc(entries: &mut Vec<Entry>, mode: AutoToc, heading: &str, rep: &mut WashReport) {
     if mode == AutoToc::Off || (mode == AutoToc::IfMissing && toc_entry_count(entries) > 0) {
         return;
     }
     let Some(opf) = parse_opf(entries) else { return };
-    let headings = collect_headings(entries, &opf.spine, opf.nav_doc.as_ref());
+    let headings = collect_toc_headings(entries, &opf.spine, opf.nav_doc.as_ref());
     let headings = if headings.is_empty() { fallback_spine_toc(entries, &opf.spine, opf.nav_doc.as_ref()) } else { split_numbered_titles(headings) };
     // 纯图片书（漫画/画册）：没有标题也没有可提取文字，`fallback_spine_toc` 故意不生成"正文 N"。但用户要求
     // **所有书都要有目录**（2026-09-20，乱马源书 NCX 是空的，转出来没目录），所以按页分段生成"第 N–M 页"
-    // ——如实标注不是章节，只为能按段跳转（同 `comic_pdf::page_chunk_titles`，PDF 路径也是这套）。
+    // ——如实标注不是章节，只为能按段跳转（同 `ncx::page_chunk_titles`，PDF 路径也是这套）。
     let headings = if headings.is_empty() { page_chunk_toc(&opf.spine, opf.nav_doc.as_ref()) } else { headings };
     if headings.is_empty() {
         return;
@@ -310,25 +378,28 @@ pub(super) fn auto_toc(entries: &mut Vec<Entry>, mode: AutoToc, rep: &mut WashRe
     let nav_path = opf.nav_doc.clone().unwrap_or_else(|| resolve(&opf.dir, "nav.xhtml"));
     let uid = opf_unique_identifier(entries).unwrap_or_else(|| WASH_MARK.to_string());
     let ncx = build_ncx(&headings, dir_of(&ncx_path), &title, &uid).into_bytes();
-    let nav = build_nav(&headings, dir_of(&nav_path)).into_bytes();
+    let old_nav = entries.iter().find(|e| e.name == nav_path).map(|e| String::from_utf8_lossy(&e.data).into_owned());
+    let nav = write_nav(old_nav.as_deref(), &headings, dir_of(&nav_path), heading).into_bytes();
     let mut text = String::from_utf8_lossy(&entries[opf.index].data).into_owned();
     if opf.ncx.is_none() {
         // id 必须叫 "ncx"（不是随便起的标记）——xochitl 定位目录文件靠二进制里硬编码死查这个
         // 字符串字面量，见 `fix_ncx_manifest_id` 的注释。
-        text = text.replacen("</manifest>", &format!(r#"<item id="ncx" href="{}" media-type="application/x-dtbncx+xml"/></manifest>"#, relative_to(&opf.dir, &ncx_path)), 1);
-        static SPINE: OnceLock<Regex> = OnceLock::new();
-        let sp = SPINE.get_or_init(|| Regex::new(r#"<spine\b([^>]*)>"#).unwrap());
-        text = sp.replace(&text, |c: &regex::Captures| {
-            let attrs = c[1].to_string();
-            if attrs.contains("toc=") {
-                format!("<spine{attrs}>")
-            } else {
-                format!("<spine{attrs} toc=\"ncx\">")
+        let href = crate::epubzip::href_to(&opf.dir, &ncx_path, "");
+        if let Some(t) = opf::insert_manifest_items(&text, &[opf::NewItem { id: "ncx", href: &href, media_type: "application/x-dtbncx+xml", properties: "" }]) {
+            text = t;
+        }
+        if let Some(t) = html::tags(&text).find(|t| t.is_start() && opf::is_local(t.name, "spine")) {
+            let tag = &text[t.start..t.end];
+            if html::attr(tag, "toc").is_none() {
+                text = format!("{}{}{}", &text[..t.start], html::set_attr(tag, "toc", "ncx"), &text[t.end..]);
             }
-        }).into_owned();
+        }
     }
     if opf.nav_doc.is_none() {
-        text = text.replacen("</manifest>", &format!(r#"<item id="cj-nav" href="{}" media-type="application/xhtml+xml" properties="nav"/></manifest>"#, relative_to(&opf.dir, &nav_path)), 1);
+        let href = crate::epubzip::href_to(&opf.dir, &nav_path, "");
+        if let Some(t) = opf::insert_manifest_items(&text, &[opf::NewItem { id: "cj-nav", href: &href, media_type: "application/xhtml+xml", properties: "nav" }]) {
+            text = t;
+        }
     }
     entries[opf.index].data = text.into_bytes();
     for (path, data) in [(ncx_path, ncx), (nav_path, nav)] {
@@ -339,3 +410,289 @@ pub(super) fn auto_toc(entries: &mut Vec<Entry>, mode: AutoToc, rep: &mut WashRe
     }
     rep.toc_generated = headings.len();
 }
+
+/// 分页拆出来的一节：所在文件（拆过的是那一份）、标题 id、标题文字。
+pub(super) struct SectionRef {
+    pub path: String,
+    pub id: String,
+    pub label: String,
+}
+
+/// 章节分页后把书自带目录里**漏掉的节**补进去（用户 2026-09-27：节要缩进出现在目录里）。`sections` 按阅读顺序。
+/// 书自带的条目原样保留、顺序不动；缺的节插在阅读顺序上它之前的最后一条后面，
+/// 层级 = 往前找到的第一条"章"（非节条目）的下一级，前一条本身就是节时同级。没有 NCX 的书不动（自动目录已含全部标题）。
+/// 书自带目录里**已有**的节条目（和章平排的，如《13級階梯》`第一章　出獄　　１`、`　　２`、`　　３`）缩进到所属章下面、
+/// 标签去掉首尾空白；章条目标签末尾跟着第一节的节号（`第一章　出獄　　１`）时去掉节号——节号另成一条。
+/// 返回补了几条。每条目录/节的阅读位置（spine 序号, 文件内偏移）只算一次（此前每插一节都把全部条目重算一遍，
+/// 章节多的书是平方级）。
+pub(super) fn merge_sections_into_toc(entries: &mut [Entry], sections: &[SectionRef], heading: &str) -> usize {
+    let Some(opf) = parse_opf(entries) else { return 0 };
+    let Some(ncx_path) = opf.ncx.clone() else { return 0 };
+    let Some(ncx) = entries.iter().find(|e| e.name == ncx_path) else { return 0 };
+    let flat = crate::ncx::parse_nav_points(&String::from_utf8_lossy(&ncx.data));
+    if flat.is_empty() {
+        return 0;
+    }
+    let spine_pos: HashMap<&str, usize> = opf.spine.iter().enumerate().map(|(i, p)| (p.as_str(), i)).collect();
+    // 文件 → (锚点 → 偏移)，按需建一次。
+    let mut anchor_cache: HashMap<String, HashMap<String, usize>> = HashMap::new();
+    let mut key_of = |path: &str, frag: &str| -> (usize, usize) {
+        let sp = spine_pos.get(path).copied().unwrap_or(usize::MAX);
+        if frag.is_empty() {
+            return (sp, 0);
+        }
+        let map = anchor_cache.entry(path.to_string()).or_insert_with(|| {
+            let mut m = HashMap::new();
+            if let Some(e) = entries.iter().find(|e| e.name == path) {
+                for (id, pos) in html::anchors(&String::from_utf8_lossy(&e.data)) {
+                    m.entry(id.to_string()).or_insert(pos);
+                }
+            }
+            m
+        });
+        (sp, map.get(frag).copied().unwrap_or(0))
+    };
+    let sec_ids: HashSet<(&str, &str)> = sections.iter().map(|s| (s.path.as_str(), s.id.as_str())).collect();
+    // 只指到文件的条目算节，要求节标题就在那个文件开头（文件开头是章标题、节在后面时，这条目录是章）
+    let sec_paths: HashSet<&str> = sections.iter().filter(|s| section_starts_file(entries, &s.path, &s.id)).map(|s| s.path.as_str()).collect();
+    struct Item {
+        toc: TocItem,
+        is_sec: bool,
+        key: (usize, usize),
+        /// 这次补进去的（不是书自带目录里的）。
+        inserted: bool,
+    }
+    let mut items: Vec<Item> = flat
+        .into_iter()
+        .map(|crate::ncx::NavPoint { depth, label, src: target, open_tag }| {
+            let (p, f) = html::split_href(&target);
+            let path = posix_norm(&resolve(dir_of(&ncx_path), &percent_decode(p)));
+            let f = f.unwrap_or("");
+            let id = html::frag_id(f).into_owned();
+            let is_sec = if id.is_empty() { sec_paths.contains(path.as_str()) } else { sec_ids.contains(&(path.as_str(), id.as_str())) };
+            let key = key_of(&path, &id);
+            Item { toc: TocItem { np: Some(open_tag).filter(|t| !t.is_empty()), ..TocItem::new(depth.max(1) as u8, label, path, f) }, is_sec, key, inserted: false }
+        })
+        .collect();
+    // 已在目录里的节：(路径, id) 或"指向该份文件本身"。
+    let mut present: HashSet<(String, String)> = items.iter().filter(|it| it.is_sec).map(|it| (it.toc.path.clone(), html::frag_id(&it.toc.frag).into_owned())).collect();
+    let mut added = 0;
+    for s in sections {
+        if present.contains(&(s.path.clone(), s.id.clone())) || present.contains(&(s.path.clone(), String::new())) {
+            continue;
+        }
+        let key = key_of(&s.path, &s.id);
+        let at = items.iter().rposition(|it| it.key <= key).map_or(0, |i| i + 1);
+        let depth = match items[..at].last() {
+            Some(prev) if prev.is_sec => prev.toc.level,
+            Some(prev) => prev.toc.level + 1,
+            None => 1,
+        };
+        items.insert(at, Item { toc: TocItem::new(depth, s.label.clone(), s.path.clone(), s.id.clone()), is_sec: true, key, inserted: true });
+        present.insert((s.path.clone(), s.id.clone()));
+        added += 1;
+    }
+    // 书自带的节条目缩进到所属章下面、标签去掉首尾空白；章标签末尾重复第一节的节号的去掉。
+    let mut changed = added > 0;
+    let mut chapter: Option<usize> = None;
+    for i in 0..items.len() {
+        if !items[i].is_sec {
+            chapter = Some(i);
+            continue;
+        }
+        let Some(c) = chapter else { continue };
+        let want = items[c].toc.level + 1;
+        if items[i].toc.level < want {
+            items[i].toc.level = want.min(6);
+            changed = true;
+        }
+        let trimmed = items[i].toc.title.trim().to_string();
+        if trimmed != items[i].toc.title {
+            items[i].toc.title = trimmed;
+            changed = true;
+        }
+        // 只在书自带目录本来就列着后面的节（紧接着是书自带的第 n+1 节）时去掉：章标签末尾的数字才确定是第一节的节号，
+        // 不是章自己的编号（《鼠疫》"部　一"后面的节都是补的，"一"是部的编号，不动）。
+        let n = super::paginate::section_number(&items[i].toc.title);
+        let next_listed = n.is_some_and(|n| {
+            items.get(i + 1).is_some_and(|x| x.is_sec && !x.inserted && super::paginate::section_number(&x.toc.title) == Some(n + 1))
+        });
+        if i == c + 1 && items[i].inserted && next_listed {
+            let label = items[i].toc.title.clone();
+            let t = items[c].toc.title.trim_end();
+            if let Some(head) = t.strip_suffix(label.as_str()).filter(|h| h.ends_with(char::is_whitespace) && !h.trim().is_empty()) {
+                items[c].toc.title = head.trim_end().to_string();
+                changed = true;
+            }
+        }
+    }
+    if !changed {
+        return 0;
+    }
+    let toc: Vec<TocItem> = items.into_iter().map(|it| it.toc).collect();
+    rewrite_toc_files(entries, &opf, &ncx_path, &toc, heading);
+    added
+}
+
+/// 节标题（`id`）是不是在文件 `path` 的正文最前面（前面没有可见内容）。
+fn section_starts_file(entries: &[Entry], path: &str, id: &str) -> bool {
+    let Some(e) = entries.iter().find(|e| e.name == path) else { return false };
+    let t = String::from_utf8_lossy(&e.data);
+    let Some((lo, _)) = html::body_range(&t) else { return false };
+    html::anchors(&t).into_iter().find(|(a, _)| *a == id).is_some_and(|(_, p)| p >= lo && !html::has_visible(&t[lo..p]))
+}
+
+// ───────────────────────── 书自带目录指错位置的修复 ─────────────────────────
+
+/// 条目名 → 下标（同名取第一条）。
+pub(super) fn name_index(entries: &[Entry]) -> HashMap<&str, usize> {
+    let mut m = HashMap::with_capacity(entries.len());
+    for (i, e) in entries.iter().enumerate() {
+        m.entry(e.name.as_str()).or_insert(i);
+    }
+    m
+}
+
+/// 一个文件的正文范围与锚点表（锚点 → 偏移，同名取第一处）。
+type FileAnchors<'a> = (Option<(usize, usize)>, HashMap<&'a str, usize>);
+
+/// 读"某文件某锚点后面的文字"用的缓存：每个文件的正文范围与锚点表只算一次（此前每条目录都把目标文件的锚点整份重扫一遍）。
+struct TextAt<'a> {
+    entries: &'a [Entry],
+    index: HashMap<&'a str, usize>,
+    /// 文件 → (正文范围, 锚点 → 偏移（同名取第一处）)
+    files: HashMap<String, FileAnchors<'a>>,
+}
+
+impl<'a> TextAt<'a> {
+    fn new(entries: &'a [Entry]) -> Self {
+        TextAt { entries, index: name_index(entries), files: HashMap::new() }
+    }
+
+    fn text(&self, path: &str) -> Option<&'a str> {
+        let entries = self.entries;
+        std::str::from_utf8(&entries[*self.index.get(path)?].data).ok()
+    }
+
+    /// `path` 文件里从锚点 `frag`（空 = 正文开头）往后的可见文字（去空白），最多取 `max` 个字。锚点不存在返回 `None`。
+    fn get(&mut self, path: &str, frag: &str, max: usize) -> Option<String> {
+        let t = self.text(path)?;
+        let (body, anchors) = self.files.entry(path.to_string()).or_insert_with(|| {
+            let mut m = HashMap::new();
+            for (id, pos) in html::anchors(t) {
+                m.entry(id).or_insert(pos);
+            }
+            (html::body_range(t), m)
+        });
+        let (lo, hi) = (*body)?;
+        let pos = if frag.is_empty() { lo } else { (*anchors.get(frag)?).max(lo) };
+        // 只看锚点后面一小段（大文件里整段转纯文本太慢）；按字符边界截
+        let mut end = (pos + 16 * 1024).min(hi);
+        while !t.is_char_boundary(end) {
+            end -= 1;
+        }
+        Some(squash_ws(&plain_text(&t[pos..end])).chars().take(max).collect())
+    }
+
+    fn starts_with(&mut self, path: &str, frag: &str, label: &str) -> bool {
+        self.get(path, frag, label.chars().count()).is_some_and(|t| t == label)
+    }
+}
+
+/// 书自带目录（NCX）的条目指错了位置时改指到对的地方（2026-09-28：《占星术杀人魔法》NCX 整体错位，点"第一章"跳进登场人物表；
+/// 《福尔摩斯探案全集》几条指进别的章节正文、一条指在上一个文件末尾）。**只改能核实的**：
+/// - 条目的目标处文字**不是**以条目标题开头（去空白后比），才算指错；
+/// - 书里（通常是目录页）有**标题完全相同**的链接，它指的地方文字以这个标题开头、且这样的地方只有一处 → 改指过去；
+/// - 或者全书只有一个文字完全相同的 `<h1>`–`<h6>` 标题（有 id、或就在文件开头）→ 改指这个标题；
+/// - 或者条目的锚点在文件末尾（后面没有文字）、下一个 spine 文件的开头以这个标题开头 → 改指下一个文件。
+///
+/// 标题与正文写法不同（目录写"Chapter 1"、正文写"一"）核实不了的，一律不动。
+pub(super) fn repair_ncx_targets(entries: &mut [Entry], rep: &mut WashReport) {
+    let Some(opf) = parse_opf(entries) else { return };
+    let Some(ncx_path) = opf.ncx.clone() else { return };
+    let Some(ncx_text) = entries.iter().find(|e| e.name == ncx_path).and_then(|e| String::from_utf8(e.data.clone()).ok()) else { return };
+    let ncx_dir = dir_of(&ncx_path).to_string();
+    let resolve_decoded = |base: &str, href: &str| -> (String, String) {
+        let (path, frag) = crate::epubzip::resolve_href(base, href);
+        (path, html::frag_id(frag.unwrap_or("")).into_owned())
+    };
+    let mut cache = TextAt::new(entries);
+    // 书里所有链接：标题 → 目标（同一标题可能有好几个目标，比如每个故事都有"第一章"）
+    let mut links: HashMap<String, Vec<(String, String)>> = HashMap::new();
+    // 书里的 `<h1>`–`<h6>` 标题：文字 → 能指到它的位置（有 id 指 id；没 id 但在文件开头指文件；都不行记 None）
+    let mut headings: HashMap<String, Vec<Option<(String, String)>>> = HashMap::new();
+    for path in &opf.spine {
+        let Some(t) = cache.text(path) else { continue };
+        for g in html::tags(t).filter(|g| g.kind == html::TagKind::Open && g.is("a")) {
+            let Some(href) = html::attr_value(&t[g.start..g.end], "href") else { continue };
+            if href.contains("://") {
+                continue;
+            }
+            let Some(close) = html::find_close(t, g.end, "a") else { continue };
+            let label = squash_ws(&plain_text(&t[g.end..close.start]));
+            if label.is_empty() || label.chars().count() > 60 {
+                continue;
+            }
+            let target = resolve_decoded(path, href);
+            let v = links.entry(label).or_default();
+            if !v.contains(&target) {
+                v.push(target);
+            }
+        }
+        let Some((lo, _)) = html::body_range(t) else { continue };
+        for g in html::tags(t).filter(|g| g.kind == html::TagKind::Open && g.start >= lo && g.heading_level().is_some()) {
+            let Some(close) = html::find_close(t, g.end, g.name) else { continue };
+            let label = squash_ws(&plain_text(&t[g.end..close.start]));
+            if label.is_empty() {
+                continue;
+            }
+            let target = match html::attr_value(&t[g.start..g.end], "id").filter(|id| !id.is_empty()) {
+                Some(id) => Some((path.clone(), id.to_string())),
+                None => (!html::has_visible(&t[lo..g.start])).then(|| (path.clone(), String::new())),
+            };
+            headings.entry(label).or_default().push(target);
+        }
+    }
+    let spine_pos: HashMap<&str, usize> = opf.spine.iter().enumerate().map(|(i, p)| (p.as_str(), i)).collect();
+    let spine_next = |path: &str| spine_pos.get(path).and_then(|&i| opf.spine.get(i + 1)).cloned();
+
+    // 逐条看 NCX，就地改 `<content src>`
+    let mut fixed = 0usize;
+    let new = crate::ncx::rewrite_content_srcs(&ncx_text, |label, src| {
+        let label = squash_ws(label);
+        if label.is_empty() {
+            return None;
+        }
+        let (path, frag) = resolve_decoded(&ncx_path, src);
+        if cache.starts_with(&path, &frag, &label) {
+            return None;
+        }
+        // 标题完全相同、目标处文字以标题开头的链接；核实得上的目标只有一个才用（有好几个就拿不准）
+        let verified: Vec<&(String, String)> = links.get(&label).into_iter().flatten().filter(|(p, f)| cache.starts_with(p, f, &label)).collect();
+        let fix = (verified.len() == 1)
+            .then(|| verified[0].clone())
+            .or_else(|| {
+                // 全书唯一一个文字相同的标题
+                match headings.get(&label).map(Vec::as_slice) {
+                    Some([Some(t)]) => Some(t.clone()),
+                    _ => None,
+                }
+            })
+            .or_else(|| {
+                // 锚点在文件末尾：下一个文件开头是这个标题
+                let at_end = !frag.is_empty() && cache.get(&path, &frag, 1).is_some_and(|t| t.is_empty());
+                let next = spine_next(&path)?;
+                (at_end && cache.starts_with(&next, "", &label)).then_some((next, String::new()))
+            });
+        let (p, f) = fix?;
+        fixed += 1;
+        Some(xml_escape(&crate::epubzip::href_to(&ncx_dir, &p, &f)))
+    });
+    if let Some(new) = new {
+        if let Some(e) = entries.iter_mut().find(|e| e.name == ncx_path) {
+            e.data = new.into_bytes();
+        }
+        rep.ncx_targets_repaired += fixed;
+    }
+}
+

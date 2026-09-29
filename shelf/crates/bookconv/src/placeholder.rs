@@ -36,52 +36,27 @@ fn read_text(zip: &mut Zip, name: &str) -> Option<String> {
     read_entry(zip, name).map(|b| String::from_utf8(b).unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned()))
 }
 
-/// 打开 EPUB 并读出 OPF：`(zip, OPF 在 zip 里的路径, OPF 文本)`。只读 container.xml 和 OPF 两个条目，不解压整本
-/// （`cover_image_of`/`epub_is_rtl`/`epub_placeholder` 三处共用，此前各抄一份）。
+/// 打开 EPUB 并读出 OPF（`crate::epubzip::open_opf`；`direction` 等旧调用方仍走这个路径）。
 pub(crate) fn open_opf(epub: &Path) -> Result<(Zip, String, String), String> {
-    let file = std::fs::File::open(epub).map_err(|e| format!("打开 {} 失败: {e}", epub.display()))?;
-    let mut zip = zip::ZipArchive::new(std::io::BufReader::new(file)).map_err(|e| format!("解 EPUB 失败: {e}"))?;
-    let container = read_text(&mut zip, "META-INF/container.xml").ok_or("缺 META-INF/container.xml")?;
-    let opf_path = crate::wash::tag_attr(&container, "full-path").ok_or("container.xml 里没有 full-path")?.to_string();
-    let opf = read_text(&mut zip, &opf_path).ok_or("读不到 OPF")?;
-    Ok((zip, opf_path, opf))
+    crate::epubzip::open_opf(epub)
 }
 
-/// 从真 EPUB 里找封面图：OPF `<meta name="cover">` → manifest；`properties="cover-image"`；都没有就取
-/// 第一个 spine 页里的第一张 `<img>`。只读需要的几个条目，不解压整本。
+/// 从真 EPUB 里找封面图：OPF 声明的封面（`wash::opf::declared_cover`：`<meta name="cover">`，其次
+/// `properties="cover-image"`；声明指向 txt 这类非图片的不算——Calibre 产物常见，xochitl 取不到封面缩略图，
+/// 2026-09-20 真机日志 `null cover image`），否则前几个 spine 页里第一张对得上 manifest 的图。只读需要的几个条目。
 fn find_cover(zip: &mut Zip, opf_path: &str, opf: &str) -> Option<(String, Vec<u8>)> {
+    use crate::wash::opf as o;
     let dir = crate::epubzip::dir_of(opf_path);
-    let items = crate::wash::manifest_items(opf);
-    let mut candidate: Option<&str> = None;
-    if let Some(id) = crate::wash::cover_meta_re().find(opf).and_then(|m| crate::wash::tag_attr(m.as_str(), "content")) {
-        candidate = items.iter().find(|i| i.id == id).map(|i| i.href);
-    }
-    if candidate.is_none() {
-        candidate = items.iter().find(|i| i.properties.contains("cover-image") || i.media_type.contains("cover-image")).map(|i| i.href);
-    }
-    // 声明必须真指向图片：Calibre 产物常见 `<meta name="cover" content="cover.txt"/>` 指向 txt，直接拿来当封面
-    // 会得到一个不是图片的"封面"，xochitl 取不到封面缩略图（2026-09-20 真机日志 `null cover image`）。
-    if let Some(href) = candidate.filter(|h| crate::util::is_image_ext(h)) {
-        let path = crate::epubzip::resolve(dir, &crate::epubzip::percent_decode(href));
-        return Some((crate::util::image_ext_of(&path), read_entry(zip, &path)?));
-    }
-    // 第一个 spine 页里的第一张图。
-    static SPINE: OnceLock<Regex> = OnceLock::new();
-    let first_ref = re(&SPINE, r#"<itemref\b[^>]*\bidref="([^"]+)""#).captures(opf)?;
-    let first = items.iter().find(|i| i.id == &first_ref[1])?;
-    let page = crate::epubzip::resolve(dir, &crate::epubzip::percent_decode(first.href));
-    let html = read_text(zip, &page)?;
-    static IMG: OnceLock<Regex> = OnceLock::new();
-    let c = re(&IMG, r#"(?is)<(?:img|image)\b[^>]*?(?:src|xlink:href|href)\s*=\s*"([^"]+)""#).captures(&html)?;
-    let path = crate::epubzip::resolve(crate::epubzip::dir_of(&page), &crate::epubzip::percent_decode(&c[1]));
+    let path = match o::declared_cover(opf) {
+        Some(it) => crate::epubzip::resolve(dir, &crate::epubzip::percent_decode(it.href)),
+        None => o::first_spine_image(opf, dir, 12, false, |p| read_text(zip, p))?,
+    };
     Some((crate::util::image_ext_of(&path), read_entry(zip, &path)?))
 }
 
-/// 读出一本 EPUB 的封面图（扩展名, 字节）：OPF 声明的有效封面，否则第一个 spine 页里的第一张图（同占位构造的规则）。
-/// 给"给已有文档补封面缩略图"的小工具用；找不到返回 `None`。
+/// 读出一本 EPUB 的封面图（扩展名, 字节），规则同 [`find_cover`]；找不到返回 `None`。
 pub fn cover_image_of(epub: &Path) -> Option<(String, Vec<u8>)> {
-    let (mut zip, opf_path, opf) = open_opf(epub).ok()?;
-    find_cover(&mut zip, &opf_path, &opf)
+    crate::epubzip::cover_image_of(epub)
 }
 
 /// 这本 EPUB 是不是"从右往左"翻页：OPF `<spine page-progression-direction="rtl">`（日漫常见）。只读

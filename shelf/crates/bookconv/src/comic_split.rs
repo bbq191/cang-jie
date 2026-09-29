@@ -330,7 +330,7 @@ fn build_piece_with(
         let Ok(html) = std::str::from_utf8(&e.data) else { continue };
         let imgs = imgs_referenced(html, dir_of(p));
         let body = if imgs.is_empty() {
-            crate::htmlproc::first_body_inner(html).unwrap_or_default().trim().to_string()
+            crate::html::first_body_inner(html).unwrap_or_default().trim().to_string()
         } else {
             let mut b = String::new();
             for img in imgs {

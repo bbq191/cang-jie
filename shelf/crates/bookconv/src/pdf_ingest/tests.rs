@@ -821,15 +821,15 @@ fn join_pages_continues_sentence_across_page_boundary_only_when_unfinished() {
     assert_eq!(join_pages(&[p("<h2>标题</h2>"), p("<p>正文</p>")]), "<h2>标题</h2><p>正文</p>");
 }
 
-/// 无彩色灰字按墨水屏提对比当黑字（不包 span），彩色字保留——与 EPUB 优化线同一判据（2026-09-23 T2）。
+/// 灰字、彩色字都按原色保留（2026-09-29 起两条线一起不再把灰字提黑，规范白皮书第 8 章 T2）；纯黑不包 span。
 #[test]
-fn gray_text_is_darkened_but_colored_text_kept() {
+fn gray_and_colored_text_keep_their_colors() {
     let content = "0.5 g\nBT /F1 12 Tf 100 700 Td (GrayDate) Tj ET\n0.89 0.07 0.04 rg\nBT /F1 12 Tf 100 680 Td (RedHead) Tj ET\n";
     let (book, _, css) = convert_synthetic(&build_synthetic_pdf(content, false));
     let body = joined_body(&book);
-    assert!(!body.contains("\">GrayDate"), "灰字不包颜色 span: {body}");
+    assert!(body.contains("\">GrayDate"), "灰字保留颜色: {body}");
     assert!(body.contains("\">RedHead"), "彩色字保留: {body}");
-    assert!(!css.contains("#808080") && !css.contains("#7f7f7f"), "{css}");
+    assert!(css.contains("#808080") || css.contains("#7f7f7f"), "{css}");
 }
 
 #[test]

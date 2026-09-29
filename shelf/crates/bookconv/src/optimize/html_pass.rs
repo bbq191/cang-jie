@@ -1,49 +1,104 @@
-//! 章节 html / 图片的逐条变换（第一遍规整、第二遍脚注重排+提对比+远程图内联、图片降采样）。
+//! 章节 html / 图片的逐条变换（第一遍规整、第二遍脚注重排+远程图内联、图片降采样）。
 use super::*;
+use crate::html;
 
-/// HTML 里的远程图（http(s)/协议相对 `//`）→ 抓取降采样内联进 EPUB：抓到→存进 zip（与本章同目录，
-/// src 改本地文件名，免相对路径计算）；抓不到→**删掉该 `<img>`**（避免 reMarkable 破图占位=大放大镜）。
-/// weread 下载书常含 `res.weread.qq.com` 远程图（logo/图片脚注）。`chap_dir`=本章 zip 内目录；
-/// `counter` 跨章递增保资源名唯一。`fetch(src)->Some((字节,ext))|None`（依赖注入便于测试，生产传抓图闭包）。
-/// 返回（改写后 html, 新增资源 [(zip路径, 字节)]）。**离线时全部抓不到 → 全删**（放大镜必消，图丢但离线本
-/// 就是放大镜，删胜于留）。不加 manifest：reMarkable 按 src 直渲图、不查 manifest（连不在 manifest 的远程
-/// URL 都尝试渲染=才有放大镜），故本地图同样直渲（真机验证）。
+/// `<img src>` 是不是远程图（http(s) 或协议相对 `//`）。属性值是原文，先还原字符引用（`&amp;`）。
+fn remote_src(tag: &str) -> Option<(html::Attr<'_>, String)> {
+    let a = html::attr(tag, "src")?;
+    let src = crate::util::xml_unescape(a.value).into_owned();
+    (src.starts_with("http://") || src.starts_with("https://") || src.starts_with("//")).then_some((a, src))
+}
+
+/// HTML 里的远程图（http(s)/协议相对 `//`）→ 抓取降采样内联进 EPUB：抓到→存进 zip（与本章同目录，src 改本地文件名，
+/// 免相对路径计算），调用方再把它补进 OPF manifest（[`add_manifest_items`]）；抓不到→**删掉该 `<img>`**：xochitl 离线加载不到
+/// 远程图时画一个巨大的破图占位（放大镜，微信读书下载书真机踩过），删胜于留（设备以 xochitl 为主，与 sheng-ren 的
+/// "原样保留"有意不同）。`chap_dir`=本章 zip 内目录；`counter` 跨章递增，`taken`（zip 里已有的条目名，含本次已抓到的）
+/// 保资源名唯一——已经优化过的书再跑时书里已有 `remote_img_0.png`，新抓到的图不能再用这个名字（2026-09-28 审计）。
+/// `fetch(src)->Some((字节,ext))|None`（依赖注入便于测试，生产传抓图闭包）。返回（改写后 html, 新增资源 [(zip路径, 字节)]）。
 pub(super) fn inline_remote_images<F>(
-    html: &str,
+    html_text: &str,
     chap_dir: &str,
     counter: &mut usize,
+    taken: &mut HashSet<String>,
     fetch: F,
 ) -> (String, Vec<(String, Vec<u8>)>)
 where
     F: Fn(&str) -> Option<(Vec<u8>, &'static str)>,
 {
-    static RE_IMG: OnceLock<Regex> = OnceLock::new();
-    static RE_SRC: OnceLock<Regex> = OnceLock::new();
-    let re_img = RE_IMG.get_or_init(|| Regex::new(r#"(?is)<img\b[^>]*>"#).unwrap());
-    let re_src = RE_SRC.get_or_init(|| Regex::new(r#"(?is)\ssrc="([^"]*)""#).unwrap());
     let mut resources: Vec<(String, Vec<u8>)> = Vec::new();
-    let out = re_img.replace_all(html, |c: &regex::Captures| {
-        let tag = &c[0];
-        let src = match re_src.captures(tag).and_then(|m| m.get(1)) {
-            Some(s) => s.as_str().to_string(),
-            None => return tag.to_string(),
+    let mut edits: Vec<(usize, usize, String)> = Vec::new();
+    for t in html::tags(html_text).filter(|t| t.is_start() && t.is("img")) {
+        let Some((a, src)) = remote_src(&html_text[t.start..t.end]) else { continue };
+        let Some((bytes, ext)) = fetch(&src) else {
+            edits.push((t.start, t.end, String::new())); // 抓不到 → 删掉 img（免放大镜）
+            continue;
         };
-        let remote = src.starts_with("http://") || src.starts_with("https://") || src.starts_with("//");
-        if !remote {
-            return tag.to_string();
-        }
-        match fetch(&src) {
-            Some((bytes, ext)) => {
-                let fname = format!("cj_remote_{}.{ext}", *counter);
-                *counter += 1;
-                let path = if chap_dir.is_empty() { fname.clone() } else { format!("{chap_dir}/{fname}") };
-                resources.push((path, bytes));
-                re_src.replace(tag, regex::NoExpand(&format!(r#" src="{fname}""#))).into_owned()
+        let (fname, path) = loop {
+            let fname = format!("remote_img_{}.{ext}", *counter);
+            *counter += 1;
+            let path = if chap_dir.is_empty() { fname.clone() } else { format!("{chap_dir}/{fname}") };
+            if taken.insert(path.clone()) {
+                break (fname, path);
             }
-            None => String::new(), // 抓不到 → 删掉 img（无放大镜）
+        };
+        resources.push((path, bytes));
+        edits.push((t.start + a.value_start, t.start + a.value_end, fname));
+    }
+    if edits.is_empty() {
+        return (html_text.to_string(), resources);
+    }
+    (html::apply_edits(html_text, edits), resources)
+}
+
+/// 章节里有没有远程图（与 [`inline_remote_images`] 同一判据的快速预扫，只决定要不要推迟写 OPF）。
+pub(super) fn has_remote_img(html_text: &str) -> bool {
+    html::tags(html_text).any(|t| t.is_start() && t.is("img") && remote_src(&html_text[t.start..t.end]).is_some())
+}
+
+/// 把抓到的远程图补进 OPF manifest（`wash::opf::insert_manifest_items`：插在 `</manifest>` 前，跟着 manifest 的命名空间前缀）。
+/// `opf_path`/`imgs` 都是 zip 内路径，href 按 OPF 所在目录算相对路径；id 用 `cj-remote-img-N`（跳过 OPF 里已有的 id）。
+/// 没有 `</manifest>` 时原样返回。
+pub(super) fn add_manifest_items(opf: &str, opf_path: &str, imgs: &[(String, Vec<u8>)]) -> String {
+    let dir = crate::epubzip::dir_of(opf_path);
+    let existing: HashSet<&str> = crate::wash::manifest_items(opf).iter().map(|i| i.id).collect();
+    let mut n = 0usize;
+    let specs: Vec<(String, String, &'static str)> = imgs
+        .iter()
+        .map(|(path, _)| {
+            let id = loop {
+                let id = format!("cj-remote-img-{n}");
+                n += 1;
+                if !existing.contains(id.as_str()) {
+                    break id;
+                }
+            };
+            (id, crate::epubzip::href_to(dir, path, ""), crate::util::image_media_type_of_ext(&crate::util::image_ext_of(path)))
+        })
+        .collect();
+    let items: Vec<crate::wash::opf::NewItem> = specs.iter().map(|(id, href, mt)| crate::wash::opf::NewItem { id, href, media_type: mt, properties: "" }).collect();
+    crate::wash::opf::insert_manifest_items(opf, &items).unwrap_or_else(|| opf.to_string())
+}
+
+/// 漫画里转换了格式的图（GIF/WebP → PNG/JPEG，条目名不变）：把 OPF manifest 里对应项的 `media-type` 改成新格式。
+/// `retyped` 是 (zip 路径, 新 media-type)；href 按 OPF 所在目录解析（百分号解码）后比对。没有 `media-type` 属性的项不动。
+///
+/// 为什么不改名：改名要把全书 xhtml 的 `src`、SVG 的 `href`、CSS 的 `url()`、OPF、NCX 里指向它的链接都改掉，漏一处图就丢；
+/// EPUB 按 manifest 的 media-type 认图片格式，不看扩展名；KOReader（crengine）按文件内容认格式（2026-09-29 本机截图核对）。
+pub(super) fn set_manifest_media_types(opf: &str, opf_path: &str, retyped: &[(String, &'static str)]) -> String {
+    let dir = crate::epubzip::dir_of(opf_path);
+    let mut edits: Vec<(usize, usize, String)> = Vec::new();
+    for it in crate::wash::manifest_items(opf) {
+        let path = crate::epubzip::resolve(dir, &crate::epubzip::percent_decode(it.href));
+        let Some((_, mt)) = retyped.iter().find(|(p, _)| *p == path) else { continue };
+        let Some(a) = html::attr(it.tag, "media-type") else { continue };
+        if a.value != *mt {
+            edits.push((it.pos + a.value_start, it.pos + a.value_end, (*mt).to_string()));
         }
-    });
-    (out.into_owned(), resources)
+    }
+    if edits.is_empty() {
+        return opf.to_string();
+    }
+    html::apply_edits(opf, edits)
 }
 
 /// 生产抓图闭包：`//`→https、Referer=图自身 origin（满足多数 CDN 同源防盗链）、抓取+降采样。
@@ -60,72 +115,76 @@ pub(super) fn remote_img_fetcher(ag: &ureq::Agent) -> impl Fn(&str) -> Option<(V
 }
 
 /// 修封面拉伸变形：calibre 封面页 SVG 常用 preserveAspectRatio="none"（强制铺满、不保宽高比，
-/// 封面被拉伸放大变形），改成 "xMidYMid meet"（保持比例缩放到适配）。覆盖小写/标准两种写法。
-pub(super) fn fix_cover_aspect(html: &str) -> String {
-    html.replace("preserveaspectratio=\"none\"", "preserveAspectRatio=\"xMidYMid meet\"")
+/// 封面被拉伸放大变形），改成 "xMidYMid meet"（保持比例缩放到适配）。覆盖小写/标准两种写法、两种引号。
+pub(super) fn fix_cover_aspect(html_text: &str) -> String {
+    if !html_text.contains("none") {
+        return html_text.to_string();
+    }
+    html_text
+        .replace("preserveaspectratio=\"none\"", "preserveAspectRatio=\"xMidYMid meet\"")
         .replace("preserveAspectRatio=\"none\"", "preserveAspectRatio=\"xMidYMid meet\"")
+        .replace("preserveaspectratio='none'", "preserveAspectRatio='xMidYMid meet'")
+        .replace("preserveAspectRatio='none'", "preserveAspectRatio='xMidYMid meet'")
+}
+
+/// ASCII 不分大小写地包含。
+fn contains_ci(hay: &str, needle: &str) -> bool {
+    hay.as_bytes().windows(needle.len()).any(|w| w.eq_ignore_ascii_case(needle.as_bytes()))
 }
 
 /// 封面 SVG 换普通 img：calibre 封面页 `<svg ...><image (xlink:)href="X"/></svg>` 被 xochitl
 /// 拉伸放大（改 preserveAspectRatio 都不吃），换成标准 `<img src="X" style=max-width:100%>` 更可控。
-pub(super) fn svg_cover_to_img(html: &str) -> String {
-    static R: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
-    let re = R.get_or_init(|| {
-        Regex::new(r#"(?is)<svg\b[^>]*>.*?<image\b[^>]*?(?:xlink:)?href="([^"]+)"[^>]*?/?>.*?</svg>"#).unwrap()
-    });
-    re.replace_all(html, |c: &regex::Captures| {
-        format!(
-            r#"<img src="{}" alt="cover" style="display:block;margin:0 auto;max-width:100%;height:auto;"/>"#,
-            &c[1]
-        )
-    })
-    .into_owned()
+///
+/// 只换**封面页**（2026-09-28 审计：此前的正则 `<svg…>.*?<image…>.*?</svg>` 会从前一个不含图的 `<svg>` 一路跨到后面那个
+/// `<image>` 所在的 `</svg>`，把中间的正文段落整段吞掉）：按元素（`html::parse_spans`）逐个看最外层的 `<svg>`，要求
+/// 它里面**只有一个** `<image>`、没有可见文字（`<text>` 之类），且页面正文里除了它没有别的可见内容。不满足就原样不动。
+pub(super) fn svg_cover_to_img(html_text: &str) -> String {
+    use crate::wash::opf::is_local;
+    if !contains_ci(html_text, "<svg") {
+        return html_text.to_string();
+    }
+    let (lo, hi) = html::body_range(html_text).unwrap_or((0, html_text.len()));
+    let spans = html::parse_spans(html_text, lo, hi);
+    let in_svg = |mut p: Option<usize>| {
+        while let Some(i) = p {
+            if is_local(&spans[i].name, "svg") {
+                return true;
+            }
+            p = spans[i].parent;
+        }
+        false
+    };
+    let svgs: Vec<usize> = (0..spans.len()).filter(|&i| is_local(&spans[i].name, "svg") && spans[i].closed() && !in_svg(spans[i].parent)).collect();
+    let [si] = svgs[..] else { return html_text.to_string() };
+    let svg = &spans[si];
+    let images: Vec<&html::Span> = spans.iter().filter(|s| is_local(&s.name, "image") && s.open_start >= svg.open_end && s.open_start < svg.close_start).collect();
+    let [img] = images[..] else { return html_text.to_string() };
+    let visible_outside = html::has_visible(&html_text[lo..svg.open_start]) || html::has_visible(&html_text[svg.close_end..hi]);
+    if visible_outside || !html::plain_text(&html_text[svg.open_end..svg.close_start]).is_empty() {
+        return html_text.to_string();
+    }
+    let tag = &html_text[img.open_start..img.open_end];
+    let Some(href) = html::attr_value(tag, "xlink:href").or_else(|| html::attr_value(tag, "href")).filter(|v| !v.is_empty()) else { return html_text.to_string() };
+    let new = format!(r#"<img src="{}" alt="cover" style="display:block;margin:0 auto;max-width:100%;height:auto;"/>"#, href.replace('"', "&quot;"));
+    format!("{}{new}{}", &html_text[..svg.open_start], &html_text[svg.close_end..])
 }
 
 /// 第一遍 html 处理：归一同文件 href（part0004.html#x 写在 part0004.html 里→改裸锚 #x，否则下面
-/// referenced/搬注释/拆环全把同章脚注误当跨文件）→ 剥字体锁 → 扫这章引用了哪些脚注 frag。
-/// `optimize_epub_with`/`optimize_epub_file_streaming` 共用，避免两条路径的第一遍处理逻辑分叉走样。
-pub(super) fn first_pass_html(text: &str, name: &str) -> (String, Vec<String>) {
-    let own = std::path::Path::new(name).file_name().and_then(|s| s.to_str()).unwrap_or("");
-    let text = crate::htmlproc::normalize_self_hrefs(text, own);
-    let stripped = crate::htmlproc::strip_font_locks(&text);
-    let referenced = crate::htmlproc::referenced_note_frags(&stripped);
-    (stripped, referenced)
-}
-
-/// 章节 html 最终变换链：解双向脚注互指环 → duokan 图片脚注标记换上标 → 封面拉伸/SVG 修复 →
-/// 脚注就地关联重排 → e-ink 提对比 → 远程图内联 → 全书 id 去重。第一遍（`first_pass_html`）跟这遍
-/// 分开是因为这遍要用到第一遍扫全书才拿得到的 `aside_index`（跨章注释索引），顺序不能换。返回
-/// (最终字节, 这章新增的远程图资源 [(zip 路径, 字节)])。同上，两条优化路径共用。
-pub(super) fn transform_html_chapter(
-    text: &str,
-    name: &str,
-    aside_index: &std::collections::HashMap<String, String>,
-    footnote: FootnoteMode,
-    remote_counter: &mut usize,
-    img_agent: &ureq::Agent,
-    seen_ids: &mut HashSet<String>,
-) -> (Vec<u8>, Vec<(String, Vec<u8>)>) {
-    let t = crate::htmlproc::break_footnote_cycles(text);
-    let t = crate::htmlproc::fix_duokan_markers(&t);
-    let t = fix_cover_aspect(&t);
-    let t = svg_cover_to_img(&t);
-    let t = crate::htmlproc::preserve_relink_footnotes(&t, aside_index, footnote);
-    let t = crate::htmlproc::boost_text_contrast(&t);
-    let chap_dir = std::path::Path::new(name).parent().and_then(|p| p.to_str()).unwrap_or("");
-    let (t, imgs) = inline_remote_images(&t, chap_dir, remote_counter, remote_img_fetcher(img_agent));
-    (crate::htmlproc::dedup_ids_in_chapter(&t, seen_ids).into_bytes(), imgs)
+/// referenced/搬注释/拆环全把同章脚注误当跨文件）→ 剥字体锁。
+pub(super) fn first_pass_html(text: &str, name: &str) -> String {
+    let text = crate::htmlproc::normalize_self_hrefs(text, name);
+    crate::htmlproc::strip_font_locks(&text)
 }
 
 /// 图片最终变换：按漫画/文字书分流（EPUB 线原则④：漫画只裁边/适配屏幕，不许压画质）。
 /// 返回 `None` = 无需改动、沿用原字节（调用方自己决定借用还是移走，不为"没变"整张图克隆一份）。
 ///
-/// 解码器遇到畸形图片偶发 panic（第三方书的坏 JPEG/PNG 是外部输入）：这里兜住、按"失败原样保留"处理——此前 panic 会从
+/// 解码器遇到畸形图片偶发 panic（第三方书的坏 JPEG/PNG 是外部输入）：这里兜住、按"失败原样保留"处理——否则 panic 会从
 /// 图片 worker 线程一路把整本书的优化搞砸（`thread::scope` 把子线程 panic 重新抛给调用方），只为一张坏图不值得。
 pub(super) fn transform_image_bytes(bytes: &[u8], is_comic_book: bool, comic_frame: crate::imgopt::EpubComicFrame) -> Option<Vec<u8>> {
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         if is_comic_book {
-            // 单趟（解码/编码各一次、灰度保持、缩放走 SIMD）——此前三道串联的问题见 `prepare_comic_page_for_epub`。
+            // 单趟（解码/编码各一次、灰度保持、缩放走 SIMD），见 `prepare_comic_page_for_epub`。
             crate::imgopt::prepare_comic_page_for_epub(bytes, comic_frame)
         } else {
             crate::imgopt::downscale_for_epub(bytes)

@@ -202,6 +202,68 @@ pub fn percent_decode(s: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
+// ───────────────────────── 按路径读 OPF 与封面 ─────────────────────────
+
+type FileZip = ZipArchive<std::io::BufReader<std::fs::File>>;
+
+/// 条目按文本读（非 UTF-8 字节按 lossy 替换）；不存在或读失败都是 `None`。
+fn read_text_opt(zip: &mut FileZip, name: &str) -> Option<String> {
+    read_by_name_opt(zip, name).ok().flatten().map(|b| String::from_utf8(b).unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned()))
+}
+
+/// 打开 EPUB 并读出 OPF：`(zip, OPF 在 zip 里的路径, OPF 文本)`。只读 container.xml 和 OPF 两个条目，不解压整本。
+pub(crate) fn open_opf(epub: &std::path::Path) -> Result<(FileZip, String, String), String> {
+    let file = std::fs::File::open(epub).map_err(|e| format!("打开 {} 失败: {e}", epub.display()))?;
+    let mut zip = ZipArchive::new(std::io::BufReader::new(file)).map_err(|e| format!("解 EPUB 失败: {e}"))?;
+    let container = read_text_opt(&mut zip, "META-INF/container.xml").ok_or("缺 META-INF/container.xml")?;
+    let opf_path = crate::wash::tag_attr(&container, "full-path").ok_or("container.xml 里没有 full-path")?.to_string();
+    let opf = read_text_opt(&mut zip, &opf_path).ok_or("读不到 OPF")?;
+    Ok((zip, opf_path, opf))
+}
+
+/// 读出一本 EPUB 的封面图（扩展名, 字节）：OPF 声明的封面（`wash::opf::declared_cover`：`<meta name="cover">` 指向的图片、
+/// 其次 `properties="cover-image"`；指向 txt 之类的坏声明不算）；没有就取前几个 spine 页里第一张对得上 manifest 的图
+/// （`wash::opf::first_spine_image`，与优化器补封面声明同一套）。只读需要的几个条目，不解压整本；找不到返回 `None`。
+pub fn cover_image_of(epub: &std::path::Path) -> Option<(String, Vec<u8>)> {
+    use crate::wash::opf;
+    let (mut zip, opf_path, text) = open_opf(epub).ok()?;
+    let dir = dir_of(&opf_path);
+    let path = match opf::declared_cover(&text) {
+        Some(it) => resolve(dir, &percent_decode(it.href)),
+        None => opf::first_spine_image(&text, dir, 12, false, |p| read_text_opt(&mut zip, p))?,
+    };
+    Some((crate::util::image_ext_of(&path), read_by_name_opt(&mut zip, &path).ok()??))
+}
+
+/// 链接值 → (目标文件的 zip 路径, 锚点原文)。`base_file` 是链接所在文件的 zip 路径；路径部分为空（`#x`）时目标就是
+/// `base_file` 自己。路径先百分号解码再按 `base_file` 所在目录解析、规整（全书各处"链接指向哪个文件"一律走这里）。
+/// 书外链接（`http:`、`mailto:`…）不该传进来，调用方先用 [`crate::html::is_external`] 筛掉。
+pub fn resolve_href<'a>(base_file: &str, href: &'a str) -> (String, Option<&'a str>) {
+    let (p, frag) = crate::html::split_href(href);
+    let path = if p.is_empty() { base_file.to_string() } else { resolve(dir_of(base_file), &percent_decode(p)) };
+    (path, frag)
+}
+
+/// zip 内路径写进 `href`/`src` 用的百分号编码：字母数字与 `-._~/` 原样，其余（空格、`#`、`%`、非 ASCII）按 UTF-8 字节编码。
+pub fn encode_href_path(p: &str) -> String {
+    let mut out = String::with_capacity(p.len());
+    for b in p.bytes() {
+        if b.is_ascii_alphanumeric() || b"-._~/".contains(&b) {
+            out.push(b as char);
+        } else {
+            out.push_str(&format!("%{b:02X}"));
+        }
+    }
+    out
+}
+
+/// 从 `from_dir`（zip 内目录）指向 `target`（zip 内路径）的链接值：相对路径百分号编码，`frag`（锚点原文）非空时带 `#frag`。
+/// 结果是属性值原文，写进 XML 前调用方仍要 `xml_escape`（锚点里可能有 `&`）。
+pub fn href_to(from_dir: &str, target: &str, frag: &str) -> String {
+    let rel = encode_href_path(&relative_to(from_dir, target));
+    if frag.is_empty() { rel } else { format!("{rel}#{frag}") }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

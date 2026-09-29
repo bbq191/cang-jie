@@ -3,10 +3,11 @@ use super::*;
 
 // ───────────────────────── 2–4. CSS 声明处理 ─────────────────────────
 
-pub(super) fn decl_re() -> &'static Regex {
+/// CSS 规则 `选择器{声明}`（只匹配最内层：`@media{}` 里的规则由"从内向外"匹配到）。`filter_css` 与章尾容器
+/// 去下边距（`layout::strip_tail_spacing`）共用。
+pub(super) fn css_rule_re() -> &'static Regex {
     static RE: OnceLock<Regex> = OnceLock::new();
-    // 属性名 : 值（值里的 HTML 实体 `&#39;` 含分号，按实体整体吃）
-    RE.get_or_init(|| Regex::new(r#"(?i)([-a-zA-Z]+)\s*:\s*((?:&#?\w+;|[^;])*);?"#).unwrap())
+    RE.get_or_init(|| Regex::new(r#"(?s)([^{}]+)\{([^{}]*)\}"#).unwrap())
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -22,7 +23,7 @@ pub(super) enum Spacing {
 /// 对一段声明文本：剥 `filter` 里的属性；按 `spacing` 处理 margin/padding。（测试用薄封装）
 #[cfg(test)]
 pub(super) fn filter_decls(decls: &str, filter: &[String], spacing: Spacing) -> String {
-    filter_decls_with(decls, filter, spacing, None)
+    filter_decls_with(decls, filter, spacing, false, None)
 }
 
 /// 值是否"非零缩进"（`0` / `0em` / `0.0pt` 之类算零；负值=悬挂缩进，保留不动）。
@@ -36,12 +37,27 @@ pub(super) fn is_positive_indent(val: &str) -> bool {
 /// 为什么：书自带的类规则（calibre 转 AZW3 常见 `.calibre_ {text-indent:2em}`）xochitl 不认（只认裸 `p{}`），
 /// KOReader 认且类规则特异性高于我们的 `p{}`——不统一就"xochitl 1.2em、KOReader 2em"，两器同字节不同观感
 /// （2026-09-06 Phase E 英文书对照发现）。`text-indent:0`（诗歌/引文/列表明示不缩进）与负值保留。
-pub(super) fn filter_decls_with(decls: &str, filter: &[String], spacing: Spacing, indent: Option<&str>) -> String {
+/// `filter` 里的属性按 [`crate::cssunlock::unlock`] 解锁（字体去掉、相对字号保留、`font`/`background` 简写只留样式和颜色……）；
+/// `base_text` = 这条规则作用在正文整体那一层（见 [`is_base_text_selector`]）。
+pub(super) fn filter_decls_with(decls: &str, filter: &[String], spacing: Spacing, base_text: bool, indent: Option<&str>) -> String {
+    use crate::cssunlock::{unlock, Unlock};
     let mut out: Vec<String> = Vec::new();
-    for c in decl_re().captures_iter(decls) {
-        let prop = c[1].to_ascii_lowercase();
-        let val = c[2].trim();
+    // 声明按分号切，引号/括号（`url(data:…;base64,…)`）/字符引用里的分号不算（`html::css_decls`）。
+    for d in html::css_decls(decls) {
+        let prop = d.prop.to_ascii_lowercase();
+        let val = d.value;
         if filter.contains(&prop) {
+            match unlock(&prop, val, base_text) {
+                Unlock::Keep => {}
+                Unlock::Drop => continue,
+                Unlock::Replace(v) => {
+                    out.extend(v);
+                    continue;
+                }
+            }
+        }
+        // 占满一屏的高度（书名页/封面页常用）加上页眉页脚会溢出成空白页（章尾空白页，2026-09-27）。
+        if (prop == "height" || prop == "min-height") && val.to_ascii_lowercase().contains("vh") {
             continue;
         }
         if prop == "text-indent" {
@@ -64,15 +80,15 @@ pub(super) fn filter_decls_with(decls: &str, filter: &[String], spacing: Spacing
             }
             Spacing::Vertical if is_box => {
                 // 简写：保留左右
-                let parts: Vec<&str> = val.split_whitespace().filter(|p| !p.starts_with('!')).collect();
-                let important = if val.contains("!important") { " !important" } else { "" };
-                let (r, l) = match parts.len() {
-                    1 => (parts[0], parts[0]),
-                    2 | 3 => (parts[1], parts[1]),
-                    4 => (parts[1], parts[3]),
-                    _ => continue,
-                };
-                out.push(if r == l { format!("{prop}:0 {r}{important}") } else { format!("{prop}:0 {r} 0 {l}{important}") });
+                match box_sides(val) {
+                    BoxSides::Sides([_, r, _, l], important) => {
+                        out.push(if r == l { format!("{prop}:0 {r}{important}") } else { format!("{prop}:0 {r} 0 {l}{important}") });
+                    }
+                    // `margin:inherit` 之类：上下交给我们的 `p{}`，左右照原值写成分项（此前写成非法的 `margin:0 inherit`）
+                    BoxSides::Keyword(k, important) => out.push(format!("{prop}-right:{k}{important};{prop}-left:{k}{important}")),
+                    // 拆不清（calc() 里带空格之类）：拿不准就原样留着
+                    BoxSides::Unknown => out.push(format!("{prop}:{val}")),
+                }
                 continue;
             }
             _ => {}
@@ -85,6 +101,60 @@ pub(super) fn filter_decls_with(decls: &str, filter: &[String], spacing: Spacing
         joined.push(';');
     }
     joined
+}
+
+/// `margin`/`padding` 简写拆成的四边。
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum BoxSides<'a> {
+    /// 上、右、下、左，和 `" !important"`（没有就是空串）。
+    Sides([&'a str; 4], &'static str),
+    /// 整体一个全局关键字（`inherit`/`initial`/`unset`/`revert`），不能跟别的边混写在一个简写里。
+    Keyword(&'a str, &'static str),
+    /// 拆不清（超过 4 个值、括号不配对）。
+    Unknown,
+}
+
+/// 拆 `margin`/`padding` 简写的值（`css.rs` 段距归零与 `layout.rs` 章尾去下边距共用）：1–4 个值按 CSS 规则展开成四边；
+/// 括号里的空格不算分隔（`calc(1em + 2px)`）。
+pub(super) fn box_sides(val: &str) -> BoxSides<'_> {
+    let v = val.trim();
+    let lower = v.to_ascii_lowercase();
+    let (v, important) = match lower.rfind('!') {
+        Some(i) if lower[i + 1..].trim() == "important" => (v[..i].trim_end(), " !important"),
+        _ => (v, ""),
+    };
+    let mut parts: Vec<&str> = Vec::new();
+    let (mut depth, mut start) = (0i32, None::<usize>);
+    for (i, ch) in v.char_indices() {
+        match ch {
+            '(' => depth += 1,
+            ')' => depth -= 1,
+            c if c.is_whitespace() && depth == 0 => {
+                if let Some(s) = start.take() {
+                    parts.push(&v[s..i]);
+                }
+                continue;
+            }
+            _ => {}
+        }
+        start.get_or_insert(i);
+    }
+    if let Some(s) = start {
+        parts.push(&v[s..]);
+    }
+    if depth != 0 {
+        return BoxSides::Unknown;
+    }
+    let keyword = |p: &str| matches!(p.to_ascii_lowercase().as_str(), "inherit" | "initial" | "unset" | "revert" | "revert-layer");
+    match parts[..] {
+        [k] if keyword(k) => BoxSides::Keyword(k, important),
+        _ if parts.iter().any(|p| keyword(p)) => BoxSides::Unknown,
+        [a] => BoxSides::Sides([a, a, a, a], important),
+        [a, b] => BoxSides::Sides([a, b, a, b], important),
+        [a, b, c] => BoxSides::Sides([a, b, c, b], important),
+        [a, b, c, d] => BoxSides::Sides([a, b, c, d], important),
+        _ => BoxSides::Unknown,
+    }
 }
 
 pub(super) fn selector_spacing(selector: &str) -> Spacing {
@@ -102,6 +172,17 @@ pub(super) fn selector_spacing(selector: &str) -> Spacing {
     }
 }
 
+/// 选择器是不是作用在"正文整体那一层"：每个逗号分项的最后一个复合选择器都是不带类、id、属性的 `body`/`html`/`p`/`div`
+/// （`body`、`div.chapter p`、`html, body` 算；`p.small`、`.note`、`h1` 不算）。这一层上的相对字号也去掉（[`crate::cssunlock`]）。
+pub(super) fn is_base_text_selector(selector: &str) -> bool {
+    let parts: Vec<&str> = selector.split(',').map(str::trim).filter(|p| !p.is_empty()).collect();
+    !parts.is_empty()
+        && parts.iter().all(|p| {
+            let last = p.rsplit(|c: char| c.is_whitespace() || c == '>' || c == '+' || c == '~').next().unwrap_or("");
+            matches!(last.to_ascii_lowercase().as_str(), "body" | "html" | "p" | "div" | ":root")
+        })
+}
+
 /// 选择器是不是"注释容器类"：书自带的 `duokan-footnote-item`/`duokan-footnote-content` 这类，以及我们
 /// 自己生成的 `.footnotes`（章末块）/`.cj-fnote`（Inline 内联注释）——判据是选择器文本含
 /// "footnote"/"fnote"（大小写不敏感），不追求穷举每本书的命名，覆盖到目前真机见过的形态。
@@ -110,8 +191,8 @@ pub(super) fn is_footnote_container_selector(sel: &str) -> bool {
     l.contains("footnote") || l.contains("fnote")
 }
 
-/// 注释容器专用的字号：比正文小一档，相对单位（随用户当前字号缩放，不是又一个"锁死"）。
-pub(super) const FOOTNOTE_FONT_SIZE: &str = "0.9em";
+/// 注释容器专用的字号：比正文小一号（五号→小五是 0.857，用户 2026-09-29），相对单位（随用户当前字号缩放，不是又一个"锁死"）。
+pub(super) const FOOTNOTE_FONT_SIZE: &str = "0.85em";
 
 /// 整段 CSS（文件或 <style> 内容）：逐规则剥锁 + 边距处理。`@media{}` 嵌套靠"从内向外"匹配最内层规则。
 /// 注释容器类是唯一的例外分支：§03av EPUB 线原则②"解锁字号但保留原书颜色/加粗"保护的是**正文语义
@@ -120,10 +201,10 @@ pub(super) const FOOTNOTE_FONT_SIZE: &str = "0.9em";
 /// "跳转注释后字体不对"，追下去发现其实是加粗不是字体），用户拍板"只剥注释容器类的字重，不碰正文；
 /// 注释字号固定比正文小一档"。
 pub fn filter_css(css: &str, opts: &WashOpts) -> String {
-    static RULE: OnceLock<Regex> = OnceLock::new();
-    let rule = RULE.get_or_init(|| Regex::new(r#"(?s)([^{}]+)\{([^{}]*)\}"#).unwrap());
-    rule.replace_all(css, |c: &regex::Captures| {
-        let sel = &c[1];
+    css_rule_re().replace_all(css, |c: &regex::Captures| {
+        // 规则前面的语句式 at-rule（`@import url(a.css);`、`@charset "utf-8";`）会被正则算进选择器里：拆出来原样保留，
+        // 后面的才是真正的选择器（2026-09-28 审计：样式表开头的 `@import` 让紧跟的第一条规则整条跳过，字体锁没剥）。
+        let (lead, sel) = split_leading_statements(&c[1]);
         let trimmed = sel.trim_start();
         if trimmed.starts_with("@font-face") || trimmed.starts_with("@import") {
             return c[0].to_string();
@@ -137,12 +218,46 @@ pub fn filter_css(css: &str, opts: &WashOpts) -> String {
             if !filter.iter().any(|p| p == "font-weight") {
                 filter.push("font-weight".to_string());
             }
-            let mut decls = filter_decls_with(&c[2], &filter, spacing, Some(indent_for(opts)));
+            // base_text=true：书自己的字号（哪怕是相对的）一律去掉，换成下面统一的注释字号
+            let mut decls = filter_decls_with(&c[2], &filter, spacing, true, Some(indent_for(opts)));
             decls.push_str(&format!("font-size:{FOOTNOTE_FONT_SIZE};"));
-            return format!("{sel}{{{decls}}}");
+            return format!("{lead}{sel}{{{decls}}}");
         }
-        format!("{}{{{}}}", sel, filter_decls_with(&c[2], &opts.filter_props, spacing, Some(indent_for(opts))))
+        format!("{lead}{}{{{}}}", sel, filter_decls_with(&c[2], &opts.filter_props, spacing, is_base_text_selector(sel), Some(indent_for(opts))))
     }).into_owned()
+}
+
+/// 选择器文本开头的语句式 at-rule（以 `@` 开头、到括号和引号之外的 `;` 为止，可以有好几条）拆成 (这些语句, 其余)。
+/// 没有就是 `("", 原文)`。
+pub(super) fn split_leading_statements(sel: &str) -> (&str, &str) {
+    let mut cut = 0;
+    loop {
+        let rest = &sel[cut..];
+        if !rest.trim_start().starts_with('@') {
+            break;
+        }
+        let (mut depth, mut quote) = (0usize, None::<char>);
+        let mut end = None;
+        for (i, ch) in rest.char_indices() {
+            match (quote, ch) {
+                (Some(q), c) if c == q => quote = None,
+                (Some(_), _) => {}
+                (None, '"' | '\'') => quote = Some(ch),
+                (None, '(') => depth += 1,
+                (None, ')') => depth = depth.saturating_sub(1),
+                (None, ';') if depth == 0 => {
+                    end = Some(i + 1);
+                    break;
+                }
+                _ => {}
+            }
+        }
+        match end {
+            Some(e) => cut += e,
+            None => break,
+        }
+    }
+    (&sel[..cut], &sel[cut..])
 }
 
 /// 本书的首行缩进值（拉丁 1.2em / 中文 2em；Auto 兜底中文）。`wash_css` 与书 css 统一改写共用。
@@ -150,30 +265,35 @@ pub(super) fn indent_for(opts: &WashOpts) -> &'static str {
     if opts.lang == LangMode::Latin { "1.2em" } else { "2em" }
 }
 
-pub(super) fn style_attr_re() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| Regex::new(r#"(?is)<([a-z][a-z0-9]*)\b([^>]*?)\sstyle="([^"]*)"([^>]*)>"#).unwrap())
-}
-
 /// (x)html：`style=""`（按标签名定边距策略）+ `<style>` 块剥锁；注入清洗样式块；折叠重复 id。
 pub fn wash_html(html: &str, opts: &WashOpts) -> (String, usize) {
+    wash_html_with(html, opts, &HashSet::new())
+}
+
+/// 同 [`wash_html`]；`indent_classes` = 书的外链样式表里写了 `text-indent` 的类（`typeset::indent_classes_of`，英文首段顶格用；
+/// 本文件 `<style>` 里的另外算上）。
+pub(super) fn wash_html_with(html: &str, opts: &WashOpts, indent_classes: &HashSet<String>) -> (String, usize) {
     let before_dup = count_dup_id_tags(html);
     let s = collapse_dup_id_attrs(html);
-    let s = style_attr_re().replace_all(&s, |c: &regex::Captures| {
-        let tag = c[1].to_ascii_lowercase();
-        let spacing = match tag.as_str() {
+    // 只认名字正好是 `style` 的属性（`data-style`、SVG `font-style` 不算），就地改值、保留原引号。
+    let s = html::edit_attrs(&s, &["style"], |t, a| {
+        let spacing = match t.name.to_ascii_lowercase().as_str() {
             "body" | "html" => Spacing::All,
             "p" | "div" if !opts.keep_para_spacing => Spacing::Vertical,
             _ => Spacing::Keep,
         };
-        let cleaned = filter_decls_with(&c[3], &opts.filter_props, spacing, Some(indent_for(opts)));
+        let base_text = matches!(t.name.to_ascii_lowercase().as_str(), "body" | "html");
+        let cleaned = filter_decls_with(a.value, &opts.filter_props, spacing, base_text, Some(indent_for(opts)));
         if cleaned.is_empty() {
-            format!("<{}{}{}>", &c[1], &c[2], &c[4])
+            Edit::Remove
+        } else if cleaned == a.value {
+            Edit::Keep
         } else {
-            format!("<{}{} style=\"{}\"{}>", &c[1], &c[2], cleaned, &c[4])
+            Edit::Set(cleaned)
         }
-    }).into_owned();
-    let s = style_block_re().replace_all(&s, |c: &regex::Captures| {
+    })
+    .into_owned();
+    let s = html::style_block_re().replace_all(&s, |c: &regex::Captures| {
         if c[1].contains(WASH_MARK) {
             // 旧版（v9 及以前）注入的内联 <style class="cj-wash"> 块：xochitl 本就无视它，重洗时清掉（已改外链 css）。
             String::new()
@@ -183,7 +303,13 @@ pub fn wash_html(html: &str, opts: &WashOpts) -> (String, usize) {
     }).into_owned();
     // 不再注入内联 <style>（xochitl 无视内联）；排版规则由 wash_entries 写成外链 css + 逐 html 加 <link>。
     let s = match opts.lang {
-        LangMode::Latin => flush_first_para_after_heading(&s),
+        LangMode::Latin => {
+            let mut classes = indent_classes.clone();
+            for c in html::style_block_re().captures_iter(&s) {
+                classes.extend(indent_classes_of(&c[2]));
+            }
+            flush_first_para_after_heading(&s, &classes)
+        }
         _ => cjk_paragraphize(&s),
     };
     (s, before_dup)
