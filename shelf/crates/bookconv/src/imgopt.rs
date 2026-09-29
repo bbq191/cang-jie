@@ -199,6 +199,23 @@ impl EpubComicFrame {
     }
 }
 
+/// 这张漫画页是不是**已经按 `frame` 排好**（本优化器上一版的产物）：宽不超过设备短边、高不超过页框高、长宽比落在页框容差内，
+/// 且不是还能再预放大的小 JPEG。重优化已优化过的书时（`optimize` 的 `reoptimize`）这种页原样保留——否则裁边会把我们自己补的
+/// 白边当留白裁掉、再补回来，多一代 JPEG 有损、画面不会更好（传书线架构 §3「别二次优化已优化产物」）。只读文件头。
+/// 换了页框（屏幕比例 ↔ 最小边距）的书长宽比对不上，照常重排。
+pub fn comic_page_already_framed(bytes: &[u8], frame: EpubComicFrame) -> bool {
+    let Some((fmt, (w, h))) = comic_header_dims(bytes) else { return false };
+    if w == 0 || h == 0 || w > MAX_SHORT_EDGE || h > frame.page_h() || w.min(h) < MAX_SHORT_EDGE / 3 {
+        return false;
+    }
+    let aspect = w as f32 / h as f32;
+    if ((aspect - frame.aspect()) / frame.aspect()).abs() > frame.tolerance() {
+        return false;
+    }
+    let s = (MAX_SHORT_EDGE as f32 / w as f32).min(frame.page_h() as f32 / h as f32);
+    !(fmt == ImageFormat::Jpeg && s > 1.0 && s <= MAX_PDF_UPSCALE)
+}
+
 /// 裁边判定容差：一行/列里像素两两 RGB 通道极差都 ≤ 这个值才算"纯色留白"。留够松（8）容 JPEG 压缩
 /// 噪声，但不到能吃掉真实画面渐变的地步。
 const TRIM_TOLERANCE: u8 = 8;

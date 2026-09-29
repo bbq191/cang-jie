@@ -68,6 +68,10 @@ fn main() {
             "清洗: css {} / html {} / 伪DRM剥离 {:?} / 空页 {:?} / 自动目录 {} 条 / 双id折叠 {} / 分部重建 {} 条 / ncx uid 修复 {} / ncx doctype 剥离 {} / ncx manifest id 修复 {}",
             w.css_files, w.html_files, w.pseudo_drm_stripped, w.empty_pages_removed, w.toc_generated, w.dup_id_tags_collapsed, w.toc_parts_restructured, w.ncx_uid_fixed, w.ncx_doctype_stripped, w.ncx_manifest_id_fixed
         );
+        println!(
+            "分页: 拆出 {} 份 / 搬注释 {} / 目录补节 {} / 目录改指 {} / 跨文件重名 id {} / 章尾空白 {} / EPUB 3 升级 {} / 生成 nav {} 条",
+            w.sections_paginated, w.paginate_notes_moved, w.toc_sections_added, w.ncx_targets_repaired, w.dup_ids_renamed, w.trailing_blanks_removed, w.epub3_upgraded, w.nav_generated
+        );
     }
     if flags.contains(&"--check") {
         // 质量门要整本读回内存核对结构——只有 --check 时才付这个代价，不影响默认路径的流式内存省。

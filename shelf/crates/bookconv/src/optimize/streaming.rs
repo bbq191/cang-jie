@@ -88,7 +88,7 @@ impl<'a> StreamingOptimize<'a> {
         // 阶段一：非图片条目整份读；图片条目占位（真实字节留到阶段二按需流式读）。
         let raw = crate::epubzip::read_skeleton(&mut archive)?.entries;
         let prep = prepare_entries(raw, opts, bytes_before, title)?;
-        let (comic_frame, is_comic_book) = (opts.comic_frame, prep.is_comic_book);
+        let (comic_frame, is_comic_book, reoptimize) = (opts.comic_frame, prep.is_comic_book, prep.reoptimize);
         let entries = &prep.entries;
         // 漫画里可能换格式的页（GIF/WebP）：处理后按实际格式改 manifest 的 media-type。
         let may_retype = |name: &str| is_comic_book && matches!(crate::util::image_ext_of(name).as_str(), "gif" | "webp");
@@ -126,7 +126,7 @@ impl<'a> StreamingOptimize<'a> {
                     // 主线程要么拿到"线程异常退出"，要么（队列已满时）`send` 永远等不到人收。
                     let px = std::panic::catch_unwind(|| crate::imgopt::pixel_count(&job.bytes)).unwrap_or(1_000_000);
                     let _permit = budget.acquire(px);
-                    let out = transform_image_bytes(&job.bytes, is_comic_book, comic_frame).unwrap_or(job.bytes);
+                    let out = transform_image_bytes(&job.bytes, is_comic_book, comic_frame, reoptimize).unwrap_or(job.bytes);
                     let _ = job.reply.send(out);
                 });
             }

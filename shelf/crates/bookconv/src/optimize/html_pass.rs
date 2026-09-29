@@ -171,9 +171,33 @@ pub(super) fn svg_cover_to_img(html_text: &str) -> String {
 
 /// 第一遍 html 处理：归一同文件 href（part0004.html#x 写在 part0004.html 里→改裸锚 #x，否则下面
 /// referenced/搬注释/拆环全把同章脚注误当跨文件）→ 剥字体锁。
-pub(super) fn first_pass_html(text: &str, name: &str) -> String {
+/// `reoptimize`（书里带着本优化器上一版的标记）时先去掉上一版加的注释计数标号（[`strip_legacy_note_counters`]）。
+pub(super) fn first_pass_html(text: &str, name: &str, reoptimize: bool) -> String {
     let text = crate::htmlproc::normalize_self_hrefs(text, name);
+    let text = if reoptimize { strip_legacy_note_counters(&text) } else { text };
     crate::htmlproc::strip_font_locks(&text)
+}
+
+/// 去掉 v15 及以前在注释标号后面追加的 `[N]`：形如 `<a href="#f">原标号</a> <a href="#f">[3]</a>`——前面紧挨着一个指向同一锚点
+/// 的链接时才去（原标号还在、仍可点，去掉后就是原书的样子）。另两种旧写法（图标整个换成 `[N]`、`<sup>` 后跟 `[N]`）原标号已被
+/// 替换或不再是链接，去掉会丢标号，不动。母版库的优化是原地覆盖，旧版产物已经没有原件可回，只能这样还原能确定的部分。
+pub(super) fn strip_legacy_note_counters(text: &str) -> String {
+    static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let re = RE.get_or_init(|| regex::Regex::new(r##" <a href="#([^"]+)">\[\d+\]</a>"##).unwrap());
+    let mut out = String::with_capacity(text.len());
+    let mut last = 0;
+    for c in re.captures_iter(text) {
+        let m = c.get(0).unwrap();
+        let before = &text[..m.start()];
+        let same_target = before.ends_with("</a>")
+            && before.rfind("<a ").is_some_and(|i| html::attr_value(&before[i..before[i..].find('>').map_or(before.len(), |j| i + j + 1)], "href") == Some(&format!("#{}", &c[1])));
+        if same_target {
+            out.push_str(&text[last..m.start()]);
+            last = m.end();
+        }
+    }
+    out.push_str(&text[last..]);
+    out
 }
 
 /// 图片最终变换：按漫画/文字书分流（EPUB 线原则④：漫画只裁边/适配屏幕，不许压画质）。
@@ -181,9 +205,13 @@ pub(super) fn first_pass_html(text: &str, name: &str) -> String {
 ///
 /// 解码器遇到畸形图片偶发 panic（第三方书的坏 JPEG/PNG 是外部输入）：这里兜住、按"失败原样保留"处理——否则 panic 会从
 /// 图片 worker 线程一路把整本书的优化搞砸（`thread::scope` 把子线程 panic 重新抛给调用方），只为一张坏图不值得。
-pub(super) fn transform_image_bytes(bytes: &[u8], is_comic_book: bool, comic_frame: crate::imgopt::EpubComicFrame) -> Option<Vec<u8>> {
+///
+/// `reoptimize`：已经按同一页框排好的漫画页原样保留（[`crate::imgopt::comic_page_already_framed`]）。
+pub(super) fn transform_image_bytes(bytes: &[u8], is_comic_book: bool, comic_frame: crate::imgopt::EpubComicFrame, reoptimize: bool) -> Option<Vec<u8>> {
     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        if is_comic_book {
+        if is_comic_book && reoptimize && crate::imgopt::comic_page_already_framed(bytes, comic_frame) {
+            None
+        } else if is_comic_book {
             // 单趟（解码/编码各一次、灰度保持、缩放走 SIMD），见 `prepare_comic_page_for_epub`。
             crate::imgopt::prepare_comic_page_for_epub(bytes, comic_frame)
         } else {

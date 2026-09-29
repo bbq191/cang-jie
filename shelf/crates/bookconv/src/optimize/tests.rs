@@ -259,7 +259,7 @@
 
         let (stream_out, _) = optimize_epub(&comic_buf).unwrap();
         let stream_img = entry_bytes(&stream_out, "p1.jpg");
-        let direct = transform_image_bytes(&jpg, true, crate::imgopt::EpubComicFrame::Screen).unwrap();
+        let direct = transform_image_bytes(&jpg, true, crate::imgopt::EpubComicFrame::Screen, false).unwrap();
         assert_eq!(stream_img, direct, "流式并行处理结果应与直接处理逐字节一致");
         let mut ar = ZipArchive::new(Cursor::new(&stream_out)).unwrap();
         assert_eq!(ar.by_name("p1.jpg").unwrap().compression(), CompressionMethod::Deflated, "图片 deflate 最快档（真机乱马实测省 6%）");
@@ -302,7 +302,7 @@
             let (mut x, mut y) = (Vec::new(), Vec::new());
             a.by_name(&name).unwrap().read_to_end(&mut x).unwrap();
             b.by_name(&name).unwrap().read_to_end(&mut y).unwrap();
-            let want = transform_image_bytes(&x, true, crate::imgopt::EpubComicFrame::Screen).unwrap_or(x);
+            let want = transform_image_bytes(&x, true, crate::imgopt::EpubComicFrame::Screen, false).unwrap_or(x);
             assert_eq!(want, y, "第 {i} 张图并行结果与顺序结果不一致（乱序或串图）");
         }
         let mut y1 = Vec::new();
@@ -961,4 +961,46 @@ fn comic_min_margin_pads_only_pure_text_pages() {
     std::fs::write(&p_s, &out_s).unwrap();
     assert!(crate::comic_detect::is_min_margin_comic_file(&p_mm), "文字页已留边的漫画应放行");
     assert!(!crate::comic_detect::is_min_margin_comic_file(&p_s), "文字页没留边的旧产物不放行（页边距 1 下会贴边）");
+}
+
+/// v15 在注释标号后追加的 `[N]`：前面紧挨着指向同一锚点的原标号时去掉，其余写法不动。
+#[test]
+fn strip_legacy_note_counters_only_removes_duplicate_links() {
+    let t = r##"<p>正文<a href="#n1"><sup>1</sup></a> <a href="#n1">[1]</a>，又<sup>2</sup><a href="#n2">[2]</a>，还有<a href="#n3">[3]</a>和<a href="#x">甲</a> <a href="#y">[4]</a></p>"##;
+    let out = html_pass::strip_legacy_note_counters(t);
+    assert_eq!(out, r##"<p>正文<a href="#n1"><sup>1</sup></a>，又<sup>2</sup><a href="#n2">[2]</a>，还有<a href="#n3">[3]</a>和<a href="#x">甲</a> <a href="#y">[4]</a></p>"##);
+}
+
+/// 已优化过的漫画再优化：排好的页原样保留（不多一代 JPEG 有损），换页框才重排。
+#[test]
+fn reoptimizing_optimized_comic_keeps_framed_pages() {
+    use image::{codecs::jpeg::JpegEncoder, DynamicImage, RgbImage};
+    let page = DynamicImage::ImageRgb8(RgbImage::from_fn(1200, 1500, |x, y| image::Rgb([(x % 251) as u8, (y % 241) as u8, 90])));
+    let mut jpg = Vec::new();
+    JpegEncoder::new_with_quality(&mut jpg, 90).encode_image(&page).unwrap();
+    let mut buf = Vec::new();
+    {
+        let mut zw = ZipWriter::new(Cursor::new(&mut buf));
+        let stored = SimpleFileOptions::default().compression_method(CompressionMethod::Stored);
+        zw.start_file("mimetype", stored).unwrap();
+        zw.write_all(b"application/epub+zip").unwrap();
+        let items: String = (1..=22).map(|i| format!(r#"<item id="c{i}" href="c{i}.xhtml" media-type="application/xhtml+xml"/><item id="p{i}" href="p{i}.jpg" media-type="image/jpeg"/>"#)).collect();
+        let spine: String = (1..=22).map(|i| format!(r#"<itemref idref="c{i}"/>"#)).collect();
+        zw.start_file("content.opf", stored).unwrap();
+        zw.write_all(format!(r#"<package version="3.0"><metadata><dc:title>漫画</dc:title></metadata><manifest>{items}</manifest><spine>{spine}</spine></package>"#).as_bytes()).unwrap();
+        for i in 1..=22 {
+            zw.start_file(format!("c{i}.xhtml"), stored).unwrap();
+            zw.write_all(format!(r#"<html><body><img src="p{i}.jpg"/></body></html>"#).as_bytes()).unwrap();
+            zw.start_file(format!("p{i}.jpg"), stored).unwrap();
+            zw.write_all(&jpg).unwrap();
+        }
+        zw.finish().unwrap();
+    }
+    let (once, _) = optimize_epub(&buf).unwrap();
+    let (twice, _) = optimize_epub(&once).unwrap();
+    assert_ne!(entry_bytes(&once, "p1.jpg"), jpg, "第一次确实处理了");
+    assert_eq!(entry_bytes(&twice, "p1.jpg"), entry_bytes(&once, "p1.jpg"), "排好的页再优化原样保留");
+    let mm = OptimizeOpts { comic_frame: crate::imgopt::EpubComicFrame::MinMargin, ..Default::default() };
+    let (reframed, _) = optimize_epub_with(&once, &mm).unwrap();
+    assert_ne!(entry_bytes(&reframed, "p1.jpg"), entry_bytes(&once, "p1.jpg"), "换页框要重排");
 }

@@ -131,6 +131,8 @@ struct Prepared {
     has_remote_imgs: bool,
     /// 改书名（见 [`EntryXform::title`]）。
     title: Option<String>,
+    /// 输入书里带着本优化器（任意版本）的标记：是在重优化自己的产物，见 [`html_pass::first_pass_html`]、[`html_pass::transform_image_bytes`]。
+    reoptimize: bool,
     rep: Report,
 }
 
@@ -142,6 +144,7 @@ const MIMETYPE: &[u8] = b"application/epub+zip";
 fn prepare_entries(mut raw: Vec<crate::epubzip::Entry>, opts: &OptimizeOpts, bytes_before: usize, title: Option<&str>) -> Result<Prepared, String> {
     // 保证 OPF 声明了有效封面（见 `wash::ensure_cover_declared`）。
     // 必须在清洗之前：清洗会把只含 SVG 封面的 titlepage 当空页删掉。
+    let reoptimize = raw.iter().any(|e| e.name == OPTIMIZE_MARKER);
     crate::wash::ensure_cover_declared(&mut raw);
     let (wash_rep, washed_comic) = match &opts.wash {
         Some(w) => {
@@ -179,7 +182,7 @@ fn prepare_entries(mut raw: Vec<crate::epubzip::Entry>, opts: &OptimizeOpts, byt
         let data = if ish {
             match String::from_utf8(data) {
                 Ok(text) => {
-                    let stripped = first_pass_html(&text, &name);
+                    let stripped = first_pass_html(&text, &name, reoptimize);
                     if !skip_notes.contains(&name) {
                         let refs = crate::htmlproc::referenced_note_keys(&stripped, &name);
                         if !refs.is_empty() && crate::wash::is_toc_like_page(&stripped) {
@@ -208,7 +211,7 @@ fn prepare_entries(mut raw: Vec<crate::epubzip::Entry>, opts: &OptimizeOpts, byt
         crate::comic_pad::free_media_pages(&mut entries);
         crate::comic_pad::pad_mixed_text_blocks(&mut entries);
     }
-    Ok(Prepared { entries, aside_index, skip_notes, is_comic_book, opf_name, has_remote_imgs, title: title.map(str::to_string), rep })
+    Ok(Prepared { entries, aside_index, skip_notes, is_comic_book, opf_name, has_remote_imgs, title: title.map(str::to_string), reoptimize, rep })
 }
 
 /// 第一遍后半：把**被引用**的注释块（aside/p/li/div 且带注释语义）从各章移除、建全书索引 (文件, id) → 块，交给第二遍
