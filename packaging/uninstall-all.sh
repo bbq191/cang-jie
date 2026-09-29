@@ -205,7 +205,7 @@ DEVICE_SCRIPT
 
 # 逆序执行 install-all 的步骤表；配置覆写/纯动作步骤没有卸载语义，跳过
 REV=""
-for step in $STEP_ORDER; do REV="$step $REV"; done
+for step in $STEP_RETIRED $STEP_ORDER; do REV="$step $REV"; done   # 退役步骤排在最后卸
 for step in $REV; do
     if word_in "$step" "$STEP_CONFIG_ONLY"; then continue; fi
     fn="uninstall_$(echo "$step" | tr '-' '_')"

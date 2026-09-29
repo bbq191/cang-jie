@@ -11,24 +11,22 @@
 #   xovi-persist         xovi 开机持久化恢复链（需要 vellum add xovi）
 #   hl-snap              荧光笔 CJK 精确吸附（需要 vellum add xovi；只落盘）
 #   handwriting-stroke   CJK 手写笔迹渲染优化（需要 vellum add xovi；只落盘）
-#   sidebar-entry        Sidebar 一级直达 KOReader/WeRead 入口（需要 qt-resource-rebuilder；缺了自动跳过；只落盘）
+#   （sidebar-entry 已退役，2026-09-29：设备不再用 KOReader/WeRead/appload；uninstall-all 仍会清，见 lib.sh STEP_RETIRED）
 #   shelf                shelf 本体+网关+笔记线+两个领域服务（不需要 xovi；qmd 只落盘）
 #   xovi-apply           统一让上面落盘的 xovi 内容生效：有待生效改动（或 xovi 还没生效）才整机重启，且只一次
 # 装前先过固件安全门（sha256(/usr/bin/xochitl) 比对 firmware-allowlist.txt），避免在没验证过注入定位的固件上装错。
 #
-# ⚠️ 生效只做一次，放在最后（xovi-apply）：没有"只重载一个扩展"的机制。hl-snap/handwriting-stroke/
-# sidebar-entry 用 DEFER_XOVI_START=1 只落盘。
+# ⚠️ 生效只做一次，放在最后（xovi-apply）：没有"只重载一个扩展"的机制。hl-snap/handwriting-stroke
+# 用 DEFER_XOVI_START=1 只落盘。
 # ⚠️ 怎么生效由设备端 devlib.sh 的 cj_xochitl_apply 判定：2026-09-25 起一律**主动整机重启**（xovi 已生效或装了
 # xovi-reenable 时）——单独 restart xochitl 有概率在它退出时崩溃、再由系统整机重启（memfault 栈 5 份，见 devlib.sh
 # 头注 H3）；只有既没生效也没装 xovi-reenable 才走 xovi/start。最后一步会先打印"将打断阅读"并留 5 秒宽限；
 # 不想被打断就 `--skip xovi-apply`，稍后自己在合适时机跑 deploy-xovi-apply.sh 或在设备上 reboot。
 #
 # 明确不做的事（范围外，见 packaging/README.md「前置条件」「已知缺口」）：
-#   · 不装 vellum/xovi/qt-resource-rebuilder/appload 本体、不侧载 KOReader——这些是全新设备
-#     共同的手动前置条件，本脚本只在缺失时把报错原样透出，不代为安装。
+#   · 不装 vellum/xovi/qt-resource-rebuilder 本体——这些是全新设备共同的手动前置条件，本脚本只在缺失时把报错原样透出，
+#     不代为安装。KOReader/WeRead/appload 2026-09-29 起不再是前置条件（不用了）。
 #   · 不装中文化（输入法/候选栏/UI 汉化）——那条链路已不在本仓库（见顶层 README「历史与范围」）。
-#   · 不升级 appload：3.28 固件需要 appload ≥ 0.6.0（`vellum add/upgrade appload`），已装旧版要先手动升级并整机重启
-#     （不要 restart xochitl，见 deploy-sidebar-entry.sh 头注）。
 # 对称卸载见 packaging/uninstall-all.sh。
 #
 # 用法：./install-all.sh [host] [--force] [--force-apply] [--dry-run] [--skip a,b,...]
@@ -73,7 +71,7 @@ for step in $STEP_ORDER; do
     script="$(step_script "$step")"
     [ -f "$script" ] || { echo "!! 步骤表里的 $step 没有对应脚本 $script"; exit 1; }
     if word_in "$step" "$STEP_DEFER"; then
-        # hl-snap/handwriting-stroke/sidebar-entry 只落盘，不各自触发 xochitl 重启
+        # hl-snap/handwriting-stroke 只落盘，不各自触发 xochitl 重启
         run_step "$step" env DEFER_XOVI_START=1 sh "$script" "$HOST"
     elif [ "$step" = "xovi-apply" ]; then
         if ! skip_has xovi-apply && [ "$DRY" = "0" ]; then
@@ -103,12 +101,8 @@ if [ -n "$FAILED" ]; then
     echo "❌ 失败：$FAILED —— 看对应步骤上面的原始报错，不会自动重试"
 fi
 echo "─── 不在本脚本范围内，需要手动处理 ───"
-echo "· vellum/xovi/qt-resource-rebuilder/appload 引导（若 xovi-persist/hl-snap/handwriting-stroke/"
+echo "· vellum/xovi/qt-resource-rebuilder 引导（若 xovi-persist/hl-snap/handwriting-stroke/"
 echo "    xovi-apply 因缺 xovi.so 失败）：设备上先跑 vellum add xovi qt-resource-rebuilder"
-echo "· KOReader：通过 appload 侧载，本脚本不代装"
-echo "· WeRead（可选第三方 app）：本脚本不代装，需要自己下载官方发行包 SSH 装；装了的话"
-echo "    sidebar-entry 这步会自动探测到、把 Sidebar 入口换成带 WeRead 的两项版本"
 echo "· 中文化（输入法/候选栏/UI 汉化）：不在本仓库，本脚本不装（见顶层 README「历史与范围」）"
-echo "· appload 版本：3.28 固件需要 ≥ 0.6.0（vellum upgrade appload，升完整机重启，别 restart xochitl）"
 echo "═══════════════════════════════════════════════════════════"
 [ -z "$FAILED" ]

@@ -11,7 +11,8 @@
 # ═══════════════════════════════════════════════════════════════════════════
 
 # 服务令牌：gateway 的单元/二进制叫 gateway，其余叫 <令牌>-serve（笔记线 ink/transcribe/mind/note 同规则）
-SHELF_ALL="gateway book koreader font wallpaper ink transcribe mind note"
+# 2026-09-29 撤掉 koreader（用户卸了设备上的 KOReader；koreader-serve 源码还在仓库，不再安装，旧设备上的由下面遗留清单清掉）
+SHELF_ALL="gateway book font wallpaper ink transcribe mind note"
 shelf_svc_of() { case "$1" in gateway) echo gateway ;; *) echo "$1-serve" ;; esac; }
 
 # shelf_select ONLY：安装时 --only 的值（逗号分隔的服务令牌）→ 要装的服务清单（去重；网关总会装、排最前）；
@@ -51,8 +52,9 @@ SHELF_UNINSTALL_BIN="shelf-uninstall"
 
 # 旧命名遗留（一次性迁移：install 时清掉、uninstall 也清）。2026-09-10/11 改名前的产物：
 #   shelf-gateway.service / shelf-gateway（网关旧名）、cangjie-lo-alias.sh（lo-alias.sh 旧名，2026-09-11 起不再带 cangjie- 前缀）
-SHELF_LEGACY_UNITS="shelf-gateway.service"
-SHELF_LEGACY_BINS="shelf-gateway cangjie-lo-alias.sh"
+#   koreader-serve.service / koreader-serve（2026-09-29 退役的服务：装过的设备重新部署时顺手清掉）
+SHELF_LEGACY_UNITS="shelf-gateway.service koreader-serve.service"
+SHELF_LEGACY_BINS="shelf-gateway cangjie-lo-alias.sh koreader-serve"
 SHELF_LEGACY_QMDS="font-menu-dynamic-3.27.qmd"   # 早期版本可能把 3.27 变体也按原名放进 qrr
 
 # 用户数据目录（--purge 才删；绝不含笔记线 ~/.local/state/notes 等其它线的数据）

@@ -202,10 +202,14 @@ fw_gate() { # $1=FORCE(0/1)
 
 # ── 步骤表（install-all / uninstall-all 共用；两边清单靠它对称）──────────────
 # 顺序：先与 xovi/vellum 无关的独立项，再 battop/wifi-watch，再依赖 xovi 的，shelf 最重，xovi-apply 放最后统一重启一次。
-STEP_ORDER="chrony-cn chrony-boot-wakelock timezone-cn battop wifi-watch xovi-persist hl-snap handwriting-stroke sidebar-entry shelf xovi-apply"
+STEP_ORDER="chrony-cn chrony-boot-wakelock timezone-cn battop wifi-watch xovi-persist hl-snap handwriting-stroke shelf xovi-apply"
 # 只落盘、不各自重启 xochitl 的步骤（install-all 给它们传 DEFER_XOVI_START=1，最后由 xovi-apply 统一重启）
 # shellcheck disable=SC2034  # 由 install-all.sh 使用
 STEP_DEFER="hl-snap handwriting-stroke sidebar-entry"
+# 已退役的步骤：install-all 不再装，uninstall-all 照样卸（装过的设备还能清干净）；对应 deploy-* 脚本保留，可单独手动跑。
+#   sidebar-entry：KOReader/WeRead 的 Sidebar 入口（2026-09-29 用户卸了设备上的 KOReader、WeRead 与 appload）
+# shellcheck disable=SC2034  # 由 uninstall-all.sh 使用
+STEP_RETIRED="sidebar-entry"
 # 没有"卸载"语义的步骤：配置覆写（chrony-cn/timezone-cn），以及纯动作（xovi-apply）
 # shellcheck disable=SC2034  # 由 uninstall-all.sh 使用
 STEP_CONFIG_ONLY="chrony-cn timezone-cn xovi-apply"
@@ -293,8 +297,7 @@ case "$FREE" in ''|*[!0-9]*) echo "⚠ 读不到 $CJ_HOME 的可用空间，跳�
 esac
 have() { [ -e "$1" ] && echo "有" || echo "无"; }
 echo "-- xovi 本体 : $(have "$CJ_XOVI/xovi.so")   （无 → xovi-persist/hl-snap/handwriting-stroke/xovi-apply 会失败：先 vellum add xovi）"
-echo "-- qt-resource-rebuilder : $(have "$CJ_XOVI/exthome/qt-resource-rebuilder")   （无 → sidebar-entry 与 shelf 的 qmd 自动跳过）"
-echo "-- appload   : $(have "$CJ_XOVI/exthome/appload")   （无 → sidebar-entry 自动跳过；3.28 固件需 ≥ 0.6.0）"
+echo "-- qt-resource-rebuilder : $(have "$CJ_XOVI/exthome/qt-resource-rebuilder")   （无 → shelf 的 qmd 自动跳过）"
 if cj_verity_active; then echo "-- dm-verity : 激活 → 所有写 /usr 的单元（chrony-boot-wakelock/xovi-persist/wifi-watch/battop/shelf 开机链接）会被跳过"; else echo "-- dm-verity : 未激活"; fi
 if cj_xochitl_has_xovi; then echo "-- xochitl 里 xovi 已生效 → 有改动时最后一步换入后整机重启（不跑 xovi/start、不 restart xochitl）"; else echo "-- xochitl 里 xovi 尚未生效 → 最后一步让它生效：装了 xovi-reenable（本轮 xovi-persist 会装，dm-verity 下装不上）就整机重启，否则 xovi/start"; fi
 DEVICE_SCRIPT

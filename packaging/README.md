@@ -29,11 +29,11 @@ sh uninstall-all.sh <host> --purge             # 同时删 battop 的二进制�
 
 ## 前置条件（需手动，本脚本不代装）
 
-`vellum add xovi`、`vellum add qt-resource-rebuilder`、`vellum add appload`（**3.28 固件需要 ≥ 0.6.0**）、经 appload 侧载 KOReader。缺了各会怎样、装的顺序见 [`INSTALL.md`「装之前」](../docs/INSTALL.md#装之前)。这里只补实现层面的三条：
+`vellum add xovi`、`vellum add qt-resource-rebuilder`。缺了各会怎样、装的顺序见 [`INSTALL.md`「装之前」](../docs/INSTALL.md#装之前)。
 
-- **侧栏入口靠 appload**：`sidebar-entry` 用 appload 暴露的 `AppLoadLauncher` 单例启动 KOReader，并**只读本次开机的 journal** 确认 appload 健康（找 `Loaded external AppLoad hooks in main UI`）；找不到就跳过这一步，不硬装一个点了没反应的按钮。appload ≤ 0.5.3 钩的是 3.27 的旧锚点，3.28 上注入失败；v0.6.0（2026-09-19，含上游 PR #59）已修好，2026-09-21 真机验证过。
-- **升级 appload 后整机重启**，别 `systemctl restart xochitl`（理由同「怎么让改动生效」）。
-- **WeRead 是可选的第三方 app**：装了，侧栏出「KOReader + WeRead」两项；没装，只出「KOReader」。不会因没装它而报错。
+2026-09-29 起**不再需要 appload 和 KOReader**（设备上 KOReader、WeRead、appload 都已卸载）：`sidebar-entry` 退役（lib.sh 的 `STEP_RETIRED`：
+`install-all` 不再装，`uninstall-all` 照样卸，`deploy-sidebar-entry.sh` 保留可单独手动跑）；`koreader-serve` 从 `shelf/manifest.sh` 的 `SHELF_ALL`
+撤掉、列进遗留清单，装过的设备重新部署书架时顺手清掉。源码（`shelf/services/koreader-serve`、网关里的 KOReader 功能）还在仓库。
 
 ## 装什么、按什么顺序
 
@@ -51,9 +51,8 @@ sh uninstall-all.sh <host> --purge             # 同时删 battop 的二进制�
 | 6 | `xovi-persist` | `deploy-xovi-persist.sh` | xovi 开机自动恢复（`xovi-reenable.service`） | 已 `vellum add xovi` |
 | 7 | `hl-snap` | `deploy-hl-snap.sh` | 荧光笔 CJK 精确吸附（xovi 扩展），**只落盘** | 同上 |
 | 8 | `handwriting-stroke` | `deploy-handwriting-stroke.sh` | CJK 手写笔迹渲染优化（xovi 扩展），**只落盘** | 同上 |
-| 9 | `sidebar-entry` | `deploy-sidebar-entry.sh` | 侧栏「KOReader」（+「WeRead」）直达入口，**只落盘** | qt-resource-rebuilder + 健康的 appload；缺了自动跳过 |
-| 10 | `shelf` | `deploy.sh` | 网关 + book/koreader/font/wallpaper + 笔记线 ink/transcribe/mind/note，共 9 个服务；随服务带的 qmd（字体菜单、回收站代理、建文件夹代理、漫画页边距、单击翻页）**只落盘** | 无；没装 qt-resource-rebuilder 时只跳过 qmd，服务照装 |
-| 11 | `xovi-apply` | `deploy-xovi-apply.sh` | 让上面落盘的扩展/qmd 统一生效：**有待生效改动（或 xovi 未生效）才**整机重启一次；`--force` 无条件 | 同 6–9 |
+| 9 | `shelf` | `deploy.sh` | 网关 + book/font/wallpaper + 笔记线 ink/transcribe/mind/note，共 8 个服务；随服务带的 qmd（字体菜单、回收站代理、建文件夹代理、漫画页边距、单击翻页）**只落盘** | 无；没装 qt-resource-rebuilder 时只跳过 qmd，服务照装 |
+| 10 | `xovi-apply` | `deploy-xovi-apply.sh` | 让上面落盘的扩展/qmd 统一生效：**有待生效改动（或 xovi 未生效）才**整机重启一次；`--force` 无条件 | 同 6–8 |
 
 每个脚本都能单独跑（如 `sh deploy-battop.sh <host>`）。任何一步失败：打印是哪一步、原始错误，**不自动重试、不静默跳过**，退出非零。
 
@@ -63,7 +62,7 @@ sh uninstall-all.sh <host> --purge             # 同时删 battop 的二进制�
 
 1. **`require_device`**：`ssh true` 能否连通（`BatchMode`，`CJ_SSH_TIMEOUT` 秒超时）。不通就打印 ssh 原始报错 + 中文排查步骤（休眠/没插 USB、IP 不对、host key 变了、没配免密），退出 1。单独跑各 `deploy-*.sh` 也先过这一关；在 `install-all.sh` 里只查一次，通过后导出 `CJ_DEVICE_OK=<host>`，后面各步骤见到它就不再重复连（2026-09-25 起，省约 10 次 ssh）。
 2. **`fw_gate` 固件安全门**：见「固件安全门」。
-3. **`preflight_device`**（只读）：必须是 root、`/home/root` 可写；`/home` 剩余空间 < 50MB（`CJ_MIN_FREE_KB`）拒装、< 200MB（`CJ_WARN_FREE_KB`）警告。另外**只报告不拦截**：xovi / qt-resource-rebuilder / appload 有无、dm-verity 是否激活、xovi 是否已在 xochitl 里生效——缺了由对应步骤自己报错或跳过。
+3. **`preflight_device`**（只读）：必须是 root、`/home/root` 可写；`/home` 剩余空间 < 50MB（`CJ_MIN_FREE_KB`）拒装、< 200MB（`CJ_WARN_FREE_KB`）警告。另外**只报告不拦截**：xovi / qt-resource-rebuilder 有无、dm-verity 是否激活、xovi 是否已在 xochitl 里生效——缺了由对应步骤自己报错或跳过。
 
 `--dry-run` 不做以上任何检查，只在本机走一遍步骤表，每步打印 `[dry-run] 将执行：<命令>`。
 
@@ -73,7 +72,7 @@ sh uninstall-all.sh <host> --purge             # 同时删 battop 的二进制�
 |---|---|
 | 已安装 | 步骤脚本退出 0 |
 | 已跳过（--skip） | 命令行点名跳过，根本没跑 |
-| 已跳过（前置条件不满足，非失败） | 步骤脚本调了 `step_skipped "<原因>"` 后退出 0，汇总写明原因。目前有三处：`sidebar-entry`（缺 qt-resource-rebuilder / appload，或本次开机没见到 appload 挂载成功）；`deploy-usr-unit.sh`（dm-verity 激活且该 `/usr` 单元**从没装过**，涉及 2、5、6 三步）；`battop`（同样是 dm-verity 激活且 `battop.service` 从没装过：设备端 `install.sh` 以退出码 10 表示"前置条件不满足"，二进制仍已就位） |
+| 已跳过（前置条件不满足，非失败） | 步骤脚本调了 `step_skipped "<原因>"` 后退出 0，汇总写明原因。目前有两处（`sidebar-entry` 退役前还有第三处：缺 appload）：`deploy-usr-unit.sh`（dm-verity 激活且该 `/usr` 单元**从没装过**，涉及 2、5、6 三步）；`battop`（同样是 dm-verity 激活且 `battop.service` 从没装过：设备端 `install.sh` 以退出码 10 表示"前置条件不满足"，二进制仍已就位） |
 | 失败 | 步骤脚本退出非 0 |
 
 注意：**"步骤内部跳过一部分"仍记"已安装"**——shelf 缺 qt-resource-rebuilder 只跳过 qmd、`timezone-cn` 缺 zoneinfo、`xovi-apply` 设备没装 xovi 且无待生效改动。这些要看步骤自己打印的那一行。
@@ -147,14 +146,14 @@ sh verify-on-device.sh --from d.txt        # 不连设备，离线重判存下�
 - **只读**：设备上不重启、不写、不删、不 mount，连临时文件都不建；只读 `/proc`、`systemctl show`/`is-active`、`journalctl`、`dmesg`、`ls`/`stat`/`df`/`sha256sum`。
 - **一次 ssh 采集，判定全在本机**：设备端输出结构化文本（每行 `键<TAB>字段…`），本机逐项判 ✓/⚠/✗——所以 `--from` 能离线重判，模拟测试也直接喂构造好的文本。
 - **退出码**：没有 ✗ 为 0（可以有 ⚠）；有 ✗ 或连不上为 1；参数错误为 2。文本模式最后一行固定是 `VERIFY-SUMMARY host=… ok=N warn=N fail=N result=PASS|WARN|FAIL`。
-- 真机上按装了多少东西大约 44 项。
+- 真机上按装了多少东西大约 44 项（09-25 装着 KOReader 时的数；09-29 撤掉 koreader-serve 和侧栏入口后会少几项，没重新数过）。
 
 | 节 | 核什么 | ✗ | ⚠ |
 |---|---|---|---|
 | 1 固件与开机 | 开机时长；`/usr/bin/xochitl` 的 sha256 对白名单 + `IMG_VERSION` | 哈希不在任何白名单（OTA 了？） | 开机不足 `CJ_VERIFY_UPTIME_WARN`（600）秒——不是你重启的就看告警与飞行记录仪；哈希只在本机 `--force` 名单里 |
 | 2 xochitl 与 xovi 扩展 | `is-active`/`MainPID`/`NRestarts`；`maps` 里有没有 `xovi.so`；`extensions.d` 下每个文件是否被映射；本进程日志里各扩展"安装完成"次数；待换入区与待生效标记 | xochitl 不是 active；xovi 装了但没生效；扩展在 `maps` 里是 `(deleted)`（换了文件没重启——整机重启，别 restart xochitl）；日志有「hook 未安装」；`extensions.d` 里有非 `.so` 文件（xovi 会当扩展加载） | `NRestarts>0`；设备没装 xovi；扩展没被映射；`.crashed` 标记；待换入区非空；有待生效标记 |
-| 3 界面补丁 qmd | 期望清单 = `shelf/manifest.sh` 里已装服务的 qmd + 装了 appload 时的侧栏 qmd/rcc；文件修改时间对比 xochitl 启动时刻；能找到加载标记（如 `CJ-PAGE-TURN: loaded`）就附注 | 期望的 qmd 缺失 | 没装 qt-resource-rebuilder；qmd 比 xochitl 进程新（待生效）；旧命名遗留。日志标记没见到**不算异常**，多数要打开相关界面才打印 |
-| 4 常驻服务 | `manifest.sh` 的 9 个服务 + `wifi-watch` + `battop`：`is-active`、`NRestarts`、`MainPID`、`VmRSS`/`VmHWM`、开机后第几秒启动 | 单元在但不是 active | `NRestarts>0`；峰值内存超 `CJ_VERIFY_HWM_WARN_KB`（512MB，经验值）。`battop` 有意不开机自启，active/inactive 都算 ✓ |
+| 3 界面补丁 qmd | 期望清单 = `shelf/manifest.sh` 里已装服务的 qmd（侧栏 qmd/rcc 09-29 退役，不再期望）；文件修改时间对比 xochitl 启动时刻；能找到加载标记（如 `CJ-PAGE-TURN: loaded`）就附注 | 期望的 qmd 缺失 | 没装 qt-resource-rebuilder；qmd 比 xochitl 进程新（待生效）；旧命名遗留。日志标记没见到**不算异常**，多数要打开相关界面才打印 |
+| 4 常驻服务 | `manifest.sh` 的 8 个服务 + `wifi-watch` + `battop`：`is-active`、`NRestarts`、`MainPID`、`VmRSS`/`VmHWM`、开机后第几秒启动 | 单元在但不是 active | `NRestarts>0`；峰值内存超 `CJ_VERIFY_HWM_WARN_KB`（512MB，经验值）。`battop` 有意不开机自启，active/inactive 都算 ✓ |
 | 5 本次开机的关键告警 | `journalctl -b` + `dmesg`：panic（排除 `Kernel command line` 行，内核参数 `panic=2` 曾误报）、OOM、「hook 未安装」、`processed more than once`、`SHELF-MKDIR: transfer timeout` | 前四类任一出现 | `SHELF-MKDIR` 超时（会自动延长等待，只提示） |
 | 6 飞行记录仪 | **宿主机**上的 `~/.local/state/cang-jie-flight/flight.log`（记录仪在宿主机循环 ssh 抓设备日志；`CJ_FLIGHT_LOG` 可改路径）最后 `--flight-lines`（8）行 | — | —（不存在记 ✓：它不由本仓库安装） |
 | 7 端口监听 | 读 `/proc/net/tcp{,6}`：网关 443、已装领域服务的端口（单元 `--bind` 优先，否则按 [`OVERVIEW.md`](../docs/OVERVIEW.md) 端口表 8790–8798） | 已装服务的端口没人听 | 领域服务听在 `0.0.0.0`（应只听回环）；网关只听回环 |
@@ -264,7 +263,7 @@ sh verify-on-device.sh --from d.txt        # 不连设备，离线重判存下�
 
 ## 卸载（`uninstall-all.sh`）
 
-与安装共用步骤表、**逆序**执行：`shelf → sidebar-entry → handwriting-stroke → hl-snap → xovi-persist → wifi-watch → battop → chrony-boot-wakelock`。`--dry-run` 只在本机打印这个计划。
+与安装共用步骤表、**逆序**执行：`shelf → handwriting-stroke → hl-snap → xovi-persist → wifi-watch → battop → chrony-boot-wakelock`，最后是已退役的 `sidebar-entry`（`STEP_RETIRED`，装过的设备也能清干净）。`--dry-run` 只在本机打印这个计划。
 
 | 步骤 | 卸载动作 |
 |---|---|
@@ -313,7 +312,7 @@ bash packaging/tests/run_sim_tests.sh      # 2026-09-25 第四轮审计后实跑
 
 **不做的事**：
 
-- **不装 vellum / xovi / qt-resource-rebuilder / appload 本体、不侧载 KOReader、不升级 appload**——手动前置条件，缺了子脚本清楚报错，收尾汇总再提醒一次。
+- **不装 vellum / xovi / qt-resource-rebuilder 本体**——手动前置条件，缺了子脚本清楚报错，收尾汇总再提醒一次。
 - **不装中文化**（输入法/候选栏/词典/UI 汉化）：那条链路（`chinese-ime/langhook/`）随 2026-09-11 的仓库整理挪出了 git 仓库（2026-09-24 只读查看设备：`extensions.d/` 里没有 `cangjie-langhook.so`）。
 - **`chrony-cn` / `timezone-cn` 没有卸载语义**（配置覆写）。
 - 旧的 `packaging/package.sh`（打 `cangjie-full-*.tar.gz` 单体包）**没有**恢复：它按旧目录结构找载荷；本目录只编排现有的独立脚本。

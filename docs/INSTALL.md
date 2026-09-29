@@ -14,19 +14,18 @@
 
 ## 装之前
 
-### 设备上：4 样东西要你手动装好
+### 设备上：2 样东西要你手动装好
 
 它们属于 reMarkable 第三方生态，不属于这个仓库，`install-all.sh` **不会**代装。缺了的话，对应步骤会报错或跳过，
-并告诉你该跑哪条命令。vellum（设备上的包管理器）本身怎么装、KOReader 怎么侧载，看 vellum 和社区自己的文档。
+并告诉你该跑哪条命令。vellum（设备上的包管理器）本身怎么装，看 vellum 自己的文档。
 
 | # | 在设备上做什么 | 它是什么 | 缺了会怎样 |
 |---|---|---|---|
 | 1 | `vellum add xovi` | [xovi](https://github.com/asivery/xovi)：扩展加载框架 | 插件类功能都靠它，相关步骤直接失败 |
-| 2 | `vellum add qt-resource-rebuilder` | 界面补丁（qmd）加载器 | 界面补丁全部不装（不算失败）：侧栏入口、字体菜单、回收站/新建文件夹代理、漫画页边距代理、阅读器单击翻页/日漫翻页规则。其余不受影响（汇总里怎么显示见问题②） |
-| 3 | `vellum add appload`（**≥ 0.6.0**） | 第三方 App 加载器 | 侧栏 KOReader 入口不出现（`sidebar-entry` 步自动跳过） |
-| 4 | 经 appload 侧载 KOReader | 第二个阅读器 | `koreader-serve` 只管理已装好的 KOReader，不负责装 |
+| 2 | `vellum add qt-resource-rebuilder` | 界面补丁（qmd）加载器 | 界面补丁全部不装（不算失败）：字体菜单、回收站/新建文件夹代理、漫画页边距代理、阅读器单击翻页/日漫翻页规则。其余不受影响（汇总里怎么显示见问题②） |
 
-可选：第三方 **WeRead** app（微信读书 reMarkable 版）。装了的话，`sidebar-entry` 会自动多加一项「WeRead」入口；没装不影响任何功能。
+2026-09-29 起**不再需要 appload 和 KOReader**：设备只用自带阅读器，KOReader、WeRead、appload 都已卸载，`koreader-serve` 和侧栏入口（`sidebar-entry`）也不再安装。
+以前装过的设备跑 `uninstall-all.sh` 仍会把侧栏入口清掉；重新部署书架时会顺手清掉旧的 `koreader-serve`。
 
 ### 电脑上：编译环境和 ssh
 
@@ -34,8 +33,7 @@
 
 | 需要什么 | 用在哪 | 缺了会怎样 |
 |---|---|---|
-| Rust（`cargo`）+ `rustup target add aarch64-unknown-linux-musl` + `aarch64-linux-gnu-gcc` | 交叉编译九个网页服务和电池刺客（`shelf/build.sh`、`deploy-battop.sh`） | `shelf`、`battop` 步失败 |
-| Qt 的 `rcc`（Qt 开发包里带） | 把侧栏图标打成资源包（`deploy-sidebar-entry.sh`） | `sidebar-entry` 步报错 |
+| Rust（`cargo`）+ `rustup target add aarch64-unknown-linux-musl` + `aarch64-linux-gnu-gcc` | 交叉编译八个网页服务和电池刺客（`shelf/build.sh`、`deploy-battop.sh`） | `shelf`、`battop` 步失败 |
 | 可选：[asivery/xovi](https://github.com/asivery/xovi) 的源码 clone（`XOVI_DIR` 指向它） | 重新编译 `hl-snap` / `hw-stroke` 两个插件 | 不影响：仓库里已提交编好的 `.so`，编不了就用它 |
 | **能免密 ssh 登录设备 root** | 所有步骤（脚本不会停下来问密码） | 动手前就报错并给排查步骤。没配过先跑 `ssh-copy-id root@10.11.99.1` |
 
@@ -46,8 +44,7 @@
 ### 推荐顺序
 
 1. **确认固件版本**：设置里看系统版本，目前只有 3.28.0.172 验证过。
-2. **按顺序手动装好设备上那 4 样**（xovi → qt-resource-rebuilder → appload → 侧载 KOReader；可选 WeRead）。装完 appload 先确认侧栏出现了原生「AppLoad」图标（见问题①）。
-   ⚠ **appload 和 WeRead 两步之间隔几分钟**：WeRead 每次进出都让 xochitl 停起一次，短时间内停起太多次会触发设备的重启保护，整机重启（2026-09-11 真机踩过，见问题③）。装完 appload 要让它生效，直接整机重启设备（`reboot`），别 `systemctl restart xochitl`（见问题①）。
+2. **按顺序手动装好设备上那 2 样**（xovi → qt-resource-rebuilder）。装完要让它们生效，直接整机重启设备（`reboot`），别 `systemctl restart xochitl`（见问题③）。
 3. **先预演**（只在电脑上跑，不连设备）：
    ```sh
    git clone https://github.com/bbq191/rm-tweak.git
@@ -60,9 +57,8 @@
    sh install-all.sh 10.11.99.1
    ```
    脚本先确认 ssh 能通、固件在白名单里、设备状态正常（见「装前自动检查」），再按下表逐步执行。第一次会先编译，要等一会儿。
-5. **看收尾汇总**：分四栏——「已安装」「已跳过（--skip）」「已跳过（前置条件不满足，非失败）」「失败」。第三栏会写明原因（例如设备没装 appload、dm-verity 开着装不进 `/usr`）；"跳过"不等于"失败"，容易漏看（见问题①②）。有失败项就照报错处理，其余已经装好；整条重跑也安全（脚本全部幂等，内容没变就不会再重启设备）。
+5. **看收尾汇总**：分四栏——「已安装」「已跳过（--skip）」「已跳过（前置条件不满足，非失败）」「失败」。第三栏会写明原因（例如 dm-verity 开着装不进 `/usr`）；"跳过"不等于"失败"，容易漏看（见问题①②）。有失败项就照报错处理，其余已经装好；整条重跑也安全（脚本全部幂等，内容没变就不会再重启设备）。
 6. **登录网页、改密码、装证书**：见「装完之后」。
-7. **肉眼确认侧栏入口**（如果这步没被跳过）：回设备主界面，看侧栏 KOReader 入口在不在、能不能点开。这一步脚本替你确认不了。
 
 ### 每一步装了什么
 
@@ -78,8 +74,7 @@
 | `xovi-persist` | 开机后自动让 xovi 重新生效，重启设备后不用手动补 | xovi |
 | `hl-snap` | 荧光笔划中文"划哪吸哪"，不再"划一小段吸整行"；只落盘 | xovi |
 | `handwriting-stroke` | 按笔尖角度和运笔速度优化手写笔画粗细（默认关，网页「管理 → 实验室」里开）；只落盘 | xovi |
-| `sidebar-entry` | 侧栏直达「KOReader」；装了 WeRead 自动多一项；只落盘 | qt-resource-rebuilder + appload（见问题①） |
-| `shelf` | 九个网页服务：网关、书（book / koreader）、字体与壁纸（font / wallpaper）、笔记四服务（ink / transcribe / mind / note）；附带的五个界面补丁（字体菜单、回收站代理、建文件夹代理、漫画页边距代理、阅读器翻页）只落盘 | 补丁需要 qt-resource-rebuilder，缺了只跳过补丁、服务照装 |
+| `shelf` | 八个网页服务：网关、书（book）、字体与壁纸（font / wallpaper）、笔记四服务（ink / transcribe / mind / note）；附带的五个界面补丁（字体菜单、回收站代理、建文件夹代理、漫画页边距代理、阅读器翻页）只落盘 | 补丁需要 qt-resource-rebuilder，缺了只跳过补丁、服务照装 |
 | `xovi-apply` | 上面"只落盘"的东西都就位后，**有改动（或 xovi 还没生效）才整机重启一次**让它们生效（约 20–60 秒，会打断阅读；没改动就不重启）。重启回来后自动跑一遍 `verify-on-device.sh` 核对 | — |
 
 "只落盘"的意思是：文件先放到位，暂不生效，最后由 `xovi-apply` 统一整机重启一次。这样避免短时间内反复重启。
@@ -87,7 +82,7 @@
 
 ## 装完之后
 
-**先看核对结果**：最后一步整机重启后，脚本会等设备回来并自动跑 `verify-on-device.sh`（`CJ_APPLY_VERIFY=0` 可关）。它只读检查设备，共 9 类 44 项（固件、xochitl/xovi、扩展、界面补丁、各服务、本次开机告警、端口、`/usr` 单元、磁盘），逐项给 ✓/⚠/✗，有 ✗ 时退出码非 0。没有触发重启、或以后单独部署某一步之后，可以自己在 `packaging/` 下跑 `sh verify-on-device.sh <host>`。每项含义见 [`packaging/README.md`「部署后核对」](../packaging/README.md#部署后核对verify-on-devicesh2026-09-25)。
+**先看核对结果**：最后一步整机重启后，脚本会等设备回来并自动跑 `verify-on-device.sh`（`CJ_APPLY_VERIFY=0` 可关）。它只读检查设备，共 9 类几十项（固件、xochitl/xovi、扩展、界面补丁、各服务、本次开机告警、端口、`/usr` 单元、磁盘），逐项给 ✓/⚠/✗，有 ✗ 时退出码非 0。没有触发重启、或以后单独部署某一步之后，可以自己在 `packaging/` 下跑 `sh verify-on-device.sh <host>`。每项含义见 [`packaging/README.md`「部署后核对」](../packaging/README.md#部署后核对verify-on-devicesh2026-09-25)。
 
 浏览器打开 `https://10.11.99.1/`（同一 WiFi 下也可以用 `https://shelf.local/`；安卓不认 `.local` 域名，要用设备的 IP）。
 
@@ -121,7 +116,7 @@
 
 1. **ssh 能不能通**：连不上就报错并给排查步骤（设备休眠或没插 USB；IP 不对；设备的 host key 变了；没配免密）。整轮只查这一次，后面各步骤不再重复。
 2. **固件安全门**：见下。
-3. **设备预检**（只读）：必须是 root、`/home` 可写；`/home` 剩余空间**不到 50MB 拒装、不到 200MB 警告**；再报告 xovi、qt-resource-rebuilder、appload 装没装，xovi 是否已在 xochitl 里生效。缺什么只是提前告诉你，对应步骤自己会报错或跳过。
+3. **设备预检**（只读）：必须是 root、`/home` 可写；`/home` 剩余空间**不到 50MB 拒装、不到 200MB 警告**；再报告 xovi、qt-resource-rebuilder 装没装，xovi 是否已在 xochitl 里生效。缺什么只是提前告诉你，对应步骤自己会报错或跳过。
 
 ### 固件安全门
 
@@ -149,16 +144,16 @@ sh install-all.sh 10.11.99.1 --force
 
 ![让插件/界面补丁生效：换入后整机重启](diagrams/so-swap-order.svg)
 
-**单独跑某一步也一样**：`deploy-hl-snap.sh`、`deploy-handwriting-stroke.sh`、`deploy-sidebar-entry.sh` 单独运行时，有改动就整机重启一次；文件和设备上已装的逐字节相同、也没有别的待生效改动、xovi 已生效，就**不重启**。判据与最后一步 `xovi-apply` 是同一个。
+**单独跑某一步也一样**：`deploy-hl-snap.sh`、`deploy-handwriting-stroke.sh` 单独运行时，有改动就整机重启一次；文件和设备上已装的逐字节相同、也没有别的待生效改动、xovi 已生效，就**不重启**。判据与最后一步 `xovi-apply` 是同一个。
 
 ### 只装一部分
 
 ```sh
 sh install-all.sh 10.11.99.1 --skip chrony-cn,timezone-cn,xovi-persist    # 跳过指定步骤
-sh deploy.sh 10.11.99.1 --only book,koreader --password '新密码'            # 只装书架的两个服务，顺便设网关密码
+sh deploy.sh 10.11.99.1 --only book,font --password '新密码'                # 只装书和字体两个服务，顺便设网关密码
 ```
 
-`--only` 可以写的名字：`gateway book koreader font wallpaper ink transcribe mind note`。网关总会装；写了别的名字会报错退出。
+`--only` 可以写的名字：`gateway book font wallpaper ink transcribe mind note`。网关总会装；写了别的名字会报错退出。
 `--password` 经 ssh 标准输入传到设备上的临时文件，用完就删，不会出现在命令行和进程列表里（只有经 `deploy.sh` 传时才这样，见「已知限制」）。
 `deploy.sh` 推送前会核对要装的程序都编好了；缺了会直接报错，提示先在仓库根目录跑 `sh shelf/build.sh`。
 
@@ -180,7 +175,7 @@ sh uninstall-all.sh 10.11.99.1 --purge            # 另外删掉电池刺客的�
 
 **不会做什么**：
 - `chrony-cn`、`timezone-cn` 是改配置、`xovi-apply` 只是个动作，都不卸。改之前的备份在设备 `cangjie-backups/` 里，要还原自己取。
-- vellum、xovi、qt-resource-rebuilder、appload 和 KOReader 不是本项目装的，也不卸。
+- vellum、xovi、qt-resource-rebuilder 不是本项目装的，也不卸。
 - 卸载**不重启**设备。已经加载的插件和界面补丁要等下次重启才真正停用。想马上停：在设备上 `reboot`（整机重启）。**别** `systemctl restart xochitl`：xochitl 自己退出时有概率崩溃，崩了系统会走应急路径整机重启（2026-09-25 真机多次），不如直接干净地重启。
 
 **系统分区只读校验（dm-verity）开着时**：`/usr` 下的服务单元删不掉（脚本遇到 verity 一律不写 `/usr`，写 `/usr` 曾经让设备回滚变砖）。这时卸载脚本会如实提示，并**保留**这些单元要用的程序，免得重启后单元找不到程序、反复失败。等设备可写后再跑一次 `uninstall-all.sh` 就能收尾。
@@ -197,16 +192,16 @@ sh uninstall-all.sh 10.11.99.1 --purge            # 另外删掉电池刺客的�
 
 ### 推荐流程
 
-1. （升级前，可选）把与新固件不兼容的 xovi 插件（例如旧版 appload）挪出 `extensions.d/`，放到 `/home/root/xovi-disabled/`。**绝不留在 `extensions.d/` 里**：xovi 会把那个目录下任何文件都当插件加载。
+1. （升级前，可选）把与新固件不兼容的 xovi 插件（例如旧版的某个第三方插件）挪出 `extensions.d/`，放到 `/home/root/xovi-disabled/`。**绝不留在 `extensions.d/` 里**：xovi 会把那个目录下任何文件都当插件加载。
 2. 升级完成后，**在设备旁手动**跑 `xovi/rebuild_hashtable`（要输 root 密码，脚本不代做）。它是界面补丁重新生效的前提。
 3. 在电脑上：`cd packaging && sh install-all.sh <设备IP>`。新固件的哈希一般不在白名单里，确认版本无误后加 `--force`。OTA 后 xovi 没有生效，所以最后一步会整机重启一次，开机时由刚装回的 `xovi-reenable` 恢复 xovi，回来后自动核对。
-4. 看收尾汇总，浏览器打开网关确认。appload 要 ≥ 0.6.0（旧版先 `vellum upgrade appload` 并整机重启），它不在安装脚本里。
+4. 看收尾汇总，浏览器打开网关确认。
 
 ### 逐项对照
 
 | 内容 | 位置 | OTA 后 | 怎么恢复 |
 |---|---|---|---|
-| 母版库、KOReader 配置、字体与壁纸池、证书、网关密码、休眠屏设置、`cangjie-backups/`、电池采样历史 | `/home` | 保留 | 不用管 |
+| 母版库、字体与壁纸池、证书、网关密码、休眠屏设置、`cangjie-backups/`、电池采样历史 | `/home` | 保留 | 不用管 |
 | 各网页服务的程序（`~/.local/bin`） | `/home` | 保留 | 不用管 |
 | `hl-snap` / `hw-stroke` 插件、侧栏入口与字体菜单/回收站/建夹/漫画边距/阅读器翻页的界面补丁 | `/home`（`extensions.d/`、`exthome/`） | 文件还在，但要重建 hashtable 才生效 | 第 2 步，再跑 `install-all.sh` |
 | 各网页服务与 `shelf.target` 的服务单元 | `/usr` | **被冲掉** | `shelf` 步（或单独：`SHELF_NO_BUILD=1 sh deploy.sh <设备IP>`） |
@@ -215,9 +210,8 @@ sh uninstall-all.sh 10.11.99.1 --purge            # 另外删掉电池刺客的�
 | `battop.service`（数据在 `/home`） | `/usr` | 单元**被冲掉** | `battop` 步（装完启动，不自启） |
 | `wifi-watch.service`（脚本在 `/home`） | `/usr` | 单元**被冲掉** | `wifi-watch` 步 |
 | 国内校时服务器、默认时区 | `/etc` | **被冲掉** | `chrony-cn` / `timezone-cn` 步 |
-| appload ≥ 0.6.0 | `/home`（xovi 插件） | 看 appload 有没有被重装 | 设备上 `vellum upgrade appload`，然后整机重启 |
 
-**风险分层**：书架这层只用 xochitl 的网页上传接口和系统标准组件，换固件重装就回来；字体菜单这类界面补丁依赖 xochitl 内部 QML，大版本升级常要重新适配；KOReader 本体不受影响，但侧栏入口靠 appload，每个固件大版本都要确认 appload 已经支持。
+**风险分层**：书架这层只用 xochitl 的网页上传接口和系统标准组件，换固件重装就回来；字体菜单这类界面补丁依赖 xochitl 内部 QML，大版本升级常要重新适配。
 
 **"裸机恢复"要多查一步**：OTA 本身不删 `/home`，但如果设备做过更彻底的重置，`/home` 下的插件和程序可能也没了（2026-09-09 真机踩过）。重跑 `install-all.sh` 前先确认它们还在。
 
@@ -227,9 +221,9 @@ sh uninstall-all.sh 10.11.99.1 --purge            # 另外删掉电池刺客的�
 
 | # | 现象 | 原因 | 怎么办 |
 |---|---|---|---|
-| ① | 侧栏没有 KOReader/WeRead 入口；汇总里 `sidebar-entry` 列在"已跳过（前置条件不满足）" | appload ≤ 0.5.3 不支持 3.28 的界面，自己的启动器建不起来。**不会**导致装不上或 xochitl 起不来，只是这一个功能不生效 | `vellum list --installed \| grep appload` 看版本，旧版就 `vellum upgrade appload`（0.6.0 起支持 3.28，2026-09-21 真机验证过）。**升级 appload 后整机重启，不要 `systemctl restart xochitl`**：停止 xochitl 时它有概率在退出途中崩溃，触发整机自动重启（2026-09-21 就是这样） |
-| ② | 字体菜单、回收站/新建文件夹、漫画页边距、阅读器单击翻页、侧栏入口这几个**同时**没有 | 它们共用同一个前置 qt-resource-rebuilder。没装时：`sidebar-entry` 在汇总里列进"已跳过（前置条件不满足）"；其余几个是 `shelf` 步里附带的补丁，**不单列**——`shelf` 仍算"已安装"，只在这一步的输出里有一行"无 qt-resource-rebuilder 目录…跳过字体菜单/回收站/建夹 qmd" | `vellum add qt-resource-rebuilder` 后重跑 `install-all.sh` |
-| ③ | 短时间内 xochitl 反复停起后，设备整机重启了一次 | xochitl 服务设置了 10 分钟内最多重启 4 次，不管谁触发的都算：手动 `systemctl restart xochitl`、`vellum add appload`、WeRead 每次进出。2026-09-11 真机上连续两次重启就触发过一次整机重启——**设备自己重启后恢复正常，不是变砖** | 部署脚本 2026-09-25 起改为整机重启，不再计入这个次数。**来回折腾 appload/WeRead 时**，每次间隔几分钟 |
+| ① | （已作废）侧栏没有 KOReader/WeRead 入口 | 2026-09-29 起不再装 KOReader、WeRead、appload 和侧栏入口，这条不再适用 | — |
+| ② | 字体菜单、回收站/新建文件夹、漫画页边距、阅读器单击翻页这几个**同时**没有 | 它们共用同一个前置 qt-resource-rebuilder。没装时：它们是 `shelf` 步里附带的补丁，**不单列**——`shelf` 仍算"已安装"，只在这一步的输出里有一行"无 qt-resource-rebuilder 目录…跳过字体菜单/回收站/建夹 qmd" | `vellum add qt-resource-rebuilder` 后重跑 `install-all.sh` |
+| ③ | 短时间内 xochitl 反复停起后，设备整机重启了一次 | xochitl 服务设置了 10 分钟内最多重启 4 次，不管谁触发的都算：手动 `systemctl restart xochitl`、`vellum add/del` 装卸 xochitl 插件（以前还有 appload、WeRead 每次进出）。2026-09-11 真机上连续两次重启就触发过一次整机重启——**设备自己重启后恢复正常，不是变砖** | 部署脚本 2026-09-25 起改为整机重启，不再计入这个次数。手动装卸插件时每次间隔几分钟 |
 | ④ | 固件安全门拒装 | 设计如此：版本号相同不保证内部布局没变 | 先确认设备固件就是你验证过的那份，再 `--force` |
 | ⑤ | 装到最后设备重启了一次 | `xovi-apply` 让改动生效：2026-09-25 起一律**整机重启**（约 20–60 秒回来），不再单独重启 xochitl——单独重启它有概率在退出时崩溃、再由系统整机重启。只有这轮真的有改动、或 xovi 还没生效时才会重启 | 正常现象，装的时候别操作设备；脚本会等设备回来并自动跑一遍 `verify-on-device.sh` 核对。不想被打断就 `--skip xovi-apply`，稍后再跑 `sh deploy-xovi-apply.sh <host>`。**自己手动让它生效时**：直接 `reboot`；**绝不**手动跑 `xovi/start`（xovi 已生效时它会让 xochitl 崩溃、整机自动重启，2026-09-20 真机事故） |
 | ⑥ | 重启设备后电池刺客没在跑 | **有意不开机自启**：2026-08-29 它的采样曾触发内核死锁冻死整机，根因没彻底排除 | 网页「管理 → 系统增强」里打开电池刺客开关（开了才出现「电池刺客」数据页），或 `systemctl start battop` |
@@ -255,6 +249,5 @@ sh uninstall-all.sh 10.11.99.1 --purge            # 另外删掉电池刺客的�
 
 ## 这套安装器不做什么
 
-- **不装 vellum / xovi / qt-resource-rebuilder / appload，不侧载 KOReader**：见「装之前」。
+- **不装 vellum / xovi / qt-resource-rebuilder**：见「装之前」。
 - **不装中文输入法**：那条功能线的源码已移出本仓库（见 [README](../README.md#历史与范围)），不随本安装器分发。
-- **不升级 appload**：3.28 固件要 ≥ 0.6.0，旧版请自己升级并整机重启（见问题①）。

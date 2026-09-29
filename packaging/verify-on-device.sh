@@ -381,7 +381,6 @@ judge_qmd() {
         awk -F'\t' -v u="$b.service" '$1 == "UNIT" && $3 == u && $5 == "1" { f = 1 } END { exit !f }' "$DUMP" || continue
         expect="$expect $(shelf_svc_qmds "$s")"
     done
-    [ "$(dget HAS_APPLOAD)" = 1 ] && expect="$expect koreader-sidebar-entry.qmd cangjie-icons.rcc"
     for q in $expect; do
         mt="$(awk -F'\t' -v n="$q" '$1 == "QRR_FILE" && $2 == n { print $3; exit }' "$DUMP")"
         mark="$(qmd_mark "$q")"; note=""

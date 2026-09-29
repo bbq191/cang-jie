@@ -535,7 +535,7 @@ check "install-all：hl-snap/hw-stroke 落进 extensions.d，且目录里只有�
 W="$CJ_SYSD/multi-user.target.wants"
 check "install-all：wifi-watch（M1）/ xovi-reenable / chrony-boot-wakelock 单元在 /usr 且有 wants 链接" test -L "$W/wifi-watch.service" -a -L "$W/xovi-reenable.service" -a -L "$W/chrony-boot-wakelock.service"
 check "install-all：battop 单元在 /usr 但没有 wants 链接（有意不开机自启）" test -f "$CJ_SYSD/battop.service" -a ! -e "$W/battop.service" -a ! -L "$W/battop.service"
-check "install-all：qmd 全部就位（sidebar/字体/回收站/建夹）" test -f "$R/home/root/xovi/exthome/qt-resource-rebuilder/koreader-sidebar-entry.qmd" -a -f "$R/home/root/xovi/exthome/qt-resource-rebuilder/shelf-mkdir-agent.qmd" -a -f "$R/home/root/xovi/exthome/qt-resource-rebuilder/font-menu-dynamic.qmd"
+check "install-all：qmd 全部就位（字体/回收站/建夹），不再装已退役的 KOReader 侧栏入口" test ! -e "$R/home/root/xovi/exthome/qt-resource-rebuilder/koreader-sidebar-entry.qmd" -a -f "$R/home/root/xovi/exthome/qt-resource-rebuilder/shelf-mkdir-agent.qmd" -a -f "$R/home/root/xovi/exthome/qt-resource-rebuilder/font-menu-dynamic.qmd"
 check "install-all：每次 rw 窗口都以 ro 收尾" test "$(last_mount)" = "mount -o remount,ro /"
 SIG_INSTALLED="$(tree_sig)"
 : > "$CJ_SIM_LOG"
@@ -572,8 +572,8 @@ section "参数解析 / --dry-run / -h / 设备不可达"
 new_sandbox; : > "$CJ_SIM_LOG"
 ( cd "$PKG" && run sh install-all.sh --dry-run ) >"$R/out.txt" 2>&1; rc=$?
 check "install-all --dry-run：退出 0、不发起任何 ssh/scp" test "$rc" -eq 0 -a "$(count_log '^ssh')" = 0 -a "$(count_log '^scp')" = 0
-missing=""; for st in chrony-cn chrony-boot-wakelock timezone-cn battop wifi-watch xovi-persist hl-snap handwriting-stroke sidebar-entry shelf xovi-apply; do grep -q "═══ $st ═══" "$R/out.txt" || missing="$missing $st"; done
-check "install-all --dry-run：11 个步骤都在计划里" test -z "$missing"
+missing=""; for st in chrony-cn chrony-boot-wakelock timezone-cn battop wifi-watch xovi-persist hl-snap handwriting-stroke shelf xovi-apply; do grep -q "═══ $st ═══" "$R/out.txt" || missing="$missing $st"; done
+check "install-all --dry-run：10 个步骤都在计划里，已退役的 sidebar-entry 不在" test -z "$missing" -a -z "$(grep '═══ sidebar-entry ═══' "$R/out.txt")"
 ( cd "$PKG" && run sh install-all.sh -h ) >"$R/out.txt" 2>&1; rc=$?
 check "install-all -h：退出 0、打印用法、不连设备" test "$rc" -eq 0 -a -n "$(grep '用法' "$R/out.txt")" -a "$(count_log '^ssh')" = 0
 ( cd "$PKG" && run sh install-all.sh 127.0.0.1 --purge ) >/dev/null 2>&1; rc1=$?
@@ -583,9 +583,10 @@ check "install-all -h：退出 0、打印用法、不连设备" test "$rc" -eq 0
 check "install-all --purge / 未知参数、uninstall-all --force/--force-apply：退出 2，且没连设备" test "$rc1" -eq 2 -a "$rc2" -eq 2 -a "$rc3" -eq 2 -a "$rc4" -eq 2 -a "$(count_log '^ssh')" = 0
 ( cd "$PKG" && run sh uninstall-all.sh --dry-run --purge ) >"$R/out.txt" 2>&1; rc=$?
 check "uninstall-all --dry-run：退出 0、不连设备" test "$rc" -eq 0 -a "$(count_log '^ssh')" = 0
-order="$(for st in shelf sidebar-entry handwriting-stroke hl-snap xovi-persist wifi-watch battop chrony-boot-wakelock; do grep -n "═══ $st ═══" "$R/out.txt" | cut -d: -f1; done | tr '\n' ' ')"
+order="$(for st in shelf handwriting-stroke hl-snap xovi-persist wifi-watch battop chrony-boot-wakelock sidebar-entry; do grep -n "═══ $st ═══" "$R/out.txt" | cut -d: -f1; done | tr '\n' ' ')"
 sorted="$(printf '%s\n' $order | sort -n | tr '\n' ' ')"
-check "uninstall-all：步骤按 install-all 的逆序执行（shelf 最先、chrony-boot-wakelock 最后）" test -n "$order" -a "$order" = "$sorted"
+check "uninstall-all：步骤按 install-all 的逆序执行（shelf 最先、chrony-boot-wakelock 其次到最后），已退役的 sidebar-entry 照样卸、排最后" test -n "$order" -a "$order" = "$sorted"
+check "uninstall-all：已退役的 sidebar-entry 仍在卸载计划里（装过的设备能清干净）" test -n "$(grep '═══ sidebar-entry ═══' "$R/out.txt")"
 check "uninstall-all：配置覆写/纯动作步骤（chrony-cn/timezone-cn/xovi-apply）不在卸载计划里" test -z "$(grep -e '═══ chrony-cn ═══' -e '═══ timezone-cn ═══' -e '═══ xovi-apply ═══' "$R/out.txt")"
 ( cd "$PKG" && run sh deploy-wifi-watch.sh --bogus ) >/dev/null 2>&1; rc1=$?
 ( cd "$PKG" && run sh deploy-wifi-watch.sh a b ) >/dev/null 2>&1; rc2=$?
@@ -769,9 +770,7 @@ check "shelf install --no-systemd（服务都没在跑）：不空等 10 轮健�
 check "shelf_select：空 → 全部；去重且网关在最前；未知令牌 → 返回 2" bash -c ". '$REPO/shelf/manifest.sh'; [ \"\$(shelf_select '')\" = \"\$SHELF_ALL\" ] && [ \"\$(shelf_select 'book,font,book,gateway')\" = 'gateway book font' ] && { shelf_select 'book,nope' 2>/dev/null; [ \$? -eq 2 ]; }"
 
 section "2026-09-24：前置条件不满足的\"跳过\"在汇总里单列，不混进\"已安装\""
-new_sandbox; rm -rf "$R/home/root/xovi/exthome/appload"; export CJ_ALLOWLIST_LOCAL="$R/allow.local.txt"
-( cd "$PKG" && run sh install-all.sh 127.0.0.1 --force --skip chrony-cn,timezone-cn,battop,wifi-watch,xovi-persist,chrony-boot-wakelock,hl-snap,handwriting-stroke,shelf ) >"$R/out.txt" 2>&1; rc=$?
-check "install-all：没装 appload → sidebar-entry 记进\"前置条件不满足\"并写明原因，不在\"已安装\"里、整轮退出 0" test "$rc" -eq 0 -a -n "$(grep '前置条件不满足' "$R/out.txt" | head -n 1)" -a -n "$(grep 'sidebar-entry：设备没装 appload' "$R/out.txt")" -a -z "$(grep '^已安装：.*sidebar-entry' "$R/out.txt")"
+# （原先这里用"没装 appload → sidebar-entry 跳过"做例子；2026-09-29 sidebar-entry 退役，只留下面 dm-verity 的例子）
 new_sandbox
 CJ_SIM_VERITY=1 bash -c "cd '$PKG' && PATH='$STUBS:'\$PATH && . ./lib.sh && HOST=127.0.0.1 && run_step chrony-boot-wakelock sh ./deploy-chrony-boot-wakelock.sh 127.0.0.1 >/dev/null 2>&1; echo \"D=\$DONE|N=\$NOTAPPL\"" >"$R/out.txt" 2>&1
 check "run_step：dm-verity 下单元从没装过 → 记为\"前置条件不满足\"而不是已安装" test -n "$(grep '^D=|N=' "$R/out.txt")" -a -n "$(grep '^   chrony-boot-wakelock：dm-verity' "$R/out.txt")"
@@ -912,7 +911,7 @@ export CJ_SIM_JOURNAL="$R/journal.txt"
 PRE_SIG="$(tree_sig)"; : > "$CJ_SIM_LOG"
 vr 127.0.0.1 --flight-lines 2; rc=$?
 check "采集：内核命令行里的 panic=2 不算 panic（2026-09-25 真机误报）" test -n "$(vline '✓ panic：无 panic')"
-check "采集：全链路跑通、没有采集错误（有 END、单元/端口/qmd/扩展都读到）" test -z "$(vline '采集结果')" -a -n "$(vline '✓ 443（gateway）：监听 0.0.0.0')" -a -n "$(vline '✓ 8790（book-serve）：监听 127.0.0.1')" -a -n "$(vline '✓ 扩展 hl-snap.so：已映射 1 段，日志 hook「安装完成」×1')" -a -n "$(vline '✓ 单元：14/14 个在位')"
+check "采集：全链路跑通、没有采集错误（有 END、单元/端口/qmd/扩展都读到）" test -z "$(vline '采集结果')" -a -n "$(vline '✓ 443（gateway）：监听 0.0.0.0')" -a -n "$(vline '✓ 8790（book-serve）：监听 127.0.0.1')" -a -n "$(vline '✓ 扩展 hl-snap.so：已映射 1 段，日志 hook「安装完成」×1')" -a -n "$(vline '✓ 单元：13/13 个在位')"
 check "采集：飞行记录仪只取 --flight-lines 条（最后 2 行）" test -n "$(vline '│ f4 x')" -a -n "$(vline '│ f3')" -a -z "$(vline '│ f2')"
 check "采集：/proc/net/tcp6 的 IPv4 映射地址解析成 127.0.0.1（8886 端口）" test -n "$( ( cd "$PKG" && run sh verify-on-device.sh 127.0.0.1 --dump ) 2>/dev/null | grep "^LISTEN${T}8886${T}127.0.0.1$")"
 ( cd "$PKG" && run sh verify-on-device.sh 127.0.0.1 --dump ) > "$R/host.dump" 2>/dev/null; vr --from "$R/host.dump"
@@ -1134,7 +1133,7 @@ check "wifi-watch：AP 在 5180 MHz（设备不许用的段）→ 锁 bg 并重�
 ww_run 5180 "" enable fail
 check "wifi-watch：锁频段后重连失败 → 回滚到原值、再连一次、日志记真实错误行" test "$(cat "$WW/band")" = "" -a "$(grep -c 'con up' "$WW/calls")" = 2 -a -n "$(grep 'No network with SSID found' "$WW/out")" -a -n "$(grep '回滚.*已重新激活' "$WW/out")"
 ww_run 2437 bg disable
-check "wifi-watch：省电缺省改开（09-28 真机对照 −37% 电流）→ 旧连接的"关"改成开并重连一次" test "$(cat "$WW/ps")" = 3 -a "$(grep -c 'con up' "$WW/calls")" = 1
+check "wifi-watch：省电缺省改开（09-28 真机对照 −37% 电流）→ 旧连接的「关」改成开并重连一次" test "$(cat "$WW/ps")" = 3 -a "$(grep -c 'con up' "$WW/calls")" = 1
 ww_run 2437 bg enable "" "POWERSAVE=2"
 check "wifi-watch：覆盖配置 POWERSAVE=2 → 改回省电关并重连；频段不动" test "$(cat "$WW/ps")" = 2 -a "$(cat "$WW/band")" = bg -a "$(grep -c 'con up' "$WW/calls")" = 1
 ww_run 2437 bg default "" "POWERSAVE="
@@ -1143,7 +1142,7 @@ rm -f "$WW/state.json"; WW_HTTP=302 ww_run 2437 bg enable
 check "wifi-watch 上网探测：连上后下个周期探一次，被拦去登录页 → 状态文件记 portal、日志提示" bash -c "grep -q '\"state\":\"portal\"' '$WW/state.json' && grep -q '\"ssid\":\"📱\"' '$WW/state.json' && grep -q '上不了外网' '$WW/out' && test \$(grep -c wget '$WW/calls') = 1"
 rm -f "$WW/state.json"; WW_HTTP=204 WW_TICKS=8 ww_run 2437 bg enable
 check "wifi-watch 上网探测：通了记 ok，之后链路正常就不再探（8 个周期只探 1 次）" bash -c "grep -q '\"state\":\"ok\"' '$WW/state.json' && test \$(grep -c wget '$WW/calls') = 1 && ! grep -q '上不了外网' '$WW/out'"
-rm -f "$WW/state.json"; WW_HTTP= WW_TICKS=8 ww_run 2437 bg enable
+rm -f "$WW/state.json"; WW_HTTP='' WW_TICKS=8 ww_run 2437 bg enable
 check "wifi-watch 上网探测：不通（无响应）记 none，且每 RECHECK 个周期复探" bash -c "grep -q '\"state\":\"none\"' '$WW/state.json' && test \$(grep -c wget '$WW/calls') -ge 2"
 echo '{"state":"portal"}' > "$WW/state.json"; rm -f "$WW/sys/wlan0/carrier"; : > "$WW/calls"
 WW_STATE="$WW" PATH="$WSTUB:$PATH" SYSFS="$WW/sys" INTERVAL=0 TICKS=2 WIFI_WATCH_CONF="$WW/conf" STATE_FILE="$WW/state.json" sh "$PKG/wifi-watch/wifi-watch.sh" >/dev/null 2>&1
