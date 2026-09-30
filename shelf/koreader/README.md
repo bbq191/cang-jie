@@ -1,6 +1,13 @@
-# KOReader 配置即代码
+# KOReader 配置即代码（历史）
 
-把设备上手改的 KOReader 调优固化成仓库文件，可 diff、可幂等恢复。（书从哪来：网页「传书 → 母版库」点「加入 KOReader」，
+> **⚠ 这份文档整体是历史。** 2026-09-29 用户从设备上卸掉了 KOReader（连同第三方 WeRead 与 appload 启动器），只用 xochitl 自带阅读器。
+> 随之：`koreader-serve` 不再安装（`shelf/manifest.sh` 撤掉 `koreader` 令牌，旧设备重新部署时清掉它的单元与二进制）；
+> 网关不再代理 `/api/koreader/*`；网页上「加入 KOReader」、KOReader 字体/词典上传、笔记页「KOReader 回流」、批量「加入 KOReader」全部删除。
+> 本目录的补丁、`merge.lua`、`annot.lua` 和 `../services/koreader-serve/` 源码**只作留档**：源码仍在 workspace 里照常编译和测试，
+> 以后要重新装 KOReader 时可以从这里起步。下文保持 2026-09-24 前后的原样描述，时态按"当时"读。
+> 笔记线 ink-serve 仍保留 `/koreader/import` 与 `koreader.rs`（网页按钮已删），以及 `ingest.rs` 里对 `koreader:` 条目的早退判断——条目库里还有旧 KOReader 书，去掉早退，启动追平会把它们当成"书已删除"整批撤销。
+
+当时的用途：把设备上手改的 KOReader 调优固化成仓库文件，可 diff、可幂等恢复。（书从哪来：网页「传书 → 母版库」点「加入 KOReader」，
 `koreader-serve` 从母版库纯复制到 `books/[目录]/`；本目录只管**配置补丁**。）
 
 ## 目录里有什么
@@ -12,8 +19,9 @@
 | `profile/gestures.patch.lua` | 补丁：深合并进设备 `settings/gestures.lua`（防误触、退出手势等） |
 | `profile/directory_defaults.patch.lua` | 补丁：深合并进 `settings/directory_defaults.lua`——漫画方案的单书设置（`books/漫画/` 下新书首次打开时套用） |
 | `profile/profiles.patch.lua` | 补丁：深合并进 `settings/profiles.lua`——「漫画」「文字」两个配置档（切状态栏预设） |
-| `profile/fonts.txt` · `profile/dicts.txt` | 字体 / StarDict 词典**清单**（每行一个本机路径；数据本身不入库）。⚠ 2026-09-18 host `shelf` 命令行砍除后，**没有工具再自动读这两份清单**，它们只作"该装哪些字体/词典"的备忘；实际安装走网页「其他 → KOReader」上传（`POST /fonts`、`POST /dicts?name=`；上传先暂存在 `~/.local/state/shelf/koreader-upload/`，与 KOReader 目录同在 /home 分区，收完直接改名装入，2026-09-25 起不再占内存） |
+| `profile/fonts.txt` · `profile/dicts.txt` | 字体 / StarDict 词典**清单**（每行一个本机路径；数据本身不入库）。2026-09-18 host `shelf` 命令行砍除后没有工具再自动读这两份清单，只作备忘；当时实际安装走网页「其他 → KOReader」上传（`POST /fonts`、`POST /dicts?name=`），该子标签 2026-09-29 已删 |
 | `merge.lua` | 合并器：被 `koreader-serve` 通过 `include_str!` 内嵌，设备端用 KOReader 自带 `luajit` 执行 |
+| `annot.lua` | 读一本书的 KOReader 标注 sidecar（`<书>.sdr/metadata.<ext>.lua`）转成 JSON，同样被 `koreader-serve`（`annot.rs`）内嵌，给笔记线的高亮回流用 |
 
 补丁语义：标量覆盖、表递归、值为字符串 `"__DELETE__"` 删键。（2026-09-24 修：目标里原先没有的表整张落进去时，也会剔除其中的 `"__DELETE__"`，此前会被当普通值写进去。）
 
@@ -44,7 +52,7 @@ docsettingtweak、profiles、gestures、coverbrowser、autosuspend。
 `settings`、`directory`、`profiles` 三个目标（后两个是 koreader-serve 2026-09-24 新增的）。2026-09-24 真机写入、用户确认两套方案都生效；
 决策过程与真机反馈见 [`../docs/reMarkable书架白皮书.md`](../docs/reMarkable书架白皮书.md) §03bt。
 
-## 怎么应用
+## 当时怎么应用（2026-09-29 起不可用：服务不再安装、网关不再代理）
 
 **所有 Lua 处理都在设备端**，由 `koreader-serve`（`127.0.0.1:8791`，经网关为 `/api/koreader/…`）执行：
 写前备份到 `~/.local/state/shelf/koreader-backups/<文件>.bak.pre-shelf-<时间戳>[-序号]`（补丁没带来改动时不留备份，每个文件只留最近 10 份），写后回读校验（读不回来自动还原；原来没有这个文件则删掉写坏的新文件）；
@@ -62,9 +70,9 @@ docsettingtweak、profiles、gestures、coverbrowser、autosuspend。
 
 profile 各文件的键来自旧《阅读白皮书》§11.1b 与 2026-09-24 按设备源码的核对（该文档在 2026-09-11 整理时已挪出仓库）；补丁文件里标注"待核对"的值，应先 `GET /config/...` 看设备实况再定。
 
-## KOReader 入口现状（2026-09-21，固件 3.28.0.172，appload 0.6.0）
+## KOReader 入口（2026-09-21 记录，固件 3.28.0.172，appload 0.6.0；2026-09-29 已连同 appload 一起卸载）
 
-KOReader 本体（v2026.07.1，官方支持 Move）与本目录 / koreader-serve 都正常。
+以下是卸载前的状态，留作重装参考。当时 KOReader 本体（v2026.07.1，官方支持 Move）与本目录 / koreader-serve 都正常。
 
 - 启动入口是 appload（xochitl 侧栏里的外部应用启动器）。**appload ≥ 0.6.0 起原生支持 3.28**（上游 v0.6.0，2026-09-19 发布，另加 3.29 支持），2026-09-21 官方升级并真机验证（侧栏 KOReader/WeRead 入口点开正常）。
 - 历史：0.5.3 在 3.28 上不兼容（其 qmd 钩了 3.28 已删的 `SidebarFilterItem`），2026-09-06 曾用 PR #59 的 qmd 等长回填进 `.so` 顶过；该回填补丁工具已删除，不再需要。

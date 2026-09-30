@@ -5,13 +5,13 @@
     </marker>
   </defs>
   <rect x="0" y="0" width="1080" height="640" fill="#fbfbfa"/>
-  <text x="540" y="30" text-anchor="middle" font-size="18" font-weight="bold" fill="#1a1a1a">EPUB 优化的两条内存路径：整本内存版 vs 流式版</text>
+  <text x="540" y="30" text-anchor="middle" font-size="18" font-weight="bold" fill="#1a1a1a">EPUB 优化的内存路径：旧整本内存版（已删）vs 现役流式版</text>
   <text x="540" y="50" text-anchor="middle" font-size="12" fill="#4a4a4a">大头是图片字节；文字类条目（html/css/opf/ncx）本来就小，两条路径都整份留在内存</text>
 
   <!-- 左：整本内存版 -->
   <rect x="24" y="66" width="500" height="404" rx="10" fill="#f0f0ee" stroke="#8a8a8a" stroke-width="1.2"/>
-  <text x="274" y="90" text-anchor="middle" font-size="14" font-weight="bold" fill="#1a1a1a">整本内存版 optimize_epub_with(&amp;[u8])</text>
-  <text x="274" y="108" text-anchor="middle" font-size="11.5" fill="#4a4a4a">保留给单测 / CLI 小书；生产不走</text>
+  <text x="274" y="90" text-anchor="middle" font-size="14" font-weight="bold" fill="#1a1a1a">旧整本内存版（09-19 前生产用，09-29 删）</text>
+  <text x="274" y="108" text-anchor="middle" font-size="11.5" fill="#4a4a4a">此处保留当年的内存账，说明为什么改流式</text>
 
   <rect x="54" y="122" width="440" height="46" rx="7" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.4"/>
   <text x="274" y="142" text-anchor="middle" font-size="12" font-weight="bold" fill="#1a1a1a">① 输入：整本 EPUB 已在内存（&amp;[u8]）</text>
@@ -40,7 +40,7 @@
   <!-- 右：流式版 -->
   <rect x="556" y="66" width="500" height="404" rx="10" fill="#e8f5ec" stroke="#3f9a55" stroke-width="1.2"/>
   <text x="806" y="90" text-anchor="middle" font-size="14" font-weight="bold" fill="#1a1a1a">流式版 optimize_epub_file_streaming</text>
-  <text x="806" y="108" text-anchor="middle" font-size="11.5" fill="#4a4a4a">= StreamingOptimize 构建器；book-serve / CLI 默认走这条</text>
+  <text x="806" y="108" text-anchor="middle" font-size="11.5" fill="#4a4a4a">= StreamingOptimize；book-serve 与 epub-optimize 都走这条</text>
 
   <rect x="586" y="122" width="440" height="46" rx="7" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.4"/>
   <text x="806" y="142" text-anchor="middle" font-size="12" font-weight="bold" fill="#1a1a1a">① 输入：磁盘路径（不读进内存）</text>
@@ -71,10 +71,10 @@
   <line x1="274" y1="470" x2="274" y2="498" stroke="#555" stroke-width="1.5" marker-end="url(#svi-arrow)"/>
   <line x1="806" y1="470" x2="806" y2="498" stroke="#555" stroke-width="1.5" marker-end="url(#svi-arrow)"/>
   <rect x="24" y="500" width="1032" height="92" rx="9" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.6"/>
-  <text x="540" y="524" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">两条路径共用同一份业务代码（optimize/ 下的抽出函数）</text>
+  <text x="540" y="524" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">09-29 起只剩流式这一份实现（optimize/ 下的抽出函数）</text>
   <text x="540" y="546" text-anchor="middle" font-size="12" fill="#3a3a3a">prepare_entries · first_pass_html · transform_html_chapter · transform_image_bytes（漫画走 prepare_comic_page_for_epub 单趟）</text>
-  <text x="540" y="566" text-anchor="middle" font-size="12" fill="#3a3a3a">对拍单测证明产出逐字节一致：streaming_matches_in_memory_output_for_footnote_book /</text>
-  <text x="540" y="583" text-anchor="middle" font-size="12" fill="#3a3a3a">streaming_downscales_comic_images_same_as_in_memory</text>
+  <text x="540" y="566" text-anchor="middle" font-size="12" fill="#3a3a3a">optimize_epub_with(&amp;[u8]) 现在只是薄封装：字节写临时文件 → StreamingOptimize → 读回产物</text>
+  <text x="540" y="583" text-anchor="middle" font-size="12" fill="#3a3a3a">（给单测和抓网文组装用；09-19～09-29 两份实现并存时靠对拍单测保证逐字节一致）</text>
 
   <text x="540" y="620" text-anchor="middle" font-size="11.5" fill="#4a4a4a">另：落库（≤90MB）路径的自检 stats::text_profile_file 也是同一思路——按条目名先筛，图片连解压都跳过</text>
 </svg>

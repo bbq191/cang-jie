@@ -5,13 +5,13 @@
 
 ## 它是什么
 
-设备上 9 个小 Web 服务（书架、KOReader、字体、壁纸、笔记四件套、网关）都要做同样的杂活：读 XDG 路径、启动时向注册表登记、收 HTTP 请求回 JSON、接大文件上传、往 xochitl 塞书、广播“该刷新了”。
+设备上 8 个小 Web 服务（书架、字体、壁纸、笔记四件套、网关）都要做同样的杂活：读 XDG 路径、启动时向注册表登记、收 HTTP 请求回 JSON、接大文件上传、往 xochitl 塞书、广播“该刷新了”。
 这些杂活只写一份，就是 `rmsvc-core`。**服务只写自己的业务；地基只有这一份。** 它不含任何“书 / 笔记”业务语义。
 
 ![模块地图与消费方](docs/diagrams/module-map.svg)
 
 - 消费方都用 path 依赖（`rmsvc-core = { path = "…/rmsvc-core" }`，`..` 的个数看自己的目录深度），**不建根 workspace**；本 crate 不知道任何消费方（单向依赖，无环）。
-- 谁在用：`shelf/services/{book,koreader}-serve` · `notes/services/{ink,transcribe,mind,note}-serve` + `notes/crates/vendorcfg` · `enhance/{font,wallpaper}-serve` · `gateway/`。
+- 谁在用：`shelf/services/book-serve` · `notes/services/{ink,transcribe,mind,note}-serve` + `notes/crates/vendorcfg` · `enhance/{font,wallpaper}-serve` · `gateway/`。另有 2026-09-29 退役的 `shelf/services/koreader-serve`：不再安装，源码留档、仍按它编译。
 - 一个服务的骨架三步：`service::run(&SPEC, bind, &paths, router)`（建目录、自注册、挂 `/health`）→ 用 `http::Router` 写处理函数 → 有变更就 `EventBus::publish` 通知网页。
 
 ## 21 个模块
@@ -23,17 +23,18 @@
 | | `http` | tiny_http 适配：路由（最具体优先）、回执、守卫、TLS、SSE 流与定长下载流；并发上限 64；每条连接 60 秒读空闲超时、accept 遇暂时性错误不停摆（靠 [`vendor/tiny_http`](vendor/README.md) 的两处补丁）；accept 线程真退出时服务非零退出，交给 systemd 拉起；对端 IP 经内部头传入 |
 | | `events` | 事件总线 `EventBus` + SSE；`follow()` 订阅另一个服务的 `/events` |
 | 文件与数据 | `paths` | XDG 路径的唯一路径表 |
-| | `fs` | 原子写（可带权限）、单段文件名校验 `plain_name`、同名不覆盖 `unique_path` |
+| | `fs` | 原子写（可带权限；临时名里的目标名截到 200 字节，长中文书名不再报 File name too long）、单段文件名校验 `plain_name`、同名不覆盖 `unique_path` |
 | | `config` | JSON 配置读写模板（`load_or_default` / `load_or_seed` / `save` / `is_corrupt`） |
 | | `multipart` | 流式 multipart 解析（边读边落盘；文件名引号内的 `;` 不切）、`Content-Disposition` 下载头 |
-| | `asset` | 资产仓库 + 上传流程模板，字体/壁纸/KOReader/母版库共用；暂存在 /home（`~/.local/state/shelf/upload` 或调用方指定），服务启动时清半成品 |
+| | `asset` | 资产仓库 + 上传流程模板，字体/壁纸/母版库共用；暂存在 /home（`~/.local/state/shelf/upload` 或调用方指定），服务启动时清半成品 |
 | | `formats` | 文件格式白名单唯一事实源（书籍只收 EPUB/PDF） |
 | | `ttf` | TTF/OTF 家族名、魔数、CJK 覆盖率（跳过 format-12 损坏组） |
-| | `cache` / `clock` / `sync` | 单值 TTL 缓存 / unix 时间戳唯一出处 / 容忍 poison 的取锁 `sync::lock` |
+| | `cache` | 单值 TTL 缓存 `TtlCache`；按文件戳（长度 + mtime + inode）失效的键值缓存 `StampCache`，列表类接口免重复开文件 |
+| | `clock` / `sync` | unix 时间戳唯一出处 / 容忍 poison 的取锁 `sync::lock` |
 | xochitl | `xochitl` | 免重启进原生书库（GET-then-upload 归档，进程内“设文件夹→上传”串行）、流式 `upload_file`、超过约 100MB 上传上限的“占位 + 磁盘替换”（整段串行，防两本大书认领到同一条目） |
 | | `xochitl_conf` | 改 `xochitl.conf [General]` 单键（休眠屏 `SleepScreenPath`；文件含凭证，绝不打印行内容，改写保留原权限） |
 | | `fswatch` | inotify 防抖目录监听（常驻 / 限时） |
-| 对外与安全（只有网关用） | `auth` | PBKDF2 密码哈希、Basic/Cookie 解析、会话表、按 IP 的失败限速 `IpFailLimiter` |
+| 对外与安全（只有网关用） | `auth` | PBKDF2 密码哈希、Basic/Cookie 解析、会话表、按 IP 的失败限速 `IpFailLimiter`、只缓存“校验通过”的 `VerifyCache` |
 | | `tls` / `mdns` / `netinfo` | 带名称约束的私有 CA + 服务器证书（旧 CA 自动迁移）/ mDNS 应答器（`shelf.local`；内核报告地址变化才重扫接口，空闲零唤醒）/ 本机 IPv4 表 |
 
 ## 常用 Rust 入口
@@ -53,11 +54,11 @@
 ## 构建与测试
 
 - `cargo build --manifest-path rmsvc-core/Cargo.toml`；独立 crate，各消费方编译时一起编。
-- `cargo test --manifest-path rmsvc-core/Cargo.toml`（2026-09-25 第四轮审计后实跑：105 个单测，104 个通过、1 个需要网络命名空间的默认忽略）。CI `rust` job 单列一步，但 CI 自 2026-09-20 起因账户扣费没有实际执行，改动要本地跑。
+- `cargo test --manifest-path rmsvc-core/Cargo.toml`（2026-09-30 第五轮审计后实跑：109 个单测，108 个通过、1 个需要网络命名空间的默认忽略；另有 1 个文档示例默认忽略）。CI `rust` job 单列一步，但 CI 自 2026-09-20 起因账户扣费没有实际执行，改动要本地跑。
 
 ## 注意
 
-- 改任何模块前先想清楚几条线谁在用它（白皮书每节都列了），这里出问题理论上 5 个顶层项目一起受影响。
+- 改任何模块前先想清楚几条线谁在用它（白皮书每节都列了），这里出问题理论上 4 个顶层项目（shelf、notes、enhance、gateway）一起受影响。
 - XDG 路径仍叫 `shelf`（`~/.config/shelf/`、`~/.local/share/shelf/`、`~/.local/state/shelf/`、`$XDG_RUNTIME_DIR/shelf/`）：这是已部署设备上的真实路径，改名要迁移。
 - 不引用旧项目的 crate（`device-core` / `weread-device`）；`xochitl`、`fswatch` 是“剥离移植”的独立实现。
 - 2026-09-11 从 `shelf/crates/shelf-core` 正名搬到顶层（crate 名 `shelf-core` → `rmsvc-core`），来历见白皮书末尾。

@@ -1,8 +1,8 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1310" height="880" viewBox="0 0 1310 880" font-family="Noto Sans CJK SC, sans-serif">
-<rect width="1310" height="880" fill="#ffffff"/>
-<text x="655.0" y="32" text-anchor="middle" font-size="20" font-weight="bold" fill="#1f2937">书架服务的并发控制：哪条路径进哪把锁</text>
-<text x="655.0" y="56" text-anchor="middle" font-size="13" fill="#6b7280">2026-09-25 第四轮审计后的代码现状（⑤⑥⑦ 只在 host 测过，未部署真机；其余已部署，但并发场景没在真机专门触发）。锁只包住真正会撞的那一小段</text>
-<text x="655.0" y="76" text-anchor="middle" font-size="12.5" fill="#6b7280">除网关闸门外都是单个进程内的锁；book-serve、koreader-serve、网关是三个独立进程</text>
+<svg xmlns="http://www.w3.org/2000/svg" width="1183" height="816" viewBox="0 0 1183 816" font-family="Noto Sans CJK SC, sans-serif">
+<rect width="1183" height="816" fill="#ffffff"/>
+<text x="591.5" y="32" text-anchor="middle" font-size="20" font-weight="bold" fill="#1f2937">书架服务的并发控制：哪条路径进哪把锁</text>
+<text x="591.5" y="56" text-anchor="middle" font-size="13" fill="#6b7280">2026-09-30 代码现状。⑤⑥⑦ 只在 host 测过、未部署；其余已部署，但并发场景没在真机专门触发。锁只包住真正会撞的那一小段</text>
+<text x="591.5" y="76" text-anchor="middle" font-size="12.5" fill="#6b7280">除网关闸门外都是单个进程内的锁；book-serve 与网关是两个独立进程（koreader-serve 及其配置同步锁 2026-09-29 退役）</text>
 <rect x="273" y="96" width="121" height="70" rx="8" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.5"/>
 <text x="333.5" y="118" text-anchor="middle" font-size="13" font-weight="bold" fill="#4a6fa5">网关闸门</text>
 <text x="333.5" y="138" text-anchor="middle" font-size="10" fill="#374151">gateway budget.rs</text>
@@ -31,19 +31,15 @@
 <text x="1095.5" y="118" text-anchor="middle" font-size="13" font-weight="bold" fill="#2b5c8a">大文件通道锁</text>
 <text x="1095.5" y="138" text-anchor="middle" font-size="10" fill="#374151">rmsvc_core::xochitl</text>
 <text x="1095.5" y="155" text-anchor="middle" font-size="10" fill="#6b7280">进程内 static</text>
-<rect x="1162" y="96" width="121" height="70" rx="8" fill="#f2f2f2" stroke="#555555" stroke-width="1.5"/>
-<text x="1222.5" y="118" text-anchor="middle" font-size="13" font-weight="bold" fill="#555555">配置同步锁</text>
-<text x="1222.5" y="138" text-anchor="middle" font-size="10" fill="#374151">koreader-serve</text>
-<text x="1222.5" y="155" text-anchor="middle" font-size="10" fill="#6b7280">ConfigSync</text>
 <text x="28" y="138" font-size="13" font-weight="bold" fill="#1f2937">入口 / 操作</text>
-<rect x="20" y="174" width="1266" height="32" fill="#f7f7f5"/>
+<rect x="20" y="174" width="1139" height="32" fill="#f7f7f5"/>
 <text x="28" y="195" font-size="12.5" fill="#1f2937">网页上传  POST /staging</text>
 <circle cx="587.5" cy="190" r="7" fill="#2f7d45"/>
 <text x="28" y="227" font-size="12.5" fill="#1f2937">scp 进 inbox（fswatch 追平）</text>
 <circle cx="587.5" cy="222" r="7" fill="#2f7d45"/>
 <circle cx="674.5" cy="222" r="7" fill="#7a5a00"/>
 <text x="686.5" y="226" font-size="11" fill="#7a5a00">写完静止 5 秒才认领</text>
-<rect x="20" y="238" width="1266" height="32" fill="#f7f7f5"/>
+<rect x="20" y="238" width="1139" height="32" fill="#f7f7f5"/>
 <text x="28" y="259" font-size="12.5" fill="#1f2937">抓网文（含「同步优化」）</text>
 <circle cx="333.5" cy="254" r="7" fill="#4a6fa5"/>
 <text x="345.5" y="258" font-size="11" fill="#4a6fa5">勾选时</text>
@@ -53,14 +49,14 @@
 <text x="28" y="291" font-size="12.5" fill="#1f2937">改名（新旧两个名字都占忙锁）</text>
 <circle cx="460.5" cy="286" r="7" fill="#b0451f"/>
 <circle cx="587.5" cy="286" r="7" fill="#2f7d45"/>
-<rect x="20" y="302" width="1266" height="32" fill="#f7f7f5"/>
+<rect x="20" y="302" width="1139" height="32" fill="#f7f7f5"/>
 <text x="28" y="323" font-size="12.5" fill="#1f2937">恢复原 PDF</text>
 <circle cx="460.5" cy="318" r="7" fill="#b0451f"/>
 <circle cx="587.5" cy="318" r="7" fill="#2f7d45"/>
 <text x="28" y="355" font-size="12.5" fill="#1f2937">删除</text>
 <circle cx="432.5" cy="350" r="7" fill="#b0451f"/>
 <text x="444.5" y="354" font-size="11" fill="#b0451f">09-25 起占</text>
-<rect x="20" y="366" width="1266" height="32" fill="#f7f7f5"/>
+<rect x="20" y="366" width="1139" height="32" fill="#f7f7f5"/>
 <text x="28" y="387" font-size="12.5" fill="#1f2937">优化 EPUB（完成时改规范名）</text>
 <circle cx="333.5" cy="382" r="7" fill="#4a6fa5"/>
 <circle cx="460.5" cy="382" r="7" fill="#b0451f"/>
@@ -72,7 +68,7 @@
 <circle cx="587.5" cy="414" r="7" fill="#2f7d45"/>
 <text x="599.5" y="418" font-size="11" fill="#2f7d45">落地时复查</text>
 <circle cx="841.5" cy="414" r="7" fill="#6b4fa0"/>
-<rect x="20" y="430" width="1266" height="32" fill="#f7f7f5"/>
+<rect x="20" y="430" width="1139" height="32" fill="#f7f7f5"/>
 <text x="28" y="451" font-size="12.5" fill="#1f2937">加入 xochitl</text>
 <circle cx="333.5" cy="446" r="7" fill="#4a6fa5"/>
 <circle cx="460.5" cy="446" r="7" fill="#b0451f"/>
@@ -80,65 +76,55 @@
 <circle cx="968.5" cy="446" r="7" fill="#1f6f8b"/>
 <circle cx="1055.5" cy="446" r="7" fill="#2b5c8a"/>
 <text x="1067.5" y="450" font-size="11" fill="#2b5c8a">超 90MB 时</text>
-<text x="28" y="483" font-size="12.5" fill="#1f2937">加入 KOReader（复制）</text>
-<circle cx="333.5" cy="478" r="7" fill="#4a6fa5"/>
-<rect x="20" y="494" width="1266" height="32" fill="#f7f7f5"/>
-<text x="28" y="515" font-size="12.5" fill="#1f2937">KOReader 配置 /config/*</text>
-<circle cx="1222.5" cy="510" r="7" fill="#555555"/>
-<line x1="270" y1="174" x2="270" y2="630" stroke="#e5e7eb"/>
-<line x1="397" y1="174" x2="397" y2="630" stroke="#e5e7eb"/>
-<line x1="524" y1="174" x2="524" y2="630" stroke="#e5e7eb"/>
-<line x1="651" y1="174" x2="651" y2="630" stroke="#e5e7eb"/>
-<line x1="778" y1="174" x2="778" y2="630" stroke="#e5e7eb"/>
-<line x1="905" y1="174" x2="905" y2="630" stroke="#e5e7eb"/>
-<line x1="1032" y1="174" x2="1032" y2="630" stroke="#e5e7eb"/>
-<line x1="1159" y1="174" x2="1159" y2="630" stroke="#e5e7eb"/>
-<line x1="1286" y1="174" x2="1286" y2="630" stroke="#e5e7eb"/>
-<line x1="20" y1="526" x2="1286" y2="526" stroke="#9ca3af"/>
-<text x="28" y="548" font-size="12.5" font-weight="bold" fill="#1f2937">锁住多久</text>
-<text x="333.5" y="545" text-anchor="middle" font-size="10.5" fill="#374151">从开始到这本书</text>
-<text x="333.5" y="559" text-anchor="middle" font-size="10.5" fill="#374151">不再 busy</text>
-<text x="333.5" y="573" text-anchor="middle" font-size="10.5" fill="#374151">（最长 1 小时）</text>
-<text x="460.5" y="545" text-anchor="middle" font-size="10.5" fill="#374151">整个操作</text>
-<text x="460.5" y="559" text-anchor="middle" font-size="10.5" fill="#374151">（大书可到分钟级）</text>
-<text x="587.5" y="545" text-anchor="middle" font-size="10.5" fill="#374151">只包挑名 + 改名</text>
-<text x="587.5" y="559" text-anchor="middle" font-size="10.5" fill="#374151">（毫秒级本地操作）</text>
-<text x="714.5" y="545" text-anchor="middle" font-size="10.5" fill="#374151">一轮 inbox 追平</text>
-<text x="841.5" y="545" text-anchor="middle" font-size="10.5" fill="#374151">一次读-改-写</text>
-<text x="968.5" y="545" text-anchor="middle" font-size="10.5" fill="#374151">设当前文件夹</text>
-<text x="968.5" y="559" text-anchor="middle" font-size="10.5" fill="#374151">+ 一次 /upload</text>
-<text x="1095.5" y="545" text-anchor="middle" font-size="10.5" fill="#374151">传占位 → 认领</text>
-<text x="1095.5" y="559" text-anchor="middle" font-size="10.5" fill="#374151">→ 换成真文件</text>
-<text x="1222.5" y="545" text-anchor="middle" font-size="10.5" fill="#374151">一次应用</text>
-<text x="1222.5" y="559" text-anchor="middle" font-size="10.5" fill="#374151">（含跑 luajit）</text>
-<line x1="20" y1="584" x2="1286" y2="584" stroke="#e5e7eb"/>
-<text x="28" y="606" font-size="12.5" font-weight="bold" fill="#1f2937">防什么</text>
-<text x="333.5" y="603" text-anchor="middle" font-size="10.5" fill="#374151">多本大书同时</text>
-<text x="333.5" y="617" text-anchor="middle" font-size="10.5" fill="#374151">处理，内存叠加</text>
-<text x="460.5" y="603" text-anchor="middle" font-size="10.5" fill="#374151">同一本同时被</text>
-<text x="460.5" y="617" text-anchor="middle" font-size="10.5" fill="#374151">优化/删/改名</text>
-<text x="587.5" y="603" text-anchor="middle" font-size="10.5" fill="#374151">两本同名书挑到</text>
-<text x="587.5" y="617" text-anchor="middle" font-size="10.5" fill="#374151">同一个名、互相覆盖</text>
-<text x="714.5" y="603" text-anchor="middle" font-size="10.5" fill="#374151">两轮追平抢</text>
-<text x="714.5" y="617" text-anchor="middle" font-size="10.5" fill="#374151">同一个文件</text>
-<text x="841.5" y="603" text-anchor="middle" font-size="10.5" fill="#374151">并发写边车</text>
-<text x="841.5" y="617" text-anchor="middle" font-size="10.5" fill="#374151">丢字段</text>
-<text x="968.5" y="603" text-anchor="middle" font-size="10.5" fill="#374151">并发投递落进</text>
-<text x="968.5" y="617" text-anchor="middle" font-size="10.5" fill="#374151">别人的文件夹</text>
-<text x="1095.5" y="603" text-anchor="middle" font-size="10.5" fill="#374151">两本大 PDF 认领</text>
-<text x="1095.5" y="617" text-anchor="middle" font-size="10.5" fill="#374151">到同一个条目</text>
-<text x="1222.5" y="603" text-anchor="middle" font-size="10.5" fill="#374151">固定名临时补丁</text>
-<text x="1222.5" y="617" text-anchor="middle" font-size="10.5" fill="#374151">被别的请求覆盖</text>
-<line x1="20" y1="630" x2="1286" y2="630" stroke="#9ca3af"/>
-<circle cx="34" cy="648" r="6" fill="#374151"/><text x="46" y="652" font-size="12" fill="#374151">进这把锁</text>
-<text x="134" y="652" font-size="12" fill="#374151">“勾选时”＝只有勾了「同步优化」才进；“超 90MB 时”＝走“占位 + 磁盘替换”大文件通道时才进</text>
-<text x="20" y="678" font-size="12" fill="#374151" xml:space="preserve">09-24 改动①：网页上传原来把 spool 锁攥到整个请求体收完（WiFi 传大书可达分钟级），期间 inbox 追平和别的上传全被卡住；</text>
-<text x="20" y="698" font-size="12" fill="#374151" xml:space="preserve">              现在上传只在“挑名 + 改名”那一瞬进落名临界区。跨分区入库（09-25）也是锁外先拷到临时文件，锁内只挑名、改名。</text>
-<text x="20" y="718" font-size="12" fill="#374151" xml:space="preserve">09-24 改动②：xochitl 的“当前文件夹”是它自己的全局状态，并发投递时 A 设完文件夹、B 又设了自己的，A 就落进 B 的文件夹；</text>
-<text x="20" y="738" font-size="12" fill="#374151" xml:space="preserve">              现在进程内把“设文件夹 → /upload”串成一对（note-serve 是另一个进程，仍不受这把锁约束）。</text>
-<text x="20" y="758" font-size="12" fill="#374151" xml:space="preserve">09-24 改动③：PDF 转 EPUB 转换完（可达分钟级）落地前，在落名临界区里再查一次同名 .epub，转换期间有人落下同名书就放弃、不覆盖。</text>
-<text x="20" y="778" font-size="12" fill="#374151" xml:space="preserve">09-25 改动④：抓网文勾了「同步优化」时，落名那一刻就占上忙锁（优化完才放），并过网关闸门（固定小档，键＝“抓网文 &lt;url&gt;”）。</text>
-<text x="20" y="798" font-size="12" fill="#374151" xml:space="preserve">09-25 改动⑤：删除原来只“先查忙不忙再删”，中间可能被优化/落库插进来对着已删的文件跑；现在删除期间占着忙锁。</text>
-<text x="20" y="818" font-size="12" fill="#374151" xml:space="preserve">09-25 改动⑥：大文件通道按“刚进库 + 大小等于占位”认领条目，PDF 占位字节都一样，两本同时投会认领同一个 uuid；现在整段串行。</text>
-<text x="20" y="838" font-size="12" fill="#374151" xml:space="preserve">09-25 改动⑦：scp 直接写最终文件名，写到一半就被追平会进母版库一本半截书；现在修改时间静止不足 5 秒的文件先跳过，写完再收。</text>
+<line x1="270" y1="174" x2="270" y2="566" stroke="#e5e7eb"/>
+<line x1="397" y1="174" x2="397" y2="566" stroke="#e5e7eb"/>
+<line x1="524" y1="174" x2="524" y2="566" stroke="#e5e7eb"/>
+<line x1="651" y1="174" x2="651" y2="566" stroke="#e5e7eb"/>
+<line x1="778" y1="174" x2="778" y2="566" stroke="#e5e7eb"/>
+<line x1="905" y1="174" x2="905" y2="566" stroke="#e5e7eb"/>
+<line x1="1032" y1="174" x2="1032" y2="566" stroke="#e5e7eb"/>
+<line x1="1159" y1="174" x2="1159" y2="566" stroke="#e5e7eb"/>
+<line x1="20" y1="462" x2="1159" y2="462" stroke="#9ca3af"/>
+<text x="28" y="484" font-size="12.5" font-weight="bold" fill="#1f2937">锁住多久</text>
+<text x="333.5" y="481" text-anchor="middle" font-size="10.5" fill="#374151">从开始到这本书</text>
+<text x="333.5" y="495" text-anchor="middle" font-size="10.5" fill="#374151">不再 busy</text>
+<text x="333.5" y="509" text-anchor="middle" font-size="10.5" fill="#374151">（最长 1 小时）</text>
+<text x="460.5" y="481" text-anchor="middle" font-size="10.5" fill="#374151">整个操作</text>
+<text x="460.5" y="495" text-anchor="middle" font-size="10.5" fill="#374151">（大书可到分钟级）</text>
+<text x="587.5" y="481" text-anchor="middle" font-size="10.5" fill="#374151">只包挑名 + 改名</text>
+<text x="587.5" y="495" text-anchor="middle" font-size="10.5" fill="#374151">（毫秒级本地操作）</text>
+<text x="714.5" y="481" text-anchor="middle" font-size="10.5" fill="#374151">一轮 inbox 追平</text>
+<text x="841.5" y="481" text-anchor="middle" font-size="10.5" fill="#374151">一次读-改-写</text>
+<text x="968.5" y="481" text-anchor="middle" font-size="10.5" fill="#374151">设当前文件夹</text>
+<text x="968.5" y="495" text-anchor="middle" font-size="10.5" fill="#374151">+ 一次 /upload</text>
+<text x="1095.5" y="481" text-anchor="middle" font-size="10.5" fill="#374151">传占位 → 认领</text>
+<text x="1095.5" y="495" text-anchor="middle" font-size="10.5" fill="#374151">→ 换成真文件</text>
+<line x1="20" y1="520" x2="1159" y2="520" stroke="#e5e7eb"/>
+<text x="28" y="542" font-size="12.5" font-weight="bold" fill="#1f2937">防什么</text>
+<text x="333.5" y="539" text-anchor="middle" font-size="10.5" fill="#374151">多本大书同时</text>
+<text x="333.5" y="553" text-anchor="middle" font-size="10.5" fill="#374151">处理，内存叠加</text>
+<text x="460.5" y="539" text-anchor="middle" font-size="10.5" fill="#374151">同一本同时被</text>
+<text x="460.5" y="553" text-anchor="middle" font-size="10.5" fill="#374151">优化/删/改名</text>
+<text x="587.5" y="539" text-anchor="middle" font-size="10.5" fill="#374151">两本同名书挑到</text>
+<text x="587.5" y="553" text-anchor="middle" font-size="10.5" fill="#374151">同一个名、互相覆盖</text>
+<text x="714.5" y="539" text-anchor="middle" font-size="10.5" fill="#374151">两轮追平抢</text>
+<text x="714.5" y="553" text-anchor="middle" font-size="10.5" fill="#374151">同一个文件</text>
+<text x="841.5" y="539" text-anchor="middle" font-size="10.5" fill="#374151">并发写边车</text>
+<text x="841.5" y="553" text-anchor="middle" font-size="10.5" fill="#374151">丢字段</text>
+<text x="968.5" y="539" text-anchor="middle" font-size="10.5" fill="#374151">并发投递落进</text>
+<text x="968.5" y="553" text-anchor="middle" font-size="10.5" fill="#374151">别人的文件夹</text>
+<text x="1095.5" y="539" text-anchor="middle" font-size="10.5" fill="#374151">两本大 PDF 认领</text>
+<text x="1095.5" y="553" text-anchor="middle" font-size="10.5" fill="#374151">到同一个条目</text>
+<line x1="20" y1="566" x2="1159" y2="566" stroke="#9ca3af"/>
+<circle cx="34" cy="584" r="6" fill="#374151"/><text x="46" y="588" font-size="12" fill="#374151">进这把锁</text>
+<text x="134" y="588" font-size="12" fill="#374151">“勾选时”＝只有勾了「同步优化」才进；“超 90MB 时”＝走“占位 + 磁盘替换”大文件通道时才进</text>
+<text x="20" y="614" font-size="12" fill="#374151" xml:space="preserve">09-24 改动①：网页上传原来把 spool 锁攥到整个请求体收完（WiFi 传大书可达分钟级），期间 inbox 追平和别的上传全被卡住；</text>
+<text x="20" y="634" font-size="12" fill="#374151" xml:space="preserve">              现在上传只在“挑名 + 改名”那一瞬进落名临界区。跨分区入库（09-25）也是锁外先拷到临时文件，锁内只挑名、改名。</text>
+<text x="20" y="654" font-size="12" fill="#374151" xml:space="preserve">09-24 改动②：xochitl 的“当前文件夹”是它自己的全局状态，并发投递时 A 设完文件夹、B 又设了自己的，A 就落进 B 的文件夹；</text>
+<text x="20" y="674" font-size="12" fill="#374151" xml:space="preserve">              现在进程内把“设文件夹 → /upload”串成一对（note-serve 是另一个进程，仍不受这把锁约束）。</text>
+<text x="20" y="694" font-size="12" fill="#374151" xml:space="preserve">09-24 改动③：PDF 转 EPUB 转换完（可达分钟级）落地前，在落名临界区里再查一次同名 .epub，转换期间有人落下同名书就放弃、不覆盖。</text>
+<text x="20" y="714" font-size="12" fill="#374151" xml:space="preserve">09-25 改动④：抓网文勾了「同步优化」时，落名那一刻就占上忙锁（优化完才放），并过网关闸门（固定小档，键＝“抓网文 &lt;url&gt;”）。</text>
+<text x="20" y="734" font-size="12" fill="#374151" xml:space="preserve">09-25 改动⑤：删除原来只“先查忙不忙再删”，中间可能被优化/落库插进来对着已删的文件跑；现在删除期间占着忙锁。</text>
+<text x="20" y="754" font-size="12" fill="#374151" xml:space="preserve">09-25 改动⑥：大文件通道按“刚进库 + 大小等于占位”认领条目，PDF 占位字节都一样，两本同时投会认领同一个 uuid；现在整段串行。</text>
+<text x="20" y="774" font-size="12" fill="#374151" xml:space="preserve">09-25 改动⑦：scp 直接写最终文件名，写到一半就被追平会进母版库一本半截书；现在修改时间静止不足 5 秒的文件先跳过，写完再收。</text>
 </svg>

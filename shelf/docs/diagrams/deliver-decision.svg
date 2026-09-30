@@ -3,8 +3,8 @@
     <marker id="dd-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#555"/></marker>
   </defs>
   <rect x="0" y="0" width="1080" height="700" fill="#fbfbfa"/>
-  <text x="540" y="30" text-anchor="middle" font-size="18" font-weight="bold" fill="#1a1a1a">落库决策树：一本书怎样进 xochitl / KOReader</text>
-  <text x="540" y="50" text-anchor="middle" font-size="12.5" fill="#4a4a4a">入口 book-serve Staging::deliver（加入 xochitl）与 koreader-serve /books/adopt（加入 KOReader）；母版库里的原书字节永远保留</text>
+  <text x="540" y="30" text-anchor="middle" font-size="18" font-weight="bold" fill="#1a1a1a">落库决策树：一本书怎样进 xochitl</text>
+  <text x="540" y="50" text-anchor="middle" font-size="12.5" fill="#4a4a4a">入口 book-serve Staging::deliver（网页「加入 xochitl」）；母版库里的原书字节永远保留，可反复加入</text>
 
   <!-- 入口 -->
   <rect x="340" y="68" width="400" height="40" rx="8" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.5"/>
@@ -13,7 +13,7 @@
 
   <!-- 先决 -->
   <rect x="270" y="130" width="540" height="62" rx="8" fill="#f0f0ee" stroke="#8a8a8a" stroke-width="1.5"/>
-  <text x="540" y="151" text-anchor="middle" font-size="12" fill="#1a1a1a">先决 1：格式只认 EPUB / PDF（其它格式拒绝，指引「加入 KOReader」）</text>
+  <text x="540" y="151" text-anchor="middle" font-size="12" fill="#1a1a1a">先决 1：格式只认 EPUB / PDF（母版库本来也只收这两种）</text>
   <text x="540" y="170" text-anchor="middle" font-size="12" fill="#1a1a1a">先决 2：文件夹名不存在 → 入 mkdir 队列，等 qmd 代理在设备上真建出来</text>
   <text x="540" y="186" text-anchor="middle" font-size="11" fill="#4a4a4a">（最多等 20 秒；超时不算错，退回落书库根；留空 = 书库根）</text>
   <line x1="540" y1="192" x2="540" y2="212" stroke="#555" stroke-width="1.5" marker-end="url(#dd-a)"/>
@@ -47,7 +47,7 @@
   <rect x="30" y="356" width="262" height="108" rx="8" fill="#e8f5ec" stroke="#3f9a55" stroke-width="1.6"/>
   <text x="161" y="378" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">② 占位 + 磁盘替换（大文件通道）</text>
   <text x="161" y="398" text-anchor="middle" font-size="11" fill="#1a1a1a">先传几 KB 占位，再原子换成真文件</text>
-  <text x="161" y="416" text-anchor="middle" font-size="11" fill="#1a1a1a">不分卷、不限漫画、EPUB/PDF 都行</text>
+  <text x="161" y="416" text-anchor="middle" font-size="11" fill="#1a1a1a">整本投、不限漫画、EPUB/PDF 都行</text>
   <text x="161" y="434" text-anchor="middle" font-size="11" fill="#1a1a1a">EPUB 首开才渲染，徽章记 onopen</text>
   <text x="161" y="452" text-anchor="middle" font-size="10" fill="#4a4a4a">见 §03bn · upload-limit-bypass.svg</text>
 
@@ -58,17 +58,17 @@
   <rect x="310" y="506" width="460" height="100" rx="8" fill="#fbe9e4" stroke="#b0451f" stroke-width="1.6"/>
   <text x="540" y="528" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">③ 整本拒绝（回执末尾「没有加入」）</text>
   <text x="540" y="548" text-anchor="middle" font-size="11" fill="#1a1a1a">超过 1GiB、造不出占位文档、或本机没有 xochitl 书库目录（非设备环境）</text>
-  <text x="540" y="566" text-anchor="middle" font-size="11" fill="#1a1a1a">→ 改用「加入 KOReader」，或自行把书分成多份再上传</text>
+  <text x="540" y="566" text-anchor="middle" font-size="11" fill="#1a1a1a">→ 只能自行把书分成多份、再分别上传入库</text>
   <text x="540" y="590" text-anchor="middle" font-size="10" fill="#4a4a4a">不再按卷拆分（EPUB 按 NCX、PDF 按书签拆分投递，2026-09-30 已移除）</text>
 
-  <!-- KOReader 旁路 -->
-  <rect x="790" y="68" width="262" height="124" rx="8" fill="#fff3d6" stroke="#c9971f" stroke-width="1.6"/>
-  <text x="921" y="90" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">另一条路：加入 KOReader</text>
-  <text x="921" y="110" text-anchor="middle" font-size="11" fill="#1a1a1a">koreader-serve POST /books/adopt</text>
-  <text x="921" y="128" text-anchor="middle" font-size="11" fill="#1a1a1a">本地复制到 .part 再 rename</text>
-  <text x="921" y="146" text-anchor="middle" font-size="11" fill="#1a1a1a">不经优化器、不限体积、不限格式</text>
-  <text x="921" y="164" text-anchor="middle" font-size="11" fill="#1a1a1a">与 xochitl 那份是同一份母版字节</text>
-  <text x="921" y="182" text-anchor="middle" font-size="10" fill="#4a4a4a">由网关批量队列事后 POST /staging/mark 记一笔</text>
+  <!-- 已退役的旁路（历史） -->
+  <rect x="790" y="68" width="262" height="124" rx="8" fill="#f0f0ee" stroke="#8a8a8a" stroke-width="1.2" stroke-dasharray="5 4"/>
+  <text x="921" y="90" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#4a4a4a">已退役：加入 KOReader</text>
+  <text x="921" y="112" text-anchor="middle" font-size="11" fill="#4a4a4a">2026-09-29 设备卸载 KOReader，</text>
+  <text x="921" y="130" text-anchor="middle" font-size="11" fill="#4a4a4a">koreader-serve 不再安装，</text>
+  <text x="921" y="148" text-anchor="middle" font-size="11" fill="#4a4a4a">网关不再代理 /api/koreader/*、</text>
+  <text x="921" y="166" text-anchor="middle" font-size="11" fill="#4a4a4a">批量队列也没有这个动作</text>
+  <text x="921" y="184" text-anchor="middle" font-size="10" fill="#6a6a6a">（源码仍在仓库，留作历史）</text>
 
   <!-- 底部说明 -->
   <rect x="30" y="628" width="1022" height="54" rx="8" fill="#f0f0ee" stroke="#8a8a8a" stroke-width="1.2"/>

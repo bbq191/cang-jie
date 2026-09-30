@@ -7,10 +7,10 @@
 <rect x="24" y="96" width="300" height="150" rx="10" fill="#eaf6ec" stroke="#3f9a55" stroke-width="1.6"/>
 <text x="174.0" y="116" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">shelf/ 书架线</text>
 <text x="174.0" y="139" text-anchor="middle" font-size="10.5" fill="#3a3a3a">book-serve（母版库 / 落原生）</text>
-<text x="174.0" y="154" text-anchor="middle" font-size="10.5" fill="#3a3a3a">koreader-serve</text>
+<text x="174.0" y="154" text-anchor="middle" font-size="10.5" fill="#8a8a8a">（koreader-serve 09-29 退役，源码留档）</text>
 <text x="174.0" y="169" text-anchor="middle" font-size="10.5" fill="#3a3a3a"></text>
 <text x="174.0" y="184" text-anchor="middle" font-size="10.5" fill="#3a3a3a">常用：events · xochitl · clock · asset</text>
-<text x="174.0" y="199" text-anchor="middle" font-size="10.5" fill="#3a3a3a">fswatch · formats · cache · sync · ttf(koreader)</text>
+<text x="174.0" y="199" text-anchor="middle" font-size="10.5" fill="#3a3a3a">fswatch · formats · cache · sync</text>
 <rect x="340" y="96" width="300" height="150" rx="10" fill="#f2eefa" stroke="#7a5cb0" stroke-width="1.6"/>
 <text x="490.0" y="116" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">notes/ 笔记线</text>
 <text x="490.0" y="139" text-anchor="middle" font-size="10.5" fill="#3a3a3a">ink-serve · transcribe-serve</text>
@@ -39,7 +39,7 @@
 <polyline points="1074,246 1074,282" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#mk)"/>
 <rect x="24" y="282" width="1192" height="400" rx="10" fill="#f1f1ef" stroke="#8a8a8a" stroke-width="1.6"/>
 <text x="620" y="306" text-anchor="middle" font-size="14" font-weight="bold" fill="#1a1a1a">rmsvc-core（crate；21 个模块）</text>
-<rect x="44" y="322" width="372" height="170" rx="10" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.6"/>
+<rect x="44" y="322" width="372" height="176" rx="10" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.6"/>
 <text x="230.0" y="342" text-anchor="middle" font-size="12" font-weight="bold" fill="#1a1a1a">服务骨架</text>
 <text x="56" y="362" text-anchor="start" font-size="10" fill="#3a3a3a">service   启动模板：解析 --bind → 建目录 → 自注册 → 起服务器（自带 /health）</text>
 <text x="56" y="380" text-anchor="start" font-size="10" fill="#3a3a3a">registry  服务自注册/发现：$XDG_RUNTIME_DIR/shelf/services/&lt;名&gt;.json</text>
@@ -47,21 +47,23 @@
 <text x="56" y="416" text-anchor="start" font-size="10" fill="#3a3a3a">http      tiny_http 适配：Router（最具体优先）/ Reply / Guard / 流式回执</text>
 <text x="56" y="434" text-anchor="start" font-size="10" fill="#3a3a3a">          （并发上限 64；accept 暂时性错误跳过不停摆；唯一适配层）</text>
 <text x="56" y="452" text-anchor="start" font-size="10" fill="#3a3a3a">events    事件总线 EventBus + SSE + follow()（订阅别的服务）</text>
-<rect x="432" y="322" width="372" height="170" rx="10" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.6"/>
+<rect x="432" y="322" width="372" height="176" rx="10" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.6"/>
 <text x="618.0" y="342" text-anchor="middle" font-size="12" font-weight="bold" fill="#1a1a1a">文件与数据</text>
 <text x="444" y="362" text-anchor="start" font-size="10" fill="#3a3a3a">paths     XDG 基目录的单一路径表（三线共用一张）</text>
 <text x="444" y="380" text-anchor="start" font-size="10" fill="#3a3a3a">fs        原子写（tmp→rename，可带权限）· plain_name · unique_path</text>
 <text x="444" y="398" text-anchor="start" font-size="10" fill="#3a3a3a">config    JSON 配置读写模板（load_or_default / load_or_seed / save）</text>
 <text x="444" y="416" text-anchor="start" font-size="10" fill="#3a3a3a">multipart 流式 multipart 解析（多文件落盘，不进内存；引号内 ; 不切）</text>
 <text x="444" y="434" text-anchor="start" font-size="10" fill="#3a3a3a">asset     资产仓库 + 上传流程模板（字体/壁纸暂存在 /home，启动清半成品）</text>
-<text x="444" y="452" text-anchor="start" font-size="10" fill="#3a3a3a">formats   文件格式白名单单一事实源 · ttf 字体解析 · cache TTL 缓存 · clock</text>
-<text x="444" y="470" text-anchor="start" font-size="10" fill="#3a3a3a">sync      容忍 poison 的取锁 sync::lock（各线手写样板已收编）</text>
-<rect x="820" y="322" width="376" height="170" rx="10" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.6"/>
+<text x="444" y="452" text-anchor="start" font-size="10" fill="#3a3a3a">formats   文件格式白名单单一事实源 · ttf 字体解析 · clock 时间戳</text>
+<text x="444" y="470" text-anchor="start" font-size="10" fill="#3a3a3a">cache     TtlCache 单值 TTL · StampCache 按文件戳失效（09-30）</text>
+<text x="444" y="488" text-anchor="start" font-size="10" fill="#3a3a3a">sync      容忍 poison 的取锁 sync::lock（各线手写样板已收编）</text>
+<rect x="820" y="322" width="376" height="176" rx="10" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.6"/>
 <text x="1008.0" y="342" text-anchor="middle" font-size="12" font-weight="bold" fill="#1a1a1a">对外与安全（网关用得多）</text>
 <text x="832" y="362" text-anchor="start" font-size="10" fill="#3a3a3a">auth      PBKDF2 密码哈希 · Basic/Cookie · 会话表 · 按 IP 失败限速</text>
-<text x="832" y="380" text-anchor="start" font-size="10" fill="#3a3a3a">tls       带名称约束的私有 CA + 叶证书（800 天，自动续签）</text>
-<text x="832" y="398" text-anchor="start" font-size="10" fill="#3a3a3a">mdns      极简 mDNS 应答器（shelf.local；网络地址变了才重扫）</text>
-<text x="832" y="416" text-anchor="start" font-size="10" fill="#3a3a3a">netinfo   本机 IPv4 表（证书 SAN、mDNS 选址；不 fork 进程）</text>
+<text x="832" y="380" text-anchor="start" font-size="10" fill="#3a3a3a">          VerifyCache：只缓存“校验通过”，免每请求 60 万轮（09-30）</text>
+<text x="832" y="398" text-anchor="start" font-size="10" fill="#3a3a3a">tls       带名称约束的私有 CA + 叶证书（800 天，自动续签）</text>
+<text x="832" y="416" text-anchor="start" font-size="10" fill="#3a3a3a">mdns      极简 mDNS 应答器（shelf.local；网络地址变了才重扫）</text>
+<text x="832" y="434" text-anchor="start" font-size="10" fill="#3a3a3a">netinfo   本机 IPv4 表（证书 SAN、mDNS 选址；不 fork 进程）</text>
 <rect x="44" y="508" width="560" height="150" rx="10" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.6"/>
 <text x="324.0" y="528" text-anchor="middle" font-size="12" font-weight="bold" fill="#1a1a1a">和设备上的 xochitl 打交道</text>
 <text x="56" y="548" text-anchor="start" font-size="10" fill="#3a3a3a">xochitl       原生书库免重启注入：POST /upload（GET-then-upload 归档）</text>
@@ -72,8 +74,8 @@
 <text x="56" y="638" text-anchor="start" font-size="10" fill="#3a3a3a">fswatch       inotify 防抖目录监听（常驻 / 限时两种）</text>
 <rect x="620" y="508" width="576" height="150" rx="10" fill="#fdf1ec" stroke="#c0602d" stroke-width="1.6"/>
 <text x="908.0" y="528" text-anchor="middle" font-size="12" font-weight="bold" fill="#1a1a1a">维护纪律</text>
-<text x="632" y="548" text-anchor="start" font-size="10" fill="#3a3a3a">· 这里出问题，理论上 5 个独立顶层项目一起受影响：改任何模块前</text>
-<text x="632" y="566" text-anchor="start" font-size="10" fill="#3a3a3a">  先想清楚三条线谁在用它</text>
+<text x="632" y="548" text-anchor="start" font-size="10" fill="#3a3a3a">· 这里出问题，理论上 4 个独立顶层项目一起受影响：改任何模块前</text>
+<text x="632" y="566" text-anchor="start" font-size="10" fill="#3a3a3a">  先想清楚谁在用它</text>
 <text x="632" y="584" text-anchor="start" font-size="10" fill="#3a3a3a">· 不引用旧项目任何 crate（device-core / weread-device）；</text>
 <text x="632" y="602" text-anchor="start" font-size="10" fill="#3a3a3a">  xochitl、fswatch 两模块是“剥离移植”的独立实现</text>
 <text x="632" y="620" text-anchor="start" font-size="10" fill="#3a3a3a">· 独立顶层项目各自带一份 .cargo/config.toml（Cargo 没有“引用别处配置”）</text>

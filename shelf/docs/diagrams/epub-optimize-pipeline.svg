@@ -27,7 +27,7 @@
   <rect x="235" y="208" width="480" height="30" rx="6" fill="#ffffff" stroke="#c9971f" stroke-width="1"/>
   <text x="475" y="228" text-anchor="middle" font-size="10.5" fill="#2a2a2a">第一遍 html：被引用的脚注块搬出、建全书索引（Anchor 模式）</text>
   <rect x="235" y="244" width="480" height="30" rx="6" fill="#ffffff" stroke="#c9971f" stroke-width="1"/>
-  <text x="475" y="264" text-anchor="middle" font-size="10.5" fill="#2a2a2a">漫画 + 开了页边距最小化：文字页/混排页留边（comic_pad，§3.5）</text>
+  <text x="475" y="264" text-anchor="middle" font-size="10.5" fill="#2a2a2a">漫画 + 开了页边距最小化：文字页/混排页留边（comic_pad，§3.3）</text>
 
   <line x1="475" y1="290" x2="475" y2="314" stroke="#555" stroke-width="1.6" marker-end="url(#eop-arrow)"/>
 
@@ -47,7 +47,7 @@
   <rect x="415" y="364" width="180" height="66" rx="7" fill="#ffffff" stroke="#3e8e51" stroke-width="1.2"/>
   <text x="505" y="384" text-anchor="middle" font-size="11" font-weight="bold" fill="#1a1a1a">图片处理</text>
   <text x="505" y="401" text-anchor="middle" font-size="10" fill="#4a4a4a">漫画：裁边 + 单趟缩放 + 补白</text>
-  <text x="505" y="415" text-anchor="middle" font-size="10" fill="#4a4a4a">普通：缩进 954×1696 框</text>
+  <text x="505" y="415" text-anchor="middle" font-size="10" fill="#4a4a4a">插图：缩进 842×1455 框</text>
   <rect x="610" y="364" width="120" height="66" rx="7" fill="#ffffff" stroke="#3e8e51" stroke-width="1.2"/>
   <text x="670" y="384" text-anchor="middle" font-size="11" font-weight="bold" fill="#1a1a1a">写出 + 丢弃</text>
   <text x="670" y="401" text-anchor="middle" font-size="10" fill="#4a4a4a">直接写输出 zip</text>
@@ -57,7 +57,7 @@
   <line x1="595" y1="397" x2="610" y2="397" stroke="#555" stroke-width="1.4" marker-end="url(#eop-arrow)"/>
 
   <rect x="135" y="440" width="595" height="28" rx="6" fill="#ffffff" stroke="#3e8e51" stroke-width="1"/>
-  <text x="432" y="459" text-anchor="middle" font-size="10" fill="#2a2a2a">html 章节：第二遍变换（脚注重挂、远程图内联、对比度…），文字条目沿用阶段一结果</text>
+  <text x="432" y="459" text-anchor="middle" font-size="10" fill="#2a2a2a">html 章节：第二遍变换（脚注重挂、远程图内联并按插图框缩放…），文字条目沿用阶段一结果</text>
   <text x="432" y="486" text-anchor="middle" font-size="10" fill="#4a4a4a">每处理完一个条目：检查取消标记 → on_progress(done, total)</text>
   <text x="432" y="501" text-anchor="middle" font-size="10" fill="#4a4a4a">同时在处理的图片总像素 ≤600 万（PixelBudget），超大图独占</text>
 
@@ -65,27 +65,28 @@
   <line x1="740" y1="412" x2="775" y2="412" stroke="#555" stroke-width="1.6" marker-end="url(#eop-arrow)"/>
   <rect x="775" y="352" width="245" height="120" rx="8" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.6"/>
   <text x="897" y="376" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">输出 EPUB</text>
-  <text x="897" y="396" text-anchor="middle" font-size="10" fill="#4a4a4a">先写 .&lt;name&gt;.optimizing.tmp</text>
+  <text x="897" y="396" text-anchor="middle" font-size="10" fill="#4a4a4a">先写 .&lt;pid&gt;.&lt;序号&gt;.optimizing.tmp</text>
   <text x="897" y="412" text-anchor="middle" font-size="10" fill="#4a4a4a">过质量门（check_epub_file）才改名覆盖</text>
   <text x="897" y="428" text-anchor="middle" font-size="10" fill="#4a4a4a">不过门/失败/取消：原文件不动</text>
-  <text x="897" y="448" text-anchor="middle" font-size="10" fill="#4a4a4a">埋 OPTIMIZE_VERSION="15"</text>
-  <text x="897" y="462" text-anchor="middle" font-size="10" fill="#4a4a4a">幂等标记（含清洗；否则 15-core）</text>
+  <text x="897" y="448" text-anchor="middle" font-size="10" fill="#4a4a4a">埋 OPTIMIZE_VERSION="16"</text>
+  <text x="897" y="462" text-anchor="middle" font-size="10" fill="#4a4a4a">幂等标记（含清洗；否则 16-core）</text>
 
   <!-- book-serve 侧 -->
   <rect x="775" y="68" width="245" height="222" rx="8" fill="#fdf3f0" stroke="#b5541f" stroke-width="1.6"/>
   <text x="897" y="90" text-anchor="middle" font-size="12" font-weight="bold" fill="#1a1a1a">book-serve 侧</text>
   <text x="897" y="112" text-anchor="middle" font-size="10" fill="#5a3a2a">spawn_optimize 起后台线程</text>
   <text x="897" y="127" text-anchor="middle" font-size="10" fill="#5a3a2a">先写 sidecar pending，HTTP 立即回</text>
-  <text x="897" y="152" text-anchor="middle" font-size="10" fill="#5a3a2a">进度每 5 个条目才落一次盘</text>
-  <text x="897" y="167" text-anchor="middle" font-size="10" fill="#5a3a2a">（首尾必落，避免真 I/O 开销</text>
-  <text x="897" y="182" text-anchor="middle" font-size="10" fill="#5a3a2a">随条目数线性涨）</text>
+  <text x="897" y="152" text-anchor="middle" font-size="10" fill="#5a3a2a">进度隔 ≥5 个条目且 ≥1 秒才落一次盘</text>
+  <text x="897" y="167" text-anchor="middle" font-size="10" fill="#5a3a2a">（首尾必落，避免 I/O 与事件</text>
+  <text x="897" y="182" text-anchor="middle" font-size="10" fill="#5a3a2a">随条目数线性涨、网页反复重拉）</text>
   <text x="897" y="207" text-anchor="middle" font-size="10" fill="#5a3a2a">写 sidecar.progress + bus.publish</text>
   <text x="897" y="222" text-anchor="middle" font-size="10" fill="#5a3a2a">→ SSE → 网页画真百分比进度条</text>
   <text x="897" y="247" text-anchor="middle" font-size="10" fill="#5a3a2a">取消：终态 cancelled，不算失败</text>
   <text x="897" y="262" text-anchor="middle" font-size="10" fill="#5a3a2a">panic 被 catch_unwind 兜住</text>
+  <text x="897" y="277" text-anchor="middle" font-size="10" fill="#5a3a2a">半成品（ScratchFile）Drop 即删</text>
 
   <!-- 底部说明 -->
-  <text x="520" y="538" text-anchor="middle" font-size="11" fill="#6a6a6a">内存版 optimize_epub_with（整本读入一次性产出）保留给测试/CLI 小书场景，业务函数共用，两条路径逐字节对拍一致</text>
+  <text x="520" y="538" text-anchor="middle" font-size="11" fill="#6a6a6a">内存版 optimize_epub_with（整本读入一次性产出）保留给单测与开发工具 epub-optimize，业务函数共用，两条路径逐字节对拍一致</text>
   <text x="520" y="560" text-anchor="middle" font-size="11" fill="#8a8a8a">像素上限 900 万取值：第一版按“3 字节/像素”理论估算给 2500 万，真机 VmHWM 撞到 230MB+ 几乎白修；</text>
   <text x="520" y="577" text-anchor="middle" font-size="11" fill="#8a8a8a">改用真机实测（870 万像素≈100MB、2500 万≈230MB）重新校准后才真正压下去</text>
   <text x="520" y="600" text-anchor="middle" font-size="11" fill="#2f7d45">图片并行：2 个 worker；设备实测一本 350 页漫画 285s → 148s，产物与串行逐字节一致</text>
