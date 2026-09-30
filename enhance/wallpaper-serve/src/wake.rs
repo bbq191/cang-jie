@@ -58,7 +58,16 @@ fn watch_once(store: &WallpaperStore, bus: &rmsvc_core::events::EventBus) -> Res
     let mut last: Option<f64> = None;
     loop {
         let events = ino.read_events_blocking(&mut buf).map_err(|e| format!("读 inotify 事件失败: {e}"))?;
-        let hit = events.into_iter().any(|ev| is_sleep_read(ev.mask, ev.name, &current_name));
+        let (mut hit, mut gone) = (false, false);
+        for ev in events {
+            hit |= is_sleep_read(ev.mask, ev.name, &current_name);
+            gone |= ev.mask.contains(EventMask::IGNORED);
+        }
+        // 监听的目录被删/被卸载时内核自动撤掉监听、只发一条 IN_IGNORED，此后再无事件：此前这里照常
+        // continue，线程永远阻塞在一个死掉的监听上、再也不轮换。返回错误交给 spawn 的重试循环重建目录和监听。
+        if gone {
+            return Err(format!("监听的 {} 已失效（目录被删除或卸载）", dir.display()));
+        }
         if !hit {
             continue;
         }
@@ -125,6 +134,27 @@ mod tests {
         let a = boottime_secs();
         let b = boottime_secs();
         assert!(a > 0.0 && b >= a);
+    }
+
+    /// 真 inotify：监听的目录被删 → watch_once 返回错误（交给重试循环重建），不再永远阻塞在死监听上。
+    #[test]
+    fn watch_returns_when_dir_removed() {
+        let t = tempfile::tempdir().unwrap();
+        let h = t.path().to_str().unwrap().to_string();
+        let paths = rmsvc_core::paths::Paths::resolve(move |k| if k == "HOME" { Some(h.clone()) } else { None });
+        let store = Arc::new(WallpaperStore::new(&paths));
+        store.ensure().unwrap();
+        let dir = store.current_path().parent().unwrap().to_path_buf();
+        let (tx, rx) = std::sync::mpsc::channel();
+        let s2 = store.clone();
+        std::thread::spawn(move || {
+            let r = watch_once(&s2, &rmsvc_core::events::EventBus::new());
+            let _ = tx.send(r);
+        });
+        std::thread::sleep(Duration::from_millis(300)); // 等监听建好
+        std::fs::remove_dir_all(&dir).unwrap();
+        let r = rx.recv_timeout(Duration::from_secs(5)).expect("目录删掉后 watch_once 应当返回");
+        assert!(r.unwrap_err().contains("已失效"));
     }
 
     /// 真 inotify：别人读完 current.png → 轮换；本服务写 current.png、读池图 → 不触发；同一次休眠重复读只轮换一次。

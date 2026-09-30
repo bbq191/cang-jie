@@ -122,7 +122,7 @@ impl Summarizer {
             let mah = drained_uah / 1000; // 精确放电 mAh
             let ma = if disc_secs > 0 { drained_uah * 3600 / disc_secs as i64 / 1000 } else { 0 }; // 均放电 mA
 
-            // 唤醒源计数(窗口内 journal 事件按友好名聚合)
+            // 唤醒源计数(窗口内 kmsg 唤醒事件按友好名聚合)
             let mut wake: HashMap<String, u64> = HashMap::new();
             for (ep, name) in wakes {
                 if ep >= start {
@@ -290,7 +290,12 @@ fn friendly(unit: &str) -> &str {
         "rm-sync" | "update-engine" | "swupdate" => "reMarkable 同步/更新",
         "NetworkManager" | "wpa_supplicant" | "systemd-networkd" | "systemd-resolved" => "网络栈",
         "marker-manager" | "tee-supplicant" => "硬件",
-        "wr-serve" | "cj-stars" | "wr-renew" | "battop" | "cangjie-wallpaper" => "cang-jie",
+        // 本项目现役服务（书架/笔记/系统增强三条线 + 网关 + 打包层常驻件）。09-30 前这里只有已退役的
+        // 微读/PKM 旧 unit，现役服务在「应用」视图里各自单列、「cang-jie」只剩 battop 一项。
+        "gateway" | "book-serve" | "font-serve" | "wallpaper-serve" | "note-serve" | "ink-serve" | "mind-serve"
+        | "transcribe-serve" | "wifi-watch" | "battop" => "cang-jie",
+        // 已退役的旧 unit 名：40 天样本保留期内的历史行仍可能出现，照旧归组。
+        "wr-serve" | "cj-stars" | "wr-renew" | "cangjie-wallpaper" => "cang-jie",
         "kernel" => "内核",
         _ if unit.ends_with("-metrics") => "reMarkable 度量",
         _ => unit,
@@ -506,6 +511,9 @@ mod tests {
     fn friendly_names() {
         assert_eq!(friendly("foo-metrics"), "reMarkable 度量");
         assert_eq!(friendly("weird"), "weird");
+        for u in ["gateway", "book-serve", "font-serve", "wallpaper-serve", "note-serve", "wifi-watch", "battop", "wr-serve"] {
+            assert_eq!(friendly(u), "cang-jie", "{u}");
+        }
         assert_eq!(friendly_wake("0-0048"), "传感器(I2C)");
         assert_eq!(friendly_wake("1-x"), "传感器(I2C)");
         assert_eq!(friendly_wake("ab"), "ab");

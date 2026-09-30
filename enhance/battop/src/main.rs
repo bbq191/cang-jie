@@ -87,7 +87,7 @@ fn sample_once(dir: &Path, cache: &mut summary::SummaryCache) {
         eprintln!("battop: 写 baseline 失败: {e}");
     }
 
-    // 唤醒源事件(设备/子系统级)：小时级缓存 + 增量读 journal；summary 每轮只读这个小缓存。
+    // 唤醒源事件(设备/子系统级)：约 50 分钟刷新一次的缓存，按序号增量读 /dev/kmsg；summary 每轮只读这个小缓存。
     wake::refresh_if_stale(dir, now);
     let wakes = wake::load_cache(dir);
 
