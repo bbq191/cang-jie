@@ -93,23 +93,7 @@ pub fn ingest_doc(lib: &Path, crops_dir: &Path, db: &BookDb, cfg: &IngestConfig,
                 stats.merge.revoked += m.revoked;
                 stats.merge.revived += m.revived;
                 stats.pages += 1;
-                // 裁图：本页所有有手写、且裁图缺失或指纹变了的条目。自渲染（`render_ink`）直接吃这一页
-                // 已经解析好的 `page.strokes`，不依赖 xochitl 缩略图——写多靠下都画得出来，也不会混进印刷体
-                // （2026-09-07 二期真机验证发现的两个问题，见白皮书 §03o）。
-                for e in book.entries.iter_mut().filter(|e| e.page == *page_id) {
-                    let Some(ink) = e.ink.as_mut() else { continue };
-                    let want = format!("{}-{}.png", e.id, ink.hash);
-                    if ink.crop == want && crops_dir.join(&want).is_file() {
-                        continue;
-                    }
-                    match render_ink(&page.strokes, &ink.strokes, ink.bbox, cfg.crop_margin) {
-                        Ok(png) => match rmsvc_core::fs::write_atomic(&crops_dir.join(&want), &png) {
-                            Ok(()) => ink.crop = want,
-                            Err(err) => errors.push(format!("{page_id}: 写裁图失败 {err}")),
-                        },
-                        Err(err) => errors.push(format!("{page_id}: {err}")),
-                    }
-                }
+                refresh_crops(crops_dir, page_id, &page.strokes, &mut book.entries, cfg.crop_margin, &mut errors);
                 // mtime 只到秒：这一秒里读完之后 xochitl 又写了一次，mtime 还是同一个秒数，下次比较"没变"就漏了。
                 // 页的修改时间落在当前这一秒（或更晚）时少记一秒，下次事件再扫一遍（合并幂等），之后正常记下
                 // （2026-09-25 第四轮审计；条目库格式不变）。
@@ -121,6 +105,38 @@ pub fn ingest_doc(lib: &Path, crops_dir: &Path, db: &BookDb, cfg: &IngestConfig,
         println!("[ink-serve] {uuid} 摄取告警: {}", errors.join("; "));
     }
     Ok(Some(stats))
+}
+
+/// 裁图：本页所有有手写、且裁图缺失或指纹变了的条目。自渲染（`render_ink`）直接吃这一页已经解析好的
+/// `strokes`，不依赖 xochitl 缩略图——写多靠下都画得出来，也不会混进印刷体（2026-09-07 二期真机验证发现的
+/// 两个问题，见白皮书 §03o）。补了几笔 → 指纹变了 → 新裁图换了名字，旧的那张再没人引用，写好新的就删掉
+/// （此前一直留着，裁图目录只增不减；2026-09-30 第五轮审计）。
+fn refresh_crops(crops_dir: &Path, page_id: &str, strokes: &[rmv6::page::Stroke], entries: &mut [notecore::model::Entry], margin: f32, errors: &mut Vec<String>) {
+    for e in entries.iter_mut().filter(|e| e.page == page_id) {
+        let Some(ink) = e.ink.as_mut() else { continue };
+        let want = format!("{}-{}.png", e.id, ink.hash);
+        if ink.crop == want && crops_dir.join(&want).is_file() {
+            continue;
+        }
+        let png = match render_ink(strokes, &ink.strokes, ink.bbox, margin) {
+            Ok(png) => png,
+            Err(err) => {
+                errors.push(format!("{page_id}: {err}"));
+                continue;
+            }
+        };
+        if let Err(err) = rmsvc_core::fs::write_atomic(&crops_dir.join(&want), &png) {
+            errors.push(format!("{page_id}: 写裁图失败 {err}"));
+            continue;
+        }
+        let old = std::mem::replace(&mut ink.crop, want);
+        // 文件名来自条目库，过一遍单段校验再拼路径。
+        if let Ok(name) = rmsvc_core::fs::plain_name(&old) {
+            if name != ink.crop {
+                let _ = std::fs::remove_file(crops_dir.join(name));
+            }
+        }
+    }
 }
 
 /// 书不再活了（回收站/已删）：条目库里如果还有没撤销的条目，全标 `Revoked`（不物理删，历史留痕）。
@@ -143,6 +159,22 @@ fn revoke_stale(db: &BookDb, uuid: &str, now: u64) -> Result<Option<DocStats>, S
         n
     })? else { return Ok(None) };
     Ok((revoked > 0).then(|| DocStats { pages: 0, merge: MergeStats { revoked, ..Default::default() } }))
+}
+
+/// 清空一本书的回收站（`Book::purge_terminal`），被清掉的条目的裁图一并删——此前裁图留在目录里再没人引用，
+/// 只增不减。书不在条目库 → `Ok(None)`。
+pub fn purge_terminal(db: &BookDb, crops_dir: &Path, uuid: &str) -> Result<Option<usize>, String> {
+    let Some((removed, crops)) = db.update_existing(uuid, |b| {
+        let crops: Vec<String> = b.entries.iter().filter(|e| e.is_terminal()).filter_map(|e| e.ink.as_ref().map(|k| k.crop.clone())).filter(|c| !c.is_empty()).collect();
+        (b.purge_terminal(), crops)
+    })?
+    else {
+        return Ok(None);
+    };
+    for c in crops.iter().filter_map(|c| rmsvc_core::fs::plain_name(c).ok()) {
+        let _ = std::fs::remove_file(crops_dir.join(c));
+    }
+    Ok(Some(removed))
 }
 
 /// 书库里所有活的 EPUB 且有手写页的文档 uuid（启动追平用）。
@@ -224,6 +256,37 @@ mod tests {
 
     fn seeded_entry(id: &str, status: Status) -> notecore::model::Entry {
         notecore::model::Entry { id: id.into(), page: "p".into(), page_index: 0, chapter: None, chapter_title: String::new(), subhead: None, quote: None, ink: None, drafts: vec![], text: None, style: Default::default(), ask_ai: false, question: None, answer: None, status, destination: Default::default(), source: Default::default(), created: 0, updated: 0 }
+    }
+
+    fn ink_entry(id: &str, hash: &str, crop: &str, status: Status) -> notecore::model::Entry {
+        let mut e = seeded_entry(id, status);
+        e.ink = Some(notecore::model::Ink { strokes: vec!["1:1".into()], bbox: (0.0, 0.0, 40.0, 20.0), hash: hash.into(), crop: crop.into() });
+        e
+    }
+
+    /// 回归（2026-09-30）：指纹变了重画裁图后删掉旧的那张；清空回收站时被清条目的裁图一并删，活条目的留着。
+    #[test]
+    fn superseded_and_purged_crops_are_deleted() {
+        let t = tempfile::tempdir().unwrap();
+        let crops = t.path().join("crops");
+        std::fs::create_dir_all(&crops).unwrap();
+        let pts = [(0.0, 0.0), (40.0, 20.0)];
+        let stroke = rmv6::page::Stroke { id: rmv6::v6::crdt::CrdtId { part1: 1, part2: 1 }, parent: Default::default(), tool: rmv6::shared::tool::Tool::BallPoint, color: rmv6::shared::pen_color::PenColor::Black, thickness: 1.0, points: pts.to_vec(), bbox: rmv6::page::BBox::of_points(pts).unwrap() };
+        std::fs::write(crops.join("e1-old.png"), b"x").unwrap();
+        let mut entries = vec![ink_entry("e1", "new", "e1-old.png", Status::Pending)];
+        let mut errors = vec![];
+        refresh_crops(&crops, "p", std::slice::from_ref(&stroke), &mut entries, 4.0, &mut errors);
+        assert!(errors.is_empty(), "{errors:?}");
+        assert_eq!(entries[0].ink.as_ref().unwrap().crop, "e1-new.png");
+        assert!(crops.join("e1-new.png").is_file() && !crops.join("e1-old.png").exists(), "旧裁图删掉");
+
+        let db = BookDb::new(t.path().join("books"));
+        db.ensure().unwrap();
+        std::fs::write(crops.join("gone-h.png"), b"x").unwrap();
+        db.update("u", || Book { uuid: "u".into(), ..Default::default() }, |b| b.entries = vec![entries[0].clone(), ink_entry("gone", "h", "gone-h.png", Status::Archived)]).unwrap();
+        assert_eq!(purge_terminal(&db, &crops, "u").unwrap(), Some(1));
+        assert!(!crops.join("gone-h.png").exists() && crops.join("e1-new.png").is_file(), "只删被清条目的裁图");
+        assert_eq!(purge_terminal(&db, &crops, "nope").unwrap(), None);
     }
 
     /// 真机验证时发现的 bug（2026-09-07）：书被移进回收站、甚至彻底删除，条目库里的旧条目
