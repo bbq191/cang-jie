@@ -7,7 +7,7 @@ const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;'
 const fmtB=n=>n>1048576?(n/1048576).toFixed(1)+' MB':n>1024?(n/1024).toFixed(0)+' KB':n+' B';
 // 小徽章：renderManage 的「基石与模块」列表用。
 const badge=(t,ok)=>`<span class="badge ${ok?'on':'off'}">${t}</span>`;
-/* 母版库一本书是不是"已经不用管了"——给 stagingList 的"隐藏已完成"开关用（2026-09-19 用户反馈
+/* 母版库一本书是不是"已经不用管了"——给母版库的"隐藏已完成"开关与「已完成」筛选用（2026-09-19 用户反馈
    母版库列表太长）。正在处理/失败态都不算"完成"（还需要用户看见），格式不是 EPUB 就没有"优化"
    这个概念、只看有没有落库；EPUB 要优化完+落库才算。落库只认加入 xochitl：2026-09-29 设备卸掉了
    KOReader，以前"加入过 KOReader"的书现在不在任何阅读器里，不再算完成。 */
@@ -30,25 +30,22 @@ const coalesce=fn=>{let running=null,again=false;
 const refreshSec=sec=>{if(!sec.refresh)return;(sec._rf||(sec._rf=coalesce(async()=>{await sec.refresh()})))()};
 /* 防双击：按钮点击后立即禁用，异步操作完成（不管成功失败）再解禁。很多按钮的异步操作是删除/
    落库这类不该被同一次操作重复触发两遍的动作——不加这一层，手指点快了或者网络慢的时候网络请求
-   还没回来就能再点一次，2026-09-18 真机反馈"优化过程中点击删除"这类并发操作会撞在一起。母版库
-   列表 stagingList 的 btn() 助手（2026-09-19 起）也走这个——原来自己手写了一遍禁用/复位逻辑，
-   跟这里是同一件事的第二份实现，改成在这层之外只叠列表特有的按钮文案/本地忙态记账。已经自己
-   一开始就手动 disabled=true 的按钮（超限/未安装这类"根本点不了"，不是"点了在跑"）不需要套这层。*/
+   还没回来就能再点一次，2026-09-18 真机反馈"优化过程中点击删除"这类并发操作会撞在一起。新按钮一律
+   用下面的 btn()（内部就是这一层）。一开始就 disabled=true 的按钮（"根本点不了"，不是"点了在跑"）不传处理函数。*/
 const guardClick=(el,fn)=>{el.onclick=async()=>{if(el.disabled)return;el.disabled=true;try{await fn()}catch(e){console.error(e);toast(T('common.failed'))}finally{el.disabled=false}}};
 /* 按钮：`btn(文案, 点击处理, 类名)`——el('button')+guardClick 这一对全站出现二十来次，收成一处。点击处理可同步可异步
    （guardClick 统一防双击、异常提示）；文案可以是字符串或节点数组（底部栏的"标签+数量角标"）；extra 放 title 等其余属性。 */
 const btn=(text,fn,cls='btn',extra)=>{const b=el('button',{class:cls,type:'button',...extra},typeof text==='string'?null:text);if(typeof text==='string')b.textContent=text;if(fn)guardClick(b,fn);return b};
 /* 轻量 DOM 构建 helper：`el('div',{class:'small',style:'...'},[child1,child2])`。`attrs` 里
    `class`/其余属性走 `setAttribute`，`style` 走 `style.cssText`，`text`/`html` 分别设
-   `textContent`/`innerHTML`；`children` 接单个节点/字符串或数组。不是要把全站手写 DOM 都机械
-   替换一遍——只在改动到的地方（stagingList 这类同类节点最密集的函数）顺手用，别的地方不动
-   （2026-09-19 代码质量审计范围说明）。*/
+   `textContent`/`innerHTML`；`children` 接单个节点/字符串或数组。不强求把全站模板字符串都改成它——
+   只在同类节点密集、或要插外部数据的地方用（`text` 天然不需要转义）。*/
 const el=(tag,attrs,children)=>{const n=document.createElement(tag);
   if(attrs)for(const k in attrs){const v=attrs[k];if(k==='style')n.style.cssText=v;else if(k==='text')n.textContent=v;else if(k==='html')n.innerHTML=v;else n.setAttribute(k,v)}
   if(children!=null)for(const c of [].concat(children))n.appendChild(typeof c==='string'?document.createTextNode(c):c);
   return n};
 /* 结构化步数进度展示：`prog={done,total}` 有数据画真百分比，没有画不确定态滚动条（浏览器原生
-   `<progress>` 不带 value/max 渲染成不确定态动画）——从 stagingList 原地实现抽出来，同样适用于
+   `<progress>` 不带 value/max 渲染成不确定态动画）——母版库行内进度、笔记「推送本章」共用，同样适用于
    任何"耗时不短、有时有分步数据有时没有"的忙态展示（`container` 是要挂这块的父节点，自己占
    一整行）。 */
 const renderStepProgress=(container,{label,prog,msg})=>{
@@ -887,7 +884,7 @@ function renderNotes(sec){sec.innerHTML=`
       // "没做"；改名"推送"是因为"同步"暗示双向/拉取，这个按钮其实只单向推。
       syncBtn.onclick=async()=>{syncBtn.disabled=true;msg.textContent='';holdFor(15000);
         // 服务端没有天然的分步数据（耗时来自生成笔记本+导出 md 两次整章调用，不是可数的"第几步"）——
-        // 跟 stagingList 普通整本落库同一处境，共用同一套不确定态滚动条（2026-09-19 代码质量审计，
+        // 跟母版库普通整本落库同一处境，共用同一套不确定态滚动条（2026-09-19 代码质量审计，
         // 原来这里只有一句不会变的静态文字"推送中…"）。
         const prog=renderStepProgress(row,{label:T('notes.pushing'),prog:null,msg:''});
         const gr=await j(bookApi('notes',`/chapters/${k}/generate`),{method:'POST'});
