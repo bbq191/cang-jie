@@ -156,6 +156,13 @@ pub(crate) fn extract_positioned_text_doc(doc: &lopdf::Document) -> Result<Vec<P
     Ok(collector.pages)
 }
 
+/// 可见文字数：不算空白，也不算 `'\0'`（字体缺 ToUnicode 映射时 pdf-extract 给的占位，不是真文字）。
+/// 分类（有没有文字层）与裁边闸门（一个字都不能有）共用同一口径——此前分类把 `'\0'` 也算作文字、裁边不算，
+/// 字全是 `'\0'` 的 PDF 会被判成有文字层去转 EPUB，产出几乎是空的。
+pub(crate) fn visible_char_count(pages: &[PageContent]) -> usize {
+    pages.iter().map(|p| p.chars.iter().filter(|c| c.ch != '\u{0}' && !c.ch.is_whitespace()).count()).sum()
+}
+
 // ============================================================================
 // 公式区域探测（纯函数，输入逐字符位置流，输出包围盒——不碰 PDF/渲染，可独立单测）
 // ============================================================================

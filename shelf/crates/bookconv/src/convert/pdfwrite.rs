@@ -146,10 +146,12 @@ fn png_to_image(data: &[u8]) -> Result<PdfImage, String> {
     let mut buf = vec![0u8; reader.output_buffer_size()];
     let info = reader.next_frame(&mut buf).map_err(|e| format!("PNG 帧解码: {e}"))?;
     let (w, h) = (info.width, info.height);
-    let bytes = &buf[..info.buffer_size()];
+    // 灰度/RGB 直接截断复用解码缓冲区（此前 `to_vec()` 再拷一份整帧像素，入库 PDF 裁边时大图多占一份内存）
+    buf.truncate(info.buffer_size());
+    let bytes = &buf[..];
     let (color, pixels): (ColorSpace, Vec<u8>) = match info.color_type {
-        png::ColorType::Grayscale => (ColorSpace::Gray, bytes.to_vec()),
-        png::ColorType::Rgb => (ColorSpace::Rgb, bytes.to_vec()),
+        png::ColorType::Grayscale => (ColorSpace::Gray, buf),
+        png::ColorType::Rgb => (ColorSpace::Rgb, buf),
         png::ColorType::GrayscaleAlpha => {
             let mut out = Vec::with_capacity((w * h) as usize);
             for px in bytes.chunks_exact(2) {

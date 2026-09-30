@@ -17,6 +17,8 @@
 //! ⑥ 2026-09-24 第三轮审计：lopdf 0.42 → 0.45（与 bookconv 同版本，调用方可直接传入已解析的 `Document`，
 //!   不必整份再解析一遍）；页内容改走带上限的解压（[`MAX_PAGE_CONTENT_BYTES`]，防解压炸弹）；损坏 PDF
 //!   常见的几处 panic（悬空引用、数组元素类型/个数不对、缺页对象、缺 MediaBox）改成返回 None/错误。
+//! ⑦ 2026-09-30 第五轮审计：`/Parent` 继承查找（`get_inherited`）改限深循环（成环时栈溢出）；Form XObject 等
+//!   嵌套流的解压也走 [`MAX_PAGE_CONTENT_BYTES`] 上限。
 //! 起因与设计见 `shelf/docs/EPUB优化规范白皮书.md` §05（PDF→EPUB 线"不改颜色/不挪图片位置"从
 //! "本来就没做"升级成"精确还原"，2026-09-23 用户拍板自研解释器）。
 //! 许可证：上游 MIT，见本 crate 目录 `LICENSE`。
@@ -1284,9 +1286,11 @@ struct TextState<'a>
 }
 
 // XXX: We'd ideally implement this without having to copy the uncompressed data
+// cj：Form XObject/ICC 等嵌套流此前用不限量的 `decompressed_content()`，几 KB 的压缩流能解出几 GB（设备 OOM）；
+// 与页内容同一个上限 [`MAX_PAGE_CONTENT_BYTES`]。超限与其它解压失败一样退回原始字节（上游原有行为）。
 fn get_contents(contents: &Stream) -> Vec<u8> {
     if contents.filters().is_ok() {
-        contents.decompressed_content().unwrap_or_else(|_|contents.content.clone())
+        contents.decompressed_content_with_limit(MAX_PAGE_CONTENT_BYTES).unwrap_or_else(|_|contents.content.clone())
     } else {
         contents.content.clone()
     }
@@ -2474,16 +2478,23 @@ pub fn extract_text_from_mem_by_pages_encrypted(buffer: &[u8], password: &str) -
 }
 
 
+/// cj：沿 `/Parent` 继承查找最多走几层（真实页树一般不超过 10 层）。
+const MAX_PARENT_DEPTH: usize = 64;
+
+/// cj：上游是无上限递归，损坏 PDF 的 `/Parent` 指回自己或绕成环时栈溢出（SIGSEGV，`catch_unwind` 接不住，
+/// book-serve 整个进程倒）——改成限深循环，走满 [`MAX_PARENT_DEPTH`] 层仍没找到按"没有"处理。
 fn get_inherited<'a, T: FromObj<'a>>(doc: &'a Document, dict: &'a Dictionary, key: &[u8]) -> Option<T> {
-    let o: Option<T> = get(doc, dict, key);
-    if let Some(o) = o {
-        Some(o)
-    } else {
-        let parent = dict.get(b"Parent")
+    let mut cur = dict;
+    for _ in 0..MAX_PARENT_DEPTH {
+        let o: Option<T> = get(doc, cur, key);
+        if o.is_some() {
+            return o;
+        }
+        cur = cur.get(b"Parent")
             .and_then(|parent| parent.as_reference())
             .and_then(|id| doc.get_dictionary(id)).ok()?;
-        get_inherited(doc, parent, key)
     }
+    None
 }
 
 pub fn output_doc_encrypted(
@@ -2548,4 +2559,23 @@ fn output_doc_inner<'a>(page_num: u32, object_id: ObjectId, doc: &'a Document, p
     p.process_stream(&doc, content, resources, &media_box, output, page_num)?;
     output.end_page()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod cj_tests {
+    use super::*;
+
+    /// `/Parent` 指回自己、又没有要找的键：此前无限递归栈溢出，现在限深后返回 None。
+    #[test]
+    fn get_inherited_survives_parent_cycle() {
+        let mut doc = Document::with_version("1.7");
+        let id = doc.new_object_id();
+        let mut d = Dictionary::new();
+        d.set("Type", Object::Name(b"Page".to_vec()));
+        d.set("Parent", Object::Reference(id));
+        doc.objects.insert(id, Object::Dictionary(d));
+        let dict = doc.get_dictionary(id).unwrap();
+        let got: Option<&Dictionary> = get_inherited(&doc, dict, b"Resources");
+        assert!(got.is_none());
+    }
 }

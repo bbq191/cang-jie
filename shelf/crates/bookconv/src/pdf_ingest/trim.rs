@@ -28,7 +28,7 @@ pub fn optimize_pdf_trim_only(src: &Path, dst_tmp: &Path, mut on_progress: impl 
         return Err("PDF 没有可用页面".into());
     }
     let text_pages = extract_positioned_text_doc(&doc).map_err(|e| format!("无法确认这个 PDF 没有文字层，为保住书籍内容不做改动：{e}"))?;
-    let text_chars: usize = text_pages.iter().map(|p| p.chars.iter().filter(|c| c.ch != '\u{0}' && !c.ch.is_whitespace()).count()).sum();
+    let text_chars = visible_char_count(&text_pages);
     if text_chars > 0 {
         return Err(format!("这个 PDF 含 {text_chars} 个可提取文字（文字层），改写页面会丢掉文字，保持原样"));
     }
