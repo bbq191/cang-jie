@@ -43,7 +43,7 @@ cd packaging && sh deploy-hl-snap.sh <host>
 sh deploy/install.sh [--no-restart]     # --no-restart：只落盘，不重启
 ```
 
-前置：设备上已 `vellum add xovi`。装到 `extensions.d/hl-snap.so`，和 `hw-stroke.so`、`qt-resource-rebuilder.so` 并列（09-29 前还有 `appload.so`，已随 KOReader 一起卸载）。安装器会：
+前置：设备上已 `vellum add xovi`。装到 `extensions.d/hl-snap.so`，和 `qt-resource-rebuilder.so` 并列（09-29 前还有 `appload.so`，已随 KOReader 一起卸载；手写优化 `hw-stroke.so` 2026-09-30 已移除）。安装器会：
 
 1. 旧 `.so` 先备份进 `~/cangjie-backups/`（**绝不留在 `extensions.d/`**：xovi 会把该目录下任何文件当扩展加载，重名会让 xochitl 起不来）；内容没变就不重复备份，`--no-restart` 模式下也不会标记"待重启"。
 2. 换文件：
