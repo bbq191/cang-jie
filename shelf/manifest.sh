@@ -45,7 +45,7 @@ shelf_svc_helpers() {
     esac
 }
 
-# 整包（非 --only）才装/删的共享件：shelf-uninstall（网关「管理台」网页卸载调它）与它 source 的库
+# 共享件：shelf-uninstall（网关「管理台」网页卸载调它）与它 source 的库。安装时每次都刷新（含 --only），卸载只在整包卸时删
 SHELF_LIB_DIRNAME="shelf"                      # ~/.local/lib/shelf/{manifest.sh,devlib.sh}
 SHELF_LIB_FILES="manifest.sh devlib.sh"
 SHELF_UNINSTALL_BIN="shelf-uninstall"
