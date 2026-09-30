@@ -1016,6 +1016,48 @@ new_sandbox; export CJ_ALLOWLIST_LOCAL="$R/allow.local.txt"; xovi_live off
 check "预检：xovi 未生效时如实说明'装了 xovi-reenable 就整机重启，否则 xovi/start'" test -n "$(grep 'xovi 尚未生效.*整机重启.*否则 xovi/start' "$R/out.txt")"
 unset CJ_ALLOWLIST_LOCAL
 
+# ═══════════════════════════ 10. 2026-09-30 第五轮审计新增 ═══════════════════════════
+section "2026-09-30 第五轮：卸载在 set -e 下的健壮性 / 遗留清理 / 状态文件"
+# cj_rm_payload 在 set -e 的设备端脚本里：子目录里多一个不认识的文件，rmdir 失败不能把整段脚本打断
+new_sandbox
+mkdir -p "$R/home/root/pkg-y/deploy"; echo 1 > "$R/home/root/pkg-y/a.so"; echo 1 > "$R/home/root/pkg-y/deploy/i.sh"; echo mine > "$R/home/root/pkg-y/deploy/mine.txt"
+out="$(sh -c "set -eu; . '$PKG/devlib.sh'; cj_rm_payload \"\$CJ_HOME/pkg-y\" a.so deploy/i.sh deploy; echo AFTER" 2>&1)"; rc=$?
+check "rm_payload（set -e）：子目录里有不认识的文件 → 不中断脚本、已知文件删了、子目录与该文件保留" test "$rc" -eq 0 -a -n "$(printf '%s' "$out" | grep -x AFTER)" -a ! -e "$R/home/root/pkg-y/a.so" -a ! -e "$R/home/root/pkg-y/deploy/i.sh" -a -f "$R/home/root/pkg-y/deploy/mine.txt"
+export CJ_SKIP_BUILD=1
+( cd "$PKG" && DEFER_XOVI_START=1 run sh deploy-hl-snap.sh 127.0.0.1 ) >/dev/null 2>&1
+echo mine > "$R/home/root/hl-snap/deploy/notes.txt"
+( cd "$PKG" && run sh uninstall-all.sh 127.0.0.1 --skip shelf ) >"$R/out.txt" 2>&1; rc=$?
+check "uninstall-all：hl-snap 载荷的 deploy/ 里有不认识的文件 → hl-snap 这步不再判失败，扩展照样摘掉、该文件保留" test "$rc" -eq 0 -a -z "$(grep '❌' "$R/out.txt")" -a ! -e "$R/home/root/xovi/extensions.d/hl-snap.so" -a -f "$R/home/root/hl-snap/deploy/notes.txt"
+unset CJ_SKIP_BUILD
+# wifi-watch 写的上网探测状态文件：卸载时一并删（否则网关横幅永远停在最后一次结果）；verity 下服务还在跑就保留
+new_sandbox; ( cd "$PKG" && run sh deploy-wifi-watch.sh 127.0.0.1 ) >/dev/null 2>&1
+WS="$R/home/root/.local/state/shelf"; mkdir -p "$WS"; echo '{"state":"portal"}' > "$WS/wifi-connectivity.json"; echo keep > "$WS/other.json"
+CJ_SIM_VERITY=1 bash -c "cd '$PKG' && PATH='$STUBS:'\$PATH sh uninstall-all.sh 127.0.0.1 --skip shelf" >/dev/null 2>&1
+check "uninstall-all + dm-verity：wifi-watch 单元删不掉 → 状态文件也保留（服务还会写它）" test -f "$WS/wifi-connectivity.json"
+( cd "$PKG" && run sh uninstall-all.sh 127.0.0.1 --skip shelf ) >/dev/null 2>&1; rc=$?
+check "uninstall-all：wifi-watch 卸掉后删它的上网探测状态文件，shelf 其它状态不动" test "$rc" -eq 0 -a ! -e "$WS/wifi-connectivity.json" -a -f "$WS/other.json"
+# 旧设备上 oneshot+timer 模型的 battop.timer：卸载时一并清
+new_sandbox; echo '[Timer]' > "$CJ_SYSD/battop.timer"; : > "$CJ_SIM_LOG"
+( cd "$PKG" && run sh uninstall-all.sh 127.0.0.1 --skip shelf ) >"$R/out.txt" 2>&1; rc=$?
+check "uninstall-all：旧版遗留的 battop.timer 被清、rw 窗口以 ro 收尾" test "$rc" -eq 0 -a ! -e "$CJ_SYSD/battop.timer" -a "$(last_mount)" = "mount -o remount,ro /"
+: > "$CJ_SIM_LOG"; ( cd "$PKG" && run sh uninstall-all.sh 127.0.0.1 --skip shelf --purge ) >"$R/out.txt" 2>&1; rc=$?
+check "uninstall-all --purge：没有 battop 目录时如实说\"本来就不存在\"，不谎称已删；不再 remount" test "$rc" -eq 0 -a -n "$(grep '本来就不存在' "$R/out.txt" | grep battop)" -a -z "$(grep -- '--purge：已删' "$R/out.txt")" -a "$(count_log remount)" = 0
+# 退役服务 koreader-serve 的遗留（09-29 撤掉）：重新部署书架时清掉单元/链接/二进制；只剩悬空 wants 链接也要清
+new_sandbox; PL="$R/payload"; mk_payload "$PL"
+echo old > "$CJ_SYSD/koreader-serve.service"; mkdir -p "$CJ_SYSD/shelf.target.wants"; ln -s ../koreader-serve.service "$CJ_SYSD/shelf.target.wants/koreader-serve.service"
+echo old > "$B/koreader-serve"
+run sh "$PL/install.sh" >/dev/null 2>&1; rc=$?
+check "shelf install：旧设备上的 koreader-serve 单元/wants 链接/二进制被清，二进制备份进 cangjie-backups" test "$rc" -eq 0 -a ! -e "$CJ_SYSD/koreader-serve.service" -a ! -L "$CJ_SYSD/shelf.target.wants/koreader-serve.service" -a ! -e "$B/koreader-serve" -a -f "$(ls "$R"/home/root/cangjie-backups/shelf-*/koreader-serve 2>/dev/null | head -n 1)"
+ln -s ../shelf-gateway.service "$CJ_SYSD/multi-user.target.wants/shelf-gateway.service"; : > "$CJ_SIM_LOG"
+run sh "$PL/install.sh" >/dev/null 2>&1
+check "shelf install：只剩悬空的旧命名 wants 链接（单元文件早没了）→ 也清掉" test ! -L "$CJ_SYSD/multi-user.target.wants/shelf-gateway.service" -a "$(last_mount)" = "mount -o remount,ro /"
+ln -s ../shelf-gateway.service "$CJ_SYSD/multi-user.target.wants/shelf-gateway.service"
+run sh "$B/shelf-uninstall" >/dev/null 2>&1
+check "shelf uninstall：multi-user.target.wants 下的旧命名链接也删（与 install 清遗留的路径对称）" test ! -L "$CJ_SYSD/multi-user.target.wants/shelf-gateway.service"
+# --skip 退役步骤名：uninstall-all 仍认它，不误报"不是已知步骤名"
+( cd "$PKG" && run sh uninstall-all.sh --dry-run --skip sidebar-entry ) >"$R/out.txt" 2>&1
+check "uninstall-all --skip sidebar-entry（退役步骤）：不误报未知步骤、确实跳过" test -z "$(grep '不是已知步骤名' "$R/out.txt")" -a -n "$(grep '跳过 sidebar-entry' "$R/out.txt")"
+
 # ═══════════════════════════ 5. 静态守卫 / 清单对称 ═══════════════════════════
 section "静态守卫"
 cd "$REPO" || exit 1

@@ -268,8 +268,9 @@ parse_step_args() {
         esac
         shift
     done
+    # 退役步骤也算已知（uninstall-all 仍会卸它们，--skip sidebar-entry 是合法的）
     for ps_s in $(echo "$SKIP" | tr ',' ' '); do
-        word_in "$ps_s" "$STEP_ORDER" || echo "⚠ --skip 里的 '$ps_s' 不是已知步骤名（已知：$STEP_ORDER）"
+        word_in "$ps_s" "$STEP_ORDER $STEP_RETIRED" || echo "⚠ --skip 里的 '$ps_s' 不是已知步骤名（已知：$STEP_ORDER $STEP_RETIRED）"
     done
 }
 

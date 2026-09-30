@@ -235,6 +235,8 @@ cj_stage_cleanup() {
 
 # cj_rm_payload DIR FILE…：卸载时清"推送载荷目录"（deploy-* 推上来的 .so/脚本/单元源）：
 # 只 rm -f 列出的已知文件再 rmdir（目录里有别的东西就留着，不会误删）；DIR 必须在 $CJ_HOME 下、不是符号链接。
+# ⚠ 调用方都是 set -e 的设备端脚本：子目录里有不认识的文件时 rmdir 失败是预期内的，不能让它成为 `&&` 链的
+# 最后一条（那样 set -e 会把整段卸载脚本当场打断、报失败——2026-09-30 审计：hl-snap/deploy/ 里多一个文件就触发）
 cj_rm_payload() {
     cj_pd=$1; shift
     case "$cj_pd" in "$CJ_HOME"/?*) ;; *) echo "!! 拒绝清理 $CJ_HOME 之外的路径：$cj_pd"; return 1 ;; esac
@@ -242,8 +244,8 @@ cj_rm_payload() {
     [ -d "$cj_pd" ] || return 0
     for cj_pn in "$@"; do
         [ -L "$cj_pd/$cj_pn" ] && continue
-        [ -f "$cj_pd/$cj_pn" ] && rm -f "$cj_pd/$cj_pn"
-        [ -d "$cj_pd/$cj_pn" ] && rmdir "$cj_pd/$cj_pn" 2>/dev/null
+        if [ -f "$cj_pd/$cj_pn" ]; then rm -f "$cj_pd/$cj_pn"; fi
+        if [ -d "$cj_pd/$cj_pn" ]; then rmdir "$cj_pd/$cj_pn" 2>/dev/null || true; fi
     done
     rmdir "$cj_pd" 2>/dev/null || true
     return 0

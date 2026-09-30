@@ -8,11 +8,13 @@
 # 只编排、不重新实现——依次在设备端停用/删除 install-all.sh 各步骤留下的东西：
 #   shelf                          调设备上的 shelf-uninstall（~/.local/bin，优先）或 shelf-pkg 里的 uninstall.sh，
 #                                  默认保留用户数据，清单与 install 共用 manifest.sh；成功后删 shelf-pkg 载荷
-#   sidebar-entry                  从 qt-resource-rebuilder exthome 摘除 qmd/rcc
+#   sidebar-entry（已退役）         从 qt-resource-rebuilder exthome 摘除 KOReader 侧栏入口的 qmd/rcc（2026-09-29 起不再安装，
+#                                  安装件已删；这里只为清旧设备：appload 卸掉后这份 qmd 的 IMPORT net.asivery.AppLoad 找不到模块）
 #   hl-snap / handwriting-stroke   从 extensions.d 摘除 .so（不碰 reading-qol.json 配置、不碰 cangjie-backups/）
 #   chrony-boot-wakelock / xovi-persist / wifi-watch   停用 + 删 /usr 单元（dm-verity 门，跟安装时同一套 devlib 写法）；
-#                                  wifi-watch 另删 ~/.local/bin/wifi-watch.sh（单元删不掉时保留它，否则服务反复起不来）
-#   battop                         停用 + 删 /usr 单元（--purge 才连 /home/root/battop 数据删）
+#                                  wifi-watch 另删 ~/.local/bin/wifi-watch.sh 与它写的上网探测状态文件（单元删不掉时都保留，
+#                                  否则服务反复起不来）
+#   battop                         停用 + 删 /usr 单元（含旧版遗留的 battop.timer；--purge 才连 /home/root/battop 数据删）
 #   另：每一步清掉 deploy-* 推到设备上的载荷目录（/home/root/pkg-<名>/、hl-snap/、hw-stroke/、shelf-pkg/——只 rm 已知文件
 #   再 rmdir，目录里有别的东西就留着）；最后清 ~/.cangjie-stage 暂存目录（待生效标记不动：卸载摘掉的东西也要等 xochitl 重启才停止生效）。
 #
@@ -89,7 +91,10 @@ if [ "$rc" = 3 ]; then
     echo "-- 单元仍在 /usr，保留 ~/.local/bin/wifi-watch.sh（删了服务会反复起不来）"
 else
     rm -f "$CJ_HOME/.local/bin/wifi-watch.sh"
-    echo "-- 已删 ~/.local/bin/wifi-watch.sh（cangjie-backups/ 下的备份不动）"
+    # 它写的上网探测结果（网关页头"上不了外网"横幅读它）：服务没了文件就不会再更新，留着会让横幅一直停在最后一次的
+    # portal/none（2026-09-30 审计）。路径与 wifi-watch.sh 的 STATE_FILE 缺省值一致
+    rm -f "$CJ_HOME/.local/state/shelf/wifi-connectivity.json" "$CJ_HOME/.local/state/shelf/wifi-connectivity.json.tmp"
+    echo "-- 已删 ~/.local/bin/wifi-watch.sh 与它的上网探测状态文件（cangjie-backups/ 下的备份不动）"
     cj_rm_payload "$CJ_HOME/$PKG" "$@"
 fi
 DEVICE_SCRIPT
@@ -148,6 +153,8 @@ PURGE="$1"
 cj_require_root || exit 1
 # battop 有意不建开机链接（见 enhance/battop/install.sh），这里顺手清可能的旧链接
 cj_uninstall_usr_unit battop.service multi-user.target.wants || exit 1
+# 旧 oneshot+timer 模型遗留的 battop.timer（2026-09-20 前的设备；新安装器装时会清，没重装过的旧设备卸载时在这清）
+if [ -e "$CJ_SYSD/battop.timer" ]; then cj_uninstall_usr_unit battop.timer timers.target.wants multi-user.target.wants || exit 1; fi
 if [ "$PURGE" = "1" ]; then
     BD="$CJ_HOME/battop"
     case "$BD" in /?*/battop) ;; *) echo "!! 拒绝清除异常路径 $BD"; exit 1 ;; esac
@@ -155,8 +162,10 @@ if [ "$PURGE" = "1" ]; then
     if [ -d "$BD" ]; then
         echo "-- --purge：将删除 $BD（$(du -sk "$BD" 2>/dev/null | awk '{print $1}') KB：二进制 + 历史采样数据）"
         rm -rf "$BD"
+        echo "-- --purge：已删 $BD"
+    else
+        echo "-- --purge：$BD 本来就不存在"
     fi
-    echo "-- --purge：已删 $BD"
 else
     echo "-- 保留 $CJ_HOME/battop（二进制 + 历史采样数据）；要连数据一起删加 --purge"
 fi
