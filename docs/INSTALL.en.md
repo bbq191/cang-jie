@@ -27,7 +27,14 @@ manager) itself, follow vellum's own documentation.
 | 2 | `vellum add qt-resource-rebuilder` | Loader for UI patches (qmd) | No UI patch is installed (not a failure): the font menu, trash/new-folder proxies, comic-margin proxy, and reader tap-to-turn / manga page-turn rule. Everything else is unaffected (for how the summary shows this, see issue ②) |
 
 Since 2026-09-29 **appload and KOReader are no longer needed**: the device only uses its built-in reader; KOReader, WeRead and appload were uninstalled, and `koreader-serve` and the sidebar entry (`sidebar-entry`) are no longer installed.
-On devices that had them, `uninstall-all.sh` still removes the sidebar entry, and redeploying the shelf cleans up an old `koreader-serve`.
+On devices that had them: redeploying the shelf cleans up an old `koreader-serve`; the sidebar entry's install files were deleted from the repository on 09-30, but `uninstall-all.sh` still knows it and removes what is left on the device.
+The automatic check after installing (`verify-on-device.sh`) flags these leftovers: an old `koreader-serve` is ⚠; a leftover sidebar-entry patch is ⚠, or ✗ if appload has already been removed (the patch then breaks the sidebar patching). To remove only the sidebar entry and nothing else:
+
+```sh
+sh uninstall-all.sh 10.11.99.1 --skip chrony-boot-wakelock,battop,wifi-watch,xovi-persist,hl-snap,handwriting-stroke,shelf
+```
+
+Then reboot the whole device once (`reboot`).
 
 ### On your computer: build tools and ssh
 
@@ -84,7 +91,7 @@ Failed steps are not retried automatically and are never silently skipped.
 
 ## After installing
 
-**Check the verification result first**: after the final reboot the script waits for the device to come back and runs `verify-on-device.sh` automatically (`CJ_APPLY_VERIFY=0` turns this off). It is a read-only check of a few dozen items in 9 groups (firmware, xochitl/xovi, extensions, UI patches, services, this boot's alerts, ports, `/usr` units, disk), reported item by item as ✓/⚠/✗; it exits non-zero if anything is ✗. If no reboot happened, or after deploying a single step later, run `sh verify-on-device.sh <host>` from `packaging/` yourself. What each item means: [`packaging/README.md`](../packaging/README.md#部署后核对verify-on-devicesh2026-09-25) (Chinese).
+**Check the verification result first**: after the final reboot the script waits for the device to come back and runs `verify-on-device.sh` automatically (`CJ_APPLY_VERIFY=0` turns this off). It is a read-only check of a few dozen items in 9 groups (firmware, xochitl/xovi, extensions, UI patches, services, this boot's alerts, ports, `/usr` units, disk), reported item by item as ✓/⚠/✗; it exits non-zero if anything is ✗. If no reboot happened, or after deploying a single step later, run `sh verify-on-device.sh <host>` from `packaging/` yourself. It also flags retired components still on the device (see "Before you install"). What each item means: [`packaging/README.md`](../packaging/README.md#部署后核对verify-on-devicesh2026-09-25) (Chinese).
 
 Open `https://10.11.99.1/` in a browser (on the same WiFi you can also use `https://shelf.local/`; Android doesn't resolve `.local`, so use the device's IP there).
 
@@ -158,6 +165,7 @@ sh deploy.sh 10.11.99.1 --only book,font --password 'new-password'          # on
 Names allowed in `--only`: `gateway book font wallpaper ink transcribe mind note`. The gateway is always installed; any other name is an error.
 `--password` is sent over ssh standard input into a temporary file on the device and deleted after use, so it never appears on a command line or in the process list (only when passed through `deploy.sh`; see "Known limitations").
 Before pushing, `deploy.sh` checks that the programs to install have been built; if not, it stops and tells you to run `sh shelf/build.sh` from the repository root first.
+When you install only part with `--only`, the device's uninstaller `shelf-uninstall` and its manifest are refreshed too (since 2026-09-30; before, only a full install refreshed them, so a later uninstall could miss newly added UI patches). On repeat deploys, files whose content hasn't changed are not uploaded again.
 
 ## Uninstall
 
@@ -236,7 +244,7 @@ These are known issues with specific triggers, not random faults. Numbers ①–
 
 - Start with the closing summary of `install-all.sh` to find the failing step; the header comment of the matching `packaging/deploy-*.sh` explains what the step does and common failures.
 - The web page's "Manage" section shows whether each plugin is actually loaded into xochitl ("loaded / not loaded"). A switch that is on but shows "not loaded" means the plugin isn't installed or the device hasn't been rebooted since. "Manage → Device health" shows a fuller picture (services, extensions, the previous boot's log).
-- To check the scripts without touching a device: `bash packaging/tests/run_sim_tests.sh` (local simulation, 314 assertions). It is no substitute for testing on real hardware.
+- To check the scripts without touching a device: `bash packaging/tests/run_sim_tests.sh` (local simulation, 343 assertions). It is no substitute for testing on real hardware.
 
 ### Backups and idempotence (short version)
 
@@ -244,7 +252,7 @@ Every install script can be re-run; before overwriting an existing file on the d
 
 ## Known limitations
 
-- **What has and hasn't run on real hardware**: run end to end on real hardware: `install-all.sh` (once each on 2026-09-22, 09-24 and 09-25) and `uninstall-all.sh` (2026-09-25); "swap in the new `.so` → reboot → xovi restored at boot → automatic check" was re-verified on real hardware on 2026-09-25 (`verify-on-device.sh`: 43 ✓). **Only simulated locally, never on real hardware**: keeping programs under dm-verity during uninstall, clearing the staging area on uninstall, the "nothing changed, so no reboot" path (including standalone deploys), ignoring disconnect signals in the swap-in critical section, the summary's "prerequisite not met" line, and every installer behaviour changed in the fourth audit on the afternoon of 2026-09-25 (handling a failed reboot, the battery sampler under dm-verity, fewer ssh round trips when deploying, and so on). Full record: [`packaging/README.md` "验证现状"](../packaging/README.md#验证现状如实说明不夸大) (Chinese). When trying them on a device, go one step at a time: `--dry-run` first, then single steps or `--skip`.
+- **What has and hasn't run on real hardware**: run end to end on real hardware: `install-all.sh` (once each on 2026-09-22, 09-24 and 09-25) and `uninstall-all.sh` (2026-09-25); "swap in the new `.so` → reboot → xovi restored at boot → automatic check" was re-verified on real hardware on 2026-09-25 (`verify-on-device.sh`: 43 ✓). **Only simulated locally, never on real hardware**: keeping programs under dm-verity during uninstall, clearing the staging area on uninstall, the "nothing changed, so no reboot" path (including standalone deploys), ignoring disconnect signals in the swap-in critical section, the summary's "prerequisite not met" line, and every installer behaviour changed in the fourth audit (afternoon of 2026-09-25) and the fifth audit (2026-09-30): handling a failed reboot, the battery sampler under dm-verity, fewer ssh round trips when deploying, not re-uploading unchanged files, `--only` refreshing the uninstall manifest, the check flagging leftovers, cleaner uninstall, and so on. Full record: [`packaging/README.md` "验证现状"](../packaging/README.md#验证现状如实说明不夸大) (Chinese). When trying them on a device, go one step at a time: `--dry-run` first, then single steps or `--skip`.
 - **Writing `/usr` still relies on two safeguards, "check dm-verity first + a time-limited read-write window"**, rather than never touching `/usr`; writing `/usr` once triggered a rollback that bricked the device (2026-08-16).
 - **Running `shelf/install.sh --password <plaintext>` directly on the device briefly exposes the password in the device's process list**; passing it through `deploy.sh --password` on your computer doesn't.
 - Uninstalling doesn't revert `chrony-cn` / `timezone-cn`; there's no "one click back to before".

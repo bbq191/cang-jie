@@ -25,7 +25,14 @@
 | 2 | `vellum add qt-resource-rebuilder` | 界面补丁（qmd）加载器 | 界面补丁全部不装（不算失败）：字体菜单、回收站/新建文件夹代理、漫画页边距代理、阅读器单击翻页/日漫翻页规则。其余不受影响（汇总里怎么显示见问题②） |
 
 2026-09-29 起**不再需要 appload 和 KOReader**：设备只用自带阅读器，KOReader、WeRead、appload 都已卸载，`koreader-serve` 和侧栏入口（`sidebar-entry`）也不再安装。
-以前装过的设备跑 `uninstall-all.sh` 仍会把侧栏入口清掉；重新部署书架时会顺手清掉旧的 `koreader-serve`。
+以前装过的设备：重新部署书架时会顺手清掉旧的 `koreader-serve`；侧栏入口的安装件 09-30 已从仓库删除，但 `uninstall-all.sh` 仍认得它、会把设备上残留的清掉。
+装完后的自动核对（`verify-on-device.sh`）会把这类遗留标出来：旧 `koreader-serve` 报 ⚠；侧栏入口补丁还在报 ⚠，如果 appload 已经卸了则报 ✗（它会让侧栏补丁失效）。只清侧栏入口、别的都不卸：
+
+```sh
+sh uninstall-all.sh 10.11.99.1 --skip chrony-boot-wakelock,battop,wifi-watch,xovi-persist,hl-snap,handwriting-stroke,shelf
+```
+
+跑完整机重启一次（`reboot`）。
 
 ### 电脑上：编译环境和 ssh
 
@@ -82,7 +89,7 @@
 
 ## 装完之后
 
-**先看核对结果**：最后一步整机重启后，脚本会等设备回来并自动跑 `verify-on-device.sh`（`CJ_APPLY_VERIFY=0` 可关）。它只读检查设备，共 9 类几十项（固件、xochitl/xovi、扩展、界面补丁、各服务、本次开机告警、端口、`/usr` 单元、磁盘），逐项给 ✓/⚠/✗，有 ✗ 时退出码非 0。没有触发重启、或以后单独部署某一步之后，可以自己在 `packaging/` 下跑 `sh verify-on-device.sh <host>`。每项含义见 [`packaging/README.md`「部署后核对」](../packaging/README.md#部署后核对verify-on-devicesh2026-09-25)。
+**先看核对结果**：最后一步整机重启后，脚本会等设备回来并自动跑 `verify-on-device.sh`（`CJ_APPLY_VERIFY=0` 可关）。它只读检查设备，共 9 类几十项（固件、xochitl/xovi、扩展、界面补丁、各服务、本次开机告警、端口、`/usr` 单元、磁盘），逐项给 ✓/⚠/✗，有 ✗ 时退出码非 0。没有触发重启、或以后单独部署某一步之后，可以自己在 `packaging/` 下跑 `sh verify-on-device.sh <host>`。它也会报出设备上残留的已退役组件（见「装之前」）。每项含义见 [`packaging/README.md`「部署后核对」](../packaging/README.md#部署后核对verify-on-devicesh2026-09-25)。
 
 浏览器打开 `https://10.11.99.1/`（同一 WiFi 下也可以用 `https://shelf.local/`；安卓不认 `.local` 域名，要用设备的 IP）。
 
@@ -156,6 +163,7 @@ sh deploy.sh 10.11.99.1 --only book,font --password '新密码'                #
 `--only` 可以写的名字：`gateway book font wallpaper ink transcribe mind note`。网关总会装；写了别的名字会报错退出。
 `--password` 经 ssh 标准输入传到设备上的临时文件，用完就删，不会出现在命令行和进程列表里（只有经 `deploy.sh` 传时才这样，见「已知限制」）。
 `deploy.sh` 推送前会核对要装的程序都编好了；缺了会直接报错，提示先在仓库根目录跑 `sh shelf/build.sh`。
+用 `--only` 只装一部分时，设备上的卸载程序 `shelf-uninstall` 和它的清单也会一起刷新（2026-09-30 起；以前只有整包装才刷，之后卸载可能漏删新加的界面补丁）。重复部署时内容没变的文件不会再上传一遍。
 
 ## 卸载
 
@@ -203,7 +211,7 @@ sh uninstall-all.sh 10.11.99.1 --purge            # 另外删掉电池刺客的�
 |---|---|---|---|
 | 母版库、字体与壁纸池、证书、网关密码、休眠屏设置、`cangjie-backups/`、电池采样历史 | `/home` | 保留 | 不用管 |
 | 各网页服务的程序（`~/.local/bin`） | `/home` | 保留 | 不用管 |
-| `hl-snap` / `hw-stroke` 插件、侧栏入口与字体菜单/回收站/建夹/漫画边距/阅读器翻页的界面补丁 | `/home`（`extensions.d/`、`exthome/`） | 文件还在，但要重建 hashtable 才生效 | 第 2 步，再跑 `install-all.sh` |
+| `hl-snap` / `hw-stroke` 插件、字体菜单/回收站/建夹/漫画边距/阅读器翻页的界面补丁 | `/home`（`extensions.d/`、`exthome/`） | 文件还在，但要重建 hashtable 才生效 | 第 2 步，再跑 `install-all.sh` |
 | 各网页服务与 `shelf.target` 的服务单元 | `/usr` | **被冲掉** | `shelf` 步（或单独：`SHELF_NO_BUILD=1 sh deploy.sh <设备IP>`） |
 | `xovi-reenable.service`（开机自动让 xovi 生效） | `/usr` | **被冲掉** | `xovi-persist` 步 |
 | `chrony-boot-wakelock.service` | `/usr` | **被冲掉** | `chrony-boot-wakelock` 步 |
@@ -234,7 +242,7 @@ sh uninstall-all.sh 10.11.99.1 --purge            # 另外删掉电池刺客的�
 
 - 先看 `install-all.sh` 的收尾汇总，定位哪一步失败；对应 `packaging/deploy-*.sh` 的开头注释写了这一步做什么、常见失败原因。
 - 网页「管理」页能直接看到插件是否真的加载进了 xochitl（"已加载 / 未加载"）。开关开着但显示"未加载"，说明插件没装上或装完还没整机重启。「管理 → 设备健康」能看到更全的状态（各服务、扩展、上次开机日志）。
-- 不碰真机就想确认脚本没被改坏：`bash packaging/tests/run_sim_tests.sh`（本机模拟，314 项断言）。它代替不了真机验证。
+- 不碰真机就想确认脚本没被改坏：`bash packaging/tests/run_sim_tests.sh`（本机模拟，343 项断言）。它代替不了真机验证。
 
 ### 备份与幂等（一句话版）
 
@@ -242,7 +250,7 @@ sh uninstall-all.sh 10.11.99.1 --purge            # 另外删掉电池刺客的�
 
 ## 已知限制
 
-- **哪些在真机上跑过、哪些没有**：真机整轮跑过的有 `install-all.sh`（2026-09-22、09-24、09-25 各一次）和 `uninstall-all.sh`（2026-09-25）；"换入新版 `.so` → 整机重启 → 开机自动恢复 → 自动核对"2026-09-25 真机复核通过（`verify-on-device.sh` 43✓）。**只有本机模拟、没在真机走过的**：卸载在 dm-verity 下保留程序、卸载时撤掉待换入区、"什么都没变就不重启"这一支（含单独部署）、换入关键区忽略断连信号、汇总的"前置条件不满足"栏，以及 2026-09-25 下午第四轮审计改的全部安装脚本行为（整机重启失败的处理、dm-verity 下的电池刺客、部署时 ssh 往返合并等）。完整记录见 [`packaging/README.md`「验证现状」](../packaging/README.md#验证现状如实说明不夸大)。上机时一步一确认：先 `--dry-run`，再单步或 `--skip` 试跑。
+- **哪些在真机上跑过、哪些没有**：真机整轮跑过的有 `install-all.sh`（2026-09-22、09-24、09-25 各一次）和 `uninstall-all.sh`（2026-09-25）；"换入新版 `.so` → 整机重启 → 开机自动恢复 → 自动核对"2026-09-25 真机复核通过（`verify-on-device.sh` 43✓）。**只有本机模拟、没在真机走过的**：卸载在 dm-verity 下保留程序、卸载时撤掉待换入区、"什么都没变就不重启"这一支（含单独部署）、换入关键区忽略断连信号、汇总的"前置条件不满足"栏，以及 2026-09-25 下午第四轮审计、2026-09-30 第五轮审计改的全部安装脚本行为（整机重启失败的处理、dm-verity 下的电池刺客、部署时 ssh 往返合并、没变的文件不重传、`--only` 刷新卸载清单、核对报遗留、卸载清理更干净等）。完整记录见 [`packaging/README.md`「验证现状」](../packaging/README.md#验证现状如实说明不夸大)。上机时一步一确认：先 `--dry-run`，再单步或 `--skip` 试跑。
 - **写 `/usr` 仍靠"先查 dm-verity + 限时读写窗口"两道防线**，不是完全不碰 `/usr`；历史上写 `/usr` 触发过回滚变砖（2026-08-16）。
 - **在设备上直接跑 `shelf/install.sh --password 明文` 时，密码会短暂出现在设备的进程列表里**；经电脑上的 `deploy.sh --password` 传则不会。
 - 卸载不还原 `chrony-cn` / `timezone-cn`，没有"一键回到装之前"。
