@@ -847,6 +847,6 @@ EPUB 线原则④（09-17）：`comic_detect::is_comic`（`MIN_IMAGES=20`、`TEX
 **明知没改（记录在案，待办）**：
 - PDF 裁边时整本输出仍在内存里攒；分类与裁边收集逐字位置（大 PDF 内存偏高）；
 - CMYK JPEG 裁边会报错；
-- 带交叉引用流的现代 PDF 走不了大文件通道（`PdfFileReader` 只认传统 xref 表）；
+- ~~带交叉引用流的现代 PDF 走不了大文件通道（`PdfFileReader` 只认传统 xref 表）~~——同日已补修：大文件通道读页数改走有界解析 `convert::pdfmeta`（交叉引用流、对象流、`/Prev` 链，内存硬上限），见传书线架构 §6.1；
 - hayro 以 2 倍渲染公式页没有像素上限；
 - `read_skeleton` 对非图片条目没有总量上限。
