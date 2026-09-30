@@ -57,11 +57,11 @@ pub const OPTIMIZE_MARKER: &str = "META-INF/com.cangjie.optimized";
 /// ② 居中/居右（`align=`、行内样式）换成 `cj-center`/`cj-right` 类（xochitl 不认行内样式）；补 `<html lang>`；两端对齐；
 ///   中文段首缩进空白（U+3000、nbsp）去掉由 CSS 给 2em；只靠 `<br>` 换行的文件切成段落；章尾空白页。
 /// ③ 章节分页：按标题把章节文件拆开，章标题独立一页、节与节/节与章之间换页，漏掉的节补进目录，指错位置的目录条目核实后改指。
-/// ④ 注释：标号原样、不加 `[N]`，图标标号保留并限一个字高；注释 0.85em、一条不跨页；注释索引按 (文件, id)。
+/// ④ 注释：标号原样、不加 `[N]`，只有图的标号换成上标数字（`number_icon_note_links`，xochitl 点不了纯图链接）；注释 0.85em、一条不跨页；注释索引按 (文件, id)。
 /// ⑤ 规范整理：产物一律升级 EPUB 3（NCX 与 spine toc 保留，xochitl 靠它），XHTML 修成合法 XML。
 /// ⑥ 图片：JPEG 哈夫曼表按图重做（无损，解码逐像素相同）；漫画里的静态 GIF/WebP 页转 PNG/JPEG；透明漫画页合成白底；
 ///   漫画 OPF 打 `<dc:subject>漫画</dc:subject>`；抓到的远程图补进 manifest。
-/// ⑦ 2026-09-30 再对齐 sheng-ren 的 xochitl 模式（v16 未部署，不升版本）：文字书插图框 842×1455（可阅读范围）、最小边距漫画画布
+/// ⑦ 2026-09-30 再对齐 sheng-ren 的 xochitl 模式（v16 当时尚未部署，故不升版本）：文字书插图框 842×1455（可阅读范围）、最小边距漫画画布
 ///   952×1457（旧 954×1458 仍认）、漫画文字留边规则整套写进样式表、图片条目不压缩。同一批真书两边产物图片逐字节相同。
 pub const OPTIMIZE_VERSION: &str = "16";
 
@@ -74,7 +74,7 @@ pub enum FootnoteMode {
     #[default]
     Anchor,
     /// 弹窗（KOReader）：同 `Anchor`，另给标号标 `epub:type="noteref"`、注释块用 `<aside epub:type="footnote">`。
-    /// 设备上两个阅读器共用同一份产物、以 xochitl 为主，母版库不用它（留给测试与命令行）。
+    /// 设备 09-29 起只用 xochitl（KOReader 已卸），母版库不用它（现在只有单测在用）。
     Popup,
     /// 注释文字就地内联显示在引用处 `<span class="cj-fnote">〔…〕</span>`，始终可见、不跳转。
     Inline,
