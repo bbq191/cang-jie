@@ -31,32 +31,31 @@
 <rect x="346" y="140" width="388" height="66" rx="7" fill="#fff" stroke="#c9971f"/>
 <text x="358" y="160" font-size="12" font-weight="bold" fill="#1a1a1a">EPUB 文字书</text>
 <text x="358" y="178" font-size="11" fill="#4a4a4a">清洗 wash → 优化遍（脚注/图片/目录/封面）→ 质量门</text>
-<text x="358" y="195" font-size="11" fill="#4a4a4a">产物仍是 EPUB；OPTIMIZE_VERSION=15，升版后旧书可重优化</text>
+<text x="358" y="195" font-size="11" fill="#4a4a4a">产物仍是 EPUB；OPTIMIZE_VERSION=16，升版后旧书可重优化</text>
 <rect x="346" y="214" width="388" height="66" rx="7" fill="#fff" stroke="#c9971f"/>
 <text x="358" y="234" font-size="12" font-weight="bold" fill="#1a1a1a">漫画 EPUB（自动识别）</text>
-<text x="358" y="252" font-size="11" fill="#4a4a4a">保画质降采样 + 白边裁切 + 补白；仍是 EPUB</text>
+<text x="358" y="252" font-size="11" fill="#4a4a4a">保画质降采样 + 白边裁切 + 补白，JPEG q95；仍是 EPUB</text>
 <text x="358" y="269" font-size="11" fill="#4a4a4a">实验室开关「漫画页边距」：页边距设 1，左右留白≈0（§20）</text>
 <rect x="346" y="288" width="388" height="52" rx="7" fill="#fff" stroke="#c9971f"/>
 <text x="358" y="308" font-size="12" font-weight="bold" fill="#1a1a1a">PDF</text>
 <text x="358" y="326" font-size="11" fill="#4a4a4a">有文字层 → 按原格式转 EPUB；无文字层 → 只裁边，仍是 PDF（§03br）</text>
 
 <polyline points="762,150 800,150" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#bj-a)"/>
-<polyline points="762,290 800,290" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#bj-a)"/>
 
 <!-- 落库 -->
 <rect x="804" y="72" width="252" height="168" rx="10" fill="#fbe9e4" stroke="#b0451f" stroke-width="1.6"/>
-<text x="930" y="96" text-anchor="middle" font-size="14" font-weight="bold" fill="#1a1a1a">④a 加入 xochitl（第 C 章）</text>
+<text x="930" y="96" text-anchor="middle" font-size="14" font-weight="bold" fill="#1a1a1a">④ 加入 xochitl（第 C 章）</text>
 <text x="816" y="120" font-size="11.5" fill="#1a1a1a">≤ 90MB：流式 POST /upload</text>
 <text x="816" y="140" font-size="11.5" fill="#1a1a1a">&gt; 90MB 且 ≤ 1GiB：占位 + 磁盘替换</text>
 <text x="816" y="160" font-size="11.5" fill="#1a1a1a">仍不行：整本拒绝（不再分卷）</text>
 <text x="816" y="184" font-size="11" fill="#4a4a4a">再做「渲染自检」：页数 vs 预期，</text>
 <text x="816" y="200" font-size="11" fill="#4a4a4a">EPUB 首次打开才渲染，徽章随后转正</text>
 <text x="816" y="222" font-size="11" fill="#4a4a4a">(§03bn · §03aa)</text>
-<rect x="804" y="256" width="252" height="106" rx="10" fill="#e8f5ec" stroke="#3f9a55" stroke-width="1.6"/>
-<text x="930" y="280" text-anchor="middle" font-size="14" font-weight="bold" fill="#1a1a1a">④b 加入 KOReader</text>
-<text x="816" y="304" font-size="11.5" fill="#1a1a1a">本地同分区拷贝到 books/[目录]/</text>
-<text x="816" y="324" font-size="11" fill="#4a4a4a">母版字节不变，可与 xochitl 两边对照</text>
-<text x="816" y="344" font-size="11" fill="#4a4a4a">KOReader 配置/字体/词典同步另走</text>
+<rect x="804" y="256" width="252" height="106" rx="10" fill="#f4f4f2" stroke="#9a9a9a" stroke-width="1.6" stroke-dasharray="6 4"/>
+<text x="930" y="280" text-anchor="middle" font-size="13" font-weight="bold" fill="#8a8a8a">已移除的去处与做法</text>
+<text x="816" y="304" font-size="11" fill="#8a8a8a">加入 KOReader（09-29 卸载 KOReader）</text>
+<text x="816" y="324" font-size="11" fill="#8a8a8a">超限按卷拆分投递（09-30）</text>
+<text x="816" y="344" font-size="11" fill="#8a8a8a">漫画转 PDF · 按书手动设方向（09-30）</text>
 
 <!-- 横切 -->
 <text x="540" y="392" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">贯穿三个动作的横切设施</text>
@@ -82,6 +81,6 @@
 <rect x="24" y="540" width="1032" height="96" rx="10" fill="#ffffff" stroke="#8a8a8a" stroke-dasharray="5 4"/>
 <text x="540" y="562" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">代码在哪里</text>
 <text x="540" y="584" text-anchor="middle" font-size="11" fill="#4a4a4a">shelf/crates/bookconv：清洗 / 优化 / 图片 / 漫画 / PDF 入库 / 占位文档　·　shelf/services/book-serve（:8790）：母版库、落库、设备端代理队列</text>
-<text x="540" y="602" text-anchor="middle" font-size="11" fill="#4a4a4a">shelf/services/koreader-serve（:8791）　·　../gateway 网关　·　../rmsvc-core 共享底座　·　../enhance/{font,wallpaper}-serve　·　shelf/xovi/*.qmd</text>
+<text x="540" y="602" text-anchor="middle" font-size="11" fill="#4a4a4a">../gateway 网关　·　../rmsvc-core 共享底座　·　../enhance/{font,wallpaper}-serve　·　shelf/xovi/*.qmd</text>
 <text x="540" y="622" text-anchor="middle" font-size="11" fill="#6a6a6a">电脑端命令行已在 2026-09-18 砍除，只剩网页；格式转换请先在电脑上处理成 EPUB / PDF 再上传</text>
 </svg>

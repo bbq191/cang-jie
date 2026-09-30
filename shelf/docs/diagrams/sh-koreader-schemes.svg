@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1120" height="640" viewBox="0 0 1120 640" font-family="Noto Sans CJK SC, sans-serif">
   <rect width="1120" height="640" fill="#ffffff"/>
-  <text x="560" y="34" text-anchor="middle" font-size="20" font-weight="bold" fill="#1f2937">KOReader 文字书 / 漫画两套方案：三样自带机制怎么拼（§03bt）</text>
-  <text x="560" y="58" text-anchor="middle" font-size="13" fill="#6b7280">KOReader v2026.07.1；补丁在 shelf/koreader/profile/，经 koreader-serve POST /config/{settings,directory,profiles} 写入（KOReader 须先退出）</text>
+  <text x="560" y="34" text-anchor="middle" font-size="20" font-weight="bold" fill="#1f2937">（历史）KOReader 文字书 / 漫画两套方案：三样自带机制怎么拼（§03bt）</text>
+  <text x="560" y="58" text-anchor="middle" font-size="13" fill="#6b7280">KOReader v2026.07.1；补丁在 shelf/koreader/profile/，当年经 koreader-serve POST /config/… 写入；2026-09-29 KOReader 已卸载、服务退役</text>
 
   <!-- 左：打开一本书 -->
   <rect x="20" y="90" width="200" height="70" rx="10" fill="#eef2ff" stroke="#4f46e5"/>
