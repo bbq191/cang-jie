@@ -217,17 +217,26 @@ fw_gate() { # $1=FORCE(0/1)
 }
 
 # ── 步骤表（install-all / uninstall-all 共用；两边清单靠它对称）──────────────
-# 顺序：先与 xovi/vellum 无关的独立项，再 battop/wifi-watch，再依赖 xovi 的，shelf 最重，xovi-apply 放最后统一重启一次。
-STEP_ORDER="chrony-cn chrony-boot-wakelock timezone-cn battop wifi-watch xovi-persist hl-snap handwriting-stroke shelf xovi-apply"
+# 顺序：先与 xovi/vellum 无关的独立项，再 wifi-watch，再依赖 xovi 的，shelf 最重，xovi-apply 放最后统一重启一次。
+STEP_ORDER="chrony-cn chrony-boot-wakelock timezone-cn wifi-watch xovi-persist hl-snap shelf xovi-apply"
 # 只落盘、不各自重启 xochitl 的步骤（install-all 给它们传 DEFER_XOVI_START=1，最后由 xovi-apply 统一重启）
 # shellcheck disable=SC2034  # 由 install-all.sh 使用
-STEP_DEFER="hl-snap handwriting-stroke"
+STEP_DEFER="hl-snap"
 # 已退役的步骤：install-all 不再装，uninstall-all 照样卸（装过的设备还能清干净）；安装件（deploy 脚本与载荷）已删，
 # 没有 step_script 映射。
 #   sidebar-entry：KOReader/WeRead 的 Sidebar 入口（2026-09-29 用户卸了设备上的 KOReader、WeRead 与 appload；
 #                  2026-09-30 删掉 deploy-sidebar-entry.sh 与它的 qmd/图标——appload 不在，它本来也装不上）
+#   battop：电池刺客（耗电诊断常驻服务 + /usr 单元），2026-09-30 用户要求移除；源码 enhance/battop 与 deploy-battop.sh 已删
+#   handwriting-stroke：手写优化（xovi 扩展 hw-stroke.so），2026-09-30 同批移除；源码与 deploy-handwriting-stroke.sh 已删
+# 清理函数：sidebar-entry 在 uninstall-all.sh，battop/handwriting-stroke 在 removal.sh（install-all 也要用）。
 # shellcheck disable=SC2034  # 由 uninstall-all.sh 使用
-STEP_RETIRED="sidebar-entry"
+STEP_RETIRED="sidebar-entry battop handwriting-stroke"
+# 退役步骤里，install-all 每次重新部署时顺手自动清掉旧设备残留的（清理函数在 removal.sh，与 uninstall-all 同一份）。
+# 在 xovi-apply 之前跑：摘了 xochitl 正加载着的 hw-stroke.so 会记待生效标记，由 xovi-apply 统一整机重启（不停/不重启
+# xochitl、不在 xovi 已生效时跑 xovi/start）。sidebar-entry 不在这里：它会删 cangjie-icons.rcc，历史上别的 qmd 也用过
+# 这个文件名，只在用户明确跑 uninstall-all 时才清。
+# shellcheck disable=SC2034  # 由 install-all.sh 使用
+STEP_RETIRED_AUTOCLEAN="battop handwriting-stroke"
 # 没有"卸载"语义的步骤：配置覆写（chrony-cn/timezone-cn），以及纯动作（xovi-apply）
 # shellcheck disable=SC2034  # 由 uninstall-all.sh 使用
 STEP_CONFIG_ONLY="chrony-cn timezone-cn xovi-apply"
@@ -237,11 +246,9 @@ step_script() {
         chrony-cn) echo ./deploy-chrony-cn.sh ;;
         chrony-boot-wakelock) echo ./deploy-chrony-boot-wakelock.sh ;;
         timezone-cn) echo ./deploy-timezone-cn.sh ;;
-        battop) echo ./deploy-battop.sh ;;
         wifi-watch) echo ./deploy-wifi-watch.sh ;;
         xovi-persist) echo ./deploy-xovi-persist.sh ;;
         hl-snap) echo ./deploy-hl-snap.sh ;;
-        handwriting-stroke) echo ./deploy-handwriting-stroke.sh ;;
         shelf) echo ./deploy.sh ;;
         xovi-apply) echo ./deploy-xovi-apply.sh ;;
         *) return 1 ;;
@@ -258,11 +265,24 @@ step_payload() {
         xovi-persist) echo "pkg-xovi-persist xovi-reenable.service" ;;
         wifi-watch) echo "pkg-wifi-watch wifi-watch.service wifi-watch.sh" ;;
         hl-snap) echo "hl-snap hl-snap.so deploy/install.sh deploy/xovi-ext-install.sh deploy/devlib.sh deploy" ;;
+        # 已退役（2026-09-30）：只剩清理用——旧设备上 deploy-handwriting-stroke.sh 推过来的载荷目录
         handwriting-stroke) echo "hw-stroke hw-stroke.so deploy/install.sh deploy/xovi-ext-install.sh deploy/devlib.sh deploy" ;;
         *) return 1 ;;
     esac
 }
 step_payload_dir() { sp_p="$(step_payload "$1")" || return 1; echo "${sp_p%% *}"; }
+
+# uninstall_only_skip STEP…：给 uninstall-all.sh 的 --skip 值——跳过除了 STEP… 之外的全部卸载步骤（逗号分隔）。
+# verify-on-device.sh / 文档给"只清某几样"的命令时用它，步骤表变了命令跟着变，不用另写一份。
+uninstall_only_skip() {
+    uo_out=""
+    for uo_s in $STEP_ORDER $STEP_RETIRED; do
+        word_in "$uo_s" "$STEP_CONFIG_ONLY" && continue
+        word_in "$uo_s" "$*" && continue
+        uo_out="$uo_out,$uo_s"
+    done
+    echo "${uo_out#,}"
+}
 
 # ── 参数解析 / 步骤运行 ────────────────────────────────────────────────────
 # parse_step_args "$@"  →  设 HOST FORCE PURGE SKIP DRY FORCE_APPLY；未知参数 exit 2。
@@ -314,9 +334,9 @@ case "$FREE" in ''|*[!0-9]*) echo "⚠ 读不到 $CJ_HOME 的可用空间，跳�
     else echo "-- $CJ_HOME 可用 $((FREE / 1024)) MB"; fi ;;
 esac
 have() { [ -e "$1" ] && echo "有" || echo "无"; }
-echo "-- xovi 本体 : $(have "$CJ_XOVI/xovi.so")   （无 → xovi-persist/hl-snap/handwriting-stroke/xovi-apply 会失败：先 vellum add xovi）"
+echo "-- xovi 本体 : $(have "$CJ_XOVI/xovi.so")   （无 → xovi-persist/hl-snap/xovi-apply 会失败：先 vellum add xovi）"
 echo "-- qt-resource-rebuilder : $(have "$CJ_XOVI/exthome/qt-resource-rebuilder")   （无 → shelf 的 qmd 自动跳过）"
-if cj_verity_active; then echo "-- dm-verity : 激活 → 所有写 /usr 的单元（chrony-boot-wakelock/xovi-persist/wifi-watch/battop/shelf 开机链接）会被跳过"; else echo "-- dm-verity : 未激活"; fi
+if cj_verity_active; then echo "-- dm-verity : 激活 → 所有写 /usr 的单元（chrony-boot-wakelock/xovi-persist/wifi-watch/shelf 开机链接）会被跳过"; else echo "-- dm-verity : 未激活"; fi
 if cj_xochitl_has_xovi; then echo "-- xochitl 里 xovi 已生效 → 有改动时最后一步换入后整机重启（不跑 xovi/start、不 restart xochitl）"; else echo "-- xochitl 里 xovi 尚未生效 → 最后一步让它生效：装了 xovi-reenable（本轮 xovi-persist 会装，dm-verity 下装不上）就整机重启，否则 xovi/start"; fi
 DEVICE_SCRIPT
 }

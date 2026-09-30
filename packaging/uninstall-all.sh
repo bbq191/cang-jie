@@ -10,11 +10,14 @@
 #                                  默认保留用户数据，清单与 install 共用 manifest.sh；成功后删 shelf-pkg 载荷
 #   sidebar-entry（已退役）         从 qt-resource-rebuilder exthome 摘除 KOReader 侧栏入口的 qmd/rcc（2026-09-29 起不再安装，
 #                                  安装件已删；这里只为清旧设备：appload 卸掉后这份 qmd 的 IMPORT net.asivery.AppLoad 找不到模块）
-#   hl-snap / handwriting-stroke   从 extensions.d 摘除 .so（不碰 reading-qol.json 配置、不碰 cangjie-backups/）
+#   hl-snap                        从 extensions.d 摘除 .so（不碰 reading-qol.json 配置、不碰 cangjie-backups/）
+#   handwriting-stroke（已移除）    手写优化：摘除 extensions.d/hw-stroke.so 与待换入区副本（2026-09-30 起不再安装；
+#                                  install-all 重新部署时也会自动清，函数在 removal.sh）
 #   chrony-boot-wakelock / xovi-persist / wifi-watch   停用 + 删 /usr 单元（dm-verity 门，跟安装时同一套 devlib 写法）；
 #                                  wifi-watch 另删 ~/.local/bin/wifi-watch.sh 与它写的上网探测状态文件（单元删不掉时都保留，
 #                                  否则服务反复起不来）
-#   battop                         停用 + 删 /usr 单元（含旧版遗留的 battop.timer；--purge 才连 /home/root/battop 数据删）
+#   battop（已移除）                电池刺客：停用 + 删 /usr 单元（含旧版遗留的 battop.timer）+ 删 /home/root/battop 整个目录
+#                                  （2026-09-30 起不再安装；install-all 重新部署时也会自动清，函数在 removal.sh）
 #   另：每一步清掉 deploy-* 推到设备上的载荷目录（/home/root/pkg-<名>/、hl-snap/、hw-stroke/、shelf-pkg/——只 rm 已知文件
 #   再 rmdir，目录里有别的东西就留着）；最后清 ~/.cangjie-stage 暂存目录（待生效标记不动：卸载摘掉的东西也要等 xochitl 重启才停止生效）。
 #
@@ -32,21 +35,23 @@
 # 用法：./uninstall-all.sh [host] [--purge] [--dry-run] [--skip a,b,...]
 #   host      默认 10.11.99.1（USB）
 #   --dry-run 只在本机打印将执行的卸载步骤，不连设备、不删任何东西
-#   --purge   额外清用户数据——目前只影响 battop（连 /home/root/battop 的二进制+历史采样数据一起删）；
-#             shelf 不受影响，那是几条独立业务线的用户数据，误删风险太高，要删请 --skip shelf 后自己跑
-#             设备上的 shelf-uninstall --purge。
+#   --purge   保留参数兼容，目前不影响任何步骤（原先只影响 battop 的采样数据；battop 2026-09-30 移除后清理时
+#             总是连数据一起删）。shelf 用户数据不受影响，那是几条独立业务线的用户数据，误删风险太高，要删请
+#             --skip shelf 后自己跑设备上的 shelf-uninstall --purge。
 #   --skip    逗号分隔，跳过指定的卸载步骤（名字同 install-all）
 # ═══════════════════════════════════════════════════════════════════════════
 set -eu
 cd "$(dirname "$0")"
 # shellcheck disable=SC1091
 . ./lib.sh
+# shellcheck disable=SC1091
+. ./removal.sh   # remove_xovi_extension、已移除的 battop/handwriting-stroke 的清理（与 install-all 共用）
 
 usage() {
     cat <<'USAGE_EOF'
 用法：./uninstall-all.sh [host] [--purge] [--dry-run] [--skip a,b,...]
   host       默认 10.11.99.1（USB）
-  --purge    额外清 battop 的二进制+历史采样数据（shelf 用户数据不受影响，见脚本头注）
+  --purge    保留兼容，目前不影响任何步骤（shelf 用户数据不受影响，见脚本头注）
   --dry-run  只在本机打印将执行的卸载步骤，不连设备、不删任何东西
   --skip     逗号分隔，跳过指定的卸载步骤（名字同 install-all）
 USAGE_EOF
@@ -100,34 +105,7 @@ fi
 DEVICE_SCRIPT
 }
 
-# 从 extensions.d 摘除一个 xovi 扩展本体（+ 清同名的 .crashed 崩溃标记 + 推送载荷目录）。不碰 reading-qol.json（多个扩展
-# 共用同一份配置，卸一个不该动别人的开关）、不碰 cangjie-backups/（那是回滚安全网）。$1=.so 文件名 $2=步骤名
-remove_xovi_extension() {
-    # shellcheck disable=SC2046  # step_payload 有意按词展开成 "目录 文件…"
-    dev_script "$1" $(step_payload "$2") <<'DEVICE_SCRIPT'
-set -eu
-SO="$1"; PKG="$2"; shift 2
-cj_require_root || exit 1
-EXT="$CJ_XOVI/extensions.d"
-# 待换入区里的新版也要撤掉：否则下一次 cj_xochitl_apply（xovi-apply / 任何单独部署）会把刚卸掉的扩展又换进 extensions.d
-cj_so_unstage "$SO"
-MAPPED=0
-if cj_xochitl_has_xovi && [ "$(cj_count_maps "$SO" "$(cj_xochitl_pid)")" -gt 0 ]; then MAPPED=1; fi
-if [ -f "$EXT/$SO" ] || [ -e "$EXT/$SO.crashed" ]; then
-    rm -f "$EXT/$SO" "$EXT/$SO.crashed"
-    echo "-- 已从 extensions.d 摘除 $SO（reading-qol.json 配置、cangjie-backups/ 下的历史备份不动）"
-else
-    echo "-- $EXT/$SO 本来就不存在"
-fi
-if [ "$MAPPED" = "1" ]; then
-    # 与 devlib.sh 头注 H3 同类：运行中的 xochitl 还映射着刚删掉的 .so，此时让它退出（restart/stop）有崩溃→整机重启的风险
-    echo "   ⚠ 运行中的 xochitl 仍加载着 $SO（已删的旧文件）。要立刻停用请**整机重启**（reboot），别 systemctl restart xochitl。"
-fi
-cj_rm_payload "$CJ_HOME/$PKG" "$@"
-DEVICE_SCRIPT
-}
 uninstall_hl_snap() { remove_xovi_extension hl-snap.so hl-snap; }
-uninstall_handwriting_stroke() { remove_xovi_extension hw-stroke.so handwriting-stroke; }
 
 uninstall_sidebar_entry() {
     dev_script <<'DEVICE_SCRIPT'
@@ -143,32 +121,6 @@ echo "-- 已从 qt-resource-rebuilder exthome 摘除 Sidebar 入口 qmd/rcc（�
 # cangjie-icons.rcc 与历史上别的注入用过同一个文件名——如果你还有别的 qmd 依赖它，从备份里还原最近一份
 LAST_RCC="$(ls -1 "$CJ_BACKUP_DIR" 2>/dev/null | grep '^cangjie-icons\.rcc\.bak\.pre-' | sort | tail -n 1 || true)"
 if [ -n "$LAST_RCC" ]; then echo "   （若有别的 qmd 需要它：cp $CJ_BACKUP_DIR/$LAST_RCC $QRR_DIR/cangjie-icons.rcc）"; fi
-DEVICE_SCRIPT
-}
-
-uninstall_battop() {
-    dev_script "$PURGE" <<'DEVICE_SCRIPT'
-set -eu
-PURGE="$1"
-cj_require_root || exit 1
-# battop 有意不建开机链接（见 enhance/battop/install.sh），这里顺手清可能的旧链接
-cj_uninstall_usr_unit battop.service multi-user.target.wants || exit 1
-# 旧 oneshot+timer 模型遗留的 battop.timer（2026-09-20 前的设备；新安装器装时会清，没重装过的旧设备卸载时在这清）
-if [ -e "$CJ_SYSD/battop.timer" ]; then cj_uninstall_usr_unit battop.timer timers.target.wants multi-user.target.wants || exit 1; fi
-if [ "$PURGE" = "1" ]; then
-    BD="$CJ_HOME/battop"
-    case "$BD" in /?*/battop) ;; *) echo "!! 拒绝清除异常路径 $BD"; exit 1 ;; esac
-    [ -L "$BD" ] && { echo "!! $BD 是符号链接，拒绝清除"; exit 1; }
-    if [ -d "$BD" ]; then
-        echo "-- --purge：将删除 $BD（$(du -sk "$BD" 2>/dev/null | awk '{print $1}') KB：二进制 + 历史采样数据）"
-        rm -rf "$BD"
-        echo "-- --purge：已删 $BD"
-    else
-        echo "-- --purge：$BD 本来就不存在"
-    fi
-else
-    echo "-- 保留 $CJ_HOME/battop（二进制 + 历史采样数据）；要连数据一起删加 --purge"
-fi
 DEVICE_SCRIPT
 }
 
@@ -240,7 +192,7 @@ echo "· vellum/xovi/qt-resource-rebuilder/appload 本体、KOReader 侧载：�
 echo "· ~/.local/share/cangjie-ime/reading-qol.json（各扩展共用的设置）与 cangjie-backups/（回滚备份）：保留，确认无用后可手动删"
 echo "· 中文化（输入法/候选栏/UI 汉化）：不在本仓库，本脚本管不到"
 echo "· 以上改动多数要等下次 xochitl 重启才会在当前运行中的进程里真正停止生效——本脚本不主动触发重启；"
-echo "    摘了 xovi 扩展 .so（hl-snap/handwriting-stroke）而 xochitl 还加载着它：要立刻停用请整机重启（reboot，见上面该步的提示）；"
+echo "    摘了 xovi 扩展 .so（hl-snap，或已移除的 hw-stroke）而 xochitl 还加载着它：要立刻停用请整机重启（reboot，见上面该步的提示）；"
 echo "      这种状态下任何 stop/restart xochitl 都会让它退出途中崩溃、再由系统整机重启（2026-09-25 真机）——所以直接 reboot；"
 echo "      紧接着重装也没问题：install-all 最后一步认得这种状态，会换入新版后主动整机重启，不再停 xochitl；"
 echo "    只摘了 qmd（sidebar-entry/shelf）：同样整机重启（reboot）——停 xochitl 本身也会概率性退出途中崩溃；xovi 已生效时别用 xovi/start"

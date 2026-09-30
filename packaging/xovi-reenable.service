@@ -1,5 +1,5 @@
 [Unit]
-Description=cang-jie: 开机后自动重跑 xovi/start，重新注入全部 xovi 扩展（hl-snap/handwriting-stroke/中文化…通用，非专属某一条线）
+Description=cang-jie: 开机后自动重跑 xovi/start，重新注入全部 xovi 扩展（hl-snap/中文化…通用，非专属某一条线）
 Documentation=https://github.com/asivery/xovi
 # /etc 是 overlay（upperdir 在 /var/volatile tmpfs），真机重启即清——xovi 的 LD_PRELOAD 配置
 # （00-xovi.conf 等）跟着一起丢，不手动跑一次 /home/root/xovi/start（vellum add xovi 自带的

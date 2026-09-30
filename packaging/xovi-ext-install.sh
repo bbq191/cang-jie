@@ -3,7 +3,7 @@
 # ═══════════════════════════════════════════════════════════════════════════
 # xovi-ext-install.sh —— 设备侧"单个 xovi 扩展"通用安装器（被各扩展的 deploy/install.sh 薄包装 source）。
 #
-# 2026-09-20 脚本审计：hl-snap 与 handwriting-stroke 两份 install.sh 归一化后 ~95% 逐字重复，且都
+# 2026-09-20 脚本审计：hl-snap 与 handwriting-stroke（2026-09-30 已移除）两份 install.sh 归一化后 ~95% 逐字重复，且都
 # ① 原地 cp 覆盖 xochitl 已映射的 .so（M4）② 不带 --no-restart 时无条件 xovi/start（H1）③ 备份自己写
 # 一遍（M6）。现在数据（名字/配置键）留在各扩展的薄包装里，流程只此一份。
 #
