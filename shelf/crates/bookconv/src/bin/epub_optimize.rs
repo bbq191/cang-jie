@@ -1,6 +1,6 @@
 //! host/设备通用 CLI：对一本 EPUB 跑 `optimize::optimize_epub_with`（与设备端 book-serve Optimize 步**同一函数**）。
 //! 缺省 = 清洗层（伪 DRM 剥离 / CSS 锁剥离 / 边距段距归零+2em / 空页清理 / 缺目录时自动目录 / 双 id 折叠）+ 优化器
-//! （脚注拆环 / duokan 标记 / 远程图内联 / 双 id 去重 / 图片降采样 / e-ink 提对比），产物自带
+//! （脚注拆环 / duokan 标记 / 远程图内联 / 双 id 去重 / 图片降采样），产物自带
 //! `META-INF/com.cangjie.optimized` 标记，设备 autoopt 不会再优化一遍。`wash_epub.sh` 末步用它。
 //!
 //! 用法: epub-optimize [选项] 输入.epub 输出.epub    （流式路径进路径出，2026-09-19 起不再整本读进
@@ -40,7 +40,8 @@ fn main() {
     // --footnote-anchor 现在是 no-op（缺省已经是 Anchor），继续留在允许的 flag 列表里只是不破坏已有脚本调用。
     let footnote = FootnoteMode::Anchor;
     // 输入输出同路径（就地覆盖）时不能边读边写同一个文件——先写临时文件，成功后再改名覆盖。
-    let same_path = files[0] == files[1];
+    // 按真实文件判断（`./a.epub` 与 `a.epub`、符号链接也算同一个）；此前只比字符串，写法不同时会先截断输出=输入，把原书毁掉。
+    let same_path = files[0] == files[1] || matches!((std::fs::canonicalize(files[0]), std::fs::canonicalize(files[1])), (Ok(a), Ok(b)) if a == b);
     let out_target: std::path::PathBuf = if same_path {
         let mut t = std::path::PathBuf::from(files[1]).into_os_string();
         t.push(".optimizing.tmp");
