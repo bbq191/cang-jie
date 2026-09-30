@@ -192,7 +192,22 @@ pub fn forward(paths: &Paths, req: &mut Request<'_>) -> ApiResult {
 /// 这时再放名额，不让侦测本身不可靠把并发档位永久卡住。
 pub(crate) fn poll_until_settled(client: &SvcClient, name: &str) {
     let wake = crate::events::books_wake();
-    wait_settled(|| client.get_json("/staging"), name, Instant::now() + SETTLE_POLL_TIMEOUT, || wake.generation(), |seen, d| { wake.wait_change(seen, d); });
+    wait_settled(|| client.get_json("/staging"), name, Instant::now() + SETTLE_POLL_TIMEOUT, || wake.generation(), |seen, d| throttled_wait(wake, seen, d, MIN_REQUERY));
+}
+
+/// 两次 `GET /staging` 之间的最短间隔。book-serve 大书优化期间约每秒发一条进度事件（`staging`，同一个 kind 分不出
+/// "进度"还是"忙完"），此前每条都唤醒等待方、每条都整表查一次——一本大书优化几分钟到几十分钟，就是每秒一次的
+/// loopback 请求 + book-serve 整表序列化。代价：名额最多晚这么久才归还（下一本排队的书晚几秒开始），与整本处理时长相比可忽略。
+const MIN_REQUERY: Duration = Duration::from_secs(5);
+
+/// 等 `wake` 的代数离开 `seen`（至多 `max`），但从调用起**至少**过 `min.min(max)` 才返回——事件再密也不会让调用方
+/// 比这更频繁地去查。
+fn throttled_wait(wake: &crate::events::Wake, seen: u64, max: Duration, min: Duration) {
+    let start = Instant::now();
+    wake.wait_change(seen, max);
+    if let Some(rest) = min.min(max).checked_sub(start.elapsed()) {
+        std::thread::sleep(rest);
+    }
 }
 
 /// 连续几次查询失败才认定"服务已不可达、任务没了"。
@@ -379,6 +394,23 @@ mod tests {
         let calls = Cell::new(0usize);
         wait_settled(|| { let i = calls.get(); calls.set(i + 1); script[i].clone() }, "big.epub", Instant::now() + Duration::from_secs(3600), || 0, |_, _| {});
         assert_eq!(calls.get(), 6, "应一直等到真正不忙（第 6 次查询）才返回");
+    }
+
+    /// 事件密集（大书优化每秒一条进度）也不会让等待方查得比 `min` 更勤；没有事件时照旧等到 `max`（`max` 比 `min` 短时以 `max` 为准）。
+    #[test]
+    fn throttled_wait_never_returns_before_min_interval() {
+        let w = std::sync::Arc::new(crate::events::Wake::default());
+        let seen = w.generation();
+        w.bump(); // 事件早就到了：wait_change 立即返回，但仍要等满 min
+        let t = Instant::now();
+        throttled_wait(&w, seen, Duration::from_secs(5), Duration::from_millis(150));
+        let el = t.elapsed();
+        assert!(el >= Duration::from_millis(150) && el < Duration::from_secs(3), "{el:?}");
+        let seen = w.generation();
+        let t = Instant::now();
+        throttled_wait(&w, seen, Duration::from_millis(60), Duration::from_secs(5));
+        let el = t.elapsed();
+        assert!(el >= Duration::from_millis(60) && el < Duration::from_secs(3), "无事件：max 更短时以 max 为准，{el:?}");
     }
 
     /// 连续失败到上限 → 放弃（服务真挂了，任务已随之消失）。

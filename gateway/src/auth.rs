@@ -20,6 +20,63 @@ pub struct AuthState {
     pub secure_cookie: bool,
     /// 密码校验失败限速：按来源 IP 各自 [`LOGIN_MAX_FAILS`] 次 / [`LOGIN_FAIL_WINDOW`]，最多记 [`LOGIN_LIMITER_IPS`] 个 IP。
     pub limiter: IpFailLimiter,
+    /// Basic 认证"刚验过的密码"缓存，见 [`BasicCache`]。
+    basic: BasicCache,
+}
+
+/// Basic 认证每个请求都带密码，此前每个请求都跑一遍 60 万轮 PBKDF2（设备上数百毫秒、占满一个核）——`curl` 脚本
+/// 连发十几个请求就是好几秒纯 CPU、整机耗电。这里只记**最近一次验证通过**的那个密码的带密钥摘要
+/// `SHA-256(本进程随机密钥 ‖ 密码)` 与时间：同一密码在 [`BASIC_CACHE_TTL`] 内再来，常数时间比对摘要即可，不重算 PBKDF2。
+///
+/// 安全取舍：① 只缓存**验证成功**的结果——错误密码照旧走 PBKDF2 + 失败限速 + 500ms 延时，缓存不给暴力猜测提供任何
+/// 加速；② 不存明文，摘要带进程启动时从 `/dev/urandom` 取的 32 字节密钥（不落盘、重启即换），拿不到密钥就没法把摘要
+/// 当成离线快速验证的靶子；③ 改密码（[`AuthState::change_password`]）立即清空，旧密码一刻都不再被接受；
+/// ④ 只有一格：换个密码来试只会覆盖/错过这一格，不会攒出一张表。能读到网关进程内存的人本来就拿得到会话令牌，
+/// 这层缓存不扩大这类攻击面。
+struct BasicCache {
+    key: [u8; 32],
+    last: std::sync::Mutex<Option<([u8; 32], std::time::Instant)>>,
+}
+
+/// 同一 Basic 密码免重算 PBKDF2 的时长。只影响 CLI/脚本（网页走会话 Cookie，本来就不每请求验密码）。
+pub const BASIC_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(10 * 60);
+
+impl BasicCache {
+    fn new() -> BasicCache {
+        use std::io::Read;
+        let mut key = [0u8; 32];
+        let ok = std::fs::File::open("/dev/urandom").and_then(|mut f| f.read_exact(&mut key)).is_ok();
+        if !ok {
+            // 拿不到随机源（只在极怪的环境）：退回时间+pid 派生，照样不落盘。
+            use sha2::Digest;
+            let seed = format!("{:?}{}", std::time::SystemTime::now(), std::process::id());
+            key.copy_from_slice(&sha2::Sha256::digest(seed.as_bytes()));
+        }
+        BasicCache { key, last: std::sync::Mutex::new(None) }
+    }
+
+    fn digest(&self, pw: &str) -> [u8; 32] {
+        use sha2::Digest;
+        let mut h = sha2::Sha256::new();
+        h.update(self.key);
+        h.update(pw.as_bytes());
+        h.finalize().into()
+    }
+
+    fn hit(&self, pw: &str) -> bool {
+        let d = self.digest(pw);
+        let last = rmsvc_core::sync::lock(&self.last);
+        // 常数时间比对（逐字节异或累加），不因前缀相同与否泄露时序。
+        last.as_ref().is_some_and(|(cached, at)| at.elapsed() < BASIC_CACHE_TTL && cached.iter().zip(d.iter()).fold(0u8, |acc, (a, b)| acc | (a ^ b)) == 0)
+    }
+
+    fn remember(&self, pw: &str) {
+        *rmsvc_core::sync::lock(&self.last) = Some((self.digest(pw), std::time::Instant::now()));
+    }
+
+    fn clear(&self) {
+        *rmsvc_core::sync::lock(&self.last) = None;
+    }
 }
 
 /// 60 秒内连续输错 5 次就锁 60 秒内的后续尝试：正常人手误几次远够用（登录页每次错还有 500ms 延时），
@@ -38,7 +95,7 @@ fn client_ip(ip: Option<std::net::IpAddr>) -> std::net::IpAddr {
 
 impl AuthState {
     pub fn new(cfg: GatewayConfig, sessions: SessionStore, paths: Paths, secure_cookie: bool) -> AuthState {
-        AuthState { cfg: Mutex::new(cfg), sessions, paths, secure_cookie, limiter: IpFailLimiter::new(LOGIN_MAX_FAILS, LOGIN_FAIL_WINDOW, LOGIN_LIMITER_IPS) }
+        AuthState { cfg: Mutex::new(cfg), sessions, paths, secure_cookie, limiter: IpFailLimiter::new(LOGIN_MAX_FAILS, LOGIN_FAIL_WINDOW, LOGIN_LIMITER_IPS), basic: BasicCache::new() }
     }
 
     /// 被限速锁定时给的 429 应答（`json` 决定 JSON 还是登录页 HTML）。
@@ -79,7 +136,7 @@ impl AuthState {
             if self.limiter.locked_for(ip).is_some() {
                 return Who::Nobody; // 锁定期不做校验（见 LOGIN_MAX_FAILS）
             }
-            if self.verify(&pw) {
+            if self.verify_basic(&pw) {
                 self.limiter.reset(ip);
                 return Who::Basic;
             }
@@ -94,6 +151,18 @@ impl AuthState {
     fn verify(&self, pw: &str) -> bool {
         let hash = self.cfg.lock().map(|c| c.password_hash.clone()).unwrap_or_default();
         GatewayConfig::verify_hash(&hash, pw)
+    }
+
+    /// Basic 头里的密码：先查 [`BasicCache`]，没命中才跑 PBKDF2，通过后记下。登录表单/改密的"当前密码"不走缓存。
+    fn verify_basic(&self, pw: &str) -> bool {
+        if self.basic.hit(pw) {
+            return true;
+        }
+        let ok = self.verify(pw);
+        if ok {
+            self.basic.remember(pw);
+        }
+        ok
     }
 
     pub fn must_change(&self) -> bool {
@@ -177,7 +246,7 @@ impl AuthState {
             return Ok(self.locked_reply(wait, json, |m| crate::ui::password_page(m, forced)));
         }
         // Basic 已证明持有当前密码；会话则必须再输一次当前密码。两次 PBKDF2 都在 cfg 锁外算（见 [`Self::verify`]）。
-        let via_basic = req.header("Authorization").and_then(parse_basic).is_some_and(|(_, p)| self.verify(&p));
+        let via_basic = req.header("Authorization").and_then(parse_basic).is_some_and(|(_, p)| self.verify_basic(&p));
         if !via_basic && !self.verify(&current) {
             self.limiter.record_failure(ip);
             std::thread::sleep(std::time::Duration::from_millis(500));
@@ -193,6 +262,7 @@ impl AuthState {
         }
         cfg.set_password(&self.paths, &new).map_err(ApiError::internal)?;
         drop(cfg);
+        self.basic.clear(); // 旧密码的 Basic 缓存立即作废
         // 改密后踢掉其它设备的会话，本会话保留。
         let keep = req.header("Cookie").and_then(|c| parse_cookie(c, COOKIE)).unwrap_or_default();
         self.sessions.revoke_others(&keep);
@@ -395,6 +465,26 @@ mod tests {
         let rep = st.change_password(&mut req(Method::Post, "/password", "application/json", &[("Authorization", &format!("Basic {b}"))], &mut body)).unwrap();
         assert_eq!(rep.status, 200, "{}", String::from_utf8_lossy(&rep.body));
         assert!(!st.must_change());
+    }
+
+    /// Basic 缓存：同一密码第二次起不再跑 PBKDF2（把哈希清空后仍放行＝没有重算）；错密码不受缓存影响；
+    /// 改密码后旧密码立即失效。
+    #[test]
+    fn basic_auth_caches_only_the_verified_password_and_forgets_it_on_change() {
+        let st = state(false);
+        let g = st.guard();
+        let basic = |pw: &str| format!("Basic {}", base64::Engine::encode(&base64::engine::general_purpose::STANDARD, format!("cli:{pw}")));
+        let ok = basic("secret1");
+        assert!((g.check)(&gr(Method::Get, "/api/services", &[("Authorization", &ok)])).is_none());
+        let real_hash = std::mem::take(&mut st.cfg.lock().unwrap().password_hash);
+        assert!((g.check)(&gr(Method::Get, "/api/services", &[("Authorization", &ok)])).is_none(), "命中缓存：不再重算 PBKDF2（哈希已清空也放行）");
+        assert_eq!((g.check)(&gr(Method::Get, "/api/services", &[("Authorization", &basic("secret2"))])).unwrap().status, 401, "别的密码不命中缓存");
+        st.cfg.lock().unwrap().password_hash = real_hash;
+        // 用 Basic 改密：旧密码的缓存随即作废
+        let mut body: &[u8] = br#"{"new":"longer1"}"#;
+        assert_eq!(st.change_password(&mut req(Method::Post, "/password", "application/json", &[("Authorization", &ok)], &mut body)).unwrap().status, 200);
+        assert_eq!((g.check)(&gr(Method::Get, "/api/services", &[("Authorization", &ok)])).unwrap().status, 401, "改密后旧密码不能再靠缓存通过");
+        assert!((g.check)(&gr(Method::Get, "/api/services", &[("Authorization", &basic("longer1"))])).is_none());
     }
 
     #[test]
