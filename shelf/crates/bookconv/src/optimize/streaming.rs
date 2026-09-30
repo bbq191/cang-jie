@@ -24,8 +24,7 @@ use super::*;
 /// `on_progress(done, total)`（2026-09-19 补，给调用方画进度条用）：阶段二每写完一个条目回调一次，
 /// `total`＝这本书要写出的条目总数（`entries.len()`，含 mimetype 之外的所有文本/图片条目，不含
 /// 末尾的 marker）。只在阶段二回调——阶段一（读入+清洗）对文字书通常是毫秒级，真正拖时间的是阶段
-/// 二逐张图片的重编码，回调粒度对齐"真正在做的工作"，跟 `comic_split::deliver_split_streaming` 的
-/// `upload_piece` 进度粒度同一个道理。**这个回调纯粹是可观测性，不改变内存峰值**——阶段二本来就是
+/// 二逐张图片的重编码，回调粒度对齐"真正在做的工作"，回调粒度对齐真正耗时的那一步。**这个回调纯粹是可观测性，不改变内存峰值**——阶段二本来就是
 /// 逐条目处理+立刻写文件+立刻丢，回调只是在这个已有的循环里多做一次通知，不持有任何额外数据。
 pub fn optimize_epub_file_streaming(input_path: &std::path::Path, output_path: &std::path::Path, opts: &OptimizeOpts, on_progress: impl FnMut(usize, usize)) -> Result<Report, String> {
     optimize_epub_file_streaming_titled(input_path, output_path, opts, None, on_progress)

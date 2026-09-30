@@ -152,63 +152,9 @@ pub fn sanitize_filename(title: &str, default: &str) -> String {
     }
 }
 
-/// 分卷投递的分卷文件名各自独立截断的字节预算——ext4 等主流 Linux 文件系统单个文件名硬限
-/// 255 字节，两段预算相加（100+100=200）+ ` - `/`.`/扩展名 留出的十来字节，稳稳落在限内。
-const PIECE_NAME_STEM_MAX_BYTES: usize = 100;
-const PIECE_NAME_TITLE_MAX_BYTES: usize = 100;
-
-/// 拼分卷投递的文件名："{原书名} - {分卷标题}.{ext}"。**两段都要独立截断，不能只截一段**：
-/// 原书名本身可能已经很长（下载站描述性文件名常见，常见破百字节）；分卷标题又可能来自源文件
-/// 自己的目录/书签——那是不受我们控制的外部数据，某些书整份目录只有一条、内容恰好就是文件名
-/// 本身（single-NCX-entry 的书）。两段各自可能单独超标，只截一段兜不住任意组合；真机撞过
-/// 两段相加 278 字节（超过 255 上限）触发 xochitl 泛化的 `"Filesystem error"`——错误信息本身
-/// 完全没提字节数/文件名，2026-09-19《乱马1/2 典藏版 19卷》两卷分卷全部投不上，靠手算原书名+
-/// 分卷标题拼出来的真实字节数才坐实根因是文件名超限，不是别的什么"文件系统错误"。
-pub fn safe_piece_filename(stem: &str, title: &str, ext: &str) -> String {
-    let stem = truncate_utf8_bytes(stem, PIECE_NAME_STEM_MAX_BYTES);
-    let title = truncate_utf8_bytes(title, PIECE_NAME_TITLE_MAX_BYTES);
-    format!("{stem} - {title}.{ext}")
-}
-
-/// 按字节预算截断，绝不切在 UTF-8 多字节字符中间（截出来的前缀本身也必须是合法 UTF-8）。
-fn truncate_utf8_bytes(s: &str, max_bytes: usize) -> &str {
-    if s.len() <= max_bytes {
-        return s;
-    }
-    let mut end = max_bytes;
-    while end > 0 && !s.is_char_boundary(end) {
-        end -= 1;
-    }
-    &s[..end]
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn safe_piece_filename_caps_both_segments_independently() {
-        let long_stem = "亂馬1⁄2 典藏版 - 19卷 -- 高橋留美子 -- 19, 2019 -- 尖端 -- 03220cf1a8939e8ef2b2253cddd33408 -- Anna\u{2019}s Archive";
-        // 真机撞到的真实场景：分卷标题恰好等于原书名本身（single-NCX-entry 的书），两段
-        // 各自都超 100 字节预算——修复前 `{stem} - {title}.pdf` 会拼出 278 字节。
-        let name = safe_piece_filename(long_stem, long_stem, "pdf");
-        assert!(name.len() < 230, "拼出来的完整文件名应该稳稳落在文件系统 255 字节限之内，实际 {} 字节: {name}", name.len());
-        assert!(name.ends_with(".pdf"));
-    }
-
-    #[test]
-    fn safe_piece_filename_leaves_short_names_untouched() {
-        assert_eq!(safe_piece_filename("镖人", "第 1-50 页", "pdf"), "镖人 - 第 1-50 页.pdf");
-    }
-
-    #[test]
-    fn truncate_utf8_bytes_never_splits_a_multibyte_char() {
-        let s = "中文中文中文"; // 每字 3 字节
-        let t = truncate_utf8_bytes(s, 7); // 7 不是 3 的倍数，必须回退到字符边界
-        assert!(s.is_char_boundary(t.len()));
-        assert!(std::str::from_utf8(t.as_bytes()).is_ok());
-        assert_eq!(t, "中文"); // 截到 6 字节（2 个字），不是硬切出半个字符
-    }
 
     #[test]
     fn produce_then_replace_swaps_on_success_and_cleans_tmp_on_failure() {

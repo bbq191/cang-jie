@@ -1,9 +1,5 @@
-//! 落库：加入 xochitl（整本 / 大文件通道 / 超限分卷）、渲染记录与落库记录、建文件夹等待。
+//! 落库：加入 xochitl（整本 / 大文件通道）、渲染记录与落库记录、建文件夹等待。
 use super::*;
-
-/// 漫画按卷拆分投递，单份等渲染确认的上限（真机观测单卷渲染+缩略图+建索引耗时 15-30 秒，给足
-/// 余量；超时不算失败，只是没等到确认就接着投下一份，见 `Staging::try_deliver_split`）。
-pub(super) const PIECE_RENDER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(90);
 
 /// 落库前等待「建文件夹」代理真的建出来目标文件夹的上限——`shelf-mkdir-agent.qmd` 现为长轮询
 /// （入队即刻响应，旧版是 8 秒一次 Timer 轮询），20 秒足够留出建夹 + 落盘的余量；等不到不算错误，`ensure_folder` 会原样放行，交给
@@ -24,9 +20,9 @@ impl Staging {
     /// 母版库条目投完**永远保留**（2026-09-19 用户明确要求去掉"投完自动删除"这个功能——母版是可以
     /// 反复投给两个读器对照、换设备重投的底本，不该被一次性动作悄悄清掉；要删由用户自己在列表里点
     /// 删除）。返回回执文案 + EPUB 的渲染自检计划（调用方起线程跑 `render_check::run`）。
-    /// **同步、阻塞**——超限漫画按卷拆分要挨个建包+上传，真机能到分钟级；跟 [`Self::optimize`] 一样，
+    /// **同步、阻塞**——上传大书、等建文件夹都能到分钟级；跟 [`Self::optimize`] 一样，
     /// HTTP 接口不该直接暴露这个方法，用 [`Self::spawn_deliver`] 走后台线程。
-    pub fn deliver(&self, name: &str, folder: &str, mkdir: &MkdirQueue, bus: &rmsvc_core::events::EventBus) -> Result<DeliverOutcome, String> {
+    pub fn deliver(&self, name: &str, folder: &str, mkdir: &MkdirQueue) -> Result<DeliverOutcome, String> {
         let ct = bookconv::convert::direct_content_type(name)
             .ok_or("xochitl 只读 EPUB / PDF；此格式请「加入 KOReader」")?;
         let p = self.existing(name)?;
@@ -34,30 +30,14 @@ impl Staging {
         let folder = folder.trim();
         self.ensure_folder(folder, mkdir);
         if self.native_limit > 0 && size > self.native_limit {
-            // 超限：EPUB 格式的漫画按 NCX 结构递归拆分成若干份分别投递，不再是全有全无
-            // （2026-09-18 用户真机反馈驱动，见 bookconv::comic_split 与书架白皮书 §03aw）。
-            // 非 EPUB、非漫画、或拆不出方案（没有可用 toc.ncx）的原样保留改动前的整本拒绝行为。
-            //
-            // **优先走大文件通道**（2026-09-20 用户要求突破上传限制，真机验证 PDF 154MB/EPUB 153MB 可行）：
-            // 占位文档 + 磁盘上替换成真文件，不分卷、不限漫画。只有本机没有 xochitl 书库目录（非设备环境）
-            // 或造占位失败才退回下面的分卷/拒绝。
+            // 超限：走大文件通道（2026-09-20 用户要求突破上传限制，真机验证 PDF 154MB/EPUB 153MB 可行）——
+            // 占位文档 + 磁盘上替换成真文件。本机没有 xochitl 书库目录（非设备环境）、超过 `MAX_DIRECT_BYTES`
+            // 或造占位失败才拒绝。**不再按卷拆分**（2026-09-30 用户定移除；此前 EPUB 漫画按 NCX、PDF 按书签拆成
+            // 若干份分别上传，作为大文件通道之后的回退）。
             if let Some(outcome) = self.try_deliver_direct(name, &p, size, folder)? {
                 return Ok(outcome);
             }
-            if formats::ext_of(name) == "epub" {
-                if let Some(outcome) = self.try_deliver_split(name, &p, folder, bus)? {
-                    return Ok(outcome);
-                }
-            } else if formats::ext_of(name) == "pdf" {
-                if let Some(outcome) = self.try_deliver_split_pdf(name, &p, folder, bus)? {
-                    return Ok(outcome);
-                }
-            }
-            return Err(format!(
-                "《{name}》{} MB 超过 xochitl 上传上限（{} MB），会直接断连。PDF 请自行分割成多份后重新上传；非漫画或没有可用目录结构的 EPUB 无法自动分卷，请改用 KOReader 读",
-                size >> 20,
-                self.native_limit >> 20
-            ));
+            return Err(format!("《{name}》{} MB 超过 xochitl 上传上限（{} MB），也走不了大文件通道（超过 1GB，或造不出占位文档），没有加入", size >> 20, self.native_limit >> 20));
         }
         // 2026-09-19 OOM 审计：这条路径以前 `std::fs::read` 整本读进 `Vec<u8>`，自检+上传各自又在
         // 内部再叠一份（`text_profile` 解压全部条目含图片、`Xochitl::upload` 内部克隆一份拼
@@ -115,7 +95,7 @@ impl Staging {
 
     /// 大文件通道（见 [`rmsvc_core::xochitl::Xochitl::upload_large_file`]）：成功 `Ok(Some)`；条件不满足（非
     /// EPUB/PDF、超过安全上限、本机没有 xochitl 书库目录、造占位失败）→ `Ok(None)` 让调用方退回旧路径；
-    /// 占位已上传之后才出的错 → `Err`（不再退回分卷，否则会在书库里留下重复内容）。
+    /// 占位已上传之后才出的错 → `Err`（不再退回拒绝，否则书库里会留下半成品占位）。
     pub(super) fn try_deliver_direct(&self, name: &str, p: &Path, size: u64, folder: &str) -> Result<Option<DeliverOutcome>, String> {
         let ext = formats::ext_of(name);
         if (ext != "epub" && ext != "pdf") || size > MAX_DIRECT_BYTES || !self.xochitl.library_dir().is_dir() {
@@ -160,7 +140,7 @@ impl Staging {
         };
         let _ = self.set_render(name, rc);
         Ok(Some(DeliverOutcome {
-            message: format!("《{stem}》{} MB 超过网页上传上限，已直接写入 xochitl 书库（未分卷）；首次打开需重新渲染，请稍候", size >> 20),
+            message: format!("《{stem}》{} MB 超过网页上传上限，已直接写入 xochitl 书库；首次打开需重新渲染，请稍候", size >> 20),
             render: None,
         }))
     }
@@ -198,7 +178,7 @@ impl Staging {
         let _ = self.set_deliver_check(name, sidecar::DeliverCheck { status: "pending".into(), message: String::new(), at: now, progress: None });
         let folder = folder.to_string();
         self.spawn_bg(name, bus, move |this, name, bus| {
-            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| this.deliver(name, &folder, &mkdir, bus)))
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| this.deliver(name, &folder, &mkdir)))
                 .unwrap_or_else(|_| Err("落库过程内部异常（已捕获，不影响其他操作）".to_string()));
             let at = rmsvc_core::clock::now_secs();
             // 成功/失败落定后进度条意义不大（`status` 本身就是终态），不保留最后一次的
@@ -222,120 +202,10 @@ impl Staging {
         sidecar::update(&p, |d| d.deliver = Some(dc))
     }
 
-    /// 超限 EPUB 漫画的拆分投递：不是漫画 / 拆不出方案 → `Ok(None)`（调用方退回改动前的整本拒绝）；
-    /// 拆出方案 → 挨个上传能塞进预算的那几份，聚合成一条回执。原书字节在母版库/KOReader 完全不受
-    /// 影响——拆出来的那几份只存在于内存里，上传即弃，从不落母版库，母版库原书一份字节不动。
-    /// 渲染自检对拆分出来的每一份跳过——`RenderPlan` 按母版库条目名找书，
-    /// 拆分份没有母版库条目，硬接只会认错书，留作已知范围限制（见书架白皮书 §03aw）。
-    /// 2026-09-19 改走流式路径 `comic_split::deliver_split_streaming`——真机 785MB《镖人（11 卷）》
-    /// 坐实旧写法（`std::fs::read` 整本读 + `check::read_entries` 整本解压进 `Vec<Entry>`）把
-    /// book-serve 逼近系统内存上限（`VmRSS` 观测到 1.65GB/2GB，同一天早些时候修的
-    /// `optimize_epub_file_streaming` 是同一类风险，这条落库拆分路径当时没顺带改）。流式版只在
-    /// 规划阶段读小文件（OPF/NCX/HTML 文本），图片体积从 zip 目录直接查表拿、不解压；逐份处理时
-    /// 才把这一份需要的图片读回真实字节，传完立刻丢，峰值内存只有"一份的体积"（≤ `native_limit`）。
-    ///
-    /// **上传完一份等 xochitl 真的渲染完再传下一份，不猜固定等待时间**（真机《镖人》11 卷三轮
-    /// 真实投递坐实：连续紧挨着上传，xochitl 那边忙着给刚收到的那卷渲染 PDF+生成封面缩略图+建
-    /// `.epubindex`——`journalctl` 能看到每卷这套处理耗时 15-30 秒不等（`entryUploadTimer timed
-    /// out` 反复出现），下一份的上传连接精确被同一卷打断（`Connection reset by peer`/`Broken
-    /// pipe`，三轮位置一致，不是随机网络抖动）；固定 5 秒/15 秒间隔都是瞎猜、不可靠，改用整本投递
-    /// 渲染自检同一套机制（`render_check::probe`+`fswatch::watch_until`）等这一份真的出现页数再
-    /// 放行下一份——每份限时 [`PIECE_RENDER_TIMEOUT`]，超时也不算失败（上传本身已经成功，只是没
-    /// 等到确认，继续投下一份，不为等不到的确认阻塞整本书）。
-    pub(super) fn try_deliver_split(&self, name: &str, p: &Path, folder: &str, bus: &rmsvc_core::events::EventBus) -> Result<Option<DeliverOutcome>, String> {
-        let stem = name.strip_suffix(".epub").unwrap_or(name).to_string();
-        let native_limit = self.native_limit;
-        self.deliver_pieces(name, &stem, "application/epub+zip", folder, bus, |upload| bookconv::comic_split::deliver_split_streaming(p, native_limit, upload))
-    }
-
-    /// 超预算漫画 PDF 的拆分投递——[`Self::try_deliver_split`] 的 PDF 版本。不是"我们自己产出的
-    /// 漫画 PDF"（没有书签目录，比如用户自己上传的原生大部头 PDF）/ 整本已在预算内 →
-    /// `Ok(None)`，调用方退回改动前的整本拒绝。
-    ///
-    /// 2026-09-19 改走流式 `comic_pdf::deliver_split_pdf_streaming`——真机 245MB/600页 样本坐实
-    /// 过前身版本（一次性 `extract_pages` 把全书图片攒成 `Vec<PdfImage>`）`VmHWM` 峰值到过
-    /// 525MB；现在逐份读逐份传逐份丢，峰值只有"一份的体积"，跟 EPUB 那条 [`Self::try_deliver_
-    /// split`] 是同一套纪律。单页体积本身超预算这种边界情况这里没有单独处理——上游 `imgopt::
-    /// downscale_for_epub_comic` 已经把每张图钳制在 954×1696 像素以内，JPEG 质量 95 下单页实际
-    /// 不可能逼近 90MB 量级的预算，这个假设不成立时（比如以后画质/尺寸上限调高很多）需要回来
-    /// 重新评估。
-    pub(super) fn try_deliver_split_pdf(&self, name: &str, p: &Path, folder: &str, bus: &rmsvc_core::events::EventBus) -> Result<Option<DeliverOutcome>, String> {
-        let stem = name.strip_suffix(".pdf").unwrap_or(name).to_string();
-        let native_limit = self.native_limit;
-        self.deliver_pieces(name, &stem, "application/pdf", folder, bus, |upload| bookconv::comic_pdf::deliver_split_pdf_streaming(p, native_limit, upload))
-    }
-
-    /// EPUB / PDF 两条拆分投递（[`Self::try_deliver_split`] / [`Self::try_deliver_split_pdf`]）共用的"逐份上传"外壳
-    /// （2026-09-20 代码质量审计：两处约 40 行逐字重复，只差"谁来切"和 mime）。`split` 拿到一个"上传一份"的回调，
-    /// 调 `bookconv` 里对应的流式拆分函数把它传进去；这里负责取消检查 → 上传 → 等 xochitl 渲染确认 → 写进度 → 汇总回执。
-    /// 返回 `Ok(None)` ＝不适用拆分（调用方退回整本拒绝）。
-    pub(super) fn deliver_pieces(
-        &self,
-        name: &str,
-        stem: &str,
-        mime: &str,
-        folder: &str,
-        bus: &rmsvc_core::events::EventBus,
-        split: impl FnOnce(&mut dyn FnMut(&str, &[u8], usize, usize) -> Result<(), String>) -> Result<Option<bookconv::comic_split::StreamSplitOutcome>, String>,
-    ) -> Result<Option<DeliverOutcome>, String> {
-        let lib_dir = self.xochitl.library_dir().to_path_buf();
-        // 逐份上传/等渲染都可能耗时到分钟级（真机《镖人》11 卷坐实）——每完成一份就把进度写进
-        // sidecar 的 `deliver` 字段（status 仍是 "pending"，`progress.{done,total}` 是结构化
-        // 份数给网页画真百分比进度条用，`message` 仍留一句人话＋已完成的具体卷名），`GET /staging`
-        // 就能看到实时进度，不用等整本投完才有任何反馈（2026-09-19 用户先反馈"能否显示优化及投书
-        // 进度"，后又反馈"正在处理中请稍候"这种静态文案该换成进度条/百分比，这里是后一条的落地）。
-        // **每写完一份 sidecar 进度也要 `bus.publish`**——不发事件的话，网页那套"SSE 推事件才刷新
-        // 列表"的零轮询机制根本不知道这条记录变了，进度条数字冻结在第一份，要手动刷新页面才看得到
-        // 新值（2026-09-19 用户反馈"进度条不会动，要自己刷新"，根因是这个函数当时没拿到 `bus`）。
-        let mut done_titles: Vec<String> = Vec::new();
-        self.mark_cancellable(name);
-        let outcome = split(&mut |piece_name, bytes, idx, total| {
-            if self.is_cancelled(name) {
-                return Err(optimize::CANCELLED_MSG.to_string()); // 份与份之间是安全的中断点
-            }
-            let since_ms = rmsvc_core::clock::now_ms();
-            self.xochitl.upload(bytes, piece_name, mime, folder).map(|_| ())?;
-            let plan = RenderPlan { name: piece_name.to_string(), title: None, expected: 0, since_ms, comic: false };
-            if render_check::probe(&lib_dir, &plan).is_none() {
-                rmsvc_core::fswatch::watch_until(&lib_dir, render_check::DEBOUNCE, PIECE_RENDER_TIMEOUT, |_| render_check::probe(&lib_dir, &plan).is_some());
-            }
-            done_titles.push(piece_name.to_string());
-            // 份数（几完成/共几份）交给 `progress` 结构化字段，网页拿去画真百分比进度条，这里
-            // `message` 只留"具体是哪几卷"——两边不重复说同一件事（份数），各自负责一半信息。
-            let progress = sidecar::DeliverCheck {
-                status: "pending".into(),
-                message: format!("已加入：{}", done_titles.join("、")),
-                at: rmsvc_core::clock::now_secs(),
-                progress: Some(sidecar::StepProgress { done: idx as u32, total: total as u32 }),
-            };
-            let _ = self.set_deliver_check(name, progress);
-            bus.publish("books", "staging");
-            Ok(())
-        })?;
-        let Some(outcome) = outcome else { return Ok(None) }; // 不是漫画/没超预算——退回原来的整本流程
-        if outcome.delivered.is_empty() {
-            return Err(format!("《{name}》按卷拆分后一份都没能投上：{}", outcome.failed.join("；")));
-        }
-        let mut message = format!("《{stem}》超限，已按卷拆分加入 xochitl：{}", outcome.delivered.join("、"));
-        if !outcome.failed.is_empty() {
-            message.push_str(&format!("（{} 未投：{}）", outcome.failed.len(), outcome.failed.join("；")));
-        }
-        let _ = self.mark_delivered(name, Reader::Native);
-        Ok(Some(DeliverOutcome { message, render: None }))
-    }
-
     /// 写渲染自检结果到边车（书已从母版库删除 → Err，调用方只记日志）。
-    /// 认到落库 uuid 时顺带按这本书的阅读方向设置同步手动清单（设了方向就不必等重新优化，见 `staging/direction.rs`）。
     pub fn set_render(&self, name: &str, rc: RenderCheck) -> Result<(), String> {
         let p = self.existing(name)?;
-        let uuid = rc.uuid.clone();
-        sidecar::update(&p, |d| d.render = Some(rc))?;
-        if !uuid.is_empty() {
-            if let Some(Err(e)) = self.sync_override(&uuid, self.direction_pref(&p), false) {
-                println!("[book-serve] 《{name}》同步阅读方向手动清单失败（不影响投书）: {e}");
-            }
-        }
-        Ok(())
+        sidecar::update(&p, |d| d.render = Some(rc))
     }
 
     /// 记这份母版库文件是由哪个原始输入处理出来的（CLI push 上传时带 `?srcName=&srcBytes=` 才有，见

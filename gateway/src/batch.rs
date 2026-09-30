@@ -210,7 +210,7 @@ pub fn status() -> Value {
 }
 
 /// **全部中止**：清空还没开始的；正在处理的那一本：还卡在并发闸门排队 → 取消排队（[`crate::budget::Budget::cancel`]）；
-/// 已经在 `book-serve` 里跑 → 请求它取消（EPUB 优化、按卷拆分投递支持中途停，其它步骤会自然跑完，见
+/// 已经在 `book-serve` 里跑 → 请求它取消（EPUB 优化支持中途停，其它步骤会自然跑完，见
 /// `Staging::request_cancel`）。返回被清掉的数量。
 pub fn stop(paths: &Paths) -> usize {
     let (n, current) = {

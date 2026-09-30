@@ -24,12 +24,6 @@ pub struct Delivered {
     /// 最近一次「落库」的结果（`staging::Staging::spawn_deliver` 异步执行时写，2026-09-19）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deliver: Option<DeliverCheck>,
-    /// 按书设置的翻页方向（2026-09-25）：`"rtl"`＝从右往左（日漫）/ `"ltr"`＝从左往右；缺省＝自动（保留书里自带的
-    /// OPF 标记）。「优化」时写进 OPF spine（`bookconv::direction`），已落库的副本按 `render.uuid` 同步进
-    /// `rtl-overrides.json`（`reading_direction.rs`）。**用户的设置，不是结果记录**——放边车是因为它跟着这本书走
-    /// （改名一起挪、删书一起删），与其它字段互不影响。
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub direction: Option<String>,
 }
 
 /// 异步优化的结果：`status` = pending（后台线程跑着）/ ok / failed。`message` 是回执文案
@@ -143,8 +137,9 @@ mod tests {
         assert_eq!((d.native, d.koreader), (Some(7), None));
         assert_eq!(d.render.as_ref().map(|r| r.pages), Some(3));
         // 旧版边车（无 render/source 字段）照读
-        std::fs::write(path_for(&book), br#"{"native":1,"koreader":2}"#).unwrap();
-        assert_eq!(read(&book), Some(Delivered { native: Some(1), koreader: Some(2), render: None, source: None, optimize: None, deliver: None, direction: None }));
+        // 2026-09-30 前的边车可能带 `direction`（已移除的按书方向设置）：照常读，字段忽略
+        std::fs::write(path_for(&book), br#"{"native":1,"koreader":2,"direction":"rtl"}"#).unwrap();
+        assert_eq!(read(&book), Some(Delivered { native: Some(1), koreader: Some(2), render: None, source: None, optimize: None, deliver: None }));
         remove(&book);
         assert!(read(&book).is_none());
         remove(&book);

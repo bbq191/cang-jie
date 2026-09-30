@@ -742,13 +742,6 @@ impl PdfFileReader {
         parse_uint_after(&pages_body, "/Count ").ok_or_else(|| "Pages 对象缺 /Count".to_string()).map(|n| n as usize)
     }
 
-    /// 这一页的图片对象在文件里占的精确字节数（含对象包装本身，不只是图片数据）——纯查表运算，
-    /// 不碰磁盘，给"按体积贪心分组"这类只需要相对大小、不需要读出真实内容的场景用。
-    pub fn page_byte_span_len(&self, page_idx: usize) -> u64 {
-        let image_id = 3 + page_idx * 3 + 1;
-        object_byte_span(&self.offsets, self.xref_off, image_id).map(|(s, e)| (e - s) as u64).unwrap_or(0)
-    }
-
     /// 全书书签，`(全局页码, 标题)`——没有 Outlines（不是我们自己产出的漫画 PDF）返回空列表，
     /// 不是错误。
     pub fn outline_titles(&mut self) -> Result<Vec<(usize, String)>, String> {
@@ -1068,24 +1061,6 @@ mod tests {
             reader.read_page_image(i).unwrap();
         }
         assert!(started.elapsed() < std::time::Duration::from_secs(2), "500 页逐页读取耗时异常: {:?}", started.elapsed());
-    }
-
-    #[test]
-    fn pdf_file_reader_page_byte_span_len_is_cheap_size_proxy() {
-        // 分卷贪心分组只需要"相对大小"，不需要真读出图片内容——page_byte_span_len 纯查表，
-        // 不碰磁盘；这里验证它跟真实读出来的图片字节数量级一致（差距只在对象包装的固定开销）。
-        let images: Vec<PdfImage> = vec![image_from_bytes(RED_PNG).unwrap(), image_from_bytes(RED_PNG).unwrap()];
-        let pdf = images_to_pdf_with_toc(&images, &[(0, "卷一".to_string())]).unwrap();
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("t.pdf");
-        std::fs::write(&path, &pdf).unwrap();
-        let mut reader = PdfFileReader::open(&path).unwrap();
-        for i in 0..2 {
-            let span = reader.page_byte_span_len(i);
-            let real = reader.read_page_image(i).unwrap().data.len() as u64;
-            assert!(span >= real, "对象包装范围应该 >= 图片数据本身: span={span} real={real}");
-            assert!(span - real < 200, "对象包装开销不该离谱地大: span={span} real={real}");
-        }
     }
 
     #[test]

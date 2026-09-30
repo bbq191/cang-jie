@@ -42,8 +42,6 @@ pub(super) struct ProbeCache {
     pub(super) modified: Option<std::time::SystemTime>,
     pub(super) level: &'static str,
     pub(super) pdf_source: bool,
-    /// EPUB OPF 里写明的翻页方向（判"方向设置待优化"用；非 EPUB 恒 `None`）。
-    pub(super) spine: Option<bookconv::direction::PageDirection>,
 }
 
 impl Staging {
@@ -267,7 +265,7 @@ impl Staging {
                 "cbz" => "cbz",
                 _ => "other",
             };
-            // 优化状态对 EPUB 有意义；PDF 里"我们自己优化产出的产物"（漫画 EPUB 分卷投递的 PDF 件或入库 PDF 裁边）
+            // 优化状态对 EPUB 有意义；PDF 里"我们自己优化产出的产物"（入库 PDF 裁边等）
             // 也算已优化（靠书签目录或 Producer 标记廉价识别，见 `pdfwrite.rs::looks_like_own_
             // bookconv_pdf` 文档注释——用户自己上传的原生 PDF 没有这俩标记，维持 none）。
             // 入库 PDF 转出来的 EPUB（`pdf_source`）视为一次性产物已经完成，直接报 full，不进
@@ -280,13 +278,12 @@ impl Staging {
                 .get(&name)
                 .filter(|c| c.len == md.len() && c.modified == modified)
                 .cloned();
-            let (level, pdf_source, spine) = match cached {
-                Some(c) => (c.level, c.pdf_source, c.spine),
+            let (level, pdf_source) = match cached {
+                Some(c) => (c.level, c.pdf_source),
                 None => {
                     let (level, pdf_source) = probe_level(&e.path(), format);
-                    let spine = if format == "epub" { bookconv::direction::spine_direction_file(&e.path()) } else { None };
-                    rmsvc_core::sync::lock(&self.probes).insert(name.clone(), ProbeCache { len: md.len(), modified, level, pdf_source, spine });
-                    (level, pdf_source, spine)
+                    rmsvc_core::sync::lock(&self.probes).insert(name.clone(), ProbeCache { len: md.len(), modified, level, pdf_source });
+                    (level, pdf_source)
                 }
             };
             seen.insert(name.clone());
@@ -314,20 +311,16 @@ impl Staging {
                     }
                 }
             }
-            let pref = if format == "epub" { super::direction::parse_pref(delivered.as_ref().and_then(|d| d.direction.as_deref())) } else { None };
-            let direction_stale = super::direction::is_stale(pref, spine);
             out.push(StagingEntry {
                 name,
                 bytes: md.len(),
                 format,
-                optimized: level == "full" && !direction_stale,
+                optimized: level == "full",
                 level,
                 mtime,
                 delivered,
                 busy,
                 pdf_source,
-                direction: super::direction::pref_label(pref),
-                direction_stale,
             });
         }
         // 已被删除/改名的条目从缓存清掉，避免缓存无限增长

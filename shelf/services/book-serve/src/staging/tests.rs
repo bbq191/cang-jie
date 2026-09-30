@@ -296,8 +296,8 @@ fn spawn_optimize_rejects_non_epub_and_missing_file_synchronously() {
     assert!(s.spawn_optimize("none.epub", bus).is_err());
 }
 
-/// 造一本 2 卷合集漫画（跟 bookconv::comic_split 测试用例同一套结构），塞进 mini_epub 装不了的
-/// 二进制字节所以这里直接手搓 zip——is_comic/comic_split 只看扩展名和 NCX 结构，不校验图片
+/// 造一本 2 卷合集漫画，塞进 mini_epub 装不了的
+/// 二进制字节所以这里直接手搓 zip——is_comic 只看扩展名和 NCX 结构，不校验图片
 /// 内容本身是不是合法 JPEG，够测这条集成路径。
 fn multivol_comic_epub(pages_per_vol: &[usize]) -> Vec<u8> {
     use std::io::Write;
@@ -333,21 +333,16 @@ fn multivol_comic_epub(pages_per_vol: &[usize]) -> Vec<u8> {
     buf
 }
 
+/// 分卷投递已移除（2026-09-30）：超限漫画走不了大文件通道（测试里没有 xochitl 书库目录）就整本拒绝，不再拆成几份上传。
 #[test]
-fn deliver_oversized_epub_comic_attempts_split_instead_of_flat_reject() {
-    // 25+ 张图满足 is_comic 阈值（2 卷各 15 张，每页 html+img 约 200B）；native_limit 给 1KB
-    // 逼近强制超限，触发拆分路径。测试环境 Xochitl 指向不可达地址，upload() 必然失败，验证不了
-    // 真正投递成功——那部分已经在真机+bookconv 单测（`comic_split::tests::against_real_naruto_book`）
-    // 分别验证过；这里只验证 deliver() 确实走了"按卷拆分尝试"这条新路径，不是笼统整本拒绝。
+fn deliver_oversized_comic_no_longer_splits() {
     let t = tempfile::tempdir().unwrap();
     let x = Arc::new(Xochitl::new("127.0.0.1:1", Path::new("/nonexistent"), 1));
     let s = Staging::new(t.path().join("staging"), x, 1024);
     s.ensure().unwrap();
-    let epub = multivol_comic_epub(&[15, 15]);
-    s.stage_new("manga.epub", &epub).unwrap();
-    let err = s.deliver("manga.epub", "", &empty_mkdir(&t), &rmsvc_core::events::EventBus::new()).unwrap_err();
-    assert!(err.contains("按卷拆分") || err.contains("上传失败") || err.contains("拆分后一份都没能投上"), "应该走拆分路径而不是整本拒绝: {err}");
-    assert!(err.contains("卷0") || err.contains("卷1"), "错误信息应该点出具体是哪一卷: {err}");
+    s.stage_new("manga.epub", &multivol_comic_epub(&[15, 15])).unwrap();
+    let err = s.deliver("manga.epub", "", &empty_mkdir(&t)).unwrap_err();
+    assert!(err.contains("超过 xochitl 上传上限") && err.contains("没有加入") && !err.contains("卷0"), "{err}");
 }
 
 /// SOI+SOF0(16x16,3分量)+EOI 最小 JPEG 骨架——`imgopt::trim_margins`/`downscale_for_epub_comic`
@@ -762,24 +757,6 @@ fn optimize_comic_epub_rejects_when_no_images_found() {
 }
 
 #[test]
-fn deliver_oversized_comic_pdf_attempts_split_instead_of_flat_reject() {
-    let t = tempfile::tempdir().unwrap();
-    let x = Arc::new(Xochitl::new("127.0.0.1:1", Path::new("/nonexistent"), 1));
-    let s = Staging::new(t.path().join("staging"), x, 1024); // 1KB 预算，逼近强制超限
-    s.ensure().unwrap();
-    let epub = comic_epub_with_real_images(&[12, 13]);
-    s.stage_new("manga.epub", &epub).unwrap();
-    // 造一份"自己产出的漫画 PDF"（带书签）：用户上传的原生 PDF 没有书签、不走分卷；漫画 EPUB 的「优化」
-    // 已不再转 PDF，这里直接调转换函数造夹具。
-    let dir = t.path().join("staging");
-    bookconv::comic_pdf::optimize_comic_epub_to_pdf_streaming(&dir.join("manga.epub"), &dir.join("manga.pdf"), |_, _| {}).unwrap();
-    std::fs::remove_file(dir.join("manga.epub")).unwrap();
-
-    let err = s.deliver("manga.pdf", "", &empty_mkdir(&t), &rmsvc_core::events::EventBus::new()).unwrap_err();
-    assert!(err.contains("按卷拆分") || err.contains("上传失败"), "应该走 PDF 拆分路径而不是整本拒绝: {err}");
-}
-
-#[test]
 fn deliver_oversized_non_comic_epub_keeps_flat_reject() {
     let t = tempfile::tempdir().unwrap();
     let opf = r#"<package version="2.0"><metadata><dc:title>t</dc:title></metadata><manifest><item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="c1"/></spine></package>"#;
@@ -787,8 +764,8 @@ fn deliver_oversized_non_comic_epub_keeps_flat_reject() {
     let epub = mini_epub(&[("content.opf", opf), ("c1.xhtml", &format!("<html><body><p>{long_text}</p></body></html>"))]);
     let s = staging(&t);
     s.stage_new("novel.epub", &epub).unwrap();
-    let err = s.deliver("novel.epub", "", &empty_mkdir(&t), &rmsvc_core::events::EventBus::new()).unwrap_err();
-    assert!(err.contains("超过 xochitl 上传上限") && err.contains("分卷"), "非漫画超限应该保持改动前的整本拒绝: {err}");
+    let err = s.deliver("novel.epub", "", &empty_mkdir(&t)).unwrap_err();
+    assert!(err.contains("超过 xochitl 上传上限") && err.contains("没有加入"), "超限又走不了大文件通道：整本拒绝: {err}");
 }
 
 #[test]
@@ -798,13 +775,13 @@ fn deliver_gates_format_before_touching_xochitl() {
     s.stage_new("c.cbz", b"PK").unwrap();
     s.stage_new("d.pdf", b"%PDF").unwrap();
     assert_eq!(s.list().iter().find(|e| e.name == "c.cbz").unwrap().format, "cbz");
-    assert!(s.deliver("c.cbz", "", &empty_mkdir(&t), &rmsvc_core::events::EventBus::new()).unwrap_err().contains("只读 EPUB / PDF"));
-    // 体积门：超过 native_limit（测试设 1MB）不碰 xochitl，回执指引分卷
+    assert!(s.deliver("c.cbz", "", &empty_mkdir(&t)).unwrap_err().contains("只读 EPUB / PDF"));
+    // 体积门：超过 native_limit（测试设 1MB）又走不了大文件通道：不碰 xochitl，整本拒绝
     s.stage_new("huge.pdf", &vec![b'%'; 2 * 1024 * 1024]).unwrap();
-    let e = s.deliver("huge.pdf", "", &empty_mkdir(&t), &rmsvc_core::events::EventBus::new()).unwrap_err();
-    assert!(e.contains("超过 xochitl 上传上限") && e.contains("分卷"), "{e}");
+    let e = s.deliver("huge.pdf", "", &empty_mkdir(&t)).unwrap_err();
+    assert!(e.contains("超过 xochitl 上传上限") && e.contains("没有加入"), "{e}");
     // PDF 走到 xochitl 才失败（不可达），母版仍在、无落库记录
-    assert!(s.deliver("d.pdf", "", &empty_mkdir(&t), &rmsvc_core::events::EventBus::new()).is_err());
+    assert!(s.deliver("d.pdf", "", &empty_mkdir(&t)).is_err());
     assert!(s.list().iter().any(|e| e.name == "d.pdf" && e.delivered.is_none()));
 }
 
@@ -832,7 +809,7 @@ fn deliver_ensures_folder_enqueues_and_waits_for_agent_to_create_it() {
     });
 
     let started = std::time::Instant::now();
-    let _ = s.deliver("x.epub", "新文件夹", &mkdir, &rmsvc_core::events::EventBus::new());
+    let _ = s.deliver("x.epub", "新文件夹", &mkdir);
     // 20s 超时是"等不到才放弃"的兜底上限；代理已经在 300ms+3s 防抖内把文件夹建出来了，
     // ensure_folder 应该在远小于超时的时间内就继续往下走（这里用 15s 卡一个宽松上限，
     // 只为区分"真的检测到了"和"傻等满超时"两种情况，不是卡精确耗时）。
@@ -887,7 +864,7 @@ fn oversized_staging(t: &tempfile::TempDir) -> (Staging, std::path::PathBuf) {
 
 #[test]
 fn deliver_oversized_epub_uses_direct_channel_placeholder_then_real_file() {
-    // 大文件通道（`try_deliver_direct`）：超网页上传上限的 EPUB 不分卷，先传占位再把磁盘上的文件替换成真书。
+    // 大文件通道（`try_deliver_direct`）：超网页上传上限的 EPUB 先传占位再把磁盘上的文件替换成真书。
     let t = tempfile::tempdir().unwrap();
     let (s, lib) = oversized_staging(&t);
     let opf = r#"<package version="2.0"><metadata><dc:title>大书</dc:title></metadata><manifest><item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="c1"/></spine></package>"#;
@@ -896,8 +873,8 @@ fn deliver_oversized_epub_uses_direct_channel_placeholder_then_real_file() {
     s.stage_new("big.epub", &epub).unwrap();
     assert!(epub.len() > 100);
 
-    let out = s.deliver("big.epub", "", &empty_mkdir(&t), &rmsvc_core::events::EventBus::new()).unwrap();
-    assert!(out.message.contains("已直接写入 xochitl 书库") && out.message.contains("未分卷"), "{}", out.message);
+    let out = s.deliver("big.epub", "", &empty_mkdir(&t)).unwrap();
+    assert!(out.message.contains("已直接写入 xochitl 书库"), "{}", out.message);
     assert!(out.render.is_none(), "大文件通道不走渲染自检线程，靠 onopen 记录升级");
     let uuid_epub = std::fs::read_dir(&lib).unwrap().flatten().find(|e| e.file_name().to_string_lossy().ends_with(".epub")).expect("书库里应有文档").path();
     assert_eq!(std::fs::read(&uuid_epub).unwrap(), epub, "占位必须被真书替换");
@@ -915,7 +892,7 @@ fn deliver_oversized_pdf_uses_direct_channel_and_records_ok_pages() {
     let img = bookconv::convert::pdfwrite::image_from_bytes(&fake_jpeg()).unwrap();
     let pdf = bookconv::convert::pdfwrite::images_to_pdf(&[img.clone(), img.clone(), img]).unwrap();
     s.stage_new("big.pdf", &pdf).unwrap();
-    let out = s.deliver("big.pdf", "", &empty_mkdir(&t), &rmsvc_core::events::EventBus::new()).unwrap();
+    let out = s.deliver("big.pdf", "", &empty_mkdir(&t)).unwrap();
     assert!(out.message.contains("已直接写入 xochitl 书库"), "{}", out.message);
     let rc = sidecar::read(&s.dir().join("big.pdf")).unwrap().render.unwrap();
     assert_eq!((rc.status.as_str(), rc.pages), ("ok", 3), "PDF 页数就是真页数，直接 ok");
@@ -925,69 +902,13 @@ fn deliver_oversized_pdf_uses_direct_channel_and_records_ok_pages() {
 
 #[test]
 fn deliver_direct_channel_falls_back_when_placeholder_cannot_be_built() {
-    // 是 zip 但没有 container.xml/OPF（造不出占位）→ 不走大文件通道，落到分卷/整本拒绝老路径，且没有往 xochitl 传任何东西。
+    // 是 zip 但没有 container.xml/OPF（造不出占位）→ 不走大文件通道，整本拒绝，且没有往 xochitl 传任何东西。
     let t = tempfile::tempdir().unwrap();
     let (s, lib) = oversized_staging(&t);
     s.stage_new("bad.epub", &mini_epub(&[("c1.xhtml", &format!("<html><body>{}</body></html>", "x".repeat(500)))])).unwrap();
-    let err = s.deliver("bad.epub", "", &empty_mkdir(&t), &rmsvc_core::events::EventBus::new()).unwrap_err();
+    let err = s.deliver("bad.epub", "", &empty_mkdir(&t)).unwrap_err();
     assert!(err.contains("超过 xochitl 上传上限"), "{err}");
     assert_eq!(std::fs::read_dir(&lib).unwrap().count(), 0, "没造出占位就不该上传任何东西");
-}
-
-/// 书库目录不存在（大文件通道不可用）+ 假 xochitl 收上传的分卷投递夹具；返回 (staging, 假 xochitl 收件目录)。
-fn splitting_staging(t: &tempfile::TempDir, budget: u64) -> (Staging, std::path::PathBuf) {
-    let inbox = t.path().join("fake-xochitl-docs");
-    std::fs::create_dir_all(&inbox).unwrap();
-    let x = Arc::new(Xochitl::new(&fake_xochitl(inbox.clone()), Path::new("/nonexistent-lib"), 10));
-    let s = Staging::new(t.path().join("staging"), x, budget);
-    s.ensure().unwrap();
-    (s, inbox)
-}
-
-fn uploaded_names(inbox: &Path, ext: &str) -> Vec<String> {
-    let mut v: Vec<String> = std::fs::read_dir(inbox)
-        .unwrap()
-        .flatten()
-        .filter(|e| e.file_name().to_string_lossy().ends_with(".metadata"))
-        .filter_map(|e| serde_json::from_slice::<serde_json::Value>(&std::fs::read(e.path()).unwrap()).ok())
-        .filter_map(|m| m["visibleName"].as_str().map(str::to_string))
-        .filter(|n| n.ends_with(ext))
-        .collect();
-    v.sort();
-    v
-}
-
-#[test]
-fn deliver_oversized_comic_epub_splits_by_volume_and_uploads_each_piece() {
-    // `deliver_pieces` 的成功路径（EPUB 版）：整本超预算、大文件通道不可用 → 按 NCX 卷逐份上传，进度/回执/落库记录齐全。
-    let t = tempfile::tempdir().unwrap();
-    let (s, inbox) = splitting_staging(&t, 1200);
-    let epub = comic_epub_with_real_images(&[12, 13]);
-    assert!(epub.len() > 1200, "夹具本身要超预算才会拆: {}", epub.len());
-    s.stage_new("manga.epub", &epub).unwrap();
-    let out = s.deliver("manga.epub", "", &empty_mkdir(&t), &rmsvc_core::events::EventBus::new()).unwrap();
-    assert!(out.message.contains("已按卷拆分加入 xochitl") && out.message.contains("卷0") && out.message.contains("卷1"), "{}", out.message);
-    assert!(out.render.is_none());
-    assert_eq!(uploaded_names(&inbox, ".epub").len(), 2, "两卷各上传一份: {:?}", uploaded_names(&inbox, ".epub"));
-    assert!(sidecar::read(&s.dir().join("manga.epub")).unwrap().native.is_some(), "落库记录已写");
-}
-
-#[test]
-fn deliver_oversized_comic_pdf_splits_and_uploads_pdf_pieces() {
-    // `deliver_pieces` 的成功路径（PDF 版，mime 走 application/pdf、stem 去 .pdf）。
-    let t = tempfile::tempdir().unwrap();
-    let (s, inbox) = splitting_staging(&t, 1 << 30);
-    let epub = comic_epub_with_real_images(&[12, 13]);
-    s.stage_new("manga.epub", &epub).unwrap();
-    let dir = s.dir().to_path_buf();
-    bookconv::comic_pdf::optimize_comic_epub_to_pdf_streaming(&dir.join("manga.epub"), &dir.join("manga.pdf"), |_, _| {}).unwrap();
-    std::fs::remove_file(dir.join("manga.epub")).unwrap();
-    let pdf_len = std::fs::metadata(dir.join("manga.pdf")).unwrap().len();
-    // 预算取整本的 60%：整本超限、每卷（约一半）能放进去
-    let s = Staging::new(dir.clone(), s.xochitl.clone(), pdf_len * 6 / 10);
-    let out = s.deliver("manga.pdf", "", &empty_mkdir(&t), &rmsvc_core::events::EventBus::new()).unwrap();
-    assert!(out.message.contains("已按卷拆分加入 xochitl"), "{}", out.message);
-    assert_eq!(uploaded_names(&inbox, ".pdf").len(), 2, "{:?}", uploaded_names(&inbox, ".pdf"));
 }
 
 #[test]
@@ -1142,140 +1063,3 @@ fn concurrent_landing_of_same_name_never_clobbers() {
     assert_eq!(contents.len(), n, "没有任何一本被别的覆盖");
 }
 
-/// 带 container.xml 的最小文字书（按文件读 OPF 的 `spine_direction_file` 要靠它找 OPF）。
-fn text_epub_with_container(spine_attrs: &str) -> Vec<u8> {
-    let opf = format!(r#"<package version="3.0"><metadata><dc:title>t</dc:title></metadata><manifest><item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/></manifest><spine{spine_attrs}><itemref idref="c1"/></spine></package>"#);
-    mini_epub(&[
-        ("META-INF/container.xml", r#"<container><rootfiles><rootfile full-path="content.opf"/></rootfiles></container>"#),
-        ("content.opf", &opf),
-        ("c1.xhtml", r#"<html><head></head><body><h1>第一章</h1><p>正文</p></body></html>"#),
-    ])
-}
-
-/// zip 里每个条目的 (名字, 解压后字节)。
-fn zip_entries(path: &Path) -> Vec<(String, Vec<u8>)> {
-    use std::io::Read;
-    let mut z = zip::ZipArchive::new(std::fs::File::open(path).unwrap()).unwrap();
-    (0..z.len())
-        .map(|i| {
-            let mut f = z.by_index(i).unwrap();
-            let mut v = Vec::new();
-            f.read_to_end(&mut v).unwrap();
-            (f.name().to_string(), v)
-        })
-        .collect()
-}
-
-/// 按书阅读方向（2026-09-25）：设置只存边车、列表报"待优化"；未优化的书「优化」时一并写进 OPF；
-/// 已优化的书再改方向只改 OPF（其余条目逐字节不变，不二次重编码）；改回自动不再报待优化。
-#[test]
-fn direction_setting_marks_stale_and_optimize_writes_spine() {
-    use bookconv::direction::{spine_direction_file, PageDirection};
-    let t = tempfile::tempdir().unwrap();
-    let s = staging(&t);
-    s.stage_new("x.epub", &text_epub_with_container("")).unwrap();
-    s.stage_new("p.pdf", b"%PDF").unwrap();
-    let entry = |s: &Staging| s.list().into_iter().find(|e| e.name == "x.epub").unwrap();
-    assert_eq!((entry(&s).direction, entry(&s).direction_stale), ("auto", false));
-    assert!(s.set_direction("p.pdf", Some(PageDirection::Rtl)).is_err(), "只有 EPUB 能设");
-    assert!(s.set_direction("none.epub", Some(PageDirection::Rtl)).is_err());
-
-    let o = s.set_direction("x.epub", Some(PageDirection::Rtl)).unwrap();
-    assert_eq!((o.stale, o.synced, o.sync_error), (true, None, None), "没加入过 xochitl：只存设置");
-    let e = entry(&s);
-    assert_eq!((e.direction, e.direction_stale, e.optimized), ("rtl", true, false));
-
-    // 未优化的书：完整优化，方向一并写进 OPF
-    s.optimize("x.epub", |_, _| {}).unwrap();
-    let p = s.dir().join("x.epub");
-    assert_eq!(spine_direction_file(&p), Some(PageDirection::Rtl));
-    let e = entry(&s);
-    assert_eq!((e.level, e.direction_stale, e.optimized), ("full", false, true), "改完不再待优化");
-
-    // 已完整优化的书改成从左往右：只改 OPF，其余条目逐字节不变
-    let before = zip_entries(&p);
-    s.set_direction("x.epub", Some(PageDirection::Ltr)).unwrap();
-    let e = entry(&s);
-    assert_eq!((e.direction, e.direction_stale, e.optimized, e.level), ("ltr", true, false, "full"));
-    let mut calls = Vec::new();
-    let msg = s.optimize("x.epub", |d, n| calls.push((d, n))).unwrap();
-    assert!(msg.contains("只改了 OPF"), "{msg}");
-    assert_eq!(calls.last(), Some(&(1, 1)), "轻量路径也报进度");
-    let after = zip_entries(&p);
-    assert_eq!(before.len(), after.len());
-    for ((na, da), (nb, db)) in before.iter().zip(&after) {
-        assert_eq!(na, nb, "条目顺序不变");
-        if na != "content.opf" {
-            assert_eq!(da, db, "{na} 不该被重写");
-        }
-    }
-    assert_eq!(spine_direction_file(&p), Some(PageDirection::Ltr));
-    assert!(!bookconv::placeholder::epub_is_rtl(&p));
-    assert!(!s.dir().join(".x.epub.optimizing.tmp").exists(), "不留半成品");
-    let e = entry(&s);
-    assert_eq!((e.direction_stale, e.optimized), (false, true));
-
-    // 改回自动：保留书里现在写的方向，不报待优化
-    assert!(!s.set_direction("x.epub", None).unwrap().stale);
-    assert_eq!((entry(&s).direction, entry(&s).direction_stale), ("auto", false));
-    assert_eq!(sidecar::read(&p).unwrap().direction, None, "自动＝边车里不存");
-}
-
-/// 设"从左往右"而书里没写方向：本来就是从左往右，不报待优化；书里写了 rtl 才报。
-#[test]
-fn direction_ltr_on_unmarked_book_is_not_stale() {
-    use bookconv::direction::PageDirection;
-    let t = tempfile::tempdir().unwrap();
-    let s = staging(&t);
-    s.stage_new("plain.epub", &text_epub_with_container("")).unwrap();
-    s.stage_new("manga.epub", &text_epub_with_container(r#" page-progression-direction="rtl""#)).unwrap();
-    assert!(!s.set_direction("plain.epub", Some(PageDirection::Ltr)).unwrap().stale);
-    assert!(s.set_direction("manga.epub", Some(PageDirection::Ltr)).unwrap().stale);
-    assert!(!s.set_direction("manga.epub", Some(PageDirection::Rtl)).unwrap().stale);
-}
-
-/// 已加入 xochitl 的书（边车有 render.uuid）：设方向时同步手动清单，免重投生效；之后渲染自检认到新 uuid 也按设置同步；
-/// 设成自动的书，渲染自检不碰清单（清单里可能是用户手加的）。
-#[test]
-fn direction_syncs_rtl_override_list_for_delivered_copies() {
-    use bookconv::direction::PageDirection;
-    const U1: &str = "11111111-1111-1111-1111-111111111111";
-    const U2: &str = "22222222-2222-2222-2222-222222222222";
-    const U3: &str = "33333333-3333-3333-3333-333333333333";
-    let t = tempfile::tempdir().unwrap();
-    let list = t.path().join("state/rtl-overrides.json");
-    let rd = Arc::new(crate::reading_direction::ReadingDirection::new(&t.path().join("xochitl"), &list));
-    let s = staging(&t).with_reading_direction(rd.clone());
-    let listed = || -> Vec<String> { std::fs::read(&list).ok().map(|b| serde_json::from_slice(&b).unwrap()).unwrap_or_default() };
-    s.stage_new("manga.epub", &text_epub_with_container("")).unwrap();
-    let rc = |u: &str| RenderCheck { uuid: u.into(), pages: 10, expected: 0, status: "ok".into(), at: 1 };
-    s.set_render("manga.epub", rc(U1)).unwrap();
-    assert!(listed().is_empty(), "自动的书认到 uuid 不碰清单");
-
-    let o = s.set_direction("manga.epub", Some(PageDirection::Rtl)).unwrap();
-    assert_eq!(o.synced.as_deref(), Some(U1));
-    assert_eq!(listed(), vec![U1.to_string()]);
-    assert_eq!(rd.is_rtl(U1), Ok(true), "xochitl 里那份不用重投就按从右往左翻");
-    assert_eq!(s.set_direction("manga.epub", Some(PageDirection::Rtl)).unwrap().synced, None, "已在清单里：没有改动");
-
-    // 重新投递、渲染自检认到新 uuid：按设置加进清单
-    s.set_render("manga.epub", rc(U2)).unwrap();
-    assert_eq!(listed(), vec![U1.to_string(), U2.to_string()]);
-    // 改成从左往右：移出当前这份
-    assert_eq!(s.set_direction("manga.epub", Some(PageDirection::Ltr)).unwrap().synced.as_deref(), Some(U2));
-    assert_eq!(listed(), vec![U1.to_string()]);
-    // 用户手加的 U3，书设成自动后认到它：不动
-    std::fs::write(&list, format!(r#"["{U1}","{U3}"]"#)).unwrap();
-    s.set_direction("manga.epub", None).unwrap();
-    s.set_render("manga.epub", rc(U3)).unwrap();
-    assert_eq!(listed(), vec![U1.to_string(), U3.to_string()]);
-    // 网页上主动点"自动"：移出当前这份
-    assert_eq!(s.set_direction("manga.epub", None).unwrap().synced.as_deref(), Some(U3));
-    assert_eq!(listed(), vec![U1.to_string()]);
-    // 清单坏了：设置照存，报同步失败，不覆盖
-    std::fs::write(&list, "坏").unwrap();
-    let o = s.set_direction("manga.epub", Some(PageDirection::Rtl)).unwrap();
-    assert!(o.sync_error.is_some() && o.synced.is_none());
-    assert_eq!(std::fs::read_to_string(&list).unwrap(), "坏");
-    assert_eq!(sidecar::read(&s.dir().join("manga.epub")).unwrap().direction.as_deref(), Some("rtl"));
-}

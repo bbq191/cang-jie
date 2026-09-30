@@ -14,7 +14,7 @@ pub struct BookConfig {
     /// too large`，即整数 **100,000,000 字节（100MB 十进制）**；此前 150 是未验证过的猜测值，
     /// 「188MB 被拒、60MB 稳」这两个点都在，但中间这段从没真机测过，真机《镖人》11 卷里恰好有一卷
     /// ~96MB 落在这段"看着安全实际会炸"的区间，反复 `Connection reset by peer`/`Broken pipe`，
-    /// 直到 curl 绕开 book-serve 直传才拿到干净的 413），超过就不发、直接回执指引分卷。90MB
+    /// 直到 curl 绕开 book-serve 直传才拿到干净的 413），超过就不发，改走大文件通道（占位 + 磁盘替换）。90MB
     /// （94,371,840 字节）留够安全余量。0=不拦。
     pub native_upload_limit_mb: u64,
 }

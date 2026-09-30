@@ -11,7 +11,6 @@ pub mod check;
 pub mod comic_detect;
 pub mod comic_pad;
 pub mod comic_pdf;
-pub mod comic_split;
 pub mod convert;
 pub mod cssunlock;
 pub mod direction;

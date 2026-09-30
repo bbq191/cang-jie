@@ -471,10 +471,9 @@
         buf
     }
 
-    /// 母版库按书指定翻页方向（2026-09-25）：`page_direction=Some` 只改 OPF 的 spine 属性，其余条目与不指定时逐字节相同；
-    /// 不指定＝保留原书（原书没写就还是没写）。
+    /// 翻页方向只保留原书自带的（2026-09-30 用户定，按书手动指定已撤）：原书写了 rtl 的优化后仍是 rtl，没写的仍没写。
     #[test]
-    fn page_direction_touches_only_opf_spine() {
+    fn optimize_keeps_original_spine_direction() {
         use crate::direction::{spine_direction, PageDirection};
         let epub = make_epub_with_html_toc_page(3);
         let entries = |bytes: &[u8]| {
@@ -488,29 +487,24 @@
                 })
                 .collect::<Vec<_>>()
         };
-        let base = OptimizeOpts { wash: Some(crate::wash::WashOpts::default()), ..Default::default() };
-        let rtl = OptimizeOpts { page_direction: Some(PageDirection::Rtl), ..base.clone() };
-        let (plain, _) = optimize_epub_with(&epub, &base).unwrap();
-        let (flipped, _) = optimize_epub_with(&epub, &rtl).unwrap();
-        let (a, b) = (entries(&plain), entries(&flipped));
-        assert_eq!(a.len(), b.len());
-        for ((na, da), (nb, db)) in a.iter().zip(&b) {
-            assert_eq!(na, nb, "条目顺序不变");
-            let (sa, sb) = (String::from_utf8_lossy(da), String::from_utf8_lossy(db));
-            if na.ends_with(".opf") {
-                assert_eq!(spine_direction(&sa), None, "不指定＝保留原书（原书没写）: {sa}");
-                assert_eq!(spine_direction(&sb), Some(PageDirection::Rtl), "{sb}");
-                assert_eq!(sb.replacen(r#" page-progression-direction="rtl""#, "", 1), sa, "OPF 只多这一个属性");
-            } else {
-                assert_eq!(da, db, "{na} 不该受方向设置影响");
+        let opf_of = |bytes: &[u8]| entries(bytes).into_iter().find(|(n, _)| n.ends_with(".opf")).map(|(_, d)| String::from_utf8(d).unwrap()).unwrap();
+        // 同一本书的 rtl 版：OPF 的 <spine 加上方向属性，其余条目原样
+        let mut rtl_epub = Vec::new();
+        {
+            let mut zw = zip::ZipWriter::new(Cursor::new(&mut rtl_epub));
+            for (n, d) in entries(&epub) {
+                let o = if n == "mimetype" { crate::epubzip::stored() } else { crate::epubzip::deflated() };
+                zw.start_file(n.as_str(), o).unwrap();
+                let d = if n.ends_with(".opf") { String::from_utf8(d).unwrap().replacen("<spine", r#"<spine page-progression-direction="rtl""#, 1).into_bytes() } else { d };
+                zw.write_all(&d).unwrap();
             }
+            zw.finish().unwrap();
         }
-        let opf_of = |v: &[(String, Vec<u8>)]| v.iter().find(|(n, _)| n.ends_with(".opf")).map(|(_, d)| d.clone()).unwrap();
-        // 从左往右：原书的 rtl 被改掉
-        let ltr = OptimizeOpts { page_direction: Some(PageDirection::Ltr), ..base.clone() };
-        let (back, _) = optimize_epub_with(&flipped, &ltr).unwrap();
-        let opf = String::from_utf8(opf_of(&entries(&back))).unwrap();
-        assert_eq!(spine_direction(&opf), Some(PageDirection::Ltr), "{opf}");
+        let opts = OptimizeOpts { wash: Some(crate::wash::WashOpts::default()), ..Default::default() };
+        let (plain, _) = optimize_epub_with(&epub, &opts).unwrap();
+        let (rtl, _) = optimize_epub_with(&rtl_epub, &opts).unwrap();
+        assert_eq!(spine_direction(&opf_of(&plain)), None, "原书没写：仍没写");
+        assert_eq!(spine_direction(&opf_of(&rtl)), Some(PageDirection::Rtl), "原书写了 rtl：保留");
     }
 
     #[test]

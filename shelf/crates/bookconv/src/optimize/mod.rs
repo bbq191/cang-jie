@@ -88,9 +88,6 @@ pub struct OptimizeOpts {
     pub footnote: FootnoteMode,
     /// 漫画页补白到哪种页框（缺省 `Screen` = 历史行为）。由 book-serve 按"实验室→漫画页边距"开关传入。
     pub comic_frame: crate::imgopt::EpubComicFrame,
-    /// 翻页方向（2026-09-25，母版库按书手动指定）：`Some` 时把 OPF `<spine page-progression-direction>` 写成这个值，
-    /// `None`（缺省）＝保留原书。见 [`crate::direction`]。
-    pub page_direction: Option<crate::direction::PageDirection>,
 }
 
 /// 优化统计，供回执。
@@ -166,7 +163,7 @@ fn prepare_entries(mut raw: Vec<crate::epubzip::Entry>, opts: &OptimizeOpts, byt
     let is_comic_book = washed_comic.unwrap_or_else(|| crate::comic_detect::is_comic(&ordered));
     let opf = crate::wash::parse_opf(&ordered);
     // 只在真要改 OPF 时才记它：改翻页方向、补远程图的 manifest 项、给漫画打标签、（清洗过的书）按最终内容标 manifest 的 properties。
-    let opf_name: Option<String> = opf.as_ref().filter(|_| title.is_some() || opts.page_direction.is_some() || has_remote_imgs || is_comic_book || opts.wash.is_some()).map(|o| ordered[o.index].name.clone());
+    let opf_name: Option<String> = opf.as_ref().filter(|_| title.is_some() || has_remote_imgs || is_comic_book || opts.wash.is_some()).map(|o| ordered[o.index].name.clone());
     // 导航文档与目录文件：不收它们里面的注释引用，也不往里面搬注释。
     let mut skip_notes: HashSet<String> = ordered.iter().filter(|e| crate::wash::is_toc_file(&e.name)).map(|e| e.name.clone()).collect();
     skip_notes.extend(opf.and_then(|o| o.nav_doc));
@@ -273,13 +270,12 @@ fn collect_notes(entries: &mut [(String, Vec<u8>, bool)], referenced: &mut HashM
     index
 }
 
-/// 第二遍的"文本类条目"变换器：html 章节 / （改书名、翻页方向、打漫画标签时）OPF。跨条目状态（远程图计数、全书 id 去重表、
+/// 第二遍的"文本类条目"变换器：html 章节 / （改书名、打漫画标签时）OPF。跨条目状态（远程图计数、全书 id 去重表、
 /// 抓到的远程图）都在这里。图片条目不归它管（走 `imgpool` 并行）。
 struct EntryXform<'a> {
     aside_index: &'a HashMap<crate::htmlproc::NoteKey, String>,
     skip_notes: &'a HashSet<String>,
     footnote: FootnoteMode,
-    page_direction: Option<crate::direction::PageDirection>,
     /// 漫画：OPF 里打上漫画标签（`comic_detect::tag_opf_as_comic`）。
     comic: bool,
     opf_name: Option<&'a str>,
@@ -303,7 +299,6 @@ impl<'a> EntryXform<'a> {
             skip_notes: &prep.skip_notes,
             taken_names: prep.entries.iter().map(|e| e.0.clone()).collect(),
             footnote: opts.footnote,
-            page_direction: opts.page_direction,
             comic: prep.is_comic_book,
             opf_name: prep.opf_name.as_deref(),
             title: prep.title.as_deref(),
@@ -345,14 +340,11 @@ impl<'a> EntryXform<'a> {
                 Err(_) => Cow::Borrowed(data),
             });
         }
-        if self.opf_name == Some(name) && (self.title.is_some() || self.page_direction.is_some() || self.comic) {
+        if self.opf_name == Some(name) && (self.title.is_some() || self.comic) {
             let Ok(text) = std::str::from_utf8(data) else { return Some(Cow::Borrowed(data)) };
             let mut text = Cow::Borrowed(text);
             if let Some(title) = self.title {
                 text = Cow::Owned(crate::placeholder::set_opf_title(&text, title));
-            }
-            if let Some(dir) = self.page_direction {
-                text = Cow::Owned(crate::direction::set_spine_direction(&text, dir));
             }
             if self.comic {
                 if let Some(t) = crate::comic_detect::tag_opf_as_comic(&text) {

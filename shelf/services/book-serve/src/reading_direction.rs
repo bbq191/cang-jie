@@ -4,12 +4,9 @@
 //! （`bookconv::placeholder::epub_is_rtl`，只读两个 zip 条目）。不是 EPUB / 找不到 / 读不了一律 `false`
 //! ——宁可按原生方向，也不误翻。按（大小, mtime）缓存，重复打开同一本书不再解 zip。
 //!
-//! **手动指定清单**（`$XDG_STATE_HOME/shelf/books/rtl-overrides.json`，uuid 字符串数组）：书里没写标记、但确实
-//! 从右往左的书（calibre 转出的漫画大多不写）。2026-09-24 用户定："这次先手动指定，以后新传的书还是看书里自带的标记"
-//! ——所以清单没有网页入口，只是给已经在设备上的那批书补一次；每次查询现读（文件很小）。
-//! 2026-09-25 起母版库可按书设"阅读方向"（`staging` 的 `set_direction`）：设了方向的书若已加入过 xochitl（边车
-//! `render.uuid`），就顺手把那个 uuid 写进/移出清单（[`ReadingDirection::set_override`]），已落库的副本不必重投即生效；
-//! 之后再投递、渲染自检认到新 uuid 时也按设置同步。清单仍可手改，两边写同一份文件（写入走进程内锁 + 原子替换）。
+//! **旧的手动指定清单**（`$XDG_STATE_HOME/shelf/books/rtl-overrides.json`，uuid 字符串数组）只读：2026-09-24 给当时已在设备上、
+//! 书里没写标记的一批书补过一次；2026-09-25 起母版库的"按书设阅读方向"也往里写过。**2026-09-30 用户定：方向只保留原书自带的**，
+//! 网页上按书指定整个撤掉，本服务不再写这份清单；已有的条目照旧生效（不替用户删），要撤就手动删文件或删条目。
 use rmsvc_core::fs::plain_name;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -26,13 +23,11 @@ pub struct ReadingDirection {
     lib: PathBuf,
     overrides: PathBuf,
     cache: Mutex<RtlCache>,
-    /// 清单的读-改-写锁（查询只读不拿它）。
-    write: Mutex<()>,
 }
 
 impl ReadingDirection {
     pub fn new(lib: &Path, overrides: &Path) -> ReadingDirection {
-        ReadingDirection { lib: lib.to_path_buf(), overrides: overrides.to_path_buf(), cache: Mutex::new(HashMap::new()), write: Mutex::new(()) }
+        ReadingDirection { lib: lib.to_path_buf(), overrides: overrides.to_path_buf(), cache: Mutex::new(HashMap::new()) }
     }
 
     /// 手动指定清单里有没有这本（文件缺失 / 解析不了 = 没有）。
@@ -41,33 +36,6 @@ impl ReadingDirection {
             .ok()
             .and_then(|b| serde_json::from_slice::<Vec<String>>(&b).ok())
             .is_some_and(|list| list.iter().any(|u| u == uuid))
-    }
-
-    /// 把 `uuid` 加进（`on=true`）或移出手动清单。返回清单是否真的变了。清单文件缺失＝空清单；
-    /// **解析不了就报错、不覆盖**（可能是用户手改到一半，不能替他清空）。
-    pub fn set_override(&self, uuid: &str, on: bool) -> Result<bool, String> {
-        let uuid = plain_name(uuid)?;
-        let _guard = rmsvc_core::sync::lock(&self.write);
-        let mut list: Vec<String> = match std::fs::read(&self.overrides) {
-            Ok(b) => serde_json::from_slice(&b).map_err(|e| format!("手动清单 {} 解析失败（未改动）: {e}", self.overrides.display()))?,
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Vec::new(),
-            Err(e) => return Err(format!("读手动清单失败: {e}")),
-        };
-        let had = list.iter().any(|u| u == uuid);
-        if had == on {
-            return Ok(false);
-        }
-        if on {
-            list.push(uuid.to_string());
-        } else {
-            list.retain(|u| u != uuid);
-        }
-        if let Some(dir) = self.overrides.parent() {
-            std::fs::create_dir_all(dir).map_err(|e| format!("建目录失败: {e}"))?;
-        }
-        let bytes = serde_json::to_vec_pretty(&list).map_err(|e| e.to_string())?;
-        rmsvc_core::fs::write_atomic(&self.overrides, &bytes).map_err(|e| format!("写手动清单失败: {e}"))?;
-        Ok(true)
     }
 
     /// uuid 非法（含路径分隔符等）→ `Err`；其余情况都给出答案。
@@ -128,24 +96,19 @@ mod tests {
         assert_eq!(rd.is_rtl("manga"), Ok(false));
     }
 
-    /// 母版库同步用的写入：缺文件从空清单起、加过不重复、移出只删这一条；清单坏了报错且不覆盖。
+    /// 旧清单里的 uuid 即使书库里的 epub 没写标记也按从右往左；清单缺失或坏了＝没有。
     #[test]
-    fn set_override_adds_removes_and_refuses_to_clobber_bad_file() {
+    fn legacy_override_list_is_read_only_and_tolerant() {
         let t = tempfile::tempdir().unwrap();
-        let list = t.path().join("sub/rtl-overrides.json");
+        let list = t.path().join("rtl-overrides.json");
+        epub(t.path(), "novel", "<spine/>");
         let rd = ReadingDirection::new(t.path(), &list);
-        assert_eq!(rd.set_override("u1", true), Ok(true));
-        assert_eq!(rd.set_override("u1", true), Ok(false), "已在清单里");
-        assert_eq!(rd.set_override("u2", true), Ok(true));
-        assert_eq!(rd.is_rtl("u1"), Ok(true), "清单里的书即使书库没有这个 epub 也按从右往左");
-        assert_eq!(rd.set_override("u1", false), Ok(true));
-        assert_eq!(rd.set_override("u1", false), Ok(false));
-        let got: Vec<String> = serde_json::from_slice(&std::fs::read(&list).unwrap()).unwrap();
-        assert_eq!(got, vec!["u2".to_string()]);
-        assert!(rd.set_override("../x", true).is_err());
-        std::fs::write(&list, "[\"u2\", 手改到一半").unwrap();
-        assert!(rd.set_override("u3", true).is_err());
-        assert_eq!(std::fs::read_to_string(&list).unwrap(), "[\"u2\", 手改到一半", "坏清单原样保留");
+        assert_eq!(rd.is_rtl("u1"), Ok(false));
+        std::fs::write(&list, r#"["u1"]"#).unwrap();
+        assert_eq!(rd.is_rtl("u1"), Ok(true));
+        assert_eq!(rd.is_rtl("novel"), Ok(false));
+        std::fs::write(&list, "[\"u1\", 手改到一半").unwrap();
+        assert_eq!(rd.is_rtl("u1"), Ok(false));
     }
 
     /// 手动指定清单：书里没写标记也按从右往左；清单缺失或损坏不影响按书里标记判断。

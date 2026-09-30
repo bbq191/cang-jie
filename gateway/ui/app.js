@@ -97,14 +97,6 @@ const promptDialog=(msg,value='')=>{const inp=el('input',{type:'text',class:'con
     const noBtn=el('button',{class:'btn',text:T('common.cancel')});noBtn.onclick=()=>close(null);
     return {nodes:[el('div',{class:'confirm-msg',text:msg}),inp,el('div',{class:'confirm-actions'},[noBtn,yesBtn])],focus:()=>{inp.focus();inp.select()}};
   },(e,close)=>{if(e.key==='Enter')close(inp.value)})};
-/* 单选版的 confirmDialog：一排选项按钮（当前值高亮），点一个就返回它的 value，取消/遮罩/Esc = null。
-   给"阅读方向"这类三选一的设置用（2026-09-25）。opts: [{value,label}]；note: 选项下方的一行小字说明。 */
-const choiceDialog=(msg,opts,current,note='')=>modal(null,close=>{
-  const noBtn=el('button',{class:'btn',text:T('common.cancel')});noBtn.onclick=()=>close(null);
-  const pick=el('div',{class:'choice-opts'},opts.map(o=>{const b=el('button',{class:'btn'+(o.value===current?' pri':''),type:'button',text:o.label});b.onclick=()=>close(o.value);return b}));
-  const nodes=[el('div',{class:'confirm-msg',text:msg}),pick];if(note)nodes.push(el('div',{class:'small choice-note',text:note}));nodes.push(el('div',{class:'confirm-actions'},[noBtn]));
-  return {nodes,focus:()=>(pick.querySelector('.pri')||pick.firstChild).focus()};
-});
 /* 轻量记忆：per-viewer 便利态，隐私窗口/禁用 storage 时静默回默认 */
 const LS={get(k,d){try{const v=localStorage.getItem('shelf.'+k);return v==null?d:v}catch{return d}},set(k,v){try{localStorage.setItem('shelf.'+k,v)}catch{}}};
 const onUsb=/^10\.11\.99\./.test(location.hostname);
@@ -255,8 +247,6 @@ function stgBadges(it,busy){
     :it.level==='core'?`<span class="badge" title="${T('transfer.staging.badge.optimizedUncleanTitle')}">${T('transfer.staging.badge.optimizedUnclean')}</span>`
     :it.level==='old'?`<span class="badge" title="${T('transfer.staging.badge.oldOptimizedTitle')}">${T('transfer.staging.badge.oldOptimized')}</span>`
     :`<span class="badge">${T('transfer.staging.badge.notOptimized')}</span>`;
-  // 按书设置的阅读方向（2026-09-25）：自动不显示；设了就标出来，设置还没写进书里（要再点「优化」）另标一枚。
-  const dir=it.format==='epub'&&it.direction&&it.direction!=='auto'?`<span class="badge on" title="${T('stg.dir.badgeTitle')}">${T('stg.dir.'+it.direction)}</span>`+(it.directionStale?`<span class="badge off" title="${T('stg.dir.staleTitle')}">${T('stg.dir.staleBadge')}</span>`:''):'';
   const ps=(it.format==='epub'&&it.pdfSource)?`<span class="badge on" title="${T('transfer.staging.badge.pdfSourceTitle')}">${T('transfer.staging.badge.pdfSource')}</span>`:'';
   const dv=it.delivered||{},stale=t=>t&&it.mtime&&t<it.mtime;
   const dl=(dv.native?`<span class="badge on" title="${stale(dv.native)?T('transfer.staging.delivered.native.staleTitle'):T('transfer.staging.delivered.native.title')}">${T('transfer.staging.delivered.native.badge')}${stale(dv.native)?T('transfer.staging.staleSuffix'):''}</span>`:'')+(dv.koreader?`<span class="badge on" title="${stale(dv.koreader)?T('transfer.staging.delivered.koreader.staleTitle'):T('transfer.staging.delivered.koreader.title')}">${T('transfer.staging.delivered.koreader.badge')}${stale(dv.koreader)?T('transfer.staging.staleSuffix'):''}</span>`:'');
@@ -271,7 +261,7 @@ function stgBadges(it,busy){
     :oc&&oc.status==='failed'?T('transfer.staging.optimizeFailedPrefix')+oc.message
     :(oc&&oc.status==='cancelled')||(dc&&dc.status==='cancelled')?T('stg.row.cancelled'):(stalePending(oc)||stalePending(dc))?T('transfer.staging.stalePending.title'):'';
   const muted=!(dc&&dc.status==='failed')&&!(oc&&oc.status==='failed')&&((oc&&oc.status==='cancelled')||(dc&&dc.status==='cancelled')); // 仅"上次已取消"这类淡色提示，不再靠正则匹配文案
-  return {html:`<span class="badge fmt">${esc(fmt)}</span><span class="stg-size">${fmtB(it.bytes)}</span>${st}${dir}${ps}${dl}${rb}${busy?'':fails}`,msg,muted};
+  return {html:`<span class="badge fmt">${esc(fmt)}</span><span class="stg-size">${fmtB(it.bytes)}</span>${st}${ps}${dl}${rb}${busy?'':fails}`,msg,muted};
 }
 /* 一行。ctx: {picked,gatedPending,gatedActive,batchQueued,bs,syncSel(),refresh()} */
 function stgRow(it,ctx){
@@ -461,22 +451,6 @@ function renderTransfer(sec){sec.innerHTML=`
         toast(T('stg.batch.deleted',{n:ok})+(busyN?T('stg.batch.deleteSkipped',{n:busyN}):''),ok?'ok':'warn');picked.clear();refresh()});
       bar.appendChild(btns);
       const row3=el('div',{class:'stgbar-btns stgbar-sub'});
-      // 「阅读方向」（2026-09-25）：选中的 EPUB 可设 自动/从右往左/从左往右，多选批量设；只存设置，要再点「优化」才写进书里。
-      const epubs=chosen.filter(it=>it.format==='epub');
-      const dirBtn=el('button',{class:'btn',type:'button',title:T('stg.bar.direction')+'（'+epubs.length+'）'},[lbl('stg.bar.direction',chosen.length>1?epubs.length:null)]);
-      if(!epubs.length){dirBtn.disabled=true;dirBtn.title=T('stg.dir.epubOnly')}
-      else guardClick(dirBtn,async()=>{
-        const cur=epubs.every(it=>(it.direction||'auto')===(epubs[0].direction||'auto'))?(epubs[0].direction||'auto'):null;
-        const v=await choiceDialog(epubs.length===1?T('stg.dir.promptOne',{name:stgClean(epubs[0].name)}):T('stg.dir.promptMany',{n:epubs.length}),
-          ['auto','rtl','ltr'].map(value=>({value,label:T('stg.dir.'+value)})),cur,T('stg.dir.note'));
-        if(v==null)return;
-        const r=await postJ('/api/books/staging/direction',{names:epubs.map(it=>it.name),direction:v});
-        if(r.ok===false)return;
-        const parts=[T('stg.dir.done',{n:r.updated})];
-        if(r.stale)parts.push(T('stg.dir.doneStale',{n:r.stale}));
-        if(r.synced)parts.push(T('stg.dir.doneSynced',{n:r.synced}));
-        (r.failed||[]).forEach(f=>parts.push(stgClean(f.name)+'：'+f.message));
-        toast(parts.join('；'),(r.failed||[]).length?'warn':'ok',8000);refresh()});
       // 只选了一本：再给「下载原件」「改名」（都是针对单本的操作，多选时不出现），删除排在同一行最右。
       if(chosen.length===1){const one=chosen[0];
         const dl=el('a',{class:'btn',href:'/api/books/staging/file?name='+encodeURIComponent(one.name),download:one.name,text:T('stg.bar.download')});
@@ -488,7 +462,7 @@ function renderTransfer(sec){sec.innerHTML=`
           const r=await postJ('/api/books/staging/rename',{name:one.name,newName:v.trim()});
           if(r.ok!==false){picked.clear();picked.add(r.name);toast(T('stg.rename.done',{name:r.name}),'ok')}refresh()});
         row3.append(dl,rn)}
-      row3.append(dirBtn,del);row3.style.setProperty('--cols',chosen.length===1?'4':'3');row3.classList.toggle('cols4',chosen.length===1);bar.appendChild(row3);
+      row3.append(del);row3.style.setProperty('--cols','3');bar.appendChild(row3);
     }else if(bs.total&&sig!==dismissedSig){
       bar.hidden=false;bar.className='stgbar done';
       const fail=bs.failed.length;

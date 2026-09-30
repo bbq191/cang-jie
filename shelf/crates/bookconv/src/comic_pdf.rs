@@ -6,17 +6,19 @@
 //! 屏幕 954×1696px）左右留白量得 **0.00%**，且 `.content` 里 PDF 文档根本没有 `margins` 这个
 //! 字段——PDF 走的是完全独立于 EPUB 文字排版盒模型的直接光栅化路径，从根上不受这个限制。
 //!
-//! 这个模块是"漫画类 EPUB 优化时改产出 PDF（带书签）"的实现，跟 `comic_split.rs`（EPUB→EPUB
-//! 按卷拆分）平行独立、互不影响；复用它的 NCX 标题解析（`ncx_titles_in_range`）和 `imgs_
-//! referenced`，图片处理用 `imgopt::prepare_comic_page_for_pdf`（裁边+缩放合成单趟，PDF 不需要靠补白像素控制留白分布，
+//! 这个模块是"漫画类 EPUB 优化时改产出 PDF（带书签）"的实现（NCX 标题解析 `ncx_titles_in_range`、`imgs_referenced`
+//! 原在按卷拆分的 `comic_split.rs`，2026-09-30 分卷投递移除后挪到这里），图片处理用 `imgopt::prepare_comic_page_for_pdf`（裁边+缩放合成单趟，PDF 不需要靠补白像素控制留白分布，
 //! 直接在页面里摆位置即可，摆位算法见 `convert::pdfwrite::place_image`）。也不碰 `convert::
 //! pdfwrite::images_to_pdf`/`convert::cbz`（CBZ→PDF 现状路径），只用新增的 `images_to_pdf_
 //! with_toc`/`extract_pages`/`page_count`。
 
 use crate::convert::pdfwrite;
-use crate::epubzip::{dir_of, is_html, Entry};
+use crate::epubzip::{dir_of, is_html, posix_norm, resolve, Entry};
 use crate::wash::parse_opf;
+use regex::Regex;
+use std::collections::HashMap;
 use std::path::Path;
+use std::sync::OnceLock;
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct PdfReport {
@@ -61,7 +63,7 @@ pub fn optimize_comic_epub_to_pdf_streaming(
     }
     let opf = parse_opf(&entries).ok_or("解不出 OPF/spine")?;
     let titles_by_spine_idx =
-        crate::comic_split::ncx_titles_in_range(&entries, &opf, 0, opf.spine.len());
+        ncx_titles_in_range(&entries, &opf, 0, opf.spine.len());
 
     // 先摸一遍每个 spine 项引用了几张图，凑出总图数给进度条用（不解码，只读 html 文本里的 <img> 引用）。
     let mut per_page_imgs: Vec<Vec<String>> = Vec::with_capacity(opf.spine.len());
@@ -74,7 +76,7 @@ pub fn optimize_comic_epub_to_pdf_streaming(
             .iter()
             .find(|e| &e.name == p)
             .and_then(|e| std::str::from_utf8(&e.data).ok())
-            .map(|html| crate::comic_split::imgs_referenced(html, dir_of(p)))
+            .map(|html| imgs_referenced(html, dir_of(p)))
             .unwrap_or_default();
         per_page_imgs.push(imgs);
     }
@@ -138,120 +140,87 @@ pub(crate) fn page_chunk_titles(total_pages: usize) -> Vec<(usize, String)> {
         .collect()
 }
 
-/// 超预算时按卷拆分——**只处理"自己产出的漫画 PDF"**（没有书签目录，视为普通用户上传的原生 PDF，
-/// 返回 `Ok(None)`，调用方按现状"整本拒绝"处理，不是新引入的失败模式）。
-///
-/// 先按书签（对应原书 NCX 顶层"卷"边界）分组；某一卷自己还超预算（罕见，如单卷本身就很大）时
-/// 在这一卷内部按页贪心再切一层，不再往更深递归——跟 `comic_split::plan_pieces_sized` 2026-09-19
-/// 简化"只切一层"是同一个理由：真实漫画每卷体积通常远低于上传预算，为这种边界情况维护一整套
-/// 递归复杂度不值得。
-///
-/// **流式**（2026-09-19 用户反馈驱动，见下）：规划阶段只用 [`pdfwrite::PdfFileReader::
-/// page_byte_span_len`] 这种纯查表的"体积代理"，不读任何图片字节；真正组包时逐份读（这一份
-/// 引用到的图片才读进内存），`upload_piece` 回调处理完这一份、函数往下一份继续之前，这一份的
-/// `Vec<PdfImage>` 出作用域即释放——峰值内存只有"一份的体积"（受 `budget` 钳制），不随全书
-/// 页数/体积线性涨，跟 `comic_split::deliver_split_streaming` 是同一套纪律。
-///
-/// 前身是一次性 `std::fs::read` 整份文件 + `extract_pages` 把全书图片一次性抽成 `Vec<PdfImage>`
-/// 再逐份切片——真机 245MB/600页 样本坐实这个前身版本 `VmHWM` 峰值到过 525MB，用户反馈后改成
-/// 这一版。
-pub fn deliver_split_pdf_streaming(
-    pdf_path: &Path,
-    budget: u64,
-    mut upload_piece: impl FnMut(&str, &[u8], usize, usize) -> Result<(), String>,
-) -> Result<Option<crate::comic_split::StreamSplitOutcome>, String> {
-    let whole_file_size = std::fs::metadata(pdf_path).map(|m| m.len()).unwrap_or(0); // 跟调用方 `deliver()` 判超限用的同一个量
-    let Ok(mut reader) = pdfwrite::PdfFileReader::open(pdf_path) else { return Ok(None) };
-    let Ok(n) = reader.page_count() else { return Ok(None) };
-    let Ok(mut all_titles) = reader.outline_titles() else { return Ok(None) };
-    // 指向不存在页的书签（损坏文件）丢掉——此前原样当切分边界，`sizes[start..end]` 在 start>end 时直接 panic。
-    all_titles.retain(|(idx, _)| *idx < n);
-    if all_titles.is_empty() {
-        return Ok(None); // 没有书签目录——不是我们自己产出的漫画 PDF，不拆。
-    }
-    if whole_file_size <= budget {
-        return Ok(None); // 整本已经在预算内，调用方按"不用拆，直接投原生"处理
-    }
+fn navpoint_event_re() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(r#"(?s)(<navPoint\b)|(</navPoint>)|<navLabel>\s*<text>([^<]*)</text>\s*</navLabel>|<content\s+src="([^"]*)""#).unwrap()
+    })
+}
 
-    // 规划阶段：纯查表算每页"占多少字节"（对象在文件里的字节范围，不读实际图片内容），
-    // 按卷边界贪心分组、卷内超预算再按页贪心细切——逻辑跟前身版本一致，只是数据来源变了。
-    let sizes: Vec<u64> = (0..n).map(|p| reader.page_byte_span_len(p)).collect();
-    let mut boundaries: Vec<usize> = all_titles.iter().map(|(idx, _)| *idx).collect();
-    boundaries.sort_unstable();
-    boundaries.dedup();
-    if boundaries.first() != Some(&0) {
-        boundaries.insert(0, 0);
+/// 线性扫 `toc.ncx`，展平成 `(depth, title, target)` 序列（不建真正的树——跟本 crate 一贯的
+/// "扁平+depth"写法一致，如 `wash.rs::dense_ranks`）。NCX 规范保证 `<navLabel>` 和 `<content>`
+/// 总是先于自己的子 `<navPoint>` 出现，扫描时按"刚看到 content 就用当前 depth/title 落地一条"
+/// 处理即可，不用等子节点扫完。
+fn parse_ncx_flat(ncx_text: &str) -> Vec<(usize, String, String)> {
+    let mut depth = 0usize;
+    let mut cur_title = String::new();
+    let mut out = Vec::new();
+    for c in navpoint_event_re().captures_iter(ncx_text) {
+        if c.get(1).is_some() {
+            depth += 1;
+        } else if c.get(2).is_some() {
+            depth = depth.saturating_sub(1);
+        } else if let Some(t) = c.get(3) {
+            // NCX 里是转义过的 XML 文本；标题后面要当分卷书名/文件名/目录项（组包时会再转义），先还原字符引用，
+            // 否则 `卷一 &amp; 卷二` 会以字面 `&amp;` 出现在分卷名和目录里。
+            cur_title = crate::util::xml_unescape(t.as_str().trim()).into_owned();
+        } else if let Some(s) = c.get(4) {
+            out.push((depth, std::mem::take(&mut cur_title), s.as_str().to_string()));
+        }
     }
-    let title_at: std::collections::HashMap<usize, String> = all_titles.into_iter().collect();
+    out
+}
 
-    let mut ranges: Vec<(usize, usize, String)> = Vec::new();
-    for (i, &start) in boundaries.iter().enumerate() {
-        let end = boundaries.get(i + 1).copied().unwrap_or(n);
-        let vol_title = title_at.get(&start).cloned().unwrap_or_else(|| format!("第 {}-{} 页", start + 1, end));
-        let vol_size: u64 = sizes[start..end].iter().sum();
-        if vol_size <= budget {
-            ranges.push((start, end, vol_title));
-            continue;
-        }
-        // 这一卷本身还超预算：按页贪心再切一层。
-        let (mut s, mut acc) = (start, 0u64);
-        for (i, &size) in sizes.iter().enumerate().take(end).skip(start) {
-            if acc > 0 && acc + size > budget {
-                ranges.push((s, i, format!("{vol_title}（第 {}-{} 页）", s + 1, i)));
-                s = i;
-                acc = 0;
-            }
-            acc += size;
-        }
-        ranges.push((s, end, format!("{vol_title}（第 {}-{} 页）", s + 1, end)));
-    }
+/// 一页 (x)html 里引用的图片，解析成 zip 内绝对路径（相对该页自身目录解析，去重按出现顺序）。
+fn imgs_referenced(html: &str, page_dir: &str) -> Vec<String> {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    let re = RE.get_or_init(|| Regex::new(r#"(?i)<img\b[^>]*\bsrc="([^"]+)""#).unwrap());
+    let mut seen = std::collections::HashSet::new();
+    re.captures_iter(html)
+        // src 按 URL 百分号编码解码（中文/空格文件名常写成 `%E5%9B%BE.jpg`），否则对不上 zip 条目名、这张图取不到。
+        .map(|c| posix_norm(&resolve(page_dir, &crate::epubzip::percent_decode(&c[1]))))
+        .filter(|p| seen.insert(p.clone()))
+        .collect()
+}
 
-    // 组包+上传阶段：逐份来，每份只读这份自己范围内的图片，处理完（无论成败）立刻释放。
-    let total = ranges.len();
-    let stem = pdf_path.file_stem().and_then(|s| s.to_str()).unwrap_or("漫画").to_string();
-    let mut delivered = Vec::new();
-    let mut failed = Vec::new();
-    for (idx, (start, end, title)) in ranges.into_iter().enumerate() {
-        // 用 PdfPieceWriter 逐页读逐页写：每页的 PdfImage 只在这一次循环迭代里活着，写进
-        // writer 内部缓冲区后立刻释放——不再像之前那样先攒出这一份的 `Vec<PdfImage>`（那样峰值
-        // 会贴着"这一份的体积"再乘二），峰值现在约等于"这一份的体积"本身。
-        let mut writer = pdfwrite::PdfPieceWriter::begin(end - start, true);
-        let mut read_err = None;
-        for page_idx in start..end {
-            match reader.read_page_image(page_idx).and_then(|img| writer.write_page(&img)) {
-                Ok(()) => {}
-                Err(e) => {
-                    read_err = Some(e);
-                    break;
-                }
-            }
-        }
-        if let Some(e) = read_err {
-            failed.push(format!("{title}（读页失败：{e}）"));
-            continue;
-        }
-        match writer.finish(&[(0, title.clone())]) {
-            Ok(bytes) => {
-                // 2026-09-19 真机撞过：原书名+分卷标题（源文件自己的目录/书签，可能整份就
-                // 一条、内容等于原书名本身）两段各自独立超长，直接拼会撞 255 字节文件系统上限，
-                // 表现成 xochitl 泛化的"Filesystem error"，见 `util::safe_piece_filename` 文档。
-                let piece_name = crate::util::safe_piece_filename(&stem, &title, "pdf");
-                match upload_piece(&piece_name, &bytes, idx + 1, total) {
-                    Ok(()) => delivered.push(title),
-                    Err(e) => failed.push(format!("{title}（上传失败：{e}）")),
-                }
-            }
-            Err(e) => failed.push(format!("{title}（组包失败：{e}）")),
-        }
-        // images/bytes 出循环体作用域即释放，下一份开始前这一份占的内存已经收回。
+/// NCX 展平并解析成 `(depth, 标题, spine 下标)` 的完整列表，不按深度过滤。没有 `toc.ncx`、entry 缺失、或全部目标都对不上
+/// spine（拿不到任何有效节点）时返回 `None`。
+fn ncx_resolved(entries: &[Entry], opf: &crate::wash::Opf) -> Option<Vec<(usize, String, usize)>> {
+    let ncx_path = opf.ncx.as_ref()?;
+    let ncx_entry = entries.iter().find(|e| &e.name == ncx_path)?;
+    let ncx_text = String::from_utf8_lossy(&ncx_entry.data);
+    let ncx_dir = dir_of(ncx_path);
+    let flat = parse_ncx_flat(&ncx_text);
+    let resolved: Vec<(usize, String, usize)> = flat
+        .into_iter()
+        .filter_map(|(depth, title, target)| {
+            let no_frag = target.split('#').next().unwrap_or(&target);
+            let abs = posix_norm(&resolve(ncx_dir, no_frag));
+            opf.spine.iter().position(|p| p == &abs).map(|idx| (depth, title, idx))
+        })
+        .collect();
+    if resolved.is_empty() {
+        None
+    } else {
+        Some(resolved)
     }
-    Ok(Some(crate::comic_split::StreamSplitOutcome { delivered, failed }))
+}
+
+/// `[start,end)` 范围内，spine 绝对下标 → NCX 标题的映射，不拘深度（转 PDF 时做书签用）。
+fn ncx_titles_in_range(entries: &[Entry], opf: &crate::wash::Opf, start: usize, end: usize) -> HashMap<usize, String> {
+    let mut map = HashMap::new();
+    let Some(resolved) = ncx_resolved(entries, opf) else { return map };
+    for (_, title, idx) in resolved {
+        if idx >= start && idx < end && !title.trim().is_empty() {
+            map.entry(idx).or_insert(title);
+        }
+    }
+    map
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::convert::pdfwrite::PdfImage;
     use std::io::Write;
 
     fn one_px_jpeg() -> Vec<u8> {
@@ -400,84 +369,5 @@ mod tests {
         let output = dir.path().join("test.pdf");
         std::fs::write(&input, &epub).unwrap();
         assert!(optimize_comic_epub_to_pdf_streaming(&input, &output, |_, _| {}).is_err());
-    }
-
-    #[test]
-    fn split_comic_pdf_returns_none_when_within_budget() {
-        let images: Vec<PdfImage> = (0..5).map(|_| pdfwrite::image_from_bytes(&one_px_jpeg()).unwrap()).collect();
-        let pdf = pdfwrite::images_to_pdf_with_toc(&images, &[(0, "卷一".into())]).unwrap();
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("small.pdf");
-        std::fs::write(&path, &pdf).unwrap();
-        assert!(deliver_split_pdf_streaming(&path, 10_000_000, |_, _, _, _| Ok(())).unwrap().is_none());
-    }
-
-    #[test]
-    fn split_comic_pdf_returns_none_for_pdf_without_outline() {
-        let images: Vec<PdfImage> = (0..5).map(|_| pdfwrite::image_from_bytes(&one_px_jpeg()).unwrap()).collect();
-        let pdf = pdfwrite::images_to_pdf_with_toc(&images, &[]).unwrap(); // 无书签 = 不是我们自己的漫画 PDF
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("plain.pdf");
-        std::fs::write(&path, &pdf).unwrap();
-        assert!(deliver_split_pdf_streaming(&path, 1, |_, _, _, _| Ok(())).unwrap().is_none());
-    }
-
-    #[test]
-    fn split_comic_pdf_splits_by_volume_boundary_when_oversized() {
-        // 两卷各 3 张图；先用 PdfFileReader 量出单页真实的对象字节范围，budget 卡在刚好装不下
-        // 6 页但装得下 3 页（不再靠猜 JPEG 骨架长度换算，直接用生产代码同一套量法）。
-        let jpeg = one_px_jpeg();
-        let images: Vec<PdfImage> = (0..6).map(|_| pdfwrite::image_from_bytes(&jpeg).unwrap()).collect();
-        let titles = vec![(0, "卷一".to_string()), (3, "卷二".to_string())];
-        let pdf = pdfwrite::images_to_pdf_with_toc(&images, &titles).unwrap();
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("big.pdf");
-        std::fs::write(&path, &pdf).unwrap();
-        let per_page = pdfwrite::PdfFileReader::open(&path).unwrap().page_byte_span_len(0);
-
-        let mut collected: Vec<(String, Vec<u8>)> = Vec::new();
-        let budget = per_page * 4; // 装得下一卷（3页），装不下两卷（6页）
-        let outcome = deliver_split_pdf_streaming(&path, budget, |name, bytes, _idx, _total| {
-            collected.push((name.to_string(), bytes.to_vec()));
-            Ok(())
-        })
-        .unwrap()
-        .unwrap();
-        assert_eq!(outcome.delivered.len(), 2, "应该按卷边界切成两份: {outcome:?}");
-        assert!(outcome.failed.is_empty(), "{outcome:?}");
-        assert_eq!(collected.len(), 2);
-        for (name, bytes) in &collected {
-            assert!(name.contains("卷"));
-            assert_eq!(pdfwrite::page_count(bytes).unwrap(), 3);
-        }
-    }
-
-    /// 同长度改写书签的 `/Dest [页对象号` 字节（不动 xref 偏移），造"损坏/陌生"的书签。
-    fn write_pdf_with_patched_dest(dir: &std::path::Path, from: &[u8], to: &[u8]) -> std::path::PathBuf {
-        let images: Vec<PdfImage> = (0..4).map(|_| pdfwrite::image_from_bytes(&one_px_jpeg()).unwrap()).collect();
-        let mut pdf = pdfwrite::images_to_pdf_with_toc(&images, &[(0, "卷一".into()), (3, "卷二".into())]).unwrap();
-        let at = pdf.windows(from.len()).position(|w| w == from).expect("书签 /Dest 应在");
-        pdf[at..at + from.len()].copy_from_slice(to);
-        let path = dir.join("patched.pdf");
-        std::fs::write(&path, &pdf).unwrap();
-        path
-    }
-
-    /// 书签指向不存在的页（第 33 页，全书 4 页）：此前当切分边界，`sizes[32..4]` 直接 panic 摔掉投递线程。
-    #[test]
-    fn split_comic_pdf_ignores_bookmark_beyond_last_page_instead_of_panicking() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = write_pdf_with_patched_dest(dir.path(), b"/Dest [12 0 R", b"/Dest [99 0 R");
-        let outcome = deliver_split_pdf_streaming(&path, 1, |_, _, _, _| Ok(())).unwrap().expect("还有一条有效书签，照常拆");
-        assert!(outcome.delivered.iter().chain(&outcome.failed).all(|t| t.contains("卷一")), "越界书签不该成为一卷: {outcome:?}");
-    }
-
-    /// 书签指向对象号 <3（不是页对象）：此前 `(id-3)/3` 减法溢出。现在整份书签判不可用 → 不拆（`None`）。
-    #[test]
-    fn split_comic_pdf_with_non_page_bookmark_target_is_not_split() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = write_pdf_with_patched_dest(dir.path(), b"/Dest [12 0 R", b"/Dest [01 0 R");
-        assert!(pdfwrite::PdfFileReader::open(&path).unwrap().outline_titles().is_err());
-        assert!(deliver_split_pdf_streaming(&path, 1, |_, _, _, _| Ok(())).unwrap().is_none());
     }
 }

@@ -97,17 +97,6 @@ impl Staging {
         if ext == "pdf" {
             return self.optimize_pdf(name, &p, on_progress);
         }
-        // 按书设置的阅读方向（边车 `direction`，见 `staging/direction.rs`）。已完整优化过、只差方向的书只改 OPF——
-        // 再跑一遍完整优化会让每张 JPEG 多一代有损（"别二次优化已优化产物"），几百 MB 的漫画也要几分钟。
-        let page_direction = self.direction_pref(&p);
-        if let Some(dir) = page_direction {
-            if library::probe_level(&p, "epub").0 == "full" && direction::is_stale(Some(dir), bookconv::direction::spine_direction_file(&p)) {
-                on_progress(0, 1);
-                let msg = self.rewrite_direction_only(name, &p, dir)?;
-                on_progress(1, 1);
-                return Ok(msg);
-            }
-        }
         // 漫画 EPUB **保持 EPUB**（2026-09-20 用户拍板：统一"优化不改格式"，文字/目录/内容原样保留）。
         // 此前一度改产出 PDF 以拿到 0% 左右留白，但 PDF 一图一页会丢掉漫画里夹带的文字页；EPUB 的固定内边距
         // 是 xochitl 渲染引擎硬限制，接受它，换取"不变动书籍内容"。图片走 `imgopt::prepare_comic_page_for_epub` 单趟处理。
@@ -120,7 +109,7 @@ impl Staging {
         let stem = name.strip_suffix(".epub").unwrap_or(name);
         let canon_title = bookconv::naming::has_volume_marker(stem).then(|| bookconv::naming::canonical_book_name(stem));
         self.mark_cancellable(name);
-        let opts = OptimizeOpts { wash: Some(WashOpts::default()), footnote: FootnoteMode::Anchor, comic_frame: self.comic_frame(), page_direction };
+        let opts = OptimizeOpts { wash: Some(WashOpts::default()), footnote: FootnoteMode::Anchor, comic_frame: self.comic_frame() };
         let cancel = || self.is_cancelled(name);
         // 产出到点前缀临时文件、成功才改名覆盖；出错清掉半成品，不留垃圾在母版库目录。质量门
         // （`check_epub_file`）在改名覆盖**之前**、对着这份临时文件跑——2026-09-23 真机坐实的教训：
