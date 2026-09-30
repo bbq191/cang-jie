@@ -547,6 +547,58 @@ fn recover_interrupted_fixes_stale_pending_and_removes_tmp() {
     assert_eq!(s.recover_interrupted(), (0, 0), "幂等");
 }
 
+/// 回归：补封面的临时副本（整本 EPUB 的拷贝）也按半成品清；新旧两种临时文件命名都认。
+#[test]
+fn recover_interrupted_removes_cover_and_new_style_scratch_files() {
+    let t = tempfile::tempdir().unwrap();
+    let s = staging(&t);
+    s.stage_new("a.epub", b"PK").unwrap();
+    for n in [".a.epub.cover.tmp", ".9.0.cover.tmp", ".9.1.optimizing.tmp", ".9.2.landing.tmp"] {
+        std::fs::write(s.dir.join(n), vec![0u8; 100]).unwrap();
+    }
+    std::fs::write(s.dir.join(".a.epub.delivered.tmp-not-ours"), b"x").unwrap();
+    assert_eq!(s.recover_interrupted(), (0, 4));
+    assert!(s.dir.join(".a.epub.delivered.tmp-not-ours").exists(), "别的点前缀文件不动");
+    assert!(s.has("a.epub"));
+}
+
+/// 回归：临时文件出错/panic 时由 Drop 删掉，不留到下次重启（后台线程 `catch_unwind` 兜住 panic，进程照常跑）。
+#[test]
+fn scratch_file_is_removed_on_panic_and_names_are_unique() {
+    let t = tempfile::tempdir().unwrap();
+    let s = staging(&t);
+    let (a, b) = (s.scratch("optimizing"), s.scratch("optimizing"));
+    assert_ne!(a.path(), b.path());
+    drop((a, b));
+    let seen = std::sync::Mutex::new(None);
+    let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let tmp = s.scratch("cover");
+        std::fs::write(tmp.path(), vec![0u8; 1000]).unwrap();
+        *seen.lock().unwrap() = Some(tmp.path().to_path_buf());
+        panic!("优化中途 panic");
+    }));
+    assert!(r.is_err());
+    let p = seen.lock().unwrap().clone().unwrap();
+    assert!(!p.exists(), "panic 展开时临时文件被删");
+    assert!(std::fs::read_dir(s.dir()).unwrap().all(|e| !e.unwrap().file_name().to_string_lossy().ends_with(".tmp")));
+}
+
+/// 回归：书名接近文件名 255 字节上限时照样能优化——此前临时文件按书名拼（`.<书名>.optimizing.tmp`），
+/// 比书名多 16 字节，超长报文件系统错误。
+#[test]
+fn optimize_works_for_book_names_near_the_filename_limit() {
+    let t = tempfile::tempdir().unwrap();
+    let s = staging(&t);
+    let name = format!("{}.epub", "长".repeat(79)); // 242 字节：书名与边车（+11）放得下，旧临时名（+16）放不下
+    assert!(name.len() + 16 > 255 && name.len() + 11 <= 255);
+    let opf = r#"<package version="2.0"><metadata><dc:title>t</dc:title></metadata><manifest><item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="c1"/></spine></package>"#;
+    let epub = mini_epub(&[("content.opf", opf), ("c1.xhtml", "<html><head></head><body><h1>一</h1><p>正文</p></body></html>")]);
+    assert_eq!(s.stage_new(&name, &epub).unwrap(), name);
+    let msg = s.optimize(&name, |_, _| {}).unwrap();
+    assert!(msg.contains("已优化"), "{msg}");
+    assert_eq!(s.list().into_iter().find(|e| e.name == name).unwrap().level, "full");
+}
+
 #[test]
 fn list_caches_level_probe_and_invalidates_on_rewrite_or_delete() {
     // 判定要开 zip（吃 CPU/电），按（大小,mtime）缓存；文件改写后必须重判，删除后清缓存。

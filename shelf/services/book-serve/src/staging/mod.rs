@@ -41,6 +41,30 @@ fn busy_err(name: &str, extra: &str) -> String {
     format!("《{name}》正在处理中，请稍候{extra}")
 }
 
+/// 母版库目录里临时文件的种类（名字 `.<pid>.<序号>.<种类>.tmp`，见 [`ScratchFile`]）：优化产物、补封面的副本、
+/// 跨分区入库的中转。`recover_interrupted` 按这几个后缀清上次进程留下的。
+pub(super) const SCRATCH_KINDS: [&str; 3] = ["optimizing", "cover", "landing"];
+
+/// 母版库目录里的一份点前缀临时文件（列表看不见）。
+///
+/// - **名字与书名无关**（`.<pid>.<序号>.<种类>.tmp`）：此前按书名拼（`.<书名>.optimizing.tmp`），书名本身接近
+///   文件名 255 字节上限（中文 80 来个字）时临时文件名超长，优化直接报文件系统错误（ENAMETOOLONG）。
+/// - **Drop 时删掉**：正常路径下文件早已被 rename 成正式文件（删不到，无害）；出错或 panic 时（后台线程 `catch_unwind`
+///   兜住、进程照常服务）不再把半成品（大书可达数百 MB）一直留到下次重启才由 `recover_interrupted` 清。
+pub(super) struct ScratchFile(PathBuf);
+
+impl ScratchFile {
+    pub(super) fn path(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for ScratchFile {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
 /// 异步操作（优化 / 投递）结果 → 边车终态 `(status, message)`：成功 `ok`、用户取消 `cancelled`、其余 `failed`。
 /// 优化与投递两处原来各写一遍同样的三分支 match（2026-09-24 审计合并）。
 fn final_status(result: Result<&str, &str>) -> (String, String) {
@@ -295,6 +319,14 @@ impl Staging {
     }
     pub fn ensure(&self) -> std::io::Result<()> {
         std::fs::create_dir_all(&self.dir)
+    }
+
+    /// 在母版库目录里要一份新的临时文件名（见 [`ScratchFile`]；`kind` 取 [`SCRATCH_KINDS`] 之一）。
+    pub(super) fn scratch(&self, kind: &str) -> ScratchFile {
+        static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        debug_assert!(SCRATCH_KINDS.contains(&kind));
+        let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        ScratchFile(self.dir.join(format!(".{}.{seq}.{kind}.tmp", std::process::id())))
     }
 
     /// 进入"落名"临界区（见 `land` 字段）。
