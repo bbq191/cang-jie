@@ -248,7 +248,10 @@ mod tests {
     fn pdf_placeholder_is_one_valid_page() {
         let pdf = pdf_placeholder().unwrap();
         assert!(pdf.starts_with(b"%PDF"));
-        assert_eq!(crate::convert::pdfwrite::page_count(&pdf).unwrap(), 1);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("p.pdf");
+        std::fs::write(&path, &pdf).unwrap();
+        assert_eq!(crate::convert::pdfwrite::PdfFileReader::open(&path).unwrap().page_count().unwrap(), 1);
         assert!(pdf.len() < 4000);
     }
 
