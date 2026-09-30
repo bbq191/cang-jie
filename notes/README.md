@@ -75,7 +75,7 @@ notes/
 与书架共用交叉编译环境（`rustup target add aarch64-unknown-linux-musl` + aarch64 交叉 gcc），见 [`../shelf/README.md`](../shelf/README.md)「构建 · 部署 · 卸载」。
 
 ```sh
-cd notes && cargo test --workspace      # host：241 个测试（rmv6 29 · epubmap 10 · notecore 67 · vendorcfg 23 · ink 30 · transcribe 25 · mind 22 · note 35；note 里 1 个 ignored，09-30 删 KOReader 导入后实跑 240 过）
+cd notes && cargo test --workspace      # host：241 个测试，240 过 + 1 忽略（rmv6 29 · epubmap 10 · notecore 67 · vendorcfg 23 · ink 30 · transcribe 25 · mind 22 · note 35 含 1 个 ignored；2026-09-30 实跑）
 cd ../shelf && sh build.sh               # host 测试 + 交叉编译（notes/ 在就一起编）
 cd ../packaging && sh deploy.sh <设备IP> --only ink,transcribe,mind,note   # 只装/更新笔记线（网关总会一起装）；不加 --only 就全装
 ```
@@ -91,8 +91,8 @@ cd ../packaging && sh deploy.sh <设备IP> --only ink,transcribe,mind,note   # �
 - OpenAI / Gemini / DeepSeek 没用真实 key 调用过；
 - 全文搜索没用真实数据核对；
 - 书的小节名插行只有单测（真机验证用的书目录是平铺的）；
-- 2026-09-24 第三轮审计的改动，摄取这半边 09-25 真机核过；转写记账、>100 MB 大书、推送串行化只在 host 验证，见白皮书第 2 章「可靠性要点」；
+- 2026-09-24 第三轮审计的改动，摄取这半边 09-25 真机核过；转写记账、>100 MB 大书、推送串行化已部署但没在真机上专门核，见白皮书第 2 章「可靠性要点」；
 - 2026-09-25 第四轮审计的改动（擦掉又回来的笔迹复活原条目、`.metadata` 读不了不当成书被删、章判据统一、小数不当编号等）09-25 已部署，但没在真机上逐项核，见白皮书第 13 章 7d；
-- 2026-09-30 第五轮审计的改动（epubmap 按 OPF 声明找目录、启动重扫没章的条目、灰度裁图 + 像素封顶、「转入笔记」继承定稿、正被写的 `.rm` 跳过、删没人用的裁图、调用端复用）只在开发机测过，**没部署、没上真机**，见白皮书第 13 章 7e。
+- 2026-09-30 第五轮审计的改动（epubmap 按 OPF 声明找目录、启动重扫没章的条目、灰度裁图 + 像素封顶、「转入笔记」继承定稿、正被写的 `.rm` 跳过、删没人用的裁图、调用端复用）**09-30 14:10 已部署**，部署自检通过，但功能还没手测（包括"旧条目重启后归上章"），见白皮书第 13 章 7e。
 
 用户已决定不改的：编号列表被〔原文〕/〔AI〕段打断会从 1 重来；没转写的条目写“（待转写）”占位。

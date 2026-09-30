@@ -4,7 +4,7 @@
 >
 > **怎么读**：先看「5 分钟读懂」和「现状总览」，这两节讲的就是现在的样子，不用翻历史。按需要再挑章：想知道条目怎么来 → 第 3 章；改转写 / 问 AI / 模型 → 第 4–6 章；改网页 → 第 7 章；改推送 → 第 8 章；上真机前 → 第 13 章待办。第 1–11 章每章开头先给**现状结论**，再讲设计，最后列**被推翻的做法与教训**。第 9 章（KOReader 回流）已随 2026-09-29 设备卸载 KOReader 退役，代码 2026-09-30 已从仓库删除，只作历史。第 12 章是踩坑表。旧版本按日期写的 §03b–§03an 已经拆进各章；代码注释里写的“见白皮书 §03u”这类旧节号，到**附录 A** 查它现在在哪一章。
 >
-> **验证程度的写法**：「真机」= 在设备上跑过真实数据；「离线」= 只有单测或 host 上的端到端；「未验证」= 两者都没有，或只确认了代码已部署。
+> **验证程度的写法**：「真机」= 在设备上跑过真实数据；「离线」= 只有单测或 host 上的端到端；「已部署」= 代码已装上设备、部署自检（`verify-on-device.sh`、服务状态）通过，但这个功能本身还没人在真机上手测；「未验证」= 以上都没有。
 >
 > 笔记线挂在书架网关下面。网关、服务注册表、事件汇聚、部署脚本、原生回收站代理都属于书架与网关（[`../../gateway/README.md`](../../gateway/README.md)、`shelf/docs/reMarkable书架白皮书.md`），本文只写笔记线自己的东西。
 
@@ -60,7 +60,7 @@
 | 能力 | 现状 | 验证 | 详见 |
 |---|---|---|---|
 | 合书自动摄取；勾画与手写配对；没手写的纯勾画也成条目 | 在用 | 真机 | 第 3 章 |
-| 从笔迹矢量自渲染裁图（09-30 起 8 位灰度、约 400 万像素封顶） | 在用 | 真机（“写在页面很靠下”的边界没有专门造样本；灰度与封顶只在开发机测过） | 第 3 章 |
+| 从笔迹矢量自渲染裁图（09-30 起 8 位灰度、约 400 万像素封顶） | 在用 | 真机（“写在页面很靠下”的边界没有专门造样本；灰度与封顶 09-30 已部署、待手测） | 第 3 章 |
 | 「浏览」页：转入笔记 / 不需要 | 在用 | 真机 | 第 7 章 |
 | 自动转写 | 在用 | 真机只调过 DashScope；OpenAI / Gemini / DeepSeek 只验证了配置层 | 第 4、6 章 |
 | 问 AI | 在用 | 真机（DashScope） | 第 5 章 |
@@ -77,9 +77,9 @@
 | 条目库、AI 配置文件损坏时不被覆盖 | 在用 | 离线测试；真机没触发过损坏路径 | 第 3、6 章 |
 | 第三轮审计（09-24）：用量账本 / 章记录损坏留 `.corrupt`、条目库解析缓存、推送串行化、后台线程兜 panic、转写空跑不写盘、大书页→章不整本读入 | 在用 | 摄取这半边 09-25 真机核过；转写记账、>100 MB 大书、推送串行化只在 host 验证 | 第 2 章「可靠性要点」、第 13 章 7b |
 | 第四轮审计（09-25）：擦掉又回来的笔迹复活原条目、`.metadata` 读不了不再当成书被删、章判据统一为顶层条目、KOReader 章表只追加、秒级 mtime 防漏扫、小数不当编号、草稿只留 10 份、没改动不写盘、畸形 `.rm` 不先分配内存 | 09-25 已部署 | host 验证（当时 240 过 + 1 忽略）；真机没逐项核 | 3.1–3.5、第 4、9 章、第 13 章 7d |
-| 第五轮审计（09-30）：epubmap 按 OPF 声明找目录、启动追平重扫没章的活条目、裁图灰度 + 像素封顶 + 坏坐标报错、「转入笔记」继承定稿 / 草稿、读 `.rm` 时正被改写就跳过、补笔 / 清空回收站删掉没人用的裁图、模型调用端复用（`ClientCache`）、删 `ink.json` 三个死键 | **只在开发机测过，没部署、没上真机** | host 250 过 + 1 忽略 | 3.1–3.3、第 6 章、第 13 章 7e |
+| 第五轮审计（09-30）：epubmap 按 OPF 声明找目录、启动追平重扫没章的活条目、裁图灰度 + 像素封顶 + 坏坐标报错、「转入笔记」继承定稿 / 草稿、读 `.rm` 时正被改写就跳过、补笔 / 清空回收站删掉没人用的裁图、模型调用端复用（`ClientCache`）、删 `ink.json` 三个死键 | **09-30 14:10 已部署**，部署自检通过，功能待手测 | host 250 过 + 1 忽略（当时还含 KOReader 导入的测试） | 3.1–3.3、第 6 章、第 13 章 7e |
 
-**离线门槛**：`cd notes && cargo test --workspace` 共 **241 个测试**（rmv6 29 · epubmap 10 · notecore 67 · vendorcfg 23 · ink-serve 30 · transcribe-serve 25 · mind-serve 22 · note-serve 35，其中 note-serve 1 个 `#[ignore]`；2026-09-30 删 KOReader 导入后实跑 240 过 + 1 忽略，零警告、clippy 零告警；第五轮审计时是 251 个）；网关另跑 `node --check ui/app.js`；脚本过 shellcheck。测试数会变，改了就同步这里和 README。note-serve 里有两条“认领重试”测试会真的等 1.5–4.5 秒。
+**离线门槛**：`cd notes && cargo test --workspace` 共 **241 个测试**，2026-09-30 实跑 240 过 + 1 忽略（rmv6 29 · epubmap 10 · notecore 67 · vendorcfg 23 · ink-serve 30 · transcribe-serve 25 · mind-serve 22 · note-serve 35，其中 note-serve 1 个 `#[ignore]`；零警告、clippy 零告警；删 KOReader 导入前是 251 个）；网关另跑 `node --check ui/app.js`；脚本过 shellcheck。测试数会变，改了就同步这里和 README。note-serve 里有两条“认领重试”测试会真的等 1.5–4.5 秒。
 
 **已知小问题（只记录，没修）**：`Entry::set_triage` 不拒绝 `Skipped`，接口上可以对已跳过的条目直接调 `/request` 或 `/archive`；网页没有这个入口，风险低。
 
@@ -108,7 +108,7 @@
 | **不依赖其他项目线的 crate** | 不依赖 `bookconv`、`device-core`、`knowledge/pkm`、`reading`。依赖方向单向：`services/* → rmsvc-core + crates/*`。 |
 | **零 xovi 依赖** | 没有 qmd 补丁，没有 `.so`。旧版本回收借用书架已有的回收站代理。 |
 
-**可靠性要点**（下图汇总。前两部分主要来自 09-24 两轮修补，摄取相关的 09-25 真机核过、其余只在 host 验证；第三部分是 09-25 第四轮审计补的，只在 host 验证、当天已部署但真机没逐项核；下面列表里 09-30 第五轮补的一条只在开发机测过、未部署）：
+**可靠性要点**（下图汇总。前两部分主要来自 09-24 两轮修补，摄取相关的 09-25 真机核过；第三部分是 09-25 第四轮审计补的；下面列表里 09-30 第五轮补的一条。除注明真机核过的，其余都已部署、但没在真机上专门触发过）：
 
 ![笔记线的数据保护与后台韧性](diagrams/robustness.svg)
 
@@ -117,7 +117,7 @@
 - **后台线程兜 panic**：ink-serve 书库监听线程里每本书的摄取、transcribe-serve 工作线程的每一轮都套了 `catch_unwind`，一次 panic 只丢这一本 / 这一轮。此前线程会直接退出，HTTP 照常应答，从外面看不出后台已经停了。这依赖 `notes/Cargo.toml` 的 release profile 设 `panic = "unwind"`。
 - **没事做就不写盘、不发事件**：摄取先比页 mtime（3.1）；条目库读—改—写之后内容没变就不重写（3.5，09-25）；转写空跑不写账本、不发事件（第 4 章）——网页每收到一条 `notes` 事件都会整页重拉。
 - **读不了 ≠ 书没了**（09-25 第四轮审计）：书的 `.metadata` 只有“文件不存在”或“读出来确实在回收站 / 标了删除”才算书没了；读不了或解析失败（可能正被 xochitl 改写）只跳过这一次，不撤销条目（3.4）。目录一时读不到时也保留上次的章表和条目的章（3.1）。
-- **不拿写到一半的文件当真**（09-30 第五轮审计，只在开发机测过）：读一页 `.rm` 前后各取一次同一个文件描述符的（长度, mtime），对不上、或读到的字节数和长度对不上，就当“正在写入”跳过这页、不记 mtime，下次事件再扫。v6 是一串块，截在块边界上的半截文件照样能解析，只是少了后面的笔画——当真会把那些条目撤销，复活时 `Pending` 只回 `Mined`，用户“转入笔记”的决定就丢了。
+- **不拿写到一半的文件当真**（09-30 第五轮审计，已部署、待手测）：读一页 `.rm` 前后各取一次同一个文件描述符的（长度, mtime），对不上、或读到的字节数和长度对不上，就当“正在写入”跳过这页、不记 mtime，下次事件再扫。v6 是一串块，截在块边界上的半截文件照样能解析，只是少了后面的笔画——当真会把那些条目撤销，复活时 `Pending` 只回 `Mined`，用户“转入笔记”的决定就丢了。
 - **不信文件里声明的长度**（09-25）：`.rm` 的块大小、字符串长度先和剩余字节比，超了直接报错，不按它分配内存；EPUB 目录文件最多读 16 MB（3.1）。内存分配失败是 abort，`catch_unwind` 兜不住，所以只能在分配前拦。
 
 **资源**：musl 全静态二进制，2026-09-24 设备上 ink 3.6 MB、transcribe 2.5 MB、mind 2.4 MB、note 2.6 MB；每个 systemd 单元 `MemoryMax=128M`、`CPUWeight=20`、`Nice=5`。
@@ -157,7 +157,7 @@
 
 - 正常流程：`Mined → Pending → Draft → Reviewed`。
 - **「转入笔记」的落点**（`Entry::set_triage`）：
-  - 已有定稿文字 → `Reviewed`；只有草稿 → `Draft`（09-30 第五轮审计，只在开发机测过）。此前一律降成 `Pending`：「不需要」→ 回收站恢复（回 `Mined`，文字还在）→ 再「转入笔记」，会得到一条带定稿文字却标着“待转写”的条目，草稿指纹对得上时转写也不会再来，永远卡住。
+  - 已有定稿文字 → `Reviewed`；只有草稿 → `Draft`（09-30 第五轮审计，已部署、待手测）。此前一律降成 `Pending`：「不需要」→ 回收站恢复（回 `Mined`，文字还在）→ 再「转入笔记」，会得到一条带定稿文字却标着“待转写”的条目，草稿指纹对得上时转写也不会再来，永远卡住。
   - **快路径**：没有手写的条目（纯勾画；以及 09-29 前拉进来的 KOReader 高亮和生词）直接把原文写成定稿，跳到 `Reviewed`。因为 `needs_transcribe()` 要求有手写，卡在 `Pending` 会永远等不到转写。
   - 其余 → `Pending`，等转写。
 - 三个终态（`Skipped` / `Revoked` / `Archived`）合称 `is_terminal()`，都在回收站里。改字端点对终态一律拒绝，要先「恢复」。
@@ -368,15 +368,21 @@
 
 ## 第 9 章 KOReader 回流（已退役）
 
-**现状结论**：**2026-09-29 设备卸载 KOReader 后，网页「KOReader 回流」按钮已删**，功能不再使用。**2026-09-30 导入代码也从仓库删除**（ink-serve 的 `POST /koreader/import`、`koreader.rs`、`notecore::koreader`，连同书架的 koreader-serve，见 git 历史）。为兼容旧数据保留两处：`model::Source` 的 `KoreaderHighlight`/`KoreaderVocab` 变体（删了旧条目反序列化失败），和 `ingest_doc` 对 `koreader:*`/`koreader-vocab` 的早退（去掉的话启动追平会把这些书当成“书已删除”整批撤销；有回归测试）。条目库里已拉进来的 KOReader 条目照常浏览、整理、推送。下面是它在用时（09-16 上线，后端真机端到端通过；网页按钮 09-23 上线）的设计，作为历史留档。
+**现状结论**：**已退役**。2026-09-29 设备卸载 KOReader 后，网页「KOReader 回流」按钮删除；**2026-09-30 导入代码也从仓库删除**（ink-serve 的 `POST /koreader/import`、`koreader.rs`、`notecore::koreader`，连同书架的 koreader-serve；提交 `b722c93`、`e7b5d69`，看代码去 git 历史）。
 
-- **分工**：原始数据归书架线的 koreader-serve（:8791），它新增两个**只读**端点 `/annotations`、`/vocabulary`；ink-serve 的 `POST /koreader/import` 拉这两个端点并合并进条目库，仍然只有 ink-serve 一个写者。按钮和当前选中的书无关，每次全量拉取、增量合并。
-- **来源标记**：`Entry.source` = `xochitl`（默认）/ `koreader_highlight` / `koreader_vocab`。KOReader 条目没有笔迹（`ink` 永远为空），天然走“没有手写直接定稿”的快路径，浏览页和状态机不用改。
-- **高亮**：读每本书的 `<book>.sdr/metadata.<ext>.lua`（路径规则照 KOReader 源码 `docsettings.lua`，第一版想当然写错过），交给 KOReader 自带的 `luajit` 跑 `shelf/koreader/annot.lua` 转成 JSON，不在 Rust 里写 Lua 解析器。高亮上的笔记拼在原文后面。一本 KOReader 书对应一个条目库 Book，uuid 用相对路径的哈希 `koreader:<hex>`（直接用路径会带 `/`，建出嵌套目录、URL 也会被拆段）。条目 id 按（书路径、起止位置、时间）哈希；KOReader 里删掉的高亮，下次拉取时标 `Revoked`。章节按 annotations 的阅读顺序去重得到（不按字典序，“第十章”会排到“第一章”后面）。**章表只追加不重排**（09-25 第四轮审计）：条目的 `chapter` 是章表下标，note-serve 按“书 + 章下标”记着每章的笔记本；此前每次导入重排，新高亮落在更靠前的章时下标整体移位，别的章的笔记本会被当成旧版本送进回收站。代价是后补的靠前章节排在末尾、高亮全删的章留在表里（没有活条目，不投影）。
-- **生词**：读 `settings/vocabulary_builder.sqlite3`（在 `settings/` 不在 `data/`，真机才发现）。生词表本身跨书去重，所以全部放进一个 `koreader-vocab` 合集 Book，按来源书名分章（章表同样只追加；同一个词换本书再查，分组跟着改）；原文格式是“前文『词』后文”。
-- **SQLite 读取**：`rusqlite` 带的 C 源码交叉编译到 musl 时链接失败（它调 glibc 的 `open64` 等符号）。用户选了手写纯 Rust 只读解析器（`shelf/services/koreader-serve/src/sqlite_min.rs`，只实现读表需要的最小子集），`rusqlite` 只作为测试依赖生成对拍用的真实数据库。
-- **真机验证**：6 本真实书的 sidecar 全部解析正确；用户在 KOReader 里划一条高亮、查一个生词，导入、转入笔记、导出 md 全部通过，重复拉取幂等。当时真机揪出一个缺口：高亮条目没有设章节，能定稿但永远导不出——已修。
-- **只有离线数据验证的**：PDF 书的位置坐标形状、单本标注量很大时触发的 SQLite 溢出页和内部页。
+**为兼容旧数据保留的两处**（别当成死代码删掉）：
+
+- `model::Source` 的 `KoreaderHighlight` / `KoreaderVocab` 变体：删了的话，条目库里已有的 KOReader 条目反序列化失败，整本书读不出来。
+- `ingest_doc` 对 `koreader:*` / `koreader-vocab` 这两类书的早退：去掉的话，启动追平会在 xochitl 书库里找不到这些"书"，把它们当成"书已删除"整批撤销（有回归测试钉住）。
+
+以前拉进来的 KOReader 条目照常浏览、整理、推送：它们没有笔迹，走“没有手写直接定稿”的快路径（3.3）。
+
+**它在用时的样子**（09-16 上线，后端真机端到端通过；09-23 加网页按钮），只留要点：
+
+- **分工**：原始数据归书架的 koreader-serve（:8791），它提供两个只读端点 `/annotations`、`/vocabulary`；ink-serve 拉这两个端点合并进条目库，仍然只有 ink-serve 一个写者。
+- **高亮**：读每本书的 `<book>.sdr/metadata.<ext>.lua`，交给 KOReader 自带的 `luajit` 转成 JSON（不在 Rust 里写 Lua 解析器）。一本 KOReader 书对应一个条目库 Book，uuid 用相对路径的哈希 `koreader:<hex>`。**章表只追加不重排**（09-25）：条目的 `chapter` 是章表下标，重排会让别的章的笔记本被当成旧版本送进回收站。
+- **生词**：读 `settings/vocabulary_builder.sqlite3`，全部放进一个 `koreader-vocab` 合集 Book，按来源书名分章。
+- **SQLite 读取**：`rusqlite` 的 C 源码交叉编译到 musl 时链接失败，用户选了手写纯 Rust 只读解析器（只实现读表需要的最小子集），`rusqlite` 只作测试依赖生成对拍数据。
 
 ## 第 10 章 代码结构
 
@@ -386,11 +392,11 @@
 |---|---|
 | `crates/rmv6` | `.rm` v6 解析 + 写入。解析部分剥离移植自 `remarkable_lines` 0.1.3（MIT，见 `PROVENANCE.md`），写入 `write.rs` 是本项目原创。`CrdtId` 的 `"part1:part2"` 字符串形式是条目库里 id 的唯一定义处 |
 | `crates/epubmap` | `.epubindex` 起始页 + nav/ncx 目录 → 页号对应的章和小节 |
-| `crates/notecore` | 纯函数领域核心：`model`（条目、状态、样式、去处、来源）· `hash` · `geom`（聚簇、配对）· `ingest`（增量合并）· `koreader` · `marker`（行首标记）· `project`（→ 笔记本段落）· `export`（→ md）· `mdimport`（md → 段落） |
+| `crates/notecore` | 纯函数领域核心：`model`（条目、状态、样式、去处、来源；`Source` 里的两个 KOReader 变体只为读旧数据）· `hash` · `geom`（聚簇、配对）· `ingest`（增量合并）· `marker`（行首标记）· `project`（→ 笔记本段落）· `export`（→ md）· `mdimport`（md → 段落） |
 | `crates/vendorcfg` | 两个 AI 服务共用：`preset`（预置、key 分格、迁移、PATCH、对外 JSON、`VendorConfig` trait）· `usage`（泛型用量账本）· `cell`（`ConfigCell`：配置的内存副本 + 落盘）· `chat`（`ChatClient` 调用端、`ClientCache` 调用端复用、OpenAI 兼容传输与应答解析）· `truncate_chars` |
-| `services/ink-serve` | `doc`（书库只读视图）· `ingest` · `crop` · `bookdb` · `config` · `koreader`（已退役入口，见第 9 章）· `search` · `main` |
+| `services/ink-serve` | `doc`（书库只读视图）· `ingest` · `crop` · `bookdb` · `config` · `search` · `main`（`koreader.rs` 09-30 已删，见第 9 章） |
 | `services/transcribe-serve` | `config`/`ledger`（vendorcfg 薄封装）· `backend`（`Vision`）· `prompt` · `ink`（访问 ink 的客户端）· `worker` · `main` |
-| `services/mind-serve` | 同上，换成 `TextModel`，没有后台线程 |
+| `services/mind-serve` | 同上，换成 `TextModel`；`worker` 只处理调用方指定的那一条，没有后台线程 |
 | `services/note-serve` | `rmdoc`（打包）· `chapter_store`（泛型“每书每章一条记录”，`notebooks`/`export_state` 是它的类型别名）· `publish`（上传 + 生成编排 + md 导入）· `export`（vault 落盘 + 下载文件名）· `ink`/`trash`（跨服务客户端）· `config` · `main` |
 | 仓库其他位置 | `shelf/build.sh` 的 `NOTES_BINS` · `shelf/manifest.sh` 的安装令牌 `ink transcribe mind note`（install / uninstall / `packaging/deploy.sh` 共用）· `gateway/src/manage.rs::MODULES` 四行 · `gateway/ui/app.js` 的 `renderNotes` 与 `mountModelPanel` |
 
@@ -471,7 +477,7 @@
 | 7b | **09-24 第三轮审计改动：真机核过摄取这半边（09-25）** | 合书后勾画约 4 秒入库、手写自渲染裁图正确、页面再改动时重新配对（旧条目标撤销不重复）、ink-serve 不重启、峰值 3.3 MB。**没核**：转写与用量（设备配置 `auto:false`，没手动点转写）、>100 MB 大书、推送串行化 |
 | 7c | 配对距离 `pairGap` 120 → 160（09-25，用户拍板） | 真机样本（距离约 138）重新配对成功；更宽的阈值在"两条勾画靠得近"时挂错的概率没有样本 |
 | 7d | **09-25 第四轮审计改动：已部署、未逐项真机核** | 可核：在 xochitl 里擦掉一处带批注的笔迹、合书，再撤销擦除、合书，条目应回到原状态且没有重复（ink-serve 日志的“复活”计数）；书进回收站再恢复，条目复活；目录分组项是 `<span>` 的书，条目能推送；（KOReader 章表只追加一项随 09-29 退役不再核）；网页打 `3.14 …` 不变成编号；已定稿的纯勾画旁补一句手写、合书，仍是原条目（定稿文字在、多了待转写的手写），再擦掉手写，回到纯勾画且定稿不丢 |
-| 7e | **09-30 第五轮审计改动：只在开发机测过，未部署** | 部署后可核：nav 不叫 `nav.xhtml` 的书条目有章；09-29 前摄取、至今没章的条目在服务重启后归上章；裁图是灰度 PNG、转写照常；「不需要」→ 恢复 → 「转入笔记」一条已定稿的条目，落 `Reviewed` 不是待转写；补几笔后 `crops/` 里旧图消失、清空回收站后被清条目的裁图消失；边写边合书不产生误撤销 |
+| 7e | **09-30 第五轮审计改动：09-30 14:10 已部署，部署自检通过，功能待手测** | 可核：nav 不叫 `nav.xhtml` 的书条目有章；09-29 前摄取、至今没章的条目在服务重启后归上章；裁图是灰度 PNG、转写照常；「不需要」→ 恢复 → 「转入笔记」一条已定稿的条目，落 `Reviewed` 不是待转写；补几笔后 `crops/` 里旧图消失、清空回收站后被清条目的裁图消失；边写边合书不产生误撤销 |
 | 8 | “改去处后对应导出指纹立刻变”只有离线单测 | 当时测试书状态在漂移，真机没能单变量复现 |
 | 9 | **书的小节名插行** | 09-25 真机验证用的《13 級階梯》目录是平铺的，条目 `subhead` 全空，这一项只有单测覆盖；找一本目录有二级小节的书再验 |
 

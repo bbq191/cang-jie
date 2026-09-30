@@ -89,13 +89,4 @@
   <text x="520" y="580" text-anchor="middle" font-size="12" fill="#6a6a6a">四服务失败面分离：矿不出网（解析错只影响新条目）· 转写/脑出网（断网只是积压，脑连事件订阅都没有）· 本只碰输出物（xochitl /upload）</text>
   <text x="520" y="600" text-anchor="middle" font-size="11" fill="#8a8a8a">API 细节见 notes/README.md「主要 API」；架构决策见 notes/docs/reMarkable笔记白皮书.md 第 2 章</text>
 
-  <!-- koreader-serve（书架线）：2026-09-29 随设备卸载 KOReader 退役 -->
-  <rect x="770" y="150" width="230" height="96" rx="9" fill="#f6f6f6" stroke="#b0b0b0" stroke-width="1.3" stroke-dasharray="5 3"/>
-  <text x="885" y="174" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#8a8a8a">koreader-serve :8791（已退役）</text>
-  <text x="885" y="193" text-anchor="middle" font-size="10.2" fill="#8a8a8a">09-29 设备卸载 KOReader，不再安装</text>
-  <text x="885" y="210" text-anchor="middle" font-size="10.2" fill="#8a8a8a">网页「KOReader 回流」按钮已删</text>
-  <text x="885" y="227" text-anchor="middle" font-size="9.8" fill="#9a9a9a">ink 的 /koreader/import 09-30 已删</text>
-  <line x1="770" y1="198" x2="666" y2="198" stroke="#9a9a9a" stroke-width="1.3" stroke-dasharray="4 3" marker-end="url(#a3)"/>
-  <text x="718" y="186" text-anchor="middle" font-size="10" fill="#9a9a9a">原「KOReader</text>
-  <text x="718" y="216" text-anchor="middle" font-size="10" fill="#9a9a9a">回流」（已移除）</text>
 </svg>
