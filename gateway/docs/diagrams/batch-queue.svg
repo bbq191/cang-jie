@@ -8,8 +8,8 @@
 <text x="120.0" y="118" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">提交</text>
 <text x="120.0" y="144" text-anchor="middle" font-size="10" fill="#4a4a4a">POST /api/batch</text>
 <text x="120.0" y="157" text-anchor="middle" font-size="10" fill="#4a4a4a">action: 优化 / 加入 xochitl</text>
-<text x="120.0" y="170" text-anchor="middle" font-size="10" fill="#4a4a4a">/ 加入 KOReader</text>
-<text x="120.0" y="183" text-anchor="middle" font-size="10" fill="#4a4a4a">names 点名 或 all:true</text>
+<text x="120.0" y="170" text-anchor="middle" font-size="10" fill="#4a4a4a">names 点名 或 all:true</text>
+<text x="120.0" y="190" text-anchor="middle" font-size="9" fill="#8a8a8a">（加入 KOReader 09-29 已撤）</text>
 <rect x="250" y="98" width="190" height="110" rx="10" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.6"/>
 <text x="345.0" y="118" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">资格校验</text>
 <text x="345.0" y="144" text-anchor="middle" font-size="10" fill="#4a4a4a">已优化的不再优化</text>
@@ -48,12 +48,12 @@
 <text x="485.0" y="302" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">② 调对应服务</text>
 <text x="485.0" y="328" text-anchor="middle" font-size="10" fill="#4a4a4a">优化 / 加入 xochitl：POST book-serve</text>
 <text x="485.0" y="341" text-anchor="middle" font-size="10" fill="#4a4a4a">  异步，网关轮询到 busy=false</text>
-<text x="485.0" y="354" text-anchor="middle" font-size="10" fill="#4a4a4a">加入 KOReader：koreader-serve 同步</text>
-<text x="485.0" y="367" text-anchor="middle" font-size="10" fill="#4a4a4a">  成功后代记“已加入”</text>
+<text x="485.0" y="354" text-anchor="middle" font-size="10" fill="#4a4a4a">提交前、提交后各查一次“全部中止”标记</text>
+<text x="485.0" y="367" text-anchor="middle" font-size="10" fill="#4a4a4a">  （09-30，见下方中止第 3 条）</text>
 <rect x="670" y="282" width="250" height="124" rx="10" fill="#ffffff" stroke="#3f9a55" stroke-width="1.6"/>
 <text x="795.0" y="302" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">③ 释放闸门</text>
 <text x="795.0" y="328" text-anchor="middle" font-size="10" fill="#4a4a4a">异步的：等到 busy=false 才还</text>
-<text x="795.0" y="341" text-anchor="middle" font-size="10" fill="#4a4a4a">同步的：调用返回即还</text>
+<text x="795.0" y="341" text-anchor="middle" font-size="10" fill="#4a4a4a">批量里两种动作都是异步的</text>
 <text x="795.0" y="354" text-anchor="middle" font-size="10" fill="#4a4a4a">名额归还，唤醒排队者</text>
 <text x="795.0" y="367" text-anchor="middle" font-size="10" fill="#4a4a4a">（下一本可以进闸）</text>
 <rect x="960" y="282" width="250" height="124" rx="10" fill="#eaf6ec" stroke="#3f9a55" stroke-width="1.6"/>
@@ -73,9 +73,10 @@
 <text x="315.0" y="515" text-anchor="middle" font-size="10" fill="#4a4a4a">2  正在处理的那本：</text>
 <text x="315.0" y="528" text-anchor="middle" font-size="10" fill="#4a4a4a">   · 还在等闸门 → 直接取消排队</text>
 <text x="315.0" y="541" text-anchor="middle" font-size="10" fill="#4a4a4a">   · 已在 book-serve 里 → POST /staging/cancel</text>
-<text x="315.0" y="554" text-anchor="middle" font-size="10" fill="#4a4a4a">3  EPUB 优化每处理完一个条目检查一次</text>
-<text x="315.0" y="567" text-anchor="middle" font-size="10" fill="#4a4a4a">   → 终态 cancelled（不是 failed），原文件字节不变</text>
-<text x="315.0" y="580" text-anchor="middle" font-size="10" fill="#4a4a4a">4  单文件上传、PDF 优化没有安全中断点：如实回“无法中途停止”，跑完为止</text>
+<text x="315.0" y="554" text-anchor="middle" font-size="10" fill="#4a4a4a">3  已出队、还没交给 book-serve（09-30 补）：打“中止”标记，</text>
+<text x="315.0" y="567" text-anchor="middle" font-size="10" fill="#4a4a4a">   提交前看到就不提交、记“已全部中止”；标记在提交途中到达则补发一次取消</text>
+<text x="315.0" y="580" text-anchor="middle" font-size="10" fill="#4a4a4a">4  EPUB 优化每处理完一个条目检查一次 → 终态 cancelled（不是 failed），原文件不变</text>
+<text x="315.0" y="593" text-anchor="middle" font-size="10" fill="#4a4a4a">5  单文件上传、PDF 优化没有安全中断点：如实回“无法中途停止”，跑完为止</text>
 <rect x="640" y="456" width="570" height="190" rx="10" fill="#fff3d6" stroke="#c9971f" stroke-width="1.6" stroke-dasharray="6 4"/>
 <text x="925.0" y="476" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">状态落盘与续跑</text>
 <text x="925.0" y="502" text-anchor="middle" font-size="10" fill="#4a4a4a">每次队列变化都写 state/batch.json（原子写）</text>
@@ -87,4 +88,5 @@
 <text x="925.0" y="580" text-anchor="middle" font-size="10" fill="#4a4a4a">  · 处理途中崩溃的那本只重放 1 次（attempts≥2 记为失败、跳过），防崩溃循环</text>
 <text x="925.0" y="593" text-anchor="middle" font-size="10" fill="#4a4a4a">没有未完成任务时，只读回“上次结果”供界面展示</text>
 <text x="925.0" y="606" text-anchor="middle" font-size="10" fill="#4a4a4a">等 book-serve 超时仍不在：队列保留在磁盘，待下次入队继续</text>
+<text x="925.0" y="619" text-anchor="middle" font-size="10" fill="#4a4a4a">旧文件里残留已撤的 koreader 任务：读回时只剔这几项，其余照跑（09-30）</text>
 </svg>

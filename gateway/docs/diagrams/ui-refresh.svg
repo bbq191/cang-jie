@@ -23,6 +23,8 @@
 <text x="852" y="137" text-anchor="start" font-size="10.5" fill="#3a3a3a">页面隐藏：只记“当前 tab 待刷”，不取数</text>
 <text x="852" y="152" text-anchor="start" font-size="10.5" fill="#3a3a3a">隐藏超过 60 秒：主动断开 SSE</text>
 <text x="852" y="167" text-anchor="start" font-size="10.5" fill="#3a3a3a">重新可见：重连，连上后补刷当前 tab</text>
+<text x="852" y="182" text-anchor="start" font-size="10.5" fill="#3a3a3a">浏览器放弃重连（如网关重启后 401）：先查登录，</text>
+<text x="852" y="197" text-anchor="start" font-size="10.5" fill="#3a3a3a">否则 5 秒起翻倍、封顶 5 分钟退避重开（09-30）</text>
 <polyline points="400,142 440,142" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#mk)"/>
 <polyline points="800,142 840,142" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#mk)"/>
 <text x="620" y="224" text-anchor="middle" font-size="12" fill="#1a1a1a" font-weight="bold">事件怎么分派：先按 area 找到 tab，前台 tab 再按事件来源决定取多少（09-25 第四轮审计，只在 host 验证）</text>
@@ -46,13 +48,13 @@
 <text x="520" y="382" text-anchor="start" font-size="10" fill="#3a3a3a">   （入库、忙态、进度，大书约每秒一条）</text>
 <text x="520" y="397" text-anchor="start" font-size="10" fill="#3a3a3a">   → 3 个：再加母版库列表</text>
 <text x="520" y="412" text-anchor="start" font-size="10" fill="#3a3a3a">③ 其余（mkdir/trash/inbox、切 tab、</text>
-<text x="520" y="427" text-anchor="start" font-size="10" fill="#3a3a3a">   重连、操作后）→ 全量 6 个</text>
+<text x="520" y="427" text-anchor="start" font-size="10" fill="#3a3a3a">   重连、操作后）→ 全量 4 个（09-29 前 6 个）</text>
 <rect x="742" y="280" width="224" height="170" rx="10" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.6"/>
 <text x="754" y="300" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">「其他」：只刷发事件的那块</text>
-<text x="754" y="322" text-anchor="start" font-size="10.5" fill="#3a3a3a">字体 / KOReader / 壁纸三块子面板</text>
+<text x="754" y="322" text-anchor="start" font-size="10.5" fill="#3a3a3a">字体 / 壁纸两块子面板</text>
 <text x="754" y="337" text-anchor="start" font-size="10.5" fill="#3a3a3a">事件来自哪个服务就只刷哪块</text>
-<text x="754" y="352" text-anchor="start" font-size="10.5" fill="#3a3a3a">（各 2～3 个请求；原来三块一起刷，</text>
-<text x="754" y="367" text-anchor="start" font-size="10.5" fill="#3a3a3a">约 7 个）</text>
+<text x="754" y="352" text-anchor="start" font-size="10.5" fill="#3a3a3a">（各 2～3 个请求；09-25 前整块一起刷，</text>
+<text x="754" y="367" text-anchor="start" font-size="10.5" fill="#3a3a3a">约 7 个；KOReader 子面板 09-29 已撤）</text>
 <text x="754" y="382" text-anchor="start" font-size="10.5" fill="#3a3a3a">认不出来源时退回整块刷新</text>
 <rect x="976" y="280" width="224" height="170" rx="10" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.6"/>
 <text x="988" y="300" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">「笔记」：不打断打字</text>
