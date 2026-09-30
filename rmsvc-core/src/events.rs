@@ -81,7 +81,7 @@ impl EventBus {
         SseStream { rx, pending: Vec::new(), keepalive }
     }
 
-    /// 发一条事件（`area`=UI 区域：books/koreader/fonts/wallpapers/manage；`kind`=细分）。
+    /// 发一条事件（`area`=UI 区域：books/fonts/wallpapers/manage/notes 等；`kind`=细分）。
     pub fn publish(&self, area: &str, kind: &str) {
         let at = crate::clock::now_secs();
         self.publish_raw(&serde_json::json!({"area": area, "kind": kind, "at": at}).to_string());

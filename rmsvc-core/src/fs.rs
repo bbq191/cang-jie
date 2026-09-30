@@ -57,7 +57,7 @@ fn tmp_sibling(path: &Path, suffix: &str) -> PathBuf {
 }
 
 /// 校验"单段普通文件名"：非空、无路径分隔符、非 `.`/`..`、不以 `.` 开头（隐藏名留给各目录的半成品 / sidecar）。
-/// 母版库 / 壁纸池 / KOReader 字体删除等所有"按名找文件"的入口共用，替代各处手写的 `contains('/')` 判断。
+/// 母版库 / 壁纸池 / 字体删除等所有"按名找文件"的入口共用，替代各处手写的 `contains('/')` 判断。
 pub fn plain_name(name: &str) -> Result<&str, String> {
     if name.is_empty() || name.contains('/') || name.contains('\\') || name.starts_with('.') {
         return Err("非法文件名".into());

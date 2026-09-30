@@ -9,9 +9,8 @@
 //! | `XDG_RUNTIME_DIR` | `/tmp/shelf-<uid>` | `shelf/{services/,upload/}` 注册表与上传分片（重启即清） |
 //! | 可执行 | `~/.local/bin` | 各服务二进制 |
 //! （host 侧缓存 `XDG_CACHE_HOME` 由 Python `shelf_cli/paths.py` 各自处理，不在此 Rust 表内。）
-//! 外部约定单点可覆盖：`SHELF_KOREADER_ROOT`（appload 外部应用目录）、`SHELF_WEREAD_ROOT`
-//! （WeRead 第三方 app 安装目录——跟本项目早年自建、已在 2026-09-05 砍掉的旧微读管线无关，
-//! 是外部下载的独立发行包自带 `install.sh` 直接 SSH 装到设备，本项目只做只读装机探测）。
+//! （原外部约定 `SHELF_KOREADER_ROOT`（KOReader 目录）/`SHELF_WEREAD_ROOT`（第三方 WeRead 安装目录）：2026-09-29 设备
+//! 卸掉 KOReader/WeRead 后已无调用方，2026-09-30 连同 koreader-serve 源码一起删除，见 git 历史。）
 //! qmd 里的 XHR 只能写绝对路径，写的是这些缺省值的展开（文档注明，非新约定）。
 use std::path::{Path, PathBuf};
 
@@ -24,8 +23,6 @@ pub struct Paths {
     data: PathBuf,
     state: PathBuf,
     runtime: PathBuf,
-    koreader_root: PathBuf,
-    weread_root: PathBuf,
 }
 
 impl Paths {
@@ -49,8 +46,6 @@ impl Paths {
             data: pick("XDG_DATA_HOME", home.join(".local/share")),
             state: pick("XDG_STATE_HOME", home.join(".local/state")),
             runtime: pick("XDG_RUNTIME_DIR", PathBuf::from(format!("/tmp/{APP}-{uid}"))),
-            koreader_root: pick("SHELF_KOREADER_ROOT", home.join("xovi/exthome/appload/koreader")),
-            weread_root: pick("SHELF_WEREAD_ROOT", home.join(".local/opt/remarkable-weread")),
             home,
         }
     }
@@ -87,7 +82,7 @@ impl Paths {
         self.state.join(APP)
     }
     /// 母版库（中间层暂存池）：所有内容源先原样落这里，用户再选优化 / 落库去向。
-    /// 与 book-serve 的 spool 同根（`state_dir()/books`）；koreader-serve 从母版库 adopt 时也读这里。
+    /// 与 book-serve 的 spool 同根（`state_dir()/books`）（以前 koreader-serve 从母版库 adopt 时也读这里；它 2026-09-30 已从仓库删除）。
     /// 在 /home 分区，重启 / OTA 不丢。**不套 spool done/ 的 LRU 淘汰**——留住用户还没落库的书。
     pub fn staging_dir(&self) -> PathBuf {
         self.state_dir().join("books").join("staging")
@@ -102,13 +97,6 @@ impl Paths {
     /// xochitl 原生书库（reMarkable 自己就放在 XDG 数据位）。
     pub fn xochitl_dir(&self) -> PathBuf {
         self.data.join("remarkable/xochitl")
-    }
-    pub fn koreader_root(&self) -> &Path {
-        &self.koreader_root
-    }
-    /// WeRead（第三方 app，官方安装器落点，非本项目服务）安装目录。
-    pub fn weread_root(&self) -> &Path {
-        &self.weread_root
     }
     /// 服务注册表目录。
     pub fn services_dir(&self) -> PathBuf {
@@ -154,8 +142,6 @@ mod tests {
         assert_eq!(p.bin_dir(), PathBuf::from("/home/root/.local/bin"));
         assert_eq!(p.user_fonts_dir(), PathBuf::from("/home/root/.local/share/fonts"));
         assert_eq!(p.xochitl_dir(), PathBuf::from("/home/root/.local/share/remarkable/xochitl"));
-        assert_eq!(p.koreader_root(), Path::new("/home/root/xovi/exthome/appload/koreader"));
-        assert_eq!(p.weread_root(), Path::new("/home/root/.local/opt/remarkable-weread"));
     }
 
     #[test]
@@ -165,15 +151,11 @@ mod tests {
             ("XDG_CONFIG_HOME", "/etc/x"),
             ("XDG_DATA_HOME", "rel/ignored"),
             ("XDG_RUNTIME_DIR", "/run/user/1000"),
-            ("SHELF_KOREADER_ROOT", "/opt/ko"),
-            ("SHELF_WEREAD_ROOT", "/opt/wr"),
             ("UID", "1000"),
         ]));
         assert_eq!(p.config_dir(), PathBuf::from("/etc/x/shelf"));
         assert_eq!(p.data_dir(), PathBuf::from("/h/.local/share/shelf"));
         assert_eq!(p.services_dir(), PathBuf::from("/run/user/1000/shelf/services"));
-        assert_eq!(p.koreader_root(), Path::new("/opt/ko"));
-        assert_eq!(p.weread_root(), Path::new("/opt/wr"));
         assert_eq!(p.app_state_dir("notes"), PathBuf::from("/h/.local/state/notes"), "笔记线私有目录与书架并列");
         assert_eq!(p.app_config_dir("notes"), PathBuf::from("/etc/x/notes"));
     }
