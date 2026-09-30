@@ -20,13 +20,6 @@ pub enum PageDirection {
 }
 
 impl PageDirection {
-    /// 写进 OPF 的属性值。
-    pub fn as_str(self) -> &'static str {
-        match self {
-            PageDirection::Ltr => "ltr",
-            PageDirection::Rtl => "rtl",
-        }
-    }
     /// `"rtl"`/`"ltr"` → 方向；其它（含 `"auto"`、`"default"`、空）→ `None`。
     pub fn parse(s: &str) -> Option<PageDirection> {
         match s.trim().to_ascii_lowercase().as_str() {
@@ -58,7 +51,7 @@ pub fn spine_direction(opf: &str) -> Option<PageDirection> {
 
 /// 读 EPUB 文件里写明的方向（只读 container.xml 与 OPF 两个条目）。读不了 / 没写 → `None`。
 pub fn spine_direction_file(epub: &Path) -> Option<PageDirection> {
-    let (_, _, opf) = crate::placeholder::open_opf(epub).ok()?;
+    let (_, _, opf) = crate::epubzip::open_opf(epub).ok()?;
     spine_direction(&opf)
 }
 

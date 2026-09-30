@@ -225,14 +225,19 @@ pub(crate) fn open_opf(epub: &std::path::Path) -> Result<(FileZip, String, Strin
 /// 其次 `properties="cover-image"`；指向 txt 之类的坏声明不算）；没有就取前几个 spine 页里第一张对得上 manifest 的图
 /// （`wash::opf::first_spine_image`，与优化器补封面声明同一套）。只读需要的几个条目，不解压整本；找不到返回 `None`。
 pub fn cover_image_of(epub: &std::path::Path) -> Option<(String, Vec<u8>)> {
-    use crate::wash::opf;
     let (mut zip, opf_path, text) = open_opf(epub).ok()?;
-    let dir = dir_of(&opf_path);
-    let path = match opf::declared_cover(&text) {
+    find_cover(&mut zip, &opf_path, &text)
+}
+
+/// [`cover_image_of`] 的本体，用已打开的 zip 与 OPF（占位 EPUB 也要同一张封面，免得再开一遍文件；此前 `placeholder` 整段抄了一份）。
+pub(crate) fn find_cover(zip: &mut FileZip, opf_path: &str, opf: &str) -> Option<(String, Vec<u8>)> {
+    use crate::wash::opf as o;
+    let dir = dir_of(opf_path);
+    let path = match o::declared_cover(opf) {
         Some(it) => resolve(dir, &percent_decode(it.href)),
-        None => opf::first_spine_image(&text, dir, 12, false, |p| read_text_opt(&mut zip, p))?,
+        None => o::first_spine_image(opf, dir, 12, false, |p| read_text_opt(zip, p))?,
     };
-    Some((crate::util::image_ext_of(&path), read_by_name_opt(&mut zip, &path).ok()??))
+    Some((crate::util::image_ext_of(&path), read_by_name_opt(zip, &path).ok()??))
 }
 
 /// 链接值 → (目标文件的 zip 路径, 锚点原文)。`base_file` 是链接所在文件的 zip 路径；路径部分为空（`#x`）时目标就是
