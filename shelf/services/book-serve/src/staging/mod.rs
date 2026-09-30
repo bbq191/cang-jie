@@ -1,7 +1,7 @@
 //! 母版库（中间层暂存池）领域模块——三层架构（内容源 → **母版库** → 读器）的交汇点。
 //! 三个正交动作各一个方法：**入库**（`stage_new` / `stage_from_path` / [`StagingStore`] 上传模板 / `fetch_article`）、
-//! **优化**（`optimize`，只对 EPUB）、**落库**（`deliver` 投 xochitl；KOReader 由 koreader-serve 从同一目录 adopt，
-//! 之后前端调 `mark_delivered` 记一笔）。落库＝纯复制母版字节（两读器同字节可对照），母版默认保留可反复落库。
+//! **优化**（`optimize`，EPUB/PDF）、**落库**（`deliver` 投 xochitl；网关批量「加入 KOReader」由 koreader-serve 从同一
+//! 目录 adopt 后调 `mark_delivered` 记一笔——KOReader 2026-09-29 已从设备卸载，koreader-serve 没注册时网关不走这条路）。落库＝纯复制母版字节（两读器同字节可对照），母版默认保留可反复落库。
 //! 目录 `$XDG_STATE_HOME/shelf/books/staging/`（/home 分区，重启/OTA 不丢；**不套 LRU 淘汰**，留住用户还没落库的书）。
 //! 落库记录是同目录隐藏 sidecar `.<name>.delivered`（`sidecar` 模块管读写；本模块只在落库/删书时调它）。
 use bookconv::optimize::{self, FootnoteMode, OptimizeOpts};
@@ -94,7 +94,7 @@ pub struct StagingEntry {
     pub delivered: Option<Delivered>,
     /// 是否正有一个异步操作（「优化」或「落库」）在这条目上跑——UI 据此禁用删除/落库/再次优化等按钮，
     /// 防止双击/并发操作同一条目（2026-09-18 真机反馈：优化耗时可能到分钟级，同步阻塞体验像卡死；
-    /// 2026-09-19 落库同理补上——超限漫画按卷拆分要挨个建包+上传，同样能拖到分钟级）。
+    /// 2026-09-19 落库同理补上——大书上传、等建文件夹同样能拖到分钟级）。
     #[serde(default)]
     pub busy: bool,
     /// 这份 EPUB 是不是入库 PDF 转出来的（`format=="epub"` 才有意义；跟 `optimized`/`level` 的
@@ -220,12 +220,12 @@ impl AssetStore for StagingStore<'_> {
     }
 }
 
-/// 非书籍文件的拒收文案（上传门与 inbox 追平同一句）。
 /// PDF→EPUB 成功后原 PDF 的隐藏备份目录（母版库下，点前缀 → `list()` 看不见）。
 pub const PDF_ORIGINALS_DIR: &str = ".pdf-originals";
 /// 备份保留时长：7 天。启动时和每次新备份时清过期的。
 pub const PDF_ORIGINALS_KEEP_SECS: u64 = 7 * 86_400;
 
+/// 非书籍文件的拒收文案（上传门与 inbox 追平同一句）。
 pub fn reject_message() -> String {
     format!("不是书籍格式，母版库只收 {}", formats::dotted(BOOK_EXTS))
 }
@@ -348,6 +348,10 @@ impl Staging {
             return Err("母版库里没有这本书".into());
         }
         Ok(p)
+    }
+    /// 改这本书的落库边车（读—改—原子写）；书已不在母版库 → Err（不给已删的书复活一份边车）。
+    fn update_sidecar(&self, name: &str, f: impl FnOnce(&mut Delivered)) -> Result<(), String> {
+        sidecar::update(&self.existing(name)?, f)
     }
 
     /// [`Self::spawn_optimize`]/[`Self::spawn_deliver`] 共用的"起后台线程"外壳（2026-09-19 代码

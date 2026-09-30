@@ -93,7 +93,7 @@ impl Staging {
                     *o = sidecar::OptimizeCheck { status: "failed".into(), message: "服务重启，上次优化被中断，可重新点「优化」".into(), at: now, progress: None };
                 }
                 if let Some(o) = d.deliver.as_mut().filter(|o| stale(&o.status)) {
-                    *o = sidecar::DeliverCheck { status: "failed".into(), message: "服务重启，上次加入被中断，可重新加入".into(), at: now, progress: None };
+                    *o = sidecar::DeliverCheck { status: "failed".into(), message: "服务重启，上次加入被中断，可重新加入".into(), at: now };
                 }
                 if let Some(r) = d.render.as_mut().filter(|r| stale(&r.status)) {
                     r.status = "timeout".into();

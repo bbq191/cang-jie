@@ -69,7 +69,7 @@ impl Xochitl {
         self.agent.get(&format!("http://{}/{}", self.host, path)).call().is_ok()
     }
 
-    /// 上传进指定名字的文件夹（找不到→书库根，best-effort）。数据已经在内存里（漫画拆分份、
+    /// 上传进指定名字的文件夹（找不到→书库根，best-effort）。数据已经在内存里（大文件通道的占位文档、
     /// note-serve 笔记本 zip 这类合成产物）用这个；落地文件直接上传用 [`Self::upload_file`]，
     /// 别自己先 `fs::read` 整个再传进来。
     pub fn upload(&self, data: &[u8], filename: &str, content_type: &str, folder_name: &str) -> Result<Delivery, String> {
@@ -77,7 +77,7 @@ impl Xochitl {
     }
 
     /// 直接流式上传一个磁盘文件——内容全程不整体读进内存，只在 `send_multipart` 里按块过一遍
-    /// （2026-09-19 OOM 审计：`Staging::deliver()` 落库不拆分路径曾经 `fs::read` 整本＋这里内部
+    /// （2026-09-19 OOM 审计：`Staging::deliver()` 整本落库曾经 `fs::read` 整本＋这里内部
     /// 再克隆一份拼 multipart body，峰值能到原文件 2 倍+；改流式后这条路径不再囤整本字节）。
     pub fn upload_file(&self, path: &Path, filename: &str, content_type: &str, folder_name: &str) -> Result<Delivery, String> {
         let file = std::fs::File::open(path).map_err(|e| format!("打开 {}: {e}", path.display()))?;
@@ -153,7 +153,7 @@ impl Xochitl {
         let folder = if folder_name.is_empty() { String::new() } else { self.find_folder(folder_name).unwrap_or_default() };
         // "设当前文件夹 → /upload" 必须成对、不被打断：当前文件夹是 xochitl 服务端的**全局**状态，两次投递并发时
         // （网关允许 3 本小书同时处理）A 设完文件夹、B 又设了自己的，A 的书就落进 B 的文件夹。进程内所有
-        // `Xochitl` 实例共用一把锁（static），把这一对串起来；只锁上传本身，拆分投递等渲染的间隙不占锁。
+        // `Xochitl` 实例共用一把锁（static），把这一对串起来；只锁上传本身。
         // 跨进程（note-serve 也会投笔记本）仍可能交错，这把锁管不到（2026-09-24 审计）。
         static UPLOAD: std::sync::Mutex<()> = std::sync::Mutex::new(());
         let _serial = crate::sync::lock(&UPLOAD);

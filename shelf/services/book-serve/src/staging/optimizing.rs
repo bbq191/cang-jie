@@ -89,11 +89,7 @@ impl Staging {
     /// 补，给 [`Self::spawn_optimize`] 挂真实进度用；这个方法本身不关心怎么展示，不耦合 sidecar/
     /// EventBus——同步调用方（如 [`Self::fetch_article`] 的"同步优化"复选框）传空闭包即可）。
     pub fn optimize(&self, name: &str, mut on_progress: impl FnMut(usize, usize)) -> Result<String, String> {
-        let ext = formats::ext_of(name);
-        if ext != "epub" && ext != "pdf" {
-            return Err("只有 EPUB/PDF 能优化".into());
-        }
-        let p = self.existing(name)?;
+        let (ext, p) = self.optimizable(name)?;
         if ext == "pdf" {
             return self.optimize_pdf(name, &p, on_progress);
         }
@@ -235,11 +231,7 @@ impl Staging {
     /// （[`sidecar::OptimizeCheck`]）异步呈现。`catch_unwind` 兜底优化过程中的 panic（如损坏文件触发
     /// 库内部意外崩溃）——绝不能让忙锁卡死在 true 再也清不掉、这条目从此删不掉优化不了。
     pub fn spawn_optimize(&self, name: &str, bus: Arc<rmsvc_core::events::EventBus>) -> Result<(), String> {
-        let ext = formats::ext_of(name);
-        if ext != "epub" && ext != "pdf" {
-            return Err("只有 EPUB/PDF 能优化".into());
-        }
-        self.existing(name)?;
+        self.optimizable(name)?;
         if !self.try_start_busy(name) {
             return Err(busy_err(name, ""));
         }
@@ -293,7 +285,15 @@ impl Staging {
 
     /// 写异步优化结果到边车（书已从母版库删除 → Err，调用方只记日志/静默丢弃，不阻断别的流程）。
     pub fn set_optimize_check(&self, name: &str, oc: sidecar::OptimizeCheck) -> Result<(), String> {
-        let p = self.existing(name)?;
-        sidecar::update(&p, |d| d.optimize = Some(oc))
+        self.update_sidecar(name, |d| d.optimize = Some(oc))
+    }
+
+    /// 优化前的零耗时校验：只收 EPUB/PDF + 书还在母版库。返回（小写扩展名, 路径）。
+    fn optimizable(&self, name: &str) -> Result<(String, PathBuf), String> {
+        let ext = formats::ext_of(name);
+        if ext != "epub" && ext != "pdf" {
+            return Err("只有 EPUB/PDF 能优化".into());
+        }
+        Ok((ext, self.existing(name)?))
     }
 }
