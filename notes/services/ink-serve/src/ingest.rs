@@ -68,10 +68,10 @@ pub fn ingest_doc(lib: &Path, crops_dir: &Path, db: &BookDb, cfg: &IngestConfig,
                 book.chapters = chapters.clone();
             }
             for (page_id, mtime) in &changed {
-                let bytes = match std::fs::read(doc.page_rm(page_id)) {
+                let bytes = match read_settled(&doc.page_rm(page_id)) {
                     Ok(b) => b,
                     Err(e) => {
-                        errors.push(format!("{page_id}: 读 .rm 失败 {e}"));
+                        errors.push(format!("{page_id}: {e}"));
                         continue;
                     }
                 };
@@ -105,6 +105,31 @@ pub fn ingest_doc(lib: &Path, crops_dir: &Path, db: &BookDb, cfg: &IngestConfig,
         println!("[ink-serve] {uuid} 摄取告警: {}", errors.join("; "));
     }
     Ok(Some(stats))
+}
+
+/// 文件的 (长度, 修改时间)：判断读的过程中有没有被改写。
+type Stamp = (u64, Option<std::time::SystemTime>);
+
+/// 读一页 `.rm`，并确认读的过程中它没被改写：读前读后各取一次同一个 fd 的 (长度, mtime)，对不上、或读到的字节数
+/// 跟长度对不上，就当"正在写入"报错跳过（不记 mtime，下次事件再扫）。v6 是一串块，截在块边界上的半截文件照样
+/// 能解析成功、只是少了后面的笔画——当成真的会把那些笔画对应的条目撤销（下次读全了虽会复活，但 `Pending`
+/// 复活只回 `Mined`，用户"转入笔记"的决定就丢了；2026-09-30 第五轮审计）。
+fn read_settled(path: &Path) -> Result<Vec<u8>, String> {
+    use std::io::Read;
+    let stamp = |f: &std::fs::File| -> std::io::Result<Stamp> { f.metadata().map(|m| (m.len(), m.modified().ok())) };
+    let mut f = std::fs::File::open(path).map_err(|e| format!("读 .rm 失败 {e}"))?;
+    let before = stamp(&f).map_err(|e| format!("读 .rm 失败 {e}"))?;
+    let mut bytes = Vec::with_capacity(before.0 as usize);
+    f.read_to_end(&mut bytes).map_err(|e| format!("读 .rm 失败 {e}"))?;
+    let after = stamp(&f).map_err(|e| format!("读 .rm 失败 {e}"))?;
+    if !settled(before, after, bytes.len()) {
+        return Err("页正在写入，下次再扫".into());
+    }
+    Ok(bytes)
+}
+
+fn settled(before: Stamp, after: Stamp, read: usize) -> bool {
+    before == after && after.0 == read as u64
 }
 
 /// 裁图：本页所有有手写、且裁图缺失或指纹变了的条目。自渲染（`render_ink`）直接吃这一页已经解析好的
@@ -268,6 +293,22 @@ mod tests {
         assert_eq!(ingest_doc(&lib, &crops, &db, &cfg, u, mt + 5).unwrap().unwrap().pages, 1, "同一秒记的，下次再扫一遍");
         assert_eq!(ingest_doc(&lib, &crops, &db, &cfg, u, mt + 6).unwrap().unwrap().pages, 0, "之后正常跳过");
         assert_eq!(db.load(u).unwrap().page_mtimes.values().copied().collect::<Vec<_>>(), [mt]);
+    }
+
+    /// 读的过程中文件被改写（长度/mtime 变了、读到的字节数对不上）→ 当"正在写入"跳过，不拿半截内容去合并。
+    #[test]
+    fn half_written_page_is_skipped_not_merged() {
+        let t0 = std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(100);
+        let t1 = t0 + std::time::Duration::from_secs(1);
+        assert!(settled((10, Some(t0)), (10, Some(t0)), 10));
+        assert!(!settled((10, Some(t0)), (20, Some(t1)), 20), "读的过程中追加了");
+        assert!(!settled((10, Some(t0)), (10, Some(t1)), 10), "原地改写，长度没变");
+        assert!(!settled((10, Some(t0)), (10, Some(t0)), 6), "读到的字节数对不上");
+        let d = tempfile::tempdir().unwrap();
+        let p = d.path().join("p.rm");
+        std::fs::write(&p, b"abc").unwrap();
+        assert_eq!(read_settled(&p).unwrap(), b"abc");
+        assert!(read_settled(&d.path().join("nope.rm")).unwrap_err().contains("读 .rm 失败"));
     }
 
     fn seeded_entry(id: &str, status: Status) -> notecore::model::Entry {
