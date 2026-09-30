@@ -987,6 +987,38 @@ fn deliver_oversized_pdf_uses_direct_channel_and_records_ok_pages() {
     assert_eq!(std::fs::read(uuid_pdf).unwrap(), pdf);
 }
 
+/// 第三方 PDF：页树根不在对象 2（对象 2 是带 `/Count` 的书签根）。此前 `PdfFileReader::page_count` 只认"对象 2 = Pages"，
+/// 这种书整本被拒收；现在顺着 Root → Pages 读真页数（交叉引用流 / 对象流的覆盖在 bookconv `pdfmeta` 的单测里）。
+#[test]
+fn deliver_oversized_third_party_pdf_reads_pages_via_root() {
+    let t = tempfile::tempdir().unwrap();
+    let (s, lib) = oversized_staging(&t);
+    let objs: [&[u8]; 4] = [b"<< /Type /Catalog /Pages 3 0 R /Outlines 2 0 R >>", b"<< /Type /Outlines /Count 9 >>", b"<< /Type /Pages /Kids [4 0 R] /Count 1 >>", b"<< /Type /Page /Parent 3 0 R /MediaBox [0 0 10 10] >>"];
+    let mut pdf = b"%PDF-1.4\n".to_vec();
+    let mut offs = Vec::new();
+    for (i, body) in objs.iter().enumerate() {
+        offs.push(pdf.len());
+        pdf.extend_from_slice(format!("{} 0 obj\n", i + 1).as_bytes());
+        pdf.extend_from_slice(body);
+        pdf.extend_from_slice(b"\nendobj\n");
+    }
+    pdf.extend_from_slice(&[b'%'; 200]); // 让体积超过测试里调小的直传上限
+    pdf.push(b'\n');
+    let xref = pdf.len();
+    pdf.extend_from_slice(b"xref\n0 5\n0000000000 65535 f \n");
+    for o in offs {
+        pdf.extend_from_slice(format!("{o:010} 00000 n \n").as_bytes());
+    }
+    pdf.extend_from_slice(format!("trailer\n<< /Size 5 /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n").as_bytes());
+    s.stage_new("third.pdf", &pdf).unwrap();
+    let out = s.deliver("third.pdf", "", &empty_mkdir(&t)).unwrap();
+    assert!(out.message.contains("已直接写入 xochitl 书库"), "{}", out.message);
+    let rc = sidecar::read(&s.dir().join("third.pdf")).unwrap().render.unwrap();
+    assert_eq!((rc.status.as_str(), rc.pages), ("ok", 1), "页数来自 Root→Pages 的 /Count，不是对象 2 的书签数");
+    let uuid_pdf = std::fs::read_dir(&lib).unwrap().flatten().find(|e| e.file_name().to_string_lossy().ends_with(".pdf")).unwrap().path();
+    assert_eq!(std::fs::read(uuid_pdf).unwrap(), pdf);
+}
+
 #[test]
 fn deliver_direct_channel_falls_back_when_placeholder_cannot_be_built() {
     // 是 zip 但没有 container.xml/OPF（造不出占位）→ 不走大文件通道，整本拒绝，且没有往 xochitl 传任何东西。

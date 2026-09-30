@@ -113,7 +113,8 @@ impl Staging {
                 Err(_) => return Ok(None),
             }
         } else {
-            let pages = match bookconv::convert::pdfwrite::PdfFileReader::open(p).and_then(|mut r| r.page_count()) {
+            // 第三方 PDF 常是交叉引用流/对象流、页树根不在对象 2：走通用的有界读取（`pdfmeta`），不整本读进内存。
+            let pages = match bookconv::convert::pdfmeta::page_count(p) {
                 Ok(n) => n,
                 Err(_) => return Ok(None),
             };

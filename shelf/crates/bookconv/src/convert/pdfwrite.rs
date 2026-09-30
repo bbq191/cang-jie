@@ -1,7 +1,7 @@
 //! 最小 PDF 写入器：一串图片（每图一页）→ PDF。贴合 epub.rs「手搓、零 C 依赖」风格。
 //! JPEG 直接作 /DCTDecode 嵌入（不解码、不重编码——漫画页几乎都是 JPEG）；
 //! PNG 用现成 `png` crate 解码成原始像素、miniz_oxide zlib 压成 /FlateDecode。
-//! 现役调用方：入库 PDF 裁边（`pdf_ingest::trim`）、大文件占位 PDF（`placeholder`）、大文件通道读页数（`PdfFileReader`）；
+//! 现役调用方：入库 PDF 裁边（`pdf_ingest::trim`）、大文件占位 PDF（`placeholder`）；大文件通道读第三方 PDF 页数 2026-09-30 起改走 [`super::pdfmeta`]（本文件的 `PdfFileReader` 只认自己写的结构）；
 //! `images_to_pdf` 只剩保留未接入的 CBZ→PDF（`convert::cbz`）。
 
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -622,7 +622,7 @@ fn parse_obj_index_from_file(file: &mut std::fs::File) -> Result<(Vec<usize>, us
         std::str::from_utf8(&count_digits).ok().and_then(|s| s.parse().ok()).ok_or("xref count 解析失败")?;
     // count 来自文件本身：先核对"条目表真的装得进文件剩余部分"再分配——损坏/陌生 PDF 写个天文数字，照单
     // `vec![0; count*20]` 在设备上是分配失败直接 abort（不是 catch_unwind 兜得住的 panic）。这个函数也会被
-    // 用户自己上传的第三方 PDF 走到（>90MB 占位通道读页数、超限拆分投递），不只是自己写的文件。
+    // 用户自己上传的第三方 PDF 走到（2026-09-30 前的大文件通道读页数、已撤的超限拆分投递），不只是自己写的文件；现在大文件通道改走 `pdfmeta`，防御照留。
     let pos = file.stream_position().map_err(|e| e.to_string())?;
     if count.checked_mul(20).is_none_or(|n| n as u64 > file_len.saturating_sub(pos)) {
         return Err("xref 条目数据被截断".into());
@@ -638,7 +638,7 @@ fn parse_obj_index_from_file(file: &mut std::fs::File) -> Result<(Vec<usize>, us
 }
 
 /// 读字典对象（Catalog/Pages/Outlines）的字节上限。自己写的 `/Pages` 是一个扁平 `/Kids` 数组，每页约 10 字节，
-/// 4MB 够几十万页；第三方 PDF（>100MB 走大文件通道时也用这个读页数）的 xref 偏移不保证按对象号递增，
+/// 4MB 够几十万页；第三方 PDF（2026-09-30 前大文件通道也用这个读页数，现改走 `pdfmeta`、同一上限）的 xref 偏移不保证按对象号递增，
 /// "下一个对象的偏移"可能在文件末尾——不设上限就是一次分配上百 MB、读完才发现不是要的对象。
 const MAX_DICT_OBJ_BYTES: usize = 4 << 20;
 
@@ -687,7 +687,7 @@ impl PdfFileReader {
         read_object_body_from_file(&mut self.file, &self.offsets, self.xref_off, id, max_len)
     }
 
-    /// `/Type /Pages` 对象（自己写的恒为对象 2）的 `/Count`。对象 2 不是 `/Pages`（第三方 PDF 常见，比如是
+    /// `/Type /Pages` 对象（自己写的恒为对象 2）的 `/Count`。只认自己写的结构；第三方 PDF 用 [`super::pdfmeta::page_count`]。对象 2 不是 `/Pages`（第三方 PDF 常见，比如是
     /// `/Outlines`，它也有 `/Count`）→ `Err`，调用方回退，不能把书签数当页数。
     pub fn page_count(&mut self) -> Result<usize, String> {
         let pages_body = self.read_object(2, MAX_DICT_OBJ_BYTES)?;
@@ -947,7 +947,7 @@ mod tests {
         assert!(image_from_bytes(&data).is_err());
     }
 
-    /// 按经典 xref 表写一份最小 PDF（对象体原样给出），给大文件通道读页数的健壮性测试用。
+    /// 按经典 xref 表写一份最小 PDF（对象体原样给出），给 `PdfFileReader` 读陌生 PDF 的健壮性测试用。
     fn classic_pdf(objs: &[&[u8]]) -> Vec<u8> {
         let mut pdf = b"%PDF-1.7\n".to_vec();
         let mut offs = Vec::new();

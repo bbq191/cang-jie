@@ -19,6 +19,7 @@ pub mod fb2;
 pub mod kf8;
 pub mod mobi;
 pub mod palm;
+pub mod pdfmeta;
 pub mod pdfwrite;
 
 /// xochitl `/upload` 接受的落地类型。
