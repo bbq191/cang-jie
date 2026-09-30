@@ -1,7 +1,7 @@
 //! 多格式 → xochitl 可读格式转换（块3 阅读 · 补内容源）。
 //!
 //! **现状（2026-09-25）**：书架只收 EPUB/PDF，格式转换器本身已不被调用；book-serve 仍复用 `direct_content_type`
-//! （落库/投递的 MIME 门控）和 `pdfwrite`（PDF 页数、占位 PDF、漫画 PDF 分卷）。下面是模块最初的设计说明。
+//! （落库/投递的 MIME 门控）和 `pdfwrite`（PDF 页数、占位 PDF、入库 PDF 裁边）。下面是模块最初的设计说明。
 //!
 //! xochitl 原生只开 EPUB/PDF：**文本类 → EPUB、漫画类 → PDF**，再走已验证的 `/upload`
 //! 免重启注入书库（见 device-core inject）。设计要点 = 各转换器互不耦合、统一收敛到

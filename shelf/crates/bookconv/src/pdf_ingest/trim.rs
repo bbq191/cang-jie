@@ -7,7 +7,7 @@ pub struct PdfTrimReport {
 }
 
 /// 无文字层/漫画 PDF：逐页取主图片字节→ `imgopt::prepare_comic_page_for_pdf`（裁边+按需缩放，单趟）
-/// →喂给 `PdfPieceWriter` 写出新 PDF（复用漫画 EPUB→PDF 那条产线的写手）。
+/// →喂给 `PdfPieceWriter` 写出新 PDF。
 ///
 /// **不允许变动书籍内容**（用户 2026-09-20 明确要求），所以这条路径**只处理"零文字、每页恰好一张
 /// 整页图"的 PDF**——重写页面等于丢掉图片以外的一切，其它形状一律拒绝并保持原文件不动：
@@ -19,7 +19,7 @@ pub struct PdfTrimReport {
 /// （实测根本没裁边）、`finish(&[])` 还把原 PDF 的书签全部丢掉。
 ///
 /// **目录**：保留原 PDF 书签（页码映射到输出页，层级压平）；原文件没有书签则按页分段兜底
-/// （[`crate::comic_pdf::page_chunk_titles`]），保证输出一定有目录。
+/// （[`crate::ncx::page_chunk_titles`]），保证输出一定有目录。
 pub fn optimize_pdf_trim_only(src: &Path, dst_tmp: &Path, mut on_progress: impl FnMut(usize, usize)) -> Result<PdfTrimReport, String> {
     let doc = load_pdf(src)?;
     let pages = doc.get_pages();
@@ -43,7 +43,7 @@ pub fn optimize_pdf_trim_only(src: &Path, dst_tmp: &Path, mut on_progress: impl 
         .map(|t| t.toc.iter().map(|e| (e.page.saturating_sub(1).min(page_count - 1), e.title.clone())).collect())
         .unwrap_or_default();
     if titles.is_empty() {
-        titles = crate::comic_pdf::page_chunk_titles(page_count);
+        titles = crate::ncx::page_chunk_titles(page_count);
     }
     let mut writer = PdfPieceWriter::begin(page_count, true);
     for (i, (_, page_id)) in pages.iter().enumerate() {

@@ -56,33 +56,8 @@ pub fn is_comic(entries: &[Entry]) -> bool {
     images >= MIN_IMAGES && (text as f64) < TEXT_PER_IMAGE * images as f64
 }
 
-/// **能转 PDF 的漫画**：漫画且整本可见文字为 0。转 PDF 是"一图一页"，纯文字页（版权页、前情提要、
-/// 章节标题页）和图片页里夹的文字（台词、旁白）**都没有对应物、会被丢掉**——用户明确要求"不允许变动
-/// 书籍内容"，所以只要有一个可见字就不转，留在 EPUB 流程里（文字和目录原样保留）。2026-09-20 审计 33 卷
-/// 只有《镖人(卷二)》简体版命中（14 个文字页 477 字 + 图片页内 26 字，12 条目录项指向文字页），其余
-/// 32 卷文字量为 0。
-pub fn is_text_free_comic(entries: &[Entry]) -> bool {
-    let (images, text) = epub_image_stats(entries);
-    images >= MIN_IMAGES && text == 0
-}
-
-/// 只读 html/opf 真实字节判断是不是漫画，图片条目留空占位（`is_comic`/`epub_image_stats` 从不读
-/// 图片字节，只数 html 里 `<img>` 标签出现次数），不解码任何图片——给 `book-serve::Staging::
-/// optimize()` 在决定"这本 EPUB 优化后走 PDF 还是 EPUB"之前用的轻量预判。打不开/解不了 zip 一律
-/// 当"不是漫画"（安全默认——判不准就走现状 EPUB 老路径，不是新引入的失败模式）。
-pub fn is_comic_epub_file(path: &std::path::Path) -> bool {
-    read_entries_without_images(path).map(|e| is_comic(&e)).unwrap_or(false)
-}
-
-/// [`is_text_free_comic`] 的文件版：给 `book-serve::Staging::optimize()` 决定"走 PDF 还是走 EPUB 优化"。
-/// 打不开/解不了 zip 一律 `false`（走现状 EPUB 路径，保内容优先）。
-pub fn is_text_free_comic_epub_file(path: &std::path::Path) -> bool {
-    read_entries_without_images(path).map(|e| is_text_free_comic(&e)).unwrap_or(false)
-}
-
 /// **能设"页边距最小化"的漫画**：整本判漫画（图为主，文字可以有）且**文字页/混排页的文字都已带留边类**
 /// （[`crate::comic_pad`]）——文字没留边的旧优化产物页边距设成 1 后文字会贴屏幕边，不放行。
-/// 与 [`is_text_free_comic_epub_file`] 不同：后者是"能转 PDF"的判据（一个字都不能有），这里允许有文字页。
 pub fn is_min_margin_comic_file(path: &std::path::Path) -> bool {
     read_entries_without_images(path).map(|e| is_comic(&e) && crate::comic_pad::all_text_padded(&e)).unwrap_or(false)
 }
@@ -234,7 +209,7 @@ mod tests {
     }
 
     #[test]
-    fn is_comic_epub_file_reads_from_disk_without_decoding_images() {
+    fn skeleton_read_from_disk_judges_comic_without_decoding_images() {
         use std::io::Write;
         let items: String = (1..=25).map(|i| format!(r#"<item id="c{i}" href="c{i}.xhtml" media-type="application/xhtml+xml"/>"#)).collect();
         let spine: String = (1..=25).map(|i| format!(r#"<itemref idref="c{i}"/>"#)).collect();
@@ -250,7 +225,7 @@ mod tests {
             for i in 1..=25 {
                 z.start_file(format!("c{i}.xhtml"), opt).unwrap();
                 z.write_all(format!(r#"<html><body><img src="p{i}.jpg"/></body></html>"#).as_bytes()).unwrap();
-                // 图片条目故意写非法/空字节——is_comic_epub_file 不该尝试解码它，判定应该照常通过。
+                // 图片条目故意写非法/空字节——骨架读取不该尝试解码它，判定应该照常通过。
                 z.start_file(format!("p{i}.jpg"), opt).unwrap();
                 z.write_all(b"not a real jpeg").unwrap();
             }
@@ -259,11 +234,13 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("test.epub");
         std::fs::write(&path, &buf).unwrap();
-        assert!(is_comic_epub_file(&path), "25 张纯图片页应判定为漫画");
+        let entries = read_entries_without_images(&path).expect("骨架应读得出");
+        assert!(is_comic(&entries), "25 张纯图片页应判定为漫画");
 
         let not_epub = dir.path().join("not.epub");
         std::fs::write(&not_epub, b"garbage").unwrap();
-        assert!(!is_comic_epub_file(&not_epub), "解不了 zip 的文件应安全返回 false");
+        assert!(read_entries_without_images(&not_epub).is_none(), "解不了 zip 的文件应安全返回 None");
+        assert!(!is_min_margin_comic_file(&not_epub));
     }
 
     #[test]

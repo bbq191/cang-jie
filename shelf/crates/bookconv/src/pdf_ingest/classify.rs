@@ -23,7 +23,7 @@ pub const COMIC_IMAGE_AREA_RATIO: f64 = 0.85;
 pub const MIN_CHARS_PER_PAGE: f64 = 40.0;
 
 /// 判不准（打不开/解析失败）一律退到安全默认：[`PdfKind::NoTextLayer`]（只裁边，不转换）——
-/// 跟 `comic_detect::is_comic_epub_file` "打不开当不是漫画、走现状老路径" 同一个"失败模式选
+/// 跟 `comic_detect::is_min_margin_comic_file` "打不开当不是漫画、走现状老路径" 同一个"失败模式选
 /// 更保守那条"原则：裁边是幂等、低风险操作，转 EPUB 是破坏性格式变更，判不准时不能选后者。
 pub fn classify_pdf(path: &Path) -> PdfKind {
     load_pdf(path).map_or(PdfKind::NoTextLayer, |doc| classify_doc(&doc))

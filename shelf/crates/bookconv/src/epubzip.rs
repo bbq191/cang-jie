@@ -1,8 +1,8 @@
-//! EPUB 的 zip 层与 zip 内 posix 路径工具（清洗/优化/质量门/分卷/占位共用的最底层）。
+//! EPUB 的 zip 层与 zip 内 posix 路径工具（清洗/优化/质量门/占位共用的最底层）。
 //!
 //! - [`Entry`]：zip 条目（目录项已剔除）。
 //! - [`read_entries`]：整本读入；[`read_skeleton`]：只读"骨架"——图片条目留空占位、其余整份读，图片真实体积从 zip
-//!   目录查表（流式优化/分卷投递/漫画转 PDF/漫画识别的阶段一，此前各抄一份循环）。
+//!   目录查表（流式优化/漫画识别的阶段一，此前各抄一份循环）。
 //! - `posix_norm/dir_of/resolve/relative_to/percent_decode/is_html`：EPUB 内路径与文件名判断。
 //!
 //! 原先散在 `wash.rs`（Entry+路径工具）与 `check.rs`（read_entries），`wash`/`check` 仍 re-export，旧路径不变。
@@ -108,7 +108,7 @@ pub fn read_skeleton<R: Read + Seek>(zip: &mut ZipArchive<R>) -> Result<Skeleton
 
 /// 按名字读一个 zip 条目的全部字节；条目不存在 → `Ok(None)`，其它（损坏/IO）错误 → `Err`。
 /// 流式路径"图片按需从源 zip 读回"的统一入口（此前 `by_name` + `with_capacity(size)` + `read_to_end` 在
-/// streaming/comic_split/comic_pdf/placeholder 各抄一份）。
+/// 各流式路径各抄一份）。
 pub fn read_by_name_opt<R: Read + Seek>(zip: &mut ZipArchive<R>, name: &str) -> Result<Option<Vec<u8>>, String> {
     let mut f = match zip.by_name(name) {
         Ok(f) => f,
