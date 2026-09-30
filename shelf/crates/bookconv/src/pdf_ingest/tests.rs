@@ -863,3 +863,93 @@ fn pdf_doc_title_follows_indirect_info_and_title() {
     doc.trailer.set("Info", Object::Reference((2, 0)));
     assert_eq!(pdf_doc_title(&doc).as_deref(), Some("Indirect Title"));
 }
+
+// ---- 第五轮审计（2026-09-30）：损坏/恶意 PDF 的健壮性 ----
+use lopdf::dictionary;
+
+/// 把一条图片 stream 放进文档，返回 (文档, 对象 id)。`filters` 为空不写 /Filter。
+fn doc_with_image(width: i64, height: i64, color_space: &str, filters: &[&str], content: Vec<u8>) -> (lopdf::Document, lopdf::ObjectId) {
+    let mut doc = lopdf::Document::with_version("1.7");
+    let mut dict = dictionary! {
+        "Type" => "XObject",
+        "Subtype" => "Image",
+        "Width" => width,
+        "Height" => height,
+        "ColorSpace" => color_space,
+        "BitsPerComponent" => 8,
+    };
+    if !filters.is_empty() {
+        dict.set("Filter", lopdf::Object::Array(filters.iter().map(|f| lopdf::Object::Name(f.as_bytes().to_vec())).collect()));
+    }
+    let id = doc.add_object(lopdf::Object::Stream(lopdf::Stream::new(dict, content)));
+    (doc, id)
+}
+
+fn decode_image_of(doc: &lopdf::Document, id: lopdf::ObjectId) -> Result<Vec<u8>, String> {
+    let stream = doc.get_object(id).unwrap().as_stream().unwrap();
+    let filters: Vec<String> = match stream.dict.get(b"Filter") {
+        Ok(lopdf::Object::Array(a)) => a.iter().map(|o| String::from_utf8_lossy(o.as_name().unwrap()).into_owned()).collect(),
+        _ => Vec::new(),
+    };
+    let img = lopdf::xobject::PdfImage {
+        id,
+        width: stream.dict.get(b"Width").unwrap().as_i64().unwrap(),
+        height: stream.dict.get(b"Height").unwrap().as_i64().unwrap(),
+        color_space: Some(String::from_utf8_lossy(stream.dict.get(b"ColorSpace").unwrap().as_name().unwrap()).into_owned()),
+        filters: Some(filters),
+        bits_per_component: Some(8),
+        content: &stream.content,
+        origin_dict: &stream.dict,
+    };
+    decode_pdf_image_to_bytes(doc, &img)
+}
+
+/// 声明 4×4 RGB（48 字节）的 Flate 流解出 16MB：此前不限量照解，现在按声明尺寸封顶、报错。
+#[test]
+fn flate_image_decompression_is_capped_by_declared_size() {
+    let bomb = miniz_oxide::deflate::compress_to_vec_zlib(&vec![0u8; 16 << 20], 9);
+    let (doc, id) = doc_with_image(4, 4, "DeviceRGB", &["FlateDecode"], bomb);
+    let err = decode_image_of(&doc, id).unwrap_err();
+    assert!(err.contains("解压失败"), "应在解压阶段就被上限拦下，而不是解完 16MB 才在 PNG 编码时报错: {err}");
+}
+
+/// `[FlateDecode DCTDecode]` 外面还包着一层 Flate：不能当裸 JPEG 透传（此前透传出坏图）。
+#[test]
+fn dct_inside_filter_chain_is_not_passed_through() {
+    let (doc, id) = doc_with_image(1, 1, "DeviceRGB", &["FlateDecode", "DCTDecode"], vec![0xFF, 0xD8, 0xFF, 0xD9]);
+    assert!(decode_image_of(&doc, id).is_err());
+    let (doc, id) = doc_with_image(1, 1, "DeviceRGB", &["DCTDecode"], vec![0xFF, 0xD8, 0xFF, 0xD9]);
+    assert_eq!(decode_image_of(&doc, id).unwrap(), vec![0xFF, 0xD8, 0xFF, 0xD9], "单独 DCTDecode 仍原样透传");
+}
+
+/// 单通道 ICCBased 图：此前一律当 RGB，字节数对不上、编码失败，转 EPUB 时图片被静默丢掉。
+#[test]
+fn single_channel_icc_image_decodes_as_gray() {
+    let px = miniz_oxide::deflate::compress_to_vec_zlib(&[0u8, 64, 128, 255], 6);
+    let (doc, id) = doc_with_image(2, 2, "ICCBased", &["FlateDecode"], px);
+    let png = decode_image_of(&doc, id).expect("单通道 ICC 图应能解出");
+    let img = image::load_from_memory(&png).unwrap();
+    assert_eq!((img.width(), img.height()), (2, 2));
+    assert!(matches!(img, image::DynamicImage::ImageLuma8(_)), "应按灰度编码");
+    // 三通道 ICC 照旧按 RGB
+    let px = miniz_oxide::deflate::compress_to_vec_zlib(&[0u8; 12], 6);
+    let (doc, id) = doc_with_image(2, 2, "ICCBased", &["FlateDecode"], px);
+    assert!(matches!(image::load_from_memory(&decode_image_of(&doc, id).unwrap()).unwrap(), image::DynamicImage::ImageRgb8(_)));
+}
+
+/// 页的 `/Parent` 指回自己且缺 MediaBox：此前无上限递归栈溢出（进程直接崩），现在返回 None。
+#[test]
+fn media_box_lookup_survives_parent_cycle() {
+    let mut doc = lopdf::Document::with_version("1.7");
+    let id = doc.new_object_id();
+    doc.objects.insert(id, lopdf::Object::Dictionary(dictionary! { "Type" => "Page", "Parent" => lopdf::Object::Reference(id) }));
+    let dict = doc.get_dictionary(id).unwrap();
+    assert!(media_box_size(&doc, dict).is_none());
+}
+
+/// 分类与裁边闸门共用的可见字数不算 `'\0'`（缺 ToUnicode 映射时的占位）。
+#[test]
+fn visible_char_count_ignores_nul_and_whitespace() {
+    let page = PageContent { chars: vec![char_at('\u{0}', 0.0, 0.0, 10.0, 0), char_at(' ', 0.0, 0.0, 10.0, 0), char_at('字', 0.0, 0.0, 10.0, 0)], images: Vec::new() };
+    assert_eq!(visible_char_count(&[page]), 1);
+}

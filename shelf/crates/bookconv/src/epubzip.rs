@@ -1,8 +1,8 @@
-//! EPUB 的 zip 层与 zip 内 posix 路径工具（清洗/优化/质量门/分卷/占位共用的最底层）。
+//! EPUB 的 zip 层与 zip 内 posix 路径工具（清洗/优化/质量门/占位共用的最底层）。
 //!
 //! - [`Entry`]：zip 条目（目录项已剔除）。
 //! - [`read_entries`]：整本读入；[`read_skeleton`]：只读"骨架"——图片条目留空占位、其余整份读，图片真实体积从 zip
-//!   目录查表（流式优化/分卷投递/漫画转 PDF/漫画识别的阶段一，此前各抄一份循环）。
+//!   目录查表（流式优化/漫画识别的阶段一，此前各抄一份循环）。
 //! - `posix_norm/dir_of/resolve/relative_to/percent_decode/is_html`：EPUB 内路径与文件名判断。
 //!
 //! 原先散在 `wash.rs`（Entry+路径工具）与 `check.rs`（read_entries），`wash`/`check` 仍 re-export，旧路径不变。
@@ -108,7 +108,7 @@ pub fn read_skeleton<R: Read + Seek>(zip: &mut ZipArchive<R>) -> Result<Skeleton
 
 /// 按名字读一个 zip 条目的全部字节；条目不存在 → `Ok(None)`，其它（损坏/IO）错误 → `Err`。
 /// 流式路径"图片按需从源 zip 读回"的统一入口（此前 `by_name` + `with_capacity(size)` + `read_to_end` 在
-/// streaming/comic_split/comic_pdf/placeholder 各抄一份）。
+/// 各流式路径各抄一份）。
 pub fn read_by_name_opt<R: Read + Seek>(zip: &mut ZipArchive<R>, name: &str) -> Result<Option<Vec<u8>>, String> {
     let mut f = match zip.by_name(name) {
         Ok(f) => f,
@@ -225,14 +225,19 @@ pub(crate) fn open_opf(epub: &std::path::Path) -> Result<(FileZip, String, Strin
 /// 其次 `properties="cover-image"`；指向 txt 之类的坏声明不算）；没有就取前几个 spine 页里第一张对得上 manifest 的图
 /// （`wash::opf::first_spine_image`，与优化器补封面声明同一套）。只读需要的几个条目，不解压整本；找不到返回 `None`。
 pub fn cover_image_of(epub: &std::path::Path) -> Option<(String, Vec<u8>)> {
-    use crate::wash::opf;
     let (mut zip, opf_path, text) = open_opf(epub).ok()?;
-    let dir = dir_of(&opf_path);
-    let path = match opf::declared_cover(&text) {
+    find_cover(&mut zip, &opf_path, &text)
+}
+
+/// [`cover_image_of`] 的本体，用已打开的 zip 与 OPF（占位 EPUB 也要同一张封面，免得再开一遍文件；此前 `placeholder` 整段抄了一份）。
+pub(crate) fn find_cover(zip: &mut FileZip, opf_path: &str, opf: &str) -> Option<(String, Vec<u8>)> {
+    use crate::wash::opf as o;
+    let dir = dir_of(opf_path);
+    let path = match o::declared_cover(opf) {
         Some(it) => resolve(dir, &percent_decode(it.href)),
-        None => opf::first_spine_image(&text, dir, 12, false, |p| read_text_opt(&mut zip, p))?,
+        None => o::first_spine_image(opf, dir, 12, false, |p| read_text_opt(zip, p))?,
     };
-    Some((crate::util::image_ext_of(&path), read_by_name_opt(&mut zip, &path).ok()??))
+    Some((crate::util::image_ext_of(&path), read_by_name_opt(zip, &path).ok()??))
 }
 
 /// 链接值 → (目标文件的 zip 路径, 锚点原文)。`base_file` 是链接所在文件的 zip 路径；路径部分为空（`#x`）时目标就是

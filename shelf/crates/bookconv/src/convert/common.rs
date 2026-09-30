@@ -1,6 +1,24 @@
 //! convert 各转换器共用的小工具——集中一处，避免 fb2/mobi/kf8/cbz 各写一遍漂移。
 
 use crate::epub::{self, Book};
+use regex::Regex;
+use std::sync::OnceLock;
+
+/// 编译一次、之后复用的正则（mobi/kf8 按段调用的清洗函数此前每段都重新编译一遍，几百章就是上千次）。
+pub(crate) fn cached_re(cell: &'static OnceLock<Regex>, pat: &str) -> &'static Regex {
+    cell.get_or_init(|| Regex::new(pat).unwrap())
+}
+
+/// 字节位置下取到字符边界（NCX/filepos 偏移可能落在多字节字符中间，最多回退 3 字节）。mobi/kf8 共用。
+pub(crate) fn char_floor(s: &str, mut pos: usize) -> usize {
+    if pos >= s.len() {
+        return s.len();
+    }
+    while pos > 0 && !s.is_char_boundary(pos) {
+        pos -= 1;
+    }
+    pos
+}
 
 /// 图片魔数 → (扩展名, MIME)。非已知图片返回 None。
 pub fn image_ext_mime(b: &[u8]) -> Option<(&'static str, &'static str)> {

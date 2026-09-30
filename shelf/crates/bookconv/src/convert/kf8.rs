@@ -6,7 +6,8 @@
 //! INDX/CNCX skeleton+fragment 重组**——按 `<html>` 边界切章 + 清洗结构标签 + 重写 kindle:embed
 //! 图片 + 去 kindle 内链即可，得到可读 EPUB。HUFF/CDIC 压缩与 DRM 明确拒绝。
 
-use super::{common, palm};
+use super::common::{self, char_floor};
+use super::palm;
 use crate::epub::{Book, BookMeta, Chapter, Resource};
 use regex::Regex;
 use std::collections::{HashMap, HashSet};
@@ -245,7 +246,8 @@ fn build_chapters(
     // 元组 = (Chapter, rawML 段起点)；段终点由下一章起点/rawml 末尾给出。
     let mut built: Vec<(Chapter, usize)> = Vec::new();
 
-    if !ncx.is_empty() {
+    // 至少一条 NCX 位置落在正文范围内才按 NCX 切（此前只看 NCX 非空：全部位置越界——如解压截断——时切点表为空，`cuts[0]` 越界 panic）
+    if ncx.iter().any(|e| e.pos <= rawml.len()) {
         // 按 NCX **精确位置**切（各章位置互异，不吸附以免邻近章被去重合并丢章）。切点可能落在标签中间，
         // 由 trim_partial_head 裁掉段首残缺标签片段。
         let mut cuts: Vec<(usize, String, i64)> = ncx
@@ -326,17 +328,6 @@ fn build_chapters(
     built.into_iter().map(|(c, _)| c).collect()
 }
 
-/// 把字节位置下取到 `<` 最近的字符边界（`str::floor_char_boundary` 未稳定，手写）。
-fn char_floor(s: &str, mut pos: usize) -> usize {
-    if pos >= s.len() {
-        return s.len();
-    }
-    while pos > 0 && !s.is_char_boundary(pos) {
-        pos -= 1;
-    }
-    pos
-}
-
 /// 若段首落在标签中间（首字符非 `<`，且第一个 `>` 出现在第一个 `<` 之前），裁掉这段残缺标签片段
 /// （到首个 `>` 之后），避免像 `2">正文` 的属性残片当正文渲染。段首本就是 `<` 则原样返回。
 fn trim_partial_head(seg: &str) -> &str {
@@ -355,6 +346,15 @@ fn trim_partial_head(seg: &str) -> &str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// NCX 非空但所有位置都超出正文（解压截断）：此前切点表为空、`cuts[0]` 越界 panic；现在退回按 `<html>` 块切。
+    #[test]
+    fn ncx_positions_all_out_of_range_fall_back_to_html_blocks() {
+        let rawml = "<html><body><p>正文</p></body></html>";
+        let ncx = [palm::NcxEntry { pos: 10_000, label: "第一章".into(), level: 0 }];
+        let chs = build_chapters(rawml, &HashMap::new(), &ncx, "书", None);
+        assert!(chs.iter().any(|c| c.html_body.contains("正文")), "应退回按 <html> 块切出正文");
+    }
 
     #[test]
     fn cleaner_strips_shell_and_maps_embed() {

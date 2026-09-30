@@ -832,7 +832,7 @@ fn optimize_comic_shaped_pdf_stays_pdf_and_gets_trimmed() {
 
 #[test]
 fn optimize_comic_epub_rejects_when_no_images_found() {
-    // is_comic_epub_file 判定要图够多；混进正好 20+ 张图但真正 spine 引用为空的极端情况这里不测，
+    // comic_detect::is_comic 判定要图够多；混进正好 20+ 张图但真正 spine 引用为空的极端情况这里不测，
     // 只覆盖最直接的"根本没图"分支走不到漫画判定，仍归普通 EPUB 分支（现状行为不变）。
     let t = tempfile::tempdir().unwrap();
     let s = staging(&t);

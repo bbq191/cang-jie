@@ -3,7 +3,7 @@
 //! （尤其"字体改不动"——第三方常内联硬写死 font）。入口是流式的 [`StreamingOptimize`]（路径进路径出）。
 //!
 //! 2026-09-29 起文字处理层（清洗、注释、XHTML 解析工具 `crate::html`）以 sheng-ren 仓库的同源 bookconv 为参照移植，
-//! 设备专有的部分（漫画页框 `comic_frame`、改书名、取消、按书翻页方向、900 万像素解码上限）保留。
+//! 设备专有的部分（漫画页框 `comic_frame`、改书名、取消、900 万像素解码上限）保留；翻页方向只保留原书自带的（不改 OPF spine 方向）。
 
 use std::collections::{HashMap, HashSet};
 use std::io::{Cursor, Read, Write};
@@ -124,7 +124,7 @@ struct Prepared {
     /// 不做注释搬移的页：导航文档、目录文件、目录样的页（它们的链接不算注释引用，也不往它们里面搬注释）。
     skip_notes: HashSet<String>,
     is_comic_book: bool,
-    /// 要改 OPF 时（指定了翻页方向，或书里有远程图、抓到的图要补进 manifest）的 OPF 条目名。
+    /// 要改 OPF 时（改书名、书里有远程图要补 manifest、漫画打标签、清洗过的书标 properties）的 OPF 条目名。
     opf_name: Option<String>,
     /// 有章节引用远程图：OPF 推迟到最后写，好把抓到的图补进 manifest（见 `streaming`）。
     has_remote_imgs: bool,
@@ -162,7 +162,7 @@ fn prepare_entries(mut raw: Vec<crate::epubzip::Entry>, opts: &OptimizeOpts, byt
     // （清洗层已把空页清理、目录归一，判定更准；不再判第二遍）。
     let is_comic_book = washed_comic.unwrap_or_else(|| crate::comic_detect::is_comic(&ordered));
     let opf = crate::wash::parse_opf(&ordered);
-    // 只在真要改 OPF 时才记它：改翻页方向、补远程图的 manifest 项、给漫画打标签、（清洗过的书）按最终内容标 manifest 的 properties。
+    // 只在真要改 OPF 时才记它：改书名、补远程图的 manifest 项、给漫画打标签、（清洗过的书）按最终内容标 manifest 的 properties。
     let opf_name: Option<String> = opf.as_ref().filter(|_| title.is_some() || has_remote_imgs || is_comic_book || opts.wash.is_some()).map(|o| ordered[o.index].name.clone());
     // 导航文档与目录文件：不收它们里面的注释引用，也不往里面搬注释。
     let mut skip_notes: HashSet<String> = ordered.iter().filter(|e| crate::wash::is_toc_file(&e.name)).map(|e| e.name.clone()).collect();

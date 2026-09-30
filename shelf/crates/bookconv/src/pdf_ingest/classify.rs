@@ -23,7 +23,7 @@ pub const COMIC_IMAGE_AREA_RATIO: f64 = 0.85;
 pub const MIN_CHARS_PER_PAGE: f64 = 40.0;
 
 /// 判不准（打不开/解析失败）一律退到安全默认：[`PdfKind::NoTextLayer`]（只裁边，不转换）——
-/// 跟 `comic_detect::is_comic_epub_file` "打不开当不是漫画、走现状老路径" 同一个"失败模式选
+/// 跟 `comic_detect::is_min_margin_comic_file` "打不开当不是漫画、走现状老路径" 同一个"失败模式选
 /// 更保守那条"原则：裁边是幂等、低风险操作，转 EPUB 是破坏性格式变更，判不准时不能选后者。
 pub fn classify_pdf(path: &Path) -> PdfKind {
     load_pdf(path).map_or(PdfKind::NoTextLayer, |doc| classify_doc(&doc))
@@ -49,8 +49,11 @@ fn classify_doc(doc: &lopdf::Document) -> PdfKind {
     if comic_pages as f64 / total as f64 >= COMIC_PAGE_RATIO {
         return PdfKind::Comic;
     }
-    let Ok(text_pages) = extract_positioned_text_doc(doc) else { return PdfKind::NoTextLayer };
-    let total_chars: usize = text_pages.iter().map(|p| p.chars.iter().filter(|c| !c.ch.is_whitespace()).count()).sum();
+    // 上游 pdf-extract 里还有不少 unwrap/expect：抽字 panic 也按"判不准"退到 NoTextLayer（见 [`classify_pdf`] 文档），
+    // 不让它穿出去把整次优化变成失败。
+    let extracted = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| extract_positioned_text_doc(doc)));
+    let Ok(Ok(text_pages)) = extracted else { return PdfKind::NoTextLayer };
+    let total_chars = visible_char_count(&text_pages);
     let avg = total_chars as f64 / total as f64;
     if avg >= MIN_CHARS_PER_PAGE {
         PdfKind::TextLayer
@@ -92,13 +95,19 @@ pub(super) fn media_box_size(doc: &lopdf::Document, page_dict: &lopdf::Dictionar
     Some((w as f64, h as f64))
 }
 
+/// 沿 `/Parent` 往上找 MediaBox，最多 [`MAX_PARENT_DEPTH`] 层——损坏 PDF 的 `/Parent` 可能指回自己或绕成环，
+/// 此前无上限递归会栈溢出（SIGSEGV，`catch_unwind` 接不住，book-serve 整个进程倒）。
 pub(super) fn get_inherited_media_box(doc: &lopdf::Document, page_dict: &lopdf::Dictionary) -> Option<Vec<lopdf::Object>> {
-    if let Ok(arr) = page_dict.get(b"MediaBox").and_then(|o| o.as_array()) {
-        return Some(arr.clone());
+    const MAX_PARENT_DEPTH: usize = 64;
+    let mut cur = page_dict;
+    for _ in 0..MAX_PARENT_DEPTH {
+        if let Ok(arr) = cur.get(b"MediaBox").and_then(|o| o.as_array()) {
+            return Some(arr.clone());
+        }
+        let parent_ref = cur.get(b"Parent").ok()?.as_reference().ok()?;
+        cur = doc.get_dictionary(parent_ref).ok()?;
     }
-    let parent_ref = page_dict.get(b"Parent").ok()?.as_reference().ok()?;
-    let parent = doc.get_dictionary(parent_ref).ok()?;
-    get_inherited_media_box(doc, parent)
+    None
 }
 
 // ============================================================================

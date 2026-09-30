@@ -13,17 +13,41 @@ use super::*;
 /// 多出来的 100 字节精确等于行数）——`lopdf::Stream::decompressed_content()` 已经正确处理
 /// 了这个预测器（含 PNG 10-15 与 TIFF 2 两种），必须重新按 `img.id` 取回原始 `Stream` 对象
 /// 调它，不能图省事直接对 `img.content`（未解预测器的裸字节）手动 inflate。
+///
+/// Flate 解压有上限（2026-09-30 第五轮审计）：按声明宽高算出 RGB 8-bit 应有的字节数，超过 [`MAX_LOAD_STREAM_BYTES`]
+/// 直接报错，解压也只放到这个量（此前用不限量的 `decompressed_content()`，几 KB 的压缩流能解出几 GB）。
+/// `ICCBased`/`CalGray`/`CalRGB` 按解出的字节数认 1 或 3 通道（此前非 `DeviceGray` 一律当 RGB，单通道 ICC 图
+/// 字节数对不上、PNG 编码失败，转 EPUB 时图片被静默丢掉）。滤镜链里夹着 `DCTDecode`（如 `[FlateDecode DCTDecode]`）
+/// 不再当裸 JPEG 透传（外面还包着一层 Flate，透传出来是坏图）。
 pub(super) fn decode_pdf_image_to_bytes(doc: &lopdf::Document, img: &lopdf::xobject::PdfImage) -> Result<Vec<u8>, String> {
-    let filters = img.filters.clone().unwrap_or_default();
+    let filters = img.filters.as_deref().unwrap_or_default();
     if filters.iter().any(|f| f == "DCTDecode") {
-        return Ok(img.content.to_vec());
+        if filters.len() == 1 {
+            return Ok(img.content.to_vec());
+        }
+        return Err(format!("暂不支持的 PDF 图片滤镜链: {filters:?}"));
     }
     if filters.is_empty() || filters.iter().any(|f| f == "FlateDecode") {
-        let obj = doc.get_object(img.id).map_err(|e| format!("重取图片对象失败: {e}"))?;
-        let stream = obj.as_stream().map_err(|e| format!("图片对象不是 stream: {e}"))?;
-        let raw = if filters.is_empty() { img.content.to_vec() } else { stream.decompressed_content().map_err(|e| format!("PDF 图片解压失败: {e}"))? };
-        let is_gray = img.color_space.as_deref() == Some("DeviceGray");
-        return encode_raw_pixels_png(&raw, img.width as u32, img.height as u32, is_gray);
+        let (w, h) = (u32::try_from(img.width).unwrap_or(0), u32::try_from(img.height).unwrap_or(0));
+        if w == 0 || h == 0 {
+            return Err("PDF 图片宽高非法".into());
+        }
+        let raw = if filters.is_empty() {
+            img.content.to_vec()
+        } else {
+            let max_bytes = (w as usize).checked_mul(h as usize).and_then(|n| n.checked_mul(3)).filter(|&n| n <= MAX_LOAD_STREAM_BYTES);
+            let Some(max_bytes) = max_bytes else { return Err(format!("PDF 图片 {w}×{h} 太大，不解压")) };
+            let obj = doc.get_object(img.id).map_err(|e| format!("重取图片对象失败: {e}"))?;
+            let stream = obj.as_stream().map_err(|e| format!("图片对象不是 stream: {e}"))?;
+            // 预测器每行多 1 字节过滤类型，留点余量
+            stream.decompressed_content_with_limit(max_bytes + h as usize + 4096).map_err(|e| format!("PDF 图片解压失败: {e}"))?
+        };
+        let is_gray = match img.color_space.as_deref() {
+            Some("DeviceGray" | "CalGray") => true,
+            Some("ICCBased") => raw.len() == w as usize * h as usize,
+            _ => false,
+        };
+        return encode_raw_pixels_png(&raw, w, h, is_gray);
     }
     Err(format!("暂不支持的 PDF 图片编码: {filters:?}"))
 }

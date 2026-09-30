@@ -16,7 +16,9 @@
 //! 违背 EPUB 线原则①"保留目录页"，已整个删掉这个剥离机制——MOBI 转换产物现在跟原生 EPUB 一样，
 //! 目录页原样留在 spine 里）。
 
-use super::{common, palm};
+use super::common::{self, cached_re, char_floor};
+use super::palm;
+use std::sync::OnceLock;
 use crate::epub::{Book, BookMeta, Chapter, Resource};
 use regex::Regex;
 use std::collections::HashMap;
@@ -114,6 +116,18 @@ struct Cut {
     level: i64,
 }
 
+/// 任意标签（取纯文本用）。
+fn tag_re() -> &'static Regex {
+    static R: OnceLock<Regex> = OnceLock::new();
+    cached_re(&R, r#"(?is)<[^>]+>"#)
+}
+
+/// `<mbp:pagebreak/>`（找目录段、无目录时按它切章两处共用）。
+fn pagebreak_re() -> &'static Regex {
+    static R: OnceLock<Regex> = OnceLock::new();
+    cached_re(&R, r#"(?is)<mbp:pagebreak\s*/?>"#)
+}
+
 /// 提取书内目录（MOBI6 的 NCX 等价物）作切章依据：取 filepos 链最密集的一段（pagebreak 分隔）当目录页，
 /// 其有序 `(N, 文字)` 即章界+章名。去重（按 N 首现）、按偏移排序。链数不足阈值→无 TOC（返回空，退化 pagebreak）。
 fn extract_toc(rawml: &str) -> Vec<Cut> {
@@ -121,7 +135,7 @@ fn extract_toc(rawml: &str) -> Vec<Cut> {
     // 各 pagebreak 段的链接计数，找最密的一段。用链接**源位置**归段，故带位置扫一遍。
     static RSRC: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
     let re_src = RSRC.get_or_init(|| Regex::new(r#"(?is)<a\b[^>]*\bfilepos=0*(\d+)[^>]*>(.*?)</a>"#).unwrap());
-    let re_tag = Regex::new(r#"(?is)<[^>]+>"#).unwrap();
+    let re_tag = tag_re();
     let mut src: Vec<(usize, usize, String)> = re_src // (源位置, 目标 N, 文字)
         .captures_iter(rawml)
         .map(|c| {
@@ -134,10 +148,7 @@ fn extract_toc(rawml: &str) -> Vec<Cut> {
         .collect();
     src.sort_by_key(|x| x.0);
 
-    let pb: Vec<usize> = {
-        let re = Regex::new(r#"(?is)<mbp:pagebreak\s*/?>"#).unwrap();
-        re.find_iter(rawml).map(|m| m.start()).collect()
-    };
+    let pb: Vec<usize> = pagebreak_re().find_iter(rawml).map(|m| m.start()).collect();
     let mut bounds = vec![0usize];
     bounds.extend(&pb);
     bounds.push(rawml.len());
@@ -184,8 +195,7 @@ fn build_chapters(rawml: &str, used_img: &HashMap<usize, String>, re_img: &Regex
     let cuts: Vec<Cut> = if !toc.is_empty() {
         toc
     } else {
-        let re_pb = Regex::new(r#"(?is)<mbp:pagebreak\s*/?>"#).unwrap();
-        re_pb.find_iter(rawml).map(|m| Cut { off: m.end(), title: String::new(), level: 1 }).collect()
+        pagebreak_re().find_iter(rawml).map(|m| Cut { off: m.end(), title: String::new(), level: 1 }).collect()
     };
 
     // 逐段边界：首个 cut 前的前置段（壳/封面/版权，无标题）+ 各 cut 段。
@@ -263,9 +273,13 @@ fn inject_anchors(seg: &str, local_desc: &[(usize, usize)]) -> String {
 /// 清洗一段 HTML → 正文：剥壳（xml 声明/head/html/body）+ img recindex→资源路径 + 去残留 mbp 标签。
 /// **保留** `<a ... filepos=...>`（待 remap）与注入的 `id="fpN"`。
 fn clean_seg(seg: &str, used_img: &HashMap<usize, String>, re_img: &Regex) -> String {
-    let re_xml = Regex::new(r#"(?is)<\?xml[^>]*\?>"#).unwrap();
-    let re_head = Regex::new(r#"(?is)<head\b.*?</head>"#).unwrap();
-    let re_shell = Regex::new(r#"(?is)<html\b[^>]*>|</html>|</?body\b[^>]*>"#).unwrap();
+    static XML: OnceLock<Regex> = OnceLock::new();
+    static HEAD: OnceLock<Regex> = OnceLock::new();
+    static SHELL: OnceLock<Regex> = OnceLock::new();
+    static JUNK: OnceLock<Regex> = OnceLock::new();
+    let re_xml = cached_re(&XML, r#"(?is)<\?xml[^>]*\?>"#);
+    let re_head = cached_re(&HEAD, r#"(?is)<head\b.*?</head>"#);
+    let re_shell = cached_re(&SHELL, r#"(?is)<html\b[^>]*>|</html>|</?body\b[^>]*>"#);
     let s = re_xml.replace_all(seg, "");
     let s = re_head.replace_all(&s, "");
     let s = re_shell.replace_all(&s, "");
@@ -278,7 +292,7 @@ fn clean_seg(seg: &str, used_img: &HashMap<usize, String>, re_img: &Regex) -> St
         }
     });
     // 去残留 </img>、mbp 命名空间标签（含段内 pagebreak）
-    let re_junk = Regex::new(r#"(?is)</img>|</?mbp:[a-z]+\s*/?>"#).unwrap();
+    let re_junk = cached_re(&JUNK, r#"(?is)</img>|</?mbp:[a-z]+\s*/?>"#);
     re_junk.replace_all(&s, "").trim().to_string()
 }
 
@@ -297,23 +311,11 @@ fn remap_links(html: &str, chapter_of: &impl Fn(usize) -> usize) -> String {
 
 /// 段内首个 `<h1>…<h6>` 的纯文本（pagebreak 退化路的标题来源）；无则空。
 fn heading_title(seg: &str) -> String {
-    let re_h = Regex::new(r#"(?is)<h[1-6][^>]*>(.*?)</h[1-6]>"#).unwrap();
-    if let Some(cap) = re_h.captures(seg) {
-        let re_tag = Regex::new(r#"(?is)<[^>]+>"#).unwrap();
-        return re_tag.replace_all(&cap[1], "").trim().chars().take(80).collect();
+    static H: OnceLock<Regex> = OnceLock::new();
+    if let Some(cap) = cached_re(&H, r#"(?is)<h[1-6][^>]*>(.*?)</h[1-6]>"#).captures(seg) {
+        return tag_re().replace_all(&cap[1], "").trim().chars().take(80).collect();
     }
     String::new()
-}
-
-/// 字节位置下取到字符边界（NCX/filepos 偏移可能落在多字节字符中间，最多回退 3 字节）。
-fn char_floor(s: &str, mut pos: usize) -> usize {
-    if pos >= s.len() {
-        return s.len();
-    }
-    while pos > 0 && !s.is_char_boundary(pos) {
-        pos -= 1;
-    }
-    pos
 }
 
 #[cfg(test)]

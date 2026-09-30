@@ -1,7 +1,8 @@
 //! 最小 PDF 写入器：一串图片（每图一页）→ PDF。贴合 epub.rs「手搓、零 C 依赖」风格。
 //! JPEG 直接作 /DCTDecode 嵌入（不解码、不重编码——漫画页几乎都是 JPEG）；
 //! PNG 用现成 `png` crate 解码成原始像素、miniz_oxide zlib 压成 /FlateDecode。
-//! 给漫画（CBZ）用——xochitl 原生 PDF 翻页比 EPUB 顺、一页一图最合漫画。
+//! 现役调用方：入库 PDF 裁边（`pdf_ingest::trim`）、大文件占位 PDF（`placeholder`）、大文件通道读页数（`PdfFileReader`）；
+//! `images_to_pdf` 只剩保留未接入的 CBZ→PDF（`convert::cbz`）。
 
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum ColorSpace {
@@ -107,8 +108,8 @@ fn jpeg_to_image(data: &[u8]) -> Result<PdfImage, String> {
         let is_sof =
             (0xC0..=0xCF).contains(&marker) && marker != 0xC4 && marker != 0xC8 && marker != 0xCC;
         if is_sof {
-            // 段内容：precision(1) height(2) width(2) components(1)
-            if i + 8 > data.len() {
+            // 段内容：precision(1) height(2) width(2) components(1)，最后一个读的是 data[i + 8]
+            if i + 9 > data.len() {
                 return Err("JPEG SOF 段截断".into());
             }
             let h = ((data[i + 4] as u32) << 8) | data[i + 5] as u32;
@@ -145,10 +146,12 @@ fn png_to_image(data: &[u8]) -> Result<PdfImage, String> {
     let mut buf = vec![0u8; reader.output_buffer_size()];
     let info = reader.next_frame(&mut buf).map_err(|e| format!("PNG 帧解码: {e}"))?;
     let (w, h) = (info.width, info.height);
-    let bytes = &buf[..info.buffer_size()];
+    // 灰度/RGB 直接截断复用解码缓冲区（此前 `to_vec()` 再拷一份整帧像素，入库 PDF 裁边时大图多占一份内存）
+    buf.truncate(info.buffer_size());
+    let bytes = &buf[..];
     let (color, pixels): (ColorSpace, Vec<u8>) = match info.color_type {
-        png::ColorType::Grayscale => (ColorSpace::Gray, bytes.to_vec()),
-        png::ColorType::Rgb => (ColorSpace::Rgb, bytes.to_vec()),
+        png::ColorType::Grayscale => (ColorSpace::Gray, buf),
+        png::ColorType::Rgb => (ColorSpace::Rgb, buf),
         png::ColorType::GrayscaleAlpha => {
             let mut out = Vec::with_capacity((w * h) as usize);
             for px in bytes.chunks_exact(2) {
@@ -315,7 +318,7 @@ fn pdf_literal_string(bytes: &[u8]) -> Vec<u8> {
     out
 }
 
-/// `images_to_pdf` 的平行版本，供 EPUB 漫画→PDF 这条新路径用：①统一页面尺寸（不再跟随每张图
+/// `images_to_pdf` 的平行版本（入库 PDF 裁边、占位 PDF 用）：①统一页面尺寸（不再跟随每张图
 /// 自己的像素尺寸），图片按 `place_image` 算出的位置摆放，不裁不拉伸；②带书签目录（Outlines）
 /// ——`titles` 是 `(0-based 页码, 标题)` 列表，允许为空（不带任何目录，此时 Catalog 不含
 /// `/Outlines`，效果等同旧版 `images_to_pdf` 只是页面尺寸统一了）。**不修改 `images_to_pdf`
@@ -471,7 +474,7 @@ impl PdfPieceWriter {
 }
 
 /// [`PdfPieceWriter`] 的薄封装——一次性喂完整个 `images` 切片，行为/输出字节跟改用
-/// `PdfPieceWriter` 之前完全一致。调用方如果自己逐页读图片（比如分卷投递流式路径），直接用
+/// `PdfPieceWriter` 之前完全一致。调用方如果自己逐页读图片（比如入库 PDF 裁边），直接用
 /// `PdfPieceWriter` 更省内存，不用先攒出这个 `&[PdfImage]`。
 pub fn images_to_pdf_with_toc(images: &[PdfImage], titles: &[(usize, String)]) -> Result<Vec<u8>, String> {
     if images.is_empty() {
@@ -491,64 +494,6 @@ fn memfind(hay: &[u8], needle: &[u8]) -> Option<usize> {
     hay.windows(needle.len()).position(|w| w == needle)
 }
 
-/// 对象号 → 字节偏移索引，从我们自己写的 xref 表一次性解出（真机 600 页/200MB 样本坐实：早期版本
-/// `find_obj_body` 每次都从文件开头线性扫一遍找 `"{id} 0 obj"`，`extract_pages` 对几百个对象各
-/// 扫一次，等效扫描量接近"页数×文件体积"，600 页的书卡了 11 分钟没跑完；这里改成先解一次 xref
-/// （单次线性扫，O(文件体积)）拿到每个对象号的精确偏移，后续每次对象查找变成 O(1) 定位 + 只在
-/// **这一个对象自身**范围内找 `endobj`，不再牵连整份文件）。
-/// 只认自己 `images_to_pdf`/`images_to_pdf_with_toc` 写出的经典 xref 表格式（每条固定 20 字节：
-/// `"{10位偏移} 00000 {f|n} \n"`），喂陌生 PDF（比如带交叉引用流的现代 PDF）大概率直接 `Err`。
-fn parse_obj_index(pdf: &[u8]) -> Result<Vec<usize>, String> {
-    // "startxref\n{偏移}\n%%EOF\n" 是我们写的固定尾巴，最长不过几十字节，只在文件最后一小段找，
-    // 不用扫全文件。
-    let tail_from = pdf.len().saturating_sub(256);
-    let tail = &pdf[tail_from..];
-    let marker = b"startxref";
-    let rel = memfind(tail, marker).ok_or("缺 startxref")?;
-    let after = &tail[rel + marker.len()..];
-    let ds = after.iter().position(|b| b.is_ascii_digit()).ok_or("startxref 后缺数字")?;
-    let de = after[ds..].iter().position(|b| !b.is_ascii_digit()).map(|o| ds + o).unwrap_or(after.len());
-    let xref_off: usize =
-        std::str::from_utf8(&after[ds..de]).ok().and_then(|s| s.parse().ok()).ok_or("startxref 数值解析失败")?;
-
-    let header = b"xref\n0 ";
-    if pdf.len() < xref_off + header.len() || &pdf[xref_off..xref_off + header.len()] != header {
-        return Err("xref 头格式不认识（不是我们自己写的经典表）".into());
-    }
-    let mut p = xref_off + header.len();
-    let count_start = p;
-    while p < pdf.len() && pdf[p].is_ascii_digit() {
-        p += 1;
-    }
-    let count: usize =
-        std::str::from_utf8(&pdf[count_start..p]).ok().and_then(|s| s.parse().ok()).ok_or("xref count 解析失败")?;
-    if pdf.get(p) != Some(&b'\n') {
-        return Err("xref count 后缺换行".into());
-    }
-    p += 1;
-    if count.checked_mul(20).and_then(|n| n.checked_add(p)).is_none_or(|end| end > pdf.len()) {
-        return Err("xref 条目数据被截断".into());
-    }
-    let mut offsets = vec![0usize; count];
-    for (i, off) in offsets.iter_mut().enumerate() {
-        let line = &pdf[p + i * 20..p + i * 20 + 10];
-        *off = std::str::from_utf8(line).ok().and_then(|s| s.parse().ok()).unwrap_or(0);
-    }
-    Ok(offsets)
-}
-
-/// `index` 是 [`parse_obj_index`] 的结果，`index[id]` = 对象 `id` 的 `"{id} 0 obj\n"` 起始偏移。
-fn find_obj_body_indexed<'a>(pdf: &'a [u8], index: &[usize], id: usize) -> Result<&'a [u8], String> {
-    let pos = *index.get(id).ok_or_else(|| format!("对象 {id} 不在 xref 索引范围内"))?;
-    let marker = format!("{id} 0 obj\n");
-    if !pdf[pos..].starts_with(marker.as_bytes()) {
-        return Err(format!("对象 {id} 的 xref 偏移跟实际内容对不上（{pos}）"));
-    }
-    let start = pos + marker.len();
-    let rel_end = memfind(&pdf[start..], b"\nendobj").ok_or_else(|| format!("对象 {id} 缺 endobj"))?;
-    Ok(&pdf[start..start + rel_end])
-}
-
 fn parse_uint_after(body: &[u8], label: &str) -> Option<u32> {
     let idx = memfind(body, label.as_bytes())? + label.len();
     let mut end = idx;
@@ -561,6 +506,7 @@ fn parse_uint_after(body: &[u8], label: &str) -> Option<u32> {
     std::str::from_utf8(&body[idx..end]).ok()?.parse().ok()
 }
 
+#[cfg(test)]
 /// 解出 `/Title (...)` 这个 literal string 的原始字节（保留转义前的 `\(`/`\)`/`\\`）。
 fn parse_pdf_literal(body: &[u8], after: &str) -> Option<Vec<u8>> {
     let idx = memfind(body, after.as_bytes())? + after.len();
@@ -585,6 +531,7 @@ fn parse_pdf_literal(body: &[u8], after: &str) -> Option<Vec<u8>> {
     None
 }
 
+#[cfg(test)]
 fn utf16be_to_string(mut bytes: &[u8]) -> String {
     if bytes.len() >= 2 && bytes[0] == 0xFE && bytes[1] == 0xFF {
         bytes = &bytes[2..];
@@ -623,13 +570,6 @@ pub fn looks_like_own_bookconv_pdf(path: &std::path::Path) -> bool {
     memfind(&tail, PRODUCER_MARKER.as_bytes()).is_some()
 }
 
-/// 总页数（`/Type /Pages` 对象的 `/Count`）——只认自己生成的固定对象编号结构，喂陌生 PDF 大概率 `Err`。
-pub fn page_count(pdf: &[u8]) -> Result<usize, String> {
-    let index = parse_obj_index(pdf)?;
-    let pages_body = find_obj_body_indexed(pdf, &index, 2)?;
-    parse_uint_after(pages_body, "/Count ").ok_or_else(|| "Pages 对象缺 /Count".to_string()).map(|n| n as usize)
-}
-
 /// 对象在文件里的精确字节范围：`[offsets[id], offsets[id+1])`（最后一个对象到 `xref_off`）——
 /// 这个区间本身就天然包含 `"{id} 0 obj\n...\nendobj\n"` 整段，不用另外找 `endobj` 在哪。
 fn object_byte_span(offsets: &[usize], xref_off: usize, id: usize) -> Result<(usize, usize), String> {
@@ -641,8 +581,10 @@ fn object_byte_span(offsets: &[usize], xref_off: usize, id: usize) -> Result<(us
     Ok((start, end))
 }
 
-/// 文件版 xref 解析——跟内存版 [`parse_obj_index`] 逻辑同构，只是从磁盘按需读（先读文件尾一小段
-/// 找 `startxref`，再定位读 xref 表本身），不需要整份文件常驻内存。
+/// 对象号 → 字节偏移索引，从我们自己写的 xref 表一次性解出（真机 600 页/200MB 样本坐实：早期版本每次查对象
+/// 都从文件开头线性扫，等效扫描量接近"页数×文件体积"；这里先解一次 xref，之后每次查找 O(1) 定位）。从磁盘按需读
+/// （先读文件尾一小段找 `startxref`，再定位读 xref 表本身），不需要整份文件常驻内存。
+/// 只认经典 xref 表格式（每条固定 20 字节：`"{10位偏移} 00000 {f|n} \n"`、单个 `0 N` 子段），喂带交叉引用流的现代 PDF 直接 `Err`。
 fn parse_obj_index_from_file(file: &mut std::fs::File) -> Result<(Vec<usize>, usize), String> {
     use std::io::{Read, Seek, SeekFrom};
     let file_len = file.metadata().map_err(|e| e.to_string())?.len();
@@ -695,14 +637,23 @@ fn parse_obj_index_from_file(file: &mut std::fs::File) -> Result<(Vec<usize>, us
     Ok((offsets, xref_off))
 }
 
+/// 读字典对象（Catalog/Pages/Outlines）的字节上限。自己写的 `/Pages` 是一个扁平 `/Kids` 数组，每页约 10 字节，
+/// 4MB 够几十万页；第三方 PDF（>100MB 走大文件通道时也用这个读页数）的 xref 偏移不保证按对象号递增，
+/// "下一个对象的偏移"可能在文件末尾——不设上限就是一次分配上百 MB、读完才发现不是要的对象。
+const MAX_DICT_OBJ_BYTES: usize = 4 << 20;
+
 fn read_object_body_from_file(
     file: &mut std::fs::File,
     offsets: &[usize],
     xref_off: usize,
     id: usize,
+    max_len: usize,
 ) -> Result<Vec<u8>, String> {
     use std::io::{Read, Seek, SeekFrom};
     let (start, end) = object_byte_span(offsets, xref_off, id)?;
+    if end - start > max_len {
+        return Err(format!("对象 {id} 体积 {} 字节超出上限（不是我们自己写的结构）", end - start));
+    }
     file.seek(SeekFrom::Start(start as u64)).map_err(|e| e.to_string())?;
     let mut raw = vec![0u8; end - start];
     file.read_exact(&mut raw).map_err(|e| e.to_string())?;
@@ -732,30 +683,35 @@ impl PdfFileReader {
         Ok(Self { file, offsets, xref_off })
     }
 
-    fn read_object(&mut self, id: usize) -> Result<Vec<u8>, String> {
-        read_object_body_from_file(&mut self.file, &self.offsets, self.xref_off, id)
+    fn read_object(&mut self, id: usize, max_len: usize) -> Result<Vec<u8>, String> {
+        read_object_body_from_file(&mut self.file, &self.offsets, self.xref_off, id, max_len)
     }
 
-    /// `/Type /Pages` 对象的 `/Count`。
+    /// `/Type /Pages` 对象（自己写的恒为对象 2）的 `/Count`。对象 2 不是 `/Pages`（第三方 PDF 常见，比如是
+    /// `/Outlines`，它也有 `/Count`）→ `Err`，调用方回退，不能把书签数当页数。
     pub fn page_count(&mut self) -> Result<usize, String> {
-        let pages_body = self.read_object(2)?;
+        let pages_body = self.read_object(2, MAX_DICT_OBJ_BYTES)?;
+        if memfind(&pages_body, b"/Type /Pages").is_none() && memfind(&pages_body, b"/Type/Pages").is_none() {
+            return Err("对象 2 不是 /Pages（不是我们自己写的结构）".into());
+        }
         parse_uint_after(&pages_body, "/Count ").ok_or_else(|| "Pages 对象缺 /Count".to_string()).map(|n| n as usize)
     }
 
     /// 全书书签，`(全局页码, 标题)`——没有 Outlines（不是我们自己产出的漫画 PDF）返回空列表，
-    /// 不是错误。
+    /// 不是错误。只有测试用（回读核对写出的书签）。
+    #[cfg(test)]
     pub fn outline_titles(&mut self) -> Result<Vec<(usize, String)>, String> {
-        let catalog = self.read_object(1)?;
+        let catalog = self.read_object(1, MAX_DICT_OBJ_BYTES)?;
         let mut titles = Vec::new();
         if let Some(outline_root) = parse_uint_after(&catalog, "/Outlines ") {
-            let root_body = self.read_object(outline_root as usize)?;
+            let root_body = self.read_object(outline_root as usize, MAX_DICT_OBJ_BYTES)?;
             let first = parse_uint_after(&root_body, "/First ").ok_or("Outlines 缺 /First")? as usize;
             let last = parse_uint_after(&root_body, "/Last ").ok_or("Outlines 缺 /Last")? as usize;
             if last < first || last >= self.offsets.len() {
                 return Err(format!("书签对象号范围 {first}..={last} 不合法"));
             }
             for item_id in first..=last {
-                let item_body = self.read_object(item_id)?;
+                let item_body = self.read_object(item_id, MAX_DICT_OBJ_BYTES)?;
                 let dest_page_id = parse_uint_after(&item_body, "/Dest [").ok_or("书签缺 /Dest")? as usize;
                 // 自己写的页对象号恒为 3+3i；别的值说明不是我们的文件（或已损坏）——此前直接 `(id-3)/3`，
                 // id<3 时减法溢出（release 下回绕成天文数字页码，调用方切片越界 panic）。
@@ -770,10 +726,11 @@ impl PdfFileReader {
         Ok(titles)
     }
 
-    /// 只读这一页的图片（这一次调用的内存开销就是这一张图自身的字节数，读完可以立刻丢）。
+    /// 只读这一页的图片。只有测试用（回读核对写出的图片流）。
+    #[cfg(test)]
     pub fn read_page_image(&mut self, page_idx: usize) -> Result<PdfImage, String> {
         let image_id = 3 + page_idx * 3 + 1;
-        let body = self.read_object(image_id)?;
+        let body = self.read_object(image_id, usize::MAX)?;
         let w = parse_uint_after(&body, "/Width ").ok_or("图片对象缺 /Width")?;
         let h = parse_uint_after(&body, "/Height ").ok_or("图片对象缺 /Height")?;
         let color = if memfind(&body, b"/DeviceGray").is_some() { ColorSpace::Gray } else { ColorSpace::Rgb };
@@ -980,7 +937,61 @@ mod tests {
         let path = dir.path().join("bad.pdf");
         std::fs::write(&path, &pdf).unwrap();
         assert!(PdfFileReader::open(&path).is_err());
-        assert!(page_count(&pdf).is_err(), "内存版同样不能溢出/越界");
+    }
+
+    /// SOF 段刚好截断在分量数字节之前：此前检查写成 `i + 8 > len`、随后读 `data[i + 8]`，`i + 8 == len` 时越界 panic
+    /// （第三方 PDF 裁边时，重编码失败的原图字节会直接走到这里）。
+    #[test]
+    fn jpeg_sof_truncated_before_component_count_is_error_not_panic() {
+        let data = [0xFF, 0xD8, 0xFF, 0xC0, 0x00, 0x11, 0x08, 0x00, 0x03, 0x00, 0x02];
+        assert!(image_from_bytes(&data).is_err());
+    }
+
+    /// 按经典 xref 表写一份最小 PDF（对象体原样给出），给大文件通道读页数的健壮性测试用。
+    fn classic_pdf(objs: &[&[u8]]) -> Vec<u8> {
+        let mut pdf = b"%PDF-1.7\n".to_vec();
+        let mut offs = Vec::new();
+        for (i, body) in objs.iter().enumerate() {
+            offs.push(pdf.len());
+            pdf.extend_from_slice(format!("{} 0 obj\n", i + 1).as_bytes());
+            pdf.extend_from_slice(body);
+            pdf.extend_from_slice(b"\nendobj\n");
+        }
+        let xref_off = pdf.len();
+        pdf.extend_from_slice(format!("xref\n0 {}\n0000000000 65535 f \n", objs.len() + 1).as_bytes());
+        for o in offs {
+            pdf.extend_from_slice(format!("{o:010} 00000 n \n").as_bytes());
+        }
+        pdf.extend_from_slice(format!("trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref_off}\n%%EOF\n", objs.len() + 1).as_bytes());
+        pdf
+    }
+
+    /// 第三方 PDF 的对象 2 不一定是 `/Pages`：是 `/Outlines`（也带 `/Count`）时此前会把书签数当页数写进 `.content`。
+    #[test]
+    fn page_count_rejects_non_pages_object_2() {
+        let pdf = classic_pdf(&[b"<< /Type /Catalog /Pages 3 0 R >>", b"<< /Type /Outlines /Count 7 >>", b"<< /Type /Pages /Kids [] /Count 300 >>"]);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("third.pdf");
+        std::fs::write(&path, &pdf).unwrap();
+        assert!(PdfFileReader::open(&path).unwrap().page_count().is_err());
+        // 对象 2 真是 /Pages（紧凑写法 `/Type/Pages`）照常认
+        let ok = classic_pdf(&[b"<< /Type /Catalog /Pages 2 0 R >>", b"<</Type/Pages/Kids[]/Count 12 >>"]);
+        std::fs::write(&path, &ok).unwrap();
+        assert_eq!(PdfFileReader::open(&path).unwrap().page_count().unwrap(), 12);
+    }
+
+    /// 对象 2 的字节范围（到下一个对象的偏移为止）超出字典对象上限 → 不分配、直接 `Err`。
+    #[test]
+    fn page_count_refuses_oversized_object_span() {
+        let pad = vec![b' '; MAX_DICT_OBJ_BYTES + 1];
+        let mut body = b"<< /Type /Pages /Count 1 >>".to_vec();
+        body.extend_from_slice(&pad);
+        let pdf = classic_pdf(&[b"<< /Type /Catalog >>", &body, b"<< >>"]);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("big.pdf");
+        std::fs::write(&path, &pdf).unwrap();
+        let err = PdfFileReader::open(&path).unwrap().page_count().unwrap_err();
+        assert!(err.contains("超出上限"), "{err}");
     }
 
     #[test]

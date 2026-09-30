@@ -24,37 +24,9 @@ pub fn set_opf_title(opf: &str, title: &str) -> String {
     r.replace(opf, |c: &regex::Captures| format!("{}{}{}", &c[1], esc, &c[2])).into_owned()
 }
 
-type Zip = zip::ZipArchive<std::io::BufReader<std::fs::File>>;
-
-/// 读条目全部字节；不存在或读失败都是 `None`（占位/封面都是尽力而为）。
-fn read_entry(zip: &mut Zip, name: &str) -> Option<Vec<u8>> {
-    crate::epubzip::read_by_name_opt(zip, name).ok().flatten()
-}
-
-/// 条目按文本读（非 UTF-8 字节按 lossy 替换）。
-fn read_text(zip: &mut Zip, name: &str) -> Option<String> {
-    read_entry(zip, name).map(|b| String::from_utf8(b).unwrap_or_else(|e| String::from_utf8_lossy(e.as_bytes()).into_owned()))
-}
-
-/// 打开 EPUB 并读出 OPF（`crate::epubzip::open_opf`；`direction` 等旧调用方仍走这个路径）。
-pub(crate) fn open_opf(epub: &Path) -> Result<(Zip, String, String), String> {
-    crate::epubzip::open_opf(epub)
-}
-
-/// 从真 EPUB 里找封面图：OPF 声明的封面（`wash::opf::declared_cover`：`<meta name="cover">`，其次
-/// `properties="cover-image"`；声明指向 txt 这类非图片的不算——Calibre 产物常见，xochitl 取不到封面缩略图，
-/// 2026-09-20 真机日志 `null cover image`），否则前几个 spine 页里第一张对得上 manifest 的图。只读需要的几个条目。
-fn find_cover(zip: &mut Zip, opf_path: &str, opf: &str) -> Option<(String, Vec<u8>)> {
-    use crate::wash::opf as o;
-    let dir = crate::epubzip::dir_of(opf_path);
-    let path = match o::declared_cover(opf) {
-        Some(it) => crate::epubzip::resolve(dir, &crate::epubzip::percent_decode(it.href)),
-        None => o::first_spine_image(opf, dir, 12, false, |p| read_text(zip, p))?,
-    };
-    Some((crate::util::image_ext_of(&path), read_entry(zip, &path)?))
-}
-
-/// 读出一本 EPUB 的封面图（扩展名, 字节），规则同 [`find_cover`]；找不到返回 `None`。
+/// 读出一本 EPUB 的封面图（扩展名, 字节），规则见 [`crate::epubzip::cover_image_of`]（OPF 声明的封面——指向 txt 这类
+/// 非图片的不算，Calibre 产物常见，xochitl 取不到封面缩略图，2026-09-20 真机日志 `null cover image`——否则前几个 spine
+/// 页里第一张对得上 manifest 的图）；找不到返回 `None`。
 pub fn cover_image_of(epub: &Path) -> Option<(String, Vec<u8>)> {
     crate::epubzip::cover_image_of(epub)
 }
@@ -62,7 +34,7 @@ pub fn cover_image_of(epub: &Path) -> Option<(String, Vec<u8>)> {
 /// 这本 EPUB 是不是"从右往左"翻页：OPF `<spine page-progression-direction="rtl">`（日漫常见）。只读
 /// container.xml 和 OPF 两个条目，不解压整本（漫画一卷可达数百 MB）。读不到/不是 EPUB 一律 `false`。
 /// 给 xochitl 阅读器的"日漫从右往左翻页"用（book-serve `GET /reading-direction/{uuid}`，2026-09-24）。
-/// 判据与写入共用 [`crate::direction`]（2026-09-25 母版库可按书指定方向后收拢到那里）。
+/// 判据见 [`crate::direction`]（只读原书自带的方向）。
 pub fn epub_is_rtl(epub: &Path) -> bool {
     crate::direction::spine_direction_file(epub) == Some(crate::direction::PageDirection::Rtl)
 }
@@ -70,8 +42,8 @@ pub fn epub_is_rtl(epub: &Path) -> bool {
 /// 造占位 EPUB：显示名 = `title`（`None` 取真书自己的 `dc:title`），封面 = 真书的封面（找不到就没有封面页，
 /// 只有标题）。体积通常几十到几百 KB。
 pub fn epub_placeholder(real_epub: &Path, title: Option<&str>) -> Result<Vec<u8>, String> {
-    let (mut zip, opf_path, opf) = open_opf(real_epub)?;
-    let cover = find_cover(&mut zip, &opf_path, &opf);
+    let (mut zip, opf_path, opf) = crate::epubzip::open_opf(real_epub)?;
+    let cover = crate::epubzip::find_cover(&mut zip, &opf_path, &opf);
     static TITLE: OnceLock<Regex> = OnceLock::new();
     // OPF 里读出的是转义过的 XML 文本：`plain_text` 还原字符引用后下面统一转义，否则 `A &amp; B` 会被写成 `A &amp;amp; B`（设备显示名带字面 `&amp;`）。
     let from_opf = |c: &regex::Captures| crate::wash::plain_text(&c[1]).trim().to_string();
@@ -248,7 +220,10 @@ mod tests {
     fn pdf_placeholder_is_one_valid_page() {
         let pdf = pdf_placeholder().unwrap();
         assert!(pdf.starts_with(b"%PDF"));
-        assert_eq!(crate::convert::pdfwrite::page_count(&pdf).unwrap(), 1);
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("p.pdf");
+        std::fs::write(&path, &pdf).unwrap();
+        assert_eq!(crate::convert::pdfwrite::PdfFileReader::open(&path).unwrap().page_count().unwrap(), 1);
         assert!(pdf.len() < 4000);
     }
 

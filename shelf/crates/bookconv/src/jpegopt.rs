@@ -235,7 +235,7 @@ fn be16(b: &[u8], i: usize) -> Option<usize> {
 }
 
 /// 重做哈夫曼表。不是本模块能处理的形态、数据损坏、或者没变小，返回 `None`（调用方用原来的）。
-pub fn optimize(jpeg: &[u8]) -> Option<Vec<u8>> {
+pub(crate) fn optimize(jpeg: &[u8]) -> Option<Vec<u8>> {
     if jpeg.get(..2)? != [0xFF, 0xD8] {
         return None;
     }
@@ -267,7 +267,11 @@ pub fn optimize(jpeg: &[u8]) -> Option<Vec<u8>> {
                 for c in 0..n {
                     let p = 10 + 3 * c;
                     let hv = *seg.get(p + 1)?;
-                    comps.push(Comp { id: *seg.get(p)?, h: (hv >> 4) as usize, v: (hv & 15) as usize });
+                    let (h, v) = ((hv >> 4) as usize, (hv & 15) as usize);
+                    if h == 0 || v == 0 {
+                        return None; // 采样因子 0：后面按 MCU 算块数会除零
+                    }
+                    comps.push(Comp { id: *seg.get(p)?, h, v });
                 }
                 kept.push(seg);
             }
@@ -315,6 +319,10 @@ pub fn optimize(jpeg: &[u8]) -> Option<Vec<u8>> {
         let cid = *sos.get(5 + 2 * s)?;
         let t = *sos.get(6 + 2 * s)?;
         let c = comps.iter().find(|c| c.id == cid)?;
+        // 基线 JPEG 的表号只有 0–3；越界的表号直接拿去索引 `decoders`/`freq` 会 panic
+        if t >> 4 > 3 || t & 15 > 3 {
+            return None;
+        }
         scan.push((c.h, c.v, (t >> 4) as usize, 4 + (t & 15) as usize));
     }
     // 频谱选择与逐次逼近：基线必须是 0..63、0
@@ -509,5 +517,23 @@ mod tests {
         j.truncate(j.len() / 2); // 截断的
         assert!(optimize(&j).is_none());
         assert_eq!(optimize_verified(j.clone()), j);
+    }
+
+    /// 扫描头里越界的哈夫曼表号（基线只有 0–3）、SOF 里为 0 的采样因子：此前前者索引越界、后者除零，都会 panic。
+    #[test]
+    fn corrupt_table_ids_and_sampling_factors_are_rejected_not_panic() {
+        let (g, c) = textured(32, 32);
+        let j = encode(&DynamicImage::ImageLuma8(g), 90);
+        let sos = j.windows(2).position(|w| w == [0xFF, 0xDA]).unwrap();
+        let mut bad_table = j.clone();
+        bad_table[sos + 6] = 0x0F; // 第一个分量：DC 表 0、AC 表 15（槽位 19，越界）
+        assert!(optimize(&bad_table).is_none());
+        let j = encode(&DynamicImage::ImageRgb8(c), 90);
+        let sof = j.windows(2).position(|w| w == [0xFF, 0xC0]).unwrap();
+        let mut bad_hv = j.clone();
+        for k in 0..3 {
+            bad_hv[sof + 11 + 3 * k] = 0x00; // 三个分量的采样因子 H/V 全为 0：多分量按 MCU 算块数时除零
+        }
+        assert!(optimize(&bad_hv).is_none());
     }
 }

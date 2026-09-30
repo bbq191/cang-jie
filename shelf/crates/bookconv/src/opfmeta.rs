@@ -107,11 +107,14 @@ impl Edits {
 }
 
 /// 改写 OPF 文本里的字段（封面另算，见 [`edit_epub`]）。`<metadata>` 找不到时报错。
+/// 元素名都认命名空间前缀（`<opf:package>`）：此前 `package` 只认无前缀，带前缀时 unique-identifier 取不到，
+/// 改标识符字段会把它指向的那个标识符也删掉（OPF 不合法、NCX dtb:uid 对不上）。
 pub fn apply_fields(opf: &str, set: &[(DcField, Vec<String>)]) -> Result<String, String> {
-    let meta_close = html::tags(opf).find(|t| t.kind == TagKind::Close && (t.is("metadata") || t.is("opf:metadata"))).ok_or("OPF 里没有 </metadata>")?.start;
+    use crate::wash::opf::is_local;
+    let meta_close = html::tags(opf).find(|t| t.kind == TagKind::Close && is_local(t.name, "metadata")).ok_or("OPF 里没有 </metadata>")?.start;
     let elems = dc_elements(opf);
     let epub2 = html::tags(opf)
-        .find(|t| t.is_start() && t.is("package"))
+        .find(|t| t.is_start() && is_local(t.name, "package"))
         .and_then(|t| html::attr_value(&opf[t.start..t.end], "version"))
         .is_some_and(|v| v.starts_with('2'))
         && opf.contains("xmlns:opf");
@@ -120,7 +123,7 @@ pub fn apply_fields(opf: &str, set: &[(DcField, Vec<String>)]) -> Result<String,
     let mut inserts: Vec<(usize, String)> = Vec::new();
     let mut removed_ids: Vec<String> = Vec::new();
     // `<package unique-identifier="X">` 指向的那个标识符不能删（删了 OPF 不合法，NCX 的 dtb:uid 也对不上，reMarkable 会不显示目录）
-    let uid = html::tags(opf).find(|t| t.is_start() && t.is("package")).and_then(|t| html::attr_value(&opf[t.start..t.end], "unique-identifier")).map(str::to_string);
+    let uid = html::tags(opf).find(|t| t.is_start() && is_local(t.name, "package")).and_then(|t| html::attr_value(&opf[t.start..t.end], "unique-identifier")).map(str::to_string);
     for (field, values) in set {
         let old: Vec<&DcElem> = elems.iter().filter(|e| e.field == *field && !(e.field == DcField::Identifier && uid.is_some() && e.id == uid)).collect();
         let at = old.first().map_or(meta_close, |e| e.start);
@@ -138,7 +141,7 @@ pub fn apply_fields(opf: &str, set: &[(DcField, Vec<String>)]) -> Result<String,
     }
     // 挂在被删元素上的 `<meta refines="#id">`（EPUB3：作者角色、排序名、书名类型等）一起删
     if !removed_ids.is_empty() {
-        for t in html::tags(opf).filter(|t| t.is_start() && t.is("meta")) {
+        for t in html::tags(opf).filter(|t| t.is_start() && is_local(t.name, "meta")) {
             let Some(r) = html::attr_value(&opf[t.start..t.end], "refines") else { continue };
             if !removed_ids.iter().any(|id| r.strip_prefix('#') == Some(id.as_str())) {
                 continue;
@@ -340,6 +343,10 @@ mod tests {
         let ids = read(&out).into_iter().find(|(f, _)| *f == DcField::Identifier).unwrap().1;
         assert_eq!(ids, ["urn:x", "isbn:9787"]);
         assert!(out.contains(r#"<dc:identifier id="uid">urn:x</dc:identifier>"#));
+        // `<opf:package>` 带前缀同样认得 unique-identifier（此前只认无前缀 package，这个标识符会被删掉）
+        let prefixed = OPF.replace("<package ", "<opf:package ").replace("</package>", "</opf:package>");
+        let out = apply_fields(&prefixed, &[(DcField::Identifier, vec!["isbn:9787".into()])]).unwrap();
+        assert!(out.contains(r#"<dc:identifier id="uid">urn:x</dc:identifier>"#), "{out}");
     }
 
     #[test]
