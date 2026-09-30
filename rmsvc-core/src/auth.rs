@@ -81,6 +81,69 @@ pub fn verify_password(password: &str, stored: &str) -> bool {
     }
 }
 
+/// 密码校验"通过"结果的短时缓存：给每个请求都带 `Authorization: Basic` 的调用方用——此前每个请求都要现算一遍
+/// 60 万轮 PBKDF2（设备上数百毫秒 CPU），脚本连发几十个请求就是几十秒满核。
+///
+/// 为什么不削弱安全：
+/// - **只缓存"通过"**：猜错的密码每次照样现算完整 PBKDF2，暴力破解的成本不变（限速也照旧在调用方）；
+/// - 键是 `SHA-256(进程随机密钥 ‖ 存储的哈希 ‖ 密码)`，内存里不留明文密码；随机密钥每个进程启动时从 `/dev/urandom` 取、
+///   不落盘，拿不到这份内存就没法离线验证；能读到这份内存的人本来也能直接截获明文密码，不是新增的暴露面；
+/// - 键里含**存储的哈希**：改密码后哈希变了，旧密码的缓存项自然对不上（调用方改密后再 [`Self::clear`] 一下更干净）；
+/// - 有 TTL（到期重算）与条目上限（满了淘汰最早到期的）。
+pub struct VerifyCache {
+    key: [u8; 32],
+    ttl: std::time::Duration,
+    cap: usize,
+    ok: std::sync::Mutex<std::collections::HashMap<[u8; 32], std::time::Instant>>,
+}
+
+impl VerifyCache {
+    pub fn new(ttl: std::time::Duration, cap: usize) -> VerifyCache {
+        let mut key = [0u8; 32];
+        key.copy_from_slice(&random_bytes(32)[..32]);
+        VerifyCache { key, ttl, cap: cap.max(1), ok: std::sync::Mutex::new(std::collections::HashMap::new()) }
+    }
+
+    fn tag(&self, password: &str, stored: &str) -> [u8; 32] {
+        let mut h = Sha256::new();
+        h.update(self.key);
+        h.update((stored.len() as u64).to_le_bytes()); // 定长前缀：哈希与密码的边界不会被拼接歧义挪动
+        h.update(stored.as_bytes());
+        h.update(password.as_bytes());
+        h.finalize().into()
+    }
+
+    /// 同 [`verify_password`]，通过过的 (密码, 哈希) 在 TTL 内直接回 `true`。
+    pub fn verify(&self, password: &str, stored: &str) -> bool {
+        self.verify_at(password, stored, std::time::Instant::now())
+    }
+
+    pub fn verify_at(&self, password: &str, stored: &str, now: std::time::Instant) -> bool {
+        let tag = self.tag(password, stored);
+        if crate::sync::lock(&self.ok).get(&tag).is_some_and(|exp| *exp > now) {
+            return true;
+        }
+        // 慢哈希在锁外算：别的请求查缓存不必排在它后面
+        if !verify_password(password, stored) {
+            return false;
+        }
+        let mut m = crate::sync::lock(&self.ok);
+        m.retain(|_, exp| *exp > now);
+        if m.len() >= self.cap && !m.contains_key(&tag) {
+            if let Some(oldest) = m.iter().min_by_key(|(_, e)| **e).map(|(k, _)| *k) {
+                m.remove(&oldest);
+            }
+        }
+        m.insert(tag, now + self.ttl);
+        true
+    }
+
+    /// 清空（改密码后调）。
+    pub fn clear(&self) {
+        crate::sync::lock(&self.ok).clear();
+    }
+}
+
 /// 解析 `Authorization: Basic …` 头 → (user, password)。
 pub fn parse_basic(header: &str) -> Option<(String, String)> {
     let b64 = header.strip_prefix("Basic ")?.trim();
@@ -336,6 +399,39 @@ mod tests {
         assert!(!verify_password("s3cret", &tampered), "轮数被改，摘要对不上");
         assert!(!verify_password("s3cret", "pbkdf2$notanumber$aa$bb"), "轮数不是数字应直接拒绝而不是 panic");
     }
+    #[test]
+    fn verify_cache_skips_pbkdf2_only_for_known_good_and_follows_password_change() {
+        use std::time::{Duration, Instant};
+        // 轮数调低，让"现算"在测试里也快；缓存与否靠计数 + 篡改证明，不靠计时
+        let stored = hash_pbkdf2("s3cret", b"0123456789abcdef", 1000);
+        let c = VerifyCache::new(Duration::from_secs(60), 2);
+        let t0 = Instant::now();
+        assert!(!c.verify_at("wrong", &stored, t0));
+        assert!(crate::sync::lock(&c.ok).is_empty(), "猜错不缓存：下次照样现算完整 PBKDF2");
+        assert!(c.verify_at("s3cret", &stored, t0));
+        assert_eq!(crate::sync::lock(&c.ok).len(), 1);
+        // 缓存键里不含明文、也不是无密钥的直接哈希
+        let plain: [u8; 32] = Sha256::digest(format!("{stored}s3cret").as_bytes()).into();
+        assert!(!crate::sync::lock(&c.ok).contains_key(&plain));
+        assert!(c.verify_at("s3cret", &stored, t0 + Duration::from_secs(59)), "TTL 内命中");
+        // 篡改证明命中时确实没重算：手工塞一条"错密码通过"的缓存项，校验就信了它
+        let fake = c.tag("forged", &stored);
+        crate::sync::lock(&c.ok).insert(fake, t0 + Duration::from_secs(60));
+        assert!(c.verify_at("forged", &stored, t0), "命中缓存不走慢哈希");
+        crate::sync::lock(&c.ok).remove(&fake);
+        // 改了密码（存储哈希变了）：旧密码对新哈希不通过
+        let new_stored = hash_pbkdf2("n3w-pass", b"fedcba9876543210", 1000);
+        assert!(!c.verify_at("s3cret", &new_stored, t0));
+        assert!(c.verify_at("n3w-pass", &new_stored, t0));
+        // 过期后重算（仍正确）；满了淘汰最早到期的
+        assert!(c.verify_at("s3cret", &stored, t0 + Duration::from_secs(61)));
+        assert!(crate::sync::lock(&c.ok).len() <= 2);
+        c.clear();
+        assert!(crate::sync::lock(&c.ok).is_empty());
+        // 两个进程（两份随机密钥）的键不同
+        assert_ne!(VerifyCache::new(Duration::from_secs(1), 1).tag("a", "b"), VerifyCache::new(Duration::from_secs(1), 1).tag("a", "b"));
+    }
+
     #[test]
     fn basic_header() {
         assert_eq!(parse_basic("Basic c2hlbGY6cGFzczp3b3Jk"), Some(("shelf".into(), "pass:word".into())));

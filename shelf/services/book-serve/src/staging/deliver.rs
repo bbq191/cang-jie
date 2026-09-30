@@ -6,7 +6,6 @@ use super::*;
 /// `Xochitl::upload` 现有的"找不到就落书库根"兜底（改动前就有的行为，不是新错误）。
 pub(super) const FOLDER_WAIT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
 
-/// EPUB 入库/优化统一按 `书名 - 卷/部/上/下`（数字在前）命名，见 `bookconv::naming`；其它格式原名不动。
 /// 大文件通道的安全上限（1GiB）：再大 xochitl 首次渲染的内存/时间没有验证过。
 pub(super) const MAX_DIRECT_BYTES: u64 = 1 << 30;
 
@@ -23,9 +22,7 @@ impl Staging {
     /// **同步、阻塞**——上传大书、等建文件夹都能到分钟级；跟 [`Self::optimize`] 一样，
     /// HTTP 接口不该直接暴露这个方法，用 [`Self::spawn_deliver`] 走后台线程。
     pub fn deliver(&self, name: &str, folder: &str, mkdir: &MkdirQueue) -> Result<DeliverOutcome, String> {
-        let ct = bookconv::convert::direct_content_type(name)
-            .ok_or("xochitl 只读 EPUB / PDF；此格式请「加入 KOReader」")?;
-        let p = self.existing(name)?;
+        let (ct, p) = self.deliverable(name)?;
         let size = std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0);
         let folder = folder.trim();
         self.ensure_folder(folder, mkdir);
@@ -57,6 +54,12 @@ impl Staging {
         };
         let _ = self.mark_delivered(name, Reader::Native);
         Ok(DeliverOutcome { message, render })
+    }
+
+    /// 落库前的零耗时校验：xochitl 读得了的格式 + 书还在母版库。返回（内容类型, 路径）。
+    fn deliverable(&self, name: &str) -> Result<(bookconv::convert::ContentType, PathBuf), String> {
+        let ct = bookconv::convert::direct_content_type(name).ok_or("xochitl 只读 EPUB / PDF")?;
+        Ok((ct, self.existing(name)?))
     }
 
     /// 给"已加入 xochitl 但没有渲染记录"的书补记（2026-09-20：大文件通道上线前直接投入的书没有渲染徽章，列表里不统一）。
@@ -168,23 +171,19 @@ impl Staging {
     /// （[`sidecar::DeliverCheck`]）异步呈现；渲染自检计划、`mark_delivered` 全部在 `deliver` 内部
     /// 完成，不劳 HTTP 层操心。`catch_unwind` 兜底同 `spawn_optimize`。
     pub fn spawn_deliver(&self, name: &str, folder: &str, mkdir: Arc<MkdirQueue>, bus: Arc<rmsvc_core::events::EventBus>) -> Result<(), String> {
-        bookconv::convert::direct_content_type(name)
-            .ok_or("xochitl 只读 EPUB / PDF；此格式请「加入 KOReader」")?;
-        self.existing(name)?;
+        self.deliverable(name)?;
         if !self.try_start_busy(name) {
             return Err(busy_err(name, ""));
         }
         let now = rmsvc_core::clock::now_secs();
-        let _ = self.set_deliver_check(name, sidecar::DeliverCheck { status: "pending".into(), message: String::new(), at: now, progress: None });
+        let _ = self.set_deliver_check(name, sidecar::DeliverCheck { status: "pending".into(), message: String::new(), at: now });
         let folder = folder.to_string();
         self.spawn_bg(name, bus, move |this, name, bus| {
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| this.deliver(name, &folder, &mkdir)))
                 .unwrap_or_else(|_| Err("落库过程内部异常（已捕获，不影响其他操作）".to_string()));
             let at = rmsvc_core::clock::now_secs();
-            // 成功/失败落定后进度条意义不大（`status` 本身就是终态），不保留最后一次的
-            // `progress`——避免网页刷新时短暂显示一条"3/8"却又同时是 ok/failed 的矛盾态。
             let (status, message) = final_status(result.as_ref().map(|o| o.message.as_str()).map_err(String::as_str));
-            let _ = this.set_deliver_check(name, sidecar::DeliverCheck { status, message, at, progress: None });
+            let _ = this.set_deliver_check(name, sidecar::DeliverCheck { status, message, at });
             if let Ok(outcome) = &result {
                 if let Some(plan) = outcome.render.clone() {
                     let (staging2, bus2, lib2) = (this.clone(), bus.clone(), this.xochitl.library_dir().to_path_buf());
@@ -198,28 +197,18 @@ impl Staging {
     /// 写异步落库结果到边车（书已从母版库删除 → Err，调用方只记日志/静默丢弃，不阻断别的流程——
     /// 比如落库还在跑的时候用户自己手动删了这本书）。
     pub fn set_deliver_check(&self, name: &str, dc: sidecar::DeliverCheck) -> Result<(), String> {
-        let p = self.existing(name)?;
-        sidecar::update(&p, |d| d.deliver = Some(dc))
+        self.update_sidecar(name, |d| d.deliver = Some(dc))
     }
 
     /// 写渲染自检结果到边车（书已从母版库删除 → Err，调用方只记日志）。
     pub fn set_render(&self, name: &str, rc: RenderCheck) -> Result<(), String> {
-        let p = self.existing(name)?;
-        sidecar::update(&p, |d| d.render = Some(rc))
-    }
-
-    /// 记这份母版库文件是由哪个原始输入处理出来的（CLI push 上传时带 `?srcName=&srcBytes=` 才有，见
-    /// `sidecar::SourceRef` 文档）。书已从母版库删除 → Err，调用方（`staging_upload`）只记日志不阻断上传结果。
-    pub fn set_source(&self, name: &str, source: sidecar::SourceRef) -> Result<(), String> {
-        let p = self.existing(name)?;
-        sidecar::update(&p, |d| d.source = Some(source))
+        self.update_sidecar(name, |d| d.render = Some(rc))
     }
 
     /// 记一次落库：写 sidecar `.<name>.delivered`。
     pub fn mark_delivered(&self, name: &str, reader: Reader) -> Result<(), String> {
-        let p = self.existing(name)?;
         let now = rmsvc_core::clock::now_secs();
-        sidecar::update(&p, |d| match reader {
+        self.update_sidecar(name, |d| match reader {
             Reader::Native => d.native = Some(now),
             Reader::Koreader => d.koreader = Some(now),
         })

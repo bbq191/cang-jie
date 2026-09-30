@@ -1,9 +1,6 @@
 //! 入库：新书落母版库（字节 / 已落盘暂存文件）与网文抓取。
 use super::*;
 
-/// 跨分区入库时的临时文件后缀（点前缀名，列表看不见；进程中途被杀留下的由 `recover_interrupted` 清掉）。
-pub(super) const LANDING_TMP_SUFFIX: &str = ".landing.tmp";
-
 pub(super) fn landed_name(p: &Path) -> String {
     p.file_name().and_then(|s| s.to_str()).unwrap_or("book").to_string()
 }
@@ -71,28 +68,17 @@ impl Staging {
                 return Ok(landed_name(&target));
             }
         }
-        static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-        let tmp = self.dir.join(format!(".{}.{}{LANDING_TMP_SUFFIX}", std::process::id(), SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)));
-        if let Err(e) = std::fs::copy(src, &tmp) {
-            let _ = std::fs::remove_file(&tmp);
-            return Err(format!("写母版库失败: {e}"));
-        }
+        // 中转文件出错/中途 panic 都由 `ScratchFile` 的 Drop 清掉；成功时它已被 rename 成正式名。
+        let tmp = self.scratch("landing");
+        std::fs::copy(src, tmp.path()).map_err(|e| format!("写母版库失败: {e}"))?;
         let landed = {
             let _land = self.land_guard();
             let target = unique_path(&self.dir, &canon);
             sidecar::remove(&target);
-            std::fs::rename(&tmp, &target).map(|_| landed_name(&target))
+            std::fs::rename(tmp.path(), &target).map(|_| landed_name(&target)).map_err(|e| format!("写母版库失败: {e}"))?
         };
-        match landed {
-            Ok(n) => {
-                let _ = std::fs::remove_file(src);
-                Ok(n)
-            }
-            Err(e) => {
-                let _ = std::fs::remove_file(&tmp);
-                Err(format!("写母版库失败: {e}"))
-            }
-        }
+        let _ = std::fs::remove_file(src);
+        Ok(landed)
     }
 
     /// 网文抓取（Readability + 白名单）→ 组 EPUB 落母版库。`optimize`＝网页「同步优化」复选框：请求了就紧接着

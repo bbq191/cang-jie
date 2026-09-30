@@ -61,7 +61,7 @@ pub fn router(st: Arc<State>) -> Router {
             Ok(Reply::ok(&serde_json::json!({"ok": true, "message": format!("《{name}》已开始优化，完成后自动刷新"), "async": true})))
         }))
         .post("/staging/deliver", bind(&st, |s, r| {
-            // 异步：耗时的落库（超限漫画按卷拆分要挨个建包+上传，真机能到分钟级）挪到后台线程，这里
+            // 异步：耗时的落库（大书上传、等建文件夹、大文件通道拷贝，真机能到分钟级）挪到后台线程，这里
             // 立即回"已开始"；真正结果通过 books/staging 事件 + GET /staging 列表里的 delivered.deliver
             // 呈现（渲染自检、mark_delivered 都在线程内部完成，见 spawn_deliver）。
             let j = r.json()?;
@@ -72,7 +72,8 @@ pub fn router(st: Arc<State>) -> Router {
             s.bus.publish("books", "staging"); // 立即推一次，UI 马上看到这条目进入 busy 状态
             Ok(Reply::ok(&serde_json::json!({"ok": true, "message": format!("《{name}》已开始投递，完成后自动刷新"), "async": true})))
         }))
-        // 落库记录：KOReader adopt 在 koreader-serve 完成后由前端调这里记一笔（各服务只写自己的目录）。
+        // 落库记录：网关批量「加入 KOReader」在 koreader-serve adopt 完成后调这里记一笔（各服务只写自己的目录）。
+        // KOReader 2026-09-29 已从设备卸载：koreader-serve 没注册时网关不会调；路由留给源码里仍在的 koreader-serve。
         .post("/staging/mark", bind(&st, |s, r| {
             let j = r.json()?;
             let reader = Reader::parse(j.str("target")?).map_err(ApiError::bad)?;
@@ -112,8 +113,7 @@ pub fn router(st: Arc<State>) -> Router {
             Ok(Reply::ok(&serde_json::json!({"ok": true, "pending": n, "message": "已排队：书库视图下次有动静时移进回收站"})))
         }))
         .get("/trash/pending", bind(&st, |s, r| {
-            let wait = r.q("wait").and_then(|v| v.parse::<u64>().ok()).unwrap_or(0).min(AGENT_WAIT_MAX_SECS);
-            let (uuids, pruned) = s.trash.pending_wait(std::time::Duration::from_secs(wait)).map_err(ApiError::internal)?;
+            let (uuids, pruned) = s.trash.pending_wait(agent_wait(r)).map_err(ApiError::internal)?;
             if pruned > 0 {
                 s.bus.publish("books", "trash");
             }
@@ -131,8 +131,7 @@ pub fn router(st: Arc<State>) -> Router {
         }))
         // `?wait=<秒>` 长轮询（上限 [`AGENT_WAIT_MAX_SECS`]）：有待办立即回，否则阻塞到入队或到期回空；缺省 0＝立即返回。
         .get("/mkdir/pending", bind(&st, |s, r| {
-            let wait = r.q("wait").and_then(|v| v.parse::<u64>().ok()).unwrap_or(0).min(AGENT_WAIT_MAX_SECS);
-            let (names, pruned) = s.mkdir.pending_wait(std::time::Duration::from_secs(wait)).map_err(ApiError::internal)?;
+            let (names, pruned) = s.mkdir.pending_wait(agent_wait(r)).map_err(ApiError::internal)?;
             if pruned > 0 {
                 s.bus.publish("books", "mkdir");
             }
@@ -158,6 +157,10 @@ pub fn router(st: Arc<State>) -> Router {
         }))
 }
 
+/// 两个代理队列长轮询的 `?wait=<秒>`：缺省/非法＝0（立即返回），上限 [`AGENT_WAIT_MAX_SECS`]。
+fn agent_wait(r: &Request<'_>) -> std::time::Duration {
+    std::time::Duration::from_secs(r.q("wait").and_then(|v| v.parse::<u64>().ok()).unwrap_or(0).min(AGENT_WAIT_MAX_SECS))
+}
 
 /// 母版库变更类操作的统一收尾：推一条 `books/staging`（网页据此重拉列表，零轮询）再回 `{ok:true}`。
 fn staging_changed(s: &State) -> ApiResult {
@@ -166,25 +169,12 @@ fn staging_changed(s: &State) -> ApiResult {
 }
 
 /// multipart 逐文件原样落母版库（不优化、不落库）：走共享上传模板，暂存在 spool `.work/`（与母版库同分区，入库 rename）。
-/// 可选 `?srcName=&srcBytes=`（CLI push 洗书产物才带）：记这份产物的原始输入身份到 sidecar，供下次
-/// push 同一份原始文件时**处理前**就能查到已经处理过，见 `sidecar::SourceRef` 文档。
+/// （曾经的 `?srcName=&srcBytes=` 是 host CLI 洗书产物记原始输入用的，CLI 2026-09-18 已砍，参数随之删除。）
 fn staging_upload(st: &State, r: &mut Request<'_>) -> ApiResult {
     let boundary = r.multipart_boundary()?;
-    let source = match (r.q("srcName"), r.q("srcBytes").and_then(|v| v.parse::<u64>().ok())) {
-        (Some(name), Some(bytes)) => Some(crate::sidecar::SourceRef { name: name.to_string(), bytes }),
-        _ => None,
-    };
     // 不持 spool 锁：暂存名是随机的 `.<uuid>.book.part`，与 inbox 追平互不相干；真正会撞的"挑名 + 落地"
     // 由 `Staging` 内部的落名临界区串行化（见 `staging::Staging` 的 `land` 字段）。
     let items = AssetUploadFlow::in_dir(st.spool.work()).run(&StagingStore(&st.staging), &mut *r.body, &boundary).map_err(ApiError::bad)?;
-    if let Some(src) = &source {
-        // 一次 staging_upload 请求实际上永远只有一个文件部分（CLI/网页都逐文件各发一个 POST），
-        // 但这里不假设，多个成功项就都记同一个来源——理论上不会发生，发生了也无害（都是同一份
-        // 原始输入触发的上传）。
-        for it in items.iter().filter(|i| i.ok) {
-            let _ = st.staging.set_source(&it.name, src.clone());
-        }
-    }
     if items.iter().any(|i| i.ok) {
         st.bus.publish("books", "staging");
     }

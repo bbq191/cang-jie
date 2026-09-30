@@ -6,7 +6,7 @@
 //!   Basic 同理只放行 `POST /password`（设备上 `gateway passwd`）。
 //! - 未登录：浏览器请求（Accept 含 text/html）303 → `/login?next=…`，其它 401 JSON。密码错延时 500ms。
 use crate::config::GatewayConfig;
-use rmsvc_core::auth::{parse_basic, parse_cookie, IpFailLimiter, SessionStore};
+use rmsvc_core::auth::{parse_basic, parse_cookie, IpFailLimiter, SessionStore, VerifyCache};
 use rmsvc_core::http::{ApiError, ApiResult, Guard, GuardRequest, Method, Reply, Request};
 use rmsvc_core::paths::Paths;
 use std::sync::{Arc, Mutex};
@@ -20,7 +20,14 @@ pub struct AuthState {
     pub secure_cookie: bool,
     /// 密码校验失败限速：按来源 IP 各自 [`LOGIN_MAX_FAILS`] 次 / [`LOGIN_FAIL_WINDOW`]，最多记 [`LOGIN_LIMITER_IPS`] 个 IP。
     pub limiter: IpFailLimiter,
+    /// 校验通过的密码短时缓存（[`VERIFY_CACHE_TTL`]）：带 Basic 头的脚本每个请求都要校验一次密码，不缓存就是每个请求
+    /// 一遍 60 万轮 PBKDF2。只缓存"通过"，猜错照样现算（见 [`VerifyCache`] 的安全说明）；改密码后清空。
+    verified: VerifyCache,
 }
+
+/// 校验通过的缓存时长与条目上限（正常只有主人一个密码，条目数只是防御性上限）。
+pub const VERIFY_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(10 * 60);
+const VERIFY_CACHE_CAP: usize = 8;
 
 /// 60 秒内连续输错 5 次就锁 60 秒内的后续尝试：正常人手误几次远够用（登录页每次错还有 500ms 延时），
 /// 而暴力猜密码被压到 ≈ 5 次/分钟；锁定期内根本不做 60 万轮 PBKDF2，也就不会被并发猜测烧 CPU。
@@ -38,7 +45,7 @@ fn client_ip(ip: Option<std::net::IpAddr>) -> std::net::IpAddr {
 
 impl AuthState {
     pub fn new(cfg: GatewayConfig, sessions: SessionStore, paths: Paths, secure_cookie: bool) -> AuthState {
-        AuthState { cfg: Mutex::new(cfg), sessions, paths, secure_cookie, limiter: IpFailLimiter::new(LOGIN_MAX_FAILS, LOGIN_FAIL_WINDOW, LOGIN_LIMITER_IPS) }
+        AuthState { cfg: Mutex::new(cfg), sessions, paths, secure_cookie, limiter: IpFailLimiter::new(LOGIN_MAX_FAILS, LOGIN_FAIL_WINDOW, LOGIN_LIMITER_IPS), verified: VerifyCache::new(VERIFY_CACHE_TTL, VERIFY_CACHE_CAP) }
     }
 
     /// 被限速锁定时给的 429 应答（`json` 决定 JSON 还是登录页 HTML）。
@@ -91,9 +98,10 @@ impl AuthState {
 
     /// 校验密码。**锁内只拷出哈希、PBKDF2（60 万轮，设备上数百毫秒）在锁外算**：`cfg` 锁是每个带会话的请求
     /// （`must_change()`）都要拿的，持锁算哈希会让登录尝试/Basic 校验期间所有其它请求排队等它。
+    /// 通过过的密码 [`VERIFY_CACHE_TTL`] 内不再重算（`verified`）；没有哈希一律不通过。
     fn verify(&self, pw: &str) -> bool {
         let hash = self.cfg.lock().map(|c| c.password_hash.clone()).unwrap_or_default();
-        GatewayConfig::verify_hash(&hash, pw)
+        !hash.is_empty() && self.verified.verify(pw, &hash)
     }
 
     pub fn must_change(&self) -> bool {
@@ -193,6 +201,7 @@ impl AuthState {
         }
         cfg.set_password(&self.paths, &new).map_err(ApiError::internal)?;
         drop(cfg);
+        self.verified.clear(); // 旧密码的缓存项本来就对不上新哈希，清掉更干净
         // 改密后踢掉其它设备的会话，本会话保留。
         let keep = req.header("Cookie").and_then(|c| parse_cookie(c, COOKIE)).unwrap_or_default();
         self.sessions.revoke_others(&keep);
@@ -315,6 +324,11 @@ mod tests {
     fn verify_accepts_only_the_current_password() {
         let st = state(false);
         assert!(st.verify("secret1") && !st.verify("nope") && !st.verify(""));
+        assert!(st.verify("secret1"), "第二次走校验缓存，结果不变");
+        // 密码哈希换了（别处改过密码）：缓存里旧密码的"通过"对新哈希不作数
+        let old = std::mem::replace(&mut st.cfg.lock().unwrap().password_hash, rmsvc_core::auth::hash_password("other12"));
+        assert!(!st.verify("secret1") && st.verify("other12"));
+        st.cfg.lock().unwrap().password_hash = old;
         st.cfg.lock().unwrap().password_hash.clear();
         assert!(!st.verify("secret1"), "没有密码哈希时一律不通过");
     }

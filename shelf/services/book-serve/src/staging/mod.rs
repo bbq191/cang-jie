@@ -1,7 +1,7 @@
 //! 母版库（中间层暂存池）领域模块——三层架构（内容源 → **母版库** → 读器）的交汇点。
 //! 三个正交动作各一个方法：**入库**（`stage_new` / `stage_from_path` / [`StagingStore`] 上传模板 / `fetch_article`）、
-//! **优化**（`optimize`，只对 EPUB）、**落库**（`deliver` 投 xochitl；KOReader 由 koreader-serve 从同一目录 adopt，
-//! 之后前端调 `mark_delivered` 记一笔）。落库＝纯复制母版字节（两读器同字节可对照），母版默认保留可反复落库。
+//! **优化**（`optimize`，EPUB/PDF）、**落库**（`deliver` 投 xochitl；网关批量「加入 KOReader」由 koreader-serve 从同一
+//! 目录 adopt 后调 `mark_delivered` 记一笔——KOReader 2026-09-29 已从设备卸载，koreader-serve 没注册时网关不走这条路）。落库＝纯复制母版字节（两读器同字节可对照），母版默认保留可反复落库。
 //! 目录 `$XDG_STATE_HOME/shelf/books/staging/`（/home 分区，重启/OTA 不丢；**不套 LRU 淘汰**，留住用户还没落库的书）。
 //! 落库记录是同目录隐藏 sidecar `.<name>.delivered`（`sidecar` 模块管读写；本模块只在落库/删书时调它）。
 use bookconv::optimize::{self, FootnoteMode, OptimizeOpts};
@@ -25,7 +25,7 @@ mod intake;
 mod library;
 mod optimizing;
 
-use self::library::ProbeCache;
+use self::library::ListCaches;
 
 #[cfg(test)]
 mod tests;
@@ -39,6 +39,30 @@ const MIN_MARGIN_SINCE_VERSION: u32 = 15;
 /// 是各自独有的后缀（删除那处要额外提示"再删除"），其余传空串。
 fn busy_err(name: &str, extra: &str) -> String {
     format!("《{name}》正在处理中，请稍候{extra}")
+}
+
+/// 母版库目录里临时文件的种类（名字 `.<pid>.<序号>.<种类>.tmp`，见 [`ScratchFile`]）：优化产物、补封面的副本、
+/// 跨分区入库的中转。上次进程留下的由 `recover_interrupted` 按"点前缀 + `.tmp` 结尾"清掉。
+pub(super) const SCRATCH_KINDS: [&str; 3] = ["optimizing", "cover", "landing"];
+
+/// 母版库目录里的一份点前缀临时文件（列表看不见）。
+///
+/// - **名字与书名无关**（`.<pid>.<序号>.<种类>.tmp`）：此前按书名拼（`.<书名>.optimizing.tmp`），书名本身接近
+///   文件名 255 字节上限（中文 80 来个字）时临时文件名超长，优化直接报文件系统错误（ENAMETOOLONG）。
+/// - **Drop 时删掉**：正常路径下文件早已被 rename 成正式文件（删不到，无害）；出错或 panic 时（后台线程 `catch_unwind`
+///   兜住、进程照常服务）不再把半成品（大书可达数百 MB）一直留到下次重启才由 `recover_interrupted` 清。
+pub(super) struct ScratchFile(PathBuf);
+
+impl ScratchFile {
+    pub(super) fn path(&self) -> &Path {
+        &self.0
+    }
+}
+
+impl Drop for ScratchFile {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
 }
 
 /// 异步操作（优化 / 投递）结果 → 边车终态 `(status, message)`：成功 `ok`、用户取消 `cancelled`、其余 `failed`。
@@ -70,7 +94,7 @@ pub struct StagingEntry {
     pub delivered: Option<Delivered>,
     /// 是否正有一个异步操作（「优化」或「落库」）在这条目上跑——UI 据此禁用删除/落库/再次优化等按钮，
     /// 防止双击/并发操作同一条目（2026-09-18 真机反馈：优化耗时可能到分钟级，同步阻塞体验像卡死；
-    /// 2026-09-19 落库同理补上——超限漫画按卷拆分要挨个建包+上传，同样能拖到分钟级）。
+    /// 2026-09-19 落库同理补上——大书上传、等建文件夹同样能拖到分钟级）。
     #[serde(default)]
     pub busy: bool,
     /// 这份 EPUB 是不是入库 PDF 转出来的（`format=="epub"` 才有意义；跟 `optimized`/`level` 的
@@ -142,9 +166,8 @@ pub struct Staging {
     native_limit: u64,
     /// 正在跑异步操作（「优化」/「落库」）的登记簿：忙锁 + 取消协作，见 [`crate::ops`]。
     ops: OpRegistry,
-    /// 列表里"优化等级 / 是否 PDF 转来"的判定缓存：判定要开 zip 读中央目录，书多时前端每 3 秒轮询一次
-    /// 列表会持续吃 CPU（电池）。文件内容只随「优化」改写——按（大小, 修改时间）失效，命中就不再碰文件。
-    probes: Arc<std::sync::Mutex<std::collections::HashMap<String, ProbeCache>>>,
+    /// 列表的缓存（优化等级判定 / 落库边车 / xochitl 页数），各按对应文件的戳失效，见 [`ListCaches`]。
+    caches: Arc<ListCaches>,
     /// 漫画页边距待办（可选：测试里不装）。见 [`crate::comic_margins`]。
     comic_margins: Option<Arc<crate::comic_margins::ComicMargins>>,
     /// 母版库"落名"临界区：挑一个不撞名的文件名（`unique_path` 先查存在）再 rename/写入，两步之间不能插进别的落名，
@@ -196,12 +219,12 @@ impl AssetStore for StagingStore<'_> {
     }
 }
 
-/// 非书籍文件的拒收文案（上传门与 inbox 追平同一句）。
 /// PDF→EPUB 成功后原 PDF 的隐藏备份目录（母版库下，点前缀 → `list()` 看不见）。
 pub const PDF_ORIGINALS_DIR: &str = ".pdf-originals";
 /// 备份保留时长：7 天。启动时和每次新备份时清过期的。
 pub const PDF_ORIGINALS_KEEP_SECS: u64 = 7 * 86_400;
 
+/// 非书籍文件的拒收文案（上传门与 inbox 追平同一句）。
 pub fn reject_message() -> String {
     format!("不是书籍格式，母版库只收 {}", formats::dotted(BOOK_EXTS))
 }
@@ -221,7 +244,7 @@ impl Staging {
             xochitl,
             native_limit,
             ops: OpRegistry::default(),
-            probes: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+            caches: Arc::default(),
             comic_margins: None,
             land: Arc::new(std::sync::Mutex::new(())),
             fetch_covers: false,
@@ -297,6 +320,14 @@ impl Staging {
         std::fs::create_dir_all(&self.dir)
     }
 
+    /// 在母版库目录里要一份新的临时文件名（见 [`ScratchFile`]；`kind` 取 [`SCRATCH_KINDS`] 之一）。
+    pub(super) fn scratch(&self, kind: &str) -> ScratchFile {
+        static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        debug_assert!(SCRATCH_KINDS.contains(&kind));
+        let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        ScratchFile(self.dir.join(format!(".{}.{seq}.{kind}.tmp", std::process::id())))
+    }
+
     /// 进入"落名"临界区（见 `land` 字段）。
     pub(super) fn land_guard(&self) -> std::sync::MutexGuard<'_, ()> {
         rmsvc_core::sync::lock(&self.land)
@@ -316,6 +347,10 @@ impl Staging {
             return Err("母版库里没有这本书".into());
         }
         Ok(p)
+    }
+    /// 改这本书的落库边车（读—改—原子写）；书已不在母版库 → Err（不给已删的书复活一份边车）。
+    fn update_sidecar(&self, name: &str, f: impl FnOnce(&mut Delivered)) -> Result<(), String> {
+        sidecar::update(&self.existing(name)?, f)
     }
 
     /// [`Self::spawn_optimize`]/[`Self::spawn_deliver`] 共用的"起后台线程"外壳（2026-09-19 代码

@@ -47,7 +47,7 @@ pub fn run_with(spec: &ServiceSpec, bind: &str, paths: &Paths, router: Router, o
     let _reg = registry::register(paths, &info).map_err(|e| format!("注册失败: {e}"))?;
     let name = spec.name;
     let ver = spec.version;
-    // /health 必须**先于**业务路由注册：否则会被形如 `GET /{name}` 的通配路由抢先匹配（真机 wallpaper-serve 踩过）。
+    // 统一挂 /health。分发按"最具体的路由优先"（见 `Router::dispatch`），注册先后不再影响它会不会被 `GET /{name}` 抢走。
     let router = Router::new()
         .get("/health", move |_| Ok(Reply::ok(&serde_json::json!({"ok": true, "service": name, "version": ver}))))
         .merge(router);

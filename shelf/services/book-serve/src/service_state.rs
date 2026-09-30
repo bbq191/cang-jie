@@ -65,7 +65,7 @@ impl State {
         let spool = Spool::new(books_state.clone());
         let qol_file = paths.home().join(".local/share/cangjie-ime/reading-qol.json"); // 与网关共享的开关文件（gateway 写、这里读）
         let comic_margins = Arc::new(ComicMargins::new(&books_state, &paths.xochitl_dir(), &qol_file));
-        // 阅读方向手动清单：xochitl 阅读器查询（只读），母版库按书设方向时同步写（见 staging/direction.rs）。
+        // 阅读方向旧手动清单：只读（2026-09-30 起不再有写方，见 reading_direction.rs）。
         let reading_direction = Arc::new(crate::reading_direction::ReadingDirection::new(&paths.xochitl_dir(), &books_state.join("rtl-overrides.json")));
         let staging = Staging::new(paths.staging_dir(), xochitl.clone(), cfg.native_upload_limit_bytes())
             .with_comic_margins(comic_margins.clone())

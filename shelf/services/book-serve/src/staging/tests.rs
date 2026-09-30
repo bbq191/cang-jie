@@ -547,6 +547,60 @@ fn recover_interrupted_fixes_stale_pending_and_removes_tmp() {
     assert_eq!(s.recover_interrupted(), (0, 0), "幂等");
 }
 
+/// 回归：补封面的临时副本（整本 EPUB 的拷贝）、边车原子写的临时文件也按半成品清；新旧两种临时文件命名都认。
+#[test]
+fn recover_interrupted_removes_cover_and_new_style_scratch_files() {
+    let t = tempfile::tempdir().unwrap();
+    let s = staging(&t);
+    s.stage_new("a.epub", b"PK").unwrap();
+    for n in [".a.epub.cover.tmp", ".9.0.cover.tmp", ".9.1.optimizing.tmp", ".9.2.landing.tmp", ".a.epub.delivered.9.3.tmp"] {
+        std::fs::write(s.dir.join(n), vec![0u8; 100]).unwrap();
+    }
+    std::fs::write(s.dir.join(".a.epub.delivered.tmp-not-ours"), b"x").unwrap();
+    std::fs::create_dir_all(s.dir.join(".dir.tmp")).unwrap();
+    assert_eq!(s.recover_interrupted(), (0, 5), "含边车原子写没改名的临时文件");
+    assert!(s.dir.join(".dir.tmp").is_dir(), "目录不动");
+    assert!(s.dir.join(".a.epub.delivered.tmp-not-ours").exists(), "别的点前缀文件不动");
+    assert!(s.has("a.epub"));
+}
+
+/// 回归：临时文件出错/panic 时由 Drop 删掉，不留到下次重启（后台线程 `catch_unwind` 兜住 panic，进程照常跑）。
+#[test]
+fn scratch_file_is_removed_on_panic_and_names_are_unique() {
+    let t = tempfile::tempdir().unwrap();
+    let s = staging(&t);
+    let (a, b) = (s.scratch("optimizing"), s.scratch("optimizing"));
+    assert_ne!(a.path(), b.path());
+    drop((a, b));
+    let seen = std::sync::Mutex::new(None);
+    let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let tmp = s.scratch("cover");
+        std::fs::write(tmp.path(), vec![0u8; 1000]).unwrap();
+        *seen.lock().unwrap() = Some(tmp.path().to_path_buf());
+        panic!("优化中途 panic");
+    }));
+    assert!(r.is_err());
+    let p = seen.lock().unwrap().clone().unwrap();
+    assert!(!p.exists(), "panic 展开时临时文件被删");
+    assert!(std::fs::read_dir(s.dir()).unwrap().all(|e| !e.unwrap().file_name().to_string_lossy().ends_with(".tmp")));
+}
+
+/// 回归：书名接近文件名 255 字节上限时照样能优化——此前临时文件按书名拼（`.<书名>.optimizing.tmp`），
+/// 比书名多 16 字节，超长报文件系统错误。
+#[test]
+fn optimize_works_for_book_names_near_the_filename_limit() {
+    let t = tempfile::tempdir().unwrap();
+    let s = staging(&t);
+    let name = format!("{}.epub", "长".repeat(79)); // 242 字节：书名与边车（+11）放得下，旧临时名（+16）放不下
+    assert!(name.len() + 16 > 255 && name.len() + 11 <= 255);
+    let opf = r#"<package version="2.0"><metadata><dc:title>t</dc:title></metadata><manifest><item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="c1"/></spine></package>"#;
+    let epub = mini_epub(&[("content.opf", opf), ("c1.xhtml", "<html><head></head><body><h1>一</h1><p>正文</p></body></html>")]);
+    assert_eq!(s.stage_new(&name, &epub).unwrap(), name);
+    let msg = s.optimize(&name, |_, _| {}).unwrap();
+    assert!(msg.contains("已优化"), "{msg}");
+    assert_eq!(s.list().into_iter().find(|e| e.name == name).unwrap().level, "full");
+}
+
 #[test]
 fn list_caches_level_probe_and_invalidates_on_rewrite_or_delete() {
     // 判定要开 zip（吃 CPU/电），按（大小,mtime）缓存；文件改写后必须重判，删除后清缓存。
@@ -555,9 +609,10 @@ fn list_caches_level_probe_and_invalidates_on_rewrite_or_delete() {
     let plain = mini_epub(&[("OEBPS/a.xhtml", "<p>x</p>")]);
     s.stage_new("b.epub", &plain).unwrap();
     assert_eq!(s.list()[0].level, "none");
-    assert_eq!(rmsvc_core::sync::lock(&s.probes).len(), 1, "首次列表写入缓存");
+    assert_eq!(s.caches.probes.len(), 1, "首次列表写入缓存");
     // 篡改缓存里的结论：若第二次列表仍用它，说明命中缓存没有重开文件
-    rmsvc_core::sync::lock(&s.probes).get_mut("b.epub").unwrap().level = "full";
+    let stamp = rmsvc_core::cache::FileStamp::read(&s.dir.join("b.epub")).unwrap();
+    s.caches.probes.put("b.epub", stamp, ("full", false));
     assert_eq!(s.list()[0].level, "full", "文件没变 → 命中缓存");
     // 文件改写（内容长度变了）→ 缓存失效重判
     let marked = mini_epub(&[("OEBPS/a.xhtml", "<p>x</p>"), (optimize::OPTIMIZE_MARKER, optimize::OPTIMIZE_VERSION)]);
@@ -567,7 +622,39 @@ fn list_caches_level_probe_and_invalidates_on_rewrite_or_delete() {
     assert_eq!(s.list()[0].level, "none", "改写回未优化 → 重判");
     std::fs::remove_file(s.dir.join("b.epub")).unwrap();
     assert!(s.list().is_empty());
-    assert!(rmsvc_core::sync::lock(&s.probes).is_empty(), "条目消失 → 清缓存");
+    assert!(s.caches.probes.is_empty(), "条目消失 → 清缓存");
+}
+
+/// 列表的边车 / xochitl 页数也按文件戳缓存：没变就不再开文件（篡改缓存证明命中），边车一改写（原子写换 inode）立刻看到新内容。
+#[test]
+fn list_caches_sidecar_and_onopen_page_count_until_files_change() {
+    const U: &str = "cccccccc-cccc-cccc-cccc-cccccccccccc";
+    let t = tempfile::tempdir().unwrap();
+    let lib = t.path().join("xochitl");
+    std::fs::create_dir_all(&lib).unwrap();
+    let s = Staging::new(t.path().join("staging"), Arc::new(Xochitl::new("127.0.0.1:1", &lib, 1)), 1024 * 1024);
+    s.ensure().unwrap();
+    s.stage_new("a.epub", b"PK").unwrap();
+    s.set_render("a.epub", RenderCheck { uuid: U.into(), pages: 2, expected: 0, status: "onopen".into(), at: 1 }).unwrap();
+    std::fs::write(lib.join(format!("{U}.content")), r#"{"pageCount":2}"#).unwrap();
+    let rc = |s: &Staging| s.list()[0].delivered.clone().unwrap().render.unwrap();
+    assert_eq!((rc(&s).status.as_str(), rc(&s).pages), ("onopen", 2));
+    assert_eq!((s.caches.sidecars.len(), s.caches.pages.len()), (1, 1));
+    // 篡改两份缓存：文件没变时列表用的就是缓存里的值
+    let content = lib.join(format!("{U}.content"));
+    s.caches.pages.put(U, rmsvc_core::cache::FileStamp::read(&content).unwrap(), Some(2));
+    let car = sidecar::path_for(&s.dir.join("a.epub"));
+    let mut fake = sidecar::read(&s.dir.join("a.epub")).unwrap();
+    fake.native = Some(42);
+    s.caches.sidecars.put("a.epub", rmsvc_core::cache::FileStamp::read(&car).unwrap(), Some(fake));
+    assert_eq!(s.list()[0].delivered.clone().unwrap().native, Some(42), "边车没变 → 命中缓存");
+    // 边车改写（原子写）→ 立刻重读
+    s.mark_delivered("a.epub", Reader::Native).unwrap();
+    assert_ne!(s.list()[0].delivered.clone().unwrap().native, Some(42), "边车一改写就重读");
+    // xochitl 渲染完改写 .content → 页数变了，升级成 ok 并写回边车；之后不再是 onopen、不再查 .content
+    std::fs::write(&content, r#"{"pageCount":351}"#).unwrap();
+    assert_eq!((rc(&s).status.as_str(), rc(&s).pages), ("ok", 351));
+    assert!(s.caches.pages.is_empty(), "不再是 onopen 的文档从页数缓存里清掉");
 }
 
 #[test]

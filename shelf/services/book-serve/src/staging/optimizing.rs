@@ -89,11 +89,7 @@ impl Staging {
     /// 补，给 [`Self::spawn_optimize`] 挂真实进度用；这个方法本身不关心怎么展示，不耦合 sidecar/
     /// EventBus——同步调用方（如 [`Self::fetch_article`] 的"同步优化"复选框）传空闭包即可）。
     pub fn optimize(&self, name: &str, mut on_progress: impl FnMut(usize, usize)) -> Result<String, String> {
-        let ext = formats::ext_of(name);
-        if ext != "epub" && ext != "pdf" {
-            return Err("只有 EPUB/PDF 能优化".into());
-        }
-        let p = self.existing(name)?;
+        let (ext, p) = self.optimizable(name)?;
         if ext == "pdf" {
             return self.optimize_pdf(name, &p, on_progress);
         }
@@ -104,7 +100,8 @@ impl Staging {
         // 图片多、逐张处理仍要时间），这份临时产物会在目录里存在相当一段时间；`list()` 本来就按
         // `.` 前缀跳过 sidecar，不带点前缀的话这份半成品会被当成一条离谱的"母版库条目"混进列表
         // （2026-09-19 真机复现：真显示过一条 `format:"other"` 的 `....epub.optimizing.tmp`）。
-        let tmp = p.with_file_name(format!(".{}.optimizing.tmp", name));
+        // 名字与书名无关、出错或 panic 都会被删掉，见 `ScratchFile`。
+        let tmp = self.scratch("optimizing");
         // 有卷标记的书：把 EPUB 自己的 dc:title 也改成规范名（设备显示名取 dc:title）。
         let stem = name.strip_suffix(".epub").unwrap_or(name);
         let canon_title = bookconv::naming::has_volume_marker(stem).then(|| bookconv::naming::canonical_book_name(stem));
@@ -118,19 +115,15 @@ impl Staging {
         // 大漫画整本读回内存、不重蹈流式优化本来要避开的 OOM。
         // 书里没有封面：先联网补一张（`cover_fetch`，2026-09-29 移植自 sheng-ren），补好的临时副本当优化的输入。
         let (with_cover, cover_note) = self.with_fetched_cover(name, &p);
-        let src = with_cover.as_deref().unwrap_or(&p);
-        let result = bookconv::util::produce_then_replace(&tmp, &p, |t| {
+        let src = with_cover.as_ref().map_or(p.as_path(), ScratchFile::path);
+        let rep = bookconv::util::produce_then_replace(tmp.path(), &p, |t| {
             let rep = optimize::StreamingOptimize::new(src, t, &opts).title(canon_title.as_deref()).cancel(&cancel).run(&mut on_progress)?;
             let check = bookconv::check::check_epub_file(t).map_err(|e| format!("质量门校验失败: {e}"))?;
             if !check.ok {
                 return Err(format!("优化产物未通过质量门，{}", check.errors.join("；")));
             }
             Ok(rep)
-        });
-        if let Some(c) = &with_cover {
-            let _ = std::fs::remove_file(c);
-        }
-        let rep = result?;
+        })?;
         // 已有的长下载名在这里一并规范成 `书名 - N卷`；目标已存在（重复的同一卷）就保持原名，不覆盖。
         let canon = canonical_staged_name(name);
         let land = self.land_guard();
@@ -149,8 +142,8 @@ impl Staging {
 
     /// 母版里的 EPUB 没有封面（没有有效的封面声明、前几页里也没有图）时联网找一张（见 [`crate::cover_fetch`]），
     /// 写一份只在 OPF 里声明了封面的临时副本（`bookconv::opfmeta::edit_epub`：不加封面页、正文不变）。
-    /// 返回（副本路径, 回执尾注）；有封面、没找到、没查成都返回 `None`，照原书优化。
-    fn with_fetched_cover(&self, name: &str, p: &Path) -> (Option<PathBuf>, String) {
+    /// 返回（副本, 回执尾注）；有封面、没找到、没查成都返回 `None`，照原书优化。副本随返回值 Drop 删除。
+    fn with_fetched_cover(&self, name: &str, p: &Path) -> (Option<ScratchFile>, String) {
         use bookconv::opfmeta::{self, DcField, Edits};
         use crate::cover_fetch::Outcome;
         if !self.fetch_covers || bookconv::epubzip::cover_image_of(p).is_some() {
@@ -165,13 +158,10 @@ impl Staging {
             Outcome::Generated(bytes, how) => (bytes, how),
             Outcome::Skipped(why) => return (None, format!("；书里没有封面，{why}")),
         };
-        let tmp = p.with_file_name(format!(".{name}.cover.tmp"));
-        match opfmeta::edit_epub(p, &tmp, &Edits { cover: Some(bytes), ..Default::default() }) {
+        let tmp = self.scratch("cover");
+        match opfmeta::edit_epub(p, tmp.path(), &Edits { cover: Some(bytes), ..Default::default() }) {
             Ok(_) => (Some(tmp), format!("；补了封面（{how}）")),
-            Err(e) => {
-                let _ = std::fs::remove_file(&tmp);
-                (None, format!("；补封面失败：{e}"))
-            }
+            Err(e) => (None, format!("；补封面失败：{e}")),
         }
     }
 
@@ -184,8 +174,8 @@ impl Staging {
         use bookconv::pdf_ingest::{self, PdfKind};
         match pdf_ingest::classify_pdf(p) {
             PdfKind::Comic | PdfKind::NoTextLayer => {
-                let tmp = p.with_file_name(format!(".{name}.optimizing.tmp"));
-                let rep = bookconv::util::produce_then_replace(&tmp, p, |t| pdf_ingest::optimize_pdf_trim_only(p, t, &mut on_progress))?;
+                let tmp = self.scratch("optimizing");
+                let rep = bookconv::util::produce_then_replace(tmp.path(), p, |t| pdf_ingest::optimize_pdf_trim_only(p, t, &mut on_progress))?;
                 Ok(format!("已优化《{name}》（裁边，{} 页）", rep.pages))
             }
             PdfKind::TextLayer => {
@@ -196,7 +186,7 @@ impl Staging {
                 if epub_path.exists() {
                     return Err(format!("母版库里已有《{stem}.epub》，为免覆盖已停止转换；请先删除或改名那一份再优化"));
                 }
-                let tmp = p.with_file_name(format!(".{stem}.epub.optimizing.tmp"));
+                let tmp = self.scratch("optimizing");
                 let (mut book, rep, color_css) = pdf_ingest::optimize_pdf_to_epub(p, &mut on_progress)?;
                 let bytes = match bookconv::epub::assemble_pdf_derived(&mut book, &color_css) {
                     Ok(b) => b,
@@ -207,9 +197,10 @@ impl Staging {
                 // 落地前在落名临界区里再查一次同名 EPUB：转换可能要几分钟，开头那次检查之后别的入库路径
                 // （上传/抓网文/inbox）可能已经落下同名书——它们都在临界区里挑名落地，这里同样在临界区里
                 // 复查 + rename，就不会把那本覆盖掉（2026-09-24 第三轮审计补）。
-                let landed = (|| {
-                    std::fs::write(&tmp, &bytes).map_err(|e| format!("写出临时文件失败: {e}"))?;
-                    let check = bookconv::check::check_epub_file(&tmp).map_err(|e| format!("质量门校验失败: {e}"))?;
+                // 出错时临时文件由 `ScratchFile` 的 Drop 清掉。
+                (|| {
+                    std::fs::write(tmp.path(), &bytes).map_err(|e| format!("写出临时文件失败: {e}"))?;
+                    let check = bookconv::check::check_epub_file(tmp.path()).map_err(|e| format!("质量门校验失败: {e}"))?;
                     if !check.ok {
                         return Err(format!("优化产物未通过质量门，{}", check.errors.join("；")));
                     }
@@ -217,12 +208,8 @@ impl Staging {
                     if epub_path.exists() {
                         return Err(format!("转换期间母版库里出现了同名《{stem}.epub》，为免覆盖已放弃这次转换；原 PDF 未动"));
                     }
-                    std::fs::rename(&tmp, &epub_path).map_err(|e| format!("回写母版库失败: {e}"))
-                })();
-                if let Err(e) = landed {
-                    let _ = std::fs::remove_file(&tmp);
-                    return Err(e);
-                }
+                    std::fs::rename(tmp.path(), &epub_path).map_err(|e| format!("回写母版库失败: {e}"))
+                })()?;
                 // 原 PDF 不直接删，挪进隐藏备份目录保留 [`PDF_ORIGINALS_KEEP_SECS`]——转坏了（多栏/表格类
                 // PDF 重排效果差）还能找回原件（2026-09-24 审查：此前 `remove_file` 删了就没了）。
                 self.backup_pdf_original(name, p)?;
@@ -244,11 +231,7 @@ impl Staging {
     /// （[`sidecar::OptimizeCheck`]）异步呈现。`catch_unwind` 兜底优化过程中的 panic（如损坏文件触发
     /// 库内部意外崩溃）——绝不能让忙锁卡死在 true 再也清不掉、这条目从此删不掉优化不了。
     pub fn spawn_optimize(&self, name: &str, bus: Arc<rmsvc_core::events::EventBus>) -> Result<(), String> {
-        let ext = formats::ext_of(name);
-        if ext != "epub" && ext != "pdf" {
-            return Err("只有 EPUB/PDF 能优化".into());
-        }
-        self.existing(name)?;
+        self.optimizable(name)?;
         if !self.try_start_busy(name) {
             return Err(busy_err(name, ""));
         }
@@ -302,7 +285,15 @@ impl Staging {
 
     /// 写异步优化结果到边车（书已从母版库删除 → Err，调用方只记日志/静默丢弃，不阻断别的流程）。
     pub fn set_optimize_check(&self, name: &str, oc: sidecar::OptimizeCheck) -> Result<(), String> {
-        let p = self.existing(name)?;
-        sidecar::update(&p, |d| d.optimize = Some(oc))
+        self.update_sidecar(name, |d| d.optimize = Some(oc))
+    }
+
+    /// 优化前的零耗时校验：只收 EPUB/PDF + 书还在母版库。返回（小写扩展名, 路径）。
+    fn optimizable(&self, name: &str) -> Result<(String, PathBuf), String> {
+        let ext = formats::ext_of(name);
+        if ext != "epub" && ext != "pdf" {
+            return Err("只有 EPUB/PDF 能优化".into());
+        }
+        Ok((ext, self.existing(name)?))
     }
 }
