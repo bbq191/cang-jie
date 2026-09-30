@@ -4,9 +4,9 @@
 //! 也不会像贴着印刷勾画行裁缩略图那样把印刷体也带进去。真机踩过这两个坑，细节见笔记线白皮书 §03o。
 //!
 //! 旧方案是吃 xochitl 缩略图裁（`page_w`/`page_h` 是 EPUB 排版引擎的虚拟画布尺寸，真机实测 **960×1280**，
-//! 不是物理屏 1404×1872——白皮书 §03g 记过"用错了裁图整体裁偏"的真机事故），这份坐标标定的知识仍然
-//! 保留在 `config.rs::IngestConfig` 的字段与文档里，代码本身随缩略图路径一起退役了（改自渲染后没有
-//! 消费者，`cargo build` 会报 dead_code——两条路径不值得同时维护，出问题回这段历史记录找）。
+//! 不是物理屏 1404×1872——白皮书 §03g 记过"用错了裁图整体裁偏"的真机事故），代码随缩略图路径一起退役了；
+//! 当初留在 `IngestConfig` 里的 `pageWidth`/`pageHeight`/`xOriginCenter` 三个没人读的配置项也于 2026-09-30 删掉，
+//! 标定结论只留在 `config.rs` 模块文档与白皮书里。
 use image::{DynamicImage, ImageFormat};
 use rmv6::page::Stroke;
 use std::io::Cursor;
@@ -17,9 +17,14 @@ const MIN_CROP_PX: u32 = 8;
 const RENDER_SCALE: f32 = 2.0;
 /// 画笔粗细（像素），凭手写笔画常见粗细估的，不是从设备笔迹参数精确反推的。
 const LINE_WIDTH_PX: f32 = 1.6;
+/// 一张裁图最多多少像素（约 2000×2000）。手写可以写满一整页、在可延长的页面上往下写很远，按 2 倍缩放
+/// 直接画会分配几十 MB 起跳的缓冲（服务 MemoryMax=128M；坐标被写坏时更是无上限，分配失败直接 abort，
+/// `catch_unwind` 兜不住）。超了就按比例降缩放，视觉模型本来也会把大图缩到百万像素量级（2026-09-30 第五轮审计）。
+const MAX_CROP_PIXELS: f32 = 4_000_000.0;
 
 /// 自渲染裁图：从 `.rm` 笔画矢量数据里挑出 `stroke_ids` 指定的那些笔画，在它们的 `bbox`（留 `margin`
-/// 页坐标单位的白边）范围内画折线，输出白底黑线 PNG。
+/// 页坐标单位的白边）范围内画折线，输出白底黑线 PNG（8 位灰度：黑白两色用不着 RGBA，缓冲和上传给视觉模型的
+/// 字节都省到约四分之一）。
 pub fn render_ink(strokes: &[Stroke], stroke_ids: &[String], bbox: (f32, f32, f32, f32), margin: f32) -> Result<Vec<u8>, String> {
     let ids: std::collections::BTreeSet<&str> = stroke_ids.iter().map(String::as_str).collect();
     let picked: Vec<&Stroke> = strokes.iter().filter(|s| ids.contains(s.id.to_string().as_str())).collect();
@@ -27,13 +32,18 @@ pub fn render_ink(strokes: &[Stroke], stroke_ids: &[String], bbox: (f32, f32, f3
         return Err("这片手写在当前页里一笔都没找到（笔画 id 对不上）".into());
     }
     let (x0, y0, x1, y1) = (bbox.0 - margin, bbox.1 - margin, bbox.2 + margin, bbox.3 + margin);
-    let w = (((x1 - x0) * RENDER_SCALE).ceil() as i64).max(1) as u32;
-    let h = (((y1 - y0) * RENDER_SCALE).ceil() as i64).max(1) as u32;
+    let (bw, bh) = (x1 - x0, y1 - y0);
+    if !(bw.is_finite() && bh.is_finite()) {
+        return Err(format!("笔画包围盒坐标不正常（{bbox:?}），画不出来"));
+    }
+    let scale = RENDER_SCALE.min((MAX_CROP_PIXELS / (bw * bh).max(1.0)).sqrt());
+    let w = ((bw * scale).ceil() as i64).max(1) as u32;
+    let h = ((bh * scale).ceil() as i64).max(1) as u32;
     if w < MIN_CROP_PX || h < MIN_CROP_PX {
         return Err(format!("笔画包围盒只有 {w}x{h} px，太小画不出来"));
     }
-    let mut img = image::RgbaImage::from_pixel(w, h, image::Rgba([255, 255, 255, 255]));
-    let to_px = |p: (f32, f32)| -> (f64, f64) { (((p.0 - x0) * RENDER_SCALE) as f64, ((p.1 - y0) * RENDER_SCALE) as f64) };
+    let mut img = image::GrayImage::from_pixel(w, h, image::Luma([255]));
+    let to_px = |p: (f32, f32)| -> (f64, f64) { (((p.0 - x0) * scale) as f64, ((p.1 - y0) * scale) as f64) };
     for s in picked {
         if s.points.len() < 2 {
             // 单点笔画（一个点/一个墨点）：就画一个点大小的圆点，别整段跳过。
@@ -49,12 +59,12 @@ pub fn render_ink(strokes: &[Stroke], stroke_ids: &[String], bbox: (f32, f32, f3
         }
     }
     let mut out = Vec::new();
-    DynamicImage::ImageRgba8(img).write_to(&mut Cursor::new(&mut out), ImageFormat::Png).map_err(|e| format!("裁图编码失败: {e}"))?;
+    DynamicImage::ImageLuma8(img).write_to(&mut Cursor::new(&mut out), ImageFormat::Png).map_err(|e| format!("裁图编码失败: {e}"))?;
     Ok(out)
 }
 
 /// 两点间按步长插值、逐点画圆点，拼出一条有粗细的线段（不追求抗锯齿，喂视觉模型够用）。
-fn draw_thick_segment(img: &mut image::RgbaImage, a: (f64, f64), b: (f64, f64), r: f64) {
+fn draw_thick_segment(img: &mut image::GrayImage, a: (f64, f64), b: (f64, f64), r: f64) {
     let dist = ((b.0 - a.0).powi(2) + (b.1 - a.1).powi(2)).sqrt();
     let steps = (dist.ceil() as i64).max(1);
     for i in 0..=steps {
@@ -64,7 +74,7 @@ fn draw_thick_segment(img: &mut image::RgbaImage, a: (f64, f64), b: (f64, f64), 
 }
 
 /// 在 (cx, cy) 处画一个半径 r 的实心圆点，越界部分自动裁掉。
-fn stamp_dot(img: &mut image::RgbaImage, cx: f64, cy: f64, r: f64) {
+fn stamp_dot(img: &mut image::GrayImage, cx: f64, cy: f64, r: f64) {
     let (w, h) = img.dimensions();
     if w == 0 || h == 0 {
         return;
@@ -78,7 +88,7 @@ fn stamp_dot(img: &mut image::RgbaImage, cx: f64, cy: f64, r: f64) {
         for x in x0..=x1 {
             let (dx, dy) = (x as f64 - cx, y as f64 - cy);
             if dx * dx + dy * dy <= r * r {
-                img.put_pixel(x, y, image::Rgba([0, 0, 0, 255]));
+                img.put_pixel(x, y, image::Luma([0]));
             }
         }
     }
@@ -116,6 +126,22 @@ mod tests {
         let b = stroke(2, &[(1000.0, 1000.0), (1010.0, 1010.0)]); // 不该被选中的邻簇
         let png = render_ink(&[a, b], &["1:1".to_string()], (0.0, 0.0, 10.0, 10.0), 4.0).unwrap();
         assert!(image::load_from_memory_with_format(&png, ImageFormat::Png).is_ok());
+    }
+
+    /// 回归（2026-09-30）：写满整页/往下写很远的一大片手写，裁图像素数有上限（按比例降缩放、比例不变）；
+    /// 坐标被写坏成 NaN/无穷时报错，不去分配一块天文数字的缓冲。
+    #[test]
+    fn huge_or_broken_bbox_is_capped_or_refused() {
+        let s = stroke(1, &[(0.0, 0.0), (960.0, 20000.0)]);
+        let png = render_ink(std::slice::from_ref(&s), &["1:1".to_string()], (0.0, 0.0, 960.0, 20000.0), 0.0).unwrap();
+        let img = image::load_from_memory_with_format(&png, ImageFormat::Png).unwrap();
+        assert!((img.width() as f32) * (img.height() as f32) <= MAX_CROP_PIXELS * 1.01, "{}x{}", img.width(), img.height());
+        let ratio = img.height() as f32 / img.width() as f32;
+        assert!((ratio - 20000.0 / 960.0).abs() < 0.2, "宽高比不变: {ratio}");
+        assert_eq!(img.color(), image::ColorType::L8, "灰度 PNG");
+        for bad in [f32::NAN, f32::INFINITY] {
+            assert!(render_ink(std::slice::from_ref(&s), &["1:1".to_string()], (0.0, 0.0, bad, 10.0), 0.0).unwrap_err().contains("不正常"));
+        }
     }
 
     #[test]

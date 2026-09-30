@@ -1,6 +1,6 @@
 //! note-serve —— 笔记·本（loopback 8798）。它是网页「笔记」tab 的注册方（tab 只挂一个服务，前端组合 ink/transcribe/mind/notes 四段）；
 //! 本体职责是把条目库投影成设备笔记本（复用书本自己所在的设备文件夹，一章一本，xochitl 7 种打字样式）与 md 导出
-//! （`export.rs`，落 `$XDG_DATA_HOME/notes/vault/<书名>/`，供 host `notes pull` 拉走）。
+//! （`export.rs`，落 `$XDG_DATA_HOME/notes/vault/<书名>/`；网页走 `.../export.md` 单章下载）。
 //! 生成编排见 `publish.rs`：只读 ink-serve 的条目库（改字段仍是 ink-serve 的事）、按章指纹判断要不要重传，
 //! 传完按 `visibleName`+时间窗认领设备新分配的 uuid，旧版本入 `book-serve` 回收站队列（真机验证过的软删路）。
 //! 路由（经网关前缀 `/api/notes`）：`GET /status` · `GET /events` ·
@@ -15,8 +15,8 @@
 //! 三期新增：光落设备盘用户够不着，见 `export.rs`）·
 //! `GET /books/{uuid}/sync`（整理区第三轮反馈新增：每章设备笔记本/Obsidian md 是否跟当前条目内容
 //! 同步，前端拿这个决定"生成完成后移出待处理列表"，见白皮书 §03x）·
-//! `GET /books/{uuid}/vault.json`（2026-09-16 新增：读回已落盘的 vault 目录内容，供 host
-//! `shelf notes pull` 拉到本机 Obsidian vault，见 `export::manifest` 文档）。
+//! `GET /books/{uuid}/vault.json`（2026-09-16 新增：读回已落盘的 vault 目录内容，原调用方 host `shelf notes pull`
+//! 已随 PC 端 CLI 于 2026-09-18 砍掉，端点只读无副作用、先留着，见 `export::manifest` 文档）。
 mod chapter_store;
 mod config;
 mod export;
@@ -131,8 +131,7 @@ fn main() {
         .get("/status", bind(&st, |s, _| Ok(Reply::ok(&serde_json::json!({"ok": true, "vault": s.paths.app_data_dir(APP).join("vault"), "xochitlHost": s.cfg.xochitl_host})))))
         .get("/books", bind(&st, |s, _| {
             let items = s.store.list_books().map_err(ApiError::bad)?;
-            // `title` 是 2026-09-16 加的：host `shelf notes pull` 靠它认书（不用另起一个 book detail
-            // 端点），别的既有消费方（前端）本来就不用这个列表拿标题，加字段不影响它们。
+            // `title` 是 2026-09-16 给 host `shelf notes pull` 认书加的（该 CLI 2026-09-18 已砍）；网页不调这个列表。
             let out: Vec<serde_json::Value> = items.iter().map(|b| serde_json::json!({"uuid": b.uuid, "title": b.title, "notebooks": s.notebooks.list(&b.uuid)})).collect();
             Ok(Reply::ok(&serde_json::json!({"items": out})))
         }))
@@ -211,8 +210,8 @@ fn main() {
             let filename = format!("{}.md", notecore::export::chapter_stem(idx, &title));
             Ok(Reply::bytes("text/markdown; charset=utf-8", md.into_bytes()).with_header("Content-Disposition", &export::content_disposition(&filename)))
         }))
-        // host `shelf notes pull` 用：读回 `POST .../export` 已经落盘的 vault 目录内容（不触发导出，
-        // 纯读——调用方该自己先 POST export 保证内容是最新的）。见 `export::manifest` 文档。
+        // 读回 `POST .../export` 已经落盘的 vault 目录内容（不触发导出，纯读——调用方该自己先 POST export 保证内容
+        // 是最新的）。原调用方 host `shelf notes pull` 已砍，见 `export::manifest` 文档。
         .get("/books/{uuid}/vault.json", bind(&st, |s, r| {
             let book = s.store.book(r.param("uuid")).map_err(ApiError::bad)?;
             let m = export::manifest(&s.paths.app_data_dir(APP), &book.title).map_err(ApiError::internal)?;

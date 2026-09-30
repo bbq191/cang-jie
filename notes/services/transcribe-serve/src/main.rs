@@ -9,7 +9,6 @@ mod ledger;
 mod prompt;
 mod worker;
 
-use backend::Vision;
 use config::TranscribeConfig;
 use ink::{EntryStore, InkHttp};
 use ledger::Ledger;
@@ -39,15 +38,16 @@ struct State {
     /// 同一时刻只跑一轮（自动与手动互斥）。
     run_lock: Mutex<()>,
     trigger: SyncSender<()>,
+    clients: vendorcfg::ClientCache,
 }
 
 impl State {
     fn cfg(&self) -> TranscribeConfig {
         self.cfg.get()
     }
-    fn vision(&self, cfg: &TranscribeConfig) -> Result<Box<dyn Vision>, String> {
-        let c = vendorcfg::ChatClient::from_config(cfg, &cfg.backend, Duration::from_secs(cfg.timeout_secs), "未配置 API key（网页「转写设置」里粘贴，或环境变量 DASHSCOPE_API_KEY）")?;
-        Ok(Box::new(c))
+    /// 配置没变就复用上一轮的调用端（连同还活着的 HTTPS 连接），见 `vendorcfg::ClientCache`。
+    fn vision(&self, cfg: &TranscribeConfig) -> Result<Arc<vendorcfg::ChatClient>, String> {
+        self.clients.get(cfg, &cfg.backend, Duration::from_secs(cfg.timeout_secs), "未配置 API key（网页「转写设置」里粘贴，或环境变量 DASHSCOPE_API_KEY）")
     }
     /// 跑一轮（阻塞拿锁）。没 key → 直接报告不出网。
     fn run(&self, only: Option<Target<'_>>) -> ledger::RunReport {
@@ -116,6 +116,7 @@ fn main() {
         store: InkHttp::new(paths.clone()),
         run_lock: Mutex::new(()),
         trigger: tx,
+        clients: Default::default(),
     });
     {
         let s = st.clone();

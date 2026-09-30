@@ -31,7 +31,7 @@ impl Toc {
     /// `nav.xhtml`：`<ol>` 深度即层级；条目 = `<a href>`。
     pub fn from_nav(text: &str) -> Toc {
         static RE: OnceLock<Regex> = OnceLock::new();
-        let re = RE.get_or_init(|| Regex::new(r#"(?is)(<ol\b)|(</ol\s*>)|(<li\b)|<a[^>]*href="([^"]+)"[^>]*>(.*?)</a>"#).unwrap());
+        let re = RE.get_or_init(|| Regex::new(r#"(?is)(<ol\b)|(</ol\s*>)|(<li\b)|<a\b[^>]*\bhref\s*=\s*["']([^"']+)["'][^>]*>(.*?)</a>"#).unwrap());
         let mut b = Builder::default();
         for c in re.captures_iter(text) {
             if c.get(1).is_some() {
@@ -50,7 +50,7 @@ impl Toc {
     /// `toc.ncx`：`navPoint` 嵌套深度即层级；标题取 `<text>`，文件取 `<content src>`。
     pub fn from_ncx(text: &str) -> Toc {
         static RE: OnceLock<Regex> = OnceLock::new();
-        let re = RE.get_or_init(|| Regex::new(r#"(?is)(<navpoint\b)|(</navpoint\s*>)|<text>(.*?)</text>|<content[^>]*src="([^"]+)""#).unwrap());
+        let re = RE.get_or_init(|| Regex::new(r#"(?is)(<navpoint\b)|(</navpoint\s*>)|<text\b[^>]*>(.*?)</text>|<content\b[^>]*\bsrc\s*=\s*["']([^"']+)["']"#).unwrap());
         let mut b = Builder::default();
         let mut pending_title = String::new();
         for c in re.captures_iter(text) {
@@ -172,6 +172,11 @@ mod tests {
             <navPoint><navLabel><text>Part II</text></navLabel><content src="p2.xhtml"/></navPoint></navMap>"#);
         let v: Vec<(&str, u8, Option<usize>)> = t.entries.iter().map(|e| (e.title.as_str(), e.level, e.parent)).collect();
         assert_eq!(v, vec![("Part I", 1, None), ("Ch 1", 2, Some(0)), ("Part II", 1, None)]);
+        // 单引号属性、`<text>` 带属性也认（2026-09-30）
+        let t = Toc::from_ncx(r#"<navPoint id='a'><navLabel><text xml:lang="zh">单引号</text></navLabel><content src='s.xhtml#p'/></navPoint>"#);
+        assert_eq!(t.entries.iter().map(|e| (e.file.as_str(), e.title.as_str())).collect::<Vec<_>>(), [("s.xhtml", "单引号")]);
+        let t = Toc::from_nav(r#"<ol><li><a class='x' href='a.xhtml'>甲</a></li></ol>"#);
+        assert_eq!(t.entries.len(), 1);
         assert_eq!(Toc::parse(Some("<ol></ol>"), Some(r#"<navPoint><text>X</text><content src="x.xhtml"/></navPoint>"#)).entries.len(), 1, "nav 空退回 ncx");
     }
 }

@@ -169,6 +169,9 @@ fn main() {
             let mut catchup: std::collections::BTreeSet<String> = ingest::candidate_docs(&st.paths.xochitl_dir()).into_iter().collect();
             catchup.extend(st.db.list().into_iter().map(|b| b.uuid.clone()));
             for u in catchup {
+                if let Err(e) = ingest::forget_unmapped_pages(&st.db, &u) {
+                    eprintln!("[ink-serve] {u}: {e}");
+                }
                 st.ingest(&u);
             }
             let lib = st.paths.xochitl_dir();
@@ -221,7 +224,7 @@ fn main() {
             edit_entry(s, r.param("uuid"), r.param("id"), |e| e.restore(now))
         }))
         .post("/books/{uuid}/purge", bind(&st, |s, r| {
-            let removed = s.db.update_existing(r.param("uuid"), |b| b.purge_terminal()).map_err(ApiError::internal)?.ok_or_else(|| ApiError::not_found("没有这本书的条目"))?;
+            let removed = ingest::purge_terminal(&s.db, &s.crops_dir(), r.param("uuid")).map_err(ApiError::internal)?.ok_or_else(|| ApiError::not_found("没有这本书的条目"))?;
             if removed > 0 {
                 s.bus.publish("notes", "entries");
             }
