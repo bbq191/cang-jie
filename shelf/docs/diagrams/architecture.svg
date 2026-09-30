@@ -10,32 +10,27 @@
 <text x="540.0" y="157" text-anchor="middle" font-size="14" font-weight="bold" fill="#1a1a1a">gateway  https://0.0.0.0:443 · shelf.local</text>
 <text x="540.0" y="184.5" text-anchor="middle" font-size="10.5" fill="#4a4a4a">私有 CA TLS + 登录页密码 · 单页 UI · /api/services · /api/manage · /api/events(SSE)</text>
 <text x="540.0" y="198.0" text-anchor="middle" font-size="10.5" fill="#4a4a4a">按注册表 /api/&lt;seg&gt;/* 反向代理 · 批量队列 · 并发/内存预算闸门</text>
-<rect x="30" y="290" width="240" height="120" rx="10" fill="#ffffff" stroke="#3f9a55" stroke-width="1.6"/>
-<text x="150.0" y="309.5" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">book-serve :8790</text>
-<text x="150.0" y="335.5" text-anchor="middle" font-size="10.5" fill="#4a4a4a">母版库：入库 / 优化 / 落库</text>
-<text x="150.0" y="349.0" text-anchor="middle" font-size="10.5" fill="#4a4a4a">投 xochitl · 原件下载/改名</text>
-<text x="150.0" y="362.5" text-anchor="middle" font-size="10.5" fill="#4a4a4a">回收站/建夹/页边距代理队列</text>
-<text x="150.0" y="376.0" text-anchor="middle" font-size="10.5" fill="#4a4a4a">优化引擎 bookconv（进程内库）</text>
-<polyline points="150,228 150,290" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#sa-a)"/>
-<rect x="290" y="290" width="240" height="120" rx="10" fill="#f4f4f2" stroke="#9a9a9a" stroke-width="1.6" stroke-dasharray="6 4"/>
-<text x="410.0" y="309.5" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#8a8a8a">koreader-serve :8791（已退役）</text>
-<text x="410.0" y="335.5" text-anchor="middle" font-size="10.5" fill="#8a8a8a">2026-09-29 设备卸载 KOReader</text>
-<text x="410.0" y="349.0" text-anchor="middle" font-size="10.5" fill="#8a8a8a">不再安装，网关不再转发</text>
-<text x="410.0" y="362.5" text-anchor="middle" font-size="10.5" fill="#8a8a8a">源码留在 shelf/services/ 作档</text>
-<rect x="550" y="290" width="240" height="120" rx="10" fill="#ffffff" stroke="#3f9a55" stroke-width="1.6"/>
-<text x="670.0" y="309.5" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">font-serve :8792</text>
-<text x="670.0" y="335.5" text-anchor="middle" font-size="10.5" fill="#4a4a4a">原生字体上传即装</text>
-<text x="670.0" y="349.0" text-anchor="middle" font-size="10.5" fill="#4a4a4a">fontconfig 中文回退链</text>
-<text x="670.0" y="362.5" text-anchor="middle" font-size="10.5" fill="#4a4a4a">（源码在 enhance/）</text>
-<polyline points="670,228 670,290" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#sa-a)"/>
-<rect x="810" y="290" width="240" height="120" rx="10" fill="#ffffff" stroke="#3f9a55" stroke-width="1.6"/>
-<text x="930.0" y="309.5" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">wallpaper-serve :8793</text>
-<text x="930.0" y="335.5" text-anchor="middle" font-size="10.5" fill="#4a4a4a">壁纸上传即用</text>
-<text x="930.0" y="349.0" text-anchor="middle" font-size="10.5" fill="#4a4a4a">池化轮换</text>
-<text x="930.0" y="362.5" text-anchor="middle" font-size="10.5" fill="#4a4a4a">原生 SleepScreenPath 键</text>
-<text x="930.0" y="376.0" text-anchor="middle" font-size="10.5" fill="#4a4a4a">（源码在 enhance/）</text>
-<polyline points="930,228 930,290" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#sa-a)"/>
-<text x="540" y="262" text-anchor="middle" font-size="10.5" fill="#5a5a5a">按注册表转发（剥掉 &lt;seg&gt;；请求体流式，下载或 &gt;256KB 应答流式，小应答缓冲）</text>
+<rect x="30" y="290" width="320" height="120" rx="10" fill="#ffffff" stroke="#3f9a55" stroke-width="1.6"/>
+<text x="190.0" y="309.5" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">book-serve :8790</text>
+<text x="190.0" y="335.5" text-anchor="middle" font-size="10.5" fill="#4a4a4a">母版库：入库 / 优化 / 落库</text>
+<text x="190.0" y="349.0" text-anchor="middle" font-size="10.5" fill="#4a4a4a">投 xochitl · 原件下载/改名</text>
+<text x="190.0" y="362.5" text-anchor="middle" font-size="10.5" fill="#4a4a4a">回收站/建夹/页边距代理队列</text>
+<text x="190.0" y="376.0" text-anchor="middle" font-size="10.5" fill="#4a4a4a">优化引擎 bookconv（进程内库）</text>
+<polyline points="190,228 190,290" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#sa-a)"/>
+<rect x="380" y="290" width="320" height="120" rx="10" fill="#ffffff" stroke="#3f9a55" stroke-width="1.6"/>
+<text x="540.0" y="309.5" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">font-serve :8792</text>
+<text x="540.0" y="335.5" text-anchor="middle" font-size="10.5" fill="#4a4a4a">原生字体上传即装</text>
+<text x="540.0" y="349.0" text-anchor="middle" font-size="10.5" fill="#4a4a4a">fontconfig 中文回退链</text>
+<text x="540.0" y="362.5" text-anchor="middle" font-size="10.5" fill="#4a4a4a">（源码在 enhance/）</text>
+<polyline points="540,228 540,290" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#sa-a)"/>
+<rect x="730" y="290" width="320" height="120" rx="10" fill="#ffffff" stroke="#3f9a55" stroke-width="1.6"/>
+<text x="890.0" y="309.5" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">wallpaper-serve :8793</text>
+<text x="890.0" y="335.5" text-anchor="middle" font-size="10.5" fill="#4a4a4a">壁纸上传即用</text>
+<text x="890.0" y="349.0" text-anchor="middle" font-size="10.5" fill="#4a4a4a">池化轮换</text>
+<text x="890.0" y="362.5" text-anchor="middle" font-size="10.5" fill="#4a4a4a">原生 SleepScreenPath 键</text>
+<text x="890.0" y="376.0" text-anchor="middle" font-size="10.5" fill="#4a4a4a">（源码在 enhance/）</text>
+<polyline points="890,228 890,290" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#sa-a)"/>
+<text x="200" y="262" font-size="10.5" fill="#5a5a5a">按注册表转发（剥掉 &lt;seg&gt;；请求体与下载/大应答流式）</text>
 <rect x="30" y="440" width="1020" height="92" rx="10" fill="#f3effa" stroke="#7a56b5" stroke-width="1.6" stroke-dasharray="6 4"/>
 <text x="540.0" y="459.5" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">笔记线 notes/（独立目录，挂同一网关/同一载荷）</text>
 <text x="540.0" y="485.5" text-anchor="middle" font-size="10.5" fill="#4a4a4a">ink-serve :8795 · transcribe-serve :8796 · mind-serve :8797 · note-serve :8798</text>
@@ -43,5 +38,5 @@
 <polyline points="930,182 1064,182 1064,486 1050,486" fill="none" stroke="#7a56b5" stroke-width="1.6" stroke-dasharray="6 4" marker-end="url(#sa-a)"/>
 <rect x="30" y="556" width="1020" height="34" rx="10" fill="#f2f2f5" stroke="#8a8a99" stroke-width="1.6" stroke-dasharray="6 4"/>
 <text x="540" y="578" text-anchor="middle" font-size="10.5" fill="#4a4a4a">共享底座 rmsvc-core：paths(XDG) · registry · events(SSE) · http · fswatch · xochitl 注入/找书 · cache · auth · config</text>
-<text x="540" y="616" text-anchor="middle" font-size="10.5" fill="#7a7a7a">URL 段 ↔ 服务：books→book-serve · fonts→font-serve · wallpapers→wallpaper-serve（gateway/src/manage.rs 的 MODULES 表是单一事实源）</text>
+<text x="540" y="604" text-anchor="middle" font-size="10.5" fill="#7a7a7a">URL 段 ↔ 服务：books→book-serve · fonts→font-serve · wallpapers→wallpaper-serve（KOReader 的 koreader-serve :8791 已于 2026-09-29 退役；gateway/src/manage.rs 的 MODULES 表是单一事实源）</text>
 </svg>

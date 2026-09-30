@@ -51,9 +51,9 @@
 <text x="540" y="236" text-anchor="middle" font-size="12" font-weight="bold" fill="#1a1a1a">五个条件必须同时满足</text>
 <text x="400" y="258" font-size="11.5" fill="#2a2a2a">1  开关开着</text>
 <text x="400" y="276" font-size="11.5" fill="#2a2a2a">2  整本判漫画（图为主，可含文字页）</text>
-<text x="400" y="294" font-size="11.5" fill="#2a2a2a">3  优化版本 = 当前 OPTIMIZE_VERSION（15）</text>
+<text x="400" y="294" font-size="11.5" fill="#2a2a2a">3  优化标记版本 ≥ 15（MIN_MARGIN_SINCE_VERSION）</text>
 <text x="400" y="312" font-size="11.5" fill="#2a2a2a">4  文字页带 cj-tp、混排页文字块带 cj-tx</text>
-<text x="400" y="330" font-size="11.5" fill="#2a2a2a">5  页框是 952×1457 或旧 954×1458（抽前 24 张整页图，过半吻合）</text>
+<text x="400" y="330" font-size="11.5" fill="#2a2a2a">5  前 24 张整页图过半是 952×1457（或旧 954×1458）</text>
 
 <line x1="540" y1="348" x2="540" y2="372" stroke="#555" stroke-width="1.6" marker-end="url(#cm-a)"/>
 <rect x="384" y="374" width="312" height="66" rx="6" fill="#ffffff" stroke="#3f9a55" stroke-width="1"/>
