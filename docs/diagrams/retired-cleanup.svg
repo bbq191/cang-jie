@@ -1,0 +1,96 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 640" font-family="Noto Sans CJK SC, sans-serif">
+<defs><marker id="rc-m" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#555"/></marker></defs>
+<rect x="0" y="0" width="1000" height="640" fill="#fbfbfa"/>
+<text x="500" y="32" text-anchor="middle" font-size="20" font-weight="bold" fill="#1a1a1a">更新旧设备时：install-all.sh 怎么清掉已移除的组件</text>
+<text x="500" y="56" text-anchor="middle" font-size="13" fill="#666">清理函数在 packaging/removal.sh，与 uninstall-all.sh 共用同一份；2026-09-30 起</text>
+
+<!-- 第一行：四个阶段 -->
+<rect x="30" y="80" width="200" height="92" rx="10" fill="#f2f2f4" stroke="#7a7a88" stroke-width="1.6"/>
+<text x="130" y="108" text-anchor="middle" font-size="14" font-weight="bold" fill="#1a1a1a">步骤 1–7 照常安装</text>
+<text x="130" y="132" text-anchor="middle" font-size="12" fill="#444">chrony … hl-snap · shelf</text>
+<text x="130" y="152" text-anchor="middle" font-size="12" fill="#444">扩展与界面补丁只落盘</text>
+
+<rect x="268" y="80" width="200" height="92" rx="10" fill="#fdf6e7" stroke="#c9a227" stroke-width="1.6"/>
+<text x="368" y="108" text-anchor="middle" font-size="14" font-weight="bold" fill="#1a1a1a">清理已移除:battop</text>
+<text x="368" y="132" text-anchor="middle" font-size="12" fill="#444">电池刺客</text>
+<text x="368" y="152" text-anchor="middle" font-size="12" fill="#444">--skip battop 可跳过</text>
+
+<rect x="506" y="80" width="220" height="92" rx="10" fill="#fdf6e7" stroke="#c9a227" stroke-width="1.6"/>
+<text x="616" y="108" text-anchor="middle" font-size="14" font-weight="bold" fill="#1a1a1a">清理已移除:handwriting-stroke</text>
+<text x="616" y="132" text-anchor="middle" font-size="12" fill="#444">手写优化（hw-stroke.so）</text>
+<text x="616" y="152" text-anchor="middle" font-size="12" fill="#444">--skip handwriting-stroke 可跳过</text>
+
+<rect x="764" y="80" width="206" height="92" rx="10" fill="#fdf0eb" stroke="#c0602d" stroke-width="1.6"/>
+<text x="867" y="108" text-anchor="middle" font-size="14" font-weight="bold" fill="#1a1a1a">8 xovi-apply</text>
+<text x="867" y="132" text-anchor="middle" font-size="12" fill="#444">有"待生效"才整机重启</text>
+<text x="867" y="152" text-anchor="middle" font-size="12" fill="#444">全程最多重启一次</text>
+
+<polyline points="230,126 266,126" fill="none" stroke="#555" stroke-width="1.7" marker-end="url(#rc-m)"/>
+<polyline points="468,126 504,126" fill="none" stroke="#555" stroke-width="1.7" marker-end="url(#rc-m)"/>
+<polyline points="726,126 762,126" fill="none" stroke="#555" stroke-width="1.7" marker-end="url(#rc-m)"/>
+
+<!-- 第二行：各自做什么 -->
+<polyline points="368,172 368,204" fill="none" stroke="#555" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#rc-m)"/>
+<polyline points="616,172 616,204" fill="none" stroke="#555" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#rc-m)"/>
+<polyline points="867,172 867,204" fill="none" stroke="#555" stroke-width="1.5" stroke-dasharray="4 3" marker-end="url(#rc-m)"/>
+
+<rect x="248" y="206" width="240" height="238" rx="10" fill="#ffffff" stroke="#c9a227" stroke-width="1.4"/>
+<text x="260" y="230" font-size="12.5" font-weight="bold" fill="#1a1a1a">设备上有残留吗？</text>
+<text x="260" y="252" font-size="12" fill="#2f6b3a">没有 → 什么都不动</text>
+<text x="260" y="270" font-size="11.5" fill="#666">  （不碰 systemd、不 remount）</text>
+<text x="260" y="296" font-size="12" fill="#222">有 →</text>
+<text x="260" y="316" font-size="12" fill="#222">① 停用并删 /usr 里的</text>
+<text x="260" y="334" font-size="12" fill="#222">   battop.service（旧版的 .timer）</text>
+<text x="260" y="352" font-size="11.5" fill="#666">   先过 dm-verity 门，限时读写窗口</text>
+<text x="260" y="376" font-size="12" fill="#222">② 删 /home/root/battop 整个目录</text>
+<text x="260" y="394" font-size="11.5" fill="#666">   程序 + 历史采样数据</text>
+<text x="260" y="418" font-size="11.5" fill="#8a4b00">dm-verity 开着删不掉单元时，</text>
+<text x="260" y="434" font-size="11.5" fill="#8a4b00">目录也保留，免得单元找不到程序</text>
+
+<rect x="506" y="206" width="220" height="238" rx="10" fill="#ffffff" stroke="#c9a227" stroke-width="1.4"/>
+<text x="518" y="230" font-size="12.5" font-weight="bold" fill="#1a1a1a">逐项删，不停 xochitl：</text>
+<text x="518" y="254" font-size="12" fill="#222">① 撤掉待换入区里的副本</text>
+<text x="518" y="276" font-size="12" fill="#222">② 删 extensions.d/hw-stroke.so</text>
+<text x="518" y="294" font-size="11.5" fill="#666">   （连同 .crashed 标记）</text>
+<text x="518" y="316" font-size="12" fill="#222">③ 删安装包目录 hw-stroke/</text>
+<text x="518" y="344" font-size="12.5" font-weight="bold" fill="#1a1a1a">xochitl 正加载着它？</text>
+<text x="518" y="366" font-size="12" fill="#b0441c">是 → 记待生效标记</text>
+<text x="518" y="384" font-size="11.5" fill="#b0441c">   removed-hw-stroke.so</text>
+<text x="518" y="408" font-size="12" fill="#2f6b3a">否 → 不用重启</text>
+<text x="518" y="432" font-size="11.5" fill="#666">reading-qol.json 的旧设置不动</text>
+
+<rect x="744" y="206" width="226" height="238" rx="10" fill="#ffffff" stroke="#c0602d" stroke-width="1.4"/>
+<text x="756" y="230" font-size="12.5" font-weight="bold" fill="#1a1a1a">看待生效标记：</text>
+<text x="756" y="254" font-size="12" fill="#222">这一轮 hl-snap / 界面补丁变了，</text>
+<text x="756" y="272" font-size="12" fill="#222">或摘了 hw-stroke.so</text>
+<text x="756" y="294" font-size="12" fill="#b0441c">→ 整机重启一次</text>
+<text x="756" y="312" font-size="11.5" fill="#666">   不单独重启 xochitl</text>
+<text x="756" y="330" font-size="11.5" fill="#666">   （它退出时有概率崩溃）</text>
+<text x="756" y="354" font-size="12" fill="#222">→ 设备回来后自动跑</text>
+<text x="756" y="372" font-size="12" fill="#222">   verify-on-device.sh</text>
+<text x="756" y="398" font-size="12" fill="#2f6b3a">什么都没变 → 不重启</text>
+<polyline points="690,375 735,375 735,290 752,290" fill="none" stroke="#b0441c" stroke-width="1.4" stroke-dasharray="4 3" marker-end="url(#rc-m)"/>
+
+<!-- 底部：不自动清的 & 只清不重装 -->
+<rect x="30" y="206" width="200" height="238" rx="10" fill="#f2f2f4" stroke="#7a7a88" stroke-width="1.4" stroke-dasharray="6 4"/>
+<text x="130" y="230" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">另外两样</text>
+<text x="42" y="256" font-size="12" fill="#222">旧 koreader-serve</text>
+<text x="42" y="274" font-size="11.5" fill="#666">shelf 步重装书架时顺手清</text>
+<text x="42" y="304" font-size="12" fill="#222">侧栏 KOReader 入口</text>
+<text x="42" y="322" font-size="11.5" fill="#666">不自动清：图标包</text>
+<text x="42" y="338" font-size="11.5" fill="#666">cangjie-icons.rcc 与别的</text>
+<text x="42" y="354" font-size="11.5" fill="#666">补丁同名过，只在你明确</text>
+<text x="42" y="370" font-size="11.5" fill="#666">跑 uninstall-all 时才删</text>
+<text x="42" y="400" font-size="11.5" fill="#666">verify 见到残留报 ⚠；</text>
+<text x="42" y="416" font-size="11.5" fill="#666">侧栏补丁在而 appload</text>
+<text x="42" y="432" font-size="11.5" fill="#666">已卸报 ✗</text>
+
+<rect x="30" y="466" width="940" height="110" rx="10" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.4"/>
+<text x="46" y="490" font-size="13" font-weight="bold" fill="#1a1a1a">不重装、只清某几样：uninstall-all.sh 跳过其它步骤</text>
+<text x="46" y="514" font-size="12" fill="#222">sh uninstall-all.sh &lt;host&gt; --dry-run --skip chrony-boot-wakelock,wifi-watch,xovi-persist,hl-snap,shelf,sidebar-entry</text>
+<text x="46" y="534" font-size="11.5" fill="#555">计划里应只剩 handwriting-stroke、battop 两步；确认后去掉 --dry-run 再跑，最后在设备上 reboot（别 systemctl restart xochitl）。</text>
+<text x="46" y="554" font-size="11.5" fill="#555">这串 --skip 由 lib.sh 的 uninstall_only_skip 生成，verify-on-device.sh 报 ⚠ 时给的就是它。</text>
+
+<text x="500" y="604" text-anchor="middle" font-size="12" fill="#2f6b3a">真机：2026-09-30 15:23 install-all 自动清掉电池刺客与 hw-stroke.so，只整机重启一次，核对 36✓ 1⚠（刚开机）0✗</text>
+<text x="500" y="624" text-anchor="middle" font-size="11.5" fill="#777">只清某几样的 uninstall-all 路径、dm-verity 下保留目录：只有本机模拟</text>
+</svg>
