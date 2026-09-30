@@ -832,7 +832,7 @@ EPUB 线原则④（09-17）：`comic_detect::is_comic`（`MIN_IMAGES=20`、`TEX
 | PDF 解压炸弹 | 页内容的嵌套流合计 64MB 封顶；转 EPUB 的 Flate 图片按声明宽×高×3 封顶 | `pdf-extract-cj::get_contents`、`pdf_ingest` 图片解码 |
 | 带 `opf:` 前缀的 OPF，分页拆出的第 2 份以后进不了 spine（丢后半章） | 登记时按本地名比较 | `wash/paginate.rs` 的 `register_in_opf` 用 `wash::opf::is_local` |
 | `pdfwrite::jpeg_to_image` 读 SOF 差一越界 panic | 边界改正 | `convert/pdfwrite.rs` |
-| 大文件通道读第三方 PDF 页数：对象 2 是 `/Outlines` 时把书签数当页数；读对象的跨度无上限 | 要求 `/Type /Pages`；字典对象最多读 4MB（`MAX_DICT_OBJ_BYTES`） | `PdfFileReader::page_count` |
+| 大文件通道读第三方 PDF 页数：对象 2 是 `/Outlines` 时把书签数当页数；读对象的跨度无上限 | 要求 `/Type /Pages`；字典对象最多读 4MB（`MAX_DICT_OBJ_BYTES`）；同日审计后大文件通道改走有界通用解析 `convert::pdfmeta`（认交叉引用流/对象流） | `PdfFileReader::page_count` → `pdfmeta::page_count` |
 
 **中**：截断的 XHTML（有 `<body>` 无 `</body>`）不再当空页删掉；PDF→EPUB 单通道 ICC 图不再被当 RGB 丢掉、`[FlateDecode DCTDecode]` 链不再被当裸 JPEG 出坏图；分类不再把 `\0` 算成文字（与仅裁边闸门同用 `visible_char_count`）；抽字时第三方代码 panic 不再让整次优化失败，改为按"无文字层"处理；远程图改走 `imgopt::downscale_for_epub`（842×1455 竖框，此前按整屏框缩、横幅可到 1696 宽，抓网文还缩两遍），超过 20MB 整张不要（`netimg::MAX_IMAGE_BYTES`，此前截断成残图）；`jpegopt` 表号 >3 越界、采样因子为 0 除零。
 
@@ -847,6 +847,6 @@ EPUB 线原则④（09-17）：`comic_detect::is_comic`（`MIN_IMAGES=20`、`TEX
 **明知没改（记录在案，待办）**：
 - PDF 裁边时整本输出仍在内存里攒；分类与裁边收集逐字位置（大 PDF 内存偏高）；
 - CMYK JPEG 裁边会报错；
-- 带交叉引用流的现代 PDF 走不了大文件通道（`PdfFileReader` 只认传统 xref 表）；
+- ~~带交叉引用流的现代 PDF 走不了大文件通道（`PdfFileReader` 只认传统 xref 表）~~——同日已补修：大文件通道读页数改走有界解析 `convert::pdfmeta`（交叉引用流、对象流、`/Prev` 链，内存硬上限），见传书线架构 §6.1；
 - hayro 以 2 倍渲染公式页没有像素上限；
 - `read_skeleton` 对非图片条目没有总量上限。

@@ -484,6 +484,48 @@ fn new_book_does_not_inherit_orphan_sidecar_and_gc_removes_orphans() {
     assert!(!s.dir.join(".gone.epub.delivered").exists());
 }
 
+/// 书名很长（250 字节中文，老式边车名要 261 字节、写不进去）：落库记录能写能读、网页列表看得到；改名、删除时边车跟着走 / 被删；
+/// 启动修复认得它；孤儿清理只清真孤儿（短名形式的孤儿也清），不误删有书的边车（2026-09-30）。
+#[test]
+fn long_book_name_sidecar_full_lifecycle() {
+    let t = tempfile::tempdir().unwrap();
+    let s = staging(&t);
+    let long = format!("{}abc.pdf", "书".repeat(81));
+    assert_eq!(long.len(), 250);
+    let name = s.stage_new(&long, b"%PDF-1.4").unwrap();
+    assert_eq!(name, long);
+    s.mark_delivered(&name, Reader::Native).unwrap();
+    assert!(s.list()[0].delivered.as_ref().is_some_and(|d| d.native.is_some()), "列表里看得到落库状态");
+    let car = sidecar::path_for(&s.dir.join(&name));
+    assert!(car.is_file() && car.file_name().unwrap().len() <= 255);
+    // 启动修复：pending → failed
+    s.set_optimize_check(&name, sidecar::OptimizeCheck { status: "pending".into(), ..Default::default() }).unwrap();
+    assert_eq!(s.recover_interrupted(), (1, 0));
+    assert_eq!(sidecar::read(&s.dir.join(&name)).unwrap().optimize.unwrap().status, "failed");
+    // 孤儿清理：有书的短名边车不动；再放一个普通孤儿 + 一个短名孤儿，都清掉
+    let orphan_long = sidecar::file_name_for(&format!("{}zz.pdf", "书".repeat(81)));
+    std::fs::write(s.dir.join(&orphan_long), b"{}").unwrap();
+    std::fs::write(s.dir.join(".gone.pdf.delivered"), b"{}").unwrap();
+    assert_eq!(s.gc_orphan_sidecars(), 2);
+    assert!(car.is_file(), "有书的边车不误删");
+    assert!(!s.dir.join(&orphan_long).exists() && !s.dir.join(".gone.pdf.delivered").exists());
+    // 改名（新名同样很长）：边车跟着走
+    let renamed = s.rename(&name, &format!("{}cd", "书".repeat(81))).unwrap();
+    assert!(!car.exists(), "旧边车挪走了");
+    assert!(sidecar::read(&s.dir.join(&renamed)).is_some_and(|d| d.native.is_some()), "新名下读得到原记录");
+    assert!(s.list()[0].delivered.is_some());
+    // 改成短名：边车回到老格式
+    let plain = s.rename(&renamed, "短名").unwrap();
+    assert!(s.dir.join(".短名.pdf.delivered").is_file());
+    let back = s.rename(&plain, &format!("{}ef", "书".repeat(81))).unwrap();
+    // 删书连带删边车
+    let back_car = sidecar::path_for(&s.dir.join(&back));
+    assert!(back_car.is_file());
+    s.remove(&back).unwrap();
+    assert!(!back_car.exists());
+    assert_eq!(std::fs::read_dir(&s.dir).unwrap().count(), 0, "目录里什么都不剩");
+}
+
 /// 跨分区入库（rename 失败走拷贝）：落地是完整文件、源删掉、目录里不留临时文件；源读不了时报错且母版库里不出现半截书。
 /// 需要一个与临时目录不同分区的可写目录（/dev/shm），没有就跳过。
 #[test]
@@ -981,6 +1023,38 @@ fn deliver_oversized_pdf_uses_direct_channel_and_records_ok_pages() {
     assert!(out.message.contains("已直接写入 xochitl 书库"), "{}", out.message);
     let rc = sidecar::read(&s.dir().join("big.pdf")).unwrap().render.unwrap();
     assert_eq!((rc.status.as_str(), rc.pages), ("ok", 3), "PDF 页数就是真页数，直接 ok");
+    let uuid_pdf = std::fs::read_dir(&lib).unwrap().flatten().find(|e| e.file_name().to_string_lossy().ends_with(".pdf")).unwrap().path();
+    assert_eq!(std::fs::read(uuid_pdf).unwrap(), pdf);
+}
+
+/// 第三方 PDF：页树根不在对象 2（对象 2 是带 `/Count` 的书签根）。此前 `PdfFileReader::page_count` 只认"对象 2 = Pages"，
+/// 这种书整本被拒收；现在顺着 Root → Pages 读真页数（交叉引用流 / 对象流的覆盖在 bookconv `pdfmeta` 的单测里）。
+#[test]
+fn deliver_oversized_third_party_pdf_reads_pages_via_root() {
+    let t = tempfile::tempdir().unwrap();
+    let (s, lib) = oversized_staging(&t);
+    let objs: [&[u8]; 4] = [b"<< /Type /Catalog /Pages 3 0 R /Outlines 2 0 R >>", b"<< /Type /Outlines /Count 9 >>", b"<< /Type /Pages /Kids [4 0 R] /Count 1 >>", b"<< /Type /Page /Parent 3 0 R /MediaBox [0 0 10 10] >>"];
+    let mut pdf = b"%PDF-1.4\n".to_vec();
+    let mut offs = Vec::new();
+    for (i, body) in objs.iter().enumerate() {
+        offs.push(pdf.len());
+        pdf.extend_from_slice(format!("{} 0 obj\n", i + 1).as_bytes());
+        pdf.extend_from_slice(body);
+        pdf.extend_from_slice(b"\nendobj\n");
+    }
+    pdf.extend_from_slice(&[b'%'; 200]); // 让体积超过测试里调小的直传上限
+    pdf.push(b'\n');
+    let xref = pdf.len();
+    pdf.extend_from_slice(b"xref\n0 5\n0000000000 65535 f \n");
+    for o in offs {
+        pdf.extend_from_slice(format!("{o:010} 00000 n \n").as_bytes());
+    }
+    pdf.extend_from_slice(format!("trailer\n<< /Size 5 /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n").as_bytes());
+    s.stage_new("third.pdf", &pdf).unwrap();
+    let out = s.deliver("third.pdf", "", &empty_mkdir(&t)).unwrap();
+    assert!(out.message.contains("已直接写入 xochitl 书库"), "{}", out.message);
+    let rc = sidecar::read(&s.dir().join("third.pdf")).unwrap().render.unwrap();
+    assert_eq!((rc.status.as_str(), rc.pages), ("ok", 1), "页数来自 Root→Pages 的 /Count，不是对象 2 的书签数");
     let uuid_pdf = std::fs::read_dir(&lib).unwrap().flatten().find(|e| e.file_name().to_string_lossy().ends_with(".pdf")).unwrap().path();
     assert_eq!(std::fs::read(uuid_pdf).unwrap(), pdf);
 }

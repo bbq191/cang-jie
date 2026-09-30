@@ -16,6 +16,8 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # statvfs 查母版库所在分区剩余空间（此前每次 GET /staging 都 fork 一个 `df`）；libc 本来就在依赖树里（inotify 拉进来的）
 libc = "0.2"
+# 书名太长时边车改用"截断书名 + sha256 前 16 位"的短名（`sidecar::file_name_for`）；跟 rmsvc-core 同一版本，不新增依赖树
+sha2 = "0.11"
 # 书里没有封面时联网补封面（`cover_fetch`，2026-09-29 移植自 sheng-ren）：ureq 查豆瓣/Wikidata（bookconv 已依赖同一版本）；
 # image 判封面尺寸、贴作者头像；ab_glyph（Apache-2.0）画生成封面上的字；fast2s（MIT）繁转简比对书名。许可证按各 crate 的 LICENSE 文件核过。
 ureq = "2"

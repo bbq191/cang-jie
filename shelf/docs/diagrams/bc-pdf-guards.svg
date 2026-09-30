@@ -60,10 +60,10 @@
 
 <!-- big file path -->
 <rect x="650" y="316" width="420" height="96" rx="10" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.5"/>
-<text x="860" y="339" font-size="13" fill="#1f3b66" text-anchor="middle" font-weight="bold">另一条路：大文件通道读页数（PdfFileReader）</text>
-<text x="860" y="361" font-size="11.5" fill="#374151" text-anchor="middle">页数必须来自 /Type /Pages 字典</text>
-<text x="860" y="380" font-size="11.5" fill="#374151" text-anchor="middle">字典对象最多读 4MB（MAX_DICT_OBJ_BYTES）</text>
-<text x="860" y="399" font-size="10.5" fill="#6b7280" text-anchor="middle">09-30：此前对象 2 是 /Outlines 时把书签数当页数</text>
+<text x="860" y="339" font-size="13" fill="#1f3b66" text-anchor="middle" font-weight="bold">另一条路：大文件通道读页数（pdfmeta）</text>
+<text x="860" y="361" font-size="11.5" fill="#374151" text-anchor="middle">startxref → /Prev 链 → /Root → /Pages 的 /Count</text>
+<text x="860" y="380" font-size="11.5" fill="#374151" text-anchor="middle">字典 ≤ 4MB · 流 ≤ 16MB 压缩 / 32MB 解压 · /Prev ≤ 64 节</text>
+<text x="860" y="399" font-size="10.5" fill="#6b7280" text-anchor="middle">09-30：认交叉引用流、对象流；此前只认"对象 2 = Pages"</text>
 
 <!-- why -->
 <rect x="30" y="440" width="1040" height="130" rx="10" fill="#f3f4f6" stroke="#9ca3af" stroke-width="1.5" stroke-dasharray="6 4"/>
@@ -71,5 +71,5 @@
 <text x="550" y="490" font-size="12" fill="#374151" text-anchor="middle">release 是 panic=unwind，普通 panic 能被 catch_unwind 接住，只坏一本书；</text>
 <text x="550" y="512" font-size="12" fill="#374151" text-anchor="middle">但<tspan font-weight="bold">栈溢出（SIGSEGV）和内存分配失败（abort）都不是 panic</tspan>，接不住——整个 book-serve 进程直接倒，</text>
 <text x="550" y="534" font-size="12" fill="#374151" text-anchor="middle">所有在途的优化、落库一起中断。所以递归要改成有上限的循环，按文件里的数字分配内存前要先封顶。</text>
-<text x="550" y="556" font-size="11" fill="#6b7280" text-anchor="middle">没改（记录）：带交叉引用流的现代 PDF 走不了大文件通道；hayro 2 倍渲染公式页无像素上限；裁边整本输出仍在内存里攒</text>
+<text x="550" y="556" font-size="11" fill="#6b7280" text-anchor="middle">没改（记录）：hayro 2 倍渲染公式页无像素上限；裁边整本输出仍在内存里攒</text>
 </svg>
