@@ -311,6 +311,12 @@ check "dm-verity 激活：不写 /usr、不 remount，二进制照装" test "$(c
 new_sandbox; PL="$R/payload"; mk_payload "$PL"
 run sh "$PL/install.sh" --only bogus >/dev/null 2>&1; rc=$?
 check "--only 未知令牌：退出 2、不写任何东西" test "$rc" -eq 2 -a ! -e "$R/home/root/.local/bin/gateway"
+# --only 也刷新 shelf-uninstall 用的清单（否则卸载拿旧清单漏删后来新增的 qmd）
+new_sandbox; PL="$R/payload"; mk_payload "$PL"
+run sh "$PL/install.sh" >/dev/null 2>&1
+echo "# 旧清单" > "$R/home/root/.local/lib/shelf/manifest.sh"
+run sh "$PL/install.sh" --only book >/dev/null 2>&1
+check "--only book：~/.local/lib/shelf/manifest.sh 也换成载荷里的新清单" cmp -s "$PL/manifest.sh" "$R/home/root/.local/lib/shelf/manifest.sh"
 # 旧命名迁移
 new_sandbox; PL="$R/payload"; mk_payload "$PL"
 echo old > "$CJ_SYSD/shelf-gateway.service"; ln -s ../shelf-gateway.service "$CJ_SYSD/multi-user.target.wants-x" 2>/dev/null

@@ -148,14 +148,13 @@ for s in $SEL; do
         done
     done
 done
-# 整包才装 shelf-uninstall 与它 source 的库（--only 装单个服务不动共享件）
-if [ -z "$ONLY" ]; then
-    for f in $SHELF_LIB_FILES; do
-        cj_safe_replace "$(_lib "$f")" "$LIB_DIR/$f" "$LIB_DIR" 644 || { echo "!! 写 $LIB_DIR/$f 失败"; exit 1; }
-    done
-    if [ -f "$SRC/uninstall.sh" ]; then
-        cj_safe_replace "$SRC/uninstall.sh" "$BIN_DIR/$SHELF_UNINSTALL_BIN" "$BIN_DIR" 755 || { echo "!! 写 shelf-uninstall 失败"; exit 1; }
-    fi
+# shelf-uninstall 与它 source 的库每次都刷新（--only 也刷）：清单是全仓库的，
+# 只装单个服务时不刷，卸载就会拿旧清单，漏掉后来新增的 qmd/单元
+for f in $SHELF_LIB_FILES; do
+    cj_safe_replace "$(_lib "$f")" "$LIB_DIR/$f" "$LIB_DIR" 644 || { echo "!! 写 $LIB_DIR/$f 失败"; exit 1; }
+done
+if [ -f "$SRC/uninstall.sh" ]; then
+    cj_safe_replace "$SRC/uninstall.sh" "$BIN_DIR/$SHELF_UNINSTALL_BIN" "$BIN_DIR" 755 || { echo "!! 写 shelf-uninstall 失败"; exit 1; }
 fi
 echo "-- 二进制已落 $BIN_DIR"
 if [ -n "$PASSWORD" ]; then "$BIN_DIR/gateway" passwd "$PASSWORD"; fi
