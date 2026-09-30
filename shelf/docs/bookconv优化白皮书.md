@@ -80,7 +80,7 @@
 | `convert/pdfwrite.rs`、`convert::direct_content_type` | PDF 读写 / 自产 PDF 识别 / 扩展名判 EPUB·PDF | 现役 |
 | `bin/` | `epub_optimize`、`cover_fix`、`cbz2pdf`（`comic_piece_extract` 2026-09-30 随分卷删除） | 开发期小工具（§11） |
 
-**当前版本** `OPTIMIZE_VERSION = "16"`（`optimize/mod.rs`，§10）。**调用方**：`book-serve::Staging::optimize`（流式）、`fetch_article`（组装时过一遍默认 `optimize_epub` = 不清洗，标记 `15-core`；勾“同步优化”再跑完整优化）、开发期 `epub-optimize`。**离线门槛**：`cargo test -p bookconv` 零警告（2026-09-30 第五轮审计后实跑：385 个通过、1 个忽略；整个 shelf workspace 521 个通过、2 个忽略 = bookconv 385 + book-serve 105 + 留档的 koreader-serve 26 + pdf-extract-cj 5）。
+**当前版本** `OPTIMIZE_VERSION = "16"`（`optimize/mod.rs`，§10）。**调用方**：`book-serve::Staging::optimize`（流式）、`fetch_article`（组装时过一遍默认 `optimize_epub` = 不清洗，标记 `15-core`；勾“同步优化”再跑完整优化）、开发期 `epub-optimize`。**离线门槛**：`cargo test -p bookconv` 零警告（2026-09-30 第五轮审计后实跑：385 个通过、1 个忽略；整个 shelf workspace 495 个通过、2 个忽略 = bookconv 385 + book-serve 105 + pdf-extract-cj 5；koreader-serve 同日稍后从仓库删除，此前含它 26 个共 521）。
 
 **未闭环**：无阻塞项；§13 都是“打磨精度”级。**一条已查清、bookconv 无杠杆的边界**（09-10，§12/§09⑭）：图片密集内容（网文抓取）分页时图片块页尾放不下就整体推下页、不回填，视觉上大片留白，与样式表无关。有人问“能不能优化掉图片留白”先看这条。
 

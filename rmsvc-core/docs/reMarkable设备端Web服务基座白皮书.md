@@ -26,7 +26,7 @@
 | 项 | 值 |
 |---|---|
 | 模块数 | 21 个（`lib.rs`；最近新增的模块是 09-24 的 `sync`，09-30 在 `cache`、`auth` 里各加了类型） |
-| 消费方 | `shelf/services/book-serve` · `enhance/{font,wallpaper}-serve` · `notes/services/{ink,transcribe,mind,note}-serve` + `notes/crates/vendorcfg` · `gateway/`。2026-09-29 退役的 `shelf/services/koreader-serve` 不再安装，但源码留档、仍按本 crate 编译，改接口时它也得编过 |
+| 消费方 | `shelf/services/book-serve` · `enhance/{font,wallpaper}-serve` · `notes/services/{ink,transcribe,mind,note}-serve` + `notes/crates/vendorcfg` · `gateway/`。2026-09-29 退役的 `shelf/services/koreader-serve` 源码已从仓库删除（2026-09-30），见 git 历史，不再是消费方 |
 | 依赖方向 | 单向：消费方 → 本 crate；本 crate 不知道任何消费方，不引用旧项目 crate（`device-core` / `weread-device`） |
 | workspace | 不建根 workspace，各项目各管各的 `target/` |
 | 测试 | 109 个单测，108 个默认跑、1 个默认忽略（需要网络命名空间的 mDNS 端到端测试），另有 1 个文档示例默认忽略；`cargo test --manifest-path rmsvc-core/Cargo.toml`，2026-09-30 第五轮审计后实跑全过。`vendor/tiny_http` 的补丁另有 1 个单测（在 vendored crate 里，不计入）。CI `rust` job 单列一步（CI 自 09-20 起因账户扣费没有实际执行） |
@@ -46,7 +46,7 @@
 
 ### service —— 启动模板（8 个服务都用）
 
-`service::run(&SPEC, bind, &paths, router)`：解析 `--bind` → 建齐 XDG 目录 → 写注册表 → 起 HTTP 服务器，自动挂 `GET /health`（返回 `{ok, service, version}`）。`run_with` 多一个 `ServeOpts`（TLS、登录守卫、并发上限），只有网关用。`ServiceSpec.tab` 给出网页标签名和顺序（font-serve、wallpaper-serve、note-serve 注册了；网关前端再把前两个收进“其他”标签。退役的 koreader-serve 源码里仍注册着 `KOReader` 标签，但它不再安装）。
+`service::run(&SPEC, bind, &paths, router)`：解析 `--bind` → 建齐 XDG 目录 → 写注册表 → 起 HTTP 服务器，自动挂 `GET /health`（返回 `{ok, service, version}`）。`run_with` 多一个 `ServeOpts`（TLS、登录守卫、并发上限），只有网关用。`ServiceSpec.tab` 给出网页标签名和顺序（font-serve、wallpaper-serve、note-serve 注册了；网关前端再把前两个收进“其他”标签。退役的 koreader-serve 当年注册过 `KOReader` 标签，它的源码 2026-09-30 已从仓库删除）。
 
 ### registry —— 服务注册与发现（网关、笔记四服务用）
 
@@ -85,13 +85,13 @@
 
 | 模块 | 谁在用 | 关键约定 |
 |---|---|---|
-| `paths` | 8 个服务 | XDG 基目录的**唯一路径表**，所有文件路径从这里取。设备 HOME 是 `/home/root`；配置 `~/.config/shelf/<服务>.json`，数据 `~/.local/share/shelf/`，状态 `~/.local/state/shelf/`，运行时 `$XDG_RUNTIME_DIR/shelf/`（注册表，重启即清），二进制 `~/.local/bin`。**上传暂存** `upload_tmp_dir()` = `~/.local/state/shelf/upload`（09-25 起；此前在运行时目录——单元没设 `XDG_RUNTIME_DIR` 时落到 `/tmp`，是 tmpfs：几十 MB 的中文字体整份占内存、计入服务 cgroup 的 `MemoryMax`，安装时还得再拷一遍到 /home）。外部约定可用 `SHELF_KOREADER_ROOT`、`SHELF_WEREAD_ROOT` 覆盖（2026-09-29 设备卸掉 KOReader 与 WeRead 后，前者只剩留档的 koreader-serve 在用，后者已无人调用）。`app_config_dir("notes")` 这类接口给非 `shelf` 命名空间的消费方 |
+| `paths` | 8 个服务 | XDG 基目录的**唯一路径表**，所有文件路径从这里取。设备 HOME 是 `/home/root`；配置 `~/.config/shelf/<服务>.json`，数据 `~/.local/share/shelf/`，状态 `~/.local/state/shelf/`，运行时 `$XDG_RUNTIME_DIR/shelf/`（注册表，重启即清），二进制 `~/.local/bin`。**上传暂存** `upload_tmp_dir()` = `~/.local/state/shelf/upload`（09-25 起；此前在运行时目录——单元没设 `XDG_RUNTIME_DIR` 时落到 `/tmp`，是 tmpfs：几十 MB 的中文字体整份占内存、计入服务 cgroup 的 `MemoryMax`，安装时还得再拷一遍到 /home）。（原外部约定 `SHELF_KOREADER_ROOT`、`SHELF_WEREAD_ROOT` 与 `koreader_root()`/`weread_root()`：2026-09-29 设备卸掉 KOReader 与 WeRead 后无人调用，2026-09-30 删除。）`app_config_dir("notes")` 这类接口给非 `shelf` 命名空间的消费方 |
 | `fs` | 8 个 | `write_atomic`：先写同目录临时文件再 rename；临时名 `<目标名>.<pid>.<序号>.tmp`，多线程/多进程同时写同一目标不会互相截断（09-20 前固定用 `<path>.tmp`）；目标名超过 200 字节（`TMP_BASE_MAX`）时按字符边界截短后再拼后缀（09-30：此前完整拼接，目标名 ≥243 字节就超过 Linux 单段 255 字节上限，报 `File name too long`）。`write_atomic_mode`：临时文件**创建时**就带指定权限，含密钥的文件没有“先宽后紧”的窗口（09-24）。`plain_name` 校验单段文件名（不含 `/`、不是 `.`/`..`、不以 `.` 开头）；`unique_path` 同名不覆盖（`1_x`、`2_x`…）；`move_unique` 跨设备回退 copy+rm |
 | `config` | 7 个 | JSON 配置模板：`load_or_default`、`load_or_seed`（首启写出缺省）、`save`（原子写，可选 0600）。`is_corrupt` 判断“文件在但解析不了”，给启动时要落盘的调用方决定是否跳过，免得把损坏的配置覆盖成缺省（09-24） |
 | `multipart` | book-serve、note-serve、网关 | 头参数按 `;` 切分时**引号内的 `;` 不切**（09-25：此前 `filename="甲; 乙.epub"` 被截成 `甲`，扩展名丢失被当成不支持的格式拒收；浏览器把文件名里的 `"` 编成 `%22`，所以只认成对双引号）。流式 multipart/form-data 解析，每个 part 以 `Read` 交出、边读边落盘，多文件一次 POST 也不把请求体读进内存。分隔符扫描记进度、按首字节跳查（200MB 上传体解析 1245ms → 46ms，09-22）。`percent_decode` 遇多字节字符不再 panic（查询串/表单语义，`+`=空格；路径段与 `filename*=` 用 `percent_decode_path`，`+` 原样）；`content_disposition(filename)` 生成下载头（ASCII 兜底名 + RFC 5987 UTF-8 名，笔记导出与原件下载共用） |
-| `asset` | book-serve、font-serve、wallpaper-serve（及留档的 koreader-serve） | `AssetStore`（仓库：`validate`/`install`/`list`/`remove`）+ `AssetUploadFlow`（上传流程写一次）。拒收/成功文案由各仓库覆盖。暂存目录：`new(&paths)` 用上面的 `upload_tmp_dir()`（font-serve、wallpaper-serve），`in_dir(dir)` 由调用方指定（book-serve 用母版库同分区的 `.work/`；留档的 koreader-serve 用 `~/.local/state/shelf/koreader-upload`）。半成品名是 `.<uuid>.<kind>.part`，`clean_stale()` 在服务启动时清掉上次中途被杀留下的（font-serve、wallpaper-serve 启动时调用，09-25；koreader-serve 当年也调）。暂存与目标同在 /home，font-serve 安装直接改名，跨分区才退回拷贝 |
-| `formats` | 5 个 + 网关 | 文件格式白名单的**单一事实源**：书籍只收 `epub`/`pdf`（09-18 起），字体 `ttf/otf/ttc`，词典 `ifo/idx/dict/dz/syn/oft`，图片 `jpg/jpeg/png`。网页 `accept`（网关注入）和服务端上传门同源 |
-| `ttf` | font-serve（及留档的 koreader-serve） | TTF/OTF 家族名（nameID 16 优先）、魔数校验、CJK 覆盖率；汉字覆盖数钳到区内总码位、够数即停（防恶意字体堆重叠段导致数亿次迭代，09-22）；format-12 里 `startCharCode > endCharCode` 的损坏组跳过（09-25：此前相减下溢，debug 版 panic、release 版回绕成天文数字直接报满 100%） |
+| `asset` | book-serve、font-serve、wallpaper-serve | `AssetStore`（仓库：`validate`/`install`/`list`/`remove`）+ `AssetUploadFlow`（上传流程写一次）。拒收/成功文案由各仓库覆盖。暂存目录：`new(&paths)` 用上面的 `upload_tmp_dir()`（font-serve、wallpaper-serve），`in_dir(dir)` 由调用方指定（book-serve 用母版库同分区的 `.work/`；已删的 koreader-serve 当年用 `~/.local/state/shelf/koreader-upload`）。半成品名是 `.<uuid>.<kind>.part`，`clean_stale()` 在服务启动时清掉上次中途被杀留下的（font-serve、wallpaper-serve 启动时调用，09-25；koreader-serve 当年也调）。暂存与目标同在 /home，font-serve 安装直接改名，跨分区才退回拷贝 |
+| `formats` | 5 个 + 网关 | 文件格式白名单的**单一事实源**：书籍只收 `epub`/`pdf`（09-18 起），字体 `ttf/otf/ttc`，图片 `jpg/jpeg/png`（KOReader 词典 `DICT_EXTS` 2026-09-30 删）。网页 `accept`（网关注入）和服务端上传门同源 |
+| `ttf` | font-serve | TTF/OTF 家族名（nameID 16 优先）、魔数校验、CJK 覆盖率；汉字覆盖数钳到区内总码位、够数即停（防恶意字体堆重叠段导致数亿次迭代，09-22）；format-12 里 `startCharCode > endCharCode` 的损坏组跳过（09-25：此前相减下溢，debug 版 panic、release 版回绕成天文数字直接报满 100%） |
 | `cache` | `TtlCache`：book-serve、网关（设备健康页）；`StampCache`：book-serve | **`TtlCache`**：单值 TTL 缓存，给每次刷新都会打、但算一次很重的 `/status`（如 3 秒 TTL）；本服务操作完成时 `invalidate`。计算期间持锁，并发请求等同一份结果。**`StampCache` + `FileStamp`**（09-30）：按文件戳失效的键值缓存，给“每次列表都要开文件判一遍、但文件很少变”的查询用（母版库列表的优化等级 / 落库边车、阅读方向判 zip）。戳 = (长度, mtime, inode)：带 inode 是因为 mtime 按时钟节拍取，同一节拍里原子写成等长内容只看 (长度, mtime) 会误判没变。计算**不持锁**（同键并发只是多算一次）；条目到上限整表清空重来，调用方可 `retain` 掉已删的键。此前 book-serve 里三处各写一份“(大小, mtime) 缓存” |
 | `clock` | 8 个 | unix 时间戳唯一出处；取不到时间回 0 |
 | `sync` | book-serve、网关、笔记线四个服务与 vendorcfg、font-serve、wallpaper-serve、本 crate 自身 | `sync::lock`：容忍 poison 的取锁。release 是 `panic="unwind"`，线程 panic 后它持有的锁被标 poison，别处再 `.lock().unwrap()` 就会让之后每个请求都跟着 panic；这里保护的都是缓存/队列/计数这类半途中断也自洽的状态，接着用即可。09-24 收编了 book-serve 私有的 `ops::lock` 和书架两服务、本 crate 里手写的 `.lock().unwrap_or_else(|e| e.into_inner())`，09-25 又把网关、笔记线、系统增强的 33 处改用它（见 §07）。条件变量 `wait*` 的 poison 处理它管不到，仍是手写 |

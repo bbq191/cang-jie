@@ -112,7 +112,7 @@
 | `mind` | mind-serve | 8797 | **否** | notes（问 AI，纯被动） |
 | `notes` | note-serve | 8798 | 是 | notes（笔记本 / 导出） |
 
-端口是各服务的缺省值，代理实际按注册表里写的转发。原来还有一行 `koreader` → koreader-serve（8791），随 2026-09-29 设备卸载 KOReader 于 09-30 撤掉：`/api/koreader/*` 现在回 404“未知服务”，也不再订阅它的事件（此前每 5 分钟白醒一次）；koreader-serve 源码仍留在 shelf 的 workspace 里编译，只是不再安装。新服务接入两步：服务用 `rmsvc_core::service::run` 启动（自动注册、自带 `/health`），再在 `MODULES` 加一行。
+端口是各服务的缺省值，代理实际按注册表里写的转发。原来还有一行 `koreader` → koreader-serve（8791），随 2026-09-29 设备卸载 KOReader 于 09-30 撤掉：`/api/koreader/*` 现在回 404“未知服务”，也不再订阅它的事件（此前每 5 分钟白醒一次）；koreader-serve 源码 2026-09-30 也已从仓库删除（见 git 历史）。新服务接入两步：服务用 `rmsvc_core::service::run` 启动（自动注册、自带 `/health`），再在 `MODULES` 加一行。
 
 ### 2.2 路由与代理行为
 
@@ -227,7 +227,7 @@
 
 7. **“已完成”只认加入过 xochitl**（09-30）：“隐藏已完成”和「已完成」筛选看的是 `delivered.native`。设备卸掉 KOReader 后，以前只加入过 KOReader 的书不在任何阅读器里，会回到“待处理”；徽章也只显示“已加入 xochitl”，不再有“已加入KO”。
 
-原件下载、改名、原 PDF 恢复、笔记全文搜索这些 09-23/24 新功能，业务逻辑在 book-serve / note-serve，网关只是页面宿主，细节见书架与笔记白皮书。（同期的“导入 KOReader 批注”按钮 09-30 已从网页移除；note/ink 侧接口仍保留，见笔记白皮书。）
+原件下载、改名、原 PDF 恢复、笔记全文搜索这些 09-23/24 新功能，业务逻辑在 book-serve / note-serve，网关只是页面宿主，细节见书架与笔记白皮书。（同期的“导入 KOReader 批注”按钮 09-30 已从网页移除；ink 侧接口同日也已从仓库删除，见笔记白皮书第 9 章。）
 
 ## 06｜系统增强接口（`src/enhance/`）
 
