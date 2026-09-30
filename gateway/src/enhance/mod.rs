@@ -1,16 +1,12 @@
 //! 系统增强工具开关（Track 3，2026-09-09）：网关自身固定能力（跟 `manage` 一样不经过服务注册表/反代），
-//! 给原来只能在设备原生「设置」App 里改的开关一个网页入口。现接的开关：CJK 荧光笔吸附/CJK 手写笔迹优化/
-//! 「导入 md 文档」可见性/漫画页边距最小化/单击翻页/日漫翻页规则（都在 [`qol`]，同一份 `reading-qol.json`）+ 电池刺客 battop
-//! （[`battop`]，独立 systemd unit）。
+//! 给原来只能在设备原生「设置」App 里改的开关一个网页入口。现接的开关：CJK 荧光笔吸附/
+//! 「导入 md 文档」可见性/漫画页边距最小化/单击翻页/日漫翻页规则（都在 [`qol`]，同一份 `reading-qol.json`）。
 //!
-//! **「CJK 手写笔迹优化」这句注释曾经写"目前完全不存在、没有反编译地基"——那是 2026-09-09 刚开线时
-//! 的状态，早就过时了**：`enhance/handwriting-stroke/src/hw_stroke.c` 现在是真机验证过的 xovi 扩展
-//! （两个 hook 目标、笔尖角度+提按速度两个效果），这里的开关是纯网页层派生态（见 `qol::Qol::hw_stroke_enabled`
-//! 头注为什么不需要单独的布尔字段），不需要碰设备端 C 代码/重新编译部署 `.so`。
+//! 2026-09-30 移除：电池刺客（battop，原 `battop.rs` + `/api/enhance/battop/*`）与手写优化（hw-stroke 扩展的
+//! `hwStrokeEnabled` 派生开关）。`reading-qol.json` 里残留的 `hwStroke*` 键不主动清——全量写回、不认识的键原样保留。
 //!
-//! 以后再加系统增强能力，往这个目录加一个新文件（比照 `qol.rs`/`battop.rs`）+ 这里挂一个路由，
-//! 不需要单独起一个 service（这两个能力都是同机文件 I/O / systemctl 直调，没有独立进程边界的理由）。
-mod battop;
+//! 以后再加系统增强能力，往这个目录加一个新文件（比照 `qol.rs`）+ 这里挂一个路由，
+//! 不需要单独起一个 service（同机文件 I/O，没有独立进程边界的理由）。
 mod loaded;
 mod qol;
 
@@ -27,21 +23,18 @@ pub fn xochitl_loaded(paths: &Paths) -> loaded::Loaded {
 }
 
 pub fn status(paths: &Paths) -> Reply {
-    let b = battop::status();
     let q = qol::Qol::load(paths);
     Reply::ok(&serde_json::json!({
         "hlSnapCjk": q.hl_snap_cjk(),
-        "hwStrokeEnabled": q.hw_stroke_enabled(),
         "notesImportMdEnabled": q.notes_import_md_enabled(),
         "comicMinMargin": q.comic_min_margin(),
         "tapPageTurn": q.tap_page_turn(),
         "rtlPageTurn": q.rtl_page_turn(),
-        "battop": {"installed": b.installed, "running": b.running, "lastSampleAt": b.last_sample_at},
         "loaded": xochitl_loaded(paths),
     }))
 }
 
-/// `PUT /api/enhance/qol`：接 `{hlSnapCjk}`/`{hwStrokeEnabled}`/`{notesImportMdEnabled}`/`{comicMinMargin}`/`{tapPageTurn}`/`{rtlPageTurn}`，body 里出现
+/// `PUT /api/enhance/qol`：接 `{hlSnapCjk}`/`{notesImportMdEnabled}`/`{comicMinMargin}`/`{tapPageTurn}`/`{rtlPageTurn}`，body 里出现
 /// 哪个就改哪个（`qol::patch` 本身是通用的 key-patch，将来加键直接扩这里）。
 pub fn set_qol(paths: &Paths, req: &mut Request<'_>) -> ApiResult {
     let body = req.json()?;
@@ -52,35 +45,11 @@ pub fn set_qol(paths: &Paths, req: &mut Request<'_>) -> ApiResult {
             changes.insert(key.into(), serde_json::Value::Bool(v));
         }
     }
-    if let Some(v) = body.0.get("hwStrokeEnabled").and_then(|v| v.as_bool()) {
-        // 两个 min_ratio 永远同步写——网页层只表达"开/关"这一个语义，角度/宽度/速度阈值这几个精调
-        // 字段留给手改 reading-qol.json，网页开关不碰（见白皮书 §03f「实验室」小节的设计取舍）。
-        let ratio = if v { 0.6 } else { 1.0 };
-        changes.insert("hwStrokeNibMinRatio".into(), serde_json::json!(ratio));
-        changes.insert("hwStrokeSpeedMinRatio".into(), serde_json::json!(ratio));
-    }
     if changes.is_empty() {
-        return Err(ApiError::bad("body 需要 hlSnapCjk/hwStrokeEnabled/notesImportMdEnabled/comicMinMargin/tapPageTurn/rtlPageTurn 其中一个布尔字段"));
+        return Err(ApiError::bad("body 需要 hlSnapCjk/notesImportMdEnabled/comicMinMargin/tapPageTurn/rtlPageTurn 其中一个布尔字段"));
     }
     qol::patch(paths, changes).map_err(ApiError::internal)?;
     Ok(status(paths))
-}
-
-/// `POST /api/enhance/battop/{start|stop}`。开关卡片在「管理 → 系统增强」（2026-09-21 从实验室移过来），耗电/唤醒数据在
-/// 运行时才出现的「管理 → 电池刺客」二级 tab；不发事件，网页在开关后自己重取 `/api/enhance/status`。
-pub fn battop_toggle(_paths: &Paths, req: &mut Request<'_>) -> ApiResult {
-    battop::toggle(req.param("action")).map_err(ApiError::bad)?;
-    Ok(Reply::ok(&serde_json::json!({"ok": true})))
-}
-
-/// `GET /api/enhance/battop/summary`：原样转发 `battop::summary()`（4 个时间窗 × 应用/进程/唤醒源
-/// top15，battop 自己聚合好的，这里不重新算）。还没有数据（刚装/从没跑过一次采样）时 `available:false`，
-/// 网页显示"还没有数据，等下一次采样"而不是报错——这不是异常状态，是正常的"刚装上"过渡态。
-pub fn battop_summary(_paths: &Paths, _req: &mut Request<'_>) -> ApiResult {
-    match battop::summary() {
-        Some(v) => Ok(Reply::ok(&serde_json::json!({"available": true, "summary": v}))),
-        None => Ok(Reply::ok(&serde_json::json!({"available": false}))),
-    }
 }
 
 #[cfg(test)]
@@ -103,10 +72,12 @@ mod tests {
         let v: serde_json::Value = serde_json::from_slice(&rep.body).unwrap();
         assert_eq!((v["comicMinMargin"].as_bool(), v["hlSnapCjk"].as_bool()), (Some(true), Some(false)));
         assert_eq!(v["notesImportMdEnabled"], false, "没传的键保持缺省");
-        // 只传 hwStrokeEnabled：两个 ratio 同步写，上一次的键不被冲掉
-        let rep = put(&paths, br#"{"hwStrokeEnabled":true}"#).unwrap();
-        assert_eq!(serde_json::from_slice::<serde_json::Value>(&rep.body).unwrap()["hwStrokeEnabled"], true);
+        // 只传 tapPageTurn：上一次写的键不被冲掉
+        put(&paths, br#"{"tapPageTurn":true}"#).unwrap();
         assert!(qol::Qol::load(&paths).comic_min_margin());
+        // 已移除的 hwStrokeEnabled（2026-09-30）不再被认：单独传它 → 拒绝，也不写任何键
+        assert!(put(&paths, br#"{"hwStrokeEnabled":true}"#).is_err());
+        assert!(!std::fs::read_to_string(paths.home().join(".local/share/cangjie-ime/reading-qol.json")).unwrap().contains("hwStroke"));
         // 没有任何可识别的布尔字段 → 拒绝
         assert!(put(&paths, br#"{"hlSnapCjk":"yes"}"#).is_err());
     }

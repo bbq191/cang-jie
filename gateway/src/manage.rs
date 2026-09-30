@@ -52,7 +52,7 @@ const RUN_TIMEOUT: Duration = Duration::from_secs(30);
 /// 卸载脚本要 stop 单元、删二进制/qmd，宽一些。
 const UNINSTALL_TIMEOUT: Duration = Duration::from_secs(180);
 
-/// `pub(crate)`：`enhance::battop` 复用同一套 systemctl 调用（避免重新实现一遍 `Command` 样板）。
+/// `pub(crate)`：`device::health` 复用同一套 systemctl 调用（避免重新实现一遍 `Command` 样板）。
 /// 带 [`RUN_TIMEOUT`] 超时，超时会 kill 子进程并报错。
 pub(crate) fn run(cmd: &str, args: &[&str]) -> Result<String, String> {
     run_timeout(cmd, args, RUN_TIMEOUT)

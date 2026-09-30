@@ -152,8 +152,6 @@ fn main() {
         // 系统增强开关（Track 3）：网关自身固定能力。
         .get("/api/enhance/status", bind(&paths, |p, _| Ok(enhance::status(p))))
         .put("/api/enhance/qol", bind(&paths, enhance::set_qol))
-        .get("/api/enhance/battop/summary", bind(&paths, enhance::battop_summary))
-        .post("/api/enhance/battop/{action}", bind(&paths, enhance::battop_toggle))
         // 设备健康 / OTA 横幅 / 遗留清理（2026-09-25，见 device/mod.rs）：只读采集按需触发，不轮询。
         .get("/api/device/health", bind(&paths, device::health))
         .get("/api/device/ota", bind(&paths, device::ota_status))

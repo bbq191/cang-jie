@@ -197,7 +197,7 @@ function uploader(box,urlOf,queryOf,okExt,onFinish,dedupeApi){
 }
 
 /* 二级标签：面板都由外层 render/refresh 预先填好，切换只显隐。`:scope >` 限定只找 sec 的**直接
-   子元素**：subnav 会嵌套（「管理 → 电池刺客 → 耗电情况 → 时间窗」「管理 → 设备健康」各有自己的一层），不加
+   子元素**：subnav 会嵌套（「管理 → 设备健康」有自己的一层，笔记页也有；2026-09-30 前还有「管理 → 电池刺客 → 耗电情况 → 时间窗」），不加
    `:scope >` 的话外层 querySelectorAll('.subpanel') 会把内层的 subpanel 也扫进来，按钮与面板按下标配对就错位。 */
 function subtabs(sec){const nav=sec.querySelector(':scope > .subnav');if(!nav)return;const btns=[...nav.children],panels=[...sec.querySelectorAll(':scope > .subpanel')];
   btns.forEach((b,i)=>b.onclick=()=>{btns.forEach(x=>x.classList.remove('on'));panels.forEach(p=>p.classList.remove('on'));b.classList.add('on');if(panels[i])panels[i].classList.add('on')});}
@@ -1098,103 +1098,6 @@ function mountModelPanel(root,seg,title,icon,showAuto){
   return refresh;
 }
 
-/* 电池刺客（battop）——2026-09-10 拆成两处：①「实验室」卡片只留开关+说明（mountBattopToggleCard，
-   checkbox 直接对应 systemd start/stop，不是 reading-qol.json 那种纯 JSON 开关）；②「管理→电池
-   刺客」二级 tab（renderBattopDetail，运行时才出现，见 renderManage 里的可见性同步逻辑）放真正的
-   数据——耗电情况（按应用/按进程）+ 唤醒源两个三级子标签，数据源是 battop 常驻聚合的 summary.json
-   （4 个时间窗：今日/7天/30天/全部），网页不重新聚合，只管排版，跟以前设备端 battery-audit.sh/
-   FINDINGS.md 那份报告对标的思路一样，只是这次是持续聚合不是一次性跑分析脚本。 */
-const fmtMs=ms=>ms>=3600000?T('battop.hours',{n:(ms/3600000).toFixed(1)}):ms>=60000?T('battop.minutes',{n:(ms/60000).toFixed(1)}):T('battop.seconds',{n:(ms/1000).toFixed(0)});
-// 顶层常量只放 key 名（label 字段），真正的 T() 查找挪到 renderBattopWindowed 里（渲染时执行），见 T() 头注。
-const BATTOP_WINDOWS=[{key:'today',label:'battop.window.today'},{key:'7d',label:'battop.window.7d'},{key:'30d',label:'battop.window.30d'},{key:'all',label:'battop.window.all'}];
-const battopTopList=items=>items&&items.length
-  ?`<ul class="list">${items.map(it=>`<li><span>${esc(it.name)}</span><span class="small">${fmtMs(it.ms)} · ${it.pct}%</span></li>`).join('')}</ul>`
-  :`<p class="small">${T('battop.noData')}</p>`;
-/* 时间窗 subnav+subpanel 骨架，耗电情况/唤醒源两处共用——contentFn(windowData)→这个窗口要显示的 HTML。 */
-/* activeIdx：重画时保留原来选中的时间窗（比如耗电情况的"按应用/按进程"下拉切换只想换列表内容，
-   不想把用户刚选的"7天"弹回"今日"），不传就默认第一个。每个时间窗的内容包一层 `.card`——跟这个
-   app 别处"subnav 切换、每块内容各自一张卡"的样子统一（battop 详情页之前漏了这层，2026-09-10 用户指出补上）。 */
-function renderBattopWindowed(container,windowsData,contentFn,activeIdx=0){
-  container.innerHTML=`<div class="subnav">${BATTOP_WINDOWS.map((x,i)=>`<button${i===activeIdx?' class="on"':''}>${T(x.label)}</button>`).join('')}</div>
-    ${BATTOP_WINDOWS.map((x,i)=>`<div class="subpanel${i===activeIdx?' on':''}"><div class="card">${contentFn(windowsData[x.key]||{})}</div></div>`).join('')}`;
-  subtabs(container);
-}
-/* 当前激活的时间窗下标——重画前先读一遍，喂给上面的 activeIdx。 */
-function battopActiveWindowIdx(container){
-  const nav=container.querySelector(':scope > .subnav');
-  if(!nav)return 0;
-  const i=[...nav.children].findIndex(b=>b.classList.contains('on'));
-  return i<0?0:i;
-}
-
-function mountBattopToggleCard(container){
-  container.innerHTML=`<h3 style="margin-top:0">${T('battop.title')}</h3>
-    <p class="small">${T('battop.toggle.desc')}</p>
-    <label class="toggle"><input type="checkbox" data-box disabled> ${T('battop.toggle.label')}</label>
-    <p class="small" data-note></p>`;
-  const box=container.querySelector('[data-box]'),note=container.querySelector('[data-note]');
-  let installed=false;
-  const refresh=async(known)=>{const r=known||await j('/api/enhance/status');if(r.ok===false)return; // known：调用方刚取过的 /api/enhance/status，省一次重复请求
-    const st=r.battop||{};installed=!!st.installed;
-    box.checked=!!st.running;box.disabled=!installed;
-    note.textContent=installed?'':T('battop.toggle.notInstalled')};
-  box.onchange=async()=>{if(!installed)return;const want=box.checked;box.disabled=true;
-    if((await sendT(`/api/enhance/battop/${want?'start':'stop'}`,'POST')).ok===false)box.checked=!want;
-    box.disabled=false;await refresh()};
-  // 挂载时不自己取：唯一调用方（「管理」页）挂载后紧接着就取 /api/enhance/status 并把结果传进来（erApply），
-  // 这里再取一次就是同一个接口连发两遍（每次都让网关查 systemctl + 扫 xochitl 进程映射）。
-  return refresh;
-}
-
-/* 「管理→电池刺客」二级 tab 内容：耗电情况（按应用+按进程）/ 唤醒源，各自内部再按时间窗切换
-   （三级嵌套：管理 subnav → 电池刺客 subpanel → 这里的 subnav → 耗电情况/唤醒源 subpanel →
-   renderBattopWindowed 自己的 subnav → 时间窗 subpanel——subtabs() 的 `:scope >` 收紧保证每层
-   只认自己的直接子元素，见 subtabs() 头注）。 */
-function renderBattopDetail(sec){
-  sec.innerHTML=`<div class="subnav"><button class="on">${T('battop.subnav.usage')}</button><button>${T('battop.subnav.wake')}</button></div>
-    <div class="subpanel on" data-usage></div>
-    <div class="subpanel" data-wake></div>`;
-  const usageEl=sec.querySelector('[data-usage]'),wakeEl=sec.querySelector('[data-wake]');
-  const refresh=async()=>{
-    const r=await j('/api/enhance/battop/summary');
-    if(r.ok===false||!r.available){
-      const msg=`<div class="card"><p class="small">${T('battop.noSamplesYet')}</p></div>`;
-      usageEl.innerHTML=msg;wakeEl.innerHTML=msg;return;
-    }
-    const w=r.summary.windows||{};
-    /* 每个子标签开头一张说明卡（标题+一句话说明），跟「系统增强」那些卡片同一个
-       视觉语言；「按应用/按进程」下拉放这张卡里——下拉要跨时间窗持续存在，不能放进
-       renderBattopWindowed 生成的、每次切时间窗都可能重画的内容里（2026-09-10 用户要求统一
-       风格顺手理清楚这条边界）。 */
-    if(!usageEl.querySelector('[data-metric]')){
-      usageEl.innerHTML=`<div class="card"><h3 style="margin-top:0">${T('battop.usage.title')}</h3>
-        <p class="small">${T('battop.usage.desc')}</p>
-        <div class="row"><label class="small" for="battopMetric">${T('battop.usage.metricLabel')}</label>
-        <select id="battopMetric" data-metric><option value="app">${T('battop.usage.byApp')}</option><option value="proc">${T('battop.usage.byProcess')}</option></select></div></div>
-        <div data-usagewin></div>`;
-    }
-    const metricSel=usageEl.querySelector('[data-metric]'),usageWinEl=usageEl.querySelector('[data-usagewin]');
-    const renderUsage=()=>{
-      const label=metricSel.value==='app'?T('battop.usage.byApp'):T('battop.usage.byProcess');
-      renderBattopWindowed(usageWinEl,w,d=>`<p class="small">${T('battop.usage.statLine',{discharge:d.discharge||0,mah:d.mah||0,ma:d.ma||0,samples:d.samples||0})}</p>
-        <h4 style="margin:.6em 0 .2em">${T('battop.usage.rankHeading',{metric:label})}</h4>${battopTopList(metricSel.value==='app'?d.app:d.proc)}`,
-        battopActiveWindowIdx(usageWinEl));
-    };
-    metricSel.onchange=renderUsage;
-    renderUsage();
-    if(!wakeEl.querySelector('[data-wakewin]')){
-      wakeEl.innerHTML=`<div class="card"><h3 style="margin-top:0">${T('battop.wake.title')}</h3>
-        <p class="small">${T('battop.wake.desc')}</p></div>
-        <div data-wakewin></div>`;
-    }
-    renderBattopWindowed(wakeEl.querySelector('[data-wakewin]'),w,d=>`<p class="small">${T('battop.wake.samples',{n:d.samples||0})}</p>
-      <h4 style="margin:.6em 0 .2em">${T('battop.wake.rankHeading')}</h4>${battopTopList(d.wake)}`,
-      battopActiveWindowIdx(wakeEl.querySelector('[data-wakewin]')));
-  };
-  // 不在这里先取一次：这个面板只在 battop 运行时显示，由「管理」页的 erApply 在确认运行后调 sec.refresh。
-  sec.refresh=refresh;subtabs(sec);
-}
-
 /* 「管理 → 设备健康」（2026-09-25，gateway/src/device/）：只读体检 + 清理遗留数据。**只在这一屏被打开、或点刷新时
    取数**，不跟管理页其它子标签一起刷、不订阅任何定时器（设备要省电）。网关侧结果缓存 15 秒，刷新按钮带 fresh=1 现采。
    2026-09-25 同日用户反馈"太长"，拆成五个二级 tab（概览/服务/扩展/日志/清理，subtabs() 惯例，第三层嵌套靠它的
@@ -1362,14 +1265,14 @@ async function showAgentFailBanner(){
 /* 管理台/引导（固定 tab，始终在——它是网关自身页面，不由服务注册表驱动） */
 /* 「管理」二级 tab（2026-09-09 起三个，2026-09-10 加到五个）：① 基石与模块（原来就有的引导/开关/
    卸载）② 模型管理（原来挂在这页最下面，现在单独一屏，不用跟基石列表一起滚）③ 系统增强（只留真正
-   "系统级"的开关，CJK 画线吸附）④ 电池刺客（`battop.running` 时才出现，放在「实验室」前面——用户
-   要求顺序）⑤ 实验室（还在打磨/覆盖面没到日常好用程度的功能：CJK 手写笔迹优化开关+漫画页边距开关
-   +导入md文档可见性开关）。电池刺客开关 2026-09-21 起在③「系统增强」里（用户要求从实验室移出）。
+   "系统级"的开关，CJK 画线吸附、阅读器翻页）④ 实验室（还在打磨/覆盖面没到日常好用程度的功能：漫画页边距开关
+   +导入md文档可见性开关）。2026-09-30 移除：电池刺客（原「系统增强」里的开关卡 + 运行时才出现的「电池刺客」
+   二级 tab）与实验室里的「CJK 手写笔迹优化」开关。
    （曾在这页的 shelf push 命令卡片已随 2026-09-18 砍掉 host CLI 一并删除。）另有「设备健康」（2026-09-25）。 */
 /* 模块管理动作（start / stop / uninstall），「基石与模块」列表与「全部开启/关闭」共用。 */
 const modAct=(seg,act,loud)=>(loud?sendT:jsend)('/api/manage/'+seg+'/'+act,'POST');
 function renderManage(sec){sec.innerHTML=`
-  <div class="subnav"><button class="on">${T('manage.subnav.foundation')}</button><button data-sub="health">${T('manage.subnav.health')}</button><button>${T('manage.subnav.models')}</button><button>${T('manage.subnav.enhance')}</button><button hidden data-sub="battop">${T('manage.subnav.battop')}</button><button>${T('manage.subnav.lab')}</button></div>
+  <div class="subnav"><button class="on">${T('manage.subnav.foundation')}</button><button data-sub="health">${T('manage.subnav.health')}</button><button>${T('manage.subnav.models')}</button><button>${T('manage.subnav.enhance')}</button><button>${T('manage.subnav.lab')}</button></div>
   <div class="subpanel on">
     <div class="card"><h2>${T('manage.foundation.title')}</h2><p class="lead">${T('manage.foundation.lead')}</p>
       <div class="kv small" id="found">${T('manage.foundation.checking')}</div>
@@ -1410,13 +1313,8 @@ function renderManage(sec){sec.innerHTML=`
       <p class="small">${T('manage.enhance.pageTurn.tapHint')}</p>
       <label class="toggle"><input type="checkbox" id="erRtlPageTurn"> ${T('manage.enhance.pageTurn.rtlToggle')}</label>
       <p class="small">${T('manage.enhance.pageTurn.rtlHint')}</p></div>
-    <div class="card" id="enhBattopCard"></div>
   </div>
-  <div class="subpanel" id="battopDetail" hidden></div>
   <div class="subpanel">
-    <div class="card"><h3 style="margin-top:0">${T('manage.lab.hwStroke.title')}</h3>
-      <p class="small">${T('manage.lab.hwStroke.desc')}</p>
-      <label class="toggle"><input type="checkbox" id="labHwStroke"> ${T('manage.lab.hwStroke.toggle')}</label> <span id="labHwStrokeLoaded"></span></div>
     <div class="card"><h3 style="margin-top:0">${T('manage.lab.comicMargin.title')}</h3>
       <p class="small">${T('manage.lab.comicMargin.desc')}</p>
       <label class="toggle"><input type="checkbox" id="labComicMargin"> ${T('manage.lab.comicMargin.toggle')}</label> <span id="labComicMarginLoaded"></span></div>
@@ -1449,21 +1347,14 @@ function renderManage(sec){sec.innerHTML=`
     if(es.ok!==false)await erApply(es)};
   guardClick($('#allon',sec),async()=>{const d=await j('/api/manage');for(const m of (d.modules||[]))if(m.installable&&m.installed&&!m.running)await modAct(m.seg,'start');refresh()});
   guardClick($('#alloff',sec),async()=>{if(!await confirmDialog(T('manage.modules.confirmAllOff')))return;const d=await j('/api/manage');for(const m of (d.modules||[]))if(m.installable&&m.installed&&m.running)await modAct(m.seg,'stop');refresh()});
-  /* 系统增强/实验室（Track 3，2026-09-09；实验室 2026-09-10 加）：CJK 画线吸附/CJK 手写笔迹优化/
-     导入md文档可见性都是真开关（写 reading-qol.json，走同一个 /api/enhance/qol）。battop 拆两处：
-     「系统增强」卡片只留开关+说明（mountBattopToggleCard），详细数据挪到本函数下面新增的第 5 个
-     二级 tab「电池刺客」（renderBattopDetail）——这个 tab 本身「运行才出现」，规则/实现都照抄
-     「笔记」tab「导入 md 文档」子标签那套 hidden 属性+点走再隐藏的写法（见 renderNotes 里
-     syncImportVisible 的注释，这里不重复讲一遍）。 */
+  /* 系统增强/实验室（Track 3，2026-09-09；实验室 2026-09-10 加）：CJK 画线吸附/翻页/漫画页边距/
+     导入md文档可见性都是真开关（写 reading-qol.json，走同一个 /api/enhance/qol）。电池刺客与 CJK 手写笔迹优化
+     2026-09-30 已移除。 */
   const tapBox=$('#erTapPageTurn',sec),rtlBox=$('#erRtlPageTurn',sec);
-  const hlBox=$('#erHlSnap',sec),hwBox=$('#labHwStroke',sec),importMdBox=$('#labImportMd',sec),comicMarginBox=$('#labComicMargin',sec);
-  const battopToggleRefresh=mountBattopToggleCard($('#enhBattopCard',sec)); // 电池刺客开关在「系统增强」里（2026-09-21 从实验室移过来）
+  const hlBox=$('#erHlSnap',sec),importMdBox=$('#labImportMd',sec),comicMarginBox=$('#labComicMargin',sec);
   const manageNav=sec.querySelector(':scope > .subnav');
-  const battopNavBtn=manageNav.querySelector('[data-sub="battop"]'),battopPanel=$('#battopDetail',sec);
-  renderBattopDetail(battopPanel);
   const erApply=async r=>{
     hlBox.checked=!!r.hlSnapCjk;
-    hwBox.checked=!!r.hwStrokeEnabled;
     importMdBox.checked=!!r.notesImportMdEnabled;
     comicMarginBox.checked=!!r.comicMinMargin;
     tapBox.checked=!!r.tapPageTurn;rtlBox.checked=!!r.rtlPageTurn;
@@ -1474,20 +1365,14 @@ function renderManage(sec){sec.innerHTML=`
       :exts.includes(so)?`<span class="badge on" title="${T('manage.loaded.onTitle')}">${T('manage.loaded.on')}</span>`
       :`<span class="badge off" title="${T('manage.loaded.offTitle')}">${T('manage.loaded.off')}</span>`;
     $('#erHlSnapLoaded',sec).innerHTML=loadedBadge('hl-snap.so');
-    $('#labHwStrokeLoaded',sec).innerHTML=loadedBadge('hw-stroke.so');
     // 漫画页边距、阅读器翻页靠 qmd 补丁（xochitl 启动时由 qt-resource-rebuilder 读一次），不是 .so：看 loaded.qmds / qmdsPending。
     const qmdBadge=qmd=>!ld.xochitl?loadedBadge(qmd)
       :(ld.qmds||[]).includes(qmd)?`<span class="badge on" title="${T('manage.loaded.qmdOnTitle')}">${T('manage.loaded.on')}</span>`
       :(ld.qmdsPending||[]).includes(qmd)?`<span class="badge" title="${T('manage.loaded.qmdPendingTitle')}">${T('manage.loaded.pending')}</span>`
       :`<span class="badge off" title="${T('manage.loaded.qmdOffTitle')}">${T('manage.loaded.off')}</span>`;
     $('#labComicMarginLoaded',sec).innerHTML=qmdBadge('shelf-comic-margins.qmd');
-    $('#erPageTurnLoaded',sec).innerHTML=qmdBadge('reader-page-turn.qmd');
-    await battopToggleRefresh(r);
-    const running=!!(r.battop&&r.battop.running);
-    if(!running&&battopNavBtn.classList.contains('on'))manageNav.children[0].click();
-    battopNavBtn.hidden=!running;battopPanel.hidden=!running;
-    if(running&&battopPanel.refresh)battopPanel.refresh()};
-  bindToggle(hlBox,'/api/enhance/qol','hlSnapCjk');bindToggle(hwBox,'/api/enhance/qol','hwStrokeEnabled');bindToggle(importMdBox,'/api/enhance/qol','notesImportMdEnabled');bindToggle(comicMarginBox,'/api/enhance/qol','comicMinMargin');
+    $('#erPageTurnLoaded',sec).innerHTML=qmdBadge('reader-page-turn.qmd')};
+  bindToggle(hlBox,'/api/enhance/qol','hlSnapCjk');bindToggle(importMdBox,'/api/enhance/qol','notesImportMdEnabled');bindToggle(comicMarginBox,'/api/enhance/qol','comicMinMargin');
   bindToggle(tapBox,'/api/enhance/qol','tapPageTurn');bindToggle(rtlBox,'/api/enhance/qol','rtlPageTurn');
   /* 设备健康：切到这个子标签时才取数（每次切过去都取一次，网关侧有 15 秒缓存），不跟着管理页的 SSE 刷新走；
      清理那组只在它是当前二级 tab 时一起取（见 mountHealth）。 */

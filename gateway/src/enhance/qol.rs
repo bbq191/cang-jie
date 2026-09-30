@@ -56,15 +56,6 @@ impl Qol {
         self.flag("hlSnapCjk", true)
     }
 
-    /// CJK 手写笔迹优化——纯网页层派生开关，不是 `reading-qol.json` 里单独存在的字段：
-    /// `hwStrokeNibMinRatio < 1.0` 视为已开（`enhance/handwriting-stroke/src/hw_stroke.c` 里 `1.0`
-    /// 是两个效果〔笔尖角度模型+提按速度代理〕全部关闭的 fail-safe 默认值，真机验证过 `0.6` 是效果
-    /// 不错的强度）。只读 `hwStrokeNibMinRatio` 一个键就够判断开关态——网页层写入时两个 min_ratio
-    /// 字段永远同步写（见 [`super::set_qol`]），不会出现只改了一个的情况。
-    pub fn hw_stroke_enabled(&self) -> bool {
-        self.0.get("hwStrokeNibMinRatio").and_then(Value::as_f64).map(|v| v < 1.0).unwrap_or(false)
-    }
-
     /// 「导入 md 文档」开关（`notesImportMdEnabled`），控制笔记 tab「导入」子标签是否显示。跟
     /// `hl_snap_cjk` 缺省开不同，这个缺省关——新功能第一次上线，不想让用户点开笔记 tab 就撞见一个
     /// 半成品，得手动去「管理→实验室」打开才看得到。
@@ -125,19 +116,17 @@ mod tests {
         assert_eq!(full["cardhwEnabled"], Value::Bool(true), "没碰过的键不能被冲掉");
     }
 
+    /// 2026-09-30 移除手写优化后，旧设备上 `reading-qol.json` 里还留着 `hwStroke*` 键：网页改别的开关时照样原样写回。
     #[test]
-    fn hw_stroke_enabled_defaults_false_when_missing() {
-        let (_t, paths) = tmp_paths();
-        assert!(!Qol::load(&paths).hw_stroke_enabled(), "文件不存在/字段缺失时缺省视为关（C 侧同一条 fail-safe 规则）");
-    }
-
-    #[test]
-    fn hw_stroke_enabled_true_when_ratio_below_one() {
+    fn patch_keeps_removed_hw_stroke_keys() {
         let (_t, paths) = tmp_paths();
         let mut seed = Map::new();
         seed.insert("hwStrokeNibMinRatio".into(), serde_json::json!(0.6));
         patch(&paths, seed).unwrap();
-        assert!(Qol::load(&paths).hw_stroke_enabled(), "ratio < 1.0 视为已开");
+        let mut change = Map::new();
+        change.insert("tapPageTurn".into(), Value::Bool(true));
+        patch(&paths, change).unwrap();
+        assert_eq!(load(&paths)["hwStrokeNibMinRatio"], serde_json::json!(0.6));
     }
 
     #[test]
