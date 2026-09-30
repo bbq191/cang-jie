@@ -11,7 +11,7 @@ note organizing, and some small system-level improvements.
 > For a 10-minute tour read [`OVERVIEW.md`](OVERVIEW.md) (Chinese); for recent changes read [`CHANGELOG.md`](CHANGELOG.md) (Chinese).
 >
 > This is the **private** repository with the full development history. What is shared publicly is the trimmed release
-> [`rm-tweak`](https://github.com/bbq191/rm-tweak) (no dev history, Apache-2.0). It was last synced on 2026-09-25:
+> [`rm-tweak`](https://github.com/bbq191/rm-tweak) (no dev history, Apache-2.0). It was last synced on 2026-09-30 (tag `v2026.09.30`):
 > it has shelf / notes / enhance / gateway / rmsvc-core / packaging (including `install-all.sh` and `verify-on-device.sh`), and no `defw/`.
 
 ## What it does

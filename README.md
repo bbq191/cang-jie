@@ -10,7 +10,7 @@ reMarkable Paper Pro Move 的设备增强套件。**不修改 xochitl**（设备
 > 想 10 分钟看懂全貌，读 [`docs/OVERVIEW.md`](docs/OVERVIEW.md)；想知道最近改了什么，读 [`docs/CHANGELOG.md`](docs/CHANGELOG.md)。
 >
 > 这是带完整开发历史的**私有**仓库。对外分享的是精简的公开发行版 [`rm-tweak`](https://github.com/bbq191/rm-tweak)
-> （没有开发历史，Apache-2.0）。2026-09-25 同步过一次：有 shelf / notes / enhance / gateway / rmsvc-core / packaging
+> （没有开发历史，Apache-2.0）。最近一次同步是 2026-09-30（tag `v2026.09.30`）：有 shelf / notes / enhance / gateway / rmsvc-core / packaging
 > （含 `install-all.sh` 和 `verify-on-device.sh`），没有 `defw/`。
 
 ## 能做什么
