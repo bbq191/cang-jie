@@ -68,6 +68,9 @@ struct State {
     action: Option<Action>,
     #[serde(skip)]
     worker_alive: bool,
+    /// 「全部中止」时正在处理的那一本也要停（见 [`run_one`]）；worker 取下一本时复位。运行时标志，不落盘（同 `worker_alive`）。
+    #[serde(skip)]
+    abort_current: bool,
 }
 
 fn state() -> &'static Mutex<State> {
@@ -231,6 +234,7 @@ pub fn stop(paths: &Paths) -> usize {
         st.queue.clear();
         // 被清掉的不会再处理，总数同步扣掉，否则停止后进度还显示"1/4"（其实只有 1 本要做）。
         st.total = st.total.saturating_sub(n as u32);
+        st.abort_current = st.current.is_some(); // 当前这本若还没交给 book-serve，run_one 看到它就不再提交
         (n, st.current.clone())
     };
     if let Some(c) = current {
@@ -350,6 +354,7 @@ fn worker(paths: &Paths) {
                 Some(mut j) => {
                     j.attempts += 1; // 先记账再落盘：处理途中进程崩了，磁盘上的 current 已带着这次计数
                     st.current = Some(j.clone());
+                    st.abort_current = false;
                     j
                 }
                 None => {
@@ -388,28 +393,38 @@ fn final_check(paths: &Paths, name: &str, kind: &str) -> Option<(String, String)
     Some((c.get("status")?.as_str()?.to_string(), c.get("message").and_then(|m| m.as_str()).unwrap_or("").to_string()))
 }
 
+/// 「全部中止」落在当前这本已经出队、但还没真正交给 book-serve 的时候，这本记的失败原因。
+const ABORTED: &str = "已全部中止";
+
+/// [`stop`] 是否要求中止当前这一本（worker 取下一本时复位）。
+fn abort_requested() -> bool {
+    lock().abort_current
+}
+
 fn run_one(paths: &Paths, job: &Job) -> Result<(), String> {
     registry::find(paths, "book-serve").ok_or("book-serve 未安装或未运行")?;
     let bytes = paths.staging_dir().join(&job.name).metadata().map(|m| m.len()).unwrap_or(0);
     // 同单条操作一样过并发/内存预算闸门；批量顺序执行，所以通常立即放行，只在别处同时在跑大书时才排队。
     let slot = crate::budget::global().admit(crate::budget::tier_of(bytes), &job.name).map_err(|e| e.message())?;
-    let settled = |kind: &str, slot: crate::budget::Slot<'static>| -> Result<(), String> {
-        crate::proxy::poll_until_settled(&client(paths, "book-serve", 10), &job.name);
-        drop(slot);
-        match final_check(paths, &job.name, kind) {
-            Some((s, m)) if s == "failed" || s == "cancelled" => Err(m),
-            _ => Ok(()),
-        }
+    let (path, body, kind) = match job.action {
+        Action::Optimize => ("/staging/optimize", json!({"name": job.name}), "optimize"),
+        Action::Deliver => ("/staging/deliver", json!({"name": job.name, "folder": job.folder}), "deliver"),
     };
-    match job.action {
-        Action::Optimize => {
-            post(paths, "book-serve", "/staging/optimize", json!({"name": job.name}), 60)?;
-            settled("optimize", slot)
-        }
-        Action::Deliver => {
-            post(paths, "book-serve", "/staging/deliver", json!({"name": job.name, "folder": job.folder}), 60)?;
-            settled("deliver", slot)
-        }
+    // 「全部中止」若落在出队之后、交给 book-serve 之前：它发的取消此时对 book-serve 是空操作（还没开工），
+    // 不在这里拦一下这本书会照样整本跑完。
+    if abort_requested() {
+        return Err(ABORTED.into());
+    }
+    post(paths, "book-serve", path, body, 60)?;
+    if abort_requested() {
+        // 中止请求在上面这次 POST 途中到达：当时的取消可能早于 book-serve 开工，开工后再补发一次（尽力而为）。
+        let _ = post(paths, "book-serve", "/staging/cancel", json!({"name": job.name}), 10);
+    }
+    crate::proxy::poll_until_settled(&client(paths, "book-serve", 10), &job.name);
+    drop(slot);
+    match final_check(paths, &job.name, kind) {
+        Some((s, m)) if s == "failed" || s == "cancelled" => Err(m),
+        _ => Ok(()),
     }
 }
 
@@ -544,18 +559,46 @@ mod tests {
 
     #[test]
     fn stop_clears_pending_persists_and_adjusts_total() {
+        let _g = rmsvc_core::sync::lock(&GLOBAL_STATE);
         let t = tempfile::tempdir().unwrap();
         let paths = crate::testutil::sandbox(&t);
         {
             let mut st = lock();
             st.queue.clear();
+            st.current = Some(Job { action: Action::Optimize, name: "now".into(), folder: String::new(), attempts: 1 });
             st.queue.push_back(Job { action: Action::Optimize, name: "a".into(), folder: String::new(), attempts: 0 });
             st.queue.push_back(Job { action: Action::Optimize, name: "b".into(), folder: String::new(), attempts: 0 });
             st.total = 3; // 1 本已在做 + 2 本排队
         }
         assert_eq!(stop(&paths), 2);
         assert_eq!(status()["total"], 1, "停止后总数应只剩正在做的那 1 本");
+        assert!(abort_requested(), "正在处理的那一本也要标记中止");
         let saved: State = serde_json::from_str(&std::fs::read_to_string(file_of(&paths)).unwrap()).unwrap();
         assert!(saved.queue.is_empty(), "停止后落盘的队列也必须是空的，否则重启会把被中止的又跑起来");
+        let mut st = lock();
+        st.current = None;
+        st.abort_current = false;
+    }
+
+    /// 批量测试共用进程级单例 `state()`：动它的测试串行跑，免得互相改掉对方的标志。
+    static GLOBAL_STATE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// 回归：「全部中止」落在当前这本出队之后、交给 book-serve 之前——不能再把它提交出去（此前中止请求对 book-serve
+    /// 是空操作，这本书会照样整本跑完）。假 book-serve 只记有没有人连过来。
+    #[test]
+    fn run_one_does_not_submit_after_stop() {
+        let _g = rmsvc_core::sync::lock(&GLOBAL_STATE);
+        let t = tempfile::tempdir().unwrap();
+        let paths = crate::testutil::sandbox(&t);
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let info = registry::ServiceInfo { name: "book-serve".into(), port: listener.local_addr().unwrap().port(), label: String::new(), version: String::new(), pid: std::process::id(), ui: None };
+        let _reg = registry::register(&paths, &info).unwrap();
+        let job = Job { action: Action::Optimize, name: "stop-race.epub".into(), folder: String::new(), attempts: 1 };
+        lock().abort_current = true;
+        assert_eq!(run_one(&paths, &job).unwrap_err(), ABORTED);
+        assert!(listener.accept().is_err(), "中止后不该再向 book-serve 提交");
+        assert!(!crate::budget::global().snapshot().1.contains(&job.name), "闸门名额随之归还");
+        lock().abort_current = false;
     }
 }
