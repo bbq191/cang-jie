@@ -3,8 +3,22 @@
 **[English](INSTALL.en.md)** · 返回 [README](../README.md)
 
 > **这份文档给谁**：第一次给 reMarkable Paper Pro Move 装这套增强的人、想卸载的人、固件升级（OTA）后要恢复功能的人。
-> 装：按顺序读「适用范围 → 装之前 → 安装 → 装完之后」。卸：读「卸载」。出问题：查「常见问题」。升级固件：读「固件升级（OTA）之后」。
-> 想先了解这套东西是什么，读 [`OVERVIEW.md`](OVERVIEW.md)。脚本内部怎么写、全部参数与环境变量、怎么本机测试，在 [`../packaging/README.md`](../packaging/README.md)（开发者向，本文不重复）。
+> - **第一次装**：按顺序读「适用范围 → 装之前 → 安装 → 装完之后」。
+> - **以前装过、现在更新**：直接重跑 `install-all.sh`（见「安装」）；已移除的组件会被自动清掉，见「从旧版升级：清理已移除的组件」。
+> - **卸载**：读「卸载」。**升级了固件**：读「固件升级（OTA）之后」。**出问题**：查「常见问题」。
+>
+> 想先了解这套东西是什么，读 [`OVERVIEW.md`](OVERVIEW.md)。脚本内部怎么写、全部参数与环境变量、每项核对的含义、怎么本机测试，在 [`../packaging/README.md`](../packaging/README.md)（开发者向，本文不重复）。
+
+**本文会反复出现的几个词**：
+
+| 词 | 意思 |
+|---|---|
+| xochitl | 设备自带的阅读/笔记主程序。本项目不改它，只在它旁边加东西 |
+| xovi / 扩展 | 第三方的扩展加载框架，xochitl 启动时把 `extensions.d/` 里的 `.so` 插件一起加载。本项目现在只有一个扩展：`hl-snap` |
+| qmd / 界面补丁 | 对 xochitl 界面描述文件（QML）的补丁，由 qt-resource-rebuilder 在 xochitl 启动时打上 |
+| 只落盘 / 生效 | 扩展和界面补丁只在 xochitl 启动时读，所以文件放到位（落盘）后还要**整机重启一次**才生效 |
+| OTA | 固件在线升级。会整体替换系统分区 `/usr`、`/etc`，不动放数据的 `/home` |
+| dm-verity | 系统分区的只读校验。开着时脚本一律不写 `/usr` |
 
 ## 适用范围
 
@@ -24,26 +38,7 @@
 | 1 | `vellum add xovi` | [xovi](https://github.com/asivery/xovi)：扩展加载框架 | 插件类功能都靠它，相关步骤直接失败 |
 | 2 | `vellum add qt-resource-rebuilder` | 界面补丁（qmd）加载器 | 界面补丁全部不装（不算失败）：字体菜单、回收站/新建文件夹代理、漫画页边距代理、阅读器单击翻页/日漫翻页规则。其余不受影响（汇总里怎么显示见问题②） |
 
-2026-09-29 起**不再需要 appload 和 KOReader**：设备只用自带阅读器，KOReader、WeRead、appload 都已卸载，`koreader-serve` 和侧栏入口（`sidebar-entry`）也不再安装。
-以前装过的设备：重新部署书架时会顺手清掉旧的 `koreader-serve`；侧栏入口的安装件 09-30 已从仓库删除，但 `uninstall-all.sh` 仍认得它、会把设备上残留的清掉。
-装完后的自动核对（`verify-on-device.sh`）会把这类遗留标出来：旧 `koreader-serve` 报 ⚠；侧栏入口补丁还在报 ⚠，如果 appload 已经卸了则报 ✗（它会让侧栏补丁失效）。只清侧栏入口、别的都不卸：
-
-```sh
-sh uninstall-all.sh 10.11.99.1 --skip chrony-boot-wakelock,battop,wifi-watch,xovi-persist,hl-snap,handwriting-stroke,shelf
-```
-
-跑完整机重启一次（`reboot`）。
-
-2026-09-30 起**电池刺客（`battop`）和手写优化（`handwriting-stroke`，插件 `hw-stroke.so`）已移除**：源码、安装步骤和网页开关都删了。
-以前装过的设备不用专门处理：**重新跑 `install-all.sh` 时会在最后一步之前自动清掉**两样的残留——电池刺客的服务单元（含旧版的 `battop.timer`）、`/home/root/battop` 整个目录（程序和历史采样数据），以及 `extensions.d/hw-stroke.so`、待换入区里的副本和安装包目录；如果 xochitl 当时还加载着 `hw-stroke.so`，最后一步会整机重启一次让它彻底停用。
-`verify-on-device.sh` 看到这些残留会报 ⚠。不想重装、只清这两样：
-
-```sh
-sh uninstall-all.sh 10.11.99.1 --dry-run --skip chrony-boot-wakelock,wifi-watch,xovi-persist,hl-snap,shelf,sidebar-entry   # 先预演：计划里应只有 handwriting-stroke、battop 两步
-sh uninstall-all.sh 10.11.99.1 --skip chrony-boot-wakelock,wifi-watch,xovi-persist,hl-snap,shelf,sidebar-entry
-```
-
-跑完整机重启一次（`reboot`，别 `systemctl restart xochitl`）。`reading-qol.json` 里旧的 `hwStroke*` 设置项会原样留着，没有程序再读它们，无害。这套清理只在开发机上模拟测过，没在真机上跑过。
+2026-09-29 起**不再需要 appload 和 KOReader**（设备只用自带阅读器）。以前装过它们、或装过电池刺客和手写优化的设备，看「[从旧版升级：清理已移除的组件](#从旧版升级清理已移除的组件)」。
 
 ### 电脑上：编译环境和 ssh
 
@@ -75,7 +70,7 @@ sh uninstall-all.sh 10.11.99.1 --skip chrony-boot-wakelock,wifi-watch,xovi-persi
    sh install-all.sh 10.11.99.1
    ```
    脚本先确认 ssh 能通、固件在白名单里、设备状态正常（见「装前自动检查」），再按下表逐步执行。第一次会先编译，要等一会儿。
-5. **看收尾汇总**：分四栏——「已安装」「已跳过（--skip）」「已跳过（前置条件不满足，非失败）」「失败」。第三栏会写明原因（例如 dm-verity 开着装不进 `/usr`）；"跳过"不等于"失败"，容易漏看（见问题①②）。有失败项就照报错处理，其余已经装好；整条重跑也安全（脚本全部幂等，内容没变就不会再重启设备）。
+5. **看收尾汇总**：分四栏——「已安装」「已跳过（--skip）」「已跳过（前置条件不满足，非失败）」「失败」。第三栏会写明原因（例如 dm-verity 开着、装不进 `/usr`）；"跳过"不等于"失败"，容易漏看（见问题②）。有失败项就照报错处理，其余已经装好；整条重跑也安全（脚本全部幂等，内容没变就不会再重启设备）。
 6. **登录网页、改密码、装证书**：见「装完之后」。
 
 ### 每一步装了什么
@@ -90,7 +85,7 @@ sh uninstall-all.sh 10.11.99.1 --skip chrony-boot-wakelock,wifi-watch,xovi-persi
 | `wifi-watch` | WiFi 假死看护：检测到断链自动重连；连上的 AP 在设备不许用的 5G 信道（5150–5350 MHz）时才锁 2.4G；打开 WiFi 省电（09-28 起，实测空闲电流约降 37%）。可在设备 `~/.config/wifi-watch.conf` 里改（`BAND=`、`POWERSAVE=`） | — |
 | `xovi-persist` | 开机后自动让 xovi 重新生效，重启设备后不用手动补 | xovi |
 | `hl-snap` | 荧光笔划中文"划哪吸哪"，不再"划一小段吸整行"；只落盘 | xovi |
-| `清理已移除:battop`、`清理已移除:handwriting-stroke` | 不是安装步骤：清掉旧设备上电池刺客、手写优化的残留（2026-09-30 起这两样已移除，见「装之前」），没有残留就什么都不动。排在 `xovi-apply` 之前；`--skip battop` / `--skip handwriting-stroke` 可跳过 | — |
+| `清理已移除:battop`、`清理已移除:handwriting-stroke` | 不是安装步骤：清掉旧设备上电池刺客、手写优化的残留（2026-09-30 起这两样已移除，见「[从旧版升级](#从旧版升级清理已移除的组件)」），没有残留就什么都不动。排在 `xovi-apply` 之前；`--skip battop` / `--skip handwriting-stroke` 可跳过 | — |
 | `shelf` | 八个网页服务：网关、书（book）、字体与壁纸（font / wallpaper）、笔记四服务（ink / transcribe / mind / note）；附带的五个界面补丁（字体菜单、回收站代理、建文件夹代理、漫画页边距代理、阅读器翻页）只落盘 | 补丁需要 qt-resource-rebuilder，缺了只跳过补丁、服务照装 |
 | `xovi-apply` | 上面"只落盘"的东西都就位后，**有改动（或 xovi 还没生效）才整机重启一次**让它们生效（约 20–60 秒，会打断阅读；没改动就不重启）。重启回来后自动跑一遍 `verify-on-device.sh` 核对 | — |
 
@@ -99,7 +94,7 @@ sh uninstall-all.sh 10.11.99.1 --skip chrony-boot-wakelock,wifi-watch,xovi-persi
 
 ## 装完之后
 
-**先看核对结果**：最后一步整机重启后，脚本会等设备回来并自动跑 `verify-on-device.sh`（`CJ_APPLY_VERIFY=0` 可关）。它只读检查设备，共 9 类几十项（固件、xochitl/xovi、扩展、界面补丁、各服务、本次开机告警、端口、`/usr` 单元、磁盘），逐项给 ✓/⚠/✗，有 ✗ 时退出码非 0。没有触发重启、或以后单独部署某一步之后，可以自己在 `packaging/` 下跑 `sh verify-on-device.sh <host>`。它也会报出设备上残留的已退役组件（见「装之前」）。每项含义见 [`packaging/README.md`「部署后核对」](../packaging/README.md#部署后核对verify-on-devicesh2026-09-25)。
+**先看核对结果**：最后一步整机重启后，脚本会等设备回来并自动跑 `verify-on-device.sh`（`CJ_APPLY_VERIFY=0` 可关）。它只读检查设备，分 9 节（固件与开机、xochitl 与扩展、界面补丁、常驻服务、本次开机告警、飞行记录仪、端口、`/usr` 单元、磁盘），逐项给 ✓/⚠/✗，有 ✗ 时退出码非 0。全套装好的设备大约 37 项：2026-09-30 真机是 36✓ 1⚠ 0✗，那个 ⚠ 是"开机不到 10 分钟"，刚重启完出现属正常。没有触发重启、或以后单独部署某一步之后，可以自己在 `packaging/` 下跑 `sh verify-on-device.sh <host>`。设备上还留着已移除组件时它会报 ⚠ 并给出清理命令（见「[从旧版升级](#从旧版升级清理已移除的组件)」）。每项含义见 [`packaging/README.md`「部署后核对」](../packaging/README.md#部署后核对verify-on-devicesh2026-09-25)。
 
 浏览器打开 `https://10.11.99.1/`（同一 WiFi 下也可以用 `https://shelf.local/`；安卓不认 `.local` 域名，要用设备的 IP）。
 
@@ -177,19 +172,19 @@ sh deploy.sh 10.11.99.1 --only book,font --password '新密码'                #
 
 ## 卸载
 
-`uninstall-all.sh` 和安装用同一张步骤表，按**相反顺序**执行（后装的先卸）。建议先预演：
+`uninstall-all.sh` 和安装用同一张步骤表，按**相反顺序**执行（后装的先卸），最后再清已移除组件的残留（见「[从旧版升级](#从旧版升级清理已移除的组件)」）。建议先预演：
 
 ```sh
 cd packaging
 sh uninstall-all.sh 10.11.99.1 --dry-run          # 只打印计划，不连设备、不删东西
 sh uninstall-all.sh 10.11.99.1                    # 卸全部
 sh uninstall-all.sh 10.11.99.1 --skip shelf       # 跳过某步
-sh uninstall-all.sh 10.11.99.1 --purge            # 保留兼容，目前不影响任何步骤（以前只管电池刺客的采样数据）
+sh uninstall-all.sh 10.11.99.1 --purge            # 保留兼容，目前不影响任何步骤
 ```
 
 **会做什么**：停用并删掉装过的服务、插件、界面补丁，以及部署时推到设备上的安装包目录（只删认识的文件，目录里有别的东西就留着）。卸插件时连待换入区里还没换进去的新版也一并撤掉（2026-09-24 之前不撤，下一次部署会把刚卸掉的插件又装回来）。
 
-**默认保留**：母版库、配置、证书、字体/壁纸池、`cangjie-backups/` 里的备份。电池刺客（已移除）的程序和采样数据卸载时总是一起删；`--purge` 目前不影响任何步骤，也不碰书架数据；要连书架数据一起删，先 `--skip shelf` 卸别的，再在设备上跑 `shelf-uninstall --purge`。
+**默认保留**：母版库、配置、证书、字体/壁纸池、`cangjie-backups/` 里的备份。`--purge` 目前不影响任何步骤，也不碰书架数据；要连书架数据一起删，先 `--skip shelf` 卸别的，再在设备上跑 `shelf-uninstall --purge`。
 
 **不会做什么**：
 - `chrony-cn`、`timezone-cn` 是改配置、`xovi-apply` 只是个动作，都不卸。改之前的备份在设备 `cangjie-backups/` 里，要还原自己取。
@@ -199,6 +194,40 @@ sh uninstall-all.sh 10.11.99.1 --purge            # 保留兼容，目前不影�
 **系统分区只读校验（dm-verity）开着时**：`/usr` 下的服务单元删不掉（脚本遇到 verity 一律不写 `/usr`，写 `/usr` 曾经让设备回滚变砖）。这时卸载脚本会如实提示，并**保留**这些单元要用的程序，免得重启后单元找不到程序、反复失败。等设备可写后再跑一次 `uninstall-all.sh` 就能收尾。
 
 卸载全流程 2026-09-25 在真机整轮跑过：8 步逆序全部成功，书架/笔记数据与配置都保留，卸载期间 xochitl 没有重启。dm-verity 下保留程序、`--purge` 这两支仍只有本机模拟。
+
+## 从旧版升级：清理已移除的组件
+
+有些功能后来被砍了。它们的源码和安装步骤已经删掉，但以前装过的设备上还留着文件。
+
+| 组件 | 何时移除 | 设备上可能留下什么 | 怎么清 |
+|---|---|---|---|
+| 电池刺客（`battop`，耗电诊断服务） | 2026-09-30 | `/usr` 里的 `battop.service`（更旧的版本还有 `battop.timer`）、`/home/root/battop/` 整个目录（程序和历史采样数据） | **重跑 `install-all.sh` 自动清** |
+| 手写优化（`handwriting-stroke`，插件 `hw-stroke.so`） | 2026-09-30 | `extensions.d/hw-stroke.so`、待换入区里的副本、安装包目录 `/home/root/hw-stroke/` | **重跑 `install-all.sh` 自动清** |
+| 书架的 `koreader-serve` 服务 | 2026-09-29 | 服务单元和程序 | 重跑 `install-all.sh`（或 `deploy.sh`）时顺手清 |
+| 侧栏 KOReader 入口（`sidebar-entry`） | 2026-09-29 | 界面补丁 `koreader-sidebar-entry.qmd` 和图标包 `cangjie-icons.rcc` | **不自动清**，要手动跑一次 `uninstall-all.sh`（命令见下） |
+
+![install-all 如何清理已移除的组件](diagrams/retired-cleanup.svg)
+
+**自动清理怎么做**：`install-all.sh` 在最后一步 `xovi-apply` 之前，对电池刺客、手写优化各跑一次清理（汇总里显示为 `清理已移除:battop`、`清理已移除:handwriting-stroke`）。清理用的是和 `uninstall-all.sh` 同一份函数（在 `packaging/removal.sh`）。设备上没有残留就什么都不动；如果 xochitl 当时还加载着 `hw-stroke.so`，会记一个"待生效"标记，最后一步因此**整机重启一次**让它彻底停用（不会单独重启 xochitl）。不想清就 `--skip battop` / `--skip handwriting-stroke`。`reading-qol.json` 里旧的 `hwStroke*` 设置项会原样留着，没有程序再读，无害。
+
+侧栏入口不自动清，是因为它的图标包文件名 `cangjie-icons.rcc` 历史上别的界面补丁也用过，只在你明确要求时才删。
+
+**不重装、只清某几样**：用 `uninstall-all.sh` 跳过其它所有步骤。先 `--dry-run` 看计划，计划里应只剩你要清的那几步：
+
+```sh
+cd packaging
+# 只清电池刺客与手写优化（计划里应只有 handwriting-stroke、battop 两步）
+sh uninstall-all.sh 10.11.99.1 --dry-run --skip chrony-boot-wakelock,wifi-watch,xovi-persist,hl-snap,shelf,sidebar-entry
+sh uninstall-all.sh 10.11.99.1 --skip chrony-boot-wakelock,wifi-watch,xovi-persist,hl-snap,shelf,sidebar-entry
+# 只清侧栏入口
+sh uninstall-all.sh 10.11.99.1 --skip chrony-boot-wakelock,battop,wifi-watch,xovi-persist,hl-snap,handwriting-stroke,shelf
+```
+
+跑完在设备上整机重启一次（`reboot`，别 `systemctl restart xochitl`）。
+
+**核对**：`verify-on-device.sh` 看到这些残留会报出来——电池刺客、`hw-stroke.so`、旧 `koreader-serve` 报 ⚠；侧栏入口补丁还在报 ⚠，如果 appload 已经卸了则报 ✗（它会让侧栏补丁失效）。报 ⚠ 时给的清理命令就是上面这几条。
+
+**真机情况**：2026-09-30 15:23 在真机上跑 `install-all.sh`，自动清掉了电池刺客（单元与 `/home/root/battop`）和 `hw-stroke.so`，只整机重启一次，之后核对 36✓ 0✗、xochitl 已不再加载 `hw-stroke.so`。上面"只清某几样"的 `uninstall-all.sh` 命令只在本机模拟测过。
 
 ## 固件升级（OTA）之后
 
@@ -211,7 +240,7 @@ sh uninstall-all.sh 10.11.99.1 --purge            # 保留兼容，目前不影�
 ### 推荐流程
 
 1. （升级前，可选）把与新固件不兼容的 xovi 插件（例如旧版的某个第三方插件）挪出 `extensions.d/`，放到 `/home/root/xovi-disabled/`。**绝不留在 `extensions.d/` 里**：xovi 会把那个目录下任何文件都当插件加载。
-2. 升级完成后，**在设备旁手动**跑 `xovi/rebuild_hashtable`（要输 root 密码，脚本不代做）。它是界面补丁重新生效的前提。
+2. 升级完成后，**在设备旁手动**跑 `xovi/rebuild_hashtable`（要输 root 密码，脚本不代做）。它按新固件重新建一张界面资源的索引表，界面补丁靠这张表定位，所以它是补丁重新生效的前提。
 3. 在电脑上：`cd packaging && sh install-all.sh <设备IP>`。新固件的哈希一般不在白名单里，确认版本无误后加 `--force`。OTA 后 xovi 没有生效，所以最后一步会整机重启一次，开机时由刚装回的 `xovi-reenable` 恢复 xovi，回来后自动核对。
 4. 看收尾汇总，浏览器打开网关确认。
 
@@ -234,16 +263,14 @@ sh uninstall-all.sh 10.11.99.1 --purge            # 保留兼容，目前不影�
 
 ## 常见问题
 
-下面都是有明确触发条件的已知坑，不是随机故障。编号 ①–⑧ 在上文被引用。
+下面都是有明确触发条件的已知坑，不是随机故障。编号在上文被引用；①、⑥ 讲的是已移除的组件（KOReader 侧栏入口、电池刺客），条目已删，编号不复用。
 
 | # | 现象 | 原因 | 怎么办 |
 |---|---|---|---|
-| ① | （已作废）侧栏没有 KOReader/WeRead 入口 | 2026-09-29 起不再装 KOReader、WeRead、appload 和侧栏入口，这条不再适用 | — |
 | ② | 字体菜单、回收站/新建文件夹、漫画页边距、阅读器单击翻页这几个**同时**没有 | 它们共用同一个前置 qt-resource-rebuilder。没装时：它们是 `shelf` 步里附带的补丁，**不单列**——`shelf` 仍算"已安装"，只在这一步的输出里有一行"无 qt-resource-rebuilder 目录…跳过字体菜单/回收站/建夹 qmd" | `vellum add qt-resource-rebuilder` 后重跑 `install-all.sh` |
 | ③ | 短时间内 xochitl 反复停起后，设备整机重启了一次 | xochitl 服务设置了 10 分钟内最多重启 4 次，不管谁触发的都算：手动 `systemctl restart xochitl`、`vellum add/del` 装卸 xochitl 插件（以前还有 appload、WeRead 每次进出）。2026-09-11 真机上连续两次重启就触发过一次整机重启——**设备自己重启后恢复正常，不是变砖** | 部署脚本 2026-09-25 起改为整机重启，不再计入这个次数。手动装卸插件时每次间隔几分钟 |
 | ④ | 固件安全门拒装 | 设计如此：版本号相同不保证内部布局没变 | 先确认设备固件就是你验证过的那份，再 `--force` |
 | ⑤ | 装到最后设备重启了一次 | `xovi-apply` 让改动生效：2026-09-25 起一律**整机重启**（约 20–60 秒回来），不再单独重启 xochitl——单独重启它有概率在退出时崩溃、再由系统整机重启。只有这轮真的有改动、或 xovi 还没生效时才会重启 | 正常现象，装的时候别操作设备；脚本会等设备回来并自动跑一遍 `verify-on-device.sh` 核对。不想被打断就 `--skip xovi-apply`，稍后再跑 `sh deploy-xovi-apply.sh <host>`。**自己手动让它生效时**：直接 `reboot`；**绝不**手动跑 `xovi/start`（xovi 已生效时它会让 xochitl 崩溃、整机自动重启，2026-09-20 真机事故） |
-| ⑥ | （已作废）重启设备后电池刺客没在跑 | 电池刺客 2026-09-30 已移除，这条不再适用 | — |
 | ⑦ | 装之前就报错退出：`连不上 root@…` / `只剩 N MB 可用` / `需要 root` / `固件不在白名单` | 装前自动检查在拦，设备上什么都没改 | 连不上：按报错里的步骤排查（休眠/没插 USB → IP → host key → 免密）；空间不足：清理 `/home/root` 和 `cangjie-backups/` 后重试；固件：见 ④ |
 | ⑧ | 最后一步报"设备没能排上整机重启……改动尚未生效"，这一步记失败 | 设备上的 `systemctl reboot` 命令本身失败了。文件已经换好，但 xochitl 还在用旧的；脚本已把"待生效"标记补回去（2026-09-25 起，此前会白等设备重启再报成功）。这一支只在本机模拟过 | 在设备上手动 `reboot`，回来后跑 `sh verify-on-device.sh <host>`；或者稍后重跑 `sh deploy-xovi-apply.sh <host>`，它会再试一次 |
 
@@ -251,7 +278,7 @@ sh uninstall-all.sh 10.11.99.1 --purge            # 保留兼容，目前不影�
 
 - 先看 `install-all.sh` 的收尾汇总，定位哪一步失败；对应 `packaging/deploy-*.sh` 的开头注释写了这一步做什么、常见失败原因。
 - 网页「管理」页能直接看到插件是否真的加载进了 xochitl（"已加载 / 未加载"）。开关开着但显示"未加载"，说明插件没装上或装完还没整机重启。「管理 → 设备健康」能看到更全的状态（各服务、扩展、上次开机日志）。
-- 不碰真机就想确认脚本没被改坏：`bash packaging/tests/run_sim_tests.sh`（本机模拟，343 项断言）。它代替不了真机验证。
+- 不碰真机就想确认脚本没被改坏：`bash packaging/tests/run_sim_tests.sh`（本机模拟，356 项断言，2026-09-30 实跑全过）。它代替不了真机验证。
 
 ### 备份与幂等（一句话版）
 
@@ -259,7 +286,11 @@ sh uninstall-all.sh 10.11.99.1 --purge            # 保留兼容，目前不影�
 
 ## 已知限制
 
-- **哪些在真机上跑过、哪些没有**：真机整轮跑过的有 `install-all.sh`（2026-09-22、09-24、09-25 各一次）和 `uninstall-all.sh`（2026-09-25）；"换入新版 `.so` → 整机重启 → 开机自动恢复 → 自动核对"2026-09-25 真机复核通过（`verify-on-device.sh` 43✓）。**只有本机模拟、没在真机走过的**：卸载在 dm-verity 下保留程序、卸载时撤掉待换入区、"什么都没变就不重启"这一支（含单独部署）、换入关键区忽略断连信号、汇总的"前置条件不满足"栏，以及 2026-09-25 下午第四轮审计、2026-09-30 第五轮审计改的全部安装脚本行为（整机重启失败的处理、dm-verity 下的电池刺客〔已移除〕、部署时 ssh 往返合并、没变的文件不重传、`--only` 刷新卸载清单、核对报遗留、卸载清理更干净等）。完整记录见 [`packaging/README.md`「验证现状」](../packaging/README.md#验证现状如实说明不夸大)。上机时一步一确认：先 `--dry-run`，再单步或 `--skip` 试跑。
+- **哪些在真机上跑过、哪些没有**：
+  - **真机整轮跑过**：`install-all.sh`（2026-09-22、09-24、09-25、09-30 各一次）、`uninstall-all.sh`（2026-09-25）；"换入新版 `.so` → 整机重启 → 开机自动恢复 → 核对"2026-09-25 真机复核通过（43✓）。
+  - **2026-09-30 两次真机部署**：14:10 用 `deploy.sh` 部署第五轮审计版，整机重启后核对 38✓ 1⚠（刚开机）0✗；15:23 用 `install-all.sh` 部署，**自动清掉电池刺客和 `hw-stroke.so`、只整机重启一次**，核对 36✓ 1⚠（刚开机）0✗，`/usr` 单元 12/12，9 个常驻服务无重启。第四、五轮审计改的安装脚本（`install-all` 只查一次连通、推送合批、没变的文件不重传等）都在这一轮里跑到，整轮通过。注意这只证明"装上了、服务健康"，书架和笔记的新功能还没逐项手测（清单见 [CHANGELOG 09-30](CHANGELOG.md#09-30)）。
+  - **只有本机模拟、没在真机走过的**：卸载在 dm-verity 下保留程序、卸载时撤掉待换入区、"什么都没变就不重启"这一支（含单独部署）、换入关键区忽略断连信号、整机重启命令本身失败的处理、汇总的"前置条件不满足"栏、第五轮审计改的卸载行为（非空目录不中断、`--only` 刷新卸载清单等）、`uninstall-all.sh` 只清已移除组件。
+  - 完整记录见 [`packaging/README.md`「验证现状」](../packaging/README.md#验证现状如实说明不夸大)。上机时一步一确认：先 `--dry-run`，再单步或 `--skip` 试跑。
 - **写 `/usr` 仍靠"先查 dm-verity + 限时读写窗口"两道防线**，不是完全不碰 `/usr`；历史上写 `/usr` 触发过回滚变砖（2026-08-16）。
 - **在设备上直接跑 `shelf/install.sh --password 明文` 时，密码会短暂出现在设备的进程列表里**；经电脑上的 `deploy.sh --password` 传则不会。
 - 卸载不还原 `chrony-cn` / `timezone-cn`，没有"一键回到装之前"。

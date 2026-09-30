@@ -47,6 +47,8 @@ Only the **reMarkable Paper Pro Move on firmware 3.28.0.172** is supported. It i
    The last step reboots the device once (about a minute); when it is back, the script checks it automatically and marks each item ✓/⚠/✗.
 3. Open `https://10.11.99.1/` in a browser. The default password is `shelf`, and you must change it on first login.
 
+Installed before and want to update: just re-run `sh install-all.sh 10.11.99.1`; it doesn't reboot when nothing changed, and removed components (the battery sampler, handwriting stroke tuning) are cleaned up along the way.
+
 To uninstall: `sh uninstall-all.sh 10.11.99.1`. Prerequisites, risks and how to recover after a firmware update (OTA) are all in **[INSTALL.en.md](INSTALL.en.md)**.
 
 ## Documentation map

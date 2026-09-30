@@ -29,18 +29,11 @@
 <text x="58" y="478" text-anchor="start" font-size="12.2" fill="#222">2  chrony-boot-wakelock</text>
 <text x="58" y="500" text-anchor="start" font-size="12.2" fill="#222">3  timezone-cn</text>
 <text x="58" y="522" text-anchor="start" font-size="12.2" fill="#222">4  wifi-watch</text>
-<text x="58" y="578" text-anchor="start" font-size="11.5" fill="#777">（battop 电池刺客</text>
-<text x="58" y="596" text-anchor="start" font-size="11.5" fill="#777">09-30 已移除，不再装）</text>
 <rect x="273" y="384" width="217" height="240" rx="10" fill="#eef3fa" stroke="#4a72b0" stroke-width="1.6"/>
 <text x="381" y="408" text-anchor="middle" font-size="14.5" font-weight="bold" fill="#1a1a1a">B · xovi 层</text>
 <text x="381" y="427" text-anchor="middle" font-size="12" fill="#555">需要 vellum add xovi</text>
 <text x="285" y="456" text-anchor="start" font-size="12.2" fill="#222">5  xovi-persist（开机补 xovi）</text>
 <text x="285" y="478" text-anchor="start" font-size="12.2" fill="#222">6  hl-snap *</text>
-<text x="285" y="524" text-anchor="start" font-size="11.5" fill="#777">（handwriting-stroke 手写优化</text>
-<text x="285" y="542" text-anchor="start" font-size="11.5" fill="#777">09-30 已移除，不再装）</text>
-<text x="285" y="566" text-anchor="start" font-size="11.5" fill="#777">（旧的 sidebar-entry 侧栏入口</text>
-<text x="285" y="584" text-anchor="start" font-size="11.5" fill="#777">09-29 退役：不再装，</text>
-<text x="285" y="602" text-anchor="start" font-size="11.5" fill="#777">uninstall-all 仍会清）</text>
 <rect x="500" y="384" width="217" height="240" rx="10" fill="#f1edf9" stroke="#6d4ab0" stroke-width="1.6"/>
 <text x="608" y="408" text-anchor="middle" font-size="14.5" font-weight="bold" fill="#1a1a1a">C · shelf</text>
 <text x="608" y="427" text-anchor="middle" font-size="12" fill="#555">网关 + 7 个领域服务</text>
@@ -78,7 +71,7 @@
 <rect x="510" y="696" width="460" height="96" rx="10" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.6"/>
 <text x="740" y="718" text-anchor="middle" font-size="14" font-weight="bold" fill="#1a1a1a">④ 浏览器验证</text>
 <text x="740" y="740" text-anchor="middle" font-size="12.5" fill="#444">https://10.11.99.1/  默认密码 shelf，首次登录强制改密</text>
-<text x="740" y="757" text-anchor="middle" font-size="12.5" fill="#444">自动核对里的 ⚠ 遗留项（如旧 koreader-serve）按提示清</text>
-<text x="500" y="814" text-anchor="middle" font-size="12.5" fill="#555">反悔：sh uninstall-all.sh &lt;host&gt;（先 --dry-run；逆序；已移除的 battop / handwriting-stroke 也照样清；chrony-cn / timezone-cn / xovi-apply 不卸）</text>
-<text x="500" y="830" text-anchor="middle" font-size="11.8" fill="#a33">⚠ 只有本机模拟：“无改动不重启”、卸载在 dm-verity 下保留程序；09-30 第五轮审计的脚本改动也还没上真机（安装、卸载主流程 09-25 已真机通过）</text>
+<text x="740" y="757" text-anchor="middle" font-size="12.5" fill="#444">自动核对里的 ⚠ 遗留项（已移除组件的残留）按提示清</text>
+<text x="500" y="814" text-anchor="middle" font-size="12.5" fill="#555">反悔：sh uninstall-all.sh &lt;host&gt;（先 --dry-run；逆序；最后连已移除组件的残留一起清；chrony-cn / timezone-cn / xovi-apply 不卸）</text>
+<text x="500" y="830" text-anchor="middle" font-size="11.8" fill="#555">真机：整轮安装 09-22/24/25/30 通过（09-30 含自动清理 + 只重启一次）、整轮卸载 09-25 通过；“无改动不重启”、dm-verity 下卸载仍只有本机模拟</text>
 </svg>
