@@ -61,6 +61,8 @@ pub const OPTIMIZE_MARKER: &str = "META-INF/com.cangjie.optimized";
 /// ⑤ 规范整理：产物一律升级 EPUB 3（NCX 与 spine toc 保留，xochitl 靠它），XHTML 修成合法 XML。
 /// ⑥ 图片：JPEG 哈夫曼表按图重做（无损，解码逐像素相同）；漫画里的静态 GIF/WebP 页转 PNG/JPEG；透明漫画页合成白底；
 ///   漫画 OPF 打 `<dc:subject>漫画</dc:subject>`；抓到的远程图补进 manifest。
+/// ⑦ 2026-09-30 再对齐 sheng-ren 的 xochitl 模式（v16 未部署，不升版本）：文字书插图框 842×1455（可阅读范围）、最小边距漫画画布
+///   952×1457（旧 954×1458 仍认）、漫画文字留边规则整套写进样式表、图片条目不压缩。同一批真书两边产物图片逐字节相同。
 pub const OPTIMIZE_VERSION: &str = "16";
 
 /// 脚注呈现方式。xochitl 无弹窗脚注（穷尽真机实测判死）；母版库「优化」用 `Anchor`（章末可见 + 同章锚点跳转 +
@@ -207,6 +209,7 @@ fn prepare_entries(mut raw: Vec<crate::epubzip::Entry>, opts: &OptimizeOpts, byt
     // 漫画 + 页边距最小化页框：纯文字页（版权/前情提要/章节标题）补左右留白，否则边距 1 下文字贴屏幕边。
     // 放在最后：此时 html 已过第一遍、注释块已搬出，判"纯文字页"看到的就是最终页面结构。
     if is_comic_book && opts.comic_frame == crate::imgopt::EpubComicFrame::MinMargin {
+        crate::comic_pad::ensure_all_css_rules(&mut entries);
         crate::comic_pad::pad_text_pages(&mut entries);
         crate::comic_pad::free_media_pages(&mut entries);
         crate::comic_pad::pad_mixed_text_blocks(&mut entries);

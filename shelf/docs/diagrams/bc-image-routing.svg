@@ -29,11 +29,11 @@
   <rect x="40" y="264" width="384" height="250" rx="10" fill="#f0fdf4" stroke="#16a34a"/>
   <text x="232" y="292" text-anchor="middle" font-size="16" font-weight="bold" fill="#14532d">downscale_for_epub</text>
   <text x="60" y="324" font-size="14" fill="#14532d">① 只读文件头取尺寸（header_dims）</text>
-  <text x="60" y="350" font-size="14" fill="#14532d">② 已在 954×1696 竖框内 → 原样（不解码）</text>
+  <text x="60" y="350" font-size="14" fill="#14532d">② 已在 842×1455 竖框内 → 原样（不解码）</text>
   <text x="60" y="376" font-size="14" fill="#14532d">③ 超过 900 万像素 → 原样（防解码撑爆内存）</text>
   <text x="60" y="402" font-size="14" fill="#14532d">④ 解码 → 缩进竖框 → 按原格式重编码（JPEG q85）</text>
   <text x="60" y="428" font-size="14" fill="#14532d">⑤ 重编码没变小 → 仍用原图</text>
-  <text x="60" y="462" font-size="13" fill="#166534">竖框：宽绝不超过 954，行内横幅图不再溢出</text>
+  <text x="60" y="462" font-size="13" fill="#166534">竖框（可阅读范围）：宽绝不超过 842，行内横幅图不再溢出</text>
   <text x="60" y="484" font-size="13" fill="#166534">竖屏（xochitl 行内图按原像素画，§09①）</text>
 
   <!-- 漫画分支 -->
@@ -45,7 +45,7 @@
   <text x="490" y="402" font-size="14" fill="#7c2d12">④ 一次缩放进页框；JPEG 小图可先放大（≤3 倍）</text>
   <text x="490" y="428" font-size="14" fill="#7c2d12">⑤ 白底补到页框比例 → 编码一次（q95，放大过的 q85）</text>
   <text x="490" y="462" font-size="13" fill="#9a3412">页框：缺省 954×1696（屏幕比例）；实验室开关开时</text>
-  <text x="490" y="484" font-size="13" fill="#9a3412">954×1458（xochitl 图片框比例，§20）。短边 &lt;318 的小图只裁边</text>
+  <text x="490" y="484" font-size="13" fill="#9a3412">952×1457（页边距 1 时的图片框，§20）。短边 &lt;318 的小图只裁边</text>
 
   <!-- 并行 -->
   <rect x="40" y="540" width="920" height="96" rx="10" fill="#f8fafc" stroke="#94a3b8" stroke-dasharray="6 4"/>

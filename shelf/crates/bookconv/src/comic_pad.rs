@@ -171,6 +171,15 @@ fn ensure_css_rules(css: &mut Vec<u8>, rules: &[&str]) {
     *css = s.into_bytes();
 }
 
+/// 整本漫画按最小页边距排时，把文字页、混排页的留边规则**全部**写进 wash css（顺序固定：文字页一条在前、文字块八条在后），
+/// 不看书里有没有这类页——与 sheng-ren `comicpad::CSS_RULES` 同一套写法（2026-09-30 对齐），产物的样式表两边一致。
+/// 在 [`pad_text_pages`]、[`pad_mixed_text_blocks`] 之前调用，它们各自的补规则就都是空操作。找不到 wash css 不动。幂等。
+pub fn ensure_all_css_rules(entries: &mut [(String, Vec<u8>, bool)]) {
+    let Some(css_idx) = entries.iter().position(|(n, _, _)| crate::wash::is_wash_css_name(n)) else { return };
+    let rules: Vec<&str> = std::iter::once(TEXT_PAGE_CSS_RULE).chain(TEXT_BLOCK_CSS_RULES).collect();
+    ensure_css_rules(&mut entries[css_idx].1, &rules);
+}
+
 /// 图文混排页的文字段落/标题追加留边类，并把规则写进 wash css（见模块文档"第三件事"）。返回处理的页数。
 /// 找不到 wash css 整体跳过（只加类不配规则没意义）。幂等。
 pub fn pad_mixed_text_blocks(entries: &mut [(String, Vec<u8>, bool)]) -> usize {
@@ -323,6 +332,16 @@ mod tests {
         assert!(!std::str::from_utf8(&es[2].1).unwrap().contains("cj-tx"), "纯图片页不动");
         assert_eq!(pad_mixed_text_blocks(&mut es), 0, "幂等");
         assert_eq!(std::str::from_utf8(&es[0].1).unwrap().matches("p.cj-tx{").count(), 1);
+    }
+
+    #[test]
+    fn all_rules_written_in_fixed_order_once() {
+        let mut es = vec![entry("OEBPS/cangjie-wash.css", "p{x:1;}\n", false), entry("p.xhtml", "<html><body><img src=\"a\"/></body></html>", true)];
+        ensure_all_css_rules(&mut es);
+        ensure_all_css_rules(&mut es);
+        let css = std::str::from_utf8(&es[0].1).unwrap().to_string();
+        let want = format!("p{{x:1;}}\n{TEXT_PAGE_CSS_RULE}\n{}\n", TEXT_BLOCK_CSS_RULES.join("\n"));
+        assert_eq!(css, want);
     }
 
     fn entry(name: &str, s: &str, html: bool) -> (String, Vec<u8>, bool) {

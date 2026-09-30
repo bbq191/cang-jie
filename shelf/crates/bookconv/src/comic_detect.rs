@@ -87,7 +87,8 @@ pub fn is_min_margin_comic_file(path: &std::path::Path) -> bool {
     read_entries_without_images(path).map(|e| is_comic(&e) && crate::comic_pad::all_text_padded(&e)).unwrap_or(false)
 }
 
-/// 这本 EPUB 的漫画页是不是已按 [`crate::imgopt::EpubComicFrame::MinMargin`] 的页框（954×[`crate::imgopt::EPUB_COMIC_PAGE_H`]）补过白。
+/// 这本 EPUB 的漫画页是不是已按 [`crate::imgopt::EpubComicFrame::MinMargin`] 的页框（[`crate::imgopt::EPUB_COMIC_PAGE_W`]×[`crate::imgopt::EPUB_COMIC_PAGE_H`]，
+/// 或 2026-09-30 之前的 [`crate::imgopt::EPUB_COMIC_PAGE_LEGACY`]）补过白。
 /// 只读每张图开头至多 256KB 取宽高（不解码），最多抽前 24 张"整页大小"的图，**过半**尺寸吻合才算（封面/个别页可能不同）。
 /// 用来在登记"首次打开设页边距"前确认：页边距是按这个页框算的，旧页框（屏幕比例）的书在最小边距下会贴左、右侧空一块。
 /// 打不开/没有整页大小的图 → `false`。
@@ -95,7 +96,7 @@ pub fn is_min_margin_framed_file(path: &std::path::Path) -> bool {
     use std::io::Read;
     let Ok(file) = std::fs::File::open(path) else { return false };
     let Ok(mut zip) = zip::ZipArchive::new(std::io::BufReader::new(file)) else { return false };
-    let (want_w, want_h) = (crate::imgopt::MAX_SHORT_EDGE, crate::imgopt::EPUB_COMIC_PAGE_H);
+    let want = [(crate::imgopt::EPUB_COMIC_PAGE_W, crate::imgopt::EPUB_COMIC_PAGE_H), crate::imgopt::EPUB_COMIC_PAGE_LEGACY];
     let (mut sampled, mut matched) = (0usize, 0usize);
     for i in 0..zip.len() {
         if sampled >= 24 {
@@ -114,7 +115,7 @@ pub fn is_min_margin_framed_file(path: &std::path::Path) -> bool {
             continue; // 装饰小图不计
         }
         sampled += 1;
-        if (w, h) == (want_w, want_h) {
+        if want.contains(&(w, h)) {
             matched += 1;
         }
     }
@@ -171,8 +172,9 @@ mod tests {
             zw.finish().unwrap();
             p
         };
-        let (w, h) = (crate::imgopt::MAX_SHORT_EDGE, crate::imgopt::EPUB_COMIC_PAGE_H);
+        let (w, h) = (crate::imgopt::EPUB_COMIC_PAGE_W, crate::imgopt::EPUB_COMIC_PAGE_H);
         assert!(is_min_margin_framed_file(&build("new.epub", &[(w, h), (w, h), (w, h), (w - 15, h)])), "过半吻合（个别页可能不同）");
+        assert!(is_min_margin_framed_file(&build("legacy.epub", &[(954, 1458), (954, 1458)])), "2026-09-30 之前的画布照样认");
         assert!(!is_min_margin_framed_file(&build("old.epub", &[(954, 1696), (954, 1696), (954, 1696)])), "屏幕比例页框（旧管线/开关关）不算");
         assert!(!is_min_margin_framed_file(&build("raw.epub", &[(1066, 1600), (1066, 1600)])), "未优化的原图不算");
         assert!(!is_min_margin_framed_file(&t.path().join("missing.epub")));

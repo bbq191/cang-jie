@@ -262,7 +262,7 @@
         let direct = transform_image_bytes(&jpg, true, crate::imgopt::EpubComicFrame::Screen, false).unwrap();
         assert_eq!(stream_img, direct, "流式并行处理结果应与直接处理逐字节一致");
         let mut ar = ZipArchive::new(Cursor::new(&stream_out)).unwrap();
-        assert_eq!(ar.by_name("p1.jpg").unwrap().compression(), CompressionMethod::Deflated, "图片 deflate 最快档（真机乱马实测省 6%）");
+        assert_eq!(ar.by_name("p1.jpg").unwrap().compression(), CompressionMethod::Stored, "图片不压缩（2026-09-30 对齐 sheng-ren）");
         assert!(image::load_from_memory(&stream_img).unwrap().dimensions().0 <= 954, "流式版也该按漫画框约束缩放");
     }
 

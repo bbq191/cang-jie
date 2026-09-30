@@ -160,7 +160,7 @@ Move 屏 = **954×1696 px、7.3″、264 PPI、Gallery 3 彩色墨水屏**。书
 
 | 函数 | 框 | 用在哪 |
 |---|---|---|
-| `downscale_for_epub`（EPUB 内嵌图） | **竖向框** 954×1696，宽绝不超 954 | 文字书 EPUB 图；防行内横幅图（`class="logo"` 1696×630）按固有宽**溢出竖屏**（§09①） |
+| `downscale_for_epub`（EPUB 内嵌图） | **竖向框** 842×1455（默认页边距下的可阅读范围，`EPUB_READABLE_W/H`），宽绝不超 842；2026-09-30 前是屏幕 954×1696 | 文字书 EPUB 图；防行内横幅图（`class="logo"` 1696×630）按固有宽**溢出竖屏**（§09①）。框收到栏宽是对齐 sheng-ren：默认页边距下插图本来只显示 842 宽 |
 | `downscale_for_device`（整页图） | **朝向框**：横图 1696×954 / 竖图 954×1696 | CBZ 漫画整页（`convert::cbz`）与远程图抓取（`netimg`） |
 
 一张图在 EPUB 优化里怎么分流：
@@ -175,7 +175,7 @@ Move 屏 = **954×1696 px、7.3″、264 PPI、Gallery 3 彩色墨水屏**。书
 
 EPUB 线原则④（09-17）：`comic_detect::is_comic`（`MIN_IMAGES=20`、`TEXT_PER_IMAGE=40.0`）在 `prepare_entries` 判一次。命中后图片走 `imgopt::prepare_comic_page_for_epub`（09-20 取代早期 `trim_margins` → `downscale_for_epub_comic` → `pad_to_device_aspect` 三道串联：各解码编码一遍、三代 JPEG 有损、灰度被转 RGB；见 §19）：
 
-1. **解码一次** → 2. **裁边** `trim_bounds`（一行/列里每个像素与首像素的 RGB 通道差都 ≤8 才算纯色留白，`TRIM_TOLERANCE`；单边最多裁 35%，`TRIM_MAX_FRACTION`）→ 3. **一次缩放**进 EPUB 页框（缩小，或 JPEG 小图按 §19 A/B 预放大 ≤3 倍，q85；SIMD `fast_image_resize`）→ 4. **白底补到页框长宽比**（`Screen` 补到 954:1696、容差 2%；`MinMargin` 补到 302.4:462.1、画布 954×1458、容差 0.3%，§20）→ 5. **编码一次**（灰度保持单分量，q95）。小于设备短边 1/3 的装饰小图只裁边不缩放/补白；无事可做返回 `None`（原字节零损失）。
+1. **解码一次** → 2. **裁边** `trim_bounds`（一行/列里每个像素与首像素的 RGB 通道差都 ≤8 才算纯色留白，`TRIM_TOLERANCE`；单边最多裁 35%，`TRIM_MAX_FRACTION`）→ 3. **一次缩放**进 EPUB 页框（缩小，或 JPEG 小图按 §19 A/B 预放大 ≤3 倍，q85；SIMD `fast_image_resize`）→ 4. **白底补到页框长宽比**（`Screen` 补到 954:1696、容差 2%；`MinMargin` 画布 952×1457、容差 0.3%，§20；2026-09-30 前按 302.4:462.1 算成 954×1458）→ 5. **编码一次**（灰度保持单分量，q95）。小于设备短边 1/3 的装饰小图只裁边不缩放/补白；无事可做返回 `None`（原字节零损失）。
 
 
 ### 解码像素上限 `MAX_DECODE_PIXELS`：一次“估算翻车、实测重定”的教训（2026-09-19）
@@ -310,10 +310,10 @@ EPUB 线原则④（09-17）：`comic_detect::is_comic`（`MIN_IMAGES=20`、`TEX
 | **v13** | `strip_ncx_doctype` 剥外部 DTD 引用；**推测性修复**，真根因是 v14（§06） |
 | **v14** | `fix_ncx_manifest_id`：xochitl 硬编码死查 manifest `id="ncx"`；`auto_toc` 自建 NCX 的 `cj-ncx` 同源 bug 一并改（§06） |
 | **v15** | **EPUB 漫画补白比例改成 xochitl 图片框比例**（`imgopt::EPUB_FRAME_ASPECT` = 302.365:462.1，简称 303:462.1；画布 954×`EPUB_COMIC_PAGE_H`=1458；容差 0.3%），配合阅读器页边距 1（book-serve + `shelf-comic-margins.qmd` 首次打开时设置）。真机同图 A/B：图宽 260→303pt（端到端 302.0），左右留白 20.0/22.9pt → ≈0.3/0.7pt（§20）。旧漫画需**从原始文件**重优化，别二次优化（多一代 JPEG 有损） |
-| **v16** | **2026-09-29 以 sheng-ren 仓库的同源 bookconv 为参照移植**（那边已到 v28）：清洗层整体换成 sheng-ren 版（`crate::html` 容错解析、`cssunlock` 字体字号行高解锁、章节分页 `wash/paginate.rs`、目录补节/改指、全书 id 去重、章尾空白页、EPUB 3 规范整理 `wash/normalize.rs`）；注释不加 `[N]`、图标保留限高、0.85em、索引按 (文件, id)；不再灰字提黑/细字提重（PDF 线一起）；JPEG 哈夫曼无损重做（`jpegopt`）、漫画静态 GIF/WebP、透明页铺白、漫画 `dc:subject`；远程图补进 manifest（抓不到仍删，设备有意保留）。**设备专有部分保留**：漫画页框与实验室最小边距、改书名、取消、按书翻页方向、900 万像素解码上限、图片 deflate 最快档。重优化自己的旧产物：排好的漫画页原样保留（不多一代有损）、去掉旧版追加的重复 `[N]`。类名沿用 `cj-` 前缀、外链样式表仍叫 `cangjie-wash.css`（sheng-ren 是 `eink-`），`comic_pad` 与旧产物判定不受影响。页边距登记资格改为"版本 ≥ 15"（页框没变）。真机未验证，见规范白皮书 §9 |
+| **v16** | **2026-09-29 以 sheng-ren 仓库的同源 bookconv 为参照移植**（那边已到 v28）：清洗层整体换成 sheng-ren 版（`crate::html` 容错解析、`cssunlock` 字体字号行高解锁、章节分页 `wash/paginate.rs`、目录补节/改指、全书 id 去重、章尾空白页、EPUB 3 规范整理 `wash/normalize.rs`）；注释不加 `[N]`、图标保留限高、0.85em、索引按 (文件, id)；不再灰字提黑/细字提重（PDF 线一起）；JPEG 哈夫曼无损重做（`jpegopt`）、漫画静态 GIF/WebP、透明页铺白、漫画 `dc:subject`；远程图补进 manifest（抓不到仍删，设备有意保留）。**设备专有部分保留**：漫画页框与实验室最小边距、改书名、取消、按书翻页方向、900 万像素解码上限、图片 deflate 最快档。重优化自己的旧产物：排好的漫画页原样保留（不多一代有损）、去掉旧版追加的重复 `[N]`。类名沿用 `cj-` 前缀、外链样式表仍叫 `cangjie-wash.css`（sheng-ren 是 `eink-`），`comic_pad` 与旧产物判定不受影响。页边距登记资格改为"版本 ≥ 15"（页框没变）。真机未验证，见规范白皮书 §9 。**2026-09-30 未升版本再对齐 sheng-ren 四处**（v16 尚未部署）：文字书插图框 954×1696→842×1455、最小边距漫画画布 954×1458→952×1457、漫画文字留边 9 条规则整套写进样式表、图片条目改回不压缩；同批 29 本书两边产物图片逐字节相同 |
 
 **v15 起几个易误解点**：
-1. **分两步演进**：285.2:462.2（画布 954×1546）→ 303:462.1（954×1455、页边距 0）→ 最终 302.4:462.1（954×1458、页边距 1；用户认为 0 贴边不合适）。代码常量 `EPUB_COMIC_PAGE_H`＝1458；别处若还看到 1455，是中间版本。
+1. **分两步演进**：285.2:462.2（画布 954×1546）→ 303:462.1（954×1455、页边距 0）→ 最终 302.4:462.1（954×1458、页边距 1；用户认为 0 贴边不合适）。代码常量 `EPUB_COMIC_PAGE_H` 当时＝1458；别处若还看到 1455，是中间版本。**2026-09-30 第三步**：改成 952×1457（`EPUB_COMIC_PAGE_W/H`），取自 sheng-ren 2026-09-29 读 xochitl 排出的 PDF 里图的摆放矩阵（页边距 1 时图框宽最多 952、高最多 1457）；与 954×1458 长宽比只差 0.14%，旧画布产物仍算排好、仍可登记（`EPUB_COMIC_PAGE_LEGACY`）。
 2. **新页框是“实验室”开关的可选项**：`OptimizeOpts.comic_frame` 缺省 `Screen`（954:1696）；仅网页「实验室→漫画页边距最小化」（`reading-qol.json` 的 `comicMinMargin`，默认关）开启才用 `MinMargin`。同一个“15”标记下的漫画可能是任一种页框——book-serve 靠读前 24 张整页图头部尺寸（`is_min_margin_framed_file`）判断，不看版本号。
 3. **v15 之后的漫画改动没升版本**（文字页/混排页留边 cj-tp/cj-tx、含图页去 body class，§20）：升版会让整库变“旧版”、让已有 v15 纯图漫画失去登记页边距的资格；代价是“文字页没留边的旧产物”靠 `comic_margin_eligible` 单独判定、需从原始文件重优化。
 
@@ -646,7 +646,7 @@ EPUB 线原则④（09-17）：`comic_detect::is_comic`（`MIN_IMAGES=20`、`TEX
 
 **决策（用户拍板）**：漫画「优化」**不再转 PDF**，统一"优化不改格式"。转 PDF 曾为拿约 0% 留白，但会丢夹带文字页；EPUB 固定内边距是 xochitl 硬限制（§16），接受它换"不变动内容"。`staging.optimize()` 里漫画→PDF 分发已删；`comic_pdf` 保留（超限 PDF 分卷仍用）。（⚠ 次日 §20 找到在 EPUB 内把左右留白压到约 0.3pt 的办法。）
 
-**单趟管线**（`prepare_comic_page_for_epub(bytes, frame)`）：旧管线串联 `trim_margins`→`downscale_for_epub_comic`→`pad_to_device_aspect`（三代有损、灰度转 RGB）；现**解码一次→裁边→等比放进 954×`frame.page_h()` 框一次缩放**（JPEG 小图按 A/B 结论预放大 ≤3 倍）**→白底补到 `frame.aspect()`→编码一次**，灰度保持。`frame` 缺省 `Screen`（954×1696、补白到屏幕比例、容差 2%）；`MinMargin`（954×1458）见 §20。短边 <318px（设备短边 1/3）的装饰小图只裁边。
+**单趟管线**（`prepare_comic_page_for_epub(bytes, frame)`）：旧管线串联 `trim_margins`→`downscale_for_epub_comic`→`pad_to_device_aspect`（三代有损、灰度转 RGB）；现**解码一次→裁边→等比放进 `frame.page_w()`×`frame.page_h()` 框一次缩放**（JPEG 小图按 A/B 结论预放大 ≤3 倍）**→白底补到 `frame.aspect()`→编码一次**，灰度保持。`frame` 缺省 `Screen`（954×1696、补白到屏幕比例、容差 2%）；`MinMargin`（952×1457，2026-09-30 前 954×1458）见 §20。短边 <318px（设备短边 1/3）的装饰小图只裁边。
 本机实测：乱马 01（151MB EPUB）**140s → 37s**，输出 168MB → 146MB；镖人 02 9s → 19s（新增预放大，49MB → 67.5MB，**换清晰度**）。**未验证**：EPUB 里预放大是否也比"阅读器自己放大"清晰（两份镖人 02 已传设备，无结论）；乱马 01 输出仍 >100MB，走大文件通道（下节）。
 
 **命名规则**（`bookconv::naming`，权威见书架白皮书 §03bn）：EPUB 一律 `书名 - 卷/部/上/下`，**数字在前**：`卷02`→`02卷`、`第二卷`→`二卷`、`Vol.3`→`3卷`、`镖人(卷二)`→`镖人 - 二卷`；`上/中/下` 原样；去掉 Anna's Archive 的 ` -- 作者 -- … -- hash` 尾巴与 `[完]`；无卷标记原样保留；幂等；母版库 37 个真实文件名无重名冲突。入库用规范名，已有长名在「优化」完成时改名（边车 `.delivered` 一并移动，目标已存在则保持原名）。
@@ -667,7 +667,7 @@ EPUB 线原则④（09-17）：`comic_detect::is_comic`（`MIN_IMAGES=20`、`TEX
 
 用户要求"提速，但不能降画质、更不能 OOM"。设备（双核 A55）优化 350 页漫画原需 285 秒。
 
-**做法**（`imgpool.rs` + `optimize/streaming.rs`）：主线程按序读原图、提交给 `worker_count()` 个 worker（CPU 核数、封顶 2）、按原顺序取回写 zip（提前量 `workers+2`）；`PixelBudget` 限制**同时处理的图片总像素 ≤ `PIXEL_BUDGET`=600 万**（按头部声明像素数申请，超大图独占），最坏峰值不高于原单线程处理一张大图；图片条目 deflate 级别 1（`Stored` 大 6%，级别 1 只大 0.7%，耗时相同）。**不换 JPEG 编码器**（`jpeg-encoder` 无 aarch64 SIMD）。
+**做法**（`imgpool.rs` + `optimize/streaming.rs`）：主线程按序读原图、提交给 `worker_count()` 个 worker（CPU 核数、封顶 2）、按原顺序取回写 zip（提前量 `workers+2`）；`PixelBudget` 限制**同时处理的图片总像素 ≤ `PIXEL_BUDGET`=600 万**（按头部声明像素数申请，超大图独占），最坏峰值不高于原单线程处理一张大图；图片条目 deflate 级别 1（`Stored` 大 6%，级别 1 只大 0.7%，耗时相同）；**2026-09-30 改回 `Stored`**，对齐 sheng-ren（阅读器读图少一道解压，体积多几个百分点）。**不换 JPEG 编码器**（`jpeg-encoder` 无 aarch64 SIMD）。
 **画质**：每张图仍是同一纯函数——乱马 01 的 706 个条目，本机、设备并行前后产物**0 字节差异、顺序相同**。
 **实测**（乱马 01，351 章）：本机 37s → 15.6s；**设备 285s → 148s（1.9×）**；`book-serve` 峰值 `VmHWM` 28MB → 47MB（第二个 worker 的工作内存），系统可用内存最低 763MB（基线 783MB），`book-serve`/xochitl 均无重启。
 **未验证**：接近 900 万像素上限的大图并行内存无实测（设计保证）；多本同时优化（网关允许 3 本小书并发）时 6 线程抢 2 核，吞吐不涨，内存约叠加 3×47MB。

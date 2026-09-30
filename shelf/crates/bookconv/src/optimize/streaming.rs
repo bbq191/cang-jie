@@ -202,13 +202,12 @@ impl<'a> StreamingOptimize<'a> {
 }
 
 
-/// 条目的压缩方式：`mimetype`（EPUB 规范）STORED；图片本身已压缩，deflate 只能再榨一点（实测乱马 6%），用最快档（级别 1）
-/// 拿大部分收益、少花 CPU；其余 deflate。
+/// 条目的压缩方式：`mimetype`（EPUB 规范）与图片 STORED，其余 deflate。图片本身已压缩，deflate 只能再榨一点
+/// （2026-09-2x 实测乱马 6%，当时用过最快档级别 1）；2026-09-30 对齐 sheng-ren 改回不压缩：阅读器打开图片省一道解压，
+/// 优化也少花 CPU，体积多几个百分点。
 fn entry_options(name: &str, stored: zip::write::SimpleFileOptions, deflated: zip::write::SimpleFileOptions) -> zip::write::SimpleFileOptions {
-    if name == "mimetype" {
+    if name == "mimetype" || crate::util::is_image_ext(name) {
         stored
-    } else if crate::util::is_image_ext(name) {
-        deflated.compression_level(Some(1))
     } else {
         deflated
     }
