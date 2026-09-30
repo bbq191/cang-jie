@@ -83,29 +83,118 @@ pub fn read_toc_texts(epub: &[u8]) -> (Option<String>, Option<String>) {
 }
 
 /// 同 [`read_toc_texts`]，吃可 seek 的读端。
+///
+/// 目录文件**先按 OPF 声明找**（`container.xml` → OPF → manifest 里 `properties` 含 `nav` 的条目 / NCX 媒体类型的条目），
+/// 找不到再退回按文件名猜（2026-09-30 第五轮审计）：nav 文档不一定叫 `nav.xhtml`（书架洗书那边记过叫 `toc.xhtml`、
+/// 又没有 NCX 的书——此前这类书整本没有章，条目两处投影都不收）；反过来"文件名含 nav 的 xhtml"也可能是正文
+/// （`canvas.xhtml` 之类），按 zip 顺序先撞上它就会拿正文当目录。
 pub fn read_toc_texts_from<R: Read + Seek>(epub: R) -> (Option<String>, Option<String>) {
     let Ok(mut ar) = zip::ZipArchive::new(epub) else { return (None, None) };
-    let (mut nav_name, mut ncx_name) = (None, None);
+    let (mut nav_name, mut ncx_name) = opf_toc_names(&mut ar);
+    let (mut guess_nav, mut guess_ncx) = (None, None);
     for i in 0..ar.len() {
         let Ok(f) = ar.by_index(i) else { continue };
         let n = f.name().to_string();
         let l = n.to_ascii_lowercase();
         if l.ends_with(".ncx") {
-            ncx_name.get_or_insert(n);
-        } else if l.ends_with("nav.xhtml") || (l.contains("nav") && l.ends_with(".xhtml")) {
-            nav_name.get_or_insert(n);
+            guess_ncx.get_or_insert(n);
+        } else if l.rsplit('/').next().is_some_and(|b| b == "nav.xhtml") {
+            guess_nav = Some(n); // 正好叫 nav.xhtml 的优先于"名字里含 nav"的
+        } else if l.contains("nav") && l.ends_with(".xhtml") {
+            guess_nav.get_or_insert(n);
         }
     }
-    // 目录文件设读取上限：解压后的大小由 zip 自己声明，坏书/恶意书可以声称极大（笔记服务 MemoryMax=128M）。
-    const TOC_MAX: u64 = 16 << 20;
-    let mut read = |name: Option<String>| -> Option<String> {
-        let mut s = String::new();
-        ar.by_name(&name?).ok()?.take(TOC_MAX).read_to_string(&mut s).ok()?;
-        Some(s)
-    };
-    let nav = read(nav_name);
-    let ncx = read(ncx_name);
+    let exists = |ar: &mut zip::ZipArchive<R>, n: &Option<String>| n.as_deref().is_some_and(|n| ar.by_name(n).is_ok());
+    if !exists(&mut ar, &nav_name) {
+        nav_name = guess_nav;
+    }
+    if !exists(&mut ar, &ncx_name) {
+        ncx_name = guess_ncx;
+    }
+    let nav = read_capped(&mut ar, nav_name);
+    let ncx = read_capped(&mut ar, ncx_name);
     (nav, ncx)
+}
+
+/// 读 zip 里一个文本条目。设读取上限：解压后的大小由 zip 自己声明，坏书/恶意书可以声称极大（笔记服务 MemoryMax=128M）。
+fn read_capped<R: Read + Seek>(ar: &mut zip::ZipArchive<R>, name: Option<String>) -> Option<String> {
+    const TOC_MAX: u64 = 16 << 20;
+    let mut s = String::new();
+    ar.by_name(&name?).ok()?.take(TOC_MAX).read_to_string(&mut s).ok()?;
+    Some(s)
+}
+
+/// OPF 声明的 (nav 文档, NCX) 在 zip 里的路径；没有 `container.xml`/OPF、或没声明的一项为 None。
+fn opf_toc_names<R: Read + Seek>(ar: &mut zip::ZipArchive<R>) -> (Option<String>, Option<String>) {
+    use regex::Regex;
+    use std::sync::OnceLock;
+    static ROOT: OnceLock<Regex> = OnceLock::new();
+    static ITEM: OnceLock<Regex> = OnceLock::new();
+    static ATTR: OnceLock<Regex> = OnceLock::new();
+    let root = ROOT.get_or_init(|| Regex::new(r#"(?i)<rootfile\b[^>]*\bfull-path\s*=\s*["']([^"']+)["']"#).unwrap());
+    let item = ITEM.get_or_init(|| Regex::new(r"(?is)<(?:opf:)?item\b[^>]*>").unwrap());
+    let attr = ATTR.get_or_init(|| Regex::new(r#"(?s)([\w:-]+)\s*=\s*(?:"([^"]*)"|'([^']*)')"#).unwrap());
+    let Some(container) = read_capped(ar, Some("META-INF/container.xml".into())) else { return (None, None) };
+    let Some(opf_path) = root.captures(&container).map(|c| c[1].to_string()) else { return (None, None) };
+    let Some(opf) = read_capped(ar, Some(opf_path.clone())) else { return (None, None) };
+    let dir = opf_path.rfind('/').map(|i| &opf_path[..=i]).unwrap_or("");
+    let (mut nav, mut ncx) = (None, None);
+    for m in item.find_iter(&opf) {
+        let (mut href, mut props, mut media) = (None, "", "");
+        for c in attr.captures_iter(m.as_str()) {
+            let v = c.get(2).or_else(|| c.get(3)).map_or("", |v| v.as_str());
+            match c[1].to_ascii_lowercase().as_str() {
+                "href" => href = Some(v),
+                "properties" => props = v,
+                "media-type" => media = v,
+                _ => {}
+            }
+        }
+        let Some(href) = href else { continue };
+        let path = || resolve_href(dir, href);
+        if nav.is_none() && props.split_whitespace().any(|p| p == "nav") {
+            nav = Some(path());
+        } else if ncx.is_none() && media.eq_ignore_ascii_case("application/x-dtbncx+xml") {
+            ncx = Some(path());
+        }
+    }
+    (nav, ncx)
+}
+
+/// manifest 的 href（相对 OPF 所在目录、可能百分号编码、可能带 `./`/`../`）→ zip 条目路径。
+fn resolve_href(dir: &str, href: &str) -> String {
+    let href = href.split('#').next().unwrap_or("");
+    let decoded = percent_decode(href);
+    let mut parts: Vec<&str> = dir.split('/').filter(|s| !s.is_empty()).collect();
+    for seg in decoded.split('/') {
+        match seg {
+            "" | "." => {}
+            ".." => {
+                parts.pop();
+            }
+            s => parts.push(s),
+        }
+    }
+    parts.join("/")
+}
+
+fn percent_decode(s: &str) -> String {
+    let b = s.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        let hex = |c: u8| (c as char).to_digit(16);
+        if b[i] == b'%' && i + 2 < b.len() {
+            if let (Some(h), Some(l)) = (hex(b[i + 1]), hex(b[i + 2])) {
+                out.push((h * 16 + l) as u8);
+                i += 3;
+                continue;
+            }
+        }
+        out.push(b[i]);
+        i += 1;
+    }
+    String::from_utf8(out).unwrap_or_else(|_| s.to_string())
 }
 
 #[cfg(test)]
@@ -176,6 +265,40 @@ mod tests {
             assert_eq!(m.chapters()[c.index].1, c.title, "第 {page} 页：章号与章表一致");
             assert_eq!(c.subhead, None);
         }
+    }
+
+    fn zip_of(files: &[(&str, &str)]) -> Vec<u8> {
+        use std::io::Write;
+        let mut buf = Cursor::new(Vec::new());
+        {
+            let mut w = zip::ZipWriter::new(&mut buf);
+            let o = zip::write::SimpleFileOptions::default();
+            for (name, body) in files {
+                w.start_file(*name, o).unwrap();
+                w.write_all(body.as_bytes()).unwrap();
+            }
+            w.finish().unwrap();
+        }
+        buf.into_inner()
+    }
+
+    /// 回归（2026-09-30）：nav 文档不叫 nav.xhtml、又没有 NCX 时按 OPF 声明找到它；名字里恰好带 nav 的正文不会被当成目录。
+    #[test]
+    fn toc_files_are_found_via_opf_declaration() {
+        let container = r#"<container><rootfiles><rootfile full-path="OEBPS/content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>"#;
+        let opf = r#"<package><manifest><item id="c" href="canvas.xhtml" media-type="application/xhtml+xml"/><item media-type="application/xhtml+xml" properties="nav" href='text/my%20toc.xhtml' id="t"/></manifest></package>"#;
+        let decoy = r#"<ol><li><a href="canvas.xhtml">假目录</a></li></ol>"#;
+        let toc = r#"<nav><ol><li><a href="c1.xhtml">第一章</a></li><li><a href="c2.xhtml">第二章</a></li></ol></nav>"#;
+        let bytes = zip_of(&[("mimetype", "application/epub+zip"), ("META-INF/container.xml", container), ("OEBPS/content.opf", opf), ("OEBPS/canvas.xhtml", decoy), ("OEBPS/text/my toc.xhtml", toc)]);
+        let (nav, ncx) = read_toc_texts(&bytes);
+        assert!(nav.as_deref().is_some_and(|n| n.contains("第一章")), "{nav:?}");
+        assert!(ncx.is_none());
+        // 没有 container.xml 的旧式包：退回按文件名猜，正好叫 nav.xhtml 的优先
+        let bytes = zip_of(&[("OEBPS/canvas.xhtml", decoy), ("OEBPS/nav.xhtml", toc)]);
+        assert!(read_toc_texts(&bytes).0.is_some_and(|n| n.contains("第二章")));
+        assert_eq!(resolve_href("OEBPS/text/", "../img/a%20b.xhtml#x"), "OEBPS/img/a b.xhtml");
+        assert_eq!(resolve_href("", "./nav.xhtml"), "nav.xhtml");
+        assert_eq!(percent_decode("%E7%AB%A0%zz%"), "章%zz%");
     }
 
     /// 从文件读端建表与整本字节建表结果一致（ingest 改走文件读端，不再整本读进内存）。
