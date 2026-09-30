@@ -74,10 +74,60 @@ fn strip_bad_params(url: &str) -> String {
     s.replace("?&", "?").replace("&&", "&").trim_end_matches(['?', '&']).to_string()
 }
 
-/// 抓网页 HTML 文本（UTF-8；非 UTF-8 站点暂不支持，属已知边界）。
+/// 网页 HTML 大小上限（与此前 ureq `into_string` 的 10MB 上限相同）。
+const MAX_HTML_BYTES: u64 = 10 * 1024 * 1024;
+
+/// 抓网页 HTML 文本，按网页自己声明的编码转成 UTF-8（见 [`decode_html`]）。
 fn fetch_text(url: &str) -> Result<String, String> {
+    use std::io::Read;
     let resp = http_agent(30).get(url).set("User-Agent", UA).set("Accept", "text/html,application/xhtml+xml").call().map_err(|e| format!("抓取失败: {e}"))?;
-    resp.into_string().map_err(|e| format!("读取网页正文失败: {e}"))
+    let header_charset = resp.header("Content-Type").and_then(charset_param);
+    let mut bytes = Vec::new();
+    resp.into_reader().take(MAX_HTML_BYTES + 1).read_to_end(&mut bytes).map_err(|e| format!("读取网页正文失败: {e}"))?;
+    if bytes.len() as u64 > MAX_HTML_BYTES {
+        return Err(format!("网页超过 {} MB，不抓", MAX_HTML_BYTES >> 20));
+    }
+    Ok(decode_html(&bytes, header_charset.as_deref()))
+}
+
+/// `Content-Type: text/html; charset=GBK` 里的 charset 值（去引号）。
+fn charset_param(content_type: &str) -> Option<String> {
+    content_type.split(';').skip(1).find_map(|p| {
+        let (k, v) = p.split_once('=')?;
+        k.trim().eq_ignore_ascii_case("charset").then(|| v.trim().trim_matches(['"', '\'']).to_string()).filter(|v| !v.is_empty())
+    })
+}
+
+/// 网页开头 `<meta charset="gbk">` 或 `<meta http-equiv="Content-Type" content="text/html; charset=gb2312">` 声明的编码。
+/// 只看前 4KB（编码声明按规范必须在前 1024 字节内，放宽一些容忍前面有长注释的站）。
+fn meta_charset(bytes: &[u8]) -> Option<String> {
+    static RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
+    let re = RE.get_or_init(|| Regex::new(r#"(?i)<meta\b[^>]*?charset\s*=\s*["']?\s*([A-Za-z0-9_.:\-]+)"#).unwrap());
+    let head = String::from_utf8_lossy(&bytes[..bytes.len().min(4096)]);
+    re.captures(&head).map(|c| c[1].to_string())
+}
+
+/// 网页字节 → UTF-8 文本（2026-09-30 起支持 GBK/GB2312/GB18030/Big5/Shift_JIS 等非 UTF-8 网页，此前一律按 UTF-8 读，
+/// 这类站点整页乱码或直接报错）。定编码的顺序照 HTML 规范：字节序标记 → HTTP 头 `charset` → 页面 `<meta>` 声明；
+/// 都没有时，字节是合法 UTF-8 就按 UTF-8，否则按 GB18030（GBK 的超集，老中文站最常见）。声明是 UTF-8 但字节不是
+/// 合法 UTF-8（服务器配置错、或 HTTP 头写 UTF-8 而页面其实是 GBK）时，改用 `<meta>` 声明，没有就按 GB18030。
+/// `<meta>` 里写 UTF-16 的按 UTF-8（规范如此：能读到这个 ASCII 声明，页面本身就不是 UTF-16）。认不出的名字当没声明。
+pub(crate) fn decode_html(bytes: &[u8], header_charset: Option<&str>) -> String {
+    use encoding_rs::{Encoding, GB18030, UTF_16BE, UTF_16LE, UTF_8};
+    if let Some((enc, bom_len)) = Encoding::for_bom(bytes) {
+        return enc.decode_without_bom_handling(&bytes[bom_len..]).0.into_owned();
+    }
+    let label = |l: &str| Encoding::for_label(l.trim().as_bytes()).filter(|e| *e != encoding_rs::REPLACEMENT);
+    let meta = meta_charset(bytes).and_then(|m| label(&m)).map(|e| if e == UTF_16LE || e == UTF_16BE { UTF_8 } else { e });
+    let declared = header_charset.and_then(label).or(meta);
+    let valid_utf8 = std::str::from_utf8(bytes).is_ok();
+    let enc = match declared {
+        Some(e) if e == UTF_8 && !valid_utf8 => meta.filter(|m| *m != UTF_8).unwrap_or(GB18030),
+        Some(e) => e,
+        None if valid_utf8 => UTF_8,
+        None => GB18030,
+    };
+    enc.decode_without_bom_handling(bytes).0.into_owned()
 }
 
 /// 处理抽取出的正文 HTML → 合法 XHTML 正文 + 内嵌图片资源。
@@ -191,6 +241,46 @@ fn host_of(url: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 非 UTF-8 网页（2026-09-30）：GBK 页面靠 HTTP 头、`<meta charset>`、`http-equiv` 三种声明都能认出；
+    /// 没声明时合法 UTF-8 照读、不合法按 GB18030；声明 UTF-8 但其实是 GBK 的也不乱码；Big5、BOM 各一例。
+    #[test]
+    fn decode_html_honours_declared_and_sniffed_charsets() {
+        let text = "<p>中文网页：斗破苍穹 第一章 陨落的天才</p>";
+        let gbk = |head: &str| [head.as_bytes(), &encoding_rs::GBK.encode(text).0].concat();
+        assert_eq!(decode_html(&gbk(""), Some("GBK")), text, "HTTP 头");
+        assert_eq!(decode_html(&gbk(r#"<meta charset="gb2312">"#), None), format!(r#"<meta charset="gb2312">{text}"#), "meta charset");
+        let he = r#"<meta http-equiv="Content-Type" content="text/html; charset=gbk" />"#;
+        assert_eq!(decode_html(&gbk(he), None), format!("{he}{text}"), "http-equiv");
+        assert_eq!(decode_html(&gbk(""), None), text, "没声明、不是合法 UTF-8：按 GB18030");
+        assert_eq!(decode_html(&gbk(r#"<meta charset="gbk">"#), Some("utf-8")), format!(r#"<meta charset="gbk">{text}"#), "HTTP 头错写 UTF-8");
+        assert_eq!(decode_html(&gbk(""), Some("utf-8")), text, "HTTP 头错写 UTF-8、页面没声明");
+        assert_eq!(decode_html(text.as_bytes(), None), text, "UTF-8 照读");
+        assert_eq!(decode_html(text.as_bytes(), Some("no-such-charset")), text, "认不出的名字当没声明");
+        let big5 = encoding_rs::BIG5.encode("繁體中文").0;
+        assert_eq!(decode_html(&big5, Some("big5")), "繁體中文");
+        assert_eq!(decode_html(&[&[0xEF, 0xBB, 0xBF][..], text.as_bytes()].concat(), Some("gbk")), text, "BOM 优先于 HTTP 头");
+    }
+
+    /// 联网冒烟：晋江文学城的章节页 HTTP 头不写编码、页面 `<meta>` 写 gb18030（2026-09-30 实测）。默认不跑：
+    /// `cargo test -p bookconv -- --ignored live_gb18030`
+    #[test]
+    #[ignore]
+    fn live_gb18030_page_is_not_garbled() {
+        let html = fetch_text("http://www.jjwxc.net/onebook.php?novelid=1&chapterid=1").unwrap();
+        assert!(!html.contains('\u{FFFD}'), "有替换字符＝解码错了");
+        assert!(html.contains("晋江"), "{}", &html[..html.len().min(500)]);
+        let (epub, title) = build_article_epub("http://www.jjwxc.net/onebook.php?novelid=1&chapterid=1").unwrap();
+        assert!(!title.contains('\u{FFFD}') && epub.len() > 1000, "{title}");
+        eprintln!("标题: {title}");
+    }
+
+    #[test]
+    fn charset_param_parses_content_type() {
+        assert_eq!(charset_param("text/html; charset=GBK").as_deref(), Some("GBK"));
+        assert_eq!(charset_param(r#"text/html;charset="gb2312""#).as_deref(), Some("gb2312"));
+        assert_eq!(charset_param("text/html").as_deref(), None);
+    }
 
     #[test]
     fn sanitize_produces_valid_xhtml_from_dirty_html() {
