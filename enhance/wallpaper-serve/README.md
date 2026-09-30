@@ -4,7 +4,7 @@
 
 - Web 服务，只听本机 `127.0.0.1:8793`，经网关 `/api/wallpapers` 访问；网页入口「其他 → 壁纸」。
 - 现状：真机通（3.28.0.172，2026-09-06 定稿）。
-- 代码：`src/main.rs` 路由，`store.rs` 壁纸池，`native.rs` 写 xochitl 配置键，`wake.rs` 轮换触发；服务单元 `wallpaper-serve.service`。子命令 `enable | disable | roll | activate` 也在这里。
+- 代码：`src/main.rs` 路由，`store.rs` 壁纸池，`native.rs` 写 xochitl 配置键，`wake.rs` 轮换触发；服务单元 `wallpaper-serve.service`。子命令 `enable | disable | roll | activate` 也在这里。host 测试 `cargo test`（11 项，2026-09-30 实跑）。
 
 ## 机制
 
@@ -18,9 +18,9 @@ xochitl 有一个隐藏配置键 `xochitl.conf` → `[General] SleepScreenPath=<
 | 入池 | 缩放到 954×1696；源图先只读文件头，超过 1600 万像素或长宽比极端的直接拒收，避免解码吃光内存 |
 | 卸载 | `wallpaper-serve disable` 删掉配置键，恢复原生休眠屏 |
 
-不写 `/usr`、不做 bind-mount、没有开机单元和 sleep 钩子，也不再起 `journalctl` 子进程。监听建不起来（如目录不在）时按 5 秒到 5 分钟指数退避重试；一次监听正常跑满 5 分钟后才出错，退避从 5 秒重新算（09-25 起，此前只增不减）。壁纸目录被删或被卸载时，内核撤掉监听、只发一条 `IN_IGNORED`：09-30 起收到它就当出错，走同一套退避重建目录和监听（此前照常等下一个事件，轮换线程永远卡死、不再换图也不报错；只在 host 测过，未部署）。
+不写 `/usr`、不做 bind-mount、没有开机单元和 sleep 钩子，也不再起 `journalctl` 子进程。监听建不起来（如目录不在）时按 5 秒到 5 分钟指数退避重试；一次监听正常跑满 5 分钟后才出错，退避从 5 秒重新算（09-25 起，此前只增不减）。壁纸目录被删或被卸载时，内核撤掉监听、只发一条 `IN_IGNORED`：09-30 起收到它就当出错，走同一套退避重建目录和监听（此前照常等下一个事件，轮换线程永远卡死、不再换图也不报错；09-30 14:10 已部署，部署自检通过，这条路径没在真机上专门触发过）。
 
-上传的图先暂存在 `~/.local/state/shelf/upload/`（/home 分区；09-25 前在运行时目录，可能落到 tmpfs 占内存），服务启动时清掉上次中途被杀留下的 `.part` 半成品。本节标 09-25 的改动（去重时钟、退避复位、暂存目录）都只在 host 验证，未上真机。
+上传的图先暂存在 `~/.local/state/shelf/upload/`（/home 分区；09-25 前在运行时目录，可能落到 tmpfs 占内存），服务启动时清掉上次中途被杀留下的 `.part` 半成品。本节标 09-25 的改动（去重时钟、退避复位、暂存目录）已随后续部署上了设备，但没在真机上专门核过。
 
 **首次写键后要整机重启一次** 才会读进这个键；网页壁纸页和 `GET /status` 的 `native.restartPending` 会提示。2026-09-25 起统一用整机重启（`reboot`）：单独 `systemctl restart xochitl` 有概率在它退出时崩溃，xovi 已生效时更**别**跑 `xovi/start`（见 [`../../docs/INSTALL.md`](../../docs/INSTALL.md)「常见问题」）。
 

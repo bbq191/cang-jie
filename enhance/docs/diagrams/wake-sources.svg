@@ -20,13 +20,11 @@
 <text x="60" y="292" text-anchor="start" font-size="12" fill="#1a1a1a" font-weight="bold">网关 mDNS 接口重扫</text>
 <text x="60" y="310" text-anchor="start" font-size="11.5" fill="#1a1a1a" font-weight="bold">0 次/时（09-25 前 60）</text>
 <text x="60" y="328" text-anchor="start" font-size="10.5" fill="#555">改听内核 netlink 地址变化，地址增删才重扫；netlink 打不开才退回每 60 秒；局域网别的设备查询另算</text>
-<text x="60" y="348" text-anchor="start" font-size="12" fill="#888" font-weight="bold">battop 采样（2026-09-30 已移除）</text>
-<text x="60" y="366" text-anchor="start" font-size="11.5" fill="#888" font-weight="bold">0 次/时</text>
-<text x="60" y="384" text-anchor="start" font-size="10.5" fill="#888">原为默认关、开着时醒着每 600 秒一次；功能已删</text>
+<text x="60" y="360" text-anchor="start" font-size="10.5" fill="#888">（已移除的 battop 原本开着时每 600 秒采样一次，2026-09-30 起这一项不存在）</text>
 <rect x="620" y="80" width="340" height="330" rx="10" fill="#eaf6ec" stroke="#3f9a55" stroke-width="1.6"/>
 <text x="632" y="100" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">只在事件发生时醒（空闲不醒）</text>
 <text x="632" y="122" text-anchor="start" font-size="11.2" fill="#3a3a3a">hl-snap.so：无定时器，</text>
-<text x="632" y="146" text-anchor="start" font-size="11.2" fill="#3a3a3a">  只在划线时进 handler（hw-stroke.so 已移除）</text>
+<text x="632" y="146" text-anchor="start" font-size="11.2" fill="#3a3a3a">  只在划线时进 handler</text>
 <text x="632" y="170" text-anchor="start" font-size="11.2" fill="#3a3a3a">reader-page-turn.qmd：打开书时单发 300 ms</text>
 <text x="632" y="194" text-anchor="start" font-size="11.2" fill="#3a3a3a">  读一次开关（旧版每 1.5 秒轮询，已去掉）</text>
 <text x="632" y="218" text-anchor="start" font-size="11.2" fill="#3a3a3a">shelf-comic-margins.qmd：换文档单发 1.5 秒</text>
@@ -39,7 +37,7 @@
 <rect x="40" y="430" width="920" height="100" rx="10" fill="#eaf6ec" stroke="#3f9a55" stroke-width="1.6"/>
 <text x="52" y="450" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">wallpaper-serve：09-24 起不再跟 xochitl 日志，改为每次休眠醒一次</text>
 <text x="52" y="472" text-anchor="start" font-size="11.5" fill="#3a3a3a">xochitl 每次进休眠都读一遍 current.png（真机 inotify 观察）→ 监听 IN_CLOSE_NOWRITE，读完就轮换；空闲零唤醒，也不再常驻 journalctl。</text>
-<text x="52" y="492" text-anchor="start" font-size="11.5" fill="#3a3a3a">飞行记录仪在宿主机上（不在设备、不在本仓库），接着电脑时循环经 ssh 抓设备日志；本线仍压低 xochitl 日志量：逐点日志默认关（§03g）、翻页去命中日志（§03i）。</text>
+<text x="52" y="492" text-anchor="start" font-size="11.5" fill="#3a3a3a">飞行记录仪在宿主机上（不在设备、不在本仓库），接着电脑时循环经 ssh 抓设备日志；本线仍压低 xochitl 日志量：翻页 qmd 去掉了命中日志（§03i）。</text>
 <text x="52" y="512" text-anchor="start" font-size="11.5" fill="#3a3a3a">单图池唤醒轮换不再重写同一张 current.png（09-24 审计），省的是闪存写入，不是唤醒次数。</text>
 <text x="500" y="558" text-anchor="middle" font-size="11" fill="#6a6a6a">mkdir-agent 依据：设备 Qt 6.10.3 的 QML XHR 不设传输超时（源码核实），book-serve 上限 MKDIR_WAIT_MAX_SECS=300；</text>
 <text x="500" y="578" text-anchor="middle" font-size="11" fill="#6a6a6a">以上数字全部来自代码常量，未在真机上实测唤醒次数。</text>
