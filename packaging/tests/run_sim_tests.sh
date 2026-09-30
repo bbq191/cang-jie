@@ -93,7 +93,7 @@ tree_sig() {
 last_mount() { grep '^mount ' "$CJ_SIM_LOG" | tail -n 1; }
 
 # ── shelf 载荷 ──
-SVCS="gateway book koreader font wallpaper ink transcribe mind note"
+SVCS="gateway book font wallpaper ink transcribe mind note"
 svc_of() { [ "$1" = gateway ] && echo gateway || echo "$1-serve"; }
 mk_payload() { # DIR
     P="$1"; mkdir -p "$P/bin" "$P/systemd" "$P/lo-alias" "$P/xovi"
@@ -258,7 +258,7 @@ new_sandbox; PL="$R/payload"; mk_payload "$PL"; PRE_SIG="$(tree_sig)"
 : > "$CJ_SIM_LOG"
 run sh "$PL/install.sh" >"$R/out1.txt" 2>&1; rc=$?
 check "install 全量：退出 0" test "$rc" -eq 0
-check "install：9 个服务二进制都在" test -x "$B/gateway" -a -x "$B/book-serve" -a -x "$B/note-serve" -a -x "$B/wallpaper-serve"
+check "install：8 个服务二进制都在" test -x "$B/gateway" -a -x "$B/book-serve" -a -x "$B/note-serve" -a -x "$B/wallpaper-serve"
 check "install：辅助脚本 lo-alias.sh / shelf-uninstall / 库 已装" test -x "$B/lo-alias.sh" -a -x "$B/shelf-uninstall" -a -f "$R/home/root/.local/lib/shelf/manifest.sh" -a -f "$R/home/root/.local/lib/shelf/devlib.sh"
 check "install：单元 + shelf.target + wants 链接" test -f "$CJ_SYSD/gateway.service" -a -L "$CJ_SYSD/shelf.target.wants/book-serve.service" -a -L "$CJ_SYSD/multi-user.target.wants/shelf.target"
 check "install：五个 qmd（字体/回收站/建夹/漫画页边距/阅读器翻页）都在 qrr 目录" test -f "$Q/font-menu-dynamic.qmd" -a -f "$Q/shelf-trash-agent.qmd" -a -f "$Q/shelf-mkdir-agent.qmd" -a -f "$Q/shelf-comic-margins.qmd" -a -f "$Q/reader-page-turn.qmd"
@@ -360,7 +360,7 @@ check "uninstall --purge：数据目录是符号链接 → 拒绝，目标内容
 section "packaging/deploy.sh：密码特殊字符 / shelf-pkg 换位"
 mk_dummy_targets() {
     T=aarch64-unknown-linux-musl
-    for f in shelf/target/$T/release/book-serve shelf/target/$T/release/koreader-serve gateway/target/$T/release/gateway \
+    for f in shelf/target/$T/release/book-serve gateway/target/$T/release/gateway \
              enhance/wallpaper-serve/target/$T/release/wallpaper-serve enhance/font-serve/target/$T/release/font-serve \
              notes/target/$T/release/ink-serve notes/target/$T/release/transcribe-serve notes/target/$T/release/mind-serve notes/target/$T/release/note-serve; do
         # 仓库里已有**真**交叉编译产物（开发机上构建过）时先挪走再造假的：否则 deploy.sh 会把真 aarch64 二进制装进
@@ -1055,6 +1055,25 @@ echo '[Service]' > "$CJ_SYSD/koreader-serve.service"; : > "$B/koreader-serve"
 ( cd "$PKG" && run sh verify-on-device.sh 127.0.0.1 ) >"$R/vout.txt" 2>&1
 check "verify 采集：设备上残留的退役单元 koreader-serve.service 被报 ⚠" test -n "$(vline '⚠ koreader-serve.service：已退役/旧命名的遗留（单元 在，二进制 在）')"
 unset CJ_ALLOWLIST_LOCAL
+
+section "2026-09-30 第五轮：推送只传有变化的文件 / 书架载荷只带要装的服务"
+new_sandbox; export CJ_SKIP_BUILD=1
+( cd "$PKG" && DEFER_XOVI_START=1 run sh deploy-hl-snap.sh 127.0.0.1 ) >/dev/null 2>&1
+: > "$CJ_SIM_LOG"
+( cd "$PKG" && DEFER_XOVI_START=1 run sh deploy-hl-snap.sh 127.0.0.1 ) >"$R/out.txt" 2>&1; rc=$?
+check "hl-snap 重复部署（载荷没变）：不再 scp，3 次 ssh（连通/建目录+取 md5/安装），不做二次 md5 复核" test "$rc" -eq 0 -a "$(count_log '^scp')" = 0 -a "$(count_log '^ssh')" = 3 -a "$(grep -c '未变，不重传' "$R/out.txt")" = 4
+echo tampered >> "$R/home/root/hl-snap/deploy/devlib.sh"; : > "$CJ_SIM_LOG"
+( cd "$PKG" && DEFER_XOVI_START=1 run sh deploy-hl-snap.sh 127.0.0.1 ) >"$R/out.txt" 2>&1; rc=$?
+check "hl-snap 部署：设备上暂存的某个文件被改过 → 只重传它、复核后装" test "$rc" -eq 0 -a "$(count_log '^scp')" = 1 -a -n "$(grep 'md5 一致：devlib.sh' "$R/out.txt")" -a "$(md5sum < "$R/home/root/hl-snap/deploy/devlib.sh")" = "$(md5sum < "$PKG/devlib.sh")"
+unset CJ_SKIP_BUILD
+new_sandbox
+( cd "$PKG" && SHELF_NO_BUILD=1 run sh deploy.sh 127.0.0.1 --only book ) >"$R/out.txt" 2>&1; rc=$?
+check "deploy.sh --only book：载荷里只有 gateway/book 两个服务的二进制与单元 + shelf.target（不再带退役的 koreader-serve.service）" test "$rc" -eq 0 -a "$(ls "$R/home/root/shelf-pkg/shelf/systemd" | tr '\n' ' ')" = "book-serve.service gateway.service shelf.target " -a "$(ls "$R/home/root/shelf-pkg/shelf/bin" | tr '\n' ' ')" = "book-serve gateway "
+HOLD="$TMPBASE/hold-mind-unit"; mv "$REPO/notes/systemd/mind-serve.service" "$HOLD"
+new_sandbox
+( cd "$PKG" && SHELF_NO_BUILD=1 run sh deploy.sh 127.0.0.1 ) >"$R/out.txt" 2>&1; rc=$?
+mv "$HOLD" "$REPO/notes/systemd/mind-serve.service"
+check "deploy.sh：仓库里缺某个服务的单元 → 推送前退出非 0、点名缺的单元，设备上什么都没推" test "$rc" -ne 0 -a -n "$(grep 'mind-serve.service' "$R/out.txt")" -a ! -e "$R/home/root/shelf-pkg" -a "$(count_log 'tar')" = 0
 
 # ═══════════════════════════ 5. 静态守卫 / 清单对称 ═══════════════════════════
 section "静态守卫"

@@ -12,7 +12,7 @@
 #   shquote          把任意字符串安全地拼进远端命令行（M9/M10）
 #   dev_script       `dev_script ARG… <<'EOF' … EOF`：devlib.sh + 脚本体经 `ssh sh -s` 在设备上执行
 #   push_verified    一批文件 scp 到"暂存路径"→ 逐个 md5 对拍；不对就删暂存并失败，绝不落到最终位置（H3）；
-#                    一次 ssh 建目录 + 每文件一次 scp + 一次 ssh 取全部 md5
+#                    一次 ssh 建目录并取现有 md5 + 只 scp 有变化的文件 + 有上传才再一次 ssh 复核 md5
 #   步骤表           STEP_ORDER / step_script / STEP_DEFER / STEP_CONFIG_ONLY（install-all 与 uninstall-all 共用，
 #                    保证两边清单对称）
 #   parse_step_args  install-all / uninstall-all 共用的 [host] --force --purge --force-apply --dry-run --skip -h 解析
@@ -125,8 +125,12 @@ md5_local() { md5sum "$1" | awk '{print $1}'; }
 
 # push_verified LOCAL REMOTE [LOCAL REMOTE …]：把一批文件 scp 到各自的"暂存路径"（调用方保证不在 extensions.d
 # 之类的自动加载目录里）并核对 md5。md5 对不上的那个文件从设备上删掉、整体返回 1；最终位置从未被碰过。
-# 连接次数：一次 ssh 建好所有目标目录 → 每个文件一次 scp → 一次 ssh 取回全部 md5（2026-09-25 起合批；
-# 旧版每个文件 mkdir/scp/md5 各一次，deploy-xovi-ext 光推送就 12 次连接）。
+# 连接次数：一次 ssh 建好所有目标目录并取回暂存路径上现有文件的 md5 → 只 scp 内容有变化的文件（2026-09-30 起：
+# 暂存路径上已是同一内容就不重传，重复部署不再每次推 .so/脚本）→ 有上传才再一次 ssh 取回它们的 md5
+# （2026-09-25 起合批；旧版每个文件 mkdir/scp/md5 各一次，deploy-xovi-ext 光推送就 12 次连接）。
+pv_md5_cmd() { # 远端命令：对参数里（已 shquote）的每个路径输出一行 md5（缺失则空行），顺序与参数一致
+    echo "for f in$1; do s=\$(md5sum \"\$f\" 2>/dev/null) || s=; echo \"\${s%% *}\"; done"
+}
 push_verified() {
     { [ $# -ge 2 ] && [ $(($# % 2)) -eq 0 ]; } || { echo "!! push_verified：参数必须成对（LOCAL REMOTE …）"; return 1; }
     pv_dirs=""; pv_rems=""; pv_odd=1
@@ -138,28 +142,41 @@ push_verified() {
         fi
         pv_odd=$((1 - pv_odd))
     done
-    rssh "mkdir -p$pv_dirs" || return 1
-    pv_odd=1
-    for pv_a in "$@"; do
-        if [ "$pv_odd" = 1 ]; then pv_local=$pv_a
-        else rscp "$pv_local" "root@$HOST:$pv_a" || { echo "!! scp $pv_local 失败"; return 1; }
-        fi
-        pv_odd=$((1 - pv_odd))
-    done
-    # 每个文件一行 md5（缺失则空行），顺序与参数一致
-    pv_sums="$(rssh "for f in$pv_rems; do s=\$(md5sum \"\$f\" 2>/dev/null) || s=; echo \"\${s%% *}\"; done")" || pv_sums=""
-    pv_bad=""; pv_odd=1; pv_k=0
+    pv_pre="$(rssh "mkdir -p$pv_dirs && $(pv_md5_cmd "$pv_rems")")" || return 1
+    # 逐个比对：暂存路径上已是同一内容就跳过，否则 scp 并记下要复核的序号与路径
+    pv_up=""; pv_uprems=""; pv_odd=1; pv_k=0
     for pv_a in "$@"; do
         if [ "$pv_odd" = 1 ]; then pv_local=$pv_a
         else
             pv_k=$((pv_k + 1))
             pv_l="$(md5_local "$pv_local")"
-            pv_r="$(printf '%s\n' "$pv_sums" | sed -n "${pv_k}p")"
-            if [ -z "$pv_r" ] || [ "$pv_l" != "$pv_r" ]; then
-                echo "!! md5 对不上：$(basename "$pv_local")（本地 $pv_l vs 设备 ${pv_r:-空}），传输可能损坏，不继续（已删设备上的暂存文件 $pv_a，最终位置未动）"
-                pv_bad="$pv_bad $(shquote "$pv_a")"
+            if [ -n "$pv_l" ] && [ "$pv_l" = "$(printf '%s\n' "$pv_pre" | sed -n "${pv_k}p")" ]; then
+                echo "-- 未变，不重传：$(basename "$pv_local")"
             else
-                echo "-- md5 一致：$(basename "$pv_local")"
+                rscp "$pv_local" "root@$HOST:$pv_a" || { echo "!! scp $pv_local 失败"; return 1; }
+                pv_up="$pv_up $pv_k"; pv_uprems="$pv_uprems $(shquote "$pv_a")"
+            fi
+        fi
+        pv_odd=$((1 - pv_odd))
+    done
+    [ -n "$pv_up" ] || return 0
+    # 刚传的每个文件一行 md5，顺序与 pv_up 一致
+    pv_sums="$(rssh "$(pv_md5_cmd "$pv_uprems")")" || pv_sums=""
+    pv_bad=""; pv_odd=1; pv_k=0; pv_j=0
+    for pv_a in "$@"; do
+        if [ "$pv_odd" = 1 ]; then pv_local=$pv_a
+        else
+            pv_k=$((pv_k + 1))
+            if word_in "$pv_k" "$pv_up"; then
+                pv_j=$((pv_j + 1))
+                pv_l="$(md5_local "$pv_local")"
+                pv_r="$(printf '%s\n' "$pv_sums" | sed -n "${pv_j}p")"
+                if [ -z "$pv_r" ] || [ "$pv_l" != "$pv_r" ]; then
+                    echo "!! md5 对不上：$(basename "$pv_local")（本地 $pv_l vs 设备 ${pv_r:-空}），传输可能损坏，不继续（已删设备上的暂存文件 $pv_a，最终位置未动）"
+                    pv_bad="$pv_bad $(shquote "$pv_a")"
+                else
+                    echo "-- md5 一致：$(basename "$pv_local")"
+                fi
             fi
         fi
         pv_odd=$((1 - pv_odd))
