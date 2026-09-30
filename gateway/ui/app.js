@@ -709,7 +709,7 @@ function renderNotes(sec){sec.innerHTML=`
       // 这条本身去哪（配置的目的地）+ 它所在章节目前的生成/导出状态（章节维度，不是这条自己确认被
       // 收进去了没——归档/撤销后这条已经不在活条目集合里，没法再逆推"当初有没有被打进那次生成"，
       // 只能诚实地给"这一章大致是什么状态"这个参考信息，用户反馈"回收站该显示导出到哪里"）。
-      row.innerHTML=`<div class="trash-badges"><span class="badge">${T(STATUS_NAMES[e.status])||e.status}</span><span class="badge">${DEST_ICON[dv]()}</span>${syncBadges(chSync,dv)}</div>
+      row.innerHTML=`<div class="trash-badges"><span class="badge">${T(STATUS_NAMES[e.status])||esc(e.status)}</span><span class="badge">${DEST_ICON[dv]()}</span>${syncBadges(chSync,dv)}</div>
         <div class="txt">p.${e.page_index+1}${e.chapter_title?' · '+esc(e.chapter_title):''}<br><span class="q">${esc(text)}</span>${e.status==='revoked'?`<br><span class="small">${T('notes.trash.revokedHint')}</span>`:''}</div>
         <button class="btn" data-restore>${T('notes.trash.restoreBtn')}</button>`;
       guardClick(row.querySelector('[data-restore]'),async()=>{if(!(await restoreOne(e.id)))return;await reloadBook(renderTrash,renderBrowse,renderBook)});
@@ -913,9 +913,9 @@ function renderNotes(sec){sec.innerHTML=`
       row.innerHTML=`
         <div class="entry-head">
           <span>p.${e.page_index+1}${e.subhead?' · '+esc(e.subhead):''}</span>
-          <span class="badge">${T(STYLE_NAMES[e.style])||e.style}</span>
+          <span class="badge">${T(STYLE_NAMES[e.style])||esc(e.style)}</span>
           ${syncBadges(s,dv)}
-          <span class="badge ${e.status==='reviewed'?'on':''}" style="margin-left:auto">${T(STATUS_NAMES[e.status])||e.status}</span>
+          <span class="badge ${e.status==='reviewed'?'on':''}" style="margin-left:auto">${T(STATUS_NAMES[e.status])||esc(e.status)}</span>
         </div>
         <div class="entry-body">
           <div class="entry-crop">${cropHtml(e)}</div>
@@ -1535,13 +1535,13 @@ function renderManage(sec){sec.innerHTML=`
   const otherSvcs=svcs.filter(s=>s.name!=='note-serve');
   $('#hdr').textContent=location.host;
   const nav=$('#tabs'),main=$('#main');main.innerHTML='';
-  const secByArea={};const dirty=new Set();
+  const secByArea={};
   /* 各 tab **第一次切过去时才渲染**（渲染本身就会取一次数据）：此前页面一打开就把笔记/其他/管理全部渲染、各自取一遍数据
      （二十来个请求，还让网关扫 /proc、问模型服务），而且首个 tab 渲染完紧接着又被点击刷新一次，同样的 6 个请求发两遍。
      之后再切回来才走 refreshSec 刷新。 */
-  const addTab=(title,render,first,area)=>{const b=document.createElement('button');b.textContent=title;const sec=document.createElement('section');sec.area=area;secByArea[area]=sec;
+  const addTab=(title,render,first,area)=>{const b=document.createElement('button');b.textContent=title;const sec=document.createElement('section');secByArea[area]=sec;
     let rendered=false;
-    b.onclick=()=>{[...nav.children].forEach(x=>x.classList.remove('on'));[...main.children].forEach(x=>x.classList.remove('on'));b.classList.add('on');sec.classList.add('on');dirty.delete(area);
+    b.onclick=()=>{[...nav.children].forEach(x=>x.classList.remove('on'));[...main.children].forEach(x=>x.classList.remove('on'));b.classList.add('on');sec.classList.add('on');
       if(!rendered){rendered=true;render(sec)}else if(sec.refresh)refreshSec(sec)};
     nav.appendChild(b);main.appendChild(sec);if(first)b.onclick();return sec};
   addTab(T('tab.transfer'),renderTransfer,true,'books');          // 总入口（入库｜母版库），固定第一位（book-serve 不在时列表里提示去管理页开）
@@ -1553,7 +1553,7 @@ function renderManage(sec){sec.innerHTML=`
     otherSvcs.forEach(s=>{secByArea[AREA[s.name]||s.name]=otherSec});
   }
   addTab(T('tab.manage'),renderManage,false,'manage');            // 固定管理台，始终可进
-  /* 事件推送（SSE，零轮询）：服务在变更处发事件 → 网关 /api/events 汇聚 → 这里只刷对应 tab；不在前台的 tab 记脏，切过去时刷。
+  /* 事件推送（SSE，零轮询）：服务在变更处发事件 → 网关 /api/events 汇聚 → 这里只刷对应 tab；不在前台的 tab 不管，切过去时本来就刷。
      manage 事件（服务启停）：tab 集合变了就整页重载，否则只刷管理台。断线（WiFi 掉/设备休眠醒来）EventSource 自动重连，
      重连成功（非首次 onopen）补刷一次当前 tab——断线期间的事件没人推给我们。
      省电/省流量：页面被隐藏（切标签页、手机锁屏）时**不刷新**，只记"当前 tab 待刷"，`visibilitychange` 变可见时补刷一次；
@@ -1564,26 +1564,37 @@ function renderManage(sec){sec.innerHTML=`
   let activeStale=false,opened=false,es=null,hiddenTimer=0;
   /* 心跳 ?ka=60：默认 20 秒一帧空注释，只是为了让中间代理不掐空闲连接；网关直连浏览器用不着这么勤（设备上每帧都是一次唤醒+TLS 写）。
      页面隐藏超过 60 秒就**主动断开** SSE（锁屏/切走的标签页不再让设备为它保活），重新可见时重连——重连成功的 onopen
-     本来就会补刷当前 tab（见上），断开期间漏掉的事件不丢；别的 tab 切过去时无条件刷新（addTab 的点击处理），也不依赖 dirty。 */
-  const HIDDEN_CLOSE_MS=60000;
-  const openEs=()=>{
-    es=new EventSource('/api/events?ka=60');
-    es.onopen=()=>{liveDot.style.color='var(--ok)';liveDot.title=T('common.eventStreamConnected');
+     本来就会补刷当前 tab（见上），断开期间漏掉的事件不丢；别的 tab 切过去时无条件刷新（addTab 的点击处理）。
+     **浏览器放弃重连的情况**：连上时回的不是 200（网关重启后内存里的会话全没了→401、并发满→503），EventSource 直接进
+     CLOSED、再也不重试——此前页面就此静默失去实时刷新（红点一直亮，用户不点东西就不知道要重新登录）。现在 CLOSED 时
+     先查一次 /api/session（401 由 j() 带去登录页），其余情况按 5 秒起、翻倍、封顶 5 分钟的退避重开；页面隐藏时不重试，
+     等变可见时由 visibilitychange 重开。浏览器自己在重连的（CONNECTING）不插手。 */
+  const HIDDEN_CLOSE_MS=60000,RETRY_MIN_MS=5000,RETRY_MAX_MS=300000;
+  let retryMs=0,retryTimer=0;
+  const reopenLater=()=>{clearTimeout(retryTimer);if(document.hidden)return;
+    retryMs=Math.min(retryMs?retryMs*2:RETRY_MIN_MS,RETRY_MAX_MS);
+    retryTimer=setTimeout(async()=>{if(es||document.hidden)return;
+      const s=await j('/api/session');if(s.ok===false){reopenLater();return} // 401/403 时 j() 已经跳走
+      if(!es&&!document.hidden)openEs()},retryMs)};
+  const openEs=()=>{clearTimeout(retryTimer);
+    const src=es=new EventSource('/api/events?ka=60');
+    es.onopen=()=>{retryMs=0;liveDot.style.color='var(--ok)';liveDot.title=T('common.eventStreamConnected');
       if(opened){if(document.hidden)activeStale=true;else{activeStale=false;const s=activeSec();if(s)refreshSec(s)}}opened=true};
-    es.onerror=()=>{liveDot.style.color='var(--bad)';liveDot.title=T('common.eventStreamReconnecting')};
+    es.onerror=()=>{liveDot.style.color='var(--bad)';liveDot.title=T('common.eventStreamReconnecting');
+      if(src.readyState===2&&es===src){closeEs();reopenLater()}}; // 2 = EventSource.CLOSED：浏览器不会再自己重连
     es.onmessage=async(e)=>{let ev;try{ev=JSON.parse(e.data)}catch{return}
       if(ev.kind==='agent-failed'){showAgentFailBanner();return} // 全站横幅，与哪个 tab 无关
       if(ev.area==='manage'){const d=await j('/api/services');const k=(d.services||[]).filter(s=>s.ui&&TABS[s.name]).map(s=>s.name).join(',');if(k!==svcKey){location.reload();return}}
       const sec=secByArea[ev.area];if(!sec)return;
-      if(!sec.classList.contains('on'))dirty.add(ev.area);
-      else if(document.hidden)activeStale=true;
+      if(!sec.classList.contains('on'))return;
+      if(document.hidden)activeStale=true;
       else if(sec.onEvent)sec.onEvent(ev); // tab 自己按事件决定刷多少（母版库：网关排队/进度事件只重取两个状态）
       else refreshSec(sec)}};
   const closeEs=()=>{if(!es)return;es.close();es=null;liveDot.style.color='var(--bad)';liveDot.title=T('common.eventStreamReconnecting')};
   document.addEventListener('visibilitychange',()=>{
     if(document.hidden){clearTimeout(hiddenTimer);hiddenTimer=setTimeout(closeEs,HIDDEN_CLOSE_MS);return}
     clearTimeout(hiddenTimer);
-    if(!es){openEs();return} // 重连后的 onopen 负责补刷当前 tab
+    if(!es){retryMs=0;openEs();return} // 重连后的 onopen 负责补刷当前 tab
     if(activeStale){activeStale=false;const s=activeSec();if(s)refreshSec(s)}});
   openEs();
   if(document.hidden)hiddenTimer=setTimeout(closeEs,HIDDEN_CLOSE_MS); // 页面是在后台标签页里打开的

@@ -23,7 +23,7 @@ const mock = `
 window.__hits = {}; window.__es = []; window.__hidden = false; window.__xss = 0;
 Object.defineProperty(document, 'hidden', {get: () => window.__hidden});
 class ES { constructor(u){ this.u=u; this.closed=false; window.__es.push(this); setTimeout(() => this.onopen && !this.closed && this.onopen(), 10);} close(){ this.closed=true; } }
-const __st = window.setTimeout.bind(window); window.setTimeout = (f, ms, ...a) => __st(f, ms === 60000 && window.__hiddenCloseMs ? window.__hiddenCloseMs : ms, ...a);
+const __st = window.setTimeout.bind(window); window.setTimeout = (f, ms, ...a) => __st(f, ms === 60000 && window.__hiddenCloseMs ? window.__hiddenCloseMs : ms === 5000 && window.__fastRetry ? 50 : ms, ...a);
 window.EventSource = ES;
 const zh = ${JSON.stringify(zh)};
 const evil = '<img src=x onerror=window.__xss=1>.epub';
@@ -41,6 +41,7 @@ const routes = {
   '/api/books/staging': () => ({ok:true, items:[{name: evil, format:'epub', bytes:1000, mtime:1, optimized:false, delivered:{optimize:{status:'failed', message:'"><img src=x onerror=window.__xss=1>'}}}], freeBytes: 9e9}),
   '/api/books/status': () => ({ok:true, xochitlFolders:[]}),
   '/api/budget/status': () => ({pending:[], active:[]}),
+  '/api/session': () => ({ok:true, mustChange:false}),
   '/api/batch/status': () => ({running:false,total:0,done:0,queued:[],failed:[]}),
   '/api/foundation': () => ({}), '/api/enhance/status': () => ({}),
   '/api/books/agent-failures': () => ({items: window.__fails}),
@@ -128,6 +129,15 @@ await new Promise(r => setTimeout(r, 400));
 out.esCount = await page.evaluate(() => window.__es.length);
 out.esReopenedOpen = await page.evaluate(() => !window.__es[window.__es.length - 1].closed);
 out.reopenRefresh = (await hits()) - h2;
+// 浏览器放弃重连（连上时回了非 200，如网关重启后会话失效 401）：EventSource 进 CLOSED 不再自己重试——页面要查一次会话再退避重开
+{ const n0 = await page.evaluate(() => window.__es.length), s0 = await hits('/api/session');
+  await page.evaluate(() => { window.__fastRetry = true; const e = window.__es[window.__es.length - 1]; e.readyState = 2; e.onerror(); });
+  await new Promise(r => setTimeout(r, 400));
+  out.closedRecovery = [await page.evaluate(() => window.__es.length) - n0, (await hits('/api/session')) - s0, await page.evaluate(() => window.__es[window.__es.length - 2].closed)];
+  // 浏览器自己在重连（CONNECTING）时不插手
+  await page.evaluate(() => { const e = window.__es[window.__es.length - 1]; e.readyState = 0; e.onerror(); });
+  await new Promise(r => setTimeout(r, 300));
+  out.connectingUntouched = (await page.evaluate(() => window.__es.length)) - n0; }
 // 对话框：Enter=确认、Esc=取消、点遮罩=取消；关闭后遮罩移除、键盘监听摘掉（单选框 choiceDialog 随「阅读方向」一起删了）
 out.dialogs = await page.evaluate(async () => {
   const key = k => document.dispatchEvent(new KeyboardEvent('keydown', {key: k}));
@@ -197,6 +207,8 @@ assert.equal(out.esClosedWhileHidden, true, '页面隐藏超时后应断开 SSE'
 assert.equal(out.esCount, 2, '重新可见应重连（新建一条 EventSource）');
 assert.equal(out.esReopenedOpen, true);
 assert.equal(out.reopenRefresh, 1, '重连成功应补刷当前 tab 一次');
+assert.deepEqual(out.closedRecovery, [1, 1, true], 'EventSource 进 CLOSED：关掉旧的、查一次会话、退避后新开一条');
+assert.equal(out.connectingUntouched, 1, '浏览器自己在重连（CONNECTING）时不另开连接');
 assert.equal(out.idleHits, 0, '空闲时不该有轮询');
 assert.deepEqual(errs, [], '不该有 JS 报错');
 console.log('smoke OK');
