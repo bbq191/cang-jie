@@ -22,7 +22,7 @@
 
 | 数据 | 来源 | 说明 |
 |---|---|---|
-| 各进程 CPU 增量 | `/proc/<pid>/stat` | 按进程名、按 systemd unit（"应用"）两种方式聚合 |
+| 各进程 CPU 增量 | `/proc/<pid>/stat` | 按进程名、按 systemd unit（"应用"）两种方式聚合。「应用」视图把本项目的服务（gateway、book/font/wallpaper/note/ink/mind/transcribe-serve、wifi-watch、battop，以及退役的旧单元名）合成一组 `cang-jie`（`summary.rs::friendly`；2026-09-30 起，此前只认退役旧单元名，现役服务各自单列；只在 host 测过，未部署） |
 | 电量、放电 mAh | 电量计 sysfs（`max77818_battery` 的 `capacity`、`charge_now`、`current_now`） | `charge_now` 是库仑计，放电 mAh 比按百分比估算准 |
 | 唤醒源 | `/dev/kmsg` 里的 `PM: active wakeup source: <名>` | 只含**本次开机以来**的记录（旧版 fork `journalctl` 能跨开机查 31 天，为去掉子进程接受了这个退化）；约每 50 分钟刷新一次缓存，保留 31 天。kmsg 时间戳在休眠时不走，所以按"墙钟 − 单调时钟 + 时间戳"换算（单调时钟同样不含休眠）；09-25 前减的是含休眠的 uptime，每条事件被提前"它之前累计的休眠时长"，面板「今日 / 24 小时」唤醒数不准。去重靠 kmsg 序号：`wakes.cursor` 记开机 id 和已并入的最大序号，同一次开机只并新序号，换了开机就重建本次开机的记录。图解见 [白皮书 §03l](../docs/reMarkable系统增强线白皮书.md)（09-25 第四轮审计，只在 host 验证） |
 
@@ -32,7 +32,7 @@
 
 ```sh
 cargo build --release --target aarch64-unknown-linux-musl
-cargo test          # host 单测（含与旧实现逐字节对拍的黄金文件、缓存与全量重扫的 60 轮对拍）
+cargo test          # host 单测 32 项 + 1 项默认忽略（含与旧实现逐字节对拍的黄金文件、缓存与全量重扫的 60 轮对拍）
 ```
 
 ## 部署

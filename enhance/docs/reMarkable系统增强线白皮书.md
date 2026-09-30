@@ -2,6 +2,8 @@
 
 > 这篇讲**原理、决策、真机验证和踩坑**；每个工具怎么装、怎么用，看各自的 README。
 > **§ 编号固定不变**（代码注释和别的文档按编号引用），所以章节顺序和编号不完全一致：先读 §00b 现状，原理从 §02 起，踩坑 §04，待办 §05。
+>
+> **给谁看、先看哪几节**：只想知道"有哪些工具、怎么开关"——§00b 一节就够；要改 xovi 扩展或 qmd 补丁——§02、§04（尤其「qmd 补丁怎么离线验证」）；要查耗电——§03b、§03j；要知道最近改了什么、哪些还没上真机——§03m（最新一轮）和 §05。
 
 ## 读这篇你能得到什么
 
@@ -17,7 +19,9 @@
 | 字体、壁纸服务和 lo-alias 在这条线里的位置 | §03h |
 | 设备空闲时谁在定时把 CPU 叫醒（整套设备，不只本线） | §03j |
 | 2026-09-24 第三轮审计给本线改了什么（当天已部署） | §03k |
-| 2026-09-25 第四轮审计给本线改了什么（未部署）、battop 唤醒时间怎么换算 | §03l |
+| 2026-09-25 第四轮审计给本线改了什么、battop 唤醒时间怎么换算 | §03l |
+| 2026-09-30 第五轮审计给本线改了什么（未部署、未上真机） | §03m |
+| 改 qmd 补丁后怎么离线验证（为什么不能用 `check-compatibility`） | §04「qmd 补丁怎么离线验证」 |
 | 改了扩展为什么要整机重启、不能只重启 xochitl | §04「hook 安全性」末条 |
 | 为什么单点工具要单独成线 | §00、§01 |
 | 踩过的坑 / 还没做完的事 | §04 / §05 |
@@ -48,9 +52,9 @@
 
 **共用件**：[`shared/`](../shared/PROVENANCE.md) 是两个 xovi 扩展共用的特征码扫描 + trampoline 代码；[`lo-alias/`](../lo-alias/README.md) 是让 `10.11.99.1` 在不插 USB 时也可达的小脚本（网关启动前调用）。
 
-**当前设备状态**：09-24 只读核对时 `extensions.d/` 里有 `appload.so`、`hl-snap.so`、`hw-stroke.so`、`qt-resource-rebuilder.so`，**没有** `cangjie-langhook.so`；第三轮审计重编的两个 `.so` 当天换入，journal 里三个 hook 都"安装完成"；battop 已装、停着。09-25 整轮卸载后重装，`verify-on-device.sh` 43✓ 0✗。09-25 13:10 又部署了加 `-ffile-prefix-map` 重编的两个 `.so`（§04「构建与环境」）：设备上 md5 与仓库一致（hl-snap `7ca1985b…`、hw-stroke `6e5b4a3d…`），三个 hook「安装完成」，`verify-on-device.sh` 43✓ 1⚠（刚开机）0✗，xochitl `NRestarts` 0。
+**当前设备状态**：2026-09-29 按用户要求卸载了 appload、KOReader、第三方 WeRead 和侧栏入口，按卸载记录 `extensions.d/` 现在应只剩 `hl-snap.so`、`hw-stroke.so`、`qt-resource-rebuilder.so`（卸载后本文没有再做只读核对）；**没有** `cangjie-langhook.so`。此前的记录：09-24 只读核对时还有 `appload.so`，第三轮审计重编的两个 `.so` 当天换入，journal 里三个 hook 都"安装完成"；battop 已装、停着。09-25 整轮卸载后重装，`verify-on-device.sh` 43✓ 0✗；同日 13:10 又部署了加 `-ffile-prefix-map` 重编的两个 `.so`（§04「构建与环境」）：设备上 md5 与仓库一致（hl-snap `7ca1985b…`、hw-stroke `6e5b4a3d…`），三个 hook「安装完成」，`verify-on-device.sh` 43✓ 1⚠（刚开机）0✗，xochitl `NRestarts` 0。09-30 第五轮审计没改两个 `.so` 的源码（md5 不变）。
 
-**未闭环**（详见 §05）：`hw-stroke` 的 `bVar16<4` 分支；两个扩展的加载顺序依赖已修并部署，但反序加载没专门验（§04「hook 安全性」）。
+**未闭环**（详见 §05）：`hw-stroke` 的 `bVar16<4` 分支；两个扩展的加载顺序依赖已修并部署，但反序加载没专门验（§04「hook 安全性」）；2026-09-30 第五轮审计的改动（§03m）只在开发机测过，没部署、没上真机。
 
 ### 术语速查
 
@@ -242,7 +246,7 @@ hook 目标 `FUN_00f47530`：两个 float（s0/s1）+ 一个指针（x0），标
 
 ![xochitl 阅读器翻页](diagrams/reader-page-turn.svg)
 
-**需求**：用户要"单击翻页"回来（08-14 做过 `tap-page-turn.qmd` 并真机验证，09-11 随 `xovi-extensions/reading-qol/` 移出仓库，设备上的 qmd 也已不在，只剩 `reading-qol.json` 里一个 `tapPageTurn`）；另外问漫画能不能"从左往右滑是下一页"——指 **xochitl**（KOReader 的漫画方案已经是这样，见书架白皮书 §03bt）。
+**需求**：用户要"单击翻页"回来（08-14 做过 `tap-page-turn.qmd` 并真机验证，09-11 随 `xovi-extensions/reading-qol/` 移出仓库，设备上的 qmd 也已不在，只剩 `reading-qol.json` 里一个 `tapPageTurn`）；另外问漫画能不能"从左往右滑是下一页"——指 **xochitl**（当时 KOReader 的漫画方案已经是这样，见书架白皮书 §03bt；KOReader 已于 2026-09-29 从设备卸载，现在只剩 xochitl 一个阅读器）。
 
 **做法**：一个 qmd 改三个 QML，锚点全部从设备 .172 的 xochitl 二进制里解出真实 QML 核对过：
 - `DeviceSceneView.qml` 的 `FocusScope#root` 加 `cjTapPageTurn`、`cjRtl` 两个属性（这个对象就是手势文件里的 `view`，`view: root` 实例化）。
@@ -253,13 +257,13 @@ hook 目标 `FUN_00f47530`：两个 float（s0/s1）+ 一个指针（x0），标
 
 **怎么判断"从右往左"**：只看 EPUB OPF 的 `<spine page-progression-direction="rtl">`。book-serve 用 `bookconv::placeholder::epub_is_rtl` 读书库里 `<uuid>.epub` 的 container.xml 和 OPF 两个 zip 条目（一卷漫画数百 MB，不能整本读），按（大小, mtime）缓存。09-24 设备书库 58 本 EPUB 里 7 本带这个标记（6 卷《死亡筆記》、1 卷《火影》），说明书架优化会保留它（2026-09-30 起优化只保留、不写这个属性）；按卷拆分的分卷原先会丢掉这个属性，当时改为从原书继承（`AssembleOpts.rtl`）；分卷投递 2026-09-30 已移除，`AssembleOpts.rtl` 一并删掉。
 
-**离线验证**：本机重编 qmldiff（`asivery/qmldiff`），把解出的三份 .172 QML 放到 hashtab 里的真实资源路径下跑 `apply-diffs`：三个 AFFECT 都应用，四处插入位置核对正确；`qmllint` 补丁前后报错数一致（DocumentView 原版就有 9 条"找不到设备私有模块"类报错）。
+**离线验证**：本机重编 qmldiff（`asivery/qmldiff`），把解出的三份 .172 QML 放到 hashtab 里的真实资源路径下跑 `apply-diffs`（不能用 `check-compatibility` 代替，见 §04「qmd 补丁怎么离线验证」）：三个 AFFECT 都应用，四处插入位置核对正确；`qmllint` 补丁前后报错数一致（DocumentView 原版就有 9 条"找不到设备私有模块"类报错）。
 
 **手动指定清单**：calibre 转出的漫画大多不写这个标记。同日真机核对：《亂馬½ 典藏版》4–9 卷、《镖人》2–5 卷、東立版《火影》8–10 卷的 OPF 都只有 `<spine toc="ncx">`，而 Kmoe 版都写了。用户定"这次先手动指定，以后新传的书还是看书里自带的标记"，所以加了 `~/.local/state/shelf/books/rtl-overrides.json`（xochitl 文档 uuid 数组，每次查询现读），当时没有网页入口；当天把这 13 本写进去了。**2026-09-30 起这份清单只读**：book-serve 不再写，已有条目照旧生效，要撤就手动删文件或删条目。
 
 **母版库按书指定方向（2026-09-25 加，2026-09-30 已移除）**：用户定翻页方向只保留原书自带的，下面是当时的做法，留作历史。母版库页勾选 EPUB →「阅读方向」（自动 / 从右往左 / 从左往右，可多选批量），「优化」时写进 OPF 的 spine（已优化过的书只改 OPF、不重新处理图片）；这本书若已加入过 xochitl，设置时顺手把那个 uuid 写进/移出上面的手动清单，重新打开书即生效，不必重投。规则见书架 EPUB 优化规范白皮书 §4.6，数据流见传书线架构 §2.6。只做手动：漫画识别分不出日漫与国漫/美漫。**09-25 真机**：《乱马》11/12 卷完整优化后 OPF 带上 `rtl`，加入 xochitl 后新 uuid 自动进手动清单，日漫翻页生效；只改 OPF 的轻量路径、PDF 转来的 EPUB 还没真机走过。
 
-**已知限制**：没在 OPF 里标 rtl、也不在手动清单里的日漫不会反转——09-25～09-29 可在母版库里按书设「从右往左」缓解，09-30 这个入口已撤，现在只能手改 `rtl-overrides.json` 或自己改书，不会自动认日漫；书本身写着 rtl 的副本不能改成"从左往右"（清单只能加不能反向覆盖书里的标记）；改开关要重新打开书；只影响 xochitl，KOReader 不受影响。
+**已知限制**：没在 OPF 里标 rtl、也不在手动清单里的日漫不会反转——09-25～09-29 可在母版库里按书设「从右往左」缓解，09-30 这个入口已撤，现在只能手改 `rtl-overrides.json` 或自己改书，不会自动认日漫；书本身写着 rtl 的副本不能改成"从左往右"（清单只能加不能反向覆盖书里的标记）；改开关要重新打开书；只影响 xochitl。
 
 **真机验证（09-24）**：部署后 journal 有 `CJ-PAGE-TURN: loaded`；打开书读到开关（`cfg tap=… rtl=…`）；《亂馬》《镖人》、Kmoe《火影》被识别为从右往左（`rtl book <uuid>`），普通书不识别；单击左右边缘翻页命中。之后（第三轮审计）去掉了单击/滑动命中时的日志——每写一行 journal 都会唤醒 wallpaper-serve 的 `journalctl -f` 和飞行记录仪；关书时不再读配置。
 
@@ -271,8 +275,8 @@ hook 目标 `FUN_00f47530`：两个 float（s0/s1）+ 一个指针（x0），标
 
 | 来源 | 属于 | 空闲时怎么醒 | 代码出处 |
 |---|---|---|---|
-| wifi-watch | packaging | 每 15 秒 `sleep` 一次看链路；链路好只读 sysfs、不 fork，每 40 轮（10 分钟）兜底复查一次频段/省电设置 | `packaging/wifi-watch/wifi-watch.sh` `INTERVAL`/`RECHECK` |
-| 服务间事件流心跳 | rmsvc-core | 网关订阅 7 个有 `/events` 的服务（book、font、koreader、wallpaper、ink、transcribe、note），transcribe 再订阅 ink，共 8 条 loopback 流，各 120 秒一次心跳 | `rmsvc-core/src/events.rs` `FOLLOW_KEEPALIVE_SECS` |
+| wifi-watch | packaging | 每 15 秒 `sleep` 一次看链路；链路好只读 sysfs、不 fork，每 40 轮（10 分钟）兜底复查一次频段/省电设置；09-28 起连上新网络后探一次外网，通了不再探，不通时每 10 分钟再探 | `packaging/wifi-watch/wifi-watch.sh` `INTERVAL`/`RECHECK`/`PROBE_URL` |
+| 服务间事件流心跳 | rmsvc-core | 网关订阅 6 个有 `/events` 的服务（book、font、wallpaper、ink、transcribe、note；`gateway/src/manage.rs` 的 `MODULES` 里 `events: true` 的项），transcribe 再订阅 ink，共 7 条 loopback 流，各 120 秒一次心跳。2026-09-30 前还订阅 koreader-serve，共 8 条（KOReader 09-29 已卸，该服务退役） | `rmsvc-core/src/events.rs` `FOLLOW_KEEPALIVE_SECS` |
 | shelf-mkdir-agent.qmd | shelf | 长轮询 `GET /mkdir/pending?wait=290`：空闲约 290 秒一次往返（book-serve 上限 300 秒；09-24 前 25 秒）；若真遇到 30 秒客户端超时自动退回 25 秒 | `shelf/xovi/shelf-mkdir-agent.qmd`；`book-serve` `MKDIR_WAIT_MAX_SECS` |
 | 网关 mDNS | rmsvc-core | 09-25 起空闲零定时唤醒：改听内核 netlink 地址变化，地址增删才重扫（此前 socket 读超时 = 重扫间隔 60 秒）；netlink 打不开才退回 60 秒；局域网别的设备发 mDNS 查询另算 | `rmsvc-core/src/mdns.rs` `AddrWatch` / `RESCAN_INTERVAL` |
 | wallpaper-serve | 本线 | inotify 等 xochitl 休眠时读完 `current.png`：空闲零唤醒，每次休眠醒一次（09-24 前常驻 `journalctl -f -u xochitl`，xochitl 每写一行日志就醒一次） | `enhance/wallpaper-serve/src/wake.rs` |
@@ -281,7 +285,7 @@ hook 目标 `FUN_00f47530`：两个 float（s0/s1）+ 一个指针（x0），标
 | reader-page-turn.qmd | 本线（源码在 shelf） | 打开书时单发 300 ms 读一次开关，不轮询（08 月旧版每 1.5 秒轮询） | `shelf/xovi/reader-page-turn.qmd` |
 | 其余 qmd 与服务 | shelf / notes | comic-margins 换文档单发 1.5 秒；trash-agent 与 mkdir-agent 同为 290 秒长轮询（09-25 起，各约 12 次/小时；book-serve 不在时出错重试 15→30→60→120 秒封顶，此前固定 15 秒 = 240 次/小时）；book-serve / ink-serve 用 inotify 防抖（8 秒 / 4 秒）；浏览器事件流 20 秒心跳只在网页开着时有 | 各自源码 |
 
-**结论**：空闲时的定时唤醒主要是 wifi-watch 和 8 条事件流心跳，每小时各约 240 次；mkdir-agent、trash-agent 两个长轮询各约 12 次/时（mkdir-agent 原约 144 次）；wallpaper-serve 09-24 起不再跟日志（改监听休眠读图）。飞行记录仪不在设备上：它跑在宿主机，循环经 ssh 抓设备日志（接着电脑时才有），所以本线仍尽量压低 xochitl 日志量（§03g 逐点日志默认关、§03i 去掉命中日志）。
+**结论**：空闲时的定时唤醒主要是 wifi-watch（约 240 次/时）和 7 条事件流心跳（约 210 次/时，09-30 前 8 条约 240 次）；mkdir-agent、trash-agent 两个长轮询各约 12 次/时（mkdir-agent 原约 144 次）；wallpaper-serve 09-24 起不再跟日志（改监听休眠读图）。飞行记录仪不在设备上：它跑在宿主机，循环经 ssh 抓设备日志（接着电脑时才有），所以本线仍尽量压低 xochitl 日志量（§03g 逐点日志默认关、§03i 去掉命中日志）。
 
 **mkdir-agent 放宽的依据**（09-24）：设备 Qt 6.10.3；qtdeclarative 6.10 的 `qqmlxmlhttprequest.cpp` 不设传输超时、XHR 也没有 timeout 属性；`QNetworkAccessManager` 缺省超时为 0（禁用）。xochitl 导入了 `setTransferTimeout`，但没有证据表明它作用在 QML 引擎的 NAM 上，所以 qmd 加了兜底：请求在 28–33 秒之间失败就当作客户端超时，退回 wait=25 并打一行 `SHELF-MKDIR: transfer timeout` 日志。**09-24 真机**：部署后与整机重启后各跑了数分钟，journal 里都没有这行，即不存在 30 秒客户端超时，290 秒长等待生效。
 
@@ -300,9 +304,9 @@ hook 目标 `FUN_00f47530`：两个 float（s0/s1）+ 一个指针（x0），标
 | reader-page-turn.qmd 去掉单击/滑动命中日志、关书时不读配置 | 每行 journal 都唤醒 wallpaper-serve 和飞行记录仪（§03j） | 没有单独再做离线/真机验证（只删日志、加一处提前返回）；加载 / 开关 / rtl 三类日志保留 |
 | hw-stroke 安装器提示改为检查两行"hook 安装完成" | 逐点日志 09-24 起默认关，旧提示让人 grep 一个必然为空的结果 | — |
 
-## 03l｜第四轮审计给本线的改动（2026-09-25，未部署）
+## 03l｜第四轮审计给本线的改动（2026-09-25）
 
-全部只在 host 上测过（battop 32 项 + 1 项默认忽略、font-serve 10 项、wallpaper-serve 10 项 `cargo test` 通过；`shared` `make test` 通过），**未在真机验证**。两个扩展 `.so` 的源码**没有改**：本机按 Makefile 同参数交叉编译零警告，产物 md5 与仓库里的 `.so` 一致（hl-snap `7ca1985b…`、hw-stroke `6e5b4a3d…`，构建可复现）；hl-snap 安装脚本只改了头注里过时的"restart xochitl"说法。
+写这节时全部只在 host 上测过（battop 32 项 + 1 项默认忽略、font-serve 10 项、wallpaper-serve 10 项 `cargo test` 通过；`shared` `make test` 通过），**未在真机验证**。之后这批代码是否随后续部署上了设备，本文没有留下核对记录；下面「部署后确认」各项也还没有逐项做过。两个扩展 `.so` 的源码**没有改**：本机按 Makefile 同参数交叉编译零警告，产物 md5 与仓库里的 `.so` 一致（hl-snap `7ca1985b…`、hw-stroke `6e5b4a3d…`，构建可复现）；hl-snap 安装脚本只改了头注里过时的"restart xochitl"说法。
 
 | 改动 | 为什么 | 验证 |
 |---|---|---|
@@ -316,6 +320,21 @@ hook 目标 `FUN_00f47530`：两个 float（s0/s1）+ 一个指针（x0），标
 ![battop 唤醒源时间换算与按序号去重](diagrams/battop-wake-time.svg)
 
 **部署后确认**：打开「管理 → 电池刺客」看唤醒源「今日」计数是否与当天实际休眠 / 唤醒次数量级相符（`data/wakes.cursor` 应出现）；`systemctl restart font-serve` 后 journal 里"索引 N 个家族"秒回、`~/.config/fontconfig/fonts.conf` 的 mtime 不变、`~/.local/state/shelf/upload/` 存在且上传字体后不留文件；xochitl 日志里 `SHELF-MKDIR` / `SHELF-TRASH` 行为照常（停掉 book-serve 时代理不再每 15 秒重试）。
+
+## 03m｜第五轮审计给本线的改动（2026-09-30，未部署）
+
+**全部只在开发机上测过，没部署、没上真机。** host 测试：battop 32 项（+1 项默认忽略）、font-serve 10 项、wallpaper-serve 11 项 `cargo test` 通过；两个扩展 `.so` 的源码没改，md5 不变，部署时不用换 `.so`。
+
+| 改动 | 为什么 | 验证 |
+|---|---|---|
+| wallpaper-serve：监听到 `IN_IGNORED` 就返回错误，交给已有的退避重试循环重建目录和监听（`wake.rs::watch_once`） | 壁纸目录被删或所在文件系统被卸载时，内核自动撤掉监听、只发一条 `IN_IGNORED`，之后再无事件；旧代码照常 `continue`，轮换线程永远卡在一个死掉的监听上，之后再也不换壁纸，也不报错 | 新增真 inotify 用例：删掉目录后 `watch_once` 5 秒内返回"已失效"（第 11 个测试） |
+| battop「应用」视图：现役服务（gateway、book/font/wallpaper/note/ink/mind/transcribe-serve、wifi-watch、battop）归进 `cang-jie` 组；退役旧单元名（wr-serve 等）照旧归组，40 天样本里的历史行不乱 | 旧映射只认已退役的微读/PKM 单元，现役服务在「应用」视图里各自单列，`cang-jie` 组只剩 battop 一项，看不出本项目合计耗电 | `friendly_names` 用例补了现役单元名 |
+| hl-snap / hw-stroke 的 `make clean` 只删 `.so`，不再删已提交的 `xovi_glue.{c,h}` | 删了之后本机没有 asivery/xovi clone 就再也编不出来（和 §04「提交进仓库的生成文件」同一类坑） | 读 Makefile 核对 |
+| font-serve 上传回执去掉"KOReader 请到 KOReader 页单独上传"，头注改为记录 KOReader 09-29 已卸 | KOReader 与 koreader-serve 已退役，网页里也没有 KOReader 页了 | — |
+| `shelf-mkdir-agent.qmd` 的 `catch` 打一行 `SHELF-MKDIR: failed <错误>`；它和 `font-menu-dynamic.qmd` 的头注去掉退役引用（**选择器没改**） | 此前回复不是合法 JSON 或 `createCollection` 抛错时静默吞掉，journal 里看不出建文件夹为什么没成 | 只改注释和一行日志，没有另跑 qmldiff |
+| 发现：`qmldiff check-compatibility` 基本不做校验 | 见 §04「qmd 补丁怎么离线验证」 | 开发机实测 |
+
+**部署后确认**（还没做）：壁纸照常在休眠时轮换；battop 开着时「应用」视图出现 `cang-jie` 组、网关等不再单列；xochitl 里建文件夹失败时 journal 能看到 `SHELF-MKDIR: failed`。
 
 ## 04｜踩坑
 
@@ -337,10 +356,18 @@ hook 目标 `FUN_00f47530`：两个 float（s0/s1）+ 一个指针（x0），标
 - **多扩展共存曾依赖加载顺序（已修、已部署；反序加载未专门验证）**：`shared/scan.c` 的 `cj_find_exec_module` 原先只返回 xochitl **第一个**可执行段。每装一个 hook，`mprotect` 都会把那一页切成独立的段，之后"第一段"只到最低的已 patch 页为止，后装的扩展找不到更高地址的目标。2026-09-24 真机 maps 里 xochitl 代码段确实被切成了 7 段（`0xf03000`、`0xf47000`、`0xf4c000` 三页各自独立），两个扩展能都装上，是因为这次顺序恰好是 hw-stroke（高地址目标）先、hl-snap（`0xf03670`）后；反过来 hw-stroke 会静默装不上 hook，网页徽章却仍显示"已加载"。**修法**（09-24 第三轮审计）：把紧接其后的同文件、首尾相接、可读可执行的续段一并算进扫描范围；`_xovi_construct` 找不到映射或特征码时改为打日志。host 单测用真内核 `mprotect` 复现了切段（旧实现只返回第一段、新实现返回整段）。xovi 实际按什么顺序加载没有核实，反序加载的真机验证见 §05。
 - **换了运行中 xochitl 正映射着的 `.so` 再 restart → 整机重启**（09-21 appload、09-24 hw-stroke 两次）：09-24 改为 stop → 换 → start（§03g）。**09-25 更正**：真正的问题是停止 xochitl 本身有概率崩溃（同日一次只换 qmd 的普通 restart 也崩了，memfault 栈与 09-21 同一处），与换没换 `.so` 无关；现在部署生效一律主动整机重启，见 `packaging/README.md`「怎么让改动生效」。同日反编译坐实线程池那 3 份的机制：xochitl 退出时 `atexit` 先析构墨水屏刷新任务用的全局数据、后停线程池（`defw/README.md`「调查记录」），跟 hl-snap / hw-stroke 无关。
 
+**qmd 补丁怎么离线验证**
+
+![qmd 离线验证：check-compatibility 不可信，要用 apply-diffs](diagrams/qmd-offline-verify.svg)
+
+- **`qmldiff check-compatibility` 不能用来验证 qmd**（2026-09-30 第五轮审计发现）：这个子命令基本不做校验，给它一份语法都不对的垃圾 qmd 也报"无错误"，查不出 `({})` 对象字面量这类会让整份补丁在设备上不应用的错误，也不核对 LOCATE 锚点能不能命中。它过了什么都不说明。
+- **要用 `apply-diffs` 实跑**：把从固件解出的真实 QML 放到 hashtab 里对应的资源路径下，用 `asivery/qmldiff` 的 `apply-diffs` 把 qmd 真正应用一遍，看每个 AFFECT 是否应用、插入位置对不对，再用 `qmllint` 比补丁前后报错数（§03i 就是这么验的）。它能一比一复现设备端的解析错误。桩 QML 只能证明语法，证明不了锚点在真实 QML 上命中（§03l 的教训）。
+- 本机新版 qmldiff 可能比设备上的宽松（例如新版对 `({})` 不再报错、旧设备版会），所以 qmd 里照旧**不写 `({})`、handler 一律用 `{ … }` 块**。
+
 **构建与环境**
 
 - **交叉工具链的 glibc 比设备新，`.so` 会在符号解析这步静默加载失败**：`atan2f` / `sqrtf` 在本地链接时被打上 `GLIBC_2.43`，设备的 `libm` 没这么新，整个 `hw-stroke.so` 加载失败，还连累同一次扫描里的 `hl-snap.so`。用 `objdump -T` 检查，最高应是 `GLIBC_2.17`。规避：能内联的用 `__builtin_xxx` + `-fno-math-errno`，不能的用三角恒等式改写。多扩展场景下要确认**所有**扩展都正常，不能只看目标扩展的日志（现在网页徽章能直接看到）。
-- **提交进仓库的生成文件，Makefile 规则别依赖它的 mtime**：`xovi_glue.{c,h}` 已提交，但旧规则依赖 `.xovi` 的修改时间——checkout 后 `.xovi` 恰好较新就会去跑 xovigen，本机没有 asivery/xovi clone 时构建失败，部署脚本随即退回仓库里已提交的（可能是旧源码编出的）`.so`，悄悄部署了旧版。现在胶水只在缺失时生成，改了 `.xovi` 用 `make glue XOVI_DIR=<clone>` 显式重生成（09-24）。
+- **提交进仓库的生成文件，Makefile 规则别依赖它的 mtime，`clean` 也别删它**：`xovi_glue.{c,h}` 已提交，但旧规则依赖 `.xovi` 的修改时间——checkout 后 `.xovi` 恰好较新就会去跑 xovigen，本机没有 asivery/xovi clone 时构建失败，部署脚本随即退回仓库里已提交的（可能是旧源码编出的）`.so`，悄悄部署了旧版。现在胶水只在缺失时生成，改了 `.xovi` 用 `make glue XOVI_DIR=<clone>` 显式重生成（09-24）。同一类坑：`make clean` 原先连 `xovi_glue.{c,h}` 一起删，删完没有 clone 就编不出来，09-30 改为只删 `.so`。
 - **构建产物里带开发机绝对路径**：`-g` 的调试信息记着编译目录，09-24 同一份源码在两处编出不同 md5，核对"设备上的 `.so` 是不是仓库这份"时容易误判。09-25 两个 `Makefile` 加 `-ffile-prefix-map=$(CURDIR)=.`，反汇编不变；09-25 已部署真机，设备上 md5 与仓库一致、三个 hook 装上。
 - **Java Swing 在 Wayland 平铺合成器下整窗口空白**：设 `_JAVA_AWT_WM_NONREPARENTING=1`；先查 `$XDG_SESSION_TYPE`，别怀疑程序或工程坏了。Ghidra headless 建的 `.gpr` 是 0 字节也正常（元数据在 `.rep/`）。
 - **过期文档可能指向"已经放弃的危险方案"**（§03a 的 `/usr` drop-in）：这类要立刻改，不能当一般文档债。
@@ -362,7 +389,8 @@ hook 目标 `FUN_00f47530`：两个 float（s0/s1）+ 一个指针（x0），标
 | wallpaper-serve 改监听休眠读图（§03j） | 09-24 已改并真机验证：临时放第二张图后休眠一次，`Normal to DeepSleep` 同一刻（115.79s）轮换到下一张、只轮换一次；进程列表里没有 journalctl | 充电状态（内核不挂起）下还没试 |
 | ~~lo-alias：不插 USB 冷启动~~ | ✅ 09-25 两次无 USB 整机重启后核对：`10.11.99.1` 同时挂上 `lo` 与 `usb1`，xochitl :80 已绑定 | — |
 | battop：两次冻机的内核根因 | 09-23 起采样循环无子进程；根因（RCU stall）未排除 | 继续观察；不开机自启保持不变 |
-| 第四轮审计改动（§03l） | 代码已合入，未部署、未上真机 | 部署后按 §03l「部署后确认」逐项核对 |
+| 第四轮审计改动（§03l） | 代码已合入；部署后确认各项还没逐项核对 | 按 §03l「部署后确认」逐项核对 |
+| 第五轮审计改动（§03m） | 只在开发机测过，未部署、未上真机 | 部署后按 §03m「部署后确认」核对 |
 
 **已闭环（真机）**：hl-snap 精确吸附（§03a）；battop 常驻化（§03b）与唤醒源改读 `/dev/kmsg`（§03b，commit 记真机确认）；hw-stroke 两个 hook 目标、笔尖角度 + 运笔速度（§03e / §03f）；hw-stroke 降负载（§03g）；网页"已加载"徽章（§02）；xochitl 单击翻页 + 日漫翻页规则（§03i）；扩展 `.so` 的 stop → 换 → start 部署流程（§03g，09-24 真机走通；09-25 起被整机重启取代）；换入后整机重启的新流程（§04，09-25 13:10 带 `-ffile-prefix-map` 的新 `.so` 经 WiFi 部署，自动整机重启、开机从待换入区换入，第一次真机走通有变化的 `.so`）；wallpaper-serve 监听休眠读图轮换（§03j）；mkdir-agent 290 秒长轮询（§03j）。
 
@@ -385,4 +413,5 @@ hook 目标 `FUN_00f47530`：两个 float（s0/s1）+ 一个指针（x0），标
 | 2026-09-23 | battop 唤醒源改读 `/dev/kmsg` |
 | 2026-09-24 | hw-stroke 降负载（§03g）；网页"已加载"徽章（§02）；扩展部署改 stop → 换 → start；第三轮审计（§03k，当天部署） |
 | 2026-09-25 | 部署生效一律整机重启（§04）；两个 `Makefile` 加 `-ffile-prefix-map`，新 `.so` 当天部署并真机走通"待换入区 → 整机重启换入"；母版库按书设阅读方向（§03i）；lo-alias 无 USB 冷启动真机通过；第四轮审计（§03l，未部署） |
-| 2026-09-30 | 撤掉母版库按书设阅读方向，`rtl-overrides.json` 改为只读（§03i；书架侧改动，只在 host 测过，未部署） |
+| 2026-09-29 | 设备上卸载 KOReader、第三方 WeRead、appload 和侧栏入口（按用户要求，已在设备上执行） |
+| 2026-09-30 | 撤掉母版库按书设阅读方向，`rtl-overrides.json` 改为只读（§03i；书架侧改动，只在 host 测过，未部署）；第五轮审计（§03m，未部署），其中网关不再订阅 koreader-serve 事件流（§03j） |

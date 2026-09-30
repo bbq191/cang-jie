@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 610" font-family="Noto Sans CJK SC, sans-serif">
 <defs><marker id="mk" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#555"/></marker><marker id="mr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#b0451f"/></marker><marker id="mg" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2f7d45"/></marker></defs>
 <rect x="0" y="0" width="1000" height="610" fill="#fbfbfa"/>
-<text x="500.0" y="30" text-anchor="middle" font-size="18" font-weight="bold" fill="#1a1a1a">设备常驻唤醒源一览（2026-09-25 按代码核对）</text>
+<text x="500.0" y="30" text-anchor="middle" font-size="18" font-weight="bold" fill="#1a1a1a">设备常驻唤醒源一览（2026-09-30 按代码核对）</text>
 <text x="500.0" y="52" text-anchor="middle" font-size="12.5" fill="#6a6a6a">空闲、不开网页时谁会定时把 CPU 叫醒；只算设备醒着的时间（用户态定时器在休眠时不走）</text>
 <rect x="40" y="80" width="560" height="330" rx="10" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.6"/>
 <text x="52" y="100" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">定时唤醒：每小时次数（醒着时）</text>
@@ -9,10 +9,10 @@
 <rect x="60" y="130" width="300.0" height="14" rx="3" fill="#9db6d8" stroke="#4a6fa5" stroke-width="1.2"/>
 <text x="368.0" y="142" text-anchor="start" font-size="11.5" fill="#1a1a1a" font-weight="bold">240 次/时</text>
 <text x="60" y="160" text-anchor="start" font-size="10.5" fill="#555">carrier=1 只读 sysfs、不 fork；每 40 轮（10 分钟）兜底复查</text>
-<text x="60" y="180" text-anchor="start" font-size="12" fill="#1a1a1a" font-weight="bold">服务间事件流心跳：8 条 × 每 2 分钟</text>
-<rect x="60" y="186" width="300.0" height="14" rx="3" fill="#9db6d8" stroke="#4a6fa5" stroke-width="1.2"/>
-<text x="368.0" y="198" text-anchor="start" font-size="11.5" fill="#1a1a1a" font-weight="bold">240 次/时</text>
-<text x="60" y="216" text-anchor="start" font-size="10.5" fill="#555">网关订阅 7 个服务 + transcribe 订阅 ink，loopback 心跳 120 秒</text>
+<text x="60" y="180" text-anchor="start" font-size="12" fill="#1a1a1a" font-weight="bold">服务间事件流心跳：7 条 × 每 2 分钟</text>
+<rect x="60" y="186" width="262.5" height="14" rx="3" fill="#9db6d8" stroke="#4a6fa5" stroke-width="1.2"/>
+<text x="330.5" y="198" text-anchor="start" font-size="11.5" fill="#1a1a1a" font-weight="bold">210 次/时</text>
+<text x="60" y="216" text-anchor="start" font-size="10.5" fill="#555">网关订阅 6 个服务 + transcribe 订阅 ink，心跳 120 秒（09-30 撤 koreader-serve，原 8 条）</text>
 <text x="60" y="236" text-anchor="start" font-size="12" fill="#1a1a1a" font-weight="bold">mkdir-agent / trash-agent 两个 qmd 长轮询</text>
 <rect x="60" y="242" width="15.0" height="14" rx="3" fill="#9db6d8" stroke="#4a6fa5" stroke-width="1.2"/>
 <text x="83.0" y="254" text-anchor="start" font-size="11.5" fill="#1a1a1a" font-weight="bold">各 ≈12 次/时（mkdir-agent 09-24 前 ≈144）</text>

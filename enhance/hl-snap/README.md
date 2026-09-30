@@ -25,7 +25,7 @@ make aarch64                               # 产物 hl-snap.so（已提交进仓
 make glue XOVI_DIR=<asivery/xovi clone 路径>   # 只有改了 hl-snap.xovi 才需要：重新生成 xovi 胶水
 ```
 
-构建只需要 aarch64 交叉编译器（2026-09-25 起加 `-ffile-prefix-map=$(CURDIR)=.`，调试信息里不带开发机路径；反汇编不变；09-25 已部署真机，hook 装上）：xovi 胶水 `xovi_glue.{c,h}` 已提交进仓库，缺失时才会调 asivery/xovi 的 `xovigen.py` 生成（2026-09-24 前规则依赖 `.xovi` 的修改时间，checkout 后可能无端去跑 xovigen、没有 clone 就失败，部署脚本随即悄悄退回仓库里已提交的旧 `.so`）。部署脚本在构建失败时仍会退回已提交的 `.so`，并打出警告。扫描/trampoline 公共代码在 [`../shared/`](../shared/PROVENANCE.md)，`cd ../shared && make test` 跑 host 单测。
+构建只需要 aarch64 交叉编译器（2026-09-25 起加 `-ffile-prefix-map=$(CURDIR)=.`，调试信息里不带开发机路径；反汇编不变；09-25 已部署真机，hook 装上）：xovi 胶水 `xovi_glue.{c,h}` 已提交进仓库，缺失时才会调 asivery/xovi 的 `xovigen.py` 生成（2026-09-24 前规则依赖 `.xovi` 的修改时间，checkout 后可能无端去跑 xovigen、没有 clone 就失败，部署脚本随即悄悄退回仓库里已提交的旧 `.so`）。部署脚本在构建失败时仍会退回已提交的 `.so`，并打出警告。`make clean` 只删 `hl-snap.so`，不删已提交的胶水（2026-09-30 前会一起删，删完没有 clone 就编不出来）。扫描/trampoline 公共代码在 [`../shared/`](../shared/PROVENANCE.md)，`cd ../shared && make test` 跑 host 单测。
 
 ## 部署
 
@@ -43,7 +43,7 @@ cd packaging && sh deploy-hl-snap.sh <host>
 sh deploy/install.sh [--no-restart]     # --no-restart：只落盘，不重启
 ```
 
-前置：设备上已 `vellum add xovi`。装到 `extensions.d/hl-snap.so`，和 `appload.so`、`qt-resource-rebuilder.so` 并列。安装器会：
+前置：设备上已 `vellum add xovi`。装到 `extensions.d/hl-snap.so`，和 `hw-stroke.so`、`qt-resource-rebuilder.so` 并列（09-29 前还有 `appload.so`，已随 KOReader 一起卸载）。安装器会：
 
 1. 旧 `.so` 先备份进 `~/cangjie-backups/`（**绝不留在 `extensions.d/`**：xovi 会把该目录下任何文件当扩展加载，重名会让 xochitl 起不来）；内容没变就不重复备份，`--no-restart` 模式下也不会标记"待重启"。
 2. 换文件：

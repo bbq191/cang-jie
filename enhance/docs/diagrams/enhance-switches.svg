@@ -100,7 +100,7 @@
 <rect x="290" y="578" width="290" height="72" rx="9" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.4"/>
 <text x="304" y="602" font-size="12" fill="#1a1a1a">字体文件装进 fontconfig 用户目录</text>
 <text x="304" y="623" font-size="11.8" fill="#444">重写 fonts.json + 中文回退链</text>
-<text x="304" y="640" font-size="11.8" fill="#444">（不碰 KOReader）</text>
+<text x="304" y="640" font-size="11.8" fill="#444">（只管 xochitl）</text>
 <rect x="600" y="578" width="370" height="72" rx="9" fill="#f1edf9" stroke="#6d4ab0" stroke-width="1.4"/>
 <text x="614" y="602" font-size="12.5" font-weight="bold" fill="#1a1a1a">xochitl「文字与布局」字体菜单</text>
 <text x="614" y="623" font-size="11.8" fill="#444">重开菜单即可选，不用重启</text>
