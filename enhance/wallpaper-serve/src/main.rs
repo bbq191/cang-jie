@@ -2,7 +2,7 @@
 //! `serve`：路由（经网关前缀 `/api/wallpapers`）`GET /`（池）· `POST /`（multipart 多图，缩放入池，`?activate=1` 顺手激活）·
 //!   `PUT /current {name}` · `PUT /mode {mode}` · `DELETE /{name}` · `GET /{name}`（PNG 预览）· `GET /status`。
 //! `enable` / `disable`：写 / 删 xochitl.conf 的 `SleepScreenPath`（安装器 / 卸载器 / 手动用）；`roll`：手动轮换；
-//! `activate <name>`：命令行激活。**轮换由 serve 内的 journal 唤醒监听触发**（wake.rs）。
+//! `activate <name>`：命令行激活。**轮换由 serve 内的 inotify 监听触发**：xochitl 休眠时读完 current.png（IN_CLOSE_NOWRITE）即换下一张（wake.rs）。
 //! 休眠屏机制（2026-09-06 起）：原生隐藏键 `SleepScreenPath=current.png`（native.rs），xochitl 每次休眠重读该文件——
 //! 不再 bind-mount `/usr/share/remarkable/suspended.png`、不再盖插画卡、不写 `/usr`、没有开机单元和 sleep 钩子。
 mod native;
