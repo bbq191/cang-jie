@@ -12,7 +12,7 @@
 | 组件 | 是什么 | 状态 | 在网页哪里开关 |
 |---|---|---|---|
 | [`hl-snap/`](hl-snap/README.md) | xovi 扩展：荧光笔划中文时划哪吸哪，不再吸整行 | ✅ 真机通 | 管理 → 系统增强，默认开 |
-| [`shelf/xovi/reader-page-turn.qmd`](../shelf/xovi/reader-page-turn.qmd) | qmd 补丁：xochitl 阅读器单击翻页、日漫翻页规则 | ✅ 真机通（09-24）；09-25 起母版库可按书设阅读方向 | 管理 → 系统增强，默认关 |
+| [`shelf/xovi/reader-page-turn.qmd`](../shelf/xovi/reader-page-turn.qmd) | qmd 补丁：xochitl 阅读器单击翻页、日漫翻页规则 | ✅ 真机通（09-24）；方向只看书里自带的标记（09-25 加的母版库按书设方向已于 09-30 移除） | 管理 → 系统增强，默认关 |
 | [`handwriting-stroke/`](handwriting-stroke/README.md) | xovi 扩展：按笔尖角度 + 运笔速度调整手写笔画粗细 | ✅ 书法笔和钢笔/铅笔/马克笔等真机通；最常用的一档钢笔/铅笔还摸不到 | 管理 → 实验室，默认关 |
 | [`battop/`](battop/README.md) | 采样服务「电池刺客」：按进程/应用/唤醒源统计耗电 | ✅ 真机通；**有意不开机自启** | 管理 → 系统增强；开着时出现「电池刺客」数据页 |
 | [`wallpaper-serve/`](wallpaper-serve/README.md) | Web 服务（8793）：休眠壁纸上传即用、每次休眠后轮换 | ✅ 真机通 | 其他 → 壁纸 |

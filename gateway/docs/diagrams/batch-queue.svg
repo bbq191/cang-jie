@@ -73,7 +73,7 @@
 <text x="315.0" y="515" text-anchor="middle" font-size="10" fill="#4a4a4a">2  正在处理的那本：</text>
 <text x="315.0" y="528" text-anchor="middle" font-size="10" fill="#4a4a4a">   · 还在等闸门 → 直接取消排队</text>
 <text x="315.0" y="541" text-anchor="middle" font-size="10" fill="#4a4a4a">   · 已在 book-serve 里 → POST /staging/cancel</text>
-<text x="315.0" y="554" text-anchor="middle" font-size="10" fill="#4a4a4a">3  EPUB 优化每处理完一个条目检查一次；按卷拆分每份之间检查</text>
+<text x="315.0" y="554" text-anchor="middle" font-size="10" fill="#4a4a4a">3  EPUB 优化每处理完一个条目检查一次</text>
 <text x="315.0" y="567" text-anchor="middle" font-size="10" fill="#4a4a4a">   → 终态 cancelled（不是 failed），原文件字节不变</text>
 <text x="315.0" y="580" text-anchor="middle" font-size="10" fill="#4a4a4a">4  单文件上传、PDF 优化没有安全中断点：如实回“无法中途停止”，跑完为止</text>
 <rect x="640" y="456" width="570" height="190" rx="10" fill="#fff3d6" stroke="#c9971f" stroke-width="1.6" stroke-dasharray="6 4"/>

@@ -45,7 +45,7 @@
   <line x1="310" y1="410" x2="292" y2="410" stroke="#555" stroke-width="1.5" marker-end="url(#dd-a)"/>
   <text x="301" y="402" text-anchor="middle" font-size="12" font-weight="bold" fill="#2f7d45">是</text>
   <rect x="30" y="356" width="262" height="108" rx="8" fill="#e8f5ec" stroke="#3f9a55" stroke-width="1.6"/>
-  <text x="161" y="378" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">② 占位 + 磁盘替换（首选）</text>
+  <text x="161" y="378" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">② 占位 + 磁盘替换（大文件通道）</text>
   <text x="161" y="398" text-anchor="middle" font-size="11" fill="#1a1a1a">先传几 KB 占位，再原子换成真文件</text>
   <text x="161" y="416" text-anchor="middle" font-size="11" fill="#1a1a1a">不分卷、不限漫画、EPUB/PDF 都行</text>
   <text x="161" y="434" text-anchor="middle" font-size="11" fill="#1a1a1a">EPUB 首开才渲染，徽章记 onopen</text>
@@ -54,31 +54,12 @@
   <line x1="540" y1="466" x2="540" y2="504" stroke="#555" stroke-width="1.5" marker-end="url(#dd-a)"/>
   <text x="552" y="490" font-size="12" font-weight="bold" fill="#b0451f">否（任一条件不满足）</text>
 
-  <!-- 判断 C -->
-  <polygon points="310,552 540,506 770,552 540,598" fill="#fff3d6" stroke="#c9971f" stroke-width="1.6"/>
-  <text x="540" y="548" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">漫画 EPUB，或带书签的</text>
-  <text x="540" y="567" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">漫画 PDF ?</text>
-
-  <!-- 是：拆卷 -->
-  <line x1="310" y1="552" x2="292" y2="552" stroke="#555" stroke-width="1.5" marker-end="url(#dd-a)"/>
-  <text x="301" y="544" text-anchor="middle" font-size="12" font-weight="bold" fill="#2f7d45">是</text>
-  <rect x="30" y="496" width="262" height="112" rx="8" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.6"/>
-  <text x="161" y="517" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">③ 兜底：按卷拆分</text>
-  <text x="161" y="536" text-anchor="middle" font-size="11" fill="#1a1a1a">EPUB：NCX 第一层切，单卷仍超</text>
-  <text x="161" y="552" text-anchor="middle" font-size="11" fill="#1a1a1a">再按页贪心切；PDF：按书签分卷</text>
-  <text x="161" y="570" text-anchor="middle" font-size="11" fill="#1a1a1a">逐份 /upload，等 xochitl 渲染完</text>
-  <text x="161" y="586" text-anchor="middle" font-size="11" fill="#1a1a1a">再传下一份，回执聚合各份成败</text>
-  <text x="161" y="602" text-anchor="middle" font-size="10" fill="#4a4a4a">见 §03ax · comic-split-deliver.svg</text>
-
   <!-- 否：拒绝 -->
-  <line x1="770" y1="552" x2="788" y2="552" stroke="#555" stroke-width="1.5" marker-end="url(#dd-a)"/>
-  <text x="779" y="544" text-anchor="middle" font-size="12" font-weight="bold" fill="#b0451f">否</text>
-  <rect x="790" y="496" width="262" height="112" rx="8" fill="#fbe9e4" stroke="#b0451f" stroke-width="1.6"/>
-  <text x="921" y="517" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">④ 拒绝（回执给出路）</text>
-  <text x="921" y="537" text-anchor="middle" font-size="11" fill="#1a1a1a">非漫画 EPUB、无书签 PDF、</text>
-  <text x="921" y="553" text-anchor="middle" font-size="11" fill="#1a1a1a">或拆到底单卷仍超限</text>
-  <text x="921" y="573" text-anchor="middle" font-size="11" fill="#1a1a1a">→ 改用「加入 KOReader」，</text>
-  <text x="921" y="589" text-anchor="middle" font-size="11" fill="#1a1a1a">或自行把 PDF 分成多份</text>
+  <rect x="310" y="506" width="460" height="100" rx="8" fill="#fbe9e4" stroke="#b0451f" stroke-width="1.6"/>
+  <text x="540" y="528" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">③ 整本拒绝（回执末尾「没有加入」）</text>
+  <text x="540" y="548" text-anchor="middle" font-size="11" fill="#1a1a1a">超过 1GiB、造不出占位文档、或本机没有 xochitl 书库目录（非设备环境）</text>
+  <text x="540" y="566" text-anchor="middle" font-size="11" fill="#1a1a1a">→ 改用「加入 KOReader」，或自行把书分成多份再上传</text>
+  <text x="540" y="590" text-anchor="middle" font-size="10" fill="#4a4a4a">不再按卷拆分（EPUB 按 NCX、PDF 按书签拆分投递，2026-09-30 已移除）</text>
 
   <!-- KOReader 旁路 -->
   <rect x="790" y="68" width="262" height="124" rx="8" fill="#fff3d6" stroke="#c9971f" stroke-width="1.6"/>
@@ -92,5 +73,5 @@
   <!-- 底部说明 -->
   <rect x="30" y="628" width="1022" height="54" rx="8" fill="#f0f0ee" stroke="#8a8a8a" stroke-width="1.2"/>
   <text x="541" y="649" text-anchor="middle" font-size="11.5" fill="#1a1a1a">成功后统一：写边车 .&lt;书名&gt;.delivered（native 时间戳，EPUB 与大文件另写 render 记录）；每完成一步向 SSE 推 books/staging，网页零轮询刷新</text>
-  <text x="541" y="668" text-anchor="middle" font-size="11.5" fill="#4a4a4a">占位已上传之后才出的错直接报错、不再退回分卷（否则书库里会留重复内容）；占位残留由用户手动删除，不做回滚删除</text>
+  <text x="541" y="668" text-anchor="middle" font-size="11.5" fill="#4a4a4a">占位已上传之后才出的错直接报错（书库里可能留下半成品占位）；占位残留由用户手动删除，不做回滚删除</text>
 </svg>

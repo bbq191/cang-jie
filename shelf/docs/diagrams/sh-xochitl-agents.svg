@@ -62,12 +62,12 @@
 <!-- 行 4 阅读方向 -->
 <rect x="20" y="418" width="240" height="86" rx="10" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.6"/>
 <text x="140" y="446" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">日漫从右往左翻</text>
-<text x="140" y="468" text-anchor="middle" font-size="11.5" fill="#3a3a3a">母版库按书设「阅读方向」，</text>
-<text x="140" y="486" text-anchor="middle" font-size="11.5" fill="#3a3a3a">或书的 OPF 自带 rtl 标记</text>
+<text x="140" y="468" text-anchor="middle" font-size="11.5" fill="#3a3a3a">书的 OPF 自带 rtl 标记，</text>
+<text x="140" y="486" text-anchor="middle" font-size="11.5" fill="#3a3a3a">或 uuid 在旧手动清单里</text>
 <rect x="340" y="418" width="300" height="86" rx="10" fill="#fff3d6" stroke="#c9971f" stroke-width="1.6"/>
 <text x="490" y="444" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">OPF rtl + rtl-overrides.json</text>
-<text x="490" y="466" text-anchor="middle" font-size="11.5" fill="#3a3a3a">优化时写进 OPF；已加入 xochitl 的</text>
-<text x="490" y="484" text-anchor="middle" font-size="11.5" fill="#3a3a3a">书把 uuid 同步进手动清单</text>
+<text x="490" y="466" text-anchor="middle" font-size="11.5" fill="#3a3a3a">优化保留原书的方向标记；旧清单只读，</text>
+<text x="490" y="484" text-anchor="middle" font-size="11.5" fill="#3a3a3a">不再写入（按书设方向 09-30 已移除）</text>
 <rect x="720" y="418" width="360" height="86" rx="10" fill="#e8f5ec" stroke="#3f9a55" stroke-width="1.6"/>
 <text x="900" y="444" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">reader-page-turn.qmd（DocumentView 等）</text>
 <text x="900" y="466" text-anchor="middle" font-size="11.5" fill="#3a3a3a">打开书时 GET /reading-direction/{uuid}</text>

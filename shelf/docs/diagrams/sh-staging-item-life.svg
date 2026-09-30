@@ -51,7 +51,7 @@
 <rect x="616" y="186" width="444" height="100" rx="10" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.6"/>
 <text x="632" y="208" font-size="13.5" font-weight="bold" fill="#1a1a1a">③ 落库（复制字节，可反复、两个阅读器都能放）</text>
 <text x="632" y="228" font-size="11.5" fill="#1a1a1a">加入 xochitl：≤90MB 网页上传；更大走「占位 + 磁盘替换」</text>
-<text x="632" y="246" font-size="11.5" fill="#1a1a1a">（≤1GiB），不行才按卷拆分；可选目标文件夹</text>
+<text x="632" y="246" font-size="11.5" fill="#1a1a1a">（≤1GiB），走不了就拒绝；可选目标文件夹</text>
 <text x="632" y="264" font-size="11.5" fill="#1a1a1a">加入 KOReader：同分区复制到 books/[目录]/</text>
 <text x="632" y="280" font-size="10.5" fill="#6a6a6a">母版不因落库而删除；落库后改母版不影响阅读器里的副本</text>
 

@@ -94,7 +94,7 @@ impl Staging {
     }
 
     /// 大文件通道（见 [`rmsvc_core::xochitl::Xochitl::upload_large_file`]）：成功 `Ok(Some)`；条件不满足（非
-    /// EPUB/PDF、超过安全上限、本机没有 xochitl 书库目录、造占位失败）→ `Ok(None)` 让调用方退回旧路径；
+    /// EPUB/PDF、超过安全上限、本机没有 xochitl 书库目录、造占位失败）→ `Ok(None)`，调用方整本拒绝；
     /// 占位已上传之后才出的错 → `Err`（不再退回拒绝，否则书库里会留下半成品占位）。
     pub(super) fn try_deliver_direct(&self, name: &str, p: &Path, size: u64, folder: &str) -> Result<Option<DeliverOutcome>, String> {
         let ext = formats::ext_of(name);

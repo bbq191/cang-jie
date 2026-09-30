@@ -43,7 +43,7 @@
   <text x="490" y="350" font-size="14" fill="#7c2d12">② 解码一次（灰度页保持单通道）</text>
   <text x="490" y="376" font-size="14" fill="#7c2d12">③ 裁白边：单边最多裁 35%</text>
   <text x="490" y="402" font-size="14" fill="#7c2d12">④ 一次缩放进页框；JPEG 小图可先放大（≤3 倍）</text>
-  <text x="490" y="428" font-size="14" fill="#7c2d12">⑤ 白底补到页框比例 → 编码一次（q95，放大过的 q85）</text>
+  <text x="490" y="428" font-size="14" fill="#7c2d12">⑤ 白底补到页框比例 → 编码一次（一律 q95）</text>
   <text x="490" y="462" font-size="13" fill="#9a3412">页框：缺省 954×1696（屏幕比例）；实验室开关开时</text>
   <text x="490" y="484" font-size="13" fill="#9a3412">952×1457（页边距 1 时的图片框，§20）。短边 &lt;318 的小图只裁边</text>
 

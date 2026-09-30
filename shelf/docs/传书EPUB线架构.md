@@ -13,11 +13,11 @@
 >
 > **怎么读**：先看 §1 架构图、§2 数据流，再按需读 §3–§7；§8 前端、§9 API 与配置、§10 已知限制是查阅用的。第一次接触项目先读 [`../../docs/OVERVIEW.md`](../../docs/OVERVIEW.md)。
 >
-> **核对时点**：2026-09-19 首写，之后每轮按源码逐字段复核，最近一次 **2026-09-25**（基线 `OPTIMIZE_VERSION`＝`"15"`）。文中"真机验证"沿用当时的记录；只对照了源码、没连设备的地方会写明。09-25 新增：按书阅读方向（§2.6）、抓网文「同步优化」进忙锁与闸门（§7.3）、回收站代理改按 id 删（§4）；同日真机补验了 >153MB 占位通道首次渲染和批量加入（§6.1、§10）。09-25 下午第四轮审计（**只在 host 测过，未部署真机**）改了：inbox 不收还在写的文件（§2.1）、跨分区入库先拷临时文件（§2.2）、删除占忙锁（§7.3）、代理队列重试有上限与出错退避（§4）、大文件通道串行（§6.1）、拆分不丢目录前的页（§6.2）、网页按事件来源决定重取多少（§7）。
+> **核对时点**：2026-09-19 首写，之后每轮按源码逐字段复核，最近一次 **2026-09-25**（基线 `OPTIMIZE_VERSION`＝`"15"`）。文中"真机验证"沿用当时的记录；只对照了源码、没连设备的地方会写明。09-25 新增：按书阅读方向（§2.6）、抓网文「同步优化」进忙锁与闸门（§7.3）、回收站代理改按 id 删（§4）；同日真机补验了 >153MB 占位通道首次渲染和批量加入（§6.1、§10）。09-25 下午第四轮审计（**只在 host 测过，未部署真机**）改了：inbox 不收还在写的文件（§2.1）、跨分区入库先拷临时文件（§2.2）、删除占忙锁（§7.3）、代理队列重试有上限与出错退避（§4）、大文件通道串行（§6.1）、拆分不丢目录前的页（§6.2）、网页按事件来源决定重取多少（§7）。**2026-09-30**（用户定，**只在 host 测过，未部署、未真机验证**）：撤掉按书阅读方向（§2.6 留作历史，翻页方向只看书里自带的标记）；移除超限书的按卷拆分（§6.2 留作历史，超限只走大文件通道，走不了整本拒绝）；漫画页预放大后也用 JPEG q95。
 
 ## 0｜这是什么
 
-"传书"是书架（shelf）里"把书弄到设备上并保证质量过得去"的统称。EPUB 线是其中处理 EPUB 的完整链路——EPUB 是唯一被**深度处理**（清洗排版、目录重建、图片降采样、漫画识别与拆分）的格式；PDF 走同一套入库/落库，「优化」由 `bookconv::pdf_ingest` 单独处理（§2.4）。书架只收 EPUB/PDF，其它格式一律拒收（`rmsvc_core::formats`）。
+"传书"是书架（shelf）里"把书弄到设备上并保证质量过得去"的统称。EPUB 线是其中处理 EPUB 的完整链路——EPUB 是唯一被**深度处理**（清洗排版、目录重建、图片降采样、漫画识别与裁边补白）的格式；PDF 走同一套入库/落库，「优化」由 `bookconv::pdf_ingest` 单独处理（§2.4）。书架只收 EPUB/PDF，其它格式一律拒收（`rmsvc_core::formats`）。
 
 **核心设计**：三层（内容源 → 母版库 → 读器）、三个正交动作（入库 / 优化 / 落库）。"正交"＝互不耦合：入库不需优化，优化后可不落库，落库前不强制优化。母版库是唯一容器，网页没有"跳过母版库直接投读器"的路径。
 
@@ -89,22 +89,22 @@
 
 ![母版库一本书的生命周期：内存忙锁与 sidecar 状态](diagrams/book-item-lifecycle.svg)
 
-**sidecar**（`sidecar.rs`，字段全可缺省，旧记录照读）＝`Delivered { optimize: Option<OptimizeCheck>, deliver: Option<DeliverCheck>, native: Option<u64>（最近投原生时间戳）, koreader: Option<u64>, render: Option<RenderCheck{uuid,pages,expected,status,at}>（§2.3）, source（历史遗留，网页不再写）, direction: Option<String>（按书阅读方向 `rtl`/`ltr`，缺省＝自动；是用户设置不是结果记录，放边车为了跟书走，§2.6） }`；`OptimizeCheck`/`DeliverCheck` 均为 `{status, message, at, progress: Option<StepProgress{done,total}>}`。
+**sidecar**（`sidecar.rs`，字段全可缺省，旧记录照读）＝`Delivered { optimize: Option<OptimizeCheck>, deliver: Option<DeliverCheck>, native: Option<u64>（最近投原生时间戳）, koreader: Option<u64>, render: Option<RenderCheck{uuid,pages,expected,status,at}>（§2.3）, source（历史遗留，网页不再写） }`（2026-09-25～09-29 的边车还带 `direction` 字段，现照读、忽略，§2.6）；`OptimizeCheck`/`DeliverCheck` 均为 `{status, message, at, progress: Option<StepProgress{done,total}>}`。
 
 | 字段 | `status` 取值 |
 |---|---|
 | `optimize` / `deliver` | `pending`（可带 `progress`）→ `ok` / `failed` / `cancelled`（用户取消，不算失败） |
 | `render` | `pending` → `ok` / `warn`（页数远低于期望）/ `timeout`（没等到，不算错）；大文件通道的 EPUB 另有 `onopen`（首次打开才渲染；列表发现 `.content` 页数变了就升成 `ok` 并**写回边车**，09-24 起，此前只改返回给网页的那份，之后每次列表都要再读一遍 `.content`） |
 
-两者形状一致但**故意不合并成泛型**。`StepProgress`：优化＝已写条目/总条目；按卷拆分落库＝已成功份数/总份数。
+两者形状一致但**故意不合并成泛型**。`StepProgress`：优化＝已写条目/总条目；落库目前不写进度（原先只有按卷拆分写"已成功份数/总份数"，2026-09-30 随分卷一起移除，字段保留）。
 
 ### 2.3 落库（母版库 → 读器）
 
-两个读器互不依赖，同一份母版可分别投给两边。决策树（体积门、占位通道、按卷拆分、拒绝的先后顺序）：
+两个读器互不依赖，同一份母版可分别投给两边。决策树（体积门、占位通道、拒绝的先后顺序）：
 
 ![落库决策树：一本书怎样进 xochitl / KOReader](diagrams/deliver-decision.svg)
 
-- **加入 xochitl**：`Staging::deliver()`，纯复制字节（不再优化）。`folder` 留空＝书库根（与 KOReader 语义对齐）；文件夹不存在经 `MkdirQueue` 让设备端 QML 代理建（§4）。超体积门（`nativeUploadLimitMb`，默认 90MB）→ **优先走“占位 + 磁盘替换”大文件通道**（§6.1）；本机无书库目录或造占位失败才退回按卷拆分（§6.2）或拒绝。≤ 体积门走普通上传，`Xochitl::upload_file` 流式发送（§5）。
+- **加入 xochitl**：`Staging::deliver()`，纯复制字节（不再优化）。`folder` 留空＝书库根（与 KOReader 语义对齐）；文件夹不存在经 `MkdirQueue` 让设备端 QML 代理建（§4）。超体积门（`nativeUploadLimitMb`，默认 90MB）→ 走“占位 + 磁盘替换”大文件通道（§6.1）；超过 1GiB、本机无书库目录或造占位失败就整本拒绝（回执末尾“没有加入”；2026-09-30 前这里还会退回按卷拆分，§6.2）。≤ 体积门走普通上传，`Xochitl::upload_file` 流式发送（§5）。
   走普通上传的 EPUB 另起**渲染自检**线程（`render_check::run`，不阻塞；大文件通道直接写渲染记录）：限时 10 分钟（`TIMEOUT`）轮询书库目录等 xochitl 渲染出页数，低于优化时统计的"期望页数"一半判 `warn`（`WARN_RATIO`＝0.5；真机标定：好书 0.86-0.99，整章渲染失败的坏书低至 0.34），写 sidecar `render` + 推 SSE。`/upload` 不回 uuid，认书靠"投书时刻后新出现的文档 + visibleName 相符者优先，否则取最新"（`render_check::pick`）。
 - **加入 KOReader**：`koreader-serve` 的 `POST /books/adopt`，从母版库（共享目录）本地拷到 KOReader `books/`（可选子目录），不经 `bookconv`、不限体积/格式。无 book-serve 侧忙态（两独立进程），落库记录靠网关批量 worker 事后调 `POST /staging/mark {target:"koreader"}` 补记（§7.2）。
 
@@ -137,17 +137,16 @@
 - **改名** `POST /staging/rename {name,newName}`：只改文件名，扩展名不变（不带扩展名沿用原扩展名；带了别的扩展名只当名字的一部分）；新名已存在、或新旧任一名字正在处理中则拒绝；边车跟着改名。**不改书内书名/作者**，xochitl 显示的书名仍取书内元数据。
 - **原 PDF 备份**：PDF 转 EPUB 成功后原 PDF 同分区 rename 进 `staging/.pdf-originals/`（此前直接删除、删了找不回）。按挪入时的 ctime 算 7 天（`PDF_ORIGINALS_KEEP_SECS`），启动时与每次新备份时清过期。`GET /staging` 的 `originals` 字段列出它们（名字、大小、备份时间、到期时间）；`POST /staging/originals/restore` 挪回母版库（同名已在则拒绝），`POST /staging/originals/delete` 提前删除。网页在母版库页底部显示「原 PDF 备份」。
 
-### 2.6 按书阅读方向（2026-09-25）
+### 2.6 按书阅读方向（2026-09-25 加，2026-09-30 已移除）
 
-![按书阅读方向](diagrams/sh-reading-direction.svg)
+**现状（2026-09-30 起）**：翻页方向只看书里自带的 OPF `<spine page-progression-direction>`。「优化」不改这个属性，原书写了什么产物就是什么（`bookconv::direction` 只剩读：`spine_direction` / `spine_direction_file`）。`GET /reading-direction/{uuid}`（`reading_direction.rs`，reader-page-turn.qmd 用）判从右往左＝书库里那份 EPUB 的 spine 写着 `rtl`，**或** uuid 在旧手动清单 `books/rtl-overrides.json` 里；这份清单现在**只读**，book-serve 不再写，已有条目照旧生效，要撤就手动删文件或删条目。旧边车里的 `direction` 字段照读、忽略。已删：`POST /staging/direction`、`Staging::set_direction`、列表的 `direction`/`directionStale`、`OptimizeOpts.page_direction`、只改 OPF 的轻量改写（`rewrite_direction_only` / `rewrite_direction_file` / `set_spine_direction`）、`ReadingDirection::set_override`、`staging/direction.rs`、网页按钮与徽章。用户用旧按钮设过方向的书：如果当时点过「优化」，方向已经写进 OPF，照样生效；已进清单的 uuid 继续生效；其余不做迁移。
 
-规则（写什么、为什么只手动、为什么不升版本）见规范白皮书 §4.6；这里只记数据流（代码 `staging/direction.rs`）：
+**当时的设计（2026-09-25～09-29，留作历史）**：
 - **设置**：`POST /staging/direction` → `Staging::set_direction` 只写边车 `direction`，不动书。PDF 拒绝。
-- **判"待优化"**：`list()` 的探测缓存（同"优化等级"，按（大小, mtime）失效）多读一次 OPF 的 spine 方向，与设置不一致 → `directionStale=true` 且 `optimized=false`。网页「优化」按钮与网关批量队列的资格都只看 `optimized`，不用改。
-- **优化**：`Staging::optimize` 读设置传 `OptimizeOpts.page_direction`；若书已是当前版本完整优化（含 PDF 转来的 EPUB）且只差方向，走 `rewrite_direction_only`：`bookconv::direction::rewrite_direction_file` 只改 OPF、其余条目原样拷贝 → 质量门 → `produce_then_replace`，不跑完整优化（免 JPEG 多一代有损）。母版 mtime 变了，已加入记录照常标"旧"，提示重新加入。
-- **免重投同步**：边车有 `render.uuid`（加入过 xochitl）时，`set_direction` 顺手 `ReadingDirection::set_override` 写进/移出 `rtl-overrides.json`（从右往左＝加；从左往右 / 改回自动＝移出）；之后 `set_render` 认到新 uuid 也按设置同步（设"自动"的不碰，清单里可能有用户手加的）。清单解析不了就报错、不覆盖。`ReadingDirection` 由 `State` 与 `Staging` 共用一个 `Arc`。
-- **真机状态**（2026-09-25）：完整优化写进 OPF `rtl`（《乱马》11/12 卷）、加入 xochitl 后自动把新 uuid 写进 `rtl-overrides.json`——已走通；"已优化、只改 OPF"的轻量路径和 PDF 转来的 EPUB 还没在真机上走过。
-- **已知限制**：清单只能"加上从右往左"——xochitl 里那份书本身写着 `rtl` 时，改成"从左往右"必须重新加入；按卷拆分的分卷沿用母版 OPF 的方向（`comic_split::opf_is_rtl` → `AssembleOpts.rtl`），所以同样要先「优化」写进书里再投。
+- **判"待优化"**：`list()` 的探测缓存多读一次 OPF 的 spine 方向，与设置不一致 → `directionStale=true` 且 `optimized=false`。
+- **优化**：`Staging::optimize` 读设置传 `OptimizeOpts.page_direction`；若书已是当前版本完整优化且只差方向，走 `rewrite_direction_only`：只改 OPF、其余条目原样拷贝 → 质量门 → `produce_then_replace`。
+- **免重投同步**：边车有 `render.uuid` 时，`set_direction` 顺手 `ReadingDirection::set_override` 写进/移出 `rtl-overrides.json`；之后 `set_render` 认到新 uuid 也按设置同步。
+- **真机状态**（2026-09-25）：完整优化写进 OPF `rtl`（《乱马》11/12 卷）、加入 xochitl 后自动把新 uuid 写进 `rtl-overrides.json`——走通过；轻量改 OPF 路径和 PDF 转来的 EPUB 没在真机上走过。
 
 ## 3｜EPUB 优化管线
 
@@ -172,7 +171,7 @@
 
 ### 3.2 质量门在流程里的位置
 
-`book-serve` 在 `produce_then_replace` 里、临时文件写完之后、改名覆盖之前调 `check::check_epub_file`（只读骨架、不读图片字节，不把整本读进内存）；EPUB 优化、PDF 转 EPUB、只改阅读方向（§2.6）三条路都过。**不过门就返回错误、临时文件清掉、原文件不动**，回执写明原因。五条拦截规则与为什么见规范白皮书 §6，实现见 bookconv 白皮书 §08。落库后另有渲染自检（§2.3）兜"渲染出来页数不对"。
+`book-serve` 在 `produce_then_replace` 里、临时文件写完之后、改名覆盖之前调 `check::check_epub_file`（只读骨架、不读图片字节，不把整本读进内存）；EPUB 优化、PDF 转 EPUB 两条路都过（2026-09-25～09-29 还有"只改阅读方向"一条，§2.6，已移除）。**不过门就返回错误、临时文件清掉、原文件不动**，回执写明原因。五条拦截规则与为什么见规范白皮书 §6，实现见 bookconv 白皮书 §08。落库后另有渲染自检（§2.3）兜"渲染出来页数不对"。
 
 ### 3.3 漫画页边距最小化（实验室开关 `comicMinMargin`，2026-09-21）
 
@@ -182,7 +181,7 @@
 |---|---|---|
 | 开关 | 网页「管理→实验室」写 `~/.local/share/cangjie-ime/reading-qol.json` 的 `comicMinMargin`（`comic_margins.rs::enabled()` 每次现读；缺文件/缺键/非布尔＝关） | 关：`EpubComicFrame::Screen`、不登记、`GET /margins/<uuid>` 恒 404 |
 | 优化 | `MinMargin`：补白到 954×**1458**（比例 302.365:462.1，`EPUB_FRAME_ASPECT`，容差 0.3%），页边距 1（`EPUB_COMIC_MARGINS`；不选 0：贴边）；`comic_pad`：纯文字页 `<body>` 加类 `cj-tp`（左右 margin 17.8pt）、含图页去掉 `<body>` class（Calibre body 类会吃约 20pt）、图文混排页 `<p>/<h1-6>/div.cj-flush` 加 `cj-tx`（须写成 `p.cj-tx{…}` 带元素名才压得过书自带类规则） | 仅"整本判漫画且 MinMargin"；幂等 |
-| 登记 | `Staging::comic_margin_eligible`：开关开 ∧ 标记版本＝当前 `OPTIMIZE_VERSION` ∧ `is_min_margin_comic_file` ∧ `is_min_margin_framed_file`（前 24 张整页图过半是 952×1457，或 2026-09-30 之前的 954×1458）→ `register_comic_margins(uuid)` 写 `comic-margins.json` | 小书在渲染自检认到 uuid 时登记；大文件通道替换后立即登记；按卷拆分不登记。**旧漫画必须重新优化**（旧页框在边距 1 下贴左） |
+| 登记 | `Staging::comic_margin_eligible`：开关开 ∧ 标记版本＝当前 `OPTIMIZE_VERSION` ∧ `is_min_margin_comic_file` ∧ `is_min_margin_framed_file`（前 24 张整页图过半是 952×1457，或 2026-09-30 之前的 954×1458）→ `register_comic_margins(uuid)` 写 `comic-margins.json` | 小书在渲染自检认到 uuid 时登记；大文件通道替换后立即登记；按卷拆分（2026-09-30 已移除）当时不登记。**旧漫画必须重新优化**（旧页框在边距 1 下贴左） |
 | 执行 | `shelf/xovi/shelf-comic-margins.qmd`（注入 DocumentView）：开书 1.5 秒后 `GET /margins/<uuid>`（404 不动；200 调 `setMargins(1)`），成功后 `POST /margins/applied` 销账 | **每本只设一次**，用户改回去不再干预；qmd 只在 xochitl 启动时加载，装/改后要**整机重启**（2026-09-25 起不再 `systemctl restart xochitl`，停 xochitl 本身会概率性崩） |
 
 ## 4｜设备端代理队列：为什么不能直接建文件夹/删文档
@@ -218,8 +217,8 @@
 | 风险点 | 修复前 | 修复方式 | 真机结果 |
 |---|---|---|---|
 | 整本优化（旧版） | 552MB 书 `VmRSS` 冲 1.4GB+ | 两阶段流式（§3） | 同书 `VmRSS` 全程 8-53MB |
-| 超限漫画拆分（旧版） | 785MB 书逼近系统内存上限 | `deliver_split_streaming`（§6.2），峰值≈单份 | 11 卷《镖人》全部投成 |
-| 落库不拆分路径 | ≤90MB 书叠 3 份数据（整本读+自检整本解压+上传克隆），峰值 ~180-270MB | `rmsvc_core::xochitl::upload_file` 流式上传 + `stats::text_profile_file` 流式自检（跳过图片） | 80MB 测试书投递，`VmHWM` 全程 3484 kB（约 3.4MB） |
+| 超限漫画拆分（旧版；分卷 2026-09-30 已移除） | 785MB 书逼近系统内存上限 | `deliver_split_streaming`（§6.2），峰值≈单份 | 11 卷《镖人》全部投成 |
+| 落库普通上传路径 | ≤90MB 书叠 3 份数据（整本读+自检整本解压+上传克隆），峰值 ~180-270MB | `rmsvc_core::xochitl::upload_file` 流式上传 + `stats::text_profile_file` 流式自检（跳过图片） | 80MB 测试书投递，`VmHWM` 全程 3484 kB（约 3.4MB） |
 | 多本大书同时处理 | 忙锁只按书名，内存线性叠加（设备约 2GB，`MemoryMax` 不生效） | 网关并发/内存闸门（§7.2）：>90MB 大档同时 1 个、小档 3 个 | 见网关白皮书（闸门核心串行化未独立验证） |
 | 图片并行 | worker 叠加大图内存 | `PixelBudget` ≤600 万像素 | `VmHWM` 47MB（串行 28MB） |
 | 单图解码无像素上限 | 漫画页解码成位图，`VmHWM` 冲 262-271MB | `imgopt::MAX_DECODE_PIXELS`（§3.1），实测校准 | 25 页漫画含一页 1600 万像素，`VmHWM` 全程个位数 MB |
@@ -229,17 +228,17 @@
 | PDF 转 EPUB / 裁边 | 原始字节活到函数结束；pdf-extract-cj 另解析一遍；解压不设限 | lopdf 统一 0.45 只解析一遍、`load_pdf` 解析完即释放、各类流解压 ≤64MB（2026-09-24 第三轮审计，图见 bookconv 白皮书 §18） | host：139MB 扫描 PDF 转 EPUB 557→431MB、裁边判定 416→279MB；未上真机 |
 | zip 条目声明大小 | 谎报 4GB 的条目被照单预分配，设备上 abort | `epubzip::read_all` 预分配封顶 32MB（2026-09-24） | host 单测 |
 
-**`nativeUploadLimitMb` 缺省 90MB**（94,371,840 字节，§9）：xochitl `/upload` 硬上限经真机 `curl` 二分测得＝100,000,000 字节（此前配置的 150 是未验证的猜测；《镖人》一卷 ~96MB 反复 `Connection reset by peer`）。超过走占位通道（§6.1），不可用才退回按卷拆分或拒绝。
+**`nativeUploadLimitMb` 缺省 90MB**（94,371,840 字节，§9）：xochitl `/upload` 硬上限经真机 `curl` 二分测得＝100,000,000 字节（此前配置的 150 是未验证的猜测；《镖人》一卷 ~96MB 反复 `Connection reset by peer`）。超过走占位通道（§6.1），走不了就整本拒绝（2026-09-30 前还会退回按卷拆分）。
 
 **验证方法论**：读 `VmHWM`（比瞬时采样权威），真机合成接近临界值的文件、走完整 API 序列。第一版像素上限功能测试全过但没量 `VmHWM`，峰值几乎没降；裁边比例（15%→35%）、漫画 PDF 多层攒副本上又复现——**内存阈值别拍脑袋算，要真机实测**。
 
-## 6｜超限书籍的落库：大文件通道与按卷拆分
+## 6｜超限书籍的落库：大文件通道（按卷拆分已移除）
 
-> **大白话**：xochitl 网页上传最多约 100MB。更大的书先传一个几 KB 的"占位"书建好条目，再把真文件直接换进去；换不了才退回按卷拆。
+> **大白话**：xochitl 网页上传最多约 100MB。更大的书先传一个几 KB 的"占位"书建好条目，再把真文件直接换进去；换不了就不加入（2026-09-30 起不再按卷拆）。
 
-xochitl `/upload` 约 100MB 硬限（超了断连）。超过体积门时 `Staging::deliver` 按序尝试（决策树见 §2.3）：① **大文件占位通道**（§6.1，优先，不分卷、EPUB/PDF 都行）→ ② **按卷拆分**（§6.2，回退，仅 ① 条件不满足/造占位失败）→ ③ **拒绝**（回执给出路：PDF 自行分割、非漫画 EPUB 改用 KOReader）。
+xochitl `/upload` 约 100MB 硬限（超了断连）。超过体积门时 `Staging::deliver` （决策树见 §2.3）：① **大文件占位通道**（§6.1，整本、EPUB/PDF 都行）→ 走不了（超过 1GiB、本机无书库目录、造不出占位）→ ② **整本拒绝**，回执“《书名》N MB 超过 xochitl 上传上限（90 MB），也走不了大文件通道（超过 1GB，或造不出占位文档），没有加入”。2026-09-30 前 ① 与 ② 之间还有一步**按卷拆分**（§6.2，已移除）。
 
-### 6.1 大文件“占位 + 磁盘替换”通道（优先，2026-09-20）
+### 6.1 大文件“占位 + 磁盘替换”通道（2026-09-20）
 
 ![绕开 xochitl 上传体积上限](../../docs/diagrams/upload-limit-bypass.svg)
 
@@ -247,21 +246,21 @@ xochitl `/upload` 约 100MB 硬限（超了断连）。超过体积门时 `Stagi
 
 **整段串行**（2026-09-25，只在 host 测过）：认领只凭"刚进库 + 大小等于占位"，而 PDF 占位是同一份固定字节——两本大 PDF 同时投会认领到同一个 uuid，一本被写进别人的条目、另一份占位永远留在书库。现在 `upload_large_file` 在进程内用一把锁从"传占位"一直串到"替换完成"（替换前那份文件仍是占位大小，锁放早了后来者照样认错）；回归测试用"回应后才落盘"的假 xochitl 复现，去掉锁必挂。经网关走时闸门本来就只放 1 本 >90MB 的书（§7.2），这把锁是 book-serve 进程内的第二道保证（直连后端、闸门提前放行时仍然成立）。
 
-**适用条件**：EPUB/PDF、≤ 1GiB（`MAX_DIRECT_BYTES`）、本机有书库目录、造占位成功；否则返回 `None` 回退分卷。**占位已上传后才出的错直接报错、不再退回分卷**（否则书库留重复内容）。**占位必须带真书名和真封面**：xochitl 用占位 `dc:title` 当显示名、导入时生成 `cover.png`，替换后不改名不补封面（真机踩过）。
+**适用条件**：EPUB/PDF、≤ 1GiB（`MAX_DIRECT_BYTES`）、本机有书库目录、造占位成功；否则返回 `None`，调用方整本拒绝。**占位已上传后才出的错直接报错**（书库里可能留下半成品占位；分卷还在时这条规则是为了不再退回分卷、免得书库留重复内容）。**占位必须带真书名和真封面**：xochitl 用占位 `dc:title` 当显示名、导入时生成 `cover.png`，替换后不改名不补封面（真机踩过）。
 ⚠ 已知限制见 §10（占位上传后崩溃会残留占位文档，回执提示手动删，不做危险的回滚删除）。
 
-### 6.2 超限漫画按卷拆分（回退路径）
+### 6.2 超限漫画按卷拆分（回退路径，2026-09-30 已移除）
 
-![超限漫画按卷拆分投递](diagrams/comic-split-deliver.svg)
+> **已移除**（2026-09-30 用户定）：`bookconv::comic_split`、`comic_pdf::deliver_split_pdf_streaming`、`util::safe_piece_filename`、`PdfFileReader::page_byte_span_len`、`comic-piece-extract`、book-serve 的 `try_deliver_split` / `try_deliver_split_pdf` / `deliver_pieces` / `PIECE_RENDER_TIMEOUT`、`AssembleOpts.rtl` 都已删掉（`imgs_referenced` / `ncx_titles_in_range` 两个解析函数挪进 `comic_pdf.rs`）。超限书现在只走 §6.1，走不了整本拒绝。以下是当时的设计，留作历史。
 
-仅 6.1 不可用时走。EPUB 走 `bookconv::comic_split::deliver_split_streaming`，**带书签目录的自产漫画 PDF** 走 `comic_pdf::deliver_split_pdf_streaming`（用户自传无书签 PDF 不拆），共用 `Staging::deliver_pieces` 逐份上传外壳；设计与真机记录见书架白皮书 §03ax。要点：
+当时仅 6.1 不可用时走。EPUB 走 `bookconv::comic_split::deliver_split_streaming`，**带书签目录的自产漫画 PDF** 走 `comic_pdf::deliver_split_pdf_streaming`（用户自传无书签 PDF 不拆），共用 `Staging::deliver_pieces` 逐份上传外壳；设计与真机记录见书架白皮书 §03ax。要点：
 
 1. **判定**：`is_comic` 才拆，否则整本拒绝；解不出 OPF/spine 是硬错误；无可用 `toc.ncx` 改按页数贪心切（`fixed_page_chunks_range_sized`）。
 2. **规划**（`plan_pieces_sized`）：只按第一层 NCX 切（旧递归边界计算有过真机 panic）；**第一份从 spine 第 0 页算起**——NCX 第一条常常不指向封面、扉页、版权页，此前这些页不属于任何一份、拆分后从书里消失（2026-09-25）；某卷仍超预算按页贪心再切（标题 `卷名（j/n）`）；单页超预算切不动则放弃并计入“N 未投”。页里的 `<img src>` 先按百分号编码解码再对 zip 条目名（中文/空格文件名常写成 `%E5%9B%BE.jpg`，此前对不上，整页被当成"没有可用图片"丢掉）；NCX 标题里的 `&amp;`、`&#12288;` 这类字符引用先还原，分卷书名、文件名和目录里不再出现字面的 `&amp;`。带书签的漫画 PDF 走拆分时，指向不存在页的书签丢掉，书签对象号/`/Dest` 不像自产 PDF 的就整份判不可用、不拆（此前前者会让切片越界 panic、后者减法溢出）。
 3. **逐份循环**：查取消标记（份间是安全中断点，§7.1）→ `build_piece`（按需重收图片、一张图一页、补目录、补外链 `comic.css`）→ `Xochitl::upload` → `render_check::probe` 等 xochitl 渲染出页数才传下一份（上限 90 秒 `PIECE_RENDER_TIMEOUT`，超时继续；真机《镖人》11 卷坐实紧挨着连传会冲垮 xochitl）→ 写 sidecar `{done,total}` + `bus.publish`（漏推事件曾致进度条冻结）。
 4. 母版字节不动，拆分份只在内存、上传即弃，峰值≈一份；全未投上→报错，部分成功→回执“N 未投”。
 5. 渲染自检与页边距登记对拆分份**都不做**（`RenderPlan` 按母版库条目名找书，拆分份无对应条目，硬接会认错书）。
-6. 分卷文件名注意 255 字节上限（见 bookconv 白皮书 §17）。
+6. 分卷文件名注意 255 字节上限（见 bookconv 白皮书 §17；`safe_piece_filename` 已随分卷删除）。
 
 ## 7｜异步任务与进度上报
 
@@ -277,7 +276,7 @@ xochitl `/upload` 约 100MB 硬限（超了断连）。超过体积门时 `Stagi
 
 ### 7.1 中途取消
 
-`OpRegistry` 里每个操作可声明 `mark_cancellable`；`POST /staging/cancel {name}` 登记取消标记，回执三种：没在处理→400；在处理但这步不可取消→200 `cancelled:false`（“这一步无法中途停止”）；可取消→200 `cancelled:true`。EPUB 优化每条目、按卷拆分每份之间检查；终态 `cancelled`（非 `failed`），原文件不变、无 `.optimizing.tmp` 残留；单文件上传与 PDF 优化无安全中断点。
+`OpRegistry` 里每个操作可声明 `mark_cancellable`；`POST /staging/cancel {name}` 登记取消标记，回执三种：没在处理→400；在处理但这步不可取消→200 `cancelled:false`（“这一步无法中途停止”）；可取消→200 `cancelled:true`。EPUB 优化每条目检查（按卷拆分原先每份之间也检查，2026-09-30 已移除）；终态 `cancelled`（非 `failed`），原文件不变、无 `.optimizing.tmp` 残留；单文件上传与 PDF 优化无安全中断点。
 
 ### 7.2 批量队列与并发/内存闸门（都在网关，2026-09-20）
 
@@ -302,7 +301,7 @@ xochitl `/upload` 约 100MB 硬限（超了断连）。超过体积门时 `Stagi
 | 落名临界区 | `Staging::land`（`land_guard()`） | `stage_new`/`stage_from_path`（网页上传、inbox 追平、抓网文）、改名、恢复原 PDF、优化完成后改规范名 | 只包“`unique_path` 挑名 + rename/写入”，毫秒级；跨分区入库的拷贝在锁外做（09-25） | 两本同名书挑到同一个名、后到的覆盖先到的 |
 | spool 锁 | `Spool::guard` | 只有 `process_inbox` 一轮追平 | 一轮 | 两轮追平抢同一文件 |
 | 边车写锁 | `sidecar::update`（全局 static） | 所有边车读-改-写（进度、终态、渲染记录、落库标记） | 一次读改写 | 交错写丢字段 |
-| xochitl 上传锁 | `rmsvc_core::xochitl`（进程内 static） | 每次 `GET /documents/<文件夹>` + `POST /upload` | 一次上传；按卷拆分等渲染的间隙不占 | 并发投递落进别人的文件夹 |
+| xochitl 上传锁 | `rmsvc_core::xochitl`（进程内 static） | 每次 `GET /documents/<文件夹>` + `POST /upload` | 一次上传（当年按卷拆分等渲染的间隙不占；分卷已移除） | 并发投递落进别人的文件夹 |
 | 大文件通道锁 | `Xochitl::upload_large_file`（进程内 static，09-25） | 超体积门走"占位 + 磁盘替换"的投递 | 传占位 → 认领 → 换成真文件 | 两本大 PDF 认领到同一个条目（§6.1） |
 | 配置同步锁 | koreader-serve `ConfigSync::apply_with` | `/config/*` 读写 | 一次应用（含 luajit） | 固定名的临时补丁/合并脚本被别的请求覆盖 |
 
@@ -321,7 +320,7 @@ PDF 转 EPUB 转换前查一次“同名 `.epub` 已存在”，转换完（可�
 **母版库页**（2026-09-20 重做，取舍见书架白皮书 §03bp）：
 - **行内只显示**书名、类型、大小、状态徽章、进度；**仅处理中/排队时有“停止/取消排队”按钮**。徽章：格式 / 优化等级 / 落库记录（晚于母版 mtime 标"旧"）/ 渲染自检 / PDF 来源 / 处理中、失败或"被重启打断"（卡 `pending` 但 `busy=false`）。
 - **操作统一在勾选后的底部操作栏**（2026-09-24 起按钮排成三行、每行一排绝不折行，按钮等高、带可处理数量角标，窄屏去掉"加入"前缀；无头 Chrome 量过 320–1024px）：优化 / 加入 xochitl / 加入 KOReader / 清除；第三行是**只勾一本时才有的「下载原件」「改名」**和删除（`confirmDialog()`）；按钮标"可处理数"，0 置灰；运行中变进度条 + 当前书 + 失败数 + **全部中止**；跑完显示小结。
-- **阅读方向**（2026-09-25，§2.6）：第三行在「删除」左边多一个「阅读方向」按钮，选了 EPUB 就可点（多选时角标＝选中的 EPUB 数；单选时第三行变四列、窄屏字号再小一档，无头 Chrome 量过 320/390/1024px 不溢出不截字），弹出三选一（自动 / 从右往左 / 从左往右，`choiceDialog()`），下面一行小字说明"要再点「优化」、已加入 xochitl 的要重新加入"。行内徽章：设了方向显示「从右往左」/「从左往右」，设置还没写进书里再加一枚「方向待优化」。
+- **阅读方向**（2026-09-25 加，**2026-09-30 已移除**，§2.6）：当时第三行在「删除」左边有「阅读方向」按钮，弹出三选一（自动 / 从右往左 / 从左往右，`choiceDialog()`），行内徽章「从右往左」/「从左往右」/「方向待优化」。按钮、徽章、`choiceDialog()` 与相关语言包条目现已删除，第三行回到「下载原件」「改名」和删除。
 - **原 PDF 备份**：母版库页底部折叠面板列出 `.pdf-originals/` 里的文件与剩余天数，可「恢复」或删除（§2.5）。
 - **加入位置**：xochitl 文件夹、KOReader 目录两个**常驻下拉**（可“＋新建”：xochitl 走 §4 mkdir 队列，KOReader 走 `POST /books/mkdir`）；搜书名带下拉建议（多卷合一条）；筛选带数量 + 格式过滤/"隐藏已完成"；真分页（25/50/100）；PC 与手机同一套单列，不横向溢出（量 `scrollWidth` 验证过 390/1280px）。
 - **状态在服务器**：批量取自 `GET /api/batch/status`、闸门取自 `GET /api/budget/status`，前端不自己记"谁在忙"。进度由 `renderStepProgress()` 统一渲染：`{done,total}` 有数据画真百分比，没有画不确定态滚动条。
@@ -347,16 +346,16 @@ GET  /staging                        母版库列表 {items, freeBytes, original
 POST /staging                        multipart 入库（逐文件；?srcName=&srcBytes= 历史遗留）
 GET  /staging/file?name=             下载原件（流式，带 Content-Disposition）
 POST /staging/rename {name, newName} 改名（扩展名不变、边车跟随；冲突或忙时 400）
-POST /staging/direction {names:[…]|name, direction:auto|rtl|ltr}  按书阅读方向（只存设置；回 {updated, stale, synced, failed[]}，全部失败才 400，§2.6）
 POST /staging/originals/restore {name} · POST /staging/originals/delete {name}   原 PDF 备份恢复 / 删除
 POST /staging/optimize {name}        异步优化（EPUB；PDF 转 EPUB / 仅裁边）
 POST /staging/deliver {name, folder?} 异步落库（原生）
-POST /staging/cancel {name}          中途停止（EPUB 优化 / 按卷拆分支持）
+POST /staging/cancel {name}          中途停止（EPUB 优化支持）
 POST /staging/mark {name, target}    标记已加入读器（native|koreader；批量 worker 补记）
 POST /staging/fetch-article {url, optimize?}  抓网文
 POST /staging/delete {name}          删除条目（忙时 400）
 GET  /margins/{uuid} · POST /margins/applied {uuid}   漫画页边距待办（qmd 用；开关关时 GET 恒 404）
-GET  /reading-direction/{uuid}                       → {rtl}：书库 <uuid>.epub 的 OPF spine 是否从右往左，或在手动清单 books/rtl-overrides.json 里（reader-page-turn.qmd 用；清单也由母版库按书方向同步写，§2.6）
+GET  /reading-direction/{uuid}                       → {rtl}：书库 <uuid>.epub 的 OPF spine 是否从右往左，或在旧手动清单 books/rtl-overrides.json 里（reader-page-turn.qmd 用；清单只读，2026-09-30 起 book-serve 不再写，§2.6）
+（2026-09-30 已删：`POST /staging/direction` 按书阅读方向，§2.6）
 GET  /events                         SSE 事件流
 POST /trash/add · GET /trash/pending · GET /trash      原生回收站代理队列
 POST /mkdir/add · GET /mkdir/pending[?wait=秒] · GET /mkdir   原生建文件夹代理队列（pending 支持长轮询）
@@ -380,11 +379,11 @@ GET  /agent-failures · POST /agent-failures/clear      两个代理交满次数
 - 网关代理对 ≤256KB 且不是下载的应答、以及没有 `Content-Length` 的应答仍整体缓冲（§1）；它们都是小 JSON，不改。
 - 并发控制（§7.3）：抓网文的「同步优化」不占忙锁、不过闸门的缺口已于 09-25 补上（忙锁 + 网关小档名额，仅 host 单测）；剩下的已知边界是 note-serve 与 book-serve 同时投 xochitl 时上传锁管不到。（PDF 转 EPUB 落地前复查同名书已于 09-24 补上。）
 - `shelf-mkdir-agent.qmd` 长轮询 09-24 放宽到 290 秒（依据：设备 Qt 6.10 的 QML XHR 不设传输超时，源码核实）；部署后确认 journal 里没有 `SHELF-MKDIR: transfer timeout`（有就说明退回了 25 秒）。
-- 渲染自检对漫画拆分份不生效（§6.2 第 5 点）。
 - inbox 只判"还在不在写"（修改时间静止 5 秒），不校验内容完整：scp 中途断开留下的半截文件静止后仍可能被收进母版库（§2.1）。
 - 大文件占位通道：占位上传后进程崩溃会残留占位文档（回执提示手动删）。（>153MB 首次渲染与批量“加入 xochitl / KOReader”已于 2026-09-25 真机走通：两本 156.5/157.1MB 的《乱马》经网关队列 `done 2 / failed 0` 落进同一文件夹。）
 - 入库 PDF 转 EPUB：公式裁图没有真机样本；公式区域按整行字符包围盒算，公式文字碎片会同时留在正文里（不丢字，但观感不如只留图）；竖排/多栏 PDF 未验证。
 - `imgopt` 对 >900 万像素原图直接跳过（完全不处理，非压画质），这类图原样出现在优化后的书里，拿不到体积收益。
-- **漫画页边距最小化**：旧漫画（或开关关着时优化的）必须重新优化才生效；qmd 只在 xochitl 启动时加载；按卷拆分投递的漫画不登记（§3.3）。
-- **按书阅读方向**（§2.6）：书本身要「优化」后重新加入才换新；免重投的清单同步只对"加上从右往左"有效；轻量改 OPF 路径未上真机。
-- **超限 PDF 只有带书签的自产漫画 PDF 能按卷拆分**；用户自传的原生大 PDF 在占位通道（≤1GiB）之外只能自行分割（§6.2）。
+- **漫画页边距最小化**：旧漫画（或开关关着时优化的）必须重新优化才生效；qmd 只在 xochitl 启动时加载（§3.3）。
+- **翻页方向**（§2.6）：只认书里自带的 OPF 标记和旧 `rtl-overrides.json`；书里没写 `rtl` 的日漫（calibre 转出的多半如此）现在没有网页入口补，只能手改清单或自己改书。
+- **超限书**：超过 1GiB、或造不出占位文档时整本拒绝，只能自行把书分成多份再上传（按卷拆分 2026-09-30 已移除，§6.2）。
+- **2026-09-30 三项改动**（撤按书方向、移除分卷、漫画预放大页 q95）只在 host 测过，未部署、未真机验证。

@@ -53,7 +53,7 @@
   <text x="170" y="267" text-anchor="middle" font-size="9.8" fill="#4a4a4a">优化 · 落库 · 删除 互斥</text>
   <rect x="70" y="312" width="200" height="46" rx="7" fill="#fff3d6" stroke="#c9971f" stroke-width="1.4"/>
   <text x="170" y="331" text-anchor="middle" font-size="11.5" font-weight="bold" fill="#1a1a1a">忙 · 可取消</text>
-  <text x="170" y="347" text-anchor="middle" font-size="9.8" fill="#4a4a4a">EPUB 优化 / 按卷拆分已声明</text>
+  <text x="170" y="347" text-anchor="middle" font-size="9.8" fill="#4a4a4a">EPUB 优化已声明</text>
   <rect x="70" y="392" width="200" height="46" rx="7" fill="#fbe9e4" stroke="#b0451f" stroke-width="1.4"/>
   <text x="170" y="411" text-anchor="middle" font-size="11.5" font-weight="bold" fill="#1a1a1a">已请求取消</text>
   <text x="170" y="427" text-anchor="middle" font-size="9.8" fill="#4a4a4a">下一个检查点停手</text>
@@ -103,7 +103,7 @@
   <text x="446" y="283" text-anchor="start" font-size="11" font-weight="bold" fill="#1a1a1a">deliver（落库）</text>
   <rect x="446" y="300" width="130" height="40" rx="6" fill="#fff3d6" stroke="#c9971f" stroke-width="1.2"/>
   <text x="511" y="317" text-anchor="middle" font-size="11" font-weight="bold" fill="#1a1a1a">pending</text>
-  <text x="511" y="332" text-anchor="middle" font-size="9.5" fill="#4a4a4a">progress: 份数</text>
+  <text x="511" y="332" text-anchor="middle" font-size="9.5" fill="#4a4a4a">（无进度）</text>
   <rect x="646" y="280" width="100" height="22" rx="5" fill="#e8f5ec" stroke="#3f9a55" stroke-width="1.1"/>
   <text x="696" y="295" text-anchor="middle" font-size="10.5" fill="#1a1a1a">ok</text>
   <rect x="646" y="306" width="100" height="22" rx="5" fill="#fbe9e4" stroke="#b0451f" stroke-width="1.1"/>
@@ -113,8 +113,8 @@
   <line x1="576" y1="320" x2="646" y2="291" stroke="#555" stroke-width="1.2" marker-end="url(#bil-a)"/>
   <line x1="576" y1="320" x2="646" y2="317" stroke="#555" stroke-width="1.2" marker-end="url(#bil-a)"/>
   <line x1="576" y1="320" x2="646" y2="343" stroke="#555" stroke-width="1.2" marker-end="url(#bil-a)"/>
-  <text x="770" y="298" text-anchor="start" font-size="9.8" fill="#4a4a4a">progress＝已成功份数/预算内总份数</text>
-  <text x="770" y="314" text-anchor="start" font-size="9.8" fill="#4a4a4a">（仅按卷拆分有；整本落库无进度）</text>
+  <text x="770" y="298" text-anchor="start" font-size="9.8" fill="#4a4a4a">落库无进度（progress 字段保留不写）</text>
+  <text x="770" y="314" text-anchor="start" font-size="9.8" fill="#4a4a4a">（原先只有按卷拆分写，09-30 已移除）</text>
   <text x="770" y="332" text-anchor="start" font-size="9.8" fill="#4a4a4a">成功后另起渲染自检线程 → 下一条轨道</text>
 
   <!-- 轨道 3 render -->

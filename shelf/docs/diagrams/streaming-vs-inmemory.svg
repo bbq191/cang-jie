@@ -76,5 +76,5 @@
   <text x="540" y="566" text-anchor="middle" font-size="12" fill="#3a3a3a">对拍单测证明产出逐字节一致：streaming_matches_in_memory_output_for_footnote_book /</text>
   <text x="540" y="583" text-anchor="middle" font-size="12" fill="#3a3a3a">streaming_downscales_comic_images_same_as_in_memory</text>
 
-  <text x="540" y="620" text-anchor="middle" font-size="11.5" fill="#4a4a4a">另：落库不拆分路径的自检 stats::text_profile_file 也是同一思路——按条目名先筛，图片连解压都跳过</text>
+  <text x="540" y="620" text-anchor="middle" font-size="11.5" fill="#4a4a4a">另：落库（≤90MB）路径的自检 stats::text_profile_file 也是同一思路——按条目名先筛，图片连解压都跳过</text>
 </svg>

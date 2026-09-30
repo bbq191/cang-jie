@@ -22,7 +22,7 @@
 <text x="34" y="248" font-size="11.5" fill="#3a3a3a">上传（EPUB / PDF）· 抓网文（贴 URL）</text>
 <text x="34" y="276" font-size="13" font-weight="bold" fill="#1a1a1a">母版库</text>
 <text x="34" y="296" font-size="11.5" fill="#3a3a3a">勾选 + 底部三行操作栏、加入位置下拉</text>
-<text x="34" y="314" font-size="11.5" fill="#3a3a3a">阅读方向；只选一本时：下载原件 / 改名</text>
+<text x="34" y="314" font-size="11.5" fill="#3a3a3a">只选一本时：下载原件 / 改名</text>
 <text x="34" y="332" font-size="11.5" fill="#3a3a3a">搜索 / 筛选 / 分页 / 处理进度</text>
 <text x="34" y="358" font-size="11.5" font-weight="bold" fill="#1a1a1a">原 PDF 备份（转 EPUB 后留 7 天）</text>
 <text x="34" y="376" font-size="11.5" fill="#3a3a3a">恢复回母版库 / 提前删除</text>

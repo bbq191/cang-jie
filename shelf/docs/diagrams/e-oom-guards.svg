@@ -33,11 +33,11 @@
 <rect x="655" y="72" width="190" height="196" rx="10" fill="#e8f5ec" stroke="#3f9a55" stroke-width="1.6"/>
 <text x="750" y="94" text-anchor="middle" font-size="13.5" font-weight="bold" fill="#1a1a1a">④ 落库</text>
 <text x="750" y="112" text-anchor="middle" font-size="11" fill="#4a4a4a">staging/deliver.rs</text>
-<text x="750" y="138" text-anchor="middle" font-size="11" fill="#1a1a1a">不拆分：upload_file 流式发送</text>
+<text x="750" y="138" text-anchor="middle" font-size="11" fill="#1a1a1a">≤90MB：upload_file 流式发送</text>
 <text x="750" y="158" text-anchor="middle" font-size="11" fill="#1a1a1a">自检 text_profile_file</text>
 <text x="750" y="174" text-anchor="middle" font-size="11" fill="#1a1a1a">（图片条目连解压都跳过）</text>
-<text x="750" y="198" text-anchor="middle" font-size="11" fill="#1a1a1a">拆分：只搬原始压缩字节</text>
-<text x="750" y="214" text-anchor="middle" font-size="11" fill="#1a1a1a">不调用任何图片解码</text>
+<text x="750" y="198" text-anchor="middle" font-size="11" fill="#1a1a1a">&gt;90MB：占位 + 磁盘替换</text>
+<text x="750" y="214" text-anchor="middle" font-size="11" fill="#1a1a1a">整本复制，不解码图片</text>
 
 <rect x="865" y="72" width="190" height="196" rx="10" fill="#fff3d6" stroke="#c9971f" stroke-width="1.6"/>
 <text x="960" y="94" text-anchor="middle" font-size="13.5" font-weight="bold" fill="#1a1a1a">⑤ 进程兜底</text>
@@ -100,7 +100,7 @@
 <text x="636" y="570" font-size="11.5" fill="#1a1a1a">579MB → 785MB（漫画高质量重编码，体积涨属预期）</text>
 
 <rect x="620" y="608" width="435" height="86" rx="8" fill="#e8f5ec" stroke="#3f9a55" stroke-width="1.6"/>
-<text x="636" y="630" font-size="12" font-weight="bold" fill="#1a1a1a">80MB 测试 EPUB 走落库不拆分路径</text>
+<text x="636" y="630" font-size="12" font-weight="bold" fill="#1a1a1a">80MB 测试 EPUB 走 ≤90MB 落库路径</text>
 <text x="636" y="652" font-size="11.5" fill="#1a1a1a">book-serve VmHWM 自 3484 kB 起全程未变</text>
 <text x="636" y="670" font-size="11.5" fill="#1a1a1a">（旧写法估算峰值约 180–270MB，三份同时在内存）</text>
 </svg>

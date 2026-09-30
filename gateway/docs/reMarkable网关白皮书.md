@@ -169,7 +169,7 @@
 - **执行**：后台 worker 线程**一次一本**（设备双核，优化内部已经在并行处理图片）。一个队列里可以混合三种动作。每本先过闸门，再直连对应服务；异步的等到 `busy=false`，再读母版库条目的 `delivered.<kind>` 判成败（`failed`/`cancelled` 记入 `failed[]`）；加入 KOReader 成功后替 book-serve 记一笔 `staging/mark`。worker 用 `catch_unwind` 兜住 panic，只让这一本失败（release 是 `panic="unwind"`）。
 - **落盘与续跑**：每次状态变化原子写 `~/.local/state/shelf/batch.json`（序列化与写盘在同一把锁里，防止旧快照后写把队列回退）。网关启动时 `resume`：先把队列装进内存，后台等 book-serve 就绪（最长 30 分钟，前 30 秒每 2 秒探测、之后每 30 秒），再按最新母版库重新校验（已优化的不重做）；超时也**保留**队列，等下次入队一起跑。
 - **防崩溃循环**：每项记 `attempts`，处理途中网关崩了最多重放 1 次；第二次还没走完就记失败跳过，免得某本书稳定触发崩溃时被 systemd 拉起后无限重放。
-- **全部中止**：清空还没开始的；正在处理的那本如果还在等闸门就取消排队，已进 book-serve 就发 `POST /staging/cancel`。EPUB 优化每处理完一个条目检查一次、按卷拆分投递每份之间检查一次，终态记 `cancelled`；单文件上传、PDF 优化没有安全中断点，只能跑完。
+- **全部中止**：清空还没开始的；正在处理的那本如果还在等闸门就取消排队，已进 book-serve 就发 `POST /staging/cancel`。EPUB 优化每处理完一个条目检查一次（按卷拆分投递每份之间原先也检查一次，分卷投递 2026-09-30 已移除），终态记 `cancelled`；单文件上传、PDF 优化没有安全中断点，只能跑完。
 
 ## 05｜网页 UI
 
@@ -285,7 +285,7 @@
 
 - **`~/.local/state/shelf/books/done/`**：09-03 早期直投流程的遗留目录。全仓 grep 过 `rs/sh/qmd/js/py/lua`，没有任何代码读写 `books/done`。网关列出里面的普通文件（不递归，符号链接和子目录不列），用户勾选、二次确认后逐个删除。
 - **删除的安全规则**（仓库出过清理时 `rm -rf` 掉用户漫画目录的事故）：前端只能传清理区代码（`books-done`）和文件名，不能传路径；名字必须是单段（拒绝空、`.`、`..`、含 `/` `\` NUL）；清理目录本身不能是符号链接；目标不能是符号链接、必须是普通文件；两边 `canonicalize` 后目标的父目录必须恰好是清理目录；只用 `remove_file`，从不整目录删。测试覆盖了 `..`、`../兄弟文件`、子目录里的文件、绝对路径、指向外面的符号链接、被换成符号链接的清理目录、未知清理区，全部拒绝且文件原样还在；删除类测试把 HOME 和全部 XDG 变量指到临时目录，并断言真实 HOME 下同名目录前后一致。
-- **xochitl 书库里的旧版重复副本**（书架白皮书真机待办第 8 条）：以前按卷拆分投进去的分卷，书名来自原书目录（如"第01卷"），跟新版整本的书名对不上，**没有精确的识别规则**，所以不自动挑、不预先勾。网关只读列出书库里活的 EPUB/PDF（手写笔记本不列），标出"同名 ×N"供人工核对；勾选后前端逐本调 book-serve 已有的 `POST /api/books/trash/add {uuid,name}` 排进队列；xochitl 里常驻的回收站代理 `shelf-trash-agent.qmd`（注入 `MainView`，长轮询 `GET /trash/pending?wait=290`）取走后按 id 调 xochitl 自己的 `LibraryController.moveEntriesToTrash`，几秒内进回收站、可恢复（09-25 重写；旧版用 `selectionMoveToTrash`，要等书库视图变化、只认当前文件夹，网页入队后不执行）。**网关不直接删、不改 xochitl 目录里的任何文件**。回收站代理没载入 xochitl 或 xochitl 没在跑时，页面会提示"排进队列要等它生效"。
+- **xochitl 书库里的旧版重复副本**（书架白皮书真机待办第 8 条）：以前按卷拆分投进去的分卷（分卷投递 2026-09-30 已移除，不会再产生新的），书名来自原书目录（如"第01卷"），跟新版整本的书名对不上，**没有精确的识别规则**，所以不自动挑、不预先勾。网关只读列出书库里活的 EPUB/PDF（手写笔记本不列），标出"同名 ×N"供人工核对；勾选后前端逐本调 book-serve 已有的 `POST /api/books/trash/add {uuid,name}` 排进队列；xochitl 里常驻的回收站代理 `shelf-trash-agent.qmd`（注入 `MainView`，长轮询 `GET /trash/pending?wait=290`）取走后按 id 调 xochitl 自己的 `LibraryController.moveEntriesToTrash`，几秒内进回收站、可恢复（09-25 重写；旧版用 `selectionMoveToTrash`，要等书库视图变化、只认当前文件夹，网页入队后不执行）。**网关不直接删、不改 xochitl 目录里的任何文件**。回收站代理没载入 xochitl 或 xochitl 没在跑时，页面会提示"排进队列要等它生效"。
 
 ## 07｜构建、部署与 systemd
 
