@@ -223,20 +223,31 @@ impl Entry {
     /// 这种条目"转入笔记"就直接落定（`text = quote.text`、状态跳到 `Reviewed`），不经过
     /// `Pending`/`Draft` 那两步，不然会卡在 `Pending` 里——`needs_transcribe()` 要求 `ink` 是
     /// `Some`，永远不会被自动转写捡走（2026-09-07 二期真机验证时发现的缺口，见笔记线白皮书 §03o）。
+    ///
+    /// **「转入笔记」继承已有内容**（2026-09-30 第五轮审计）：条目已经有校对文本就落 `Reviewed`、只有草稿就落
+    /// `Draft`，不无条件降成 `Pending`。此前「不需要」→ 回收站恢复（`Skipped` 永远回 `Mined`，文本/草稿都还在）→
+    /// 再点「转入笔记」，会得到一条带着定稿文字却标着"待转写"的 `Pending` 条目（草稿指纹对得上时转写也不会再来
+    /// 把它推进 `Draft`，永远卡在"待转写"）；对已经在 `Draft`/`Reviewed` 的条目重复调用同理会把状态降级。
     pub fn set_triage(&mut self, target: Status, now: u64) -> Result<(), String> {
         if matches!(self.status, Status::Revoked | Status::Archived) {
             return Err("这条已撤销/已删除，不能再操作".into());
         }
-        if target == Status::Pending && self.ink.is_none() {
-            if let Some(q) = &self.quote {
-                self.text = Some(q.text.clone());
-                self.status = Status::Reviewed;
-                self.updated = now;
-                return Ok(());
-            }
+        let target = match target {
+            Status::Pending if self.text.is_some() => Status::Reviewed,
+            Status::Pending if self.ink.is_none() => match &self.quote {
+                Some(q) => {
+                    self.text = Some(q.text.clone());
+                    Status::Reviewed
+                }
+                None => Status::Pending,
+            },
+            Status::Pending if !self.drafts.is_empty() => Status::Draft,
+            t => t,
+        };
+        if self.status != target {
+            self.status = target;
+            self.updated = now;
         }
-        self.status = target;
-        self.updated = now;
         Ok(())
     }
 
@@ -403,6 +414,29 @@ mod tests {
         e.text = None;
         e.set_triage(Status::Skipped, 20).unwrap();
         assert_eq!(e.status, Status::Skipped);
+    }
+
+    /// 回归（2026-09-30）：「不需要」→ 恢复（回 `Mined`，文本/草稿还在）→ 再「转入笔记」，落点继承已有内容，
+    /// 不降成"待转写"；对已在 `Draft`/`Reviewed` 的条目重复点也不降级、不改 `updated`。
+    #[test]
+    fn requesting_again_keeps_existing_text_or_drafts() {
+        let ink = r#""ink":{"strokes":["1:1"],"bbox":[0,0,1,1],"hash":"h"}"#;
+        let mut e: Entry = serde_json::from_str(&format!(r#"{{"id":"e","page":"p","page_index":0,"created":0,"updated":0,{ink},"text":"定稿","status":"skipped"}}"#)).unwrap();
+        e.restore(5).unwrap();
+        assert_eq!(e.status, Status::Mined);
+        e.set_triage(Status::Pending, 6).unwrap();
+        assert_eq!((e.status, e.text.as_deref(), e.updated), (Status::Reviewed, Some("定稿"), 6));
+        e.set_triage(Status::Pending, 7).unwrap();
+        assert_eq!((e.status, e.updated), (Status::Reviewed, 6), "重复转入：不降级、不算改动");
+
+        let mut d: Entry = serde_json::from_str(&format!(r#"{{"id":"e","page":"p","page_index":0,"created":0,"updated":0,{ink},"drafts":[{{"text":"草","backend":"b","at":0,"hash":"h"}}]}}"#)).unwrap();
+        d.set_triage(Status::Pending, 3).unwrap();
+        assert_eq!(d.status, Status::Draft, "只有草稿 → Draft");
+        assert!(!d.needs_transcribe(), "草稿指纹对得上，不重复转写");
+
+        let mut fresh: Entry = serde_json::from_str(&format!(r#"{{"id":"e","page":"p","page_index":0,"created":0,"updated":0,{ink}}}"#)).unwrap();
+        fresh.set_triage(Status::Pending, 3).unwrap();
+        assert_eq!(fresh.status, Status::Pending, "什么都没有 → 照旧等转写");
     }
 
     #[test]
