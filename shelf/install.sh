@@ -197,7 +197,8 @@ else
         [ -L "$SYSD/shelf.target.wants/$u" ] || need=1
     done
     for lu in $SHELF_LEGACY_UNITS; do
-        if [ -e "$SYSD/$lu" ]; then
+        # 单元文件或任一 wants 链接还在都算遗留（只剩悬空链接时旧版查不到、永远清不掉）
+        if [ -e "$SYSD/$lu" ] || [ -L "$SYSD/shelf.target.wants/$lu" ] || [ -L "$SYSD/multi-user.target.wants/$lu" ]; then
             need=1
             systemctl disable --now "$lu" 2>/dev/null || true
             bk_keep "$SYSD/$lu"
@@ -293,7 +294,7 @@ fi
 # ── 3d. xovi 持久化诊断（不引用/不安装外层单元——那是 xovi 层的事）──
 if [ -x "$HOME_DIR/xovi/start" ] && [ ! -f "$SYSD/xovi-reenable.service" ] && [ ! -f "$SYSD/cangjie-xovi-reenable.service" ]; then
     echo "═══════════════════════════════════════════════════"
-    echo "⚠ 本机没装 xovi-reenable.service：真机重启后 xovi 会丢（字体菜单 / KOReader 入口 / 中文化一起没）。"
+    echo "⚠ 本机没装 xovi-reenable.service：真机重启后 xovi 会丢（字体菜单等界面补丁、xovi 扩展、中文化一起没）。"
     echo "  想开机自动恢复 xovi：那是 xovi 层的持久化，跑 packaging/deploy-xovi-persist.sh <host>"
     echo "  （或整包 packaging/install-all.sh）；shelf 单独装不管 xovi 持久化。"
     echo "═══════════════════════════════════════════════════"

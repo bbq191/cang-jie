@@ -2,7 +2,7 @@
 # ═══════════════════════════════════════════════════════════════════════════
 # 安装/卸载/部署脚本的本机模拟测试（不碰真机；2026-09-20 脚本审计后新增）。
 #
-# 做法：PATH 里放 tests/stubs/ 下的假 ssh/scp/systemctl/mount/dmsetup/id/sleep/curl/journalctl/rcc/python3，
+# 做法：PATH 里放 tests/stubs/ 下的假 ssh/scp/systemctl/mount/dmsetup/id/sleep/curl/journalctl/dmesg，
 # 临时目录当"设备"（$CJ_SIM_ROOT：home/root、usr/lib/systemd/system、proc/…）。假 ssh 把远端命令直接在本机沙箱里
 # 执行，设备端脚本（devlib.sh / shelf/install.sh / 各 heredoc 脚本）因此跑的是**真代码**，只是 rootfs/systemd/
 # mount 被桩住并写日志（$CJ_SIM_LOG），可断言"有没有 remount rw、最后一次 mount 是不是 ro、有没有 xovi/start"。
@@ -10,7 +10,7 @@
 # 覆盖：devlib 各函数 · shelf install 幂等/缺载荷不留半成品/rw 窗口失败恢复 ro/只重启有变化的服务 ·
 #       shelf uninstall 与 install 清单对称（含 mkdir-agent qmd、lo-alias.sh、shelf-uninstall、旧命名遗留、--only、--purge）·
 #       deploy.sh（密码含特殊字符、shelf-pkg 换位）· hl-snap 部署（原子落位/备份不进 extensions.d/DEFER）·
-#       xovi-apply 与 sidebar-entry 的 H1 判定（xovi 已生效 → restart，绝不 xovi/start）·
+#       xovi-apply 与各扩展部署的 H1 判定（xovi 已生效 → 整机重启，绝不 xovi/start）·
 #       install-all → uninstall-all 整轮对称 · 静态守卫（remount,rw / xovi/start 只许出现在库里）。
 # 一键：sh packaging/tests/run_sim_tests.sh     （也由 pytest 的 test_install_scripts_sim.py 调用，CI 会跑）
 # ═══════════════════════════════════════════════════════════════════════════
@@ -22,9 +22,14 @@ fi
 REAL_HOME="$HOME"
 # 所有 XDG_* 一律指进沙箱（脚本会读它们；不设的话 install/uninstall --purge 会碰到真实用户目录——
 # 2026-09-20 首版就踩过：--purge 测试清了开发机的 ~/.config/shelf 等，见 new_sandbox 里的导出与末尾的"真实 HOME 未被触碰"守卫）
-guard_paths() { echo "$REAL_HOME/.config/shelf $REAL_HOME/.local/share/shelf $REAL_HOME/.local/state/shelf $REAL_HOME/.local/lib/shelf $REAL_HOME/cangjie-backups $REAL_HOME/.local/bin/shelf-uninstall $REAL_HOME/.cangjie-stage $REAL_HOME/.cangjie-pending-apply /run/cangjie-pending-apply"; }
-GUARD_BEFORE=""
-for g in $(guard_paths); do [ -e "$g" ] && GUARD_BEFORE="$GUARD_BEFORE $g"; done
+guard_paths() {
+    echo "$REAL_HOME/.config/shelf $REAL_HOME/.local/share/shelf $REAL_HOME/.local/state/shelf $REAL_HOME/.local/lib/shelf $REAL_HOME/cangjie-backups $REAL_HOME/.local/bin/shelf-uninstall $REAL_HOME/.cangjie-stage $REAL_HOME/.cangjie-pending-apply /run/cangjie-pending-apply"
+    # 2026-09-30 补：deploy/uninstall 会在 $HOME 下建/删的其它载荷与数据位置（同名目录在开发机上也可能真实存在）
+    echo "$REAL_HOME/battop $REAL_HOME/hl-snap $REAL_HOME/hw-stroke $REAL_HOME/shelf-pkg $REAL_HOME/shelf-pkg.new $REAL_HOME/pkg-wifi-watch $REAL_HOME/pkg-xovi-persist $REAL_HOME/pkg-chrony-boot-wakelock $REAL_HOME/xovi $REAL_HOME/.local/share/cangjie-ime $REAL_HOME/.local/bin/wifi-watch.sh $REAL_HOME/.local/bin/gateway $REAL_HOME/.local/bin/lo-alias.sh"
+}
+# 签名 = 每个已存在路径 + 它的 mtime（目录里增删条目会改目录 mtime）：不只看"有没有新出现"，也看"原有的被动过/删掉"
+guard_sig() { for g in $(guard_paths); do [ -e "$g" ] || [ -L "$g" ] && echo "$g $(stat -c %Y "$g" 2>/dev/null)"; done; }
+GUARD_BEFORE="$(guard_sig)"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 PKG="$(cd "$HERE/.." && pwd)"
 REPO="$(cd "$PKG/.." && pwd)"
@@ -93,7 +98,7 @@ tree_sig() {
 last_mount() { grep '^mount ' "$CJ_SIM_LOG" | tail -n 1; }
 
 # ── shelf 载荷 ──
-SVCS="gateway book koreader font wallpaper ink transcribe mind note"
+SVCS="gateway book font wallpaper ink transcribe mind note"
 svc_of() { [ "$1" = gateway ] && echo gateway || echo "$1-serve"; }
 mk_payload() { # DIR
     P="$1"; mkdir -p "$P/bin" "$P/systemd" "$P/lo-alias" "$P/xovi"
@@ -258,7 +263,7 @@ new_sandbox; PL="$R/payload"; mk_payload "$PL"; PRE_SIG="$(tree_sig)"
 : > "$CJ_SIM_LOG"
 run sh "$PL/install.sh" >"$R/out1.txt" 2>&1; rc=$?
 check "install 全量：退出 0" test "$rc" -eq 0
-check "install：9 个服务二进制都在" test -x "$B/gateway" -a -x "$B/book-serve" -a -x "$B/note-serve" -a -x "$B/wallpaper-serve"
+check "install：8 个服务二进制都在" test -x "$B/gateway" -a -x "$B/book-serve" -a -x "$B/note-serve" -a -x "$B/wallpaper-serve"
 check "install：辅助脚本 lo-alias.sh / shelf-uninstall / 库 已装" test -x "$B/lo-alias.sh" -a -x "$B/shelf-uninstall" -a -f "$R/home/root/.local/lib/shelf/manifest.sh" -a -f "$R/home/root/.local/lib/shelf/devlib.sh"
 check "install：单元 + shelf.target + wants 链接" test -f "$CJ_SYSD/gateway.service" -a -L "$CJ_SYSD/shelf.target.wants/book-serve.service" -a -L "$CJ_SYSD/multi-user.target.wants/shelf.target"
 check "install：五个 qmd（字体/回收站/建夹/漫画页边距/阅读器翻页）都在 qrr 目录" test -f "$Q/font-menu-dynamic.qmd" -a -f "$Q/shelf-trash-agent.qmd" -a -f "$Q/shelf-mkdir-agent.qmd" -a -f "$Q/shelf-comic-margins.qmd" -a -f "$Q/reader-page-turn.qmd"
@@ -360,7 +365,7 @@ check "uninstall --purge：数据目录是符号链接 → 拒绝，目标内容
 section "packaging/deploy.sh：密码特殊字符 / shelf-pkg 换位"
 mk_dummy_targets() {
     T=aarch64-unknown-linux-musl
-    for f in shelf/target/$T/release/book-serve shelf/target/$T/release/koreader-serve gateway/target/$T/release/gateway \
+    for f in shelf/target/$T/release/book-serve gateway/target/$T/release/gateway \
              enhance/wallpaper-serve/target/$T/release/wallpaper-serve enhance/font-serve/target/$T/release/font-serve \
              notes/target/$T/release/ink-serve notes/target/$T/release/transcribe-serve notes/target/$T/release/mind-serve notes/target/$T/release/note-serve; do
         # 仓库里已有**真**交叉编译产物（开发机上构建过）时先挪走再造假的：否则 deploy.sh 会把真 aarch64 二进制装进
@@ -502,17 +507,6 @@ check "battop 已装但当前停着（用户在网页关了）→ 更新二进�
 new_sandbox; CJ_SIM_VERITY=1 bash -c "cd '$PKG' && CJ_BATTOP_BIN='$R/battop.bin' PATH='$STUBS:'\$PATH sh deploy-battop.sh 127.0.0.1" >/dev/null 2>&1
 check "battop + dm-verity：不 remount（补上原先缺的 verity 门）" test "$(count_log remount)" = 0
 
-section "packaging/deploy-sidebar-entry.sh"
-new_sandbox; Q="$R/home/root/xovi/exthome/qt-resource-rebuilder"; echo OLDQMD > "$Q/koreader-sidebar-entry.qmd"
-( cd "$PKG" && DEFER_XOVI_START=1 PATH="$STUBS:$PATH" sh deploy-sidebar-entry.sh 127.0.0.1 ) >"$R/out.txt" 2>&1; rc=$?
-check "sidebar-entry DEFER：qmd/rcc 落位，旧 qmd 备份进 cangjie-backups，qrr 目录里无 .bak/暂存残留" test "$rc" -eq 0 -a -f "$Q/cangjie-icons.rcc" -a -n "$(ls "$R"/home/root/cangjie-backups/koreader-sidebar-entry.qmd.bak.pre-* 2>/dev/null)" -a -z "$(find "$Q" -maxdepth 1 \( -name '*.bak*' -o -name '*.new*' \) )" -a ! -e "$R/home/root/.cangjie-stage"
-check "sidebar-entry DEFER：不重启 xochitl" test "$(count_log 'restart xochitl')" = 0 -a "$(count_log XOVI_START)" = 0
-xovi_live on; : > "$CJ_SIM_LOG"
-( cd "$PKG" && PATH="$STUBS:$PATH" sh deploy-sidebar-entry.sh 127.0.0.1 ) >"$R/out.txt" 2>&1; rc=$?
-check "sidebar-entry 非 DEFER + xovi 已生效：整机重启，绝不 xovi/start" test "$rc" -eq 0 -a "$(count_log 'systemctl reboot')" = 1 -a -z "$(grep -E 'systemctl (stop|start|restart) xochitl' "$CJ_SIM_LOG")" -a "$(count_log XOVI_START)" = 0
-new_sandbox; CJ_SIM_SCP_CORRUPT=cangjie-icons.rcc bash -c "cd '$PKG' && DEFER_XOVI_START=1 PATH='$STUBS:'\$PATH sh deploy-sidebar-entry.sh 127.0.0.1" >/dev/null 2>&1; rc=$?
-check "sidebar-entry rcc 传输损坏：非 0，qrr 目录里没有 rcc/qmd（H3 同类：坏文件不进自动加载路径）" test "$rc" -ne 0 -a ! -e "$R/home/root/xovi/exthome/qt-resource-rebuilder/cangjie-icons.rcc"
-
 # ═══════════════════════════ 4. install-all → uninstall-all 整轮对称 ═══════════════════════════
 section "install-all → uninstall-all 整轮"
 new_sandbox
@@ -596,13 +590,13 @@ check "薄 deploy 脚本：未知选项/多余参数 → 退出 2；-h → 退�
 # 设备连不上：每个会连设备的入口都先给可读的报错并在动手前退出（不留半成品、不 scp）
 new_sandbox; export CJ_BATTOP_BIN="$R/battop.bin" CJ_SKIP_BUILD=1 SHELF_NO_BUILD=1; echo B > "$R/battop.bin"
 unreach_ok=1
-for sc in "install-all.sh 127.0.0.1 --force" "uninstall-all.sh 127.0.0.1" deploy-hl-snap.sh deploy-handwriting-stroke.sh deploy-wifi-watch.sh deploy-xovi-persist.sh deploy-chrony-boot-wakelock.sh deploy-battop.sh deploy-sidebar-entry.sh deploy-xovi-apply.sh deploy-chrony-cn.sh deploy-timezone-cn.sh deploy.sh; do
+for sc in "install-all.sh 127.0.0.1 --force" "uninstall-all.sh 127.0.0.1" deploy-hl-snap.sh deploy-handwriting-stroke.sh deploy-wifi-watch.sh deploy-xovi-persist.sh deploy-chrony-boot-wakelock.sh deploy-battop.sh deploy-xovi-apply.sh deploy-chrony-cn.sh deploy-timezone-cn.sh deploy.sh; do
     : > "$CJ_SIM_LOG"
     case "$sc" in *" "*) cmd="$sc" ;; *) cmd="$sc 127.0.0.1" ;; esac
     CJ_SIM_SSH_FAIL=1 bash -c "cd '$PKG' && PATH='$STUBS:'\$PATH sh $cmd" >"$R/out.txt" 2>&1; rc=$?
     if [ "$rc" -eq 0 ] || ! grep -q '连不上' "$R/out.txt" || [ "$(count_log '^scp')" != 0 ]; then unreach_ok=0; echo "       未达预期：$sc rc=$rc"; fi
 done
-check "13 个入口在 ssh 不通时：退出非 0、打印\"连不上\"与下一步、没有 scp" test "$unreach_ok" = 1
+check "12 个入口在 ssh 不通时：退出非 0、打印\"连不上\"与下一步、没有 scp" test "$unreach_ok" = 1
 unset CJ_BATTOP_BIN CJ_SKIP_BUILD SHELF_NO_BUILD
 
 section "设备预检（磁盘空间）"
@@ -748,12 +742,6 @@ check "hl-snap 单独跑：自己没变但有别的待生效改动（shelf-qmd�
 xovi_live off; : > "$CJ_SIM_LOG"
 ( cd "$PKG" && CJ_SKIP_BUILD=1 run sh deploy-hl-snap.sh 127.0.0.1 ) >/dev/null 2>&1
 check "hl-snap 单独跑：没变但 xovi 还没生效 → 照常 xovi/start" test "$(count_log XOVI_START)" = 1
-new_sandbox; xovi_live on
-( cd "$PKG" && DEFER_XOVI_START=1 PATH="$STUBS:$PATH" sh deploy-sidebar-entry.sh 127.0.0.1 ) >/dev/null 2>&1
-( cd "$PKG" && run sh deploy-xovi-apply.sh 127.0.0.1 ) >/dev/null 2>&1
-: > "$CJ_SIM_LOG"
-( cd "$PKG" && PATH="$STUBS:$PATH" sh deploy-sidebar-entry.sh 127.0.0.1 ) >"$R/out.txt" 2>&1; rc=$?
-check "sidebar-entry 单独跑：qmd/rcc 没变且无待生效 → 不重启 xochitl、退出 0" test "$rc" -eq 0 -a "$(grep -c -e 'restart xochitl' -e 'stop xochitl' -e XOVI_START "$CJ_SIM_LOG")" = 0 -a -n "$(grep '已是最新' "$R/out.txt")"
 
 section "2026-09-24：wifi-watch 在 verity 下更新脚本 / shelf --no-systemd 不空等 / shelf_select"
 new_sandbox
@@ -780,9 +768,9 @@ unset CJ_ALLOWLIST_LOCAL
 section "2026-09-25：verify-on-device.sh —— host 端判定（--from 离线喂构造的采集文本）"
 new_sandbox; export CJ_ALLOWLIST_LOCAL="$R/allow.local.txt"
 FW_OK="$(awk '!/^#/ && /3\.28\.0\.172/ { print $1; exit }' "$PKG/firmware-allowlist.txt")"
-VSVCS="gateway book-serve koreader-serve font-serve wallpaper-serve ink-serve transcribe-serve mind-serve note-serve"
+VSVCS="gateway book-serve font-serve wallpaper-serve ink-serve transcribe-serve mind-serve note-serve"
 # 一台"健康设备"的采集文本（字段用 | 写，转成 TAB）：扩展都映射且无 (deleted)、qmd 都在且早于 xochitl 启动、
-# 9 个服务 active、端口都在听、单元都在、无告警、空间充足
+# 8 个服务 active、端口都在听、单元都在、无告警、空间充足
 mk_dump() {
     {
         echo "VERSION|1"; echo "NOW|2000000000"; echo "UPTIME|100000.00"; echo "FW_SHA|$FW_OK"; echo "FW_VER|3.28.0.172"
@@ -790,8 +778,8 @@ mk_dump() {
         echo "XMAP|/home/root/xovi/extensions.d/hl-snap.so|3|0"; echo "XMAP|/home/root/xovi/extensions.d/hw-stroke.so|3|0"
         echo "HAS_XOVI|1"; echo "EXT_FILE|hl-snap.so|1999000000"; echo "EXT_FILE|hw-stroke.so|1999000000"
         echo "HAS_QRR|1"
-        for q in font-menu-dynamic.qmd shelf-trash-agent.qmd shelf-mkdir-agent.qmd shelf-comic-margins.qmd reader-page-turn.qmd koreader-sidebar-entry.qmd cangjie-icons.rcc; do echo "QRR_FILE|$q|1999000000"; done
-        echo "HAS_APPLOAD|1"
+        for q in font-menu-dynamic.qmd shelf-trash-agent.qmd shelf-mkdir-agent.qmd shelf-comic-margins.qmd reader-page-turn.qmd; do echo "QRR_FILE|$q|1999000000"; done
+        echo "HAS_APPLOAD|0"
         for s in $VSVCS; do echo "UNIT|svc|$s.service|1|1|active|0|5000|10240|20480|7600000|-"; done
         echo "UNIT|target|shelf.target|1|1|active|-|-|-|-|-|-"
         echo "UNIT|svc|wifi-watch.service|1|1|active|0|5001|512|600|7000000|-"
@@ -799,7 +787,7 @@ mk_dump() {
         echo "UNIT|once|xovi-reenable.service|1|1|active|-|-|-|-|-|-"
         echo "UNIT|once|chrony-boot-wakelock.service|1|-|inactive|-|-|-|-|-|-"
         echo "PORTINFO|1"; echo "LISTEN|443|0.0.0.0"
-        for p in 8790 8791 8792 8793 8795 8796 8797 8798; do echo "LISTEN|$p|127.0.0.1"; done
+        for p in 8790 8792 8793 8795 8796 8797 8798; do echo "LISTEN|$p|127.0.0.1"; done
         echo "JOURNAL|1"; echo "XLOG|hookok:hl-snap|1"; echo "XLOG|hookok:hw-stroke|3"; echo "XLOG|hookfail:hl-snap|0"
         echo "XLOG|mark:reader-page-turn.qmd|2"; echo "FLIGHT_ABSENT|1"; echo "DF_HOME|3000000"; echo "END|1"
     } | tr '|' '\t'
@@ -855,9 +843,15 @@ vcase "服务 NRestarts>0 → ⚠" 0 "⚠ mind-serve.service：active，但 NRes
 vcase "服务峰值内存超阈值 → ⚠" 0 "⚠ book-serve.service：active，峰值内存偏高" "s/^\(UNIT${T}svc${T}book-serve.service${T}1${T}1${T}active${T}0${T}5000${T}10240${T}\)20480/\1900000/"
 vcase "服务很晚才启动 → 注明开机后被重启过" 0 "开机后 1小时0分 才启动（开机后被重启过）" "s/^\(UNIT${T}svc${T}note-serve.service${T}.*${T}\)7600000${T}-\$/\13600000000${T}-/"
 vcase "端口没人听 → ✗" 1 "✗ 8796（transcribe-serve）：没有进程在监听" "/^LISTEN${T}8796/d"
-vcase "领域服务监听 0.0.0.0 → ⚠" 0 "⚠ 8791（koreader-serve）：监听 0.0.0.0" "s/^LISTEN${T}8791${T}127.0.0.1/LISTEN${T}8791${T}0.0.0.0/"
+vcase "领域服务监听 0.0.0.0 → ⚠" 0 "⚠ 8792（font-serve）：监听 0.0.0.0" "s/^LISTEN${T}8792${T}127.0.0.1/LISTEN${T}8792${T}0.0.0.0/"
 vcase "网关只听回环 → ⚠" 0 "⚠ 443（gateway）：只监听 127.0.0.1" "s/^LISTEN${T}443${T}0.0.0.0/LISTEN${T}443${T}127.0.0.1/"
 vcase "单元里 --bind 的端口优先于兜底表" 0 "✓ 8899（font-serve）" "s/^\(UNIT${T}svc${T}font-serve.service${T}.*${T}\)-\$/\18899/" "\$a LISTEN${T}8899${T}127.0.0.1"
+vcase "退役服务 koreader-serve 的单元/二进制还在 → ⚠（不计入在位统计）" 0 "⚠ koreader-serve.service：已退役/旧命名的遗留（单元 在，二进制 在）" "\$a UNIT${T}legacy${T}koreader-serve.service${T}1${T}1${T}active${T}-${T}-${T}-${T}-${T}-${T}-"
+check "  └ 在位统计不含退役单元" test -n "$(vline '✓ 单元：13/13 个在位')"
+vcase "退役单元都不在 → 不报" 0 "✓ 单元：13/13 个在位" "\$a UNIT${T}legacy${T}koreader-serve.service${T}0${T}0${T}inactive${T}-${T}-${T}-${T}-${T}-${T}-"
+check "  └ 没有遗留提示" test -z "$(vline '已退役/旧命名的遗留')"
+vcase "已退役的侧栏 qmd 还在、appload 也在 → ⚠" 0 "⚠ koreader-sidebar-entry.qmd：已退役的 KOReader/WeRead 侧栏入口还在" "\$a QRR_FILE${T}koreader-sidebar-entry.qmd${T}1" "s/^HAS_APPLOAD${T}0/HAS_APPLOAD${T}1/"
+vcase "已退役的侧栏 qmd 还在、appload 已卸 → ✗（它 IMPORT 的模块不在了）" 1 "✗ koreader-sidebar-entry.qmd：已退役的侧栏入口还在，而 appload 已不在" "\$a QRR_FILE${T}koreader-sidebar-entry.qmd${T}1"
 vcase "journal 有 panic → ✗" 1 "✗ panic：1 条相关日志；最近一条：thread 'main' panicked at src/x.rs" "\$a ALERT${T}J${T}panic${T}1${T}thread 'main' panicked at src/x.rs"
 vcase "dmesg 与 journal 同一次 OOM 各一份 → 取较大计数、样例用 journal" 1 "✗ OOM：3 条相关日志；最近一条：J-sample" "\$a ALERT${T}K${T}oom${T}3${T}K-sample" "\$a ALERT${T}J${T}oom${T}2${T}J-sample"
 vcase "SHELF-MKDIR 超时只 ⚠" 0 "⚠ SHELF-MKDIR 超时：4 条相关日志" "\$a ALERT${T}J${T}mkdir-timeout${T}4${T}SHELF-MKDIR: transfer timeout after 9000ms"
@@ -891,14 +885,14 @@ echo "100000.00 1.00" > "$R/proc/uptime"
 printf 'Name:\tx\nVmHWM:\t  20480 kB\nVmRSS:\t  10240 kB\n' > "$R/proc/4242/status"
 { echo "  sl  local_address rem_address   st"
   echo "   0: 00000000:01BB 00000000:0000 0A 0"; n=1
-  for p in 8790 8791 8792 8793 8795 8796 8797 8798; do printf '   %d: 0100007F:%04X 00000000:0000 0A 0\n' "$n" "$p"; n=$((n + 1)); done
+  for p in 8790 8792 8793 8795 8796 8797 8798; do printf '   %d: 0100007F:%04X 00000000:0000 0A 0\n' "$n" "$p"; n=$((n + 1)); done
   echo "   9: 0100007F:1F90 0100007F:D431 01 0"; } > "$R/proc/net/tcp"   # 最后一行是已建立连接（st=01），不算监听
 printf '  sl  local_address                         remote_address                        st\n   0: 0000000000000000FFFF00000100007F:22B6 00000000000000000000000000000000:0000 0A 0\n' > "$R/proc/net/tcp6"
 : > "$R/home/root/xovi/extensions.d/hl-snap.so"; : > "$R/home/root/xovi/extensions.d/hw-stroke.so"
 for s in $VSVCS; do : > "$B/$s"; printf '[Service]\nExecStart=/home/root/.local/bin/%s\n' "$s" > "$R/usr/lib/systemd/system/$s.service"; done
 for u in shelf.target xovi-reenable.service wifi-watch.service battop.service chrony-boot-wakelock.service; do : > "$R/usr/lib/systemd/system/$u"; done
 : > "$B/wifi-watch.sh"; mkdir -p "$R/home/root/battop"; : > "$R/home/root/battop/battop"
-for q in font-menu-dynamic.qmd shelf-trash-agent.qmd shelf-mkdir-agent.qmd shelf-comic-margins.qmd reader-page-turn.qmd koreader-sidebar-entry.qmd cangjie-icons.rcc; do : > "$Q/$q"; done
+for q in font-menu-dynamic.qmd shelf-trash-agent.qmd shelf-mkdir-agent.qmd shelf-comic-margins.qmd reader-page-turn.qmd; do : > "$Q/$q"; done
 printf 'f1\nf2\nf3\nf4\tx\n' > "$R/host-flight.log"   # 飞行记录仪在宿主机上（09-25 更正）；末行带 TAB：要压成空格，不能错位
 export CJ_FLIGHT_LOG="$R/host-flight.log"
 cat > "$R/journal.txt" <<'EOF'
@@ -995,13 +989,10 @@ echo TZ > "$R/Shanghai"; chmod 555 "$R/timezone-cn.rootbind/etc"; : > "$CJ_SIM_L
 check "timezone-cn overlay：写底层失败 → 退出非 0、报错、不说\"已改\"、最后一次 mount 是 ro" test "$rc" -ne 0 -a -n "$(grep '失败（底层未动）' "$R/out.txt")" -a -z "$(grep '底层已改' "$R/out.txt")" -a "$(last_mount)" = "mount -o remount,ro /"
 chmod 755 "$R/timezone-cn.rootbind/etc"
 
-# 连接次数（2026-09-25 合批）：推送一次 ssh 建目录 + 每文件一次 scp + 一次 ssh 取全部 md5；sidebar 探测/落位+生效各合一
+# 连接次数（2026-09-25 合批）：推送一次 ssh 建目录 + 每文件一次 scp + 一次 ssh 取全部 md5
 new_sandbox; : > "$CJ_SIM_LOG"
 ( cd "$PKG" && CJ_SKIP_BUILD=1 DEFER_XOVI_START=1 run sh deploy-hl-snap.sh 127.0.0.1 ) >/dev/null 2>&1; rc=$?
 check "hl-snap 部署：4 次 ssh（连通检查/建目录/取 md5/安装）+ 4 次 scp（旧版 13 次 ssh）" test "$rc" -eq 0 -a "$(count_log '^ssh')" = 4 -a "$(count_log '^scp')" = 4
-: > "$CJ_SIM_LOG"
-( cd "$PKG" && DEFER_XOVI_START=1 run sh deploy-sidebar-entry.sh 127.0.0.1 ) >/dev/null 2>&1; rc=$?
-check "sidebar-entry 部署：5 次 ssh（连通/探测/建目录/取 md5/落位）+ 2 次 scp（旧版 10 次 ssh）" test "$rc" -eq 0 -a "$(count_log '^ssh')" = 5 -a "$(count_log '^scp')" = 2
 new_sandbox; SOP="$R/home/root/.cangjie-stage"; mkdir -p "$SOP"; echo keep > "$SOP/battop.new"; : > "$CJ_SIM_LOG"
 ( cd "$PKG" && CJ_SIM_SCP_CORRUPT=hl-snap.so CJ_SKIP_BUILD=1 DEFER_XOVI_START=1 run sh deploy-hl-snap.sh 127.0.0.1 ) >"$R/out.txt" 2>&1; rc=$?
 check "合批推送：只有 md5 对不上的那个文件被删，其余已校验的暂存文件保留、没进入安装" test "$rc" -ne 0 -a ! -e "$R/home/root/hl-snap/hl-snap.so" -a -f "$R/home/root/hl-snap/deploy/install.sh" -a -n "$(grep 'md5 对不上：hl-snap.so' "$R/out.txt")" -a -z "$(grep "^ssh sh '.*/deploy/install.sh" "$CJ_SIM_LOG")"
@@ -1012,9 +1003,82 @@ unset CJ_ALLOWLIST_LOCAL CJ_BATTOP_BIN CJ_SKIP_BUILD SHELF_NO_BUILD
 
 # 预检提示与 cj_xochitl_apply 的实际分支一致（xovi 未生效但会装 xovi-reenable → 整机重启，不是"一定 xovi/start"）
 new_sandbox; export CJ_ALLOWLIST_LOCAL="$R/allow.local.txt"; xovi_live off
-( cd "$PKG" && run sh install-all.sh 127.0.0.1 --force --skip chrony-cn,timezone-cn,battop,wifi-watch,chrony-boot-wakelock,hl-snap,handwriting-stroke,sidebar-entry,shelf,xovi-apply ) >"$R/out.txt" 2>&1
+( cd "$PKG" && run sh install-all.sh 127.0.0.1 --force --skip chrony-cn,timezone-cn,battop,wifi-watch,chrony-boot-wakelock,hl-snap,handwriting-stroke,shelf,xovi-apply ) >"$R/out.txt" 2>&1
 check "预检：xovi 未生效时如实说明'装了 xovi-reenable 就整机重启，否则 xovi/start'" test -n "$(grep 'xovi 尚未生效.*整机重启.*否则 xovi/start' "$R/out.txt")"
 unset CJ_ALLOWLIST_LOCAL
+
+# ═══════════════════════════ 10. 2026-09-30 第五轮审计新增 ═══════════════════════════
+section "2026-09-30 第五轮：卸载在 set -e 下的健壮性 / 遗留清理 / 状态文件"
+# cj_rm_payload 在 set -e 的设备端脚本里：子目录里多一个不认识的文件，rmdir 失败不能把整段脚本打断
+new_sandbox
+mkdir -p "$R/home/root/pkg-y/deploy"; echo 1 > "$R/home/root/pkg-y/a.so"; echo 1 > "$R/home/root/pkg-y/deploy/i.sh"; echo mine > "$R/home/root/pkg-y/deploy/mine.txt"
+out="$(sh -c "set -eu; . '$PKG/devlib.sh'; cj_rm_payload \"\$CJ_HOME/pkg-y\" a.so deploy/i.sh deploy; echo AFTER" 2>&1)"; rc=$?
+check "rm_payload（set -e）：子目录里有不认识的文件 → 不中断脚本、已知文件删了、子目录与该文件保留" test "$rc" -eq 0 -a -n "$(printf '%s' "$out" | grep -x AFTER)" -a ! -e "$R/home/root/pkg-y/a.so" -a ! -e "$R/home/root/pkg-y/deploy/i.sh" -a -f "$R/home/root/pkg-y/deploy/mine.txt"
+export CJ_SKIP_BUILD=1
+( cd "$PKG" && DEFER_XOVI_START=1 run sh deploy-hl-snap.sh 127.0.0.1 ) >/dev/null 2>&1
+echo mine > "$R/home/root/hl-snap/deploy/notes.txt"
+( cd "$PKG" && run sh uninstall-all.sh 127.0.0.1 --skip shelf ) >"$R/out.txt" 2>&1; rc=$?
+check "uninstall-all：hl-snap 载荷的 deploy/ 里有不认识的文件 → hl-snap 这步不再判失败，扩展照样摘掉、该文件保留" test "$rc" -eq 0 -a -z "$(grep '❌' "$R/out.txt")" -a ! -e "$R/home/root/xovi/extensions.d/hl-snap.so" -a -f "$R/home/root/hl-snap/deploy/notes.txt"
+unset CJ_SKIP_BUILD
+# wifi-watch 写的上网探测状态文件：卸载时一并删（否则网关横幅永远停在最后一次结果）；verity 下服务还在跑就保留
+new_sandbox; ( cd "$PKG" && run sh deploy-wifi-watch.sh 127.0.0.1 ) >/dev/null 2>&1
+WS="$R/home/root/.local/state/shelf"; mkdir -p "$WS"; echo '{"state":"portal"}' > "$WS/wifi-connectivity.json"; echo keep > "$WS/other.json"
+CJ_SIM_VERITY=1 bash -c "cd '$PKG' && PATH='$STUBS:'\$PATH sh uninstall-all.sh 127.0.0.1 --skip shelf" >/dev/null 2>&1
+check "uninstall-all + dm-verity：wifi-watch 单元删不掉 → 状态文件也保留（服务还会写它）" test -f "$WS/wifi-connectivity.json"
+( cd "$PKG" && run sh uninstall-all.sh 127.0.0.1 --skip shelf ) >/dev/null 2>&1; rc=$?
+check "uninstall-all：wifi-watch 卸掉后删它的上网探测状态文件，shelf 其它状态不动" test "$rc" -eq 0 -a ! -e "$WS/wifi-connectivity.json" -a -f "$WS/other.json"
+# 旧设备上 oneshot+timer 模型的 battop.timer：卸载时一并清
+new_sandbox; echo '[Timer]' > "$CJ_SYSD/battop.timer"; : > "$CJ_SIM_LOG"
+( cd "$PKG" && run sh uninstall-all.sh 127.0.0.1 --skip shelf ) >"$R/out.txt" 2>&1; rc=$?
+check "uninstall-all：旧版遗留的 battop.timer 被清、rw 窗口以 ro 收尾" test "$rc" -eq 0 -a ! -e "$CJ_SYSD/battop.timer" -a "$(last_mount)" = "mount -o remount,ro /"
+: > "$CJ_SIM_LOG"; ( cd "$PKG" && run sh uninstall-all.sh 127.0.0.1 --skip shelf --purge ) >"$R/out.txt" 2>&1; rc=$?
+check "uninstall-all --purge：没有 battop 目录时如实说\"本来就不存在\"，不谎称已删；不再 remount" test "$rc" -eq 0 -a -n "$(grep '本来就不存在' "$R/out.txt" | grep battop)" -a -z "$(grep -- '--purge：已删' "$R/out.txt")" -a "$(count_log remount)" = 0
+# 退役服务 koreader-serve 的遗留（09-29 撤掉）：重新部署书架时清掉单元/链接/二进制；只剩悬空 wants 链接也要清
+new_sandbox; PL="$R/payload"; mk_payload "$PL"
+echo old > "$CJ_SYSD/koreader-serve.service"; mkdir -p "$CJ_SYSD/shelf.target.wants"; ln -s ../koreader-serve.service "$CJ_SYSD/shelf.target.wants/koreader-serve.service"
+echo old > "$B/koreader-serve"
+run sh "$PL/install.sh" >/dev/null 2>&1; rc=$?
+check "shelf install：旧设备上的 koreader-serve 单元/wants 链接/二进制被清，二进制备份进 cangjie-backups" test "$rc" -eq 0 -a ! -e "$CJ_SYSD/koreader-serve.service" -a ! -L "$CJ_SYSD/shelf.target.wants/koreader-serve.service" -a ! -e "$B/koreader-serve" -a -f "$(ls "$R"/home/root/cangjie-backups/shelf-*/koreader-serve 2>/dev/null | head -n 1)"
+ln -s ../shelf-gateway.service "$CJ_SYSD/multi-user.target.wants/shelf-gateway.service"; : > "$CJ_SIM_LOG"
+run sh "$PL/install.sh" >/dev/null 2>&1
+check "shelf install：只剩悬空的旧命名 wants 链接（单元文件早没了）→ 也清掉" test ! -L "$CJ_SYSD/multi-user.target.wants/shelf-gateway.service" -a "$(last_mount)" = "mount -o remount,ro /"
+ln -s ../shelf-gateway.service "$CJ_SYSD/multi-user.target.wants/shelf-gateway.service"
+run sh "$B/shelf-uninstall" >/dev/null 2>&1
+check "shelf uninstall：multi-user.target.wants 下的旧命名链接也删（与 install 清遗留的路径对称）" test ! -L "$CJ_SYSD/multi-user.target.wants/shelf-gateway.service"
+# --skip 退役步骤名：uninstall-all 仍认它，不误报"不是已知步骤名"
+( cd "$PKG" && run sh uninstall-all.sh --dry-run --skip sidebar-entry ) >"$R/out.txt" 2>&1
+check "uninstall-all --skip sidebar-entry（退役步骤）：不误报未知步骤、确实跳过" test -z "$(grep '不是已知步骤名' "$R/out.txt")" -a -n "$(grep '跳过 sidebar-entry' "$R/out.txt")"
+
+# 退役的 sidebar-entry：安装件已删，但装过的设备仍能被 uninstall-all 清干净
+new_sandbox; echo OLD > "$Q/koreader-sidebar-entry.qmd"; echo OLD > "$Q/cangjie-icons.rcc"; echo keep > "$Q/font-menu-dynamic.qmd"
+( cd "$PKG" && run sh uninstall-all.sh 127.0.0.1 --skip shelf ) >"$R/out.txt" 2>&1; rc=$?
+check "uninstall-all：旧设备上的 KOReader 侧栏 qmd/rcc 被摘掉，别的 qmd 不动" test "$rc" -eq 0 -a ! -e "$Q/koreader-sidebar-entry.qmd" -a ! -e "$Q/cangjie-icons.rcc" -a -f "$Q/font-menu-dynamic.qmd"
+check "sidebar-entry 安装件已删、步骤表里没有它的脚本映射" bash -c "cd '$PKG' && . ./lib.sh && ! step_script sidebar-entry >/dev/null && ! word_in sidebar-entry \"\$STEP_DEFER\" && [ ! -e deploy-sidebar-entry.sh ]"
+# verify 设备端采集：旧设备上 koreader-serve 单元/二进制还在 → 采到 legacy 行并判 ⚠
+new_sandbox; export CJ_ALLOWLIST_LOCAL="$R/allow.local.txt"; xovi_live on
+echo '[Service]' > "$CJ_SYSD/koreader-serve.service"; : > "$B/koreader-serve"
+( cd "$PKG" && run sh verify-on-device.sh 127.0.0.1 ) >"$R/vout.txt" 2>&1
+check "verify 采集：设备上残留的退役单元 koreader-serve.service 被报 ⚠" test -n "$(vline '⚠ koreader-serve.service：已退役/旧命名的遗留（单元 在，二进制 在）')"
+unset CJ_ALLOWLIST_LOCAL
+
+section "2026-09-30 第五轮：推送只传有变化的文件 / 书架载荷只带要装的服务"
+new_sandbox; export CJ_SKIP_BUILD=1
+( cd "$PKG" && DEFER_XOVI_START=1 run sh deploy-hl-snap.sh 127.0.0.1 ) >/dev/null 2>&1
+: > "$CJ_SIM_LOG"
+( cd "$PKG" && DEFER_XOVI_START=1 run sh deploy-hl-snap.sh 127.0.0.1 ) >"$R/out.txt" 2>&1; rc=$?
+check "hl-snap 重复部署（载荷没变）：不再 scp，3 次 ssh（连通/建目录+取 md5/安装），不做二次 md5 复核" test "$rc" -eq 0 -a "$(count_log '^scp')" = 0 -a "$(count_log '^ssh')" = 3 -a "$(grep -c '未变，不重传' "$R/out.txt")" = 4
+echo tampered >> "$R/home/root/hl-snap/deploy/devlib.sh"; : > "$CJ_SIM_LOG"
+( cd "$PKG" && DEFER_XOVI_START=1 run sh deploy-hl-snap.sh 127.0.0.1 ) >"$R/out.txt" 2>&1; rc=$?
+check "hl-snap 部署：设备上暂存的某个文件被改过 → 只重传它、复核后装" test "$rc" -eq 0 -a "$(count_log '^scp')" = 1 -a -n "$(grep 'md5 一致：devlib.sh' "$R/out.txt")" -a "$(md5sum < "$R/home/root/hl-snap/deploy/devlib.sh")" = "$(md5sum < "$PKG/devlib.sh")"
+unset CJ_SKIP_BUILD
+new_sandbox
+( cd "$PKG" && SHELF_NO_BUILD=1 run sh deploy.sh 127.0.0.1 --only book ) >"$R/out.txt" 2>&1; rc=$?
+check "deploy.sh --only book：载荷里只有 gateway/book 两个服务的二进制与单元 + shelf.target（不再带退役的 koreader-serve.service）" test "$rc" -eq 0 -a "$(ls "$R/home/root/shelf-pkg/shelf/systemd" | tr '\n' ' ')" = "book-serve.service gateway.service shelf.target " -a "$(ls "$R/home/root/shelf-pkg/shelf/bin" | tr '\n' ' ')" = "book-serve gateway "
+HOLD="$TMPBASE/hold-mind-unit"; mv "$REPO/notes/systemd/mind-serve.service" "$HOLD"
+new_sandbox
+( cd "$PKG" && SHELF_NO_BUILD=1 run sh deploy.sh 127.0.0.1 ) >"$R/out.txt" 2>&1; rc=$?
+mv "$HOLD" "$REPO/notes/systemd/mind-serve.service"
+check "deploy.sh：仓库里缺某个服务的单元 → 推送前退出非 0、点名缺的单元，设备上什么都没推" test "$rc" -ne 0 -a -n "$(grep 'mind-serve.service' "$R/out.txt")" -a ! -e "$R/home/root/shelf-pkg" -a "$(count_log 'tar')" = 0
 
 # ═══════════════════════════ 5. 静态守卫 / 清单对称 ═══════════════════════════
 section "静态守卫"
@@ -1149,9 +1213,9 @@ WW_STATE="$WW" PATH="$WSTUB:$PATH" SYSFS="$WW/sys" INTERVAL=0 TICKS=2 WIFI_WATCH
 check "wifi-watch 上网探测：WiFi 关了（读不到 carrier）→ 删掉状态文件、不探" test ! -e "$WW/state.json" -a ! -s "$WW/calls"
 
 # 守卫：真实 HOME 下不该出现任何测试产物
-GUARD_AFTER=""
-for g in $(guard_paths); do [ -e "$g" ] && GUARD_AFTER="$GUARD_AFTER $g"; done
-check "真实 HOME 未被测试触碰（无新增 shelf/cangjie-backups/.stage 等目录）" test "$GUARD_BEFORE" = "$GUARD_AFTER"
+GUARD_AFTER="$(guard_sig)"
+check "真实 HOME 未被测试触碰（shelf/cangjie-backups/.stage/载荷目录等：无新增、无删除、原有的 mtime 不变）" test "$GUARD_BEFORE" = "$GUARD_AFTER"
+[ "$GUARD_BEFORE" = "$GUARD_AFTER" ] || diff <(printf '%s\n' "$GUARD_BEFORE") <(printf '%s\n' "$GUARD_AFTER") | sed 's/^/       /'
 
 echo
 echo "════ 结果：通过 $PASS，失败 $FAIL ════"

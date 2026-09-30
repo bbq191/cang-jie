@@ -12,7 +12,7 @@
 #   shquote          把任意字符串安全地拼进远端命令行（M9/M10）
 #   dev_script       `dev_script ARG… <<'EOF' … EOF`：devlib.sh + 脚本体经 `ssh sh -s` 在设备上执行
 #   push_verified    一批文件 scp 到"暂存路径"→ 逐个 md5 对拍；不对就删暂存并失败，绝不落到最终位置（H3）；
-#                    一次 ssh 建目录 + 每文件一次 scp + 一次 ssh 取全部 md5
+#                    一次 ssh 建目录并取现有 md5 + 只 scp 有变化的文件 + 有上传才再一次 ssh 复核 md5
 #   步骤表           STEP_ORDER / step_script / STEP_DEFER / STEP_CONFIG_ONLY（install-all 与 uninstall-all 共用，
 #                    保证两边清单对称）
 #   parse_step_args  install-all / uninstall-all 共用的 [host] --force --purge --force-apply --dry-run --skip -h 解析
@@ -22,12 +22,11 @@
 #   host_arg         薄 deploy-*.sh 共用的 [host] 参数解析（-h、多余/未知参数 exit 2）
 #   require_device   动手前确认 ssh 通；不通给下一步排查提示并 exit 1
 #   fw_gate          固件 sha256 白名单门（install-all）
-#   preflight_device 设备只读预检：root/ /home 可写与剩余空间/xovi·qrr·appload·verity 现状（install-all）
+#   preflight_device 设备只读预检：root/ /home 可写与剩余空间/xovi·qrr·verity 现状（install-all）
 # ═══════════════════════════════════════════════════════════════════════════
 
 CJ_PKG_DIR="$(pwd)"
 CJ_SSH_TIMEOUT="${CJ_SSH_TIMEOUT:-8}"
-CJ_STAGE_REMOTE="${CJ_STAGE_REMOTE:-/home/root/.cangjie-stage}"   # 设备上的暂存目录（与 devlib.sh 的 CJ_STAGE_DIR 同址）
 
 # shellcheck disable=SC2086  # CJ_SSH_OPTS 有意按词展开成多个选项
 rssh()    { ssh -n $CJ_SSH_OPTS "root@$HOST" "$@"; }
@@ -125,8 +124,12 @@ md5_local() { md5sum "$1" | awk '{print $1}'; }
 
 # push_verified LOCAL REMOTE [LOCAL REMOTE …]：把一批文件 scp 到各自的"暂存路径"（调用方保证不在 extensions.d
 # 之类的自动加载目录里）并核对 md5。md5 对不上的那个文件从设备上删掉、整体返回 1；最终位置从未被碰过。
-# 连接次数：一次 ssh 建好所有目标目录 → 每个文件一次 scp → 一次 ssh 取回全部 md5（2026-09-25 起合批；
-# 旧版每个文件 mkdir/scp/md5 各一次，deploy-xovi-ext 光推送就 12 次连接）。
+# 连接次数：一次 ssh 建好所有目标目录并取回暂存路径上现有文件的 md5 → 只 scp 内容有变化的文件（2026-09-30 起：
+# 暂存路径上已是同一内容就不重传，重复部署不再每次推 .so/脚本）→ 有上传才再一次 ssh 取回它们的 md5
+# （2026-09-25 起合批；旧版每个文件 mkdir/scp/md5 各一次，deploy-xovi-ext 光推送就 12 次连接）。
+pv_md5_cmd() { # 远端命令：对参数里（已 shquote）的每个路径输出一行 md5（缺失则空行），顺序与参数一致
+    echo "for f in$1; do s=\$(md5sum \"\$f\" 2>/dev/null) || s=; echo \"\${s%% *}\"; done"
+}
 push_verified() {
     { [ $# -ge 2 ] && [ $(($# % 2)) -eq 0 ]; } || { echo "!! push_verified：参数必须成对（LOCAL REMOTE …）"; return 1; }
     pv_dirs=""; pv_rems=""; pv_odd=1
@@ -138,28 +141,41 @@ push_verified() {
         fi
         pv_odd=$((1 - pv_odd))
     done
-    rssh "mkdir -p$pv_dirs" || return 1
-    pv_odd=1
-    for pv_a in "$@"; do
-        if [ "$pv_odd" = 1 ]; then pv_local=$pv_a
-        else rscp "$pv_local" "root@$HOST:$pv_a" || { echo "!! scp $pv_local 失败"; return 1; }
-        fi
-        pv_odd=$((1 - pv_odd))
-    done
-    # 每个文件一行 md5（缺失则空行），顺序与参数一致
-    pv_sums="$(rssh "for f in$pv_rems; do s=\$(md5sum \"\$f\" 2>/dev/null) || s=; echo \"\${s%% *}\"; done")" || pv_sums=""
-    pv_bad=""; pv_odd=1; pv_k=0
+    pv_pre="$(rssh "mkdir -p$pv_dirs && $(pv_md5_cmd "$pv_rems")")" || return 1
+    # 逐个比对：暂存路径上已是同一内容就跳过，否则 scp 并记下要复核的序号与路径
+    pv_up=""; pv_uprems=""; pv_odd=1; pv_k=0
     for pv_a in "$@"; do
         if [ "$pv_odd" = 1 ]; then pv_local=$pv_a
         else
             pv_k=$((pv_k + 1))
             pv_l="$(md5_local "$pv_local")"
-            pv_r="$(printf '%s\n' "$pv_sums" | sed -n "${pv_k}p")"
-            if [ -z "$pv_r" ] || [ "$pv_l" != "$pv_r" ]; then
-                echo "!! md5 对不上：$(basename "$pv_local")（本地 $pv_l vs 设备 ${pv_r:-空}），传输可能损坏，不继续（已删设备上的暂存文件 $pv_a，最终位置未动）"
-                pv_bad="$pv_bad $(shquote "$pv_a")"
+            if [ -n "$pv_l" ] && [ "$pv_l" = "$(printf '%s\n' "$pv_pre" | sed -n "${pv_k}p")" ]; then
+                echo "-- 未变，不重传：$(basename "$pv_local")"
             else
-                echo "-- md5 一致：$(basename "$pv_local")"
+                rscp "$pv_local" "root@$HOST:$pv_a" || { echo "!! scp $pv_local 失败"; return 1; }
+                pv_up="$pv_up $pv_k"; pv_uprems="$pv_uprems $(shquote "$pv_a")"
+            fi
+        fi
+        pv_odd=$((1 - pv_odd))
+    done
+    [ -n "$pv_up" ] || return 0
+    # 刚传的每个文件一行 md5，顺序与 pv_up 一致
+    pv_sums="$(rssh "$(pv_md5_cmd "$pv_uprems")")" || pv_sums=""
+    pv_bad=""; pv_odd=1; pv_k=0; pv_j=0
+    for pv_a in "$@"; do
+        if [ "$pv_odd" = 1 ]; then pv_local=$pv_a
+        else
+            pv_k=$((pv_k + 1))
+            if word_in "$pv_k" "$pv_up"; then
+                pv_j=$((pv_j + 1))
+                pv_l="$(md5_local "$pv_local")"
+                pv_r="$(printf '%s\n' "$pv_sums" | sed -n "${pv_j}p")"
+                if [ -z "$pv_r" ] || [ "$pv_l" != "$pv_r" ]; then
+                    echo "!! md5 对不上：$(basename "$pv_local")（本地 $pv_l vs 设备 ${pv_r:-空}），传输可能损坏，不继续（已删设备上的暂存文件 $pv_a，最终位置未动）"
+                    pv_bad="$pv_bad $(shquote "$pv_a")"
+                else
+                    echo "-- md5 一致：$(basename "$pv_local")"
+                fi
             fi
         fi
         pv_odd=$((1 - pv_odd))
@@ -205,9 +221,11 @@ fw_gate() { # $1=FORCE(0/1)
 STEP_ORDER="chrony-cn chrony-boot-wakelock timezone-cn battop wifi-watch xovi-persist hl-snap handwriting-stroke shelf xovi-apply"
 # 只落盘、不各自重启 xochitl 的步骤（install-all 给它们传 DEFER_XOVI_START=1，最后由 xovi-apply 统一重启）
 # shellcheck disable=SC2034  # 由 install-all.sh 使用
-STEP_DEFER="hl-snap handwriting-stroke sidebar-entry"
-# 已退役的步骤：install-all 不再装，uninstall-all 照样卸（装过的设备还能清干净）；对应 deploy-* 脚本保留，可单独手动跑。
-#   sidebar-entry：KOReader/WeRead 的 Sidebar 入口（2026-09-29 用户卸了设备上的 KOReader、WeRead 与 appload）
+STEP_DEFER="hl-snap handwriting-stroke"
+# 已退役的步骤：install-all 不再装，uninstall-all 照样卸（装过的设备还能清干净）；安装件（deploy 脚本与载荷）已删，
+# 没有 step_script 映射。
+#   sidebar-entry：KOReader/WeRead 的 Sidebar 入口（2026-09-29 用户卸了设备上的 KOReader、WeRead 与 appload；
+#                  2026-09-30 删掉 deploy-sidebar-entry.sh 与它的 qmd/图标——appload 不在，它本来也装不上）
 # shellcheck disable=SC2034  # 由 uninstall-all.sh 使用
 STEP_RETIRED="sidebar-entry"
 # 没有"卸载"语义的步骤：配置覆写（chrony-cn/timezone-cn），以及纯动作（xovi-apply）
@@ -224,7 +242,6 @@ step_script() {
         xovi-persist) echo ./deploy-xovi-persist.sh ;;
         hl-snap) echo ./deploy-hl-snap.sh ;;
         handwriting-stroke) echo ./deploy-handwriting-stroke.sh ;;
-        sidebar-entry) echo ./deploy-sidebar-entry.sh ;;
         shelf) echo ./deploy.sh ;;
         xovi-apply) echo ./deploy-xovi-apply.sh ;;
         *) return 1 ;;
@@ -268,8 +285,9 @@ parse_step_args() {
         esac
         shift
     done
+    # 退役步骤也算已知（uninstall-all 仍会卸它们，--skip sidebar-entry 是合法的）
     for ps_s in $(echo "$SKIP" | tr ',' ' '); do
-        word_in "$ps_s" "$STEP_ORDER" || echo "⚠ --skip 里的 '$ps_s' 不是已知步骤名（已知：$STEP_ORDER）"
+        word_in "$ps_s" "$STEP_ORDER $STEP_RETIRED" || echo "⚠ --skip 里的 '$ps_s' 不是已知步骤名（已知：$STEP_ORDER $STEP_RETIRED）"
     done
 }
 
@@ -277,7 +295,7 @@ parse_step_args() {
 skip_has() { case ",$SKIP," in *",$1,"*) return 0 ;; *) return 1 ;; esac; }
 
 # ── 设备预检（install-all 用）：只读检查，能提前拦住的全在这拦（磁盘满/非 root/写不了 /home），
-#   其余（xovi/qrr/appload 缺失）只报告——对应步骤自己会清楚报错或跳过。返回 1 = 不该继续装。──
+#   其余（xovi/qrr 缺失）只报告——对应步骤自己会清楚报错或跳过。返回 1 = 不该继续装。──
 CJ_MIN_FREE_KB="${CJ_MIN_FREE_KB:-51200}"     # /home 可用空间低于此值拒装（≈50MB：连 shelf 二进制都放不下）
 CJ_WARN_FREE_KB="${CJ_WARN_FREE_KB:-204800}"  # 低于此值只警告（≈200MB：shelf 载荷+备份余量偏紧）
 preflight_device() {

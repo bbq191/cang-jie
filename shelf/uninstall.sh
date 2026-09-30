@@ -80,7 +80,8 @@ unit_paths() {
     done
     if [ -z "$ONLY" ]; then
         echo "$SYSD/shelf.target"; echo "$SYSD/multi-user.target.wants/shelf.target"
-        for lu in $SHELF_LEGACY_UNITS; do echo "$SYSD/$lu"; echo "$SYSD/shelf.target.wants/$lu"; done
+        # 与 install.sh 的 write_units 清旧命名遗留时同一组路径（它也删 multi-user.target.wants 下的）
+        for lu in $SHELF_LEGACY_UNITS; do echo "$SYSD/$lu"; echo "$SYSD/shelf.target.wants/$lu"; echo "$SYSD/multi-user.target.wants/$lu"; done
     fi
 }
 # 将被删的用户态路径（二进制/辅助/qmd/库…）

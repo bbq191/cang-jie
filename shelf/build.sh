@@ -6,7 +6,8 @@ set -e
 cd "$(dirname "$0")"
 
 TARGET=aarch64-unknown-linux-musl
-BINS="book-serve koreader-serve"
+# 只列要部署的产物（koreader-serve 2026-09-29 退役：源码仍在 workspace 里、照样会编，但不再部署，也不在这列出）
+BINS="book-serve"
 # 网关（../gateway）+ 笔记线（../notes）+ enhance 的 wallpaper-serve/font-serve 都是独立
 # 顶层 Cargo 项目，随书架一起编/装（目录不存在则跳过）；网关是 shelf/notes/enhance 三条线
 # 共用的唯一前端，2026-09-11 从 shelf 内部 workspace 正名搬出去，见 ../gateway/README.md；

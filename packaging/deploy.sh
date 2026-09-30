@@ -2,8 +2,8 @@
 # host 侧一键部署书架+网关+笔记线+两个 enhance 领域服务到设备。2026-09-11 从 shelf/deploy.sh
 # 搬到这里——它编排的是跨 shelf/gateway/enhance/notes 四个目录的一整套安装，本质上是"全项目安装
 # 编排"的一部分，该跟 packaging/ 放一起（shelf/build.sh、shelf/install.sh、shelf/uninstall.sh 没有跟着搬）。
-#   组载荷（bin/ systemd/ lo-alias/ xovi/ install.sh uninstall.sh manifest.sh devlib.sh）→ tar → ssh 送到
-#   设备暂存目录 → 校验完整后换位 → 设备端 install.sh。
+#   组载荷（bin/ systemd/ lo-alias/ xovi/ install.sh uninstall.sh manifest.sh devlib.sh；bin/ 与 systemd/ 只放要装的
+#   服务）→ tar → ssh 送到设备暂存目录 → 校验完整后换位 → 设备端 install.sh。
 # 用法：./deploy.sh [host] [install.sh 的参数…]      host 默认 10.11.99.1（第一个参数以 - 开头则视为 install.sh 参数、host 用默认）
 #   例：./deploy.sh 10.11.99.1 --only font,wallpaper     ./deploy.sh 10.11.99.1 --password '新密码'
 #   环境 SHELF_NO_BUILD=1 跳过交叉编译（直接用 target/ 里现成产物）
@@ -39,16 +39,22 @@ USAGE_EOF
 case "${1:-}" in -h|--help) usage; exit 0 ;; esac
 case "${1:-}" in ""|-*) HOST="10.11.99.1" ;; *) HOST="$1"; shift ;; esac
 
-# 服务令牌 → 交叉编译产物路径（这套映射与 shelf/build.sh 的产出目录一一对应；新增服务要在这里加一行）
-bin_src() {
-    b="$(shelf_svc_of "$1")"
+# 服务令牌 → 仓库里的顶层目录（交叉编译产物与 systemd 单元都按它找；与 shelf/build.sh 的产出目录一一对应；
+# 新增服务要在这里加一行）
+svc_home() {
     case "$1" in
-        gateway) echo "../gateway/target/$TARGET/release/$b" ;;
-        book|koreader) echo "../shelf/target/$TARGET/release/$b" ;;
-        wallpaper|font) echo "../enhance/$b/target/$TARGET/release/$b" ;;
-        ink|transcribe|mind|note) echo "../notes/target/$TARGET/release/$b" ;;
-        *) echo "!! deploy.sh 不知道服务 $1 的产物位置（manifest.sh 新增了服务？更新本脚本的 bin_src）" >&2; return 1 ;;
+        gateway) echo ../gateway ;;
+        book) echo ../shelf ;;
+        wallpaper|font) echo "../enhance/$(shelf_svc_of "$1")" ;;
+        ink|transcribe|mind|note) echo ../notes ;;
+        *) echo "!! deploy.sh 不知道服务 $1 在哪（manifest.sh 新增了服务？更新本脚本的 svc_home）" >&2; return 1 ;;
     esac
+}
+bin_src() { bs_h="$(svc_home "$1")" || return 1; echo "$bs_h/target/$TARGET/release/$(shelf_svc_of "$1")"; }
+# 单元：enhance 下的服务单元在它自己的目录根，其余在 <顶层>/systemd/
+unit_src() {
+    us_h="$(svc_home "$1")" || return 1; us_u="$(shelf_svc_of "$1").service"
+    if [ -f "$us_h/$us_u" ]; then echo "$us_h/$us_u"; else echo "$us_h/systemd/$us_u"; fi
 }
 
 # 拆出 --password（值走 stdin）与 --only（本机也要用它算载荷），其余参数原样保留（逐个 shquote）
@@ -72,29 +78,28 @@ SEL="$(shelf_select "$ONLY")" || exit 2
 require_device
 [ "${SHELF_NO_BUILD:-0}" = "1" ] || sh ../shelf/build.sh
 
-# 推送前先核对：要装的服务的二进制都在（缺了指路去构建，别传完才被设备端拒绝）
-MISSING=""
+# 推送前先核对：要装的服务的二进制与单元都在（缺了指路，别传完才被设备端拒绝）
+MISSING=""; MISSING_UNITS=""
 for s in $SEL; do
     f="$(bin_src "$s")" || exit 1
     [ -f "$f" ] || MISSING="$MISSING
    $f"
+    u="$(unit_src "$s")"
+    [ -f "$u" ] || MISSING_UNITS="$MISSING_UNITS $u"
 done
 if [ -n "$MISSING" ]; then
     echo "!! 缺这些交叉编译产物（要装的服务：$(echo "$SEL" | sed 's/^ //')）：$MISSING"
     echo "   先在 shelf/ 下跑 sh build.sh（会一并编 gateway/notes/enhance），或用 --only 只装已编好的服务。"
     exit 1
 fi
+[ -z "$MISSING_UNITS" ] || { echo "!! 仓库里缺这些 systemd 单元：$MISSING_UNITS"; exit 1; }
 
 STAGE="$(mktemp -d)"; trap 'rm -rf "$STAGE"' EXIT
 P="$STAGE/pkg/shelf"
 mkdir -p "$P/bin" "$P/systemd" "$P/lo-alias" "$P/xovi"
-for s in $SEL; do cp "$(bin_src "$s")" "$P/bin/"; done
-cp ../shelf/systemd/* "$P/systemd/"
-if [ -d ../gateway/systemd ]; then cp ../gateway/systemd/*.service "$P/systemd/"; fi
-for b in wallpaper-serve font-serve; do
-    if [ -f "../enhance/$b/$b.service" ]; then cp "../enhance/$b/$b.service" "$P/systemd/"; fi
-done
-if [ -d ../notes/systemd ]; then cp ../notes/systemd/*.service "$P/systemd/"; fi
+# 只放要装的服务（旧版把四个目录下的单元整批拷上去，含已退役的 koreader-serve.service）
+for s in $SEL; do cp "$(bin_src "$s")" "$P/bin/"; cp "$(unit_src "$s")" "$P/systemd/"; done
+cp ../shelf/systemd/shelf.target "$P/systemd/"
 cp ../enhance/lo-alias/lo-alias.sh "$P/lo-alias/"
 cp ../shelf/install.sh ../shelf/uninstall.sh ../shelf/manifest.sh devlib.sh "$P/"
 cp ../shelf/xovi/*.qmd "$P/xovi/"
