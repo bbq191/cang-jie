@@ -176,7 +176,7 @@ fn main() {
         // 状态任何会话都能看（关掉浏览器重开、换设备都在）。
         .post("/api/batch", bind(&paths, |p, r| {
             let j = r.json()?;
-            let action = j.0.get("action").and_then(|a| a.as_str()).and_then(batch::Action::parse).ok_or_else(|| ApiError::bad("action 只能是 optimize/deliver/koreader"))?;
+            let action = j.0.get("action").and_then(|a| a.as_str()).and_then(batch::Action::parse).ok_or_else(|| ApiError::bad("action 只能是 optimize/deliver"))?;
             let names = j.0.get("names").and_then(|n| n.as_array()).map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect::<Vec<_>>());
             if names.is_none() && !j.bool_or("all", false) {
                 return Err(ApiError::bad("要么给 names，要么 all:true"));

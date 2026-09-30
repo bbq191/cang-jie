@@ -9,14 +9,13 @@ const fmtB=n=>n>1048576?(n/1048576).toFixed(1)+' MB':n>1024?(n/1024).toFixed(0)+
 const badge=(t,ok)=>`<span class="badge ${ok?'on':'off'}">${t}</span>`;
 /* 母版库一本书是不是"已经不用管了"——给 stagingList 的"隐藏已完成"开关用（2026-09-19 用户反馈
    母版库列表太长）。正在处理/失败态都不算"完成"（还需要用户看见），格式不是 EPUB 就没有"优化"
-   这个概念、只看有没有落库；EPUB 要优化完+落库才算。 */
+   这个概念、只看有没有落库；EPUB 要优化完+落库才算。落库只认加入 xochitl：2026-09-29 设备卸掉了
+   KOReader，以前"加入过 KOReader"的书现在不在任何阅读器里，不再算完成。 */
 const isBookDone=it=>{
   if(it.busy)return false;
   const dv=it.delivered||{};
   if((dv.optimize&&dv.optimize.status==='failed')||(dv.deliver&&dv.deliver.status==='failed'))return false;
-  const optimizedOk=it.format!=='epub'||it.optimized;
-  const deliveredOk=!!(dv.native||dv.koreader);
-  return optimizedOk&&deliveredOk;
+  return (it.format!=='epub'||!!it.optimized)&&!!dv.native;
 };
 /* 停一会儿再继续：用在"先弹出一条状态文字，再触发会重画掉这条文字的动作"这种场景——不等的话状态
    文字刚显示就被紧跟着的重画冲掉，用户根本来不及看见（点重转/生成笔记本弹出消耗那次踩过的坑）。 */
@@ -66,7 +65,7 @@ const toast=(msg,kind='bad',ms=4200)=>{if(!msg)return;const t=el('div',{class:'t
   requestAnimationFrame(()=>t.classList.add('show'));
   const kill=()=>{t.classList.remove('show');setTimeout(()=>t.remove(),200)};
   t.onclick=kill;setTimeout(kill,ms)};
-/* 三种对话框（确认 / 输入 / 单选）的公共骨架：遮罩 + 盒子 + 关闭收尾（摘掉键盘监听、移除节点、兑现 Promise）。
+/* 两种对话框（确认 / 输入）的公共骨架：遮罩 + 盒子 + 关闭收尾（摘掉键盘监听、移除节点、兑现 Promise）。
    点遮罩 / Esc = 取消（cancelValue）；onKey 处理其余按键（Enter 等）。build(close) 返回盒子里的节点数组与要聚焦的元素。 */
 const modal=(cancelValue,build,onKey)=>new Promise(resolve=>{
   const close=v=>{document.removeEventListener('keydown',key);overlay.remove();resolve(v)};
@@ -116,7 +115,7 @@ const T=(key,vars)=>{let s=I18N[key]||key;if(vars)for(const k in vars)s=s.split(
 const currentLang=()=>LS.get('lang',(navigator.language||'').toLowerCase().startsWith('en')?'en-US':'zh-CN');
 /* 格式白名单：服务端 rmsvc_core::formats 注入（同一份，网页 accept + 选中即拦 = 服务端上传门） */
 const EXT=__EXTS__, dot=l=>l.map(e=>'.'+e);
-const BOOK_EXT=dot(EXT.book), FONT_EXT=dot(EXT.font), DICT_EXT=dot(EXT.dict), IMG_EXT=dot(EXT.image);
+const BOOK_EXT=dot(EXT.book), FONT_EXT=dot(EXT.font), IMG_EXT=dot(EXT.image);
 const up=l=>l.map(e=>e.toUpperCase()).join(' / ');
 // 2026-09-18 起母版库只收 EPUB/PDF（BOOK_EXT===EXT.native，见 rmsvc_core::formats 头注）——原来
 // 这里有个 FMT_TIERS() 分两档（原生/仅 KOReader）拼文案，两档收成一档后不再需要，删掉。
@@ -198,10 +197,8 @@ function uploader(box,urlOf,queryOf,okExt,onFinish,dedupeApi){
 }
 
 /* 二级标签：面板都由外层 render/refresh 预先填好，切换只显隐。`:scope >` 限定只找 sec 的**直接
-   子元素**（2026-09-10 「其他」tab 把 KOReader 的 render() 原样嵌进自己某个 subpanel 里，KOReader
-   自己内部还有一层字体/词典 subnav——不加 `:scope >` 的话外层这次 querySelectorAll('.subpanel')
-   会把 KOReader 自己那两个内层 subpanel 也扫进来，外层按钮数对不上内层+外层 panel 总数，点哪个都
-   错位。对现有的非嵌套调用点（没有内层 subnav 的场景）结果完全一样，不是破坏性改动）。 */
+   子元素**：subnav 会嵌套（「管理 → 电池刺客 → 耗电情况 → 时间窗」「管理 → 设备健康」各有自己的一层），不加
+   `:scope >` 的话外层 querySelectorAll('.subpanel') 会把内层的 subpanel 也扫进来，按钮与面板按下标配对就错位。 */
 function subtabs(sec){const nav=sec.querySelector(':scope > .subnav');if(!nav)return;const btns=[...nav.children],panels=[...sec.querySelectorAll(':scope > .subpanel')];
   btns.forEach((b,i)=>b.onclick=()=>{btns.forEach(x=>x.classList.remove('on'));panels.forEach(p=>p.classList.remove('on'));b.classList.add('on');if(panels[i])panels[i].classList.add('on')});}
 
@@ -217,21 +214,19 @@ function delBtn(msg,url,refresh){const d=el('button',{class:'btn',text:T('action
   guardClick(d,async()=>{if(await confirmDialog(msg)){const r=await j(url,{method:'DELETE'});if(r.ok===false)toast(r.message);refresh()}});return d}
 const cjkBadge=p=>p==null?'':`<span class="badge ${p>=80?'on':(p>=8?'':'off')}" title="${T('common.cjkCoverageTitle')}">${T('common.cjkCoverage',{pct:p})}</span>`;
 
-/* 决策辅助：不替用户分类（闲书/研读机器判不准），讲清母版库三步走 + 两读器各擅长；拿不准先投一个，母版还在 */
+/* 母版库怎么用：三步走 + 收哪些格式 + 加入 xochitl 适合什么书（2026-09-29 起设备只剩 xochitl 一个阅读器，
+   原来"两读器怎么选/拿不准放哪"两条随 KOReader 一起撤掉） */
 const GUIDE=()=>`<details class="cmp"><summary>${T('transfer.guide.summary')}</summary>
 <dl class="help">
 <dt>${T('transfer.guide.steps.dt')}</dt><dd>${T('transfer.guide.steps.dd')}</dd>
 <dt>${T('transfer.guide.format.dt')}</dt><dd>${T('transfer.guide.format.dd',{native:up(EXT.native)})}</dd>
 <dt>${T('transfer.guide.native.dt')}</dt><dd>${T('transfer.guide.native.dd')}</dd>
-<dt>${T('transfer.guide.koreader.dt')}</dt><dd>${T('transfer.guide.koreader.dd')}</dd>
-<dt>${T('transfer.guide.unsure.dt')}</dt><dd>${T('transfer.guide.unsure.dd')}</dd>
 </dl></details>`;
 
-/* 母版库列表（2026-09-20 重设计，兼顾手机和 PC）。此前的问题：一整张卡片里堆了文件夹输入框、说明、搜索、两个
-   下拉、开关、三条状态提示，每行最多 5 个徽章 + 4 个按钮，下载站的长文件名在手机上折成好几行；批量要逐行勾选、
-   由浏览器逐个提交。现在：每行 = 勾选框 + 清爽书名（去掉 `-- 作者 -- hash` 尾巴，完整名在「更多」里）+ 一行徽章 +
-   **一个主按钮**（随状态变：待优化→优化；已优化→加入 xochitl；cbz/其它→加入 KOReader）+ `⋯` 菜单（其余操作）。
-   批量走服务端队列（网关 `/api/batch`），全选/一键"优化全部待优化"，关掉页面照跑。 */
+/* 母版库列表（2026-09-20 重设计，兼顾手机和 PC）。每行 = 勾选框 + 清爽书名（去掉 `-- 作者 -- hash` 尾巴，
+   完整名在 title 里）+ 一行徽章 + 状态/进度；**行内只在处理中/排队时出现「停止」**，其余操作（优化 / 加入 xochitl /
+   下载 / 改名 / 删除）一律在勾选后的底部操作栏（用户 2026-09-20 定，别加回单条按钮）。批量走服务端队列
+   （网关 `/api/batch`），关掉页面照跑。 */
 const stgClean=n=>{const s=n.replace(/\.(epub|pdf|cbz)$/i,'');return (s.split(' -- ')[0]||s).trim()};
 /* 搜索框的下拉建议：**书名 = 第一个 "-" 之前的内容**（用户 2026-09-20 指定）。"亂馬1⁄2 典藏版 - 07卷" → "亂馬1⁄2 典藏版"，
    同一本书的多卷合成一条；选中后按名字包含匹配，正好筛出这本书的所有卷。 */
@@ -249,7 +244,8 @@ function stgBadges(it,busy){
     :`<span class="badge">${T('transfer.staging.badge.notOptimized')}</span>`;
   const ps=(it.format==='epub'&&it.pdfSource)?`<span class="badge on" title="${T('transfer.staging.badge.pdfSourceTitle')}">${T('transfer.staging.badge.pdfSource')}</span>`:'';
   const dv=it.delivered||{},stale=t=>t&&it.mtime&&t<it.mtime;
-  const dl=(dv.native?`<span class="badge on" title="${stale(dv.native)?T('transfer.staging.delivered.native.staleTitle'):T('transfer.staging.delivered.native.title')}">${T('transfer.staging.delivered.native.badge')}${stale(dv.native)?T('transfer.staging.staleSuffix'):''}</span>`:'')+(dv.koreader?`<span class="badge on" title="${stale(dv.koreader)?T('transfer.staging.delivered.koreader.staleTitle'):T('transfer.staging.delivered.koreader.title')}">${T('transfer.staging.delivered.koreader.badge')}${stale(dv.koreader)?T('transfer.staging.staleSuffix'):''}</span>`:'');
+  // 只标「已加入 xochitl」：落库记录里历史上的 `koreader` 那条不再显示（2026-09-29 设备已卸载 KOReader）。
+  const dl=dv.native?`<span class="badge on" title="${stale(dv.native)?T('transfer.staging.delivered.native.staleTitle'):T('transfer.staging.delivered.native.title')}">${T('transfer.staging.delivered.native.badge')}${stale(dv.native)?T('transfer.staging.staleSuffix'):''}</span>`:'';
   const rc=dv.render,rb=!rc?'':rc.status==='onopen'?`<span class="badge" title="${T('stg.render.onopenTitle')}">${T('stg.render.onopenBadge')}</span>`:rc.status==='ok'?`<span class="badge on" title="${rc.expected>=20?T('transfer.staging.render.okTitle',{pages:rc.pages,expected:rc.expected}):T('stg.render.okTitle',{pages:rc.pages})}">${T('transfer.staging.render.okBadge',{pages:rc.pages})}</span>`:rc.status==='warn'?`<span class="badge off" title="${T('transfer.staging.render.warnTitle',{pages:rc.pages,expected:rc.expected})}">${T('transfer.staging.render.warnBadge',{pages:rc.pages,expected:rc.expected})}</span>`:rc.status==='pending'?`<span class="badge" title="${T('transfer.staging.render.pendingTitle')}">${T('transfer.staging.render.pendingBadge')}</span>`:`<span class="badge" title="${T('transfer.staging.render.noneTitle')}">${T('transfer.staging.render.noneBadge')}</span>`;
   const oc=dv.optimize,dc=dv.deliver;
   // 卡在 pending 但 busy=false＝上次处理被服务/设备重启打断（2026-09-19 真机撞过），不是"还在跑"。
@@ -286,7 +282,7 @@ function stgRow(it,ctx){
   // 行内按钮（只有停止/取消排队两种）：guardClick 防双击，点完刷新。
   const act=(t,fn)=>{const x=el('button',{class:'btn btn-bad',text:t});
     guardClick(x,async()=>{x.textContent=t+'…';await fn();ctx.refresh()});return x};
-  // 列表只显示书名/类型/大小/状态/进度；**所有操作**（优化/加入 xochitl/加入 KOReader/删除/全部中止）由勾选后的底部操作栏统一控制
+  // 列表只显示书名/类型/大小/状态/进度；**所有操作**（优化/加入 xochitl/删除/全部中止）由勾选后的底部操作栏统一控制
   // （用户 2026-09-20 明确要求）。行内唯一的按钮：这本书正在处理/排队时的「停止」。
   const doStop=async()=>{const r=await postJ('/api/books/staging/cancel',{name:it.name});if(r.ok!==false)toast(r.message,r.cancelled?'ok':'warn',5000)};
   const actions=el('div',{class:'stg-actions'});
@@ -299,8 +295,8 @@ function stgRow(it,ctx){
   return li;
 }
 
-/* 「传书」固定 tab = 三层架构入口：入库（所有内容源汇入）｜母版库（可选优化 → 选去向落库）。放第一位。
-   读器页（xochitl / KOReader）不再有任何传书入口，只管各自的字体 / 词典。 */
+/* 「传书」固定 tab = 三层架构入口：入库（所有内容源汇入）｜母版库（可选优化 → 加入 xochitl）。放第一位。
+   「其他 → xochitl」页不再有传书入口，只管字体。 */
 function renderTransfer(sec){sec.innerHTML=`
   <div class="subnav"><button class="on">${T('transfer.subnav.intake')}</button><button>${T('transfer.subnav.library')}</button></div>
   <div class="subpanel on">
@@ -330,12 +326,8 @@ function renderTransfer(sec){sec.innerHTML=`
     <div class="card stg-head">
       <div class="stg-headrow"><h3 style="margin:0">${T('transfer.staging.title')}</h3><span class="small" id="stgcap"></span></div>
       <div class="stg-dest">
-        <div class="stg-destpair">
-          <div class="stg-destcol"><label class="small" for="folder">${T('stg.dest.xochitl')}</label><select id="folder"></select></div>
-          <div class="stg-destcol"><label class="small" for="kfolder">${T('stg.dest.koreader')}</label><select id="kfolder"></select></div>
-        </div>
+        <div class="stg-destcol"><label class="small" for="folder">${T('stg.dest.xochitl')}</label><select id="folder"></select></div>
         <span class="stg-newrow" id="xnew" hidden><input type="text" id="xnewname" placeholder="${T('stg.dest.newPlaceholder')}"><button class="btn pri" id="xnewgo">${T('stg.dest.create')}</button><button class="btn" id="xnewx">${T('stg.dest.cancel')}</button></span>
-        <span class="stg-newrow" id="knew" hidden><input type="text" id="knewname" placeholder="${T('stg.dest.newPlaceholder')}"><button class="btn pri" id="knewgo">${T('stg.dest.create')}</button><button class="btn" id="knewx">${T('stg.dest.cancel')}</button></span>
         <details class="cmp"><summary>${T('transfer.staging.optDetailsSummary')}</summary><p class="small">${T('transfer.staging.optNote')}</p></details>
       </div>
       <div class="small" id="stgfree"></div>
@@ -349,7 +341,7 @@ function renderTransfer(sec){sec.innerHTML=`
     <details class="card stg-orig" id="stgorig" hidden><summary id="stgorigsum"></summary><p class="small">${T('stg.orig.lead')}</p><ul class="stg-list" id="stgoriglist"></ul></details>
     <div class="stgbar" id="stgbar" hidden></div>
   </div>`;
-  let koInstalled=false,items=[];
+  let items=[];
   const picked=new Set();                                  // 勾选的书名（跨页保留）
   // 服务端批量队列状态（网关 /api/batch/status）：关掉页面重开、换设备都读得到，不再依赖本标签页提交过什么。
   let bs={running:false,total:0,done:0,failed:[],queued:[],current:null,action:null};
@@ -357,27 +349,21 @@ function renderTransfer(sec){sec.innerHTML=`
   // 网关并发闸门的服务端真相（排队/处理中），见 budget.rs。
   let gatedPending=new Set(),gatedActive=new Set();
   const g=id=>$('#'+id,sec);
-  // 加入位置：下拉（现有文件夹）+「＋新建文件夹」。选中值记在本机；xochitl 新建走 book-serve 的 mkdir 队列（xochitl 里 QML
-  // 代理每 8 秒轮询建出来），KOReader 直接建目录。"根目录"= 空串。
+  // 加入位置：下拉（现有文件夹）+「＋新建文件夹」。选中值记在本机；"根目录"= 空串。新建走 book-serve 的 mkdir 队列，
+  // 由 xochitl 里的 QML 代理（长轮询）真正建出来。**不在这里等它建好**：fillFolders 会把记住的名字补进下拉（哪怕 xochitl 那边
+  // 还没出现），加入 xochitl 时 book-serve 自己会等这个文件夹建出来（deliver.rs::ensure_folder）；建好后 mkdir 事件
+  // 触发的刷新把它换成真实列表里的那一项。此前这里每 2 秒查一次 /api/books/status、最多 12 次，按钮也跟着卡 24 秒。
   const NEW='__new__';
-  const val=id=>{const v=g(id).value;return v===NEW?'':v};
-  const xFolder=()=>val('folder'),kFolder=()=>val('kfolder');
-  const fillSel=(id,names,lsKey)=>{const sel=g(id),want=LS.get(lsKey,'');const list=[...new Set(names.filter(Boolean))];if(want&&!list.includes(want))list.push(want);
-    sel.innerHTML='';sel.appendChild(el('option',{value:'',text:T('stg.dest.root')}));
-    list.forEach(n=>sel.appendChild(el('option',{value:n,text:n})));sel.appendChild(el('option',{value:NEW,text:T('stg.dest.new')}));sel.value=want};
-  const bindDest=(id,lsKey,newBox,nameInp,goBtn,cancelBtn,create)=>{
-    g(id).addEventListener('change',()=>{if(g(id).value===NEW){g(newBox).hidden=false;g(nameInp).focus()}else{g(newBox).hidden=true;LS.set(lsKey,g(id).value)}});
-    g(cancelBtn).onclick=()=>{g(newBox).hidden=true;g(nameInp).value='';g(id).value=LS.get(lsKey,'')};
-    guardClick(g(goBtn),async()=>{const name=g(nameInp).value.trim();if(!name){toast(T('stg.dest.needName'),'warn');return}
-      if(await create(name)){LS.set(lsKey,name);g(newBox).hidden=true;g(nameInp).value='';await refresh()}})};
-  bindDest('folder','folder','xnew','xnewname','xnewgo','xnewx',async name=>{
-    const r=await postJ('/api/books/mkdir/add',{name});if(r.ok===false)return false;
+  const fsel=g('folder'),newBox=g('xnew'),newName=g('xnewname');
+  const xFolder=()=>fsel.value===NEW?'':fsel.value;
+  const fillFolders=names=>{const want=LS.get('folder','');const list=[...new Set(names.filter(Boolean))];if(want&&!list.includes(want))list.push(want);
+    fsel.replaceChildren(el('option',{value:'',text:T('stg.dest.root')}),...list.map(n=>el('option',{value:n,text:n})),el('option',{value:NEW,text:T('stg.dest.new')}));fsel.value=want};
+  fsel.addEventListener('change',()=>{if(fsel.value===NEW){newBox.hidden=false;newName.focus()}else{newBox.hidden=true;LS.set('folder',fsel.value)}});
+  g('xnewx').onclick=()=>{newBox.hidden=true;newName.value='';fsel.value=LS.get('folder','')};
+  guardClick(g('xnewgo'),async()=>{const name=newName.value.trim();if(!name){toast(T('stg.dest.needName'),'warn');return}
+    const r=await postJ('/api/books/mkdir/add',{name});if(r.ok===false)return;
     toast(T('stg.dest.created',{name}),'info',6000);
-    // xochitl 侧由 QML 代理轮询建文件夹（约 8 秒一次），等它真出现再选中，最多 ~24 秒。
-    for(let i=0;i<12;i++){await wait(2000);const s=await j('/api/books/status');if((s.xochitlFolders||[]).includes(name))break}
-    return true});
-  bindDest('kfolder','kfolder','knew','knewname','knewgo','knewx',async name=>{
-    const r=await postJ('/api/koreader/books/mkdir',{folder:name});if(r.ok===false)return false;toast(T('stg.dest.createdKo',{name}),'ok');return true});
+    LS.set('folder',name);newBox.hidden=true;newName.value='';await refresh()});
   // 筛选/分页状态。"隐藏已完成"只在「全部」筛选下生效（选了「已优化」就是想看它们）。
   let st=LS.get('stgSt','all'),hideDone=LS.get('stgHideDone','1')==='1',page=1,pageSize=+LS.get('stgPageSize','25')||25;
   g('stghide').checked=hideDone;g('stghide').onchange=()=>{hideDone=g('stghide').checked;LS.set('stgHideDone',hideDone?'1':'0');page=1;render()};
@@ -385,7 +371,7 @@ function renderTransfer(sec){sec.innerHTML=`
   const filtered=()=>{const q=g('stgq').value.toLowerCase(),f=g('stgfmt').value;
     return items.filter(it=>(!q||it.name.toLowerCase().includes(q))&&(!f||fmtOf(it)===f)&&(st==='todo'?stgIsTodo(it):st==='done'?!!it.optimized:st==='finished'?isBookDone(it):(!hideDone||!isBookDone(it))))};
   const batchTitle=a=>T('stg.batch.'+a);
-  const enqueue=async(action,body)=>{const r=await postJ('/api/batch',{action,folder:action==='koreader'?kFolder():xFolder(),...body});
+  const enqueue=async(action,body)=>{const r=await postJ('/api/batch',{action,folder:xFolder(),...body});
     if(r.ok===false)return;
     toast(r.queued?T('stg.batch.queuedToast',{queued:r.queued,skip:r.skipped?T('stg.batch.skipped',{n:r.skipped}):''}):T('stg.batch.none'),r.queued?'ok':'warn');
     if(r.queued)picked.clear();await refresh()};
@@ -428,7 +414,7 @@ function renderTransfer(sec){sec.innerHTML=`
       // 0 本可处理就置灰——不再等点完才提示"跳过了 N 本"。
       const chosen=items.filter(it=>picked.has(it.name));
       const isBook=it=>it.format==='epub'||it.format==='pdf';
-      const cnt={optimize:chosen.filter(stgIsTodo).length,deliver:chosen.filter(isBook).length,koreader:koInstalled?chosen.length:0};
+      const cnt={optimize:chosen.filter(stgIsTodo).length,deliver:chosen.filter(isBook).length};
       const clr=el('button',{class:'btn',type:'button',text:T('stg.batch.clear')});clr.onclick=()=>{picked.clear();render()};
       bar.appendChild(el('div',{class:'stgbar-top'},[el('b',{text:T('stg.selected',{n:picked.size})}),clr]));
       // 按钮排布（2026-09-24 用户要求手机上不折行）：第二行 = 处理/加入（主操作，等分一行）；第三行 = 单本操作 + 删除。
@@ -439,7 +425,6 @@ function renderTransfer(sec){sec.innerHTML=`
       const mk=(a,pri)=>{const b=el('button',{class:'btn'+(pri?' pri':''),type:'button',title:T('stg.bar.'+a)+'（'+cnt[a]+'）'},[lbl('stg.bar.'+a,cnt[a])]);
         if(!cnt[a]){b.disabled=true;b.title=T('stg.bar.noneApplicable')}else guardClick(b,()=>enqueue(a,{names:[...picked]}));return b};
       const btns=el('div',{class:'stgbar-btns'},[mk('optimize',true),mk('deliver')]);
-      if(koInstalled)btns.appendChild(mk('koreader'));
       btns.style.setProperty('--cols',String(btns.children.length));
       const delN=chosen.filter(it=>!it.busy).length;
       const del=el('button',{class:'btn btn-bad',type:'button',title:T('action.delete')+'（'+delN+'）'},[lbl('action.delete',delN)]);
@@ -486,24 +471,19 @@ function renderTransfer(sec){sec.innerHTML=`
   const applyQueue=(bg,bt)=>{
     gatedPending=new Set(bg.ok!==false?bg.pending||[]:[]);gatedActive=new Set(bg.ok!==false?bg.active||[]:[]);
     if(bt.ok!==false){bs={running:!!bt.running,action:bt.action,total:bt.total||0,done:bt.done||0,current:bt.current,queued:bt.queued||[],failed:bt.failed||[]};batchQueued=new Set(bs.queued)}
-    const gated=(gatedPending.size||gatedActive.size)?T('transfer.staging.gatedSummary',{pending:gatedPending.size,active:gatedActive.size}):'';
-    g('stgnotice').textContent=[koInstalled?'':T('transfer.staging.btn.koNotInstalled'),gated].filter(Boolean).join(' · ')};
+    g('stgnotice').textContent=(gatedPending.size||gatedActive.size)?T('transfer.staging.gatedSummary',{pending:gatedPending.size,active:gatedActive.size}):''};
   /* 按事件决定取多少（不轮询）。三档，数字越大取得越全：
      1 = 网关自己的批量队列 / 并发闸门事件（area=books、不带 svc）：只重取这两个状态（2 个请求）。一轮批量里每本书网关要发 4～5 条。
      2 = book-serve 的 `staging` 事件（入库、忙态开始/结束、优化/落库**进度**——大书处理期间约每秒一条）：只有母版库列表会变，
-         再加上面两个状态（3 个请求）；xochitl / KOReader 文件夹列表与 KOReader 安装状态不会因此变化，不重取。
-     3 = 其余（book-serve 的 mkdir/trash/inbox 事件、切 tab、重连、操作后主动刷新）：全量 6 个请求。
+         再加上面两个状态（3 个请求）；xochitl 文件夹列表不会因此变化，不重取。
+     3 = 其余（book-serve 的 mkdir/trash/inbox 事件、切 tab、重连、操作后主动刷新）：全量 4 个请求。
      所有刷新走同一个 coalesce 串行执行（need 记"下一轮至少要取到哪一档"，取最大），不会出现旧的全量结果盖掉新的排队状态。 */
   let need=0;
   const run=coalesce(async()=>{const lvl=need;need=0;if(!lvl)return;
     if(lvl===1){const [bg,bt]=await Promise.all([j('/api/budget/status'),j('/api/batch/status')]);applyQueue(bg,bt);render();return}
     const full=lvl>=3;
-    const [d,bg,bt,s,k,kb]=await Promise.all([j('/api/books/staging'),j('/api/budget/status'),j('/api/batch/status')].concat(full?[j('/api/books/status'),j('/api/koreader/status'),j('/api/koreader/books')]:[]));
-    if(full){
-      koInstalled=!!(k.ok&&k.installed);
-      fillSel('folder',s.ok?s.xochitlFolders||[]:[],'folder');
-      fillSel('kfolder',(kb.items||[]).filter(x=>x.kind==='dir').map(x=>x.name),'kfolder');
-    }
+    const [d,bg,bt,s]=await Promise.all([j('/api/books/staging'),j('/api/budget/status'),j('/api/batch/status')].concat(full?[j('/api/books/status')]:[]));
+    if(full)fillFolders(s.ok!==false?s.xochitlFolders||[]:[]);
     applyQueue(bg,bt);
     if(d.ok===false){items=[];render();g('stgcap').textContent='';g('stgfree').textContent='';g('stglist').innerHTML=`<li class="small stg-empty" style="color:var(--bad)">${esc(T('transfer.staging.unavailable',{msg:d.message||T('transfer.staging.notOpen')}))}</li>`;return}
     items=d.items||[];const tot=items.reduce((a,b)=>a+b.bytes,0);g('stgcap').textContent=items.length?T('transfer.staging.capSummary',{count:items.length,size:fmtB(tot)}):'';
@@ -524,7 +504,7 @@ function renderTransfer(sec){sec.innerHTML=`
       ul.appendChild(el('li',{class:'stg-row'},[el('div',{class:'stg-main'},[el('div',{class:'stg-name',title:o.name,text:o.name}),el('div',{class:'stg-meta small',text:fmtB(o.bytes)+' · '+T('stg.orig.left',{days})})]),el('div',{class:'stg-actions'},[restore,del])]))})};
   uploader($('.up',sec),()=>'/api/books/staging',()=>({}),BOOK_EXT,()=>refresh(),'/api/books/staging');   // 书籍格式原样入库；选中即按 BOOK_EXT 拦；传 dedupeApi 防重传出重复
   const am=g('artmsg'),au=g('arturl'),ag=g('artgo'),ao=g('artopt');
-  // 「同步优化」记在本机（per-viewer 便利态，跟 folder/kfolder 那几个一个规矩）；缺省开——网文正文
+  // 「同步优化」记在本机（per-viewer 便利态，跟加入位置 folder 一个规矩）；缺省开——网文正文
   // 没有任何 CSS（article.rs 属性白名单本来就不留 class/style），不经优化会在设备上按默认段距渲染出大片
   // 留空（真机反馈），默认帮用户把这一步做了，不想要（比如想快点抓完自己再调）可以关掉。
   ao.checked=LS.get('artopt','1')==='1';ao.onchange=()=>LS.set('artopt',ao.checked?'1':'0');
@@ -554,36 +534,6 @@ const TABS={
      left.innerHTML=`${esc(it.name)}${ex.names&&ex.names.cn&&ex.names.cn!==it.name?' <span class="small">'+esc(ex.names.cn)+'</span>':''}${ex.files&&ex.files.length>1?' <span class="small">×'+ex.files.length+'</span>':''}`;
      right.insertAdjacentHTML('beforeend',cjkBadge(ex.cjkPct)+(ex.fontconfigRef?`<span title="${T('assets.fonts.fallbackRefTitle')}">⚠</span>`:''));
      right.appendChild(delBtn(T('assets.fonts.deleteConfirm',{name:it.name,filesNote:ex.files&&ex.files.length>1?T('assets.fonts.filesNote',{count:ex.files.length}):'',suffix:ex.fontconfigRef?T('assets.fonts.deleteSuffixFallback'):T('assets.fonts.deleteSuffixNormal')}),'/api/fonts/'+encodeURIComponent(it.name),refresh))}})}},
- 'koreader-serve':{title:'KOReader',render(sec){sec.innerHTML=`
-  <div class="subnav"><button class="on">${T('koreader.subnav.fonts')}</button><button>${T('koreader.subnav.dicts')}</button></div>
-  <div class="subpanel on">
-    <div class="card"><h2>${T('koreader.title')}</h2><div class="kv small" id="ks" style="margin-top:.5em">${T('common.loading')}</div>
-      <details class="cmp"><summary>${T('koreader.installGuide.summary')}</summary>
-      <dl class="help">
-        <dt>${T('koreader.installGuide.install.dt')}</dt><dd>${T('koreader.installGuide.install.dd')}</dd>
-        <dt>${T('koreader.installGuide.tuned.dt')}</dt><dd>${T('koreader.installGuide.tuned.dd')}</dd>
-        <dt>${T('koreader.installGuide.books.dt')}</dt><dd>${T('koreader.installGuide.books.dd')}</dd>
-        <dt>${T('koreader.installGuide.restart.dt')}</dt><dd>${T('koreader.installGuide.restart.dd')}</dd>
-      </dl></details></div>
-    <div class="card"><h3 style="margin-top:0">${T('koreader.fonts.title')}</h3><p class="small">${T('koreader.fonts.hint')}</p>
-    ${upHtml('🔤',T('assets.fonts.dropLabel'),FONT_EXT,T('assets.fonts.btn'))}
-    <h3>${T('assets.fonts.listTitle')}</h3><ul class="list" id="kf"></ul></div>
-  </div>
-  <div class="subpanel">
-    <div class="card"><h3 style="margin-top:0">${T('koreader.dicts.title')}</h3><p class="small">${T('koreader.dicts.hint',{ext:DICT_EXT.join(' / ')})}</p>
-    <label class="field" for="dictname">${T('koreader.dicts.nameLabel')}</label><input type="text" id="dictname" placeholder="${T('koreader.dicts.namePlaceholder')}">
-    ${upHtml('📖',T('koreader.dicts.dropLabel'),DICT_EXT,T('koreader.dicts.btn'))}
-    <h3>${T('koreader.dicts.installedTitle')}</h3><ul class="list" id="kd"></ul></div>
-  </div>`;
-  const ups=sec.querySelectorAll('.up');
-  uploader(ups[0],()=>'/api/koreader/fonts',()=>({}),FONT_EXT,()=>refresh());
-  uploader(ups[1],()=>'/api/koreader/dicts',()=>({name:$('#dictname',sec).value.trim()}),DICT_EXT,()=>refresh());
-  const refresh=async()=>{
-    const [s,f,dc]=await Promise.all([j('/api/koreader/status'),j('/api/koreader/fonts'),j('/api/koreader/dicts')]);
-    $('#ks',sec).innerHTML=s.ok?`<b>${T('koreader.status.installed')}</b><span>${s.installed?T('common.yes'):T('common.no')} ${s.version?'('+esc(s.version)+')':''}</span><b>${T('koreader.status.running')}</b><span>${s.running?T('koreader.status.runningYes'):T('common.no')}</span><b>${T('koreader.status.installedCount')}</b><span>${T('koreader.status.countLabel',{fonts:s.fonts,dicts:s.dicts||0})}</span>`:`<span>${esc(s.message)}</span>`;
-    fillList($('#kf',sec),f.items||[],(it,left,right)=>{left.textContent=it.name;right.insertAdjacentHTML('beforeend',cjkBadge(it.cjkPct)+`<span>${fmtB(it.bytes)}</span>`);right.appendChild(delBtn(T('koreader.fonts.deleteConfirm',{name:it.name}),'/api/koreader/fonts/'+encodeURIComponent(it.name),refresh))},T('koreader.fonts.emptyHint'));
-    fillList($('#kd',sec),dc.items||[],(it,left,right)=>{left.textContent='📖 '+it.name;right.textContent=T('koreader.dicts.countSuffix',{count:it.ifo})},T('koreader.dicts.emptyHint'))};
-  refresh();sec.refresh=refresh;subtabs(sec)}},
  'wallpaper-serve':{titleKey:'tab.wallpaper',title:'壁纸',render(sec){assetTab(sec,'/api/wallpapers',{
    hint:T('wallpaper.hint'),
    header:`<label class="field">${T('wallpaper.rotateLabel')}</label><div class="row"><select id="wpmode" style="max-width:12em"><option value="sequential">${T('wallpaper.mode.sequential')}</option><option value="random">${T('wallpaper.mode.random')}</option><option value="fixed">${T('wallpaper.mode.fixed')}</option></select><span id="wpst" class="small"></span></div>`,
@@ -608,22 +558,20 @@ function assetTab(sec,api,o){sec.innerHTML=`<div class="card">${o.title?`<h2>${o
   uploader($('.up',sec),()=>api,()=>({}),o.accept,refresh);
   refresh();sec.refresh=refresh}
 
-/* 「其他」顶层 tab（2026-09-10 用户重排首层标签：传书/笔记/其他/管理）：xochitl(font-serve)/
-   KOReader(koreader-serve)/壁纸(wallpaper-serve) 三个原来各自独立的顶层 tab 降一级，包进这个
-   tab 当二级子标签——三个服务各自的 render() 原样复用，不重写内容，只是换个挂载点（KOReader 自己
-   内部还有一层字体/词典 subnav，三级嵌套，subtabs() 已经改成 `:scope >` 限定直接子元素，不会互相
-   干扰，见 subtabs() 头注）。只装了其中一部分时，subnav 只列已装的那几个（笔记 tab 本身不在这
-   里——note-serve 单独占「其他」前面那个固定位置，不受这条影响）。 */
+/* 「其他」顶层 tab（2026-09-10 用户重排首层标签：传书/笔记/其他/管理）：xochitl(font-serve)/壁纸(wallpaper-serve)
+   原来各自独立的顶层 tab 降一级，包进这个 tab 当二级子标签——各服务的 render() 原样复用，只是换个挂载点。
+   只装了其中一部分时，subnav 只列已装的那几个（笔记 tab 本身不在这里——note-serve 单独占「其他」前面那个固定位置）。
+   （原来的 KOReader 子标签随 2026-09-29 设备卸载 KOReader 撤掉。） */
 function renderOther(sec,svcs,areaOf){
-  const items=[{name:'font-serve',icon:'🔤',label:'xochitl'},{name:'koreader-serve',icon:'📖',label:'KOReader'},{name:'wallpaper-serve',icon:'🖼️',label:T('tab.wallpaper')}]
+  const items=[{name:'font-serve',icon:'🔤',label:'xochitl'},{name:'wallpaper-serve',icon:'🖼️',label:T('tab.wallpaper')}]
     .filter(it=>svcs.some(s=>s.name===it.name));
   sec.innerHTML=`<div class="subnav">${items.map((it,i)=>`<button${i===0?' class="on"':''}>${it.icon} ${it.label}</button>`).join('')}</div>
     ${items.map((it,i)=>`<div class="subpanel${i===0?' on':''}" id="other-${it.name}"></div>`).join('')}`;
   items.forEach(it=>TABS[it.name].render($('#other-'+it.name,sec)));
   const pane=it=>$('#other-'+it.name,sec);
   sec.refresh=()=>Promise.all(items.map(it=>{const c=pane(it);return c&&c.refresh&&c.refresh()}));
-  /* 事件只刷发事件的那个服务的子面板（字体/KOReader/壁纸各自 2～3 个请求），不再三块一起重取——壁纸每次休眠轮换、
-     KOReader 每次加书都会发事件。认不出来源（没有映射）时退回整块刷新。 */
+  /* 事件只刷发事件的那个服务的子面板（字体/壁纸各自 2 个请求），不再几块一起重取——壁纸每次休眠轮换都会发事件。
+     认不出来源（没有映射）时退回整块刷新。 */
   sec.onEvent=ev=>{const it=items.find(x=>areaOf(x.name)===ev.area);const c=it&&pane(it);if(c&&c.refresh)refreshSec(c);else refreshSec(sec)};
   subtabs(sec);
 }
@@ -652,7 +600,7 @@ const DEST_ORDER=['notebook','obsidian','both'];
 function renderNotes(sec){sec.innerHTML=`
   <div class="card"><h2>${T('notes.title')}</h2>
     <p class="lead">${T('notes.lead')}</p>
-    <div class="row"><span class="small">${T('notes.bookLabel')}</span><select id="nbook" style="flex:1;min-width:10em"></select><button class="btn" id="nrescan" title="${T('notes.rescanTitle')}">${T('notes.rescanBtn')}</button><button class="btn" id="nkoimport" title="${T('notes.koreaderImportTitle')}">${T('notes.koreaderImportBtn')}</button></div>
+    <div class="row"><span class="small">${T('notes.bookLabel')}</span><select id="nbook" style="flex:1;min-width:10em"></select><button class="btn" id="nrescan" title="${T('notes.rescanTitle')}">${T('notes.rescanBtn')}</button></div>
     <div class="row small" id="nsum"></div>
     <div class="row"><input type="search" id="nq" placeholder="${T('notes.search.placeholder')}" aria-label="${T('notes.search.placeholder')}" style="flex:1;min-width:10em"><button class="btn" id="nqgo">${T('notes.search.btn')}</button></div>
     <div id="nqres"></div>
@@ -810,8 +758,6 @@ function renderNotes(sec){sec.innerHTML=`
   // 重新摄取。实际数据风险不大（已校对文本/条目不会被覆盖，见 notecore::ingest 的增量规则），但操作
   // 本身不常用、容易误触，补一句说清楚"安全在哪"的确认。
   guardClick($('#nrescan',sec),async()=>{if(!book)return;if(!await confirmDialog(T('notes.confirmRescan')))return;await flushPendingText();await postJ(bookApi('ink',`/rescan`),{});refresh()});
-  // KOReader 回流跟当前选的书无关（拉全量高亮/生词、内部按增量规则合并），不用 bookApi/不用 book 判空。
-  guardClick($('#nkoimport',sec),async()=>{const r=await postJ('/api/ink/koreader/import',{});if(r.ok===false)return;toast(T('notes.koreaderImportDone',r),'ok');refresh()});
   guardClick($('#npurge',sec),async()=>{if(!book)return;
     const items=trashedEntries();
     if(!items.length){toast(T('notes.trash.noneToPurge'),'warn');return}
@@ -1172,8 +1118,7 @@ const battopTopList=items=>items&&items.length
 /* 时间窗 subnav+subpanel 骨架，耗电情况/唤醒源两处共用——contentFn(windowData)→这个窗口要显示的 HTML。 */
 /* activeIdx：重画时保留原来选中的时间窗（比如耗电情况的"按应用/按进程"下拉切换只想换列表内容，
    不想把用户刚选的"7天"弹回"今日"），不传就默认第一个。每个时间窗的内容包一层 `.card`——跟这个
-   app 别处"subnav 切换、每块内容各自一张卡"的样子统一（KOReader 字体/词典两个子标签各自一张卡
-   是同一个规矩，battop 详情页之前漏了这层，2026-09-10 用户指出补上）。 */
+   app 别处"subnav 切换、每块内容各自一张卡"的样子统一（battop 详情页之前漏了这层，2026-09-10 用户指出补上）。 */
 function renderBattopWindowed(container,windowsData,contentFn,activeIdx=0){
   container.innerHTML=`<div class="subnav">${BATTOP_WINDOWS.map((x,i)=>`<button${i===activeIdx?' class="on"':''}>${T(x.label)}</button>`).join('')}</div>
     ${BATTOP_WINDOWS.map((x,i)=>`<div class="subpanel${i===activeIdx?' on':''}"><div class="card">${contentFn(windowsData[x.key]||{})}</div></div>`).join('')}`;
@@ -1223,7 +1168,7 @@ function renderBattopDetail(sec){
       usageEl.innerHTML=msg;wakeEl.innerHTML=msg;return;
     }
     const w=r.summary.windows||{};
-    /* 每个子标签开头一张说明卡（标题+一句话说明），跟「系统增强」/KOReader 那些卡片同一个
+    /* 每个子标签开头一张说明卡（标题+一句话说明），跟「系统增强」那些卡片同一个
        视觉语言；「按应用/按进程」下拉放这张卡里——下拉要跨时间窗持续存在，不能放进
        renderBattopWindowed 生成的、每次切时间窗都可能重画的内容里（2026-09-10 用户要求统一
        风格顺手理清楚这条边界）。 */
@@ -1499,7 +1444,7 @@ function renderManage(sec){sec.innerHTML=`
     const inst=v=>badge(v?T('common.installed'):T('common.notInstalled'),v);
     const ld=(es.ok!==false&&es.loaded)||{},live=[...(ld.extensions||[]),...(ld.qmds||[])];
     $('#found',sec).innerHTML=f.ok===false?`<span>${esc(f.message)}</span>`:
-      `<b>xovi</b><span>${inst(f.xovi)}</span><b>appload</b><span>${inst(f.appload)}</span><b>qt-resource-rebuilder</b><span>${inst(f.qrr)}</span><b>KOReader</b><span>${inst(f.koreader)}</span><b>WeRead</b><span>${inst(f.weread)}</span>`
+      `<b>xovi</b><span>${inst(f.xovi)}</span><b>qt-resource-rebuilder</b><span>${inst(f.qrr)}</span>`
       +`<b>${T('manage.loaded.xoviLive')}</b><span>${badge(ld.xovi?T('manage.loaded.on'):T('manage.loaded.off'),!!ld.xovi)}${live.length?' <span class="small">'+esc(live.join(' · '))+'</span>':''}</span>`;
     const ul=$('#mods',sec);ul.innerHTML='';(d.modules||[]).forEach(m=>{
       const [state,cls]=!m.installable?[T('manage.modules.state.notLaunched'),'']:!m.installed?[T('common.notInstalled'),'off']:m.running?[T('manage.modules.state.on'),'on']:[T('manage.modules.state.installedOff'),''];
@@ -1585,8 +1530,7 @@ function renderManage(sec){sec.innerHTML=`
   try{AREA=Object.fromEntries((await j('/api/manage')).modules.map(m=>[m.service,m.seg]))}catch{}
   const svcs=(d.services||[]).filter(s=>s.ui&&TABS[s.name]).sort((a,b)=>a.ui.order-b.ui.order);
   /* 首层标签顺序（2026-09-10 用户重排）：传书 / 笔记 / 其他 / 管理。笔记单独占位，xochitl(font-serve)/
-     KOReader(koreader-serve)/壁纸(wallpaper-serve)——目前 svcs 里唯三除笔记外还带 ui.order 的候选——
-     一律降一级包进「其他」（见 renderOther）。 */
+     壁纸(wallpaper-serve)——目前 svcs 里除笔记外还带 ui.order 的候选——一律降一级包进「其他」（见 renderOther）。 */
   const noteSvc=svcs.filter(s=>s.name==='note-serve');
   const otherSvcs=svcs.filter(s=>s.name!=='note-serve');
   $('#hdr').textContent=location.host;
@@ -1604,9 +1548,8 @@ function renderManage(sec){sec.innerHTML=`
   noteSvc.forEach((s)=>addTab(TABS[s.name].titleKey?T(TABS[s.name].titleKey):TABS[s.name].title,TABS[s.name].render,false,AREA[s.name]||s.name));
   if(otherSvcs.length){
     const otherSec=addTab(T('tab.other'),(sec)=>renderOther(sec,otherSvcs,n=>AREA[n]||n),false,'other');
-    // fonts/koreader/wallpapers 各自的 SSE 事件原来路由到各自独立顶层 section，现在都嵌进了同一个
-    // 「其他」section——三个 area 名都指向同一个 otherSec，事件到了随便哪个都触发它的合并 refresh
-    // （2026-09-25 起按事件的 svc 只刷发事件的那块子面板；切到「其他」tab、重连时才三块一起刷）。
+    // fonts/wallpapers 的 SSE 事件都指向同一个「其他」section，由它的 onEvent 只刷发事件的那块子面板
+    // （2026-09-25 起）；切到「其他」tab、重连时才几块一起刷。
     otherSvcs.forEach(s=>{secByArea[AREA[s.name]||s.name]=otherSec});
   }
   addTab(T('tab.manage'),renderManage,false,'manage');            // 固定管理台，始终可进
