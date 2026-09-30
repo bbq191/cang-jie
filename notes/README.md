@@ -10,12 +10,11 @@ reMarkable 的强项是**荧光笔勾书，再在勾出来的地方旁边手写*
 
 ![笔记线一图读懂](docs/diagrams/overview.svg)
 
-- **摄取**：勾画与旁边手写自动配对；没写字的纯勾画也算一条；手写画成裁图。
-- **浏览**：逐条决定「转入笔记」还是「不需要」。
+- **摄取**：勾画与旁边手写自动配对；没写字的纯勾画也算一条；手写画成灰度裁图；按书的目录归章。
+- **浏览**：逐条决定「转入笔记」还是「不需要」（已有定稿 / 草稿的条目转入时保留原来的进度）。
 - **转写**：转入笔记的手写自动交给视觉模型识别，结果作为草稿，你在手机上改定。
 - **整理**：改字、选去处、问 AI、「不要了」进回收站（可恢复）。行首写 `##` / `###` / `1.` / `-` / `- [ ]`（或手写 `口`），推送后分别变成设备笔记本内置的大标题 / 加粗小标题 / 编号列表 / 圆点列表 / 复选框，导出 md 时是对应的 markdown（对照图见白皮书第 4 章）。
 - **推送**：每章一个「推送本章」，生成设备笔记本（放进书本自己所在的文件夹，一章一本；书的小节变化处自动插小标题）和 md（同时让浏览器下载）。内容没变就跳过；旧版笔记本几秒内自动进 xochitl 回收站。
-- **KOReader 回流**：把 KOReader 里的高亮和生词并入条目库，走同样的流程。
 - **全文搜索**：跨所有书搜原文、转写、AI 回答。
 - **导入 md 文档**（默认隐藏）：选一个 `.md` 文件直接生成一份设备笔记本，不经条目库。
 
@@ -25,12 +24,12 @@ reMarkable 的强项是**荧光笔勾书，再在勾出来的地方旁边手写*
 
 | 服务 | 网关前缀 / 端口 | 职责 | 出网 |
 |---|---|---|---|
-| `ink-serve`（矿） | `/api/ink` · 8795 | 监听书库 → 解析变更页 → 配对 → 裁图 → 写条目库；KOReader 回流；全文搜索 | 否 |
+| `ink-serve`（矿） | `/api/ink` · 8795 | 监听书库 → 解析变更页 → 配对 → 裁图 → 写条目库；全文搜索 | 否 |
 | `transcribe-serve`（转写） | `/api/transcribe` · 8796 | 订阅 ink 事件，只转写 `Pending` 条目，草稿写回 | 是 |
 | `mind-serve`（脑） | `/api/mind` · 8797 | 点「提问」时调文字模型，回答写回；没有后台任务 | 是 |
 | `note-serve`（本） | `/api/notes` · 8798 | 注册「笔记」tab；生成设备笔记本、导出 md、单篇 md 导入 | 否 |
 
-**模型**：在网关「管理」tab 的“模型管理”卡片里选，视觉和文字各一张。预置了 DashScope / OpenAI / Gemini / DeepSeek 四家，key 按厂商分开存，用量按模型分账。只有 DashScope 真机调用过，其余三家只验证了配置层。详见白皮书第 6 章。
+**模型**：在网关「管理」tab 的“模型管理”卡片里选，视觉和文字各一张。预置了 DashScope / OpenAI / Gemini / DeepSeek 四家，key 按厂商分开存，用量按模型分账；配置不变时复用同一个调用端和 HTTPS 连接。只有 DashScope 真机调用过，其余三家只验证了配置层。详见白皮书第 6 章。
 
 ![notes 数据流](docs/diagrams/data-flow.svg)
 
@@ -38,7 +37,7 @@ reMarkable 的强项是**荧光笔勾书，再在勾出来的地方旁边手写*
 
 | 服务 | 路由 |
 |---|---|
-| ink | `GET /books`（只列还有活条目的书）· `GET /books/{uuid}` · `GET /books/{uuid}/crops/{file}` · `POST /books/{uuid}/entries/{id}`（改 `text` / `style` / `destination` / `draft` / `answer` / `askAi` / `question`；终态条目拒改）· `POST …/entries/{id}/request`（转入笔记）· `…/skip`（不需要）· `…/archive`（不要了）· `…/restore`（恢复）· `POST /books/{uuid}/purge`（清空回收站，不可恢复）· `POST /books/{uuid}/rescan` · `POST /koreader/import` · `GET /search?q=&limit=` · `GET /events` |
+| ink | `GET /books`（只列还有活条目的书）· `GET /books/{uuid}` · `GET /books/{uuid}/crops/{file}` · `POST /books/{uuid}/entries/{id}`（改 `text` / `style` / `destination` / `draft` / `answer` / `askAi` / `question`；终态条目拒改）· `POST …/entries/{id}/request`（转入笔记）· `…/skip`（不需要）· `…/archive`（不要了）· `…/restore`（恢复）· `POST /books/{uuid}/purge`（清空回收站，不可恢复）· `POST /books/{uuid}/rescan` · `GET /search?q=&limit=` · `GET /events`；`POST /koreader/import` 还在但已无调用方（KOReader 09-29 从设备卸载，网页按钮已删） |
 | transcribe | `GET /status` · `GET /config` · `PUT /config`（`preset` / `backend` / `apiKey`（只写）/ `clearKey` / `price` / 自定义 `model`+`baseUrl` / `auto` / `maxPerRun` / `pauseMs` / `timeoutSecs` / `maxAttempts` / `prompt`）· `POST /run` · `POST /books/{uuid}/entries/{id}`（强制转写一条，返回 token 用量）· `POST /retry` · `GET /events` |
 | mind | `GET /status` · `GET /config` · `PUT /config`（同上，只有 `timeoutSecs` / `prompt`，没有 `auto` / `maxPerRun` / `pauseMs` / `maxAttempts` 这些节流字段）· `POST /books/{uuid}/entries/{id}/ask`（要求已勾「问 AI」且问题非空）|
 | notes | `GET /status` · `GET /books` · `GET /books/{uuid}/notebooks` · `GET /books/{uuid}/exports` · `GET /books/{uuid}/sync`（每章两个去处的同步状态）· `POST /books/{uuid}/generate` · `POST /books/{uuid}/chapters/{idx}/generate` · `POST /books/{uuid}/export` · `POST /books/{uuid}/chapters/{idx}/export` · `GET /books/{uuid}/chapters/{idx}/export.md`（浏览器下载）· `GET /books/{uuid}/vault.json`（读回已导出的 md）· `POST /books/{uuid}/import-md {title, markdown}` · `GET /events` |
@@ -50,16 +49,16 @@ reMarkable 的强项是**荧光笔勾书，再在勾出来的地方旁边手写*
 ```
 notes/
 ├── crates/rmv6/          .rm v6 解析 + 写入（解析部分剥离移植自 remarkable_lines 0.1.3，MIT，见 PROVENANCE.md）
-├── crates/epubmap/       .epubindex + 目录 → 页号对应的章/小节
-├── crates/notecore/      领域核心（纯函数）：条目模型、聚簇配对、增量合并、KOReader 合并、行首标记、投影、md 导出/导入
-├── crates/vendorcfg/     两个 AI 服务共用：预置表、key 分厂商、配置迁移、用量账本、OpenAI 兼容调用端 ChatClient
+├── crates/epubmap/       .epubindex + 目录（按 OPF 声明找 nav/NCX）→ 页号对应的章/小节
+├── crates/notecore/      领域核心（纯函数）：条目模型、聚簇配对、增量合并、行首标记、投影、md 导出/导入（另有已退役的 KOReader 合并）
+├── crates/vendorcfg/     两个 AI 服务共用：预置表、key 分厂商、配置迁移、用量账本、OpenAI 兼容调用端 ChatClient + ClientCache
 ├── services/             ink-serve · transcribe-serve · mind-serve · note-serve
 ├── systemd/              四个 .service（PartOf=shelf.target）
 ├── testdata/             真机样本（renggu 墓碑页 / renggu_marks 勾画+手写 / seven_styles 七种打字样式）
 └── docs/                 白皮书 + diagrams/（overview · architecture · data-flow · entry-status · marker-styles · model-config · organize-page · robustness）
 ```
 
-网页在网关里：[`../gateway/ui/app.js`](../gateway/ui/app.js) 的 `renderNotes`（浏览 / 整理 / 回收站 / 导入 md 文档四个子视图，顶部是选书、重扫、KOReader 回流和搜索框）与 `mountModelPanel`（模型管理卡片）。
+网页在网关里：[`../gateway/ui/app.js`](../gateway/ui/app.js) 的 `renderNotes`（浏览 / 整理 / 回收站 / 导入 md 文档四个子视图，顶部是选书、重扫和搜索框）与 `mountModelPanel`（模型管理卡片）。
 
 ## 设备上的路径（XDG，HOME=/home/root）
 
@@ -73,10 +72,10 @@ notes/
 
 ## 构建与部署
 
-与书架共用交叉编译环境（`rustup target add aarch64-unknown-linux-musl` + aarch64 交叉 gcc），见 [`../shelf/README.md`](../shelf/README.md)「构建 · 部署 · 卸载」。改代码前先看工程纪律。
+与书架共用交叉编译环境（`rustup target add aarch64-unknown-linux-musl` + aarch64 交叉 gcc），见 [`../shelf/README.md`](../shelf/README.md)「构建 · 部署 · 卸载」。
 
 ```sh
-cd notes && cargo test --workspace      # host：241 个测试（rmv6 29 · epubmap 8 · notecore 71 · vendorcfg 22 · ink 29 · transcribe 25 · mind 22 · note 35；note 里 1 个 ignored，09-25 第四轮审计后实跑 240 过）
+cd notes && cargo test --workspace      # host：251 个测试（rmv6 29 · epubmap 10 · notecore 74 · vendorcfg 23 · ink 33 · transcribe 25 · mind 22 · note 35；note 里 1 个 ignored，09-30 第五轮审计后实跑 250 过）
 cd ../shelf && sh build.sh               # host 测试 + 交叉编译（notes/ 在就一起编）
 cd ../packaging && sh deploy.sh <设备IP> --only ink,transcribe,mind,note   # 只装/更新笔记线（网关总会一起装）；不加 --only 就全装
 ```
@@ -93,6 +92,7 @@ cd ../packaging && sh deploy.sh <设备IP> --only ink,transcribe,mind,note   # �
 - 全文搜索没用真实数据核对；
 - 书的小节名插行只有单测（真机验证用的书目录是平铺的）；
 - 2026-09-24 第三轮审计的改动，摄取这半边 09-25 真机核过；转写记账、>100 MB 大书、推送串行化只在 host 验证，见白皮书第 2 章「可靠性要点」；
-- 2026-09-25 第四轮审计的改动（擦掉又回来的笔迹复活原条目、`.metadata` 读不了不当成书被删、章判据统一、KOReader 章表只追加、小数不当编号等）尚未部署，只在 host 验证，见白皮书第 13 章 7d。
+- 2026-09-25 第四轮审计的改动（擦掉又回来的笔迹复活原条目、`.metadata` 读不了不当成书被删、章判据统一、小数不当编号等）09-25 已部署，但没在真机上逐项核，见白皮书第 13 章 7d；
+- 2026-09-30 第五轮审计的改动（epubmap 按 OPF 声明找目录、启动重扫没章的条目、灰度裁图 + 像素封顶、「转入笔记」继承定稿、正被写的 `.rm` 跳过、删没人用的裁图、调用端复用）只在开发机测过，**没部署、没上真机**，见白皮书第 13 章 7e。
 
 用户已决定不改的：编号列表被〔原文〕/〔AI〕段打断会从 1 重来；没转写的条目写“（待转写）”占位。

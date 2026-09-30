@@ -3,6 +3,7 @@
 > **这是历史调查记录**，数字和进程名反映 2026-08-27 的设备（当时还跑着 `wr-serve`、`cj-stars-daemon`、`wr-renew` 等已退役的服务）。
 > battop 之后的演进（09-20 改为不开机自启、09-23 再次冻机后唤醒源改读 `/dev/kmsg`、采样循环不再创建子进程）见
 > [`../docs/reMarkable系统增强线白皮书.md`](../docs/reMarkable系统增强线白皮书.md) §03b；battop 现在怎么用见 [`README.md`](README.md)。
+> 表里"cang-jie(本项目)"那一组对应 battop「应用」视图的 `cang-jie` 组：当年组里是这些退役单元；2026-09-30 起现役服务（网关、各 `*-serve`、wifi-watch、battop）也归进这一组（`summary.rs::friendly`，只在开发机测过）。
 
 **设备**:reMarkable Paper Pro Move,固件 20260806,uptime 1 天。
 **日期**:2026-08-27。**方法**:功耗代理量(累计 CPU、生命期 CPU 占比、唤醒源、休眠健康、应用归属)。

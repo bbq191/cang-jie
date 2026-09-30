@@ -5,7 +5,7 @@
 
 ## 它是什么
 
-设备上有好几个各管一摊的小服务（书架、KOReader、字体、壁纸、笔记四件套），它们都只听本机 `127.0.0.1`，外面直接碰不到。
+设备上有好几个各管一摊的小服务（书架、字体、壁纸、笔记四件套），它们都只听本机 `127.0.0.1`，外面直接碰不到。
 网关是站在最前面的“前台”：**浏览器只需要认识它——一个网址（`https://shelf.local/`）、一次登录**，转发、排队、限流它来管。它自己不做“书 / 笔记 / 字体”的业务。
 它是 `shelf/`、`notes/`、`enhance/` 三条线共用的唯一对外入口。
 
@@ -14,12 +14,12 @@
 | 职责 | 代码 | 一句话 |
 |---|---|---|
 | 托管单页 UI | `ui/`、`ui.rs` | 页面文件编译期打进二进制，零外链；中英文语言包在 `ui/locales/` |
-| HTTPS 与登录 | `auth.rs`、`config.rs` | 私有 CA 签的证书 + 只要密码的登录页；命令行用 Basic；输错按来源 IP 限速 |
+| HTTPS 与登录 | `auth.rs`、`config.rs` | 私有 CA 签的证书 + 只要密码的登录页；命令行用 Basic（验过的密码缓存 10 分钟，免每次 60 万轮 PBKDF2）；输错按来源 IP 限速 |
 | 服务发现 + 反向代理 | `manage.rs`、`proxy.rs` | `/api/<seg>/*` 剥掉 `<seg>` 转给对应服务；上传边读边转，有长度的下载/大应答（>256KB）边读边发；GET/DELETE 不转发请求体也不带 `Content-Length`；服务没起 → 404，网页隐藏对应标签 |
-| 事件汇聚 | `events.rs` | 各服务的 `GET /events` 汇成一条 SSE `/api/events`，网页不轮询；前台 tab 按事件来源只重取受影响的那几个接口（白皮书 §5.1） |
-| 并发/内存闸门 | `budget.rs` | 设备约 2GB 内存：>90MB 的书同时只处理 1 本，其余同时 3 本，排队最长 30 分钟（拦优化、加入 xochitl、加入 KOReader、勾了同步优化的抓网文四种请求） |
-| 批量队列 | `batch.rs` | 勾选多本后由网关后台一次一本地处理，状态落盘、重启续跑、可全部中止 |
-| 管理台 | `manage.rs` | 各服务“未装 / 已装未开 / 已开”三态、启停、卸载；探测 xovi/appload/KOReader/WeRead |
+| 事件汇聚 | `events.rs` | 各服务的 `GET /events` 汇成一条 SSE `/api/events`，网页不轮询；前台 tab 按事件来源只重取受影响的那几个接口（白皮书 §5.1）；浏览器放弃重连时网页自己退避重开（§03） |
+| 并发/内存闸门 | `budget.rs` | 设备约 2GB 内存：>90MB 的书同时只处理 1 本，其余同时 3 本，排队最长 30 分钟（拦优化、加入 xochitl、勾了同步优化的抓网文三种请求） |
+| 批量队列 | `batch.rs` | 勾选多本后由网关后台一次一本地“优化 / 加入 xochitl”，状态落盘、重启续跑、可全部中止 |
+| 管理台 | `manage.rs` | 各服务“未装 / 已装未开 / 已开”三态、启停、卸载；探测 xovi 与 qt-resource-rebuilder |
 | 系统增强开关 | `enhance/` | 荧光笔汉字吸附、阅读器单击翻页 / 日漫翻页规则、手写笔迹优化、导入 md、漫画页边距、电池刺客；并显示扩展是否真的加载进 xochitl |
 | 设备健康 / OTA 提示 / 清理 | `device/` | 「管理 → 设备健康」五个二级 tab（概览 / 服务 / 扩展 / 日志 / 清理），只在打开或点刷新时采集；OTA 后页头横幅提示重装；清理早期遗留文件与 xochitl 书库同名副本（后者进 xochitl 回收站，可恢复） |
 
@@ -36,13 +36,15 @@
 | 事件 | `GET /api/events`（SSE） |
 | 系统增强 | `GET /api/enhance/status` · `PUT /api/enhance/qol`（`hlSnapCjk` / `hwStrokeEnabled` / `notesImportMdEnabled` / `comicMinMargin` / `tapPageTurn` / `rtlPageTurn`）· `POST /api/enhance/battop/{start\|stop}` · `GET /api/enhance/battop/summary` |
 | 设备健康 | `GET /api/device/health[?fresh=1]` · `GET /api/device/ota` · `GET /api/device/wifi` · `GET /api/device/cleanup` · `POST /api/device/cleanup/delete {area, names}` |
-| 批量队列 | `POST /api/batch {action: optimize\|deliver\|koreader, names? \| all:true, folder?}` → `{queued, skipped}` · `GET /api/batch/status` · `POST /api/batch/stop` |
+| 批量队列 | `POST /api/batch {action: optimize\|deliver, names? \| all:true, folder?}` → `{queued, skipped}` · `GET /api/batch/status` · `POST /api/batch/stop` |
 | 闸门 | `GET /api/budget/status` → `{pending, active}` · `POST /api/budget/cancel {name}`（只对还在排队的生效） |
-| 反向代理 | `GET/POST/PUT/DELETE /api/<seg>/*`，`<seg>` ∈ `books` `koreader` `fonts` `wallpapers` `ink` `transcribe` `mind` `notes` |
+| 反向代理 | `GET/POST/PUT/DELETE /api/<seg>/*`，`<seg>` ∈ `books` `fonts` `wallpapers` `ink` `transcribe` `mind` `notes` |
 
 登录规则一句话：默认密码 `shelf`，首次登录必须改（≥6 位）；同一 IP 60 秒内输错 5 次锁这个 IP，登录口回 429、Basic 请求回 401。详见白皮书 §01。
 
 子命令：`gateway serve [--bind]`（部署固定 `0.0.0.0:443`）· `passwd <新密码>` · `reset-password`（回默认密码并强制改）· `regen-tls`（只重签服务器证书，CA 不变）。改密码类命令要重启网关生效。
+
+> **2026-09-29 设备卸掉了 KOReader、第三方 WeRead 与 appload**，09-30 网关随之撤掉 `/api/koreader/*` 代理、批量“加入 KOReader”、基石探测里这三项和网页上所有 KOReader 入口；母版库的“已完成”只认加入过 xochitl。这一轮（第五轮审计）只在开发机测过，**没部署、没上真机**。
 
 ## 接入一个新服务
 
@@ -55,7 +57,7 @@
 
 - **依赖**：只依赖 [`../rmsvc-core`](../rmsvc-core/README.md)；独立 Cargo 项目，不在任何 workspace 里。
 - **构建/部署**：没有自己的脚本，由 `shelf/build.sh`（顺手编译本目录）和 `shelf/deploy.sh`（打包二进制 + `systemd/gateway.service`）代管。单独交叉编译：`cargo build --release --target aarch64-unknown-linux-musl`（用本目录 `.cargo/config.toml` 的 CC/AR 覆盖）。
-- **测试**：`cargo test --manifest-path gateway/Cargo.toml`（72 个，2026-09-25 第四轮审计后实跑）；前端 `node --check ui/app.js` 与 `node --test ui/test/*.test.mjs`（6 项）；浏览器冒烟 `ui/test/smoke.puppeteer.mjs` 手动跑；可视走查见 [`tools/screenshot-walkthrough/`](tools/screenshot-walkthrough/README.md)。
+- **测试**（在仓库根目录跑；2026-09-30 第五轮审计后实跑）：`cargo test --manifest-path gateway/Cargo.toml`（78 个）；前端 `node --check gateway/ui/app.js` 与 `node --test gateway/ui/test/*.test.mjs`（3 个文件共 10 项：断网兜底、XSS 转义、语言包一致）；浏览器冒烟手动跑 `PUPPETEER_NODE_MODULES=<含 puppeteer 的 node_modules 目录> node gateway/ui/test/smoke.puppeteer.mjs`；可视走查见 [`tools/screenshot-walkthrough/`](tools/screenshot-walkthrough/README.md)。
 - **设备上的文件**：二进制 `~/.local/bin/gateway`；配置 `~/.config/shelf/gateway.json`；证书 `~/.config/shelf/tls/`；批量队列 `~/.local/state/shelf/batch.json`。
 
 ## 目录
@@ -65,11 +67,12 @@ src/
   main.rs      入口、子命令、路由注册
   auth.rs      登录守卫（Cookie/Basic）、首登必改、按 IP 限速
   config.rs    gateway.json：HTTPS 开关、密码哈希、mDNS 名、额外证书名、会话天数
-  proxy.rs     /api/<seg>/* 反向代理 + 四个吃内存操作的闸门拦截（优化/加入 xochitl/加入 KOReader/勾了同步优化的抓网文）
+  proxy.rs     /api/<seg>/* 反向代理 + 三个吃内存操作的闸门拦截（优化/加入 xochitl/勾了同步优化的抓网文）
   manage.rs    MODULES 服务表（唯一事实源）、管理台、基石探测
   events.rs    事件汇聚 Hub
   budget.rs    并发/内存闸门
-  batch.rs     批量队列
+  batch.rs     批量队列（含全部中止）
+  testutil.rs  测试沙箱（HOME 与全部 XDG 指向同一临时目录）
   ui.rs        拼装单页 UI、登录页、改密页
   enhance/     系统增强开关（qol / battop / loaded）
   device/      设备健康（health）、OTA 横幅（ota）、遗留清理（cleanup）

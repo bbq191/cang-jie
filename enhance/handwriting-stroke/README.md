@@ -59,6 +59,7 @@
 ```sh
 make aarch64                                                   # 产物 hw-stroke.so（已提交进仓库）；改了 hw-stroke.xovi 才要 make glue XOVI_DIR=<xovi clone>
                                                                # 09-25 起带 -ffile-prefix-map，调试信息不含本机路径（09-25 已部署真机，三个 hook 装上）
+                                                               # make clean 只删 hw-stroke.so，不删已提交的 xovi_glue.{c,h}（09-30 起）
 cd ../../packaging && sh deploy-handwriting-stroke.sh <host>     # host 侧一键：构建 → 推送 → 设备端安装
 ```
 

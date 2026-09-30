@@ -5,10 +5,10 @@
 <text x="620.0" y="52" text-anchor="middle" font-size="12.5" fill="#6a6a6a">各服务在“变更发生处”发一条极短的“该刷新了”信号；网关汇总后经一条 SSE 长连接推给所有网页</text>
 <rect x="24" y="96" width="250" height="240" rx="10" fill="#eaf6ec" stroke="#3f9a55" stroke-width="1.6"/>
 <text x="149.0" y="116" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">各领域服务</text>
-<text x="149.0" y="139" text-anchor="middle" font-size="10.5" fill="#3a3a3a">book-serve · koreader-serve</text>
-<text x="149.0" y="154" text-anchor="middle" font-size="10.5" fill="#3a3a3a">font-serve · wallpaper-serve</text>
-<text x="149.0" y="169" text-anchor="middle" font-size="10.5" fill="#3a3a3a">ink-serve · transcribe-serve</text>
-<text x="149.0" y="184" text-anchor="middle" font-size="10.5" fill="#3a3a3a">note-serve</text>
+<text x="149.0" y="139" text-anchor="middle" font-size="10.5" fill="#3a3a3a">book-serve · font-serve</text>
+<text x="149.0" y="154" text-anchor="middle" font-size="10.5" fill="#3a3a3a">wallpaper-serve · ink-serve</text>
+<text x="149.0" y="169" text-anchor="middle" font-size="10.5" fill="#3a3a3a">transcribe-serve · note-serve</text>
+<text x="149.0" y="184" text-anchor="middle" font-size="9.5" fill="#8a8a8a">（koreader-serve 09-29 起不再订阅）</text>
 <text x="149.0" y="199" text-anchor="middle" font-size="10.5" fill="#3a3a3a"></text>
 <text x="149.0" y="214" text-anchor="middle" font-size="10.5" fill="#3a3a3a">每个都有 GET /events（SSE）</text>
 <text x="149.0" y="229" text-anchor="middle" font-size="10.5" fill="#3a3a3a">事件：{"area":"books",</text>
@@ -37,7 +37,7 @@
 <text x="841.0" y="269" text-anchor="middle" font-size="10" fill="#3a3a3a">batch.rs 队列状态变了</text>
 <text x="841.0" y="284" text-anchor="middle" font-size="10" fill="#3a3a3a">budget.rs 排队/处理变了</text>
 <text x="841.0" y="299" text-anchor="middle" font-size="10" fill="#3a3a3a">→ {"area":"books"}</text>
-<rect x="1010" y="96" width="206" height="240" rx="10" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.6"/>
+<rect x="1010" y="96" width="206" height="286" rx="10" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.6"/>
 <text x="1113.0" y="116" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">浏览器 EventSource</text>
 <text x="1113.0" y="139" text-anchor="middle" font-size="10" fill="#3a3a3a">GET /api/events?ka=60</text>
 <text x="1113.0" y="154" text-anchor="middle" font-size="10" fill="#3a3a3a">（受登录守卫保护）</text>
@@ -46,10 +46,15 @@
 <text x="1113.0" y="199" text-anchor="middle" font-size="10" fill="#3a3a3a">区域（母版库 / 笔记 /</text>
 <text x="1113.0" y="214" text-anchor="middle" font-size="10" fill="#3a3a3a">管理台），不整页刷</text>
 <text x="1113.0" y="229" text-anchor="middle" font-size="10" fill="#3a3a3a"></text>
-<text x="1113.0" y="244" text-anchor="middle" font-size="10" fill="#3a3a3a">断线（WiFi 掉、休眠醒来）</text>
-<text x="1113.0" y="259" text-anchor="middle" font-size="10" fill="#3a3a3a">浏览器自动重连并补刷；</text>
-<text x="1113.0" y="274" text-anchor="middle" font-size="10" fill="#3a3a3a">60 秒一次心跳；页面隐藏</text>
-<text x="1113.0" y="289" text-anchor="middle" font-size="10" fill="#3a3a3a">超 60 秒主动断开</text>
+<text x="1113.0" y="244" text-anchor="middle" font-size="10" fill="#3a3a3a">断线（WiFi 掉、休眠醒来）：</text>
+<text x="1113.0" y="259" text-anchor="middle" font-size="10" fill="#3a3a3a">浏览器自己重连并补刷；</text>
+<text x="1113.0" y="274" text-anchor="middle" font-size="10" fill="#3a3a3a">浏览器放弃重连（CLOSED，</text>
+<text x="1113.0" y="289" text-anchor="middle" font-size="10" fill="#3a3a3a">如网关重启后 401）：先查</text>
+<text x="1113.0" y="304" text-anchor="middle" font-size="10" fill="#3a3a3a">/api/session，401 去登录；</text>
+<text x="1113.0" y="319" text-anchor="middle" font-size="10" fill="#3a3a3a">否则 5 秒起翻倍、封顶 5 分钟</text>
+<text x="1113.0" y="334" text-anchor="middle" font-size="10" fill="#3a3a3a">重开，页面隐藏时不重试（09-30）</text>
+<text x="1113.0" y="349" text-anchor="middle" font-size="10" fill="#3a3a3a">60 秒一次心跳；页面隐藏</text>
+<text x="1113.0" y="364" text-anchor="middle" font-size="10" fill="#3a3a3a">超 60 秒主动断开</text>
 <polyline points="274,216 340,216" fill="none" stroke="#2f7d45" stroke-width="1.6" marker-end="url(#mg)"/>
 <text x="307.0" y="208" text-anchor="middle" font-size="10" fill="#555">SSE</text>
 <polyline points="670,150 736,150" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#mk)"/>

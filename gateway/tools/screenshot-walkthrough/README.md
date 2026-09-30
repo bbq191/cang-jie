@@ -31,7 +31,7 @@ npx playwright install chromium   # 下载浏览器（一次性，不进 git，�
 ## 覆盖范围与局限
 
 - **能走到的**：传书（入库 / 母版库）、笔记（浏览 / 整理 / 回收站）、管理（基石与模块 / 设备健康 / 模型管理 / 系统增强 / 实验室），以及「整理」里未导出/已导出切换（`[data-etab]`）的默认档。设备健康页在 host 上显示的是开发机自己的数据（没有设备单元，OTA 横幅也会亮），只能看排版，不能看内容对不对；它的五个二级 tab 属于第三层，不递归。
-- **走不到的**：只起了 book-serve / ink-serve / note-serve 三个后端，font-serve、koreader-serve、wallpaper-serve、transcribe-serve、mind-serve 没起——“其他”标签（xochitl 字体 / KOReader / 壁纸）不会出现，转写和问 AI 面板也看不到。它们要么需要真实外部依赖（AI API key），要么 fixture 成本更高，属于有意的范围裁剪。
+- **走不到的**：只起了 book-serve / ink-serve / note-serve 三个后端，font-serve、wallpaper-serve、transcribe-serve、mind-serve 没起——“其他”标签（xochitl 字体 / 壁纸；原来的 KOReader 子标签 2026-09-30 已从网页移除）不会出现，转写和问 AI 面板也看不到。它们要么需要真实外部依赖（AI API key），要么 fixture 成本更高，属于有意的范围裁剪。
 - **不递归进第三层**：「整理」的章节切换、「浏览」按书切换的下拉只截默认状态。要扩大覆盖，往 `walk.mjs` 里加一层循环即可。
 - **只截桌面宽、亮色**：视口固定 1280×900，不切暗色、不模拟手机宽度；隐藏的子标签（如「导入 md」、battop 没跑时的「电池刺客」）跳过。手机宽度（390）和暗色下的问题要另外看——2026-09-24 那轮 390/1280 × 亮暗 × 中英走查用的是临时 mock 后端脚本，没有并进这个工具。
 - **不是像素级回归**：没有和上一次截图比对的机制，适合“改完前端跑一遍、自己瞄一眼”，不能进 CI 自动判定。

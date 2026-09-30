@@ -48,7 +48,7 @@
 <text x="500.0" y="452" text-anchor="middle" font-size="11.8" fill="#444">上传字体 → ~/.local/share/fonts + fc-cache</text>
 <text x="500.0" y="469" text-anchor="middle" font-size="11.8" fill="#444">重建 fonts.json（字体菜单 qmd 读）</text>
 <text x="500.0" y="486" text-anchor="middle" font-size="11.8" fill="#444">维护界面 CJK 回退链（fontconfig）</text>
-<text x="500.0" y="503" text-anchor="middle" font-size="11.8" fill="#444">仅管原生阅读器，不碰 KOReader</text>
+<text x="500.0" y="503" text-anchor="middle" font-size="11.8" fill="#444">只管 xochitl（原生阅读器）的字体菜单</text>
 <rect x="670" y="408" width="300" height="132" rx="10" fill="#f1edf9" stroke="#6d4ab0" stroke-width="1.6"/>
 <text x="820.0" y="430" text-anchor="middle" font-size="14" font-weight="bold" fill="#1a1a1a">wallpaper-serve :8793</text>
 <text x="820.0" y="452" text-anchor="middle" font-size="11.8" fill="#444">上传壁纸 → 缩放 954×1696、入池</text>
