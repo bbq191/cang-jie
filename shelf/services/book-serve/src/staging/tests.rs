@@ -494,7 +494,7 @@ fn long_book_name_sidecar_full_lifecycle() {
     assert_eq!(long.len(), 250);
     let name = s.stage_new(&long, b"%PDF-1.4").unwrap();
     assert_eq!(name, long);
-    s.mark_delivered(&name, Reader::Native).unwrap();
+    s.mark_delivered(&name).unwrap();
     assert!(s.list()[0].delivered.as_ref().is_some_and(|d| d.native.is_some()), "列表里看得到落库状态");
     let car = sidecar::path_for(&s.dir.join(&name));
     assert!(car.is_file() && car.file_name().unwrap().len() <= 255);
