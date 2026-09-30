@@ -17,7 +17,7 @@ pub const MAX_EDGE: u32 = 1696;
 pub const MAX_SHORT_EDGE: u32 = 954;
 /// 单张图片允许解码的像素数上限（w×h，跟格式/用途无关）——防极端高分辨率原图解码成未压缩位图
 /// 把内存顶爆。2026-09-19 真机坐实：用户真实投递一套漫画（《乱马1/2》8 卷）触发超限按卷拆分
-/// 落库，book-serve `VmHWM` 冲到 271MB——定位到 `downscale_into`/`decode_trim_comic`/`dither_bilevel`
+/// 落库（分卷投递 2026-09-30 已移除），book-serve `VmHWM` 冲到 271MB——定位到 `downscale_into`/`decode_trim_comic`/`dither_bilevel`
 /// 三处解码前只用 `header_dims` 读了宽高判断"要不要处理"，没有对"这张图本身大到不该整个解出来"
 /// 设硬上限。
 ///
@@ -408,7 +408,7 @@ fn flatten_alpha_on_white(img: image::DynamicImage) -> image::DynamicImage {
     }
 }
 
-/// **EPUB 漫画 → PDF 专用的单趟页面处理**：解码一次 → 裁边 → 按 PDF 里实际绘制的整数像素尺寸
+/// **漫画 PDF 页的单趟处理**（现唯一调用方：入库 PDF 裁边 `pdf_ingest::trim`；最初为已移除的 EPUB 漫画→PDF 写）：解码一次 → 裁边 → 按 PDF 里实际绘制的整数像素尺寸
 /// （[`crate::convert::pdfwrite::place_image`]）重采样一次 → 编码一次。**恰好没有可裁的留白、
 /// 也不需要缩小时返回 `None`，调用方直接嵌原图字节（零损失）。**
 ///
@@ -471,7 +471,7 @@ fn paste_on_white(img: &image::DynamicImage, cw: u32, ch: u32, off_x: u32, off_y
 /// 解码一次 → 裁边 → 等比放进 EPUB 页框（`frame.page_w()`×`frame.page_h()`）**一次**缩放（缩小，或 JPEG 小图放大，见
 /// [`prepare_comic_page_for_pdf`] 的 A/B 结论：让 xochitl 自己放大偏糊，我们预放大更清晰）→ 白底补到
 /// `frame.aspect()`（`width:100%` 渲染正好填满 xochitl 的图片框，实测依据见 [`EPUB_FRAME_ASPECT`]）→ 编码一次，
-/// 灰度保持单分量。小于设备短边 1/3 的装饰小图只裁边，不缩放/补白（同 `pad_to_device_aspect`）。
+/// 灰度保持单分量。小于设备短边 1/3 的装饰小图只裁边，不缩放/补白。
 /// 什么都不需要做时返回 `None`（原字节零损失）。
 pub fn prepare_comic_page_for_epub(bytes: &[u8], frame: EpubComicFrame) -> Option<Vec<u8>> {
     let (img, fmt, trimmed) = decode_trim_comic(bytes)?;
