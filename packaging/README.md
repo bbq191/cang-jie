@@ -33,7 +33,7 @@ sh uninstall-all.sh <host> --purge             # 同时删 battop 的二进制�
 
 2026-09-29 起**不再需要 appload 和 KOReader**（设备上 KOReader、WeRead、appload 都已卸载）：
 - `sidebar-entry` 退役，记在 lib.sh 的 `STEP_RETIRED`：`install-all` 不再装，`uninstall-all` 照样卸（只按文件名删设备上的残留）。它的安装件——`deploy-sidebar-entry.sh`、两份 `sidebar-entry-*.qmd`、图标 png 与 `.qrc`、测试桩 `rcc`——2026-09-30 已从仓库删除。
-- `koreader-serve` 从 `shelf/manifest.sh` 的 `SHELF_ALL` 撤掉、列进遗留清单 `SHELF_LEGACY_*`，装过的设备重新部署书架时顺手清掉；`verify-on-device.sh` 见到它还在报 ⚠。源码 `shelf/services/koreader-serve` 还在仓库（workspace 照常编译），网关里的 KOReader 代理与网页入口 09-30 已删。
+- `koreader-serve` 从 `shelf/manifest.sh` 的 `SHELF_ALL` 撤掉、列进遗留清单 `SHELF_LEGACY_*`，装过的设备重新部署书架时顺手清掉；`verify-on-device.sh` 见到它还在报 ⚠。网关里的 KOReader 代理与网页入口 09-30 已删，`shelf/services/koreader-serve` 源码同日也已从仓库删除（见 git 历史）；遗留清单里仍保留它，给旧设备清理用。
 
 ## 装什么、按什么顺序
 

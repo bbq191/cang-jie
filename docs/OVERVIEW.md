@@ -20,7 +20,7 @@ reMarkable Paper Pro Move 是一台彩色墨水屏平板，官方阅读/笔记�
 
 | 目录 | 一句话 | 运行形态 |
 |---|---|---|
-| [`shelf/`](../shelf/README.md) 书架 | 书（EPUB/PDF）导入 → 母版库 → 按需优化 → 加入 xochitl | 1 个 Web 服务（book-serve）+ 若干 qmd 界面补丁。`koreader-serve` 源码还在仓库，2026-09-29 起不再安装（设备已卸 KOReader） |
+| [`shelf/`](../shelf/README.md) 书架 | 书（EPUB/PDF）导入 → 母版库 → 按需优化 → 加入 xochitl | 1 个 Web 服务（book-serve）+ 若干 qmd 界面补丁。`koreader-serve` 2026-09-29 起不再安装（设备已卸 KOReader），源码 2026-09-30 已从仓库删除 |
 | [`notes/`](../notes/README.md) 笔记线 | 荧光笔勾画 + 旁边手写批注 → 手机整理/转写/问 AI → 投回设备笔记本或 Obsidian | 4 个 Web 服务（ink / transcribe / mind / note） |
 | [`enhance/`](../enhance/README.md) 系统增强 | 荧光笔 CJK 精确吸附、手写笔锋渲染、阅读器单击翻页 / 日漫翻页规则、电池诊断、字体/壁纸上传即用 | 2 个 xovi 扩展 + 1 个采样器 + 2 个 Web 服务（font / wallpaper）；翻页补丁是 qmd，随 shelf 一起装 |
 | [`gateway/`](../gateway/README.md) 网关 | 上面三条线共用的唯一对外入口：HTTPS + 登录密码 + 反向代理 + 批量队列 + 并发闸门 | Web 服务（`0.0.0.0:443`） |

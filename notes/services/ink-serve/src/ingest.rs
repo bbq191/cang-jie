@@ -17,10 +17,11 @@ pub struct DocStats {
 
 /// 摄取一份文档。返回 None = 不该管（非 EPUB / 回收站 / 没有手写页 / KOReader 摄取线的 Book）。
 pub fn ingest_doc(lib: &Path, crops_dir: &Path, db: &BookDb, cfg: &IngestConfig, uuid: &str, now: u64) -> Result<Option<DocStats>, String> {
-    // KOReader 高亮/生词回流线的 Book（`uuid` 形如 `koreader:...`/`koreader-vocab`，见 `koreader.rs`）
-    // 不是 xochitl 设备文档——不能走下面的 `Doc::new` 找不到就当"书被删了"那条路径，不然每次启动追平
-    // （`main.rs` 的 catchup 会把 `db.list()` 里所有已知 uuid 都过一遍这个函数）都会把它们的条目
-    // 整批标 `Revoked`，2026-09-16 设计阶段发现的坑，写进白皮书 §03al。
+    // 以前 KOReader 高亮/生词回流导入的 Book（`uuid` 形如 `koreader:...`/`koreader-vocab`）不是 xochitl 设备文档——
+    // 不能走下面的 `Doc::new` 找不到就当"书被删了"那条路径，不然每次启动追平（`main.rs` 的 catchup 会把
+    // `db.list()` 里所有已知 uuid 都过一遍这个函数）都会把它们的条目整批标 `Revoked`（2026-09-16 设计阶段发现的坑，
+    // 白皮书 §03al）。导入代码（原 `koreader.rs`/`notecore::koreader`）已从仓库删除（2026-09-30，见 git 历史），
+    // 但条目库里还存着以前导入的这些书，**这条早退必须保留**。
     if uuid.starts_with("koreader:") || uuid == "koreader-vocab" {
         return Ok(None);
     }
@@ -443,6 +444,24 @@ mod tests {
         assert_eq!((s.merge.revived, s.merge.added), (before.len(), 0));
         let after = db.load(u).unwrap().entries;
         assert_eq!(after.iter().map(|e| (&e.id, e.status)).collect::<Vec<_>>(), before.iter().map(|e| (&e.id, Status::Mined)).collect::<Vec<_>>());
+    }
+
+    /// 回归（2026-09-30 删 KOReader 导入代码时补）：条目库里以前导入的 KOReader 书不是 xochitl 文档，
+    /// 启动追平过一遍也不能被当成"书被删了"整批撤销。
+    #[test]
+    fn legacy_koreader_books_are_left_alone() {
+        let t = tempfile::tempdir().unwrap();
+        let lib = t.path().join("xochitl");
+        let crops = t.path().join("crops");
+        std::fs::create_dir_all(&lib).unwrap();
+        std::fs::create_dir_all(&crops).unwrap();
+        let db = BookDb::new(t.path().join("books"));
+        db.ensure().unwrap();
+        for u in ["koreader:0123abcd", "koreader-vocab"] {
+            db.update(u, || Book { uuid: u.into(), ..Default::default() }, |b| b.entries.push(seeded_entry("k", Status::Reviewed))).unwrap();
+            assert!(ingest_doc(&lib, &crops, &db, &IngestConfig::default(), u, 10).unwrap().is_none());
+            assert_eq!(db.load(u).unwrap().entries[0].status, Status::Reviewed, "{u} 的条目不动");
+        }
     }
 
     /// 回归：`.metadata` 读到半截/解析失败不能当成"书没了"——此前会把整本书的活条目全标 Revoked。

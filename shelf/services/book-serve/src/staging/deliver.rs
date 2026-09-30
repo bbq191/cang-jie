@@ -52,7 +52,7 @@ impl Staging {
             Delivery::Delivered(_) => format!("已加入 xochitl《{name}》"),
             Delivery::LikelyDelivered(_) => format!("已加入 xochitl《{name}》（设备处理较慢，稍候刷新书库）"),
         };
-        let _ = self.mark_delivered(name, Reader::Native);
+        let _ = self.mark_delivered(name);
         Ok(DeliverOutcome { message, render })
     }
 
@@ -126,7 +126,7 @@ impl Staging {
         if ext == "epub" && self.comic_margin_eligible(p) {
             self.register_comic_margins(&uuid, name);
         }
-        let _ = self.mark_delivered(name, Reader::Native);
+        let _ = self.mark_delivered(name);
         // 渲染记录也写上，让"加入 xochitl"的书在列表里都有统一的渲染徽章（此前直接投入的书没有）：
         // - PDF：页数就是我们写进 `.content` 的真页数 → 直接 ok；
         // - EPUB：xochitl 要**首次打开**才渲染，此刻 `.content` 里是占位的页数。记 `onopen` + 占位页数，`list()` 之后每次
@@ -205,12 +205,9 @@ impl Staging {
         self.update_sidecar(name, |d| d.render = Some(rc))
     }
 
-    /// 记一次落库：写 sidecar `.<name>.delivered`。
-    pub fn mark_delivered(&self, name: &str, reader: Reader) -> Result<(), String> {
+    /// 记一次落库（加入 xochitl）：写 sidecar `.<name>.delivered` 的 `native` 时间戳。
+    pub fn mark_delivered(&self, name: &str) -> Result<(), String> {
         let now = rmsvc_core::clock::now_secs();
-        self.update_sidecar(name, |d| match reader {
-            Reader::Native => d.native = Some(now),
-            Reader::Koreader => d.koreader = Some(now),
-        })
+        self.update_sidecar(name, |d| d.native = Some(now))
     }
 }

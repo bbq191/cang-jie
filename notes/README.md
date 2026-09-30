@@ -37,7 +37,7 @@ reMarkable 的强项是**荧光笔勾书，再在勾出来的地方旁边手写*
 
 | 服务 | 路由 |
 |---|---|
-| ink | `GET /books`（只列还有活条目的书）· `GET /books/{uuid}` · `GET /books/{uuid}/crops/{file}` · `POST /books/{uuid}/entries/{id}`（改 `text` / `style` / `destination` / `draft` / `answer` / `askAi` / `question`；终态条目拒改）· `POST …/entries/{id}/request`（转入笔记）· `…/skip`（不需要）· `…/archive`（不要了）· `…/restore`（恢复）· `POST /books/{uuid}/purge`（清空回收站，不可恢复）· `POST /books/{uuid}/rescan` · `GET /search?q=&limit=` · `GET /events`；`POST /koreader/import` 还在但已无调用方（KOReader 09-29 从设备卸载，网页按钮已删） |
+| ink | `GET /books`（只列还有活条目的书）· `GET /books/{uuid}` · `GET /books/{uuid}/crops/{file}` · `POST /books/{uuid}/entries/{id}`（改 `text` / `style` / `destination` / `draft` / `answer` / `askAi` / `question`；终态条目拒改）· `POST …/entries/{id}/request`（转入笔记）· `…/skip`（不需要）· `…/archive`（不要了）· `…/restore`（恢复）· `POST /books/{uuid}/purge`（清空回收站，不可恢复）· `POST /books/{uuid}/rescan` · `GET /search?q=&limit=` · `GET /events`；原 `POST /koreader/import` 已从仓库删除（2026-09-30），见 git 历史（KOReader 09-29 从设备卸载），以前导入的 KOReader 条目照常可用 |
 | transcribe | `GET /status` · `GET /config` · `PUT /config`（`preset` / `backend` / `apiKey`（只写）/ `clearKey` / `price` / 自定义 `model`+`baseUrl` / `auto` / `maxPerRun` / `pauseMs` / `timeoutSecs` / `maxAttempts` / `prompt`）· `POST /run` · `POST /books/{uuid}/entries/{id}`（强制转写一条，返回 token 用量）· `POST /retry` · `GET /events` |
 | mind | `GET /status` · `GET /config` · `PUT /config`（同上，只有 `timeoutSecs` / `prompt`，没有 `auto` / `maxPerRun` / `pauseMs` / `maxAttempts` 这些节流字段）· `POST /books/{uuid}/entries/{id}/ask`（要求已勾「问 AI」且问题非空）|
 | notes | `GET /status` · `GET /books` · `GET /books/{uuid}/notebooks` · `GET /books/{uuid}/exports` · `GET /books/{uuid}/sync`（每章两个去处的同步状态）· `POST /books/{uuid}/generate` · `POST /books/{uuid}/chapters/{idx}/generate` · `POST /books/{uuid}/export` · `POST /books/{uuid}/chapters/{idx}/export` · `GET /books/{uuid}/chapters/{idx}/export.md`（浏览器下载）· `GET /books/{uuid}/vault.json`（读回已导出的 md）· `POST /books/{uuid}/import-md {title, markdown}` · `GET /events` |
@@ -50,7 +50,7 @@ reMarkable 的强项是**荧光笔勾书，再在勾出来的地方旁边手写*
 notes/
 ├── crates/rmv6/          .rm v6 解析 + 写入（解析部分剥离移植自 remarkable_lines 0.1.3，MIT，见 PROVENANCE.md）
 ├── crates/epubmap/       .epubindex + 目录（按 OPF 声明找 nav/NCX）→ 页号对应的章/小节
-├── crates/notecore/      领域核心（纯函数）：条目模型、聚簇配对、增量合并、行首标记、投影、md 导出/导入（另有已退役的 KOReader 合并）
+├── crates/notecore/      领域核心（纯函数）：条目模型、聚簇配对、增量合并、行首标记、投影、md 导出/导入（KOReader 合并 2026-09-30 已删，只留旧数据兼容）
 ├── crates/vendorcfg/     两个 AI 服务共用：预置表、key 分厂商、配置迁移、用量账本、OpenAI 兼容调用端 ChatClient + ClientCache
 ├── services/             ink-serve · transcribe-serve · mind-serve · note-serve
 ├── systemd/              四个 .service（PartOf=shelf.target）
@@ -75,7 +75,7 @@ notes/
 与书架共用交叉编译环境（`rustup target add aarch64-unknown-linux-musl` + aarch64 交叉 gcc），见 [`../shelf/README.md`](../shelf/README.md)「构建 · 部署 · 卸载」。
 
 ```sh
-cd notes && cargo test --workspace      # host：251 个测试（rmv6 29 · epubmap 10 · notecore 74 · vendorcfg 23 · ink 33 · transcribe 25 · mind 22 · note 35；note 里 1 个 ignored，09-30 第五轮审计后实跑 250 过）
+cd notes && cargo test --workspace      # host：241 个测试（rmv6 29 · epubmap 10 · notecore 67 · vendorcfg 23 · ink 30 · transcribe 25 · mind 22 · note 35；note 里 1 个 ignored，09-30 删 KOReader 导入后实跑 240 过）
 cd ../shelf && sh build.sh               # host 测试 + 交叉编译（notes/ 在就一起编）
 cd ../packaging && sh deploy.sh <设备IP> --only ink,transcribe,mind,note   # 只装/更新笔记线（网关总会一起装）；不加 --only 就全装
 ```

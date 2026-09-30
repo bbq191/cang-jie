@@ -20,20 +20,17 @@
 //! 手动触发、不可恢复，见 `notecore::model::Book::purge_terminal`）·
 //! `POST /books/{uuid}/rescan` · `GET /events`。条目库 `$XDG_STATE_HOME/notes/books/<uuid>.json`，裁图 `$XDG_DATA_HOME/notes/crops/`。
 //! `destination` 字段（三期，落设备笔记本/Obsidian/两处都要，缺省两处都要）走通用 PATCH，见下方。
-//! `POST /koreader/import`（KOReader 高亮/生词回流，2026-09-16，见 `koreader.rs`+笔记线白皮书 §03al：
-//! 拉 koreader-serve 的 `/annotations`+`/vocabulary` 原始数据，按增量规则并入条目库——手动触发，不像
-//! xochitl 那条线自动 fswatch，KOReader 那边没有等价的"改了就通知"事件源）。
+//! 原 `POST /koreader/import`（KOReader 高亮/生词回流，2026-09-16，笔记线白皮书 §03al）随 KOReader 卸载
+//! 已从仓库删除（2026-09-30），见 git 历史；条目库里以前导入的 KOReader 书仍保留，见 `ingest::ingest_doc` 的早退。
 mod bookdb;
 mod config;
 mod crop;
 mod doc;
 mod ingest;
-mod koreader;
 mod search;
 
 use bookdb::BookDb;
 use config::IngestConfig;
-use koreader::KoreaderHttp;
 use notecore::model::{Answer, Destination, Draft, Entry, Status, Style};
 use rmsvc_core::events::EventBus;
 use rmsvc_core::fs::plain_name;
@@ -51,7 +48,6 @@ struct State {
     cfg: IngestConfig,
     db: BookDb,
     bus: Arc<EventBus>,
-    koreader: KoreaderHttp,
 }
 
 impl State {
@@ -154,8 +150,7 @@ fn main() {
     let paths = Paths::from_env();
     let cfg: IngestConfig = rmsvc_core::config::load_or_seed(&paths.app_config_dir(APP).join("ink.json"));
     let db = BookDb::new(paths.app_state_dir(APP).join("books"));
-    let koreader = KoreaderHttp::new(paths.clone());
-    let st = Arc::new(State { paths: paths.clone(), cfg, db, bus: Arc::new(EventBus::new()), koreader });
+    let st = Arc::new(State { paths: paths.clone(), cfg, db, bus: Arc::new(EventBus::new()) });
     if let Err(e) = std::fs::create_dir_all(st.crops_dir()).and_then(|_| st.db.ensure()) {
         eprintln!("[ink-serve] 建目录失败: {e}");
         std::process::exit(1);
@@ -238,13 +233,6 @@ fn main() {
             let _ = s.db.update_existing(&uuid, |b| b.page_mtimes.clear());
             s.ingest(&uuid);
             Ok(Reply::ok(&serde_json::json!({"ok": true})))
-        }))
-        .post("/koreader/import", bind(&st, |s, _| {
-            let stats = koreader::import(&s.db, &s.koreader, rmsvc_core::clock::now_secs()).map_err(ApiError::internal)?;
-            if stats.highlight_books > 0 || stats.highlights.added > 0 || stats.vocab.added > 0 {
-                s.bus.publish("notes", "entries");
-            }
-            Ok(Reply::ok(&serde_json::json!({"ok": true, "highlightBooks": stats.highlight_books, "highlightsAdded": stats.highlights.added, "highlightsRevoked": stats.highlights.revoked, "vocabAdded": stats.vocab.added})))
         }));
     println!("[ink-serve] 条目库 {}；裁图 {}；监听 {}", st.db.dir().display(), st.crops_dir().display(), st.paths.xochitl_dir().display());
     if let Err(e) = service::run(&SPEC, &bind_addr, &paths, router) {

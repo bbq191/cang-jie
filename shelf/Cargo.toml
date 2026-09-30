@@ -14,8 +14,8 @@ members = [
     "crates/bookconv",
     "crates/pdf-extract-cj",
     "services/book-serve",
-    "services/koreader-serve",
 ]
+# services/koreader-serve 2026-09-29 退役、2026-09-30 源码已从仓库删除，见 git 历史。
 
 [workspace.package]
 version = "0.1.0"

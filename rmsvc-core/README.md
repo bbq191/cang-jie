@@ -11,7 +11,7 @@
 ![模块地图与消费方](docs/diagrams/module-map.svg)
 
 - 消费方都用 path 依赖（`rmsvc-core = { path = "…/rmsvc-core" }`，`..` 的个数看自己的目录深度），**不建根 workspace**；本 crate 不知道任何消费方（单向依赖，无环）。
-- 谁在用：`shelf/services/book-serve` · `notes/services/{ink,transcribe,mind,note}-serve` + `notes/crates/vendorcfg` · `enhance/{font,wallpaper}-serve` · `gateway/`。另有 2026-09-29 退役的 `shelf/services/koreader-serve`：不再安装，源码留档、仍按它编译。
+- 谁在用：`shelf/services/book-serve` · `notes/services/{ink,transcribe,mind,note}-serve` + `notes/crates/vendorcfg` · `enhance/{font,wallpaper}-serve` · `gateway/`。（2026-09-29 退役的 `shelf/services/koreader-serve` 源码已从仓库删除（2026-09-30），见 git 历史。）
 - 一个服务的骨架三步：`service::run(&SPEC, bind, &paths, router)`（建目录、自注册、挂 `/health`）→ 用 `http::Router` 写处理函数 → 有变更就 `EventBus::publish` 通知网页。
 
 ## 21 个模块

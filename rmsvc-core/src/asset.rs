@@ -1,5 +1,5 @@
 //! 资产仓库（Repository）与上传流程模板（Template Method）。
-//! 字体、壁纸、KOReader 字体/词典、母版库都是"一个目录里的一堆文件"：上传→暂存→扩展名门→校验→安装→回执
+//! 字体、壁纸、母版库（以前还有 KOReader 字体/词典，2026-09-30 随 koreader-serve 删除）都是"一个目录里的一堆文件"：上传→暂存→扩展名门→校验→安装→回执
 //! 这一套只在 [`AssetUploadFlow`] 写一次，各仓库只实现差异（`validate`/`install`/`list`/`remove`），
 //! 拒收 / 成功文案也由仓库按需覆盖（`reject_message`/`success_message`），不再各服务手搓 multipart 循环。
 use crate::formats;

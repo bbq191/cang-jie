@@ -56,7 +56,7 @@
 | `gateway` | 唯一 Web 前端：网页 UI + 反向代理 + **批量队列（`batch.rs`）+ 并发/内存闸门（`budget.rs`）** + SSE 汇聚 | `0.0.0.0:443`（HTTPS，登录墙） |
 | `book-serve` | 母版库领域服务：入库/优化/落库 | `127.0.0.1:8790`（只经网关访问） |
 | `bookconv` | **库，不是服务**，被 `book-serve` 进程内调用 | 无网络面 |
-| ~~`koreader-serve`~~ | （历史）落 KOReader 的领域服务，另含字体/词典/配置同步；2026-09-29 退役，源码留在 `shelf/services/koreader-serve/`、照常编译，不再安装 | ~~`127.0.0.1:8791`~~ |
+| ~~`koreader-serve`~~ | （历史）落 KOReader 的领域服务，另含字体/词典/配置同步；2026-09-29 退役、不再安装；源码已从仓库删除（2026-09-30），见 git 历史 | ~~`127.0.0.1:8791`~~ |
 
 **`bookconv` 不拆独立服务**（评估后否决）：库边界本已干净，拆服务唯一好处是进程隔离，代价是几百 MB 大文件跨进程序列化（峰值内存可能不降反升）；且设备 cgroup `MemoryMax` 从未真正生效（单元写了 `MemoryMax=192M`，但 systemd 没把 memory 控制器代理进 `system.slice` 子树），隔离想要的内存兜底本来就是假的。
 
@@ -125,7 +125,7 @@
 
 - **加入 xochitl**：`Staging::deliver()`，纯复制字节（不再优化）。`folder` 留空＝书库根；文件夹不存在经 `MkdirQueue` 让设备端 QML 代理建（§4）。超体积门（`nativeUploadLimitMb`，默认 90MB）→ 走“占位 + 磁盘替换”大文件通道（§6.1）；超过 1GiB、本机无书库目录或造占位失败就整本拒绝（回执末尾“没有加入”；2026-09-30 前这里还会退回按卷拆分，§6.2）。≤ 体积门走普通上传，`Xochitl::upload_file` 流式发送（§5）。
   走普通上传的 EPUB 另起**渲染自检**线程（`render_check::run`，不阻塞；大文件通道直接写渲染记录）：限时 10 分钟（`TIMEOUT`）轮询书库目录等 xochitl 渲染出页数，低于优化时统计的"期望页数"一半判 `warn`（`WARN_RATIO`＝0.5；真机标定：好书 0.86-0.99，整章渲染失败的坏书低至 0.34），写 sidecar `render` + 推 SSE。`/upload` 不回 uuid，认书靠"投书时刻后新出现的文档 + visibleName 相符者优先，否则取最新"（`render_check::pick`）。
-- **（历史）加入 KOReader**：2026-09-29 前由 `koreader-serve` 的 `POST /books/adopt` 从母版库本地拷到 KOReader `books/`，不经 `bookconv`、不限体积/格式；落库记录由网关事后调 `POST /staging/mark {target:"koreader"}` 补记。KOReader 卸载后网页入口、批量动作、网关代理都已删除；`/staging/mark` 路由还在（留给仍在仓库里的 koreader-serve 源码），没有调用方。
+- **（历史）加入 KOReader**：2026-09-29 前由 `koreader-serve` 的 `POST /books/adopt` 从母版库本地拷到 KOReader `books/`，不经 `bookconv`、不限体积/格式；落库记录由网关事后调 `POST /staging/mark {target:"koreader"}` 补记。KOReader 卸载后网页入口、批量动作、网关代理都已删除；koreader-serve 源码 2026-09-30 也已从仓库删除（见 git 历史）。`/staging/mark` 路由还在，但 `target` 只剩 `native`（可省略），传 `koreader` 回 400。
 
 两个操作在 HTTP 层都是**异步**（`spawn_optimize`/`spawn_deliver`，共用外壳 `spawn_bg`：起线程 + `catch_unwind` + 解忙锁 + `bus.publish`）：立即回"已开始"，结果经 sidecar + SSE 呈现。
 
@@ -365,7 +365,7 @@ POST /staging/originals/restore {name} · POST /staging/originals/delete {name} 
 POST /staging/optimize {name}        异步优化（EPUB；PDF 转 EPUB / 仅裁边）
 POST /staging/deliver {name, folder?} 异步落库（原生）
 POST /staging/cancel {name}          中途停止（EPUB 优化支持）
-POST /staging/mark {name, target}    标记已加入读器（native|koreader；原给网关批量「加入 KOReader」补记，现无调用方）
+POST /staging/mark {name, target?}   标记已加入 xochitl（target 只剩 native、可省略；koreader 09-30 起回 400；原给网关批量「加入 KOReader」补记，现无调用方）
 POST /staging/fetch-article {url, optimize?}  抓网文
 POST /staging/delete {name}          删除条目（忙时 400）
 GET  /margins/{uuid} · POST /margins/applied {uuid}   漫画页边距待办（qmd 用；开关关时 GET 恒 404）
@@ -378,7 +378,7 @@ GET  /agent-failures · POST /agent-failures/clear      两个代理交满次数
 （2026-09-22 已删：`GET /inbox`、`POST /inbox/retry|delete`、`GET /staging/render/{uuid}`——无调用方；inbox 失败项重试=人工把 `failed/` 里的文件拷回 `inbox/`）
 ```
 
-**`/api/koreader/*`**：2026-09-29 起网关不再代理（`MODULES` 撤掉 `koreader` 段）。koreader-serve 源码里的接口（书、字体/词典、`/config/*` 补丁、`/annotations`、`/vocabulary`）见 [`../koreader/README.md`](../koreader/README.md)（历史）。
+**`/api/koreader/*`**：2026-09-29 起网关不再代理（`MODULES` 撤掉 `koreader` 段）。koreader-serve 当年的接口（书、字体/词典、`/config/*` 补丁、`/annotations`、`/vocabulary`）写在 `shelf/koreader/README.md`，源码与该文档 2026-09-30 已从仓库删除，见 git 历史。
 
 **`/api/fonts/*`**（font-serve:8792）：`GET /` · `POST /` · `DELETE /{family}` · `PUT /config {emboldenCjkFallback}` · `GET /status`。
 **`/api/wallpapers/*`**（wallpaper-serve:8793）：`GET /` · `POST /[?activate=1]` · `PUT /current {name}` · `PUT /mode {mode}` · `DELETE /{name}` · `GET /{name}` · `GET /status`。

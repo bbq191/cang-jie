@@ -60,7 +60,7 @@
 <rect x="720" y="474" width="300" height="72" rx="10" fill="#f4f4f2" stroke="#9a9a9a" stroke-width="1.3" stroke-dasharray="6 4"/>
 <text x="870" y="494" text-anchor="middle" font-size="12" font-weight="bold" fill="#6a6a6a">已退役：koreader-serve（:8791）</text>
 <text x="870" y="516" text-anchor="middle" font-size="10" fill="#7a7a7a">2026-09-29 设备卸载 KOReader：不再安装、</text>
-<text x="870" y="531" text-anchor="middle" font-size="10" fill="#7a7a7a">网关不再代理 /api/koreader/*（源码留档）</text>
+<text x="870" y="531" text-anchor="middle" font-size="10" fill="#7a7a7a">网关不再代理 /api/koreader/*（09-30 源码已删）</text>
 
 <rect x="60" y="558" width="960" height="38" rx="10" fill="#f2f2f5" stroke="#8a8a99" stroke-width="1.6" stroke-dasharray="6 4"/>
 <text x="540" y="582" text-anchor="middle" font-size="11" fill="#4a4a4a">共享底座 rmsvc-core：xochitl 上传/找书/大文件通道 · multipart 流式解析 · events(SSE) · fswatch · paths(XDG)</text>

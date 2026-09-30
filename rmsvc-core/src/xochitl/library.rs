@@ -51,7 +51,7 @@ pub fn find_folder_by_name(dir: &Path, name: &str) -> Option<String> {
 }
 
 /// 原生书库里所有活文件夹的名字（去重、按名排序）——给网页「加入原生书库 → 文件夹」下拉候选用，
-/// 跟 koreader-serve 给 KOReader 目录下拉候选同一个道理：反映设备上**真实存在**的文件夹，不是
+/// 反映设备上**真实存在**的文件夹（跟已删的 koreader-serve 当年给 KOReader 目录下拉候选同一个道理），不是
 /// 写死的预设列表（2026-09-19 用户反馈：原来的「书库/批注/自定义」三选一预设看不出真实文件夹，
 /// 批注那档还常年跟书库撞成一样，见书架白皮书对应记录）。
 pub fn list_folders(dir: &Path) -> Vec<String> {

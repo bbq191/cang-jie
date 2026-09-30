@@ -46,5 +46,5 @@
   <text x="562" y="448" font-size="14" font-weight="bold" fill="#1e293b">../rmsvc-core/README.md</text>
   <text x="562" y="468" font-size="12.5" fill="#334155">rmsvc-core：模块速查 + 基座白皮书入口</text>
   <text x="490" y="514" text-anchor="middle" font-size="12.5" fill="#6b7280">全项目入门看仓库根 docs/OVERVIEW.md；网关自身（转发、批量队列、并发闸门）看 gateway/docs/；用户可见的更新看 docs/CHANGELOG.md</text>
-  <text x="490" y="534" text-anchor="middle" font-size="12" fill="#9ca3af">koreader/README.md 是历史（KOReader 2026-09-29 已从设备卸载），只作重装参考</text>
+  <text x="490" y="534" text-anchor="middle" font-size="12" fill="#9ca3af">KOReader 相关（koreader/README.md、配置补丁、koreader-serve）09-30 已从仓库删除，见 git 历史</text>
 </svg>

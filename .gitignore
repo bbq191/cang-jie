@@ -64,8 +64,6 @@ chinese-ime/pinyin-engine/data/english/frequency_dictionary_*.txt
 
 # 大字体（第三方，可重新下载）
 chinese-ime/fonts/**/*.ttf
-shelf/koreader/profile/vendor-fonts/*.ttf
-shelf/koreader/profile/vendor-fonts/*.otf
 chinese-ime/fonts/**/*.otf
 
 # 媒体：宽忽略 assets 下所有，白名单留 logo + 顶层 README 打赏二维码（心法③）

@@ -50,7 +50,7 @@ pub struct Request<'a> {
 /// 所以处理函数读到的一定是真实对端地址（不是 `X-Forwarded-For` 这类可伪造的值）。
 pub const REMOTE_IP_HEADER: &str = "X-Rmsvc-Remote-Ip";
 
-/// [`Request::read_small_body`] 的上限（1MB）：JSON 表单、KOReader 配置补丁这类小请求体。
+/// [`Request::read_small_body`] 的上限（1MB）：JSON 表单这类小请求体（当年还有 KOReader 配置补丁，koreader-serve 2026-09-30 已删）。
 pub const SMALL_BODY_MAX: u64 = 1024 * 1024;
 
 /// 按名取头（不区分大小写）——[`Request`] 与 [`GuardRequest`] 共用。

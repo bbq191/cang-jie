@@ -23,7 +23,7 @@
 | ② 优化（可选） | EPUB：清洗 + 排版 + 目录 + 封面 + 质量门；漫画自动识别；PDF：有文字层按原格式转 EPUB，无文字层只裁边 | 不强制；产物仍在母版库，可重优化 |
 | ③ 落库 | 复制母版字节进 xochitl（≤90MB 流式上传 / 更大的占位替换；走不了整本拒绝，不再按卷拆分） | 母版永久保留，可反复落库 |
 
-**模块与端口**：网关 `gateway`（443，唯一对外）转发给只听本机端口的服务：`book-serve`（8790，母版库）、`font-serve`（8792）、`wallpaper-serve`（8793）；`koreader-serve`（8791）2026-09-29 退役，源码留档、不再安装。优化引擎 `bookconv` 是 book-serve 链接的库，不是服务。服务表见 [`../README.md`](../README.md)「服务与端口」。
+**模块与端口**：网关 `gateway`（443，唯一对外）转发给只听本机端口的服务：`book-serve`（8790，母版库）、`font-serve`（8792）、`wallpaper-serve`（8793）；`koreader-serve`（8791）2026-09-29 退役、不再安装，源码已从仓库删除（2026-09-30），见 git 历史。优化引擎 `bookconv` 是 book-serve 链接的库，不是服务。服务表见 [`../README.md`](../README.md)「服务与端口」。
 
 ![shelf 架构：网关 + 领域服务](diagrams/architecture.svg)
 
@@ -55,7 +55,7 @@
 | F | 设备、字体壁纸与固件 | §03c · §03f · §03k · §03o · §03v · §03w · §03x · §03at · §03bd |
 | 附录 | 踩坑合集 · 旧版现状总览 · 待办 · 演进记录 · 已移除能力（CLI、KOReader、分卷、手动方向、漫画转 PDF） · 目录与路径 · 旧 OTA 说明 | §04 · §00b · §05 · 附录 A–D |
 
-读法：先看「现状总览」，再按主题跳到某章，先读章首「现状结论」和「坑位表」，需要来龙去脉再读 § 节。KOReader 相关（§03d、§03ar、§03bt 与 [`../koreader/README.md`](../koreader/README.md)）是 2026-09-29 卸载前的历史留档。
+读法：先看「现状总览」，再按主题跳到某章，先读章首「现状结论」和「坑位表」，需要来龙去脉再读 § 节。KOReader 相关（§03d、§03ar、§03bt）是 2026-09-29 卸载前的历史；对应源码、补丁与 `koreader/README.md` 2026-09-30 已从仓库删除，见 git 历史。
 
 ## 现状总览（2026-09-30 刷新）
 
@@ -81,11 +81,11 @@
 | 稳定性 | `panic="unwind"`+`catch_unwind`、`OpRegistry`、启动时修正被中断的 `pending` | §03bq |
 | 进程内并发 | 忙锁（按书名；09-25 起删除也占）、落名临界区（同名书不互相覆盖）、spool 锁（只管 inbox 追平）、边车写锁、xochitl 上传锁（"设文件夹 → 上传"成对）、大文件通道锁（"传占位 → 认领 → 替换"整段串行，09-25） | 传书线架构 §7.3 |
 | 让 qmd 改动生效 | **整机重启**（09-25 起）。不再单独 `systemctl restart xochitl`：xochitl 退出时自身有概率崩溃，再由系统应急整机重启；xovi 已生效时**绝不**跑 `xovi/start` | 第 F 章速查 |
-| KOReader | **2026-09-29 已从设备卸载**（连同 WeRead、appload）：koreader-serve 不再安装、网关不再代理 `/api/koreader/*`，网页上加入 KOReader、字体/词典、高亮回流、批量加入等入口全删；源码与补丁留档 | §03d、§03ar、§03bt（历史）、附录 B |
+| KOReader | **2026-09-29 已从设备卸载**（连同 WeRead、appload）：koreader-serve 不再安装、网关不再代理 `/api/koreader/*`，网页上加入 KOReader、字体/词典、高亮回流、批量加入等入口全删；源码与补丁 09-30 已从仓库删除（见 git 历史） | §03d、§03ar、§03bt（历史）、附录 B |
 | 上传暂存与临时文件 | 书在 `books/.work/`；xochitl 字体/壁纸在 `~/.local/state/shelf/upload/`——都在 /home，字体装的时候直接改名（壁纸要转码，照旧写新文件；09-25 之前暂存在 tmpfs）。母版库里的优化/补封面/入库中转临时文件叫 `.<pid>.<序号>.<种类>.tmp`，出错或 panic 当场删、启动再清一遍（09-30） | 传书线架构 §9、§03bu |
-| 测试 | `cd shelf && cargo test --workspace`：521 个通过、2 个忽略（2026-09-30 第五轮审计后在开发机实跑：bookconv 385 · book-serve 105 · koreader-serve 26〔留档〕· pdf-extract-cj 5）；`rmsvc-core` 另有 108 个通过、1 个忽略 | — |
+| 测试 | `cd shelf && cargo test --workspace`：495 个通过、2 个忽略（2026-09-30 删 koreader-serve 后在开发机实跑：bookconv 385 · book-serve 105 · pdf-extract-cj 5；第五轮审计时含 koreader-serve 26 个共 521）；`rmsvc-core` 另有 108 个通过、1 个忽略 | — |
 
-**已砍/已被取代（别再找）**：电脑端 `shelf` 命令行（09-18，附录 B）；KOReader 一切入口与 koreader-serve 安装（09-29，附录 B）；超限书按卷拆分与按书设阅读方向（09-30，附录 B）；母版库"优化档位"与"投完自动删除"（09-19）；漫画"优化转 PDF"（09-19 做、09-20 换回 EPUB、09-30 代码删除）；三档格式（09-17/18 收成一档）；微信读书内容源（09-05）；appload 补丁工具链（09-21）；bind-mount 壁纸（§03x）；`/inbox*` 与 `/staging/render/*` HTTP 接口（09-22 删，scp 进 `inbox/` 仍可用）；"restart xochitl 让改动生效"（09-25 改整机重启）。
+**已砍/已被取代（别再找）**：电脑端 `shelf` 命令行（09-18，附录 B）；KOReader 一切入口与 koreader-serve 安装（09-29，附录 B；源码 09-30 删）；超限书按卷拆分与按书设阅读方向（09-30，附录 B）；母版库"优化档位"与"投完自动删除"（09-19）；漫画"优化转 PDF"（09-19 做、09-20 换回 EPUB、09-30 代码删除）；三档格式（09-17/18 收成一档）；微信读书内容源（09-05）；appload 补丁工具链（09-21）；bind-mount 壁纸（§03x）；`/inbox*` 与 `/staging/render/*` HTTP 接口（09-22 删，scp 进 `inbox/` 仍可用）；"restart xochitl 让改动生效"（09-25 改整机重启）。
 
 **2026-09-25 下午第四轮审计**：书架、bookconv、网关共改了二十多处（半截书、丢页、二次转义、无限重试、并发认领错条目等），**全部只在 host 测过、还没部署真机**，清单见附录 A 09-25 行与 §05 #17。
 
@@ -429,7 +429,7 @@ host 质量门 `check_output.py` 当时移植成 `bookconv::check`；host 门与
 
 ### 03d｜Phase 3 KOReader 配置即代码（2026-09-03，离线完成；2026-09-29 随 KOReader 卸载退役）
 
-> 历史：koreader-serve 09-29 起不再安装、网关不再代理 `/api/koreader/*`；下面按当时的状态记录，补丁与源码留档，见 [`../koreader/README.md`](../koreader/README.md)。
+> 历史：koreader-serve 09-29 起不再安装、网关不再代理 `/api/koreader/*`；下面按当时的状态记录。补丁、源码与 `shelf/koreader/README.md` 2026-09-30 已从仓库删除，见 git 历史。
 
 **设计（当时）**：`shelf/koreader/merge.lua` 由 KOReader 自带 `luajit` 跑（标量覆盖、表递归、`"__DELETE__"` 删键、`--dry-run` 只出差异）。`ConfigSync::apply`：KOReader 在跑则 409（它退出时会回写配置）→ 备份 → 合并 → `dofile` 回读、失败自动还原。备份规则（09-25）：补丁没带来改动时删掉刚做的备份；同一秒内第二次备份加 `-1`、`-2` 后缀（此前同名覆盖，真正的原件被第二份盖掉）；每个配置文件只留最近 10 份；回读失败而原来没有这个文件时删掉写坏的新文件（此前留给 KOReader 下次启动 `dofile`）。
 **端点**：`GET|POST /config/{settings|defaults|gestures|directory|profiles}[?dry_run=1]`（后两个 09-24 加，§03bt）、`/dicts`、`/fonts`。补丁见 `shelf/koreader/profile/`。
@@ -471,12 +471,12 @@ host 质量门 `check_output.py` 当时移植成 `bookconv::check`；host 门与
 - `GET /annotations`：交给 KOReader 自带 `luajit` 跑 `annot.lua` 解析 `.sdr` 标注；`GET /vocabulary`：**手写零 C 依赖的纯 Rust 只读 SQLite 解析器**（`sqlite_min.rs`）。
 - **判死**：`rusqlite` 交叉编译到 musl 链接失败（`sqlite3.c` 调 glibc LFS64 符号），用户选手写；`rusqlite` 降为仅测试依赖做差分。
 - **真 bug**：生词本路径想当然写 `data/`，真机在 `settings/`。
-- **消费方**：笔记线 `ink-serve` 的 `/koreader/import`；2026-09-23 网页笔记页加「导入 KOReader 批注」按钮，**09-29 随卸载删掉该按钮**。`ink-serve` 的 `/koreader/import`、`koreader.rs` 仍保留，`ingest.rs` 里对 `koreader:` 条目的早退判断也必须留——条目库里还有旧 KOReader 书，去掉早退，启动追平会把它们当成"书已删除"整批撤销。
+- **消费方**：笔记线 `ink-serve` 的 `/koreader/import`；2026-09-23 网页笔记页加「导入 KOReader 批注」按钮，**09-29 随卸载删掉该按钮**。`ink-serve` 的 `/koreader/import`、`koreader.rs` 与 `notecore::koreader` 2026-09-30 已从仓库删除（见 git 历史）；`ingest.rs` 里对 `koreader:` 条目的早退判断必须留——条目库里还有旧 KOReader 书，去掉早退，启动追平会把它们当成"书已删除"整批撤销。
 - **可迁移的教训**：`sqlite_min.rs` 的"手写零 C 依赖只读解析 + 用 rusqlite 做测试差分"的做法，以后遇到 musl 交叉编译 C 库链接失败时仍可参考。
 
 ### 03bt｜KOReader 文字书 / 漫画两套阅读方案（2026-09-24，真机通；2026-09-29 KOReader 已卸载，本节为历史）
 
-> 方案内容（三层机制各设了什么、插件清单、补丁接口）写全在 [`../koreader/README.md`](../koreader/README.md)「文字书 / 漫画两套方案」；本节只记起因、决策和真机反馈。
+> 方案内容（三层机制各设了什么、插件清单、补丁接口）原写在 `shelf/koreader/README.md`「文字书 / 漫画两套方案」（2026-09-30 已从仓库删除，见 git 历史）；本节只记起因、决策和真机反馈。
 
 ![KOReader 文字书 / 漫画两套方案](diagrams/sh-koreader-schemes.svg)
 
@@ -800,7 +800,7 @@ sudo nmcli connection down Hotspot && sudo nmcli connection up Hotspot
 - book-serve：host CLI 专用的 `SourceRef` / `set_source` / 入库参数 `?srcName=&srcBytes=`；`DeliverCheck.progress`；边车写入合并到 `update_sidecar`；`optimizable` / `deliverable`；`agent_wait`。
 - 网关与网页：`MODULES` 的 koreader 项（`/api/koreader/*` 不再代理）、`/api/foundation` 的 appload/koreader/weread 探测、批量动作 `koreader`、闸门 `KoreaderAdopt`、词典格式；网页「其他」的 KOReader 子标签、母版库 KOReader 位置与「已加入KO」徽章、笔记页「KOReader 回流」、引导页两读器对比、基石列表的 appload/KOReader/WeRead，删 44 个语言键。
 - **行为变化**：「已完成」只认加入过 xochitl，只加入过 KOReader 的旧书会回到「待处理」；旧 `batch.json` 残留的 koreader 任务读回时只剔除这几项。
-- 保留：`koreader-serve` 源码（workspace 照常编译测试，不安装）；ink-serve 的 `/koreader/import` 与 `koreader.rs`（见 §03ar）。
+- 当时保留：`koreader-serve` 源码；ink-serve 的 `/koreader/import` 与 `koreader.rs`（见 §03ar）。**同日稍后这些也从仓库删除**（见附录 A 演进记录表“09-30 末”一行），旧数据兼容部分（条目来源枚举、`koreader:` 早退、边车 `koreader` 字段）保留。
 
 **安装与卸载**：`install.sh --only` 也刷新设备上的 `shelf-uninstall` 与 `~/.local/lib/shelf/{manifest.sh,devlib.sh}`（此前只有整包安装才刷，`--only` 部署新 qmd 后卸载会拿旧清单漏删）；卸载时 `[ -d ] && rmdir` 在 `set -e` 下遇到非空目录会让整段卸载退出，已改；每次安装清掉旧设备上的 `koreader-serve` 单元与二进制（`manifest.sh` 的 `SHELF_LEGACY_*`）。全套脚本改动见 `packaging/README.md`。
 
@@ -1000,9 +1000,10 @@ qmd 和 xovi 扩展只在 xochitl **启动时**注入，所以改了要让 xochi
 | 09-24 | §03br、§03ah、§03bt | 全系统审查两批修补：PDF 转 EPUB 同名不覆盖 + 原 PDF 备份 7 天可恢复、`pdf-extract-cj` 嵌套表单限深防环；原件下载（流式）与改名；底部操作栏三行不折行；**KOReader 文字书/漫画两套方案**，插件取舍，merge.lua 删除标记泄漏修复；书架四份文档按"规则 / 实现 / 数据流 / 现状与历史"重新分工；**第三轮全系统审计**（只在 host 验证）：并发锁四处修正、进度节流、PDF 只解析一遍并及早释放内存、小请求体超限报错 |
 | 09-25 | §03aa、§03ap、§03bn、§03aj | 部署生效改**整机重启**（xochitl 退出时自身会崩）；**回收站代理重写**（MainView + 长轮询 + `entryForId`）；**母版库按书设阅读方向**；抓网文「同步优化」进忙锁与闸门；「管理 → 设备健康」与清理入口；真机通过批量加入与 >153MB 占位首次渲染；目录页跨文件链接决定不做 |
 | 09-25 下午 | §03aa、§03d；传书线架构 §2、§4、§6、§7.3 | **第四轮全系统审计**（只在 host 验证，未部署）：inbox 不收还在写的文件；跨分区入库先拷临时文件；删除占忙锁；大文件通道整段串行；拆分不丢目录前的页、认百分号编码图片路径；目录/书名字符引用只转义一次；损坏 PDF 拆分不 panic；代理重试 5 次封顶 + 出错退避；KOReader 落盘半成品名唯一、配置备份留 10 份；上传暂存挪出 tmpfs；网页按事件来源减少重取 |
-| 09-29 | §03d、§03ar、§03bt | 设备卸载 KOReader、WeRead、appload；`manifest.sh` 撤 `koreader` 令牌，koreader-serve 不再安装（源码留档） |
+| 09-29 | §03d、§03ar、§03bt | 设备卸载 KOReader、WeRead、appload；`manifest.sh` 撤 `koreader` 令牌，koreader-serve 不再安装（源码 09-30 已从仓库删除） |
 | 09-30 | 传书线架构 §2.6、§6；bookconv §19 | 用户定三项（只在 host 测过，未部署）：漫画预放大页 JPEG q85→q95（漫画一律 q95）；**撤掉母版库按书设阅读方向**（方向只看书里自带的，旧 `rtl-overrides.json` 只读）；**移除超限书按卷拆分**（只走大文件通道，走不了整本拒绝） |
 | 09-30 晚 | §03bu | **第五轮全系统审计**（只在开发机测过，未部署）：坏 PDF 不再拖垮 book-serve、长书名临时文件、`opf:` 前缀分页、`ScratchFile`、文件戳缓存与 Basic 认证缓存、删 `comic_pdf.rs` 与 host CLI 残留、网关/网页撤掉全部 KOReader 入口 |
+| 09-30 末 | §03d、§03ar、附录 B | **KOReader 相关源码从仓库删除**（见 git 历史，只在开发机测过）：`services/koreader-serve`、`koreader/`、`systemd/koreader-serve.service`；book-serve 删 `Reader` 枚举，`/staging/mark` 的 `target` 只剩 `native`（可省略，`koreader` 回 400）；边车 `koreader` 字段照读；`manifest.sh` 遗留清单仍列 koreader-serve 给旧设备清理 |
 
 ### 附录 B｜已移除的能力：电脑端 `shelf` 命令行（原 `shelf/README.md`，2026-09-18 砍除）
 
@@ -1027,7 +1028,7 @@ qmd 和 xovi 扩展只在 xochitl **启动时**注入，所以改了要让 xochi
 
 | 能力 | 移除 | 现在 | 历史见 |
 |---|---|---|---|
-| KOReader：加入 KOReader、字体/词典上传、配置补丁接口、高亮/生词回流、批量加入 | 09-29（用户从设备卸载 KOReader、WeRead、appload） | 只投 xochitl；koreader-serve 源码与 `shelf/koreader/` 补丁留档，不安装 | §03d、§03ar、§03bt、[`../koreader/README.md`](../koreader/README.md) |
+| KOReader：加入 KOReader、字体/词典上传、配置补丁接口、高亮/生词回流、批量加入 | 09-29（用户从设备卸载 KOReader、WeRead、appload） | 只投 xochitl；koreader-serve 源码与 `shelf/koreader/` 补丁 09-30 已从仓库删除（见 git 历史） | §03d、§03ar、§03bt |
 | 超限书按卷拆分投递（EPUB 按 NCX、PDF 按书签） | 09-30（用户定；`comic_split`、`try_deliver_split` 删除） | 超过网页上限走占位 + 磁盘替换，走不了整本拒绝 | §03ax、§03bn |
 | 母版库按书设阅读方向 | 09-30（用户定；写入函数删除） | 只保留原书自带的 OPF 方向；`rtl-overrides.json` 只读 | 传书线架构 §2.6 |
 | 漫画 EPUB→PDF 转换器（`comic_pdf.rs`） | 09-20 起不再用于漫画优化，09-30 第五轮审计删代码 | 漫画一律出 EPUB，JPEG q95 | §03bk |
@@ -1038,15 +1039,15 @@ qmd 和 xovi 扩展只在 xochitl **启动时**注入，所以改了要让 xochi
 
 | 路径 | 来历与易踩细节 |
 |---|---|
-| `Cargo.toml`·`build.sh` | 内部 workspace，成员 `bookconv`、`pdf-extract-cj`、`book-serve`、`koreader-serve`（09-29 退役：照常编译测试，`build.sh` 不列为部署产物）；`panic=unwind`（§03bq） |
+| `Cargo.toml`·`build.sh` | 内部 workspace，成员 `bookconv`、`pdf-extract-cj`、`book-serve`（`koreader-serve` 09-29 退役、09-30 源码从仓库删除）；`panic=unwind`（§03bq） |
 | `crates/bookconv/` | `optimize/`、`wash/`、`htmlproc/`、`check.rs`（质量门 5 条）、`imgopt`/`imgpool`、`pdf_ingest/`、`comic_detect`/`comic_pad`（`comic_pdf` 09-30 删除）、`netimg.rs`（远程图）、`naming.rs`、`placeholder.rs`、`article.rs`、`direction.rs`（读 OPF 阅读方向；09-25～09-29 还负责写，09-30 写入函数删除）；`convert/` 里的杂格式转换仍在但设备端不再可达（只有 `pdfwrite` 与 `direct_content_type` 现役） |
 | `bookconv/src/bin/` | 开发期工具：`epub_optimize`（与设备端同一优化代码）、`cbz2pdf`、`cover_fix`（§03bo；`comic_piece_extract` 2026-09-30 随分卷删除）；都没有自动化调用方 |
 | `crates/pdf-extract-cj/` | `pdf-extract` 0.12.1 本地 fork（MIT，保留上游版权），改动见其 `src/lib.rs` 头注释（§03br） |
 | `services/book-serve/` | `staging/`（`mod`〔含 `ScratchFile`〕/`intake`/`optimizing`/`deliver`/`library`/`tests`）、`sidecar.rs`、`render_check.rs`、`pending_queue.rs`（`PendingQueue` + 长轮询 `Handout`）、`agent_failures.rs`（代理放弃项的横幅记录）、`trash.rs`、`mkdir.rs`、`comic_margins.rs`、`reading_direction.rs`（`GET /reading-direction/{uuid}`，读 OPF 与只读的手动清单）、`cover_fetch/`（联网补封面）、`spool.rs`（inbox 追平）、`ops.rs`、`service_state.rs` |
-| `services/koreader-serve/` | （09-29 退役，留档）`koreader.rs`、`config.rs`+`merge.lua`（5 个配置目标）、`annot.rs`、`vocab.rs`、`sqlite_min.rs`（§03ar） |
+| ~~`services/koreader-serve/`~~ | （09-29 退役，09-30 已从仓库删除，见 git 历史）当时含 `koreader.rs`、`config.rs`+`merge.lua`（5 个配置目标）、`annot.rs`、`vocab.rs`、`sqlite_min.rs`（§03ar） |
 | `install.sh`·`uninstall.sh`·`manifest.sh` | 设备端安装/卸载（`--only`；写 `/usr` 前实检 dm-verity；清旧命名遗留单元，§03at）；新增一个服务/qmd = 只改 `manifest.sh` |
 | `xovi/` | 6 个 qmd 文件：字体菜单（3.28 与 3.27 两版，设备上统一叫 `font-menu-dynamic.qmd`）、回收站代理、建文件夹代理、漫画页边距代理、阅读器单击翻页与日漫翻页规则 `reader-page-turn.qmd`（系统增强线白皮书 §03i） |
-| `koreader/` | （历史）`profile/` 五份补丁（settings.reader / defaults.custom / gestures / directory_defaults / profiles）+ 字体词典清单、`merge.lua`、`annot.lua`、`README.md` |
+| ~~`koreader/`~~ | （历史，09-30 已从仓库删除，见 git 历史）`profile/` 五份补丁（settings.reader / defaults.custom / gestures / directory_defaults / profiles）+ 字体词典清单、`merge.lua`、`annot.lua`、`README.md` |
 
 **设备路径**（XDG，设备 HOME=/home/root；表的单一事实源是 `rmsvc_core::paths`）：
 
@@ -1059,7 +1060,7 @@ qmd 和 xovi 扩展只在 xochitl **启动时**注入，所以改了要让 xochi
 | 数据 | `~/.local/share/shelf/`（fonts.json、壁纸池）· `~/.local/share/fonts/`（用户字体）· 跨进程开关 `~/.local/share/cangjie-ime/reading-qol.json` |
 | 状态 | `~/.local/state/shelf/books/staging/`（**母版库**，不淘汰；`.pdf-originals/` 原 PDF 备份 7 天；点前缀临时文件 `.<pid>.<序号>.{optimizing,cover,landing}.tmp`，出错当场删、启动时再清一遍所有点前缀 `*.tmp`）· `books/{inbox,.work,failed}`（追平队列；`.work/` 兼网页上传暂存）· `upload/`（xochitl 字体/壁纸上传暂存，09-25 起从 tmpfs 挪来）· `books/{mkdir,trash}-pending.json`、`books/comic-margins.json`（代理队列）· `books/rtl-overrides.json`（日漫翻页手动清单，uuid 数组；09-30 起只读，book-serve 不再写）· `batch.json`（网关批量队列）· `wallpaper-state.json` · `koreader-backups/`、`koreader-upload/`（KOReader 历史遗留，09-29 起不再写；卸载 `--purge` 随 `~/.local/state/shelf` 一起删） |
 | 运行时 | `$XDG_RUNTIME_DIR/shelf/`（缺省 `/tmp/shelf-0/shelf/services`：服务注册表；`koreader/` 子目录是退役的 koreader-serve 用的临时 Lua；重启即清；09-25 起上传暂存不再放这里） |
-| 外部约定 | KOReader 根 `SHELF_KOREADER_ROOT`（缺省 `~/xovi/exthome/appload/koreader`；历史，`rmsvc_core::paths` 仍保留这一项）；xochitl 书库 `~/.local/share/remarkable/xochitl` |
+| 外部约定 | KOReader 根 `SHELF_KOREADER_ROOT`（缺省 `~/xovi/exthome/appload/koreader`；历史，`rmsvc_core::paths` 这一项 09-30 已删）；xochitl 书库 `~/.local/share/remarkable/xochitl` |
 | 笔记线 | 自成一套 `notes` 命名空间，见 `../../notes/README.md` |
 
 **已搬走 / 旧名对照**（读历史节时用）：`font-serve`/`wallpaper-serve` → `enhance/`；`crates/shelf-core`（`shelf-core::*`）→ 顶层 `rmsvc-core/`；`services/shelf-gateway` → 顶层 `gateway/`；网关 `ui.rs` 大字符串 → `gateway/ui/{index.html,style.css,app.js}`；`shelf/deploy.sh` → `packaging/deploy.sh`；`wash_epub.sh` 随 host 砍除。依赖方向见 [`../README.md`](../README.md)「目录」。
