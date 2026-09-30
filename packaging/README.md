@@ -2,7 +2,8 @@
 
 > **读者与用途**：要给设备装/卸/更新这套增强的人，以及要改这些脚本的维护者。
 > 本文讲**脚本结构、每一步做什么、各文件职责、怎么本机测试**。"第一次怎么装、有什么风险、固件升级后怎么恢复"这类面向使用者的说明在 [`../docs/INSTALL.md`](../docs/INSTALL.md)（中文）/ [`INSTALL.en.md`](../docs/INSTALL.en.md)，本文不重复。
-> 文末「验证现状」汇总了哪些在真机上验证过、哪些只有本机模拟。
+> 文末「验证现状」汇总了哪些在真机上验证过、哪些只有本机模拟——这是真机验证记录的**权威出处**，INSTALL 只放摘要。
+> 分工：使用者要知道的（前置条件、步骤表、OTA 恢复、已移除组件怎么清）以 INSTALL 为准；脚本内部机制、全部参数与环境变量、`verify-on-device.sh` 逐节判据、备份规则、开机顺序、测试以本文为准。
 
 ## 一分钟上手
 
@@ -31,23 +32,29 @@ sh uninstall-all.sh <host> --skip chrony-boot-wakelock,wifi-watch,xovi-persist,h
 
 `vellum add xovi`、`vellum add qt-resource-rebuilder`。缺了各会怎样、装的顺序见 [`INSTALL.md`「装之前」](../docs/INSTALL.md#装之前)。
 
-2026-09-29 起**不再需要 appload 和 KOReader**（设备上 KOReader、WeRead、appload 都已卸载）：
-- `sidebar-entry` 退役，记在 lib.sh 的 `STEP_RETIRED`：`install-all` 不再装，`uninstall-all` 照样卸（只按文件名删设备上的残留）。它的安装件——`deploy-sidebar-entry.sh`、两份 `sidebar-entry-*.qmd`、图标 png 与 `.qrc`、测试桩 `rcc`——2026-09-30 已从仓库删除。
-- `koreader-serve` 从 `shelf/manifest.sh` 的 `SHELF_ALL` 撤掉、列进遗留清单 `SHELF_LEGACY_*`，装过的设备重新部署书架时顺手清掉；`verify-on-device.sh` 见到它还在报 ⚠。网关里的 KOReader 代理与网页入口 09-30 已删，`shelf/services/koreader-serve` 源码同日也已从仓库删除（见 git 历史）；遗留清单里仍保留它，给旧设备清理用。
+## 已退役 / 已移除的步骤（`STEP_RETIRED`）
 
-2026-09-30 起**电池刺客（`battop`）和手写优化（`handwriting-stroke`）已移除**（用户要求）：
-- 两步移出 `STEP_ORDER`、进 `STEP_RETIRED`；`deploy-battop.sh`、`deploy-handwriting-stroke.sh` 与源码 `enhance/battop`、`enhance/handwriting-stroke` 已删。
-- **重新部署自动清**：`lib.sh` 的 `STEP_RETIRED_AUTOCLEAN` 列出这两步。`install-all` 在 `xovi-apply` 之前对它们各跑一次 `removal.sh` 里的 `uninstall_<步骤>`（与 `uninstall-all` 同一份函数），步骤名显示为 `清理已移除:battop` / `清理已移除:handwriting-stroke`；没有残留就什么都不动（不碰 systemd、不 remount）。`--skip battop` / `--skip handwriting-stroke` 跳过。
-- 清什么：battop → `battop.service` 与旧版 `battop.timer`（`cj_remove_usr_unit`：dm-verity 门 + 带 trap 的 rw 窗口）、`/home/root/battop` 整个目录（路径与符号链接守卫；dm-verity 下单元删不掉时保留目录）；handwriting-stroke → `extensions.d/hw-stroke.so` 与 `.crashed`、待换入区副本、载荷目录 `hw-stroke/`。xochitl 正加载着 `hw-stroke.so` 时记待生效标记 `removed-hw-stroke.so`，`xovi-apply` 据此**整机重启**一次（不 stop/restart xochitl，xovi 已生效时不 `xovi/start`）。
-- 只清这两样：`sh uninstall-all.sh <host> --skip chrony-boot-wakelock,wifi-watch,xovi-persist,hl-snap,shelf,sidebar-entry`，然后整机重启。这串 `--skip` 由 `lib.sh` 的 `uninstall_only_skip battop handwriting-stroke` 生成，`verify-on-device.sh` 报 ⚠ 时给的就是它。
-- 为什么 `sidebar-entry` 不自动清：它会删 `cangjie-icons.rcc`，历史上别的 qmd 也用过这个文件名，只在用户明确跑 `uninstall-all` 时清。
-- **只在本机模拟测过**（见「测试」），没部署、没上真机。
+使用者视角（有哪些、设备上留什么、怎么清、真机情况）见 [`INSTALL.md`「从旧版升级：清理已移除的组件」](../docs/INSTALL.md#从旧版升级清理已移除的组件)，含流程图。这里只记实现：
+
+| 步骤 | 退役 | 安装件 | 清理函数 | `install-all` 自动清？ |
+|---|---|---|---|---|
+| `sidebar-entry`（KOReader 侧栏入口） | 09-29 | `deploy-sidebar-entry.sh`、两份 qmd、图标 png/`.qrc`、测试桩 `rcc` 09-30 已删 | `uninstall-all.sh` 里的 `uninstall_sidebar_entry`（只按文件名删） | **否**：它会删 `cangjie-icons.rcc`，历史上别的 qmd 也用过这个文件名 |
+| `battop`（电池刺客） | 09-30 | `deploy-battop.sh` 与源码 `enhance/battop` 已删 | `removal.sh` 的 `uninstall_battop` | 是（`STEP_RETIRED_AUTOCLEAN`） |
+| `handwriting-stroke`（手写优化 `hw-stroke.so`） | 09-30 | `deploy-handwriting-stroke.sh` 与源码已删；`deploy-xovi-ext.sh hw-stroke` 报"已移除"退出 2 | `removal.sh` 的 `uninstall_handwriting_stroke`（即 `remove_xovi_extension`） | 是 |
+
+另有 `koreader-serve`（09-29）：不是独立步骤，而是从 `shelf/manifest.sh` 的 `SHELF_ALL` 撤掉、列进遗留清单 `SHELF_LEGACY_*`，重新部署书架时顺手清；源码 09-30 已删，遗留清单仍保留它给旧设备用。
+
+**自动清理的实现**：`install-all` 在 `xovi-apply` 之前对 `STEP_RETIRED_AUTOCLEAN` 逐个跑 `uninstall_<步骤>`（与 `uninstall-all` 同一份函数），汇总里显示为 `清理已移除:battop` / `清理已移除:handwriting-stroke`；`--skip battop` / `--skip handwriting-stroke` 跳过。
+- battop：什么都没有时直接退出（不碰 systemd、不 remount）；否则 `cj_remove_usr_unit` 删 `battop.service` 与旧版 `battop.timer`（dm-verity 门 + 带 trap 的 rw 窗口），再删 `/home/root/battop`（路径与符号链接守卫；dm-verity 下单元删不掉时保留目录）。
+- handwriting-stroke：撤待换入区副本 → 删 `extensions.d/hw-stroke.so` 与 `.crashed` → 删载荷目录 `hw-stroke/`。xochitl 正加载着它时记待生效标记 `removed-hw-stroke.so`，`xovi-apply` 据此**整机重启**一次（不 stop/restart xochitl，xovi 已生效时不 `xovi/start`）。
+- "只清这几样"的 `--skip` 串由 `lib.sh` 的 `uninstall_only_skip battop handwriting-stroke` 生成（结果 `chrony-boot-wakelock,wifi-watch,xovi-persist,hl-snap,shelf,sidebar-entry`），`verify-on-device.sh` 报 ⚠ 时给的就是它。
+- **真机**：09-30 15:23 `install-all` 自动清掉了电池刺客与 `hw-stroke.so`、只整机重启一次，核对 36✓ 1⚠（刚开机）0✗。`uninstall-all` 只清这两样、dm-verity 下保留目录两支只有本机模拟。
 
 ## 装什么、按什么顺序
 
 ![install-all.sh 流程](../docs/diagrams/install-flow.svg)
 
-`install-all.sh` 只负责编排，不重新实现构建或传输：先做装前检查，再按 `lib.sh` 的**步骤表 `STEP_ORDER`** 依次调用 8 个部署脚本（09-30 前是 10 个：`battop`、`handwriting-stroke` 两步已移除，在第 7 步之后、第 8 步之前自动清它们的残留）。`uninstall-all.sh` 用同一张表逆序卸载，所以安装与卸载清单天然对称。
+`install-all.sh` 只负责编排，不重新实现构建或传输：先做装前检查，再按 `lib.sh` 的**步骤表 `STEP_ORDER`** 依次调用 8 个部署脚本（09-30 前是 10 个：`battop`、`handwriting-stroke` 两步已移除，在第 7 步之后、第 8 步之前自动清它们的残留，见上节）。`uninstall-all.sh` 用同一张表逆序卸载，所以安装与卸载清单天然对称。
 
 | 顺序 | 步骤名 | 脚本 | 装什么 | 前置 |
 |---|---|---|---|---|
@@ -58,7 +65,7 @@ sh uninstall-all.sh <host> --skip chrony-boot-wakelock,wifi-watch,xovi-persist,h
 | 5 | `xovi-persist` | `deploy-xovi-persist.sh` | xovi 开机自动恢复（`xovi-reenable.service`） | 已 `vellum add xovi` |
 | 6 | `hl-snap` | `deploy-hl-snap.sh` | 荧光笔 CJK 精确吸附（xovi 扩展），**只落盘** | 同上 |
 | 7 | `shelf` | `deploy.sh` | 网关 + book/font/wallpaper + 笔记线 ink/transcribe/mind/note，共 8 个服务；随服务带的 qmd（字体菜单、回收站代理、建文件夹代理、漫画页边距、单击翻页）**只落盘** | 无；没装 qt-resource-rebuilder 时只跳过 qmd，服务照装 |
-| — | `清理已移除:battop`、`清理已移除:handwriting-stroke` | `removal.sh`（函数，不是脚本） | 清旧设备上已移除功能的残留（见上「前置条件」末段）；摘了正加载着的 `hw-stroke.so` 会记待生效标记 | 无 |
+| — | `清理已移除:battop`、`清理已移除:handwriting-stroke` | `removal.sh`（函数，不是脚本） | 清旧设备上已移除功能的残留（见上「已退役 / 已移除的步骤」）；摘了正加载着的 `hw-stroke.so` 会记待生效标记 | 无 |
 | 8 | `xovi-apply` | `deploy-xovi-apply.sh` | 让上面落盘的扩展/qmd 统一生效：**有待生效改动（或 xovi 未生效）才**整机重启一次；`--force` 无条件 | 同 5–6 |
 
 每个脚本都能单独跑（如 `sh deploy-wifi-watch.sh <host>`）。任何一步失败：打印是哪一步、原始错误，**不自动重试、不静默跳过**，退出非零。
@@ -153,8 +160,8 @@ sh verify-on-device.sh --from d.txt        # 不连设备，离线重判存下�
 - **只读**：设备上不重启、不写、不删、不 mount，连临时文件都不建；只读 `/proc`、`systemctl show`/`is-active`、`journalctl`、`dmesg`、`ls`/`stat`/`df`/`sha256sum`。
 - **一次 ssh 采集，判定全在本机**：设备端输出结构化文本（每行 `键<TAB>字段…`），本机逐项判 ✓/⚠/✗——所以 `--from` 能离线重判，模拟测试也直接喂构造好的文本。
 - **退出码**：没有 ✗ 为 0（可以有 ⚠）；有 ✗ 或连不上为 1；参数错误为 2。文本模式最后一行固定是 `VERIFY-SUMMARY host=… ok=N warn=N fail=N result=PASS|WARN|FAIL`。
-- 真机上按装了多少东西大约 40 多项（09-25 装着 KOReader 时是 44 项；09-29 撤掉 koreader-serve 和侧栏入口后少了几项，没在真机上重新数过）。
-- **退役遗留报警**（2026-09-30）：已退役或旧命名的单元（manifest 的 `SHELF_LEGACY_UNITS`：`koreader-serve`、`shelf-gateway`）单元或二进制还在报 ⚠；qrr 目录里还有侧栏入口 `koreader-sidebar-entry.qmd` 报 ⚠，如果 appload 已不在则报 ✗（它 IMPORT 的 AppLoad 模块找不到，Sidebar 补丁失效）。清法见 [`INSTALL.md`「装之前」](../docs/INSTALL.md#装之前)。
+- 真机上的项数随装了多少东西变：09-25 装着 KOReader 时 44 项；09-30 14:10 为 39 项（38✓ 1⚠）；09-30 15:23 移除电池刺客与手写优化后为 37 项（36✓ 1⚠ 0✗，⚠ 是开机不足 600 秒）。
+- **退役遗留报警**（2026-09-30）：已退役或旧命名的单元（manifest 的 `SHELF_LEGACY_UNITS`：`koreader-serve`、`shelf-gateway`）单元或二进制还在报 ⚠；qrr 目录里还有侧栏入口 `koreader-sidebar-entry.qmd` 报 ⚠，如果 appload 已不在则报 ✗（它 IMPORT 的 AppLoad 模块找不到，Sidebar 补丁失效）。清法见 [`INSTALL.md`「从旧版升级」](../docs/INSTALL.md#从旧版升级清理已移除的组件)。
 - **已移除功能的残留报警**（2026-09-30）：`battop.service`/`battop.timer` 单元或 `/home/root/battop/battop` 还在（节 8，不计入在位统计）、`extensions.d/hw-stroke.so` 还在（节 2，不再当正常扩展判）、待换入区里有 `hw-stroke.so`（节 2），都报 ⚠，并给出清理命令：重跑 `install-all.sh`，或 `uninstall-all.sh --skip <uninstall_only_skip 的结果>` 后整机重启。
 
 | 节 | 核什么 | ✗ | ⚠ |
@@ -293,6 +300,7 @@ sh verify-on-device.sh --from d.txt        # 不连设备，离线重判存下�
 
 ```sh
 bash packaging/tests/run_sim_tests.sh      # 2026-09-30 移除 battop/hw-stroke 后实跑 356 项断言全过（第五轮审计后是 343 项）；也由 tests/test_install_scripts_sim.py 经 pytest 调用
+git ls-files -z '*.sh' | xargs -0 shellcheck --severity=warning   # 全仓库 32 个 .sh（09-30 移除两样后；之前 39 个），零告警
 ```
 
 **做法**：`tests/stubs/` 下放假的 `ssh`/`scp`/`systemctl`/`mount`/`dmsetup`/`id`/`sleep`/`curl`/`journalctl`/`dmesg`/`timedatectl` 塞进 `PATH`，用临时目录当"设备"。假 `ssh` 把远端命令直接在本机沙箱里执行，所以设备端脚本（`devlib.sh`、`shelf/install.sh`、各 heredoc）跑的是**真代码**，只是 rootfs/systemd/mount 被桩住并写日志，可以断言"有没有 remount rw、最后一次 mount 是不是 ro、有没有 `xovi/start`、有没有 `systemctl reboot`"。**拒绝以 root 运行**（设 `CJ_SIM_ALLOW_ROOT=1` 才强行跑），并在最后核对没碰真实 HOME（2026-09-30 起按路径 + mtime 核：无新增、无删除、原有文件的 mtime 不变）。
@@ -314,7 +322,7 @@ bash packaging/tests/run_sim_tests.sh      # 2026-09-30 移除 battop/hw-stroke 
 
 这些是本机模拟，**不能代替真机验证**。
 
-**CI 现状**：`.github/workflows/ci.yml` 会跑 shellcheck、这套模拟测试、各 Rust crate 的 `cargo test` 与交叉编译冒烟。但 GitHub Actions 从 2026-09-20 起因账户扣费失败，每次几秒内就失败、**没有执行任何检查**（`gh run list` 可见，2026-09-25 仍如此）。这段时间靠本地在干净 checkout 里跑同样的检查；别把"push 了没报错"当成"测过了"。
+**CI 现状**：`.github/workflows/ci.yml` 会跑 shellcheck、这套模拟测试、各 Rust crate 的 `cargo test` 与交叉编译冒烟。但 GitHub Actions 从 2026-09-20 起因账户扣费失败，每次几秒内就失败、**没有执行任何检查**（`gh run list` 可见，2026-09-30 仍如此：每次 3–4 秒失败）。这段时间靠本地在干净 checkout 里跑同样的检查；别把"push 了没报错"当成"测过了"。
 
 ## 固件升级（OTA）之后
 
@@ -347,7 +355,8 @@ bash packaging/tests/run_sim_tests.sh      # 2026-09-30 移除 battop/hw-stroke 
 
 | 主题 | 日期 | 结论 |
 |---|---|---|
-| 整轮 `install-all.sh` | 09-11（当时八步）、09-22、09-24、09-25（先整轮卸载再全新安装，途中踩到"停 xochitl 会崩"，改为整机重启后复核） | 通过：9 个服务健康、`NRestarts` 0、hook 全部"安装完成" |
+| 整轮 `install-all.sh` | 09-11（当时八步）、09-22、09-24、09-25（先整轮卸载再全新安装，途中踩到"停 xochitl 会崩"，改为整机重启后复核）、09-30 15:23 | 通过：9 个服务健康、`NRestarts` 0、hook 全部"安装完成"。09-30 这轮用的是第四、五轮审计与移除两样之后的脚本：自动清掉电池刺客（单元 + `/home/root/battop`）与 `hw-stroke.so`，**只整机重启一次**；核对 36✓ 1⚠（刚开机）0✗，`/usr` 单元 12/12，9 个常驻服务 RSS 1–4.5MB、开机后 7–9 秒起齐，设备二进制 md5 与本地构建一致，xochitl maps 里已无 `hw-stroke.so`，日志无 warning 以上 |
+| 单独 `deploy.sh`（书架整包） | 09-30 14:10 | 通过：部署第五轮审计版后整机重启，核对 38✓ 1⚠（刚开机）0✗；09-29 手动卸载的遗留查过，无残留（所以 verify 的"退役遗留报警"分支本身没在真机触发过） |
 | 整轮 `uninstall-all.sh` | 09-25 | 通过：8 步逆序全部成功；`/usr` 单元、服务二进制、两个扩展、qmd 全部清掉，端口释放，书架/笔记数据保留；卸载期间 xochitl 不重启，被删的 `.so` 在 maps 里变成 `(deleted)`——**删掉正被映射的 `.so` 本身不崩**。小尾巴：09-20 之前的手工备份 `*.bak.pre-*` 卸载器不认识、没动；`SleepScreenPath` 被运行中的 xochitl 写回 |
 | 生效方式：换入后整机重启 | 09-25 | 通过：只卸 `hl-snap` → `deploy-hl-snap.sh` 换入、打印 `CJ-APPLY-REBOOTING`、`systemctl reboot`；约 20 秒回来，上次关机无 SEGV / core dump / 应急服务，hook "安装完成"，`verify-on-device.sh` 43 ✓。同一次顺带核了 lo-alias：没插 USB 冷启动，`10.11.99.1` 挂上 `lo` 与 `usb1`，xochitl :80 已绑定 |
 | 部署后自动核对 | 09-25 | `verify-on-device.sh` 首次真机（busybox）：44 项全部采集到、判定正确，`panic=2` 误报已排除。**`run_apply` 自动等重启并核对**这一段只有本机模拟 |
@@ -365,9 +374,8 @@ bash packaging/tests/run_sim_tests.sh      # 2026-09-30 移除 battop/hw-stroke 
 - **待换入区的边角**：设备中途重启后仍算待生效；`xovi-reenable` 开机时的 `ExecStartPre` 换入（09-25 新增）；`xovi-reenable` 在 xovi 已生效时被 `ExecCondition` 跳过。
 - **卸载的边角**：dm-verity 保留分支、`--purge`、撤掉待换入 `.so`。
 - **其它**：汇总第四栏"前置条件不满足"；rw 窗口补 SIGPIPE；verity 下 `wifi-watch` 脚本更新后重启服务；`cj_backup_if_differs`；`deploy.sh` 推送前核对与密码文件兜底清理；`battop.new` 原子 rename 的新部署流程。
-- **2026-09-25 下午第四轮审计的全部脚本改动**：推送合批、`install-all` 只查一次连通（`CJ_DEVICE_OK`）、`systemctl reboot` 失败分支、`battop` 在 dm-verity 下的两支、直接装扩展时撤掉过时的待换入版本、`chrony-boot-wakelock` 收到 TERM 即退出、`chrony-cn`/`timezone-cn` 写底层失败即报错、`step_payload` 共用清单。都只有本机模拟（314 项）与代码审查。
-- **2026-09-30 移除 battop / hw-stroke 的全部脚本改动**（`removal.sh`、`install-all` 自动清理、verify 残留报警）：只有本机模拟（356 项）与代码审查，**没部署、没上真机**。
-- **2026-09-30 第五轮审计的全部脚本改动**：推送只传有变化的文件、书架载荷只带要装的服务、`shelf/install.sh --only` 刷新卸载清单、卸载非空目录不中断、`wifi-watch` 状态文件/`battop.timer`/悬空旧链接清理、verify 的退役遗留报警，以及删掉 `sidebar-entry` 安装件后 `uninstall-all` 仍能清旧设备。只有本机模拟（343 项）与代码审查，**没部署、没上真机**。
+- **2026-09-25 下午第四轮审计的脚本改动中没在真机走到的分支**：`systemctl reboot` 失败分支、`battop` 在 dm-verity 下的两支（battop 已移除）、直接装扩展时撤掉过时的待换入版本、`chrony-boot-wakelock` 收到 TERM 即退出、`chrony-cn`/`timezone-cn` 写底层失败即报错。只有本机模拟与代码审查。推送合批、`install-all` 只查一次连通（`CJ_DEVICE_OK`）、`step_payload` 共用清单随 09-30 的整轮 `install-all` 跑过。
+- **2026-09-30 移除 battop / hw-stroke、第五轮审计的脚本改动中，没在真机走到的分支**：`uninstall-all` 只清这两样；dm-verity 下保留 battop 目录；battop 目录是符号链接时拒删；verify 的残留/退役遗留 ⚠/✗；卸载非空目录不中断、`wifi-watch` 状态文件与悬空旧链接清理；`--only` 刷新卸载清单；删掉 `sidebar-entry` 安装件后 `uninstall-all` 仍能清旧设备。只有本机模拟（356 项）与代码审查。`install-all` 主路径（自动清理、推送只传有变化的文件、书架载荷只带要装的服务）已在 09-30 15:23 真机跑过，见上表。
 - **enhance 两个扩展的构建改动**（09-25）：`hl-snap` / `handwriting-stroke` 的 Makefile 加了 `-ffile-prefix-map`（去掉 `.so` 调试信息里的本机路径），反汇编与旧版一致；09-25 已真机部署（这也是"有变化的 `.so` → 待换入区 → 整机重启换入"第一次真机走通，3 个 hook 安装完成，verify 43✓ 0✗）。
 
 ### 踩过的坑（已修）
