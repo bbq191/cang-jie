@@ -32,5 +32,6 @@ xovi_glue.c:
 glue:
 	python3 $(XOVIGEN) -o xovi_glue.c -H xovi_glue.h -a aarch64 hl-snap.xovi
 
+# 不删 xovi_glue.{c,h}：它们已提交进仓库，删了之后没有 xovi clone 就再也编不出来（见上）。
 clean:
-	rm -f hl-snap.so xovi_glue.c xovi_glue.h
+	rm -f hl-snap.so
