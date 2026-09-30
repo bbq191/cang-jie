@@ -35,6 +35,9 @@ const refreshSec=sec=>{if(!sec.refresh)return;(sec._rf||(sec._rf=coalesce(async(
    跟这里是同一件事的第二份实现，改成在这层之外只叠列表特有的按钮文案/本地忙态记账。已经自己
    一开始就手动 disabled=true 的按钮（超限/未安装这类"根本点不了"，不是"点了在跑"）不需要套这层。*/
 const guardClick=(el,fn)=>{el.onclick=async()=>{if(el.disabled)return;el.disabled=true;try{await fn()}catch(e){console.error(e);toast(T('common.failed'))}finally{el.disabled=false}}};
+/* 按钮：`btn(文案, 点击处理, 类名)`——el('button')+guardClick 这一对全站出现二十来次，收成一处。点击处理可同步可异步
+   （guardClick 统一防双击、异常提示）；文案可以是字符串或节点数组（底部栏的"标签+数量角标"）；extra 放 title 等其余属性。 */
+const btn=(text,fn,cls='btn',extra)=>{const b=el('button',{class:cls,type:'button',...extra},typeof text==='string'?null:text);if(typeof text==='string')b.textContent=text;if(fn)guardClick(b,fn);return b};
 /* 轻量 DOM 构建 helper：`el('div',{class:'small',style:'...'},[child1,child2])`。`attrs` 里
    `class`/其余属性走 `setAttribute`，`style` 走 `style.cssText`，`text`/`html` 分别设
    `textContent`/`innerHTML`；`children` 接单个节点/字符串或数组。不是要把全站手写 DOM 都机械
@@ -85,15 +88,13 @@ const modal=(cancelValue,build,onKey)=>new Promise(resolve=>{
    `if(await confirmDialog(msg))`）；点"是"/`Enter`/取消按钮外没有对应处理，点遮罩/`Esc`/"否"
    都算取消，跟原生 confirm() 的"确定/取消"行为对齐。 */
 const confirmDialog=msg=>modal(false,close=>{
-  const yesBtn=el('button',{class:'btn pri',text:T('common.yes')});yesBtn.onclick=()=>close(true);
-  const noBtn=el('button',{class:'btn',text:T('common.no')});noBtn.onclick=()=>close(false);
+  const yesBtn=btn(T('common.yes'),()=>close(true),'btn pri'),noBtn=btn(T('common.no'),()=>close(false));
   return {nodes:[el('div',{class:'confirm-msg',text:msg}),el('div',{class:'confirm-actions'},[noBtn,yesBtn])],focus:()=>yesBtn.focus()};
 },(e,close)=>{if(e.key==='Enter')close(true)});
 /* 输入框版的 confirmDialog：返回 `Promise<string|null>`（取消 = null）。给改名这类"要用户敲一个值"的操作用。 */
 const promptDialog=(msg,value='')=>{const inp=el('input',{type:'text',class:'confirm-input'});inp.value=value;
   return modal(null,close=>{
-    const yesBtn=el('button',{class:'btn pri',text:T('common.ok')});yesBtn.onclick=()=>close(inp.value);
-    const noBtn=el('button',{class:'btn',text:T('common.cancel')});noBtn.onclick=()=>close(null);
+    const yesBtn=btn(T('common.ok'),()=>close(inp.value),'btn pri'),noBtn=btn(T('common.cancel'),()=>close(null));
     return {nodes:[el('div',{class:'confirm-msg',text:msg}),inp,el('div',{class:'confirm-actions'},[noBtn,yesBtn])],focus:()=>{inp.focus();inp.select()}};
   },(e,close)=>{if(e.key==='Enter')close(inp.value)})};
 /* 轻量记忆：per-viewer 便利态，隐私窗口/禁用 storage 时静默回默认 */
@@ -135,13 +136,15 @@ document.addEventListener('click',e=>{const b=e.target.closest('.badge[title]');
 async function j(url,opt){let r;try{r=await fetch(url,opt)}catch(e){console.error(e);return {ok:false,message:T('common.networkError')}}if(r.status===401){location.href='/login?next='+encodeURIComponent(location.pathname);return {ok:false,message:T('common.needLogin')}}if(r.status===403){location.href='/password';return {ok:false,message:T('common.needChangePassword')}}
   const httpErr=T('common.httpErr',{status:r.status});
   let d;try{d=await r.json()}catch{d={ok:false,message:httpErr}}if(!r.ok&&d.ok!==false)d={ok:false,message:d.message||httpErr};return d}
-/* 带 JSON body 的请求：`jsend(url,'PUT',{a:1})`——全站 POST/PUT 带 body 的调用共用，不再各处手写 `{method,body:JSON.stringify}`。 */
-const jsend=(url,method,body)=>j(url,{method,body:JSON.stringify(body)});
-/* 开关复选框绑定 PUT：勾选即 PUT `{key:checked}`，期间禁用；失败弹 toast 并把勾选还原。「系统增强」/「实验室」的开关共用。 */
+/* 带 JSON body 的请求：`jsend(url,'PUT',{a:1})`；省略 body＝不带请求体（`jsend(url,'POST')`）。全站非 GET 调用共用。 */
+const jsend=(url,method,body)=>j(url,body===undefined?{method}:{method,body:JSON.stringify(body)});
+/* 同 jsend，失败时顺手弹 toast（服务端给的 message，没有就用 failKey 的文案），返回应答照常给调用方判断。
+   全站"发请求 → 失败提示"都走它（postJ / bindToggle / 模型面板 / 删除按钮…），不再各处手写同一句。 */
+const sendT=async(url,method,body,failKey='common.failed')=>{const r=await jsend(url,method,body);if(r.ok===false)toast(r.message||T(failKey));return r};
+const postJ=(url,body)=>sendT(url,'POST',body);
+/* 开关复选框绑定 PUT：勾选即 PUT `{key:checked}`，期间禁用；失败弹 toast 并把勾选还原。「系统增强」/「实验室」/字体加粗/合书自动转写共用。 */
 const bindToggle=(box,url,key)=>{box.onchange=async()=>{const want=box.checked;box.disabled=true;
-  let r;try{r=await jsend(url,'PUT',{[key]:want})}catch(e){console.error(e);r={ok:false}}finally{box.disabled=false}
-  if(r.ok===false){toast(r.message||T('common.saveFailed'));box.checked=!want}}};
-const postJ=async(url,body)=>{const r=await jsend(url,'POST',body);if(r.ok===false)toast(r.message||T('common.failed'));return r};
+  const r=await sendT(url,'PUT',{[key]:want},'common.saveFailed');box.disabled=false;if(r.ok===false)box.checked=!want}};
 
 /* 上传区 HTML（拖放框 + 隐藏 input + 队列 + 按钮），一处生成、各页复用；uploader() 认这个 .up 容器 */
 const upHtml=(icon,label,ext,btn)=>`<div class="up"><div class="drop"><span class="big">${icon}</span>${label}</div><input type="file" multiple hidden accept="${ext.join(',')}"><ul class="q"></ul><div class="row"><button class="btn pri go">${btn}</button></div></div>`;
@@ -150,7 +153,7 @@ const upHtml=(icon,label,ext,btn)=>`<div class="up"><div class="drop"><span clas
 function uploader(box,urlOf,queryOf,okExt,onFinish,dedupeApi){
   const list=$('ul.q',box), input=$('input[type=file]',box), drop=$('.drop',box), go=$('.go',box);
   let files=[], sum=null, busy=false;
-  const clr=el('button',{type:'button',class:'btn',text:T('common.clear')});clr.onclick=()=>{files=[];render()};go.after(clr);
+  const clr=btn(T('common.clear'),()=>{files=[];render()});go.after(clr);
   const summary=()=>{if(!sum){sum=el('div',{class:'small',style:'margin:.3em 0'});list.parentNode.insertBefore(sum,list)}
     const ok=files.filter(f=>f.st==='ok').length,bad=files.filter(f=>f.st==='bad').length;
     sum.innerHTML=files.length?T('common.uploadSummary',{ok,total:files.length,badPart:bad?T('common.uploadBadPart',{bad}):''}):'';};
@@ -210,8 +213,7 @@ function fillList(ul,items,row,emptyMsg){ul.innerHTML='';if(!items.length){ul.in
   items.forEach(it=>{const li=el('li'),left=el('span'),right=el('span',{class:'small',style:'display:flex;align-items:center;gap:.4em;flex-wrap:wrap'});
     row(it,left,right,li);li.append(left,right);ul.appendChild(li)})}
 /* 删除按钮：confirmDialog → DELETE → 刷新 */
-function delBtn(msg,url,refresh){const d=el('button',{class:'btn',text:T('action.delete')});
-  guardClick(d,async()=>{if(await confirmDialog(msg)){const r=await j(url,{method:'DELETE'});if(r.ok===false)toast(r.message);refresh()}});return d}
+const delBtn=(msg,url,refresh)=>btn(T('action.delete'),async()=>{if(await confirmDialog(msg)){await sendT(url,'DELETE');refresh()}});
 const cjkBadge=p=>p==null?'':`<span class="badge ${p>=80?'on':(p>=8?'':'off')}" title="${T('common.cjkCoverageTitle')}">${T('common.cjkCoverage',{pct:p})}</span>`;
 
 /* 母版库怎么用：三步走 + 收哪些格式 + 加入 xochitl 适合什么书（2026-09-29 起设备只剩 xochitl 一个阅读器，
@@ -280,8 +282,7 @@ function stgRow(it,ctx){
     renderStepProgress(main,{label:ctx.batchQueued.has(it.name)?T('stg.batch.queuedHere'):T('transfer.staging.progress.queued')});
   }
   // 行内按钮（只有停止/取消排队两种）：guardClick 防双击，点完刷新。
-  const act=(t,fn)=>{const x=el('button',{class:'btn btn-bad',text:t});
-    guardClick(x,async()=>{x.textContent=t+'…';await fn();ctx.refresh()});return x};
+  const act=(t,fn)=>{const x=btn(t,async()=>{x.textContent=t+'…';await fn();ctx.refresh()},'btn btn-bad');return x};
   // 列表只显示书名/类型/大小/状态/进度；**所有操作**（优化/加入 xochitl/删除/全部中止）由勾选后的底部操作栏统一控制
   // （用户 2026-09-20 明确要求）。行内唯一的按钮：这本书正在处理/排队时的「停止」。
   const doStop=async()=>{const r=await postJ('/api/books/staging/cancel',{name:it.name});if(r.ok!==false)toast(r.message,r.cancelled?'ok':'warn',5000)};
@@ -383,18 +384,18 @@ function renderTransfer(sec){sec.innerHTML=`
     // 四个筛选统一都带数量（数量 = 该筛选下的书本数，与"隐藏已完成"开关无关）。
     const cnt={all:items.length,todo:items.filter(stgIsTodo).length,done:items.filter(it=>!!it.optimized).length,finished:items.filter(isBookDone).length};
     [['all','stg.chip.all'],['todo','stg.chip.todo'],['done','stg.chip.done'],['finished','stg.chip.finished']].forEach(([k,key])=>{
-      const b=el('button',{class:'chip'+(st===k?' on':''),type:'button',text:T(key,{n:cnt[k]})});b.onclick=()=>{st=k;LS.set('stgSt',k);page=1;render()};chips.appendChild(b)})};
+      chips.appendChild(btn(T(key,{n:cnt[k]}),()=>{st=k;LS.set('stgSt',k);page=1;render()},'chip'+(st===k?' on':'')))})};
   const renderPager=(total)=>{const box=g('stgpager');box.innerHTML='';if(total<=0)return;
     const pages=Math.max(1,Math.ceil(total/pageSize));const from=(page-1)*pageSize+1,to=Math.min(total,page*pageSize);
     const go=p=>{page=Math.min(pages,Math.max(1,p));render();g('stglist').scrollIntoView({block:'start'})};
-    const prev=el('button',{class:'btn',type:'button',text:'‹ '+T('stg.pager.prev')});prev.disabled=page<=1;prev.onclick=()=>go(page-1);
-    const next=el('button',{class:'btn',type:'button',text:T('stg.pager.next')+' ›'});next.disabled=page>=pages;next.onclick=()=>go(page+1);
+    const prev=btn('‹ '+T('stg.pager.prev'),()=>go(page-1));prev.disabled=page<=1;
+    const next=btn(T('stg.pager.next')+' ›',()=>go(page+1));next.disabled=page>=pages;
     box.appendChild(el('div',{class:'small stg-range',text:T('stg.pager.range',{from,to,total})}));
     const nav=el('div',{class:'stg-pgnav'},[prev]);
     // 页码：首页、当前页±1、末页，中间省略——宽屏显示数字，窄屏只留"第 x/y 页"
     const nums=[...new Set([1,page-1,page,page+1,pages].filter(p=>p>=1&&p<=pages))].sort((a,b)=>a-b);
     let last=0;const numbox=el('span',{class:'stg-pgnums'});
-    nums.forEach(p=>{if(last&&p-last>1)numbox.appendChild(el('span',{class:'small',text:'…'}));const b=el('button',{class:'btn'+(p===page?' pri':''),type:'button',text:String(p)});b.onclick=()=>go(p);numbox.appendChild(b);last=p});
+    nums.forEach(p=>{if(last&&p-last>1)numbox.appendChild(el('span',{class:'small',text:'…'}));numbox.appendChild(btn(String(p),()=>go(p),'btn'+(p===page?' pri':'')));last=p});
     nav.appendChild(numbox);nav.appendChild(el('span',{class:'small stg-pgtxt',text:T('stg.pager.page',{cur:page,total:pages})}));nav.appendChild(next);box.appendChild(nav);
     const sz=el('select',{'aria-label':T('stg.pager.size',{n:pageSize})});[25,50,100].forEach(n=>{const o=el('option',{value:String(n),text:T('stg.pager.size',{n})});if(n===pageSize)o.selected=true;sz.appendChild(o)});
     sz.onchange=()=>{pageSize=+sz.value;LS.set('stgPageSize',String(pageSize));page=1;render()};box.appendChild(sz)};
@@ -406,8 +407,7 @@ function renderTransfer(sec){sec.innerHTML=`
       const t=batchTitle(bs.action||'optimize');
       bar.appendChild(el('div',{class:'stgbar-main'},[el('b',{text:T('stg.batch.progress',{title:t,done:bs.done,total:bs.total})}),el('span',{class:'small',text:(bs.current?' · '+T('stg.batch.current',{name:stgClean(bs.current)}):'')+(bs.failed.length?' · '+T('stg.batch.failedN',{n:bs.failed.length}):'')})]));
       const p=el('progress');p.max=Math.max(1,bs.total);p.value=bs.done;bar.appendChild(p);
-      const stop=el('button',{class:'btn btn-bad',type:'button',text:T('stg.batch.stopAll')});
-      guardClick(stop,async()=>{const r=await postJ('/api/batch/stop',{});if(r.ok!==false)toast(T('stg.batch.stopped',{n:r.cleared||0}),'info');await refresh()});bar.appendChild(stop);
+      bar.appendChild(btn(T('stg.batch.stopAll'),async()=>{const r=await postJ('/api/batch/stop',{});if(r.ok!==false)toast(T('stg.batch.stopped',{n:r.cleared||0}),'info');await refresh()},'btn btn-bad'));
     }else if(picked.size){
       bar.hidden=false;bar.className='stgbar sel';
       // 第一行：已选数 + 清除；第二行：批量按钮等宽。按钮上直接标"可处理数"（已优化的再优化、非 EPUB/PDF 加入 xochitl 等会被跳过），
@@ -415,37 +415,35 @@ function renderTransfer(sec){sec.innerHTML=`
       const chosen=items.filter(it=>picked.has(it.name));
       const isBook=it=>it.format==='epub'||it.format==='pdf';
       const cnt={optimize:chosen.filter(stgIsTodo).length,deliver:chosen.filter(isBook).length};
-      const clr=el('button',{class:'btn',type:'button',text:T('stg.batch.clear')});clr.onclick=()=>{picked.clear();render()};
+      const clr=btn(T('stg.batch.clear'),()=>{picked.clear();render()});
       bar.appendChild(el('div',{class:'stgbar-top'},[el('b',{text:T('stg.selected',{n:picked.size})}),clr]));
       // 按钮排布（2026-09-24 用户要求手机上不折行）：第二行 = 处理/加入（主操作，等分一行）；第三行 = 单本操作 + 删除。
       // 文案 = 标签 + 数量角标；窄屏去掉"加入"前缀（.lbl-long），一行三个也放得下。
       const lbl=(key,n)=>{const f=document.createDocumentFragment();const t=T(key);const m=t.match(/^(加入 |Add to )(.*)$/);
         if(m){f.appendChild(el('span',{class:'lbl-long',text:m[1]}));f.appendChild(document.createTextNode(m[2]))}else f.appendChild(document.createTextNode(t));
         if(n!=null)f.appendChild(el('span',{class:'cnt',text:String(n)}));return f};
-      const mk=(a,pri)=>{const b=el('button',{class:'btn'+(pri?' pri':''),type:'button',title:T('stg.bar.'+a)+'（'+cnt[a]+'）'},[lbl('stg.bar.'+a,cnt[a])]);
-        if(!cnt[a]){b.disabled=true;b.title=T('stg.bar.noneApplicable')}else guardClick(b,()=>enqueue(a,{names:[...picked]}));return b};
+      const mk=(a,pri)=>{const b=btn([lbl('stg.bar.'+a,cnt[a])],cnt[a]?()=>enqueue(a,{names:[...picked]}):null,'btn'+(pri?' pri':''),{title:T('stg.bar.'+a)+'（'+cnt[a]+'）'});
+        if(!cnt[a]){b.disabled=true;b.title=T('stg.bar.noneApplicable')}return b};
       const btns=el('div',{class:'stgbar-btns'},[mk('optimize',true),mk('deliver')]);
       btns.style.setProperty('--cols',String(btns.children.length));
       const delN=chosen.filter(it=>!it.busy).length;
-      const del=el('button',{class:'btn btn-bad',type:'button',title:T('action.delete')+'（'+delN+'）'},[lbl('action.delete',delN)]);
-      guardClick(del,async()=>{
+      const del=btn([lbl('action.delete',delN)],async()=>{
         const names=chosen.filter(it=>!it.busy).map(it=>it.name),busyN=chosen.length-names.length;
         if(!names.length){toast(T('stg.bar.noneApplicable'),'warn');return}
         if(!await confirmDialog(T('stg.batch.deleteConfirm',{n:names.length})))return;
         let ok=0;for(const n of names){const r=await jsend('/api/books/staging/delete','POST',{name:n});if(r.ok!==false)ok++}
-        toast(T('stg.batch.deleted',{n:ok})+(busyN?T('stg.batch.deleteSkipped',{n:busyN}):''),ok?'ok':'warn');picked.clear();refresh()});
+        toast(T('stg.batch.deleted',{n:ok})+(busyN?T('stg.batch.deleteSkipped',{n:busyN}):''),ok?'ok':'warn');picked.clear();refresh()},'btn btn-bad',{title:T('action.delete')+'（'+delN+'）'});
       bar.appendChild(btns);
       const row3=el('div',{class:'stgbar-btns stgbar-sub'});
       // 只选了一本：再给「下载原件」「改名」（都是针对单本的操作，多选时不出现），删除排在同一行最右。
       if(chosen.length===1){const one=chosen[0];
         const dl=el('a',{class:'btn',href:'/api/books/staging/file?name='+encodeURIComponent(one.name),download:one.name,text:T('stg.bar.download')});
-        const rn=el('button',{class:'btn',type:'button',text:T('stg.bar.rename')});
-        if(one.busy){rn.disabled=true;rn.title=T('stg.bar.busy')}
-        else guardClick(rn,async()=>{const ext='.'+one.name.split('.').pop();
+        const rn=btn(T('stg.bar.rename'),one.busy?null:async()=>{const ext='.'+one.name.split('.').pop();
           const v=await promptDialog(T('stg.rename.prompt',{ext}),one.name.slice(0,-ext.length));
           if(v==null||!v.trim())return;
           const r=await postJ('/api/books/staging/rename',{name:one.name,newName:v.trim()});
           if(r.ok!==false){picked.clear();picked.add(r.name);toast(T('stg.rename.done',{name:r.name}),'ok')}refresh()});
+        if(one.busy){rn.disabled=true;rn.title=T('stg.bar.busy')}
         row3.append(dl,rn)}
       row3.append(del);row3.style.setProperty('--cols','3');bar.appendChild(row3);
     }else if(bs.total&&sig!==dismissedSig){
@@ -453,7 +451,7 @@ function renderTransfer(sec){sec.innerHTML=`
       const fail=bs.failed.length;
       bar.appendChild(el('div',{class:'stgbar-main'},[el('span',{text:T('stg.batch.finished',{title:batchTitle(bs.action||'optimize'),ok:bs.done-fail,fail})})]));
       if(fail)bar.appendChild(el('details',{class:'small stgbar-fails'},[el('summary',{text:T('stg.batch.failedN',{n:fail})}),el('div',{html:bs.failed.map(f=>`<div>${esc(stgClean(f.name))}：${esc(f.message)}</div>`).join('')})]));
-      const x=el('button',{class:'btn',type:'button',text:T('stg.batch.dismiss')});x.onclick=()=>{dismissedSig=sig;renderBar()};bar.appendChild(x);
+      bar.appendChild(btn(T('stg.batch.dismiss'),()=>{dismissedSig=sig;renderBar()}));
     }else{bar.hidden=true}};
   const render=()=>{
     const list=filtered();const pages=Math.max(1,Math.ceil(list.length/pageSize));if(page>pages)page=pages;
@@ -497,10 +495,8 @@ function renderTransfer(sec){sec.innerHTML=`
   const renderOriginals=list=>{const box=g('stgorig'),ul=g('stgoriglist');box.hidden=!list.length;if(!list.length)return;
     g('stgorigsum').textContent=T('stg.orig.summary',{n:list.length});ul.innerHTML='';
     list.forEach(o=>{const days=Math.max(0,Math.ceil((o.expiresAt-Date.now()/1000)/86400));
-      const restore=el('button',{class:'btn',type:'button',text:T('stg.orig.restore')});
-      guardClick(restore,async()=>{const r=await postJ('/api/books/staging/originals/restore',{name:o.name});if(r.ok!==false)toast(T('stg.orig.restored',{name:o.name}),'ok');refresh()});
-      const del=el('button',{class:'btn btn-bad',type:'button',text:T('action.delete')});
-      guardClick(del,async()=>{if(!await confirmDialog(T('stg.orig.deleteConfirm',{name:o.name})))return;const r=await postJ('/api/books/staging/originals/delete',{name:o.name});if(r.ok!==false)toast(T('stg.orig.deleted'),'ok');refresh()});
+      const restore=btn(T('stg.orig.restore'),async()=>{const r=await postJ('/api/books/staging/originals/restore',{name:o.name});if(r.ok!==false)toast(T('stg.orig.restored',{name:o.name}),'ok');refresh()});
+      const del=btn(T('action.delete'),async()=>{if(!await confirmDialog(T('stg.orig.deleteConfirm',{name:o.name})))return;const r=await postJ('/api/books/staging/originals/delete',{name:o.name});if(r.ok!==false)toast(T('stg.orig.deleted'),'ok');refresh()},'btn btn-bad');
       ul.appendChild(el('li',{class:'stg-row'},[el('div',{class:'stg-main'},[el('div',{class:'stg-name',title:o.name,text:o.name}),el('div',{class:'stg-meta small',text:fmtB(o.bytes)+' · '+T('stg.orig.left',{days})})]),el('div',{class:'stg-actions'},[restore,del])]))})};
   uploader($('.up',sec),()=>'/api/books/staging',()=>({}),BOOK_EXT,()=>refresh(),'/api/books/staging');   // 书籍格式原样入库；选中即按 BOOK_EXT 拦；传 dedupeApi 防重传出重复
   const am=g('artmsg'),au=g('arturl'),ag=g('artgo'),ao=g('artopt');
@@ -529,7 +525,7 @@ const TABS={
      // 中文缺字回退链：覆盖率≥8% 的中文字体，按覆盖率降序
      const cjk=(fl.items||[]).filter(it=>((it.extra||{}).cjkPct||0)>=8).sort((a,b)=>(b.extra.cjkPct||0)-(a.extra.cjkPct||0));
      const fb=$('#fbchain',sec);fb.style.display='';fb.innerHTML=cjk.length?T('assets.fonts.fallbackChain',{chain:cjk.map(it=>`${esc(it.name)} <span class="small">${esc(it.extra.cjkPct)}%</span>`).join(' → ')}):T('assets.fonts.noCjkWarn');
-     const fst=await j('/api/fonts/status');const eb=$('#embold',sec);if(fst.ok){eb.checked=!!fst.emboldenCjkFallback;eb.onchange=async()=>{const r=await jsend('/api/fonts/config','PUT',{emboldenCjkFallback:eb.checked});if(r.ok===false){toast(r.message);eb.checked=!eb.checked}}}},
+     const fst=await j('/api/fonts/status');const eb=$('#embold',sec);if(fst.ok){eb.checked=!!fst.emboldenCjkFallback;bindToggle(eb,'/api/fonts/config','emboldenCjkFallback')}},
    row:(it,left,right,refresh)=>{const ex=it.extra||{};
      left.innerHTML=`${esc(it.name)}${ex.names&&ex.names.cn&&ex.names.cn!==it.name?' <span class="small">'+esc(ex.names.cn)+'</span>':''}${ex.files&&ex.files.length>1?' <span class="small">×'+ex.files.length+'</span>':''}`;
      right.insertAdjacentHTML('beforeend',cjkBadge(ex.cjkPct)+(ex.fontconfigRef?`<span title="${T('assets.fonts.fallbackRefTitle')}">⚠</span>`:''));
@@ -539,14 +535,14 @@ const TABS={
    header:`<label class="field">${T('wallpaper.rotateLabel')}</label><div class="row"><select id="wpmode" style="max-width:12em"><option value="sequential">${T('wallpaper.mode.sequential')}</option><option value="random">${T('wallpaper.mode.random')}</option><option value="fixed">${T('wallpaper.mode.fixed')}</option></select><span id="wpst" class="small"></span></div>`,
    icon:'🖼',label:T('wallpaper.dropLabel'),accept:IMG_EXT,btn:T('wallpaper.btn'),
    onRender:async(sec,refresh)=>{const st=await j('/api/wallpapers/status');const sel=$('#wpmode',sec);if(st.ok){sel.value=st.mode;const nv=st.native||{};$('#wpst',sec).textContent=T('wallpaper.status',{current:st.current||T('wallpaper.none'),nativeState:nv.enabled?T('wallpaper.nativeEnabled'):T('wallpaper.nativeDisabled'),restartNote:nv.restartPending?T('wallpaper.restartNote'):''})}
-     sel.onchange=async()=>{const r=await jsend('/api/wallpapers/mode','PUT',{mode:sel.value});if(r.ok===false){toast(r.message||T('wallpaper.switchFailed'));return}refresh()}},
+     sel.onchange=async()=>{if((await sendT('/api/wallpapers/mode','PUT',{mode:sel.value},'wallpaper.switchFailed')).ok!==false)refresh()}},
    row:(it,left,right,refresh)=>{const cur=(it.extra||{}).current;
      // alt="" 原来把这张图当装饰性处理，但壁纸缩略图本身就是内容（"这张壁纸长什么样"），屏幕阅读器
      // 会整个跳过（2026-09-09 审计发现）；文件名本身当描述最直接，跟右边视觉上显示的文字一致。
      left.style.cssText='display:flex;align-items:center;gap:.6em'; // 缩略图固定在左、长文件名在右侧自己折行，不绕着图片流
      left.innerHTML=`<img src="/api/wallpapers/${encodeURIComponent(it.name)}" alt="${esc(T('wallpaper.thumbAlt',{name:it.name}))}" loading="lazy" style="height:3.4em;flex:none;border-radius:.3em;border:1px solid var(--line)"><span style="min-width:0">${esc(it.name)}</span>`;
      right.insertAdjacentHTML('beforeend',`<span>${fmtB(it.bytes)}</span>`+(cur?`<span class="badge on">${T('wallpaper.current')}</span>`:''));
-     if(!cur){const b=el('button',{class:'btn',text:T('wallpaper.use')});guardClick(b,async()=>{const r=await jsend('/api/wallpapers/current','PUT',{name:it.name});if(r.ok===false){toast(r.message||T('wallpaper.setFailed'));return}refresh()});right.appendChild(b);
+     if(!cur){right.appendChild(btn(T('wallpaper.use'),async()=>{if((await sendT('/api/wallpapers/current','PUT',{name:it.name},'wallpaper.setFailed')).ok!==false)refresh()}));
        right.appendChild(delBtn(T('wallpaper.deleteConfirm',{name:it.name}),'/api/wallpapers/'+encodeURIComponent(it.name),refresh))}}})}}
 };
 
@@ -768,8 +764,7 @@ function renderNotes(sec){sec.innerHTML=`
     if(!items.length){toast(T('notes.trash.noneToPurge'),'warn');return}
     if(!await confirmDialog(T('notes.trash.confirmPurge',{count:items.length})))return;
     await flushPendingText();
-    const r=await j(bookApi('ink',`/purge`),{method:'POST'});
-    if(r.ok===false){toast(r.message||T('notes.trash.purgeFailed'));return}
+    if((await sendT(bookApi('ink',`/purge`),'POST',undefined,'notes.trash.purgeFailed')).ok===false)return;
     book=await j(bookApi('ink'));renderTrash();refresh()});
   /* 「不要了」（三期）：转 Archived，两处投影都摘掉，条目库里软删留痕（真删靠「回收站」清空）。 */
   const archiveEntry=async(id)=>{if(!await confirmDialog(T('notes.confirmArchive')))return;
@@ -864,7 +859,7 @@ function renderNotes(sec){sec.innerHTML=`
     exportTabsEl.querySelectorAll('button').forEach(b=>b.classList.toggle('on',b.dataset.etab===exportTab));
     const visibleKeys=exportTab==='pending'?pendingKeys:syncedKeys;
     chaptertabs.innerHTML='';
-    visibleKeys.forEach(k=>{const b=el('button',{class:k===selectedChapter?'on':'',text:k<0?T('notes.unfiledChapter'):T('notes.chapterHeading',{n:k+1})});b.onclick=()=>{selectedChapter=k;renderBook()};chaptertabs.appendChild(b)});
+    visibleKeys.forEach(k=>chaptertabs.appendChild(btn(k<0?T('notes.unfiledChapter'):T('notes.chapterHeading',{n:k+1}),()=>{selectedChapter=k;renderBook()},k===selectedChapter?'on':'')));
     chapterbody.innerHTML='';
     if(selectedChapter==null){
       // 2026-09-09 审计修：pendingKeys 为空有两种完全不同的原因——"这本书压根没有条目被转入笔记过"
@@ -1060,9 +1055,9 @@ function mountModelPanel(root,seg,title,icon,showAuto){
     <div class="small" data-stat style="margin-top:.3em;overflow-wrap:anywhere"></div>`;
   root.appendChild(card);
   const vendorSel=card.querySelector('[data-vendor]'),modelBox=card.querySelector('[data-modelbox]'),presetSel=card.querySelector('[data-preset]'),customBox=card.querySelector('[data-custom]'),modelInp=card.querySelector('[data-model]'),urlInp=card.querySelector('[data-url]'),keyRow=card.querySelector('[data-keyrow]'),stat=card.querySelector('[data-stat]'),autoBox=card.querySelector('[data-auto]'),priceIn=card.querySelector('[data-pricein]'),priceOut=card.querySelector('[data-priceout]'),usageBody=card.querySelector('[data-usagebody]');
-  const put=body=>jsend(`/api/${seg}/config`,'PUT',body);
+  const cfgUrl=`/api/${seg}/config`;
   // 「改一项配置 → 失败弹 toast → 无论成败都重画」：厂家/模型/密钥/自定义/单价这几个动作共用。
-  const putR=async(body,failKey='common.failed')=>{const r=await put(body);if(r.ok===false)toast(r.message||T(failKey));refresh()};
+  const putR=async(body,failKey)=>{await sendT(cfgUrl,'PUT',body,failKey);refresh()};
   const fmtCost=c=>c==null?T('models.noPrice'):'¥'+c.toFixed(4);
   let presets=[];
   const modelsOf=v=>presets.filter(p=>p.provider===v);
@@ -1083,7 +1078,7 @@ function mountModelPanel(root,seg,title,icon,showAuto){
     keyRow.innerHTML=c.hasKey
       ?`<span class="small">${T('models.keySaved',{key:esc(c.keyMasked||'••••')})}</span><button class="btn" data-delkey>${T('action.delete')}</button>`
       :`<input type="password" placeholder="${T('models.keyInputPlaceholder')}" data-keyinput style="flex:1;min-width:11em" autocomplete="off"><button class="btn pri" data-savekey>${T('models.saveKeyBtn')}</button>`;
-    if(autoBox){autoBox.checked=!!c.auto;autoBox.onchange=async()=>{const r=await put({auto:autoBox.checked});if(r.ok===false){toast(r.message||T('common.failed'));autoBox.checked=!autoBox.checked}}}
+    if(autoBox){autoBox.checked=!!c.auto;bindToggle(autoBox,cfgUrl,'auto')}
     const price=c.price||{inputPer1k:0,outputPer1k:0};
     priceIn.value=price.inputPer1k||'';priceOut.value=price.outputPer1k||'';
     const rows=st.usageByModel||[];
@@ -1147,8 +1142,7 @@ function mountBattopToggleCard(container){
     box.checked=!!st.running;box.disabled=!installed;
     note.textContent=installed?'':T('battop.toggle.notInstalled')};
   box.onchange=async()=>{if(!installed)return;const want=box.checked;box.disabled=true;
-    const r=await j(`/api/enhance/battop/${want?'start':'stop'}`,{method:'POST'});
-    if(r.ok===false){toast(r.message||T('common.failed'));box.checked=!want}
+    if((await sendT(`/api/enhance/battop/${want?'start':'stop'}`,'POST')).ok===false)box.checked=!want;
     box.disabled=false;await refresh()};
   // 挂载时不自己取：唯一调用方（「管理」页）挂载后紧接着就取 /api/enhance/status 并把结果传进来（erApply），
   // 这里再取一次就是同一个接口连发两遍（每次都让网关查 systemctl + 扫 xochitl 进程映射）。
@@ -1337,6 +1331,11 @@ function mountCleanup(box){
   syncBtns();
   return load;
 }
+/* 页头横幅（OTA / WiFi / 代理放弃三种同一套外观）：插在标签栏下、main 前；同 id 已在就原地替换。
+   closable：左上角 ×，只在本次页面会话内关掉。 */
+const banner=(id,html,closable)=>{const ban=el('div',{class:'otabanner',id,role:'alert',html});
+  if(closable)ban.prepend(btn('×',()=>ban.remove(),'btn x',{title:T('ota.dismiss'),'aria-label':T('ota.dismiss')}));
+  const old=document.getElementById(id);if(old)old.replaceWith(ban);else document.body.insertBefore(ban,$('#main'));return ban};
 /* 页头"需要重新安装"横幅（2026-09-25）：页面打开时取一次 /api/device/ota（网关侧判定见 device/ota.rs：单元文件缺失 /
    xovi 未生效；固件哈希不在白名单只作附加原因），不轮询。关掉只在本次页面会话内有效。 */
 async function showOtaBanner(){
@@ -1344,33 +1343,23 @@ async function showOtaBanner(){
   const reasons=(d.reasons||[]).map(r=>`<li>${esc(T('ota.reason.'+r,{units:(d.missingUnits||[]).join(', ')}))}</li>`).join('');
   const cmd=d.recovery==='full'?`<p>${T('ota.recovery.full',{cmd1:'<code>/home/root/xovi/rebuild_hashtable</code>'})}</p><pre class="hlog">cd packaging &amp;&amp; sh install-all.sh ${esc(location.hostname)}${(d.reasons||[]).includes('firmware-unknown')?' --force':''}</pre>`
     :`<p>${T('ota.recovery.xovi')}</p><pre class="hlog">cd packaging &amp;&amp; sh deploy-xovi-apply.sh ${esc(location.hostname)}</pre>`;
-  const x=el('button',{class:'btn x',type:'button',title:T('ota.dismiss'),'aria-label':T('ota.dismiss'),text:'×'});
-  const ban=el('div',{class:'otabanner',role:'alert',html:`<b>${d.recovery==='full'?T('ota.banner.title'):T('ota.banner.xoviTitle')}</b><ul>${reasons}</ul>${cmd}<p class="small">${T('ota.recovery.doc')}</p>`});
-  ban.prepend(x);x.onclick=()=>ban.remove();
-  document.body.insertBefore(ban,$('#main'));
+  banner('otabanner',`<b>${d.recovery==='full'?T('ota.banner.title'):T('ota.banner.xoviTitle')}</b><ul>${reasons}</ul>${cmd}<p class="small">${T('ota.recovery.doc')}</p>`,true);
 }
 /* 页头"这个 WiFi 上不了外网"横幅（2026-09-28）：设备端 wifi-watch 连上新网络时探一次外网，结果经 /api/device/wifi 给这里。
    酒店那种要网页登录的 WiFi 上 xochitl 会反复连云端、设备一直醒着很耗电，而 reMarkable 上没法完成网页登录。页面打开时取一次，不轮询；× 只在本次页面会话内关掉。 */
 async function showWifiBanner(){
   const d=await j('/api/device/wifi');if(d.ok===false||(d.state!=='portal'&&d.state!=='none'))return;
-  const x=el('button',{class:'btn x',type:'button',title:T('ota.dismiss'),'aria-label':T('ota.dismiss'),text:'×'});
-  const ban=el('div',{class:'otabanner',id:'wifibanner',role:'alert',html:`<b>${esc(T('wifi.banner.'+d.state,{ssid:d.ssid||'?'}))}</b><p>${T('wifi.banner.why')}</p><p class="small">${T('wifi.banner.hint')}</p>`});
-  ban.prepend(x);x.onclick=()=>ban.remove();
-  document.body.insertBefore(ban,$('#main'));
+  banner('wifibanner',`<b>${esc(T('wifi.banner.'+d.state,{ssid:d.ssid||'?'}))}</b><p>${T('wifi.banner.why')}</p><p class="small">${T('wifi.banner.hint')}</p>`,true);
 }
 /* 页头"设备上没做成"横幅（2026-09-25）：移进 xochitl 回收站、在 xochitl 书库建文件夹，这两件事由设备端代理执行，
    交满 5 次仍没做成 book-serve 就放弃（见 book-serve agent_failures.rs）。页面打开时取一次，之后收到 `agent-failed`
    事件再取，不轮询；「知道了」清空服务端记录（换台设备/刷新后也不再出现）。book-serve 没开时接口不通，不显示。 */
 async function showAgentFailBanner(){
-  const old=$('#agentfail');
   const d=await j('/api/books/agent-failures');const items=d.ok===false?[]:(d.items||[]);
-  if(!items.length){if(old)old.remove();return}
+  if(!items.length){const old=$('#agentfail');if(old)old.remove();return}
   const li=items.slice().reverse().map(f=>`<li>${esc(T('agentfail.'+(f.kind==='mkdir'?'mkdir':'trash'),{name:f.name}))} <span class="small">${esc(fmtTime(f.at))}</span></li>`).join('');
-  const ok=el('button',{class:'btn',type:'button',text:T('agentfail.ack')});
-  const ban=el('div',{class:'otabanner',id:'agentfail',role:'alert',html:`<b>${T('agentfail.title',{n:items.length})}</b><ul>${li}</ul><p class="small">${T('agentfail.hint')}</p>`});
-  ban.appendChild(ok);
-  ok.onclick=async()=>{ok.disabled=true;const r=await postJ('/api/books/agent-failures/clear',{});if(r.ok===false){ok.disabled=false;return}ban.remove()};
-  if(old)old.replaceWith(ban);else document.body.insertBefore(ban,$('#main'));
+  const ban=banner('agentfail',`<b>${T('agentfail.title',{n:items.length})}</b><ul>${li}</ul><p class="small">${T('agentfail.hint')}</p>`);
+  ban.appendChild(btn(T('agentfail.ack'),async()=>{if((await postJ('/api/books/agent-failures/clear',{})).ok!==false)ban.remove()}));
 }
 
 /* 管理台/引导（固定 tab，始终在——它是网关自身页面，不由服务注册表驱动） */
@@ -1381,7 +1370,7 @@ async function showAgentFailBanner(){
    +导入md文档可见性开关）。电池刺客开关 2026-09-21 起在③「系统增强」里（用户要求从实验室移出）。
    （曾在这页的 shelf push 命令卡片已随 2026-09-18 砍掉 host CLI 一并删除。）另有「设备健康」（2026-09-25）。 */
 /* 模块管理动作（start / stop / uninstall），「基石与模块」列表与「全部开启/关闭」共用。 */
-const modAct=(seg,act)=>j('/api/manage/'+seg+'/'+act,{method:'POST'});
+const modAct=(seg,act,loud)=>(loud?sendT:jsend)('/api/manage/'+seg+'/'+act,'POST');
 function renderManage(sec){sec.innerHTML=`
   <div class="subnav"><button class="on">${T('manage.subnav.foundation')}</button><button data-sub="health">${T('manage.subnav.health')}</button><button>${T('manage.subnav.models')}</button><button>${T('manage.subnav.enhance')}</button><button hidden data-sub="battop">${T('manage.subnav.battop')}</button><button>${T('manage.subnav.lab')}</button></div>
   <div class="subpanel on">
@@ -1455,10 +1444,8 @@ function renderManage(sec){sec.innerHTML=`
       const left=el('span',{html:`${esc(label)} <span class="small">${esc(m.service)}</span> <span class="badge ${cls}">${state}</span>`});
       const right=el('span',{style:'display:flex;gap:.4em;align-items:center'});
       if(m.installable&&m.installed){
-        const t=el('button',{class:'btn',text:m.running?T('manage.modules.turnOff'):T('manage.modules.turnOn')});
-        guardClick(t,async()=>{const r=await modAct(m.seg,m.running?'stop':'start');if(r.ok===false)toast(r.message);setTimeout(refresh,600)});
-        const u=el('button',{class:'btn',text:T('manage.modules.uninstallBtn')});
-        guardClick(u,async()=>{if(await confirmDialog(T('manage.modules.confirmUninstall',{label}))){const r=await modAct(m.seg,'uninstall');if(r.ok===false)toast(r.message);else toast(T('manage.modules.uninstalled',{label}),'ok');setTimeout(()=>location.reload(),800)}});
+        const t=btn(m.running?T('manage.modules.turnOff'):T('manage.modules.turnOn'),async()=>{await modAct(m.seg,m.running?'stop':'start',true);setTimeout(refresh,600)});
+        const u=btn(T('manage.modules.uninstallBtn'),async()=>{if(await confirmDialog(T('manage.modules.confirmUninstall',{label}))){if((await modAct(m.seg,'uninstall',true)).ok!==false)toast(T('manage.modules.uninstalled',{label}),'ok');setTimeout(()=>location.reload(),800)}});
         right.append(t,u);
       }else if(m.installable)right.appendChild(el('span',{class:'small',html:T('manage.modules.installCmd',{only:esc(m.only)})}));
       ul.appendChild(el('li',{style:'flex-wrap:wrap'},[left,right]))});
