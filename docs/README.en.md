@@ -18,7 +18,7 @@ note organizing, and some small system-level improvements.
 
 | You want | What provides it | Where |
 |---|---|---|
-| Get books onto the device and make them read well on e-ink | Upload on the web page or fetch an article; books land in the "master library" first. EPUBs get one-click "optimize" (layout, table of contents, cover, footnotes); PDFs with a text layer are converted to EPUB keeping their original formatting. Then deliver to the stock reader or KOReader (KOReader comes with two reading presets, one for text books and one for comics). Books over xochitl's ~100MB upload limit work too; comics get dedicated handling; books in the master library can be downloaded as the original file, renamed, or given a reading direction (right-to-left for manga) | [`shelf/`](../shelf/README.md) |
+| Get books onto the device and make them read well on e-ink | Upload on the web page or fetch an article; books land in the "master library" first. EPUBs get one-click "optimize" (layout, table of contents, cover, footnotes); PDFs with a text layer are converted to EPUB keeping their original formatting. Then deliver to the stock reader, xochitl. Books over xochitl's ~100MB upload limit work too (whole book, up to 1GB); comics get dedicated handling; books in the master library can be downloaded as the original file or renamed | [`shelf/`](../shelf/README.md) |
 | Turn highlighter marks and handwritten notes beside them into organizable notes | Collected automatically when you close the book. On your phone: review the handwriting transcription, full-text search, ask an AI model; then send back into a device notebook (headings, lists and checkboxes use the device's own styles) or export as Obsidian markdown | [`notes/`](../notes/README.md) |
 | Small system-level improvements | Precise CJK highlighter snapping, handwriting stroke-width tuning, tap-to-turn and a manga (right-to-left) page-turn rule in the xochitl reader, battery drain diagnostics, upload-and-use fonts and wallpapers | [`enhance/`](../enhance/README.md) |
 | One place on your phone/computer to operate all of the above | A single HTTPS web entry with a login password that forwards requests to each service; plus a "Device health" page and a reinstall hint after firmware updates | [`gateway/`](../gateway/README.md) |
@@ -35,7 +35,7 @@ Everything runs on the device's **stock system**; `xochitl` is never repackaged.
 
 Only the **reMarkable Paper Pro Move on firmware 3.28.0.172** is supported. It is the only version verified so far; the installer checks and refuses otherwise by default.
 
-1. Install four base components on the device by hand: `vellum add xovi`, `vellum add qt-resource-rebuilder`, `vellum add appload` (≥ 0.6.0), then sideload KOReader through appload. They are not part of this project and the installer won't install them.
+1. Install two base components on the device by hand: `vellum add xovi` and `vellum add qt-resource-rebuilder`. They are not part of this project and the installer won't install them. Since 2026-09-29 appload and KOReader are no longer needed (the device uses only the stock reader).
 2. Your computer needs a Rust cross-compilation setup and passwordless ssh to the device's root (list in [INSTALL.en.md "Before you install"](INSTALL.en.md#before-you-install)). Connect the device over USB, then:
 
    ```sh

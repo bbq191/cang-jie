@@ -17,7 +17,7 @@ reMarkable Paper Pro Move 的设备增强套件。**不修改 xochitl**（设备
 
 | 你想要 | 对应的功能 | 在哪 |
 |---|---|---|
-| 把书弄进设备，而且在墨水屏上好读 | 网页上传或抓网文，书先进"母版库"。EPUB 可一键"优化"（排版、目录、封面、脚注）；有文字层的 PDF 按原格式转成 EPUB。然后加入原生阅读器或 KOReader（KOReader 预置文字书 / 漫画两套阅读方案）。超过 xochitl 约 100MB 上传上限的大书也能整本进（最大 1GB），漫画有专门处理；母版库里的书可以下载原件、改名 | [`shelf/`](shelf/README.md) |
+| 把书弄进设备，而且在墨水屏上好读 | 网页上传或抓网文，书先进"母版库"。EPUB 可一键"优化"（排版、目录、封面、脚注）；有文字层的 PDF 按原格式转成 EPUB。然后加入设备自带的阅读器 xochitl。超过 xochitl 约 100MB 上传上限的大书也能整本进（最大 1GB），漫画有专门处理；母版库里的书可以下载原件、改名 | [`shelf/`](shelf/README.md) |
 | 把荧光笔勾画和旁边的手写批注变成能整理的笔记 | 合上书自动收进条目库。在手机网页上校对手写转写、全文搜索、选 AI 模型提问，再投回设备笔记本（标题、列表、复选框用设备自带样式）或导出 Obsidian markdown | [`notes/`](notes/README.md) |
 | 系统层面的小改进 | 荧光笔划中文"划哪吸哪"、手写笔画粗细优化、xochitl 阅读器单击翻页与日漫翻页规则、电池耗电诊断、字体和壁纸上传即用 | [`enhance/`](enhance/README.md) |
 | 在手机或电脑上统一操作以上功能 | 一个 HTTPS 网页入口，带登录密码，把请求转给各个服务；另有「设备健康」页和固件升级后的重装提示 | [`gateway/`](gateway/README.md) |
@@ -34,7 +34,7 @@ reMarkable Paper Pro Move 的设备增强套件。**不修改 xochitl**（设备
 
 **只支持 reMarkable Paper Pro Move、固件 3.28.0.172**。这是目前唯一验证过的版本，安装脚本会核对，不符默认拒装。
 
-1. 在设备上手动装好四样基础组件：`vellum add xovi`、`vellum add qt-resource-rebuilder`、`vellum add appload`（≥ 0.6.0），再经 appload 侧载 KOReader。它们不属于本项目，安装脚本不代装。
+1. 在设备上手动装好两样基础组件：`vellum add xovi`、`vellum add qt-resource-rebuilder`。它们不属于本项目，安装脚本不代装。2026-09-29 起不再需要 appload 和 KOReader（设备只用自带阅读器）。
 2. 电脑上要有 Rust 交叉编译环境，并能免密 ssh 到设备的 root（清单见 [INSTALL.md「装之前」](docs/INSTALL.md#装之前)）。用 USB 线连上设备，然后：
 
    ```sh
