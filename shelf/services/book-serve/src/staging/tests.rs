@@ -547,17 +547,19 @@ fn recover_interrupted_fixes_stale_pending_and_removes_tmp() {
     assert_eq!(s.recover_interrupted(), (0, 0), "幂等");
 }
 
-/// 回归：补封面的临时副本（整本 EPUB 的拷贝）也按半成品清；新旧两种临时文件命名都认。
+/// 回归：补封面的临时副本（整本 EPUB 的拷贝）、边车原子写的临时文件也按半成品清；新旧两种临时文件命名都认。
 #[test]
 fn recover_interrupted_removes_cover_and_new_style_scratch_files() {
     let t = tempfile::tempdir().unwrap();
     let s = staging(&t);
     s.stage_new("a.epub", b"PK").unwrap();
-    for n in [".a.epub.cover.tmp", ".9.0.cover.tmp", ".9.1.optimizing.tmp", ".9.2.landing.tmp"] {
+    for n in [".a.epub.cover.tmp", ".9.0.cover.tmp", ".9.1.optimizing.tmp", ".9.2.landing.tmp", ".a.epub.delivered.9.3.tmp"] {
         std::fs::write(s.dir.join(n), vec![0u8; 100]).unwrap();
     }
     std::fs::write(s.dir.join(".a.epub.delivered.tmp-not-ours"), b"x").unwrap();
-    assert_eq!(s.recover_interrupted(), (0, 4));
+    std::fs::create_dir_all(s.dir.join(".dir.tmp")).unwrap();
+    assert_eq!(s.recover_interrupted(), (0, 5), "含边车原子写没改名的临时文件");
+    assert!(s.dir.join(".dir.tmp").is_dir(), "目录不动");
     assert!(s.dir.join(".a.epub.delivered.tmp-not-ours").exists(), "别的点前缀文件不动");
     assert!(s.has("a.epub"));
 }

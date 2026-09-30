@@ -77,7 +77,8 @@ impl Staging {
     /// 启动时修正上一个进程被打断留下的状态（崩溃 / OOM / 被 systemd 杀 / 断电）：
     /// - 边车里停在 `pending` 的优化 / 落库记录 → 改成 `failed`（否则界面永远显示"处理中"，而实际早没有线程在跑）；
     /// - 渲染自检停在 `pending` → `timeout`（自检线程随进程没了；xochitl 可能延后渲染，打开一次就有页数）；
-    /// - 优化半成品、补封面的副本、跨分区入库的中转（`.<…>.{optimizing,cover,landing}.tmp`，点前缀，列表看不见，可达数百 MB）→ 删除。
+    /// - 点前缀的 `*.tmp`（优化半成品、补封面的副本、跨分区入库的中转——可达数百 MB；以及边车原子写没来得及改名的
+    ///   `.<书名>.delivered.<pid>.<序号>.tmp`）→ 删除。这些都只可能是本服务写的，启动时没有操作在跑，全清安全。
     ///
     /// 只在启动时调用（此时不可能有操作在跑）。返回 (修正的记录数, 清掉的半成品数)。
     pub fn recover_interrupted(&self) -> (usize, usize) {
@@ -87,7 +88,7 @@ impl Staging {
         for e in rd.flatten() {
             let name = e.file_name().to_string_lossy().to_string();
             // 旧版的优化半成品按书名起名（`.<书名>.optimizing.tmp`），新版是 `.<pid>.<序号>.<种类>.tmp`（`ScratchFile`）：都按后缀认。
-            if name.starts_with('.') && SCRATCH_KINDS.iter().any(|k| name.ends_with(&format!(".{k}.tmp"))) {
+            if name.starts_with('.') && name.ends_with(".tmp") && e.file_type().is_ok_and(|t| t.is_file()) {
                 if std::fs::remove_file(e.path()).is_ok() {
                     tmps += 1;
                 }

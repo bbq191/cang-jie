@@ -42,7 +42,7 @@ fn busy_err(name: &str, extra: &str) -> String {
 }
 
 /// 母版库目录里临时文件的种类（名字 `.<pid>.<序号>.<种类>.tmp`，见 [`ScratchFile`]）：优化产物、补封面的副本、
-/// 跨分区入库的中转。`recover_interrupted` 按这几个后缀清上次进程留下的。
+/// 跨分区入库的中转。上次进程留下的由 `recover_interrupted` 按"点前缀 + `.tmp` 结尾"清掉。
 pub(super) const SCRATCH_KINDS: [&str; 3] = ["optimizing", "cover", "landing"];
 
 /// 母版库目录里的一份点前缀临时文件（列表看不见）。
