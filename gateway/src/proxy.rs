@@ -277,8 +277,7 @@ mod tests {
         use std::io::Write;
         use std::sync::atomic::{AtomicBool, Ordering};
         let t = tempfile::tempdir().unwrap();
-        let h = t.path().to_string_lossy().to_string();
-        let paths = Paths::resolve(move |k| if k == "HOME" || k.starts_with("XDG_") { Some(h.clone()) } else { None });
+        let paths = crate::testutil::sandbox(&t);
         let url = "https://example.invalid/slot-test";
         let key = format!("{ARTICLE_GATE_PREFIX}{url}");
         let seen_active = std::sync::Arc::new(AtomicBool::new(false));
@@ -334,8 +333,7 @@ mod tests {
     fn delete_forwards_no_content_length() {
         use std::io::Write;
         let t = tempfile::tempdir().unwrap();
-        let h = t.path().to_string_lossy().to_string();
-        let paths = Paths::resolve(move |k| if k == "HOME" || k.starts_with("XDG_") { Some(h.clone()) } else { None });
+        let paths = crate::testutil::sandbox(&t);
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         let backend = std::thread::spawn(move || {

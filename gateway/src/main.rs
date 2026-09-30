@@ -15,6 +15,8 @@ mod enhance;
 mod events;
 mod manage;
 mod proxy;
+#[cfg(test)]
+mod testutil;
 mod ui;
 
 use rmsvc_core::http::{bind, ApiError, Method, Reply, Router, ServeOpts};
@@ -146,15 +148,12 @@ fn main() {
         .get("/api/events", bind(&hub, |h, _| Ok(h.bus.sse_reply())))
         .get("/api/manage", bind(&paths, |p, _| Ok(manage::status(p))))
         .get("/api/foundation", bind(&paths, |p, _| Ok(manage::foundation(p))))
-        .post("/api/manage/{seg}/{action}", bind(&paths, |p, r| {
-            let (seg, action) = (r.param("seg").to_string(), r.param("action").to_string());
-            if action == "uninstall" { manage::uninstall(p, &seg, r) } else { manage::toggle(p, &seg, &action) }
-        }))
+        .post("/api/manage/{seg}/{action}", bind(&paths, manage::action))
         // 系统增强开关（Track 3）：网关自身固定能力。
         .get("/api/enhance/status", bind(&paths, |p, _| Ok(enhance::status(p))))
         .put("/api/enhance/qol", bind(&paths, enhance::set_qol))
         .get("/api/enhance/battop/summary", bind(&paths, enhance::battop_summary))
-        .post("/api/enhance/battop/{action}", bind(&paths, |p, r| { let action = r.param("action").to_string(); enhance::battop_toggle(p, &action) }))
+        .post("/api/enhance/battop/{action}", bind(&paths, enhance::battop_toggle))
         // 设备健康 / OTA 横幅 / 遗留清理（2026-09-25，见 device/mod.rs）：只读采集按需触发，不轮询。
         .get("/api/device/health", bind(&paths, device::health))
         .get("/api/device/ota", bind(&paths, device::ota_status))
@@ -164,28 +163,13 @@ fn main() {
         // 并发/内存预算闸门的排队/处理状态（2026-09-19 用户反馈驱动，见 budget.rs::State 文档
         // 注释）：跟 /api/manage、/api/enhance/* 一样是网关自身固定能力。GET 给任何会话（含关掉浏览器重开）看真实排队/处理状态；POST cancel
         // 只对还在排队（没真正拿到名额开始跑）的书名生效，见 budget::Budget::cancel 文档。
-        .get("/api/budget/status", |_| {
-            let (pending, active) = budget::global().snapshot();
-            Ok(Reply::ok(&serde_json::json!({"pending": pending, "active": active})))
-        })
-        .post("/api/budget/cancel", |r| {
-            let name = r.json()?.str("name")?.to_string();
-            Ok(Reply::ok(&serde_json::json!({"cancelled": budget::global().cancel(&name)})))
-        })
+        .get("/api/budget/status", budget::status_route)
+        .post("/api/budget/cancel", budget::cancel_route)
         // 服务端批量队列（见 batch.rs）：提交 `{action, names?, all?, folder?}`；`names` 缺省且 `all:true` 表示"所有适用的"。
         // 状态任何会话都能看（关掉浏览器重开、换设备都在）。
-        .post("/api/batch", bind(&paths, |p, r| {
-            let j = r.json()?;
-            let action = j.0.get("action").and_then(|a| a.as_str()).and_then(batch::Action::parse).ok_or_else(|| ApiError::bad("action 只能是 optimize/deliver"))?;
-            let names = j.0.get("names").and_then(|n| n.as_array()).map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect::<Vec<_>>());
-            if names.is_none() && !j.bool_or("all", false) {
-                return Err(ApiError::bad("要么给 names，要么 all:true"));
-            }
-            let e = batch::enqueue(p, action, names, j.str_or("folder", "")).map_err(ApiError::bad)?;
-            Ok(Reply::ok(&serde_json::json!({"queued": e.queued, "skipped": e.skipped})))
-        }))
+        .post("/api/batch", bind(&paths, batch::submit))
         .get("/api/batch/status", |_| Ok(Reply::ok(&batch::status())))
-        .post("/api/batch/stop", bind(&paths, |p, _| Ok(Reply::ok(&serde_json::json!({"cleared": batch::stop(p)})))))
+        .post("/api/batch/stop", bind(&paths, batch::stop_route))
         .route(Method::Other, "/api/*", |_| Err(ApiError::bad("unsupported method")))
         .any(PROXIED, "/api/{svc}/*", bind(&paths, proxy::forward))
         .any(PROXIED, "/api/{svc}", bind(&paths, proxy::forward));

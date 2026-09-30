@@ -11,6 +11,7 @@
 //! 继续跑——"关闭浏览器再回来能保持上次的未完记录并继续操作"（用户 2026-09-20 要求）。恢复时按最新母版库状态重新
 //! 校验每一本（已经优化完的不会重做）。任务自带动作，一个队列里可以混合优化/加入 xochitl。
 //! （「批量加入 KOReader」随 2026-09-29 设备卸载 KOReader 撤掉；旧落盘文件里残留的这类任务读回时剔除，见 [`parse_saved`]。）
+use rmsvc_core::http::{ApiError, ApiResult, Reply, Request};
 use rmsvc_core::paths::Paths;
 use rmsvc_core::registry::{self, SvcClient};
 use serde::{Deserialize, Serialize};
@@ -174,6 +175,23 @@ pub fn enqueue(paths: &Paths, action: Action, names: Option<Vec<String>>, folder
         }
     }
     Ok(Enqueued { queued, skipped })
+}
+
+/// `POST /api/batch {action, names?, all?, folder?}`：`names` 缺省且 `all:true` 表示"母版库里所有适用的"。
+pub fn submit(paths: &Paths, req: &mut Request<'_>) -> ApiResult {
+    let j = req.json()?;
+    let action = j.0.get("action").and_then(|a| a.as_str()).and_then(Action::parse).ok_or_else(|| ApiError::bad("action 只能是 optimize/deliver"))?;
+    let names = j.0.get("names").and_then(|n| n.as_array()).map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect::<Vec<_>>());
+    if names.is_none() && !j.bool_or("all", false) {
+        return Err(ApiError::bad("要么给 names，要么 all:true"));
+    }
+    let e = enqueue(paths, action, names, j.str_or("folder", "")).map_err(ApiError::bad)?;
+    Ok(Reply::ok(&json!({"queued": e.queued, "skipped": e.skipped})))
+}
+
+/// `POST /api/batch/stop`：全部中止，见 [`stop`]。
+pub fn stop_route(paths: &Paths, _req: &mut Request<'_>) -> ApiResult {
+    Ok(Reply::ok(&json!({"cleared": stop(paths)})))
 }
 
 /// 记入这次新入队的 `queued` 本。一轮批量从空闲开始才重置计数（已经在跑的时候追加，累加进同一轮）；重置时**队列里
@@ -509,10 +527,25 @@ mod tests {
         assert_eq!((st.total, st.done), (4, 1));
     }
 
+    /// 提交入口先校验参数，不碰 book-serve：未知/已下线的动作、既没 names 也没 all 都直接 400。
+    #[test]
+    fn submit_rejects_bad_action_or_missing_scope_before_touching_services() {
+        let t = tempfile::tempdir().unwrap();
+        let paths = crate::testutil::sandbox(&t);
+        let call = |body: &[u8]| {
+            let mut b: &[u8] = body;
+            let mut r = Request { method: rmsvc_core::http::Method::Post, path: "/api/batch".into(), query: Default::default(), params: Default::default(), content_type: "application/json".into(), content_length: None, headers: vec![], body: &mut b };
+            submit(&paths, &mut r).map(|_| ()).unwrap_err()
+        };
+        assert!(call(br#"{"action":"koreader","all":true}"#).message.contains("optimize/deliver"));
+        assert!(call(br#"{"action":"optimize"}"#).message.contains("names"));
+        assert_eq!(call(br#"{"action":"optimize","all":true}"#).status, 400, "参数齐了才去找 book-serve（沙箱里没有，报不可用）");
+    }
+
     #[test]
     fn stop_clears_pending_persists_and_adjusts_total() {
         let t = tempfile::tempdir().unwrap();
-        let paths = Paths::resolve(|k| if k == "XDG_STATE_HOME" { Some(t.path().to_string_lossy().to_string()) } else { None });
+        let paths = crate::testutil::sandbox(&t);
         {
             let mut st = lock();
             st.queue.clear();

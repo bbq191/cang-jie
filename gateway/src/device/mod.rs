@@ -124,12 +124,7 @@ mod tests {
     #[test]
     fn delete_endpoint_requires_names_and_reports_per_file() {
         let t = tempfile::tempdir().unwrap();
-        let h = t.path().to_str().unwrap().to_string();
-        let paths = Paths::resolve(move |k| match k {
-            "HOME" => Some(h.clone()),
-            "XDG_CONFIG_HOME" | "XDG_DATA_HOME" | "XDG_STATE_HOME" | "XDG_CACHE_HOME" | "XDG_RUNTIME_DIR" => Some(format!("{h}/{k}")),
-            _ => None,
-        });
+        let paths = crate::testutil::sandbox(&t);
         let done = cleanup::areas(&paths)[0].1.clone();
         assert!(done.starts_with(t.path()));
         std::fs::create_dir_all(&done).unwrap();

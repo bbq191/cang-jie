@@ -93,8 +93,7 @@ impl GatewayConfig {
 mod tests {
     use super::*;
     fn paths(t: &tempfile::TempDir) -> Paths {
-        let h = t.path().to_str().unwrap().to_string();
-        Paths::resolve(move |k| if k == "HOME" { Some(h.clone()) } else { None })
+        crate::testutil::sandbox(t)
     }
     #[test]
     fn default_password_then_forced_change() {

@@ -298,8 +298,7 @@ mod tests {
 
     fn state(must_change: bool) -> Shared {
         let t = tempfile::tempdir().unwrap();
-        let h = t.path().to_str().unwrap().to_string();
-        let paths = Paths::resolve(move |k| if k == "HOME" { Some(h.clone()) } else { None });
+        let paths = crate::testutil::sandbox(&t);
         let mut cfg = GatewayConfig::default();
         cfg.ensure_password(&paths).unwrap();
         if !must_change {

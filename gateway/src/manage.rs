@@ -137,8 +137,18 @@ pub fn foundation(paths: &Paths) -> Reply {
     }))
 }
 
+/// `POST /api/manage/{seg}/{action}` 路由入口：`uninstall` 走 [`uninstall`]，其余交给 [`toggle`]（只认 start|stop）。
+pub fn action(paths: &Paths, req: &mut Request<'_>) -> ApiResult {
+    let (seg, action) = (req.param("seg").to_string(), req.param("action").to_string());
+    if action == "uninstall" {
+        uninstall(paths, &seg, req)
+    } else {
+        toggle(&seg, &action)
+    }
+}
+
 /// `POST /api/manage/{seg}/{start|stop}`：仅开关后台服务（省占用/隐藏功能，非省电）。网关不可关。
-pub fn toggle(_paths: &Paths, seg: &str, action: &str) -> ApiResult {
+pub fn toggle(seg: &str, action: &str) -> ApiResult {
     let m = by_seg(seg).ok_or_else(|| ApiError::bad(format!("未知模块 {seg}")))?;
     if !m.installable {
         return Err(ApiError::bad(format!("{} 未上线，不可开关", m.label)));
@@ -199,8 +209,7 @@ mod tests {
     #[test]
     fn status_reports_three_states() {
         let t = tempfile::tempdir().unwrap();
-        let h = t.path().to_str().unwrap().to_string();
-        let paths = Paths::resolve(move |k| if k == "HOME" || k == "XDG_RUNTIME_DIR" { Some(h.clone()) } else { None });
+        let paths = crate::testutil::sandbox(&t);
         std::fs::create_dir_all(paths.bin_dir()).unwrap();
         std::fs::write(paths.bin_dir().join("book-serve"), b"x").unwrap(); // 已装、未跑（注册表空）
         let v: serde_json::Value = serde_json::from_slice(&status(&paths).body).unwrap();
@@ -216,8 +225,7 @@ mod tests {
     #[test]
     fn foundation_probes_only_xovi_and_qrr() {
         let t = tempfile::tempdir().unwrap();
-        let h = t.path().to_str().unwrap().to_string();
-        let paths = Paths::resolve(move |k| if k == "HOME" || k == "XDG_RUNTIME_DIR" { Some(h.clone()) } else { None });
+        let paths = crate::testutil::sandbox(&t);
         let v: serde_json::Value = serde_json::from_slice(&foundation(&paths).body).unwrap();
         assert_eq!((v["xovi"].as_bool(), v["qrr"].as_bool()), (Some(false), Some(false)), "没装时探测为 false");
         std::fs::create_dir_all(paths.home().join("xovi/exthome/qt-resource-rebuilder")).unwrap();

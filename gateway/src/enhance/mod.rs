@@ -70,8 +70,8 @@ pub fn set_qol(paths: &Paths, req: &mut Request<'_>) -> ApiResult {
 /// 用户拍板：降级移入「管理→实验室」，只留卡片，不单开顶层 tab）——上一版为了让那个独立标签页
 /// "跑起来才出现"而加的 `events::Hub` 事件 publish 已经跟着撤掉，这里恢复成不需要额外状态的
 /// 单一函数。
-pub fn battop_toggle(_paths: &Paths, action: &str) -> ApiResult {
-    battop::toggle(action).map_err(ApiError::bad)?;
+pub fn battop_toggle(_paths: &Paths, req: &mut Request<'_>) -> ApiResult {
+    battop::toggle(req.param("action")).map_err(ApiError::bad)?;
     Ok(Reply::ok(&serde_json::json!({"ok": true})))
 }
 
@@ -100,8 +100,7 @@ mod tests {
     #[test]
     fn set_qol_applies_only_present_boolean_keys_and_rejects_empty() {
         let t = tempfile::tempdir().unwrap();
-        let h = t.path().to_str().unwrap().to_string();
-        let paths = Paths::resolve(move |k| if k == "HOME" { Some(h.clone()) } else { None });
+        let paths = crate::testutil::sandbox(&t);
         let rep = put(&paths, br#"{"comicMinMargin":true,"hlSnapCjk":false,"junk":1}"#).unwrap();
         let v: serde_json::Value = serde_json::from_slice(&rep.body).unwrap();
         assert_eq!((v["comicMinMargin"].as_bool(), v["hlSnapCjk"].as_bool()), (Some(true), Some(false)));
@@ -118,8 +117,7 @@ mod tests {
     #[test]
     fn page_turn_switches_default_off_and_independent() {
         let t = tempfile::tempdir().unwrap();
-        let h = t.path().to_str().unwrap().to_string();
-        let paths = Paths::resolve(move |k| if k == "HOME" { Some(h.clone()) } else { None });
+        let paths = crate::testutil::sandbox(&t);
         let q = qol::Qol::load(&paths);
         assert!(!q.tap_page_turn() && !q.rtl_page_turn());
         put(&paths, br#"{"comicMinMargin":true}"#).unwrap();

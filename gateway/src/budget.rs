@@ -11,6 +11,7 @@
 //! 强行量化是假精确。按用户原话直接做成**两档**：大文件（超过 [`LARGE_THRESHOLD_BYTES`]）
 //! 同一时刻最多一个在跑；小文件允许 [`MAX_SMALL_CONCURRENT`] 个同时跑。
 
+use rmsvc_core::http::{ApiResult, Reply, Request};
 use std::collections::HashSet;
 use std::sync::{Condvar, Mutex, OnceLock};
 use std::time::{Duration, Instant};
@@ -214,6 +215,18 @@ impl Drop for Slot<'_> {
 pub fn global() -> &'static Budget {
     static B: OnceLock<Budget> = OnceLock::new();
     B.get_or_init(Budget::new)
+}
+
+/// `GET /api/budget/status`：排队中 / 处理中的书名（任何会话都能看，含关掉浏览器重开、换设备）。
+pub fn status_route(_req: &mut Request<'_>) -> ApiResult {
+    let (pending, active) = global().snapshot();
+    Ok(Reply::ok(&serde_json::json!({"pending": pending, "active": active})))
+}
+
+/// `POST /api/budget/cancel {name}`：只对还在排队、没拿到名额的书生效（见 [`Budget::cancel`]）。
+pub fn cancel_route(req: &mut Request<'_>) -> ApiResult {
+    let name = req.json()?.str("name")?.to_string();
+    Ok(Reply::ok(&serde_json::json!({"cancelled": global().cancel(&name)})))
 }
 
 /// 判断"这个名字对应的条目是不是已经不再忙"——给异步操作（优化/落库）完成侦测用，输入是
