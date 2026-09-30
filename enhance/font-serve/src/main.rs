@@ -1,5 +1,5 @@
 //! font-serve —— 书架·字体（loopback 8792）。路由（经网关前缀 `/api/fonts`）：
-//! `GET /`（按家族归组的清单）· `POST /`（multipart 多文件，装进 fontconfig 用户字体目录；**不碰 KOReader**）·
+//! `GET /`（按家族归组的清单）· `POST /`（multipart 多文件，装进 fontconfig 用户字体目录）·
 //! `DELETE /{family}`（删整个家族的全部文件）· `GET /status`。所有字体一视同仁、无"内建"。
 //! 字体菜单 qmd 读 `~/.local/share/shelf/fonts.json`（`shelf/xovi/font-menu-dynamic.qmd`）。
 //! 开机时 fonts.json 与字体目录一致（文件集合相同、mtime 不晚于索引）就直接复用，不再逐个 fc-scan；
@@ -53,7 +53,7 @@ fn main() {
             // fontconfig 回退由 write_index 随每次上传重写（weak 绑定：选的字体优先、缺字才回退）。
             let fallback = s.store.cjk_fallback_keys();
             let warns: Vec<String> = items.iter().filter_map(|i| i.item.as_ref().and_then(|it| it.extra.get("warn")).and_then(|w| w.as_str()).filter(|w| !w.is_empty()).map(|w| w.to_string())).collect();
-            let mut note = String::from("已装进原生阅读器（fontconfig）；「文字与布局」菜单重开即可选，无需重启。KOReader 请到 KOReader 页单独上传");
+            let mut note = String::from("已装进原生阅读器（fontconfig）；「文字与布局」菜单重开即可选，无需重启");
             if !fallback.is_empty() {
                 note.push_str(&format!("。中文缺字回退链：{}", fallback.join(" → ")));
             }

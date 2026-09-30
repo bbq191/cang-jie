@@ -3,7 +3,7 @@
 //! （2026-09-03 用户纠正：那是对旧中文化套件 scp 字体的路径耦合）。唯一的提示：家族被
 //! `~/.config/fontconfig/fonts.conf` 引用（界面 CJK 回退）的标 `fontconfigRef`，删前 UI 提醒但不拦。
 //! 上传→落目录→`fc-cache -f`→重建 `$XDG_DATA_HOME/shelf/fonts.json`（字体菜单 qmd 读）。**只管原生阅读器**：
-//! KOReader 的字体由 koreader-serve 单独管（用户 2026-09-03 定：两边各自装、不同时装填）。
+//! （2026-09-29 KOReader 已从设备卸载，koreader-serve 随之退役；此前 KOReader 字体由它单独管。）
 use serde::{Deserialize, Serialize};
 use rmsvc_core::asset::{AssetItem, AssetStore};
 use rmsvc_core::formats::{self, FONT_EXTS};
