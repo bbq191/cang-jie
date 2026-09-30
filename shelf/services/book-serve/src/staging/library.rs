@@ -60,19 +60,25 @@ impl Default for ListCaches {
 }
 
 impl Staging {
-    /// 清理没有对应书的落库边车（`.<书名>.delivered`）：书早已删除/被外部清掉，边车成了孤儿。留着不仅占目录，
+    /// 清理没有对应书的落库边车（`.<书名>.delivered`，长书名是短名形式）：书早已删除/被外部清掉，边车成了孤儿。留着不仅占目录，
     /// 更会让**同名新书**误继承旧的"已加入/渲染"记录。返回清掉的个数。
+    ///
+    /// "是不是孤儿"按 [`sidecar::owners`] 反查（短名形式的边车没法从文件名反推书名）；删之前再查一次最新的反查表，
+    /// 不误删两次查询之间刚入库的书的边车。
     pub fn gc_orphan_sidecars(&self) -> usize {
         let Ok(rd) = std::fs::read_dir(&self.dir) else { return 0 };
-        let mut n = 0;
-        for e in rd.flatten() {
-            let name = e.file_name().to_string_lossy().to_string();
-            let Some(book) = name.strip_prefix('.').and_then(|s| s.strip_suffix(".delivered")) else { continue };
-            if !self.dir.join(book).is_file() && std::fs::remove_file(e.path()).is_ok() {
-                n += 1;
-            }
+        let owners = sidecar::owners(&self.dir);
+        let candidates: Vec<_> = rd
+            .flatten()
+            .filter(|e| e.file_type().is_ok_and(|t| t.is_file()))
+            .filter_map(|e| e.file_name().to_str().map(str::to_string))
+            .filter(|name| sidecar::is_sidecar_name(name) && !owners.contains_key(name))
+            .collect();
+        if candidates.is_empty() {
+            return 0;
         }
-        n
+        let owners = sidecar::owners(&self.dir);
+        candidates.into_iter().filter(|name| !owners.contains_key(name) && std::fs::remove_file(self.dir.join(name)).is_ok()).count()
     }
     /// 启动时修正上一个进程被打断留下的状态（崩溃 / OOM / 被 systemd 杀 / 断电）：
     /// - 边车里停在 `pending` 的优化 / 落库记录 → 改成 `failed`（否则界面永远显示"处理中"，而实际早没有线程在跑）；
@@ -83,6 +89,7 @@ impl Staging {
     /// 只在启动时调用（此时不可能有操作在跑）。返回 (修正的记录数, 清掉的半成品数)。
     pub fn recover_interrupted(&self) -> (usize, usize) {
         let Ok(rd) = std::fs::read_dir(&self.dir) else { return (0, 0) };
+        let owners = sidecar::owners(&self.dir);
         let now = rmsvc_core::clock::now_secs();
         let (mut fixed, mut tmps) = (0, 0);
         for e in rd.flatten() {
@@ -94,17 +101,17 @@ impl Staging {
                 }
                 continue;
             }
-            let Some(book) = name.strip_prefix('.').and_then(|s| s.strip_suffix(".delivered")) else { continue };
-            let book_path = self.dir.join(book);
+            // 边车 → 书按反查表认（短名形式没法从文件名反推书名）；没有书的孤儿边车不修，留给 `gc_orphan_sidecars` 清。
+            let Some(book_path) = sidecar::is_sidecar_name(&name).then(|| owners.get(&name)).flatten() else { continue };
             let stale = |st: &str| st == "pending";
-            let Some(d) = sidecar::read(&book_path) else { continue };
+            let Some(d) = sidecar::read(book_path) else { continue };
             let needs = d.optimize.as_ref().is_some_and(|o| stale(&o.status))
                 || d.deliver.as_ref().is_some_and(|o| stale(&o.status))
                 || d.render.as_ref().is_some_and(|o| stale(&o.status));
             if !needs {
                 continue;
             }
-            let ok = sidecar::update(&book_path, |d| {
+            let ok = sidecar::update(book_path, |d| {
                 if let Some(o) = d.optimize.as_mut().filter(|o| stale(&o.status)) {
                     *o = sidecar::OptimizeCheck { status: "failed".into(), message: "服务重启，上次优化被中断，可重新点「优化」".into(), at: now, progress: None };
                 }
@@ -225,10 +232,7 @@ impl Staging {
                 return Err(format!("母版库里已有《{new_name}》"));
             }
             std::fs::rename(&src, &dst).map_err(|e| format!("改名失败: {e}"))?;
-            let (old_car, new_car) = (sidecar::path_for(&src), sidecar::path_for(&dst));
-            if old_car.exists() {
-                let _ = std::fs::rename(old_car, new_car);
-            }
+            sidecar::rename(&src, &dst);
             Ok(new_name.clone())
         })();
         self.end_busy(&new_name);

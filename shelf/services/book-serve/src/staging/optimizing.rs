@@ -128,10 +128,7 @@ impl Staging {
         let canon = canonical_staged_name(name);
         let land = self.land_guard();
         let shown = if canon != name && !self.dir.join(&canon).exists() && std::fs::rename(&p, self.dir.join(&canon)).is_ok() {
-            let (old_car, new_car) = (sidecar::path_for(&p), sidecar::path_for(&self.dir.join(&canon)));
-            if old_car.exists() {
-                let _ = std::fs::rename(old_car, new_car);
-            }
+            sidecar::rename(&p, &self.dir.join(&canon));
             canon
         } else {
             name.to_string()
