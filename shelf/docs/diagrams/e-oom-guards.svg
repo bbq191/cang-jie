@@ -47,6 +47,7 @@
 <text x="960" y="178" text-anchor="middle" font-size="11" fill="#1a1a1a">边车更新全局锁</text>
 <text x="960" y="198" text-anchor="middle" font-size="11" fill="#1a1a1a">启动 recover_interrupted：</text>
 <text x="960" y="214" text-anchor="middle" font-size="11" fill="#1a1a1a">pending→failed，删半成品</text>
+<text x="960" y="236" text-anchor="middle" font-size="10.5" fill="#4a4a4a">半成品出错即删（09-30）</text>
 
 <polyline points="215,170 233,170" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#eo-a)"/>
 <polyline points="425,170 443,170" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#eo-a)"/>

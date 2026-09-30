@@ -31,8 +31,8 @@
 <rect x="306" y="198" width="248" height="72" rx="8" fill="#ffffff" stroke="#c9971f" stroke-dasharray="4 3"/>
 <text x="430" y="218" text-anchor="middle" font-size="12" font-weight="bold" fill="#1a1a1a">边车 .书名 - 02卷.epub.delivered</text>
 <text x="430" y="238" text-anchor="middle" font-size="11" fill="#555">优化 / 落库状态与进度、渲染自检、</text>
-<text x="430" y="255" text-anchor="middle" font-size="11" fill="#555">加入 xochitl / KOReader 的时间</text>
-<text x="430" y="292" text-anchor="middle" font-size="11.5" fill="#1a1a1a">网页徽章：格式 · 优化等级 · 已加入哪</text>
+<text x="430" y="255" text-anchor="middle" font-size="11" fill="#555">加入 xochitl 的时间</text>
+<text x="430" y="292" text-anchor="middle" font-size="11.5" fill="#1a1a1a">网页徽章：格式 · 优化等级 · 已加入</text>
 <text x="430" y="312" text-anchor="middle" font-size="11.5" fill="#1a1a1a">· 渲染 N 页 · 处理中 / 失败</text>
 
 <!-- 动作 -->
@@ -49,11 +49,11 @@
 <text x="632" y="166" font-size="10.5" fill="#6a6a6a">不过门 / 失败 / 中途停止：原文件一个字节不动</text>
 
 <rect x="616" y="186" width="444" height="100" rx="10" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.6"/>
-<text x="632" y="208" font-size="13.5" font-weight="bold" fill="#1a1a1a">③ 落库（复制字节，可反复、两个阅读器都能放）</text>
+<text x="632" y="208" font-size="13.5" font-weight="bold" fill="#1a1a1a">③ 落库（复制字节进 xochitl，可反复）</text>
 <text x="632" y="228" font-size="11.5" fill="#1a1a1a">加入 xochitl：≤90MB 网页上传；更大走「占位 + 磁盘替换」</text>
 <text x="632" y="246" font-size="11.5" fill="#1a1a1a">（≤1GiB），走不了就拒绝；可选目标文件夹</text>
-<text x="632" y="264" font-size="11.5" fill="#1a1a1a">加入 KOReader：同分区复制到 books/[目录]/</text>
-<text x="632" y="280" font-size="10.5" fill="#6a6a6a">母版不因落库而删除；落库后改母版不影响阅读器里的副本</text>
+<text x="632" y="264" font-size="11.5" fill="#6a6a6a">（「加入 KOReader」随 2026-09-29 卸载 KOReader 删除）</text>
+<text x="632" y="280" font-size="10.5" fill="#6a6a6a">母版不因落库而删除；落库后改母版不影响 xochitl 里的副本</text>
 
 <rect x="616" y="300" width="444" height="84" rx="10" fill="#f3eefa" stroke="#7a5aa6" stroke-width="1.6"/>
 <text x="632" y="322" font-size="13.5" font-weight="bold" fill="#1a1a1a">④ 改名 / 下载原件（只勾选一本时出现）</text>
@@ -64,7 +64,7 @@
 <rect x="616" y="398" width="444" height="66" rx="10" fill="#fbe9e4" stroke="#b0451f" stroke-width="1.6"/>
 <text x="632" y="420" font-size="13.5" font-weight="bold" fill="#1a1a1a">⑤ 删除</text>
 <text x="632" y="440" font-size="11.5" fill="#1a1a1a">正在优化 / 落库时拒绝；删的那一刻自己也占忙锁（09-25）</text>
-<text x="632" y="456" font-size="11.5" fill="#1a1a1a">连边车一起删；已放进 xochitl / KOReader 的副本不受影响</text>
+<text x="632" y="456" font-size="11.5" fill="#1a1a1a">连边车一起删；已加入 xochitl 的副本不受影响</text>
 
 <!-- PDF 备份 -->
 <rect x="290" y="400" width="300" height="150" rx="10" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.6" stroke-dasharray="5 4"/>
@@ -84,5 +84,5 @@
 <text x="36" y="596" font-size="12.5" font-weight="bold" fill="#1a1a1a">贯穿各动作的规矩</text>
 <text x="36" y="618" font-size="11.5" fill="#1a1a1a">· 优化与落库都是异步：按钮立即回"已开始"，进度写边车 + SSE；批量时由网关队列逐本执行，每本先过并发 / 内存闸门。</text>
 <text x="36" y="638" font-size="11.5" fill="#1a1a1a">· 服务重启后，停在"处理中"的记录改成失败（渲染自检改成超时），清掉半成品临时文件；网页标"上次处理被中断"。</text>
-<text x="36" y="658" font-size="11.5" fill="#1a1a1a">· 半成品一律点号开头（.书名.optimizing.tmp），不会被当成条目列出；落地新书前先清同名旧边车，免得继承旧记录。</text>
+<text x="36" y="658" font-size="11.5" fill="#1a1a1a">· 临时文件一律点号开头、与书名无关（.&lt;pid&gt;.&lt;序号&gt;.&lt;种类&gt;.tmp），出错即删，不会被列出；落地新书前先清同名旧边车。</text>
 </svg>
