@@ -27,7 +27,7 @@
 <text x="852" y="197" text-anchor="start" font-size="10.5" fill="#3a3a3a">否则 5 秒起翻倍、封顶 5 分钟退避重开（09-30）</text>
 <polyline points="400,142 440,142" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#mk)"/>
 <polyline points="800,142 840,142" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#mk)"/>
-<text x="620" y="224" text-anchor="middle" font-size="12" fill="#1a1a1a" font-weight="bold">事件怎么分派：先按 area 找到 tab，前台 tab 再按事件来源决定取多少（09-25 第四轮审计，只在 host 验证）</text>
+<text x="620" y="224" text-anchor="middle" font-size="12" fill="#1a1a1a" font-weight="bold">事件怎么分派：先按 area 找到 tab，前台 tab 再按事件来源决定取多少（09-25 第四轮审计起）</text>
 <rect x="40" y="280" width="224" height="170" rx="10" fill="#f3effa" stroke="#7a5cb0" stroke-width="1.6"/>
 <text x="52" y="300" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">area = manage</text>
 <text x="52" y="322" text-anchor="start" font-size="10.5" fill="#3a3a3a">服务启停 / 上下线</text>
@@ -75,14 +75,12 @@
 <text x="52" y="522" text-anchor="start" font-size="10.5" fill="#3a3a3a">/api/foundation、/api/enhance/status、/api/manage 三个并行</text>
 <text x="52" y="537" text-anchor="start" font-size="10.5" fill="#3a3a3a">/api/enhance/status 只取一次，结果同时给「基石与模块」和</text>
 <text x="52" y="552" text-anchor="start" font-size="10.5" fill="#3a3a3a">「系统增强 / 实验室」的“已加载”徽章</text>
-<text x="52" y="567" text-anchor="start" font-size="10.5" fill="#3a3a3a">（09-30 起不再有电池刺客卡片和它运行时才出现的子标签，</text>
-<text x="52" y="582" text-anchor="start" font-size="10.5" fill="#3a3a3a">  随 battop 一起移除；实验室里的手写笔迹开关同批移除）</text>
 <rect x="640" y="480" width="560" height="125" rx="10" fill="#fff3d6" stroke="#c9971f" stroke-width="1.6"/>
 <text x="652" y="500" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">网关侧：/api/enhance/status 为什么很便宜（09-24）</text>
 <text x="652" y="522" text-anchor="start" font-size="10.5" fill="#3a3a3a">reading-qol.json 一次请求只读一次（原来 6 个开关各读一遍）</text>
 <text x="652" y="537" text-anchor="start" font-size="10.5" fill="#3a3a3a">xochitl 扩展扫描按 (pid, starttime) 缓存：同一个进程只全量扫一次</text>
 <text x="652" y="552" text-anchor="start" font-size="10.5" fill="#3a3a3a">  /proc + maps，之后每次只读一次 /proc/&lt;pid&gt;/stat 核对（253→1.7µs，host）</text>
 <text x="652" y="567" text-anchor="start" font-size="10.5" fill="#3a3a3a">xochitl 启动不到 30 秒不缓存（xovi 还在逐个加载扩展）</text>
-<text x="652" y="582" text-anchor="start" font-size="10.5" fill="#3a3a3a">qmd 补丁状态照旧每次现算（battop is-active 缓存随 battop 09-30 移除）</text>
+<text x="652" y="582" text-anchor="start" font-size="10.5" fill="#3a3a3a">qmd 补丁状态照旧每次现算（看文件修改时间）</text>
 <polyline points="600,542 640,542" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#mk)"/>
 </svg>
