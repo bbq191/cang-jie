@@ -662,9 +662,14 @@ function renderNotes(sec){sec.innerHTML=`
     if(inflight.size)await Promise.all([...inflight])};
   /* 每章"设备笔记本/Obsidian md 是不是已经跟当前条目内容同步"（整理区第三轮反馈）：一次性取整本书
      的同步状态，章头徽章、「整理」列表默认收起已同步章节、回收站显示这条大概去哪了，三处共用同一份，
-     不用各自发请求。`refreshSync()` 在 loadBook 里、以及每次生成/导出动作之后调用刷新。 */
-  let syncMap=new Map();
-  const refreshSync=async()=>{if(!book){syncMap=new Map();return}const r=await j(bookApi('notes',`/sync`));syncMap=new Map((r.chapters||[]).map(c=>[c.chapter,c]))};
+     不用各自发请求。`refreshSync()` 在 loadBook / reloadBook 里、以及每次生成/导出动作之后调用刷新。
+     顺带取转写失败清单（`failedIds`，「整理」里标红 + 按钮改「重转失败」）：此前 renderBook 每画一次就查一次
+     /api/transcribe/status，连点章节标签、切「未导出/已导出」这种纯本地切换也要打一次请求。 */
+  let syncMap=new Map(),failedIds=new Set();
+  const refreshSync=async()=>{if(!book){syncMap=new Map();failedIds=new Set();return}
+    const [r,t]=await Promise.all([j(bookApi('notes',`/sync`)),j('/api/transcribe/status')]);
+    syncMap=new Map((r.chapters||[]).map(c=>[c.chapter,c]));
+    failedIds=new Set((t.failures||[]).filter(f=>f.book===book.uuid).map(f=>f.id))};
   /* 「保存并刷新」这条 5 步链（flush 未落地的改字 → 重取整本书 → 重取同步状态 → 重画指定的几个
      子视图）原来在 triage/archiveEntry/restore/去处切换/转写/问 AI 七处各自逐字重复（2026-09-09
      审计发现），任何一处漏改都容易造成"某个动作之后画面没更新"这类不容易被发现的 bug——收成一个
@@ -830,8 +835,6 @@ function renderNotes(sec){sec.innerHTML=`
   let exportTab='pending',selectedChapter=null;
   const renderBook=async(opts={})=>{if(!book){chaptertabs.innerHTML='';chapterbody.innerHTML=`<p class="small">${T('notes.pickBookFirst')}</p>`;return}updateSummary();
     const advance=!!opts.advance;
-    const trst=await j('/api/transcribe/status');
-    const failedIds=new Set((trst.failures||[]).filter(f=>f.book===book.uuid).map(f=>f.id));
     // 这份判据是 notes/crates/notecore/src/model.rs::Status::is_live_for_projection() 的镜像
     // （2026-09-09 单一事实源化：Rust 侧 project.rs/export.rs 都改成调那个方法了，前端这份因为
     // 跨语言/跨仓库做不到直接复用，改状态机时两边都要看一眼，别只改 Rust 那边）。

@@ -163,6 +163,11 @@ await page.evaluate(() => window.__ta.blur());
 await new Promise(r => setTimeout(r, 500));
 out.noteAfterBlur = (await hits('/api/ink/books')) - n0;
 out.noteEventEnhance = (await hits('/api/enhance/status')) - e0;
+// 「整理」里切「未导出/已导出」、点章节标签是纯本地切换：不该再查转写失败清单
+{ const t0 = await hits('/api/transcribe/status');
+  await page.evaluate(() => { const b = document.querySelectorAll('#nexporttabs button'); b[1].click(); b[0].click(); const c = document.querySelector('#nchaptertabs button'); if (c) c.click(); });
+  await new Promise(r => setTimeout(r, 300));
+  out.noteLocalSwitchTranscribe = (await hits('/api/transcribe/status')) - t0; }
 // 「其他」tab：壁纸服务的事件只刷壁纸子面板，不连带重取字体
 await page.evaluate(() => document.querySelectorAll('#tabs button')[2].click()); // 传书 / 笔记 / 其他 / 管理
 await new Promise(r => setTimeout(r, 500));
@@ -194,6 +199,7 @@ assert.equal(out.noteWhileTyping, 0, '正在输入时事件不该触发重画');
 assert.equal(out.noteFocusKept, true, '输入框焦点不该被重画冲掉');
 assert.equal(out.noteAfterBlur, 1, '失焦后补刷一次');
 assert.equal(out.noteEventEnhance, 0, '事件刷新不重查 /api/enhance/status');
+assert.equal(out.noteLocalSwitchTranscribe, 0, '切导出 tab / 章节标签不该再请求 /api/transcribe/status');
 assert.equal(out.otherFonts, 0, '壁纸事件不该重取字体列表');
 assert.equal(out.otherWalls, 1, '壁纸事件应刷壁纸子面板一次');
 assert.equal(out.queueEventStagingHits, 0, '网关排队/进度事件不该全量重取母版库列表');
