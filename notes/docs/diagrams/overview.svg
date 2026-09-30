@@ -13,7 +13,7 @@
 <rect x="316" y="84" width="300" height="130" rx="10" fill="#eaf6ec" stroke="#3f9a55" stroke-width="1.6"/>
 <text x="466.0" y="104" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">② ink-serve 矿 :8795</text>
 <text x="466.0" y="127" text-anchor="middle" font-size="10.5" fill="#3a3a3a">解析 .rm：勾画 ↔ 旁边手写配对</text>
-<text x="466.0" y="142" text-anchor="middle" font-size="10.5" fill="#3a3a3a">自渲染裁图；增量合并（不覆盖你改的字）</text>
+<text x="466.0" y="142" text-anchor="middle" font-size="10.5" fill="#3a3a3a">灰度自渲染裁图；增量合并（不覆盖你改的字）</text>
 <text x="466.0" y="157" text-anchor="middle" font-size="10.5" fill="#3a3a3a">写条目库（唯一写者），状态 Mined</text>
 <polyline points="616,149 658,149" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#mk)"/>
 <rect x="658" y="84" width="270" height="130" rx="10" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.6"/>
@@ -64,6 +64,6 @@
 <text x="36" y="482" text-anchor="start" font-size="10" fill="#3a3a3a">key 按厂商分开存、0600 权限、网页上脱敏显示；其余服务只听 127.0.0.1，经网关（HTTPS + 登录）对外</text>
 <rect x="24" y="540" width="1192" height="78" rx="10" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.6"/>
 <text x="36" y="560" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">图里没画的三件事</text>
-<text x="36" y="583" text-anchor="start" font-size="10.5" fill="#3a3a3a">· KOReader 回流：「笔记」页顶部「KOReader 回流」按钮，把 KOReader 的高亮/生词并入条目库，之后同样走 浏览 → 整理 → 推送   · 全文搜索：「笔记」页顶部搜索框，跨书搜原文/转写/AI 回答</text>
+<text x="36" y="583" text-anchor="start" font-size="10.5" fill="#3a3a3a">· 全文搜索：「笔记」页顶部搜索框，跨书搜原文/转写/AI 回答   · 已退役：KOReader 回流（09-16 上线，09-29 设备卸载 KOReader 后网页按钮删除；拉进来的旧条目照常可用）</text>
 <text x="36" y="603" text-anchor="start" font-size="10.5" fill="#3a3a3a">· 导入 md 文档：选一个 .md 文件直接生成一份新的设备笔记本，不经条目库（入口默认隐藏，由书架「管理 → 实验室」开关控制）</text>
 </svg>
