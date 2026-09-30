@@ -61,6 +61,16 @@ impl Doc {
     pub fn content(&self) -> Option<Content> {
         serde_json::from_str(&std::fs::read_to_string(self.side("content")).ok()?).ok()
     }
+    /// 只取 `.content` 的 `fileType`（不把整张页 id 表解析成 `Vec<String>`）。
+    pub fn file_type(&self) -> Option<String> {
+        #[derive(Deserialize)]
+        struct OnlyFileType {
+            #[serde(rename = "fileType", default)]
+            file_type: String,
+        }
+        let f = std::fs::File::open(self.side("content")).ok()?;
+        serde_json::from_reader::<_, OnlyFileType>(std::io::BufReader::new(f)).ok().map(|c| c.file_type)
+    }
     /// 打开 `.epub`（带缓冲、可 seek）：页→章只要目录那一两个 zip 条目，不整本读进内存。
     pub fn epub_file(&self) -> Option<std::io::BufReader<std::fs::File>> {
         std::fs::File::open(self.side("epub")).ok().map(std::io::BufReader::new)
@@ -70,6 +80,10 @@ impl Doc {
     }
     pub fn page_rm(&self, page_id: &str) -> PathBuf {
         self.lib.join(&self.uuid).join(format!("{page_id}.rm"))
+    }
+    /// 有没有任何 `.rm` 页（找到第一个就停，不逐个 stat）。
+    pub fn has_annotated_pages(&self) -> bool {
+        std::fs::read_dir(self.lib.join(&self.uuid)).map(|rd| rd.flatten().any(|e| e.path().extension().and_then(|x| x.to_str()) == Some("rm"))).unwrap_or(false)
     }
     /// 有 `.rm` 的页：(页 id, mtime 秒)。
     pub fn annotated_pages(&self) -> Vec<(String, u64)> {
@@ -121,11 +135,18 @@ mod tests {
         let lib = t.path();
         let d = Doc::new(lib, "u1");
         assert_eq!(d.page_rm("p"), lib.join("u1/p.rm"));
-        assert!(d.annotated_pages().is_empty());
+        assert!(d.annotated_pages().is_empty() && !d.has_annotated_pages());
         std::fs::create_dir_all(lib.join("u1")).unwrap();
-        std::fs::write(lib.join("u1/b.rm"), b"x").unwrap();
-        std::fs::write(lib.join("u1/a.rm"), b"x").unwrap();
         std::fs::write(lib.join("u1/a.png"), b"x").unwrap();
+        assert!(!d.has_annotated_pages(), "只认 .rm");
+        std::fs::write(lib.join("u1/b.rm"), b"x").unwrap();
+        assert!(d.has_annotated_pages());
+        assert_eq!(d.file_type(), None, "没有 .content");
+        std::fs::write(lib.join("u1.content"), r#"{"fileType":"pdf","pages":["p1","p2"],"x":{"y":[1]}}"#).unwrap();
+        assert_eq!(d.file_type().as_deref(), Some("pdf"));
+        std::fs::write(lib.join("u1.content"), r#"{"fileType":"#).unwrap();
+        assert_eq!(d.file_type(), None, "半截文件");
+        std::fs::write(lib.join("u1/a.rm"), b"x").unwrap();
         assert_eq!(d.annotated_pages().iter().map(|(id, _)| id.as_str()).collect::<Vec<_>>(), ["a", "b"]);
     }
 }

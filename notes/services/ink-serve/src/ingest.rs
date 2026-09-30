@@ -161,6 +161,20 @@ fn revoke_stale(db: &BookDb, uuid: &str, now: u64) -> Result<Option<DocStats>, S
     Ok((revoked > 0).then(|| DocStats { pages: 0, merge: MergeStats { revoked, ..Default::default() } }))
 }
 
+/// 启动追平前调用：还活着却没有章的 xochitl 条目，把它们所在页的 mtime 记录忘掉，让这次追平重扫一遍——
+/// 页→章的规则会变（2026-09-29 起不在目录里的 spine 文件归到前面最近的目录章，配合书架把一章拆成多个文件），
+/// 而摄取只扫 mtime 变了的页：规则改之前摄取的条目章一直是空的，两处投影都不收，页不动就永远不会被重新归章。
+/// 重扫时 `merge_page` 认领原条目、只刷新页级上下文，别的都不动。真在第一个目录条目之前的页（封面等）每次启动
+/// 多扫一遍，代价可忽略。返回忘掉了几页。
+pub fn forget_unmapped_pages(db: &BookDb, uuid: &str) -> Result<usize, String> {
+    Ok(db
+        .update_existing(uuid, |b| {
+            let pages: std::collections::BTreeSet<String> = b.entries.iter().filter(|e| e.chapter.is_none() && !e.is_terminal() && e.source == notecore::model::Source::Xochitl).map(|e| e.page.clone()).collect();
+            pages.iter().filter(|p| b.page_mtimes.remove(*p).is_some()).count()
+        })?
+        .unwrap_or(0))
+}
+
 /// 清空一本书的回收站（`Book::purge_terminal`），被清掉的条目的裁图一并删——此前裁图留在目录里再没人引用，
 /// 只增不减。书不在条目库 → `Ok(None)`。
 pub fn purge_terminal(db: &BookDb, crops_dir: &Path, uuid: &str) -> Result<Option<usize>, String> {
@@ -190,7 +204,9 @@ pub fn candidate_docs(lib: &Path) -> Vec<String> {
             let uuid = p.file_name()?.to_str()?.to_string();
             crate::doc::uuid_of_event(&uuid)?;
             let d = Doc::new(lib, &uuid);
-            (d.metadata()?.is_live_document() && d.content()?.file_type == "epub" && !d.annotated_pages().is_empty()).then_some(uuid)
+            // 由便宜到贵：先看有没有 `.rm`（一次 read_dir），再读 `.metadata`，最后才碰 `.content`（只取 fileType）——
+            // 书库里绝大多数文档没有手写页，此前每次启动都要把每份文档的 `.content`（长 PDF 上千个页 id）整份解析一遍。
+            (d.has_annotated_pages() && d.metadata()?.is_live_document() && d.file_type()? == "epub").then_some(uuid)
         })
         .collect();
     out.sort();
@@ -262,6 +278,36 @@ mod tests {
         let mut e = seeded_entry(id, status);
         e.ink = Some(notecore::model::Ink { strokes: vec!["1:1".into()], bbox: (0.0, 0.0, 40.0, 20.0), hash: hash.into(), crop: crop.into() });
         e
+    }
+
+    /// 启动追平前：活着却没章的 xochitl 条目所在页忘掉 mtime（让追平重扫、按新规则归章）；有章的页、终态条目、
+    /// KOReader 条目的页不动；没变化不写盘。
+    #[test]
+    fn forget_unmapped_pages_only_touches_live_chapterless_xochitl_pages() {
+        let t = tempfile::tempdir().unwrap();
+        let db = BookDb::new(t.path().join("books"));
+        db.ensure().unwrap();
+        let on = |id: &str, page: &str, chapter: Option<usize>, status: Status| {
+            let mut e = seeded_entry(id, status);
+            e.page = page.into();
+            e.chapter = chapter;
+            e
+        };
+        let mut ko = on("k", "pk", None, Status::Reviewed);
+        ko.source = notecore::model::Source::KoreaderHighlight;
+        db.update(
+            "u",
+            || Book { uuid: "u".into(), ..Default::default() },
+            |b| {
+                b.entries = vec![on("a", "p1", None, Status::Mined), on("b", "p2", Some(0), Status::Reviewed), on("c", "p3", None, Status::Archived), ko];
+                b.page_mtimes = [("p1", 5), ("p2", 5), ("p3", 5), ("pk", 5)].into_iter().map(|(p, m)| (p.to_string(), m)).collect();
+            },
+        )
+        .unwrap();
+        assert_eq!(forget_unmapped_pages(&db, "u").unwrap(), 1);
+        assert_eq!(db.load("u").unwrap().page_mtimes.keys().map(String::as_str).collect::<Vec<_>>(), ["p2", "p3", "pk"]);
+        assert_eq!(forget_unmapped_pages(&db, "u").unwrap(), 0, "再来一次没事可做");
+        assert_eq!(forget_unmapped_pages(&db, "ghost").unwrap(), 0);
     }
 
     /// 回归（2026-09-30）：指纹变了重画裁图后删掉旧的那张；清空回收站时被清条目的裁图一并删，活条目的留着。

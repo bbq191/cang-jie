@@ -169,6 +169,9 @@ fn main() {
             let mut catchup: std::collections::BTreeSet<String> = ingest::candidate_docs(&st.paths.xochitl_dir()).into_iter().collect();
             catchup.extend(st.db.list().into_iter().map(|b| b.uuid.clone()));
             for u in catchup {
+                if let Err(e) = ingest::forget_unmapped_pages(&st.db, &u) {
+                    eprintln!("[ink-serve] {u}: {e}");
+                }
                 st.ingest(&u);
             }
             let lib = st.paths.xochitl_dir();
