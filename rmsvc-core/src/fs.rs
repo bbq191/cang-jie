@@ -20,9 +20,7 @@ pub fn write_atomic_mode(path: &Path, bytes: &[u8], mode: Option<u32>) -> std::i
     if let Some(p) = path.parent() {
         std::fs::create_dir_all(p)?;
     }
-    let mut tmp = path.as_os_str().to_owned();
-    tmp.push(format!(".{}.{}.tmp", std::process::id(), SEQ.fetch_add(1, Ordering::Relaxed)));
-    let tmp = PathBuf::from(tmp);
+    let tmp = tmp_sibling(path, &format!(".{}.{}.tmp", std::process::id(), SEQ.fetch_add(1, Ordering::Relaxed)));
     let write = || -> std::io::Result<()> {
         use std::io::Write;
         let mut o = std::fs::OpenOptions::new();
@@ -41,6 +39,21 @@ pub fn write_atomic_mode(path: &Path, bytes: &[u8], mode: Option<u32>) -> std::i
         let _ = std::fs::remove_file(&tmp);
     }
     r
+}
+
+/// 临时文件名里保留的目标文件名最多这么多字节（Linux 单段文件名上限 255，留出 `.<pid>.<序号>.tmp` 的余量）。
+const TMP_BASE_MAX: usize = 200;
+
+/// `path` 同目录下的临时文件路径：`<目标文件名>` + `suffix`；目标文件名太长时按字符边界截短到 [`TMP_BASE_MAX`] 字节。
+/// 此前直接拼完整文件名，目标名本身在 243 字节以上（中文 80 来个字的书名）时临时名超过 255 字节，
+/// 原子写直接报 `File name too long`——母版库入库、抓网文（标题截到 80 字＋`.epub` 就是 245 字节）都会撞上。
+fn tmp_sibling(path: &Path, suffix: &str) -> PathBuf {
+    let name = path.file_name().map(|n| n.to_string_lossy()).unwrap_or_default();
+    let mut end = name.len().min(TMP_BASE_MAX);
+    while !name.is_char_boundary(end) {
+        end -= 1;
+    }
+    path.with_file_name(format!("{}{suffix}", &name[..end]))
 }
 
 /// 校验"单段普通文件名"：非空、无路径分隔符、非 `.`/`..`、不以 `.` 开头（隐藏名留给各目录的半成品 / sidecar）。
@@ -168,6 +181,20 @@ mod tests {
         let mut tmp = p.as_os_str().to_owned();
         tmp.push(".tmp");
         assert!(!PathBuf::from(tmp).exists(), "tmp 应已 rename 掉");
+    }
+
+    /// 回归：目标文件名接近 255 字节上限时照样能原子写（临时名不再"完整文件名 + 后缀"超长）。
+    #[test]
+    fn atomic_write_handles_names_near_the_filename_limit() {
+        let t = tempfile::tempdir().unwrap();
+        for name in [format!("{}.epub", "长".repeat(80)), "a".repeat(255), format!(".{}.delivered", "书".repeat(81))] {
+            assert!(name.len() <= 255);
+            let p = t.path().join(&name);
+            write_atomic(&p, b"x").unwrap_or_else(|e| panic!("{} 字节的名字: {e}", name.len()));
+            assert_eq!(std::fs::read(&p).unwrap(), b"x");
+        }
+        assert_eq!(std::fs::read_dir(t.path()).unwrap().count(), 3, "不留临时文件");
+        assert_eq!(tmp_sibling(Path::new("/d/短.json"), ".1.2.tmp"), Path::new("/d/短.json.1.2.tmp"), "普通名字的临时名不变");
     }
 
     /// 回归：多线程同时原子写同一个目标，内容始终是某一次完整写入（不被截断/撕裂），且不留 tmp。
