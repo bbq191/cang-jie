@@ -11,7 +11,7 @@
 #   xovi-persist         xovi 开机持久化恢复链（需要 vellum add xovi）
 #   hl-snap              荧光笔 CJK 精确吸附（需要 vellum add xovi；只落盘）
 #   handwriting-stroke   CJK 手写笔迹渲染优化（需要 vellum add xovi；只落盘）
-#   （sidebar-entry 已退役，2026-09-29：设备不再用 KOReader/WeRead/appload；uninstall-all 仍会清，见 lib.sh STEP_RETIRED）
+#   （sidebar-entry 已退役，2026-09-29：设备不再用 KOReader/WeRead/appload；安装件 09-30 已删，uninstall-all 仍会清，见 lib.sh STEP_RETIRED）
 #   shelf                shelf 本体+网关+笔记线+两个领域服务（不需要 xovi；qmd 只落盘）
 #   xovi-apply           统一让上面落盘的 xovi 内容生效：有待生效改动（或 xovi 还没生效）才整机重启，且只一次
 # 装前先过固件安全门（sha256(/usr/bin/xochitl) 比对 firmware-allowlist.txt），避免在没验证过注入定位的固件上装错。
@@ -36,7 +36,7 @@
 #                 文件（或 xovi 还没在 xochitl 里生效）时才重启——重复跑 install-all 不再每次闪屏
 #   --dry-run     只在本机打印将执行的步骤，不连设备、不执行任何东西
 #   --skip        逗号分隔，跳过指定步骤（可选值见 lib.sh STEP_ORDER）
-# 装前依次：固件安全门（sha256 白名单）→ 设备预检（root/磁盘空间/xovi·qrr·appload 现状，只读）。
+# 装前依次：固件安全门（sha256 白名单）→ 设备预检（root/磁盘空间/xovi·qrr·dm-verity 现状，只读）。
 # ═══════════════════════════════════════════════════════════════════════════
 set -eu
 cd "$(dirname "$0")"

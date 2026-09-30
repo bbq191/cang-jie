@@ -74,13 +74,15 @@ TAB="$(printf '\t')"
 US="$(printf '\037')"   # 条目"详情"多行之间的分隔符（渲染时拆开）
 
 # ── 要核对的 systemd 单元（取自 manifest + 步骤表的载荷位置，不在这里另起一份服务清单）──────────
-# 每项 KIND:UNIT:PAYLOAD——KIND：svc=常驻且应 active；opt=常驻但有意不开机自启（battop）；once=oneshot；target。
+# 每项 KIND:UNIT:PAYLOAD——KIND：svc=常驻且应 active；opt=常驻但有意不开机自启（battop）；once=oneshot；target；
+# legacy=已退役/旧命名、不该再在的（manifest 的 SHELF_LEGACY_UNITS，如 09-29 撤掉的 koreader-serve），在就报 ⚠。
 # PAYLOAD：这个单元对应的设备上载荷（二进制/脚本）；"单元缺失但载荷在" = OTA 冲掉了 /usr，判 ✗。"-" = 无可判载荷。
 unit_specs() {
     for us_s in $SHELF_ALL; do
         us_b="$(shelf_svc_of "$us_s")"
         echo "svc:$us_b.service:/home/root/.local/bin/$us_b"
     done
+    for us_u in $SHELF_LEGACY_UNITS; do echo "legacy:$us_u:/home/root/.local/bin/${us_u%.service}"; done
     echo "target:shelf.target:/home/root/.local/bin/gateway"
     echo "svc:wifi-watch.service:/home/root/.local/bin/wifi-watch.sh"
     echo "opt:battop.service:/home/root/battop/battop"
@@ -92,7 +94,7 @@ unit_specs() {
 svc_port() {
     case "$1" in
         gateway) echo 443 ;;
-        book-serve) echo 8790 ;; koreader-serve) echo 8791 ;; font-serve) echo 8792 ;; wallpaper-serve) echo 8793 ;;
+        book-serve) echo 8790 ;; font-serve) echo 8792 ;; wallpaper-serve) echo 8793 ;;
         ink-serve) echo 8795 ;; transcribe-serve) echo 8796 ;; mind-serve) echo 8797 ;; note-serve) echo 8798 ;;
         *) echo "" ;;
     esac
@@ -102,7 +104,6 @@ svc_port() {
 qmd_mark() {
     case "$1" in
         reader-page-turn.qmd) echo "CJ-PAGE-TURN: loaded" ;;
-        koreader-sidebar-entry.qmd) echo "CJ-SIDEBAR[" ;;
         font-menu-dynamic.qmd) echo "SHELF-FONT:" ;;
         shelf-mkdir-agent.qmd) echo "SHELF-MKDIR:" ;;
         shelf-trash-agent.qmd) echo "SHELF-TRASH:" ;;
@@ -110,13 +111,18 @@ qmd_mark() {
         *) echo "" ;;
     esac
 }
-qmd_marks_spec() {   # 传给设备端的 "键=子串" 列表（| 分隔），键 = qmd 文件名
+qmd_marks_spec() {   # 传给设备端的 "键=子串" 列表（| 分隔），键 = qmd 文件名；qmd 清单取 manifest（不另写一份）
     qm_out=""
-    for qm_q in reader-page-turn.qmd koreader-sidebar-entry.qmd font-menu-dynamic.qmd shelf-mkdir-agent.qmd shelf-trash-agent.qmd shelf-comic-margins.qmd; do
-        qm_out="$qm_out|mark:$qm_q=$(qmd_mark "$qm_q")"
+    for qm_s in $SHELF_ALL; do
+        for qm_q in $(shelf_svc_qmds "$qm_s"); do
+            qm_m="$(qmd_mark "$qm_q")"
+            [ -z "$qm_m" ] || qm_out="$qm_out|mark:$qm_q=$qm_m"
+        done
     done
     echo "${qm_out#|}"
 }
+# 已退役、不该再在 qrr 目录里的 qmd（2026-09-29 撤掉的 KOReader/WeRead 侧栏入口，由 uninstall-all 的 sidebar-entry 步骤清）
+RETIRED_QMDS="koreader-sidebar-entry.qmd"
 
 # ═════════════════════════════ 设备端采集 ═════════════════════════════
 collect() {
@@ -358,7 +364,7 @@ judge_xochitl() {
     so="$(drows PENDING | cut -f2 | grep '^so-pending:' | sed 's/^so-pending://' | tr '\n' ' ' | sed 's/ $//' || true)"
     mk="$(drows PENDING | cut -f2 | grep -v '^so-pending:' | tr '\n' ' ' | sed 's/ $//' || true)"
     if [ -n "$so" ]; then
-        item warn "$S" "待换入区 so-pending" "有 $so 等着换入——下次 sh deploy-xovi-apply.sh 会 stop→换入→start"
+        item warn "$S" "待换入区 so-pending" "有 $so 等着换入——下次 sh deploy-xovi-apply.sh（或设备重启时 xovi-reenable）会换入并生效"
     else
         item ok "$S" "待换入区 so-pending" "空"
     fi
@@ -390,7 +396,7 @@ judge_qmd() {
             else note="；当前 xochitl 日志未见「$mark」（要打开相关界面才打印，不算异常）"; fi
         fi
         if [ -z "$mt" ]; then
-            item fail "$S" "$q" "缺失（所属服务已装、qt-resource-rebuilder 在）——重跑对应部署（shelf：sh deploy.sh；侧栏：sh deploy-sidebar-entry.sh）"
+            item fail "$S" "$q" "缺失（所属服务已装、qt-resource-rebuilder 在）——重跑 sh deploy.sh"
         elif [ -n "$xstart" ] && num "$mt" && [ "$mt" -gt $((xstart + 2)) ]; then
             item warn "$S" "$q" "文件比当前 xochitl 进程新——待重启生效（sh deploy-xovi-apply.sh）$note"
         else
@@ -400,6 +406,14 @@ judge_qmd() {
     for q in $SHELF_LEGACY_QMDS; do
         awk -F'\t' -v n="$q" '$1 == "QRR_FILE" && $2 == n { f = 1 } END { exit !f }' "$DUMP" \
             && item warn "$S" "$q" "旧命名遗留（重跑 sh deploy.sh 会清掉）"
+    done
+    for q in $RETIRED_QMDS; do
+        awk -F'\t' -v n="$q" '$1 == "QRR_FILE" && $2 == n { f = 1 } END { exit !f }' "$DUMP" || continue
+        if [ "$(dget HAS_APPLOAD)" = 1 ]; then
+            item warn "$S" "$q" "已退役的 KOReader/WeRead 侧栏入口还在——清掉：sh uninstall-all.sh 只留 sidebar-entry 一步（其余用 --skip），之后整机重启"
+        else
+            item fail "$S" "$q" "已退役的侧栏入口还在，而 appload 已不在：它 IMPORT 的 net.asivery.AppLoad 找不到，Sidebar 补丁失效（可能连带侧栏加载失败）——sh uninstall-all.sh 只留 sidebar-entry 一步清掉，之后整机重启"
+        fi
     done
     [ -n "$expect" ] || item warn "$S" "qmd" "没有期望的 qmd（书架服务都没装？）"
 }
@@ -496,9 +510,17 @@ judge_ports() {
 judge_units() {
     S="8. /usr 下的 systemd 单元（OTA 会冲掉）"
     total=0; okc=0
-    for spec in $(drows UNIT | awk -F'\t' '{ print $3 ":" $4 ":" $5 }'); do
-        total=$((total + 1))
+    for spec in $(drows UNIT | awk -F'\t' '{ print $2 ":" $3 ":" $4 ":" $5 }'); do
+        kind="${spec%%:*}"; spec="${spec#*:}"
         unit="${spec%%:*}"; r="${spec#*:}"; present="${r%%:*}"; pl="${r#*:}"
+        if [ "$kind" = legacy ]; then
+            # 退役/旧命名：单元或二进制还在就提醒（重新部署书架会清），不计入"在位"统计
+            if [ "$present" = 1 ] || [ "$pl" = 1 ]; then
+                item warn "$S" "$unit" "已退役/旧命名的遗留（单元 $([ "$present" = 1 ] && echo 在 || echo 不在)，二进制 $([ "$pl" = 1 ] && echo 在 || echo 不在)）——重跑 sh deploy.sh 会清掉"
+            fi
+            continue
+        fi
+        total=$((total + 1))
         if [ "$present" = 1 ]; then okc=$((okc + 1)); continue; fi
         if [ "$pl" = 1 ]; then
             item fail "$S" "$unit" "单元文件不在 /usr/lib/systemd/system，但它的载荷还在 /home——OTA 冲掉了？重跑 sh install-all.sh"

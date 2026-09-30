@@ -201,7 +201,8 @@ done
 DEVICE_SCRIPT
 }
 
-# 通用收尾：暂存目录里只有本项目的中转文件，清掉（不在 STEP_ORDER 里、不计入"已卸载"清单）
+# 通用收尾：暂存目录里只有本项目的中转文件，清掉（不在 STEP_ORDER 里、不计入"已卸载"清单）。
+# koreader-sidebar-entry.qmd / cangjie-icons.rcc 是已退役的 sidebar-entry 部署中断时可能留下的暂存件
 cleanup_staging() {
     dev_script <<'DEVICE_SCRIPT'
 set -eu

@@ -22,7 +22,7 @@
 #   host_arg         薄 deploy-*.sh 共用的 [host] 参数解析（-h、多余/未知参数 exit 2）
 #   require_device   动手前确认 ssh 通；不通给下一步排查提示并 exit 1
 #   fw_gate          固件 sha256 白名单门（install-all）
-#   preflight_device 设备只读预检：root/ /home 可写与剩余空间/xovi·qrr·appload·verity 现状（install-all）
+#   preflight_device 设备只读预检：root/ /home 可写与剩余空间/xovi·qrr·verity 现状（install-all）
 # ═══════════════════════════════════════════════════════════════════════════
 
 CJ_PKG_DIR="$(pwd)"
@@ -205,9 +205,11 @@ fw_gate() { # $1=FORCE(0/1)
 STEP_ORDER="chrony-cn chrony-boot-wakelock timezone-cn battop wifi-watch xovi-persist hl-snap handwriting-stroke shelf xovi-apply"
 # 只落盘、不各自重启 xochitl 的步骤（install-all 给它们传 DEFER_XOVI_START=1，最后由 xovi-apply 统一重启）
 # shellcheck disable=SC2034  # 由 install-all.sh 使用
-STEP_DEFER="hl-snap handwriting-stroke sidebar-entry"
-# 已退役的步骤：install-all 不再装，uninstall-all 照样卸（装过的设备还能清干净）；对应 deploy-* 脚本保留，可单独手动跑。
-#   sidebar-entry：KOReader/WeRead 的 Sidebar 入口（2026-09-29 用户卸了设备上的 KOReader、WeRead 与 appload）
+STEP_DEFER="hl-snap handwriting-stroke"
+# 已退役的步骤：install-all 不再装，uninstall-all 照样卸（装过的设备还能清干净）；安装件（deploy 脚本与载荷）已删，
+# 没有 step_script 映射。
+#   sidebar-entry：KOReader/WeRead 的 Sidebar 入口（2026-09-29 用户卸了设备上的 KOReader、WeRead 与 appload；
+#                  2026-09-30 删掉 deploy-sidebar-entry.sh 与它的 qmd/图标——appload 不在，它本来也装不上）
 # shellcheck disable=SC2034  # 由 uninstall-all.sh 使用
 STEP_RETIRED="sidebar-entry"
 # 没有"卸载"语义的步骤：配置覆写（chrony-cn/timezone-cn），以及纯动作（xovi-apply）
@@ -224,7 +226,6 @@ step_script() {
         xovi-persist) echo ./deploy-xovi-persist.sh ;;
         hl-snap) echo ./deploy-hl-snap.sh ;;
         handwriting-stroke) echo ./deploy-handwriting-stroke.sh ;;
-        sidebar-entry) echo ./deploy-sidebar-entry.sh ;;
         shelf) echo ./deploy.sh ;;
         xovi-apply) echo ./deploy-xovi-apply.sh ;;
         *) return 1 ;;
@@ -278,7 +279,7 @@ parse_step_args() {
 skip_has() { case ",$SKIP," in *",$1,"*) return 0 ;; *) return 1 ;; esac; }
 
 # ── 设备预检（install-all 用）：只读检查，能提前拦住的全在这拦（磁盘满/非 root/写不了 /home），
-#   其余（xovi/qrr/appload 缺失）只报告——对应步骤自己会清楚报错或跳过。返回 1 = 不该继续装。──
+#   其余（xovi/qrr 缺失）只报告——对应步骤自己会清楚报错或跳过。返回 1 = 不该继续装。──
 CJ_MIN_FREE_KB="${CJ_MIN_FREE_KB:-51200}"     # /home 可用空间低于此值拒装（≈50MB：连 shelf 二进制都放不下）
 CJ_WARN_FREE_KB="${CJ_WARN_FREE_KB:-204800}"  # 低于此值只警告（≈200MB：shelf 载荷+备份余量偏紧）
 preflight_device() {
