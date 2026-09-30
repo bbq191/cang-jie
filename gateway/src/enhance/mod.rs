@@ -1,6 +1,6 @@
 //! 系统增强工具开关（Track 3，2026-09-09）：网关自身固定能力（跟 `manage` 一样不经过服务注册表/反代），
-//! 给原来只能在设备原生「设置」App 里改的开关一个网页入口。现接了五个开关：CJK 荧光笔吸附/CJK 手写
-//! 笔迹优化/「导入 md 文档」可见性/漫画页边距最小化（都在 [`qol`]，同一份 `reading-qol.json`）+ 电池刺客 battop
+//! 给原来只能在设备原生「设置」App 里改的开关一个网页入口。现接的开关：CJK 荧光笔吸附/CJK 手写笔迹优化/
+//! 「导入 md 文档」可见性/漫画页边距最小化/单击翻页/日漫翻页规则（都在 [`qol`]，同一份 `reading-qol.json`）+ 电池刺客 battop
 //! （[`battop`]，独立 systemd unit）。
 //!
 //! **「CJK 手写笔迹优化」这句注释曾经写"目前完全不存在、没有反编译地基"——那是 2026-09-09 刚开线时
@@ -66,12 +66,10 @@ pub fn set_qol(paths: &Paths, req: &mut Request<'_>) -> ApiResult {
     Ok(status(paths))
 }
 
-/// `POST /api/enhance/battop/{start|stop}`。**没有独立顶层「电池刺客」标签页了**（2026-09-10
-/// 用户拍板：降级移入「管理→实验室」，只留卡片，不单开顶层 tab）——上一版为了让那个独立标签页
-/// "跑起来才出现"而加的 `events::Hub` 事件 publish 已经跟着撤掉，这里恢复成不需要额外状态的
-/// 单一函数。
-pub fn battop_toggle(_paths: &Paths, action: &str) -> ApiResult {
-    battop::toggle(action).map_err(ApiError::bad)?;
+/// `POST /api/enhance/battop/{start|stop}`。开关卡片在「管理 → 系统增强」（2026-09-21 从实验室移过来），耗电/唤醒数据在
+/// 运行时才出现的「管理 → 电池刺客」二级 tab；不发事件，网页在开关后自己重取 `/api/enhance/status`。
+pub fn battop_toggle(_paths: &Paths, req: &mut Request<'_>) -> ApiResult {
+    battop::toggle(req.param("action")).map_err(ApiError::bad)?;
     Ok(Reply::ok(&serde_json::json!({"ok": true})))
 }
 
@@ -100,8 +98,7 @@ mod tests {
     #[test]
     fn set_qol_applies_only_present_boolean_keys_and_rejects_empty() {
         let t = tempfile::tempdir().unwrap();
-        let h = t.path().to_str().unwrap().to_string();
-        let paths = Paths::resolve(move |k| if k == "HOME" { Some(h.clone()) } else { None });
+        let paths = crate::testutil::sandbox(&t);
         let rep = put(&paths, br#"{"comicMinMargin":true,"hlSnapCjk":false,"junk":1}"#).unwrap();
         let v: serde_json::Value = serde_json::from_slice(&rep.body).unwrap();
         assert_eq!((v["comicMinMargin"].as_bool(), v["hlSnapCjk"].as_bool()), (Some(true), Some(false)));
@@ -118,8 +115,7 @@ mod tests {
     #[test]
     fn page_turn_switches_default_off_and_independent() {
         let t = tempfile::tempdir().unwrap();
-        let h = t.path().to_str().unwrap().to_string();
-        let paths = Paths::resolve(move |k| if k == "HOME" { Some(h.clone()) } else { None });
+        let paths = crate::testutil::sandbox(&t);
         let q = qol::Qol::load(&paths);
         assert!(!q.tap_page_turn() && !q.rtl_page_turn());
         put(&paths, br#"{"comicMinMargin":true}"#).unwrap();

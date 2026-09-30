@@ -92,14 +92,10 @@ impl Qol {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::collections::HashMap;
 
     fn tmp_paths() -> (tempfile::TempDir, Paths) {
         let t = tempfile::tempdir().unwrap();
-        let h = t.path().to_str().unwrap().to_string();
-        let mut env = HashMap::new();
-        env.insert("HOME".to_string(), h);
-        let paths = Paths::resolve(move |k| env.get(k).cloned());
+        let paths = crate::testutil::sandbox(&t);
         (t, paths)
     }
 

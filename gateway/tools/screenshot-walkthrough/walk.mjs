@@ -17,9 +17,9 @@ fs.mkdirSync(OUT, { recursive: true });
 
 // 这几个 4xx 是"服务缺席→404 未安装，UI 据 /api/services 隐藏 tab"的正常设计行为（见
 // gateway/src/main.rs 头注）——run.sh 只起 book-serve/ink-serve/note-serve 三个服务，font/
-// koreader/wallpaper/transcribe/mind 五个缺席时前端仍会轮询它们的 status，全是预期噪音，
+// wallpaper/transcribe/mind 四个缺席时前端仍会请求它们的 status（打开页面/切 tab 时各一次，不轮询），全是预期噪音，
 // 过滤掉之后剩下的才是真正值得人看一眼的异常响应。
-const EXPECTED_404 = [/\/api\/(font|koreader|wallpaper|transcribe|mind)\//];
+const EXPECTED_404 = [/\/api\/(font|wallpaper|transcribe|mind)\//];
 
 const browser = await chromium.launch();
 

@@ -1,8 +1,8 @@
 //! 单页 UI（手机/电脑浏览器打开 `https://<设备IP>/`，2026-09-10 起绑标准 443 端口，不用带端口号）。固定 tab「传书」（母版库总入口）+「管理」，中间的服务 tab
-//! 按 `/api/services` 注册表动态生成（xochitl 字体 = font-serve、KOReader = koreader-serve、壁纸 = wallpaper-serve）。
+//! 按 `/api/services` 注册表动态生成（笔记 = note-serve；xochitl 字体 = font-serve、壁纸 = wallpaper-serve 收在「其他」里）。
 //! 上传逐文件一请求（每本独立成败、独立进度条），所有上传口共用一个 `uploader` + 服务端同形回执（`asset::receipt`）；
 //! 格式白名单由 [`page`] 从 `rmsvc_core::formats` 注入（`__EXTS__`），网页 accept / 选中即拦与服务端上传门同源。
-//! 页面源码在 `services/gateway/ui/`（index.html 骨架 + style.css + app.js + auth.css），编译期 `include_str!` 进二进制：
+//! 页面源码在 `gateway/ui/`（index.html 骨架 + style.css + app.js + auth.css），编译期 `include_str!` 进二进制：
 //! 网页仍是单文件零外链，但 JS/CSS 是真文件——编辑器/`node --check`（CI）直接检查，改样式不用在 Rust 原始字符串里找。
 use std::sync::OnceLock;
 
@@ -11,8 +11,8 @@ const STYLE_CSS: &str = include_str!("../ui/style.css");
 const APP_JS: &str = include_str!("../ui/app.js");
 const AUTH_CSS: &str = include_str!("../ui/auth.css");
 
-/// i18n 语言包（2026-09-09 起，只覆盖主界面外壳 + 顶层导航，登录/改密码页与各模块正文暂不迁移——
-/// 见 `ui/locales/` 目录说明与白皮书对应记录）。继续走 `include_str!` 编译进二进制，不破坏"单文件
+/// i18n 语言包（2026-09-09 起；09-10 起覆盖主界面全部正文，只有登录/改密码页仍是 [`login_page`]/[`password_page`]
+/// 里的中文——未登录态读不到网页的语言选择）。继续走 `include_str!` 编译进二进制，不破坏"单文件
 /// 零外链"部署（不用改 build/deploy/install 脚本，语言包新增/改词只是改这两个 JSON 再重新编译）。
 const LOCALE_ZH_CN: &str = include_str!("../ui/locales/zh-CN.json");
 const LOCALE_EN_US: &str = include_str!("../ui/locales/en-US.json");
@@ -29,11 +29,12 @@ pub fn locale_json(lang: &str) -> &'static str {
 pub fn page() -> &'static str {
     static PAGE: OnceLock<String> = OnceLock::new();
     PAGE.get_or_init(|| {
-        use rmsvc_core::formats::{BOOK_EXTS, DICT_EXTS, FONT_EXTS, IMAGE_EXTS, NATIVE_EXTS};
+        use rmsvc_core::formats::{BOOK_EXTS, FONT_EXTS, IMAGE_EXTS, NATIVE_EXTS};
         // "convertible" 档（azw3/mobi/azw/prc/fb2/txt）2026-09-17 随 EPUB 线架构调整退役；"仅
         // KOReader" 档（cbz/cbr/djvu/html/htm/rtf/doc/docx/chm/xps）2026-09-18 用户明确要求一并
         // 退役——母版库只收 EPUB/PDF，`BOOK_EXTS == NATIVE_EXTS`，不再需要 `koOnly` 字段区分两档。
-        let exts = serde_json::json!({"book": BOOK_EXTS, "native": NATIVE_EXTS, "font": FONT_EXTS, "dict": DICT_EXTS, "image": IMAGE_EXTS});
+        // `dict`（KOReader 词典上传口的格式）随 2026-09-29 设备卸载 KOReader、网页撤掉词典上传一并不再注入。
+        let exts = serde_json::json!({"book": BOOK_EXTS, "native": NATIVE_EXTS, "font": FONT_EXTS, "image": IMAGE_EXTS});
         INDEX_HTML.replace("__STYLE__", STYLE_CSS).replace("__SCRIPT__", APP_JS).replace("__EXTS__", &exts.to_string())
     })
 }
@@ -74,7 +75,8 @@ mod tests {
     fn page_injects_format_whitelists_once() {
         let p = super::page();
         assert!(!p.contains("__EXTS__"), "占位应被替换");
-        assert!(p.contains(r#""book":["epub","pdf"]"#) && p.contains(r#""font":["ttf""#) && p.contains(r#""dict":["ifo""#) && p.contains(r#""image":["jpg""#));
+        assert!(p.contains(r#""book":["epub","pdf"]"#) && p.contains(r#""font":["ttf""#) && p.contains(r#""image":["jpg""#));
+        assert!(!p.contains(r#""dict""#), "KOReader 词典上传口已撤，格式表不再注入");
         assert!(p.contains(r#""native":["epub","pdf"]"#), "格式说明注入");
         assert!(!p.contains(r#""convertible""#), "convertible 档已随 EPUB 线架构调整退役");
         assert!(!p.contains(r#""koOnly""#), "仅 KOReader 档已随 2026-09-18 格式收窄退役");

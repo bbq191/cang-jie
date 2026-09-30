@@ -7,16 +7,15 @@ const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;'
 const fmtB=n=>n>1048576?(n/1048576).toFixed(1)+' MB':n>1024?(n/1024).toFixed(0)+' KB':n+' B';
 // 小徽章：renderManage 的「基石与模块」列表用。
 const badge=(t,ok)=>`<span class="badge ${ok?'on':'off'}">${t}</span>`;
-/* 母版库一本书是不是"已经不用管了"——给 stagingList 的"隐藏已完成"开关用（2026-09-19 用户反馈
+/* 母版库一本书是不是"已经不用管了"——给母版库的"隐藏已完成"开关与「已完成」筛选用（2026-09-19 用户反馈
    母版库列表太长）。正在处理/失败态都不算"完成"（还需要用户看见），格式不是 EPUB 就没有"优化"
-   这个概念、只看有没有落库；EPUB 要优化完+落库才算。 */
+   这个概念、只看有没有落库；EPUB 要优化完+落库才算。落库只认加入 xochitl：2026-09-29 设备卸掉了
+   KOReader，以前"加入过 KOReader"的书现在不在任何阅读器里，不再算完成。 */
 const isBookDone=it=>{
   if(it.busy)return false;
   const dv=it.delivered||{};
   if((dv.optimize&&dv.optimize.status==='failed')||(dv.deliver&&dv.deliver.status==='failed'))return false;
-  const optimizedOk=it.format!=='epub'||it.optimized;
-  const deliveredOk=!!(dv.native||dv.koreader);
-  return optimizedOk&&deliveredOk;
+  return (it.format!=='epub'||!!it.optimized)&&!!dv.native;
 };
 /* 停一会儿再继续：用在"先弹出一条状态文字，再触发会重画掉这条文字的动作"这种场景——不等的话状态
    文字刚显示就被紧跟着的重画冲掉，用户根本来不及看见（点重转/生成笔记本弹出消耗那次踩过的坑）。 */
@@ -31,22 +30,22 @@ const coalesce=fn=>{let running=null,again=false;
 const refreshSec=sec=>{if(!sec.refresh)return;(sec._rf||(sec._rf=coalesce(async()=>{await sec.refresh()})))()};
 /* 防双击：按钮点击后立即禁用，异步操作完成（不管成功失败）再解禁。很多按钮的异步操作是删除/
    落库这类不该被同一次操作重复触发两遍的动作——不加这一层，手指点快了或者网络慢的时候网络请求
-   还没回来就能再点一次，2026-09-18 真机反馈"优化过程中点击删除"这类并发操作会撞在一起。母版库
-   列表 stagingList 的 btn() 助手（2026-09-19 起）也走这个——原来自己手写了一遍禁用/复位逻辑，
-   跟这里是同一件事的第二份实现，改成在这层之外只叠列表特有的按钮文案/本地忙态记账。已经自己
-   一开始就手动 disabled=true 的按钮（超限/未安装这类"根本点不了"，不是"点了在跑"）不需要套这层。*/
+   还没回来就能再点一次，2026-09-18 真机反馈"优化过程中点击删除"这类并发操作会撞在一起。新按钮一律
+   用下面的 btn()（内部就是这一层）。一开始就 disabled=true 的按钮（"根本点不了"，不是"点了在跑"）不传处理函数。*/
 const guardClick=(el,fn)=>{el.onclick=async()=>{if(el.disabled)return;el.disabled=true;try{await fn()}catch(e){console.error(e);toast(T('common.failed'))}finally{el.disabled=false}}};
+/* 按钮：`btn(文案, 点击处理, 类名)`——el('button')+guardClick 这一对全站出现二十来次，收成一处。点击处理可同步可异步
+   （guardClick 统一防双击、异常提示）；文案可以是字符串或节点数组（底部栏的"标签+数量角标"）；extra 放 title 等其余属性。 */
+const btn=(text,fn,cls='btn',extra)=>{const b=el('button',{class:cls,type:'button',...extra},typeof text==='string'?null:text);if(typeof text==='string')b.textContent=text;if(fn)guardClick(b,fn);return b};
 /* 轻量 DOM 构建 helper：`el('div',{class:'small',style:'...'},[child1,child2])`。`attrs` 里
    `class`/其余属性走 `setAttribute`，`style` 走 `style.cssText`，`text`/`html` 分别设
-   `textContent`/`innerHTML`；`children` 接单个节点/字符串或数组。不是要把全站手写 DOM 都机械
-   替换一遍——只在改动到的地方（stagingList 这类同类节点最密集的函数）顺手用，别的地方不动
-   （2026-09-19 代码质量审计范围说明）。*/
+   `textContent`/`innerHTML`；`children` 接单个节点/字符串或数组。不强求把全站模板字符串都改成它——
+   只在同类节点密集、或要插外部数据的地方用（`text` 天然不需要转义）。*/
 const el=(tag,attrs,children)=>{const n=document.createElement(tag);
   if(attrs)for(const k in attrs){const v=attrs[k];if(k==='style')n.style.cssText=v;else if(k==='text')n.textContent=v;else if(k==='html')n.innerHTML=v;else n.setAttribute(k,v)}
   if(children!=null)for(const c of [].concat(children))n.appendChild(typeof c==='string'?document.createTextNode(c):c);
   return n};
 /* 结构化步数进度展示：`prog={done,total}` 有数据画真百分比，没有画不确定态滚动条（浏览器原生
-   `<progress>` 不带 value/max 渲染成不确定态动画）——从 stagingList 原地实现抽出来，同样适用于
+   `<progress>` 不带 value/max 渲染成不确定态动画）——母版库行内进度、笔记「推送本章」共用，同样适用于
    任何"耗时不短、有时有分步数据有时没有"的忙态展示（`container` 是要挂这块的父节点，自己占
    一整行）。 */
 const renderStepProgress=(container,{label,prog,msg})=>{
@@ -66,7 +65,7 @@ const toast=(msg,kind='bad',ms=4200)=>{if(!msg)return;const t=el('div',{class:'t
   requestAnimationFrame(()=>t.classList.add('show'));
   const kill=()=>{t.classList.remove('show');setTimeout(()=>t.remove(),200)};
   t.onclick=kill;setTimeout(kill,ms)};
-/* 三种对话框（确认 / 输入 / 单选）的公共骨架：遮罩 + 盒子 + 关闭收尾（摘掉键盘监听、移除节点、兑现 Promise）。
+/* 两种对话框（确认 / 输入）的公共骨架：遮罩 + 盒子 + 关闭收尾（摘掉键盘监听、移除节点、兑现 Promise）。
    点遮罩 / Esc = 取消（cancelValue）；onKey 处理其余按键（Enter 等）。build(close) 返回盒子里的节点数组与要聚焦的元素。 */
 const modal=(cancelValue,build,onKey)=>new Promise(resolve=>{
   const close=v=>{document.removeEventListener('keydown',key);overlay.remove();resolve(v)};
@@ -86,15 +85,13 @@ const modal=(cancelValue,build,onKey)=>new Promise(resolve=>{
    `if(await confirmDialog(msg))`）；点"是"/`Enter`/取消按钮外没有对应处理，点遮罩/`Esc`/"否"
    都算取消，跟原生 confirm() 的"确定/取消"行为对齐。 */
 const confirmDialog=msg=>modal(false,close=>{
-  const yesBtn=el('button',{class:'btn pri',text:T('common.yes')});yesBtn.onclick=()=>close(true);
-  const noBtn=el('button',{class:'btn',text:T('common.no')});noBtn.onclick=()=>close(false);
+  const yesBtn=btn(T('common.yes'),()=>close(true),'btn pri'),noBtn=btn(T('common.no'),()=>close(false));
   return {nodes:[el('div',{class:'confirm-msg',text:msg}),el('div',{class:'confirm-actions'},[noBtn,yesBtn])],focus:()=>yesBtn.focus()};
 },(e,close)=>{if(e.key==='Enter')close(true)});
 /* 输入框版的 confirmDialog：返回 `Promise<string|null>`（取消 = null）。给改名这类"要用户敲一个值"的操作用。 */
 const promptDialog=(msg,value='')=>{const inp=el('input',{type:'text',class:'confirm-input'});inp.value=value;
   return modal(null,close=>{
-    const yesBtn=el('button',{class:'btn pri',text:T('common.ok')});yesBtn.onclick=()=>close(inp.value);
-    const noBtn=el('button',{class:'btn',text:T('common.cancel')});noBtn.onclick=()=>close(null);
+    const yesBtn=btn(T('common.ok'),()=>close(inp.value),'btn pri'),noBtn=btn(T('common.cancel'),()=>close(null));
     return {nodes:[el('div',{class:'confirm-msg',text:msg}),inp,el('div',{class:'confirm-actions'},[noBtn,yesBtn])],focus:()=>{inp.focus();inp.select()}};
   },(e,close)=>{if(e.key==='Enter')close(inp.value)})};
 /* 轻量记忆：per-viewer 便利态，隐私窗口/禁用 storage 时静默回默认 */
@@ -116,7 +113,7 @@ const T=(key,vars)=>{let s=I18N[key]||key;if(vars)for(const k in vars)s=s.split(
 const currentLang=()=>LS.get('lang',(navigator.language||'').toLowerCase().startsWith('en')?'en-US':'zh-CN');
 /* 格式白名单：服务端 rmsvc_core::formats 注入（同一份，网页 accept + 选中即拦 = 服务端上传门） */
 const EXT=__EXTS__, dot=l=>l.map(e=>'.'+e);
-const BOOK_EXT=dot(EXT.book), FONT_EXT=dot(EXT.font), DICT_EXT=dot(EXT.dict), IMG_EXT=dot(EXT.image);
+const BOOK_EXT=dot(EXT.book), FONT_EXT=dot(EXT.font), IMG_EXT=dot(EXT.image);
 const up=l=>l.map(e=>e.toUpperCase()).join(' / ');
 // 2026-09-18 起母版库只收 EPUB/PDF（BOOK_EXT===EXT.native，见 rmsvc_core::formats 头注）——原来
 // 这里有个 FMT_TIERS() 分两档（原生/仅 KOReader）拼文案，两档收成一档后不再需要，删掉。
@@ -136,13 +133,15 @@ document.addEventListener('click',e=>{const b=e.target.closest('.badge[title]');
 async function j(url,opt){let r;try{r=await fetch(url,opt)}catch(e){console.error(e);return {ok:false,message:T('common.networkError')}}if(r.status===401){location.href='/login?next='+encodeURIComponent(location.pathname);return {ok:false,message:T('common.needLogin')}}if(r.status===403){location.href='/password';return {ok:false,message:T('common.needChangePassword')}}
   const httpErr=T('common.httpErr',{status:r.status});
   let d;try{d=await r.json()}catch{d={ok:false,message:httpErr}}if(!r.ok&&d.ok!==false)d={ok:false,message:d.message||httpErr};return d}
-/* 带 JSON body 的请求：`jsend(url,'PUT',{a:1})`——全站 POST/PUT 带 body 的调用共用，不再各处手写 `{method,body:JSON.stringify}`。 */
-const jsend=(url,method,body)=>j(url,{method,body:JSON.stringify(body)});
-/* 开关复选框绑定 PUT：勾选即 PUT `{key:checked}`，期间禁用；失败弹 toast 并把勾选还原。「系统增强」/「实验室」的开关共用。 */
+/* 带 JSON body 的请求：`jsend(url,'PUT',{a:1})`；省略 body＝不带请求体（`jsend(url,'POST')`）。全站非 GET 调用共用。 */
+const jsend=(url,method,body)=>j(url,body===undefined?{method}:{method,body:JSON.stringify(body)});
+/* 同 jsend，失败时顺手弹 toast（服务端给的 message，没有就用 failKey 的文案），返回应答照常给调用方判断。
+   全站"发请求 → 失败提示"都走它（postJ / bindToggle / 模型面板 / 删除按钮…），不再各处手写同一句。 */
+const sendT=async(url,method,body,failKey='common.failed')=>{const r=await jsend(url,method,body);if(r.ok===false)toast(r.message||T(failKey));return r};
+const postJ=(url,body)=>sendT(url,'POST',body);
+/* 开关复选框绑定 PUT：勾选即 PUT `{key:checked}`，期间禁用；失败弹 toast 并把勾选还原。「系统增强」/「实验室」/字体加粗/合书自动转写共用。 */
 const bindToggle=(box,url,key)=>{box.onchange=async()=>{const want=box.checked;box.disabled=true;
-  let r;try{r=await jsend(url,'PUT',{[key]:want})}catch(e){console.error(e);r={ok:false}}finally{box.disabled=false}
-  if(r.ok===false){toast(r.message||T('common.saveFailed'));box.checked=!want}}};
-const postJ=async(url,body)=>{const r=await jsend(url,'POST',body);if(r.ok===false)toast(r.message||T('common.failed'));return r};
+  const r=await sendT(url,'PUT',{[key]:want},'common.saveFailed');box.disabled=false;if(r.ok===false)box.checked=!want}};
 
 /* 上传区 HTML（拖放框 + 隐藏 input + 队列 + 按钮），一处生成、各页复用；uploader() 认这个 .up 容器 */
 const upHtml=(icon,label,ext,btn)=>`<div class="up"><div class="drop"><span class="big">${icon}</span>${label}</div><input type="file" multiple hidden accept="${ext.join(',')}"><ul class="q"></ul><div class="row"><button class="btn pri go">${btn}</button></div></div>`;
@@ -151,7 +150,7 @@ const upHtml=(icon,label,ext,btn)=>`<div class="up"><div class="drop"><span clas
 function uploader(box,urlOf,queryOf,okExt,onFinish,dedupeApi){
   const list=$('ul.q',box), input=$('input[type=file]',box), drop=$('.drop',box), go=$('.go',box);
   let files=[], sum=null, busy=false;
-  const clr=el('button',{type:'button',class:'btn',text:T('common.clear')});clr.onclick=()=>{files=[];render()};go.after(clr);
+  const clr=btn(T('common.clear'),()=>{files=[];render()});go.after(clr);
   const summary=()=>{if(!sum){sum=el('div',{class:'small',style:'margin:.3em 0'});list.parentNode.insertBefore(sum,list)}
     const ok=files.filter(f=>f.st==='ok').length,bad=files.filter(f=>f.st==='bad').length;
     sum.innerHTML=files.length?T('common.uploadSummary',{ok,total:files.length,badPart:bad?T('common.uploadBadPart',{bad}):''}):'';};
@@ -198,10 +197,8 @@ function uploader(box,urlOf,queryOf,okExt,onFinish,dedupeApi){
 }
 
 /* 二级标签：面板都由外层 render/refresh 预先填好，切换只显隐。`:scope >` 限定只找 sec 的**直接
-   子元素**（2026-09-10 「其他」tab 把 KOReader 的 render() 原样嵌进自己某个 subpanel 里，KOReader
-   自己内部还有一层字体/词典 subnav——不加 `:scope >` 的话外层这次 querySelectorAll('.subpanel')
-   会把 KOReader 自己那两个内层 subpanel 也扫进来，外层按钮数对不上内层+外层 panel 总数，点哪个都
-   错位。对现有的非嵌套调用点（没有内层 subnav 的场景）结果完全一样，不是破坏性改动）。 */
+   子元素**：subnav 会嵌套（「管理 → 电池刺客 → 耗电情况 → 时间窗」「管理 → 设备健康」各有自己的一层），不加
+   `:scope >` 的话外层 querySelectorAll('.subpanel') 会把内层的 subpanel 也扫进来，按钮与面板按下标配对就错位。 */
 function subtabs(sec){const nav=sec.querySelector(':scope > .subnav');if(!nav)return;const btns=[...nav.children],panels=[...sec.querySelectorAll(':scope > .subpanel')];
   btns.forEach((b,i)=>b.onclick=()=>{btns.forEach(x=>x.classList.remove('on'));panels.forEach(p=>p.classList.remove('on'));b.classList.add('on');if(panels[i])panels[i].classList.add('on')});}
 
@@ -213,25 +210,22 @@ function fillList(ul,items,row,emptyMsg){ul.innerHTML='';if(!items.length){ul.in
   items.forEach(it=>{const li=el('li'),left=el('span'),right=el('span',{class:'small',style:'display:flex;align-items:center;gap:.4em;flex-wrap:wrap'});
     row(it,left,right,li);li.append(left,right);ul.appendChild(li)})}
 /* 删除按钮：confirmDialog → DELETE → 刷新 */
-function delBtn(msg,url,refresh){const d=el('button',{class:'btn',text:T('action.delete')});
-  guardClick(d,async()=>{if(await confirmDialog(msg)){const r=await j(url,{method:'DELETE'});if(r.ok===false)toast(r.message);refresh()}});return d}
+const delBtn=(msg,url,refresh)=>btn(T('action.delete'),async()=>{if(await confirmDialog(msg)){await sendT(url,'DELETE');refresh()}});
 const cjkBadge=p=>p==null?'':`<span class="badge ${p>=80?'on':(p>=8?'':'off')}" title="${T('common.cjkCoverageTitle')}">${T('common.cjkCoverage',{pct:p})}</span>`;
 
-/* 决策辅助：不替用户分类（闲书/研读机器判不准），讲清母版库三步走 + 两读器各擅长；拿不准先投一个，母版还在 */
+/* 母版库怎么用：三步走 + 收哪些格式 + 加入 xochitl 适合什么书（2026-09-29 起设备只剩 xochitl 一个阅读器，
+   原来"两读器怎么选/拿不准放哪"两条随 KOReader 一起撤掉） */
 const GUIDE=()=>`<details class="cmp"><summary>${T('transfer.guide.summary')}</summary>
 <dl class="help">
 <dt>${T('transfer.guide.steps.dt')}</dt><dd>${T('transfer.guide.steps.dd')}</dd>
 <dt>${T('transfer.guide.format.dt')}</dt><dd>${T('transfer.guide.format.dd',{native:up(EXT.native)})}</dd>
 <dt>${T('transfer.guide.native.dt')}</dt><dd>${T('transfer.guide.native.dd')}</dd>
-<dt>${T('transfer.guide.koreader.dt')}</dt><dd>${T('transfer.guide.koreader.dd')}</dd>
-<dt>${T('transfer.guide.unsure.dt')}</dt><dd>${T('transfer.guide.unsure.dd')}</dd>
 </dl></details>`;
 
-/* 母版库列表（2026-09-20 重设计，兼顾手机和 PC）。此前的问题：一整张卡片里堆了文件夹输入框、说明、搜索、两个
-   下拉、开关、三条状态提示，每行最多 5 个徽章 + 4 个按钮，下载站的长文件名在手机上折成好几行；批量要逐行勾选、
-   由浏览器逐个提交。现在：每行 = 勾选框 + 清爽书名（去掉 `-- 作者 -- hash` 尾巴，完整名在「更多」里）+ 一行徽章 +
-   **一个主按钮**（随状态变：待优化→优化；已优化→加入 xochitl；cbz/其它→加入 KOReader）+ `⋯` 菜单（其余操作）。
-   批量走服务端队列（网关 `/api/batch`），全选/一键"优化全部待优化"，关掉页面照跑。 */
+/* 母版库列表（2026-09-20 重设计，兼顾手机和 PC）。每行 = 勾选框 + 清爽书名（去掉 `-- 作者 -- hash` 尾巴，
+   完整名在 title 里）+ 一行徽章 + 状态/进度；**行内只在处理中/排队时出现「停止」**，其余操作（优化 / 加入 xochitl /
+   下载 / 改名 / 删除）一律在勾选后的底部操作栏（用户 2026-09-20 定，别加回单条按钮）。批量走服务端队列
+   （网关 `/api/batch`），关掉页面照跑。 */
 const stgClean=n=>{const s=n.replace(/\.(epub|pdf|cbz)$/i,'');return (s.split(' -- ')[0]||s).trim()};
 /* 搜索框的下拉建议：**书名 = 第一个 "-" 之前的内容**（用户 2026-09-20 指定）。"亂馬1⁄2 典藏版 - 07卷" → "亂馬1⁄2 典藏版"，
    同一本书的多卷合成一条；选中后按名字包含匹配，正好筛出这本书的所有卷。 */
@@ -249,7 +243,8 @@ function stgBadges(it,busy){
     :`<span class="badge">${T('transfer.staging.badge.notOptimized')}</span>`;
   const ps=(it.format==='epub'&&it.pdfSource)?`<span class="badge on" title="${T('transfer.staging.badge.pdfSourceTitle')}">${T('transfer.staging.badge.pdfSource')}</span>`:'';
   const dv=it.delivered||{},stale=t=>t&&it.mtime&&t<it.mtime;
-  const dl=(dv.native?`<span class="badge on" title="${stale(dv.native)?T('transfer.staging.delivered.native.staleTitle'):T('transfer.staging.delivered.native.title')}">${T('transfer.staging.delivered.native.badge')}${stale(dv.native)?T('transfer.staging.staleSuffix'):''}</span>`:'')+(dv.koreader?`<span class="badge on" title="${stale(dv.koreader)?T('transfer.staging.delivered.koreader.staleTitle'):T('transfer.staging.delivered.koreader.title')}">${T('transfer.staging.delivered.koreader.badge')}${stale(dv.koreader)?T('transfer.staging.staleSuffix'):''}</span>`:'');
+  // 只标「已加入 xochitl」：落库记录里历史上的 `koreader` 那条不再显示（2026-09-29 设备已卸载 KOReader）。
+  const dl=dv.native?`<span class="badge on" title="${stale(dv.native)?T('transfer.staging.delivered.native.staleTitle'):T('transfer.staging.delivered.native.title')}">${T('transfer.staging.delivered.native.badge')}${stale(dv.native)?T('transfer.staging.staleSuffix'):''}</span>`:'';
   const rc=dv.render,rb=!rc?'':rc.status==='onopen'?`<span class="badge" title="${T('stg.render.onopenTitle')}">${T('stg.render.onopenBadge')}</span>`:rc.status==='ok'?`<span class="badge on" title="${rc.expected>=20?T('transfer.staging.render.okTitle',{pages:rc.pages,expected:rc.expected}):T('stg.render.okTitle',{pages:rc.pages})}">${T('transfer.staging.render.okBadge',{pages:rc.pages})}</span>`:rc.status==='warn'?`<span class="badge off" title="${T('transfer.staging.render.warnTitle',{pages:rc.pages,expected:rc.expected})}">${T('transfer.staging.render.warnBadge',{pages:rc.pages,expected:rc.expected})}</span>`:rc.status==='pending'?`<span class="badge" title="${T('transfer.staging.render.pendingTitle')}">${T('transfer.staging.render.pendingBadge')}</span>`:`<span class="badge" title="${T('transfer.staging.render.noneTitle')}">${T('transfer.staging.render.noneBadge')}</span>`;
   const oc=dv.optimize,dc=dv.deliver;
   // 卡在 pending 但 busy=false＝上次处理被服务/设备重启打断（2026-09-19 真机撞过），不是"还在跑"。
@@ -284,9 +279,8 @@ function stgRow(it,ctx){
     renderStepProgress(main,{label:ctx.batchQueued.has(it.name)?T('stg.batch.queuedHere'):T('transfer.staging.progress.queued')});
   }
   // 行内按钮（只有停止/取消排队两种）：guardClick 防双击，点完刷新。
-  const act=(t,fn)=>{const x=el('button',{class:'btn btn-bad',text:t});
-    guardClick(x,async()=>{x.textContent=t+'…';await fn();ctx.refresh()});return x};
-  // 列表只显示书名/类型/大小/状态/进度；**所有操作**（优化/加入 xochitl/加入 KOReader/删除/全部中止）由勾选后的底部操作栏统一控制
+  const act=(t,fn)=>{const x=btn(t,async()=>{x.textContent=t+'…';await fn();ctx.refresh()},'btn btn-bad');return x};
+  // 列表只显示书名/类型/大小/状态/进度；**所有操作**（优化/加入 xochitl/删除/全部中止）由勾选后的底部操作栏统一控制
   // （用户 2026-09-20 明确要求）。行内唯一的按钮：这本书正在处理/排队时的「停止」。
   const doStop=async()=>{const r=await postJ('/api/books/staging/cancel',{name:it.name});if(r.ok!==false)toast(r.message,r.cancelled?'ok':'warn',5000)};
   const actions=el('div',{class:'stg-actions'});
@@ -299,8 +293,8 @@ function stgRow(it,ctx){
   return li;
 }
 
-/* 「传书」固定 tab = 三层架构入口：入库（所有内容源汇入）｜母版库（可选优化 → 选去向落库）。放第一位。
-   读器页（xochitl / KOReader）不再有任何传书入口，只管各自的字体 / 词典。 */
+/* 「传书」固定 tab = 三层架构入口：入库（所有内容源汇入）｜母版库（可选优化 → 加入 xochitl）。放第一位。
+   「其他 → xochitl」页不再有传书入口，只管字体。 */
 function renderTransfer(sec){sec.innerHTML=`
   <div class="subnav"><button class="on">${T('transfer.subnav.intake')}</button><button>${T('transfer.subnav.library')}</button></div>
   <div class="subpanel on">
@@ -330,12 +324,8 @@ function renderTransfer(sec){sec.innerHTML=`
     <div class="card stg-head">
       <div class="stg-headrow"><h3 style="margin:0">${T('transfer.staging.title')}</h3><span class="small" id="stgcap"></span></div>
       <div class="stg-dest">
-        <div class="stg-destpair">
-          <div class="stg-destcol"><label class="small" for="folder">${T('stg.dest.xochitl')}</label><select id="folder"></select></div>
-          <div class="stg-destcol"><label class="small" for="kfolder">${T('stg.dest.koreader')}</label><select id="kfolder"></select></div>
-        </div>
+        <div class="stg-destcol"><label class="small" for="folder">${T('stg.dest.xochitl')}</label><select id="folder"></select></div>
         <span class="stg-newrow" id="xnew" hidden><input type="text" id="xnewname" placeholder="${T('stg.dest.newPlaceholder')}"><button class="btn pri" id="xnewgo">${T('stg.dest.create')}</button><button class="btn" id="xnewx">${T('stg.dest.cancel')}</button></span>
-        <span class="stg-newrow" id="knew" hidden><input type="text" id="knewname" placeholder="${T('stg.dest.newPlaceholder')}"><button class="btn pri" id="knewgo">${T('stg.dest.create')}</button><button class="btn" id="knewx">${T('stg.dest.cancel')}</button></span>
         <details class="cmp"><summary>${T('transfer.staging.optDetailsSummary')}</summary><p class="small">${T('transfer.staging.optNote')}</p></details>
       </div>
       <div class="small" id="stgfree"></div>
@@ -349,7 +339,7 @@ function renderTransfer(sec){sec.innerHTML=`
     <details class="card stg-orig" id="stgorig" hidden><summary id="stgorigsum"></summary><p class="small">${T('stg.orig.lead')}</p><ul class="stg-list" id="stgoriglist"></ul></details>
     <div class="stgbar" id="stgbar" hidden></div>
   </div>`;
-  let koInstalled=false,items=[];
+  let items=[];
   const picked=new Set();                                  // 勾选的书名（跨页保留）
   // 服务端批量队列状态（网关 /api/batch/status）：关掉页面重开、换设备都读得到，不再依赖本标签页提交过什么。
   let bs={running:false,total:0,done:0,failed:[],queued:[],current:null,action:null};
@@ -357,27 +347,21 @@ function renderTransfer(sec){sec.innerHTML=`
   // 网关并发闸门的服务端真相（排队/处理中），见 budget.rs。
   let gatedPending=new Set(),gatedActive=new Set();
   const g=id=>$('#'+id,sec);
-  // 加入位置：下拉（现有文件夹）+「＋新建文件夹」。选中值记在本机；xochitl 新建走 book-serve 的 mkdir 队列（xochitl 里 QML
-  // 代理每 8 秒轮询建出来），KOReader 直接建目录。"根目录"= 空串。
+  // 加入位置：下拉（现有文件夹）+「＋新建文件夹」。选中值记在本机；"根目录"= 空串。新建走 book-serve 的 mkdir 队列，
+  // 由 xochitl 里的 QML 代理（长轮询）真正建出来。**不在这里等它建好**：fillFolders 会把记住的名字补进下拉（哪怕 xochitl 那边
+  // 还没出现），加入 xochitl 时 book-serve 自己会等这个文件夹建出来（deliver.rs::ensure_folder）；建好后 mkdir 事件
+  // 触发的刷新把它换成真实列表里的那一项。此前这里每 2 秒查一次 /api/books/status、最多 12 次，按钮也跟着卡 24 秒。
   const NEW='__new__';
-  const val=id=>{const v=g(id).value;return v===NEW?'':v};
-  const xFolder=()=>val('folder'),kFolder=()=>val('kfolder');
-  const fillSel=(id,names,lsKey)=>{const sel=g(id),want=LS.get(lsKey,'');const list=[...new Set(names.filter(Boolean))];if(want&&!list.includes(want))list.push(want);
-    sel.innerHTML='';sel.appendChild(el('option',{value:'',text:T('stg.dest.root')}));
-    list.forEach(n=>sel.appendChild(el('option',{value:n,text:n})));sel.appendChild(el('option',{value:NEW,text:T('stg.dest.new')}));sel.value=want};
-  const bindDest=(id,lsKey,newBox,nameInp,goBtn,cancelBtn,create)=>{
-    g(id).addEventListener('change',()=>{if(g(id).value===NEW){g(newBox).hidden=false;g(nameInp).focus()}else{g(newBox).hidden=true;LS.set(lsKey,g(id).value)}});
-    g(cancelBtn).onclick=()=>{g(newBox).hidden=true;g(nameInp).value='';g(id).value=LS.get(lsKey,'')};
-    guardClick(g(goBtn),async()=>{const name=g(nameInp).value.trim();if(!name){toast(T('stg.dest.needName'),'warn');return}
-      if(await create(name)){LS.set(lsKey,name);g(newBox).hidden=true;g(nameInp).value='';await refresh()}})};
-  bindDest('folder','folder','xnew','xnewname','xnewgo','xnewx',async name=>{
-    const r=await postJ('/api/books/mkdir/add',{name});if(r.ok===false)return false;
+  const fsel=g('folder'),newBox=g('xnew'),newName=g('xnewname');
+  const xFolder=()=>fsel.value===NEW?'':fsel.value;
+  const fillFolders=names=>{const want=LS.get('folder','');const list=[...new Set(names.filter(Boolean))];if(want&&!list.includes(want))list.push(want);
+    fsel.replaceChildren(el('option',{value:'',text:T('stg.dest.root')}),...list.map(n=>el('option',{value:n,text:n})),el('option',{value:NEW,text:T('stg.dest.new')}));fsel.value=want};
+  fsel.addEventListener('change',()=>{if(fsel.value===NEW){newBox.hidden=false;newName.focus()}else{newBox.hidden=true;LS.set('folder',fsel.value)}});
+  g('xnewx').onclick=()=>{newBox.hidden=true;newName.value='';fsel.value=LS.get('folder','')};
+  guardClick(g('xnewgo'),async()=>{const name=newName.value.trim();if(!name){toast(T('stg.dest.needName'),'warn');return}
+    const r=await postJ('/api/books/mkdir/add',{name});if(r.ok===false)return;
     toast(T('stg.dest.created',{name}),'info',6000);
-    // xochitl 侧由 QML 代理轮询建文件夹（约 8 秒一次），等它真出现再选中，最多 ~24 秒。
-    for(let i=0;i<12;i++){await wait(2000);const s=await j('/api/books/status');if((s.xochitlFolders||[]).includes(name))break}
-    return true});
-  bindDest('kfolder','kfolder','knew','knewname','knewgo','knewx',async name=>{
-    const r=await postJ('/api/koreader/books/mkdir',{folder:name});if(r.ok===false)return false;toast(T('stg.dest.createdKo',{name}),'ok');return true});
+    LS.set('folder',name);newBox.hidden=true;newName.value='';await refresh()});
   // 筛选/分页状态。"隐藏已完成"只在「全部」筛选下生效（选了「已优化」就是想看它们）。
   let st=LS.get('stgSt','all'),hideDone=LS.get('stgHideDone','1')==='1',page=1,pageSize=+LS.get('stgPageSize','25')||25;
   g('stghide').checked=hideDone;g('stghide').onchange=()=>{hideDone=g('stghide').checked;LS.set('stgHideDone',hideDone?'1':'0');page=1;render()};
@@ -385,7 +369,7 @@ function renderTransfer(sec){sec.innerHTML=`
   const filtered=()=>{const q=g('stgq').value.toLowerCase(),f=g('stgfmt').value;
     return items.filter(it=>(!q||it.name.toLowerCase().includes(q))&&(!f||fmtOf(it)===f)&&(st==='todo'?stgIsTodo(it):st==='done'?!!it.optimized:st==='finished'?isBookDone(it):(!hideDone||!isBookDone(it))))};
   const batchTitle=a=>T('stg.batch.'+a);
-  const enqueue=async(action,body)=>{const r=await postJ('/api/batch',{action,folder:action==='koreader'?kFolder():xFolder(),...body});
+  const enqueue=async(action,body)=>{const r=await postJ('/api/batch',{action,folder:xFolder(),...body});
     if(r.ok===false)return;
     toast(r.queued?T('stg.batch.queuedToast',{queued:r.queued,skip:r.skipped?T('stg.batch.skipped',{n:r.skipped}):''}):T('stg.batch.none'),r.queued?'ok':'warn');
     if(r.queued)picked.clear();await refresh()};
@@ -397,18 +381,18 @@ function renderTransfer(sec){sec.innerHTML=`
     // 四个筛选统一都带数量（数量 = 该筛选下的书本数，与"隐藏已完成"开关无关）。
     const cnt={all:items.length,todo:items.filter(stgIsTodo).length,done:items.filter(it=>!!it.optimized).length,finished:items.filter(isBookDone).length};
     [['all','stg.chip.all'],['todo','stg.chip.todo'],['done','stg.chip.done'],['finished','stg.chip.finished']].forEach(([k,key])=>{
-      const b=el('button',{class:'chip'+(st===k?' on':''),type:'button',text:T(key,{n:cnt[k]})});b.onclick=()=>{st=k;LS.set('stgSt',k);page=1;render()};chips.appendChild(b)})};
+      chips.appendChild(btn(T(key,{n:cnt[k]}),()=>{st=k;LS.set('stgSt',k);page=1;render()},'chip'+(st===k?' on':'')))})};
   const renderPager=(total)=>{const box=g('stgpager');box.innerHTML='';if(total<=0)return;
     const pages=Math.max(1,Math.ceil(total/pageSize));const from=(page-1)*pageSize+1,to=Math.min(total,page*pageSize);
     const go=p=>{page=Math.min(pages,Math.max(1,p));render();g('stglist').scrollIntoView({block:'start'})};
-    const prev=el('button',{class:'btn',type:'button',text:'‹ '+T('stg.pager.prev')});prev.disabled=page<=1;prev.onclick=()=>go(page-1);
-    const next=el('button',{class:'btn',type:'button',text:T('stg.pager.next')+' ›'});next.disabled=page>=pages;next.onclick=()=>go(page+1);
+    const prev=btn('‹ '+T('stg.pager.prev'),()=>go(page-1));prev.disabled=page<=1;
+    const next=btn(T('stg.pager.next')+' ›',()=>go(page+1));next.disabled=page>=pages;
     box.appendChild(el('div',{class:'small stg-range',text:T('stg.pager.range',{from,to,total})}));
     const nav=el('div',{class:'stg-pgnav'},[prev]);
     // 页码：首页、当前页±1、末页，中间省略——宽屏显示数字，窄屏只留"第 x/y 页"
     const nums=[...new Set([1,page-1,page,page+1,pages].filter(p=>p>=1&&p<=pages))].sort((a,b)=>a-b);
     let last=0;const numbox=el('span',{class:'stg-pgnums'});
-    nums.forEach(p=>{if(last&&p-last>1)numbox.appendChild(el('span',{class:'small',text:'…'}));const b=el('button',{class:'btn'+(p===page?' pri':''),type:'button',text:String(p)});b.onclick=()=>go(p);numbox.appendChild(b);last=p});
+    nums.forEach(p=>{if(last&&p-last>1)numbox.appendChild(el('span',{class:'small',text:'…'}));numbox.appendChild(btn(String(p),()=>go(p),'btn'+(p===page?' pri':'')));last=p});
     nav.appendChild(numbox);nav.appendChild(el('span',{class:'small stg-pgtxt',text:T('stg.pager.page',{cur:page,total:pages})}));nav.appendChild(next);box.appendChild(nav);
     const sz=el('select',{'aria-label':T('stg.pager.size',{n:pageSize})});[25,50,100].forEach(n=>{const o=el('option',{value:String(n),text:T('stg.pager.size',{n})});if(n===pageSize)o.selected=true;sz.appendChild(o)});
     sz.onchange=()=>{pageSize=+sz.value;LS.set('stgPageSize',String(pageSize));page=1;render()};box.appendChild(sz)};
@@ -420,47 +404,43 @@ function renderTransfer(sec){sec.innerHTML=`
       const t=batchTitle(bs.action||'optimize');
       bar.appendChild(el('div',{class:'stgbar-main'},[el('b',{text:T('stg.batch.progress',{title:t,done:bs.done,total:bs.total})}),el('span',{class:'small',text:(bs.current?' · '+T('stg.batch.current',{name:stgClean(bs.current)}):'')+(bs.failed.length?' · '+T('stg.batch.failedN',{n:bs.failed.length}):'')})]));
       const p=el('progress');p.max=Math.max(1,bs.total);p.value=bs.done;bar.appendChild(p);
-      const stop=el('button',{class:'btn btn-bad',type:'button',text:T('stg.batch.stopAll')});
-      guardClick(stop,async()=>{const r=await postJ('/api/batch/stop',{});if(r.ok!==false)toast(T('stg.batch.stopped',{n:r.cleared||0}),'info');await refresh()});bar.appendChild(stop);
+      bar.appendChild(btn(T('stg.batch.stopAll'),async()=>{const r=await postJ('/api/batch/stop',{});if(r.ok!==false)toast(T('stg.batch.stopped',{n:r.cleared||0}),'info');await refresh()},'btn btn-bad'));
     }else if(picked.size){
       bar.hidden=false;bar.className='stgbar sel';
       // 第一行：已选数 + 清除；第二行：批量按钮等宽。按钮上直接标"可处理数"（已优化的再优化、非 EPUB/PDF 加入 xochitl 等会被跳过），
       // 0 本可处理就置灰——不再等点完才提示"跳过了 N 本"。
       const chosen=items.filter(it=>picked.has(it.name));
       const isBook=it=>it.format==='epub'||it.format==='pdf';
-      const cnt={optimize:chosen.filter(stgIsTodo).length,deliver:chosen.filter(isBook).length,koreader:koInstalled?chosen.length:0};
-      const clr=el('button',{class:'btn',type:'button',text:T('stg.batch.clear')});clr.onclick=()=>{picked.clear();render()};
+      const cnt={optimize:chosen.filter(stgIsTodo).length,deliver:chosen.filter(isBook).length};
+      const clr=btn(T('stg.batch.clear'),()=>{picked.clear();render()});
       bar.appendChild(el('div',{class:'stgbar-top'},[el('b',{text:T('stg.selected',{n:picked.size})}),clr]));
       // 按钮排布（2026-09-24 用户要求手机上不折行）：第二行 = 处理/加入（主操作，等分一行）；第三行 = 单本操作 + 删除。
       // 文案 = 标签 + 数量角标；窄屏去掉"加入"前缀（.lbl-long），一行三个也放得下。
       const lbl=(key,n)=>{const f=document.createDocumentFragment();const t=T(key);const m=t.match(/^(加入 |Add to )(.*)$/);
         if(m){f.appendChild(el('span',{class:'lbl-long',text:m[1]}));f.appendChild(document.createTextNode(m[2]))}else f.appendChild(document.createTextNode(t));
         if(n!=null)f.appendChild(el('span',{class:'cnt',text:String(n)}));return f};
-      const mk=(a,pri)=>{const b=el('button',{class:'btn'+(pri?' pri':''),type:'button',title:T('stg.bar.'+a)+'（'+cnt[a]+'）'},[lbl('stg.bar.'+a,cnt[a])]);
-        if(!cnt[a]){b.disabled=true;b.title=T('stg.bar.noneApplicable')}else guardClick(b,()=>enqueue(a,{names:[...picked]}));return b};
+      const mk=(a,pri)=>{const b=btn([lbl('stg.bar.'+a,cnt[a])],cnt[a]?()=>enqueue(a,{names:[...picked]}):null,'btn'+(pri?' pri':''),{title:T('stg.bar.'+a)+'（'+cnt[a]+'）'});
+        if(!cnt[a]){b.disabled=true;b.title=T('stg.bar.noneApplicable')}return b};
       const btns=el('div',{class:'stgbar-btns'},[mk('optimize',true),mk('deliver')]);
-      if(koInstalled)btns.appendChild(mk('koreader'));
       btns.style.setProperty('--cols',String(btns.children.length));
       const delN=chosen.filter(it=>!it.busy).length;
-      const del=el('button',{class:'btn btn-bad',type:'button',title:T('action.delete')+'（'+delN+'）'},[lbl('action.delete',delN)]);
-      guardClick(del,async()=>{
+      const del=btn([lbl('action.delete',delN)],async()=>{
         const names=chosen.filter(it=>!it.busy).map(it=>it.name),busyN=chosen.length-names.length;
         if(!names.length){toast(T('stg.bar.noneApplicable'),'warn');return}
         if(!await confirmDialog(T('stg.batch.deleteConfirm',{n:names.length})))return;
         let ok=0;for(const n of names){const r=await jsend('/api/books/staging/delete','POST',{name:n});if(r.ok!==false)ok++}
-        toast(T('stg.batch.deleted',{n:ok})+(busyN?T('stg.batch.deleteSkipped',{n:busyN}):''),ok?'ok':'warn');picked.clear();refresh()});
+        toast(T('stg.batch.deleted',{n:ok})+(busyN?T('stg.batch.deleteSkipped',{n:busyN}):''),ok?'ok':'warn');picked.clear();refresh()},'btn btn-bad',{title:T('action.delete')+'（'+delN+'）'});
       bar.appendChild(btns);
       const row3=el('div',{class:'stgbar-btns stgbar-sub'});
       // 只选了一本：再给「下载原件」「改名」（都是针对单本的操作，多选时不出现），删除排在同一行最右。
       if(chosen.length===1){const one=chosen[0];
         const dl=el('a',{class:'btn',href:'/api/books/staging/file?name='+encodeURIComponent(one.name),download:one.name,text:T('stg.bar.download')});
-        const rn=el('button',{class:'btn',type:'button',text:T('stg.bar.rename')});
-        if(one.busy){rn.disabled=true;rn.title=T('stg.bar.busy')}
-        else guardClick(rn,async()=>{const ext='.'+one.name.split('.').pop();
+        const rn=btn(T('stg.bar.rename'),one.busy?null:async()=>{const ext='.'+one.name.split('.').pop();
           const v=await promptDialog(T('stg.rename.prompt',{ext}),one.name.slice(0,-ext.length));
           if(v==null||!v.trim())return;
           const r=await postJ('/api/books/staging/rename',{name:one.name,newName:v.trim()});
           if(r.ok!==false){picked.clear();picked.add(r.name);toast(T('stg.rename.done',{name:r.name}),'ok')}refresh()});
+        if(one.busy){rn.disabled=true;rn.title=T('stg.bar.busy')}
         row3.append(dl,rn)}
       row3.append(del);row3.style.setProperty('--cols','3');bar.appendChild(row3);
     }else if(bs.total&&sig!==dismissedSig){
@@ -468,7 +448,7 @@ function renderTransfer(sec){sec.innerHTML=`
       const fail=bs.failed.length;
       bar.appendChild(el('div',{class:'stgbar-main'},[el('span',{text:T('stg.batch.finished',{title:batchTitle(bs.action||'optimize'),ok:bs.done-fail,fail})})]));
       if(fail)bar.appendChild(el('details',{class:'small stgbar-fails'},[el('summary',{text:T('stg.batch.failedN',{n:fail})}),el('div',{html:bs.failed.map(f=>`<div>${esc(stgClean(f.name))}：${esc(f.message)}</div>`).join('')})]));
-      const x=el('button',{class:'btn',type:'button',text:T('stg.batch.dismiss')});x.onclick=()=>{dismissedSig=sig;renderBar()};bar.appendChild(x);
+      bar.appendChild(btn(T('stg.batch.dismiss'),()=>{dismissedSig=sig;renderBar()}));
     }else{bar.hidden=true}};
   const render=()=>{
     const list=filtered();const pages=Math.max(1,Math.ceil(list.length/pageSize));if(page>pages)page=pages;
@@ -486,24 +466,19 @@ function renderTransfer(sec){sec.innerHTML=`
   const applyQueue=(bg,bt)=>{
     gatedPending=new Set(bg.ok!==false?bg.pending||[]:[]);gatedActive=new Set(bg.ok!==false?bg.active||[]:[]);
     if(bt.ok!==false){bs={running:!!bt.running,action:bt.action,total:bt.total||0,done:bt.done||0,current:bt.current,queued:bt.queued||[],failed:bt.failed||[]};batchQueued=new Set(bs.queued)}
-    const gated=(gatedPending.size||gatedActive.size)?T('transfer.staging.gatedSummary',{pending:gatedPending.size,active:gatedActive.size}):'';
-    g('stgnotice').textContent=[koInstalled?'':T('transfer.staging.btn.koNotInstalled'),gated].filter(Boolean).join(' · ')};
+    g('stgnotice').textContent=(gatedPending.size||gatedActive.size)?T('transfer.staging.gatedSummary',{pending:gatedPending.size,active:gatedActive.size}):''};
   /* 按事件决定取多少（不轮询）。三档，数字越大取得越全：
      1 = 网关自己的批量队列 / 并发闸门事件（area=books、不带 svc）：只重取这两个状态（2 个请求）。一轮批量里每本书网关要发 4～5 条。
      2 = book-serve 的 `staging` 事件（入库、忙态开始/结束、优化/落库**进度**——大书处理期间约每秒一条）：只有母版库列表会变，
-         再加上面两个状态（3 个请求）；xochitl / KOReader 文件夹列表与 KOReader 安装状态不会因此变化，不重取。
-     3 = 其余（book-serve 的 mkdir/trash/inbox 事件、切 tab、重连、操作后主动刷新）：全量 6 个请求。
+         再加上面两个状态（3 个请求）；xochitl 文件夹列表不会因此变化，不重取。
+     3 = 其余（book-serve 的 mkdir/trash/inbox 事件、切 tab、重连、操作后主动刷新）：全量 4 个请求。
      所有刷新走同一个 coalesce 串行执行（need 记"下一轮至少要取到哪一档"，取最大），不会出现旧的全量结果盖掉新的排队状态。 */
   let need=0;
   const run=coalesce(async()=>{const lvl=need;need=0;if(!lvl)return;
     if(lvl===1){const [bg,bt]=await Promise.all([j('/api/budget/status'),j('/api/batch/status')]);applyQueue(bg,bt);render();return}
     const full=lvl>=3;
-    const [d,bg,bt,s,k,kb]=await Promise.all([j('/api/books/staging'),j('/api/budget/status'),j('/api/batch/status')].concat(full?[j('/api/books/status'),j('/api/koreader/status'),j('/api/koreader/books')]:[]));
-    if(full){
-      koInstalled=!!(k.ok&&k.installed);
-      fillSel('folder',s.ok?s.xochitlFolders||[]:[],'folder');
-      fillSel('kfolder',(kb.items||[]).filter(x=>x.kind==='dir').map(x=>x.name),'kfolder');
-    }
+    const [d,bg,bt,s]=await Promise.all([j('/api/books/staging'),j('/api/budget/status'),j('/api/batch/status')].concat(full?[j('/api/books/status')]:[]));
+    if(full)fillFolders(s.ok!==false?s.xochitlFolders||[]:[]);
     applyQueue(bg,bt);
     if(d.ok===false){items=[];render();g('stgcap').textContent='';g('stgfree').textContent='';g('stglist').innerHTML=`<li class="small stg-empty" style="color:var(--bad)">${esc(T('transfer.staging.unavailable',{msg:d.message||T('transfer.staging.notOpen')}))}</li>`;return}
     items=d.items||[];const tot=items.reduce((a,b)=>a+b.bytes,0);g('stgcap').textContent=items.length?T('transfer.staging.capSummary',{count:items.length,size:fmtB(tot)}):'';
@@ -517,14 +492,12 @@ function renderTransfer(sec){sec.innerHTML=`
   const renderOriginals=list=>{const box=g('stgorig'),ul=g('stgoriglist');box.hidden=!list.length;if(!list.length)return;
     g('stgorigsum').textContent=T('stg.orig.summary',{n:list.length});ul.innerHTML='';
     list.forEach(o=>{const days=Math.max(0,Math.ceil((o.expiresAt-Date.now()/1000)/86400));
-      const restore=el('button',{class:'btn',type:'button',text:T('stg.orig.restore')});
-      guardClick(restore,async()=>{const r=await postJ('/api/books/staging/originals/restore',{name:o.name});if(r.ok!==false)toast(T('stg.orig.restored',{name:o.name}),'ok');refresh()});
-      const del=el('button',{class:'btn btn-bad',type:'button',text:T('action.delete')});
-      guardClick(del,async()=>{if(!await confirmDialog(T('stg.orig.deleteConfirm',{name:o.name})))return;const r=await postJ('/api/books/staging/originals/delete',{name:o.name});if(r.ok!==false)toast(T('stg.orig.deleted'),'ok');refresh()});
+      const restore=btn(T('stg.orig.restore'),async()=>{const r=await postJ('/api/books/staging/originals/restore',{name:o.name});if(r.ok!==false)toast(T('stg.orig.restored',{name:o.name}),'ok');refresh()});
+      const del=btn(T('action.delete'),async()=>{if(!await confirmDialog(T('stg.orig.deleteConfirm',{name:o.name})))return;const r=await postJ('/api/books/staging/originals/delete',{name:o.name});if(r.ok!==false)toast(T('stg.orig.deleted'),'ok');refresh()},'btn btn-bad');
       ul.appendChild(el('li',{class:'stg-row'},[el('div',{class:'stg-main'},[el('div',{class:'stg-name',title:o.name,text:o.name}),el('div',{class:'stg-meta small',text:fmtB(o.bytes)+' · '+T('stg.orig.left',{days})})]),el('div',{class:'stg-actions'},[restore,del])]))})};
   uploader($('.up',sec),()=>'/api/books/staging',()=>({}),BOOK_EXT,()=>refresh(),'/api/books/staging');   // 书籍格式原样入库；选中即按 BOOK_EXT 拦；传 dedupeApi 防重传出重复
   const am=g('artmsg'),au=g('arturl'),ag=g('artgo'),ao=g('artopt');
-  // 「同步优化」记在本机（per-viewer 便利态，跟 folder/kfolder 那几个一个规矩）；缺省开——网文正文
+  // 「同步优化」记在本机（per-viewer 便利态，跟加入位置 folder 一个规矩）；缺省开——网文正文
   // 没有任何 CSS（article.rs 属性白名单本来就不留 class/style），不经优化会在设备上按默认段距渲染出大片
   // 留空（真机反馈），默认帮用户把这一步做了，不想要（比如想快点抓完自己再调）可以关掉。
   ao.checked=LS.get('artopt','1')==='1';ao.onchange=()=>LS.set('artopt',ao.checked?'1':'0');
@@ -549,54 +522,24 @@ const TABS={
      // 中文缺字回退链：覆盖率≥8% 的中文字体，按覆盖率降序
      const cjk=(fl.items||[]).filter(it=>((it.extra||{}).cjkPct||0)>=8).sort((a,b)=>(b.extra.cjkPct||0)-(a.extra.cjkPct||0));
      const fb=$('#fbchain',sec);fb.style.display='';fb.innerHTML=cjk.length?T('assets.fonts.fallbackChain',{chain:cjk.map(it=>`${esc(it.name)} <span class="small">${esc(it.extra.cjkPct)}%</span>`).join(' → ')}):T('assets.fonts.noCjkWarn');
-     const fst=await j('/api/fonts/status');const eb=$('#embold',sec);if(fst.ok){eb.checked=!!fst.emboldenCjkFallback;eb.onchange=async()=>{const r=await jsend('/api/fonts/config','PUT',{emboldenCjkFallback:eb.checked});if(r.ok===false){toast(r.message);eb.checked=!eb.checked}}}},
+     const fst=await j('/api/fonts/status');const eb=$('#embold',sec);if(fst.ok){eb.checked=!!fst.emboldenCjkFallback;bindToggle(eb,'/api/fonts/config','emboldenCjkFallback')}},
    row:(it,left,right,refresh)=>{const ex=it.extra||{};
      left.innerHTML=`${esc(it.name)}${ex.names&&ex.names.cn&&ex.names.cn!==it.name?' <span class="small">'+esc(ex.names.cn)+'</span>':''}${ex.files&&ex.files.length>1?' <span class="small">×'+ex.files.length+'</span>':''}`;
      right.insertAdjacentHTML('beforeend',cjkBadge(ex.cjkPct)+(ex.fontconfigRef?`<span title="${T('assets.fonts.fallbackRefTitle')}">⚠</span>`:''));
      right.appendChild(delBtn(T('assets.fonts.deleteConfirm',{name:it.name,filesNote:ex.files&&ex.files.length>1?T('assets.fonts.filesNote',{count:ex.files.length}):'',suffix:ex.fontconfigRef?T('assets.fonts.deleteSuffixFallback'):T('assets.fonts.deleteSuffixNormal')}),'/api/fonts/'+encodeURIComponent(it.name),refresh))}})}},
- 'koreader-serve':{title:'KOReader',render(sec){sec.innerHTML=`
-  <div class="subnav"><button class="on">${T('koreader.subnav.fonts')}</button><button>${T('koreader.subnav.dicts')}</button></div>
-  <div class="subpanel on">
-    <div class="card"><h2>${T('koreader.title')}</h2><div class="kv small" id="ks" style="margin-top:.5em">${T('common.loading')}</div>
-      <details class="cmp"><summary>${T('koreader.installGuide.summary')}</summary>
-      <dl class="help">
-        <dt>${T('koreader.installGuide.install.dt')}</dt><dd>${T('koreader.installGuide.install.dd')}</dd>
-        <dt>${T('koreader.installGuide.tuned.dt')}</dt><dd>${T('koreader.installGuide.tuned.dd')}</dd>
-        <dt>${T('koreader.installGuide.books.dt')}</dt><dd>${T('koreader.installGuide.books.dd')}</dd>
-        <dt>${T('koreader.installGuide.restart.dt')}</dt><dd>${T('koreader.installGuide.restart.dd')}</dd>
-      </dl></details></div>
-    <div class="card"><h3 style="margin-top:0">${T('koreader.fonts.title')}</h3><p class="small">${T('koreader.fonts.hint')}</p>
-    ${upHtml('🔤',T('assets.fonts.dropLabel'),FONT_EXT,T('assets.fonts.btn'))}
-    <h3>${T('assets.fonts.listTitle')}</h3><ul class="list" id="kf"></ul></div>
-  </div>
-  <div class="subpanel">
-    <div class="card"><h3 style="margin-top:0">${T('koreader.dicts.title')}</h3><p class="small">${T('koreader.dicts.hint',{ext:DICT_EXT.join(' / ')})}</p>
-    <label class="field" for="dictname">${T('koreader.dicts.nameLabel')}</label><input type="text" id="dictname" placeholder="${T('koreader.dicts.namePlaceholder')}">
-    ${upHtml('📖',T('koreader.dicts.dropLabel'),DICT_EXT,T('koreader.dicts.btn'))}
-    <h3>${T('koreader.dicts.installedTitle')}</h3><ul class="list" id="kd"></ul></div>
-  </div>`;
-  const ups=sec.querySelectorAll('.up');
-  uploader(ups[0],()=>'/api/koreader/fonts',()=>({}),FONT_EXT,()=>refresh());
-  uploader(ups[1],()=>'/api/koreader/dicts',()=>({name:$('#dictname',sec).value.trim()}),DICT_EXT,()=>refresh());
-  const refresh=async()=>{
-    const [s,f,dc]=await Promise.all([j('/api/koreader/status'),j('/api/koreader/fonts'),j('/api/koreader/dicts')]);
-    $('#ks',sec).innerHTML=s.ok?`<b>${T('koreader.status.installed')}</b><span>${s.installed?T('common.yes'):T('common.no')} ${s.version?'('+esc(s.version)+')':''}</span><b>${T('koreader.status.running')}</b><span>${s.running?T('koreader.status.runningYes'):T('common.no')}</span><b>${T('koreader.status.installedCount')}</b><span>${T('koreader.status.countLabel',{fonts:s.fonts,dicts:s.dicts||0})}</span>`:`<span>${esc(s.message)}</span>`;
-    fillList($('#kf',sec),f.items||[],(it,left,right)=>{left.textContent=it.name;right.insertAdjacentHTML('beforeend',cjkBadge(it.cjkPct)+`<span>${fmtB(it.bytes)}</span>`);right.appendChild(delBtn(T('koreader.fonts.deleteConfirm',{name:it.name}),'/api/koreader/fonts/'+encodeURIComponent(it.name),refresh))},T('koreader.fonts.emptyHint'));
-    fillList($('#kd',sec),dc.items||[],(it,left,right)=>{left.textContent='📖 '+it.name;right.textContent=T('koreader.dicts.countSuffix',{count:it.ifo})},T('koreader.dicts.emptyHint'))};
-  refresh();sec.refresh=refresh;subtabs(sec)}},
  'wallpaper-serve':{titleKey:'tab.wallpaper',title:'壁纸',render(sec){assetTab(sec,'/api/wallpapers',{
    hint:T('wallpaper.hint'),
    header:`<label class="field">${T('wallpaper.rotateLabel')}</label><div class="row"><select id="wpmode" style="max-width:12em"><option value="sequential">${T('wallpaper.mode.sequential')}</option><option value="random">${T('wallpaper.mode.random')}</option><option value="fixed">${T('wallpaper.mode.fixed')}</option></select><span id="wpst" class="small"></span></div>`,
    icon:'🖼',label:T('wallpaper.dropLabel'),accept:IMG_EXT,btn:T('wallpaper.btn'),
    onRender:async(sec,refresh)=>{const st=await j('/api/wallpapers/status');const sel=$('#wpmode',sec);if(st.ok){sel.value=st.mode;const nv=st.native||{};$('#wpst',sec).textContent=T('wallpaper.status',{current:st.current||T('wallpaper.none'),nativeState:nv.enabled?T('wallpaper.nativeEnabled'):T('wallpaper.nativeDisabled'),restartNote:nv.restartPending?T('wallpaper.restartNote'):''})}
-     sel.onchange=async()=>{const r=await jsend('/api/wallpapers/mode','PUT',{mode:sel.value});if(r.ok===false){toast(r.message||T('wallpaper.switchFailed'));return}refresh()}},
+     sel.onchange=async()=>{if((await sendT('/api/wallpapers/mode','PUT',{mode:sel.value},'wallpaper.switchFailed')).ok!==false)refresh()}},
    row:(it,left,right,refresh)=>{const cur=(it.extra||{}).current;
      // alt="" 原来把这张图当装饰性处理，但壁纸缩略图本身就是内容（"这张壁纸长什么样"），屏幕阅读器
      // 会整个跳过（2026-09-09 审计发现）；文件名本身当描述最直接，跟右边视觉上显示的文字一致。
      left.style.cssText='display:flex;align-items:center;gap:.6em'; // 缩略图固定在左、长文件名在右侧自己折行，不绕着图片流
      left.innerHTML=`<img src="/api/wallpapers/${encodeURIComponent(it.name)}" alt="${esc(T('wallpaper.thumbAlt',{name:it.name}))}" loading="lazy" style="height:3.4em;flex:none;border-radius:.3em;border:1px solid var(--line)"><span style="min-width:0">${esc(it.name)}</span>`;
      right.insertAdjacentHTML('beforeend',`<span>${fmtB(it.bytes)}</span>`+(cur?`<span class="badge on">${T('wallpaper.current')}</span>`:''));
-     if(!cur){const b=el('button',{class:'btn',text:T('wallpaper.use')});guardClick(b,async()=>{const r=await jsend('/api/wallpapers/current','PUT',{name:it.name});if(r.ok===false){toast(r.message||T('wallpaper.setFailed'));return}refresh()});right.appendChild(b);
+     if(!cur){right.appendChild(btn(T('wallpaper.use'),async()=>{if((await sendT('/api/wallpapers/current','PUT',{name:it.name},'wallpaper.setFailed')).ok!==false)refresh()}));
        right.appendChild(delBtn(T('wallpaper.deleteConfirm',{name:it.name}),'/api/wallpapers/'+encodeURIComponent(it.name),refresh))}}})}}
 };
 
@@ -608,22 +551,20 @@ function assetTab(sec,api,o){sec.innerHTML=`<div class="card">${o.title?`<h2>${o
   uploader($('.up',sec),()=>api,()=>({}),o.accept,refresh);
   refresh();sec.refresh=refresh}
 
-/* 「其他」顶层 tab（2026-09-10 用户重排首层标签：传书/笔记/其他/管理）：xochitl(font-serve)/
-   KOReader(koreader-serve)/壁纸(wallpaper-serve) 三个原来各自独立的顶层 tab 降一级，包进这个
-   tab 当二级子标签——三个服务各自的 render() 原样复用，不重写内容，只是换个挂载点（KOReader 自己
-   内部还有一层字体/词典 subnav，三级嵌套，subtabs() 已经改成 `:scope >` 限定直接子元素，不会互相
-   干扰，见 subtabs() 头注）。只装了其中一部分时，subnav 只列已装的那几个（笔记 tab 本身不在这
-   里——note-serve 单独占「其他」前面那个固定位置，不受这条影响）。 */
+/* 「其他」顶层 tab（2026-09-10 用户重排首层标签：传书/笔记/其他/管理）：xochitl(font-serve)/壁纸(wallpaper-serve)
+   原来各自独立的顶层 tab 降一级，包进这个 tab 当二级子标签——各服务的 render() 原样复用，只是换个挂载点。
+   只装了其中一部分时，subnav 只列已装的那几个（笔记 tab 本身不在这里——note-serve 单独占「其他」前面那个固定位置）。
+   （原来的 KOReader 子标签随 2026-09-29 设备卸载 KOReader 撤掉。） */
 function renderOther(sec,svcs,areaOf){
-  const items=[{name:'font-serve',icon:'🔤',label:'xochitl'},{name:'koreader-serve',icon:'📖',label:'KOReader'},{name:'wallpaper-serve',icon:'🖼️',label:T('tab.wallpaper')}]
+  const items=[{name:'font-serve',icon:'🔤',label:'xochitl'},{name:'wallpaper-serve',icon:'🖼️',label:T('tab.wallpaper')}]
     .filter(it=>svcs.some(s=>s.name===it.name));
   sec.innerHTML=`<div class="subnav">${items.map((it,i)=>`<button${i===0?' class="on"':''}>${it.icon} ${it.label}</button>`).join('')}</div>
     ${items.map((it,i)=>`<div class="subpanel${i===0?' on':''}" id="other-${it.name}"></div>`).join('')}`;
   items.forEach(it=>TABS[it.name].render($('#other-'+it.name,sec)));
   const pane=it=>$('#other-'+it.name,sec);
   sec.refresh=()=>Promise.all(items.map(it=>{const c=pane(it);return c&&c.refresh&&c.refresh()}));
-  /* 事件只刷发事件的那个服务的子面板（字体/KOReader/壁纸各自 2～3 个请求），不再三块一起重取——壁纸每次休眠轮换、
-     KOReader 每次加书都会发事件。认不出来源（没有映射）时退回整块刷新。 */
+  /* 事件只刷发事件的那个服务的子面板（字体/壁纸各自 2 个请求），不再几块一起重取——壁纸每次休眠轮换都会发事件。
+     认不出来源（没有映射）时退回整块刷新。 */
   sec.onEvent=ev=>{const it=items.find(x=>areaOf(x.name)===ev.area);const c=it&&pane(it);if(c&&c.refresh)refreshSec(c);else refreshSec(sec)};
   subtabs(sec);
 }
@@ -652,7 +593,7 @@ const DEST_ORDER=['notebook','obsidian','both'];
 function renderNotes(sec){sec.innerHTML=`
   <div class="card"><h2>${T('notes.title')}</h2>
     <p class="lead">${T('notes.lead')}</p>
-    <div class="row"><span class="small">${T('notes.bookLabel')}</span><select id="nbook" style="flex:1;min-width:10em"></select><button class="btn" id="nrescan" title="${T('notes.rescanTitle')}">${T('notes.rescanBtn')}</button><button class="btn" id="nkoimport" title="${T('notes.koreaderImportTitle')}">${T('notes.koreaderImportBtn')}</button></div>
+    <div class="row"><span class="small">${T('notes.bookLabel')}</span><select id="nbook" style="flex:1;min-width:10em"></select><button class="btn" id="nrescan" title="${T('notes.rescanTitle')}">${T('notes.rescanBtn')}</button></div>
     <div class="row small" id="nsum"></div>
     <div class="row"><input type="search" id="nq" placeholder="${T('notes.search.placeholder')}" aria-label="${T('notes.search.placeholder')}" style="flex:1;min-width:10em"><button class="btn" id="nqgo">${T('notes.search.btn')}</button></div>
     <div id="nqres"></div>
@@ -714,9 +655,14 @@ function renderNotes(sec){sec.innerHTML=`
     if(inflight.size)await Promise.all([...inflight])};
   /* 每章"设备笔记本/Obsidian md 是不是已经跟当前条目内容同步"（整理区第三轮反馈）：一次性取整本书
      的同步状态，章头徽章、「整理」列表默认收起已同步章节、回收站显示这条大概去哪了，三处共用同一份，
-     不用各自发请求。`refreshSync()` 在 loadBook 里、以及每次生成/导出动作之后调用刷新。 */
-  let syncMap=new Map();
-  const refreshSync=async()=>{if(!book){syncMap=new Map();return}const r=await j(bookApi('notes',`/sync`));syncMap=new Map((r.chapters||[]).map(c=>[c.chapter,c]))};
+     不用各自发请求。`refreshSync()` 在 loadBook / reloadBook 里、以及每次生成/导出动作之后调用刷新。
+     顺带取转写失败清单（`failedIds`，「整理」里标红 + 按钮改「重转失败」）：此前 renderBook 每画一次就查一次
+     /api/transcribe/status，连点章节标签、切「未导出/已导出」这种纯本地切换也要打一次请求。 */
+  let syncMap=new Map(),failedIds=new Set();
+  const refreshSync=async()=>{if(!book){syncMap=new Map();failedIds=new Set();return}
+    const [r,t]=await Promise.all([j(bookApi('notes',`/sync`)),j('/api/transcribe/status')]);
+    syncMap=new Map((r.chapters||[]).map(c=>[c.chapter,c]));
+    failedIds=new Set((t.failures||[]).filter(f=>f.book===book.uuid).map(f=>f.id))};
   /* 「保存并刷新」这条 5 步链（flush 未落地的改字 → 重取整本书 → 重取同步状态 → 重画指定的几个
      子视图）原来在 triage/archiveEntry/restore/去处切换/转写/问 AI 七处各自逐字重复（2026-09-09
      审计发现），任何一处漏改都容易造成"某个动作之后画面没更新"这类不容易被发现的 bug——收成一个
@@ -761,7 +707,7 @@ function renderNotes(sec){sec.innerHTML=`
       // 这条本身去哪（配置的目的地）+ 它所在章节目前的生成/导出状态（章节维度，不是这条自己确认被
       // 收进去了没——归档/撤销后这条已经不在活条目集合里，没法再逆推"当初有没有被打进那次生成"，
       // 只能诚实地给"这一章大致是什么状态"这个参考信息，用户反馈"回收站该显示导出到哪里"）。
-      row.innerHTML=`<div class="trash-badges"><span class="badge">${T(STATUS_NAMES[e.status])||e.status}</span><span class="badge">${DEST_ICON[dv]()}</span>${syncBadges(chSync,dv)}</div>
+      row.innerHTML=`<div class="trash-badges"><span class="badge">${T(STATUS_NAMES[e.status])||esc(e.status)}</span><span class="badge">${DEST_ICON[dv]()}</span>${syncBadges(chSync,dv)}</div>
         <div class="txt">p.${e.page_index+1}${e.chapter_title?' · '+esc(e.chapter_title):''}<br><span class="q">${esc(text)}</span>${e.status==='revoked'?`<br><span class="small">${T('notes.trash.revokedHint')}</span>`:''}</div>
         <button class="btn" data-restore>${T('notes.trash.restoreBtn')}</button>`;
       guardClick(row.querySelector('[data-restore]'),async()=>{if(!(await restoreOne(e.id)))return;await reloadBook(renderTrash,renderBrowse,renderBook)});
@@ -810,15 +756,12 @@ function renderNotes(sec){sec.innerHTML=`
   // 重新摄取。实际数据风险不大（已校对文本/条目不会被覆盖，见 notecore::ingest 的增量规则），但操作
   // 本身不常用、容易误触，补一句说清楚"安全在哪"的确认。
   guardClick($('#nrescan',sec),async()=>{if(!book)return;if(!await confirmDialog(T('notes.confirmRescan')))return;await flushPendingText();await postJ(bookApi('ink',`/rescan`),{});refresh()});
-  // KOReader 回流跟当前选的书无关（拉全量高亮/生词、内部按增量规则合并），不用 bookApi/不用 book 判空。
-  guardClick($('#nkoimport',sec),async()=>{const r=await postJ('/api/ink/koreader/import',{});if(r.ok===false)return;toast(T('notes.koreaderImportDone',r),'ok');refresh()});
   guardClick($('#npurge',sec),async()=>{if(!book)return;
     const items=trashedEntries();
     if(!items.length){toast(T('notes.trash.noneToPurge'),'warn');return}
     if(!await confirmDialog(T('notes.trash.confirmPurge',{count:items.length})))return;
     await flushPendingText();
-    const r=await j(bookApi('ink',`/purge`),{method:'POST'});
-    if(r.ok===false){toast(r.message||T('notes.trash.purgeFailed'));return}
+    if((await sendT(bookApi('ink',`/purge`),'POST',undefined,'notes.trash.purgeFailed')).ok===false)return;
     book=await j(bookApi('ink'));renderTrash();refresh()});
   /* 「不要了」（三期）：转 Archived，两处投影都摘掉，条目库里软删留痕（真删靠「回收站」清空）。 */
   const archiveEntry=async(id)=>{if(!await confirmDialog(T('notes.confirmArchive')))return;
@@ -884,8 +827,6 @@ function renderNotes(sec){sec.innerHTML=`
   let exportTab='pending',selectedChapter=null;
   const renderBook=async(opts={})=>{if(!book){chaptertabs.innerHTML='';chapterbody.innerHTML=`<p class="small">${T('notes.pickBookFirst')}</p>`;return}updateSummary();
     const advance=!!opts.advance;
-    const trst=await j('/api/transcribe/status');
-    const failedIds=new Set((trst.failures||[]).filter(f=>f.book===book.uuid).map(f=>f.id));
     // 这份判据是 notes/crates/notecore/src/model.rs::Status::is_live_for_projection() 的镜像
     // （2026-09-09 单一事实源化：Rust 侧 project.rs/export.rs 都改成调那个方法了，前端这份因为
     // 跨语言/跨仓库做不到直接复用，改状态机时两边都要看一眼，别只改 Rust 那边）。
@@ -915,7 +856,7 @@ function renderNotes(sec){sec.innerHTML=`
     exportTabsEl.querySelectorAll('button').forEach(b=>b.classList.toggle('on',b.dataset.etab===exportTab));
     const visibleKeys=exportTab==='pending'?pendingKeys:syncedKeys;
     chaptertabs.innerHTML='';
-    visibleKeys.forEach(k=>{const b=el('button',{class:k===selectedChapter?'on':'',text:k<0?T('notes.unfiledChapter'):T('notes.chapterHeading',{n:k+1})});b.onclick=()=>{selectedChapter=k;renderBook()};chaptertabs.appendChild(b)});
+    visibleKeys.forEach(k=>chaptertabs.appendChild(btn(k<0?T('notes.unfiledChapter'):T('notes.chapterHeading',{n:k+1}),()=>{selectedChapter=k;renderBook()},k===selectedChapter?'on':'')));
     chapterbody.innerHTML='';
     if(selectedChapter==null){
       // 2026-09-09 审计修：pendingKeys 为空有两种完全不同的原因——"这本书压根没有条目被转入笔记过"
@@ -943,7 +884,7 @@ function renderNotes(sec){sec.innerHTML=`
       // "没做"；改名"推送"是因为"同步"暗示双向/拉取，这个按钮其实只单向推。
       syncBtn.onclick=async()=>{syncBtn.disabled=true;msg.textContent='';holdFor(15000);
         // 服务端没有天然的分步数据（耗时来自生成笔记本+导出 md 两次整章调用，不是可数的"第几步"）——
-        // 跟 stagingList 普通整本落库同一处境，共用同一套不确定态滚动条（2026-09-19 代码质量审计，
+        // 跟母版库普通整本落库同一处境，共用同一套不确定态滚动条（2026-09-19 代码质量审计，
         // 原来这里只有一句不会变的静态文字"推送中…"）。
         const prog=renderStepProgress(row,{label:T('notes.pushing'),prog:null,msg:''});
         const gr=await j(bookApi('notes',`/chapters/${k}/generate`),{method:'POST'});
@@ -967,9 +908,9 @@ function renderNotes(sec){sec.innerHTML=`
       row.innerHTML=`
         <div class="entry-head">
           <span>p.${e.page_index+1}${e.subhead?' · '+esc(e.subhead):''}</span>
-          <span class="badge">${T(STYLE_NAMES[e.style])||e.style}</span>
+          <span class="badge">${T(STYLE_NAMES[e.style])||esc(e.style)}</span>
           ${syncBadges(s,dv)}
-          <span class="badge ${e.status==='reviewed'?'on':''}" style="margin-left:auto">${T(STATUS_NAMES[e.status])||e.status}</span>
+          <span class="badge ${e.status==='reviewed'?'on':''}" style="margin-left:auto">${T(STATUS_NAMES[e.status])||esc(e.status)}</span>
         </div>
         <div class="entry-body">
           <div class="entry-crop">${cropHtml(e)}</div>
@@ -1111,9 +1052,9 @@ function mountModelPanel(root,seg,title,icon,showAuto){
     <div class="small" data-stat style="margin-top:.3em;overflow-wrap:anywhere"></div>`;
   root.appendChild(card);
   const vendorSel=card.querySelector('[data-vendor]'),modelBox=card.querySelector('[data-modelbox]'),presetSel=card.querySelector('[data-preset]'),customBox=card.querySelector('[data-custom]'),modelInp=card.querySelector('[data-model]'),urlInp=card.querySelector('[data-url]'),keyRow=card.querySelector('[data-keyrow]'),stat=card.querySelector('[data-stat]'),autoBox=card.querySelector('[data-auto]'),priceIn=card.querySelector('[data-pricein]'),priceOut=card.querySelector('[data-priceout]'),usageBody=card.querySelector('[data-usagebody]');
-  const put=body=>jsend(`/api/${seg}/config`,'PUT',body);
+  const cfgUrl=`/api/${seg}/config`;
   // 「改一项配置 → 失败弹 toast → 无论成败都重画」：厂家/模型/密钥/自定义/单价这几个动作共用。
-  const putR=async(body,failKey='common.failed')=>{const r=await put(body);if(r.ok===false)toast(r.message||T(failKey));refresh()};
+  const putR=async(body,failKey)=>{await sendT(cfgUrl,'PUT',body,failKey);refresh()};
   const fmtCost=c=>c==null?T('models.noPrice'):'¥'+c.toFixed(4);
   let presets=[];
   const modelsOf=v=>presets.filter(p=>p.provider===v);
@@ -1134,7 +1075,7 @@ function mountModelPanel(root,seg,title,icon,showAuto){
     keyRow.innerHTML=c.hasKey
       ?`<span class="small">${T('models.keySaved',{key:esc(c.keyMasked||'••••')})}</span><button class="btn" data-delkey>${T('action.delete')}</button>`
       :`<input type="password" placeholder="${T('models.keyInputPlaceholder')}" data-keyinput style="flex:1;min-width:11em" autocomplete="off"><button class="btn pri" data-savekey>${T('models.saveKeyBtn')}</button>`;
-    if(autoBox){autoBox.checked=!!c.auto;autoBox.onchange=async()=>{const r=await put({auto:autoBox.checked});if(r.ok===false){toast(r.message||T('common.failed'));autoBox.checked=!autoBox.checked}}}
+    if(autoBox){autoBox.checked=!!c.auto;bindToggle(autoBox,cfgUrl,'auto')}
     const price=c.price||{inputPer1k:0,outputPer1k:0};
     priceIn.value=price.inputPer1k||'';priceOut.value=price.outputPer1k||'';
     const rows=st.usageByModel||[];
@@ -1172,8 +1113,7 @@ const battopTopList=items=>items&&items.length
 /* 时间窗 subnav+subpanel 骨架，耗电情况/唤醒源两处共用——contentFn(windowData)→这个窗口要显示的 HTML。 */
 /* activeIdx：重画时保留原来选中的时间窗（比如耗电情况的"按应用/按进程"下拉切换只想换列表内容，
    不想把用户刚选的"7天"弹回"今日"），不传就默认第一个。每个时间窗的内容包一层 `.card`——跟这个
-   app 别处"subnav 切换、每块内容各自一张卡"的样子统一（KOReader 字体/词典两个子标签各自一张卡
-   是同一个规矩，battop 详情页之前漏了这层，2026-09-10 用户指出补上）。 */
+   app 别处"subnav 切换、每块内容各自一张卡"的样子统一（battop 详情页之前漏了这层，2026-09-10 用户指出补上）。 */
 function renderBattopWindowed(container,windowsData,contentFn,activeIdx=0){
   container.innerHTML=`<div class="subnav">${BATTOP_WINDOWS.map((x,i)=>`<button${i===activeIdx?' class="on"':''}>${T(x.label)}</button>`).join('')}</div>
     ${BATTOP_WINDOWS.map((x,i)=>`<div class="subpanel${i===activeIdx?' on':''}"><div class="card">${contentFn(windowsData[x.key]||{})}</div></div>`).join('')}`;
@@ -1199,8 +1139,7 @@ function mountBattopToggleCard(container){
     box.checked=!!st.running;box.disabled=!installed;
     note.textContent=installed?'':T('battop.toggle.notInstalled')};
   box.onchange=async()=>{if(!installed)return;const want=box.checked;box.disabled=true;
-    const r=await j(`/api/enhance/battop/${want?'start':'stop'}`,{method:'POST'});
-    if(r.ok===false){toast(r.message||T('common.failed'));box.checked=!want}
+    if((await sendT(`/api/enhance/battop/${want?'start':'stop'}`,'POST')).ok===false)box.checked=!want;
     box.disabled=false;await refresh()};
   // 挂载时不自己取：唯一调用方（「管理」页）挂载后紧接着就取 /api/enhance/status 并把结果传进来（erApply），
   // 这里再取一次就是同一个接口连发两遍（每次都让网关查 systemctl + 扫 xochitl 进程映射）。
@@ -1223,7 +1162,7 @@ function renderBattopDetail(sec){
       usageEl.innerHTML=msg;wakeEl.innerHTML=msg;return;
     }
     const w=r.summary.windows||{};
-    /* 每个子标签开头一张说明卡（标题+一句话说明），跟「系统增强」/KOReader 那些卡片同一个
+    /* 每个子标签开头一张说明卡（标题+一句话说明），跟「系统增强」那些卡片同一个
        视觉语言；「按应用/按进程」下拉放这张卡里——下拉要跨时间窗持续存在，不能放进
        renderBattopWindowed 生成的、每次切时间窗都可能重画的内容里（2026-09-10 用户要求统一
        风格顺手理清楚这条边界）。 */
@@ -1389,6 +1328,11 @@ function mountCleanup(box){
   syncBtns();
   return load;
 }
+/* 页头横幅（OTA / WiFi / 代理放弃三种同一套外观）：插在标签栏下、main 前；同 id 已在就原地替换。
+   closable：左上角 ×，只在本次页面会话内关掉。 */
+const banner=(id,html,closable)=>{const ban=el('div',{class:'otabanner',id,role:'alert',html});
+  if(closable)ban.prepend(btn('×',()=>ban.remove(),'btn x',{title:T('ota.dismiss'),'aria-label':T('ota.dismiss')}));
+  const old=document.getElementById(id);if(old)old.replaceWith(ban);else document.body.insertBefore(ban,$('#main'));return ban};
 /* 页头"需要重新安装"横幅（2026-09-25）：页面打开时取一次 /api/device/ota（网关侧判定见 device/ota.rs：单元文件缺失 /
    xovi 未生效；固件哈希不在白名单只作附加原因），不轮询。关掉只在本次页面会话内有效。 */
 async function showOtaBanner(){
@@ -1396,33 +1340,23 @@ async function showOtaBanner(){
   const reasons=(d.reasons||[]).map(r=>`<li>${esc(T('ota.reason.'+r,{units:(d.missingUnits||[]).join(', ')}))}</li>`).join('');
   const cmd=d.recovery==='full'?`<p>${T('ota.recovery.full',{cmd1:'<code>/home/root/xovi/rebuild_hashtable</code>'})}</p><pre class="hlog">cd packaging &amp;&amp; sh install-all.sh ${esc(location.hostname)}${(d.reasons||[]).includes('firmware-unknown')?' --force':''}</pre>`
     :`<p>${T('ota.recovery.xovi')}</p><pre class="hlog">cd packaging &amp;&amp; sh deploy-xovi-apply.sh ${esc(location.hostname)}</pre>`;
-  const x=el('button',{class:'btn x',type:'button',title:T('ota.dismiss'),'aria-label':T('ota.dismiss'),text:'×'});
-  const ban=el('div',{class:'otabanner',role:'alert',html:`<b>${d.recovery==='full'?T('ota.banner.title'):T('ota.banner.xoviTitle')}</b><ul>${reasons}</ul>${cmd}<p class="small">${T('ota.recovery.doc')}</p>`});
-  ban.prepend(x);x.onclick=()=>ban.remove();
-  document.body.insertBefore(ban,$('#main'));
+  banner('otabanner',`<b>${d.recovery==='full'?T('ota.banner.title'):T('ota.banner.xoviTitle')}</b><ul>${reasons}</ul>${cmd}<p class="small">${T('ota.recovery.doc')}</p>`,true);
 }
 /* 页头"这个 WiFi 上不了外网"横幅（2026-09-28）：设备端 wifi-watch 连上新网络时探一次外网，结果经 /api/device/wifi 给这里。
    酒店那种要网页登录的 WiFi 上 xochitl 会反复连云端、设备一直醒着很耗电，而 reMarkable 上没法完成网页登录。页面打开时取一次，不轮询；× 只在本次页面会话内关掉。 */
 async function showWifiBanner(){
   const d=await j('/api/device/wifi');if(d.ok===false||(d.state!=='portal'&&d.state!=='none'))return;
-  const x=el('button',{class:'btn x',type:'button',title:T('ota.dismiss'),'aria-label':T('ota.dismiss'),text:'×'});
-  const ban=el('div',{class:'otabanner',id:'wifibanner',role:'alert',html:`<b>${esc(T('wifi.banner.'+d.state,{ssid:d.ssid||'?'}))}</b><p>${T('wifi.banner.why')}</p><p class="small">${T('wifi.banner.hint')}</p>`});
-  ban.prepend(x);x.onclick=()=>ban.remove();
-  document.body.insertBefore(ban,$('#main'));
+  banner('wifibanner',`<b>${esc(T('wifi.banner.'+d.state,{ssid:d.ssid||'?'}))}</b><p>${T('wifi.banner.why')}</p><p class="small">${T('wifi.banner.hint')}</p>`,true);
 }
 /* 页头"设备上没做成"横幅（2026-09-25）：移进 xochitl 回收站、在 xochitl 书库建文件夹，这两件事由设备端代理执行，
    交满 5 次仍没做成 book-serve 就放弃（见 book-serve agent_failures.rs）。页面打开时取一次，之后收到 `agent-failed`
    事件再取，不轮询；「知道了」清空服务端记录（换台设备/刷新后也不再出现）。book-serve 没开时接口不通，不显示。 */
 async function showAgentFailBanner(){
-  const old=$('#agentfail');
   const d=await j('/api/books/agent-failures');const items=d.ok===false?[]:(d.items||[]);
-  if(!items.length){if(old)old.remove();return}
+  if(!items.length){const old=$('#agentfail');if(old)old.remove();return}
   const li=items.slice().reverse().map(f=>`<li>${esc(T('agentfail.'+(f.kind==='mkdir'?'mkdir':'trash'),{name:f.name}))} <span class="small">${esc(fmtTime(f.at))}</span></li>`).join('');
-  const ok=el('button',{class:'btn',type:'button',text:T('agentfail.ack')});
-  const ban=el('div',{class:'otabanner',id:'agentfail',role:'alert',html:`<b>${T('agentfail.title',{n:items.length})}</b><ul>${li}</ul><p class="small">${T('agentfail.hint')}</p>`});
-  ban.appendChild(ok);
-  ok.onclick=async()=>{ok.disabled=true;const r=await postJ('/api/books/agent-failures/clear',{});if(r.ok===false){ok.disabled=false;return}ban.remove()};
-  if(old)old.replaceWith(ban);else document.body.insertBefore(ban,$('#main'));
+  const ban=banner('agentfail',`<b>${T('agentfail.title',{n:items.length})}</b><ul>${li}</ul><p class="small">${T('agentfail.hint')}</p>`);
+  ban.appendChild(btn(T('agentfail.ack'),async()=>{if((await postJ('/api/books/agent-failures/clear',{})).ok!==false)ban.remove()}));
 }
 
 /* 管理台/引导（固定 tab，始终在——它是网关自身页面，不由服务注册表驱动） */
@@ -1433,7 +1367,7 @@ async function showAgentFailBanner(){
    +导入md文档可见性开关）。电池刺客开关 2026-09-21 起在③「系统增强」里（用户要求从实验室移出）。
    （曾在这页的 shelf push 命令卡片已随 2026-09-18 砍掉 host CLI 一并删除。）另有「设备健康」（2026-09-25）。 */
 /* 模块管理动作（start / stop / uninstall），「基石与模块」列表与「全部开启/关闭」共用。 */
-const modAct=(seg,act)=>j('/api/manage/'+seg+'/'+act,{method:'POST'});
+const modAct=(seg,act,loud)=>(loud?sendT:jsend)('/api/manage/'+seg+'/'+act,'POST');
 function renderManage(sec){sec.innerHTML=`
   <div class="subnav"><button class="on">${T('manage.subnav.foundation')}</button><button data-sub="health">${T('manage.subnav.health')}</button><button>${T('manage.subnav.models')}</button><button>${T('manage.subnav.enhance')}</button><button hidden data-sub="battop">${T('manage.subnav.battop')}</button><button>${T('manage.subnav.lab')}</button></div>
   <div class="subpanel on">
@@ -1499,7 +1433,7 @@ function renderManage(sec){sec.innerHTML=`
     const inst=v=>badge(v?T('common.installed'):T('common.notInstalled'),v);
     const ld=(es.ok!==false&&es.loaded)||{},live=[...(ld.extensions||[]),...(ld.qmds||[])];
     $('#found',sec).innerHTML=f.ok===false?`<span>${esc(f.message)}</span>`:
-      `<b>xovi</b><span>${inst(f.xovi)}</span><b>appload</b><span>${inst(f.appload)}</span><b>qt-resource-rebuilder</b><span>${inst(f.qrr)}</span><b>KOReader</b><span>${inst(f.koreader)}</span><b>WeRead</b><span>${inst(f.weread)}</span>`
+      `<b>xovi</b><span>${inst(f.xovi)}</span><b>qt-resource-rebuilder</b><span>${inst(f.qrr)}</span>`
       +`<b>${T('manage.loaded.xoviLive')}</b><span>${badge(ld.xovi?T('manage.loaded.on'):T('manage.loaded.off'),!!ld.xovi)}${live.length?' <span class="small">'+esc(live.join(' · '))+'</span>':''}</span>`;
     const ul=$('#mods',sec);ul.innerHTML='';(d.modules||[]).forEach(m=>{
       const [state,cls]=!m.installable?[T('manage.modules.state.notLaunched'),'']:!m.installed?[T('common.notInstalled'),'off']:m.running?[T('manage.modules.state.on'),'on']:[T('manage.modules.state.installedOff'),''];
@@ -1507,10 +1441,8 @@ function renderManage(sec){sec.innerHTML=`
       const left=el('span',{html:`${esc(label)} <span class="small">${esc(m.service)}</span> <span class="badge ${cls}">${state}</span>`});
       const right=el('span',{style:'display:flex;gap:.4em;align-items:center'});
       if(m.installable&&m.installed){
-        const t=el('button',{class:'btn',text:m.running?T('manage.modules.turnOff'):T('manage.modules.turnOn')});
-        guardClick(t,async()=>{const r=await modAct(m.seg,m.running?'stop':'start');if(r.ok===false)toast(r.message);setTimeout(refresh,600)});
-        const u=el('button',{class:'btn',text:T('manage.modules.uninstallBtn')});
-        guardClick(u,async()=>{if(await confirmDialog(T('manage.modules.confirmUninstall',{label}))){const r=await modAct(m.seg,'uninstall');if(r.ok===false)toast(r.message);else toast(T('manage.modules.uninstalled',{label}),'ok');setTimeout(()=>location.reload(),800)}});
+        const t=btn(m.running?T('manage.modules.turnOff'):T('manage.modules.turnOn'),async()=>{await modAct(m.seg,m.running?'stop':'start',true);setTimeout(refresh,600)});
+        const u=btn(T('manage.modules.uninstallBtn'),async()=>{if(await confirmDialog(T('manage.modules.confirmUninstall',{label}))){if((await modAct(m.seg,'uninstall',true)).ok!==false)toast(T('manage.modules.uninstalled',{label}),'ok');setTimeout(()=>location.reload(),800)}});
         right.append(t,u);
       }else if(m.installable)right.appendChild(el('span',{class:'small',html:T('manage.modules.installCmd',{only:esc(m.only)})}));
       ul.appendChild(el('li',{style:'flex-wrap:wrap'},[left,right]))});
@@ -1585,32 +1517,30 @@ function renderManage(sec){sec.innerHTML=`
   try{AREA=Object.fromEntries((await j('/api/manage')).modules.map(m=>[m.service,m.seg]))}catch{}
   const svcs=(d.services||[]).filter(s=>s.ui&&TABS[s.name]).sort((a,b)=>a.ui.order-b.ui.order);
   /* 首层标签顺序（2026-09-10 用户重排）：传书 / 笔记 / 其他 / 管理。笔记单独占位，xochitl(font-serve)/
-     KOReader(koreader-serve)/壁纸(wallpaper-serve)——目前 svcs 里唯三除笔记外还带 ui.order 的候选——
-     一律降一级包进「其他」（见 renderOther）。 */
+     壁纸(wallpaper-serve)——目前 svcs 里除笔记外还带 ui.order 的候选——一律降一级包进「其他」（见 renderOther）。 */
   const noteSvc=svcs.filter(s=>s.name==='note-serve');
   const otherSvcs=svcs.filter(s=>s.name!=='note-serve');
   $('#hdr').textContent=location.host;
   const nav=$('#tabs'),main=$('#main');main.innerHTML='';
-  const secByArea={};const dirty=new Set();
+  const secByArea={};
   /* 各 tab **第一次切过去时才渲染**（渲染本身就会取一次数据）：此前页面一打开就把笔记/其他/管理全部渲染、各自取一遍数据
      （二十来个请求，还让网关扫 /proc、问模型服务），而且首个 tab 渲染完紧接着又被点击刷新一次，同样的 6 个请求发两遍。
      之后再切回来才走 refreshSec 刷新。 */
-  const addTab=(title,render,first,area)=>{const b=document.createElement('button');b.textContent=title;const sec=document.createElement('section');sec.area=area;secByArea[area]=sec;
+  const addTab=(title,render,first,area)=>{const b=document.createElement('button');b.textContent=title;const sec=document.createElement('section');secByArea[area]=sec;
     let rendered=false;
-    b.onclick=()=>{[...nav.children].forEach(x=>x.classList.remove('on'));[...main.children].forEach(x=>x.classList.remove('on'));b.classList.add('on');sec.classList.add('on');dirty.delete(area);
+    b.onclick=()=>{[...nav.children].forEach(x=>x.classList.remove('on'));[...main.children].forEach(x=>x.classList.remove('on'));b.classList.add('on');sec.classList.add('on');
       if(!rendered){rendered=true;render(sec)}else if(sec.refresh)refreshSec(sec)};
     nav.appendChild(b);main.appendChild(sec);if(first)b.onclick();return sec};
   addTab(T('tab.transfer'),renderTransfer,true,'books');          // 总入口（入库｜母版库），固定第一位（book-serve 不在时列表里提示去管理页开）
   noteSvc.forEach((s)=>addTab(TABS[s.name].titleKey?T(TABS[s.name].titleKey):TABS[s.name].title,TABS[s.name].render,false,AREA[s.name]||s.name));
   if(otherSvcs.length){
     const otherSec=addTab(T('tab.other'),(sec)=>renderOther(sec,otherSvcs,n=>AREA[n]||n),false,'other');
-    // fonts/koreader/wallpapers 各自的 SSE 事件原来路由到各自独立顶层 section，现在都嵌进了同一个
-    // 「其他」section——三个 area 名都指向同一个 otherSec，事件到了随便哪个都触发它的合并 refresh
-    // （2026-09-25 起按事件的 svc 只刷发事件的那块子面板；切到「其他」tab、重连时才三块一起刷）。
+    // fonts/wallpapers 的 SSE 事件都指向同一个「其他」section，由它的 onEvent 只刷发事件的那块子面板
+    // （2026-09-25 起）；切到「其他」tab、重连时才几块一起刷。
     otherSvcs.forEach(s=>{secByArea[AREA[s.name]||s.name]=otherSec});
   }
   addTab(T('tab.manage'),renderManage,false,'manage');            // 固定管理台，始终可进
-  /* 事件推送（SSE，零轮询）：服务在变更处发事件 → 网关 /api/events 汇聚 → 这里只刷对应 tab；不在前台的 tab 记脏，切过去时刷。
+  /* 事件推送（SSE，零轮询）：服务在变更处发事件 → 网关 /api/events 汇聚 → 这里只刷对应 tab；不在前台的 tab 不管，切过去时本来就刷。
      manage 事件（服务启停）：tab 集合变了就整页重载，否则只刷管理台。断线（WiFi 掉/设备休眠醒来）EventSource 自动重连，
      重连成功（非首次 onopen）补刷一次当前 tab——断线期间的事件没人推给我们。
      省电/省流量：页面被隐藏（切标签页、手机锁屏）时**不刷新**，只记"当前 tab 待刷"，`visibilitychange` 变可见时补刷一次；
@@ -1621,26 +1551,37 @@ function renderManage(sec){sec.innerHTML=`
   let activeStale=false,opened=false,es=null,hiddenTimer=0;
   /* 心跳 ?ka=60：默认 20 秒一帧空注释，只是为了让中间代理不掐空闲连接；网关直连浏览器用不着这么勤（设备上每帧都是一次唤醒+TLS 写）。
      页面隐藏超过 60 秒就**主动断开** SSE（锁屏/切走的标签页不再让设备为它保活），重新可见时重连——重连成功的 onopen
-     本来就会补刷当前 tab（见上），断开期间漏掉的事件不丢；别的 tab 切过去时无条件刷新（addTab 的点击处理），也不依赖 dirty。 */
-  const HIDDEN_CLOSE_MS=60000;
-  const openEs=()=>{
-    es=new EventSource('/api/events?ka=60');
-    es.onopen=()=>{liveDot.style.color='var(--ok)';liveDot.title=T('common.eventStreamConnected');
+     本来就会补刷当前 tab（见上），断开期间漏掉的事件不丢；别的 tab 切过去时无条件刷新（addTab 的点击处理）。
+     **浏览器放弃重连的情况**：连上时回的不是 200（网关重启后内存里的会话全没了→401、并发满→503），EventSource 直接进
+     CLOSED、再也不重试——此前页面就此静默失去实时刷新（红点一直亮，用户不点东西就不知道要重新登录）。现在 CLOSED 时
+     先查一次 /api/session（401 由 j() 带去登录页），其余情况按 5 秒起、翻倍、封顶 5 分钟的退避重开；页面隐藏时不重试，
+     等变可见时由 visibilitychange 重开。浏览器自己在重连的（CONNECTING）不插手。 */
+  const HIDDEN_CLOSE_MS=60000,RETRY_MIN_MS=5000,RETRY_MAX_MS=300000;
+  let retryMs=0,retryTimer=0;
+  const reopenLater=()=>{clearTimeout(retryTimer);if(document.hidden)return;
+    retryMs=Math.min(retryMs?retryMs*2:RETRY_MIN_MS,RETRY_MAX_MS);
+    retryTimer=setTimeout(async()=>{if(es||document.hidden)return;
+      const s=await j('/api/session');if(s.ok===false){reopenLater();return} // 401/403 时 j() 已经跳走
+      if(!es&&!document.hidden)openEs()},retryMs)};
+  const openEs=()=>{clearTimeout(retryTimer);
+    const src=es=new EventSource('/api/events?ka=60');
+    es.onopen=()=>{retryMs=0;liveDot.style.color='var(--ok)';liveDot.title=T('common.eventStreamConnected');
       if(opened){if(document.hidden)activeStale=true;else{activeStale=false;const s=activeSec();if(s)refreshSec(s)}}opened=true};
-    es.onerror=()=>{liveDot.style.color='var(--bad)';liveDot.title=T('common.eventStreamReconnecting')};
+    es.onerror=()=>{liveDot.style.color='var(--bad)';liveDot.title=T('common.eventStreamReconnecting');
+      if(src.readyState===2&&es===src){closeEs();reopenLater()}}; // 2 = EventSource.CLOSED：浏览器不会再自己重连
     es.onmessage=async(e)=>{let ev;try{ev=JSON.parse(e.data)}catch{return}
       if(ev.kind==='agent-failed'){showAgentFailBanner();return} // 全站横幅，与哪个 tab 无关
       if(ev.area==='manage'){const d=await j('/api/services');const k=(d.services||[]).filter(s=>s.ui&&TABS[s.name]).map(s=>s.name).join(',');if(k!==svcKey){location.reload();return}}
       const sec=secByArea[ev.area];if(!sec)return;
-      if(!sec.classList.contains('on'))dirty.add(ev.area);
-      else if(document.hidden)activeStale=true;
+      if(!sec.classList.contains('on'))return;
+      if(document.hidden)activeStale=true;
       else if(sec.onEvent)sec.onEvent(ev); // tab 自己按事件决定刷多少（母版库：网关排队/进度事件只重取两个状态）
       else refreshSec(sec)}};
   const closeEs=()=>{if(!es)return;es.close();es=null;liveDot.style.color='var(--bad)';liveDot.title=T('common.eventStreamReconnecting')};
   document.addEventListener('visibilitychange',()=>{
     if(document.hidden){clearTimeout(hiddenTimer);hiddenTimer=setTimeout(closeEs,HIDDEN_CLOSE_MS);return}
     clearTimeout(hiddenTimer);
-    if(!es){openEs();return} // 重连后的 onopen 负责补刷当前 tab
+    if(!es){retryMs=0;openEs();return} // 重连后的 onopen 负责补刷当前 tab
     if(activeStale){activeStale=false;const s=activeSec();if(s)refreshSec(s)}});
   openEs();
   if(document.hidden)hiddenTimer=setTimeout(closeEs,HIDDEN_CLOSE_MS); // 页面是在后台标签页里打开的

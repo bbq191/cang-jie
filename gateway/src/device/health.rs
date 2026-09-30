@@ -273,12 +273,7 @@ Id=book-serve.service\nLoadState=not-found\nActiveState=inactive\nSubState=dead\
     #[test]
     fn collect_tolerates_missing_everything() {
         let t = tempfile::tempdir().unwrap();
-        let h = t.path().to_str().unwrap().to_string();
-        let paths = Paths::resolve(move |k| match k {
-            "HOME" => Some(h.clone()),
-            "XDG_STATE_HOME" | "XDG_DATA_HOME" | "XDG_CONFIG_HOME" | "XDG_RUNTIME_DIR" => Some(format!("{h}/{k}")),
-            _ => None,
-        });
+        let paths = crate::testutil::sandbox(&t);
         std::fs::create_dir_all(so_pending_dir(&paths)).unwrap();
         std::fs::write(so_pending_dir(&paths).join("hl-snap.so"), b"x").unwrap();
         let v = collect(&paths, &t.path().join("proc"), Err("no systemd".into()), Some(vec!["a".into(), "b".into()]));

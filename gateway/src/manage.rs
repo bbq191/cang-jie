@@ -4,7 +4,7 @@
 //! 三态（用户 2026-09-04 定）：**未装**（二进制不在→引导安装）/ **已装未开**（二进制在、服务没跑→可开启）/
 //! **已开**（跑着→网页有该功能）。开关＝`systemctl start/stop`（仅关后台省占用，非省电）；卸载＝调已装的
 //! `shelf-uninstall --only <令牌>`（对称删单元/二进制/qmd）；**安装不走网页**（不让网页 remount /usr 装系统单元），
-//! 未装模块只给引导。网关自身永远在（管理台宿主），不可从网页关/卸。基石（xovi/appload/qrr/KOReader）只读探测。
+//! 未装模块只给引导。网关自身永远在（管理台宿主），不可从网页关/卸。基石（xovi / qt-resource-rebuilder）只读探测。
 use rmsvc_core::http::{ApiError, ApiResult, Reply, Request};
 use rmsvc_core::paths::Paths;
 use rmsvc_core::registry;
@@ -29,7 +29,6 @@ pub struct Module {
 pub const MODULES: &[Module] = &[
     Module { seg: "books", service: "book-serve", only: "book", label: "母版库 / 落原生", installable: true, events: true },
     Module { seg: "fonts", service: "font-serve", only: "font", label: "xochitl 字体", installable: true, events: true },
-    Module { seg: "koreader", service: "koreader-serve", only: "koreader", label: "KOReader", installable: true, events: true },
     Module { seg: "wallpapers", service: "wallpaper-serve", only: "wallpaper", label: "壁纸", installable: true, events: true },
     // 笔记线（notes/）：矿 / 转写 / 脑 / 本，挂同一网关；网页只有 note-serve 注册「笔记」tab，前端组合四个 seg。
     Module { seg: "ink", service: "ink-serve", only: "ink", label: "笔记·矿（条目库）", installable: true, events: true },
@@ -127,24 +126,29 @@ pub fn status(paths: &Paths) -> Reply {
     Reply::ok(&serde_json::json!({ "modules": modules, "gateway": {"running": true} }))
 }
 
-/// `GET /api/foundation`：基石（xovi 栈 + KOReader + WeRead）只读探测——引导页据此显示红绿 + 官方链接。
-/// WeRead 不是本项目服务（不在 [`MODULES`] 里、没有 `-serve` 后端），是外部发行包自带 `install.sh`
-/// 直接 SSH 装到设备的第三方 app（跟 2026-09-05 已砍的旧微读管线无关），这里只探测装没装。
+/// `GET /api/foundation`：基石（xovi + qt-resource-rebuilder）只读探测——引导页据此显示红绿 + 官方链接。
+/// 2026-09-29 设备卸掉 KOReader、第三方 WeRead 与 appload（只用 xochitl 自带阅读器，见 docs/INSTALL.md），
+/// 这三项探测随之撤掉：再列出来只会是三枚永远"未安装"的红徽章。
 pub fn foundation(paths: &Paths) -> Reply {
-    let home = paths.home();
-    let xovi = home.join("xovi");
-    let exists = |p: std::path::PathBuf| p.exists();
+    let xovi = paths.home().join("xovi");
     Reply::ok(&serde_json::json!({
-        "xovi": exists(xovi.join("xovi.so")) || exists(xovi.join("start")),
-        "appload": exists(xovi.join("exthome/appload")),
-        "qrr": exists(xovi.join("exthome/qt-resource-rebuilder")),
-        "koreader": exists(paths.koreader_root().join("reader.lua")) || exists(paths.koreader_root().to_path_buf()),
-        "weread": exists(paths.weread_root().join("bin/start-remarkable-weread.sh")) || exists(paths.weread_root().to_path_buf()),
+        "xovi": xovi.join("xovi.so").exists() || xovi.join("start").exists(),
+        "qrr": xovi.join("exthome/qt-resource-rebuilder").exists(),
     }))
 }
 
+/// `POST /api/manage/{seg}/{action}` 路由入口：`uninstall` 走 [`uninstall`]，其余交给 [`toggle`]（只认 start|stop）。
+pub fn action(paths: &Paths, req: &mut Request<'_>) -> ApiResult {
+    let (seg, action) = (req.param("seg").to_string(), req.param("action").to_string());
+    if action == "uninstall" {
+        uninstall(paths, &seg, req)
+    } else {
+        toggle(&seg, &action)
+    }
+}
+
 /// `POST /api/manage/{seg}/{start|stop}`：仅开关后台服务（省占用/隐藏功能，非省电）。网关不可关。
-pub fn toggle(_paths: &Paths, seg: &str, action: &str) -> ApiResult {
+pub fn toggle(seg: &str, action: &str) -> ApiResult {
     let m = by_seg(seg).ok_or_else(|| ApiError::bad(format!("未知模块 {seg}")))?;
     if !m.installable {
         return Err(ApiError::bad(format!("{} 未上线，不可开关", m.label)));
@@ -193,6 +197,7 @@ mod tests {
         assert_eq!(service_of("wallpapers"), Some("wallpaper-serve"));
         assert_eq!(service_of("nope"), None);
         assert_eq!(service_of("weread"), None, "微读线已砍（2026-09-05），目录表不再有它");
+        assert_eq!(service_of("koreader"), None, "koreader-serve 随 2026-09-29 设备卸载 KOReader 撤出目录表：不再代理、不再订阅事件");
         assert!(MODULES.iter().all(|m| m.installable));
     }
     #[test]
@@ -204,8 +209,7 @@ mod tests {
     #[test]
     fn status_reports_three_states() {
         let t = tempfile::tempdir().unwrap();
-        let h = t.path().to_str().unwrap().to_string();
-        let paths = Paths::resolve(move |k| if k == "HOME" || k == "XDG_RUNTIME_DIR" { Some(h.clone()) } else { None });
+        let paths = crate::testutil::sandbox(&t);
         std::fs::create_dir_all(paths.bin_dir()).unwrap();
         std::fs::write(paths.bin_dir().join("book-serve"), b"x").unwrap(); // 已装、未跑（注册表空）
         let v: serde_json::Value = serde_json::from_slice(&status(&paths).body).unwrap();
@@ -219,15 +223,18 @@ mod tests {
         assert!(mods.iter().all(|m| m["service"] != "weread-serve"));
     }
     #[test]
-    fn foundation_probes_weread_alongside_koreader() {
+    fn foundation_probes_only_xovi_and_qrr() {
         let t = tempfile::tempdir().unwrap();
-        let h = t.path().to_str().unwrap().to_string();
-        let paths = Paths::resolve(move |k| if k == "HOME" || k == "XDG_RUNTIME_DIR" { Some(h.clone()) } else { None });
+        let paths = crate::testutil::sandbox(&t);
         let v: serde_json::Value = serde_json::from_slice(&foundation(&paths).body).unwrap();
-        assert_eq!(v["weread"], false, "没装时探测为 false");
-        std::fs::create_dir_all(paths.weread_root().join("bin")).unwrap();
-        std::fs::write(paths.weread_root().join("bin/start-remarkable-weread.sh"), b"x").unwrap();
+        assert_eq!((v["xovi"].as_bool(), v["qrr"].as_bool()), (Some(false), Some(false)), "没装时探测为 false");
+        std::fs::create_dir_all(paths.home().join("xovi/exthome/qt-resource-rebuilder")).unwrap();
+        std::fs::write(paths.home().join("xovi/start"), b"x").unwrap();
         let v: serde_json::Value = serde_json::from_slice(&foundation(&paths).body).unwrap();
-        assert_eq!(v["weread"], true);
+        assert_eq!((v["xovi"].as_bool(), v["qrr"].as_bool()), (Some(true), Some(true)));
+        // 2026-09-29 已卸载的三项不再探测（前端也不再显示）
+        for k in ["koreader", "weread", "appload"] {
+            assert!(v.get(k).is_none(), "{k} 不该再出现在基石探测里");
+        }
     }
 }

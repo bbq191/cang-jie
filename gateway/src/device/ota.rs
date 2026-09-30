@@ -182,8 +182,7 @@ mod tests {
     #[test]
     fn missing_units_only_counts_installed_services() {
         let t = tempfile::tempdir().unwrap();
-        let h = t.path().join("home").to_str().unwrap().to_string();
-        let paths = Paths::resolve(move |k| if k == "HOME" { Some(h.clone()) } else { None });
+        let paths = crate::testutil::sandbox(&t);
         let units = t.path().join("units");
         std::fs::create_dir_all(&units).unwrap();
         std::fs::create_dir_all(paths.bin_dir()).unwrap();

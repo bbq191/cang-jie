@@ -5,18 +5,17 @@
 //! 其余（JSON 等小应答、没有长度的应答）读完再回——没有长度的流只能走 SSE 那条"读到连接关闭"的通道，
 //! 不适合普通下载（见 [`stream_len`]）。
 //!
-//! **并发/内存预算闸门**（2026-09-19）：`优化`/`加入xochitl`/`加入KOReader` 这三个操作在这里统一
-//! 拦一道——真机测出漫画 optimize/超限分卷投递内存峰值 ≈ 处理的文件体积本身，`book-serve`/
-//! `koreader-serve` 的忙锁都是按书名分别加的、点不同的书互不阻塞，同时点几本大部头会线性叠加内存。
-//! `gateway` 是这三个操作物理上唯一必经的转发关口（三个服务是独立进程，互不共享内存），闸门放这里
-//! 不需要任何跨进程锁，详见 `budget.rs` 文档注释。只有这三条命中路由才会额外读一次 body（几十字节
-//! 的小 JSON，`Request::read_small_body` 本来就有 1MB 上限）+ 查一次文件体积，其余请求（含真正的
-//! 大文件上传）完全不受影响、维持原有纯流式转发。
+//! **并发/内存预算闸门**（2026-09-19）：`优化`/`加入xochitl` 在这里统一拦一道——真机测出漫画 optimize
+//! 内存峰值 ≈ 处理的文件体积本身，`book-serve` 的忙锁是按书名分别加的、点不同的书互不阻塞，同时点几本
+//! 大部头会线性叠加内存。`gateway` 是这些操作物理上唯一必经的转发关口，闸门放这里不需要任何跨进程锁，
+//! 详见 `budget.rs` 文档注释。只有命中的路由才会额外读一次 body（几十字节的小 JSON，
+//! `Request::read_small_body` 本来就有 1MB 上限）+ 查一次文件体积，其余请求（含真正的大文件上传）完全
+//! 不受影响、维持原有纯流式转发。（原第三条「加入 KOReader」随 2026-09-29 设备卸载 KOReader 撤掉。）
 //!
-//! 第四条（2026-09-25）：**抓网文勾了「同步优化」**（`POST /api/books/staging/fetch-article`，`optimize:true`）
+//! 另一条（2026-09-25）：**抓网文勾了「同步优化」**（`POST /api/books/staging/fetch-article`，`optimize:true`）
 //! 也过闸门——它在一次 HTTP 请求里同步地"抓取→组 EPUB→落母版库→跑 `optimize()`"，此前既不占 book-serve 的忙锁
 //! 也不占这里的名额。书名在请求时还不知道（要等抓完才有标题），闸门键用 `抓网文 <url>`，固定小档（网文通常几十 KB）；
-//! 同步操作，响应回来＝真正做完，名额随函数返回释放（同 `KoreaderAdopt`）。没勾同步优化的抓取不过闸门。
+//! 同步操作，响应回来＝真正做完，名额随函数返回释放。没勾同步优化的抓取不过闸门。
 use rmsvc_core::http::{ApiError, ApiResult, JsonBody, Method, Reply, Request};
 use rmsvc_core::multipart::percent_encode as enc;
 use rmsvc_core::paths::Paths;
@@ -37,8 +36,6 @@ enum GatedOp {
     Optimize,
     /// `book-serve` 的"加入 xochitl"——同上，异步。
     Deliver,
-    /// `koreader-serve` 的"加入 KOReader"——同步：`fs::copy`+`fs::rename`，HTTP 响应返回=真正做完。
-    KoreaderAdopt,
     /// `book-serve` 的"抓网文"——同步：抓取 + 组包 + （勾了才有的）同步优化都在这次请求里做完。
     FetchArticle,
 }
@@ -62,17 +59,15 @@ fn gate_target(kind: GatedOp, body: &JsonBody, size_of: impl Fn(&str) -> u64) ->
     Ok(Some((name, tier)))
 }
 
-/// 这个请求是不是命中要限流的三个操作之一。`service_name` 是解析过的后端服务名
-/// （`book-serve`/`koreader-serve`，不是 URL 段 `books`/`koreader`）。
+/// 这个请求是不是命中要限流的操作之一。`service_name` 是解析过的后端服务名（`book-serve`，不是 URL 段 `books`）。
 fn gated_operation(service_name: &str, rest: &str, method: Method) -> Option<GatedOp> {
-    if method != Method::Post {
+    if method != Method::Post || service_name != "book-serve" {
         return None;
     }
-    match (service_name, rest) {
-        ("book-serve", "staging/optimize") => Some(GatedOp::Optimize),
-        ("book-serve", "staging/deliver") => Some(GatedOp::Deliver),
-        ("koreader-serve", "books/adopt") => Some(GatedOp::KoreaderAdopt),
-        ("book-serve", "staging/fetch-article") => Some(GatedOp::FetchArticle),
+    match rest {
+        "staging/optimize" => Some(GatedOp::Optimize),
+        "staging/deliver" => Some(GatedOp::Deliver),
+        "staging/fetch-article" => Some(GatedOp::FetchArticle),
         _ => None,
     }
 }
@@ -167,7 +162,7 @@ pub fn forward(paths: &Paths, req: &mut Request<'_>) -> ApiResult {
         reply = reply.with_header("Content-Disposition", &v);
     }
 
-    // 名额释放时机：`KoreaderAdopt`/`FetchArticle` 是同步操作，走到这里真正的复制/优化已经做完，`slot` 出函数作用域
+    // 名额释放时机：`FetchArticle` 是同步操作，走到这里真正的复制/优化已经做完，`slot` 出函数作用域
     // 自然 Drop 释放，不用特殊处理。`Optimize`/`Deliver` 是异步的，HTTP 响应此刻只代表"已经开始"，
     // 真正的内存开销在后台线程里继续——把 `slot` 转移进一个监控线程，轮询该服务自己的 `/staging`
     // 列表直到这本书不再 busy（或条目已经不在了，比如漫画→PDF 改名），`slot` 才出那个线程的作用域
@@ -197,7 +192,22 @@ pub fn forward(paths: &Paths, req: &mut Request<'_>) -> ApiResult {
 /// 这时再放名额，不让侦测本身不可靠把并发档位永久卡住。
 pub(crate) fn poll_until_settled(client: &SvcClient, name: &str) {
     let wake = crate::events::books_wake();
-    wait_settled(|| client.get_json("/staging"), name, Instant::now() + SETTLE_POLL_TIMEOUT, || wake.generation(), |seen, d| { wake.wait_change(seen, d); });
+    wait_settled(|| client.get_json("/staging"), name, Instant::now() + SETTLE_POLL_TIMEOUT, || wake.generation(), |seen, d| throttled_wait(wake, seen, d, MIN_REQUERY));
+}
+
+/// 两次 `GET /staging` 之间的最短间隔。book-serve 大书优化期间约每秒发一条进度事件（`staging`，同一个 kind 分不出
+/// "进度"还是"忙完"），此前每条都唤醒等待方、每条都整表查一次——一本大书优化几分钟到几十分钟，就是每秒一次的
+/// loopback 请求 + book-serve 整表序列化。代价：名额最多晚这么久才归还（下一本排队的书晚几秒开始），与整本处理时长相比可忽略。
+const MIN_REQUERY: Duration = Duration::from_secs(5);
+
+/// 等 `wake` 的代数离开 `seen`（至多 `max`），但从调用起**至少**过 `min.min(max)` 才返回——事件再密也不会让调用方
+/// 比这更频繁地去查。
+fn throttled_wait(wake: &crate::events::Wake, seen: u64, max: Duration, min: Duration) {
+    let start = Instant::now();
+    wake.wait_change(seen, max);
+    if let Some(rest) = min.min(max).checked_sub(start.elapsed()) {
+        std::thread::sleep(rest);
+    }
 }
 
 /// 连续几次查询失败才认定"服务已不可达、任务没了"。
@@ -242,8 +252,8 @@ mod tests {
     fn gated_operation_matches_exactly_three_routes() {
         assert_eq!(gated_operation("book-serve", "staging/optimize", Method::Post), Some(GatedOp::Optimize));
         assert_eq!(gated_operation("book-serve", "staging/deliver", Method::Post), Some(GatedOp::Deliver));
-        assert_eq!(gated_operation("koreader-serve", "books/adopt", Method::Post), Some(GatedOp::KoreaderAdopt));
         assert_eq!(gated_operation("book-serve", "staging/fetch-article", Method::Post), Some(GatedOp::FetchArticle));
+        assert_eq!(gated_operation("koreader-serve", "books/adopt", Method::Post), None, "加入 KOReader 随 2026-09-29 卸载撤掉");
     }
 
     /// 抓网文：勾了同步优化才占名额（小档、键带前缀不跟书名撞），没勾不过闸门；普通优化仍按书名 + 体积分档。
@@ -267,8 +277,7 @@ mod tests {
         use std::io::Write;
         use std::sync::atomic::{AtomicBool, Ordering};
         let t = tempfile::tempdir().unwrap();
-        let h = t.path().to_string_lossy().to_string();
-        let paths = Paths::resolve(move |k| if k == "HOME" || k.starts_with("XDG_") { Some(h.clone()) } else { None });
+        let paths = crate::testutil::sandbox(&t);
         let url = "https://example.invalid/slot-test";
         let key = format!("{ARTICLE_GATE_PREFIX}{url}");
         let seen_active = std::sync::Arc::new(AtomicBool::new(false));
@@ -324,8 +333,7 @@ mod tests {
     fn delete_forwards_no_content_length() {
         use std::io::Write;
         let t = tempfile::tempdir().unwrap();
-        let h = t.path().to_string_lossy().to_string();
-        let paths = Paths::resolve(move |k| if k == "HOME" || k.starts_with("XDG_") { Some(h.clone()) } else { None });
+        let paths = crate::testutil::sandbox(&t);
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let port = listener.local_addr().unwrap().port();
         let backend = std::thread::spawn(move || {
@@ -384,6 +392,23 @@ mod tests {
         let calls = Cell::new(0usize);
         wait_settled(|| { let i = calls.get(); calls.set(i + 1); script[i].clone() }, "big.epub", Instant::now() + Duration::from_secs(3600), || 0, |_, _| {});
         assert_eq!(calls.get(), 6, "应一直等到真正不忙（第 6 次查询）才返回");
+    }
+
+    /// 事件密集（大书优化每秒一条进度）也不会让等待方查得比 `min` 更勤；没有事件时照旧等到 `max`（`max` 比 `min` 短时以 `max` 为准）。
+    #[test]
+    fn throttled_wait_never_returns_before_min_interval() {
+        let w = std::sync::Arc::new(crate::events::Wake::default());
+        let seen = w.generation();
+        w.bump(); // 事件早就到了：wait_change 立即返回，但仍要等满 min
+        let t = Instant::now();
+        throttled_wait(&w, seen, Duration::from_secs(5), Duration::from_millis(150));
+        let el = t.elapsed();
+        assert!(el >= Duration::from_millis(150) && el < Duration::from_secs(3), "{el:?}");
+        let seen = w.generation();
+        let t = Instant::now();
+        throttled_wait(&w, seen, Duration::from_millis(60), Duration::from_secs(5));
+        let el = t.elapsed();
+        assert!(el >= Duration::from_millis(60) && el < Duration::from_secs(3), "无事件：max 更短时以 max 为准，{el:?}");
     }
 
     /// 连续失败到上限 → 放弃（服务真挂了，任务已随之消失）。

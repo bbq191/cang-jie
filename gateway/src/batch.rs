@@ -4,13 +4,14 @@
 //! 剩下没提交的就永远不会跑了。现在批量任务提交给网关，由网关自己的后台线程按顺序逐本执行，页面只负责提交
 //! 和展示进度——关掉浏览器、换设备重开，队列照跑，状态照看。
 //!
-//! 放网关而不是 `book-serve`：网关是三个独立服务（优化/加入 xochitl 在 `book-serve`，加入 KOReader 在
-//! `koreader-serve`）的唯一转发关口，且并发/内存预算闸门（[`crate::budget`]）就在这里——批量里每一本
-//! 仍走同一道闸门（[`crate::budget::Budget::admit`]），跟别的操作互相排队、不叠加内存。
+//! 放网关而不是 `book-serve`：网关是各服务的唯一转发关口，且并发/内存预算闸门（[`crate::budget`]）就在这里——
+//! 批量里每一本仍走同一道闸门（[`crate::budget::Budget::admit`]），跟单条的优化/加入互相排队、不叠加内存。
 //! **顺序执行**：一次只处理一本（设备双核，优化内部已经在并行处理图片，见 `bookconv::imgpool`）。
 //! **状态落盘**（`state/batch.json`，每次变化写一次）：网关重启（比如部署新版本）后 [`resume`] 读回未完成的队列
 //! 继续跑——"关闭浏览器再回来能保持上次的未完记录并继续操作"（用户 2026-09-20 要求）。恢复时按最新母版库状态重新
-//! 校验每一本（已经优化完的不会重做）。任务自带动作，一个队列里可以混合优化/加入 xochitl/加入 KOReader。
+//! 校验每一本（已经优化完的不会重做）。任务自带动作，一个队列里可以混合优化/加入 xochitl。
+//! （「批量加入 KOReader」随 2026-09-29 设备卸载 KOReader 撤掉；旧落盘文件里残留的这类任务读回时剔除，见 [`parse_saved`]。）
+use rmsvc_core::http::{ApiError, ApiResult, Reply, Request};
 use rmsvc_core::paths::Paths;
 use rmsvc_core::registry::{self, SvcClient};
 use serde::{Deserialize, Serialize};
@@ -24,7 +25,6 @@ use std::time::Duration;
 pub enum Action {
     Optimize,
     Deliver,
-    Koreader,
 }
 
 impl Action {
@@ -32,7 +32,6 @@ impl Action {
         match s {
             "optimize" => Some(Action::Optimize),
             "deliver" => Some(Action::Deliver),
-            "koreader" => Some(Action::Koreader),
             _ => None,
         }
     }
@@ -40,7 +39,6 @@ impl Action {
         match self {
             Action::Optimize => "optimize",
             Action::Deliver => "deliver",
-            Action::Koreader => "koreader",
         }
     }
 }
@@ -70,6 +68,9 @@ struct State {
     action: Option<Action>,
     #[serde(skip)]
     worker_alive: bool,
+    /// 「全部中止」时正在处理的那一本也要停（见 [`run_one`]）；worker 取下一本时复位。运行时标志，不落盘（同 `worker_alive`）。
+    #[serde(skip)]
+    abort_current: bool,
 }
 
 fn state() -> &'static Mutex<State> {
@@ -105,15 +106,13 @@ fn persist(paths: &Paths) {
     crate::events::notify_books("batch");
 }
 
-/// 这本书该动作是否有意义（跟界面批量按钮同一套资格条件）：优化=EPUB/PDF 且还没优化；加入 xochitl=EPUB/PDF；
-/// 加入 KOReader=KOReader 已安装。
-pub fn eligible(action: Action, item: &Value, koreader_installed: bool) -> bool {
+/// 这本书该动作是否有意义（跟界面批量按钮同一套资格条件）：优化=EPUB/PDF 且还没优化；加入 xochitl=EPUB/PDF。
+pub fn eligible(action: Action, item: &Value) -> bool {
     let format = item.get("format").and_then(|v| v.as_str()).unwrap_or("");
     let is_book = format == "epub" || format == "pdf";
     match action {
         Action::Optimize => is_book && !item.get("optimized").and_then(|v| v.as_bool()).unwrap_or(false),
         Action::Deliver => is_book,
-        Action::Koreader => koreader_installed,
     }
 }
 
@@ -135,7 +134,6 @@ fn staging_items(paths: &Paths) -> Result<Vec<Value>, String> {
 /// 入队。`names=None` 表示"母版库里所有该动作适用的书"；`Some` 只处理点名的。已经在队列里/正在处理的同名书跳过
 /// （不重复排）；不适用的（如已优化的又点优化）计入 skipped。
 pub fn enqueue(paths: &Paths, action: Action, names: Option<Vec<String>>, folder: &str) -> Result<Enqueued, String> {
-    let koreader = registry::find(paths, "koreader-serve").is_some();
     let items = staging_items(paths)?;
     let wanted: Vec<String> = match &names {
         Some(n) => n.clone(),
@@ -147,7 +145,7 @@ pub fn enqueue(paths: &Paths, action: Action, names: Option<Vec<String>>, folder
         let mut st = lock();
         for name in wanted {
             let item = items.iter().find(|it| it.get("name").and_then(|v| v.as_str()) == Some(name.as_str()));
-            let ok = item.map(|it| eligible(action, it, koreader)).unwrap_or(false);
+            let ok = item.map(|it| eligible(action, it)).unwrap_or(false);
             let dup = st.current.as_ref().map(|j| j.name == name && j.action == action).unwrap_or(false) || st.queue.iter().any(|j| j.name == name && j.action == action);
             if !ok {
                 if names.is_some() {
@@ -180,6 +178,23 @@ pub fn enqueue(paths: &Paths, action: Action, names: Option<Vec<String>>, folder
         }
     }
     Ok(Enqueued { queued, skipped })
+}
+
+/// `POST /api/batch {action, names?, all?, folder?}`：`names` 缺省且 `all:true` 表示"母版库里所有适用的"。
+pub fn submit(paths: &Paths, req: &mut Request<'_>) -> ApiResult {
+    let j = req.json()?;
+    let action = j.0.get("action").and_then(|a| a.as_str()).and_then(Action::parse).ok_or_else(|| ApiError::bad("action 只能是 optimize/deliver"))?;
+    let names = j.0.get("names").and_then(|n| n.as_array()).map(|a| a.iter().filter_map(|x| x.as_str().map(str::to_string)).collect::<Vec<_>>());
+    if names.is_none() && !j.bool_or("all", false) {
+        return Err(ApiError::bad("要么给 names，要么 all:true"));
+    }
+    let e = enqueue(paths, action, names, j.str_or("folder", "")).map_err(ApiError::bad)?;
+    Ok(Reply::ok(&json!({"queued": e.queued, "skipped": e.skipped})))
+}
+
+/// `POST /api/batch/stop`：全部中止，见 [`stop`]。
+pub fn stop_route(paths: &Paths, _req: &mut Request<'_>) -> ApiResult {
+    Ok(Reply::ok(&json!({"cleared": stop(paths)})))
 }
 
 /// 记入这次新入队的 `queued` 本。一轮批量从空闲开始才重置计数（已经在跑的时候追加，累加进同一轮）；重置时**队列里
@@ -219,6 +234,7 @@ pub fn stop(paths: &Paths) -> usize {
         st.queue.clear();
         // 被清掉的不会再处理，总数同步扣掉，否则停止后进度还显示"1/4"（其实只有 1 本要做）。
         st.total = st.total.saturating_sub(n as u32);
+        st.abort_current = st.current.is_some(); // 当前这本若还没交给 book-serve，run_one 看到它就不再提交
         (n, st.current.clone())
     };
     if let Some(c) = current {
@@ -247,7 +263,7 @@ fn recover_interrupted(saved: &mut State) {
 /// 再按最新母版库状态重新校验每一本——上次进行中的那本如果已经优化完/不存在，就不再重做。
 pub fn resume(paths: &Paths) {
     let Ok(text) = std::fs::read_to_string(file_of(paths)) else { return };
-    let Ok(mut saved) = serde_json::from_str::<State>(&text) else { return };
+    let Some(mut saved) = parse_saved(&text) else { return };
     recover_interrupted(&mut saved);
     if saved.queue.is_empty() {
         // 没有未完成的：只把"上次结果"（完成数/失败原因）读回来供界面展示。
@@ -281,10 +297,7 @@ pub fn resume(paths: &Paths) {
             }
         };
         match items {
-            Some(items) => {
-                let koreader = registry::find(&paths, "koreader-serve").is_some();
-                validate_queue(&mut lock(), &items, koreader);
-            }
+            Some(items) => validate_queue(&mut lock(), &items),
             // 等了 RESUME_WAIT_MAX 仍没有 book-serve：队列**保留**在内存和磁盘上（不清空、不丢），只是不再有人主动跑；
             // 下一次入队会带起 worker 连同这份旧队列一起处理，或用户在页面点"全部中止"清掉。
             None => {
@@ -301,10 +314,34 @@ pub fn resume(paths: &Paths) {
 /// 等 book-serve 就绪的上限（见 [`resume`]）。
 const RESUME_WAIT_MAX: Duration = Duration::from_secs(30 * 60);
 
+/// 读回落盘状态。已下线的动作（`koreader`，2026-09-29 撤）残留在队列/当前项里时**只剔除那几项、其余照常续跑**，
+/// 总数同步扣减——整份按 `State` 直接反序列化会因为一个未知动作整份失败，[`resume`] 随即放弃，下一次落盘就把
+/// 其余还没跑的书一起覆盖掉。文件本身损坏/不是 JSON → `None`（同此前：当作没有未完成的队列）。
+fn parse_saved(text: &str) -> Option<State> {
+    let mut v: Value = serde_json::from_str(text).ok()?;
+    let known = |j: &Value| j.get("action").and_then(|a| a.as_str()).and_then(Action::parse).is_some();
+    let mut dropped = 0usize;
+    if let Some(q) = v.get_mut("queue").and_then(|q| q.as_array_mut()) {
+        let before = q.len();
+        q.retain(known);
+        dropped += before - q.len();
+    }
+    if v.get("current").is_some_and(|c| !c.is_null() && !known(c)) {
+        v["current"] = Value::Null;
+        dropped += 1;
+    }
+    if v.get("action").and_then(|a| a.as_str()).is_some_and(|a| Action::parse(a).is_none()) {
+        v["action"] = Value::Null;
+    }
+    let mut st: State = serde_json::from_value(v).ok()?;
+    st.total = st.total.saturating_sub(dropped as u32);
+    Some(st)
+}
+
 /// 按最新母版库状态重新校验队列：不存在/已不适用（比如上次进行中的那本已经优化完）的项剔除，总数同步扣减。
-fn validate_queue(st: &mut State, items: &[Value], koreader: bool) {
+fn validate_queue(st: &mut State, items: &[Value]) {
     let before = st.queue.len();
-    st.queue.retain(|j| items.iter().find(|it| it.get("name").and_then(|v| v.as_str()) == Some(j.name.as_str())).map(|it| eligible(j.action, it, koreader)).unwrap_or(false));
+    st.queue.retain(|j| items.iter().find(|it| it.get("name").and_then(|v| v.as_str()) == Some(j.name.as_str())).map(|it| eligible(j.action, it)).unwrap_or(false));
     let dropped = (before - st.queue.len()) as u32;
     st.total = st.total.saturating_sub(dropped);
 }
@@ -317,6 +354,7 @@ fn worker(paths: &Paths) {
                 Some(mut j) => {
                     j.attempts += 1; // 先记账再落盘：处理途中进程崩了，磁盘上的 current 已带着这次计数
                     st.current = Some(j.clone());
+                    st.abort_current = false;
                     j
                 }
                 None => {
@@ -355,37 +393,38 @@ fn final_check(paths: &Paths, name: &str, kind: &str) -> Option<(String, String)
     Some((c.get("status")?.as_str()?.to_string(), c.get("message").and_then(|m| m.as_str()).unwrap_or("").to_string()))
 }
 
+/// 「全部中止」落在当前这本已经出队、但还没真正交给 book-serve 的时候，这本记的失败原因。
+const ABORTED: &str = "已全部中止";
+
+/// [`stop`] 是否要求中止当前这一本（worker 取下一本时复位）。
+fn abort_requested() -> bool {
+    lock().abort_current
+}
+
 fn run_one(paths: &Paths, job: &Job) -> Result<(), String> {
     registry::find(paths, "book-serve").ok_or("book-serve 未安装或未运行")?;
     let bytes = paths.staging_dir().join(&job.name).metadata().map(|m| m.len()).unwrap_or(0);
     // 同单条操作一样过并发/内存预算闸门；批量顺序执行，所以通常立即放行，只在别处同时在跑大书时才排队。
     let slot = crate::budget::global().admit(crate::budget::tier_of(bytes), &job.name).map_err(|e| e.message())?;
-    let settled = |kind: &str, slot: crate::budget::Slot<'static>| -> Result<(), String> {
-        crate::proxy::poll_until_settled(&client(paths, "book-serve", 10), &job.name);
-        drop(slot);
-        match final_check(paths, &job.name, kind) {
-            Some((s, m)) if s == "failed" || s == "cancelled" => Err(m),
-            _ => Ok(()),
-        }
+    let (path, body, kind) = match job.action {
+        Action::Optimize => ("/staging/optimize", json!({"name": job.name}), "optimize"),
+        Action::Deliver => ("/staging/deliver", json!({"name": job.name, "folder": job.folder}), "deliver"),
     };
-    match job.action {
-        Action::Optimize => {
-            post(paths, "book-serve", "/staging/optimize", json!({"name": job.name}), 60)?;
-            settled("optimize", slot)
-        }
-        Action::Deliver => {
-            post(paths, "book-serve", "/staging/deliver", json!({"name": job.name, "folder": job.folder}), 60)?;
-            settled("deliver", slot)
-        }
-        Action::Koreader => {
-            registry::find(paths, "koreader-serve").ok_or("koreader-serve 未安装或未运行")?;
-            let r = post(paths, "koreader-serve", "/books/adopt", json!({"name": job.name, "folder": job.folder}), 900);
-            drop(slot);
-            r?;
-            // 记一笔"已加入 KOReader"（各服务只写自己的目录，落库记录归 book-serve），失败不算这本书失败。
-            let _ = post(paths, "book-serve", "/staging/mark", json!({"name": job.name, "target": "koreader"}), 30);
-            Ok(())
-        }
+    // 「全部中止」若落在出队之后、交给 book-serve 之前：它发的取消此时对 book-serve 是空操作（还没开工），
+    // 不在这里拦一下这本书会照样整本跑完。
+    if abort_requested() {
+        return Err(ABORTED.into());
+    }
+    post(paths, "book-serve", path, body, 60)?;
+    if abort_requested() {
+        // 中止请求在上面这次 POST 途中到达：当时的取消可能早于 book-serve 开工，开工后再补发一次（尽力而为）。
+        let _ = post(paths, "book-serve", "/staging/cancel", json!({"name": job.name}), 10);
+    }
+    crate::proxy::poll_until_settled(&client(paths, "book-serve", 10), &job.name);
+    drop(slot);
+    match final_check(paths, &job.name, kind) {
+        Some((s, m)) if s == "failed" || s == "cancelled" => Err(m),
+        _ => Ok(()),
     }
 }
 
@@ -399,22 +438,36 @@ mod tests {
 
     #[test]
     fn eligibility_matches_selection_bar_buttons() {
-        assert!(eligible(Action::Optimize, &item("epub", false), false));
-        assert!(eligible(Action::Optimize, &item("pdf", false), false));
-        assert!(!eligible(Action::Optimize, &item("epub", true), false), "已优化的不再优化");
-        assert!(!eligible(Action::Optimize, &item("cbz", false), false), "只有 EPUB/PDF 能优化");
-        assert!(eligible(Action::Deliver, &item("epub", true), false));
-        assert!(!eligible(Action::Deliver, &item("cbz", false), false), "xochitl 只收 EPUB/PDF");
-        assert!(eligible(Action::Koreader, &item("cbz", false), true));
-        assert!(!eligible(Action::Koreader, &item("epub", false), false), "KOReader 没装不能加入");
+        assert!(eligible(Action::Optimize, &item("epub", false)));
+        assert!(eligible(Action::Optimize, &item("pdf", false)));
+        assert!(!eligible(Action::Optimize, &item("epub", true)), "已优化的不再优化");
+        assert!(!eligible(Action::Optimize, &item("cbz", false)), "只有 EPUB/PDF 能优化");
+        assert!(eligible(Action::Deliver, &item("epub", true)));
+        assert!(!eligible(Action::Deliver, &item("cbz", false)), "xochitl 只收 EPUB/PDF");
     }
 
     #[test]
     fn action_parse_roundtrip() {
-        for a in [Action::Optimize, Action::Deliver, Action::Koreader] {
+        for a in [Action::Optimize, Action::Deliver] {
             assert_eq!(Action::parse(a.key()), Some(a));
         }
         assert_eq!(Action::parse("nope"), None);
+        assert_eq!(Action::parse("koreader"), None, "批量加入 KOReader 随 2026-09-29 卸载 KOReader 撤掉");
+    }
+
+    /// 回归：旧版落盘文件里残留「加入 KOReader」任务时，只剔除这几项，其余照常续跑（整份反序列化失败会让
+    /// resume 放弃、下次落盘把没跑完的书一起覆盖掉）。
+    #[test]
+    fn parse_saved_drops_retired_koreader_jobs_but_keeps_the_rest() {
+        let text = r#"{"queue":[{"action":"koreader","name":"k.epub","folder":""},{"action":"optimize","name":"a.epub","folder":"","attempts":0}],
+            "current":{"action":"koreader","name":"c.epub","folder":"","attempts":1},"total":5,"done":2,"failed":[],"action":"koreader"}"#;
+        let st = parse_saved(text).expect("残留旧动作不该让整份读回失败");
+        assert_eq!(st.queue.iter().map(|j| j.name.as_str()).collect::<Vec<_>>(), ["a.epub"]);
+        assert!(st.current.is_none() && st.action.is_none());
+        assert_eq!((st.total, st.done), (3, 2), "剔除的 2 项从总数里扣掉");
+        assert!(parse_saved("{坏").is_none());
+        let ok = parse_saved(r#"{"queue":[],"current":null,"total":1,"done":1,"failed":[["x","boom"]],"action":"deliver"}"#).unwrap();
+        assert_eq!((ok.total, ok.done, ok.failed.len(), ok.action), (1, 1, 1, Some(Action::Deliver)));
     }
 
     #[test]
@@ -465,7 +518,7 @@ mod tests {
         st.queue.push_back(job("done.epub", Action::Optimize)); // 已优化 → 不再适用
         st.queue.push_back(job("gone.epub", Action::Deliver)); // 母版库里没了
         let items = vec![json!({"name": "keep.epub", "format": "epub", "optimized": false}), json!({"name": "done.epub", "format": "epub", "optimized": true})];
-        validate_queue(&mut st, &items, false);
+        validate_queue(&mut st, &items);
         assert_eq!(st.queue.iter().map(|j| j.name.as_str()).collect::<Vec<_>>(), ["keep.epub"]);
         assert_eq!(st.total, 1);
     }
@@ -489,20 +542,63 @@ mod tests {
         assert_eq!((st.total, st.done), (4, 1));
     }
 
+    /// 提交入口先校验参数，不碰 book-serve：未知/已下线的动作、既没 names 也没 all 都直接 400。
+    #[test]
+    fn submit_rejects_bad_action_or_missing_scope_before_touching_services() {
+        let t = tempfile::tempdir().unwrap();
+        let paths = crate::testutil::sandbox(&t);
+        let call = |body: &[u8]| {
+            let mut b: &[u8] = body;
+            let mut r = Request { method: rmsvc_core::http::Method::Post, path: "/api/batch".into(), query: Default::default(), params: Default::default(), content_type: "application/json".into(), content_length: None, headers: vec![], body: &mut b };
+            submit(&paths, &mut r).map(|_| ()).unwrap_err()
+        };
+        assert!(call(br#"{"action":"koreader","all":true}"#).message.contains("optimize/deliver"));
+        assert!(call(br#"{"action":"optimize"}"#).message.contains("names"));
+        assert_eq!(call(br#"{"action":"optimize","all":true}"#).status, 400, "参数齐了才去找 book-serve（沙箱里没有，报不可用）");
+    }
+
     #[test]
     fn stop_clears_pending_persists_and_adjusts_total() {
+        let _g = rmsvc_core::sync::lock(&GLOBAL_STATE);
         let t = tempfile::tempdir().unwrap();
-        let paths = Paths::resolve(|k| if k == "XDG_STATE_HOME" { Some(t.path().to_string_lossy().to_string()) } else { None });
+        let paths = crate::testutil::sandbox(&t);
         {
             let mut st = lock();
             st.queue.clear();
+            st.current = Some(Job { action: Action::Optimize, name: "now".into(), folder: String::new(), attempts: 1 });
             st.queue.push_back(Job { action: Action::Optimize, name: "a".into(), folder: String::new(), attempts: 0 });
             st.queue.push_back(Job { action: Action::Optimize, name: "b".into(), folder: String::new(), attempts: 0 });
             st.total = 3; // 1 本已在做 + 2 本排队
         }
         assert_eq!(stop(&paths), 2);
         assert_eq!(status()["total"], 1, "停止后总数应只剩正在做的那 1 本");
+        assert!(abort_requested(), "正在处理的那一本也要标记中止");
         let saved: State = serde_json::from_str(&std::fs::read_to_string(file_of(&paths)).unwrap()).unwrap();
         assert!(saved.queue.is_empty(), "停止后落盘的队列也必须是空的，否则重启会把被中止的又跑起来");
+        let mut st = lock();
+        st.current = None;
+        st.abort_current = false;
+    }
+
+    /// 批量测试共用进程级单例 `state()`：动它的测试串行跑，免得互相改掉对方的标志。
+    static GLOBAL_STATE: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
+    /// 回归：「全部中止」落在当前这本出队之后、交给 book-serve 之前——不能再把它提交出去（此前中止请求对 book-serve
+    /// 是空操作，这本书会照样整本跑完）。假 book-serve 只记有没有人连过来。
+    #[test]
+    fn run_one_does_not_submit_after_stop() {
+        let _g = rmsvc_core::sync::lock(&GLOBAL_STATE);
+        let t = tempfile::tempdir().unwrap();
+        let paths = crate::testutil::sandbox(&t);
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let info = registry::ServiceInfo { name: "book-serve".into(), port: listener.local_addr().unwrap().port(), label: String::new(), version: String::new(), pid: std::process::id(), ui: None };
+        let _reg = registry::register(&paths, &info).unwrap();
+        let job = Job { action: Action::Optimize, name: "stop-race.epub".into(), folder: String::new(), attempts: 1 };
+        lock().abort_current = true;
+        assert_eq!(run_one(&paths, &job).unwrap_err(), ABORTED);
+        assert!(listener.accept().is_err(), "中止后不该再向 book-serve 提交");
+        assert!(!crate::budget::global().snapshot().1.contains(&job.name), "闸门名额随之归还");
+        lock().abort_current = false;
     }
 }

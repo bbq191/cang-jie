@@ -5,7 +5,7 @@
 // 不起网关：拦截请求直接喂拼好的页面，并在页面里 mock 掉 fetch 与 EventSource，验证：
 //   ① 文件名/错误文案里的 HTML 不会注入 DOM（无 <img>、onerror 不触发）；
 //   ② 10 个 SSE 事件连发被 coalesce 成至多 2 次刷新；网关自身的批量/闸门事件只重取那两个状态，book-serve 的 staging 事件不重取
-//      KOReader 目录；③ 页面隐藏时不刷新、可见后补刷一次；④ 空闲无轮询；⑤ 三种对话框的键盘/点击行为；⑥ 笔记 tab 正在输入时
+//      xochitl 文件夹列表；③ 页面隐藏时不刷新、可见后补刷一次；④ 空闲无轮询；⑤ 确认/输入两种对话框的键盘/点击行为；⑥ 笔记 tab 正在输入时
 //      事件不重画、失焦补刷；⑦「其他」tab 的事件只刷发事件服务的子面板；⑧ 代理放弃横幅（显示 / 事件重取 / 知道了）。
 import { createRequire } from 'node:module';
 import fs from 'node:fs';
@@ -23,7 +23,7 @@ const mock = `
 window.__hits = {}; window.__es = []; window.__hidden = false; window.__xss = 0;
 Object.defineProperty(document, 'hidden', {get: () => window.__hidden});
 class ES { constructor(u){ this.u=u; this.closed=false; window.__es.push(this); setTimeout(() => this.onopen && !this.closed && this.onopen(), 10);} close(){ this.closed=true; } }
-const __st = window.setTimeout.bind(window); window.setTimeout = (f, ms, ...a) => __st(f, ms === 60000 && window.__hiddenCloseMs ? window.__hiddenCloseMs : ms, ...a);
+const __st = window.setTimeout.bind(window); window.setTimeout = (f, ms, ...a) => __st(f, ms === 60000 && window.__hiddenCloseMs ? window.__hiddenCloseMs : ms === 5000 && window.__fastRetry ? 50 : ms, ...a);
 window.EventSource = ES;
 const zh = ${JSON.stringify(zh)};
 const evil = '<img src=x onerror=window.__xss=1>.epub';
@@ -40,9 +40,8 @@ const routes = {
   '/api/transcribe/status': () => ({failures:[]}),
   '/api/books/staging': () => ({ok:true, items:[{name: evil, format:'epub', bytes:1000, mtime:1, optimized:false, delivered:{optimize:{status:'failed', message:'"><img src=x onerror=window.__xss=1>'}}}], freeBytes: 9e9}),
   '/api/books/status': () => ({ok:true, xochitlFolders:[]}),
-  '/api/koreader/status': () => ({ok:true, installed:false}),
-  '/api/koreader/books': () => ({items:[]}),
   '/api/budget/status': () => ({pending:[], active:[]}),
+  '/api/session': () => ({ok:true, mustChange:false}),
   '/api/batch/status': () => ({running:false,total:0,done:0,queued:[],failed:[]}),
   '/api/foundation': () => ({}), '/api/enhance/status': () => ({}),
   '/api/books/agent-failures': () => ({items: window.__fails}),
@@ -98,7 +97,8 @@ out.failAck = [await hits('/api/books/agent-failures/clear'), await page.evaluat
 await page.evaluate(() => { for (let i = 0; i < 10; i++) window.__es[0].onmessage({data: JSON.stringify({area:'books', kind:'staging', svc:'books'})}); });
 await new Promise(r => setTimeout(r, 500));
 out.afterBurst = (await hits()) - out.initialHits;
-out.burstKoBooks = (await hits('/api/koreader/books')) - 1; // 首次全量取过 1 次；staging 事件不该再取
+out.burstFolders = (await hits('/api/books/status')) - 1; // 首次全量取过 1 次；staging 事件不该再取
+out.koreaderHits = await page.evaluate(() => Object.keys(window.__hits).filter(p => p.startsWith('/api/koreader')).length); // KOReader 已撤：一次都不该请求
 // 网关自身的批量/闸门事件（不带 svc）：只重取批量/闸门状态，不全量刷新
 const s0 = await hits(), b0 = await hits('/api/batch/status');
 await page.evaluate(() => { for (let i = 0; i < 5; i++) window.__es[0].onmessage({data: JSON.stringify({area:'books', kind: i % 2 ? 'budget' : 'batch'})}); });
@@ -129,7 +129,16 @@ await new Promise(r => setTimeout(r, 400));
 out.esCount = await page.evaluate(() => window.__es.length);
 out.esReopenedOpen = await page.evaluate(() => !window.__es[window.__es.length - 1].closed);
 out.reopenRefresh = (await hits()) - h2;
-// 对话框：Enter=确认、Esc=取消、点选项返回其值；关闭后遮罩移除、键盘监听摘掉
+// 浏览器放弃重连（连上时回了非 200，如网关重启后会话失效 401）：EventSource 进 CLOSED 不再自己重试——页面要查一次会话再退避重开
+{ const n0 = await page.evaluate(() => window.__es.length), s0 = await hits('/api/session');
+  await page.evaluate(() => { window.__fastRetry = true; const e = window.__es[window.__es.length - 1]; e.readyState = 2; e.onerror(); });
+  await new Promise(r => setTimeout(r, 400));
+  out.closedRecovery = [await page.evaluate(() => window.__es.length) - n0, (await hits('/api/session')) - s0, await page.evaluate(() => window.__es[window.__es.length - 2].closed)];
+  // 浏览器自己在重连（CONNECTING）时不插手
+  await page.evaluate(() => { const e = window.__es[window.__es.length - 1]; e.readyState = 0; e.onerror(); });
+  await new Promise(r => setTimeout(r, 300));
+  out.connectingUntouched = (await page.evaluate(() => window.__es.length)) - n0; }
+// 对话框：Enter=确认、Esc=取消、点遮罩=取消；关闭后遮罩移除、键盘监听摘掉（单选框 choiceDialog 随「阅读方向」一起删了）
 out.dialogs = await page.evaluate(async () => {
   const key = k => document.dispatchEvent(new KeyboardEvent('keydown', {key: k}));
   const r = [];
@@ -137,7 +146,6 @@ out.dialogs = await page.evaluate(async () => {
   p = confirmDialog('x'); key('Escape'); r.push(await p);
   p = promptDialog('x', 'abc'); key('Enter'); r.push(await p);
   p = promptDialog('x', 'abc'); document.querySelector('.confirm-overlay').click(); r.push(await p);
-  p = choiceDialog('x', [{value:'a', label:'A'}, {value:'b', label:'B'}], 'a'); document.querySelectorAll('.choice-opts button')[1].click(); r.push(await p);
   key('Enter'); // 已关闭的对话框不该再响应
   r.push(document.querySelectorAll('.confirm-overlay').length);
   return r;
@@ -155,6 +163,11 @@ await page.evaluate(() => window.__ta.blur());
 await new Promise(r => setTimeout(r, 500));
 out.noteAfterBlur = (await hits('/api/ink/books')) - n0;
 out.noteEventEnhance = (await hits('/api/enhance/status')) - e0;
+// 「整理」里切「未导出/已导出」、点章节标签是纯本地切换：不该再查转写失败清单
+{ const t0 = await hits('/api/transcribe/status');
+  await page.evaluate(() => { const b = document.querySelectorAll('#nexporttabs button'); b[1].click(); b[0].click(); const c = document.querySelector('#nchaptertabs button'); if (c) c.click(); });
+  await new Promise(r => setTimeout(r, 300));
+  out.noteLocalSwitchTranscribe = (await hits('/api/transcribe/status')) - t0; }
 // 「其他」tab：壁纸服务的事件只刷壁纸子面板，不连带重取字体
 await page.evaluate(() => document.querySelectorAll('#tabs button')[2].click()); // 传书 / 笔记 / 其他 / 管理
 await new Promise(r => setTimeout(r, 500));
@@ -178,13 +191,15 @@ assert.ok(out.wifiBanner && out.wifiBanner.img === 0 && out.wifiBanner.text.incl
 assert.ok(out.wifiClosed, 'WiFi 横幅：× 关掉');
 assert.ok(out.listText.includes('<img src=x'), '文件名应作为文本显示');
 assert.ok(out.afterBurst >= 1 && out.afterBurst <= 2, `事件突发应合并，实际 ${out.afterBurst} 次`);
-assert.equal(out.burstKoBooks, 0, 'book-serve 的 staging 事件只重取母版库列表与排队状态，不重取 KOReader 目录');
-assert.deepEqual(out.dialogs, [true, false, 'abc', null, 'b', 0], '对话框行为');
+assert.equal(out.burstFolders, 0, 'book-serve 的 staging 事件只重取母版库列表与排队状态，不重取 xochitl 文件夹列表');
+assert.equal(out.koreaderHits, 0, 'KOReader 已卸载：网页不该再请求 /api/koreader/*');
+assert.deepEqual(out.dialogs, [true, false, 'abc', null, 0], '对话框行为');
 assert.equal(out.noteTa, true, '笔记 tab 应渲染出条目文本框');
 assert.equal(out.noteWhileTyping, 0, '正在输入时事件不该触发重画');
 assert.equal(out.noteFocusKept, true, '输入框焦点不该被重画冲掉');
 assert.equal(out.noteAfterBlur, 1, '失焦后补刷一次');
 assert.equal(out.noteEventEnhance, 0, '事件刷新不重查 /api/enhance/status');
+assert.equal(out.noteLocalSwitchTranscribe, 0, '切导出 tab / 章节标签不该再请求 /api/transcribe/status');
 assert.equal(out.otherFonts, 0, '壁纸事件不该重取字体列表');
 assert.equal(out.otherWalls, 1, '壁纸事件应刷壁纸子面板一次');
 assert.equal(out.queueEventStagingHits, 0, '网关排队/进度事件不该全量重取母版库列表');
@@ -198,6 +213,8 @@ assert.equal(out.esClosedWhileHidden, true, '页面隐藏超时后应断开 SSE'
 assert.equal(out.esCount, 2, '重新可见应重连（新建一条 EventSource）');
 assert.equal(out.esReopenedOpen, true);
 assert.equal(out.reopenRefresh, 1, '重连成功应补刷当前 tab 一次');
+assert.deepEqual(out.closedRecovery, [1, 1, true], 'EventSource 进 CLOSED：关掉旧的、查一次会话、退避后新开一条');
+assert.equal(out.connectingUntouched, 1, '浏览器自己在重连（CONNECTING）时不另开连接');
 assert.equal(out.idleHits, 0, '空闲时不该有轮询');
 assert.deepEqual(errs, [], '不该有 JS 报错');
 console.log('smoke OK');

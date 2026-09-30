@@ -222,8 +222,7 @@ header .links{white-space:nowrap}
 .stg-main{min-width:0;overflow-wrap:anywhere}
 .stg-meta{min-width:0}
 .stg-actions{flex-shrink:0}
-/* 加入位置：两个下拉同一行（各自上方一个小标签），手机上也并排 */
-.stg-destpair{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:.6em}
+/* 加入位置：一个下拉（上方一个小标签）；原来并排的 KOReader 下拉随 2026-09-29 卸载 KOReader 撤掉 */
 .stg-destcol{display:flex;flex-direction:column;gap:.2em;min-width:0}
 .stg-destcol select{width:100%;min-width:0}
 .nsearch{list-style:none;margin:.3em 0 0;padding:0}

@@ -237,8 +237,7 @@ mod tests {
 
     fn state(must_change: bool) -> Shared {
         let t = tempfile::tempdir().unwrap();
-        let h = t.path().to_str().unwrap().to_string();
-        let paths = Paths::resolve(move |k| if k == "HOME" { Some(h.clone()) } else { None });
+        let paths = crate::testutil::sandbox(&t);
         let mut cfg = GatewayConfig::default();
         cfg.ensure_password(&paths).unwrap();
         if !must_change {
@@ -409,6 +408,22 @@ mod tests {
         let rep = st.change_password(&mut req(Method::Post, "/password", "application/json", &[("Authorization", &format!("Basic {b}"))], &mut body)).unwrap();
         assert_eq!(rep.status, 200, "{}", String::from_utf8_lossy(&rep.body));
         assert!(!st.must_change());
+    }
+
+    /// Basic 校验缓存：别的密码不命中；用 Basic 改密后旧密码立即不能再靠缓存通过。
+    #[test]
+    fn basic_auth_cache_forgets_old_password_on_change() {
+        let st = state(false);
+        let g = st.guard();
+        let basic = |pw: &str| format!("Basic {}", base64::Engine::encode(&base64::engine::general_purpose::STANDARD, format!("cli:{pw}")));
+        let ok = basic("secret1");
+        assert!((g.check)(&gr(Method::Get, "/api/services", &[("Authorization", &ok)])).is_none());
+        assert!((g.check)(&gr(Method::Get, "/api/services", &[("Authorization", &ok)])).is_none(), "第二次命中缓存照样放行");
+        assert_eq!((g.check)(&gr(Method::Get, "/api/services", &[("Authorization", &basic("secret2"))])).unwrap().status, 401, "别的密码不命中缓存");
+        let mut body: &[u8] = br#"{"new":"longer1"}"#;
+        assert_eq!(st.change_password(&mut req(Method::Post, "/password", "application/json", &[("Authorization", &ok)], &mut body)).unwrap().status, 200);
+        assert_eq!((g.check)(&gr(Method::Get, "/api/services", &[("Authorization", &ok)])).unwrap().status, 401, "改密后旧密码不能再靠缓存通过");
+        assert!((g.check)(&gr(Method::Get, "/api/services", &[("Authorization", &basic("longer1"))])).is_none());
     }
 
     #[test]
