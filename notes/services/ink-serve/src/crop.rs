@@ -4,9 +4,9 @@
 //! 也不会像贴着印刷勾画行裁缩略图那样把印刷体也带进去。真机踩过这两个坑，细节见笔记线白皮书 §03o。
 //!
 //! 旧方案是吃 xochitl 缩略图裁（`page_w`/`page_h` 是 EPUB 排版引擎的虚拟画布尺寸，真机实测 **960×1280**，
-//! 不是物理屏 1404×1872——白皮书 §03g 记过"用错了裁图整体裁偏"的真机事故），这份坐标标定的知识仍然
-//! 保留在 `config.rs::IngestConfig` 的字段与文档里，代码本身随缩略图路径一起退役了（改自渲染后没有
-//! 消费者，`cargo build` 会报 dead_code——两条路径不值得同时维护，出问题回这段历史记录找）。
+//! 不是物理屏 1404×1872——白皮书 §03g 记过"用错了裁图整体裁偏"的真机事故），代码随缩略图路径一起退役了；
+//! 当初留在 `IngestConfig` 里的 `pageWidth`/`pageHeight`/`xOriginCenter` 三个没人读的配置项也于 2026-09-30 删掉，
+//! 标定结论只留在 `config.rs` 模块文档与白皮书里。
 use image::{DynamicImage, ImageFormat};
 use rmv6::page::Stroke;
 use std::io::Cursor;

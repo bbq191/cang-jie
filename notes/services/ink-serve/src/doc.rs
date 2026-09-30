@@ -1,5 +1,6 @@
 //! xochitl 书库里一份文档的**只读**视图：`<uuid>.metadata`（名字/类型/回收站）、`<uuid>.content`（fileType、`pages` 页 id 表）、
-//! `<uuid>/<page>.rm`（有手写/勾画的页才有文件）、`<uuid>.epubindex` + `<uuid>.epub`（页→章）、`<uuid>.thumbnails/<page>.png`。
+//! `<uuid>/<page>.rm`（有手写/勾画的页才有文件）、`<uuid>.epubindex` + `<uuid>.epub`（页→章）。
+//! （`<uuid>.thumbnails/` 缩略图已不读：裁图改自渲染，见 `crop.rs`。）
 //! 绝不写书库目录（xochitl 不认外部改动，且 metadata 含凭证以外的隐私）。
 use serde::Deserialize;
 use std::path::{Path, PathBuf};
