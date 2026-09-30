@@ -165,6 +165,7 @@ fn icon_only_to_number(content: &str, note_html: &str, counter: &mut usize) -> S
 /// 图标上只剩 `cj-noteicon`，重优化时靠这里改）。`<sup>` 已包着链接时不再套一层。
 pub fn number_icon_note_links(html_text: &str) -> String {
     let tags: Vec<html::Tag> = html::tags(html_text).collect();
+    let ids = IdIndex::new(html_text, &tags);
     let mut counter = 0usize;
     let mut edits: Vec<(usize, usize, String)> = Vec::new();
     for e in a_elems(&tags) {
@@ -177,12 +178,12 @@ pub fn number_icon_note_links(html_text: &str) -> String {
         }
         let noteish = |tag: &str| html::attr_value(tag, "class").is_some_and(|v| v.to_ascii_lowercase().contains("note"));
         let img_noteish = html::tags(content).any(|t| t.kind != html::TagKind::Close && noteish(&content[t.start..t.end]));
-        let target_open = tags.iter().find(|t| t.is_start() && html::attr_value(&html_text[t.start..t.end], "id") == Some(frag)).map(|t| &html_text[t.start..t.end]);
+        let target_open = ids.open_tag(frag);
         if !(noteish(open) || img_noteish || target_open.is_some_and(note_semantic)) {
             continue;
         }
         counter += 1;
-        let num = note_number(element_by_id(html_text, frag)).unwrap_or_else(|| counter.to_string());
+        let num = note_number(ids.content(frag)).unwrap_or_else(|| counter.to_string());
         let in_sup = e.open_ix.checked_sub(1).is_some_and(|k| tags[k].kind == html::TagKind::Open && tags[k].is("sup") && html_text[tags[k].end..e.start].trim().is_empty());
         let label = if in_sup { xml_escape(&num) } else { format!("<sup>{}</sup>", xml_escape(&num)) };
         edits.push((e.open_end, e.close_start, label));
@@ -203,14 +204,33 @@ fn note_number(note_html: &str) -> Option<String> {
     c.get(1).or_else(|| c.get(2)).map(|m| m.as_str().to_string())
 }
 
-/// 同文件里 `id="frag"` 那个元素的内容（[`fix_duokan_markers`] 取注释编号用）；找不到返回空串。
-fn element_by_id<'a>(html_text: &'a str, frag: &str) -> &'a str {
-    let tags: Vec<html::Tag> = html::tags(html_text).collect();
-    let Some(i) = tags.iter().position(|t| t.is_start() && html::attr_value(&html_text[t.start..t.end], "id") == Some(frag)) else { return "" };
-    let open = &tags[i];
-    match html::find_close(html_text, open.end, open.name) {
-        Some(close) => &html_text[open.end..close.start],
-        None => "",
+/// 同文件 id → 带这个 id 的**第一个**开标签（取注释编号、看目标有没有注释语义用）。整章分词一次、按 id 建表——此前每个图标
+/// 标号都把整章重新分词、线性找一遍（`element_by_id`），一章几百条注释就是"标号数 × 章长"。
+struct IdIndex<'a> {
+    html: &'a str,
+    /// id → (开标签起点, 开标签终点, 元素名)
+    by_id: std::collections::HashMap<&'a str, (usize, usize, &'a str)>,
+}
+
+impl<'a> IdIndex<'a> {
+    fn new(html_text: &'a str, tags: &[html::Tag<'a>]) -> IdIndex<'a> {
+        let mut by_id = std::collections::HashMap::new();
+        for t in tags.iter().filter(|t| t.is_start()) {
+            if let Some(id) = html::attr_value(&html_text[t.start..t.end], "id") {
+                by_id.entry(id).or_insert((t.start, t.end, t.name));
+            }
+        }
+        IdIndex { html: html_text, by_id }
+    }
+
+    fn open_tag(&self, id: &str) -> Option<&'a str> {
+        self.by_id.get(id).map(|&(s, e, _)| &self.html[s..e])
+    }
+
+    /// 该元素的内容；找不到元素或没有闭合标签返回空串。
+    fn content(&self, id: &str) -> &'a str {
+        let Some(&(_, end, name)) = self.by_id.get(id) else { return "" };
+        html::find_close(self.html, end, name).map_or("", |close| &self.html[end..close.start])
     }
 }
 
@@ -345,6 +365,9 @@ fn mentions_referenced_id(html: &str, referenced: &std::collections::HashSet<Str
 /// 环交给前置的 `break_footnote_cycles` 拆（回链去链、id 留作落点）；合法嵌套的 li 不动。
 pub fn fix_duokan_markers(html: &str) -> String {
     let mut local = 0usize;
+    // 真图标才要按 id 找注释取编号：用到时才整章分词建表，一章只建一次。
+    let tags = std::cell::OnceCell::new();
+    let ids = std::cell::OnceCell::new();
     // 标记替换（转义 img 版 / Calibre 真 img 版共用）：保留 href 与 `<a>` 自带 id（Calibre 形态的
     // 回链落点，丢了则注释里的回链悬空 → reMarkable 判互指整对丢弃）。
     // `escaped`：标记里的 <img> 是被转义成字面文字的（微读 CDN 图，离线显示成一串代码）；否则是真的 <img> 图标。
@@ -366,7 +389,8 @@ pub fn fix_duokan_markers(html: &str) -> String {
                     // 真图标：换成上标数字（xochitl 里纯图标链接点不了、图标还按原图像素画，见 [`icon_only_to_number`]）。
                     // 编号取目标注释开头的 `[14]`，其次 alt 里的"注释N"，都没有才按本章顺序数。
                     local += 1;
-                    let num = note_number(element_by_id(html, &frag)).or_else(|| duokan_note_num(img_inner)).unwrap_or_else(|| local.to_string());
+                    let ids = ids.get_or_init(|| IdIndex::new(html, tags.get_or_init(|| html::tags(html).collect::<Vec<_>>())));
+                    let num = note_number(ids.content(&frag)).or_else(|| duokan_note_num(img_inner)).unwrap_or_else(|| local.to_string());
                     format!("<a href=\"#{frag}\"{id_attr}><sup>{}</sup></a>", xml_escape(&num))
                 }
             }
