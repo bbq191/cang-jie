@@ -44,7 +44,7 @@
   <rect x="345" y="256" width="290" height="66" rx="7" fill="#ffffff" stroke="#c9971f" stroke-width="1.2"/>
   <text x="490" y="275" text-anchor="middle" font-size="11" font-weight="bold" fill="#1a1a1a">sidecar .&lt;name&gt;.delivered（磁盘）</text>
   <text x="490" y="292" text-anchor="middle" font-size="10" fill="#4a4a4a">optimize（带进度）/ deliver：status + message</text>
-  <text x="490" y="306" text-anchor="middle" font-size="10" fill="#4a4a4a">native 时间戳（koreader 只剩旧记录）+ render 自检结果</text>
+  <text x="490" y="306" text-anchor="middle" font-size="10" fill="#4a4a4a">native（加入 xochitl 的时间）+ render 自检结果</text>
 
   <rect x="345" y="332" width="290" height="72" rx="7" fill="#ffffff" stroke="#c9971f" stroke-width="1.2"/>
   <text x="490" y="351" text-anchor="middle" font-size="11" font-weight="bold" fill="#1a1a1a">落库（原样复制字节，不再优化）</text>
@@ -53,7 +53,6 @@
   <text x="490" y="395" text-anchor="middle" font-size="10" fill="#4a4a4a">spawn_deliver 异步，渲染自检另起线程</text>
 
   <line x1="655" y1="200" x2="720" y2="160" stroke="#555" stroke-width="1.6" marker-end="url(#eld-arrow)"/>
-  <line x1="655" y1="370" x2="720" y2="410" stroke="#aaa" stroke-width="1.3" stroke-dasharray="5 4"/>
 
   <!-- 读器 -->
   <rect x="725" y="90" width="270" height="112" rx="10" fill="#fdf3f0" stroke="#b5541f" stroke-width="1.6"/>
@@ -62,12 +61,6 @@
   <text x="860" y="148" text-anchor="middle" font-size="10.5" fill="#5a3a2a">投完 render_check 页数自检（EPUB）</text>
   <text x="860" y="164" text-anchor="middle" font-size="10.5" fill="#5a3a2a">符合条件的漫画：登记首开设页边距</text>
   <text x="860" y="180" text-anchor="middle" font-size="10.5" fill="#5a3a2a">只读 EPUB / PDF</text>
-
-  <rect x="725" y="360" width="270" height="90" rx="10" fill="#f4f4f2" stroke="#9a9a9a" stroke-width="1.3" stroke-dasharray="6 4"/>
-  <text x="860" y="384" text-anchor="middle" font-size="13" font-weight="bold" fill="#6a6a6a">（历史）KOReader</text>
-  <text x="860" y="402" text-anchor="middle" font-size="10.5" fill="#7a7a7a">2026-09-29 从设备卸载，落库入口全部删除</text>
-  <text x="860" y="418" text-anchor="middle" font-size="10.5" fill="#7a7a7a">当时由 koreader-serve 从母版库本地拷贝，</text>
-  <text x="860" y="434" text-anchor="middle" font-size="10.5" fill="#7a7a7a">与 xochitl 同一份母版字节</text>
 
   <!-- SSE loop back -->
   <path d="M 490 404 C 490 480, 140 480, 140 268" fill="none" stroke="#8a8a8a" stroke-width="1.3" stroke-dasharray="4 3" marker-end="url(#eld-arrow)"/>

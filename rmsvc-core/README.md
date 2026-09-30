@@ -54,7 +54,7 @@
 ## 构建与测试
 
 - `cargo build --manifest-path rmsvc-core/Cargo.toml`；独立 crate，各消费方编译时一起编。
-- `cargo test --manifest-path rmsvc-core/Cargo.toml`（2026-09-30 第五轮审计后实跑：109 个单测，108 个通过、1 个需要网络命名空间的默认忽略；另有 1 个文档示例默认忽略）。CI `rust` job 单列一步，但 CI 自 2026-09-20 起因账户扣费没有实际执行，改动要本地跑。
+- `cargo test --manifest-path rmsvc-core/Cargo.toml`（2026-09-30 实跑：109 个单测，108 个通过、1 个需要网络命名空间的默认忽略；另有 1 个文档示例默认忽略）。CI `rust` job 单列一步，但 CI 自 2026-09-20 起因账户扣费没有实际执行，改动要本地跑。
 
 ## 注意
 

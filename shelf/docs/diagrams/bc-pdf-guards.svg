@@ -2,7 +2,7 @@
 <defs><marker id="pg-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#555"/></marker><marker id="pg-r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#b0451f"/></marker></defs>
 <rect width="1100" height="600" fill="#ffffff"/>
 <text x="550" y="32" font-size="20" fill="#1f2937" text-anchor="middle" font-weight="bold">坏 PDF 的几道闸：只让这一本失败，不让 book-serve 倒下</text>
-<text x="550" y="56" font-size="12.5" fill="#6b7280" text-anchor="middle">上传的 PDF 是任意文件；每道闸超限就返回错误或降级，原书不动（2026-09-24 / 09-30 两轮审计，只在开发机测过）</text>
+<text x="550" y="56" font-size="12.5" fill="#6b7280" text-anchor="middle">上传的 PDF 是任意文件；每道闸超限就返回错误或降级，原书不动（2026-09-24 / 09-30 两轮审计加的闸）</text>
 
 <rect x="30" y="92" width="150" height="70" rx="10" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.5"/>
 <text x="105" y="122" font-size="14" fill="#1f3b66" text-anchor="middle" font-weight="bold">上传的 PDF</text>

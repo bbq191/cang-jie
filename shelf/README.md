@@ -8,6 +8,8 @@ reMarkable Paper Pro Move 的**读书与阅读质量层**。它是跑在设备�
 > KOReader 字体/词典/配置、高亮回流等全部网页入口，`koreader-serve` 不再安装；它的源码和 `koreader/` 配置补丁 2026-09-30 也
 > 已从仓库删除（见 git 历史）。下文凡提到 KOReader 的都是历史。
 
+> **部署状态（2026-09-30）**：当前 master 的书架线改动（优化规则 v16、漫画 q95、撤按书方向与按卷拆分、第五轮审计、第三方大 PDF 与长书名）都已部署到设备，部署自检通过，**功能还没逐项手测**，清单见书架白皮书附录 §05。
+
 > 这份 README 只讲能做什么、有哪些服务、怎么构建部署。细节去看文末「文档索引」里的四份文档（第一次来先看书架白皮书开头的「现状」）；全项目概览看
 > [`../docs/OVERVIEW.md`](../docs/OVERVIEW.md)，用户可见的更新历史看 [`../docs/CHANGELOG.md`](../docs/CHANGELOG.md)。
 
@@ -84,7 +86,7 @@ shelf/
 
 ```sh
 cd shelf && sh build.sh                        # host 测试 + aarch64 构建（gateway / enhance / notes 在的话一起编）
-cargo test --workspace                         # 只跑测试：2026-09-30 删 koreader-serve 后 495 个通过、2 个忽略
+cargo test --workspace                         # 只跑测试：2026-09-30 实跑 509 个通过、2 个忽略
 cd ../packaging && sh deploy.sh 10.11.99.1     # 打包 → 传到设备 → install.sh（先备份旧文件）；只有 WiFi 时给 WiFi IP
 sh deploy.sh 10.11.99.1 --only font,wallpaper  # 只装部分服务；SHELF_NO_BUILD=1 跳过编译
 sh deploy.sh 10.11.99.1 --password '新密码'     # 顺便设网关密码（经 ssh 标准输入传，不上命令行）

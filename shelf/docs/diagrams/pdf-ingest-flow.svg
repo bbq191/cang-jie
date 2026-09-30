@@ -54,7 +54,7 @@
   <text x="54" y="515" font-size="11.5" fill="#3a3a3a">3. 无法确认没有文字层（提取失败）：宁可不动</text>
   <text x="44" y="541" font-size="12" font-weight="bold" fill="#2c7a41">全过才改写：</text>
   <text x="54" y="560" font-size="11.5" fill="#3a3a3a">逐页取图 → prepare_comic_page_for_pdf（裁边 + 缩放，单趟）</text>
-  <text x="54" y="578" font-size="11.5" fill="#3a3a3a">→ PdfPieceWriter 单遍写（复用漫画 PDF 写手，页面 954×1696）</text>
+  <text x="54" y="578" font-size="11.5" fill="#3a3a3a">→ pdfwrite::PdfPieceWriter 单遍写（页面 954×1696）</text>
   <text x="54" y="596" font-size="11.5" fill="#3a3a3a">书签：保留原书签（层级压平）；没有则每 20 页一条兜底</text>
   <text x="54" y="614" font-size="11.5" fill="#3a3a3a">produce_then_replace：临时文件 → 成功才原地覆盖同名 .pdf</text>
   <text x="54" y="640" font-size="11.5" font-weight="bold" fill="#4a4a4a">代价：带水印文字/OCR 文字层的扫描 PDF 会被拒绝而非处理</text>

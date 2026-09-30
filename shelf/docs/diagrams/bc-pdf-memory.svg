@@ -2,7 +2,7 @@
 <defs><marker id="pm-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#555"/></marker></defs>
 <rect width="1100" height="640" fill="#ffffff"/>
 <text x="550.0" y="32" font-size="20" fill="#1f2937" text-anchor="middle" font-weight="bold">PDF 处理管线的内存释放点（2026-09-24 第三轮审计）</text>
-<text x="550.0" y="56" font-size="12.5" fill="#6b7280" text-anchor="middle">分类 / 仅裁边 / 转 EPUB 三条路共用 load_pdf：读文件 → 带上限解析 → 原始字节立即释放；数字均为 host release 实测，未上真机</text>
+<text x="550.0" y="56" font-size="12.5" fill="#6b7280" text-anchor="middle">分类 / 仅裁边 / 转 EPUB 三条路共用 load_pdf：读文件 → 带上限解析 → 原始字节立即释放；数字均为开发机 release 实测</text>
 <rect x="40" y="78" width="300" height="56" rx="10" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.5"/>
 <text x="190" y="101" font-size="13" fill="#1f3b66" text-anchor="middle" font-weight="bold">classify_pdf</text>
 <text x="190" y="121" font-size="11.5" fill="#374151" text-anchor="middle">判断走哪条路</text>

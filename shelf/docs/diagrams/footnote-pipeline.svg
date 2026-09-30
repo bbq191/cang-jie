@@ -35,7 +35,7 @@
   <text x="486" y="233" text-anchor="middle" font-size="11.5" fill="#6a6a6a">块须自带 footnote/note 语义；嵌套 div 跳过</text>
   <text x="486" y="263" text-anchor="middle" font-size="11.5" font-weight="bold" fill="#8a3a1f">第二遍（逐章）</text>
   <text x="486" y="283" text-anchor="middle" font-size="11.5" fill="#2a2a2a">break_footnote_cycles → fix_duokan_markers</text>
-  <text x="486" y="301" text-anchor="middle" font-size="11.5" fill="#2a2a2a">→ preserve_relink_footnotes(mode)</text>
+  <text x="486" y="301" text-anchor="middle" font-size="11.5" fill="#2a2a2a">→ 纯图标号换上标数字 → preserve_relink(mode)</text>
   <text x="486" y="319" text-anchor="middle" font-size="11.5" fill="#6a6a6a">把注释块搬进引用它的那一章</text>
 
   <!-- fork arrows -->
@@ -45,8 +45,8 @@
   <!-- Anchor -->
   <rect x="692" y="70" width="290" height="200" rx="9" fill="#e8f5ec" stroke="#3f9a55" stroke-width="1.5"/>
   <text x="837" y="94" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">FootnoteMode::Anchor（缺省）</text>
-  <text x="837" y="118" text-anchor="middle" font-size="11.5" fill="#2a2a2a">marker 保留原样，旁边加同章锚点</text>
-  <text x="837" y="135" text-anchor="middle" font-size="11.5" fill="#2a2a2a">&lt;a href="#nX"&gt;[N]&lt;/a&gt;（朴素文字，可点）</text>
+  <text x="837" y="118" text-anchor="middle" font-size="11.5" fill="#2a2a2a">标号原样保留，链接改指同章锚点</text>
+  <text x="837" y="135" text-anchor="middle" font-size="11.5" fill="#2a2a2a">#nX；不再追加 [N]（09-29 起）</text>
   <text x="837" y="159" text-anchor="middle" font-size="11.5" fill="#2a2a2a">注释移到 &lt;/body&gt; 之内的章末</text>
   <text x="837" y="176" text-anchor="middle" font-size="11.5" fill="#2a2a2a">&lt;hr/&gt;&lt;div class="footnotes"&gt;</text>
   <text x="837" y="200" text-anchor="middle" font-size="11.5" fill="#2a2a2a">注释里不加回链（会构成互指对被丢）</text>

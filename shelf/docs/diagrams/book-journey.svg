@@ -73,9 +73,9 @@
 <text x="540" y="502" text-anchor="middle" font-size="11" fill="#4a4a4a">启动时修正被中断的 pending</text>
 <rect x="720" y="404" width="336" height="112" rx="10" fill="#f0efe9" stroke="#8a8a8a"/>
 <text x="888" y="426" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">设备侧代理与周边（第 F 章）</text>
-<text x="888" y="448" text-anchor="middle" font-size="11" fill="#4a4a4a">xovi qmd 代理：回收站 · 建文件夹 · 漫画页边距</text>
-<text x="888" y="466" text-anchor="middle" font-size="11" fill="#4a4a4a">font-serve（字体上传即装）</text>
-<text x="888" y="484" text-anchor="middle" font-size="11" fill="#4a4a4a">wallpaper-serve（写原生 SleepScreenPath）</text>
+<text x="888" y="448" text-anchor="middle" font-size="11" fill="#4a4a4a">xovi qmd 代理：回收站 · 建文件夹</text>
+<text x="888" y="466" text-anchor="middle" font-size="11" fill="#4a4a4a">漫画页边距 · 日漫翻页（只读原书 OPF rtl）</text>
+<text x="888" y="484" text-anchor="middle" font-size="11" fill="#4a4a4a">字体上传即装 · 休眠壁纸上传即用</text>
 <text x="888" y="502" text-anchor="middle" font-size="11" fill="#4a4a4a">固件升级（OTA）后的恢复</text>
 
 <rect x="24" y="540" width="1032" height="96" rx="10" fill="#ffffff" stroke="#8a8a8a" stroke-dasharray="5 4"/>

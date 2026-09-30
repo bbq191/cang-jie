@@ -2,7 +2,7 @@
 <defs><marker id="ib" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#555"/></marker></defs>
 <rect width="1100" height="470" fill="#fbfbfa"/>
 <text x="550.0" y="30" text-anchor="middle" font-size="18" font-weight="bold" fill="#1a1a1a">scp 往 inbox 传一本大书：什么时候才入库（book-serve，2026-09-25 第四轮审计）</text>
-<text x="550.0" y="52" text-anchor="middle" font-size="12.5" fill="#6a6a6a">scp 直接写最终文件名；追平时只收“修改时间静止 ≥ 5 秒”的文件，还在写的先跳过，写完那次事件再收（只在 host 单测验证）</text>
+<text x="550.0" y="52" text-anchor="middle" font-size="12.5" fill="#6a6a6a">scp 直接写最终文件名；追平时只收“修改时间静止 ≥ 5 秒”的文件，还在写的先跳过，写完那次事件再收（09-25 已部署，真机未专门触发）</text>
 <line x1="80" y1="130" x2="1040" y2="130" stroke="#555" stroke-width="1.6" marker-end="url(#ib)"/>
 <text x="1030" y="118" text-anchor="end" font-size="11" fill="#6a6a6a">时间</text>
 <rect x="100" y="96" width="620" height="20" rx="4" fill="#dbe6f3" stroke="#4a6fa5"/>

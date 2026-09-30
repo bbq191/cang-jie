@@ -7,9 +7,8 @@
 <rect x="24" y="96" width="300" height="150" rx="10" fill="#eaf6ec" stroke="#3f9a55" stroke-width="1.6"/>
 <text x="174.0" y="116" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">shelf/ 书架线</text>
 <text x="174.0" y="139" text-anchor="middle" font-size="10.5" fill="#3a3a3a">book-serve（母版库 / 落原生）</text>
-<text x="174.0" y="154" text-anchor="middle" font-size="10.5" fill="#8a8a8a">（koreader-serve 09-29 退役，09-30 源码已删）</text>
 <text x="174.0" y="169" text-anchor="middle" font-size="10.5" fill="#3a3a3a"></text>
-<text x="174.0" y="184" text-anchor="middle" font-size="10.5" fill="#3a3a3a">常用：events · xochitl · clock · asset</text>
+<text x="174.0" y="162" text-anchor="middle" font-size="10.5" fill="#3a3a3a">常用：events · xochitl · clock · asset</text>
 <text x="174.0" y="199" text-anchor="middle" font-size="10.5" fill="#3a3a3a">fswatch · formats · cache · sync</text>
 <rect x="340" y="96" width="300" height="150" rx="10" fill="#f2eefa" stroke="#7a5cb0" stroke-width="1.6"/>
 <text x="490.0" y="116" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">notes/ 笔记线</text>

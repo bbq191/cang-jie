@@ -17,7 +17,7 @@
 > 1. 当前 `OPTIMIZE_VERSION = "16"`（§10；v16 = 2026-09-29 以 sheng-ren 同源 bookconv 为参照移植文字处理层，规则见 `EPUB优化规范白皮书.md` 4.1–4.9）。**看现状先看 §00b**。§14–§17、§19 多是"当时怎么查出来的"的排查记录；§18（PDF 入库）和 §20（漫画页边距）是现行方案的实现说明。
 > 2. 已被取代的旧决策原位保留并加了横幅：漫画"优化成 PDF"（§16、§19；2026-09-20 用户拍板换回 EPUB，左右留白改由 §20 解决）。
 > 3. 电脑端 `shelf` 命令行与 Calibre 管线 2026-09-18 已整体砍掉（源码留档 `oldbak/`，**没有网页替代**，见书架白皮书附录 B）。正文里的 `shelf push`、`wash_epub.sh`、`comic.py` 都只是历史依据；"host 单测"指开发机/CI 上跑测试，仍然有效。
-> 4. 最近的改动：09-23 PDF 转 EPUB 重写并真机验证（§18）、质量门接进 book-serve（§08）、清洗与脚注几处修复（§01、§02、§04）；09-24 PDF 只解析一遍并给解压设上限、三个小 bug（§18、§12，**只在 host 验证**）；09-25 按书阅读方向（`direction.rs`，§00b、§10；**09-30 已移除**，现只读）；09-25 下午第四轮审计（**只在 host 验证，未上真机**）：字符引用只转义一次（§06 末）、拆分不丢目录前的页与百分号编码图片路径（§15 末）、文字书插图缩放改 SIMD（§05）、损坏 PDF 设防与 PDF 书名（§16、§18）、流式 worker 兜底与几处去线性查找（§14 追记④），坑见 §12；**09-30**（用户定，只在 host 验证，未部署）：漫画预放大页 q85→q95（§05、§19）、撤掉写 OPF 阅读方向（§00b、§10）、删除超限按卷拆分（§15–§17 成为历史）；**09-30 第五轮审计**（**只在开发机测过，没部署、没上真机**）：坏 PDF 设防（`/Parent` 成环、解压炸弹、SOF 越界、大文件通道页数）、`opf:` 前缀、截断 XHTML、PDF 图片 ICC/Flate DCT、远程图改竖框、删 `comic_pdf.rs` 等死代码，汇总见 **§21**。
+> 4. **部署状态**（2026-09-30）：09-24 第三轮、09-25 第四轮审计都已当天部署；09-29 v16、09-30 三项减法（漫画 q95、撤写 OPF 方向、删按卷拆分）与第五轮审计（§21）09-30 14:10 部署，审计后补修的 `convert::pdfmeta`（第三方大 PDF 页数）15:23 部署。部署自检都通过，**但功能没有逐项手测**；文中"host 验证 / 开发机实测"指当时在开发机上的测量，要在设备上看的项汇总在书架白皮书附录 §05 与规范白皮书 §9。
 
 ### 3 分钟导读
 
@@ -29,8 +29,8 @@
 2. wash 清洗（缺省开）：剥伪 DRM、字体锁、背景图，挂外链排版表 `cangjie-wash.css`，缺目录才建，修 NCX（§02、§06）；
 3. 重排条目 + 漫画识别（图 ≥20 张且每图平均文字 <40 字＝漫画，§05）；
 4. 第一遍：剥字体锁，把被引用的注释块从各章取出（§03、§04）；
-5. 第二遍：注释搬到引用它的章末、灰字提黑、远程图内联、id 去重（OPF 的阅读方向原样保留，§00b）；
-6. 图片缩进 Move 屏尺寸框，漫画走"裁边 + 缩放 + 补白"单趟（§05、§20）；
+5. 第二遍：注释搬到引用它的章末（标号原样，纯图标号换上标数字）、远程图内联、id 去重（颜色与 OPF 的阅读方向都原样保留，§00b）；
+6. 文字书插图缩进 842×1455 竖框（默认页边距下的可阅读范围），漫画走"裁边 + 缩放 + 补白"单趟（§05、§20）；
 7. 打包，写幂等标记 `META-INF/com.cangjie.optimized`＝版本号（§10）。
 
 | 想知道 | 去 |
@@ -50,11 +50,11 @@
 
 书架线的**内容层**，2026-09-03 从旧 `weread-device` 抽成独立 crate（旧仓库分块里属"块③ 阅读"）。四块职责：
 1. **格式转换 `convert`**：AZW3/MOBI/FB2 → EPUB、CBZ → PDF，纯 Rust clean-room。⚠ 代码保留，shelf 不接入（§07）。
-2. **EPUB 优化器 `optimize`**：就地改每个 (x)html（解字体锁 / 脚注 / 远程图 / 图片降采样 / 对比度 / 双 id），其余文件结构不动、重打包。
+2. **EPUB 优化器 `optimize`**：就地改每个 (x)html（解字体锁 / 脚注 / 远程图 / 图片降采样 / 双 id），其余文件结构不动、重打包。
 3. **清洗层 `wash`**：对标已砍的 Calibre `wash_epub.sh` 规则（伪 DRM / CSS 锁 / 边距段距 / 自动目录 / 空页 / 外链排版 css），由优化器可选前置调用。
 4. **质量门 `check`**：只读体检（真 DRM / 目录命中率 / 双 id / 资源引用命中率 / OPF 合法 XML），硬失败拦下替换（§08）。
 
-**一份代码两处共用**：`book-serve` 母版库「优化」（`Staging::optimize`，生产走流式入口 `optimize_epub_file_streaming`）与开发期 `epub-optimize` 都调 `optimize` 模块，小书/测试走 `optimize_epub_with`，业务函数共用、逐字节对拍一致（书架白皮书 §03i / §03q）。（当年的 koreader-serve 自 §03s 起就不再优化、落库是纯复制；2026-09-29 它随 KOReader 卸载退役。）
+**一份代码两处共用**：`book-serve` 母版库「优化」（`Staging::optimize`）与开发期 `epub-optimize` 都走同一个流式实现 `StreamingOptimize`；`optimize_epub_with`（字节进字节出）只是经临时文件走它的薄封装，给单测和抓网文组装用（§01、§14）。
 
 **零 C 依赖**：zip 压缩走纯 Rust 的 deflate（`mimetype` 按规范 STORED，其余条目 Deflated）；PDF 手搓（`pdfwrite`：JPEG 直嵌 `/DCTDecode`、PNG 走 `png` + miniz_oxide；现用于大文件占位 PDF、PDF 仅裁边重写、开发期 `cbz2pdf`，漫画 EPUB→PDF 已删）；MOBI/KF8 不依赖 `mobi` crate（真机词典样本上 `extra_data_flags` 尾字节判错、解压乱码，见 `palm.rs`）。
 
@@ -80,17 +80,17 @@
 | `convert/pdfwrite.rs`、`convert::direct_content_type` | PDF 读写 / 自产 PDF 识别 / 扩展名判 EPUB·PDF | 现役 |
 | `bin/` | `epub_optimize`、`cover_fix`、`cbz2pdf`（`comic_piece_extract` 2026-09-30 随分卷删除） | 开发期小工具（§11） |
 
-**当前版本** `OPTIMIZE_VERSION = "16"`（`optimize/mod.rs`，§10）。**调用方**：`book-serve::Staging::optimize`（流式）、`fetch_article`（组装时过一遍默认 `optimize_epub` = 不清洗，标记 `15-core`；勾“同步优化”再跑完整优化）、开发期 `epub-optimize`。**离线门槛**：`cargo test -p bookconv` 零警告（2026-09-30 第五轮审计后实跑：385 个通过、1 个忽略；整个 shelf workspace 495 个通过、2 个忽略 = bookconv 385 + book-serve 105 + pdf-extract-cj 5；koreader-serve 同日稍后从仓库删除，此前含它 26 个共 521）。
+**当前版本** `OPTIMIZE_VERSION = "16"`（`optimize/mod.rs`，§10）。**调用方**：`book-serve::Staging::optimize`（流式）、`fetch_article`（组装时过一遍默认 `optimize_epub` = 不清洗，标记 `<版本>-core`，现为 `16-core`；勾“同步优化”再跑完整优化）、开发期 `epub-optimize`。**离线门槛**：`cargo test -p bookconv` 零警告（2026-09-30 文档刷新时实跑：395 个通过、1 个忽略；整个 shelf workspace 509 个通过、2 个忽略 = bookconv 395 + book-serve 109 + pdf-extract-cj 5）。
 
 **未闭环**：无阻塞项；§13 都是“打磨精度”级。**一条已查清、bookconv 无杠杆的边界**（09-10，§12/§09⑭）：图片密集内容（网文抓取）分页时图片块页尾放不下就整体推下页、不回填，视觉上大片留白，与样式表无关。有人问“能不能优化掉图片留白”先看这条。
 
-## 01｜架构：`optimize_epub_with` 两遍 + wash 前置
+## 01｜架构：两遍 + wash 前置
 
 > **大白话**：先把整本书的结构看一遍（封面、目录、哪些注释被引用、是不是漫画），再一个文件一个文件地改写、打包。
 
 ![bookconv 优化管线：阶段一（整书结构）+ 阶段二（逐条目变换）](diagrams/bookconv-pipeline.svg)
 
-入口 `optimize_epub_with(epub, &OptimizeOpts{wash, footnote, comic_frame})`（09-25～09-29 还有 `page_direction`，已删），分**阶段一**（`prepare_entries`，看整本书结构）和**阶段二**（逐条目变换 + 写出）：
+入口 `StreamingOptimize::new(输入, 输出, &OptimizeOpts{wash, footnote, comic_frame})`（09-25～09-29 还有 `page_direction`，已删；`optimize_epub_with` 是它的字节版薄封装），分**阶段一**（`prepare_entries`，看整本书结构）和**阶段二**（逐条目变换 + 写出）：
 - **读全条目**（`epubzip::read_entries`；读失败整体报错，绝不静默跳过产出残缺 EPUB）。哪些条目算正文章节由 `epubzip::is_html_entry` 判：先看扩展名，**没有扩展名的再嗅探内容**（`<?xml`/`<html` 开头）——真实书里有合法的无扩展名章节，此前纯按扩展名判断，《甲午》29 章里 4 章整章没被清洗（2026-09-23）。
 - **封面声明**（`ensure_cover_declared`）：保证 OPF 有真正指向图片的封面，**必须在 wash 之前**（wash 会把只含 SVG 封面的 titlepage 当空页删掉）。
 - **wash 前置**（`opts.wash=Some`）：作用于条目表 `Vec<Entry>`，见 §02。
@@ -101,7 +101,7 @@
 - **幂等标记**：产物写 `META-INF/com.cangjie.optimized` = `OPTIMIZE_VERSION`（含 wash）或 `<版本>-core`（`wash=None`）；`optimized_version()` 判是否当前版本（母版库据此标 full/core/old）；旧版本重传**重优化升级**（`double_optimize_*` 测试坐实不翻倍脚注）。
 - **只有一份实现**：`StreamingOptimize`（路径进路径出，峰值内存不随书体积涨），book-serve 与 `epub-optimize` 都走它；`optimize_epub_with(&[u8])` 自 09-29 起只是薄封装（字节写临时文件 → 流式 → 读回），给单测与抓网文组装用。09-19～09-29 曾是两份并行实现、靠对拍单测保证逐字节一致，见 §14。
 
-`FootnoteMode`：`Anchor`（缺省，注释移章末 + 同章锚点 + 原生「返回」浮标；2026-09-17 起母版库「优化」也统一用它）· `Inline`（就地内联 `〔…〕`，只剩单测在用）。曾短暂存在的第三种 `ParagraphEnd` 已撤回删除，见 §04。
+`FootnoteMode`：`Anchor`（缺省，注释移章末 + 同章锚点 + 原生「返回」浮标；2026-09-17 起母版库「优化」也统一用它）· `Popup`（09-29 随 sheng-ren 规则移植进来，给 KOReader 弹窗用；母版库不用，命令行也没有开关，只剩单测）· `Inline`（就地内联 `〔…〕`，只剩单测在用）。曾短暂存在的第三种 `ParagraphEnd` 已撤回删除，见 §04。
 
 ## 02｜清洗层 wash（`wash_entries`，对标 Calibre）
 
@@ -115,13 +115,13 @@
 | 2 | 空页清理 `remove_empty_pages` | 无文字无图的页（Calibre MOBI 的 `mbppagebreak` 独占页）从 spine/manifest/zip 删，目录里指向它的条目改指下一篇 |
 | 3 | 死引用清理 `drop_dead_refs` | 去 `src` 指向书内不存在文件的 `<img>`（alt 有实际内容的留着）与字体全缺的 `@font-face`；外链/`data:`/纯锚点不算无效 |
 | 4 | 主语言探测 `detect_dominant_script` | Han 字数 ≥ 拉丁字母数 = 中文（扫够 2 万字早停）→ `LangMode::{Cjk,Latin}`（`Auto` 在此解析） |
-| 5 | CSS 锁剥离 `filter_css` | 独立 `.css` / `<style>` / `style=` 三处剥 `DEFAULT_FILTER_PROPS` = `font-family, font-size, font, background-image, background`；`@font-face src:url` 豁免；`@media{}` 从内向外匹配最内层规则；书 css 里非零 `text-indent` 统一改成本书缩进；输出声明尾带分号（§09④）；**注释容器类**（选择器含 `footnote`/`fnote`）额外去掉 `font-weight`、补 `font-size:0.9em`（2026-09-23《甲午》：原书模板让全书注释加粗，用户拍板只剥注释容器、不碰正文；`cangjie-wash.css` 另补 `.footnotes`/`.cj-fnote` 两条兜底） |
+| 5 | CSS 锁剥离 `filter_css` | 独立 `.css` / `<style>` / `style=` 三处剥 `DEFAULT_FILTER_PROPS` = `font-family, font-size, font, line-height, background-image, background`，每条声明怎么处理按 `cssunlock.rs` 的解锁表（09-29：相对字号保留、`font` 简写留粗斜体、`background` 简写留颜色，规范白皮书 4.1）；`@font-face src:url` 豁免；`@media{}` 从内向外匹配最内层规则；书 css 里非零 `text-indent` 统一改成本书缩进；输出声明尾带分号（§09④）；**注释容器类**（选择器含 `footnote`/`fnote`）额外去掉 `font-weight`、补 `font-size:0.85em`（`wash::css::FOOTNOTE_FONT_SIZE`；09-23 首版是 0.9em，09-29 v16 改 0.85em。起因是 2026-09-23《甲午》：原书模板让全书注释加粗，用户拍板只剥注释容器、不碰正文；`cangjie-wash.css` 另补 `.footnotes`/`.cj-fnote` 两条兜底） |
 | 6 | 边距/段距 `wash_html` | `style=` 按标签名定策略（body/html 全删边距、p/div 上下归零左右保留，不伤 blockquote/列表缩进）。中文书 `cjk_paragraphize`（无 `<p>` 只有 `<br>` 分行的按 `<br>` 切段 + 剥段首全角空格）；拉丁书 `flush_first_para_after_heading`（标题/章首/场景切换后首段顶格） |
 | 7 | 外链排版 css | `add_wash_css_entry` 写外链 `cangjie-wash.css`（`p{text-indent:2em;margin-top:0;…;}` + `.cj-flush{…}` + `figure`/`figcaption` 边距归零）+ 每章 `<link>` + manifest item（§09④ 治本） |
 | 8 | NCX 与目录 | `fix_ncx_manifest_id`（v14）→ `restructure_existing_toc_parts`（“第X部”分两级）→ `auto_toc`（缺目录才建，§06）→ `fix_ncx_uid`（v12）→ `strip_ncx_doctype`（v13） |
 | 9 | 单标签双 id 折叠 `collapse_dup_id_attrs` | 在 `wash_html` 内做（§09⑥） |
 
-**2026-09-17 收窄**：`DEFAULT_FILTER_PROPS` 不再剥 `color`/`background-color`/`text-align`（EPUB 线原则：保留原书颜色/加粗，只解锁字号；这三项此前只是照抄 Calibre `--filter-css`，没验证过必须剥）。⚠ 彩色底纹书低对比场景可能更难读（`boost_text_contrast()` 不处理背景色），待专挑一本真机测。`background`/`background-image` 进 `filter_props` 是 v8 真机《飘》修（§09②）。`keep_para_spacing` 给诗集/剧本（靠空行分节）；book-serve 现只用 `WashOpts::default()`（2026-09-19 已砍优化档位）。
+**2026-09-17 收窄**：`DEFAULT_FILTER_PROPS` 不再剥 `color`/`background-color`/`text-align`（EPUB 线原则：保留原书颜色/加粗，只解锁字号；这三项此前只是照抄 Calibre `--filter-css`，没验证过必须剥）。⚠ 彩色底纹书低对比场景可能更难读，待专挑一本真机测（原来的提对比 `boost_text_contrast()` 09-29 已删，现在对文字颜色也不做任何处理）。`background`/`background-image` 进 `filter_props` 是 v8 真机《飘》修（§09②）。`keep_para_spacing` 给诗集/剧本（靠空行分节）；book-serve 现只用 `WashOpts::default()`（2026-09-19 已砍优化档位）。
 
 ## 03｜优化器核心遍（always-on，不依赖 wash）
 
@@ -136,28 +136,29 @@
 
 ## 04｜脚注：四形态 + 两引擎 + FootnoteMode
 
-> **大白话**：各家电子书的注释写法五花八门，这里统一改成 xochitl 唯一会跳的形态——正文里一个 `[N]`，点了跳到本章末尾的注释，左下角"返回"回原处。
+> **大白话**：各家电子书的注释写法五花八门，这里统一改成 xochitl 唯一会跳的形态——正文里的标号（原样保留；只有图、没有文字的标号换成上标数字）指向本章末尾的注释，点了跳过去，左下角"返回"回原处。
 
 ![脚注：四种真机形态 → 一套抽取 → 两种 FootnoteMode](diagrams/footnote-pipeline.svg)
 
 **四种脚注形态**（真机《13·67》《人骨拼图》混合）：① 同章 `noteref`↔`aside`；② 跨文件 `<a href="notes.xhtml#nX">` + `<p id="nX">` 尾注；③ duokan 图片脚注标记；④ 双向互指对（reMarkable 索引器遇互指**整对丢弃**，`break_footnote_cycles` 拆环）。
 
-**2026-09-23 三处修复**（《甲午》真机）：① 注释块统一包成 `<div id>`（`footnote_block`），不再用 `<p id>`——源注释本身含 `<p>` 时会产出非法的 `<p><p>` 嵌套；② `fix_duokan_markers` 认 `duokan-footnote` 类时 `<img>` 和外层 `<a>` 上都查（真书把类写在 `<a>` 上，此前漏判，图标按原尺寸巨大显示）；③ `Anchor` 模式下 `<sup>` 包着的图标 marker 直接换成 `[N]` 文字。
+**2026-09-23 三处修复**（《甲午》真机）：① 注释块统一包成 `<div id>`（`footnote_block`），不再用 `<p id>`——源注释本身含 `<p>` 时会产出非法的 `<p><p>` 嵌套；② `fix_duokan_markers` 认 `duokan-footnote` 类时 `<img>` 和外层 `<a>` 上都查（真书把类写在 `<a>` 上，此前漏判，图标按原尺寸巨大显示）；③ `Anchor` 模式下 `<sup>` 包着的图标 marker 直接换成 `[N]` 文字（09-29 v16 起改成上标数字、不再追加 `[N]`，见下表）。
 
 **抽取管线**：第一遍 `referenced_note_frags` 扫出被引用的注释 id → `collect_footnote_notes` 把被引用的注释块（aside/p/li/div，须自带 footnote/note 语义；嵌套 div 跳过）从各章移除、建 `aside_index` → 第二遍 `preserve_relink_footnotes(html, index, mode)` 搬进引用它的章。未被引用的块原样留原处（零丢失）。
 
 | 模式 | marker | 注释放哪 | 要点 |
 |---|---|---|---|
-| `Anchor`（缺省） | 保留原样，旁边加同章朴素文字锚点 `<a href="#nX">[N]</a>`（图标 marker 包在 `<sup>` 里时，图标去链、`[N]` 独立可点） | 移到 `</body>` **之内**的章末 `<hr/><div class="footnotes">` | 只有同章朴素文字锚点可点，`<a><img></a>` 不可点；注释区在 `</body>` 之外则不建锚点、marker 死链；注释里**不加回链**（互指被整对丢弃），返回靠原生「返回」浮标 |
+| `Anchor`（缺省） | **标号原样保留**，只把 `<a>` 的 href 改成同章 `#nX`，前后一个字不加（09-29 起不再追加 `[N]`）；只有图、没有文字的标号换成上标数字（`number_icon_note_links`，编号怎么取见规范白皮书 4.2） | 移到 `</body>` **之内**的章末 `<hr/><div class="footnotes">`，每条带 `cj-note`（不跨页） | 只有带文字的同章链接可点，纯图 `<a><img></a>` 点不动（09-29 真机《注释探针》坐实）；注释区在 `</body>` 之外则不建锚点、marker 死链；注释里**不加回链**（互指被整对丢弃），返回靠原生「返回」浮标 |
+| `Popup`（仅单测） | 同 `Anchor`，另标 `epub:type="noteref"` | `<aside epub:type="footnote">` | 给 KOReader 弹窗用，母版库不用 |
 | `Inline` | **丢弃**原 marker | 就地 `<span class="cj-fnote">〔纯文本〕</span>` 常显、不跳转 | xochitl **无弹窗脚注**（穷尽真机判死，§09⑤）；必须丢 marker（图标 `<img>` 按固有尺寸巨大重复，§09①）并去标签取纯文本（块级标签塞进 `<p>` 致整章白屏，§09⑥）；塞进句子中间会打断阅读，目前无入口（仅单测） |
 
 **已删除的尝试：`ParagraphEnd`（09-17，上线又下线，同日）**：注释移到含引用的整段之后，功能按设计跑通、测试都过；但用户看真书反馈“注释并未在当前页最下面，而是在段末”。**根因不是实现能修**：EPUB 是流式重排文本，“这段落在第几页”是阅读器翻页时的运行时结果，做书阶段（优化器唯一能碰的阶段）没法把“这条注释属于第 N 页”写进源文件；真正的页底注释只有固定版式（PDF 线）能表达。处置：改回 Anchor，`ParagraphEnd` 相关函数与测试整个删除，不留死代码。
 
 ## 05｜图片：按 Move 屏两个降采样盒
 
-> **大白话**：书里常塞着几千像素的高清图，设备屏幕才 954×1696。按屏幕尺寸缩一次既省空间也省内存；漫画只裁白边、不压画质。
+> **大白话**：书里常塞着几千像素的高清图，设备屏幕才 954×1696，默认页边距下正文栏只有 842 像素宽。文字书插图按这块可阅读范围缩一次，既省空间也省内存；漫画只裁白边、不压画质。
 
-Move 屏 = **954×1696 px、7.3″、264 PPI、Gallery 3 彩色墨水屏**。书常带 2000–4000px 高清图。常量 `MAX_EDGE=1696` / `MAX_SHORT_EDGE=954`（`imgopt.rs`）、JPEG 质量 85（漫画 95）、Lanczos3。**09-25 起两个降采样函数（共用 `downscale_into`）也走 SIMD 版 `resize_lanczos3`**（同漫画页的 `fast_image_resize`）：尺寸算法与 `DynamicImage::resize` 相同（`fit_within`，单测对 4 种尺寸逐一核对，像素均差 <2），灰度 JPEG 编码保持单分量（`encode_keep_gray`；此前被写成 3 分量，体积白涨）；host 上一张 2800×2000 JPEG 解码 + 缩放 + 编码 714ms → 194ms。`mean_chroma` 对灰度图直接返回 0、RGB 图直接读原像素，不再整图 `to_rgb8()` 复制（900 万像素灰度页省约 27MB）。只在 host 验证。**两个降采样函数**（v8 真机《飘》拆分）：
+Move 屏 = **954×1696 px、7.3″、264 PPI、Gallery 3 彩色墨水屏**。书常带 2000–4000px 高清图。常量 `MAX_EDGE=1696` / `MAX_SHORT_EDGE=954`（`imgopt.rs`）、JPEG 质量 85（漫画 95）、Lanczos3。**09-25 起两个降采样函数（共用 `downscale_into`）也走 SIMD 版 `resize_lanczos3`**（同漫画页的 `fast_image_resize`）：尺寸算法与 `DynamicImage::resize` 相同（`fit_within`，单测对 4 种尺寸逐一核对，像素均差 <2），灰度 JPEG 编码保持单分量（`encode_keep_gray`；此前被写成 3 分量，体积白涨）；host 上一张 2800×2000 JPEG 解码 + 缩放 + 编码 714ms → 194ms。`mean_chroma` 对灰度图直接返回 0、RGB 图直接读原像素，不再整图 `to_rgb8()` 复制（900 万像素灰度页省约 27MB）。数字是 host 实测，09-25 已部署。**两个降采样函数**（v8 真机《飘》拆分）：
 
 | 函数 | 框 | 用在哪 |
 |---|---|---|
@@ -217,7 +218,7 @@ EPUB 线原则④（09-17）：`comic_detect::is_comic`（`MIN_IMAGES=20`、`TEX
 | v13 | v12 后入口仍不出现 | 唯一剩余结构差异是 `toc.ncx` 带外部 DTD 引用（daisy.org）；**只是推测** | `strip_ncx_doctype` 剥声明。⚠ 是否必需从未单独证实，v14 才是真根因 |
 | **v14** | v12+v13 后仍不出现 | **反编译 xochitl（书架白皮书 §03bc）坐实**：定位 `toc.ncx` **硬编码死查 manifest 里 `id="ncx"` 字面量**，不走 `<spine toc>`（后备分支没救回《疯探》，原因未查清）；合规的 `<item id="toc"/>` + `<spine toc="toc">` 被当成没有 ncx，navMap 标题提取整体失败（书照常翻页） | `fix_ncx_manifest_id`：NCX manifest id 不是 `ncx` 就改（`<spine toc>` 同步）；`auto_toc` 自建 NCX 的 `id="cj-ncx"`（同坑）改 `ncx`。真机：`content.opf` 只改这一行，`.epubindex` 7188 字节（94 条标题全空）→ 15558 字节（全部提取） |
 
-**字符引用只转义一次（2026-09-25 第四轮审计，没升版本号，只在 host 验证）**：`wash::plain_text` 从 HTML/NCX 里取出的是转义过的 XML 文本，此前只把 `&nbsp;` 换成空格，调用方写进 NCX/nav/OPF 时又 `xml_escape` 一遍，标题里的 `&amp;`、`&#12288;` 变成 `&amp;amp;`、`&amp;#12288;`，自动目录、"第X部"重建、`docTitle` 显示字面的 `&amp;`。现在 `plain_text` 用新增的 `util::xml_unescape`（`xml_escape` 的反向，认不出的 `&` 原样保留）还原成字符，输出端照旧只转义一次。同一问题的另外几处一起修：超限拆分的 NCX 标题（分卷书名、文件名、目录，§15）、大文件占位的书名（§19）、`stats::text_profile` 的书名（要和 xochitl 的 visibleName 比对）。测试钉住"自动目录 ncx/nav/docTitle 各只转义一次"（修前失败）。不升版本号：已优化的书若目录里带字面 `&amp;`，要从原始文件重新优化才会变。
+**字符引用只转义一次（2026-09-25 第四轮审计，没升版本号，当天部署）**：`wash::plain_text` 从 HTML/NCX 里取出的是转义过的 XML 文本，此前只把 `&nbsp;` 换成空格，调用方写进 NCX/nav/OPF 时又 `xml_escape` 一遍，标题里的 `&amp;`、`&#12288;` 变成 `&amp;amp;`、`&amp;#12288;`，自动目录、"第X部"重建、`docTitle` 显示字面的 `&amp;`。现在 `plain_text` 用新增的 `util::xml_unescape`（`xml_escape` 的反向，认不出的 `&` 原样保留）还原成字符，输出端照旧只转义一次。同一问题的另外几处一起修：超限拆分的 NCX 标题（分卷书名、文件名、目录，§15）、大文件占位的书名（§19）、`stats::text_profile` 的书名（要和 xochitl 的 visibleName 比对）。测试钉住"自动目录 ncx/nav/docTitle 各只转义一次"（修前失败）。不升版本号：已优化的书若目录里带字面 `&amp;`，要从原始文件重新优化才会变。
 
 ## 07｜格式转换 `convert`（纯 Rust，零 C）
 
@@ -228,7 +229,7 @@ EPUB 线原则④（09-17）：`comic_detect::is_comic`（`MIN_IMAGES=20`、`TEX
 > | `palm` / `mobi` / `kf8` / `fb2` / `convert_file` / `is_convertible` / `is_ingestible` / `precheck` | 无调用方（仅自身单测；`kf8`/`fb2` 收尾调 `common::assemble_optimized`） |
 > | `cbz::cbz_to_pdf` | 只剩开发期 `bin/cbz2pdf` |
 > | `pdfwrite`（PDF 读写、`looks_like_own_bookconv_pdf`、页数/占位 PDF）、`direct_content_type` | **现役**：`book-serve` 落库/列表/门控、`placeholder`、`pdf_ingest`（`comic_pdf` 09-30 删；内存版 `page_count` 等无调用函数同日删） |
-> | `common::assemble_optimized`（组装 EPUB 再过 `optimize_epub` 默认档，标记 `15-core`） | **现役**：`article.rs` |
+> | `common::assemble_optimized`（组装 EPUB 再过 `optimize_epub` 默认档，标记 `<版本>-core`，现为 `16-core`） | **现役**：`article.rs` |
 >
 > 沿革：09-05 杂格式走电脑 Calibre、漫画只给 KOReader；09-17 Calibre 转换整段删、杂格式拒收；09-18 用户要求“入库只入 PDF 和 EPUB”，仅 KOReader 能读的 CBZ/HTML/RTF 也拒收——**策略收紧，不是技术能力判断**。⚠ `convert/mod.rs` 头注释“使用方只有 `reading/device-rs`”已过时。09-30 审计顺手修了未接入转换器里两处能 panic 的输入（`palm`/`kf8`），它们仍无调用方。
 
@@ -264,7 +265,7 @@ EPUB 线原则④（09-17）：`comic_detect::is_comic`（`MIN_IMAGES=20`、`TEX
 
 | # | 规则 | 现象 | 对优化器的约束 | 证据 |
 |---|---|---|---|---|
-| ① | **行内 `<img>` 按固有像素渲染、不认 CSS**（块级 img 才适配列宽） | 图标脚注 marker（`<img alt="note" 70×95>`）内联 = 巨大且每页重复；行内横幅 1696×630 溢出竖屏 | `Inline` 丢 marker 只留纯文本；EPUB 图走竖向框 `downscale_for_epub`（宽 ≤954） | 真机《飘》（v8） |
+| ① | **行内 `<img>` 按固有像素渲染、不认 CSS**（块级 img 才适配列宽） | 图标脚注 marker（`<img alt="note" 70×95>`）内联 = 巨大且每页重复；行内横幅 1696×630 溢出竖屏 | `Inline` 丢 marker 只留纯文本；EPUB 图走竖向框 `downscale_for_epub`（v8 时宽 ≤954，09-30 起 ≤842）；`Anchor` 下纯图标号换成上标数字 | 真机《飘》（v8）、《注释探针》（09-29） |
 | ② | **无视 `background-repeat:no-repeat`/`background-size`，`background-image` 平铺满页盖正文** | 《飘》分卷页 `body.fen{background:url() no-repeat}` 铺成多幅风景盖住“第一卷” | `filter_props` 含 `background`/`background-image`（`@font-face src:url` 豁免、章头 `<img>` 不受影响） | 真机《飘》（v8） |
 | ③ | **章头装饰 `<img>`（每章 banner/logo）是要保留的正常内容** | 曾误当“同图跨 ≥5 章重复 → 删 img”，被用户照片（IMG_0447 判“对”）纠正、`git revert` | 跨章重复 `<img>` ≠ 可删；不做图片去重 | 用户照片 |
 | ④ | **CSS 引擎七条**（3.28.0.172，规则全表见 §03y）：只认外链 `.css`（无视 `<style>`/`style=`）；末尾无分号的声明被丢；`text-indent:0` 当“没设”；类选择器认且压元素规则、同类先出现者胜；`div{}` 不生效；`text-indent` 继承；不认 `!important` | 内联 `<style class="cj-wash">`（v6–v9）从未生效；`p{text-indent:2em}` 少分号整条失效 | 排版规则写**外链** `cangjie-wash.css` + 每章 `<link>` + manifest item；声明尾带 `;`；顶格 `text-indent:0.01em` + `<div class="cj-flush">`（剥书的类与 style）；不用 `!important`；每条规则一个选择器 | 《飘》（v10）；`wash/typeset.rs::wash_css` |
@@ -311,7 +312,7 @@ EPUB 线原则④（09-17）：`comic_detect::is_comic`（`MIN_IMAGES=20`、`TEX
 | **v13** | `strip_ncx_doctype` 剥外部 DTD 引用；**推测性修复**，真根因是 v14（§06） |
 | **v14** | `fix_ncx_manifest_id`：xochitl 硬编码死查 manifest `id="ncx"`；`auto_toc` 自建 NCX 的 `cj-ncx` 同源 bug 一并改（§06） |
 | **v15** | **EPUB 漫画补白比例改成 xochitl 图片框比例**（`imgopt::EPUB_FRAME_ASPECT` = 302.365:462.1，简称 303:462.1；画布 954×`EPUB_COMIC_PAGE_H`=1458；容差 0.3%），配合阅读器页边距 1（book-serve + `shelf-comic-margins.qmd` 首次打开时设置）。真机同图 A/B：图宽 260→303pt（端到端 302.0），左右留白 20.0/22.9pt → ≈0.3/0.7pt（§20）。旧漫画需**从原始文件**重优化，别二次优化（多一代 JPEG 有损） |
-| **v16** | **2026-09-29 以 sheng-ren 仓库的同源 bookconv 为参照移植**（那边已到 v28）：清洗层整体换成 sheng-ren 版（`crate::html` 容错解析、`cssunlock` 字体字号行高解锁、章节分页 `wash/paginate.rs`、目录补节/改指、全书 id 去重、章尾空白页、EPUB 3 规范整理 `wash/normalize.rs`）；注释不加 `[N]`、图标保留限高、0.85em、索引按 (文件, id)；不再灰字提黑/细字提重（PDF 线一起）；JPEG 哈夫曼无损重做（`jpegopt`）、漫画静态 GIF/WebP、透明页铺白、漫画 `dc:subject`；远程图补进 manifest（抓不到仍删，设备有意保留）。**设备专有部分保留**：漫画页框与实验室最小边距、改书名、取消、按书翻页方向（09-30 已撤）、900 万像素解码上限、图片 deflate 最快档。重优化自己的旧产物：排好的漫画页原样保留（不多一代有损）、去掉旧版追加的重复 `[N]`。类名沿用 `cj-` 前缀、外链样式表仍叫 `cangjie-wash.css`（sheng-ren 是 `eink-`），`comic_pad` 与旧产物判定不受影响。页边距登记资格改为"版本 ≥ 15"（页框没变）。真机未验证，见规范白皮书 §9 。**2026-09-30 未升版本再对齐 sheng-ren 四处**（v16 尚未部署）：文字书插图框 954×1696→842×1455、最小边距漫画画布 954×1458→952×1457、漫画文字留边 9 条规则整套写进样式表、图片条目改回不压缩；同批 29 本书两边产物图片逐字节相同。**09-30 第五轮审计同样不升版本**：只有带远程图的书与抓网文产物（插图改按 842×1455 竖框）、PDF→EPUB 的个别情况、`opf:` 前缀 / 截断 XHTML / 大写 `</BODY>` 的书产物字节会变，正常书不变（§21） |
+| **v16** | **2026-09-29 以 sheng-ren 仓库的同源 bookconv 为参照移植**（那边已到 v28）：清洗层整体换成 sheng-ren 版（`crate::html` 容错解析、`cssunlock` 字体字号行高解锁、章节分页 `wash/paginate.rs`、目录补节/改指、全书 id 去重、章尾空白页、EPUB 3 规范整理 `wash/normalize.rs`）；注释不加 `[N]`、图标保留限高、0.85em、索引按 (文件, id)；不再灰字提黑/细字提重（PDF 线一起）；JPEG 哈夫曼无损重做（`jpegopt`）、漫画静态 GIF/WebP、透明页铺白、漫画 `dc:subject`；远程图补进 manifest（抓不到仍删，设备有意保留）。**设备专有部分保留**：漫画页框与实验室最小边距、改书名、取消、按书翻页方向（09-30 已撤）、900 万像素解码上限、图片 deflate 最快档。重优化自己的旧产物：排好的漫画页原样保留（不多一代有损）、去掉旧版追加的重复 `[N]`。类名沿用 `cj-` 前缀、外链样式表仍叫 `cangjie-wash.css`（sheng-ren 是 `eink-`），`comic_pad` 与旧产物判定不受影响。页边距登记资格改为"版本 ≥ 15"（页框没变）。09-30 14:10 已部署，功能待手测（规范白皮书 §9）。**2026-09-30 未升版本再对齐 sheng-ren 四处**（与 v16 一起部署）：文字书插图框 954×1696→842×1455、最小边距漫画画布 954×1458→952×1457、漫画文字留边 9 条规则整套写进样式表、图片条目改回不压缩；同批 29 本书两边产物图片逐字节相同。**09-30 第五轮审计同样不升版本**：只有带远程图的书与抓网文产物（插图改按 842×1455 竖框）、PDF→EPUB 的个别情况、`opf:` 前缀 / 截断 XHTML / 大写 `</BODY>` 的书产物字节会变，正常书不变（§21） |
 
 **v15 起几个易误解点**：
 1. **分两步演进**：285.2:462.2（画布 954×1546）→ 303:462.1（954×1455、页边距 0）→ 最终 302.4:462.1（954×1458、页边距 1；用户认为 0 贴边不合适）。代码常量 `EPUB_COMIC_PAGE_H` 当时＝1458；别处若还看到 1455，是中间版本。**2026-09-30 第三步**：改成 952×1457（`EPUB_COMIC_PAGE_W/H`），取自 sheng-ren 2026-09-29 读 xochitl 排出的 PDF 里图的摆放矩阵（页边距 1 时图框宽最多 952、高最多 1457）；与 954×1458 长宽比只差 0.14%，旧画布产物仍算排好、仍可登记（`EPUB_COMIC_PAGE_LEGACY`）。
@@ -367,21 +368,21 @@ EPUB 线原则④（09-17）：`comic_detect::is_comic`（`MIN_IMAGES=20`、`TEX
 
 **仍待验证 / 未闭环**：
 - ⚠ **EPUB 线四原则（书架白皮书 §03av）的视觉效果**仍待用户拿真书肉眼确认——功能层（造测试 EPUB 真实上传+优化+核对字节：颜色保留 / TOC 拆分 / 漫画裁边）已通过，但“字节正确”不等于“观感正常”。脚注一项已推翻改回 `Anchor`（§04），**别照抄 `ParagraphEnd` 结论**。
-- **2026-09-30 三项改动只在 host 验证，未部署**：漫画预放大页改 q95 后低分辨率漫画的体积与显示；撤掉写方向后从右往左的日漫重新优化仍按从右往左翻；删分卷后超限书走大文件通道、>1GiB / 造不出占位整本拒绝（规范白皮书 §9）。
-- PDF 转 EPUB：公式裁图没有真机样本；竖排/多栏 PDF 未验证；嵌套表单限深只有合成测试、没有真机触发样本；09-24 第三轮审计的内存与解压上限改动只有 host 实测（§18）。
+- **2026-09-30 三项改动（09-30 14:10 已部署，待手测）**：漫画预放大页改 q95 后低分辨率漫画的体积与显示；撤掉写方向后从右往左的日漫重新优化仍按从右往左翻；删分卷后超限书走大文件通道、>1GiB / 造不出占位整本拒绝（规范白皮书 §9）。
+- PDF 转 EPUB：公式裁图没有真机样本；竖排/多栏 PDF 未验证；嵌套表单限深只有合成测试、没有真机触发样本；09-24 第三轮审计的内存与解压上限改动当天已部署，内存数字只有 host 实测（§18）。
 - 母版库「优化」与 CLI 缺省都用 `Anchor` 脚注（09-17 起，此前是 `Inline`）。（当年“xochitl 与 KOReader 两边观感没对照”这条随 09-29 卸载 KOReader 作废。）
 - 颜色保留放开后（§02）彩色底纹书的低对比可读性，要专门挑一本测。
 - v13 剥外部 DTD 是否必需（v14 才是真根因，§06）。
-- ~~远程图内联走 `downscale_for_device`（朝向框，横图容许 1696 宽）~~：**09-30 第五轮审计已改**，远程图与抓网文插图统一走竖框 `downscale_for_epub`（842×1455），>20MB 整张不要（§21）；改后在 xochitl 里的显示没上真机看过。
-- **09-30 第五轮审计的改动全部只在开发机验证，未部署**（清单与“明知没改”的项见 §21）。
-- **09-25 第四轮审计的改动全部只在 host 验证**：文字书插图 SIMD 缩放与灰度单通道（部署后先看插图显示是否正常）、字符引用只转义一次、拆分不丢页、损坏 PDF 设防、PDF 书名认间接对象、流式 worker 兜底。
+- ~~远程图内联走 `downscale_for_device`（朝向框，横图容许 1696 宽）~~：**09-30 第五轮审计已改**，远程图与抓网文插图统一走竖框 `downscale_for_epub`（842×1455），>20MB 整张不要（§21）；09-30 已部署，改后在 xochitl 里的显示还没看过。
+- **09-30 第五轮审计的改动 09-30 已部署，待手测**（清单与“明知没改”的项见 §21）。
+- **09-25 第四轮审计的改动当天已部署**，其中要在设备上专门看的：文字书插图 SIMD 缩放与灰度单通道后显示是否正常、字符引用只转义一次、PDF 书名认间接对象（损坏 PDF 设防与流式 worker 兜底没有真机样本）。
 - 已调研、决定不做（不是待办）：书里自带的"目录页"跨文件链接在 xochitl 上点不动（§09⑯）。唯一办法是整书合成一个文件，代价与结论见规范白皮书 §8 T3。
 
 ## 14｜内存架构：流式 vs 整本内存（`optimize_epub_file_streaming`，2026-09-19）
 
 > **大白话**：几百 MB 的书整本读进内存会把设备拖死。做法是先只读文字把结构想清楚，再一张一张地处理图片、处理完立刻写盘释放。
 
-> **现状**：生产路径（`book-serve` 的 `Staging::optimize`、CLI `epub-optimize` 默认）走流式版 `optimize_epub_file_streaming`（现为 `StreamingOptimize` 构建器的薄封装）；整本内存版 `optimize_epub_with(&[u8])` 只留给单测和小书。两条路径共用同一份业务代码，产物逐字节一致。
+> **现状**：只有流式一份实现 `StreamingOptimize`（`optimize_epub_file_streaming*` 是它的薄封装），`book-serve` 的 `Staging::optimize` 与 CLI `epub-optimize` 都走它；`optimize_epub_with(&[u8])` 自 2026-09-29 起也只是"写临时文件 → 走流式 → 读回"的薄封装。下面"两条路径"的说法是 09-19～09-29 两份实现并存时期的记录。
 
 ![EPUB 优化的内存路径：旧整本内存版（已删）vs 现役流式版](diagrams/streaming-vs-inmemory.svg)
 
@@ -404,9 +405,9 @@ EPUB 线原则④（09-17）：`comic_detect::is_comic`（`MIN_IMAGES=20`、`TEX
 
 > **后续演进（§19「优化提速」）**：阶段二加了 2 个 worker 并行（提前量 `workers+2`，`imgpool::PixelBudget` 限制同时在处理的图片总像素 ≤ 600 万，`imgpool.rs` 的 `PIXEL_BUDGET`），实测乱马 01 `VmHWM` 47MB（并行前 28MB）；另加每条目一次的取消检查（`optimize_epub_file_streaming_ctl` / `.cancel(..)`，返回 `CANCELLED_MSG`="已取消"）。
 
-### 避免两条路径分叉走样
+### 避免两条路径分叉走样（09-19～09-29 的做法，已被"只留一份实现"取代）
 
-抽出 `prepare_entries`（清洗+第一遍）、`first_pass_html`、`transform_html_chapter`、`transform_image_bytes` 供两版共用；对拍测试 `streaming_matches_in_memory_output_for_footnote_book` / `streaming_downscales_comic_images_same_as_in_memory` 证明产出逐字节一致。
+当时抽出 `prepare_entries`（清洗+第一遍）、`first_pass_html`、`transform_html_chapter`、`transform_image_bytes` 供两版共用，并用对拍测试证明产出逐字节一致。09-29 起内存版改成走流式路径的薄封装，从根上不会分叉。
 
 ### 真机复测
 
@@ -414,7 +415,7 @@ EPUB 线原则④（09-17）：`comic_detect::is_comic`（`MIN_IMAGES=20`、`TEX
 
 ### 附带发现：临时产物被当成母版库条目
 
-`Staging::optimize()` 的临时产物起初没带点前缀，真机复现被 `GET /staging` 当成 `format:"other"` 条目列出。当时改叫 `.{name}.optimizing.tmp`（`list()` 跳过 `.` 开头文件），真机验证过。**2026-09-30 再改**：按书名起名在长书名时超 255 字节失败，panic 后半成品和补封面副本（数百 MB）还会留到下次重启；现在是 book-serve 的 `ScratchFile`，名字 `.<pid>.<序号>.<种类>.tmp`、Drop 自动删，启动时再清母版库目录下所有“点前缀 + `.tmp`”普通文件（新旧两种名字都认；未上真机）。
+`Staging::optimize()` 的临时产物起初没带点前缀，真机复现被 `GET /staging` 当成 `format:"other"` 条目列出。当时改叫 `.{name}.optimizing.tmp`（`list()` 跳过 `.` 开头文件），真机验证过。**2026-09-30 再改**：按书名起名在长书名时超 255 字节失败，panic 后半成品和补封面副本（数百 MB）还会留到下次重启；现在是 book-serve 的 `ScratchFile`，名字 `.<pid>.<序号>.<种类>.tmp`、Drop 自动删，启动时再清母版库目录下所有“点前缀 + `.tmp`”普通文件（新旧两种名字都认；09-30 已部署，待手测）。
 
 ### 追记：补分步进度 ≠ 进一步省内存（2026-09-19）
 
@@ -426,11 +427,11 @@ EPUB 线原则④（09-17）：`comic_detect::is_comic`（`MIN_IMAGES=20`、`TEX
 
 `Staging::deliver()`（不拆分路径）的渲染自检 `stats::text_profile(&data)` 内部 `check::read_entries` 会把 zip **全部条目（含图片）**解压，自检却只用 OPF/HTML。新增 `stats::text_profile_file(path)`：按条目遍历，`wants_entry()` 先看条目名，非 OPF/HTML 连 `read_to_end` 都不做；逐字符统计抽成私有 `accumulate()` 与内存版共享，差分测试断言两入口结果相等。`deliver()` 改调新入口并配合 `rmsvc_core::xochitl::upload_file`（流式上传）。真机 `VmHWM` 数据见书架白皮书 §03bh。
 
-### 追记③：清洗与占位去热点（2026-09-24 第三轮审计，host 实测，未上真机）
+### 追记③：清洗与占位去热点（2026-09-24 第三轮审计，host 实测，当天部署）
 
 只改实现、输出逐字节不变（7 本 EPUB × 5 入口 + 5 份 PDF 共 45 项对拍）：`collect_footnote_notes` 本章找不到被引用的 id 就直接返回（此前它是章节变换里最慢的一步）；`is_empty_page` 改成单次去标签 + 字节扫描；三处各编一份的 `<body>` 提取正则收成 `htmlproc::first_body_inner`；`collapse_dup_id_attrs` 先只读扫、没有双 id 就不重建全文；占位文档的 OPF 属性解析改走 `wash::opf` 共享 helper，不再每取一个属性现编一个正则。数字：端到端流式优化《白夜行》158→88ms、《偷書賊》101→61ms、《雪人》69→52ms；552 项 manifest 的漫画卷造占位 81→5ms。`stats::text_profile` 内存版与文件版合成一个 `Read+Seek` 泛型实现（内存版此前会把图片也解压一遍）。
 
-### 追记④：worker 兜底与去掉线性查找（2026-09-25 第四轮审计，host 验证，未上真机）
+### 追记④：worker 兜底与去掉线性查找（2026-09-25 第四轮审计，host 验证，当天部署）
 
 - **坏图不再卡死优化**：阶段二的 worker 读外部图片头（`pixel_count`）时 panic 会让 worker 退出；worker 全退后，主线程要么拿到"线程异常退出"，要么在满队列上 `job_tx.send` 永远阻塞（主线程自己还握着一份 `job_rx`，通道永远不算断开）。现在读头放进 `catch_unwind`（按读不出尺寸处理），生成 worker 后主线程立刻 drop 自己那份 `job_rx`，worker 全退时 `send` 马上报错。
 - **"页数 × 条目数"的线性查找改索引**：漫画识别（`comic_detect`）、文字页留边检查（`comic_pad`）、空页清理（`wash::empty_pages`）、拆分体积估算（`comic_split::SpineSizer`，09-30 随分卷删除）此前每查一页、每张图都 `entries.iter().find` 扫全书，两千页漫画要上千万次字符串比较；现在按条目名建一次 `HashMap`（同名取第一条，与原行为一致）。
@@ -481,7 +482,7 @@ EPUB 线原则④（09-17）：`comic_detect::is_comic`（`MIN_IMAGES=20`、`TEX
 3. 删递归的简化决策值得，但它调低了"单卷超限"门槛，按页细切是必要配套，不能只做一半。
 4. 历史遗留的"安全上限"数字没有真机实测覆盖就等于猜测；判据类常量要写清"实测点在哪、没测的区间在哪"。
 
-### 追记：两处丢页与标题转义（2026-09-25 第四轮审计，host 验证，未上真机）
+### 追记：两处丢页与标题转义（2026-09-25 第四轮审计；分卷 09-30 已删，本追记为历史）
 
 - **目录前的页被丢**：`plan_pieces_sized` 每一份取"本条目录项起点 → 下一条起点"，第一份也从 NCX 第一条算起；而合集漫画的 NCX 第一条常常不指向第 0 页（封面、扉页、版权页不进目录），这些页不属于任何一份，拆分投递后从书里消失。现在第一份固定从 spine 第 0 页开始（`let start = if i == 0 { 0 } else { *start }`）。测试 `pages_before_first_ncx_entry_go_into_first_piece`。
 - **百分号编码的图片路径**：`imgs_referenced` 此前直接拿 `src` 对 zip 条目名，`<img src="../images/%E5%B0%81%E9%9D%A2%200.jpg">` 对不上 `images/封面 0.jpg`，这张图取不到、整页被当成"没有可用图片"丢掉，体积估算也漏算。现在先 `epubzip::percent_decode` 再解析路径。测试 `percent_encoded_img_src_resolves_to_zip_entry`。
@@ -579,7 +580,7 @@ EPUB 线原则④（09-17）：`comic_detect::is_comic`（`MIN_IMAGES=20`、`TEX
 
 **链接三轮真机实验**（量 xochitl 生成的预览 PDF，免肉眼）：① 3 章测试书——只有同文件 `#锚点` 被转成书内跳转，跨文件写法全被当 `/URI` 外链（§09⑯）；② 单文件版——目录指文件内锚点，`.epubindex` 里逐条映射到正确页；③ 用户反馈"点了不跳"——目标用的是空 `<a id></a>`，预览 PDF 名字树里 0 个目标；对照能跳的《甲午》331 个；改挂非空段落后 95 个全部登记、逐个核对落页正确（§09⑰）。**教训**：`.epubindex` 只管目录，正文链接要看预览 PDF 的 `/Dests` 名字树，两者都过才算"能跳"。
 
-**2026-09-25 第四轮审计（host 验证，未上真机）**：
+**2026-09-25 第四轮审计（host 验证，当天部署）**：
 - **书名**：`pdf_doc_title` 此前只认"`/Info` 是引用、`/Title` 是直接字符串"一种写法，两者是间接对象或内嵌字典时取不到书名、退回文件名；现在三种写法都认（测试覆盖）。
 - **按行分组**：公式区域探测与字号识别标题原来对每行扫一遍全页字符，calibre 逐字 `Td` 的 PDF 行号几乎逐字递增，一页 2000 字约 400 万次比较；改为每页一遍 `BTreeMap` 分组。host 100 页 × 2000 字 251ms → 46ms；保留旧实现作参照做差分测试（伪随机页 + 真实 `sample.pdf` 逐项相等）。
 - **公式裁图**：`crop_pixmap_to_png` 只拷裁出的那一块，不再每个公式块先复制一整页 RGBA（2 倍渲染的 A4 约 8MB）。
@@ -587,7 +588,7 @@ EPUB 线原则④（09-17）：`comic_detect::is_comic`（`MIN_IMAGES=20`、`TEX
 
 **⑤ 质量门 + 落地**：见 §08；过门写 `<stem>.epub`，原 `.pdf` 挪进母版库隐藏备份 `.pdf-originals/` 保留 7 天；不过门原 PDF 不动；已有同名 `.epub` 则转换前就停下（落地与备份都在 book-serve 侧，见传书线架构 §2.5）。
 
-### 内存释放点与解压上限（2026-09-24 第三轮审计，host 实测，未上真机）
+### 内存释放点与解压上限（2026-09-24 第三轮审计，host 实测；当天部署，真机没量过）
 
 ![PDF 处理管线的内存释放点](diagrams/bc-pdf-memory.svg)
 
@@ -618,7 +619,7 @@ EPUB 线原则④（09-17）：`comic_detect::is_comic`（`MIN_IMAGES=20`、`TEX
 > | 画质五项排查 + 提速 | 五项未实施；SIMD 缩放 `imgopt::resize_lanczos3` 现役 |
 > | 内容保真核查 | 现役："有文字的漫画不转 PDF"（`comic_detect::is_text_free_comic`）、漫画自动目录、PDF 仅裁边收紧 |
 > | 换回 EPUB + 单趟管线 + 命名 | 现役：`prepare_comic_page_for_epub`、`bookconv::naming` |
-> | 占位 + 替换 | 现役（权威描述：书架白皮书 §03bn、传书线架构 §6.1）；>153MB 首次渲染 09-25 真机通过 |
+> | 占位 + 替换 | 现役（机制权威：传书线架构 §6.1；决策与真机数据：书架白皮书 §03bn）；本节只留实验数据与坑 |
 > | 图片并行 + 内存预算 | 现役：`imgpool.rs` |
 > | 漫画缺目录 / 日志核查 / 封面 | 现役：`wash::page_chunk_toc`、`wash::ensure_cover_declared`、`bin/cover_fix.rs` |
 
@@ -657,15 +658,15 @@ EPUB 线原则④（09-17）：`comic_detect::is_comic`（`MIN_IMAGES=20`、`TEX
 
 ### 突破 xochitl 上传体积上限：占位 + 替换（2026-09-20，真机已验证并部署）
 
-> 权威描述：书架白皮书 §03bn、传书EPUB线架构 §6.1。此处只留**真机实验数据与踩坑**。
+> 机制的权威描述在传书EPUB线架构 §6.1，决策与后续真机数据在书架白皮书 §03bn。此处只留**最早的真机实验数据与踩坑**。
 
 原理：xochitl 网页上传约 100MB 硬限；`book-serve` 在设备上可直接写书库目录，先传几 KB 占位文档建条目、再原子换成真文件（`bookconv::placeholder` + `Xochitl::upload_large_file`；`Staging::deliver` 超 `native_upload_limit_mb`=90 时优先走此通道，上限 `MAX_DIRECT_BYTES`=1GiB）。
 
 **真机实验**（占位 → `scp` 换文件 → 用户打开）：**PDF**：占位 99KB → 乱马 01 的 154MB/349 页，**同时改写 `.content`**（`pageCount`/`originalPageCount`/逐页 UUID 表/`redirectionPageMap`/`sizeInBytes`），能打开、翻页正常，列表页数/大小点开后才刷新，**不需重启 xochitl**。**EPUB**：占位 1.7KB → 153MB，**删掉占位的渲染缓存 `.pdf`/`.epubindex`**，首次打开 xochitl 自己重渲（**约 25 秒**，351 页），之后走缓存。
 
-**2026-09-25 两处修正（host 验证）**：占位从原书 OPF 读出的 `dc:title` 是已转义文本，此前再 `xml_escape` 一遍，书名带 `&` 的大书设备显示名多出字面 `&amp;`；`dc:creator`/`dc:language` 此前原样拼接，原书里有 CDATA、标签或非法字符时占位 OPF 不是合法 XML、导入失败。现在三项都"读出 → 还原字符引用 → 转义一次"。同日 `rmsvc-core` 给整个"传占位 → 认领 → 替换"加了串行锁（两本大 PDF 占位字节相同，同时投会认领到同一条目，见传书线架构 §6.1）。
+**2026-09-25 两处修正（host 验证，当天部署）**：占位从原书 OPF 读出的 `dc:title` 是已转义文本，此前再 `xml_escape` 一遍，书名带 `&` 的大书设备显示名多出字面 `&amp;`；`dc:creator`/`dc:language` 此前原样拼接，原书里有 CDATA、标签或非法字符时占位 OPF 不是合法 XML、导入失败。现在三项都"读出 → 还原字符引用 → 转义一次"。同日 `rmsvc-core` 给整个"传占位 → 认领 → 替换"加了串行锁（两本大 PDF 占位字节相同，同时投会认领到同一条目，见传书线架构 §6.1）。
 
-**三个坑**：①显示名取占位 EPUB 的 `dc:title`（PDF 取上传文件名），替换后不改名 → 占位必须带真书名；②`cover.png` 按占位封面生成，替换后不补 → 占位必须带真封面；③导入后 xochitl 用 EPUB 自己的 `dc:title`（乱马原值甚至是 "Unknown"），故优化时对带卷标记的书把 `dc:title` 改成规范名。**>153MB 首次渲染（2026-09-25 真机通过）**：《乱马》11 卷 156.5MB 走占位通道投入，第一次打开约 74 秒渲染完，`pageCount` 2→349，写出 `.epubindex`；xochitl 主进程 `VmHWM` 410MB、没有重启（渲染在 xochitl 另起的工作进程里做，那个进程的峰值没量到）。**仍是已知限制**：占位上传后进程崩溃会在书库留下占位文档（回执提示手动删除）。
+**三个坑**：①显示名取占位 EPUB 的 `dc:title`（PDF 取上传文件名），替换后不改名 → 占位必须带真书名；②`cover.png` 按占位封面生成，替换后不补 → 占位必须带真封面；③导入后 xochitl 用 EPUB 自己的 `dc:title`（乱马原值甚至是 "Unknown"），故优化时对带卷标记的书把 `dc:title` 改成规范名。后续 >153MB 首次渲染的真机数据见书架白皮书 §03bn。**仍是已知限制**：占位上传后进程崩溃会在书库留下占位文档（回执提示手动删除）。
 
 ### 优化提速：图片并行 + 内存预算（2026-09-20，真机已验证并部署）
 
@@ -704,7 +705,7 @@ EPUB 线原则④（09-17）：`comic_detect::is_comic`（`MIN_IMAGES=20`、`TEX
 
 > **现状结论**：EPUB 漫画每页被 xochitl（reMarkable 官方阅读器进程）画成一个固定"图片框"，图片被**栏宽**或**高度上限**中先到的那个卡住。旧方案（补白成屏幕比例 954:1696、页边距默认 56）图片只有 **260pt 宽（页宽 303pt）、左 20.0 / 右 22.9pt**。新方案两件事配套：
 >
-> 1. 图片补白到 **302.4:462.1**（`imgopt::EPUB_FRAME_ASPECT` = 302.365 / 462.1 ≈ 0.6543，画布 **954×1458**，`imgopt::EpubComicFrame::MinMargin`，容差 **0.3%**）。302.365 = 页宽 303 − 2×边距 1px（1px = 303/954 = 0.318pt），文中简写 302.4。
+> 1. 图片补白到 **302.4:462.1**（`imgopt::EpubComicFrame::MinMargin`，容差 **0.3%**）。302.365 = 页宽 303 − 2×边距 1px（1px = 303/954 = 0.318pt），文中简写 302.4。画布当时是 **954×1458**；**2026-09-30 起改成 952×1457**（`EPUB_COMIC_PAGE_W/H`，读 xochitl 排出的 PDF 实测的图框，与旧比例只差 0.14%），`EPUB_FRAME_ASPECT` 由它算出；旧画布 `EPUB_COMIC_PAGE_LEGACY` 仍算排好（§10「v15 起几个易误解点」第 1 条）。本节下文的 954×1458 都是当时的数字。
 > 2. 用户**首次打开**这本书时，由 xochitl 里的 qmd 代理（qmd=对 xochitl QML 的补丁，`shelf/xovi/shelf-comic-margins.qmd`）调用阅读器自己的 `EpubProperties.setMargins(1)`。
 >
 > 真机端到端（开关开启，全流程用户零设置）：图片框 **302.0 × 461.5pt，左 0.3 / 右 0.7pt**，宽 +16%，无需 PDF。
@@ -713,7 +714,7 @@ EPUB 线原则④（09-17）：`comic_detect::is_comic`（`MIN_IMAGES=20`、`TEX
 >
 > **边距为什么是 1 不是 0**：0 也可行（`setMargins(0)` 图片 302.6×461.5、左 0.0/右 0.4），但用户认为图片贴屏幕边缘不合适。
 >
-> **前提**：只对**开关打开之后、用新页框优化并加入**的漫画生效（`Staging::comic_margin_eligible`：开关开 + 漫画 + 优化版本 ≥ 15（v16 页框没变，`MIN_MARGIN_SINCE_VERSION`）+ **文字页已留边** + 页框 954×1458）；开关关着时优化的、或已在设备里的旧漫画不会登记——它们在最小边距下会贴左、右侧空一大块。旧漫画要受益：开开关后**从原始文件重新优化**再加入（别对已优化产物二次优化，多一代 JPEG 有损）。
+> **前提**：只对**开关打开之后、用新页框优化并加入**的漫画生效（`Staging::comic_margin_eligible`：开关开 + 漫画 + 优化版本 ≥ 15（v16 页框没变，`MIN_MARGIN_SINCE_VERSION`）+ **文字页已留边** + 页框 952×1457 或旧 954×1458）；开关关着时优化的、或已在设备里的旧漫画不会登记——它们在最小边距下会贴左、右侧空一大块。旧漫画要受益：开开关后**从原始文件重新优化**再加入（别对已优化产物二次优化，多一代 JPEG 有损）。
 
 ![漫画页边距最小化：优化时补白与标记 → 加入时登记 → 首次打开时 qmd 代理调用 setMargins(1)；虚线=开关关闭分支（不登记、接口 404、页框保持屏幕比例）](diagrams/comic-margin-pipeline.svg)
 
@@ -758,7 +759,7 @@ EPUB 线原则④（09-17）：`comic_detect::is_comic`（`MIN_IMAGES=20`、`TEX
 **最终方案**（`shelf/xovi/shelf-comic-margins.qmd` + `book-serve/src/comic_margins.rs` + 网关实验室开关），按时间顺序：
 
 1. 用户在网页打开「实验室→漫画页边距最小化」（网关写 `reading-qol.json` 的 `comicMinMargin`，缺省 false）。
-2. **优化**：book-serve 每次现读开关（`Staging::comic_frame`），开 → `OptimizeOpts.comic_frame = MinMargin`（纯图漫画页补白到 954×1458，另做文字留边与 body 类处理），关 → `Screen`（改动前行为）。
+2. **优化**：book-serve 每次现读开关（`Staging::comic_frame`），开 → `OptimizeOpts.comic_frame = MinMargin`（纯图漫画页补白到当时的 954×1458、现在的 952×1457，另做文字留边与 body 类处理），关 → `Screen`（改动前行为）。
 3. **加入 xochitl** 导入完成（拿到 uuid）后，若满足上面「前提」五条（页框判定 `is_min_margin_framed_file` 读前 24 张整页图头部尺寸，过半吻合；短边 <318px 的装饰小图不计），登记到 `comic-margins.json`（通用 `PendingQueue`，条目 `{uuid, margins:1, at}`，路径 `$XDG_STATE_HOME/shelf/books/comic-margins.json`）。**登记发生在两条投递路径**：普通上传（`render_check` 探到 uuid 后）、大文件占位（`try_deliver_direct`）；当时的第三条分卷回退路径不登记（分卷 09-30 已删）。book-serve 启动时清掉书已不在库里的待办。
 4. qmd 代理插在 `DocumentView.qml`：`Connections.onDocumentChanged` → 1.5 s 后 `GET http://127.0.0.1:8790/margins/<uuid>`：404（没登记 / **开关关着**）什么都不做；200 → `EpubProperties.createObject` → 边距与目标不同才 `setMargins(1)` → `POST /margins/applied` 销账。**每本书只设一次**，之后用户在界面改回去不干预。
 5. **真机踩的坑**：`document.id` 是**值类型**，拼接能显示但 `!==`/`===` 恒假，必须 `String(...)`；`EpubProperties` 只在命中时才 `createObject`；qmd 只在 xochitl 启动时加载，**部署/更新代理后要整机重启**（2026-09-25 起不再 `systemctl restart xochitl`，它本身会概率性崩）；改开关不用重启（book-serve 每次现读）。
@@ -820,7 +821,7 @@ EPUB 线原则④（09-17）：`comic_detect::is_comic`（`MIN_IMAGES=20`、`TEX
 ## 21｜第五轮审计（2026-09-30）：坏输入设防、产物字节变化、删死代码
 
 > **大白话**：这一轮主要防"用户传进来的坏文件把整个书架服务弄崩或吃光内存"，顺带修了几类特殊书会丢内容的问题、删掉了已经没人调用的漫画 PDF 代码。
-> **全部只在开发机测过（`cargo test --workspace` 521 个通过、2 个忽略），没部署、没上真机。** `OPTIMIZE_VERSION` 仍是 16。
+> **状态**：当时开发机 `cargo test --workspace` 521 个通过（含随后删除的 koreader-serve），09-30 14:10 部署、`pdfmeta` 补修 15:23 部署，部署自检通过，**功能待手测**。`OPTIMIZE_VERSION` 仍是 16。书架线这一轮的完整清单（含 book-serve、网关部分）以书架白皮书 §03bu 为准，本节只写 bookconv 与 pdf-extract-cj。
 
 ![坏 PDF 的四道闸：层数、解压量、对象大小、第三方代码 panic](diagrams/bc-pdf-guards.svg)
 
