@@ -502,7 +502,8 @@ pub fn preserve_relink_footnotes(html_text: &str, name: &str, index: &std::colle
     // ⚠ 注释区必须插到 </body> **之内**。optimize 处理的是完整 xhtml，若加到文件末尾就落在
     // </body></html> 外面=无效 HTML，xochitl 不为其中的 id 建锚点 → marker 死链、点不动。
     let block = format!("\n<hr/>\n<div class=\"footnotes\">\n{}\n</div>\n", appended.join("\n"));
-    let out = match out.rfind("</body>") {
+    // `</BODY>` 大写也认（此前区分大小写，注释区会被追加到 `</html>` 之后）。
+    let out = match crate::html::body_range(&out).map(|(_, close)| close) {
         Some(pos) => format!("{}{}{}", &out[..pos], block, &out[pos..]),
         None => format!("{out}{block}"),
     };
@@ -661,6 +662,10 @@ mod optimizer_footnote_tests {
         // 注释区必须落在 </body> 之内
         let body_end = out.find("</body>").unwrap();
         assert!(out[..body_end].contains(r##"<div class="footnotes">"##), "注释区落到 </body> 外: {out}");
+        // 大写 </BODY> 也要落在里面（此前区分大小写，注释区被追加到 </HTML> 之后）
+        let upper = preserve_relink_footnotes(&chapter.replace("body>", "BODY>"), "c.xhtml", &index, crate::optimize::FootnoteMode::Anchor);
+        let body_end = upper.find("</BODY>").unwrap();
+        assert!(upper[..body_end].contains(r##"<div class="footnotes">"##), "注释区落到 </BODY> 外: {upper}");
         // Inline 模式：注释就地内联〔…〕、不跳转、无章末 div
         let inl = preserve_relink_footnotes(chapter, "c.xhtml", &index, crate::optimize::FootnoteMode::Inline);
         assert!(inl.contains("〔第十二条注释文本〕") && !inl.contains(r##"<div class="footnotes">"##) && !inl.contains(r##"href="#n12""##), "Inline 应内联常显不跳转: {inl}");

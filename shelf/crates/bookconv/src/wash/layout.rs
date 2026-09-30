@@ -252,7 +252,7 @@ pub(super) fn remove_chapter_end_blanks(entries: &mut [Entry], rep: &mut WashRep
     if tail_classes.is_empty() {
         return;
     }
-    for e in entries.iter_mut().filter(|e| e.name.to_ascii_lowercase().ends_with(".css") && !e.name.ends_with(WASH_CSS_NAME)) {
+    for e in entries.iter_mut().filter(|e| e.name.to_ascii_lowercase().ends_with(".css") && !is_wash_css_name(&e.name)) {
         let Ok(css) = std::str::from_utf8(&e.data) else { continue };
         let new = strip_tail_spacing(css, &tail_classes);
         if new != css {

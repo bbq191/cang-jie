@@ -734,6 +734,23 @@
             assert!(!is_empty_page(&page(b)), "{b:?}");
         }
         assert!(is_empty_page("<p>没有 body 的片段按空页算（与旧实现一致）</p>"));
+        // 截断的文件（有 <body> 没有 </body>）：正文还在，不能当空页删掉
+        assert!(!is_empty_page("<html><body><p>截断前的正文</p>"));
+        assert!(is_empty_page("<html><body> <p></p>"));
+    }
+
+    /// `<opf:spine toc="旧id">` 带前缀：NCX 的 manifest id 改成 ncx 后 toc 属性要同步（此前只认无前缀 spine，toc 悬空）。
+    #[test]
+    fn ncx_manifest_id_fix_updates_prefixed_spine() {
+        let mut v = vec![e(
+            "content.opf",
+            r#"<opf:package xmlns:opf="http://www.idpf.org/2007/opf" version="2.0"><opf:metadata><dc:title>书</dc:title></opf:metadata><opf:manifest><opf:item id="toc" href="toc.ncx" media-type="application/x-dtbncx+xml"/><opf:item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/></opf:manifest><opf:spine toc="toc"><opf:itemref idref="c1"/></opf:spine></opf:package>"#,
+        )];
+        v.push(e("c1.xhtml", "<html><body><p>正文</p></body></html>"));
+        let mut rep = WashReport::default();
+        super::ncx_fix::fix_ncx_manifest_id(&mut v, &mut rep);
+        let opf = s(&v, "content.opf");
+        assert!(opf.contains(r#"<opf:spine toc="ncx">"#), "{opf}");
     }
 
     /// 全书没有 `<h>` 标题、目录里没有中文时，新建目录标题用"Contents"；重建已有 nav 时其它 `<nav>`（landmarks）与原标题保留。
@@ -864,6 +881,24 @@
         let rep = wash_entries(&mut v, &WashOpts::default()).unwrap();
         assert_eq!(rep.sections_paginated, 0);
         assert_eq!(spine_files(&v).len(), 1);
+    }
+
+    /// `<opf:…>` 前缀的 OPF：拆出的份要进 spine（此前只认无前缀 itemref，后半章从 spine 消失），新 item 也带前缀。
+    #[test]
+    fn pagination_registers_pieces_in_prefixed_opf() {
+        let long = "这是足够长的正文文字，确保标题页之后的内容超过三十个字这条门槛，不被当成书名页的作者行。";
+        let mut v = vec![e(
+            "OEBPS/content.opf",
+            r#"<opf:package xmlns:opf="http://www.idpf.org/2007/opf" version="2.0"><opf:metadata><dc:title>书</dc:title></opf:metadata><opf:manifest><opf:item id="c0" href="Text/c1.xhtml" media-type="application/xhtml+xml"/></opf:manifest><opf:spine><opf:itemref idref="c0"/></opf:spine></opf:package>"#,
+        )];
+        v.push(e("OEBPS/Text/c1.xhtml", &format!(r#"<html><head><title>t</title></head><body><h1>第一章</h1><p>甲{long}</p><h1>第二章</h1><p>乙{long}</p></body></html>"#)));
+        let rep = wash_entries(&mut v, &WashOpts::default()).unwrap();
+        assert!(rep.sections_paginated > 0);
+        let spine = spine_files(&v);
+        assert!(spine.len() > 1 && spine.iter().all(|p| v.iter().any(|x| &x.name == p)), "拆出的份都在 spine 里: {spine:?}");
+        let opf = s(&v, "OEBPS/content.opf");
+        assert!(!opf.contains("<item "), "新 item 沿用 opf: 前缀: {opf}");
+        assert!(body_of(&v, spine.last().unwrap()).contains("乙"), "最后一份是第二章正文");
     }
 
     #[test]

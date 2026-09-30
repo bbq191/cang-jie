@@ -25,12 +25,10 @@ pub struct Opf {
     pub index: usize,
     pub dir: String,
     /// manifest id → zip 路径
-    #[allow(dead_code)]
     pub items: HashMap<String, String>,
     /// spine 顺序的 zip 路径
     pub spine: Vec<String>,
     pub nav_doc: Option<String>,
-    #[allow(dead_code)]
     pub ncx: Option<String>,
 }
 

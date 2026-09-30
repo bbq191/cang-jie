@@ -790,11 +790,13 @@ fn piece_path(orig: &str, k: usize, taken: &HashSet<String>) -> String {
 
 /// 在 OPF 里把拆出来的新文件登记进 manifest（紧跟原项）和 spine（紧跟原 itemref）。`splits` = [(原文件, 新拆出的各份)]，
 /// 一趟改完（此前每个被拆文件都把越来越长的 OPF 重新解析、整份复制一遍）。
+/// 元素名认命名空间前缀（`<opf:itemref>`），新写的 `<item>` 沿用原项的前缀——此前只认无前缀的 `itemref`，
+/// 带前缀的 OPF 拆出的第 2 份起进不了 spine，读者看不到后半章。
 fn register_in_opf(opf_text: &str, opf_dir: &str, splits: &[(String, Vec<String>)]) -> String {
     let items = manifest_items(opf_text);
     let by_path: HashMap<String, &ManifestItem> = items.iter().map(|it| (resolve(opf_dir, &percent_decode(it.href)), it)).collect();
     let irefs: HashMap<&str, html::Tag> = html::tags(opf_text)
-        .filter(|t| t.is_start() && t.is("itemref"))
+        .filter(|t| t.is_start() && opf::is_local(t.name, "itemref"))
         .filter_map(|t| tag_attr(&opf_text[t.start..t.end], "idref").map(|id| (id, t)))
         .collect();
     let mut edits: Vec<(usize, usize, String)> = Vec::new();
@@ -805,9 +807,12 @@ fn register_in_opf(opf_text: &str, opf_dir: &str, splits: &[(String, Vec<String>
         let mut new_items = String::new();
         let mut new_refs = String::new();
         let iref = irefs.get(it.id).map(|t| html::remove_attr(&opf_text[t.start..t.end], "id"));
+        // `<opf:item …>` → "opf:"（manifest_items 已按本地名 item 筛过，名字末尾 4 字节就是 item）
+        let name_end = it.tag[1..].find(|c: char| c.is_ascii_whitespace() || c == '/' || c == '>').map_or(it.tag.len(), |i| i + 1);
+        let prefix = &it.tag[1..name_end.saturating_sub(4).max(1)];
         for (k, p) in new_paths.iter().enumerate() {
             let nid = format!("{}-p{}", it.id, k + 2);
-            new_items.push_str(&format!("<item id=\"{nid}\" href=\"{}\" media-type=\"{}\"{props}/>", crate::epubzip::href_to(opf_dir, p, ""), it.media_type));
+            new_items.push_str(&format!("<{prefix}item id=\"{nid}\" href=\"{}\" media-type=\"{}\"{props}/>", crate::epubzip::href_to(opf_dir, p, ""), it.media_type));
             if let Some(r) = &iref {
                 new_refs.push_str(&html::set_attr(r, "idref", &nid));
             }
