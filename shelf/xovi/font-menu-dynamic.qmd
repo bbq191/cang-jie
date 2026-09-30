@@ -17,7 +17,7 @@
 ; 【真机】3.28.0.172 2026-09-05：qmldiff 应用干净，`SHELF-FONT: onCompleted lang=en appended=4 count=8`。
 ; 【qmldiff 纪律】INSERT{} 块内是 QML，注释只能用 //；**不写 `({})` 对象字面量、handler 一律 `{ … }` 块**（否则整份 qmd
 ;   "expected item assignment value token, got Some(Symbol('('))" 不应用）。改前先用 asivery/qmldiff CLI `apply-diffs` 离线实跑
-;   （reading-qol/README「离线验证管线」），它能一比一复现设备端的解析错误。
+;   （输入是从固件解出的 FormatFont.qml；`check-compatibility` 子命令不解析 qmd 结构、查不出这类错误）。
 ; ─────────────────────────────────────────────────────────────────────────
 
 AFFECT /qml/device/view/documentview/FormatFont.qml

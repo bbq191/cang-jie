@@ -28,20 +28,20 @@
 ;   为空串"的约定一致（book-serve `.metadata` 落地、`Xochitl::upload` 的 `set_folder("")` 同理）。
 ;   **没有真机点过这个对话框做交叉验证**（那样会真建一个用户可见的文件夹，干扰度更高）——这条结论
 ;   目前只到"反编译 + 静态调用链一致"这一步，比"形状看着像"更硬，但还没有"UI 手点后 .metadata 真的
-;   多了一条 CollectionType 记录"这层最终验证；先用 note-serve 真实业务场景（下方"真机验证"节）间接
-;   验证，如果后续发现建出来的文件夹有问题（比如漏了某个必填的兄弟调用），再回来加。
+;   多了一条 CollectionType 记录"这层最终验证；靠母版库「加入 xochitl → 文件夹」的真实投递流程间接
+;   验证（书架白皮书对应记录），如果后续发现建出来的文件夹有问题（比如漏了某个必填的兄弟调用），再回来加。
 ;
-; 【为什么锚点选 MainView 而不是 Sidebar】`shelf-trash-agent.qmd` 注入 `Sidebar.qml`，但 Sidebar
-;   没有 `import xofm.libs.library`——要用 `Library` 单例得先加一条 IMPORT，而 qmldiff 的 IMPORT
-;   语句强制要求显式版本号，实测源文件里 `xofm.libs.library` 是 Qt6 新式无版本 import，硬造一个版本号
-;   （如 `1.0`）风险不可控、没法离线验证是否真的解析成功。MainView.qml（书库+文档常驻宿主，
-;   `cardhw-notify.qmd` 已用过的同一份文件/同一个锚点）本来就 `import xofm.libs.library` +
+; 【为什么锚点选 MainView 而不是 Sidebar】Sidebar 没有 `import xofm.libs.library`——要用 `Library`
+;   单例得先加一条 IMPORT，而 qmldiff 的 IMPORT 语句强制要求显式版本号，实测源文件里
+;   `xofm.libs.library` 是 Qt6 新式无版本 import，硬造一个版本号（如 `1.0`）风险不可控、没法离线验证
+;   是否真的解析成功。MainView.qml（书库+文档常驻宿主）本来就 `import xofm.libs.library` +
 ;   `import com.remarkable`，直接用现成裸单例，不用改 import 列表——更小的改动面。
+;   `shelf-trash-agent.qmd` 2026-09-25 重写后也改注入这里的同一个锚点。
 ;
-; 【队列后端】book-serve 新增 `mkdir.rs`（`MkdirQueue`，跟 `trash.rs` 同款 JSON 落盘队列，各自独立，
-;   都在 `$XDG_STATE_HOME/shelf/books/`）：`POST /mkdir/add {name}` 入队（note-serve 上传前发现目标
-;   文件夹不存在时调用，fire-and-forget、不阻塞本次上传）、`GET /mkdir/pending` 本代理拉取执行
-;   （顺手把已经真实存在的文件夹名从队列里剔除，不需要 QML 端 ack，跟 trash 队列的剔除方式对称）。
+; 【队列后端】book-serve `mkdir.rs`（`MkdirQueue`，跟 `trash.rs` 同款 JSON 落盘队列，各自独立，
+;   都在 `$XDG_STATE_HOME/shelf/books/`）：`POST /mkdir/add {name}` 入队（`staging/deliver.rs::ensure_folder`
+;   投递前发现目标文件夹不存在时调用，随后同步等本代理建出来、超时则落书库根）、`GET /mkdir/pending`
+;   本代理拉取执行（顺手把已经真实存在的文件夹名从队列里剔除，不需要 QML 端 ack，跟 trash 队列的剔除方式对称）。
 ;
 ; 【触发】没有类似"打开书库文件夹视图"那种天然事件可等——建文件夹必须先于 /upload 发生，不能等
 ;   上传后的 rowsInserted 才反应（因果顺序反了）。2026-09-22 前是 8s 一个常驻 Timer 定时拉；现改为
@@ -113,6 +113,8 @@ AFFECT /qml/device/view/main/MainView.qml
                                     console.log("SHELF-MKDIR: created " + names[i]);
                                 }
                             } catch (e) {
+                                // 此前静默吞掉：回复不是合法 JSON / createCollection 抛错时 journal 里什么都看不到。
+                                console.warn("SHELF-MKDIR: failed " + e);
                             }
                             if (count > 0) {
                                 next = 3000;
