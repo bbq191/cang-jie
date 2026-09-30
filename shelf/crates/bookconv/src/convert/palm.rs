@@ -391,12 +391,13 @@ pub fn parse_ncx(records: &[&[u8]], h: &Header) -> Vec<NcxEntry> {
         tagtable.push((hdr[q], hdr[q + 1], hdr[q + 2], hdr[q + 3]));
         q += 4;
     }
-    let cncx = records[ncx + 1 + ndata];
+    // `indx_locate` 只保证数据块在范围内，CNCX 记录可能缺（此前直接下标取，缺了就越界 panic）
+    let Some(&cncx) = records.get(ncx + 1 + ndata) else { return vec![] };
     // CNCX 文本校验：首串须 UTF-8 可解，否则判定不是我们要的 NCX（防误读别的索引族）
     {
         let mut p = 0usize;
         let l = read_varint_fwd(cncx, &mut p);
-        if l == 0 || p + l > cncx.len() || std::str::from_utf8(&cncx[p..p + l]).is_err() {
+        if l == 0 || l > cncx.len().saturating_sub(p) || std::str::from_utf8(&cncx[p..p + l]).is_err() {
             return vec![];
         }
     }
@@ -406,7 +407,8 @@ pub fn parse_ncx(records: &[&[u8]], h: &Header) -> Vec<NcxEntry> {
         }
         let mut p = o;
         let l = read_varint_fwd(cncx, &mut p);
-        if p + l > cncx.len() {
+        // 变长整数来自文件、可以大到 `p + l` 溢出，比剩余长度而不是做加法
+        if l > cncx.len().saturating_sub(p) {
             return String::new();
         }
         String::from_utf8_lossy(&cncx[p..p + l]).into_owned()
@@ -481,6 +483,21 @@ pub fn parse_fragment_starts(records: &[&[u8]], h: &Header) -> Vec<usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// 头 INDX 声明 1 个数据块、数据块正好是最后一条记录、CNCX 记录缺失：此前 `records[ncx + 1 + ndata]` 越界 panic。
+    #[test]
+    fn parse_ncx_without_cncx_record_is_empty_not_panic() {
+        let mut mobi = vec![0u8; 0xE8];
+        mobi[0xE4..0xE8].copy_from_slice(&1u32.to_be_bytes()); // NCX 头 INDX = 记录 1
+        let mut hdr = vec![0u8; 0x1C];
+        hdr[..4].copy_from_slice(b"INDX");
+        hdr[0x18..0x1C].copy_from_slice(&1u32.to_be_bytes()); // ndata = 1
+        hdr.extend_from_slice(b"TAGX\0\0\0\x0c\0\0\0\x01");
+        let data = b"INDX".to_vec();
+        let records: Vec<&[u8]> = vec![&[], &hdr, &data]; // 记录 3（CNCX）不存在
+        let h = Header { compression: 1, encryption: 0, text_record_count: 0, extra_flags: 0, mobi: &mobi, mobi_hlen: mobi.len() };
+        assert!(parse_ncx(&records, &h).is_empty());
+    }
 
     #[test]
     fn palmdoc_literal_and_backref() {
