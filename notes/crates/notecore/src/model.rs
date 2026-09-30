@@ -99,6 +99,10 @@ impl Status {
 /// §03al）两条都是纯文本、没有笔画坐标——`ink` 永远 `None`，天然走 `Entry::set_triage` 已有的
 /// "纯勾画直接定稿"快路径，不需要为它们单独加状态机分支。`#[serde(default)]` 兼容这个字段加之前
 /// 落盘的旧条目库（旧数据反序列化成 `Xochitl`，语义上也确实都是）。
+///
+/// KOReader 导入代码已从仓库删除（2026-09-30，见 git 历史），不会再产出这两个变体；**但变体必须保留**：
+/// 条目库里还存着以前导入的 KOReader 条目（`"source":"koreader_highlight"`/`"koreader_vocab"`），删了变体
+/// 这些书整本反序列化失败。
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum Source {

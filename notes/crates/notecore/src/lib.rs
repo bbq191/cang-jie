@@ -3,8 +3,8 @@
 //! - `geom`   勾画 ↔ 旁边手写的几何配对（同一页坐标系：笔画聚簇 → 簇找最近的勾画矩形）；
 //! - `hash`   簇指纹（笔画点集量化哈希）——增量的根：指纹不变不重识别；
 //! - `ingest` 一页解析结果 → 条目草稿，并按增量规则并入已有条目（校对文本永不被覆盖、删笔画只标撤销）。
-//! - `koreader` KOReader 高亮/生词 → 条目，跟 `ingest` 平行的另一条摄取入口（零笔画坐标，走
-//!   `Entry::set_triage` 已有的"纯勾画直接定稿"快路径），供 ink-serve 的 KOReader 回流用。
+//! - （原 `koreader` 模块——KOReader 高亮/生词 → 条目——2026-09-30 已从仓库删除，见 git 历史；
+//!   旧数据兼容靠 `model::Source` 保留的 KOReader 变体。）
 //! - `marker` 行首标记的 OCR 路兜底（转写文本开头的 `-`/`1.`/`口` → 样式，并剥掉标记）。
 //! - `mdimport` 单篇 markdown → `rmv6::write::Paragraph` 列表（跟 `marker` 方向相反：输入已经是
 //!   规范 markdown 语法，不是 OCR 纯文本），供 note-serve"单篇导入"这条独立于条目库的功能用。
@@ -15,7 +15,6 @@ pub mod export;
 pub mod geom;
 pub mod hash;
 pub mod ingest;
-pub mod koreader;
 pub mod marker;
 pub mod mdimport;
 pub mod model;
