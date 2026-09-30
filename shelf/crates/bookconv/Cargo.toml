@@ -23,6 +23,8 @@ fb2 = "0.4"
 quick-xml = { version = "0.30", features = ["serialize", "encoding"] }
 # 网文获取（readlater 下沉，2026-09-05）：Readability 可读性抽取 + scraper 白名单重序列化成合法 XHTML
 readability-rust = "0.1.0"
+# 网页编码（GBK/GB2312/Big5 等非 UTF-8 中文站，2026-09-30）：quick-xml 的 encoding 特性已经带进来同一个 crate
+encoding_rs = "0.8"
 scraper = "0.18"
 ego-tree = "0.6"
 # 入库 PDF「优化」（有文字层→转 EPUB，无文字层/漫画→仅裁边，2026-09-19）：三者均纯 Rust、
