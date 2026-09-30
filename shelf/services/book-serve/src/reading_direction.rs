@@ -7,27 +7,23 @@
 //! **旧的手动指定清单**（`$XDG_STATE_HOME/shelf/books/rtl-overrides.json`，uuid 字符串数组）只读：2026-09-24 给当时已在设备上、
 //! 书里没写标记的一批书补过一次；2026-09-25 起母版库的"按书设阅读方向"也往里写过。**2026-09-30 用户定：方向只保留原书自带的**，
 //! 网页上按书指定整个撤掉，本服务不再写这份清单；已有的条目照旧生效（不替用户删），要撤就手动删文件或删条目。
+use rmsvc_core::cache::{FileStamp, StampCache};
 use rmsvc_core::fs::plain_name;
-use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::sync::Mutex;
-use std::time::SystemTime;
 
 /// 缓存条目上限：书库几十到几百本，超了整表清空重来即可（查询本身很便宜）。
 const CACHE_MAX: usize = 1024;
 
-/// uuid → (文件大小, mtime, 是否从右往左)。
-type RtlCache = HashMap<String, (u64, Option<SystemTime>, bool)>;
-
 pub struct ReadingDirection {
     lib: PathBuf,
     overrides: PathBuf,
-    cache: Mutex<RtlCache>,
+    /// uuid → 是否从右往左，按书库里那份 epub 的戳失效（解 zip 不持锁，查询结果幂等，偶尔重复算一次无妨）。
+    cache: StampCache<bool>,
 }
 
 impl ReadingDirection {
     pub fn new(lib: &Path, overrides: &Path) -> ReadingDirection {
-        ReadingDirection { lib: lib.to_path_buf(), overrides: overrides.to_path_buf(), cache: Mutex::new(HashMap::new()) }
+        ReadingDirection { lib: lib.to_path_buf(), overrides: overrides.to_path_buf(), cache: StampCache::new(CACHE_MAX) }
     }
 
     /// 手动指定清单里有没有这本（文件缺失 / 解析不了 = 没有）。
@@ -45,21 +41,8 @@ impl ReadingDirection {
             return Ok(true);
         }
         let path = self.lib.join(format!("{uuid}.epub"));
-        let Ok(md) = std::fs::metadata(&path) else { return Ok(false) };
-        let key = (md.len(), md.modified().ok());
-        if let Some(&(len, mtime, rtl)) = rmsvc_core::sync::lock(&self.cache).get(uuid) {
-            if (len, mtime) == key {
-                return Ok(rtl);
-            }
-        }
-        // 解 zip 不持锁：别的书同时打开时不必排在这一本后面（查询结果幂等，偶尔重复算一次无妨）。
-        let rtl = bookconv::placeholder::epub_is_rtl(&path);
-        let mut cache = rmsvc_core::sync::lock(&self.cache);
-        if cache.len() >= CACHE_MAX {
-            cache.clear();
-        }
-        cache.insert(uuid.to_string(), (key.0, key.1, rtl));
-        Ok(rtl)
+        let Some(stamp) = FileStamp::read(&path) else { return Ok(false) };
+        Ok(self.cache.get_or(uuid, stamp, || bookconv::placeholder::epub_is_rtl(&path)))
     }
 }
 
@@ -92,7 +75,7 @@ mod tests {
         std::fs::remove_file(t.path().join("manga.epub")).unwrap();
         epub(t.path(), "manga", "<spine/>");
         let f = std::fs::File::options().write(true).open(t.path().join("manga.epub")).unwrap();
-        f.set_modified(SystemTime::now() + std::time::Duration::from_secs(5)).unwrap();
+        f.set_modified(std::time::SystemTime::now() + std::time::Duration::from_secs(5)).unwrap();
         assert_eq!(rd.is_rtl("manga"), Ok(false));
     }
 
@@ -107,21 +90,9 @@ mod tests {
         std::fs::write(&list, r#"["u1"]"#).unwrap();
         assert_eq!(rd.is_rtl("u1"), Ok(true));
         assert_eq!(rd.is_rtl("novel"), Ok(false));
+        std::fs::write(&list, r#"["u1","novel"]"#).unwrap();
+        assert_eq!(rd.is_rtl("novel"), Ok(true), "清单现读、优先于书里标记（及其缓存）");
         std::fs::write(&list, "[\"u1\", 手改到一半").unwrap();
         assert_eq!(rd.is_rtl("u1"), Ok(false));
-    }
-
-    /// 手动指定清单：书里没写标记也按从右往左；清单缺失或损坏不影响按书里标记判断。
-    #[test]
-    fn override_list_marks_books_without_spine_flag() {
-        let t = tempfile::tempdir().unwrap();
-        epub(t.path(), "ranma", "<spine/>");
-        let list = t.path().join("rtl-overrides.json");
-        let rd = ReadingDirection::new(t.path(), &list);
-        assert_eq!(rd.is_rtl("ranma"), Ok(false));
-        std::fs::write(&list, r#"["ranma"]"#).unwrap();
-        assert_eq!(rd.is_rtl("ranma"), Ok(true), "清单现读，改了立即生效");
-        std::fs::write(&list, "not json").unwrap();
-        assert_eq!(rd.is_rtl("ranma"), Ok(false), "清单坏了当没有");
     }
 }

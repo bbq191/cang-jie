@@ -607,9 +607,10 @@ fn list_caches_level_probe_and_invalidates_on_rewrite_or_delete() {
     let plain = mini_epub(&[("OEBPS/a.xhtml", "<p>x</p>")]);
     s.stage_new("b.epub", &plain).unwrap();
     assert_eq!(s.list()[0].level, "none");
-    assert_eq!(rmsvc_core::sync::lock(&s.probes).len(), 1, "首次列表写入缓存");
+    assert_eq!(s.caches.probes.len(), 1, "首次列表写入缓存");
     // 篡改缓存里的结论：若第二次列表仍用它，说明命中缓存没有重开文件
-    rmsvc_core::sync::lock(&s.probes).get_mut("b.epub").unwrap().level = "full";
+    let stamp = rmsvc_core::cache::FileStamp::read(&s.dir.join("b.epub")).unwrap();
+    s.caches.probes.put("b.epub", stamp, ("full", false));
     assert_eq!(s.list()[0].level, "full", "文件没变 → 命中缓存");
     // 文件改写（内容长度变了）→ 缓存失效重判
     let marked = mini_epub(&[("OEBPS/a.xhtml", "<p>x</p>"), (optimize::OPTIMIZE_MARKER, optimize::OPTIMIZE_VERSION)]);
@@ -619,7 +620,39 @@ fn list_caches_level_probe_and_invalidates_on_rewrite_or_delete() {
     assert_eq!(s.list()[0].level, "none", "改写回未优化 → 重判");
     std::fs::remove_file(s.dir.join("b.epub")).unwrap();
     assert!(s.list().is_empty());
-    assert!(rmsvc_core::sync::lock(&s.probes).is_empty(), "条目消失 → 清缓存");
+    assert!(s.caches.probes.is_empty(), "条目消失 → 清缓存");
+}
+
+/// 列表的边车 / xochitl 页数也按文件戳缓存：没变就不再开文件（篡改缓存证明命中），边车一改写（原子写换 inode）立刻看到新内容。
+#[test]
+fn list_caches_sidecar_and_onopen_page_count_until_files_change() {
+    const U: &str = "cccccccc-cccc-cccc-cccc-cccccccccccc";
+    let t = tempfile::tempdir().unwrap();
+    let lib = t.path().join("xochitl");
+    std::fs::create_dir_all(&lib).unwrap();
+    let s = Staging::new(t.path().join("staging"), Arc::new(Xochitl::new("127.0.0.1:1", &lib, 1)), 1024 * 1024);
+    s.ensure().unwrap();
+    s.stage_new("a.epub", b"PK").unwrap();
+    s.set_render("a.epub", RenderCheck { uuid: U.into(), pages: 2, expected: 0, status: "onopen".into(), at: 1 }).unwrap();
+    std::fs::write(lib.join(format!("{U}.content")), r#"{"pageCount":2}"#).unwrap();
+    let rc = |s: &Staging| s.list()[0].delivered.clone().unwrap().render.unwrap();
+    assert_eq!((rc(&s).status.as_str(), rc(&s).pages), ("onopen", 2));
+    assert_eq!((s.caches.sidecars.len(), s.caches.pages.len()), (1, 1));
+    // 篡改两份缓存：文件没变时列表用的就是缓存里的值
+    let content = lib.join(format!("{U}.content"));
+    s.caches.pages.put(U, rmsvc_core::cache::FileStamp::read(&content).unwrap(), Some(2));
+    let car = sidecar::path_for(&s.dir.join("a.epub"));
+    let mut fake = sidecar::read(&s.dir.join("a.epub")).unwrap();
+    fake.native = Some(42);
+    s.caches.sidecars.put("a.epub", rmsvc_core::cache::FileStamp::read(&car).unwrap(), Some(fake));
+    assert_eq!(s.list()[0].delivered.clone().unwrap().native, Some(42), "边车没变 → 命中缓存");
+    // 边车改写（原子写）→ 立刻重读
+    s.mark_delivered("a.epub", Reader::Native).unwrap();
+    assert_ne!(s.list()[0].delivered.clone().unwrap().native, Some(42), "边车一改写就重读");
+    // xochitl 渲染完改写 .content → 页数变了，升级成 ok 并写回边车；之后不再是 onopen、不再查 .content
+    std::fs::write(&content, r#"{"pageCount":351}"#).unwrap();
+    assert_eq!((rc(&s).status.as_str(), rc(&s).pages), ("ok", 351));
+    assert!(s.caches.pages.is_empty(), "不再是 onopen 的文档从页数缓存里清掉");
 }
 
 #[test]

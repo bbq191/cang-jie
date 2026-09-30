@@ -25,7 +25,7 @@ mod intake;
 mod library;
 mod optimizing;
 
-use self::library::ProbeCache;
+use self::library::ListCaches;
 
 #[cfg(test)]
 mod tests;
@@ -166,9 +166,8 @@ pub struct Staging {
     native_limit: u64,
     /// 正在跑异步操作（「优化」/「落库」）的登记簿：忙锁 + 取消协作，见 [`crate::ops`]。
     ops: OpRegistry,
-    /// 列表里"优化等级 / 是否 PDF 转来"的判定缓存：判定要开 zip 读中央目录，书多时前端每 3 秒轮询一次
-    /// 列表会持续吃 CPU（电池）。文件内容只随「优化」改写——按（大小, 修改时间）失效，命中就不再碰文件。
-    probes: Arc<std::sync::Mutex<std::collections::HashMap<String, ProbeCache>>>,
+    /// 列表的缓存（优化等级判定 / 落库边车 / xochitl 页数），各按对应文件的戳失效，见 [`ListCaches`]。
+    caches: Arc<ListCaches>,
     /// 漫画页边距待办（可选：测试里不装）。见 [`crate::comic_margins`]。
     comic_margins: Option<Arc<crate::comic_margins::ComicMargins>>,
     /// 母版库"落名"临界区：挑一个不撞名的文件名（`unique_path` 先查存在）再 rename/写入，两步之间不能插进别的落名，
@@ -245,7 +244,7 @@ impl Staging {
             xochitl,
             native_limit,
             ops: OpRegistry::default(),
-            probes: Arc::new(std::sync::Mutex::new(std::collections::HashMap::new())),
+            caches: Arc::default(),
             comic_margins: None,
             land: Arc::new(std::sync::Mutex::new(())),
             fetch_covers: false,

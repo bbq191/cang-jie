@@ -1,5 +1,6 @@
 //! 母版库的查 / 删 / 列表与启动期维护（孤儿边车、被中断记录恢复）。
 use super::*;
+use rmsvc_core::cache::{FileStamp, StampCache};
 
 /// 判定一本母版库文件的优化等级（`full`/`core`/`old`/`none`）与是否 PDF 转出的 EPUB——要开 zip / 读文件头尾，
 /// 结果由 `Staging::list` 按（大小, 修改时间）缓存。
@@ -36,12 +37,26 @@ pub(super) fn free_bytes_of(path: &Path) -> Option<u64> {
     st.f_bavail.checked_mul(st.f_frsize)
 }
 
-#[derive(Clone)]
-pub(super) struct ProbeCache {
-    pub(super) len: u64,
-    pub(super) modified: Option<std::time::SystemTime>,
-    pub(super) level: &'static str,
-    pub(super) pdf_source: bool,
+/// `list()` 的几份按文件戳失效的缓存（见 [`StampCache`]）。网页每收到一条母版库事件就重拉一次列表（优化进行中每秒一条
+/// 进度事件），每本书每次都开 zip 判等级、读边车、读 xochitl 的 `.content`，书一多就是持续的读盘和 CPU（电池）；
+/// 文件没变时这些结论都不会变。
+pub(super) struct ListCaches {
+    /// 书名 → (优化等级, 是否 PDF 转出)，按书本身的戳失效（判定要开 zip / 读文件头尾）。
+    pub(super) probes: StampCache<(&'static str, bool)>,
+    /// 书名 → 落库边车内容，按边车文件的戳失效（边车都是原子写，每次改写换 inode）。
+    pub(super) sidecars: StampCache<Option<Delivered>>,
+    /// 文档 uuid → xochitl `.content` 里的页数，按 `.content` 的戳失效。只查"首次打开才渲染"（onopen）的书：
+    /// 用户一直没打开的那些，此前每次列表都要把它的 `.content`（逐页表，大书几十 KB）读一遍解析一遍。
+    pub(super) pages: StampCache<Option<u64>>,
+}
+
+/// 缓存条目上限（母版库几十到几百本；超了整表清空重来）。
+const LIST_CACHE_CAP: usize = 4096;
+
+impl Default for ListCaches {
+    fn default() -> Self {
+        ListCaches { probes: StampCache::new(LIST_CACHE_CAP), sidecars: StampCache::new(LIST_CACHE_CAP), pages: StampCache::new(LIST_CACHE_CAP) }
+    }
 }
 
 impl Staging {
@@ -249,11 +264,25 @@ impl Staging {
         free_bytes_of(&self.dir)
     }
 
+    /// 读这本书的落库边车（经 [`ListCaches::sidecars`]：边车没变就不再开文件）。没有边车 → `None`。
+    fn read_sidecar(&self, name: &str, book: &Path) -> Option<Delivered> {
+        let stamp = FileStamp::read(&sidecar::path_for(book))?;
+        self.caches.sidecars.get_or(name, stamp, || sidecar::read(book))
+    }
+
+    /// xochitl 书库里这份文档 `.content` 的页数（经 [`ListCaches::pages`]）。
+    fn content_pages(&self, uuid: &str) -> Option<u64> {
+        let lib = self.xochitl.library_dir();
+        let stamp = FileStamp::read(&lib.join(format!("{uuid}.content")))?;
+        self.caches.pages.get_or(uuid, stamp, || rmsvc_core::xochitl::page_count(lib, uuid))
+    }
+
     /// 列母版库，最新入库在前（同秒按名）。隐藏文件（sidecar / 半成品）不列。
     pub fn list(&self) -> Vec<StagingEntry> {
         let mut out = Vec::new();
         let Ok(rd) = std::fs::read_dir(&self.dir) else { return out };
         let mut seen = std::collections::HashSet::new();
+        let mut seen_docs = std::collections::HashSet::new();
         for e in rd.flatten() {
             let name = e.file_name().to_string_lossy().to_string();
             let Ok(md) = e.metadata() else { continue };
@@ -274,28 +303,17 @@ impl Staging {
             // 只会白白报 none（这类 EPUB 从没被 `optimize_epub_file_streaming` 处理过，没有那个
             // 内嵌版本标记），误导前端以为它"未优化"、显示可以点「优化」，见 `StagingEntry::
             // pdf_source` 文档。
-            let modified = md.modified().ok();
-            let cached = rmsvc_core::sync::lock(&self.probes)
-                .get(&name)
-                .filter(|c| c.len == md.len() && c.modified == modified)
-                .cloned();
-            let (level, pdf_source) = match cached {
-                Some(c) => (c.level, c.pdf_source),
-                None => {
-                    let (level, pdf_source) = probe_level(&e.path(), format);
-                    rmsvc_core::sync::lock(&self.probes).insert(name.clone(), ProbeCache { len: md.len(), modified, level, pdf_source });
-                    (level, pdf_source)
-                }
-            };
+            let (level, pdf_source) = self.caches.probes.get_or(&name, FileStamp::of(&md), || probe_level(&e.path(), format));
             seen.insert(name.clone());
             let mtime = md.modified().ok().map(rmsvc_core::clock::secs_of).unwrap_or(0);
             let busy = self.is_busy(&name);
-            let mut delivered = sidecar::read(&e.path());
+            let mut delivered = self.read_sidecar(&name, &e.path());
             if let Some(rc) = delivered.as_mut().and_then(|d| d.render.as_mut()) {
                 // 直接投入的 EPUB 首次打开才渲染：xochitl 渲染完会把 `.content` 的 pageCount 改成真页数，跟记录里的占位页数不同
                 // 就说明已经渲染过 → 升级成 ok。没打开过 → 保持 onopen。
                 if rc.status == "onopen" {
-                    if let Some(n) = rmsvc_core::xochitl::page_count(self.xochitl.library_dir(), &rc.uuid) {
+                    seen_docs.insert(rc.uuid.clone());
+                    if let Some(n) = self.content_pages(&rc.uuid) {
                         if n != rc.pages {
                             rc.status = "ok".into();
                             rc.pages = n;
@@ -325,7 +343,9 @@ impl Staging {
             });
         }
         // 已被删除/改名的条目从缓存清掉，避免缓存无限增长
-        rmsvc_core::sync::lock(&self.probes).retain(|k, _| seen.contains(k));
+        self.caches.probes.retain(|k| seen.contains(k));
+        self.caches.sidecars.retain(|k| seen.contains(k));
+        self.caches.pages.retain(|k| seen_docs.contains(k));
         out.sort_by(|a, b| b.mtime.cmp(&a.mtime).then_with(|| a.name.cmp(&b.name)));
         out
     }
