@@ -14,7 +14,6 @@ mod ledger;
 mod prompt;
 mod worker;
 
-use backend::TextModel;
 use config::MindConfig;
 use ink::{EntryStore, InkHttp};
 use ledger::Ledger;
@@ -34,15 +33,16 @@ struct State {
     cfg: ConfigCell<MindConfig>,
     ledger: Ledger,
     store: InkHttp,
+    clients: vendorcfg::ClientCache,
 }
 
 impl State {
     fn cfg(&self) -> MindConfig {
         self.cfg.get()
     }
-    fn model(&self, cfg: &MindConfig) -> Result<Box<dyn TextModel>, String> {
-        let c = vendorcfg::ChatClient::from_config(cfg, &cfg.backend, Duration::from_secs(cfg.timeout_secs), "未配置 API key（网页「模型」设置里粘贴，或环境变量 DASHSCOPE_API_KEY）")?;
-        Ok(Box::new(c))
+    /// 配置没变就复用上一次的调用端（连同还活着的 HTTPS 连接），见 `vendorcfg::ClientCache`。
+    fn model(&self, cfg: &MindConfig) -> Result<Arc<vendorcfg::ChatClient>, String> {
+        self.clients.get(cfg, &cfg.backend, Duration::from_secs(cfg.timeout_secs), "未配置 API key（网页「模型」设置里粘贴，或环境变量 DASHSCOPE_API_KEY）")
     }
 }
 
@@ -53,7 +53,7 @@ fn main() {
     // `.migrate()`：老配置文件搬进新形状，不迁移会让真机已存的 key 在升级后凭空消失，见 config.rs 文档；
     // 读→迁移→0600→落盘一次这套启动流程收在 `ConfigCell::load`。
     let cfg = ConfigCell::load(&paths.app_config_dir(APP).join("mind.json"), MindConfig::migrate);
-    let st = Arc::new(State { cfg, ledger: Ledger::open(&paths.app_state_dir(APP).join("mind.json")), store: InkHttp::new(paths.clone()) });
+    let st = Arc::new(State { cfg, ledger: Ledger::open(&paths.app_state_dir(APP).join("mind.json")), store: InkHttp::new(paths.clone()), clients: Default::default() });
     let router = Router::new()
         .get("/status", bind(&st, |s, _| {
             let cfg = s.cfg();

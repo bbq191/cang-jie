@@ -28,11 +28,6 @@ impl ChatClient {
     pub fn new(backend: &str, base_url: &str, model: &str, key: &str, timeout: Duration) -> ChatClient {
         ChatClient { backend: backend.into(), base_url: base_url.trim_end_matches('/').into(), model: model.into(), key: key.into(), agent: agent(timeout) }
     }
-    /// 按当前配置建调用端；没 key 返回 `Err(missing_key)`（各服务的提示文案不同，调用方给）。
-    pub fn from_config<C: crate::VendorConfig>(cfg: &C, backend: &str, timeout: Duration, missing_key: &str) -> Result<ChatClient, String> {
-        let key = cfg.key().ok_or_else(|| missing_key.to_string())?;
-        Ok(ChatClient::new(backend, cfg.base_url(), cfg.model(), &key, timeout))
-    }
     /// 写进草稿/回答 `backend` 字段的后端标识。
     pub fn backend(&self) -> &str {
         &self.backend
@@ -43,6 +38,32 @@ impl ChatClient {
     /// 发一次 `chat/completions`（请求体由调用方拼，见 [`post_chat`]）。
     pub fn post(&self, body: &serde_json::Value) -> Result<ChatReply, String> {
         post_chat(&self.agent, &self.base_url, &self.key, body)
+    }
+}
+
+/// 调用端缓存：配置（后端/baseUrl/模型/key/超时）没变就复用上一次建的 [`ChatClient`]（连同 agent 里还活着的
+/// HTTPS 连接）。此前 transcribe-serve 每一轮、mind-serve 每问一次都新建一个，接连几次调用各做一遍 DNS + TCP +
+/// TLS 握手——设备走 WiFi，这几次往返是实打实的射频唤醒（2026-09-30 第五轮审计）。配置一改（换预置、换 key）
+/// 指纹就变，下一次调用自然换成新的。
+#[derive(Default)]
+pub struct ClientCache {
+    cur: std::sync::Mutex<Option<(String, std::sync::Arc<ChatClient>)>>,
+}
+
+impl ClientCache {
+    /// 按当前配置取调用端（缓存命中直接给上一次的）；没 key 返回 `Err(missing_key)`（各服务的提示文案不同，调用方给）。
+    pub fn get<C: crate::VendorConfig>(&self, cfg: &C, backend: &str, timeout: Duration, missing_key: &str) -> Result<std::sync::Arc<ChatClient>, String> {
+        let key = cfg.key().ok_or_else(|| missing_key.to_string())?;
+        let fp = format!("{backend}\u{1}{}\u{1}{}\u{1}{key}\u{1}{}", cfg.base_url(), cfg.model(), timeout.as_millis());
+        let mut cur = rmsvc_core::sync::lock(&self.cur);
+        if let Some((f, c)) = cur.as_ref() {
+            if *f == fp {
+                return Ok(c.clone());
+            }
+        }
+        let c = std::sync::Arc::new(ChatClient::new(backend, cfg.base_url(), cfg.model(), &key, timeout));
+        *cur = Some((fp, c.clone()));
+        Ok(c)
     }
 }
 
@@ -108,6 +129,49 @@ mod tests {
         let (url, auth) = h.join().unwrap();
         assert_eq!(url, "/v1/chat/completions", "baseUrl 末尾的 / 去掉，不出现 //");
         assert_eq!(auth.as_deref(), Some("Bearer sk-1"));
+    }
+
+    #[test]
+    fn client_cache_reuses_until_config_changes() {
+        use std::collections::BTreeMap;
+        #[derive(serde::Serialize)]
+        struct Cfg {
+            keys: BTreeMap<String, String>,
+            prices: BTreeMap<String, crate::Price>,
+        }
+        const PRESETS: &[crate::Preset] = &[crate::Preset { id: "m", label: "m", model: "m", base_url: crate::DASHSCOPE, provider: "dashscope" }];
+        impl crate::VendorConfig for Cfg {
+            fn presets() -> &'static [crate::Preset] {
+                PRESETS
+            }
+            fn preset(&self) -> &str {
+                "m"
+            }
+            fn custom_model(&self) -> &str {
+                ""
+            }
+            fn custom_base_url(&self) -> &str {
+                ""
+            }
+            fn keys(&self) -> &BTreeMap<String, String> {
+                &self.keys
+            }
+            fn prices(&self) -> &BTreeMap<String, crate::Price> {
+                &self.prices
+            }
+        }
+        let with_key = |k: &str| Cfg { keys: [("dashscope".to_string(), k.to_string())].into(), prices: BTreeMap::new() };
+        let cache = ClientCache::default();
+        let t = Duration::from_secs(5);
+        let a = cache.get(&with_key("sk-1"), "qwen", t, "没 key").unwrap();
+        let b = cache.get(&with_key("sk-1"), "qwen", t, "没 key").unwrap();
+        assert!(std::sync::Arc::ptr_eq(&a, &b), "配置没变复用同一个");
+        let c = cache.get(&with_key("sk-2"), "qwen", t, "没 key").unwrap();
+        assert!(!std::sync::Arc::ptr_eq(&a, &c), "换 key 重建");
+        assert!(!std::sync::Arc::ptr_eq(&c, &cache.get(&with_key("sk-2"), "qwen", Duration::from_secs(9), "没 key").unwrap()), "换超时重建");
+        if std::env::var(crate::KEY_ENV).is_err() {
+            assert_eq!(cache.get(&Cfg { keys: BTreeMap::new(), prices: BTreeMap::new() }, "qwen", t, "没 key").err().as_deref(), Some("没 key"));
+        }
     }
 
     #[test]
