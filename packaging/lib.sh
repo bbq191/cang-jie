@@ -27,7 +27,6 @@
 
 CJ_PKG_DIR="$(pwd)"
 CJ_SSH_TIMEOUT="${CJ_SSH_TIMEOUT:-8}"
-CJ_STAGE_REMOTE="${CJ_STAGE_REMOTE:-/home/root/.cangjie-stage}"   # 设备上的暂存目录（与 devlib.sh 的 CJ_STAGE_DIR 同址）
 
 # shellcheck disable=SC2086  # CJ_SSH_OPTS 有意按词展开成多个选项
 rssh()    { ssh -n $CJ_SSH_OPTS "root@$HOST" "$@"; }

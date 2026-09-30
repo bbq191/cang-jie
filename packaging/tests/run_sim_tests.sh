@@ -22,9 +22,14 @@ fi
 REAL_HOME="$HOME"
 # 所有 XDG_* 一律指进沙箱（脚本会读它们；不设的话 install/uninstall --purge 会碰到真实用户目录——
 # 2026-09-20 首版就踩过：--purge 测试清了开发机的 ~/.config/shelf 等，见 new_sandbox 里的导出与末尾的"真实 HOME 未被触碰"守卫）
-guard_paths() { echo "$REAL_HOME/.config/shelf $REAL_HOME/.local/share/shelf $REAL_HOME/.local/state/shelf $REAL_HOME/.local/lib/shelf $REAL_HOME/cangjie-backups $REAL_HOME/.local/bin/shelf-uninstall $REAL_HOME/.cangjie-stage $REAL_HOME/.cangjie-pending-apply /run/cangjie-pending-apply"; }
-GUARD_BEFORE=""
-for g in $(guard_paths); do [ -e "$g" ] && GUARD_BEFORE="$GUARD_BEFORE $g"; done
+guard_paths() {
+    echo "$REAL_HOME/.config/shelf $REAL_HOME/.local/share/shelf $REAL_HOME/.local/state/shelf $REAL_HOME/.local/lib/shelf $REAL_HOME/cangjie-backups $REAL_HOME/.local/bin/shelf-uninstall $REAL_HOME/.cangjie-stage $REAL_HOME/.cangjie-pending-apply /run/cangjie-pending-apply"
+    # 2026-09-30 补：deploy/uninstall 会在 $HOME 下建/删的其它载荷与数据位置（同名目录在开发机上也可能真实存在）
+    echo "$REAL_HOME/battop $REAL_HOME/hl-snap $REAL_HOME/hw-stroke $REAL_HOME/shelf-pkg $REAL_HOME/shelf-pkg.new $REAL_HOME/pkg-wifi-watch $REAL_HOME/pkg-xovi-persist $REAL_HOME/pkg-chrony-boot-wakelock $REAL_HOME/xovi $REAL_HOME/.local/share/cangjie-ime $REAL_HOME/.local/bin/wifi-watch.sh $REAL_HOME/.local/bin/gateway $REAL_HOME/.local/bin/lo-alias.sh"
+}
+# 签名 = 每个已存在路径 + 它的 mtime（目录里增删条目会改目录 mtime）：不只看"有没有新出现"，也看"原有的被动过/删掉"
+guard_sig() { for g in $(guard_paths); do [ -e "$g" ] || [ -L "$g" ] && echo "$g $(stat -c %Y "$g" 2>/dev/null)"; done; }
+GUARD_BEFORE="$(guard_sig)"
 HERE="$(cd "$(dirname "$0")" && pwd)"
 PKG="$(cd "$HERE/.." && pwd)"
 REPO="$(cd "$PKG/.." && pwd)"
@@ -1208,9 +1213,9 @@ WW_STATE="$WW" PATH="$WSTUB:$PATH" SYSFS="$WW/sys" INTERVAL=0 TICKS=2 WIFI_WATCH
 check "wifi-watch 上网探测：WiFi 关了（读不到 carrier）→ 删掉状态文件、不探" test ! -e "$WW/state.json" -a ! -s "$WW/calls"
 
 # 守卫：真实 HOME 下不该出现任何测试产物
-GUARD_AFTER=""
-for g in $(guard_paths); do [ -e "$g" ] && GUARD_AFTER="$GUARD_AFTER $g"; done
-check "真实 HOME 未被测试触碰（无新增 shelf/cangjie-backups/.stage 等目录）" test "$GUARD_BEFORE" = "$GUARD_AFTER"
+GUARD_AFTER="$(guard_sig)"
+check "真实 HOME 未被测试触碰（shelf/cangjie-backups/.stage/载荷目录等：无新增、无删除、原有的 mtime 不变）" test "$GUARD_BEFORE" = "$GUARD_AFTER"
+[ "$GUARD_BEFORE" = "$GUARD_AFTER" ] || diff <(printf '%s\n' "$GUARD_BEFORE") <(printf '%s\n' "$GUARD_AFTER") | sed 's/^/       /'
 
 echo
 echo "════ 结果：通过 $PASS，失败 $FAIL ════"
