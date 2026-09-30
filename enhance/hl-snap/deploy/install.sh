@@ -2,7 +2,7 @@
 # hl-snap 安装脚本（vellum-xovi 结构，只碰 /home，不碰 /usr）——独立于 chinese-ime/langhook 之外的
 # 最小 xovi 扩展，只做荧光笔精确吸附一件事。
 #
-# 2026-09-20：流程收进 packaging/xovi-ext-install.sh（与 handwriting-stroke 共用，数据驱动），本文件
+# 2026-09-20：流程收进 packaging/xovi-ext-install.sh（原与 handwriting-stroke 共用，数据驱动；后者 2026-09-30 已移除），本文件
 # 只剩这个扩展的数据。运行需要同目录有 xovi-ext-install.sh 与 devlib.sh——由 `packaging/deploy-hl-snap.sh`
 # 一起推送；脱离编排手动跑时先把这两个文件（packaging/ 下）连同 hl-snap.so 放到设备上对应位置。
 #

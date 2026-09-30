@@ -10,14 +10,14 @@
 <text x="315.0" y="175.5" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">被冲掉（需要重新安装）</text>
 <text x="315.0" y="201.5" text-anchor="middle" font-size="10.5" fill="#4a4a4a">/usr 里的 systemd 单元：</text>
 <text x="315.0" y="215.0" text-anchor="middle" font-size="10.5" fill="#4a4a4a">  shelf.target 与各服务单元（网关、book/font/wallpaper、笔记线四服务）</text>
-<text x="315.0" y="228.5" text-anchor="middle" font-size="10.5" fill="#4a4a4a">  xovi-reenable · chrony-boot-wakelock · wifi-watch · battop</text>
+<text x="315.0" y="228.5" text-anchor="middle" font-size="10.5" fill="#4a4a4a">  xovi-reenable · chrony-boot-wakelock · wifi-watch</text>
 <text x="315.0" y="242.0" text-anchor="middle" font-size="10.5" fill="#4a4a4a">/etc（tmpfs 叠加层）：</text>
 <text x="315.0" y="255.5" text-anchor="middle" font-size="10.5" fill="#4a4a4a">  国内 NTP 的 chrony 配置 · 默认时区 · xovi 启动 drop-in</text>
 <text x="315.0" y="269.0" text-anchor="middle" font-size="10.5" fill="#4a4a4a">固件版本变了：xovi 需要重建 hashtab，qmd 才能重新注入</text>
 <rect x="640" y="156" width="570" height="150" rx="10" fill="#eaf6ec" stroke="#3f9a55" stroke-width="1.6" stroke-dasharray="6 4"/>
 <text x="925.0" y="175.5" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">保留（/home，OTA 不动）</text>
 <text x="925.0" y="201.5" text-anchor="middle" font-size="10.5" fill="#4a4a4a">母版库、配置、证书、字体/壁纸池、休眠屏 conf 键</text>
-<text x="925.0" y="215.0" text-anchor="middle" font-size="10.5" fill="#4a4a4a">~/.local/bin 里的服务二进制 · battop 数据</text>
+<text x="925.0" y="215.0" text-anchor="middle" font-size="10.5" fill="#4a4a4a">~/.local/bin 里的服务二进制</text>
 <text x="925.0" y="228.5" text-anchor="middle" font-size="10.5" fill="#4a4a4a">xovi/extensions.d 里的 .so · exthome 里的 qmd</text>
 <text x="925.0" y="242.0" text-anchor="middle" font-size="10.5" fill="#4a4a4a">cangjie-backups/ 历史备份</text>
 <text x="925.0" y="255.5" text-anchor="middle" font-size="10.5" fill="#4a4a4a">注意：qmd 文件在，但 hashtab 过期，未注入，直到重建 hashtable</text>

@@ -34,14 +34,25 @@ sh uninstall-all.sh 10.11.99.1 --skip chrony-boot-wakelock,battop,wifi-watch,xov
 
 跑完整机重启一次（`reboot`）。
 
+2026-09-30 起**电池刺客（`battop`）和手写优化（`handwriting-stroke`，插件 `hw-stroke.so`）已移除**：源码、安装步骤和网页开关都删了。
+以前装过的设备不用专门处理：**重新跑 `install-all.sh` 时会在最后一步之前自动清掉**两样的残留——电池刺客的服务单元（含旧版的 `battop.timer`）、`/home/root/battop` 整个目录（程序和历史采样数据），以及 `extensions.d/hw-stroke.so`、待换入区里的副本和安装包目录；如果 xochitl 当时还加载着 `hw-stroke.so`，最后一步会整机重启一次让它彻底停用。
+`verify-on-device.sh` 看到这些残留会报 ⚠。不想重装、只清这两样：
+
+```sh
+sh uninstall-all.sh 10.11.99.1 --dry-run --skip chrony-boot-wakelock,wifi-watch,xovi-persist,hl-snap,shelf,sidebar-entry   # 先预演：计划里应只有 handwriting-stroke、battop 两步
+sh uninstall-all.sh 10.11.99.1 --skip chrony-boot-wakelock,wifi-watch,xovi-persist,hl-snap,shelf,sidebar-entry
+```
+
+跑完整机重启一次（`reboot`，别 `systemctl restart xochitl`）。`reading-qol.json` 里旧的 `hwStroke*` 设置项会原样留着，没有程序再读它们，无害。这套清理只在开发机上模拟测过，没在真机上跑过。
+
 ### 电脑上：编译环境和 ssh
 
 脚本在你的电脑上把程序编好，再经 ssh 装到设备上，所以电脑需要：
 
 | 需要什么 | 用在哪 | 缺了会怎样 |
 |---|---|---|
-| Rust（`cargo`）+ `rustup target add aarch64-unknown-linux-musl` + `aarch64-linux-gnu-gcc` | 交叉编译八个网页服务和电池刺客（`shelf/build.sh`、`deploy-battop.sh`） | `shelf`、`battop` 步失败 |
-| 可选：[asivery/xovi](https://github.com/asivery/xovi) 的源码 clone（`XOVI_DIR` 指向它） | 重新编译 `hl-snap` / `hw-stroke` 两个插件 | 不影响：仓库里已提交编好的 `.so`，编不了就用它 |
+| Rust（`cargo`）+ `rustup target add aarch64-unknown-linux-musl` + `aarch64-linux-gnu-gcc` | 交叉编译八个网页服务（`shelf/build.sh`） | `shelf` 步失败 |
+| 可选：[asivery/xovi](https://github.com/asivery/xovi) 的源码 clone（`XOVI_DIR` 指向它） | 重新编译 `hl-snap` 插件 | 不影响：仓库里已提交编好的 `.so`，编不了就用它 |
 | **能免密 ssh 登录设备 root** | 所有步骤（脚本不会停下来问密码） | 动手前就报错并给排查步骤。没配过先跑 `ssh-copy-id root@10.11.99.1` |
 
 ## 安装
@@ -76,11 +87,10 @@ sh uninstall-all.sh 10.11.99.1 --skip chrony-boot-wakelock,battop,wifi-watch,xov
 | `chrony-cn` | 校时服务器换成国内能连上的（阿里云、腾讯云等） | — |
 | `chrony-boot-wakelock` | 开机头一小段（同步成功就放，最多 120 秒）不让设备自动休眠，免得打断第一次校时 | — |
 | `timezone-cn` | 默认时区设为 Asia/Shanghai | — |
-| `battop` | 电池耗电诊断的采样服务；装完启动，但**不随开机自启**（有意的，见问题⑥）。dm-verity 开着且以前没装过时，程序放好了但服务单元进不了 `/usr`，汇总记"前置条件不满足" | — |
 | `wifi-watch` | WiFi 假死看护：检测到断链自动重连；连上的 AP 在设备不许用的 5G 信道（5150–5350 MHz）时才锁 2.4G；打开 WiFi 省电（09-28 起，实测空闲电流约降 37%）。可在设备 `~/.config/wifi-watch.conf` 里改（`BAND=`、`POWERSAVE=`） | — |
 | `xovi-persist` | 开机后自动让 xovi 重新生效，重启设备后不用手动补 | xovi |
 | `hl-snap` | 荧光笔划中文"划哪吸哪"，不再"划一小段吸整行"；只落盘 | xovi |
-| `handwriting-stroke` | 按笔尖角度和运笔速度优化手写笔画粗细（默认关，网页「管理 → 实验室」里开）；只落盘 | xovi |
+| `清理已移除:battop`、`清理已移除:handwriting-stroke` | 不是安装步骤：清掉旧设备上电池刺客、手写优化的残留（2026-09-30 起这两样已移除，见「装之前」），没有残留就什么都不动。排在 `xovi-apply` 之前；`--skip battop` / `--skip handwriting-stroke` 可跳过 | — |
 | `shelf` | 八个网页服务：网关、书（book）、字体与壁纸（font / wallpaper）、笔记四服务（ink / transcribe / mind / note）；附带的五个界面补丁（字体菜单、回收站代理、建文件夹代理、漫画页边距代理、阅读器翻页）只落盘 | 补丁需要 qt-resource-rebuilder，缺了只跳过补丁、服务照装 |
 | `xovi-apply` | 上面"只落盘"的东西都就位后，**有改动（或 xovi 还没生效）才整机重启一次**让它们生效（约 20–60 秒，会打断阅读；没改动就不重启）。重启回来后自动跑一遍 `verify-on-device.sh` 核对 | — |
 
@@ -151,7 +161,7 @@ sh install-all.sh 10.11.99.1 --force
 
 ![让插件/界面补丁生效：换入后整机重启](diagrams/so-swap-order.svg)
 
-**单独跑某一步也一样**：`deploy-hl-snap.sh`、`deploy-handwriting-stroke.sh` 单独运行时，有改动就整机重启一次；文件和设备上已装的逐字节相同、也没有别的待生效改动、xovi 已生效，就**不重启**。判据与最后一步 `xovi-apply` 是同一个。
+**单独跑某一步也一样**：`deploy-hl-snap.sh` 单独运行时，有改动就整机重启一次；文件和设备上已装的逐字节相同、也没有别的待生效改动、xovi 已生效，就**不重启**。判据与最后一步 `xovi-apply` 是同一个。
 
 ### 只装一部分
 
@@ -174,12 +184,12 @@ cd packaging
 sh uninstall-all.sh 10.11.99.1 --dry-run          # 只打印计划，不连设备、不删东西
 sh uninstall-all.sh 10.11.99.1                    # 卸全部
 sh uninstall-all.sh 10.11.99.1 --skip shelf       # 跳过某步
-sh uninstall-all.sh 10.11.99.1 --purge            # 另外删掉电池刺客的程序和历史采样数据
+sh uninstall-all.sh 10.11.99.1 --purge            # 保留兼容，目前不影响任何步骤（以前只管电池刺客的采样数据）
 ```
 
 **会做什么**：停用并删掉装过的服务、插件、界面补丁，以及部署时推到设备上的安装包目录（只删认识的文件，目录里有别的东西就留着）。卸插件时连待换入区里还没换进去的新版也一并撤掉（2026-09-24 之前不撤，下一次部署会把刚卸掉的插件又装回来）。
 
-**默认保留**：母版库、配置、证书、字体/壁纸池、`cangjie-backups/` 里的备份。`--purge` 只管电池刺客，不碰书架数据；要连书架数据一起删，先 `--skip shelf` 卸别的，再在设备上跑 `shelf-uninstall --purge`。
+**默认保留**：母版库、配置、证书、字体/壁纸池、`cangjie-backups/` 里的备份。电池刺客（已移除）的程序和采样数据卸载时总是一起删；`--purge` 目前不影响任何步骤，也不碰书架数据；要连书架数据一起删，先 `--skip shelf` 卸别的，再在设备上跑 `shelf-uninstall --purge`。
 
 **不会做什么**：
 - `chrony-cn`、`timezone-cn` 是改配置、`xovi-apply` 只是个动作，都不卸。改之前的备份在设备 `cangjie-backups/` 里，要还原自己取。
@@ -209,13 +219,12 @@ sh uninstall-all.sh 10.11.99.1 --purge            # 另外删掉电池刺客的�
 
 | 内容 | 位置 | OTA 后 | 怎么恢复 |
 |---|---|---|---|
-| 母版库、字体与壁纸池、证书、网关密码、休眠屏设置、`cangjie-backups/`、电池采样历史 | `/home` | 保留 | 不用管 |
+| 母版库、字体与壁纸池、证书、网关密码、休眠屏设置、`cangjie-backups/` | `/home` | 保留 | 不用管 |
 | 各网页服务的程序（`~/.local/bin`） | `/home` | 保留 | 不用管 |
-| `hl-snap` / `hw-stroke` 插件、字体菜单/回收站/建夹/漫画边距/阅读器翻页的界面补丁 | `/home`（`extensions.d/`、`exthome/`） | 文件还在，但要重建 hashtable 才生效 | 第 2 步，再跑 `install-all.sh` |
+| `hl-snap` 插件、字体菜单/回收站/建夹/漫画边距/阅读器翻页的界面补丁 | `/home`（`extensions.d/`、`exthome/`） | 文件还在，但要重建 hashtable 才生效 | 第 2 步，再跑 `install-all.sh` |
 | 各网页服务与 `shelf.target` 的服务单元 | `/usr` | **被冲掉** | `shelf` 步（或单独：`SHELF_NO_BUILD=1 sh deploy.sh <设备IP>`） |
 | `xovi-reenable.service`（开机自动让 xovi 生效） | `/usr` | **被冲掉** | `xovi-persist` 步 |
 | `chrony-boot-wakelock.service` | `/usr` | **被冲掉** | `chrony-boot-wakelock` 步 |
-| `battop.service`（数据在 `/home`） | `/usr` | 单元**被冲掉** | `battop` 步（装完启动，不自启） |
 | `wifi-watch.service`（脚本在 `/home`） | `/usr` | 单元**被冲掉** | `wifi-watch` 步 |
 | 国内校时服务器、默认时区 | `/etc` | **被冲掉** | `chrony-cn` / `timezone-cn` 步 |
 
@@ -234,7 +243,7 @@ sh uninstall-all.sh 10.11.99.1 --purge            # 另外删掉电池刺客的�
 | ③ | 短时间内 xochitl 反复停起后，设备整机重启了一次 | xochitl 服务设置了 10 分钟内最多重启 4 次，不管谁触发的都算：手动 `systemctl restart xochitl`、`vellum add/del` 装卸 xochitl 插件（以前还有 appload、WeRead 每次进出）。2026-09-11 真机上连续两次重启就触发过一次整机重启——**设备自己重启后恢复正常，不是变砖** | 部署脚本 2026-09-25 起改为整机重启，不再计入这个次数。手动装卸插件时每次间隔几分钟 |
 | ④ | 固件安全门拒装 | 设计如此：版本号相同不保证内部布局没变 | 先确认设备固件就是你验证过的那份，再 `--force` |
 | ⑤ | 装到最后设备重启了一次 | `xovi-apply` 让改动生效：2026-09-25 起一律**整机重启**（约 20–60 秒回来），不再单独重启 xochitl——单独重启它有概率在退出时崩溃、再由系统整机重启。只有这轮真的有改动、或 xovi 还没生效时才会重启 | 正常现象，装的时候别操作设备；脚本会等设备回来并自动跑一遍 `verify-on-device.sh` 核对。不想被打断就 `--skip xovi-apply`，稍后再跑 `sh deploy-xovi-apply.sh <host>`。**自己手动让它生效时**：直接 `reboot`；**绝不**手动跑 `xovi/start`（xovi 已生效时它会让 xochitl 崩溃、整机自动重启，2026-09-20 真机事故） |
-| ⑥ | 重启设备后电池刺客没在跑 | **有意不开机自启**：2026-08-29 它的采样曾触发内核死锁冻死整机，根因没彻底排除 | 网页「管理 → 系统增强」里打开电池刺客开关（开了才出现「电池刺客」数据页），或 `systemctl start battop` |
+| ⑥ | （已作废）重启设备后电池刺客没在跑 | 电池刺客 2026-09-30 已移除，这条不再适用 | — |
 | ⑦ | 装之前就报错退出：`连不上 root@…` / `只剩 N MB 可用` / `需要 root` / `固件不在白名单` | 装前自动检查在拦，设备上什么都没改 | 连不上：按报错里的步骤排查（休眠/没插 USB → IP → host key → 免密）；空间不足：清理 `/home/root` 和 `cangjie-backups/` 后重试；固件：见 ④ |
 | ⑧ | 最后一步报"设备没能排上整机重启……改动尚未生效"，这一步记失败 | 设备上的 `systemctl reboot` 命令本身失败了。文件已经换好，但 xochitl 还在用旧的；脚本已把"待生效"标记补回去（2026-09-25 起，此前会白等设备重启再报成功）。这一支只在本机模拟过 | 在设备上手动 `reboot`，回来后跑 `sh verify-on-device.sh <host>`；或者稍后重跑 `sh deploy-xovi-apply.sh <host>`，它会再试一次 |
 
@@ -250,7 +259,7 @@ sh uninstall-all.sh 10.11.99.1 --purge            # 另外删掉电池刺客的�
 
 ## 已知限制
 
-- **哪些在真机上跑过、哪些没有**：真机整轮跑过的有 `install-all.sh`（2026-09-22、09-24、09-25 各一次）和 `uninstall-all.sh`（2026-09-25）；"换入新版 `.so` → 整机重启 → 开机自动恢复 → 自动核对"2026-09-25 真机复核通过（`verify-on-device.sh` 43✓）。**只有本机模拟、没在真机走过的**：卸载在 dm-verity 下保留程序、卸载时撤掉待换入区、"什么都没变就不重启"这一支（含单独部署）、换入关键区忽略断连信号、汇总的"前置条件不满足"栏，以及 2026-09-25 下午第四轮审计、2026-09-30 第五轮审计改的全部安装脚本行为（整机重启失败的处理、dm-verity 下的电池刺客、部署时 ssh 往返合并、没变的文件不重传、`--only` 刷新卸载清单、核对报遗留、卸载清理更干净等）。完整记录见 [`packaging/README.md`「验证现状」](../packaging/README.md#验证现状如实说明不夸大)。上机时一步一确认：先 `--dry-run`，再单步或 `--skip` 试跑。
+- **哪些在真机上跑过、哪些没有**：真机整轮跑过的有 `install-all.sh`（2026-09-22、09-24、09-25 各一次）和 `uninstall-all.sh`（2026-09-25）；"换入新版 `.so` → 整机重启 → 开机自动恢复 → 自动核对"2026-09-25 真机复核通过（`verify-on-device.sh` 43✓）。**只有本机模拟、没在真机走过的**：卸载在 dm-verity 下保留程序、卸载时撤掉待换入区、"什么都没变就不重启"这一支（含单独部署）、换入关键区忽略断连信号、汇总的"前置条件不满足"栏，以及 2026-09-25 下午第四轮审计、2026-09-30 第五轮审计改的全部安装脚本行为（整机重启失败的处理、dm-verity 下的电池刺客〔已移除〕、部署时 ssh 往返合并、没变的文件不重传、`--only` 刷新卸载清单、核对报遗留、卸载清理更干净等）。完整记录见 [`packaging/README.md`「验证现状」](../packaging/README.md#验证现状如实说明不夸大)。上机时一步一确认：先 `--dry-run`，再单步或 `--skip` 试跑。
 - **写 `/usr` 仍靠"先查 dm-verity + 限时读写窗口"两道防线**，不是完全不碰 `/usr`；历史上写 `/usr` 触发过回滚变砖（2026-08-16）。
 - **在设备上直接跑 `shelf/install.sh --password 明文` 时，密码会短暂出现在设备的进程列表里**；经电脑上的 `deploy.sh --password` 传则不会。
 - 卸载不还原 `chrony-cn` / `timezone-cn`，没有"一键回到装之前"。

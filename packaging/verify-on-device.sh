@@ -74,8 +74,10 @@ TAB="$(printf '\t')"
 US="$(printf '\037')"   # 条目"详情"多行之间的分隔符（渲染时拆开）
 
 # ── 要核对的 systemd 单元（取自 manifest + 步骤表的载荷位置，不在这里另起一份服务清单）──────────
-# 每项 KIND:UNIT:PAYLOAD——KIND：svc=常驻且应 active；opt=常驻但有意不开机自启（battop）；once=oneshot；target；
-# legacy=已退役/旧命名、不该再在的（manifest 的 SHELF_LEGACY_UNITS，如 09-29 撤掉的 koreader-serve），在就报 ⚠。
+# 每项 KIND:UNIT:PAYLOAD——KIND：svc=常驻且应 active；once=oneshot；target；
+# legacy=已退役/旧命名、不该再在的（manifest 的 SHELF_LEGACY_UNITS，如 09-29 撤掉的 koreader-serve），在就报 ⚠（重跑 deploy.sh 清）；
+# removed=已移除的功能留下的单元（2026-09-30 移除的电池刺客 battop），在就报 ⚠（重跑 install-all 或 uninstall-all 清）。
+# （2026-09-30 前还有 opt=常驻但有意不开机自启，只给 battop 用，随它一起删了。）
 # PAYLOAD：这个单元对应的设备上载荷（二进制/脚本）；"单元缺失但载荷在" = OTA 冲掉了 /usr，判 ✗。"-" = 无可判载荷。
 unit_specs() {
     for us_s in $SHELF_ALL; do
@@ -85,7 +87,8 @@ unit_specs() {
     for us_u in $SHELF_LEGACY_UNITS; do echo "legacy:$us_u:/home/root/.local/bin/${us_u%.service}"; done
     echo "target:shelf.target:/home/root/.local/bin/gateway"
     echo "svc:wifi-watch.service:/home/root/.local/bin/wifi-watch.sh"
-    echo "opt:battop.service:/home/root/battop/battop"
+    echo "removed:battop.service:/home/root/battop/battop"
+    echo "removed:battop.timer:-"
     echo "once:xovi-reenable.service:/home/root/xovi/start"
     echo "once:chrony-boot-wakelock.service:-"
 }
@@ -123,6 +126,10 @@ qmd_marks_spec() {   # 传给设备端的 "键=子串" 列表（| 分隔），�
 }
 # 已退役、不该再在 qrr 目录里的 qmd（2026-09-29 撤掉的 KOReader/WeRead 侧栏入口，由 uninstall-all 的 sidebar-entry 步骤清）
 RETIRED_QMDS="koreader-sidebar-entry.qmd"
+# 已移除的 xovi 扩展（2026-09-30 移除的手写优化 hw-stroke.so）：在 extensions.d 或待换入区里就报 ⚠
+RETIRED_EXTS="hw-stroke.so"
+# 已移除功能（battop / handwriting-stroke）残留的清理办法：重新部署会自动清；只清这两样就用下面这条卸载命令（步骤表变了跟着变）
+REMOVED_FIX="sh install-all.sh（重新部署会自动清）；或只清这两样：sh uninstall-all.sh --skip $(uninstall_only_skip battop handwriting-stroke)，之后整机重启（reboot）"
 
 # ═════════════════════════════ 设备端采集 ═════════════════════════════
 collect() {
@@ -196,7 +203,7 @@ for spec in "$@"; do
     if [ "$payload" = "-" ]; then pl="-"; else pl="$(yn [ -e "$payload" ])"; fi
     act="$(systemctl is-active "$unit" 2>/dev/null)"
     nr=""; pid=""; rss=""; hwm=""; sm=""; port=""
-    case "$kind" in svc|opt)
+    case "$kind" in svc)
         nr="$(sprop "$unit" NRestarts)"; pid="$(sprop "$unit" MainPID)"; sm="$(sprop "$unit" ExecMainStartTimestampMonotonic)"
         if [ -n "$pid" ] && [ "$pid" != "0" ] && [ -r "$CJ_PROC/$pid/status" ]; then
             rss="$(awk '/^VmRSS:/ { print $2 }' "$CJ_PROC/$pid/status")"
@@ -330,6 +337,10 @@ judge_xochitl() {
 
     # 扩展：extensions.d 里的每个文件 × maps 里映射的路径
     drows EXT_FILE | while IFS="$TAB" read -r _k name _mt; do
+        if word_in "$name" "$RETIRED_EXTS"; then
+            item warn "$S" "扩展 $name" "已移除的手写优化（2026-09-30）还在 extensions.d 里——清掉：$REMOVED_FIX"
+            continue
+        fi
         case "$name" in
             *.so.crashed) item warn "$S" "扩展 $name" "有 xovi 崩溃标记——对应扩展上次加载时崩过" ; continue ;;
             *.so) ;;
@@ -363,6 +374,11 @@ judge_xochitl() {
 
     so="$(drows PENDING | cut -f2 | grep '^so-pending:' | sed 's/^so-pending://' | tr '\n' ' ' | sed 's/ $//' || true)"
     mk="$(drows PENDING | cut -f2 | grep -v '^so-pending:' | tr '\n' ' ' | sed 's/ $//' || true)"
+    for rx in $RETIRED_EXTS; do
+        if word_in "$rx" "$so"; then
+            item warn "$S" "待换入区 $rx" "已移除的手写优化还在待换入区里（下次生效会被换进 extensions.d）——清掉：$REMOVED_FIX"
+        fi
+    done
     if [ -n "$so" ]; then
         item warn "$S" "待换入区 so-pending" "有 $so 等着换入——下次 sh deploy-xovi-apply.sh（或设备重启时 xovi-reenable）会换入并生效"
     else
@@ -421,7 +437,7 @@ judge_qmd() {
 judge_services() {
     S="4. 常驻服务"
     drows UNIT | while IFS="$TAB" read -r _k kind unit present _pl act nr pid rss hwm sm _port; do
-        case "$kind" in svc|opt) ;; *) continue ;; esac
+        [ "$kind" = svc ] || continue
         [ "$present" = 1 ] || continue   # 单元缺失在第 8 节报
         mem=""; num "$rss" && mem="，RSS $(fmt_mb "$rss")"; num "$hwm" && mem="$mem / 峰值 $(fmt_mb "$hwm")"
         started=""
@@ -430,10 +446,6 @@ judge_services() {
             [ $((sm / 1000000)) -gt 300 ] && started="，开机后 $(fmt_dur $((sm / 1000000))) 才启动（开机后被重启过）"
         fi
         info="PID $(dash "$pid")，NRestarts $(dash "$nr")$mem$started"
-        if [ "$kind" = opt ]; then
-            item ok "$S" "$unit" "$act（有意不开机自启，active/inactive 都正常）；$info"
-            continue
-        fi
         if [ "$act" != "active" ]; then
             item fail "$S" "$unit" "is-active=$act（期望 active）——journalctl -u $unit -b 看原因"
         elif num "$nr" && [ "$nr" -gt 0 ]; then
@@ -517,6 +529,13 @@ judge_units() {
             # 退役/旧命名：单元或二进制还在就提醒（重新部署书架会清），不计入"在位"统计
             if [ "$present" = 1 ] || [ "$pl" = 1 ]; then
                 item warn "$S" "$unit" "已退役/旧命名的遗留（单元 $([ "$present" = 1 ] && echo 在 || echo 不在)，二进制 $([ "$pl" = 1 ] && echo 在 || echo 不在)）——重跑 sh deploy.sh 会清掉"
+            fi
+            continue
+        fi
+        if [ "$kind" = removed ]; then
+            # 已移除功能（电池刺客）的单元或载荷还在：不计入"在位"统计
+            if [ "$present" = 1 ] || [ "$pl" = 1 ]; then
+                item warn "$S" "$unit" "已移除的电池刺客（2026-09-30）遗留（单元 $([ "$present" = 1 ] && echo 在 || echo 不在)，载荷 $([ "$pl" = 1 ] && echo 在 || echo 不在)）——清掉：$REMOVED_FIX"
             fi
             continue
         fi

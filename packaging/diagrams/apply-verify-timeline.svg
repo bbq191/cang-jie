@@ -2,7 +2,7 @@
 <defs><marker id="av-m" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#555"/></marker></defs>
 <rect x="0" y="0" width="1000" height="520" fill="#fbfbfa"/>
 <text x="500" y="30" text-anchor="middle" font-size="18" font-weight="bold" fill="#1a1a1a">部署生效：设备整机重启，电脑等它回来后自动核对</text>
-<text x="500" y="52" text-anchor="middle" font-size="12.5" fill="#6a6a6a">xovi-apply、单独部署 hl-snap / handwriting-stroke 都走这条（2026-09-25 起）</text>
+<text x="500" y="52" text-anchor="middle" font-size="12.5" fill="#6a6a6a">xovi-apply、单独部署 hl-snap 都走这条（2026-09-25 起；handwriting-stroke 2026-09-30 已移除）</text>
 
 <text x="42" y="86" font-size="13" font-weight="bold" fill="#2f7d45">设备端（devlib.sh 的 cj_xochitl_apply）</text>
 <rect x="42" y="96" width="172" height="80" rx="10" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.6"/>

@@ -44,8 +44,8 @@ jobs:
         run: node --check gateway/ui/app.js
       - name: 网关前端转义回归（esc() 行为 + app.js 插值静态检查，node 内置测试、零 npm 依赖）
         run: node --test gateway/ui/test/*.test.mjs
-      # enhance/shared 四个纯 C 工具文件（hl-snap/handwriting-stroke 两个"涉及 xovi/mprotect
-      # 高危代码路径"共用的特征码扫描 + trampoline patch）：host gcc 编译+跑，不需要 aarch64
+      # enhance/shared 四个纯 C 工具文件（hl-snap 这个"涉及 xovi/mprotect 高危代码路径"的扩展用的
+      # 特征码扫描 + trampoline patch；原先 handwriting-stroke 也用，2026-09-30 已移除）：host gcc 编译+跑，不需要 aarch64
       # 交叉工具链，不需要真机——2026-09-16 补，此前这块完全零自动化覆盖，见 enhance/shared/
       # tests/test_shared.c 头注。
       - name: enhance/shared host 单测（特征码扫描 + trampoline patch，纯字节级验证不涉真机）
@@ -58,13 +58,12 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      - name: cargo test（共享基座 + 网关 + enhance 的三个独立服务，各自独立 crate）
+      - name: cargo test（共享基座 + 网关 + enhance 的两个独立服务，各自独立 crate）
         run: |
           cargo test --manifest-path rmsvc-core/Cargo.toml
           cargo test --manifest-path gateway/Cargo.toml
           cargo test --manifest-path enhance/wallpaper-serve/Cargo.toml
           cargo test --manifest-path enhance/font-serve/Cargo.toml
-          cargo test --manifest-path enhance/battop/Cargo.toml
       - name: cargo test（shelf 内部 workspace：bookconv/pdf-extract-cj/book-serve）
         run: cargo test --manifest-path shelf/Cargo.toml --workspace
       - name: cargo test（notes 内部 workspace：rmv6/notecore/vendorcfg/四服务）

@@ -458,10 +458,11 @@ xovi_live on; printf '7f03 r-xp %s (deleted)\n' "$EXT/hw-stroke.so" >> "$R/proc/
 ( cd "$PKG" && run sh deploy-xovi-apply.sh 127.0.0.1 --force ) >"$R/out.txt" 2>&1; rc=$?
 check "H3：刚卸载过（maps 带 (deleted)）+ --force → 同样只整机重启" test "$rc" -eq 0 -a "$(count_log 'systemctl reboot')" = 1 -a -z "$(grep -E 'systemctl (stop|start|restart) xochitl' "$CJ_SIM_LOG")"
 
-section "packaging/deploy-handwriting-stroke.sh（同一份数据驱动流程）"
-new_sandbox; EXT="$R/home/root/xovi/extensions.d"
-( cd "$PKG" && CJ_SKIP_BUILD=1 DEFER_XOVI_START=1 run sh deploy-handwriting-stroke.sh 127.0.0.1 ) >"$R/out.txt" 2>&1; rc=$?
-check "hw-stroke DEFER：落位 hw-stroke.so，配置键是 hwStrokeWidthFactor" test "$rc" -eq 0 -a -f "$EXT/hw-stroke.so" -a -n "$(grep hwStrokeWidthFactor "$R/home/root/.local/share/cangjie-ime/reading-qol.json")"
+section "2026-09-30 已移除的手写优化（hw-stroke）：部署入口已撤"
+new_sandbox; EXT="$R/home/root/xovi/extensions.d"; : > "$CJ_SIM_LOG"
+( cd "$PKG" && CJ_SKIP_BUILD=1 DEFER_XOVI_START=1 run sh deploy-xovi-ext.sh hw-stroke 127.0.0.1 ) >"$R/out.txt" 2>&1; rc=$?
+check "deploy-xovi-ext.sh hw-stroke：退出 2、说明已移除，不连设备、不落任何文件" test "$rc" -eq 2 -a -n "$(grep '已移除' "$R/out.txt")" -a "$(count_log '^ssh')" = 0 -a -z "$(ls -A "$EXT")"
+check "deploy-battop.sh / deploy-handwriting-stroke.sh / enhance 源码目录都已删" test ! -e "$PKG/deploy-battop.sh" -a ! -e "$PKG/deploy-handwriting-stroke.sh" -a ! -e "$REPO/enhance/battop" -a ! -e "$REPO/enhance/handwriting-stroke"
 
 section "packaging/deploy-xovi-apply.sh：H1 + A1（无待生效改动不重启）"
 new_sandbox; echo x > "$R/home/root/xovi/extensions.d/hl-snap.so"; xovi_live on; : > "$CJ_SIM_LOG"
@@ -497,27 +498,10 @@ check "chrony-boot-wakelock + dm-verity：退出 0（跳过非失败）、不 re
 new_sandbox; rm "$R/home/root/xovi/start"; ( cd "$PKG" && run sh deploy-xovi-persist.sh 127.0.0.1 ) >"$R/out.txt" 2>&1; rc=$?
 check "xovi-persist：没装 xovi 本体 → 失败，且不写 /usr、不 remount" test "$rc" -ne 0 -a "$(count_log remount)" = 0 -a -z "$(ls -A "$CJ_SYSD")"
 
-section "packaging/deploy-battop.sh：有意不开机自启 / 原子替换 / 保留用户关闭状态"
-new_sandbox; echo BIN1 > "$R/battop.bin"; : > "$CJ_SIM_LOG"
-( cd "$PKG" && CJ_BATTOP_BIN="$R/battop.bin" run sh deploy-battop.sh 127.0.0.1 ) >"$R/out.txt" 2>&1; rc=$?
-check "battop 首装：二进制+单元就位，起服务" test "$rc" -eq 0 -a "$(cat "$R/home/root/battop/battop")" = BIN1 -a -f "$CJ_SYSD/battop.service" -a "$(count_log 'restart battop.service')" = 1
-check "battop：不建 wants 链接、不 systemctl enable（有意不开机自启）" test ! -e "$CJ_SYSD/multi-user.target.wants/battop.service" -a "$(count_log 'systemctl enable')" = 0
-echo BIN2 > "$R/battop.bin"; : > "$CJ_SIM_LOG"
-( cd "$PKG" && CJ_BATTOP_BIN="$R/battop.bin" run sh deploy-battop.sh 127.0.0.1 ) >/dev/null 2>&1
-check "battop 更新：旧二进制备份进 cangjie-backups；旧的在跑 → restart 载入新版；没有先 stop 再 scp" test "$(cat "$R/home/root/battop/battop")" = BIN2 -a -n "$(ls "$R"/home/root/cangjie-backups/battop.bak.pre-* 2>/dev/null)" -a "$(count_log 'systemctl stop')" = 0 -a "$(count_log 'restart battop.service')" = 1
-: > "$CJ_SIM_LOG"; ( cd "$PKG" && CJ_BATTOP_BIN="$R/battop.bin" run sh deploy-battop.sh 127.0.0.1 ) >/dev/null 2>&1
-check "battop 重复部署同一份二进制：不重启（不重复触发 cgroup 迁移）、不再堆备份" test "$(count_log 'restart battop.service')" = 0 -a "$(ls "$R"/home/root/cangjie-backups/battop.bak.pre-* | wc -l)" -eq 1
-echo BIN3 > "$R/battop.bin"; : > "$CJ_SIM_LOG"
-CJ_SIM_INACTIVE=1 bash -c "cd '$PKG' && CJ_BATTOP_BIN='$R/battop.bin' PATH='$STUBS:'\$PATH sh deploy-battop.sh 127.0.0.1" >/dev/null 2>&1
-check "battop 已装但当前停着（用户在网页关了）→ 更新二进制但不擅自启动" test "$(cat "$R/home/root/battop/battop")" = BIN3 -a "$(count_log 'restart battop.service')" = 0
-new_sandbox; CJ_SIM_VERITY=1 bash -c "cd '$PKG' && CJ_BATTOP_BIN='$R/battop.bin' PATH='$STUBS:'\$PATH sh deploy-battop.sh 127.0.0.1" >/dev/null 2>&1
-check "battop + dm-verity：不 remount（补上原先缺的 verity 门）" test "$(count_log remount)" = 0
-
 # ═══════════════════════════ 4. install-all → uninstall-all 整轮对称 ═══════════════════════════
 section "install-all → uninstall-all 整轮"
 new_sandbox
-echo BATTOPBIN > "$R/battop.bin"
-export CJ_BATTOP_BIN="$R/battop.bin" CJ_SKIP_BUILD=1 SHELF_NO_BUILD=1
+export CJ_SKIP_BUILD=1 SHELF_NO_BUILD=1
 export CJ_ALLOWLIST_LOCAL="$R/allow.local.txt"
 ALLOW_MD5="$(md5sum < "$PKG/firmware-allowlist.txt")"
 PRE_SIG="$(tree_sig)"; : > "$CJ_SIM_LOG"
@@ -531,10 +515,10 @@ check "install-all --force：未验证哈希写进本机 allowlist.local，被 g
 # 扩展 .so 有变化且 xochitl 正映射着 → 走 H3 的 stop → 换入 → start；否则 restart。两者合计恰好一轮。
 cycles="$(count_log 'systemctl reboot')"
 check "install-all：整轮下来 xovi 已生效 → 只在最后整机重启一次，全程不停/不重启 xochitl、没有 xovi/start（H1）" test "$cycles" = 1 -a -z "$(grep -E 'systemctl (stop|start|restart) xochitl' "$CJ_SIM_LOG")" -a "$(count_log XOVI_START)" = 0
-check "install-all：hl-snap/hw-stroke 落进 extensions.d，且目录里只有它俩" test -f "$R/home/root/xovi/extensions.d/hl-snap.so" -a -f "$R/home/root/xovi/extensions.d/hw-stroke.so" -a "$(ls "$R/home/root/xovi/extensions.d" | wc -l)" -eq 2
+check "install-all：hl-snap 落进 extensions.d，且目录里只有它（已移除的 hw-stroke 不再装）" test -f "$R/home/root/xovi/extensions.d/hl-snap.so" -a "$(ls "$R/home/root/xovi/extensions.d")" = hl-snap.so
 W="$CJ_SYSD/multi-user.target.wants"
 check "install-all：wifi-watch（M1）/ xovi-reenable / chrony-boot-wakelock 单元在 /usr 且有 wants 链接" test -L "$W/wifi-watch.service" -a -L "$W/xovi-reenable.service" -a -L "$W/chrony-boot-wakelock.service"
-check "install-all：battop 单元在 /usr 但没有 wants 链接（有意不开机自启）" test -f "$CJ_SYSD/battop.service" -a ! -e "$W/battop.service" -a ! -L "$W/battop.service"
+check "install-all：不再装已移除的电池刺客（没有 battop 单元与 /home/root/battop）" test ! -e "$CJ_SYSD/battop.service" -a ! -e "$R/home/root/battop"
 check "install-all：qmd 全部就位（字体/回收站/建夹），不再装已退役的 KOReader 侧栏入口" test ! -e "$R/home/root/xovi/exthome/qt-resource-rebuilder/koreader-sidebar-entry.qmd" -a -f "$R/home/root/xovi/exthome/qt-resource-rebuilder/shelf-mkdir-agent.qmd" -a -f "$R/home/root/xovi/exthome/qt-resource-rebuilder/font-menu-dynamic.qmd"
 check "install-all：每次 rw 窗口都以 ro 收尾" test "$(last_mount)" = "mount -o remount,ro /"
 SIG_INSTALLED="$(tree_sig)"
@@ -555,25 +539,25 @@ check "--skip 未知步骤名：给出警告而不是静默" grep -q '不是已�
 check "uninstall-all：整轮退出 0" test "$rc" -eq 0
 POST_SIG="$(tree_sig | grep -v \
     -e 'home/root/\.config/shelf/' -e 'home/root/\.local/share/shelf/' -e 'home/root/\.local/state/shelf/' \
-    -e 'home/root/battop/' -e 'home/root/\.local/share/cangjie-ime/')"
-sig_eq "uninstall-all：文件树回到安装前（含 deploy 推送的载荷 pkg-*/hl-snap/hw-stroke/shelf-pkg 与暂存目录全清；仅剩用户数据/battop 数据/配置）" "$PRE_SIG" "$POST_SIG"
+    -e 'home/root/\.local/share/cangjie-ime/')"
+sig_eq "uninstall-all：文件树回到安装前（含 deploy 推送的载荷 pkg-*/hl-snap/shelf-pkg 与暂存目录全清；仅剩用户数据/配置）" "$PRE_SIG" "$POST_SIG"
 check "uninstall-all：暂存目录也清了" test ! -e "$R/home/root/.cangjie-stage"
 check "uninstall-all：不重启 xochitl、不 xovi/start" test "$(count_log 'restart xochitl')" = 0 -a "$(count_log XOVI_START)" = 0
 check "uninstall-all：最后一次 mount 是 ro" test "$(last_mount)" = "mount -o remount,ro /"
 ( cd "$PKG" && run sh uninstall-all.sh 127.0.0.1 ) >"$R/uout2.txt" 2>&1; rc=$?
 check "uninstall-all 第二遍：仍退出 0（幂等）" test "$rc" -eq 0
-: > "$CJ_SIM_LOG"
-( cd "$PKG" && run sh uninstall-all.sh 127.0.0.1 --purge --skip shelf ) >/dev/null 2>&1
-check "uninstall-all --purge：battop 目录才被清" test ! -e "$R/home/root/battop"
-unset CJ_BATTOP_BIN CJ_SKIP_BUILD SHELF_NO_BUILD CJ_ALLOWLIST_LOCAL
+unset CJ_SKIP_BUILD SHELF_NO_BUILD CJ_ALLOWLIST_LOCAL
 
 # ═══════════════════════════ 6. 2026-09-22 审计新增 ═══════════════════════════
 section "参数解析 / --dry-run / -h / 设备不可达"
 new_sandbox; : > "$CJ_SIM_LOG"
 ( cd "$PKG" && run sh install-all.sh --dry-run ) >"$R/out.txt" 2>&1; rc=$?
 check "install-all --dry-run：退出 0、不发起任何 ssh/scp" test "$rc" -eq 0 -a "$(count_log '^ssh')" = 0 -a "$(count_log '^scp')" = 0
-missing=""; for st in chrony-cn chrony-boot-wakelock timezone-cn battop wifi-watch xovi-persist hl-snap handwriting-stroke shelf xovi-apply; do grep -q "═══ $st ═══" "$R/out.txt" || missing="$missing $st"; done
-check "install-all --dry-run：10 个步骤都在计划里，已退役的 sidebar-entry 不在" test -z "$missing" -a -z "$(grep '═══ sidebar-entry ═══' "$R/out.txt")"
+missing=""; for st in chrony-cn chrony-boot-wakelock timezone-cn wifi-watch xovi-persist hl-snap shelf xovi-apply; do grep -q "═══ $st ═══" "$R/out.txt" || missing="$missing $st"; done
+check "install-all --dry-run：8 个步骤都在计划里，已退役的 sidebar-entry、已移除的 battop/handwriting-stroke 不作为安装步骤" test -z "$missing" -a -z "$(grep -e '═══ sidebar-entry ═══' -e '═══ battop ═══' -e '═══ handwriting-stroke ═══' "$R/out.txt")"
+l_clean="$(grep -n '═══ 清理已移除:handwriting-stroke ═══' "$R/out.txt" | cut -d: -f1)"; l_b="$(grep -n '═══ 清理已移除:battop ═══' "$R/out.txt" | cut -d: -f1)"
+l_shelf="$(grep -n '═══ shelf ═══' "$R/out.txt" | cut -d: -f1)"; l_apply="$(grep -n '═══ xovi-apply ═══' "$R/out.txt" | cut -d: -f1)"
+check "install-all --dry-run：已移除的 battop/handwriting-stroke 的残留清理排在 shelf 之后、xovi-apply 之前" test -n "$l_clean" -a -n "$l_b" -a -n "$l_shelf" -a -n "$l_apply" && test "$l_shelf" -lt "$l_b" -a "$l_b" -lt "$l_clean" -a "$l_clean" -lt "$l_apply"
 ( cd "$PKG" && run sh install-all.sh -h ) >"$R/out.txt" 2>&1; rc=$?
 check "install-all -h：退出 0、打印用法、不连设备" test "$rc" -eq 0 -a -n "$(grep '用法' "$R/out.txt")" -a "$(count_log '^ssh')" = 0
 ( cd "$PKG" && run sh install-all.sh 127.0.0.1 --purge ) >/dev/null 2>&1; rc1=$?
@@ -583,9 +567,9 @@ check "install-all -h：退出 0、打印用法、不连设备" test "$rc" -eq 0
 check "install-all --purge / 未知参数、uninstall-all --force/--force-apply：退出 2，且没连设备" test "$rc1" -eq 2 -a "$rc2" -eq 2 -a "$rc3" -eq 2 -a "$rc4" -eq 2 -a "$(count_log '^ssh')" = 0
 ( cd "$PKG" && run sh uninstall-all.sh --dry-run --purge ) >"$R/out.txt" 2>&1; rc=$?
 check "uninstall-all --dry-run：退出 0、不连设备" test "$rc" -eq 0 -a "$(count_log '^ssh')" = 0
-order="$(for st in shelf handwriting-stroke hl-snap xovi-persist wifi-watch battop chrony-boot-wakelock sidebar-entry; do grep -n "═══ $st ═══" "$R/out.txt" | cut -d: -f1; done | tr '\n' ' ')"
+order="$(for st in shelf hl-snap xovi-persist wifi-watch chrony-boot-wakelock handwriting-stroke battop sidebar-entry; do grep -n "═══ $st ═══" "$R/out.txt" | cut -d: -f1; done | tr '\n' ' ')"
 sorted="$(printf '%s\n' $order | sort -n | tr '\n' ' ')"
-check "uninstall-all：步骤按 install-all 的逆序执行（shelf 最先、chrony-boot-wakelock 其次到最后），已退役的 sidebar-entry 照样卸、排最后" test -n "$order" -a "$order" = "$sorted"
+check "uninstall-all：步骤按 install-all 的逆序执行（shelf 最先），已退役/已移除的 handwriting-stroke、battop、sidebar-entry 照样卸、排最后" test "$(echo $order | wc -w)" -eq 8 -a "$order" = "$sorted"
 check "uninstall-all：已退役的 sidebar-entry 仍在卸载计划里（装过的设备能清干净）" test -n "$(grep '═══ sidebar-entry ═══' "$R/out.txt")"
 check "uninstall-all：配置覆写/纯动作步骤（chrony-cn/timezone-cn/xovi-apply）不在卸载计划里" test -z "$(grep -e '═══ chrony-cn ═══' -e '═══ timezone-cn ═══' -e '═══ xovi-apply ═══' "$R/out.txt")"
 ( cd "$PKG" && run sh deploy-wifi-watch.sh --bogus ) >/dev/null 2>&1; rc1=$?
@@ -594,16 +578,16 @@ check "uninstall-all：配置覆写/纯动作步骤（chrony-cn/timezone-cn/xovi
 check "薄 deploy 脚本：未知选项/多余参数 → 退出 2；-h → 退出 0 并打印用法；都没连设备" test "$rc1" -eq 2 -a "$rc2" -eq 2 -a "$rc3" -eq 0 -a -n "$(grep '用法' "$R/out.txt")" -a "$(count_log '^ssh')" = 0
 
 # 设备连不上：每个会连设备的入口都先给可读的报错并在动手前退出（不留半成品、不 scp）
-new_sandbox; export CJ_BATTOP_BIN="$R/battop.bin" CJ_SKIP_BUILD=1 SHELF_NO_BUILD=1; echo B > "$R/battop.bin"
+new_sandbox; export CJ_SKIP_BUILD=1 SHELF_NO_BUILD=1
 unreach_ok=1
-for sc in "install-all.sh 127.0.0.1 --force" "uninstall-all.sh 127.0.0.1" deploy-hl-snap.sh deploy-handwriting-stroke.sh deploy-wifi-watch.sh deploy-xovi-persist.sh deploy-chrony-boot-wakelock.sh deploy-battop.sh deploy-xovi-apply.sh deploy-chrony-cn.sh deploy-timezone-cn.sh deploy.sh; do
+for sc in "install-all.sh 127.0.0.1 --force" "uninstall-all.sh 127.0.0.1" deploy-hl-snap.sh deploy-wifi-watch.sh deploy-xovi-persist.sh deploy-chrony-boot-wakelock.sh deploy-xovi-apply.sh deploy-chrony-cn.sh deploy-timezone-cn.sh deploy.sh; do
     : > "$CJ_SIM_LOG"
     case "$sc" in *" "*) cmd="$sc" ;; *) cmd="$sc 127.0.0.1" ;; esac
     CJ_SIM_SSH_FAIL=1 bash -c "cd '$PKG' && PATH='$STUBS:'\$PATH sh $cmd" >"$R/out.txt" 2>&1; rc=$?
     if [ "$rc" -eq 0 ] || ! grep -q '连不上' "$R/out.txt" || [ "$(count_log '^scp')" != 0 ]; then unreach_ok=0; echo "       未达预期：$sc rc=$rc"; fi
 done
-check "12 个入口在 ssh 不通时：退出非 0、打印\"连不上\"与下一步、没有 scp" test "$unreach_ok" = 1
-unset CJ_BATTOP_BIN CJ_SKIP_BUILD SHELF_NO_BUILD
+check "10 个入口在 ssh 不通时：退出非 0、打印\"连不上\"与下一步、没有 scp" test "$unreach_ok" = 1
+unset CJ_SKIP_BUILD SHELF_NO_BUILD
 
 section "设备预检（磁盘空间）"
 new_sandbox; export CJ_ALLOWLIST_LOCAL="$R/allow.local.txt"; PRE_SIG="$(tree_sig)"
@@ -656,7 +640,7 @@ run sh "$R/home/root/.local/bin/shelf-uninstall" >/dev/null 2>&1
 check "uninstall 第二次（已无残留）：退出 0，且不 remount rootfs（幂等）" test "$rc" -eq 0 -a "$(count_log remount)" = 0
 
 section "uninstall-all：载荷清理保守 / wifi-watch 在 verity 下留脚本 / 备份不因重复部署被挤掉"
-new_sandbox; export CJ_SKIP_BUILD=1 CJ_BATTOP_BIN="$R/battop.bin"; echo B > "$R/battop.bin"
+new_sandbox; export CJ_SKIP_BUILD=1
 ( cd "$PKG" && DEFER_XOVI_START=1 run sh deploy-hl-snap.sh 127.0.0.1 ) >/dev/null 2>&1
 echo "user file" > "$R/home/root/hl-snap/mine.txt"
 ( cd "$PKG" && run sh uninstall-all.sh 127.0.0.1 ) >"$R/out.txt" 2>&1; rc=$?
@@ -679,7 +663,7 @@ CJ_SIM_VERITY=1 bash -c "cd '$PKG' && PATH='$STUBS:'\$PATH sh uninstall-all.sh 1
 check "uninstall-all + dm-verity：shelf 二进制被保留 → shelf-pkg 载荷（可写后重卸的退路）也保留" test "$rc" -eq 0 -a -x "$R/home/root/.local/bin/gateway" -a -f "$R/home/root/shelf-pkg/shelf/uninstall.sh"
 ( cd "$PKG" && run sh uninstall-all.sh 127.0.0.1 ) >/dev/null 2>&1; rc=$?
 check "uninstall-all 可写后再跑：shelf 卸干净，shelf-pkg 载荷随后删除" test "$rc" -eq 0 -a ! -e "$R/home/root/.local/bin/gateway" -a ! -e "$R/home/root/shelf-pkg"
-unset CJ_SKIP_BUILD CJ_BATTOP_BIN
+unset CJ_SKIP_BUILD
 
 section "chrony-cn / timezone-cn（路径覆盖；只测非 overlay 与 verity 路径，overlay 底层改写只能真机验证）"
 new_sandbox; : > "$R/mounts"; CONF="$R/chrony.conf"
@@ -781,20 +765,20 @@ mk_dump() {
     {
         echo "VERSION|1"; echo "NOW|2000000000"; echo "UPTIME|100000.00"; echo "FW_SHA|$FW_OK"; echo "FW_VER|3.28.0.172"
         echo "X_ACTIVE|active"; echo "X_PID|4242"; echo "X_NRESTARTS|0"; echo "X_START_MONO|7400000"; echo "X_XOVI|1"
-        echo "XMAP|/home/root/xovi/extensions.d/hl-snap.so|3|0"; echo "XMAP|/home/root/xovi/extensions.d/hw-stroke.so|3|0"
-        echo "HAS_XOVI|1"; echo "EXT_FILE|hl-snap.so|1999000000"; echo "EXT_FILE|hw-stroke.so|1999000000"
+        echo "XMAP|/home/root/xovi/extensions.d/hl-snap.so|3|0"
+        echo "HAS_XOVI|1"; echo "EXT_FILE|hl-snap.so|1999000000"
         echo "HAS_QRR|1"
         for q in font-menu-dynamic.qmd shelf-trash-agent.qmd shelf-mkdir-agent.qmd shelf-comic-margins.qmd reader-page-turn.qmd; do echo "QRR_FILE|$q|1999000000"; done
         echo "HAS_APPLOAD|0"
         for s in $VSVCS; do echo "UNIT|svc|$s.service|1|1|active|0|5000|10240|20480|7600000|-"; done
         echo "UNIT|target|shelf.target|1|1|active|-|-|-|-|-|-"
         echo "UNIT|svc|wifi-watch.service|1|1|active|0|5001|512|600|7000000|-"
-        echo "UNIT|opt|battop.service|1|1|inactive|0|0|-|-|0|-"
+        echo "UNIT|removed|battop.service|0|0|inactive|-|-|-|-|-|-"; echo "UNIT|removed|battop.timer|0|-|inactive|-|-|-|-|-|-"
         echo "UNIT|once|xovi-reenable.service|1|1|active|-|-|-|-|-|-"
         echo "UNIT|once|chrony-boot-wakelock.service|1|-|inactive|-|-|-|-|-|-"
         echo "PORTINFO|1"; echo "LISTEN|443|0.0.0.0"
         for p in 8790 8792 8793 8795 8796 8797 8798; do echo "LISTEN|$p|127.0.0.1"; done
-        echo "JOURNAL|1"; echo "XLOG|hookok:hl-snap|1"; echo "XLOG|hookok:hw-stroke|3"; echo "XLOG|hookfail:hl-snap|0"
+        echo "JOURNAL|1"; echo "XLOG|hookok:hl-snap|3"; echo "XLOG|hookfail:hl-snap|0"
         echo "XLOG|mark:reader-page-turn.qmd|2"; echo "FLIGHT_ABSENT|1"; echo "DF_HOME|3000000"; echo "END|1"
     } | tr '|' '\t'
 }
@@ -806,9 +790,9 @@ mk_dump > "$R/ok.dump"
 : > "$CJ_SIM_LOG"; vr 127.0.0.1 --from "$R/ok.dump"; rc=$?
 check "健康采集：退出 0、result=PASS、无 ⚠/✗" test "$rc" -eq 0 -a "$(vsum result)" = PASS -a "$(vsum warn)" = 0 -a "$(vsum fail)" = 0
 check "--from：不连设备（没有任何 ssh/scp）" test "$(count_log '^ssh')" = 0 -a "$(count_log '^scp')" = 0
-check "健康采集：扩展行带 maps 段数与 hook「安装完成」次数" test -n "$(vline '✓ 扩展 hw-stroke.so：已映射 3 段，日志 hook「安装完成」×3')"
+check "健康采集：扩展行带 maps 段数与 hook「安装完成」次数" test -n "$(vline '✓ 扩展 hl-snap.so：已映射 3 段，日志 hook「安装完成」×3')"
 check "健康采集：qmd 有日志佐证时注明（CJ-PAGE-TURN: loaded ×2）" test -n "$(vline 'CJ-PAGE-TURN: loaded」×2')"
-check "健康采集：battop inactive 不算问题（有意不开机自启）" test -n "$(vline '✓ battop.service：inactive')"
+check "健康采集：已移除的电池刺客单元不在 → 不报、不计入在位统计" test -z "$(vline 'battop')" -a -n "$(vline '✓ 单元：12/12 个在位')"
 check "健康采集：最后一行是机器可读汇总" test "$(tail -n 1 "$R/vout.txt" | cut -d' ' -f1)" = VERIFY-SUMMARY
 
 # 逐项坏掉：期望的级别与退出码
@@ -820,12 +804,12 @@ vcase() { # 描述 期望退出码(0/1) 期望行里的子串 sed表达式…（
     if [ "$vc_got" -eq "$vc_rc" ] && [ -n "$(vline "$vc_s")" ]; then ok "$vc_d"; else bad "$vc_d（rc=$vc_got）"; grep -e '✗' -e '⚠' "$R/vout.txt" | head -n 5 | sed 's/^/       /'; fi
 }
 T=$'\t'
-vcase "扩展 .so 在 maps 里是 (deleted) → ✗、退出 1" 1 "✗ 扩展 hw-stroke.so：maps 里是 (deleted)" "s#^XMAP${T}\(.*hw-stroke.so\)${T}3${T}0#XMAP${T}\1${T}3${T}1#"
+vcase "扩展 .so 在 maps 里是 (deleted) → ✗、退出 1" 1 "✗ 扩展 hl-snap.so：maps 里是 (deleted)" "s#^XMAP${T}\(.*hl-snap.so\)${T}3${T}0#XMAP${T}\1${T}3${T}1#"
 vcase "extensions.d 里有非 .so 文件（备份）→ ✗" 1 "✗ 扩展目录异物 hl-snap.so.bak" "\$a EXT_FILE${T}hl-snap.so.bak${T}1"
 vcase "extensions.d 里有 .crashed 标记 → 只 ⚠" 0 "⚠ 扩展 hl-snap.so.crashed" "\$a EXT_FILE${T}hl-snap.so.crashed${T}1"
 vcase "扩展在目录里但没被映射 → ⚠" 0 "⚠ 扩展 hl-snap.so：在 extensions.d 里但没被当前 xochitl 映射" "/^XMAP${T}.*hl-snap/d"
 vcase "当前 xochitl 日志有「hook 未安装」→ 该扩展 ✗" 1 "✗ 扩展 hl-snap.so：已映射 3 段，但当前 xochitl 日志有「hook 未安装」×2" "s/^XLOG${T}hookfail:hl-snap${T}0/XLOG${T}hookfail:hl-snap${T}2/"
-vcase "待换入区有 .so → ⚠、退出 0（result=WARN）" 0 "⚠ 待换入区 so-pending：有 hw-stroke.so" "\$a PENDING${T}so-pending:hw-stroke.so"
+vcase "待换入区有 .so → ⚠、退出 0（result=WARN）" 0 "⚠ 待换入区 so-pending：有 hl-snap.so" "\$a PENDING${T}so-pending:hl-snap.so"
 check "  └ result=WARN" test "$(vsum result)" = WARN
 vcase "有待生效标记 → ⚠" 0 "⚠ 待生效标记：shelf-qmd" "\$a PENDING${T}shelf-qmd"
 vcase "xovi 没在 xochitl 里生效 → ✗" 1 "✗ xovi：xochitl 没带 xovi" "s/^X_XOVI${T}1/X_XOVI${T}0/"
@@ -853,9 +837,16 @@ vcase "领域服务监听 0.0.0.0 → ⚠" 0 "⚠ 8792（font-serve）：监听 
 vcase "网关只听回环 → ⚠" 0 "⚠ 443（gateway）：只监听 127.0.0.1" "s/^LISTEN${T}443${T}0.0.0.0/LISTEN${T}443${T}127.0.0.1/"
 vcase "单元里 --bind 的端口优先于兜底表" 0 "✓ 8899（font-serve）" "s/^\(UNIT${T}svc${T}font-serve.service${T}.*${T}\)-\$/\18899/" "\$a LISTEN${T}8899${T}127.0.0.1"
 vcase "退役服务 koreader-serve 的单元/二进制还在 → ⚠（不计入在位统计）" 0 "⚠ koreader-serve.service：已退役/旧命名的遗留（单元 在，二进制 在）" "\$a UNIT${T}legacy${T}koreader-serve.service${T}1${T}1${T}active${T}-${T}-${T}-${T}-${T}-${T}-"
-check "  └ 在位统计不含退役单元" test -n "$(vline '✓ 单元：13/13 个在位')"
-vcase "退役单元都不在 → 不报" 0 "✓ 单元：13/13 个在位" "\$a UNIT${T}legacy${T}koreader-serve.service${T}0${T}0${T}inactive${T}-${T}-${T}-${T}-${T}-${T}-"
+check "  └ 在位统计不含退役单元" test -n "$(vline '✓ 单元：12/12 个在位')"
+vcase "退役单元都不在 → 不报" 0 "✓ 单元：12/12 个在位" "\$a UNIT${T}legacy${T}koreader-serve.service${T}0${T}0${T}inactive${T}-${T}-${T}-${T}-${T}-${T}-"
 check "  └ 没有遗留提示" test -z "$(vline '已退役/旧命名的遗留')"
+ONLY_SKIP="$(bash -c "cd '$PKG' && . ./lib.sh && uninstall_only_skip battop handwriting-stroke")"
+vcase "已移除的手写优化 hw-stroke.so 还在 extensions.d（旧设备）→ ⚠（不当成正常扩展），给清理命令" 0 "⚠ 扩展 hw-stroke.so：已移除的手写优化（2026-09-30）还在 extensions.d 里——清掉：sh install-all.sh" "\$a EXT_FILE${T}hw-stroke.so${T}1999000000" "\$a XMAP${T}/home/root/xovi/extensions.d/hw-stroke.so${T}3${T}0"
+check "  └ 清理命令只留 battop/handwriting-stroke 两步（--skip $ONLY_SKIP）、没把它报成 ✓" test "$ONLY_SKIP" = "chrony-boot-wakelock,wifi-watch,xovi-persist,hl-snap,shelf,sidebar-entry" -a -n "$(vline "uninstall-all.sh --skip $ONLY_SKIP")" -a -z "$(vline '✓ 扩展 hw-stroke.so')"
+vcase "已移除的 hw-stroke.so 在待换入区 → ⚠" 0 "⚠ 待换入区 hw-stroke.so：已移除的手写优化还在待换入区里" "\$a PENDING${T}so-pending:hw-stroke.so"
+vcase "已移除的电池刺客单元/二进制还在（旧设备）→ ⚠、不计入在位统计" 0 "⚠ battop.service：已移除的电池刺客（2026-09-30）遗留（单元 在，载荷 在）——清掉：sh install-all.sh" "s/^UNIT${T}removed${T}battop.service${T}0${T}0/UNIT${T}removed${T}battop.service${T}1${T}1/"
+check "  └ 在位统计仍是 12/12" test -n "$(vline '✓ 单元：12/12 个在位')"
+vcase "旧版遗留的 battop.timer 还在 → ⚠" 0 "⚠ battop.timer：已移除的电池刺客（2026-09-30）遗留（单元 在，载荷 不在）" "s/^UNIT${T}removed${T}battop.timer${T}0/UNIT${T}removed${T}battop.timer${T}1/"
 vcase "已退役的侧栏 qmd 还在、appload 也在 → ⚠" 0 "⚠ koreader-sidebar-entry.qmd：已退役的 KOReader/WeRead 侧栏入口还在" "\$a QRR_FILE${T}koreader-sidebar-entry.qmd${T}1" "s/^HAS_APPLOAD${T}0/HAS_APPLOAD${T}1/"
 vcase "已退役的侧栏 qmd 还在、appload 已卸 → ✗（它 IMPORT 的模块不在了）" 1 "✗ koreader-sidebar-entry.qmd：已退役的侧栏入口还在，而 appload 已不在" "\$a QRR_FILE${T}koreader-sidebar-entry.qmd${T}1"
 vcase "journal 有 panic → ✗" 1 "✗ panic：1 条相关日志；最近一条：thread 'main' panicked at src/x.rs" "\$a ALERT${T}J${T}panic${T}1${T}thread 'main' panicked at src/x.rs"
@@ -894,24 +885,23 @@ printf 'Name:\tx\nVmHWM:\t  20480 kB\nVmRSS:\t  10240 kB\n' > "$R/proc/4242/stat
   for p in 8790 8792 8793 8795 8796 8797 8798; do printf '   %d: 0100007F:%04X 00000000:0000 0A 0\n' "$n" "$p"; n=$((n + 1)); done
   echo "   9: 0100007F:1F90 0100007F:D431 01 0"; } > "$R/proc/net/tcp"   # 最后一行是已建立连接（st=01），不算监听
 printf '  sl  local_address                         remote_address                        st\n   0: 0000000000000000FFFF00000100007F:22B6 00000000000000000000000000000000:0000 0A 0\n' > "$R/proc/net/tcp6"
-: > "$R/home/root/xovi/extensions.d/hl-snap.so"; : > "$R/home/root/xovi/extensions.d/hw-stroke.so"
+: > "$R/home/root/xovi/extensions.d/hl-snap.so"
 for s in $VSVCS; do : > "$B/$s"; printf '[Service]\nExecStart=/home/root/.local/bin/%s\n' "$s" > "$R/usr/lib/systemd/system/$s.service"; done
-for u in shelf.target xovi-reenable.service wifi-watch.service battop.service chrony-boot-wakelock.service; do : > "$R/usr/lib/systemd/system/$u"; done
-: > "$B/wifi-watch.sh"; mkdir -p "$R/home/root/battop"; : > "$R/home/root/battop/battop"
+for u in shelf.target xovi-reenable.service wifi-watch.service chrony-boot-wakelock.service; do : > "$R/usr/lib/systemd/system/$u"; done
+: > "$B/wifi-watch.sh"
 for q in font-menu-dynamic.qmd shelf-trash-agent.qmd shelf-mkdir-agent.qmd shelf-comic-margins.qmd reader-page-turn.qmd; do : > "$Q/$q"; done
 printf 'f1\nf2\nf3\nf4\tx\n' > "$R/host-flight.log"   # 飞行记录仪在宿主机上（09-25 更正）；末行带 TAB：要压成空格，不能错位
 export CJ_FLIGHT_LOG="$R/host-flight.log"
 cat > "$R/journal.txt" <<'EOF'
 Kernel command line: console=ttymxc0,115200 panic=2 rootwait
 [hl-snap] 荧光笔EXPAND hook 安装完成 @ 0x1（neuter=0）
-[hw-stroke] 变宽几何 hook 安装完成 @ 0x2（factor=1.000）
 CJ-PAGE-TURN: loaded
 EOF
 export CJ_SIM_JOURNAL="$R/journal.txt"
 PRE_SIG="$(tree_sig)"; : > "$CJ_SIM_LOG"
 vr 127.0.0.1 --flight-lines 2; rc=$?
 check "采集：内核命令行里的 panic=2 不算 panic（2026-09-25 真机误报）" test -n "$(vline '✓ panic：无 panic')"
-check "采集：全链路跑通、没有采集错误（有 END、单元/端口/qmd/扩展都读到）" test -z "$(vline '采集结果')" -a -n "$(vline '✓ 443（gateway）：监听 0.0.0.0')" -a -n "$(vline '✓ 8790（book-serve）：监听 127.0.0.1')" -a -n "$(vline '✓ 扩展 hl-snap.so：已映射 1 段，日志 hook「安装完成」×1')" -a -n "$(vline '✓ 单元：13/13 个在位')"
+check "采集：全链路跑通、没有采集错误（有 END、单元/端口/qmd/扩展都读到）" test -z "$(vline '采集结果')" -a -n "$(vline '✓ 443（gateway）：监听 0.0.0.0')" -a -n "$(vline '✓ 8790（book-serve）：监听 127.0.0.1')" -a -n "$(vline '✓ 扩展 hl-snap.so：已映射 1 段，日志 hook「安装完成」×1')" -a -n "$(vline '✓ 单元：12/12 个在位')"
 check "采集：飞行记录仪只取 --flight-lines 条（最后 2 行）" test -n "$(vline '│ f4 x')" -a -n "$(vline '│ f3')" -a -z "$(vline '│ f2')"
 check "采集：/proc/net/tcp6 的 IPv4 映射地址解析成 127.0.0.1（8886 端口）" test -n "$( ( cd "$PKG" && run sh verify-on-device.sh 127.0.0.1 --dump ) 2>/dev/null | grep "^LISTEN${T}8886${T}127.0.0.1$")"
 ( cd "$PKG" && run sh verify-on-device.sh 127.0.0.1 --dump ) > "$R/host.dump" 2>/dev/null; vr --from "$R/host.dump"
@@ -923,7 +913,7 @@ check "采集：没有 start/stop/restart/enable/disable/daemon-reload、没有 
 check "采集：一次 ssh 连通检查 + 一次 ssh 采集（不逐项连）" test "$(count_log '^ssh')" = 2 -a "$(count_log '^ssh sh -s')" = 1
 check "采集：设备全健康时退出 0（固件桩哈希不在白名单除外，已单独断言）" test "$(vsum fail)" = 1 -a -n "$(vline '✗ 固件')"
 # 真 panic / hook 未安装 / dmesg OOM 能从采集里抓到
-printf "thread 'main' panicked at gateway/src/main.rs:10:5\n[hw-stroke] _xovi_construct: 找不到 xochitl 映射，hook 未安装\nxochitl: processed more than once!\n" >> "$R/journal.txt"
+printf "thread 'main' panicked at gateway/src/main.rs:10:5\n[hl-snap] _xovi_construct: 找不到 xochitl 映射，hook 未安装\nxochitl: processed more than once!\n" >> "$R/journal.txt"
 printf '[  12.3] Out of memory: Killed process 777 (book-serve)\n[    0.0] Kernel command line: panic=2\n' > "$R/dmesg.txt"; export CJ_SIM_DMESG="$R/dmesg.txt"
 vr 127.0.0.1; rc=$?
 check "采集：真 panic / hook 未安装 / 扩展重复注册 / dmesg 里的 OOM 都判 ✗、退出 1" test "$rc" -eq 1 -a -n "$(vline "✗ panic：1 条相关日志；最近一条：thread 'main' panicked")" -a -n "$(vline '✗ hook 未安装：1 条')" -a -n "$(vline '✗ 扩展重复注册')" -a -n "$(vline '✗ OOM：1 条相关日志；最近一条：[  12.3] Out of memory')"
@@ -940,7 +930,7 @@ check "静态守卫：verify 采集脚本不含 systemctl 写操作 / mount / rm
 unset CJ_ALLOWLIST_LOCAL
 
 # ═══════════════════════════ 9. 2026-09-25 第四轮审计新增 ═══════════════════════════
-section "2026-09-25 第四轮：待换入区过时版本 / 重启失败 / battop verity / 连接次数"
+section "2026-09-25 第四轮：待换入区过时版本 / 重启失败 / 连接次数"
 HLSO="$REPO/enhance/hl-snap/hl-snap.so"
 # 待换入区里有更早一轮的旧版（xovi 暂未生效时直接原子替换）：必须撤掉，否则随后的生效步骤会把它盖回来
 new_sandbox; EXT="$R/home/root/xovi/extensions.d"; SOP="$R/home/root/.cangjie-stage/so-pending"
@@ -956,17 +946,6 @@ mkdir -p "$CJ_PENDING_DIR"; : > "$CJ_PENDING_DIR/shelf-qmd"; : > "$CJ_SIM_LOG"
 ( cd "$PKG" && CJ_SIM_REBOOT_FAIL=1 CJ_APPLY_VERIFY=1 CJ_REBOOT_DOWN_WAIT=0 CJ_REBOOT_UP_WAIT=0 CJ_REBOOT_SETTLE=0 run sh deploy-xovi-apply.sh 127.0.0.1 ) >"$R/out.txt" 2>&1; rc=$?
 check "reboot 失败：退出非 0、提示手动 reboot、不去等设备重启/不跑核对" test "$rc" -ne 0 -a -n "$(grep '手动 reboot' "$R/out.txt")" -a -z "$(grep -e '设备已回来' -e '^VERIFY-SUMMARY' "$R/out.txt")"
 check "reboot 失败：补回待生效标记（下次 xovi-apply 仍会判定需要生效）" test -n "$(ls -A "$CJ_PENDING_DIR" 2>/dev/null)"
-
-# battop + dm-verity：单元以前装过 → 换了二进制且在跑就重启用上新版（与 wifi-watch 09-24 同一类）；旧 timer 不碰 rootfs
-new_sandbox; echo BIN1 > "$R/battop.bin"
-( cd "$PKG" && CJ_BATTOP_BIN="$R/battop.bin" run sh deploy-battop.sh 127.0.0.1 ) >/dev/null 2>&1
-echo BIN2 > "$R/battop.bin"; : > "$CJ_SYSD/battop.timer"; : > "$CJ_SIM_LOG"
-CJ_SIM_VERITY=1 bash -c "cd '$PKG' && CJ_BATTOP_BIN='$R/battop.bin' PATH='$STUBS:'\$PATH sh deploy-battop.sh 127.0.0.1" >"$R/out.txt" 2>&1; rc=$?
-check "battop + dm-verity + 单元以前装过：二进制更新后重启服务载入新版，不 remount、退出 0" test "$rc" -eq 0 -a "$(cat "$R/home/root/battop/battop")" = BIN2 -a "$(count_log 'restart battop.service')" = 1 -a "$(count_log remount)" = 0
-check "battop + dm-verity：旧 battop.timer 不去删（rootfs 不可写）" test -f "$CJ_SYSD/battop.timer"
-new_sandbox; echo BIN1 > "$R/battop.bin"
-CJ_SIM_VERITY=1 bash -c "cd '$PKG' && PATH='$STUBS:'\$PATH && . ./lib.sh && HOST=127.0.0.1 && CJ_BATTOP_BIN='$R/battop.bin' run_step battop sh ./deploy-battop.sh 127.0.0.1 >/dev/null 2>&1; echo \"D=\$DONE|N=\$NOTAPPL\"" >"$R/out.txt" 2>&1
-check "run_step：battop 在 dm-verity 下单元从没装过 → 记为\"前置条件不满足\"而不是已安装" test -n "$(grep '^D=|N=' "$R/out.txt")" -a -n "$(grep '^   battop：dm-verity' "$R/out.txt")"
 
 # chrony-boot-wakelock：收到 TERM（关机/重启时 systemd 发）要放锁并**退出**，不能接着轮询到 120 秒
 WL="$R/wl"; mkdir -p "$WL/bin"; : > "$WL/lock"; : > "$WL/unlock"
@@ -1002,10 +981,10 @@ check "hl-snap 部署：4 次 ssh（连通检查/建目录/取 md5/安装）+ 4 
 new_sandbox; SOP="$R/home/root/.cangjie-stage"; mkdir -p "$SOP"; echo keep > "$SOP/battop.new"; : > "$CJ_SIM_LOG"
 ( cd "$PKG" && CJ_SIM_SCP_CORRUPT=hl-snap.so CJ_SKIP_BUILD=1 DEFER_XOVI_START=1 run sh deploy-hl-snap.sh 127.0.0.1 ) >"$R/out.txt" 2>&1; rc=$?
 check "合批推送：只有 md5 对不上的那个文件被删，其余已校验的暂存文件保留、没进入安装" test "$rc" -ne 0 -a ! -e "$R/home/root/hl-snap/hl-snap.so" -a -f "$R/home/root/hl-snap/deploy/install.sh" -a -n "$(grep 'md5 对不上：hl-snap.so' "$R/out.txt")" -a -z "$(grep "^ssh sh '.*/deploy/install.sh" "$CJ_SIM_LOG")"
-new_sandbox; export CJ_ALLOWLIST_LOCAL="$R/allow.local.txt" CJ_BATTOP_BIN="$R/battop.bin" CJ_SKIP_BUILD=1 SHELF_NO_BUILD=1; echo B > "$R/battop.bin"; : > "$CJ_SIM_LOG"
+new_sandbox; export CJ_ALLOWLIST_LOCAL="$R/allow.local.txt" CJ_SKIP_BUILD=1 SHELF_NO_BUILD=1; : > "$CJ_SIM_LOG"
 ( cd "$PKG" && run sh install-all.sh 127.0.0.1 --force --skip chrony-cn,timezone-cn ) >/dev/null 2>&1; rc=$?
 check "install-all：整轮只做一次连通检查（各步骤不再各自 ssh true）" test "$rc" -eq 0 -a "$(count_log '^ssh true')" = 1
-unset CJ_ALLOWLIST_LOCAL CJ_BATTOP_BIN CJ_SKIP_BUILD SHELF_NO_BUILD
+unset CJ_ALLOWLIST_LOCAL CJ_SKIP_BUILD SHELF_NO_BUILD
 
 # 预检提示与 cj_xochitl_apply 的实际分支一致（xovi 未生效但会装 xovi-reenable → 整机重启，不是"一定 xovi/start"）
 new_sandbox; export CJ_ALLOWLIST_LOCAL="$R/allow.local.txt"; xovi_live off
@@ -1038,7 +1017,7 @@ new_sandbox; echo '[Timer]' > "$CJ_SYSD/battop.timer"; : > "$CJ_SIM_LOG"
 ( cd "$PKG" && run sh uninstall-all.sh 127.0.0.1 --skip shelf ) >"$R/out.txt" 2>&1; rc=$?
 check "uninstall-all：旧版遗留的 battop.timer 被清、rw 窗口以 ro 收尾" test "$rc" -eq 0 -a ! -e "$CJ_SYSD/battop.timer" -a "$(last_mount)" = "mount -o remount,ro /"
 : > "$CJ_SIM_LOG"; ( cd "$PKG" && run sh uninstall-all.sh 127.0.0.1 --skip shelf --purge ) >"$R/out.txt" 2>&1; rc=$?
-check "uninstall-all --purge：没有 battop 目录时如实说\"本来就不存在\"，不谎称已删；不再 remount" test "$rc" -eq 0 -a -n "$(grep '本来就不存在' "$R/out.txt" | grep battop)" -a -z "$(grep -- '--purge：已删' "$R/out.txt")" -a "$(count_log remount)" = 0
+check "uninstall-all 再跑（--purge 保留兼容）：电池刺客没有残留时如实说、不碰 systemd、不 remount" test "$rc" -eq 0 -a -n "$(grep '没有电池刺客（battop）的残留' "$R/out.txt")" -a "$(count_log battop)" = 0 -a "$(count_log remount)" = 0
 # 退役服务 koreader-serve 的遗留（09-29 撤掉）：重新部署书架时清掉单元/链接/二进制；只剩悬空 wants 链接也要清
 new_sandbox; PL="$R/payload"; mk_payload "$PL"
 echo old > "$CJ_SYSD/koreader-serve.service"; mkdir -p "$CJ_SYSD/shelf.target.wants"; ln -s ../koreader-serve.service "$CJ_SYSD/shelf.target.wants/koreader-serve.service"
@@ -1086,6 +1065,80 @@ new_sandbox
 mv "$HOLD" "$REPO/notes/systemd/mind-serve.service"
 check "deploy.sh：仓库里缺某个服务的单元 → 推送前退出非 0、点名缺的单元，设备上什么都没推" test "$rc" -ne 0 -a -n "$(grep 'mind-serve.service' "$R/out.txt")" -a ! -e "$R/home/root/shelf-pkg" -a "$(count_log 'tar')" = 0
 
+section "2026-09-30 移除电池刺客/手写优化：旧设备上的残留能被卸载、重新部署时自动清"
+# 旧设备：电池刺客（单元 + 旧 timer + 二进制/采样数据/推送来的安装件）+ 手写优化（extensions.d、待换入区、载荷目录）
+seed_old_device() {
+    mkdir -p "$R/home/root/battop/data" "$R/home/root/hw-stroke/deploy" "$R/home/root/.cangjie-stage/so-pending" "$CJ_SYSD/timers.target.wants"
+    echo BIN > "$R/home/root/battop/battop"; echo '{}' > "$R/home/root/battop/data/summary.json"
+    : > "$R/home/root/battop/install.sh"; : > "$R/home/root/battop/devlib.sh"
+    printf '[Service]\nExecStart=/home/root/battop/battop\n' > "$CJ_SYSD/battop.service"
+    echo '[Timer]' > "$CJ_SYSD/battop.timer"; ln -s ../battop.timer "$CJ_SYSD/timers.target.wants/battop.timer"
+    echo OLDHW > "$R/home/root/xovi/extensions.d/hw-stroke.so"; : > "$R/home/root/xovi/extensions.d/hw-stroke.so.crashed"
+    echo STAGED > "$R/home/root/.cangjie-stage/so-pending/hw-stroke.so"
+    : > "$R/home/root/hw-stroke/hw-stroke.so"; : > "$R/home/root/hw-stroke/deploy/install.sh"
+    : > "$R/home/root/hw-stroke/deploy/xovi-ext-install.sh"; : > "$R/home/root/hw-stroke/deploy/devlib.sh"
+    mkdir -p "$R/home/root/.local/share/cangjie-ime"; echo '{"hwStrokeNibMinRatio":0.6,"hlSnapCjk":true}' > "$R/home/root/.local/share/cangjie-ime/reading-qol.json"
+    printf '7f00 r-xp /home/root/xovi/xovi.so\n7f01 r-xp /home/root/xovi/extensions.d/hl-snap.so\n7f02 r-xp /home/root/xovi/extensions.d/hw-stroke.so\n' > "$R/proc/4242/maps"
+}
+gone_old() { # 两样都清干净（hl-snap、reading-qol.json 不动）
+    test ! -e "$CJ_SYSD/battop.service" -a ! -e "$CJ_SYSD/battop.timer" -a ! -L "$CJ_SYSD/timers.target.wants/battop.timer" \
+        -a ! -e "$R/home/root/battop" -a ! -e "$R/home/root/xovi/extensions.d/hw-stroke.so" -a ! -e "$R/home/root/xovi/extensions.d/hw-stroke.so.crashed" \
+        -a ! -e "$R/home/root/.cangjie-stage/so-pending/hw-stroke.so" -a ! -e "$R/home/root/hw-stroke" \
+        -a -n "$(grep hwStrokeNibMinRatio "$R/home/root/.local/share/cangjie-ime/reading-qol.json")"
+}
+ONLY_SKIP="$(bash -c "cd '$PKG' && . ./lib.sh && uninstall_only_skip battop handwriting-stroke")"
+new_sandbox; : > "$CJ_SIM_LOG"
+( cd "$PKG" && run sh uninstall-all.sh --dry-run --skip "$ONLY_SKIP" ) >"$R/out.txt" 2>&1; rc=$?
+check "uninstall-all --dry-run --skip <其余全部>：计划里只剩 handwriting-stroke、battop 两步（文档给的清理命令）" test "$rc" -eq 0 -a "$(grep -c '^═══ .* ═══$' "$R/out.txt")" = 2 -a -n "$(grep '═══ handwriting-stroke ═══' "$R/out.txt")" -a -n "$(grep '═══ battop ═══' "$R/out.txt")" -a -z "$(grep '不是已知步骤名' "$R/out.txt")"
+
+# ① 手动：uninstall-all 只留这两步
+new_sandbox; xovi_live on; seed_old_device; echo KEEP > "$R/home/root/xovi/extensions.d/hl-snap.so"; : > "$CJ_SIM_LOG"
+( cd "$PKG" && run sh uninstall-all.sh 127.0.0.1 --skip "$ONLY_SKIP" ) >"$R/out.txt" 2>&1; rc=$?
+check "旧设备 uninstall-all（只留两步）：电池刺客单元/timer/目录、hw-stroke.so/.crashed/待换入副本/载荷目录全清；hl-snap.so 与 reading-qol.json 不动" test "$rc" -eq 0 -a "$(cat "$R/home/root/xovi/extensions.d/hl-snap.so")" = KEEP && gone_old
+check "  └ 不停/不重启 xochitl、不 xovi/start、不整机重启；rw 窗口以 ro 收尾；extensions.d 里没有备份" test -z "$(grep -E 'systemctl (stop|start|restart) xochitl' "$CJ_SIM_LOG")" -a "$(count_log XOVI_START)" = 0 -a "$(count_log 'systemctl reboot')" = 0 -a "$(last_mount)" = "mount -o remount,ro /" -a "$(ls -A "$R/home/root/xovi/extensions.d")" = hl-snap.so
+check "  └ xochitl 还加载着被摘的 hw-stroke.so：提示整机重启、记待生效标记" test -n "$(grep '整机重启' "$R/out.txt")" -a -e "$CJ_PENDING_DIR/removed-hw-stroke.so"
+( cd "$PKG" && run sh uninstall-all.sh 127.0.0.1 --skip "$ONLY_SKIP" ) >"$R/out.txt" 2>&1; rc=$?
+check "  └ 再跑一遍：退出 0（幂等）" test "$rc" -eq 0
+
+# ② 自动：install-all 重新部署时清掉，并在最后整机重启一次
+new_sandbox; export CJ_ALLOWLIST_LOCAL="$R/allow.local.txt" CJ_SKIP_BUILD=1 SHELF_NO_BUILD=1
+xovi_live on; seed_old_device; : > "$CJ_SIM_LOG"
+( cd "$PKG" && run sh install-all.sh 127.0.0.1 --force --skip chrony-cn,timezone-cn ) >"$R/out.txt" 2>&1; rc=$?
+check "旧设备 install-all：退出 0，电池刺客与手写优化的残留全被自动清掉（reading-qol.json 旧键保留）" test "$rc" -eq 0 && gone_old
+check "  └ 清理排在 xovi-apply 前；最后只整机重启一次，全程不停/不重启 xochitl、没有 xovi/start" test "$(count_log 'systemctl reboot')" = 1 -a -z "$(grep -E 'systemctl (stop|start|restart) xochitl' "$CJ_SIM_LOG")" -a "$(count_log XOVI_START)" = 0 -a "$(grep -n '═══ 清理已移除:handwriting-stroke ═══' "$R/out.txt" | cut -d: -f1)" -lt "$(grep -n '═══ xovi-apply ═══' "$R/out.txt" | cut -d: -f1)"
+check "  └ extensions.d 只剩 hl-snap.so；rw 窗口以 ro 收尾；汇总里没有失败" test "$(ls -A "$R/home/root/xovi/extensions.d")" = hl-snap.so -a "$(last_mount)" = "mount -o remount,ro /" -a -z "$(grep '❌' "$R/out.txt")"
+: > "$CJ_SIM_LOG"
+( cd "$PKG" && run sh install-all.sh 127.0.0.1 --skip chrony-cn,timezone-cn ) >"$R/out.txt" 2>&1; rc=$?
+check "  └ 再部署一次：已没有残留 → 清理步骤什么都不动（不碰 battop 单元、不 remount、不重启）" test "$rc" -eq 0 -a -n "$(grep '没有电池刺客（battop）的残留' "$R/out.txt")" -a "$(count_log battop)" = 0 -a "$(count_log remount)" = 0 -a "$(count_log 'systemctl reboot')" = 0
+
+# ③ --skip handwriting-stroke：这次不清手写优化（不想被整机重启打断）
+new_sandbox; xovi_live on; seed_old_device; rm -rf "$R/home/root/battop" "$CJ_SYSD/battop.service" "$CJ_SYSD/battop.timer" "$CJ_SYSD/timers.target.wants/battop.timer"; : > "$CJ_SIM_LOG"
+# （不放待换入副本：--skip 就是整样不碰，待换入区里要是有副本，随后的 xovi-apply 会照常把它换进 extensions.d）
+rm -f "$R/home/root/.cangjie-stage/so-pending/hw-stroke.so"
+( cd "$PKG" && run sh install-all.sh 127.0.0.1 --force --skip chrony-cn,timezone-cn,handwriting-stroke ) >"$R/out.txt" 2>&1; rc=$?
+check "install-all --skip handwriting-stroke：hw-stroke.so 原样保留、提示已跳过、不误报未知步骤" test "$rc" -eq 0 -a "$(cat "$R/home/root/xovi/extensions.d/hw-stroke.so")" = OLDHW -a -n "$(grep '跳过 handwriting-stroke 的残留清理' "$R/out.txt")" -a -z "$(grep '不是已知步骤名' "$R/out.txt")"
+
+# ④ xovi 没生效（extensions.d 里的 hw-stroke.so 没被加载）：摘掉即可，不记待生效标记
+new_sandbox; xovi_live off; seed_old_device; : > "$CJ_SIM_LOG"
+( cd "$PKG" && run sh uninstall-all.sh 127.0.0.1 --skip "$ONLY_SKIP" ) >"$R/out.txt" 2>&1; rc=$?
+check "xovi 未生效时摘 hw-stroke.so：清干净、不记待生效标记、不提示整机重启" test "$rc" -eq 0 -a ! -e "$CJ_PENDING_DIR/removed-hw-stroke.so" -a -z "$(grep '整机重启（reboot），别' "$R/out.txt")" && gone_old
+
+# ⑤ dm-verity：电池刺客单元删不掉 → 保留二进制目录、不 remount、不算失败；手写优化照清（只碰 /home）
+new_sandbox; xovi_live on; seed_old_device; : > "$CJ_SIM_LOG"
+CJ_SIM_VERITY=1 bash -c "cd '$PKG' && PATH='$STUBS:'\$PATH sh uninstall-all.sh 127.0.0.1 --skip '$ONLY_SKIP'" >"$R/out.txt" 2>&1; rc=$?
+check "dm-verity：battop 单元与 /home/root/battop 保留、不 remount、退出 0；hw-stroke.so 照样摘掉" test "$rc" -eq 0 -a -f "$CJ_SYSD/battop.service" -a -f "$R/home/root/battop/battop" -a "$(count_log remount)" = 0 -a ! -e "$R/home/root/xovi/extensions.d/hw-stroke.so"
+
+# ⑥ /home/root/battop 是符号链接：拒绝 rm -rf、报失败，链接目标不动
+new_sandbox; mkdir -p "$R/elsewhere"; echo keep > "$R/elsewhere/f"; ln -s "$R/elsewhere" "$R/home/root/battop"
+( cd "$PKG" && run sh uninstall-all.sh 127.0.0.1 --skip "$ONLY_SKIP" ) >"$R/out.txt" 2>&1; rc=$?
+check "battop 目录是符号链接：拒绝清除、退出非 0，链接目标原样" test "$rc" -ne 0 -a -f "$R/elsewhere/f" -a -n "$(grep '符号链接' "$R/out.txt")"
+
+# ⑦ verify 设备端采集：旧设备上残留的 battop 单元 / hw-stroke.so 被报 ⚠
+new_sandbox; export CJ_ALLOWLIST_LOCAL="$R/allow.local.txt"; xovi_live on; seed_old_device
+( cd "$PKG" && run sh verify-on-device.sh 127.0.0.1 ) >"$R/vout.txt" 2>&1
+check "verify 采集：旧设备上残留的 battop.service / battop.timer / hw-stroke.so / 待换入的 hw-stroke.so 都报 ⚠" test -n "$(vline '⚠ battop.service：已移除的电池刺客')" -a -n "$(vline '⚠ battop.timer：已移除的电池刺客')" -a -n "$(vline '⚠ 扩展 hw-stroke.so：已移除的手写优化')" -a -n "$(vline '⚠ 待换入区 hw-stroke.so')"
+unset CJ_ALLOWLIST_LOCAL CJ_SKIP_BUILD SHELF_NO_BUILD
+
 # ═══════════════════════════ 5. 静态守卫 / 清单对称 ═══════════════════════════
 section "静态守卫"
 cd "$REPO" || exit 1
@@ -1110,6 +1163,18 @@ check "xovi/start 不再被任何脚本直接执行（统一走 devlib 的 cj_xo
   done ) >"$TMPBASE/sym.txt" 2>&1
 check "install-all/uninstall-all 步骤表对称（每步有脚本；非配置步骤有 uninstall_ 函数）" test ! -s "$TMPBASE/sym.txt"
 cat "$TMPBASE/sym.txt"
+# 退役/已移除步骤：没有安装脚本映射，但都有 uninstall_ 函数（uninstall-all.sh 或 removal.sh）；自动清理的是退役步骤的子集
+# shellcheck disable=SC1091
+( cd "$PKG" && . ./lib.sh
+  for step in $STEP_RETIRED; do
+      step_script "$step" >/dev/null && { echo "退役步骤 $step 还有安装脚本映射"; exit 1; }
+      word_in "$step" "$STEP_ORDER" && { echo "退役步骤 $step 还在 STEP_ORDER 里"; exit 1; }
+      fn="uninstall_$(echo "$step" | tr '-' '_')"
+      grep -q "^$fn()" uninstall-all.sh removal.sh || { echo "退役步骤 $step 缺 $fn"; exit 1; }
+  done
+  for step in $STEP_RETIRED_AUTOCLEAN; do word_in "$step" "$STEP_RETIRED" || { echo "自动清理的 $step 不是退役步骤"; exit 1; }; done ) >"$TMPBASE/sym2.txt" 2>&1
+check "退役/已移除步骤（sidebar-entry/battop/handwriting-stroke）：不再安装，但都有卸载函数；自动清理 ⊂ 退役" test ! -s "$TMPBASE/sym2.txt"
+cat "$TMPBASE/sym2.txt"
 # 4) shelf 清单对称：manifest 里声明的每个 qmd/辅助脚本，install.sh 与 uninstall.sh 都是靠 manifest 函数处理，不再硬编码
 check "shelf/uninstall.sh 不再硬编码 qmd 文件名（走 manifest）" test -z "$(grep -n 'shelf-trash-agent\|shelf-mkdir-agent\|font-menu-dynamic' shelf/uninstall.sh | grep -v '^[0-9]*:#')"
 # 5) 备份不进 extensions.d：脚本里不存在把 .bak 写进 extensions.d 的写法
@@ -1126,7 +1191,7 @@ check "每个连设备的 deploy-*.sh 都调用了 require_device" test -z "$vio
 [ -z "$viol" ] || echo "       缺 require_device：$viol"
 # 8) 设备端会 rm 的脚本必须有目标核对：rm -rf 只允许出现在带守卫的位置（白名单式点名）
 viol="$(grep -n 'rm -rf' packaging/*.sh shelf/*.sh 2>/dev/null | grep -v -e ':[0-9]*:[[:space:]]*#' | grep -v -e 'packaging/tests/' -e 'STAGE' -e 'REMOTE' )"
-check "rm -rf 出现处已人工核对：仅 uninstall-all(battop purge / shelf-pkg 载荷)、shelf/uninstall(--purge 三个 XDG 目录，路径/符号链接守卫)" test "$(echo "$viol" | grep -v '^$' | grep -v -e 'packaging/uninstall-all.sh' -e 'shelf/uninstall.sh' | wc -l)" -eq 0
+check "rm -rf 出现处已人工核对：仅 uninstall-all(shelf-pkg 载荷)、removal.sh(已移除的 /home/root/battop，路径/符号链接守卫)、shelf/uninstall(--purge 三个 XDG 目录，路径/符号链接守卫)" test "$(echo "$viol" | grep -v '^$' | grep -v -e 'packaging/uninstall-all.sh' -e 'packaging/removal.sh' -e 'shelf/uninstall.sh' | wc -l)" -eq 0
 
 # 9) xovi-reenable.service 不许在 xovi 已生效时重跑 xovi/start（会让运行中的 xochitl SEGV → 整机重启）：
 #    必须有 ExecCondition 检查 xochitl 进程是否已映射 xovi.so，且排在 ExecStart 之前

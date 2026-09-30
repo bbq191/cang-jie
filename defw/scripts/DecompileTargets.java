@@ -1,6 +1,6 @@
 // Decompile a fixed list of known target addresses and print their C output
 // plus caller xrefs. Used for headless follow-up after GUI-driven recon has
-// already located concrete addresses (see enhance/handwriting-stroke/README.md).
+// already located concrete addresses (see the enhance whitepaper §03c-§03g; enhance/handwriting-stroke/ was removed on 2026-09-30).
 //@category CangJie
 
 import ghidra.app.script.GhidraScript;

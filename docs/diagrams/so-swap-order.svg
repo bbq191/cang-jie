@@ -6,7 +6,7 @@
 </defs>
 <rect x="0" y="0" width="1000" height="700" fill="#fbfbfa"/>
 <text x="500" y="30" text-anchor="middle" font-size="18" font-weight="bold" fill="#1a1a1a">让扩展 / 界面补丁生效：换入后整机重启</text>
-<text x="500" y="52" text-anchor="middle" font-size="12.5" fill="#6a6a6a">devlib.sh 的 cj_xochitl_apply + xovi-reenable.service（2026-09-25 起）；hl-snap、handwriting-stroke、各 qmd 都走这条路</text>
+<text x="500" y="52" text-anchor="middle" font-size="12.5" fill="#6a6a6a">devlib.sh 的 cj_xochitl_apply + xovi-reenable.service（2026-09-25 起）；hl-snap、各 qmd 都走这条路（手写优化 handwriting-stroke 2026-09-30 已移除）</text>
 
 <text x="30" y="88" font-size="13" font-weight="bold" fill="#333">一、装新版 .so 时先看三种情况</text>
 <rect x="30" y="100" width="300" height="84" rx="10" fill="#f2f2f5" stroke="#8a8a99" stroke-width="1.5"/>

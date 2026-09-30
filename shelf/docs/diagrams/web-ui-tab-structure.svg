@@ -56,11 +56,11 @@
 <text x="814" y="244" font-size="12" fill="#1a1a1a">设备健康：概览/服务/扩展/日志/清理</text>
 <text x="814" y="264" font-size="12" fill="#1a1a1a">模型管理（转写 / 问 AI）</text>
 <text x="814" y="284" font-size="12" fill="#1a1a1a">系统增强：画线吸附、阅读器翻页、</text>
-<text x="814" y="302" font-size="12" fill="#1a1a1a">　　　　　电池刺客开关</text>
+<text x="814" y="302" font-size="12" fill="#1a1a1a">　　　　　（漫画页边距等在实验室）</text>
 <text x="814" y="320" font-size="11" fill="#3a3a3a">每项带加载徽章：已加载/待重启/未加载</text>
-<text x="814" y="342" font-size="12" fill="#1a1a1a">电池刺客（battop 运行时才出现）</text>
-<text x="814" y="362" font-size="12" fill="#1a1a1a">实验室：手写笔迹、漫画页边距、</text>
-<text x="814" y="380" font-size="12" fill="#1a1a1a">　　　　导入 md 文档</text>
+<text x="814" y="342" font-size="12" fill="#1a1a1a">实验室：漫画页边距、导入 md 文档</text>
+<text x="814" y="364" font-size="11" fill="#8a4b00">09-30 已移除：电池刺客页与开关、</text>
+<text x="814" y="380" font-size="11" fill="#8a4b00">　　　　　　　手写笔迹开关</text>
 
 
 <!-- 底部：数据通路 -->

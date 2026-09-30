@@ -14,7 +14,7 @@ BINS="book-serve"
 # wallpaper-serve/font-serve 同批从 shelf 内部 workspace 挪进 ../enhance/（概念上更贴近
 # 系统增强），见 ../enhance/README.md。
 GATEWAY_BINS="gateway"
-ENHANCE_BINS="wallpaper-serve font-serve battop"
+ENHANCE_BINS="wallpaper-serve font-serve"   # battop（电池刺客）2026-09-30 已移除
 NOTES_BINS="ink-serve transcribe-serve mind-serve note-serve"
 
 echo "== host 构建 + 测试 =="

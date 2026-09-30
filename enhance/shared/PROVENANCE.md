@@ -1,6 +1,6 @@
-# shared —— 两个 xovi 扩展共用的 C 代码
+# shared —— xovi 扩展的 hook 基础设施（C）
 
-`hl-snap` 和 `handwriting-stroke` 都靠"找到 xochitl 里的某个函数 → 改写它的开头跳到自己的代码"来工作，这套基础设施放在这里，两边的 `Makefile` 用 `LANGHOOK_SRC_DIR` 指向本目录。整个流程的图解见白皮书 §02（[`../docs/diagrams/xovi-hook-lifecycle.svg`](../docs/diagrams/xovi-hook-lifecycle.svg)）。
+`hl-snap` 靠"找到 xochitl 里的某个函数 → 改写它的开头跳到自己的代码"来工作，这套基础设施放在这里，它的 `Makefile` 用 `LANGHOOK_SRC_DIR` 指向本目录。原先 `handwriting-stroke`（手写优化，`hw-stroke.so`）也用这一份；它 **2026-09-30 已移除**，下面提到它的段落是历史记录。这里的源码仍被 hl-snap 编进 `hl-snap.so`，没有只给 hw-stroke 用的文件，所以一个也没删（源码里提到 `hw_stroke.c` 的注释也保留不改：扩展带 `-g` 编译，动注释会改变行号调试信息，进而改变 `hl-snap.so` 的 md5）。整个流程的图解见白皮书 §02（[`../docs/diagrams/xovi-hook-lifecycle.svg`](../docs/diagrams/xovi-hook-lifecycle.svg)）。
 
 | 文件 | 做什么 |
 |---|---|
@@ -10,7 +10,7 @@
 | `trampoline_patch.c/.h` | `cj_patch_target`：mprotect 目标页 → 把开头 20 字节抄进新分配的"调用桩"并接上跳回原函数的远跳转 → 把目标开头改写成跳到 handler → 刷指令缓存。任一步失败返回 0、不改任何字节 |
 | `tests/` | host 单测：`make test` |
 
-## 多扩展共存：合并被 mprotect 切开的代码段（2026-09-24 修）
+## 多扩展共存：合并被 mprotect 切开的代码段（2026-09-24 修；hw-stroke 09-30 移除后只剩 hl-snap 一个扩展，这个修复仍保留）
 
 每装一个 hook，`mprotect` 都会把目标所在的那一页从 xochitl 的代码段里切出来（`r-xp` / `rwxp` / `r-xp`）。`cj_find_exec_module` 原先找到**第一行**匹配的可执行映射就返回，于是"第一段"只到最低的已 patch 页之前为止：**后装 hook 的扩展只能找到地址低于已 patch 页的目标**。09-24 真机两个扩展都装上了，是因为顺序恰好是 hw-stroke（`0xf47530`、`0xf4c8d0`）先、hl-snap（`0xf03670`）后；反过来 hw-stroke 会在 `_xovi_construct` 里静默装不上。
 
