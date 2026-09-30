@@ -3,7 +3,9 @@
 > 这篇讲**原理、决策、真机验证和踩坑**；每个工具怎么装、怎么用，看各自的 README。
 > **§ 编号固定不变**（代码注释和别的文档按编号引用），所以章节顺序和编号不完全一致：先读 §00b 现状，原理从 §02 起，踩坑 §04，待办 §05。
 >
-> **给谁看、先看哪几节**：只想知道"有哪些工具、怎么开关"——§00b 一节就够；要改 xovi 扩展或 qmd 补丁——§02、§04（尤其「qmd 补丁怎么离线验证」）；要查耗电——§03b、§03j；要知道最近改了什么、哪些还没上真机——§03m（最新一轮）和 §05。
+> **给谁看、先看哪几节**：只想知道"有哪些工具、怎么开关"——§00b 一节就够；要改 xovi 扩展或 qmd 补丁——§02、§04（尤其「qmd 补丁怎么离线验证」）；要查耗电——§03j（§03b 的电池刺客已移除，只剩历史）；要知道最近改了什么、哪些还没上真机——§03m、§03n（最新）和 §05。
+>
+> **2026-09-30 起，手写优化（hw-stroke）和电池刺客（battop）已移除**（用户要求，§03n）。§03b、§03c、§03e–§03g 以及其它章节里关于它们的内容保留为历史记录，不再代表现状。
 
 ## 读这篇你能得到什么
 
@@ -14,13 +16,15 @@
 | 网页开关写到哪里、怎么确认扩展真的生效了 | §02 |
 | xovi 扩展从加载到 hook 生效的完整流程 | §02 流程图 |
 | 荧光笔"划哪吸哪"怎么修的 | §03a |
-| 电池刺客为什么不开机自启、两次冻机怎么回事 | §03b |
-| 手写笔锋：xochitl 怎么画笔画、hook 在哪、做过什么又撤回了什么 | §03c（逆向）→ §03e（第一版）→ §03f（速度代理 + 第二个 hook）→ §03g（降负载） |
+| 电池刺客、手写优化为什么没了，旧设备怎么清 | §03n |
+| （历史）电池刺客为什么不开机自启、两次冻机怎么回事 | §03b |
+| （历史）手写笔锋：xochitl 怎么画笔画、hook 在哪、做过什么又撤回了什么 | §03c（逆向）→ §03e（第一版）→ §03f（速度代理 + 第二个 hook）→ §03g（降负载） |
 | 字体、壁纸服务和 lo-alias 在这条线里的位置 | §03h |
 | 设备空闲时谁在定时把 CPU 叫醒（整套设备，不只本线） | §03j |
 | 2026-09-24 第三轮审计给本线改了什么（当天已部署） | §03k |
 | 2026-09-25 第四轮审计给本线改了什么、battop 唤醒时间怎么换算 | §03l |
 | 2026-09-30 第五轮审计给本线改了什么（未部署、未上真机） | §03m |
+| 2026-09-30 移除手写优化与电池刺客：删了什么、旧设备怎么清 | §03n |
 | 改 qmd 补丁后怎么离线验证（为什么不能用 `check-compatibility`） | §04「qmd 补丁怎么离线验证」 |
 | 改了扩展为什么要整机重启、不能只重启 xochitl | §04「hook 安全性」末条 |
 | 为什么单点工具要单独成线 | §00、§01 |
@@ -28,18 +32,18 @@
 
 ## 00b｜现状总览（先读这个）
 
-![enhance 的五个工具怎么接到设备上](diagrams/enhance-overview.svg)
+![enhance 的工具怎么接到设备上](diagrams/enhance-overview.svg)
 
 这条线是一组**互相独立的单点增强工具**，都不修改 xochitl（reMarkable 自带的阅读/笔记程序）本身。设备固件 3.28.0.172。
 
 **hl-snap —— 荧光笔 CJK 精确吸附**（[README](../hl-snap/README.md)）
 用荧光笔划中文时，划哪就高亮哪，不再整行吸附。是 xovi 扩展 `hl-snap.so`，hook 一个函数。**✅ 真机通，日常在用**。开关：网页「管理 → 系统增强」，写 `hlSnapCjk`，**默认开**，下一次划线即生效。
 
-**handwriting-stroke（hw-stroke）—— CJK 手写笔锋**（[README](../handwriting-stroke/README.md)）
-按笔尖角度和运笔速度调整笔画粗细。是 xovi 扩展 `hw-stroke.so`，hook 两个"变宽几何"函数。**✅ 书法笔和钢笔/铅笔/马克笔等日常工具真机通**；最常用的一档钢笔/铅笔（`bVar16<4`）还摸不到；真实压感已放弃。09-24 起每笔只读一次配置、逐点日志默认关。开关：网页「管理 → 实验室」，**默认关**，下一笔生效。
+**~~handwriting-stroke（hw-stroke）—— CJK 手写笔锋~~：2026-09-30 已移除**（§03n）
+曾经是 xovi 扩展 `hw-stroke.so`，按笔尖角度和运笔速度调整笔画粗细（书法笔和钢笔/铅笔/马克笔等真机通，最常用的一档钢笔/铅笔 `bVar16<4` 一直摸不到）。源码 `enhance/handwriting-stroke/`、部署脚本、网页「实验室」开关都已删除；历史见 §03c、§03e–§03g。
 
-**battop —— 电池刺客**（[README](../battop/README.md)）
-按进程/应用/唤醒源统计耗电的采样服务。**✅ 真机通，但有意不开机自启**：它和两次整机冻死有关（08-29 坐实，09-23 时间吻合），09-23 起采样循环里已不创建任何子进程。开关：网页「管理 → 系统增强」，`systemctl start/stop`；开着时出现「电池刺客」数据页。
+**~~battop —— 电池刺客~~：2026-09-30 已移除**（§03n）
+曾经是按进程/应用/唤醒源统计耗电的采样服务，有意不开机自启（和两次整机冻死有关，§03b）。源码 `enhance/battop/`（含 `FINDINGS.md` 电池审计与冻机内核证据）、部署脚本、网页开关与「电池刺客」数据页都已删除；想看旧的审计报告，去 git 历史里找删除提交之前的版本。
 
 **reader-page-turn —— xochitl 阅读器翻页**（§03i）
 两个功能：**单击翻页**（点屏幕左右各 7% 边缘、纵向 45%–80% 的区域翻页）和**日漫翻页规则**（从右往左的书，左右滑和点边缘都对调）。是 qmd 补丁 `reader-page-turn.qmd`（源码在 `shelf/xovi/`，随 book 服务安装，因为要问 book-serve 这本书的方向）。开关：网页「管理 → 系统增强」，写 `tapPageTurn` / `rtlPageTurn`，**默认都关**，每次打开书读一次，改了开关要重新打开书。**离线（qmldiff 在 .172 真实 QML 上全部命中）和真机都验证过**。方向只看书里自带的 OPF 标记和旧的只读手动清单（09-25 加的母版库按书设方向 09-30 已移除）。
@@ -50,11 +54,11 @@
 **font-serve —— xochitl 字体**（`../font-serve/src/main.rs` 头注；原理在书架白皮书）
 网页上传字体即装进 fontconfig，维护中文回退链。**✅ 真机通**。入口「其他 → xochitl」，重开字体菜单即可选。
 
-**共用件**：[`shared/`](../shared/PROVENANCE.md) 是两个 xovi 扩展共用的特征码扫描 + trampoline 代码；[`lo-alias/`](../lo-alias/README.md) 是让 `10.11.99.1` 在不插 USB 时也可达的小脚本（网关启动前调用）。
+**共用件**：[`shared/`](../shared/PROVENANCE.md) 是 xovi 扩展用的特征码扫描 + trampoline 代码（原先 hl-snap、hw-stroke 两个扩展共用，现在只有 hl-snap）；[`lo-alias/`](../lo-alias/README.md) 是让 `10.11.99.1` 在不插 USB 时也可达的小脚本（网关启动前调用）。
 
-**当前设备状态**：2026-09-29 按用户要求卸载了 appload、KOReader、第三方 WeRead 和侧栏入口，按卸载记录 `extensions.d/` 现在应只剩 `hl-snap.so`、`hw-stroke.so`、`qt-resource-rebuilder.so`（卸载后本文没有再做只读核对）；**没有** `cangjie-langhook.so`。此前的记录：09-24 只读核对时还有 `appload.so`，第三轮审计重编的两个 `.so` 当天换入，journal 里三个 hook 都"安装完成"；battop 已装、停着。09-25 整轮卸载后重装，`verify-on-device.sh` 43✓ 0✗；同日 13:10 又部署了加 `-ffile-prefix-map` 重编的两个 `.so`（§04「构建与环境」）：设备上 md5 与仓库一致（hl-snap `7ca1985b…`、hw-stroke `6e5b4a3d…`），三个 hook「安装完成」，`verify-on-device.sh` 43✓ 1⚠（刚开机）0✗，xochitl `NRestarts` 0。09-30 第五轮审计没改两个 `.so` 的源码（md5 不变）。
+**当前设备状态**：2026-09-29 按用户要求卸载了 appload、KOReader、第三方 WeRead 和侧栏入口，按卸载记录 `extensions.d/` 现在应只剩 `hl-snap.so`、`hw-stroke.so`、`qt-resource-rebuilder.so`（卸载后本文没有再做只读核对）；**没有** `cangjie-langhook.so`。此前的记录：09-24 只读核对时还有 `appload.so`，第三轮审计重编的两个 `.so` 当天换入，journal 里三个 hook 都"安装完成"；battop 已装、停着。09-25 整轮卸载后重装，`verify-on-device.sh` 43✓ 0✗；同日 13:10 又部署了加 `-ffile-prefix-map` 重编的两个 `.so`（§04「构建与环境」）：设备上 md5 与仓库一致（hl-snap `7ca1985b…`、hw-stroke `6e5b4a3d…`），三个 hook「安装完成」，`verify-on-device.sh` 43✓ 1⚠（刚开机）0✗，xochitl `NRestarts` 0。09-30 第五轮审计没改两个 `.so` 的源码（md5 不变）。**09-30 移除 hw-stroke / battop 之后**：仓库里只剩 `hl-snap.so`（md5 仍是 `7ca1985b…`，重编核对过）；设备上的 `hw-stroke.so`、battop 单元和 `/home/root/battop` 要等下一次跑 `install-all.sh` 自动清（或手动清，§03n）——截至本文写成**没有部署、没有上真机**。
 
-**未闭环**（详见 §05）：`hw-stroke` 的 `bVar16<4` 分支；两个扩展的加载顺序依赖已修并部署，但反序加载没专门验（§04「hook 安全性」）；2026-09-30 第五轮审计的改动（§03m）只在开发机测过，没部署、没上真机。
+**未闭环**（详见 §05）：2026-09-30 第五轮审计的改动（§03m）和同日移除 hw-stroke / battop 的清理流程（§03n）只在开发机测过，没部署、没上真机。（`hw-stroke` 的 `bVar16<4` 分支、两个扩展的反序加载随 hw-stroke 移除不再跟进。）
 
 ### 术语速查
 
@@ -87,7 +91,7 @@
 
 **为什么 hl-snap 用自己的特征码当加载判据？** langhook 里所有 hook 能不能装，先看 `setLanguageCode` 的特征码在不在（"总闸"）。这对输入法合理，对只管吸附的扩展不合理：`hl-snap.so` 装不装只该取决于它要 patch 的 `FUN_00f05ad0` 还在不在。
 
-**为什么 battop、字体、壁纸服务也归这里？** 概念上都是"跨块的单点增强工具"，只是历史上先存在于别处（`misc/`、`shelf/services/`）。搬家不改运行时行为，见附录。
+**为什么 battop（2026-09-30 已移除）、字体、壁纸服务也归这里？** 概念上都是"跨块的单点增强工具"，只是历史上先存在于别处（`misc/`、`shelf/services/`）。搬家不改运行时行为，见附录。
 
 **命名遗留**：旧 `xovi-extensions/`（设备端 QML/UI 增强，reading-qol / font-menu）已移出仓库，和本线没有从属关系。若以后捞回来，设想按"它管 QML/UI 层、`enhance/` 管更底层的单点工具"分工——这只是设想，没拍板，动这条边界要先问用户。
 
@@ -100,9 +104,9 @@
 | 开关 | 网页位置 | 落到哪里 |
 |---|---|---|
 | CJK 荧光笔精确吸附 | 管理 → 系统增强 | `reading-qol.json` 的 `hlSnapCjk`（默认开） |
-| 电池刺客 | 管理 → 系统增强（09-21 从实验室移来）；开着才出现「电池刺客」数据页 | `systemctl start/stop battop` |
+| ~~电池刺客~~（2026-09-30 已移除） | 原在管理 → 系统增强；开着才出现「电池刺客」数据页 | 原为 `systemctl start/stop battop` |
 | 单击翻页 / 日漫翻页规则 | 管理 → 系统增强 | `reading-qol.json` 的 `tapPageTurn` / `rtlPageTurn`（默认都关），`reader-page-turn.qmd` 每次打开书读一次（§03i） |
-| CJK 手写笔迹优化 | 管理 → 实验室 | 网页层派生开关：开写 `hwStrokeNibMinRatio` = `hwStrokeSpeedMinRatio` = 0.6，关写 1.0；`NibMinRatio < 1.0` 显示为已开 |
+| ~~CJK 手写笔迹优化~~（2026-09-30 已移除） | 原在管理 → 实验室 | 原为网页层派生开关：开写 `hwStrokeNibMinRatio` = `hwStrokeSpeedMinRatio` = 0.6，关写 1.0。旧设备 `reading-qol.json` 里这些键会原样留着（全量写回，不认识的键不删），没有程序再读它们 |
 
 网页 UI 的演进细节见书架白皮书 §03aj–§03an（纯网页层变化）。
 
@@ -112,7 +116,7 @@
 
 ![xovi 扩展从加载到 hook 生效](diagrams/xovi-hook-lifecycle.svg)
 
-两个扩展都走这套流程，代码在 `shared/`：
+扩展都走这套流程（现在只有 hl-snap；已移除的 hw-stroke 也是），代码在 `shared/`：
 
 1. xovi 在 xochitl 启动时加载 `extensions.d/` 下的每个文件——所以备份绝不能留在这个目录。
 2. `_xovi_shouldLoad` 在 xochitl 代码段里搜特征码，恰好命中 1 处才加载；换了固件、函数变了，就不加载，xochitl 按原生行为跑。这是主要的 fail-safe。
@@ -123,7 +127,7 @@
 
 开关只写配置；扩展根本没加载时，开了也没用。历史上两次"开关看着开了、其实没生效"：09-09 langhook 整个从设备上消失（§03a），hw-stroke 因 GLIBC 版本不符静默加载失败（§04）。现在网页直接显示：
 
-- 两个扩展开关旁各有「已加载 / 未加载」徽章；「管理 → 基石」另列一行"xochitl 里生效的扩展"。
+- 扩展开关旁有「已加载 / 未加载」徽章（现在只有 hl-snap；hw-stroke 的开关 09-30 随它移除）；「管理 → 基石」另列一行"xochitl 里生效的扩展"。
 - 数据来自 `gateway/src/enhance/loaded.rs`：找 `comm == xochitl` 且父进程是 1 的主进程（排除渲染 PDF 时 fork 出的同名子进程），读它的 `/proc/<pid>/maps`，映射了哪个 `extensions.d/*.so` 就算已加载；映射了 `xovi.so` 说明 xovi 生效。
 - **徽章的边界**：它只证明 `.so` 进了进程（走完了 `_xovi_shouldLoad`），不证明 hook 装上了；后者看 journal 里的"hook 安装完成"。§04 记了一种"已加载但 hook 没装上"的可能情形。
 - 「漫画页边距最小化」靠 qmd 补丁 `shelf-comic-margins.qmd`，不是 `.so`。判定：qt-resource-rebuilder.so 在主进程里、补丁文件在它的 exthome、且修改时间早于 xochitl 启动时间（`/proc/<pid>/stat` 第 22 列 + `/proc/stat` 的 btime）算已载入；文件比进程新报「待重启」。这是按加载机制推断，看不到补丁里的 LOCATE 是否全部命中。
@@ -143,13 +147,15 @@
 
 **和 langhook 同时装会怎样**：旧文档写"行为未定义"，按代码看其实是"先到先得"：两个扩展在 `_xovi_shouldLoad` 阶段都看到原始机器码、都同意加载；先执行 `_xovi_construct` 的那个改写了函数开头，后一个再扫时特征码对不上，静默放弃这个 hook。langhook 一侧源码已不在仓库，这一半**未核对**；两者同时装也没有真机测过。结论不变：两者不要同时装（langhook 自带同样的修复）。
 
-## 03b｜battop：搬迁、两次冻机与现状
+## 03b｜battop：搬迁、两次冻机与现状（2026-09-30 已移除，本节为历史）
+
+> 2026-09-30 电池刺客整体移除（§03n）。下面是它移除前的记录，"现状"指的是当时。
 
 battop 早于这条线存在，2026-09-09 从 `misc/battery-audit/battop/` 搬进来，设备路径 `/home/root/battop` 不变。它的故事主要是"一个诊断工具怎么差点变成故障源"：
 
 | 时间 | 事件 | 结论 / 改动 |
 |---|---|---|
-| 08-27 | 电池审计（[`FINDINGS.md`](../battop/FINDINGS.md) 前半） | 无"电池刺客"：休眠健康、无自旋进程；最大非核心 CPU 是 `memfaultd`。由此建 battop 做长期追踪 |
+| 08-27 | 电池审计（`enhance/battop/FINDINGS.md` 前半；该文件 09-30 随 battop 删除，看 git 历史） | 无"电池刺客"：休眠健康、无自旋进程；最大非核心 CPU 是 `memfaultd`。由此建 battop 做长期追踪 |
 | 08-29 | **第一次冻机**：屏幕冻住、ping/SSH 全不通、USB 链路仍在，长按电源 25–30 秒才恢复 | 内核日志坐实：systemd 启动 battop 的 oneshot 服务时把进程写进 cgroup，`synchronize_rcu` 撞上内核 RCU stall，连 PID 1 一起卡死。不是 battop 逻辑 bug，但 timer 每 10 分钟拉起一次 = 每天 144 次 cgroup 迁移，把罕见 stall 的暴露面放大了 144 倍。**改成常驻服务**，每次开机只迁一次（内核证据见 FINDINGS 后半） |
 | 09-20 | 安装器定案 | **只 start、不 enable**：原先 enable 链接在 `/etc` tmpfs、重启即清，"重启后不自启"一直是事实上的缓解，现在写成明确设计 |
 | 09-22 | 代码审计 | 拆成 procs / store / summary / wake / util 五个模块；summary 改流式聚合；时区改用 libc `localtime_r`，去掉每轮 fork 一次 `date` |
@@ -161,7 +167,9 @@ battop 早于这条线存在，2026-09-09 从 `misc/battery-audit/battop/` 搬�
 
 **教训**：诊断工具自己也要当成"可能出事的代码"看——常驻、周期性、在内核敏感路径附近（cgroup、fork）的操作要尽量去掉；"重启后自然关闭"这种安全态要写成明确设计，而不是依赖 tmpfs 碰巧被清。
 
-## 03c｜hw-stroke 逆向：xochitl 怎么画笔画（2026-09-09，纯静态分析）
+## 03c｜hw-stroke 逆向：xochitl 怎么画笔画（2026-09-09，纯静态分析；hw-stroke 2026-09-30 已移除）
+
+> §03c、§03e–§03g 记的是手写优化扩展 hw-stroke 的研究与实现；它 2026-09-30 已移除（§03n），这几节保留为历史。逆向得到的渲染链结论本身仍然成立（固件 3.28.0.172）。
 
 **目标**：让笔锋按中文书写习惯（粗细、顿挫）渲染。**和 AI 手写识别完全无关**，用户第一轮就澄清过。全仓库搜索确认是全新功能；唯一沾边的先例（笔记页背景滤镜）是判死的。
 
@@ -200,7 +208,7 @@ battop 早于这条线存在，2026-09-09 从 `misc/battery-audit/battop/` 搬�
 
 装法、`JAVA_HOME`（Ghidra 12.x 要 JDK 21）、怎么拉 xochitl 二进制、headless 怎么调，都在 [`../../defw/README.md`](../../defw/README.md)。取舍留一条：改用发行版包（`paru -S ghidra --assume-installed java-environment=21`，避免多装一份系统 JDK），每次调用用 `JAVA_HOME` 指定（`/opt/ghidra` 是 root 拥有，改不了 `launch.properties`）。Wayland 下 GUI 空白见 §04。
 
-## 03e｜hw-stroke 第一版：真机验证（2026-09-10）
+## 03e｜hw-stroke 第一版：真机验证（2026-09-10；已移除，历史）
 
 hook 目标 `FUN_00f47530`：两个 float（s0/s1）+ 一个指针（x0），标准调用约定，入口第一件事就读"当前点宽度"（`ctx+4`）算半宽，在这里改值最简单可靠。
 
@@ -209,7 +217,7 @@ hook 目标 `FUN_00f47530`：两个 float（s0/s1）+ 一个指针（x0），标
 - **效果强度跟基础宽度挂钩**：真机反馈"钢笔效果不好、毛笔还行"，诊断发现两者走同一分支同一公式，只是基础宽度不同导致观感不同——改成细笔画趋近关闭、粗笔画满强度。
 - **撤回一次**：尝试读点结构的笔型标签（`ctx+0x70`）排除钢笔，真机测大号画笔时读出的"笔型"在 0~255 随机跳而坐标正常，说明这个偏移在这条路径上读的是无关内存（§04）。退回纯宽度渐变。
 
-## 03f｜压感撤回、运笔速度代理、第二个 hook（2026-09-10）
+## 03f｜压感撤回、运笔速度代理、第二个 hook（2026-09-10；已移除，历史）
 
 **压感**：点结构 `0xD` 的压感字节被读出转成 0~1 浮点，但存进的是另一个对象（`plVar6+0x74`），不是 hook 收到的 `ctx`。改用不依赖它们的算法（`当前点地址 = param_2[3] + (param_2[4]*0xe − 0xe)`）在 `FUN_00f3f9d0` 入口读，两轮真机证实压感字节是真数据（正常书写很快饱和到 255，专测轻重才有 3~255 的分布）。但**跨函数传给宽度 hook 失败**：诊断样本里只有 2/3449 落在会调用 `FUN_00f47530` 的分支，而它自己被调了 686 次——`FUN_00f3f9d0` 有 6 个调用点，"实时预览"和"提交进笔记本"很可能走不同路径。放弃真实压感，改用 hook 内部就能算的**运笔速度代理**：相邻两点距离短（慢、顿笔）→ 粗，长（快、带过）→ 细，与笔尖角度模型共用"强度随基础宽度挂钩"。
 
@@ -220,7 +228,7 @@ hook 目标 `FUN_00f47530`：两个 float（s0/s1）+ 一个指针（x0），标
 
 部署后真机命中 **10033 次**（`FUN_00f47530` 仅 2117 次），宽度范围 3~36，覆盖面近 5 倍。按真机数据重新校准，两个效果开到中等强度（`min_ratio=0.6`），用户反馈"看上去还行"。当时写进配置的校准值是宽度阈值 5/20、速度阈值 1~10；代码默认值见 hw-stroke README。
 
-## 03g｜hw-stroke 降负载：每笔读一次配置、日志默认关（2026-09-24，真机通）
+## 03g｜hw-stroke 降负载：每笔读一次配置、日志默认关（2026-09-24，真机通；已移除，历史）
 
 **问题**：hook 每个点都 `fopen` 读一次 `reading-qol.json`、往 stderr 写一行日志，效果关着也照样执行；§03f 一次采样就上万次。stderr 进 xochitl 的 journal，又被 wallpaper-serve（`journalctl -f -u xochitl`）和飞行记录仪逐行读，负载被放大。纯诊断的 `FUN_00f3f9d0` hook 对行为零贡献，却在生产环境多 patch 一个函数。
 
@@ -280,8 +288,8 @@ hook 目标 `FUN_00f47530`：两个 float（s0/s1）+ 一个指针（x0），标
 | shelf-mkdir-agent.qmd | shelf | 长轮询 `GET /mkdir/pending?wait=290`：空闲约 290 秒一次往返（book-serve 上限 300 秒；09-24 前 25 秒）；若真遇到 30 秒客户端超时自动退回 25 秒 | `shelf/xovi/shelf-mkdir-agent.qmd`；`book-serve` `MKDIR_WAIT_MAX_SECS` |
 | 网关 mDNS | rmsvc-core | 09-25 起空闲零定时唤醒：改听内核 netlink 地址变化，地址增删才重扫（此前 socket 读超时 = 重扫间隔 60 秒）；netlink 打不开才退回 60 秒；局域网别的设备发 mDNS 查询另算 | `rmsvc-core/src/mdns.rs` `AddrWatch` / `RESCAN_INTERVAL` |
 | wallpaper-serve | 本线 | inotify 等 xochitl 休眠时读完 `current.png`：空闲零唤醒，每次休眠醒一次（09-24 前常驻 `journalctl -f -u xochitl`，xochitl 每写一行日志就醒一次） | `enhance/wallpaper-serve/src/wake.rs` |
-| battop | 本线 | **默认不跑**；开着时醒着每 600 秒采样一次 | `enhance/battop/src/main.rs` `BATTOP_INTERVAL_SECS` |
-| hl-snap / hw-stroke | 本线 | 没有定时器，只在划线 / 写字时进 handler | `enhance/*/src/*.c` |
+| ~~battop~~ | 本线（2026-09-30 已移除） | 原为默认不跑、开着时醒着每 600 秒采样一次；移除后不再有这一项 | （源码已删） |
+| hl-snap | 本线 | 没有定时器，只在划线时进 handler（已移除的 hw-stroke 同样只在写字时进） | `enhance/hl-snap/src/hl_snap.c` |
 | reader-page-turn.qmd | 本线（源码在 shelf） | 打开书时单发 300 ms 读一次开关，不轮询（08 月旧版每 1.5 秒轮询） | `shelf/xovi/reader-page-turn.qmd` |
 | 其余 qmd 与服务 | shelf / notes | comic-margins 换文档单发 1.5 秒；trash-agent 与 mkdir-agent 同为 290 秒长轮询（09-25 起，各约 12 次/小时；book-serve 不在时出错重试 15→30→60→120 秒封顶，此前固定 15 秒 = 240 次/小时）；book-serve / ink-serve 用 inotify 防抖（8 秒 / 4 秒）；浏览器事件流 20 秒心跳只在网页开着时有 | 各自源码 |
 
@@ -319,7 +327,7 @@ hook 目标 `FUN_00f47530`：两个 float（s0/s1）+ 一个指针（x0），标
 
 ![battop 唤醒源时间换算与按序号去重](diagrams/battop-wake-time.svg)
 
-**部署后确认**：打开「管理 → 电池刺客」看唤醒源「今日」计数是否与当天实际休眠 / 唤醒次数量级相符（`data/wakes.cursor` 应出现）；`systemctl restart font-serve` 后 journal 里"索引 N 个家族"秒回、`~/.config/fontconfig/fonts.conf` 的 mtime 不变、`~/.local/state/shelf/upload/` 存在且上传字体后不留文件；xochitl 日志里 `SHELF-MKDIR` / `SHELF-TRASH` 行为照常（停掉 book-serve 时代理不再每 15 秒重试）。
+**部署后确认**：~~打开「管理 → 电池刺客」看唤醒源「今日」计数是否与当天实际休眠 / 唤醒次数量级相符（`data/wakes.cursor` 应出现）~~（battop 09-30 已移除，这条作废）；`systemctl restart font-serve` 后 journal 里"索引 N 个家族"秒回、`~/.config/fontconfig/fonts.conf` 的 mtime 不变、`~/.local/state/shelf/upload/` 存在且上传字体后不留文件；xochitl 日志里 `SHELF-MKDIR` / `SHELF-TRASH` 行为照常（停掉 book-serve 时代理不再每 15 秒重试）。
 
 ## 03m｜第五轮审计给本线的改动（2026-09-30，未部署）
 
@@ -334,7 +342,44 @@ hook 目标 `FUN_00f47530`：两个 float（s0/s1）+ 一个指针（x0），标
 | `shelf-mkdir-agent.qmd` 的 `catch` 打一行 `SHELF-MKDIR: failed <错误>`；它和 `font-menu-dynamic.qmd` 的头注去掉退役引用（**选择器没改**） | 此前回复不是合法 JSON 或 `createCollection` 抛错时静默吞掉，journal 里看不出建文件夹为什么没成 | 只改注释和一行日志，没有另跑 qmldiff |
 | 发现：`qmldiff check-compatibility` 基本不做校验 | 见 §04「qmd 补丁怎么离线验证」 | 开发机实测 |
 
-**部署后确认**（还没做）：壁纸照常在休眠时轮换；battop 开着时「应用」视图出现 `cang-jie` 组、网关等不再单列；xochitl 里建文件夹失败时 journal 能看到 `SHELF-MKDIR: failed`。
+**部署后确认**（还没做）：壁纸照常在休眠时轮换；xochitl 里建文件夹失败时 journal 能看到 `SHELF-MKDIR: failed`。（原有一条"battop「应用」视图出现 `cang-jie` 组"随 battop 移除作废；表里 battop、hw-stroke 两行的改动也随源码一起删了。）
+
+## 03n｜移除手写优化与电池刺客（2026-09-30，未部署）
+
+**起因**：用户要求"移除电池刺客/手写优化及其开关相关功能和模块"。
+
+**删了什么**：
+
+| 层 | 手写优化（hw-stroke） | 电池刺客（battop） |
+|---|---|---|
+| 源码 | `enhance/handwriting-stroke/`（`hw_stroke.c`、`hw-stroke.so`、xovi 胶水、安装包装） | `enhance/battop/`（Rust 采样服务、测试、`FINDINGS.md`、`history/` 旧脚本） |
+| 网关 / 网页 | 实验室「CJK 手写笔迹优化」开关；`PUT /api/enhance/qol` 不再认 `hwStrokeEnabled`，`/api/enhance/status` 不再返回它 | `gateway/src/enhance/battop.rs`、`/api/enhance/battop/*`；「系统增强」里的开关卡、运行时才出现的「电池刺客」数据页；中英语言包各 30 个键 |
+| 安装 | `deploy-handwriting-stroke.sh`；步骤移出 `STEP_ORDER`，进 `STEP_RETIRED` | `deploy-battop.sh`；同左；`shelf/build.sh` 不再编它；CI 不再跑它的 `cargo test` |
+| 核对 | `verify-on-device.sh` 不再当在位项；残留报 ⚠ 并给清理命令 | 同左（去掉只给它用的 `opt` 单元类型） |
+
+**没删的**：`shared/` 仍被 hl-snap 编进 `hl-snap.so`，没有只给 hw-stroke 用的文件；源码里提到 `hw_stroke.c` 的注释也不改——扩展带 `-g` 编译，动注释会改变调试行号，进而改变 `hl-snap.so` 的 md5（改完重编核对过：`7ca1985b…` 不变）。`reading-qol.json` 里的 `hwStroke*` 键不清：网关"全量写回、不认识的键原样保留"的规则不变，留着无害。§03b–§03g 的历史记录保留。
+
+**旧设备怎么清**：
+
+- **自动**：重跑 `sh packaging/install-all.sh <host>`。在最后一步 `xovi-apply` 之前，它对两样各跑一次清理（`packaging/removal.sh`，与 `uninstall-all.sh` 同一份代码）：电池刺客删 `/usr` 的 `battop.service` 和旧版 `battop.timer`（走 devlib 的 dm-verity 门 + 限时读写窗口）、删 `/home/root/battop` 整个目录；手写优化从 `extensions.d/` 摘掉 `hw-stroke.so` 和 `.crashed` 标记、撤掉待换入区里的副本、清安装包目录 `/home/root/hw-stroke/`。xochitl 当时还加载着 `hw-stroke.so` 就记一个待生效标记，`xovi-apply` 因此整机重启一次；全程不 stop / restart xochitl、xovi 已生效时不跑 `xovi/start`、不往 `extensions.d` 放备份。没有残留时什么都不动（不碰 systemd、不 remount）。`--skip battop` / `--skip handwriting-stroke` 可跳过。
+- **手动（只清这两样）**：
+
+  ```sh
+  cd packaging
+  sh uninstall-all.sh <host> --dry-run --skip chrony-boot-wakelock,wifi-watch,xovi-persist,hl-snap,shelf,sidebar-entry   # 计划里应只有 handwriting-stroke、battop
+  sh uninstall-all.sh <host> --skip chrony-boot-wakelock,wifi-watch,xovi-persist,hl-snap,shelf,sidebar-entry
+  ```
+
+  然后在设备上整机重启一次（`reboot`）。这个 `--skip` 列表由 `lib.sh` 的 `uninstall_only_skip battop handwriting-stroke` 生成，`verify-on-device.sh` 报 ⚠ 时给的就是它。
+- dm-verity 开着时：battop 单元删不掉，它的目录也保留（单元指向其中的程序；battop 从不开机自启），等可写后再跑一次；hw-stroke 只在 `/home`，照常清。
+
+**为什么选"重新部署时自动清"**：两样的清理都复用了已有、已真机走过的机制（卸 `/usr` 单元的读写窗口、摘 `.so` + 待生效标记 + 整机重启），没有新的高风险动作；让用户记得单独跑一条卸载命令，残留更可能一直留在设备上（hw-stroke 还会每次开机被加载）。sidebar-entry 没有并进自动清理：它会删 `cangjie-icons.rcc`，历史上别的 qmd 也用过这个文件名。
+
+**一个留意点**：`--skip handwriting-stroke` 时，待换入区里如果还有旧的 `hw-stroke.so` 副本，最后的 `xovi-apply` 会照常把它换进 `extensions.d`（跳过就是整样不碰）。只有 09-24 前后部署过 hw-stroke、之后一直没重启过的设备才会有这个副本。
+
+**验证**：只在开发机上——网关 `cargo test`、clippy、前端 node 测试与浏览器冒烟通过；`hl-snap.so` 重编 md5 不变；`packaging/tests/run_sim_tests.sh` 356 项全过（新增旧设备手动卸载、`install-all` 自动清并只整机重启一次、`--skip`、xovi 未生效、dm-verity、目录是符号链接、verify 报 ⚠ 等用例）。**没部署、没上真机。**
+
+**部署后确认**（还没做）：`install-all.sh` 输出里两步「清理已移除」报了删除内容；设备回来后 `verify-on-device.sh` 不再有 battop / hw-stroke 相关 ⚠；`/proc/<xochitl pid>/maps` 里没有 `hw-stroke.so`；`systemctl status battop` 报找不到单元。
 
 ## 04｜踩坑
 
@@ -380,19 +425,20 @@ hook 目标 `FUN_00f47530`：两个 float（s0/s1）+ 一个指针（x0），标
 
 | 项 | 现状 | 下一步思路 |
 |---|---|---|
-| hw-stroke：`bVar16<4`（最常用的钢笔/铅笔量级）摸不到 | 走虚函数动态分发 `(**(code**)(*plVar6+0x10))(x,y,width,plVar6,…)`，宽度直接当第 3 个参数传，运行时目标没确认 | 扩展诊断 hook 打印 `*(void**)(*plVar6+0x10)` 的函数地址，再拿地址反编译确认签名 |
+| ~~hw-stroke：`bVar16<4`（最常用的钢笔/铅笔量级）摸不到~~（09-30 随 hw-stroke 移除，下面四行 hw-stroke 待办同样不再跟进） | 走虚函数动态分发 `(**(code**)(*plVar6+0x10))(x,y,width,plVar6,…)`，宽度直接当第 3 个参数传，运行时目标没确认 | 扩展诊断 hook 打印 `*(void**)(*plVar6+0x10)` 的函数地址，再拿地址反编译确认签名 |
 | hw-stroke：`FUN_00f4f430`（`bVar16==3`） | 前 20 字节含条件分支，不能安全 patch | 做指令级搬移/重定位，或找更靠后的安全 patch 点 |
 | hw-stroke：像素消费者（`vtable+0x10`）的真实目标、smoothstep 曲线的下游用途 | 静态分析到边界 | 需要动态分析 |
 | hw-stroke：参数调优 | 一轮真机校准的起点，"看上去还行" | 按用户反馈再调 |
 | hw-stroke：真实压感 | 放弃 | 先搞清 `FUN_00f47530` / `FUN_00f4c8d0` 各有哪些调用路径 |
-| 多扩展共存依赖加载顺序（§04） | 已修并部署：09-24 部署后与整机重启后三个 hook 都"安装完成"、没有"hook 未安装" | 有条件时把两个 `.so` 改名调换加载顺序再验一次（反序场景没真机验过） |
+| 多扩展共存依赖加载顺序（§04） | 已修并部署：09-24 部署后与整机重启后三个 hook 都"安装完成"、没有"hook 未安装"。09-30 hw-stroke 移除后只剩 hl-snap 一个扩展，眼下没有反序场景 | 以后再加扩展时，把两个 `.so` 改名调换加载顺序验一次 |
 | wallpaper-serve 改监听休眠读图（§03j） | 09-24 已改并真机验证：临时放第二张图后休眠一次，`Normal to DeepSleep` 同一刻（115.79s）轮换到下一张、只轮换一次；进程列表里没有 journalctl | 充电状态（内核不挂起）下还没试 |
 | ~~lo-alias：不插 USB 冷启动~~ | ✅ 09-25 两次无 USB 整机重启后核对：`10.11.99.1` 同时挂上 `lo` 与 `usb1`，xochitl :80 已绑定 | — |
-| battop：两次冻机的内核根因 | 09-23 起采样循环无子进程；根因（RCU stall）未排除 | 继续观察；不开机自启保持不变 |
+| ~~battop：两次冻机的内核根因~~ | 09-30 battop 移除，不再跟进（内核 RCU stall 本身仍未排除） | — |
 | 第四轮审计改动（§03l） | 代码已合入；部署后确认各项还没逐项核对 | 按 §03l「部署后确认」逐项核对 |
 | 第五轮审计改动（§03m） | 只在开发机测过，未部署、未上真机 | 部署后按 §03m「部署后确认」核对 |
+| 移除 hw-stroke / battop 的旧设备清理（§03n） | 只在开发机模拟测过，未部署、未上真机 | 重跑 `install-all.sh` 后按 §03n「部署后确认」核对 |
 
-**已闭环（真机）**：hl-snap 精确吸附（§03a）；battop 常驻化（§03b）与唤醒源改读 `/dev/kmsg`（§03b，commit 记真机确认）；hw-stroke 两个 hook 目标、笔尖角度 + 运笔速度（§03e / §03f）；hw-stroke 降负载（§03g）；网页"已加载"徽章（§02）；xochitl 单击翻页 + 日漫翻页规则（§03i）；扩展 `.so` 的 stop → 换 → start 部署流程（§03g，09-24 真机走通；09-25 起被整机重启取代）；换入后整机重启的新流程（§04，09-25 13:10 带 `-ffile-prefix-map` 的新 `.so` 经 WiFi 部署，自动整机重启、开机从待换入区换入，第一次真机走通有变化的 `.so`）；wallpaper-serve 监听休眠读图轮换（§03j）；mkdir-agent 290 秒长轮询（§03j）。
+**已闭环（真机）**：hl-snap 精确吸附（§03a）；（以下 battop、hw-stroke 各项 09-30 已随功能移除，留作历史）battop 常驻化（§03b）与唤醒源改读 `/dev/kmsg`（§03b，commit 记真机确认）；hw-stroke 两个 hook 目标、笔尖角度 + 运笔速度（§03e / §03f）；hw-stroke 降负载（§03g）；网页"已加载"徽章（§02）；xochitl 单击翻页 + 日漫翻页规则（§03i）；扩展 `.so` 的 stop → 换 → start 部署流程（§03g，09-24 真机走通；09-25 起被整机重启取代）；换入后整机重启的新流程（§04，09-25 13:10 带 `-ffile-prefix-map` 的新 `.so` 经 WiFi 部署，自动整机重启、开机从待换入区换入，第一次真机走通有变化的 `.so`）；wallpaper-serve 监听休眠读图轮换（§03j）；mkdir-agent 290 秒长轮询（§03j）。
 
 **已放弃**：按笔型标签精确排除钢笔（§03e，真机数据证伪了 `ctx` 同一性假设）；真实压感跨函数传值（§03f）。
 
@@ -414,4 +460,5 @@ hook 目标 `FUN_00f47530`：两个 float（s0/s1）+ 一个指针（x0），标
 | 2026-09-24 | hw-stroke 降负载（§03g）；网页"已加载"徽章（§02）；扩展部署改 stop → 换 → start；第三轮审计（§03k，当天部署） |
 | 2026-09-25 | 部署生效一律整机重启（§04）；两个 `Makefile` 加 `-ffile-prefix-map`，新 `.so` 当天部署并真机走通"待换入区 → 整机重启换入"；母版库按书设阅读方向（§03i）；lo-alias 无 USB 冷启动真机通过；第四轮审计（§03l，未部署） |
 | 2026-09-29 | 设备上卸载 KOReader、第三方 WeRead、appload 和侧栏入口（按用户要求，已在设备上执行） |
+| 2026-09-30 | **移除手写优化（`handwriting-stroke/`）与电池刺客（`battop/`）**：源码、部署脚本、网页开关与数据页一并删除，旧设备残留由 `install-all.sh` 自动清（§03n，未部署） |
 | 2026-09-30 | 撤掉母版库按书设阅读方向，`rtl-overrides.json` 改为只读（§03i；书架侧改动，只在 host 测过，未部署）；第五轮审计（§03m，未部署），其中网关不再订阅 koreader-serve 事件流（§03j） |

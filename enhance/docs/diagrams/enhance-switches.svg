@@ -1,8 +1,8 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 706" font-family="Noto Sans CJK SC, sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 548" font-family="Noto Sans CJK SC, sans-serif">
 <defs><marker id="sw-m" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#555"/></marker></defs>
-<rect x="0" y="0" width="1000" height="706" fill="#fbfbfa"/>
+<rect x="0" y="0" width="1000" height="548" fill="#fbfbfa"/>
 <text x="500" y="32" text-anchor="middle" font-size="20" font-weight="bold" fill="#1a1a1a">网页开关 → 落到设备上的什么 → 什么时候生效</text>
-<text x="500" y="56" text-anchor="middle" font-size="13" fill="#666">所有请求都进网关 gateway :443；前四行由网关自己处理（gateway/src/enhance/），后两行转发给独立服务</text>
+<text x="500" y="56" text-anchor="middle" font-size="13" fill="#666">所有请求都进网关 gateway :443；前两行由网关自己处理（gateway/src/enhance/），后两行转发给独立服务</text>
 
 <!-- column headers -->
 <text x="40" y="92" font-size="13" font-weight="bold" fill="#555">网页上的开关（位置）</text>
@@ -25,22 +25,7 @@
 <polyline points="270,150 290,150" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#sw-m)"/>
 <polyline points="580,150 600,150" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#sw-m)"/>
 
-<!-- row 2 -->
-<rect x="30" y="200" width="240" height="72" rx="9" fill="#fdf3dc" stroke="#b8860b" stroke-width="1.4"/>
-<text x="44" y="224" font-size="13.5" font-weight="bold" fill="#1a1a1a">CJK 手写笔迹优化</text>
-<text x="44" y="245" font-size="11.8" fill="#444">管理 → 实验室</text>
-<text x="44" y="262" font-size="11.8" fill="#444">默认关 · 旁有「已加载」徽章</text>
-<rect x="290" y="200" width="290" height="72" rx="9" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.4"/>
-<text x="304" y="224" font-size="12" fill="#1a1a1a">reading-qol.json 两个键同写</text>
-<text x="304" y="245" font-size="11.8" fill="#444">hwStrokeNibMinRatio</text>
-<text x="304" y="262" font-size="11.8" fill="#444">hwStrokeSpeedMinRatio：开 0.6 / 关 1.0</text>
-<rect x="600" y="200" width="370" height="72" rx="9" fill="#eaf5ee" stroke="#2f7d45" stroke-width="1.4"/>
-<text x="614" y="224" font-size="12.5" font-weight="bold" fill="#1a1a1a">hw-stroke.so（xochitl 进程内）</text>
-<text x="614" y="245" font-size="11.8" fill="#444">每一笔起点读一次 → 从下一笔生效</text>
-<text x="614" y="262" font-size="11.8" fill="#444">精调参数（角度/阈值）只能手改 JSON</text>
-<polyline points="270,236 290,236" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#sw-m)"/>
-<polyline points="580,236 600,236" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#sw-m)"/>
-
+<g transform="translate(0,-86)">
 <!-- row 2b -->
 <rect x="30" y="286" width="240" height="72" rx="9" fill="#fdf3dc" stroke="#b8860b" stroke-width="1.4"/>
 <text x="44" y="310" font-size="13.5" font-weight="bold" fill="#1a1a1a">单击翻页 / 日漫翻页规则</text>
@@ -57,22 +42,8 @@
 <polyline points="270,322 290,322" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#sw-m)"/>
 <polyline points="580,322 600,322" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#sw-m)"/>
 
-<!-- row 3 -->
-<rect x="30" y="372" width="240" height="72" rx="9" fill="#fdf3dc" stroke="#b8860b" stroke-width="1.4"/>
-<text x="44" y="396" font-size="13.5" font-weight="bold" fill="#1a1a1a">电池刺客</text>
-<text x="44" y="417" font-size="11.8" fill="#444">管理 → 系统增强</text>
-<text x="44" y="434" font-size="11.8" fill="#444">开了才出现「电池刺客」数据页</text>
-<rect x="290" y="372" width="290" height="72" rx="9" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.4"/>
-<text x="304" y="396" font-size="12" fill="#1a1a1a">systemctl start / stop</text>
-<text x="304" y="417" font-size="11.8" fill="#444">battop.service</text>
-<text x="304" y="434" font-size="11.8" fill="#444">（不写任何配置文件）</text>
-<rect x="600" y="372" width="370" height="72" rx="9" fill="#f1edf9" stroke="#6d4ab0" stroke-width="1.4"/>
-<text x="614" y="396" font-size="12.5" font-weight="bold" fill="#1a1a1a">battop 常驻进程</text>
-<text x="614" y="417" font-size="11.8" fill="#444">立即启停；设备真重启后回到「关」</text>
-<text x="614" y="434" font-size="11.8" fill="#444">（有意不开机自启，见白皮书 §03b）</text>
-<polyline points="270,408 290,408" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#sw-m)"/>
-<polyline points="580,408 600,408" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#sw-m)"/>
-
+</g>
+<g transform="translate(0,-172)">
 <line x1="30" y1="460" x2="970" y2="460" stroke="#bbb" stroke-width="1" stroke-dasharray="5 4"/>
 <text x="40" y="480" font-size="12" fill="#666">以下经网关反向代理到独立的 Web 服务（本机端口，不对外）</text>
 
@@ -108,5 +79,7 @@
 <polyline points="270,614 290,614" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#sw-m)"/>
 <polyline points="580,614 600,614" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#sw-m)"/>
 
-<text x="500" y="684" text-anchor="middle" font-size="12" fill="#555">reading-qol.json 在 ~/.local/share/cangjie-ime/（历史目录名）；网关只改自己要改的键，其余键原样写回</text>
+</g>
+<text x="500" y="506" text-anchor="middle" font-size="12" fill="#555">reading-qol.json 在 ~/.local/share/cangjie-ime/（历史目录名）；网关只改自己要改的键，其余键原样写回</text>
+<text x="500" y="526" text-anchor="middle" font-size="12" fill="#8a4b00">2026-09-30 已移除：CJK 手写笔迹优化（hw-stroke.so）、电池刺客（battop）——旧设备 reading-qol.json 里的 hwStroke* 键原样留着，无害</text>
 </svg>

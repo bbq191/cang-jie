@@ -11,6 +11,17 @@
 
 ### 09-30
 
+- **（已移除）电池刺客与手写优化**（用户要求）：
+  - **删了什么**：电池刺客（`battop`，耗电采样服务）和手写优化（`handwriting-stroke`，xovi 插件 `hw-stroke.so`）的源码、安装步骤和部署脚本（`deploy-battop.sh`、`deploy-handwriting-stroke.sh`）；网页「管理 → 系统增强」里的电池刺客开关、只在它运行时出现的「电池刺客」数据页、「管理 → 实验室」里的「CJK 手写笔迹优化」开关，以及网关对应的接口（`/api/enhance/battop/*`、`hwStrokeEnabled`）。`reading-qol.json` 里旧的 `hwStroke*` 设置项不清，没有程序再读它们，无害。荧光笔精确吸附（`hl-snap`）不受影响，`hl-snap.so` 重编后 md5 不变。
+  - **旧设备怎么清**：重新跑 `sh packaging/install-all.sh <host>` 会**自动清**——最后一步之前删掉 `battop.service`（含旧版 `battop.timer`）、`/home/root/battop` 整个目录（程序和历史采样数据），摘掉 `extensions.d/hw-stroke.so` 和待换入区里的副本。不想重装、只清这两样：
+    ```sh
+    cd packaging
+    sh uninstall-all.sh <host> --dry-run --skip chrony-boot-wakelock,wifi-watch,xovi-persist,hl-snap,shelf,sidebar-entry   # 先核对：计划里只有 handwriting-stroke、battop 两步
+    sh uninstall-all.sh <host> --skip chrony-boot-wakelock,wifi-watch,xovi-persist,hl-snap,shelf,sidebar-entry
+    ```
+  - **需要整机重启**：`hw-stroke.so` 在 xochitl 里加载着时，要整机重启一次才真正停用。`install-all` 会在最后一步自动整机重启；手动清的话自己在设备上 `reboot`（别 `systemctl restart xochitl`）。装完 `verify-on-device.sh` 如果还看到这两样的残留会报 ⚠，并给出上面的清理命令。
+  - **只在开发机上测过**（网关测试、网页测试与浏览器冒烟、安装模拟测试 356 项全过），**没部署、没上真机**。详见 [`enhance/docs/reMarkable系统增强线白皮书.md`](../enhance/docs/reMarkable系统增强线白皮书.md) §03n。
+
 - **全系统审计（第五轮）**：6 条线并行审查，修了约 50 处问题，顺手把 09-29 卸掉的 KOReader、WeRead、appload 在网页和安装脚本里的残留删干净。**只在开发机上测过**（书架 521 项、笔记 250 项、服务基座 108 项、网关 78 项等 `cargo test` 全过，安装模拟测试 342 → 343 项，39 个 shell 脚本 shellcheck 零告警，浏览器冒烟通过），**还没部署、没上真机**；两个插件 `.so` 没改，部署时不用换。部署后请照本条末尾的清单抽查。
   - **会丢内容或让服务崩溃的问题**：
     - 书架：书名很长（中文约 80 字）时，入库、优化、写状态都会报"文件名太长"而失败。现在临时文件改用和书名无关的短名字，长书名照常处理。
@@ -27,7 +38,7 @@
     - 网页里跟 KOReader、WeRead、appload 相关的按钮、标签、提示全部删掉（「其他」里的 KOReader 字体/词典上传、母版库的 KOReader 位置和「已加入KO」徽章、「加入 KOReader」、笔记页的 KOReader 回流、基石列表里的这三项）。**以前只加入过 KOReader、没加入过 xochitl 的书，会从「已完成」回到「待处理」**。旧的批量队列里如果还有"加入 KOReader"的任务，只剔除这几项，其余照跑（以前会整条队列读不出来）。
   - **更省电**：母版库列表和页面刷新的请求更少（全量刷新 6 个接口减到 4 个，新建 xochitl 文件夹后不再每 2 秒查 12 次）；每个带密码的请求不再都重算一遍密码哈希（结果缓存 10 分钟）；网关撤掉了原来每 5 分钟醒一次去连 KOReader 服务的线程。
   - **抓网文**：带远程插图的网文，图片按插图框（842×1455）缩一次，不再缩两遍损失画质；超过 20MB 的图整张不要，不再把截断的残图放进书里。
-  - **系统增强**：壁纸目录被删掉或卸载后，壁纸轮换不再永远卡住；电池刺客「应用」视图把网关、书架、笔记、字体、壁纸、wifi-watch 归到 cang-jie 一组。
+  - **系统增强**：壁纸目录被删掉或卸载后，壁纸轮换不再永远卡住；电池刺客「应用」视图把网关、书架、笔记、字体、壁纸、wifi-watch 归到 cang-jie 一组（电池刺客同日已移除，见本节第一条）。
   - **安装与卸载**：
     - 卸载在目录里有别的文件时不会再中途退出；卸 `wifi-watch` 时一并删掉它的联网状态文件（否则网页"上不了外网"横幅会一直挂着）；旧设备的 `battop.timer`、旧命名留下的悬空链接也能清掉。
     - 只装部分服务（`deploy.sh --only …`）后，设备上的卸载程序和清单也会更新，之后卸载不再漏删新加的界面补丁。

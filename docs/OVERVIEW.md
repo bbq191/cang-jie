@@ -9,8 +9,8 @@
 reMarkable Paper Pro Move 是一台彩色墨水屏平板，官方阅读/笔记应用叫 **xochitl**（读作"沙特尔"，设备上的官方主程序）。日常用起来有几处不顺手：
 
 - **书难弄进去、弄进去排版不好**：网页上传有约 100MB 上限；很多 EPUB 在墨水屏上边距、缩进、脚注、目录、封面都不理想；漫画体积大、留白多。
-- **中文与手写场景欠缺**：荧光笔划中文会"吸一整行"；手写笔画不像中文书写；没有把"勾画 + 旁边手写批注"变成可整理笔记的通道。
-- **系统层面的小痛点**：字体/壁纸不能自己上传、耗电难排查、时区与校时不合国内环境。
+- **中文与手写场景欠缺**：荧光笔划中文会"吸一整行"；手写笔画不像中文书写（曾做过手写笔画优化，2026-09-30 已移除）；没有把"勾画 + 旁边手写批注"变成可整理笔记的通道。
+- **系统层面的小痛点**：字体/壁纸不能自己上传、耗电难排查（曾做过耗电诊断「电池刺客」，2026-09-30 已移除）、时区与校时不合国内环境。
 
 这个项目**不修改 xochitl 本体**，而是用两种"旁路"手段增强它：一是 **xovi 扩展**（xovi 是第三方的扩展加载框架，能在 xochitl 启动时加载我们的小插件）；二是一组**跑在设备上的独立 Web 服务**，通过网页操作，需要时再借 xochitl 自己的上传接口、直接读写它的书库目录，或用 **qmd**（对 xochitl 界面 QML 描述文件的补丁）往界面里注入少量入口。
 
@@ -22,7 +22,7 @@ reMarkable Paper Pro Move 是一台彩色墨水屏平板，官方阅读/笔记�
 |---|---|---|
 | [`shelf/`](../shelf/README.md) 书架 | 书（EPUB/PDF）导入 → 母版库 → 按需优化 → 加入 xochitl | 1 个 Web 服务（book-serve）+ 若干 qmd 界面补丁。`koreader-serve` 源码还在仓库，2026-09-29 起不再安装（设备已卸 KOReader） |
 | [`notes/`](../notes/README.md) 笔记线 | 荧光笔勾画 + 旁边手写批注 → 手机整理/转写/问 AI → 投回设备笔记本或 Obsidian | 4 个 Web 服务（ink / transcribe / mind / note） |
-| [`enhance/`](../enhance/README.md) 系统增强 | 荧光笔 CJK 精确吸附、手写笔锋渲染、阅读器单击翻页 / 日漫翻页规则、电池诊断、字体/壁纸上传即用 | 2 个 xovi 扩展 + 1 个采样器 + 2 个 Web 服务（font / wallpaper）；翻页补丁是 qmd，随 shelf 一起装 |
+| [`enhance/`](../enhance/README.md) 系统增强 | 荧光笔 CJK 精确吸附、阅读器单击翻页 / 日漫翻页规则、字体/壁纸上传即用（手写笔锋渲染、电池诊断 2026-09-30 已移除） | 1 个 xovi 扩展（hl-snap）+ 2 个 Web 服务（font / wallpaper）；翻页补丁是 qmd，随 shelf 一起装 |
 | [`gateway/`](../gateway/README.md) 网关 | 上面三条线共用的唯一对外入口：HTTPS + 登录密码 + 反向代理 + 批量队列 + 并发闸门 | Web 服务（`0.0.0.0:443`） |
 | [`rmsvc-core/`](../rmsvc-core/README.md) 服务基座 | 各 Web 服务共用的基础库，不含业务逻辑 | Rust 库（编进各服务，不单独运行） |
 | [`defw/`](../defw/README.md) 固件逆向 | xochitl 3.28.0.172 的 Ghidra 逆向产物，给扩展定位 hook 用 | 逆向资料（不上设备） |
@@ -54,10 +54,10 @@ reMarkable Paper Pro Move 是一台彩色墨水屏平板，官方阅读/笔记�
 | 各服务的二进制（`gateway`、`book-serve` …） | `/home/root/.local/bin/` | 保留 |
 | 各服务的数据 / 配置 / 状态（母版库、证书、密码、字体壁纸池、PDF 转换后的原件备份…） | `~/.local/share/shelf`、`~/.config/shelf`、`~/.local/state/shelf`；笔记线同理放在 `~/.config/notes`、`~/.local/share/notes`、`~/.local/state/notes` | 保留 |
 | 上传途中的暂存文件 | 字体、壁纸在 `~/.local/state/shelf/upload/`（2026-09-25 起放在 `/home`、装好时直接改名；以前在内存里的 `/tmp`，会计入服务的内存上限）。服务启动时清掉上次中断留下的半成品 | 保留 |
-| xovi 扩展 `.so`（`hl-snap`、`hw-stroke`） | `/home/root/xovi/extensions.d/`（**只放扩展，备份绝不能放这里**：xovi 会把目录里每个文件都当扩展加载） | 文件保留，重跑安装后生效 |
+| xovi 扩展 `.so`（`hl-snap`；`hw-stroke` 2026-09-30 已移除，重新部署时自动摘掉） | `/home/root/xovi/extensions.d/`（**只放扩展，备份绝不能放这里**：xovi 会把目录里每个文件都当扩展加载） | 文件保留，重跑安装后生效 |
 | 等着换入的新版扩展 `.so`（xochitl 正在用旧版时先放这里；整机重启前由部署脚本、或开机时由 `xovi-reenable` 换进 `extensions.d/`） | `/home/root/.cangjie-stage/so-pending/` | 保留 |
 | 界面补丁 qmd（字体菜单、回收站/建夹代理、漫画边距代理、阅读器翻页） | `/home/root/xovi/exthome/qt-resource-rebuilder/` | 文件保留，要先在设备上重建 hashtable 再重跑安装 |
-| systemd 单元（`shelf.target`、各服务、`xovi-reenable`、`wifi-watch`、`battop`、`chrony-boot-wakelock`） | `/usr/lib/systemd/system/` | **被冲掉**，重跑安装 |
+| systemd 单元（`shelf.target`、各服务、`xovi-reenable`、`wifi-watch`、`chrony-boot-wakelock`；`battop` 2026-09-30 已移除，重新部署时自动清） | `/usr/lib/systemd/system/` | **被冲掉**，重跑安装 |
 | 国内 NTP、默认时区 | `/etc` | **被冲掉**，重跑安装 |
 | battop 二进制与采样数据 | `/home/root/battop/` | 保留 |
 | 安装前的旧文件备份（保留最近 5 份） | `/home/root/cangjie-backups/` | 保留 |
@@ -104,13 +104,13 @@ reMarkable Paper Pro Move 是一台彩色墨水屏平板，官方阅读/笔记�
 | 术语 | 一句话解释 |
 |---|---|
 | xochitl | reMarkable 官方主程序（阅读器 + 笔记 + UI）；本项目不改它 |
-| xovi / 扩展 | 第三方的扩展加载框架；我们的 `hl-snap`、`handwriting-stroke` 是它加载的 `.so` 插件 |
+| xovi / 扩展 | 第三方的扩展加载框架；我们的 `hl-snap` 是它加载的 `.so` 插件（`handwriting-stroke` 2026-09-30 已移除） |
 | qmd / qmldiff | 对 xochitl 界面 QML 的补丁语言/文件；用来往界面里加字体菜单、回收站/建文件夹代理、翻页规则等 |
 | vellum | 设备上的包管理器，用来装 xovi、qt-resource-rebuilder 等生态组件 |
 | 母版库 | shelf 里的暂存池：入库的书原样保存在这里，优化和落库都从它出发 |
 | 边车（sidecar） | 母版库里每本书旁边的 `.<书名>.delivered` 小文件，记录"已加入哪里、渲染自检结果、处理进度" |
 | 占位文档 | 为绕开上传上限先传的几 KB 替身，之后被替换成真文件 |
-| hook | 在 xochitl 某个函数入口"插一脚"：先跑我们的代码，再决定是否调用原函数；`hl-snap`、`hw-stroke` 就是这样改行为的 |
+| hook | 在 xochitl 某个函数入口"插一脚"：先跑我们的代码，再决定是否调用原函数；`hl-snap` 就是这样改行为的（已移除的 `hw-stroke` 也是） |
 | 私有 CA | 设备自己生成的证书颁发机构，给网关签 HTTPS 证书；手机/电脑装一次它的证书，浏览器就不再报"不安全" |
 | OTA | 固件在线升级；会整体替换 `/usr`、`/etc`，不动 `/home` |
 | 注册表 | 服务启动时写的一份 JSON，网关据此出 tab 和转发 |

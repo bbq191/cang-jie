@@ -1,7 +1,7 @@
 # defw —— xochitl 3.28.0.172 逆向工程
 
 > **读者与用途**：要给 xochitl 写新的 hook / qmd、查 xochitl 崩溃栈，或想复现"某个函数地址是怎么定位到的"的人。
-> 这里是**逆向工程的工作目录与方法说明**（Ghidra 项目 + headless 脚本），不是功能代码，也不上设备；用它支撑的成果在 [`../enhance/handwriting-stroke/`](../enhance/handwriting-stroke/README.md) 等处。
+> 这里是**逆向工程的工作目录与方法说明**（Ghidra 项目 + headless 脚本），不是功能代码，也不上设备；用它支撑过的成果主要是手写优化扩展 `enhance/handwriting-stroke/`（2026-09-30 已移除，研究记录留在 [系统增强线白皮书](../enhance/docs/reMarkable系统增强线白皮书.md) §03c–§03g）。
 > 整体位置见 [`../docs/OVERVIEW.md`](../docs/OVERVIEW.md)。原名 `ghidra-project-328`，2026-09-10 改名 `defw`。
 
 **跟旧的 `ghidra-project/` 是两个独立项目，别混**：旧目录是固件 3.28.0.169 时代的分析成果，已随 2026-09-11 的仓库整理搬出 git 仓库，函数地址对不上现在的固件，本目录不复用它。
@@ -70,7 +70,7 @@ JAVA_HOME=$J ghidra-analyzeHeadless <proj> xochitl_328_analysis -process xochitl
 3. **headless 脚本接力**：一旦有了具体地址，反编译、查引用、按字节搜内存都用 `scripts/` 批量做，不必再靠 GUI 截图。
 4. **反编译要交叉核实**：关键偏移和参数签名用原始反汇编（`CheckFuncSizes.java`）核对，别只信反编译出来的 C。
 
-完整的发现、踩坑与勘误记在 [`../enhance/handwriting-stroke/README.md`](../enhance/handwriting-stroke/README.md) 和 [`../enhance/docs/reMarkable系统增强线白皮书.md`](../enhance/docs/reMarkable系统增强线白皮书.md) §03c–§03f、§04。**本目录只管"怎么用这套工具"，不重复记发现内容**；唯一例外是下面这条不属于任何功能线的崩溃调查。
+完整的发现、踩坑与勘误记在 [`../enhance/docs/reMarkable系统增强线白皮书.md`](../enhance/docs/reMarkable系统增强线白皮书.md) §03c–§03f、§04（原先还有 `enhance/handwriting-stroke/README.md`，2026-09-30 随该扩展删除，要看去 git 历史）。**本目录只管"怎么用这套工具"，不重复记发现内容**；唯一例外是下面这条不属于任何功能线的崩溃调查。
 
 ## 调查记录：xochitl 退出时崩溃（2026-09-25）
 

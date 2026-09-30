@@ -181,10 +181,10 @@
 ### 5.1 怎么打包、怎么组织
 
 - `ui/index.html`、`style.css`、`app.js`、`auth.css` 在编译期 `include_str!` 进二进制，拼成**一个零外链的单文件页面**；格式白名单从 `rmsvc_core::formats` 注入（母版库现在只收 EPUB/PDF），网页 `accept` 和服务端上传门同源。
-- **顶层标签**：传书（入库 / 母版库）· 笔记（浏览 / 整理 / 回收站 / 导入 md〔实验室开关打开才显示〕）· 其他（xochitl 字体 / 壁纸，按注册表里有哪些服务动态出现；KOReader 子标签〔字体/词典上传〕09-30 已移除）· 管理（基石与模块 / 设备健康〔09-25〕/ 模型管理 / 系统增强 / 电池刺客〔battop 在跑才显示〕/ 实验室）。
+- **顶层标签**：传书（入库 / 母版库）· 笔记（浏览 / 整理 / 回收站 / 导入 md〔实验室开关打开才显示〕）· 其他（xochitl 字体 / 壁纸，按注册表里有哪些服务动态出现；KOReader 子标签〔字体/词典上传〕09-30 已移除）· 管理（基石与模块 / 设备健康〔09-25〕/ 模型管理 / 系统增强 / 实验室；「电池刺客」子标签〔battop 在跑才显示〕09-30 随 battop 移除）。
 - **i18n**：`ui/locales/{zh-CN,en-US}.json` 各 543 个 key（09-30），`GET /ui/locales/{lang}` 下发，不认识的语言落中文。后端直接吐给前端的字符串（如 `MODULES.label`）绕过了翻译管线，前端优先查 `manage.modules.label.<seg>`，语言包里没有才用后端的中文（注意 `T()` 缺 key 时返回 key 本身，不能写成 `T(k)||兜底`，09-24 修过这个永远不生效的兜底）。
 - **安全**：外部数据（文件名、书名、转写、AI 回答、服务端错误）插入 `innerHTML` 前统一经 `esc()` 转义（09-20 修存储型 XSS；09-30 又补了笔记页两处服务端字段，`xss.test.mjs` 扫 `app.js` 里插进 HTML 的 `${…}` 是否都过了 `esc()`）。
-- **什么时候取数**：各 tab **第一次切过去才渲染**（渲染本身取一次数据），之后切回来只刷新；打开页面的请求从 33 个降到 7 个，逛完四个 tab 从 69 降到 35（09-24 第三轮审计）。管理页一次刷新并行取三个接口，`/api/enhance/status` 只取一次，结果也传给电池刺客卡片（09-25 起卡片挂载时不再自己多取一次）。每个区块（顶层 tab、「其他」里的子面板）的刷新都经 `refreshSec` 按区块各自 `coalesce`，同一区块同一时刻最多一个刷新在飞。
+- **什么时候取数**：各 tab **第一次切过去才渲染**（渲染本身取一次数据），之后切回来只刷新；打开页面的请求从 33 个降到 7 个，逛完四个 tab 从 69 降到 35（09-24 第三轮审计）。管理页一次刷新并行取三个接口，`/api/enhance/status` 只取一次，结果也传给系统增强/实验室的各开关（09-25 起电池刺客卡片挂载时不再自己多取一次；该卡片 09-30 随 battop 移除）。每个区块（顶层 tab、「其他」里的子面板）的刷新都经 `refreshSec` 按区块各自 `coalesce`，同一区块同一时刻最多一个刷新在飞。
 
   ![网页什么时候向网关要数据](diagrams/ui-refresh.svg)
 
@@ -235,17 +235,16 @@
 
 | 接口 | 作用 |
 |---|---|
-| `GET /api/enhance/status` | 返回下面六个开关、battop 状态，以及 `loaded`（扩展是否真的加载进 xochitl） |
-| `PUT /api/enhance/qol` | body 里出现哪个布尔键就改哪个：`hlSnapCjk`、`hwStrokeEnabled`、`notesImportMdEnabled`、`comicMinMargin`、`tapPageTurn`、`rtlPageTurn`；一个都没有回 400 |
-| `POST /api/enhance/battop/{start\|stop}` | 启停电池刺客（`systemctl`） |
-| `GET /api/enhance/battop/summary` | 原样返回 battop 的 `summary.json`；还没数据时 `available:false` |
+| `GET /api/enhance/status` | 返回下面五个开关，以及 `loaded`（扩展是否真的加载进 xochitl）。09-30 前还返回 `hwStrokeEnabled` 与 battop 状态 |
+| `PUT /api/enhance/qol` | body 里出现哪个布尔键就改哪个：`hlSnapCjk`、`notesImportMdEnabled`、`comicMinMargin`、`tapPageTurn`、`rtlPageTurn`；一个都没有回 400（已移除的 `hwStrokeEnabled` 单独传也回 400） |
+| ~~`POST /api/enhance/battop/{start\|stop}`~~、~~`GET /api/enhance/battop/summary`~~ | 电池刺客的启停与数据，**2026-09-30 随 battop 一起移除**（`src/enhance/battop.rs` 已删） |
 
 - **开关存哪**：`~/.local/share/cangjie-ime/reading-qol.json`（与设备原生设置页、langhook C hook 共用）。写法是“整份读进来、只覆盖要改的键、其余原样写回”，进程内串行化，所以不认识的键不会丢。
-- **缺省值**：`hlSnapCjk` 缺省开（荧光笔汉字吸附）；`notesImportMdEnabled`、`comicMinMargin` 缺省关（新功能要手动去实验室打开）；`tapPageTurn`（单击翻页）、`rtlPageTurn`（日漫翻页规则）缺省关 = xochitl 原生行为，由 `reader-page-turn.qmd` 每次打开书时读，切换后下次打开书生效（细节见系统增强线白皮书）；`hwStrokeEnabled` 是派生开关——`hwStrokeNibMinRatio < 1.0` 就算开，网页写入时两个 ratio 同步写 `0.6`（开）或 `1.0`（关），精调字段留给手改文件。
-- **页面位置**：荧光笔吸附、阅读器翻页（单击翻页 + 日漫翻页规则）和电池刺客开关卡片在「管理 → 系统增强」；battop 在跑时多出一个「电池刺客」子标签放详细数据；手写笔迹优化、漫画页边距最小化、导入 md 在「管理 → 实验室」。
+- **缺省值**：`hlSnapCjk` 缺省开（荧光笔汉字吸附）；`notesImportMdEnabled`、`comicMinMargin` 缺省关（新功能要手动去实验室打开）；`tapPageTurn`（单击翻页）、`rtlPageTurn`（日漫翻页规则）缺省关 = xochitl 原生行为，由 `reader-page-turn.qmd` 每次打开书时读，切换后下次打开书生效（细节见系统增强线白皮书）。已移除的手写优化（09-30）原有派生开关 `hwStrokeEnabled`（`hwStrokeNibMinRatio < 1.0` 就算开）；旧设备文件里的 `hwStroke*` 键按上一条规则原样保留，无害。
+- **页面位置**：荧光笔吸附、阅读器翻页（单击翻页 + 日漫翻页规则）在「管理 → 系统增强」；漫画页边距最小化、导入 md 在「管理 → 实验室」。2026-09-30 移除：「系统增强」里的电池刺客开关卡片、battop 在跑时才出现的「电池刺客」子标签、实验室里的手写笔迹优化开关。
 - **扩展加载检测**（09-24，`enhance/loaded.rs`）：开关只反映配置，看不出 `.so` 到底有没有进 xochitl——历史上两次“开关开着其实没生效”（09-09 langhook 整个从设备上消失；GLIBC 版本不符让 hw-stroke 静默加载失败）。现在直接读 xochitl 主进程（`comm==xochitl` 且父进程是 1，排除渲染用的同名子进程）的 `/proc/<pid>/maps`：映射了哪个 `extensions.d/*.so` 就是真加载了，网页显示“已加载 / 未加载 / xochitl 未运行”。qmd 补丁（如 `shelf-comic-margins.qmd`）不是 `.so`，按“qt-resource-rebuilder 在进程里 + 补丁文件早于 xochitl 启动”推断为已载入，文件比进程新则显示“待重启”（指整机重启，悬停提示里写明）——这是按加载机制推断，看不到 qmd 里的定位是否全部命中（阅读器翻页的 `reader-page-turn.qmd` 同理）。导入 md 只标“网页功能”（不需要往 xochitl 里加载东西）。
 - **这个接口很常被调**（管理页每次刷新、每个 manage 事件、笔记页每次刷新），所以 09-24 第三轮审计给它做了缓存（只在 host 验证）：`reading-qol.json` 一次请求只读一次（原来六个开关各读一遍）；xochitl 扩展扫描按 **(pid, 进程启动时刻)** 缓存——同一个 xochitl 进程只全量扫一次 `/proc` 和它的 `maps`，之后每次只读一次 `/proc/<pid>/stat` 核对还是不是同一个进程（host 合成数据 253µs → 1.7µs）。启动不到 30 秒的 xochitl 不缓存，因为 xovi 还在逐个加载扩展、映射可能不全；qmd 状态看的是文件修改时间，照旧每次现算。
-- **battop 的边界**：battop 已改成常驻进程，把“每次启动都做一次 cgroup 迁移”从每天 144 次降到“用户手点几次”；但每次 `systemctl start` 仍是同类操作，网页没做防连点，短时间反复启停理论上会复现旧事故的触发条件（事故见 `enhance/battop/FINDINGS.md`）。`systemctl is-active` 结果缓存 30 秒（09-24 前 5 秒；网页启停会主动清缓存，只有 battop 自己崩掉时网页最多晚 30 秒显示“已停”）。
+- **（历史，battop 09-30 已移除）battop 的边界**：battop 已改成常驻进程，把“每次启动都做一次 cgroup 迁移”从每天 144 次降到“用户手点几次”；但每次 `systemctl start` 仍是同类操作，网页没做防连点，短时间反复启停理论上会复现旧事故的触发条件（事故见当时的 `enhance/battop/FINDINGS.md`，现已随 battop 删除）。`systemctl is-active` 结果缓存 30 秒（09-24 前 5 秒；网页启停会主动清缓存，只有 battop 自己崩掉时网页最多晚 30 秒显示“已停”）。
 
 ## 06b｜设备健康、OTA 横幅与遗留清理（`src/device/`，2026-09-25）
 

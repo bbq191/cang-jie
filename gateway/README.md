@@ -20,7 +20,7 @@
 | 并发/内存闸门 | `budget.rs` | 设备约 2GB 内存：>90MB 的书同时只处理 1 本，其余同时 3 本，排队最长 30 分钟（拦优化、加入 xochitl、勾了同步优化的抓网文三种请求） |
 | 批量队列 | `batch.rs` | 勾选多本后由网关后台一次一本地“优化 / 加入 xochitl”，状态落盘、重启续跑、可全部中止 |
 | 管理台 | `manage.rs` | 各服务“未装 / 已装未开 / 已开”三态、启停、卸载；探测 xovi 与 qt-resource-rebuilder |
-| 系统增强开关 | `enhance/` | 荧光笔汉字吸附、阅读器单击翻页 / 日漫翻页规则、手写笔迹优化、导入 md、漫画页边距、电池刺客；并显示扩展是否真的加载进 xochitl |
+| 系统增强开关 | `enhance/` | 荧光笔汉字吸附、阅读器单击翻页 / 日漫翻页规则、导入 md、漫画页边距；并显示扩展是否真的加载进 xochitl（手写笔迹优化、电池刺客 2026-09-30 已移除） |
 | 设备健康 / OTA 提示 / 清理 | `device/` | 「管理 → 设备健康」五个二级 tab（概览 / 服务 / 扩展 / 日志 / 清理），只在打开或点刷新时采集；OTA 后页头横幅提示重装；清理早期遗留文件与 xochitl 书库同名副本（后者进 xochitl 回收站，可恢复） |
 
 ## 对外接口
@@ -34,7 +34,7 @@
 | 页面 | `GET /` · `GET /ui/locales/{lang}` · `GET/POST /password` · `GET /api/session` |
 | 服务发现 / 管理 | `GET /api/services` · `GET /api/manage` · `GET /api/foundation` · `POST /api/manage/{seg}/{start\|stop\|uninstall}` |
 | 事件 | `GET /api/events`（SSE） |
-| 系统增强 | `GET /api/enhance/status` · `PUT /api/enhance/qol`（`hlSnapCjk` / `hwStrokeEnabled` / `notesImportMdEnabled` / `comicMinMargin` / `tapPageTurn` / `rtlPageTurn`）· `POST /api/enhance/battop/{start\|stop}` · `GET /api/enhance/battop/summary` |
+| 系统增强 | `GET /api/enhance/status` · `PUT /api/enhance/qol`（`hlSnapCjk` / `notesImportMdEnabled` / `comicMinMargin` / `tapPageTurn` / `rtlPageTurn`）（`/api/enhance/battop/*` 与 `hwStrokeEnabled` 2026-09-30 已移除） |
 | 设备健康 | `GET /api/device/health[?fresh=1]` · `GET /api/device/ota` · `GET /api/device/wifi` · `GET /api/device/cleanup` · `POST /api/device/cleanup/delete {area, names}` |
 | 批量队列 | `POST /api/batch {action: optimize\|deliver, names? \| all:true, folder?}` → `{queued, skipped}` · `GET /api/batch/status` · `POST /api/batch/stop` |
 | 闸门 | `GET /api/budget/status` → `{pending, active}` · `POST /api/budget/cancel {name}`（只对还在排队的生效） |
@@ -74,7 +74,7 @@ src/
   batch.rs     批量队列（含全部中止）
   testutil.rs  测试沙箱（HOME 与全部 XDG 指向同一临时目录）
   ui.rs        拼装单页 UI、登录页、改密页
-  enhance/     系统增强开关（qol / battop / loaded）
+  enhance/     系统增强开关（qol / loaded；battop 2026-09-30 已移除）
   device/      设备健康（health）、OTA 横幅（ota）、遗留清理（cleanup）
 ui/            index.html、style.css、app.js、auth.css、locales/、test/（前端取数时机与界面规则见白皮书 §05）
 systemd/gateway.service

@@ -7,7 +7,7 @@
 <text x="46" y="98" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">① 手动前置（2 样）：属于设备生态、不属于本项目，install-all.sh 不代装；2026-09-29 起不再需要 appload / KOReader</text>
 <rect x="46" y="110" width="449" height="84" rx="10" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.6"/>
 <text x="270.5" y="132" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">vellum add xovi</text>
-<text x="270.5" y="154" text-anchor="middle" font-size="12" fill="#444">扩展加载框架：两个插件、开机自动恢复都靠它</text>
+<text x="270.5" y="154" text-anchor="middle" font-size="12" fill="#444">扩展加载框架：hl-snap 插件、开机自动恢复都靠它</text>
 <text x="270.5" y="171" text-anchor="middle" font-size="12" fill="#444">缺了：依赖 xovi 的步骤直接失败</text>
 <rect x="505" y="110" width="449" height="84" rx="10" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.6"/>
 <text x="729.5" y="132" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">vellum add qt-resource-rebuilder</text>
@@ -21,28 +21,30 @@
 <text x="46" y="316" text-anchor="start" font-size="12.3" fill="#444">③ 设备预检（只读）：root、/home 可写、剩余空间 &lt;50MB 拒装 / &lt;200MB 警告；报告 xovi · QML 补丁加载器 · dm-verity 现状</text>
 <polyline points="500,324 500,348" fill="none" stroke="#555" stroke-width="1.7" marker-end="url(#if-m)"/>
 <rect x="30" y="348" width="940" height="324" rx="10" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.6" stroke-dasharray="6 4"/>
-<text x="46" y="370" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">② 按步骤表（lib.sh 的 STEP_ORDER）依次执行 —— 共 10 步，卸载用同一张表<tspan font-weight="bold">逆序</tspan>做</text>
+<text x="46" y="370" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">② 按步骤表（lib.sh 的 STEP_ORDER）依次执行 —— 共 8 步，卸载用同一张表<tspan font-weight="bold">逆序</tspan>做</text>
 <rect x="46" y="384" width="217" height="240" rx="10" fill="#eaf5ee" stroke="#2f7d45" stroke-width="1.6"/>
 <text x="154" y="408" text-anchor="middle" font-size="14.5" font-weight="bold" fill="#1a1a1a">A · 系统小配置</text>
 <text x="154" y="427" text-anchor="middle" font-size="12" fill="#555">不依赖 xovi</text>
 <text x="58" y="456" text-anchor="start" font-size="12.2" fill="#222">1  chrony-cn</text>
 <text x="58" y="478" text-anchor="start" font-size="12.2" fill="#222">2  chrony-boot-wakelock</text>
 <text x="58" y="500" text-anchor="start" font-size="12.2" fill="#222">3  timezone-cn</text>
-<text x="58" y="522" text-anchor="start" font-size="12.2" fill="#222">4  battop（不随开机自启）</text>
-<text x="58" y="544" text-anchor="start" font-size="12.2" fill="#222">5  wifi-watch</text>
+<text x="58" y="522" text-anchor="start" font-size="12.2" fill="#222">4  wifi-watch</text>
+<text x="58" y="578" text-anchor="start" font-size="11.5" fill="#777">（battop 电池刺客</text>
+<text x="58" y="596" text-anchor="start" font-size="11.5" fill="#777">09-30 已移除，不再装）</text>
 <rect x="273" y="384" width="217" height="240" rx="10" fill="#eef3fa" stroke="#4a72b0" stroke-width="1.6"/>
 <text x="381" y="408" text-anchor="middle" font-size="14.5" font-weight="bold" fill="#1a1a1a">B · xovi 层</text>
 <text x="381" y="427" text-anchor="middle" font-size="12" fill="#555">需要 vellum add xovi</text>
-<text x="285" y="456" text-anchor="start" font-size="12.2" fill="#222">6  xovi-persist（开机补 xovi）</text>
-<text x="285" y="478" text-anchor="start" font-size="12.2" fill="#222">7  hl-snap *</text>
-<text x="285" y="500" text-anchor="start" font-size="12.2" fill="#222">8  handwriting-stroke *</text>
-<text x="285" y="560" text-anchor="start" font-size="11.5" fill="#777">（旧的 sidebar-entry 侧栏入口</text>
-<text x="285" y="578" text-anchor="start" font-size="11.5" fill="#777">09-29 退役：不再装，</text>
-<text x="285" y="596" text-anchor="start" font-size="11.5" fill="#777">uninstall-all 仍会清）</text>
+<text x="285" y="456" text-anchor="start" font-size="12.2" fill="#222">5  xovi-persist（开机补 xovi）</text>
+<text x="285" y="478" text-anchor="start" font-size="12.2" fill="#222">6  hl-snap *</text>
+<text x="285" y="524" text-anchor="start" font-size="11.5" fill="#777">（handwriting-stroke 手写优化</text>
+<text x="285" y="542" text-anchor="start" font-size="11.5" fill="#777">09-30 已移除，不再装）</text>
+<text x="285" y="566" text-anchor="start" font-size="11.5" fill="#777">（旧的 sidebar-entry 侧栏入口</text>
+<text x="285" y="584" text-anchor="start" font-size="11.5" fill="#777">09-29 退役：不再装，</text>
+<text x="285" y="602" text-anchor="start" font-size="11.5" fill="#777">uninstall-all 仍会清）</text>
 <rect x="500" y="384" width="217" height="240" rx="10" fill="#f1edf9" stroke="#6d4ab0" stroke-width="1.6"/>
 <text x="608" y="408" text-anchor="middle" font-size="14.5" font-weight="bold" fill="#1a1a1a">C · shelf</text>
 <text x="608" y="427" text-anchor="middle" font-size="12" fill="#555">网关 + 7 个领域服务</text>
-<text x="512" y="456" text-anchor="start" font-size="12.2" fill="#222">9  shelf *（仅其 qmd）</text>
+<text x="512" y="456" text-anchor="start" font-size="12.2" fill="#222">7  shelf *（仅其 qmd）</text>
 <text x="512" y="478" text-anchor="start" font-size="12.2" fill="#222">   gateway :443</text>
 <text x="512" y="500" text-anchor="start" font-size="12.2" fill="#222">   book</text>
 <text x="512" y="522" text-anchor="start" font-size="12.2" fill="#222">   font · wallpaper</text>
@@ -51,21 +53,22 @@
 <rect x="727" y="384" width="217" height="240" rx="10" fill="#fdf0eb" stroke="#c0602d" stroke-width="1.6"/>
 <text x="835" y="408" text-anchor="middle" font-size="14.5" font-weight="bold" fill="#1a1a1a">D · 按需生效</text>
 <text x="835" y="427" text-anchor="middle" font-size="12" fill="#555">看"待生效标记"，最多整机重启一次</text>
-<text x="739" y="452" text-anchor="start" font-size="12.2" fill="#222">10  xovi-apply</text>
-<text x="739" y="470" text-anchor="start" font-size="12.2" fill="#222">   有标记/待换入或 xovi 未生效才动：</text>
-<text x="739" y="488" text-anchor="start" font-size="12.2" fill="#222">   先提示“将打断阅读”，等 5 秒</text>
-<text x="739" y="506" text-anchor="start" font-size="12.2" fill="#222">   换入待换入区里的新 .so</text>
-<text x="739" y="524" text-anchor="start" font-size="12.2" fill="#222">   → systemctl reboot 整机重启</text>
-<text x="739" y="542" text-anchor="start" font-size="12.2" fill="#222">   回来后自动跑 verify-on-device</text>
-<text x="739" y="560" text-anchor="start" font-size="12.2" fill="#222">   没装 xovi-persist 时：</text>
-<text x="739" y="578" text-anchor="start" font-size="12.2" fill="#222">   → 改跑 xovi/start</text>
-<text x="739" y="596" text-anchor="start" font-size="12.2" fill="#222">   无标记且已生效 → 不重启</text>
-<text x="739" y="614" text-anchor="start" font-size="12.2" fill="#222">   （--force-apply 强制重启）</text>
+<text x="739" y="446" text-anchor="start" font-size="11.8" fill="#8a4b00">先清已移除功能的残留：</text>
+<text x="739" y="463" text-anchor="start" font-size="11.8" fill="#8a4b00">   battop、handwriting-stroke</text>
+<text x="739" y="480" text-anchor="start" font-size="11.8" fill="#8a4b00">   （没有就什么都不动）</text>
+<text x="739" y="500" text-anchor="start" font-size="12.2" fill="#222">8  xovi-apply</text>
+<text x="739" y="517" text-anchor="start" font-size="12.2" fill="#222">   有标记/待换入或 xovi 未生效才动：</text>
+<text x="739" y="534" text-anchor="start" font-size="12.2" fill="#222">   先提示“将打断阅读”，等 5 秒</text>
+<text x="739" y="551" text-anchor="start" font-size="12.2" fill="#222">   换入待换入区里的新 .so</text>
+<text x="739" y="568" text-anchor="start" font-size="12.2" fill="#222">   → systemctl reboot 整机重启</text>
+<text x="739" y="585" text-anchor="start" font-size="12.2" fill="#222">   回来后自动跑 verify-on-device</text>
+<text x="739" y="602" text-anchor="start" font-size="12.2" fill="#222">   没装 xovi-persist 时改跑 xovi/start</text>
+<text x="739" y="619" text-anchor="start" font-size="12.2" fill="#222">   无标记且已生效 → 不重启</text>
 <polyline points="263,500 273,500" fill="none" stroke="#555" stroke-width="1.7" marker-end="url(#if-m)"/>
 <polyline points="490,500 500,500" fill="none" stroke="#555" stroke-width="1.7" marker-end="url(#if-m)"/>
 <polyline points="717,500 727,500" fill="none" stroke="#555" stroke-width="1.7" marker-end="url(#if-m)"/>
 <text x="500" y="644" text-anchor="middle" font-size="11.8" fill="#555">* 只落盘（DEFER_XOVI_START=1），且仅在文件内容真的变了时，在设备 /run/cangjie-pending-apply/ 记一个"待生效标记"（设备重启即清）。</text>
-<text x="500" y="662" text-anchor="middle" font-size="11.8" fill="#555">xovi 没有"只重载一个扩展"的机制：全部落盘后由第 10 步统一整机重启一次（不单独重启 xochitl：它退出时可能崩溃）；重复运行、无改动时不重启。</text>
+<text x="500" y="662" text-anchor="middle" font-size="11.8" fill="#555">xovi 没有"只重载一个扩展"的机制：全部落盘后由第 8 步统一整机重启一次（不单独重启 xochitl：它退出时可能崩溃）；重复运行、无改动时不重启。</text>
 <polyline points="500,672 500,696" fill="none" stroke="#555" stroke-width="1.7" marker-end="url(#if-m)"/>
 <rect x="30" y="696" width="460" height="96" rx="10" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.6"/>
 <text x="260" y="718" text-anchor="middle" font-size="14" font-weight="bold" fill="#1a1a1a">③ 收尾汇总</text>
@@ -76,6 +79,6 @@
 <text x="740" y="718" text-anchor="middle" font-size="14" font-weight="bold" fill="#1a1a1a">④ 浏览器验证</text>
 <text x="740" y="740" text-anchor="middle" font-size="12.5" fill="#444">https://10.11.99.1/  默认密码 shelf，首次登录强制改密</text>
 <text x="740" y="757" text-anchor="middle" font-size="12.5" fill="#444">自动核对里的 ⚠ 遗留项（如旧 koreader-serve）按提示清</text>
-<text x="500" y="814" text-anchor="middle" font-size="12.5" fill="#555">反悔：sh uninstall-all.sh &lt;host&gt;（先 --dry-run；逆序；--purge 才删 battop 数据；chrony-cn / timezone-cn / xovi-apply 不卸）</text>
+<text x="500" y="814" text-anchor="middle" font-size="12.5" fill="#555">反悔：sh uninstall-all.sh &lt;host&gt;（先 --dry-run；逆序；已移除的 battop / handwriting-stroke 也照样清；chrony-cn / timezone-cn / xovi-apply 不卸）</text>
 <text x="500" y="830" text-anchor="middle" font-size="11.8" fill="#a33">⚠ 只有本机模拟：“无改动不重启”、卸载在 dm-verity 下保留程序；09-30 第五轮审计的脚本改动也还没上真机（安装、卸载主流程 09-25 已真机通过）</text>
 </svg>

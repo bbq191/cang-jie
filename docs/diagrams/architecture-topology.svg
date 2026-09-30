@@ -82,16 +82,16 @@
 <text x="417.0" y="698" text-anchor="middle" font-size="10" fill="#4a4a4a">勾画/手写 .rm 由 ink-serve 只读</text>
 <rect x="590" y="600" width="250" height="140" rx="10" fill="#f2f2f5" stroke="#8a8a99" stroke-width="1.6"/>
 <text x="715.0" y="620" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">系统小服务（不经网关）</text>
-<text x="715.0" y="646" text-anchor="middle" font-size="10" fill="#4a4a4a">battop 电池采样（不开机自启）</text>
-<text x="715.0" y="659" text-anchor="middle" font-size="10" fill="#4a4a4a">wifi-watch WiFi 假死看护</text>
-<text x="715.0" y="672" text-anchor="middle" font-size="10" fill="#4a4a4a">chrony 国内校时 + 开机防休眠</text>
-<text x="715.0" y="685" text-anchor="middle" font-size="10" fill="#4a4a4a">xovi-reenable 开机恢复 xovi</text>
+<text x="715.0" y="646" text-anchor="middle" font-size="10" fill="#4a4a4a">wifi-watch WiFi 假死看护</text>
+<text x="715.0" y="659" text-anchor="middle" font-size="10" fill="#4a4a4a">chrony 国内校时 + 开机防休眠</text>
+<text x="715.0" y="672" text-anchor="middle" font-size="10" fill="#4a4a4a">xovi-reenable 开机恢复 xovi</text>
+<text x="715.0" y="698" text-anchor="middle" font-size="9.5" fill="#7a7a7a">（battop 电池采样 09-30 已移除）</text>
 <text x="715.0" y="711" text-anchor="middle" font-size="9.5" fill="#7a7a7a">（KOReader / appload 09-29 已卸）</text>
 <rect x="858" y="600" width="290" height="140" rx="10" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.6"/>
 <text x="1003.0" y="620" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">xovi 扩展 + qmd 注入</text>
 <text x="1003.0" y="646" text-anchor="middle" font-size="10" fill="#4a4a4a">扩展：hl-snap 荧光笔 CJK 吸附</text>
-<text x="1003.0" y="659" text-anchor="middle" font-size="10" fill="#4a4a4a">扩展：handwriting-stroke 笔锋渲染</text>
-<text x="1003.0" y="672" text-anchor="middle" font-size="10" fill="#4a4a4a">qmd：回收站 / 建夹 / 漫画边距代理</text>
-<text x="1003.0" y="685" text-anchor="middle" font-size="10" fill="#4a4a4a">qmd：阅读器单击翻页 / 日漫翻页规则</text>
-<text x="1003.0" y="698" text-anchor="middle" font-size="10" fill="#4a4a4a">qmd：字体菜单</text>
+<text x="1003.0" y="659" text-anchor="middle" font-size="10" fill="#4a4a4a">qmd：回收站 / 建夹 / 漫画边距代理</text>
+<text x="1003.0" y="672" text-anchor="middle" font-size="10" fill="#4a4a4a">qmd：阅读器单击翻页 / 日漫翻页规则</text>
+<text x="1003.0" y="685" text-anchor="middle" font-size="10" fill="#4a4a4a">qmd：字体菜单</text>
+<text x="1003.0" y="711" text-anchor="middle" font-size="9.5" fill="#7a7a7a">（handwriting-stroke 笔锋 09-30 已移除）</text>
 </svg>

@@ -36,14 +36,25 @@ sh uninstall-all.sh 10.11.99.1 --skip chrony-boot-wakelock,battop,wifi-watch,xov
 
 Then reboot the whole device once (`reboot`).
 
+Since 2026-09-30 **the battery sampler ("Battery Assassin", `battop`) and handwriting stroke tuning (`handwriting-stroke`, plugin `hw-stroke.so`) have been removed**: source, install steps and web switches are gone.
+Devices that had them need nothing special: **re-running `install-all.sh` cleans up what's left automatically, just before the last step** — the sampler's service unit (including the old `battop.timer`), the whole `/home/root/battop` directory (program and sampling history), plus `extensions.d/hw-stroke.so`, its copy in the staging area and its package directory; if xochitl still has `hw-stroke.so` loaded, the last step reboots the device once so it is really gone.
+`verify-on-device.sh` flags these leftovers with ⚠. To clean up only these two without reinstalling:
+
+```sh
+sh uninstall-all.sh 10.11.99.1 --dry-run --skip chrony-boot-wakelock,wifi-watch,xovi-persist,hl-snap,shelf,sidebar-entry   # rehearse: the plan should list only handwriting-stroke and battop
+sh uninstall-all.sh 10.11.99.1 --skip chrony-boot-wakelock,wifi-watch,xovi-persist,hl-snap,shelf,sidebar-entry
+```
+
+Then reboot the whole device once (`reboot`, not `systemctl restart xochitl`). Old `hwStroke*` settings in `reading-qol.json` are left as they are; nothing reads them any more, so they're harmless. This cleanup has only been simulated on the development machine, not run on real hardware.
+
 ### On your computer: build tools and ssh
 
 The scripts build the programs on your computer and install them on the device over ssh, so the computer needs:
 
 | What | Used for | If missing |
 |---|---|---|
-| Rust (`cargo`) + `rustup target add aarch64-unknown-linux-musl` + `aarch64-linux-gnu-gcc` | Cross-compiling the eight web services and the battery sampler (`shelf/build.sh`, `deploy-battop.sh`) | The `shelf` and `battop` steps fail |
-| Optional: a clone of [asivery/xovi](https://github.com/asivery/xovi) (point `XOVI_DIR` at it) | Rebuilding the `hl-snap` / `hw-stroke` plugins | No effect: prebuilt `.so` files are committed and used when a rebuild isn't possible |
+| Rust (`cargo`) + `rustup target add aarch64-unknown-linux-musl` + `aarch64-linux-gnu-gcc` | Cross-compiling the eight web services (`shelf/build.sh`) | The `shelf` step fails |
+| Optional: a clone of [asivery/xovi](https://github.com/asivery/xovi) (point `XOVI_DIR` at it) | Rebuilding the `hl-snap` plugin | No effect: prebuilt `.so` files are committed and used when a rebuild isn't possible |
 | **Passwordless ssh login to the device as root** | Every step (the scripts never stop to ask for a password) | Fails before touching anything, with troubleshooting steps. If you haven't set it up, run `ssh-copy-id root@10.11.99.1` first |
 
 ## Install
@@ -78,11 +89,10 @@ Every **step name** below can be used with `--skip`; the matching script `packag
 | `chrony-cn` | Switches time servers to ones reachable from mainland China (Alibaba Cloud, Tencent Cloud, etc.) | — |
 | `chrony-boot-wakelock` | Keeps the device from auto-suspending for a short while after boot (released once synced, at most 120 s) so the first time sync isn't interrupted | — |
 | `timezone-cn` | Sets the default time zone to Asia/Shanghai | — |
-| `battop` | Battery-drain sampling service; started after install but **not started at boot** (on purpose, see issue ⑥). With dm-verity on and no earlier install, the program is put in place but its unit can't go into `/usr`, so the summary lists it as "prerequisite not met" | — |
 | `wifi-watch` | WiFi stall watchdog: reconnects when the link dies; pins the 2.4 GHz band only when the access point sits on a 5 GHz channel the device may not use (5150–5350 MHz); turns WiFi power saving on (since 2026-09-28; measured about 37% lower idle current). Override in `~/.config/wifi-watch.conf` on the device (`BAND=`, `POWERSAVE=`) | — |
 | `xovi-persist` | Re-activates xovi automatically after boot, so you don't have to after a restart | xovi |
 | `hl-snap` | The highlighter snaps precisely to Chinese text instead of "a short stroke grabs the whole line"; files only | xovi |
-| `handwriting-stroke` | Tunes handwriting stroke width by pen angle and speed (off by default; turn it on under "Manage → Lab" on the web page); files only | xovi |
+| `清理已移除:battop`, `清理已移除:handwriting-stroke` | Not install steps: clean up what the battery sampler and handwriting stroke tuning left on older devices (both removed on 2026-09-30, see "Before you install"); nothing to clean means nothing is touched. They run just before `xovi-apply`; `--skip battop` / `--skip handwriting-stroke` skips them | — |
 | `shelf` | Eight web services: the gateway, books (book), fonts and wallpapers (font / wallpaper), and the four notes services (ink / transcribe / mind / note); its five UI patches (font menu, trash proxy, new-folder proxy, comic-margin proxy, reader page turn) are files only | The patches need qt-resource-rebuilder; without it only the patches are skipped, the services still install |
 | `xovi-apply` | Once all "files only" content is in place, **reboots the whole device once, only if something changed (or xovi isn't active yet)**, so it takes effect (about 20–60 seconds, interrupts reading; nothing changed means no reboot). After the reboot it runs `verify-on-device.sh` automatically | — |
 
@@ -153,7 +163,7 @@ Re-running `install-all.sh` is safe and doesn't flash the screen every time. Onl
 
 ![Making plugins / UI patches take effect: swap in, then reboot](diagrams/so-swap-order.svg)
 
-**The same applies when running a step on its own**: `deploy-hl-snap.sh` and `deploy-handwriting-stroke.sh` run alone reboot the device once if something changed; when the files are byte-identical to what's installed, nothing else is pending and xovi is active, there is **no** reboot. It uses the same check as the final `xovi-apply` step.
+**The same applies when running a step on its own**: `deploy-hl-snap.sh` run alone reboots the device once if something changed; when the files are byte-identical to what's installed, nothing else is pending and xovi is active, there is **no** reboot. It uses the same check as the final `xovi-apply` step.
 
 ### Installing only part of it
 
@@ -176,12 +186,12 @@ cd packaging
 sh uninstall-all.sh 10.11.99.1 --dry-run          # print the plan only; no device contact, nothing deleted
 sh uninstall-all.sh 10.11.99.1                    # remove everything
 sh uninstall-all.sh 10.11.99.1 --skip shelf       # skip a step
-sh uninstall-all.sh 10.11.99.1 --purge            # also delete the battery sampler's program and history
+sh uninstall-all.sh 10.11.99.1 --purge            # kept for compatibility; currently affects no step (it used to cover the battery sampler's data)
 ```
 
 **What it does**: stops and removes the installed services, plugins and UI patches, plus the package directories pushed to the device during install (only known files are deleted; a directory with anything else in it is kept). Removing a plugin also removes a newer version still waiting in the staging area (before 2026-09-24 it wasn't, so the next deploy put the removed plugin straight back).
 
-**Kept by default**: the master library, configuration, certificates, font/wallpaper pools, and the backups in `cangjie-backups/`. `--purge` only concerns the battery sampler and leaves book data alone; to remove book data too, first `--skip shelf`, then run `shelf-uninstall --purge` on the device.
+**Kept by default**: the master library, configuration, certificates, font/wallpaper pools, and the backups in `cangjie-backups/`. The removed battery sampler's program and data are always deleted together on uninstall; `--purge` currently affects no step and leaves book data alone; to remove book data too, first `--skip shelf`, then run `shelf-uninstall --purge` on the device.
 
 **What it doesn't do**:
 - `chrony-cn` and `timezone-cn` are configuration changes and `xovi-apply` is just an action; none of them is undone. Backups from before the change are in `cangjie-backups/` on the device if you want to restore them yourself.
@@ -211,13 +221,12 @@ This is the **authoritative** OTA recovery guide; the other documents link here.
 
 | Content | Location | After OTA | How to recover |
 |---|---|---|---|
-| Master library, font and wallpaper pools, certificates, gateway password, sleep-screen setting, `cangjie-backups/`, battery sampling history | `/home` | Kept | Nothing to do |
+| Master library, font and wallpaper pools, certificates, gateway password, sleep-screen setting, `cangjie-backups/` | `/home` | Kept | Nothing to do |
 | The web services' programs (`~/.local/bin`) | `/home` | Kept | Nothing to do |
-| `hl-snap` / `hw-stroke` plugins; UI patches for the font menu, trash, new folder, comic margins and reader page turn | `/home` (`extensions.d/`, `exthome/`) | Files remain, but need a hashtable rebuild to take effect | Step 2, then run `install-all.sh` |
+| `hl-snap` plugin; UI patches for the font menu, trash, new folder, comic margins and reader page turn | `/home` (`extensions.d/`, `exthome/`) | Files remain, but need a hashtable rebuild to take effect | Step 2, then run `install-all.sh` |
 | Service units for the web services and `shelf.target` | `/usr` | **Wiped** | `shelf` step (or alone: `SHELF_NO_BUILD=1 sh deploy.sh <device IP>`) |
 | `xovi-reenable.service` (re-activates xovi at boot) | `/usr` | **Wiped** | `xovi-persist` step |
 | `chrony-boot-wakelock.service` | `/usr` | **Wiped** | `chrony-boot-wakelock` step |
-| `battop.service` (data lives in `/home`) | `/usr` | Unit **wiped** | `battop` step (started, not enabled at boot) |
 | `wifi-watch.service` (script lives in `/home`) | `/usr` | Unit **wiped** | `wifi-watch` step |
 | China time servers, default time zone | `/etc` | **Wiped** | `chrony-cn` / `timezone-cn` steps |
 
@@ -236,7 +245,7 @@ These are known issues with specific triggers, not random faults. Numbers ①–
 | ③ | After several xochitl stops/starts in a short time, the whole device rebooted once | The xochitl service allows at most 4 restarts in 10 minutes, no matter who triggers them: a manual `systemctl restart xochitl`, installing or removing xochitl plugins with `vellum add/del` (formerly also appload, and WeRead launches and exits). On 2026-09-11 two restarts in a row were enough to trigger a full reboot — **the device recovered on its own; it was not bricked** | Since 2026-09-25 the deploy scripts reboot the device instead, so they no longer count towards this limit. When installing or removing plugins by hand, wait a few minutes between each |
 | ④ | The firmware safety gate refuses | By design: the same version number doesn't guarantee the same internal layout | Confirm the device firmware is the one you verified, then use `--force` |
 | ⑤ | The device rebooted at the end of the install | `xovi-apply` makes the changes take effect: since 2026-09-25 always by **rebooting the whole device** (back in about 20–60 seconds) rather than restarting xochitl alone, because xochitl may crash while exiting and the system then reboots anyway. It only reboots when something actually changed or xovi isn't active yet | Normal; don't use the device during install. The script waits for the device and runs `verify-on-device.sh` automatically. To avoid the interruption, `--skip xovi-apply` and run `sh deploy-xovi-apply.sh <host>` later. **To apply by hand**: just `reboot`; **never** run `xovi/start` by hand (when xovi is already active it crashes xochitl and the device reboots itself — real-hardware incident, 2026-09-20) |
-| ⑥ | After a reboot the battery sampler isn't running | **Deliberately not started at boot**: on 2026-08-29 its sampling triggered a kernel deadlock that froze the device, and the root cause hasn't been fully ruled out | Turn on the battery switch under "Manage → System enhance" on the web page (the "Battery Assassin" data page appears once it's on), or `systemctl start battop` |
+| ⑥ | (Obsolete) After a reboot the battery sampler isn't running | The battery sampler was removed on 2026-09-30; this no longer applies | — |
 | ⑦ | It exits with an error before installing: `cannot connect to root@…` / `only N MB free` / `needs root` / `firmware not on the allowlist` | The automatic pre-install checks stopped it; nothing on the device changed | Can't connect: follow the steps in the message (asleep/USB → IP → host key → passwordless); not enough space: clean up `/home/root` and `cangjie-backups/` and retry; firmware: see ④ |
 | ⑧ | The last step reports that the device couldn't schedule the reboot and the changes aren't in effect yet; the step counts as failed | The `systemctl reboot` command on the device itself failed. The files are already swapped in, but xochitl is still running the old ones; the script has put the "pending apply" marker back (since 2026-09-25; before that it waited for a reboot that never came and then reported success). This path has only been simulated locally | Run `reboot` on the device, then `sh verify-on-device.sh <host>` once it's back; or re-run `sh deploy-xovi-apply.sh <host>` later, which tries again |
 
@@ -252,7 +261,7 @@ Every install script can be re-run; before overwriting an existing file on the d
 
 ## Known limitations
 
-- **What has and hasn't run on real hardware**: run end to end on real hardware: `install-all.sh` (once each on 2026-09-22, 09-24 and 09-25) and `uninstall-all.sh` (2026-09-25); "swap in the new `.so` → reboot → xovi restored at boot → automatic check" was re-verified on real hardware on 2026-09-25 (`verify-on-device.sh`: 43 ✓). **Only simulated locally, never on real hardware**: keeping programs under dm-verity during uninstall, clearing the staging area on uninstall, the "nothing changed, so no reboot" path (including standalone deploys), ignoring disconnect signals in the swap-in critical section, the summary's "prerequisite not met" line, and every installer behaviour changed in the fourth audit (afternoon of 2026-09-25) and the fifth audit (2026-09-30): handling a failed reboot, the battery sampler under dm-verity, fewer ssh round trips when deploying, not re-uploading unchanged files, `--only` refreshing the uninstall manifest, the check flagging leftovers, cleaner uninstall, and so on. Full record: [`packaging/README.md` "验证现状"](../packaging/README.md#验证现状如实说明不夸大) (Chinese). When trying them on a device, go one step at a time: `--dry-run` first, then single steps or `--skip`.
+- **What has and hasn't run on real hardware**: run end to end on real hardware: `install-all.sh` (once each on 2026-09-22, 09-24 and 09-25) and `uninstall-all.sh` (2026-09-25); "swap in the new `.so` → reboot → xovi restored at boot → automatic check" was re-verified on real hardware on 2026-09-25 (`verify-on-device.sh`: 43 ✓). **Only simulated locally, never on real hardware**: keeping programs under dm-verity during uninstall, clearing the staging area on uninstall, the "nothing changed, so no reboot" path (including standalone deploys), ignoring disconnect signals in the swap-in critical section, the summary's "prerequisite not met" line, and every installer behaviour changed in the fourth audit (afternoon of 2026-09-25) and the fifth audit (2026-09-30): handling a failed reboot, the battery sampler under dm-verity (since removed), fewer ssh round trips when deploying, not re-uploading unchanged files, `--only` refreshing the uninstall manifest, the check flagging leftovers, cleaner uninstall, and so on. Full record: [`packaging/README.md` "验证现状"](../packaging/README.md#验证现状如实说明不夸大) (Chinese). When trying them on a device, go one step at a time: `--dry-run` first, then single steps or `--skip`.
 - **Writing `/usr` still relies on two safeguards, "check dm-verity first + a time-limited read-write window"**, rather than never touching `/usr`; writing `/usr` once triggered a rollback that bricked the device (2026-08-16).
 - **Running `shelf/install.sh --password <plaintext>` directly on the device briefly exposes the password in the device's process list**; passing it through `deploy.sh --password` on your computer doesn't.
 - Uninstalling doesn't revert `chrony-cn` / `timezone-cn`; there's no "one click back to before".
