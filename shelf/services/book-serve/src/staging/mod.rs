@@ -1,7 +1,7 @@
 //! 母版库（中间层暂存池）领域模块——三层架构（内容源 → **母版库** → 读器）的交汇点。
 //! 三个正交动作各一个方法：**入库**（`stage_new` / `stage_from_path` / [`StagingStore`] 上传模板 / `fetch_article`）、
-//! **优化**（`optimize`，EPUB/PDF）、**落库**（`deliver` 投 xochitl；网关批量「加入 KOReader」由 koreader-serve 从同一
-//! 目录 adopt 后调 `mark_delivered` 记一笔——KOReader 2026-09-29 已从设备卸载，koreader-serve 没注册时网关不走这条路）。落库＝纯复制母版字节（两读器同字节可对照），母版默认保留可反复落库。
+//! **优化**（`optimize`，EPUB/PDF）、**落库**（`deliver` 投 xochitl；以前还有网关批量「加入 KOReader」由 koreader-serve 从同一
+//! 目录 adopt 后记一笔——KOReader 2026-09-29 从设备卸载，koreader-serve 源码 2026-09-30 已从仓库删除，见 git 历史）。落库＝纯复制母版字节，母版默认保留可反复落库。
 //! 目录 `$XDG_STATE_HOME/shelf/books/staging/`（/home 分区，重启/OTA 不丢；**不套 LRU 淘汰**，留住用户还没落库的书）。
 //! 落库记录是同目录隐藏 sidecar `.<name>.delivered`（`sidecar` 模块管读写；本模块只在落库/删书时调它）。
 use bookconv::optimize::{self, FootnoteMode, OptimizeOpts};
@@ -141,22 +141,9 @@ pub struct FetchArticleOutcome {
     pub optimize_error: Option<String>,
 }
 
-/// 落库去向（记录用）。
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Reader {
-    Native,
-    Koreader,
-}
-
-impl Reader {
-    pub fn parse(s: &str) -> Result<Reader, String> {
-        match s {
-            "native" => Ok(Reader::Native),
-            "koreader" => Ok(Reader::Koreader),
-            _ => Err("target 只能是 native / koreader".into()),
-        }
-    }
-}
+// 原 `Reader { Native, Koreader }` 落库去向枚举：KOReader 2026-09-29 从设备卸载、2026-09-30 相关源码从仓库删除
+// （见 git 历史）后只剩 xochitl 一个去向，枚举随之删掉，`mark_delivered` 只记原生。边车里旧的 `koreader` 时间戳
+// 字段仍由 `sidecar.rs` 解析（兼容旧数据），这里不再写。
 
 #[derive(Clone)]
 pub struct Staging {

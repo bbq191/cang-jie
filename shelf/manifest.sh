@@ -11,7 +11,7 @@
 # ═══════════════════════════════════════════════════════════════════════════
 
 # 服务令牌：gateway 的单元/二进制叫 gateway，其余叫 <令牌>-serve（笔记线 ink/transcribe/mind/note 同规则）
-# 2026-09-29 撤掉 koreader（用户卸了设备上的 KOReader；koreader-serve 源码还在仓库，不再安装，旧设备上的由下面遗留清单清掉）
+# 2026-09-29 撤掉 koreader（用户卸了设备上的 KOReader；koreader-serve 不再安装，源码已从仓库删除（2026-09-30），见 git 历史；旧设备上的由下面遗留清单清掉）
 SHELF_ALL="gateway book font wallpaper ink transcribe mind note"
 shelf_svc_of() { case "$1" in gateway) echo gateway ;; *) echo "$1-serve" ;; esac; }
 

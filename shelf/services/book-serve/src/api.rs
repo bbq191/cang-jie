@@ -2,7 +2,7 @@
 //! `GET /status`
 //! 母版库：`GET /staging` → `{items, freeBytes}` · `POST /staging`（multipart，原样入库）· `POST /staging/optimize {name}`
 //! （2026-09-19 起不再分档位，只有一种"清洗+优化"行为）
-//! · `POST /staging/deliver {name, folder?}`（2026-09-19 起投完永远保留母版，不再有 `keep` 参数）· `POST /staging/mark {name, target}` · `POST /staging/fetch-article {url, optimize?}`
+//! · `POST /staging/deliver {name, folder?}`（2026-09-19 起投完永远保留母版，不再有 `keep` 参数）· `POST /staging/mark {name, target?}`（target 只剩 native，可省略；koreader 已删）· `POST /staging/fetch-article {url, optimize?}`
 //! · `POST /staging/delete {name}` · `POST /staging/rename {name, newName}` · `GET /staging/file?name=`（原件下载，流式）
 //! · 原 PDF 备份：`GET /staging` 的 `originals` · `POST /staging/originals/restore {name}` · `POST /staging/originals/delete {name}`
 //! · `GET /events`（SSE：母版库/inbox 变更即推，网页零轮询）。
@@ -12,7 +12,7 @@
 //! 代理放弃记录：`GET /agent-failures` → `{items:[{kind,name,uuid?,at}]}` · `POST /agent-failures/clear`（两个队列交满次数仍没做成的项）。
 //! 2026-09-05 起规则统一"所有书只落母版库"：旧 `POST /?target=` 直投路已删（`/staging*` 是唯一入口）。
 use crate::service_state::State;
-use crate::staging::{Reader, StagingStore};
+use crate::staging::StagingStore;
 use rmsvc_core::asset::{self, AssetUploadFlow};
 use rmsvc_core::http::{bind, ApiError, ApiResult, Reply, Request, Router};
 use std::sync::Arc;
@@ -72,12 +72,13 @@ pub fn router(st: Arc<State>) -> Router {
             s.bus.publish("books", "staging"); // 立即推一次，UI 马上看到这条目进入 busy 状态
             Ok(Reply::ok(&serde_json::json!({"ok": true, "message": format!("《{name}》已开始投递，完成后自动刷新"), "async": true})))
         }))
-        // 落库记录：网关批量「加入 KOReader」在 koreader-serve adopt 完成后调这里记一笔（各服务只写自己的目录）。
-        // KOReader 2026-09-29 已从设备卸载：koreader-serve 没注册时网关不会调；路由留给源码里仍在的 koreader-serve。
+        // 手动记一笔落库（加入 xochitl）。以前网关批量「加入 KOReader」在 koreader-serve adopt 完成后调这里记
+        // `target=koreader`；KOReader 2026-09-29 从设备卸载、koreader-serve 源码 2026-09-30 从仓库删除（见 git 历史），
+        // 去向只剩 native：`target` 可省略，传 `native` 仍接受（向后兼容），传别的（含 `koreader`）一律 400。
         .post("/staging/mark", bind(&st, |s, r| {
             let j = r.json()?;
-            let reader = Reader::parse(j.str("target")?).map_err(ApiError::bad)?;
-            s.staging.mark_delivered(j.str("name")?, reader).map_err(ApiError::bad)?;
+            check_mark_target(j.str_or("target", "native")).map_err(ApiError::bad)?;
+            s.staging.mark_delivered(j.str("name")?).map_err(ApiError::bad)?;
             staging_changed(s)
         }))
         .post("/staging/fetch-article", bind(&st, |s, r| {
@@ -155,6 +156,15 @@ pub fn router(st: Arc<State>) -> Router {
             s.staging.remove(r.json()?.str("name")?).map_err(ApiError::bad)?;
             staging_changed(s)
         }))
+}
+
+/// `POST /staging/mark` 的 `target`：只剩 `native`（KOReader 去向已删，见路由处注释）。
+fn check_mark_target(target: &str) -> Result<(), String> {
+    match target {
+        "native" => Ok(()),
+        "koreader" => Err("KOReader 已不再支持（2026-09-29 从设备卸载），target 只能是 native".into()),
+        _ => Err("target 只能是 native".into()),
+    }
 }
 
 /// 两个代理队列长轮询的 `?wait=<秒>`：缺省/非法＝0（立即返回），上限 [`AGENT_WAIT_MAX_SECS`]。
@@ -318,11 +328,17 @@ mod tests {
         let st = state(&t);
         let router = router(st.clone());
         st.staging.stage_new("m.epub", b"PK").unwrap();
-        assert_eq!(call(&router, Method::Post, "/staging/mark", r#"{"name":"m.epub","target":"koreader"}"#).0, 200);
-        assert!(st.staging.list()[0].delivered.as_ref().unwrap().koreader.is_some(), "记了一笔 KOReader 落库");
+        // KOReader 去向已删（2026-09-30）：传 koreader 报错、不落记录；native（或省略 target）照常记原生落库。
+        let (code, v) = call(&router, Method::Post, "/staging/mark", r#"{"name":"m.epub","target":"koreader"}"#);
+        assert_eq!(code, 400);
+        assert!(msg(&v).contains("KOReader 已不再支持"), "{v}");
+        assert!(st.staging.list()[0].delivered.is_none(), "报错时不记任何落库");
         let (code, v) = call(&router, Method::Post, "/staging/mark", r#"{"name":"m.epub","target":"kindle"}"#);
         assert_eq!(code, 400);
-        assert!(msg(&v).contains("native / koreader"));
+        assert!(msg(&v).contains("target 只能是 native"), "{v}");
+        assert_eq!(call(&router, Method::Post, "/staging/mark", r#"{"name":"m.epub","target":"native"}"#).0, 200, "native 仍接受（向后兼容）");
+        assert!(st.staging.list()[0].delivered.as_ref().unwrap().native.is_some(), "记了一笔原生落库");
+        assert_eq!(call(&router, Method::Post, "/staging/mark", r#"{"name":"m.epub"}"#).0, 200, "target 可省略");
         // 方法不对 405；路径不存在 404（已删的死路由 /inbox*、/staging/render/* 同样 404）
         assert_eq!(call(&router, Method::Get, "/staging/render/abc", "").0, 404);
         assert_eq!(call(&router, Method::Get, "/inbox", "").0, 404);

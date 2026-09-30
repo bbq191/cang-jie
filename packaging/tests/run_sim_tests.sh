@@ -1152,7 +1152,7 @@ check "xovi-reenable 开机换入：待换入区空了就删掉目录；没有�
 # 10) 开机顺序（2026-09-24）：常驻服务不拉 network-online.target（否则开机专门为它们跑 NetworkManager-wait-online，
 #     没 WiFi 时等到超时）；都排在 xovi-reenable 之后（xochitl 先带 xovi 起来）；xovi-reenable 必须有启动超时上限
 #     （否则它卡住所有服务跟着永远等）；fc-cache 在 font-serve 不在网关。
-SVC_UNITS="gateway/systemd/gateway.service shelf/systemd/book-serve.service shelf/systemd/koreader-serve.service enhance/font-serve/font-serve.service enhance/wallpaper-serve/wallpaper-serve.service notes/systemd/ink-serve.service notes/systemd/mind-serve.service notes/systemd/note-serve.service notes/systemd/transcribe-serve.service"
+SVC_UNITS="gateway/systemd/gateway.service shelf/systemd/book-serve.service enhance/font-serve/font-serve.service enhance/wallpaper-serve/wallpaper-serve.service notes/systemd/ink-serve.service notes/systemd/mind-serve.service notes/systemd/note-serve.service notes/systemd/transcribe-serve.service"
 viol=""; for u in $SVC_UNITS; do grep -v '^#' "$u" | grep -q 'network-online' && viol="$viol $u"; done
 check "常驻服务单元不依赖 network-online.target" test -z "$viol"
 [ -z "$viol" ] || echo "       仍依赖：$viol"

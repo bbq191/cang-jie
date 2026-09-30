@@ -65,7 +65,7 @@ jobs:
           cargo test --manifest-path enhance/wallpaper-serve/Cargo.toml
           cargo test --manifest-path enhance/font-serve/Cargo.toml
           cargo test --manifest-path enhance/battop/Cargo.toml
-      - name: cargo test（shelf 内部 workspace：bookconv/book-serve/koreader-serve）
+      - name: cargo test（shelf 内部 workspace：bookconv/pdf-extract-cj/book-serve）
         run: cargo test --manifest-path shelf/Cargo.toml --workspace
       - name: cargo test（notes 内部 workspace：rmv6/notecore/vendorcfg/四服务）
         run: cargo test --manifest-path notes/Cargo.toml --workspace

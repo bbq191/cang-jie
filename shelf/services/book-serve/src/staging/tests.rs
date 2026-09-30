@@ -86,18 +86,16 @@ fn free_bytes_matches_df_and_is_none_for_missing_dir() {
 }
 
 #[test]
-fn delivered_record_roundtrip_and_reader_parse() {
+fn delivered_record_roundtrip() {
     let t = tempfile::tempdir().unwrap();
     let s = staging(&t);
     s.stage_new("b.epub", b"x").unwrap();
     assert!(s.list()[0].delivered.is_none(), "未落库无记录");
-    s.mark_delivered("b.epub", Reader::Native).unwrap();
-    s.mark_delivered("b.epub", Reader::Koreader).unwrap();
+    s.mark_delivered("b.epub").unwrap();
     let d = s.list()[0].delivered.clone().unwrap();
-    assert!(d.native.is_some() && d.koreader.is_some());
+    assert!(d.native.is_some(), "记原生落库（KOReader 去向 2026-09-30 已删）");
     assert_eq!(s.list().len(), 1, "sidecar 不当条目列出");
-    assert!(Reader::parse("nowhere").is_err() && Reader::parse("native").is_ok());
-    assert!(s.mark_delivered("nope.epub", Reader::Native).is_err(), "不存在的书拒绝");
+    assert!(s.mark_delivered("nope.epub").is_err(), "不存在的书拒绝");
     s.remove("b.epub").unwrap();
     assert!(!sidecar::path_for(&s.dir().join("b.epub")).exists(), "删书连带删 sidecar");
 }
@@ -410,7 +408,7 @@ fn optimize_renames_existing_long_epub_and_keeps_sidecar() {
     let s = staging(&t);
     let long = "亂馬1⁄2 典藏版 - 19卷 -- 高橋留美子 -- 19, 2019 -- 尖端 -- 03220cf1 -- Anna’s Archive.epub";
     std::fs::write(t.path().join("staging").join(long), comic_epub_with_real_images(&[12, 13])).unwrap();
-    s.mark_delivered(long, Reader::Koreader).unwrap();
+    s.mark_delivered(long).unwrap();
     let msg = s.optimize(long, |_, _| {}).unwrap();
     assert!(msg.contains("亂馬1⁄2 典藏版 - 19卷"), "{msg}");
     let list = s.list();
@@ -471,7 +469,7 @@ fn new_book_does_not_inherit_orphan_sidecar_and_gc_removes_orphans() {
     let s = staging(&t);
     // 旧书被外部删掉（没走 remove）→ 留下孤儿边车
     let name = s.stage_new("a.epub", &mini_epub(&[("OEBPS/a.xhtml", "<p>x</p>")])).unwrap();
-    s.mark_delivered(&name, Reader::Native).unwrap();
+    s.mark_delivered(&name).unwrap();
     std::fs::remove_file(s.dir.join(&name)).unwrap();
     assert!(sidecar::path_for(&s.dir.join(&name)).exists());
     // 同名新书入库：不能带着旧的"已加入"
@@ -479,7 +477,7 @@ fn new_book_does_not_inherit_orphan_sidecar_and_gc_removes_orphans() {
     assert_eq!(name2, name);
     assert!(s.list()[0].delivered.is_none(), "新书不继承孤儿边车");
     // 启动清理：只清孤儿，不动有书的边车
-    s.mark_delivered(&name2, Reader::Native).unwrap();
+    s.mark_delivered(&name2).unwrap();
     std::fs::write(s.dir.join(".gone.epub.delivered"), b"{}").unwrap();
     assert_eq!(s.gc_orphan_sidecars(), 1);
     assert!(sidecar::path_for(&s.dir.join(&name2)).exists());
@@ -649,7 +647,7 @@ fn list_caches_sidecar_and_onopen_page_count_until_files_change() {
     s.caches.sidecars.put("a.epub", rmsvc_core::cache::FileStamp::read(&car).unwrap(), Some(fake));
     assert_eq!(s.list()[0].delivered.clone().unwrap().native, Some(42), "边车没变 → 命中缓存");
     // 边车改写（原子写）→ 立刻重读
-    s.mark_delivered("a.epub", Reader::Native).unwrap();
+    s.mark_delivered("a.epub").unwrap();
     assert_ne!(s.list()[0].delivered.clone().unwrap().native, Some(42), "边车一改写就重读");
     // xochitl 渲染完改写 .content → 页数变了，升级成 ok 并写回边车；之后不再是 onopen、不再查 .content
     std::fs::write(&content, r#"{"pageCount":351}"#).unwrap();
@@ -668,7 +666,7 @@ fn backfill_claims_delivered_books_without_render_record_by_name_and_size() {
     let epub = comic_epub_with_real_images(&[12, 13]);
     for n in ["镖人 - 二卷.epub", "镖人 - 三卷.epub"] {
         s.stage_new(n, &epub).unwrap();
-        s.mark_delivered(n, Reader::Native).unwrap();
+        s.mark_delivered(n).unwrap();
     }
     let mk = |uuid: &str, name: &str, opened: bool| {
         std::fs::write(lib.join(format!("{uuid}.metadata")), format!(r#"{{"type":"DocumentType","visibleName":"{name}","parent":"","createdTime":"{}"}}"#, rmsvc_core::clock::now_ms())).unwrap();
@@ -1026,13 +1024,13 @@ fn rename_keeps_format_moves_sidecar_and_refuses_conflicts() {
     let s = staging(&t);
     s.stage_new("a.epub", b"A").unwrap();
     s.stage_new("b.epub", b"B").unwrap();
-    s.mark_delivered("a.epub", Reader::Koreader).unwrap();
+    s.mark_delivered("a.epub").unwrap();
     let dir = t.path().join("staging");
 
     assert_eq!(s.rename("a.epub", "  新名字 ").unwrap(), "新名字.epub", "不带扩展名沿用原格式、去首尾空白");
     assert_eq!(std::fs::read(dir.join("新名字.epub")).unwrap(), b"A");
     assert!(!dir.join("a.epub").exists());
-    assert!(crate::sidecar::read(&dir.join("新名字.epub")).is_some_and(|d| d.koreader.is_some()), "落库记录跟着改名");
+    assert!(crate::sidecar::read(&dir.join("新名字.epub")).is_some_and(|d| d.native.is_some()), "落库记录跟着改名");
 
     assert!(s.rename("新名字.epub", "b").unwrap_err().contains("已有《b.epub》"));
     assert_eq!(s.rename("新名字.epub", "x.pdf").unwrap(), "x.pdf.epub", "不能借改名改格式：别的扩展名只当名字的一部分");
