@@ -7,7 +7,6 @@
 <text x="135.0" y="116" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">会占内存的请求</text>
 <text x="135.0" y="142.5" text-anchor="middle" font-size="10.5" fill="#4a4a4a">优化</text>
 <text x="135.0" y="156.0" text-anchor="middle" font-size="10.5" fill="#4a4a4a">加入 xochitl</text>
-<text x="135.0" y="169.5" text-anchor="middle" font-size="10.5" fill="#4a4a4a">加入 KOReader</text>
 <text x="135.0" y="183.0" text-anchor="middle" font-size="10.5" fill="#4a4a4a">（单条点击和批量队列</text>
 <text x="135.0" y="196.5" text-anchor="middle" font-size="10.5" fill="#4a4a4a">走同一道闸门）</text>
 <rect x="290" y="96" width="250" height="190" rx="10" fill="#fff3d6" stroke="#c9971f" stroke-width="1.6"/>
@@ -55,6 +54,6 @@
 <text x="985.0" y="473.0" text-anchor="middle" font-size="10.5" fill="#4a4a4a">归还时唤醒所有排队者重新判断</text>
 <rect x="30" y="520" width="1140" height="92" rx="10" fill="#f2f2f5" stroke="#8a8a99" stroke-width="1.6" stroke-dasharray="6 4"/>
 <text x="600.0" y="539" text-anchor="middle" font-size="12" font-weight="bold" fill="#1a1a1a">为什么放在网关</text>
-<text x="600.0" y="564.5" text-anchor="middle" font-size="10.5" fill="#4a4a4a">book-serve、koreader-serve、gateway 是三个独立进程，进程内的忙锁天然不跨进程；book-serve 的忙锁又只按“书名”加，点不同的书互不阻塞。</text>
-<text x="600.0" y="578.0" text-anchor="middle" font-size="10.5" fill="#4a4a4a">网关是三者之间唯一的转发关口，用进程内的锁就能全局限流，不需要跨进程锁或共享内存。两档数字是保守经验值，不是按内存精算的模型。</text>
+<text x="600.0" y="564.5" text-anchor="middle" font-size="10.5" fill="#4a4a4a">book-serve 与 gateway 是各自独立的进程，进程内的忙锁天然不跨进程；book-serve 的忙锁又只按“书名”加，点不同的书互不阻塞。</text>
+<text x="600.0" y="578.0" text-anchor="middle" font-size="10.5" fill="#4a4a4a">网关是所有请求唯一的转发关口，用进程内的锁就能全局限流，不需要跨进程锁或共享内存。两档数字是保守经验值，不是按内存精算的模型。</text>
 </svg>

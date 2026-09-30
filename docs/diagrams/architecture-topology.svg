@@ -20,28 +20,22 @@
 <text x="241" y="140" text-anchor="middle" font-size="10.5" fill="#555">HTTPS</text>
 <rect x="262" y="222" width="886" height="144" rx="10" fill="#f3faf4" stroke="#3f9a55" stroke-width="1.3" stroke-dasharray="6 4"/>
 <text x="274" y="240" text-anchor="start" font-size="11" font-weight="bold" fill="#2f6f40">书架线 shelf · 系统增强线 enhance 的 Web 服务</text>
-<rect x="274" y="250" width="206" height="104" rx="10" fill="#ffffff" stroke="#3f9a55" stroke-width="1.6"/>
-<text x="377.0" y="269" text-anchor="middle" font-size="12" font-weight="bold" fill="#1a1a1a">book-serve :8790</text>
-<text x="377.0" y="294" text-anchor="middle" font-size="10" fill="#4a4a4a">母版库：入库·优化·落库</text>
-<text x="377.0" y="307" text-anchor="middle" font-size="10" fill="#4a4a4a">投 xochitl（含 &gt;90MB 占位通道）</text>
-<text x="377.0" y="320" text-anchor="middle" font-size="10" fill="#4a4a4a">PDF 转 EPUB · 原件下载/改名</text>
-<text x="377.0" y="333" text-anchor="middle" font-size="10" fill="#4a4a4a">回收站 / 建夹队列（设备端代理执行）</text>
-<rect x="494" y="250" width="206" height="104" rx="10" fill="#ffffff" stroke="#3f9a55" stroke-width="1.6"/>
-<text x="597.0" y="269" text-anchor="middle" font-size="12" font-weight="bold" fill="#1a1a1a">koreader-serve :8791</text>
-<text x="597.0" y="294" text-anchor="middle" font-size="10" fill="#4a4a4a">从母版库拷书进 KOReader</text>
-<text x="597.0" y="307" text-anchor="middle" font-size="10" fill="#4a4a4a">字体·词典·配置同步</text>
-<text x="597.0" y="320" text-anchor="middle" font-size="10" fill="#4a4a4a">文字书 / 漫画两套阅读方案</text>
-<text x="597.0" y="333" text-anchor="middle" font-size="10" fill="#4a4a4a">高亮/生词只读端点</text>
-<rect x="714" y="250" width="206" height="104" rx="10" fill="#ffffff" stroke="#3f9a55" stroke-width="1.6"/>
-<text x="817.0" y="269" text-anchor="middle" font-size="12" font-weight="bold" fill="#1a1a1a">font-serve :8792</text>
-<text x="817.0" y="294" text-anchor="middle" font-size="10" fill="#4a4a4a">字体上传即装</text>
-<text x="817.0" y="307" text-anchor="middle" font-size="10" fill="#4a4a4a">fontconfig 中文回退链</text>
-<text x="817.0" y="320" text-anchor="middle" font-size="10" fill="#4a4a4a">字体菜单动态项</text>
-<rect x="934" y="250" width="206" height="104" rx="10" fill="#ffffff" stroke="#3f9a55" stroke-width="1.6"/>
-<text x="1037.0" y="269" text-anchor="middle" font-size="12" font-weight="bold" fill="#1a1a1a">wallpaper-serve :8793</text>
-<text x="1037.0" y="294" text-anchor="middle" font-size="10" fill="#4a4a4a">壁纸上传即用</text>
-<text x="1037.0" y="307" text-anchor="middle" font-size="10" fill="#4a4a4a">池化轮换</text>
-<text x="1037.0" y="320" text-anchor="middle" font-size="10" fill="#4a4a4a">写 SleepScreenPath 键</text>
+<rect x="274" y="250" width="280" height="104" rx="10" fill="#ffffff" stroke="#3f9a55" stroke-width="1.6"/>
+<text x="414.0" y="269" text-anchor="middle" font-size="12" font-weight="bold" fill="#1a1a1a">book-serve :8790</text>
+<text x="414.0" y="294" text-anchor="middle" font-size="10" fill="#4a4a4a">母版库：入库·优化·加入 xochitl</text>
+<text x="414.0" y="307" text-anchor="middle" font-size="10" fill="#4a4a4a">&gt;90MB 走占位+磁盘替换通道</text>
+<text x="414.0" y="320" text-anchor="middle" font-size="10" fill="#4a4a4a">PDF 转 EPUB · 原件下载/改名 · 抓网文</text>
+<text x="414.0" y="333" text-anchor="middle" font-size="10" fill="#4a4a4a">回收站 / 建夹队列（设备端代理执行）</text>
+<rect x="568" y="250" width="280" height="104" rx="10" fill="#ffffff" stroke="#3f9a55" stroke-width="1.6"/>
+<text x="708.0" y="269" text-anchor="middle" font-size="12" font-weight="bold" fill="#1a1a1a">font-serve :8792</text>
+<text x="708.0" y="294" text-anchor="middle" font-size="10" fill="#4a4a4a">字体上传即装</text>
+<text x="708.0" y="307" text-anchor="middle" font-size="10" fill="#4a4a4a">fontconfig 中文回退链</text>
+<text x="708.0" y="320" text-anchor="middle" font-size="10" fill="#4a4a4a">字体菜单动态项</text>
+<rect x="862" y="250" width="278" height="104" rx="10" fill="#ffffff" stroke="#3f9a55" stroke-width="1.6"/>
+<text x="1001.0" y="269" text-anchor="middle" font-size="12" font-weight="bold" fill="#1a1a1a">wallpaper-serve :8793</text>
+<text x="1001.0" y="294" text-anchor="middle" font-size="10" fill="#4a4a4a">壁纸上传即用</text>
+<text x="1001.0" y="307" text-anchor="middle" font-size="10" fill="#4a4a4a">池化轮换（每次休眠换一张）</text>
+<text x="1001.0" y="320" text-anchor="middle" font-size="10" fill="#4a4a4a">写 SleepScreenPath 键</text>
 <polyline points="705,194 705,222" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#top-a)"/>
 <text x="770" y="213" text-anchor="middle" font-size="10.5" fill="#555">按注册表转发</text>
 <rect x="262" y="378" width="886" height="124" rx="10" fill="#f7f4fc" stroke="#7a56b5" stroke-width="1.3" stroke-dasharray="6 4"/>
@@ -77,26 +71,27 @@
 <rect x="262" y="518" width="886" height="34" rx="10" fill="#f2f2f5" stroke="#8a8a99" stroke-width="1.6" stroke-dasharray="6 4"/>
 <text x="705" y="540" text-anchor="middle" font-size="10.5" fill="#4a4a4a">共享底座 rmsvc-core：路径(XDG) · 服务注册表 · HTTP 适配 · 流式 multipart · 事件总线(SSE) · xochitl 注入/找书 · fswatch</text>
 <text x="274" y="584" text-anchor="start" font-size="11" font-weight="bold" fill="#5a5a6a">被增强的设备原生部分</text>
-<polyline points="450,552 450,600" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#top-a)"/>
-<polyline points="715,552 715,600" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#top-a)"/>
+<polyline points="417,552 417,600" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#top-a)"/>
 <polyline points="1003,552 1003,600" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#top-a)"/>
 <rect x="262" y="600" width="310" height="140" rx="10" fill="#fdf1ec" stroke="#c0602d" stroke-width="1.6"/>
-<text x="417.0" y="620" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">xochitl（官方阅读器/书库）</text>
+<text x="417.0" y="620" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">xochitl（官方阅读器/书库，唯一阅读器）</text>
 <text x="417.0" y="646" text-anchor="middle" font-size="10" fill="#4a4a4a">书库目录 ~/.local/share/remarkable/xochitl</text>
 <text x="417.0" y="659" text-anchor="middle" font-size="10" fill="#4a4a4a">网页 /upload（约 100MB 上限，</text>
 <text x="417.0" y="672" text-anchor="middle" font-size="10" fill="#4a4a4a">大文件走占位+磁盘替换绕开）</text>
 <text x="417.0" y="685" text-anchor="middle" font-size="10" fill="#4a4a4a">书库文件可被 book-serve 直接写</text>
-<rect x="590" y="600" width="250" height="140" rx="10" fill="#eaf6ec" stroke="#3f9a55" stroke-width="1.6"/>
-<text x="715.0" y="620" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">KOReader</text>
-<text x="715.0" y="646" text-anchor="middle" font-size="10" fill="#4a4a4a">经 appload 侧载</text>
-<text x="715.0" y="659" text-anchor="middle" font-size="10" fill="#4a4a4a">书目录/配置由</text>
-<text x="715.0" y="672" text-anchor="middle" font-size="10" fill="#4a4a4a">koreader-serve 管理</text>
-<text x="715.0" y="685" text-anchor="middle" font-size="10" fill="#4a4a4a">侧栏入口靠 qmd 注入</text>
+<text x="417.0" y="698" text-anchor="middle" font-size="10" fill="#4a4a4a">勾画/手写 .rm 由 ink-serve 只读</text>
+<rect x="590" y="600" width="250" height="140" rx="10" fill="#f2f2f5" stroke="#8a8a99" stroke-width="1.6"/>
+<text x="715.0" y="620" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">系统小服务（不经网关）</text>
+<text x="715.0" y="646" text-anchor="middle" font-size="10" fill="#4a4a4a">battop 电池采样（不开机自启）</text>
+<text x="715.0" y="659" text-anchor="middle" font-size="10" fill="#4a4a4a">wifi-watch WiFi 假死看护</text>
+<text x="715.0" y="672" text-anchor="middle" font-size="10" fill="#4a4a4a">chrony 国内校时 + 开机防休眠</text>
+<text x="715.0" y="685" text-anchor="middle" font-size="10" fill="#4a4a4a">xovi-reenable 开机恢复 xovi</text>
+<text x="715.0" y="711" text-anchor="middle" font-size="9.5" fill="#7a7a7a">（KOReader / appload 09-29 已卸）</text>
 <rect x="858" y="600" width="290" height="140" rx="10" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.6"/>
 <text x="1003.0" y="620" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">xovi 扩展 + qmd 注入</text>
 <text x="1003.0" y="646" text-anchor="middle" font-size="10" fill="#4a4a4a">扩展：hl-snap 荧光笔 CJK 吸附</text>
 <text x="1003.0" y="659" text-anchor="middle" font-size="10" fill="#4a4a4a">扩展：handwriting-stroke 笔锋渲染</text>
 <text x="1003.0" y="672" text-anchor="middle" font-size="10" fill="#4a4a4a">qmd：回收站 / 建夹 / 漫画边距代理</text>
 <text x="1003.0" y="685" text-anchor="middle" font-size="10" fill="#4a4a4a">qmd：阅读器单击翻页 / 日漫翻页规则</text>
-<text x="1003.0" y="698" text-anchor="middle" font-size="10" fill="#4a4a4a">qmd：字体菜单 · 侧栏 KOReader 入口</text>
+<text x="1003.0" y="698" text-anchor="middle" font-size="10" fill="#4a4a4a">qmd：字体菜单</text>
 </svg>
