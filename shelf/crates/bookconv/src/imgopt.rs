@@ -41,10 +41,9 @@ fn within_decode_budget(w: u32, h: u32) -> bool {
 const JPEG_QUALITY: u8 = 85;
 /// 漫画页专用重编码质量——EPUB 线原则④"漫画不允许压画质"：超限时仍必须缩到屏幕框内（否则设备渲染
 /// 异常），但不该像普通插图那样再吃一道 85 质量的有损重编码，95 更接近视觉无损。
+/// **缩小、放大、补白一律用它**：2026-09-30 用户定，小漫画页预放大后也用 95（此前放大页用 85 控体积——镖人卷02 做 PDF 时
+/// q95 21MB→113MB、q85 约 71MB；与 sheng-ren 2026-09-29 的决定一致）。代价是低分辨率漫画的产物明显变大。
 const JPEG_QUALITY_COMIC: u8 = 95;
-/// EPUB 漫画→PDF 里**预放大**后的页面所用 JPEG 质量：放大产生的像素本就平滑，q95 会体积暴涨
-/// （镖人卷02 实测 21MB→113MB），q85 约 71MB 且真机对照仍明显比阅读器自己放大清晰。
-const JPEG_QUALITY_UPSCALED: u8 = 85;
 /// 预放大的倍数上限：超过视为缩略图/装饰小图，不值得放大到整页宽。
 const MAX_PDF_UPSCALE: f32 = 3.0;
 
@@ -425,8 +424,8 @@ fn flatten_alpha_on_white(img: image::DynamicImage) -> image::DynamicImage {
 ///
 /// **JPEG 低分辨率源图会由我们预放大**（2026-09-20 真机 A/B 坐实）：镖人卷02 源图仅 566×800，PDF 里
 /// 按 934 宽摆放要放大 1.65 倍。让 xochitl 放大 vs 我们先 Lanczos 放大到整数绘制宽、设备 1:1 显示，
-/// 用户对照后判定**后者明显更清晰**（xochitl 的 PDF 放大滤镜偏糊）。代价是体积：q95 会 21MB→113MB，
-/// 放大后内容本就平滑，改用 [`JPEG_QUALITY_UPSCALED`]=85 压到约 71MB。边界：放大倍数超过
+/// 用户对照后判定**后者明显更清晰**（xochitl 的 PDF 放大滤镜偏糊）。代价是体积：q95 会 21MB→113MB
+/// （2026-09-20 起放大页曾用 q85 压到约 71MB，2026-09-30 用户定放大页也用 q95）。边界：放大倍数超过
 /// [`MAX_PDF_UPSCALE`]（缩略图/装饰小图，放大只是白涨体积）不放大；PNG 不放大（无损放大体积暴涨）。
 pub fn prepare_comic_page_for_pdf(bytes: &[u8], page_w: u32, page_h: u32) -> Option<Vec<u8>> {
     let (img, fmt, trimmed) = decode_trim_comic(bytes)?;
@@ -441,7 +440,7 @@ pub fn prepare_comic_page_for_pdf(bytes: &[u8], page_w: u32, page_h: u32) -> Opt
         return None; // 既没裁又不缩放：原图字节零损失直接嵌
     }
     let img = if shrink || upscale { resize_lanczos3(&img, dw, dh) } else { img };
-    encode_keep_gray(fmt, &img, if upscale { JPEG_QUALITY_UPSCALED } else { JPEG_QUALITY_COMIC })
+    encode_keep_gray(fmt, &img, JPEG_QUALITY_COMIC)
 }
 
 /// 白底画布上放置 `img`（保持 `Luma8`/`Rgb8` 类型，偏移 `off_x/off_y`）。
@@ -477,23 +476,22 @@ fn paste_on_white(img: &image::DynamicImage, cw: u32, ch: u32, off_x: u32, off_y
 pub fn prepare_comic_page_for_epub(bytes: &[u8], frame: EpubComicFrame) -> Option<Vec<u8>> {
     let (img, fmt, trimmed) = decode_trim_comic(bytes)?;
     let (cw, ch) = (img.width(), img.height());
-    let quality_default = JPEG_QUALITY_COMIC;
-    let (out_img, quality) = if cw.min(ch) < MAX_SHORT_EDGE / 3 {
+    let out_img = if cw.min(ch) < MAX_SHORT_EDGE / 3 {
         if !trimmed {
             return None; // 装饰小图且没白边：原样
         }
-        (img, quality_default)
+        img
     } else {
         let (page_w, page_h, frame_aspect) = (frame.page_w(), frame.page_h(), frame.aspect());
         let s = (page_w as f32 / cw as f32).min(page_h as f32 / ch as f32);
         let shrink = s < 1.0;
         let upscale = fmt == ImageFormat::Jpeg && s > 1.0 && s <= MAX_PDF_UPSCALE;
-        let (img, quality) = if shrink || upscale {
+        let img = if shrink || upscale {
             let nw = ((cw as f32 * s).round() as u32).clamp(1, page_w);
             let nh = ((ch as f32 * s).round() as u32).clamp(1, page_h);
-            (resize_lanczos3(&img, nw, nh), if upscale { JPEG_QUALITY_UPSCALED } else { quality_default })
+            resize_lanczos3(&img, nw, nh)
         } else {
-            (img, quality_default)
+            img
         };
         let (w, h) = (img.width(), img.height());
         let cur_aspect = w as f32 / h as f32;
@@ -501,16 +499,16 @@ pub fn prepare_comic_page_for_epub(bytes: &[u8], frame: EpubComicFrame) -> Optio
             if !trimmed && !shrink && !upscale {
                 return None;
             }
-            (img, quality)
+            img
         } else if cur_aspect > frame_aspect {
             let new_h = (w as f32 / frame_aspect).round() as u32;
-            (paste_on_white(&img, w, new_h, 0, (new_h - h) / 2), quality)
+            paste_on_white(&img, w, new_h, 0, (new_h - h) / 2)
         } else {
             let new_w = (h as f32 * frame_aspect).round() as u32;
-            (paste_on_white(&img, new_w, h, (new_w - w) / 2, 0), quality)
+            paste_on_white(&img, new_w, h, (new_w - w) / 2, 0)
         }
     };
-    encode_keep_gray(fmt, &out_img, quality)
+    encode_keep_gray(fmt, &out_img, JPEG_QUALITY_COMIC)
 }
 
 /// Lanczos3 重采样，SIMD 实现（`fast_image_resize`，x86 SSE4/AVX2、aarch64 NEON 运行期自动选）。

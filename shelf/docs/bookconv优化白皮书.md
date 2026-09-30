@@ -175,7 +175,7 @@ Move 屏 = **954×1696 px、7.3″、264 PPI、Gallery 3 彩色墨水屏**。书
 
 EPUB 线原则④（09-17）：`comic_detect::is_comic`（`MIN_IMAGES=20`、`TEXT_PER_IMAGE=40.0`）在 `prepare_entries` 判一次。命中后图片走 `imgopt::prepare_comic_page_for_epub`（09-20 取代早期 `trim_margins` → `downscale_for_epub_comic` → `pad_to_device_aspect` 三道串联：各解码编码一遍、三代 JPEG 有损、灰度被转 RGB；见 §19）：
 
-1. **解码一次** → 2. **裁边** `trim_bounds`（一行/列里每个像素与首像素的 RGB 通道差都 ≤8 才算纯色留白，`TRIM_TOLERANCE`；单边最多裁 35%，`TRIM_MAX_FRACTION`）→ 3. **一次缩放**进 EPUB 页框（缩小，或 JPEG 小图按 §19 A/B 预放大 ≤3 倍，q85；SIMD `fast_image_resize`）→ 4. **白底补到页框长宽比**（`Screen` 补到 954:1696、容差 2%；`MinMargin` 画布 952×1457、容差 0.3%，§20；2026-09-30 前按 302.4:462.1 算成 954×1458）→ 5. **编码一次**（灰度保持单分量，q95）。小于设备短边 1/3 的装饰小图只裁边不缩放/补白；无事可做返回 `None`（原字节零损失）。
+1. **解码一次** → 2. **裁边** `trim_bounds`（一行/列里每个像素与首像素的 RGB 通道差都 ≤8 才算纯色留白，`TRIM_TOLERANCE`；单边最多裁 35%，`TRIM_MAX_FRACTION`）→ 3. **一次缩放**进 EPUB 页框（缩小，或 JPEG 小图按 §19 A/B 预放大 ≤3 倍；SIMD `fast_image_resize`）→ 4. **白底补到页框长宽比**（`Screen` 补到 954:1696、容差 2%；`MinMargin` 画布 952×1457、容差 0.3%，§20；2026-09-30 前按 302.4:462.1 算成 954×1458）→ 5. **编码一次**（灰度保持单分量，q95）。小于设备短边 1/3 的装饰小图只裁边不缩放/补白；无事可做返回 `None`（原字节零损失）。
 
 
 ### 解码像素上限 `MAX_DECODE_PIXELS`：一次“估算翻车、实测重定”的教训（2026-09-19）
@@ -621,7 +621,7 @@ EPUB 线原则④（09-17）：`comic_detect::is_comic`（`MIN_IMAGES=20`、`TEX
 ### 画质：三处缺陷 + 低分辨率源图预放大（结论）
 
 - **三处确凿缺陷**（乱马 01、镖人 08 离线复现，已修，修法沿用到 EPUB 单趟管线）：有白边的页被解码编码两次（多一代有损）；灰度页被 `image` 0.25 的 `JpegEncoder` 悄悄升成 3 分量（改 `ExtendedColorType::L8`，`encode_jpeg_keep_gray`）；同一本书有的页缩、有的页不缩。
-- **真机 A/B**：镖人 02 源图仅 566×800，由 xochitl 放大 1.65 倍偏糊；**先用 Lanczos 预放大再交给阅读器，用户判定明显更清晰**。落地规则（`imgopt.rs`）：JPEG 且放大 ≤ `MAX_PDF_UPSCALE`=3 倍才预放大，质量 85（q95 会 21MB→113MB）；PNG 不放大。代价：低分辨率漫画体积明显变大（镖人 02：19.7MB → 70.7MB）。
+- **真机 A/B**：镖人 02 源图仅 566×800，由 xochitl 放大 1.65 倍偏糊；**先用 Lanczos 预放大再交给阅读器，用户判定明显更清晰**。落地规则（`imgopt.rs`）：JPEG 且放大 ≤ `MAX_PDF_UPSCALE`=3 倍才预放大，质量 85（q95 会 21MB→113MB）；PNG 不放大。代价：低分辨率漫画体积明显变大（镖人 02：19.7MB → 70.7MB）。**2026-09-30 用户定放大页也用 q95**（与 sheng-ren 一致），体积再涨（按当时 PDF 实测约 1.6 倍，EPUB 未实测）。
 - 量化注意：poppler 72dpi 模拟设备**不可靠**（自己再插值一遍，仅约 19dB）。
 
 ### 画质优化五项排查结论 + 提速（2026-09-20）
