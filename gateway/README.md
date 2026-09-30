@@ -44,7 +44,7 @@
 
 子命令：`gateway serve [--bind]`（部署固定 `0.0.0.0:443`）· `passwd <新密码>` · `reset-password`（回默认密码并强制改）· `regen-tls`（只重签服务器证书，CA 不变）。改密码类命令要重启网关生效。
 
-> **2026-09-29 设备卸掉了 KOReader、第三方 WeRead 与 appload**，09-30 网关随之撤掉 `/api/koreader/*` 代理、批量“加入 KOReader”、基石探测里这三项和网页上所有 KOReader 入口；母版库的“已完成”只认加入过 xochitl。这一轮（第五轮审计）只在开发机测过，**没部署、没上真机**。
+> **2026-09-29 设备卸掉了 KOReader、第三方 WeRead 与 appload**，09-30 网关随之撤掉 `/api/koreader/*` 代理、批量“加入 KOReader”、基石探测里这三项和网页上所有 KOReader 入口；母版库的“已完成”只认加入过 xochitl。这一轮（第五轮审计）09-30 14:10 已部署，同日 15:23 又部署了电池刺客的移除，两次部署自检都通过；**功能还没逐项手测**（尤其“批量全部中止”和“网关重启后网页自动重连”）。
 
 ## 接入一个新服务
 
@@ -57,7 +57,7 @@
 
 - **依赖**：只依赖 [`../rmsvc-core`](../rmsvc-core/README.md)；独立 Cargo 项目，不在任何 workspace 里。
 - **构建/部署**：没有自己的脚本，由 `shelf/build.sh`（顺手编译本目录）和 `shelf/deploy.sh`（打包二进制 + `systemd/gateway.service`）代管。单独交叉编译：`cargo build --release --target aarch64-unknown-linux-musl`（用本目录 `.cargo/config.toml` 的 CC/AR 覆盖）。
-- **测试**（在仓库根目录跑；2026-09-30 第五轮审计后实跑）：`cargo test --manifest-path gateway/Cargo.toml`（78 个）；前端 `node --check gateway/ui/app.js` 与 `node --test gateway/ui/test/*.test.mjs`（3 个文件共 10 项：断网兜底、XSS 转义、语言包一致）；浏览器冒烟手动跑 `PUPPETEER_NODE_MODULES=<含 puppeteer 的 node_modules 目录> node gateway/ui/test/smoke.puppeteer.mjs`；可视走查见 [`tools/screenshot-walkthrough/`](tools/screenshot-walkthrough/README.md)。
+- **测试**（在仓库根目录跑；2026-09-30 移除电池刺客后实跑）：`cargo test --manifest-path gateway/Cargo.toml`（77 个）；前端 `node --check gateway/ui/app.js` 与 `node --test gateway/ui/test/*.test.mjs`（3 个文件共 10 项：断网兜底、XSS 转义、语言包一致）；浏览器冒烟手动跑 `PUPPETEER_NODE_MODULES=<含 puppeteer 的 node_modules 目录> node gateway/ui/test/smoke.puppeteer.mjs`；可视走查见 [`tools/screenshot-walkthrough/`](tools/screenshot-walkthrough/README.md)。
 - **设备上的文件**：二进制 `~/.local/bin/gateway`；配置 `~/.config/shelf/gateway.json`；证书 `~/.config/shelf/tls/`；批量队列 `~/.local/state/shelf/batch.json`。
 
 ## 目录
