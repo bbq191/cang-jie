@@ -307,7 +307,7 @@ dependencies = [
 [[package]]
 name = "bookconv"
 version = "0.1.0"
-source = "git+https://github.com/bbq191/sheng-ren?branch=master#124d1971f32012205e1d2b5119423dde5f1c8303"
+source = "git+https://github.com/bbq191/sheng-ren?branch=master#d53121a25bce2cdecdb530c2efcc83b2b2ed2f6a"
 dependencies = [
  "ego-tree",
  "encoding_rs",
@@ -1923,7 +1923,7 @@ dependencies = [
 [[package]]
 name = "profile"
 version = "0.1.0"
-source = "git+https://github.com/bbq191/sheng-ren?branch=master#124d1971f32012205e1d2b5119423dde5f1c8303"
+source = "git+https://github.com/bbq191/sheng-ren?branch=master#d53121a25bce2cdecdb530c2efcc83b2b2ed2f6a"
 dependencies = [
  "serde",
  "toml",
