@@ -7,6 +7,7 @@ mod api;
 mod comic_margins;
 mod config;
 mod import;
+mod import_jobs;
 mod mkdir;
 mod ops;
 mod pending_queue;

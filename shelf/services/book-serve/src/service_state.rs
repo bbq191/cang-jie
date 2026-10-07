@@ -33,10 +33,13 @@ pub struct State {
     pub agent_failures: Arc<AgentFailures>,
     /// 直接导入 xochitl（不进母版库，sheng-ren 经 SSH 端口转发调，见 import.rs）。
     pub import: crate::import::Importer,
+    /// 直接导入的后台任务队列（一次一个，结果在内存里留 1 小时，见 import_jobs.rs）。
+    pub import_jobs: crate::import_jobs::ImportJobs,
     /// `GET /status` 的结果缓存（[`STATUS_TTL`]）。网页全量刷新时打这个接口，里面要读全部 `.metadata` 列文件夹。
     /// 本服务自己可能建出新文件夹的操作（落库、直接导入）完成后 [`State::invalidate_status`] 主动失效；
     /// 用户在设备上新建文件夹这类外部变化最多滞后一个 TTL。
-    status_cache: TtlCache<serde_json::Value>,
+    /// `Arc`：直接导入的后台任务做完时也要让它失效（见 [`State::status_invalidator`]）。
+    status_cache: Arc<TtlCache<serde_json::Value>>,
     /// inbox 文件修改时间静止多久才算"写完了"（见 [`State::process_inbox_counting_deferred`]）。缺省 [`INBOX_SETTLE`]，
     /// 须小于 inbox 监听的防抖时长（8 秒），写完那次事件触发的追平才不会再被暂缓。
     pub inbox_settle: Duration,
@@ -70,7 +73,7 @@ impl State {
         let agent_failures = Arc::new(AgentFailures::new(&books_state, Some(bus.clone())));
         let trash = TrashQueue::new(&books_state, &paths.xochitl_dir()).with_failures(agent_failures.clone());
         let mkdir = Arc::new(MkdirQueue::new(&books_state, &paths.xochitl_dir()).with_failures(agent_failures.clone()));
-        State { cfg, spool, staging, xochitl, bus, trash, comic_margins, mkdir, agent_failures, import, status_cache: TtlCache::new(STATUS_TTL), inbox_settle: INBOX_SETTLE }
+        State { cfg, spool, staging, xochitl, bus, trash, comic_margins, mkdir, agent_failures, import, import_jobs: crate::import_jobs::ImportJobs::default(), status_cache: Arc::new(TtlCache::new(STATUS_TTL)), inbox_settle: INBOX_SETTLE }
     }
 
     pub fn ensure_dirs(&self) -> std::io::Result<()> {
@@ -98,6 +101,12 @@ impl State {
     /// 让下一次 `/status` 必定重算（可能建出新文件夹的操作完成后调）。
     pub fn invalidate_status(&self) {
         self.status_cache.invalidate();
+    }
+
+    /// 同 [`State::invalidate_status`]，但可以带进后台线程（直接导入的任务做完时调）。
+    pub fn status_invalidator(&self) -> impl Fn() + Send + 'static {
+        let c = self.status_cache.clone();
+        move || c.invalidate()
     }
 
     pub fn status(&self) -> serde_json::Value {

@@ -12,10 +12,15 @@
 //! shelf-mkdir-agent.qmd 长轮询拉取执行；`items` 带上级文件夹 uuid，`names` 只放建在根的、给旧代理兼容）· `GET /mkdir`（只供调试）。
 //! 代理放弃记录：`GET /agent-failures` → `{items:[{kind,name,uuid?,at}]}` · `POST /agent-failures/clear`（两个队列交满次数仍没做成的项）。
 //! 2026-09-05 起规则统一"所有书只落母版库"：旧 `POST /?target=` 直投路已删（`/staging*` 是网页的唯一入口）。
-//! 直接导入 xochitl、不进母版库（2026-10-07，电脑上的 sheng-ren `booklib sync` 经 SSH 端口转发直连 8790 调，见 import.rs）：
-//! · `POST /import?name=<文件名.epub>&folder=<文件夹路径，`/` 分多级，可空＝书库根>`（请求体＝EPUB 原始字节）→ `{uuid, name, folder}`
-//!   （同步，可达分钟级；文件夹逐级找、没有就建，`folder` 回实际落进的完整路径）
-//! · `POST /import?uuid=<uuid>&name=<文件名.epub>`：原地替换已有文档内容、uuid 不变 → `{uuid, name, folder}`；文档不在 / 已删 / 在回收站 / 不是 EPUB → 404
+//! 直接导入 xochitl、不进母版库（2026-10-07，电脑上的 sheng-ren `booklib sync` 经 SSH 端口转发直连 8790 调，见 import.rs）。
+//! **异步**（同 `/staging/deliver`）：收完请求体、做完快速校验就回 `202 {job}`，建文件夹、上传、等 xochitl 排版、认领在后台
+//! 任务队列里一次一个做（import_jobs.rs），结果用任务 id 查：
+//! · `POST /import?name=<文件名.epub>&folder=<文件夹路径，`/` 分多级，可空＝书库根>`（请求体＝EPUB 原始字节）→ `202 {job}`
+//!   （文件夹逐级找、没有就建；目标文件夹里已有逐字节相同的书就认回它、不重复加入）
+//! · `POST /import?uuid=<uuid>&name=<文件名.epub>`：原地替换已有文档内容、uuid 不变 → `202 {job}`；文档不在 / 已删 / 在回收站 / 不是 EPUB → 404
+//!   （文件名 / zip 头 / 大小不对、同一 uuid 正在替换 → 400，都在回 202 之前）
+//! · `GET /import/jobs/{id}` → `{job, state: running|done|failed, stage, uuid?, name?, folder?, message?}`（done 带 uuid/name/folder，
+//!   `folder`＝实际落进的完整路径；failed 带 message；排队中 running + stage「排队」）；不存在（含 book-serve 重启丢了、做完超过 1 小时清掉）→ 404
 //! · `GET /import/{uuid}` → `{uuid, name, folder, deleted}`（不存在 → 404）。删除用 `POST /trash/add {uuid, name}`。
 use crate::service_state::State;
 use crate::staging::StagingStore;
@@ -111,8 +116,9 @@ pub fn router(st: Arc<State>) -> Router {
             let n = s.agent_failures.clear().map_err(ApiError::internal)?;
             Ok(Reply::ok(&serde_json::json!({"ok": true, "cleared": n})))
         }))
-        // ── 直接导入 xochitl（不进母版库，见 import.rs）：同步处理，回执时书已在书库里 ──
+        // ── 直接导入 xochitl（不进母版库，见 import.rs）：异步，回 202 + 任务 id，结果查 /import/jobs/{id} ──
         .post("/import", bind(&st, import_book))
+        .get("/import/jobs/{id}", bind(&st, |s, r| s.import_jobs.get(r.param("id")).map(|v| Reply::ok(&v)).ok_or_else(|| ApiError::not_found("没有这个导入任务（可能 book-serve 重启过，或做完超过 1 小时已清掉）"))))
         .get("/import/{uuid}", bind(&st, |s, r| match s.import.describe(r.param("uuid")) {
             Some(d) => Ok(Reply::ok(&serde_json::json!({"uuid": d.uuid, "name": d.name, "folder": d.folder, "deleted": d.deleted}))),
             None => Err(ApiError::not_found("xochitl 书库里没有这份文档")),
@@ -148,25 +154,40 @@ fn staging_upload(st: &State, r: &mut Request<'_>) -> ApiResult {
 }
 
 /// `POST /import`：有 `uuid` → 原地替换，没有 → 新导入。请求体是 EPUB 原始字节（流式落盘，不进内存）。
+/// 这里只收体、做快速校验（出错照旧 400 / 404），然后把剩下的交给后台任务队列，立即回 `202 {job}`。
 fn import_book(st: &State, r: &mut Request<'_>) -> ApiResult {
     use crate::import::ImportError;
     let name = r.q("name").ok_or_else(|| ApiError::bad("缺少 name"))?.to_string();
     let len = r.content_length;
-    let res = match r.q("uuid").map(str::to_string) {
-        Some(uuid) => st.import.replace(&uuid, &name, &mut *r.body, len),
+    let accepted = match r.q("uuid").map(str::to_string) {
+        Some(uuid) => st.import.accept_replace(&uuid, &name, &mut *r.body, len),
         None => {
             let folder = r.q("folder").unwrap_or("").to_string();
-            st.import.import_new(&name, &folder, &mut *r.body, len, &st.mkdir)
+            st.import.accept_new(&name, &folder, &mut *r.body, len)
         }
     };
-    let d = res.map_err(|e| match e {
-        ImportError::Bad(m) => ApiError::bad(m),
-        ImportError::NotFound(m) => ApiError::not_found(m),
-        ImportError::Failed(m) => ApiError::internal(m),
+    // 失败也记进日志（此前只回给客户端，客户端等不到回执时设备上查不到原因）
+    let accepted = accepted.map_err(|e| {
+        eprintln!("[book-serve] 直接导入《{name}》失败：{e:?}");
+        match e {
+            ImportError::Bad(m) => ApiError::bad(m),
+            ImportError::NotFound(m) => ApiError::not_found(m),
+            ImportError::Failed(m) => ApiError::internal(m),
+        }
     })?;
-    st.invalidate_status(); // 可能新建了文件夹
-    st.bus.publish("books", "import");
-    Ok(Reply::ok(&serde_json::json!({"uuid": d.uuid, "name": d.name, "folder": d.folder})))
+    let (import, mkdir, bus, invalidate) = (st.import.clone(), st.mkdir.clone(), st.bus.clone(), st.status_invalidator());
+    let id = st.import_jobs.submit(Box::new(move |stage| {
+        let res = import.run(accepted, &mkdir, stage);
+        match &res {
+            Ok(_) => {
+                invalidate(); // 可能新建了文件夹
+                bus.publish("books", "import");
+            }
+            Err(e) => eprintln!("[book-serve] 直接导入《{name}》失败：{e:?}"),
+        }
+        res.map_err(|e| e.message().to_string())
+    }));
+    Ok(Reply::json(202, &serde_json::json!({"job": id})))
 }
 
 #[cfg(test)]
@@ -178,11 +199,20 @@ mod tests {
     use std::collections::HashMap;
 
     fn state(t: &tempfile::TempDir) -> Arc<State> {
+        state_with_host(t, "127.0.0.1:9") // 关闭端口：连接秒拒，不真等超时
+    }
+
+    fn paths(t: &tempfile::TempDir) -> Paths {
         let h = t.path().to_str().unwrap().to_string();
-        let paths = Paths::resolve(move |k| if k == "HOME" || k == "XDG_RUNTIME_DIR" { Some(h.clone()) } else { None });
+        Paths::resolve(move |k| if k == "HOME" || k == "XDG_RUNTIME_DIR" { Some(h.clone()) } else { None })
+    }
+
+    /// xochitl 客户端连 `host` 的服务状态（直接导入的路由测试接假 xochitl）。
+    fn state_with_host(t: &tempfile::TempDir, host: &str) -> Arc<State> {
+        let paths = paths(t);
         let cfg = paths.service_config("book");
         std::fs::create_dir_all(cfg.parent().unwrap()).unwrap();
-        std::fs::write(&cfg, r#"{"xochitlHost":"127.0.0.1:9"}"#).unwrap(); // 关闭端口：连接秒拒，不真等超时
+        std::fs::write(&cfg, format!(r#"{{"xochitlHost":"{host}"}}"#)).unwrap();
         let mut st = State::new(&paths);
         st.inbox_settle = std::time::Duration::ZERO; // 测试里刚写的 inbox 文件也立即处理
         st.ensure_dirs().unwrap();
@@ -348,7 +378,26 @@ mod tests {
         (rep.status, serde_json::from_slice(&rep.body).unwrap_or(serde_json::Value::Null))
     }
 
-    /// 直接导入的路由：错误码映射（非 epub 400、文档不在 / 已删 404）、原地替换保留 uuid、查询。
+    /// `POST /import` 回 202 后等任务做完，回任务查询结果。
+    fn post_and_wait(router: &Router, query: &str, body: &[u8]) -> serde_json::Value {
+        let (code, v) = post_raw(router, query, body);
+        assert_eq!(code, 202, "{v}");
+        let id = v["job"].as_str().expect("回执带任务 id").to_string();
+        let t0 = std::time::Instant::now();
+        loop {
+            let (code, v) = call(router, Method::Get, &format!("/import/jobs/{id}"), "");
+            assert_eq!(code, 200, "{v}");
+            assert_eq!(v["job"], id.as_str());
+            if v["state"] != "running" {
+                return v;
+            }
+            assert!(t0.elapsed() < std::time::Duration::from_secs(10), "任务一直没做完：{v}");
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+    }
+
+    /// 直接导入的路由：同步校验的错误码照旧（非 epub / 缺 name 400、文档不在 / 已删 404，都在回 202 之前）；
+    /// 原地替换走任务、保留 uuid；查询。
     #[test]
     fn import_routes_map_errors_replace_and_query() {
         const U: &str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
@@ -362,14 +411,14 @@ mod tests {
         assert_eq!(code, 400);
         assert!(msg(&v).contains("只收 .epub"), "{v}");
         assert_eq!(post_raw(&router, "", epub).0, 400, "缺 name");
+        assert_eq!(post_raw(&router, "name=a.epub", b"not a zip").0, 400, "zip 头不对，回 202 之前就拒");
         assert_eq!(post_raw(&router, &format!("uuid={U}&name=a.epub"), epub).0, 404, "文档不在 → 404，客户端改成新导入");
         assert_eq!(call(&router, Method::Get, &format!("/import/{U}"), "").0, 404);
         std::fs::write(lib.join(format!("{U}.metadata")), r#"{"type":"DocumentType","visibleName":"书","parent":""}"#).unwrap();
         std::fs::write(lib.join(format!("{U}.epub")), b"PK\x03\x04old").unwrap();
         std::fs::write(lib.join(format!("{U}.pdf")), b"cache").unwrap();
-        let (code, v) = post_raw(&router, &format!("uuid={U}&name=a.epub"), epub);
-        assert_eq!(code, 200, "{v}");
-        assert_eq!(v, serde_json::json!({"uuid": U, "name": "书", "folder": ""}));
+        let v = post_and_wait(&router, &format!("uuid={U}&name=a.epub"), epub);
+        assert_eq!((v["state"].as_str(), v["uuid"].as_str(), v["name"].as_str(), v["folder"].as_str()), (Some("done"), Some(U), Some("书"), Some("")), "{v}");
         assert_eq!(std::fs::read(lib.join(format!("{U}.epub"))).unwrap(), epub);
         assert!(!lib.join(format!("{U}.pdf")).exists());
         let (code, v) = call(&router, Method::Get, &format!("/import/{U}"), "");
@@ -377,7 +426,47 @@ mod tests {
         std::fs::write(lib.join(format!("{U}.metadata")), r#"{"type":"DocumentType","visibleName":"书","parent":"trash"}"#).unwrap();
         assert_eq!(call(&router, Method::Get, &format!("/import/{U}"), "").1["deleted"], true, "进了回收站算 deleted");
         assert_eq!(post_raw(&router, &format!("uuid={U}&name=a.epub"), epub).0, 404, "回收站里的不替换");
+        assert_eq!(call(&router, Method::Get, "/import/jobs/nope", "").0, 404, "未知任务 404");
         assert!(st.staging.list().is_empty(), "不进母版库");
+    }
+
+    /// 新导入：202 → 任务做完 done 带 uuid/name/folder；同一份字节再导一次认回同一个 uuid；内容不同另加一本；
+    /// 临时文件用完就删、不进母版库。
+    #[test]
+    fn import_new_is_async_and_idempotent() {
+        let t = tempfile::tempdir().unwrap();
+        let lib = paths(&t).xochitl_dir();
+        std::fs::create_dir_all(&lib).unwrap();
+        let st = state_with_host(&t, &crate::staging::tests::fake_xochitl(lib.clone()));
+        let router = router(st.clone());
+        let a = crate::staging::tests::mini_epub(&[("OEBPS/a.xhtml", "<p>甲</p>")]);
+        let v = post_and_wait(&router, "name=%E7%94%B2.epub", &a);
+        assert_eq!((v["state"].as_str(), v["stage"].as_str(), v["name"].as_str(), v["folder"].as_str()), (Some("done"), Some("完成"), Some("甲.epub"), Some("")), "{v}");
+        let uuid = v["uuid"].as_str().unwrap().to_string();
+        assert_eq!(std::fs::read(lib.join(format!("{uuid}.epub"))).unwrap(), a);
+        let again = post_and_wait(&router, "name=%E7%94%B2.epub", &a);
+        assert_eq!(again["uuid"].as_str(), Some(uuid.as_str()), "同一文件夹同字节：认回原来那份");
+        let b = crate::staging::tests::mini_epub(&[("OEBPS/a.xhtml", "<p>乙</p>")]);
+        let other = post_and_wait(&router, "name=%E7%94%B2.epub", &b);
+        assert_eq!(other["state"], "done");
+        assert_ne!(other["uuid"].as_str(), Some(uuid.as_str()), "内容不同另加一本");
+        let tmp = paths(&t).state_dir().join("books").join("import-tmp");
+        assert_eq!(std::fs::read_dir(tmp).unwrap().count(), 0, "临时文件用完就删");
+        assert!(st.staging.list().is_empty(), "不进母版库");
+    }
+
+    /// xochitl 连不上：202 照回，任务 failed 带 message。
+    #[test]
+    fn import_new_upload_failure_is_reported_on_the_job() {
+        let t = tempfile::tempdir().unwrap();
+        let st = state(&t);
+        let router = router(st.clone());
+        std::fs::create_dir_all(st.xochitl.library_dir()).unwrap();
+        let a = crate::staging::tests::mini_epub(&[]);
+        let v = post_and_wait(&router, "name=a.epub", &a);
+        assert_eq!((v["state"].as_str(), v["stage"].as_str()), (Some("failed"), Some("失败")), "{v}");
+        assert!(msg(&v).contains("上传给 xochitl 失败"), "{v}");
+        assert!(v.get("uuid").is_none());
     }
 
     /// `GET /import/{uuid}` 的 folder 是从书库根起的完整路径。
