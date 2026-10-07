@@ -14,9 +14,9 @@ zip = { version = "2", default-features = false, features = ["deflate-flate2", "
 # PNG 像素 /FlateDecode 压缩（pdfwrite），纯 Rust、musl 友好
 png = "0.17"
 miniz_oxide = "0.8"
-# PDF 页图片裁边/缩放（pdfimg）：jpeg、png；gif、webp 只解码。与 bookconv 同版本同特性
+# PDF 页图片（pdfwrite 读图、pdf_ingest 解内嵌图）：jpeg、png；gif、webp 只解码。与 bookconv 同版本同特性
+# （裁边/缩放/编码用 bookconv::imgopt 的公开接口，fast_image_resize 随之去掉）
 image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp"] }
-fast_image_resize = "6.1.0"
 # 入库 PDF「优化」（有文字层→转 EPUB，无文字层/漫画→仅裁边，2026-09-19）：三者均纯 Rust、无 C 依赖，
 # aarch64-unknown-linux-musl 全静态交叉编译验证过。lopdf 读第三方 PDF 结构；pdf-extract（本地 fork `pdf-extract-cj`，
 # `package =` 让代码里仍用 `pdf_extract::`）给文字层探测/字号识别标题/公式区域探测；hayro 整页光栅化供公式区域裁剪。

@@ -424,7 +424,11 @@ host 质量门 `check_output.py` 当时移植成 `bookconv::check`；host 门与
 
 **迁移测试（开发机）**：旧 v16 优化《雪国》《春雪》《飘·上册》+《北鬥之拳》卷01（开关开）→ 兼容预处理 → sheng-ren v51：可见文字和 v16 产物逐字一致（sheng-ren `tools/regress/compare.py` 4 本 TEXT-SAME，对原书字符账平，图标注释号换数字照规则不算不平），XHTML 全部合法，没有 `cj-` 类，只有一份 `eink-wash.css`，质量门通过。交叉编译 book-serve 11,136,232 字节（旧 10,922,768，+2%），全静态。**真机待验证**（附录 §05 #21）。
 
-**sheng-ren 缺、这边绕过的接口**：`epub` 没有"带共用样式表、自定义标识符前缀"的组装（`AssembleOpts` 是 crate 内私有），`pdf_epub` 留了一份旧组装器；`imgopt` 的裁边/缩放/编码内部函数私有，`pdfimg` 留了一份 PDF 用的；`check::check_epub`（内存版）只在 sheng-ren 自己的测试里编译，测试改用 `check_entries`。
+**sheng-ren 缺、这边绕过的接口**：`check::check_epub`（内存版）只在 sheng-ren 自己的测试里编译，测试改用 `check_entries`。
+
+**2026-10-07 第二步：两份拷贝去掉**。sheng-ren 公开了组装器选项和整页图片接口（缺省值下它自己的产物逐字节不变），shelf-conv 不再各留一份：
+- `pdf_epub`：改成构建 `AssembleOpts { consume_resources, id_scheme: "weread:", shared_css: pdf-img.css（link_if = 含 `<img`/颜色 span） }` 调 sheng-ren 的 `epub::assemble_with`（288→111 行）。产物差别（`tests/fixtures/sample.pdf` 转出前后逐条目比）：可见文字、条目名与顺序、9 张图逐字节都一样；`<html>` 上多了 `lang="zh"`（以前只有 `xml:lang="zh"`），OPF 里样式表的 manifest 条目换成单独一行；PDF 书签超过两级时目录按实际层级嵌套（以前三级及以下压成第二级，这个样本没有）。
+- `pdfimg`：解码、裁边、缩放、编码改用 `bookconv::imgopt::{decode_page, trim_page, Page8}`（500→228 行，含测试），只留 PDF 专用的"按 `place_image` 绘制尺寸一次缩放、低分辨率 JPEG 预放大"。两个选项和 sheng-ren 漫画页不同：裁边 `TrimMode::AnyUniform`（任何纯色边都裁，沿用旧行为——扫描件的黑框要裁；sheng-ren 只裁白边，因为它裁完补白边）、`apply_exif: false`（PDF 阅读器画内嵌 JPEG 不看 EXIF，旧版也不摆正）。《哆啦A夢》6 页真图 + 白边/黑边/彩边/灰度低分辨率 4 张合成图，迁移前后 `prepare_comic_page_for_pdf` 输出逐字节相同。`fast_image_resize` 依赖随之去掉。
 
 ## 第 C 章 落库、大文件、漫画、xochitl 代理（含 KOReader 历史）
 

@@ -2392,7 +2392,6 @@ name = "shelf-conv"
 version = "0.1.0"
 dependencies = [
  "bookconv",
- "fast_image_resize",
  "hayro",
  "image",
  "lopdf",
