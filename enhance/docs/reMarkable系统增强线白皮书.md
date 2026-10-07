@@ -104,7 +104,7 @@
 | CJK 荧光笔精确吸附 | 管理 → 系统增强 | `reading-qol.json` 的 `hlSnapCjk`（默认开） |
 | 单击翻页 / 日漫翻页规则 | 管理 → 系统增强 | `reading-qol.json` 的 `tapPageTurn` / `rtlPageTurn`（默认都关），`reader-page-turn.qmd` 每次打开书读一次（§03i） |
 
-同一个 `/api/enhance/*` 接口还管着「管理 → 实验室」里的两个开关（漫画页边距最小化、导入 md 文档），它们属于书架和笔记线，见[网关白皮书](../../gateway/docs/reMarkable网关白皮书.md) §06。2026-09-30 前这里还有「电池刺客」启停和「CJK 手写笔迹优化」两个开关，随功能移除；旧设备 `reading-qol.json` 里的 `hwStroke*` 键会原样留着（见下一段"全量写回"），没有程序再读它们。
+同一个 `/api/enhance/*` 接口还管着「管理 → 实验室」里的「导入 md 文档」开关，它属于笔记线（「漫画页边距最小化」开关 2026-10-07 删除：带 sheng-ren 页边距标记的漫画加入 xochitl 后一律在首次打开时设页边距 1，不带标记的书不碰，见书架传书线架构 §3；旧 `comicMinMargin` 键原样留着、无人再读），见[网关白皮书](../../gateway/docs/reMarkable网关白皮书.md) §06。2026-09-30 前这里还有「电池刺客」启停和「CJK 手写笔迹优化」两个开关，随功能移除；旧设备 `reading-qol.json` 里的 `hwStroke*` 键会原样留着（见下一段"全量写回"），没有程序再读它们。
 
 **全量写回**：`reading-qol.json` 是多方共享的文件（网关、旧原生设置页、C 扩展、qmd 都读，前三者会写）。`gateway/src/enhance/qol.rs` 把整份文件当不透明 JSON 读进来、只改要改的键，不认识的键原样写回，并在进程内串行化，避免冲掉别处写的开关。（`qol.rs` 头注说的"系统增强白皮书 §08「全量防覆盖」"是已移出仓库的旧系统增强白皮书，规则就是这一段。）
 
@@ -126,7 +126,7 @@
 - 扩展开关旁有「已加载 / 未加载」徽章；「管理 → 基石」另列一行"xochitl 里生效的扩展"。
 - 数据来自 `gateway/src/enhance/loaded.rs`：找 `comm == xochitl` 且父进程是 1 的主进程（排除渲染 PDF 时 fork 出的同名子进程），读它的 `/proc/<pid>/maps`，映射了哪个 `extensions.d/*.so` 就算已加载；映射了 `xovi.so` 说明 xovi 生效。
 - **徽章的边界**：它只证明 `.so` 进了进程（走完了 `_xovi_shouldLoad`），不证明 hook 装上了；后者看 journal 里的"hook 安装完成"。
-- 「漫画页边距最小化」靠 qmd 补丁 `shelf-comic-margins.qmd`，不是 `.so`。判定：qt-resource-rebuilder.so 在主进程里、补丁文件在它的 exthome、且修改时间早于 xochitl 启动时间（`/proc/<pid>/stat` 第 22 列 + `/proc/stat` 的 btime）算已载入；文件比进程新报「待重启」。这是按加载机制推断，看不到补丁里的 LOCATE 是否全部命中。
+- 漫画页边距靠 qmd 补丁 `shelf-comic-margins.qmd`，不是 `.so`（2026-10-07 起实验室里的开关卡片删除，下面这套加载判定当时用于那张卡片的徽章）。判定：qt-resource-rebuilder.so 在主进程里、补丁文件在它的 exthome、且修改时间早于 xochitl 启动时间（`/proc/<pid>/stat` 第 22 列 + `/proc/stat` 的 btime）算已载入；文件比进程新报「待重启」。这是按加载机制推断，看不到补丁里的 LOCATE 是否全部命中。
 - 「导入 md 文档」只控制网页子标签，标「网页功能」，没有加载这回事。
 
 ## 03a｜hl-snap：荧光笔 CJK 精确吸附（2026-09-09，真机通）
@@ -238,11 +238,11 @@ battop 早于这条线存在（08-27 电池审计后建的长期耗电追踪工�
 
 **区域**（用户定）：左右各 7% 宽，纵向只在屏幕高度 45%–80% 之间；比 08 月旧版（10%、25%–85%）更窄更低，进一步避开顶部工具栏、底部进度条和握持的四角。
 
-**怎么判断"从右往左"**：只看 EPUB OPF 的 `<spine page-progression-direction="rtl">`。book-serve 用 `bookconv::placeholder::epub_is_rtl` 读书库里 `<uuid>.epub` 的 container.xml 和 OPF 两个 zip 条目（一卷漫画数百 MB，不能整本读），按（大小, mtime）缓存。09-24 设备书库 58 本 EPUB 里 7 本带这个标记（6 卷《死亡筆記》、1 卷《火影》），说明书架优化会保留它（2026-09-30 起优化只保留、不写这个属性）。
+**怎么判断"从右往左"**：只看 EPUB OPF 的 `<spine page-progression-direction="rtl">`。book-serve 用 `shelf_conv::placeholder::epub_is_rtl`（2026-10-07 前是 `bookconv::placeholder`）读书库里 `<uuid>.epub` 的 container.xml 和 OPF 两个 zip 条目（一卷漫画数百 MB，不能整本读），按（大小, mtime）缓存。09-24 设备书库 58 本 EPUB 里 7 本带这个标记（6 卷《死亡筆記》、1 卷《火影》），说明书架优化会保留它（2026-09-30 起优化只保留、不写这个属性）。〔2026-10-07 起书架不再优化书，书在电脑上用 sheng-ren 优化，它同样原样保留原书的方向标记。〕
 
 **手动指定清单**：calibre 转出的漫画大多不写这个标记（同日核对：《亂馬½ 典藏版》4–9 卷、《镖人》2–5 卷、東立版《火影》8–10 卷都没有，Kmoe 版都写了）。用户定"这次先手动指定，以后新传的书还是看书里自带的标记"，所以加了 `~/.local/state/shelf/books/rtl-overrides.json`（xochitl 文档 uuid 数组，每次查询现读），当天把这 13 本写进去了。**2026-09-30 起这份清单只读**：book-serve 不再写，已有条目照旧生效，要撤就手动删文件或删条目。
 
-**母版库按书指定方向（09-25 加，09-30 已移除）**：用户定翻页方向只保留原书自带的。当时母版库页可以勾选 EPUB 设「阅读方向」，优化时写进 OPF，已加入 xochitl 的书顺手写进/移出手动清单（09-25 真机《乱马》11/12 卷生效）。规则与数据流见书架 EPUB 优化规范白皮书 §4.6、传书线架构 §2.6（均已标历史）。
+**母版库按书指定方向（09-25 加，09-30 已移除）**：用户定翻页方向只保留原书自带的。当时母版库页可以勾选 EPUB 设「阅读方向」，优化时写进 OPF，已加入 xochitl 的书顺手写进/移出手动清单（09-25 真机《乱马》11/12 卷生效）。规则与数据流见书架传书线架构 §2.5（已标历史）；当时的 EPUB 优化规范白皮书 2026-10-07 已删除，见 git 历史。
 
 **已知限制**：没在 OPF 里标 rtl、也不在手动清单里的日漫不会反转，现在只能手改 `rtl-overrides.json` 或自己改书；书本身写着 rtl 的副本不能改成"从左往右"（清单只能加不能反向覆盖）；改开关要重新打开书；只影响 xochitl。
 

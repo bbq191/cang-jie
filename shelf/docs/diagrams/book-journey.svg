@@ -66,9 +66,9 @@
 <text x="853" y="222" font-size="11" fill="#1a1a1a">占位 + 磁盘替换</text>
 <text x="842" y="242" font-size="11" fill="#1a1a1a">再大：整本拒绝</text>
 <text x="842" y="268" font-size="11" fill="#4a4a4a">· 渲染自检：页数 vs 预期</text>
-<text x="842" y="292" font-size="11" fill="#4a4a4a">· 漫画带页边距标记且</text>
-<text x="853" y="310" font-size="11" fill="#4a4a4a">「实验室→漫画页边距」开：</text>
-<text x="853" y="328" font-size="11" fill="#4a4a4a">首次打开自动设页边距</text>
+<text x="842" y="292" font-size="11" fill="#4a4a4a">· 漫画带 sheng-ren 页边距标记：</text>
+<text x="853" y="310" font-size="11" fill="#4a4a4a">一律登记（没有开关），</text>
+<text x="853" y="328" font-size="11" fill="#4a4a4a">首次打开自动设页边距 1</text>
 
 <!-- 横切 -->
 <rect x="24" y="394" width="512" height="104" rx="10" fill="#f0efe9" stroke="#8a8a8a"/>

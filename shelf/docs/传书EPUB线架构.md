@@ -146,16 +146,15 @@ HTTP 层是**异步**的（`spawn_deliver`：起线程 + `catch_unwind` + 解忙
 
 （历史：2026-09-25～09-29 母版库可以按书设方向、优化时写进 OPF，2026-09-30 用户定移除；当时的接口 `POST /staging/direction`、列表的 `direction`/`directionStale` 都已删，设计与真机记录见书架白皮书与 git 历史。旧边车里的 `direction` 字段照读、忽略。）
 
-## 3｜漫画页边距（实验室开关 `comicMinMargin`）
+## 3｜漫画页边距（带 sheng-ren 标记的漫画一律登记）
 
-问题：xochitl 的图片框由"栏宽（303pt − 2×页边距，缺省 56）"与"高度上限 462.1pt"先到者决定，漫画页左右留白约 20/23pt；改 `.content` 会被运行中的 xochitl 盖回（5 次仅成功 1 次），须让 xochitl 自己调 `EpubProperties.setMargins`（真机诊断记录见 sheng-ren `docs/xochitl.md` 与书架白皮书 §03bk 之后的历史）。漫画按页边距 1 排版是 sheng-ren 的事；书架只负责**认标记、登记、让 xochitl 设页边距**。默认关。
+问题：xochitl 的图片框由"栏宽（303pt − 2×页边距，缺省 56）"与"高度上限 462.1pt"先到者决定，漫画页左右留白约 20/23pt；改 `.content` 会被运行中的 xochitl 盖回（5 次仅成功 1 次），须让 xochitl 自己调 `EpubProperties.setMargins`（真机诊断记录见 sheng-ren `docs/xochitl.md` 与书架白皮书 §03bk 之后的历史）。漫画按页边距 1 排版是 sheng-ren 的事；书架只负责**认标记、登记、让 xochitl 设页边距**。**2026-10-07 起没有开关**（用户定）：原来「管理→实验室→漫画页边距」（`comicMinMargin`，默认关）删除，带标记的漫画加入后一律登记；`reading-qol.json` 里旧的 `comicMinMargin` 键无人再读（网关写回时照常原样保留未知键）。
 
 | 环节 | 代码 | 行为 |
 |---|---|---|
-| 开关 | 网页「管理→实验室」写 `~/.local/share/cangjie-ime/reading-qol.json` 的 `comicMinMargin`（`comic_margins.rs::enabled()` 每次现读；缺文件/缺键/非布尔＝关） | 关：不登记、`GET /margins/<uuid>` 恒 404 |
-| 认标记 | `Staging::comic_margin_eligible` → `Option<u32>`：开关开 ∧ 书里有 `META-INF/eink-reader-margins`（sheng-ren 按 `xochitl` 模式优化漫画时写，值是页边距，现为 `1`） | 只认 sheng-ren 的标记。**书架 2026-10-07 前自己优化的漫画不再认**（旧标记的兼容判断随 `shelf_conv::legacy` 删掉），要用 sheng-ren 重新优化后再加入 |
+| 认标记 | `Staging::comic_margin_eligible` → `Option<u32>`：书里有 `META-INF/eink-reader-margins`（sheng-ren 按 `xochitl` 模式优化漫画时写，值是页边距，现为 `1`） | 只认 sheng-ren 的标记；不带标记的书（文字书、PDF、旧漫画）完全不碰。**书架 2026-10-07 前自己优化的漫画不再认**（旧标记的兼容判断随 `shelf_conv::legacy` 删掉），要用 sheng-ren 重新优化后再加入 |
 | 登记 | `register_comic_margins(uuid, 页边距)` 写 `comic-margins.json` | 普通上传在渲染自检认到 uuid 时登记；大文件通道替换后立即登记 |
-| 执行 | `shelf/xovi/shelf-comic-margins.qmd`（注入 DocumentView）：开书 1.5 秒后 `GET /margins/<uuid>`（404 不动；200 调 `setMargins(m)`），成功后 `POST /margins/applied` 销账 | **每本只设一次**，用户改回去不再干预；qmd 只在 xochitl 启动时加载，装/改后要**整机重启**（2026-09-25 起不再 `systemctl restart xochitl`，停 xochitl 本身会概率性崩） |
+| 执行 | `shelf/xovi/shelf-comic-margins.qmd`（注入 DocumentView）：开书 1.5 秒后 `GET /margins/<uuid>`（404 不动；200 调 `setMargins(m)`），成功后 `POST /margins/applied` 销账 | **每本只设一次**：想要回缺省页边距 56 的，首次打开后在阅读器「文字设置」里自己调回，之后不再干预；qmd 只在 xochitl 启动时加载，装/改后要**整机重启**（2026-09-25 起不再 `systemctl restart xochitl`，停 xochitl 本身会概率性崩） |
 
 ## 4｜设备端代理队列：为什么不能直接建文件夹/删文档
 
@@ -277,7 +276,7 @@ xochitl `/upload` 约 100MB 硬限（超了断连）。超过体积门时 `Stagi
 | `uploadTimeoutSecs` | 300 | `/upload` 超时（超时但已送达判 `LikelyDelivered`，绝不重试） |
 | `nativeUploadLimitMb` | 90 | 投原生体积门：≤ 普通上传，> 大文件占位通道（§5、§6.1）；0＝不拦 |
 
-另有跨进程开关 `~/.local/share/cangjie-ime/reading-qol.json` 的 `comicMinMargin`（网关经 `PUT /api/enhance/qol` 写、book-serve 读）。
+（2026-10-07 前还有跨进程开关 `reading-qol.json` 的 `comicMinMargin`，随实验室卡片删除，book-serve 不再读。）
 
 **`/api/books/*`**（网关代理到 `book-serve:8790`，代理层剥掉 `books` 段；直连后端去掉 `/api/books` 前缀）：
 
@@ -290,7 +289,7 @@ POST /staging/rename {name, newName} 改名（扩展名不变、边车跟随；�
 POST /staging/deliver {name, folder?} 异步加入 xochitl
 POST /staging/mark {name, target?}   标记已加入 xochitl（target 只剩 native、可省略；koreader 回 400；现无调用方）
 POST /staging/delete {name}          删除条目（忙时 400）
-GET  /margins/{uuid} · POST /margins/applied {uuid}   漫画页边距待办（qmd 用；开关关时 GET 恒 404）
+GET  /margins/{uuid} · POST /margins/applied {uuid}   漫画页边距待办（qmd 用；没登记的 uuid GET 回 404）
 GET  /reading-direction/{uuid}       → {rtl}（reader-page-turn.qmd 用，§2.5）
 GET  /events                         SSE 事件流
 POST /trash/add · GET /trash/pending · GET /trash      原生回收站代理队列
@@ -313,7 +312,8 @@ GET  /agent-failures · POST /agent-failures/clear      两个代理交满次数
 
 - **书架不检查书优化过没有**：没经过 sheng-ren 的书照样能入库、加入，在 xochitl 上排版好不好全看书本身。渲染自检报 `warn` 时网页提示用 sheng-ren 重新优化。
 - **书内显示名**：普通上传时 xochitl 显示书里的 `dc:title`，书架只规范文件名、不改书；大文件通道的占位对带卷标记的书用规范名。两条路显示名可能不一致，要一致就在 sheng-ren 那边定书名（2026-10-07 前「优化」会把带卷标记的书 `dc:title` 改成规范名）。
-- **旧版优化的漫画**：书架 2026-10-07 前自己优化的漫画不带 sheng-ren 的页边距标记，加入后不会自动设页边距；要用 sheng-ren 重新优化再上传。母版库里设备上优化过的其它书照样能加入。
+- **旧版优化的漫画**：书架 2026-10-07 前自己优化的漫画不带 sheng-ren 的页边距标记，加入后不会自动设页边距；要用 sheng-ren 重新优化再上传。
+- **漫画页边距没有开关**：带标记的漫画首次打开一律设成 1；不想要的只能在阅读器里每本手动调回。母版库里设备上优化过的其它书照样能加入。
 - **旧设备残留**：`staging/.pdf-originals/` 里的旧备份不会再被清理，需要时手动删。
 - 网关代理对 ≤256KB 且不是下载的应答、以及没有 `Content-Length` 的应答仍整体缓冲（§1）；它们都是小 JSON，不改。
 - 并发控制（§7.3）：note-serve 与 book-serve 同时投 xochitl 时上传锁管不到。

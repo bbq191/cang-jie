@@ -15,16 +15,16 @@
 <rect x="262" y="104" width="886" height="90" rx="10" fill="#fff3d6" stroke="#c9971f" stroke-width="1.6"/>
 <text x="705.0" y="124" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">gateway · 0.0.0.0:443（唯一对外入口）</text>
 <text x="705.0" y="150.5" text-anchor="middle" font-size="10.5" fill="#4a4a4a">HTTPS（带名称约束的私有 CA）+ 登录密码（失败按来源 IP 限速）· 网页 UI · /api/&lt;服务&gt;/* 反向代理 · 服务注册表发现</text>
-<text x="705.0" y="164.0" text-anchor="middle" font-size="10.5" fill="#4a4a4a">批量队列（落盘续跑）· 并发/内存预算闸门 · SSE 事件汇聚 · 系统增强开关与扩展加载状态 · 设备健康 / OTA 提示</text>
+<text x="705.0" y="164.0" text-anchor="middle" font-size="10.5" fill="#4a4a4a">批量队列（落盘续跑）· 并发闸门 · SSE 事件汇聚 · 系统增强开关与扩展加载状态 · 设备健康 / OTA 提示</text>
 <polyline points="220,150 262,150" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#top-a)"/>
 <text x="241" y="140" text-anchor="middle" font-size="10.5" fill="#555">HTTPS</text>
 <rect x="262" y="222" width="886" height="144" rx="10" fill="#f3faf4" stroke="#3f9a55" stroke-width="1.3" stroke-dasharray="6 4"/>
 <text x="274" y="240" text-anchor="start" font-size="11" font-weight="bold" fill="#2f6f40">书架线 shelf · 系统增强线 enhance 的 Web 服务</text>
 <rect x="274" y="250" width="280" height="104" rx="10" fill="#ffffff" stroke="#3f9a55" stroke-width="1.6"/>
 <text x="414.0" y="269" text-anchor="middle" font-size="12" font-weight="bold" fill="#1a1a1a">book-serve :8790</text>
-<text x="414.0" y="294" text-anchor="middle" font-size="10" fill="#4a4a4a">母版库：入库·优化·加入 xochitl</text>
+<text x="414.0" y="294" text-anchor="middle" font-size="10" fill="#4a4a4a">母版库：入库·加入 xochitl（不改书）</text>
 <text x="414.0" y="307" text-anchor="middle" font-size="10" fill="#4a4a4a">&gt;90MB 走占位+磁盘替换通道</text>
-<text x="414.0" y="320" text-anchor="middle" font-size="10" fill="#4a4a4a">PDF 转 EPUB · 原件下载/改名 · 抓网文</text>
+<text x="414.0" y="320" text-anchor="middle" font-size="10" fill="#4a4a4a">原件下载 / 改名 · 书先在电脑上用 sheng-ren 优化</text>
 <text x="414.0" y="333" text-anchor="middle" font-size="10" fill="#4a4a4a">回收站 / 建夹队列（设备端代理执行）</text>
 <rect x="568" y="250" width="280" height="104" rx="10" fill="#ffffff" stroke="#3f9a55" stroke-width="1.6"/>
 <text x="708.0" y="269" text-anchor="middle" font-size="12" font-weight="bold" fill="#1a1a1a">font-serve :8792</text>

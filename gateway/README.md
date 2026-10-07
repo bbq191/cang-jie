@@ -17,10 +17,10 @@
 | HTTPS 与登录 | `auth.rs`、`config.rs` | 私有 CA 签的证书 + 只要密码的登录页；命令行用 Basic（验过的密码缓存 10 分钟，免每次 60 万轮 PBKDF2）；输错按来源 IP 限速 |
 | 服务发现 + 反向代理 | `manage.rs`、`proxy.rs` | `/api/<seg>/*` 剥掉 `<seg>` 转给对应服务；上传边读边转，有长度的下载/大应答（>256KB）边读边发；GET/DELETE 不转发请求体也不带 `Content-Length`；服务没起 → 404，网页隐藏对应标签 |
 | 事件汇聚 | `events.rs` | 各服务的 `GET /events` 汇成一条 SSE `/api/events`，网页不轮询；前台 tab 按事件来源只重取受影响的那几个接口（白皮书 §5.1）；浏览器放弃重连时网页自己退避重开（§03） |
-| 并发/内存闸门 | `budget.rs` | 设备约 2GB 内存：>90MB 的书同时只处理 1 本，其余同时 3 本，排队最长 30 分钟（拦优化、加入 xochitl、勾了同步优化的抓网文三种请求） |
-| 批量队列 | `batch.rs` | 勾选多本后由网关后台一次一本地“优化 / 加入 xochitl”，状态落盘、重启续跑、可全部中止 |
+| 并发/内存闸门 | `budget.rs` | 设备约 2GB 内存：>90MB 的书同时只处理 1 本，其余同时 3 本，排队最长 30 分钟（只拦「加入 xochitl」；2026-10-07 前还拦优化与抓网文，书架不再优化书后撤掉） |
+| 批量队列 | `batch.rs` | 勾选多本后由网关后台一次一本地“加入 xochitl”，状态落盘、重启续跑、可全部中止（已交给书架的那本会跑完） |
 | 管理台 | `manage.rs` | 各服务“未装 / 已装未开 / 已开”三态、启停、卸载；探测 xovi 与 qt-resource-rebuilder |
-| 系统增强开关 | `enhance/` | 荧光笔汉字吸附、阅读器单击翻页 / 日漫翻页规则、导入 md、漫画页边距；并显示扩展是否真的加载进 xochitl（手写笔迹优化、电池刺客 2026-09-30 已移除） |
+| 系统增强开关 | `enhance/` | 荧光笔汉字吸附、阅读器单击翻页 / 日漫翻页规则、导入 md；并显示扩展是否真的加载进 xochitl（手写笔迹优化、电池刺客 2026-09-30 已移除；漫画页边距开关 2026-10-07 删除，带 sheng-ren 标记的漫画一律设） |
 | 设备健康 / OTA 提示 / 清理 | `device/` | 「管理 → 设备健康」五个二级 tab（概览 / 服务 / 扩展 / 日志 / 清理），只在打开或点刷新时采集；OTA 后页头横幅提示重装；清理早期遗留文件与 xochitl 书库同名副本（后者进 xochitl 回收站，可恢复） |
 
 ## 对外接口
@@ -34,9 +34,9 @@
 | 页面 | `GET /` · `GET /ui/locales/{lang}` · `GET/POST /password` · `GET /api/session` |
 | 服务发现 / 管理 | `GET /api/services` · `GET /api/manage` · `GET /api/foundation` · `POST /api/manage/{seg}/{start\|stop\|uninstall}` |
 | 事件 | `GET /api/events`（SSE） |
-| 系统增强 | `GET /api/enhance/status` · `PUT /api/enhance/qol`（`hlSnapCjk` / `notesImportMdEnabled` / `comicMinMargin` / `tapPageTurn` / `rtlPageTurn`）（`/api/enhance/battop/*` 与 `hwStrokeEnabled` 2026-09-30 已移除） |
+| 系统增强 | `GET /api/enhance/status` · `PUT /api/enhance/qol`（`hlSnapCjk` / `notesImportMdEnabled` / `tapPageTurn` / `rtlPageTurn`）（`/api/enhance/battop/*` 与 `hwStrokeEnabled` 2026-09-30 已移除；`comicMinMargin` 2026-10-07 随开关删除） |
 | 设备健康 | `GET /api/device/health[?fresh=1]` · `GET /api/device/ota` · `GET /api/device/wifi` · `GET /api/device/cleanup` · `POST /api/device/cleanup/delete {area, names}` |
-| 批量队列 | `POST /api/batch {action: optimize\|deliver, names? \| all:true, folder?}` → `{queued, skipped}` · `GET /api/batch/status` · `POST /api/batch/stop` |
+| 批量队列 | `POST /api/batch {action: deliver, names? \| all:true, folder?}`（2026-10-07 起 `optimize` 回 400） → `{queued, skipped}` · `GET /api/batch/status` · `POST /api/batch/stop` |
 | 闸门 | `GET /api/budget/status` → `{pending, active}` · `POST /api/budget/cancel {name}`（只对还在排队的生效） |
 | 反向代理 | `GET/POST/PUT/DELETE /api/<seg>/*`，`<seg>` ∈ `books` `fonts` `wallpapers` `ink` `transcribe` `mind` `notes` |
 
@@ -57,7 +57,7 @@
 
 - **依赖**：只依赖 [`../rmsvc-core`](../rmsvc-core/README.md)；独立 Cargo 项目，不在任何 workspace 里。
 - **构建/部署**：没有自己的脚本，由 `shelf/build.sh`（顺手编译本目录）和 `shelf/deploy.sh`（打包二进制 + `systemd/gateway.service`）代管。单独交叉编译：`cargo build --release --target aarch64-unknown-linux-musl`（用本目录 `.cargo/config.toml` 的 CC/AR 覆盖）。
-- **测试**（在仓库根目录跑；2026-09-30 移除电池刺客后实跑）：`cargo test --manifest-path gateway/Cargo.toml`（77 个）；前端 `node --check gateway/ui/app.js` 与 `node --test gateway/ui/test/*.test.mjs`（3 个文件共 10 项：断网兜底、XSS 转义、语言包一致）；浏览器冒烟手动跑 `PUPPETEER_NODE_MODULES=<含 puppeteer 的 node_modules 目录> node gateway/ui/test/smoke.puppeteer.mjs`；可视走查见 [`tools/screenshot-walkthrough/`](tools/screenshot-walkthrough/README.md)。
+- **测试**（在仓库根目录跑；2026-10-07 实跑）：`cargo test --manifest-path gateway/Cargo.toml`（75 个）；前端 `node --check gateway/ui/app.js` 与 `node --test gateway/ui/test/*.test.mjs`（3 个文件共 10 项：断网兜底、XSS 转义、语言包一致）；浏览器冒烟手动跑 `PUPPETEER_NODE_MODULES=<含 puppeteer 的 node_modules 目录> node gateway/ui/test/smoke.puppeteer.mjs`；可视走查见 [`tools/screenshot-walkthrough/`](tools/screenshot-walkthrough/README.md)。
 - **设备上的文件**：二进制 `~/.local/bin/gateway`；配置 `~/.config/shelf/gateway.json`；证书 `~/.config/shelf/tls/`；批量队列 `~/.local/state/shelf/batch.json`。
 
 ## 目录
@@ -67,7 +67,7 @@ src/
   main.rs      入口、子命令、路由注册
   auth.rs      登录守卫（Cookie/Basic）、首登必改、按 IP 限速
   config.rs    gateway.json：HTTPS 开关、密码哈希、mDNS 名、额外证书名、会话天数
-  proxy.rs     /api/<seg>/* 反向代理 + 三个吃内存操作的闸门拦截（优化/加入 xochitl/勾了同步优化的抓网文）
+  proxy.rs     /api/<seg>/* 反向代理 + 「加入 xochitl」的闸门拦截
   manage.rs    MODULES 服务表（唯一事实源）、管理台、基石探测
   events.rs    事件汇聚 Hub
   budget.rs    并发/内存闸门
