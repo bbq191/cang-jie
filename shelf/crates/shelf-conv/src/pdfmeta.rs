@@ -10,7 +10,7 @@
 //! 查某个对象时按"新节在前"逐节找它的位置，只读那一条；对象在对象流里就解压那一个流。
 //!
 //! **为什么不用 lopdf**：lopdf 0.45 的 `Document::load_metadata(path)` 也是先 `read_to_end` 整份文件进内存
-//! （`reader.rs` `load_metadata_internal`），几百 MB 的书在 2GB 设备上不可接受；pdf-extract-cj 建在 lopdf 之上，同理。
+//! （`reader.rs` `load_metadata_internal`），几百 MB 的书在 2GB 设备上不可接受。
 //!
 //! **内存上限**（全部是硬上限，超了就 `Err`，不分配）：
 //! - 单个字典对象（Catalog/Pages/trailer/流字典）窗口最多 [`MAX_DICT_OBJ_BYTES`]（4MB，从 16KB 起按需翻倍）；

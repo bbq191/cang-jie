@@ -1,4 +1,4 @@
-//! 事件总线 + SSE（Server-Sent Events）流：服务在**变更发生处**发事件（上传/优化/落库/删除/轮换/inbox 追平），
+//! 事件总线 + SSE（Server-Sent Events）流：服务在**变更发生处**发事件（上传/落库/删除/轮换/inbox 追平），
 //! 网关汇聚后推给浏览器，网页不轮询也能即时刷新（2026-09-06 用户："不喜欢轮询，要事件通知"）。
 //! - `EventBus`：进程内广播，订阅者各持一个有界通道（满了丢事件——事件只是"该刷新了"的信号，不携带状态）；
 //! - `SseStream`：把通道包成 `Read`，交给 HTTP 层（`http::respond_stream`：接管 socket、一帧一 flush，绕开 tiny_http 的 8 KB chunked 缓冲）；20 s 无事件发一行注释心跳，
