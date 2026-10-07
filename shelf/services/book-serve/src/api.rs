@@ -1,13 +1,14 @@
 //! HTTP 适配层（唯一碰 http 类型的地方，只做取参 + 调领域方法 + 回执）。路由（经网关时前缀 `/api/books`）：
 //! `GET /status`
 //! 母版库：`GET /staging` → `{items, freeBytes}` · `POST /staging`（multipart，原样入库）
-//! · `POST /staging/deliver {name, folder?}`（2026-09-19 起投完永远保留母版，不再有 `keep` 参数）· `POST /staging/mark {name, target?}`（target 只剩 native，可省略；koreader 已删）
+//! · `POST /staging/deliver {name, folder?}`（2026-09-19 起投完永远保留母版，不再有 `keep` 参数；`POST /staging/mark` 2026-10-07 删，
+//!   原调用方是已删的网关批量「加入 KOReader」）
 //! · `POST /staging/delete {name}` · `POST /staging/rename {name, newName}` · `GET /staging/file?name=`（原件下载，流式）
 //! · 2026-10-07 删除：`/staging/optimize`、`/staging/fetch-article`、`/staging/originals/*`、`/staging/cancel`（书架不再优化书，
 //!   优化全部在电脑上用 sheng-ren 做；剩下的投递没有能中途停的步骤）。
 //! · `GET /events`（SSE：母版库/inbox 变更即推，网页零轮询）。
-//! 原生回收站队列：`POST /trash/add {uuid, name}`（name 必须与书库 visibleName 相符）· `GET /trash/pending?wait=` → `{uuids}`（MainView 代理 qmd 长轮询拉取执行）· `GET /trash`。
-//! 原生建文件夹队列：`POST /mkdir/add {name}` · `GET /mkdir/pending` → `{names}`（MainView 代理 shelf-mkdir-agent.qmd 拉取执行）· `GET /mkdir`。
+//! 原生回收站队列：`POST /trash/add {uuid, name}`（name 必须与书库 visibleName 相符）· `GET /trash/pending?wait=` → `{uuids}`（MainView 代理 qmd 长轮询拉取执行）· `GET /trash`（只供调试：ssh 上 curl 看队列）。
+//! 原生建文件夹队列：`POST /mkdir/add {name}` · `GET /mkdir/pending?wait=` → `{names}`（MainView 代理 shelf-mkdir-agent.qmd 长轮询拉取执行）· `GET /mkdir`（只供调试）。
 //! 代理放弃记录：`GET /agent-failures` → `{items:[{kind,name,uuid?,at}]}` · `POST /agent-failures/clear`（两个队列交满次数仍没做成的项）。
 //! 2026-09-05 起规则统一"所有书只落母版库"：旧 `POST /?target=` 直投路已删（`/staging*` 是网页的唯一入口）。
 //! 直接导入 xochitl、不进母版库（2026-10-07，电脑上的 sheng-ren `booklib sync` 经 SSH 端口转发直连 8790 调，见 import.rs）：
@@ -52,19 +53,10 @@ pub fn router(st: Arc<State>) -> Router {
             let j = r.json()?;
             let name = j.str("name")?.to_string();
             // 母版库永远保留（可再投另一读器对照，2026-09-19 起不再有"投完自动删除"这条路）；
-            // folder 空＝配置缺省；非空且真不存在会先经 mkdir 队列建出来再投，见 ensure_folder。
+            // folder 空＝书库根；非空且真不存在会先经 mkdir 队列建出来再投，见 ensure_folder。
             s.staging.spawn_deliver(&name, j.str_or("folder", ""), s.mkdir.clone(), s.bus.clone()).map_err(ApiError::bad)?;
             s.bus.publish("books", "staging"); // 立即推一次，UI 马上看到这条目进入 busy 状态
             Ok(Reply::ok(&serde_json::json!({"ok": true, "message": format!("《{name}》已开始投递，完成后自动刷新"), "async": true})))
-        }))
-        // 手动记一笔落库（加入 xochitl）。以前网关批量「加入 KOReader」在 koreader-serve adopt 完成后调这里记
-        // `target=koreader`；KOReader 2026-09-29 从设备卸载、koreader-serve 源码 2026-09-30 从仓库删除（见 git 历史），
-        // 去向只剩 native：`target` 可省略，传 `native` 仍接受（向后兼容），传别的（含 `koreader`）一律 400。
-        .post("/staging/mark", bind(&st, |s, r| {
-            let j = r.json()?;
-            check_mark_target(j.str_or("target", "native")).map_err(ApiError::bad)?;
-            s.staging.mark_delivered(j.str("name")?).map_err(ApiError::bad)?;
-            staging_changed(s)
         }))
         // ── 漫画页边距待办（QML 代理 shelf-comic-margins.qmd 在书打开时查；见 comic_margins.rs）──
         .get("/margins/{uuid}", bind(&st, |s, r| match s.comic_margins.get(r.param("uuid")) {
@@ -124,15 +116,6 @@ pub fn router(st: Arc<State>) -> Router {
             s.staging.remove(r.json()?.str("name")?).map_err(ApiError::bad)?;
             staging_changed(s)
         }))
-}
-
-/// `POST /staging/mark` 的 `target`：只剩 `native`（KOReader 去向已删，见路由处注释）。
-fn check_mark_target(target: &str) -> Result<(), String> {
-    match target {
-        "native" => Ok(()),
-        "koreader" => Err("KOReader 已不再支持（2026-09-29 从设备卸载），target 只能是 native".into()),
-        _ => Err("target 只能是 native".into()),
-    }
 }
 
 /// 两个代理队列长轮询的 `?wait=<秒>`：缺省/非法＝0（立即返回），上限 [`AGENT_WAIT_MAX_SECS`]。
@@ -241,7 +224,7 @@ mod tests {
         let st = state(&t);
         let router = router(st.clone());
         st.staging.stage_new("x.epub", b"PK").unwrap();
-        assert!(st.staging.try_start_busy("x.epub"));
+        let busy = st.staging.busy_guard("x.epub", "").unwrap();
         for (path, body) in [
             ("/staging/deliver", r#"{"name":"x.epub"}"#),
             ("/staging/delete", r#"{"name":"x.epub"}"#),
@@ -253,7 +236,7 @@ mod tests {
         }
         assert!(msg(&call(&router, Method::Post, "/staging/delete", r#"{"name":"x.epub"}"#).1).contains("再删除"), "删除的忙提示带后缀");
         // 解锁后删除恢复正常（200），列表里没有了
-        st.staging.end_busy("x.epub");
+        drop(busy);
         assert_eq!(call(&router, Method::Post, "/staging/delete", r#"{"name":"x.epub"}"#).0, 200);
         assert!(st.staging.list().is_empty());
     }
@@ -279,22 +262,11 @@ mod tests {
     }
 
     #[test]
-    fn mark_and_unknown_routes() {
+    fn unknown_routes() {
         let t = tempfile::tempdir().unwrap();
         let st = state(&t);
         let router = router(st.clone());
-        st.staging.stage_new("m.epub", b"PK").unwrap();
-        // KOReader 去向已删（2026-09-30）：传 koreader 报错、不落记录；native（或省略 target）照常记原生落库。
-        let (code, v) = call(&router, Method::Post, "/staging/mark", r#"{"name":"m.epub","target":"koreader"}"#);
-        assert_eq!(code, 400);
-        assert!(msg(&v).contains("KOReader 已不再支持"), "{v}");
-        assert!(st.staging.list()[0].delivered.is_none(), "报错时不记任何落库");
-        let (code, v) = call(&router, Method::Post, "/staging/mark", r#"{"name":"m.epub","target":"kindle"}"#);
-        assert_eq!(code, 400);
-        assert!(msg(&v).contains("target 只能是 native"), "{v}");
-        assert_eq!(call(&router, Method::Post, "/staging/mark", r#"{"name":"m.epub","target":"native"}"#).0, 200, "native 仍接受（向后兼容）");
-        assert!(st.staging.list()[0].delivered.as_ref().unwrap().native.is_some(), "记了一笔原生落库");
-        assert_eq!(call(&router, Method::Post, "/staging/mark", r#"{"name":"m.epub"}"#).0, 200, "target 可省略");
+        assert_eq!(call(&router, Method::Post, "/staging/mark", r#"{"name":"m.epub"}"#).0, 404, "/staging/mark 已删");
         // 方法不对 405；路径不存在 404（已删的死路由 /inbox*、/staging/render/*、/staging/optimize 等同样 404）
         assert_eq!(call(&router, Method::Get, "/staging/render/abc", "").0, 404);
         assert_eq!(call(&router, Method::Get, "/inbox", "").0, 404);
@@ -339,7 +311,7 @@ mod tests {
         std::fs::write(st.spool.inbox().join("scp.epub"), b"x").unwrap();
         let (done_tx, done_rx) = std::sync::mpsc::channel();
         let st2 = st.clone();
-        std::thread::spawn(move || done_tx.send(st2.process_inbox(None)).unwrap());
+        std::thread::spawn(move || done_tx.send(st2.process_inbox()).unwrap());
         let out = done_rx.recv_timeout(std::time::Duration::from_secs(5)).expect("上传收体期间 inbox 追平不该被卡住");
         assert!(out.iter().any(|o| o.ok && o.name == "scp.epub"));
         tx.send(b"\r\n--B--\r\n".to_vec()).unwrap();

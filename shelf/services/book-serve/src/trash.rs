@@ -5,7 +5,7 @@
 //! 执行——网页「设备健康 → 清理」入队后设备上不翻书库就永远不执行，书不在当前文件夹也加不进选择集（真机：
 //! 《告白》《白夜行》在「好读精校」里，入队后一直没动）。现改为全局常驻 + 长轮询 + 按 id 调，跟建文件夹代理同构。本模块只管队列：入队时按 visibleName 核对 uuid（防错删），拉取时把已进回收站 /
 //! 已不存在的条目清掉（QML 端无需 ack）。队列文件 `$XDG_STATE_HOME/shelf/books/trash-pending.json`。
-//! 首个用途：渲染自检探针书（现已无此调用方，能力保留）送进回收站，不在原生书库里累积（2026-09-06）。
+//! 调用方：网页「管理 → 设备健康 → 清理」删书库里的重复副本、电脑上的 sheng-ren 删书（`POST /trash/add`）。
 //!
 //! 持久化+入队去重+剔除这层通用外壳委托 `pending_queue::PendingQueue<T>`（2026-09-09 消重复，跟
 //! `mkdir.rs` 是同一份基础设施，见该模块文档）；这里只留领域校验（uuid 形状/名字核对/是否已在回收站）。
@@ -47,8 +47,7 @@ impl TrashQueue {
 
     /// 文档 `.metadata` 的 (visibleName, parent)；文件不存在 → None。
     fn meta(&self, uuid: &str) -> Option<(String, String)> {
-        let t = std::fs::read_to_string(self.lib_dir.join(format!("{uuid}.metadata"))).ok()?;
-        let v: serde_json::Value = serde_json::from_str(&t).ok()?;
+        let v = rmsvc_core::xochitl::read_metadata(&self.lib_dir, uuid)?;
         let s = |k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
         Some((s("visibleName"), s("parent")))
     }

@@ -91,7 +91,7 @@ fn classic_table_pages_not_object_2() {
 
 #[test]
 fn placeholder_pdf_has_one_page() {
-    assert_eq!(count(&crate::placeholder::pdf_placeholder().unwrap()), Ok(1));
+    assert_eq!(count(&crate::placeholder::pdf_placeholder()), Ok(1));
 }
 
 #[test]

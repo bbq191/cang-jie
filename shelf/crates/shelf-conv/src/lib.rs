@@ -28,12 +28,6 @@ impl ContentType {
             ContentType::Pdf => "application/pdf",
         }
     }
-    pub fn ext(self) -> &'static str {
-        match self {
-            ContentType::Epub => "epub",
-            ContentType::Pdf => "pdf",
-        }
-    }
 }
 
 /// 按扩展名判 xochitl 能直接读的格式（EPUB/PDF），其余 `None`。

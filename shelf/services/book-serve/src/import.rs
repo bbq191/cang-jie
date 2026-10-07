@@ -6,7 +6,8 @@
 //!   母版库目录，不进母版库列表），再照落库那条路加入 xochitl——≤ 体积门走普通 `/upload`，超了走大文件通道（占位 + 磁盘替换）。
 //!   `/upload` 不回 uuid：按"上传前没有、上传后新出现、`<uuid>.epub` 与上传的字节逐字节相同"认出这份新文档。
 //! - **原地替换**（[`Importer::replace`]）：已有文档的 `<uuid>.epub` 换成新内容，uuid 不变（阅读进度 `lastOpenedPage`、
-//!   所在文件夹、页边距等 `.content`/`.metadata` 里的东西都不动）；删掉渲染缓存 `.pdf`/`.epubindex`，让 xochitl 下次打开时重排。
+//!   所在文件夹、页边距等 `.content`/`.metadata` 里的东西都不动，漫画页边距也不重新登记——用户在阅读器里调过的不被覆盖）；
+//!   删掉渲染缓存 `.pdf`/`.epubindex`，让 xochitl 下次打开时重排。
 //! - **查询**（[`Importer::describe`]）：这份文档还在不在、叫什么、在哪个文件夹（客户端据此决定替换还是重新导入）。
 //!
 //! 删除不另设接口：客户端用已有的 `POST /trash/add {uuid, name}`（走 xochitl 自己的回收站代理，见 `trash.rs`）。
@@ -16,9 +17,10 @@
 //! 设了 60 秒超时（`READ_IDLE_TIMEOUT`），处理期间服务端不读 socket，不受它影响。
 use crate::mkdir::MkdirQueue;
 use crate::ops::OpRegistry;
+use crate::scratch::ScratchFile;
 use crate::staging::{Staging, MAX_DIRECT_BYTES};
 use rmsvc_core::fs::{plain_name, same_content, Content};
-use rmsvc_core::xochitl::{find_documents_since, is_uuid_shape, Delivery, Xochitl};
+use rmsvc_core::xochitl::{find_documents_since, is_uuid_shape, read_metadata, Delivery, Xochitl};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -28,6 +30,8 @@ use std::time::Duration;
 pub const CLAIM_WAIT: Duration = Duration::from_secs(20);
 /// `/upload` 读超时 / 408（"很可能已送达"，见 `upload_likely_delivered`）时多等一会：xochitl 还在处理大书。
 pub const CLAIM_WAIT_SLOW: Duration = Duration::from_secs(120);
+/// 认领时书库目录写入的防抖（xochitl 导入时连写 metadata/content/epub）。
+const CLAIM_DEBOUNCE: Duration = Duration::from_millis(500);
 
 /// 直接导入的错误：HTTP 层按种类映射成 400 / 404 / 500（领域模块不碰 http 类型）。
 #[derive(Debug, PartialEq)]
@@ -52,24 +56,17 @@ pub struct DocState {
     pub deleted: bool,
 }
 
-/// 临时文件：出错、panic 时 Drop 删掉；正常路径下已被 rename 走或用完，删不到也无害。
-struct PartFile(PathBuf);
-
-impl Drop for PartFile {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.0);
-    }
-}
-
 pub struct Importer {
     xochitl: Arc<Xochitl>,
     /// 借用落库那套：`ensure_folder`（经建文件夹队列建出目标文件夹）、漫画页边距的判定与登记。母版库本身不碰。
     staging: Staging,
-    /// 新导入的请求体落在这（`$XDG_STATE_HOME/shelf/books/import-tmp/`，/home 分区，与 xochitl 书库同分区）。
+    /// 新导入和原地替换的请求体都先落在这（`$XDG_STATE_HOME/shelf/books/import-tmp/`，/home 分区，与 xochitl 书库同分区，
+    /// 替换时收完再 rename 进书库）。进程中途被杀留下的半成品由 [`Importer::ensure`] 在启动时清掉——此前替换直接写书库里的
+    /// `<uuid>.epub.new`，被杀就一直留在书库目录里（最大 1GB）。
     tmp_dir: PathBuf,
     /// 普通上传的体积门（字节，0=不拦），同 `BookConfig::native_upload_limit_bytes`。
     native_limit: u64,
-    /// 正在替换的 uuid：同一份文档同时只允许一个替换（都写 `<uuid>.epub.new`）。
+    /// 正在替换的 uuid：同一份文档同时只允许一个替换。
     replacing: OpRegistry,
     pub claim_wait: Duration,
     pub claim_wait_slow: Duration,
@@ -105,17 +102,22 @@ impl Importer {
     pub fn import_new(&self, name: &str, folder: &str, body: &mut dyn Read, declared_len: Option<usize>, mkdir: &MkdirQueue) -> Result<DocState, ImportError> {
         check_name(name)?;
         let lib = self.lib()?;
-        static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-        let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        let part = PartFile(self.tmp_dir.join(format!("{}.{seq}.epub.part", std::process::id())));
-        let size = receive(body, declared_len, &part.0)?;
+        let part = ScratchFile::new(&self.tmp_dir, "", "epub.part");
+        let size = receive(body, declared_len, part.path())?;
         // 体收完、校验过才动文件夹：坏请求不该留下一个空文件夹。
         let folder = folder.trim();
         self.staging.ensure_folder(folder, mkdir);
-        let uuid = if self.native_limit > 0 && size > self.native_limit { self.upload_large(&part.0, name, folder)? } else { self.upload_and_claim(lib, &part.0, name, folder)? };
-        if let Some(m) = self.staging.comic_margin_eligible(&part.0) {
-            self.staging.register_comic_margins(&uuid, name, m);
-        }
+        let uuid = if self.native_limit > 0 && size > self.native_limit {
+            // 大文件通道自己登记漫画页边距（同母版库落库那条路）。
+            let up = self.staging.upload_large(part.path(), name, folder).map_err(ImportError::Failed)?;
+            up.ok_or_else(|| ImportError::Bad("读不了这本 EPUB，造不出大文件通道的占位文档".into()))?.uuid
+        } else {
+            let uuid = self.upload_and_claim(lib, part.path(), name, folder)?;
+            if let Some(m) = shelf_conv::epub::Book::open(part.path()).ok().and_then(|mut b| b.reader_margins()) {
+                self.staging.register_comic_margins(&uuid, name, m);
+            }
+            uuid
+        };
         println!("[book-serve] 直接导入《{name}》{} KB → {uuid}", size >> 10);
         self.describe(&uuid).ok_or_else(|| ImportError::Failed(format!("已加入 xochitl（{uuid}），但读不到它的 .metadata")))
     }
@@ -132,33 +134,27 @@ impl Importer {
             Ok(Delivery::LikelyDelivered(_)) => self.claim_wait_slow,
             Err(e) => return Err(ImportError::Failed(format!("上传给 xochitl 失败: {e}"))),
         };
-        let deadline = std::time::Instant::now() + wait;
-        loop {
-            let found = find_documents_since(lib, since)
+        // 先查一次（真机导入当下同步渲染，回执时多半已经落盘），没有再等书库目录的变化（事件驱动，此前每 200ms 扫一遍书库）。
+        let claim = || {
+            find_documents_since(lib, since)
                 .into_iter()
-                .find(|d| !before.contains(&d.uuid) && same_content(&lib.join(format!("{}.epub", d.uuid)), Content::File(part)));
-            if let Some(d) = found {
-                return Ok(d.uuid);
-            }
-            if std::time::Instant::now() >= deadline {
-                return Err(ImportError::Failed(format!(
-                    "已上传给 xochitl，但 {} 秒内没在书库里认出《{name}》（可能稍后才出现；先在设备上看一眼，别马上重试，免得重复）",
-                    wait.as_secs()
-                )));
-            }
-            std::thread::sleep(Duration::from_millis(200));
+                .find(|d| !before.contains(&d.uuid) && same_content(&lib.join(format!("{}.epub", d.uuid)), Content::File(part)))
+                .map(|d| d.uuid)
+        };
+        let mut found = claim();
+        if found.is_none() {
+            rmsvc_core::fswatch::watch_until(lib, CLAIM_DEBOUNCE, wait, |_| {
+                found = claim();
+                found.is_some()
+            });
         }
+        found.or_else(claim).ok_or_else(|| {
+            ImportError::Failed(format!("已上传给 xochitl，但 {} 秒内没在书库里认出《{name}》（可能稍后才出现；先在设备上看一眼，别马上重试，免得重复）", wait.as_secs()))
+        })
     }
 
-    /// 超过体积门：大文件通道（占位 + 磁盘替换，同 `Staging::try_deliver_direct`），它自己返回 uuid。
-    fn upload_large(&self, part: &Path, name: &str, folder: &str) -> Result<String, ImportError> {
-        // 显示名沿用书自己的 dc:title（sheng-ren 优化时已写好规范书名）。
-        let placeholder = shelf_conv::placeholder::epub_placeholder(part, None).map_err(|e| ImportError::Bad(format!("读不了这本 EPUB，造不出大文件通道的占位文档: {e}")))?;
-        self.xochitl.upload_large_file(part, name, "application/epub+zip", folder, &placeholder, None).map_err(ImportError::Failed)
-    }
-
-    /// 原地替换 `<uuid>.epub`，uuid 不变：体流式写 `<uuid>.epub.new`（0600）→ 删渲染缓存 → 原子 rename。`.content`/`.metadata` 不动
-    /// （保留 `lastOpenedPage`、页边距、所在文件夹）。
+    /// 原地替换 `<uuid>.epub`，uuid 不变：体流式写进临时目录（0600）→ 删渲染缓存 → rename 进书库（同分区，原子）。
+    /// `.content`/`.metadata` 不动（保留 `lastOpenedPage`、页边距、所在文件夹），漫画页边距不重新登记。
     ///
     /// 删 `.pdf`/`.epubindex` 让 xochitl 下次打开时重排，与大文件通道替换占位的做法一致——**那条路（从没打开过的占位）2026-09-20/25
     /// 真机验证过；这条路对「已经打开过、已排版」的书 xochitl 会不会正确重排、`lastOpenedPage` 落在新排版的哪一页，尚未真机验证。**
@@ -170,26 +166,14 @@ impl Importer {
         }
         let lib = self.lib()?;
         self.replaceable(uuid)?;
-        if !self.replacing.try_start(uuid) {
-            return Err(ImportError::Bad("这份文档正在替换中，请稍候".into()));
-        }
-        struct EndOp<'a>(&'a OpRegistry, &'a str);
-        impl Drop for EndOp<'_> {
-            fn drop(&mut self) {
-                self.0.end(self.1);
-            }
-        }
-        let _end = EndOp(&self.replacing, uuid);
-        let part = PartFile(lib.join(format!("{uuid}.epub.new")));
-        receive(body, declared_len, &part.0)?;
+        let _busy = self.replacing.try_guard(uuid).ok_or_else(|| ImportError::Bad("这份文档正在替换中，请稍候".into()))?;
+        let part = ScratchFile::new(&self.tmp_dir, "", "epub.part");
+        receive(body, declared_len, part.path())?;
         // 收体可能要好几分钟，期间用户可能在设备上把书删了：再确认一次，别把新文件写进回收站里的条目。
         self.replaceable(uuid)?;
         let _ = std::fs::remove_file(lib.join(format!("{uuid}.pdf")));
         let _ = std::fs::remove_file(lib.join(format!("{uuid}.epubindex")));
-        std::fs::rename(&part.0, lib.join(format!("{uuid}.epub"))).map_err(|e| ImportError::Failed(format!("替换文件失败: {e}")))?;
-        if let Some(m) = self.staging.comic_margin_eligible(&lib.join(format!("{uuid}.epub"))) {
-            self.staging.register_comic_margins(uuid, name, m);
-        }
+        std::fs::rename(part.path(), lib.join(format!("{uuid}.epub"))).map_err(|e| ImportError::Failed(format!("替换文件失败: {e}")))?;
         println!("[book-serve] 原地替换《{name}》→ {uuid}");
         self.describe(uuid).ok_or_else(|| ImportError::Failed(format!("已替换（{uuid}），但读不到它的 .metadata")))
     }
@@ -226,10 +210,6 @@ impl Importer {
     }
 }
 
-fn read_metadata(lib: &Path, uuid: &str) -> Option<serde_json::Value> {
-    serde_json::from_str(&std::fs::read_to_string(lib.join(format!("{uuid}.metadata"))).ok()?).ok()
-}
-
 /// 文件名：单段、扩展名 `.epub`（不区分大小写）。只收 EPUB——优化好的书都是 EPUB，xochitl 也只认 EPUB/PDF。
 fn check_name(name: &str) -> Result<(), ImportError> {
     plain_name(name).map_err(ImportError::Bad)?;
@@ -241,7 +221,7 @@ fn check_name(name: &str) -> Result<(), ImportError> {
 
 /// 把请求体按块写进 `dest`（0600，覆盖旧的），不整本进内存。校验：非空、不超过 [`MAX_DIRECT_BYTES`]、收到的字节数等于
 /// `Content-Length`（客户端中途断开时 tiny_http 的定长读取会提前结束）、开头是 zip 本地文件头（`PK\3\4`，EPUB 是 zip）。
-/// 返回字节数；出错时由调用方的 [`PartFile`] 删掉半成品。
+/// 返回字节数；出错时由调用方的 [`ScratchFile`] 删掉半成品。
 fn receive(body: &mut dyn Read, declared_len: Option<usize>, dest: &Path) -> Result<u64, ImportError> {
     let too_big = || ImportError::Bad(format!("超过 {} MB 上限", MAX_DIRECT_BYTES >> 20));
     match declared_len {
@@ -416,8 +396,10 @@ mod tests {
         assert_eq!(im.describe("not-a-uuid"), None);
     }
 
+    /// 原地替换不重新登记漫画页边距：书一直是同一个文档，`.content` 里的页边距原样保留，用户在阅读器里调过的不被覆盖；
+    /// 请求体先落临时目录，收完才进书库，书库目录里不留 `.epub.new` 之类的半成品。
     #[test]
-    fn replace_registers_comic_margins_when_marked() {
+    fn replace_keeps_margins_untouched_and_leaves_no_temp_in_library() {
         let t = tempfile::tempdir().unwrap();
         let lib = t.path().join("xochitl");
         std::fs::create_dir_all(&lib).unwrap();
@@ -425,9 +407,14 @@ mod tests {
         let q = Arc::new(crate::comic_margins::ComicMargins::new(&t.path().join("state"), &lib));
         let s = Staging::new(t.path().join("staging"), x.clone(), 0).with_comic_margins(q.clone());
         let im = Importer::new(x, s, t.path().join("import-tmp"), 0);
+        im.ensure().unwrap();
         put_doc(&lib, U, r#"{"type":"DocumentType","visibleName":"漫画","parent":""}"#);
         let manga = mini_epub(&[(shelf_conv::epub::READER_MARGINS_MARKER, "1")]);
         im.replace(U, "漫画.epub", &mut manga.as_slice(), Some(manga.len())).unwrap();
-        assert_eq!(q.get(U), Some(1));
+        assert_eq!(q.get(U), None, "替换不重新登记");
+        assert_eq!(std::fs::read(lib.join(format!("{U}.epub"))).unwrap(), manga);
+        let stray: Vec<_> = std::fs::read_dir(&lib).unwrap().flatten().map(|e| e.file_name().to_string_lossy().into_owned()).filter(|n| !n.starts_with(U) || n.ends_with(".new")).collect();
+        assert!(stray.is_empty(), "书库里不该有别的文件：{stray:?}");
+        assert_eq!(std::fs::read_dir(t.path().join("import-tmp")).unwrap().count(), 0, "临时文件用完即走");
     }
 }

@@ -8,20 +8,19 @@
 //! 替换成大文件后它不会补生成封面、也不会改名（真机踩过：显示成"上传限制实验-EPUB"且没封面）。
 //! PDF 的显示名取上传文件名，缩略图打开时才按页生成，占位不需要带内容。
 
-use crate::epub;
-use std::path::Path;
+use crate::epub::{self, Book};
 
-/// 造占位 EPUB：显示名 = `title`（`None` 取真书自己的 `dc:title`），封面 = 真书的封面（找不到就没有封面页，
-/// 只有标题）。体积通常几十到几百 KB。
-pub fn epub_placeholder(real_epub: &Path, title: Option<&str>) -> Result<Vec<u8>, String> {
-    let (_, _, opf) = epub::open_opf(real_epub)?;
-    let cover = epub::cover_image_of(real_epub);
+/// 造占位 EPUB：显示名 = 真书自己的 `dc:title`（sheng-ren 优化时已写好规范书名），封面 = 真书的封面（找不到就没有
+/// 封面页，只有标题）。体积通常几十到几百 KB。
+pub fn epub_placeholder(book: &mut Book) -> Result<Vec<u8>, String> {
+    book.opf()?; // 读不到 OPF 的书不造占位（调用方整本拒收）
+    let cover = book.cover();
     // OPF 里读出的是转义过的 XML 文本：`dc_text` 还原字符引用后下面统一转义，否则 `A &amp; B` 会被写成 `A &amp;amp; B`（设备显示名带字面 `&amp;`）。
     // 作者/语言同样按"读出→还原→转义"处理：原书里若是 CDATA、嵌套标签或非法字符，原样拼进占位 OPF 就不是合法 XML
     // （xochitl 严格解析，占位导入失败）。
-    let title: String = title.map(str::to_string).or_else(|| epub::dc_text(&opf, "title")).unwrap_or_else(|| "未命名".into());
-    let creator = epub::xml_escape(&epub::dc_text(&opf, "creator").unwrap_or_default());
-    let lang = epub::xml_escape(&epub::dc_text(&opf, "language").unwrap_or_else(|| "zh".into()));
+    let title = book.title().unwrap_or_else(|| "未命名".into());
+    let creator = epub::xml_escape(&book.dc("creator").unwrap_or_default());
+    let lang = epub::xml_escape(&book.dc("language").unwrap_or_else(|| "zh".into()));
     let t = epub::xml_escape(&title);
     let (cover_item, cover_meta, page_body) = match &cover {
         Some((ext, _)) => (
@@ -63,7 +62,7 @@ const PDF_PAGE_H: u32 = 1696;
 
 /// 造占位 PDF：一页空白（设备页面尺寸）。显示名取上传文件名，缩略图打开时才按页生成，所以不用带内容。
 /// 手写最小 PDF（目录 → 页树 → 一页，无内容流），交叉引用表按实际偏移生成。
-pub fn pdf_placeholder() -> Result<Vec<u8>, String> {
+pub fn pdf_placeholder() -> Vec<u8> {
     let objs = [
         "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
         "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
@@ -81,13 +80,14 @@ pub fn pdf_placeholder() -> Result<Vec<u8>, String> {
         out.extend_from_slice(format!("{o:010} 00000 n \n").as_bytes());
     }
     out.extend_from_slice(format!("trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n", objs.len() + 1).as_bytes());
-    Ok(out)
+    out
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::io::Read;
+    use std::path::Path;
     use std::io::Write;
 
     fn real_epub(dir: &Path, cover_meta: bool) -> std::path::PathBuf {
@@ -101,7 +101,7 @@ mod tests {
         z.write_all(br#"<container><rootfiles><rootfile full-path="OEBPS/content.opf"/></rootfiles></container>"#).unwrap();
         let meta = if cover_meta { r#"<meta name="cover" content="cv"/>"# } else { "" };
         z.start_file("OEBPS/content.opf", o).unwrap();
-        z.write_all(format!(r#"<package><metadata><dc:title>Unknown</dc:title><dc:creator>许先哲</dc:creator><dc:language>zh-CN</dc:language>{meta}</metadata><manifest><item id="cv" href="images/cv.jpg" media-type="image/jpeg"/><item id="c1" href="Text/p1.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="c1"/></spine></package>"#).as_bytes()).unwrap();
+        z.write_all(format!(r#"<package><metadata><dc:title>鏢人 - 02卷</dc:title><dc:creator>许先哲</dc:creator><dc:language>zh-CN</dc:language>{meta}</metadata><manifest><item id="cv" href="images/cv.jpg" media-type="image/jpeg"/><item id="c1" href="Text/p1.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="c1"/></spine></package>"#).as_bytes()).unwrap();
         z.start_file("OEBPS/Text/p1.xhtml", o).unwrap();
         z.write_all(br#"<html><body><img src="../images/cv.jpg"/></body></html>"#).unwrap();
         z.start_file("OEBPS/images/cv.jpg", o).unwrap();
@@ -161,7 +161,7 @@ mod tests {
     #[test]
     fn placeholder_carries_real_title_author_and_cover_via_meta() {
         let d = tempfile::tempdir().unwrap();
-        let out = epub_placeholder(&real_epub(d.path(), true), Some("鏢人 - 02卷")).unwrap();
+        let out = epub_placeholder(&mut Book::open(&real_epub(d.path(), true)).unwrap()).unwrap();
         let e = entries_of(&out);
         let opf = String::from_utf8_lossy(&e["content.opf"]).to_string();
         assert!(opf.contains("<dc:title>鏢人 - 02卷</dc:title>") && opf.contains("<dc:creator>许先哲</dc:creator>") && opf.contains(r#"properties="cover-image""#));
@@ -173,15 +173,8 @@ mod tests {
     #[test]
     fn cover_falls_back_to_first_image_of_first_spine_page() {
         let d = tempfile::tempdir().unwrap();
-        let out = epub_placeholder(&real_epub(d.path(), false), Some("书")).unwrap();
+        let out = epub_placeholder(&mut Book::open(&real_epub(d.path(), false)).unwrap()).unwrap();
         assert_eq!(entries_of(&out)["cover.jpg"], b"\xFF\xD8COVERBYTES\xFF\xD9");
-    }
-
-    #[test]
-    fn placeholder_defaults_to_real_dc_title_when_none_given() {
-        let d = tempfile::tempdir().unwrap();
-        let out = epub_placeholder(&real_epub(d.path(), true), None).unwrap();
-        assert!(String::from_utf8_lossy(&entries_of(&out)["content.opf"]).contains("<dc:title>Unknown</dc:title>"));
     }
 
     #[test]
@@ -204,7 +197,7 @@ mod tests {
         z.start_file("real.jpg", o).unwrap();
         z.write_all(b"\xFF\xD8REALCOVER\xFF\xD9").unwrap();
         z.finish().unwrap();
-        let out = epub_placeholder(&p, Some("t")).unwrap();
+        let out = epub_placeholder(&mut Book::open(&p).unwrap()).unwrap();
         let e = entries_of(&out);
         assert_eq!(e["cover.jpg"], b"\xFF\xD8REALCOVER\xFF\xD9", "必须回退到第一页的真图片，而不是 txt");
         assert!(!e.contains_key("cover.txt"));
@@ -224,7 +217,7 @@ mod tests {
         z.start_file("p1.xhtml", o).unwrap();
         z.write_all(b"<html><body><p>x</p></body></html>").unwrap();
         z.finish().unwrap();
-        let out = epub_placeholder(&p, None).unwrap();
+        let out = epub_placeholder(&mut Book::open(&p).unwrap()).unwrap();
         let opf = String::from_utf8(entries_of(&out)["content.opf"].clone()).unwrap();
         assert!(opf.contains("<dc:title>Tom &amp; Jerry</dc:title>"), "{opf}");
         assert!(opf.contains("<dc:creator>A &lt;B&gt; &amp; C</dc:creator>"), "{opf}");
@@ -233,7 +226,7 @@ mod tests {
 
     #[test]
     fn pdf_placeholder_is_one_valid_page() {
-        let pdf = pdf_placeholder().unwrap();
+        let pdf = pdf_placeholder();
         assert!(pdf.starts_with(b"%PDF"));
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("p.pdf");

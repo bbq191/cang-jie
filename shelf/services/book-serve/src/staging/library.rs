@@ -117,25 +117,26 @@ impl Staging {
         if new_name == name {
             return Ok(new_name);
         }
-        if !self.try_start_busy(name) {
-            return Err(busy_err(name, "再改名"));
+        let _busy = self.busy_guard(name, "再改名")?;
+        let _busy_new = self.busy_guard(&new_name, "再改名")?;
+        let _land = self.land_guard();
+        if dst.exists() {
+            return Err(format!("母版库里已有《{new_name}》"));
         }
-        if !self.try_start_busy(&new_name) {
-            self.end_busy(name);
-            return Err(busy_err(&new_name, "再改名"));
+        std::fs::rename(&src, &dst).map_err(|e| format!("改名失败: {e}"))?;
+        sidecar::rename(&src, &dst);
+        // 渲染自检线程按旧书名记结果（落库完忙锁就放了，自检还要再等最多 10 分钟）：改名后它找不到书、不再写，边车会一直停在
+        // "渲染中"直到下次重启。这里直接收成 timeout（列表显示"未见渲染"，不影响阅读）。
+        if sidecar::read(&dst).and_then(|d| d.render).is_some_and(|r| r.status == "pending") {
+            let now = rmsvc_core::clock::now_secs();
+            let _ = sidecar::update(&dst, |d| {
+                if let Some(r) = d.render.as_mut().filter(|r| r.status == "pending") {
+                    r.status = "timeout".into();
+                    r.at = now;
+                }
+            });
         }
-        let r = (|| {
-            let _land = self.land_guard();
-            if dst.exists() {
-                return Err(format!("母版库里已有《{new_name}》"));
-            }
-            std::fs::rename(&src, &dst).map_err(|e| format!("改名失败: {e}"))?;
-            sidecar::rename(&src, &dst);
-            Ok(new_name.clone())
-        })();
-        self.end_busy(&new_name);
-        self.end_busy(name);
-        r
+        Ok(new_name)
     }
 
     /// 打开母版库条目供下载：`(文件, 字节数)`。
@@ -151,13 +152,9 @@ impl Staging {
     /// 开始落库/改名，后台线程随即对着一个已删的文件跑（2026-09-25 第四轮审计）。
     pub fn remove(&self, name: &str) -> Result<(), String> {
         let p = self.path_of(name)?;
-        if !self.try_start_busy(name) {
-            return Err(busy_err(name, "再删除"));
-        }
+        let _busy = self.busy_guard(name, "再删除")?;
         sidecar::remove(&p);
-        let r = std::fs::remove_file(&p).map_err(|e| format!("删除失败: {e}"));
-        self.end_busy(name);
-        r
+        std::fs::remove_file(&p).map_err(|e| format!("删除失败: {e}"))
     }
 
     /// 所在分区剩余空间（字节，非特权用户可用的那部分，与 `df` 的 Available 同义）；查不到 None。
@@ -195,7 +192,6 @@ impl Staging {
             let format = match formats::ext_of(&name).as_str() {
                 "epub" => "epub",
                 "pdf" => "pdf",
-                "cbz" => "cbz",
                 _ => "other",
             };
             seen.insert(name.clone());

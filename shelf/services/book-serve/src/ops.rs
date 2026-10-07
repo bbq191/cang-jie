@@ -17,14 +17,22 @@ impl OpRegistry {
         lock(&self.0).contains(name)
     }
 
-    /// 尝试给条目加忙锁；已经忙着 → false（调用方据此拒绝这次操作，不排队不覆盖）。
-    pub fn try_start(&self, name: &str) -> bool {
-        lock(&self.0).insert(name.to_string())
+    /// 尝试给条目加忙锁；已经忙着 → `None`（调用方据此拒绝这次操作，不排队不覆盖）。返回的守卫离开作用域（含 panic 展开）
+    /// 时自动解锁——此前各处手写"加锁 … 记得解锁"，改名要配对解两把、后台线程要在 panic 兜底之后再解，容易漏。
+    pub fn try_guard(&self, name: &str) -> Option<OpGuard> {
+        lock(&self.0).insert(name.to_string()).then(|| OpGuard { reg: self.clone(), name: name.to_string() })
     }
+}
 
-    /// 结束操作，清掉忙锁。
-    pub fn end(&self, name: &str) {
-        lock(&self.0).remove(name);
+/// [`OpRegistry::try_guard`] 的忙锁，Drop 时解锁。可以移进后台线程。
+pub struct OpGuard {
+    reg: OpRegistry,
+    name: String,
+}
+
+impl Drop for OpGuard {
+    fn drop(&mut self) {
+        lock(&self.reg.0).remove(&self.name);
     }
 }
 
@@ -33,14 +41,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn busy_is_exclusive_and_end_clears_it() {
+    fn busy_is_exclusive_and_guard_drop_clears_it() {
         let r = OpRegistry::default();
-        assert!(r.try_start("a.epub"));
-        assert!(!r.try_start("a.epub"), "同一条目不能同时跑两个操作");
+        let g = r.try_guard("a.epub").unwrap();
+        assert!(r.try_guard("a.epub").is_none(), "同一条目不能同时跑两个操作");
         assert!(r.is_busy("a.epub") && !r.is_busy("b.epub"));
-        r.end("a.epub");
+        drop(g);
         assert!(!r.is_busy("a.epub"));
-        assert!(r.try_start("a.epub"));
+        let r2 = r.clone();
+        let _ = std::thread::spawn(move || {
+            let _g = r2.try_guard("a.epub").unwrap();
+            panic!("boom");
+        })
+        .join();
+        assert!(!r.is_busy("a.epub"), "panic 展开时守卫照样解锁");
     }
 
     #[test]
@@ -52,6 +66,6 @@ mod tests {
             panic!("boom");
         })
         .join();
-        assert!(r.try_start("a"), "poison 后仍可用");
+        assert!(r.try_guard("a").is_some(), "poison 后仍可用");
     }
 }

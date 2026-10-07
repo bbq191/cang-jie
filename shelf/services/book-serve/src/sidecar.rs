@@ -1,4 +1,4 @@
-//! 落库记录边车（Repository）：母版库每本书旁的隐藏 JSON `.<文件名>.delivered`（书名太长时用短名，见 [`file_name_for`]）——各读器最近一次落库的 unix 秒 +
+//! 落库记录边车（Repository）：母版库每本书旁的隐藏 JSON `.<文件名>.delivered`（书名太长时用短名，见 [`file_name_for`]）——最近一次加入 xochitl 的 unix 秒 +
 //! 最近一次投原生的渲染自检结果 + 最近一次落库的异步结果。只管"读 / 改 / 删这份记录"，
 //! 母版库动作（入库/落库）在 `staging`，自检逻辑在 `render_check`；两边都通过这里落盘，谁也不碰
 //! 对方的字段语义（2026-09-06 从 staging.rs 拆出）。
@@ -8,17 +8,14 @@ use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-/// 落库记录：各读器最近一次落库的 unix 秒；`render`=最近一次投原生的渲染自检结果。
-/// 旧版边车里可能还带着已退役的字段——`source`（host CLI 洗书产物的原始输入身份，2026-09-18 CLI 已砍、此后没有写方）、
+/// 落库记录：最近一次加入 xochitl 的 unix 秒；`render`=最近一次投原生的渲染自检结果。
+/// 旧版边车里可能还带着已退役的字段——`koreader`（加入 KOReader 的时刻，2026-10-07 删）、`source`（host CLI 洗书产物的原始输入身份，2026-09-18 CLI 已砍、此后没有写方）、
 /// `direction`（按书阅读方向，2026-09-30 已撤）、`deliver.progress`（按卷拆分投递的进度，同日已撤）：serde 缺省忽略
 /// 未知字段，照常读。
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
 pub struct Delivered {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native: Option<u64>,
-    /// KOReader 落库时刻（网关批量「加入 KOReader」经 `POST /staging/mark` 记；KOReader 已从设备卸载，旧记录照常显示）。
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub koreader: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub render: Option<RenderCheck>,
     /// 最近一次「落库」的结果（`staging::Staging::spawn_deliver` 异步执行时写，2026-09-19）。
@@ -139,13 +136,13 @@ mod tests {
         update(&book, |d| d.native = Some(7)).unwrap();
         update(&book, |d| d.render = Some(RenderCheck { uuid: "u".into(), pages: 3, status: "ok".into(), at: 1 })).unwrap();
         let d = read(&book).unwrap();
-        assert_eq!((d.native, d.koreader), (Some(7), None));
+        assert_eq!(d.native, Some(7));
         assert_eq!(d.render.as_ref().map(|r| r.pages), Some(3));
         // 旧版边车（无 render 字段）照读；带已退役字段的也照读、字段忽略：`direction`（按书方向，2026-09-30 撤）、
         // `source`（CLI 洗书原始输入，CLI 09-18 砍）、`deliver.progress`（按卷拆分投递进度，09-30 撤）
         std::fs::write(path_for(&book), br#"{"native":1,"koreader":2,"direction":"rtl","source":{"name":"a.pdf","bytes":9},"deliver":{"status":"ok","message":"m","at":3,"progress":{"done":1,"total":2}}}"#).unwrap();
         let deliver = Some(DeliverCheck { status: "ok".into(), message: "m".into(), at: 3 });
-        assert_eq!(read(&book), Some(Delivered { native: Some(1), koreader: Some(2), render: None, deliver }));
+        assert_eq!(read(&book), Some(Delivered { native: Some(1), render: None, deliver }));
         remove(&book);
         assert!(read(&book).is_none());
         remove(&book);

@@ -5,8 +5,9 @@
 //! 目录 `$XDG_STATE_HOME/shelf/books/staging/`（/home 分区，重启/OTA 不丢；**不套 LRU 淘汰**，留住用户还没落库的书）。
 //! 落库记录是同目录隐藏 sidecar `.<name>.delivered`（`sidecar` 模块管读写；本模块只在落库/删书时调它）。
 use crate::mkdir::MkdirQueue;
-use crate::ops::OpRegistry;
+use crate::ops::{OpGuard, OpRegistry};
 use crate::render_check;
+use crate::scratch::ScratchFile;
 use crate::sidecar::{self, Delivered, RenderCheck};
 use serde::Serialize;
 use rmsvc_core::asset::{AssetItem, AssetStore};
@@ -36,28 +37,7 @@ fn busy_err(name: &str, extra: &str) -> String {
     format!("《{name}》正在处理中，请稍候{extra}")
 }
 
-/// 母版库目录里的一份点前缀临时文件（列表看不见），现在只有跨分区入库的中转用它。
-/// 上次进程留下的由 `recover_interrupted` 按"点前缀 + `.tmp` 结尾"清掉。
-///
-/// - **名字与书名无关**（`.<pid>.<序号>.landing.tmp`）：按书名拼的话，书名本身接近文件名 255 字节上限（中文 80 来个字）时
-///   临时文件名超长，直接报文件系统错误（ENAMETOOLONG）。
-/// - **Drop 时删掉**：正常路径下文件早已被 rename 成正式文件（删不到，无害）；出错或 panic 时（后台线程 `catch_unwind`
-///   兜住、进程照常服务）不再把半成品（大书可达数百 MB）一直留到下次重启才由 `recover_interrupted` 清。
-pub(super) struct ScratchFile(PathBuf);
-
-impl ScratchFile {
-    pub(super) fn path(&self) -> &Path {
-        &self.0
-    }
-}
-
-impl Drop for ScratchFile {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.0);
-    }
-}
-
-/// 母版库一本书的展示条目。`format`（epub / pdf / cbz / other）从扩展名判。
+/// 母版库一本书的展示条目。`format`（epub / pdf / other）从扩展名判（2026-09-18 起只收 EPUB/PDF，other 只可能是更早的旧文件）。
 #[derive(Serialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct StagingEntry {
@@ -92,9 +72,6 @@ pub struct DeliverOutcome {
     pub render: Option<RenderPlan>,
 }
 
-// 原 `Reader { Native, Koreader }` 落库去向枚举：KOReader 2026-09-29 从设备卸载、2026-09-30 相关源码从仓库删除
-// （见 git 历史）后只剩 xochitl 一个去向，枚举随之删掉，`mark_delivered` 只记原生。边车里旧的 `koreader` 时间戳
-// 字段仍由 `sidecar.rs` 解析（兼容旧数据），这里不再写。
 
 #[derive(Clone)]
 pub struct Staging {
@@ -185,15 +162,10 @@ impl Staging {
         self.comic_margins = Some(q);
         self
     }
-    /// 这本 EPUB 投到原生书库后该设成多大的页边距（`None` = 不登记）：按页边距模式排的漫画——看 sheng-ren
-    /// 优化器写的 `META-INF/eink-reader-margins`（sheng-ren `xochitl` 模式优化的漫画才有）。补白比例是按那个页边距算的，
-    /// 没按这个模式排的漫画设成 1 反而更糟（贴左、右侧空一块，文字贴屏幕边）；文字书 / PDF 完全不碰。
-    /// 本仓库旧版（v15、v16）优化出来的漫画不再认，请用 sheng-ren 重新优化。
-    /// 没接队列（测试里）照样判；登记时没队列就不登记（见 [`Self::register_comic_margins`]）。
-    pub(crate) fn comic_margin_eligible(&self, path: &Path) -> Option<u32> {
-        shelf_conv::epub::reader_margins_of(path)
-    }
-    /// 登记"这本书首次打开时设页边距 `margins`"。失败只记日志，不影响投书。
+    /// 登记"这本书首次打开时设页边距 `margins`"。失败只记日志，不影响投书；没接队列（测试里）就不登记。
+    /// 只登记按页边距模式排的漫画：`margins` 来自 sheng-ren 优化器写的 `META-INF/eink-reader-margins`
+    /// （[`shelf_conv::epub::Book::reader_margins`]）。补白比例是按那个页边距算的，没按这个模式排的漫画设成 1 反而更糟
+    /// （贴左、右侧空一块，文字贴屏幕边）；文字书 / PDF 完全不碰。本仓库旧版（v15、v16）优化出来的漫画不再认。
     pub(crate) fn register_comic_margins(&self, uuid: &str, name: &str, margins: u32) {
         let Some(q) = &self.comic_margins else { return };
         match q.add(uuid, margins) {
@@ -205,12 +177,9 @@ impl Staging {
     pub fn is_busy(&self, name: &str) -> bool {
         self.ops.is_busy(name)
     }
-    /// 尝试给条目加忙锁；已经忙着 → false（调用方据此拒绝这次操作，不排队不覆盖）。
-    pub(crate) fn try_start_busy(&self, name: &str) -> bool {
-        self.ops.try_start(name)
-    }
-    pub(crate) fn end_busy(&self, name: &str) {
-        self.ops.end(name);
+    /// 给条目加忙锁（见 [`OpGuard`]，离开作用域自动解锁）；已经忙着 → 统一的"正在处理中"提示，`extra` 是各自的后缀。
+    pub(crate) fn busy_guard(&self, name: &str, extra: &str) -> Result<OpGuard, String> {
+        self.ops.try_guard(name).ok_or_else(|| busy_err(name, extra))
     }
     pub fn dir(&self) -> &Path {
         &self.dir
@@ -219,11 +188,10 @@ impl Staging {
         std::fs::create_dir_all(&self.dir)
     }
 
-    /// 在母版库目录里要一份新的临时文件名（见 [`ScratchFile`]）。
+    /// 在母版库目录里要一份新的点前缀临时文件名 `.<pid>.<序号>.landing.tmp`（列表看不见，见 [`ScratchFile`]）；
+    /// 上次进程留下的由 `recover_interrupted` 按"点前缀 + `.tmp` 结尾"清掉。
     pub(super) fn scratch(&self) -> ScratchFile {
-        static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-        let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        ScratchFile(self.dir.join(format!(".{}.{seq}.landing.tmp", std::process::id())))
+        ScratchFile::new(&self.dir, ".", "landing.tmp")
     }
 
     /// 进入"落名"临界区（见 `land` 字段）。
@@ -251,13 +219,13 @@ impl Staging {
         sidecar::update(&self.existing(name)?, f)
     }
 
-    /// [`Self::spawn_deliver`] 的"起后台线程"外壳：跑完（含 panic）一律 `end_busy` + 发 `books`/`staging` 事件。`body` 里对
-    /// 落库本身另有一层 `catch_unwind`（把 panic 转成带原因的 `Err` 写进边车）；这一层只兜底 `body` 自身（比如边车写入）意外 panic。
-    fn spawn_bg(&self, name: &str, bus: Arc<rmsvc_core::events::EventBus>, body: impl FnOnce(&Staging, &str, &Arc<rmsvc_core::events::EventBus>) + Send + 'static) {
+    /// [`Self::spawn_deliver`] 的"起后台线程"外壳：忙锁 `busy` 随线程走，跑完（含 panic）解锁再发 `books`/`staging` 事件。`body`
+    /// 里对落库本身另有一层 `catch_unwind`（把 panic 转成带原因的 `Err` 写进边车）；这一层只兜底 `body` 自身（比如边车写入）意外 panic。
+    fn spawn_bg(&self, name: &str, busy: OpGuard, bus: Arc<rmsvc_core::events::EventBus>, body: impl FnOnce(&Staging, &str, &Arc<rmsvc_core::events::EventBus>) + Send + 'static) {
         let (this, name) = (self.clone(), name.to_string());
         std::thread::spawn(move || {
             let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| body(&this, &name, &bus)));
-            this.end_busy(&name);
+            drop(busy);
             bus.publish("books", "staging");
         });
     }

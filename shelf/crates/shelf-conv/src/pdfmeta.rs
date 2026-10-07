@@ -1,9 +1,8 @@
 //! 第三方 PDF 的页数：有界、按需从磁盘读（2026-09-30）。
 //!
 //! 给 book-serve 的「大文件通道」用（>90MB 的 PDF 先传占位、再在磁盘上换成真文件，页数要写进 `.content` 页表）。
-//! 此前复用 [`crate::pdfwrite::PdfFileReader::page_count`]，它只认我们自己写的结构（传统 xref 表 + 对象 2 就是
-//! `/Pages`），第三方 PDF 常见的交叉引用流（PDF 1.5+，`/Type /XRef`）、对象流（`/Type /ObjStm`）、页树根不在
-//! 对象 2，都被整本拒收。
+//! 此前复用的读取器（已随 `pdfwrite` 删除）只认我们自己写的结构（传统 xref 表 + 对象 2 就是 `/Pages`），第三方 PDF
+//! 常见的交叉引用流（PDF 1.5+，`/Type /XRef`）、对象流（`/Type /ObjStm`）、页树根不在对象 2，都被整本拒收。
 //!
 //! 走法（PDF 1.7 规范 §7.5）：文件尾找 `startxref` → 沿 `/Prev` 链把每一节交叉引用登记下来（传统表只记子段位置，
 //! 不读条目；交叉引用流只记字典和数据偏移）→ 最新 trailer 的 `/Root` → Catalog 的 `/Pages` → 它的 `/Count`。
@@ -13,7 +12,7 @@
 //! （`reader.rs` `load_metadata_internal`），几百 MB 的书在 2GB 设备上不可接受。
 //!
 //! **内存上限**（全部是硬上限，超了就 `Err`，不分配）：
-//! - 单个字典对象（Catalog/Pages/trailer/流字典）窗口最多 [`MAX_DICT_OBJ_BYTES`]（4MB，从 16KB 起按需翻倍）；
+//! - 单个字典对象（Catalog/Pages/trailer/流字典）窗口最多 [`MAX_DICT_OBJ_BYTES`]（4MB，从 16KB 起不够就乘 4）；
 //! - 单个流（交叉引用流、对象流）压缩数据最多 [`MAX_STREAM_RAW`]，解压后最多 [`MAX_STREAM_DECODED`]；
 //! - `/Prev` 链最多 [`MAX_XREF_SECTIONS`] 节、传统表子段总数最多 [`MAX_SUBSECTIONS`]；
 //! - 解析出的数组/字典元素总数最多 [`MAX_STORED_ELEMS`]（超出的照常跳过、不存）、嵌套深度最多 [`MAX_DEPTH`]。
@@ -23,23 +22,23 @@
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 
-/// 单个字典对象窗口上限（跟 `pdfwrite::MAX_DICT_OBJ_BYTES` 同值）。
-pub const MAX_DICT_OBJ_BYTES: usize = 4 << 20;
+/// 单个字典对象窗口上限。
+const MAX_DICT_OBJ_BYTES: usize = 4 << 20;
 /// 单个流的压缩数据上限。
-pub const MAX_STREAM_RAW: usize = 16 << 20;
+const MAX_STREAM_RAW: usize = 16 << 20;
 /// 单个流解压后的上限（交叉引用流每个对象一行、常见 5~7 字节：32MB 够四五百万个对象）。
-pub const MAX_STREAM_DECODED: usize = 32 << 20;
+const MAX_STREAM_DECODED: usize = 32 << 20;
 /// `/Prev` 链节数上限（增量更新一次一节，正常书个位数）。
-pub const MAX_XREF_SECTIONS: usize = 64;
+const MAX_XREF_SECTIONS: usize = 64;
 /// 所有传统表子段总数上限。
-pub const MAX_SUBSECTIONS: usize = 100_000;
+const MAX_SUBSECTIONS: usize = 100_000;
 /// 一次解析最多存这么多数组/字典元素（页树根的 `/Kids` 可能很长，我们不需要它的内容）。
 const MAX_STORED_ELEMS: usize = 100_000;
 const MAX_DEPTH: usize = 32;
 /// 间接引用解析的嵌套上限（`/Length`、`/Count` 可能是引用，引用对象又可能在对象流里）。
 const MAX_RESOLVE_DEPTH: usize = 8;
 /// 页数上限：`.content` 页表每页一条带 UUID 的记录，天文数字页数不能照单写。
-pub const MAX_PAGES: usize = 200_000;
+const MAX_PAGES: usize = 200_000;
 const FIRST_WINDOW: usize = 16 << 10;
 
 /// 按路径读页数。
@@ -49,7 +48,7 @@ pub fn page_count(path: &Path) -> Result<usize, String> {
 }
 
 /// 从任意可随机读的源读页数（测试用 `Cursor`）。
-pub fn page_count_from<R: Read + Seek>(mut src: R) -> Result<usize, String> {
+fn page_count_from<R: Read + Seek>(mut src: R) -> Result<usize, String> {
     let len = src.seek(SeekFrom::End(0)).map_err(|e| e.to_string())?;
     let mut doc = Doc { src, len, sections: Vec::new(), subsections: 0, resolve_depth: 0 };
     let root = doc.load_sections()?;

@@ -1,4 +1,4 @@
-//! 读 EPUB 的几样小事：找 OPF、书名/作者/语言、封面图、sheng-ren 的漫画页边距标记，外加写占位 EPUB 的 zip。
+//! 读 EPUB 的几样小事（[`Book`]）：找 OPF、书名/作者/语言、封面图、sheng-ren 的漫画页边距标记，外加写占位 EPUB 的 zip。
 //!
 //! 2026-10-07 起书架不优化书，只把书原样投进 xochitl，读书只剩这几样；以前借用 sheng-ren `bookconv` 的公开接口，
 //! 它连带的图片处理、网页正文抽取、HTTP 客户端等依赖书架一样都用不上，同日改成这里的最小实现（只读 container.xml、
@@ -19,23 +19,23 @@ pub const READER_MARGINS_MARKER: &str = "META-INF/eink-reader-margins";
 
 /// 单个条目解压后的上限：几 KB 的压缩数据能解出几 GB（zip 炸弹），目录里声明的大小也可以造假，按实际解出的字节数截。
 /// 这里读的只有 container.xml、OPF、几页正文和一张封面，256MB 远超真实需要。
-pub const MAX_ENTRY_BYTES: u64 = 256 * 1024 * 1024;
+const MAX_ENTRY_BYTES: u64 = 256 * 1024 * 1024;
 
-pub type FileZip = ZipArchive<std::io::BufReader<std::fs::File>>;
+type FileZip = ZipArchive<std::io::BufReader<std::fs::File>>;
 
 fn re(cell: &'static OnceLock<Regex>, pat: &str) -> &'static Regex {
     cell.get_or_init(|| Regex::new(pat).unwrap())
 }
 
 /// 读一个条目的全部字节，解出超过 `cap` 字节返回 `Ok(None)`（预分配按声明大小，封顶 32MB）。
-pub fn read_capped(r: impl Read, cap: u64, declared: u64) -> std::io::Result<Option<Vec<u8>>> {
+fn read_capped(r: impl Read, cap: u64, declared: u64) -> std::io::Result<Option<Vec<u8>>> {
     let mut buf = Vec::with_capacity(declared.min(cap).min(32 << 20) as usize);
     r.take(cap + 1).read_to_end(&mut buf)?;
     Ok((buf.len() as u64 <= cap).then_some(buf))
 }
 
 /// 按名读条目；不存在 → `Ok(None)`，超过 [`MAX_ENTRY_BYTES`] 或读失败 → `Err`。
-pub fn read_by_name<R: Read + Seek>(zip: &mut ZipArchive<R>, name: &str) -> Result<Option<Vec<u8>>, String> {
+fn read_by_name<R: Read + Seek>(zip: &mut ZipArchive<R>, name: &str) -> Result<Option<Vec<u8>>, String> {
     let f = match zip.by_name(name) {
         Ok(f) => f,
         Err(zip::result::ZipError::FileNotFound) => return Ok(None),
@@ -69,7 +69,7 @@ fn start_tags<'a>(text: &'a str, local: &str) -> Vec<&'a str> {
 }
 
 /// 标签里名为 `name`（完整属性名、不分大小写）的属性原文值。
-pub fn attr<'a>(tag: &'a str, name: &str) -> Option<&'a str> {
+fn attr<'a>(tag: &'a str, name: &str) -> Option<&'a str> {
     static A: OnceLock<Regex> = OnceLock::new();
     // 跳过开头的 `<元素名`，免得把元素名当属性
     let body = tag.find(|c: char| c.is_whitespace()).map_or("", |i| &tag[i..]);
@@ -81,7 +81,7 @@ pub fn attr<'a>(tag: &'a str, name: &str) -> Option<&'a str> {
 }
 
 /// XML 字符引用还原：`&amp; &lt; &gt; &quot; &apos;`、`&#NNN;`、`&#xHH;`；认不出的原样保留。
-pub fn xml_unescape(s: &str) -> Cow<'_, str> {
+fn xml_unescape(s: &str) -> Cow<'_, str> {
     if !s.contains('&') {
         return Cow::Borrowed(s);
     }
@@ -109,7 +109,7 @@ pub fn xml_unescape(s: &str) -> Cow<'_, str> {
 
 /// XML 文本/属性转义（`& < > "`），并丢掉 XML 1.0 不允许的字符——转义救不了它们，留着整份文档就不是合法 XML
 /// （真机踩过：PDF 标题按错误编码解出一串 `\0`，写进 OPF 后 xochitl 整本只渲染 1 页）。
-pub fn xml_escape(s: &str) -> String {
+pub(crate) fn xml_escape(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     for c in s.chars() {
         match c {
@@ -126,7 +126,7 @@ pub fn xml_escape(s: &str) -> String {
 }
 
 /// 元素内容 → 纯文本：去标签（含 CDATA 包装）、字符引用还原、空白折叠成单个空格。写回 XML 时调用方要再 [`xml_escape`]。
-pub fn plain_text(fragment: &str) -> String {
+fn plain_text(fragment: &str) -> String {
     static TAGS: OnceLock<Regex> = OnceLock::new();
     let s = fragment.replace("<![CDATA[", "").replace("]]>", "");
     let s = re(&TAGS, r"<[^>]*>").replace_all(&strip_comments(&s), "").into_owned();
@@ -134,7 +134,7 @@ pub fn plain_text(fragment: &str) -> String {
 }
 
 /// 图片扩展名（小写，不带点）→ media-type；认不出的当 JPEG。
-pub fn image_media_type_of_ext(ext: &str) -> &'static str {
+pub(crate) fn image_media_type_of_ext(ext: &str) -> &'static str {
     match ext {
         "png" => "image/png",
         "gif" => "image/gif",
@@ -211,20 +211,65 @@ fn resolve(base_dir: &str, href: &str) -> String {
     }
 }
 
-/// 打开 EPUB 读出 OPF：`(zip, OPF 在 zip 里的路径, OPF 文本)`。只读 container.xml 和 OPF 两个条目。
-pub fn open_opf(epub: &Path) -> Result<(FileZip, String, String), String> {
-    let file = std::fs::File::open(epub).map_err(|e| format!("打开 {} 失败: {e}", epub.display()))?;
-    let mut zip = ZipArchive::new(std::io::BufReader::new(file)).map_err(|e| format!("解 EPUB 失败: {e}"))?;
-    let container = read_text(&mut zip, "META-INF/container.xml").ok_or("缺 META-INF/container.xml")?;
-    let container = strip_comments(&container);
-    let opf_path = start_tags(&container, "rootfile").into_iter().find_map(|t| attr(t, "full-path")).ok_or("container.xml 里没有 full-path")?;
-    let opf_path = resolve("", opf_path);
-    let opf = read_text(&mut zip, &opf_path).ok_or("读不到 OPF")?;
-    Ok((zip, opf_path, opf))
+/// 打开着的一本 EPUB：zip 中央目录只解一次，书名、封面、页边距标记都从这里取（此前投一本书要把 zip 打开两三次，
+/// 图多的漫画中央目录不小）。只读 container.xml、OPF 和需要的少数几个条目，从不解压整本。
+pub struct Book {
+    zip: FileZip,
+    /// `(OPF 所在目录, OPF 文本)`；缺 container.xml / OPF 时是 `Err(原因)`——页边距标记照样能读，书名为空，造不了占位。
+    opf: Result<(String, String), String>,
+}
+
+impl Book {
+    /// 打开并读出 OPF。不是 zip → `Err`；缺 container.xml / OPF 不算错（见 [`Book::opf`]）。
+    pub fn open(epub: &Path) -> Result<Book, String> {
+        let file = std::fs::File::open(epub).map_err(|e| format!("打开 {} 失败: {e}", epub.display()))?;
+        let mut zip = ZipArchive::new(std::io::BufReader::new(file)).map_err(|e| format!("解 EPUB 失败: {e}"))?;
+        let opf = Self::read_opf(&mut zip);
+        Ok(Book { zip, opf })
+    }
+
+    fn read_opf(zip: &mut FileZip) -> Result<(String, String), String> {
+        let container = read_text(zip, "META-INF/container.xml").ok_or("缺 META-INF/container.xml")?;
+        let container = strip_comments(&container);
+        let opf_path = start_tags(&container, "rootfile").into_iter().find_map(|t| attr(t, "full-path")).ok_or("container.xml 里没有 full-path")?;
+        let opf_path = resolve("", opf_path);
+        let opf = read_text(zip, &opf_path).ok_or("读不到 OPF")?;
+        Ok((dir_of(&opf_path).to_string(), opf))
+    }
+
+    /// OPF 文本；缺 container.xml / OPF → `Err(原因)`。
+    pub fn opf(&self) -> Result<&str, String> {
+        self.opf.as_ref().map(|(_, t)| t.as_str()).map_err(String::clone)
+    }
+
+    /// OPF 里第一个非空的 Dublin Core 元素（`title`/`creator`/`language`…）的纯文本，见 [`dc_text`]。
+    pub fn dc(&self, local: &str) -> Option<String> {
+        dc_text(self.opf().ok()?, local)
+    }
+
+    /// `dc:title`：xochitl 进库后的显示名取自它。
+    pub fn title(&self) -> Option<String> {
+        self.dc("title")
+    }
+
+    /// 封面图（扩展名, 字节）；找不到 → `None`。见 [`cover_path`]。
+    pub fn cover(&mut self) -> Option<(String, Vec<u8>)> {
+        let (opf_dir, opf) = self.opf.as_ref().ok()?;
+        let zip = &mut self.zip;
+        let path = cover_path(opf, opf_dir, |p| read_text(zip, p))?;
+        Some((image_ext_of(&path), read_by_name(&mut self.zip, &path).ok()??))
+    }
+
+    /// sheng-ren 写在漫画里的页边距（[`READER_MARGINS_MARKER`] 条目的内容）。没有、读不出、不是数字 → `None`。
+    pub fn reader_margins(&mut self) -> Option<u32> {
+        let entry = self.zip.by_name(READER_MARGINS_MARKER).ok()?;
+        let bytes = read_capped(entry, 16, 0).ok()??;
+        std::str::from_utf8(&bytes).ok()?.trim().parse().ok()
+    }
 }
 
 /// OPF 里第一个非空的 Dublin Core 元素（`title`/`creator`/`language`…，认任意前缀）的纯文本。
-pub fn dc_text(opf: &str, local: &str) -> Option<String> {
+fn dc_text(opf: &str, local: &str) -> Option<String> {
     static DC: OnceLock<Regex> = OnceLock::new();
     let opf = strip_comments(opf);
     re(&DC, r"(?s)<([A-Za-z_][-\w.]*):([A-Za-z_][-\w.]*)\b[^>]*?(?:/>|>(.*?)</[A-Za-z_][-\w.]*:[A-Za-z_][-\w.]*\s*>)")
@@ -232,11 +277,6 @@ pub fn dc_text(opf: &str, local: &str) -> Option<String> {
         .filter(|c| c[2].eq_ignore_ascii_case(local))
         .filter_map(|c| c.get(3).map(|m| plain_text(m.as_str())))
         .find(|s| !s.is_empty())
-}
-
-/// 这本 EPUB 的 `dc:title`（读不到 → `None`）。xochitl 进库后的显示名取自它。
-pub fn title_of(epub: &Path) -> Option<String> {
-    open_opf(epub).ok().and_then(|(_, _, opf)| dc_text(&opf, "title"))
 }
 
 struct Item<'a> {
@@ -296,35 +336,19 @@ fn cover_path(opf: &str, opf_dir: &str, mut read: impl FnMut(&str) -> Option<Str
     None
 }
 
-/// 封面图（扩展名, 字节）；找不到 → `None`。只读 OPF 和需要的几个条目。
-pub fn cover_image_of(epub: &Path) -> Option<(String, Vec<u8>)> {
-    let (mut zip, opf_path, opf) = open_opf(epub).ok()?;
-    let path = cover_path(&opf, dir_of(&opf_path), |p| read_text(&mut zip, p))?;
-    Some((image_ext_of(&path), read_by_name(&mut zip, &path).ok()??))
-}
-
-/// sheng-ren 写在漫画里的页边距（[`READER_MARGINS_MARKER`] 条目的内容）。没有、读不出、不是数字 → `None`。
-pub fn reader_margins_of(epub: &Path) -> Option<u32> {
-    let f = std::fs::File::open(epub).ok()?;
-    let mut zip = ZipArchive::new(std::io::BufReader::new(f)).ok()?;
-    let entry = zip.by_name(READER_MARGINS_MARKER).ok()?;
-    let bytes = read_capped(entry, 16, 0).ok()??;
-    std::str::from_utf8(&bytes).ok()?.trim().parse().ok()
-}
-
 /// 写 EPUB：先写 `mimetype`（第一个条目、STORED，OCF 规范要求），之后图片 STORED、其余 deflate。
-pub struct EpubWriter<W: Write + Seek> {
+pub(crate) struct EpubWriter<W: Write + Seek> {
     zw: ZipWriter<W>,
 }
 
 impl<W: Write + Seek> EpubWriter<W> {
-    pub fn new(w: W) -> Result<Self, String> {
+    pub(crate) fn new(w: W) -> Result<Self, String> {
         let mut me = EpubWriter { zw: ZipWriter::new(w) };
         me.put_with("mimetype", CompressionMethod::Stored, b"application/epub+zip")?;
         Ok(me)
     }
 
-    pub fn put(&mut self, name: &str, data: &[u8]) -> Result<(), String> {
+    pub(crate) fn put(&mut self, name: &str, data: &[u8]) -> Result<(), String> {
         let m = if is_image_ext(name) { CompressionMethod::Stored } else { CompressionMethod::Deflated };
         self.put_with(name, m, data)
     }
@@ -334,7 +358,7 @@ impl<W: Write + Seek> EpubWriter<W> {
         self.zw.write_all(data).map_err(|e| e.to_string())
     }
 
-    pub fn finish(self) -> Result<W, String> {
+    pub(crate) fn finish(self) -> Result<W, String> {
         let mut w = self.zw.finish().map_err(|e| e.to_string())?;
         w.flush().map_err(|e| e.to_string())?;
         Ok(w)

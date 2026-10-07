@@ -6,7 +6,7 @@
 //! `GET /margins/<uuid>`，命中就调用阅读器的 `EpubProperties.setMargins(m)`（与界面点"页边距"同一条路径），成功后
 //! `POST /margins/applied` 销账。**每本书只设一次**：之后用户在界面上自己改回去，我们不再干预。
 //!
-//! 只登记**按页边距模式排的漫画 EPUB**（`Staging::comic_margin_eligible`：sheng-ren 优化的产物带 `META-INF/eink-reader-margins`）：
+//! 只登记**按页边距模式排的漫画 EPUB**（`shelf_conv::epub::Book::reader_margins`：sheng-ren 优化的产物带 `META-INF/eink-reader-margins`）：
 //! 补白比例是按"边距 1"算的，别的漫画在最小边距下会贴左、右侧空一大块，文字贴屏幕边，反而更糟。文字书、PDF 完全不碰。
 //! 漫画怎么排（补白、文字页留边）是 sheng-ren 的事，书架只负责登记和首次打开时设页边距。
 //!

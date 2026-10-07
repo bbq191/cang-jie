@@ -1,6 +1,6 @@
 //! 原生书库「建文件夹」队列：外部进程不能直接建文件夹（跟不能直改 `.metadata` 一样，唯一合法路是
 //! xochitl 自己的代码路 `Library.createCollection(parentId, name)`）——由注入 MainView 的
-//! `shelf/xovi/shelf-mkdir-agent.qmd` 定时拉 `GET /mkdir/pending` 执行。本模块只管队列：`add()` 入队去重，
+//! `shelf/xovi/shelf-mkdir-agent.qmd` 长轮询 `GET /mkdir/pending?wait=` 执行。本模块只管队列：`add()` 入队去重，
 //! `pending()` 顺手把已经真实存在的文件夹名剔除（QML 端无需 ack，跟 `trash.rs` 的剔除方式对称）。
 //! 队列文件 `$XDG_STATE_HOME/shelf/books/mkdir-pending.json`。
 //!

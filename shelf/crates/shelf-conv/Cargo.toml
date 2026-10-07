@@ -3,7 +3,7 @@ name = "shelf-conv"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "书架投递 xochitl 用的读书工具：读 EPUB 的书名/封面/翻页方向、第三方 PDF 页数、大文件占位文档、书名规范化；书本身的优化一律在电脑上用 sheng-ren 做"
+description = "书架投递 xochitl 用的读书工具：读 EPUB 的书名/封面/漫画页边距标记、第三方 PDF 页数、大文件占位文档、书名规范化；书本身的优化一律在电脑上用 sheng-ren 做"
 
 [dependencies]
 regex = "1"

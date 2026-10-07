@@ -11,6 +11,7 @@ mod mkdir;
 mod ops;
 mod pending_queue;
 mod render_check;
+mod scratch;
 mod service_state;
 mod sidecar;
 mod spool;
@@ -50,7 +51,7 @@ fn main() {
         std::thread::spawn(move || {
             let inbox = st.spool.inbox();
             rmsvc_core::fswatch::watch_debounced(&inbox, std::time::Duration::from_secs(8), |_| {
-                st.process_inbox(None);
+                st.process_inbox();
             });
         });
     }
@@ -59,7 +60,7 @@ fn main() {
         std::thread::spawn(move || {
             // 最多重扫 12 轮（约 1 分钟）：一直在写的大文件之后由它写完时的事件接手，这里不陪着空转。
             for _ in 0..12 {
-                if st.process_inbox_counting_deferred(None).1 == 0 {
+                if st.process_inbox_counting_deferred().1 == 0 {
                     break;
                 }
                 std::thread::sleep(st.inbox_settle);

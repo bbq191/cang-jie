@@ -95,7 +95,7 @@ impl State {
         Ok(())
     }
 
-    /// 让下一次 `/status` 必定重算（改变了 inbox 计数 / 文件夹候选的操作完成后调）。
+    /// 让下一次 `/status` 必定重算（可能建出新文件夹的操作完成后调）。
     pub fn invalidate_status(&self) {
         self.status_cache.invalidate();
     }
@@ -116,10 +116,10 @@ impl State {
         })
     }
 
-    /// 处理 inbox（scp 丢进来的 / 重试的）：**原样落母版库**（与网页/CLI 同一规则：所有书只落母版库，去向在网页选）。
-    /// 非书籍格式进 failed/ 带原因、不反复重试。`only`=只处理该文件。
-    pub fn process_inbox(&self, only: Option<&str>) -> Vec<InboxOutcome> {
-        self.process_inbox_counting_deferred(only).0
+    /// 处理 inbox（scp 丢进来的 / 重试的）：**原样落母版库**（与网页上传同一规则：所有书只落母版库，去向在网页选）。
+    /// 非书籍格式进 failed/ 带原因、不反复重试。
+    pub fn process_inbox(&self) -> Vec<InboxOutcome> {
+        self.process_inbox_counting_deferred().0
     }
 
     /// 同 [`Self::process_inbox`]，另返回因"还在写"（修改时间离现在不足 [`State::inbox_settle`]）而暂缓的文件数。
@@ -128,7 +128,7 @@ impl State {
     /// 追平——WiFi 传大书超过 8 秒时，这里会把还在写的文件认领、改名进母版库，写入者手里的 fd 跟着 inode 继续写，
     /// 母版库里于是出现一本半截书（可被落库）。写完时的 CLOSE_WRITE 会再触发一轮追平，
     /// 那时修改时间已经静止超过防抖时长，照常处理。
-    pub fn process_inbox_counting_deferred(&self, only: Option<&str>) -> (Vec<InboxOutcome>, usize) {
+    pub fn process_inbox_counting_deferred(&self) -> (Vec<InboxOutcome>, usize) {
         let _g = self.spool.guard();
         let mut out = Vec::new();
         let mut deferred = 0;
@@ -137,7 +137,7 @@ impl State {
         for e in rd.flatten() {
             let p = e.path();
             let Some(name) = p.file_name().and_then(|s| s.to_str()).map(|s| s.to_string()) else { continue };
-            if !p.is_file() || only.map(|o| o != name).unwrap_or(false) || name.starts_with('.') {
+            if !p.is_file() || name.starts_with('.') {
                 continue; // 半成品不动
             }
             let fresh = e.metadata().ok().and_then(|m| m.modified().ok()).and_then(|m| now.duration_since(m).ok()).is_some_and(|age| age < self.inbox_settle);
@@ -182,7 +182,7 @@ mod tests {
         // 2026-09-18 起母版库只收 EPUB/PDF（cbz 已随"仅 KOReader"档退役），接受项夹具改用 .epub。
         std::fs::write(st.spool.inbox().join("b.epub"), b"x").unwrap();
         std::fs::write(st.spool.inbox().join("p.jpg"), b"x").unwrap();
-        let out = st.process_inbox(None);
+        let out = st.process_inbox();
         assert_eq!(out.len(), 2);
         assert!(out.iter().any(|o| o.ok && o.name == "b.epub"));
         assert!(out.iter().any(|o| !o.ok && o.name == "p.jpg" && o.message.contains("不是书籍格式")));
@@ -229,12 +229,12 @@ mod tests {
         st.ensure_dirs().unwrap();
         let f = st.spool.inbox().join("scp.epub");
         std::fs::write(&f, b"half").unwrap();
-        let (out, deferred) = st.process_inbox_counting_deferred(None);
+        let (out, deferred) = st.process_inbox_counting_deferred();
         assert!(out.is_empty() && deferred == 1, "刚写的文件暂缓");
         assert!(f.exists() && !st.staging.has("scp.epub"));
         let old = std::time::SystemTime::now() - INBOX_SETTLE - Duration::from_secs(1);
         std::fs::File::options().write(true).open(&f).unwrap().set_modified(old).unwrap();
-        let (out, deferred) = st.process_inbox_counting_deferred(None);
+        let (out, deferred) = st.process_inbox_counting_deferred();
         assert_eq!((out.len(), deferred), (1, 0));
         assert!(st.staging.has("scp.epub"));
     }
@@ -251,7 +251,7 @@ mod tests {
         for name in ["b.azw3", "b.mobi", "b.fb2", "b.txt"] {
             std::fs::write(st.spool.inbox().join(name), b"x").unwrap();
         }
-        let out = st.process_inbox(None);
+        let out = st.process_inbox();
         assert!(out.iter().all(|o| !o.ok && o.message.contains("不是书籍格式")), "{out:?}");
     }
 }

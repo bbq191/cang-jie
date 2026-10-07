@@ -105,14 +105,14 @@ fn busy_lock_blocks_second_start_and_conflicting_delete_deliver() {
     let t = tempfile::tempdir().unwrap();
     let s = staging(&t);
     s.stage_new("x.epub", b"PK").unwrap();
-    assert!(s.try_start_busy("x.epub"), "第一次加锁应该成功");
-    assert!(!s.try_start_busy("x.epub"), "已经忙着，第二次应该失败");
+    let busy = s.busy_guard("x.epub", "").expect("第一次加锁应该成功");
+    assert!(s.busy_guard("x.epub", "").is_err(), "已经忙着，第二次应该失败");
     assert!(s.is_busy("x.epub"));
     assert!(s.remove("x.epub").unwrap_err().contains("正在处理中"), "忙的时候不该能删");
     let bus = Arc::new(rmsvc_core::events::EventBus::new());
     assert!(s.spawn_deliver("x.epub", "", Arc::new(empty_mkdir(&t)), bus).unwrap_err().contains("正在处理中"), "忙的时候不该能起第二个落库");
     assert!(s.list().iter().find(|e| e.name == "x.epub").unwrap().busy, "GET /staging 列表应体现 busy");
-    s.end_busy("x.epub");
+    drop(busy);
     assert!(!s.is_busy("x.epub"));
     assert!(s.remove("x.epub").is_ok(), "解锁后恢复正常");
 }
@@ -483,7 +483,7 @@ fn deliver_gates_format_before_touching_xochitl() {
     let s = staging(&t);
     s.stage_new("c.cbz", b"PK").unwrap();
     s.stage_new("d.pdf", b"%PDF").unwrap();
-    assert_eq!(s.list().iter().find(|e| e.name == "c.cbz").unwrap().format, "cbz");
+    assert_eq!(s.list().iter().find(|e| e.name == "c.cbz").unwrap().format, "other");
     assert!(s.deliver("c.cbz", "", &empty_mkdir(&t)).unwrap_err().contains("只读 EPUB / PDF"));
     // 体积门：超过 native_limit（测试设 1MB）又走不了大文件通道：不碰 xochitl，整本拒绝
     s.stage_new("huge.pdf", &vec![b'%'; 2 * 1024 * 1024]).unwrap();
@@ -714,9 +714,8 @@ fn rename_keeps_format_moves_sidecar_and_refuses_conflicts() {
     assert!(s.rename("x.pdf.epub", "../evil").is_err(), "路径分隔符拒绝");
     assert!(s.rename("x.pdf.epub", " ").unwrap_err().contains("不能为空"));
 
-    assert!(s.try_start_busy("b.epub"));
+    let _busy = s.busy_guard("b.epub", "").unwrap();
     assert!(s.rename("b.epub", "c").unwrap_err().contains("正在处理中"));
-    s.end_busy("b.epub");
 }
 
 #[test]
@@ -786,6 +785,7 @@ fn comic_margins_follow_sheng_ren_marker() {
     let s = staging(&t);
     s.stage_new("manga.epub", &mini_epub(&[(shelf_conv::epub::READER_MARGINS_MARKER, "1"), ("OEBPS/p1.xhtml", "<p>x</p>")])).unwrap();
     s.stage_new("novel.epub", &mini_epub(&[("OEBPS/p1.xhtml", "<p>x</p>")])).unwrap();
-    assert_eq!(s.comic_margin_eligible(&s.dir().join("manga.epub")), Some(1));
-    assert_eq!(s.comic_margin_eligible(&s.dir().join("novel.epub")), None);
+    let margins = |n: &str| shelf_conv::epub::Book::open(&s.dir().join(n)).ok().and_then(|mut b| b.reader_margins());
+    assert_eq!(margins("manga.epub"), Some(1), "缺 OPF 也照样读得到标记");
+    assert_eq!(margins("novel.epub"), None);
 }
