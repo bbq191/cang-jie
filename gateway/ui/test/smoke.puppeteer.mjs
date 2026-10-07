@@ -208,6 +208,7 @@ assert.equal(out.noteLocalSwitchTranscribe, 0, '切导出 tab / 章节标签不�
 assert.equal(out.otherFonts, 0, '壁纸事件不该重取字体列表');
 assert.ok(out.uiFont && out.uiFont.sans === 'Sarasa UI SC' && out.uiFont.serif === '' && out.uiFont.opts === 3 && out.uiFont.firstOpt === '' && out.uiFont.restart, '界面字体：下拉 = 原生 + 两个已装、选中当前、显示待重启');
 assert.ok(out.uiFont.rows === 2 && out.uiFont.img === 0 && out.uiFont.text.includes('<img src=x'), '界面字体列表：两行、名字按文本显示');
+assert.ok(out.uiFont.text.includes('3 个文件（字重/样式）'), '多文件字体标"N 个文件（字重/样式）"，不是"×N"');
 assert.equal(out.otherWalls, 1, '壁纸事件应刷壁纸子面板一次');
 assert.equal(out.queueEventStagingHits, 0, '网关排队/进度事件不该全量重取母版库列表');
 assert.ok(out.queueEventBatchHits >= 1 && out.queueEventBatchHits <= 2, `排队事件应重取批量状态且合并，实际 ${out.queueEventBatchHits} 次`);

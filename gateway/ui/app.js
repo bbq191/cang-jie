@@ -208,6 +208,11 @@ function fillList(ul,items,row,emptyMsg){ul.innerHTML='';if(!items.length){ul.in
     row(it,left,right,li);li.append(left,right);ul.appendChild(li)})}
 /* 删除按钮：confirmDialog → DELETE → 刷新 */
 const delBtn=(msg,url,refresh)=>btn(T('action.delete'),async()=>{if(await confirmDialog(msg)){await sendT(url,'DELETE');refresh()}});
+/* 字体列表的名字：家族名 + 本地化名 + 多文件时"N 个文件（字重/样式）"——同一家族的常规/半粗/粗体等文件合成一行，
+   悬停列出文件名（原来只标"×N"，看不出是什么，2026-10-07 用户问）。阅读字体、界面字体两张列表共用。 */
+const fontLabel=it=>{const ex=it.extra||{},f=ex.files||[];
+  return esc(it.name)+(ex.names&&ex.names.cn&&ex.names.cn!==it.name?' <span class="small">'+esc(ex.names.cn)+'</span>':'')
+    +(f.length>1?` <span class="small" title="${esc(f.join('\n'))}">${esc(T('assets.fonts.filesCount',{count:f.length}))}</span>`:'')};
 const cjkBadge=p=>p==null?'':`<span class="badge ${p>=80?'on':(p>=8?'':'off')}" title="${T('common.cjkCoverageTitle')}">${T('common.cjkCoverage',{pct:p})}</span>`;
 
 /* 母版库怎么用：三步走 + 收哪些格式 + 加入 xochitl 适合什么书（2026-09-29 起设备只剩 xochitl 一个阅读器，
@@ -493,7 +498,7 @@ function renderFonts(sec){
      const fb=$('#fbchain',sec);fb.style.display='';fb.innerHTML=cjk.length?T('assets.fonts.fallbackChain',{chain:cjk.map(it=>`${esc(it.name)} <span class="small">${esc(it.extra.cjkPct)}%</span>`).join(' → ')}):T('assets.fonts.noCjkWarn');
      const fst=await j('/api/fonts/status');const eb=$('#embold',sec);if(fst.ok){eb.checked=!!fst.emboldenCjkFallback;bindToggle(eb,'/api/fonts/config','emboldenCjkFallback')}},
    row:(it,left,right,refresh)=>{const ex=it.extra||{};
-     left.innerHTML=`${esc(it.name)}${ex.names&&ex.names.cn&&ex.names.cn!==it.name?' <span class="small">'+esc(ex.names.cn)+'</span>':''}${ex.files&&ex.files.length>1?' <span class="small">×'+ex.files.length+'</span>':''}`;
+     left.innerHTML=fontLabel(it);
      right.insertAdjacentHTML('beforeend',cjkBadge(ex.cjkPct)+(ex.fontconfigRef?`<span title="${T('assets.fonts.fallbackRefTitle')}">⚠</span>`:''));
      right.appendChild(delBtn(T('assets.fonts.deleteConfirm',{name:it.name,filesNote:ex.files&&ex.files.length>1?T('assets.fonts.filesNote',{count:ex.files.length}):'',suffix:ex.fontconfigRef?T('assets.fonts.deleteSuffixFallback'):T('assets.fonts.deleteSuffixNormal')}),'/api/fonts/'+encodeURIComponent(it.name),refresh))}});
   const readRefresh=sec.refresh;
@@ -513,7 +518,7 @@ function renderFonts(sec){
   const uiRefresh=async()=>{const d=await j('/api/fonts/ui');const items=d.items||[];
     fill(sans,'reMarkable Sans',items,d.sans);fill(serif,'reMarkable Serif',items,d.serif);show(d);
     fillList($('#uil',card),items,(it,left,right)=>{const ex=it.extra||{};
-      left.innerHTML=`${esc(it.name)}${ex.names&&ex.names.cn&&ex.names.cn!==it.name?' <span class="small">'+esc(ex.names.cn)+'</span>':''}${ex.files&&ex.files.length>1?' <span class="small">×'+ex.files.length+'</span>':''}`;
+      left.innerHTML=fontLabel(it);
       right.insertAdjacentHTML('beforeend',cjkBadge(ex.cjkPct)+`<span>${fmtB(it.bytes)}</span>`);
       right.appendChild(delBtn(T('assets.uiFont.deleteConfirm',{name:it.name}),'/api/fonts/ui/'+encodeURIComponent(it.name),uiRefresh))},T('assets.uiFont.empty'))};
   const save=async()=>{sans.disabled=serif.disabled=true;
