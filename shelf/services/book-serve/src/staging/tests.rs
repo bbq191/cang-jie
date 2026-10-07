@@ -266,7 +266,7 @@ fn onopen_render_record_upgrades_to_ok_once_xochitl_rewrites_page_count() {
     s.ensure().unwrap();
     s.stage_new("big.epub", &comic_epub_with_real_images(&[12, 13])).unwrap();
     std::fs::write(lib.join("u1.content"), r#"{"pageCount":2}"#).unwrap();
-    s.set_render("big.epub", sidecar::RenderCheck { uuid: "u1".into(), pages: 2, expected: 0, status: "onopen".into(), at: 1 }).unwrap();
+    s.set_render("big.epub", sidecar::RenderCheck { uuid: "u1".into(), pages: 2, status: "onopen".into(), at: 1 }).unwrap();
     let rc = |s: &Staging| s.list()[0].delivered.clone().unwrap().render.unwrap();
     assert_eq!((rc(&s).status.as_str(), rc(&s).pages), ("onopen", 2), "没打开过：保持 onopen");
     std::fs::write(lib.join("u1.content"), r#"{"pageCount":351}"#).unwrap();
@@ -417,12 +417,12 @@ fn recover_interrupted_removes_old_and_new_style_scratch_files() {
 fn scratch_file_is_removed_on_panic_and_names_are_unique() {
     let t = tempfile::tempdir().unwrap();
     let s = staging(&t);
-    let (a, b) = (s.scratch("landing"), s.scratch("landing"));
+    let (a, b) = (s.scratch(), s.scratch());
     assert_ne!(a.path(), b.path());
     drop((a, b));
     let seen = std::sync::Mutex::new(None);
     let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let tmp = s.scratch("landing");
+        let tmp = s.scratch();
         std::fs::write(tmp.path(), vec![0u8; 1000]).unwrap();
         *seen.lock().unwrap() = Some(tmp.path().to_path_buf());
         panic!("入库中途 panic");
@@ -443,7 +443,7 @@ fn list_caches_sidecar_and_onopen_page_count_until_files_change() {
     let s = Staging::new(t.path().join("staging"), Arc::new(Xochitl::new("127.0.0.1:1", &lib, 1)), 1024 * 1024);
     s.ensure().unwrap();
     s.stage_new("a.epub", b"PK").unwrap();
-    s.set_render("a.epub", RenderCheck { uuid: U.into(), pages: 2, expected: 0, status: "onopen".into(), at: 1 }).unwrap();
+    s.set_render("a.epub", RenderCheck { uuid: U.into(), pages: 2, status: "onopen".into(), at: 1 }).unwrap();
     std::fs::write(lib.join(format!("{U}.content")), r#"{"pageCount":2}"#).unwrap();
     let rc = |s: &Staging| s.list()[0].delivered.clone().unwrap().render.unwrap();
     assert_eq!((rc(&s).status.as_str(), rc(&s).pages), ("onopen", 2));
@@ -463,36 +463,6 @@ fn list_caches_sidecar_and_onopen_page_count_until_files_change() {
     std::fs::write(&content, r#"{"pageCount":351}"#).unwrap();
     assert_eq!((rc(&s).status.as_str(), rc(&s).pages), ("ok", 351));
     assert!(s.caches.pages.is_empty(), "不再是 onopen 的文档从页数缓存里清掉");
-}
-
-#[test]
-fn backfill_claims_delivered_books_without_render_record_by_name_and_size() {
-    let t = tempfile::tempdir().unwrap();
-    let lib = t.path().join("lib");
-    std::fs::create_dir_all(&lib).unwrap();
-    let x = Arc::new(Xochitl::new("127.0.0.1:1", &lib, 1));
-    let s = Staging::new(t.path().join("staging"), x, 1024 * 1024);
-    s.ensure().unwrap();
-    let epub = comic_epub_with_real_images(&[12, 13]);
-    for n in ["镖人 - 二卷.epub", "镖人 - 三卷.epub"] {
-        s.stage_new(n, &epub).unwrap();
-        s.mark_delivered(n).unwrap();
-    }
-    let mk = |uuid: &str, name: &str, opened: bool| {
-        std::fs::write(lib.join(format!("{uuid}.metadata")), format!(r#"{{"type":"DocumentType","visibleName":"{name}","parent":"","createdTime":"{}"}}"#, rmsvc_core::clock::now_ms())).unwrap();
-        std::fs::write(lib.join(format!("{uuid}.epub")), &epub).unwrap();
-        std::fs::write(lib.join(format!("{uuid}.content")), if opened { r#"{"pageCount":264}"# } else { r#"{"pageCount":2}"# }).unwrap();
-        if opened {
-            std::fs::write(lib.join(format!("{uuid}.pdf")), b"render").unwrap();
-        }
-    };
-    mk("u-unopened", "镖人 - 二卷", false);
-    mk("u-opened", "镖人 - 三卷", true);
-    assert_eq!(s.backfill_render_records(), 2);
-    let get = |name: &str| s.list().into_iter().find(|e| e.name == name).unwrap().delivered.unwrap().render.unwrap();
-    assert_eq!((get("镖人 - 二卷.epub").status.as_str(), get("镖人 - 二卷.epub").pages), ("onopen", 2));
-    assert_eq!((get("镖人 - 三卷.epub").status.as_str(), get("镖人 - 三卷.epub").pages), ("ok", 264));
-    assert_eq!(s.backfill_render_records(), 0, "幂等：已有记录的不再补");
 }
 
 #[test]
@@ -772,7 +742,7 @@ fn list_persists_onopen_to_ok_upgrade() {
     let s = Staging::new(t.path().join("staging"), Arc::new(Xochitl::new("127.0.0.1:1", &lib, 1)), 0);
     s.ensure().unwrap();
     s.stage_new("big.epub", b"PK").unwrap();
-    s.set_render("big.epub", RenderCheck { uuid: U.into(), pages: 3, expected: 0, status: "onopen".into(), at: 1 }).unwrap();
+    s.set_render("big.epub", RenderCheck { uuid: U.into(), pages: 3, status: "onopen".into(), at: 1 }).unwrap();
     std::fs::write(lib.join(format!("{U}.content")), r#"{"pageCount":3}"#).unwrap();
     let rc = |s: &Staging| s.list()[0].delivered.clone().unwrap().render.unwrap();
     assert_eq!(rc(&s).status, "onopen", "页数没变＝还没打开过");
@@ -814,7 +784,7 @@ fn concurrent_landing_of_same_name_never_clobbers() {
 fn comic_margins_follow_sheng_ren_marker() {
     let t = tempfile::tempdir().unwrap();
     let s = staging(&t);
-    s.stage_new("manga.epub", &mini_epub(&[(bookconv::optimize::READER_MARGINS_MARKER, "1"), ("OEBPS/p1.xhtml", "<p>x</p>")])).unwrap();
+    s.stage_new("manga.epub", &mini_epub(&[(shelf_conv::epub::READER_MARGINS_MARKER, "1"), ("OEBPS/p1.xhtml", "<p>x</p>")])).unwrap();
     s.stage_new("novel.epub", &mini_epub(&[("OEBPS/p1.xhtml", "<p>x</p>")])).unwrap();
     assert_eq!(s.comic_margin_eligible(&s.dir().join("manga.epub")), Some(1));
     assert_eq!(s.comic_margin_eligible(&s.dir().join("novel.epub")), None);

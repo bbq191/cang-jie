@@ -35,10 +35,9 @@ pub struct State {
     pub agent_failures: Arc<AgentFailures>,
     /// 直接导入 xochitl（不进母版库，sheng-ren 经 SSH 端口转发调，见 import.rs）。
     pub import: crate::import::Importer,
-    /// `GET /status` 的结果缓存（[`STATUS_TTL`]）。网页每次 refresh 都会打这个接口，而它里面有重活：
-    /// 对 xochitl 发 HTTP 探活（不可达时要等满 3 秒超时）、读全部 `.metadata` 列文件夹、扫 inbox。
-    /// 会被本服务自己的操作改变的部分（inbox 计数、文件夹候选）在操作路径里 [`State::invalidate_status`]
-    /// 主动失效；xochitl 是否可达、用户在设备上新建文件夹这类外部变化最多滞后一个 TTL。
+    /// `GET /status` 的结果缓存（[`STATUS_TTL`]）。网页全量刷新时打这个接口，里面要读全部 `.metadata` 列文件夹。
+    /// 本服务自己可能建出新文件夹的操作（落库、直接导入）完成后 [`State::invalidate_status`] 主动失效；
+    /// 用户在设备上新建文件夹这类外部变化最多滞后一个 TTL。
     status_cache: TtlCache<serde_json::Value>,
     /// inbox 文件修改时间静止多久才算"写完了"（见 [`State::process_inbox_counting_deferred`]）。缺省 [`INBOX_SETTLE`]，
     /// 须小于 inbox 监听的防抖时长（8 秒），写完那次事件触发的追平才不会再被暂缓。
@@ -66,8 +65,7 @@ impl State {
         let books_state = paths.state_dir().join("books"); // inbox/.work/failed 与三个待办队列共用的状态目录
         let spool = Spool::new(books_state.clone());
         let comic_margins = Arc::new(ComicMargins::new(&books_state, &paths.xochitl_dir()));
-        // 阅读方向旧手动清单：只读（2026-09-30 起不再有写方，见 reading_direction.rs）。
-        let reading_direction = Arc::new(crate::reading_direction::ReadingDirection::new(&paths.xochitl_dir(), &books_state.join("rtl-overrides.json")));
+        let reading_direction = Arc::new(crate::reading_direction::ReadingDirection::new(&paths.xochitl_dir()));
         let staging = Staging::new(paths.staging_dir(), xochitl.clone(), cfg.native_upload_limit_bytes())
             .with_comic_margins(comic_margins.clone());
         let import = crate::import::Importer::new(xochitl.clone(), staging.clone(), books_state.join("import-tmp"), cfg.native_upload_limit_bytes());
@@ -97,11 +95,6 @@ impl State {
         if orphans > 0 {
             println!("[book-serve] 清掉 {orphans} 个没有对应书的落库记录");
         }
-        // 给"已加入 xochitl 但没有渲染记录"的书补记（大文件通道上线前直接投入的），让列表里渲染徽章统一。幂等。
-        let n = self.staging.backfill_render_records();
-        if n > 0 {
-            println!("[book-serve] 补记 {n} 本已加入 xochitl 的书的渲染记录");
-        }
         Ok(())
     }
 
@@ -115,20 +108,14 @@ impl State {
     }
 
     fn compute_status(&self) -> serde_json::Value {
-        let items = self.spool.list();
         serde_json::json!({
             "ok": true,
-            "uploadReachable": self.xochitl.reachable(),
             // 原生书库里真实存在的文件夹名（去重排序），给网页「加入原生书库 → 文件夹」下拉候选用——
             // 2026-09-19 取代原来写死的「书库/批注/自定义」三选一预设（`annotFolder` 已删），跟
             // 当年 KOReader 那边的目录下拉候选同一个道理（koreader-serve 已于 2026-09-30 从仓库删除）。
             "xochitlFolders": rmsvc_core::xochitl::list_folders(self.xochitl.library_dir()),
-            // 投原生的体积门（字节），网页据此灰掉超限书的「投入原生书库」
-            "nativeUploadLimitBytes": self.cfg.native_upload_limit_bytes(),
-            "spool": {
-                "pending": items.iter().filter(|i| i.state == "pending").count(),
-                "failed": items.iter().filter(|i| i.state == "failed").count(),
-            },
+            // 2026-10-07 删掉网页从来没读过的三项：`uploadReachable`（xochitl 不在时每次白等 3 秒探活）、
+            // `nativeUploadLimitBytes`（有大文件通道后不再灰掉超限书）、`spool`（inbox 待处理/失败计数）。
         })
     }
 
@@ -174,7 +161,6 @@ impl State {
             out.push(o);
         }
         if !out.is_empty() {
-            self.invalidate_status(); // inbox 计数变了，先失效再发事件（网页收到事件后马上来取 /status）
             self.bus.publish("books", "inbox");
             if out.iter().any(|o| o.ok) {
                 self.bus.publish("books", "staging");
@@ -221,23 +207,19 @@ mod tests {
     }
 
     #[test]
-    fn status_is_cached_within_ttl_and_invalidated_by_inbox_operations() {
+    fn status_lists_folders_cached_within_ttl_until_invalidated() {
         let t = tempfile::tempdir().unwrap();
         let st = state_with_dead_xochitl(t.path());
-        assert_eq!(st.status()["spool"]["failed"], 0);
-        // 外部（scp）丢进 inbox 一个非书文件：TTL 内 status 仍是缓存的旧值（不重算重活）
-        std::fs::write(st.spool.inbox().join("p.jpg"), b"x").unwrap();
-        assert_eq!(st.status()["spool"]["pending"], 0, "TTL 内命中缓存");
-        // 本服务自己处理 inbox → 主动失效，马上看到 failed=1
-        st.process_inbox(None);
-        let s = st.status();
-        assert_eq!((s["spool"]["pending"].as_u64(), s["spool"]["failed"].as_u64()), (Some(0), Some(1)), "操作后立刻刷新");
-        assert_eq!(s["uploadReachable"], false);
-        // 外部把失败项清掉后，失效钩子生效前仍是缓存值（api 层的 invalidate_status 就是这个钩子）
-        std::fs::remove_file(st.spool.failed().join("p.jpg")).unwrap();
-        assert_eq!(st.status()["spool"]["failed"], 1, "没失效前仍是缓存值");
+        let lib = st.xochitl.library_dir().to_path_buf();
+        std::fs::create_dir_all(&lib).unwrap();
+        assert_eq!(st.status()["xochitlFolders"], serde_json::json!([]));
+        // 设备上新建了文件夹：TTL 内仍是缓存的旧值（不重读全部 .metadata）
+        std::fs::write(lib.join("f1.metadata"), r#"{"type":"CollectionType","visibleName":"漫画","parent":""}"#).unwrap();
+        assert_eq!(st.status()["xochitlFolders"], serde_json::json!([]), "TTL 内命中缓存");
         st.invalidate_status();
-        assert_eq!(st.status()["spool"]["failed"], 0);
+        let s = st.status();
+        assert_eq!((s["ok"].clone(), s["xochitlFolders"].clone()), (serde_json::json!(true), serde_json::json!(["漫画"])));
+        assert!(s.get("uploadReachable").is_none() && s.get("spool").is_none(), "网页不读的字段已删");
     }
 
     /// 回归：还在写的文件（修改时间离现在不足 settle）不认领，写完静止后照常入库。

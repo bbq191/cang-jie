@@ -1,8 +1,9 @@
 //! 投原生后的**渲染自检**：xochitl 导入 EPUB 后渲染（真机：导入当下同步渲染），渲染完在 `<uuid>.content` 写 `pageCount`。
-//! 整章渲染失败（同一标签双 id 等，《消失的爱人》只出 7 页）以前要用户翻到才发现；现在投书后起一条线程，
-//! **限时**监听书库目录（`fswatch::watch_until`，最长 [`TIMEOUT`]，结束即撤、不常驻），等到页数就与
-//! `shelf_conv::stats` 的期望页数比：低于 [`WARN_RATIO`] → `warn`。结果写进母版库边车 `.<name>.delivered` 的
+//! 投书后起一条线程，**限时**监听书库目录（`fswatch::watch_until`，最长 [`TIMEOUT`]，结束即撤、不常驻），认出这本书就
+//! 记下 uuid 和页数、登记漫画页边距（普通上传拿不到 uuid，只能在这里认）。结果写进母版库边车 `.<name>.delivered` 的
 //! `render` 字段（事件是有损信号，状态必须落盘），并推 `books/render` 事件（带 name/status/pages）。
+//! 2026-10-07 前还按正文字数估期望页数、页数远低于期望时报 `warn`（抓整章渲染失败）：那主要是设备上优化出错的症状，
+//! 书改在电脑上用 sheng-ren 优化、有它的质量门把关后删掉，只记页数。
 //! 认书：`/upload` 不回 uuid，visibleName 取自 EPUB 元数据不等于文件名 → 按 `createdTime >= 投书时刻` 圈候选，
 //! 书名（dc:title / 文件名 stem）相符者优先，否则取最新一本。只读 `.metadata/.content`，绝不写 xochitl 目录。
 use crate::sidecar::RenderCheck;
@@ -18,10 +19,6 @@ use std::time::Duration;
 pub const TIMEOUT: Duration = Duration::from_secs(600);
 /// 书库目录写入防抖（xochitl 导入时连写 metadata/content/缩略图）。
 pub const DEBOUNCE: Duration = Duration::from_secs(3);
-/// 实际页数 / 期望页数低于此 → warn。自检发生在导入当下，xochitl 用的是缺省字号/边距（`.content` 里 textScale 1 /
-/// margins 56），页数只随书的文字密度浮动（真机：两本真书 0.99，随机词探针 0.86）；坏章在 xochitl 里各占 1 页空白，
-/// 4 章坏 3 章的探针 10/29=0.34——30% 抓不住，定 50%（2026-09-06 真机标定）。
-pub const WARN_RATIO: f64 = 0.5;
 
 pub fn run(staging: &Staging, bus: &EventBus, lib_dir: &Path, plan: &RenderPlan) {
     run_with(staging, bus, lib_dir, plan, DEBOUNCE, TIMEOUT)
@@ -34,12 +31,12 @@ pub fn run_with(staging: &Staging, bus: &EventBus, lib_dir: &Path, plan: &Render
         if !staging.has(&plan.name) {
             return;
         }
-        let rc = RenderCheck { uuid: uuid.to_string(), pages, expected: plan.expected, status: status.to_string(), at: now() };
+        let rc = RenderCheck { uuid: uuid.to_string(), pages, status: status.to_string(), at: now() };
         if let Err(e) = staging.set_render(&plan.name, rc) {
             println!("[book-serve] 渲染自检记录《{}》失败: {e}", plan.name);
         }
-        bus.publish_raw(&serde_json::json!({"area":"books","kind":"render","name":plan.name,"status":status,"pages":pages,"expected":plan.expected,"at":now()}).to_string());
-        println!("[book-serve] 渲染自检《{}》: {status} pages={pages} expected={} uuid={uuid}", plan.name, plan.expected);
+        bus.publish_raw(&serde_json::json!({"area":"books","kind":"render","name":plan.name,"status":status,"pages":pages,"at":now()}).to_string());
+        println!("[book-serve] 渲染自检《{}》: {status} pages={pages} uuid={uuid}", plan.name);
     };
     write("", 0, "pending");
     let check = || {
@@ -47,7 +44,7 @@ pub fn run_with(staging: &Staging, bus: &EventBus, lib_dir: &Path, plan: &Render
             if let Some(m) = plan.comic_margins {
                 staging.register_comic_margins(&uuid, &plan.name, m);
             }
-            write(&uuid, pages, verdict(pages, plan.expected))
+            write(&uuid, pages, "ok")
         })
     };
     if check().is_some() {
@@ -71,14 +68,6 @@ pub fn pick<'a>(docs: &'a [DocInfo], title: Option<&str>, name: &str) -> Option<
     let stem = name.rsplit_once('.').map(|(s, _)| s).unwrap_or(name);
     let eq = |a: &str, b: &str| a.trim().eq_ignore_ascii_case(b.trim());
     docs.iter().find(|d| title.is_some_and(|t| eq(&d.visible_name, t)) || eq(&d.visible_name, stem)).or(docs.first())
-}
-
-pub fn verdict(pages: u64, expected: u64) -> &'static str {
-    if expected > 0 && (pages as f64) < (expected as f64) * WARN_RATIO {
-        "warn"
-    } else {
-        "ok"
-    }
 }
 
 #[cfg(test)]
@@ -111,8 +100,8 @@ mod tests {
         std::fs::write(lib.join(format!("{uuid}.content")), format!(r#"{{"pageCount":{pages}}}"#)).unwrap();
     }
 
-    fn plan(expected: u64) -> RenderPlan {
-        RenderPlan { name: "a.epub".into(), title: None, expected, since_ms: 1000, comic_margins: None }
+    fn plan() -> RenderPlan {
+        RenderPlan { name: "a.epub".into(), title: None, since_ms: 1000, comic_margins: None }
     }
 
     const MS: fn(u64) -> Duration = Duration::from_millis;
@@ -128,9 +117,9 @@ mod tests {
         render_doc(&lib, "u1", "a", 100);
         let bus = EventBus::new();
         let mut sub = bus.subscribe();
-        run_with(&s, &bus, &lib, &plan(100), MS(20), MS(200));
+        run_with(&s, &bus, &lib, &plan(), MS(20), MS(200));
         let rc = render_of(&s).unwrap();
-        assert_eq!((rc.status.as_str(), rc.pages, rc.uuid.as_str(), rc.expected), ("ok", 100, "u1", 100));
+        assert_eq!((rc.status.as_str(), rc.pages, rc.uuid.as_str()), ("ok", 100, "u1"));
         let mut buf = [0u8; 1024];
         let n = sub.read(&mut buf).unwrap();
         assert!(String::from_utf8_lossy(&buf[..n]).contains(r#""kind":"render""#), "应推 books/render 事件");
@@ -146,7 +135,7 @@ mod tests {
             let q = std::sync::Arc::new(crate::comic_margins::ComicMargins::new(t.path(), &lib));
             let s = s.with_comic_margins(q.clone());
             render_doc(&lib, U, "a", 100);
-            let mut p = plan(100);
+            let mut p = plan();
             p.comic_margins = comic;
             run_with(&s, &EventBus::new(), &lib, &p, MS(20), MS(200));
             assert_eq!(q.get(U), expect, "comic={comic:?}");
@@ -154,20 +143,11 @@ mod tests {
     }
 
     #[test]
-    fn run_records_warn_when_pages_far_below_expected() {
-        let t = tempfile::tempdir().unwrap();
-        let (s, lib) = setup(&t);
-        render_doc(&lib, "u1", "a", 100);
-        run_with(&s, &EventBus::new(), &lib, &plan(300), MS(20), MS(200));
-        assert_eq!(render_of(&s).unwrap().status, "warn", "100/300 < 50% → 整章渲染失败嫌疑");
-    }
-
-    #[test]
     fn run_records_timeout_when_book_never_appears() {
         let t = tempfile::tempdir().unwrap();
         let (s, lib) = setup(&t);
         let started = std::time::Instant::now();
-        run_with(&s, &EventBus::new(), &lib, &plan(100), MS(20), MS(150));
+        run_with(&s, &EventBus::new(), &lib, &plan(), MS(20), MS(150));
         let rc = render_of(&s).unwrap();
         assert_eq!((rc.status.as_str(), rc.pages), ("timeout", 0));
         assert!(started.elapsed() < Duration::from_secs(5), "限时监听按给定 timeout 收工");
@@ -182,7 +162,7 @@ mod tests {
             std::thread::sleep(MS(200));
             render_doc(&lib2, "u2", "a", 42);
         });
-        run_with(&s, &EventBus::new(), &lib, &plan(40), MS(30), Duration::from_secs(10));
+        run_with(&s, &EventBus::new(), &lib, &plan(), MS(30), Duration::from_secs(10));
         let rc = render_of(&s).unwrap();
         assert_eq!((rc.status.as_str(), rc.pages, rc.uuid.as_str()), ("ok", 42, "u2"), "watch_until 应在书出现后很快检出");
     }
@@ -196,7 +176,7 @@ mod tests {
         s.remove("a.epub").unwrap();
         let bus = EventBus::new();
         let _sub = bus.subscribe();
-        run_with(&s, &bus, &lib, &plan(100), MS(20), MS(100));
+        run_with(&s, &bus, &lib, &plan(), MS(20), MS(100));
         assert!(sidecar::read(&s.dir().join("a.epub")).is_none(), "书已删，不该再生成边车");
         assert!(!s.has("a.epub"));
     }
@@ -208,16 +188,5 @@ mod tests {
         assert_eq!(pick(&docs, None, "Tell Me Your Dreams (v6).epub").unwrap().uuid, "s", "退而按文件名 stem");
         assert_eq!(pick(&docs, Some("没有的"), "x.epub").unwrap().uuid, "n", "都不符取最新");
         assert!(pick(&[], Some("a"), "a.epub").is_none());
-    }
-
-    #[test]
-    fn verdict_thresholds() {
-        assert_eq!(verdict(7, 300), "warn");
-        assert_eq!(verdict(10, 29), "warn", "真机探针：4 章坏 3 章");
-        assert_eq!(verdict(149, 300), "warn");
-        assert_eq!(verdict(150, 300), "ok");
-        assert_eq!(verdict(25, 29), "ok", "真机探针：好书 0.86");
-        assert_eq!(verdict(600, 300), "ok");
-        assert_eq!(verdict(1, 0), "ok", "没期望值不判");
     }
 }

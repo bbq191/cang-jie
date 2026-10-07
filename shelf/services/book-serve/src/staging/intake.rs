@@ -51,7 +51,7 @@ impl Staging {
             }
         }
         // 中转文件出错/中途 panic 都由 `ScratchFile` 的 Drop 清掉；成功时它已被 rename 成正式名。
-        let tmp = self.scratch("landing");
+        let tmp = self.scratch();
         std::fs::copy(src, tmp.path()).map_err(|e| format!("写母版库失败: {e}"))?;
         let landed = {
             let _land = self.land_guard();

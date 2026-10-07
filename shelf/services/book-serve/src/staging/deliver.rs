@@ -35,18 +35,14 @@ impl Staging {
             }
             return Err(format!("《{name}》{} MB 超过 xochitl 上传上限（{} MB），也走不了大文件通道（超过 1GB，或造不出占位文档），没有加入", size >> 20, self.native_limit >> 20));
         }
-        // 2026-09-19 OOM 审计：这条路径以前 `std::fs::read` 整本读进 `Vec<u8>`，自检+上传各自又在
-        // 内部再叠一份（`text_profile` 解压全部条目含图片、`Xochitl::upload` 内部克隆一份拼
-        // multipart body），≤90MB 的书峰值能叠到 ~180-270MB。现在全程不把整本读进内存：自检走
-        // `text_profile_file`（流式开文件，图片条目连解压都跳过），上传走 `upload_file`（流式发送
-        // 体，见 rmsvc_core::xochitl 文档）。自检计划在上传前算好（投书时刻要早于 xochitl 给文档的
-        // createdTime）；统计失败就不自检，不影响投书。
-        let render = if formats::ext_of(name) == "epub" {
-            let comic_margins = self.comic_margin_eligible(&p);
-            shelf_conv::stats::text_profile_file(&p).ok().map(|prof| RenderPlan { name: name.to_string(), title: prof.title.clone(), expected: prof.expected_pages(), since_ms: rmsvc_core::clock::now_ms(), comic_margins })
-        } else {
-            None
-        };
+        // 全程不把整本读进内存：上传走 `upload_file`（流式发送体，见 rmsvc_core::xochitl 文档），自检只读 OPF 里的书名。
+        // 自检计划在上传前算好（投书时刻要早于 xochitl 给文档的 createdTime）。
+        let render = (formats::ext_of(name) == "epub").then(|| RenderPlan {
+            name: name.to_string(),
+            title: shelf_conv::epub::title_of(&p),
+            since_ms: rmsvc_core::clock::now_ms(),
+            comic_margins: self.comic_margin_eligible(&p),
+        });
         let message = match self.xochitl.upload_file(&p, name, ct.mime(), folder)? {
             Delivery::Delivered(_) => format!("已加入 xochitl《{name}》"),
             Delivery::LikelyDelivered(_) => format!("已加入 xochitl《{name}》（设备处理较慢，稍候刷新书库）"),
@@ -61,40 +57,6 @@ impl Staging {
         Ok((ct, self.existing(name)?))
     }
 
-    /// 给"已加入 xochitl 但没有渲染记录"的书补记（2026-09-20：大文件通道上线前直接投入的书没有渲染徽章，列表里不统一）。
-    /// 按书名（规范名或文件名 stem）+ 文件大小在 xochitl 书库里认领对应文档；没渲染缓存（`.pdf`）＝没打开过 → `onopen`（记当前
-    /// 占位页数，之后 `list()` 看到页数变了就升级）；有缓存＝已渲染过 → 直接 `ok` 记真页数。返回补记了几本。幂等、只补缺的。
-    pub fn backfill_render_records(&self) -> usize {
-        let lib = self.xochitl.library_dir().to_path_buf();
-        if !lib.is_dir() {
-            return 0;
-        }
-        let docs = rmsvc_core::xochitl::find_documents_since(&lib, 0);
-        let mut n = 0;
-        for e in self.list() {
-            let has_native = e.delivered.as_ref().map(|d| d.native.is_some() && d.render.is_none()).unwrap_or(false);
-            let ext = formats::ext_of(&e.name);
-            if !has_native || (ext != "epub" && ext != "pdf") {
-                continue;
-            }
-            let stem = e.name.strip_suffix(&format!(".{ext}")).unwrap_or(&e.name).to_string();
-            let canon = bookconv::naming::canonical_book_name(&stem);
-            let eq = |a: &str, b: &str| a.trim().eq_ignore_ascii_case(b.trim());
-            let doc = docs.iter().find(|d| {
-                (eq(&d.visible_name, &canon) || eq(&d.visible_name, &stem) || eq(&d.visible_name, &e.name))
-                    && std::fs::metadata(lib.join(format!("{}.{ext}", d.uuid))).map(|m| m.len() == e.bytes).unwrap_or(false)
-            });
-            let Some(doc) = doc else { continue };
-            let pages = rmsvc_core::xochitl::page_count(&lib, &doc.uuid).unwrap_or(0);
-            let opened = ext == "pdf" || lib.join(format!("{}.pdf", doc.uuid)).exists();
-            let rc = sidecar::RenderCheck { uuid: doc.uuid.clone(), pages, expected: 0, status: if opened { "ok".into() } else { "onopen".into() }, at: rmsvc_core::clock::now_secs() };
-            if self.set_render(&e.name, rc).is_ok() {
-                n += 1;
-            }
-        }
-        n
-    }
-
     /// 大文件通道（见 [`rmsvc_core::xochitl::Xochitl::upload_large_file`]）：成功 `Ok(Some)`；条件不满足（非
     /// EPUB/PDF、超过安全上限、本机没有 xochitl 书库目录、造占位失败）→ `Ok(None)`，调用方整本拒绝；
     /// 占位已上传之后才出的错 → `Err`（不再退回拒绝，否则书库里会留下半成品占位）。
@@ -105,9 +67,8 @@ impl Staging {
         }
         let stem = name.strip_suffix(&format!(".{ext}")).unwrap_or(name);
         let (placeholder, content_type, pages) = if ext == "epub" {
-            // 显示名：有卷标记用规范名（与文件名一致），否则沿用书自己的 dc:title。
-            let title = shelf_conv::naming::has_volume_marker(stem).then(|| bookconv::naming::canonical_book_name(stem));
-            match shelf_conv::placeholder::epub_placeholder(p, title.as_deref()) {
+            // 显示名沿用书自己的 dc:title（sheng-ren 优化时已写好规范书名）。
+            match shelf_conv::placeholder::epub_placeholder(p, None) {
                 Ok(b) => (b, "application/epub+zip", None),
                 Err(_) => return Ok(None),
             }
@@ -132,11 +93,10 @@ impl Staging {
         // - EPUB：xochitl 要**首次打开**才渲染，此刻 `.content` 里是占位的页数。记 `onopen` + 占位页数，`list()` 之后每次
         //   读该文档 `.content` 的 pageCount，一变（用户打开过、xochitl 渲染完）就自动显示成真页数。
         let rc = match pages {
-            Some(n) => sidecar::RenderCheck { uuid: uuid.clone(), pages: n as u64, expected: 0, status: "ok".into(), at: rmsvc_core::clock::now_secs() },
+            Some(n) => sidecar::RenderCheck { uuid: uuid.clone(), pages: n as u64, status: "ok".into(), at: rmsvc_core::clock::now_secs() },
             None => sidecar::RenderCheck {
                 uuid: uuid.clone(),
                 pages: rmsvc_core::xochitl::page_count(self.xochitl.library_dir(), &uuid).unwrap_or(0),
-                expected: 0,
                 status: "onopen".into(),
                 at: rmsvc_core::clock::now_secs(),
             },

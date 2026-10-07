@@ -36,12 +36,13 @@ pub struct DeliverCheck {
     pub at: u64,
 }
 
-/// 渲染自检结果：`status` = pending（等 xochitl 渲染）/ ok / warn（页数远低于期望＝整章渲染失败）/ timeout。
+/// 渲染自检结果：`status` = pending（等 xochitl 渲染）/ ok / onopen（大文件通道的 EPUB，首次打开才渲染）/ timeout。
+/// 2026-10-07 前还有 `warn`（页数远低于按字数估的期望页数）和 `expected` 字段：书改在电脑上用 sheng-ren 优化、有它的质量门把关后删掉，
+/// 旧边车里的 `expected` 解析时忽略，旧的 `warn` 记录照样显示页数。
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
 pub struct RenderCheck {
     pub uuid: String,
     pub pages: u64,
-    pub expected: u64,
     pub status: String,
     pub at: u64,
 }
@@ -136,7 +137,7 @@ mod tests {
         assert_eq!(path_for(&book).file_name().unwrap(), ".b.epub.delivered");
         assert!(read(&book).is_none());
         update(&book, |d| d.native = Some(7)).unwrap();
-        update(&book, |d| d.render = Some(RenderCheck { uuid: "u".into(), pages: 3, expected: 4, status: "ok".into(), at: 1 })).unwrap();
+        update(&book, |d| d.render = Some(RenderCheck { uuid: "u".into(), pages: 3, status: "ok".into(), at: 1 })).unwrap();
         let d = read(&book).unwrap();
         assert_eq!((d.native, d.koreader), (Some(7), None));
         assert_eq!(d.render.as_ref().map(|r| r.pages), Some(3));

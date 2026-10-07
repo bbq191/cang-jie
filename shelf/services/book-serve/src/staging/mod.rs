@@ -36,13 +36,10 @@ fn busy_err(name: &str, extra: &str) -> String {
     format!("《{name}》正在处理中，请稍候{extra}")
 }
 
-/// 母版库目录里临时文件的种类（名字 `.<pid>.<序号>.<种类>.tmp`，见 [`ScratchFile`]）：现在只剩跨分区入库的中转。
-/// 上次进程留下的由 `recover_interrupted` 按"点前缀 + `.tmp` 结尾"清掉（旧版优化留下的半成品也一样）。
-pub(super) const SCRATCH_KINDS: [&str; 1] = ["landing"];
-
-/// 母版库目录里的一份点前缀临时文件（列表看不见）。
+/// 母版库目录里的一份点前缀临时文件（列表看不见），现在只有跨分区入库的中转用它。
+/// 上次进程留下的由 `recover_interrupted` 按"点前缀 + `.tmp` 结尾"清掉。
 ///
-/// - **名字与书名无关**（`.<pid>.<序号>.<种类>.tmp`）：按书名拼的话，书名本身接近文件名 255 字节上限（中文 80 来个字）时
+/// - **名字与书名无关**（`.<pid>.<序号>.landing.tmp`）：按书名拼的话，书名本身接近文件名 255 字节上限（中文 80 来个字）时
 ///   临时文件名超长，直接报文件系统错误（ENAMETOOLONG）。
 /// - **Drop 时删掉**：正常路径下文件早已被 rename 成正式文件（删不到，无害）；出错或 panic 时（后台线程 `catch_unwind`
 ///   兜住、进程照常服务）不再把半成品（大书可达数百 MB）一直留到下次重启才由 `recover_interrupted` 清。
@@ -83,7 +80,6 @@ pub struct StagingEntry {
 pub struct RenderPlan {
     pub name: String,
     pub title: Option<String>,
-    pub expected: u64,
     pub since_ms: u64,
     /// 按页边距模式排的漫画：导入完成后登记"首次打开时设成这个页边距"（见 `comic_margins.rs`）；其余 `None`。
     pub comic_margins: Option<u32>,
@@ -172,15 +168,6 @@ fn canonical_staged_name(name: &str) -> String {
     }
 }
 
-/// sheng-ren 优化器写在漫画里的 `META-INF/eink-reader-margins`（内容是阅读器该设的页边距）。没有、读不出、不是数字 → `None`。
-fn reader_margins_of(path: &Path) -> Option<u32> {
-    let f = std::fs::File::open(path).ok()?;
-    let mut ar = bookconv::zip::ZipArchive::new(std::io::BufReader::new(f)).ok()?;
-    let entry = ar.by_name(bookconv::optimize::READER_MARGINS_MARKER).ok()?;
-    let bytes = bookconv::util::read_capped(entry, 16, 0).ok()??;
-    std::str::from_utf8(&bytes).ok()?.trim().parse().ok()
-}
-
 impl Staging {
     pub fn new(dir: PathBuf, xochitl: Arc<Xochitl>, native_limit: u64) -> Staging {
         Staging {
@@ -204,7 +191,7 @@ impl Staging {
     /// 本仓库旧版（v15、v16）优化出来的漫画不再认，请用 sheng-ren 重新优化。
     /// 没接队列（测试里）照样判；登记时没队列就不登记（见 [`Self::register_comic_margins`]）。
     pub(crate) fn comic_margin_eligible(&self, path: &Path) -> Option<u32> {
-        reader_margins_of(path)
+        shelf_conv::epub::reader_margins_of(path)
     }
     /// 登记"这本书首次打开时设页边距 `margins`"。失败只记日志，不影响投书。
     pub(crate) fn register_comic_margins(&self, uuid: &str, name: &str, margins: u32) {
@@ -232,12 +219,11 @@ impl Staging {
         std::fs::create_dir_all(&self.dir)
     }
 
-    /// 在母版库目录里要一份新的临时文件名（见 [`ScratchFile`]；`kind` 取 [`SCRATCH_KINDS`] 之一）。
-    pub(super) fn scratch(&self, kind: &str) -> ScratchFile {
+    /// 在母版库目录里要一份新的临时文件名（见 [`ScratchFile`]）。
+    pub(super) fn scratch(&self) -> ScratchFile {
         static SEQ: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-        debug_assert!(SCRATCH_KINDS.contains(&kind));
         let seq = SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        ScratchFile(self.dir.join(format!(".{}.{seq}.{kind}.tmp", std::process::id())))
+        ScratchFile(self.dir.join(format!(".{}.{seq}.landing.tmp", std::process::id())))
     }
 
     /// 进入"落名"临界区（见 `land` 字段）。

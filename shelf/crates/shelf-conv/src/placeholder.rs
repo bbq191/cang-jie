@@ -1,4 +1,4 @@
-//! 大文件"占位 + 替换"投原生用的占位文档，以及 OPF 书名改写。
+//! 大文件"占位 + 替换"投原生用的占位文档，以及读 EPUB 的翻页方向。
 //!
 //! xochitl 的网页上传接口有约 100MB 的硬上限（超了直接断连，2026-09-19 真机实测）。绕开办法（2026-09-20
 //! 真机验证过 PDF 154MB/349 页、EPUB 153MB 都能打开）：先用网页上传一个几 KB 的**占位文档**让 xochitl
@@ -8,45 +8,32 @@
 //! 替换成大文件后它不会补生成封面、也不会改名（真机踩过：显示成"上传限制实验-EPUB"且没封面）。
 //! PDF 的显示名取上传文件名，缩略图打开时才按页生成，占位不需要带内容。
 
-use regex::Regex;
+use crate::epub;
 use std::path::Path;
-use std::sync::OnceLock;
-
-fn re(cell: &'static OnceLock<Regex>, pat: &str) -> &'static Regex {
-    cell.get_or_init(|| Regex::new(pat).unwrap())
-}
 
 /// 这本 EPUB 是不是"从右往左"翻页：OPF `<spine page-progression-direction="rtl">`（日漫常见）。只读
 /// container.xml 和 OPF 两个条目，不解压整本（漫画一卷可达数百 MB）。读不到/不是 EPUB 一律 `false`。
 /// 给 xochitl 阅读器的"日漫从右往左翻页"用（book-serve `GET /reading-direction/{uuid}`，2026-09-24）。
-/// 判据见 [`bookconv::direction::spine_direction`]（只读原书自带的方向）。
+/// 判据见 [`epub::spine_is_rtl`]（只读原书自带的方向）。
 pub fn epub_is_rtl(epub: &Path) -> bool {
-    bookconv::epubzip::open_opf(epub).ok().and_then(|(_, _, opf)| bookconv::direction::spine_direction(&opf)) == Some(bookconv::direction::PageDirection::Rtl)
+    epub::open_opf(epub).is_ok_and(|(_, _, opf)| epub::spine_is_rtl(&opf))
 }
 
 /// 造占位 EPUB：显示名 = `title`（`None` 取真书自己的 `dc:title`），封面 = 真书的封面（找不到就没有封面页，
 /// 只有标题）。体积通常几十到几百 KB。
 pub fn epub_placeholder(real_epub: &Path, title: Option<&str>) -> Result<Vec<u8>, String> {
-    let (_, _, opf) = bookconv::epubzip::open_opf(real_epub)?;
-    let cover = bookconv::epubzip::cover_image_of(real_epub);
-    static TITLE: OnceLock<Regex> = OnceLock::new();
-    // OPF 里读出的是转义过的 XML 文本：`plain_text` 还原字符引用后下面统一转义，否则 `A &amp; B` 会被写成 `A &amp;amp; B`（设备显示名带字面 `&amp;`）。
-    let from_opf = |c: &regex::Captures| bookconv::html::plain_text(&c[1]).trim().to_string();
-    let real_title = re(&TITLE, r#"(?s)<dc:title\b[^>]*>(.*?)</dc:title>"#).captures(&opf).map(|c| from_opf(&c)).filter(|t| !t.is_empty());
-    let title: String = title.map(str::to_string).or(real_title).unwrap_or_else(|| "未命名".into());
-    let title = title.as_str();
-    static CREATOR: OnceLock<Regex> = OnceLock::new();
-    // 作者/语言同样按"读出→还原→转义"处理：此前原样拼进占位 OPF，原书里若是 CDATA、嵌套标签或非法字符，占位 OPF 就不是
-    // 合法 XML（xochitl 严格解析，占位导入失败）。
-    let creator = re(&CREATOR, r#"(?s)<dc:creator\b[^>]*>(.*?)</dc:creator>"#).captures(&opf).map(|c| from_opf(&c)).unwrap_or_default();
-    static LANG: OnceLock<Regex> = OnceLock::new();
-    let lang = re(&LANG, r#"(?s)<dc:language\b[^>]*>(.*?)</dc:language>"#).captures(&opf).map(|c| from_opf(&c)).filter(|l| !l.is_empty()).unwrap_or_else(|| "zh".into());
-    let (creator, lang) = (bookconv::util::xml_escape(&creator), bookconv::util::xml_escape(&lang));
-
-    let t = bookconv::util::xml_escape(title);
+    let (_, _, opf) = epub::open_opf(real_epub)?;
+    let cover = epub::cover_image_of(real_epub);
+    // OPF 里读出的是转义过的 XML 文本：`dc_text` 还原字符引用后下面统一转义，否则 `A &amp; B` 会被写成 `A &amp;amp; B`（设备显示名带字面 `&amp;`）。
+    // 作者/语言同样按"读出→还原→转义"处理：原书里若是 CDATA、嵌套标签或非法字符，原样拼进占位 OPF 就不是合法 XML
+    // （xochitl 严格解析，占位导入失败）。
+    let title: String = title.map(str::to_string).or_else(|| epub::dc_text(&opf, "title")).unwrap_or_else(|| "未命名".into());
+    let creator = epub::xml_escape(&epub::dc_text(&opf, "creator").unwrap_or_default());
+    let lang = epub::xml_escape(&epub::dc_text(&opf, "language").unwrap_or_else(|| "zh".into()));
+    let t = epub::xml_escape(&title);
     let (cover_item, cover_meta, page_body) = match &cover {
         Some((ext, _)) => (
-            format!(r#"<item id="cover-img" href="cover.{ext}" media-type="{}" properties="cover-image"/>"#, bookconv::util::image_media_type_of_ext(ext)),
+            format!(r#"<item id="cover-img" href="cover.{ext}" media-type="{}" properties="cover-image"/>"#, epub::image_media_type_of_ext(ext)),
             r#"<meta name="cover" content="cover-img"/>"#.to_string(),
             format!(r#"<div><img src="cover.{ext}" alt="cover"/></div>"#),
         ),
@@ -65,7 +52,7 @@ pub fn epub_placeholder(real_epub: &Path, title: Option<&str>) -> Result<Vec<u8>
     let mut buf = Vec::new();
     {
         // mimetype 首个 STORED（`EpubWriter::new` 写）；封面图 STORED，其余 deflate（`EpubWriter::put` 按扩展名选）
-        let mut z = bookconv::epubzip::EpubWriter::new(std::io::Cursor::new(&mut buf))?;
+        let mut z = epub::EpubWriter::new(std::io::Cursor::new(&mut buf))?;
         z.put("META-INF/container.xml", br#"<?xml version="1.0"?><container version="1.0" xmlns="urn:oasis:names:tc:opendocument:xmlns:container"><rootfiles><rootfile full-path="content.opf" media-type="application/oebps-package+xml"/></rootfiles></container>"#)?;
         z.put("content.opf", opf_out.as_bytes())?;
         z.put("toc.ncx", ncx.as_bytes())?;
@@ -131,6 +118,49 @@ mod tests {
         p
     }
 
+    /// 占位本身要是合法 EPUB：`mimetype` 第一个且不压缩、container 指向的 OPF 在、manifest 每项都有条目、有 NCX 目录、
+    /// OPF 与 NCX 是良构 XML（标签配对）。
+    fn assert_valid_epub(bytes: &[u8]) {
+        let mut z = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
+        let first = z.by_index(0).unwrap();
+        assert_eq!((first.name(), first.compression()), ("mimetype", zip::CompressionMethod::Stored));
+        drop(first);
+        let e = entries_of(bytes);
+        assert_eq!(e["mimetype"], b"application/epub+zip");
+        let opf = String::from_utf8(e["content.opf"].clone()).unwrap();
+        assert!(String::from_utf8_lossy(&e["META-INF/container.xml"]).contains(r#"full-path="content.opf""#));
+        for it in opf.split("<item ").skip(1) {
+            let href = it.split("href=\"").nth(1).unwrap().split('"').next().unwrap();
+            assert!(e.contains_key(href), "manifest 项 {href} 没有对应条目");
+        }
+        assert!(opf.contains(r#"media-type="application/x-dtbncx+xml""#) && e.contains_key("toc.ncx"), "要有目录");
+        for doc in [&opf, &String::from_utf8(e["toc.ncx"].clone()).unwrap(), &String::from_utf8(e["c1.xhtml"].clone()).unwrap()] {
+            assert_well_formed(doc);
+        }
+    }
+
+    /// 极简良构检查：开闭标签按栈配对（自闭合、声明不入栈），文本里不出现裸 `<`/`&`（`&` 必须是实体）。
+    fn assert_well_formed(doc: &str) {
+        let tag = regex::Regex::new(r"<(/?)([A-Za-z_][-\w.:]*)[^>]*?(/?)>|<\?[^>]*\?>").unwrap();
+        let ent = regex::Regex::new(r"&(?:[a-z]+|#[0-9]+|#x[0-9a-fA-F]+);").unwrap();
+        let mut stack: Vec<String> = Vec::new();
+        let mut last = 0;
+        for c in tag.captures_iter(doc) {
+            let m = c.get(0).unwrap();
+            let text = &doc[last..m.start()];
+            assert!(!text.contains('<'), "裸 < : {doc}");
+            assert!(ent.replace_all(text, "").find('&').is_none(), "裸 & : {doc}");
+            last = m.end();
+            let Some(name) = c.get(2) else { continue };
+            match (&c[1], &c[3]) {
+                ("/", _) => assert_eq!(stack.pop().as_deref(), Some(name.as_str()), "标签不配对: {doc}"),
+                (_, "/") => {}
+                _ => stack.push(name.as_str().to_string()),
+            }
+        }
+        assert!(stack.is_empty(), "未闭合 {stack:?}: {doc}");
+    }
+
     fn entries_of(bytes: &[u8]) -> std::collections::HashMap<String, Vec<u8>> {
         let mut z = zip::ZipArchive::new(std::io::Cursor::new(bytes)).unwrap();
         (0..z.len()).map(|i| { let mut f = z.by_index(i).unwrap(); let mut v = Vec::new(); f.read_to_end(&mut v).unwrap(); (f.name().to_string(), v) }).collect()
@@ -145,7 +175,7 @@ mod tests {
         assert!(opf.contains("<dc:title>鏢人 - 02卷</dc:title>") && opf.contains("<dc:creator>许先哲</dc:creator>") && opf.contains(r#"properties="cover-image""#));
         assert_eq!(e["cover.jpg"], b"\xFF\xD8COVERBYTES\xFF\xD9", "封面字节必须是真书的封面");
         assert!(out.len() < 5000, "占位应很小: {}", out.len());
-        assert!(bookconv::check::check_entries(&bookconv::epubzip::read_entries(&out).unwrap(), true).ok, "占位本身要是合法 EPUB（有目录）");
+        assert_valid_epub(&out);
     }
 
     #[test]
@@ -206,7 +236,7 @@ mod tests {
         let opf = String::from_utf8(entries_of(&out)["content.opf"].clone()).unwrap();
         assert!(opf.contains("<dc:title>Tom &amp; Jerry</dc:title>"), "{opf}");
         assert!(opf.contains("<dc:creator>A &lt;B&gt; &amp; C</dc:creator>"), "{opf}");
-        assert!(bookconv::check::check_entries(&bookconv::epubzip::read_entries(&out).unwrap(), true).ok);
+        assert_valid_epub(&out);
     }
 
     #[test]

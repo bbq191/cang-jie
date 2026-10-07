@@ -5,13 +5,15 @@
 //!
 //! - `pdfmeta`：第三方 PDF 页数（大文件通道要写进 `.content`）；`placeholder`：大文件"占位 + 替换"投原生用的占位文档，
 //!   以及读 EPUB 的翻页方向；
-//! - `stats`：投原生后的渲染页数自检统计；`naming`：文件名版本的书名规范化。
+//! - `naming`：书名规范化（入库文件名、大文件通道占位的显示名）；
+//! - `epub`：读 EPUB 的几样小事（OPF、书名、封面、翻页方向、sheng-ren 的漫画页边距标记）和写占位 EPUB 的 zip。
 //!
-//! 读 EPUB 的公共件（zip、OPF、封面、正文文字）用 sheng-ren `bookconv` 的公开接口。
+//! 2026-10-07 起不再依赖 sheng-ren 的 `bookconv`：书架只读书的这几样，借它的公开接口要连带编进图片处理、网页抽取等
+//! 一整串用不上的依赖，还要跟着它的 master 走；渲染自检也只剩"认出刚投的书"，不再按正文字数估期望页数（原 `stats`）。
+pub mod epub;
 pub mod naming;
 pub mod pdfmeta;
 pub mod placeholder;
-pub mod stats;
 
 /// xochitl 能直接读的格式（母版库落库与下载用）。
 #[derive(Clone, Copy, PartialEq, Debug)]

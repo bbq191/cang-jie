@@ -11,10 +11,9 @@ path = "src/main.rs"
 
 [dependencies]
 rmsvc-core = { path = "../../../rmsvc-core" }
-# 投进 xochitl 时读书用的工具（占位文档、PDF 页数、渲染自检统计）；书本身的优化在电脑上用 sheng-ren 做（2026-10-07）
+# 投进 xochitl 时读书用的工具（读 EPUB 书名/封面/翻页方向/漫画页边距标记、占位文档、PDF 页数、书名规范化）；
+# 书本身的优化在电脑上用 sheng-ren 做（2026-10-07）
 shelf-conv = { path = "../../crates/shelf-conv" }
-# 读 EPUB 的公开接口（zip、书名规范化、漫画页边距标记名）：sheng-ren 的 bookconv，git 依赖跟 master 走
-bookconv = { git = "https://github.com/bbq191/sheng-ren", branch = "master" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # statvfs 查母版库所在分区剩余空间（此前每次 GET /staging 都 fork 一个 `df`）；libc 本来就在依赖树里（inotify 拉进来的）

@@ -4,7 +4,6 @@
 //! - `failed/` 失败源（封顶 50MB，`<name>.reason` sidecar 记原因；重试=人工拷回 `inbox/`，2026-09-22 起不再有 HTTP 重试/删除接口）。
 //!
 //! 处理成功的书进母版库（`staging/`，见 `staging.rs`），本队列不再另存一份。
-use serde::Serialize;
 use rmsvc_core::fs::{move_unique, unique_path};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -18,13 +17,14 @@ pub struct Spool {
     lock: Mutex<()>,
 }
 
-#[derive(Serialize, Clone, Debug, PartialEq)]
+/// 队列里的一项（只有测试列它；2026-10-07 前 `GET /status` 的 inbox 计数也读它，网页从没显示过，已删）。
+#[cfg(test)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct SpoolEntry {
     pub name: String,
     pub bytes: u64,
     pub state: &'static str,
     /// 失败原因（仅 failed 条目）。
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub reason: Option<String>,
 }
 
@@ -93,6 +93,7 @@ impl Spool {
         n
     }
 
+    #[cfg(test)]
     pub fn list(&self) -> Vec<SpoolEntry> {
         let mut out = Vec::new();
         for (dir, state) in [(self.inbox(), "pending"), (self.work(), "working"), (self.failed(), "failed")] {

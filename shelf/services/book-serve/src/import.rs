@@ -152,10 +152,8 @@ impl Importer {
 
     /// 超过体积门：大文件通道（占位 + 磁盘替换，同 `Staging::try_deliver_direct`），它自己返回 uuid。
     fn upload_large(&self, part: &Path, name: &str, folder: &str) -> Result<String, ImportError> {
-        let stem = name.rsplit_once('.').map(|(s, _)| s).unwrap_or(name);
-        // 显示名：有卷标记用规范名（与文件名一致），否则沿用书自己的 dc:title。
-        let title = shelf_conv::naming::has_volume_marker(stem).then(|| bookconv::naming::canonical_book_name(stem));
-        let placeholder = shelf_conv::placeholder::epub_placeholder(part, title.as_deref()).map_err(|e| ImportError::Bad(format!("读不了这本 EPUB，造不出大文件通道的占位文档: {e}")))?;
+        // 显示名沿用书自己的 dc:title（sheng-ren 优化时已写好规范书名）。
+        let placeholder = shelf_conv::placeholder::epub_placeholder(part, None).map_err(|e| ImportError::Bad(format!("读不了这本 EPUB，造不出大文件通道的占位文档: {e}")))?;
         self.xochitl.upload_large_file(part, name, "application/epub+zip", folder, &placeholder, None).map_err(ImportError::Failed)
     }
 
@@ -428,7 +426,7 @@ mod tests {
         let s = Staging::new(t.path().join("staging"), x.clone(), 0).with_comic_margins(q.clone());
         let im = Importer::new(x, s, t.path().join("import-tmp"), 0);
         put_doc(&lib, U, r#"{"type":"DocumentType","visibleName":"漫画","parent":""}"#);
-        let manga = mini_epub(&[(bookconv::optimize::READER_MARGINS_MARKER, "1")]);
+        let manga = mini_epub(&[(shelf_conv::epub::READER_MARGINS_MARKER, "1")]);
         im.replace(U, "漫画.epub", &mut manga.as_slice(), Some(manga.len())).unwrap();
         assert_eq!(q.get(U), Some(1));
     }

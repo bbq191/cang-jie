@@ -7,9 +7,11 @@
 # 2026-09-11 第二轮：`wallpaper-serve`/`font-serve` 挪进 `../enhance/`（概念上更贴近
 # 系统增强，不是"书架内容管理"业务；wallpaper-serve 原依赖的 bookconv 两个屏幕尺寸
 # 常量已复制成本地值，不再跨线依赖 bookconv）。
-# 依赖方向单向无环：services/* → ../rmsvc-core；book-serve → shelf-conv → bookconv（sheng-ren，git 依赖，只用读 EPUB 的公开接口）。
+# 依赖方向单向无环：services/* → ../rmsvc-core；book-serve → shelf-conv。
 # 2026-10-07：书架不再优化书——优化全部在电脑上用 sheng-ren 做，书架只把优化好的书投进 xochitl。本仓库自带的 crates/bookconv
 # （v16）、入库 PDF 转换（pdf_ingest、pdf-extract-cj）、旧产物兼容、联网补封面、抓网文都已删除，见 git 历史。
+# 同日去掉对 sheng-ren `bookconv` 的 git 依赖：书架只读 EPUB 的书名/封面/翻页方向/漫画页边距标记，shelf-conv 自带最小实现
+#（本地 107 本 EPUB 与 bookconv 对拍一致），不再连带编进图片处理、网页抽取等用不上的依赖，也不用跟着 sheng-ren 的 master 走。
 [workspace]
 resolver = "2"
 members = [
@@ -28,7 +30,7 @@ license = "MIT"
 opt-level = "z"
 lto = true
 strip = true
-# unwind（不是 abort）：book-serve 的优化/落库在后台线程里用 catch_unwind 兜住 panic（损坏书触发的越界等），
+# unwind（不是 abort）：book-serve 的落库在后台线程里用 catch_unwind 兜住 panic（损坏书触发的越界等），
 # 失败只影响这一本；abort 下 catch_unwind 完全无效，一次 panic 会摔掉整个进程、卡住所有在途操作（2026-09-19《镖人》真机踩过）。
 # 代价只是二进制略大，设备 /home 有几十 GB，可忽略。
 panic = "unwind"

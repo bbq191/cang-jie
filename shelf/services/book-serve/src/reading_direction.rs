@@ -4,9 +4,8 @@
 //! （`shelf_conv::placeholder::epub_is_rtl`，只读两个 zip 条目）。不是 EPUB / 找不到 / 读不了一律 `false`
 //! ——宁可按原生方向，也不误翻。按（大小, mtime）缓存，重复打开同一本书不再解 zip。
 //!
-//! **旧的手动指定清单**（`$XDG_STATE_HOME/shelf/books/rtl-overrides.json`，uuid 字符串数组）只读：2026-09-24 给当时已在设备上、
-//! 书里没写标记的一批书补过一次；2026-09-25 起母版库的"按书设阅读方向"也往里写过。**2026-09-30 用户定：方向只保留原书自带的**，
-//! 网页上按书指定整个撤掉，本服务不再写这份清单；已有的条目照旧生效（不替用户删），要撤就手动删文件或删条目。
+//! 2026-09-30 用户定方向只保留原书自带的；以前的手动指定清单（`$XDG_STATE_HOME/shelf/books/rtl-overrides.json`）2026-10-07
+//! 起不再读（设备上如果还有这个文件，可以删掉）。
 use rmsvc_core::cache::{FileStamp, StampCache};
 use rmsvc_core::fs::plain_name;
 use std::path::{Path, PathBuf};
@@ -16,30 +15,18 @@ const CACHE_MAX: usize = 1024;
 
 pub struct ReadingDirection {
     lib: PathBuf,
-    overrides: PathBuf,
     /// uuid → 是否从右往左，按书库里那份 epub 的戳失效（解 zip 不持锁，查询结果幂等，偶尔重复算一次无妨）。
     cache: StampCache<bool>,
 }
 
 impl ReadingDirection {
-    pub fn new(lib: &Path, overrides: &Path) -> ReadingDirection {
-        ReadingDirection { lib: lib.to_path_buf(), overrides: overrides.to_path_buf(), cache: StampCache::new(CACHE_MAX) }
-    }
-
-    /// 手动指定清单里有没有这本（文件缺失 / 解析不了 = 没有）。
-    fn overridden(&self, uuid: &str) -> bool {
-        std::fs::read(&self.overrides)
-            .ok()
-            .and_then(|b| serde_json::from_slice::<Vec<String>>(&b).ok())
-            .is_some_and(|list| list.iter().any(|u| u == uuid))
+    pub fn new(lib: &Path) -> ReadingDirection {
+        ReadingDirection { lib: lib.to_path_buf(), cache: StampCache::new(CACHE_MAX) }
     }
 
     /// uuid 非法（含路径分隔符等）→ `Err`；其余情况都给出答案。
     pub fn is_rtl(&self, uuid: &str) -> Result<bool, String> {
         let uuid = plain_name(uuid)?;
-        if self.overridden(uuid) {
-            return Ok(true);
-        }
         let path = self.lib.join(format!("{uuid}.epub"));
         let Some(stamp) = FileStamp::read(&path) else { return Ok(false) };
         Ok(self.cache.get_or(uuid, stamp, || shelf_conv::placeholder::epub_is_rtl(&path)))
@@ -66,7 +53,7 @@ mod tests {
         let t = tempfile::tempdir().unwrap();
         epub(t.path(), "manga", r#"<spine page-progression-direction="rtl"/>"#);
         epub(t.path(), "novel", "<spine/>");
-        let rd = ReadingDirection::new(t.path(), &t.path().join("rtl-overrides.json"));
+        let rd = ReadingDirection::new(t.path());
         assert_eq!(rd.is_rtl("manga"), Ok(true));
         assert_eq!(rd.is_rtl("novel"), Ok(false));
         assert_eq!(rd.is_rtl("nope"), Ok(false), "书库里没有 = 按原生方向");
@@ -77,22 +64,5 @@ mod tests {
         let f = std::fs::File::options().write(true).open(t.path().join("manga.epub")).unwrap();
         f.set_modified(std::time::SystemTime::now() + std::time::Duration::from_secs(5)).unwrap();
         assert_eq!(rd.is_rtl("manga"), Ok(false));
-    }
-
-    /// 旧清单里的 uuid 即使书库里的 epub 没写标记也按从右往左；清单缺失或坏了＝没有。
-    #[test]
-    fn legacy_override_list_is_read_only_and_tolerant() {
-        let t = tempfile::tempdir().unwrap();
-        let list = t.path().join("rtl-overrides.json");
-        epub(t.path(), "novel", "<spine/>");
-        let rd = ReadingDirection::new(t.path(), &list);
-        assert_eq!(rd.is_rtl("u1"), Ok(false));
-        std::fs::write(&list, r#"["u1"]"#).unwrap();
-        assert_eq!(rd.is_rtl("u1"), Ok(true));
-        assert_eq!(rd.is_rtl("novel"), Ok(false));
-        std::fs::write(&list, r#"["u1","novel"]"#).unwrap();
-        assert_eq!(rd.is_rtl("novel"), Ok(true), "清单现读、优先于书里标记（及其缓存）");
-        std::fs::write(&list, "[\"u1\", 手改到一半").unwrap();
-        assert_eq!(rd.is_rtl("u1"), Ok(false));
     }
 }

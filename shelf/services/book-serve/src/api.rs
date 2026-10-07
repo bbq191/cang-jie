@@ -410,13 +410,13 @@ mod tests {
     }
 
     #[test]
-    fn status_route_reports_spool_and_dead_xochitl() {
+    fn status_route_reports_ok_and_folders() {
         let t = tempfile::tempdir().unwrap();
         let st = state(&t);
         let router = router(st.clone());
         let (code, v) = call(&router, Method::Get, "/status", "");
         assert_eq!(code, 200);
-        assert_eq!((v["ok"].clone(), v["uploadReachable"].clone()), (serde_json::json!(true), serde_json::json!(false)));
-        assert_eq!(v["spool"]["pending"], 0);
+        assert_eq!(v["ok"], serde_json::json!(true));
+        assert!(v["xochitlFolders"].is_array());
     }
 }

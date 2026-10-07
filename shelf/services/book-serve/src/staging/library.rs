@@ -70,7 +70,7 @@ impl Staging {
         let (mut fixed, mut tmps) = (0, 0);
         for e in rd.flatten() {
             let name = e.file_name().to_string_lossy().to_string();
-            // 旧版的优化半成品按书名起名（`.<书名>.optimizing.tmp`），现在是 `.<pid>.<序号>.<种类>.tmp`（`ScratchFile`）：都按后缀认。
+            // 入库中转是 `.<pid>.<序号>.landing.tmp`（`ScratchFile`）；2026-10-07 前的优化半成品（`.<书名>.optimizing.tmp`）也按后缀认。
             if name.starts_with('.') && name.ends_with(".tmp") && e.file_type().is_ok_and(|t| t.is_file()) {
                 if std::fs::remove_file(e.path()).is_ok() {
                     tmps += 1;
