@@ -34,15 +34,6 @@ label.field{display:block;margin:.9em 0 .2em;font-size:.85em;color:var(--mute);f
    显示成浏览器默认的小框（暗色模式下尤其扎眼，2026-09-24 截图走查发现）。 */
 select,input[type=text],input[type=search],input[type=number],input[type=password],input[type=url]{font-size:1em;padding:.55em .6em;border:1px solid var(--line);border-radius:.5em;background:var(--surface);color:var(--fg);width:100%;max-width:100%}
 .row{display:flex;gap:.7em;align-items:center;flex-wrap:wrap;margin:.6em 0}
-/* 目标选择卡 */
-.seg{display:grid;grid-template-columns:repeat(3,1fr);gap:.6em;margin:.4em 0 .2em}
-@media(max-width:34em){.seg{grid-template-columns:1fr}}
-.seg label{position:relative;display:block;border:1.5px solid var(--line);border-radius:.7em;padding:.7em .8em;cursor:pointer;background:var(--surface);transition:.15s}
-.seg label:hover{border-color:var(--accent)}
-.seg input{position:absolute;opacity:0;pointer-events:none}
-.seg label:has(input:checked){border-color:var(--accent);background:color-mix(in srgb,var(--accent) 10%,var(--surface));box-shadow:var(--shadow)}
-.seg .t{font-weight:700;font-size:.98em}.seg .d{font-size:.82em;color:var(--mute);margin-top:.15em}
-.seg .fmt{font-size:.72em;color:var(--accent);margin-top:.35em;font-variant:tabular-nums}
 .opt-note{font-size:.82em;color:var(--mute);margin:.4em 0 0;padding:.5em .7em;background:var(--surface2);border-radius:.5em;border-left:3px solid var(--accent)}
 .toggle{display:inline-flex;align-items:center;gap:.45em;font-size:.92em;cursor:pointer}
 .drop{border:2px dashed var(--line);border-radius:.8em;padding:1.6em 1em;text-align:center;color:var(--mute);margin:.9em 0;transition:.15s;cursor:pointer}
@@ -68,8 +59,6 @@ progress::-webkit-progress-bar{background:var(--surface2)}progress::-webkit-prog
 .list li{flex-wrap:wrap}.list li>span:first-child{min-width:0;overflow-wrap:anywhere}.list li>span:last-child{margin-left:auto}
 /* 上下排列的列表行（设备健康·服务）：说明另起一行左对齐；.nw 让"7.60 s"这类数字和单位不被拆开 */
 .list li.stack{display:block}.list li.stack>span{display:block;margin-left:0}.list li.stack>span+span{margin-top:.2em}.nw{white-space:nowrap}
-/* 母版库列表书多时很长（2026-09-19 用户反馈）——单独收紧行内边距，不动全站共用的 .list（笔记/
-   其它列表沿用原样，只有这里书多到需要专门收紧）。 */
 .small{font-size:.83em;color:var(--mute)}
 code{background:var(--surface2);padding:.1em .35em;border-radius:.3em;font-size:.88em}
 /* 对比表 */
@@ -85,9 +74,7 @@ table.cmp{border-collapse:collapse;width:100%;font-size:.85em;min-width:34em}
 @media (max-width:36em){table.cmp{min-width:0}}
 table.cmp th,table.cmp td{text-align:left;padding:.55em .7em;border-bottom:1px solid var(--line2);vertical-align:top}
 table.cmp thead th{background:var(--surface2);font-weight:600;position:sticky;top:0}
-table.cmp tbody th{font-weight:600;color:var(--fg);white-space:nowrap;background:var(--surface)}
 table.cmp tbody tr:last-child td{border-bottom:none}
-table.cmp .pick{color:var(--accent);font-weight:600}
 .badge{display:inline-block;font-size:.72em;padding:.05em .5em;border-radius:1em;background:var(--surface2);color:var(--mute);border:1px solid var(--line)}
 .badge[title]{cursor:help} /* 点了会弹出一条 toast 展示完整说明（app.js 全局委托），触屏摸不到 hover 时的替代入口 */
 .badge.on{background:color-mix(in srgb,var(--ok) 18%,transparent);color:var(--ok);border-color:transparent}
@@ -184,6 +171,8 @@ dl.help dd{margin:.2em 0 .2em;color:var(--mute);font-size:.9em;line-height:1.65}
 .stgbar{position:sticky;bottom:.6em;z-index:9;display:flex;gap:.5em;align-items:center;flex-wrap:wrap;background:var(--surface);border:1px solid var(--accent);border-radius:.9em;box-shadow:0 4px 22px rgba(0,0,0,.2);padding:.6em .8em;margin-top:.5em}
 .stgbar progress{flex:1 1 100%;margin:.1em 0}
 .stgbar-main{flex:1 1 12em;min-width:0;overflow-wrap:anywhere}
+/* 批量队列这一块：选了书时底部栏是纵向排列（.sel），这块自己保持横向（文字 + 进度 + 全部中止） */
+.stgbar-run{display:flex;gap:.5em;align-items:center;flex-wrap:wrap;flex:1 1 100%}
 .stgbar.done{border-color:var(--line)}
 .stgbar-fails{flex:1 1 100%}
 @media(max-width:34em){.stg-pgnums{display:none}}

@@ -7,9 +7,9 @@ const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;'
 const fmtB=n=>n>1048576?(n/1048576).toFixed(1)+' MB':n>1024?(n/1024).toFixed(0)+' KB':n+' B';
 // 小徽章：renderManage 的「基石与模块」列表用。
 const badge=(t,ok)=>`<span class="badge ${ok?'on':'off'}">${t}</span>`;
-/* 母版库一本书是不是"已经不用管了"——给「已加入」筛选用（2026-09-19 用户反馈母版库列表太长时加的"隐藏已完成"开关，
-   2026-10-07 跟「未加入」筛选重复了，删掉，改成默认选中「未加入」）。正在处理/失败态都不算"完成"（还需要用户看见）；书架不再优化书（2026-10-07，优化在电脑上用
-   sheng-ren 做），完成＝已加入 xochitl。以前"加入过 KOReader"的书（2026-09-29 设备卸掉 KOReader）不算完成。 */
+/* 母版库一本书是不是"已经不用管了"——给「已加入」筛选用：加入过 xochitl、不在处理中、最近一次加入没失败。
+   正在处理/失败态都不算"完成"，归进「未加入」（还需要用户看见）。以前"加入过 KOReader"的书（2026-09-29 设备卸掉
+   KOReader）不算完成。 */
 const isBookDone=it=>{
   if(it.busy)return false;
   const dv=it.delivered||{};
@@ -29,7 +29,7 @@ const coalesce=fn=>{let running=null,again=false;
 const refreshSec=sec=>{if(!sec.refresh)return;(sec._rf||(sec._rf=coalesce(async()=>{await sec.refresh()})))()};
 /* 防双击：按钮点击后立即禁用，异步操作完成（不管成功失败）再解禁。很多按钮的异步操作是删除/
    落库这类不该被同一次操作重复触发两遍的动作——不加这一层，手指点快了或者网络慢的时候网络请求
-   还没回来就能再点一次，2026-09-18 真机反馈"优化过程中点击删除"这类并发操作会撞在一起。新按钮一律
+   还没回来就能再点一次，2026-09-18 真机反馈过"处理中又点了删除"这类并发操作撞在一起。新按钮一律
    用下面的 btn()（内部就是这一层）。一开始就 disabled=true 的按钮（"根本点不了"，不是"点了在跑"）不传处理函数。*/
 const guardClick=(el,fn)=>{el.onclick=async()=>{if(el.disabled)return;el.disabled=true;try{await fn()}catch(e){console.error(e);toast(T('common.failed'))}finally{el.disabled=false}}};
 /* 按钮：`btn(文案, 点击处理, 类名)`——el('button')+guardClick 这一对全站出现二十来次，收成一处。点击处理可同步可异步
@@ -56,10 +56,13 @@ const renderBusy=(container,label)=>{
    同一套 --ok/--bad/--warn 变量，见 style.css），缺省 'bad'——历史上这堆 alert() 十有八九是报错。
    点一下提前关掉；到时自动淡出+移除。 */
 const toastHost=(()=>{let el=document.getElementById('toasthost');if(!el){el=document.createElement('div');el.id='toasthost';document.body.appendChild(el)}return el})();
-const toast=(msg,kind='bad',ms=4200)=>{if(!msg)return;const t=el('div',{class:'toast '+kind,text:msg});toastHost.appendChild(t);
+const showToast=(children,kind,ms)=>{const t=el('div',{class:'toast '+kind},children);toastHost.appendChild(t);
   requestAnimationFrame(()=>t.classList.add('show'));
   const kill=()=>{t.classList.remove('show');setTimeout(()=>t.remove(),200)};
   t.onclick=kill;setTimeout(kill,ms)};
+const toast=(msg,kind='bad',ms=4200)=>{if(msg)showToast(msg,kind,ms)};
+/* 带一个链接的提示（停留更久）：点链接是用户手势，打开新页不会被浏览器当弹窗拦掉。 */
+const toastLink=(msg,linkText,href,ms=15000)=>showToast([msg+' ',el('a',{href,target:'_blank',rel:'noopener',text:linkText})],'ok',ms);
 /* 两种对话框（确认 / 输入）的公共骨架：遮罩 + 盒子 + 关闭收尾（摘掉键盘监听、移除节点、兑现 Promise）。
    点遮罩 / Esc = 取消（cancelValue）；onKey 处理其余按键（Enter 等）。build(close) 返回盒子里的节点数组与要聚焦的元素。 */
 const modal=(cancelValue,build,onKey)=>new Promise(resolve=>{
@@ -110,15 +113,14 @@ const currentLang=()=>LS.get('lang',(navigator.language||'').toLowerCase().start
 const EXT=__EXTS__, dot=l=>l.map(e=>'.'+e);
 const BOOK_EXT=dot(EXT.book), FONT_EXT=dot(EXT.font), IMG_EXT=dot(EXT.image);
 const up=l=>l.map(e=>e.toUpperCase()).join(' / ');
-// 2026-09-18 起母版库只收 EPUB/PDF（BOOK_EXT===EXT.native，见 rmsvc_core::formats 头注）——原来
+// 2026-09-18 起母版库只收 EPUB/PDF（EXT.book 与 EXT.native 相同，见 rmsvc_core::formats 头注，网页只用 EXT.book）——原来
 // 这里有个 FMT_TIERS() 分两档（原生/仅 KOReader）拼文案，两档收成一档后不再需要，删掉。
 /* 标签栏吸顶位置跟着页头实际高度（手机英文界面页头会折两行），见 style.css nav 的 --hdr-h。只在尺寸变化时回调，不轮询。 */
 if(window.ResizeObserver)new ResizeObserver(([e])=>document.documentElement.style.setProperty('--hdr-h',Math.ceil(e.target.getBoundingClientRect().height)+'px')).observe($('header'));
-$('#logout').onclick=e=>{e.preventDefault();fetch('/logout',{method:'POST'}).then(()=>location.href='/login')};
-// 徽章的完整解释（渲染自检失败原因、优化档位差异…）以前只写进 title——触屏摸不到 hover，只看得见
-// 图标+数字，看不见"为什么/该怎么办"（2026-09-09 审计发现）。这里全局委托一个点击处理：任何带
-// title 的徽章点一下就 alert 出完整内容，不用逐个改模板字符串；desktop 上点了也只是多一次确认，
-// 不冲突。`.badge[title]` 的 `cursor` 在 style.css 里配套改成 help，给一个"这能点"的视觉提示。
+$('#logout').onclick=e=>{e.preventDefault();fetch('/logout',{method:'POST'}).then(()=>location.href='/login',()=>toast(T('common.networkError')))};
+// 徽章的完整解释（加入失败原因、渲染状态…）以前只写进 title——触屏摸不到 hover，只看得见图标+数字，看不见
+// "为什么/该怎么办"（2026-09-09 审计发现）。这里全局委托一个点击处理：任何带 title 的徽章点一下就弹一条提示显示
+// 完整内容，不用逐个改模板字符串。`.badge[title]` 的 `cursor` 在 style.css 里配套改成 help，给一个"这能点"的视觉提示。
 document.addEventListener('click',e=>{const b=e.target.closest('.badge[title]');if(b&&b.title)toast(b.title,'info',6500)});
 // 响应不是合法 JSON（网关自身 502/504、反代错误页…）时，以前直接把裸状态码当 message 弹给用户
 // （"HTTP 502"），技术术语没翻译成人话（2026-09-09 审计发现）。改成一句人话+状态码放在括号里，
@@ -165,10 +167,10 @@ function uploader(box,urlOf,queryOf,okExt,onFinish,dedupeApi){
   drop.onclick=()=>input.click();
   const lockRows=on=>{busy=on;list.querySelectorAll('.x').forEach(x=>x.disabled=on)};
   go.onclick=async()=>{go.disabled=true;clr.disabled=true;lockRows(true);
-    // 母版库上传口传 dedupeApi（`/api/books/staging`）：先查一次现有条目，同名同大小＝上一轮已经
-    // 成功落地，跳过重传——不然 unique_path 同名不覆盖会把它再落一份 1_x（2026-09-13，跟 shelf
-    // push CLI 那次同一个 gap，见书架白皮书 §04；只有母版库这个上传口传这个参数，字体/壁纸/词典
-    // 那几个 uploader() 调用点不传，行为不变）。查询失败（网络/未登录）就当没查到，照常全部传。
+    // 母版库上传口传 dedupeApi（`/api/books/staging`）：先查一次现有条目，同名同大小＝上一轮已经成功落地，跳过重传，
+    // 省流量省时间（主要是大 PDF）。只是省传输：服务端入库本来就逐字节比对，内容相同直接认已有那本、不会落出第二份；
+    // EPUB 入库时会规范化文件名，按原名查常常对不上，这时照常上传、由服务端去重。只有母版库这个上传口传这个参数，
+    // 字体/壁纸那几个 uploader() 调用点不传。查询失败（网络/未登录）就当没查到，照常全部传。
     let existing=null;
     if(dedupeApi){try{const d=await j(dedupeApi);existing=new Set((d.items||[]).map(it=>it.name+'|'+it.bytes))}catch{existing=null}}
     for(const f of files){if(f.st==='ok'||f.rej)continue;          // 成功项跳过；格式不收项不上传；失败项允许重传
@@ -213,21 +215,22 @@ const cjkBadge=p=>p==null?'':`<span class="badge ${p>=80?'on':(p>=8?'':'off')}" 
 const GUIDE=()=>`<details class="cmp"><summary>${T('transfer.guide.summary')}</summary>
 <dl class="help">
 <dt>${T('transfer.guide.steps.dt')}</dt><dd>${T('transfer.guide.steps.dd')}</dd>
-<dt>${T('transfer.guide.format.dt')}</dt><dd>${T('transfer.guide.format.dd',{native:up(EXT.native)})}</dd>
+<dt>${T('transfer.guide.format.dt')}</dt><dd>${T('transfer.guide.format.dd',{native:up(EXT.book)})}</dd>
 <dt>${T('transfer.guide.native.dt')}</dt><dd>${T('transfer.guide.native.dd')}</dd>
 </dl></details>`;
 
 /* 母版库列表（2026-09-20 重设计，兼顾手机和 PC）。每行 = 勾选框 + 清爽书名（去掉 `-- 作者 -- hash` 尾巴，
-   完整名在 title 里）+ 一行徽章 + 状态/进度；**行内只在并发闸门排队时出现「取消排队」**，其余操作（加入 xochitl /
-   下载 / 改名 / 删除）一律在勾选后的底部操作栏（用户 2026-09-20 定，别加回单条按钮）。批量走服务端队列
+   完整名在 title 里）+ 一行徽章 + 状态/进度；行内没有按钮，操作（加入 xochitl / 下载 / 改名 / 删除）一律在勾选后的
+   底部操作栏（用户 2026-09-20 定，别加回单条按钮）。批量走服务端队列
    （网关 `/api/batch`），关掉页面照跑。 */
 const stgClean=n=>{const s=n.replace(/\.(epub|pdf)$/i,'');return (s.split(' -- ')[0]||s).trim()};
 /* 搜索框的下拉建议：**书名 = 第一个 "-" 之前的内容**（用户 2026-09-20 指定）。"亂馬1⁄2 典藏版 - 07卷" → "亂馬1⁄2 典藏版"，
    同一本书的多卷合成一条；选中后按名字包含匹配，正好筛出这本书的所有卷。 */
 const stgTitle=n=>stgClean(n).split('-')[0].trim();
 const stgNameOptions=items=>[...new Set(items.map(it=>stgTitle(it.name)).filter(Boolean))].map(n=>`<option value="${esc(n)}">`).join('');
-/* 「未加入」：xochitl 读得了（EPUB/PDF）、还没加入过。 */
-const stgIsTodo=it=>(it.format==='epub'||it.format==='pdf')&&!(it.delivered||{}).native;
+/* 「未加入」＝「已加入」的补集：还没加入过，或正在处理、上次加入失败（这些还需要用户看见，默认就停在这个筛选上）。
+   两个筛选互补，数量加起来等于「全部」。 */
+const stgIsTodo=it=>!isBookDone(it);
 /* 一本书的徽章 HTML + 一条可见的状态文字（失败原因等）：格式/大小/落库记录/渲染自检/忙态。 */
 function stgBadges(it,busy){
   // 母版库只收 EPUB/PDF（2026-09-18 起），格式就这两种
@@ -245,7 +248,7 @@ function stgBadges(it,busy){
   const msg=dc&&dc.status==='failed'?T('transfer.staging.deliverFailedPrefix')+dc.message:stalePending?T('transfer.staging.stalePending.title'):'';
   return {html:`<span class="badge fmt">${esc(fmt)}</span><span class="stg-size">${fmtB(it.bytes)}</span>${dl}${rb}${busy?'':fails}`,msg};
 }
-/* 一行。ctx: {picked,batchQueued,bs,syncSel(),refresh()} */
+/* 一行。ctx: {picked,batchQueued,bs,syncSel()} */
 function stgRow(it,ctx){
   const dc=(it.delivered||{}).deliver;
   const busy=!!it.busy;
@@ -283,7 +286,7 @@ function renderTransfer(sec){sec.innerHTML=`
          入库只剩「上传」+「抓网文」两条路，都走网页本身，不用任何 host CLI。2026-10-07：「抓网文」随书架不再优化书删掉，
          网页入库只剩「上传」——网页链接请用 sheng-ren 收书、优化好再传）。 -->
     <div class="card"><h3 style="margin-top:0">${T('transfer.upload.title')}</h3>
-      ${upHtml('⬆',T('transfer.upload.dropLabel',{native:up(EXT.native)}),BOOK_EXT,T('transfer.upload.btn'))}
+      ${upHtml('⬆',T('transfer.upload.dropLabel',{native:up(EXT.book)}),BOOK_EXT,T('transfer.upload.btn'))}
       <p class="small">${T('transfer.upload.hint')}</p>
     </div>
   </div>
@@ -307,8 +310,8 @@ function renderTransfer(sec){sec.innerHTML=`
   let items=[];
   const picked=new Set();                                  // 勾选的书名（跨页保留）
   // 服务端批量队列状态（网关 /api/batch/status）：关掉页面重开、换设备都读得到，不再依赖本标签页提交过什么。
-  let bs={running:false,total:0,done:0,failed:[],queued:[],current:null,action:null};
-  let batchQueued=new Set(),dismissedSig='';
+  let bs={running:false,waitingService:false,total:0,done:0,failed:[],queued:[],current:null,action:null};
+  let batchQueued=new Set();
   const g=id=>$('#'+id,sec);
   // 加入位置：下拉（现有文件夹）+「＋新建文件夹」。选中值记在本机；"根目录"= 空串。新建走 book-serve 的 mkdir 队列，
   // 由 xochitl 里的 QML 代理（长轮询）真正建出来。**不在这里等它建好**：fillFolders 会把记住的名字补进下拉（哪怕 xochitl 那边
@@ -318,7 +321,8 @@ function renderTransfer(sec){sec.innerHTML=`
   const fsel=g('folder'),newBox=g('xnew'),newName=g('xnewname');
   const xFolder=()=>fsel.value===NEW?'':fsel.value;
   const fillFolders=names=>{const want=LS.get('folder','');const list=[...new Set(names.filter(Boolean))];if(want&&!list.includes(want))list.push(want);
-    fsel.replaceChildren(el('option',{value:'',text:T('stg.dest.root')}),...list.map(n=>el('option',{value:n,text:n})),el('option',{value:NEW,text:T('stg.dest.new')}));fsel.value=want};
+    fsel.replaceChildren(el('option',{value:'',text:T('stg.dest.root')}),...list.map(n=>el('option',{value:n,text:n})),el('option',{value:NEW,text:T('stg.dest.new')}));
+    fsel.value=newBox.hidden?want:NEW}; // 新建框还开着（正在填名字）时刷新别把下拉跳回旧值
   fsel.addEventListener('change',()=>{if(fsel.value===NEW){newBox.hidden=false;newName.focus()}else{newBox.hidden=true;LS.set('folder',fsel.value)}});
   g('xnewx').onclick=()=>{newBox.hidden=true;newName.value='';fsel.value=LS.get('folder','')};
   guardClick(g('xnewgo'),async()=>{const name=newName.value.trim();if(!name){toast(T('stg.dest.needName'),'warn');return}
@@ -330,11 +334,12 @@ function renderTransfer(sec){sec.innerHTML=`
   const filtered=()=>{const q=g('stgq').value.toLowerCase(),f=g('stgfmt').value;
     return items.filter(it=>(!q||it.name.toLowerCase().includes(q))&&(!f||it.format===f)&&(st==='todo'?stgIsTodo(it):st==='finished'?isBookDone(it):true))};
   const batchTitle=a=>T('stg.batch.'+a);
-  const enqueue=async(action,body)=>{const r=await postJ('/api/batch',{action,folder:xFolder(),...body});
+  const enqueue=async(action,body)=>{if(fsel.value===NEW){toast(T('stg.dest.createFirst'),'warn');return}
+    const r=await postJ('/api/batch',{action,folder:xFolder(),...body});
     if(r.ok===false)return;
     toast(r.queued?T('stg.batch.queuedToast',{queued:r.queued,skip:r.skipped?T('stg.batch.skipped',{n:r.skipped}):''}):T('stg.batch.none'),r.queued?'ok':'warn');
     if(r.queued)picked.clear();await refresh()};
-  const ctx=()=>({picked,batchQueued,bs,syncSel:()=>{syncSelUi();renderBar()},refresh:()=>refresh()});
+  const ctx=()=>({picked,batchQueued,bs,syncSel:()=>{syncSelUi();renderBar()}});
   const syncSelUi=()=>{const list=filtered();const n=list.length,all=n>0&&list.every(it=>picked.has(it.name));
     g('stgall').checked=all;g('stgall').indeterminate=!all&&list.some(it=>picked.has(it.name));g('stgalltxt').textContent=T('stg.selectAll',{n})};
   g('stgall').onchange=()=>{const list=filtered();if(g('stgall').checked)list.forEach(it=>picked.add(it.name));else list.forEach(it=>picked.delete(it.name));render()};
@@ -357,40 +362,40 @@ function renderTransfer(sec){sec.innerHTML=`
     nav.appendChild(numbox);nav.appendChild(el('span',{class:'small stg-pgtxt',text:T('stg.pager.page',{cur:page,total:pages})}));nav.appendChild(next);box.appendChild(nav);
     const sz=el('select',{'aria-label':T('stg.pager.size',{n:pageSize})});[25,50,100].forEach(n=>{const o=el('option',{value:String(n),text:T('stg.pager.size',{n})});if(n===pageSize)o.selected=true;sz.appendChild(o)});
     sz.onchange=()=>{pageSize=+sz.value;LS.set('stgPageSize',String(pageSize));page=1;render()};box.appendChild(sz)};
-  // 底部操作栏：批量运行中＝进度+停止；有勾选＝批量按钮；跑完＝一条结果小结（可收起，失败原因可展开）。
+  /* 底部操作栏，最多三块，从上到下：① 批量队列还有活（在跑，或网关重启后等 book-serve 就绪）＝进度 + 全部中止；
+     ② 有勾选＝选择操作（批量运行期间照样能删、改名、下载、往队列里追加——此前跑批量时整栏只剩进度，几十本大书一跑
+     就是很久，母版库没法操作）；③ 都没有、上一轮已跑完＝结果小结（可收起，失败原因可展开）。收起记在本机：服务端会一直
+     保存上一轮结果（网关重启也读回），只记在内存里的话每次打开页面都会重新弹出来。 */
   const renderBar=()=>{const bar=g('stgbar');bar.innerHTML='';
     const sig=`${bs.action}|${bs.total}|${bs.done}|${bs.failed.length}`;
-    if(bs.running){
-      bar.hidden=false;bar.className='stgbar run';
+    const live=bs.running||bs.queued.length>0;
+    if(live){
       const t=batchTitle(bs.action||'deliver');
-      bar.appendChild(el('div',{class:'stgbar-main'},[el('b',{text:T('stg.batch.progress',{title:t,done:bs.done,total:bs.total})}),el('span',{class:'small',text:(bs.current?' · '+T('stg.batch.current',{name:stgClean(bs.current)}):'')+(bs.failed.length?' · '+T('stg.batch.failedN',{n:bs.failed.length}):'')})]));
-      const p=el('progress');p.max=Math.max(1,bs.total);p.value=bs.done;bar.appendChild(p);
-      bar.appendChild(btn(T('stg.batch.stopAll'),async()=>{const r=await postJ('/api/batch/stop',{});if(r.ok!==false)toast(T('stg.batch.stopped',{n:r.cleared||0}),'info');await refresh()},'btn btn-bad'));
-    }else if(picked.size){
-      bar.hidden=false;bar.className='stgbar sel';
-      // 第一行：已选数 + 清除；第二行：批量按钮。按钮上直接标"可处理数"（非 EPUB/PDF 加入 xochitl 会被跳过），
-      // 0 本可处理就置灰——不再等点完才提示"跳过了 N 本"。
+      // 在跑但还没取到第一本（`waitingService`：网关重启后等 book-serve 起来），或有排队却没有 worker（等了 30 分钟
+      // 仍没等到 book-serve、队列留着待下次入队带起）——都如实说"在等"，不显示成"正在处理"。
+      const waiting=!!bs.waitingService||(!bs.running&&bs.queued.length>0);
+      const head=waiting?T('stg.batch.waiting',{n:bs.queued.length}):T('stg.batch.progress',{title:t,done:bs.done,total:bs.total});
+      const sub=(bs.current?' · '+T('stg.batch.current',{name:stgClean(bs.current)}):'')+(bs.failed.length?' · '+T('stg.batch.failedN',{n:bs.failed.length}):'');
+      const p=el('progress');p.max=Math.max(1,bs.total);p.value=bs.done;
+      const stop=btn(T('stg.batch.stopAll'),async()=>{const r=await postJ('/api/batch/stop',{});if(r.ok!==false)toast(T('stg.batch.stopped',{n:r.cleared||0}),'info');await refresh()},'btn btn-bad');
+      bar.appendChild(el('div',{class:'stgbar-run'},[el('div',{class:'stgbar-main'},[el('b',{text:head}),el('span',{class:'small',text:sub})]),p,stop]));
+    }
+    if(picked.size){
+      // 第一行：已选数 + 清除；第二行：加入 xochitl（主操作，按钮上标可处理数）；第三行：单本操作 + 删除。
       const chosen=items.filter(it=>picked.has(it.name));
-      const isBook=it=>it.format==='epub'||it.format==='pdf';
-      const cnt={deliver:chosen.filter(isBook).length};
-      const clr=btn(T('stg.batch.clear'),()=>{picked.clear();render()});
-      bar.appendChild(el('div',{class:'stgbar-top'},[el('b',{text:T('stg.selected',{n:picked.size})}),clr]));
-      // 按钮排布（2026-09-24 用户要求手机上不折行）：第二行 = 加入（主操作）；第三行 = 单本操作 + 删除。
-      // 文案 = 标签 + 数量角标；窄屏去掉"加入"前缀（.lbl-long），一行三个也放得下。
+      bar.appendChild(el('div',{class:'stgbar-top'},[el('b',{text:T('stg.selected',{n:picked.size})}),btn(T('stg.batch.clear'),()=>{picked.clear();render()})]));
+      // 按钮文案 = 标签 + 数量角标；窄屏去掉"加入"前缀（.lbl-long），一行三个也放得下（2026-09-24 用户要求手机上不折行）。
       const lbl=(key,n)=>{const f=document.createDocumentFragment();const t=T(key);const m=t.match(/^(加入 |Add to )(.*)$/);
         if(m){f.appendChild(el('span',{class:'lbl-long',text:m[1]}));f.appendChild(document.createTextNode(m[2]))}else f.appendChild(document.createTextNode(t));
         if(n!=null)f.appendChild(el('span',{class:'cnt',text:String(n)}));return f};
-      const mk=(a,pri)=>{const b=btn([lbl('stg.bar.'+a,cnt[a])],cnt[a]?()=>enqueue(a,{names:[...picked]}):null,'btn'+(pri?' pri':''),{title:T('stg.bar.'+a)+'（'+cnt[a]+'）'});
-        if(!cnt[a]){b.disabled=true;b.title=T('stg.bar.noneApplicable')}return b};
-      const btns=el('div',{class:'stgbar-btns'},[mk('deliver',true)]);
-      btns.style.setProperty('--cols',String(btns.children.length));
-      const delN=chosen.filter(it=>!it.busy).length;
-      const del=btn([lbl('action.delete',delN)],async()=>{
-        const names=chosen.filter(it=>!it.busy).map(it=>it.name),busyN=chosen.length-names.length;
-        if(!names.length){toast(T('stg.bar.noneApplicable'),'warn');return}
-        if(!await confirmDialog(T('stg.batch.deleteConfirm',{n:names.length})))return;
-        let ok=0;for(const n of names){const r=await jsend('/api/books/staging/delete','POST',{name:n});if(r.ok!==false)ok++}
-        toast(T('stg.batch.deleted',{n:ok})+(busyN?T('stg.batch.deleteSkipped',{n:busyN}):''),ok?'ok':'warn');picked.clear();refresh()},'btn btn-bad',{title:T('action.delete')+'（'+delN+'）'});
+      const add=btn([lbl('stg.bar.deliver',chosen.length)],()=>enqueue('deliver',{names:[...picked]}),'btn pri',{title:T('common.paren',{text:T('stg.bar.deliver'),inner:chosen.length})});
+      const btns=el('div',{class:'stgbar-btns'},[add]);btns.style.setProperty('--cols','1');
+      const free=chosen.filter(it=>!it.busy).map(it=>it.name),busyN=chosen.length-free.length;
+      const del=btn([lbl('action.delete',free.length)],free.length?async()=>{
+        if(!await confirmDialog(T('stg.batch.deleteConfirm',{n:free.length})))return;
+        let ok=0;for(const n of free){const r=await jsend('/api/books/staging/delete','POST',{name:n});if(r.ok!==false)ok++}
+        toast(T('stg.batch.deleted',{n:ok})+(busyN?T('stg.batch.deleteSkipped',{n:busyN}):''),ok?'ok':'warn');picked.clear();refresh()}:null,'btn btn-bad',{title:T('common.paren',{text:T('action.delete'),inner:free.length})});
+      if(!free.length){del.disabled=true;del.title=T('stg.bar.allBusy')}
       bar.appendChild(btns);
       const row3=el('div',{class:'stgbar-btns stgbar-sub'});
       // 只选了一本：再给「下载原件」「改名」（都是针对单本的操作，多选时不出现），删除排在同一行最右。
@@ -404,13 +409,14 @@ function renderTransfer(sec){sec.innerHTML=`
         if(one.busy){rn.disabled=true;rn.title=T('stg.bar.busy')}
         row3.append(dl,rn)}
       row3.append(del);row3.style.setProperty('--cols','3');bar.appendChild(row3);
-    }else if(bs.total&&sig!==dismissedSig){
-      bar.hidden=false;bar.className='stgbar done';
+    }else if(!live&&bs.total&&sig!==LS.get('stgDismissed','')){
       const fail=bs.failed.length;
       bar.appendChild(el('div',{class:'stgbar-main'},[el('span',{text:T('stg.batch.finished',{title:batchTitle(bs.action||'deliver'),ok:bs.done-fail,fail})})]));
-      if(fail)bar.appendChild(el('details',{class:'small stgbar-fails'},[el('summary',{text:T('stg.batch.failedN',{n:fail})}),el('div',{html:bs.failed.map(f=>`<div>${esc(stgClean(f.name))}：${esc(f.message)}</div>`).join('')})]));
-      bar.appendChild(btn(T('stg.batch.dismiss'),()=>{dismissedSig=sig;renderBar()}));
-    }else{bar.hidden=true}};
+      if(fail)bar.appendChild(el('details',{class:'small stgbar-fails'},[el('summary',{text:T('stg.batch.failedN',{n:fail})}),el('div',{html:bs.failed.map(f=>`<div>${esc(T('common.labelValue',{label:stgClean(f.name),value:f.message}))}</div>`).join('')})]));
+      bar.appendChild(btn(T('stg.batch.dismiss'),()=>{LS.set('stgDismissed',sig);renderBar()}));
+    }
+    bar.hidden=!bar.children.length;
+    bar.className='stgbar'+(picked.size?' sel':live?' run':' done')};
   const render=()=>{
     const list=filtered();const pages=Math.max(1,Math.ceil(list.length/pageSize));if(page>pages)page=pages;
     const ul=g('stglist');ul.innerHTML='';
@@ -425,10 +431,10 @@ function renderTransfer(sec){sec.innerHTML=`
   const refresh=()=>refreshAt(3);
   // 网关自身的批量队列状态（见 batch.rs）。
   const applyQueue=bt=>{
-    if(bt.ok!==false){bs={running:!!bt.running,action:bt.action,total:bt.total||0,done:bt.done||0,current:bt.current,queued:bt.queued||[],failed:bt.failed||[]};batchQueued=new Set(bs.queued)}};
+    if(bt.ok!==false){bs={running:!!bt.running,waitingService:!!bt.waitingService,action:bt.action,total:bt.total||0,done:bt.done||0,current:bt.current,queued:bt.queued||[],failed:bt.failed||[]};batchQueued=new Set(bs.queued)}};
   /* 按事件决定取多少（不轮询）。三档，数字越大取得越全：
      1 = 网关自己的批量队列事件（area=books、不带 svc）：只重取队列状态（1 个请求）。
-     2 = book-serve 的 `staging` 事件（入库、忙态开始/结束、落库结果）：只有母版库列表会变，
+     2 = book-serve 的 `staging` 事件（入库、忙态开始/结束、落库结果）与 `render` 事件（渲染自检结果）：只有母版库列表会变，
          再加队列状态（2 个请求）；xochitl 文件夹列表不会因此变化，不重取。
      3 = 其余（book-serve 的 mkdir/trash/inbox 事件、切 tab、重连、操作后主动刷新）：全量 3 个请求。
      所有刷新走同一个 coalesce 串行执行（need 记"下一轮至少要取到哪一档"，取最大），不会出现旧的全量结果盖掉新的排队状态。 */
@@ -447,7 +453,7 @@ function renderTransfer(sec){sec.innerHTML=`
     g('stgnames').innerHTML=stgNameOptions(items);render()});
   const refreshAt=lvl=>{need=Math.max(need,lvl);return run()};
   uploader($('.up',sec),()=>'/api/books/staging',()=>({}),BOOK_EXT,()=>refresh(),'/api/books/staging');   // 书籍格式原样入库；选中即按 BOOK_EXT 拦；传 dedupeApi 防重传出重复
-  refresh();sec.refresh=refresh;sec.onEvent=ev=>refreshAt(ev.area!=='books'?3:!ev.svc&&ev.kind==='batch'?1:ev.kind==='staging'?2:3);subtabs(sec);}
+  refresh();sec.refresh=refresh;sec.onEvent=ev=>refreshAt(ev.area!=='books'?3:!ev.svc&&ev.kind==='batch'?1:ev.kind==='staging'||ev.kind==='render'?2:3);subtabs(sec);}
 
 /* 服务 tab（按注册表出现）。key = 注册的服务名。service→seg（AREA）不再在这里手搓一份——
    那正是 gateway/src/manage.rs::MODULES 表已声明的唯一事实源，这里改成初始化时从
@@ -455,7 +461,7 @@ function renderTransfer(sec){sec.innerHTML=`
    悄悄脱节，SSE 事件的 area 就对不上、对应 tab 的事件驱动刷新会静默失效。 */
 const TABS={
  'note-serve':{titleKey:'tab.notes',title:'笔记',render:renderNotes},
- 'font-serve':{title:'xochitl',render(sec){assetTab(sec,'/api/fonts',{
+ 'font-serve':{render(sec){assetTab(sec,'/api/fonts',{
    title:T('assets.fonts.title'),
    hint:T('assets.fonts.hint'),
    header:`<div id="fbchain" class="opt-note" style="display:none"></div>
@@ -470,7 +476,7 @@ const TABS={
      left.innerHTML=`${esc(it.name)}${ex.names&&ex.names.cn&&ex.names.cn!==it.name?' <span class="small">'+esc(ex.names.cn)+'</span>':''}${ex.files&&ex.files.length>1?' <span class="small">×'+ex.files.length+'</span>':''}`;
      right.insertAdjacentHTML('beforeend',cjkBadge(ex.cjkPct)+(ex.fontconfigRef?`<span title="${T('assets.fonts.fallbackRefTitle')}">⚠</span>`:''));
      right.appendChild(delBtn(T('assets.fonts.deleteConfirm',{name:it.name,filesNote:ex.files&&ex.files.length>1?T('assets.fonts.filesNote',{count:ex.files.length}):'',suffix:ex.fontconfigRef?T('assets.fonts.deleteSuffixFallback'):T('assets.fonts.deleteSuffixNormal')}),'/api/fonts/'+encodeURIComponent(it.name),refresh))}})}},
- 'wallpaper-serve':{titleKey:'tab.wallpaper',title:'壁纸',render(sec){assetTab(sec,'/api/wallpapers',{
+ 'wallpaper-serve':{render(sec){assetTab(sec,'/api/wallpapers',{
    hint:T('wallpaper.hint'),
    header:`<label class="field">${T('wallpaper.rotateLabel')}</label><div class="row"><select id="wpmode" style="max-width:12em"><option value="sequential">${T('wallpaper.mode.sequential')}</option><option value="random">${T('wallpaper.mode.random')}</option><option value="fixed">${T('wallpaper.mode.fixed')}</option></select><span id="wpst" class="small"></span></div>`,
    icon:'🖼',label:T('wallpaper.dropLabel'),accept:IMG_EXT,btn:T('wallpaper.btn'),
@@ -576,6 +582,9 @@ function renderNotes(sec){sec.innerHTML=`
   // 主动重画一次，只是不再被 SSE 抢跑。
   let holdRefreshUntil=0;
   const holdFor=ms=>{holdRefreshUntil=ms?Date.now()+ms:0};
+  // 请求还在跑时一直挡着（生成笔记本 + 导出、转写、提问都可能超过十几秒；此前固定挡 15 秒，超时后 SSE 把卡片重画掉，
+  // 结果文字写到已经脱离页面的节点上）。请求结束由 lingerThen / holdFor(0) 改成"再挡 3 秒"或解除；10 分钟只是兜底。
+  const HOLD_BUSY=10*60*1000;
   /* 结果文案停留 3s（这期间 SSE 触发的重画被 holdRefreshUntil 挡住），再执行 fn（通常是拉新数据重画）。三处「点完显示结果」共用。 */
   const lingerThen=async fn=>{holdFor(3000);await wait(3000);await fn()};
   const cropUrl=(uuid,f)=>`/api/ink/books/${encodeURIComponent(uuid)}/crops/${encodeURIComponent(f)}`;
@@ -587,7 +596,7 @@ function renderNotes(sec){sec.innerHTML=`
   // 在途的保存请求：重取数据前先等它们落地（失焦保存 `onchange` 不 await，紧跟着的重画可能先拿到旧文本）。
   // 用 jsend 不用 postJ：postJ 失败时自己弹一次 toast，这里再弹"保存失败"就成了两条（此前如此）。
   const inflight=new Set();
-  const patch=(id,body)=>{const p=jsend(bookApi('ink',`/entries/${encodeURIComponent(id)}`),'POST',body).then(r=>{if(r.ok===false)toast(r.message||T('notes.saveFailed'))}).finally(()=>inflight.delete(p));inflight.add(p);return p};
+  const patch=(id,body)=>{const p=jsend(bookApi('ink',`/entries/${encodeURIComponent(id)}`),'POST',body).then(r=>{if(r.ok===false){toast(r.message||T('notes.saveFailed'));return false}return true}).finally(()=>inflight.delete(p));inflight.add(p);return p};
   /* 编辑区文本失焦才存（`onchange`），但点旁边的按钮（重转/去处/问AI…）会先让文本框失焦触发保存，
      两件事几乎同时各发一个 HTTP 请求，谁先到服务端不一定——按钮那次的收尾动作会拉新数据整页重画，
      如果保存请求还没落地，重画拿到的还是旧文本，编辑就跟着"消失"了（用户反馈"改了内容点重转不存"）。
@@ -610,7 +619,12 @@ function renderNotes(sec){sec.innerHTML=`
      子视图）原来在 triage/archiveEntry/restore/去处切换/转写/问 AI 七处各自逐字重复（2026-09-09
      审计发现），任何一处漏改都容易造成"某个动作之后画面没更新"这类不容易被发现的 bug——收成一个
      辅助函数，调用方只需要说清楚"这次要重画哪几个子视图"。 */
-  const reloadBook=async(...views)=>{await flushPendingText();book=await j(bookApi('ink'));await refreshSync();views.forEach(fn=>fn())};
+  /* 自己动作之后这里已经重取过整本书，同一动作让服务端发出的 `entries` 事件再触发一次整页刷新就是重复取（书列表 + 整本书 +
+     同步状态 + 转写状态）：重取期间和之后 1 秒内到达的事件不再刷新。 */
+  let selfQuietUntil=0;
+  const reloadBook=async(...views)=>{selfQuietUntil=Infinity;
+    try{await flushPendingText();const b=await j(bookApi('ink'));if(b.ok!==false)book=b;await refreshSync();views.forEach(fn=>fn())}
+    finally{selfQuietUntil=Date.now()+1000}};
   /* s 是章节级同步状态（notebookNeeded/Synced、obsidianNeeded/Synced），本身只精确到"整章"，不到
      "这一条"（`fingerprint_chapter` 把整章活条目内容拼一起算一个哈希，见白皮书 §03aa）。章头调用不传
      `only`，如实显示整章的聚合状态；贴在每条笔记行上时传 `only=该条自己的 destination`，把跟这条本身
@@ -670,7 +684,7 @@ function renderNotes(sec){sec.innerHTML=`
     const f=importFile.files[0];
     if(!f){importFileContent='';importFilename.textContent='';return}
     importFileContent=await f.text();
-    importFilename.textContent=`${f.name}（${fmtB(f.size)}）`;
+    importFilename.textContent=T('common.paren',{text:f.name,inner:fmtB(f.size)});
     if(!importTitle.value.trim())importTitle.value=f.name.replace(/\.(md|markdown)$/i,''); // 顺手拿文件名当默认标题，仍可编辑
   };
   importBtn.onclick=async()=>{if(!book)return;
@@ -679,7 +693,7 @@ function renderNotes(sec){sec.innerHTML=`
     if(!title){toast(T('notes.import.needTitle'),'warn');return}
     if(!markdown.trim()){toast(T('notes.import.needFile'),'warn');return}
     importBtn.disabled=true;importStat.textContent=T('notes.import.generating');
-    const r=await postJ(bookApi('notes',`/import-md`),{title,markdown}); // 失败 postJ 已经 alert 过
+    const r=await postJ(bookApi('notes',`/import-md`),{title,markdown}); // 失败时 postJ 已经弹过提示
     importBtn.disabled=false;
     if(r.ok===false){importStat.textContent='';return}
     importStat.textContent=T('notes.import.done',{name:r.visibleName});importFile.value='';importFileContent='';importFilename.textContent=''};
@@ -825,7 +839,7 @@ function renderNotes(sec){sec.innerHTML=`
       // 是重复劳动，一个按钮内部按当前去处该做哪样做哪样：没有条目要那个去处，对应那步自然是 Empty
       // （后端已有这个语义，见 export::ExportOutcome/publish::ChapterOutcome），前端只是不重复提示
       // "没做"；改名"推送"是因为"同步"暗示双向/拉取，这个按钮其实只单向推。
-      syncBtn.onclick=async()=>{syncBtn.disabled=true;msg.textContent='';holdFor(15000);
+      syncBtn.onclick=async()=>{syncBtn.disabled=true;msg.textContent='';holdFor(HOLD_BUSY);
         // 服务端没有天然的分步数据（耗时来自生成笔记本+导出 md 两次整章调用，不是可数的"第几步"）——
         // 跟母版库普通整本落库同一处境，共用同一套不确定态滚动条（2026-09-19 代码质量审计，
         // 原来这里只有一句不会变的静态文字"推送中…"）。
@@ -836,11 +850,14 @@ function renderNotes(sec){sec.innerHTML=`
         syncBtn.disabled=false;
         const gc=(gr.chapters&&gr.chapters[0])||{};
         const parts=[];
-        if(gr.ok===false)parts.push('✗ '+T('notes.push.notebook')+'：'+(gr.message||T('common.failed')));
-        else if(gc.status==='failed')parts.push('✗ '+T('notes.push.notebook')+'：'+gc.error);
+        const fail=(label,m)=>parts.push('✗ '+T('common.labelValue',{label,value:m}));
+        if(gr.ok===false)fail(T('notes.push.notebook'),gr.message||T('common.failed'));
+        else if(gc.status==='failed')fail(T('notes.push.notebook'),gc.error);
         else if(gc.status==='generated')parts.push('✓ '+T('notes.push.notebookUpdated'));
-        if(er.ok===false)parts.push('✗ md：'+(er.message||T('common.failed')));
-        else if(er.status==='written'){parts.push('✓ '+T('notes.push.mdExported'));window.open(bookApi('notes',`/chapters/${k}/export.md`),'_blank')}
+        if(er.ok===false)fail('md',er.message||T('common.failed'));
+        // md 用一条带链接的提示让用户点开：此前在两次请求之后才 window.open，已经不在点击的上下文里，iOS Safari / Firefox
+        // 当弹窗拦掉，Chrome 操作超过约 5 秒也拦——设备上生成笔记本常要好几秒，md 实际打不开。
+        else if(er.status==='written'){parts.push('✓ '+T('notes.push.mdExported'));toastLink(T('notes.push.mdExported'),T('notes.push.openMd'),bookApi('notes',`/chapters/${k}/export.md`))}
         msg.textContent=parts.length?parts.join(' · '):T('notes.push.noChange');
         // 结果文案刚显示出来，从这一刻起再保 3s，不管上面两次请求实际花了多久
         await lingerThen(async()=>{await refreshSync();renderBook({advance:true})})};
@@ -871,13 +888,14 @@ function renderNotes(sec){sec.innerHTML=`
                 <input type="text" data-question placeholder="${T('notes.questionPlaceholder')}" value="${e.question?esc(e.question):''}" style="flex:1;min-width:9em" ${e.ask_ai?'':'disabled'}>
                 <button class="btn pri" data-askbtn ${e.ask_ai&&e.question?'':'disabled'}>${T('notes.askBtn')}</button></div>
               <div class="small" data-askstat></div>
-              ${e.answer?`<div class="entry-answer"><b>${T('notes.aiAnswer')}</b>（${esc(T('notes.askedLabel',{brief:e.answer.brief}))}）<br>${esc(e.answer.text).replace(/\n/g,'<br>')}</div>`:''}
+              ${e.answer?`<div class="entry-answer">${T('common.paren',{text:`<b>${T('notes.aiAnswer')}</b>`,inner:esc(T('notes.askedLabel',{brief:e.answer.brief}))})}<br>${esc(e.answer.text).replace(/\n/g,'<br>')}</div>`:''}
             </div>
           </div>
         </div>`;
       const ta=row.querySelector('textarea');
       ta.oninput=ev=>pendingText.set(e.id,ev.target.value);   // 还没失焦确认，先记住最新值，别的动作重画前会先冲掉
-      ta.onchange=ev=>{pendingText.delete(e.id);patch(e.id,{text:ev.target.value})};
+      // 存上了才从 pendingText 里摘掉（存失败的那份留着，下次重画前 flushPendingText 再试；期间又改过就不摘新值）。
+      ta.onchange=ev=>{const v=ev.target.value;patch(e.id,{text:v}).then(ok=>{if(ok&&pendingText.get(e.id)===v)pendingText.delete(e.id)})};
       guardClick(row.querySelector('[data-dest]'),async()=>{const next=DEST_ORDER[(DEST_ORDER.indexOf(dv)+1)%3];await patch(e.id,{destination:next});await reloadBook(renderBook)});
       row.querySelector('[data-archive]').onclick=()=>archiveEntry(e.id);
       /* 点「重新转写」/「提问」弹出状态和这次调用的消耗（用户反馈"应该弹出状态及当前消耗"，2026-09-08
@@ -886,7 +904,7 @@ function renderNotes(sec){sec.innerHTML=`
          最初给的 1.5s 真机反馈"闪一下就没了"根本来不及读，2026-09-16 延长到 3s（「推送本章」
          那条同款状态提示也一起延长，三处是同一个模式）。 */
       const tb=row.querySelector('[data-transcribe]'),txStat=row.querySelector('[data-txstat]');
-      if(tb)tb.onclick=async()=>{tb.disabled=true;txStat.textContent=T('notes.transcribing');holdFor(15000);
+      if(tb)tb.onclick=async()=>{tb.disabled=true;txStat.textContent=T('notes.transcribing');holdFor(HOLD_BUSY);
         const r=await j(bookApi('transcribe',`/entries/${encodeURIComponent(e.id)}`),{method:'POST'});
         tb.disabled=false;
         txStat.textContent=r.ok===false?('✗ '+(r.message||T('notes.transcribeFailed'))):T('notes.transcribeDone',{promptTokens:r.promptTokens||0,completionTokens:r.completionTokens||0});
@@ -896,7 +914,7 @@ function renderNotes(sec){sec.innerHTML=`
       const syncAskUi=()=>{qInput.disabled=!askBox.checked;askBtn.disabled=!(askBox.checked&&qInput.value.trim())};
       askBox.onchange=()=>{patch(e.id,{askAi:askBox.checked});syncAskUi()};
       qInput.onchange=()=>{patch(e.id,{question:qInput.value});syncAskUi()};
-      askBtn.onclick=async()=>{askBtn.disabled=true;askStat.textContent=T('notes.asking');holdFor(15000);
+      askBtn.onclick=async()=>{askBtn.disabled=true;askStat.textContent=T('notes.asking');holdFor(HOLD_BUSY);
         const r=await j(bookApi('mind',`/entries/${encodeURIComponent(e.id)}/ask`),{method:'POST'});
         askBtn.disabled=false;
         if(r.ok===false){askStat.textContent='✗ '+(r.message||T('notes.askFailed'));holdFor(0)}
@@ -904,13 +922,18 @@ function renderNotes(sec){sec.innerHTML=`
       body.appendChild(row)});
     chapterbody.appendChild(card)};
   exportTabsEl.querySelectorAll('button').forEach(b=>b.onclick=()=>{if(exportTab===b.dataset.etab)return;exportTab=b.dataset.etab;selectedChapter=null;renderBook()});
-  const loadBook=async()=>{await flushPendingText();selectedChapter=null;
-    book=null;
-    if(sel.value){const b=await j(`/api/ink/books/${encodeURIComponent(sel.value)}`);
+  /* 取当前选中的书并重画。先取到局部变量再一次性换掉 `book`：此前开头先置空，等待期间任何会调 bookApi() 的动作（文本框
+     失焦保存等）都会因 book 为 null 抛错、这次编辑丢掉。选中的章节在这里不清空（只有换书才清，见 sel.onchange）——
+     事件刷新也走这里，此前每次保存引发的 `entries` 事件都把用户正在看的那章跳回第一章。 */
+  const loadBook=async()=>{await flushPendingText();
+    let b=null;
+    if(sel.value){const r=await j(`/api/ink/books/${encodeURIComponent(sel.value)}`);
       // 取失败（ink-serve 重启中、书刚被删）按"没选书"画，别把 {ok:false} 当成书——此前后续请求会拼出 /books/undefined。
-      if(b.ok===false)toast(b.message||T('common.failed'));else book=b}
+      if(r.ok===false)toast(r.message||T('common.failed'));else b=r}
+    if(!b||!book||b.uuid!==book.uuid)selectedChapter=null; // 换了书（或书没了），章节 key 按书算，清掉
+    book=b;
     await refreshSync();renderBrowse();await renderBook();renderTrash();renderImport()};
-  sel.onchange=loadBook;
+  sel.onchange=()=>runRefresh(false,false,true);
   /* 全文搜索（跨所有书，ink-serve /search）：结果点一下就切到那本书的「浏览」。命中词加粗——片段先 esc 再替换，
      替换用的也是 esc 过的查询词，不会引入未转义的 HTML。 */
   const nq=$('#nq',sec),nqres=$('#nqres',sec);
@@ -925,7 +948,7 @@ function renderNotes(sec){sec.innerHTML=`
     items.forEach(h=>{const li=el('li',{html:`<div class="small">${esc(h.title)} · p.${h.pageIndex+1}${h.chapterTitle?' · '+esc(h.chapterTitle):''} · ${T(FIELD_KEYS[h.field]||'notes.search.field.text')}</div><div>${mark(h.snippet,q)}</div>`});
       // 跳到这条目实际所在的子页：未处理（mined）在「浏览」，跳过/归档在「回收站」，其余（待转写/草稿/定稿）在「整理」。
       const tab=h.status==='mined'?0:(h.status==='skipped'||h.status==='archived')?2:1;
-      li.onclick=async()=>{if(sel.value!==h.uuid){sel.value=h.uuid;await loadBook()}$('#nsubnav',sec).children[tab].click();nqres.innerHTML=''};
+      li.onclick=async()=>{if(sel.value!==h.uuid){sel.value=h.uuid;await runRefresh(false,false,true)}$('#nsubnav',sec).children[tab].click();nqres.innerHTML=''};
       ul.appendChild(li)});
     nqres.appendChild(el('p',{class:'small',text:T('notes.search.count',{n:items.length})}));nqres.appendChild(ul)};
   guardClick($('#nqgo',sec),doSearch);
@@ -942,18 +965,30 @@ function renderNotes(sec){sec.innerHTML=`
     if(!show&&importNavBtn.classList.contains('on'))$('#nsubnav',sec).children[0].click(); // 正停在「导入」时先切回「浏览」，避免 hidden+on 类同时存在
     importNavBtn.hidden=!show;importPanel.hidden=!show;
   };
-  // checkImport=false：SSE 事件触发的刷新不重查「导入 md」开关（那个开关在「管理」页改，切回本 tab 的刷新会查）——
-  // 自动转写期间每转完一条都有事件，原来每次都连带让网关扫一遍 xochitl 扩展状态。
-  const refresh=async(checkImport=true)=>{if(Date.now()<holdRefreshUntil)return; // 正显示着结果提示，别被 SSE 抢跑冲掉（见 holdRefreshUntil 声明处注释）
-    const d=await j('/api/ink/books');const cur=sel.value;sel.innerHTML=(d.items||[]).map(b=>`<option value="${esc(b.uuid)}">${esc(b.title)}（${b.entries}）</option>`).join('')||`<option value="">${T('notes.noBooks')}</option>`;
-    if(cur&&[...sel.options].some(o=>o.value===cur))sel.value=cur;await loadBook();if(checkImport)await syncImportVisible()};
+  /* 全部刷新入口走同一个 coalesce（切 tab、事件、换书、搜索跳转、清空回收站…）：此前切 tab 和事件各有一个合并器，
+     两份 loadBook 可以并发跑。`checkImport`：只有切回本 tab 的刷新重查「导入 md」开关（那个开关在「管理」页改）——
+     自动转写期间每转完一条都有事件，原来每次都连带让网关扫一遍 xochitl 扩展状态。 */
+  let wantImport=false,wantList=false,wantForce=false;
+  const doRefresh=async()=>{const force=wantForce;wantForce=false;
+    if(!force&&Date.now()<holdRefreshUntil)return; // 正显示着结果提示，别被 SSE 抢跑冲掉（见 holdRefreshUntil 声明处注释）；用户自己换书不挡
+    const checkImport=wantImport,list=wantList;wantImport=false;wantList=false;
+    if(list){const d=await j('/api/ink/books');const cur=sel.value;sel.innerHTML=(d.items||[]).map(b=>`<option value="${esc(b.uuid)}">${esc(T('common.paren',{text:b.title,inner:b.entries}))}</option>`).join('')||`<option value="">${T('notes.noBooks')}</option>`;
+      if(cur&&[...sel.options].some(o=>o.value===cur))sel.value=cur}
+    await loadBook();if(checkImport)await syncImportVisible()};
+  const runCoalesced=coalesce(doRefresh);
+  const runRefresh=(list=true,checkImport=false,force=false)=>{wantList=wantList||list;wantImport=wantImport||checkImport;wantForce=wantForce||force;return runCoalesced()};
+  const refresh=()=>runRefresh(true,true);
+  /* 只有同步状态变了（note-serve 生成笔记本/导出 md 发 `notebooks`）：只重取同步状态、重画「整理」和回收站，不重取书列表和整本书。 */
+  const syncOnly=coalesce(async()=>{if(Date.now()<holdRefreshUntil||!book)return;await refreshSync();await renderBook();renderTrash()});
   /* 事件刷新会整段重画（含正在编辑的文本框）：用户正在本 tab 的输入框里打字时先不重画，只记一笔，焦点离开输入框再补一次。
      此前自动转写/另一台设备的改动一来，光标连同输入框一起被重画掉（文字靠 pendingText 保住了，但得重新点进去）。 */
   const editing=()=>{const a=document.activeElement;return !!a&&sec.contains(a)&&(a.tagName==='TEXTAREA'||(a.tagName==='INPUT'&&/^(text|search)$/.test(a.type)))};
   let deferred=false;
-  const evRefresh=coalesce(()=>refresh(false));
-  sec.onEvent=()=>{if(editing()){deferred=true;return}evRefresh()};
-  sec.addEventListener('focusout',()=>setTimeout(()=>{if(deferred&&!editing()){deferred=false;evRefresh()}},0));
+  sec.onEvent=ev=>{if(editing()){deferred=true;return}
+    if(ev.kind==='notebooks'){syncOnly();return}
+    if(ev.kind==='entries'&&Date.now()<selfQuietUntil)return; // 自己刚动过、已经重取过了
+    runRefresh()};
+  sec.addEventListener('focusout',()=>setTimeout(()=>{if(deferred&&!editing()){deferred=false;runRefresh()}},0));
   refresh();sec.refresh=refresh;subtabs(sec)}
 
 // 只放 key 名，DashScope/OpenAI/Gemini/DeepSeek 本身是厂商专名不翻，括注里的中文说明才走 T()（同样是
@@ -1154,15 +1189,15 @@ function mountCleanup(box){
   busyClick(q('[data-delfiles]'),async()=>{const names=[...pickF];
     if(!names.length||!await confirmDialog(T('cleanup.confirmFiles',{n:names.length,list:listOf(names)})))return;
     const r=await jsend('/api/device/cleanup/delete','POST',{area:'books-done',names});
-    if(r.failed&&r.failed.length)toast(T('cleanup.partial',{ok:(r.deleted||[]).length,bad:r.failed.length,msg:r.failed.map(f=>f.name+'：'+f.error).join('；')}));
+    if(r.failed&&r.failed.length)toast(T('cleanup.partial',{ok:(r.deleted||[]).length,bad:r.failed.length,msg:r.failed.map(f=>T('common.labelValue',{label:f.name,value:f.error})).join(T('common.listSep'))}));
     else if(r.ok===false)toast(r.message||T('common.failed'));
     else toast(T('cleanup.deleted',{n:(r.deleted||[]).length}),'ok');
     pickF.clear();await load()});
   busyClick(q('[data-trash]'),async()=>{const picks=[...pickL];
     if(!picks.length||!await confirmDialog(T('cleanup.lib.confirm',{n:picks.length,list:listOf(picks.map(p=>p[1]))})))return;
     let ok=0;const bad=[];
-    for(const [uuid,name] of picks){const r=await jsend('/api/books/trash/add','POST',{uuid,name});if(r.ok===false)bad.push(name+'：'+(r.message||''));else ok++}
-    if(bad.length)toast(T('cleanup.partial',{ok,bad:bad.length,msg:bad.join('；')}));else toast(T('cleanup.lib.queued',{n:ok}),'ok',6500);
+    for(const [uuid,name] of picks){const r=await jsend('/api/books/trash/add','POST',{uuid,name});if(r.ok===false)bad.push(T('common.labelValue',{label:name,value:r.message||''}));else ok++}
+    if(bad.length)toast(T('cleanup.partial',{ok,bad:bad.length,msg:bad.join(T('common.listSep'))}));else toast(T('cleanup.lib.queued',{n:ok}),'ok',6500);
     pickL.clear();await load()});
   const load=async()=>{const d=await j('/api/device/cleanup');
     if(d.ok===false){q('[data-files]').innerHTML=`<li class="small">${esc(d.message)}</li>`;return}
@@ -1272,19 +1307,19 @@ function renderManage(sec){sec.innerHTML=`
       `<b>xovi</b><span>${inst(f.xovi)}</span><b>qt-resource-rebuilder</b><span>${inst(f.qrr)}</span>`
       +`<b>${T('manage.loaded.xoviLive')}</b><span>${badge(ld.xovi?T('manage.loaded.on'):T('manage.loaded.off'),!!ld.xovi)}${live.length?' <span class="small">'+esc(live.join(' · '))+'</span>':''}</span>`;
     const ul=$('#mods',sec);ul.innerHTML='';(d.modules||[]).forEach(m=>{
-      const [state,cls]=!m.installable?[T('manage.modules.state.notLaunched'),'']:!m.installed?[T('common.notInstalled'),'off']:m.running?[T('manage.modules.state.on'),'on']:[T('manage.modules.state.installedOff'),''];
+      const [state,cls]=!m.installed?[T('common.notInstalled'),'off']:m.running?[T('manage.modules.state.on'),'on']:[T('manage.modules.state.installedOff'),''];
       const lk='manage.modules.label.'+m.seg,label=I18N[lk]?T(lk):m.label; // 语言包缺这个 seg 时兜底用后端 Rust 侧的中文 label（T() 缺 key 返回 key 本身，不能靠 ||）
       const left=el('span',{html:`${esc(label)} <span class="small">${esc(m.service)}</span> <span class="badge ${cls}">${state}</span>`});
       const right=el('span',{style:'display:flex;gap:.4em;align-items:center'});
-      if(m.installable&&m.installed){
+      if(m.installed){
         const t=btn(m.running?T('manage.modules.turnOff'):T('manage.modules.turnOn'),async()=>{await modAct(m.seg,m.running?'stop':'start',true);setTimeout(refresh,600)});
         const u=btn(T('manage.modules.uninstallBtn'),async()=>{if(await confirmDialog(T('manage.modules.confirmUninstall',{label}))){if((await modAct(m.seg,'uninstall',true)).ok!==false)toast(T('manage.modules.uninstalled',{label}),'ok');setTimeout(()=>location.reload(),800)}});
         right.append(t,u);
-      }else if(m.installable)right.appendChild(el('span',{class:'small',html:T('manage.modules.installCmd',{only:esc(m.only)})}));
+      }else right.appendChild(el('span',{class:'small',html:T('manage.modules.installCmd',{only:esc(m.only)})}));
       ul.appendChild(el('li',{style:'flex-wrap:wrap'},[left,right]))});
     if(es.ok!==false)await erApply(es)};
-  guardClick($('#allon',sec),async()=>{const d=await j('/api/manage');for(const m of (d.modules||[]))if(m.installable&&m.installed&&!m.running)await modAct(m.seg,'start');refresh()});
-  guardClick($('#alloff',sec),async()=>{if(!await confirmDialog(T('manage.modules.confirmAllOff')))return;const d=await j('/api/manage');for(const m of (d.modules||[]))if(m.installable&&m.installed&&m.running)await modAct(m.seg,'stop');refresh()});
+  guardClick($('#allon',sec),async()=>{const d=await j('/api/manage');for(const m of (d.modules||[]))if(m.installed&&!m.running)await modAct(m.seg,'start');refresh()});
+  guardClick($('#alloff',sec),async()=>{if(!await confirmDialog(T('manage.modules.confirmAllOff')))return;const d=await j('/api/manage');for(const m of (d.modules||[]))if(m.installed&&m.running)await modAct(m.seg,'stop');refresh()});
   /* 系统增强/实验室（Track 3，2026-09-09；实验室 2026-09-10 加）：CJK 画线吸附/翻页/
      导入md文档可见性都是真开关（写 reading-qol.json，走同一个 /api/enhance/qol）。电池刺客与 CJK 手写笔迹优化
      2026-09-30 已移除；「漫画页边距」开关 2026-10-07 删除（带 sheng-ren 页边距标记的漫画一律登记）。 */
@@ -1321,6 +1356,7 @@ function renderManage(sec){sec.innerHTML=`
   // 语言包先拿到手：下面 addTab 用得到 T()，晚拿会让顶层导航先短暂显示 key 本身再跳成文字。
   // 拿不到（离线/服务重启中）静默留空对象——T() 兜底显示 key，不是白屏，也不阻塞页面其余部分。
   const lang=currentLang();
+  document.documentElement.lang=lang; // 读屏与字体回退按真实界面语言走（index.html 写死的是 zh）
   try{I18N=await(await fetch(`/ui/locales/${lang}.json`)).json()}catch{I18N={}}
   document.title=T('app.title');$('#applogo').textContent=T('app.title');
   $('#navpw').textContent=T('nav.changePassword');$('#navca').textContent=T('nav.caCert');$('#logout').textContent=T('nav.signOut');
