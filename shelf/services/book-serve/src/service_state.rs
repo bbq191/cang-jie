@@ -33,6 +33,8 @@ pub struct State {
     pub reading_direction: Arc<crate::reading_direction::ReadingDirection>,
     /// 回收站 / 建文件夹代理执行不成、已放弃的记录（网页页头横幅，见 agent_failures.rs）。
     pub agent_failures: Arc<AgentFailures>,
+    /// 直接导入 xochitl（不进母版库，sheng-ren 经 SSH 端口转发调，见 import.rs）。
+    pub import: crate::import::Importer,
     /// `GET /status` 的结果缓存（[`STATUS_TTL`]）。网页每次 refresh 都会打这个接口，而它里面有重活：
     /// 对 xochitl 发 HTTP 探活（不可达时要等满 3 秒超时）、读全部 `.metadata` 列文件夹、扫 inbox。
     /// 会被本服务自己的操作改变的部分（inbox 计数、文件夹候选）在操作路径里 [`State::invalidate_status`]
@@ -68,16 +70,21 @@ impl State {
         let reading_direction = Arc::new(crate::reading_direction::ReadingDirection::new(&paths.xochitl_dir(), &books_state.join("rtl-overrides.json")));
         let staging = Staging::new(paths.staging_dir(), xochitl.clone(), cfg.native_upload_limit_bytes())
             .with_comic_margins(comic_margins.clone());
+        let import = crate::import::Importer::new(xochitl.clone(), staging.clone(), books_state.join("import-tmp"), cfg.native_upload_limit_bytes());
         let bus = Arc::new(EventBus::new());
         let agent_failures = Arc::new(AgentFailures::new(&books_state, Some(bus.clone())));
         let trash = TrashQueue::new(&books_state, &paths.xochitl_dir()).with_failures(agent_failures.clone());
         let mkdir = Arc::new(MkdirQueue::new(&books_state, &paths.xochitl_dir()).with_failures(agent_failures.clone()));
-        State { cfg, spool, staging, xochitl, bus, trash, comic_margins, mkdir, reading_direction, agent_failures, status_cache: TtlCache::new(STATUS_TTL), inbox_settle: INBOX_SETTLE }
+        State { cfg, spool, staging, xochitl, bus, trash, comic_margins, mkdir, reading_direction, agent_failures, import, status_cache: TtlCache::new(STATUS_TTL), inbox_settle: INBOX_SETTLE }
     }
 
     pub fn ensure_dirs(&self) -> std::io::Result<()> {
         self.spool.ensure()?;
         self.staging.ensure()?;
+        let parts = self.import.ensure()?;
+        if parts > 0 {
+            println!("[book-serve] 清掉 {parts} 个上次没传完的直接导入临时文件");
+        }
         let stale_margins = self.comic_margins.prune_missing();
         if stale_margins > 0 {
             println!("[book-serve] 清掉 {stale_margins} 条书已不在库里的页边距待办");

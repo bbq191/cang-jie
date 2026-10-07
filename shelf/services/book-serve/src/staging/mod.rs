@@ -19,13 +19,15 @@ use std::sync::Arc;
 // 按职责拆成子模块（原 `staging.rs` 一个文件 1800+ 行）：`Staging` 的方法按动作分散在各子模块的 `impl Staging` 里，
 // 对外路径（`crate::staging::Staging` 等）不变；子模块内的私有项以 `pub(super)` 提供给兄弟模块与测试。
 mod deliver;
+/// 大文件通道的安全上限，直接导入（`crate::import`）也用同一个。
+pub(crate) use self::deliver::MAX_DIRECT_BYTES;
 mod intake;
 mod library;
 
 use self::library::ListCaches;
 
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 
 /// 忙锁占用时的统一提示——落库/删除/改名几处几乎逐字重复过（2026-09-19 代码质量审计）。`extra`

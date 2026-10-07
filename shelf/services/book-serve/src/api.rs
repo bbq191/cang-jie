@@ -10,7 +10,11 @@
 //! 原生回收站队列：`POST /trash/add {uuid, name}`（name 必须与书库 visibleName 相符）· `GET /trash/pending?wait=` → `{uuids}`（MainView 代理 qmd 长轮询拉取执行）· `GET /trash`。
 //! 原生建文件夹队列：`POST /mkdir/add {name}` · `GET /mkdir/pending` → `{names}`（MainView 代理 shelf-mkdir-agent.qmd 拉取执行）· `GET /mkdir`。
 //! 代理放弃记录：`GET /agent-failures` → `{items:[{kind,name,uuid?,at}]}` · `POST /agent-failures/clear`（两个队列交满次数仍没做成的项）。
-//! 2026-09-05 起规则统一"所有书只落母版库"：旧 `POST /?target=` 直投路已删（`/staging*` 是唯一入口）。
+//! 2026-09-05 起规则统一"所有书只落母版库"：旧 `POST /?target=` 直投路已删（`/staging*` 是网页的唯一入口）。
+//! 直接导入 xochitl、不进母版库（2026-10-07，电脑上的 sheng-ren `booklib sync` 经 SSH 端口转发直连 8790 调，见 import.rs）：
+//! · `POST /import?name=<文件名.epub>&folder=<文件夹名，可空＝书库根>`（请求体＝EPUB 原始字节）→ `{uuid, name, folder}`（同步，可达分钟级）
+//! · `POST /import?uuid=<uuid>&name=<文件名.epub>`：原地替换已有文档内容、uuid 不变 → `{uuid, name, folder}`；文档不在 / 已删 / 在回收站 / 不是 EPUB → 404
+//! · `GET /import/{uuid}` → `{uuid, name, folder, deleted}`（不存在 → 404）。删除用 `POST /trash/add {uuid, name}`。
 use crate::service_state::State;
 use crate::staging::StagingStore;
 use rmsvc_core::asset::{self, AssetUploadFlow};
@@ -116,6 +120,12 @@ pub fn router(st: Arc<State>) -> Router {
             let n = s.agent_failures.clear().map_err(ApiError::internal)?;
             Ok(Reply::ok(&serde_json::json!({"ok": true, "cleared": n})))
         }))
+        // ── 直接导入 xochitl（不进母版库，见 import.rs）：同步处理，回执时书已在书库里 ──
+        .post("/import", bind(&st, import_book))
+        .get("/import/{uuid}", bind(&st, |s, r| match s.import.describe(r.param("uuid")) {
+            Some(d) => Ok(Reply::ok(&serde_json::json!({"uuid": d.uuid, "name": d.name, "folder": d.folder, "deleted": d.deleted}))),
+            None => Err(ApiError::not_found("xochitl 书库里没有这份文档")),
+        }))
         .post("/staging/delete", bind(&st, |s, r| {
             s.staging.remove(r.json()?.str("name")?).map_err(ApiError::bad)?;
             staging_changed(s)
@@ -153,6 +163,28 @@ fn staging_upload(st: &State, r: &mut Request<'_>) -> ApiResult {
         st.bus.publish("books", "staging");
     }
     Ok(Reply::ok(&asset::receipt(&items, serde_json::Value::Null)))
+}
+
+/// `POST /import`：有 `uuid` → 原地替换，没有 → 新导入。请求体是 EPUB 原始字节（流式落盘，不进内存）。
+fn import_book(st: &State, r: &mut Request<'_>) -> ApiResult {
+    use crate::import::ImportError;
+    let name = r.q("name").ok_or_else(|| ApiError::bad("缺少 name"))?.to_string();
+    let len = r.content_length;
+    let res = match r.q("uuid").map(str::to_string) {
+        Some(uuid) => st.import.replace(&uuid, &name, &mut *r.body, len),
+        None => {
+            let folder = r.q("folder").unwrap_or("").to_string();
+            st.import.import_new(&name, &folder, &mut *r.body, len, &st.mkdir)
+        }
+    };
+    let d = res.map_err(|e| match e {
+        ImportError::Bad(m) => ApiError::bad(m),
+        ImportError::NotFound(m) => ApiError::not_found(m),
+        ImportError::Failed(m) => ApiError::internal(m),
+    })?;
+    st.invalidate_status(); // 可能新建了文件夹
+    st.bus.publish("books", "import");
+    Ok(Reply::ok(&serde_json::json!({"uuid": d.uuid, "name": d.name, "folder": d.folder})))
 }
 
 #[cfg(test)]
@@ -335,6 +367,46 @@ mod tests {
         let h = |k: &str| rep.headers.iter().find(|(n, _)| n == k).map(|(_, v)| v.clone()).unwrap_or_default();
         assert_eq!(h("Content-Length"), "6");
         assert!(h("Content-Disposition").contains("filename*=UTF-8''%E4%B9%A6.PDF"));
+    }
+
+    /// `POST /import` 带原始字节体（查询串取参）。
+    fn post_raw(router: &Router, query: &str, body: &[u8]) -> (u16, serde_json::Value) {
+        let mut b = body;
+        let mut r = Request { method: Method::Post, path: "/import".into(), query: parse_query(query), params: HashMap::new(), content_type: "application/epub+zip".into(), content_length: Some(body.len()), headers: vec![], body: &mut b };
+        let rep = router.dispatch(&mut r);
+        (rep.status, serde_json::from_slice(&rep.body).unwrap_or(serde_json::Value::Null))
+    }
+
+    /// 直接导入的路由：错误码映射（非 epub 400、文档不在 / 已删 404）、原地替换保留 uuid、查询。
+    #[test]
+    fn import_routes_map_errors_replace_and_query() {
+        const U: &str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+        let t = tempfile::tempdir().unwrap();
+        let st = state(&t);
+        let router = router(st.clone());
+        let lib = st.xochitl.library_dir().to_path_buf();
+        std::fs::create_dir_all(&lib).unwrap();
+        let epub = b"PK\x03\x04rest-of-zip";
+        let (code, v) = post_raw(&router, "name=a.pdf", epub);
+        assert_eq!(code, 400);
+        assert!(msg(&v).contains("只收 .epub"), "{v}");
+        assert_eq!(post_raw(&router, "", epub).0, 400, "缺 name");
+        assert_eq!(post_raw(&router, &format!("uuid={U}&name=a.epub"), epub).0, 404, "文档不在 → 404，客户端改成新导入");
+        assert_eq!(call(&router, Method::Get, &format!("/import/{U}"), "").0, 404);
+        std::fs::write(lib.join(format!("{U}.metadata")), r#"{"type":"DocumentType","visibleName":"书","parent":""}"#).unwrap();
+        std::fs::write(lib.join(format!("{U}.epub")), b"PK\x03\x04old").unwrap();
+        std::fs::write(lib.join(format!("{U}.pdf")), b"cache").unwrap();
+        let (code, v) = post_raw(&router, &format!("uuid={U}&name=a.epub"), epub);
+        assert_eq!(code, 200, "{v}");
+        assert_eq!(v, serde_json::json!({"uuid": U, "name": "书", "folder": ""}));
+        assert_eq!(std::fs::read(lib.join(format!("{U}.epub"))).unwrap(), epub);
+        assert!(!lib.join(format!("{U}.pdf")).exists());
+        let (code, v) = call(&router, Method::Get, &format!("/import/{U}"), "");
+        assert_eq!((code, v), (200, serde_json::json!({"uuid": U, "name": "书", "folder": "", "deleted": false})));
+        std::fs::write(lib.join(format!("{U}.metadata")), r#"{"type":"DocumentType","visibleName":"书","parent":"trash"}"#).unwrap();
+        assert_eq!(call(&router, Method::Get, &format!("/import/{U}"), "").1["deleted"], true, "进了回收站算 deleted");
+        assert_eq!(post_raw(&router, &format!("uuid={U}&name=a.epub"), epub).0, 404, "回收站里的不替换");
+        assert!(st.staging.list().is_empty(), "不进母版库");
     }
 
     #[test]

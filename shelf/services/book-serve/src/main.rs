@@ -6,6 +6,7 @@ mod agent_failures;
 mod api;
 mod comic_margins;
 mod config;
+mod import;
 mod mkdir;
 mod ops;
 mod pending_queue;

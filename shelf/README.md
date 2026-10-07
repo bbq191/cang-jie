@@ -50,7 +50,7 @@ reMarkable Paper Pro Move 的**书籍搬运层**。它是跑在设备上的一�
 | 服务 | 端口 | 职责 | 源码 |
 |---|---|---|---|
 | gateway | `0.0.0.0:443`，唯一对外 | HTTPS + 登录密码、网页 UI、反向代理、批量队列、并发闸门 | `../gateway` |
-| book-serve | 127.0.0.1:8790 | 母版库：入库、加入 xochitl、下载/改名/删除；xochitl 回收站 / 建文件夹 / 漫画页边距 / 日漫翻页的设备端代理（见书架白皮书第 C 章） | `services/book-serve` |
+| book-serve | 127.0.0.1:8790 | 母版库：入库、加入 xochitl、下载/改名/删除；直接导入 xochitl（sheng-ren 用，不进母版库）；xochitl 回收站 / 建文件夹 / 漫画页边距 / 日漫翻页的设备端代理（见书架白皮书第 C 章） | `services/book-serve` |
 | ~~koreader-serve~~ | ~~127.0.0.1:8791~~ | 2026-09-29 退役：不再安装、网关不再代理 `/api/koreader/*`；重新部署时 `install.sh` 会清掉旧设备上的单元与二进制 | 源码已从仓库删除（2026-09-30），见 git 历史 |
 | font-serve | 127.0.0.1:8792 | xochitl 字体上传即装（改写 fontconfig 中文回退链） | `../enhance/font-serve` |
 | wallpaper-serve | 127.0.0.1:8793 | 休眠壁纸上传即用（写 xochitl 的 `SleepScreenPath` 键） | `../enhance/wallpaper-serve` |
@@ -91,7 +91,7 @@ shelf/
 
 ```sh
 cd shelf && sh build.sh                        # host 测试 + aarch64 构建（gateway / enhance / notes 在的话一起编）
-cargo test --workspace                         # 只跑测试：2026-10-07 实跑 book-serve 79 + shelf-conv 24 个通过
+cargo test --workspace                         # 只跑测试：2026-10-07 实跑 book-serve 86 + shelf-conv 24 个通过
 cargo update -p bookconv                       # 跟进 sheng-ren（更新 Cargo.lock 里记的提交）
 cd ../packaging && sh deploy.sh 10.11.99.1     # 打包 → 传到设备 → install.sh（先备份旧文件）；只有 WiFi 时给 WiFi IP
 sh deploy.sh 10.11.99.1 --only font,wallpaper  # 只装部分服务；SHELF_NO_BUILD=1 跳过编译

@@ -295,7 +295,16 @@ GET  /events                         SSE 事件流
 POST /trash/add · GET /trash/pending · GET /trash      原生回收站代理队列
 POST /mkdir/add · GET /mkdir/pending[?wait=秒] · GET /mkdir   原生建文件夹代理队列（pending 支持长轮询）
 GET  /agent-failures · POST /agent-failures/clear      两个代理交满次数放弃的记录（网页页头横幅，§4）
+POST /import?name=&folder=           直接导入 xochitl、不进母版库（体＝EPUB 原始字节）→ {uuid, name, folder}
+POST /import?uuid=&name=             原地替换已有文档内容、uuid 不变 → {uuid, name, folder}；不在/已删/回收站/非 EPUB → 404
+GET  /import/{uuid}                  → {uuid, name, folder, deleted}；不存在 → 404
 ```
+
+**直接导入**（`import.rs`，2026-10-07）：给电脑上的 sheng-ren（`booklib sync`）用——经 SSH 端口转发（`ssh -L` 到设备 `127.0.0.1:8790`）直连 book-serve，不经网关、不带 `/api/books` 前缀，书**不进母版库**。
+- 新导入：请求体（`Content-Type: application/epub+zip`，带 `Content-Length`）按块写到 `$XDG_STATE_HOME/shelf/books/import-tmp/` 的临时文件（不整本进内存；用完/出错都删，启动时清上次的残留），校验扩展名 `.epub`、非空、≤ 1GB（`MAX_DIRECT_BYTES`）、收到的字节数等于 `Content-Length`、开头是 zip 头 `PK\3\4`；目标文件夹不存在先经 §4 mkdir 队列建（同落库）；≤ 体积门走普通 `/upload`，再按"上传前没有、上传后新出现、`<uuid>.epub` 与上传字节逐字节相同"认出 uuid（进程内串行，回执后等 20 秒；`/upload` 超时判"很可能已送达"时等 120 秒），> 体积门走大文件通道（§5，它自己返回 uuid）。漫画带 sheng-ren 页边距标记的照常登记（§3）。**同步**：回执时书已在书库里，大书可达分钟级；成功后推 `books/import` 事件。
+- 原地替换：`<uuid>.metadata` 不在、`deleted`、在回收站、没有 `<uuid>.epub` → 404（客户端据此改成新导入）；体写到 `<uuid>.epub.new`（0600）→ 删 `<uuid>.pdf`、`<uuid>.epubindex` → 原子改名成 `<uuid>.epub`；`.content`/`.metadata` 不动（保留 `lastOpenedPage`、页边距、所在文件夹）。同一 uuid 同时只允许一个替换（第二个 400）。**未真机验证**：删渲染缓存让 xochitl 重排这一招只在大文件通道"替换从没打开过的占位"上验证过（2026-09-20/25）；对已经打开过、已排版的书会不会正确重排、进度落在哪一页，还没在真机上看过。缩略图不动。
+- 删除不另设接口：`POST /trash/add {uuid, name}`（`name` 用导入回执里的 `name`，即 visibleName）。
+- 超时：rmsvc-core 只有"读请求体时 60 秒收不到一个字节就断"的空闲超时（`READ_IDLE_TIMEOUT`），没有请求体大小上限和总时长上限；处理期间服务端不读 socket，不受空闲超时影响。客户端读应答的超时要按分钟设。
 
 2026-10-07 已删（回 404）：`POST /staging/optimize`、`POST /staging/cancel`、`POST /staging/fetch-article`、`POST /staging/originals/restore|delete`。更早已删：`POST /staging/direction`（09-30）、`GET /inbox`、`POST /inbox/retry|delete`、`GET /staging/render/{uuid}`（09-22）；`/api/koreader/*` 2026-09-29 起不再代理。
 

@@ -15,7 +15,7 @@ fn empty_mkdir(t: &tempfile::TempDir) -> MkdirQueue {
     MkdirQueue::new(&t.path().join("state"), &t.path().join("xochitl"))
 }
 
-fn mini_epub(files: &[(&str, &str)]) -> Vec<u8> {
+pub(crate) fn mini_epub(files: &[(&str, &str)]) -> Vec<u8> {
     use std::io::Write;
     let mut buf = Vec::new();
     {
@@ -559,7 +559,7 @@ fn deliver_ensures_folder_enqueues_and_waits_for_agent_to_create_it() {
 
 /// 假 xochitl：`POST /upload` 把文件部分落成 `<uuid>.{ext}` + `.metadata`（+ EPUB 的渲染缓存 `.pdf`、PDF 的 `.content`）
 /// 回 201，其余请求回 200——够 `Xochitl::upload_large_file` 走通"占位→替换成真文件"这条大文件通道。
-fn fake_xochitl(lib: std::path::PathBuf) -> String {
+pub(crate) fn fake_xochitl(lib: std::path::PathBuf) -> String {
     let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
     let addr = server.server_addr().to_ip().unwrap().to_string();
     std::thread::spawn(move || {

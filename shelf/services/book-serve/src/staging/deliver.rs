@@ -7,7 +7,7 @@ use super::*;
 pub(super) const FOLDER_WAIT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(20);
 
 /// 大文件通道的安全上限（1GiB）：再大 xochitl 首次渲染的内存/时间没有验证过。
-pub(super) const MAX_DIRECT_BYTES: u64 = 1 << 30;
+pub(crate) const MAX_DIRECT_BYTES: u64 = 1 << 30;
 
 impl Staging {
     // ───────────── 落库 ─────────────
@@ -154,7 +154,7 @@ impl Staging {
     /// 外部进程不能直接写 xochitl 书库的 `.metadata`）真的建出来再放行。等不到就超时放弃——不是
     /// 新错误，[`rmsvc_core::xochitl::Xochitl::upload`] 本来就有"文件夹名找不到就落书库根"的
     /// best-effort 兜底，改动前就是这个行为，这里只是尽量把"真建出来"这条更好的结果多等一会。
-    pub(super) fn ensure_folder(&self, folder: &str, mkdir: &MkdirQueue) {
+    pub(crate) fn ensure_folder(&self, folder: &str, mkdir: &MkdirQueue) {
         if folder.is_empty() || self.xochitl.find_folder(folder).is_some() {
             return;
         }
