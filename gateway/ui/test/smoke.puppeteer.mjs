@@ -40,7 +40,6 @@ const routes = {
   '/api/transcribe/status': () => ({failures:[]}),
   '/api/books/staging': () => ({ok:true, items:[{name: evil, format:'epub', bytes:1000, mtime:1, delivered:{deliver:{status:'failed', message:'"><img src=x onerror=window.__xss=1>'}}}], freeBytes: 9e9}),
   '/api/books/status': () => ({ok:true, xochitlFolders:[]}),
-  '/api/budget/status': () => ({pending:[], active:[]}),
   '/api/session': () => ({ok:true, mustChange:false}),
   '/api/batch/status': () => ({running:false,total:0,done:0,queued:[],failed:[]}),
   '/api/foundation': () => ({}), '/api/enhance/status': () => ({}),
@@ -99,9 +98,9 @@ await new Promise(r => setTimeout(r, 500));
 out.afterBurst = (await hits()) - out.initialHits;
 out.burstFolders = (await hits('/api/books/status')) - 1; // 首次全量取过 1 次；staging 事件不该再取
 out.koreaderHits = await page.evaluate(() => Object.keys(window.__hits).filter(p => p.startsWith('/api/koreader')).length); // KOReader 已撤：一次都不该请求
-// 网关自身的批量/闸门事件（不带 svc）：只重取批量/闸门状态，不全量刷新
+// 网关自身的批量队列事件（不带 svc）：只重取批量状态，不全量刷新
 const s0 = await hits(), b0 = await hits('/api/batch/status');
-await page.evaluate(() => { for (let i = 0; i < 5; i++) window.__es[0].onmessage({data: JSON.stringify({area:'books', kind: i % 2 ? 'budget' : 'batch'})}); });
+await page.evaluate(() => { for (let i = 0; i < 5; i++) window.__es[0].onmessage({data: JSON.stringify({area:'books', kind:'batch'})}); });
 await new Promise(r => setTimeout(r, 500));
 out.queueEventStagingHits = (await hits()) - s0;
 out.queueEventBatchHits = (await hits('/api/batch/status')) - b0;

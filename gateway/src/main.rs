@@ -8,7 +8,6 @@
 //! 子命令：`serve [--bind]` · `passwd <新密码>` · `reset-password`（回默认并强制改）· `regen-tls`（重签叶证书）。
 mod auth;
 mod batch;
-mod budget;
 mod config;
 mod device;
 mod enhance;
@@ -111,7 +110,7 @@ fn main() {
         println!("[gateway] mDNS 名 {}.local（iOS/macOS/Windows/Linux 可直接访问；安卓走热点 dnsmasq 别名）", cfg.mdns_name.trim());
     }
     let paths = Arc::new(paths);
-    let hub = Arc::new(events::Hub::spawn(paths.clone())); // 先建总线：batch/budget 的进度事件要发到它
+    let hub = Arc::new(events::Hub::spawn(paths.clone())); // 先建总线：batch 的进度事件要发到它
     batch::resume(&paths); // 读回上次没跑完的批量队列继续跑（网关重启/部署新版本不丢）
     device::start(); // 后台只算一次 /usr/bin/xochitl 的 sha256（OTA 横幅的固件判据），不轮询
     let mut router = Router::new()
@@ -158,11 +157,7 @@ fn main() {
         .get("/api/device/wifi", bind(&paths, device::wifi))
         .get("/api/device/cleanup", bind(&paths, device::cleanup_list))
         .post("/api/device/cleanup/delete", bind(&paths, device::cleanup_delete))
-        // 并发/内存预算闸门的排队/处理状态（2026-09-19 用户反馈驱动，见 budget.rs::State 文档
-        // 注释）：跟 /api/manage、/api/enhance/* 一样是网关自身固定能力。GET 给任何会话（含关掉浏览器重开）看真实排队/处理状态；POST cancel
-        // 只对还在排队（没真正拿到名额开始跑）的书名生效，见 budget::Budget::cancel 文档。
-        .get("/api/budget/status", budget::status_route)
-        .post("/api/budget/cancel", budget::cancel_route)
+        // 并发/内存预算闸门（/api/budget/status、/api/budget/cancel）2026-10-07 删除，见 batch.rs 模块文档。
         // 服务端批量队列（见 batch.rs）：提交 `{action, names?, all?, folder?}`；`names` 缺省且 `all:true` 表示"所有适用的"。
         // 状态任何会话都能看（关掉浏览器重开、换设备都在）。
         .post("/api/batch", bind(&paths, batch::submit))

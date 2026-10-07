@@ -1,6 +1,6 @@
 //! 系统增强工具开关（Track 3，2026-09-09）：网关自身固定能力（跟 `manage` 一样不经过服务注册表/反代），
 //! 给原来只能在设备原生「设置」App 里改的开关一个网页入口。现接的开关：CJK 荧光笔吸附/
-//! 「导入 md 文档」可见性/漫画页边距最小化/单击翻页/日漫翻页规则（都在 [`qol`]，同一份 `reading-qol.json`）。
+//! 「导入 md 文档」可见性/单击翻页/日漫翻页规则（都在 [`qol`]，同一份 `reading-qol.json`）。
 //!
 //! 2026-09-30 移除：电池刺客（battop，原 `battop.rs` + `/api/enhance/battop/*`）与手写优化（hw-stroke 扩展的
 //! `hwStrokeEnabled` 派生开关）。`reading-qol.json` 里残留的 `hwStroke*` 键不主动清——全量写回、不认识的键原样保留。

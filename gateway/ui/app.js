@@ -1,7 +1,7 @@
 const $=(s,r=document)=>r.querySelector(s);
 /* HTML 转义：**所有外部数据**（文件名、字体内部名、书里的划线/手写转写文本、AI 回答、服务端错误文案）插进
    innerHTML/insertAdjacentHTML/属性值之前必须过它。文件名允许含 `<`（rmsvc_core::fs::plain_name 只拒 `/` `\` 和
-   开头的 `.`），抓取的网文标题、字体 name 表、OCR/大模型输出也都是外部内容——不转义就是存储型 XSS。
+   开头的 `.`），书里的元数据、字体 name 表、OCR/大模型输出也都是外部内容——不转义就是存储型 XSS。
    textContent/el({text}) 天然安全，不需要它。 */
 const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const fmtB=n=>n>1048576?(n/1048576).toFixed(1)+' MB':n>1024?(n/1024).toFixed(0)+' KB':n+' B';
@@ -43,15 +43,11 @@ const el=(tag,attrs,children)=>{const n=document.createElement(tag);
   if(attrs)for(const k in attrs){const v=attrs[k];if(k==='style')n.style.cssText=v;else if(k==='text')n.textContent=v;else if(k==='html')n.innerHTML=v;else n.setAttribute(k,v)}
   if(children!=null)for(const c of [].concat(children))n.appendChild(typeof c==='string'?document.createTextNode(c):c);
   return n};
-/* 结构化步数进度展示：`prog={done,total}` 有数据画真百分比，没有画不确定态滚动条（浏览器原生
-   `<progress>` 不带 value/max 渲染成不确定态动画）——母版库行内进度、笔记「推送本章」共用，同样适用于
-   任何"耗时不短、有时有分步数据有时没有"的忙态展示（`container` 是要挂这块的父节点，自己占
-   一整行）。 */
-const renderStepProgress=(container,{label,prog,msg})=>{
-  const bar=el('progress');
-  if(prog){bar.max=prog.total;bar.value=prog.done}
-  const text=el('div',{class:'small',text:prog?`${label} ${prog.done}/${prog.total}（${Math.round(prog.done/prog.total*100)}%）${msg?' · '+msg:''}`:label});
-  const wrap=el('div',{style:'flex-basis:100%;margin-top:.2em'},[bar,text]);
+/* 忙态进度：不确定态滚动条（浏览器原生 `<progress>` 不带 value/max 渲染成不确定态动画）+ 一行说明——母版库行内、
+   笔记「推送本章」共用（`container` 是要挂这块的父节点，自己占一整行）。原来还能按 `{done,total}` 画真百分比，那是给设备上
+   「优化」和分卷投递用的，2026-10-07 起没有调用方传分步数据，删掉。 */
+const renderBusy=(container,label)=>{
+  const wrap=el('div',{style:'flex-basis:100%;margin-top:.2em'},[el('progress'),el('div',{class:'small',text:label})]);
   container.appendChild(wrap);
   return wrap};
 /* 全局 toast：系统里不允许用浏览器原生 alert（打断操作、要点掉才能继续，风格跟页面其它地方的行内
@@ -225,7 +221,7 @@ const GUIDE=()=>`<details class="cmp"><summary>${T('transfer.guide.summary')}</s
    完整名在 title 里）+ 一行徽章 + 状态/进度；**行内只在并发闸门排队时出现「取消排队」**，其余操作（加入 xochitl /
    下载 / 改名 / 删除）一律在勾选后的底部操作栏（用户 2026-09-20 定，别加回单条按钮）。批量走服务端队列
    （网关 `/api/batch`），关掉页面照跑。 */
-const stgClean=n=>{const s=n.replace(/\.(epub|pdf|cbz)$/i,'');return (s.split(' -- ')[0]||s).trim()};
+const stgClean=n=>{const s=n.replace(/\.(epub|pdf)$/i,'');return (s.split(' -- ')[0]||s).trim()};
 /* 搜索框的下拉建议：**书名 = 第一个 "-" 之前的内容**（用户 2026-09-20 指定）。"亂馬1⁄2 典藏版 - 07卷" → "亂馬1⁄2 典藏版"，
    同一本书的多卷合成一条；选中后按名字包含匹配，正好筛出这本书的所有卷。 */
 const stgTitle=n=>stgClean(n).split('-')[0].trim();
@@ -234,11 +230,13 @@ const stgNameOptions=items=>[...new Set(items.map(it=>stgTitle(it.name)).filter(
 const stgIsTodo=it=>(it.format==='epub'||it.format==='pdf')&&!(it.delivered||{}).native;
 /* 一本书的徽章 HTML + 一条可见的状态文字（失败原因等）：格式/大小/落库记录/渲染自检/忙态。 */
 function stgBadges(it,busy){
-  const fmt=it.format==='epub'?'EPUB':it.format==='pdf'?'PDF':(it.name.includes('.')?it.name.split('.').pop().toUpperCase():T('transfer.staging.fmtOther'));
+  // 母版库只收 EPUB/PDF（2026-09-18 起），格式就这两种
+  const fmt=it.format==='pdf'?'PDF':'EPUB';
   const dv=it.delivered||{},stale=t=>t&&it.mtime&&t<it.mtime;
   // 只标「已加入 xochitl」：落库记录里历史上的 `koreader` 那条不再显示（2026-09-29 设备已卸载 KOReader）。
   const dl=dv.native?`<span class="badge on" title="${stale(dv.native)?T('transfer.staging.delivered.native.staleTitle'):T('transfer.staging.delivered.native.title')}">${T('transfer.staging.delivered.native.badge')}${stale(dv.native)?T('transfer.staging.staleSuffix'):''}</span>`:'';
-  const rc=dv.render,rb=!rc?'':rc.status==='onopen'?`<span class="badge" title="${T('stg.render.onopenTitle')}">${T('stg.render.onopenBadge')}</span>`:rc.status==='ok'?`<span class="badge on" title="${rc.expected>=20?T('transfer.staging.render.okTitle',{pages:rc.pages,expected:rc.expected}):T('stg.render.okTitle',{pages:rc.pages})}">${T('transfer.staging.render.okBadge',{pages:rc.pages})}</span>`:rc.status==='warn'?`<span class="badge off" title="${T('transfer.staging.render.warnTitle',{pages:rc.pages,expected:rc.expected})}">${T('transfer.staging.render.warnBadge',{pages:rc.pages,expected:rc.expected})}</span>`:rc.status==='pending'?`<span class="badge" title="${T('transfer.staging.render.pendingTitle')}">${T('transfer.staging.render.pendingBadge')}</span>`:`<span class="badge" title="${T('transfer.staging.render.noneTitle')}">${T('transfer.staging.render.noneBadge')}</span>`;
+  // 渲染自检只记页数（2026-10-07 起不再按字数估期望页数报"只渲染了 N 页"；旧记录里的 warn 也按页数显示）。
+  const rc=dv.render,rb=!rc?'':rc.status==='onopen'?`<span class="badge" title="${T('stg.render.onopenTitle')}">${T('stg.render.onopenBadge')}</span>`:rc.status==='ok'||rc.status==='warn'?`<span class="badge on" title="${T('stg.render.okTitle',{pages:rc.pages})}">${T('transfer.staging.render.okBadge',{pages:rc.pages})}</span>`:rc.status==='pending'?`<span class="badge" title="${T('transfer.staging.render.pendingTitle')}">${T('transfer.staging.render.pendingBadge')}</span>`:`<span class="badge" title="${T('transfer.staging.render.noneTitle')}">${T('transfer.staging.render.noneBadge')}</span>`;
   const dc=dv.deliver;
   // 卡在 pending 但 busy=false＝上次处理被服务/设备重启打断（2026-09-19 真机撞过），不是"还在跑"。
   const stalePending=dc&&dc.status==='pending'&&!it.busy;
@@ -247,12 +245,11 @@ function stgBadges(it,busy){
   const msg=dc&&dc.status==='failed'?T('transfer.staging.deliverFailedPrefix')+dc.message:stalePending?T('transfer.staging.stalePending.title'):'';
   return {html:`<span class="badge fmt">${esc(fmt)}</span><span class="stg-size">${fmtB(it.bytes)}</span>${dl}${rb}${busy?'':fails}`,msg};
 }
-/* 一行。ctx: {picked,gatedPending,gatedActive,batchQueued,bs,syncSel(),refresh()} */
+/* 一行。ctx: {picked,batchQueued,bs,syncSel(),refresh()} */
 function stgRow(it,ctx){
   const dc=(it.delivered||{}).deliver;
   const busy=!!it.busy;
-  const gatedPending=ctx.gatedPending.has(it.name);
-  const queued=gatedPending||ctx.batchQueued.has(it.name)||(ctx.bs.running&&ctx.bs.current===it.name&&!busy);
+  const queued=ctx.batchQueued.has(it.name)||(ctx.bs.running&&ctx.bs.current===it.name&&!busy);
   const b=stgBadges(it,busy);
   const cb=el('input',{type:'checkbox','aria-label':it.name});cb.checked=ctx.picked.has(it.name);
   cb.onchange=()=>{if(cb.checked)ctx.picked.add(it.name);else ctx.picked.delete(it.name);li.classList.toggle('sel',cb.checked);ctx.syncSel()};
@@ -260,22 +257,11 @@ function stgRow(it,ctx){
   const meta=el('div',{class:'stg-meta',html:b.html});
   const main=el('div',{class:'stg-main'},[title,meta]);
   if(b.msg)main.appendChild(el('div',{class:'small stg-err',text:b.msg}));
-  if(busy){
-    const dcP=dc&&dc.status==='pending';
-    renderStepProgress(main,{label:dcP?T('transfer.staging.progress.delivering'):T('transfer.staging.progress.working'),msg:dcP?dc.message:''});
-  }else if(queued){
-    renderStepProgress(main,{label:ctx.batchQueued.has(it.name)?T('stg.batch.queuedHere'):T('transfer.staging.progress.queued')});
-  }
-  // 行内按钮（只有「取消排队」一种）：guardClick 防双击，点完刷新。
-  const act=(t,fn)=>{const x=btn(t,async()=>{x.textContent=t+'…';await fn();ctx.refresh()},'btn btn-bad');return x};
+  if(busy)renderBusy(main,dc&&dc.status==='pending'?T('transfer.staging.progress.delivering'):T('transfer.staging.progress.working'));
+  else if(queued)renderBusy(main,T('stg.batch.queuedHere'));
   // 列表只显示书名/类型/大小/状态/进度；**所有操作**（加入 xochitl/删除/全部中止）由勾选后的底部操作栏统一控制
-  // （用户 2026-09-20 明确要求）。行内唯一的按钮：还在并发闸门排队时的「取消排队」。已经交给 book-serve 的加入没有能中途停的
-  // 步骤（以前能停的是设备上的「优化」，2026-10-07 随书架不再优化书删掉），不给「停止」。
-  const actions=el('div',{class:'stg-actions'});
-  if(gatedPending&&!busy){
-    actions.appendChild(act(T('transfer.staging.btn.cancelQueued'),async()=>{const r=await postJ('/api/budget/cancel',{name:it.name});if(r.ok!==false)toast(r.cancelled?T('transfer.staging.cancelQueuedOk',{name:it.name}):T('transfer.staging.cancelQueuedTooLate',{name:it.name}),r.cancelled?'ok':'warn')}));
-  }
-  const li=el('li',{class:'stg-row'+(cb.checked?' sel':'')},actions.children.length?[el('label',{class:'stg-check'},[cb]),main,actions]:[el('label',{class:'stg-check'},[cb]),main]);
+  // （用户 2026-09-20 明确要求）。行内原来唯一的按钮是并发闸门排队时的「取消排队」，闸门 2026-10-07 删掉后行内没有按钮。
+  const li=el('li',{class:'stg-row'+(cb.checked?' sel':'')},[el('label',{class:'stg-check'},[cb]),main]);
   return li;
 }
 
@@ -310,9 +296,8 @@ function renderTransfer(sec){sec.innerHTML=`
         <details class="cmp"><summary>${T('transfer.staging.optDetailsSummary')}</summary><p class="small">${T('transfer.staging.optNote')}</p></details>
       </div>
       <div class="small" id="stgfree"></div>
-      <div class="small" id="stgnotice"></div>
     </div>
-    <div class="stg-tools"><input type="text" id="stgq" list="stgnames" autocomplete="off" placeholder="${T('transfer.staging.searchPlaceholder')}" aria-label="${T('transfer.staging.searchAria')}"><datalist id="stgnames"></datalist><select id="stgfmt" aria-label="${T('transfer.staging.fmtFilterAria')}"><option value="">${T('transfer.staging.fmtAll')}</option><option value="epub">EPUB</option><option value="pdf">PDF</option><option value="other">${T('transfer.staging.fmtOther')}</option></select></div>
+    <div class="stg-tools"><input type="text" id="stgq" list="stgnames" autocomplete="off" placeholder="${T('transfer.staging.searchPlaceholder')}" aria-label="${T('transfer.staging.searchAria')}"><datalist id="stgnames"></datalist><select id="stgfmt" aria-label="${T('transfer.staging.fmtFilterAria')}"><option value="">${T('transfer.staging.fmtAll')}</option><option value="epub">EPUB</option><option value="pdf">PDF</option></select></div>
     <div class="stg-chips" id="stgchips"></div>
     <div class="stg-selrow"><label class="toggle"><input type="checkbox" id="stgall"> <span id="stgalltxt"></span></label></div>
     <ul class="stg-list" id="stglist"></ul>
@@ -324,8 +309,6 @@ function renderTransfer(sec){sec.innerHTML=`
   // 服务端批量队列状态（网关 /api/batch/status）：关掉页面重开、换设备都读得到，不再依赖本标签页提交过什么。
   let bs={running:false,total:0,done:0,failed:[],queued:[],current:null,action:null};
   let batchQueued=new Set(),dismissedSig='';
-  // 网关并发闸门的服务端真相（排队/处理中），见 budget.rs。
-  let gatedPending=new Set(),gatedActive=new Set();   // gatedActive 只用于页头的"处理中 N 本"计数
   const g=id=>$('#'+id,sec);
   // 加入位置：下拉（现有文件夹）+「＋新建文件夹」。选中值记在本机；"根目录"= 空串。新建走 book-serve 的 mkdir 队列，
   // 由 xochitl 里的 QML 代理（长轮询）真正建出来。**不在这里等它建好**：fillFolders 会把记住的名字补进下拉（哪怕 xochitl 那边
@@ -344,15 +327,14 @@ function renderTransfer(sec){sec.innerHTML=`
     LS.set('folder',name);newBox.hidden=true;newName.value='';await refresh()});
   // 筛选/分页状态。默认「未加入」（顶替原来"全部 + 隐藏已完成"的默认视图）；旧版存的「已优化」筛选（done）也回落到它。
   let st=['all','todo','finished'].includes(LS.get('stgSt','todo'))?LS.get('stgSt','todo'):'todo',page=1,pageSize=+LS.get('stgPageSize','25')||25;
-  const fmtOf=it=>it.format==='cbz'?'other':it.format;
   const filtered=()=>{const q=g('stgq').value.toLowerCase(),f=g('stgfmt').value;
-    return items.filter(it=>(!q||it.name.toLowerCase().includes(q))&&(!f||fmtOf(it)===f)&&(st==='todo'?stgIsTodo(it):st==='finished'?isBookDone(it):true))};
+    return items.filter(it=>(!q||it.name.toLowerCase().includes(q))&&(!f||it.format===f)&&(st==='todo'?stgIsTodo(it):st==='finished'?isBookDone(it):true))};
   const batchTitle=a=>T('stg.batch.'+a);
   const enqueue=async(action,body)=>{const r=await postJ('/api/batch',{action,folder:xFolder(),...body});
     if(r.ok===false)return;
     toast(r.queued?T('stg.batch.queuedToast',{queued:r.queued,skip:r.skipped?T('stg.batch.skipped',{n:r.skipped}):''}):T('stg.batch.none'),r.queued?'ok':'warn');
     if(r.queued)picked.clear();await refresh()};
-  const ctx=()=>({picked,gatedPending,gatedActive,batchQueued,bs,syncSel:()=>{syncSelUi();renderBar()},refresh:()=>refresh()});
+  const ctx=()=>({picked,batchQueued,bs,syncSel:()=>{syncSelUi();renderBar()},refresh:()=>refresh()});
   const syncSelUi=()=>{const list=filtered();const n=list.length,all=n>0&&list.every(it=>picked.has(it.name));
     g('stgall').checked=all;g('stgall').indeterminate=!all&&list.some(it=>picked.has(it.name));g('stgalltxt').textContent=T('stg.selectAll',{n})};
   g('stgall').onchange=()=>{const list=filtered();if(g('stgall').checked)list.forEach(it=>picked.add(it.name));else list.forEach(it=>picked.delete(it.name));render()};
@@ -441,24 +423,22 @@ function renderTransfer(sec){sec.innerHTML=`
   g('stgq').addEventListener('change',rerender);
   g('stgfmt').addEventListener('change',rerender);
   const refresh=()=>refreshAt(3);
-  // 网关自身的批量队列 / 并发闸门状态（见 batch.rs、budget.rs）。
-  const applyQueue=(bg,bt)=>{
-    gatedPending=new Set(bg.ok!==false?bg.pending||[]:[]);gatedActive=new Set(bg.ok!==false?bg.active||[]:[]);
-    if(bt.ok!==false){bs={running:!!bt.running,action:bt.action,total:bt.total||0,done:bt.done||0,current:bt.current,queued:bt.queued||[],failed:bt.failed||[]};batchQueued=new Set(bs.queued)}
-    g('stgnotice').textContent=(gatedPending.size||gatedActive.size)?T('transfer.staging.gatedSummary',{pending:gatedPending.size,active:gatedActive.size}):''};
+  // 网关自身的批量队列状态（见 batch.rs）。
+  const applyQueue=bt=>{
+    if(bt.ok!==false){bs={running:!!bt.running,action:bt.action,total:bt.total||0,done:bt.done||0,current:bt.current,queued:bt.queued||[],failed:bt.failed||[]};batchQueued=new Set(bs.queued)}};
   /* 按事件决定取多少（不轮询）。三档，数字越大取得越全：
-     1 = 网关自己的批量队列 / 并发闸门事件（area=books、不带 svc）：只重取这两个状态（2 个请求）。一轮批量里每本书网关要发 4～5 条。
+     1 = 网关自己的批量队列事件（area=books、不带 svc）：只重取队列状态（1 个请求）。
      2 = book-serve 的 `staging` 事件（入库、忙态开始/结束、落库结果）：只有母版库列表会变，
-         再加上面两个状态（3 个请求）；xochitl 文件夹列表不会因此变化，不重取。
-     3 = 其余（book-serve 的 mkdir/trash/inbox 事件、切 tab、重连、操作后主动刷新）：全量 4 个请求。
+         再加队列状态（2 个请求）；xochitl 文件夹列表不会因此变化，不重取。
+     3 = 其余（book-serve 的 mkdir/trash/inbox 事件、切 tab、重连、操作后主动刷新）：全量 3 个请求。
      所有刷新走同一个 coalesce 串行执行（need 记"下一轮至少要取到哪一档"，取最大），不会出现旧的全量结果盖掉新的排队状态。 */
   let need=0;
   const run=coalesce(async()=>{const lvl=need;need=0;if(!lvl)return;
-    if(lvl===1){const [bg,bt]=await Promise.all([j('/api/budget/status'),j('/api/batch/status')]);applyQueue(bg,bt);render();return}
+    if(lvl===1){applyQueue(await j('/api/batch/status'));render();return}
     const full=lvl>=3;
-    const [d,bg,bt,s]=await Promise.all([j('/api/books/staging'),j('/api/budget/status'),j('/api/batch/status')].concat(full?[j('/api/books/status')]:[]));
+    const [d,bt,s]=await Promise.all([j('/api/books/staging'),j('/api/batch/status')].concat(full?[j('/api/books/status')]:[]));
     if(full)fillFolders(s.ok!==false?s.xochitlFolders||[]:[]);
-    applyQueue(bg,bt);
+    applyQueue(bt);
     if(d.ok===false){items=[];render();g('stgcap').textContent='';g('stgfree').textContent='';g('stglist').innerHTML=`<li class="small stg-empty" style="color:var(--bad)">${esc(T('transfer.staging.unavailable',{msg:d.message||T('transfer.staging.notOpen')}))}</li>`;return}
     items=d.items||[];const tot=items.reduce((a,b)=>a+b.bytes,0);g('stgcap').textContent=items.length?T('transfer.staging.capSummary',{count:items.length,size:fmtB(tot)}):'';
     // 清掉选中集合里的幽灵条目（书被改名/删除后旧名字再也选不中也取消不掉）
@@ -467,7 +447,7 @@ function renderTransfer(sec){sec.innerHTML=`
     g('stgnames').innerHTML=stgNameOptions(items);render()});
   const refreshAt=lvl=>{need=Math.max(need,lvl);return run()};
   uploader($('.up',sec),()=>'/api/books/staging',()=>({}),BOOK_EXT,()=>refresh(),'/api/books/staging');   // 书籍格式原样入库；选中即按 BOOK_EXT 拦；传 dedupeApi 防重传出重复
-  refresh();sec.refresh=refresh;sec.onEvent=ev=>refreshAt(ev.area!=='books'?3:!ev.svc&&(ev.kind==='batch'||ev.kind==='budget')?1:ev.kind==='staging'?2:3);subtabs(sec);}
+  refresh();sec.refresh=refresh;sec.onEvent=ev=>refreshAt(ev.area!=='books'?3:!ev.svc&&ev.kind==='batch'?1:ev.kind==='staging'?2:3);subtabs(sec);}
 
 /* 服务 tab（按注册表出现）。key = 注册的服务名。service→seg（AREA）不再在这里手搓一份——
    那正是 gateway/src/manage.rs::MODULES 表已声明的唯一事实源，这里改成初始化时从
@@ -849,7 +829,7 @@ function renderNotes(sec){sec.innerHTML=`
         // 服务端没有天然的分步数据（耗时来自生成笔记本+导出 md 两次整章调用，不是可数的"第几步"）——
         // 跟母版库普通整本落库同一处境，共用同一套不确定态滚动条（2026-09-19 代码质量审计，
         // 原来这里只有一句不会变的静态文字"推送中…"）。
-        const prog=renderStepProgress(row,{label:T('notes.pushing'),prog:null,msg:''});
+        const prog=renderBusy(row,T('notes.pushing'));
         const gr=await j(bookApi('notes',`/chapters/${k}/generate`),{method:'POST'});
         const er=await j(bookApi('notes',`/chapters/${k}/export`),{method:'POST'});
         prog.remove();
@@ -1228,8 +1208,8 @@ async function showAgentFailBanner(){
 /* 管理台/引导（固定 tab，始终在——它是网关自身页面，不由服务注册表驱动） */
 /* 「管理」二级 tab（2026-09-09 起三个，2026-09-10 加到五个）：① 基石与模块（原来就有的引导/开关/
    卸载）② 模型管理（原来挂在这页最下面，现在单独一屏，不用跟基石列表一起滚）③ 系统增强（只留真正
-   "系统级"的开关，CJK 画线吸附、阅读器翻页）④ 实验室（还在打磨/覆盖面没到日常好用程度的功能：漫画页边距开关
-   +导入md文档可见性开关）。2026-09-30 移除：电池刺客（原「系统增强」里的开关卡 + 运行时才出现的「电池刺客」
+   "系统级"的开关，CJK 画线吸附、阅读器翻页）④ 实验室（还在打磨/覆盖面没到日常好用程度的功能：现在只有导入md文档
+   可见性开关；漫画页边距开关 2026-10-07 删除）。2026-09-30 移除：电池刺客（原「系统增强」里的开关卡 + 运行时才出现的「电池刺客」
    二级 tab）与实验室里的「CJK 手写笔迹优化」开关。
    （曾在这页的 shelf push 命令卡片已随 2026-09-18 砍掉 host CLI 一并删除。）另有「设备健康」（2026-09-25）。 */
 /* 模块管理动作（start / stop / uninstall），「基石与模块」列表与「全部开启/关闭」共用。 */

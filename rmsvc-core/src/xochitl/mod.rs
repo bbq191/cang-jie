@@ -39,11 +39,6 @@ impl Xochitl {
         Xochitl { agent, host: host.to_string(), library_dir: library_dir.to_path_buf() }
     }
 
-    /// `/upload` 是否可达（不真上传，GET 根页）。
-    pub fn reachable(&self) -> bool {
-        self.agent.get(&format!("http://{}/", self.host)).timeout(std::time::Duration::from_secs(3)).call().is_ok()
-    }
-
     /// 按 visibleName 找非回收站文件夹 uuid。
     pub fn find_folder(&self, name: &str) -> Option<String> {
         find_folder_by_name(&self.library_dir, name)

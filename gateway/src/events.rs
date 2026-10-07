@@ -11,18 +11,18 @@ pub struct Hub {
     pub bus: Arc<EventBus>,
 }
 
-/// 网关自己产生的事件（批量队列进度、并发闸门排队/处理状态变化）要发到同一条总线，而 batch/budget 是
+/// 网关自己产生的事件（批量队列进度）要发到同一条总线，而 batch 是
 /// 进程级单例、拿不到 `Hub`——`Hub::spawn` 把总线登记在这里，[`notify_books`] 取用（没登记时是空操作，测试里就是这样）。
 static BUS: OnceLock<Arc<EventBus>> = OnceLock::new();
 
-/// 通知网页"传书/母版库"区域刷新：批量队列状态、闸门排队/处理状态变了。取代前端在批量运行时每 3 秒轮询。
+/// 通知网页"传书/母版库"区域刷新：批量队列状态变了。取代前端在批量运行时每 3 秒轮询。
 pub fn notify_books(kind: &str) {
     if let Some(b) = BUS.get() {
         b.publish("books", kind);
     }
 }
 
-/// "book-serve 有新事件"唤醒器：代数计数 + 条件变量。并发闸门要知道"这本书处理完没有"（[`crate::proxy::poll_until_settled`]），
+/// "book-serve 有新事件"唤醒器：代数计数 + 条件变量。批量队列要知道"这本书处理完没有"（`batch::poll_until_settled`），
 /// 此前每 5 秒 `GET /staging` 一次（整个处理期间——大部头几分钟起）；book-serve 在忙态开始/结束处都发
 /// `books` 事件（`staging` 等），网关本来就订阅着它，这里把"收到事件"变成唤醒信号，等待方事件到了才去查一次，
 /// 超时只是兜底（事件丢了/订阅重连空窗）。

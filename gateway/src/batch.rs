@@ -4,14 +4,14 @@
 //! 剩下没提交的就永远不会跑了。现在批量任务提交给网关，由网关自己的后台线程按顺序逐本执行，页面只负责提交
 //! 和展示进度——关掉浏览器、换设备重开，队列照跑，状态照看。
 //!
-//! 放网关而不是 `book-serve`：网关是各服务的唯一转发关口，且并发/内存预算闸门（[`crate::budget`]）就在这里——
-//! 批量里每一本仍走同一道闸门（[`crate::budget::Budget::admit`]），跟单条的加入互相排队、不叠加。
-//! **顺序执行**：一次只处理一本。
+//! **顺序执行**：一次只处理一本，等它在 book-serve 那边真正处理完（[`poll_until_settled`]）才取下一本，所以同一时刻最多
+//! 一本书在投——网页的「加入 xochitl」只走这条队列。原来网关还有一道并发/内存预算闸门（`budget.rs`，按书的体积分大小档
+//! 限并发）：那是设备上优化大书时内存峰值接近文件体积留下的，书架 2026-10-07 不再优化书后，加入 xochitl 是流式上传、
+//! book-serve 只多占几 MB，加上这条队列本来就一本一本来，闸门已经拦不到任何东西，同日删掉。
 //! **状态落盘**（`state/batch.json`，每次变化写一次）：网关重启（比如部署新版本）后 [`resume`] 读回未完成的队列
 //! 继续跑——"关闭浏览器再回来能保持上次的未完记录并继续操作"（用户 2026-09-20 要求）。恢复时按最新母版库状态重新
 //! 校验每一本（已经不在母版库的不再做）。任务自带动作，现在只剩「加入 xochitl」。
-//! 已下线的动作：「批量加入 KOReader」（2026-09-29 设备卸载 KOReader）、「批量优化」（2026-10-07 书架不再优化书，优化全部在
-//! 电脑上用 sheng-ren 做）；旧落盘文件里残留的这类任务读回时剔除，见 [`parse_saved`]。
+//! 已下线的动作：「批量加入 KOReader」（2026-09-29 设备卸载 KOReader）、「批量优化」（2026-10-07 书架不再优化书）。
 use rmsvc_core::http::{ApiError, ApiResult, Reply, Request};
 use rmsvc_core::paths::Paths;
 use rmsvc_core::registry::{self, SvcClient};
@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::VecDeque;
 use std::sync::{Mutex, OnceLock};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -46,14 +46,7 @@ struct Job {
     action: Action,
     name: String,
     folder: String,
-    /// 这一项被 worker 开始处理的次数（每次 pop 出来 +1，落盘）。网关在处理某本书途中崩溃/被重启时，
-    /// `resume` 靠它区分"偶发中断、值得重放一次"和"这本书大概率就是崩溃元凶、别再重放"，见 [`recover_interrupted`]。
-    #[serde(default)]
-    attempts: u32,
 }
-
-/// 同一项中断后最多重放一次：`attempts` 达到这个数还落在 `current` 里 = 已经开始处理过 2 次都没走完。
-const MAX_ATTEMPTS: u32 = 2;
 
 #[derive(Default, Serialize, Deserialize)]
 struct State {
@@ -153,7 +146,7 @@ pub fn enqueue(paths: &Paths, action: Action, names: Option<Vec<String>>, folder
                 skipped += 1;
                 continue;
             }
-            st.queue.push_back(Job { action, name, folder: folder.to_string(), attempts: 0 });
+            st.queue.push_back(Job { action, name, folder: folder.to_string() });
             queued += 1;
         }
         if queued > 0 {
@@ -220,34 +213,26 @@ pub fn status() -> Value {
     })
 }
 
-/// **全部中止**：清空还没开始的；正在处理的那一本：还卡在并发闸门排队 → 取消排队（[`crate::budget::Budget::cancel`]）；
-/// 已经交给 `book-serve` 的会自然跑完（整本上传 / 大文件通道都没有安全的中断点）。返回被清掉的数量。
+/// **全部中止**：清空还没开始的；正在处理的那一本如果还没交给 `book-serve` 就不再提交，已经交出去的会自然跑完
+/// （整本上传 / 大文件通道都没有安全的中断点）。返回被清掉的数量。
 pub fn stop(paths: &Paths) -> usize {
-    let (n, current) = {
+    let n = {
         let mut st = lock();
         let n = st.queue.len();
         st.queue.clear();
         // 被清掉的不会再处理，总数同步扣掉，否则停止后进度还显示"1/4"（其实只有 1 本要做）。
         st.total = st.total.saturating_sub(n as u32);
         st.abort_current = st.current.is_some(); // 当前这本若还没交给 book-serve，run_one 看到它就不再提交
-        (n, st.current.clone())
+        n
     };
-    if let Some(c) = current {
-        crate::budget::global().cancel(&c.name);
-    }
     persist(paths);
     n
 }
 
-/// 上次进程退出时还"进行中"的那一本：第一次中断放回队首重放（重新校验后从头再来）；已经处理过
-/// [`MAX_ATTEMPTS`] 次都没走完的，记为失败不再重放——否则某本书稳定触发崩溃时，网关每次被 systemd 拉起都会
-/// 先重放它再崩，形成崩溃循环，后面排队的书永远轮不到。
+/// 上次进程退出时还"进行中"的那一本放回队首，重新校验后从头再来。原来同一本中断两次就记失败不再重放（防"这本书让网关
+/// 崩溃、每次被拉起都先重放它再崩"）：网关这边只转发和轮询、不读书的内容，读书出错只会在 book-serve 里，2026-10-07 删掉。
 fn recover_interrupted(saved: &mut State) {
-    let Some(cur) = saved.current.take() else { return };
-    if cur.attempts >= MAX_ATTEMPTS {
-        saved.done += 1;
-        saved.failed.push((cur.name, format!("处理途中网关连续 {} 次中断（可能是这本书触发的崩溃），已跳过；可稍后手动重试", cur.attempts)));
-    } else {
+    if let Some(cur) = saved.current.take() {
         saved.queue.push_front(cur);
     }
 }
@@ -256,7 +241,8 @@ fn recover_interrupted(saved: &mut State) {
 /// 再按最新母版库状态重新校验每一本——上次进行中的那本如果已经不在母版库，就不再做。
 pub fn resume(paths: &Paths) {
     let Ok(text) = std::fs::read_to_string(file_of(paths)) else { return };
-    let Some(mut saved) = parse_saved(&text) else { return };
+    // 文件损坏/不是 JSON：当作没有未完成的队列（下次落盘覆盖）。
+    let Ok(mut saved) = serde_json::from_str::<State>(&text) else { return };
     recover_interrupted(&mut saved);
     if saved.queue.is_empty() {
         // 没有未完成的：只把"上次结果"（完成数/失败原因）读回来供界面展示。
@@ -307,30 +293,6 @@ pub fn resume(paths: &Paths) {
 /// 等 book-serve 就绪的上限（见 [`resume`]）。
 const RESUME_WAIT_MAX: Duration = Duration::from_secs(30 * 60);
 
-/// 读回落盘状态。已下线的动作（`koreader` 2026-09-29 撤、`optimize` 2026-10-07 撤）残留在队列/当前项里时**只剔除那几项、其余照常续跑**，
-/// 总数同步扣减——整份按 `State` 直接反序列化会因为一个未知动作整份失败，[`resume`] 随即放弃，下一次落盘就把
-/// 其余还没跑的书一起覆盖掉。文件本身损坏/不是 JSON → `None`（同此前：当作没有未完成的队列）。
-fn parse_saved(text: &str) -> Option<State> {
-    let mut v: Value = serde_json::from_str(text).ok()?;
-    let known = |j: &Value| j.get("action").and_then(|a| a.as_str()).and_then(Action::parse).is_some();
-    let mut dropped = 0usize;
-    if let Some(q) = v.get_mut("queue").and_then(|q| q.as_array_mut()) {
-        let before = q.len();
-        q.retain(known);
-        dropped += before - q.len();
-    }
-    if v.get("current").is_some_and(|c| !c.is_null() && !known(c)) {
-        v["current"] = Value::Null;
-        dropped += 1;
-    }
-    if v.get("action").and_then(|a| a.as_str()).is_some_and(|a| Action::parse(a).is_none()) {
-        v["action"] = Value::Null;
-    }
-    let mut st: State = serde_json::from_value(v).ok()?;
-    st.total = st.total.saturating_sub(dropped as u32);
-    Some(st)
-}
-
 /// 按最新母版库状态重新校验队列：不存在/已不适用的项剔除，总数同步扣减。
 fn validate_queue(st: &mut State, items: &[Value]) {
     let before = st.queue.len();
@@ -344,8 +306,7 @@ fn worker(paths: &Paths) {
         let job = {
             let mut st = lock();
             match st.queue.pop_front() {
-                Some(mut j) => {
-                    j.attempts += 1; // 先记账再落盘：处理途中进程崩了，磁盘上的 current 已带着这次计数
+                Some(j) => {
                     st.current = Some(j.clone());
                     st.abort_current = false;
                     j
@@ -396,9 +357,6 @@ fn abort_requested() -> bool {
 
 fn run_one(paths: &Paths, job: &Job) -> Result<(), String> {
     registry::find(paths, "book-serve").ok_or("book-serve 未安装或未运行")?;
-    let bytes = paths.staging_dir().join(&job.name).metadata().map(|m| m.len()).unwrap_or(0);
-    // 同单条操作一样过并发/内存预算闸门；批量顺序执行，所以通常立即放行，只在别处同时在跑大书时才排队。
-    let slot = crate::budget::global().admit(crate::budget::tier_of(bytes), &job.name).map_err(|e| e.message())?;
     let (path, body, kind) = match job.action {
         Action::Deliver => ("/staging/deliver", json!({"name": job.name, "folder": job.folder}), "deliver"),
     };
@@ -407,11 +365,77 @@ fn run_one(paths: &Paths, job: &Job) -> Result<(), String> {
         return Err(ABORTED.into());
     }
     post(paths, "book-serve", path, body, 60)?;
-    crate::proxy::poll_until_settled(&client(paths, "book-serve", 10), &job.name);
-    drop(slot);
+    poll_until_settled(&client(paths, "book-serve", 10), &job.name);
     match final_check(paths, &job.name, kind) {
-        Some((s, m)) if s == "failed" || s == "cancelled" => Err(m),
+        Some((s, m)) if s == "failed" => Err(m),
         _ => Ok(()),
+    }
+}
+
+// ───────────── 等 book-serve 把这本处理完 ─────────────
+
+/// 等"book-serve 有新事件"的兜底超时：正常靠 [`crate::events::books_wake`] 事件唤醒（忙态结束 book-serve 会发 `books`
+/// 事件），这里只防事件丢了/订阅线程重连空窗。
+const POLL_FALLBACK: Duration = Duration::from_secs(30);
+/// 等一本书处理完的上限：服务崩溃/重启导致侦测不到结果时，超时后如实放弃、接着处理下一本。
+const SETTLE_POLL_TIMEOUT: Duration = Duration::from_secs(60 * 60);
+/// 两次 `GET /staging` 之间的最短间隔：book-serve 每有母版库事件就发一条 `staging`，每条都整表查一次就是持续的
+/// loopback 请求 + 整表序列化。代价是下一本最多晚这么久才开始，与整本处理时长相比可忽略。
+const MIN_REQUERY: Duration = Duration::from_secs(5);
+/// 连续几次查询失败才认定"服务已不可达、任务没了"。
+const MAX_POLL_FAILURES: u32 = 6;
+/// 查询失败后至多隔多久重试（服务卡住时事件多半不来，不能只等事件）。
+const FAILURE_RETRY: Duration = Duration::from_secs(5);
+
+/// 查 book-serve 的 `/staging`（直连后端服务，不经网关自己这层转发）直到 [`is_settled`] 判定这本书已经不再忙，
+/// 或等到 [`SETTLE_POLL_TIMEOUT`] 放弃。**事件驱动**：每次查完就阻塞等 [`crate::events::books_wake`]，至多 [`POLL_FALLBACK`]
+/// 兜底一次；先取代数再查，查询期间到达的事件不会漏。查询要**连续** [`MAX_POLL_FAILURES`] 次失败才放弃：book-serve 忙着
+/// 上传大书时 10 秒查询超时最容易撞上，一次失败就放弃会让下一本在这本还没投完时就开始。
+fn poll_until_settled(client: &SvcClient, name: &str) {
+    let wake = crate::events::books_wake();
+    wait_settled(|| client.get_json("/staging"), name, Instant::now() + SETTLE_POLL_TIMEOUT, || wake.generation(), |seen, d| throttled_wait(wake, seen, d, MIN_REQUERY));
+}
+
+/// 这本书是不是已经不再忙，输入是 `GET /staging` 原样返回的 JSON（`{"items":[...]}`）。条目还在且 `busy==false`、或条目已经
+/// 不在列表里（被删或改名，不能死等一个永远不会再出现的 `busy:false`）都算处理完；解析不了也当处理完，不让侦测本身出错把队列卡住。
+fn is_settled(list_json: &Value, name: &str) -> bool {
+    let Some(items) = list_json.get("items").and_then(|v| v.as_array()) else { return true };
+    match items.iter().find(|it| it.get("name").and_then(|v| v.as_str()) == Some(name)) {
+        Some(it) => !it.get("busy").and_then(|v| v.as_bool()).unwrap_or(false),
+        None => true,
+    }
+}
+
+/// 等 `wake` 的代数离开 `seen`（至多 `max`），但从调用起**至少**过 `min.min(max)` 才返回——事件再密也不会让调用方
+/// 比这更频繁地去查。
+fn throttled_wait(wake: &crate::events::Wake, seen: u64, max: Duration, min: Duration) {
+    let start = Instant::now();
+    wake.wait_change(seen, max);
+    if let Some(rest) = min.min(max).checked_sub(start.elapsed()) {
+        std::thread::sleep(rest);
+    }
+}
+
+/// [`poll_until_settled`] 的循环本体，查询/代数/等待都由调用方注入，便于离线测试。
+fn wait_settled(mut query: impl FnMut() -> Result<Value, String>, name: &str, deadline: Instant, generation: impl Fn() -> u64, wait: impl Fn(u64, Duration)) {
+    let mut failures = 0u32;
+    loop {
+        let seen = generation();
+        let failed = match query() {
+            Ok(json) if is_settled(&json, name) => return,
+            Ok(_) => false, // 还在忙，继续轮询
+            Err(_) => true,
+        };
+        failures = if failed { failures + 1 } else { 0 };
+        if failures >= MAX_POLL_FAILURES || Instant::now() >= deadline {
+            return;
+        }
+        let left = deadline.saturating_duration_since(Instant::now());
+        if failed {
+            wait(generation(), FAILURE_RETRY.min(left)); // 等下一次事件，至多 FAILURE_RETRY
+        } else {
+            wait(seen, POLL_FALLBACK.min(left));
+        }
     }
 }
 
@@ -438,26 +462,19 @@ mod tests {
         assert_eq!(Action::parse("optimize"), None, "批量优化随 2026-10-07 书架不再优化书撤掉");
     }
 
-    /// 回归：旧版落盘文件里残留「加入 KOReader」「优化」任务时，只剔除这几项，其余照常续跑（整份反序列化失败会让
-    /// resume 放弃、下次落盘把没跑完的书一起覆盖掉）。
+    /// 旧版落盘文件里的 `attempts` 字段读回时忽略；坏文件读不出来。
     #[test]
-    fn parse_saved_drops_retired_jobs_but_keeps_the_rest() {
-        let text = r#"{"queue":[{"action":"koreader","name":"k.epub","folder":""},{"action":"optimize","name":"o.epub","folder":""},{"action":"deliver","name":"a.epub","folder":"","attempts":0}],
-            "current":{"action":"koreader","name":"c.epub","folder":"","attempts":1},"total":6,"done":2,"failed":[],"action":"optimize"}"#;
-        let st = parse_saved(text).expect("残留旧动作不该让整份读回失败");
-        assert_eq!(st.queue.iter().map(|j| j.name.as_str()).collect::<Vec<_>>(), ["a.epub"]);
-        assert!(st.current.is_none() && st.action.is_none());
-        assert_eq!((st.total, st.done), (3, 2), "剔除的 3 项从总数里扣掉");
-        assert!(parse_saved("{坏").is_none());
-        let ok = parse_saved(r#"{"queue":[],"current":null,"total":1,"done":1,"failed":[["x","boom"]],"action":"deliver"}"#).unwrap();
-        assert_eq!((ok.total, ok.done, ok.failed.len(), ok.action), (1, 1, 1, Some(Action::Deliver)));
+    fn saved_state_tolerates_old_fields() {
+        let st: State = serde_json::from_str(r#"{"queue":[{"action":"deliver","name":"a.epub","folder":"","attempts":1}],"current":null,"total":1,"done":0,"failed":[],"action":"deliver"}"#).unwrap();
+        assert_eq!((st.queue.len(), st.total, st.action), (1, 1, Some(Action::Deliver)));
+        assert!(serde_json::from_str::<State>("{坏").is_err());
     }
 
     #[test]
     fn state_roundtrips_through_json_and_skips_worker_flag() {
         let mut st = State::default();
-        st.queue.push_back(Job { action: Action::Deliver, name: "a.epub".into(), folder: "乱马1/2".into(), attempts: 0 });
-        st.current = Some(Job { action: Action::Deliver, name: "b.epub".into(), folder: String::new(), attempts: 0 });
+        st.queue.push_back(Job { action: Action::Deliver, name: "a.epub".into(), folder: "乱马1/2".into() });
+        st.current = Some(Job { action: Action::Deliver, name: "b.epub".into(), folder: String::new() });
         st.total = 3;
         st.done = 1;
         st.failed.push(("c.epub".into(), "boom".into()));
@@ -472,30 +489,18 @@ mod tests {
     }
 
     #[test]
-    fn recover_interrupted_replays_once_then_fails() {
-        let job = |n: u32| Job { action: Action::Deliver, name: "b.epub".into(), folder: String::new(), attempts: n };
-        // 第一次中断（attempts=1）：放回队首重放
-        let mut st = State { current: Some(job(1)), total: 2, ..Default::default() };
-        st.queue.push_back(Job { action: Action::Deliver, name: "c.epub".into(), folder: String::new(), attempts: 0 });
+    fn recover_interrupted_puts_current_back_first() {
+        let job = |n: &str| Job { action: Action::Deliver, name: n.into(), folder: String::new() };
+        let mut st = State { current: Some(job("b.epub")), total: 2, ..Default::default() };
+        st.queue.push_back(job("c.epub"));
         recover_interrupted(&mut st);
         assert!(st.current.is_none() && st.failed.is_empty());
-        assert_eq!(st.queue.front().unwrap().name, "b.epub", "第一次中断重放，且排在队首");
-        assert_eq!(st.queue.len(), 2);
-        // 重放后又中断（attempts=2）：记失败、不再重放，后面的书照常继续
-        let mut st = State { current: Some(job(2)), total: 2, ..Default::default() };
-        st.queue.push_back(Job { action: Action::Deliver, name: "c.epub".into(), folder: String::new(), attempts: 0 });
-        recover_interrupted(&mut st);
-        assert_eq!(st.queue.len(), 1, "只剩后面那本");
-        assert_eq!((st.done, st.failed.len()), (1, 1));
-        assert!(st.failed[0].1.contains("中断"), "{:?}", st.failed);
-        // 老版本落盘文件没有 attempts 字段：默认 0，按第一次中断处理
-        let old: Job = serde_json::from_str(r#"{"action":"deliver","name":"x","folder":""}"#).unwrap();
-        assert_eq!(old.attempts, 0);
+        assert_eq!(st.queue.iter().map(|j| j.name.as_str()).collect::<Vec<_>>(), ["b.epub", "c.epub"], "中断的那本排在队首重放");
     }
 
     #[test]
     fn validate_queue_drops_missing_or_ineligible_and_adjusts_total() {
-        let job = |n: &str, a: Action| Job { action: a, name: n.into(), folder: String::new(), attempts: 0 };
+        let job = |n: &str, a: Action| Job { action: a, name: n.into(), folder: String::new() };
         let mut st = State { total: 3, ..Default::default() };
         st.queue.push_back(job("keep.epub", Action::Deliver));
         st.queue.push_back(job("comic.cbz", Action::Deliver)); // 不是 EPUB/PDF → 不再适用
@@ -509,7 +514,7 @@ mod tests {
     /// 回归：resume 放弃等待后队列留在内存里（没有 worker），下一次入队开新一轮时总数要把这些遗留项算进去。
     #[test]
     fn new_round_counts_leftover_queue_in_total() {
-        let job = |n: &str| Job { action: Action::Deliver, name: n.into(), folder: String::new(), attempts: 0 };
+        let job = |n: &str| Job { action: Action::Deliver, name: n.into(), folder: String::new() };
         let mut st = State { total: 9, done: 7, ..Default::default() };
         st.failed.push(("old".into(), "x".into()));
         st.queue.push_back(job("left1"));
@@ -549,9 +554,9 @@ mod tests {
         {
             let mut st = lock();
             st.queue.clear();
-            st.current = Some(Job { action: Action::Deliver, name: "now".into(), folder: String::new(), attempts: 1 });
-            st.queue.push_back(Job { action: Action::Deliver, name: "a".into(), folder: String::new(), attempts: 0 });
-            st.queue.push_back(Job { action: Action::Deliver, name: "b".into(), folder: String::new(), attempts: 0 });
+            st.current = Some(Job { action: Action::Deliver, name: "now".into(), folder: String::new() });
+            st.queue.push_back(Job { action: Action::Deliver, name: "a".into(), folder: String::new() });
+            st.queue.push_back(Job { action: Action::Deliver, name: "b".into(), folder: String::new() });
             st.total = 3; // 1 本已在做 + 2 本排队
         }
         assert_eq!(stop(&paths), 2);
@@ -578,11 +583,48 @@ mod tests {
         listener.set_nonblocking(true).unwrap();
         let info = registry::ServiceInfo { name: "book-serve".into(), port: listener.local_addr().unwrap().port(), label: String::new(), version: String::new(), pid: std::process::id(), ui: None };
         let _reg = registry::register(&paths, &info).unwrap();
-        let job = Job { action: Action::Deliver, name: "stop-race.epub".into(), folder: String::new(), attempts: 1 };
+        let job = Job { action: Action::Deliver, name: "stop-race.epub".into(), folder: String::new() };
         lock().abort_current = true;
         assert_eq!(run_one(&paths, &job).unwrap_err(), ABORTED);
         assert!(listener.accept().is_err(), "中止后不该再向 book-serve 提交");
-        assert!(!crate::budget::global().snapshot().1.contains(&job.name), "闸门名额随之归还");
         lock().abort_current = false;
+    }
+
+    /// 回归：一次查询失败（book-serve 忙、查询超时）不能提前算处理完，要等它真的不忙。
+    #[test]
+    fn transient_query_failure_does_not_release_slot_early() {
+        use std::cell::Cell;
+        let busy = serde_json::json!({"items": [{"name": "big.epub", "busy": true}]});
+        let idle = serde_json::json!({"items": [{"name": "big.epub", "busy": false}]});
+        let script: Vec<Result<serde_json::Value, String>> = vec![Ok(busy.clone()), Err("timeout".into()), Err("timeout".into()), Ok(busy), Err("timeout".into()), Ok(idle)];
+        let calls = Cell::new(0usize);
+        wait_settled(|| { let i = calls.get(); calls.set(i + 1); script[i].clone() }, "big.epub", Instant::now() + Duration::from_secs(3600), || 0, |_, _| {});
+        assert_eq!(calls.get(), 6, "应一直等到真正不忙（第 6 次查询）才返回");
+    }
+
+    /// 事件密集（比如每秒一条）也不会让等待方查得比 `min` 更勤；没有事件时照旧等到 `max`（`max` 比 `min` 短时以 `max` 为准）。
+    #[test]
+    fn throttled_wait_never_returns_before_min_interval() {
+        let w = std::sync::Arc::new(crate::events::Wake::default());
+        let seen = w.generation();
+        w.bump(); // 事件早就到了：wait_change 立即返回，但仍要等满 min
+        let t = Instant::now();
+        throttled_wait(&w, seen, Duration::from_secs(5), Duration::from_millis(150));
+        let el = t.elapsed();
+        assert!(el >= Duration::from_millis(150) && el < Duration::from_secs(3), "{el:?}");
+        let seen = w.generation();
+        let t = Instant::now();
+        throttled_wait(&w, seen, Duration::from_millis(60), Duration::from_secs(5));
+        let el = t.elapsed();
+        assert!(el >= Duration::from_millis(60) && el < Duration::from_secs(3), "无事件：max 更短时以 max 为准，{el:?}");
+    }
+
+    /// 连续失败到上限 → 放弃（服务真挂了，任务已随之消失）。
+    #[test]
+    fn persistent_failure_gives_up_after_limit() {
+        use std::cell::Cell;
+        let calls = Cell::new(0u32);
+        wait_settled(|| { calls.set(calls.get() + 1); Err("down".into()) }, "x", Instant::now() + Duration::from_secs(3600), || 0, |_, _| {});
+        assert_eq!(calls.get(), MAX_POLL_FAILURES);
     }
 }
