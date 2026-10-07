@@ -72,20 +72,19 @@ pub(super) fn optimize_note(rep: &optimize::Report) -> String {
 impl Staging {
     // ───────────── 优化 ─────────────
 
-    /// 对母版库里的 EPUB 跑通用优化（清洗+优化：Inline 脚注 + 外链 css 缩进 + 边距段距归零等，两读器
-    /// 都能显示），原子回写。返回回执文案。**不再分档位**（2026-09-19 用户明确要求去掉"优化分档位"
+    /// 对母版库里的 EPUB 跑通用优化（sheng-ren 的 bookconv 按 `xochitl` 阅读模式：清洗 + 排版 + 注释 + 图片，规则见 sheng-ren
+    /// `docs/typesetting.md`），原子回写。返回回执文案。**不再分档位**（2026-09-19 用户明确要求去掉"优化分档位"
     /// 这个选择——原来还有「清洗但保留段距」「只优化不清洗」两档给诗集/剧本/已排好版的书用，但这个
     /// 选择埋在母版库页一个全局下拉里、跟"点哪本书的优化按钮"脱节，容易选错却不易发现；只保留最
     /// 常用、原本就标"推荐"的那档，即完整清洗+优化）。
-    /// **同步、阻塞**——大漫画真机实测能跑到分钟级（`trim_margins` 裁边扫描，见书架白皮书 §05），
+    /// **同步、阻塞**——大漫画真机实测能跑到分钟级（逐张图片裁边、缩放、重编码，见书架白皮书 §05），
     /// HTTP 接口不该直接暴露这个方法，用 [`Self::spawn_optimize`] 走后台线程。
     ///
-    /// **流式路径**（2026-09-19 真机坐实）：改走 [`optimize::optimize_epub_file_streaming`] 而不是
-    /// 整本读进内存的 [`optimize::optimize_epub_with`]——真机拿用户自己传的 552MB《镖人》全集测过
+    /// **流式路径**（2026-09-19 真机坐实）：走 [`optimize::optimize_epub_file_streaming_with_cancel`]，不整本读进内存——真机拿用户自己传的 552MB《镖人》全集测过
     /// 内存版，`VmRSS` 几十秒冲到 1.4GB+、系统可用内存探底到 ~25MB，逼近全系统级 OOM（book-serve
     /// 自己的 `systemd` `MemoryMax=192M` 没有真正生效，见白皮书 §03az）。流式版峰值内存量级是
     /// "一张图 + 全书文字部分"，不随书变大线性涨，细节见该函数文档注释。
-    /// `on_progress(done, total)` 原样转发给 [`optimize::optimize_epub_file_streaming`]（2026-09-19
+    /// `on_progress(done, total)` 原样转发给 [`optimize::optimize_epub_file_streaming_with_cancel`]（2026-09-19
     /// 补，给 [`Self::spawn_optimize`] 挂真实进度用；这个方法本身不关心怎么展示，不耦合 sidecar/
     /// EventBus——同步调用方（如 [`Self::fetch_article`] 的"同步优化"复选框）传空闭包即可）。
     pub fn optimize(&self, name: &str, mut on_progress: impl FnMut(usize, usize)) -> Result<String, String> {
@@ -95,7 +94,7 @@ impl Staging {
         }
         // 漫画 EPUB **保持 EPUB**（2026-09-20 用户拍板：统一"优化不改格式"，文字/目录/内容原样保留）。
         // 此前一度改产出 PDF 以拿到 0% 左右留白，但 PDF 一图一页会丢掉漫画里夹带的文字页；EPUB 的固定内边距
-        // 是 xochitl 渲染引擎硬限制，接受它，换取"不变动书籍内容"。图片走 `imgopt::prepare_comic_page_for_epub` 单趟处理。
+        // 是 xochitl 渲染引擎硬限制，接受它，换取"不变动书籍内容"。漫画页的裁边、缩放、补白在 sheng-ren bookconv 里（单趟处理）。
         // 点前缀隐藏名——真机 552MB《镖人》全集坐实优化能跑到分钟级（流式虽然不再吃内存，但大书
         // 图片多、逐张处理仍要时间），这份临时产物会在目录里存在相当一段时间；`list()` 本来就按
         // `.` 前缀跳过 sidecar，不带点前缀的话这份半成品会被当成一条离谱的"母版库条目"混进列表
@@ -104,26 +103,39 @@ impl Staging {
         let tmp = self.scratch("optimizing");
         // 有卷标记的书：把 EPUB 自己的 dc:title 也改成规范名（设备显示名取 dc:title）。
         let stem = name.strip_suffix(".epub").unwrap_or(name);
-        let canon_title = bookconv::naming::has_volume_marker(stem).then(|| bookconv::naming::canonical_book_name(stem));
+        let mut opts = self.optimize_opts();
+        opts.title = shelf_conv::naming::has_volume_marker(stem).then(|| bookconv::naming::canonical_book_name(stem));
         self.mark_cancellable(name);
-        let opts = OptimizeOpts { wash: Some(WashOpts::default()), footnote: FootnoteMode::Anchor, comic_frame: self.comic_frame() };
         let cancel = || self.is_cancelled(name);
+        // 旧版（cang-jie 自带 bookconv v16 及以前）的优化产物：先翻译成 sheng-ren 的写法（标记、样式表名、类名、v15 的重复 [N]，
+        // 见 `shelf_conv::legacy`），译好的临时副本当后面的输入。图片原样拷贝压缩数据，不解码、不整本进内存。
+        let legacy = self.scratch("legacy");
+        let legacy_note = match shelf_conv::legacy::preprocess_file(&p, legacy.path()).map_err(|e| format!("旧版优化产物兼容处理失败: {e}"))? {
+            Some(r) => format!("；旧版产物已转换（类名 {} 处，去重复注释号 {} 处）", r.classes_renamed, r.counters_stripped),
+            None => String::new(),
+        };
+        let src0 = if legacy_note.is_empty() { p.as_path() } else { legacy.path() };
+        if cancel() {
+            return Err(optimize::CANCELLED_MSG.to_string());
+        }
         // 产出到点前缀临时文件、成功才改名覆盖；出错清掉半成品，不留垃圾在母版库目录。质量门
         // （`check_epub_file`）在改名覆盖**之前**、对着这份临时文件跑——2026-09-23 真机坐实的教训：
         // 门校验不通过就该当成"优化失败"处理，原书留在母版库原样不动，不能让一份带断链引用的
         // 半成品覆盖掉用户原来能正常读的书。`check_epub_file` 走 skeleton（图片留空），不会把
         // 大漫画整本读回内存、不重蹈流式优化本来要避开的 OOM。
         // 书里没有封面：先联网补一张（`cover_fetch`，2026-09-29 移植自 sheng-ren），补好的临时副本当优化的输入。
-        let (with_cover, cover_note) = self.with_fetched_cover(name, &p);
-        let src = with_cover.as_ref().map_or(p.as_path(), ScratchFile::path);
+        let (with_cover, cover_note) = self.with_fetched_cover(name, src0);
+        let src = with_cover.as_ref().map_or(src0, ScratchFile::path);
         let rep = bookconv::util::produce_then_replace(tmp.path(), &p, |t| {
-            let rep = optimize::StreamingOptimize::new(src, t, &opts).title(canon_title.as_deref()).cancel(&cancel).run(&mut on_progress)?;
+            let rep = optimize::optimize_epub_file_streaming_with_cancel(src, t, &opts, &mut on_progress, &cancel)?;
             let check = bookconv::check::check_epub_file(t).map_err(|e| format!("质量门校验失败: {e}"))?;
             if !check.ok {
                 return Err(format!("优化产物未通过质量门，{}", check.errors.join("；")));
             }
             Ok(rep)
         })?;
+        drop(with_cover);
+        drop(legacy);
         // 已有的长下载名在这里一并规范成 `书名 - N卷`；目标已存在（重复的同一卷）就保持原名，不覆盖。
         let canon = canonical_staged_name(name);
         let land = self.land_guard();
@@ -134,7 +146,7 @@ impl Staging {
             name.to_string()
         };
         drop(land);
-        Ok(format!("已优化《{shown}》{}{cover_note}", optimize_note(&rep)))
+        Ok(format!("已优化《{shown}》{}{legacy_note}{cover_note}", optimize_note(&rep)))
     }
 
     /// 母版里的 EPUB 没有封面（没有有效的封面声明、前几页里也没有图）时联网找一张（见 [`crate::cover_fetch`]），
@@ -156,19 +168,19 @@ impl Staging {
             Outcome::Skipped(why) => return (None, format!("；书里没有封面，{why}")),
         };
         let tmp = self.scratch("cover");
-        match opfmeta::edit_epub(p, tmp.path(), &Edits { cover: Some(bytes), ..Default::default() }) {
+        match opfmeta::edit_epub(p, tmp.path(), &Edits { cover: Some(opfmeta::CoverEdit::Set(bytes)), ..Default::default() }) {
             Ok(_) => (Some(tmp), format!("；补了封面（{how}）")),
             Err(e) => (None, format!("；补封面失败：{e}")),
         }
     }
 
-    /// 入库 PDF 的「优化」分支：`bookconv::pdf_ingest::classify_pdf` 先判漫画/无文字层/有文字层——
+    /// 入库 PDF 的「优化」分支：`shelf_conv::pdf_ingest::classify_pdf` 先判漫画/无文字层/有文字层——
     /// 漫画或无文字层只裁边（格式不变，原地覆盖，对齐文字 EPUB 优化那条"原地覆盖"路径）；有文字层
     /// 转 EPUB（产出 `<stem>.epub`，成功后原 `.pdf` 挪进隐藏备份 `.pdf-originals/` 保留 7 天，照抄"先写点前缀临时文件、成功才落地"的结构
-    /// 的"改名删原文件"结构，只是方向相反）。详见 `bookconv::pdf_ingest` 模块文档（分类阈值、
+    /// 的"改名删原文件"结构，只是方向相反）。详见 `shelf_conv::pdf_ingest` 模块文档（分类阈值、
     /// 三个新依赖的分工、已知的公式区域边界粗粒度限制）。
     pub(super) fn optimize_pdf(&self, name: &str, p: &Path, mut on_progress: impl FnMut(usize, usize)) -> Result<String, String> {
-        use bookconv::pdf_ingest::{self, PdfKind};
+        use shelf_conv::pdf_ingest::{self, PdfKind};
         match pdf_ingest::classify_pdf(p) {
             PdfKind::Comic | PdfKind::NoTextLayer => {
                 let tmp = self.scratch("optimizing");
@@ -185,7 +197,7 @@ impl Staging {
                 }
                 let tmp = self.scratch("optimizing");
                 let (mut book, rep, color_css) = pdf_ingest::optimize_pdf_to_epub(p, &mut on_progress)?;
-                let bytes = match bookconv::epub::assemble_pdf_derived(&mut book, &color_css) {
+                let bytes = match shelf_conv::pdf_epub::assemble_pdf_derived(&mut book, &color_css) {
                     Ok(b) => b,
                     Err(e) => return Err(format!("组装 EPUB 失败: {e}")),
                 };

@@ -14,7 +14,7 @@
 //! ⑤ Form XObject 递归原本不设深度上限、不防环：自引用的 Form 会把栈打爆（SIGSEGV，`catch_unwind`
 //!   接不住，整个 book-serve 进程一起崩）。现在限深 [`MAX_FORM_DEPTH`] 并跳过正在展开中的同一对象
 //!   （2026-09-24 审查补）。
-//! ⑥ 2026-09-24 第三轮审计：lopdf 0.42 → 0.45（与 bookconv 同版本，调用方可直接传入已解析的 `Document`，
+//! ⑥ 2026-09-24 第三轮审计：lopdf 0.42 → 0.45（与当时的 bookconv、现在的 shelf-conv 同版本，调用方可直接传入已解析的 `Document`，
 //!   不必整份再解析一遍）；页内容改走带上限的解压（[`MAX_PAGE_CONTENT_BYTES`]，防解压炸弹）；损坏 PDF
 //!   常见的几处 panic（悬空引用、数组元素类型/个数不对、缺页对象、缺 MediaBox）改成返回 None/错误。
 //! ⑦ 2026-09-30 第五轮审计：`/Parent` 继承查找（`get_inherited`）改限深循环（成环时栈溢出）；Form XObject 等

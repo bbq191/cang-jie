@@ -1,7 +1,7 @@
 //! 阅读方向查询（2026-09-24）：xochitl 阅读器里的 `reader-page-turn.qmd` 打开书时问
 //! `GET /reading-direction/{uuid}` → `{"rtl": bool}`，为真就把左右滑动/点边缘翻页对调（日漫从右往左）。
 //! 判据只有一个：书库里 `<uuid>.epub` 的 OPF `<spine page-progression-direction="rtl">`
-//! （`bookconv::placeholder::epub_is_rtl`，只读两个 zip 条目）。不是 EPUB / 找不到 / 读不了一律 `false`
+//! （`shelf_conv::placeholder::epub_is_rtl`，只读两个 zip 条目）。不是 EPUB / 找不到 / 读不了一律 `false`
 //! ——宁可按原生方向，也不误翻。按（大小, mtime）缓存，重复打开同一本书不再解 zip。
 //!
 //! **旧的手动指定清单**（`$XDG_STATE_HOME/shelf/books/rtl-overrides.json`，uuid 字符串数组）只读：2026-09-24 给当时已在设备上、
@@ -42,7 +42,7 @@ impl ReadingDirection {
         }
         let path = self.lib.join(format!("{uuid}.epub"));
         let Some(stamp) = FileStamp::read(&path) else { return Ok(false) };
-        Ok(self.cache.get_or(uuid, stamp, || bookconv::placeholder::epub_is_rtl(&path)))
+        Ok(self.cache.get_or(uuid, stamp, || shelf_conv::placeholder::epub_is_rtl(&path)))
     }
 }
 

@@ -292,10 +292,12 @@ dependencies = [
  "fast2s",
  "image",
  "libc",
+ "profile",
  "rmsvc-core",
  "serde",
  "serde_json",
  "sha2",
+ "shelf-conv",
  "tempfile",
  "tiny_http 0.12.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "ureq",
@@ -305,25 +307,20 @@ dependencies = [
 [[package]]
 name = "bookconv"
 version = "0.1.0"
+source = "git+https://github.com/bbq191/sheng-ren?branch=master#124d1971f32012205e1d2b5119423dde5f1c8303"
 dependencies = [
- "base64 0.22.1",
  "ego-tree",
  "encoding_rs",
  "fast_image_resize",
- "fb2",
- "hayro",
+ "flate2",
  "image",
- "lopdf",
- "miniz_oxide 0.8.9",
- "pdf-extract-cj",
- "png 0.17.16",
+ "profile",
  "quick-xml",
  "readability-rust",
  "regex",
  "scraper",
  "serde",
  "serde_json",
- "tempfile",
  "ureq",
  "zip",
 ]
@@ -815,18 +812,6 @@ name = "fastrand"
 version = "2.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "da7c62ceae207dd37ea5b845da6a0696c799f85e97da1ab5b7910be3c1c80223"
-
-[[package]]
-name = "fb2"
-version = "0.4.4"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f2d27bbfaf8178bef57815d3b6169100928316099922e419668ee50f61e87e7a"
-dependencies = [
- "chrono",
- "language-tags",
- "quick-xml",
- "serde",
-]
 
 [[package]]
 name = "fdeflate"
@@ -1393,15 +1378,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "language-tags"
-version = "0.3.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d4345964bb142484797b161f473a503a434de77149dd8c7427788c6e13379388"
-dependencies = [
- "serde",
-]
-
-[[package]]
 name = "lazy_static"
 version = "1.5.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1945,6 +1921,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "profile"
+version = "0.1.0"
+source = "git+https://github.com/bbq191/sheng-ren?branch=master#124d1971f32012205e1d2b5119423dde5f1c8303"
+dependencies = [
+ "serde",
+ "toml",
+]
+
+[[package]]
 name = "pxfm"
 version = "0.1.30"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1964,7 +1949,6 @@ checksum = "eff6510e86862b57b210fd8cbe8ed3f0d7d600b9c2863cd4549a2e033c66e956"
 dependencies = [
  "encoding_rs",
  "memchr",
- "serde",
 ]
 
 [[package]]
@@ -2296,6 +2280,7 @@ dependencies = [
  "ego-tree",
  "getopts",
  "html5ever",
+ "indexmap",
  "once_cell",
  "selectors",
  "tendril",
@@ -2374,6 +2359,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde_spanned"
+version = "1.1.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "6662b5879511e06e8999a8a235d848113e942c9124f211511b16466ee2995f26"
+dependencies = [
+ "serde_core",
+]
+
+[[package]]
 name = "servo_arc"
 version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2391,6 +2385,24 @@ dependencies = [
  "cfg-if",
  "cpufeatures",
  "digest",
+]
+
+[[package]]
+name = "shelf-conv"
+version = "0.1.0"
+dependencies = [
+ "bookconv",
+ "fast_image_resize",
+ "hayro",
+ "image",
+ "lopdf",
+ "miniz_oxide 0.8.9",
+ "pdf-extract-cj",
+ "png 0.17.16",
+ "profile",
+ "regex",
+ "tempfile",
+ "zip",
 ]
 
 [[package]]
@@ -2687,6 +2699,45 @@ name = "tinyvec"
 version = "1.13.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fd3ca314f692efd6c868f8408f53fe444634a845f96c028b97d35f6a1f79f0ee"
+
+[[package]]
+name = "toml"
+version = "1.1.6+spec-1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "920602543f0911ab71da12c50d59701da54c196d1a2bf5cb4b75667f137a406a"
+dependencies = [
+ "indexmap",
+ "serde_core",
+ "serde_spanned",
+ "toml_datetime",
+ "toml_parser",
+ "toml_writer",
+ "winnow",
+]
+
+[[package]]
+name = "toml_datetime"
+version = "1.1.1+spec-1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3165f65f62e28e0115a00b2ebdd37eb6f3b641855f9d636d3cd4103767159ad7"
+dependencies = [
+ "serde_core",
+]
+
+[[package]]
+name = "toml_parser"
+version = "1.1.3+spec-1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1d38ac1cf9b95face32296c0a3ede1fdc270627c9d9c02a7274dd6d960dc4d56"
+dependencies = [
+ "winnow",
+]
+
+[[package]]
+name = "toml_writer"
+version = "1.1.2+spec-1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7d56353a2a665ad0f41a421187180aab746c8c325620617ad883a99a1cbe66d2"
 
 [[package]]
 name = "ttf-parser"
@@ -3136,6 +3187,12 @@ name = "windows_x86_64_msvc"
 version = "0.52.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "589f6da84c646204747d1270a2a5661ea66ed1cced2631d546fdfb155959f9ec"
+
+[[package]]
+name = "winnow"
+version = "1.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "23b97319f7b8343df12cc98938e5c3eb436064524c8d2b4e30a1d3a36eecdf81"
 
 [[package]]
 name = "wit-bindgen"

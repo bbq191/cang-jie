@@ -427,7 +427,7 @@ fn optimize_sets_dc_title_to_canonical_name_for_volume_books() {
     std::fs::write(t.path().join("staging").join(long), comic_epub_with_real_images(&[12, 13])).unwrap();
     s.optimize(long, |_, _| {}).unwrap();
     let bytes = std::fs::read(t.path().join("staging").join("鏢人 - 02卷.epub")).unwrap();
-    let entries = bookconv::check::read_entries(&bytes).unwrap();
+    let entries = bookconv::epubzip::read_entries(&bytes).unwrap();
     let opf = entries.iter().find(|e| e.name.ends_with(".opf")).unwrap();
     assert!(String::from_utf8_lossy(&opf.data).contains("<dc:title>鏢人 - 02卷</dc:title>"), "dc:title 应为规范名");
 }
@@ -779,13 +779,13 @@ fn optimize_comic_epub_stays_epub() {
     assert!(e.optimized && e.level == "full", "应报已优化: {e:?}");
 }
 
-/// 拿真实 pdflatex 编译的样本（bookconv 那条线的测试夹具，两个 crate 同一个仓库共享一份
+/// 拿真实 pdflatex 编译的样本（shelf-conv 的测试夹具，两个 crate 同一个仓库共享一份
 /// 真实样本，不在 book-serve 这边另造一份假数据）核对：入库有文字层的 PDF「优化」真的会
 /// 转成 EPUB、原 PDF 挪进隐藏备份、新 EPUB 在 `list()` 里报 `pdfSource: true` 且不再显示优化档位
 /// 的 none（视为已完成）。
 #[test]
 fn optimize_text_layer_pdf_produces_epub_output() {
-    const SAMPLE_PDF: &[u8] = include_bytes!("../../../../crates/bookconv/tests/fixtures/sample.pdf");
+    const SAMPLE_PDF: &[u8] = include_bytes!("../../../../crates/shelf-conv/tests/fixtures/sample.pdf");
     let t = tempfile::tempdir().unwrap();
     let s = staging(&t);
     s.stage_new("paper.pdf", SAMPLE_PDF).unwrap();
@@ -815,7 +815,7 @@ fn optimize_text_layer_pdf_produces_epub_output() {
 /// 母版库已有同名 EPUB 时，有文字层 PDF 的优化停下报错：那份 EPUB 和原 PDF 都原样不动。
 #[test]
 fn optimize_text_layer_pdf_refuses_to_overwrite_same_name_epub() {
-    const SAMPLE_PDF: &[u8] = include_bytes!("../../../../crates/bookconv/tests/fixtures/sample.pdf");
+    const SAMPLE_PDF: &[u8] = include_bytes!("../../../../crates/shelf-conv/tests/fixtures/sample.pdf");
     let t = tempfile::tempdir().unwrap();
     let s = staging(&t);
     s.stage_new("paper.pdf", SAMPLE_PDF).unwrap();
@@ -833,7 +833,7 @@ fn optimize_text_layer_pdf_refuses_to_overwrite_same_name_epub() {
 /// 不覆盖那本书（2026-09-24 第三轮审计补的窗口）。
 #[test]
 fn optimize_text_layer_pdf_does_not_clobber_epub_landed_mid_conversion() {
-    const SAMPLE_PDF: &[u8] = include_bytes!("../../../../crates/bookconv/tests/fixtures/sample.pdf");
+    const SAMPLE_PDF: &[u8] = include_bytes!("../../../../crates/shelf-conv/tests/fixtures/sample.pdf");
     let t = tempfile::tempdir().unwrap();
     let s = staging(&t);
     s.stage_new("paper.pdf", SAMPLE_PDF).unwrap();
@@ -855,8 +855,8 @@ fn optimize_text_layer_pdf_does_not_clobber_epub_landed_mid_conversion() {
 /// 漫画/无文字层 PDF 走裁边分支，格式不变仍是 PDF，且能被识别成"自己优化过的"。
 #[test]
 fn optimize_comic_shaped_pdf_stays_pdf_and_gets_trimmed() {
-    let img = bookconv::convert::pdfwrite::image_from_bytes(&fake_jpeg()).unwrap();
-    let comic_pdf = bookconv::convert::pdfwrite::images_to_pdf(&[img.clone(), img.clone(), img]).unwrap();
+    let img = shelf_conv::pdfwrite::image_from_bytes(&fake_jpeg()).unwrap();
+    let comic_pdf = shelf_conv::pdfwrite::images_to_pdf(&[img.clone(), img.clone(), img]).unwrap();
     let t = tempfile::tempdir().unwrap();
     let s = staging(&t);
     s.stage_new("scan.pdf", &comic_pdf).unwrap();
@@ -1016,8 +1016,8 @@ fn deliver_oversized_epub_uses_direct_channel_placeholder_then_real_file() {
 fn deliver_oversized_pdf_uses_direct_channel_and_records_ok_pages() {
     let t = tempfile::tempdir().unwrap();
     let (s, lib) = oversized_staging(&t);
-    let img = bookconv::convert::pdfwrite::image_from_bytes(&fake_jpeg()).unwrap();
-    let pdf = bookconv::convert::pdfwrite::images_to_pdf(&[img.clone(), img.clone(), img]).unwrap();
+    let img = shelf_conv::pdfwrite::image_from_bytes(&fake_jpeg()).unwrap();
+    let pdf = shelf_conv::pdfwrite::images_to_pdf(&[img.clone(), img.clone(), img]).unwrap();
     s.stage_new("big.pdf", &pdf).unwrap();
     let out = s.deliver("big.pdf", "", &empty_mkdir(&t)).unwrap();
     assert!(out.message.contains("已直接写入 xochitl 书库"), "{}", out.message);
@@ -1028,7 +1028,7 @@ fn deliver_oversized_pdf_uses_direct_channel_and_records_ok_pages() {
 }
 
 /// 第三方 PDF：页树根不在对象 2（对象 2 是带 `/Count` 的书签根）。此前 `PdfFileReader::page_count` 只认"对象 2 = Pages"，
-/// 这种书整本被拒收；现在顺着 Root → Pages 读真页数（交叉引用流 / 对象流的覆盖在 bookconv `pdfmeta` 的单测里）。
+/// 这种书整本被拒收；现在顺着 Root → Pages 读真页数（交叉引用流 / 对象流的覆盖在 shelf-conv `pdfmeta` 的单测里）。
 #[test]
 fn deliver_oversized_third_party_pdf_reads_pages_via_root() {
     let t = tempfile::tempdir().unwrap();
@@ -1222,3 +1222,69 @@ fn concurrent_landing_of_same_name_never_clobbers() {
     assert_eq!(contents.len(), n, "没有任何一本被别的覆盖");
 }
 
+
+/// 旧版（cang-jie 自带 bookconv v16 及以前）的优化产物：列表里一律是 old（提示重新优化），`-core` 的也是。
+#[test]
+fn legacy_optimized_books_list_as_old() {
+    let t = tempfile::tempdir().unwrap();
+    let s = staging(&t);
+    s.stage_new("a.epub", &mini_epub(&[("OEBPS/a.xhtml", "<p>x</p>"), (shelf_conv::legacy::LEGACY_MARKER, "16")])).unwrap();
+    s.stage_new("b.epub", &mini_epub(&[("OEBPS/a.xhtml", "<p>x</p>"), (shelf_conv::legacy::LEGACY_MARKER, "16-core")])).unwrap();
+    s.stage_new("c.epub", &mini_epub(&[("OEBPS/a.xhtml", "<p>x</p>"), (optimize::OPTIMIZE_MARKER, "50")])).unwrap();
+    for e in s.list() {
+        assert_eq!((e.level, e.optimized), ("old", false), "{}", e.name);
+    }
+}
+
+/// 旧版产物（旧标记、`cangjie-wash.css`、`cj-` 类）重新优化：先过兼容预处理，产物只有 sheng-ren 的标记和一份 `eink-wash.css`，
+/// 正文的字都在，列表变成 full。
+#[test]
+fn optimize_translates_legacy_product_first() {
+    let t = tempfile::tempdir().unwrap();
+    let s = staging(&t);
+    let opf = r#"<package version="3.0" unique-identifier="id"><metadata><dc:identifier id="id">x</dc:identifier><dc:title>旧书</dc:title><dc:language>zh</dc:language></metadata><manifest><item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/><item id="cangjie-wash-css" href="cangjie-wash.css" media-type="text/css"/></manifest><spine><itemref idref="c1"/></spine></package>"#;
+    let c1 = r##"<?xml version="1.0" encoding="utf-8"?><html xmlns="http://www.w3.org/1999/xhtml"><head><title>c</title><link href="cangjie-wash.css" rel="stylesheet" type="text/css"/></head><body><h1>第一章</h1><p class="cj-center">居中的一句</p><p>正文<a href="#n1">1</a> <a href="#n1">[1]</a></p><div id="n1" class="cj-note">注释内容</div></body></html>"##;
+    let book = mini_epub(&[
+        ("META-INF/container.xml", r#"<container><rootfiles><rootfile full-path="OEBPS/content.opf"/></rootfiles></container>"#),
+        ("OEBPS/content.opf", opf),
+        ("OEBPS/c1.xhtml", c1),
+        ("OEBPS/cangjie-wash.css", "p{text-indent:2em;}\n.cj-center{text-align:center;}\n"),
+        (shelf_conv::legacy::LEGACY_MARKER, "16"),
+    ]);
+    s.stage_new("旧书.epub", &book).unwrap();
+    let msg = s.optimize("旧书.epub", |_, _| {}).unwrap();
+    assert!(msg.contains("旧版产物已转换"), "{msg}");
+    let e = s.list().into_iter().find(|e| e.name == "旧书.epub").unwrap();
+    assert_eq!(e.level, "full");
+    let entries = bookconv::epubzip::read_entries(&std::fs::read(s.dir().join("旧书.epub")).unwrap()).unwrap();
+    assert!(entries.iter().all(|e| e.name != shelf_conv::legacy::LEGACY_MARKER && !e.name.contains("cangjie")), "旧标记、旧样式表都不在了");
+    assert_eq!(entries.iter().filter(|e| e.name.ends_with(".css")).count(), 1, "只有一份洗书样式表");
+    let html = String::from_utf8(entries.iter().find(|e| e.name == "OEBPS/c1.xhtml").unwrap().data.clone()).unwrap();
+    assert!(!html.contains("cj-") && html.contains("eink-center") && !html.contains("[1]"), "{html}");
+    let text = bookconv::html::plain_text(&html);
+    assert!(text.contains("第一章") && text.contains("居中的一句") && text.contains("注释内容"), "{text}");
+}
+
+/// 「实验室→漫画页边距」开关：开 → 漫画按页边距 1 排、产物带 `META-INF/eink-reader-margins`、投书时登记 1；关 → 用默认页边距的
+/// 阅读范围、不写标记、不登记。资源上限一律是设备值。
+#[test]
+fn comic_margin_switch_drives_profile_and_registration() {
+    let t = tempfile::tempdir().unwrap();
+    let qol = t.path().join("qol.json");
+    let q = Arc::new(crate::comic_margins::ComicMargins::new(t.path(), &t.path().join("xochitl"), &qol));
+    let s = staging(&t).with_comic_margins(q);
+    for (on, margins) in [(false, None), (true, Some(1))] {
+        std::fs::write(&qol, format!(r#"{{"comicMinMargin":{on}}}"#)).unwrap();
+        let o = s.optimize_opts();
+        assert_eq!((o.comic_reader_margins, o.limits), (margins, DEVICE_LIMITS), "on={on}");
+        assert_eq!(o.comic_screen.map(|sc| (sc.width, sc.height)), Some(if on { (952, 1457) } else { (842, 1455) }), "on={on}");
+        let name = format!("manga{on}.epub");
+        s.stage_new(&name, &comic_epub_with_real_images(&[12, 13])).unwrap();
+        s.optimize(&name, |_, _| {}).unwrap();
+        assert_eq!(super::reader_margins_of(&s.dir().join(&name)), margins, "on={on}");
+        assert_eq!(s.comic_margin_eligible(&s.dir().join(&name)), margins, "on={on}");
+    }
+    // 开关关掉以后，开着时优化的漫画也不再登记
+    std::fs::write(&qol, r#"{"comicMinMargin":false}"#).unwrap();
+    assert_eq!(s.comic_margin_eligible(&s.dir().join("mangatrue.epub")), None);
+}

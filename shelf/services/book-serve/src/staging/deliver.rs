@@ -43,8 +43,8 @@ impl Staging {
         // 体，见 rmsvc_core::xochitl 文档）。自检计划在上传前算好（投书时刻要早于 xochitl 给文档的
         // createdTime）；统计失败就不自检，不影响投书。
         let render = if formats::ext_of(name) == "epub" {
-            let comic = self.comic_margin_eligible(&p);
-            bookconv::stats::text_profile_file(&p).ok().map(|prof| RenderPlan { name: name.to_string(), title: prof.title.clone(), expected: prof.expected_pages(), since_ms: rmsvc_core::clock::now_ms(), comic })
+            let comic_margins = self.comic_margin_eligible(&p);
+            shelf_conv::stats::text_profile_file(&p).ok().map(|prof| RenderPlan { name: name.to_string(), title: prof.title.clone(), expected: prof.expected_pages(), since_ms: rmsvc_core::clock::now_ms(), comic_margins })
         } else {
             None
         };
@@ -57,8 +57,8 @@ impl Staging {
     }
 
     /// 落库前的零耗时校验：xochitl 读得了的格式 + 书还在母版库。返回（内容类型, 路径）。
-    fn deliverable(&self, name: &str) -> Result<(bookconv::convert::ContentType, PathBuf), String> {
-        let ct = bookconv::convert::direct_content_type(name).ok_or("xochitl 只读 EPUB / PDF")?;
+    fn deliverable(&self, name: &str) -> Result<(shelf_conv::ContentType, PathBuf), String> {
+        let ct = shelf_conv::direct_content_type(name).ok_or("xochitl 只读 EPUB / PDF")?;
         Ok((ct, self.existing(name)?))
     }
 
@@ -107,25 +107,25 @@ impl Staging {
         let stem = name.strip_suffix(&format!(".{ext}")).unwrap_or(name);
         let (placeholder, content_type, pages) = if ext == "epub" {
             // 显示名：有卷标记用规范名（与文件名一致），否则沿用书自己的 dc:title。
-            let title = bookconv::naming::has_volume_marker(stem).then(|| bookconv::naming::canonical_book_name(stem));
-            match bookconv::placeholder::epub_placeholder(p, title.as_deref()) {
+            let title = shelf_conv::naming::has_volume_marker(stem).then(|| bookconv::naming::canonical_book_name(stem));
+            match shelf_conv::placeholder::epub_placeholder(p, title.as_deref()) {
                 Ok(b) => (b, "application/epub+zip", None),
                 Err(_) => return Ok(None),
             }
         } else {
             // 第三方 PDF 常是交叉引用流/对象流、页树根不在对象 2：走通用的有界读取（`pdfmeta`），不整本读进内存。
-            let pages = match bookconv::convert::pdfmeta::page_count(p) {
+            let pages = match shelf_conv::pdfmeta::page_count(p) {
                 Ok(n) => n,
                 Err(_) => return Ok(None),
             };
-            match bookconv::placeholder::pdf_placeholder() {
+            match shelf_conv::placeholder::pdf_placeholder() {
                 Ok(b) => (b, "application/pdf", Some(pages)),
                 Err(_) => return Ok(None),
             }
         };
         let uuid = self.xochitl.upload_large_file(p, name, content_type, folder, &placeholder, pages)?;
-        if ext == "epub" && self.comic_margin_eligible(p) {
-            self.register_comic_margins(&uuid, name);
+        if let Some(m) = (ext == "epub").then(|| self.comic_margin_eligible(p)).flatten() {
+            self.register_comic_margins(&uuid, name, m);
         }
         let _ = self.mark_delivered(name);
         // 渲染记录也写上，让"加入 xochitl"的书在列表里都有统一的渲染徽章（此前直接投入的书没有）：

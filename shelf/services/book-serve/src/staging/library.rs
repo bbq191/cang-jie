@@ -5,18 +5,22 @@ use rmsvc_core::cache::{FileStamp, StampCache};
 /// 判定一本母版库文件的优化等级（`full`/`core`/`old`/`none`）与是否 PDF 转出的 EPUB——要开 zip / 读文件头尾，
 /// 结果由 `Staging::list` 按（大小, 修改时间）缓存。
 pub(super) fn probe_level(path: &Path, format: &str) -> (&'static str, bool) {
-    let pdf_source = format == "epub" && bookconv::pdf_ingest::looks_like_pdf_derived_epub(path);
+    let pdf_source = format == "epub" && shelf_conv::pdf_ingest::looks_like_pdf_derived_epub(path);
     let level = if format == "pdf" {
-        if bookconv::convert::pdfwrite::looks_like_own_bookconv_pdf(path) { "full" } else { "none" }
+        if shelf_conv::pdfwrite::looks_like_own_bookconv_pdf(path) { "full" } else { "none" }
     } else if pdf_source {
         "full"
     } else if format != "epub" {
         "none"
     } else {
-        match path.to_str().and_then(optimize::optimized_version_file) {
+        // sheng-ren 优化器的标记（`META-INF/eink-optimized`）：当前版本＝full、只跑核心遍＝core、其余版本＝old。
+        // 没有它但有 cang-jie 旧版 bookconv 的标记（`META-INF/com.cangjie.optimized`，v16 及以前）＝old：规则整套换成了
+        // sheng-ren 的（2026-10-07），旧产物一律提示重新优化（重新优化前先过 `shelf_conv::legacy` 兼容预处理）。
+        match optimize::optimized_version_file(path) {
             Some(v) if v == optimize::OPTIMIZE_VERSION => "full",
             Some(v) if v.ends_with("-core") => "core",
             Some(_) => "old",
+            None if shelf_conv::legacy::legacy_version_file(path).is_some() => "old",
             None => "none",
         }
     };

@@ -4,12 +4,11 @@
 //! 目录 adopt 后记一笔——KOReader 2026-09-29 从设备卸载，koreader-serve 源码 2026-09-30 已从仓库删除，见 git 历史）。落库＝纯复制母版字节，母版默认保留可反复落库。
 //! 目录 `$XDG_STATE_HOME/shelf/books/staging/`（/home 分区，重启/OTA 不丢；**不套 LRU 淘汰**，留住用户还没落库的书）。
 //! 落库记录是同目录隐藏 sidecar `.<name>.delivered`（`sidecar` 模块管读写；本模块只在落库/删书时调它）。
-use bookconv::optimize::{self, FootnoteMode, OptimizeOpts};
+use bookconv::optimize::{self, OptimizeOpts};
 use crate::mkdir::MkdirQueue;
 use crate::ops::OpRegistry;
 use crate::render_check;
 use crate::sidecar::{self, Delivered, RenderCheck};
-use bookconv::wash::WashOpts;
 use serde::Serialize;
 use rmsvc_core::asset::{AssetItem, AssetStore};
 use rmsvc_core::formats::{self, BOOK_EXTS};
@@ -31,9 +30,16 @@ use self::library::ListCaches;
 mod tests;
 
 
-/// 漫画"页边距最小化"页框从这一版优化器起才有（v15）；之后的版本页框没变（v16 只改了文字处理与图片编码），都算数。
-/// 带 `-core` 的（没清洗）解析不成数字，不算。
-const MIN_MARGIN_SINCE_VERSION: u32 = 15;
+/// 优化用的阅读模式：sheng-ren 的 `xochitl` profile（Move 原生阅读器：阅读范围、注释跳转、漫画页边距 1 等都在里面）。
+const READER_PROFILE: &str = "xochitl";
+
+/// 设备上的图片处理资源上限（sheng-ren 的缺省值是按电脑定的）：单张图最多解码 900 万像素、同时在处理的图片合计 600 万像素。
+/// 两个数是原 cang-jie bookconv 在设备上实测定的（`imgopt::MAX_DECODE_PIXELS`：900 万像素峰值约 100–110MB；`imgpool` 的并行额度
+/// 600 万像素，2026-09-19 《镖人》552MB 真机 OOM 之后定），超过的图原样保留、不解码。
+pub(crate) const DEVICE_LIMITS: optimize::Limits = optimize::Limits { max_decode_pixels: 9_000_000, pool_pixel_budget: 6_000_000 };
+
+/// 旧版（v15、v16）最小页边距漫画登记的页边距（新产物从 `META-INF/eink-reader-margins` 读）。
+const LEGACY_COMIC_MARGINS: u32 = 1;
 
 /// 忙锁占用时的统一提示——优化/落库/删除三处几乎逐字重复过（2026-09-19 代码质量审计）。`extra`
 /// 是各自独有的后缀（删除那处要额外提示"再删除"），其余传空串。
@@ -42,8 +48,8 @@ fn busy_err(name: &str, extra: &str) -> String {
 }
 
 /// 母版库目录里临时文件的种类（名字 `.<pid>.<序号>.<种类>.tmp`，见 [`ScratchFile`]）：优化产物、补封面的副本、
-/// 跨分区入库的中转。上次进程留下的由 `recover_interrupted` 按"点前缀 + `.tmp` 结尾"清掉。
-pub(super) const SCRATCH_KINDS: [&str; 3] = ["optimizing", "cover", "landing"];
+/// 跨分区入库的中转、旧版产物兼容处理的中间副本。上次进程留下的由 `recover_interrupted` 按"点前缀 + `.tmp` 结尾"清掉。
+pub(super) const SCRATCH_KINDS: [&str; 4] = ["optimizing", "cover", "landing", "legacy"];
 
 /// 母版库目录里的一份点前缀临时文件（列表看不见）。
 ///
@@ -121,8 +127,8 @@ pub struct RenderPlan {
     pub title: Option<String>,
     pub expected: u64,
     pub since_ms: u64,
-    /// 新版管线处理过的漫画：导入完成后登记"首次打开时设页边距"（见 `comic_margins.rs`）。
-    pub comic: bool,
+    /// 按页边距模式排的漫画：导入完成后登记"首次打开时设成这个页边距"（见 `comic_margins.rs`）；其余 `None`。
+    pub comic_margins: Option<u32>,
 }
 
 /// `deliver` 的结果：回执文案 + （EPUB 才有）渲染自检计划。
@@ -218,10 +224,19 @@ pub fn reject_message() -> String {
 
 fn canonical_staged_name(name: &str) -> String {
     if formats::ext_of(name) == "epub" {
-        bookconv::naming::canonical_file_name(name)
+        shelf_conv::naming::canonical_file_name(name)
     } else {
         name.to_string()
     }
+}
+
+/// sheng-ren 优化器写在漫画里的 `META-INF/eink-reader-margins`（内容是阅读器该设的页边距）。没有、读不出、不是数字 → `None`。
+fn reader_margins_of(path: &Path) -> Option<u32> {
+    let f = std::fs::File::open(path).ok()?;
+    let mut ar = bookconv::zip::ZipArchive::new(std::io::BufReader::new(f)).ok()?;
+    let entry = ar.by_name(optimize::READER_MARGINS_MARKER).ok()?;
+    let bytes = bookconv::util::read_capped(entry, 16, 0).ok()??;
+    std::str::from_utf8(&bytes).ok()?.trim().parse().ok()
 }
 
 impl Staging {
@@ -251,29 +266,33 @@ impl Staging {
     pub(crate) fn comic_margin_switch_on(&self) -> bool {
         self.comic_margins.as_ref().is_some_and(|q| q.enabled())
     }
-    /// 优化时纯图漫画页补白到哪种页框：开关开 → 页边距最小的页框，关 → 屏幕比例（改动前的行为）。
-    pub(crate) fn comic_frame(&self) -> bookconv::imgopt::EpubComicFrame {
-        if self.comic_margin_switch_on() {
-            bookconv::imgopt::EpubComicFrame::MinMargin
-        } else {
-            bookconv::imgopt::EpubComicFrame::Screen
+    /// 这次优化用的选项：sheng-ren 的 `xochitl` 阅读模式 + 设备资源上限（[`DEVICE_LIMITS`]）。「实验室→漫画页边距」开关关着时
+    /// 关掉 profile 的漫画页边距模式（`without_comic_reader_margins`）：漫画按默认页边距（56）下的阅读范围 842×1455 排、不写
+    /// `META-INF/eink-reader-margins`、文字页不另补留边；开着时按页边距 1 的范围 952×1457 排，并写这个标记供投书时登记。
+    pub(crate) fn optimize_opts(&self) -> OptimizeOpts {
+        let mut p = profile::get(READER_PROFILE).expect("sheng-ren 内置 xochitl 阅读模式").clone();
+        if !self.comic_margin_switch_on() {
+            p.without_comic_reader_margins();
         }
+        let mut o = OptimizeOpts::for_profile(&p);
+        o.limits = DEVICE_LIMITS;
+        o
     }
-    /// 这本 EPUB 是否该在原生书库里设成漫画页边距：**开关开 + 漫画（以图为主，允许有文字页）+ 已用 v15 起的管线优化过（[`MIN_MARGIN_SINCE_VERSION`]）+
-    /// 文字页都已补留边 + 页框是最小边距页框**。补白比例按最小边距算，旧页框产物（含开关关着时优化的）在最小边距下会贴左、
-    /// 右侧空一大块；文字页没留边的旧产物（此前只放行"整本零文字"的漫画）在边距 1 下文字会贴屏幕边——都反而更糟
-    /// （见 `imgopt::EPUB_FRAME_ASPECT`、`bookconv::comic_pad`）；文字书 / PDF 不是漫画，完全不碰。
-    pub(crate) fn comic_margin_eligible(&self, path: &Path) -> bool {
-        self.comic_margin_switch_on()
-            && path.to_str().and_then(optimize::optimized_version_file).and_then(|v| v.parse::<u32>().ok()).is_some_and(|v| v >= MIN_MARGIN_SINCE_VERSION)
-            && bookconv::comic_detect::is_min_margin_comic_file(path)
-            && bookconv::comic_detect::is_min_margin_framed_file(path)
+    /// 这本 EPUB 投到原生书库后该设成多大的页边距（`None` = 不登记）：**开关开**，并且是按页边距模式排的漫画——
+    /// 新产物看 sheng-ren 优化器写的 `META-INF/eink-reader-margins`（只有开关开着时优化的漫画才有）；还没重新优化的旧版
+    /// （v15、v16）最小页边距漫画照旧认（[`shelf_conv::legacy::is_legacy_min_margin_comic_file`]）。补白比例是按页边距 1 算的，
+    /// 没按这个模式排的漫画设成 1 反而更糟（贴左、右侧空一块，文字贴屏幕边）；文字书 / PDF 完全不碰。
+    pub(crate) fn comic_margin_eligible(&self, path: &Path) -> Option<u32> {
+        if !self.comic_margin_switch_on() {
+            return None;
+        }
+        reader_margins_of(path).or_else(|| shelf_conv::legacy::is_legacy_min_margin_comic_file(path).then_some(LEGACY_COMIC_MARGINS))
     }
-    /// 登记"这本书首次打开时设页边距"。失败只记日志，不影响投书。
-    pub(crate) fn register_comic_margins(&self, uuid: &str, name: &str) {
+    /// 登记"这本书首次打开时设页边距 `margins`"。失败只记日志，不影响投书。
+    pub(crate) fn register_comic_margins(&self, uuid: &str, name: &str, margins: u32) {
         let Some(q) = &self.comic_margins else { return };
-        match q.add(uuid, bookconv::imgopt::EPUB_COMIC_MARGINS) {
-            Ok(_) => println!("[book-serve] 《{name}》是新版管线的漫画，已登记首次打开时设页边距 {}", bookconv::imgopt::EPUB_COMIC_MARGINS),
+        match q.add(uuid, margins) {
+            Ok(_) => println!("[book-serve] 《{name}》是按页边距模式排的漫画，已登记首次打开时设页边距 {margins}"),
             Err(e) => println!("[book-serve] 《{name}》登记页边距失败（不影响投书）: {e}"),
         }
     }

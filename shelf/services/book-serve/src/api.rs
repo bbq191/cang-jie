@@ -32,7 +32,7 @@ pub fn router(st: Arc<State>) -> Router {
         .get("/staging/file", bind(&st, |s, r| {
             let name = r.q("name").ok_or_else(|| ApiError::bad("缺少 name"))?.to_string();
             let (f, len) = s.staging.open_for_download(&name).map_err(ApiError::bad)?;
-            let ctype = bookconv::convert::direct_content_type(&name).map(|c| c.mime()).unwrap_or("application/octet-stream");
+            let ctype = shelf_conv::direct_content_type(&name).map(|c| c.mime()).unwrap_or("application/octet-stream");
             Ok(Reply::sized_stream(ctype, Box::new(std::io::BufReader::new(f)), len).with_header("Content-Disposition", &rmsvc_core::multipart::content_disposition(&name)))
         }))
         .post("/staging/rename", bind(&st, |s, r| {

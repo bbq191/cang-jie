@@ -11,7 +11,11 @@ path = "src/main.rs"
 
 [dependencies]
 rmsvc-core = { path = "../../../rmsvc-core" }
-bookconv = { path = "../../crates/bookconv" }
+# EPUB 优化器（规则在 sheng-ren，git 依赖跟 master 走；`cargo update -p bookconv` 跟进）与阅读模式（xochitl profile）
+bookconv = { git = "https://github.com/bbq191/sheng-ren", branch = "master" }
+profile = { git = "https://github.com/bbq191/sheng-ren", branch = "master" }
+# 书架独有的内容层：入库 PDF、占位文档、渲染自检统计、旧产物兼容预处理
+shelf-conv = { path = "../../crates/shelf-conv" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # statvfs 查母版库所在分区剩余空间（此前每次 GET /staging 都 fork 一个 `df`）；libc 本来就在依赖树里（inotify 拉进来的）

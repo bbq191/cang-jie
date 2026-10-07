@@ -64,8 +64,9 @@ jobs:
           cargo test --manifest-path gateway/Cargo.toml
           cargo test --manifest-path enhance/wallpaper-serve/Cargo.toml
           cargo test --manifest-path enhance/font-serve/Cargo.toml
-      - name: cargo test（shelf 内部 workspace：bookconv/pdf-extract-cj/book-serve）
-        run: cargo test --manifest-path shelf/Cargo.toml --workspace
+      # EPUB 优化器是 sheng-ren 的 bookconv/profile（公开仓库，https git 依赖，提交钉在 shelf/Cargo.lock）：cargo 自己拉，不需要凭证
+      - name: cargo test（shelf 内部 workspace：shelf-conv/pdf-extract-cj/book-serve，拉 sheng-ren 的 bookconv）
+        run: cargo test --manifest-path shelf/Cargo.toml --workspace --locked
       - name: cargo test（notes 内部 workspace：rmv6/notecore/vendorcfg/四服务）
         run: cargo test --manifest-path notes/Cargo.toml --workspace
 
