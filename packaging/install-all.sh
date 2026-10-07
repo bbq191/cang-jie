@@ -9,6 +9,7 @@
 #   wifi-watch           WiFi 载波假死看护（2026-09-20 接入；跟 xovi/vellum 无关）
 #   xovi-persist         xovi 开机持久化恢复链（需要 vellum add xovi）
 #   hl-snap              荧光笔 CJK 精确吸附（需要 vellum add xovi；只落盘）
+#   ui-font              界面字体（xovi 扩展，换 xochitl 应用默认字体；需要 vellum add xovi；只落盘）
 #   （sidebar-entry 已退役，2026-09-29：设备不再用 KOReader/WeRead/appload；安装件 09-30 已删，uninstall-all 仍会清，见 lib.sh STEP_RETIRED）
 #   （battop 电池刺客、handwriting-stroke 手写优化 2026-09-30 已移除：不再安装；旧设备上的残留在 xovi-apply 之前自动清，
 #     见下面「已移除功能的残留清理」与 removal.sh）
@@ -77,7 +78,7 @@ for step in $STEP_ORDER; do
     script="$(step_script "$step")"
     [ -f "$script" ] || { echo "!! 步骤表里的 $step 没有对应脚本 $script"; exit 1; }
     if word_in "$step" "$STEP_DEFER"; then
-        # hl-snap 只落盘，不各自触发 xochitl 重启
+        # hl-snap / ui-font 只落盘，不各自触发 xochitl 重启
         run_step "$step" env DEFER_XOVI_START=1 sh "$script" "$HOST"
     elif [ "$step" = "xovi-apply" ]; then
         # 先清已移除功能在旧设备上的残留（摘 .so 记的待生效标记由紧接着的 xovi-apply 统一生效）

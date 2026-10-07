@@ -1,0 +1,49 @@
+; ─────────────────────────────────────────────────────────────────────────
+; ui-font-tokens.qmd —— xochitl 界面字体：Ark 设计令牌（固件 3.28.0.172，2026-10-07）
+;
+; 【做什么】xochitl 新版界面（Ark 组件：设置页、对话框、标题栏、按钮等）的字体写在设计令牌单例
+;   /ark-imports/ark/tokens/Style.qml（源文件名 rM-paper-tablet.json.qml）里：正文 39 处 "reMarkable Sans"、
+;   标题 8 处 "reMarkable Serif Small"。本补丁把它们换成单例根上的两个属性，启动时从
+;   ~/.local/share/shelf/ui-font.json（font-serve 写，网页「其他 → xochitl → 界面字体」选）读 sans / serif 赋值；
+;   没文件、空串、读失败 → 保持原生字体，与没装一样。
+;   老界面里没用令牌的文字吃应用默认字体，那部分由 xovi 扩展 enhance/ui-font 改（同一个配置文件的 sans）。
+;
+; 【不影响阅读】阅读器的字体是 EPUB 渲染时按阅读器菜单（FormatFont.qml 的 fontModel，键写死在那个文件里）选的，
+;   不读这些令牌；令牌只决定界面控件的字体。界面字体也不进阅读器字体菜单（font-serve 把它放在单独的 fonts/shelf-ui/）。
+;
+; 【生效】只在 xochitl 启动时读一次配置：改完要整机重启（与其它 qmd 一样，不单独 restart xochitl）。
+;
+; 【写法】只能整份 AFFECT REBUILD（同一文件不能既 AFFECT 又 AFFECT REBUILD）：
+;   先从头 REPLACE 两个字体名字面量，再在 `id: root` 后插入属性——顺序反过来的话，插进去的属性默认值也会被替换成
+;   自引用（离线 apply-diffs 实测踩过）。
+; 【离线验证】从设备 .172 的 xochitl 解出真实 Style.qml，qmldiff apply-diffs：正文 39 处、标题 8 处替换，只剩插入属性
+;   默认值里的两处字面量；补丁后的单例在本机 Qt 6.11 上实跑：有配置读到、没配置保持原生。
+; 【日志】journalctl -u xochitl | grep SHELF-UI-FONT：启动时一行 sans=… serif=…（单例创建时打印一次）。
+; ─────────────────────────────────────────────────────────────────────────
+
+AFFECT REBUILD /ark-imports/ark/tokens/Style.qml
+    LOCATE BEFORE ALL
+    REPLACE { "reMarkable Sans" } WITH { root.shelfUiSans }
+    LOCATE BEFORE ALL
+    REPLACE { "reMarkable Serif Small" } WITH { root.shelfUiSerif }
+    LOCATE AFTER { id: root }
+    INSERT {
+        property string shelfUiSans: "reMarkable Sans"
+        property string shelfUiSerif: "reMarkable Serif Small"
+        Component.onCompleted: {
+            try {
+                var f = new XMLHttpRequest();
+                f.open("GET", "file:///home/root/.local/share/shelf/ui-font.json", false);
+                f.send();
+                if (f.responseText && f.responseText.length > 0) {
+                    var c = JSON.parse(f.responseText);
+                    if (c.sans) { root.shelfUiSans = c.sans; }
+                    if (c.serif) { root.shelfUiSerif = c.serif; }
+                }
+            } catch (e) {
+                console.warn("SHELF-UI-FONT: config read failed " + e);
+            }
+            console.warn("SHELF-UI-FONT: sans=" + root.shelfUiSans + " serif=" + root.shelfUiSerif);
+        }
+    }
+END REBUILD

@@ -21,7 +21,7 @@ sh verify-on-device.sh <host>                  # 装完（或任何一次单独�
 
 sh uninstall-all.sh <host> --dry-run           # 卸载预演
 sh uninstall-all.sh <host>                     # 卸全部（chrony-cn / timezone-cn / xovi-apply 没有卸载语义，见「卸载」）
-sh uninstall-all.sh <host> --skip chrony-boot-wakelock,wifi-watch,xovi-persist,hl-snap,shelf,sidebar-entry   # 只清已移除的电池刺客/手写优化（09-30）
+sh uninstall-all.sh <host> --skip chrony-boot-wakelock,wifi-watch,xovi-persist,hl-snap,ui-font,shelf,sidebar-entry   # 只清已移除的电池刺客/手写优化（09-30）
 ```
 
 `<host>` 默认 `10.11.99.1`（USB 网段），WiFi 下给设备 IP 或 `shelf.local`。所有脚本 `-h` 看用法；参数写错一律退出码 2 且不连设备。全部参数见「参数与环境变量」。
@@ -47,14 +47,14 @@ sh uninstall-all.sh <host> --skip chrony-boot-wakelock,wifi-watch,xovi-persist,h
 **自动清理的实现**：`install-all` 在 `xovi-apply` 之前对 `STEP_RETIRED_AUTOCLEAN` 逐个跑 `uninstall_<步骤>`（与 `uninstall-all` 同一份函数），汇总里显示为 `清理已移除:battop` / `清理已移除:handwriting-stroke`；`--skip battop` / `--skip handwriting-stroke` 跳过。
 - battop：什么都没有时直接退出（不碰 systemd、不 remount）；否则 `cj_remove_usr_unit` 删 `battop.service` 与旧版 `battop.timer`（dm-verity 门 + 带 trap 的 rw 窗口），再删 `/home/root/battop`（路径与符号链接守卫；dm-verity 下单元删不掉时保留目录）。
 - handwriting-stroke：撤待换入区副本 → 删 `extensions.d/hw-stroke.so` 与 `.crashed` → 删载荷目录 `hw-stroke/`。xochitl 正加载着它时记待生效标记 `removed-hw-stroke.so`，`xovi-apply` 据此**整机重启**一次（不 stop/restart xochitl，xovi 已生效时不 `xovi/start`）。
-- "只清这几样"的 `--skip` 串由 `lib.sh` 的 `uninstall_only_skip battop handwriting-stroke` 生成（结果 `chrony-boot-wakelock,wifi-watch,xovi-persist,hl-snap,shelf,sidebar-entry`），`verify-on-device.sh` 报 ⚠ 时给的就是它。
+- "只清这几样"的 `--skip` 串由 `lib.sh` 的 `uninstall_only_skip battop handwriting-stroke` 生成（结果 `chrony-boot-wakelock,wifi-watch,xovi-persist,hl-snap,ui-font,shelf,sidebar-entry`），`verify-on-device.sh` 报 ⚠ 时给的就是它。
 - **真机**：09-30 15:23 `install-all` 自动清掉了电池刺客与 `hw-stroke.so`、只整机重启一次，核对 36✓ 1⚠（刚开机）0✗。`uninstall-all` 只清这两样、dm-verity 下保留目录两支只有本机模拟。
 
 ## 装什么、按什么顺序
 
 ![install-all.sh 流程](../docs/diagrams/install-flow.svg)
 
-`install-all.sh` 只负责编排，不重新实现构建或传输：先做装前检查，再按 `lib.sh` 的**步骤表 `STEP_ORDER`** 依次调用 8 个部署脚本（09-30 前是 10 个：`battop`、`handwriting-stroke` 两步已移除，在第 7 步之后、第 8 步之前自动清它们的残留，见上节）。`uninstall-all.sh` 用同一张表逆序卸载，所以安装与卸载清单天然对称。
+`install-all.sh` 只负责编排，不重新实现构建或传输：先做装前检查，再按 `lib.sh` 的**步骤表 `STEP_ORDER`** 依次调用 9 个部署脚本（10-07 加了 `ui-font`；09-30 前是 10 个：`battop`、`handwriting-stroke` 两步已移除，在第 8 步之后、第 9 步之前自动清它们的残留，见上节）。`uninstall-all.sh` 用同一张表逆序卸载，所以安装与卸载清单天然对称。
 
 | 顺序 | 步骤名 | 脚本 | 装什么 | 前置 |
 |---|---|---|---|---|
@@ -64,13 +64,14 @@ sh uninstall-all.sh <host> --skip chrony-boot-wakelock,wifi-watch,xovi-persist,h
 | 4 | `wifi-watch` | `deploy-wifi-watch.sh` | WiFi 载波假死看护；链路正常时只读 sysfs、零 fork | 无 |
 | 5 | `xovi-persist` | `deploy-xovi-persist.sh` | xovi 开机自动恢复（`xovi-reenable.service`） | 已 `vellum add xovi` |
 | 6 | `hl-snap` | `deploy-hl-snap.sh` | 荧光笔 CJK 精确吸附（xovi 扩展），**只落盘** | 同上 |
-| 7 | `shelf` | `deploy.sh` | 网关 + book/font/wallpaper + 笔记线 ink/transcribe/mind/note，共 8 个服务；随服务带的 qmd（字体菜单、回收站代理、建文件夹代理、漫画页边距、单击翻页）**只落盘** | 无；没装 qt-resource-rebuilder 时只跳过 qmd，服务照装 |
+| 7 | `ui-font` | `deploy-ui-font.sh` | 界面字体（xovi 扩展，换 xochitl 应用默认字体；2026-10-07），**只落盘** | 同上 |
+| 8 | `shelf` | `deploy.sh` | 网关 + book/font/wallpaper + 笔记线 ink/transcribe/mind/note，共 8 个服务；随服务带的 qmd（字体菜单、界面字体令牌、回收站代理、建文件夹代理、漫画页边距、单击翻页）**只落盘** | 无；没装 qt-resource-rebuilder 时只跳过 qmd，服务照装 |
 | — | `清理已移除:battop`、`清理已移除:handwriting-stroke` | `removal.sh`（函数，不是脚本） | 清旧设备上已移除功能的残留（见上「已退役 / 已移除的步骤」）；摘了正加载着的 `hw-stroke.so` 会记待生效标记 | 无 |
-| 8 | `xovi-apply` | `deploy-xovi-apply.sh` | 让上面落盘的扩展/qmd 统一生效：**有待生效改动（或 xovi 未生效）才**整机重启一次；`--force` 无条件 | 同 5–6 |
+| 9 | `xovi-apply` | `deploy-xovi-apply.sh` | 让上面落盘的扩展/qmd 统一生效：**有待生效改动（或 xovi 未生效）才**整机重启一次；`--force` 无条件 | 同 5–7 |
 
 每个脚本都能单独跑（如 `sh deploy-wifi-watch.sh <host>`）。任何一步失败：打印是哪一步、原始错误，**不自动重试、不静默跳过**，退出非零。
 
-**为什么 6–7 只落盘、最后由 8 统一生效**：xovi 没有"只重载一个扩展"的机制，每步各自重启会在短时间内多次打断设备（2026-09-11 连续两次重启 xochitl 撞上 watchdog + StartLimit，意外整机重启过）。所以 `install-all.sh` 给 6（`STEP_DEFER`）传 `DEFER_XOVI_START=1`（设备端 `install.sh --no-restart`），7 shelf 的 qmd 本来就只落盘，最后由 `xovi-apply` 统一生效一次。
+**为什么 6–8 只落盘、最后由 9 统一生效**：xovi 没有"只重载一个扩展"的机制，每步各自重启会在短时间内多次打断设备（2026-09-11 连续两次重启 xochitl 撞上 watchdog + StartLimit，意外整机重启过）。所以 `install-all.sh` 给 6、7（`STEP_DEFER`）传 `DEFER_XOVI_START=1`（设备端 `install.sh --no-restart`），8 shelf 的 qmd 本来就只落盘，最后由 `xovi-apply` 统一生效一次。
 
 ### 装前检查（任何一项不过，一个步骤都不执行）
 
@@ -280,7 +281,7 @@ sh verify-on-device.sh --from d.txt        # 不连设备，离线重判存下�
 
 ## 卸载（`uninstall-all.sh`）
 
-与安装共用步骤表、**逆序**执行：`shelf → hl-snap → xovi-persist → wifi-watch → chrony-boot-wakelock`，最后是已退役/已移除的 `handwriting-stroke → battop → sidebar-entry`（`STEP_RETIRED`，装过的设备也能清干净）。`--dry-run` 只在本机打印这个计划。
+与安装共用步骤表、**逆序**执行：`shelf → ui-font → hl-snap → xovi-persist → wifi-watch → chrony-boot-wakelock`，最后是已退役/已移除的 `handwriting-stroke → battop → sidebar-entry`（`STEP_RETIRED`，装过的设备也能清干净）。`--dry-run` 只在本机打印这个计划。
 
 | 步骤 | 卸载动作 |
 |---|---|

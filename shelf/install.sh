@@ -260,6 +260,17 @@ if [ -d "$QRR" ] && [ -d "$SRC/xovi" ]; then
         else
             echo "-- 载荷无 xovi/$Q，跳过字体菜单 qmd"
         fi
+        # 其余随字体服务装的 qmd（界面字体 ui-font-tokens.qmd）：锚点按 3.28 核对，3.27 不装
+        for q in $(shelf_svc_qmds font); do
+            [ "$q" = "font-menu-dynamic.qmd" ] && continue
+            if [ "$FWV" = "3.27" ]; then echo "-- 固件 3.27：跳过 $q（锚点按 3.28 核对）"; continue; fi
+            if [ -f "$SRC/xovi/$q" ]; then
+                bk_keep_if_differs "$SRC/xovi/$q" "$QRR/$q"
+                cj_safe_replace "$SRC/xovi/$q" "$QRR/$q" "$CJ_STAGE_DIR" 644 || { echo "!! 写 $q 失败"; exit 1; }
+                if [ "$CJ_REPLACED" = "1" ]; then QMD_CHANGED=1; fi
+                echo "-- qmd $q 已放 $QRR/（3.28 锚点）"
+            fi
+        done
     fi
     if sel_has book; then
         # 原生回收站代理（note-serve 旧版本回收走 book-serve /trash/*，Sidebar 注入）
@@ -279,7 +290,7 @@ if [ -d "$QRR" ] && [ -d "$SRC/xovi" ]; then
     done
     cj_stage_cleanup
 else
-    echo "-- （无 qt-resource-rebuilder 目录或载荷无 xovi/，跳过字体菜单/回收站/建夹/漫画页边距/阅读器翻页 qmd；字体仍可用 fontconfig 装入）"
+    echo "-- （无 qt-resource-rebuilder 目录或载荷无 xovi/，跳过字体菜单/界面字体/回收站/建夹/漫画页边距/阅读器翻页 qmd；字体仍可用 fontconfig 装入）"
 fi
 if [ "$QMD_CHANGED" = "1" ]; then
     cj_pending_mark shelf-qmd || true   # 让 packaging/deploy-xovi-apply.sh 知道有 qmd 待生效

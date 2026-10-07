@@ -10,7 +10,7 @@
 # 包装需在 source 本文件前设好：
 #   EXT_NAME     扩展名（日志用）              EXT_SO       .so 文件名（在 payload 目录里，即 deploy/ 的上一级）
 #   EXT_MAPTAG   /proc/PID/maps 里用来确认已加载的字符串
-#   RQOL_INIT    首次装才建的 reading-qol.json 内容（已有非空文件绝不覆盖）
+#   RQOL_INIT    首次装才建的 reading-qol.json 内容（已有非空文件绝不覆盖）；空 = 这个扩展不用它，不建
 #   RQOL_MSG     建配置时的提示           OK_MSG / NEXT_MSG   成功后的提示
 #   HERE         包装脚本所在目录（要求同目录有本文件与 devlib.sh；由 deploy-xovi-ext.sh 一起推送）
 # 用法（包装转发参数）：install.sh [--no-restart]
@@ -72,7 +72,7 @@ cj_stage_cleanup
 
 # reading-qol.json 首次装才建（不覆盖已有设置）；其它键留给别的功能各自维护，这里不动。
 RQOL="$DATADIR/reading-qol.json"
-if [ ! -s "$RQOL" ]; then
+if [ -n "${RQOL_INIT:-}" ] && [ ! -s "$RQOL" ]; then
     echo "-- $RQOL_MSG -> $RQOL"
     mkdir -p "$DATADIR"
     printf '%s' "$RQOL_INIT" > "$RQOL"

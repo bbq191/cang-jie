@@ -4,8 +4,11 @@
 //! 字体菜单 qmd 读 `~/.local/share/shelf/fonts.json`（`shelf/xovi/font-menu-dynamic.qmd`）。
 //! 开机时 fonts.json 与字体目录一致（文件集合相同、mtime 不晚于索引）就直接复用，不再逐个 fc-scan；
 //! fonts.conf 内容没变不重写（2026-09-25）。上传暂存在 `$XDG_STATE_HOME/shelf/upload`，启动时清半成品。
+//! 界面字体（2026-10-07）：`GET /ui`（清单 + 当前选择）· `POST /ui`（上传）· `DELETE /ui/{family}` · `PUT /ui/select {sans, serif}`。
+//! 界面字体只给 xochitl 界面用，不进阅读器菜单、不当阅读的中文回退（见 `store.rs` 头注与 `ui.rs`）。
 mod fontconfig;
 mod store;
+mod ui;
 
 use rmsvc_core::asset::{self, AssetStore, AssetUploadFlow};
 use rmsvc_core::http::{bind, ApiError, Reply, Router};
@@ -25,8 +28,16 @@ const SPEC: ServiceSpec = ServiceSpec {
 
 struct State {
     store: FontStore,
+    ui_store: FontStore,
+    ui: ui::UiFont,
     paths: Paths,
     bus: Arc<rmsvc_core::events::EventBus>,
+}
+
+/// `GET /ui` 与改选择后的回执：界面字体清单 + 当前选择 + 是否待整机重启。
+fn ui_status(s: &State) -> serde_json::Value {
+    let sel = s.ui.get();
+    serde_json::json!({"ok": true, "items": s.ui_store.list(), "sans": sel.sans, "serif": sel.serif, "restartNeeded": s.ui.restart_needed()})
 }
 
 fn main() {
@@ -39,11 +50,17 @@ fn main() {
         println!("[font-serve] 清掉 {n} 个上次未完成的上传暂存");
     }
     let store = FontStore::new(&paths, FontConfig::load(&paths));
+    let ui_store = FontStore::ui(&paths);
+    match ui_store.startup_index() {
+        Ok(f) => println!("[font-serve] 界面字体 {} 个家族", f.len()),
+        Err(e) => eprintln!("[font-serve] 写 ui-fonts.json 失败: {e}"),
+    }
+    // 阅读仓库排在界面仓库之后：fonts.conf 的系统中文保底要看界面字体目录有没有字体。
     match store.startup_index() {
         Ok(f) => println!("[font-serve] 索引 {} 个家族", f.len()),
         Err(e) => eprintln!("[font-serve] 写 fonts.json 失败: {e}"),
     }
-    let st = Arc::new(State { store, paths: paths.clone(), bus: Arc::new(rmsvc_core::events::EventBus::new()) });
+    let st = Arc::new(State { store, ui_store, ui: ui::UiFont::load(&paths), paths: paths.clone(), bus: Arc::new(rmsvc_core::events::EventBus::new()) });
     let router = Router::new()
         .get("/", bind(&st, |s, _| Ok(Reply::ok(&serde_json::json!({"items": s.store.list(), "fontsDir": s.store.fonts_dir(), "index": s.store.json_path()})))))
         .post("/", bind(&st, |s, r| {
@@ -64,6 +81,34 @@ fn main() {
                 s.bus.publish("fonts", "fonts");
             }
             Ok(Reply::ok(&asset::receipt(&items, serde_json::json!({"restartNeeded": false, "fallback": fallback, "note": note}))))
+        }))
+        .get("/ui", bind(&st, |s, _| Ok(Reply::ok(&ui_status(s)))))
+        .post("/ui", bind(&st, |s, r| {
+            let b = r.multipart_boundary()?;
+            let items = AssetUploadFlow::new(&s.paths).run(&s.ui_store, &mut *r.body, &b).map_err(ApiError::bad)?;
+            if items.iter().any(|i| i.ok) {
+                s.store.refresh_fontconfig();
+                s.bus.publish("fonts", "ui");
+            }
+            let note = "已装进界面字体（不进阅读器菜单）；在上面选它当界面字体，整机重启后生效";
+            Ok(Reply::ok(&asset::receipt(&items, serde_json::json!({"note": note}))))
+        }))
+        .delete("/ui/{family}", bind(&st, |s, r| {
+            let family = r.param("family").to_string();
+            let removed = s.ui_store.remove_family(&family).map_err(ApiError::bad)?;
+            let unselected = s.ui.forget(&family).map_err(ApiError::internal)?;
+            s.store.refresh_fontconfig();
+            s.bus.publish("fonts", "ui");
+            Ok(Reply::ok(&serde_json::json!({"ok": true, "removed": removed, "unselected": unselected, "restartNeeded": s.ui.restart_needed()})))
+        }))
+        .put("/ui/select", bind(&st, |s, r| {
+            let body = r.json()?.0;
+            let field = |k: &str| body.get(k).and_then(|x| x.as_str()).map(str::to_string).ok_or_else(|| ApiError::bad("需要 {sans: 字符串, serif: 字符串}（空串 = 原生）"));
+            let (sans, serif) = (field("sans")?, field("serif")?);
+            let installed: Vec<String> = s.ui_store.entries().into_iter().map(|e| e.key).collect();
+            s.ui.set(&sans, &serif, &installed).map_err(ApiError::bad)?;
+            s.bus.publish("fonts", "ui");
+            Ok(Reply::ok(&ui_status(s)))
         }))
         .get("/events", bind(&st, |s, _| Ok(s.bus.sse_reply())))
         .delete("/{family}", bind(&st, |s, r| {

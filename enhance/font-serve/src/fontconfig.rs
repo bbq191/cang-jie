@@ -12,8 +12,14 @@ fn esc(s: &str) -> String {
 }
 
 /// `cjk_keys`：中文回退字体的 fontconfig 家族名，**已按覆盖率降序**；`embolden`：对每个回退字体加 embolden
-/// （墨水屏细笔画补偿）；`backup_path`：原配置备份位置（只写进注释）。
-pub fn render(cjk_keys: &[&str], embolden: bool, backup_path: &std::path::Path) -> String {
+/// （墨水屏细笔画补偿）；`pin`：追加在每个请求家族表**末尾**的保底字体（weak），非空时加一条 append 规则；
+/// `backup_path`：原配置备份位置（只写进注释）。
+///
+/// `pin` 是给界面字体用的（2026-10-07）：界面字体装在 fontconfig 能扫到的 `fonts/shelf-ui/`，阅读器的中文缺字回退
+/// 排序时它和系统 Noto Sans SC 一样"没被任何规则点名"，实测（设备 fc-match -s）更纱黑体 UI 会排到第一、被当成阅读的
+/// 中文字体。末尾追加一个点名的系统中文字体，就让它排在所有没点名的字体前面；而 append 不动前面已有的顺序（拉丁字仍
+/// 先用 Noto Sans，你选的阅读字体、上面的中文回退链都在它之前），明确点名界面字体时照样拿到界面字体。
+pub fn render(cjk_keys: &[&str], embolden: bool, pin: &[&str], backup_path: &std::path::Path) -> String {
     let mut x = String::new();
     x.push_str("<?xml version=\"1.0\"?>\n<!DOCTYPE fontconfig SYSTEM \"fonts.dtd\">\n");
     x.push_str(&format!("<!-- {FC_MARK}：随已装中文字体自动更新，请勿手改（改动会被覆盖）。\n     原有配置已备份到 {}。全部 weak 绑定：阅读器里选的字体优先，缺字才回退。 -->\n", backup_path.display()));
@@ -45,6 +51,13 @@ pub fn render(cjk_keys: &[&str], embolden: bool, backup_path: &std::path::Path) 
             }
         }
     }
+    if !pin.is_empty() {
+        x.push_str("  <!-- 界面字体不进阅读：每个请求末尾追加系统中文字体（weak），排在没被点名的界面字体之前 -->\n  <match target=\"pattern\">\n");
+        for n in pin {
+            x.push_str(&format!("    <edit name=\"family\" mode=\"append\" binding=\"weak\"><string>{}</string></edit>\n", esc(n)));
+        }
+        x.push_str("  </match>\n");
+    }
     x.push_str("</fontconfig>\n");
     x
 }
@@ -72,14 +85,14 @@ mod tests {
 
     #[test]
     fn empty_chain_has_no_alias_and_says_so() {
-        let x = render(&[], true, Path::new("/bak"));
+        let x = render(&[], true, &[], Path::new("/bak"));
         assert!(x.contains("没有已装的中文字体") && !x.contains("<alias") && !x.contains("embolden"));
         assert!(x.contains(FC_MARK) && x.contains("/bak"));
     }
 
     #[test]
     fn chain_order_prepend_reversed_and_escaped() {
-        let x = render(&["A&B", "C<D>"], false, Path::new("/b"));
+        let x = render(&["A&B", "C<D>"], false, &[], Path::new("/b"));
         // 家族名转义
         assert!(x.contains("A&amp;B") && x.contains("C&lt;D&gt;") && !x.contains("A&B<"));
         // generic 别名按降序（A 在 C 前）
@@ -96,9 +109,22 @@ mod tests {
 
     #[test]
     fn embolden_adds_one_font_match_per_family() {
-        let x = render(&["A", "B"], true, Path::new("/b"));
+        let x = render(&["A", "B"], true, &[], Path::new("/b"));
         assert_eq!(x.matches("<match target=\"font\">").count(), 2);
         assert_eq!(x.matches("<edit name=\"embolden\"").count(), 2);
+    }
+
+    #[test]
+    fn pin_appends_weak_after_everything_and_only_when_given() {
+        let none = render(&["Han"], false, &[], Path::new("/b"));
+        assert!(!none.contains("mode=\"append\""), "没有界面字体时不加保底规则");
+        // 没有中文回退链时也要加（这正是界面字体会被当成阅读中文字体的情形）
+        let x = render(&[], false, &["Noto Sans SC"], Path::new("/b"));
+        assert!(x.contains("<edit name=\"family\" mode=\"append\" binding=\"weak\"><string>Noto Sans SC</string></edit>"));
+        assert!(!x.contains("strong"));
+        let y = render(&["Han"], true, &["Noto Sans SC"], Path::new("/b"));
+        assert!(y.rfind("mode=\"append\"").unwrap() > y.rfind("mode=\"prepend\"").unwrap(), "保底在回退链之后");
+        assert!(y.trim_end().ends_with("</fontconfig>"));
     }
 
     #[test]
@@ -107,7 +133,7 @@ mod tests {
         assert_eq!(referenced_families(x), vec!["One", "Two"]);
         assert!(referenced_families("").is_empty());
         // 自己生成的配置：generic 名也会被提取（既有行为：判 fontconfigRef 只看字体 key 相等，不受影响）
-        let g = render(&["Han"], false, Path::new("/b"));
+        let g = render(&["Han"], false, &[], Path::new("/b"));
         assert!(referenced_families(&g).contains(&"Han".to_string()));
     }
 }

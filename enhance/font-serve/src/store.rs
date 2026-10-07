@@ -4,6 +4,10 @@
 //! `~/.config/fontconfig/fonts.conf` 引用（界面 CJK 回退）的标 `fontconfigRef`，删前 UI 提醒但不拦。
 //! 上传→落目录→`fc-cache -f`→重建 `$XDG_DATA_HOME/shelf/fonts.json`（字体菜单 qmd 读）。**只管原生阅读器**：
 //! （2026-09-29 KOReader 已从设备卸载，koreader-serve 随之退役；此前 KOReader 字体由它单独管。）
+//!
+//! 同一个类型还管**界面字体**（[`Role::Ui`]，2026-10-07）：放在 `fonts/shelf-ui/` 子目录（fontconfig 递归扫得到、
+//! xochitl 能按名字用；阅读字体的扫描只看顶层，所以不进阅读器菜单 `fonts.json`、不进中文回退链），清单写
+//! `shelf/ui-fonts.json`，不写 fontconfig。选哪个当界面字体记在 `shelf/ui-font.json`（见 `ui.rs`）。
 use serde::{Deserialize, Serialize};
 use rmsvc_core::asset::{AssetItem, AssetStore};
 use rmsvc_core::formats::{self, FONT_EXTS};
@@ -20,6 +24,18 @@ use std::path::{Path, PathBuf};
 pub const CJK_MIN_PCT: u8 = 8;
 /// 覆盖率 < 此值 = 低覆盖美术/子集字体，上传时警告（正文会缺字）。
 pub const CJK_LOW_PCT: u8 = 80;
+/// 界面字体子目录（在 fontconfig 用户字体目录下）。
+pub const UI_SUBDIR: &str = "shelf-ui";
+/// 装了界面字体时追加在每个字体请求末尾的系统中文字体（设备 /usr/share/fonts/ttf/noto 自带），
+/// 让阅读的中文缺字回退仍落在它上面、不落到界面字体上（见 `fontconfig::render` 的 `pin`）。
+pub const SYSTEM_CJK_PIN: &str = "Noto Sans SC";
+
+/// 这个仓库管的是阅读字体还是界面字体。
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Role {
+    Reading,
+    Ui,
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
@@ -74,6 +90,7 @@ struct FontsJson {
 }
 
 pub struct FontStore {
+    role: Role,
     /// 中文回退加粗（墨水屏补偿）。运行时可切（PUT /config），用 AtomicBool 免锁。
     embolden: std::sync::atomic::AtomicBool,
     config_path: PathBuf,
@@ -104,6 +121,7 @@ struct Probe {
 impl FontStore {
     pub fn new(paths: &Paths, cfg: FontConfig) -> FontStore {
         FontStore {
+            role: Role::Reading,
             embolden: std::sync::atomic::AtomicBool::new(cfg.embolden_cjk_fallback),
             config_path: paths.service_config("font"),
             fonts_dir: paths.user_fonts_dir(),
@@ -112,6 +130,22 @@ impl FontStore {
             probes: Mutex::new(HashMap::new()),
             side_effects: true,
         }
+    }
+
+    /// 界面字体仓库：`fonts/shelf-ui/` + `shelf/ui-fonts.json`，不写 fontconfig、没有加粗开关。
+    pub fn ui(paths: &Paths) -> FontStore {
+        let mut s = FontStore::new(paths, FontConfig { embolden_cjk_fallback: false });
+        s.role = Role::Ui;
+        s.fonts_dir = paths.user_fonts_dir().join(UI_SUBDIR);
+        s.json_path = paths.data_dir().join("ui-fonts.json");
+        s
+    }
+
+    /// 界面字体目录里有没有字体文件（阅读仓库据此决定要不要加系统中文保底）。
+    fn ui_fonts_present(&self) -> bool {
+        std::fs::read_dir(self.fonts_dir.join(UI_SUBDIR))
+            .map(|rd| rd.flatten().any(|e| e.file_name().to_str().is_some_and(|n| !n.starts_with('.') && formats::has_ext(n, FONT_EXTS))))
+            .unwrap_or(false)
     }
 
     pub fn embolden(&self) -> bool {
@@ -200,10 +234,13 @@ impl FontStore {
         groups.into_values().collect()
     }
 
-    /// 重建 fonts.json（qmd 消费）。
+    /// 重建 fonts.json（qmd 消费；界面仓库是 ui-fonts.json，只给网页列表用）。
     pub fn write_index(&self) -> Result<Vec<FontEntry>, String> {
         let fonts = self.scan();
         rmsvc_core::config::save(&self.json_path, &FontsJson { version: 1, fonts: fonts.clone() }, None)?;
+        if self.role == Role::Ui {
+            return Ok(fonts);
+        }
         if let Err(e) = self.write_fontconfig(&fonts) {
             eprintln!("[font-serve] 写 fontconfig 回退失败: {e}");
         }
@@ -216,6 +253,9 @@ impl FontStore {
     /// 当前条目重渲染一次（内容没变不落盘，见 [`Self::write_fontconfig`]），新版本改了回退配置格式也能在启动时带上。
     pub fn startup_index(&self) -> Result<Vec<FontEntry>, String> {
         if let Some(fonts) = self.fresh_index() {
+            if self.role == Role::Ui {
+                return Ok(fonts);
+            }
             if let Err(e) = self.write_fontconfig(&fonts) {
                 eprintln!("[font-serve] 写 fontconfig 回退失败: {e}");
             }
@@ -281,7 +321,8 @@ impl FontStore {
             }
         }
         let keys: Vec<&str> = cjk.iter().map(|e| e.key.as_str()).collect();
-        let xml = fontconfig::render(&keys, self.embolden(), &self.config_root_backup());
+        let pin: &[&str] = if self.ui_fonts_present() { &[SYSTEM_CJK_PIN] } else { &[] };
+        let xml = fontconfig::render(&keys, self.embolden(), pin, &self.config_root_backup());
         // 内容没变不重写：fontconfig 按配置文件 mtime 判断要不要重载，白写一次会让正在用它的进程（xochitl）重读配置。
         if std::fs::read(&self.fontconfig_conf).is_ok_and(|b| b == xml.as_bytes()) {
             return Ok(());
@@ -292,6 +333,13 @@ impl FontStore {
     /// ~/.config/shelf/fontconfig-fonts.conf.pre-shelf.bak（首次接管前的原配置备份）。
     fn config_root_backup(&self) -> PathBuf {
         self.fontconfig_conf.parent().and_then(|p| p.parent()).map(|c| c.join("shelf/fontconfig-fonts.conf.pre-shelf.bak")).unwrap_or_else(|| PathBuf::from("fontconfig-fonts.conf.pre-shelf.bak"))
+    }
+
+    /// 界面字体装上 / 删掉后由调用方叫：重写阅读仓库的 fonts.conf（保底规则跟着有无界面字体变）。
+    pub fn refresh_fontconfig(&self) {
+        if let Err(e) = self.write_fontconfig(&self.entries()) {
+            eprintln!("[font-serve] 写 fontconfig 回退失败: {e}");
+        }
     }
 
     /// 当前中文回退链（覆盖率降序的字体 key）——回执/状态展示用。
@@ -313,7 +361,10 @@ impl FontStore {
 
 impl AssetStore for FontStore {
     fn kind(&self) -> &'static str {
-        "font"
+        match self.role {
+            Role::Reading => "font",
+            Role::Ui => "ui-font",
+        }
     }
     fn allowed_ext(&self) -> &'static [&'static str] {
         FONT_EXTS
@@ -340,7 +391,11 @@ impl AssetStore for FontStore {
         let pct = entry.as_ref().map(|e| e.cjk_pct).unwrap_or(0);
         let is_cjk = pct >= CJK_MIN_PCT;
         let mut warn = String::new();
-        if is_cjk && pct < CJK_LOW_PCT {
+        if self.role == Role::Ui {
+            if pct < CJK_LOW_PCT {
+                warn = format!("中文覆盖率仅 {pct}%，界面里缺的字会显示成系统的 {SYSTEM_CJK_PIN}");
+            }
+        } else if is_cjk && pct < CJK_LOW_PCT {
             warn = format!("中文覆盖率仅 {pct}%（正文会有生僻字缺字/方框，适合做标题或点缀，不建议当正文主字体）");
         } else if !is_cjk && pct > 0 {
             warn = format!("中文覆盖率仅 {pct}%，不作中文回退");
@@ -349,7 +404,7 @@ impl AssetStore for FontStore {
             "family": entry.as_ref().map(|e| e.key.clone()).unwrap_or_default(),
             "names": entry.as_ref().map(|e| e.names.clone()),
             "cjkPct": pct, "isCjk": is_cjk,
-            "fallback": is_cjk, "warn": warn,
+            "fallback": is_cjk && self.role == Role::Reading, "warn": warn,
         });
         Ok(AssetItem { name: name.into(), bytes, extra })
     }
@@ -516,6 +571,36 @@ mod tests {
         // fonts.json 损坏 → 重扫
         std::fs::write(store.json_path(), "{broken").unwrap();
         assert_eq!(store.startup_index().unwrap()[0].key, "A");
+    }
+
+    #[test]
+    fn ui_fonts_stay_out_of_reading_and_pin_system_cjk() {
+        let (_t, paths, store) = setup();
+        let mut ui = FontStore::ui(&paths);
+        ui.side_effects = false;
+        std::fs::create_dir_all(store.fonts_dir()).unwrap();
+        std::fs::write(store.fonts_dir().join("Read.ttf"), b"\x00\x01\x00\x00").unwrap();
+        store.write_index().unwrap();
+        let conf = || std::fs::read_to_string(&store.fontconfig_conf).unwrap();
+        assert!(!conf().contains(SYSTEM_CJK_PIN), "没有界面字体时不加保底");
+        // 装一个界面字体：落在 shelf-ui/，进 ui-fonts.json，不进阅读的 fonts.json / 菜单
+        let out = AssetUploadFlow::new(&paths).run(&ui, &body(&[("Ui.ttf", b"\x00\x01\x00\x00")])[..], "B").unwrap();
+        assert!(out[0].ok, "{:?}", out[0].message);
+        assert!(store.fonts_dir().join(UI_SUBDIR).join("Ui.ttf").exists());
+        assert_eq!(ui.list().iter().map(|i| i.name.as_str()).collect::<Vec<_>>(), vec!["Ui"]);
+        assert_eq!(out[0].item.as_ref().unwrap().extra["fallback"], false, "界面字体不当回退");
+        assert_eq!(store.write_index().unwrap().iter().map(|e| e.key.as_str()).collect::<Vec<_>>(), vec!["Read"], "阅读扫描只看顶层");
+        let j: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(store.json_path()).unwrap()).unwrap();
+        assert!(!j.to_string().contains("Ui.ttf"));
+        assert!(!conf().contains(">Ui<"), "界面字体不进 fonts.conf 的回退链");
+        // 阅读仓库重写 fonts.conf 时带上系统中文保底
+        store.refresh_fontconfig();
+        assert!(conf().contains(&format!("mode=\"append\" binding=\"weak\"><string>{SYSTEM_CJK_PIN}</string>")));
+        // 删掉界面字体：保底撤掉
+        ui.remove_family("Ui").unwrap();
+        store.refresh_fontconfig();
+        assert!(!conf().contains(SYSTEM_CJK_PIN));
+        assert!(ui.list().is_empty());
     }
 
     #[test]

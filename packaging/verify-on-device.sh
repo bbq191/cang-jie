@@ -108,6 +108,7 @@ qmd_mark() {
     case "$1" in
         reader-page-turn.qmd) echo "CJ-PAGE-TURN: loaded" ;;
         font-menu-dynamic.qmd) echo "SHELF-FONT:" ;;
+        ui-font-tokens.qmd) echo "SHELF-UI-FONT:" ;;
         shelf-mkdir-agent.qmd) echo "SHELF-MKDIR:" ;;
         shelf-trash-agent.qmd) echo "SHELF-TRASH:" ;;
         shelf-comic-margins.qmd) echo "CJ-COMIC-MARGIN:" ;;

@@ -28,10 +28,11 @@ shelf_select() {
 }
 
 # 服务→随它装的 qt-resource-rebuilder qmd（放 $HOME/xovi/exthome/qt-resource-rebuilder/）
-#   font 的 qmd 载荷里按固件版本二选一（font-menu-dynamic.qmd / -3.27.qmd），设备上统一叫 font-menu-dynamic.qmd
+#   font 的 qmd 载荷里按固件版本二选一（font-menu-dynamic.qmd / -3.27.qmd），设备上统一叫 font-menu-dynamic.qmd；
+#   ui-font-tokens.qmd（界面字体，Ark 设计令牌）只在 3.28 装（3.27 的令牌文件没核对过）
 shelf_svc_qmds() {
     case "$1" in
-        font) echo "font-menu-dynamic.qmd" ;;
+        font) echo "font-menu-dynamic.qmd ui-font-tokens.qmd" ;;
         book) echo "shelf-trash-agent.qmd shelf-mkdir-agent.qmd shelf-comic-margins.qmd reader-page-turn.qmd" ;;
         *) echo "" ;;
     esac

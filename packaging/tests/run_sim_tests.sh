@@ -25,7 +25,7 @@ REAL_HOME="$HOME"
 guard_paths() {
     echo "$REAL_HOME/.config/shelf $REAL_HOME/.local/share/shelf $REAL_HOME/.local/state/shelf $REAL_HOME/.local/lib/shelf $REAL_HOME/cangjie-backups $REAL_HOME/.local/bin/shelf-uninstall $REAL_HOME/.cangjie-stage $REAL_HOME/.cangjie-pending-apply /run/cangjie-pending-apply"
     # 2026-09-30 补：deploy/uninstall 会在 $HOME 下建/删的其它载荷与数据位置（同名目录在开发机上也可能真实存在）
-    echo "$REAL_HOME/battop $REAL_HOME/hl-snap $REAL_HOME/hw-stroke $REAL_HOME/shelf-pkg $REAL_HOME/shelf-pkg.new $REAL_HOME/pkg-wifi-watch $REAL_HOME/pkg-xovi-persist $REAL_HOME/pkg-chrony-boot-wakelock $REAL_HOME/xovi $REAL_HOME/.local/share/cangjie-ime $REAL_HOME/.local/bin/wifi-watch.sh $REAL_HOME/.local/bin/gateway $REAL_HOME/.local/bin/lo-alias.sh"
+    echo "$REAL_HOME/battop $REAL_HOME/hl-snap $REAL_HOME/ui-font $REAL_HOME/hw-stroke $REAL_HOME/shelf-pkg $REAL_HOME/shelf-pkg.new $REAL_HOME/pkg-wifi-watch $REAL_HOME/pkg-xovi-persist $REAL_HOME/pkg-chrony-boot-wakelock $REAL_HOME/xovi $REAL_HOME/.local/share/cangjie-ime $REAL_HOME/.local/bin/wifi-watch.sh $REAL_HOME/.local/bin/gateway $REAL_HOME/.local/bin/lo-alias.sh"
 }
 # 签名 = 每个已存在路径 + 它的 mtime（目录里增删条目会改目录 mtime）：不只看"有没有新出现"，也看"原有的被动过/删掉"
 guard_sig() { for g in $(guard_paths); do [ -e "$g" ] || [ -L "$g" ] && echo "$g $(stat -c %Y "$g" 2>/dev/null)"; done; }
@@ -109,7 +109,7 @@ mk_payload() { # DIR
     done
     printf '[Unit]\nDescription=t\n[Install]\nWantedBy=multi-user.target\n' > "$P/systemd/shelf.target"
     echo '#!/bin/sh' > "$P/lo-alias/lo-alias.sh"
-    for q in font-menu-dynamic.qmd font-menu-dynamic-3.27.qmd shelf-trash-agent.qmd shelf-mkdir-agent.qmd shelf-comic-margins.qmd reader-page-turn.qmd; do echo "qmd $q v1" > "$P/xovi/$q"; done
+    for q in font-menu-dynamic.qmd font-menu-dynamic-3.27.qmd ui-font-tokens.qmd shelf-trash-agent.qmd shelf-mkdir-agent.qmd shelf-comic-margins.qmd reader-page-turn.qmd; do echo "qmd $q v1" > "$P/xovi/$q"; done
     cp "$REPO/shelf/install.sh" "$REPO/shelf/uninstall.sh" "$REPO/shelf/manifest.sh" "$PKG/devlib.sh" "$P/"
 }
 
@@ -266,7 +266,7 @@ check "install 全量：退出 0" test "$rc" -eq 0
 check "install：8 个服务二进制都在" test -x "$B/gateway" -a -x "$B/book-serve" -a -x "$B/note-serve" -a -x "$B/wallpaper-serve"
 check "install：辅助脚本 lo-alias.sh / shelf-uninstall / 库 已装" test -x "$B/lo-alias.sh" -a -x "$B/shelf-uninstall" -a -f "$R/home/root/.local/lib/shelf/manifest.sh" -a -f "$R/home/root/.local/lib/shelf/devlib.sh"
 check "install：单元 + shelf.target + wants 链接" test -f "$CJ_SYSD/gateway.service" -a -L "$CJ_SYSD/shelf.target.wants/book-serve.service" -a -L "$CJ_SYSD/multi-user.target.wants/shelf.target"
-check "install：五个 qmd（字体/回收站/建夹/漫画页边距/阅读器翻页）都在 qrr 目录" test -f "$Q/font-menu-dynamic.qmd" -a -f "$Q/shelf-trash-agent.qmd" -a -f "$Q/shelf-mkdir-agent.qmd" -a -f "$Q/shelf-comic-margins.qmd" -a -f "$Q/reader-page-turn.qmd"
+check "install：六个 qmd（字体/界面字体/回收站/建夹/漫画页边距/阅读器翻页）都在 qrr 目录" test -f "$Q/font-menu-dynamic.qmd" -a -f "$Q/ui-font-tokens.qmd" -a -f "$Q/shelf-trash-agent.qmd" -a -f "$Q/shelf-mkdir-agent.qmd" -a -f "$Q/shelf-comic-margins.qmd" -a -f "$Q/reader-page-turn.qmd"
 check "install：rw 窗口只开一次、最后一次 mount 是 ro" test "$(count_log 'remount,rw')" = 1 -a "$(last_mount)" = "mount -o remount,ro /"
 check "install：不跑 xovi/start、不重启 xochitl（只打印提示）" test "$(count_log XOVI_START)" = 0 -a "$(count_log 'restart xochitl')" = 0
 check "install：qmd 生效提示指路整机重启（deploy-xovi-apply.sh / reboot），不教 systemctl restart xochitl" test -n "$(grep '生效需整机重启' "$R/out1.txt")" -a -z "$(grep 'systemctl restart xochitl' "$R/out1.txt")"
@@ -515,7 +515,7 @@ check "install-all --force：未验证哈希写进本机 allowlist.local，被 g
 # 扩展 .so 有变化且 xochitl 正映射着 → 走 H3 的 stop → 换入 → start；否则 restart。两者合计恰好一轮。
 cycles="$(count_log 'systemctl reboot')"
 check "install-all：整轮下来 xovi 已生效 → 只在最后整机重启一次，全程不停/不重启 xochitl、没有 xovi/start（H1）" test "$cycles" = 1 -a -z "$(grep -E 'systemctl (stop|start|restart) xochitl' "$CJ_SIM_LOG")" -a "$(count_log XOVI_START)" = 0
-check "install-all：hl-snap 落进 extensions.d，且目录里只有它（已移除的 hw-stroke 不再装）" test -f "$R/home/root/xovi/extensions.d/hl-snap.so" -a "$(ls "$R/home/root/xovi/extensions.d")" = hl-snap.so
+check "install-all：hl-snap 与 ui-font 落进 extensions.d，且目录里只有这两个（已移除的 hw-stroke 不再装）" test -f "$R/home/root/xovi/extensions.d/hl-snap.so" -a "$(ls "$R/home/root/xovi/extensions.d" | tr '\n' ' ')" = "hl-snap.so ui-font.so "
 W="$CJ_SYSD/multi-user.target.wants"
 check "install-all：wifi-watch（M1）/ xovi-reenable / chrony-boot-wakelock 单元在 /usr 且有 wants 链接" test -L "$W/wifi-watch.service" -a -L "$W/xovi-reenable.service" -a -L "$W/chrony-boot-wakelock.service"
 check "install-all：不再装已移除的电池刺客（没有 battop 单元与 /home/root/battop）" test ! -e "$CJ_SYSD/battop.service" -a ! -e "$R/home/root/battop"
@@ -768,7 +768,7 @@ mk_dump() {
         echo "XMAP|/home/root/xovi/extensions.d/hl-snap.so|3|0"
         echo "HAS_XOVI|1"; echo "EXT_FILE|hl-snap.so|1999000000"
         echo "HAS_QRR|1"
-        for q in font-menu-dynamic.qmd shelf-trash-agent.qmd shelf-mkdir-agent.qmd shelf-comic-margins.qmd reader-page-turn.qmd; do echo "QRR_FILE|$q|1999000000"; done
+        for q in font-menu-dynamic.qmd ui-font-tokens.qmd shelf-trash-agent.qmd shelf-mkdir-agent.qmd shelf-comic-margins.qmd reader-page-turn.qmd; do echo "QRR_FILE|$q|1999000000"; done
         echo "HAS_APPLOAD|0"
         for s in $VSVCS; do echo "UNIT|svc|$s.service|1|1|active|0|5000|10240|20480|7600000|-"; done
         echo "UNIT|target|shelf.target|1|1|active|-|-|-|-|-|-"
@@ -842,7 +842,7 @@ vcase "退役单元都不在 → 不报" 0 "✓ 单元：12/12 个在位" "\$a U
 check "  └ 没有遗留提示" test -z "$(vline '已退役/旧命名的遗留')"
 ONLY_SKIP="$(bash -c "cd '$PKG' && . ./lib.sh && uninstall_only_skip battop handwriting-stroke")"
 vcase "已移除的手写优化 hw-stroke.so 还在 extensions.d（旧设备）→ ⚠（不当成正常扩展），给清理命令" 0 "⚠ 扩展 hw-stroke.so：已移除的手写优化（2026-09-30）还在 extensions.d 里——清掉：sh install-all.sh" "\$a EXT_FILE${T}hw-stroke.so${T}1999000000" "\$a XMAP${T}/home/root/xovi/extensions.d/hw-stroke.so${T}3${T}0"
-check "  └ 清理命令只留 battop/handwriting-stroke 两步（--skip $ONLY_SKIP）、没把它报成 ✓" test "$ONLY_SKIP" = "chrony-boot-wakelock,wifi-watch,xovi-persist,hl-snap,shelf,sidebar-entry" -a -n "$(vline "uninstall-all.sh --skip $ONLY_SKIP")" -a -z "$(vline '✓ 扩展 hw-stroke.so')"
+check "  └ 清理命令只留 battop/handwriting-stroke 两步（--skip $ONLY_SKIP）、没把它报成 ✓" test "$ONLY_SKIP" = "chrony-boot-wakelock,wifi-watch,xovi-persist,hl-snap,ui-font,shelf,sidebar-entry" -a -n "$(vline "uninstall-all.sh --skip $ONLY_SKIP")" -a -z "$(vline '✓ 扩展 hw-stroke.so')"
 vcase "已移除的 hw-stroke.so 在待换入区 → ⚠" 0 "⚠ 待换入区 hw-stroke.so：已移除的手写优化还在待换入区里" "\$a PENDING${T}so-pending:hw-stroke.so"
 vcase "已移除的电池刺客单元/二进制还在（旧设备）→ ⚠、不计入在位统计" 0 "⚠ battop.service：已移除的电池刺客（2026-09-30）遗留（单元 在，载荷 在）——清掉：sh install-all.sh" "s/^UNIT${T}removed${T}battop.service${T}0${T}0/UNIT${T}removed${T}battop.service${T}1${T}1/"
 check "  └ 在位统计仍是 12/12" test -n "$(vline '✓ 单元：12/12 个在位')"
@@ -889,7 +889,7 @@ printf '  sl  local_address                         remote_address              
 for s in $VSVCS; do : > "$B/$s"; printf '[Service]\nExecStart=/home/root/.local/bin/%s\n' "$s" > "$R/usr/lib/systemd/system/$s.service"; done
 for u in shelf.target xovi-reenable.service wifi-watch.service chrony-boot-wakelock.service; do : > "$R/usr/lib/systemd/system/$u"; done
 : > "$B/wifi-watch.sh"
-for q in font-menu-dynamic.qmd shelf-trash-agent.qmd shelf-mkdir-agent.qmd shelf-comic-margins.qmd reader-page-turn.qmd; do : > "$Q/$q"; done
+for q in font-menu-dynamic.qmd ui-font-tokens.qmd shelf-trash-agent.qmd shelf-mkdir-agent.qmd shelf-comic-margins.qmd reader-page-turn.qmd; do : > "$Q/$q"; done
 printf 'f1\nf2\nf3\nf4\tx\n' > "$R/host-flight.log"   # 飞行记录仪在宿主机上（09-25 更正）；末行带 TAB：要压成空格，不能错位
 export CJ_FLIGHT_LOG="$R/host-flight.log"
 cat > "$R/journal.txt" <<'EOF'
@@ -1106,7 +1106,7 @@ xovi_live on; seed_old_device; : > "$CJ_SIM_LOG"
 ( cd "$PKG" && run sh install-all.sh 127.0.0.1 --force --skip chrony-cn,timezone-cn ) >"$R/out.txt" 2>&1; rc=$?
 check "旧设备 install-all：退出 0，电池刺客与手写优化的残留全被自动清掉（reading-qol.json 旧键保留）" test "$rc" -eq 0 && gone_old
 check "  └ 清理排在 xovi-apply 前；最后只整机重启一次，全程不停/不重启 xochitl、没有 xovi/start" test "$(count_log 'systemctl reboot')" = 1 -a -z "$(grep -E 'systemctl (stop|start|restart) xochitl' "$CJ_SIM_LOG")" -a "$(count_log XOVI_START)" = 0 -a "$(grep -n '═══ 清理已移除:handwriting-stroke ═══' "$R/out.txt" | cut -d: -f1)" -lt "$(grep -n '═══ xovi-apply ═══' "$R/out.txt" | cut -d: -f1)"
-check "  └ extensions.d 只剩 hl-snap.so；rw 窗口以 ro 收尾；汇总里没有失败" test "$(ls -A "$R/home/root/xovi/extensions.d")" = hl-snap.so -a "$(last_mount)" = "mount -o remount,ro /" -a -z "$(grep '❌' "$R/out.txt")"
+check "  └ extensions.d 只剩 hl-snap.so 与 ui-font.so；rw 窗口以 ro 收尾；汇总里没有失败" test "$(ls -A "$R/home/root/xovi/extensions.d" | tr '\n' ' ')" = "hl-snap.so ui-font.so " -a "$(last_mount)" = "mount -o remount,ro /" -a -z "$(grep '❌' "$R/out.txt")"
 : > "$CJ_SIM_LOG"
 ( cd "$PKG" && run sh install-all.sh 127.0.0.1 --skip chrony-cn,timezone-cn ) >"$R/out.txt" 2>&1; rc=$?
 check "  └ 再部署一次：已没有残留 → 清理步骤什么都不动（不碰 battop 单元、不 remount、不重启）" test "$rc" -eq 0 -a -n "$(grep '没有电池刺客（battop）的残留' "$R/out.txt")" -a "$(count_log battop)" = 0 -a "$(count_log remount)" = 0 -a "$(count_log 'systemctl reboot')" = 0

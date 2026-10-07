@@ -2,6 +2,7 @@
 
 **一句话**：一组互相独立的小工具，让 reMarkable 更顺手——划中文精确吸附、阅读器翻页、字体和壁纸上传即用。它们都**不修改 xochitl**（reMarkable 自带的阅读/笔记程序）本身。
 
+- **2026-10-07 新做界面字体**（`ui-font/`，未部署）：只换 xochitl 界面字体、不碰阅读，见 [README](ui-font/README.md) 与白皮书 §03o。
 - 整个仓库里的位置见 [`../docs/OVERVIEW.md`](../docs/OVERVIEW.md)。
 - 原理、决策、真机验证、踩坑见 [白皮书](docs/reMarkable系统增强线白皮书.md)（先读 §00b 现状）。
 - 改 qmd 补丁（如 `reader-page-turn.qmd`）后要离线验证，用 qmldiff 的 `apply-diffs` 实跑，**不要信 `check-compatibility`**（它基本不做校验，垃圾语法也报无错），见白皮书 §04「qmd 补丁怎么离线验证」。
@@ -16,8 +17,9 @@
 |---|---|---|---|
 | [`hl-snap/`](hl-snap/README.md) | xovi 扩展：荧光笔划中文时划哪吸哪，不再吸整行 | ✅ 真机通 | 管理 → 系统增强，默认开 |
 | [`shelf/xovi/reader-page-turn.qmd`](../shelf/xovi/reader-page-turn.qmd) | qmd 补丁：xochitl 阅读器单击翻页 | ✅ 真机通（09-24）；日漫翻页规则 2026-10-07 删除（书架不管翻页方向，xochitl 里日漫一律从左往右；已合 master（9c2571f），10-07 15:54 已部署并整机重启，部署自检 36✓ 1⚠ 0✗，功能未手测） | 管理 → 系统增强，默认关 |
+| [`ui-font/`](ui-font/README.md) | xovi 扩展 + qmd：把 xochitl **界面**的字体换成上传的字体，阅读器字体不变 | 🧪 host 测试 + 离线验证通过，**未部署**（10-07） | 其他 → xochitl → 界面字体，整机重启生效 |
 | [`wallpaper-serve/`](wallpaper-serve/README.md) | Web 服务（8793）：休眠壁纸上传即用、每次休眠后轮换 | ✅ 真机通 | 其他 → 壁纸 |
-| [`font-serve/`](font-serve/font-serve.service) | Web 服务（8792）：xochitl 字体上传即装、中文回退链 | ✅ 真机通 | 其他 → xochitl |
+| [`font-serve/`](font-serve/font-serve.service) | Web 服务（8792）：xochitl 阅读字体上传即装、中文回退链；10-07 起也管界面字体（未部署） | ✅ 真机通（阅读字体） | 其他 → xochitl |
 | [`shared/`](shared/PROVENANCE.md) | xovi 扩展用的特征码扫描 + trampoline 代码（带 host 单测，编进 `hl-snap.so`） | — | 不单独部署 |
 | [`lo-alias/`](lo-alias/README.md) | 让 `10.11.99.1` 在不插 USB 时也可达的小脚本 | ✅ 真机通（09-25 无 USB 冷启动） | 不单独部署（网关启动前调用） |
 
@@ -25,7 +27,7 @@
 
 **开关 ≠ 已生效**：扩展的网页开关旁有「已加载 / 未加载」徽章，表示 `.so` 是否真的在 xochitl 进程里；「管理 → 基石」也列出了 xochitl 里实际生效的扩展。
 
-`font-serve` 没有自己的 README：路由、字体目录、`fonts.json` 索引写在 `font-serve/src/main.rs` 头注（host 测试 `cd font-serve && cargo test`，10 项；wallpaper-serve 11 项），原理在 [`../shelf/docs/reMarkable书架白皮书.md`](../shelf/docs/reMarkable书架白皮书.md) 的字体章节（第 F 章、§03k、§03bd）。
+`font-serve` 没有自己的 README：路由、字体目录、`fonts.json` 索引写在 `font-serve/src/main.rs` 头注，界面字体在 `src/ui.rs` 头注（host 测试 `cd font-serve && cargo test`，13 项；wallpaper-serve 11 项），原理在 [`../shelf/docs/reMarkable书架白皮书.md`](../shelf/docs/reMarkable书架白皮书.md) 的字体章节（第 F 章、§03k、§03bd）。
 
 ## 构建与部署
 
@@ -36,6 +38,7 @@
 ```sh
 cd packaging
 sh deploy-hl-snap.sh <host>
+sh deploy-ui-font.sh <host>
 ```
 
 （`deploy-handwriting-stroke.sh`、`deploy-battop.sh` 随功能一起在 2026-09-30 删除。）

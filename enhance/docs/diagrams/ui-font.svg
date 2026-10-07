@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1000 640" font-family="Noto Sans CJK SC, sans-serif">
+<defs><marker id="uf-m" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#555"/></marker></defs>
+<rect x="0" y="0" width="1000" height="640" fill="#fbfbfa"/>
+<text x="500" y="32" text-anchor="middle" font-size="20" font-weight="bold" fill="#1a1a1a">界面字体：只换 xochitl 界面，不碰阅读</text>
+<text x="500" y="56" text-anchor="middle" font-size="13" fill="#666">一个选择文件，开机时被两处读一次；界面字体放在单独子目录，fontconfig 加一条保底规则挡住它进阅读回退</text>
+
+<!-- browser + gateway + font-serve -->
+<rect x="30" y="84" width="200" height="64" rx="10" fill="#f2f2f4" stroke="#7a7a88" stroke-width="1.6"/>
+<text x="130" y="108" text-anchor="middle" font-size="14" font-weight="bold" fill="#1a1a1a">网页</text>
+<text x="130" y="130" text-anchor="middle" font-size="12" fill="#444">其他 → xochitl → 界面字体</text>
+<polyline points="130,148 130,180" fill="none" stroke="#555" stroke-width="1.7" marker-end="url(#uf-m)"/>
+<rect x="30" y="180" width="200" height="118" rx="10" fill="#fdf3dc" stroke="#b8860b" stroke-width="1.6"/>
+<text x="130" y="203" text-anchor="middle" font-size="14" font-weight="bold" fill="#1a1a1a">font-serve :8792</text>
+<text x="130" y="225" text-anchor="middle" font-size="11.5" fill="#444">POST /ui 上传 · DELETE /ui/…</text>
+<text x="130" y="243" text-anchor="middle" font-size="11.5" fill="#444">PUT /ui/select {sans, serif}</text>
+<text x="130" y="261" text-anchor="middle" font-size="11.5" fill="#444">（经网关 /api/fonts/ui）</text>
+<text x="130" y="283" text-anchor="middle" font-size="11.5" fill="#8a6508">改选择 → 显示"整机重启后生效"</text>
+
+<!-- files -->
+<rect x="300" y="84" width="300" height="64" rx="10" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.6"/>
+<text x="450" y="108" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a" font-family="Noto Sans Mono CJK SC, monospace">~/.local/share/fonts/shelf-ui/</text>
+<text x="450" y="130" text-anchor="middle" font-size="11.5" fill="#444">界面字体文件（阅读扫描只看上一层，看不到）</text>
+<rect x="300" y="180" width="300" height="64" rx="10" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.6"/>
+<text x="450" y="204" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a" font-family="Noto Sans Mono CJK SC, monospace">~/.local/share/shelf/ui-font.json</text>
+<text x="450" y="226" text-anchor="middle" font-size="11.5" fill="#444">{"sans":"…","serif":"…"}　空串 = 原生</text>
+<rect x="300" y="276" width="300" height="80" rx="10" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.6"/>
+<text x="450" y="300" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a" font-family="Noto Sans Mono CJK SC, monospace">~/.config/fontconfig/fonts.conf</text>
+<text x="450" y="322" text-anchor="middle" font-size="11.5" fill="#444">有界面字体时末尾加：每个请求</text>
+<text x="450" y="340" text-anchor="middle" font-size="11.5" fill="#444">append weak「Noto Sans SC」</text>
+<polyline points="230,200 262,200 262,116 300,116" fill="none" stroke="#555" stroke-width="1.5" marker-end="url(#uf-m)"/>
+<polyline points="230,230 300,230" fill="none" stroke="#555" stroke-width="1.5" marker-end="url(#uf-m)"/>
+<polyline points="230,270 262,270 262,316 300,316" fill="none" stroke="#555" stroke-width="1.5" marker-end="url(#uf-m)"/>
+
+<!-- xochitl process -->
+<rect x="660" y="84" width="310" height="300" rx="12" fill="#eef4fb" stroke="#4a78b0" stroke-width="1.8"/>
+<text x="815" y="108" text-anchor="middle" font-size="14" font-weight="bold" fill="#1a1a1a">xochitl 进程（开机时读一次）</text>
+<rect x="680" y="124" width="270" height="100" rx="8" fill="#ffffff" stroke="#4a78b0" stroke-width="1.4"/>
+<text x="815" y="146" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">ui-font.so（xovi 扩展）</text>
+<text x="815" y="166" text-anchor="middle" font-size="11.5" fill="#444">改导入表里 setFont 那一格</text>
+<text x="815" y="184" text-anchor="middle" font-size="11.5" fill="#444">应用默认字体 reMarkable Sans → sans</text>
+<text x="815" y="202" text-anchor="middle" font-size="11.5" fill="#666">管：老界面里没写字体名的文字</text>
+<rect x="680" y="236" width="270" height="100" rx="8" fill="#ffffff" stroke="#4a78b0" stroke-width="1.4"/>
+<text x="815" y="258" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">ui-font-tokens.qmd</text>
+<text x="815" y="278" text-anchor="middle" font-size="11.5" fill="#444">Ark 设计令牌 Style.qml</text>
+<text x="815" y="296" text-anchor="middle" font-size="11.5" fill="#444">正文 39 处 → sans · 标题 8 处 → serif</text>
+<text x="815" y="314" text-anchor="middle" font-size="11.5" fill="#666">管：设置页、对话框、按钮、标题</text>
+<text x="815" y="364" text-anchor="middle" font-size="11.5" fill="#2e5d8c">改完要整机重启（不单独重启 xochitl）</text>
+<polyline points="600,212 630,212 630,174 680,174" fill="none" stroke="#4a78b0" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#uf-m)"/>
+<polyline points="630,212 630,286 680,286" fill="none" stroke="#4a78b0" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#uf-m)"/>
+<text x="634" y="250" font-size="11" fill="#2e5d8c">读</text>
+
+<!-- reading untouched -->
+<rect x="30" y="420" width="940" height="196" rx="12" fill="#eef7ee" stroke="#4f8a4f" stroke-width="1.8"/>
+<text x="500" y="446" text-anchor="middle" font-size="15" font-weight="bold" fill="#1a1a1a">阅读不变（三道隔离）</text>
+<text x="56" y="478" font-size="13" fill="#1a1a1a">① 菜单：阅读字体菜单读 shelf/fonts.json，只列 fonts/ 顶层的字体；界面字体在 shelf-ui/ 子目录，不在菜单里。</text>
+<text x="56" y="508" font-size="13" fill="#1a1a1a">② 缺字回退：只装界面字体时，fontconfig 会把它排进阅读的中文回退第一位（设备 fc-match -s 实测）；</text>
+<text x="80" y="530" font-size="13" fill="#1a1a1a">保底规则让系统 Noto Sans SC 排在它前面，拉丁字仍先用 Noto Sans，阅读字体与中文回退链都在它们之前。</text>
+<text x="56" y="560" font-size="13" fill="#1a1a1a">③ 字体名：阅读器菜单里的「reMarkable Sans」、笔记本打字的字体都按名字直接取内嵌字体，</text>
+<text x="80" y="582" font-size="13" fill="#1a1a1a">扩展只换 setFont 这一次调用、不改字体数据库，qmd 只改令牌文件，两者都碰不到它们。</text>
+<polyline points="450,356 450,420" fill="none" stroke="#4f8a4f" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#uf-m)"/>
+</svg>

@@ -33,6 +33,7 @@ const routes = {
   '/api/services': () => ({services: [{name:'note-serve', ui:{order:1}}, {name:'font-serve', ui:{order:2}}, {name:'wallpaper-serve', ui:{order:3}}]}),
   '/api/manage': () => ({modules: [{service:'note-serve', seg:'notes'}, {service:'font-serve', seg:'fonts'}, {service:'wallpaper-serve', seg:'wallpapers'}]}),
   '/api/fonts': () => ({items:[]}), '/api/fonts/status': () => ({ok:true}),
+  '/api/fonts/ui': () => ({ok:true, items:[{name:'Sarasa UI SC', bytes:135000000, extra:{names:{cn:'更纱黑体 UI SC'}, cjkPct:100, files:['a.ttf','b.ttf','c.ttf']}}, {name:evil, bytes:1, extra:{cjkPct:0}}], sans:'Sarasa UI SC', serif:'', restartNeeded:true}),
   '/api/wallpapers': () => ({items:[]}), '/api/wallpapers/status': () => ({ok:true, mode:'sequential'}),
   '/api/ink/books': () => ({items:[{uuid:'u1', title:'书', entries:1}]}),
   '/api/ink/books/u1': () => ({uuid:'u1', entries:[{id:'e1', status:'pending', chapter:0, page_index:0, destination:'both', style:'body', text:'hi', updated:1}]}),
@@ -170,6 +171,11 @@ out.noteEventEnhance = (await hits('/api/enhance/status')) - e0;
 // 「其他」tab：壁纸服务的事件只刷壁纸子面板，不连带重取字体
 await page.evaluate(() => document.querySelectorAll('#tabs button')[2].click()); // 传书 / 笔记 / 其他 / 管理
 await new Promise(r => setTimeout(r, 500));
+// 界面字体卡片：两个下拉（原生 + 已装界面字体）、当前选择、待重启提示、字体名按文本显示
+out.uiFont = await page.evaluate(() => { const c = document.querySelector('#uisans'); if (!c) return null;
+  const s = document.querySelector('#uiserif'), l = document.querySelector('#uil');
+  return {sans: c.value, serif: s.value, opts: c.options.length, firstOpt: c.options[0].value, restart: document.querySelector('#uist').style.display !== 'none',
+    rows: l.querySelectorAll('li').length, img: l.querySelectorAll('img').length, text: l.textContent}; });
 const f0 = await hits('/api/fonts'), w0 = await hits('/api/wallpapers');
 await page.evaluate(() => window.__es[window.__es.length - 1].onmessage({data: JSON.stringify({area:'wallpapers', kind:'pool', svc:'wallpapers'})}));
 await new Promise(r => setTimeout(r, 400));
@@ -200,6 +206,8 @@ assert.equal(out.noteAfterBlur, 1, '失焦后补刷一次');
 assert.equal(out.noteEventEnhance, 0, '事件刷新不重查 /api/enhance/status');
 assert.equal(out.noteLocalSwitchTranscribe, 0, '切导出 tab / 章节标签不该再请求 /api/transcribe/status');
 assert.equal(out.otherFonts, 0, '壁纸事件不该重取字体列表');
+assert.ok(out.uiFont && out.uiFont.sans === 'Sarasa UI SC' && out.uiFont.serif === '' && out.uiFont.opts === 3 && out.uiFont.firstOpt === '' && out.uiFont.restart, '界面字体：下拉 = 原生 + 两个已装、选中当前、显示待重启');
+assert.ok(out.uiFont.rows === 2 && out.uiFont.img === 0 && out.uiFont.text.includes('<img src=x'), '界面字体列表：两行、名字按文本显示');
 assert.equal(out.otherWalls, 1, '壁纸事件应刷壁纸子面板一次');
 assert.equal(out.queueEventStagingHits, 0, '网关排队/进度事件不该全量重取母版库列表');
 assert.ok(out.queueEventBatchHits >= 1 && out.queueEventBatchHits <= 2, `排队事件应重取批量状态且合并，实际 ${out.queueEventBatchHits} 次`);

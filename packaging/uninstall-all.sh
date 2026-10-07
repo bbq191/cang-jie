@@ -11,6 +11,7 @@
 #   sidebar-entry（已退役）         从 qt-resource-rebuilder exthome 摘除 KOReader 侧栏入口的 qmd/rcc（2026-09-29 起不再安装，
 #                                  安装件已删；这里只为清旧设备：appload 卸掉后这份 qmd 的 IMPORT net.asivery.AppLoad 找不到模块）
 #   hl-snap                        从 extensions.d 摘除 .so（不碰 reading-qol.json 配置、不碰 cangjie-backups/）
+#   ui-font                        从 extensions.d 摘除 .so（不碰 ~/.local/share/shelf/ui-font.json 与界面字体文件——那是 shelf 的数据）
 #   handwriting-stroke（已移除）    手写优化：摘除 extensions.d/hw-stroke.so 与待换入区副本（2026-09-30 起不再安装；
 #                                  install-all 重新部署时也会自动清，函数在 removal.sh）
 #   chrony-boot-wakelock / xovi-persist / wifi-watch   停用 + 删 /usr 单元（dm-verity 门，跟安装时同一套 devlib 写法）；
@@ -106,6 +107,7 @@ DEVICE_SCRIPT
 }
 
 uninstall_hl_snap() { remove_xovi_extension hl-snap.so hl-snap; }
+uninstall_ui_font() { remove_xovi_extension ui-font.so ui-font; }
 
 uninstall_sidebar_entry() {
     dev_script <<'DEVICE_SCRIPT'

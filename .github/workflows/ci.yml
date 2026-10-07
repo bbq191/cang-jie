@@ -50,6 +50,9 @@ jobs:
       # tests/test_shared.c 头注。
       - name: enhance/shared host 单测（特征码扫描 + trampoline patch，纯字节级验证不涉真机）
         run: make -C enhance/shared test
+      # enhance/ui-font（界面字体 xovi 扩展，2026-10-07）：配置解析 + 导入表改写（4 种链接方式）+ 真实 Qt 6 上的 setFont 替换
+      - name: enhance/ui-font host 单测
+        run: sudo apt-get update && sudo apt-get install -y qt6-base-dev pkg-config && make -C enhance/ui-font test
 
   # ── 设备端 Rust crate 的 host 测试（rmsvc-core / gateway / shelf / notes，各自独立无根 workspace）──
   rust:

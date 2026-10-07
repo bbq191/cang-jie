@@ -218,10 +218,10 @@ fw_gate() { # $1=FORCE(0/1)
 
 # ── 步骤表（install-all / uninstall-all 共用；两边清单靠它对称）──────────────
 # 顺序：先与 xovi/vellum 无关的独立项，再 wifi-watch，再依赖 xovi 的，shelf 最重，xovi-apply 放最后统一重启一次。
-STEP_ORDER="chrony-cn chrony-boot-wakelock timezone-cn wifi-watch xovi-persist hl-snap shelf xovi-apply"
+STEP_ORDER="chrony-cn chrony-boot-wakelock timezone-cn wifi-watch xovi-persist hl-snap ui-font shelf xovi-apply"
 # 只落盘、不各自重启 xochitl 的步骤（install-all 给它们传 DEFER_XOVI_START=1，最后由 xovi-apply 统一重启）
 # shellcheck disable=SC2034  # 由 install-all.sh 使用
-STEP_DEFER="hl-snap"
+STEP_DEFER="hl-snap ui-font"
 # 已退役的步骤：install-all 不再装，uninstall-all 照样卸（装过的设备还能清干净）；安装件（deploy 脚本与载荷）已删，
 # 没有 step_script 映射。
 #   sidebar-entry：KOReader/WeRead 的 Sidebar 入口（2026-09-29 用户卸了设备上的 KOReader、WeRead 与 appload；
@@ -249,6 +249,7 @@ step_script() {
         wifi-watch) echo ./deploy-wifi-watch.sh ;;
         xovi-persist) echo ./deploy-xovi-persist.sh ;;
         hl-snap) echo ./deploy-hl-snap.sh ;;
+        ui-font) echo ./deploy-ui-font.sh ;;
         shelf) echo ./deploy.sh ;;
         xovi-apply) echo ./deploy-xovi-apply.sh ;;
         *) return 1 ;;
@@ -265,6 +266,7 @@ step_payload() {
         xovi-persist) echo "pkg-xovi-persist xovi-reenable.service" ;;
         wifi-watch) echo "pkg-wifi-watch wifi-watch.service wifi-watch.sh" ;;
         hl-snap) echo "hl-snap hl-snap.so deploy/install.sh deploy/xovi-ext-install.sh deploy/devlib.sh deploy" ;;
+        ui-font) echo "ui-font ui-font.so deploy/install.sh deploy/xovi-ext-install.sh deploy/devlib.sh deploy" ;;
         # 已退役（2026-09-30）：只剩清理用——旧设备上 deploy-handwriting-stroke.sh 推过来的载荷目录
         handwriting-stroke) echo "hw-stroke hw-stroke.so deploy/install.sh deploy/xovi-ext-install.sh deploy/devlib.sh deploy" ;;
         *) return 1 ;;
@@ -334,7 +336,7 @@ case "$FREE" in ''|*[!0-9]*) echo "⚠ 读不到 $CJ_HOME 的可用空间，跳�
     else echo "-- $CJ_HOME 可用 $((FREE / 1024)) MB"; fi ;;
 esac
 have() { [ -e "$1" ] && echo "有" || echo "无"; }
-echo "-- xovi 本体 : $(have "$CJ_XOVI/xovi.so")   （无 → xovi-persist/hl-snap/xovi-apply 会失败：先 vellum add xovi）"
+echo "-- xovi 本体 : $(have "$CJ_XOVI/xovi.so")   （无 → xovi-persist/hl-snap/ui-font/xovi-apply 会失败：先 vellum add xovi）"
 echo "-- qt-resource-rebuilder : $(have "$CJ_XOVI/exthome/qt-resource-rebuilder")   （无 → shelf 的 qmd 自动跳过）"
 if cj_verity_active; then echo "-- dm-verity : 激活 → 所有写 /usr 的单元（chrony-boot-wakelock/xovi-persist/wifi-watch/shelf 开机链接）会被跳过"; else echo "-- dm-verity : 未激活"; fi
 if cj_xochitl_has_xovi; then echo "-- xochitl 里 xovi 已生效 → 有改动时最后一步换入后整机重启（不跑 xovi/start、不 restart xochitl）"; else echo "-- xochitl 里 xovi 尚未生效 → 最后一步让它生效：装了 xovi-reenable（本轮 xovi-persist 会装，dm-verity 下装不上）就整机重启，否则 xovi/start"; fi

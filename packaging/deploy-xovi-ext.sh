@@ -2,8 +2,9 @@
 # host 侧一键构建+推送+安装一个"独立最小 xovi 扩展"（数据驱动，2026-09-20 起 hl-snap 与
 # handwriting-stroke 共用这一份，原先两份 deploy 脚本 ~29 行差异全是名字）。
 #   hl-snap  → enhance/hl-snap（荧光笔 CJK 精确吸附，hook FUN_00f05ad0）
+#   ui-font  → enhance/ui-font（界面字体：改 xochitl 导入表里 QGuiApplication::setFont 那一格，2026-10-07）
 #   （hw-stroke → enhance/handwriting-stroke 手写优化 2026-09-30 已移除；旧设备上的残留由 removal.sh 清）
-# 入口仍是 deploy-hl-snap.sh（install-all 与文档沿用的名字，薄包装）。数据驱动的结构保留，将来再加扩展往下面 case 里加一行。
+# 入口是 deploy-hl-snap.sh / deploy-ui-font.sh（install-all 与文档沿用的名字，薄包装）。数据驱动的结构保留，将来再加扩展往下面 case 里加一行。
 #
 # 前置：设备已 vellum add xovi（设备端 install.sh 检查，缺失清楚报错）。
 # 前置（host 侧构建）：需要 asivery/xovi 的 clone 供 xovigen 生成元数据胶水，缺省找 ../../../xovi；
@@ -19,14 +20,15 @@ set -eu
 cd "$(dirname "$0")"
 # shellcheck disable=SC1091
 . ./lib.sh
-USAGE="用法：deploy-xovi-ext.sh hl-snap [host]      环境：DEFER_XOVI_START=1（只落盘不重启）CJ_SKIP_BUILD=1 XOVI_DIR=<xovi clone>"
+USAGE="用法：deploy-xovi-ext.sh hl-snap|ui-font [host]      环境：DEFER_XOVI_START=1（只落盘不重启）CJ_SKIP_BUILD=1 XOVI_DIR=<xovi clone>"
 case "${1:-}" in -h|--help) echo "$USAGE"; exit 0 ;; esac
 NAME="${1:?$USAGE}"; shift
 host_arg "$USAGE" "$@"
 case "$NAME" in
     hl-snap)   DIR=../enhance/hl-snap;            SO=hl-snap.so;   STEP=hl-snap ;;
+    ui-font)   DIR=../enhance/ui-font;            SO=ui-font.so;   STEP=ui-font ;;
     hw-stroke) echo "!! hw-stroke（手写优化）2026-09-30 已移除，不再部署；旧设备上的残留：sh install-all.sh 会自动清（或见 packaging/README.md）"; exit 2 ;;
-    *) echo "!! 未知扩展 $NAME（hl-snap）"; exit 2 ;;
+    *) echo "!! 未知扩展 $NAME（hl-snap / ui-font）"; exit 2 ;;
 esac
 DEST="/home/root/$(step_payload_dir "$STEP")"   # 载荷目录与 uninstall-all 共用 lib.sh 的 step_payload
 
