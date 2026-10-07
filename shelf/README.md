@@ -5,7 +5,7 @@ reMarkable Paper Pro Move 的**书籍搬运层**。它是跑在设备上的一�
 
 > **书的优化不在这里做**（2026-10-07 起）：先在电脑上用 [sheng-ren](https://github.com/bbq191/sheng-ren) 的 booklib，按 `xochitl` 阅读模式把书优化成 EPUB，
 > 再传上来。书架原样投书：设备上的「优化」、PDF 转 EPUB、原 PDF 备份、抓网文、联网补封面都删了。
-> **这次改动已提交（分支 `feat/drop-book-optimize`），未合并、未部署、未真机验证。**
+> **这次改动已合 master（15b4069），2026-10-07 13:02 已部署（`deploy.sh --only book`），部署自检 37✓ 0⚠ 0✗，功能未真机手测。**
 
 > **2026-09-29 起只剩 xochitl 一个阅读器**：设备上卸掉了 KOReader、第三方 WeRead 与 appload。书架随之撤掉「加入 KOReader」、
 > KOReader 字体/词典/配置、高亮回流等全部网页入口，`koreader-serve` 不再安装；它的源码和 `koreader/` 配置补丁 2026-09-30 也
