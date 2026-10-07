@@ -98,7 +98,7 @@
 | 让 qmd 改动生效 | **整机重启**（09-25 起）。不再单独 `systemctl restart xochitl`：xochitl 退出时自身有概率崩溃，再由系统应急整机重启；xovi 已生效时**绝不**跑 `xovi/start` | 第 F 章速查 |
 | KOReader | **2026-09-29 已从设备卸载**，书架相关入口与源码 09-30 全部删除 | 附录 B |
 | 上传暂存与临时文件 | 书在 `books/.work/`；xochitl 字体/壁纸在 `~/.local/state/shelf/upload/`——都在 /home。母版库里的临时文件只剩跨分区入库中转 `.<pid>.<序号>.landing.tmp`，出错或 panic 当场删、启动再清一遍所有点前缀 `*.tmp` | 传书线架构 §2.2、§9 |
-| 测试 | `cd shelf && cargo test --workspace`：2026-10-07 实跑 book-serve 79 + shelf-conv 24 个通过；`rmsvc-core` 108 个、网关 75 个、网页 node 测试 10 项通过；clippy 0 告警；aarch64 交叉编译通过（浏览器冒烟没跑：本机没装 puppeteer） | — |
+| 测试 | `cd shelf && cargo test --workspace`：2026-10-07 实跑 book-serve 78 + shelf-conv 24 个通过；`rmsvc-core` 108 个、网关 74 个、网页 node 测试 10 项通过；clippy 0 告警；aarch64 交叉编译通过（浏览器冒烟没跑：本机没装 puppeteer） | — |
 
 **已砍/已被取代（别再找）**：**设备上的「优化」、入库 PDF 转换、原 PDF 备份、抓网文、联网补封面、旧产物兼容、中途取消、优化徽章与筛选（10-07，§03bw）**；电脑端 `shelf` 命令行（09-18，附录 B）；KOReader 一切入口与 koreader-serve 安装（09-29，附录 B；源码 09-30 删）；超限书按卷拆分与按书设阅读方向（09-30，附录 B）；母版库"优化档位"与"投完自动删除"（09-19）；漫画"优化转 PDF"（09-19 做、09-20 换回 EPUB、09-30 代码删除）；三档格式（09-17/18 收成一档）；微信读书内容源（09-05）；appload 补丁工具链（09-21）；bind-mount 壁纸（§03x）；`/inbox*` 与 `/staging/render/*` HTTP 接口（09-22 删，scp 进 `inbox/` 仍可用）；"restart xochitl 让改动生效"（09-25 改整机重启）。
 

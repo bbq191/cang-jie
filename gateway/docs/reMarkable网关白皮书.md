@@ -44,8 +44,8 @@
 | 代理超时 | 900 秒 | `proxy.rs` |
 | 代理应答流式转发 | 200 且带长度，又是下载（带 `Content-Disposition`）或 > 256KB → 边读边发；其余读完再回 | `proxy.rs::STREAM_MIN_BYTES` |
 | systemd | `CPUWeight=20`、`MemoryMax=192M`、`Nice=5` | `systemd/gateway.service` |
-| 测试 | Rust 75 个（`cargo test`）；前端 3 个 node 测试文件共 10 项（`node --test gateway/ui/test/*.test.mjs`）+ 1 个手动跑的浏览器冒烟（`smoke.puppeteer.mjs`，要设 `PUPPETEER_NODE_MODULES`） | 2026-10-07 实跑（浏览器冒烟这次没跑：本机没装 puppeteer） |
-| 语言包 | `zh-CN.json` / `en-US.json` 各约 470 余个 key（09-30 为 513；10-07 随书架不再优化书、删「隐藏已完成」与漫画页边距卡片又删了几十个，确切数以 `locales.test.mjs` 实跑为准），`locales.test.mjs` 钉住中英键集合与 `{占位符}` 一致、`app.js` 里字面量 `T()` 键都在、没有死键 | `ui/locales/`、`ui/test/locales.test.mjs` |
+| 测试 | Rust 74 个（`cargo test`）；前端 3 个 node 测试文件共 10 项（`node --test gateway/ui/test/*.test.mjs`）+ 1 个手动跑的浏览器冒烟（`smoke.puppeteer.mjs`，要设 `PUPPETEER_NODE_MODULES`） | 2026-10-07 实跑（浏览器冒烟这次没跑：本机没装 puppeteer） |
+| 语言包 | `zh-CN.json` / `en-US.json` 各 474 个 key（2026-10-07 实数；09-30 为 513，10-07 随书架不再优化书、删「隐藏已完成」与漫画页边距卡片减少），`locales.test.mjs` 钉住中英键集合与 `{占位符}` 一致、`app.js` 里字面量 `T()` 键都在、没有死键 | `ui/locales/`、`ui/test/locales.test.mjs` |
 
 **真机验证状态**
 
@@ -63,7 +63,7 @@
 | 09-25 第四轮审计（代理 GET/DELETE 不带 `Content-Length`、批量新一轮总数算上遗留项、前端按事件来源减少重取、上传器/笔记保存/批量按钮修复、对话框公共骨架） | host 测试通过；09-25 已随整轮部署（43✓），这些行为本身没在真机专门核（见 §09） |
 | **09-30 第五轮审计**（撤 KOReader/WeRead/appload、Basic 认证缓存、全部中止补漏、事件流断线退避、旧 `batch.json` 剔除 koreader 任务、闸门重查至少隔 5 秒、母版库全量刷新 6→4 个请求、新建文件夹不再轮询） | host：`cargo test`、node 10 项、浏览器冒烟通过；**09-30 14:10 已部署**，部署自检通过；功能待手测（见 §09） |
 | **09-30 移除电池刺客 / 手写优化**（删 `battop.rs` 与 `/api/enhance/battop/*`、`hwStrokeEnabled` 开关、两个网页入口与 30 个语言键） | host 测试通过；**09-30 15:23 已部署**，部署自检通过（`/api/enhance/status` 不再返回这两项） |
-| **10-07 书架不再优化书**（删「优化」/「抓网文」/「原 PDF 备份」/行内「停止」，批量只剩加入 xochitl，闸门只拦加入，筛选改三档） | host：`cargo test` 75 个、node 10 项通过；浏览器冒烟没跑。**已提交（分支 `feat/drop-book-optimize`），未合并、未部署** |
+| **10-07 书架不再优化书**（删「优化」/「抓网文」/「原 PDF 备份」/行内「停止」，批量只剩加入 xochitl，闸门只拦加入，筛选改三档） | host：`cargo test` 74 个、node 10 项通过；浏览器冒烟没跑。**已提交（分支 `feat/drop-book-optimize`），未合并、未部署** |
 
 ## 01｜登录与安全
 
