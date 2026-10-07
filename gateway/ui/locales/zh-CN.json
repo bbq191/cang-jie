@@ -316,7 +316,6 @@
   "stg.dest.root": "根目录",
   "stg.chip.all": "全部 {n}",
   "stg.chip.todo": "未加入 {n}",
-  "stg.hideDone": "隐藏已完成",
   "stg.selectAll": "全选当前筛选（{n}）",
   "stg.selected": "已选 {n} 本",
   "stg.pager.prev": "上一页",

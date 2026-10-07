@@ -7,8 +7,8 @@ const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;'
 const fmtB=n=>n>1048576?(n/1048576).toFixed(1)+' MB':n>1024?(n/1024).toFixed(0)+' KB':n+' B';
 // 小徽章：renderManage 的「基石与模块」列表用。
 const badge=(t,ok)=>`<span class="badge ${ok?'on':'off'}">${t}</span>`;
-/* 母版库一本书是不是"已经不用管了"——给母版库的"隐藏已完成"开关与「已加入」筛选用（2026-09-19 用户反馈
-   母版库列表太长）。正在处理/失败态都不算"完成"（还需要用户看见）；书架不再优化书（2026-10-07，优化在电脑上用
+/* 母版库一本书是不是"已经不用管了"——给「已加入」筛选用（2026-09-19 用户反馈母版库列表太长时加的"隐藏已完成"开关，
+   2026-10-07 跟「未加入」筛选重复了，删掉，改成默认选中「未加入」）。正在处理/失败态都不算"完成"（还需要用户看见）；书架不再优化书（2026-10-07，优化在电脑上用
    sheng-ren 做），完成＝已加入 xochitl。以前"加入过 KOReader"的书（2026-09-29 设备卸掉 KOReader）不算完成。 */
 const isBookDone=it=>{
   if(it.busy)return false;
@@ -314,7 +314,7 @@ function renderTransfer(sec){sec.innerHTML=`
     </div>
     <div class="stg-tools"><input type="text" id="stgq" list="stgnames" autocomplete="off" placeholder="${T('transfer.staging.searchPlaceholder')}" aria-label="${T('transfer.staging.searchAria')}"><datalist id="stgnames"></datalist><select id="stgfmt" aria-label="${T('transfer.staging.fmtFilterAria')}"><option value="">${T('transfer.staging.fmtAll')}</option><option value="epub">EPUB</option><option value="pdf">PDF</option><option value="other">${T('transfer.staging.fmtOther')}</option></select></div>
     <div class="stg-chips" id="stgchips"></div>
-    <div class="stg-selrow"><label class="toggle"><input type="checkbox" id="stgall"> <span id="stgalltxt"></span></label><span class="stg-spacer"></span><label class="toggle"><input type="checkbox" id="stghide"> ${T('stg.hideDone')}</label></div>
+    <div class="stg-selrow"><label class="toggle"><input type="checkbox" id="stgall"> <span id="stgalltxt"></span></label></div>
     <ul class="stg-list" id="stglist"></ul>
     <div class="stg-pager" id="stgpager"></div>
     <div class="stgbar" id="stgbar" hidden></div>
@@ -342,12 +342,11 @@ function renderTransfer(sec){sec.innerHTML=`
     const r=await postJ('/api/books/mkdir/add',{name});if(r.ok===false)return;
     toast(T('stg.dest.created',{name}),'info',6000);
     LS.set('folder',name);newBox.hidden=true;newName.value='';await refresh()});
-  // 筛选/分页状态。"隐藏已完成"只在「全部」筛选下生效（选了「已加入」就是想看它们）。旧版存的「已优化」筛选（done）回落到全部。
-  let st=['all','todo','finished'].includes(LS.get('stgSt','all'))?LS.get('stgSt','all'):'all',hideDone=LS.get('stgHideDone','1')==='1',page=1,pageSize=+LS.get('stgPageSize','25')||25;
-  g('stghide').checked=hideDone;g('stghide').onchange=()=>{hideDone=g('stghide').checked;LS.set('stgHideDone',hideDone?'1':'0');page=1;render()};
+  // 筛选/分页状态。默认「未加入」（顶替原来"全部 + 隐藏已完成"的默认视图）；旧版存的「已优化」筛选（done）也回落到它。
+  let st=['all','todo','finished'].includes(LS.get('stgSt','todo'))?LS.get('stgSt','todo'):'todo',page=1,pageSize=+LS.get('stgPageSize','25')||25;
   const fmtOf=it=>it.format==='cbz'?'other':it.format;
   const filtered=()=>{const q=g('stgq').value.toLowerCase(),f=g('stgfmt').value;
-    return items.filter(it=>(!q||it.name.toLowerCase().includes(q))&&(!f||fmtOf(it)===f)&&(st==='todo'?stgIsTodo(it):st==='finished'?isBookDone(it):(!hideDone||!isBookDone(it))))};
+    return items.filter(it=>(!q||it.name.toLowerCase().includes(q))&&(!f||fmtOf(it)===f)&&(st==='todo'?stgIsTodo(it):st==='finished'?isBookDone(it):true))};
   const batchTitle=a=>T('stg.batch.'+a);
   const enqueue=async(action,body)=>{const r=await postJ('/api/batch',{action,folder:xFolder(),...body});
     if(r.ok===false)return;
@@ -358,7 +357,7 @@ function renderTransfer(sec){sec.innerHTML=`
     g('stgall').checked=all;g('stgall').indeterminate=!all&&list.some(it=>picked.has(it.name));g('stgalltxt').textContent=T('stg.selectAll',{n})};
   g('stgall').onchange=()=>{const list=filtered();if(g('stgall').checked)list.forEach(it=>picked.add(it.name));else list.forEach(it=>picked.delete(it.name));render()};
   const renderChips=()=>{const chips=g('stgchips');chips.innerHTML='';
-    // 三个筛选统一都带数量（数量 = 该筛选下的书本数，与"隐藏已完成"开关无关）。
+    // 三个筛选统一都带数量（数量 = 该筛选下的书本数）。
     const cnt={all:items.length,todo:items.filter(stgIsTodo).length,finished:items.filter(isBookDone).length};
     [['all','stg.chip.all'],['todo','stg.chip.todo'],['finished','stg.chip.finished']].forEach(([k,key])=>{
       chips.appendChild(btn(T(key,{n:cnt[k]}),()=>{st=k;LS.set('stgSt',k);page=1;render()},'chip'+(st===k?' on':'')))})};

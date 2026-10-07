@@ -316,7 +316,6 @@
   "stg.dest.root": "root",
   "stg.chip.all": "All {n}",
   "stg.chip.todo": "Not added {n}",
-  "stg.hideDone": "Hide finished",
   "stg.selectAll": "Select all in current filter ({n})",
   "stg.selected": "{n} selected",
   "stg.pager.prev": "Prev",

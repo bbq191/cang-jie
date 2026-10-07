@@ -168,7 +168,6 @@ dl.help dd{margin:.2em 0 .2em;color:var(--mute);font-size:.9em;line-height:1.65}
 .chip{border:1px solid var(--line);background:var(--surface);color:var(--mute);padding:.4em .9em;border-radius:2em;cursor:pointer;font-size:.9em;white-space:nowrap}
 .chip.on{background:var(--accent);color:var(--accent-fg);border-color:var(--accent);font-weight:600}
 .stg-selrow{display:flex;align-items:center;gap:.6em;flex-wrap:wrap;margin:.4em 0;padding:.5em .2em;border-bottom:1px solid var(--line)}
-.stg-spacer{flex:1}
 .stg-list{list-style:none;margin:.5em 0 0;padding:0;display:flex;flex-direction:column;gap:.5em}
 .stg-row{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:.5em .8em;align-items:start;padding:.65em .8em;border:1px solid var(--line);border-radius:.7em;background:var(--surface)}
 .stg-row.sel{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 6%,var(--surface))}
