@@ -3,28 +3,19 @@ name = "shelf-conv"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "书架独有的内容层：入库 PDF（转 EPUB / 裁边）、PDF 读写、大文件占位文档、渲染自检统计、旧产物兼容预处理；通用的 EPUB 优化用 sheng-ren 的 bookconv"
+description = "书架投递 xochitl 用的读书工具：第三方 PDF 页数、大文件占位文档、渲染自检统计、书名规范化；书本身的优化一律在电脑上用 sheng-ren 做"
 
 [dependencies]
-# EPUB 优化器、EPUB 读写与组装的公共件：sheng-ren 的 bookconv（git 依赖跟 master 走，`cargo update -p bookconv` 跟进）
+# 读 EPUB（zip/OPF/封面/正文文字）用 sheng-ren 的 bookconv 公开接口（git 依赖跟 master 走，`cargo update -p bookconv` 跟进）。
+# 书架不再调用它的优化器（2026-10-07 用户定：优化全部由 sheng-ren 在电脑上做，书架只负责把优化好的书投进 xochitl）。
 bookconv = { git = "https://github.com/bbq191/sheng-ren", branch = "master" }
 regex = "1"
 # 跟 bookconv 同一版本、同一组特性（只用 flate2 的 deflate），依赖树里只有一份 zip
 zip = { version = "2", default-features = false, features = ["deflate-flate2", "flate2"] }
-# PNG 像素 /FlateDecode 压缩（pdfwrite），纯 Rust、musl 友好
-png = "0.17"
+# pdfmeta 解 FlateDecode 的交叉引用流/对象流（有界解压）
 miniz_oxide = "0.8"
-# PDF 页图片（pdfwrite 读图、pdf_ingest 解内嵌图）：jpeg、png；gif、webp 只解码。与 bookconv 同版本同特性
-# （裁边/缩放/编码用 bookconv::imgopt 的公开接口，fast_image_resize 随之去掉）
-image = { version = "0.25", default-features = false, features = ["jpeg", "png", "gif", "webp"] }
-# 入库 PDF「优化」（有文字层→转 EPUB，无文字层/漫画→仅裁边，2026-09-19）：三者均纯 Rust、无 C 依赖，
-# aarch64-unknown-linux-musl 全静态交叉编译验证过。lopdf 读第三方 PDF 结构；pdf-extract（本地 fork `pdf-extract-cj`，
-# `package =` 让代码里仍用 `pdf_extract::`）给文字层探测/字号识别标题/公式区域探测；hayro 整页光栅化供公式区域裁剪。
-lopdf = "0.45.0"
-pdf-extract = { path = "../pdf-extract-cj", package = "pdf-extract-cj" }
-hayro = "0.7.1"
 
 [dev-dependencies]
 tempfile = "3"
-# 端到端测试取 xochitl 阅读模式
-profile = { git = "https://github.com/bbq191/sheng-ren", branch = "master" }
+# pdfmeta 测试用它生成"对象流 + 交叉引用流"的现代 PDF
+lopdf = "0.45.0"

@@ -68,8 +68,7 @@ impl State {
         // 阅读方向旧手动清单：只读（2026-09-30 起不再有写方，见 reading_direction.rs）。
         let reading_direction = Arc::new(crate::reading_direction::ReadingDirection::new(&paths.xochitl_dir(), &books_state.join("rtl-overrides.json")));
         let staging = Staging::new(paths.staging_dir(), xochitl.clone(), cfg.native_upload_limit_bytes())
-            .with_comic_margins(comic_margins.clone())
-            .with_cover_fetch();
+            .with_comic_margins(comic_margins.clone());
         let bus = Arc::new(EventBus::new());
         let agent_failures = Arc::new(AgentFailures::new(&books_state, Some(bus.clone())));
         let trash = TrashQueue::new(&books_state, &paths.xochitl_dir()).with_failures(agent_failures.clone());
@@ -86,15 +85,11 @@ impl State {
         }
         let (fixed, tmps) = self.staging.recover_interrupted();
         if fixed > 0 || tmps > 0 {
-            println!("[book-serve] 修正 {fixed} 条上次被中断的处理记录，清掉 {tmps} 个优化半成品");
+            println!("[book-serve] 修正 {fixed} 条上次被中断的处理记录，清掉 {tmps} 个半成品临时文件");
         }
         let orphans = self.staging.gc_orphan_sidecars();
         if orphans > 0 {
             println!("[book-serve] 清掉 {orphans} 个没有对应书的落库记录");
-        }
-        let old_pdfs = self.staging.gc_pdf_originals(crate::staging::PDF_ORIGINALS_KEEP_SECS);
-        if old_pdfs > 0 {
-            println!("[book-serve] 清掉 {old_pdfs} 份过期的原 PDF 备份");
         }
         // 给"已加入 xochitl 但没有渲染记录"的书补记（大文件通道上线前直接投入的），让列表里渲染徽章统一。幂等。
         let n = self.staging.backfill_render_records();
@@ -141,7 +136,7 @@ impl State {
     ///
     /// **正在写的文件不动**（2026-09-25 第四轮审计）：scp 直接往最终文件名里写，一建出文件就有 CREATE 事件，防抖 8 秒后
     /// 追平——WiFi 传大书超过 8 秒时，这里会把还在写的文件认领、改名进母版库，写入者手里的 fd 跟着 inode 继续写，
-    /// 母版库里于是出现一本半截书（可被优化/落库，列表判定按半截内容缓存）。写完时的 CLOSE_WRITE 会再触发一轮追平，
+    /// 母版库里于是出现一本半截书（可被落库）。写完时的 CLOSE_WRITE 会再触发一轮追平，
     /// 那时修改时间已经静止超过防抖时长，照常处理。
     pub fn process_inbox_counting_deferred(&self, only: Option<&str>) -> (Vec<InboxOutcome>, usize) {
         let _g = self.spool.guard();

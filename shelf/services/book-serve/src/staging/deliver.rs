@@ -12,15 +12,14 @@ pub(super) const MAX_DIRECT_BYTES: u64 = 1 << 30;
 impl Staging {
     // ───────────── 落库 ─────────────
 
-    /// 加入 xochitl：纯复制原字节（不再优化）。xochitl 只读 EPUB/PDF（CBZ 漫画不加入 xochitl，用户定）。`folder`
+    /// 加入 xochitl：纯复制原字节（书架不优化书，书应先在电脑上用 sheng-ren 优化好）。xochitl 只读 EPUB/PDF（CBZ 漫画不加入 xochitl，用户定）。`folder`
     /// 空＝书库根目录（2026-09-19 用户明确要求去掉"留空落进配置里的缺省文件夹"这条隐藏行为——跟
     /// KOReader 那边"留空＝根目录"的语义对齐，不再有一个不写在界面上的"默认文件夹"概念；
     /// [`crate::config::BookConfig::library_folder`] 配置项随这次改动一并删除，不再有任何地方读它）；
     /// 母版库条目投完**永远保留**（2026-09-19 用户明确要求去掉"投完自动删除"这个功能——母版是可以
     /// 反复投给两个读器对照、换设备重投的底本，不该被一次性动作悄悄清掉；要删由用户自己在列表里点
     /// 删除）。返回回执文案 + EPUB 的渲染自检计划（调用方起线程跑 `render_check::run`）。
-    /// **同步、阻塞**——上传大书、等建文件夹都能到分钟级；跟 [`Self::optimize`] 一样，
-    /// HTTP 接口不该直接暴露这个方法，用 [`Self::spawn_deliver`] 走后台线程。
+    /// **同步、阻塞**——上传大书、等建文件夹都能到分钟级；HTTP 接口不该直接暴露这个方法，用 [`Self::spawn_deliver`] 走后台线程。
     pub fn deliver(&self, name: &str, folder: &str, mkdir: &MkdirQueue) -> Result<DeliverOutcome, String> {
         let (ct, p) = self.deliverable(name)?;
         let size = std::fs::metadata(&p).map(|m| m.len()).unwrap_or(0);
@@ -166,11 +165,11 @@ impl Staging {
         rmsvc_core::fswatch::watch_until(lib_dir, render_check::DEBOUNCE, FOLDER_WAIT_TIMEOUT, |_| self.xochitl.find_folder(folder).is_some());
     }
 
-    /// [`Self::deliver`] 的异步版：同 [`Self::spawn_optimize`] 套路——先做零耗时校验（格式/文件存在），
+    /// [`Self::deliver`] 的异步版：先做零耗时校验（格式/文件存在），
     /// 校验过了才加忙锁、起后台线程跑真正耗时的部分。成功返回后 HTTP 层立即回"已开始"，真正结果通过
     /// `bus` 的 `books`/`staging` 事件 + `GET /staging` 列表里这条目的 `delivered.deliver`
     /// （[`sidecar::DeliverCheck`]）异步呈现；渲染自检计划、`mark_delivered` 全部在 `deliver` 内部
-    /// 完成，不劳 HTTP 层操心。`catch_unwind` 兜底同 `spawn_optimize`。
+    /// 完成，不劳 HTTP 层操心。panic 由 `catch_unwind` 兜住，转成失败记录。
     pub fn spawn_deliver(&self, name: &str, folder: &str, mkdir: Arc<MkdirQueue>, bus: Arc<rmsvc_core::events::EventBus>) -> Result<(), String> {
         self.deliverable(name)?;
         if !self.try_start_busy(name) {
@@ -183,7 +182,10 @@ impl Staging {
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| this.deliver(name, &folder, &mkdir)))
                 .unwrap_or_else(|_| Err("落库过程内部异常（已捕获，不影响其他操作）".to_string()));
             let at = rmsvc_core::clock::now_secs();
-            let (status, message) = final_status(result.as_ref().map(|o| o.message.as_str()).map_err(String::as_str));
+            let (status, message) = match &result {
+                Ok(o) => ("ok".to_string(), o.message.clone()),
+                Err(e) => ("failed".to_string(), e.clone()),
+            };
             let _ = this.set_deliver_check(name, sidecar::DeliverCheck { status, message, at });
             if let Ok(outcome) = &result {
                 if let Some(plan) = outcome.render.clone() {

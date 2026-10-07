@@ -1,12 +1,11 @@
 //! book-serve —— 书架·母版库 + 落原生（loopback 8790）。
-//! 所有内容源（网页上传 / 抓网文 / scp 进 inbox）原样落**母版库**；优化与落库（投 xochitl）是母版库里
-//! 各自独立的动作（`staging.rs`）。自有 inbox 队列（XDG state）+ inotify 追平。不读写旧项目任何路径。
+//! 所有内容源（网页上传 / scp 进 inbox）原样落**母版库**，再由用户投进 xochitl（`staging`）。书架不优化书：
+//! 书先在电脑上用 sheng-ren 的 `xochitl` 阅读模式优化好（2026-10-07 用户定）。自有 inbox 队列（XDG state）+ inotify 追平。不读写旧项目任何路径。
 //! 网页 tab 「传书」是网关固定页（不由本服务注册），本服务不挂 tab。
 mod agent_failures;
 mod api;
 mod comic_margins;
 mod config;
-mod cover_fetch;
 mod mkdir;
 mod ops;
 mod pending_queue;

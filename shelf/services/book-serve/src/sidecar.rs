@@ -1,6 +1,6 @@
 //! 落库记录边车（Repository）：母版库每本书旁的隐藏 JSON `.<文件名>.delivered`（书名太长时用短名，见 [`file_name_for`]）——各读器最近一次落库的 unix 秒 +
-//! 最近一次投原生的渲染自检结果 + 最近一次优化 / 落库的异步结果。只管"读 / 改 / 删这份记录"，
-//! 母版库动作（入库/优化/落库）在 `staging`，自检逻辑在 `render_check`；两边都通过这里落盘，谁也不碰
+//! 最近一次投原生的渲染自检结果 + 最近一次落库的异步结果。只管"读 / 改 / 删这份记录"，
+//! 母版库动作（入库/落库）在 `staging`，自检逻辑在 `render_check`；两边都通过这里落盘，谁也不碰
 //! 对方的字段语义（2026-09-06 从 staging.rs 拆出）。
 use serde::{Deserialize, Serialize};
 use rmsvc_core::fs::write_atomic;
@@ -21,42 +21,19 @@ pub struct Delivered {
     pub koreader: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub render: Option<RenderCheck>,
-    /// 最近一次「优化」的结果（`staging::Staging::spawn_optimize` 异步执行时写）。
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub optimize: Option<OptimizeCheck>,
     /// 最近一次「落库」的结果（`staging::Staging::spawn_deliver` 异步执行时写，2026-09-19）。
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deliver: Option<DeliverCheck>,
 }
 
-/// 异步优化的结果：`status` = pending（后台线程跑着）/ ok / failed / cancelled。`message` 是回执文案
-/// （成功＝"已优化《...》（...）"；失败＝错误原因）。
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
-pub struct OptimizeCheck {
-    pub status: String,
-    pub message: String,
-    pub at: u64,
-    /// 条目级进度（已处理/总条目数，不是字节）——`optimize_epub_file_streaming` 阶段二逐条目写出
-    /// 时回调（2026-09-19 用户反馈"进度条一直感觉不会动"）。网页据此画百分比条，没有就画不确定进度的滚动条。
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub progress: Option<StepProgress>,
-}
-
 /// 异步落库的结果：`status` = pending（后台线程跑着）/ ok / failed。`message` 是回执文案（成功＝"已加入 xochitl《...》"；
-/// 失败＝错误原因）。跟 [`OptimizeCheck`] 分开成两个类型，是因为它们是两件独立的事。落库只有整本上传 / 大文件通道
-/// 两条路，都是一步到位、没有分步进度（按卷拆分投递连同它的进度字段 2026-09-30 已撤）。
+/// 失败＝错误原因）。落库只有整本上传 / 大文件通道两条路，都是一步到位、没有分步进度。旧边车里的 `optimize` 字段
+/// （书架 2026-10-07 前的「优化」结果）解析时当未知字段忽略，下次改写边车时自然消失。
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Default)]
 pub struct DeliverCheck {
     pub status: String,
     pub message: String,
     pub at: u64,
-}
-
-/// 分步进度：`done`＝已经完成的步数，`total`＝这次操作总共会有多少步（EPUB 优化：一步＝阶段二写出一个条目）。
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Default)]
-pub struct StepProgress {
-    pub done: u32,
-    pub total: u32,
 }
 
 /// 渲染自检结果：`status` = pending（等 xochitl 渲染）/ ok / warn（页数远低于期望＝整章渲染失败）/ timeout。
@@ -79,7 +56,7 @@ const SUFFIX: &str = ".delivered";
 /// 书名 → 边车文件名。**所有**读、写、改名、删除、孤儿清理、启动修复都经这一个函数（或 [`path_for`]），不许各处自己拼。
 /// - 普通书名：`.<书名>.delivered`（跟以前逐字节一致，设备上已有的边车照常认）；
 /// - 拼出来超过 255 字节（书名约 244 字节以上，中文八十来个字）：`.<书名按字符边界截到 200 字节>.<书名 sha256 前 16 位 hex>.delivered`。
-///   以前这种书名的边车写不进去（`File name too long`），网页上看不到它的优化 / 落库状态；所以短名形式没有旧数据要迁移。
+///   以前这种书名的边车写不进去（`File name too long`），网页上看不到它的落库状态；所以短名形式没有旧数据要迁移。
 pub fn file_name_for(book_name: &str) -> String {
     let plain = format!(".{book_name}{SUFFIX}");
     if plain.len() <= NAME_MAX {
@@ -132,7 +109,7 @@ pub fn read(book: &Path) -> Option<Delivered> {
 
 /// 读—改—原子写。没有边车从空记录起。
 ///
-/// 全局互斥：优化进度回调、渲染自检线程、HTTP 线程会并发改同一份边车，`write_atomic` 只保证文件不写一半、
+/// 全局互斥：落库线程、渲染自检线程、HTTP 线程会并发改同一份边车，`write_atomic` 只保证文件不写一半、
 /// 不保证不丢更新（A 读→B 读→A 写→B 写，A 的字段没了）。边车都很小、写得不频繁，一把全局锁足够。
 pub fn update(book: &Path, f: impl FnOnce(&mut Delivered)) -> Result<(), String> {
     static WRITE: std::sync::Mutex<()> = std::sync::Mutex::new(());
@@ -167,7 +144,7 @@ mod tests {
         // `source`（CLI 洗书原始输入，CLI 09-18 砍）、`deliver.progress`（按卷拆分投递进度，09-30 撤）
         std::fs::write(path_for(&book), br#"{"native":1,"koreader":2,"direction":"rtl","source":{"name":"a.pdf","bytes":9},"deliver":{"status":"ok","message":"m","at":3,"progress":{"done":1,"total":2}}}"#).unwrap();
         let deliver = Some(DeliverCheck { status: "ok".into(), message: "m".into(), at: 3 });
-        assert_eq!(read(&book), Some(Delivered { native: Some(1), koreader: Some(2), render: None, optimize: None, deliver }));
+        assert_eq!(read(&book), Some(Delivered { native: Some(1), koreader: Some(2), render: None, deliver }));
         remove(&book);
         assert!(read(&book).is_none());
         remove(&book);

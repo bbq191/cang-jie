@@ -3,7 +3,7 @@ name = "book-serve"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "书架·母版库（入库/优化/落库正交）+ 原生 xochitl 投递"
+description = "书架·母版库（入库/落库）+ 原生 xochitl 投递；书在电脑上用 sheng-ren 优化好再传上来"
 
 [[bin]]
 name = "book-serve"
@@ -11,23 +11,16 @@ path = "src/main.rs"
 
 [dependencies]
 rmsvc-core = { path = "../../../rmsvc-core" }
-# EPUB 优化器（规则在 sheng-ren，git 依赖跟 master 走；`cargo update -p bookconv` 跟进）与阅读模式（xochitl profile）
-bookconv = { git = "https://github.com/bbq191/sheng-ren", branch = "master" }
-profile = { git = "https://github.com/bbq191/sheng-ren", branch = "master" }
-# 书架独有的内容层：入库 PDF、占位文档、渲染自检统计、旧产物兼容预处理
+# 投进 xochitl 时读书用的工具（占位文档、PDF 页数、渲染自检统计）；书本身的优化在电脑上用 sheng-ren 做（2026-10-07）
 shelf-conv = { path = "../../crates/shelf-conv" }
+# 读 EPUB 的公开接口（zip、书名规范化、漫画页边距标记名）：sheng-ren 的 bookconv，git 依赖跟 master 走
+bookconv = { git = "https://github.com/bbq191/sheng-ren", branch = "master" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 # statvfs 查母版库所在分区剩余空间（此前每次 GET /staging 都 fork 一个 `df`）；libc 本来就在依赖树里（inotify 拉进来的）
 libc = "0.2"
 # 书名太长时边车改用"截断书名 + sha256 前 16 位"的短名（`sidecar::file_name_for`）；跟 rmsvc-core 同一版本，不新增依赖树
 sha2 = "0.11"
-# 书里没有封面时联网补封面（`cover_fetch`，2026-09-29 移植自 sheng-ren）：ureq 查豆瓣/Wikidata（bookconv 已依赖同一版本）；
-# image 判封面尺寸、贴作者头像；ab_glyph（Apache-2.0）画生成封面上的字；fast2s（MIT）繁转简比对书名。许可证按各 crate 的 LICENSE 文件核过。
-ureq = "2"
-image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
-ab_glyph = "0.2.32"
-fast2s = "0.3.1"
 
 [dev-dependencies]
 zip = { version = "2", default-features = false, features = ["deflate"] }

@@ -6,12 +6,12 @@
 //! `GET /margins/<uuid>`，命中就调用阅读器的 `EpubProperties.setMargins(m)`（与界面点"页边距"同一条路径），成功后
 //! `POST /margins/applied` 销账。**每本书只设一次**：之后用户在界面上自己改回去，我们不再干预。
 //!
-//! 只登记**按页边距模式排的漫画 EPUB**（`Staging::comic_margin_eligible`：产物带 `META-INF/eink-reader-margins`，或还没重新优化的
-//! 旧版 v15/v16 最小页边距漫画）：补白比例是按"边距 1"算的，别的漫画在最小边距下会贴左、右侧空一大块，文字贴屏幕边，反而更糟。
-//! 文字书、PDF 完全不碰。文字页留边由 sheng-ren 的 `bookconv::comicpad` 做。
+//! 只登记**按页边距模式排的漫画 EPUB**（`Staging::comic_margin_eligible`：sheng-ren 优化的产物带 `META-INF/eink-reader-margins`）：
+//! 补白比例是按"边距 1"算的，别的漫画在最小边距下会贴左、右侧空一大块，文字贴屏幕边，反而更糟。文字书、PDF 完全不碰。
+//! 漫画怎么排（补白、文字页留边）是 sheng-ren 的事，书架只负责登记和首次打开时设页边距。
 //!
 //! **用户开关**（网页「管理→实验室→漫画页边距」）：`reading-qol.json` 的 `comicMinMargin`（默认关，跟「导入 md」同一套实验室开关）。
-//! 关闭时：优化时关掉 xochitl 阅读模式的漫画页边距模式（`Profile::without_comic_reader_margins`，漫画按默认页边距的阅读范围排）、不登记、`GET /margins/<uuid>` 一律 404（已登记的也不再生效）。队列文件 `$XDG_STATE_HOME/shelf/books/comic-margins.json`，
+//! 关闭时：不登记、`GET /margins/<uuid>` 一律 404（已登记的也不再生效）。队列文件 `$XDG_STATE_HOME/shelf/books/comic-margins.json`，
 //! 持久化/去重/剔除委托通用的 [`PendingQueue`]（同 `trash.rs`/`mkdir.rs`）。
 use crate::pending_queue::PendingQueue;
 use serde::{Deserialize, Serialize};
@@ -36,7 +36,7 @@ impl ComicMargins {
         ComicMargins { q: PendingQueue::new(state_books_dir.join("comic-margins.json")), lib_dir: lib_dir.to_path_buf(), qol_file: qol_file.to_path_buf() }
     }
 
-    /// 「实验室→漫画页边距」开关是否打开。每次现读文件（很小；优化/投书/开书各一次），缺文件/缺键/非布尔 → 关。
+    /// 「实验室→漫画页边距」开关是否打开。每次现读文件（很小；投书/开书各一次），缺文件/缺键/非布尔 → 关。
     pub fn enabled(&self) -> bool {
         std::fs::read_to_string(&self.qol_file)
             .ok()

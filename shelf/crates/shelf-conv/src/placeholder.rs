@@ -78,14 +78,31 @@ pub fn epub_placeholder(real_epub: &Path, title: Option<&str>) -> Result<Vec<u8>
     Ok(buf)
 }
 
+/// 占位 PDF 的页面尺寸（点）：Move 屏幕 954×1696。
+const PDF_PAGE_W: u32 = 954;
+const PDF_PAGE_H: u32 = 1696;
+
 /// 造占位 PDF：一页空白（设备页面尺寸）。显示名取上传文件名，缩略图打开时才按页生成，所以不用带内容。
+/// 手写最小 PDF（目录 → 页树 → 一页，无内容流），交叉引用表按实际偏移生成。
 pub fn pdf_placeholder() -> Result<Vec<u8>, String> {
-    let mut png = Vec::new();
-    image::DynamicImage::ImageLuma8(image::GrayImage::from_pixel(8, 14, image::Luma([255])))
-        .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
-        .map_err(|e| e.to_string())?;
-    let img = crate::pdfwrite::image_from_bytes(&png)?;
-    crate::pdfwrite::images_to_pdf_with_toc(&[img], &[])
+    let objs = [
+        "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".to_string(),
+        format!("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 {PDF_PAGE_W} {PDF_PAGE_H}] /Resources << >> >>"),
+    ];
+    let mut out = b"%PDF-1.4\n".to_vec();
+    let mut offsets = Vec::with_capacity(objs.len());
+    for (i, body) in objs.iter().enumerate() {
+        offsets.push(out.len());
+        out.extend_from_slice(format!("{} 0 obj\n{body}\nendobj\n", i + 1).as_bytes());
+    }
+    let xref = out.len();
+    out.extend_from_slice(format!("xref\n0 {}\n0000000000 65535 f \n", objs.len() + 1).as_bytes());
+    for o in offsets {
+        out.extend_from_slice(format!("{o:010} 00000 n \n").as_bytes());
+    }
+    out.extend_from_slice(format!("trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n", objs.len() + 1).as_bytes());
+    Ok(out)
 }
 
 #[cfg(test)]
@@ -199,7 +216,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("p.pdf");
         std::fs::write(&path, &pdf).unwrap();
-        assert_eq!(crate::pdfwrite::PdfFileReader::open(&path).unwrap().page_count().unwrap(), 1);
+        assert_eq!(crate::pdfmeta::page_count(&path).unwrap(), 1);
         assert!(pdf.len() < 4000);
     }
 

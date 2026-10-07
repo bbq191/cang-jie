@@ -1,10 +1,9 @@
 //! 母版库（中间层暂存池）领域模块——三层架构（内容源 → **母版库** → 读器）的交汇点。
-//! 三个正交动作各一个方法：**入库**（`stage_new` / `stage_from_path` / [`StagingStore`] 上传模板 / `fetch_article`）、
-//! **优化**（`optimize`，EPUB/PDF）、**落库**（`deliver` 投 xochitl；以前还有网关批量「加入 KOReader」由 koreader-serve 从同一
-//! 目录 adopt 后记一笔——KOReader 2026-09-29 从设备卸载，koreader-serve 源码 2026-09-30 已从仓库删除，见 git 历史）。落库＝纯复制母版字节，母版默认保留可反复落库。
+//! 两个动作各一个方法：**入库**（`stage_new` / `stage_from_path` / [`StagingStore`] 上传模板）、**落库**（`deliver` 投 xochitl）。
+//! 落库＝纯复制母版字节，母版默认保留可反复落库。**书架不优化书**（2026-10-07 用户定）：书在电脑上用 sheng-ren 的 `xochitl`
+//! 阅读模式优化好再上传，这里原样投进 xochitl；原来的「优化」、入库 PDF 转换、原 PDF 备份、抓网文、联网补封面都已删除，见 git 历史。
 //! 目录 `$XDG_STATE_HOME/shelf/books/staging/`（/home 分区，重启/OTA 不丢；**不套 LRU 淘汰**，留住用户还没落库的书）。
 //! 落库记录是同目录隐藏 sidecar `.<name>.delivered`（`sidecar` 模块管读写；本模块只在落库/删书时调它）。
-use bookconv::optimize::{self, OptimizeOpts};
 use crate::mkdir::MkdirQueue;
 use crate::ops::OpRegistry;
 use crate::render_check;
@@ -12,7 +11,7 @@ use crate::sidecar::{self, Delivered, RenderCheck};
 use serde::Serialize;
 use rmsvc_core::asset::{AssetItem, AssetStore};
 use rmsvc_core::formats::{self, BOOK_EXTS};
-use rmsvc_core::fs::{plain_name, same_content, unique_path, write_atomic, Content};
+use rmsvc_core::fs::{plain_name, same_content, unique_path, Content};
 use rmsvc_core::xochitl::{Delivery, Xochitl};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -22,7 +21,6 @@ use std::sync::Arc;
 mod deliver;
 mod intake;
 mod library;
-mod optimizing;
 
 use self::library::ListCaches;
 
@@ -30,31 +28,20 @@ use self::library::ListCaches;
 mod tests;
 
 
-/// 优化用的阅读模式：sheng-ren 的 `xochitl` profile（Move 原生阅读器：阅读范围、注释跳转、漫画页边距 1 等都在里面）。
-const READER_PROFILE: &str = "xochitl";
-
-/// 设备上的图片处理资源上限（sheng-ren 的缺省值是按电脑定的）：单张图最多解码 900 万像素、同时在处理的图片合计 600 万像素。
-/// 两个数是原 cang-jie bookconv 在设备上实测定的（`imgopt::MAX_DECODE_PIXELS`：900 万像素峰值约 100–110MB；`imgpool` 的并行额度
-/// 600 万像素，2026-09-19 《镖人》552MB 真机 OOM 之后定），超过的图原样保留、不解码。
-pub(crate) const DEVICE_LIMITS: optimize::Limits = optimize::Limits { max_decode_pixels: 9_000_000, pool_pixel_budget: 6_000_000 };
-
-/// 旧版（v15、v16）最小页边距漫画登记的页边距（新产物从 `META-INF/eink-reader-margins` 读）。
-const LEGACY_COMIC_MARGINS: u32 = 1;
-
-/// 忙锁占用时的统一提示——优化/落库/删除三处几乎逐字重复过（2026-09-19 代码质量审计）。`extra`
+/// 忙锁占用时的统一提示——落库/删除/改名几处几乎逐字重复过（2026-09-19 代码质量审计）。`extra`
 /// 是各自独有的后缀（删除那处要额外提示"再删除"），其余传空串。
 fn busy_err(name: &str, extra: &str) -> String {
     format!("《{name}》正在处理中，请稍候{extra}")
 }
 
-/// 母版库目录里临时文件的种类（名字 `.<pid>.<序号>.<种类>.tmp`，见 [`ScratchFile`]）：优化产物、补封面的副本、
-/// 跨分区入库的中转、旧版产物兼容处理的中间副本。上次进程留下的由 `recover_interrupted` 按"点前缀 + `.tmp` 结尾"清掉。
-pub(super) const SCRATCH_KINDS: [&str; 4] = ["optimizing", "cover", "landing", "legacy"];
+/// 母版库目录里临时文件的种类（名字 `.<pid>.<序号>.<种类>.tmp`，见 [`ScratchFile`]）：现在只剩跨分区入库的中转。
+/// 上次进程留下的由 `recover_interrupted` 按"点前缀 + `.tmp` 结尾"清掉（旧版优化留下的半成品也一样）。
+pub(super) const SCRATCH_KINDS: [&str; 1] = ["landing"];
 
 /// 母版库目录里的一份点前缀临时文件（列表看不见）。
 ///
-/// - **名字与书名无关**（`.<pid>.<序号>.<种类>.tmp`）：此前按书名拼（`.<书名>.optimizing.tmp`），书名本身接近
-///   文件名 255 字节上限（中文 80 来个字）时临时文件名超长，优化直接报文件系统错误（ENAMETOOLONG）。
+/// - **名字与书名无关**（`.<pid>.<序号>.<种类>.tmp`）：按书名拼的话，书名本身接近文件名 255 字节上限（中文 80 来个字）时
+///   临时文件名超长，直接报文件系统错误（ENAMETOOLONG）。
 /// - **Drop 时删掉**：正常路径下文件早已被 rename 成正式文件（删不到，无害）；出错或 panic 时（后台线程 `catch_unwind`
 ///   兜住、进程照常服务）不再把半成品（大书可达数百 MB）一直留到下次重启才由 `recover_interrupted` 清。
 pub(super) struct ScratchFile(PathBuf);
@@ -71,53 +58,22 @@ impl Drop for ScratchFile {
     }
 }
 
-/// 异步操作（优化 / 投递）结果 → 边车终态 `(status, message)`：成功 `ok`、用户取消 `cancelled`、其余 `failed`。
-/// 优化与投递两处原来各写一遍同样的三分支 match（2026-09-24 审计合并）。
-fn final_status(result: Result<&str, &str>) -> (String, String) {
-    match result {
-        Ok(msg) => ("ok".into(), msg.to_string()),
-        Err(e) if e.contains(optimize::CANCELLED_MSG) => ("cancelled".into(), e.to_string()),
-        Err(e) => ("failed".into(), e.to_string()),
-    }
-}
-
-/// 母版库一本书的展示条目。`format`（epub / pdf / cbz / other）从扩展名判、优化等级从内埋标记判（轻量只读中央目录）。
-/// `rename_all = "camelCase"`：既有字段全是单词、camelCase 变换不影响它们的 JSON key，这次
-/// 新增的 `pdf_source` 借这个转成前端习惯的 `pdfSource`，不用单独给这一个字段挂 `rename`。
+/// 母版库一本书的展示条目。`format`（epub / pdf / cbz / other）从扩展名判。
 #[derive(Serialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct StagingEntry {
     pub name: String,
     pub bytes: u64,
     pub format: &'static str,
-    /// 是否**当前版本的完整优化**（含清洗层）。`level` 更细：full / core（只跑核心遍，如网文·格式转换产物）/ old / none。
-    pub optimized: bool,
-    pub level: &'static str,
     /// 入库时间（unix 秒），列表最新在前。
     pub mtime: u64,
-    /// 落库记录。时间早于 `mtime`（之后又优化过）= 母版已变，UI 标"旧"。
+    /// 落库记录。时间早于 `mtime`（之后母版又被替换过）= 母版已变，UI 标"旧"。
     #[serde(skip_serializing_if = "Option::is_none")]
     pub delivered: Option<Delivered>,
-    /// 是否正有一个异步操作（「优化」或「落库」）在这条目上跑——UI 据此禁用删除/落库/再次优化等按钮，
-    /// 防止双击/并发操作同一条目（2026-09-18 真机反馈：优化耗时可能到分钟级，同步阻塞体验像卡死；
-    /// 2026-09-19 落库同理补上——大书上传、等建文件夹同样能拖到分钟级）。
+    /// 是否正有一个操作（落库、删除、改名）在这条目上跑——UI 据此禁用删除/落库等按钮，防止双击/并发操作同一条目
+    /// （大书上传、等建文件夹能拖到分钟级）。
     #[serde(default)]
     pub busy: bool,
-    /// 这份 EPUB 是不是入库 PDF 转出来的（`format=="epub"` 才有意义；跟 `optimized`/`level` 的
-    /// 常规 full/core/old/none 阶梯正交——PDF 转出来是一次性产物，视为已经完成，不再进那条
-    /// 阶梯，也不再显示「优化」按钮，见 `looks_like_pdf_derived_epub` 文档）。
-    #[serde(default)]
-    pub pdf_source: bool,
-}
-
-/// 原 PDF 备份一条（`GET /staging` 的 `originals`）。
-#[derive(Serialize, Clone, Debug, PartialEq)]
-#[serde(rename_all = "camelCase")]
-pub struct OriginalEntry {
-    pub name: String,
-    pub bytes: u64,
-    pub backed_up_at: u64,
-    pub expires_at: u64,
 }
 
 /// 投原生成功后交给自检线程的计划：投书时刻（毫秒，圈"之后进库"的候选）+ 书名 + 期望页数。
@@ -138,15 +94,6 @@ pub struct DeliverOutcome {
     pub render: Option<RenderPlan>,
 }
 
-/// `fetch_article` 的结果：落地名 + 标题 + 同步优化态（没请求优化＝两个字段都是"未发生"，不是"失败"）。
-#[derive(Debug, PartialEq)]
-pub struct FetchArticleOutcome {
-    pub name: String,
-    pub title: String,
-    pub optimized: bool,
-    pub optimize_error: Option<String>,
-}
-
 // 原 `Reader { Native, Koreader }` 落库去向枚举：KOReader 2026-09-29 从设备卸载、2026-09-30 相关源码从仓库删除
 // （见 git 历史）后只剩 xochitl 一个去向，枚举随之删掉，`mark_delivered` 只记原生。边车里旧的 `koreader` 时间戳
 // 字段仍由 `sidecar.rs` 解析（兼容旧数据），这里不再写。
@@ -157,19 +104,17 @@ pub struct Staging {
     xochitl: Arc<Xochitl>,
     /// 投原生体积门（字节，0=不拦）：xochitl `/upload` 超限会直接断连，先拦下来给指引。
     native_limit: u64,
-    /// 正在跑异步操作（「优化」/「落库」）的登记簿：忙锁 + 取消协作，见 [`crate::ops`]。
+    /// 正在处理的条目登记簿（忙锁），见 [`crate::ops`]。
     ops: OpRegistry,
-    /// 列表的缓存（优化等级判定 / 落库边车 / xochitl 页数），各按对应文件的戳失效，见 [`ListCaches`]。
+    /// 列表的缓存（落库边车 / xochitl 页数），各按对应文件的戳失效，见 [`ListCaches`]。
     caches: Arc<ListCaches>,
     /// 漫画页边距待办（可选：测试里不装）。见 [`crate::comic_margins`]。
     comic_margins: Option<Arc<crate::comic_margins::ComicMargins>>,
     /// 母版库"落名"临界区：挑一个不撞名的文件名（`unique_path` 先查存在）再 rename/写入，两步之间不能插进别的落名，
-    /// 否则两个同名书会挑到同一个名字、后到的把先到的覆盖掉。网页上传 / inbox 追平 / 抓网文 / 改名 / 恢复原 PDF
+    /// 否则两个同名书会挑到同一个名字、后到的把先到的覆盖掉。网页上传 / inbox 追平 / 改名
     /// 都从这里过。只包"挑名 + 落地"这一小段本地文件操作——此前网页上传是把 spool 锁一直攥到整个 multipart
     /// 请求体收完（WiFi 上传大书能到分钟级），期间别的上传和 inbox 追平全被卡住（2026-09-24 审计）。
     land: Arc<std::sync::Mutex<()>>,
-    /// 优化 EPUB 前书里没有封面就联网补一张（[`crate::cover_fetch`]；测试里不开，免得单测联网）。
-    fetch_covers: bool,
 }
 
 /// 上传模板适配：母版库作为 [`AssetStore`]——扩展名门＝书籍格式白名单，install＝同分区 rename 入库。
@@ -212,11 +157,6 @@ impl AssetStore for StagingStore<'_> {
     }
 }
 
-/// PDF→EPUB 成功后原 PDF 的隐藏备份目录（母版库下，点前缀 → `list()` 看不见）。
-pub const PDF_ORIGINALS_DIR: &str = ".pdf-originals";
-/// 备份保留时长：7 天。启动时和每次新备份时清过期的。
-pub const PDF_ORIGINALS_KEEP_SECS: u64 = 7 * 86_400;
-
 /// 非书籍文件的拒收文案（上传门与 inbox 追平同一句）。
 pub fn reject_message() -> String {
     format!("不是书籍格式，母版库只收 {}", formats::dotted(BOOK_EXTS))
@@ -234,7 +174,7 @@ fn canonical_staged_name(name: &str) -> String {
 fn reader_margins_of(path: &Path) -> Option<u32> {
     let f = std::fs::File::open(path).ok()?;
     let mut ar = bookconv::zip::ZipArchive::new(std::io::BufReader::new(f)).ok()?;
-    let entry = ar.by_name(optimize::READER_MARGINS_MARKER).ok()?;
+    let entry = ar.by_name(bookconv::optimize::READER_MARGINS_MARKER).ok()?;
     let bytes = bookconv::util::read_capped(entry, 16, 0).ok()??;
     std::str::from_utf8(&bytes).ok()?.trim().parse().ok()
 }
@@ -249,13 +189,7 @@ impl Staging {
             caches: Arc::default(),
             comic_margins: None,
             land: Arc::new(std::sync::Mutex::new(())),
-            fetch_covers: false,
         }
-    }
-    /// 打开"没有封面就联网补"（`State::new` 用）。
-    pub fn with_cover_fetch(mut self) -> Staging {
-        self.fetch_covers = true;
-        self
     }
     /// 接上漫画页边距待办队列（`State::new` 用）。
     pub fn with_comic_margins(mut self, q: Arc<crate::comic_margins::ComicMargins>) -> Staging {
@@ -266,27 +200,15 @@ impl Staging {
     pub(crate) fn comic_margin_switch_on(&self) -> bool {
         self.comic_margins.as_ref().is_some_and(|q| q.enabled())
     }
-    /// 这次优化用的选项：sheng-ren 的 `xochitl` 阅读模式 + 设备资源上限（[`DEVICE_LIMITS`]）。「实验室→漫画页边距」开关关着时
-    /// 关掉 profile 的漫画页边距模式（`without_comic_reader_margins`）：漫画按默认页边距（56）下的阅读范围 842×1455 排、不写
-    /// `META-INF/eink-reader-margins`、文字页不另补留边；开着时按页边距 1 的范围 952×1457 排，并写这个标记供投书时登记。
-    pub(crate) fn optimize_opts(&self) -> OptimizeOpts {
-        let mut p = profile::get(READER_PROFILE).expect("sheng-ren 内置 xochitl 阅读模式").clone();
-        if !self.comic_margin_switch_on() {
-            p.without_comic_reader_margins();
-        }
-        let mut o = OptimizeOpts::for_profile(&p);
-        o.limits = DEVICE_LIMITS;
-        o
-    }
-    /// 这本 EPUB 投到原生书库后该设成多大的页边距（`None` = 不登记）：**开关开**，并且是按页边距模式排的漫画——
-    /// 新产物看 sheng-ren 优化器写的 `META-INF/eink-reader-margins`（只有开关开着时优化的漫画才有）；还没重新优化的旧版
-    /// （v15、v16）最小页边距漫画照旧认（[`shelf_conv::legacy::is_legacy_min_margin_comic_file`]）。补白比例是按页边距 1 算的，
+    /// 这本 EPUB 投到原生书库后该设成多大的页边距（`None` = 不登记）：**开关开**，并且是按页边距模式排的漫画——看 sheng-ren
+    /// 优化器写的 `META-INF/eink-reader-margins`（sheng-ren `xochitl` 模式优化的漫画才有）。补白比例是按那个页边距算的，
     /// 没按这个模式排的漫画设成 1 反而更糟（贴左、右侧空一块，文字贴屏幕边）；文字书 / PDF 完全不碰。
+    /// 本仓库旧版（v15、v16）优化出来的漫画不再认，请用 sheng-ren 重新优化。
     pub(crate) fn comic_margin_eligible(&self, path: &Path) -> Option<u32> {
         if !self.comic_margin_switch_on() {
             return None;
         }
-        reader_margins_of(path).or_else(|| shelf_conv::legacy::is_legacy_min_margin_comic_file(path).then_some(LEGACY_COMIC_MARGINS))
+        reader_margins_of(path)
     }
     /// 登记"这本书首次打开时设页边距 `margins`"。失败只记日志，不影响投书。
     pub(crate) fn register_comic_margins(&self, uuid: &str, name: &str, margins: u32) {
@@ -296,7 +218,7 @@ impl Staging {
             Err(e) => println!("[book-serve] 《{name}》登记页边距失败（不影响投书）: {e}"),
         }
     }
-    /// 这条目当前是否有异步操作在跑。
+    /// 这条目当前是否有操作在跑。
     pub fn is_busy(&self, name: &str) -> bool {
         self.ops.is_busy(name)
     }
@@ -306,18 +228,6 @@ impl Staging {
     }
     pub(crate) fn end_busy(&self, name: &str) {
         self.ops.end(name);
-    }
-    /// 当前这步操作声明"我会检查取消标记"。
-    pub(crate) fn mark_cancellable(&self, name: &str) {
-        self.ops.mark_cancellable(name);
-    }
-    pub(crate) fn is_cancelled(&self, name: &str) -> bool {
-        self.ops.is_cancelled(name)
-    }
-    /// 请求取消这本书正在跑的优化/投递。`Ok(true)`＝已登记，会在下一个检查点停下；`Ok(false)`＝这一步无法中途停止
-    /// （如单文件上传）；`Err`＝这本书当前没有在处理。
-    pub fn request_cancel(&self, name: &str) -> Result<bool, String> {
-        self.ops.request_cancel(name)
     }
     pub fn dir(&self) -> &Path {
         &self.dir
@@ -359,14 +269,8 @@ impl Staging {
         sidecar::update(&self.existing(name)?, f)
     }
 
-    /// [`Self::spawn_optimize`]/[`Self::spawn_deliver`] 共用的"起后台线程"外壳（2026-09-19 代码
-    /// 质量审计：两处 `thread::spawn`+`end_busy`+`bus.publish` 逐行同构，业务内容——调
-    /// `optimize`/`deliver`、写哪个 `sidecar::*Check`、`spawn_deliver` 还要另起渲染自检子线程——
-    /// 本身不同，不下沉进来，留在各自的 `body` 闭包里。`body` 内部对业务调用本身的 `catch_unwind`
-    /// （把 panic 转成带具体原因的 `Err` 写进 sidecar）**保留在各自闭包里、不合并**——两处 panic
-    /// 提示文案不同（"优化过程内部异常"/"落库过程内部异常"），硬并到这一层反而丢信息；这里外层
-    /// 再包一层 `catch_unwind` 只是兜底 `body` 自身（比如 sidecar 写入）意外 panic 时仍能
-    /// `end_busy`+`publish`，不影响正常路径的行为。
+    /// [`Self::spawn_deliver`] 的"起后台线程"外壳：跑完（含 panic）一律 `end_busy` + 发 `books`/`staging` 事件。`body` 里对
+    /// 落库本身另有一层 `catch_unwind`（把 panic 转成带原因的 `Err` 写进边车）；这一层只兜底 `body` 自身（比如边车写入）意外 panic。
     fn spawn_bg(&self, name: &str, bus: Arc<rmsvc_core::events::EventBus>, body: impl FnOnce(&Staging, &str, &Arc<rmsvc_core::events::EventBus>) + Send + 'static) {
         let (this, name) = (self.clone(), name.to_string());
         std::thread::spawn(move || {

@@ -1,4 +1,4 @@
-//! 母版库单测（原 `staging.rs` 内联的 `mod tests`；夹具（假 xochitl、漫画 EPUB 等）跨入库/优化/落库共用，集中放这里）。
+//! 母版库单测（原 `staging.rs` 内联的 `mod tests`；夹具（假 xochitl、漫画 EPUB 等）跨入库/落库共用，集中放这里）。
 use super::*;
 use rmsvc_core::asset::AssetUploadFlow;
 
@@ -42,7 +42,7 @@ fn put_list_read_remove() {
     let list = s.list();
     assert_eq!(list.len(), 3);
     let epub = list.iter().find(|e| e.name == "a.epub").unwrap();
-    assert_eq!((epub.format, epub.level, epub.optimized), ("epub", "none", false), "非 zip 不该判已优化");
+    assert_eq!(epub.format, "epub");
     assert_eq!(list.iter().find(|e| e.name == "doc.pdf").unwrap().format, "pdf");
     s.remove("a.epub").unwrap();
     assert_eq!(s.list().len(), 2);
@@ -101,63 +101,6 @@ fn delivered_record_roundtrip() {
 }
 
 #[test]
-fn optimize_gates_and_runs_single_full_pass() {
-    // 2026-09-19 用户明确要求去掉"优化分档位"——不再有 Plain/KeepSpacing 两档，`optimize()`
-    // 永远跑完整的清洗+优化（原来标"推荐"的那档，也是绝大多数书要的那档）。
-    let t = tempfile::tempdir().unwrap();
-    let s = staging(&t);
-    let opf = r#"<package version="2.0"><metadata><dc:title>t</dc:title></metadata><manifest><item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="c1"/></spine></package>"#;
-    let epub = mini_epub(&[("content.opf", opf), ("c1.xhtml", r#"<html><head></head><body><h1>第一章</h1><p style="font-size:9px;margin:1em">正文</p></body></html>"#)]);
-    s.stage_new("x.epub", &epub).unwrap();
-    // 2026-09-19 起 PDF 也能「优化」（入库 PDF 线，见 `optimize_pdf`）——这份 `%PDF` 字面量
-    // 不是真实可解析的 PDF 结构，走到 `pdf_ingest::classify_pdf` 会解析失败，这里只断言
-    // "确实报错、不是静默成功"，不再断言旧版"PDF 一律不支持"那句文案。
-    s.stage_new("p.pdf", b"%PDF").unwrap();
-    assert!(s.optimize("p.pdf", |_, _| {}).is_err());
-    assert!(s.optimize("none.epub", |_, _| {}).is_err());
-    assert!(s.optimize("x.cbz", |_, _| {}).is_err()); // 格式白名单之外的仍然拒绝
-
-    let mut progresses = Vec::new();
-    let msg = s.optimize("x.epub", |done, total| progresses.push((done, total))).unwrap();
-    assert!(msg.contains("清洗+优化") && msg.contains("自动目录 1 条"), "{msg}");
-    assert!(!progresses.is_empty(), "on_progress 应该原样转发自 optimize_epub_file_streaming");
-    assert_eq!(progresses.last().unwrap().0, progresses.last().unwrap().1, "最后一次回调应该是 done==total");
-    let e = s.list().into_iter().find(|e| e.name == "x.epub").unwrap();
-    assert!(e.optimized && e.level == "full");
-}
-
-/// 2026-09-23 接入质量门：优化产物没过 `check_epub_file` 就该整体失败，母版库里的原书原样留着——
-/// 不能让一份带断链引用的半成品覆盖掉用户原来能正常读的书。带 `alt` 文字的死图 `drop_dead_refs`
-/// 不会删（"不冒丢内容风险"，见该函数文档），刚好是个真实存在、优化器管不到的断链场景。
-#[test]
-fn optimize_rejects_and_leaves_original_untouched_when_quality_gate_fails() {
-    let t = tempfile::tempdir().unwrap();
-    let s = staging(&t);
-    let opf = r#"<package version="2.0"><metadata><dc:title>t</dc:title></metadata><manifest><item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="c1"/></spine></package>"#;
-    let epub = mini_epub(&[("content.opf", opf), ("c1.xhtml", r#"<html><body><img src="missing.png" alt="重要插图说明"/></body></html>"#)]);
-    s.stage_new("x.epub", &epub).unwrap();
-    let err = s.optimize("x.epub", |_, _| {}).unwrap_err();
-    assert!(err.contains("质量门") && err.contains("正文资源引用命中率过低"), "{err}");
-    let dir = t.path().join("staging");
-    assert_eq!(std::fs::read(dir.join("x.epub")).unwrap(), epub, "母版原样保留，没被半成品覆盖");
-    assert!(!std::fs::read_dir(&dir).unwrap().any(|e| e.unwrap().file_name().to_string_lossy().contains("optimizing.tmp")), "不留半成品");
-}
-
-#[test]
-fn optimize_temp_file_dot_prefixed_so_list_does_not_surface_mid_flight_product() {
-    // 真机回归（2026-09-19，《镖人》552MB 全集）：流式优化耗时到分钟级，临时产物在目录里存在
-    // 的时间不再是"同步写一次内存 buffer"那种毫秒级窗口——之前用不带点前缀的命名，真机
-    // `GET /staging` 撞见过一条 `format:"other"` 的 `....epub.optimizing.tmp` 离谱条目。
-    // 这里不模拟并发时序（太脆），直接断言临时产物命名遵循 `list()` 已有的点前缀过滤规则。
-    let t = tempfile::tempdir().unwrap();
-    let s = staging(&t);
-    s.stage_new("x.epub", b"PK").unwrap();
-    std::fs::write(s.dir().join(".x.epub.optimizing.tmp"), b"partial").unwrap();
-    let names: Vec<String> = s.list().into_iter().map(|e| e.name).collect();
-    assert_eq!(names, vec!["x.epub".to_string()], "优化中途产物不该出现在列表里: {names:?}");
-}
-
-#[test]
 fn busy_lock_blocks_second_start_and_conflicting_delete_deliver() {
     let t = tempfile::tempdir().unwrap();
     let s = staging(&t);
@@ -204,94 +147,6 @@ fn spawn_deliver_rejects_bad_format_synchronously_without_busy_lock() {
     assert!(s.spawn_deliver("c.cbz", "", Arc::new(empty_mkdir(&t)), bus.clone()).unwrap_err().contains("只读 EPUB / PDF"));
     assert!(!s.is_busy("c.cbz"), "校验失败不该留下忙锁");
     assert!(s.spawn_deliver("none.epub", "", Arc::new(empty_mkdir(&t)), bus).is_err());
-}
-
-#[test]
-fn spawn_optimize_runs_in_background_and_records_result_then_clears_busy() {
-    let t = tempfile::tempdir().unwrap();
-    let s = staging(&t);
-    let opf = r#"<package version="2.0"><metadata><dc:title>t</dc:title></metadata><manifest><item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="c1"/></spine></package>"#;
-    let epub = mini_epub(&[("content.opf", opf), ("c1.xhtml", "<html><head></head><body><h1>第一章</h1><p>正文</p></body></html>")]);
-    s.stage_new("x.epub", &epub).unwrap();
-    let bus = Arc::new(rmsvc_core::events::EventBus::new());
-    s.spawn_optimize("x.epub", bus).unwrap();
-    // 起线程那一刻就该忙（同步部分：格式校验+加锁，不依赖线程调度时机）
-    assert!(s.is_busy("x.epub"), "spawn 返回时忙锁应已生效");
-    // 忙着的时候第二次调用应该被拒绝，不会排队/覆盖
-    let bus2 = Arc::new(rmsvc_core::events::EventBus::new());
-    assert!(s.spawn_optimize("x.epub", bus2).unwrap_err().contains("正在处理中"));
-    // 等后台线程跑完（真实测试书毫秒级，给足超时兜底 CI 慢机器）
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-    while s.is_busy("x.epub") && std::time::Instant::now() < deadline {
-        std::thread::sleep(std::time::Duration::from_millis(10));
-    }
-    assert!(!s.is_busy("x.epub"), "后台线程应该在超时前跑完并清忙锁");
-    let e = s.list().into_iter().find(|e| e.name == "x.epub").unwrap();
-    assert!(!e.busy);
-    let oc = e.delivered.and_then(|d| d.optimize).expect("应该写了异步优化结果");
-    assert_eq!(oc.status, "ok");
-    assert!(oc.message.contains("已优化"), "{}", oc.message);
-}
-
-/// 回归（2026-09-25）：抓网文的「同步优化」占忙锁——优化进行中对这本书的删除/再优化/落库/改名都被拒，
-/// 列表显示忙；优化完忙锁清掉、书能正常删。不勾同步优化的抓取不加锁。
-#[test]
-fn fetch_article_sync_optimize_holds_busy_lock() {
-    let t = tempfile::tempdir().unwrap();
-    let s = staging(&t);
-    let opf = r#"<package version="2.0"><metadata><dc:title>t</dc:title></metadata><manifest><item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="c1"/></spine></package>"#;
-    let epub = mini_epub(&[("content.opf", opf), ("c1.xhtml", "<html><head></head><body><h1>网文</h1><p>正文</p></body></html>")]);
-    let (s2, mkdir) = (s.clone(), Arc::new(empty_mkdir(&t)));
-    let checked = std::cell::Cell::new(0u32);
-    let out = s
-        .land_article("网文.epub", &epub, "网文".into(), true, |_, _| {
-            checked.set(checked.get() + 1);
-            assert!(s2.is_busy("网文.epub"), "同步优化期间应占着忙锁");
-            assert!(s2.remove("网文.epub").unwrap_err().contains("正在处理中"), "优化中不能删");
-            let bus = Arc::new(rmsvc_core::events::EventBus::new());
-            assert!(s2.spawn_optimize("网文.epub", bus.clone()).unwrap_err().contains("正在处理中"), "优化中不能再起一个优化");
-            assert!(s2.spawn_deliver("网文.epub", "", mkdir.clone(), bus).unwrap_err().contains("正在处理中"), "优化中不能落库");
-            assert!(s2.rename("网文.epub", "别名.epub").unwrap_err().contains("正在处理中"), "优化中不能改名");
-            assert!(s2.list().iter().find(|e| e.name == "网文.epub").is_some_and(|e| e.busy), "列表应体现 busy");
-        })
-        .unwrap();
-    assert!(checked.get() > 0, "优化进度回调应被调到（否则上面的断言没跑）");
-    assert_eq!((out.name.as_str(), out.optimized, out.optimize_error.as_deref()), ("网文.epub", true, None));
-    assert!(!s.is_busy("网文.epub"), "同步优化结束后忙锁应清掉");
-    // 优化失败（不是合法 EPUB）也照样清锁、书照样入库
-    let bad = s.land_article("坏.epub", b"not-a-zip", "坏".into(), true, |_, _| {}).unwrap();
-    assert!(!bad.optimized && bad.optimize_error.is_some());
-    assert!(!s.is_busy("坏.epub") && s.has("坏.epub"), "优化失败不留忙锁、不丢已抓到的文章");
-    // 不勾同步优化：只落地，不加锁
-    let plain = s.land_article("网文.epub", &epub, "网文".into(), false, |_, _| unreachable!()).unwrap();
-    assert_eq!((plain.name.as_str(), plain.optimized), ("1_网文.epub", false), "同名不覆盖");
-    assert!(!s.is_busy(&plain.name));
-    s.remove("网文.epub").unwrap();
-}
-
-/// 落名临界区里挑中的名字恰好正被占着（如别的书正改名成它）→ 抓网文如实报忙、不落地，不抢别人的锁。
-#[test]
-fn fetch_article_refuses_when_landed_name_is_busy() {
-    let t = tempfile::tempdir().unwrap();
-    let s = staging(&t);
-    assert!(s.try_start_busy("网文.epub"));
-    let err = s.land_article("网文.epub", b"PK", "网文".into(), true, |_, _| {}).unwrap_err();
-    assert!(err.contains("正在处理中"), "{err}");
-    assert!(!s.has("网文.epub"), "没拿到锁就不落地");
-    assert!(s.is_busy("网文.epub"), "别人的忙锁不能被清掉");
-}
-
-#[test]
-fn spawn_optimize_rejects_non_epub_and_missing_file_synchronously() {
-    let t = tempfile::tempdir().unwrap();
-    let s = staging(&t);
-    s.stage_new("x.cbz", b"not a real cbz").unwrap();
-    let bus = Arc::new(rmsvc_core::events::EventBus::new());
-    // 格式白名单之外（CBZ 等）依然同步拒绝，不占忙锁——PDF 2026-09-19 起已经在白名单内，
-    // 不能再拿它当"非法格式"的例子（见 `optimize_gates_and_runs_single_full_pass`）。
-    assert!(s.spawn_optimize("x.cbz", bus.clone()).unwrap_err().contains("只有 EPUB/PDF"));
-    assert!(!s.is_busy("x.cbz"), "校验失败不该留下忙锁");
-    assert!(s.spawn_optimize("none.epub", bus).is_err());
 }
 
 /// 造一本 2 卷合集漫画，塞进 mini_epub 装不了的
@@ -353,9 +208,7 @@ fn fake_jpeg() -> Vec<u8> {
     ]
 }
 
-/// 带 NCX 目录、真图片字节的漫画 EPUB——给"优化改产出 PDF"这条新路径用的测试夹具，跟
-/// `multivol_comic_epub`（图片纯占位、拆分不解码）区别在于图片是真能被 `pdfwrite::
-/// image_from_bytes` 编进去的字节。
+/// 带 NCX 目录、真图片字节（最小 JPEG 头）的漫画 EPUB，大文件通道的占位要从里面取封面。
 fn comic_epub_with_real_images(pages_per_vol: &[usize]) -> Vec<u8> {
     use std::io::Write;
     let mut manifest = String::new();
@@ -400,49 +253,6 @@ fn stage_new_names_epub_as_title_dash_volume_number_first() {
     assert_eq!(landed, "鏢人 - 02卷.epub");
     // 非 EPUB 不动名字。
     assert_eq!(s.stage_new("x -- y.pdf", b"%PDF-1.4").unwrap(), "x -- y.pdf");
-}
-
-#[test]
-fn optimize_renames_existing_long_epub_and_keeps_sidecar() {
-    let t = tempfile::tempdir().unwrap();
-    let s = staging(&t);
-    let long = "亂馬1⁄2 典藏版 - 19卷 -- 高橋留美子 -- 19, 2019 -- 尖端 -- 03220cf1 -- Anna’s Archive.epub";
-    std::fs::write(t.path().join("staging").join(long), comic_epub_with_real_images(&[12, 13])).unwrap();
-    s.mark_delivered(long).unwrap();
-    let msg = s.optimize(long, |_, _| {}).unwrap();
-    assert!(msg.contains("亂馬1⁄2 典藏版 - 19卷"), "{msg}");
-    let list = s.list();
-    assert_eq!(list.len(), 1, "只该有一条: {:?}", list.iter().map(|e| &e.name).collect::<Vec<_>>());
-    assert_eq!(list[0].name, "亂馬1⁄2 典藏版 - 19卷.epub");
-    assert!(list[0].delivered.is_some(), "落库记录（边车）必须跟着改名，不能丢");
-    assert!(list[0].optimized);
-}
-
-#[test]
-fn optimize_sets_dc_title_to_canonical_name_for_volume_books() {
-    // 设备显示名取 EPUB 的 dc:title：有卷标记的书，优化后 dc:title 必须是规范名，跟文件名一致。
-    let t = tempfile::tempdir().unwrap();
-    let s = staging(&t);
-    let long = "鏢人 - 卷02 -- 許先哲 -- Anna’s Archive.epub";
-    std::fs::write(t.path().join("staging").join(long), comic_epub_with_real_images(&[12, 13])).unwrap();
-    s.optimize(long, |_, _| {}).unwrap();
-    let bytes = std::fs::read(t.path().join("staging").join("鏢人 - 02卷.epub")).unwrap();
-    let entries = bookconv::epubzip::read_entries(&bytes).unwrap();
-    let opf = entries.iter().find(|e| e.name.ends_with(".opf")).unwrap();
-    assert!(String::from_utf8_lossy(&opf.data).contains("<dc:title>鏢人 - 02卷</dc:title>"), "dc:title 应为规范名");
-}
-
-#[test]
-fn optimize_keeps_original_name_when_canonical_target_exists() {
-    let t = tempfile::tempdir().unwrap();
-    let s = staging(&t);
-    let dir = t.path().join("staging");
-    let long = "书 - 01卷 -- 作者 -- Anna’s Archive.epub";
-    std::fs::write(dir.join(long), comic_epub_with_real_images(&[12, 13])).unwrap();
-    std::fs::write(dir.join("书 - 01卷.epub"), comic_epub_with_real_images(&[12, 13])).unwrap();
-    s.optimize(long, |_, _| {}).unwrap();
-    let names: Vec<String> = s.list().into_iter().map(|e| e.name).collect();
-    assert!(names.contains(&long.to_string()) && names.contains(&"书 - 01卷.epub".to_string()), "重复的同一卷不能互相覆盖: {names:?}");
 }
 
 #[test]
@@ -499,9 +309,9 @@ fn long_book_name_sidecar_full_lifecycle() {
     let car = sidecar::path_for(&s.dir.join(&name));
     assert!(car.is_file() && car.file_name().unwrap().len() <= 255);
     // 启动修复：pending → failed
-    s.set_optimize_check(&name, sidecar::OptimizeCheck { status: "pending".into(), ..Default::default() }).unwrap();
+    s.set_deliver_check(&name, sidecar::DeliverCheck { status: "pending".into(), ..Default::default() }).unwrap();
     assert_eq!(s.recover_interrupted(), (1, 0));
-    assert_eq!(sidecar::read(&s.dir.join(&name)).unwrap().optimize.unwrap().status, "failed");
+    assert_eq!(sidecar::read(&s.dir.join(&name)).unwrap().deliver.unwrap().status, "failed");
     // 孤儿清理：有书的短名边车不动；再放一个普通孤儿 + 一个短名孤儿，都清掉
     let orphan_long = sidecar::file_name_for(&format!("{}zz.pdf", "书".repeat(81)));
     std::fs::write(s.dir.join(&orphan_long), b"{}").unwrap();
@@ -570,26 +380,24 @@ fn recover_interrupted_fixes_stale_pending_and_removes_tmp() {
     let t = tempfile::tempdir().unwrap();
     let s = staging(&t);
     let name = s.stage_new("a.epub", &mini_epub(&[("OEBPS/a.xhtml", "<p>x</p>")])).unwrap();
-    s.set_optimize_check(&name, sidecar::OptimizeCheck { status: "pending".into(), ..Default::default() }).unwrap();
     s.set_deliver_check(&name, sidecar::DeliverCheck { status: "pending".into(), ..Default::default() }).unwrap();
     s.set_render(&name, sidecar::RenderCheck { status: "pending".into(), ..Default::default() }).unwrap();
     let ok = s.stage_new("ok.epub", &mini_epub(&[("OEBPS/a.xhtml", "<p>y</p>")])).unwrap();
-    s.set_optimize_check(&ok, sidecar::OptimizeCheck { status: "ok".into(), message: "已优化".into(), ..Default::default() }).unwrap();
+    s.set_deliver_check(&ok, sidecar::DeliverCheck { status: "ok".into(), message: "已加入".into(), ..Default::default() }).unwrap();
     std::fs::write(s.dir.join(".a.epub.optimizing.tmp"), vec![0u8; 1000]).unwrap();
     std::fs::write(s.dir.join(".123.0.landing.tmp"), vec![0u8; 1000]).unwrap();
-    assert_eq!(s.recover_interrupted(), (1, 2), "只修 pending 的那本，清 2 个半成品（优化 + 跨分区入库）");
+    assert_eq!(s.recover_interrupted(), (1, 2), "只修 pending 的那本，清 2 个半成品（旧版优化 + 跨分区入库）");
     let d = sidecar::read(&s.dir.join(&name)).unwrap();
-    assert_eq!(d.optimize.unwrap().status, "failed");
     assert_eq!(d.deliver.unwrap().status, "failed");
     assert_eq!(d.render.unwrap().status, "timeout");
-    assert_eq!(sidecar::read(&s.dir.join(&ok)).unwrap().optimize.unwrap().message, "已优化", "已完成的记录不动");
+    assert_eq!(sidecar::read(&s.dir.join(&ok)).unwrap().deliver.unwrap().message, "已加入", "已完成的记录不动");
     assert!(!s.dir.join(".a.epub.optimizing.tmp").exists());
     assert_eq!(s.recover_interrupted(), (0, 0), "幂等");
 }
 
 /// 回归：补封面的临时副本（整本 EPUB 的拷贝）、边车原子写的临时文件也按半成品清；新旧两种临时文件命名都认。
 #[test]
-fn recover_interrupted_removes_cover_and_new_style_scratch_files() {
+fn recover_interrupted_removes_old_and_new_style_scratch_files() {
     let t = tempfile::tempdir().unwrap();
     let s = staging(&t);
     s.stage_new("a.epub", b"PK").unwrap();
@@ -609,60 +417,20 @@ fn recover_interrupted_removes_cover_and_new_style_scratch_files() {
 fn scratch_file_is_removed_on_panic_and_names_are_unique() {
     let t = tempfile::tempdir().unwrap();
     let s = staging(&t);
-    let (a, b) = (s.scratch("optimizing"), s.scratch("optimizing"));
+    let (a, b) = (s.scratch("landing"), s.scratch("landing"));
     assert_ne!(a.path(), b.path());
     drop((a, b));
     let seen = std::sync::Mutex::new(None);
     let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        let tmp = s.scratch("cover");
+        let tmp = s.scratch("landing");
         std::fs::write(tmp.path(), vec![0u8; 1000]).unwrap();
         *seen.lock().unwrap() = Some(tmp.path().to_path_buf());
-        panic!("优化中途 panic");
+        panic!("入库中途 panic");
     }));
     assert!(r.is_err());
     let p = seen.lock().unwrap().clone().unwrap();
     assert!(!p.exists(), "panic 展开时临时文件被删");
     assert!(std::fs::read_dir(s.dir()).unwrap().all(|e| !e.unwrap().file_name().to_string_lossy().ends_with(".tmp")));
-}
-
-/// 回归：书名接近文件名 255 字节上限时照样能优化——此前临时文件按书名拼（`.<书名>.optimizing.tmp`），
-/// 比书名多 16 字节，超长报文件系统错误。
-#[test]
-fn optimize_works_for_book_names_near_the_filename_limit() {
-    let t = tempfile::tempdir().unwrap();
-    let s = staging(&t);
-    let name = format!("{}.epub", "长".repeat(79)); // 242 字节：书名与边车（+11）放得下，旧临时名（+16）放不下
-    assert!(name.len() + 16 > 255 && name.len() + 11 <= 255);
-    let opf = r#"<package version="2.0"><metadata><dc:title>t</dc:title></metadata><manifest><item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="c1"/></spine></package>"#;
-    let epub = mini_epub(&[("content.opf", opf), ("c1.xhtml", "<html><head></head><body><h1>一</h1><p>正文</p></body></html>")]);
-    assert_eq!(s.stage_new(&name, &epub).unwrap(), name);
-    let msg = s.optimize(&name, |_, _| {}).unwrap();
-    assert!(msg.contains("已优化"), "{msg}");
-    assert_eq!(s.list().into_iter().find(|e| e.name == name).unwrap().level, "full");
-}
-
-#[test]
-fn list_caches_level_probe_and_invalidates_on_rewrite_or_delete() {
-    // 判定要开 zip（吃 CPU/电），按（大小,mtime）缓存；文件改写后必须重判，删除后清缓存。
-    let t = tempfile::tempdir().unwrap();
-    let s = staging(&t);
-    let plain = mini_epub(&[("OEBPS/a.xhtml", "<p>x</p>")]);
-    s.stage_new("b.epub", &plain).unwrap();
-    assert_eq!(s.list()[0].level, "none");
-    assert_eq!(s.caches.probes.len(), 1, "首次列表写入缓存");
-    // 篡改缓存里的结论：若第二次列表仍用它，说明命中缓存没有重开文件
-    let stamp = rmsvc_core::cache::FileStamp::read(&s.dir.join("b.epub")).unwrap();
-    s.caches.probes.put("b.epub", stamp, ("full", false));
-    assert_eq!(s.list()[0].level, "full", "文件没变 → 命中缓存");
-    // 文件改写（内容长度变了）→ 缓存失效重判
-    let marked = mini_epub(&[("OEBPS/a.xhtml", "<p>x</p>"), (optimize::OPTIMIZE_MARKER, optimize::OPTIMIZE_VERSION)]);
-    std::fs::write(s.dir.join("b.epub"), &marked).unwrap();
-    assert_eq!(s.list()[0].level, "full");
-    std::fs::write(s.dir.join("b.epub"), &plain).unwrap();
-    assert_eq!(s.list()[0].level, "none", "改写回未优化 → 重判");
-    std::fs::remove_file(s.dir.join("b.epub")).unwrap();
-    assert!(s.list().is_empty());
-    assert!(s.caches.probes.is_empty(), "条目消失 → 清缓存");
 }
 
 /// 列表的边车 / xochitl 页数也按文件戳缓存：没变就不再开文件（篡改缓存证明命中），边车一改写（原子写换 inode）立刻看到新内容。
@@ -725,162 +493,6 @@ fn backfill_claims_delivered_books_without_render_record_by_name_and_size() {
     assert_eq!((get("镖人 - 二卷.epub").status.as_str(), get("镖人 - 二卷.epub").pages), ("onopen", 2));
     assert_eq!((get("镖人 - 三卷.epub").status.as_str(), get("镖人 - 三卷.epub").pages), ("ok", 264));
     assert_eq!(s.backfill_render_records(), 0, "幂等：已有记录的不再补");
-}
-
-#[test]
-fn request_cancel_requires_busy_and_cancellable_step() {
-    let t = tempfile::tempdir().unwrap();
-    let s = staging(&t);
-    assert!(s.request_cancel("x.epub").unwrap_err().contains("没有在处理"), "没在处理的书不能取消");
-    assert!(s.try_start_busy("x.epub"));
-    assert_eq!(s.request_cancel("x.epub"), Ok(false), "没声明可中断的步骤（如单文件上传）如实回 false");
-    assert!(!s.is_cancelled("x.epub"));
-    s.mark_cancellable("x.epub");
-    assert_eq!(s.request_cancel("x.epub"), Ok(true));
-    assert!(s.is_cancelled("x.epub"));
-    s.end_busy("x.epub");
-    assert!(!s.is_cancelled("x.epub"), "操作结束后取消标记必须清掉，不能带进下一次");
-    assert!(s.try_start_busy("x.epub"));
-    assert!(!s.is_cancelled("x.epub"));
-}
-
-#[test]
-fn optimize_cancelled_midway_leaves_book_and_no_temp_file() {
-    // 取消标记已设：优化一开始就停，母版原样保留，不留 .optimizing.tmp 半成品，状态是 cancelled 而不是 failed。
-    let t = tempfile::tempdir().unwrap();
-    let s = staging(&t);
-    let epub = comic_epub_with_real_images(&[12, 13]);
-    s.stage_new("manga.epub", &epub).unwrap();
-    assert!(s.try_start_busy("manga.epub"));
-    s.mark_cancellable("manga.epub");
-    s.request_cancel("manga.epub").unwrap();
-    let err = s.optimize("manga.epub", |_, _| {}).unwrap_err();
-    assert!(err.contains("已取消"), "{err}");
-    let dir = t.path().join("staging");
-    assert_eq!(std::fs::read(dir.join("manga.epub")).unwrap(), epub, "母版原样保留");
-    assert!(!std::fs::read_dir(&dir).unwrap().any(|e| e.unwrap().file_name().to_string_lossy().contains("optimizing.tmp")), "不留半成品");
-}
-
-#[test]
-fn optimize_comic_epub_stays_epub() {
-    // 统一规则（2026-09-20 用户拍板）：漫画「优化」也不改格式，产物仍是同名 EPUB，内容/目录原样保留。
-    let t = tempfile::tempdir().unwrap();
-    let s = staging(&t);
-    let epub = comic_epub_with_real_images(&[12, 13]); // 25 张图，够 is_comic 阈值
-    s.stage_new("manga.epub", &epub).unwrap();
-
-    let msg = s.optimize("manga.epub", |_, _| {}).unwrap();
-    assert!(!msg.contains("PDF"), "漫画不该再转 PDF: {msg}");
-
-    let list = s.list();
-    assert!(list.iter().all(|e| e.name != "manga.pdf"), "不该产出 PDF");
-    let e = list.iter().find(|e| e.name == "manga.epub").expect("仍是 manga.epub");
-    assert_eq!(e.format, "epub");
-    assert!(e.optimized && e.level == "full", "应报已优化: {e:?}");
-}
-
-/// 拿真实 pdflatex 编译的样本（shelf-conv 的测试夹具，两个 crate 同一个仓库共享一份
-/// 真实样本，不在 book-serve 这边另造一份假数据）核对：入库有文字层的 PDF「优化」真的会
-/// 转成 EPUB、原 PDF 挪进隐藏备份、新 EPUB 在 `list()` 里报 `pdfSource: true` 且不再显示优化档位
-/// 的 none（视为已完成）。
-#[test]
-fn optimize_text_layer_pdf_produces_epub_output() {
-    const SAMPLE_PDF: &[u8] = include_bytes!("../../../../crates/shelf-conv/tests/fixtures/sample.pdf");
-    let t = tempfile::tempdir().unwrap();
-    let s = staging(&t);
-    s.stage_new("paper.pdf", SAMPLE_PDF).unwrap();
-
-    let msg = s.optimize("paper.pdf", |_, _| {}).unwrap();
-    assert!(msg.contains("PDF→EPUB"), "{msg}");
-
-    let list = s.list();
-    assert!(list.iter().all(|e| e.name != "paper.pdf"), "原 PDF 条目应该被替换掉");
-    let epub_entry = list.iter().find(|e| e.name == "paper.epub").expect("应该产出 paper.epub");
-    assert_eq!(epub_entry.format, "epub");
-    assert!(epub_entry.pdf_source, "应该标记来源是 PDF 转换: {epub_entry:?}");
-    assert!(epub_entry.optimized && epub_entry.level == "full", "PDF 转出的 EPUB 应该直接报已完成: {epub_entry:?}");
-
-    let epub_bytes = std::fs::read(t.path().join("staging").join("paper.epub")).unwrap();
-    assert!(!epub_bytes.is_empty());
-
-    // 原 PDF 不删，挪进隐藏备份目录（字节不变）；备份目录不出现在列表里
-    let backup = t.path().join("staging").join(PDF_ORIGINALS_DIR).join("paper.pdf");
-    assert_eq!(std::fs::read(&backup).unwrap(), SAMPLE_PDF, "原 PDF 应原样留在备份里");
-    assert!(list.iter().all(|e| !e.name.starts_with('.')), "{list:?}");
-    assert_eq!(s.gc_pdf_originals(PDF_ORIGINALS_KEEP_SECS), 0, "刚挪进来的不该被清");
-    assert_eq!(s.gc_pdf_originals(0), 1, "过期的要清");
-    assert!(!backup.exists());
-}
-
-/// 母版库已有同名 EPUB 时，有文字层 PDF 的优化停下报错：那份 EPUB 和原 PDF 都原样不动。
-#[test]
-fn optimize_text_layer_pdf_refuses_to_overwrite_same_name_epub() {
-    const SAMPLE_PDF: &[u8] = include_bytes!("../../../../crates/shelf-conv/tests/fixtures/sample.pdf");
-    let t = tempfile::tempdir().unwrap();
-    let s = staging(&t);
-    s.stage_new("paper.pdf", SAMPLE_PDF).unwrap();
-    s.stage_new("paper.epub", b"mine").unwrap();
-
-    let err = s.optimize("paper.pdf", |_, _| {}).unwrap_err();
-    assert!(err.contains("已有《paper.epub》"), "{err}");
-    let dir = t.path().join("staging");
-    assert_eq!(std::fs::read(dir.join("paper.epub")).unwrap(), b"mine", "已有的 EPUB 不能被覆盖");
-    assert_eq!(std::fs::read(dir.join("paper.pdf")).unwrap(), SAMPLE_PDF, "原 PDF 不能动");
-    assert!(!dir.join(PDF_ORIGINALS_DIR).exists());
-}
-
-/// 开头检查时还没有同名 EPUB、转换进行中才有人落下同名书：落地前在落名临界区里复查，放弃这次转换，
-/// 不覆盖那本书（2026-09-24 第三轮审计补的窗口）。
-#[test]
-fn optimize_text_layer_pdf_does_not_clobber_epub_landed_mid_conversion() {
-    const SAMPLE_PDF: &[u8] = include_bytes!("../../../../crates/shelf-conv/tests/fixtures/sample.pdf");
-    let t = tempfile::tempdir().unwrap();
-    let s = staging(&t);
-    s.stage_new("paper.pdf", SAMPLE_PDF).unwrap();
-    let dir = t.path().join("staging");
-    let epub = dir.join("paper.epub");
-    let err = s
-        .optimize("paper.pdf", |_, _| {
-            if !epub.exists() {
-                std::fs::write(&epub, b"mine").unwrap();
-            }
-        })
-        .unwrap_err();
-    assert!(err.contains("转换期间"), "{err}");
-    assert_eq!(std::fs::read(&epub).unwrap(), b"mine", "转换期间落下的 EPUB 不能被覆盖");
-    assert_eq!(std::fs::read(dir.join("paper.pdf")).unwrap(), SAMPLE_PDF, "原 PDF 不能动");
-    assert!(std::fs::read_dir(&dir).unwrap().all(|e| !e.unwrap().file_name().to_string_lossy().ends_with(".optimizing.tmp")), "临时文件要清掉");
-}
-
-/// 漫画/无文字层 PDF 走裁边分支，格式不变仍是 PDF，且能被识别成"自己优化过的"。
-#[test]
-fn optimize_comic_shaped_pdf_stays_pdf_and_gets_trimmed() {
-    let img = shelf_conv::pdfwrite::image_from_bytes(&fake_jpeg()).unwrap();
-    let comic_pdf = shelf_conv::pdfwrite::images_to_pdf(&[img.clone(), img.clone(), img]).unwrap();
-    let t = tempfile::tempdir().unwrap();
-    let s = staging(&t);
-    s.stage_new("scan.pdf", &comic_pdf).unwrap();
-
-    let msg = s.optimize("scan.pdf", |_, _| {}).unwrap();
-    assert!(msg.contains("裁边"), "{msg}");
-
-    let list = s.list();
-    let entry = list.iter().find(|e| e.name == "scan.pdf").expect("格式不该变，还是 scan.pdf");
-    assert_eq!(entry.format, "pdf");
-    assert!(entry.optimized && entry.level == "full", "裁边后应该报已优化: {entry:?}");
-}
-
-#[test]
-fn optimize_comic_epub_rejects_when_no_images_found() {
-    // comic_detect::is_comic 判定要图够多；混进正好 20+ 张图但真正 spine 引用为空的极端情况这里不测，
-    // 只覆盖最直接的"根本没图"分支走不到漫画判定，仍归普通 EPUB 分支（现状行为不变）。
-    let t = tempfile::tempdir().unwrap();
-    let s = staging(&t);
-    let opf = r#"<package version="2.0"><metadata><dc:title>t</dc:title></metadata><manifest><item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/></manifest><spine><itemref idref="c1"/></spine></package>"#;
-    let epub = mini_epub(&[("content.opf", opf), ("c1.xhtml", "<html><body><p>正文</p></body></html>")]);
-    s.stage_new("plain.epub", &epub).unwrap();
-    let msg = s.optimize("plain.epub", |_, _| {}).unwrap();
-    assert!(!msg.contains("PDF"), "没有图片不该走漫画→PDF 分支: {msg}");
 }
 
 #[test]
@@ -1012,12 +624,33 @@ fn deliver_oversized_epub_uses_direct_channel_placeholder_then_real_file() {
     assert!(uuid_epub.file_name().unwrap().to_string_lossy().starts_with(&rc.uuid));
 }
 
+/// 经典交叉引用表的 `pages` 页空白 PDF（页树根是对象 2），末尾垫 200 字节让体积超过测试里调小的直传上限。
+fn classic_pdf(pages: usize) -> Vec<u8> {
+    let kids: Vec<String> = (0..pages).map(|i| format!("{} 0 R", i + 3)).collect();
+    let mut objs = vec!["<< /Type /Catalog /Pages 2 0 R >>".to_string(), format!("<< /Type /Pages /Kids [{}] /Count {pages} >>", kids.join(" "))];
+    objs.extend((0..pages).map(|_| "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 10 10] >>".to_string()));
+    let mut pdf = b"%PDF-1.4\n".to_vec();
+    let mut offs = Vec::new();
+    for (i, body) in objs.iter().enumerate() {
+        offs.push(pdf.len());
+        pdf.extend_from_slice(format!("{} 0 obj\n{body}\nendobj\n", i + 1).as_bytes());
+    }
+    pdf.extend_from_slice(&[b'%'; 200]);
+    pdf.push(b'\n');
+    let xref = pdf.len();
+    pdf.extend_from_slice(format!("xref\n0 {}\n0000000000 65535 f \n", objs.len() + 1).as_bytes());
+    for o in offs {
+        pdf.extend_from_slice(format!("{o:010} 00000 n \n").as_bytes());
+    }
+    pdf.extend_from_slice(format!("trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n", objs.len() + 1).as_bytes());
+    pdf
+}
+
 #[test]
 fn deliver_oversized_pdf_uses_direct_channel_and_records_ok_pages() {
     let t = tempfile::tempdir().unwrap();
     let (s, lib) = oversized_staging(&t);
-    let img = shelf_conv::pdfwrite::image_from_bytes(&fake_jpeg()).unwrap();
-    let pdf = shelf_conv::pdfwrite::images_to_pdf(&[img.clone(), img.clone(), img]).unwrap();
+    let pdf = classic_pdf(3);
     s.stage_new("big.pdf", &pdf).unwrap();
     let out = s.deliver("big.pdf", "", &empty_mkdir(&t)).unwrap();
     assert!(out.message.contains("已直接写入 xochitl 书库"), "{}", out.message);
@@ -1116,34 +749,6 @@ fn rename_keeps_format_moves_sidecar_and_refuses_conflicts() {
     s.end_busy("b.epub");
 }
 
-/// 原 PDF 备份：列出、恢复回母版库（同名已在则拒绝）、提前删除。
-#[test]
-fn pdf_originals_list_restore_delete() {
-    let t = tempfile::tempdir().unwrap();
-    let s = staging(&t);
-    let dir = t.path().join("staging");
-    let bak = dir.join(PDF_ORIGINALS_DIR);
-    std::fs::create_dir_all(&bak).unwrap();
-    std::fs::write(bak.join("p.pdf"), b"PDF1").unwrap();
-    std::fs::write(bak.join("q.pdf"), b"PDF2").unwrap();
-
-    let list = s.list_originals();
-    assert_eq!(list.len(), 2);
-    assert!(list.iter().all(|o| o.expires_at == o.backed_up_at + PDF_ORIGINALS_KEEP_SECS));
-
-    s.restore_original("p.pdf").unwrap();
-    assert_eq!(std::fs::read(dir.join("p.pdf")).unwrap(), b"PDF1");
-    assert!(s.list().iter().any(|e| e.name == "p.pdf"), "恢复后回到列表");
-
-    s.stage_new("q.pdf", b"OTHER").unwrap();
-    assert!(s.restore_original("q.pdf").unwrap_err().contains("已有《q.pdf》"));
-    assert_eq!(std::fs::read(dir.join("q.pdf")).unwrap(), b"OTHER", "不覆盖");
-    s.delete_original("q.pdf").unwrap();
-    assert!(s.list_originals().is_empty());
-    assert!(s.restore_original("q.pdf").unwrap_err().contains("没有这份"));
-    assert!(s.delete_original("../x").is_err());
-}
-
 #[test]
 fn open_for_download_returns_file_and_length() {
     use std::io::Read;
@@ -1179,26 +784,6 @@ fn list_persists_onopen_to_ok_upgrade() {
     assert_eq!(rc(&s).pages, 412, "之后列表不再依赖 .content");
 }
 
-/// 进度节流：首尾必报；快书（300 条目、每条 10ms，共 3 秒）从只按条目数时的 61 次上报降到 4 次；
-/// 慢书（每条 500ms）仍按每 5 条报一次，进度条照样平滑。
-#[test]
-fn progress_throttle_limits_fast_books_by_time_and_keeps_slow_books_by_stride() {
-    use std::time::{Duration, Instant};
-    use super::optimizing::{ProgressThrottle, OPTIMIZE_PROGRESS_MIN_GAP, OPTIMIZE_PROGRESS_STRIDE};
-    let count = |total: usize, per_entry: Duration, gap: Duration| {
-        let t0 = Instant::now();
-        let mut th = ProgressThrottle::new(OPTIMIZE_PROGRESS_STRIDE, gap);
-        let reported: Vec<usize> = (1..=total).filter(|&d| th.should_report(d, total, t0 + per_entry * d as u32)).collect();
-        assert_eq!((reported.first(), reported.last()), (Some(&1), Some(&total)), "首尾必报");
-        reported.len()
-    };
-    let fast = Duration::from_millis(10);
-    assert_eq!(count(300, fast, Duration::ZERO), 61, "旧行为（只按条目数）");
-    assert_eq!(count(300, fast, OPTIMIZE_PROGRESS_MIN_GAP), 4, "3 秒跑完只报 4 次（第 1、101、201、300 条）");
-    assert_eq!(count(300, Duration::from_millis(500), OPTIMIZE_PROGRESS_MIN_GAP), 61, "慢书不受时间门影响");
-    assert_eq!(count(1, fast, OPTIMIZE_PROGRESS_MIN_GAP), 1);
-}
-
 /// 回归：多条入库路径（网页上传 / inbox 追平 / 抓网文）同时落同名书，每一本都要落成独立文件、谁也不覆盖谁。
 /// 此前靠网页上传把 spool 锁攥到请求体收完来串行化（抓网文压根不拿锁）；现在"挑名 + 落地"由落名临界区保证。
 #[test]
@@ -1223,68 +808,19 @@ fn concurrent_landing_of_same_name_never_clobbers() {
 }
 
 
-/// 旧版（cang-jie 自带 bookconv v16 及以前）的优化产物：列表里一律是 old（提示重新优化），`-core` 的也是。
+/// 「实验室→漫画页边距」开关：开 → 带 sheng-ren 页边距标记（`META-INF/eink-reader-margins`）的漫画投书时登记标记里的页边距；
+/// 关 → 不登记。没有标记的书（文字书、本仓库旧版优化的漫画）开关开着也不登记。
 #[test]
-fn legacy_optimized_books_list_as_old() {
-    let t = tempfile::tempdir().unwrap();
-    let s = staging(&t);
-    s.stage_new("a.epub", &mini_epub(&[("OEBPS/a.xhtml", "<p>x</p>"), (shelf_conv::legacy::LEGACY_MARKER, "16")])).unwrap();
-    s.stage_new("b.epub", &mini_epub(&[("OEBPS/a.xhtml", "<p>x</p>"), (shelf_conv::legacy::LEGACY_MARKER, "16-core")])).unwrap();
-    s.stage_new("c.epub", &mini_epub(&[("OEBPS/a.xhtml", "<p>x</p>"), (optimize::OPTIMIZE_MARKER, "50")])).unwrap();
-    for e in s.list() {
-        assert_eq!((e.level, e.optimized), ("old", false), "{}", e.name);
-    }
-}
-
-/// 旧版产物（旧标记、`cangjie-wash.css`、`cj-` 类）重新优化：先过兼容预处理，产物只有 sheng-ren 的标记和一份 `eink-wash.css`，
-/// 正文的字都在，列表变成 full。
-#[test]
-fn optimize_translates_legacy_product_first() {
-    let t = tempfile::tempdir().unwrap();
-    let s = staging(&t);
-    let opf = r#"<package version="3.0" unique-identifier="id"><metadata><dc:identifier id="id">x</dc:identifier><dc:title>旧书</dc:title><dc:language>zh</dc:language></metadata><manifest><item id="c1" href="c1.xhtml" media-type="application/xhtml+xml"/><item id="cangjie-wash-css" href="cangjie-wash.css" media-type="text/css"/></manifest><spine><itemref idref="c1"/></spine></package>"#;
-    let c1 = r##"<?xml version="1.0" encoding="utf-8"?><html xmlns="http://www.w3.org/1999/xhtml"><head><title>c</title><link href="cangjie-wash.css" rel="stylesheet" type="text/css"/></head><body><h1>第一章</h1><p class="cj-center">居中的一句</p><p>正文<a href="#n1">1</a> <a href="#n1">[1]</a></p><div id="n1" class="cj-note">注释内容</div></body></html>"##;
-    let book = mini_epub(&[
-        ("META-INF/container.xml", r#"<container><rootfiles><rootfile full-path="OEBPS/content.opf"/></rootfiles></container>"#),
-        ("OEBPS/content.opf", opf),
-        ("OEBPS/c1.xhtml", c1),
-        ("OEBPS/cangjie-wash.css", "p{text-indent:2em;}\n.cj-center{text-align:center;}\n"),
-        (shelf_conv::legacy::LEGACY_MARKER, "16"),
-    ]);
-    s.stage_new("旧书.epub", &book).unwrap();
-    let msg = s.optimize("旧书.epub", |_, _| {}).unwrap();
-    assert!(msg.contains("旧版产物已转换"), "{msg}");
-    let e = s.list().into_iter().find(|e| e.name == "旧书.epub").unwrap();
-    assert_eq!(e.level, "full");
-    let entries = bookconv::epubzip::read_entries(&std::fs::read(s.dir().join("旧书.epub")).unwrap()).unwrap();
-    assert!(entries.iter().all(|e| e.name != shelf_conv::legacy::LEGACY_MARKER && !e.name.contains("cangjie")), "旧标记、旧样式表都不在了");
-    assert_eq!(entries.iter().filter(|e| e.name.ends_with(".css")).count(), 1, "只有一份洗书样式表");
-    let html = String::from_utf8(entries.iter().find(|e| e.name == "OEBPS/c1.xhtml").unwrap().data.clone()).unwrap();
-    assert!(!html.contains("cj-") && html.contains("eink-center") && !html.contains("[1]"), "{html}");
-    let text = bookconv::html::plain_text(&html);
-    assert!(text.contains("第一章") && text.contains("居中的一句") && text.contains("注释内容"), "{text}");
-}
-
-/// 「实验室→漫画页边距」开关：开 → 漫画按页边距 1 排、产物带 `META-INF/eink-reader-margins`、投书时登记 1；关 → 用默认页边距的
-/// 阅读范围、不写标记、不登记。资源上限一律是设备值。
-#[test]
-fn comic_margin_switch_drives_profile_and_registration() {
+fn comic_margin_switch_gates_registration_by_sheng_ren_marker() {
     let t = tempfile::tempdir().unwrap();
     let qol = t.path().join("qol.json");
     let q = Arc::new(crate::comic_margins::ComicMargins::new(t.path(), &t.path().join("xochitl"), &qol));
     let s = staging(&t).with_comic_margins(q);
-    for (on, margins) in [(false, None), (true, Some(1))] {
+    s.stage_new("manga.epub", &mini_epub(&[(bookconv::optimize::READER_MARGINS_MARKER, "1"), ("OEBPS/p1.xhtml", "<p>x</p>")])).unwrap();
+    s.stage_new("novel.epub", &mini_epub(&[("OEBPS/p1.xhtml", "<p>x</p>")])).unwrap();
+    for (on, want) in [(false, None), (true, Some(1))] {
         std::fs::write(&qol, format!(r#"{{"comicMinMargin":{on}}}"#)).unwrap();
-        let o = s.optimize_opts();
-        assert_eq!((o.comic_reader_margins, o.limits), (margins, DEVICE_LIMITS), "on={on}");
-        assert_eq!(o.comic_screen.map(|sc| (sc.width, sc.height)), Some(if on { (952, 1457) } else { (842, 1455) }), "on={on}");
-        let name = format!("manga{on}.epub");
-        s.stage_new(&name, &comic_epub_with_real_images(&[12, 13])).unwrap();
-        s.optimize(&name, |_, _| {}).unwrap();
-        assert_eq!(super::reader_margins_of(&s.dir().join(&name)), margins, "on={on}");
-        assert_eq!(s.comic_margin_eligible(&s.dir().join(&name)), margins, "on={on}");
+        assert_eq!(s.comic_margin_eligible(&s.dir().join("manga.epub")), want, "on={on}");
+        assert_eq!(s.comic_margin_eligible(&s.dir().join("novel.epub")), None, "on={on}");
     }
-    // 开关关掉以后，开着时优化的漫画也不再登记
-    std::fs::write(&qol, r#"{"comicMinMargin":false}"#).unwrap();
-    assert_eq!(s.comic_margin_eligible(&s.dir().join("mangatrue.epub")), None);
 }
