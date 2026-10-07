@@ -1,5 +1,16 @@
 # bookconv 电子书优化白皮书
 
+> **⚠ 2026-10-07 起这是历史档案**：本文记的是 cang-jie 自带的 `shelf/crates/bookconv`（最后版本 v16），这个 crate 已删除。
+> - **EPUB 优化**现在用 sheng-ren 的 `bookconv`（git 依赖 `https://github.com/bbq191/sheng-ren`，跟 master 走，`shelf/Cargo.lock` 记着提交，
+>   `cd shelf && cargo update -p bookconv` 跟进），阅读模式是它的 `xochitl` profile。**规则、模块、版本号以 sheng-ren 的文档为准**：
+>   `docs/typesetting.md`（排版与优化规则）、`docs/architecture.md`（模块与指纹）、`docs/devices.md`（阅读模式、可阅读范围）、`docs/development.md#版本号`。
+>   本文 §01–§06、§09、§10 讲的 v16 规则与实现都已不是现状（例如章节分页 sheng-ren v46 撤了、写进书里的前缀换成 `eink-`）。
+> - **仍然有效的部分搬进了 `shelf/crates/shelf-conv`**，本文对应各节仍是它们的实现说明与踩坑记录：§18 入库 PDF（`pdf_ingest`、`pdf_epub`、`pdfimg`）、
+>   `pdfwrite`/`pdfmeta`、§19 末的大文件占位文档（`placeholder`）、渲染自检统计（`stats`）、书名的文件名版本（`naming`）。
+> - §20 漫画页边距：机制（页边距 1 + qmd 代理调 `setMargins`）不变，页框改由 sheng-ren profile 的 `comic_readable`/`comic_reader_margins` 决定，
+>   产物写 `META-INF/eink-reader-margins`；旧产物（v15/v16）的识别挪进 `shelf_conv::legacy`。
+> - 旧产物怎么交给新引擎（改标记、样式表名、类名，去重复 `[N]`）见 [`传书EPUB线架构.md`](传书EPUB线架构.md) §3.4，换引擎的经过见书架白皮书 §03bv。
+
 > **这份文档管什么**：优化引擎 `bookconv` 的**实现**——函数、常量、版本号、实现层踩过的坑。
 > `bookconv`（`shelf/crates/bookconv`）是 `book-serve` 进程里调用的 Rust 库，**不是独立服务**；
 > xochitl＝reMarkable 自带的阅读器/界面进程（闭源）。

@@ -1,5 +1,13 @@
 # EPUB 优化与 PDF→EPUB 转换规范白皮书
 
+> **⚠ 2026-10-07 起 EPUB 优化规则以 sheng-ren 为准**：book-serve 的「优化」换成了 sheng-ren 的 `bookconv`（git 依赖，`xochitl` 阅读模式），
+> 本文**第 4 章**（EPUB 优化线的规则）记的是 cang-jie 自带 bookconv v16 的规则，已不是现状——现行规则看 sheng-ren 仓库 `docs/typesetting.md`
+> 与 `docs/devices.md`（xochitl 一节）。已知的主要差别：文字书**不再按章节拆文件**（4.7 撤，sheng-ren v46，用户 2026-10-06 定：原书文件结构原样、
+> 目录改指原文件里的锚点）；没有 Inline 注释模式；写进书里的前缀从 `cj-`/`cangjie-wash.css`/`META-INF/com.cangjie.optimized` 换成
+> `eink-`/`eink-wash.css`/`META-INF/eink-optimized`；漫画页边距走 profile（`comic_readable` 952×1457、`META-INF/eink-reader-margins`）。
+> **第 3 章**（xochitl 实测规则）是设备事实，仍然有效（sheng-ren 的 xochitl 模式也是按这些规则做的）；**第 5 章**（PDF→EPUB）仍是现行规则，
+> 代码在 `shelf/crates/shelf-conv`；**第 6 章**质量门现在是 sheng-ren 的 `bookconv::check`。
+
 > **这是什么**：一份**规范**——回答"书该被改成什么样、为什么这样改、改到哪儿为止"。它不讲代码怎么写
 > （见 [`bookconv优化白皮书.md`](bookconv优化白皮书.md)），也不讲模块怎么拼（见
 > [`传书EPUB线架构.md`](传书EPUB线架构.md)），真机排查经过记在 [`reMarkable书架白皮书.md`](reMarkable书架白皮书.md)。
@@ -202,7 +210,7 @@
   产物逐字节不变（T4）。**2026-09-30 用户定整个撤掉**，写入函数一并删除。当时设过方向、又点过「优化」的书，方向已经写在
   OPF 里，照样生效；已进清单的 uuid 继续生效；其余不做迁移。
 
-### 4.7 章节分页（2026-09-29 移植自 sheng-ren）
+### 4.7 章节分页（2026-09-29 移植自 sheng-ren；2026-10-07 随换引擎撤掉，sheng-ren v46 起不拆文件）
 
 ![章节分页](diagrams/spec-paginate.svg)
 

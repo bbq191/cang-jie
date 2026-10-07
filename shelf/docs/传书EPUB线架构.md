@@ -6,8 +6,9 @@
 >
 > | 想知道 | 看哪份 |
 > |---|---|
-> | 书该被改成什么样、为什么（xochitl 十条实测规则、两条优化线的规则、质量门） | [`EPUB优化规范白皮书.md`](EPUB优化规范白皮书.md)（**规则以它为准**） |
-> | 优化引擎的函数、常量、版本号、实现层的坑 | [`bookconv优化白皮书.md`](bookconv优化白皮书.md) |
+> | EPUB 优化规则（2026-10-07 起）| **sheng-ren 仓库** `docs/typesetting.md`（排版与优化规则）、`docs/devices.md`（`xochitl` 阅读模式、可阅读范围）、`docs/architecture.md`（模块、指纹）；本仓库通过 git 依赖使用它的 `bookconv`（§3） |
+> | PDF→EPUB 转换规则、xochitl 实测规则、质量门的来由 | [`EPUB优化规范白皮书.md`](EPUB优化规范白皮书.md)（第 4 章 EPUB 优化规则 2026-10-07 起是历史，以 sheng-ren 为准） |
+> | 书架独有的内容层（PDF 入库、占位文档、渲染自检统计、旧产物兼容）的实现 | `shelf/crates/shelf-conv` 的模块文档；历史实现与踩坑见 [`bookconv优化白皮书.md`](bookconv优化白皮书.md)（2026-10-07 起是历史档案） |
 > | 书在服务间怎么流动、API 与配置 | 本文 |
 > | 真机排查经过与历史决策 | [`reMarkable书架白皮书.md`](reMarkable书架白皮书.md) |
 >
@@ -21,15 +22,19 @@
 > | 查内存 / 耗电问题 | §5 内存表 → §7 刷新机制 |
 > | 想知道最近改了什么、部署到哪一步 | §11 |
 >
+> **2026-10-07 起**：本仓库自带的 `shelf/crates/bookconv`（v16）删除，book-serve 的 EPUB「优化」改用 **sheng-ren 的 bookconv**（git 依赖，跟
+> sheng-ren master 走，`shelf/Cargo.lock` 记着具体提交，`cd shelf && cargo update -p bookconv` 跟进），阅读模式用 sheng-ren 的 `xochitl` profile；
+> 书架独有的部分搬进新 crate `shelf/crates/shelf-conv`。旧产物一律显示「旧版优化」，重新优化时先过兼容预处理（§3.4）。
+>
 > **现状一句话**（2026-09-30）：阅读器只剩 **xochitl**（KOReader 2026-09-29 已从设备卸载，`koreader-serve` 不再安装、网关不再代理）；
 > 超限书只走大文件通道、不再按卷拆分；翻页方向只认书里自带的标记；电脑端命令行 2026-09-18 已砍。这些被移除的设计在对应小节标"历史"保留。
 >
-> **核对时点**：2026-09-19 首写，每轮按源码逐字段复核，最近一次 **2026-09-30**（`OPTIMIZE_VERSION`＝`"16"`）。文中"真机验证"沿用当时的记录。
+> **核对时点**：2026-09-19 首写，每轮按源码逐字段复核，最近一次 **2026-09-30**（`OPTIMIZE_VERSION`＝`"16"`）；2026-10-07 换用 sheng-ren 的 bookconv 时改了 §0、§2.4、§3、§6.1 涉及模块路径的地方（版本号现值看 sheng-ren `docs/development.md#版本号`）。文中"真机验证"沿用当时的记录。
 > **部署状态**：2026-09-25 第四轮审计当天部署；2026-09-30 三项用户决定与第五轮审计 09-30 14:10 部署，审计后补修（第三方大 PDF 页数、长书名边车短名）15:23 部署。部署自检都通过，**但"已部署"不等于"功能在真机上走过"**——没手测的地方文中写"待手测"，统一清单在书架白皮书附录 §05。
 
 ## 0｜这是什么
 
-"传书"是书架（shelf）里"把书弄到设备上并保证质量过得去"的统称。EPUB 线是其中处理 EPUB 的完整链路——EPUB 是唯一被**深度处理**（清洗排版、目录重建、图片降采样、漫画识别与裁边补白）的格式；PDF 走同一套入库/落库，「优化」由 `bookconv::pdf_ingest` 单独处理（§2.4）。书架只收 EPUB/PDF，其它格式一律拒收（`rmsvc_core::formats`）。
+"传书"是书架（shelf）里"把书弄到设备上并保证质量过得去"的统称。EPUB 线是其中处理 EPUB 的完整链路——EPUB 是唯一被**深度处理**（清洗排版、目录重建、图片降采样、漫画识别与裁边补白）的格式；PDF 走同一套入库/落库，「优化」由 `shelf_conv::pdf_ingest` 单独处理（§2.4）。书架只收 EPUB/PDF，其它格式一律拒收（`rmsvc_core::formats`）。
 
 **核心设计**：三层（内容源 → 母版库 → 读器）、三个正交动作（入库 / 优化 / 落库）。"正交"＝互不耦合：入库不需优化，优化后可不落库，落库前不强制优化。母版库是唯一容器，网页没有"跳过母版库直接投读器"的路径。
 
@@ -55,9 +60,9 @@
 |---|---|---|
 | `gateway` | 唯一 Web 前端：网页 UI + 反向代理 + **批量队列（`batch.rs`）+ 并发/内存闸门（`budget.rs`）** + SSE 汇聚 | `0.0.0.0:443`（HTTPS，登录墙） |
 | `book-serve` | 母版库领域服务：入库/优化/落库 | `127.0.0.1:8790`（只经网关访问） |
-| `bookconv` | **库，不是服务**，被 `book-serve` 进程内调用 | 无网络面 |
+| `bookconv`（sheng-ren，git 依赖）+ `shelf-conv` | **库，不是服务**，被 `book-serve` 进程内调用：EPUB 优化、质量门、EPUB 读写在 sheng-ren 的 `bookconv`；PDF 入库、占位文档、渲染自检统计、旧产物兼容在本仓库 `shelf/crates/shelf-conv` | 无网络面 |
 
-**`bookconv` 不拆独立服务**（评估后否决）：库边界本已干净，拆服务唯一好处是进程隔离，代价是几百 MB 大文件跨进程序列化（峰值内存可能不降反升）；且设备 cgroup `MemoryMax` 从未真正生效（单元写了 `MemoryMax=192M`，但 systemd 没把 memory 控制器代理进 `system.slice` 子树），隔离想要的内存兜底本来就是假的。
+**优化库不拆独立服务**（评估后否决）：库边界本已干净，拆服务唯一好处是进程隔离，代价是几百 MB 大文件跨进程序列化（峰值内存可能不降反升）；且设备 cgroup `MemoryMax` 从未真正生效（单元写了 `MemoryMax=192M`，但 systemd 没把 memory 控制器代理进 `system.slice` 子树），隔离想要的内存兜底本来就是假的。
 
 **网关代理**（`gateway/src/proxy.rs`）：`/api/{svc}/*` 按 URL 段（`books`→`book-serve`、`fonts`→`font-serve`、`wallpapers`→`wallpaper-serve` 等，唯一的表是 `gateway/src/manage.rs` 的 `MODULES`；`koreader` 段 2026-09-29 撤掉）转发到 loopback。**请求体真流式**（大文件上传不占网关内存）；**响应**：后端给了 `Content-Length` 的 200 应答，若是下载（带 `Content-Disposition`）或体积超过 256KB（`STREAM_MIN_BYTES`，壁纸原图等），网关按定长边读边发；其余小 JSON 与没有长度的应答读完再回（2026-09-24；没有长度的流只能走 SSE 那种“读到连接关闭”的通道，拿来做下载会让浏览器等不到结束）。"优化 / 加入 xochitl"两个 POST 与勾了「同步优化」的抓网文（09-25 起；2026-09-29 前还有"加入 KOReader"）会额外读一次小 JSON 并过并发闸门（§7.2、§7.3）。
 
@@ -73,7 +78,7 @@
 
 三条入口，都是**原样入库，不做格式转换**：
 - **网页上传**：`uploader()`（`gateway/ui/app.js`）逐文件 XHR 真实进度；传 `dedupeApi` 按 `name|bytes` 去重（免落成 `xxx_1.epub`）。服务端 `rmsvc_core::multipart` 流式解析边读边落盘（暂存 `.work/` 下随机名 `.<uuid>.book.part`，rename 入库；只在“挑名 + 改名”那一瞬进落名临界区，§7.3）。
-- **抓网文**：`Staging::fetch_article`，Readability 提取正文后用 `bookconv::epub` 组装最小合规 EPUB3。网页编码（2026-09-30 起）按字节序标记 → HTTP 头 `charset` → 页面 `<meta>` 声明认，都没有时合法 UTF-8 按 UTF-8、否则按 GB18030；GBK/GB2312/Big5 等老中文站不再乱码（`bookconv::article::decode_html`，晋江 gb18030 页联网实测）；可选"同步优化"（缺省勾选；网文无 CSS，不优化会按默认段距留大片空白）。
+- **抓网文**：`Staging::fetch_article`，Readability 提取正文后用 sheng-ren `bookconv::article` 组装最小合规 EPUB3（2026-10-07 起只组装不优化：没勾"同步优化"的列表里是「未优化」，此前组装时顺带跑过不清洗的核心遍、显示 core）。网页编码（2026-09-30 起）按字节序标记 → HTTP 头 `charset` → 页面 `<meta>` 声明认，都没有时合法 UTF-8 按 UTF-8、否则按 GB18030；GBK/GB2312/Big5 等老中文站不再乱码（`bookconv::article::decode_html`，晋江 gb18030 页联网实测）；可选"同步优化"（缺省勾选；网文无 CSS，不优化会按默认段距留大片空白）。
 - **scp 进设备 `inbox/`**：`fswatch` 监听（8 秒防抖）自动追平（§2.2）。**只收写完的文件**（2026-09-25）：scp 直接往最终文件名里写，追平时修改时间离现在不足 5 秒（`INBOX_SETTLE`）的文件先跳过，写完那次 `CLOSE_WRITE` 事件触发的下一轮再收；此前 WiFi 传大书超过 8 秒，还在写的文件会被改名进母版库，写入方的文件句柄跟着 inode 继续写，母版库里出现一本半截书。启动时先起监听、再扫一遍启动前就在的文件，扫描遇到"暂缓"的隔 5 秒重扫，最多 12 轮（约 1 分钟），之后交给事件。判据只看"还在不在写"，scp 中途断开留下的半截文件静止 5 秒后同样可能被收进。
 
   ![scp 往 inbox 传大书：什么时候才入库](diagrams/sh-inbox-settle.svg)
@@ -82,7 +87,7 @@
 
 **长书名**：中文 80 来个字的书名加 `.epub` 已接近单段文件名 255 字节上限。2026-09-30 起两处不再因此失败：`rmsvc_core::fs::write_atomic` 的临时名只保留目标名前 200 字节（`TMP_BASE_MAX`，按字符边界截），母版库自己的临时文件改成与书名无关的 `ScratchFile`（§2.2）。此前入库、抓网文（标题截到 80 字就是 245 字节）、优化都会报 `File name too long`。边车 `.<书名>.delivered` 比书名长 11 字节，书名超过 244 字节时此前状态记录写不进去；同日也已修，超长时改用短名（§2.2「边车文件名」）。
 
-**书名规范化**（`bookconv::naming`）：入库直接用规范名 `书名 - 02卷`（去掉下载站 `-- 作者 -- … -- hash` 尾巴与 `[完]`；无卷标记原样；幂等）；撞名加数字前缀不覆盖（`unique_path`）；已有长名在「优化」完成时改名（边车一并移动，目标已存在则保持原名）；EPUB 优化还把 OPF `dc:title` 改成规范名（仅带卷标记的书），使设备显示名与文件名一致。
+**书名规范化**（`bookconv::naming::canonical_book_name` + `shelf_conv::naming` 的文件名版本与卷标记判断）：入库直接用规范名 `书名 - 02卷`（去掉下载站 `-- 作者 -- … -- hash` 尾巴与 `[完]`；无卷标记原样；幂等）；撞名加数字前缀不覆盖（`unique_path`）；已有长名在「优化」完成时改名（边车一并移动，目标已存在则保持原名）；EPUB 优化还把 OPF `dc:title` 改成规范名（仅带卷标记的书），使设备显示名与文件名一致。
 
 ### 2.2 母版库（中间层暂存池）
 
@@ -130,7 +135,7 @@
 
 两个操作在 HTTP 层都是**异步**（`spawn_optimize`/`spawn_deliver`，共用外壳 `spawn_bg`：起线程 + `catch_unwind` + 解忙锁 + `bus.publish`）：立即回"已开始"，结果经 sidecar + SSE 呈现。
 
-### 2.4 PDF 的「优化」（`bookconv::pdf_ingest`）
+### 2.4 PDF 的「优化」（`shelf_conv::pdf_ingest`）
 
 > **大白话**：带文字的 PDF 被"重排"成 EPUB（字号可调、目录可点）；扫描件和漫画 PDF 不转格式，只把四周白边裁掉。
 
@@ -144,7 +149,7 @@
 
 ![入库 PDF 的分类与两条出路](diagrams/pdf-ingest-flow.svg)
 
-转换本身（逐字提取 → 逐页排版 → 切章 → 组装 → 质量门）的规则见规范白皮书 §5，实现与踩坑见 bookconv 白皮书 §18。数据流上要记住三点：
+转换本身（逐字提取 → 逐页排版 → 切章 → 组装 → 质量门）的规则见规范白皮书 §5，实现在 `shelf/crates/shelf-conv/src/pdf_ingest`（2026-10-07 从原 bookconv 原样搬来），踩坑见 bookconv 白皮书 §18。数据流上要记住三点：
 - 产物同样先写点前缀临时文件、过质量门才落地（§3.2），不过门原 PDF 不动；
 - PDF 转出的 EPUB 带「来源」徽章（认 `dc:identifier` 的 `weread:pdf:` 前缀），直接报「已优化」、不进 full/core/old 阶梯；
 - PDF 优化**不可中途取消**（§7.1），并发闸门照常把关。
@@ -159,7 +164,7 @@
 
 ### 2.6 按书阅读方向（2026-09-25 加，2026-09-30 已移除）
 
-**现状（2026-09-30 起）**：翻页方向只看书里自带的 OPF `<spine page-progression-direction>`。「优化」不改这个属性，原书写了什么产物就是什么（`bookconv::direction` 只剩读：`spine_direction` / `spine_direction_file`）。`GET /reading-direction/{uuid}`（`reading_direction.rs`，reader-page-turn.qmd 用）判从右往左＝书库里那份 EPUB 的 spine 写着 `rtl`，**或** uuid 在旧手动清单 `books/rtl-overrides.json` 里；这份清单现在**只读**，book-serve 不再写，已有条目照旧生效，要撤就手动删文件或删条目。旧边车里的 `direction` 字段照读、忽略。已删：`POST /staging/direction`、`Staging::set_direction`、列表的 `direction`/`directionStale`、`OptimizeOpts.page_direction`、只改 OPF 的轻量改写（`rewrite_direction_only` / `rewrite_direction_file` / `set_spine_direction`）、`ReadingDirection::set_override`、`staging/direction.rs`、网页按钮与徽章。用户用旧按钮设过方向的书：如果当时点过「优化」，方向已经写进 OPF，照样生效；已进清单的 uuid 继续生效；其余不做迁移。
+**现状（2026-09-30 起）**：翻页方向只看书里自带的 OPF `<spine page-progression-direction>`。「优化」不改这个属性，原书写了什么产物就是什么（读方向：`shelf_conv::placeholder::epub_is_rtl` → sheng-ren `bookconv::direction::spine_direction`；sheng-ren 的 `xochitl` 阅读模式不设漫画翻页方向，优化照样保留原书的）。`GET /reading-direction/{uuid}`（`reading_direction.rs`，reader-page-turn.qmd 用）判从右往左＝书库里那份 EPUB 的 spine 写着 `rtl`，**或** uuid 在旧手动清单 `books/rtl-overrides.json` 里；这份清单现在**只读**，book-serve 不再写，已有条目照旧生效，要撤就手动删文件或删条目。旧边车里的 `direction` 字段照读、忽略。已删：`POST /staging/direction`、`Staging::set_direction`、列表的 `direction`/`directionStale`、`OptimizeOpts.page_direction`、只改 OPF 的轻量改写（`rewrite_direction_only` / `rewrite_direction_file` / `set_spine_direction`）、`ReadingDirection::set_override`、`staging/direction.rs`、网页按钮与徽章。用户用旧按钮设过方向的书：如果当时点过「优化」，方向已经写进 OPF，照样生效；已进清单的 uuid 继续生效；其余不做迁移。
 
 **当时的设计（2026-09-25～09-29，留作历史）**：
 - **设置**：`POST /staging/direction` → `Staging::set_direction` 只写边车 `direction`，不动书。PDF 拒绝。
@@ -174,34 +179,44 @@
 
 ![EPUB 优化：两阶段流式管线](diagrams/epub-optimize-pipeline.svg)
 
-`bookconv::optimize` 的入口（`optimize_epub_with` 只是字节进字节出的薄封装：写临时文件 → 走流式 → 读回，给单测和抓网文组装用；2026-09-29 前它是一份独立的内存版实现）：
+**引擎是 sheng-ren 的 `bookconv::optimize`**（2026-10-07 起；规则见 sheng-ren `docs/typesetting.md`，阅读模式见 `docs/devices.md`）。入口 `optimize_epub_file_streaming_with_cancel(输入, 输出, &opts, on_progress, &cancel)`，同样是两阶段流式：
 
-- **`StreamingOptimize`**（流式版，**唯一的实现**，`book-serve` 与开发期工具 `epub-optimize` 都走它；`new(in, out, opts).title(..).cancel(..).run(on_progress)`，旧 `optimize_epub_file_streaming*` 是薄封装）：因 2026-09-19 真实 552MB 书 `VmRSS` 冲 1.4GB+ 的 OOM 事故而生。
-  - **阶段一（规划，轻量）**：只把非图片条目（html/css/opf/ncx）整读进内存，图片留空占位。顺序：`ensure_cover_declared` → `wash_entries`（§3.1）→ 漫画判定 → 第一遍 html（脚注注释块搬出）→（漫画且开页边距最小化时）文字页留边（§3.3）。
-  - **阶段二（耗内存）**：逐图片流式处理，每张独立作用域——seek 取真实字节 → 像素 guard（§3.1）→ 裁边/降采样 → 直接写输出 zip → 释放；html 章节此时做第二遍变换（脚注重挂、远程图内联，`EntryXform`）。峰值＝"一张图 + 全书文字"，不随书体积涨。每条目检查取消标记（§7.1）。
+- **阶段一（规划，轻量）**：只把非图片条目（html/css/opf/ncx）整读进内存，图片留空占位；清洗层、漫画判定、注释处理在这里。
+- **阶段二（耗内存）**：图片按需从源文件读回、交给 worker 并行处理（并行像素额度见下）、按原顺序写进输出 zip；峰值＝"并行中的几张图 + 全书文字"，不随书体积涨。每个条目前问一次取消（§7.1），取消时错误串以 `CANCELLED_MSG`（"已取消"）开头。
 
-`book-serve` 调用（`staging/optimizing.rs`）：产物先写 `ScratchFile`（`.<pid>.<序号>.optimizing.tmp`，§2.2），过质量门才由 `bookconv::util::produce_then_replace` 改名覆盖原文件（失败/取消/panic 时 Drop 删掉半成品）；选项固定 `wash=Some(默认)`、`FootnoteMode::Anchor`、页框按开关取 `Screen`/`MinMargin`（§3.3）；优化档位已砍。
+`book-serve` 调用（`staging/optimizing.rs`）：
+1. **旧产物兼容预处理**（§3.4）：书里有旧标记就先译成 sheng-ren 的写法，写进 `ScratchFile`（`.<pid>.<序号>.legacy.tmp`），后面拿它当输入；
+2. 书里没有封面就联网补（`cover_fetch`，`bookconv::opfmeta::edit_epub`，`CoverEdit::Set`）；
+3. 选项 `Staging::optimize_opts()`：`OptimizeOpts::for_profile(xochitl)`（「实验室→漫画页边距」关着时先 `without_comic_reader_margins()`，§3.3），`limits` 设成设备值 `DEVICE_LIMITS`（单张图最多解码 900 万像素、同时处理的图片合计 600 万像素，原 cang-jie 在设备上实测定的；sheng-ren 缺省是电脑上的 6400 万/3600 万），带卷标记的书 `title` 设成规范名；
+4. 产物写 `.<pid>.<序号>.optimizing.tmp`，过质量门才由 `bookconv::util::produce_then_replace` 改名覆盖原文件（失败/取消/panic 时删掉半成品）；优化档位已砍。
 
-**幂等标记**：产物埋 `META-INF/com.cangjie.optimized`＝`OPTIMIZE_VERSION`（当前 **`"16"`**）：`"16"`＝完整优化含清洗（显示「已优化」）/`"16-core"`＝只跑核心遍无清洗（网文/格式转换产物）/其它旧版本＝「旧版优化」/无标记＝未优化。改优化行为就要涨版本号；旧书重新优化须**从原始文件重跑**，别二次优化已优化产物（多一代 JPEG 有损）。v16 是 2026-09-29 对齐 sheng-ren 的那批规则；2026-09-30 第五轮审计只改了少数特殊书的产物（带远程图的书、抓网文、`opf:` 前缀 OPF、截断 XHTML），版本号不动。各版本见 `optimize/mod.rs` 注释。
+**幂等标记**：sheng-ren 产物埋 `META-INF/eink-optimized`＝它的 `OPTIMIZE_VERSION`（`<版本>-core`＝没清洗）。母版库判等级（`staging/library.rs::probe_level`）：当前版本＝full（「已优化」）/`-core`＝core/其它版本＝old（「旧版优化」）/没有它但有 cang-jie 旧标记 `META-INF/com.cangjie.optimized`＝old/都没有＝none。sheng-ren 每次涨版本，母版库里的书就都变成 old，点「优化」升级（漫画会再编码一代 JPEG，接受）。
 
 ### 3.1 引擎内部做了什么（摘要）
 
-阶段一里的清洗（`wash_entries`：伪 DRM、空页、死引用、剥字体锁与背景图、外链 `cangjie-wash.css`、目录与 NCX 修复、双 id 折叠）、脚注（缺省 `Anchor`：注释移章末 + 同章锚点）、图片（文字书插图缩进 842×1455 竖框〔`EPUB_READABLE_W/H`，2026-09-30 起，此前 954×1696〕、JPEG q85；远程图与抓网文插图同一规则，>20MB 的整张不要；漫画"解码一次→裁边→缩放→补白→编码一次"；>900 万像素原样跳过；2 个 worker 并行、同时处理像素 ≤600 万）——**做成什么样**见规范白皮书 §4，**函数与常量**见 bookconv 白皮书 §01–§06、§14。
+清洗（伪 DRM、空页、死引用、字体字号解锁、外链 `eink-wash.css`、目录与 NCX 修复、id 去重、EPUB 3 规范整理）、注释（`xochitl` 模式＝跳转：标号原样、注释移章末、去掉回链、只有图标的标号换上标数字）、图片（文字书插图缩进 842×1455；漫画裁边、缩放、补白单趟，xochitl 是彩色屏不转灰度）——**做成什么样**见 sheng-ren `docs/typesetting.md`。和 cang-jie v16 的主要差别：**不再按章节拆文件**（sheng-ren v46，用户 2026-10-06 定：原书的文件结构原样、目录改指原文件里的锚点）、没有 Inline 注释模式、写进书里的前缀从 `cj-`/`cangjie-wash.css`/`com.cangjie.optimized` 换成 `eink-`/`eink-wash.css`/`eink-optimized`。
 
 ### 3.2 质量门在流程里的位置
 
-`book-serve` 在 `bookconv::util::produce_then_replace` 里、临时文件写完之后、改名覆盖之前调 `check::check_epub_file`（只读骨架、不读图片字节，不把整本读进内存）；EPUB 优化、PDF 转 EPUB 两条路都过（2026-09-25～09-29 还有"只改阅读方向"一条，§2.6，已移除）。**不过门就返回错误、临时文件清掉、原文件不动**，回执写明原因。五条拦截规则与为什么见规范白皮书 §6，实现见 bookconv 白皮书 §08。落库后另有渲染自检（§2.3）兜"渲染出来页数不对"。
+`book-serve` 在 `bookconv::util::produce_then_replace` 里、临时文件写完之后、改名覆盖之前调 `check::check_epub_file`（只读骨架、不读图片字节，不把整本读进内存）；EPUB 优化、PDF 转 EPUB 两条路都过（2026-09-25～09-29 还有"只改阅读方向"一条，§2.6，已移除）。**不过门就返回错误、临时文件清掉、原文件不动**，回执写明原因。五条拦截规则与为什么见规范白皮书 §6，实现是 sheng-ren `bookconv::check`。落库后另有渲染自检（§2.3）兜"渲染出来页数不对"。
 
-### 3.3 漫画页边距最小化（实验室开关 `comicMinMargin`，2026-09-21）
+### 3.3 漫画页边距最小化（实验室开关 `comicMinMargin`，2026-09-21；2026-10-07 起走 sheng-ren 的 profile）
 
 问题与真机诊断见 bookconv 白皮书 §20（此处只列代码现状）。要点：xochitl 的图片框由"栏宽（303pt − 2×页边距，缺省 56）"与"高度上限 462.1pt"先到者决定，比栏窄就贴左，留白约 20/23pt；改 `.content` 会被运行中的 xochitl 盖回（5 次仅成功 1 次），须让 xochitl 自己调 `EpubProperties.setMargins`。默认关。
 
 | 环节 | 代码 | 行为 |
 |---|---|---|
-| 开关 | 网页「管理→实验室」写 `~/.local/share/cangjie-ime/reading-qol.json` 的 `comicMinMargin`（`comic_margins.rs::enabled()` 每次现读；缺文件/缺键/非布尔＝关） | 关：`EpubComicFrame::Screen`、不登记、`GET /margins/<uuid>` 恒 404 |
-| 优化 | `MinMargin`：补白到 **952×1457**（`EPUB_COMIC_PAGE_W/H`，页边距 1 时 xochitl 的图片框；2026-09-30 前是 954×1458，旧画布 `EPUB_COMIC_PAGE_LEGACY` 仍认；比例 `EPUB_FRAME_ASPECT`，容差 0.3%），页边距 1（`EPUB_COMIC_MARGINS`；不选 0：贴边）；`comic_pad`：纯文字页 `<body>` 加类 `cj-tp`（左右 margin 17.8pt）、含图页去掉 `<body>` class（Calibre body 类会吃约 20pt）、图文混排页 `<p>/<h1-6>/div.cj-flush` 加 `cj-tx`（须写成 `p.cj-tx{…}` 带元素名才压得过书自带类规则） | 仅"整本判漫画且 MinMargin"；幂等 |
-| 登记 | `Staging::comic_margin_eligible`：开关开 ∧ 标记版本 ≥ 15（`MIN_MARGIN_SINCE_VERSION`；v16 页框没变）∧ `is_min_margin_comic_file` ∧ `is_min_margin_framed_file`（前 24 张整页图过半是 952×1457，或 2026-09-30 之前的 954×1458）→ `register_comic_margins(uuid)` 写 `comic-margins.json` | 小书在渲染自检认到 uuid 时登记；大文件通道替换后立即登记。**旧漫画必须重新优化**（旧页框在边距 1 下贴左） |
-| 执行 | `shelf/xovi/shelf-comic-margins.qmd`（注入 DocumentView）：开书 1.5 秒后 `GET /margins/<uuid>`（404 不动；200 调 `setMargins(1)`），成功后 `POST /margins/applied` 销账 | **每本只设一次**，用户改回去不再干预；qmd 只在 xochitl 启动时加载，装/改后要**整机重启**（2026-09-25 起不再 `systemctl restart xochitl`，停 xochitl 本身会概率性崩） |
+| 开关 | 网页「管理→实验室」写 `~/.local/share/cangjie-ime/reading-qol.json` 的 `comicMinMargin`（`comic_margins.rs::enabled()` 每次现读；缺文件/缺键/非布尔＝关） | 关：优化用 `without_comic_reader_margins()` 的 xochitl 模式、不登记、`GET /margins/<uuid>` 恒 404 |
+| 优化（开） | sheng-ren `xochitl` profile 原样：漫画按 `comic_readable` **952×1457**（页边距 1 时 xochitl 的图片框）排、画布里不留白边（`comic_margin = 0`）、写 `META-INF/eink-reader-margins`＝`1`；文字页、混排页的字补回默认留白、图页去掉 `<body>` 的类（sheng-ren `comicpad`，类名 `eink-textpage`/`eink-tx`） | 仅整本判漫画时 |
+| 优化（关） | `without_comic_reader_margins()`：漫画按默认页边距的阅读范围 **842×1455** 排（`comic_margin` 仍是 0，阅读器自己的页边距就是留白）、不写标记、不做 `comicpad` | 旧版是补白到屏幕比例 954:1696（`EpubComicFrame::Screen`）、宽不超 954；现在按默认页边距下真实的图片框排，图不再比栏宽大、阅读器不用再缩 |
+| 登记 | `Staging::comic_margin_eligible` → `Option<u32>`：开关开 ∧（产物里 `META-INF/eink-reader-margins` 的数字，或还没重新优化的旧版 v15/v16 最小页边距漫画〔`shelf_conv::legacy::is_legacy_min_margin_comic_file`，判据同旧 `is_min_margin_comic_file` + `is_min_margin_framed_file`〕＝1）→ `register_comic_margins(uuid, 页边距)` 写 `comic-margins.json` | 小书在渲染自检认到 uuid 时登记；大文件通道替换后立即登记 |
+| 执行 | `shelf/xovi/shelf-comic-margins.qmd`（注入 DocumentView）：开书 1.5 秒后 `GET /margins/<uuid>`（404 不动；200 调 `setMargins(m)`），成功后 `POST /margins/applied` 销账 | **每本只设一次**，用户改回去不再干预；qmd 只在 xochitl 启动时加载，装/改后要**整机重启**（2026-09-25 起不再 `systemctl restart xochitl`，停 xochitl 本身会概率性崩） |
+
+### 3.4 旧产物兼容预处理（`shelf_conv::legacy`，2026-10-07）
+
+母版库里 cang-jie 自带 bookconv（v16 及以前）优化过的书，直接交给 sheng-ren 优化器会多出第二份样式表、旧类名失效。所以「优化」先把它译成 sheng-ren 的写法（`preprocess_file`，流式：图片等条目原样拷贝压缩数据、不解码，整本不进内存）：删 `META-INF/com.cangjie.optimized`；`cangjie-wash.css` 改名 `eink-wash.css`（manifest 的 href/id、各章 `<link>` 跟着改，sheng-ren 清洗层随后就地重写它）；`class` 里的 `cj-flush/cj-tx/cj-center/cj-right/cj-note/cj-noteicon/cj-fnote/cj-wash` 换成同名 `eink-` 类、`cj-tp` 换成 `eink-textpage`；去掉 v15 及以前追加的重复 `[N]`。**只改标签属性、不改可见文字**；`cj-cN`/`cj-wN`/`cj-imgwrap`（定义在书自己的样式表里）和 `cj-toc-N` 等 id 不动。回执里写"旧版产物已转换（类名 N 处，去重复注释号 M 处）"。
+
+迁移测试（2026-10-07，开发机）：3 本文字书（《雪国》《春雪》《飘·上册》，多看图标注释、注释多）+ 1 卷漫画（《北鬥之拳》卷01，开关开）用旧 v16 优化 → 兼容预处理 → sheng-ren v51 优化：可见文字与 v16 产物逐字一致（sheng-ren `tools/regress/compare.py` 全部 TEXT-SAME，对原书字符账平），XHTML 全部合法，没有 `cj-` 类、只有一份 `eink-wash.css`、质量门通过；漫画页仍是 952×1457、写了 `eink-reader-margins`＝1。**真机没验证**。
 
 ## 4｜设备端代理队列：为什么不能直接建文件夹/删文档
 
@@ -238,12 +253,12 @@
 | 整本优化（旧版） | 552MB 书 `VmRSS` 冲 1.4GB+ | 两阶段流式（§3） | 同书 `VmRSS` 全程 8-53MB |
 | 落库普通上传路径 | ≤90MB 书叠 3 份数据（整本读+自检整本解压+上传克隆），峰值 ~180-270MB | `rmsvc_core::xochitl::upload_file` 流式上传 + `stats::text_profile_file` 流式自检（跳过图片） | 80MB 测试书投递，`VmHWM` 全程 3484 kB（约 3.4MB） |
 | 多本大书同时处理 | 忙锁只按书名，内存线性叠加（设备约 2GB，`MemoryMax` 不生效） | 网关并发/内存闸门（§7.2）：>90MB 大档同时 1 个、小档 3 个 | 见网关白皮书（闸门核心串行化未独立验证） |
-| 图片并行 | worker 叠加大图内存 | `PixelBudget` ≤600 万像素 | `VmHWM` 47MB（串行 28MB） |
-| 单图解码无像素上限 | 漫画页解码成位图，`VmHWM` 冲 262-271MB | `imgopt::MAX_DECODE_PIXELS`（§3.1），实测校准 | 25 页漫画含一页 1600 万像素，`VmHWM` 全程个位数 MB |
+| 图片并行 | worker 叠加大图内存 | `PixelBudget` ≤600 万像素（2026-10-07 起是 sheng-ren `OptimizeOpts.limits.pool_pixel_budget`，book-serve 设成 600 万：`DEVICE_LIMITS`） | `VmHWM` 47MB（串行 28MB） |
+| 单图解码无像素上限 | 漫画页解码成位图，`VmHWM` 冲 262-271MB | `imgopt::MAX_DECODE_PIXELS`（§3.1），实测校准；2026-10-07 起是 `limits.max_decode_pixels`＝900 万（sheng-ren 缺省 6400 万是按电脑定的，设备上必须调小） | 25 页漫画含一页 1600 万像素，`VmHWM` 全程个位数 MB |
 | 大文件通道 | xochitl 上传 100MB 硬限 | 占位 + 磁盘替换（§6.1），真文件本机 `fs::copy` | 不占 HTTP 内存（真机数据见书架白皮书 §03bn） |
 | 下载原件 | 上百 MB 的书整本读进 book-serve / 网关 | 两端都流式（§2.5） | 未专门量 `VmHWM` |
 | PDF 解析 | 自引用的嵌套表单无限递归，栈溢出整进程崩 | `pdf-extract-cj` 限深 16 + 防环（2026-09-24） | 回归测试 `form_recursion`；真机无触发样本 |
-| PDF `/Parent` 成环 | 找继承属性无限递归，栈溢出（SIGSEGV 不是 panic，`catch_unwind` 接不住）整个 book-serve 崩 | bookconv `classify::get_inherited_media_box` 与 pdf-extract-cj `get_inherited` 改成最多 64 层的循环（2026-09-30） | host 回归测试；已部署，真机无触发样本 |
+| PDF `/Parent` 成环 | 找继承属性无限递归，栈溢出（SIGSEGV 不是 panic，`catch_unwind` 接不住）整个 book-serve 崩 | （现 shelf-conv）`classify::get_inherited_media_box` 与 pdf-extract-cj `get_inherited` 改成最多 64 层的循环（2026-09-30） | host 回归测试；已部署，真机无触发样本 |
 | PDF 解压炸弹 | 几 KB 压缩流解出几 GB | 嵌套流并入每页 64MB 上限、图片 Flate 流按声明宽×高×3 封顶（2026-09-30） | host 回归测试；已部署，真机无触发样本 |
 | PDF 转 EPUB / 裁边 | 原始字节活到函数结束；pdf-extract-cj 另解析一遍；解压不设限 | lopdf 统一 0.45 只解析一遍、`load_pdf` 解析完即释放、各类流解压 ≤64MB（2026-09-24 第三轮审计，图见 bookconv 白皮书 §18） | host：139MB 扫描 PDF 转 EPUB 557→431MB、裁边判定 416→279MB；已部署，真机没量过 |
 | zip 条目声明大小 | 谎报 4GB 的条目被照单预分配，设备上 abort | `epubzip::read_all` 预分配封顶 32MB（2026-09-24） | host 单测 |
@@ -263,11 +278,11 @@ xochitl `/upload` 约 100MB 硬限（超了断连）。超过体积门时 `Stagi
 
 ![绕开 xochitl 上传体积上限](../../docs/diagrams/upload-limit-bypass.svg)
 
-`Staging::try_deliver_direct`（→ `rmsvc_core::xochitl::Xochitl::upload_large_file`）：造带真书名（`dc:title`，带卷标记用规范名）和真封面的占位（EPUB 几十到几百 KB；PDF 一页极小，单测断言 <4000 字节，`bookconv::placeholder`）→ 上传 → 等最多 20 秒、按**占位字节数**在书库认出新文档 → 母版真文件复制为 `<uuid>.<ext>.new`（0600，校验大小）→ EPUB 删渲染缓存（`.pdf`/`.epubindex`，首次打开约 25 秒重渲，146MB 实测）/PDF 改写 `.content`（`pageCount`/`originalPageCount`/`pages`/`redirectionPageMap`/`sizeInBytes`）→ 原子 rename 覆盖占位（无需重启 xochitl）→ `mark_delivered`；渲染记录 PDF 直接 `ok`、EPUB 记 `onopen`（之后读 `.content` 的 `pageCount` 显示真页数）；漫画符合 §3.3 时登记页边距。真机上 154MB PDF、153MB EPUB（09-20）与 156.5MB EPUB 首次打开约 74 秒渲染出 349 页（09-25）都走通了，数据见书架白皮书 §03bn。
+`Staging::try_deliver_direct`（→ `rmsvc_core::xochitl::Xochitl::upload_large_file`）：造带真书名（`dc:title`，带卷标记用规范名）和真封面的占位（EPUB 几十到几百 KB；PDF 一页极小，单测断言 <4000 字节，`shelf_conv::placeholder`）→ 上传 → 等最多 20 秒、按**占位字节数**在书库认出新文档 → 母版真文件复制为 `<uuid>.<ext>.new`（0600，校验大小）→ EPUB 删渲染缓存（`.pdf`/`.epubindex`，首次打开约 25 秒重渲，146MB 实测）/PDF 改写 `.content`（`pageCount`/`originalPageCount`/`pages`/`redirectionPageMap`/`sizeInBytes`）→ 原子 rename 覆盖占位（无需重启 xochitl）→ `mark_delivered`；渲染记录 PDF 直接 `ok`、EPUB 记 `onopen`（之后读 `.content` 的 `pageCount` 显示真页数）；漫画符合 §3.3 时登记页边距。真机上 154MB PDF、153MB EPUB（09-20）与 156.5MB EPUB 首次打开约 74 秒渲染出 349 页（09-25）都走通了，数据见书架白皮书 §03bn。
 
 **整段串行**（2026-09-25，当天部署；真机没有并发投过两本大 PDF）：认领只凭"刚进库 + 大小等于占位"，而 PDF 占位是同一份固定字节——两本大 PDF 同时投会认领到同一个 uuid，一本被写进别人的条目、另一份占位永远留在书库。现在 `upload_large_file` 在进程内用一把锁从"传占位"一直串到"替换完成"（替换前那份文件仍是占位大小，锁放早了后来者照样认错）；回归测试用"回应后才落盘"的假 xochitl 复现，去掉锁必挂。经网关走时闸门本来就只放 1 本 >90MB 的书（§7.2），这把锁是 book-serve 进程内的第二道保证（直连后端、闸门提前放行时仍然成立）。
 
-**适用条件**：EPUB/PDF、≤ 1GiB（`MAX_DIRECT_BYTES`）、本机有书库目录、造占位成功；否则返回 `None`，调用方整本拒绝。PDF 还要先读出真页数（写进 `.content`）：`bookconv::convert::pdfmeta::page_count`（2026-09-30 起）按 PDF 规范从文件尾 `startxref` 沿 `/Prev` 链登记每一节交叉引用（传统表只记子段位置、不读条目；交叉引用流〔PDF 1.5+〕只记字典与数据偏移；混合式 `/XRefStm` 也认），取最新 trailer 的 `/Root` → Catalog 的 `/Pages` → `/Count`；查对象时按"新节在前"只读用到的那一条，对象在对象流（`/ObjStm`）里就只解压那一个流（FlateDecode + PNG 预测器）。**内存有硬上限**：字典对象窗口 ≤4MB（16KB 起按需放大）、单个流压缩数据 ≤16MB / 解压后 ≤32MB、`/Prev` ≤64 节、传统表子段 ≤10 万、页数 ≤20 万，最坏峰值约 48MB（只在交叉引用流巨大时出现，常见书几百 KB），不会把整本读进内存；格式不认识（加密的对象流、LZW 等别的过滤器、偏移错乱）一律 `Err` → 整本拒绝，不 panic。lopdf 0.45 的 `load_metadata` 也是先把整份文件读进内存，所以没复用。此前用的 `pdfwrite::PdfFileReader::page_count` 只认对象 2 是 `/Type /Pages` 的传统表结构（本项目自己写的 PDF），第三方 PDF 用交叉引用流、或对象 2 是别的（常见 `/Outlines`）就整本拒收；再早（09-30 第五轮审计前）还会把书签数当页数。**占位已上传后才出的错直接报错**（书库里可能留下半成品占位；分卷还在时这条规则是为了不再退回分卷、免得书库留重复内容）。**占位必须带真书名和真封面**：xochitl 用占位 `dc:title` 当显示名、导入时生成 `cover.png`，替换后不改名不补封面（真机踩过）。
+**适用条件**：EPUB/PDF、≤ 1GiB（`MAX_DIRECT_BYTES`）、本机有书库目录、造占位成功；否则返回 `None`，调用方整本拒绝。PDF 还要先读出真页数（写进 `.content`）：`shelf_conv::pdfmeta::page_count`（2026-09-30 起；2026-10-07 前在 `bookconv::convert::pdfmeta`）按 PDF 规范从文件尾 `startxref` 沿 `/Prev` 链登记每一节交叉引用（传统表只记子段位置、不读条目；交叉引用流〔PDF 1.5+〕只记字典与数据偏移；混合式 `/XRefStm` 也认），取最新 trailer 的 `/Root` → Catalog 的 `/Pages` → `/Count`；查对象时按"新节在前"只读用到的那一条，对象在对象流（`/ObjStm`）里就只解压那一个流（FlateDecode + PNG 预测器）。**内存有硬上限**：字典对象窗口 ≤4MB（16KB 起按需放大）、单个流压缩数据 ≤16MB / 解压后 ≤32MB、`/Prev` ≤64 节、传统表子段 ≤10 万、页数 ≤20 万，最坏峰值约 48MB（只在交叉引用流巨大时出现，常见书几百 KB），不会把整本读进内存；格式不认识（加密的对象流、LZW 等别的过滤器、偏移错乱）一律 `Err` → 整本拒绝，不 panic。lopdf 0.45 的 `load_metadata` 也是先把整份文件读进内存，所以没复用。此前用的 `pdfwrite::PdfFileReader::page_count` 只认对象 2 是 `/Type /Pages` 的传统表结构（本项目自己写的 PDF），第三方 PDF 用交叉引用流、或对象 2 是别的（常见 `/Outlines`）就整本拒收；再早（09-30 第五轮审计前）还会把书签数当页数。**占位已上传后才出的错直接报错**（书库里可能留下半成品占位；分卷还在时这条规则是为了不再退回分卷、免得书库留重复内容）。**占位必须带真书名和真封面**：xochitl 用占位 `dc:title` 当显示名、导入时生成 `cover.png`，替换后不改名不补封面（真机踩过）。
 ⚠ 已知限制见 §10（占位上传后崩溃会残留占位文档，回执提示手动删，不做危险的回滚删除）。
 
 ### 6.2 （历史）超限漫画按卷拆分：2026-09-30 已移除
@@ -290,7 +305,7 @@ xochitl `/upload` 约 100MB 硬限（超了断连）。超过体积门时 `Stagi
 
 ### 7.1 中途取消
 
-`OpRegistry` 里每个操作可声明 `mark_cancellable`；`POST /staging/cancel {name}` 登记取消标记，回执三种：没在处理→400；在处理但这步不可取消→200 `cancelled:false`（“这一步无法中途停止”）；可取消→200 `cancelled:true`。EPUB 优化每条目检查（当年按卷拆分每份之间也检查）；终态 `cancelled`（非 `failed`），原文件不变、不留临时文件（`ScratchFile` 随即删掉）；单文件上传与 PDF 优化无安全中断点。
+`OpRegistry` 里每个操作可声明 `mark_cancellable`；`POST /staging/cancel {name}` 登记取消标记，回执三种：没在处理→400；在处理但这步不可取消→200 `cancelled:false`（“这一步无法中途停止”）；可取消→200 `cancelled:true`。EPUB 优化每条目检查（sheng-ren `optimize_epub_file_streaming_with_cancel` 的 `cancel` 回调；旧版产物兼容预处理前后各查一次，预处理本身是原样拷贝、不可中断；当年按卷拆分每份之间也检查）；终态 `cancelled`（非 `failed`），原文件不变、不留临时文件（`ScratchFile` 随即删掉）；单文件上传与 PDF 优化无安全中断点。
 
 ### 7.2 批量队列与并发/内存闸门（都在网关，2026-09-20）
 

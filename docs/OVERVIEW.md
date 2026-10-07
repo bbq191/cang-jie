@@ -135,7 +135,7 @@ reMarkable Paper Pro Move 是一台彩色墨水屏平板，官方阅读/笔记�
 |---|---|
 | 怎么装 / 卸 / 升级后恢复 | [`INSTALL.md`](INSTALL.md)（脚本内部结构见 [`../packaging/README.md`](../packaging/README.md)） |
 | 书架细节 | [`../shelf/README.md`](../shelf/README.md) → [`传书EPUB线架构`](../shelf/docs/传书EPUB线架构.md)（现状）→ [书架白皮书](../shelf/docs/reMarkable书架白皮书.md)（决策与真机记录） |
-| 书怎么被优化 | [`bookconv 优化白皮书`](../shelf/docs/bookconv优化白皮书.md)；现行规则与 xochitl 实测渲染规则见 [EPUB 优化规范白皮书](../shelf/docs/EPUB优化规范白皮书.md) |
+| 书怎么被优化 | 2026-10-07 起 EPUB 优化用 sheng-ren 的 `bookconv`（git 依赖），规则看 sheng-ren 仓库 `docs/typesetting.md`；xochitl 实测渲染规则与 PDF 转换规则见 [EPUB 优化规范白皮书](../shelf/docs/EPUB优化规范白皮书.md)；旧引擎的历史见 [`bookconv 优化白皮书`](../shelf/docs/bookconv优化白皮书.md) |
 | 网关、批量队列、闸门 | [`../gateway/README.md`](../gateway/README.md) · [网关白皮书](../gateway/docs/reMarkable网关白皮书.md) |
 | 笔记线 | [`../notes/README.md`](../notes/README.md) |
 | 系统增强 | [`../enhance/README.md`](../enhance/README.md) |

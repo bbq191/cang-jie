@@ -13,8 +13,9 @@
 |---|---|
 | 母版库状态、边车（sidecar）字段与文件名、锁、全部 API 与配置 | [`传书EPUB线架构.md`](传书EPUB线架构.md) §2.2、§7.3、§9 |
 | 大文件"占位 + 磁盘替换"通道的机制 | 传书线架构 §6.1（真机数据在本文 §03bn） |
-| 书该被改成什么样（xochitl 实测规则、优化与 PDF 转换规则、质量门） | [`EPUB优化规范白皮书.md`](EPUB优化规范白皮书.md) |
-| `OPTIMIZE_VERSION` 各版本改了什么、函数与常量 | [`bookconv优化白皮书.md`](bookconv优化白皮书.md) §10 与各节 |
+| EPUB 优化规则（2026-10-07 起） | **sheng-ren 仓库** `docs/typesetting.md`、`docs/devices.md`（本仓库经 git 依赖用它的 `bookconv`，§03bv） |
+| 书该被改成什么样（xochitl 实测规则、PDF 转换规则、质量门的来由；EPUB 优化规则在 10-07 前的版本） | [`EPUB优化规范白皮书.md`](EPUB优化规范白皮书.md) |
+| 旧 bookconv（v16 及以前）各版本改了什么、实现层的坑；PDF 入库的实现 | [`bookconv优化白皮书.md`](bookconv优化白皮书.md)（2026-10-07 起是历史档案；PDF 部分现在在 `shelf/crates/shelf-conv`） |
 | 已移除的能力（电脑端命令行、KOReader、按卷拆分、按书方向、漫画转 PDF） | 本文附录 B |
 | 部署状态与真机待办 | 本文「现状总览 → 部署状态」与附录 §05 |
 
@@ -34,7 +35,7 @@
 | ② 优化（可选） | EPUB：清洗 + 排版 + 目录 + 封面 + 质量门；漫画自动识别；PDF：有文字层按原格式转 EPUB，无文字层只裁边 | 不强制；产物仍在母版库，可重优化 |
 | ③ 落库 | 复制母版字节进 xochitl（≤90MB 流式上传 / 更大的占位替换；走不了整本拒绝，不再按卷拆分） | 母版永久保留，可反复落库 |
 
-**模块与端口**：网关 `gateway`（443，唯一对外）转发给只听本机端口的服务：`book-serve`（8790，母版库）、`font-serve`（8792）、`wallpaper-serve`（8793）。优化引擎 `bookconv` 是 book-serve 链接的库，不是服务。服务表见 [`../README.md`](../README.md)「服务与端口」。
+**模块与端口**：网关 `gateway`（443，唯一对外）转发给只听本机端口的服务：`book-serve`（8790，母版库）、`font-serve`（8792）、`wallpaper-serve`（8793）。优化引擎是 book-serve 链接的库，不是服务：EPUB 优化用 sheng-ren 的 `bookconv`（git 依赖，2026-10-07 起），PDF 入库、占位文档等书架独有的部分在 `shelf/crates/shelf-conv`。服务表见 [`../README.md`](../README.md)「服务与端口」。
 
 ![shelf 架构：网关 + 领域服务](diagrams/architecture.svg)
 
@@ -74,6 +75,8 @@
 
 **读书线 = 三层 · 三个正交动作**：内容源 →（入库，原样）→ **母版库** →（可选「优化」）→（落库：加入 xochitl）。全项目传书全貌图见 [`docs/diagrams/transfer-flow.svg`](../../docs/diagrams/transfer-flow.svg)。
 
+> **2026-10-07 换优化引擎（本地分支 `feat/shared-bookconv`，未合并、未部署）**：本仓库自带的 bookconv（v16）删除，EPUB「优化」改用 sheng-ren 的 bookconv（v51 起，`xochitl` 阅读模式），书架独有的部分搬进 `shelf-conv`；母版库里的书全部显示「旧版优化」，重新优化时先过旧产物兼容预处理。下表里"优化"相关几行是 09-30 的现状，换引擎后的差别见 §03bv。
+
 **当前有效的关键规则**
 
 | 项 | 现状 | 详见 |
@@ -94,7 +97,7 @@
 | 让 qmd 改动生效 | **整机重启**（09-25 起）。不再单独 `systemctl restart xochitl`：xochitl 退出时自身有概率崩溃，再由系统应急整机重启；xovi 已生效时**绝不**跑 `xovi/start` | 第 F 章速查 |
 | KOReader | **2026-09-29 已从设备卸载**，书架相关入口与源码 09-30 全部删除 | 附录 B |
 | 上传暂存与临时文件 | 书在 `books/.work/`；xochitl 字体/壁纸在 `~/.local/state/shelf/upload/`——都在 /home，字体装的时候直接改名（壁纸要转码，照旧写新文件；09-25 之前暂存在 tmpfs）。母版库里的优化/补封面/入库中转临时文件叫 `.<pid>.<序号>.<种类>.tmp`，出错或 panic 当场删、启动再清一遍（09-30） | 传书线架构 §9、§03bu |
-| 测试 | `cd shelf && cargo test --workspace`：**509 个通过、2 个忽略**（2026-09-30 文档刷新时在开发机实跑：bookconv 395 · book-serve 109 · pdf-extract-cj 5）；`rmsvc-core` 另有 108 个通过、1 个忽略 | — |
+| 测试 | `cd shelf && cargo test --workspace`：**509 个通过、2 个忽略**（2026-09-30 文档刷新时在开发机实跑：bookconv 395 · book-serve 109 · pdf-extract-cj 5）；`rmsvc-core` 另有 108 个通过、1 个忽略。2026-10-07 换引擎后：shelf-conv 115 · book-serve 112（1 个忽略）· pdf-extract-cj 5（bookconv 的测试在 sheng-ren 仓库跑） | — |
 
 **已砍/已被取代（别再找）**：电脑端 `shelf` 命令行（09-18，附录 B）；KOReader 一切入口与 koreader-serve 安装（09-29，附录 B；源码 09-30 删）；超限书按卷拆分与按书设阅读方向（09-30，附录 B）；母版库"优化档位"与"投完自动删除"（09-19）；漫画"优化转 PDF"（09-19 做、09-20 换回 EPUB、09-30 代码删除）；三档格式（09-17/18 收成一档）；微信读书内容源（09-05）；appload 补丁工具链（09-21）；bind-mount 壁纸（§03x）；`/inbox*` 与 `/staging/render/*` HTTP 接口（09-22 删，scp 进 `inbox/` 仍可用）；"restart xochitl 让改动生效"（09-25 改整机重启）。
 
@@ -244,6 +247,7 @@ md 导出现入口见 [`notes/README.md`](../../notes/README.md)。留下的**�
 > **大白话导语**：一本 EPUB 放进母版库后点「优化」，`book-serve` 调 `bookconv` 库完成清洗。值得读是因为 **xochitl 的 EPUB 渲染器闭源、行为反常识**，本章多是"真机量出来的规矩"和踩坑的来龙去脉。**规则本身以 `EPUB优化规范白皮书.md` 为准**；引擎逐模块细节见 `bookconv优化白皮书.md`。读法：现状结论 + 坑位表 → 决策来由读 §03q / §03av / §03bs → 《疯探》排查链是方法论样板。
 
 > **现状结论**
+> - **2026-10-07 起引擎是 sheng-ren 的 bookconv**（§03bv，未部署）：规则以 sheng-ren `docs/typesetting.md` 为准，写进书里的前缀是 `eink-`（`eink-wash.css`、`META-INF/eink-optimized`），文字书不再按章节拆文件；下面几条是 09-30 的 v16 现状，作为历史留着。
 > - 「优化」只有一档：完整清洗（wash）+ 优化器两遍 + 图片处理 + **质量门**；`OPTIMIZE_VERSION`=16（09-29 移植 sheng-ren 规则，09-30 14:10 部署，功能待手测，清单见规范白皮书 §9）。书里没有封面时，优化前先联网补一张（豆瓣 → 原作 → 生成，`book-serve/src/cover_fetch/`，规范白皮书 4.9）。母版库按产物内版本标记显示 full / core / old / none，非当前版本可再点「优化」升级。
 > - **质量门接入设备端优化流程（2026-09-23）**：产物写到临时文件后先过 `bookconv::check`（5 条硬规则：真 DRM、目录命中率、双 id、正文资源引用命中率、OPF 合法 XML），**不过门就放弃产物、原文件完全不动**（§03bs）。
 > - **排版**：xochitl 只认外链 `.css`，规则写进 `cangjie-wash.css`；实测规则（尾分号、`0` 当没设、类规则等）见规范白皮书 §3。脚注缺省 `Anchor`（注释移章末、原生返回浮标兜底）；注释容器类只去加粗、字号 `0.85em`（比正文小一档）；纯图标注释标号换成上标数字。
@@ -404,6 +408,23 @@ host 质量门 `check_output.py` 当时移植成 `bookconv::check`；host 门与
 
 **质量门接入**：同日 PDF 转 EPUB 的 `../` 路径 bug（§03br）让"门只在命令行工具里跑"的缺口暴露。现在 `Staging::optimize()` 与 PDF 转换在 `produce_then_replace` 的临时文件阶段跑 `check_epub_file`（只读骨架、不读图片字节），不过门就返回错误、原文件完全不动。新增两条硬规则：正文资源引用命中率 <80%、OPF 不是合法 XML（后者对设备上 56 本真实 EPUB 扫过，零误伤）。
 **真机**：《甲午》重优化后 29 章全部处理、注释不加粗且小一号，用户确认"注释正常了"。
+
+### 03bv｜2026-10-07 优化引擎换成 sheng-ren 的 bookconv（分支 `feat/shared-bookconv`，未合并、未部署）
+
+**做了什么**：删掉本仓库的 `shelf/crates/bookconv`（v16），book-serve 改用 sheng-ren 的 `bookconv` 和 `profile`（git 依赖 `https://github.com/bbq191/sheng-ren`，跟 master 走、不写 rev，`shelf/Cargo.lock` 记着具体提交；跟进用 `cd shelf && cargo update -p bookconv`）。sheng-ren 没有、母版库要用的东西搬进新 crate `shelf/crates/shelf-conv`：`pdf_ingest`、`pdfwrite`/`pdfmeta`、PDF 页图片处理 `pdfimg`、PDF 转出 EPUB 的组装 `pdf_epub`（保留 `weread:pdf:` 标识符前缀和共用样式表）、`placeholder`、`stats`、`naming`（文件名版本、卷标记）、`legacy`（旧产物兼容）。没有调用方的开发期小工具 `epub-optimize`（sheng-ren 有同名的）、`cover-fix`、`cbz2pdf` 和无调用方的杂格式转换（MOBI/AZW3/FB2/CBZ）随旧 crate 一起删了。
+
+**用户接受的变化**：写进书里的前缀 `cj-`→`eink-`、样式表 `cangjie-wash.css`→`eink-wash.css`、标记 `META-INF/com.cangjie.optimized`→`META-INF/eink-optimized`；母版库里的书全部判为需要重新优化；xochitl 文字书不再强制章节分页；漫画页边距开关改走 profile。
+
+**book-serve 行为变化**：
+- **优化选项**：`OptimizeOpts::for_profile(xochitl)` + 设备资源上限（单图解码 900 万像素、并行额度 600 万像素，原 cang-jie 实测值；sheng-ren 缺省是电脑的 6400 万/3600 万）；取消走 `optimize_epub_file_streaming_with_cancel`；带卷标记的书 `OptimizeOpts.title` 改书名。
+- **漫画页边距开关**：开＝sheng-ren 的 xochitl 模式原样（952×1457、写 `META-INF/eink-reader-margins`、`comicpad` 文字页留边）；关＝`without_comic_reader_margins()`，漫画按默认页边距的阅读范围 842×1455 排。旧版关着时补白到屏幕比例 954:1696、宽不超过 954（图比默认页边距的栏宽大，阅读器再缩），现在直接排成栏宽，同一本漫画关开关时体积小一些（实测《北鬥之拳》卷01 185MB→153MB）。登记页边距改读产物里的 `eink-reader-margins`；还没重新优化的旧版 v15/v16 最小页边距漫画照旧认（判据挪进 `shelf_conv::legacy`）。
+- **等级显示**：新标记按版本判 full/core/old；只有旧标记的书一律 old（「旧版优化」）。抓网文不勾"同步优化"的现在是「未优化」（sheng-ren 的 `build_article_epub` 只组装），以前是 core。
+- **旧产物兼容预处理**：见传书线架构 §3.4。
+- **删掉的**：`FootnoteMode::Inline`、`WashOpts.paginate`、`EpubComicFrame`（book-serve 没有对应的界面选项，只是代码里的取值）。
+
+**迁移测试（开发机）**：旧 v16 优化《雪国》《春雪》《飘·上册》+《北鬥之拳》卷01（开关开）→ 兼容预处理 → sheng-ren v51：可见文字和 v16 产物逐字一致（sheng-ren `tools/regress/compare.py` 4 本 TEXT-SAME，对原书字符账平，图标注释号换数字照规则不算不平），XHTML 全部合法，没有 `cj-` 类，只有一份 `eink-wash.css`，质量门通过。交叉编译 book-serve 11,136,232 字节（旧 10,922,768，+2%），全静态。**真机待验证**（附录 §05 #21）。
+
+**sheng-ren 缺、这边绕过的接口**：`epub` 没有"带共用样式表、自定义标识符前缀"的组装（`AssembleOpts` 是 crate 内私有），`pdf_epub` 留了一份旧组装器；`imgopt` 的裁边/缩放/编码内部函数私有，`pdfimg` 留了一份 PDF 用的；`check::check_epub`（内存版）只在 sheng-ren 自己的测试里编译，测试改用 `check_entries`。
 
 ## 第 C 章 落库、大文件、漫画、xochitl 代理（含 KOReader 历史）
 
@@ -985,6 +1006,7 @@ qmd 和 xovi 扩展只在 xochitl **启动时**注入，所以改了要让 xochi
 | 18 | 2026-09-30 三项改动 | **09-30 14:10 已部署，待手测**：低分辨率漫画重新优化后（预放大页改 q95）的体积与显示；从右往左的日漫重新优化后仍从右往左翻；超限书走大文件通道，超过 1GiB / 造不出占位时整本拒绝、回执干净 | 规范白皮书 §9；传书线架构 §2.6、§6 |
 | 19 | 2026-09-30 第五轮审计与审计后补修 | **09-30 14:10 / 15:23 已部署，待手测**：中文 80 字左右的长书名能入库、优化、抓网文；GBK 编码的网文抓取不乱码；母版库目录里不留 `.*.tmp`（优化失败后也不留）；带远程图的书与抓网文产物插图宽不超 842；「全部中止」在处理中点击时当前那本停得下来；网关重启后网页自动恢复实时刷新；只加入过 KOReader 的旧书回到「待处理」；（已确认：重新部署后设备上没有 koreader-serve 残留）；用带 Basic 头的脚本连发请求时网关 CPU 不再持续满载；一本 >90MB 的第三方 PDF（交叉引用流写法）加入 xochitl 后页数正确、能打开；书名 >244 字节的书在网页上显示优化/加入状态 | §03bu |
 | 20 | 2026-09-29 优化规则 v16（移植 sheng-ren） | **09-30 14:10 已部署，待手测**：章节分页、EPUB 3 升级后能打开且目录在、注释图标换数字、相对字号与行距、联网补封面、插图 842 宽、952×1457 漫画页；逐项清单见规范白皮书 §9 | 规范白皮书 §9 |
+| 21 | 2026-10-07 换成 sheng-ren 的 bookconv（§03bv；**未部署**） | 待部署后手测：旧版产物（文字书、漫画）点「优化」能过、回执带"旧版产物已转换"、目录与注释跳转正常、没有重复样式；文字书不再按章节分页后在 xochitl 里目录跳转是否准确（sheng-ren 只在 Kindle、掌阅上验证过，Move 没看）；漫画开关开时优化 + 加入后首次打开设成页边距 1、左右约 1px；开关关时漫画按 842×1455 排、显示正常；PDF 入库（转 EPUB、裁边）、大文件占位通道、取消优化照常；设备上优化大漫画的内存峰值（资源上限是否生效） | §03bv；传书线架构 §3 |
 
 **已闭环（摘要）**：批量加入 xochitl 与 >153MB 占位首次渲染（09-25，#4、#5）；回收站代理重写（09-25，§03aa）；《疯探》目录入口（§03bc）；Anchor 脚注嵌套 `<p>`（§03bs）；T.E. 只渲染 1 页与内容重复（§03br）；字体菜单只增不删（§03bd）；文件夹不建与带斜杠名（§03be、§03bf）；三次内存事故（§03ba、§03bh、§03bi）；网关闸门并发串行化（§03bp）。
 
@@ -1012,6 +1034,7 @@ qmd 和 xovi 扩展只在 xochitl **启动时**注入，所以改了要让 xochi
 | 09-30 | 传书线架构 §2.6、§6；bookconv §19 | 用户定三项（14:10 部署）：漫画预放大页 JPEG q85→q95（漫画一律 q95）；**撤掉母版库按书设阅读方向**（方向只看书里自带的，旧 `rtl-overrides.json` 只读）；**移除超限书按卷拆分**（只走大文件通道，走不了整本拒绝） |
 | 09-30 | §03bu | **第五轮全系统审计**（14:10 部署，自检 38✓ 1⚠ 0✗）：坏 PDF 不再拖垮 book-serve、长书名临时文件、`opf:` 前缀分页、`ScratchFile`、文件戳缓存与 Basic 认证缓存、删 `comic_pdf.rs` 与 host CLI 残留、网关/网页撤掉全部 KOReader 入口 |
 | 09-30 | §03bu 末、§03d、§03ar、附录 B | 第三方大 PDF 有界读页数、长书名边车短名；**KOReader 相关源码从仓库删除**（见 git 历史）；同批系统增强线移除电池刺客与手写优化（15:23 `install-all` 部署，自检 36✓ 1⚠ 0✗）：`services/koreader-serve`、`koreader/`、`systemd/koreader-serve.service`；book-serve 删 `Reader` 枚举，`/staging/mark` 的 `target` 只剩 `native`（可省略，`koreader` 回 400）；边车 `koreader` 字段照读；`manifest.sh` 遗留清单仍列 koreader-serve 给旧设备清理 |
+| 10-07 | §03bv；传书线架构 §3.3、§3.4 | **优化引擎换成 sheng-ren 的 bookconv**（git 依赖跟 master 走）；删 `shelf/crates/bookconv`，书架独有部分搬进 `shelf/crates/shelf-conv`；旧产物兼容预处理；漫画页边距开关改走 profile（分支 `feat/shared-bookconv`，未合并、未部署） |
 
 ### 附录 B｜已移除的能力：电脑端 `shelf` 命令行（原 `shelf/README.md`，2026-09-18 砍除）
 

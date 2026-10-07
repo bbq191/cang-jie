@@ -298,7 +298,7 @@
 
 ## 07｜构建、部署与 systemd
 
-- **依赖**：只依赖顶层 `../rmsvc-core`；不依赖 `shelf/crates/bookconv`、`notes/` 的任何 crate；不在任何 workspace 里，是独立 Cargo 项目，自带一份 `.cargo/config.toml`（交叉编译的 CC/AR 覆盖，原因见基座白皮书 §06）。
+- **依赖**：只依赖顶层 `../rmsvc-core`；不依赖 `shelf/` 的 crate（含书架用的 sheng-ren `bookconv`）和 `notes/` 的任何 crate；不在任何 workspace 里，是独立 Cargo 项目，自带一份 `.cargo/config.toml`（交叉编译的 CC/AR 覆盖，原因见基座白皮书 §06）。
 - **构建/部署由 shelf 代管**：没有自己的 `build.sh`/`deploy.sh`。`shelf/build.sh` 顺手 `cd ../gateway && cargo build`，`shelf/deploy.sh` 把二进制和 `systemd/gateway.service` 打进同一个部署包。单独重编：`cargo build --release --target aarch64-unknown-linux-musl`。
 - **release profile**：`panic="unwind"`（abort 下 `catch_unwind` 完全无效，一次 panic 就摔掉整个进程；代价是 aarch64 二进制大约 8%）。
 - **systemd 单元**：`PartOf=shelf.target`；`After=home.mount NetworkManager.service xovi-reenable.service`——只排顺序、不拉起，**不牵连 xochitl 本体**。排在 `xovi-reenable` 后面是让 xochitl 开机先把界面拉起来（09-24）；不再依赖 `network-online.target`，否则没 WiFi 时开机要等 `NetworkManager-wait-online` 超时。`ExecStartPre` 先跑 `lo-alias.sh`（让 `10.11.99.1` 常驻可达，xochitl 的 `/upload` 只绑 USB 网口；源在 `enhance/lo-alias/`），失败不阻断启动；`fc-cache` 09-24 起挪到 font-serve 的单元里。`Restart=on-failure`；`CPUWeight=20`、`MemoryMax=192M`、`Nice=5`（只降权不硬顶，交互式重活需要突发）。

@@ -67,7 +67,7 @@ reMarkable Paper Pro Move 的**读书与阅读质量层**。它是跑在设备�
 ```
 shelf/
 ├── Cargo.toml · build.sh · .cargo/   内部 workspace；aarch64 musl 全静态交叉编译
-├── crates/bookconv/                  优化引擎（清洗、优化、质量门、图片、漫画、PDF 入库、占位文档、网文抽取、命名）
+├── crates/shelf-conv/                书架独有的内容层：PDF 入库（转 EPUB/裁边）、PDF 读写、占位文档、渲染自检统计、文件名规范化、旧产物兼容预处理
 ├── crates/pdf-extract-cj/            pdf-extract 0.12.1 的本地 fork（MIT）：给 PDF 转 EPUB 提供颜色、图片位置、正确的中文字宽
 ├── services/book-serve/              母版库服务
 ├── systemd/                          shelf.target + book-serve 单元
@@ -76,7 +76,9 @@ shelf/
 └── docs/                             四份文档 + diagrams/
 ```
 
-依赖单向无环：`services/* → ../rmsvc-core`；`book-serve → bookconv → pdf-extract-cj`。
+依赖单向无环：`services/* → ../rmsvc-core`；`book-serve → shelf-conv → pdf-extract-cj`，`book-serve`/`shelf-conv → bookconv`。
+**EPUB 优化引擎是 sheng-ren 的 `bookconv`**（2026-10-07 起，git 依赖 `https://github.com/bbq191/sheng-ren`，跟 master 走、不钉 rev；
+`Cargo.lock` 记着具体提交，跟进新规则用 `cargo update -p bookconv`，然后重新跑测试、交叉编译）。优化规则看 sheng-ren 的 `docs/typesetting.md`、`docs/devices.md`。
 设备上的路径（XDG，HOME=/home/root）：母版库 `~/.local/state/shelf/books/staging/`；配置 `~/.config/shelf/<服务>.json`；
 二进制 `~/.local/bin/`；安装备份 `~/cangjie-backups/shelf-<时间戳>/`（留最近 5 份）。完整路径表见书架白皮书附录 C。
 
@@ -86,7 +88,8 @@ shelf/
 
 ```sh
 cd shelf && sh build.sh                        # host 测试 + aarch64 构建（gateway / enhance / notes 在的话一起编）
-cargo test --workspace                         # 只跑测试：2026-09-30 实跑 509 个通过、2 个忽略
+cargo test --workspace                         # 只跑测试：2026-10-07 实跑 232 个通过、1 个忽略（bookconv 的测试在 sheng-ren 仓库）
+cargo update -p bookconv                       # 跟进 sheng-ren 的新规则（更新 Cargo.lock 里记的提交）
 cd ../packaging && sh deploy.sh 10.11.99.1     # 打包 → 传到设备 → install.sh（先备份旧文件）；只有 WiFi 时给 WiFi IP
 sh deploy.sh 10.11.99.1 --only font,wallpaper  # 只装部分服务；SHELF_NO_BUILD=1 跳过编译
 sh deploy.sh 10.11.99.1 --password '新密码'     # 顺便设网关密码（经 ssh 标准输入传，不上命令行）
@@ -109,7 +112,8 @@ ssh root@10.11.99.1 '~/.local/bin/shelf-uninstall' [--only font] [--purge]
 | 文档 | 管什么 |
 |---|---|
 | [`docs/传书EPUB线架构.md`](docs/传书EPUB线架构.md) | **数据流与服务分工**：书在各服务间怎么流动、母版库状态、落库通道、内存设计、并发与锁、全部 API 与配置 |
-| [`docs/EPUB优化规范白皮书.md`](docs/EPUB优化规范白皮书.md) | **规则**：书该被改成什么样、为什么；xochitl 实测渲染与跳转规则；质量门 |
-| [`docs/bookconv优化白皮书.md`](docs/bookconv优化白皮书.md) | **实现**：优化引擎各模块的函数、常量、版本号与实现层的坑 |
+| sheng-ren 仓库 `docs/typesetting.md`、`docs/devices.md` | **EPUB 优化规则（2026-10-07 起以它为准）**：排版、注释、目录、漫画，`xochitl` 阅读模式 |
+| [`docs/EPUB优化规范白皮书.md`](docs/EPUB优化规范白皮书.md) | **规则**：PDF→EPUB 转换规则、xochitl 实测渲染与跳转规则、质量门的来由；第 4 章 EPUB 优化规则是 v16 的历史 |
+| [`docs/bookconv优化白皮书.md`](docs/bookconv优化白皮书.md) | **历史档案**（2026-10-07 起）：旧 bookconv v16 的实现与坑；其中 PDF 入库、占位文档等仍是 `shelf-conv` 的实现说明 |
 | [`docs/reMarkable书架白皮书.md`](docs/reMarkable书架白皮书.md) | **现状总览 + 真机历史与坑**：各章"现状结论"、决策来由、事故与教训、待办、已砍能力 |
 | [`../rmsvc-core/README.md`](../rmsvc-core/README.md) | 书架两服务共用的 Web 服务底座（路径、注册、HTTP、上传、往 xochitl 投书） |
