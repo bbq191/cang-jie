@@ -66,7 +66,7 @@
 <text x="140" y="486" text-anchor="middle" font-size="11.5" fill="#3a3a3a">或 uuid 在旧手动清单里</text>
 <rect x="340" y="418" width="300" height="86" rx="10" fill="#fff3d6" stroke="#c9971f" stroke-width="1.6"/>
 <text x="490" y="444" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">OPF rtl + rtl-overrides.json</text>
-<text x="490" y="466" text-anchor="middle" font-size="11.5" fill="#3a3a3a">优化保留原书的方向标记；旧清单只读，</text>
+<text x="490" y="466" text-anchor="middle" font-size="11.5" fill="#3a3a3a">书架不改书、方向随原书；旧清单只读，</text>
 <text x="490" y="484" text-anchor="middle" font-size="11.5" fill="#3a3a3a">不再写入（按书设方向 09-30 已移除）</text>
 <rect x="720" y="418" width="360" height="86" rx="10" fill="#e8f5ec" stroke="#3f9a55" stroke-width="1.6"/>
 <text x="900" y="444" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">reader-page-turn.qmd（DocumentView 等）</text>

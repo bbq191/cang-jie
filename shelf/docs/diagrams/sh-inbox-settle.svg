@@ -26,7 +26,7 @@
 <text x="54" y="284" text-anchor="start" font-size="11.5" fill="#3a3a3a">防抖到期就把文件挪走、改名进母版库</text>
 <text x="54" y="301" text-anchor="start" font-size="11.5" fill="#3a3a3a">scp 手里的文件句柄跟着 inode 继续往里写</text>
 <text x="54" y="318" text-anchor="start" font-size="11.5" fill="#3a3a3a">→ 母版库里出现一本“半截书”：列表按半截内容缓存，</text>
-<text x="54" y="335" text-anchor="start" font-size="11.5" fill="#3a3a3a">   可以被优化、加入阅读器</text>
+<text x="54" y="335" text-anchor="start" font-size="11.5" fill="#3a3a3a">   可以加入 xochitl</text>
 <text x="54" y="352" text-anchor="start" font-size="11.5" fill="#3a3a3a">CREATE 之后 8 秒内写不完的书都会中招</text>
 <rect x="560" y="240" width="500" height="150" rx="10" fill="#eaf6ec" stroke="#3f9a55" stroke-width="1.6"/>
 <text x="574" y="262" text-anchor="start" font-size="13" fill="#1a1a1a" font-weight="bold">现在</text>

@@ -3,7 +3,7 @@
 <marker id="ak" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#555"/></marker>
 </defs>
 <rect x="0" y="0" width="1080" height="680" fill="#fbfbfa"/>
-<text x="540" y="30" text-anchor="middle" font-size="18" font-weight="bold" fill="#1a1a1a">网页「秘密花园」：首层四个 tab 与二级 tab（2026-09-30 现状）</text>
+<text x="540" y="30" text-anchor="middle" font-size="18" font-weight="bold" fill="#1a1a1a">网页「秘密花园」：首层四个 tab 与二级 tab（2026-10-07 现状，未部署）</text>
 <text x="540" y="52" text-anchor="middle" font-size="12.5" fill="#6a6a6a">https://shelf.local/（443）· 登录后进入 · 顶栏右侧小圆点 = 事件流（SSE）连接状态</text>
 
 <rect x="20" y="76" width="1040" height="46" rx="10" fill="#f0f0ee" stroke="#8a8a8a" stroke-width="1.6"/>
@@ -19,13 +19,13 @@
 <text x="145" y="174" text-anchor="middle" font-size="15" font-weight="bold" fill="#1a1a1a">传书</text>
 <rect x="20" y="204" width="250" height="190" rx="10" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.6"/>
 <text x="34" y="228" font-size="13" font-weight="bold" fill="#1a1a1a">入库</text>
-<text x="34" y="248" font-size="11.5" fill="#3a3a3a">上传（EPUB / PDF）· 抓网文（贴 URL）</text>
+<text x="34" y="248" font-size="11.5" fill="#3a3a3a">上传 EPUB / PDF（sheng-ren 优化好的）</text>
 <text x="34" y="276" font-size="13" font-weight="bold" fill="#1a1a1a">母版库</text>
 <text x="34" y="296" font-size="11.5" fill="#3a3a3a">勾选 + 底部三行操作栏、加入位置下拉</text>
 <text x="34" y="314" font-size="11.5" fill="#3a3a3a">只选一本时：下载原件 / 改名</text>
-<text x="34" y="332" font-size="11.5" fill="#3a3a3a">搜索 / 筛选 / 分页 / 处理进度</text>
-<text x="34" y="358" font-size="11.5" font-weight="bold" fill="#1a1a1a">原 PDF 备份（转 EPUB 后留 7 天）</text>
-<text x="34" y="376" font-size="11.5" fill="#3a3a3a">恢复回母版库 / 提前删除</text>
+<text x="34" y="332" font-size="11.5" fill="#3a3a3a">筛选：全部 / 未加入 / 已加入；搜索 / 分页</text>
+<text x="34" y="358" font-size="11" fill="#8a8a8a">（10-07 删：抓网文、优化、原 PDF 备份）</text>
+
 
 <rect x="280" y="148" width="250" height="40" rx="10" fill="#e8f5ec" stroke="#3f9a55" stroke-width="1.6"/>
 <text x="405" y="174" text-anchor="middle" font-size="15" font-weight="bold" fill="#1a1a1a">笔记</text>
