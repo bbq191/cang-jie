@@ -808,19 +808,14 @@ fn concurrent_landing_of_same_name_never_clobbers() {
 }
 
 
-/// 「实验室→漫画页边距」开关：开 → 带 sheng-ren 页边距标记（`META-INF/eink-reader-margins`）的漫画投书时登记标记里的页边距；
-/// 关 → 不登记。没有标记的书（文字书、本仓库旧版优化的漫画）开关开着也不登记。
+/// 带 sheng-ren 页边距标记（`META-INF/eink-reader-margins`）的漫画登记标记里的页边距（没有开关，2026-10-07）；没有标记的书
+/// （文字书、本仓库旧版优化的漫画）不登记。
 #[test]
-fn comic_margin_switch_gates_registration_by_sheng_ren_marker() {
+fn comic_margins_follow_sheng_ren_marker() {
     let t = tempfile::tempdir().unwrap();
-    let qol = t.path().join("qol.json");
-    let q = Arc::new(crate::comic_margins::ComicMargins::new(t.path(), &t.path().join("xochitl"), &qol));
-    let s = staging(&t).with_comic_margins(q);
+    let s = staging(&t);
     s.stage_new("manga.epub", &mini_epub(&[(bookconv::optimize::READER_MARGINS_MARKER, "1"), ("OEBPS/p1.xhtml", "<p>x</p>")])).unwrap();
     s.stage_new("novel.epub", &mini_epub(&[("OEBPS/p1.xhtml", "<p>x</p>")])).unwrap();
-    for (on, want) in [(false, None), (true, Some(1))] {
-        std::fs::write(&qol, format!(r#"{{"comicMinMargin":{on}}}"#)).unwrap();
-        assert_eq!(s.comic_margin_eligible(&s.dir().join("manga.epub")), want, "on={on}");
-        assert_eq!(s.comic_margin_eligible(&s.dir().join("novel.epub")), None, "on={on}");
-    }
+    assert_eq!(s.comic_margin_eligible(&s.dir().join("manga.epub")), Some(1));
+    assert_eq!(s.comic_margin_eligible(&s.dir().join("novel.epub")), None);
 }

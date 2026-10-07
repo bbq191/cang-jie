@@ -143,8 +143,7 @@ mod tests {
         for (comic, expect) in [(Some(1), Some(1)), (None, None)] {
             let t = tempfile::tempdir().unwrap();
             let (s, lib) = setup(&t);
-            std::fs::write(t.path().join("qol.json"), r#"{"comicMinMargin":true}"#).unwrap();
-            let q = std::sync::Arc::new(crate::comic_margins::ComicMargins::new(t.path(), &lib, &t.path().join("qol.json")));
+            let q = std::sync::Arc::new(crate::comic_margins::ComicMargins::new(t.path(), &lib));
             let s = s.with_comic_margins(q.clone());
             render_doc(&lib, U, "a", 100);
             let mut p = plan(100);

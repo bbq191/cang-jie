@@ -196,18 +196,12 @@ impl Staging {
         self.comic_margins = Some(q);
         self
     }
-    /// 「实验室→漫画页边距」开关是否打开（没接队列 = 关）。
-    pub(crate) fn comic_margin_switch_on(&self) -> bool {
-        self.comic_margins.as_ref().is_some_and(|q| q.enabled())
-    }
-    /// 这本 EPUB 投到原生书库后该设成多大的页边距（`None` = 不登记）：**开关开**，并且是按页边距模式排的漫画——看 sheng-ren
+    /// 这本 EPUB 投到原生书库后该设成多大的页边距（`None` = 不登记）：按页边距模式排的漫画——看 sheng-ren
     /// 优化器写的 `META-INF/eink-reader-margins`（sheng-ren `xochitl` 模式优化的漫画才有）。补白比例是按那个页边距算的，
     /// 没按这个模式排的漫画设成 1 反而更糟（贴左、右侧空一块，文字贴屏幕边）；文字书 / PDF 完全不碰。
     /// 本仓库旧版（v15、v16）优化出来的漫画不再认，请用 sheng-ren 重新优化。
+    /// 没接队列（测试里）照样判；登记时没队列就不登记（见 [`Self::register_comic_margins`]）。
     pub(crate) fn comic_margin_eligible(&self, path: &Path) -> Option<u32> {
-        if !self.comic_margin_switch_on() {
-            return None;
-        }
         reader_margins_of(path)
     }
     /// 登记"这本书首次打开时设页边距 `margins`"。失败只记日志，不影响投书。

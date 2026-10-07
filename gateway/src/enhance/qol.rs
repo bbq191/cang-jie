@@ -63,13 +63,6 @@ impl Qol {
         self.flag("notesImportMdEnabled", false)
     }
 
-    /// 「漫画页边距最小化」开关（`comicMinMargin`，2026-09-21）：**仅对漫画 EPUB**（以图为主，允许有文字页），控制 book-serve 优化时漫画页补白到哪种页框、
-    /// 「加入 xochitl」后是否登记"首次打开时把阅读器页边距设为 1"（xochitl 里的 qmd 代理执行）。book-serve 只读这个键
-    /// （`comic_margins.rs::enabled`），跟「导入 md」一样缺省关——新功能第一次上线，得手动去「管理→实验室」打开。
-    pub fn comic_min_margin(&self) -> bool {
-        self.flag("comicMinMargin", false)
-    }
-
     /// 「单击翻页」（`tapPageTurn`）与「日漫翻页规则」（`rtlPageTurn`）两个开关（2026-09-24）：xochitl 阅读器里的
     /// `reader-page-turn.qmd` 每次打开书时读这两个键（不轮询），切换后下次打开书生效。缺省都关 = xochitl 原生行为。
     pub fn tap_page_turn(&self) -> bool {
@@ -133,15 +126,5 @@ mod tests {
     fn notes_import_md_enabled_defaults_false() {
         let (_t, paths) = tmp_paths();
         assert!(!Qol::load(&paths).notes_import_md_enabled(), "新功能第一次上线，缺省关，不是缺省开");
-    }
-
-    #[test]
-    fn comic_min_margin_defaults_false_and_follows_patch() {
-        let (_t, paths) = tmp_paths();
-        assert!(!Qol::load(&paths).comic_min_margin(), "缺省关");
-        let mut on = Map::new();
-        on.insert("comicMinMargin".into(), Value::Bool(true));
-        patch(&paths, on).unwrap();
-        assert!(Qol::load(&paths).comic_min_margin());
     }
 }

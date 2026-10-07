@@ -27,26 +27,26 @@ pub fn status(paths: &Paths) -> Reply {
     Reply::ok(&serde_json::json!({
         "hlSnapCjk": q.hl_snap_cjk(),
         "notesImportMdEnabled": q.notes_import_md_enabled(),
-        "comicMinMargin": q.comic_min_margin(),
         "tapPageTurn": q.tap_page_turn(),
         "rtlPageTurn": q.rtl_page_turn(),
         "loaded": xochitl_loaded(paths),
     }))
 }
 
-/// `PUT /api/enhance/qol`：接 `{hlSnapCjk}`/`{notesImportMdEnabled}`/`{comicMinMargin}`/`{tapPageTurn}`/`{rtlPageTurn}`，body 里出现
-/// 哪个就改哪个（`qol::patch` 本身是通用的 key-patch，将来加键直接扩这里）。
+/// `PUT /api/enhance/qol`：接 `{hlSnapCjk}`/`{notesImportMdEnabled}`/`{tapPageTurn}`/`{rtlPageTurn}`，body 里出现
+/// 哪个就改哪个（`qol::patch` 本身是通用的 key-patch，将来加键直接扩这里）。「漫画页边距」开关 `comicMinMargin` 2026-10-07 删除
+/// （带 sheng-ren 页边距标记的漫画一律登记，见 book-serve `comic_margins.rs`）；旧文件里的这个键照常原样保留、不再有人读。
 pub fn set_qol(paths: &Paths, req: &mut Request<'_>) -> ApiResult {
     let body = req.json()?;
     let mut changes = serde_json::Map::new();
     // 与 reading-qol.json 键同名的直通布尔开关。
-    for key in ["hlSnapCjk", "notesImportMdEnabled", "comicMinMargin", "tapPageTurn", "rtlPageTurn"] {
+    for key in ["hlSnapCjk", "notesImportMdEnabled", "tapPageTurn", "rtlPageTurn"] {
         if let Some(v) = body.0.get(key).and_then(|v| v.as_bool()) {
             changes.insert(key.into(), serde_json::Value::Bool(v));
         }
     }
     if changes.is_empty() {
-        return Err(ApiError::bad("body 需要 hlSnapCjk/notesImportMdEnabled/comicMinMargin/tapPageTurn/rtlPageTurn 其中一个布尔字段"));
+        return Err(ApiError::bad("body 需要 hlSnapCjk/notesImportMdEnabled/tapPageTurn/rtlPageTurn 其中一个布尔字段"));
     }
     qol::patch(paths, changes).map_err(ApiError::internal)?;
     Ok(status(paths))
@@ -68,13 +68,15 @@ mod tests {
     fn set_qol_applies_only_present_boolean_keys_and_rejects_empty() {
         let t = tempfile::tempdir().unwrap();
         let paths = crate::testutil::sandbox(&t);
-        let rep = put(&paths, br#"{"comicMinMargin":true,"hlSnapCjk":false,"junk":1}"#).unwrap();
+        let rep = put(&paths, br#"{"notesImportMdEnabled":true,"hlSnapCjk":false,"junk":1}"#).unwrap();
         let v: serde_json::Value = serde_json::from_slice(&rep.body).unwrap();
-        assert_eq!((v["comicMinMargin"].as_bool(), v["hlSnapCjk"].as_bool()), (Some(true), Some(false)));
-        assert_eq!(v["notesImportMdEnabled"], false, "没传的键保持缺省");
+        assert_eq!((v["notesImportMdEnabled"].as_bool(), v["hlSnapCjk"].as_bool()), (Some(true), Some(false)));
+        assert_eq!(v["tapPageTurn"], false, "没传的键保持缺省");
         // 只传 tapPageTurn：上一次写的键不被冲掉
         put(&paths, br#"{"tapPageTurn":true}"#).unwrap();
-        assert!(qol::Qol::load(&paths).comic_min_margin());
+        assert!(qol::Qol::load(&paths).notes_import_md_enabled());
+        // 已删的 comicMinMargin（2026-10-07）不再被认：单独传它 → 拒绝
+        assert!(put(&paths, br#"{"comicMinMargin":true}"#).is_err());
         // 已移除的 hwStrokeEnabled（2026-09-30）不再被认：单独传它 → 拒绝，也不写任何键
         assert!(put(&paths, br#"{"hwStrokeEnabled":true}"#).is_err());
         assert!(!std::fs::read_to_string(paths.home().join(".local/share/cangjie-ime/reading-qol.json")).unwrap().contains("hwStroke"));
@@ -89,11 +91,11 @@ mod tests {
         let paths = crate::testutil::sandbox(&t);
         let q = qol::Qol::load(&paths);
         assert!(!q.tap_page_turn() && !q.rtl_page_turn());
-        put(&paths, br#"{"comicMinMargin":true}"#).unwrap();
+        put(&paths, br#"{"notesImportMdEnabled":true}"#).unwrap();
         let v: serde_json::Value = serde_json::from_slice(&put(&paths, br#"{"tapPageTurn":true}"#).unwrap().body).unwrap();
         assert_eq!((v["tapPageTurn"].as_bool(), v["rtlPageTurn"].as_bool()), (Some(true), Some(false)));
         put(&paths, br#"{"rtlPageTurn":true}"#).unwrap();
         let q = qol::Qol::load(&paths);
-        assert!(q.tap_page_turn() && q.rtl_page_turn() && q.comic_min_margin());
+        assert!(q.tap_page_turn() && q.rtl_page_turn() && q.notes_import_md_enabled());
     }
 }

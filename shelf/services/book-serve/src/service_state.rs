@@ -63,8 +63,7 @@ impl State {
         let xochitl = Arc::new(Xochitl::new(&cfg.xochitl_host, &paths.xochitl_dir(), cfg.upload_timeout_secs));
         let books_state = paths.state_dir().join("books"); // inbox/.work/failed 与三个待办队列共用的状态目录
         let spool = Spool::new(books_state.clone());
-        let qol_file = paths.home().join(".local/share/cangjie-ime/reading-qol.json"); // 与网关共享的开关文件（gateway 写、这里读）
-        let comic_margins = Arc::new(ComicMargins::new(&books_state, &paths.xochitl_dir(), &qol_file));
+        let comic_margins = Arc::new(ComicMargins::new(&books_state, &paths.xochitl_dir()));
         // 阅读方向旧手动清单：只读（2026-09-30 起不再有写方，见 reading_direction.rs）。
         let reading_direction = Arc::new(crate::reading_direction::ReadingDirection::new(&paths.xochitl_dir(), &books_state.join("rtl-overrides.json")));
         let staging = Staging::new(paths.staging_dir(), xochitl.clone(), cfg.native_upload_limit_bytes())
