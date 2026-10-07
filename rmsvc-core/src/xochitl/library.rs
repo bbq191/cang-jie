@@ -40,6 +40,17 @@ fn is_live(v: &serde_json::Value) -> bool {
     str_of(v, "parent") != "trash" && v.get("deleted").and_then(|x| x.as_bool()) != Some(true)
 }
 
+/// 书库里所有**活的**条目（非回收站、未删除，文件夹与文档都有）→ (uuid, `.metadata` JSON)。只读；解析失败的跳过。
+/// 网关「设备健康 → 清理」列书库用（此前自己再写一遍遍历 + 过滤）。
+pub fn live_entries(dir: &Path) -> Vec<(String, serde_json::Value)> {
+    metadata_entries(dir).into_iter().filter(|(_, v)| is_live(v)).collect()
+}
+
+/// `.metadata` 的 `createdTime`（毫秒；xochitl 写成字符串，也认数字）；缺或解析不了 → 0。
+pub fn created_ms(v: &serde_json::Value) -> u64 {
+    v.get("createdTime").and_then(|x| x.as_str().and_then(|s| s.parse().ok()).or_else(|| x.as_u64())).unwrap_or(0)
+}
+
 /// 是不是 xochitl 文档 uuid 的形状（36 字符，只含十六进制与 `-`）。拿来当文件名片段之前先过一遍，
 /// 防路径注入（`../`）；只看形状，不代表书库里真有这份文档。
 pub fn is_uuid_shape(s: &str) -> bool {
@@ -64,13 +75,18 @@ pub fn list_folders(dir: &Path) -> Vec<String> {
         .collect()
 }
 
+/// 读一份 `<uuid>.metadata`（JSON）；不在、读不了、不是合法 JSON → `None`。调用方自己校验 uuid 形状（`is_uuid_shape`）。
+/// 书架的回收站代理、直接导入和这里的 [`parent_folder_of`] 共用（此前三处各读一遍）。
+pub fn read_metadata(dir: &Path, uuid: &str) -> Option<serde_json::Value> {
+    serde_json::from_str(&std::fs::read_to_string(dir.join(format!("{uuid}.metadata"))).ok()?).ok()
+}
+
 /// 给定一份文档的 uuid，读它 `.metadata` 的 `parent` 字段——就是它当前所在的设备文件夹 uuid
 /// （空串＝书库根）。找不到 `.metadata`、解析失败、或书在回收站（`parent=="trash"`），一律返回
 /// `None`，调用方按 best-effort 落书库根处理（2026-09-09 补：`note-serve` 生成章节笔记本时不再
 /// 新建/确保文件夹，改成直接复用书本自己已经在的文件夹）。
 pub fn parent_folder_of(dir: &Path, uuid: &str) -> Option<String> {
-    let t = std::fs::read_to_string(dir.join(format!("{uuid}.metadata"))).ok()?;
-    let v: serde_json::Value = serde_json::from_str(&t).ok()?;
+    let v = read_metadata(dir, uuid)?;
     let parent = v.get("parent").and_then(|x| x.as_str())?;
     (parent != "trash").then(|| parent.to_string())
 }
@@ -116,7 +132,7 @@ pub fn find_documents_since(dir: &Path, since_ms: u64) -> Vec<DocInfo> {
         .into_iter()
         .filter(|(_, v)| str_of(v, "type") == "DocumentType" && is_live(v))
         .filter_map(|(uuid, v)| {
-            let created_ms = v.get("createdTime").and_then(|x| x.as_str().and_then(|s| s.parse::<u64>().ok()).or_else(|| x.as_u64())).unwrap_or(0);
+            let created_ms = created_ms(&v);
             (created_ms >= since_ms).then(|| DocInfo { uuid, visible_name: str_of(&v, "visibleName").to_string(), created_ms })
         })
         .collect();

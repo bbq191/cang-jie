@@ -19,22 +19,20 @@ pub struct Module {
     /// `install.sh`/`uninstall.sh` 的 `--only` 令牌。
     pub only: &'static str,
     pub label: &'static str,
-    /// 门控未上线 → 不可装、不可开（当前全为 true；机制保留给将来的新模块）。
-    pub installable: bool,
     /// 该服务是否提供 `GET /events`（SSE）。网关只给提供的服务起订阅线程：mind-serve 是纯被动的
     /// 问答服务（没有事件流，见其 main.rs 头注），此前网关对它每 3 秒打一个 404、白白唤醒它。
     pub events: bool,
 }
 
 pub const MODULES: &[Module] = &[
-    Module { seg: "books", service: "book-serve", only: "book", label: "母版库 / 落原生", installable: true, events: true },
-    Module { seg: "fonts", service: "font-serve", only: "font", label: "xochitl 字体", installable: true, events: true },
-    Module { seg: "wallpapers", service: "wallpaper-serve", only: "wallpaper", label: "壁纸", installable: true, events: true },
+    Module { seg: "books", service: "book-serve", only: "book", label: "母版库 / 落原生", events: true },
+    Module { seg: "fonts", service: "font-serve", only: "font", label: "xochitl 字体", events: true },
+    Module { seg: "wallpapers", service: "wallpaper-serve", only: "wallpaper", label: "壁纸", events: true },
     // 笔记线（notes/）：矿 / 转写 / 脑 / 本，挂同一网关；网页只有 note-serve 注册「笔记」tab，前端组合四个 seg。
-    Module { seg: "ink", service: "ink-serve", only: "ink", label: "笔记·矿（条目库）", installable: true, events: true },
-    Module { seg: "transcribe", service: "transcribe-serve", only: "transcribe", label: "笔记·转写（手写→文字）", installable: true, events: true },
-    Module { seg: "mind", service: "mind-serve", only: "mind", label: "笔记·脑（问AI）", installable: true, events: false },
-    Module { seg: "notes", service: "note-serve", only: "note", label: "笔记·本（笔记本/导出）", installable: true, events: true },
+    Module { seg: "ink", service: "ink-serve", only: "ink", label: "笔记·矿（条目库）", events: true },
+    Module { seg: "transcribe", service: "transcribe-serve", only: "transcribe", label: "笔记·转写（手写→文字）", events: true },
+    Module { seg: "mind", service: "mind-serve", only: "mind", label: "笔记·脑（问AI）", events: false },
+    Module { seg: "notes", service: "note-serve", only: "note", label: "笔记·本（笔记本/导出）", events: true },
 ];
 
 pub fn by_seg(seg: &str) -> Option<&'static Module> {
@@ -116,10 +114,12 @@ pub fn status(paths: &Paths) -> Reply {
             let inst = installed(paths, m);
             serde_json::json!({
                 "seg": m.seg, "service": m.service, "only": m.only, "label": m.label,
-                "installable": m.installable,
+                // 原来的"门控未上线"开关（`installable`）所有模块都是 true，2026-10-07 删掉；这个键先照旧回 true，
+                // 网页不再判断它之后可以一起删。
+                "installable": true,
                 "installed": inst,
                 "running": running(&reg, m),
-                "hasWeb": inst && m.installable,
+                "hasWeb": inst,
             })
         })
         .collect();
@@ -133,8 +133,13 @@ pub fn foundation(paths: &Paths) -> Reply {
     let xovi = paths.home().join("xovi");
     Reply::ok(&serde_json::json!({
         "xovi": xovi.join("xovi.so").exists() || xovi.join("start").exists(),
-        "qrr": xovi.join("exthome/qt-resource-rebuilder").exists(),
+        "qrr": qrr_dir(paths).exists(),
     }))
+}
+
+/// qt-resource-rebuilder 的 exthome（qmd 补丁所在目录）：基石探测与扩展加载扫描共用。
+pub fn qrr_dir(paths: &Paths) -> std::path::PathBuf {
+    paths.home().join("xovi/exthome/qt-resource-rebuilder")
 }
 
 /// `POST /api/manage/{seg}/{action}` 路由入口：`uninstall` 走 [`uninstall`]，其余交给 [`toggle`]（只认 start|stop）。
@@ -150,9 +155,6 @@ pub fn action(paths: &Paths, req: &mut Request<'_>) -> ApiResult {
 /// `POST /api/manage/{seg}/{start|stop}`：仅开关后台服务（省占用/隐藏功能，非省电）。网关不可关。
 pub fn toggle(seg: &str, action: &str) -> ApiResult {
     let m = by_seg(seg).ok_or_else(|| ApiError::bad(format!("未知模块 {seg}")))?;
-    if !m.installable {
-        return Err(ApiError::bad(format!("{} 未上线，不可开关", m.label)));
-    }
     let unit = format!("{}.service", m.service);
     match action {
         "start" => run("systemctl", &["start", &unit]).map_err(ApiError::internal)?,
@@ -198,7 +200,6 @@ mod tests {
         assert_eq!(service_of("nope"), None);
         assert_eq!(service_of("weread"), None, "微读线已砍（2026-09-05），目录表不再有它");
         assert_eq!(service_of("koreader"), None, "koreader-serve 随 2026-09-29 设备卸载 KOReader 撤出目录表：不再代理、不再订阅事件");
-        assert!(MODULES.iter().all(|m| m.installable));
     }
     #[test]
     fn only_mind_serve_has_no_event_stream() {

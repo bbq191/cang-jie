@@ -1,6 +1,6 @@
 //! 系统增强工具开关（Track 3，2026-09-09）：网关自身固定能力（跟 `manage` 一样不经过服务注册表/反代），
 //! 给原来只能在设备原生「设置」App 里改的开关一个网页入口。现接的开关：CJK 荧光笔吸附/
-//! 「导入 md 文档」可见性/单击翻页/日漫翻页规则（都在 [`qol`]，同一份 `reading-qol.json`）。
+//! 「导入 md 文档」可见性/单击翻页（都在 [`qol`]，同一份 `reading-qol.json`）。
 //!
 //! 2026-09-30 移除：电池刺客（battop，原 `battop.rs` + `/api/enhance/battop/*`）与手写优化（hw-stroke 扩展的
 //! `hwStrokeEnabled` 派生开关）。`reading-qol.json` 里残留的 `hwStroke*` 键不主动清——全量写回、不认识的键原样保留。
@@ -16,10 +16,10 @@ use rmsvc_core::paths::Paths;
 /// xochitl 扩展加载状态的扫描器（进程级缓存，见 [`loaded::Scanner`]）。
 static LOADED: loaded::Scanner = loaded::Scanner::new();
 
-/// xochitl 主进程映射扫描（同一个进程只扫一次 maps，见 [`loaded::Scanner`]）：「设备健康」的 OTA 判定与清理页复用，
-/// 不另起一套 `/proc` 遍历。
+/// xochitl 主进程映射扫描（同一个进程只扫一次 maps，见 [`loaded::Scanner`]）：「设备健康」的 OTA 判定与清理页复用；
+/// maps 的解析与「设备健康」共用 `device::health::parse_maps`。
 pub fn xochitl_loaded(paths: &Paths) -> loaded::Loaded {
-    LOADED.scan(std::path::Path::new("/proc"), &paths.home().join("xovi/exthome/qt-resource-rebuilder"))
+    LOADED.scan(std::path::Path::new("/proc"), &crate::manage::qrr_dir(paths))
 }
 
 pub fn status(paths: &Paths) -> Reply {

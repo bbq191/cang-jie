@@ -1,7 +1,7 @@
 //! 「管理 → 设备健康」卡片的数据（2026-09-25）：只读，**用户打开这一屏 / 点刷新时才采集**，不轮询。
 //!
 //! 采集手段：读 `/proc`（uptime、进程 maps/status），加**一次** `systemctl show`（所有单元合在同一条命令里），
-//! 再加一次 `journalctl -b -1`（上次开机的最后几行，冻结/意外重启的线索）——一个请求共 fork 两个子进程。结果进 [`super::HEALTH`] 的短 TTL 缓存，刷新按钮带 `?fresh=1` 跳过缓存。
+//! 再加一次 `journalctl -b -1`（上次开机的最后几行，冻结/意外重启的线索）——一个请求共 fork 两个子进程。结果进 `super::health_cache()` 的短 TTL 缓存，刷新按钮带 `?fresh=1` 跳过缓存。
 //!
 //! 为什么要这张卡：历史上几次"看着装了、其实没生效"都要 SSH 上去逐条查——xochitl 有没有带 xovi、换了 `.so`
 //! 没重启（maps 里是 `(deleted)`）、待换入区里压着新版、某个服务反复重启、内存涨到哪、上次开机最后留下了什么。
@@ -170,22 +170,6 @@ pub fn parse_journal(out: &str) -> Option<Vec<String>> {
     (!lines.is_empty()).then_some(lines)
 }
 
-/// `path` 所在文件系统的 (可用字节, 总字节)。与 book-serve `free_bytes_of` 同一写法（statvfs，不 fork `df`）。
-pub fn fs_space(path: &Path) -> Option<(u64, u64)> {
-    use std::os::unix::ffi::OsStrExt;
-    let c = std::ffi::CString::new(path.as_os_str().as_bytes()).ok()?;
-    let mut st = std::mem::MaybeUninit::<libc::statvfs>::zeroed();
-    // SAFETY: `c` 是合法的 NUL 结尾 C 字符串；`st` 是足够大的零初始化 statvfs，成功返回后由内核填好。
-    if unsafe { libc::statvfs(c.as_ptr(), st.as_mut_ptr()) } != 0 {
-        return None;
-    }
-    // SAFETY: statvfs 返回 0，结构体已被内核写入。
-    let st = unsafe { st.assume_init() };
-    #[allow(clippy::unnecessary_cast)] // 各架构 libc 的字段类型不同（有的 u32 有的 u64）
-    let (bavail, blocks, frsize) = (st.f_bavail as u64, st.f_blocks as u64, st.f_frsize as u64);
-    Some((bavail.checked_mul(frsize)?, blocks.checked_mul(frsize)?))
-}
-
 /// `/proc/uptime` 第一列（秒）。
 pub fn uptime_secs(proc_root: &Path) -> Option<u64> {
     std::fs::read_to_string(proc_root.join("uptime")).ok()?.split_whitespace().next()?.split('.').next()?.parse().ok()
@@ -204,9 +188,9 @@ pub fn collect(paths: &Paths, proc_root: &Path, show: Result<String, String>, pr
         Err(e) => (HashMap::new(), Some(e)),
     };
     let list: Vec<UnitHealth> = units.iter().map(|u| unit_health(proc_root, u, table.get(u))).collect();
-    let xochitl_pid = list.first().and_then(|u| u.pid);
+    let xochitl_pid = list.iter().find(|u| u.unit == "xochitl.service").and_then(|u| u.pid);
     let maps = xochitl_maps(proc_root, xochitl_pid);
-    let space = fs_space(paths.home());
+    let space = rmsvc_core::fs::fs_space(paths.home());
     serde_json::json!({
         "uptimeSecs": uptime_secs(proc_root),
         "systemctlError": show_err,

@@ -105,15 +105,10 @@ impl Scanner {
         if !hit {
             *cache = None;
             let Some((pid, ticks)) = find_main_xochitl(proc_root) else { return Loaded::default() };
-            let maps = std::fs::read_to_string(proc_root.join(&pid).join("maps")).unwrap_or_default();
-            let mut extensions: Vec<String> = maps
-                .lines()
-                .filter_map(|l| l.split_whitespace().nth(5))
-                .filter_map(|p| p.split_once("/extensions.d/").map(|(_, f)| f.to_string()))
-                .collect();
-            extensions.sort();
-            extensions.dedup();
-            let m = Mapped { start: start_secs(proc_root, ticks), xovi: maps.lines().any(|l| l.ends_with("/xovi.so")), pid, ticks, extensions };
+            // maps 解析跟「设备健康」同一个函数（含路径带空格、行尾 ` (deleted)`）：此前这里另写一份按行尾判 xovi，
+            // xovi.so 在 xochitl 运行中被替换后行尾多出 ` (deleted)` 就判成"没加载"，OTA 横幅随之误报。
+            let maps = crate::device::health::parse_maps(&std::fs::read_to_string(proc_root.join(&pid).join("maps")).unwrap_or_default());
+            let m = Mapped { start: start_secs(proc_root, ticks), xovi: maps.xovi, pid, ticks, extensions: maps.extensions };
             let settled = m.start.is_some_and(|s| rmsvc_core::clock::now_secs().saturating_sub(s) >= SETTLE_SECS);
             let loaded = m.loaded(qrr_dir);
             if settled {

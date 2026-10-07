@@ -30,14 +30,11 @@ pub fn patch(paths: &Paths, changes: Map<String, Value>) -> Result<(), String> {
     let mut map = load(paths);
     map.extend(changes);
     let p = path(paths);
-    if let Some(dir) = p.parent() {
-        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-    }
     let bytes = serde_json::to_vec_pretty(&Value::Object(map)).map_err(|e| e.to_string())?;
-    rmsvc_core::fs::write_atomic(&p, &bytes).map_err(|e| e.to_string())
+    rmsvc_core::fs::write_atomic(&p, &bytes).map_err(|e| e.to_string()) // 父目录由 write_atomic 自己建
 }
 
-/// `reading-qol.json` 的一次快照：`/api/enhance/status` 一次请求要读六七个开关，读一次文件、各开关从同一份
+/// `reading-qol.json` 的一次快照：`/api/enhance/status` 一次请求要读好几个开关，读一次文件、各开关从同一份
 /// 快照取（此前每个开关各自读一遍整份文件）。
 pub struct Qol(Map<String, Value>);
 

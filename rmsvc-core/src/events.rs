@@ -137,42 +137,48 @@ impl Read for SseStream {
     }
 }
 
-/// 注册表目录变化唤醒器：每个 `services_dir` 一条 inotify 监听线程（进程内共享），变化时代数 +1 并唤醒所有等待者。
-/// [`follow`] 靠它"等服务出现/重启"而不是每 3 秒轮询注册表（此前网关 8 条订阅线程各自 3 秒一次读注册表目录，
-/// 服务没装/没起时也不停）。
-struct RegWake {
+/// 代数计数 + 条件变量的"有变化就醒"唤醒器：变化方 [`Wake::bump`]，等待方记下 [`Wake::generation`] 再 [`Wake::wait_change`]，
+/// 记下之后发生的变化不会漏（代数已经不同，立即返回）；多次变化合并成一次醒来。注册表目录监听（[`registry_wake`]）和
+/// 网关的"book-serve 有新事件"共用这一份（此前两边各写一份，逐行相同）。
+#[derive(Default)]
+pub struct Wake {
     generation: Mutex<u64>,
     cv: Condvar,
 }
 
-impl RegWake {
-    fn generation(&self) -> u64 {
+impl Wake {
+    pub fn generation(&self) -> u64 {
         *crate::sync::lock(&self.generation)
     }
-    /// 等到代数不再是 `seen`（注册表变过了）或 `timeout` 到，返回当前代数。
-    fn wait_change(&self, seen: u64, timeout: Duration) -> u64 {
+    pub fn bump(&self) {
+        *crate::sync::lock(&self.generation) += 1;
+        self.cv.notify_all();
+    }
+    /// 等到代数不再是 `seen` 或 `timeout` 到，返回当前代数。
+    pub fn wait_change(&self, seen: u64, timeout: Duration) -> u64 {
         let g = crate::sync::lock(&self.generation);
         let (g, _) = self.cv.wait_timeout_while(g, timeout, |g| *g == seen).unwrap_or_else(|e| e.into_inner());
         *g
     }
 }
 
-fn reg_wake(paths: &Paths) -> Arc<RegWake> {
-    static M: OnceLock<Mutex<HashMap<PathBuf, Arc<RegWake>>>> = OnceLock::new();
+/// 注册表目录变化唤醒器：每个 `services_dir` 一条 inotify 监听线程（进程内共享，防抖 300ms），变化时 [`Wake::bump`]。
+/// [`follow`] 靠它"等服务出现/重启"而不是每 3 秒轮询注册表（此前网关 8 条订阅线程各自 3 秒一次读注册表目录，
+/// 服务没装/没起时也不停）；网关用它发"服务注册/注销"事件、批量队列恢复时等 book-serve 起来，不另起监听线程。
+/// inotify 初始化失败时监听线程直接返回，等待者只剩各自的超时兜底。
+pub fn registry_wake(paths: &Paths) -> Arc<Wake> {
+    static M: OnceLock<Mutex<HashMap<PathBuf, Arc<Wake>>>> = OnceLock::new();
     let dir = paths.services_dir();
     let mut m = crate::sync::lock(M.get_or_init(|| Mutex::new(HashMap::new())));
     if let Some(w) = m.get(&dir) {
         return w.clone();
     }
-    let w = Arc::new(RegWake { generation: Mutex::new(0), cv: Condvar::new() });
+    let w = Arc::new(Wake::default());
     let _ = std::fs::create_dir_all(&dir);
     let (w2, d2) = (w.clone(), dir.clone());
-    // 监听线程阻塞在 inotify 上（空闲零唤醒）。inotify 初始化失败时该线程直接返回，等待者只剩超时兜底。
+    // 监听线程阻塞在 inotify 上（空闲零唤醒）。
     let _ = std::thread::Builder::new().name("reg-watch".into()).spawn(move || {
-        crate::fswatch::watch_debounced(&d2, Duration::from_millis(300), |_| {
-            *crate::sync::lock(&w2.generation) += 1;
-            w2.cv.notify_all();
-        });
+        crate::fswatch::watch_debounced(&d2, Duration::from_millis(300), |_| w2.bump());
     });
     m.insert(dir, w.clone());
     w
@@ -209,7 +215,7 @@ impl Default for FollowTiming {
 /// 订阅另一个服务的 `GET /events`，把每条事件的 JSON 行交给 `on_json`（**阻塞，永不返回**，放线程里）。
 /// 收编此前网关 `events::subscribe_loop` 与 `transcribe-serve::watch_ink` 各写一份的"查注册表 → 连流 → 逐行解析 →
 /// 断线重连"循环，并修掉它们的耗电问题：
-/// - 服务没起：等注册表目录的 inotify 事件（[`RegWake`]），不再 3 秒轮询；
+/// - 服务没起：等注册表目录的 inotify 事件（[`registry_wake`]），不再 3 秒轮询；
 /// - 服务没有 `/events`（404）：长等待（见 [`FollowTiming::no_events_wait`]）；
 /// - 连接失败/断流：指数退避（3s → 60s），流撑过 10 秒才重置；
 /// - 请求带 `?ka=120`：loopback 上心跳 2 分钟一次（浏览器流仍是 20 秒）。
@@ -219,7 +225,7 @@ pub fn follow(paths: &Paths, svc: &str, mut on_json: impl FnMut(&str)) {
 
 /// [`follow`] 的可控版本：`stop` 置位后在下一次唤醒（事件/超时）时返回——生产不用，给测试关停线程。
 pub fn follow_with(paths: &Paths, svc: &str, timing: &FollowTiming, stop: &AtomicBool, on_json: &mut dyn FnMut(&str)) {
-    let wake = reg_wake(paths);
+    let wake = registry_wake(paths);
     let agent = ureq::AgentBuilder::new().timeout_connect(Duration::from_secs(3)).build(); // 读不设超时：靠对端关连接/心跳发现断线
     let mut backoff = timing.retry_min;
     while !stop.load(Ordering::Relaxed) {
@@ -266,6 +272,28 @@ pub fn parse_sse_line(line: &str) -> Option<&str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn wake_returns_on_bump_and_times_out_otherwise() {
+        let w = Arc::new(Wake::default());
+        let seen = w.generation();
+        // 没人 bump：超时返回，代数不变
+        let t = Instant::now();
+        assert_eq!(w.wait_change(seen, Duration::from_millis(60)), seen);
+        assert!(t.elapsed() >= Duration::from_millis(60));
+        // 另一线程 bump：远早于超时就返回
+        let w2 = w.clone();
+        let h = std::thread::spawn(move || {
+            std::thread::sleep(Duration::from_millis(30));
+            w2.bump();
+        });
+        let t = Instant::now();
+        assert_eq!(w.wait_change(seen, Duration::from_secs(10)), seen + 1);
+        assert!(t.elapsed() < Duration::from_secs(5), "bump 应立即唤醒等待者");
+        h.join().unwrap();
+        // 已经变过的代数：wait 立即返回（不会漏掉 wait 之前发生的事件）
+        assert_eq!(w.wait_change(seen, Duration::from_secs(10)), seen + 1);
+    }
 
     #[test]
     fn publish_reaches_subscribers_and_drops_dead_ones() {

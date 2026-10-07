@@ -21,6 +21,21 @@ fn stream_len(status: u16, download: bool, len: Option<u64>) -> Option<u64> {
     (status == 200 && (download || n > STREAM_MIN_BYTES)).then_some(n)
 }
 
+/// 转发用的 HTTP 客户端，进程内共用一个（连接池可复用 loopback 连接；此前每个请求新建一个 Agent，网页一次刷新十几个请求
+/// 各自新建 TCP 连接、留下一串 TIME_WAIT）。**不设总时长**：ureq 的 `timeout` 管的是整个请求（含发完请求体、读完应答体），
+/// 原来的 900 秒会把慢网下的大文件上传/下载（大文件通道最大 1GB）中途截断。改成只限空闲：连接 3 秒；读（等后端回应、
+/// 两段数据之间）900 秒——后端有同步处理到分钟级的接口（转写、生成笔记本），沿用原来的量级；写（往后端送请求体）120 秒。
+fn agent() -> &'static ureq::Agent {
+    static AGENT: std::sync::OnceLock<ureq::Agent> = std::sync::OnceLock::new();
+    AGENT.get_or_init(|| {
+        ureq::AgentBuilder::new()
+            .timeout_connect(std::time::Duration::from_secs(3))
+            .timeout_read(std::time::Duration::from_secs(900))
+            .timeout_write(std::time::Duration::from_secs(120))
+            .build()
+    })
+}
+
 /// `/api/{svc}/*` → 按 URL 段查目录表找服务名再转发（段不在表里 404）。
 pub fn forward(paths: &Paths, req: &mut Request<'_>) -> ApiResult {
     let Some(name) = crate::manage::service_of(req.param("svc")) else { return Err(ApiError::not_found("未知服务")) };
@@ -42,8 +57,7 @@ pub fn forward(paths: &Paths, req: &mut Request<'_>) -> ApiResult {
         Method::Delete => "DELETE",
         _ => return Err(ApiError::bad("unsupported method")),
     };
-    let agent = ureq::AgentBuilder::new().timeout(std::time::Duration::from_secs(900)).build();
-    let mut r = agent.request(method, &url);
+    let mut r = agent().request(method, &url);
     if !req.content_type.is_empty() {
         r = r.set("Content-Type", &req.content_type);
     }

@@ -125,20 +125,12 @@ pub struct LibraryDoc {
 pub fn list_library(xochitl_dir: &Path) -> Vec<LibraryDoc> {
     let mut docs = Vec::new();
     let mut folders: HashMap<String, String> = HashMap::new();
-    for e in std::fs::read_dir(xochitl_dir).into_iter().flatten().flatten() {
-        let p = e.path();
-        if p.extension().and_then(|x| x.to_str()) != Some("metadata") {
-            continue;
-        }
-        let Some(uuid) = p.file_stem().and_then(|s| s.to_str()).map(str::to_string) else { continue };
+    // 遍历与"活的"判定（非回收站、未删除）用 rmsvc-core 的同一套书库读取（`live_entries`、`created_ms`）。
+    for (uuid, v) in rmsvc_core::xochitl::live_entries(xochitl_dir) {
         if !rmsvc_core::xochitl::is_uuid_shape(&uuid) {
             continue;
         }
-        let Some(v) = std::fs::read_to_string(&p).ok().and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok()) else { continue };
         let s = |k: &str| v.get(k).and_then(|x| x.as_str()).unwrap_or("").to_string();
-        if s("parent") == "trash" || v.get("deleted").and_then(|x| x.as_bool()) == Some(true) {
-            continue;
-        }
         match s("type").as_str() {
             "CollectionType" => {
                 folders.insert(uuid, s("visibleName"));
@@ -146,7 +138,7 @@ pub fn list_library(xochitl_dir: &Path) -> Vec<LibraryDoc> {
             "DocumentType" => {
                 let found = ["epub", "pdf"].into_iter().find_map(|k| std::fs::symlink_metadata(xochitl_dir.join(format!("{uuid}.{k}"))).ok().filter(|m| m.is_file()).map(|m| (k, m.len())));
                 let Some((kind, bytes)) = found else { continue };
-                let created_ms = v.get("createdTime").and_then(|x| x.as_str().and_then(|s| s.parse().ok()).or_else(|| x.as_u64())).unwrap_or(0);
+                let created_ms = rmsvc_core::xochitl::created_ms(&v);
                 docs.push((LibraryDoc { uuid, name: s("visibleName"), folder: String::new(), kind, bytes, created_ms, same_name: 0 }, s("parent")));
             }
             _ => {}

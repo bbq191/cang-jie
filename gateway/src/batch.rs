@@ -14,7 +14,7 @@
 //! 已下线的动作：「批量加入 KOReader」（2026-09-29 设备卸载 KOReader）、「批量优化」（2026-10-07 书架不再优化书）。
 use rmsvc_core::http::{ApiError, ApiResult, Reply, Request};
 use rmsvc_core::paths::Paths;
-use rmsvc_core::registry::{self, SvcClient};
+use rmsvc_core::registry::SvcClient;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::VecDeque;
@@ -55,10 +55,12 @@ struct State {
     total: u32,
     done: u32,
     failed: Vec<(String, String)>,
-    /// 最近一次处理的动作（给界面显示"批量加入…"用；队列里混动作时取当前这一本的）。
-    action: Option<Action>,
     #[serde(skip)]
     worker_alive: bool,
+    /// [`resume`] 正在等 book-serve 起来（开机时网关可能先起）：界面据此显示"等书架服务启动"，而不是像卡住的批量。
+    /// 运行时标志，不落盘。
+    #[serde(skip)]
+    waiting_service: bool,
     /// 「全部中止」时正在处理的那一本也要停（见 [`run_one`]）；worker 取下一本时复位。运行时标志，不落盘（同 `worker_alive`）。
     #[serde(skip)]
     abort_current: bool,
@@ -90,8 +92,7 @@ fn persist(paths: &Paths) {
     let _g = rmsvc_core::sync::lock(persist_lock());
     let json = { serde_json::to_vec(&*lock()).ok() };
     if let Some(b) = json {
-        let _ = std::fs::create_dir_all(paths.state_dir());
-        let _ = rmsvc_core::fs::write_atomic(&file_of(paths), &b);
+        let _ = rmsvc_core::fs::write_atomic(&file_of(paths), &b); // 父目录由 write_atomic 自己建
     }
     // 状态每变一次就落一次盘，正好是"该通知网页刷新"的时机（前端不再批量运行时每 3 秒轮询）。
     crate::events::notify_books("batch");
@@ -110,20 +111,28 @@ pub struct Enqueued {
     pub skipped: usize,
 }
 
-/// 到另一个服务的客户端（每次现建：`registry::find` 已是 O(1)，端口变了/服务重启后自然取到新地址）。
-fn client(paths: &Paths, svc: &'static str, secs: u64) -> SvcClient {
-    SvcClient::new(paths.clone(), svc, secs)
+/// 到 book-serve 的客户端。每次调用（入队、恢复、处理一本书）现建一个、这一次里共用：每次请求按注册表现查地址，
+/// 服务重启换了端口也能找到；没注册时报"book-serve 未运行"。
+fn book_serve(paths: &Paths) -> SvcClient {
+    SvcClient::new(paths.clone(), "book-serve", BOOK_SERVE_TIMEOUT_SECS)
+}
+/// 对 book-serve 单个请求的上限：列表、提交加入都是零耗时操作（加入本身在 book-serve 后台线程里跑）。
+const BOOK_SERVE_TIMEOUT_SECS: u64 = 30;
+
+fn staging_items(c: &SvcClient) -> Result<Vec<Value>, String> {
+    let list = c.get_json("/staging")?;
+    Ok(list.get("items").and_then(|v| v.as_array()).cloned().unwrap_or_default())
 }
 
-fn staging_items(paths: &Paths) -> Result<Vec<Value>, String> {
-    let list = client(paths, "book-serve", 10).get_json("/staging")?;
-    Ok(list.get("items").and_then(|v| v.as_array()).cloned().unwrap_or_default())
+/// 母版库列表（`/staging` 的 `items` 数组）里名为 `name` 的条目。
+fn find_item<'a>(items: &'a [Value], name: &str) -> Option<&'a Value> {
+    items.iter().find(|it| it.get("name").and_then(|v| v.as_str()) == Some(name))
 }
 
 /// 入队。`names=None` 表示"母版库里所有该动作适用的书"；`Some` 只处理点名的。已经在队列里/正在处理的同名书跳过
 /// （不重复排）；点名了但不适用的（如 CBZ）计入 skipped。
 pub fn enqueue(paths: &Paths, action: Action, names: Option<Vec<String>>, folder: &str) -> Result<Enqueued, String> {
-    let items = staging_items(paths)?;
+    let items = staging_items(&book_serve(paths))?;
     let wanted: Vec<String> = match &names {
         Some(n) => n.clone(),
         None => items.iter().filter_map(|it| it.get("name").and_then(|v| v.as_str()).map(str::to_string)).collect(),
@@ -133,8 +142,7 @@ pub fn enqueue(paths: &Paths, action: Action, names: Option<Vec<String>>, folder
     let spawn = {
         let mut st = lock();
         for name in wanted {
-            let item = items.iter().find(|it| it.get("name").and_then(|v| v.as_str()) == Some(name.as_str()));
-            let ok = item.map(|it| eligible(action, it)).unwrap_or(false);
+            let ok = find_item(&items, &name).is_some_and(|it| eligible(action, it));
             let dup = st.current.as_ref().map(|j| j.name == name && j.action == action).unwrap_or(false) || st.queue.iter().any(|j| j.name == name && j.action == action);
             if !ok {
                 if names.is_some() {
@@ -151,7 +159,6 @@ pub fn enqueue(paths: &Paths, action: Action, names: Option<Vec<String>>, folder
         }
         if queued > 0 {
             start_round(&mut st, queued);
-            st.action = Some(action);
             let spawn = !st.worker_alive;
             st.worker_alive = true;
             spawn
@@ -198,17 +205,20 @@ fn start_round(st: &mut State, queued: usize) {
     st.total += queued as u32;
 }
 
-/// 当前批量状态（任何会话都能看）。
+/// 当前批量状态（任何会话都能看）。`action`：正在处理/排队那本的动作；都没有但有上一轮结果时是 `deliver`
+/// （动作只剩这一种，原来另存一份"最近动作"，跟当前任务里的重复，2026-10-07 删掉）；从没跑过是 `null`。
+/// `waitingService`：网关刚重启、恢复出来的队列在等 book-serve 起来。
 pub fn status() -> Value {
     let st = lock();
+    let action = st.current.as_ref().or(st.queue.front()).map(|j| j.action).or((st.total > 0).then_some(Action::Deliver));
     json!({
         "running": st.worker_alive,
-        "action": st.current.as_ref().map(|j| j.action.key()).or(st.action.map(Action::key)),
+        "waitingService": st.waiting_service,
+        "action": action.map(Action::key),
         "total": st.total,
         "done": st.done,
         "current": st.current.as_ref().map(|j| j.name.clone()),
         "queued": st.queue.iter().take(200).map(|j| j.name.clone()).collect::<Vec<_>>(),
-        "queuedCount": st.queue.len(),
         "failed": st.failed.iter().map(|(n, m)| json!({"name": n, "message": m})).collect::<Vec<_>>(),
     })
 }
@@ -257,24 +267,12 @@ pub fn resume(paths: &Paths) {
         let mut st = lock();
         *st = saved;
         st.worker_alive = true;
+        st.waiting_service = true;
     }
     let paths = paths.clone();
     std::thread::spawn(move || {
-        let mut waited = Duration::ZERO;
-        let mut n = 0u32;
-        let items = loop {
-            match staging_items(&paths) {
-                Ok(i) => break Some(i),
-                Err(_) if waited >= RESUME_WAIT_MAX => break None,
-                Err(_) => {
-                    // 开机/整体重启时网关可能先起：前 30 秒每 2 秒试一次，之后放宽到每 30 秒（极少见的长等待不必勤快探测）。
-                    let step = Duration::from_secs(if n < 15 { 2 } else { 30 });
-                    std::thread::sleep(step);
-                    waited += step;
-                    n += 1;
-                }
-            }
-        };
+        let items = wait_for_book_serve(&paths);
+        lock().waiting_service = false;
         match items {
             Some(items) => validate_queue(&mut lock(), &items),
             // 等了 RESUME_WAIT_MAX 仍没有 book-serve：队列**保留**在内存和磁盘上（不清空、不丢），只是不再有人主动跑；
@@ -282,6 +280,7 @@ pub fn resume(paths: &Paths) {
             None => {
                 lock().worker_alive = false;
                 eprintln!("[gateway] 批量队列恢复：等了 {} 分钟 book-serve 仍不可用，队列已保留，待下次入队时继续", RESUME_WAIT_MAX.as_secs() / 60);
+                persist(&paths);
                 return;
             }
         }
@@ -292,11 +291,32 @@ pub fn resume(paths: &Paths) {
 
 /// 等 book-serve 就绪的上限（见 [`resume`]）。
 const RESUME_WAIT_MAX: Duration = Duration::from_secs(30 * 60);
+/// 等 book-serve 时注册表没动静的兜底重试间隔（服务注册了但还没开始接请求、inotify 不可用时靠它）。
+const RESUME_RETRY: Duration = Duration::from_secs(30);
+
+/// 等到能从 book-serve 取到母版库列表，至多 [`RESUME_WAIT_MAX`]。**等注册表变化**（rmsvc-core 的 `registry_wake`，
+/// book-serve 起来时会注册）而不是定时轮询——此前前 30 秒每 2 秒、之后每 30 秒探一次。
+fn wait_for_book_serve(paths: &Paths) -> Option<Vec<Value>> {
+    let wake = rmsvc_core::events::registry_wake(paths);
+    let c = book_serve(paths);
+    let deadline = Instant::now() + RESUME_WAIT_MAX;
+    loop {
+        let seen = wake.generation();
+        if let Ok(items) = staging_items(&c) {
+            return Some(items);
+        }
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            return None;
+        }
+        wake.wait_change(seen, RESUME_RETRY.min(left));
+    }
+}
 
 /// 按最新母版库状态重新校验队列：不存在/已不适用的项剔除，总数同步扣减。
 fn validate_queue(st: &mut State, items: &[Value]) {
     let before = st.queue.len();
-    st.queue.retain(|j| items.iter().find(|it| it.get("name").and_then(|v| v.as_str()) == Some(j.name.as_str())).map(|it| eligible(j.action, it)).unwrap_or(false));
+    st.queue.retain(|j| find_item(items, &j.name).is_some_and(|it| eligible(j.action, it)));
     let dropped = (before - st.queue.len()) as u32;
     st.total = st.total.saturating_sub(dropped);
 }
@@ -334,17 +354,18 @@ fn worker(paths: &Paths) {
     }
 }
 
-/// POST 并只取给用户看的失败原因（服务端错误体里的 message，不带 "book-serve POST /x:" 这类前缀）。
-fn post(paths: &Paths, svc: &'static str, path: &str, body: Value, secs: u64) -> Result<Value, String> {
-    client(paths, svc, secs).try_post_json(path, &body).map_err(|e| e.message)
-}
-
-/// 这本书在母版库列表里的 `delivered.<kind>` 终态（`ok`/`failed` + 文案）；条目没了（处理途中被删或改名）→ None。
-fn final_check(paths: &Paths, name: &str, kind: &str) -> Option<(String, String)> {
-    let list = client(paths, "book-serve", 10).get_json("/staging").ok()?;
-    let it = list.get("items")?.as_array()?.iter().find(|it| it.get("name").and_then(|v| v.as_str()) == Some(name))?;
-    let c = it.get("delivered")?.get(kind)?;
-    Some((c.get("status")?.as_str()?.to_string(), c.get("message").and_then(|m| m.as_str()).unwrap_or("").to_string()))
+/// 这本书这次处理的结论，看等待结束时最后一次取到的母版库列表里它的 `delivered.<kind>`：`ok` → 成功；`failed` → 带
+/// book-serve 写的原因失败。其余（没等到结果：等满一小时、book-serve 连续查不到、条目途中被删或改名、状态还是 `pending`）
+/// 一律算失败并说明——此前只认 `failed`，这几种结果不明的情况都被记成成功。
+fn outcome(last: Option<&Value>, name: &str, kind: &str) -> Result<(), String> {
+    let unknown = || Err("没等到结果（书架服务超时、不可达，或这本书已不在母版库），请到 xochitl 书库里核对".to_string());
+    let Some(items) = last.and_then(|l| l.get("items")).and_then(|v| v.as_array()) else { return unknown() };
+    let Some(c) = find_item(items, name).and_then(|it| it.get("delivered")).and_then(|d| d.get(kind)) else { return unknown() };
+    match c.get("status").and_then(|v| v.as_str()) {
+        Some("ok") => Ok(()),
+        Some("failed") => Err(c.get("message").and_then(|m| m.as_str()).unwrap_or("加入失败").to_string()),
+        _ => unknown(),
+    }
 }
 
 /// 「全部中止」落在当前这本已经出队、但还没真正交给 book-serve 的时候，这本记的失败原因。
@@ -356,20 +377,18 @@ fn abort_requested() -> bool {
 }
 
 fn run_one(paths: &Paths, job: &Job) -> Result<(), String> {
-    registry::find(paths, "book-serve").ok_or("book-serve 未安装或未运行")?;
-    let (path, body, kind) = match job.action {
-        Action::Deliver => ("/staging/deliver", json!({"name": job.name, "folder": job.folder}), "deliver"),
+    let (path, body) = match job.action {
+        Action::Deliver => ("/staging/deliver", json!({"name": job.name, "folder": job.folder})),
     };
     // 「全部中止」若落在出队之后、交给 book-serve 之前：不在这里拦一下，这本书会照样整本投完。
     if abort_requested() {
         return Err(ABORTED.into());
     }
-    post(paths, "book-serve", path, body, 60)?;
-    poll_until_settled(&client(paths, "book-serve", 10), &job.name);
-    match final_check(paths, &job.name, kind) {
-        Some((s, m)) if s == "failed" => Err(m),
-        _ => Ok(()),
-    }
+    let c = book_serve(paths);
+    // 失败原因只取对方错误体里的 message（不带 "book-serve POST /x:" 前缀）；没注册时是"book-serve 未运行"。
+    c.try_post_json(path, &body).map_err(|e| e.message)?;
+    let last = poll_until_settled(&c, &job.name);
+    outcome(last.as_ref(), &job.name, job.action.key())
 }
 
 // ───────────── 等 book-serve 把这本处理完 ─────────────
@@ -390,20 +409,18 @@ const FAILURE_RETRY: Duration = Duration::from_secs(5);
 /// 查 book-serve 的 `/staging`（直连后端服务，不经网关自己这层转发）直到 [`is_settled`] 判定这本书已经不再忙，
 /// 或等到 [`SETTLE_POLL_TIMEOUT`] 放弃。**事件驱动**：每次查完就阻塞等 [`crate::events::books_wake`]，至多 [`POLL_FALLBACK`]
 /// 兜底一次；先取代数再查，查询期间到达的事件不会漏。查询要**连续** [`MAX_POLL_FAILURES`] 次失败才放弃：book-serve 忙着
-/// 上传大书时 10 秒查询超时最容易撞上，一次失败就放弃会让下一本在这本还没投完时就开始。
-fn poll_until_settled(client: &SvcClient, name: &str) {
+/// 上传大书时查询超时最容易撞上，一次失败就放弃会让下一本在这本还没投完时就开始。返回最后一次取到的列表
+/// （判定处理完的那一份；放弃时是最后一次成功取到的，可能还显示忙），结论由 [`outcome`] 从它读，不再另取一次。
+fn poll_until_settled(client: &SvcClient, name: &str) -> Option<Value> {
     let wake = crate::events::books_wake();
-    wait_settled(|| client.get_json("/staging"), name, Instant::now() + SETTLE_POLL_TIMEOUT, || wake.generation(), |seen, d| throttled_wait(wake, seen, d, MIN_REQUERY));
+    wait_settled(|| client.get_json("/staging"), name, Instant::now() + SETTLE_POLL_TIMEOUT, || wake.generation(), |seen, d| throttled_wait(wake, seen, d, MIN_REQUERY))
 }
 
 /// 这本书是不是已经不再忙，输入是 `GET /staging` 原样返回的 JSON（`{"items":[...]}`）。条目还在且 `busy==false`、或条目已经
 /// 不在列表里（被删或改名，不能死等一个永远不会再出现的 `busy:false`）都算处理完；解析不了也当处理完，不让侦测本身出错把队列卡住。
 fn is_settled(list_json: &Value, name: &str) -> bool {
     let Some(items) = list_json.get("items").and_then(|v| v.as_array()) else { return true };
-    match items.iter().find(|it| it.get("name").and_then(|v| v.as_str()) == Some(name)) {
-        Some(it) => !it.get("busy").and_then(|v| v.as_bool()).unwrap_or(false),
-        None => true,
-    }
+    find_item(items, name).is_none_or(|it| !it.get("busy").and_then(|v| v.as_bool()).unwrap_or(false))
 }
 
 /// 等 `wake` 的代数离开 `seen`（至多 `max`），但从调用起**至少**过 `min.min(max)` 才返回——事件再密也不会让调用方
@@ -416,19 +433,23 @@ fn throttled_wait(wake: &crate::events::Wake, seen: u64, max: Duration, min: Dur
     }
 }
 
-/// [`poll_until_settled`] 的循环本体，查询/代数/等待都由调用方注入，便于离线测试。
-fn wait_settled(mut query: impl FnMut() -> Result<Value, String>, name: &str, deadline: Instant, generation: impl Fn() -> u64, wait: impl Fn(u64, Duration)) {
+/// [`poll_until_settled`] 的循环本体，查询/代数/等待都由调用方注入，便于离线测试。返回最后一次成功取到的列表。
+fn wait_settled(mut query: impl FnMut() -> Result<Value, String>, name: &str, deadline: Instant, generation: impl Fn() -> u64, wait: impl Fn(u64, Duration)) -> Option<Value> {
     let mut failures = 0u32;
+    let mut last = None;
     loop {
         let seen = generation();
         let failed = match query() {
-            Ok(json) if is_settled(&json, name) => return,
-            Ok(_) => false, // 还在忙，继续轮询
+            Ok(json) if is_settled(&json, name) => return Some(json),
+            Ok(json) => {
+                last = Some(json); // 还在忙，继续轮询
+                false
+            }
             Err(_) => true,
         };
         failures = if failed { failures + 1 } else { 0 };
         if failures >= MAX_POLL_FAILURES || Instant::now() >= deadline {
-            return;
+            return last;
         }
         let left = deadline.saturating_duration_since(Instant::now());
         if failed {
@@ -462,11 +483,11 @@ mod tests {
         assert_eq!(Action::parse("optimize"), None, "批量优化随 2026-10-07 书架不再优化书撤掉");
     }
 
-    /// 旧版落盘文件里的 `attempts` 字段读回时忽略；坏文件读不出来。
+    /// 旧版落盘文件里的 `attempts`、`action` 字段读回时忽略；坏文件读不出来。
     #[test]
     fn saved_state_tolerates_old_fields() {
         let st: State = serde_json::from_str(r#"{"queue":[{"action":"deliver","name":"a.epub","folder":"","attempts":1}],"current":null,"total":1,"done":0,"failed":[],"action":"deliver"}"#).unwrap();
-        assert_eq!((st.queue.len(), st.total, st.action), (1, 1, Some(Action::Deliver)));
+        assert_eq!((st.queue.len(), st.total), (1, 1));
         assert!(serde_json::from_str::<State>("{坏").is_err());
     }
 
@@ -581,8 +602,8 @@ mod tests {
         let paths = crate::testutil::sandbox(&t);
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         listener.set_nonblocking(true).unwrap();
-        let info = registry::ServiceInfo { name: "book-serve".into(), port: listener.local_addr().unwrap().port(), label: String::new(), version: String::new(), pid: std::process::id(), ui: None };
-        let _reg = registry::register(&paths, &info).unwrap();
+        let info = rmsvc_core::registry::ServiceInfo { name: "book-serve".into(), port: listener.local_addr().unwrap().port(), label: String::new(), version: String::new(), pid: std::process::id(), ui: None };
+        let _reg = rmsvc_core::registry::register(&paths, &info).unwrap();
         let job = Job { action: Action::Deliver, name: "stop-race.epub".into(), folder: String::new() };
         lock().abort_current = true;
         assert_eq!(run_one(&paths, &job).unwrap_err(), ABORTED);
@@ -592,13 +613,14 @@ mod tests {
 
     /// 回归：一次查询失败（book-serve 忙、查询超时）不能提前算处理完，要等它真的不忙。
     #[test]
-    fn transient_query_failure_does_not_release_slot_early() {
+    fn transient_query_failure_does_not_settle_early() {
         use std::cell::Cell;
         let busy = serde_json::json!({"items": [{"name": "big.epub", "busy": true}]});
         let idle = serde_json::json!({"items": [{"name": "big.epub", "busy": false}]});
         let script: Vec<Result<serde_json::Value, String>> = vec![Ok(busy.clone()), Err("timeout".into()), Err("timeout".into()), Ok(busy), Err("timeout".into()), Ok(idle)];
         let calls = Cell::new(0usize);
-        wait_settled(|| { let i = calls.get(); calls.set(i + 1); script[i].clone() }, "big.epub", Instant::now() + Duration::from_secs(3600), || 0, |_, _| {});
+        let last = wait_settled(|| { let i = calls.get(); calls.set(i + 1); script[i].clone() }, "big.epub", Instant::now() + Duration::from_secs(3600), || 0, |_, _| {});
+        assert_eq!(last.as_ref().and_then(|l| find_item(l["items"].as_array().unwrap(), "big.epub")).map(|it| it["busy"].clone()), Some(json!(false)), "返回判定处理完的那一份列表");
         assert_eq!(calls.get(), 6, "应一直等到真正不忙（第 6 次查询）才返回");
     }
 
@@ -624,7 +646,32 @@ mod tests {
     fn persistent_failure_gives_up_after_limit() {
         use std::cell::Cell;
         let calls = Cell::new(0u32);
-        wait_settled(|| { calls.set(calls.get() + 1); Err("down".into()) }, "x", Instant::now() + Duration::from_secs(3600), || 0, |_, _| {});
+        assert!(wait_settled(|| { calls.set(calls.get() + 1); Err("down".into()) }, "x", Instant::now() + Duration::from_secs(3600), || 0, |_, _| {}).is_none());
         assert_eq!(calls.get(), MAX_POLL_FAILURES);
+    }
+
+    /// 结论只认 `ok`；`failed` 带原因；`pending`、条目不在、没取到列表都算"没等到结果"的失败（此前都记成成功）。
+    #[test]
+    fn outcome_only_ok_counts_as_success() {
+        let list = |status: &str| json!({"items": [{"name": "a.epub", "busy": false, "delivered": {"deliver": {"status": status, "message": "上传失败: boom"}}}]});
+        assert_eq!(outcome(Some(&list("ok")), "a.epub", "deliver"), Ok(()));
+        assert_eq!(outcome(Some(&list("failed")), "a.epub", "deliver"), Err("上传失败: boom".into()));
+        for unknown in [outcome(Some(&list("pending")), "a.epub", "deliver"), outcome(Some(&list("ok")), "gone.epub", "deliver"), outcome(None, "a.epub", "deliver")] {
+            assert!(unknown.unwrap_err().contains("没等到结果"));
+        }
+    }
+
+    /// 状态里的 `action`：有当前/排队任务取它的；只剩上一轮结果时是 deliver；从没跑过是 null。
+    #[test]
+    fn status_action_is_derived_and_waiting_flag_reported() {
+        let _g = rmsvc_core::sync::lock(&GLOBAL_STATE);
+        let saved = std::mem::take(&mut *lock());
+        assert!(status()["action"].is_null() && status()["waitingService"] == json!(false));
+        lock().total = 2;
+        assert_eq!(status()["action"], "deliver");
+        lock().waiting_service = true;
+        assert_eq!(status()["waitingService"], true);
+        assert!(status().get("queuedCount").is_none());
+        *lock() = saved;
     }
 }

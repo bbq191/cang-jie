@@ -147,6 +147,23 @@ pub fn set_mode(path: &Path, mode: u32) {
     let _ = (path, mode);
 }
 
+/// `path` 所在文件系统的 (可用字节, 总字节)（statvfs，不 fork `df`）：`f_bavail × f_frsize`、`f_blocks × f_frsize`。
+/// 网关「设备健康」看 /home 剩余空间、book-serve 母版库列表显示剩余空间共用（此前两边各有一份同样的 unsafe 代码）。
+pub fn fs_space(path: &Path) -> Option<(u64, u64)> {
+    use std::os::unix::ffi::OsStrExt;
+    let c = std::ffi::CString::new(path.as_os_str().as_bytes()).ok()?;
+    let mut st = std::mem::MaybeUninit::<libc::statvfs>::zeroed();
+    // SAFETY: `c` 是合法的 NUL 结尾 C 字符串；`st` 是足够大的零初始化 statvfs，成功返回后由内核填好。
+    if unsafe { libc::statvfs(c.as_ptr(), st.as_mut_ptr()) } != 0 {
+        return None;
+    }
+    // SAFETY: statvfs 返回 0，结构体已被内核写入。
+    let st = unsafe { st.assume_init() };
+    #[allow(clippy::unnecessary_cast)] // 各架构 libc 的字段类型不同（有的 u32 有的 u64）
+    let (bavail, blocks, frsize) = (st.f_bavail as u64, st.f_blocks as u64, st.f_frsize as u64);
+    Some((bavail.checked_mul(frsize)?, blocks.checked_mul(frsize)?))
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
