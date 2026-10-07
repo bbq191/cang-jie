@@ -2,7 +2,7 @@
 <defs><marker id="ela-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#555"/></marker><marker id="ela-r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#b0451f"/></marker><marker id="ela-g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2f7d45"/></marker><marker id="ela-b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#4a6fa5"/></marker></defs>
 <rect x="0" y="0" width="1080" height="680" fill="#fbfbfa"/>
 <text x="540" y="30" text-anchor="middle" font-size="18" font-weight="bold" fill="#1a1a1a">传书模块：系统架构</text>
-<text x="540" y="52" text-anchor="middle" font-size="12.5" fill="#6a6a6a">书架不改书：书在电脑上用 sheng-ren 优化好，这里只入库、原样加入 xochitl（2026-10-07 现状，未部署）</text>
+<text x="540" y="52" text-anchor="middle" font-size="12.5" fill="#6a6a6a">书架不改书：书在电脑上用 sheng-ren 优化好，这里只入库、原样加入 xochitl（按 2026-10-07 稍后清理后的代码，未部署）</text>
 
 <rect x="400" y="68" width="280" height="42" rx="8" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.6"/>
 <text x="540" y="94" text-anchor="middle" font-size="13.5" fill="#1a1a1a">浏览器（母版库页面，登录墙后）</text>
@@ -11,8 +11,8 @@
 <rect x="180" y="134" width="720" height="98" rx="10" fill="#fff3d6" stroke="#c9971f" stroke-width="1.6"/>
 <text x="540" y="156" text-anchor="middle" font-size="14" font-weight="bold" fill="#1a1a1a">gateway 0.0.0.0:443（唯一 Web 前端）</text>
 <text x="540" y="180" text-anchor="middle" font-size="11" fill="#4a4a4a">/api/books/* 反向代理到 book-serve：请求体流式；下载或 &gt;256KB 应答流式、小应答整体缓冲；SSE 汇聚</text>
-<text x="540" y="198" text-anchor="middle" font-size="11" fill="#4a4a4a">批量队列 batch.rs（只剩加入 xochitl；状态落盘、重启续跑）· 并发闸门 budget.rs</text>
-<text x="540" y="216" text-anchor="middle" font-size="11" fill="#4a4a4a">每一本「加入 xochitl」都先过闸门，再调 book-serve</text>
+<text x="540" y="198" text-anchor="middle" font-size="11" fill="#4a4a4a">批量队列 batch.rs（只剩加入 xochitl；一次一本，等这本处理完再取下一本；状态落盘、重启续跑）</text>
+<text x="540" y="216" text-anchor="middle" font-size="11" fill="#4a4a4a">网页的「加入 xochitl」只走这条队列（并发闸门 budget.rs 2026-10-07 删除）</text>
 <polyline points="400,232 400,262" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#ela-a)"/>
 <text x="330" y="252" text-anchor="middle" font-size="10.5" fill="#555">/api/books/*</text>
 
@@ -36,10 +36,10 @@
 <text x="196" y="460" text-anchor="middle" font-size="9.8" fill="#4a4a4a">fswatch 追平进母版库</text>
 <rect x="328" y="432" width="232" height="34" rx="6" fill="#ffffff" stroke="#3e8e51" stroke-width="1"/>
 <text x="444" y="446" text-anchor="middle" font-size="9.8" fill="#4a4a4a">render_check：投书后</text>
-<text x="444" y="460" text-anchor="middle" font-size="9.8" fill="#4a4a4a">等 xochitl 渲染，页数自检</text>
+<text x="444" y="460" text-anchor="middle" font-size="9.8" fill="#4a4a4a">认出 uuid、记页数</text>
 <rect x="80" y="476" width="480" height="40" rx="6" fill="#ffffff" stroke="#3e8e51" stroke-width="1"/>
 <text x="320" y="493" text-anchor="middle" font-size="10" fill="#4a4a4a">shelf-conv（库，进程内调用，只读不改书）</text>
-<text x="320" y="508" text-anchor="middle" font-size="10" fill="#4a4a4a">pdfmeta · placeholder · stats · naming；读 EPUB 借用 sheng-ren bookconv 的公开接口</text>
+<text x="320" y="508" text-anchor="middle" font-size="10" fill="#4a4a4a">epub · pdfmeta · placeholder · naming（不再依赖 sheng-ren bookconv）</text>
 
 <rect x="720" y="262" width="300" height="270" rx="10" fill="#fdf1ec" stroke="#c0602d" stroke-width="1.6"/>
 <text x="870" y="282" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">xochitl（设备原生）</text>
@@ -51,8 +51,8 @@
 <text x="870" y="381" text-anchor="middle" font-size="9.8" fill="#4a4a4a">mkdir：长轮询拉队列</text>
 <text x="870" y="396" text-anchor="middle" font-size="9.8" fill="#4a4a4a">trash：长轮询拉队列，按 uuid 删</text>
 <text x="870" y="411" text-anchor="middle" font-size="9.8" fill="#4a4a4a">comic-margins：开书 1.5 秒后查</text>
-<text x="870" y="426" text-anchor="middle" font-size="9.8" fill="#4a4a4a">reader-page-turn：开书查 /reading-direction</text>
-<text x="870" y="441" text-anchor="middle" font-size="9.8" fill="#4a4a4a">（只读原书 OPF rtl 与旧清单）</text>
+<text x="870" y="426" text-anchor="middle" font-size="9.8" fill="#4a4a4a">（reader-page-turn 只剩单击翻页，</text>
+<text x="870" y="441" text-anchor="middle" font-size="9.8" fill="#4a4a4a">不再问 book-serve；日漫翻页 10-07 删）</text>
 <text x="870" y="462" text-anchor="middle" font-size="9.8" fill="#4a4a4a">→ 调 xochitl 自己的 QML 接口</text>
 <text x="870" y="484" text-anchor="middle" font-size="9.8" fill="#7a7a7a">唯一阅读器；KOReader 已于 2026-09-29</text>
 <text x="870" y="499" text-anchor="middle" font-size="9.8" fill="#7a7a7a">卸载，koreader-serve（:8791）退役</text>
@@ -63,6 +63,6 @@
 
 <rect x="60" y="558" width="960" height="38" rx="10" fill="#f2f2f5" stroke="#8a8a99" stroke-width="1.6" stroke-dasharray="6 4"/>
 <text x="540" y="582" text-anchor="middle" font-size="11" fill="#4a4a4a">共享底座 rmsvc-core：xochitl 上传/找书/大文件通道 · multipart 流式解析 · events(SSE) · fswatch · paths(XDG)</text>
-<text x="540" y="622" text-anchor="middle" font-size="11" fill="#6a6a6a">2026-10-07 删除：设备上「优化」· PDF 转 EPUB / 裁边 · 原 PDF 备份 · 抓网文 · 联网补封面 · 旧产物兼容 · 中途取消</text>
+<text x="540" y="622" text-anchor="middle" font-size="11" fill="#6a6a6a">2026-10-07 删除：设备上「优化」· PDF 转 EPUB / 裁边 · 原 PDF 备份 · 抓网文 · 联网补封面 · 旧产物兼容 · 中途取消 · 并发闸门 · 日漫翻页</text>
 <text x="540" y="642" text-anchor="middle" font-size="10.5" fill="#8a8a8a">（书的优化全部在电脑上用 sheng-ren 的 booklib 做，xochitl 阅读模式）</text>
 </svg>

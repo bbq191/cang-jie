@@ -1,6 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1088 640" font-family="Noto Sans CJK SC, sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1088 658" font-family="Noto Sans CJK SC, sans-serif">
 <defs><marker id="bj-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#555"/></marker></defs>
-<rect x="0" y="0" width="1088" height="640" fill="#fbfbfa"/>
+<rect x="0" y="0" width="1088" height="658" fill="#fbfbfa"/>
 <text x="544" y="30" text-anchor="middle" font-size="18" font-weight="bold" fill="#1a1a1a">一本书的旅程：电脑上优化 → 上传 → 母版库 → 加入 xochitl</text>
 <text x="544" y="52" text-anchor="middle" font-size="12.5" fill="#6a6a6a">2026-10-07 起书架只搬运、不改书：优化全部在电脑上用 sheng-ren 做，设备上原样投进 xochitl</text>
 
@@ -65,7 +65,7 @@
 <text x="842" y="204" font-size="11" fill="#1a1a1a">&gt; 90MB 且 ≤ 1GB：</text>
 <text x="853" y="222" font-size="11" fill="#1a1a1a">占位 + 磁盘替换</text>
 <text x="842" y="242" font-size="11" fill="#1a1a1a">再大：整本拒绝</text>
-<text x="842" y="268" font-size="11" fill="#4a4a4a">· 渲染自检：页数 vs 预期</text>
+<text x="842" y="268" font-size="11" fill="#4a4a4a">· 渲染自检：认出 uuid、记页数</text>
 <text x="842" y="292" font-size="11" fill="#4a4a4a">· 漫画带 sheng-ren 页边距标记：</text>
 <text x="853" y="310" font-size="11" fill="#4a4a4a">一律登记（没有开关），</text>
 <text x="853" y="328" font-size="11" fill="#4a4a4a">首次打开自动设页边距 1</text>
@@ -75,17 +75,18 @@
 <text x="280" y="416" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">网关 gateway :443</text>
 <text x="40" y="440" font-size="11" fill="#4a4a4a">HTTPS + 密码 · 单页网页 · /api/&lt;段&gt;/* 反向代理 · SSE 推送，网页不轮询</text>
 <text x="40" y="460" font-size="11" fill="#4a4a4a">批量队列：只剩「加入 xochitl」，顺序逐本、落盘续跑、可全部中止</text>
-<text x="40" y="480" font-size="11" fill="#4a4a4a">闸门：只拦「加入 xochitl」，&gt;90MB 同时 1 本，其余 3 本</text>
+<text x="40" y="480" font-size="11" fill="#4a4a4a">一本加完才取下一本（并发闸门 2026-10-07 删除）</text>
 <rect x="552" y="394" width="512" height="104" rx="10" fill="#f0efe9" stroke="#8a8a8a"/>
 <text x="808" y="416" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">xochitl 里的 qmd 代理（book-serve 排队、xochitl 自己做）</text>
 <text x="568" y="440" font-size="11" fill="#4a4a4a">建文件夹 · 移进回收站 · 漫画页边距</text>
-<text x="568" y="460" font-size="11" fill="#4a4a4a">日漫翻页：只读书里自带的 OPF rtl 标记（+ 旧手动清单）</text>
+<text x="568" y="460" font-size="11" fill="#4a4a4a">（日漫翻页 2026-10-07 删除：xochitl 里日漫从左往右翻）</text>
 <text x="568" y="480" font-size="11" fill="#4a4a4a">改 qmd 后要整机重启才加载</text>
 
-<rect x="24" y="512" width="1040" height="58" rx="10" fill="#f4f4f2" stroke="#9a9a9a" stroke-width="1.4" stroke-dasharray="6 4"/>
+<rect x="24" y="512" width="1040" height="76" rx="10" fill="#f4f4f2" stroke="#9a9a9a" stroke-width="1.4" stroke-dasharray="6 4"/>
 <text x="40" y="534" font-size="12" font-weight="bold" fill="#8a8a8a">已删除（git 历史可查）</text>
-<text x="40" y="555" font-size="11" fill="#8a8a8a">2026-10-07：设备上「优化」· PDF 转 EPUB / 裁边 · 原 PDF 备份 · 抓网文 · 联网补封面 · 旧产物兼容 · 中途取消　｜　09-30：超限按卷拆分 · 按书设方向　｜　09-29：加入 KOReader</text>
+<text x="40" y="555" font-size="11" fill="#8a8a8a">2026-10-07：设备上「优化」· PDF 转 EPUB / 裁边 · 原 PDF 备份 · 抓网文 · 联网补封面 · 旧产物兼容 · 中途取消；同日稍后：并发闸门 · 渲染 warn · 日漫翻页</text>
+<text x="40" y="574" font-size="11" fill="#8a8a8a">09-30：超限按卷拆分 · 按书设方向　｜　09-29：加入 KOReader</text>
 
-<text x="544" y="596" text-anchor="middle" font-size="11" fill="#4a4a4a">代码：shelf/services/book-serve（:8790）母版库 · 加入 · 代理队列　·　shelf/crates/shelf-conv：PDF 页数 · 占位文档 · 渲染统计 · 书名规范（只读不改书）</text>
-<text x="544" y="616" text-anchor="middle" font-size="11" fill="#6a6a6a">sheng-ren 的 bookconv 是 git 依赖，书架只用它读 EPUB 的公开接口，不调用优化器</text>
+<text x="544" y="614" text-anchor="middle" font-size="11" fill="#4a4a4a">代码：shelf/services/book-serve（:8790）母版库 · 加入 · 代理队列　·　shelf/crates/shelf-conv：读 EPUB · PDF 页数 · 占位文档 · 书名规范（只读不改书）</text>
+<text x="544" y="634" text-anchor="middle" font-size="11" fill="#6a6a6a">书架不依赖 sheng-ren 的代码；漫画页边距标记名与书名规范化规则从 sheng-ren 复制，那边改了要跟着改</text>
 </svg>

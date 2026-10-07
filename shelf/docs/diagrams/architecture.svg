@@ -9,7 +9,7 @@
 <rect x="150" y="136" width="780" height="92" rx="10" fill="#fff3d6" stroke="#c9971f" stroke-width="1.6"/>
 <text x="540.0" y="157" text-anchor="middle" font-size="14" font-weight="bold" fill="#1a1a1a">gateway  https://0.0.0.0:443 · shelf.local</text>
 <text x="540.0" y="184.5" text-anchor="middle" font-size="10.5" fill="#4a4a4a">私有 CA TLS + 登录页密码 · 单页 UI · /api/services · /api/manage · /api/events(SSE)</text>
-<text x="540.0" y="198.0" text-anchor="middle" font-size="10.5" fill="#4a4a4a">按注册表 /api/&lt;seg&gt;/* 反向代理 · 批量队列 · 并发闸门</text>
+<text x="540.0" y="198.0" text-anchor="middle" font-size="10.5" fill="#4a4a4a">按注册表 /api/&lt;seg&gt;/* 反向代理 · 批量队列（一次一本）</text>
 <rect x="30" y="290" width="320" height="120" rx="10" fill="#ffffff" stroke="#3f9a55" stroke-width="1.6"/>
 <text x="190.0" y="309.5" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">book-serve :8790</text>
 <text x="190.0" y="335.5" text-anchor="middle" font-size="10.5" fill="#4a4a4a">母版库：入库 / 加入 xochitl</text>

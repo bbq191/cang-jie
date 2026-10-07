@@ -3,7 +3,7 @@
 <marker id="ak" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#555"/></marker>
 </defs>
 <rect x="0" y="0" width="1080" height="680" fill="#fbfbfa"/>
-<text x="540" y="30" text-anchor="middle" font-size="18" font-weight="bold" fill="#1a1a1a">网页「秘密花园」：首层四个 tab 与二级 tab（2026-10-07 现状，未部署）</text>
+<text x="540" y="30" text-anchor="middle" font-size="18" font-weight="bold" fill="#1a1a1a">网页「秘密花园」：首层四个 tab 与二级 tab（按 2026-10-07 稍后清理后的代码，未部署）</text>
 <text x="540" y="52" text-anchor="middle" font-size="12.5" fill="#6a6a6a">https://shelf.local/（443）· 登录后进入 · 顶栏右侧小圆点 = 事件流（SSE）连接状态</text>
 
 <rect x="20" y="76" width="1040" height="46" rx="10" fill="#f0f0ee" stroke="#8a8a8a" stroke-width="1.6"/>
@@ -55,7 +55,7 @@
 <text x="814" y="224" font-size="12" fill="#1a1a1a">基石与模块（探测 / 启停 / 卸载）</text>
 <text x="814" y="244" font-size="12" fill="#1a1a1a">设备健康：概览/服务/扩展/日志/清理</text>
 <text x="814" y="264" font-size="12" fill="#1a1a1a">模型管理（转写 / 问 AI）</text>
-<text x="814" y="284" font-size="12" fill="#1a1a1a">系统增强：画线吸附、阅读器翻页、</text>
+<text x="814" y="284" font-size="12" fill="#1a1a1a">系统增强：画线吸附、单击翻页、</text>
 <text x="814" y="302" font-size="12" fill="#1a1a1a">　　　　　（导入 md 在实验室）</text>
 <text x="814" y="320" font-size="11" fill="#3a3a3a">每项带加载徽章：已加载/待重启/未加载</text>
 <text x="814" y="342" font-size="12" fill="#1a1a1a">实验室：导入 md（漫画页边距卡 10-07 删）</text>
@@ -85,7 +85,7 @@
 <line x1="340" y1="506" x2="388" y2="506" stroke="#555" stroke-width="1.6" marker-end="url(#ak)"/>
 <line x1="690" y1="506" x2="738" y2="506" stroke="#555" stroke-width="1.6" marker-end="url(#ak)"/>
 
-<text x="40" y="570" font-size="12" fill="#1a1a1a">批量队列 / 并发闸门：网关自己也发事件（area=books），母版库进度走同一条流。</text>
+<text x="40" y="570" font-size="12" fill="#1a1a1a">批量队列：网关自己也发事件（area=books，kind=batch），母版库状态走同一条流。</text>
 <text x="40" y="590" font-size="12" fill="#1a1a1a">注册表目录 inotify：服务启停 → manage 事件 → tab 集合变了就整页重载。</text>
 <text x="40" y="610" font-size="12" fill="#1a1a1a">系统增强 / 实验室开关：PUT /api/enhance/qol → 整份 reading-qol.json 读入、只改指定键、原样写回。</text>
 <text x="40" y="630" font-size="12" fill="#1a1a1a">事件流断开（如网关重启后 401）：先查 /api/session，未登录跳登录页；否则 5 秒起翻倍退避重连，最多 5 分钟；页面隐藏时不重试（09-30）。</text>

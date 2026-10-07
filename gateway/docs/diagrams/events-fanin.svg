@@ -35,7 +35,7 @@
 <rect x="736" y="226" width="210" height="110" rx="10" fill="#fdf1ec" stroke="#c0602d" stroke-width="1.6"/>
 <text x="841.0" y="246" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">网关自己也发事件</text>
 <text x="841.0" y="269" text-anchor="middle" font-size="10" fill="#3a3a3a">batch.rs 队列状态变了</text>
-<text x="841.0" y="284" text-anchor="middle" font-size="10" fill="#3a3a3a">budget.rs 排队/处理变了</text>
+<text x="841.0" y="284" text-anchor="middle" font-size="10" fill="#8a8a8a">（闸门 budget.rs 2026-10-07 删除）</text>
 <text x="841.0" y="299" text-anchor="middle" font-size="10" fill="#3a3a3a">→ {"area":"books"}</text>
 <rect x="1010" y="96" width="206" height="286" rx="10" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.6"/>
 <text x="1113.0" y="116" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">浏览器 EventSource</text>
@@ -62,8 +62,8 @@
 <polyline points="946,150 1010,150" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#mk)"/>
 <text x="620" y="400" text-anchor="middle" font-size="11.5" fill="#3a3a3a">设计约束（用户 2026-09-06）：不轮询、不监听全盘、日志写入不触发；事件只来自服务代码里的变更点，加上上述两处 inotify。</text>
 <rect x="24" y="430" width="1192" height="100" rx="10" fill="#f1f1ef" stroke="#8a8a8a" stroke-width="1.6"/>
-<text x="36" y="450" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">和批量队列/闸门的关系</text>
-<text x="36" y="473" text-anchor="start" font-size="10.5" fill="#3a3a3a">网页在批量运行时不再每 3 秒轮询 /api/batch/status：batch.rs 每次落盘、budget.rs 每次排队状态变化都会调 events::notify_books()，</text>
-<text x="36" y="488" text-anchor="start" font-size="10.5" fill="#3a3a3a">网页收到 {"area":"books"} 再去拉一次 /api/batch/status 与 /api/budget/status。</text>
-<text x="36" y="510" text-anchor="start" font-size="10.5" fill="#3a3a3a">反方向也用得上：book-serve 发来的 books 事件会唤醒闸门里“等这本书处理完再还名额”的监控线程（没事件时 30 秒兜底查一次）。</text>
+<text x="36" y="450" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">和批量队列的关系</text>
+<text x="36" y="473" text-anchor="start" font-size="10.5" fill="#3a3a3a">网页在批量运行时不再每 3 秒轮询 /api/batch/status：batch.rs 每次落盘都会调 events::notify_books()（kind=batch，不带 svc），</text>
+<text x="36" y="488" text-anchor="start" font-size="10.5" fill="#3a3a3a">网页收到后只拉一次 /api/batch/status（2026-10-07 前闸门还发 budget、网页多拉 /api/budget/status）。</text>
+<text x="36" y="510" text-anchor="start" font-size="10.5" fill="#3a3a3a">反方向也用得上：book-serve 发来的 books 事件会唤醒批量 worker 里“等这本书处理完再取下一本”的等待（books_wake，没事件时 30 秒兜底查一次）。</text>
 </svg>

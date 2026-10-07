@@ -25,9 +25,9 @@ reMarkable Paper Pro Move 的**书籍搬运层**。它是跑在设备上的一�
 | 动作 | 说明 |
 |---|---|
 | 入库 | 网页上传（多文件，有进度）、scp 进设备 `inbox/` 目录（写完、文件静止 5 秒后才收）。**只收 EPUB / PDF**，字节原样不动；同名同内容不重复存；文件名规范成 `书名 - 02卷` |
-| 加入 xochitl | ≤90MB 网页上传；更大的走"占位 + 磁盘替换"，上限 1GiB；再大就整本拒收。可选文件夹（没有就让 xochitl 自己建）。加完自动检查渲染页数。母版不会因此删除 |
+| 加入 xochitl | ≤90MB 网页上传；更大的走"占位 + 磁盘替换"，上限 1GiB；再大就整本拒收。可选文件夹（没有就让 xochitl 自己建）。加完自动记下渲染页数（不判断好坏）。母版不会因此删除 |
 | 漫画页边距 | sheng-ren 优化的漫画带页边距标记，加入后首次打开一律自动把页边距设到最小（2026-10-07 起没有开关；想要回原来的边距就在阅读器里自己调回，每本只设一次）；不带标记的书不碰。书架以前自己优化的漫画不带标记，要用 sheng-ren 重新优化 |
-| 其它 | 只选一本时可**下载原件**、**改名**；母版库筛选 全部 / 未加入 / 已加入（默认「未加入」）；翻页方向只看书里自带的标记；批量加入由网关排队逐本执行、可全部中止 |
+| 其它 | 只选一本时可**下载原件**、**改名**；母版库筛选 全部 / 未加入 / 已加入（默认「未加入」）；批量加入由网关排队逐本执行、可全部中止。书架不管翻页方向（xochitl 里日漫一律从左往右翻） |
 | 周边 | xochitl 字体上传即装、休眠壁纸上传即用 |
 
 网页有四个固定标签页：**传书**（入库、母版库）· **笔记**（笔记线）· **其他**（xochitl 字体 / 壁纸，只列已装的）· **管理**（基石与模块、设备健康、模型、系统增强、实验室；「电池刺客」2026-09-30 已移除）。
@@ -36,11 +36,13 @@ reMarkable Paper Pro Move 的**书籍搬运层**。它是跑在设备上的一�
 
 | 能力 | 移除时间 | 现在怎么办 |
 |---|---|---|
-| 设备上的「优化」、入库 PDF 转换（有文字层转 EPUB、无文字层裁边）、原 PDF 7 天备份、抓网文、联网补封面、旧版产物兼容、中途取消、优化徽章与筛选 | 2026-10-07（未部署） | 书在电脑上用 sheng-ren 优化好再传；网页链接也用 sheng-ren 收书 |
+| 设备上的「优化」、入库 PDF 转换（有文字层转 EPUB、无文字层裁边）、原 PDF 7 天备份、抓网文、联网补封面、旧版产物兼容、中途取消、优化徽章与筛选 | 2026-10-07（已部署，功能未真机手测） | 书在电脑上用 sheng-ren 优化好再传；网页链接也用 sheng-ren 收书 |
+| 网关并发闸门与行内"取消排队"、渲染自检的"页数远低于预期"警告 | 2026-10-07 稍后（未合 master、未部署） | 网页加入只走批量队列，本来就一本一本来；渲染好坏由 sheng-ren 的质量门把关，母版库只显示页数 |
 | 电脑端命令行 `shelf`（push / Calibre 管线 / doctor 等） | 2026-09-18 | 没有网页替代；其它格式先在电脑上自行转成 EPUB/PDF 再上传 |
 | KOReader 一切（加入 KOReader、字体/词典/配置同步、高亮与生词回流） | 2026-09-29 | 只用 xochitl；`koreader-serve` 与 `koreader/` 补丁已从仓库删除（2026-09-30），见 git 历史 |
 | 按卷拆分投递（EPUB 按目录、PDF 按书签切成多份） | 2026-09-30 | 超过网页上限走大文件通道，超过 1GiB 整本拒收 |
-| 按书手动设置翻页方向 | 2026-09-30 | 只认书里自带的方向标记，旧的手动清单只读不再写 |
+| 按书手动设置翻页方向 | 2026-09-30 | 当时改成只认书里自带的方向标记；旧的手动清单 09-30 起只读 |
+| 日漫翻页（按书里的方向标记把滑动方向对调，「日漫翻页规则」开关） | 2026-10-07 稍后（未合 master、未部署） | 书架只管入库；xochitl 不看方向标记，日漫一律从左往右翻（用户接受）。单击翻页保留 |
 | 漫画 EPUB→PDF 转换器（`comic_pdf.rs`） | 2026-09-20 起不用，2026-09-30 代码删除 | 漫画由 sheng-ren 出 EPUB |
 
 ## 服务与端口
@@ -49,8 +51,8 @@ reMarkable Paper Pro Move 的**书籍搬运层**。它是跑在设备上的一�
 
 | 服务 | 端口 | 职责 | 源码 |
 |---|---|---|---|
-| gateway | `0.0.0.0:443`，唯一对外 | HTTPS + 登录密码、网页 UI、反向代理、批量队列、并发闸门 | `../gateway` |
-| book-serve | 127.0.0.1:8790 | 母版库：入库、加入 xochitl、下载/改名/删除；直接导入 xochitl（sheng-ren 用，不进母版库）；xochitl 回收站 / 建文件夹 / 漫画页边距 / 日漫翻页的设备端代理（见书架白皮书第 C 章） | `services/book-serve` |
+| gateway | `0.0.0.0:443`，唯一对外 | HTTPS + 登录密码、网页 UI、反向代理、批量队列 | `../gateway` |
+| book-serve | 127.0.0.1:8790 | 母版库：入库、加入 xochitl、下载/改名/删除；直接导入 xochitl（sheng-ren 用，不进母版库）；xochitl 回收站 / 建文件夹 / 漫画页边距的设备端代理（见书架白皮书第 C 章） | `services/book-serve` |
 | ~~koreader-serve~~ | ~~127.0.0.1:8791~~ | 2026-09-29 退役：不再安装、网关不再代理 `/api/koreader/*`；重新部署时 `install.sh` 会清掉旧设备上的单元与二进制 | 源码已从仓库删除（2026-09-30），见 git 历史 |
 | font-serve | 127.0.0.1:8792 | xochitl 字体上传即装（改写 fontconfig 中文回退链） | `../enhance/font-serve` |
 | wallpaper-serve | 127.0.0.1:8793 | 休眠壁纸上传即用（写 xochitl 的 `SleepScreenPath` 键） | `../enhance/wallpaper-serve` |
@@ -71,17 +73,18 @@ reMarkable Paper Pro Move 的**书籍搬运层**。它是跑在设备上的一�
 ```
 shelf/
 ├── Cargo.toml · build.sh · .cargo/   内部 workspace；aarch64 musl 全静态交叉编译
-├── crates/shelf-conv/                只读不改书的读书工具：第三方 PDF 页数、大文件通道占位文档、渲染自检统计、文件名规范化
+├── crates/shelf-conv/                只读不改书的读书工具：读 EPUB（书名、封面、漫画页边距标记）、第三方 PDF 页数、大文件通道占位文档、文件名规范化
 ├── services/book-serve/              母版库服务
 ├── systemd/                          shelf.target + book-serve 单元
-├── xovi/                             注入 xochitl 的 qmd：字体菜单、回收站/建文件夹/漫画页边距代理、阅读器单击翻页与日漫翻页规则
+├── xovi/                             注入 xochitl 的 qmd：字体菜单、回收站/建文件夹/漫画页边距代理、阅读器单击翻页
 ├── install.sh · uninstall.sh · manifest.sh   设备端安装/卸载与共用清单
 └── docs/                             书架白皮书、传书线架构 + diagrams/
 ```
 
-依赖单向无环：`services/* → ../rmsvc-core`；`book-serve → shelf-conv → bookconv`。
-`bookconv` 是 sheng-ren 的 crate（git 依赖 `https://github.com/bbq191/sheng-ren`，跟 master 走、不钉 rev；`Cargo.lock` 记着具体提交，
-跟进用 `cargo update -p bookconv`，然后重新跑测试、交叉编译）。**书架只用它读 EPUB 的公开接口（zip、OPF、封面、正文文字），不调用优化器。**
+依赖单向无环：`services/* → ../rmsvc-core`；`book-serve → shelf-conv`。
+2026-10-07 稍后起**不再依赖 sheng-ren 的 `bookconv`**（此前 git 依赖它读 EPUB），读 EPUB 用 `shelf-conv` 自己的 `epub` 模块。
+有两处是从 sheng-ren 抄来的、**sheng-ren 改了这边要手动跟着改**：漫画页边距标记名 `READER_MARGINS_MARKER`（`META-INF/eink-reader-margins`），
+书名规范化 `canonical_book_name`（`shelf-conv/src/naming.rs`）。没有自动检查，见书架白皮书 §03bx。
 设备上的路径（XDG，HOME=/home/root）：母版库 `~/.local/state/shelf/books/staging/`；配置 `~/.config/shelf/<服务>.json`；
 二进制 `~/.local/bin/`；安装备份 `~/cangjie-backups/shelf-<时间戳>/`（留最近 5 份）。完整路径表见书架白皮书附录 C。
 
@@ -91,8 +94,7 @@ shelf/
 
 ```sh
 cd shelf && sh build.sh                        # host 测试 + aarch64 构建（gateway / enhance / notes 在的话一起编）
-cargo test --workspace                         # 只跑测试：2026-10-07 实跑 book-serve 86 + shelf-conv 24 个通过
-cargo update -p bookconv                       # 跟进 sheng-ren（更新 Cargo.lock 里记的提交）
+cargo test --workspace                         # 只跑测试：2026-10-07 清理后实跑 book-serve 81 + shelf-conv 27 个通过
 cd ../packaging && sh deploy.sh 10.11.99.1     # 打包 → 传到设备 → install.sh（先备份旧文件）；只有 WiFi 时给 WiFi IP
 sh deploy.sh 10.11.99.1 --only font,wallpaper  # 只装部分服务；SHELF_NO_BUILD=1 跳过编译
 sh deploy.sh 10.11.99.1 --password '新密码'     # 顺便设网关密码（经 ssh 标准输入传，不上命令行）

@@ -24,7 +24,7 @@
 <text x="486.0" y="254" text-anchor="middle" font-size="10" fill="#3a3a3a">/api/services（注册表）· /api/manage · /api/foundation（基石探测）</text>
 <text x="486.0" y="269" text-anchor="middle" font-size="10" fill="#3a3a3a">/api/events（SSE 事件汇聚）</text>
 <text x="486.0" y="284" text-anchor="middle" font-size="10" fill="#3a3a3a">/api/enhance/*（系统增强开关）· /api/device/*（健康 / OTA 横幅 / 清理）</text>
-<text x="486.0" y="299" text-anchor="middle" font-size="10" fill="#3a3a3a">/api/batch* 批量队列 · /api/budget/* 并发闸门</text>
+<text x="486.0" y="299" text-anchor="middle" font-size="10" fill="#3a3a3a">/api/batch* 批量队列（网页的「加入 xochitl」只走这里，一本处理完才取下一本）</text>
 <rect x="256" y="332" width="460" height="190" rx="10" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.6"/>
 <text x="268" y="352" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">③ 兜底：/api/&lt;seg&gt;/* 反向代理（proxy.rs）</text>
 <text x="268" y="375" text-anchor="start" font-size="10" fill="#3a3a3a">1  seg → 服务名：查 manage.rs 的 MODULES 表（单一事实源）</text>
@@ -36,15 +36,14 @@
 <text x="268" y="465" text-anchor="start" font-size="10" fill="#3a3a3a">     只回传 Content-Type / Content-Disposition 两个响应头</text>
 <text x="268" y="480" text-anchor="start" font-size="10" fill="#3a3a3a">4  seg 不在表里 → 404“未知服务”；服务没起 → 404“未安装或未运行”</text>
 <text x="268" y="495" text-anchor="start" font-size="10" fill="#3a3a3a">     后端连不上 → 502</text>
-<rect x="256" y="540" width="460" height="108" rx="10" fill="#fdf1ec" stroke="#c0602d" stroke-width="1.6" stroke-dasharray="6 4"/>
-<text x="268" y="560" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">例外：「加入 xochitl」先过闸门</text>
-<text x="268" y="583" text-anchor="start" font-size="10" fill="#3a3a3a">book-serve  POST /staging/deliver</text>
-<text x="268" y="598" text-anchor="start" font-size="10" fill="#8a8a8a">（2026-10-07 前还拦 /staging/optimize 与</text>
-<text x="268" y="613" text-anchor="start" font-size="10" fill="#8a8a8a">勾了同步优化的 /staging/fetch-article，两个接口已删）</text>
-<text x="268" y="633" text-anchor="start" font-size="10" fill="#3a3a3a">→ 读小 JSON 拿书名 → budget::admit()（按体积分档、排队）再转发</text>
+<rect x="256" y="540" width="460" height="108" rx="10" fill="#f3f3f1" stroke="#9a9a9a" stroke-width="1.4" stroke-dasharray="6 4"/>
+<text x="268" y="560" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">已删除：「加入 xochitl」先过闸门（2026-10-07）</text>
+<text x="268" y="583" text-anchor="start" font-size="10" fill="#3a3a3a">原来 POST /staging/deliver 要先读小 JSON 拿书名、过 budget::admit()</text>
+<text x="268" y="598" text-anchor="start" font-size="10" fill="#3a3a3a">（按体积分档排队）再转发；/api/budget/* 可看、可取消排队</text>
+<text x="268" y="618" text-anchor="start" font-size="10" fill="#8a8a8a">书架不再优化书后加入只占几 MB，批量队列本来一本一本来，</text>
+<text x="268" y="633" text-anchor="start" font-size="10" fill="#8a8a8a">闸门拦不到东西，删掉；现在所有请求都按 ③ 原样转发</text>
 <polyline points="486,178 486,196" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#mk)"/>
 <polyline points="486,314 486,332" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#mk)"/>
-<polyline points="486,522 486,540" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#mk)"/>
 <text x="770" y="100" text-anchor="start" font-size="12" font-weight="bold" fill="#1a1a1a">领域服务（各自独立进程，只听 127.0.0.1，启动时自注册）</text>
 <rect x="770" y="112" width="446" height="50" rx="10" fill="#eaf6ec" stroke="#3f9a55" stroke-width="1.6"/>
 <text x="784" y="133" text-anchor="start" font-size="12" font-weight="bold" fill="#1a1a1a">/api/books/*</text>

@@ -1,12 +1,12 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1183" height="618" viewBox="0 0 1183 618" font-family="Noto Sans CJK SC, sans-serif">
 <rect width="1183" height="618" fill="#ffffff"/>
 <text x="591.5" y="32" text-anchor="middle" font-size="20" font-weight="bold" fill="#1f2937">书架服务的并发控制：哪条路径进哪把锁</text>
-<text x="591.5" y="56" text-anchor="middle" font-size="13" fill="#6b7280">2026-10-07 代码现状（书架不再优化书，未部署）。各把锁 09-24/09-25 已部署过，但并发场景没在真机专门触发。锁只包住真正会撞的那一小段</text>
-<text x="591.5" y="76" text-anchor="middle" font-size="12.5" fill="#6b7280">除网关闸门外都是单个进程内的锁；book-serve 与网关是两个独立进程（koreader-serve 及其配置同步锁 2026-09-29 退役）</text>
+<text x="591.5" y="56" text-anchor="middle" font-size="13" fill="#6b7280">按 2026-10-07 稍后清理后的代码（未部署）。各把锁 09-24/09-25 已部署过，但并发场景没在真机专门触发。锁只包住真正会撞的那一小段</text>
+<text x="591.5" y="76" text-anchor="middle" font-size="12.5" fill="#6b7280">第一列是网关批量队列的"一次一本"（不是锁；原并发闸门 budget.rs 2026-10-07 删除），其余都是单个进程内的锁；book-serve 与网关是两个独立进程</text>
 <rect x="273" y="96" width="121" height="70" rx="8" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.5"/>
-<text x="333.5" y="118" text-anchor="middle" font-size="13" font-weight="bold" fill="#4a6fa5">网关闸门</text>
-<text x="333.5" y="138" text-anchor="middle" font-size="10" fill="#374151">gateway budget.rs</text>
-<text x="333.5" y="155" text-anchor="middle" font-size="10" fill="#6b7280">跨进程</text>
+<text x="333.5" y="118" text-anchor="middle" font-size="13" font-weight="bold" fill="#4a6fa5">批量队列</text>
+<text x="333.5" y="138" text-anchor="middle" font-size="10" fill="#374151">gateway batch.rs</text>
+<text x="333.5" y="155" text-anchor="middle" font-size="10" fill="#6b7280">一次一本</text>
 <rect x="400" y="96" width="121" height="70" rx="8" fill="#fbeee8" stroke="#b0451f" stroke-width="1.5"/>
 <text x="460.5" y="118" text-anchor="middle" font-size="13" font-weight="bold" fill="#b0451f">忙锁</text>
 <text x="460.5" y="138" text-anchor="middle" font-size="10" fill="#374151">OpRegistry</text>
@@ -64,7 +64,7 @@
 <line x1="1159" y1="174" x2="1159" y2="438" stroke="#e5e7eb"/>
 <line x1="20" y1="334" x2="1159" y2="334" stroke="#9ca3af"/>
 <text x="28" y="356" font-size="12.5" font-weight="bold" fill="#1f2937">锁住多久</text>
-<text x="333.5" y="353" text-anchor="middle" font-size="10.5" fill="#374151">从开始到这本书</text>
+<text x="333.5" y="353" text-anchor="middle" font-size="10.5" fill="#374151">从提交到这本书</text>
 <text x="333.5" y="367" text-anchor="middle" font-size="10.5" fill="#374151">不再 busy</text>
 <text x="333.5" y="381" text-anchor="middle" font-size="10.5" fill="#374151">（最长 1 小时）</text>
 <text x="460.5" y="353" text-anchor="middle" font-size="10.5" fill="#374151">整个操作</text>
@@ -79,8 +79,8 @@
 <text x="1095.5" y="367" text-anchor="middle" font-size="10.5" fill="#374151">→ 换成真文件</text>
 <line x1="20" y1="392" x2="1159" y2="392" stroke="#e5e7eb"/>
 <text x="28" y="414" font-size="12.5" font-weight="bold" fill="#1f2937">防什么</text>
-<text x="333.5" y="411" text-anchor="middle" font-size="10.5" fill="#374151">多本大书同时</text>
-<text x="333.5" y="425" text-anchor="middle" font-size="10.5" fill="#374151">加入，内存叠加</text>
+<text x="333.5" y="411" text-anchor="middle" font-size="10.5" fill="#374151">网页一次勾多本时</text>
+<text x="333.5" y="425" text-anchor="middle" font-size="10.5" fill="#374151">同时往 xochitl 投</text>
 <text x="460.5" y="411" text-anchor="middle" font-size="10.5" fill="#374151">同一本同时被</text>
 <text x="460.5" y="425" text-anchor="middle" font-size="10.5" fill="#374151">加入/删/改名</text>
 <text x="587.5" y="411" text-anchor="middle" font-size="10.5" fill="#374151">两本同名书挑到</text>

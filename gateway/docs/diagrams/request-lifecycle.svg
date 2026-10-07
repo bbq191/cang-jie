@@ -1,6 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1240 870" font-family="Noto Sans CJK SC, sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1240 760" font-family="Noto Sans CJK SC, sans-serif">
 <defs><marker id="mk" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#555"/></marker><marker id="mr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#b0451f"/></marker><marker id="mg" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2f7d45"/></marker></defs>
-<rect x="0" y="0" width="1240" height="870" fill="#fbfbfa"/>
+<rect x="0" y="0" width="1240" height="760" fill="#fbfbfa"/>
 <text x="620.0" y="30" text-anchor="middle" font-size="18" font-weight="bold" fill="#1a1a1a">一个请求在网关里要过的关（以“加入 xochitl”为例）</text>
 <text x="620.0" y="52" text-anchor="middle" font-size="12.5" fill="#6a6a6a">左列是正常路径，右列是在这一关被拦下时浏览器收到什么；灰字标出代码位置</text>
 <rect x="40" y="78" width="600" height="78" rx="10" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.6"/>
@@ -43,34 +43,24 @@
 <text x="712" y="410" text-anchor="start" font-size="10.5" fill="#3a3a3a">404“未知服务” / 404“book-serve 未安装或未运行”</text>
 <polyline points="640,399.0 700,399.0" fill="none" stroke="#b0451f" stroke-width="1.6" marker-end="url(#mr)"/>
 <polyline points="340.0,438 340.0,454" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#mk)"/>
-<rect x="40" y="454" width="600" height="78" rx="10" fill="#fff3d6" stroke="#c9971f" stroke-width="1.6"/>
-<text x="52" y="474" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">⑤ 闸门：只拦「加入 xochitl」（优化、抓网文 2026-10-07 删除）</text>
-<text x="52" y="496" text-anchor="start" font-size="10.5" fill="#3a3a3a">读小 JSON 拿书名，看母版库里这本多大；</text>
-<text x="52" y="511" text-anchor="start" font-size="10.5" fill="#3a3a3a">&gt; 90MB 大档同时 1 本，其余小档同时 3 本；拿不到名额就排队（最长 30 分钟）</text>
-<text x="628" y="474" text-anchor="end" font-size="10" fill="#8a8a8a">budget.rs</text>
+<rect x="40" y="454" width="600" height="78" rx="10" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.6"/>
+<text x="52" y="474" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">⑤ 转发请求</text>
+<text x="52" y="496" text-anchor="start" font-size="10.5" fill="#3a3a3a">请求体边读边转发、一律不解析（上传大文件不占网关内存），超时 900 秒</text>
+<text x="628" y="474" text-anchor="end" font-size="10" fill="#8a8a8a">gateway proxy.rs</text>
 <rect x="700" y="462" width="500" height="62" rx="10" fill="#fdf1ec" stroke="#c0602d" stroke-width="1.6"/>
-<text x="712" y="482" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">同名书已在排队/处理 / 排队超时或被取消</text>
-<text x="712" y="504" text-anchor="start" font-size="10.5" fill="#3a3a3a">409 / 503（网页可随时“取消排队”）</text>
-<polyline points="640,493.0 700,493.0" fill="none" stroke="#b0451f" stroke-width="1.6" marker-end="url(#mr)"/>
+<text x="712" y="482" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">后端连不上</text>
+<text x="712" y="504" text-anchor="start" font-size="10.5" fill="#3a3a3a">502“book-serve 无响应”</text>
+<polyline points="640,493 700,493" fill="none" stroke="#b0451f" stroke-width="1.6" marker-end="url(#mr)"/>
 <polyline points="340.0,532 340.0,548" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#mk)"/>
-<rect x="40" y="548" width="600" height="78" rx="10" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.6"/>
-<text x="52" y="568" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">⑥ 转发请求</text>
-<text x="52" y="590" text-anchor="start" font-size="10.5" fill="#3a3a3a">请求体边读边转发（上传大文件不占网关内存），超时 900 秒</text>
-<text x="628" y="568" text-anchor="end" font-size="10" fill="#8a8a8a">gateway proxy.rs</text>
-<rect x="700" y="556" width="500" height="62" rx="10" fill="#fdf1ec" stroke="#c0602d" stroke-width="1.6"/>
-<text x="712" y="576" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">后端连不上</text>
-<text x="712" y="598" text-anchor="start" font-size="10.5" fill="#3a3a3a">502“book-serve 无响应”</text>
-<polyline points="640,587.0 700,587.0" fill="none" stroke="#b0451f" stroke-width="1.6" marker-end="url(#mr)"/>
-<polyline points="340.0,626 340.0,642" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#mk)"/>
-<rect x="40" y="642" width="600" height="86" rx="10" fill="#eaf6ec" stroke="#3f9a55" stroke-width="1.6"/>
-<text x="52" y="662" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">⑦ 回应浏览器</text>
-<text x="52" y="684" text-anchor="start" font-size="10.5" fill="#3a3a3a">200 且带长度，又是下载（原件、导出）或 &gt;256KB（壁纸原图等）→ 按定长边读边发；</text>
-<text x="52" y="699" text-anchor="start" font-size="10.5" fill="#3a3a3a">其余（JSON 等小应答、没有长度的）读完再回——不借 SSE“读到连接关闭”的通道；</text>
-<text x="52" y="714" text-anchor="start" font-size="10.5" fill="#3a3a3a">只带回 Content-Type / Content-Disposition 两个响应头</text>
-<text x="628" y="662" text-anchor="end" font-size="10" fill="#8a8a8a">proxy.rs + http/server.rs</text>
-<rect x="40" y="742" width="1160" height="112" rx="10" fill="#fff3d6" stroke="#c9971f" stroke-width="1.6"/>
-<text x="52" y="762" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">名额什么时候还？（proxy.rs poll_until_settled）</text>
-<text x="52" y="784" text-anchor="start" font-size="10.5" fill="#3a3a3a">只剩「加入 xochitl」一种：原“加入 KOReader”（2026-09-29）、“优化”与勾了同步优化的“抓网文”（2026-10-07）都已撤掉。</text>
-<text x="52" y="801" text-anchor="start" font-size="10.5" fill="#3a3a3a">加入 xochitl 是异步的：book-serve 立刻回“已开始”，真活在后台。网关把名额交给一条监控线程，查 GET /staging 直到这本 busy=false（或条目已消失）才还；</text>
-<text x="52" y="818" text-anchor="start" font-size="10.5" fill="#3a3a3a">靠 book-serve 的 books 事件唤醒（两次查询至少隔 5 秒，09-30），没事件 30 秒兜底查一次；查询要连续失败 6 次（每次至多隔 5 秒）才当服务已挂、放掉名额（2026-09-24 前一次失败就放）；最长等 60 分钟。</text>
+<rect x="40" y="548" width="600" height="86" rx="10" fill="#eaf6ec" stroke="#3f9a55" stroke-width="1.6"/>
+<text x="52" y="568" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">⑥ 回应浏览器</text>
+<text x="52" y="590" text-anchor="start" font-size="10.5" fill="#3a3a3a">200 且带长度，又是下载（原件、导出）或 &gt;256KB（壁纸原图等）→ 按定长边读边发；</text>
+<text x="52" y="605" text-anchor="start" font-size="10.5" fill="#3a3a3a">其余（JSON 等小应答、没有长度的）读完再回——不借 SSE“读到连接关闭”的通道；</text>
+<text x="52" y="620" text-anchor="start" font-size="10.5" fill="#3a3a3a">只带回 Content-Type / Content-Disposition 两个响应头</text>
+<text x="628" y="568" text-anchor="end" font-size="10" fill="#8a8a8a">proxy.rs + http/server.rs</text>
+<rect x="40" y="648" width="1160" height="94" rx="10" fill="#f3f3f1" stroke="#9a9a9a" stroke-width="1.4" stroke-dasharray="6 4"/>
+<text x="52" y="668" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">已删除：并发/内存闸门（budget.rs，2026-10-07）</text>
+<text x="52" y="690" text-anchor="start" font-size="10.5" fill="#3a3a3a">原来在 ④ 和转发之间还有一关：读小 JSON 拿书名，&gt;90MB 大档同时 1 本、其余 3 本，排队最长 30 分钟，可“取消排队”（409 / 503）。</text>
+<text x="52" y="707" text-anchor="start" font-size="10.5" fill="#3a3a3a">书架不再优化书后加入是流式上传、只占几 MB，网页的「加入 xochitl」又只走批量队列（一本处理完才取下一本），闸门拦不到东西，删掉。</text>
+<text x="52" y="724" text-anchor="start" font-size="10.5" fill="#3a3a3a">“等这本书处理完”的轮询（poll_until_settled：事件唤醒、30 秒兜底、两次查询≥5 秒、连续 6 次失败才放弃、最长 1 小时）挪进了 batch.rs。</text>
 </svg>

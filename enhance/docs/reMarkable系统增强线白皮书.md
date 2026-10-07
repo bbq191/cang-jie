@@ -21,7 +21,7 @@
 | 几个术语（xovi、hook、特征码、trampoline…）是什么意思 | §00b 末尾「术语速查」 |
 | 网页开关写到哪里、怎么确认扩展真的生效了 | §02 |
 | 荧光笔"划哪吸哪"怎么修的 | §03a |
-| 阅读器单击翻页、日漫翻页规则怎么做的 | §03i |
+| 阅读器单击翻页怎么做的（日漫翻页规则 2026-10-07 删除） | §03i |
 | 字体、壁纸服务和 lo-alias 在这条线里的位置 | §03h |
 | 设备空闲时谁在定时把 CPU 叫醒（整套设备，不只本线） | §03j |
 | 电池刺客、手写优化为什么没了、旧设备怎么清 | §03n |
@@ -40,7 +40,7 @@
 | 工具 | 是什么 | 状态 | 开关 |
 |---|---|---|---|
 | **hl-snap**（[README](../hl-snap/README.md)） | xovi 扩展 `hl-snap.so`：荧光笔划中文时划哪高亮哪，不再整行吸附；hook 一个函数（§03a） | ✅ 真机通，日常在用 | 「管理 → 系统增强」，写 `hlSnapCjk`，**默认开**，下一次划线即生效 |
-| **reader-page-turn**（§03i） | qmd 补丁 `reader-page-turn.qmd`（源码在 `shelf/xovi/`，随 book 服务安装）：单击屏幕左右各 7% 边缘翻页；从右往左的书左右对调 | ✅ 离线 + 真机验证（09-24） | 「管理 → 系统增强」，写 `tapPageTurn` / `rtlPageTurn`，**默认都关**，重新打开书生效 |
+| **reader-page-turn**（§03i） | qmd 补丁 `reader-page-turn.qmd`（源码在 `shelf/xovi/`，随 book 服务安装）：单击屏幕左右各 7% 边缘翻页（日漫翻页规则 2026-10-07 删除，未部署） | ✅ 离线 + 真机验证（09-24）；10-07 删日漫分支只做了离线验证 | 「管理 → 系统增强」，写 `tapPageTurn`，**默认关**，重新打开书生效 |
 | **wallpaper-serve**（[README](../wallpaper-serve/README.md)） | Web 服务（8793）：上传即用的休眠壁纸，每次休眠后轮换；靠 xochitl 隐藏配置键 `SleepScreenPath` | ✅ 真机通 | 「其他 → 壁纸」 |
 | **font-serve**（`../font-serve/src/main.rs` 头注；原理在书架白皮书） | Web 服务（8792）：上传字体即装进 fontconfig，维护中文回退链 | ✅ 真机通 | 「其他 → xochitl」，重开字体菜单即可选 |
 | **lo-alias**（[README](../lo-alias/README.md)） | 小脚本：让 `10.11.99.1` 在不插 USB 时也可达（网关启动前调用） | ✅ 真机通（09-25 无 USB 冷启动核对） | 无 |
@@ -102,7 +102,7 @@
 | 开关 | 网页位置 | 落到哪里 |
 |---|---|---|
 | CJK 荧光笔精确吸附 | 管理 → 系统增强 | `reading-qol.json` 的 `hlSnapCjk`（默认开） |
-| 单击翻页 / 日漫翻页规则 | 管理 → 系统增强 | `reading-qol.json` 的 `tapPageTurn` / `rtlPageTurn`（默认都关），`reader-page-turn.qmd` 每次打开书读一次（§03i） |
+| 单击翻页 | 管理 → 系统增强 | `reading-qol.json` 的 `tapPageTurn`（默认关），`reader-page-turn.qmd` 每次打开书读一次（§03i）。`rtlPageTurn`（日漫翻页规则）2026-10-07 删除，旧键留在文件里无人读 |
 
 同一个 `/api/enhance/*` 接口还管着「管理 → 实验室」里的「导入 md 文档」开关，它属于笔记线（「漫画页边距最小化」开关 2026-10-07 删除：带 sheng-ren 页边距标记的漫画加入 xochitl 后一律在首次打开时设页边距 1，不带标记的书不碰，见书架传书线架构 §3；旧 `comicMinMargin` 键原样留着、无人再读），见[网关白皮书](../../gateway/docs/reMarkable网关白皮书.md) §06。2026-09-30 前这里还有「电池刺客」启停和「CJK 手写笔迹优化」两个开关，随功能移除；旧设备 `reading-qol.json` 里的 `hwStroke*` 键会原样留着（见下一段"全量写回"），没有程序再读它们。
 
@@ -224,29 +224,34 @@ battop 早于这条线存在（08-27 电池审计后建的长期耗电追踪工�
 
 两个服务都依赖 [`../../rmsvc-core`](../../rmsvc-core/README.md)，由网关反向代理，随 `install-all.sh` 的 shelf 步安装。host 测试（2026-09-30 实跑）：font-serve 10 项、wallpaper-serve 11 项。
 
-## 03i｜reader-page-turn：单击翻页 + 日漫翻页规则（2026-09-24）
+## 03i｜reader-page-turn：单击翻页（2026-09-24；日漫翻页规则 2026-10-07 删除）
 
 ![xochitl 阅读器翻页](diagrams/reader-page-turn.svg)
 
-**需求**：用户要"单击翻页"回来（08-14 做过 `tap-page-turn.qmd` 并真机验证，09-11 随 `xovi-extensions/reading-qol/` 移出仓库，设备上的 qmd 也已不在，只剩 `reading-qol.json` 里一个 `tapPageTurn`）；另外问漫画能不能"从左往右滑是下一页"——指 **xochitl**（KOReader 已于 2026-09-29 从设备卸载，现在只剩 xochitl 一个阅读器）。
+> **现状（2026-10-07 稍后，提交 `bd531cd`，未合 master、未部署）**：只剩**单击翻页**（`tapPageTurn`）。「日漫翻页规则」（`rtlPageTurn`）整个删掉——用户定书架只管入库、翻页方向交给书本身。xochitl 自己不看 OPF 的 `page-progression-direction`，所以**日漫在 xochitl 里一律从左往右翻**（用户已知悉）。删掉的有：qmd 里的 `cjRtl` 属性、开书查方向、`nextPageGesture`/`prevPageGesture` 的滑动对调；book-serve `GET /reading-direction/{uuid}`；shelf-conv `epub_is_rtl`/`spine_is_rtl`；网关与网页的开关（单独传 `rtlPageTurn` 回 400，`/api/enhance/status` 不再返回它）。`reading-qol.json` 里的旧 `rtlPageTurn` 键不清，无人再读。改了 qmd，部署时要整机重启一次（§04）。设备上现跑的仍是带日漫分支的旧版。
 
-**做法**：一个 qmd 改三个 QML，锚点全部从设备 .172 的 xochitl 二进制里解出真实 QML 核对过：
+**需求**：用户要"单击翻页"回来（08-14 做过 `tap-page-turn.qmd` 并真机验证，09-11 随 `xovi-extensions/reading-qol/` 移出仓库，设备上的 qmd 也已不在，只剩 `reading-qol.json` 里一个 `tapPageTurn`）；另外问漫画能不能"从左往右滑是下一页"——指 **xochitl**（KOReader 已于 2026-09-29 从设备卸载，现在只剩 xochitl 一个阅读器）。后一项就是 2026-09-24～10-07 的日漫翻页规则。
 
-- `DeviceSceneView.qml` 的 `FocusScope#root` 加 `cjTapPageTurn`、`cjRtl` 两个属性（这个对象就是手势文件里的 `view`，`view: root` 实例化）。
-- `DocumentView.qml`：书一换就先把 `cjRtl` 清掉，300 ms 后同步读 `reading-qol.json` 取两个开关；开了日漫就异步问 book-serve `GET /reading-direction/<uuid>`，结果回来时书没换才生效。**每次打开书只读一次**——08 月旧版每 1.5 秒轮询一次配置，费电，这次不再轮询，代价是改开关要重新打开书。
-- `SceneViewGestures.qml`：在单击 `touchClick.onClick` 函数体开头插入翻页分支（守卫沿用旧版：链接按下、文本编辑、缩放、笔记页不接管）；在左滑 `nextPageGesture` / 右滑 `prevPageGesture` 的 `onActiveChanged` 开头插入"`cjRtl` 时反向翻页并 return"。
+**做法**（现状）：一个 qmd 改三个 QML，锚点全部从设备 .172 的 xochitl 二进制里解出真实 QML 核对过：
+
+- `DeviceSceneView.qml` 的 `FocusScope#root` 加 `cjTapPageTurn` 属性（这个对象就是手势文件里的 `view`，`view: root` 实例化）。
+- `DocumentView.qml`：书一换，300 ms 后同步读 `reading-qol.json` 取 `tapPageTurn`。**每次打开书只读一次**——08 月旧版每 1.5 秒轮询一次配置，费电，这次不再轮询，代价是改开关要重新打开书。
+- `SceneViewGestures.qml`：在单击 `touchClick.onClick` 函数体开头插入翻页分支（守卫沿用旧版：链接按下、文本编辑、缩放、笔记页不接管）。
 
 **区域**（用户定）：左右各 7% 宽，纵向只在屏幕高度 45%–80% 之间；比 08 月旧版（10%、25%–85%）更窄更低，进一步避开顶部工具栏、底部进度条和握持的四角。
 
-**怎么判断"从右往左"**：只看 EPUB OPF 的 `<spine page-progression-direction="rtl">`。book-serve 用 `shelf_conv::placeholder::epub_is_rtl`（2026-10-07 前是 `bookconv::placeholder`）读书库里 `<uuid>.epub` 的 container.xml 和 OPF 两个 zip 条目（一卷漫画数百 MB，不能整本读），按（大小, mtime）缓存。09-24 设备书库 58 本 EPUB 里 7 本带这个标记（6 卷《死亡筆記》、1 卷《火影》），说明书架优化会保留它（2026-09-30 起优化只保留、不写这个属性）。〔2026-10-07 起书架不再优化书，书在电脑上用 sheng-ren 优化，它同样原样保留原书的方向标记。〕
+**已知限制**：改开关要重新打开书；只影响 xochitl；日漫不会从右往左翻（见上面现状）。
 
-**手动指定清单**：calibre 转出的漫画大多不写这个标记（同日核对：《亂馬½ 典藏版》4–9 卷、《镖人》2–5 卷、東立版《火影》8–10 卷都没有，Kmoe 版都写了）。用户定"这次先手动指定，以后新传的书还是看书里自带的标记"，所以加了 `~/.local/state/shelf/books/rtl-overrides.json`（xochitl 文档 uuid 数组，每次查询现读），当天把这 13 本写进去了。**2026-09-30 起这份清单只读**：book-serve 不再写，已有条目照旧生效，要撤就手动删文件或删条目。
+**历史：日漫翻页规则（2026-09-24～2026-10-07）**
+- 做法：`DeviceSceneView` 另有 `cjRtl` 属性；`DocumentView` 开书时清掉 `cjRtl`，开了日漫开关就异步问 book-serve `GET /reading-direction/<uuid>`，书没换才生效；`SceneViewGestures` 在左滑 `nextPageGesture` / 右滑 `prevPageGesture` 的 `onActiveChanged` 开头插入"`cjRtl` 时反向翻页并 return"，单击左边缘也算下一页。
+- 怎么判"从右往左"：EPUB OPF 的 `<spine page-progression-direction="rtl">`（book-serve 只读 container.xml 和 OPF 两个 zip 条目，按（大小, mtime）缓存；09-24 设备书库 58 本 EPUB 里 7 本带这个标记），或 uuid 在手动清单 `~/.local/state/shelf/books/rtl-overrides.json` 里。calibre 转出的漫画大多不写这个标记（《亂馬½ 典藏版》4–9 卷、《镖人》2–5 卷、東立版《火影》8–10 卷都没有，Kmoe 版都写了），所以 09-24 加了手动清单，当天写进 13 本；09-30 起清单只读。
+- 母版库按书指定方向：09-25 加（优化时写进 OPF、已加入的书顺手写进/移出清单，真机《乱马》11/12 卷生效），09-30 用户定移除。
+- 删除前（10-07）核对设备上的手动清单：里面 15 个 uuid 都已不在 xochitl 书库里，删掉没影响任何现有的书；文件还在设备上，无人再读。
+- 真机：09-24 离线 + 真机验证通过，09-25《乱马》11 卷首次打开时日志 `CJ-PAGE-TURN: rtl book`。
 
-**母版库按书指定方向（09-25 加，09-30 已移除）**：用户定翻页方向只保留原书自带的。当时母版库页可以勾选 EPUB 设「阅读方向」，优化时写进 OPF，已加入 xochitl 的书顺手写进/移出手动清单（09-25 真机《乱马》11/12 卷生效）。规则与数据流见书架传书线架构 §2.5（已标历史）；当时的 EPUB 优化规范白皮书 2026-10-07 已删除，见 git 历史。
+**离线验证**（09-24 首版）：本机重编 qmldiff（`asivery/qmldiff`），把解出的三份 .172 QML 放到 hashtab 里的真实资源路径下跑 `apply-diffs`（不能用 `check-compatibility` 代替，见 §04）：三个 AFFECT 都应用，四处插入位置核对正确；`qmllint` 补丁前后报错数一致（DocumentView 原版就有 9 条"找不到设备私有模块"类报错）。
 
-**已知限制**：没在 OPF 里标 rtl、也不在手动清单里的日漫不会反转，现在只能手改 `rtl-overrides.json` 或自己改书；书本身写着 rtl 的副本不能改成"从左往右"（清单只能加不能反向覆盖）；改开关要重新打开书；只影响 xochitl。
-
-**离线验证**：本机重编 qmldiff（`asivery/qmldiff`），把解出的三份 .172 QML 放到 hashtab 里的真实资源路径下跑 `apply-diffs`（不能用 `check-compatibility` 代替，见 §04）：三个 AFFECT 都应用，四处插入位置核对正确；`qmllint` 补丁前后报错数一致（DocumentView 原版就有 9 条"找不到设备私有模块"类报错）。
+**离线验证**（10-07 删日漫分支后）：同样从设备 .172 xochitl 二进制解出真实 QML，`qmldiff apply-diffs` 三个 AFFECT 都应用；新旧补丁的输出对比，差异正好是删掉的日漫代码；qmllint 无语法错误，告警数下降（DocumentView 602→599、SceneViewGestures 180→173、DeviceSceneView 92→92）。未上真机。
 
 **真机验证（09-24）**：部署后 journal 有 `CJ-PAGE-TURN: loaded`；打开书读到开关（`cfg tap=… rtl=…`）；《亂馬》《镖人》、Kmoe《火影》被识别为从右往左（`rtl book <uuid>`），普通书不识别；单击左右边缘翻页命中。之后（第三轮审计）去掉了单击/滑动命中时的日志——每写一行 journal 都会唤醒飞行记录仪之类的日志读者；关书时不再读配置。
 
@@ -403,12 +408,13 @@ battop 早于这条线存在（08-27 电池审计后建的长期耗电追踪工�
 
 | 项 | 现状 | 下一步 |
 |---|---|---|
+| 删日漫翻页规则（§03i，10-07） | 未合 master、未部署；只做了 qmd 离线验证 | 部署（整机重启）后看：「系统增强」只剩「单击翻页」开关；单击左右边缘照常翻页；日漫滑动不再对调；journal 里 `CJ-PAGE-TURN: loaded` 与 `cfg tap=…` 正常、无 qmd 报错 |
 | 第五轮审计改动（§03m） | 09-30 14:10 已部署，部署自检通过，功能待手测 | 按 §03m「部署后确认」手测 |
 | 第四轮审计改动（§03l） | 已随后续部署上设备，功能项没逐项核对 | 按 §03l「部署后确认」手测 |
 | 多扩展共存的反序加载（§04） | 修法已部署；现在只剩 hl-snap 一个扩展，没有反序场景 | 以后再加扩展时，把两个 `.so` 改名调换加载顺序验一次 |
 | wallpaper-serve 监听休眠读图 | 09-24 真机验证：休眠那一刻轮换、只轮换一次 | 充电状态（内核不挂起）下还没试 |
 
-**已闭环（真机）**：hl-snap 精确吸附（§03a）；网页"已加载"徽章（§02）；xochitl 单击翻页 + 日漫翻页规则（§03i）；换入后整机重启的部署流程（§04，09-25 首次走通有变化的 `.so`）；wallpaper-serve 监听休眠读图轮换；mkdir-agent 290 秒长轮询（§03j）；lo-alias 不插 USB 冷启动（09-25 两次无 USB 整机重启后核对：`10.11.99.1` 同时挂上 `lo` 与 `usb1`，xochitl :80 已绑定）；移除 hw-stroke / battop 的旧设备清理（§03n，09-30 部署自检）。
+**已闭环（真机）**：hl-snap 精确吸附（§03a）；网页"已加载"徽章（§02）；xochitl 单击翻页 + 日漫翻页规则（§03i；日漫翻页 10-07 删除）；换入后整机重启的部署流程（§04，09-25 首次走通有变化的 `.so`）；wallpaper-serve 监听休眠读图轮换；mkdir-agent 290 秒长轮询（§03j）；lo-alias 不插 USB 冷启动（09-25 两次无 USB 整机重启后核对：`10.11.99.1` 同时挂上 `lo` 与 `usb1`，xochitl :80 已绑定）；移除 hw-stroke / battop 的旧设备清理（§03n，09-30 部署自检）。
 
 **随功能移除不再跟进**：hw-stroke 的 `bVar16<4`（最常用钢笔/铅笔量级）、`FUN_00f4f430` 不能安全 patch、像素消费者的真实目标、参数调优、真实压感；battop 两次冻机的内核根因（RCU stall 本身仍未排除）。
 
@@ -428,4 +434,5 @@ battop 早于这条线存在（08-27 电池审计后建的长期耗电追踪工�
 | 2026-09-25 | 部署生效一律整机重启（§04）；`Makefile` 加 `-ffile-prefix-map`；lo-alias 无 USB 冷启动真机通过；第四轮审计（§03l） |
 | 2026-09-29 | 设备上卸载 KOReader、第三方 WeRead、appload 和侧栏入口（按用户要求） |
 | 2026-09-30 | 第五轮审计（§03m）；撤掉母版库按书设阅读方向，`rtl-overrides.json` 改为只读（§03i）；14:10 部署 |
+| 2026-10-07 | **删日漫翻页规则**（用户定：书架只管入库，方向交给书本身）：`reader-page-turn.qmd` 只留单击翻页，网关删 `rtlPageTurn` 开关，book-serve 删 `GET /reading-direction`（§03i；提交 `bd531cd`，未合 master、未部署，部署要整机重启） |
 | 2026-09-30 | **移除手写优化（`handwriting-stroke/`）与电池刺客（`battop/`）**：源码、部署脚本、网页开关与数据页一并删除；15:23 部署，`install-all.sh` 自动清掉设备残留（§03n） |

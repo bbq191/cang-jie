@@ -1,9 +1,9 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 710" font-family="Noto Sans CJK SC, sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1100 630" font-family="Noto Sans CJK SC, sans-serif">
 <defs>
 <marker id="ar" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#555"/></marker>
 </defs>
-<rect x="0" y="0" width="1100" height="710" fill="#fbfbfa"/>
-<text x="550" y="30" text-anchor="middle" font-size="18" font-weight="bold" fill="#1a1a1a">书架怎么让 xochitl "自己动手"：四个 qmd 代理</text>
+<rect x="0" y="0" width="1100" height="630" fill="#fbfbfa"/>
+<text x="550" y="30" text-anchor="middle" font-size="18" font-weight="bold" fill="#1a1a1a">书架怎么让 xochitl "自己动手"：三个 qmd 代理</text>
 <text x="550" y="54" text-anchor="middle" font-size="12.5" fill="#6a6a6a">外部进程改书库文件（.metadata / .content）会被运行中 xochitl 的内存状态盖回去 → 只能注入 qmd，在 xochitl 进程里调它自己的函数</text>
 
 <!-- 列标题 -->
@@ -59,28 +59,14 @@
 <line x1="260" y1="357" x2="338" y2="357" stroke="#555" stroke-width="1.6" marker-end="url(#ar)"/>
 <line x1="718" y1="357" x2="642" y2="357" stroke="#555" stroke-width="1.6" marker-end="url(#ar)"/>
 
-<!-- 行 4 阅读方向 -->
-<rect x="20" y="418" width="240" height="86" rx="10" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.6"/>
-<text x="140" y="446" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">日漫从右往左翻</text>
-<text x="140" y="468" text-anchor="middle" font-size="11.5" fill="#3a3a3a">书的 OPF 自带 rtl 标记，</text>
-<text x="140" y="486" text-anchor="middle" font-size="11.5" fill="#3a3a3a">或 uuid 在旧手动清单里</text>
-<rect x="340" y="418" width="300" height="86" rx="10" fill="#fff3d6" stroke="#c9971f" stroke-width="1.6"/>
-<text x="490" y="444" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">OPF rtl + rtl-overrides.json</text>
-<text x="490" y="466" text-anchor="middle" font-size="11.5" fill="#3a3a3a">书架不改书、方向随原书；旧清单只读，</text>
-<text x="490" y="484" text-anchor="middle" font-size="11.5" fill="#3a3a3a">不再写入（按书设方向 09-30 已移除）</text>
-<rect x="720" y="418" width="360" height="86" rx="10" fill="#e8f5ec" stroke="#3f9a55" stroke-width="1.6"/>
-<text x="900" y="444" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">reader-page-turn.qmd（DocumentView 等）</text>
-<text x="900" y="466" text-anchor="middle" font-size="11.5" fill="#3a3a3a">打开书时 GET /reading-direction/{uuid}</text>
-<text x="900" y="484" text-anchor="middle" font-size="11.5" fill="#3a3a3a">→ 为真就对调左右翻页（系统增强开关，默认关）</text>
-<line x1="260" y1="461" x2="338" y2="461" stroke="#555" stroke-width="1.6" marker-end="url(#ar)"/>
-<line x1="718" y1="461" x2="642" y2="461" stroke="#555" stroke-width="1.6" marker-end="url(#ar)"/>
+<text x="550" y="428" text-anchor="middle" font-size="12" fill="#8a8a8a">（原第四个代理「日漫翻页」reader-page-turn.qmd → GET /reading-direction 2026-10-07 删除：书架不管翻页方向，xochitl 里日漫一律从左往右；同一 qmd 的单击翻页不经书架）</text>
 
 <!-- 底部说明 -->
-<rect x="20" y="526" width="1060" height="166" rx="10" fill="#f0f0ee" stroke="#8a8a8a" stroke-width="1.6"/>
-<text x="40" y="552" font-size="12.5" fill="#1a1a1a">• 箭头方向 = 谁找谁：代理（右）主动向 book-serve（中）要活，book-serve 从不主动调 xochitl。</text>
-<text x="40" y="576" font-size="12.5" fill="#1a1a1a">• 上两行是长轮询，共用 pending_queue::Handout：有待办立即返回，没有就睡到有人入队、290 秒到期，或某项“交出后静默期”到期；空闲约每 5 分钟往返一次。</text>
-<text x="40" y="600" font-size="12.5" fill="#1a1a1a">• 交出后 15 秒（建文件夹）/ 30 秒（回收站）内不重复交；过了静默期还没做成就再交，同一项最多交 5 次，仍不成就放弃、移出队列、记一行日志（09-25）。</text>
-<text x="40" y="624" font-size="12.5" fill="#1a1a1a">• 代理请求出错（书架服务停了/重启中）时退避 15 → 30 → 60 → 120 秒封顶，成功一次复位（09-25；此前固定 15 秒，每小时白醒 240 次）。</text>
-<text x="40" y="648" font-size="12.5" fill="#1a1a1a">• 下两行不轮询：只在打开一本书时问一次，费电为零。</text>
-<text x="40" y="672" font-size="12.5" fill="#1a1a1a">• qmd 只在 xochitl 启动时注入：装/改了 qmd 要整机重启才生效（2026-09-25 起，不再单独重启 xochitl）。09-25 这批 qmd 改动已随当天部署上机。</text>
+<rect x="20" y="446" width="1060" height="166" rx="10" fill="#f0f0ee" stroke="#8a8a8a" stroke-width="1.6"/>
+<text x="40" y="472" font-size="12.5" fill="#1a1a1a">• 箭头方向 = 谁找谁：代理（右）主动向 book-serve（中）要活，book-serve 从不主动调 xochitl。</text>
+<text x="40" y="496" font-size="12.5" fill="#1a1a1a">• 上两行是长轮询，共用 pending_queue::Handout：有待办立即返回，没有就睡到有人入队、290 秒到期，或某项“交出后静默期”到期；空闲约每 5 分钟往返一次。</text>
+<text x="40" y="520" font-size="12.5" fill="#1a1a1a">• 交出后 15 秒（建文件夹）/ 30 秒（回收站）内不重复交；过了静默期还没做成就再交，同一项最多交 5 次，仍不成就放弃、移出队列、记一行日志（09-25）。</text>
+<text x="40" y="544" font-size="12.5" fill="#1a1a1a">• 代理请求出错（书架服务停了/重启中）时退避 15 → 30 → 60 → 120 秒封顶，成功一次复位（09-25；此前固定 15 秒，每小时白醒 240 次）。</text>
+<text x="40" y="568" font-size="12.5" fill="#1a1a1a">• 第三行不轮询：只在打开一本书时问一次，费电为零。</text>
+<text x="40" y="592" font-size="12.5" fill="#1a1a1a">• qmd 只在 xochitl 启动时注入：装/改了 qmd 要整机重启才生效（2026-09-25 起，不再单独重启 xochitl）。09-25 这批 qmd 改动已随当天部署上机。</text>
 </svg>

@@ -24,8 +24,8 @@
 <rect x="690" y="98" width="200" height="110" rx="10" fill="#eaf6ec" stroke="#3f9a55" stroke-width="1.6"/>
 <text x="790.0" y="118" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">current 处理中</text>
 <text x="790.0" y="144" text-anchor="middle" font-size="10" fill="#4a4a4a">worker 线程，一次一本</text>
-<text x="790.0" y="157" text-anchor="middle" font-size="10" fill="#4a4a4a">（顺序逐本，</text>
-<text x="790.0" y="170" text-anchor="middle" font-size="10" fill="#4a4a4a">大书不扎堆）</text>
+<text x="790.0" y="157" text-anchor="middle" font-size="10" fill="#4a4a4a">（等 book-serve 处理完</text>
+<text x="790.0" y="170" text-anchor="middle" font-size="10" fill="#4a4a4a">才取下一本）</text>
 <rect x="930" y="98" width="280" height="50" rx="10" fill="#eaf6ec" stroke="#3f9a55" stroke-width="1.6"/>
 <text x="1070.0" y="116.5" text-anchor="middle" font-size="11.5" font-weight="bold" fill="#1a1a1a">done 成功  →  done+1</text>
 <rect x="930" y="158" width="280" height="50" rx="10" fill="#fdf1ec" stroke="#c0602d" stroke-width="1.6"/>
@@ -38,41 +38,34 @@
 <polyline points="790,208 790,236 565,236 565,208" fill="none" stroke="#555" stroke-width="1.6" stroke-dasharray="6 4" marker-end="url(#bq-a)"/>
 <text x="678" y="231" text-anchor="middle" font-size="10" fill="#555">取下一本</text>
 <text x="30" y="268" text-anchor="start" font-size="12.5" font-weight="bold" fill="#1a1a1a">二、处理“一本书”的内部</text>
-<rect x="30" y="282" width="270" height="124" rx="10" fill="#fff3d6" stroke="#c9971f" stroke-width="1.6"/>
-<text x="165.0" y="302" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">① 过并发闸门</text>
-<text x="165.0" y="328" text-anchor="middle" font-size="10" fill="#4a4a4a">按体积分档：&gt;90MB 大档同时 1 个</text>
-<text x="165.0" y="341" text-anchor="middle" font-size="10" fill="#4a4a4a">≤90MB 小档同时 3 个</text>
-<text x="165.0" y="354" text-anchor="middle" font-size="10" fill="#4a4a4a">排队最长 30 分钟，可取消排队</text>
-<text x="165.0" y="369" text-anchor="middle" font-size="10" fill="#4a4a4a">同名书已在排队/处理中 → 这本记失败</text>
-<rect x="340" y="282" width="290" height="124" rx="10" fill="#ffffff" stroke="#3f9a55" stroke-width="1.6"/>
-<text x="485.0" y="302" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">② 调对应服务</text>
-<text x="485.0" y="328" text-anchor="middle" font-size="10" fill="#4a4a4a">POST book-serve /staging/deliver</text>
-<text x="485.0" y="341" text-anchor="middle" font-size="10" fill="#4a4a4a">  异步，网关轮询到 busy=false</text>
-<text x="485.0" y="354" text-anchor="middle" font-size="10" fill="#4a4a4a">提交前查一次“全部中止”标记</text>
-<text x="485.0" y="367" text-anchor="middle" font-size="10" fill="#4a4a4a">  （09-30，见下方中止第 3 条）</text>
-<rect x="670" y="282" width="250" height="124" rx="10" fill="#ffffff" stroke="#3f9a55" stroke-width="1.6"/>
-<text x="795.0" y="302" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">③ 释放闸门</text>
-<text x="795.0" y="328" text-anchor="middle" font-size="10" fill="#4a4a4a">异步的：等到 busy=false 才还</text>
-<text x="795.0" y="341" text-anchor="middle" font-size="10" fill="#4a4a4a">加入是异步的，等后台跑完</text>
-<text x="795.0" y="354" text-anchor="middle" font-size="10" fill="#4a4a4a">名额归还，唤醒排队者</text>
-<text x="795.0" y="367" text-anchor="middle" font-size="10" fill="#4a4a4a">（下一本可以进闸）</text>
-<rect x="960" y="282" width="250" height="124" rx="10" fill="#eaf6ec" stroke="#3f9a55" stroke-width="1.6"/>
-<text x="1085.0" y="302" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">④ 读终态</text>
-<text x="1085.0" y="328" text-anchor="middle" font-size="10" fill="#4a4a4a">查母版库条目的 delivered.deliver</text>
-<text x="1085.0" y="341" text-anchor="middle" font-size="10" fill="#4a4a4a">ok → 成功</text>
-<text x="1085.0" y="354" text-anchor="middle" font-size="10" fill="#4a4a4a">failed → 失败并记原因</text>
-<text x="1085.0" y="377" text-anchor="middle" font-size="10" fill="#4a4a4a">worker 捕获 panic，</text>
-<text x="1085.0" y="390" text-anchor="middle" font-size="10" fill="#4a4a4a">一本出错不拖垮整队</text>
-<polyline points="300,344 340,344" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#bq-a)"/>
-<polyline points="630,344 670,344" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#bq-a)"/>
-<polyline points="920,344 960,344" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#bq-a)"/>
+<rect x="30" y="282" width="330" height="124" rx="10" fill="#ffffff" stroke="#3f9a55" stroke-width="1.6"/>
+<text x="195.0" y="302" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">① 提交给 book-serve</text>
+<text x="195.0" y="328" text-anchor="middle" font-size="10" fill="#4a4a4a">POST book-serve /staging/deliver</text>
+<text x="195.0" y="341" text-anchor="middle" font-size="10" fill="#4a4a4a">异步：book-serve 立刻回“已开始”</text>
+<text x="195.0" y="354" text-anchor="middle" font-size="10" fill="#4a4a4a">提交前查一次“全部中止”标记</text>
+<text x="195.0" y="367" text-anchor="middle" font-size="10" fill="#4a4a4a">（09-30，见下方中止第 3 条）</text>
+<text x="195.0" y="394" text-anchor="middle" font-size="9" fill="#8a8a8a">（2026-10-07 前先过并发闸门，闸门已删）</text>
+<rect x="400" y="282" width="410" height="124" rx="10" fill="#fff3d6" stroke="#c9971f" stroke-width="1.6"/>
+<text x="605.0" y="302" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">② 等这本处理完（poll_until_settled）</text>
+<text x="605.0" y="328" text-anchor="middle" font-size="10" fill="#4a4a4a">查 GET /staging 直到这本 busy=false（或条目消失）</text>
+<text x="605.0" y="341" text-anchor="middle" font-size="10" fill="#4a4a4a">books_wake 事件唤醒，没事件 30 秒兜底查一次</text>
+<text x="605.0" y="354" text-anchor="middle" font-size="10" fill="#4a4a4a">两次查询至少隔 5 秒；连续 6 次失败才放弃等待</text>
+<text x="605.0" y="367" text-anchor="middle" font-size="10" fill="#4a4a4a">最长等 1 小时；等完才取下一本 → 同一时刻只投一本</text>
+<rect x="850" y="282" width="360" height="124" rx="10" fill="#eaf6ec" stroke="#3f9a55" stroke-width="1.6"/>
+<text x="1030.0" y="302" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">③ 读终态</text>
+<text x="1030.0" y="328" text-anchor="middle" font-size="10" fill="#4a4a4a">查母版库条目的 delivered.deliver</text>
+<text x="1030.0" y="341" text-anchor="middle" font-size="10" fill="#4a4a4a">ok → 成功；failed → 失败并记原因</text>
+<text x="1030.0" y="354" text-anchor="middle" font-size="10" fill="#4a4a4a">worker 捕获 panic，</text>
+<text x="1030.0" y="367" text-anchor="middle" font-size="10" fill="#4a4a4a">一本出错不拖垮整队</text>
+<polyline points="360,344 400,344" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#bq-a)"/>
+<polyline points="810,344 850,344" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#bq-a)"/>
 <text x="30" y="442" text-anchor="start" font-size="12.5" font-weight="bold" fill="#1a1a1a">三、中止与断点续跑</text>
 <rect x="30" y="456" width="570" height="190" rx="10" fill="#fdf1ec" stroke="#c0602d" stroke-width="1.6" stroke-dasharray="6 4"/>
 <text x="315.0" y="476" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">全部中止（POST /api/batch/stop）</text>
 <text x="315.0" y="502" text-anchor="middle" font-size="10" fill="#4a4a4a">1  清空还没开始的（总数同步扣减）</text>
-<text x="315.0" y="515" text-anchor="middle" font-size="10" fill="#4a4a4a">2  正在处理的那本：</text>
-<text x="315.0" y="528" text-anchor="middle" font-size="10" fill="#4a4a4a">   · 还在等闸门 → 直接取消排队</text>
-<text x="315.0" y="541" text-anchor="middle" font-size="10" fill="#4a4a4a">   · 已在 book-serve 里 → 跑完（加入没有能中途停的步骤）</text>
+<text x="315.0" y="515" text-anchor="middle" font-size="10" fill="#4a4a4a">2  正在处理的那本：已在 book-serve 里 → 跑完</text>
+<text x="315.0" y="528" text-anchor="middle" font-size="10" fill="#4a4a4a">   （加入没有能中途停的步骤）</text>
+<text x="315.0" y="541" text-anchor="middle" font-size="10" fill="#8a8a8a">   （2026-10-07 前还在等闸门的会直接取消排队；闸门已删）</text>
 <text x="315.0" y="554" text-anchor="middle" font-size="10" fill="#4a4a4a">3  已出队、还没交给 book-serve（09-30 补）：打“中止”标记，</text>
 <text x="315.0" y="567" text-anchor="middle" font-size="10" fill="#4a4a4a">   提交前看到就不提交、记“已全部中止”</text>
 <text x="315.0" y="580" text-anchor="middle" font-size="10" fill="#4a4a4a">（2026-10-07 前：已进 book-serve 的发 POST /staging/cancel，EPUB 优化</text>
@@ -81,12 +74,12 @@
 <text x="925.0" y="476" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">状态落盘与续跑</text>
 <text x="925.0" y="502" text-anchor="middle" font-size="10" fill="#4a4a4a">每次队列变化都写 state/batch.json（原子写）</text>
 <text x="925.0" y="515" text-anchor="middle" font-size="10" fill="#4a4a4a">网关重启（例如部署新版本）→ resume：</text>
-<text x="925.0" y="528" text-anchor="middle" font-size="10" fill="#4a4a4a">  · 上次进行中的那本放回队首</text>
+<text x="925.0" y="528" text-anchor="middle" font-size="10" fill="#4a4a4a">  · 上次进行中的那本放回队首（不限次数）</text>
 <text x="925.0" y="541" text-anchor="middle" font-size="10" fill="#4a4a4a">  · 后台等 book-serve 就绪（最多 30 分钟：前 30 秒每 2 秒探测，之后每 30 秒）</text>
 <text x="925.0" y="554" text-anchor="middle" font-size="10" fill="#4a4a4a">  · 按最新母版库重新校验每一本，不在母版库的不再做</text>
 <text x="925.0" y="567" text-anchor="middle" font-size="10" fill="#4a4a4a">  · 等待期间用户提交了新批量则并入同一队列，不覆盖</text>
-<text x="925.0" y="580" text-anchor="middle" font-size="10" fill="#4a4a4a">  · 处理途中崩溃的那本只重放 1 次（attempts≥2 记为失败、跳过），防崩溃循环</text>
+<text x="925.0" y="580" text-anchor="middle" font-size="10" fill="#4a4a4a">  · 网关不读书的内容，崩溃元凶不在这边：10-07 删了“打断两次记失败”的 attempts 计数</text>
 <text x="925.0" y="593" text-anchor="middle" font-size="10" fill="#4a4a4a">没有未完成任务时，只读回“上次结果”供界面展示</text>
 <text x="925.0" y="606" text-anchor="middle" font-size="10" fill="#4a4a4a">等 book-serve 超时仍不在：队列保留在磁盘，待下次入队继续</text>
-<text x="925.0" y="619" text-anchor="middle" font-size="10" fill="#4a4a4a">旧文件里残留已撤的 koreader / optimize 任务：读回时只剔这几项，其余照跑</text>
+<text x="925.0" y="619" text-anchor="middle" font-size="10" fill="#4a4a4a">文件损坏或格式不对 → 当作没有未完成的队列（10-07 删了旧任务剔除迁移）</text>
 </svg>

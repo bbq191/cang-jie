@@ -30,10 +30,10 @@
 <text x="795.0" y="200" text-anchor="middle" font-size="11.8" fill="#444">开关 hlSnapCjk（默认开）</text>
 <rect x="636" y="228" width="318" height="104" rx="10" fill="#eaf5ee" stroke="#2f7d45" stroke-width="1.6"/>
 <text x="795.0" y="250" text-anchor="middle" font-size="14" font-weight="bold" fill="#1a1a1a" font-family="Noto Sans Mono CJK SC, monospace">reader-page-turn.qmd</text>
-<text x="795.0" y="272" text-anchor="middle" font-size="11.8" fill="#444">阅读器单击翻页 · 日漫从右往左翻</text>
+<text x="795.0" y="272" text-anchor="middle" font-size="11.8" fill="#444">阅读器单击翻页（日漫翻页 10-07 删）</text>
 <text x="795.0" y="289" text-anchor="middle" font-size="11.8" fill="#444">经 qt-resource-rebuilder 载入（源码在 shelf/xovi/）</text>
-<text x="795.0" y="306" text-anchor="middle" font-size="11.8" fill="#444">开关 tapPageTurn / rtlPageTurn（默认关）</text>
-<text x="795.0" y="323" text-anchor="middle" font-size="11.8" fill="#444">每次打开书读一次；书的方向问 book-serve</text>
+<text x="795.0" y="306" text-anchor="middle" font-size="11.8" fill="#444">开关 tapPageTurn（默认关）</text>
+<text x="795.0" y="323" text-anchor="middle" font-size="11.8" fill="#444">每次打开书读一次开关，不问 book-serve</text>
 <polyline points="550,234 620,234" fill="none" stroke="#555" stroke-width="1.7" stroke-dasharray="5 4" marker-end="url(#eo-m)"/>
 <text x="585" y="224" text-anchor="middle" font-size="11.5" fill="#555">现读</text>
 <text x="210" y="392" text-anchor="start" font-size="14" font-weight="bold" fill="#1a1a1a">不经 xovi、独立运行的工具</text>

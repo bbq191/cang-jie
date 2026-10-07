@@ -28,13 +28,13 @@
 <g transform="translate(0,-86)">
 <!-- row 2b -->
 <rect x="30" y="286" width="240" height="72" rx="9" fill="#fdf3dc" stroke="#b8860b" stroke-width="1.4"/>
-<text x="44" y="310" font-size="13.5" font-weight="bold" fill="#1a1a1a">单击翻页 / 日漫翻页规则</text>
+<text x="44" y="310" font-size="13.5" font-weight="bold" fill="#1a1a1a">单击翻页</text>
 <text x="44" y="331" font-size="11.8" fill="#444">管理 → 系统增强</text>
-<text x="44" y="348" font-size="11.8" fill="#444">默认都关 · 旁有「已加载」徽章</text>
+<text x="44" y="348" font-size="11.8" fill="#444">默认关 · 旁有「已加载」徽章</text>
 <rect x="290" y="286" width="290" height="72" rx="9" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.4"/>
 <text x="304" y="310" font-size="12" fill="#1a1a1a">reading-qol.json</text>
-<text x="304" y="331" font-size="11.8" fill="#444">tapPageTurn / rtlPageTurn</text>
-<text x="304" y="348" font-size="11.8" fill="#444">（日漫另看书的方向，问 book-serve）</text>
+<text x="304" y="331" font-size="11.8" fill="#444">tapPageTurn</text>
+<text x="304" y="348" font-size="11.8" fill="#444">（日漫翻页规则 rtlPageTurn 10-07 删）</text>
 <rect x="600" y="286" width="370" height="72" rx="9" fill="#eaf5ee" stroke="#2f7d45" stroke-width="1.4"/>
 <text x="614" y="310" font-size="12.5" font-weight="bold" fill="#1a1a1a">reader-page-turn.qmd（xochitl 阅读器）</text>
 <text x="614" y="331" font-size="11.8" fill="#444">每次打开书读一次 → 重新打开书生效</text>
