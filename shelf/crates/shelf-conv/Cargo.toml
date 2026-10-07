@@ -1,0 +1,21 @@
+[package]
+name = "shelf-conv"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "书架投递 xochitl 用的读书工具：第三方 PDF 页数、大文件占位文档、渲染自检统计、书名规范化；书本身的优化一律在电脑上用 sheng-ren 做"
+
+[dependencies]
+# 读 EPUB（zip/OPF/封面/正文文字）用 sheng-ren 的 bookconv 公开接口（git 依赖跟 master 走，`cargo update -p bookconv` 跟进）。
+# 书架不再调用它的优化器（2026-10-07 用户定：优化全部由 sheng-ren 在电脑上做，书架只负责把优化好的书投进 xochitl）。
+bookconv = { git = "https://github.com/bbq191/sheng-ren", branch = "master" }
+regex = "1"
+# 跟 bookconv 同一版本、同一组特性（只用 flate2 的 deflate），依赖树里只有一份 zip
+zip = { version = "2", default-features = false, features = ["deflate-flate2", "flate2"] }
+# pdfmeta 解 FlateDecode 的交叉引用流/对象流（有界解压）
+miniz_oxide = "0.8"
+
+[dev-dependencies]
+tempfile = "3"
+# pdfmeta 测试用它生成"对象流 + 交叉引用流"的现代 PDF
+lopdf = "0.45.0"

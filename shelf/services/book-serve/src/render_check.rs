@@ -1,7 +1,7 @@
 //! 投原生后的**渲染自检**：xochitl 导入 EPUB 后渲染（真机：导入当下同步渲染），渲染完在 `<uuid>.content` 写 `pageCount`。
 //! 整章渲染失败（同一标签双 id 等，《消失的爱人》只出 7 页）以前要用户翻到才发现；现在投书后起一条线程，
 //! **限时**监听书库目录（`fswatch::watch_until`，最长 [`TIMEOUT`]，结束即撤、不常驻），等到页数就与
-//! `bookconv::stats` 的期望页数比：低于 [`WARN_RATIO`] → `warn`。结果写进母版库边车 `.<name>.delivered` 的
+//! `shelf_conv::stats` 的期望页数比：低于 [`WARN_RATIO`] → `warn`。结果写进母版库边车 `.<name>.delivered` 的
 //! `render` 字段（事件是有损信号，状态必须落盘），并推 `books/render` 事件（带 name/status/pages）。
 //! 认书：`/upload` 不回 uuid，visibleName 取自 EPUB 元数据不等于文件名 → 按 `createdTime >= 投书时刻` 圈候选，
 //! 书名（dc:title / 文件名 stem）相符者优先，否则取最新一本。只读 `.metadata/.content`，绝不写 xochitl 目录。
@@ -44,8 +44,8 @@ pub fn run_with(staging: &Staging, bus: &EventBus, lib_dir: &Path, plan: &Render
     write("", 0, "pending");
     let check = || {
         probe(lib_dir, plan).map(|(uuid, pages)| {
-            if plan.comic {
-                staging.register_comic_margins(&uuid, &plan.name);
+            if let Some(m) = plan.comic_margins {
+                staging.register_comic_margins(&uuid, &plan.name, m);
             }
             write(&uuid, pages, verdict(pages, plan.expected))
         })
@@ -112,7 +112,7 @@ mod tests {
     }
 
     fn plan(expected: u64) -> RenderPlan {
-        RenderPlan { name: "a.epub".into(), title: None, expected, since_ms: 1000, comic: false }
+        RenderPlan { name: "a.epub".into(), title: None, expected, since_ms: 1000, comic_margins: None }
     }
 
     const MS: fn(u64) -> Duration = Duration::from_millis;
@@ -140,17 +140,16 @@ mod tests {
     fn run_registers_margins_only_for_comic_plans() {
         // 新版管线的漫画：导入完成（找到 uuid）后登记"首次打开时设页边距"；文字书不登记。
         const U: &str = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa";
-        for (comic, expect) in [(true, Some(bookconv::imgopt::EPUB_COMIC_MARGINS)), (false, None)] {
+        for (comic, expect) in [(Some(1), Some(1)), (None, None)] {
             let t = tempfile::tempdir().unwrap();
             let (s, lib) = setup(&t);
-            std::fs::write(t.path().join("qol.json"), r#"{"comicMinMargin":true}"#).unwrap();
-            let q = std::sync::Arc::new(crate::comic_margins::ComicMargins::new(t.path(), &lib, &t.path().join("qol.json")));
+            let q = std::sync::Arc::new(crate::comic_margins::ComicMargins::new(t.path(), &lib));
             let s = s.with_comic_margins(q.clone());
             render_doc(&lib, U, "a", 100);
             let mut p = plan(100);
-            p.comic = comic;
+            p.comic_margins = comic;
             run_with(&s, &EventBus::new(), &lib, &p, MS(20), MS(200));
-            assert_eq!(q.get(U), expect, "comic={comic}");
+            assert_eq!(q.get(U), expect, "comic={comic:?}");
         }
     }
 

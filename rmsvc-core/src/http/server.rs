@@ -15,7 +15,7 @@ pub const DEFAULT_MAX_CONCURRENT: usize = 64;
 /// 连接读空闲超时：服务端等着读时，这么久没收到一个字节就断开这条连接。上游 tiny_http 0.12 不设任何
 /// 超时——慢客户端、只发半个请求头/半个 TLS 握手的 slowloris、手机休眠后留下的半开 keep-alive 连接，
 /// 都会永久占住一条连接线程（网关直面局域网，天天用会慢慢攒）。这是"空闲"超时不是"总时长"超时：
-/// 大文件上传只要一直有字节在流就不受影响；处理函数自己慢（长轮询、优化排队）不算——那时服务端没在读。
+/// 大文件上传只要一直有字节在流就不受影响；处理函数自己慢（长轮询、排队）不算——那时服务端没在读。
 /// 靠 `vendor/tiny_http` 的补丁对每条 accept 出来的连接设 `read_timeout`（2026-09-24 第三轮审计）。
 pub const READ_IDLE_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(60);
 

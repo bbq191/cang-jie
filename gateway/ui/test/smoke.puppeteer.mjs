@@ -38,7 +38,7 @@ const routes = {
   '/api/ink/books/u1': () => ({uuid:'u1', entries:[{id:'e1', status:'pending', chapter:0, page_index:0, destination:'both', style:'body', text:'hi', updated:1}]}),
   '/api/notes/books/u1/sync': () => ({chapters:[]}),
   '/api/transcribe/status': () => ({failures:[]}),
-  '/api/books/staging': () => ({ok:true, items:[{name: evil, format:'epub', bytes:1000, mtime:1, optimized:false, delivered:{optimize:{status:'failed', message:'"><img src=x onerror=window.__xss=1>'}}}], freeBytes: 9e9}),
+  '/api/books/staging': () => ({ok:true, items:[{name: evil, format:'epub', bytes:1000, mtime:1, delivered:{deliver:{status:'failed', message:'"><img src=x onerror=window.__xss=1>'}}}], freeBytes: 9e9}),
   '/api/books/status': () => ({ok:true, xochitlFolders:[]}),
   '/api/budget/status': () => ({pending:[], active:[]}),
   '/api/session': () => ({ok:true, mustChange:false}),

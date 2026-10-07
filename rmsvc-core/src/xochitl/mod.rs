@@ -86,7 +86,7 @@ impl Xochitl {
     }
 
     /// **突破网页上传的体积上限**（xochitl `/upload` 约 100MB 硬限，超了直接断连）：先上传 `placeholder`
-    /// （几 KB 的占位文档，EPUB 要带真书名和封面，见 `bookconv::placeholder`）让 xochitl 建好条目，再把磁盘上
+    /// （几 KB 的占位文档，EPUB 要带真书名和封面，见 `shelf_conv::placeholder`）让 xochitl 建好条目，再把磁盘上
     /// 那个文件原子替换成 `path` 的真文件。2026-09-20 真机验证：PDF 154MB/349 页、EPUB 153MB 都能打开。
     ///
     /// - **EPUB**：删掉占位的渲染缓存 `.pdf`/`.epubindex`，用户第一次打开时 xochitl 重新渲染（146MB 实测约 25s，

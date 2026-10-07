@@ -1,11 +1,11 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 640" font-family="Noto Sans CJK SC, sans-serif">
 <defs><marker id="bg-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#555"/></marker><marker id="bg-r" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#b0451f"/></marker><marker id="bg-g" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2f7d45"/></marker></defs>
 <rect x="0" y="0" width="1200" height="640" fill="#fbfbfa"/>
-<text x="600.0" y="30" text-anchor="middle" font-size="18" font-weight="bold" fill="#1a1a1a">并发 / 内存预算闸门（网关 budget.rs）</text>
-<text x="600.0" y="52" text-anchor="middle" font-size="12.5" fill="#6a6a6a">设备只有约 2GB 内存：同时处理几本大书会内存叠加，所以所有重活都要先过这一道闸</text>
+<text x="600.0" y="30" text-anchor="middle" font-size="18" font-weight="bold" fill="#1a1a1a">并发闸门（网关 budget.rs）</text>
+<text x="600.0" y="52" text-anchor="middle" font-size="12.5" fill="#6a6a6a">设备只有约 2GB 内存：当年设备上优化大书会内存叠加，于是加了这道闸；2026-10-07 起只拦「加入 xochitl」</text>
 <rect x="30" y="96" width="210" height="190" rx="10" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.6"/>
-<text x="135.0" y="116" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">会占内存的请求</text>
-<text x="135.0" y="142.5" text-anchor="middle" font-size="10.5" fill="#4a4a4a">优化</text>
+<text x="135.0" y="116" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">要过闸的请求</text>
+<text x="135.0" y="142.5" text-anchor="middle" font-size="10.5" fill="#8a8a8a">（优化 10-07 已删）</text>
 <text x="135.0" y="156.0" text-anchor="middle" font-size="10.5" fill="#4a4a4a">加入 xochitl</text>
 <text x="135.0" y="183.0" text-anchor="middle" font-size="10.5" fill="#4a4a4a">（单条点击和批量队列</text>
 <text x="135.0" y="196.5" text-anchor="middle" font-size="10.5" fill="#4a4a4a">走同一道闸门）</text>

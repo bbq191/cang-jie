@@ -1,86 +1,91 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1080 660" font-family="Noto Sans CJK SC, sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1088 640" font-family="Noto Sans CJK SC, sans-serif">
 <defs><marker id="bj-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#555"/></marker></defs>
-<rect x="0" y="0" width="1080" height="660" fill="#fbfbfa"/>
-<text x="540" y="30" text-anchor="middle" font-size="18" font-weight="bold" fill="#1a1a1a">一本书的旅程：入库 → 母版库 → （可选）优化 → 落库</text>
-<text x="540" y="52" text-anchor="middle" font-size="12.5" fill="#6a6a6a">三个动作互相独立：入库不强制优化，优化后不强制落库，落库只是复制母版字节；括号里是详细说明所在的 § 节</text>
+<rect x="0" y="0" width="1088" height="640" fill="#fbfbfa"/>
+<text x="544" y="30" text-anchor="middle" font-size="18" font-weight="bold" fill="#1a1a1a">一本书的旅程：电脑上优化 → 上传 → 母版库 → 加入 xochitl</text>
+<text x="544" y="52" text-anchor="middle" font-size="12.5" fill="#6a6a6a">2026-10-07 起书架只搬运、不改书：优化全部在电脑上用 sheng-ren 做，设备上原样投进 xochitl</text>
 
-<!-- 入库 -->
-<rect x="24" y="72" width="250" height="290" rx="10" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.6"/>
-<text x="149" y="96" text-anchor="middle" font-size="14" font-weight="bold" fill="#1a1a1a">① 入库（第 A 章）</text>
-<rect x="40" y="110" width="218" height="52" rx="7" fill="#fff" stroke="#4a6fa5"/>
-<text x="149" y="132" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">网页上传</text>
-<text x="149" y="150" text-anchor="middle" font-size="11" fill="#4a4a4a">多文件；同名同大小视为已落地</text>
-<rect x="40" y="172" width="218" height="52" rx="7" fill="#fff" stroke="#4a6fa5"/>
-<text x="149" y="194" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">抓网文</text>
-<text x="149" y="212" text-anchor="middle" font-size="11" fill="#4a4a4a">Readability 抽正文 → 组成 EPUB</text>
-<rect x="40" y="234" width="218" height="52" rx="7" fill="#fff" stroke="#4a6fa5"/>
-<text x="149" y="256" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">scp 进设备 inbox/</text>
-<text x="149" y="274" text-anchor="middle" font-size="11" fill="#4a4a4a">追平队列，自动收进母版库</text>
-<text x="149" y="312" text-anchor="middle" font-size="11" fill="#4a4a4a">只收 EPUB / PDF，其它格式拒收</text>
-<text x="149" y="330" text-anchor="middle" font-size="11" fill="#4a4a4a">书名规范成「书名 - 02卷」</text>
-<text x="149" y="348" text-anchor="middle" font-size="11" fill="#4a4a4a">(§03bn)</text>
+<!-- ① 电脑 -->
+<rect x="24" y="72" width="236" height="300" rx="10" fill="#eceaf4" stroke="#6a5aa5" stroke-width="1.6"/>
+<text x="142" y="96" text-anchor="middle" font-size="14" font-weight="bold" fill="#1a1a1a">① 电脑上优化</text>
+<text x="142" y="114" text-anchor="middle" font-size="11" fill="#6a5aa5">sheng-ren（booklib）· 不在本仓库</text>
+<rect x="38" y="126" width="208" height="112" rx="7" fill="#fff" stroke="#6a5aa5"/>
+<text x="50" y="146" font-size="12" font-weight="bold" fill="#1a1a1a">xochitl 阅读模式出 EPUB</text>
+<text x="50" y="166" font-size="11" fill="#4a4a4a">排版、目录、注释跳转、封面</text>
+<text x="50" y="184" font-size="11" fill="#4a4a4a">漫画裁边、缩放、补白</text>
+<text x="50" y="202" font-size="11" fill="#4a4a4a">漫画写页边距标记</text>
+<text x="50" y="220" font-size="10.5" fill="#6a6a6a">META-INF/eink-reader-margins</text>
+<text x="50" y="262" font-size="11" fill="#4a4a4a">规则：sheng-ren docs/typesetting.md</text>
+<text x="50" y="280" font-size="11" fill="#4a4a4a">阅读器踩坑：docs/xochitl.md</text>
+<text x="50" y="306" font-size="11" fill="#4a4a4a">PDF 不处理，直接传也行</text>
+<text x="50" y="324" font-size="11" fill="#4a4a4a">其它格式先在电脑上转好</text>
 
-<polyline points="274,217 316,217" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#bj-a)"/>
-<text x="295" y="208" text-anchor="middle" font-size="10.5" fill="#6a6a6a">原样</text>
+<polyline points="260,200 290,200" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#bj-a)"/>
 
-<!-- 母版库 + 优化 -->
-<rect x="318" y="72" width="444" height="290" rx="10" fill="#fff3d6" stroke="#c9971f" stroke-width="1.6"/>
-<text x="540" y="96" text-anchor="middle" font-size="14" font-weight="bold" fill="#1a1a1a">② 母版库 staging/（永久保留，可反复落库）</text>
-<rect x="334" y="108" width="412" height="242" rx="8" fill="#fffaf0" stroke="#c9971f" stroke-dasharray="6 4"/>
-<text x="540" y="128" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">③ 可选「优化」（第 B 章 · bookconv 白皮书）</text>
-<rect x="346" y="140" width="388" height="66" rx="7" fill="#fff" stroke="#c9971f"/>
-<text x="358" y="160" font-size="12" font-weight="bold" fill="#1a1a1a">EPUB 文字书</text>
-<text x="358" y="178" font-size="11" fill="#4a4a4a">清洗 wash → 优化遍（脚注/图片/目录/封面）→ 质量门</text>
-<text x="358" y="195" font-size="11" fill="#4a4a4a">产物仍是 EPUB；OPTIMIZE_VERSION=16，升版后旧书可重优化</text>
-<rect x="346" y="214" width="388" height="66" rx="7" fill="#fff" stroke="#c9971f"/>
-<text x="358" y="234" font-size="12" font-weight="bold" fill="#1a1a1a">漫画 EPUB（自动识别）</text>
-<text x="358" y="252" font-size="11" fill="#4a4a4a">保画质降采样 + 白边裁切 + 补白，JPEG q95；仍是 EPUB</text>
-<text x="358" y="269" font-size="11" fill="#4a4a4a">实验室开关「漫画页边距」：页边距设 1，左右留白≈0（§20）</text>
-<rect x="346" y="288" width="388" height="52" rx="7" fill="#fff" stroke="#c9971f"/>
-<text x="358" y="308" font-size="12" font-weight="bold" fill="#1a1a1a">PDF</text>
-<text x="358" y="326" font-size="11" fill="#4a4a4a">有文字层 → 按原格式转 EPUB；无文字层 → 只裁边，仍是 PDF（§03br）</text>
+<!-- ② 入库 -->
+<rect x="292" y="72" width="236" height="300" rx="10" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.6"/>
+<text x="410" y="96" text-anchor="middle" font-size="14" font-weight="bold" fill="#1a1a1a">② 入库</text>
+<rect x="306" y="110" width="208" height="52" rx="7" fill="#fff" stroke="#4a6fa5"/>
+<text x="410" y="132" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">网页上传</text>
+<text x="410" y="150" text-anchor="middle" font-size="11" fill="#4a4a4a">「传书 → 入库」，可多文件</text>
+<rect x="306" y="172" width="208" height="52" rx="7" fill="#fff" stroke="#4a6fa5"/>
+<text x="410" y="194" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">scp 进设备 inbox/</text>
+<text x="410" y="212" text-anchor="middle" font-size="11" fill="#4a4a4a">写完静止 5 秒才收</text>
+<text x="306" y="252" font-size="11" fill="#4a4a4a">· 字节原样，不改书</text>
+<text x="306" y="272" font-size="11" fill="#4a4a4a">· 只收 EPUB / PDF</text>
+<text x="306" y="292" font-size="11" fill="#4a4a4a">· 同名同内容不重复存</text>
+<text x="306" y="312" font-size="11" fill="#4a4a4a">· 同名不同内容加数字前缀</text>
+<text x="306" y="332" font-size="11" fill="#4a4a4a">· 文件名规范成「书名 - 02卷」</text>
 
-<polyline points="762,150 800,150" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#bj-a)"/>
+<polyline points="528,200 558,200" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#bj-a)"/>
 
-<!-- 落库 -->
-<rect x="804" y="72" width="252" height="168" rx="10" fill="#fbe9e4" stroke="#b0451f" stroke-width="1.6"/>
-<text x="930" y="96" text-anchor="middle" font-size="14" font-weight="bold" fill="#1a1a1a">④ 加入 xochitl（第 C 章）</text>
-<text x="816" y="120" font-size="11.5" fill="#1a1a1a">≤ 90MB：流式 POST /upload</text>
-<text x="816" y="140" font-size="11.5" fill="#1a1a1a">&gt; 90MB 且 ≤ 1GiB：占位 + 磁盘替换</text>
-<text x="816" y="160" font-size="11.5" fill="#1a1a1a">仍不行：整本拒绝（不再分卷）</text>
-<text x="816" y="184" font-size="11" fill="#4a4a4a">再做「渲染自检」：页数 vs 预期，</text>
-<text x="816" y="200" font-size="11" fill="#4a4a4a">EPUB 首次打开才渲染，徽章随后转正</text>
-<text x="816" y="222" font-size="11" fill="#4a4a4a">(§03bn · §03aa)</text>
-<rect x="804" y="256" width="252" height="106" rx="10" fill="#f4f4f2" stroke="#9a9a9a" stroke-width="1.6" stroke-dasharray="6 4"/>
-<text x="930" y="280" text-anchor="middle" font-size="13" font-weight="bold" fill="#8a8a8a">已移除的去处与做法</text>
-<text x="816" y="304" font-size="11" fill="#8a8a8a">加入 KOReader（09-29 卸载 KOReader）</text>
-<text x="816" y="324" font-size="11" fill="#8a8a8a">超限按卷拆分投递（09-30）</text>
-<text x="816" y="344" font-size="11" fill="#8a8a8a">漫画转 PDF · 按书手动设方向（09-30）</text>
+<!-- ③ 母版库 -->
+<rect x="560" y="72" width="236" height="300" rx="10" fill="#fff3d6" stroke="#c9971f" stroke-width="1.6"/>
+<text x="678" y="96" text-anchor="middle" font-size="14" font-weight="bold" fill="#1a1a1a">③ 母版库 staging/</text>
+<text x="678" y="114" text-anchor="middle" font-size="11" fill="#8a6a10">永久保留，可反复加入</text>
+<text x="574" y="142" font-size="11" fill="#4a4a4a">· 勾选后底部栏操作</text>
+<text x="574" y="162" font-size="11" fill="#4a4a4a">· 只勾一本：下载原件 · 改名</text>
+<text x="585" y="182" font-size="11" fill="#4a4a4a">（改名只改文件名）</text>
+<text x="574" y="202" font-size="11" fill="#4a4a4a">· 删除（忙时拒绝）</text>
+<text x="574" y="222" font-size="11" fill="#4a4a4a">· 筛选：全部 / 未加入 / 已加入</text>
+<rect x="574" y="244" width="208" height="92" rx="7" fill="#fffaf0" stroke="#c9971f" stroke-dasharray="5 3"/>
+<text x="586" y="264" font-size="11.5" font-weight="bold" fill="#1a1a1a">边车 .&lt;书名&gt;.delivered</text>
+<text x="586" y="284" font-size="11" fill="#4a4a4a">最近加入时间</text>
+<text x="586" y="302" font-size="11" fill="#4a4a4a">加入结果 pending/ok/failed</text>
+<text x="586" y="320" font-size="11" fill="#4a4a4a">渲染自检页数</text>
+
+<polyline points="796,200 826,200" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#bj-a)"/>
+
+<!-- ④ 加入 xochitl -->
+<rect x="828" y="72" width="236" height="300" rx="10" fill="#fbe9e4" stroke="#b0451f" stroke-width="1.6"/>
+<text x="946" y="96" text-anchor="middle" font-size="14" font-weight="bold" fill="#1a1a1a">④ 加入 xochitl</text>
+<text x="946" y="114" text-anchor="middle" font-size="11" fill="#8a3010">复制母版字节，可批量</text>
+<text x="842" y="142" font-size="11" fill="#4a4a4a">· 选文件夹；没有就排队</text>
+<text x="853" y="160" font-size="11" fill="#4a4a4a">让 xochitl 自己建</text>
+<text x="842" y="184" font-size="11" fill="#1a1a1a">≤ 90MB：流式 POST /upload</text>
+<text x="842" y="204" font-size="11" fill="#1a1a1a">&gt; 90MB 且 ≤ 1GB：</text>
+<text x="853" y="222" font-size="11" fill="#1a1a1a">占位 + 磁盘替换</text>
+<text x="842" y="242" font-size="11" fill="#1a1a1a">再大：整本拒绝</text>
+<text x="842" y="268" font-size="11" fill="#4a4a4a">· 渲染自检：页数 vs 预期</text>
+<text x="842" y="292" font-size="11" fill="#4a4a4a">· 漫画带 sheng-ren 页边距标记：</text>
+<text x="853" y="310" font-size="11" fill="#4a4a4a">一律登记（没有开关），</text>
+<text x="853" y="328" font-size="11" fill="#4a4a4a">首次打开自动设页边距 1</text>
 
 <!-- 横切 -->
-<text x="540" y="392" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">贯穿三个动作的横切设施</text>
-<rect x="24" y="404" width="336" height="112" rx="10" fill="#f0efe9" stroke="#8a8a8a"/>
-<text x="192" y="426" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">网关 gateway :443（第 D 章）</text>
-<text x="192" y="448" text-anchor="middle" font-size="11" fill="#4a4a4a">HTTPS+密码 · 单页 UI · /api/&lt;段&gt;/* 反向代理</text>
-<text x="192" y="466" text-anchor="middle" font-size="11" fill="#4a4a4a">批量队列（顺序逐本、落盘续跑、可中止）</text>
-<text x="192" y="484" text-anchor="middle" font-size="11" fill="#4a4a4a">并发/内存闸门：&gt;90MB 大档 1 个，小档 3 个</text>
-<text x="192" y="502" text-anchor="middle" font-size="11" fill="#4a4a4a">SSE 事件推送，网页零轮询</text>
-<rect x="372" y="404" width="336" height="112" rx="10" fill="#f0efe9" stroke="#8a8a8a"/>
-<text x="540" y="426" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">稳定性与内存（第 E 章）</text>
-<text x="540" y="448" text-anchor="middle" font-size="11" fill="#4a4a4a">设备内存有限：流式优化、逐张处理图片</text>
-<text x="540" y="466" text-anchor="middle" font-size="11" fill="#4a4a4a">图片像素上限；忙锁/取消登记簿 OpRegistry</text>
-<text x="540" y="484" text-anchor="middle" font-size="11" fill="#4a4a4a">panic=unwind + catch_unwind：坏书只坏一本</text>
-<text x="540" y="502" text-anchor="middle" font-size="11" fill="#4a4a4a">启动时修正被中断的 pending</text>
-<rect x="720" y="404" width="336" height="112" rx="10" fill="#f0efe9" stroke="#8a8a8a"/>
-<text x="888" y="426" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">设备侧代理与周边（第 F 章）</text>
-<text x="888" y="448" text-anchor="middle" font-size="11" fill="#4a4a4a">xovi qmd 代理：回收站 · 建文件夹</text>
-<text x="888" y="466" text-anchor="middle" font-size="11" fill="#4a4a4a">漫画页边距 · 日漫翻页（只读原书 OPF rtl）</text>
-<text x="888" y="484" text-anchor="middle" font-size="11" fill="#4a4a4a">字体上传即装 · 休眠壁纸上传即用</text>
-<text x="888" y="502" text-anchor="middle" font-size="11" fill="#4a4a4a">固件升级（OTA）后的恢复</text>
+<rect x="24" y="394" width="512" height="104" rx="10" fill="#f0efe9" stroke="#8a8a8a"/>
+<text x="280" y="416" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">网关 gateway :443</text>
+<text x="40" y="440" font-size="11" fill="#4a4a4a">HTTPS + 密码 · 单页网页 · /api/&lt;段&gt;/* 反向代理 · SSE 推送，网页不轮询</text>
+<text x="40" y="460" font-size="11" fill="#4a4a4a">批量队列：只剩「加入 xochitl」，顺序逐本、落盘续跑、可全部中止</text>
+<text x="40" y="480" font-size="11" fill="#4a4a4a">闸门：只拦「加入 xochitl」，&gt;90MB 同时 1 本，其余 3 本</text>
+<rect x="552" y="394" width="512" height="104" rx="10" fill="#f0efe9" stroke="#8a8a8a"/>
+<text x="808" y="416" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">xochitl 里的 qmd 代理（book-serve 排队、xochitl 自己做）</text>
+<text x="568" y="440" font-size="11" fill="#4a4a4a">建文件夹 · 移进回收站 · 漫画页边距</text>
+<text x="568" y="460" font-size="11" fill="#4a4a4a">日漫翻页：只读书里自带的 OPF rtl 标记（+ 旧手动清单）</text>
+<text x="568" y="480" font-size="11" fill="#4a4a4a">改 qmd 后要整机重启才加载</text>
 
-<rect x="24" y="540" width="1032" height="96" rx="10" fill="#ffffff" stroke="#8a8a8a" stroke-dasharray="5 4"/>
-<text x="540" y="562" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">代码在哪里</text>
-<text x="540" y="584" text-anchor="middle" font-size="11" fill="#4a4a4a">shelf/crates/bookconv：清洗 / 优化 / 图片 / 漫画 / PDF 入库 / 占位文档　·　shelf/services/book-serve（:8790）：母版库、落库、设备端代理队列</text>
-<text x="540" y="602" text-anchor="middle" font-size="11" fill="#4a4a4a">../gateway 网关　·　../rmsvc-core 共享底座　·　../enhance/{font,wallpaper}-serve　·　shelf/xovi/*.qmd</text>
-<text x="540" y="622" text-anchor="middle" font-size="11" fill="#6a6a6a">电脑端命令行已在 2026-09-18 砍除，只剩网页；格式转换请先在电脑上处理成 EPUB / PDF 再上传</text>
+<rect x="24" y="512" width="1040" height="58" rx="10" fill="#f4f4f2" stroke="#9a9a9a" stroke-width="1.4" stroke-dasharray="6 4"/>
+<text x="40" y="534" font-size="12" font-weight="bold" fill="#8a8a8a">已删除（git 历史可查）</text>
+<text x="40" y="555" font-size="11" fill="#8a8a8a">2026-10-07：设备上「优化」· PDF 转 EPUB / 裁边 · 原 PDF 备份 · 抓网文 · 联网补封面 · 旧产物兼容 · 中途取消　｜　09-30：超限按卷拆分 · 按书设方向　｜　09-29：加入 KOReader</text>
+
+<text x="544" y="596" text-anchor="middle" font-size="11" fill="#4a4a4a">代码：shelf/services/book-serve（:8790）母版库 · 加入 · 代理队列　·　shelf/crates/shelf-conv：PDF 页数 · 占位文档 · 渲染统计 · 书名规范（只读不改书）</text>
+<text x="544" y="616" text-anchor="middle" font-size="11" fill="#6a6a6a">sheng-ren 的 bookconv 是 git 依赖，书架只用它读 EPUB 的公开接口，不调用优化器</text>
 </svg>

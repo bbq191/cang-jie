@@ -1,10 +1,10 @@
 //! HTTP 适配层（唯一碰 http 类型的地方，只做取参 + 调领域方法 + 回执）。路由（经网关时前缀 `/api/books`）：
 //! `GET /status`
-//! 母版库：`GET /staging` → `{items, freeBytes}` · `POST /staging`（multipart，原样入库）· `POST /staging/optimize {name}`
-//! （2026-09-19 起不再分档位，只有一种"清洗+优化"行为）
-//! · `POST /staging/deliver {name, folder?}`（2026-09-19 起投完永远保留母版，不再有 `keep` 参数）· `POST /staging/mark {name, target?}`（target 只剩 native，可省略；koreader 已删）· `POST /staging/fetch-article {url, optimize?}`
+//! 母版库：`GET /staging` → `{items, freeBytes}` · `POST /staging`（multipart，原样入库）
+//! · `POST /staging/deliver {name, folder?}`（2026-09-19 起投完永远保留母版，不再有 `keep` 参数）· `POST /staging/mark {name, target?}`（target 只剩 native，可省略；koreader 已删）
 //! · `POST /staging/delete {name}` · `POST /staging/rename {name, newName}` · `GET /staging/file?name=`（原件下载，流式）
-//! · 原 PDF 备份：`GET /staging` 的 `originals` · `POST /staging/originals/restore {name}` · `POST /staging/originals/delete {name}`
+//! · 2026-10-07 删除：`/staging/optimize`、`/staging/fetch-article`、`/staging/originals/*`、`/staging/cancel`（书架不再优化书，
+//!   优化全部在电脑上用 sheng-ren 做；剩下的投递没有能中途停的步骤）。
 //! · `GET /events`（SSE：母版库/inbox 变更即推，网页零轮询）。
 //! 阅读方向：`GET /reading-direction/{uuid}` → `{rtl}`（xochitl 里 reader-page-turn.qmd 用；只看书里自带的 OPF 标记，2026-09-30 起不能在网页上按书指定）。
 //! 原生回收站队列：`POST /trash/add {uuid, name}`（name 必须与书库 visibleName 相符）· `GET /trash/pending?wait=` → `{uuids}`（MainView 代理 qmd 长轮询拉取执行）· `GET /trash`。
@@ -26,13 +26,13 @@ pub fn router(st: Arc<State>) -> Router {
     Router::new()
         .get("/status", bind(&st, |s, _| Ok(Reply::ok(&s.status()))))
         .get("/events", bind(&st, |s, _| Ok(s.bus.sse_reply())))
-        // ── 母版库（中间层）：入库 / 优化 / 落库 / 删除各自正交 ──
-        .get("/staging", bind(&st, |s, _| Ok(Reply::ok(&serde_json::json!({"items": s.staging.list(), "freeBytes": s.staging.free_bytes(), "originals": s.staging.list_originals()})))))
+        // ── 母版库（中间层）：入库 / 落库 / 删除各自正交 ──
+        .get("/staging", bind(&st, |s, _| Ok(Reply::ok(&serde_json::json!({"items": s.staging.list(), "freeBytes": s.staging.free_bytes()})))))
         // 原件下载：边读边发（大书上百 MB，不整本读进内存）；网关见到 Content-Disposition 也原样流式转发。
         .get("/staging/file", bind(&st, |s, r| {
             let name = r.q("name").ok_or_else(|| ApiError::bad("缺少 name"))?.to_string();
             let (f, len) = s.staging.open_for_download(&name).map_err(ApiError::bad)?;
-            let ctype = bookconv::convert::direct_content_type(&name).map(|c| c.mime()).unwrap_or("application/octet-stream");
+            let ctype = shelf_conv::direct_content_type(&name).map(|c| c.mime()).unwrap_or("application/octet-stream");
             Ok(Reply::sized_stream(ctype, Box::new(std::io::BufReader::new(f)), len).with_header("Content-Disposition", &rmsvc_core::multipart::content_disposition(&name)))
         }))
         .post("/staging/rename", bind(&st, |s, r| {
@@ -41,25 +41,7 @@ pub fn router(st: Arc<State>) -> Router {
             s.bus.publish("books", "staging");
             Ok(Reply::ok(&serde_json::json!({"ok": true, "name": new_name})))
         }))
-        // ── 原 PDF 备份（PDF→EPUB 后保留 7 天，见 Staging::backup_pdf_original）──
-        .post("/staging/originals/restore", bind(&st, |s, r| {
-            s.staging.restore_original(r.json()?.str("name")?).map_err(ApiError::bad)?;
-            staging_changed(s)
-        }))
-        .post("/staging/originals/delete", bind(&st, |s, r| {
-            s.staging.delete_original(r.json()?.str("name")?).map_err(ApiError::bad)?;
-            staging_changed(s)
-        }))
         .post("/staging", bind(&st, staging_upload))
-        .post("/staging/optimize", bind(&st, |s, r| {
-            // 异步：耗时的优化（真机实测大漫画能跑到分钟级，见书架白皮书 §05）挪到后台线程，这里立即
-            // 回"已开始"；真正结果通过 books/staging 事件 + GET /staging 列表里的 delivered.optimize 呈现。
-            let j = r.json()?;
-            let name = j.str("name")?.to_string();
-            s.staging.spawn_optimize(&name, s.bus.clone()).map_err(ApiError::bad)?;
-            s.bus.publish("books", "staging"); // 立即推一次，UI 马上看到这条目进入 busy 状态
-            Ok(Reply::ok(&serde_json::json!({"ok": true, "message": format!("《{name}》已开始优化，完成后自动刷新"), "async": true})))
-        }))
         .post("/staging/deliver", bind(&st, |s, r| {
             // 异步：耗时的落库（大书上传、等建文件夹、大文件通道拷贝，真机能到分钟级）挪到后台线程，这里
             // 立即回"已开始"；真正结果通过 books/staging 事件 + GET /staging 列表里的 delivered.deliver
@@ -80,17 +62,6 @@ pub fn router(st: Arc<State>) -> Router {
             check_mark_target(j.str_or("target", "native")).map_err(ApiError::bad)?;
             s.staging.mark_delivered(j.str("name")?).map_err(ApiError::bad)?;
             staging_changed(s)
-        }))
-        .post("/staging/fetch-article", bind(&st, |s, r| {
-            let j = r.json()?;
-            let out = s.staging.fetch_article(j.str("url")?, j.bool_or("optimize", false)).map_err(ApiError::bad)?;
-            s.bus.publish("books", "staging");
-            let message = match &out.optimize_error {
-                Some(e) => format!("已抓取《{}》入母版库（同步优化失败：{e}，可在列表里手动点「优化」）", out.title),
-                None if out.optimized => format!("已抓取《{}》入母版库并同步优化", out.title),
-                None => format!("已抓取《{}》入母版库", out.title),
-            };
-            Ok(Reply::ok(&serde_json::json!({"ok": true, "name": out.name, "title": out.title, "message": message})))
         }))
         // ── 阅读方向（reader-page-turn.qmd 打开书时查；rtl=从右往左翻页的书，见 reading_direction.rs）──
         .get("/reading-direction/{uuid}", bind(&st, |s, r| {
@@ -144,13 +115,6 @@ pub fn router(st: Arc<State>) -> Router {
         .post("/agent-failures/clear", bind(&st, |s, _| {
             let n = s.agent_failures.clear().map_err(ApiError::internal)?;
             Ok(Reply::ok(&serde_json::json!({"ok": true, "cleared": n})))
-        }))
-        // 停止正在跑的优化/投递（2026-09-20）：登记取消标记，在下一个安全检查点停下；无法中途停的步骤如实回 cancelled:false。
-        .post("/staging/cancel", bind(&st, |s, r| {
-            let name = r.json()?.str("name")?.to_string();
-            let supported = s.staging.request_cancel(&name).map_err(ApiError::bad)?;
-            let message = if supported { "已请求停止，会在当前这一小步结束后停下" } else { "这一步无法中途停止（单文件上传中），会自然跑完" };
-            Ok(Reply::ok(&serde_json::json!({"ok": true, "cancelled": supported, "message": message})))
         }))
         .post("/staging/delete", bind(&st, |s, r| {
             s.staging.remove(r.json()?.str("name")?).map_err(ApiError::bad)?;
@@ -237,16 +201,7 @@ mod tests {
         std::fs::write(lib.join(format!("{U}.metadata")), "{}").unwrap();
         let path = format!("/margins/{U}");
         assert_eq!(call(&router, Method::Get, &path, "").0, 404, "没登记 → 404，QML 代理静默不动");
-        let qol = Paths::resolve({
-            let h = t.path().to_str().unwrap().to_string();
-            move |k| if k == "HOME" || k == "XDG_RUNTIME_DIR" { Some(h.clone()) } else { None }
-        })
-        .home()
-        .join(".local/share/cangjie-ime/reading-qol.json");
-        std::fs::create_dir_all(qol.parent().unwrap()).unwrap();
         st.comic_margins.add(U, 1).unwrap();
-        assert_eq!(call(&router, Method::Get, &path, "").0, 404, "实验室开关默认关：已登记也 404，QML 代理不动");
-        std::fs::write(&qol, r#"{"comicMinMargin":true}"#).unwrap();
         let (code, v) = call(&router, Method::Get, &path, "");
         assert_eq!((code, v["margins"].as_u64()), (200, Some(1)));
         assert_eq!(call(&router, Method::Post, "/margins/applied", &format!(r#"{{"uuid":"{U}"}}"#)).0, 200);
@@ -255,14 +210,13 @@ mod tests {
     }
 
     #[test]
-    fn busy_book_rejects_optimize_deliver_delete_with_400_and_hint() {
+    fn busy_book_rejects_deliver_delete_with_400_and_hint() {
         let t = tempfile::tempdir().unwrap();
         let st = state(&t);
         let router = router(st.clone());
         st.staging.stage_new("x.epub", b"PK").unwrap();
         assert!(st.staging.try_start_busy("x.epub"));
         for (path, body) in [
-            ("/staging/optimize", r#"{"name":"x.epub"}"#),
             ("/staging/deliver", r#"{"name":"x.epub"}"#),
             ("/staging/delete", r#"{"name":"x.epub"}"#),
         ] {
@@ -279,14 +233,12 @@ mod tests {
     }
 
     #[test]
-    fn optimize_and_deliver_validate_before_starting_anything() {
+    fn deliver_validates_before_starting_anything() {
         let t = tempfile::tempdir().unwrap();
         let st = state(&t);
         let router = router(st.clone());
         // 不存在的书 / 不支持的格式：400，且没有留下忙锁
         for (path, body, hint) in [
-            ("/staging/optimize", r#"{"name":"nope.epub"}"#, "没有这本书"),
-            ("/staging/optimize", r#"{"name":"a.cbz"}"#, "只有 EPUB/PDF"),
             ("/staging/deliver", r#"{"name":"nope.epub"}"#, "没有这本书"),
             ("/staging/deliver", r#"{"name":"a.cbz"}"#, "xochitl 只读 EPUB"),
         ] {
@@ -296,30 +248,8 @@ mod tests {
         }
         assert!(!st.staging.is_busy("nope.epub") && !st.staging.is_busy("a.cbz"));
         // 缺字段 400；非法 JSON 400
-        assert_eq!(call(&router, Method::Post, "/staging/optimize", "{}").0, 400);
-        assert_eq!(call(&router, Method::Post, "/staging/optimize", "not json").0, 400);
-    }
-
-    #[test]
-    fn cancel_reports_three_states_not_busy_uncancellable_cancellable() {
-        let t = tempfile::tempdir().unwrap();
-        let st = state(&t);
-        let router = router(st.clone());
-        let cancel = |name: &str| call(&router, Method::Post, "/staging/cancel", &format!(r#"{{"name":"{name}"}}"#));
-        // 没在处理 → 400
-        let (code, v) = cancel("x.epub");
-        assert_eq!(code, 400);
-        assert!(msg(&v).contains("没有在处理"), "{v}");
-        // 在处理但这一步不能中途停（如单文件上传）→ 200 cancelled:false
-        assert!(st.staging.try_start_busy("x.epub"));
-        let (code, v) = cancel("x.epub");
-        assert_eq!((code, &v["cancelled"]), (200, &serde_json::json!(false)), "{v}");
-        assert!(msg(&v).contains("无法中途停止"));
-        // 声明可取消 → 200 cancelled:true，且取消标记已登记
-        st.staging.mark_cancellable("x.epub");
-        let (code, v) = cancel("x.epub");
-        assert_eq!((code, &v["cancelled"]), (200, &serde_json::json!(true)), "{v}");
-        assert!(st.staging.is_cancelled("x.epub"));
+        assert_eq!(call(&router, Method::Post, "/staging/deliver", "{}").0, 400);
+        assert_eq!(call(&router, Method::Post, "/staging/deliver", "not json").0, 400);
     }
 
     #[test]
@@ -339,10 +269,13 @@ mod tests {
         assert_eq!(call(&router, Method::Post, "/staging/mark", r#"{"name":"m.epub","target":"native"}"#).0, 200, "native 仍接受（向后兼容）");
         assert!(st.staging.list()[0].delivered.as_ref().unwrap().native.is_some(), "记了一笔原生落库");
         assert_eq!(call(&router, Method::Post, "/staging/mark", r#"{"name":"m.epub"}"#).0, 200, "target 可省略");
-        // 方法不对 405；路径不存在 404（已删的死路由 /inbox*、/staging/render/* 同样 404）
+        // 方法不对 405；路径不存在 404（已删的死路由 /inbox*、/staging/render/*、/staging/optimize 等同样 404）
         assert_eq!(call(&router, Method::Get, "/staging/render/abc", "").0, 404);
         assert_eq!(call(&router, Method::Get, "/inbox", "").0, 404);
-        assert_eq!(call(&router, Method::Get, "/staging/optimize", "").0, 405);
+        assert_eq!(call(&router, Method::Get, "/staging/deliver", "").0, 405);
+        for gone in ["/staging/optimize", "/staging/fetch-article", "/staging/cancel", "/staging/originals/restore"] {
+            assert_eq!(call(&router, Method::Post, gone, r#"{"name":"m.epub"}"#).0, 404, "{gone} 已删");
+        }
         assert_eq!(call(&router, Method::Get, "/nope", "").0, 404);
     }
 

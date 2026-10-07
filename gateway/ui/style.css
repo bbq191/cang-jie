@@ -155,8 +155,6 @@ dl.help dd{margin:.2em 0 .2em;color:var(--mute);font-size:.9em;line-height:1.65}
 .confirm-msg{font-size:.95em;line-height:1.6;white-space:pre-wrap;word-break:break-word}
 .confirm-actions{display:flex;justify-content:flex-end;gap:.5em;margin-top:1em}
 .confirm-input{width:100%;box-sizing:border-box;margin-top:.8em;font:inherit;padding:.45em .6em;border:1px solid var(--line);border-radius:.5em;background:var(--bg);color:var(--fg)}
-.stg-orig summary{cursor:pointer;font-weight:600}
-.stg-orig .stg-list{margin-top:.5em}
 
 /* 母版库（2026-09-20 重设计，手机+PC）。PC 上放宽 main（其它页保持 48em 阅读宽度）、列表两列；手机上每行动作换到
    书名下面、页码收成"上一页 第 x/y 页 下一页"、批量操作栏固定在屏幕底部。 */
@@ -170,7 +168,6 @@ dl.help dd{margin:.2em 0 .2em;color:var(--mute);font-size:.9em;line-height:1.65}
 .chip{border:1px solid var(--line);background:var(--surface);color:var(--mute);padding:.4em .9em;border-radius:2em;cursor:pointer;font-size:.9em;white-space:nowrap}
 .chip.on{background:var(--accent);color:var(--accent-fg);border-color:var(--accent);font-weight:600}
 .stg-selrow{display:flex;align-items:center;gap:.6em;flex-wrap:wrap;margin:.4em 0;padding:.5em .2em;border-bottom:1px solid var(--line)}
-.stg-spacer{flex:1}
 .stg-list{list-style:none;margin:.5em 0 0;padding:0;display:flex;flex-direction:column;gap:.5em}
 .stg-row{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:.5em .8em;align-items:start;padding:.65em .8em;border:1px solid var(--line);border-radius:.7em;background:var(--surface)}
 .stg-row.sel{border-color:var(--accent);background:color-mix(in srgb,var(--accent) 6%,var(--surface))}
@@ -215,7 +212,6 @@ header .links{white-space:nowrap}
 .stg-dest{display:flex;flex-direction:column;gap:.4em;margin:.5em 0}
 .stg-newrow{display:flex;gap:.4em;flex:1 1 100%;align-items:center}
 .stg-newrow input{flex:1;min-width:0}
-.stg-muted{color:var(--mute)}
 /* 手机/PC 同一套单列布局（2026-09-20 用户要求界面保持一致、类似其它页面），并保证不产生横向溢出 */
 .stg-root,#stgroot{min-width:0;max-width:100%}
 .stg-row{min-width:0}

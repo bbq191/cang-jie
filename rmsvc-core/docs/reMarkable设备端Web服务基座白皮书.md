@@ -92,7 +92,7 @@
 | `asset` | book-serve、font-serve、wallpaper-serve | `AssetStore`（仓库：`validate`/`install`/`list`/`remove`）+ `AssetUploadFlow`（上传流程写一次）。拒收/成功文案由各仓库覆盖。暂存目录：`new(&paths)` 用上面的 `upload_tmp_dir()`（font-serve、wallpaper-serve），`in_dir(dir)` 由调用方指定（book-serve 用母版库同分区的 `.work/`；已删的 koreader-serve 当年用 `~/.local/state/shelf/koreader-upload`）。半成品名是 `.<uuid>.<kind>.part`，`clean_stale()` 在服务启动时清掉上次中途被杀留下的（font-serve、wallpaper-serve 启动时调用，09-25；koreader-serve 当年也调）。暂存与目标同在 /home，font-serve 安装直接改名，跨分区才退回拷贝 |
 | `formats` | 5 个 + 网关 | 文件格式白名单的**单一事实源**：书籍只收 `epub`/`pdf`（09-18 起），字体 `ttf/otf/ttc`，图片 `jpg/jpeg/png`（KOReader 词典 `DICT_EXTS` 2026-09-30 删）。网页 `accept`（网关注入）和服务端上传门同源 |
 | `ttf` | font-serve | TTF/OTF 家族名（nameID 16 优先）、魔数校验、CJK 覆盖率；汉字覆盖数钳到区内总码位、够数即停（防恶意字体堆重叠段导致数亿次迭代，09-22）；format-12 里 `startCharCode > endCharCode` 的损坏组跳过（09-25：此前相减下溢，debug 版 panic、release 版回绕成天文数字直接报满 100%） |
-| `cache` | `TtlCache`：book-serve、网关（设备健康页）；`StampCache`：book-serve | **`TtlCache`**：单值 TTL 缓存，给每次刷新都会打、但算一次很重的 `/status`（如 3 秒 TTL）；本服务操作完成时 `invalidate`。计算期间持锁，并发请求等同一份结果。**`StampCache` + `FileStamp`**（09-30）：按文件戳失效的键值缓存，给“每次列表都要开文件判一遍、但文件很少变”的查询用（母版库列表的优化等级 / 落库边车、阅读方向判 zip）。戳 = (长度, mtime, inode)：带 inode 是因为 mtime 按时钟节拍取，同一节拍里原子写成等长内容只看 (长度, mtime) 会误判没变。计算**不持锁**（同键并发只是多算一次）；条目到上限整表清空重来，调用方可 `retain` 掉已删的键。此前 book-serve 里三处各写一份“(大小, mtime) 缓存” |
+| `cache` | `TtlCache`：book-serve、网关（设备健康页）；`StampCache`：book-serve | **`TtlCache`**：单值 TTL 缓存，给每次刷新都会打、但算一次很重的 `/status`（如 3 秒 TTL）；本服务操作完成时 `invalidate`。计算期间持锁，并发请求等同一份结果。**`StampCache` + `FileStamp`**（09-30）：按文件戳失效的键值缓存，给“每次列表都要开文件判一遍、但文件很少变”的查询用（母版库列表的落库边车与 `.content` 页数、阅读方向判 zip；2026-10-07 前还有优化等级）。戳 = (长度, mtime, inode)：带 inode 是因为 mtime 按时钟节拍取，同一节拍里原子写成等长内容只看 (长度, mtime) 会误判没变。计算**不持锁**（同键并发只是多算一次）；条目到上限整表清空重来，调用方可 `retain` 掉已删的键。此前 book-serve 里三处各写一份“(大小, mtime) 缓存” |
 | `clock` | 8 个 | unix 时间戳唯一出处；取不到时间回 0 |
 | `sync` | book-serve、网关、笔记线四个服务与 vendorcfg、font-serve、wallpaper-serve、本 crate 自身 | `sync::lock`：容忍 poison 的取锁。release 是 `panic="unwind"`，线程 panic 后它持有的锁被标 poison，别处再 `.lock().unwrap()` 就会让之后每个请求都跟着 panic；这里保护的都是缓存/队列/计数这类半途中断也自洽的状态，接着用即可。09-24 收编了 book-serve 私有的 `ops::lock` 和书架两服务、本 crate 里手写的 `.lock().unwrap_or_else(|e| e.into_inner())`，09-25 又把网关、笔记线、系统增强的 33 处改用它（见 §07）。条件变量 `wait*` 的 poison 处理它管不到，仍是手写 |
 
@@ -130,7 +130,7 @@
 
 ## 05｜维护纪律、构建与测试
 
-- **改之前先查谁在用**：上面每节都列了消费方。`bookconv` 出问题只影响书处理；这里出问题理论上 4 个顶层项目全受影响。
+- **改之前先查谁在用**：上面每节都列了消费方。`shelf-conv`（书架的读书工具库）出问题只影响书架；这里出问题理论上 4 个顶层项目全受影响。
 - **公开结构体不随便加字段**：`http::Request` 等被各服务直接构造（包括测试），加字段会波及全部调用方。09-24 的对端 IP 就是为此走了内部头。
 - **path 依赖的深度**：`..` 的个数取决于消费方自己的目录深度——`gateway/` 写 `../rmsvc-core`，`enhance/*-serve/` 写 `../../rmsvc-core`，`shelf/services/*/`、`notes/services/*/`、`notes/crates/vendorcfg/` 写 `../../../rmsvc-core`。写错时 `cargo build` 会直接说它去哪找过，照着改。
 - **每个独立顶层项目各带一份 `.cargo/config.toml`**（交叉编译的 CC/AR 覆盖），原因见 §06。
@@ -147,7 +147,7 @@
 - **原子写换了 inode，权限跟着丢**（2026-09-25）：tmp + rename 得到的是新文件，权限按 umask 来，不继承原文件。改别人家的配置文件（尤其含凭证的 `xochitl.conf`）要显式保留原权限（§03）。
 - **暂存放在 tmpfs 上会吃服务的内存配额**（2026-09-25）：`/tmp`、运行时目录都是内存；几十 MB 的上传暂存计入 cgroup `MemoryMax`，还要跨分区再拷一遍。暂存要和最终目标放在同一分区（§02 paths）。
 - **通配路由抢字面路由**：旧的“先注册先匹配”下，`GET /{name}` 抢过 `/health`（wallpaper-serve 真机踩过）。现在按具体程度分发，注册先后不再影响匹配（`service.rs` 里当年“`/health` 必须先注册”的注释 09-30 已改掉）。
-- **临时文件名 = 目标名 + 后缀会超长**（2026-09-30）：Linux 单段文件名上限 255 字节，中文一个字 3 字节，80 来个字的书名加上 `.<pid>.<序号>.tmp` 就超了。凡是“在目标名后面拼后缀”的地方都要先截短（§02 fs）；book-serve 的优化临时文件干脆改成不带书名的 `ScratchFile`（见书架线文档）。
+- **临时文件名 = 目标名 + 后缀会超长**（2026-09-30）：Linux 单段文件名上限 255 字节，中文一个字 3 字节，80 来个字的书名加上 `.<pid>.<序号>.tmp` 就超了。凡是“在目标名后面拼后缀”的地方都要先截短（§02 fs）；book-serve 的优化临时文件干脆改成不带书名的 `ScratchFile`（见书架线文档；2026-10-07 书架不再优化书，`ScratchFile` 只剩跨分区入库中转一种）。
 
 ## 07｜命名遗留与待办
 
@@ -156,7 +156,7 @@
 **待办**
 
 - 命名遗留要不要处理，没有排期；要动时先设计迁移方案，不是简单改字符串。
-- （已办，2026-09-25）网关、笔记线、系统增强里 33 处手写的容忍 poison 取锁已改用 `sync::lock`（纯样板，不改行为）。剩下的只有条件变量 `wait*` 的 poison 处理（`sync::lock` 管不到）和不依赖本 crate 的 bookconv。
+- （已办，2026-09-25）网关、笔记线、系统增强里 33 处手写的容忍 poison 取锁已改用 `sync::lock`（纯样板，不改行为）。剩下的只有条件变量 `wait*` 的 poison 处理（`sync::lock` 管不到）（当年还有不依赖本 crate 的 bookconv，2026-10-07 已从本仓库删除）。
 - （已办）`lib.rs` 模块注释里 `auth` 的过时说法“salted SHA-256”已更正为 PBKDF2（commit `8320ac5`）。
 
 ## 附｜来历

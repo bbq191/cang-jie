@@ -46,7 +46,7 @@ const TMP_BASE_MAX: usize = 200;
 
 /// `path` 同目录下的临时文件路径：`<目标文件名>` + `suffix`；目标文件名太长时按字符边界截短到 [`TMP_BASE_MAX`] 字节。
 /// 此前直接拼完整文件名，目标名本身在 243 字节以上（中文 80 来个字的书名）时临时名超过 255 字节，
-/// 原子写直接报 `File name too long`——母版库入库、抓网文（标题截到 80 字＋`.epub` 就是 245 字节）都会撞上。
+/// 原子写直接报 `File name too long`——母版库入库（当时还有抓网文：标题截到 80 字＋`.epub` 就是 245 字节）都会撞上。
 fn tmp_sibling(path: &Path, suffix: &str) -> PathBuf {
     let name = path.file_name().map(|n| n.to_string_lossy()).unwrap_or_default();
     let mut end = name.len().min(TMP_BASE_MAX);

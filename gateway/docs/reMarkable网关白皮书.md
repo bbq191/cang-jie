@@ -4,10 +4,11 @@
 > **怎么读**：只想知道网关现在什么样 → 读“现状”（一句话、术语、关键数字、验证状态）；要改登录 → §01；加服务或查“请求为什么到不了” → §02；网页不刷新 → §03、§5.1；大书排队/批量 → §04；改网页 → §05；系统增强开关与设备健康 → §06、§06b；踩坑汇总 → §08。
 > 后面每章讲一个主题的现行设计，被推翻的做法只留结论和教训（完整经过在 git 历史）。
 > 入口文档（构建、部署、接口速查）见 [`../README.md`](../README.md)；共用基座（HTTP、TLS、鉴权原语）见 [`rmsvc-core` 白皮书](../../rmsvc-core/docs/reMarkable设备端Web服务基座白皮书.md)；整体位置见 [`../../docs/OVERVIEW.md`](../../docs/OVERVIEW.md)。
-> 所有数字和行为以 2026-09-30 的代码为准（`gateway/src`、`gateway/ui`、`rmsvc-core/src`），含第五轮审计与同日移除电池刺客的改动（**09-30 已部署、部署自检通过，功能待手测**，见“真机验证状态”）。
+> 所有数字和行为以 2026-09-30 的代码为准（`gateway/src`、`gateway/ui`、`rmsvc-core/src`），含第五轮审计与同日移除电池刺客的改动（**09-30 已部署、部署自检通过，功能待手测**，见“真机验证状态”）。2026-10-07 书架不再优化书，§04、§05 里闸门、批量、母版库页的描述按 `feat/drop-book-optimize` 分支的代码改成现状（**已提交，未合并、未部署**）。
 >
 > **验证程度的写法**：「真机通」= 在设备上实际操作过这个功能；「已部署」= 代码已装上设备、部署自检（`verify-on-device.sh`、服务状态、接口健康检查）通过，但功能本身还没人手测；「host 验证」= 只有单元测试或开发机上的测试。
 > **2026-09-29 设备卸掉了 KOReader、第三方 WeRead 与 appload**（只用 xochitl 自带阅读器）；09-30 第五轮审计随之从网关撤掉 `koreader` 代理段与事件订阅、批量“加入 KOReader”、基石探测里的 appload/KOReader/WeRead，以及网页上所有 KOReader 入口。下文凡提到这些，都是带日期的历史，已标“已移除”。
+> **2026-10-07 书架不再优化书**（用户定：书在电脑上用 [sheng-ren](https://github.com/bbq191/sheng-ren) 的 booklib 按 `xochitl` 阅读模式优化好再上传）：网关随之删掉网页的「优化」按钮与优化徽章、「抓网文」卡片、「原 PDF 备份」面板、行内「停止」；批量队列只剩「加入 xochitl」，闸门只拦 `staging/deliver`；母版库筛选改成 全部 / 未加入 / 已加入（默认「未加入」，“隐藏已完成”开关删掉）；「实验室」删掉漫画页边距卡片（带 sheng-ren 标记的漫画一律设）。**已提交（分支 `feat/drop-book-optimize`），待部署**。
 
 ## 现状（2026-09-30）
 
@@ -23,7 +24,7 @@
 | 注册表 | 每个服务启动时在 `$XDG_RUNTIME_DIR/shelf/services/<名>.json` 写下自己的端口；网关读这个目录就知道谁活着 |
 | seg（URL 段） | `/api/books/...` 里的 `books`；`manage.rs` 的 `MODULES` 表把它对应到服务名 `book-serve` |
 | SSE | 服务器单向推送的长连接；网页靠它“被通知”刷新，而不是定时去问 |
-| 闸门（budget） | 按文件体积给“吃内存的操作”排队：大档同时 1 本、小档同时 3 本 |
+| 闸门（budget） | 按文件体积给「加入 xochitl」排队：大档同时 1 本、小档同时 3 本（2026-10-07 前还管优化、抓网文） |
 | 批量队列（batch） | 网关自己的后台队列，一次处理一本，关掉浏览器照跑 |
 | 整机重启 | 让 xovi 扩展、界面补丁（qmd）生效的唯一方式（2026-09-25 起）。单独重启 xochitl 有概率在它退出时崩溃，所以网页里的提示一律写“整机重启” |
 | 私有 CA | 设备首次启动时自己生成的根证书；装进手机/电脑一次，浏览器就不再报“不安全” |
@@ -43,8 +44,8 @@
 | 代理超时 | 900 秒 | `proxy.rs` |
 | 代理应答流式转发 | 200 且带长度，又是下载（带 `Content-Disposition`）或 > 256KB → 边读边发；其余读完再回 | `proxy.rs::STREAM_MIN_BYTES` |
 | systemd | `CPUWeight=20`、`MemoryMax=192M`、`Nice=5` | `systemd/gateway.service` |
-| 测试 | Rust 77 个（`cargo test`）；前端 3 个 node 测试文件共 10 项（`node --test gateway/ui/test/*.test.mjs`）+ 1 个手动跑的浏览器冒烟（`smoke.puppeteer.mjs`，要设 `PUPPETEER_NODE_MODULES`） | 2026-09-30 移除电池刺客后实跑 |
-| 语言包 | `zh-CN.json` / `en-US.json` 各 513 个 key（09-30 先删 KOReader 相关 44 个等，再随电池刺客删 30 个），`locales.test.mjs` 钉住中英键集合与 `{占位符}` 一致、`app.js` 里字面量 `T()` 键都在、没有死键 | `ui/locales/`、`ui/test/locales.test.mjs` |
+| 测试 | Rust 74 个（`cargo test`）；前端 3 个 node 测试文件共 10 项（`node --test gateway/ui/test/*.test.mjs`）+ 1 个手动跑的浏览器冒烟（`smoke.puppeteer.mjs`，要设 `PUPPETEER_NODE_MODULES`） | 2026-10-07 实跑（浏览器冒烟这次没跑：本机没装 puppeteer） |
+| 语言包 | `zh-CN.json` / `en-US.json` 各 474 个 key（2026-10-07 实数；09-30 为 513，10-07 随书架不再优化书、删「隐藏已完成」与漫画页边距卡片减少），`locales.test.mjs` 钉住中英键集合与 `{占位符}` 一致、`app.js` 里字面量 `T()` 键都在、没有死键 | `ui/locales/`、`ui/test/locales.test.mjs` |
 
 **真机验证状态**
 
@@ -52,7 +53,7 @@
 |---|---|
 | 网关部署运行（`active`、`NRestarts=0`） | 真机通（09-24 只读核对；09-25 整轮卸载后重装 43✓ 0✗；09-30 两次部署后 `verify-on-device.sh` 38✓ / 36✓、1⚠（刚开机）0✗，9 个常驻服务 `NRestarts` 0、开机后 7–9 秒起齐） |
 | 私有 CA 自动迁移到带名称约束的新 CA | 设备端已发生（2026-09-24 09:38，日志与 `.bak-*` 文件可见）；**各手机/电脑是否已重装新 CA、删掉旧 CA：未核实** |
-| 批量优化、中途停止、网关重启后续跑 | 真机通（2026-09-20） |
+| 批量优化、中途停止、网关重启后续跑 | 真机通（2026-09-20）。批量优化与行内停止 2026-10-07 已删除，续跑机制不变 |
 | 批量“加入 xochitl” | 真机通（2026-09-25 用户在网页操作：两本 >90MB《乱马》加入 xochitl，队列 `done 2 / failed 0`）。批量“加入 KOReader”当时也实测过，09-30 已移除 |
 | 闸门“两本大书真的串行、内存峰值不叠加” | **从未在真机验证**。09-24 修掉了“查询失败一次就提前放名额”，但那只有单元测试覆盖 |
 | 09-24 第三轮审计（代理大应答流式、`/api/enhance/status` 缓存、改密码 PBKDF2 挪锁外、按 tab 懒加载与一批界面修复） | 09-24 已部署。09-25 真实登录只读走查 108 屏，没见溢出或报错。**没专门核**：下载大原件时网关的 `VmHWM`、“已加载”徽章在整机重启前后是否正确刷新 |
@@ -62,6 +63,7 @@
 | 09-25 第四轮审计（代理 GET/DELETE 不带 `Content-Length`、批量新一轮总数算上遗留项、前端按事件来源减少重取、上传器/笔记保存/批量按钮修复、对话框公共骨架） | host 测试通过；09-25 已随整轮部署（43✓），这些行为本身没在真机专门核（见 §09） |
 | **09-30 第五轮审计**（撤 KOReader/WeRead/appload、Basic 认证缓存、全部中止补漏、事件流断线退避、旧 `batch.json` 剔除 koreader 任务、闸门重查至少隔 5 秒、母版库全量刷新 6→4 个请求、新建文件夹不再轮询） | host：`cargo test`、node 10 项、浏览器冒烟通过；**09-30 14:10 已部署**，部署自检通过；功能待手测（见 §09） |
 | **09-30 移除电池刺客 / 手写优化**（删 `battop.rs` 与 `/api/enhance/battop/*`、`hwStrokeEnabled` 开关、两个网页入口与 30 个语言键） | host 测试通过；**09-30 15:23 已部署**，部署自检通过（`/api/enhance/status` 不再返回这两项） |
+| **10-07 书架不再优化书**（删「优化」/「抓网文」/「原 PDF 备份」/行内「停止」，批量只剩加入 xochitl，闸门只拦加入，筛选改三档） | host：`cargo test` 74 个、node 10 项通过；浏览器冒烟没跑。**已提交（分支 `feat/drop-book-optimize`），未合并、未部署** |
 
 ## 01｜登录与安全
 
@@ -152,32 +154,33 @@
 
 漫画优化做完后真机测出：优化、超限分卷投递的内存峰值约等于文件体积本身（245MB 的书优化峰值 206MB）。`book-serve` 的忙锁按书名分别加，点不同的书互不阻塞；设备只有约 2GB 内存，`systemd MemoryMax` 又没真正生效，同时点几本大部头会线性叠加，是真实的 OOM 风险。用户要求按内存用量限流，而不是按操作个数。
 
+〔2026-10-07：吃内存的大头「优化」随书架不再优化书删掉（优化改在电脑上用 sheng-ren 做），闸门现在只拦「加入 xochitl」。加入是流式上传、大文件通道是本机拷贝，单本内存很小（书架白皮书 §5），闸门留着当并发上限：一次只投一本 >90MB 的大书，也避免同时往 xochitl 塞太多本。〕
+
 各服务是独立进程，进程内的锁天然不跨进程；而网关是这些操作**物理上唯一必经**的转发关口，放在这里用一把进程内的锁就够，不需要跨进程锁、共享内存或 IPC。批量队列放网关是同一个理由，而且批量里每一本也要过同一道闸。
 
 ### 4.2 闸门（`budget.rs`）
 
 ![并发/内存预算闸门](../../docs/diagrams/budget-gate.svg)
 
-- **拦哪些**：只拦三个 POST，都在 `book-serve`——`staging/optimize`（优化）、`staging/deliver`（加入 xochitl）、`staging/fetch-article`（抓网文，**只在 `optimize:true` 勾了同步优化时**，09-25 补）。原第四个 `koreader-serve` 的 `books/adopt`（加入 KOReader）09-30 已移除。其余请求（包括大文件上传）照常纯流式转发。抓网文请求时还不知道书名（要抓完才有标题），排队键用 `抓网文 <url>`、固定小档（网文通常几十 KB）；网页的“排队/处理中”计数会把它算进去。
+- **拦哪些**：只拦 `book-serve` 的 `POST staging/deliver`（加入 xochitl）。其余请求（包括大文件上传）照常纯流式转发。历史：09-25～10-06 还拦 `staging/optimize`（优化）与勾了「同步优化」的 `staging/fetch-article`（抓网文，排队键 `抓网文 <url>`），2026-10-07 随这两个接口一起删掉；`koreader-serve` 的 `books/adopt`（加入 KOReader）09-30 已移除。
 - **怎么分档**：看母版库里这本书的文件体积。**大于 90MB** 是大档，同时最多 1 本；其余小档，同时最多 3 本。两档各自计数、互不占对方名额（所以最坏是 1 本大的 + 3 本小的同时跑）。90MB 和 book-serve 的 xochitl 上传硬限恰好相同，是巧合，语义不同，不做同步。不做“按字节精算”，因为没有足够数据给出各操作的内存倍率，量化是假精确。
 - **等名额的三种结局**：拿到名额放行；等满 30 分钟超时（503）；被取消（503）。同名书已在排队或处理中 → 直接 **409**（排队表以书名为键，同名并存会互相抹掉记录，第二个还取消不掉）。
 - **跨会话可见、可取消**：`GET /api/budget/status → {pending, active}`；`POST /api/budget/cancel {name}` 只对还在排队的生效，已经在跑的救不回来（如实返回 `cancelled:false`）。状态在网关进程里，关掉浏览器、换设备都看得到（09-19 前这些是标签页里的 JS 状态，关页就丢）。
 - **名额什么时候还**（最容易出错的地方）：
-  - 抓网文是同步的（抓取 + 同步优化做完才回应），回应返回名额就还。抓网文的名额在联网抓取期间也占着，比只锁优化那一段略宽，换来不必把同步接口拆成“落地 + 再发一次异步优化”。
-  - 优化 / 加入 xochitl 是异步的：book-serve 立刻回“已开始”，真活在后台。网关把名额交给一条监控线程，查 `GET /staging` 直到这本 `busy=false`（或条目已消失，比如 PDF 转 EPUB 改了名）才还，最长 60 分钟。平时靠 book-serve 的事件唤醒，没事件 30 秒兜底查一次。两次查询**至少隔 5 秒**（09-30，`MIN_REQUERY`）：大书处理时 book-serve 约每秒发一条进度事件，此前每条都唤醒一次整表查询；代价是名额最多晚几秒归还。
+  - 加入 xochitl 是异步的：book-serve 立刻回“已开始”，真活在后台。网关把名额交给一条监控线程，查 `GET /staging` 直到这本 `busy=false`（或条目已消失）才还，最长 60 分钟。平时靠 book-serve 的事件唤醒，没事件 30 秒兜底查一次。两次查询**至少隔 5 秒**（09-30，`MIN_REQUERY`）：当时大书优化期间 book-serve 约每秒发一条进度事件，此前每条都唤醒一次整表查询；代价是名额最多晚几秒归还。
   - **查询要连续失败 6 次**（每次至多隔 5 秒）才当服务真挂了、放掉名额。09-24 前一次失败就放，而大书优化时 book-serve 正忙、10 秒查询超时最容易撞上，于是第二本大书被提前放进来——闸门在最该起作用的时候失效。
 
 ### 4.3 批量队列（`batch.rs`）
 
 ![批量队列状态机](diagrams/batch-queue.svg)
 
-- **接口**：`POST /api/batch {action: optimize|deliver, names?: [...], all?: true, folder?}` → `{queued, skipped}`；`GET /api/batch/status`（`running`、`action`、`total`、`done`、`current`、`queued`〔前 200 个〕、`queuedCount`、`failed[]`）；`POST /api/batch/stop` → `{cleared}`。
-- **资格**（和界面底部栏按钮同一套）：优化 = EPUB/PDF 且还没优化；加入 xochitl = EPUB/PDF。（`koreader` 动作 09-30 移除，再传回 400。）不适用的和重复入队的计入 `skipped`（`all:true` 时不适用的是预期筛选，不计）。
+- **接口**：`POST /api/batch {action: deliver, names?: [...], all?: true, folder?}` → `{queued, skipped}`；`GET /api/batch/status`（`running`、`action`、`total`、`done`、`current`、`queued`〔前 200 个〕、`queuedCount`、`failed[]`）；`POST /api/batch/stop` → `{cleared}`。
+- **资格**（和界面底部栏按钮同一套）：加入 xochitl = EPUB/PDF。`action` 只认 `deliver`：`koreader` 09-30 移除、`optimize` 2026-10-07 移除，再传都回 400“action 只能是 deliver”。不适用的和重复入队的计入 `skipped`（`all:true` 时不适用的是预期筛选，不计）。
 - **一轮的计数**：从空闲开始的一次入队开新一轮，`done`/`failed` 清零，`total` 按队列里**实际有多少本**算——`resume` 等不到 book-serve 放弃时，旧队列留在内存里没有 worker，下一次入队会连它们一起跑（09-25；此前 `total` 只算这次入队的数量，进度会显示成“5/2”）。已经在跑时再入队，累加进同一轮。
-- **执行**：后台 worker 线程**一次一本**（设备双核，优化内部已经在并行处理图片）。一个队列里可以混合两种动作。每本先过闸门，再直连对应服务；异步的等到 `busy=false`，再读母版库条目的 `delivered.<kind>` 判成败（`failed`/`cancelled` 记入 `failed[]`）。worker 用 `catch_unwind` 兜住 panic，只让这一本失败（release 是 `panic="unwind"`）。
-- **落盘与续跑**：每次状态变化原子写 `~/.local/state/shelf/batch.json`（序列化与写盘在同一把锁里，防止旧快照后写把队列回退）。网关启动时 `resume`：先把队列装进内存，后台等 book-serve 就绪（最长 30 分钟，前 30 秒每 2 秒探测、之后每 30 秒），再按最新母版库重新校验（已优化的不重做）；超时也**保留**队列，等下次入队一起跑。旧版落盘文件里残留已撤的 `koreader` 任务时，读回只剔除这几项、其余照常续跑（09-30；此前整份反序列化失败会丢掉整个队列）。
+- **执行**：后台 worker 线程**一次一本**。每本先过闸门，再直连 book-serve 的 `POST /staging/deliver`；等到 `busy=false`，再读母版库条目的 `delivered.deliver` 判成败（`failed` 记入 `failed[]`）。worker 用 `catch_unwind` 兜住 panic，只让这一本失败（release 是 `panic="unwind"`）。
+- **落盘与续跑**：每次状态变化原子写 `~/.local/state/shelf/batch.json`（序列化与写盘在同一把锁里，防止旧快照后写把队列回退）。网关启动时 `resume`：先把队列装进内存，后台等 book-serve 就绪（最长 30 分钟，前 30 秒每 2 秒探测、之后每 30 秒），再按最新母版库重新校验（已经不在母版库的不再做）；超时也**保留**队列，等下次入队一起跑。旧版落盘文件里残留已撤的 `koreader`（09-30）或 `optimize`（2026-10-07）任务时，读回只剔除这几项、其余照常续跑（`parse_saved`；09-30 前整份反序列化失败会丢掉整个队列）。
 - **防崩溃循环**：每项记 `attempts`，处理途中网关崩了最多重放 1 次；第二次还没走完就记失败跳过，免得某本书稳定触发崩溃时被 systemd 拉起后无限重放。
-- **全部中止**：清空还没开始的；正在处理的那本如果还在等闸门就取消排队，已进 book-serve 就发 `POST /staging/cancel`。还有一个窗口（09-30 补）：这本已经出队、过了闸门，但还没交给 book-serve——此时的取消对 book-serve 是空操作，这本会照样整本跑完。现在 `stop` 同时打一个“中止当前”标记，worker 提交前看到就不提交（记失败“已全部中止”）；标记在提交途中到达，就在提交后补发一次取消。EPUB 优化每处理完一个条目检查一次（按卷拆分投递每份之间原先也检查一次，分卷投递 2026-09-30 已移除），终态记 `cancelled`；单文件上传、PDF 优化没有安全中断点，只能跑完。
+- **全部中止**：清空还没开始的；正在处理的那本如果还在等闸门就取消排队；已经交给 book-serve 的会跑完（整本上传、大文件通道都没有安全的中断点）。还有一个窗口（09-30 补）：这本已经出队、过了闸门，但还没交给 book-serve——`stop` 同时打一个“中止当前”标记，worker 提交前看到就不提交（记失败“已全部中止”）。历史：2026-10-07 前已进 book-serve 的会再发 `POST /staging/cancel`，EPUB 优化每处理完一个条目检查一次、终态记 `cancelled`；这个接口随「优化」一起删掉。
 
 ## 05｜网页 UI
 
@@ -196,7 +199,7 @@
   | tab | 事件 | 重取 | 此前 |
   |---|---|---|---|
   | 传书（母版库） | 网关自己的 `batch`/`budget`（不带 `svc`） | `/api/batch/status`、`/api/budget/status` 两个 | 同（09-24 起） |
-  | 传书（母版库） | book-serve 的 `staging`（入库、忙态开始/结束、优化/落库进度，大书处理时约每秒一条） | 母版库列表 + 上面两个，共 3 个 | 全量（当时 6 个） |
+  | 传书（母版库） | book-serve 的 `staging`（入库、忙态开始/结束、落库结果；2026-10-07 前还有优化进度，大书时约每秒一条） | 母版库列表 + 上面两个，共 3 个 | 全量（当时 6 个） |
   | 传书（母版库） | 其余 `books` 事件（`mkdir`/`trash`/`inbox`/`render`）、切 tab、重连、操作后 | 全量 4 个：母版库列表、闸门、批量、book-serve 状态（09-30 撤掉 KOReader 状态与目录列表两个后） | 6 个 |
   | 其他 | 字体 / 壁纸任一服务 | 只刷发事件那个服务的子面板（各 2～3 个）；认不出来源退回整块刷新 | 当时连 KOReader 三块一起刷，约 7 个 |
   | 笔记 | 笔记四服务的事件 | 照常重取，但不再查 `/api/enhance/status`（切回 tab 时才查「导入 md」开关）；**焦点在本 tab 的输入框里时先不重画**，失焦后补一次；「整理」页切章节/导出标签不再每次查转写失败清单（09-30） | 每条事件都查一次 enhance 状态；重画会把光标连同输入框换掉 |
@@ -223,14 +226,14 @@
 
 1. **加入位置**：一个常驻的 xochitl 文件夹下拉，带“＋ 新建文件夹…”（09-29 前旁边还有一个 KOReader 下拉，已移除）。新建走 book-serve 的建文件夹队列：xochitl 里的 QML 代理 `shelf-mkdir-agent.qmd` 用长轮询 `GET /mkdir/pending?wait=290` 等着（09-24 前 25 秒；09-22 前是 8 秒一次定时拉），有人入队就立刻建。界面**不等它建好**（09-30）：记住的名字先补进下拉，加入 xochitl 时 book-serve 自己会等文件夹出现（`deliver.rs::ensure_folder`），建好后的 `mkdir` 事件把它换成真实列表里的那一项；此前前端每 2 秒查一次、最多 12 次，按钮跟着卡 24 秒。
 2. **搜书名**：输入框带建议（系列名 + 每本书名）。清爽书名去掉下载站 `-- 作者 -- hash` 尾巴，完整名在提示里。
-3. **行内只显示**书名、类型、大小、状态、进度；只有处理中/排队时才有一个“停止 / 取消排队”按钮（手机上放在书名下面一行，09-24）。
-4. **所有操作在勾选后的底部操作栏**，分三行（09-24 排布）：第一行“已选 N 本 / 清除选择”；第二行主操作“优化 / 加入 xochitl”等分一行（“加入 KOReader”09-30 移除），按钮上的小角标是“可处理数”，0 就置灰；第三行“下载原件 / 改名 / 删除”（多选时只剩删除，靠右一格）。窄屏（≤34em）去掉“加入”前缀，≤22.5em 再缩字号；按钮不折行、等高。运行中底部栏变成进度 + 全部中止。
-5. **PC 和手机同一套单列布局**；真分页（每页 25/50/100，PC 页码，手机上一页/下一页）；“全选当前筛选”“优化全部待优化（N）”。
+3. **行内只显示**书名、类型、大小、状态、进度；只有还在闸门排队时才有一个“取消排队”按钮（手机上放在书名下面一行，09-24）。已经在加入的书没有能中途停的步骤，不给“停止”（2026-10-07 前处理中的优化可以停）。徽章：格式、大小、落库记录（晚于母版修改时间标“旧”）、渲染自检、失败或“被重启打断”；优化等级与“PDF 来源”徽章 2026-10-07 删除。
+4. **所有操作在勾选后的底部操作栏**，分三行（09-24 排布）：第一行“已选 N 本 / 清除选择”；第二行主操作“加入 xochitl”（“加入 KOReader”09-30 移除、“优化”2026-10-07 移除），按钮上的小角标是“可处理数”，0 就置灰；第三行“下载原件 / 改名 / 删除”（多选时只剩删除，靠右一格）。窄屏（≤34em）去掉“加入”前缀，≤22.5em 再缩字号；按钮不折行、等高。运行中底部栏变成进度 + 全部中止。
+5. **PC 和手机同一套单列布局**；真分页（每页 25/50/100，PC 页码，手机上一页/下一页）；“全选当前筛选”。筛选：全部 / 未加入 / 已加入，各带数量，**默认「未加入」**，外加格式过滤（2026-10-07 起；此前是 全部 / 待优化 / 已优化 / 已完成 + “隐藏已完成”开关，那个开关跟「未加入」重复，删掉；浏览器里记着的旧“已优化”筛选回落到「未加入」）。
 6. **验证方式**：无头浏览器在 320/360/390/414/1024/1280 宽下逐状态量 `scrollWidth`，无横向溢出、无截字。真实触屏交互未验证。
 
-7. **“已完成”只认加入过 xochitl**（09-30）：“隐藏已完成”和「已完成」筛选看的是 `delivered.native`。设备卸掉 KOReader 后，以前只加入过 KOReader 的书不在任何阅读器里，会回到“待处理”；徽章也只显示“已加入 xochitl”，不再有“已加入KO”。
+7. **“已完成”只认加入过 xochitl**（09-30）：「已加入」筛选（10-07 前叫「已完成」，另有同判据的“隐藏已完成”开关，10-07 删）看的是 `delivered.native`；10-07 前 EPUB 还要“优化过”才算完成。设备卸掉 KOReader 后，以前只加入过 KOReader 的书不在任何阅读器里，会回到“待处理”；徽章也只显示“已加入 xochitl”，不再有“已加入KO”。
 
-原件下载、改名、原 PDF 恢复、笔记全文搜索这些 09-23/24 新功能，业务逻辑在 book-serve / note-serve，网关只是页面宿主，细节见书架与笔记白皮书。（同期的“导入 KOReader 批注”按钮 09-30 已从网页移除；ink 侧接口同日也已从仓库删除，见笔记白皮书第 9 章。）
+原件下载、改名、笔记全文搜索这些 09-23/24 新功能，业务逻辑在 book-serve / note-serve，网关只是页面宿主，细节见书架与笔记白皮书（同期的“原 PDF 备份”面板 2026-10-07 随 PDF 转换一起删除）。（同期的“导入 KOReader 批注”按钮 09-30 已从网页移除；ink 侧接口同日也已从仓库删除，见笔记白皮书第 9 章。）
 
 ## 06｜系统增强接口（`src/enhance/`）
 
@@ -239,12 +242,12 @@
 | 接口 | 作用 |
 |---|---|
 | `GET /api/enhance/status` | 返回下面五个开关，以及 `loaded`（扩展是否真的加载进 xochitl）。09-30 前还返回 `hwStrokeEnabled` 与 battop 状态 |
-| `PUT /api/enhance/qol` | body 里出现哪个布尔键就改哪个：`hlSnapCjk`、`notesImportMdEnabled`、`comicMinMargin`、`tapPageTurn`、`rtlPageTurn`；一个都没有回 400（已移除的 `hwStrokeEnabled` 单独传也回 400） |
+| `PUT /api/enhance/qol` | body 里出现哪个布尔键就改哪个：`hlSnapCjk`、`notesImportMdEnabled`、`tapPageTurn`、`rtlPageTurn`；一个都没有回 400（已移除的 `hwStrokeEnabled`、`comicMinMargin` 单独传也回 400） |
 | ~~`POST /api/enhance/battop/{start\|stop}`~~、~~`GET /api/enhance/battop/summary`~~ | 电池刺客的启停与数据，**2026-09-30 随 battop 一起移除**（`src/enhance/battop.rs` 已删） |
 
 - **开关存哪**：`~/.local/share/cangjie-ime/reading-qol.json`（与设备原生设置页、langhook C hook 共用）。写法是“整份读进来、只覆盖要改的键、其余原样写回”，进程内串行化，所以不认识的键不会丢。
-- **缺省值**：`hlSnapCjk` 缺省开（荧光笔汉字吸附）；`notesImportMdEnabled`、`comicMinMargin` 缺省关（新功能要手动去实验室打开）；`tapPageTurn`（单击翻页）、`rtlPageTurn`（日漫翻页规则）缺省关 = xochitl 原生行为，由 `reader-page-turn.qmd` 每次打开书时读，切换后下次打开书生效（细节见系统增强线白皮书）。已移除的手写优化（09-30）原有派生开关 `hwStrokeEnabled`（`hwStrokeNibMinRatio < 1.0` 就算开）；旧设备文件里的 `hwStroke*` 键按上一条规则原样保留，无害。
-- **页面位置**：荧光笔吸附、阅读器翻页（单击翻页 + 日漫翻页规则）在「管理 → 系统增强」；漫画页边距最小化、导入 md 在「管理 → 实验室」。2026-09-30 移除：「系统增强」里的电池刺客开关卡片、battop 在跑时才出现的「电池刺客」子标签、实验室里的手写笔迹优化开关。
+- **缺省值**：`hlSnapCjk` 缺省开（荧光笔汉字吸附）；`notesImportMdEnabled` 缺省关（新功能要手动去实验室打开）；漫画页边距开关 `comicMinMargin` 2026-10-07 删除（带 sheng-ren 页边距标记的漫画一律设页边距 1），旧文件里的这个键原样保留、无人再读；`tapPageTurn`（单击翻页）、`rtlPageTurn`（日漫翻页规则）缺省关 = xochitl 原生行为，由 `reader-page-turn.qmd` 每次打开书时读，切换后下次打开书生效（细节见系统增强线白皮书）。已移除的手写优化（09-30）原有派生开关 `hwStrokeEnabled`（`hwStrokeNibMinRatio < 1.0` 就算开）；旧设备文件里的 `hwStroke*` 键按上一条规则原样保留，无害。
+- **页面位置**：荧光笔吸附、阅读器翻页（单击翻页 + 日漫翻页规则）在「管理 → 系统增强」；导入 md 在「管理 → 实验室」（「漫画页边距最小化」卡片 2026-10-07 删除）。2026-09-30 移除：「系统增强」里的电池刺客开关卡片、battop 在跑时才出现的「电池刺客」子标签、实验室里的手写笔迹优化开关。
 - **扩展加载检测**（09-24，`enhance/loaded.rs`）：开关只反映配置，看不出 `.so` 到底有没有进 xochitl——历史上两次“开关开着其实没生效”（09-09 langhook 整个从设备上消失；GLIBC 版本不符让 hw-stroke 静默加载失败）。现在直接读 xochitl 主进程（`comm==xochitl` 且父进程是 1，排除渲染用的同名子进程）的 `/proc/<pid>/maps`：映射了哪个 `extensions.d/*.so` 就是真加载了，网页显示“已加载 / 未加载 / xochitl 未运行”。qmd 补丁（如 `shelf-comic-margins.qmd`）不是 `.so`，按“qt-resource-rebuilder 在进程里 + 补丁文件早于 xochitl 启动”推断为已载入，文件比进程新则显示“待重启”（指整机重启，悬停提示里写明）——这是按加载机制推断，看不到 qmd 里的定位是否全部命中（阅读器翻页的 `reader-page-turn.qmd` 同理）。导入 md 只标“网页功能”（不需要往 xochitl 里加载东西）。
 - **这个接口很常被调**（管理页每次刷新、每个 manage 事件、笔记页每次刷新），所以 09-24 第三轮审计给它做了缓存（已部署；下面的耗时是 host 合成数据）：`reading-qol.json` 一次请求只读一次（原来六个开关各读一遍）；xochitl 扩展扫描按 **(pid, 进程启动时刻)** 缓存——同一个 xochitl 进程只全量扫一次 `/proc` 和它的 `maps`，之后每次只读一次 `/proc/<pid>/stat` 核对还是不是同一个进程（host 合成数据 253µs → 1.7µs）。启动不到 30 秒的 xochitl 不缓存，因为 xovi 还在逐个加载扩展、映射可能不全；qmd 状态看的是文件修改时间，照旧每次现算。
 - **电池刺客（battop）已移除**（09-30）：它的启停与数据接口、`systemctl is-active` 缓存一并删了；它和两次冻机的关系见[系统增强线白皮书](../../enhance/docs/reMarkable系统增强线白皮书.md) §03b。
@@ -298,7 +301,7 @@
 
 ## 07｜构建、部署与 systemd
 
-- **依赖**：只依赖顶层 `../rmsvc-core`；不依赖 `shelf/crates/bookconv`、`notes/` 的任何 crate；不在任何 workspace 里，是独立 Cargo 项目，自带一份 `.cargo/config.toml`（交叉编译的 CC/AR 覆盖，原因见基座白皮书 §06）。
+- **依赖**：只依赖顶层 `../rmsvc-core`；不依赖 `shelf/` 的 crate（含书架用的 sheng-ren `bookconv`）和 `notes/` 的任何 crate；不在任何 workspace 里，是独立 Cargo 项目，自带一份 `.cargo/config.toml`（交叉编译的 CC/AR 覆盖，原因见基座白皮书 §06）。
 - **构建/部署由 shelf 代管**：没有自己的 `build.sh`/`deploy.sh`。`shelf/build.sh` 顺手 `cd ../gateway && cargo build`，`shelf/deploy.sh` 把二进制和 `systemd/gateway.service` 打进同一个部署包。单独重编：`cargo build --release --target aarch64-unknown-linux-musl`。
 - **release profile**：`panic="unwind"`（abort 下 `catch_unwind` 完全无效，一次 panic 就摔掉整个进程；代价是 aarch64 二进制大约 8%）。
 - **systemd 单元**：`PartOf=shelf.target`；`After=home.mount NetworkManager.service xovi-reenable.service`——只排顺序、不拉起，**不牵连 xochitl 本体**。排在 `xovi-reenable` 后面是让 xochitl 开机先把界面拉起来（09-24）；不再依赖 `network-online.target`，否则没 WiFi 时开机要等 `NetworkManager-wait-online` 超时。`ExecStartPre` 先跑 `lo-alias.sh`（让 `10.11.99.1` 常驻可达，xochitl 的 `/upload` 只绑 USB 网口；源在 `enhance/lo-alias/`），失败不阻断启动；`fc-cache` 09-24 起挪到 font-serve 的单元里。`Restart=on-failure`；`CPUWeight=20`、`MemoryMax=192M`、`Nice=5`（只降权不硬顶，交互式重活需要突发）。
@@ -334,7 +337,8 @@
 
 **待办**
 
-- **闸门核心仍未真机验证**：两本 >90MB 的书同时点优化，看是否真的串行、`VmHWM` 不叠加。
+- **闸门核心仍未真机验证**：两本 >90MB 的书同时点「加入 xochitl」，看是否真的串行（2026-10-07 前写的是“同时点优化”，优化已删）。
+- **10-07 书架不再优化书（已提交未部署）**：部署后看母版库页只剩「加入 xochitl」、筛选三档、旧的 `batch.json` 里如有 optimize 任务被剔除；补跑一次浏览器冒烟（本机当时没装 puppeteer）。
 - **09-24 的安全改动在真实手机/电脑上走一遍**：按 IP 限速、`next` 校验、断网提示；确认每台终端已装新 CA 并删掉旧 CA，之后删设备上的 `tls/*.bak-*`。
 - **第三轮审计改动的剩余核对**：下载大原件时网关 `VmHWM`；管理页“已加载”徽章在整机重启前后是否正确刷新；真实手机上的触屏热区与英文页头吸顶。
 - **设备健康 / 清理**：真 OTA 后横幅是否出现、恢复后是否消失；两类清理的删除按钮在真机上点一次。采集依赖的设备格式 09-25 已只读核过（多单元 `systemctl show` 按空行分块、以 `Id` 为键；journal 已持久化、`-b -1` 可读；`/usr/bin/xochitl` 算 sha256 用 0.54 秒；书库 `createdTime` 是字符串形式的毫秒）。

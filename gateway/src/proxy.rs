@@ -5,17 +5,12 @@
 //! 其余（JSON 等小应答、没有长度的应答）读完再回——没有长度的流只能走 SSE 那条"读到连接关闭"的通道，
 //! 不适合普通下载（见 [`stream_len`]）。
 //!
-//! **并发/内存预算闸门**（2026-09-19）：`优化`/`加入xochitl` 在这里统一拦一道——真机测出漫画 optimize
-//! 内存峰值 ≈ 处理的文件体积本身，`book-serve` 的忙锁是按书名分别加的、点不同的书互不阻塞，同时点几本
-//! 大部头会线性叠加内存。`gateway` 是这些操作物理上唯一必经的转发关口，闸门放这里不需要任何跨进程锁，
-//! 详见 `budget.rs` 文档注释。只有命中的路由才会额外读一次 body（几十字节的小 JSON，
+//! **并发/内存预算闸门**（2026-09-19）：`加入xochitl` 在这里统一拦一道——`book-serve` 的忙锁是按书名分别加的、
+//! 点不同的书互不阻塞，同时投几本大部头会叠加内存与 xochitl 的导入负担。`gateway` 是这个操作物理上唯一必经的转发关口，
+//! 闸门放这里不需要任何跨进程锁，详见 `budget.rs` 文档注释。只有命中的路由才会额外读一次 body（几十字节的小 JSON，
 //! `Request::read_small_body` 本来就有 1MB 上限）+ 查一次文件体积，其余请求（含真正的大文件上传）完全
-//! 不受影响、维持原有纯流式转发。（原第三条「加入 KOReader」随 2026-09-29 设备卸载 KOReader 撤掉。）
-//!
-//! 另一条（2026-09-25）：**抓网文勾了「同步优化」**（`POST /api/books/staging/fetch-article`，`optimize:true`）
-//! 也过闸门——它在一次 HTTP 请求里同步地"抓取→组 EPUB→落母版库→跑 `optimize()`"，此前既不占 book-serve 的忙锁
-//! 也不占这里的名额。书名在请求时还不知道（要等抓完才有标题），闸门键用 `抓网文 <url>`，固定小档（网文通常几十 KB）；
-//! 同步操作，响应回来＝真正做完，名额随函数返回释放。没勾同步优化的抓取不过闸门。
+//! 不受影响、维持原有纯流式转发。原来还拦「优化」和勾了同步优化的「抓网文」——书架 2026-10-07 不再优化书（优化全部在
+//! 电脑上用 sheng-ren 做），两条连同 book-serve 的接口一起删了；「加入 KOReader」随 2026-09-29 设备卸载 KOReader 撤掉。
 use rmsvc_core::http::{ApiError, ApiResult, JsonBody, Method, Reply, Request};
 use rmsvc_core::multipart::percent_encode as enc;
 use rmsvc_core::paths::Paths;
@@ -24,52 +19,22 @@ use std::io::Read;
 use std::time::{Duration, Instant};
 
 /// 等"book-serve 有新事件"的兜底超时：正常靠 [`crate::events::books_wake`] 事件唤醒（忙态结束 book-serve 会发 `books`
-/// 事件），这里只防事件丢了/订阅线程重连空窗——所以从原来的 5 秒轮询放宽到 30 秒（整个优化期间唤醒降到 1/6）。
+/// 事件），这里只防事件丢了/订阅线程重连空窗——所以从原来的 5 秒轮询放宽到 30 秒（整个处理期间唤醒降到 1/6）。
 const POLL_FALLBACK: Duration = Duration::from_secs(30);
-/// 轮询等一个异步任务（优化/落库）真正跑完的上限——不是永久卡死，服务崩溃/重启导致侦测不到
+/// 轮询等一个异步落库真正跑完的上限——不是永久卡死，服务崩溃/重启导致侦测不到
 /// 结果时，超时后如实放弃、让名额自然释放，不为一个查不到结果的任务永久占着并发档位。
 const SETTLE_POLL_TIMEOUT: Duration = Duration::from_secs(60 * 60);
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum GatedOp {
-    /// `book-serve` 的"优化"——异步：HTTP 响应几乎立即回"已开始"，真正处理在后台线程跑。
-    Optimize,
-    /// `book-serve` 的"加入 xochitl"——同上，异步。
-    Deliver,
-    /// `book-serve` 的"抓网文"——同步：抓取 + 组包 + （勾了才有的）同步优化都在这次请求里做完。
-    FetchArticle,
-}
-
-/// 抓网文在闸门里的占位名前缀（后接 URL）。书名要抓完才知道，只能拿 URL 当键；带前缀不会跟母版库书名撞，
-/// 网页的"排队/处理中"计数照样把它算进去。
-const ARTICLE_GATE_PREFIX: &str = "抓网文 ";
-
-/// 这次请求在闸门里要占的名额：键（书名或 `抓网文 <url>`）+ 档位。`Ok(None)`＝这次不用过闸门（抓网文没勾同步优化）。
-/// 体积由 `size_of` 注入，便于离线测。
-fn gate_target(kind: GatedOp, body: &JsonBody, size_of: impl Fn(&str) -> u64) -> Result<Option<(String, crate::budget::Tier)>, ApiError> {
-    if kind == GatedOp::FetchArticle {
-        // 与 book-serve 同口径：`optimize` 缺省 false（`bool_or("optimize", false)`）。
-        if !body.bool_or("optimize", false) {
-            return Ok(None);
-        }
-        return Ok(Some((format!("{ARTICLE_GATE_PREFIX}{}", body.str("url")?), crate::budget::Tier::Small)));
-    }
+/// 这次落库在闸门里要占的名额：键（书名）+ 档位（按母版库里这本书的体积）。体积由 `size_of` 注入，便于离线测。
+fn gate_target(body: &JsonBody, size_of: impl Fn(&str) -> u64) -> Result<(String, crate::budget::Tier), ApiError> {
     let name = body.str("name")?.to_string();
     let tier = crate::budget::tier_of(size_of(&name));
-    Ok(Some((name, tier)))
+    Ok((name, tier))
 }
 
-/// 这个请求是不是命中要限流的操作之一。`service_name` 是解析过的后端服务名（`book-serve`，不是 URL 段 `books`）。
-fn gated_operation(service_name: &str, rest: &str, method: Method) -> Option<GatedOp> {
-    if method != Method::Post || service_name != "book-serve" {
-        return None;
-    }
-    match rest {
-        "staging/optimize" => Some(GatedOp::Optimize),
-        "staging/deliver" => Some(GatedOp::Deliver),
-        "staging/fetch-article" => Some(GatedOp::FetchArticle),
-        _ => None,
-    }
+/// 这个请求是不是要限流的「加入 xochitl」。`service_name` 是解析过的后端服务名（`book-serve`，不是 URL 段 `books`）。
+fn is_gated(service_name: &str, rest: &str, method: Method) -> bool {
+    method == Method::Post && service_name == "book-serve" && rest == "staging/deliver"
 }
 
 /// 不带 `Content-Disposition` 的应答超过这个体积也流式转发（壁纸原图、裁图等图片；JSON 列表远小于它）。
@@ -91,21 +56,20 @@ pub fn forward(paths: &Paths, req: &mut Request<'_>) -> ApiResult {
     };
     // 剥掉服务段：`/api/fonts/x` → 后端 `/x`，`/api/fonts` → 后端 `/`。后端直连（SSH 调试）与经网关同一套路由。
     let rest = req.param("*").to_string();
-    let gated = gated_operation(name, &rest, req.method);
+    let gated = is_gated(name, &rest, req.method);
 
     // 命中限流操作才读 body 拿书名、过闸门；其余请求原样走下面已有的流式转发，不碰这段。
     let mut body_override: Option<Vec<u8>> = None;
     let mut slot: Option<crate::budget::Slot<'static>> = None;
     let mut book_name = String::new();
-    if let Some(kind) = gated {
+    if gated {
         // 读一次 body 拿书名、过闸门后还要原样转发给后端，所以先读成字节再解析（`req.json()` 会把流读空）。
         let buf = req.read_small_body().map_err(ApiError::bad)?;
         let parsed: serde_json::Value = serde_json::from_slice(&buf).map_err(|e| ApiError::bad(format!("请求不是 JSON: {e}")))?;
         let staging = paths.staging_dir();
-        if let Some((key, tier)) = gate_target(kind, &JsonBody(parsed), |n| staging.join(n).metadata().map(|m| m.len()).unwrap_or(0))? {
-            slot = Some(crate::budget::global().admit(tier, &key).map_err(|e| ApiError { status: e.status(), message: e.message() })?);
-            book_name = key;
-        }
+        let (key, tier) = gate_target(&JsonBody(parsed), |n| staging.join(n).metadata().map(|m| m.len()).unwrap_or(0))?;
+        slot = Some(crate::budget::global().admit(tier, &key).map_err(|e| ApiError { status: e.status(), message: e.message() })?);
+        book_name = key;
         body_override = Some(buf);
     }
 
@@ -162,21 +126,15 @@ pub fn forward(paths: &Paths, req: &mut Request<'_>) -> ApiResult {
         reply = reply.with_header("Content-Disposition", &v);
     }
 
-    // 名额释放时机：`FetchArticle` 是同步操作，走到这里真正的复制/优化已经做完，`slot` 出函数作用域
-    // 自然 Drop 释放，不用特殊处理。`Optimize`/`Deliver` 是异步的，HTTP 响应此刻只代表"已经开始"，
-    // 真正的内存开销在后台线程里继续——把 `slot` 转移进一个监控线程，轮询该服务自己的 `/staging`
-    // 列表直到这本书不再 busy（或条目已经不在了，比如漫画→PDF 改名），`slot` 才出那个线程的作用域
+    // 名额释放时机：落库是异步的，HTTP 响应此刻只代表"已经开始"，真正的上传在后台线程里继续——把 `slot` 转移进一个
+    // 监控线程，轮询该服务自己的 `/staging` 列表直到这本书不再 busy（或条目已经不在了），`slot` 才出那个线程的作用域
     // 释放；轮询/线程本身跟这次 HTTP 响应完全解耦，不影响这次请求的返回时间。
-    if let Some(kind) = gated {
-        if matches!(kind, GatedOp::Optimize | GatedOp::Deliver) {
-            if let Some(slot) = slot.take() {
-                let client = SvcClient::new(paths.clone(), "book-serve", 10);
-                std::thread::spawn(move || {
-                    poll_until_settled(&client, &book_name);
-                    drop(slot);
-                });
-            }
-        }
+    if let Some(slot) = slot.take() {
+        let client = SvcClient::new(paths.clone(), "book-serve", 10);
+        std::thread::spawn(move || {
+            poll_until_settled(&client, &book_name);
+            drop(slot);
+        });
     }
 
     Ok(reply)
@@ -187,7 +145,7 @@ pub fn forward(paths: &Paths, req: &mut Request<'_>) -> ApiResult {
 /// **事件驱动**：每次查完就阻塞等 [`crate::events::books_wake`]（book-serve 有事件才醒），至多 [`POLL_FALLBACK`] 兜底一次；
 /// 先取代数再查，查询期间到达的事件不会漏。
 /// 查询失败要**连续** [`MAX_POLL_FAILURES`] 次才放弃（每次隔 [`FAILURE_RETRY`]）：此前一次失败就放名额，
-/// 而大书优化时 book-serve 正忙、10 秒查询超时恰恰最容易撞上，于是第二本大书被放进来、内存照样叠加——
+/// 而 book-serve 忙着处理大书时 10 秒查询超时恰恰最容易撞上，于是第二本大书被放进来、内存照样叠加——
 /// 闸门在最该起作用的时候失效（2026-09-24 审查）。连续失败才说明服务真的挂了/重启了（任务随之没了），
 /// 这时再放名额，不让侦测本身不可靠把并发档位永久卡住。
 pub(crate) fn poll_until_settled(client: &SvcClient, name: &str) {
@@ -195,9 +153,8 @@ pub(crate) fn poll_until_settled(client: &SvcClient, name: &str) {
     wait_settled(|| client.get_json("/staging"), name, Instant::now() + SETTLE_POLL_TIMEOUT, || wake.generation(), |seen, d| throttled_wait(wake, seen, d, MIN_REQUERY));
 }
 
-/// 两次 `GET /staging` 之间的最短间隔。book-serve 大书优化期间约每秒发一条进度事件（`staging`，同一个 kind 分不出
-/// "进度"还是"忙完"），此前每条都唤醒等待方、每条都整表查一次——一本大书优化几分钟到几十分钟，就是每秒一次的
-/// loopback 请求 + book-serve 整表序列化。代价：名额最多晚这么久才归还（下一本排队的书晚几秒开始），与整本处理时长相比可忽略。
+/// 两次 `GET /staging` 之间的最短间隔。book-serve 每有母版库事件就发一条 `staging`（同一个 kind 分不出"进度"还是"忙完"；
+/// 以前大书优化期间约每秒一条），每条都唤醒等待方、每条都整表查一次的话，就是持续的 loopback 请求 + book-serve 整表序列化。代价：名额最多晚这么久才归还（下一本排队的书晚几秒开始），与整本处理时长相比可忽略。
 const MIN_REQUERY: Duration = Duration::from_secs(5);
 
 /// 等 `wake` 的代数离开 `seen`（至多 `max`），但从调用起**至少**过 `min.min(max)` 才返回——事件再密也不会让调用方
@@ -249,82 +206,15 @@ mod tests {
     use super::*;
 
     #[test]
-    fn gated_operation_matches_exactly_three_routes() {
-        assert_eq!(gated_operation("book-serve", "staging/optimize", Method::Post), Some(GatedOp::Optimize));
-        assert_eq!(gated_operation("book-serve", "staging/deliver", Method::Post), Some(GatedOp::Deliver));
-        assert_eq!(gated_operation("book-serve", "staging/fetch-article", Method::Post), Some(GatedOp::FetchArticle));
-        assert_eq!(gated_operation("koreader-serve", "books/adopt", Method::Post), None, "加入 KOReader 随 2026-09-29 卸载撤掉");
-    }
-
-    /// 抓网文：勾了同步优化才占名额（小档、键带前缀不跟书名撞），没勾不过闸门；普通优化仍按书名 + 体积分档。
-    #[test]
-    fn gate_target_for_fetch_article_and_staged_books() {
-        use crate::budget::Tier;
-        let j = JsonBody;
+    fn only_deliver_is_gated_and_tier_follows_book_size() {
+        assert!(is_gated("book-serve", "staging/deliver", Method::Post));
+        for gone in ["staging/optimize", "staging/fetch-article"] {
+            assert!(!is_gated("book-serve", gone, Method::Post), "{gone} 已随书架不再优化删除");
+        }
+        assert!(!is_gated("koreader-serve", "books/adopt", Method::Post), "加入 KOReader 随 2026-09-29 卸载撤掉");
         let big = |_: &str| crate::budget::LARGE_THRESHOLD_BYTES + 1;
-        let got = gate_target(GatedOp::FetchArticle, &j(serde_json::json!({"url": "https://a.b/c", "optimize": true})), big).unwrap();
-        assert_eq!(got, Some(("抓网文 https://a.b/c".to_string(), Tier::Small)), "网文固定小档，不查母版库体积");
-        assert_eq!(gate_target(GatedOp::FetchArticle, &j(serde_json::json!({"url": "https://a.b/c", "optimize": false})), big).unwrap(), None);
-        assert_eq!(gate_target(GatedOp::FetchArticle, &j(serde_json::json!({"url": "https://a.b/c"})), big).unwrap(), None, "缺省不优化＝不过闸门");
-        assert!(gate_target(GatedOp::FetchArticle, &j(serde_json::json!({"optimize": true})), big).is_err(), "缺 url 直接 400");
-        assert_eq!(gate_target(GatedOp::Optimize, &j(serde_json::json!({"name": "x.epub"})), big).unwrap(), Some(("x.epub".to_string(), Tier::Large)));
-    }
-
-    /// 回归（2026-09-25）：抓网文同步优化经 [`forward`] 真的占一个名额、响应回来就还——起一个假 book-serve，
-    /// 在它处理请求的那一刻查闸门快照，确认名额在用；请求返回后快照里没有它。
-    #[test]
-    fn fetch_article_with_optimize_holds_and_returns_a_slot() {
-        use std::io::Write;
-        use std::sync::atomic::{AtomicBool, Ordering};
-        let t = tempfile::tempdir().unwrap();
-        let paths = crate::testutil::sandbox(&t);
-        let url = "https://example.invalid/slot-test";
-        let key = format!("{ARTICLE_GATE_PREFIX}{url}");
-        let seen_active = std::sync::Arc::new(AtomicBool::new(false));
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let port = listener.local_addr().unwrap().port();
-        let (seen2, key2) = (seen_active.clone(), key.clone());
-        let backend = std::thread::spawn(move || {
-            let (mut sock, _) = listener.accept().unwrap();
-            // 读到请求头结束 + 按 Content-Length 读完 body（小 JSON），再回一个最小 200。
-            let mut buf = Vec::new();
-            let mut chunk = [0u8; 1024];
-            loop {
-                let n = sock.read(&mut chunk).unwrap();
-                buf.extend_from_slice(&chunk[..n]);
-                if let Some(end) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
-                    let head = String::from_utf8_lossy(&buf[..end]).to_ascii_lowercase();
-                    let len: usize = head.lines().find_map(|l| l.strip_prefix("content-length:").map(|v| v.trim().parse().unwrap())).unwrap_or(0);
-                    if buf.len() >= end + 4 + len || n == 0 {
-                        break;
-                    }
-                }
-            }
-            seen2.store(crate::budget::global().snapshot().1.contains(&key2), Ordering::SeqCst);
-            let body = b"{\"ok\":true}";
-            write!(sock, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len()).unwrap();
-            sock.write_all(body).unwrap();
-        });
-        let info = registry::ServiceInfo { name: "book-serve".into(), port, label: String::new(), version: String::new(), pid: std::process::id(), ui: None };
-        let _reg = registry::register(&paths, &info).unwrap();
-        let body = serde_json::json!({"url": url, "optimize": true}).to_string().into_bytes();
-        let mut rd = std::io::Cursor::new(body.clone());
-        let params = [("svc", "books"), ("*", "staging/fetch-article")].iter().map(|(k, v)| (k.to_string(), v.to_string())).collect();
-        let mut req = Request {
-            method: Method::Post,
-            path: "/api/books/staging/fetch-article".into(),
-            query: Default::default(),
-            params,
-            content_type: "application/json".into(),
-            content_length: Some(body.len()),
-            headers: vec![],
-            body: &mut rd,
-        };
-        let reply = forward(&paths, &mut req).unwrap();
-        backend.join().unwrap();
-        assert_eq!(reply.status, 200);
-        assert!(seen_active.load(Ordering::SeqCst), "后端处理期间闸门里应有这次抓网文的名额");
-        assert!(!crate::budget::global().snapshot().1.contains(&key), "同步请求返回后名额应已归还");
+        assert_eq!(gate_target(&JsonBody(serde_json::json!({"name": "x.epub"})), big).unwrap(), ("x.epub".to_string(), crate::budget::Tier::Large));
+        assert!(gate_target(&JsonBody(serde_json::json!({})), big).is_err(), "缺 name 直接 400");
     }
 
     /// 回归：客户端发了带 `Content-Length` 的 DELETE，网关用 `call()` 不转发 body，也就不能转发这个长度——否则后端会
@@ -365,12 +255,11 @@ mod tests {
     }
 
     #[test]
-    fn gated_operation_ignores_everything_else() {
-        assert_eq!(gated_operation("book-serve", "staging", Method::Post), None, "落库入库本身走多文件上传，不该被拦下来读 body");
-        assert_eq!(gated_operation("book-serve", "staging", Method::Get), None, "列表查询不限流");
-        assert_eq!(gated_operation("book-serve", "staging/optimize", Method::Get), None, "方法不对不该命中");
-        assert_eq!(gated_operation("koreader-serve", "books", Method::Get), None);
-        assert_eq!(gated_operation("font-serve", "staging/optimize", Method::Post), None, "服务名对不上不该误命中");
+    fn gate_ignores_everything_else() {
+        assert!(!is_gated("book-serve", "staging", Method::Post), "入库本身走多文件上传，不该被拦下来读 body");
+        assert!(!is_gated("book-serve", "staging", Method::Get), "列表查询不限流");
+        assert!(!is_gated("book-serve", "staging/deliver", Method::Get), "方法不对不该命中");
+        assert!(!is_gated("font-serve", "staging/deliver", Method::Post), "服务名对不上不该误命中");
     }
 
     #[test]
@@ -382,7 +271,7 @@ mod tests {
         assert_eq!(stream_len(404, true, Some(10)), None, "错误应答读完再回");
     }
 
-    /// 回归：一次查询失败（大书优化时 book-serve 忙、查询超时）不能提前放名额，要等它真的不忙。
+    /// 回归：一次查询失败（book-serve 忙、查询超时）不能提前放名额，要等它真的不忙。
     #[test]
     fn transient_query_failure_does_not_release_slot_early() {
         use std::cell::Cell;
@@ -394,7 +283,7 @@ mod tests {
         assert_eq!(calls.get(), 6, "应一直等到真正不忙（第 6 次查询）才返回");
     }
 
-    /// 事件密集（大书优化每秒一条进度）也不会让等待方查得比 `min` 更勤；没有事件时照旧等到 `max`（`max` 比 `min` 短时以 `max` 为准）。
+    /// 事件密集（比如每秒一条）也不会让等待方查得比 `min` 更勤；没有事件时照旧等到 `max`（`max` 比 `min` 短时以 `max` 为准）。
     #[test]
     fn throttled_wait_never_returns_before_min_interval() {
         let w = std::sync::Arc::new(crate::events::Wake::default());

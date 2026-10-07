@@ -1,4 +1,4 @@
-# shelf 书架：领域服务 + bookconv 的内部 workspace（仓库根仍不建 workspace）。
+# shelf 书架：领域服务 + 书架内容层（shelf-conv）的内部 workspace（仓库根仍不建 workspace）。
 # 2026-09-11：共享基座 crate 正名搬顶层 `../rmsvc-core`（原 crates/shelf-core，
 # 三条线共用，不再是 shelf 私有——notes/ 早就在依赖它，gateway/ 也依赖它）；
 # 网关本身也搬顶层 `../gateway`（原 services/shelf-gateway，它是 shelf/notes/
@@ -7,12 +7,13 @@
 # 2026-09-11 第二轮：`wallpaper-serve`/`font-serve` 挪进 `../enhance/`（概念上更贴近
 # 系统增强，不是"书架内容管理"业务；wallpaper-serve 原依赖的 bookconv 两个屏幕尺寸
 # 常量已复制成本地值，不再跨线依赖 bookconv）。
-# 依赖方向单向无环：services/* → ../rmsvc-core；book-serve → bookconv。
+# 依赖方向单向无环：services/* → ../rmsvc-core；book-serve → shelf-conv → bookconv（sheng-ren，git 依赖，只用读 EPUB 的公开接口）。
+# 2026-10-07：书架不再优化书——优化全部在电脑上用 sheng-ren 做，书架只把优化好的书投进 xochitl。本仓库自带的 crates/bookconv
+# （v16）、入库 PDF 转换（pdf_ingest、pdf-extract-cj）、旧产物兼容、联网补封面、抓网文都已删除，见 git 历史。
 [workspace]
 resolver = "2"
 members = [
-    "crates/bookconv",
-    "crates/pdf-extract-cj",
+    "crates/shelf-conv",
     "services/book-serve",
 ]
 # services/koreader-serve 2026-09-29 退役、2026-09-30 源码已从仓库删除，见 git 历史。

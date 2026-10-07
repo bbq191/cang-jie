@@ -68,7 +68,7 @@
 <text x="317.5" y="573" text-anchor="middle" font-size="10" fill="#4a4a4a">导入时按占位的封面生成 cover.png；</text>
 <text x="317.5" y="586" text-anchor="middle" font-size="10" fill="#4a4a4a">替换成大文件后它不会改名、也不会补生成封面</text>
 <text x="317.5" y="599" text-anchor="middle" font-size="10" fill="#4a4a4a">（真机踩过：显示成“上传限制实验-EPUB”且没有封面）</text>
-<text x="317.5" y="612" text-anchor="middle" font-size="10" fill="#4a4a4a">所以优化时把带卷标记的书 dc:title 改成规范名</text>
+<text x="317.5" y="612" text-anchor="middle" font-size="10" fill="#4a4a4a">所以带卷标记的书，占位的 dc:title 用规范名</text>
 <rect x="635" y="514" width="575" height="150" rx="10" fill="#f2f2f5" stroke="#8a8a99" stroke-width="1.6" stroke-dasharray="6 4"/>
 <text x="922.5" y="534" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">已知限制</text>
 <text x="922.5" y="560" text-anchor="middle" font-size="10" fill="#4a4a4a">占位上传后进程崩溃：书库里会残留占位文档，回执提示手动删除</text>

@@ -1,88 +1,77 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="700" viewBox="0 0 1080 700" font-family="Noto Sans CJK SC, sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" width="1080" height="640" viewBox="0 0 1080 640" font-family="Noto Sans CJK SC, sans-serif">
 <defs>
 <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#555"/></marker>
-<marker id="ag" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#8a8a8a"/></marker>
 </defs>
-<rect width="1080" height="700" fill="#fbfbfa"/>
-<text x="540" y="30" text-anchor="middle" font-size="18" font-weight="bold" fill="#1a1a1a">母版库里一本书的一生：入库 → 可选优化 → 落库 → 改名 / 下载 / 删除</text>
-<text x="540" y="52" text-anchor="middle" font-size="12.5" fill="#6a6a6a">四个动作互相独立、可重复；同一本书同一时刻只跑一个（book-serve 忙锁），结果写进边车并经 SSE 推到网页</text>
+<rect width="1080" height="640" fill="#fbfbfa"/>
+<text x="540" y="30" text-anchor="middle" font-size="18" font-weight="bold" fill="#1a1a1a">母版库里一本书的一生：入库 → 加入 xochitl / 改名 / 下载 / 删除</text>
+<text x="540" y="52" text-anchor="middle" font-size="12.5" fill="#6a6a6a">书架不改书（2026-10-07 起）；同一本书同一时刻只跑一个动作（book-serve 忙锁），结果写进边车并经 SSE 推到网页</text>
 
-<!-- 入口 -->
-<rect x="20" y="80" width="220" height="250" rx="10" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.6"/>
+<!-- 入库 -->
+<rect x="20" y="80" width="220" height="240" rx="10" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.6"/>
 <text x="130" y="104" text-anchor="middle" font-size="14" font-weight="bold" fill="#1a1a1a">① 入库（原样）</text>
 <text x="36" y="132" font-size="12" fill="#1a1a1a">网页上传（多文件，有进度）</text>
 <text x="36" y="150" font-size="11" fill="#555">同名同大小 = 已落地，跳过</text>
-<text x="36" y="176" font-size="12" fill="#1a1a1a">抓网文（贴 URL）</text>
-<text x="36" y="194" font-size="11" fill="#555">组成 EPUB，「同步优化」缺省勾</text>
-<text x="36" y="220" font-size="12" fill="#1a1a1a">scp 进设备 inbox/</text>
-<text x="36" y="238" font-size="11" fill="#555">自动入库；失败进 failed/ 带 .reason</text>
-<text x="36" y="266" font-size="11.5" fill="#b0451f">只收 EPUB / PDF，其它拒收</text>
-<text x="36" y="286" font-size="11.5" fill="#1a1a1a">书名规范成「书名 - 02卷」</text>
-<text x="36" y="306" font-size="11.5" fill="#1a1a1a">撞名不覆盖，另起名字</text>
+<text x="36" y="178" font-size="12" fill="#1a1a1a">scp 进设备 inbox/</text>
+<text x="36" y="196" font-size="11" fill="#555">写完静止 5 秒才收；</text>
+<text x="36" y="212" font-size="11" fill="#555">失败进 failed/ 带 .reason</text>
+<text x="36" y="242" font-size="11.5" fill="#b0451f">只收 EPUB / PDF，其它拒收</text>
+<text x="36" y="262" font-size="11.5" fill="#1a1a1a">文件名规范成「书名 - 02卷」</text>
+<text x="36" y="282" font-size="11.5" fill="#1a1a1a">同名同内容：认已有那本</text>
+<text x="36" y="302" font-size="11.5" fill="#1a1a1a">同名不同内容：加数字前缀</text>
 <line x1="242" y1="200" x2="286" y2="200" stroke="#555" stroke-width="1.6" marker-end="url(#a)"/>
 
 <!-- 母版库条目 -->
-<rect x="290" y="80" width="280" height="250" rx="10" fill="#fff3d6" stroke="#c9971f" stroke-width="1.8"/>
+<rect x="290" y="80" width="280" height="240" rx="10" fill="#fff3d6" stroke="#c9971f" stroke-width="1.8"/>
 <text x="430" y="104" text-anchor="middle" font-size="14" font-weight="bold" fill="#1a1a1a">母版库条目（永久保留）</text>
 <text x="430" y="122" text-anchor="middle" font-size="11" fill="#555">~/.local/state/shelf/books/staging/</text>
 <rect x="306" y="136" width="248" height="52" rx="8" fill="#ffffff" stroke="#c9971f"/>
 <text x="430" y="158" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">书名 - 02卷.epub</text>
-<text x="430" y="177" text-anchor="middle" font-size="11" fill="#555">原书字节；优化成功后才被替换</text>
-<rect x="306" y="198" width="248" height="72" rx="8" fill="#ffffff" stroke="#c9971f" stroke-dasharray="4 3"/>
+<text x="430" y="177" text-anchor="middle" font-size="11" fill="#555">原书字节，书架从不改写</text>
+<rect x="306" y="198" width="248" height="62" rx="8" fill="#ffffff" stroke="#c9971f" stroke-dasharray="4 3"/>
 <text x="430" y="218" text-anchor="middle" font-size="12" font-weight="bold" fill="#1a1a1a">边车 .书名 - 02卷.epub.delivered</text>
-<text x="430" y="238" text-anchor="middle" font-size="11" fill="#555">优化 / 落库状态与进度、渲染自检、</text>
-<text x="430" y="255" text-anchor="middle" font-size="11" fill="#555">加入 xochitl 的时间</text>
-<text x="430" y="292" text-anchor="middle" font-size="11.5" fill="#1a1a1a">网页徽章：格式 · 优化等级 · 已加入</text>
-<text x="430" y="312" text-anchor="middle" font-size="11.5" fill="#1a1a1a">· 渲染 N 页 · 处理中 / 失败</text>
+<text x="430" y="238" text-anchor="middle" font-size="11" fill="#555">最近加入时间 · 加入结果 · 渲染自检</text>
+<text x="430" y="284" text-anchor="middle" font-size="11.5" fill="#1a1a1a">网页徽章：格式 · 大小 · 已加入（旧）</text>
+<text x="430" y="304" text-anchor="middle" font-size="11.5" fill="#1a1a1a">· 渲染 N 页 · 处理中 / 失败</text>
 
 <!-- 动作 -->
-<line x1="572" y1="140" x2="612" y2="118" stroke="#555" stroke-width="1.6" marker-end="url(#a)"/>
-<line x1="572" y1="200" x2="612" y2="236" stroke="#555" stroke-width="1.6" marker-end="url(#a)"/>
-<line x1="572" y1="260" x2="612" y2="352" stroke="#555" stroke-width="1.6" marker-end="url(#a)"/>
-<line x1="572" y1="300" x2="612" y2="436" stroke="#555" stroke-width="1.6" marker-end="url(#a)"/>
+<line x1="572" y1="140" x2="612" y2="130" stroke="#555" stroke-width="1.6" marker-end="url(#a)"/>
+<line x1="572" y1="220" x2="612" y2="236" stroke="#555" stroke-width="1.6" marker-end="url(#a)"/>
+<line x1="572" y1="290" x2="612" y2="306" stroke="#555" stroke-width="1.6" marker-end="url(#a)"/>
 
-<rect x="616" y="72" width="444" height="100" rx="10" fill="#e8f5ec" stroke="#3f9a55" stroke-width="1.6"/>
-<text x="632" y="94" font-size="13.5" font-weight="bold" fill="#1a1a1a">② 优化（可选，可重做）</text>
-<text x="632" y="114" font-size="11.5" fill="#1a1a1a">EPUB：清洗 + 排版 + 目录 + 封面 + 图片 → 过质量门才替换原文件</text>
-<text x="632" y="132" font-size="11.5" fill="#1a1a1a">PDF 有文字层：生成「书名.epub」，原 PDF 挪进备份（见下）</text>
-<text x="632" y="150" font-size="11.5" fill="#1a1a1a">PDF 无文字层 / 漫画 PDF：只裁白边，仍是 PDF</text>
-<text x="632" y="166" font-size="10.5" fill="#6a6a6a">不过门 / 失败 / 中途停止：原文件一个字节不动</text>
+<rect x="616" y="72" width="444" height="124" rx="10" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.6"/>
+<text x="632" y="94" font-size="13.5" font-weight="bold" fill="#1a1a1a">② 加入 xochitl（复制字节，可反复、可批量）</text>
+<text x="632" y="116" font-size="11.5" fill="#1a1a1a">≤90MB 网页上传；更大走「占位 + 磁盘替换」（≤1GB），走不了就拒绝</text>
+<text x="632" y="136" font-size="11.5" fill="#1a1a1a">可选目标文件夹，没有就排队让 xochitl 自己建</text>
+<text x="632" y="156" font-size="11.5" fill="#1a1a1a">之后：渲染自检；带 sheng-ren 页边距标记的漫画登记设页边距</text>
+<text x="632" y="176" font-size="10.5" fill="#6a6a6a">母版不因加入而删除；没有能中途停的步骤，只能取消闸门里的排队</text>
+<text x="632" y="190" font-size="10.5" fill="#6a6a6a">（「加入 KOReader」2026-09-29 随 KOReader 卸载删除）</text>
 
-<rect x="616" y="186" width="444" height="100" rx="10" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.6"/>
-<text x="632" y="208" font-size="13.5" font-weight="bold" fill="#1a1a1a">③ 落库（复制字节进 xochitl，可反复）</text>
-<text x="632" y="228" font-size="11.5" fill="#1a1a1a">加入 xochitl：≤90MB 网页上传；更大走「占位 + 磁盘替换」</text>
-<text x="632" y="246" font-size="11.5" fill="#1a1a1a">（≤1GiB），走不了就拒绝；可选目标文件夹</text>
-<text x="632" y="264" font-size="11.5" fill="#6a6a6a">（「加入 KOReader」随 2026-09-29 卸载 KOReader 删除）</text>
-<text x="632" y="280" font-size="10.5" fill="#6a6a6a">母版不因落库而删除；落库后改母版不影响 xochitl 里的副本</text>
+<rect x="616" y="208" width="444" height="76" rx="10" fill="#f3eefa" stroke="#7a5aa6" stroke-width="1.6"/>
+<text x="632" y="230" font-size="13.5" font-weight="bold" fill="#1a1a1a">③ 改名 / 下载原件（只勾选一本时出现）</text>
+<text x="632" y="250" font-size="11.5" fill="#1a1a1a">改名：只改文件名、扩展名不变，边车跟着改；新名已在或正忙则拒绝</text>
+<text x="632" y="270" font-size="11.5" fill="#1a1a1a">下载：边读边发，网关也流式转发，不占内存</text>
 
-<rect x="616" y="300" width="444" height="84" rx="10" fill="#f3eefa" stroke="#7a5aa6" stroke-width="1.6"/>
-<text x="632" y="322" font-size="13.5" font-weight="bold" fill="#1a1a1a">④ 改名 / 下载原件（只勾选一本时出现）</text>
-<text x="632" y="342" font-size="11.5" fill="#1a1a1a">改名：只改文件名、扩展名不变，边车跟着改；新名已在或正忙则拒绝</text>
-<text x="632" y="360" font-size="11.5" fill="#1a1a1a">不改书里的书名 / 作者（xochitl 显示的仍是书内书名）</text>
-<text x="632" y="376" font-size="11.5" fill="#1a1a1a">下载：边读边发，网关也流式转发，不占内存</text>
+<rect x="616" y="296" width="444" height="58" rx="10" fill="#fbe9e4" stroke="#b0451f" stroke-width="1.6"/>
+<text x="632" y="318" font-size="13.5" font-weight="bold" fill="#1a1a1a">④ 删除</text>
+<text x="632" y="338" font-size="11.5" fill="#1a1a1a">正在加入 / 改名时拒绝；删的那一刻占忙锁；已在 xochitl 里的副本不受影响</text>
 
-<rect x="616" y="398" width="444" height="66" rx="10" fill="#fbe9e4" stroke="#b0451f" stroke-width="1.6"/>
-<text x="632" y="420" font-size="13.5" font-weight="bold" fill="#1a1a1a">⑤ 删除</text>
-<text x="632" y="440" font-size="11.5" fill="#1a1a1a">正在优化 / 落库时拒绝；删的那一刻自己也占忙锁（09-25）</text>
-<text x="632" y="456" font-size="11.5" fill="#1a1a1a">连边车一起删；已加入 xochitl 的副本不受影响</text>
+<!-- 状态 -->
+<rect x="20" y="372" width="1040" height="168" rx="10" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.4"/>
+<text x="540" y="396" text-anchor="middle" font-size="13.5" font-weight="bold" fill="#1a1a1a">两套状态，各管一件事</text>
+<rect x="36" y="408" width="320" height="118" rx="8" fill="#f0efe9" stroke="#8a8a8a"/>
+<text x="196" y="430" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">忙锁 OpRegistry（内存）</text>
+<text x="50" y="452" font-size="11" fill="#4a4a4a">答“现在有没有线程在跑”，按书名</text>
+<text x="50" y="472" font-size="11" fill="#4a4a4a">加入 · 改名 · 删除 互斥，冲突回 400</text>
+<text x="50" y="492" font-size="11" fill="#4a4a4a">不落盘：重启即清零（有意）</text>
+<text x="50" y="512" font-size="11" fill="#4a4a4a">列表字段 busy</text>
+<rect x="372" y="408" width="672" height="118" rx="8" fill="#fffaf0" stroke="#c9971f"/>
+<text x="708" y="430" text-anchor="middle" font-size="12.5" font-weight="bold" fill="#1a1a1a">边车 sidecar（磁盘）：答“上次跑到哪、结果如何”</text>
+<text x="388" y="454" font-size="11.5" fill="#1a1a1a">deliver：pending → ok / failed</text>
+<text x="388" y="476" font-size="11.5" fill="#1a1a1a">render：pending → ok / warn（页数不到期望一半）/ timeout（没等到，不算错）</text>
+<text x="388" y="496" font-size="11.5" fill="#1a1a1a">　　　大文件通道的 EPUB 记 onopen，首次打开渲染后自动升成 ok</text>
+<text x="388" y="516" font-size="11" fill="#6a6a6a">重启修正：停在 pending 的 deliver → failed、render → timeout；点前缀 .tmp 半成品全删</text>
 
-<!-- PDF 备份 -->
-<rect x="290" y="400" width="300" height="150" rx="10" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.6" stroke-dasharray="5 4"/>
-<text x="440" y="424" text-anchor="middle" font-size="13.5" font-weight="bold" fill="#1a1a1a">原 PDF 备份 staging/.pdf-originals/</text>
-<text x="306" y="448" font-size="11.5" fill="#1a1a1a">PDF 转 EPUB 成功后原 PDF 挪到这里</text>
-<text x="306" y="468" font-size="11.5" fill="#1a1a1a">保留 7 天，启动时与每次新备份时清过期</text>
-<text x="306" y="488" font-size="11.5" fill="#1a1a1a">母版库页底部「原 PDF 备份」：</text>
-<text x="306" y="506" font-size="11.5" fill="#1a1a1a">恢复（同名已在则拒绝）/ 提前删除</text>
-<text x="306" y="532" font-size="11" fill="#b0451f">母版库已有同名「书名.epub」→ 不转换、报错</text>
-<line x1="480" y1="332" x2="480" y2="396" stroke="#8a8a8a" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#ag)"/>
-<text x="488" y="364" font-size="11" fill="#6a6a6a">转 EPUB 后挪入</text>
-<line x1="380" y1="398" x2="380" y2="334" stroke="#8a8a8a" stroke-width="1.5" stroke-dasharray="5 4" marker-end="url(#ag)"/>
-<text x="372" y="370" text-anchor="end" font-size="11" fill="#6a6a6a">「恢复」挪回</text>
-
-<!-- 底部说明 -->
-<rect x="20" y="572" width="1040" height="108" rx="10" fill="#f0f0ee" stroke="#8a8a8a" stroke-width="1.4"/>
-<text x="36" y="596" font-size="12.5" font-weight="bold" fill="#1a1a1a">贯穿各动作的规矩</text>
-<text x="36" y="618" font-size="11.5" fill="#1a1a1a">· 优化与落库都是异步：按钮立即回"已开始"，进度写边车 + SSE；批量时由网关队列逐本执行，每本先过并发 / 内存闸门。</text>
-<text x="36" y="638" font-size="11.5" fill="#1a1a1a">· 服务重启后，停在"处理中"的记录改成失败（渲染自检改成超时），清掉半成品临时文件；网页标"上次处理被中断"。</text>
-<text x="36" y="658" font-size="11.5" fill="#1a1a1a">· 临时文件一律点号开头、与书名无关（.&lt;pid&gt;.&lt;序号&gt;.&lt;种类&gt;.tmp），出错即删，不会被列出；落地新书前先清同名旧边车。</text>
+<rect x="20" y="556" width="1040" height="62" rx="10" fill="#f4f4f2" stroke="#9a9a9a" stroke-width="1.4" stroke-dasharray="6 4"/>
+<text x="36" y="578" font-size="12" font-weight="bold" fill="#8a8a8a">2026-10-07 删除</text>
+<text x="36" y="600" font-size="11" fill="#8a8a8a">抓网文入口 · 「优化」（及其 pending→ok/failed/cancelled 状态与进度）· PDF 转 EPUB 与原 PDF 备份（.pdf-originals/）· 中途停止 · 优化等级 / PDF 来源徽章</text>
 </svg>

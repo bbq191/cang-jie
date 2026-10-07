@@ -1,7 +1,7 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1240 870" font-family="Noto Sans CJK SC, sans-serif">
 <defs><marker id="mk" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#555"/></marker><marker id="mr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#b0451f"/></marker><marker id="mg" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#2f7d45"/></marker></defs>
 <rect x="0" y="0" width="1240" height="870" fill="#fbfbfa"/>
-<text x="620.0" y="30" text-anchor="middle" font-size="18" font-weight="bold" fill="#1a1a1a">一个请求在网关里要过的关（以“优化一本书”为例）</text>
+<text x="620.0" y="30" text-anchor="middle" font-size="18" font-weight="bold" fill="#1a1a1a">一个请求在网关里要过的关（以“加入 xochitl”为例）</text>
 <text x="620.0" y="52" text-anchor="middle" font-size="12.5" fill="#6a6a6a">左列是正常路径，右列是在这一关被拦下时浏览器收到什么；灰字标出代码位置</text>
 <rect x="40" y="78" width="600" height="78" rx="10" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.6"/>
 <text x="52" y="98" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">① 接入：拿并发名额 + 记下对端 IP</text>
@@ -44,7 +44,7 @@
 <polyline points="640,399.0 700,399.0" fill="none" stroke="#b0451f" stroke-width="1.6" marker-end="url(#mr)"/>
 <polyline points="340.0,438 340.0,454" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#mk)"/>
 <rect x="40" y="454" width="600" height="78" rx="10" fill="#fff3d6" stroke="#c9971f" stroke-width="1.6"/>
-<text x="52" y="474" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">⑤ 闸门：只拦优化 / 加入 xochitl / 抓网文（勾同步优化）</text>
+<text x="52" y="474" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">⑤ 闸门：只拦「加入 xochitl」（优化、抓网文 2026-10-07 删除）</text>
 <text x="52" y="496" text-anchor="start" font-size="10.5" fill="#3a3a3a">读小 JSON 拿书名，看母版库里这本多大；</text>
 <text x="52" y="511" text-anchor="start" font-size="10.5" fill="#3a3a3a">&gt; 90MB 大档同时 1 本，其余小档同时 3 本；拿不到名额就排队（最长 30 分钟）</text>
 <text x="628" y="474" text-anchor="end" font-size="10" fill="#8a8a8a">budget.rs</text>
@@ -70,7 +70,7 @@
 <text x="628" y="662" text-anchor="end" font-size="10" fill="#8a8a8a">proxy.rs + http/server.rs</text>
 <rect x="40" y="742" width="1160" height="112" rx="10" fill="#fff3d6" stroke="#c9971f" stroke-width="1.6"/>
 <text x="52" y="762" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">名额什么时候还？（proxy.rs poll_until_settled）</text>
-<text x="52" y="784" text-anchor="start" font-size="10.5" fill="#3a3a3a">抓网文是同步的：抓取 + 同步优化做完才回应，回应返回名额就还（还不知书名，按“抓网文 &lt;url&gt;”固定小档排队）。原“加入 KOReader”一项随 2026-09-29 卸载 KOReader 撤掉。</text>
-<text x="52" y="801" text-anchor="start" font-size="10.5" fill="#3a3a3a">优化 / 加入 xochitl 是异步的：book-serve 立刻回“已开始”，真活在后台。网关把名额交给一条监控线程，查 GET /staging 直到这本 busy=false（或条目消失，如 PDF 转成 EPUB 改了名）才还；</text>
+<text x="52" y="784" text-anchor="start" font-size="10.5" fill="#3a3a3a">只剩「加入 xochitl」一种：原“加入 KOReader”（2026-09-29）、“优化”与勾了同步优化的“抓网文”（2026-10-07）都已撤掉。</text>
+<text x="52" y="801" text-anchor="start" font-size="10.5" fill="#3a3a3a">加入 xochitl 是异步的：book-serve 立刻回“已开始”，真活在后台。网关把名额交给一条监控线程，查 GET /staging 直到这本 busy=false（或条目已消失）才还；</text>
 <text x="52" y="818" text-anchor="start" font-size="10.5" fill="#3a3a3a">靠 book-serve 的 books 事件唤醒（两次查询至少隔 5 秒，09-30），没事件 30 秒兜底查一次；查询要连续失败 6 次（每次至多隔 5 秒）才当服务已挂、放掉名额（2026-09-24 前一次失败就放）；最长等 60 分钟。</text>
 </svg>

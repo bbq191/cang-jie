@@ -81,7 +81,7 @@ impl Paths {
     pub fn state_dir(&self) -> PathBuf {
         self.state.join(APP)
     }
-    /// 母版库（中间层暂存池）：所有内容源先原样落这里，用户再选优化 / 落库去向。
+    /// 母版库（中间层暂存池）：所有内容源先原样落这里，用户再加入 xochitl（书架不优化书，书在电脑上用 sheng-ren 优化好再传）。
     /// 与 book-serve 的 spool 同根（`state_dir()/books`）（以前 koreader-serve 从母版库 adopt 时也读这里；它 2026-09-30 已从仓库删除）。
     /// 在 /home 分区，重启 / OTA 不丢。**不套 spool done/ 的 LRU 淘汰**——留住用户还没落库的书。
     pub fn staging_dir(&self) -> PathBuf {

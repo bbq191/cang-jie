@@ -2,27 +2,6 @@
 use super::*;
 use rmsvc_core::cache::{FileStamp, StampCache};
 
-/// 判定一本母版库文件的优化等级（`full`/`core`/`old`/`none`）与是否 PDF 转出的 EPUB——要开 zip / 读文件头尾，
-/// 结果由 `Staging::list` 按（大小, 修改时间）缓存。
-pub(super) fn probe_level(path: &Path, format: &str) -> (&'static str, bool) {
-    let pdf_source = format == "epub" && bookconv::pdf_ingest::looks_like_pdf_derived_epub(path);
-    let level = if format == "pdf" {
-        if bookconv::convert::pdfwrite::looks_like_own_bookconv_pdf(path) { "full" } else { "none" }
-    } else if pdf_source {
-        "full"
-    } else if format != "epub" {
-        "none"
-    } else {
-        match path.to_str().and_then(optimize::optimized_version_file) {
-            Some(v) if v == optimize::OPTIMIZE_VERSION => "full",
-            Some(v) if v.ends_with("-core") => "core",
-            Some(_) => "old",
-            None => "none",
-        }
-    };
-    (level, pdf_source)
-}
-
 /// `path` 所在文件系统的可用字节数（`f_bavail × f_frsize`）。
 pub(super) fn free_bytes_of(path: &Path) -> Option<u64> {
     use std::os::unix::ffi::OsStrExt;
@@ -37,12 +16,9 @@ pub(super) fn free_bytes_of(path: &Path) -> Option<u64> {
     st.f_bavail.checked_mul(st.f_frsize)
 }
 
-/// `list()` 的几份按文件戳失效的缓存（见 [`StampCache`]）。网页每收到一条母版库事件就重拉一次列表（优化进行中每秒一条
-/// 进度事件），每本书每次都开 zip 判等级、读边车、读 xochitl 的 `.content`，书一多就是持续的读盘和 CPU（电池）；
-/// 文件没变时这些结论都不会变。
+/// `list()` 的两份按文件戳失效的缓存（见 [`StampCache`]）。网页每收到一条母版库事件就重拉一次列表，每本书每次都读边车、
+/// 读 xochitl 的 `.content`，书一多就是持续的读盘和 CPU（电池）；文件没变时这些结论都不会变。
 pub(super) struct ListCaches {
-    /// 书名 → (优化等级, 是否 PDF 转出)，按书本身的戳失效（判定要开 zip / 读文件头尾）。
-    pub(super) probes: StampCache<(&'static str, bool)>,
     /// 书名 → 落库边车内容，按边车文件的戳失效（边车都是原子写，每次改写换 inode）。
     pub(super) sidecars: StampCache<Option<Delivered>>,
     /// 文档 uuid → xochitl `.content` 里的页数，按 `.content` 的戳失效。只查"首次打开才渲染"（onopen）的书：
@@ -55,7 +31,7 @@ const LIST_CACHE_CAP: usize = 4096;
 
 impl Default for ListCaches {
     fn default() -> Self {
-        ListCaches { probes: StampCache::new(LIST_CACHE_CAP), sidecars: StampCache::new(LIST_CACHE_CAP), pages: StampCache::new(LIST_CACHE_CAP) }
+        ListCaches { sidecars: StampCache::new(LIST_CACHE_CAP), pages: StampCache::new(LIST_CACHE_CAP) }
     }
 }
 
@@ -81,9 +57,9 @@ impl Staging {
         candidates.into_iter().filter(|name| !owners.contains_key(name) && std::fs::remove_file(self.dir.join(name)).is_ok()).count()
     }
     /// 启动时修正上一个进程被打断留下的状态（崩溃 / OOM / 被 systemd 杀 / 断电）：
-    /// - 边车里停在 `pending` 的优化 / 落库记录 → 改成 `failed`（否则界面永远显示"处理中"，而实际早没有线程在跑）；
+    /// - 边车里停在 `pending` 的落库记录 → 改成 `failed`（否则界面永远显示"处理中"，而实际早没有线程在跑）；
     /// - 渲染自检停在 `pending` → `timeout`（自检线程随进程没了；xochitl 可能延后渲染，打开一次就有页数）；
-    /// - 点前缀的 `*.tmp`（优化半成品、补封面的副本、跨分区入库的中转——可达数百 MB；以及边车原子写没来得及改名的
+    /// - 点前缀的 `*.tmp`（跨分区入库的中转、旧版留下的优化半成品——可达数百 MB；以及边车原子写没来得及改名的
     ///   `.<书名>.delivered.<pid>.<序号>.tmp`）→ 删除。这些都只可能是本服务写的，启动时没有操作在跑，全清安全。
     ///
     /// 只在启动时调用（此时不可能有操作在跑）。返回 (修正的记录数, 清掉的半成品数)。
@@ -94,7 +70,7 @@ impl Staging {
         let (mut fixed, mut tmps) = (0, 0);
         for e in rd.flatten() {
             let name = e.file_name().to_string_lossy().to_string();
-            // 旧版的优化半成品按书名起名（`.<书名>.optimizing.tmp`），新版是 `.<pid>.<序号>.<种类>.tmp`（`ScratchFile`）：都按后缀认。
+            // 旧版的优化半成品按书名起名（`.<书名>.optimizing.tmp`），现在是 `.<pid>.<序号>.<种类>.tmp`（`ScratchFile`）：都按后缀认。
             if name.starts_with('.') && name.ends_with(".tmp") && e.file_type().is_ok_and(|t| t.is_file()) {
                 if std::fs::remove_file(e.path()).is_ok() {
                     tmps += 1;
@@ -105,16 +81,12 @@ impl Staging {
             let Some(book_path) = sidecar::is_sidecar_name(&name).then(|| owners.get(&name)).flatten() else { continue };
             let stale = |st: &str| st == "pending";
             let Some(d) = sidecar::read(book_path) else { continue };
-            let needs = d.optimize.as_ref().is_some_and(|o| stale(&o.status))
-                || d.deliver.as_ref().is_some_and(|o| stale(&o.status))
+            let needs = d.deliver.as_ref().is_some_and(|o| stale(&o.status))
                 || d.render.as_ref().is_some_and(|o| stale(&o.status));
             if !needs {
                 continue;
             }
             let ok = sidecar::update(book_path, |d| {
-                if let Some(o) = d.optimize.as_mut().filter(|o| stale(&o.status)) {
-                    *o = sidecar::OptimizeCheck { status: "failed".into(), message: "服务重启，上次优化被中断，可重新点「优化」".into(), at: now, progress: None };
-                }
                 if let Some(o) = d.deliver.as_mut().filter(|o| stale(&o.status)) {
                     *o = sidecar::DeliverCheck { status: "failed".into(), message: "服务重启，上次加入被中断，可重新加入".into(), at: now };
                 }
@@ -130,80 +102,6 @@ impl Staging {
         }
         (fixed, tmps)
     }
-    /// 把转换完的原 PDF 挪进 [`PDF_ORIGINALS_DIR`]（同分区 rename，不拷贝），顺手清过期备份。
-    /// 同名旧备份直接被新的替换。它的落库边车留给 [`Self::gc_orphan_sidecars`] 按孤儿清。
-    pub(super) fn backup_pdf_original(&self, name: &str, p: &Path) -> Result<(), String> {
-        let dir = self.dir.join(PDF_ORIGINALS_DIR);
-        std::fs::create_dir_all(&dir).map_err(|e| format!("建原 PDF 备份目录失败: {e}"))?;
-        std::fs::rename(p, dir.join(name)).map_err(|e| format!("备份原 PDF 失败: {e}"))?;
-        self.gc_pdf_originals(PDF_ORIGINALS_KEEP_SECS);
-        Ok(())
-    }
-
-    /// 删掉挪进备份目录已超过 `keep_secs` 的原 PDF。按 ctime 算而不是 mtime：rename 不改 mtime
-    /// （那是 PDF 入库的时间，按它算会删得过早），但会刷新 inode 的 ctime。返回清掉的个数。
-    pub fn gc_pdf_originals(&self, keep_secs: u64) -> usize {
-        use std::os::unix::fs::MetadataExt;
-        let Ok(rd) = std::fs::read_dir(self.dir.join(PDF_ORIGINALS_DIR)) else { return 0 };
-        let now = rmsvc_core::clock::now_secs();
-        let mut n = 0;
-        for e in rd.flatten() {
-            let Ok(md) = e.metadata() else { continue };
-            let ctime = u64::try_from(md.ctime()).unwrap_or(0);
-            if md.is_file() && now.saturating_sub(ctime) >= keep_secs && std::fs::remove_file(e.path()).is_ok() {
-                n += 1;
-            }
-        }
-        n
-    }
-    /// 原 PDF 备份列表（新的在前）。`expiresAt` = 挪进来的时间（ctime）+ 保留期。
-    pub fn list_originals(&self) -> Vec<OriginalEntry> {
-        use std::os::unix::fs::MetadataExt;
-        let Ok(rd) = std::fs::read_dir(self.dir.join(PDF_ORIGINALS_DIR)) else { return vec![] };
-        let mut out: Vec<OriginalEntry> = rd
-            .flatten()
-            .filter_map(|e| {
-                let md = e.metadata().ok().filter(|m| m.is_file())?;
-                let name = e.file_name().to_str()?.to_string();
-                let at = u64::try_from(md.ctime()).unwrap_or(0);
-                Some(OriginalEntry { name, bytes: md.len(), backed_up_at: at, expires_at: at + PDF_ORIGINALS_KEEP_SECS })
-            })
-            .collect();
-        out.sort_by(|a, b| b.backed_up_at.cmp(&a.backed_up_at).then_with(|| a.name.cmp(&b.name)));
-        out
-    }
-
-    fn original_path(&self, name: &str) -> Result<PathBuf, String> {
-        let p = self.dir.join(PDF_ORIGINALS_DIR).join(plain_name(name)?);
-        if !p.is_file() {
-            return Err("备份里没有这份 PDF（可能已过期被清掉）".into());
-        }
-        Ok(p)
-    }
-
-    /// 把备份里的原 PDF 挪回母版库（同名条目已在 → 拒绝，不覆盖）。它转出来的 EPUB 不动，要不要删由用户决定。
-    pub fn restore_original(&self, name: &str) -> Result<(), String> {
-        let src = self.original_path(name)?;
-        let dst = self.path_of(name)?;
-        if !self.try_start_busy(name) {
-            return Err(busy_err(name, "再恢复"));
-        }
-        let land = self.land_guard();
-        let r = if dst.exists() {
-            Err(format!("母版库里已有《{name}》，为免覆盖没有恢复；先删除或改名那一份"))
-        } else {
-            std::fs::rename(&src, &dst).map_err(|e| format!("恢复失败: {e}"))
-        };
-        drop(land);
-        self.end_busy(name);
-        r
-    }
-
-    /// 提前删掉一份原 PDF 备份（不等 7 天过期）。
-    pub fn delete_original(&self, name: &str) -> Result<(), String> {
-        std::fs::remove_file(self.original_path(name)?).map_err(|e| format!("删除失败: {e}"))
-    }
-
     /// 母版库条目改名：只改文件名（不改书内的书名/作者），格式不能变——新名字不带扩展名就沿用原扩展名，
     /// 带了别的扩展名则拒绝。新名已存在 / 任一名字正在处理中 → 拒绝。落库边车跟着改名。返回新名字。
     pub fn rename(&self, name: &str, new_name: &str) -> Result<String, String> {
@@ -250,7 +148,7 @@ impl Staging {
     // ───────────── 查 / 删 ─────────────
 
     /// 删除一本书（连同落库边车）。删除期间**占着忙锁**：此前只是先查"忙不忙"再删，查完到删之间别的请求可能刚好
-    /// 开始优化/落库/改名，后台线程随即对着一个已删的文件跑（2026-09-25 第四轮审计）。
+    /// 开始落库/改名，后台线程随即对着一个已删的文件跑（2026-09-25 第四轮审计）。
     pub fn remove(&self, name: &str) -> Result<(), String> {
         let p = self.path_of(name)?;
         if !self.try_start_busy(name) {
@@ -300,15 +198,6 @@ impl Staging {
                 "cbz" => "cbz",
                 _ => "other",
             };
-            // 优化状态对 EPUB 有意义；PDF 里"我们自己优化产出的产物"（入库 PDF 裁边等）
-            // 也算已优化（靠书签目录或 Producer 标记廉价识别，见 `pdfwrite.rs::looks_like_own_
-            // bookconv_pdf` 文档注释——用户自己上传的原生 PDF 没有这俩标记，维持 none）。
-            // 入库 PDF 转出来的 EPUB（`pdf_source`）视为一次性产物已经完成，直接报 full，不进
-            // 常规文字 EPUB 那条 full/core/old/none 优化阶梯——真跑一遍 `optimized_version_file`
-            // 只会白白报 none（这类 EPUB 从没被 `optimize_epub_file_streaming` 处理过，没有那个
-            // 内嵌版本标记），误导前端以为它"未优化"、显示可以点「优化」，见 `StagingEntry::
-            // pdf_source` 文档。
-            let (level, pdf_source) = self.caches.probes.get_or(&name, FileStamp::of(&md), || probe_level(&e.path(), format));
             seen.insert(name.clone());
             let mtime = md.modified().ok().map(rmsvc_core::clock::secs_of).unwrap_or(0);
             let busy = self.is_busy(&name);
@@ -339,16 +228,12 @@ impl Staging {
                 name,
                 bytes: md.len(),
                 format,
-                optimized: level == "full",
-                level,
                 mtime,
                 delivered,
                 busy,
-                pdf_source,
             });
         }
         // 已被删除/改名的条目从缓存清掉，避免缓存无限增长
-        self.caches.probes.retain(|k| seen.contains(k));
         self.caches.sidecars.retain(|k| seen.contains(k));
         self.caches.pages.retain(|k| seen_docs.contains(k));
         out.sort_by(|a, b| b.mtime.cmp(&a.mtime).then_with(|| a.name.cmp(&b.name)));

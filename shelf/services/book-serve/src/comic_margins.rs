@@ -1,15 +1,19 @@
-//! 漫画「页边距」待办：哪些原生书库里的文档，应在用户**首次打开**时由阅读器自己设成 [`bookconv::imgopt::EPUB_COMIC_MARGINS`]。
+//! 漫画「页边距」待办：哪些原生书库里的文档，应在用户**首次打开**时由阅读器自己设成漫画产物要的页边距（sheng-ren 优化器写在
+//! `META-INF/eink-reader-margins` 里，xochitl 阅读模式是 1）。
 //!
 //! 为什么不直接改文档的 `.content`：外部写文件会被运行中 xochitl 的内存状态盖回去（真机 5 次实验只成功 1 次，白皮书 §20）。
 //! 唯一可靠的是走 xochitl 自己的代码路径——注入 DocumentView 的 `shelf/xovi/shelf-comic-margins.qmd` 在书打开时
 //! `GET /margins/<uuid>`，命中就调用阅读器的 `EpubProperties.setMargins(m)`（与界面点"页边距"同一条路径），成功后
 //! `POST /margins/applied` 销账。**每本书只设一次**：之后用户在界面上自己改回去，我们不再干预。
 //!
-//! 只登记**用新版页框处理过的漫画 EPUB**（以图为主；文字页已补留边）（`Staging::comic_margin_eligible`）：补白比例是按"边距 1"算的，旧页框产物
-//! （补白到屏幕比例）在最小边距下会贴左、右侧空一大块，反而更糟。文字书、PDF 完全不碰。文字页留边见 `bookconv::comic_pad`。
+//! 只登记**按页边距模式排的漫画 EPUB**（`Staging::comic_margin_eligible`：sheng-ren 优化的产物带 `META-INF/eink-reader-margins`）：
+//! 补白比例是按"边距 1"算的，别的漫画在最小边距下会贴左、右侧空一大块，文字贴屏幕边，反而更糟。文字书、PDF 完全不碰。
+//! 漫画怎么排（补白、文字页留边）是 sheng-ren 的事，书架只负责登记和首次打开时设页边距。
 //!
-//! **用户开关**（网页「管理→实验室→漫画页边距」）：`reading-qol.json` 的 `comicMinMargin`（默认关，跟「导入 md」同一套实验室开关）。
-//! 关闭时：优化用旧页框（`EpubComicFrame::Screen`）、不登记、`GET /margins/<uuid>` 一律 404（已登记的也不再生效）。队列文件 `$XDG_STATE_HOME/shelf/books/comic-margins.json`，
+//! **没有开关**（2026-10-07 删掉「实验室→漫画页边距」`comicMinMargin`）：sheng-ren 的 xochitl 模式漫画就是按页边距 1 排的，
+//! 不设成 1 反而缩小一圈；开关以前还管设备上优化漫画时按哪种页框排，书架不再优化书后只剩"登不登记"，关着只会让漫画变难看。
+//! 带标记的一律登记；想要回原来的页边距，首次打开后在阅读器界面里调回去即可（每本只设一次）。
+//! sheng-ren 的 `xochitl/comic-margins.sh` 也往同一个队列里登记（拷进设备、没经过书架的漫画）。队列文件 `$XDG_STATE_HOME/shelf/books/comic-margins.json`，
 //! 持久化/去重/剔除委托通用的 [`PendingQueue`]（同 `trash.rs`/`mkdir.rs`）。
 use crate::pending_queue::PendingQueue;
 use serde::{Deserialize, Serialize};
@@ -25,22 +29,11 @@ pub struct Pending {
 pub struct ComicMargins {
     q: PendingQueue<Pending>,
     lib_dir: PathBuf,
-    /// 共享开关文件 `reading-qol.json`（网关写、这里只读）。
-    qol_file: PathBuf,
 }
 
 impl ComicMargins {
-    pub fn new(state_books_dir: &Path, lib_dir: &Path, qol_file: &Path) -> ComicMargins {
-        ComicMargins { q: PendingQueue::new(state_books_dir.join("comic-margins.json")), lib_dir: lib_dir.to_path_buf(), qol_file: qol_file.to_path_buf() }
-    }
-
-    /// 「实验室→漫画页边距」开关是否打开。每次现读文件（很小；优化/投书/开书各一次），缺文件/缺键/非布尔 → 关。
-    pub fn enabled(&self) -> bool {
-        std::fs::read_to_string(&self.qol_file)
-            .ok()
-            .and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok())
-            .and_then(|v| v.get("comicMinMargin").and_then(|b| b.as_bool()))
-            .unwrap_or(false)
+    pub fn new(state_books_dir: &Path, lib_dir: &Path) -> ComicMargins {
+        ComicMargins { q: PendingQueue::new(state_books_dir.join("comic-margins.json")), lib_dir: lib_dir.to_path_buf() }
     }
 
     fn exists(&self, uuid: &str) -> bool {
@@ -58,9 +51,9 @@ impl ComicMargins {
         self.q.add(|p| p.uuid == uuid, || Pending { uuid: uuid.to_string(), margins, at: rmsvc_core::clock::now_secs() })
     }
 
-    /// 这本书该设的边距；没登记 / 书已不在 / **开关关着** → None。QML 代理每次开书调一次。
+    /// 这本书该设的边距；没登记 / uuid 不对 → None。QML 代理每次开书调一次。
     pub fn get(&self, uuid: &str) -> Option<u32> {
-        if !self.enabled() || !rmsvc_core::xochitl::is_uuid_shape(uuid) {
+        if !rmsvc_core::xochitl::is_uuid_shape(uuid) {
             return None;
         }
         self.q.list().into_iter().find(|p| p.uuid == uuid).map(|p| p.margins)
@@ -89,8 +82,7 @@ mod tests {
         let lib = t.path().join("xochitl");
         std::fs::create_dir_all(&lib).unwrap();
         std::fs::write(lib.join(format!("{U1}.metadata")), "{}").unwrap();
-        std::fs::write(t.path().join("qol.json"), r#"{"comicMinMargin":true,"other":1}"#).unwrap(); // 开关默认开着（测别的行为）
-        ComicMargins::new(t.path(), &lib, &t.path().join("qol.json"))
+        ComicMargins::new(t.path(), &lib)
     }
 
     #[test]
@@ -113,7 +105,7 @@ mod tests {
         assert!(m.add(U2, 0).is_err(), "书库里没有");
         assert_eq!(m.get("../x"), None);
         m.add(U1, 0).unwrap();
-        let again = ComicMargins::new(t.path(), &t.path().join("xochitl"), &t.path().join("qol.json"));
+        let again = ComicMargins::new(t.path(), &t.path().join("xochitl"));
         assert_eq!(again.get(U1), Some(0), "落盘，重启不丢");
     }
 
@@ -125,25 +117,5 @@ mod tests {
         std::fs::remove_file(t.path().join("xochitl").join(format!("{U1}.metadata"))).unwrap();
         assert_eq!(m.prune_missing(), 1);
         assert_eq!(m.get(U1), None);
-    }
-
-    #[test]
-    fn switch_defaults_off_and_get_is_none_while_off() {
-        let t = tempfile::tempdir().unwrap();
-        let m = setup(&t);
-        m.add(U1, 1).unwrap();
-        assert_eq!(m.get(U1), Some(1));
-        let q = t.path().join("qol.json");
-        std::fs::write(&q, r#"{"comicMinMargin":false}"#).unwrap();
-        assert!(!m.enabled());
-        assert_eq!(m.get(U1), None, "开关关：已登记的也不再生效");
-        std::fs::write(&q, r#"{"hlSnapCjk":true}"#).unwrap();
-        assert!(!m.enabled(), "缺键 → 关（实验室开关默认关）");
-        std::fs::write(&q, "not json").unwrap();
-        assert!(!m.enabled(), "文件坏 → 关");
-        std::fs::remove_file(&q).unwrap();
-        assert!(!m.enabled(), "缺文件 → 关");
-        std::fs::write(&q, r#"{"comicMinMargin":true}"#).unwrap();
-        assert_eq!(m.get(U1), Some(1), "重新打开后仍在（登记没丢）");
     }
 }

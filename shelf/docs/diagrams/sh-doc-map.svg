@@ -15,22 +15,22 @@
   <text x="40" y="196" font-size="12" fill="#6b7280">数据流、状态机、落库通道、API、配置</text>
   <line x1="346" y1="180" x2="540" y2="180" stroke="#9ca3af" stroke-width="2" marker-end="url(#ar)"/>
   <rect x="546" y="152" width="410" height="56" rx="8" fill="#dcfce7" stroke="#16a34a"/>
-  <text x="562" y="176" font-size="14" font-weight="bold" fill="#166534">docs/传书EPUB线架构.md</text>
+  <text x="562" y="176" font-size="14" font-weight="bold" fill="#166534">docs/传书EPUB线架构.md（传书线架构）</text>
   <text x="562" y="196" font-size="12.5" fill="#14532d">数据流与服务分工（现状参考 + 全部 API）</text>
   <rect x="24" y="220" width="320" height="56" rx="8" fill="#f3f4f6" stroke="#d1d5db"/>
-  <text x="40" y="244" font-size="13" fill="#1f2937">书该被改成什么样？</text>
-  <text x="40" y="264" font-size="12" fill="#6b7280">EPUB 优化、PDF 转 EPUB、xochitl 实测规则</text>
+  <text x="40" y="244" font-size="13" fill="#1f2937">书该被优化成什么样？</text>
+  <text x="40" y="264" font-size="12" fill="#6b7280">排版、注释、漫画、xochitl 阅读器踩坑</text>
   <line x1="346" y1="248" x2="540" y2="248" stroke="#9ca3af" stroke-width="2" marker-end="url(#ar)"/>
   <rect x="546" y="220" width="410" height="56" rx="8" fill="#fef3c7" stroke="#d97706"/>
-  <text x="562" y="244" font-size="14" font-weight="bold" fill="#92400e">docs/EPUB优化规范白皮书.md</text>
-  <text x="562" y="264" font-size="12.5" fill="#78350f">规则：应该是什么样（权威出处）</text>
+  <text x="562" y="244" font-size="14" font-weight="bold" fill="#92400e">sheng-ren 仓库 docs/（不在本仓库）</text>
+  <text x="562" y="264" font-size="12.5" fill="#78350f">typesetting.md 排版规则 · xochitl.md 阅读器踩坑</text>
   <rect x="24" y="288" width="320" height="56" rx="8" fill="#f3f4f6" stroke="#d1d5db"/>
-  <text x="40" y="312" font-size="13" fill="#1f2937">代码是怎么做到的？</text>
-  <text x="40" y="332" font-size="12" fill="#6b7280">清洗/脚注/图片/漫画/PDF 解析/内存</text>
+  <text x="40" y="312" font-size="13" fill="#1f2937">以前设备上的优化是怎么做的？</text>
+  <text x="40" y="332" font-size="12" fill="#6b7280">清洗/脚注/图片/漫画/PDF 转换（2026-10-07 已删）</text>
   <line x1="346" y1="316" x2="540" y2="316" stroke="#9ca3af" stroke-width="2" marker-end="url(#ar)"/>
   <rect x="546" y="288" width="410" height="56" rx="8" fill="#ede9fe" stroke="#7c3aed"/>
-  <text x="562" y="312" font-size="14" font-weight="bold" fill="#5b21b6">docs/bookconv优化白皮书.md</text>
-  <text x="562" y="332" font-size="12.5" fill="#4c1d95">实现：函数、常量、版本号、实现层的坑</text>
+  <text x="562" y="312" font-size="14" font-weight="bold" fill="#5b21b6">git 历史 + 书架白皮书第 B 章</text>
+  <text x="562" y="332" font-size="12.5" fill="#4c1d95">两份旧优化白皮书已删：git show 76fd031:shelf/docs/…</text>
   <rect x="24" y="356" width="320" height="56" rx="8" fill="#f3f4f6" stroke="#d1d5db"/>
   <text x="40" y="380" font-size="13" fill="#1f2937">现在整体什么状态？为什么这么定？</text>
   <text x="40" y="400" font-size="12" fill="#6b7280">现状总览、真机历史、事故与坑</text>
