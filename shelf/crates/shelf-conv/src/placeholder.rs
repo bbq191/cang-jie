@@ -1,4 +1,4 @@
-//! 大文件"占位 + 替换"投原生用的占位文档，以及读 EPUB 的翻页方向。
+//! 大文件"占位 + 替换"投原生用的占位文档。
 //!
 //! xochitl 的网页上传接口有约 100MB 的硬上限（超了直接断连，2026-09-19 真机实测）。绕开办法（2026-09-20
 //! 真机验证过 PDF 154MB/349 页、EPUB 153MB 都能打开）：先用网页上传一个几 KB 的**占位文档**让 xochitl
@@ -10,14 +10,6 @@
 
 use crate::epub;
 use std::path::Path;
-
-/// 这本 EPUB 是不是"从右往左"翻页：OPF `<spine page-progression-direction="rtl">`（日漫常见）。只读
-/// container.xml 和 OPF 两个条目，不解压整本（漫画一卷可达数百 MB）。读不到/不是 EPUB 一律 `false`。
-/// 给 xochitl 阅读器的"日漫从右往左翻页"用（book-serve `GET /reading-direction/{uuid}`，2026-09-24）。
-/// 判据见 [`epub::spine_is_rtl`]（只读原书自带的方向）。
-pub fn epub_is_rtl(epub: &Path) -> bool {
-    epub::open_opf(epub).is_ok_and(|(_, _, opf)| epub::spine_is_rtl(&opf))
-}
 
 /// 造占位 EPUB：显示名 = `title`（`None` 取真书自己的 `dc:title`），封面 = 真书的封面（找不到就没有封面页，
 /// 只有标题）。体积通常几十到几百 KB。
@@ -248,27 +240,5 @@ mod tests {
         std::fs::write(&path, &pdf).unwrap();
         assert_eq!(crate::pdfmeta::page_count(&path).unwrap(), 1);
         assert!(pdf.len() < 4000);
-    }
-
-    #[test]
-    fn epub_is_rtl_reads_spine_direction_only() {
-        let d = tempfile::tempdir().unwrap();
-        let mk = |name: &str, spine: &str| {
-            let p = d.path().join(name);
-            let mut z = zip::ZipWriter::new(std::fs::File::create(&p).unwrap());
-            let o: zip::write::SimpleFileOptions = zip::write::SimpleFileOptions::default();
-            z.start_file("META-INF/container.xml", o).unwrap();
-            z.write_all(br#"<container><rootfiles><rootfile full-path="OEBPS/content.opf"/></rootfiles></container>"#).unwrap();
-            z.start_file("OEBPS/content.opf", o).unwrap();
-            z.write_all(format!(r#"<package><manifest/>{spine}</package>"#).as_bytes()).unwrap();
-            z.finish().unwrap();
-            p
-        };
-        assert!(epub_is_rtl(&mk("r.epub", r#"<spine toc="ncx" page-progression-direction="rtl"><itemref idref="a"/></spine>"#)));
-        assert!(!epub_is_rtl(&mk("l.epub", r#"<spine page-progression-direction="ltr"><itemref idref="a"/></spine>"#)));
-        assert!(!epub_is_rtl(&mk("n.epub", r#"<spine toc="ncx"><itemref idref="a"/></spine>"#)));
-        assert!(!epub_is_rtl(&d.path().join("missing.epub")));
-        std::fs::write(d.path().join("bad.epub"), b"not a zip").unwrap();
-        assert!(!epub_is_rtl(&d.path().join("bad.epub")));
     }
 }

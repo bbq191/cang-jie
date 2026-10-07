@@ -28,25 +28,25 @@ pub fn status(paths: &Paths) -> Reply {
         "hlSnapCjk": q.hl_snap_cjk(),
         "notesImportMdEnabled": q.notes_import_md_enabled(),
         "tapPageTurn": q.tap_page_turn(),
-        "rtlPageTurn": q.rtl_page_turn(),
         "loaded": xochitl_loaded(paths),
     }))
 }
 
-/// `PUT /api/enhance/qol`：接 `{hlSnapCjk}`/`{notesImportMdEnabled}`/`{tapPageTurn}`/`{rtlPageTurn}`，body 里出现
+/// `PUT /api/enhance/qol`：接 `{hlSnapCjk}`/`{notesImportMdEnabled}`/`{tapPageTurn}`，body 里出现
 /// 哪个就改哪个（`qol::patch` 本身是通用的 key-patch，将来加键直接扩这里）。「漫画页边距」开关 `comicMinMargin` 2026-10-07 删除
-/// （带 sheng-ren 页边距标记的漫画一律登记，见 book-serve `comic_margins.rs`）；旧文件里的这个键照常原样保留、不再有人读。
+/// （带 sheng-ren 页边距标记的漫画一律登记，见 book-serve `comic_margins.rs`），「日漫翻页规则」`rtlPageTurn` 同日删除；
+/// 旧文件里的这两个键照常原样保留、不再有人读。
 pub fn set_qol(paths: &Paths, req: &mut Request<'_>) -> ApiResult {
     let body = req.json()?;
     let mut changes = serde_json::Map::new();
     // 与 reading-qol.json 键同名的直通布尔开关。
-    for key in ["hlSnapCjk", "notesImportMdEnabled", "tapPageTurn", "rtlPageTurn"] {
+    for key in ["hlSnapCjk", "notesImportMdEnabled", "tapPageTurn"] {
         if let Some(v) = body.0.get(key).and_then(|v| v.as_bool()) {
             changes.insert(key.into(), serde_json::Value::Bool(v));
         }
     }
     if changes.is_empty() {
-        return Err(ApiError::bad("body 需要 hlSnapCjk/notesImportMdEnabled/tapPageTurn/rtlPageTurn 其中一个布尔字段"));
+        return Err(ApiError::bad("body 需要 hlSnapCjk/notesImportMdEnabled/tapPageTurn 其中一个布尔字段"));
     }
     qol::patch(paths, changes).map_err(ApiError::internal)?;
     Ok(status(paths))
@@ -84,18 +84,18 @@ mod tests {
         assert!(put(&paths, br#"{"hlSnapCjk":"yes"}"#).is_err());
     }
 
-    /// 两个翻页开关：缺省关；各自独立写，互不冲掉，也不冲掉别的键。
+    /// 单击翻页开关：缺省关；单独写不冲掉别的键。已删的 rtlPageTurn 单独传 → 拒绝，状态里也不再有它。
     #[test]
-    fn page_turn_switches_default_off_and_independent() {
+    fn tap_page_turn_default_off_and_rtl_switch_gone() {
         let t = tempfile::tempdir().unwrap();
         let paths = crate::testutil::sandbox(&t);
-        let q = qol::Qol::load(&paths);
-        assert!(!q.tap_page_turn() && !q.rtl_page_turn());
+        assert!(!qol::Qol::load(&paths).tap_page_turn());
         put(&paths, br#"{"notesImportMdEnabled":true}"#).unwrap();
         let v: serde_json::Value = serde_json::from_slice(&put(&paths, br#"{"tapPageTurn":true}"#).unwrap().body).unwrap();
-        assert_eq!((v["tapPageTurn"].as_bool(), v["rtlPageTurn"].as_bool()), (Some(true), Some(false)));
-        put(&paths, br#"{"rtlPageTurn":true}"#).unwrap();
+        assert_eq!(v["tapPageTurn"].as_bool(), Some(true));
+        assert!(v.get("rtlPageTurn").is_none());
+        assert!(put(&paths, br#"{"rtlPageTurn":true}"#).is_err());
         let q = qol::Qol::load(&paths);
-        assert!(q.tap_page_turn() && q.rtl_page_turn() && q.notes_import_md_enabled());
+        assert!(q.tap_page_turn() && q.notes_import_md_enabled());
     }
 }

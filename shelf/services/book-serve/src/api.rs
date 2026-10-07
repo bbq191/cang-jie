@@ -6,7 +6,6 @@
 //! · 2026-10-07 删除：`/staging/optimize`、`/staging/fetch-article`、`/staging/originals/*`、`/staging/cancel`（书架不再优化书，
 //!   优化全部在电脑上用 sheng-ren 做；剩下的投递没有能中途停的步骤）。
 //! · `GET /events`（SSE：母版库/inbox 变更即推，网页零轮询）。
-//! 阅读方向：`GET /reading-direction/{uuid}` → `{rtl}`（xochitl 里 reader-page-turn.qmd 用；只看书里自带的 OPF 标记，2026-09-30 起不能在网页上按书指定）。
 //! 原生回收站队列：`POST /trash/add {uuid, name}`（name 必须与书库 visibleName 相符）· `GET /trash/pending?wait=` → `{uuids}`（MainView 代理 qmd 长轮询拉取执行）· `GET /trash`。
 //! 原生建文件夹队列：`POST /mkdir/add {name}` · `GET /mkdir/pending` → `{names}`（MainView 代理 shelf-mkdir-agent.qmd 拉取执行）· `GET /mkdir`。
 //! 代理放弃记录：`GET /agent-failures` → `{items:[{kind,name,uuid?,at}]}` · `POST /agent-failures/clear`（两个队列交满次数仍没做成的项）。
@@ -66,11 +65,6 @@ pub fn router(st: Arc<State>) -> Router {
             check_mark_target(j.str_or("target", "native")).map_err(ApiError::bad)?;
             s.staging.mark_delivered(j.str("name")?).map_err(ApiError::bad)?;
             staging_changed(s)
-        }))
-        // ── 阅读方向（reader-page-turn.qmd 打开书时查；rtl=从右往左翻页的书，见 reading_direction.rs）──
-        .get("/reading-direction/{uuid}", bind(&st, |s, r| {
-            let rtl = s.reading_direction.is_rtl(r.param("uuid")).map_err(ApiError::bad)?;
-            Ok(Reply::ok(&serde_json::json!({"rtl": rtl})))
         }))
         // ── 漫画页边距待办（QML 代理 shelf-comic-margins.qmd 在书打开时查；见 comic_margins.rs）──
         .get("/margins/{uuid}", bind(&st, |s, r| match s.comic_margins.get(r.param("uuid")) {

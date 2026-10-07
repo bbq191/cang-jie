@@ -1,4 +1,4 @@
-//! 读 EPUB 的几样小事：找 OPF、书名/作者/语言、封面图、翻页方向、sheng-ren 的漫画页边距标记，外加写占位 EPUB 的 zip。
+//! 读 EPUB 的几样小事：找 OPF、书名/作者/语言、封面图、sheng-ren 的漫画页边距标记，外加写占位 EPUB 的 zip。
 //!
 //! 2026-10-07 起书架不优化书，只把书原样投进 xochitl，读书只剩这几样；以前借用 sheng-ren `bookconv` 的公开接口，
 //! 它连带的图片处理、网页正文抽取、HTTP 客户端等依赖书架一样都用不上，同日改成这里的最小实现（只读 container.xml、
@@ -239,12 +239,6 @@ pub fn title_of(epub: &Path) -> Option<String> {
     open_opf(epub).ok().and_then(|(_, _, opf)| dc_text(&opf, "title"))
 }
 
-/// OPF `<spine page-progression-direction="rtl">`（值去空白、不分大小写）。
-pub fn spine_is_rtl(opf: &str) -> bool {
-    let opf = strip_comments(opf);
-    start_tags(&opf, "spine").first().and_then(|t| attr(t, "page-progression-direction")).is_some_and(|v| v.trim().eq_ignore_ascii_case("rtl"))
-}
-
 struct Item<'a> {
     id: &'a str,
     href: &'a str,
@@ -358,9 +352,9 @@ mod tests {
         assert_eq!(attr(t, "HREF"), Some("x&amp;y.xhtml"));
         assert_eq!(attr(t, "media-type"), Some("application/xhtml+xml"));
         assert_eq!(attr(t, "properties"), None);
-        let opf = r#"<package><!-- <spine page-progression-direction="rtl"> --><opf:spine page-progression-direction=" RTL "/></package>"#;
-        assert!(spine_is_rtl(opf), "注释里的不算、带前缀、值去空白不分大小写");
-        assert!(!spine_is_rtl(r#"<package><!-- <spine page-progression-direction="rtl"> --><spine/></package>"#));
+        let opf = r#"<package><!-- <opf:item id="x" href="old.xhtml"/> --><opf:item id="y" href="new.xhtml"/></package>"#;
+        let items = manifest_items(&strip_comments(opf)).into_iter().map(|i| i.href.to_string()).collect::<Vec<_>>();
+        assert_eq!(items, ["new.xhtml"], "注释里的不算、带前缀");
     }
 
     #[test]

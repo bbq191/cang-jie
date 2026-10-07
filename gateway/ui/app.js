@@ -1253,9 +1253,7 @@ function renderManage(sec){sec.innerHTML=`
     <div class="card"><h3 style="margin-top:0">${T('manage.enhance.pageTurn.title')} <span id="erPageTurnLoaded"></span></h3>
       <p class="small">${T('manage.enhance.pageTurn.desc')}</p>
       <label class="toggle"><input type="checkbox" id="erTapPageTurn"> ${T('manage.enhance.pageTurn.tapToggle')}</label>
-      <p class="small">${T('manage.enhance.pageTurn.tapHint')}</p>
-      <label class="toggle"><input type="checkbox" id="erRtlPageTurn"> ${T('manage.enhance.pageTurn.rtlToggle')}</label>
-      <p class="small">${T('manage.enhance.pageTurn.rtlHint')}</p></div>
+      <p class="small">${T('manage.enhance.pageTurn.tapHint')}</p></div>
   </div>
   <div class="subpanel">
     <div class="card"><h3 style="margin-top:0">${T('manage.lab.importMd.title')}</h3>
@@ -1290,13 +1288,13 @@ function renderManage(sec){sec.innerHTML=`
   /* 系统增强/实验室（Track 3，2026-09-09；实验室 2026-09-10 加）：CJK 画线吸附/翻页/
      导入md文档可见性都是真开关（写 reading-qol.json，走同一个 /api/enhance/qol）。电池刺客与 CJK 手写笔迹优化
      2026-09-30 已移除；「漫画页边距」开关 2026-10-07 删除（带 sheng-ren 页边距标记的漫画一律登记）。 */
-  const tapBox=$('#erTapPageTurn',sec),rtlBox=$('#erRtlPageTurn',sec);
+  const tapBox=$('#erTapPageTurn',sec);
   const hlBox=$('#erHlSnap',sec),importMdBox=$('#labImportMd',sec);
   const manageNav=sec.querySelector(':scope > .subnav');
   const erApply=async r=>{
     hlBox.checked=!!r.hlSnapCjk;
     importMdBox.checked=!!r.notesImportMdEnabled;
-    tapBox.checked=!!r.tapPageTurn;rtlBox.checked=!!r.rtlPageTurn;
+    tapBox.checked=!!r.tapPageTurn;
     // 开关旁边标"xochitl 里实际有没有加载这个扩展"（查主进程 maps，见 gateway enhance/loaded.rs）：开关只是配置，
     // 扩展没加载时开了也不生效——历史上两次"看着装了、其实没生效"就是这种情况。
     const ld=r.loaded||{},exts=ld.extensions||[];
@@ -1311,7 +1309,7 @@ function renderManage(sec){sec.innerHTML=`
       :`<span class="badge off" title="${T('manage.loaded.qmdOffTitle')}">${T('manage.loaded.off')}</span>`;
     $('#erPageTurnLoaded',sec).innerHTML=qmdBadge('reader-page-turn.qmd')};
   bindToggle(hlBox,'/api/enhance/qol','hlSnapCjk');bindToggle(importMdBox,'/api/enhance/qol','notesImportMdEnabled');
-  bindToggle(tapBox,'/api/enhance/qol','tapPageTurn');bindToggle(rtlBox,'/api/enhance/qol','rtlPageTurn');
+  bindToggle(tapBox,'/api/enhance/qol','tapPageTurn');
   /* 设备健康：切到这个子标签时才取数（每次切过去都取一次，网关侧有 15 秒缓存），不跟着管理页的 SSE 刷新走；
      清理那组只在它是当前二级 tab 时一起取（见 mountHealth）。 */
   const healthLoad=mountHealth($('#healthBox',sec));

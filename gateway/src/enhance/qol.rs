@@ -63,13 +63,11 @@ impl Qol {
         self.flag("notesImportMdEnabled", false)
     }
 
-    /// 「单击翻页」（`tapPageTurn`）与「日漫翻页规则」（`rtlPageTurn`）两个开关（2026-09-24）：xochitl 阅读器里的
-    /// `reader-page-turn.qmd` 每次打开书时读这两个键（不轮询），切换后下次打开书生效。缺省都关 = xochitl 原生行为。
+    /// 「单击翻页」开关（`tapPageTurn`，2026-09-24）：xochitl 阅读器里的 `reader-page-turn.qmd` 每次打开书时读它（不轮询），
+    /// 切换后下次打开书生效。缺省关 = xochitl 原生行为。「日漫翻页规则」`rtlPageTurn` 2026-10-07 删除（书架只管入库，
+    /// 翻页方向交给书本身）；旧文件里的这个键原样保留、不再有人读。
     pub fn tap_page_turn(&self) -> bool {
         self.flag("tapPageTurn", false)
-    }
-    pub fn rtl_page_turn(&self) -> bool {
-        self.flag("rtlPageTurn", false)
     }
 }
 

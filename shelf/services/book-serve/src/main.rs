@@ -15,7 +15,6 @@ mod service_state;
 mod sidecar;
 mod spool;
 mod staging;
-mod reading_direction;
 mod trash;
 
 use rmsvc_core::paths::Paths;

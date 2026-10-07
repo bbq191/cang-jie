@@ -29,8 +29,6 @@ pub struct State {
     /// 原生书库「建文件夹」队列（QML 代理 shelf-mkdir-agent.qmd 拉取执行，2026-09-19 复活，
     /// 见 mkdir.rs 模块文档）；`Arc` 是因为 `Staging::deliver` 的后台线程要跟 `bus` 一样带着走。
     pub mkdir: Arc<MkdirQueue>,
-    /// 阅读方向查询（xochitl 阅读器里的 reader-page-turn.qmd 打开书时问，见 reading_direction.rs）。
-    pub reading_direction: Arc<crate::reading_direction::ReadingDirection>,
     /// 回收站 / 建文件夹代理执行不成、已放弃的记录（网页页头横幅，见 agent_failures.rs）。
     pub agent_failures: Arc<AgentFailures>,
     /// 直接导入 xochitl（不进母版库，sheng-ren 经 SSH 端口转发调，见 import.rs）。
@@ -65,7 +63,6 @@ impl State {
         let books_state = paths.state_dir().join("books"); // inbox/.work/failed 与三个待办队列共用的状态目录
         let spool = Spool::new(books_state.clone());
         let comic_margins = Arc::new(ComicMargins::new(&books_state, &paths.xochitl_dir()));
-        let reading_direction = Arc::new(crate::reading_direction::ReadingDirection::new(&paths.xochitl_dir()));
         let staging = Staging::new(paths.staging_dir(), xochitl.clone(), cfg.native_upload_limit_bytes())
             .with_comic_margins(comic_margins.clone());
         let import = crate::import::Importer::new(xochitl.clone(), staging.clone(), books_state.join("import-tmp"), cfg.native_upload_limit_bytes());
@@ -73,7 +70,7 @@ impl State {
         let agent_failures = Arc::new(AgentFailures::new(&books_state, Some(bus.clone())));
         let trash = TrashQueue::new(&books_state, &paths.xochitl_dir()).with_failures(agent_failures.clone());
         let mkdir = Arc::new(MkdirQueue::new(&books_state, &paths.xochitl_dir()).with_failures(agent_failures.clone()));
-        State { cfg, spool, staging, xochitl, bus, trash, comic_margins, mkdir, reading_direction, agent_failures, import, status_cache: TtlCache::new(STATUS_TTL), inbox_settle: INBOX_SETTLE }
+        State { cfg, spool, staging, xochitl, bus, trash, comic_margins, mkdir, agent_failures, import, status_cache: TtlCache::new(STATUS_TTL), inbox_settle: INBOX_SETTLE }
     }
 
     pub fn ensure_dirs(&self) -> std::io::Result<()> {
