@@ -203,7 +203,9 @@ fn main() {
         .get("/books/{uuid}/crops/{file}", bind(&st, |s, r| {
             let f = plain_name(r.param("file")).map_err(ApiError::bad)?;
             let bytes = std::fs::read(s.crops_dir().join(f)).map_err(|_| ApiError::not_found("没有这张裁图"))?;
-            Ok(Reply::bytes("image/png", bytes))
+            // 裁图名带笔迹哈希（`<条目id>-<hash>.png`，笔迹一变就换新名字、旧图删掉），内容永不变：让浏览器长期缓存，
+            // 笔记页每次重画不再重新下载（网关转发时透传这个头）。
+            Ok(Reply::bytes("image/png", bytes).with_header("Cache-Control", "private, max-age=31536000, immutable"))
         }))
         .post("/books/{uuid}/entries/{id}", bind(&st, |s, r| {
             let (uuid, id) = (r.param("uuid").to_string(), r.param("id").to_string());

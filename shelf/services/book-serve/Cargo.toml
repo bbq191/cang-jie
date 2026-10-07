@@ -16,8 +16,6 @@ rmsvc-core = { path = "../../../rmsvc-core" }
 shelf-conv = { path = "../../crates/shelf-conv" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-# statvfs 查母版库所在分区剩余空间（此前每次 GET /staging 都 fork 一个 `df`）；libc 本来就在依赖树里（inotify 拉进来的）
-libc = "0.2"
 # 书名太长时边车改用"截断书名 + sha256 前 16 位"的短名（`sidecar::file_name_for`）；跟 rmsvc-core 同一版本，不新增依赖树
 sha2 = "0.11"
 

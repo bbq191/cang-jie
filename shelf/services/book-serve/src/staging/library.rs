@@ -2,18 +2,9 @@
 use super::*;
 use rmsvc_core::cache::{FileStamp, StampCache};
 
-/// `path` 所在文件系统的可用字节数（`f_bavail × f_frsize`）。
+/// `path` 所在文件系统的可用字节数（statvfs，见 [`rmsvc_core::fs::fs_space`]，网关「设备健康」同一份）。
 pub(super) fn free_bytes_of(path: &Path) -> Option<u64> {
-    use std::os::unix::ffi::OsStrExt;
-    let c = std::ffi::CString::new(path.as_os_str().as_bytes()).ok()?;
-    let mut st = std::mem::MaybeUninit::<libc::statvfs>::zeroed();
-    // SAFETY: `c` 是合法的 NUL 结尾 C 字符串；`st` 是足够大的零初始化 statvfs，成功返回后由内核填好。
-    if unsafe { libc::statvfs(c.as_ptr(), st.as_mut_ptr()) } != 0 {
-        return None;
-    }
-    // SAFETY: statvfs 返回 0，结构体已被内核写入。
-    let st = unsafe { st.assume_init() };
-    st.f_bavail.checked_mul(st.f_frsize)
+    rmsvc_core::fs::fs_space(path).map(|(free, _)| free)
 }
 
 /// `list()` 的两份按文件戳失效的缓存（见 [`StampCache`]）。网页每收到一条母版库事件就重拉一次列表，每本书每次都读边车、

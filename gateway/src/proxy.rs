@@ -74,9 +74,11 @@ pub fn forward(paths: &Paths, req: &mut Request<'_>) -> ApiResult {
         Err(e) => return Err(ApiError { status: 502, message: format!("{name} 无响应: {e}") }),
     };
     let ctype = resp.header("Content-Type").unwrap_or("application/octet-stream").to_string();
-    // 只转发这一个头：后端服务想让浏览器"下载保存"而不是原地展示/跳转时设它（如 md/zip 导出、CA 证书下载，
-    // 见 gateway::main 的证书下载同款用法）；别的头一律不转发，不给后端服务借这条通道夹带别的东西。
+    // 只转发两个头，别的一律不转发，不给后端服务借这条通道夹带别的东西：
+    // - `Content-Disposition`：后端想让浏览器"下载保存"而不是原地展示/跳转时设它（如 md/zip 导出、CA 证书下载）；
+    // - `Cache-Control`（只在 200 时）：内容按名字永不变的资源（如 ink-serve 带哈希名的裁图）让浏览器长期缓存，笔记页重画不再重下。
     let disposition = resp.header("Content-Disposition").map(str::to_string);
+    let cache = resp.header("Cache-Control").filter(|_| status == 200).map(str::to_string);
     // 下载（母版库原件可达上百 MB）与大应答：按定长边读边发，不整个读进网关内存；其余照旧读完再回。
     let len = resp.header("Content-Length").and_then(|v| v.parse::<u64>().ok());
     let mut reply = if let Some(n) = stream_len(status, disposition.is_some(), len) {
@@ -88,6 +90,9 @@ pub fn forward(paths: &Paths, req: &mut Request<'_>) -> ApiResult {
     };
     if let Some(v) = disposition {
         reply = reply.with_header("Content-Disposition", &v);
+    }
+    if let Some(v) = cache {
+        reply = reply.with_header("Cache-Control", &v);
     }
 
     Ok(reply)
