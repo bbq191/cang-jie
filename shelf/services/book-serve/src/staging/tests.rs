@@ -784,8 +784,8 @@ fn list_persists_onopen_to_ok_upgrade() {
     assert_eq!(rc(&s).pages, 412, "之后列表不再依赖 .content");
 }
 
-/// 回归：多条入库路径（网页上传 / inbox 追平 / 抓网文）同时落同名书，每一本都要落成独立文件、谁也不覆盖谁。
-/// 此前靠网页上传把 spool 锁攥到请求体收完来串行化（抓网文压根不拿锁）；现在"挑名 + 落地"由落名临界区保证。
+/// 回归：多条入库路径（网页上传 / inbox 追平）同时落同名书，每一本都要落成独立文件、谁也不覆盖谁。
+/// 此前靠网页上传把 spool 锁攥到请求体收完来串行化（当时的抓网文压根不拿锁）；现在"挑名 + 落地"由落名临界区保证。
 #[test]
 fn concurrent_landing_of_same_name_never_clobbers() {
     let t = tempfile::tempdir().unwrap();
