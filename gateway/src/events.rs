@@ -23,7 +23,7 @@ pub fn notify_books(kind: &str) {
 }
 
 /// "book-serve 有新事件"唤醒器：代数计数 + 条件变量。并发闸门要知道"这本书处理完没有"（[`crate::proxy::poll_until_settled`]），
-/// 此前每 5 秒 `GET /staging` 一次（整个优化期间——大部头几分钟到几十分钟）；book-serve 在忙态开始/结束处都发
+/// 此前每 5 秒 `GET /staging` 一次（整个处理期间——大部头几分钟起）；book-serve 在忙态开始/结束处都发
 /// `books` 事件（`staging` 等），网关本来就订阅着它，这里把"收到事件"变成唤醒信号，等待方事件到了才去查一次，
 /// 超时只是兜底（事件丢了/订阅重连空窗）。
 #[derive(Default)]
