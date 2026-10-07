@@ -68,6 +68,18 @@
 ;   即剔除"这两层兜底应该够用，但**没有真机验证过"重复调用 createCollection 传同名会不会建出两个重名
 ;   文件夹"**——这层风险记在这里，白皮书验证清单里核一下。
 ;
+;
+; 【按层建，2026-10-07】直接导入（book-serve `import.rs`，电脑上的 sheng-ren `booklib sync` 调）的文件夹是
+;   多级路径（`漫画/死亡筆記(愛藏版)`），book-serve 逐级入队：上一级建出来、拿到它的 uuid，才把下一级以
+;   `{name, parent: 上一级 uuid}` 入队。`GET /mkdir/pending` 回执因此多了 `items: [{name, parent}]`（parent
+;   空串＝书库根），本代理优先按 items 调 `Library.createCollection(item.parent, item.name)`；回执没有
+;   items（旧版 book-serve）时退回 `names`、一律建在根，和以前一样。`names` 里只放 parent 为根的项，旧代理
+;   拿到也不会把子文件夹错建到根。
+;   **createCollection 传非空 parent 还没有真机验证**：依据只有两条——反编译里对话框传的是
+;   `currentFolderId`（在子文件夹里点"新建文件夹"时就是那个文件夹的 uuid），以及 2026-10-07 在 Move 上
+;   用界面手工建的三层文件夹 Folder → Folder 2 → Folder 3，各自 `.metadata` 的 parent 依次是 ""、上一级
+;   的 uuid（只读看到的）——嵌套就是 parent 指向上一级 uuid，与本调用的参数含义一致。部署后要真机看一次。
+;
 ; 【qmldiff 纪律】INSERT{} 内注释只能 //；handler 一律 `{ … }` 块、不写 `({})`；只 INSERT 不 REPLACE。
 ; ─────────────────────────────────────────────────────────────────────────
 
@@ -106,11 +118,21 @@ AFFECT /qml/device/view/main/MainView.qml
                             var count = 0;
                             try {
                                 var resp = JSON.parse(x.responseText);
-                                var names = resp.names || [];
-                                count = names.length;
-                                for (var i = 0; i < names.length; i++) {
-                                    Library.createCollection("", names[i]);
-                                    console.log("SHELF-MKDIR: created " + names[i]);
+                                // 2026-10-07 起按 items（带上级文件夹 uuid）建；旧版 book-serve 只回 names，退回一律建在根。
+                                // 非空 parent 的 createCollection 还没真机验证过，见文件头【按层建】。
+                                var items = resp.items;
+                                if (!items) {
+                                    items = [];
+                                    var names = resp.names || [];
+                                    for (var j = 0; j < names.length; j++) {
+                                        items.push({ name: names[j], parent: "" });
+                                    }
+                                }
+                                count = items.length;
+                                for (var i = 0; i < items.length; i++) {
+                                    var parent = items[i].parent || "";
+                                    Library.createCollection(parent, items[i].name);
+                                    console.log("SHELF-MKDIR: created " + items[i].name + (parent ? " in " + parent : ""));
                                 }
                             } catch (e) {
                                 // 此前静默吞掉：回复不是合法 JSON / createCollection 抛错时 journal 里什么都看不到。

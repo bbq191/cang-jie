@@ -14,12 +14,17 @@
 //! 点过新建文件夹按钮做交叉验证**（见 `shelf-mkdir-agent.qmd` 头注原样保留的踩坑记录），这次借着
 //! 有了真消费方顺手把这层最后验证补上。
 //!
+//! **按层建（2026-10-07）**：直接导入（`import.rs`）的 `folder` 是多级路径（`漫画/死亡筆記(愛藏版)`），要逐级建——
+//! 队列项因此带上父文件夹 uuid（[`Pending::parent`]，空串＝书库根；此前的队列文件没有这个字段，按根读）。去重和
+//! "已经建出来就剔除"都按（父, 名）判：只有那个父文件夹正下方有同名活文件夹才算存在。网页的 `POST /mkdir/add {name}`
+//! 不变：建在根，名字里的 `/` 当普通字符。
+//!
 //! 持久化+入队去重+剔除这层通用外壳委托 `pending_queue::PendingQueue<T>`（2026-09-09 消重复，跟
 //! `trash.rs` 是同一份基础设施，见该模块文档）；这里只留领域校验（名字合法性/文件夹是否已存在）。
 use crate::agent_failures::AgentFailures;
 use crate::pending_queue::{Handout, PendingQueue, HANDOUT_MAX_ATTEMPTS};
 use serde::{Deserialize, Serialize};
-use rmsvc_core::xochitl::{find_folder_by_name, list_folders};
+use rmsvc_core::xochitl::{find_child_folder, folder_keys, is_uuid_shape};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
@@ -32,7 +37,28 @@ const HANDOUT_QUIET: Duration = Duration::from_secs(15);
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct Pending {
     pub name: String,
+    /// 建在哪个文件夹下面（uuid；空串＝书库根）。2026-10-07 前的队列文件没有这个字段，按根读。
+    #[serde(default)]
+    pub parent: String,
     pub at: u64,
+}
+
+/// 交给 QML 代理的一项：在 `parent`（空串＝根）下建 `name`。`GET /mkdir/pending` 的 `items` 就是这个。
+#[derive(Serialize, Clone, Debug, PartialEq)]
+pub struct MkdirItem {
+    pub name: String,
+    pub parent: String,
+}
+
+/// 交出记录（[`Handout`]）只认字符串键：拼成 `<父 uuid>/<名字>`。父是 uuid（或空串），不含 `/`，按第一个 `/` 拆回来不会错；
+/// 名字里带 `/` 也没关系。
+fn key_of(parent: &str, name: &str) -> String {
+    format!("{parent}/{name}")
+}
+
+fn item_of(key: &str) -> MkdirItem {
+    let (parent, name) = key.split_once('/').unwrap_or(("", key));
+    MkdirItem { name: name.to_string(), parent: parent.to_string() }
 }
 
 pub struct MkdirQueue {
@@ -69,40 +95,60 @@ impl MkdirQueue {
     /// 入队一个文件夹名；已经真实存在或已在队列里都不重复加。名字不能为空——`/`、`\` 曾经也被当
     /// "路径分隔符防误传"拦掉，2026-09-19 真机反馈坐实是误伤：这个名字全程只当 JSON `visibleName`
     /// 字符串走（`Library.createCollection(parentId, name)` 收的是普通 JS 字符串，不是文件系统路径，
-    /// 本模块也不支持"按路径建多级文件夹"这种语义），真实书名/文件夹名带斜杠很常见（如《乱马1/2》），
+    /// 本模块不把名字当路径拆——多级文件夹由直接导入逐级调 `add_in` 建，见 `staging::Staging::ensure_folder_path`），真实书名/文件夹名带斜杠很常见（如《乱马1/2》），
     /// 拦它没有技术依据、只会挡合法输入——见 `find_folder_by_name`/`Xochitl::upload` 全程都是按
     /// `visibleName` 字符串整体比较，folder 的文件系统路径只走 uuid，从不落到名字里。
+    ///
+    /// 建在书库根（`POST /mkdir/add`、网页落库用），等于 `add_in("", name)`。
     pub fn add(&self, name: &str) -> Result<usize, String> {
+        self.add_in("", name)
+    }
+
+    /// 在 `parent`（文件夹 uuid，空串＝根）下入队建 `name`：那个父文件夹正下方已经有同名活文件夹 → `Ok(0)`（不用建）；
+    /// 队列里已有同一（父, 名）不重复加；返回入队后的队列长度。`parent` 不是空串也不是 uuid 形状 → `Err`。
+    pub fn add_in(&self, parent: &str, name: &str) -> Result<usize, String> {
         let name = name.trim();
         if name.is_empty() {
             return Err("文件夹名不能为空".into());
         }
-        if find_folder_by_name(&self.lib_dir, name).is_some() {
+        if !parent.is_empty() && !is_uuid_shape(parent) {
+            return Err("上级文件夹 uuid 格式不对".into());
+        }
+        if find_child_folder(&self.lib_dir, parent, name).is_some() {
             return Ok(0); // 已经存在，不用建
         }
-        let n = self.q.add(|p| p.name == name, || Pending { name: name.to_string(), at: rmsvc_core::clock::now_secs() })?;
+        let n = self.q.add(|p| p.parent == parent && p.name == name, || Pending { name: name.to_string(), parent: parent.to_string(), at: rmsvc_core::clock::now_secs() })?;
         self.handout.notify();
         Ok(n)
     }
 
-    /// 待办文件夹名（QML 代理拉取）：顺手清掉已经真实建出来的（QML 端无需 ack），以及交满次数仍没建出来、放弃的。
-    /// 返回 (待办文件夹名列表, 本次清掉几条)。
-    /// 刚交出去不久（[`HANDOUT_QUIET`]）的名字不再重复返回；返回的名字同时记为"已交出"。
-    pub fn pending(&self) -> Result<(Vec<String>, usize), String> {
-        // 书库文件夹名只扫一遍、且只在队列非空时扫（`prune` 对空队列不调谓词）：此前每条待办各调一次
+    /// 待办（QML 代理拉取）：顺手清掉已经真实建出来的（QML 端无需 ack），以及交满次数仍没建出来、放弃的。
+    /// 返回 (待办项列表, 本次清掉几条)。
+    /// 刚交出去不久（[`HANDOUT_QUIET`]）的项不再重复返回；返回的项同时记为"已交出"。
+    /// 线上走的是长轮询版 [`Self::pending_wait`]，这个立即返回的版本只给单测用。
+    #[cfg(test)]
+    pub fn pending(&self) -> Result<(Vec<MkdirItem>, usize), String> {
+        let (keys, dropped) = self.pending_keys()?;
+        Ok((keys.iter().map(|k| item_of(k)).collect(), dropped))
+    }
+
+    /// [`Self::pending`] 的本体，项用 [`key_of`] 的字符串键表示（[`Handout`] 只认字符串）。
+    fn pending_keys(&self) -> Result<(Vec<String>, usize), String> {
+        // 书库文件夹只扫一遍、且只在队列非空时扫（`prune` 对空队列不调谓词）：此前每条待办各调一次
         // `find_folder_by_name`，每次都把书库里全部 `.metadata` 读一遍解析一遍，k 条待办＝k 遍全库扫描，
-        // 长轮询每次唤醒都来一轮（2026-09-24 审计）。判据与 `find_folder_by_name` 相同（活的 CollectionType 同名）。
+        // 长轮询每次唤醒都来一轮（2026-09-24 审计）。判据与 `find_child_folder` 相同（那个父文件夹下有活的同名 CollectionType）。
         let folders = std::cell::OnceCell::new();
-        let (kept, pruned) = self.q.prune(|p| folders.get_or_init(|| list_folders(&self.lib_dir)).binary_search(&p.name).is_err())?;
-        let taken = self.handout.take(kept.into_iter().map(|p| p.name).collect());
+        let (kept, pruned) = self.q.prune(|p| !folders.get_or_init(|| folder_keys(&self.lib_dir)).contains(&(p.parent.clone(), p.name.clone())))?;
+        let taken = self.handout.take(kept.into_iter().map(|p| key_of(&p.parent, &p.name)).collect());
         let mut dropped = pruned;
         if !taken.give_up.is_empty() {
-            let (_, n) = self.q.prune(|p| !taken.give_up.contains(&p.name))?;
+            let (_, n) = self.q.prune(|p| !taken.give_up.contains(&key_of(&p.parent, &p.name)))?;
             dropped += n;
-            for name in &taken.give_up {
-                println!("[book-serve] 建文件夹《{name}》已交给 xochitl {HANDOUT_MAX_ATTEMPTS} 次仍没建出来，放弃（移出队列）");
+            for key in &taken.give_up {
+                let name = item_of(key).name;
+                println!("[book-serve] 建文件夹《{name}》（上级 {}）已交给 xochitl {HANDOUT_MAX_ATTEMPTS} 次仍没建出来，放弃（移出队列）", if key.starts_with('/') { "书库根" } else { key.split('/').next().unwrap_or("") });
                 if let Some(f) = &self.failures {
-                    f.record("mkdir", name, "");
+                    f.record("mkdir", &name, "");
                 }
             }
         }
@@ -112,8 +158,9 @@ impl MkdirQueue {
     /// 长轮询版 [`Self::pending`]：有待办立即返回；没有就阻塞到入队唤醒或 `wait` 到期（到期返回空列表）。
     /// 这样 QML 代理不必每 8 秒定时拉一次——空闲时整条链路零唤醒，入队后也是即刻响应而不是平均等 4 秒。
     /// `wait` 为零＝不等（旧的立即返回语义）。
-    pub fn pending_wait(&self, wait: Duration) -> Result<(Vec<String>, usize), String> {
-        self.handout.wait(wait, || self.pending())
+    pub fn pending_wait(&self, wait: Duration) -> Result<(Vec<MkdirItem>, usize), String> {
+        let (keys, dropped) = self.handout.wait(wait, || self.pending_keys())?;
+        Ok((keys.iter().map(|k| item_of(k)).collect(), dropped))
     }
 
     pub fn list(&self) -> Vec<Pending> {
@@ -125,6 +172,11 @@ impl MkdirQueue {
 mod tests {
     use super::*;
     use std::time::Instant;
+
+    /// 建在根下的这些名字（期望值）。
+    fn root(names: &[&str]) -> Vec<MkdirItem> {
+        names.iter().map(|n| MkdirItem { name: n.to_string(), parent: String::new() }).collect()
+    }
 
     fn lib(t: &tempfile::TempDir) -> PathBuf {
         let d = t.path().join("xochitl");
@@ -152,7 +204,7 @@ mod tests {
         // QML 代理把《人骨拼圖》真的建出来了
         std::fs::write(lib_dir.join("f1.metadata"), r#"{"type":"CollectionType","visibleName":"《人骨拼圖》","parent":""}"#).unwrap();
         let (names, pruned) = q.pending().unwrap();
-        assert_eq!((names, pruned), (vec!["《消失的爱人》".to_string()], 1));
+        assert_eq!((names, pruned), (root(&["《消失的爱人》"]), 1));
         assert_eq!(q.list().len(), 1);
 
         // 已存在的文件夹再入队直接判"不用建"，不落队列
@@ -173,17 +225,55 @@ mod tests {
         assert_eq!(q.add(r"a\b").unwrap(), 2);
     }
 
+    /// 按（父, 名）去重、判存在：不同上级下的同名子文件夹各是各的；根下有同名的不妨碍在别的文件夹下建。
+    #[test]
+    fn add_in_dedupes_and_prunes_by_parent_and_name() {
+        const P1: &str = "11111111-1111-4111-8111-111111111111";
+        const P2: &str = "22222222-2222-4222-8222-222222222222";
+        let t = tempfile::tempdir().unwrap();
+        let lib_dir = lib(&t);
+        let q = MkdirQueue::new(&t.path().join("state"), &lib_dir).with_handout_quiet(Duration::ZERO);
+        std::fs::write(lib_dir.join("r.metadata"), r#"{"type":"CollectionType","visibleName":"卷01","parent":""}"#).unwrap();
+        assert_eq!(q.add("卷01").unwrap(), 0, "根下已有");
+        assert_eq!(q.add_in(P1, "卷01").unwrap(), 1, "根下有同名不算 P1 下有");
+        assert_eq!(q.add_in(P1, "卷01").unwrap(), 1, "同一（父, 名）不重复");
+        assert_eq!(q.add_in(P2, "卷01").unwrap(), 2, "别的上级下的同名是另一项");
+        assert!(q.add_in("../x", "卷01").unwrap_err().contains("uuid"));
+        let it = |parent: &str| MkdirItem { name: "卷01".into(), parent: parent.into() };
+        assert_eq!(q.pending().unwrap(), (vec![it(P1), it(P2)], 0));
+        // P1 下建出来了：只剔除 P1 那一项
+        std::fs::write(lib_dir.join("c1.metadata"), format!(r#"{{"type":"CollectionType","visibleName":"卷01","parent":"{P1}"}}"#)).unwrap();
+        assert_eq!(q.pending().unwrap(), (vec![it(P2)], 1));
+        assert_eq!(q.list().iter().map(|p| p.parent.as_str()).collect::<Vec<_>>(), [P2]);
+    }
+
+    /// 2026-10-07 前的队列文件没有 `parent` 字段：按根读，照常交出、照常剔除。
+    #[test]
+    fn old_queue_file_without_parent_reads_as_root() {
+        let t = tempfile::tempdir().unwrap();
+        let lib_dir = lib(&t);
+        let state = t.path().join("state");
+        std::fs::create_dir_all(&state).unwrap();
+        std::fs::write(state.join("mkdir-pending.json"), r#"[{"name":"旧","at":1}]"#).unwrap();
+        let q = MkdirQueue::new(&state, &lib_dir).with_handout_quiet(Duration::ZERO);
+        assert_eq!(q.list(), vec![Pending { name: "旧".into(), parent: String::new(), at: 1 }]);
+        assert_eq!(q.pending().unwrap().0, root(&["旧"]));
+        assert_eq!(q.add("旧").unwrap(), 1, "和新入队的根项是同一项");
+        std::fs::write(lib_dir.join("f.metadata"), r#"{"type":"CollectionType","visibleName":"旧","parent":""}"#).unwrap();
+        assert_eq!(q.pending().unwrap(), (root(&[]), 1));
+    }
+
     #[test]
     fn handed_out_name_is_not_repeated_within_quiet_period() {
         let t = tempfile::tempdir().unwrap();
         let q = MkdirQueue::new(&t.path().join("state"), &lib(&t));
         q.add("甲").unwrap();
-        assert_eq!(q.pending().unwrap().0, vec!["甲".to_string()]);
+        assert_eq!(q.pending().unwrap().0, root(&["甲"]));
         assert!(q.pending().unwrap().0.is_empty(), "静默期内不重复交出，免得代理立刻再拉时建出重名文件夹");
         // 静默期过后仍没建出来 → 再交一次（自带重试）
         let q2 = MkdirQueue::new(&t.path().join("state"), &lib(&t)).with_handout_quiet(Duration::ZERO);
-        assert_eq!(q2.pending().unwrap().0, vec!["甲".to_string()]);
-        assert_eq!(q2.pending().unwrap().0, vec!["甲".to_string()]);
+        assert_eq!(q2.pending().unwrap().0, root(&["甲"]));
+        assert_eq!(q2.pending().unwrap().0, root(&["甲"]));
     }
 
     /// 交满次数仍没建出来的名字放弃（移出队列、算进"清掉几条"让网页刷新），不再每个静默期重交一次。
@@ -194,12 +284,12 @@ mod tests {
         let q = MkdirQueue::new(&t.path().join("state"), &lib(&t)).with_handout_quiet(Duration::ZERO).with_failures(fails.clone());
         q.add("丁").unwrap();
         for _ in 0..HANDOUT_MAX_ATTEMPTS {
-            assert_eq!(q.pending().unwrap(), (vec!["丁".to_string()], 0));
+            assert_eq!(q.pending().unwrap(), (root(&["丁"]), 0));
         }
-        assert_eq!(q.pending().unwrap(), (vec![], 1), "交满放弃");
+        assert_eq!(q.pending().unwrap(), (root(&[]), 1), "交满放弃");
         assert!(q.list().is_empty(), "移出队列");
         assert_eq!(fails.list().iter().map(|f| (f.kind.as_str(), f.name.as_str())).collect::<Vec<_>>(), [("mkdir", "丁")], "放弃记下来给网页看");
-        assert_eq!(q.pending().unwrap(), (vec![], 0));
+        assert_eq!(q.pending().unwrap(), (root(&[]), 0));
     }
 
     /// 回归：交出后没建成的名字，长轮询在静默期到期时就重交，而不是等满整个 `wait`（代理发 290 秒）。
@@ -208,9 +298,9 @@ mod tests {
         let t = tempfile::tempdir().unwrap();
         let q = MkdirQueue::new(&t.path().join("state"), &lib(&t)).with_handout_quiet(Duration::from_millis(200));
         q.add("丙").unwrap();
-        assert_eq!(q.pending_wait(Duration::from_secs(10)).unwrap().0, vec!["丙".to_string()], "首次立即交出");
+        assert_eq!(q.pending_wait(Duration::from_secs(10)).unwrap().0, root(&["丙"]), "首次立即交出");
         let t0 = Instant::now();
-        assert_eq!(q.pending_wait(Duration::from_secs(10)).unwrap().0, vec!["丙".to_string()], "静默期过后重交");
+        assert_eq!(q.pending_wait(Duration::from_secs(10)).unwrap().0, root(&["丙"]), "静默期过后重交");
         let took = t0.elapsed();
         assert!(took >= Duration::from_millis(150) && took < Duration::from_secs(3), "应在静默期到期时醒来，实际等了 {took:?}");
         // 建出来之后：静默期到期醒来也只是发现已完成，不再交出，等到 wait 到期
@@ -238,7 +328,7 @@ mod tests {
         });
         let t0 = Instant::now();
         let (names, _) = q.pending_wait(Duration::from_secs(10)).unwrap();
-        assert_eq!(names, vec!["乙".to_string()]);
+        assert_eq!(names, root(&["乙"]));
         assert!(t0.elapsed() < Duration::from_secs(3), "应被入队唤醒，实际等了 {:?}", t0.elapsed());
         h.join().unwrap();
 

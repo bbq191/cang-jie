@@ -22,6 +22,8 @@ use std::sync::Arc;
 mod deliver;
 /// 大文件通道的安全上限，直接导入（`crate::import`）也用同一个。
 pub(crate) use self::deliver::MAX_DIRECT_BYTES;
+/// 等代理建出文件夹的上限，直接导入逐级建文件夹也用同一个。
+pub(crate) use self::deliver::FOLDER_WAIT_TIMEOUT;
 mod intake;
 mod library;
 

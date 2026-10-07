@@ -534,8 +534,13 @@ pub(crate) fn fake_xochitl(lib: std::path::PathBuf) -> String {
     let addr = server.server_addr().to_ip().unwrap().to_string();
     std::thread::spawn(move || {
         let mut n = 0u32;
+        // 真 xochitl 的"当前文件夹"：`GET /documents/<uuid>` 设、之后的 `/upload` 落进去（`GET /documents/` ＝ 根）。
+        let mut current = String::new();
         for mut req in server.incoming_requests() {
             if req.method() != &tiny_http::Method::Post {
+                if let Some(f) = req.url().strip_prefix("/documents/") {
+                    current = f.trim_end_matches('/').to_string();
+                }
                 let _ = req.respond(tiny_http::Response::from_string("[]"));
                 continue;
             }
@@ -549,7 +554,7 @@ pub(crate) fn fake_xochitl(lib: std::path::PathBuf) -> String {
             let uuid = format!("0000000{n}-0000-4000-8000-000000000000");
             let ext = fname.rsplit('.').next().unwrap();
             std::fs::write(lib.join(format!("{uuid}.{ext}")), &body[start..tail]).unwrap();
-            std::fs::write(lib.join(format!("{uuid}.metadata")), format!(r#"{{"type":"DocumentType","visibleName":"{fname}","parent":"","createdTime":"{}"}}"#, rmsvc_core::clock::now_ms())).unwrap();
+            std::fs::write(lib.join(format!("{uuid}.metadata")), format!(r#"{{"type":"DocumentType","visibleName":"{fname}","parent":"{current}","createdTime":"{}"}}"#, rmsvc_core::clock::now_ms())).unwrap();
             if ext == "epub" {
                 std::fs::write(lib.join(format!("{uuid}.pdf")), b"render-cache").unwrap();
             } else {

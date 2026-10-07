@@ -8,11 +8,13 @@
 //!   优化全部在电脑上用 sheng-ren 做；剩下的投递没有能中途停的步骤）。
 //! · `GET /events`（SSE：母版库/inbox 变更即推，网页零轮询）。
 //! 原生回收站队列：`POST /trash/add {uuid, name}`（name 必须与书库 visibleName 相符）· `GET /trash/pending?wait=` → `{uuids}`（MainView 代理 qmd 长轮询拉取执行）· `GET /trash`（只供调试：ssh 上 curl 看队列）。
-//! 原生建文件夹队列：`POST /mkdir/add {name}` · `GET /mkdir/pending?wait=` → `{names}`（MainView 代理 shelf-mkdir-agent.qmd 长轮询拉取执行）· `GET /mkdir`（只供调试）。
+//! 原生建文件夹队列：`POST /mkdir/add {name}`（建在书库根）· `GET /mkdir/pending?wait=` → `{names, items: [{name, parent}]}`（MainView 代理
+//! shelf-mkdir-agent.qmd 长轮询拉取执行；`items` 带上级文件夹 uuid，`names` 只放建在根的、给旧代理兼容）· `GET /mkdir`（只供调试）。
 //! 代理放弃记录：`GET /agent-failures` → `{items:[{kind,name,uuid?,at}]}` · `POST /agent-failures/clear`（两个队列交满次数仍没做成的项）。
 //! 2026-09-05 起规则统一"所有书只落母版库"：旧 `POST /?target=` 直投路已删（`/staging*` 是网页的唯一入口）。
 //! 直接导入 xochitl、不进母版库（2026-10-07，电脑上的 sheng-ren `booklib sync` 经 SSH 端口转发直连 8790 调，见 import.rs）：
-//! · `POST /import?name=<文件名.epub>&folder=<文件夹名，可空＝书库根>`（请求体＝EPUB 原始字节）→ `{uuid, name, folder}`（同步，可达分钟级）
+//! · `POST /import?name=<文件名.epub>&folder=<文件夹路径，`/` 分多级，可空＝书库根>`（请求体＝EPUB 原始字节）→ `{uuid, name, folder}`
+//!   （同步，可达分钟级；文件夹逐级找、没有就建，`folder` 回实际落进的完整路径）
 //! · `POST /import?uuid=<uuid>&name=<文件名.epub>`：原地替换已有文档内容、uuid 不变 → `{uuid, name, folder}`；文档不在 / 已删 / 在回收站 / 不是 EPUB → 404
 //! · `GET /import/{uuid}` → `{uuid, name, folder, deleted}`（不存在 → 404）。删除用 `POST /trash/add {uuid, name}`。
 use crate::service_state::State;
@@ -93,11 +95,14 @@ pub fn router(st: Arc<State>) -> Router {
         }))
         // `?wait=<秒>` 长轮询（上限 [`AGENT_WAIT_MAX_SECS`]）：有待办立即回，否则阻塞到入队或到期回空；缺省 0＝立即返回。
         .get("/mkdir/pending", bind(&st, |s, r| {
-            let (names, pruned) = s.mkdir.pending_wait(agent_wait(r)).map_err(ApiError::internal)?;
+            let (items, pruned) = s.mkdir.pending_wait(agent_wait(r)).map_err(ApiError::internal)?;
             if pruned > 0 {
                 s.bus.publish("books", "mkdir");
             }
-            Ok(Reply::ok(&serde_json::json!({"names": names})))
+            // `items` 带上级文件夹（2026-10-07 按层建）；`names` 只放建在根的，给还没更新的旧代理用——旧代理一律建在根，
+            // 把子文件夹的名字交给它会建错地方，所以不放进去（那几项交满次数后放弃）。
+            let names: Vec<&str> = items.iter().filter(|i| i.parent.is_empty()).map(|i| i.name.as_str()).collect();
+            Ok(Reply::ok(&serde_json::json!({"names": names, "items": items})))
         }))
         .get("/mkdir", bind(&st, |s, _| Ok(Reply::ok(&serde_json::json!({"items": s.mkdir.list()})))))
         // ── 代理执行不成、已放弃的记录（网页页头横幅；「知道了」→ clear），见 agent_failures.rs ──
@@ -373,6 +378,38 @@ mod tests {
         assert_eq!(call(&router, Method::Get, &format!("/import/{U}"), "").1["deleted"], true, "进了回收站算 deleted");
         assert_eq!(post_raw(&router, &format!("uuid={U}&name=a.epub"), epub).0, 404, "回收站里的不替换");
         assert!(st.staging.list().is_empty(), "不进母版库");
+    }
+
+    /// `GET /import/{uuid}` 的 folder 是从书库根起的完整路径。
+    #[test]
+    fn import_query_reports_full_folder_path() {
+        const U: &str = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+        const TOP: &str = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+        const IN: &str = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+        let t = tempfile::tempdir().unwrap();
+        let st = state(&t);
+        let router = router(st.clone());
+        let lib = st.xochitl.library_dir().to_path_buf();
+        std::fs::create_dir_all(&lib).unwrap();
+        std::fs::write(lib.join(format!("{TOP}.metadata")), r#"{"type":"CollectionType","visibleName":"漫画","parent":""}"#).unwrap();
+        std::fs::write(lib.join(format!("{IN}.metadata")), format!(r#"{{"type":"CollectionType","visibleName":"死亡筆記(愛藏版)","parent":"{TOP}"}}"#)).unwrap();
+        std::fs::write(lib.join(format!("{U}.metadata")), format!(r#"{{"type":"DocumentType","visibleName":"书","parent":"{IN}"}}"#)).unwrap();
+        let (code, v) = call(&router, Method::Get, &format!("/import/{U}"), "");
+        assert_eq!((code, v), (200, serde_json::json!({"uuid": U, "name": "书", "folder": "漫画/死亡筆記(愛藏版)", "deleted": false})));
+    }
+
+    /// `GET /mkdir/pending`：`items` 带上级，`names` 只放建在根的（旧代理一律建在根，不能把子文件夹交给它）。
+    #[test]
+    fn mkdir_pending_returns_items_and_root_only_names() {
+        const P: &str = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+        let t = tempfile::tempdir().unwrap();
+        let st = state(&t);
+        let router = router(st.clone());
+        assert_eq!(call(&router, Method::Post, "/mkdir/add", r#"{"name":"漫画/卷01"}"#).0, 200, "网页入口：名字里的 / 当普通字符，建在根");
+        st.mkdir.add_in(P, "卷01").unwrap();
+        let (code, v) = call(&router, Method::Get, "/mkdir/pending", "");
+        assert_eq!(code, 200);
+        assert_eq!(v, serde_json::json!({"names": ["漫画/卷01"], "items": [{"name": "漫画/卷01", "parent": ""}, {"name": "卷01", "parent": P}]}));
     }
 
     #[test]

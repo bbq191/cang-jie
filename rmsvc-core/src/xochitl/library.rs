@@ -57,8 +57,47 @@ pub fn is_uuid_shape(s: &str) -> bool {
     s.len() == 36 && s.chars().all(|c| c.is_ascii_hexdigit() || c == '-')
 }
 
+/// 按 visibleName 在**整个书库**里找活文件夹（不管它在哪一层），多个同名取先扫到的。网页「加入 xochitl → 文件夹」用；
+/// 要按层找（某个父文件夹下的某个名字）用 [`find_child_folder`]。
 pub fn find_folder_by_name(dir: &Path, name: &str) -> Option<String> {
     metadata_entries(dir).into_iter().find(|(_, v)| str_of(v, "type") == "CollectionType" && is_live(v) && str_of(v, "visibleName") == name).map(|(uuid, _)| uuid)
+}
+
+/// 在 `parent`（文件夹 uuid，空串＝书库根）**正下方**找名叫 `name` 的活文件夹（`CollectionType`、没删、不在回收站），
+/// 返回它的 uuid（2026-10-07 直接导入按层建多级文件夹用）。同一层有多个同名的取 uuid 最小的那个，结果不随目录扫描顺序变。
+pub fn find_child_folder(dir: &Path, parent: &str, name: &str) -> Option<String> {
+    metadata_entries(dir)
+        .into_iter()
+        .filter(|(_, v)| str_of(v, "type") == "CollectionType" && is_live(v) && str_of(v, "parent") == parent && str_of(v, "visibleName") == name)
+        .map(|(uuid, _)| uuid)
+        .min()
+}
+
+/// 书库里所有活文件夹的（父文件夹 uuid, 名字）——建文件夹队列每次唤醒判"哪些已经建出来了"用，整库只扫一遍。
+pub fn folder_keys(dir: &Path) -> std::collections::HashSet<(String, String)> {
+    metadata_entries(dir)
+        .into_iter()
+        .filter(|(_, v)| str_of(v, "type") == "CollectionType" && is_live(v))
+        .map(|(_, v)| (str_of(&v, "parent").to_string(), str_of(&v, "visibleName").to_string()))
+        .collect()
+}
+
+/// 文件夹 `folder` 从书库根往下的完整路径，各级名字用 `/` 连起来（`漫画/死亡筆記(愛藏版)`）；空串（书库根）→ 空串。
+/// 往上找 `parent` 直到根；中途某一级读不到、不是文件夹、在回收站、或层数超过 64（防 `.metadata` 里成环）就停在那里，
+/// 只拼已经找到的那几级。名字里本来带 `/` 的（如《乱马1/2》）原样拼进去，路径就有歧义——只给人看、给客户端比对，不再拆回去用。
+pub fn folder_path_of(dir: &Path, folder: &str) -> String {
+    let mut names = Vec::new();
+    let mut cur = folder.to_string();
+    while !cur.is_empty() && is_uuid_shape(&cur) && names.len() < 64 {
+        let Some(v) = read_metadata(dir, &cur) else { break };
+        if str_of(&v, "type") != "CollectionType" || !is_live(&v) {
+            break;
+        }
+        names.push(str_of(&v, "visibleName").to_string());
+        cur = str_of(&v, "parent").to_string();
+    }
+    names.reverse();
+    names.join("/")
 }
 
 /// 原生书库里所有活文件夹的名字（去重、按名排序）——给网页「加入原生书库 → 文件夹」下拉候选用，
@@ -169,6 +208,45 @@ mod tests {
         w("d.content", r#"{}"#);
         assert_eq!(find_folder_by_name(t.path(), "library"), Some("c".into()));
         assert_eq!(find_folder_by_name(t.path(), "none"), None);
+    }
+
+    /// 按层找：只认指定父文件夹正下方的；不同父文件夹下的同名子文件夹互不相混。
+    #[test]
+    fn find_child_folder_matches_parent_and_name() {
+        let t = tempfile::tempdir().unwrap();
+        let w = |n: &str, j: &str| std::fs::write(t.path().join(n), j).unwrap();
+        w("m.metadata", r#"{"type":"CollectionType","visibleName":"漫画","parent":""}"#);
+        w("n.metadata", r#"{"type":"CollectionType","visibleName":"小说","parent":""}"#);
+        w("m1.metadata", r#"{"type":"CollectionType","visibleName":"卷01","parent":"m"}"#);
+        w("n1.metadata", r#"{"type":"CollectionType","visibleName":"卷01","parent":"n"}"#);
+        w("t1.metadata", r#"{"type":"CollectionType","visibleName":"卷02","parent":"trash"}"#);
+        w("d1.metadata", r#"{"type":"DocumentType","visibleName":"卷03","parent":"m"}"#);
+        w("x1.metadata", r#"{"type":"CollectionType","visibleName":"卷04","parent":"m","deleted":true}"#);
+        assert_eq!(find_child_folder(t.path(), "", "漫画"), Some("m".into()));
+        assert_eq!(find_child_folder(t.path(), "m", "卷01"), Some("m1".into()));
+        assert_eq!(find_child_folder(t.path(), "n", "卷01"), Some("n1".into()));
+        assert_eq!(find_child_folder(t.path(), "", "卷01"), None, "根下没有卷01");
+        assert_eq!(find_child_folder(t.path(), "m", "卷02"), None, "回收站里的不算");
+        assert_eq!(find_child_folder(t.path(), "m", "卷03"), None, "文档不是文件夹");
+        assert_eq!(find_child_folder(t.path(), "m", "卷04"), None, "已删的不算");
+        let keys = folder_keys(t.path());
+        assert!(keys.contains(&("m".to_string(), "卷01".to_string())) && keys.contains(&("n".to_string(), "卷01".to_string())));
+        assert!(!keys.contains(&("m".to_string(), "卷04".to_string())));
+    }
+
+    #[test]
+    fn folder_path_walks_up_to_root() {
+        let t = tempfile::tempdir().unwrap();
+        let w = |n: &str, j: &str| std::fs::write(t.path().join(format!("{n}.metadata")), j).unwrap();
+        let (a, b, c) = ("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", "cccccccc-cccc-4ccc-8ccc-cccccccccccc");
+        w(a, r#"{"type":"CollectionType","visibleName":"漫画","parent":""}"#);
+        w(b, &format!(r#"{{"type":"CollectionType","visibleName":"死亡筆記(愛藏版)","parent":"{a}"}}"#));
+        w(c, &format!(r#"{{"type":"CollectionType","visibleName":"环","parent":"{c}"}}"#));
+        assert_eq!(folder_path_of(t.path(), ""), "");
+        assert_eq!(folder_path_of(t.path(), a), "漫画");
+        assert_eq!(folder_path_of(t.path(), b), "漫画/死亡筆記(愛藏版)");
+        assert_eq!(folder_path_of(t.path(), "dddddddd-dddd-4ddd-8ddd-dddddddddddd"), "", "读不到就是空");
+        assert_eq!(folder_path_of(t.path(), c).split('/').count(), 64, "成环也会停");
     }
 
     #[test]

@@ -5,6 +5,9 @@
 //! - **新导入**（[`Importer::import_new`]）：请求体流式落到本服务状态目录下的临时文件（`books/import-tmp/`，**不是**
 //!   母版库目录，不进母版库列表），再照落库那条路加入 xochitl——≤ 体积门走普通 `/upload`，超了走大文件通道（占位 + 磁盘替换）。
 //!   `/upload` 不回 uuid：按"上传前没有、上传后新出现、`<uuid>.epub` 与上传的字节逐字节相同"认出这份新文档。
+//! - **多级文件夹**（2026-10-07）：`folder` 是原件在用户书目录里的相对子目录，`/` 分隔（`漫画/死亡筆記(愛藏版)`）。按层建：
+//!   先在书库根找（或建）「漫画」，再在「漫画」里找（或建）「死亡筆記(愛藏版)」，书放进最里层（[`Staging::ensure_folder_path`]，
+//!   按（上级 uuid, 名字）找，上传按 uuid 指定文件夹）。此前整串当一个名字，建出一个叫「漫画/死亡筆記(愛藏版)」的顶层文件夹。
 //! - **原地替换**（[`Importer::replace`]）：已有文档的 `<uuid>.epub` 换成新内容，uuid 不变（阅读进度 `lastOpenedPage`、
 //!   所在文件夹、页边距等 `.content`/`.metadata` 里的东西都不动，漫画页边距也不重新登记——用户在阅读器里调过的不被覆盖）；
 //!   删掉渲染缓存 `.pdf`/`.epubindex`，让 xochitl 下次打开时重排。
@@ -50,7 +53,7 @@ pub struct DocState {
     pub uuid: String,
     /// `.metadata` 的 `visibleName`（`POST /trash/add` 要用这个名字）。
     pub name: String,
-    /// 所在文件夹的名字；书库根 / 已删除 → 空串。
+    /// 所在文件夹从书库根起的完整路径（`漫画/死亡筆記(愛藏版)`）；书库根 / 已删除 → 空串。
     pub folder: String,
     /// `deleted` 为真或进了回收站。
     pub deleted: bool,
@@ -70,11 +73,13 @@ pub struct Importer {
     replacing: OpRegistry,
     pub claim_wait: Duration,
     pub claim_wait_slow: Duration,
+    /// 每一级文件夹等代理建出来的上限，同落库的 `FOLDER_WAIT_TIMEOUT`（单测改短）。
+    pub folder_wait: Duration,
 }
 
 impl Importer {
     pub fn new(xochitl: Arc<Xochitl>, staging: Staging, tmp_dir: PathBuf, native_limit: u64) -> Importer {
-        Importer { xochitl, staging, tmp_dir, native_limit, replacing: OpRegistry::default(), claim_wait: CLAIM_WAIT, claim_wait_slow: CLAIM_WAIT_SLOW }
+        Importer { xochitl, staging, tmp_dir, native_limit, replacing: OpRegistry::default(), claim_wait: CLAIM_WAIT, claim_wait_slow: CLAIM_WAIT_SLOW, folder_wait: crate::staging::FOLDER_WAIT_TIMEOUT }
     }
 
     /// 建临时目录，并清掉上次进程留下的半成品（被杀时 Drop 来不及删）。返回清掉几个。
@@ -97,16 +102,18 @@ impl Importer {
         Ok(lib)
     }
 
-    /// 新导入：`body` 落临时文件 → 确保文件夹 → 加入 xochitl → 认出 uuid → （漫画）登记页边距。**同步、阻塞**（分钟级）。
-    /// `folder` 空＝书库根；非空且不存在先经建文件夹队列建（等不到就落书库根，同 `Staging::deliver`）。
+    /// 新导入：`body` 落临时文件 → 逐级确保文件夹 → 加入 xochitl → 认出 uuid → （漫画）登记页边距。**同步、阻塞**（分钟级）。
+    /// `folder` 是 `/` 分隔的多级路径（去掉空段和各段首尾空白；空＝书库根）：逐级找，没有的经建文件夹队列在上一级里建，
+    /// 某一级等不到就停在已经有的那一级（回执的 `folder` 照实写实际落进的路径）。
     pub fn import_new(&self, name: &str, folder: &str, body: &mut dyn Read, declared_len: Option<usize>, mkdir: &MkdirQueue) -> Result<DocState, ImportError> {
         check_name(name)?;
         let lib = self.lib()?;
         let part = ScratchFile::new(&self.tmp_dir, "", "epub.part");
         let size = receive(body, declared_len, part.path())?;
         // 体收完、校验过才动文件夹：坏请求不该留下一个空文件夹。
-        let folder = folder.trim();
-        self.staging.ensure_folder(folder, mkdir);
+        let segments = folder_segments(folder);
+        let (folder_uuid, _) = self.staging.ensure_folder_path(&segments, mkdir, self.folder_wait);
+        let folder = folder_uuid.as_str();
         let uuid = if self.native_limit > 0 && size > self.native_limit {
             // 大文件通道自己登记漫画页边距（同母版库落库那条路）。
             let up = self.staging.upload_large(part.path(), name, folder).map_err(ImportError::Failed)?;
@@ -124,12 +131,13 @@ impl Importer {
 
     /// 普通 `/upload` + 认领：上传前先记下"已经在的候选"，上传后找新出现、内容逐字节相同的那份。
     /// 整段串行（进程内一把锁）：两次导入同一份字节时，后一次不会把前一次刚建的文档认成自己的。
+    /// `folder` 是目标文件夹 uuid（空串＝根）。
     fn upload_and_claim(&self, lib: &Path, part: &Path, name: &str, folder: &str) -> Result<String, ImportError> {
         static CLAIM: std::sync::Mutex<()> = std::sync::Mutex::new(());
         let _serial = rmsvc_core::sync::lock(&CLAIM);
         let since = rmsvc_core::clock::now_ms().saturating_sub(2_000);
         let before: std::collections::HashSet<String> = find_documents_since(lib, since).into_iter().map(|d| d.uuid).collect();
-        let wait = match self.xochitl.upload_file(part, name, "application/epub+zip", folder) {
+        let wait = match self.xochitl.upload_file_into(part, name, "application/epub+zip", folder) {
             Ok(Delivery::Delivered(_)) => self.claim_wait,
             Ok(Delivery::LikelyDelivered(_)) => self.claim_wait_slow,
             Err(e) => return Err(ImportError::Failed(format!("上传给 xochitl 失败: {e}"))),
@@ -201,13 +209,14 @@ impl Importer {
         }
         let parent = s("parent");
         let deleted = parent == "trash" || v.get("deleted").and_then(|x| x.as_bool()) == Some(true);
-        let folder = if deleted || parent.is_empty() || !is_uuid_shape(&parent) {
-            String::new()
-        } else {
-            read_metadata(lib, &parent).and_then(|p| p.get("visibleName").and_then(|x| x.as_str()).map(str::to_string)).unwrap_or_default()
-        };
+        let folder = if deleted { String::new() } else { self.xochitl.folder_path(&parent) };
         Some(DocState { uuid: uuid.to_string(), name: s("visibleName"), folder, deleted })
     }
+}
+
+/// 导入的 `folder` 拆成各级名字：按 `/` 拆，去掉各段首尾空白和空段（`" 漫画//死亡筆記 /"` → `["漫画", "死亡筆記"]`）。
+fn folder_segments(folder: &str) -> Vec<&str> {
+    folder.split('/').map(str::trim).filter(|s| !s.is_empty()).collect()
 }
 
 /// 文件名：单段、扩展名 `.epub`（不区分大小写）。只收 EPUB——优化好的书都是 EPUB，xochitl 也只认 EPUB/PDF。
@@ -307,6 +316,123 @@ mod tests {
         assert!(!t.path().join("staging").exists() || std::fs::read_dir(t.path().join("staging")).unwrap().count() == 0, "不进母版库");
     }
 
+    /// 模拟 `shelf-mkdir-agent.qmd`：长轮询拉待办，每项在书库里写一份 `CollectionType` 的 `.metadata`（`parent`＝项的上级），
+    /// 等价于真机 `Library.createCollection(parent, name)` 落盘的结果。`only_root` 为真时只建根下的（模拟某一级建不出来）。
+    /// 返回它建过的（上级, 名字）记录；`stop` 置真后退出。
+    fn spawn_agent(q: Arc<MkdirQueue>, lib: PathBuf, only_root: bool, stop: Arc<std::sync::atomic::AtomicBool>) -> Arc<std::sync::Mutex<Vec<(String, String)>>> {
+        let made = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let m2 = made.clone();
+        std::thread::spawn(move || {
+            static N: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(1);
+            while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+                let (items, _) = q.pending_wait(Duration::from_millis(100)).unwrap();
+                for it in items {
+                    if only_root && !it.parent.is_empty() {
+                        continue;
+                    }
+                    let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    let uuid = format!("f{n:07x}-0000-4000-8000-000000000000");
+                    std::fs::write(lib.join(format!("{uuid}.metadata")), format!(r#"{{"type":"CollectionType","visibleName":"{}","parent":"{}"}}"#, it.name, it.parent)).unwrap();
+                    m2.lock().unwrap().push((it.parent, it.name));
+                }
+            }
+        });
+        made
+    }
+
+    /// 书库里（上级, 名字）的活文件夹 uuid。
+    fn folder(lib: &Path, parent: &str, name: &str) -> String {
+        rmsvc_core::xochitl::find_child_folder(lib, parent, name).unwrap_or_else(|| panic!("没有 {parent}/{name}"))
+    }
+
+    /// 带假 xochitl 和模拟建夹代理的一套：返回（导入器, 书库目录, 队列, 代理建过的记录, 停止开关）。
+    #[allow(clippy::type_complexity)]
+    fn with_agent(t: &tempfile::TempDir, only_root: bool) -> (Importer, PathBuf, Arc<MkdirQueue>, Arc<std::sync::Mutex<Vec<(String, String)>>>, Arc<std::sync::atomic::AtomicBool>) {
+        let lib = t.path().join("xochitl");
+        std::fs::create_dir_all(&lib).unwrap();
+        let (mut im, lib) = importer(t, &fake_xochitl(lib), 1 << 20);
+        im.folder_wait = Duration::from_secs(5);
+        let q = Arc::new(mkdir(t));
+        let stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let made = spawn_agent(q.clone(), lib.clone(), only_root, stop.clone());
+        (im, lib, q, made, stop)
+    }
+
+    #[test]
+    fn folder_segments_split_trim_and_drop_empty() {
+        assert_eq!(folder_segments(" 漫画//死亡筆記(愛藏版) /"), ["漫画", "死亡筆記(愛藏版)"]);
+        assert_eq!(folder_segments("小说"), ["小说"]);
+        assert!(folder_segments(" / ").is_empty());
+    }
+
+    /// 两级路径逐级建：先在根建「漫画」，再在「漫画」里建「死亡筆記(愛藏版)」，书落进最里层，回执给完整路径。
+    #[test]
+    fn import_new_builds_nested_folders_level_by_level() {
+        let t = tempfile::tempdir().unwrap();
+        let (im, lib, q, made, stop) = with_agent(&t, false);
+        let a = mini_epub(&[("OEBPS/a.xhtml", "<p>死</p>")]);
+        let d = im.import_new("死亡筆記01.epub", "漫画/死亡筆記(愛藏版)", &mut a.as_slice(), Some(a.len()), &q).unwrap();
+        stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        let top = folder(&lib, "", "漫画");
+        let inner = folder(&lib, &top, "死亡筆記(愛藏版)");
+        assert_eq!(*made.lock().unwrap(), [(String::new(), "漫画".to_string()), (top.clone(), "死亡筆記(愛藏版)".to_string())], "逐级建、第二级建在第一级里");
+        assert_eq!(rmsvc_core::xochitl::parent_folder_of(&lib, &d.uuid), Some(inner));
+        assert_eq!(d.folder, "漫画/死亡筆記(愛藏版)");
+        assert_eq!(im.describe(&d.uuid).unwrap().folder, "漫画/死亡筆記(愛藏版)");
+        assert!(rmsvc_core::xochitl::find_child_folder(&lib, "", "漫画/死亡筆記(愛藏版)").is_none(), "不再建压平的顶层文件夹");
+    }
+
+    /// 上级已有只建下级；不同上级下的同名子文件夹（「漫画/卷01」「小说/卷01」）各是各的，书各落各的。
+    #[test]
+    fn import_new_reuses_existing_parent_and_keeps_same_named_children_apart() {
+        let t = tempfile::tempdir().unwrap();
+        let (im, lib, q, made, stop) = with_agent(&t, false);
+        let manga = "aaaaaaaa-0000-4000-8000-000000000001";
+        std::fs::write(lib.join(format!("{manga}.metadata")), r#"{"type":"CollectionType","visibleName":"漫画","parent":""}"#).unwrap();
+        let a = mini_epub(&[("OEBPS/a.xhtml", "<p>甲</p>")]);
+        let b = mini_epub(&[("OEBPS/a.xhtml", "<p>乙</p>")]);
+        let da = im.import_new("甲.epub", "漫画/卷01", &mut a.as_slice(), Some(a.len()), &q).unwrap();
+        assert_eq!(*made.lock().unwrap(), [(manga.to_string(), "卷01".to_string())], "已有的上级不重建，只建下级");
+        let db = im.import_new("乙.epub", "小说/卷01", &mut b.as_slice(), Some(b.len()), &q).unwrap();
+        stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        let novel = folder(&lib, "", "小说");
+        let (v1m, v1n) = (folder(&lib, manga, "卷01"), folder(&lib, &novel, "卷01"));
+        assert_ne!(v1m, v1n);
+        assert_eq!(rmsvc_core::xochitl::parent_folder_of(&lib, &da.uuid), Some(v1m));
+        assert_eq!(rmsvc_core::xochitl::parent_folder_of(&lib, &db.uuid), Some(v1n));
+        assert_eq!((da.folder.as_str(), db.folder.as_str()), ("漫画/卷01", "小说/卷01"));
+        // 再导入到已经全有的路径：一个都不建
+        let n = made.lock().unwrap().len();
+        let dc = im.import_new("丙.epub", "小说/卷01", &mut a.as_slice(), Some(a.len()), &q).unwrap();
+        assert_eq!((made.lock().unwrap().len(), dc.folder.as_str()), (n, "小说/卷01"));
+    }
+
+    /// 单段路径与原来一样：建在根、书落进去（首尾空白去掉）；空＝根。
+    #[test]
+    fn import_new_single_segment_matches_old_behavior() {
+        let t = tempfile::tempdir().unwrap();
+        let (im, lib, q, _made, stop) = with_agent(&t, false);
+        let a = mini_epub(&[("OEBPS/a.xhtml", "<p>甲</p>")]);
+        let d = im.import_new("甲.epub", " 小说 ", &mut a.as_slice(), Some(a.len()), &q).unwrap();
+        let d0 = im.import_new("乙.epub", "", &mut a.as_slice(), Some(a.len()), &q).unwrap();
+        stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        assert_eq!(rmsvc_core::xochitl::parent_folder_of(&lib, &d.uuid), Some(folder(&lib, "", "小说")));
+        assert_eq!((d.folder.as_str(), d0.folder.as_str()), ("小说", ""));
+    }
+
+    /// 某一级等不到：停在已经建好的那一级（不落到根以外的别处），回执照实写。
+    #[test]
+    fn import_new_stops_at_last_folder_that_exists() {
+        let t = tempfile::tempdir().unwrap();
+        let (mut im, lib, q, _made, stop) = with_agent(&t, true);
+        im.folder_wait = Duration::from_millis(500);
+        let a = mini_epub(&[("OEBPS/a.xhtml", "<p>甲</p>")]);
+        let d = im.import_new("甲.epub", "漫画/卷01", &mut a.as_slice(), Some(a.len()), &q).unwrap();
+        stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        assert_eq!(rmsvc_core::xochitl::parent_folder_of(&lib, &d.uuid), Some(folder(&lib, "", "漫画")));
+        assert_eq!(d.folder, "漫画");
+    }
+
     #[test]
     fn import_new_over_limit_goes_through_large_file_channel() {
         let t = tempfile::tempdir().unwrap();
@@ -318,6 +444,13 @@ mod tests {
         let big = mini_epub(&[("META-INF/container.xml", container), ("content.opf", opf), ("c1.xhtml", &"字".repeat(500))]);
         let d = im.import_new("大书.epub", "", &mut big.as_slice(), Some(big.len()), &mkdir(&t)).unwrap();
         assert_eq!(std::fs::read(lib.join(format!("{}.epub", d.uuid))).unwrap(), big, "占位已换成真书");
+        // 大文件通道也按 uuid 落进多级文件夹的最里层（两级都已存在，不用代理）；另一个上级下的同名文件夹不会被认错
+        let (top, inner, other) = ("aaaaaaaa-0000-4000-8000-00000000000a", "aaaaaaaa-0000-4000-8000-00000000000b", "aaaaaaaa-0000-4000-8000-00000000000c");
+        std::fs::write(lib.join(format!("{top}.metadata")), r#"{"type":"CollectionType","visibleName":"漫画","parent":""}"#).unwrap();
+        std::fs::write(lib.join(format!("{other}.metadata")), r#"{"type":"CollectionType","visibleName":"大","parent":""}"#).unwrap();
+        std::fs::write(lib.join(format!("{inner}.metadata")), format!(r#"{{"type":"CollectionType","visibleName":"大","parent":"{top}"}}"#)).unwrap();
+        let d = im.import_new("大书.epub", "漫画/大", &mut big.as_slice(), Some(big.len()), &mkdir(&t)).unwrap();
+        assert_eq!((rmsvc_core::xochitl::parent_folder_of(&lib, &d.uuid).as_deref(), d.folder.as_str()), (Some(inner), "漫画/大"));
     }
 
     #[test]

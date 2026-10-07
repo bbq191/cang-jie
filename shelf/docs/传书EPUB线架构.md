@@ -166,11 +166,13 @@ HTTP 层是**异步**的（`spawn_deliver`：起线程 + `catch_unwind` + 解忙
 
 | 队列 | qmd（`shelf/xovi/`） | 触发 | 用途 |
 |---|---|---|---|
-| `mkdir-pending.json`：要建的文件夹名 | `shelf-mkdir-agent.qmd`（注入 MainView） | 长轮询 `GET /mkdir/pending?wait=290`（服务端阻塞到入队或到期，上限 300 秒；遇 30 秒客户端超时自动退回 25 秒）；每次唤醒书库文件夹名只扫一遍、队列空就不扫 | 「加入 xochitl → 文件夹」填了不存在的名字；也可 `POST /mkdir/add` |
+| `mkdir-pending.json`：要建的文件夹（名字 + 上级文件夹 uuid） | `shelf-mkdir-agent.qmd`（注入 MainView） | 长轮询 `GET /mkdir/pending?wait=290`（服务端阻塞到入队或到期，上限 300 秒；遇 30 秒客户端超时自动退回 25 秒）；每次唤醒书库文件夹只扫一遍、队列空就不扫；按 `items` 调 `Library.createCollection(parent, name)` | 「加入 xochitl → 文件夹」填了不存在的名字（建在根）；直接导入逐级建多级文件夹（建在上一级里）；也可 `POST /mkdir/add`（建在根） |
 | `trash-pending.json`：要删的文档 uuid+name | `shelf-trash-agent.qmd`（注入 MainView，09-25 起） | 长轮询 `GET /trash/pending?wait=290`（同一 uuid 交出后 30 秒内不重复交），先 `Library.entryForId(uuid)` 取条目、再取 `.id`，按 id 调 `LibraryController.moveEntriesToTrash(ids)`，与当前在看哪个文件夹无关 | 入队时按 visibleName 核对 uuid；调用方是网关「设备健康→清理」和笔记线 `note-serve` 旧版本软删 |
 | `comic-margins.json`：待设页边距的 uuid | `shelf-comic-margins.qmd`（注入 DocumentView） | 开书 1.5 秒后 `GET /margins/<uuid>` | §3 |
 
 （2026-10-07 稍后前表里还有一行：`reader-page-turn.qmd` 开了「日漫翻页规则」时开书问 `GET /reading-direction/<uuid>`；随日漫翻页删除，§2.5。单击翻页不经 book-serve。）
+
+**建文件夹队列按（上级, 名字）记**（2026-10-07，直接导入要按层建多级文件夹）：队列项是 `{name, parent, at}`，`parent` 是上级文件夹 uuid、空串＝书库根；此前的队列文件没有 `parent`，按根读。入队去重和"已经建出来就剔除"都按（parent, name）判——只有那个上级正下方有同名活文件夹（`CollectionType`、没删、不在回收站）才算存在，所以「漫画/卷01」和「小说/卷01」各是各的。`GET /mkdir/pending` 回 `{"names": [...], "items": [{"name", "parent"}, ...]}`：`items` 是全部待办，`names` 只放 parent 为根的（给还没更新的旧代理；旧代理一律建在根，子文件夹交给它会建错地方，那几项交满次数后放弃）。代理有 `items` 就按它调 `Library.createCollection(item.parent, item.name)`，没有就退回 `names` 建在根。`POST /mkdir/add {name}`（网页用）不变：建在根，名字里的 `/` 当普通字符。**`createCollection` 传非空 parent 还没真机验证**：依据是反编译里对话框传 `currentFolderId`，以及 10-07 在 Move 上用界面手工建的三层文件夹（Folder → Folder 2 → Folder 3）的 `.metadata`：parent 依次是 ""、上一级的 uuid（只读看到的）。
 
 `ensure_folder`（`staging/deliver.rs`）落库前最多等 20 秒（`FOLDER_WAIT_TIMEOUT`）让文件夹建出来，等不到不算错，退回 `upload_file` 的"找不到就落根"兜底。入队时发现文件夹刚好已经出现（`mkdir.add` 回 0）就不再等（2026-10-07 审查修复；`watch_until` 不先查一次，以前没有新事件就白等满 20 秒）。
 
@@ -296,15 +298,16 @@ POST /staging/delete {name}          删除条目（忙时 400）
 GET  /margins/{uuid} · POST /margins/applied {uuid}   漫画页边距待办（qmd 用；没登记的 uuid GET 回 404）
 GET  /events                         SSE 事件流
 POST /trash/add · GET /trash/pending · GET /trash      原生回收站代理队列（GET /trash 只供调试：ssh 上 curl 看队列）
-POST /mkdir/add · GET /mkdir/pending[?wait=秒] · GET /mkdir   原生建文件夹代理队列（pending 支持长轮询；GET /mkdir 只供调试）
+POST /mkdir/add {name}（建在根）· GET /mkdir/pending[?wait=秒] → {names, items:[{name, parent}]} · GET /mkdir   原生建文件夹代理队列（pending 支持长轮询；GET /mkdir 只供调试）
 GET  /agent-failures · POST /agent-failures/clear      两个代理交满次数放弃的记录（网页页头横幅，§4）
-POST /import?name=&folder=           直接导入 xochitl、不进母版库（体＝EPUB 原始字节）→ {uuid, name, folder}
+POST /import?name=&folder=           直接导入 xochitl、不进母版库（体＝EPUB 原始字节；folder 是 / 分隔的多级路径）→ {uuid, name, folder}（folder＝实际落进的完整路径）
 POST /import?uuid=&name=             原地替换已有文档内容、uuid 不变 → {uuid, name, folder}；不在/已删/回收站/非 EPUB → 404
-GET  /import/{uuid}                  → {uuid, name, folder, deleted}；不存在 → 404
+GET  /import/{uuid}                  → {uuid, name, folder, deleted}（folder＝从根起的完整路径）；不存在 → 404
 ```
 
 **直接导入**（`import.rs`，2026-10-07）：给电脑上的 sheng-ren（`booklib sync`）用——经 SSH 端口转发（`ssh -L` 到设备 `127.0.0.1:8790`）直连 book-serve，不经网关、不带 `/api/books` 前缀，书**不进母版库**。
-- 新导入：请求体（`Content-Type: application/epub+zip`，带 `Content-Length`）按块写到 `$XDG_STATE_HOME/shelf/books/import-tmp/` 的临时文件（不整本进内存；用完/出错都删，启动时清上次的残留），校验扩展名 `.epub`、非空、≤ 1GB（`MAX_DIRECT_BYTES`）、收到的字节数等于 `Content-Length`、开头是 zip 头 `PK\3\4`；目标文件夹不存在先经 §4 mkdir 队列建（同落库）；≤ 体积门走普通 `/upload`，再按"上传前没有、上传后新出现、`<uuid>.epub` 与上传字节逐字节相同"认出 uuid（进程内串行，回执后等 20 秒；`/upload` 超时判"很可能已送达"时等 120 秒；等的是书库目录的 inotify 事件〔防抖 500ms〕，2026-10-07 审查修复前是每 200ms 扫一遍书库），> 体积门走大文件通道（§5，它自己返回 uuid）。漫画带 sheng-ren 页边距标记的照常登记（§3）。**同步**：回执时书已在书库里，大书可达分钟级；成功后推 `books/import` 事件。
+- 新导入：请求体（`Content-Type: application/epub+zip`，带 `Content-Length`）按块写到 `$XDG_STATE_HOME/shelf/books/import-tmp/` 的临时文件（不整本进内存；用完/出错都删，启动时清上次的残留），校验扩展名 `.epub`、非空、≤ 1GB（`MAX_DIRECT_BYTES`）、收到的字节数等于 `Content-Length`、开头是 zip 头 `PK\3\4`；目标文件夹逐级确保（见下一条）；≤ 体积门走普通 `/upload`，再按"上传前没有、上传后新出现、`<uuid>.epub` 与上传字节逐字节相同"认出 uuid（进程内串行，回执后等 20 秒；`/upload` 超时判"很可能已送达"时等 120 秒；等的是书库目录的 inotify 事件〔防抖 500ms〕，2026-10-07 审查修复前是每 200ms 扫一遍书库），> 体积门走大文件通道（§5，它自己返回 uuid）。漫画带 sheng-ren 页边距标记的照常登记（§3）。**同步**：回执时书已在书库里，大书可达分钟级；成功后推 `books/import` 事件。
+- **多级文件夹**（2026-10-07 用户要求）：`folder` 是原件在用户书目录里的相对子目录，`/` 分隔（`漫画/死亡筆記(愛藏版)`），按 `/` 拆、去掉各段首尾空白和空段（单段就是原来的行为，空＝书库根）。`Staging::ensure_folder_path` 从根往下逐级：在上一级正下方按名字找（`rmsvc_core::xochitl::find_child_folder`）→ 没有就 `MkdirQueue::add_in(上一级 uuid, 名字)` 入队 → 同 `ensure_folder` 等它真建出来（书库目录 inotify，防抖 3 秒，每级最多 20 秒），拿到这一级的 uuid 再往下。最后按 **uuid** 上传进最里层（`Xochitl::upload_file_into` / `upload_large_file_into`，不按名字在全库找——不同上级下可能有同名子文件夹）。某一级等不到就停在已经有的那一级（书落在那里，不会落到别处），回执的 `folder` 照实写实际路径。回执和 `GET /import/{uuid}` 的 `folder` 都是从文档的 parent 往上找到根拼出的完整路径（`rmsvc_core::xochitl::folder_path_of`；名字本身带 `/` 的文件夹拼出来有歧义，只供显示和比对）。此前整串当一个名字，建出叫「漫画/死亡筆記(愛藏版)」的顶层文件夹；设备上已有的两个这种顶层文件夹不自动处理，按（上级, 名字）逐级找也不会误认它们。**未真机验证**（依赖 `createCollection` 传非空 parent，见 §4）。
 - 原地替换：`<uuid>.metadata` 不在、`deleted`、在回收站、没有 `<uuid>.epub` → 404（客户端据此改成新导入）；请求体先写到 `import-tmp/` 的临时文件（0600；与书库同在 /home 分区）→ 删 `<uuid>.pdf`、`<uuid>.epubindex` → rename 成 `<uuid>.epub`；`.content`/`.metadata` 不动（保留 `lastOpenedPage`、页边距、所在文件夹），**漫画页边距也不重新登记**（每本只设一次，用户在阅读器里调过的不被 sheng-ren 每次同步覆盖）。2026-10-07 审查修复前体直接写在书库里的 `<uuid>.epub.new`，进程被杀时会在书库留下最大 1GB 的半成品，而启动清理只管 `import-tmp/`。同一 uuid 同时只允许一个替换（第二个 400）。**未真机验证**：删渲染缓存让 xochitl 重排这一招只在大文件通道"替换从没打开过的占位"上验证过（2026-09-20/25）；对已经打开过、已排版的书会不会正确重排、进度落在哪一页，还没在真机上看过。缩略图不动。
 - 删除不另设接口：`POST /trash/add {uuid, name}`（`name` 用导入回执里的 `name`，即 visibleName）。
 - 超时：rmsvc-core 只有"读请求体时 60 秒收不到一个字节就断"的空闲超时（`READ_IDLE_TIMEOUT`），没有请求体大小上限和总时长上限；处理期间服务端不读 socket，不受空闲超时影响。客户端读应答的超时要按分钟设。
