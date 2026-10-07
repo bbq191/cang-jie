@@ -35,7 +35,7 @@
 
 ![enhance 的工具怎么接到设备上](diagrams/enhance-overview.svg)
 
-这条线是一组**互相独立的单点增强工具**，都不修改 xochitl（reMarkable 自带的阅读/笔记程序）本身。设备固件 3.28.0.172。现役的只有下面五样（另有 2026-10-07 新做、**未部署**的界面字体，见表后）：
+这条线是一组**互相独立的单点增强工具**，都不修改 xochitl（reMarkable 自带的阅读/笔记程序）本身。设备固件 3.28.0.172。现役的只有下面五样（另有 2026-10-07 新做的界面字体，见表后）：
 
 | 工具 | 是什么 | 状态 | 开关 |
 |---|---|---|---|
@@ -45,7 +45,7 @@
 | **font-serve**（`../font-serve/src/main.rs` 头注；原理在书架白皮书） | Web 服务（8792）：上传字体即装进 fontconfig，维护中文回退链 | ✅ 真机通 | 「其他 → xochitl」，重开字体菜单即可选 |
 | **lo-alias**（[README](../lo-alias/README.md)） | 小脚本：让 `10.11.99.1` 在不插 USB 时也可达（网关启动前调用） | ✅ 真机通（09-25 无 USB 冷启动核对） | 无 |
 
-**界面字体 ui-font**（[README](../ui-font/README.md)，§03o，2026-10-07，**未部署、未真机验证**）：xovi 扩展 `ui-font.so` + qmd `ui-font-tokens.qmd` + font-serve 的界面字体仓库，把 xochitl 界面的字体换成上传的字体，阅读器字体不变；「其他 → xochitl → 界面字体」，整机重启后生效。
+**界面字体 ui-font**（[README](../ui-font/README.md)，§03o，2026-10-07，已合 master（6e915bc），10-07 17:14 已部署并整机重启，部署自检 38✓ 1⚠（刚开机）0✗，xochitl 日志确认生效，界面效果待肉眼确认）：xovi 扩展 `ui-font.so` + qmd `ui-font-tokens.qmd` + font-serve 的界面字体仓库，把 xochitl 界面的字体换成上传的字体，阅读器字体不变；「其他 → xochitl → 界面字体」，整机重启后生效。
 
 另有共用件 [`shared/`](../shared/PROVENANCE.md)：xovi 扩展用的特征码扫描 + trampoline 代码，编进 `hl-snap.so`，不单独部署。
 
@@ -366,7 +366,7 @@ battop 早于这条线存在（08-27 电池审计后建的长期耗电追踪工�
 - 开发机：网关 `cargo test`、clippy、前端 node 测试与浏览器冒烟通过；`hl-snap.so` 重编 md5 不变；`packaging/tests/run_sim_tests.sh` 356 项全过（旧设备手动卸载、`install-all` 自动清并只整机重启一次、`--skip`、xovi 未生效、dm-verity、目录是符号链接、verify 报 ⚠ 等用例）。
 - **真机（09-30 15:23 部署）**：`install-all.sh` 自动清掉了设备上的 battop（单元 + `/home/root/battop`）和 `hw-stroke.so`，整机重启一次（只一次）；`verify-on-device.sh` 36✓ 1⚠（刚开机）0✗，比上一次少的 2 项就是这两样不再检查；`/usr` 单元 12/12；xochitl 的 maps 里已没有 hw-stroke；日志无 warning 以上。原定的"部署后确认"各项都在这次部署自检里覆盖了。
 
-## 03o｜界面字体 ui-font（2026-10-07，未部署）
+## 03o｜界面字体 ui-font（2026-10-07，已部署）
 
 ![界面字体：只换 xochitl 界面，不碰阅读](diagrams/ui-font.svg)
 
@@ -393,7 +393,13 @@ battop 早于这条线存在（08-27 电池审计后建的长期耗电追踪工�
 
 **生效**：两处都只在启动时读选择，改完要整机重启（§04）；网页改完显示"整机重启后生效"。
 
-**还没做 / 没验证**：未部署；真机上界面是否全部换掉（会不会有既不用令牌、也不吃应用默认字体的文字）、阅读器各字体选项与中文回退是否确实不变、`[ui-font] setFont(reMarkable Sans) → …` 是否在 xochitl 启动时出现（扩展是否赶在 xochitl 调 setFont 之前装好），都要部署后看（§05）。
+**部署**（已合 master（6e915bc），10-07 17:14 已部署并整机重启，部署自检 38✓ 1⚠（刚开机）0✗）：`deploy.sh --only font`（网关、font-serve、两个字体 qmd）→ `DEFER_XOVI_START=1 deploy-ui-font.sh` → 经 SSH 隧道直连 font-serve 上传三个 TTF（约 135MB，14 秒）并 `PUT /ui/select` 正文与标题都选 `Sarasa UI SC`（用户定：与电脑界面一致）→ `deploy-xovi-apply.sh`。设备上核对：
+- xochitl 日志：`[ui-font] 安装完成（setFont 导入槽 0x1a60b68）`、`[ui-font] setFont(reMarkable Sans) → Sarasa UI SC`（扩展赶在 xochitl 调 setFont 之前装好了）、`SHELF-UI-FONT: sans=Sarasa UI SC serif=Sarasa UI SC`；xochitl `NRestarts=0`；没有新的 QML 报错（唯一一行 `Experimental.qml:71: ReferenceError: Values` 上次开机就有）。
+- xochitl 拉起的短命子进程也会被 xovi 加载扩展，两个扩展都在 `_xovi_shouldLoad` 拒绝（hl-snap 打"找不到 xochitl 映射"，ui-font 打"不导入 setFont"）——正常。ui-font 这句原来写成"（未知固件）"，不准确，仓库已改措辞；设备上跑的仍是 6e915bc 的 `.so`（md5 `7199073b…`），下次部署带上。
+- 阅读侧：`fonts.json` 仍为空（菜单里没有更纱）；真实配置下 `fc-match -s "reMarkable Serif Small:lang=zh-cn"` 第一是 Noto Sans SC、更纱排第三；`fonts.conf` 末尾有保底规则。
+- xochitl 部署后 VmRSS 约 224MB（没有部署前的对照数，字体是 mmap，按用到的页计）。
+
+**还没验证**：界面是否全部换掉（会不会有既不用令牌、也不吃应用默认字体的文字）、阅读器各字体选项与书里的中文实际渲染是否与以前一样，要在设备上用眼睛看（§05）。
 
 ## 04｜踩坑
 
@@ -439,7 +445,7 @@ battop 早于这条线存在（08-27 电池审计后建的长期耗电追踪工�
 
 | 项 | 现状 | 下一步 |
 |---|---|---|
-| 界面字体 ui-font（§03o，10-07） | host 测试 + 离线验证通过，**未部署** | 部署（`deploy.sh --only font` + `deploy-ui-font.sh`，整机重启）后：journal 有 `[ui-font] 安装完成`、`setFont(reMarkable Sans) → Sarasa UI SC`、`SHELF-UI-FONT: sans=…`；界面（书库、设置、对话框、标题）换成更纱；阅读器字体菜单里没有 Sarasa；用 reMarkable Serif 读中文书时汉字仍是 Noto Sans SC（与改之前对比）；`fonts.conf` 末尾有保底规则；选回「原生」重启后一切复原 |
+| 界面字体 ui-font（§03o，10-07） | 已合 master（6e915bc），10-07 17:14 已部署并整机重启，部署自检 38✓ 1⚠（刚开机）0✗；journal 三行都有、阅读菜单与 fontconfig 回退核对过 | 用眼睛看：界面（书库、设置、对话框、标题）换成更纱；阅读器字体菜单里没有 Sarasa；用 reMarkable Serif 读中文书时汉字仍是 Noto Sans SC（与改之前对比）；`fonts.conf` 末尾有保底规则；选回「原生」重启后一切复原 |
 | 删日漫翻页规则（§03i，10-07） | 已合 master（9c2571f），10-07 15:54 已部署并整机重启，部署自检 36✓ 1⚠ 0✗，功能未手测；qmd 离线验证过，部署后 journal 有 `CJ-PAGE-TURN: loaded`、无 qmd 解析报错 | 部署（整机重启）后看：「系统增强」只剩「单击翻页」开关；单击左右边缘照常翻页；日漫滑动不再对调；journal 里 `CJ-PAGE-TURN: loaded` 与 `cfg tap=…` 正常、无 qmd 报错 |
 | 第五轮审计改动（§03m） | 09-30 14:10 已部署，部署自检通过，功能待手测 | 按 §03m「部署后确认」手测 |
 | 第四轮审计改动（§03l） | 已随后续部署上设备，功能项没逐项核对 | 按 §03l「部署后确认」手测 |
@@ -467,5 +473,5 @@ battop 早于这条线存在（08-27 电池审计后建的长期耗电追踪工�
 | 2026-09-29 | 设备上卸载 KOReader、第三方 WeRead、appload 和侧栏入口（按用户要求） |
 | 2026-09-30 | 第五轮审计（§03m）；撤掉母版库按书设阅读方向，`rtl-overrides.json` 改为只读（§03i）；14:10 部署 |
 | 2026-10-07 | **删日漫翻页规则**（用户定：书架只管入库，方向交给书本身）：`reader-page-turn.qmd` 只留单击翻页，网关删 `rtlPageTurn` 开关，book-serve 删 `GET /reading-direction`（§03i；提交 `bd531cd`，已合 master（9c2571f），10-07 15:54 已部署并整机重启，部署自检 36✓ 1⚠ 0✗，功能未手测，部署要整机重启） |
-| 2026-10-07 | **界面字体 ui-font**（§03o）：新 xovi 扩展 `ui-font/` + `shelf/xovi/ui-font-tokens.qmd` + font-serve 界面字体仓库与网页卡片；`packaging` 加 `ui-font` 步（`deploy-ui-font.sh`）；未部署 |
+| 2026-10-07 | **界面字体 ui-font**（§03o）：新 xovi 扩展 `ui-font/` + `shelf/xovi/ui-font-tokens.qmd` + font-serve 界面字体仓库与网页卡片；`packaging` 加 `ui-font` 步（`deploy-ui-font.sh`）；已合 master（6e915bc），10-07 17:14 已部署并整机重启，部署自检 38✓ 1⚠（刚开机）0✗，正文与标题选更纱黑体 UI SC |
 | 2026-09-30 | **移除手写优化（`handwriting-stroke/`）与电池刺客（`battop/`）**：源码、部署脚本、网页开关与数据页一并删除；15:23 部署，`install-all.sh` 自动清掉设备残留（§03n） |

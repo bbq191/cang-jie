@@ -196,7 +196,7 @@ static int resolve_qt(void) {
 
 char _xovi_shouldLoad(void) {
     if (!find_got_slot(SYM_SET_FONT)) {
-        fprintf(stderr, TAG " _xovi_shouldLoad: xochitl 不导入 QGuiApplication::setFont（未知固件）→ 拒绝加载\n");
+        fprintf(stderr, TAG " _xovi_shouldLoad: 本进程不导入 QGuiApplication::setFont（不是 xochitl 主程序，如它拉起的子进程；或未知固件）→ 拒绝加载\n");
         return 0;
     }
     if (!resolve_qt()) {
