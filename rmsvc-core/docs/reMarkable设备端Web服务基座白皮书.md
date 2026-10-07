@@ -3,7 +3,7 @@
 > **读者与用途**：要改 `rmsvc-core`，或在 `shelf/`、`notes/`、`enhance/`、`gateway/` 里写 Web 服务、想知道基座提供什么、有哪些约定的人。
 > 先读“现状”；后面按模块分组，每个模块写“谁在用”和“关键约定”。被推翻的做法只留结论和教训。
 > 入口文档（模块速查、Rust API 入口）见 [`../README.md`](../README.md)；网关怎么用这些模块（登录、代理、批量队列）见 [网关白皮书](../../gateway/docs/reMarkable网关白皮书.md)。
-> 所有数字以 2026-09-30 的代码为准（`rmsvc-core/src`）；2026-10-07 代码审查新增的几个函数（`fs::fs_space`、`events::Wake`/`registry_wake`、`xochitl::{live_entries, created_ms, read_metadata}`，分支 `chore/post-optimize-cleanup` 提交 `a405ea8`，**未合 master、未部署**）已写进各节。
+> 所有数字以 2026-09-30 的代码为准（`rmsvc-core/src`）；2026-10-07 代码审查新增的几个函数（`fs::fs_space`、`events::Wake`/`registry_wake`、`xochitl::{live_entries, created_ms, read_metadata}`，分支 `chore/post-optimize-cleanup` 提交 `a405ea8`，**已合 master（9c2571f），10-07 15:54 已部署并整机重启，部署自检 36✓ 1⚠ 0✗，功能未手测**）已写进各节。
 > **赶时间只看三处**：“现状”的关键事实表、下面“三条要记住”、要改的那个模块所在小节的“谁在用”。
 
 ## 现状（2026-09-30）
@@ -40,7 +40,7 @@
 - `auth` 新增 `VerifyCache`（§04 auth），网关每个带 Basic 认证的请求不再都现算一遍 60 万轮 PBKDF2；
 - 注释跟进：`events` 不再提已砍的 host CLI，`service` 里“/health 必须先注册”的旧说法改掉（§06）。
 
-**10-07 代码审查新增了什么**（未合 master、未部署；都是把消费方各写一份的代码收进基座，行为不变）：
+**10-07 代码审查新增了什么**（已合 master（9c2571f），10-07 15:54 已部署并整机重启，部署自检 36✓ 1⚠ 0✗，功能未手测；都是把消费方各写一份的代码收进基座，行为不变）：
 - `fs::fs_space(path)` → `(可用字节, 总字节)`（`statvfs`）：网关设备健康看 `/home`、book-serve 母版库显示剩余空间共用，book-serve 随之去掉 `libc` 直接依赖（§02 fs）；
 - `events::Wake`（代数 + 条件变量的“有变化就醒”唤醒器）和 `events::registry_wake(paths)`（每个注册表目录进程内一条 inotify 监听，防抖 300ms）：`follow` 等服务上线、网关发 manage 事件、网关批量队列恢复时等 book-serve，都挂在同一条监听上（§01 events）；
 - `xochitl::live_entries` / `created_ms` / `read_metadata`：书库只读查询，网关清理页、book-serve 回收站代理与直接导入共用（§03）。

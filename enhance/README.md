@@ -15,7 +15,7 @@
 | 组件 | 是什么 | 状态 | 在网页哪里开关 |
 |---|---|---|---|
 | [`hl-snap/`](hl-snap/README.md) | xovi 扩展：荧光笔划中文时划哪吸哪，不再吸整行 | ✅ 真机通 | 管理 → 系统增强，默认开 |
-| [`shelf/xovi/reader-page-turn.qmd`](../shelf/xovi/reader-page-turn.qmd) | qmd 补丁：xochitl 阅读器单击翻页 | ✅ 真机通（09-24）；日漫翻页规则 2026-10-07 删除（书架不管翻页方向，xochitl 里日漫一律从左往右；未合 master、未部署，部署要整机重启） | 管理 → 系统增强，默认关 |
+| [`shelf/xovi/reader-page-turn.qmd`](../shelf/xovi/reader-page-turn.qmd) | qmd 补丁：xochitl 阅读器单击翻页 | ✅ 真机通（09-24）；日漫翻页规则 2026-10-07 删除（书架不管翻页方向，xochitl 里日漫一律从左往右；已合 master（9c2571f），10-07 15:54 已部署并整机重启，部署自检 36✓ 1⚠ 0✗，功能未手测） | 管理 → 系统增强，默认关 |
 | [`wallpaper-serve/`](wallpaper-serve/README.md) | Web 服务（8793）：休眠壁纸上传即用、每次休眠后轮换 | ✅ 真机通 | 其他 → 壁纸 |
 | [`font-serve/`](font-serve/font-serve.service) | Web 服务（8792）：xochitl 字体上传即装、中文回退链 | ✅ 真机通 | 其他 → xochitl |
 | [`shared/`](shared/PROVENANCE.md) | xovi 扩展用的特征码扫描 + trampoline 代码（带 host 单测，编进 `hl-snap.so`） | — | 不单独部署 |

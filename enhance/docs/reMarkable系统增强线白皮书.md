@@ -228,7 +228,7 @@ battop 早于这条线存在（08-27 电池审计后建的长期耗电追踪工�
 
 ![xochitl 阅读器翻页](diagrams/reader-page-turn.svg)
 
-> **现状（2026-10-07 稍后，提交 `bd531cd`，未合 master、未部署）**：只剩**单击翻页**（`tapPageTurn`）。「日漫翻页规则」（`rtlPageTurn`）整个删掉——用户定书架只管入库、翻页方向交给书本身。xochitl 自己不看 OPF 的 `page-progression-direction`，所以**日漫在 xochitl 里一律从左往右翻**（用户已知悉）。删掉的有：qmd 里的 `cjRtl` 属性、开书查方向、`nextPageGesture`/`prevPageGesture` 的滑动对调；book-serve `GET /reading-direction/{uuid}`；shelf-conv `epub_is_rtl`/`spine_is_rtl`；网关与网页的开关（单独传 `rtlPageTurn` 回 400，`/api/enhance/status` 不再返回它）。`reading-qol.json` 里的旧 `rtlPageTurn` 键不清，无人再读。改了 qmd，部署时要整机重启一次（§04）。设备上现跑的仍是带日漫分支的旧版。
+> **现状（2026-10-07 稍后，提交 `bd531cd`，已合 master（9c2571f），10-07 15:54 已部署并整机重启，部署自检 36✓ 1⚠ 0✗，功能未手测）**：只剩**单击翻页**（`tapPageTurn`）。「日漫翻页规则」（`rtlPageTurn`）整个删掉——用户定书架只管入库、翻页方向交给书本身。xochitl 自己不看 OPF 的 `page-progression-direction`，所以**日漫在 xochitl 里一律从左往右翻**（用户已知悉）。删掉的有：qmd 里的 `cjRtl` 属性、开书查方向、`nextPageGesture`/`prevPageGesture` 的滑动对调；book-serve `GET /reading-direction/{uuid}`；shelf-conv `epub_is_rtl`/`spine_is_rtl`；网关与网页的开关（单独传 `rtlPageTurn` 回 400，`/api/enhance/status` 不再返回它）。`reading-qol.json` 里的旧 `rtlPageTurn` 键不清，无人再读。改了 qmd，部署时要整机重启一次（§04）。设备上现跑的仍是带日漫分支的旧版。
 
 **需求**：用户要"单击翻页"回来（08-14 做过 `tap-page-turn.qmd` 并真机验证，09-11 随 `xovi-extensions/reading-qol/` 移出仓库，设备上的 qmd 也已不在，只剩 `reading-qol.json` 里一个 `tapPageTurn`）；另外问漫画能不能"从左往右滑是下一页"——指 **xochitl**（KOReader 已于 2026-09-29 从设备卸载，现在只剩 xochitl 一个阅读器）。后一项就是 2026-09-24～10-07 的日漫翻页规则。
 
@@ -408,7 +408,7 @@ battop 早于这条线存在（08-27 电池审计后建的长期耗电追踪工�
 
 | 项 | 现状 | 下一步 |
 |---|---|---|
-| 删日漫翻页规则（§03i，10-07） | 未合 master、未部署；只做了 qmd 离线验证 | 部署（整机重启）后看：「系统增强」只剩「单击翻页」开关；单击左右边缘照常翻页；日漫滑动不再对调；journal 里 `CJ-PAGE-TURN: loaded` 与 `cfg tap=…` 正常、无 qmd 报错 |
+| 删日漫翻页规则（§03i，10-07） | 已合 master（9c2571f），10-07 15:54 已部署并整机重启，部署自检 36✓ 1⚠ 0✗，功能未手测；qmd 离线验证过，部署后 journal 有 `CJ-PAGE-TURN: loaded`、无 qmd 解析报错 | 部署（整机重启）后看：「系统增强」只剩「单击翻页」开关；单击左右边缘照常翻页；日漫滑动不再对调；journal 里 `CJ-PAGE-TURN: loaded` 与 `cfg tap=…` 正常、无 qmd 报错 |
 | 第五轮审计改动（§03m） | 09-30 14:10 已部署，部署自检通过，功能待手测 | 按 §03m「部署后确认」手测 |
 | 第四轮审计改动（§03l） | 已随后续部署上设备，功能项没逐项核对 | 按 §03l「部署后确认」手测 |
 | 多扩展共存的反序加载（§04） | 修法已部署；现在只剩 hl-snap 一个扩展，没有反序场景 | 以后再加扩展时，把两个 `.so` 改名调换加载顺序验一次 |
@@ -434,5 +434,5 @@ battop 早于这条线存在（08-27 电池审计后建的长期耗电追踪工�
 | 2026-09-25 | 部署生效一律整机重启（§04）；`Makefile` 加 `-ffile-prefix-map`；lo-alias 无 USB 冷启动真机通过；第四轮审计（§03l） |
 | 2026-09-29 | 设备上卸载 KOReader、第三方 WeRead、appload 和侧栏入口（按用户要求） |
 | 2026-09-30 | 第五轮审计（§03m）；撤掉母版库按书设阅读方向，`rtl-overrides.json` 改为只读（§03i）；14:10 部署 |
-| 2026-10-07 | **删日漫翻页规则**（用户定：书架只管入库，方向交给书本身）：`reader-page-turn.qmd` 只留单击翻页，网关删 `rtlPageTurn` 开关，book-serve 删 `GET /reading-direction`（§03i；提交 `bd531cd`，未合 master、未部署，部署要整机重启） |
+| 2026-10-07 | **删日漫翻页规则**（用户定：书架只管入库，方向交给书本身）：`reader-page-turn.qmd` 只留单击翻页，网关删 `rtlPageTurn` 开关，book-serve 删 `GET /reading-direction`（§03i；提交 `bd531cd`，已合 master（9c2571f），10-07 15:54 已部署并整机重启，部署自检 36✓ 1⚠ 0✗，功能未手测，部署要整机重启） |
 | 2026-09-30 | **移除手写优化（`handwriting-stroke/`）与电池刺客（`battop/`）**：源码、部署脚本、网页开关与数据页一并删除；15:23 部署，`install-all.sh` 自动清掉设备残留（§03n） |
