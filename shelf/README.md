@@ -94,7 +94,7 @@ shelf/
 
 ```sh
 cd shelf && sh build.sh                        # host 测试 + aarch64 构建（gateway / enhance / notes 在的话一起编）
-cargo test --workspace                         # 只跑测试：2026-10-07 清理后实跑 book-serve 81 + shelf-conv 27 个通过
+cargo test --workspace                         # 只跑测试：2026-10-07 代码审查修复后实跑 book-serve 81 + shelf-conv 26 个通过
 cd ../packaging && sh deploy.sh 10.11.99.1     # 打包 → 传到设备 → install.sh（先备份旧文件）；只有 WiFi 时给 WiFi IP
 sh deploy.sh 10.11.99.1 --only font,wallpaper  # 只装部分服务；SHELF_NO_BUILD=1 跳过编译
 sh deploy.sh 10.11.99.1 --password '新密码'     # 顺便设网关密码（经 ssh 标准输入传，不上命令行）

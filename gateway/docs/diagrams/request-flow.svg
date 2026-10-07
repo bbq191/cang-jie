@@ -33,7 +33,7 @@
 <text x="268" y="420" text-anchor="start" font-size="10" fill="#3a3a3a">3  剥掉 &lt;seg&gt;，转发到 http://127.0.0.1:&lt;端口&gt;/&lt;其余路径&gt;</text>
 <text x="268" y="435" text-anchor="start" font-size="10" fill="#3a3a3a">     请求体流式转发；应答是 200 且带长度、又是下载或 &gt;256KB → 按定长边读边发</text>
 <text x="268" y="450" text-anchor="start" font-size="10" fill="#3a3a3a">     其余（小 JSON、没有长度的）读完再回</text>
-<text x="268" y="465" text-anchor="start" font-size="10" fill="#3a3a3a">     只回传 Content-Type / Content-Disposition 两个响应头</text>
+<text x="268" y="465" text-anchor="start" font-size="10" fill="#3a3a3a">     只回传 Content-Type / Content-Disposition，200 时加 Cache-Control</text>
 <text x="268" y="480" text-anchor="start" font-size="10" fill="#3a3a3a">4  seg 不在表里 → 404“未知服务”；服务没起 → 404“未安装或未运行”</text>
 <text x="268" y="495" text-anchor="start" font-size="10" fill="#3a3a3a">     后端连不上 → 502</text>
 <rect x="256" y="540" width="460" height="108" rx="10" fill="#f3f3f1" stroke="#9a9a9a" stroke-width="1.4" stroke-dasharray="6 4"/>

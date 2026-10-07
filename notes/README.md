@@ -14,7 +14,7 @@ reMarkable 的强项是**荧光笔勾书，再在勾出来的地方旁边手写*
 - **浏览**：逐条决定「转入笔记」还是「不需要」（已有定稿 / 草稿的条目转入时保留原来的进度）。
 - **转写**：转入笔记的手写自动交给视觉模型识别，结果作为草稿，你在手机上改定。
 - **整理**：改字、选去处、问 AI、「不要了」进回收站（可恢复）。行首写 `##` / `###` / `1.` / `-` / `- [ ]`（或手写 `口`），推送后分别变成设备笔记本内置的大标题 / 加粗小标题 / 编号列表 / 圆点列表 / 复选框，导出 md 时是对应的 markdown（对照图见白皮书第 4 章）。
-- **推送**：每章一个「推送本章」，生成设备笔记本（放进书本自己所在的文件夹，一章一本；书的小节变化处自动插小标题）和 md（同时让浏览器下载）。内容没变就跳过；旧版笔记本几秒内自动进 xochitl 回收站。
+- **推送**：每章一个「推送本章」，生成设备笔记本（放进书本自己所在的文件夹，一章一本；书的小节变化处自动插小标题）和 md（提示里给下载链接，点一下由浏览器下载；2026-10-07 代码审查前是自动下载、会被浏览器当弹窗拦，未部署）。内容没变就跳过；旧版笔记本几秒内自动进 xochitl 回收站。
 - **全文搜索**：跨所有书搜原文、转写、AI 回答。
 - **导入 md 文档**（默认隐藏）：选一个 `.md` 文件直接生成一份设备笔记本，不经条目库。
 
@@ -75,7 +75,7 @@ notes/
 与书架共用交叉编译环境（`rustup target add aarch64-unknown-linux-musl` + aarch64 交叉 gcc），见 [`../shelf/README.md`](../shelf/README.md)「构建 · 部署 · 卸载」。
 
 ```sh
-cd notes && cargo test --workspace      # host：241 个测试，240 过 + 1 忽略（rmv6 29 · epubmap 10 · notecore 67 · vendorcfg 23 · ink 30 · transcribe 25 · mind 22 · note 35 含 1 个 ignored；2026-09-30 实跑）
+cd notes && cargo test --workspace      # host：241 个测试，240 过 + 1 忽略（rmv6 29 · epubmap 10 · notecore 67 · vendorcfg 23 · ink 30 · transcribe 25 · mind 22 · note 35 含 1 个 ignored；2026-09-30 实跑，10-07 重跑数目不变）
 cd ../shelf && sh build.sh               # host 测试 + 交叉编译（notes/ 在就一起编）
 cd ../packaging && sh deploy.sh <设备IP> --only ink,transcribe,mind,note   # 只装/更新笔记线（网关总会一起装）；不加 --only 就全装
 ```

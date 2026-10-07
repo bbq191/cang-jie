@@ -15,11 +15,11 @@
 |---|---|---|
 | 托管单页 UI | `ui/`、`ui.rs` | 页面文件编译期打进二进制，零外链；中英文语言包在 `ui/locales/` |
 | HTTPS 与登录 | `auth.rs`、`config.rs` | 私有 CA 签的证书 + 只要密码的登录页；命令行用 Basic（验过的密码缓存 10 分钟，免每次 60 万轮 PBKDF2）；输错按来源 IP 限速 |
-| 服务发现 + 反向代理 | `manage.rs`、`proxy.rs` | `/api/<seg>/*` 剥掉 `<seg>` 转给对应服务；上传边读边转，有长度的下载/大应答（>256KB）边读边发；GET/DELETE 不转发请求体也不带 `Content-Length`；服务没起 → 404，网页隐藏对应标签 |
-| 事件汇聚 | `events.rs` | 各服务的 `GET /events` 汇成一条 SSE `/api/events`，网页不轮询；前台 tab 按事件来源只重取受影响的那几个接口（白皮书 §5.1）；浏览器放弃重连时网页自己退避重开（§03） |
-| 批量队列 | `batch.rs` | 勾选多本后由网关后台一次一本地“加入 xochitl”（等这本在书架那边处理完才取下一本；网页的加入只走这里），状态落盘、重启从被打断那本续跑、可全部中止（已交给书架的那本会跑完）。原来的并发/内存闸门 `budget.rs` 2026-10-07 删除（未部署）：书架不再优化书后它已拦不到东西，见白皮书 §04 |
+| 服务发现 + 反向代理 | `manage.rs`、`proxy.rs` | `/api/<seg>/*` 剥掉 `<seg>` 转给对应服务；上传边读边转，有长度的下载/大应答（>256KB）边读边发；GET/DELETE 不转发请求体也不带 `Content-Length`；只设空闲超时（连 3 秒 / 读 900 秒 / 写 120 秒，不设总时长，大文件慢传不被截断），共用一个连接池；只透传 `Content-Type`、`Content-Disposition` 和 200 时的 `Cache-Control`；服务没起 → 404，网页隐藏对应标签 |
+| 事件汇聚 | `events.rs` | 各服务的 `GET /events` 汇成一条 SSE `/api/events`，网页不轮询；前台 tab 按事件来源只重取受影响的那几个接口（白皮书 §5.1）；浏览器放弃重连时网页自己退避重开（§03）；服务上下线靠基座的 `registry_wake`（与订阅线程共用一条 inotify） |
+| 批量队列 | `batch.rs` | 勾选多本后由网关后台一次一本地“加入 xochitl”（等这本在书架那边处理完才取下一本；网页的加入只走这里），状态落盘、重启从被打断那本续跑（等 book-serve 期间 `waitingService=true`）、可全部中止（已交给书架的那本会跑完）。只有书架回报 `ok` 才算成功，超时、查不到、结果不明一律记失败并提示去 xochitl 书库核对（2026-10-07 审查修复，未部署）。原来的并发/内存闸门 `budget.rs` 2026-10-07 删除（未部署）：书架不再优化书后它已拦不到东西，见白皮书 §04 |
 | 管理台 | `manage.rs` | 各服务“未装 / 已装未开 / 已开”三态、启停、卸载；探测 xovi 与 qt-resource-rebuilder |
-| 系统增强开关 | `enhance/` | 荧光笔汉字吸附、阅读器单击翻页、导入 md（日漫翻页规则 2026-10-07 删除，未部署）；并显示扩展是否真的加载进 xochitl（手写笔迹优化、电池刺客 2026-09-30 已移除；漫画页边距开关 2026-10-07 删除，带 sheng-ren 标记的漫画一律设） |
+| 系统增强开关 | `enhance/` | 荧光笔汉字吸附、阅读器单击翻页、导入 md（日漫翻页规则 2026-10-07 删除，未部署）；并显示扩展是否真的加载进 xochitl（与设备健康共用 maps 解析，`(deleted)` 的映射照样算已加载；手写笔迹优化、电池刺客 2026-09-30 已移除；漫画页边距开关 2026-10-07 删除，带 sheng-ren 标记的漫画一律设） |
 | 设备健康 / OTA 提示 / 清理 | `device/` | 「管理 → 设备健康」五个二级 tab（概览 / 服务 / 扩展 / 日志 / 清理），只在打开或点刷新时采集；OTA 后页头横幅提示重装；清理早期遗留文件与 xochitl 书库同名副本（后者进 xochitl 回收站，可恢复） |
 
 ## 对外接口
@@ -35,7 +35,7 @@
 | 事件 | `GET /api/events`（SSE） |
 | 系统增强 | `GET /api/enhance/status` · `PUT /api/enhance/qol`（`hlSnapCjk` / `notesImportMdEnabled` / `tapPageTurn`）（`/api/enhance/battop/*` 与 `hwStrokeEnabled` 2026-09-30 已移除；`comicMinMargin` 2026-10-07 随开关删除；`rtlPageTurn` 2026-10-07 稍后随日漫翻页删除，单独传回 400） |
 | 设备健康 | `GET /api/device/health[?fresh=1]` · `GET /api/device/ota` · `GET /api/device/wifi` · `GET /api/device/cleanup` · `POST /api/device/cleanup/delete {area, names}` |
-| 批量队列 | `POST /api/batch {action: deliver, names? \| all:true, folder?}`（2026-10-07 起 `optimize` 回 400） → `{queued, skipped}` · `GET /api/batch/status` · `POST /api/batch/stop` |
+| 批量队列 | `POST /api/batch {action: deliver, names? \| all:true, folder?}`（2026-10-07 起 `optimize` 回 400） → `{queued, skipped}` · `GET /api/batch/status`（`running` `waitingService` `action` `total` `done` `current` `queued` `failed`；`queuedCount` 2026-10-07 审查修复删除） · `POST /api/batch/stop` |
 | 反向代理 | `GET/POST/PUT/DELETE /api/<seg>/*`，`<seg>` ∈ `books` `fonts` `wallpapers` `ink` `transcribe` `mind` `notes` |
 
 （`GET /api/budget/status`、`POST /api/budget/cancel` 2026-10-07 随闸门删除，未部署。）
@@ -57,7 +57,7 @@
 
 - **依赖**：只依赖 [`../rmsvc-core`](../rmsvc-core/README.md)；独立 Cargo 项目，不在任何 workspace 里。
 - **构建/部署**：没有自己的脚本，由 `shelf/build.sh`（顺手编译本目录）和 `shelf/deploy.sh`（打包二进制 + `systemd/gateway.service`）代管。单独交叉编译：`cargo build --release --target aarch64-unknown-linux-musl`（用本目录 `.cargo/config.toml` 的 CC/AR 覆盖）。
-- **测试**（在仓库根目录跑；2026-10-07 清理后实跑）：`cargo test --manifest-path gateway/Cargo.toml`（61 个）；前端 `node --check gateway/ui/app.js` 与 `node --test gateway/ui/test/*.test.mjs`（3 个文件共 10 项：断网兜底、XSS 转义、语言包一致）；浏览器冒烟手动跑 `PUPPETEER_NODE_MODULES=<含 puppeteer 的 node_modules 目录> node gateway/ui/test/smoke.puppeteer.mjs`；可视走查见 [`tools/screenshot-walkthrough/`](tools/screenshot-walkthrough/README.md)。
+- **测试**（在仓库根目录跑；2026-10-07 审查修复后实跑）：`cargo test --manifest-path gateway/Cargo.toml`（62 个）；前端 `node --check gateway/ui/app.js` 与 `node --test gateway/ui/test/*.test.mjs`（3 个文件共 10 项：断网兜底、XSS 转义、语言包一致）；浏览器冒烟手动跑 `PUPPETEER_NODE_MODULES=<含 puppeteer 的 node_modules 目录> node gateway/ui/test/smoke.puppeteer.mjs`；可视走查见 [`tools/screenshot-walkthrough/`](tools/screenshot-walkthrough/README.md)。
 - **设备上的文件**：二进制 `~/.local/bin/gateway`；配置 `~/.config/shelf/gateway.json`；证书 `~/.config/shelf/tls/`；批量队列 `~/.local/state/shelf/batch.json`。
 
 ## 目录
@@ -69,7 +69,7 @@ src/
   config.rs    gateway.json：HTTPS 开关、密码哈希、mDNS 名、额外证书名、会话天数
   proxy.rs     /api/<seg>/* 反向代理
   manage.rs    MODULES 服务表（唯一事实源）、管理台、基石探测
-  events.rs    事件汇聚 Hub
+  events.rs    事件汇聚（spawn 返回总线；Hub 结构 2026-10-07 删除）
   batch.rs     批量队列（含全部中止、等一本处理完的轮询）
   testutil.rs  测试沙箱（HOME 与全部 XDG 指向同一临时目录）
   ui.rs        拼装单页 UI、登录页、改密页

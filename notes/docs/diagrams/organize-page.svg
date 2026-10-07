@@ -23,7 +23,7 @@
 <text x="36" y="518" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">章头</text>
 <text x="36" y="541" text-anchor="start" font-size="10" fill="#3a3a3a">章名 · 条数 · 同步徽章（📓 设备笔记本 / Obsidian）</text>
 <text x="36" y="556" text-anchor="start" font-size="10" fill="#3a3a3a">「推送本章」：依次调 generate + export，按每条的“去处”决定各做哪样</text>
-<text x="36" y="571" text-anchor="start" font-size="10" fill="#3a3a3a">  两边都没变化 → “已同步，没有变化”；md 写出后触发浏览器下载</text>
+<text x="36" y="571" text-anchor="start" font-size="10" fill="#3a3a3a">  两边都没变化 → “已同步，没有变化”；md 写出后提示里给下载链接</text>
 <text x="36" y="586" text-anchor="start" font-size="10" fill="#3a3a3a">推送中显示进度条；结果文案停留 3 s，期间不被自动刷新冲掉</text>
 <polyline points="304,472 304,498" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#mk)"/>
 <rect x="620" y="84" width="596" height="594" rx="10" fill="#ffffff" stroke="#8a8a8a" stroke-width="1.6"/>

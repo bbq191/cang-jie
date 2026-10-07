@@ -17,15 +17,15 @@
 <text x="149.0" y="274" text-anchor="middle" font-size="10.5" fill="#3a3a3a">mind-serve 没有 /events</text>
 <text x="149.0" y="289" text-anchor="middle" font-size="10.5" fill="#3a3a3a">（纯被动问答，网关不订阅）</text>
 <rect x="340" y="96" width="330" height="240" rx="10" fill="#fff3d6" stroke="#c9971f" stroke-width="1.6"/>
-<text x="352" y="116" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">网关 Hub（每个有事件流的服务一条线程）</text>
+<text x="352" y="116" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">网关 events::spawn（每个有事件流的服务一条线程）</text>
 <text x="352" y="139" text-anchor="start" font-size="10" fill="#3a3a3a">events::follow(服务名)：</text>
-<text x="352" y="154" text-anchor="start" font-size="10" fill="#3a3a3a">· 服务没起：等注册表目录 inotify，不轮询</text>
+<text x="352" y="154" text-anchor="start" font-size="10" fill="#3a3a3a">· 服务没起：等注册表变化（基座 registry_wake），不轮询</text>
 <text x="352" y="169" text-anchor="start" font-size="10" fill="#3a3a3a">· 连上：GET /events?ka=120（心跳 2 分钟一次）</text>
 <text x="352" y="184" text-anchor="start" font-size="10" fill="#3a3a3a">· 断线：退避重连 3s→60s，撑过 10s 才重置</text>
 <text x="352" y="199" text-anchor="start" font-size="10" fill="#3a3a3a">· 对方回 404：长等 10 分钟或等重新注册</text>
 <text x="352" y="214" text-anchor="start" font-size="10" fill="#3a3a3a">收到事件补上 "svc":"&lt;seg&gt;" 后发进总线</text>
 <text x="352" y="229" text-anchor="start" font-size="10" fill="#3a3a3a"></text>
-<text x="352" y="244" text-anchor="start" font-size="10" fill="#3a3a3a">另有一条：监听注册表目录（inotify，防抖 500ms）</text>
+<text x="352" y="244" text-anchor="start" font-size="10" fill="#3a3a3a">另有一条：阻塞在同一个 registry_wake 上（共用一条 inotify，防抖 300ms）</text>
 <text x="352" y="259" text-anchor="start" font-size="10" fill="#3a3a3a">→ 服务上下线时发 {"area":"manage"}</text>
 <rect x="736" y="96" width="210" height="110" rx="10" fill="#eef2f7" stroke="#4a6fa5" stroke-width="1.6"/>
 <text x="841.0" y="116" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">EventBus 总线</text>
@@ -60,7 +60,7 @@
 <polyline points="670,150 736,150" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#mk)"/>
 <polyline points="841,226 841,206" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#mk)"/>
 <polyline points="946,150 1010,150" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#mk)"/>
-<text x="620" y="400" text-anchor="middle" font-size="11.5" fill="#3a3a3a">设计约束（用户 2026-09-06）：不轮询、不监听全盘、日志写入不触发；事件只来自服务代码里的变更点，加上上述两处 inotify。</text>
+<text x="620" y="400" text-anchor="middle" font-size="11.5" fill="#3a3a3a">设计约束（用户 2026-09-06）：不轮询、不监听全盘、日志写入不触发；事件只来自服务代码里的变更点，加上注册表目录的 inotify（共用一条）。</text>
 <rect x="24" y="430" width="1192" height="100" rx="10" fill="#f1f1ef" stroke="#8a8a8a" stroke-width="1.6"/>
 <text x="36" y="450" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">和批量队列的关系</text>
 <text x="36" y="473" text-anchor="start" font-size="10.5" fill="#3a3a3a">网页在批量运行时不再每 3 秒轮询 /api/batch/status：batch.rs 每次落盘都会调 events::notify_books()（kind=batch，不带 svc），</text>

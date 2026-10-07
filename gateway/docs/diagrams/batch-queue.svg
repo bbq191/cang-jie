@@ -20,7 +20,7 @@
 <text x="565.0" y="118" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">queue 排队中</text>
 <text x="565.0" y="144" text-anchor="middle" font-size="10" fill="#4a4a4a">先进先出</text>
 <text x="565.0" y="157" text-anchor="middle" font-size="10" fill="#4a4a4a">只有一种动作</text>
-<text x="565.0" y="170" text-anchor="middle" font-size="10" fill="#4a4a4a">界面显示 queuedCount</text>
+<text x="565.0" y="170" text-anchor="middle" font-size="10" fill="#4a4a4a">界面显示前 200 个书名</text>
 <rect x="690" y="98" width="200" height="110" rx="10" fill="#eaf6ec" stroke="#3f9a55" stroke-width="1.6"/>
 <text x="790.0" y="118" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">current 处理中</text>
 <text x="790.0" y="144" text-anchor="middle" font-size="10" fill="#4a4a4a">worker 线程，一次一本</text>
@@ -53,10 +53,11 @@
 <text x="605.0" y="367" text-anchor="middle" font-size="10" fill="#4a4a4a">最长等 1 小时；等完才取下一本 → 同一时刻只投一本</text>
 <rect x="850" y="282" width="360" height="124" rx="10" fill="#eaf6ec" stroke="#3f9a55" stroke-width="1.6"/>
 <text x="1030.0" y="302" text-anchor="middle" font-size="13" font-weight="bold" fill="#1a1a1a">③ 读终态</text>
-<text x="1030.0" y="328" text-anchor="middle" font-size="10" fill="#4a4a4a">查母版库条目的 delivered.deliver</text>
-<text x="1030.0" y="341" text-anchor="middle" font-size="10" fill="#4a4a4a">ok → 成功；failed → 失败并记原因</text>
-<text x="1030.0" y="354" text-anchor="middle" font-size="10" fill="#4a4a4a">worker 捕获 panic，</text>
-<text x="1030.0" y="367" text-anchor="middle" font-size="10" fill="#4a4a4a">一本出错不拖垮整队</text>
+<text x="1030.0" y="328" text-anchor="middle" font-size="10" fill="#4a4a4a">从②最后取到的列表读 delivered.deliver</text>
+<text x="1030.0" y="341" text-anchor="middle" font-size="10" fill="#4a4a4a">只有 ok 才算成功；failed → 失败并记原因</text>
+<text x="1030.0" y="354" text-anchor="middle" font-size="10" fill="#4a4a4a">超时 / 查不到 / 条目消失 / 仍是 pending → 也记失败，</text>
+<text x="1030.0" y="367" text-anchor="middle" font-size="10" fill="#4a4a4a">提示“请到 xochitl 书库里核对”（10-07 前记成功）</text>
+<text x="1030.0" y="380" text-anchor="middle" font-size="10" fill="#4a4a4a">worker 捕获 panic，一本出错不拖垮整队</text>
 <polyline points="360,344 400,344" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#bq-a)"/>
 <polyline points="810,344 850,344" fill="none" stroke="#555" stroke-width="1.6" marker-end="url(#bq-a)"/>
 <text x="30" y="442" text-anchor="start" font-size="12.5" font-weight="bold" fill="#1a1a1a">三、中止与断点续跑</text>
@@ -75,7 +76,7 @@
 <text x="925.0" y="502" text-anchor="middle" font-size="10" fill="#4a4a4a">每次队列变化都写 state/batch.json（原子写）</text>
 <text x="925.0" y="515" text-anchor="middle" font-size="10" fill="#4a4a4a">网关重启（例如部署新版本）→ resume：</text>
 <text x="925.0" y="528" text-anchor="middle" font-size="10" fill="#4a4a4a">  · 上次进行中的那本放回队首（不限次数）</text>
-<text x="925.0" y="541" text-anchor="middle" font-size="10" fill="#4a4a4a">  · 后台等 book-serve 就绪（最多 30 分钟：前 30 秒每 2 秒探测，之后每 30 秒）</text>
+<text x="925.0" y="541" text-anchor="middle" font-size="10" fill="#4a4a4a">  · 后台等 book-serve 就绪（最多 30 分钟；等注册表变化、30 秒兜底；期间 waitingService）</text>
 <text x="925.0" y="554" text-anchor="middle" font-size="10" fill="#4a4a4a">  · 按最新母版库重新校验每一本，不在母版库的不再做</text>
 <text x="925.0" y="567" text-anchor="middle" font-size="10" fill="#4a4a4a">  · 等待期间用户提交了新批量则并入同一队列，不覆盖</text>
 <text x="925.0" y="580" text-anchor="middle" font-size="10" fill="#4a4a4a">  · 网关不读书的内容，崩溃元凶不在这边：10-07 删了“打断两次记失败”的 attempts 计数</text>

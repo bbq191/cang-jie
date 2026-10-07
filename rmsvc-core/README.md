@@ -21,9 +21,9 @@
 | 服务骨架 | `service` | 启动模板：解析 `--bind` → 建目录 → 自注册 → 起服务器，自带 `GET /health` |
 | | `registry` | 注册与发现（`$XDG_RUNTIME_DIR/shelf/services/<name>.json`，按 pid 清陈旧条目）；`SvcClient` 调另一个服务 |
 | | `http` | tiny_http 适配：路由（最具体优先）、回执、守卫、TLS、SSE 流与定长下载流；并发上限 64；每条连接 60 秒读空闲超时、accept 遇暂时性错误不停摆（靠 [`vendor/tiny_http`](vendor/README.md) 的两处补丁）；accept 线程真退出时服务非零退出，交给 systemd 拉起；对端 IP 经内部头传入 |
-| | `events` | 事件总线 `EventBus` + SSE；`follow()` 订阅另一个服务的 `/events` |
+| | `events` | 事件总线 `EventBus` + SSE；`follow()` 订阅另一个服务的 `/events`；`Wake` 唤醒器与 `registry_wake()`（注册表目录进程内共用一条 inotify，2026-10-07） |
 | 文件与数据 | `paths` | XDG 路径的唯一路径表 |
-| | `fs` | 原子写（可带权限；临时名里的目标名截到 200 字节，长中文书名不再报 File name too long）、单段文件名校验 `plain_name`、同名不覆盖 `unique_path` |
+| | `fs` | 原子写（可带权限；临时名里的目标名截到 200 字节，长中文书名不再报 File name too long）、单段文件名校验 `plain_name`、同名不覆盖 `unique_path`、剩余空间 `fs_space`（statvfs，2026-10-07） |
 | | `config` | JSON 配置读写模板（`load_or_default` / `load_or_seed` / `save` / `is_corrupt`） |
 | | `multipart` | 流式 multipart 解析（边读边落盘；文件名引号内的 `;` 不切）、`Content-Disposition` 下载头 |
 | | `asset` | 资产仓库 + 上传流程模板，字体/壁纸/母版库共用；暂存在 /home（`~/.local/state/shelf/upload` 或调用方指定），服务启动时清半成品 |
@@ -31,7 +31,7 @@
 | | `ttf` | TTF/OTF 家族名、魔数、CJK 覆盖率（跳过 format-12 损坏组） |
 | | `cache` | 单值 TTL 缓存 `TtlCache`；按文件戳（长度 + mtime + inode）失效的键值缓存 `StampCache`，列表类接口免重复开文件 |
 | | `clock` / `sync` | unix 时间戳唯一出处 / 容忍 poison 的取锁 `sync::lock` |
-| xochitl | `xochitl` | 免重启进原生书库（GET-then-upload 归档，进程内“设文件夹→上传”串行）、流式 `upload_file`、超过约 100MB 上传上限的“占位 + 磁盘替换”（整段串行，防两本大书认领到同一条目） |
+| xochitl | `xochitl` | 免重启进原生书库（GET-then-upload 归档，进程内“设文件夹→上传”串行）、流式 `upload_file`、超过约 100MB 上传上限的“占位 + 磁盘替换”（整段串行，防两本大书认领到同一条目）；书库只读查询 `read_metadata` / `live_entries` / `created_ms`（2026-10-07） |
 | | `xochitl_conf` | 改 `xochitl.conf [General]` 单键（休眠屏 `SleepScreenPath`；文件含凭证，绝不打印行内容，改写保留原权限） |
 | | `fswatch` | inotify 防抖目录监听（常驻 / 限时） |
 | 对外与安全（只有网关用） | `auth` | PBKDF2 密码哈希、Basic/Cookie 解析、会话表、按 IP 的失败限速 `IpFailLimiter`、只缓存“校验通过”的 `VerifyCache` |
@@ -46,7 +46,7 @@
 | `service::{ServiceSpec, run, run_with, parse_bind}` | 起服务 |
 | `http::{Router, bind, Request, Reply, JsonBody, ApiError, Guard, ServeOpts}` | 写路由与回执 |
 | `registry::{register, find, list, SvcClient}` | 注册、发现、调另一个服务 |
-| `events::{EventBus, follow}` | 发事件 / 订阅事件 |
+| `events::{EventBus, follow, Wake, registry_wake}` | 发事件 / 订阅事件 / 等变化 |
 | `asset::{AssetStore, AssetUploadFlow}` | 实现“上传→校验→安装”的仓库 |
 | `xochitl::Xochitl` | 往原生书库上传 |
 | `paths::Paths` | 所有文件路径的来源 |
@@ -54,7 +54,7 @@
 ## 构建与测试
 
 - `cargo build --manifest-path rmsvc-core/Cargo.toml`；独立 crate，各消费方编译时一起编。
-- `cargo test --manifest-path rmsvc-core/Cargo.toml`（2026-09-30 实跑：109 个单测，108 个通过、1 个需要网络命名空间的默认忽略；另有 1 个文档示例默认忽略）。CI `rust` job 单列一步，但 CI 自 2026-09-20 起因账户扣费没有实际执行，改动要本地跑。
+- `cargo test --manifest-path rmsvc-core/Cargo.toml`（2026-10-07 实跑：110 个单测，109 个通过、1 个需要网络命名空间的默认忽略；另有 1 个文档示例默认忽略）。CI `rust` job 单列一步，但 CI 自 2026-09-20 起因账户扣费没有实际执行，改动要本地跑。
 
 ## 注意
 

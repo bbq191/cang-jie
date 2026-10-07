@@ -43,7 +43,7 @@
 <text x="520" y="300" text-anchor="start" font-size="13" font-weight="bold" fill="#1a1a1a">「传书」母版库：分三档</text>
 <text x="520" y="322" text-anchor="start" font-size="10" fill="#3a3a3a">① 网关自己的批量事件（没有 svc）</text>
 <text x="520" y="337" text-anchor="start" font-size="10" fill="#3a3a3a">   → 1 个请求：batch/status</text>
-<text x="520" y="352" text-anchor="start" font-size="10" fill="#3a3a3a">② book-serve 的 staging 事件</text>
+<text x="520" y="352" text-anchor="start" font-size="10" fill="#3a3a3a">② book-serve 的 staging / render 事件</text>
 <text x="520" y="367" text-anchor="start" font-size="10" fill="#3a3a3a">   （入库、忙态开始/结束、落库结果）</text>
 <text x="520" y="382" text-anchor="start" font-size="10" fill="#3a3a3a">   → 2 个：母版库列表 + batch/status</text>
 <text x="520" y="397" text-anchor="start" font-size="10" fill="#3a3a3a">③ 其余（mkdir/trash/inbox、切tab、</text>

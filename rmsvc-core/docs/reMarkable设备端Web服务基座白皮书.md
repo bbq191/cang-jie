@@ -3,7 +3,7 @@
 > **读者与用途**：要改 `rmsvc-core`，或在 `shelf/`、`notes/`、`enhance/`、`gateway/` 里写 Web 服务、想知道基座提供什么、有哪些约定的人。
 > 先读“现状”；后面按模块分组，每个模块写“谁在用”和“关键约定”。被推翻的做法只留结论和教训。
 > 入口文档（模块速查、Rust API 入口）见 [`../README.md`](../README.md)；网关怎么用这些模块（登录、代理、批量队列）见 [网关白皮书](../../gateway/docs/reMarkable网关白皮书.md)。
-> 所有数字以 2026-09-30 的代码为准（`rmsvc-core/src`）。
+> 所有数字以 2026-09-30 的代码为准（`rmsvc-core/src`）；2026-10-07 代码审查新增的几个函数（`fs::fs_space`、`events::Wake`/`registry_wake`、`xochitl::{live_entries, created_ms, read_metadata}`，分支 `chore/post-optimize-cleanup` 提交 `a405ea8`，**未合 master、未部署**）已写进各节。
 > **赶时间只看三处**：“现状”的关键事实表、下面“三条要记住”、要改的那个模块所在小节的“谁在用”。
 
 ## 现状（2026-09-30）
@@ -29,7 +29,7 @@
 | 消费方 | `shelf/services/book-serve` · `enhance/{font,wallpaper}-serve` · `notes/services/{ink,transcribe,mind,note}-serve` + `notes/crates/vendorcfg` · `gateway/`。2026-09-29 退役的 `shelf/services/koreader-serve` 源码已从仓库删除（2026-09-30），见 git 历史，不再是消费方 |
 | 依赖方向 | 单向：消费方 → 本 crate；本 crate 不知道任何消费方，不引用旧项目 crate（`device-core` / `weread-device`） |
 | workspace | 不建根 workspace，各项目各管各的 `target/` |
-| 测试 | 109 个单测，108 个默认跑、1 个默认忽略（需要网络命名空间的 mDNS 端到端测试），另有 1 个文档示例默认忽略；`cargo test --manifest-path rmsvc-core/Cargo.toml`，2026-09-30 第五轮审计后实跑全过。`vendor/tiny_http` 的补丁另有 1 个单测（在 vendored crate 里，不计入）。CI `rust` job 单列一步（CI 自 09-20 起因账户扣费没有实际执行） |
+| 测试 | 110 个单测，109 个默认跑、1 个默认忽略（需要网络命名空间的 mDNS 端到端测试），另有 1 个文档示例默认忽略；`cargo test --manifest-path rmsvc-core/Cargo.toml`，2026-10-07 代码审查后实跑全过（09-30 第五轮审计后是 109 个）。`vendor/tiny_http` 的补丁另有 1 个单测（在 vendored crate 里，不计入）。CI `rust` job 单列一步（CI 自 09-20 起因账户扣费没有实际执行） |
 | 真机 | 所有消费方已部署在设备上并正常运行（2026-09-11 起 `install-all.sh` 真机跑通；09-24、09-25 各整轮重装一次，9 个服务 active——当时还含 koreader-serve）。09-24 第三轮审计的改动（`sync`、小请求体超限报错、`percent_decode_path`、上传串行锁、上传文件名清洗、读空闲超时）已随部署上机、服务正常，但这些行为本身只在 host 测试里专门验证过；09-25 的 mDNS 地址变化驱动见 §04。**09-25 第四轮审计**的六处改动（accept 暂时性错误不停摆、`xochitl_conf` 保留权限、multipart 引号内分号、大文件通道整段串行、上传暂存改到 /home 并启动清理、format-12 损坏组）当天随 `install-all` 部署（部署自检 43✓；`~/.local/state/shelf/upload` 已建且为空），其余行为只在 host 测试里专门验证过。**09-30 第五轮审计**的改动（见下）09-30 14:10 部署，15:23 又整轮 `install-all` 一次，部署自检都通过、9 个常驻服务健康；这些行为本身**还没在真机上专门触发过**（长书名入库、带 Basic 头的脚本连发请求等，清单见书架白皮书附录 §05） |
 
 **09-25 第四轮审计改了什么**（一句话版，细节在各节）：accept 线程遇到暂时性错误不再退出、真退出时服务非零退出交给 systemd 拉起（§01 http）；上传暂存从运行时目录改到 `~/.local/state/shelf/upload`，启动清半成品（§02 paths / asset）；multipart 文件名里引号内的 `;` 不再截断（§02）；format-12 损坏组不再报满 100%（§02 ttf）；大文件通道“传占位 → 认领 → 替换”整段串行（§03）；改 `xochitl.conf` 保留原文件权限（§03）。
@@ -39,6 +39,12 @@
 - `cache` 新增按文件戳失效的 `StampCache` / `FileStamp`（§02 cache），book-serve 三处手写的“(大小, mtime) 缓存”收编进来，`GET /staging` 列表也用上；
 - `auth` 新增 `VerifyCache`（§04 auth），网关每个带 Basic 认证的请求不再都现算一遍 60 万轮 PBKDF2；
 - 注释跟进：`events` 不再提已砍的 host CLI，`service` 里“/health 必须先注册”的旧说法改掉（§06）。
+
+**10-07 代码审查新增了什么**（未合 master、未部署；都是把消费方各写一份的代码收进基座，行为不变）：
+- `fs::fs_space(path)` → `(可用字节, 总字节)`（`statvfs`）：网关设备健康看 `/home`、book-serve 母版库显示剩余空间共用，book-serve 随之去掉 `libc` 直接依赖（§02 fs）；
+- `events::Wake`（代数 + 条件变量的“有变化就醒”唤醒器）和 `events::registry_wake(paths)`（每个注册表目录进程内一条 inotify 监听，防抖 300ms）：`follow` 等服务上线、网关发 manage 事件、网关批量队列恢复时等 book-serve，都挂在同一条监听上（§01 events）；
+- `xochitl::live_entries` / `created_ms` / `read_metadata`：书库只读查询，网关清理页、book-serve 回收站代理与直接导入共用（§03）。
+测试 110 个单测，109 个默认跑、1 个默认忽略（2026-10-07 实跑）。
 
 **三条要记住**：① 这里出问题，理论上 4 个独立顶层项目（shelf、notes、enhance、gateway）一起受影响，改任何模块前先查谁在用（下面每节都列了）；② 公开结构体（如 `http::Request`）被各服务直接构造，加字段会波及全部调用方，宁可走内部头或新函数；③ XDG 路径仍叫 `shelf`（已部署设备的真实路径，改名要迁移）。
 
@@ -79,14 +85,15 @@
 - **格式**：一行 JSON `{"area":"books","kind":"staging","at":<unix秒>}`，只是“该刷新了”的信号，不带状态。服务在**变更发生处**调 `EventBus::publish`，网关汇聚后推给网页（原则：不轮询、不监听全盘、日志写入不触发）。
 - **`EventBus`**：进程内广播，每个订阅者一条有界队列（64 条），满了丢事件。
 - **心跳**：`GET /events` 缺省 20 秒一次注释心跳；请求可带 `?ka=<秒>` 要求别的间隔（夹到 5～600 秒）。网关给浏览器用 `?ka=60`。
-- **`follow(paths, svc, on_json)`**：订阅另一个服务的 `/events`，阻塞不返回，放线程里跑。服务没注册就等注册表目录的 inotify 事件（兜底 5 分钟）；连上用 `?ka=120`；断线 3 秒→60 秒指数退避，一条流撑过 10 秒才重置；对方回 404（没有事件流）就长等 10 分钟或等它重新注册。网关的 `Hub` 和 transcribe-serve 订阅 ink-serve 都用它（以前各写一份，还有每 3 秒轮询的耗电问题）。
+- **`follow(paths, svc, on_json)`**：订阅另一个服务的 `/events`，阻塞不返回，放线程里跑。服务没注册就等注册表目录变化（`registry_wake`，兜底 5 分钟）；连上用 `?ka=120`；断线 3 秒→60 秒指数退避，一条流撑过 10 秒才重置；对方回 404（没有事件流）就长等 10 分钟或等它重新注册。网关的事件汇聚（`gateway/src/events.rs::spawn`；2026-10-07 前叫 `Hub`）和 transcribe-serve 订阅 ink-serve 都用它（以前各写一份，还有每 3 秒轮询的耗电问题）。
+- **`Wake` 与 `registry_wake(paths)`**（2026-10-07 代码审查收进基座）：`Wake` 是“代数 + 条件变量”的唤醒器——变化方 `bump()`，等待方先记 `generation()` 再 `wait_change(seen, 超时)`，记下之后发生的变化不会漏，多次变化合并成一次醒来。`registry_wake` 给每个注册表目录在进程内起**一条** inotify 监听（防抖 300ms，空闲零唤醒），变化时 `bump`；同一进程里 `follow` 等服务上线、网关发 `{"area":"manage"}`、网关批量队列重启后等 book-serve，都挂在这一条上（此前网关自己另起一条监听同一个目录，网关的 book-serve 唤醒器也是逐行相同的另一份 `Wake`）。inotify 初始化失败时监听线程直接返回，等待方只剩各自的超时兜底。
 
 ## 02｜文件与数据
 
 | 模块 | 谁在用 | 关键约定 |
 |---|---|---|
 | `paths` | 8 个服务 | XDG 基目录的**唯一路径表**，所有文件路径从这里取。设备 HOME 是 `/home/root`；配置 `~/.config/shelf/<服务>.json`，数据 `~/.local/share/shelf/`，状态 `~/.local/state/shelf/`，运行时 `$XDG_RUNTIME_DIR/shelf/`（注册表，重启即清），二进制 `~/.local/bin`。**上传暂存** `upload_tmp_dir()` = `~/.local/state/shelf/upload`（09-25 起；此前在运行时目录——单元没设 `XDG_RUNTIME_DIR` 时落到 `/tmp`，是 tmpfs：几十 MB 的中文字体整份占内存、计入服务 cgroup 的 `MemoryMax`，安装时还得再拷一遍到 /home）。（原外部约定 `SHELF_KOREADER_ROOT`、`SHELF_WEREAD_ROOT` 与 `koreader_root()`/`weread_root()`：2026-09-29 设备卸掉 KOReader 与 WeRead 后无人调用，2026-09-30 删除。）`app_config_dir("notes")` 这类接口给非 `shelf` 命名空间的消费方 |
-| `fs` | 8 个 | `write_atomic`：先写同目录临时文件再 rename；临时名 `<目标名>.<pid>.<序号>.tmp`，多线程/多进程同时写同一目标不会互相截断（09-20 前固定用 `<path>.tmp`）；目标名超过 200 字节（`TMP_BASE_MAX`）时按字符边界截短后再拼后缀（09-30：此前完整拼接，目标名 ≥243 字节就超过 Linux 单段 255 字节上限，报 `File name too long`）。`write_atomic_mode`：临时文件**创建时**就带指定权限，含密钥的文件没有“先宽后紧”的窗口（09-24）。`plain_name` 校验单段文件名（不含 `/`、不是 `.`/`..`、不以 `.` 开头）；`unique_path` 同名不覆盖（`1_x`、`2_x`…）；`move_unique` 跨设备回退 copy+rm |
+| `fs` | 8 个 | `write_atomic`：先写同目录临时文件再 rename；临时名 `<目标名>.<pid>.<序号>.tmp`，多线程/多进程同时写同一目标不会互相截断（09-20 前固定用 `<path>.tmp`）；目标名超过 200 字节（`TMP_BASE_MAX`）时按字符边界截短后再拼后缀（09-30：此前完整拼接，目标名 ≥243 字节就超过 Linux 单段 255 字节上限，报 `File name too long`）。`write_atomic_mode`：临时文件**创建时**就带指定权限，含密钥的文件没有“先宽后紧”的窗口（09-24）。`plain_name` 校验单段文件名（不含 `/`、不是 `.`/`..`、不以 `.` 开头）；`unique_path` 同名不覆盖（`1_x`、`2_x`…）；`move_unique` 跨设备回退 copy+rm。`fs_space(path)` → `(可用字节, 总字节)`（`statvfs`，`f_bavail`/`f_blocks` × `f_frsize`，不 fork `df`；2026-10-07 起，网关设备健康与 book-serve 母版库剩余空间共用，此前两边各有一份同样的 unsafe 代码） |
 | `config` | 7 个 | JSON 配置模板：`load_or_default`、`load_or_seed`（首启写出缺省）、`save`（原子写，可选 0600）。`is_corrupt` 判断“文件在但解析不了”，给启动时要落盘的调用方决定是否跳过，免得把损坏的配置覆盖成缺省（09-24） |
 | `multipart` | book-serve、note-serve、网关 | 头参数按 `;` 切分时**引号内的 `;` 不切**（09-25：此前 `filename="甲; 乙.epub"` 被截成 `甲`，扩展名丢失被当成不支持的格式拒收；浏览器把文件名里的 `"` 编成 `%22`，所以只认成对双引号）。流式 multipart/form-data 解析，每个 part 以 `Read` 交出、边读边落盘，多文件一次 POST 也不把请求体读进内存。分隔符扫描记进度、按首字节跳查（200MB 上传体解析 1245ms → 46ms，09-22）。`percent_decode` 遇多字节字符不再 panic（查询串/表单语义，`+`=空格；路径段与 `filename*=` 用 `percent_decode_path`，`+` 原样）；`content_disposition(filename)` 生成下载头（ASCII 兜底名 + RFC 5987 UTF-8 名，笔记导出与原件下载共用） |
 | `asset` | book-serve、font-serve、wallpaper-serve | `AssetStore`（仓库：`validate`/`install`/`list`/`remove`）+ `AssetUploadFlow`（上传流程写一次）。拒收/成功文案由各仓库覆盖。暂存目录：`new(&paths)` 用上面的 `upload_tmp_dir()`（font-serve、wallpaper-serve），`in_dir(dir)` 由调用方指定（book-serve 用母版库同分区的 `.work/`；已删的 koreader-serve 当年用 `~/.local/state/shelf/koreader-upload`）。半成品名是 `.<uuid>.<kind>.part`，`clean_stale()` 在服务启动时清掉上次中途被杀留下的（font-serve、wallpaper-serve 启动时调用，09-25；koreader-serve 当年也调）。暂存与目标同在 /home，font-serve 安装直接改名，跨分区才退回拷贝 |
@@ -98,7 +105,7 @@
 
 ## 03｜和 xochitl 打交道：xochitl / xochitl_conf / fswatch
 
-- **`xochitl`**（book-serve、note-serve；网关只用 `is_uuid_shape` 校验书库 id）：往设备原生书库免重启塞文件，剥离移植自旧项目的真机结论。
+- **`xochitl`**（book-serve、note-serve；网关用 `is_uuid_shape` 校验书库 id，清理页用 `live_entries`/`created_ms` 只读列书库）：往设备原生书库免重启塞文件，剥离移植自旧项目的真机结论。
   - `POST http://10.11.99.1/upload`（xochitl 的网页接口只绑 USB 网口，设备端靠 lo/usb1 别名让这个地址常驻可达）。
   - **GET-then-upload 归档**：先 `GET /documents/<文件夹 uuid>` 把“当前文件夹”设好（这是 xochitl 的全局状态），再上传，文件就落进该文件夹；`.metadata` 里的 parent 会被忽略。因为是全局状态，进程内“设文件夹 → 上传”由一把 static 锁串成一对（09-24：网关允许 3 本小书同时处理，此前两本书并发投到不同文件夹会落错）；只锁上传本身（当年按卷拆分等渲染的间隙也不占锁；分卷投递 2026-09-30 已移除）；跨进程（note-serve 也会投笔记本）不受这把锁约束。
   - **multipart 头里的文件名**：`"` 换成 `'`、CR/LF 换成空格，其余字节原样（中文照旧直传）。母版库文件名只校验“单段”，带引号的书名此前原样拼进 `filename="…"`，xochitl 读到第一个 `"` 就截断成半截名；带换行则会被当成新的头（09-24）。
@@ -109,7 +116,7 @@
 
     ![大文件通道为什么要整段加锁](diagrams/large-file-claim.svg)
 
-  - `xochitl::library`：书库 `.metadata`/`.content` 的只读查询（找文件夹、去重命名、按创建时间找“刚进库的那本”、渲染页数），纯文件读取，不碰 HTTP。
+  - `xochitl::library`：书库 `.metadata`/`.content` 的只读查询（找文件夹、去重命名、按创建时间找“刚进库的那本”、渲染页数），纯文件读取，不碰 HTTP。2026-10-07 代码审查补了三个公开函数：`read_metadata(dir, uuid)` 读一份 `.metadata`（不在 / 不是合法 JSON → `None`，uuid 形状由调用方先校验），book-serve 回收站代理、直接导入和本模块的找父文件夹共用；`live_entries(dir)` 列书库里所有活的条目（非回收站、未删除），网关清理页用；`created_ms(v)` 取 `createdTime`（xochitl 写成字符串的毫秒，也认数字）。
 - **`xochitl_conf`**（wallpaper-serve）：改 `~/.config/remarkable/xochitl.conf` 的 `[General]` 单键，目前只用于休眠屏 `SleepScreenPath`。文件里有 `DeveloperPassword` 等凭证，本模块**绝不返回、绝不打印任何行内容**；整文件读入、只动目标行、原子覆盖，首次改前留一份 `.shelf-bak`。**保留原文件权限**（09-25）：原子覆盖是“写临时文件 → rename”，新 inode 按默认 umask 落成 0644，原件若是 0600，含凭证的文件就这样变成人人可读；现在临时文件创建时就带原权限，改名后再精确设一次（umask 会收窄）。新值要等 xochitl 下次启动才生效。
 - **`fswatch`**（book-serve、ink-serve、网关）：inotify 防抖目录监听（单层）。空闲时阻塞读、零唤醒。`watch_debounced` 常驻；`watch_until` 限时，回调说“完了”就撤，用于有头有尾的等待（投原生后等 xochitl 渲染完），不给书库目录留常驻监听。inotify 读事件出错时固定歇 5 秒再读（没有退避；09-30 审计记下、未改）。
 
@@ -135,7 +142,7 @@
 - **path 依赖的深度**：`..` 的个数取决于消费方自己的目录深度——`gateway/` 写 `../rmsvc-core`，`enhance/*-serve/` 写 `../../rmsvc-core`，`shelf/services/*/`、`notes/services/*/`、`notes/crates/vendorcfg/` 写 `../../../rmsvc-core`。写错时 `cargo build` 会直接说它去哪找过，照着改。
 - **每个独立顶层项目各带一份 `.cargo/config.toml`**（交叉编译的 CC/AR 覆盖），原因见 §06。
 - **release profile**：`gateway`、`shelf`、`notes` 是 `panic="unwind"`，基座的 panic 兜底和各服务的 `catch_unwind` 才真正生效；`enhance/{font,wallpaper}-serve` 仍是 `abort`（没有依赖 `catch_unwind` 的后台线程）。
-- **测试**：`cargo test --manifest-path rmsvc-core/Cargo.toml`，109 个单测（1 个默认忽略）；HTTP 服务器、TLS 握手取对端 IP、名称约束链校验都有真起服务器 / 真证书链的测试。
+- **测试**：`cargo test --manifest-path rmsvc-core/Cargo.toml`，110 个单测（1 个默认忽略；2026-10-07 实跑）；HTTP 服务器、TLS 握手取对端 IP、名称约束链校验都有真起服务器 / 真证书链的测试。
 
 ## 06｜踩坑
 
