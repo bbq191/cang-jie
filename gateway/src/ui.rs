@@ -29,12 +29,12 @@ pub fn locale_json(lang: &str) -> &'static str {
 pub fn page() -> &'static str {
     static PAGE: OnceLock<String> = OnceLock::new();
     PAGE.get_or_init(|| {
-        use rmsvc_core::formats::{BOOK_EXTS, FONT_EXTS, IMAGE_EXTS, NATIVE_EXTS};
+        use rmsvc_core::formats::{BOOK_EXTS, FONT_EXTS, IMAGE_EXTS};
         // "convertible" 档（azw3/mobi/azw/prc/fb2/txt）2026-09-17 随 EPUB 线架构调整退役；"仅
         // KOReader" 档（cbz/cbr/djvu/html/htm/rtf/doc/docx/chm/xps）2026-09-18 用户明确要求一并
-        // 退役——母版库只收 EPUB/PDF，`BOOK_EXTS == NATIVE_EXTS`，不再需要 `koOnly` 字段区分两档。
+        // 退役——母版库只收 EPUB/PDF，`BOOK_EXTS == NATIVE_EXTS`，不再需要 `koOnly` 字段区分两档；`native` 字段同理 2026-10-07 不再注入。
         // `dict`（KOReader 词典上传口的格式）随 2026-09-29 设备卸载 KOReader、网页撤掉词典上传一并不再注入。
-        let exts = serde_json::json!({"book": BOOK_EXTS, "native": NATIVE_EXTS, "font": FONT_EXTS, "image": IMAGE_EXTS});
+        let exts = serde_json::json!({"book": BOOK_EXTS, "font": FONT_EXTS, "image": IMAGE_EXTS});
         INDEX_HTML.replace("__STYLE__", STYLE_CSS).replace("__SCRIPT__", APP_JS).replace("__EXTS__", &exts.to_string())
     })
 }
@@ -77,7 +77,7 @@ mod tests {
         assert!(!p.contains("__EXTS__"), "占位应被替换");
         assert!(p.contains(r#""book":["epub","pdf"]"#) && p.contains(r#""font":["ttf""#) && p.contains(r#""image":["jpg""#));
         assert!(!p.contains(r#""dict""#), "KOReader 词典上传口已撤，格式表不再注入");
-        assert!(p.contains(r#""native":["epub","pdf"]"#), "格式说明注入");
+        assert!(!p.contains(r#""native""#), "native 与 book 相同，2026-10-07 起不再注入");
         assert!(!p.contains(r#""convertible""#), "convertible 档已随 EPUB 线架构调整退役");
         assert!(!p.contains(r#""koOnly""#), "仅 KOReader 档已随 2026-09-18 格式收窄退役");
         assert!(std::ptr::eq(p, super::page()), "OnceLock 只渲染一次");

@@ -113,7 +113,7 @@ const currentLang=()=>LS.get('lang',(navigator.language||'').toLowerCase().start
 const EXT=__EXTS__, dot=l=>l.map(e=>'.'+e);
 const BOOK_EXT=dot(EXT.book), FONT_EXT=dot(EXT.font), IMG_EXT=dot(EXT.image);
 const up=l=>l.map(e=>e.toUpperCase()).join(' / ');
-// 2026-09-18 起母版库只收 EPUB/PDF（EXT.book 与 EXT.native 相同，见 rmsvc_core::formats 头注，网页只用 EXT.book）——原来
+// 2026-09-18 起母版库只收 EPUB/PDF（网关只注入 EXT.book，见 rmsvc_core::formats 头注）——原来
 // 这里有个 FMT_TIERS() 分两档（原生/仅 KOReader）拼文案，两档收成一档后不再需要，删掉。
 /* 标签栏吸顶位置跟着页头实际高度（手机英文界面页头会折两行），见 style.css nav 的 --hdr-h。只在尺寸变化时回调，不轮询。 */
 if(window.ResizeObserver)new ResizeObserver(([e])=>document.documentElement.style.setProperty('--hdr-h',Math.ceil(e.target.getBoundingClientRect().height)+'px')).observe($('header'));
